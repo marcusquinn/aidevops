@@ -7,16 +7,32 @@ import argparse
 import datetime as dt
 import getpass
 import json
+import math
 import os
 import re
 import sqlite3
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 CORE_DATA_EPOCH = 978307200
 DAY = 86400
 WINDOWS = {"day": DAY, "week": 7 * DAY, "month": 28 * DAY, "year": 365 * DAY}
+
+
+def local_date(timestamp):
+    return dt.datetime.fromtimestamp(timestamp).date()
+
+
+def local_midnight_epoch(date):
+    # Naive datetime.timestamp intentionally uses the host TZ database, including
+    # the offset applicable on this date rather than today's fixed UTC offset.
+    return dt.datetime.combine(date, dt.time.min).timestamp()
+
+
+def local_day_bounds(date):
+    return local_midnight_epoch(date), local_midnight_epoch(date + dt.timedelta(days=1))
 
 
 def union_intervals(intervals, start, end):
@@ -102,8 +118,8 @@ def macos_collection(db_path, now):
         dates = set()
         window_start = now - window_days * DAY
         for left, right in union_intervals(intervals, window_start, now):
-            cursor = dt.datetime.fromtimestamp(left, dt.timezone.utc).date()
-            final = dt.datetime.fromtimestamp(max(left, right - 1), dt.timezone.utc).date()
+            cursor = local_date(left)
+            final = local_date(max(left, right - 1))
             while cursor <= final:
                 dates.add(cursor)
                 cursor += dt.timedelta(days=1)
@@ -111,10 +127,19 @@ def macos_collection(db_path, now):
 
     backlit_dates = active_dates(backlit_intervals)
     app_dates = active_dates(app_intervals)
+    backlit_seconds = interval_seconds(backlit_intervals, now - 28 * DAY, now)
+    app_seconds = interval_seconds(app_intervals, now - 28 * DAY, now)
+    app_materially_richer = (
+        len(app_dates) > len(backlit_dates)
+        and (
+            len(app_dates) >= max(len(backlit_dates) + 2, len(backlit_dates) * 2)
+            or app_seconds > max(3600, backlit_seconds * 1.5)
+        )
+    )
     use_backlit = (
         latest_backlit is not None
         and now - latest_backlit <= 3 * DAY
-        and not (len(backlit_dates) <= 1 and len(app_dates) >= 2)
+        and not app_materially_richer
     )
     if use_backlit:
         intervals = backlit_intervals
@@ -132,7 +157,7 @@ def macos_collection(db_path, now):
         latest = latest_backlit
         observations = len(backlit)
     else:
-        return {"status": "ok", "source": "macos-knowledge-db:no-observations", "reason": "empty-readable-database", "intervals": [], "observations": 0}
+        return {"status": "unavailable", "source": "macos-knowledge-db:no-observations", "reason": "empty-readable-database", "intervals": [], "observations": 0}
     freshness = max(0.0, (now - latest) / 3600) if latest is not None else None
     status = "stale" if freshness is not None and freshness > 72 else "ok"
     return {
@@ -142,6 +167,7 @@ def macos_collection(db_path, now):
         "intervals": intervals,
         "observations": observations,
         "latest_epoch": latest,
+        "earliest_epoch": min((item[0] for item in (backlit if use_backlit or not apps else apps)), default=latest),
         "freshness_hours": round(freshness, 1) if freshness is not None else None,
     }
 
@@ -217,6 +243,17 @@ def journal_lines(now):
     return result.stdout.splitlines(), None
 
 
+def parse_last_local_timestamp(value):
+    for format_string in ("%a %b %d %H:%M:%S %z %Y", "%a %b %d %H:%M:%S %Y"):
+        try:
+            # The no-offset form is intentionally naive: timestamp() applies the
+            # host local timezone and historical DST rules used by GNU last -F.
+            return dt.datetime.strptime(value, format_string).timestamp()
+        except ValueError:
+            continue
+    return None
+
+
 def wtmp_collection(now, user, journal_reason):
     fixture = os.environ.get("AIDEVOPS_LAST_FIXTURE")
     if fixture:
@@ -235,20 +272,31 @@ def wtmp_collection(now, user, journal_reason):
             return {"status": "unavailable", "source": "linux-logind+wtmp", "reason": f"{journal_reason};wtmp-read-failed:exit-{result.returncode}", "intervals": []}
         lines = result.stdout.splitlines()
     intervals = []
+    skipped = 0
     for line in lines:
+        if not line.strip() or "wtmp begins" in line or line.startswith(("reboot", "shutdown")):
+            continue
         structured = re.match(r"^([0-9]+)\|([0-9]+)$", line.strip())
         if structured:
             intervals.append((float(structured.group(1)), float(structured.group(2))))
             continue
-        dates = re.findall(r"(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun) [A-Z][a-z]{2}\s+[0-9]{1,2} [0-9:]{8} [0-9]{4}", line)
-        if len(dates) >= 2:
+        dates = re.findall(r"(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun) [A-Z][a-z]{2}\s+[0-9]{1,2} [0-9:]{8}(?: [+-][0-9]{4})? [0-9]{4}", line)
+        if dates:
             try:
-                left = dt.datetime.strptime(dates[0], "%a %b %d %H:%M:%S %Y").replace(tzinfo=dt.timezone.utc).timestamp()
-                right = dt.datetime.strptime(dates[1], "%a %b %d %H:%M:%S %Y").replace(tzinfo=dt.timezone.utc).timestamp()
-                if right > left:
+                left = parse_last_local_timestamp(dates[0])
+                if "still logged in" in line:
+                    right = now
+                elif len(dates) >= 2:
+                    right = parse_last_local_timestamp(dates[1])
+                else:
+                    skipped += 1
+                    continue
+                if left is not None and right is not None and right > left:
                     intervals.append((left, right))
-            except ValueError:
-                continue
+            except (TypeError, ValueError):
+                skipped += 1
+        else:
+            skipped += 1
     if not intervals:
         return {"status": "unavailable", "source": "linux-logind+wtmp", "reason": f"{journal_reason};no-parseable-wtmp-sessions", "intervals": []}
     latest = max(right for _, right in intervals)
@@ -260,7 +308,9 @@ def wtmp_collection(now, user, journal_reason):
         "intervals": union_intervals(intervals, now - WINDOWS["year"], now),
         "observations": len(intervals),
         "latest_epoch": latest,
+        "earliest_epoch": min(left for left, _ in intervals),
         "freshness_hours": round(freshness, 1),
+        "skipped_rows": skipped,
     }
 
 
@@ -275,6 +325,7 @@ def linux_collection(now, user):
     intervals = []
     observations = 0
     latest = None
+    earliest_event = None
     start = now - WINDOWS["year"]
 
     def is_active():
@@ -322,6 +373,7 @@ def linux_collection(now, user):
             )
         observations += 1
         latest = timestamp if latest is None else max(latest, timestamp)
+        earliest_event = timestamp if earliest_event is None else min(earliest_event, timestamp)
         after = is_active()
         if before == after:
             continue
@@ -333,7 +385,7 @@ def linux_collection(now, user):
         intervals.append((opened, now))
     intervals = union_intervals(intervals, start, now)
     if observations == 0:
-        return {"status": "ok", "source": "linux-systemd-logind", "reason": "no-user-session-observations", "intervals": [], "observations": 0}
+        return wtmp_collection(now, user, "journal-readable-no-user-observations")
     freshness = max(0.0, (now - latest) / 3600)
     return {
         "status": "stale" if freshness > 72 else "ok",
@@ -342,6 +394,7 @@ def linux_collection(now, user):
         "intervals": intervals,
         "observations": observations,
         "latest_epoch": latest,
+        "earliest_epoch": earliest_event,
         "freshness_hours": round(freshness, 1),
     }
 
@@ -382,21 +435,29 @@ def period_payload(collection, now, seconds):
 
 def read_history(history_path, now):
     rows = {}
+    skipped = 0
     if not history_path or not history_path.exists():
-        return rows
+        return rows, skipped
     try:
         for line in history_path.read_text(encoding="utf-8").splitlines():
-            row = json.loads(line)
-            date = dt.date.fromisoformat(str(row.get("date")))
-            hours = max(0.0, min(24.0, float(row.get("screen_hours"))))
-            rows[date] = (hours, row)
-    except (OSError, ValueError, TypeError, json.JSONDecodeError):
-        return {}
-    return rows
+            try:
+                row = json.loads(line)
+                if not isinstance(row, dict) or isinstance(row.get("screen_hours"), bool):
+                    raise ValueError("invalid history row")
+                date = dt.date.fromisoformat(str(row.get("date")))
+                hours = float(row.get("screen_hours"))
+                if hours < 0 or not math.isfinite(hours):
+                    raise ValueError("invalid history row")
+                rows[date] = (min(24.0, hours), row)
+            except (ValueError, TypeError, json.JSONDecodeError):
+                skipped += 1
+    except OSError:
+        return {}, skipped + 1
+    return rows, skipped
 
 
-def history_period(rows, now, days):
-    end_date = dt.datetime.fromtimestamp(now, dt.timezone.utc).date()
+def history_period(rows, now, days, skipped_rows=0):
+    end_date = local_date(now)
     start_date = end_date - dt.timedelta(days=days)
     selected = [(date, value) for date, value in rows.items() if start_date <= date < end_date]
     if not selected:
@@ -416,18 +477,19 @@ def history_period(rows, now, days):
         "freshness_hours": latest_age * 24,
         "observations": len(selected),
         "estimated": False,
+        "skipped_history_rows": skipped_rows,
     }
 
 
 def profile_payload(collection, history_path, now):
     periods = {name: period_payload(collection, now, seconds) for name, seconds in WINDOWS.items()}
-    history = read_history(history_path, now)
+    history, skipped_history_rows = read_history(history_path, now)
     for name, days in (("day", 1), ("week", 7), ("month", 28)):
         if periods[name]["status"] == "unavailable":
-            fallback = history_period(history, now, days)
+            fallback = history_period(history, now, days, skipped_history_rows)
             if fallback:
                 periods[name] = fallback
-    year_history = history_period(history, now, 365)
+    year_history = history_period(history, now, 365, skipped_history_rows)
     if year_history:
         span = year_history.get("calendar_span_days", 0)
         observed = year_history.get("coverage_days", 0)
@@ -448,6 +510,7 @@ def profile_payload(collection, history_path, now):
         "month_note": periods["month"]["source"],
         "periods": periods,
         "collection_status": collection.get("status", "unavailable"),
+        "history_skipped_rows": skipped_history_rows,
     }
 
 
@@ -461,7 +524,7 @@ def collect(args):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("command", choices=("profile", "query", "date", "earliest", "apps"))
+    parser.add_argument("command", choices=("profile", "query", "date", "earliest", "apps", "next-date", "history-summary"))
     parser.add_argument("--os-type", required=True)
     parser.add_argument("--db", default="")
     parser.add_argument("--history", default="")
@@ -470,10 +533,19 @@ def main():
     parser.add_argument("--now", type=float, default=float(os.environ.get("AIDEVOPS_SCREEN_TIME_NOW_EPOCH", "0") or 0))
     parser.add_argument("--user", default=os.environ.get("AIDEVOPS_SCREEN_TIME_USER", getpass.getuser()))
     args = parser.parse_args()
+    if hasattr(time, "tzset"):
+        time.tzset()
     if not args.now:
         args.now = dt.datetime.now(dt.timezone.utc).timestamp()
     if args.command == "apps":
         print(json.dumps(macos_app_stats(Path(args.db), args.now), sort_keys=True))
+        return 0
+    if args.command == "next-date":
+        print((dt.date.fromisoformat(args.date) + dt.timedelta(days=1)).isoformat())
+        return 0
+    if args.command == "history-summary":
+        rows, skipped = read_history(Path(args.history) if args.history else None, args.now)
+        print(json.dumps({"valid_rows": len(rows), "skipped_rows": skipped, "earliest": min(rows).isoformat() if rows else None, "latest": max(rows).isoformat() if rows else None, "total_hours": round(sum(value[0] for value in rows.values()), 1)}, sort_keys=True))
         return 0
     collection = collect(args)
     if args.command == "profile":
@@ -484,12 +556,15 @@ def main():
         print("unavailable" if payload["hours"] is None else payload["hours"])
     elif args.command == "date":
         target = dt.date.fromisoformat(args.date)
-        start = dt.datetime.combine(target, dt.time.min, tzinfo=dt.timezone.utc).timestamp()
-        hours = None if collection.get("status") == "unavailable" else round(interval_seconds(collection.get("intervals", []), start, start + DAY) / 3600, 1)
+        start, end = local_day_bounds(target)
+        hours = None if collection.get("status") == "unavailable" else round(min(24 * 3600, interval_seconds(collection.get("intervals", []), start, end)) / 3600, 1)
         print("unavailable" if hours is None else hours)
     else:
         starts = [left for left, _ in collection.get("intervals", [])]
-        print(dt.datetime.fromtimestamp(min(starts), dt.timezone.utc).date().isoformat() if starts else "")
+        earliest = collection.get("earliest_epoch")
+        if earliest is None and starts:
+            earliest = min(starts)
+        print(local_date(earliest).isoformat() if earliest is not None else "")
     return 0
 
 

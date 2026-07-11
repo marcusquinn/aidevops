@@ -128,6 +128,72 @@ test_union_clipping_and_failure_status() {
 	return 0
 }
 
+test_empty_zero_and_sparse_source_semantics() {
+	local tmpdir="$1"
+	local now="$2"
+	local empty_db="${tmpdir}/empty.db"
+	create_knowledge_db "$empty_db"
+	local empty_json
+	empty_json=$(AIDEVOPS_SCREEN_TIME_NOW_EPOCH="$now" profile_stats "$empty_db")
+	[[ "$(printf '%s' "$empty_json" | jq -r '.collection_status')" == "unavailable" ]] || fail "readable empty macOS DB was not unavailable"
+	local fallback_home="${tmpdir}/empty-fallback-home"
+	mkdir -p "${fallback_home}/.aidevops/.agent-workspace/observability"
+	python3 - "${fallback_home}/.aidevops/.agent-workspace/observability/screen-time.jsonl" "$now" <<'PY'
+import datetime as dt
+import json
+import sys
+date = dt.datetime.fromtimestamp(int(sys.argv[2])).date() - dt.timedelta(days=1)
+with open(sys.argv[1], "w", encoding="utf-8") as handle:
+    handle.write(json.dumps({"date": str(date), "screen_hours": 2}) + "\n")
+PY
+	local empty_fallback
+	empty_fallback=$(HOME="$fallback_home" AIDEVOPS_SCREEN_TIME_NOW_EPOCH="$now" AIDEVOPS_SCREEN_TIME_OS_TYPE=Darwin AIDEVOPS_KNOWLEDGE_DB="$empty_db" "$HELPER" profile-stats)
+	[[ "$(printf '%s' "$empty_fallback" | jq -r '.today_hours')" == "2" || "$(printf '%s' "$empty_fallback" | jq -r '.today_hours')" == "2.0" ]] || fail "empty readable macOS source did not fall back to history: ${empty_fallback}"
+	[[ "$(printf '%s' "$empty_fallback" | jq -r '.periods.day.source')" == "screen-time-history:daily-observations" ]] || fail "empty-source history provenance missing"
+
+	local zero_db="${tmpdir}/observed-zero.db"
+	create_knowledge_db "$zero_db"
+	sqlite3 "$zero_db" "INSERT INTO ZOBJECT (ZSTREAMNAME,ZCREATIONDATE,ZVALUEINTEGER) VALUES('/display/isBacklit',$(core_data_offset "$((now - 3600))"),0);"
+	local zero_json
+	zero_json=$(AIDEVOPS_SCREEN_TIME_NOW_EPOCH="$now" profile_stats "$zero_db")
+	[[ "$(printf '%s' "$zero_json" | jq -r '.today_hours')" == "0" || "$(printf '%s' "$zero_json" | jq -r '.today_hours')" == "0.0" ]] || fail "explicit OFF observation was not preserved as legitimate zero: ${zero_json}"
+	[[ "$(printf '%s' "$zero_json" | jq -r '.periods.day.status')" == "ok" ]] || fail "explicit zero observation was marked unavailable"
+
+	local sparse_db="${tmpdir}/relative-sparse.db"
+	create_knowledge_db "$sparse_db"
+	insert_backlit_pair "$sparse_db" "$((now - 2 * 86400))" "$((now - 2 * 86400 + 3600))"
+	insert_backlit_pair "$sparse_db" "$((now - 3600))" "$now"
+	local day
+	for day in 1 2 3 4 5 6 7 8; do
+		insert_app_usage "$sparse_db" "$((now - day * 86400))" "$((now - day * 86400 + 4 * 3600))"
+	done
+	local sparse_json
+	sparse_json=$(AIDEVOPS_SCREEN_TIME_NOW_EPOCH="$now" profile_stats "$sparse_db")
+	[[ "$(printf '%s' "$sparse_json" | jq -r '.periods.month.source')" == "macos-knowledge-db:/app/usage-union" ]] || fail "two sparse backlit days incorrectly beat eight app-usage days"
+	[[ "$(printf '%s' "$sparse_json" | jq -r '.month_hours')" == "32" || "$(printf '%s' "$sparse_json" | jq -r '.month_hours')" == "32.0" ]] || fail "relative app coverage duration was not selected"
+	pass "empty sources, explicit zero, and relative sparse-source selection are distinct"
+	return 0
+}
+
+test_local_midnight_dst_boundaries() {
+	local tmpdir="$1"
+	local db="${tmpdir}/dst.db"
+	create_knowledge_db "$db"
+	local bounds
+	bounds=$(TZ=America/New_York python3 -c 'import datetime as d,time; time.tzset(); dates=(d.date(2026,3,8),d.date(2026,11,1)); print(" ".join(str(int(d.datetime.combine(x,d.time.min).timestamp()))+" "+str(int(d.datetime.combine(x+d.timedelta(days=1),d.time.min).timestamp())) for x in dates))')
+	local spring_start spring_end fall_start fall_end
+	read -r spring_start spring_end fall_start fall_end <<<"$bounds"
+	insert_app_usage "$db" "$spring_start" "$spring_end"
+	insert_app_usage "$db" "$fall_start" "$fall_end"
+	local spring_hours fall_hours
+	spring_hours=$(TZ=America/New_York AIDEVOPS_SCREEN_TIME_NOW_EPOCH="$((fall_end + 3600))" python3 "${SCRIPTS_DIR}/screen-time-interval-engine.py" date --date 2026-03-08 --os-type Darwin --db "$db")
+	fall_hours=$(TZ=America/New_York AIDEVOPS_SCREEN_TIME_NOW_EPOCH="$((fall_end + 3600))" python3 "${SCRIPTS_DIR}/screen-time-interval-engine.py" date --date 2026-11-01 --os-type Darwin --db "$db")
+	[[ "$((spring_end - spring_start))" == "82800" && "$spring_hours" == "23.0" ]] || fail "spring DST local day was not bounded by consecutive midnights"
+	[[ "$((fall_end - fall_start))" == "90000" && "$fall_hours" == "24.0" ]] || fail "fall DST local day was not bounded then capped at 24h"
+	pass "date collection uses host-local consecutive-midnight DST boundaries"
+	return 0
+}
+
 test_linux_state_machine() {
 	local tmpdir="$1"
 	local now=2000000000
@@ -159,6 +225,20 @@ PY
 	[[ "$hours" == "3" || "$hours" == "3.0" ]] || fail "expected lock/lid/session state to produce 3.0h, got ${hours}"
 	[[ "$source" == *"session-lid-lock-state"* ]] || fail "Linux provenance missing state semantics: ${source}"
 	pass "Linux state retains username-less session OFF events and clips active windows"
+	local zero_fixture="${tmpdir}/logind-zero.txt"
+	python3 - "$zero_fixture" "$now" <<'PY'
+import datetime as dt
+import sys
+stamp = dt.datetime.fromtimestamp(int(sys.argv[2]) - 60, dt.timezone.utc).isoformat()
+with open(sys.argv[1], "w", encoding="utf-8") as handle:
+    handle.write(f"{stamp} host systemd-logind[1]: New session z1 of user fixture.\n")
+    handle.write(f"{stamp} host systemd-logind[1]: Removed session z1.\n")
+PY
+	local zero_output
+	zero_output=$(AIDEVOPS_SCREEN_TIME_OS_TYPE=Linux AIDEVOPS_LOGIND_FIXTURE="$zero_fixture" \
+		AIDEVOPS_SCREEN_TIME_NOW_EPOCH="$now" AIDEVOPS_SCREEN_TIME_USER=fixture "$HELPER" profile-stats)
+	[[ "$(printf '%s' "$zero_output" | jq -r '.today_hours')" == "0" || "$(printf '%s' "$zero_output" | jq -r '.today_hours')" == "0.0" ]] || fail "explicit zero-duration logind events were not preserved"
+	[[ "$(printf '%s' "$zero_output" | jq -r '.periods.day.status')" == "ok" ]] || fail "explicit logind zero was treated as source failure"
 
 	local missing_journal="${tmpdir}/missing-journal"
 	local wtmp_fixture="${tmpdir}/wtmp.txt"
@@ -170,6 +250,21 @@ PY
 	[[ "$(printf '%s' "$fallback" | jq -r '.today_hours')" == "1" || "$(printf '%s' "$fallback" | jq -r '.today_hours')" == "1.0" ]] || fail "wtmp fallback hours were not parsed"
 	[[ "$(printf '%s' "$fallback" | jq -r '.periods.day.source')" == "linux-wtmp:login-session-proxy" ]] || fail "wtmp fallback provenance was not truthful"
 	pass "Linux collection failure falls back to clipped wtmp sessions with proxy provenance"
+
+	local empty_journal="${tmpdir}/empty-logind.txt"
+	local realistic_last="${tmpdir}/last-F.txt"
+	: >"$empty_journal"
+	cat >"$realistic_last" <<'EOF'
+fixture  pts/0  host  Tue May 17 23:33:20 2033 - Wed May 18 00:33:20 2033  (01:00)
+fixture  pts/1  host  Wed May 18 01:33:20 2033   still logged in
+EOF
+	local empty_fallback
+	empty_fallback=$(TZ=UTC AIDEVOPS_SCREEN_TIME_OS_TYPE=Linux AIDEVOPS_LOGIND_FIXTURE="$empty_journal" \
+		AIDEVOPS_LAST_FIXTURE="$realistic_last" AIDEVOPS_SCREEN_TIME_NOW_EPOCH="$now" \
+		AIDEVOPS_SCREEN_TIME_USER=fixture "$HELPER" profile-stats)
+	[[ "$(printf '%s' "$empty_fallback" | jq -r '.today_hours')" == "3" || "$(printf '%s' "$empty_fallback" | jq -r '.today_hours')" == "3.0" ]] || fail "real last -F completed+active records were not clipped to now"
+	[[ "$(printf '%s' "$empty_fallback" | jq -r '.periods.day.reason')" == *"journal-readable-no-user-observations"* ]] || fail "empty readable logind did not truthfully fall back"
+	pass "empty logind falls back and parses realistic local last -F records"
 	return 0
 }
 
@@ -187,16 +282,21 @@ today = dt.datetime.now(dt.timezone.utc).date()
 with open(sys.argv[1], "w", encoding="utf-8") as handle:
     for age, hours in ((20, 30), (10, 12), (5, 6)):
         handle.write(json.dumps({"date": str(today - dt.timedelta(days=age)), "screen_hours": hours}) + "\n")
+    handle.write("not-json\n")
+    handle.write(json.dumps({"date": "bad-date", "screen_hours": 5}) + "\n")
+    handle.write(json.dumps({"date": str(today - dt.timedelta(days=4)), "screen_hours": "broken"}) + "\n")
 PY
-	local output estimate span status
+	local output estimate span status skipped
 	output=$(HOME="$fixture_home" AIDEVOPS_SCREEN_TIME_OS_TYPE=Unsupported "$HELPER" profile-stats)
 	estimate=$(printf '%s' "$output" | jq -r '.year_hours')
 	span=$(printf '%s' "$output" | jq -r '.periods.year.calendar_span_days')
 	status=$(printf '%s' "$output" | jq -r '.periods.year.status')
+	skipped=$(printf '%s' "$output" | jq -r '.history_skipped_rows')
 	[[ "$span" == "16" ]] || fail "expected calendar span 16 rather than active row count 3, got ${span}"
 	[[ "$estimate" == "958.1" ]] || fail "expected clamped 24h rows and calendar-span estimate 958.1h, got ${estimate}"
 	[[ "$status" == "stale" ]] || fail "expected stale history estimate to remain visibly stale"
-	pass "history estimates use calendar coverage, clamp daily values, and expose staleness"
+	[[ "$skipped" == "3" ]] || fail "expected three malformed history rows to be skipped individually, got ${skipped}"
+	pass "history skips malformed rows individually and reports provenance"
 	return 0
 }
 
@@ -242,6 +342,8 @@ main() {
 
 	pass "screen-time helper falls back only for sparse backlit windows"
 	test_union_clipping_and_failure_status "$tmpdir" "$now"
+	test_empty_zero_and_sparse_source_semantics "$tmpdir" "$now"
+	test_local_midnight_dst_boundaries "$tmpdir"
 	test_linux_state_machine "$tmpdir"
 	test_history_calendar_coverage_and_staleness "$tmpdir"
 	return 0

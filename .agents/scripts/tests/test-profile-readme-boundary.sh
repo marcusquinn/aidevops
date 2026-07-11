@@ -709,7 +709,7 @@ test_work_with_ai_unavailable_is_not_zero() {
 }
 
 test_profile_update_lock_is_bounded() {
-	local test_name="profile update lock rejects overlap and recovers stale owner"
+	local test_name="profile update lock is token-owned, race-safe, and stale-recoverable"
 	TEST_DIR=$(mktemp -d)
 	local result
 	result=$(
@@ -719,16 +719,33 @@ test_profile_update_lock_is_bounded() {
 		HOME="${TEST_DIR}/home"
 		export HOME
 		_acquire_profile_update_lock
-		if _acquire_profile_update_lock 2>/dev/null; then
+		local owner_token="$PROFILE_UPDATE_LOCK_TOKEN"
+		if HOME="$HOME" bash -c 'set -- help; source "$1" >/dev/null; _acquire_profile_update_lock' _ "$SOURCE_HELPER" 2>/dev/null; then
 			printf '%s\n' overlap-accepted
 			return 0
 		fi
-		_release_profile_update_lock
+		PROFILE_UPDATE_LOCK_TOKEN="not-the-owner"
+		if _release_profile_update_lock 2>/dev/null; then
+			printf '%s\n' non-owner-released
+			return 0
+		fi
 		local lock_dir
 		lock_dir=$(_profile_update_lock_dir)
+		[[ -d "$lock_dir" ]] || { printf '%s\n' lock-lost; return 0; }
+		PROFILE_UPDATE_LOCK_TOKEN="$owner_token"
+		_release_profile_update_lock
+
+		# A fresh PID-less directory receives a grace period rather than deletion.
 		mkdir -p "$lock_dir"
-		printf '%s\n' 999999 >"${lock_dir}/pid"
+		PROFILE_UPDATE_LOCK_GRACE_SECONDS=60
+		if _acquire_profile_update_lock 2>/dev/null; then
+			printf '%s\n' pidless-grace-bypassed
+			return 0
+		fi
+		PROFILE_UPDATE_LOCK_GRACE_SECONDS=0
 		_acquire_profile_update_lock
+		local recovered_token="$PROFILE_UPDATE_LOCK_TOKEN"
+		[[ -n "$recovered_token" && "$recovered_token" != "$owner_token" ]] || { printf '%s\n' token-not-unique; return 0; }
 		printf '%s\n' stale-recovered
 		_release_profile_update_lock
 	)

@@ -137,7 +137,27 @@ create_observability_db() {
 			duration_ms INTEGER,
 			project_path TEXT
 		);
+		CREATE INDEX idx_llm_requests_timestamp ON llm_requests(timestamp);
 	'
+	return 0
+}
+
+insert_machine_interval_fixture() {
+	local db_path="$1"
+	local session_id="$2"
+	local start_ms="$3"
+	local completed_ms="$4"
+	local directory="$5"
+	python3 - "$db_path" "$session_id" "$start_ms" "$completed_ms" "$directory" <<'PY'
+import json
+import sqlite3
+import sys
+
+db_path, session_id, start_ms, completed_ms, directory = sys.argv[1:]
+with sqlite3.connect(db_path) as conn:
+    conn.execute("INSERT INTO session(id,title,parent_id,directory) VALUES(?,?,NULL,?)", (session_id, "Issue #77: partial observability", directory))
+    conn.execute("INSERT INTO message(session_id,data,time_created) VALUES(?,?,?)", (session_id, json.dumps({"role":"assistant","time":{"completed":int(completed_ms)}}), int(start_ms)))
+PY
 	return 0
 }
 
@@ -394,6 +414,99 @@ test_session_time_repo_filter_treats_path_metacharacters_literally() {
 	return 0
 }
 
+test_partial_observability_unions_with_message_generation() {
+	local test_name="partial observability unions with complete message generation"
+	setup
+	# shellcheck source=../contributor-activity-helper-session.sh
+	source "$SOURCE_SESSION_LIB"
+	local active_db="${TEST_DIR}/home/.local/share/opencode/opencode.db"
+	local obs_db="${TEST_DIR}/home/.aidevops/.agent-workspace/observability/llm-requests.db"
+	create_session_db "$active_db"
+	create_observability_db "$obs_db"
+	local now_ms message_start message_end
+	now_ms=$(python3 -c 'import time; print(int(time.time() * 1000))')
+	message_start=$((now_ms - 4 * 3600000))
+	message_end=$((now_ms - 1 * 3600000))
+	insert_machine_interval_fixture "$active_db" "partial-worker" "$message_start" "$message_end" "$TEST_DIR/repo"
+	insert_observability_fixture "$obs_db" "partial-worker" 7200000 "$TEST_DIR/repo"
+	local output machine
+	output=$(HOME="${TEST_DIR}/home" session_time --all-dirs --period day --format json)
+	machine=$(printf '%s' "$output" | jq -r '.worker_machine_hours')
+	if [[ "$machine" != "4" && "$machine" != "4.0" ]]; then
+		print_result "$test_name" 1 "expected 3h message + 2h observability with 1h overlap to union to 4h, got ${machine}; ${output}"
+		teardown
+		return 0
+	fi
+	print_result "$test_name" 0
+	teardown
+	return 0
+}
+
+test_observability_sql_filters_old_and_other_roots() {
+	local test_name="observability SQL filters timestamp and root before row conversion"
+	setup
+	# shellcheck source=../contributor-activity-helper-session.sh
+	source "$SOURCE_SESSION_LIB"
+	local obs_db="${TEST_DIR}/home/.aidevops/.agent-workspace/observability/llm-requests.db"
+	create_observability_db "$obs_db"
+	python3 - "$obs_db" "$TEST_DIR/repo" <<'PY'
+import datetime as dt
+import sqlite3
+import sys
+
+db_path, root = sys.argv[1:]
+old = (dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=500)).isoformat().replace("+00:00", "Z")
+now = dt.datetime.now(dt.timezone.utc).isoformat().replace("+00:00", "Z")
+with sqlite3.connect(db_path) as conn:
+    conn.executemany("INSERT INTO llm_requests VALUES(?,?,?,?)", [(old, f"old-{i}", 1000, root) for i in range(1000)])
+    conn.execute("INSERT INTO llm_requests VALUES(?,?,?,?)", (now, "wanted", 60000, root))
+    conn.execute("INSERT INTO llm_requests VALUES(?,?,?,?)", (now, "other-root", 60000, root + "X"))
+    conn.execute("INSERT INTO llm_requests VALUES(?,?,?,?)", (now, "bad-number", "corrupt", root))
+PY
+	local counter="${TEST_DIR}/obs-selected-count"
+	local plan_file="${TEST_DIR}/obs-query-plan"
+	local output selected sessions
+	output=$(HOME="${TEST_DIR}/home" AIDEVOPS_OBS_ROW_COUNTER="$counter" AIDEVOPS_OBS_QUERY_PLAN_FILE="$plan_file" session_time "$TEST_DIR/repo" --period day --format json)
+	selected=$(awk '{sum += $1} END {print sum + 0}' "$counter")
+	sessions=$(printf '%s' "$output" | jq -r '.total_sessions')
+	if [[ "$selected" != "1" || "$sessions" != "1" ]] || ! grep -qF 'idx_llm_requests_timestamp' "$plan_file"; then
+		print_result "$test_name" 1 "expected indexed SQL range to return one current matching row, selected=${selected} sessions=${sessions} plan=$(<"$plan_file"); ${output}"
+		teardown
+		return 0
+	fi
+	print_result "$test_name" 0
+	teardown
+	return 0
+}
+
+test_malformed_numeric_rows_and_invalid_period() {
+	local test_name="malformed numeric rows are skipped and invalid periods rejected"
+	setup
+	# shellcheck source=../contributor-activity-helper-session.sh
+	source "$SOURCE_SESSION_LIB"
+	local active_db="${TEST_DIR}/home/.local/share/opencode/opencode.db"
+	create_session_db "$active_db"
+	sqlite3 "$active_db" "
+		INSERT INTO session VALUES('bad-created','Bad created',NULL,'${TEST_DIR}/repo');
+		INSERT INTO message VALUES('bad-created','{\"role\":\"assistant\",\"time\":{\"completed\":\"broken\"}}','not-a-number');"
+	local output skipped
+	output=$(HOME="${TEST_DIR}/home" session_time --all-dirs --period day --format json)
+	skipped=$(printf '%s' "$output" | jq -r '.skipped_malformed_rows')
+	if [[ "$skipped" -lt 1 ]]; then
+		print_result "$test_name" 1 "corrupt numeric row was not counted as skipped: ${output}"
+		teardown
+		return 0
+	fi
+	if HOME="${TEST_DIR}/home" session_time --all-dirs --period nonsense --format json >/dev/null 2>&1; then
+		print_result "$test_name" 1 "invalid period unexpectedly succeeded"
+		teardown
+		return 0
+	fi
+	print_result "$test_name" 0
+	teardown
+	return 0
+}
+
 main() {
 	if [[ ! -f "$SOURCE_SESSION_LIB" ]]; then
 		echo "Session library not found: ${SOURCE_SESSION_LIB}" >&2
@@ -408,6 +521,9 @@ main() {
 	test_session_time_uses_observability_machine_floor
 	test_session_time_repo_filter_treats_path_metacharacters_literally
 	test_profile_periods_scan_once_and_union_attention
+	test_partial_observability_unions_with_message_generation
+	test_observability_sql_filters_old_and_other_roots
+	test_malformed_numeric_rows_and_invalid_period
 
 	echo ""
 	echo "Tests run: ${TESTS_RUN}"
