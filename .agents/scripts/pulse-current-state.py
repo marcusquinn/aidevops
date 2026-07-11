@@ -458,6 +458,41 @@ result = {
     'review_thread_attention': review_thread_attention,
 }
 
+runtime_state = {
+    'active_worker_processes': active_worker_processes,
+    'api_call_pressure': {
+        'graphql_other_calls': api_pressure['graphql_other_calls'],
+        'graphql_read_calls': api_pressure['graphql_read_calls'],
+        'graphql_search_calls': api_pressure['graphql_search_calls'],
+        'read_rest_ratio': api_pressure['read_rest_ratio'],
+        'rest_read_calls': api_pressure['rest_read_calls'],
+        'rest_search_calls': api_pressure['rest_search_calls'],
+    },
+    'current_state_guardrails': current_state_guardrails,
+    'dispatch_alive': result['dispatch_alive'],
+    'dispatch_api_blocked': dispatch_api_blocked,
+    'dispatch_pacing': dispatch_pacing,
+    'dispatch_stage_counts': dict(stage_counts),
+    'graphql_budget': graphql_budget,
+    'prefetch_cache': prefetch_cache,
+    'pre_launch_blockers': pre_launch_blockers,
+    'pulse_counter_hits': counter_hits,
+    'pulse_gauges': gauge_values,
+    'resource_context': result['resource_context'],
+    'review_thread_attention_count': len(review_thread_attention),
+    'window_seconds': window_s,
+    'worker_outcomes': result['worker_outcomes'],
+    'worker_result_counts': dict(metric_class_counts),
+    'worker_worktrees': len(worktrees),
+}
+runtime_state_output = os.environ.get('AIDEVOPS_RUNTIME_STATE_OUTPUT', '')
+if runtime_state_output:
+    try:
+        with open(runtime_state_output, 'w', encoding='utf-8') as runtime_state_file:
+            json.dump(runtime_state, runtime_state_file, separators=(',', ':'), sort_keys=True)
+    except OSError:
+        pass
+
 if as_json:
     print(json.dumps(result, indent=2, sort_keys=True))
 else:

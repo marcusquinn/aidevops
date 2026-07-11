@@ -39,7 +39,9 @@ print_result() {
 setup_test_env() {
 	TEST_ROOT="$(mktemp -d)"
 	export HOME="${TEST_ROOT}/home"
-	mkdir -p "$HOME"
+	mkdir -p "$HOME" "${TEST_ROOT}/.ssh"
+	printf 'private-fixture\n' >"${TEST_ROOT}/.ssh/id_ed25519"
+	printf 'public-fixture\n' >"${TEST_ROOT}/.ssh/id_ed25519.pub"
 	return 0
 }
 
@@ -90,7 +92,7 @@ test_blocks_private_key_file_read_command() {
 	local exit_code
 
 	set +e
-	output="$(timeout 10 "$HELPER" run "cat /tmp/.ssh/id_ed25519" 2>&1)"
+	output="$(timeout 10 "$HELPER" run "cat ${TEST_ROOT}/.ssh/id_ed25519" 2>&1)"
 	exit_code=$?
 	set -e
 
@@ -107,11 +109,11 @@ test_allows_public_key_file_reference() {
 	local exit_code
 
 	set +e
-	output="$(timeout 10 "$HELPER" run "cat /tmp/.ssh/id_ed25519.pub" 2>&1)"
+	output="$(timeout 10 "$HELPER" run -- cat "${TEST_ROOT}/.ssh/id_ed25519.pub" 2>&1)"
 	exit_code=$?
 	set -e
 
-	if [[ "$exit_code" -ne 126 ]]; then
+	if [[ "$exit_code" -eq 0 ]] && [[ "$output" == *"public-fixture"* ]]; then
 		print_result "allows harmless public key reference path" 0
 	else
 		print_result "allows harmless public key reference path" 1 "exit=$exit_code output=$output"
@@ -141,12 +143,11 @@ test_override_flag_allows_blocked_pattern() {
 	local exit_code
 
 	set +e
-	# shellcheck disable=SC2016 # expansion must happen inside the sandboxed child
-	output="$(timeout 10 "$HELPER" run --allow-secret-io -- /bin/bash -lc 'echo "$SHOPIFY_CLIENT_SECRET"' 2>&1)"
+	output="$(timeout 10 "$HELPER" run --allow-secret-io -- cat "${TEST_ROOT}/.ssh/id_ed25519" 2>&1)"
 	exit_code=$?
 	set -e
 
-	if [[ "$exit_code" -eq 0 ]]; then
+	if [[ "$exit_code" -eq 0 ]] && [[ "$output" == *"private-fixture"* ]]; then
 		print_result "allow-secret-io bypass works" 0
 	else
 		print_result "allow-secret-io bypass works" 1 "exit=$exit_code output=$output"

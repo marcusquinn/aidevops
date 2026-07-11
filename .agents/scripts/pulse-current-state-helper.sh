@@ -36,6 +36,7 @@ main() {
 	local active_worker_processes=""
 	local worker_worktree_count="0"
 	local graphql_budget_status=""
+	local runtime_state_file=""
 	local as_json=0
 	while [[ $# -gt 0 ]]; do
 		local arg="$1"
@@ -68,13 +69,21 @@ main() {
 		graphql_budget_status="$("${SCRIPT_DIR}/pulse-rate-limit-circuit-breaker.sh" \
 			status --cached 2>/dev/null || true)"
 	fi
+	runtime_state_file=$(mktemp "${TMPDIR:-/tmp}/aidevops-pulse-runtime-state.XXXXXX") || runtime_state_file=""
+	local projection_status=0
 	AIDEVOPS_ACTIVE_WORKER_PROCESSES="$active_worker_processes" \
 		AIDEVOPS_WORKER_WORKTREE_COUNT="$worker_worktree_count" \
 		AIDEVOPS_GRAPHQL_BUDGET_STATUS="$graphql_budget_status" \
+		AIDEVOPS_RUNTIME_STATE_OUTPUT="$runtime_state_file" \
 		python3 "${SCRIPT_DIR}/pulse-current-state.py" \
 			"$log_dir" "$repo_path" "$window_s" "$as_json" "$SCRIPT_DIR" \
-			"$review_thread_state_dir"
-	return 0
+			"$review_thread_state_dir" || projection_status=$?
+	if [[ "$projection_status" -eq 0 && -s "$runtime_state_file" ]] && command -v node >/dev/null 2>&1; then
+		node "${SCRIPT_DIR}/runtime-events.mjs" state auto "pulse:current" - <"$runtime_state_file" \
+			>/dev/null 2>&1 || true
+	fi
+	rm -f "$runtime_state_file" 2>/dev/null || true
+	return "$projection_status"
 }
 
 main "$@"

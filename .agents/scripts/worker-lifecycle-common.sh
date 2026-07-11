@@ -42,6 +42,79 @@
 [[ -n "${_WORKER_LIFECYCLE_COMMON_LOADED:-}" ]] && return 0
 _WORKER_LIFECYCLE_COMMON_LOADED=1
 
+_ensure_worker_lineage() {
+	local session_key="$1"
+	local epoch=""
+	epoch=$(date +%s 2>/dev/null || printf '0')
+	if [[ -z "${AIDEVOPS_WORKER_ID:-}" ]]; then
+		export AIDEVOPS_WORKER_ID="worker:${session_key:-session}:$$:${epoch}:${RANDOM:-0}"
+	fi
+	if [[ -z "${AIDEVOPS_ROOT_WORKER_ID:-}" ]]; then
+		export AIDEVOPS_ROOT_WORKER_ID="${AIDEVOPS_PARENT_WORKER_ID:-$AIDEVOPS_WORKER_ID}"
+	fi
+	if [[ -z "${AIDEVOPS_CORRELATION_ID:-}" ]]; then
+		export AIDEVOPS_CORRELATION_ID="correlation:${AIDEVOPS_ROOT_WORKER_ID}"
+	fi
+	: "${AIDEVOPS_PARENT_WORKER_ID:=}"
+	: "${AIDEVOPS_CAUSATION_ID:=}"
+	: "${AIDEVOPS_PARENT_EVENT_ID:=}"
+	: "${AIDEVOPS_ROOT_EVENT_ID:=}"
+	export AIDEVOPS_WORKER_ID AIDEVOPS_PARENT_WORKER_ID AIDEVOPS_ROOT_WORKER_ID AIDEVOPS_CORRELATION_ID
+	export AIDEVOPS_CAUSATION_ID AIDEVOPS_PARENT_EVENT_ID AIDEVOPS_ROOT_EVENT_ID
+	return 0
+}
+
+_emit_worker_runtime_event() {
+	local event_type="$1"
+	local status="${2:-}"
+	local classification="${3:-}"
+	local runtime_events="${BASH_SOURCE[0]%/*}/runtime-events.mjs"
+	[[ -n "${AIDEVOPS_WORKER_ID:-}" ]] || return 0
+	[[ -f "$runtime_events" ]] || return 0
+	command -v node >/dev/null 2>&1 || return 0
+	local -a event_cmd=(node "$runtime_events" emit "$event_type" --source worker_self_reported)
+	[[ -n "$status" ]] && event_cmd+=(--status "$status")
+	[[ -n "$classification" ]] && event_cmd+=(--classification "$classification")
+	"${event_cmd[@]}" >/dev/null 2>&1 || true
+	return 0
+}
+
+_emit_supervisor_dispatch_event() {
+	local worker_id="$1"
+	local parent_worker_id="$2"
+	local root_worker_id="$3"
+	local correlation_id="$4"
+	local runtime_events="${BASH_SOURCE[0]%/*}/runtime-events.mjs"
+	local event_id=""
+	[[ -n "$worker_id" && -f "$runtime_events" ]] || return 0
+	command -v node >/dev/null 2>&1 || return 0
+
+	local -a event_cmd=(
+		node "$runtime_events" emit worker.dispatched
+		--subject "$worker_id"
+		--worker "$worker_id"
+		--root-worker "$root_worker_id"
+		--correlation "$correlation_id"
+		--source supervisor_observed
+		--root-dispatch
+		--print-id
+	)
+	if [[ -n "$parent_worker_id" ]]; then
+		event_cmd+=(--parent-worker "$parent_worker_id")
+	fi
+	if [[ -n "${AIDEVOPS_ROOT_EVENT_ID:-}" ]]; then
+		event_cmd+=(--root-event "$AIDEVOPS_ROOT_EVENT_ID")
+	fi
+	if [[ -n "${AIDEVOPS_PARENT_EVENT_ID:-}" ]]; then
+		event_cmd+=(--parent-event "$AIDEVOPS_PARENT_EVENT_ID" --causation "$AIDEVOPS_PARENT_EVENT_ID")
+	elif [[ -n "${AIDEVOPS_CAUSATION_ID:-}" ]]; then
+		event_cmd+=(--causation "$AIDEVOPS_CAUSATION_ID")
+	fi
+	event_id=$("${event_cmd[@]}" 2>/dev/null) || event_id=""
+	printf '%s' "$event_id"
+	return 0
+}
+
 #######################################
 # Resolve the OpenCode session DB path
 # Returns: path via stdout
@@ -1568,6 +1641,17 @@ _verbose_lifecycle_sentinel_dir() {
 _emit_verbose_checkpoint() {
 	local event="$1"
 	shift || true
+	local runtime_event_type=""
+	case "$event" in
+	worker_started) runtime_event_type="worker.started" ;;
+	opencode_session_created) runtime_event_type="worker.session_created" ;;
+	first_tool_use) runtime_event_type="worker.tool_started" ;;
+	first_commit_attempted) runtime_event_type="worker.commit_attempted" ;;
+	first_push_attempted) runtime_event_type="worker.push_attempted" ;;
+	esac
+	if [[ -n "$runtime_event_type" ]]; then
+		_emit_worker_runtime_event "$runtime_event_type" "$event"
+	fi
 
 	[[ "${AIDEVOPS_VERBOSE_LIFECYCLE:-0}" != "1" ]] && return 0
 	[[ -z "$event" ]] && return 0

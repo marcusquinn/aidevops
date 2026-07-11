@@ -6,8 +6,8 @@
 # Tests for git_safety_guard.py covering GH#21814 changes:
 #   - Dynamic default-branch detection (replaces hardcoded "main"/"master")
 #   - Off-default-branch canonical-workspace protection (t1990)
-#   - AIDEVOPS_SKIP_CANONICAL_GUARD=1 escape valve
-#   - Bash-matcher destructive-command checks (regression)
+#   - environment variables cannot bypass canonical protection
+#   - shared command-policy destructive checks (regression)
 #
 # Modelled on test-pre-edit-check.sh for structure.
 
@@ -28,6 +28,13 @@ readonly TEST_RESET='\033[0m'
 TESTS_RUN=0
 TESTS_FAILED=0
 TEST_ROOT=""
+
+# Fixture construction must bypass the deployed guard shim. Hook assertions
+# continue to exercise the shared command policy and canonical Git guard.
+git() {
+	/usr/bin/git "$@"
+	return $?
+}
 
 print_result() {
 	local test_name="$1"
@@ -285,7 +292,7 @@ test_bash_destructive_commands_blocked() {
 	json='{"tool_name":"Bash","tool_input":{"command":"rm -rf /some/path"}}'
 	local output=""
 	output=$(run_hook "$TEST_ROOT" "$json") || true
-	if ! hook_is_deny "$output" "rm -rf"; then
+	if ! hook_is_deny "$output" "filesystem.rm-recursive-force"; then
 		print_result "rm -rf blocked by Bash matcher" 1 "output=${output}"
 		passed=1
 	fi
@@ -493,6 +500,37 @@ test_canonical_guard_skip_env_var() {
 }
 
 # =============================================================================
+# Test 11: worker Bash tools enforce shared network policy
+# =============================================================================
+test_worker_network_policy() {
+	local json='{"tool_name":"Bash","tool_input":{"command":"curl --url HTTPS://requestbin.com/collect"}}'
+	local output=""
+	output=$(run_hook "$TEST_ROOT" "$json" "AIDEVOPS_HEADLESS=true" "AIDEVOPS_WORKER_ID=hook-test") || true
+	if hook_is_deny "$output" "network.worker-policy"; then
+		print_result "Claude worker Bash adapter blocks Tier 5 destination" 0
+	else
+		print_result "Claude worker Bash adapter blocks Tier 5 destination" 1 "output=${output}"
+	fi
+
+	json='{"tool_name":"Bash","tool_input":{"command":"printf '\''%s'\'' '\''curl https://requestbin.com/collect'\''"}}'
+	output=$(run_hook "$TEST_ROOT" "$json" "AIDEVOPS_HEADLESS=true" "AIDEVOPS_WORKER_ID=hook-test") || true
+	if [[ -z "$output" ]]; then
+		print_result "Claude worker Bash adapter ignores printf network text" 0
+	else
+		print_result "Claude worker Bash adapter ignores printf network text" 1 "output=${output}"
+	fi
+
+	json='{"tool_name":"Bash","tool_input":{"command":"printf one\nprintf two"}}'
+	output=$(run_hook "$TEST_ROOT" "$json") || true
+	if hook_is_deny "$output" "command.parse-error"; then
+		print_result "Claude Bash adapter rejects multiline command" 0
+	else
+		print_result "Claude Bash adapter rejects multiline command" 1 "output=${output}"
+	fi
+	return 0
+}
+
+# =============================================================================
 # Main
 # =============================================================================
 main() {
@@ -508,6 +546,7 @@ main() {
 	test_linked_worktree_branch_switch_allowed
 	test_no_origin_head_falls_back_to_main
 	test_canonical_guard_skip_env_var
+	test_worker_network_policy
 
 	teardown_test_repo
 

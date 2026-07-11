@@ -18,10 +18,66 @@ Tables:
 - `tool_calls` — per-tool call session_id, tool_name, intent (from the
   `agent__intent` field), duration_ms, success, metadata JSON
 - `session_summaries` — aggregate totals keyed by session_id
+- `runtime_events` — versioned, append-only runtime evidence with event,
+  correlation, causation, subject, session, worker, root, and parent IDs
 
 Query with `.agents/scripts/observability-helper.sh` (cost dashboards,
 rate-limit telemetry, cache health). No configuration required — the
 plugin auto-creates the DB on first tool call.
+
+### Runtime-event contract
+
+`.agents/scripts/runtime-events.mjs` owns the runtime-neutral envelope and uses
+the same `llm-requests.db`; it does not create another database or state store.
+`llm_requests`, `tool_calls`, and `session_summaries` remain compatible. Runtime
+events are evidence and projections, not a task, mailbox, audit, transcript, or
+worker-state authority.
+
+Envelope version 1 stores `event_id`, `event_type`, `correlation_id`,
+`causation_id`, `subject_id`, `session_id`, `worker_id`, `parent_worker_id`,
+`root_worker_id`, `root_event_id`, and `parent_event_id`. The supervisor emits
+the root `worker.dispatched` observation before launch and passes its event IDs
+to the child. Worker emissions carry `source=worker_self_reported`; supervisor
+observations carry `source=supervisor_observed`. Interactive shell hooks clear
+inherited worker/event lineage instead of attaching stale worker ancestry.
+
+Update and delete triggers make rows append-only. Ordinary payloads use a
+small top-level allowlist rather than persisting arbitrary hook payloads. All
+payloads are canonical JSON capped at 16 KiB, with bounded depth, keys, arrays,
+and strings. AWS access/secret keys, bearer/basic credentials, JWTs, PEM blocks,
+credential-shaped values, absolute/file paths, configured private roots, and
+repository-like identifiers are redacted before persistence. CamelCase and
+snake_case path/repository keys receive the same treatment.
+
+Use `appendRuntimeEvent()` for ordinary evidence. Evidence writes fail open:
+validation, queue, lock, or disk failures never change the runtime action's
+result. Use `appendStateSnapshot()` and `appendStateDelta()` for bounded state
+evidence. They allocate each subject's `state_version` inside a
+`BEGIN IMMEDIATE` transaction, so concurrent writers cannot receive the same
+version. `appendProjectedState()` uses an optimistic expected-version
+transaction across its read/derive/write sequence and retries stale bases.
+It suppresses unchanged projections. Deltas use RFC 7396 JSON Merge Patch and
+are round-trip checked; when a merge patch cannot represent the desired state
+(including an object property whose desired value is `null`), the writer emits
+a snapshot instead. `reconstructRuntimeState()` sorts by state version, starts
+from the latest applicable snapshot, rejects version gaps, and returns
+canonically ordered state.
+
+`.agents/scripts/sqlite-process.mjs` is the shared runtime-neutral sqlite3
+transport. It canonicalises absolute database overrides and invokes sqlite3
+with argv (`execFileSync`/`spawn`), never shell-interpolated database paths.
+`runtime-events.mjs` is the sole runtime-event schema and migration authority;
+the OpenCode plugin consumes it.
+
+Retention is not currently enforced for `runtime_events`: history can grow.
+Storage pressure is reduced by no-op state suppression and bounded payloads,
+but those controls do not constitute bounded history or an age/count policy.
+
+Inspect recent events without exposing any other store:
+
+```bash
+observability-helper.sh runtime-events 20
+```
 
 ### 2. OpenTelemetry spans (opt-in, opencode v1.4.7+)
 
@@ -38,20 +94,25 @@ The opencode-aidevops plugin shell-env hook forwards these variables to
 every subprocess opencode spawns — headless workers and helper scripts
 inherit the trace endpoint without per-script plumbing.
 
-The plugin enriches each active tool span with aidevops attributes
-via `@opentelemetry/api` (dynamic import, no-op when absent):
+The plugin enriches each active tool span with bounded, low-cardinality
+aidevops attributes via `@opentelemetry/api` (dynamic import, no-op when
+absent):
 
 | Attribute                   | Value                                    |
 |-----------------------------|------------------------------------------|
-| `aidevops.intent`           | The `agent__intent` string for the call  |
 | `aidevops.tool_name`        | Tool name (Read, Edit, Bash, …)          |
 | `aidevops.task_id`          | `tNNN` / `GH#NNN` detected from cwd/env  |
 | `aidevops.session_origin`   | `worker` or `interactive`                |
 | `aidevops.runtime`          | `opencode`                               |
+| `aidevops.runtime_event.type` | Runtime-event type                     |
+| `aidevops.runtime_event.envelope_version` | Envelope version             |
 
 Namespace `aidevops.*` avoids collision with OpenTelemetry's standard
 semantic conventions (which opencode already populates as `session.id`,
-`message.id`, etc.).
+`message.id`, etc.). Free-form intent remains available in `tool_calls` but is
+not exported. Runtime payloads, state, paths, and causal identifiers are never
+projected to OTEL. SQLite remains the complete local evidence layer; OTEL is
+optional.
 
 ### 3. Session introspect (offline self-diagnosis)
 
@@ -195,7 +256,8 @@ tool interface.
 `tool.execute.before` / `tool.execute.after` hooks. When opencode
 does not create a `Tool.execute` span, `getActiveSpan()` returns
 `undefined` and the enrichment silently no-ops. The `aidevops.*`
-attributes (`intent`, `task_id`, `session_origin`, `runtime`) are
+attributes (`tool_name`, `task_id`, `session_origin`, `runtime`, and bounded
+runtime-event type/version) are
 therefore invisible in OTEL traces for headless `run` mode sessions.
 Plugin-side SQLite (`tool_calls` table) is unaffected — it records
 independently of OTEL.

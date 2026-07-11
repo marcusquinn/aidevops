@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
+
 /**
  * LLM Observability Module (t1308)
  *
@@ -19,18 +22,29 @@ import {
 } from "fs";
 import { join, dirname } from "path";
 import { homedir } from "os";
-import { execSync } from "child_process";
+import { execFileSync } from "child_process";
 import { fileURLToPath } from "url";
 import {
-  setDbPath, sqliteExec, sqliteExecSync, shutdownSqlite as _shutdownSqlite, sqlEscape,
+  canonicalizeSqliteDbPath, setDbPath, sqliteAvailable, sqliteExec, sqliteExecSync,
+  shutdownSqlite as _shutdownSqlite, sqlEscape,
 } from "./observability-sqlite.mjs";
+import {
+  appendRuntimeEvent,
+  initialiseRuntimeEventStore,
+} from "../../scripts/runtime-events.mjs";
+import {
+  enrichActiveSpan,
+  runtimeEventOtelAttributes,
+} from "./otel-enrichment.mjs";
 
 const HOME = homedir();
 const DEFAULT_OBS_DIR = join(HOME, ".aidevops", ".agent-workspace", "observability");
 // AIDEVOPS_OBS_DB_OVERRIDE lets tests redirect to a temp DB without touching
 // the prod observability DB. Module-load semantics — set the env var BEFORE
 // importing this module. See tests/test-observability-concurrent-init.sh (t2900).
-const DB_PATH = process.env.AIDEVOPS_OBS_DB_OVERRIDE || join(DEFAULT_OBS_DIR, "llm-requests.db");
+const DB_PATH = canonicalizeSqliteDbPath(
+  process.env.AIDEVOPS_OBS_DB_OVERRIDE || join(DEFAULT_OBS_DIR, "llm-requests.db"),
+);
 const OBS_DIR = dirname(DB_PATH);
 const COST_BACKFILL_MARKER = `${DB_PATH}.cost-backfill-v1.done`;
 
@@ -157,9 +171,7 @@ function initDatabase() {
   }
 
   // Check sqlite3 is available
-  try {
-    execSync("which sqlite3", { encoding: "utf-8", timeout: 2000, stdio: ["pipe", "pipe", "pipe"] });
-  } catch {
+  if (!sqliteAvailable()) {
     console.error("[aidevops] sqlite3 not found — observability disabled");
     return false;
   }
@@ -205,17 +217,17 @@ function initDatabase() {
  */
 function _isSchemaInitialized() {
   try {
-    const result = execSync(
-      "sqlite3 -readonly -separator '|' \"$TARGET_DB\" " +
-      "\"SELECT " +
+    const result = execFileSync(
+      "sqlite3",
+      ["-readonly", "-separator", "|", DB_PATH,
+       "SELECT " +
       "(SELECT COUNT(*) FROM sqlite_master WHERE type='table' " +
-      "AND name IN ('llm_requests','tool_calls','session_summaries')) AS tbls, " +
-      "(SELECT COUNT(*) FROM pragma_table_info('tool_calls') WHERE name='intent') AS intent_col;\"",
+       "AND name IN ('llm_requests','tool_calls','session_summaries')) AS tbls, " +
+       "(SELECT COUNT(*) FROM pragma_table_info('tool_calls') WHERE name='intent') AS intent_col;"],
       {
         encoding: "utf-8",
         timeout: 2000,
         stdio: ["pipe", "pipe", "pipe"],
-        env: { ...process.env, TARGET_DB: DB_PATH },
       },
     ).trim();
     if (!result) return false;
@@ -305,6 +317,7 @@ CREATE TABLE IF NOT EXISTS session_summaries (
 
 CREATE INDEX IF NOT EXISTS idx_session_summaries_session
   ON session_summaries(session_id);
+
 `;
 
   const result = sqliteExecSync(schema, 10000);
@@ -338,6 +351,9 @@ function _runDataMigrations(options = {}) {
   if (hasIntentCol === "0") {
     sqliteExecSync("ALTER TABLE tool_calls ADD COLUMN intent TEXT;", 5000);
   }
+
+  // runtime-events.mjs is the sole runtime-event schema/migration authority.
+  if (!initialiseRuntimeEventStore(DB_PATH)) return false;
 
   // Migration: backfill cost for rows where cost=0 but tokens exist.
   // OpenCode never provided msg.cost — all historical rows have cost=0.
@@ -643,7 +659,40 @@ export function handleEvent(input) {
 
   if (event.type === "message.updated") {
     handleMessageUpdated(event);
+    return;
   }
+
+  recordOpenCodeRuntimeEvent(event);
+}
+
+function projectRuntimeEvent(envelope) {
+  if (!envelope) return;
+  enrichActiveSpan(runtimeEventOtelAttributes(envelope)).catch(() => {});
+}
+
+function recordOpenCodeRuntimeEvent(event, eventType = event.type) {
+  const properties = event.properties || {};
+  const info = properties.info || {};
+  const sessionId = info.sessionID || properties.sessionID || properties.sessionId || null;
+  const subjectId = info.id || properties.id || sessionId || "runtime:opencode";
+  const envelope = appendRuntimeEvent({
+    eventType,
+    subjectId,
+    sessionId,
+    correlationId: properties.correlationID || sessionId || undefined,
+    causationId: properties.causationID,
+    rootEventId: properties.rootEventID,
+    parentEventId: properties.parentEventID,
+    payload: {
+      error_type: info.error?.name || properties.error?.name || null,
+      finish_reason: info.finish || null,
+      model_id: info.modelID || null,
+      provider_id: info.providerID || null,
+      role: info.role || null,
+      source: "opencode",
+    },
+  });
+  projectRuntimeEvent(envelope);
 }
 
 /**
@@ -665,6 +714,8 @@ function handleMessageUpdated(event) {
   // Deduplicate — event may fire multiple times for same message
   if (recordedMessages.has(msg.id)) return;
   recordedMessages.add(msg.id);
+
+  recordOpenCodeRuntimeEvent(event, "message.completed");
 
   // Prevent unbounded memory growth — prune old entries periodically
   if (recordedMessages.size > 10000) {
@@ -867,6 +918,20 @@ export function recordToolCall(input, output, intent, durationMs) {
   });
 
   sqliteExec(sql);
+
+  const runtimeEnvelope = appendRuntimeEvent({
+    eventType: "tool.completed",
+    subjectId: callID || `${sessionID}:${toolName}`,
+    sessionId: sessionID,
+    correlationId: sessionID,
+    payload: {
+      call_id: callID || null,
+      duration_ms: durationMs ?? null,
+      success: isSuccess === 1,
+      tool_name: toolName,
+    },
+  });
+  projectRuntimeEvent(runtimeEnvelope);
 }
 
 /**

@@ -32,7 +32,7 @@
 # This test spawns 8 concurrent Node processes that all call
 # `initObservability()` against a fresh temp DB and asserts:
 #   1. Zero `database is locked` errors in any child's stderr.
-#   2. The DB ends up in WAL mode with all expected tables.
+#   2. The DB ends up in WAL mode with all expected tables and append guards.
 #   3. Exactly one schema CREATE wins (the others see fast path or
 #      double-checked-lock fast path).
 #   4. Total runtime < 10s (under contention used to be 30s+).
@@ -176,17 +176,17 @@ else
 fi
 
 # =============================================================================
-# Assertion 4: all three tables exist with expected column.
+# Assertion 4: all four tables exist with expected columns and triggers.
 # =============================================================================
 
 table_count=$(sqlite3 "$DB_PATH" \
-	"SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('llm_requests','tool_calls','session_summaries');" \
+	"SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('llm_requests','tool_calls','session_summaries','runtime_events');" \
 	2>/dev/null || echo "0")
-if [[ "$table_count" == "3" ]]; then
-	pass "all 3 tables created (llm_requests, tool_calls, session_summaries)"
+if [[ "$table_count" == "4" ]]; then
+	pass "all 4 tables created, including runtime_events"
 else
-	fail "all 3 tables created (llm_requests, tool_calls, session_summaries)" \
-		"found $table_count of 3"
+	fail "all 4 observability tables created" \
+		"found $table_count of 4"
 fi
 
 intent_col_count=$(sqlite3 "$DB_PATH" \
@@ -197,6 +197,16 @@ if [[ "$intent_col_count" == "1" ]]; then
 else
 	fail "t1309 'intent' column present on tool_calls" \
 		"column count: $intent_col_count (expected 1)"
+fi
+
+runtime_guard_count=$(sqlite3 "$DB_PATH" \
+	"SELECT COUNT(*) FROM sqlite_master WHERE type='trigger' AND name IN ('runtime_events_reject_update','runtime_events_reject_delete');" \
+	2>/dev/null || echo "0")
+if [[ "$runtime_guard_count" == "2" ]]; then
+	pass "runtime_events append-only triggers present"
+else
+	fail "runtime_events append-only triggers present" \
+		"trigger count: $runtime_guard_count (expected 2)"
 fi
 
 # =============================================================================

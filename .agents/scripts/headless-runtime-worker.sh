@@ -27,6 +27,9 @@ _HEADLESS_RUNTIME_WORKER_LIB_LOADED=1
 # Module-local string constants (avoid ratchet repeated-literal violations)
 _HRW_STATUS_FAIL="fail"
 _HRW_STATUS_UNKNOWN="unknown"
+_HRW_GIT_HEAD="HEAD"
+_HRW_CRASH_NO_WORK="no_work"
+_HRW_REASON_WORKER_COMPLETE="worker_complete"
 
 # Defensive SCRIPT_DIR fallback (test harnesses may not set it)
 if [[ -z "${SCRIPT_DIR:-}" ]]; then
@@ -491,7 +494,7 @@ _worker_produced_output() {
 	branch_name=$(git -C "$work_dir" rev-parse --abbrev-ref HEAD 2>/dev/null || true)
 	default_branch=$(_hrw_resolve_default_branch "$work_dir")
 	[[ -z "$default_branch" ]] && default_branch="${DISPATCH_REPO_DEFAULT_BRANCH:-main}"
-	if [[ -n "$branch_name" && "$branch_name" != "HEAD" && "$branch_name" != "$default_branch" ]]; then
+	if [[ -n "$branch_name" && "$branch_name" != "$_HRW_GIT_HEAD" && "$branch_name" != "$default_branch" ]]; then
 		local remote_ref=""
 		remote_ref=$(git -C "$work_dir" ls-remote origin "refs/heads/$branch_name" 2>/dev/null || true)
 		[[ -n "$remote_ref" ]] && has_pushed_branch=1
@@ -631,7 +634,7 @@ _handle_worker_branch_orphan() {
 
 	if _attempt_orphan_recovery_pr "$session_key" "$work_dir" "$branch_name" "$repo_slug"; then
 		print_info "[lifecycle] Orphan PR auto-created for session=${session_key}"
-		_release_dispatch_claim "$session_key" "worker_complete"
+		_release_dispatch_claim "$session_key" "$_HRW_REASON_WORKER_COMPLETE"
 	else
 		print_info "[lifecycle] Orphan recovery failed for session=${session_key}"
 		_release_dispatch_claim "$session_key" "worker_branch_orphan"
@@ -800,13 +803,13 @@ _recover_worker_output_on_failure() {
 	default_branch=$(_hrw_resolve_default_branch "$work_dir")
 	[[ -z "$default_branch" ]] && default_branch="${DISPATCH_REPO_DEFAULT_BRANCH:-main}"
 
-	if [[ -n "$repo_slug" && -n "$issue_number" && -n "$branch_name" && "$branch_name" != "HEAD" && "$branch_name" != "$default_branch" ]] && \
+	if [[ -n "$repo_slug" && -n "$issue_number" && -n "$branch_name" && "$branch_name" != "$_HRW_GIT_HEAD" && "$branch_name" != "$default_branch" ]] && \
 		declare -F _pr_exists_for_branch_or_issue >/dev/null 2>&1; then
 		local pr_existence=""
 		pr_existence=$(_pr_exists_for_branch_or_issue "$branch_name" "$issue_number" "$repo_slug")
 		if [[ "$pr_existence" == "found" ]]; then
 			print_info "[lifecycle] worker_failure_recovered_existing_pr session=${session_key} branch=${branch_name}"
-			_release_dispatch_claim "$session_key" "worker_complete"
+			_release_dispatch_claim "$session_key" "$_HRW_REASON_WORKER_COMPLETE"
 			return 0
 		fi
 	fi
@@ -865,11 +868,11 @@ _worker_external_terminal_complete() {
 	if [[ -n "$work_dir" && -d "$work_dir" ]]; then
 		local live_branch_name=""
 		live_branch_name=$(git -C "$work_dir" rev-parse --abbrev-ref HEAD 2>/dev/null || true)
-		if [[ -n "$live_branch_name" && "$live_branch_name" != "HEAD" ]]; then
+		if [[ -n "$live_branch_name" && "$live_branch_name" != "$_HRW_GIT_HEAD" ]]; then
 			branch_name="$live_branch_name"
 		fi
 	fi
-	[[ -n "$branch_name" && "$branch_name" != "HEAD" ]] || return 1
+	[[ -n "$branch_name" && "$branch_name" != "$_HRW_GIT_HEAD" ]] || return 1
 
 	local branch_pr_numbers=""
 	branch_pr_numbers=$(gh pr list --repo "$repo_slug" --head "$branch_name" --state merged --json number --jq '.[].number' 2>/dev/null || true)
@@ -939,7 +942,7 @@ _hrw_worktree_clean_for_owner_reclaim() {
 		elif git -C "$work_dir" rev-parse --verify "origin/master" >/dev/null 2>&1; then
 			upstream_ref="origin/master"
 		else
-			upstream_ref="HEAD"
+			upstream_ref="$_HRW_GIT_HEAD"
 		fi
 	fi
 
@@ -1075,7 +1078,7 @@ _hrw_run_finish_crash_type() {
 		;;
 	no_activity)
 		# No LLM output at all — infra/setup failure.
-		printf '%s\n' "no_work"
+		printf '%s\n' "$_HRW_CRASH_NO_WORK"
 		;;
 	*)
 		# Provider errors, rate limits, auth failures — not a model capability
@@ -1092,12 +1095,21 @@ _hrw_finish_failed_run() {
 	local failure_recovered=0
 
 	if _worker_external_terminal_complete "$session_key" "$work_dir"; then
-		_release_dispatch_claim "$session_key" "worker_complete"
+		_release_dispatch_claim "$session_key" "$_HRW_REASON_WORKER_COMPLETE"
 		failure_recovered=1
 	elif _recover_worker_output_on_failure "$session_key" "$work_dir"; then
 		failure_recovered=1
 	else
 		_release_dispatch_claim "$session_key" "worker_failed"
+	fi
+	if [[ "$failure_recovered" -eq 1 ]]; then
+		_HRW_FINAL_RUNTIME_EVENT="worker.completed"
+		_HRW_FINAL_RUNTIME_STATUS="recovered"
+		_HRW_FINAL_RUNTIME_CLASSIFICATION="$_HRW_REASON_WORKER_COMPLETE"
+	else
+		_HRW_FINAL_RUNTIME_EVENT="worker.failed"
+		_HRW_FINAL_RUNTIME_STATUS="failed"
+		_HRW_FINAL_RUNTIME_CLASSIFICATION="${_run_failure_reason:-worker_failed}"
 	fi
 
 	# Classify crash type from worker session state.
@@ -1157,8 +1169,11 @@ _hrw_finish_success_run() {
 		noop)
 			print_info "[lifecycle] worker_noop session=$session_key — zero commits, no pushed branch, no PR"
 			_release_dispatch_claim "$session_key" "worker_noop"
-			_report_failure_to_fast_fail "$session_key" "worker_noop_zero_output" "no_work"
+			_report_failure_to_fast_fail "$session_key" "worker_noop_zero_output" "$_HRW_CRASH_NO_WORK"
 			release_needed=0
+			_HRW_FINAL_RUNTIME_EVENT="worker.failed"
+			_HRW_FINAL_RUNTIME_STATUS="failed"
+			_HRW_FINAL_RUNTIME_CLASSIFICATION="$_HRW_CRASH_NO_WORK"
 			;;
 		branch_orphan)
 			_handle_worker_branch_orphan "$session_key" "$work_dir"
@@ -1179,7 +1194,7 @@ _hrw_finish_success_run() {
 		# pr_exists or fail-open: normal success path. Post CLAIM_RELEASED with
 		# reason=worker_complete so the audit trail shows the full lifecycle even
 		# when no PR was created.
-		_release_dispatch_claim "$session_key" "worker_complete"
+		_release_dispatch_claim "$session_key" "$_HRW_REASON_WORKER_COMPLETE"
 	fi
 
 	return 0
@@ -1207,6 +1222,9 @@ _cmd_run_finish() {
 	# _worker_produced_output() classifies tangible output to distinguish
 	# worker_complete, worker_branch_orphan, and worker_noop (GH#20721, GH#20819).
 	local work_dir="${3:-${_WORKER_WORKTREE_PATH:-}}"
+	_HRW_FINAL_RUNTIME_EVENT="worker.completed"
+	_HRW_FINAL_RUNTIME_STATUS="${_run_result_label:-$ledger_status}"
+	_HRW_FINAL_RUNTIME_CLASSIFICATION="${_run_failure_reason:-}"
 
 	# Release the dispatch claim so the issue is immediately available for
 	# re-dispatch (next 2-min pulse cycle) instead of waiting for the
@@ -1226,9 +1244,14 @@ _cmd_run_finish() {
 		_hrw_finish_failed_run "$session_key" "$work_dir"
 	elif [[ "$ledger_status" == "rate_limit_fast" ]]; then
 		_hrw_finish_rate_limit_fast_run "$session_key"
+		_HRW_FINAL_RUNTIME_EVENT="worker.deferred"
+		_HRW_FINAL_RUNTIME_STATUS="rate_limit_fast"
+		_HRW_FINAL_RUNTIME_CLASSIFICATION="rate_limit"
 	else
 		_hrw_finish_success_run "$session_key" "$work_dir"
 	fi
+	_emit_worker_runtime_event "$_HRW_FINAL_RUNTIME_EVENT" \
+		"$_HRW_FINAL_RUNTIME_STATUS" "$_HRW_FINAL_RUNTIME_CLASSIFICATION"
 
 	_hrw_finish_cleanup "$session_key" "$ledger_status" "$work_dir"
 	return 0

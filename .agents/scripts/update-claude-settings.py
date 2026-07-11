@@ -37,40 +37,37 @@ hook_entry = {
     "type": "command",
     "command": hook_command
 }
-bash_matcher = {
-    "matcher": "Bash",
-    "hooks": [hook_entry]
-}
 
 if "hooks" not in settings:
     settings["hooks"] = {}
 if "PreToolUse" not in settings["hooks"]:
     settings["hooks"]["PreToolUse"] = []
 
-# Check if Bash matcher with our hook already exists
-has_bash_hook = False
-for rule in settings["hooks"]["PreToolUse"]:
-    if rule.get("matcher") == "Bash":
-        # Ensure our hook is in the hooks list
-        existing_commands = [h.get("command", "") for h in rule.get("hooks", [])]
-        if hook_command not in existing_commands:
-            rule.setdefault("hooks", []).append(hook_entry)
-            changed = True
-        has_bash_hook = True
-        break
-
-if not has_bash_hook:
-    settings["hooks"]["PreToolUse"].append(bash_matcher)
-    changed = True
+# Bash consumes the shared command policy. Edit|Write remains the distinct
+# canonical-workspace file protection surface in the same hook.
+for required_matcher in ("Bash", "Edit|Write"):
+    has_matcher = False
+    for rule in settings["hooks"]["PreToolUse"]:
+        if rule.get("matcher") == required_matcher:
+            existing_commands = [h.get("command", "") for h in rule.get("hooks", [])]
+            if hook_command not in existing_commands:
+                rule.setdefault("hooks", []).append(hook_entry)
+                changed = True
+            has_matcher = True
+            break
+    if not has_matcher:
+        settings["hooks"]["PreToolUse"].append({"matcher": required_matcher, "hooks": [hook_entry]})
+        changed = True
 
 # --- Tool permissions (allow / deny / ask) ---
 # Claude Code permission rule syntax: Tool or Tool(specifier)
 # Rules evaluated: deny first, then ask, then allow. First match wins.
-# Merge strategy: add our rules if not already present, never remove user rules.
+# Merge strategy: add missing rules and remove only exact framework-owned rules
+# migrated to the shared command policy; never remove user-authored rules.
 #
 # Design rationale:
 #   allow  — safe read-only commands, aidevops scripts, common dev tools
-#   deny   — secrets, credentials, destructive ops (defense-in-depth with hooks)
+#   deny   — runtime capability and secret boundaries, not command classification
 #   ask    — powerful but legitimate operations that benefit from confirmation
 #
 # Reference: https://docs.anthropic.com/en/docs/claude-code/settings
@@ -212,21 +209,7 @@ deny_rules = [
     "Read(./**/.env.*)",
     "Read(~/.config/aidevops/credentials.sh)",
 
-    # --- Destructive git (also blocked by PreToolUse hook) ---
-    "Bash(git push --force *)",
-    "Bash(git push -f *)",
-    "Bash(git reset --hard *)",
-    "Bash(git reset --hard)",
-    "Bash(git clean -f *)",
-    "Bash(git clean -f)",
-    "Bash(git checkout -- *)",
-    "Bash(git branch -D *)",
-
-    # --- Dangerous system commands ---
-    "Bash(rm -rf /)",
-    "Bash(rm -rf /*)",
-    "Bash(rm -rf ~)",
-    "Bash(rm -rf ~/*)",
+    # --- Runtime capability restrictions (broader than command safety) ---
     "Bash(sudo *)",
     "Bash(chmod 777 *)",
 
@@ -240,19 +223,27 @@ deny_rules = [
 # ---- ASK rules ----
 # Powerful operations that benefit from user confirmation
 ask_rules = [
-    # --- Potentially destructive file operations ---
-    "Bash(rm -rf *)",
+    # --- Operations outside the deterministic safety-floor classification ---
     "Bash(rm -r *)",
-
-    # --- Network operations ---
-    "Bash(curl *)",
-    "Bash(wget *)",
 
     # --- Docker/container operations ---
     "Bash(docker *)",
     "Bash(docker-compose *)",
     "Bash(orbctl *)",
 ]
+
+# Rules previously managed here that now belong exclusively to the shared
+# command/network safety floor. Remove only these exact framework-owned entries;
+# preserve all user-authored permission rules.
+legacy_command_safety_rules = {
+    "Bash(git push --force *)", "Bash(git push -f *)",
+    "Bash(git reset --hard *)", "Bash(git reset --hard)",
+    "Bash(git clean -f *)", "Bash(git clean -f)",
+    "Bash(git checkout -- *)", "Bash(git branch -D *)",
+    "Bash(rm -rf /)", "Bash(rm -rf /*)", "Bash(rm -rf ~)",
+    "Bash(rm -rf ~/*)", "Bash(rm -rf *)",
+    "Bash(curl *)", "Bash(wget *)",
+}
 
 
 # Merge function: add rules not already present, preserve user additions
@@ -283,6 +274,15 @@ if len(cleaned_allow) != original_len:
 allow_list = permissions.setdefault("allow", [])
 deny_list = permissions.setdefault("deny", [])
 ask_list = permissions.setdefault("ask", [])
+
+cleaned_deny = [rule for rule in deny_list if rule not in legacy_command_safety_rules]
+cleaned_ask = [rule for rule in ask_list if rule not in legacy_command_safety_rules]
+if cleaned_deny != deny_list:
+    permissions["deny"] = deny_list = cleaned_deny
+    changed = True
+if cleaned_ask != ask_list:
+    permissions["ask"] = ask_list = cleaned_ask
+    changed = True
 
 if merge_rules(allow_list, allow_rules):
     changed = True

@@ -1,11 +1,10 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
-"""
-Git/filesystem safety guard for Claude Code (PreToolUse hook).
+"""Claude Code adapter for shared command policy and write safety.
 
-Blocks destructive commands that can lose uncommitted work or delete files.
-Also enforces the canonical-workspace protection rule (t1712/t1990):
+Shell-command decisions are delegated to command-policy-helper.py. This hook
+also enforces the canonical-workspace Edit/Write rule (t1712/t1990):
   - Edit/Write on the default branch: only allowlisted paths permitted
     (README.md, TODO.md, todo/**) without a linked worktree.
   - Edit/Write on any non-default branch in the canonical workspace: always
@@ -13,7 +12,7 @@ Also enforces the canonical-workspace protection rule (t1712/t1990):
     from origin/HEAD (with fallbacks to init.defaultBranch then "main") so
     repos using develop/trunk/etc. are covered equally.
 
-This hook runs before Bash/Edit/Write tool calls execute and can deny dangerous operations.
+This hook runs before Bash/Edit/Write tool calls execute.
 It is registered under BOTH the 'Bash' AND 'Edit|Write' PreToolUse matchers so that
 the Edit/Write protection branch is reachable (see GH#21814).
 
@@ -28,144 +27,21 @@ Exit behavior:
   - Exit 0 with JSON {"hookSpecificOutput": {"permissionDecision": "deny", ...}} = block
   - Exit 0 with no output = allow
 
-Environment overrides:
-  AIDEVOPS_SKIP_CANONICAL_GUARD=1  — bypass the off-default-branch canonical guard
-                                     (use sparingly; document reason at call site)
 """
 import json
 import os
-import re
-import shlex
+import shutil
 import subprocess
 import sys
 from pathlib import Path
 
-# Destructive patterns to block - tuple of (regex, reason)
-DESTRUCTIVE_PATTERNS = [
-    # Git commands that discard uncommitted changes
-    (
-        r"git\s+checkout\s+--\s+",
-        "git checkout -- discards uncommitted changes permanently. "
-        "Use 'git stash' first.",
-    ),
-    (
-        r"git\s+checkout\s+(?!-b\b)(?!--orphan\b)[^\s]+\s+--\s+",
-        "git checkout <ref> -- <path> overwrites working tree. "
-        "Use 'git stash' first.",
-    ),
-    (
-        r"git\s+restore\s+(?!--staged\b)(?!-S\b)",
-        "git restore discards uncommitted changes. "
-        "Use 'git stash' or 'git diff' first.",
-    ),
-    (
-        r"git\s+restore\s+.*(?:--worktree|-W\b)",
-        "git restore --worktree/-W discards uncommitted changes permanently.",
-    ),
-    # Git reset variants
-    (
-        r"git\s+reset\s+--hard",
-        "git reset --hard destroys uncommitted changes. Use 'git stash' first.",
-    ),
-    (
-        r"git\s+reset\s+--merge",
-        "git reset --merge can lose uncommitted changes.",
-    ),
-    # Git clean
-    (
-        r"git\s+clean\s+-[a-z]*f",
-        "git clean -f removes untracked files permanently. "
-        "Review with 'git clean -n' first.",
-    ),
-    # Force push operations
-    # (?![-a-z]) ensures we only block bare --force, not --force-with-lease
-    (
-        r"git\s+push\s+.*--force(?![-a-z])",
-        "Force push can destroy remote history. "
-        "Use --force-with-lease if necessary.",
-    ),
-    (
-        r"git\s+push\s+.*-f\b",
-        "Force push (-f) can destroy remote history. "
-        "Use --force-with-lease if necessary.",
-    ),
-    (
-        r"git\s+branch\s+-D\b",
-        "git branch -D force-deletes without merge check. Use -d for safety.",
-    ),
-    # Destructive filesystem commands
-    # Specific root/home pattern MUST come before generic pattern
-    (
-        r"rm\s+-[a-zA-Z]*[rR][a-zA-Z]*f[a-zA-Z]*\s+[/~]"
-        r"|rm\s+-[a-zA-Z]*f[a-zA-Z]*[rR][a-zA-Z]*\s+[/~]",
-        "rm -rf on root or home paths is EXTREMELY DANGEROUS. "
-        "Ask the user to run it manually if truly needed.",
-    ),
-    (
-        r"rm\s+-[a-zA-Z]*[rR][a-zA-Z]*f"
-        r"|rm\s+-[a-zA-Z]*f[a-zA-Z]*[rR]",
-        "rm -rf is destructive and requires human approval. "
-        "Explain what you want to delete and ask the user to run it manually.",
-    ),
-    # Catch rm with separate -r and -f flags (e.g., rm -r -f, rm -f -r)
-    (
-        r"rm\s+(-[a-zA-Z]+\s+)*-[rR]\s+(-[a-zA-Z]+\s+)*-f"
-        r"|rm\s+(-[a-zA-Z]+\s+)*-f\s+(-[a-zA-Z]+\s+)*-[rR]",
-        "rm with separate -r -f flags is destructive and requires human approval.",
-    ),
-    # Catch rm with long options (--recursive, --force)
-    (
-        r"rm\s+.*--recursive.*--force|rm\s+.*--force.*--recursive",
-        "rm --recursive --force is destructive and requires human approval.",
-    ),
-    # Git stash drop/clear
-    (
-        r"git\s+stash\s+drop",
-        "git stash drop permanently deletes stashed changes. "
-        "List stashes first.",
-    ),
-    (
-        r"git\s+stash\s+clear",
-        "git stash clear permanently deletes ALL stashed changes.",
-    ),
-]
-
-# Patterns that are safe even if they match above (allowlist)
-SAFE_PATTERNS = [
-    # Branch creation is only safe inside linked worktrees. The canonical
-    # workspace branch-switch guard runs before this allowlist and denies these
-    # commands there; linked worktrees skip that guard and keep these safe.
-    r"git\s+checkout\s+-b\s+",  # Creating new branch in linked worktree
-    r"git\s+checkout\s+--orphan\s+",  # Creating orphan branch in linked worktree
-    # Unstaging is safe, BUT NOT if --worktree/-W is also present
-    r"git\s+restore\s+--staged\s+(?!.*--worktree)(?!.*-W\b)",
-    r"git\s+restore\s+-S\s+(?!.*--worktree)(?!.*-W\b)",
-    r"git\s+clean\s+-[a-z]*n[a-z]*",  # Dry run (-n, -fn, -nf, etc.)
-    r"git\s+clean\s+--dry-run",  # Dry run (long form)
-    # Allow rm -rf on temp directories (ephemeral by design)
-    r"rm\s+-[a-zA-Z]*[rR][a-zA-Z]*f[a-zA-Z]*\s+/tmp/",
-    r"rm\s+-[a-zA-Z]*f[a-zA-Z]*[rR][a-zA-Z]*\s+/tmp/",
-    r"rm\s+-[a-zA-Z]*[rR][a-zA-Z]*f[a-zA-Z]*\s+/var/tmp/",
-    r"rm\s+-[a-zA-Z]*f[a-zA-Z]*[rR][a-zA-Z]*\s+/var/tmp/",
-    r"rm\s+-[a-zA-Z]*[rR][a-zA-Z]*f[a-zA-Z]*\s+\$TMPDIR/",
-    r"rm\s+-[a-zA-Z]*f[a-zA-Z]*[rR][a-zA-Z]*\s+\$TMPDIR/",
-    r"rm\s+-[a-zA-Z]*[rR][a-zA-Z]*f[a-zA-Z]*\s+\$\{TMPDIR",
-    r"rm\s+-[a-zA-Z]*f[a-zA-Z]*[rR][a-zA-Z]*\s+\$\{TMPDIR",
-    r'rm\s+-[a-zA-Z]*[rR][a-zA-Z]*f[a-zA-Z]*\s+"\$TMPDIR/',
-    r'rm\s+-[a-zA-Z]*f[a-zA-Z]*[rR][a-zA-Z]*\s+"\$TMPDIR/',
-    r'rm\s+-[a-zA-Z]*[rR][a-zA-Z]*f[a-zA-Z]*\s+"\$\{TMPDIR',
-    r'rm\s+-[a-zA-Z]*f[a-zA-Z]*[rR][a-zA-Z]*\s+"\$\{TMPDIR',
-    # Separate flags on temp directories
-    r"rm\s+(-[a-zA-Z]+\s+)*-[rR]\s+(-[a-zA-Z]+\s+)*-f\s+/tmp/",
-    r"rm\s+(-[a-zA-Z]+\s+)*-f\s+(-[a-zA-Z]+\s+)*-[rR]\s+/tmp/",
-    r"rm\s+(-[a-zA-Z]+\s+)*-[rR]\s+(-[a-zA-Z]+\s+)*-f\s+/var/tmp/",
-    r"rm\s+(-[a-zA-Z]+\s+)*-f\s+(-[a-zA-Z]+\s+)*-[rR]\s+/var/tmp/",
-    r"rm\s+.*--recursive.*--force\s+/tmp/",
-    r"rm\s+.*--force.*--recursive\s+/tmp/",
-    r"rm\s+.*--recursive.*--force\s+/var/tmp/",
-    r"rm\s+.*--force.*--recursive\s+/var/tmp/",
-]
-
+GIT_BINARY = os.environ.get("AIDEVOPS_REAL_GIT", "")
+if not GIT_BINARY:
+    GIT_BINARY = (
+        "/usr/bin/git"
+        if os.path.isfile("/usr/bin/git")
+        else (shutil.which("git") or "git")
+    )
 
 # =============================================================================
 # Main-branch file allowlist (t1712)
@@ -177,13 +53,32 @@ MAIN_BRANCH_ALLOWLIST = [
     "TODO.md",
     "todo/",  # prefix: todo/** subtree
 ]
+WORKER_ENV_KEYS = (
+    "FULL_LOOP_HEADLESS",
+    "AIDEVOPS_HEADLESS",
+    "OPENCODE_HEADLESS",
+    "CLAUDE_HEADLESS",
+    "Claude_HEADLESS",
+    "HEADLESS",
+    "GITHUB_ACTIONS",
+)
+
+
+def _is_worker_context() -> bool:
+    """Return True when this per-tool hook is running in a worker process."""
+    if os.environ.get("AIDEVOPS_WORKER_ID", ""):
+        return True
+    return any(
+        os.environ.get(key, "").lower() in {"1", "true", "yes"}
+        for key in WORKER_ENV_KEYS
+    )
 
 
 def _get_current_branch(cwd: str) -> str:
     """Return the current git branch name, or empty string on failure."""
     try:
         result = subprocess.run(
-            ["git", "branch", "--show-current"],
+            [GIT_BINARY, "branch", "--show-current"],
             capture_output=True,
             text=True,
             cwd=cwd,
@@ -198,14 +93,14 @@ def _is_linked_worktree(cwd: str) -> bool:
     """Return True if cwd is inside a linked worktree (not the main worktree)."""
     try:
         git_dir = subprocess.run(
-            ["git", "rev-parse", "--git-dir"],
+            [GIT_BINARY, "rev-parse", "--git-dir"],
             capture_output=True,
             text=True,
             cwd=cwd,
             timeout=5,
         ).stdout.strip()
         git_common_dir = subprocess.run(
-            ["git", "rev-parse", "--git-common-dir"],
+            [GIT_BINARY, "rev-parse", "--git-common-dir"],
             capture_output=True,
             text=True,
             cwd=cwd,
@@ -221,7 +116,7 @@ def _get_repo_root(cwd: str) -> str:
     """Return the absolute path of the git repository root, or empty string on failure."""
     try:
         result = subprocess.run(
-            ["git", "rev-parse", "--show-toplevel"],
+            [GIT_BINARY, "rev-parse", "--show-toplevel"],
             capture_output=True,
             text=True,
             cwd=cwd,
@@ -296,7 +191,7 @@ def _get_default_branch(repo_root: str) -> str:
     # 1. Try origin/HEAD
     try:
         result = subprocess.run(
-            ["git", "symbolic-ref", "--short", "refs/remotes/origin/HEAD"],
+            [GIT_BINARY, "symbolic-ref", "--short", "refs/remotes/origin/HEAD"],
             capture_output=True,
             text=True,
             cwd=repo_root,
@@ -315,7 +210,7 @@ def _get_default_branch(repo_root: str) -> str:
     # 2. Try git config init.defaultBranch
     try:
         result = subprocess.run(
-            ["git", "config", "--get", "init.defaultBranch"],
+            [GIT_BINARY, "config", "--get", "init.defaultBranch"],
             capture_output=True,
             text=True,
             cwd=repo_root,
@@ -330,27 +225,6 @@ def _get_default_branch(repo_root: str) -> str:
 
     # 3. Hard fallback
     return "main"
-
-
-def _resolve_previous_branch(repo_root: str) -> str:
-    """Return the branch that ``git switch -`` would restore, or empty on failure."""
-    if not repo_root:
-        return ""
-    try:
-        result = subprocess.run(
-            ["git", "rev-parse", "--abbrev-ref", "@{-1}"],
-            capture_output=True,
-            text=True,
-            cwd=repo_root,
-            timeout=5,
-        )
-        if result.returncode == 0:
-            branch = result.stdout.strip()
-            if branch and branch != "HEAD":
-                return branch
-    except Exception:
-        pass
-    return ""
 
 
 def _build_canonical_off_default_deny(
@@ -374,260 +248,69 @@ def _build_canonical_off_default_deny(
                 f"Options:\n"
                 f"  (a) Use a linked worktree for this work:\n"
                 f"        wt switch -c feature/your-task-name\n\n"
-                f"  (b) Reset canonical to the default branch:\n"
-                f"        git switch {default_branch}\n\n"
-                f"  (c) Override for this operation (RARE — document reason):\n"
-                f"        AIDEVOPS_SKIP_CANONICAL_GUARD=1 <your-command>"
+                f"  (b) Restore canonical state through the audited recovery helper "
+                f"when appropriate."
             ),
         }
     }
 
 
-TAKES_BRANCH_ARG = {
-    "-b",
-    "-B",
-    "-c",
-    "-C",
-    "--create",
-    "--force-create",
-    "--orphan",
-}
-OPTION_WITH_VALUE = {"-t", "--track", "--conflict", "--pathspec-from-file"}
-
-
-def _extract_text_from_content(content) -> str:
-    """Return plain text from common runtime transcript content shapes."""
-    if isinstance(content, str):
-        return content
-    if isinstance(content, list):
-        parts = []
-        for item in content:
-            if isinstance(item, str):
-                parts.append(item)
-            elif isinstance(item, dict):
-                text = item.get("text") or item.get("content") or ""
-                if isinstance(text, str):
-                    parts.append(text)
-        return "\n".join(parts)
-    if isinstance(content, dict):
-        text = content.get("text") or content.get("content") or ""
-        if isinstance(text, str):
-            return text
-    return ""
-
-
-def _extract_user_text_from_record(record: dict) -> str:
-    """Return user message text from a Claude/OpenCode-style transcript record."""
-    if not isinstance(record, dict):
-        return ""
-
-    if record.get("role") == "user":
-        return _extract_text_from_content(record.get("content"))
-
-    message = record.get("message")
-    if isinstance(message, dict) and message.get("role") == "user":
-        return _extract_text_from_content(message.get("content"))
-
-    if record.get("type") == "user":
-        return _extract_text_from_content(record.get("content"))
-
-    return ""
-
-
-def _latest_user_message_from_transcript(transcript_path: str) -> str:
-    """Return the latest user message from a JSONL transcript path."""
-    if not transcript_path:
-        return ""
-    latest = ""
-    try:
-        with open(transcript_path, "r", encoding="utf-8") as handle:
-            for line in handle:
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    record = json.loads(line)
-                except json.JSONDecodeError:
-                    continue
-                text = _extract_user_text_from_record(record)
-                if text:
-                    latest = text
-    except OSError:
-        return ""
-    return latest
-
-
-def _current_user_message(input_data: dict) -> str:
-    """Return the live current-turn user message when the runtime provides it."""
-    for key in (
-        "aidevops_current_user_message",
-        "current_user_message",
-        "current_user_turn",
-        "user_message",
-    ):
-        value = input_data.get(key)
-        if isinstance(value, str) and value.strip():
-            return value.strip()
-    transcript_path = input_data.get("transcript_path") or input_data.get("transcriptPath")
-    if isinstance(transcript_path, str):
-        return _latest_user_message_from_transcript(transcript_path)
-    return ""
-
-
-def _branch_target_is_current_turn_authorized(target: str, user_message: str) -> bool:
-    """Return True when the live user explicitly requested this branch switch."""
-    if not target or not user_message:
-        return False
-    quoted = re.escape(target)
-    patterns = [
-        rf"\bgit\s+(?:switch|checkout)\s+{quoted}\b",
-        rf"\b(?:switch|checkout)\s+(?:to\s+)?(?:the\s+)?(?:branch\s+)?{quoted}\b",
-        rf"\bchange\s+(?:back\s+)?(?:to\s+)?(?:the\s+)?(?:branch\s+)?{quoted}\b",
-        rf"\brestore\s+(?:the\s+)?canonical(?:\s+repo(?:sitory)?)?\s+(?:back\s+)?to\s+{quoted}\b",
-    ]
-    return any(re.search(pattern, user_message, re.IGNORECASE) for pattern in patterns)
-
-
-def _split_git_switch_command(command: str) -> tuple[str, list[str]]:
-    """Return the git switch/checkout subcommand and args, or empty values."""
-    subcommand = ""
-    args: list[str] = []
-    try:
-        tokens = shlex.split(command)
-    except ValueError:
-        tokens = []
-    if len(tokens) >= 3 and tokens[0] == "git" and tokens[1] in ("switch", "checkout"):
-        subcommand = tokens[1]
-        args = tokens[2:]
-    return subcommand, args
-
-
-def _scan_git_switch_args(subcommand: str, args: list[str]) -> tuple[str, bool]:
-    """Return the first branch-like target and whether the command creates it."""
-    target = ""
-    creates_branch = False
-    index = 0
-    while index < len(args) and not target:
-        arg = args[index]
-        if arg in TAKES_BRANCH_ARG:
-            if index + 1 < len(args):
-                target = args[index + 1]
-                creates_branch = True
-        elif arg in OPTION_WITH_VALUE:
-            index += 2
-            continue
-        elif arg == "-":
-            target = arg
-        elif arg.startswith("-"):
-            index += 1
-            continue
-        elif subcommand == "checkout" and any(ch in arg for ch in ("/", ".")):
-            # Likely a file/path checkout, not a branch switch.
-            target = ""
-        else:
-            target = arg
-        index += 1
-    return target, creates_branch
-
-
-def _extract_git_switch_target(command: str) -> tuple[str, bool]:
-    """Return the target branch and creation flag for git switch/checkout."""
-    subcommand, args = _split_git_switch_command(command)
-    target = ""
-    creates_branch = False
-    if subcommand and "--" not in args:
-        target, creates_branch = _scan_git_switch_args(subcommand, args)
-    return target, creates_branch
-
-
-def _canonical_branch_switch_deny(target: str, default_branch: str) -> dict:
-    """Return a deny payload for canonical workspace branch switches."""
-    return {
-        "hookSpecificOutput": {
-            "hookEventName": "PreToolUse",
-            "permissionDecision": "deny",
-            "permissionDecisionReason": (
-                "BLOCKED by git_safety_guard.py (aidevops t1990)\n\n"
-                f"Reason: Canonical workspace cannot switch to or create branch '{target}'.\n\n"
-                "Per t1990, the canonical repo directory must stay on the default branch. "
-                "Create or use a linked worktree under the configured workspace root instead:\n"
-                f"  wt switch -c {target}\n\n"
-                f"To restore canonical state, run: git switch {default_branch}"
-            ),
-        }
-    }
-
-
-def _canonical_branch_switch_user_request_deny(target: str, default_branch: str) -> dict:
-    """Return a deny payload when the live user did not request the branch switch."""
-    return {
-        "hookSpecificOutput": {
-            "hookEventName": "PreToolUse",
-            "permissionDecision": "deny",
-            "permissionDecisionReason": (
-                "BLOCKED by git_safety_guard.py (aidevops t3573)\n\n"
-                f"Reason: Canonical workspace branch switch to '{target}' was not "
-                "explicitly requested by the live user in the current turn.\n\n"
-                "Use a linked worktree for feature work instead:\n"
-                f"  wt switch -c {target}\n\n"
-                "Canonical restoration is allowed only when the current user turn "
-                f"explicitly asks for this exact branch, for example: git switch {default_branch}"
-            ),
-        }
-    }
-
-
-def _check_canonical_branch_switch_command(
-    command: str, current_user_message: str
-) -> "dict | None":
-    """Deny unrequested git switch/checkout commands in the canonical checkout."""
-    cwd = os.getcwd()
-    repo_root = _get_repo_root(cwd)
-    target = ""
-    creates_branch = False
-    if repo_root and not _is_linked_worktree(repo_root):
-        target, creates_branch = _extract_git_switch_target(command)
-        if target == "-":
-            target = _resolve_previous_branch(repo_root)
-    default_branch = _get_default_branch(repo_root) if target else ""
-    if not target:
-        return None
-    if creates_branch or target not in (default_branch, "main", "master"):
-        return _canonical_branch_switch_deny(target, default_branch)
-    if not _branch_target_is_current_turn_authorized(target, current_user_message):
-        return _canonical_branch_switch_user_request_deny(target, default_branch)
-    return None
-
-
-def _check_shared_canonical_git_guard(command: str) -> "dict | None":
-    """Delegate canonical Git mutation policy to the shared runtime guard."""
+def _check_command_policy(command: str) -> "dict | None":
+    """Return a Claude deny payload unless the shared safety floor allows."""
     candidates = [
-        os.environ.get("AIDEVOPS_CANONICAL_GIT_GUARD", ""),
-        str(Path(__file__).resolve().parent.parent / "scripts" / "canonical-git-command-guard.py"),
-        str(Path.home() / ".aidevops" / "agents" / "scripts" / "canonical-git-command-guard.py"),
+        os.environ.get("AIDEVOPS_COMMAND_POLICY_HELPER", ""),
+        str(Path(__file__).resolve().parent.parent / "scripts" / "command-policy-helper.py"),
+        str(Path.home() / ".aidevops" / "agents" / "scripts" / "command-policy-helper.py"),
     ]
-    guard = next((path for path in candidates if path and os.path.isfile(path)), "")
-    if not guard:
-        if re.search(r"(^|[;&|()\n]\s*)(?:\S*/)?git(?:\s|$)", command):
-            reason = "canonical Git policy engine is missing; refusing Git command"
+    helper = next((path for path in candidates if path and os.path.isfile(path)), "")
+    decision = "forbid"
+    rule_id = "policy.helper-unavailable"
+    reason = "required command safety policy helper is unavailable"
+    if helper:
+        helper_args = [
+            sys.executable,
+            helper,
+            "check-command",
+            "--cwd",
+            os.getcwd(),
+            "--command",
+            command,
+        ]
+        if _is_worker_context():
+            helper_args.extend(
+                ["--worker", "--worker-id", os.environ.get("AIDEVOPS_WORKER_ID", "claude-worker")]
+            )
+        try:
+            result = subprocess.run(
+                helper_args,
+                capture_output=True,
+                text=True,
+                timeout=10,
+                check=False,
+            )
+        except (OSError, subprocess.SubprocessError) as exc:
+            rule_id = "policy.helper-error"
+            reason = f"command safety policy failed closed: {exc}"
         else:
-            return None
-    else:
-        result = subprocess.run(
-            [sys.executable, guard, "--cwd", os.getcwd(), "--command", command],
-            capture_output=True,
-            text=True,
-            timeout=10,
-            check=False,
-        )
-        if result.returncode == 0:
-            return None
-        reason = result.stderr.strip() or "canonical Git policy check failed closed"
+            try:
+                payload = json.loads(result.stdout)
+            except (json.JSONDecodeError, TypeError):
+                payload = {}
+            decision = payload.get("decision", "forbid")
+            rule_id = payload.get("rule_id", "policy.invalid-response")
+            reason = payload.get(
+                "reason", "command safety policy returned an invalid response"
+            )
+            if result.returncode == 0 and decision == "allow":
+                return None
     return {
         "hookSpecificOutput": {
             "hookEventName": "PreToolUse",
             "permissionDecision": "deny",
-            "permissionDecisionReason": reason,
+            "permissionDecisionReason": (
+                f"BLOCKED by shared command policy ({decision}, {rule_id})\n\n"
+                f"Reason: {reason}"
+            ),
         }
     }
 
@@ -687,26 +370,8 @@ def _check_main_branch_allowlist(file_path: str) -> "dict | None":
         return _build_canonical_off_default_deny(file_path, branch, default_branch)
 
 
-def _normalize_absolute_paths(cmd):
-    """Normalize absolute paths to rm/git for consistent pattern matching.
-
-    Converts /bin/rm, /usr/bin/rm, /usr/local/bin/rm, etc. to just 'rm'.
-    Converts /usr/bin/git, /usr/local/bin/git, etc. to just 'git'.
-
-    Only normalizes at the START of the command string to avoid
-    corrupting paths that appear as arguments.
-    """
-    if not cmd:
-        return cmd
-
-    result = cmd
-    result = re.sub(r"^/(?:\S*/)*s?bin/rm(?=\s|$)", "rm", result)
-    result = re.sub(r"^/(?:\S*/)*s?bin/git(?=\s|$)", "git", result)
-    return result
-
-
 def main():
-    """Check stdin for destructive Bash commands and enforce main-branch allowlist."""
+    """Delegate Bash policy and enforce the Edit/Write worktree allowlist."""
     try:
         input_data = json.load(sys.stdin)
     except json.JSONDecodeError:
@@ -725,55 +390,12 @@ def main():
             print(json.dumps(deny))
         sys.exit(0)
 
-    # ==========================================================================
-    # Bash tool: block destructive commands
-    # ==========================================================================
     command = tool_input.get("command", "")
-
     if tool_name != "Bash" or not isinstance(command, str) or not command:
         sys.exit(0)
-
-    original_command = command
-    command = _normalize_absolute_paths(command)
-
-    current_user_message = _current_user_message(input_data)
-    shared_git_deny = _check_shared_canonical_git_guard(command)
-    if shared_git_deny:
-        print(json.dumps(shared_git_deny))
-        sys.exit(0)
-    branch_switch_deny = _check_canonical_branch_switch_command(
-        command, current_user_message
-    )
-    if branch_switch_deny:
-        print(json.dumps(branch_switch_deny))
-        sys.exit(0)
-
-    # Check safe patterns first (allowlist)
-    for pattern in SAFE_PATTERNS:
-        if re.search(pattern, command):
-            sys.exit(0)
-
-    # Check destructive patterns
-    for pattern, reason in DESTRUCTIVE_PATTERNS:
-        if re.search(pattern, command):
-            output = {
-                "hookSpecificOutput": {
-                    "hookEventName": "PreToolUse",
-                    "permissionDecision": "deny",
-                    "permissionDecisionReason": (
-                        f"BLOCKED by git_safety_guard.py (aidevops)\n\n"
-                        f"Reason: {reason}\n\n"
-                        f"Command: {original_command}\n\n"
-                        f"If this operation is truly needed, ask the user "
-                        f"for explicit permission and have them run the "
-                        f"command manually."
-                    ),
-                }
-            }
-            print(json.dumps(output))
-            sys.exit(0)
-
-    # Allow all other commands
+    deny = _check_command_policy(command)
+    if deny:
+        print(json.dumps(deny))
     sys.exit(0)
 
 

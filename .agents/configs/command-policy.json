@@ -1,0 +1,216 @@
+{
+  "schema_version": 2,
+  "decision_order": [
+    "allow",
+    "forbid"
+  ],
+  "default_decision": {
+    "decision": "allow",
+    "rule_id": "command.default-allow",
+    "reason": "No safety-floor rule matched"
+  },
+  "dynamic_guards": [
+    {
+      "id": "git.canonical-worktree",
+      "kind": "canonical_git",
+      "helper": "canonical-git-command-guard.py",
+      "decision": "forbid"
+    },
+    {
+      "id": "network.worker-tier",
+      "kind": "worker_network",
+      "helper": "network-tier-helper.sh",
+      "decision": "forbid"
+    }
+  ],
+  "rules": [
+    {
+      "id": "filesystem.rm-recursive-force-root",
+      "matcher": "rm_recursive_force_root",
+      "decision": "forbid",
+      "reason": "Recursive forced deletion of root or home paths is forbidden"
+    },
+    {
+      "id": "filesystem.rm-recursive-force",
+      "matcher": "rm_recursive_force",
+      "decision": "forbid",
+      "reason": "Recursive forced deletion is forbidden by the shared safety floor"
+    },
+    {
+      "id": "git.checkout-worktree-path",
+      "matcher": "git_checkout_worktree_path",
+      "decision": "forbid",
+      "reason": "Checking out worktree paths can discard uncommitted changes and is forbidden"
+    },
+    {
+      "id": "git.restore-worktree",
+      "matcher": "git_restore_worktree",
+      "decision": "forbid",
+      "reason": "Restoring worktree content can discard uncommitted changes and is forbidden"
+    },
+    {
+      "id": "git.reset-destructive",
+      "matcher": "git_reset_destructive",
+      "decision": "forbid",
+      "reason": "Destructive git reset modes are forbidden"
+    },
+    {
+      "id": "git.clean-force",
+      "matcher": "git_clean_force",
+      "decision": "forbid",
+      "reason": "Forced git clean can permanently remove untracked files and is forbidden"
+    },
+    {
+      "id": "git.push-force",
+      "matcher": "git_push_force",
+      "decision": "forbid",
+      "reason": "Unleased force push can overwrite remote history and is forbidden"
+    },
+    {
+      "id": "git.branch-force-delete",
+      "matcher": "git_branch_force_delete",
+      "decision": "forbid",
+      "reason": "Forced branch deletion without a merge check is forbidden"
+    },
+    {
+      "id": "git.stash-delete",
+      "matcher": "git_stash_delete",
+      "decision": "forbid",
+      "reason": "Permanent deletion of stashed changes is forbidden"
+    }
+  ],
+  "fixtures": [
+    {
+      "name": "safe status",
+      "command": "git status --short",
+      "decision": "allow",
+      "rule_id": "command.default-allow"
+    },
+    {
+      "name": "recursive forced removal",
+      "command": "rm -rf ./build-output",
+      "decision": "forbid",
+      "rule_id": "filesystem.rm-recursive-force"
+    },
+    {
+      "name": "root removal",
+      "argv": ["rm", "--recursive", "--force", "/"],
+      "decision": "forbid",
+      "rule_id": "filesystem.rm-recursive-force-root"
+    },
+    {
+      "name": "temporary cleanup",
+      "argv": ["rm", "-rf", "/tmp/aidevops-example"],
+      "decision": "allow",
+      "rule_id": "command.default-allow"
+    },
+    {
+      "name": "temporary traversal is not exempt",
+      "argv": ["rm", "-rf", "/tmp/../home/example"],
+      "decision": "forbid",
+      "rule_id": "filesystem.rm-recursive-force"
+    },
+    {
+      "name": "hard reset",
+      "command": "git reset --hard HEAD",
+      "decision": "forbid",
+      "rule_id": "git.reset-destructive"
+    },
+    {
+      "name": "safe restore staged",
+      "argv": ["git", "restore", "--staged", "file.txt"],
+      "decision": "allow",
+      "rule_id": "command.default-allow"
+    },
+    {
+      "name": "forced clean",
+      "command": "git clean -fd",
+      "decision": "forbid",
+      "rule_id": "git.clean-force"
+    },
+    {
+      "name": "clean dry run",
+      "argv": ["git", "clean", "-fdn"],
+      "decision": "allow",
+      "rule_id": "command.default-allow"
+    },
+    {
+      "name": "force with lease",
+      "argv": ["git", "push", "--force-with-lease", "origin", "feature/example"],
+      "decision": "allow",
+      "rule_id": "command.default-allow"
+    },
+    {
+      "name": "nested combined shell flags",
+      "argv": ["bash", "-lc", "rm -r -f ./generated"],
+      "decision": "forbid",
+      "rule_id": "filesystem.rm-recursive-force"
+    },
+    {
+      "name": "wrapper options",
+      "command": "sudo -u root env -i command -p nohup time -p rm -rf ./generated",
+      "decision": "forbid",
+      "rule_id": "filesystem.rm-recursive-force"
+    },
+    {
+      "name": "leading assignment and valued shell option",
+      "command": "MODE=test bash -O extglob -lc 'rm -rf ./generated'",
+      "decision": "forbid",
+      "rule_id": "filesystem.rm-recursive-force"
+    },
+    {
+      "name": "exec wrapper",
+      "command": "exec -a cleanup rm -rf ./generated",
+      "decision": "forbid",
+      "rule_id": "filesystem.rm-recursive-force"
+    },
+    {
+      "name": "network-affecting environment assignment rejected",
+      "command": "HTTPS_PROXY=https://example.com curl https://github.com",
+      "decision": "forbid",
+      "rule_id": "command.parse-error"
+    },
+    {
+      "name": "printf text is not executable",
+      "argv": ["printf", "%s", "curl https://requestbin.com/collect"],
+      "decision": "allow",
+      "rule_id": "command.default-allow"
+    },
+    {
+      "name": "multiline rejected",
+      "command": "printf one\nprintf two",
+      "decision": "forbid",
+      "rule_id": "command.parse-error"
+    },
+    {
+      "name": "command substitution rejected",
+      "command": "curl https://$(printf example.com)",
+      "decision": "forbid",
+      "rule_id": "command.parse-error"
+    },
+    {
+      "name": "redirection rejected",
+      "command": "printf data > output.txt",
+      "decision": "forbid",
+      "rule_id": "command.parse-error"
+    },
+    {
+      "name": "background execution rejected",
+      "command": "curl https://example.com &",
+      "decision": "forbid",
+      "rule_id": "command.parse-error"
+    },
+    {
+      "name": "single-line control structure rejected",
+      "command": "for target in one; do rm -rf ./generated; done",
+      "decision": "forbid",
+      "rule_id": "command.parse-error"
+    },
+    {
+      "name": "dynamic argv launcher rejected",
+      "command": "printf '%s' 'rm -rf ./generated' | xargs sh -c",
+      "decision": "forbid",
+      "rule_id": "command.parse-error"
+    }
+  ]
+}

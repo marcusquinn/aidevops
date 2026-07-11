@@ -1,9 +1,7 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
-# Observability Helper — LLM request tracking via JSONL log (t1307, t1337.5)
-# Commands: ingest | record | rate-limits | help
-# Storage: ~/.aidevops/.agent-workspace/observability/metrics.jsonl
+# Observability Helper — LLM request and runtime-event evidence
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 source "${SCRIPT_DIR}/shared-constants.sh"
@@ -102,10 +100,6 @@ _write_metric() {
 	return 0
 }
 
-# =============================================================================
-# JSONL Log Parsing
-# =============================================================================
-
 parse_jsonl_file() {
 	local file_path="$1"
 	local start_offset="${2:-0}"
@@ -162,10 +156,6 @@ parse_jsonl_file() {
 	echo "$file_size"
 	return 0
 }
-
-# =============================================================================
-# Commands
-# =============================================================================
 
 cmd_ingest() {
 	local quiet=false
@@ -289,8 +279,6 @@ cmd_record() {
 		"$error_message" "$prompt_version" "$prompt_file"
 	print_success "Recorded: $model ($provider) - \$${ct}"
 }
-
-# Rate Limit Tracking
 
 _get_rate_limits_config() {
 	[[ -f "$RATE_LIMITS_CONFIG_USER" ]] && {
@@ -542,13 +530,6 @@ cmd_rate_limits() {
 	return 0
 }
 
-# =============================================================================
-# Cache Health Check (t1858)
-# =============================================================================
-# Queries the SQLite DB for prompt cache hit rates per model over a time window.
-# Flags models where cache_read / (cache_read + input) drops below a threshold.
-# Designed for: manual spot-checks, pulse integration, and session greeting.
-
 readonly DEFAULT_CACHE_THRESHOLD=90
 readonly DEFAULT_CACHE_WINDOW_HOURS=24
 
@@ -651,11 +632,29 @@ cmd_cache_health() {
 	return 1
 }
 
+cmd_runtime_events() {
+	local limit="${1:-20}" obs_db="${OBS_DIR}/llm-requests.db"
+	[[ "$limit" =~ ^[0-9]+$ && "$limit" -ge 1 && "$limit" -le 1000 ]] || {
+		print_error "runtime-events limit must be an integer from 1 to 1000"
+		return 1
+	}
+	[[ -f "$obs_db" ]] || {
+		print_error "SQLite DB not found at $obs_db"
+		return 1
+	}
+	command -v sqlite3 &>/dev/null || {
+		print_error "sqlite3 required"
+		return 1
+	}
+	sqlite3 -json "$obs_db" "SELECT envelope_version, occurred_at, event_id, event_type, correlation_id, causation_id, subject_id, session_id, worker_id, root_event_id, parent_event_id, state_version, payload_json, payload_bytes, redaction_count FROM runtime_events ORDER BY id DESC LIMIT ${limit};"
+	return 0
+}
+
 cmd_help() {
 	cat <<EOF
-Observability Helper — LLM request tracking via JSONL log
+Observability Helper — LLM request and runtime-event evidence
 Usage: observability-helper.sh [command] [options]
-Commands: ingest | record (--model X) | rate-limits (--json, --provider, --window) | cache-health (--json, --threshold, --window) | help
+Commands: ingest | record (--model X) | rate-limits | cache-health | runtime-events [limit] | help
 
 Record options:
   --model MODEL          Model name (required)
@@ -673,6 +672,7 @@ Record options:
 
 Metrics: $OBS_METRICS
 EOF
+	return 0
 }
 
 main() {
@@ -683,6 +683,7 @@ main() {
 	ingest | parse | import) cmd_ingest "$@" ;; record | r) cmd_record "$@" ;;
 	rate-limits | rate_limits | ratelimits | rl) cmd_rate_limits "$@" ;;
 	cache-health | cache_health | ch) cmd_cache_health "$@" ;;
+	runtime-events | runtime_events | events) cmd_runtime_events "$@" ;;
 	help | --help | -h) cmd_help ;; *)
 		print_error "Unknown: $command"
 		cmd_help

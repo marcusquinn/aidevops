@@ -75,6 +75,7 @@ open(os.path.join(state_dir, 'owner-repo-12.state'), 'w').write(
 PY
 
 output="$TMP_DIR/out.txt"
+export AIDEVOPS_OBS_DB_OVERRIDE="$TMP_DIR/runtime-events.db"
 export AIDEVOPS_PULSE_RATE_LIMIT_CACHE="$TMP_DIR/rate-limit-cache.json"
 export AIDEVOPS_PR_REVIEW_THREAD_RESPONSE_STATE_DIR="$TMP_DIR/review-thread-state"
 python3 - "$AIDEVOPS_PULSE_RATE_LIMIT_CACHE" <<'PY'
@@ -131,6 +132,12 @@ jq -e '.prefetch_cache.conditional_misses == 1' "$json_output" >/dev/null
 jq -e '.review_thread_attention[0].blocked_by == "maintainer"' "$json_output" >/dev/null
 jq -e '.review_thread_attention[0].pr_number == 12' "$json_output" >/dev/null
 jq -e '.review_thread_attention[0].reason == "needs_decision"' "$json_output" >/dev/null
+sqlite3 "$AIDEVOPS_OBS_DB_OVERRIDE" "SELECT COUNT(*) FROM runtime_events WHERE subject_id='pulse:current' AND event_type IN ('state.snapshot','state.delta');" | grep -Eq '^[12]$'
+sqlite3 "$AIDEVOPS_OBS_DB_OVERRIDE" "SELECT payload_json FROM runtime_events WHERE subject_id='pulse:current' ORDER BY id LIMIT 1;" | grep -q 'review_thread_attention_count'
+if sqlite3 "$AIDEVOPS_OBS_DB_OVERRIDE" "SELECT payload_json FROM runtime_events WHERE subject_id='pulse:current';" | grep -Eq 'marcusquinn/aidevops|owner-repo|state_file|wrapper_activity'; then
+	printf 'FAIL runtime state contains private or prose projection fields\n' >&2
+	exit 1
+fi
 python3 - "$HELPER" "${SCRIPT_DIR}/../pulse-current-state.py" <<'PY'
 import pathlib
 import sys

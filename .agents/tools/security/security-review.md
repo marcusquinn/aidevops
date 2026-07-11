@@ -9,7 +9,7 @@ Triage quarantined security items. Run after worker batches or when `quarantine-
 
 - **prompt-guard-helper.sh** — WARN-level prompt injection detections
 - **network-tier-helper.sh** — Tier 4 unknown domains allowed but flagged
-- **sandbox-exec-helper.sh** — Tier 5 denied domains from sandbox pre-checks
+- **sandbox-exec-helper.sh** — Tier 5 denied domains from recognized direct-client pre-checks; arbitrary interpreter/custom-binary traffic requires lower-layer containment
 - **mcp-audit** — MCP tool descriptions with ambiguous injection patterns
 
 ## Learn actions

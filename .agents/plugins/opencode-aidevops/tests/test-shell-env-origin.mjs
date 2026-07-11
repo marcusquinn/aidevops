@@ -70,12 +70,22 @@ test("interactive OpenCode shell overrides stale worker origin", async () => {
       env: {
         PATH: "/usr/bin:/bin",
         AIDEVOPS_SESSION_ORIGIN: "worker",
+        AIDEVOPS_WORKER_ID: "worker:stale",
+        AIDEVOPS_PARENT_WORKER_ID: "worker:stale-parent",
+        AIDEVOPS_ROOT_WORKER_ID: "worker:stale-root",
+        AIDEVOPS_CORRELATION_ID: "correlation:stale",
+        AIDEVOPS_CAUSATION_ID: "event:stale",
+        AIDEVOPS_PARENT_EVENT_ID: "event:stale",
+        AIDEVOPS_ROOT_EVENT_ID: "event:stale-root",
       },
     };
 
     await hook({ sessionID: "interactive-session" }, output);
 
     assert.equal(output.env.AIDEVOPS_SESSION_ORIGIN, "interactive");
+    for (const key of Object.keys(output.env).filter((key) => /WORKER_ID|EVENT_ID|CORRELATION_ID|CAUSATION_ID/.test(key))) {
+      assert.fail(`interactive shell retained stale lineage key ${key}`);
+    }
   });
 });
 
@@ -106,6 +116,42 @@ test("headless OpenCode shell stamps worker origin", async () => {
   await hook({ sessionID: "worker-session" }, output);
 
   assert.equal(output.env.AIDEVOPS_SESSION_ORIGIN, "worker");
+});
+
+test("headless shell preserves explicit worker lineage", async () => {
+  const keys = [
+    "AIDEVOPS_WORKER_ID",
+    "AIDEVOPS_PARENT_WORKER_ID",
+    "AIDEVOPS_ROOT_WORKER_ID",
+    "AIDEVOPS_CORRELATION_ID",
+    "AIDEVOPS_CAUSATION_ID",
+    "AIDEVOPS_PARENT_EVENT_ID",
+    "AIDEVOPS_ROOT_EVENT_ID",
+  ];
+  const saved = Object.fromEntries(keys.map((key) => [key, process.env[key]]));
+  try {
+    process.env.AIDEVOPS_WORKER_ID = "worker:child";
+    process.env.AIDEVOPS_PARENT_WORKER_ID = "worker:parent";
+    process.env.AIDEVOPS_ROOT_WORKER_ID = "worker:root";
+    process.env.AIDEVOPS_CORRELATION_ID = "correlation:root";
+    process.env.AIDEVOPS_CAUSATION_ID = "event:dispatch";
+    process.env.AIDEVOPS_PARENT_EVENT_ID = "event:dispatch";
+    process.env.AIDEVOPS_ROOT_EVENT_ID = "event:root";
+    const output = { env: { PATH: "/usr/bin:/bin", OPENCODE_HEADLESS: "true" } };
+    await makeHook()({ sessionID: "worker-session" }, output);
+    assert.equal(output.env.AIDEVOPS_WORKER_ID, "worker:child");
+    assert.equal(output.env.AIDEVOPS_PARENT_WORKER_ID, "worker:parent");
+    assert.equal(output.env.AIDEVOPS_ROOT_WORKER_ID, "worker:root");
+    assert.equal(output.env.AIDEVOPS_CORRELATION_ID, "correlation:root");
+    assert.equal(output.env.AIDEVOPS_CAUSATION_ID, "event:dispatch");
+    assert.equal(output.env.AIDEVOPS_PARENT_EVENT_ID, "event:dispatch");
+    assert.equal(output.env.AIDEVOPS_ROOT_EVENT_ID, "event:root");
+  } finally {
+    for (const key of keys) {
+      if (saved[key] === undefined) delete process.env[key];
+      else process.env[key] = saved[key];
+    }
+  }
 });
 
 test("shell env version prefers deployed agents VERSION over legacy version", async () => {

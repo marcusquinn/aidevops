@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
+
 // ---------------------------------------------------------------------------
 // Phase 4: Shell Environment
 // Extracted from index.mjs (t1914) — shell env variable injection.
@@ -70,6 +73,16 @@ const HEADLESS_ENV_VARS = [
   "GITHUB_ACTIONS",
 ];
 
+const WORKER_LINEAGE_ENV_VARS = [
+  "AIDEVOPS_WORKER_ID",
+  "AIDEVOPS_PARENT_WORKER_ID",
+  "AIDEVOPS_ROOT_WORKER_ID",
+  "AIDEVOPS_CORRELATION_ID",
+  "AIDEVOPS_CAUSATION_ID",
+  "AIDEVOPS_PARENT_EVENT_ID",
+  "AIDEVOPS_ROOT_EVENT_ID",
+];
+
 /**
  * @param {string | undefined} value
  * @returns {boolean}
@@ -115,7 +128,15 @@ export function createShellEnvHook(deps) {
     // Set aidevops workspace directory
     output.env.AIDEVOPS_AGENTS_DIR = agentsDir;
     output.env.AIDEVOPS_WORKSPACE_DIR = workspaceDir;
-    output.env.AIDEVOPS_SESSION_ORIGIN = shellSessionOrigin(output.env);
+    const sessionOrigin = shellSessionOrigin(output.env);
+    output.env.AIDEVOPS_SESSION_ORIGIN = sessionOrigin;
+    for (const key of WORKER_LINEAGE_ENV_VARS) {
+      if (sessionOrigin === "worker") {
+        if (!output.env[key] && process.env[key]) output.env[key] = process.env[key];
+      } else {
+        delete output.env[key];
+      }
+    }
 
     // Set aidevops version if available. Prefer the deployed framework version
     // source; ~/.aidevops/version is a legacy/stale compatibility fallback.

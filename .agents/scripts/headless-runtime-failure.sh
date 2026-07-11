@@ -946,6 +946,13 @@ _exit_trap_handler() {
 			reason="worker_dirty_work_preserved"
 		fi
 	fi
+	if declare -F _emit_worker_runtime_event >/dev/null 2>&1; then
+		if [[ "$reason" == "worker_complete" ]]; then
+			_emit_worker_runtime_event "worker.completed" "recovered" "$reason"
+		else
+			_emit_worker_runtime_event "worker.failed" "failed" "$reason"
+		fi
+	fi
 	if declare -F _cleanup_headless_runtime_temp_paths >/dev/null 2>&1; then
 		_cleanup_headless_runtime_temp_paths
 	fi

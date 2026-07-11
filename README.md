@@ -138,6 +138,7 @@ Since the last README feature refresh, aidevops has added or expanded:
 - **Self-hosted runner operations**: lifecycle and storage runbooks, Docker foreground-mode guidance, systemd timer freshness triage, and ExecStop race-guard documentation (`.agents/reference/github-self-hosted-runners.md`).
 - **Pulse diagnostics and reliability**: compact API-budget diagnostics, pulse cadence/API diagnostics, GitHub read ramp pacing, configurable worker floors, Renovate dashboard skipping, and more defensive duplicate/blocked-by/rate-limit handling.
 - **Worker and PR observability**: worker diagnostic failure families, runtime observability signals, review-thread response scanning, required-check validation, orphan-recovery base handling, and safer automated GitHub write guards.
+- **Runtime-neutral safety and evidence contracts**: shared command decisions across supported runtimes, commit-pinned plugin provenance with explicit hook authorization, recognized-client network checks, causal worker lineage, and redacted state snapshots/deltas in the existing observability database.
 - **OpenCode runtime polish**: versioned session title suffixes, session archive retention, OAuth pool hardening, debug-error preservation, and reusable shell-env version lookup in the OpenCode plugin.
 
 <!-- AI-CONTEXT-END -->
@@ -655,7 +656,7 @@ See `.agents/tools/terminal/terminal-title.md` for customization options.
 - **Mailbox** - SQLite-backed inter-agent messaging for coordination across parallel sessions
 - **Worktree isolation** - Each agent works on its own branch in a separate directory, no merge conflicts
 - **Budget tracking** - Append-only cost log (`budget-tracker-helper.sh`) with burn-rate analysis and `/budget-analysis` command for model routing decisions
-- **Observability** - LLM request capture plugin (`observability.mjs`) for cost tracking, performance analysis, and debugging
+- **Observability** - LLM request/tool capture plus append-only, redacted runtime lifecycle/state evidence with worker correlation and causal lineage in the existing local SQLite database
 - **Rate limits and API budget diagnostics** - Per-provider rate-limit configuration, secondary cooldown capture, reset-aware pacing, and compact API budget summaries for pulse and worker decisions
 
 **Project Intelligence:**
@@ -829,7 +830,7 @@ Supervisor (pulse loop)
 | Registry | `mail-helper.sh register` | Agent registration with role, branch, worktree, heartbeat |
 | Model routing | `model-routing.md`, `/route` | Cost-aware routing across OpenAI, Anthropic, Gemini, Cursor, Grok, and local providers |
 | Budget tracking | `budget-tracker-helper.sh` | Append-only cost log for model routing decisions |
-| Observability | `observability.mjs` plugin | LLM request capture for cost tracking and performance analysis |
+| Observability | `observability.mjs`, `runtime-events.mjs` | LLM/tool metrics plus redacted lifecycle, lineage, and state evidence in one local SQLite database |
 
 **How it works:**
 
