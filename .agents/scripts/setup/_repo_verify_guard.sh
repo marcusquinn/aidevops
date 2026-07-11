@@ -57,6 +57,10 @@ setup_repo_verify_guard() {
 		esac
 	done < <(jq -r '.initialized_repos[]?.path // empty' "$repos_file")
 	print_info "Repo verify guard: installed=$installed registered=$registered migrated=$migrated skipped=$skipped conflict=$conflicts err=$errors"
+	if [[ "$errors" -gt 0 ]]; then
+		print_warning "Repo verify rollout incomplete: $errors persistent-state or hook installation error(s)"
+		return 1
+	fi
 	setup_track_configured "Repo verify guard (${installed} repos, ${registered} registrations, ${migrated} config migrations)"
 	return 0
 }

@@ -124,7 +124,10 @@ _init_configure_repo_verify() {
 	0) print_success "Seeded exact repository verify commands" ;;
 	2) print_info "No exact native verify commands detected; leaving verify policy unset" ;;
 	3) print_warning "Tracked verify config requires a linked-worktree change" ;;
-	4) print_info "Explicit verify opt-out preserved" ;;
+	4)
+		print_info "Explicit verify opt-out preserved"
+		return 0
+		;;
 	*) print_warning "Repository verify configuration could not be updated" ;;
 	esac
 	if repo_verify_install_hook "$project_root" >/dev/null 2>&1; then

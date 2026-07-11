@@ -68,6 +68,9 @@ main() {
 		assert_equal "0" "0" "setup preserves explicit opt-out"
 	fi
 	assert_equal "false" "$(jq -r '.features.code_quality // false' "$disabled/.aidevops.json")" "verify opt-out does not gain code-quality true"
+	local setup_status=0
+	REPO_VERIFY_INSTALLER="${TEST_TMP_DIR}/missing-installer" HOME="$fake_home" setup_repo_verify_guard || setup_status=$?
+	assert_equal "1" "$setup_status" "setup reports hook rollout failures"
 
 	printf '\nRan %d tests, %d failed.\n' "$((passed + failed))" "$failed"
 	[[ "$failed" -eq 0 ]] || return 1

@@ -189,15 +189,21 @@ lint_repo_list() {
 }
 
 lint_audit() {
-	local records_file actionable=0 repo_root record classification
+	local records_file repo_list_file actionable=0 repo_root record classification
 	records_file=$(mktemp)
+	repo_list_file=$(mktemp)
+	if ! lint_repo_list >"$repo_list_file"; then
+		rm -f "$records_file" "$repo_list_file"
+		print_error "Unable to read repository list"
+		return 1
+	fi
 	while IFS= read -r repo_root; do
 		[[ -d "$repo_root" ]] || continue
 		record=$(lint_audit_record "$repo_root")
 		printf '%s\n' "$record" >>"$records_file"
 		classification=$(printf '%s' "$record" | jq -r '.classification')
 		case "$classification" in READY | EXPLICITLY-DISABLED) ;; *) actionable=$((actionable + 1)) ;; esac
-	done < <(lint_repo_list)
+	done <"$repo_list_file"
 	if [[ "$LINT_JSON" == "true" ]]; then
 		jq -s '.' "$records_file"
 	else
@@ -208,7 +214,7 @@ lint_audit() {
 			done
 		printf '\nActionable repositories: %s\n' "$actionable"
 	fi
-	rm -f "$records_file"
+	rm -f "$records_file" "$repo_list_file"
 	if [[ "$LINT_STRICT" == "true" && "$actionable" -gt 0 ]]; then return 1; fi
 	return 0
 }
@@ -216,30 +222,43 @@ lint_audit() {
 lint_write_dispatch_plan() {
 	local records_file="$1"
 	local plan_dir="${HOME}/.aidevops/.agent-workspace/work"
-	local plan_file="${plan_dir}/lint-configure-pr-plan.json"
+	local temp_file plan_file
 	mkdir -p "$plan_dir"
+	temp_file=$(mktemp "${plan_dir}/lint-configure-pr-plan.XXXXXX") || return 1
+	plan_file="${temp_file}.json"
 	jq '[.[] | select(.classification != "READY" and .classification != "EXPLICITLY-DISABLED") |
 		{repo:.repo,classification:.classification,evidence:.detection.evidence,
 		files:[".aidevops.json",".gitignore"],
 		worker_brief:"Run aidevops lint configure --apply in an isolated linked worktree; preserve opt-outs and unknown keys; commit only tracked policy changes; verify native lint/typecheck; open a PR."}]' \
-		"$records_file" >"$plan_file"
+		"$records_file" >"$temp_file" || {
+		rm -f "$temp_file"
+		return 1
+	}
+	chmod 600 "$temp_file"
+	mv "$temp_file" "$plan_file"
 	printf 'Worker-ready PR plan written: %s\n' "$plan_file" >&2
 	return 0
 }
 
 lint_configure_all() {
-	local records_file repo_root
+	local records_file repo_list_file repo_root
 	records_file=$(mktemp)
+	repo_list_file=$(mktemp)
+	if ! lint_repo_list >"$repo_list_file"; then
+		rm -f "$records_file" "$repo_list_file"
+		print_error "Unable to read repository list"
+		return 1
+	fi
 	while IFS= read -r repo_root; do
 		[[ -d "$repo_root" ]] || continue
 		lint_audit_record "$repo_root" >>"$records_file"
-	done < <(lint_repo_list)
+	done <"$repo_list_file"
 	local array_file
 	array_file=$(mktemp)
 	jq -s '.' "$records_file" >"$array_file"
 	if [[ "$LINT_JSON" == "true" ]]; then jq '.' "$array_file"; else jq -r '.[] | "\(.classification)\t\(.repo)\t\(.detection.evidence)"' "$array_file"; fi
 	if [[ "$LINT_WRITE_PR_PLAN" == "true" ]]; then lint_write_dispatch_plan "$array_file"; fi
-	rm -f "$records_file" "$array_file"
+	rm -f "$records_file" "$repo_list_file" "$array_file"
 	return 0
 }
 
@@ -274,9 +293,15 @@ lint_configure_current() {
 }
 
 lint_reconcile() {
-	local repo_root registration_status migration_status feature_state hook_status
+	local repo_root registration_status migration_status feature_state hook_status repo_list_file
 	local registered=0 migrated=0 installed=0 skipped=0 failed=0
 	LINT_ALL=true
+	repo_list_file=$(mktemp)
+	if ! lint_repo_list >"$repo_list_file"; then
+		rm -f "$repo_list_file"
+		print_error "Unable to read repository list"
+		return 1
+	fi
 	while IFS= read -r repo_root; do
 		[[ -n "$repo_root" && -e "$repo_root/.git" ]] || {
 			skipped=$((skipped + 1))
@@ -306,7 +331,8 @@ lint_reconcile() {
 			continue
 		fi
 		if repo_verify_install_hook "$repo_root" >/dev/null 2>&1; then installed=$((installed + 1)); else failed=$((failed + 1)); fi
-	done < <(lint_repo_list)
+	done <"$repo_list_file"
+	rm -f "$repo_list_file"
 	printf 'Lint reconciliation: registered=%s migrated=%s installed=%s skipped=%s failed=%s\n' "$registered" "$migrated" "$installed" "$skipped" "$failed"
 	[[ "$failed" -eq 0 ]] || return 1
 	return 0

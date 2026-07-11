@@ -154,6 +154,7 @@ test_concurrent_registration_writes() {
 	/usr/bin/git -C "$root_a" add package.json
 	/usr/bin/git -C "$root_b" add package.json
 	jq -n --arg a "$root_a" --arg b "$root_b" '{initialized_repos:[{path:$a,features:[]},{path:$b,features:[]}]}' >"$repos_file"
+	printf '%s\n' '99999999' >"${repos_file}.aidevops-lock"
 	(AIDEVOPS_REPOS_FILE="$repos_file" repo_verify_migrate_registration "$root_a") &
 	local pid_a=$!
 	(AIDEVOPS_REPOS_FILE="$repos_file" repo_verify_migrate_registration "$root_b") &

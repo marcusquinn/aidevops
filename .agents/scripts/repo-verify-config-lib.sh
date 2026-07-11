@@ -32,10 +32,30 @@ _repo_verify_lock_acquire() {
 		rm -f "$REPO_VERIFY_LOCK_TOKEN"
 		return 1
 	}
-	while ! ln "$REPO_VERIFY_LOCK_TOKEN" "$REPO_VERIFY_LOCK_FILE" 2>/dev/null; do
+	while true; do
+		if [[ -d "${REPO_VERIFY_LOCK_FILE}.reclaim" ]]; then
+			attempts=$((attempts + 1))
+			if [[ "$attempts" -ge 100 ]]; then
+				rm -f "$REPO_VERIFY_LOCK_TOKEN"
+				REPO_VERIFY_LOCK_FILE=""
+				REPO_VERIFY_LOCK_TOKEN=""
+				return 1
+			fi
+			sleep 0.05
+			continue
+		fi
+		if ln "$REPO_VERIFY_LOCK_TOKEN" "$REPO_VERIFY_LOCK_FILE" 2>/dev/null; then
+			break
+		fi
 		owner_pid=$(sed -n '1p' "$REPO_VERIFY_LOCK_FILE" 2>/dev/null || true)
 		if [[ "$owner_pid" =~ ^[0-9]+$ ]] && ! kill -0 "$owner_pid" 2>/dev/null; then
-			rm -f "$REPO_VERIFY_LOCK_FILE"
+			if mkdir "${REPO_VERIFY_LOCK_FILE}.reclaim" 2>/dev/null; then
+				owner_pid=$(sed -n '1p' "$REPO_VERIFY_LOCK_FILE" 2>/dev/null || true)
+				if [[ "$owner_pid" =~ ^[0-9]+$ ]] && ! kill -0 "$owner_pid" 2>/dev/null; then
+					rm -f "$REPO_VERIFY_LOCK_FILE"
+				fi
+				rmdir "${REPO_VERIFY_LOCK_FILE}.reclaim" 2>/dev/null || true
+			fi
 			continue
 		fi
 		attempts=$((attempts + 1))

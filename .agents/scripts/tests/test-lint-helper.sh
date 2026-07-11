@@ -61,10 +61,15 @@ main() {
 	assert_equal "npm run lint" "$(jq -r '.verify.lint' "$repo_one/.aidevops.json")" "configure seeds exact native lint command"
 	assert_equal "true" "$(jq -r '.features.planning' "$repo_one/.aidevops.json")" "configure preserves unrelated config"
 
-	local plan_json
-	plan_json=$(HOME="$fake_home" bash "$HELPER" configure --all --write-pr-plan --json 2>/dev/null)
+	local plan_json plan_stderr plan_path
+	plan_stderr=$(mktemp)
+	plan_json=$(HOME="$fake_home" bash "$HELPER" configure --all --write-pr-plan --json 2>"$plan_stderr")
+	plan_path=$(<"$plan_stderr")
+	plan_path="${plan_path##*: }"
 	assert_equal "array" "$(printf '%s' "$plan_json" | jq -r 'type')" "write-pr-plan keeps JSON stdout machine-readable"
-	assert_equal "true" "$(jq -r 'length > 0' "${fake_home}/.aidevops/.agent-workspace/work/lint-configure-pr-plan.json")" "all-repo mode writes worker-ready PR plans"
+	assert_equal "true" "$(jq -r 'length > 0' "$plan_path")" "all-repo mode writes worker-ready PR plans"
+	assert_equal "600" "$(stat -f '%Lp' "$plan_path" 2>/dev/null || stat -c '%a' "$plan_path")" "PR plan protects private repository paths"
+	rm -f "$plan_stderr"
 
 	HOME="$fake_home" bash "$HELPER" reconcile --all >/dev/null
 	assert_equal "2" "$(jq '[.initialized_repos[] | select((.features // []) | index("code-quality"))] | length' "${fake_home}/.config/aidevops/repos.json")" "update reconciliation seeds every non-opted-out registration"
@@ -81,6 +86,10 @@ main() {
 	local unsafe_status=0
 	HOME="$fake_home" bash "$HELPER" configure --all --apply >/dev/null 2>&1 || unsafe_status=$?
 	assert_equal "2" "$unsafe_status" "all-repo direct canonical mutation is refused"
+
+	local missing_status=0
+	HOME="$fake_home" AIDEVOPS_REPOS_FILE="${TEST_TMP_DIR}/missing.json" bash "$HELPER" audit --all >/dev/null 2>&1 || missing_status=$?
+	assert_equal "1" "$missing_status" "all-repo audit fails when registry is unavailable"
 
 	printf '\nRan %d tests, %d failed.\n' "$((passed + failed))" "$failed"
 	[[ "$failed" -eq 0 ]] || return 1

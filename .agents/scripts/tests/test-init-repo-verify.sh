@@ -63,6 +63,20 @@ main() {
 	assert_equal "1" "$invalid_status" "init refuses to overwrite invalid existing config"
 	assert_equal "$invalid_before" "$invalid_after" "invalid existing config remains untouched"
 
+	local opted_out="${TEST_TMP_DIR}/opted-out"
+	mkdir -p "$opted_out"
+	/usr/bin/git -C "$opted_out" init -q
+	printf '%s\n' '{"features":{"code_quality":true},"verify":{"enabled":false}}' >"$opted_out/.aidevops.json"
+	printf '%s\n' '{"scripts":{"lint":"eslint ."}}' >"$opted_out/package.json"
+	/usr/bin/git -C "$opted_out" add package.json
+	_init_configure_repo_verify "$opted_out"
+	common_dir=$(/usr/bin/git -C "$opted_out" rev-parse --git-common-dir)
+	if [[ -f "${opted_out}/${common_dir}/hooks/pre-push" ]]; then
+		assert_equal "0" "$(grep -c '# guard:repo-verify' "${opted_out}/${common_dir}/hooks/pre-push" 2>/dev/null || printf 0)" "init does not install hook for verify opt-out"
+	else
+		assert_equal "0" "0" "init does not install hook for verify opt-out"
+	fi
+
 	printf '\nRan %d tests, %d failed.\n' "$((passed + failed))" "$failed"
 	[[ "$failed" -eq 0 ]] || return 1
 	return 0
