@@ -1102,6 +1102,9 @@ _process_single_ready_pr() {
 	# so dry-run still proves whether the PR would pass gates, then return before
 	# any GitHub write.
 	if [[ "${DRY_RUN:-0}" == "1" ]]; then
+		if ! _pulse_merge_preflight_snapshot_gate "$repo_slug" "$pr_number" "$pr_head_ref_oid"; then
+			return 1
+		fi
 		echo "[pulse-wrapper] DRY-RUN: would merge PR #${pr_number} in ${repo_slug} (linked_issue=#${linked_issue:-none})" >>"$LOGFILE"
 		return 0
 	fi
@@ -1149,6 +1152,13 @@ _process_single_ready_pr() {
 		return 1
 	fi
 
+	# #aidevops:trust-boundary — bind the final merge decision to the exact
+	# reviewed head and a fresh, terminal, quiet snapshot. This must run after
+	# all preparatory writes and immediately before native/admin merge paths.
+	if ! _pulse_merge_preflight_snapshot_gate "$repo_slug" "$pr_number" "$pr_head_ref_oid"; then
+		return 1
+	fi
+
 	# Native auto-merge fast-track (t3070): if CI is still pending and the
 	# repo has allow_auto_merge enabled, hand the merge over to GitHub —
 	# it merges within seconds of green instead of waiting for the next
@@ -1171,11 +1181,11 @@ _process_single_ready_pr() {
 	# whose rulesets allow immediate maintainer merges.
 	local merge_output="" _merge_exit=0 _auto_merge_output="" _auto_merge_exit=0
 	local merge_failure_context=""
-	merge_output=$(gh pr merge "$pr_number" --repo "$repo_slug" --squash --admin 2>&1)
+	merge_output=$(gh pr merge "$pr_number" --repo "$repo_slug" --squash --admin --match-head-commit "$pr_head_ref_oid" 2>&1)
 	_merge_exit=$?
 	if [[ $_merge_exit -ne 0 ]] && gh_merge_remediate_stale_auth_cache "$merge_output" "pulse merge PR #${pr_number} in ${repo_slug}" "$LOGFILE"; then
 		local _merge_original_output="$merge_output"
-		merge_output=$(gh pr merge "$pr_number" --repo "$repo_slug" --squash --admin 2>&1)
+		merge_output=$(gh pr merge "$pr_number" --repo "$repo_slug" --squash --admin --match-head-commit "$pr_head_ref_oid" 2>&1)
 		_merge_exit=$?
 		if [[ $_merge_exit -ne 0 ]]; then
 			merge_output="${_merge_original_output}
@@ -1205,7 +1215,7 @@ ${_missing_check_update_output}"
 	fi
 	if [[ $_merge_exit -ne 0 && "$merge_output" == *"Repository rule violations found"* ]]; then
 		echo "[pulse-wrapper] Deterministic merge: admin merge hit repository rulesets for PR #${pr_number} in ${repo_slug}; retrying with native auto-merge without --admin (GH#24438): ${merge_output}" >>"$LOGFILE"
-		_auto_merge_output=$(gh pr merge "$pr_number" --repo "$repo_slug" --auto --squash 2>&1)
+		_auto_merge_output=$(gh pr merge "$pr_number" --repo "$repo_slug" --auto --squash --match-head-commit "$pr_head_ref_oid" 2>&1)
 		_auto_merge_exit=$?
 		if [[ $_auto_merge_exit -eq 0 ]]; then
 			echo "[pulse-wrapper] Deterministic merge: enabled native auto-merge for PR #${pr_number} in ${repo_slug} after ruleset blocked admin bypass (GH#24438)" >>"$LOGFILE"
@@ -1216,11 +1226,11 @@ ${_missing_check_update_output}"
 [native auto-merge fallback]
 ${_auto_merge_output}"
 		echo "[pulse-wrapper] Deterministic merge: native auto-merge fallback failed for PR #${pr_number} in ${repo_slug}; retrying direct merge without --admin (GH#23087): ${_auto_merge_output}" >>"$LOGFILE"
-		merge_output=$(gh pr merge "$pr_number" --repo "$repo_slug" --squash 2>&1)
+		merge_output=$(gh pr merge "$pr_number" --repo "$repo_slug" --squash --match-head-commit "$pr_head_ref_oid" 2>&1)
 		_merge_exit=$?
 		if [[ $_merge_exit -ne 0 ]] && gh_merge_remediate_stale_auth_cache "$merge_output" "pulse direct merge PR #${pr_number} in ${repo_slug}" "$LOGFILE"; then
 			local _direct_merge_original_output="$merge_output"
-			merge_output=$(gh pr merge "$pr_number" --repo "$repo_slug" --squash 2>&1)
+			merge_output=$(gh pr merge "$pr_number" --repo "$repo_slug" --squash --match-head-commit "$pr_head_ref_oid" 2>&1)
 			_merge_exit=$?
 			if [[ $_merge_exit -ne 0 ]]; then
 				merge_output="${_direct_merge_original_output}
