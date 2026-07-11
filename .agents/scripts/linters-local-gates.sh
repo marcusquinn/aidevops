@@ -135,11 +135,14 @@ _linters_local_acquire_broad_gate_lock() {
 	local gate_name="$2"
 	local lock_path="${cache_dir}/broad-gate.lock"
 	local timeout_seconds="${LINTERS_LOCAL_GATE_LOCK_TIMEOUT_SECONDS:-${LINTERS_LOCAL_BROAD_GATE_TIMEOUT_SECONDS:-90}}"
-	local started_at now owner_token="" owner_pid=""
+	local max_lock_age="${LINTERS_LOCAL_GATE_LOCK_MAX_AGE_SECONDS:-}"
+	local started_at now owner_token="" owner_pid="" owner_started=0
 	[[ "$timeout_seconds" =~ ^[0-9]+$ ]] || timeout_seconds=90
+	[[ "$max_lock_age" =~ ^[0-9]+$ ]] || max_lock_age=$((timeout_seconds + 30))
 	started_at=$(date +%s)
 
 	while ! _linters_local_try_create_lock "$cache_dir" "$lock_path"; do
+		now=$(date +%s)
 		if [[ -d "$lock_path" ]]; then
 			owner_token=$(cat "${lock_path}/owner" 2>/dev/null || true)
 			if [[ ! "$owner_token" =~ ^[0-9]+$ ]] || ! kill -0 "$owner_token" 2>/dev/null; then
@@ -148,11 +151,13 @@ _linters_local_acquire_broad_gate_lock() {
 		elif [[ -f "$lock_path" ]]; then
 			owner_token=$(cat "$lock_path" 2>/dev/null || true)
 			owner_pid=${owner_token%%:*}
-			if [[ ! "$owner_token" =~ ^[0-9]+:[0-9]+:[0-9]+$ ]] || ! kill -0 "$owner_pid" 2>/dev/null; then
+			owner_started=${owner_token#*:}
+			owner_started=${owner_started%%:*}
+			if [[ ! "$owner_token" =~ ^[0-9]+:[0-9]+:[0-9]+$ ]] ||
+				! kill -0 "$owner_pid" 2>/dev/null || [[ $((now - owner_started)) -gt "$max_lock_age" ]]; then
 				_linters_local_reclaim_stale_lock "$lock_path" "$owner_token"
 			fi
 		fi
-		now=$(date +%s)
 		if [[ $((now - started_at)) -ge "$timeout_seconds" ]]; then
 			print_warning "${gate_name}: broad-gate slot unavailable after ${timeout_seconds}s"
 			return 1
@@ -177,7 +182,7 @@ _linters_local_release_broad_gate_lock() {
 _linters_local_file_checksum() {
 	local file_path="$1"
 	if [[ -f "$file_path" ]]; then
-		cksum "$file_path" 2>/dev/null || true
+		cksum <"$file_path" 2>/dev/null || true
 	fi
 	return 0
 }
