@@ -873,6 +873,10 @@ test_scan_single_pr_filters_positive_inline_acknowledgement_reply() {
 	_assert_scan_single_pr_has_no_findings "1" \
 		"issue #26770 positive inline guard-check acknowledgement is filtered"
 
+	acknowledgement_body="I understand your point regarding the scope of this PR. Since the test fixture setup is isolated and currently functioning as intended in your environment, I agree that further hardening of the path normalization can be deferred to a dedicated task. I will refrain from further comments on this thread."
+	_assert_scan_single_pr_has_no_findings "1" \
+		"issue #27188 deferred-scope acknowledgement is filtered"
+
 	gh() {
 		local command="$1"
 		shift
