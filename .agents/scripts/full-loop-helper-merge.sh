@@ -452,9 +452,10 @@ _merge_verify_completed_state() {
 		--json state,mergedAt,mergeCommit 2>/dev/null) || return 1
 
 	if ! printf '%s' "$pr_json" | jq -e '
+		def present: ((. // "") | length > 0);
 		(.state == "MERGED")
-		and ((.mergedAt // "") != "")
-		and ((.mergeCommit.oid // "") != "")
+		and (.mergedAt | present)
+		and (.mergeCommit.oid | present)
 	' >/dev/null; then
 		return 1
 	fi
