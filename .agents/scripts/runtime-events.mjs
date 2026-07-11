@@ -706,7 +706,7 @@ export function verifyRuntimeEventStore() {
     ORDER BY subject_id, state_version;
   `);
   const invalidStateSubjects = [];
-  for (const subjectId of [...new Set(stateRows.map((row) => row.subject_id))]) {
+  for (const subjectId of new Set(stateRows.map((row) => row.subject_id))) {
     try {
       reconstructRuntimeState(stateRows, { subjectId });
     } catch {

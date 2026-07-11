@@ -478,6 +478,7 @@ def _is_temp_operand(path: str, cwd: str) -> bool:
     canonical = _canonical_operand(path, cwd)
     if not canonical:
         return False
+    # nosec B108 -- these canonical roots classify operands; no temp file is created.
     roots = ["/tmp", "/var/tmp"]
     tmpdir = os.environ.get("TMPDIR", "")
     if tmpdir:

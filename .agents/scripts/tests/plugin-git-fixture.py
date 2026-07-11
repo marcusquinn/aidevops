@@ -14,7 +14,8 @@ import zlib
 
 def write_object(git_dir: Path, object_type: bytes, content: bytes) -> str:
     payload = object_type + b" " + str(len(content)).encode() + b"\0" + content
-    object_id = hashlib.sha1(payload).hexdigest()
+    # Git object IDs require SHA-1 compatibility; this is not a security digest.
+    object_id = hashlib.sha1(payload, usedforsecurity=False).hexdigest()
     object_path = git_dir / "objects" / object_id[:2] / object_id[2:]
     object_path.parent.mkdir(parents=True, exist_ok=True)
     if not object_path.exists():
