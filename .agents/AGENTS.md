@@ -71,7 +71,7 @@ Skip if you lack Edit/Write/Bash tools. Otherwise, before any file modification 
 
 ### Tool and file discipline
 
-- Prefer exact search first: `rg`/Grep, then `osgrep` for semantic search. File discovery with Bash available: `git ls-files '<pattern>'` for tracked files, `fd` for untracked, `rg --files -g '<pattern>'` for file lists. Glob is last resort.
+- Prefer exact search first: with Bash use scoped `rg` (or `git grep` for tracked content); use the runtime Grep tool only without Bash or for bounded searches. Then use `osgrep` for semantic search. File discovery with Bash available: `git ls-files '<pattern>'` for tracked files, `fd` for untracked, `rg --files -g '<pattern>'` for file lists. Glob is last resort.
 - Use Read for file reads. Always Read before Edit/Write existing files, re-read after modification before another edit, verify paths first, and include 3+ context lines in edits.
 - Output text directly; never use Bash `echo` to communicate. Call independent tools in parallel.
 - Slash commands: read `scripts/commands/<command>.md`, then `workflows/<command>.md` fallback.

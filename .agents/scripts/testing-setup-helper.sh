@@ -437,8 +437,13 @@ discover_ci() {
 	# GitHub Actions
 	if has_dir "$project_dir" ".github/workflows"; then
 		local has_test_step="false"
-		if grep -rl 'npm test\|yarn test\|pnpm test\|pytest\|cargo test\|go test\|bats' \
-			"${project_dir}/.github/workflows/" >/dev/null 2>&1; then
+		if command -v rg >/dev/null 2>&1 && \
+			rg -q -e 'npm test|yarn test|pnpm test|pytest|cargo test|go test|bats' \
+				"${project_dir}/.github/workflows/" 2>/dev/null; then
+			has_test_step="true"
+		elif ! command -v rg >/dev/null 2>&1 && \
+			grep -rEq 'npm test|yarn test|pnpm test|pytest|cargo test|go test|bats' \
+				"${project_dir}/.github/workflows/" 2>/dev/null; then
 			has_test_step="true"
 		fi
 		ci=$(echo "$ci" | jq --arg t "$has_test_step" \
@@ -1100,4 +1105,6 @@ main() {
 	return 0
 }
 
-main "$@"
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+	main "$@"
+fi
