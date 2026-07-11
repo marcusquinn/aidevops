@@ -78,11 +78,15 @@ _generate_greeting_agents_md() {
 	# SC2088: tilde is intentionally literal here -- written to AGENTS.md
 	# as documentation for the model, not expanded as a shell path.
 	local cache_path plugin_name global_config_path
+	local greeting_authority_note=""
 	case "$runtime_id" in
 	opencode)
 		# shellcheck disable=SC2088
 		cache_path="~/.aidevops/cache/session-greeting.txt"
 		plugin_name="opencode-aidevops plugin"
+		# Markdown backticks are intentionally literal.
+		# shellcheck disable=SC2016
+		greeting_authority_note='The opencode-aidevops plugin normally injects an authoritative `## Session-start greeting order` instruction dynamically. If that instruction is present in the system context, follow it and do not run the fallback steps below or produce a second greeting. Use the fallback only when the plugin instruction is absent.'
 		# shellcheck disable=SC2088
 		global_config_path="~/.config/opencode/opencode.json"
 		;;
@@ -117,7 +121,9 @@ turn. Raw output is cached at \`${cache_path}\`. The
 user has already seen it — do NOT re-run \`aidevops-update-check.sh\` and do
 NOT repeat toast content in the chat.
 
-**On interactive conversation start** (skip for headless sessions like \`/pulse\`, \`/full-loop\`):
+${greeting_authority_note}
+
+**Fallback on interactive conversation start** (skip for headless sessions like \`/pulse\`, \`/full-loop\`):
 
 1. Read line 1 of \`${cache_path}\`. Format: \`aidevops v{X} running in ${display_name} v{Y} | ...\`. Extract \`{X}\` and \`{Y}\`.
 2. Before any tool call or task work, make the first visible text in your first assistant response exactly this template — no extra prose, no status dump:
