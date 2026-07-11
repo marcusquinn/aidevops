@@ -401,21 +401,25 @@ _large_file_gate_verify_prior_reduced_size() {
 _large_file_gate_find_existing_debt_issue() {
 	local repo_slug="$1"
 	local lf_path="$2"
-	local _marker="generator=large-file-simplification-gate cited_file=${lf_path}"
+	local _marker="generator=large-file-simplification-gate cited_file=${lf_path} "
 
 	# Open-state lookup. One retry with 2s backoff covers GitHub search
 	# index lag (typically 1-3s after issue creation) — t2995 investigation
 	# step 4. We only retry when the call SUCCEEDED but returned empty;
 	# retrying a real failure would just hit the same timeout twice.
-	local _open _open_rc=0
-	_open=$(gh_issue_list --repo "$repo_slug" --state open \
-		--label "file-size-debt" --search "\"$_marker\" in:body" \
-		--json number --jq '.[0].number // empty' --limit 5 2>/dev/null) || _open_rc=$?
+	local _open _open_json _open_rc=0
+	_open_json=$(gh_issue_list --repo "$repo_slug" --state open \
+		--label "file-size-debt" --search "large-file-simplification-gate in:body" \
+		--json number,body --limit 100 2>/dev/null) || _open_rc=$?
+	_open=$(printf '%s' "$_open_json" | jq -r --arg marker "$_marker" \
+		'[.[] | select((.body // "") | contains($marker)) | .number] | min // empty' 2>/dev/null) || _open_rc=$?
 	if [[ $_open_rc -eq 0 && -z "$_open" ]]; then
 		sleep 2
-		_open=$(gh_issue_list --repo "$repo_slug" --state open \
-			--label "file-size-debt" --search "\"$_marker\" in:body" \
-			--json number --jq '.[0].number // empty' --limit 5 2>/dev/null) || _open_rc=$?
+		_open_json=$(gh_issue_list --repo "$repo_slug" --state open \
+			--label "file-size-debt" --search "large-file-simplification-gate in:body" \
+			--json number,body --limit 100 2>/dev/null) || _open_rc=$?
+		_open=$(printf '%s' "$_open_json" | jq -r --arg marker "$_marker" \
+			'[.[] | select((.body // "") | contains($marker)) | .number] | min // empty' 2>/dev/null) || _open_rc=$?
 	fi
 	if [[ $_open_rc -ne 0 ]]; then
 		echo "[pulse-wrapper] WARN: file-size-debt dedup open-search failed for ${lf_path} (rc=${_open_rc}); deferring (t2995)" >>"$LOGFILE"
@@ -426,12 +430,13 @@ _large_file_gate_find_existing_debt_issue() {
 		return 0
 	fi
 
-	local _closed _closed_rc=0
-	_closed=$(gh_issue_list --repo "$repo_slug" \
+	local _closed _closed_json _closed_rc=0
+	_closed_json=$(gh_issue_list --repo "$repo_slug" \
 		--state closed --label "file-size-debt" \
-		--search "\"$_marker\" in:body" \
-		--json number --jq '.[0].number // empty' \
-		--limit 5 2>/dev/null) || _closed_rc=$?
+		--search "large-file-simplification-gate in:body" \
+		--json number,body --limit 100 2>/dev/null) || _closed_rc=$?
+	_closed=$(printf '%s' "$_closed_json" | jq -r --arg marker "$_marker" \
+		'[.[] | select((.body // "") | contains($marker)) | .number] | min // empty' 2>/dev/null) || _closed_rc=$?
 	if [[ $_closed_rc -ne 0 ]]; then
 		echo "[pulse-wrapper] WARN: file-size-debt dedup closed-search failed for ${lf_path} (rc=${_closed_rc}); deferring (t2995)" >>"$LOGFILE"
 		return 2
@@ -441,6 +446,26 @@ _large_file_gate_find_existing_debt_issue() {
 		return 0
 	fi
 	return 1
+}
+
+#######################################
+# Restore the labels required for an active canonical debt issue.
+# Arguments: issue_number, repo_slug
+#######################################
+_large_file_gate_normalize_debt_issue() {
+	local issue_number="$1"
+	local repo_slug="$2"
+
+	if ! gh issue edit "$issue_number" --repo "$repo_slug" \
+		--add-label "file-size-debt,auto-dispatch" >/dev/null 2>&1; then
+		return 1
+	fi
+	local _stale_label
+	for _stale_label in status:done not-planned simplification-incomplete; do
+		gh issue edit "$issue_number" --repo "$repo_slug" \
+			--remove-label "$_stale_label" >/dev/null 2>&1 || true
+	done
+	return 0
 }
 
 #######################################
@@ -457,9 +482,10 @@ _large_file_gate_reopen_debt_issue() {
 		echo "[pulse-wrapper] WARN: failed to reopen canonical file-size-debt #${issue_number} for ${lf_path}; deferring" >>"$LOGFILE"
 		return 1
 	fi
-	gh issue edit "$issue_number" --repo "$repo_slug" \
-		--add-label "file-size-debt,auto-dispatch" \
-		--remove-label "status:done,not-planned,simplification-incomplete" >/dev/null 2>&1 || true
+	if ! _large_file_gate_normalize_debt_issue "$issue_number" "$repo_slug"; then
+		echo "[pulse-wrapper] WARN: reopened file-size-debt #${issue_number} but failed to normalize labels; next pulse will retry" >>"$LOGFILE"
+		return 1
+	fi
 	echo "[pulse-wrapper] Reopened canonical file-size-debt issue #${issue_number} for ${lf_path}" >>"$LOGFILE"
 	printf '#%s (reopened)' "$issue_number"
 	return 0
@@ -523,6 +549,21 @@ _Created by large-file simplification gate (pulse-dispatch-core.sh)_"
 		head -1 |
 		grep -oE '[0-9]+$' || true)
 	if [[ -n "$_new_num" ]]; then
+		# Reconcile concurrent search-then-create races after GitHub's search
+		# index has had time to expose both issues. The oldest exact-marker
+		# match is canonical; any later issue created by this caller is closed.
+		sleep 3
+		local _canonical_combined _canonical_num="" _reconcile_rc=0
+		_canonical_combined=$(_large_file_gate_find_existing_debt_issue "$repo_slug" "$lf_path") || _reconcile_rc=$?
+		if [[ "$_reconcile_rc" -eq 0 && "$_canonical_combined" == open:* ]]; then
+			_canonical_num="${_canonical_combined#open:}"
+		fi
+		if [[ -n "$_canonical_num" && "$_canonical_num" != "$_new_num" ]]; then
+			gh issue close "$_new_num" --repo "$repo_slug" --reason "not planned" \
+				--comment "Superseded by canonical file-size-debt #${_canonical_num}; closed by post-create race reconciliation." >/dev/null 2>&1 || true
+			printf '#%s (existing)' "$_canonical_num"
+			return 0
+		fi
 		printf '#%s (new)' "$_new_num"
 		echo "[pulse-wrapper] Created file-size-debt issue #${_new_num} for ${lf_path} (blocking #${parent_issue})" >>"$LOGFILE"
 	else
@@ -586,6 +627,10 @@ _large_file_gate_create_debt_issue() {
 	fi
 
 	if [[ "$_existing_state" == "open" ]]; then
+		if ! _large_file_gate_normalize_debt_issue "$_existing" "$repo_slug"; then
+			echo "[pulse-wrapper] WARN: failed to normalize canonical file-size-debt #${_existing}; deferring" >>"$LOGFILE"
+			return 0
+		fi
 		printf '#%s (existing)' "$_existing"
 		return 0
 	fi

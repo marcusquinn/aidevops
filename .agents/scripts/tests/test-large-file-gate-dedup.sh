@@ -119,12 +119,20 @@ gh_issue_list() {
 		echo "$_n" >"$OPEN_CALL_COUNTER"
 		# On the SECOND open call, return STUB_GH_LIST_RETRY_OUT if set.
 		if [[ "$_n" -ge 2 && -n "${STUB_GH_LIST_RETRY_OUT:-}" ]]; then
-			printf '%s' "$STUB_GH_LIST_RETRY_OUT"
+			printf '[{"number":%s,"body":"generator=large-file-simplification-gate cited_file=worktree-helper.sh threshold=1000 generator=large-file-simplification-gate cited_file=.agents/scripts/worktree-helper.sh threshold=1000"}]' "$STUB_GH_LIST_RETRY_OUT"
 			return 0
 		fi
-		printf '%s' "${STUB_GH_LIST_OPEN_OUT:-}"
+		if [[ -n "${STUB_GH_LIST_OPEN_OUT:-}" ]]; then
+			printf '[{"number":%s,"body":"generator=large-file-simplification-gate cited_file=worktree-helper.sh threshold=1000 generator=large-file-simplification-gate cited_file=.agents/scripts/worktree-helper.sh threshold=1000"}]' "$STUB_GH_LIST_OPEN_OUT"
+		else
+			printf '[]'
+		fi
 	elif [[ "$_state" == "closed" ]]; then
-		printf '%s' "${STUB_GH_LIST_CLOSED_OUT:-}"
+		if [[ -n "${STUB_GH_LIST_CLOSED_OUT:-}" ]]; then
+			printf '[{"number":%s,"body":"generator=large-file-simplification-gate cited_file=worktree-helper.sh threshold=1000 generator=large-file-simplification-gate cited_file=.agents/scripts/worktree-helper.sh threshold=1000"}]' "$STUB_GH_LIST_CLOSED_OUT"
+		else
+			printf '[]'
+		fi
 	fi
 	return "${STUB_GH_LIST_RC:-0}"
 }
@@ -154,6 +162,14 @@ export -f _large_file_gate_verify_prior_reduced_size
 # short-circuit it for deterministic test runtime.
 sleep() { return 0; }
 export -f sleep
+
+gh() {
+	if [[ "$1" == "issue" && "$2" == "edit" ]]; then
+		return 0
+	fi
+	return 0
+}
+export -f gh
 
 # Bash 3.2 + LARGE_FILE_LINE_THRESHOLD (referenced by the gate script via
 # nested helpers). The dedup helper itself does not depend on this — but

@@ -126,11 +126,19 @@ gh() {
 
 	if [[ "$1" == "issue" && "$2" == "list" ]]; then
 		if [[ "$saw_closed" == "true" ]]; then
-			printf '%s\n' "$GH_CLOSED_RESPONSE"
+			if [[ -n "$GH_CLOSED_RESPONSE" ]]; then
+				printf '[{"number":%s,"body":"generator=large-file-simplification-gate cited_file=under.sh threshold=2000 generator=large-file-simplification-gate cited_file=over.sh threshold=2000 generator=large-file-simplification-gate cited_file=missing.sh threshold=2000"}]\n' "$GH_CLOSED_RESPONSE"
+			else
+				printf '[]\n'
+			fi
 			return 0
 		fi
 		if [[ "$saw_open" == "true" ]]; then
-			printf '%s\n' "$GH_OPEN_RESPONSE"
+			if [[ -n "$GH_OPEN_RESPONSE" ]]; then
+				printf '[{"number":%s,"body":"generator=large-file-simplification-gate cited_file=under.sh threshold=2000 generator=large-file-simplification-gate cited_file=over.sh threshold=2000 generator=large-file-simplification-gate cited_file=missing.sh threshold=2000"}]\n' "$GH_OPEN_RESPONSE"
+			else
+				printf '[]\n'
+			fi
 			return 0
 		fi
 	fi
