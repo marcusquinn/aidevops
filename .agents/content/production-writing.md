@@ -2,7 +2,7 @@
 name: writing
 description: Scripts, copy, captions, and text content production across all formats
 mode: subagent
-model: sonnet
+model: standard
 ---
 
 <!-- SPDX-License-Identifier: MIT -->

@@ -262,7 +262,7 @@ PROMPT
 # Returns: 0 on success, 1 on failure
 _call_verifier() {
 	local prompt="$1"
-	local model="${2:-haiku}"
+	local model="${2:-simple}"
 
 	if [[ ! -x "${SCRIPT_DIR}/ai-research-helper.sh" ]]; then
 		log_error "ai-research-helper.sh not found or not executable"
@@ -502,10 +502,10 @@ _cmd_verify_select_verifier() {
 	# Determine model short name for ai-research-helper
 	local model_short
 	case "$verifier_model" in
-	claude-haiku-*) model_short="haiku" ;;
-	claude-sonnet-*) model_short="sonnet" ;;
-	claude-opus-*) model_short="opus" ;;
-	*) model_short="haiku" ;; # ai-research-helper only supports anthropic
+	claude-haiku-*) model_short="simple" ;;
+	claude-sonnet-*) model_short="standard" ;;
+	claude-opus-*) model_short="thinking" ;;
+	*) model_short="simple" ;;
 	esac
 
 	# For non-Anthropic verifiers, we still use ai-research-helper (Anthropic)
@@ -515,7 +515,7 @@ _cmd_verify_select_verifier() {
 		log_info "Note: Using Anthropic API for verification call (multi-provider API support planned in t1364.3)"
 		verifier_provider="anthropic"
 		verifier_model="claude-haiku-4-5"
-		model_short="haiku"
+		model_short="simple"
 	fi
 
 	log_info "Verifying operation: ${op_type} (${risk_tier})"

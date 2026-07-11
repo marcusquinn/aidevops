@@ -2,7 +2,7 @@
 description: Show cross-session success/failure patterns to guide task approach and model routing
 agent: Build+
 mode: subagent
-model: haiku
+model: simple
 ---
 
 <!-- SPDX-License-Identifier: MIT -->

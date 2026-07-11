@@ -136,9 +136,9 @@ close_stale_quality_debt_prs() {
 #######################################
 _enrichment_resolve_model() {
 	local resolved_model=""
-	resolved_model=$("$MODEL_AVAILABILITY_HELPER" resolve opus || echo "")
+	resolved_model=$("$MODEL_AVAILABILITY_HELPER" resolve thinking || echo "")
 	if [[ -z "$resolved_model" ]]; then
-		resolved_model=$("$MODEL_AVAILABILITY_HELPER" resolve sonnet || echo "")
+		resolved_model=$("$MODEL_AVAILABILITY_HELPER" resolve standard || echo "")
 	fi
 	if [[ -z "$resolved_model" ]]; then
 		echo "[pulse-wrapper] dispatch_enrichment_workers: no thinking-tier model available — skipping" >>"$LOGFILE"

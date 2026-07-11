@@ -75,9 +75,9 @@ ORIGIN_LABELS=(
 
 # --- Tier Labels (model routing) ---
 TIER_LABELS=(
-	"tier:simple|BFD4F2|Haiku-tier: docs, formatting, config, simple renames"
-	"tier:standard|1D76DB|Sonnet-tier: standard implementation, bug fixes, refactors"
-	"tier:thinking|7057FF|Opus-tier: architecture, novel design, complex trade-offs"
+	"tier:simple|BFD4F2|Simple workload: docs, formatting, config, bounded transforms"
+	"tier:standard|1D76DB|Standard workload: implementation, bug fixes, refactors"
+	"tier:thinking|7057FF|Thinking workload: architecture, novel design, complex trade-offs"
 )
 
 # --- Priority Labels ---
@@ -90,18 +90,18 @@ PRIORITY_LABELS=(
 
 # --- Dispatch Tracking Labels ---
 DISPATCH_LABELS=(
-	"dispatched:haiku|1D76DB|Task dispatched to haiku model"
-	"dispatched:sonnet|1D76DB|Task dispatched to sonnet model"
-	"dispatched:opus|1D76DB|Task dispatched to opus model"
-	"implemented:haiku|0075CA|Task implemented by haiku model"
-	"implemented:sonnet|0075CA|Task implemented by sonnet model"
-	"implemented:opus|0075CA|Task implemented by opus model"
-	"retried:haiku|E4E669|Task retried with haiku model"
-	"retried:sonnet|E4E669|Task retried with sonnet model"
-	"retried:opus|E4E669|Task retried with opus model"
-	"failed:haiku|D93F0B|Task failed with haiku model"
-	"failed:sonnet|D93F0B|Task failed with sonnet model"
-	"failed:opus|D93F0B|Task failed with opus model"
+	"dispatched:simple|1D76DB|Task dispatched at the simple workload tier"
+	"dispatched:standard|1D76DB|Task dispatched at the standard workload tier"
+	"dispatched:thinking|1D76DB|Task dispatched at the thinking workload tier"
+	"implemented:simple|0075CA|Task implemented at the simple workload tier"
+	"implemented:standard|0075CA|Task implemented at the standard workload tier"
+	"implemented:thinking|0075CA|Task implemented at the thinking workload tier"
+	"retried:simple|E4E669|Task retried at the simple workload tier"
+	"retried:standard|E4E669|Task retried at the standard workload tier"
+	"retried:thinking|E4E669|Task retried at the thinking workload tier"
+	"failed:simple|D93F0B|Task failed at the simple workload tier"
+	"failed:standard|D93F0B|Task failed at the standard workload tier"
+	"failed:thinking|D93F0B|Task failed at the thinking workload tier"
 )
 
 # --- aidevops System Labels ---

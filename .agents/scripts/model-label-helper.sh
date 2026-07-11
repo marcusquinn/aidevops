@@ -11,12 +11,12 @@
 #   model-label-helper.sh help
 #
 # Actions: planned, researched, implemented, reviewed, verified, documented, failed, retried
-# Models: haiku, flash, sonnet, pro, opus (or concrete model names)
+# Tiers: simple, standard, thinking (or concrete model names)
 #
 # Labels are append-only (history, not state). Examples:
-#   implemented:sonnet - Task was implemented using sonnet tier
-#   failed:sonnet - Task failed when using sonnet tier
-#   retried:opus - Task was retried with opus tier after failure
+#   implemented:standard - Task was implemented using the standard tier
+#   failed:standard - Task failed when using the standard tier
+#   retried:thinking - Task was retried with the thinking tier after failure
 #
 # Integration points:
 #   - supervisor dispatch: adds implemented:{model}
@@ -33,7 +33,7 @@ set -euo pipefail
 readonly VALID_ACTIONS="planned researched implemented reviewed verified documented failed retried"
 
 # Valid model tiers (matches model-routing.md and pattern-tracker)
-readonly VALID_MODELS="local haiku flash sonnet pro opus"
+readonly VALID_MODELS="simple standard thinking"
 
 #######################################
 # Show help
@@ -58,20 +58,20 @@ ACTIONS:
     planned, researched, implemented, reviewed, verified, documented, failed, retried
 
 MODELS:
-    local, haiku, flash, sonnet, pro, opus (or concrete model names like claude-sonnet-4-6)
+    simple, standard, thinking (or concrete model names like claude-sonnet-4-6)
 
 EXAMPLES:
     # Add label when dispatching a task
-    model-label-helper.sh add t1025 implemented sonnet
+    model-label-helper.sh add t1025 implemented standard
 
     # Add label when task fails
-    model-label-helper.sh add t1025 failed sonnet
+    model-label-helper.sh add t1025 failed standard
 
     # Add label when retrying with higher tier
-    model-label-helper.sh add t1025 retried opus
+    model-label-helper.sh add t1025 retried thinking
 
-    # Query tasks that failed with sonnet
-    model-label-helper.sh query failed sonnet
+    # Query tasks that failed at the standard tier
+    model-label-helper.sh query failed standard
 
     # Show overall model usage stats
     model-label-helper.sh stats
@@ -94,9 +94,9 @@ EOF
 #######################################
 # Normalize model name to tier
 # Arguments:
-#   $1 - Model name (e.g., claude-sonnet-4-6, sonnet, gpt-4)
+#   $1 - Model name (e.g., claude-sonnet-4-6, standard, gpt-4)
 # Returns:
-#   Normalized tier name (haiku, flash, sonnet, pro, opus)
+#   Normalized tier name (simple, standard, thinking)
 #######################################
 normalize_model() {
 	local model="$1"
@@ -110,35 +110,23 @@ normalize_model() {
 	# Normalize concrete model names to tiers
 	# Specific patterns first, then wildcards
 	case "$model" in
-	claude-haiku-4* | claude-3-haiku* | claude-3-5-haiku*)
-		echo "haiku"
-		;;
-	gemini-*-flash*)
-		echo "flash"
+	claude-haiku-4* | claude-3-haiku* | claude-3-5-haiku* | gemini-*-flash* | *terra*)
+		echo "simple"
 		;;
 	claude-sonnet-4* | claude-3-sonnet* | claude-3-5-sonnet*)
-		echo "sonnet"
+		echo "standard"
 		;;
-	gemini-*-pro*)
-		echo "pro"
+	gemini-*-pro* | claude-opus-4* | claude-3-opus* | o3 | o1*)
+		echo "thinking"
 		;;
-	claude-opus-4* | claude-3-opus* | o3 | o1*)
-		echo "opus"
-		;;
-	*haiku*)
-		echo "haiku"
-		;;
-	*flash*)
-		echo "flash"
+	*haiku* | *flash*)
+		echo "simple"
 		;;
 	*sonnet*)
-		echo "sonnet"
+		echo "standard"
 		;;
-	*pro*)
-		echo "pro"
-		;;
-	*opus*)
-		echo "opus"
+	*pro* | *opus*)
+		echo "thinking"
 		;;
 	*)
 		# Unknown model - use as-is but warn

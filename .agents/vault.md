@@ -2,7 +2,7 @@
 name: vault
 description: Vault security operations - encrypted stores, lock/unlock policy, fleet trust, secure sync, provider routing, and protected-data task briefing
 mode: subagent
-model: opus
+model: thinking
 tools:
   read: true
   write: true

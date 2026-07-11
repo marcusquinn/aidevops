@@ -48,13 +48,13 @@ Prevents workers spawning only to find no ratchet-down work exists (GH#19024).
 
 Runs BEFORE generator-marker validators in `cmd_validate()`. Detects issues that modify the worker dispatch/spawn path by scanning the body's `## Files to modify` / `## How` sections for canonical dispatch-path file patterns (`pulse-wrapper.sh`, `pulse-dispatch-*.sh`, `headless-runtime-helper.sh`, `worker-lifecycle-common.sh`, `shared-dispatch-dedup.sh`, etc.).
 
-When detected on a `tier:thinking` issue lacking `model:opus-4-7`:
+When dispatch-path work is detected without `tier:thinking`:
 
-1. Applies `model:opus-4-7` label via `gh issue edit`
+1. Applies `tier:thinking` via `gh issue edit`
 2. Posts a provenance-wrapped audit comment (`<!-- self-hosting-tier-override -->` marker for idempotency)
 3. Returns 0 (never blocks dispatch)
 
-**Rationale:** Self-hosting tasks (fixing the dispatch path) trigger a tautology loop — the workers run through the code being fixed. Starting at opus-4-6 wastes 1-2 cascade attempts (~40K tokens, observed on GH#20765). Applying `model:opus-4-7` upfront eliminates this waste.
+**Rationale:** Self-hosting tasks run through the dispatch path being changed. Applying the terminal workload tier upfront avoids lower-tier attempts while leaving concrete model and reasoning selection to runtime routing.
 
 **Tests:** `tests/test-self-hosting-detector.sh` — 7 cases covering positive/negative/mixed-scope/idempotency/bypass/dry-run/tier-guard.
 
@@ -79,6 +79,7 @@ Outcomes:
 1. Define the generator function in `pulse-simplification.sh` or the issue-creation script.
 2. Emit the marker in the issue body: `<!-- aidevops:generator=my-generator -->`
 3. Implement in `pre-dispatch-validator-helper.sh`:
+
    ```bash
    _validator_my_generator() {
        local slug="$1"
@@ -86,10 +87,13 @@ Outcomes:
        return 0  # 0=dispatch, 10=falsified, 20=error
    }
    ```
+
 4. Register in `_register_validators()`:
+
    ```bash
    _VALIDATOR_REGISTRY["my-generator"]="_validator_my_generator"
    ```
+
 5. Add test cases in `tests/test-pre-dispatch-validator.sh` (falsified + legitimate paths).
 6. Run `shellcheck .agents/scripts/pre-dispatch-validator-helper.sh`.
 

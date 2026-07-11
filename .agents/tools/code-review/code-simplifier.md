@@ -1,7 +1,7 @@
 ---
 description: Analyse code for simplification opportunities (analysis-only, human-gated)
 mode: subagent
-model: opus
+steps: 12
 tools:
   read: true
   write: false
@@ -10,7 +10,7 @@ tools:
   glob: true
   grep: true
   webfetch: false
-  task: true
+  task: false
 ---
 
 <!-- SPDX-License-Identifier: MIT -->
@@ -23,7 +23,7 @@ tools:
 ## Quick Reference
 
 - **Mode**: Analysis-only — suggestions only, never applies changes directly
-- **Model**: `opus` minimum (NEVER sonnet/haiku/flash — knowledge-loss risk; if unavailable, wait)
+- **Effort**: `thinking`; inherit the parent model and never exceed the parent's reasoning level
 - **Trigger**: `/code-simplifier`
 - **Rule**: Never lose functionality, knowledge, capability, or decision rationale. Human approves every suggestion before work begins.
 

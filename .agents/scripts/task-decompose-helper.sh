@@ -9,7 +9,7 @@
 # dependency edges and lineage context.
 #
 # Inspired by TinyAGI/fractals — adopts the classify/decompose/lineage pattern,
-# not the code. Uses haiku-tier LLM calls (~$0.001 each).
+# not the code. Uses simple-tier LLM calls.
 #
 # Usage:
 #   task-decompose-helper.sh classify <description> [--lineage <json>] [--depth N] [--task-id ID] [--todo-file PATH]
@@ -146,7 +146,7 @@ Respond with ONLY a JSON object (no markdown, no explanation outside the JSON):
 call_classify_llm() {
 	local prompt="$1"
 	local raw_result
-	raw_result=$("$AI_HELPER" --prompt "$prompt" --model haiku --max-tokens 200 || echo "")
+	raw_result=$("$AI_HELPER" --prompt "$prompt" --model simple --max-tokens 200 || echo "")
 	if [[ -z "$raw_result" ]]; then
 		return 1
 	fi
@@ -430,7 +430,7 @@ call_decompose_llm() {
 	local prompt="$1"
 	local max_subtasks="$2"
 	local raw_result
-	raw_result=$("$AI_HELPER" --prompt "$prompt" --model haiku --max-tokens 600 || echo "")
+	raw_result=$("$AI_HELPER" --prompt "$prompt" --model simple --max-tokens 600 || echo "")
 	if [[ -z "$raw_result" ]]; then
 		return 1
 	fi

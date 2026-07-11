@@ -1,7 +1,7 @@
 ---
 description: "YouTube optimizer - titles, tags, descriptions, hooks, and thumbnail analysis"
 mode: subagent
-model: sonnet
+model: standard
 tools:
   read: true
   write: false

@@ -2,7 +2,7 @@
 name: image
 description: AI image generation, thumbnails, style libraries, and visual asset production
 mode: subagent
-model: sonnet
+model: standard
 tools:
   read: true
   write: true

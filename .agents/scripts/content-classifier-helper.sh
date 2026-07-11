@@ -30,7 +30,7 @@
 #   ANTHROPIC_API_KEY              Required for LLM classification (resolved via ai-research-helper.sh)
 #   CONTENT_CLASSIFIER_CACHE_DIR   Cache directory (default: ~/.aidevops/.agent-workspace/cache/content-classifier)
 #   CONTENT_CLASSIFIER_CACHE_TTL   Cache TTL in seconds (default: 86400 = 24h)
-#   CONTENT_CLASSIFIER_MODEL       Model tier (default: haiku)
+#   CONTENT_CLASSIFIER_MODEL       Model tier (default: simple)
 #   CONTENT_CLASSIFIER_QUIET       Suppress stderr output when "true"
 #   CONTENT_CLASSIFIER_DRY_RUN     Skip API call, return UNKNOWN (for testing)
 #
@@ -52,7 +52,7 @@ LOG_PREFIX="${LOG_PREFIX:-CONTENT-CLASSIFIER}"
 
 CONTENT_CLASSIFIER_CACHE_DIR="${CONTENT_CLASSIFIER_CACHE_DIR:-${HOME}/.aidevops/.agent-workspace/cache/content-classifier}"
 CONTENT_CLASSIFIER_CACHE_TTL="${CONTENT_CLASSIFIER_CACHE_TTL:-86400}"
-CONTENT_CLASSIFIER_MODEL="${CONTENT_CLASSIFIER_MODEL:-haiku}"
+CONTENT_CLASSIFIER_MODEL="${CONTENT_CLASSIFIER_MODEL:-simple}"
 CONTENT_CLASSIFIER_QUIET="${CONTENT_CLASSIFIER_QUIET:-false}"
 CONTENT_CLASSIFIER_DRY_RUN="${CONTENT_CLASSIFIER_DRY_RUN:-false}"
 
@@ -922,7 +922,7 @@ ENVIRONMENT:
   ANTHROPIC_API_KEY              Required for LLM classification
   CONTENT_CLASSIFIER_CACHE_DIR   Cache directory (default: ~/.aidevops/.agent-workspace/cache/content-classifier)
   CONTENT_CLASSIFIER_CACHE_TTL   Cache TTL in seconds (default: 86400)
-  CONTENT_CLASSIFIER_MODEL       Model tier: haiku|sonnet (default: haiku)
+  CONTENT_CLASSIFIER_MODEL       Model tier: simple|standard (default: simple)
   CONTENT_CLASSIFIER_QUIET       Suppress stderr when "true"
   CONTENT_CLASSIFIER_DRY_RUN     Skip API call, return UNKNOWN
 

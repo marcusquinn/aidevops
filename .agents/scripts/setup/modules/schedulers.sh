@@ -18,7 +18,7 @@
 #   setup_stats_wrapper, setup_failure_miner, setup_process_guard,
 #   setup_memory_pressure_monitor, setup_screen_time_snapshot
 
-# Keep pulse workers alive long enough for opus-tier dispatches.
+# Keep pulse workers alive long enough for thinking-tier dispatches.
 PULSE_STALE_THRESHOLD_SECONDS=1800
 
 # Cron expression: top of every hour. Shared by stats-wrapper,

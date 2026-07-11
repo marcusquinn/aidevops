@@ -10,7 +10,7 @@ tools:
   grep: false
   webfetch: true
   task: false
-model: sonnet
+model: standard
 ---
 
 <!-- SPDX-License-Identifier: MIT -->
@@ -114,7 +114,7 @@ sonnet: $3.00/$15.00 per 1M tokens, 200K context — 85% (n=47) success
 For each comparison include:
 
 1. **Winner by category**: Best for cost, capability, context, speed
-2. **aidevops tier mapping**: How models map to haiku/flash/sonnet/pro/opus tiers
+2. **aidevops tier mapping**: How available models map to simple/standard/thinking tiers
 3. **Trade-offs**: What you gain/lose with each choice
 4. **Pattern-backed insights**: Which tiers have proven track records for the task type
 
@@ -155,7 +155,7 @@ Results stored at `~/.aidevops/.agent-workspace/observability/bench-results.json
 
 | Flag | Description |
 |------|-------------|
-| `--judge` | LLM-as-judge quality scoring (haiku-tier, ~$0.001/call) |
+| `--judge` | LLM-as-judge quality scoring using the simple tier |
 | `--dataset FILE` | Read prompts from JSONL file (`{"prompt":"..."}` per line) |
 | `--max-tokens N` | Max output tokens per model (default: 1024) |
 | `--dry-run` | Show plan and estimated costs without API calls |

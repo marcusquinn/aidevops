@@ -2,7 +2,7 @@
 description: Lightweight model for triage, classification, and simple transforms
 mode: subagent
 model: anthropic/claude-haiku-4-5-20251001
-model-tier: haiku
+model-tier: simple
 model-fallback: google/gemini-2.5-flash-preview-05-20
 fallback-chain:
   - anthropic/claude-haiku-4-5-20251001

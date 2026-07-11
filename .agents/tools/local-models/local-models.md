@@ -1,7 +1,7 @@
 ---
 description: Local AI model inference via llama.cpp - hardware-aware setup, HuggingFace GGUF models, usage tracking, disk cleanup
 mode: subagent
-model: haiku
+model: simple
 tools:
   read: true
   write: false

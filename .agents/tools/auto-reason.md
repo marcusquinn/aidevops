@@ -1,7 +1,7 @@
 ---
 description: Provider-agnostic subjective self-refinement loop with blind judging, Borda aggregation, and a first-class do-nothing option
 mode: subagent
-model: sonnet
+model: standard
 tools:
   read: true
   write: true

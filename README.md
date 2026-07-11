@@ -1977,17 +1977,17 @@ Primary agents live at `.agents/<name>.md`. Each is a domain expert with its own
 
 | Name | File | Purpose | Model Tier |
 |------|------|---------|------------|
-| Build+ | `build-plus.md` | Code: features, bug fixes, refactors, CI, full-loop delivery (default) | opus |
-| Automate | `automate.md` | Scheduling, dispatch, monitoring, background orchestration | sonnet |
-| Aidevops | `aidevops.md` | Framework development — meta-agent for improving aidevops itself | opus |
-| Business | `business.md` | Company orchestration, financial ops, invoicing, strategy | sonnet |
-| Content | `content.md` | Content creation across blog, video, audio, image, social | opus |
-| Health | `health.md` | Health and wellness content, fitness, nutrition | opus |
-| Legal | `legal.md` | Legal compliance, terms, privacy, GDPR | opus |
-| Marketing-Sales | `marketing-sales.md` | Email campaigns, CRM, outreach, paid ads, direct response, CRO | opus |
-| Product | `product.md` | Product management, PRDs, roadmaps, requirements capture | opus |
-| Research | `research.md` | Technical and market research, competitive analysis | gemini/grok |
-| SEO | `seo.md` | SEO audits, keyword research, GSC, schema, technical SEO | opus |
+| Build+ | `build-plus.md` | Code: features, bug fixes, refactors, CI, full-loop delivery (default) | thinking |
+| Automate | `automate.md` | Scheduling, dispatch, monitoring, background orchestration | standard |
+| Aidevops | `aidevops.md` | Framework development — meta-agent for improving aidevops itself | thinking |
+| Business | `business.md` | Company orchestration, financial ops, invoicing, strategy | standard |
+| Content | `content.md` | Content creation across blog, video, audio, image, social | thinking |
+| Health | `health.md` | Health and wellness content, fitness, nutrition | thinking |
+| Legal | `legal.md` | Legal compliance, terms, privacy, GDPR | thinking |
+| Marketing-Sales | `marketing-sales.md` | Email campaigns, CRM, outreach, paid ads, direct response, CRO | thinking |
+| Product | `product.md` | Product management, PRDs, roadmaps, requirements capture | thinking |
+| Research | `research.md` | Technical and market research, competitive analysis | standard |
+| SEO | `seo.md` | SEO audits, keyword research, GSC, schema, technical SEO | thinking |
 
 **Specialist subagents** (e.g. `@wordpress`, `@seo`, Build-Agent, Build-MCP, etc.) live under `.agents/tools/` or as `mode: subagent` files and are invoked via `@mention` when domain expertise is needed. See `subagent-index.toon` for the full roster. For read-only macOS Activity Monitor and background-efficiency audits, use `@macos-activity-cleaner` or `/aidevops-macos-activity-cleaner`.
 
@@ -2464,7 +2464,7 @@ memory-helper.sh recall "how to optimize queries" --semantic
 
 ```bash
 # Record what worked (via memory system)
-memory-helper.sh store --type SUCCESS_PATTERN --content "Structured debugging found root cause" --tags "bugfix,sonnet"
+memory-helper.sh store --type SUCCESS_PATTERN --content "Structured debugging found root cause" --tags "bugfix,standard"
 
 # Record what failed
 memory-helper.sh store --type FAILURE_PATTERN --content "Blind refactor without tests caused regressions" --tags "refactor"
@@ -2758,8 +2758,8 @@ aidevops is configured through two JSONC/JSON files that control framework behav
 # Disable automatic updates
 aidevops config set updates.auto_update false
 
-# Use opus-tier verification for destructive operations
-aidevops config set safety.verification_tier opus
+# Use thinking-tier verification for destructive operations
+aidevops config set safety.verification_tier thinking
 
 # View all current config values
 aidevops config list

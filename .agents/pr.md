@@ -2,7 +2,7 @@
 name: pr
 description: Public relations - earned media strategy, newsworthiness, newsjacking, journalist research, media lists, coverage tracking
 mode: subagent
-model: opus
+model: thinking
 tools:
   read: true
   write: true

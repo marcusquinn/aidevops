@@ -1,7 +1,7 @@
 ---
 description: Open Tech Explorer provider for website technology stack discovery
 mode: subagent
-model: sonnet
+model: standard
 tools:
   read: true
   write: false

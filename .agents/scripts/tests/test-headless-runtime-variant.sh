@@ -27,58 +27,59 @@ assert_equals() {
 
 with_clean_variant_env() {
 	unset AIDEVOPS_HEADLESS_VARIANT || true
-	unset AIDEVOPS_HEADLESS_VARIANT_SONNET || true
-	unset AIDEVOPS_HEADLESS_VARIANT_HAIKU || true
-	unset AIDEVOPS_HEADLESS_VARIANT_OPUS || true
+	unset AIDEVOPS_HEADLESS_VARIANT_SIMPLE || true
+	unset AIDEVOPS_HEADLESS_VARIANT_STANDARD || true
+	unset AIDEVOPS_HEADLESS_VARIANT_THINKING || true
 	unset AIDEVOPS_HEADLESS_WORKER_VARIANT || true
 	unset AIDEVOPS_HEADLESS_PULSE_VARIANT || true
 	return 0
 }
 
 with_clean_variant_env
-AIDEVOPS_HEADLESS_VARIANT_SONNET="high"
-actual=$(resolve_headless_variant "worker" "sonnet" "openai/gpt-5.5")
-assert_equals "" "$actual" "GPT-5.5 sonnet worker omits env-derived high variant" || true
+AIDEVOPS_HEADLESS_VARIANT_STANDARD="high"
+actual=$(resolve_headless_variant "worker" "standard" "openai/gpt-5.5")
+assert_equals "" "$actual" "GPT-5.5 standard worker omits env-derived high variant" || true
 
 with_clean_variant_env
-AIDEVOPS_HEADLESS_VARIANT_SONNET="high"
-actual=$(resolve_headless_variant "worker" "sonnet" "openai/gpt-5.4")
-assert_equals "high" "$actual" "non-GPT-5.5 sonnet worker keeps high variant" || true
+AIDEVOPS_HEADLESS_VARIANT_STANDARD="high"
+actual=$(resolve_headless_variant "worker" "standard" "openai/gpt-5.4")
+assert_equals "high" "$actual" "non-GPT-5.5 standard worker keeps high variant" || true
 
 with_clean_variant_env
-AIDEVOPS_HEADLESS_VARIANT_OPUS="xhigh"
-actual=$(resolve_headless_variant "worker" "opus" "openai/gpt-5.5")
-assert_equals "xhigh" "$actual" "GPT-5.5 opus worker keeps thinking-tier variant" || true
+AIDEVOPS_HEADLESS_VARIANT_THINKING="xhigh"
+actual=$(resolve_headless_variant "worker" "thinking" "openai/gpt-5.5")
+assert_equals "xhigh" "$actual" "GPT-5.5 thinking worker keeps configured variant" || true
 
 with_clean_variant_env
-AIDEVOPS_HEADLESS_VARIANT_SONNET="high"
-actual=$(resolve_headless_variant "pulse" "sonnet" "openai/gpt-5.5")
-assert_equals "high" "$actual" "pulse sonnet routing keeps configured variant" || true
+AIDEVOPS_HEADLESS_VARIANT_STANDARD="high"
+actual=$(resolve_headless_variant "pulse" "standard" "openai/gpt-5.5")
+assert_equals "high" "$actual" "pulse standard routing keeps configured variant" || true
 
 with_clean_variant_env
-actual=$(resolve_headless_variant "worker" "opus" "openai/gpt-5.6-sol")
-assert_equals "high" "$actual" "GPT-5.6 Sol thinking worker defaults to high" || true
+actual=$(resolve_headless_variant "worker" "thinking" "openai/gpt-5.6-sol")
+assert_equals "xhigh" "$actual" "GPT-5.6 Sol thinking worker uses routed effort" || true
 
 with_clean_variant_env
-actual=$(resolve_headless_variant "worker" "opus" "openai/gpt-5.6-sol-fast")
-assert_equals "high" "$actual" "GPT-5.6 Sol Fast thinking worker defaults to high" || true
+actual=$(resolve_headless_variant "worker" "thinking" "openai/gpt-5.6-sol-fast")
+assert_equals "xhigh" "$actual" "GPT-5.6 Sol Fast thinking worker uses provider mapping" || true
 
 with_clean_variant_env
-actual=$(resolve_headless_variant "worker" "sonnet" "openai/gpt-5.6-sol")
-assert_equals "low" "$actual" "GPT-5.6 Sol standard worker defaults to low" || true
+actual=$(resolve_headless_variant "worker" "standard" "openai/gpt-5.6-sol")
+assert_equals "medium" "$actual" "GPT-5.6 Sol standard worker uses routed effort" || true
 
 with_clean_variant_env
-actual=$(resolve_headless_variant "worker" "haiku" "openai/gpt-5.6-terra")
-assert_equals "low" "$actual" "GPT-5.6 Terra simple worker defaults to low" || true
+AIDEVOPS_HEADLESS_VARIANT_THINKING="high"
+actual=$(resolve_headless_variant "worker" "thinking" "openai/gpt-5.6-sol")
+assert_equals "high" "$actual" "explicit GPT-5.6 Sol high variant remains stable" || true
 
 with_clean_variant_env
-AIDEVOPS_HEADLESS_VARIANT_OPUS="high"
-actual=$(resolve_headless_variant "worker" "opus" "openai/gpt-5.6-sol")
-assert_equals "high" "$actual" "explicit GPT-5.6 Sol thinking-tier variant overrides the automatic default" || true
+AIDEVOPS_HEADLESS_VARIANT_THINKING="xhigh"
+actual=$(resolve_headless_variant "worker" "thinking" "openai/gpt-5.6-sol")
+assert_equals "xhigh" "$actual" "explicit GPT-5.6 Sol xhigh opt-in remains available" || true
 
 with_clean_variant_env
-actual=$(resolve_headless_variant "pulse" "opus" "openai/gpt-5.6-sol")
-assert_equals "" "$actual" "pulse does not inherit worker thinking-tier effort defaults" || true
+actual=$(resolve_headless_variant "pulse" "thinking" "openai/gpt-5.6-sol")
+assert_equals "xhigh" "$actual" "pulse thinking tier uses the same runtime mapping" || true
 
 with_clean_variant_env
 

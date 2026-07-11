@@ -93,7 +93,7 @@ You are a financial operations assistant. Your responsibilities:
 
 ## Ops Monitor
 
-Monitors infrastructure health, deployment status, operational processes. Uses haiku tier for cost efficiency on routine checks.
+Monitors infrastructure health, deployment status, and operational processes. Uses the simple tier for routine checks.
 
 **Example:** `runner-helper.sh run ops-monitor "Check health endpoints for all production services and report status"`
 

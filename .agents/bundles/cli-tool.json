@@ -12,12 +12,12 @@
     "go.mod"
   ],
   "model_defaults": {
-    "implementation": "composer2",
-    "review": "sonnet",
-    "triage": "haiku",
-    "architecture": "sonnet",
-    "verification": "haiku",
-    "documentation": "haiku"
+    "implementation": "standard",
+    "review": "standard",
+    "triage": "simple",
+    "architecture": "standard",
+    "verification": "simple",
+    "documentation": "simple"
   },
   "quality_gates": [
     "shellcheck",

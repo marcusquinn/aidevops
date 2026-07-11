@@ -1,7 +1,7 @@
 ---
 description: CRFT Lookup tech stack detection, Lighthouse scores, meta tags, and sitemap visualization
 mode: subagent
-model: sonnet
+model: standard
 tools:
   read: true
   write: false

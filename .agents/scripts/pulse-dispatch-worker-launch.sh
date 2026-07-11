@@ -26,6 +26,7 @@
 
 [[ -n "${_PULSE_DISPATCH_WORKER_LAUNCH_LOADED:-}" ]] && return 0
 _PULSE_DISPATCH_WORKER_LAUNCH_LOADED=1
+readonly _DLW_STANDARD_TIER="standard"
 
 _DLW_SCRIPT_DIR="${BASH_SOURCE[0]%/*}"
 if [[ -r "${_DLW_SCRIPT_DIR}/lib/version.sh" ]]; then
@@ -161,7 +162,7 @@ _dlw_setup_worker_log() {
 # without the complexity of multi-value stdout parsing (bash 3.2 has no
 # namerefs — pattern from GH#18705 decomposition memory lesson):
 #   _DLW_DISPATCH_TIER        — cascade tier name: simple|standard|thinking
-#   _DLW_DISPATCH_MODEL_TIER  — runtime tier: haiku|sonnet|opus|bundle tier
+#   _DLW_DISPATCH_MODEL_TIER  — runtime tier: simple|standard|thinking|bundle tier
 #   _DLW_SELECTED_MODEL       — concrete model name, or empty for auto-select
 #
 # ROUND-ROBIN MODEL SELECTION (owned by this helper, NOT the caller).
@@ -173,8 +174,7 @@ _dlw_setup_worker_log() {
 # the worker used.
 #
 # IMPORTANT: Callers MUST NOT pass a model override for default dispatches.
-# Only pass model_override when a specific tier is required (e.g.,
-# tier:thinking → opus escalation, tier:simple → haiku). Passing an
+# Only pass model_override when a specific tier is required. Passing an
 # arbitrary model here bypasses the round-robin and causes provider
 # imbalance. History: GH#17503 moved model resolution here from the worker.
 #
@@ -185,8 +185,8 @@ _dlw_resolve_tier_and_model() {
 	local model_override="$2"
 	local repo_path="${3:-}"
 
-	_DLW_DISPATCH_TIER="standard"
-	_DLW_DISPATCH_MODEL_TIER="sonnet"
+	_DLW_DISPATCH_TIER="$_DLW_STANDARD_TIER"
+	_DLW_DISPATCH_MODEL_TIER="$_DLW_STANDARD_TIER"
 	local issue_labels_csv
 	issue_labels_csv=$(printf '%s' "$issue_meta_json" | jq -r '[.labels[].name] | join(",")' 2>/dev/null) || issue_labels_csv=""
 	local explicit_tier_label=0
@@ -200,15 +200,15 @@ _dlw_resolve_tier_and_model() {
 	case "$resolved_tier" in
 	tier:thinking)
 		_DLW_DISPATCH_TIER="thinking"
-		_DLW_DISPATCH_MODEL_TIER="opus"
+		_DLW_DISPATCH_MODEL_TIER="thinking"
 		;;
 	tier:standard)
-		_DLW_DISPATCH_TIER="standard"
-		_DLW_DISPATCH_MODEL_TIER="sonnet"
+		_DLW_DISPATCH_TIER="$_DLW_STANDARD_TIER"
+		_DLW_DISPATCH_MODEL_TIER="$_DLW_STANDARD_TIER"
 		;;
 	tier:simple)
 		_DLW_DISPATCH_TIER="simple"
-		_DLW_DISPATCH_MODEL_TIER="haiku"
+		_DLW_DISPATCH_MODEL_TIER="simple"
 		;;
 	esac
 
@@ -1386,7 +1386,7 @@ _dlw_spawn_lifecycle_observer() {
 #   $6  - worker_log (path from _dlw_setup_worker_log)
 #   $7  - prompt
 #   $8  - repo_path
-#   $9  - dispatch_model_tier (haiku|sonnet|opus)
+#   $9  - dispatch_model_tier (simple|standard|thinking)
 #   $10 - selected_model (may be empty for auto-select)
 #   $11 - worker_worktree_path (may be empty)
 #   $12 - worker_worktree_branch (may be empty)

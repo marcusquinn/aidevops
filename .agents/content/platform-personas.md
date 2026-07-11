@@ -2,7 +2,7 @@
 name: platform-personas
 description: Platform-specific content adaptations - voice, tone, structure, and best practices per channel
 mode: subagent
-model: haiku
+model: simple
 ---
 
 <!-- SPDX-License-Identifier: MIT -->

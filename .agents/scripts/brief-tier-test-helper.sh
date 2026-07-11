@@ -41,7 +41,7 @@ Options:
   --limit N         Maximum PRs to extract (default: 30)
   --output DIR      Output directory for corpus
   --corpus DIR      Corpus directory (for enrich/test/score)
-  --model MODEL     Model tier to use (default: haiku for test, sonnet for enrich)
+  --model MODEL     Model tier to use (default: simple for test, standard for enrich)
   --results FILE    Results TSV file path
   --subset N        Test only N cases from corpus (for iteration speed)
 EOF
@@ -477,7 +477,7 @@ _enrich_single_case() {
 #######################################
 cmd_enrich() {
 	local corpus=""
-	local model="sonnet"
+	local model="standard"
 
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
@@ -602,7 +602,7 @@ _test_single_case() {
 #######################################
 cmd_test() {
 	local corpus=""
-	local model="haiku"
+	local model="simple"
 	local results=""
 	local subset=0
 

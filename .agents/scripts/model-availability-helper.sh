@@ -124,7 +124,9 @@ is_known_provider() {
 # OpenCode's per-token billing and are far more expensive than direct
 # provider API keys or subscription accounts.
 get_tier_models() {
-	local tier="$1"
+	local requested_tier="$1"
+	local tier
+	tier=$(normalize_model_tier_name "$requested_tier")
 	local allowlist_raw="${AIDEVOPS_HEADLESS_PROVIDER_ALLOWLIST:-}"
 	local -a allowlist=()
 	local -a filtered_models=()
@@ -158,7 +160,8 @@ get_tier_models() {
 				[[ "$allowed" == "true" ]] || continue
 			fi
 			filtered_models+=("$current_model")
-		done < <(jq -r --arg t "$tier" '.tiers[$t].models[]? // empty' "$routing_table" 2>/dev/null)
+		done < <(jq -r --arg canonical "$tier" --arg requested "$requested_tier" \
+			'(.tiers[$canonical].models // .tiers[$requested].models // [])[]' "$routing_table" 2>/dev/null)
 		if [[ ${#filtered_models[@]} -gt 0 ]]; then
 			local models_json=""
 			models_json=$(
@@ -179,11 +182,9 @@ get_tier_models() {
 	# Current smoke-tested models are the headless defaults. An empty local value
 	# deliberately fails closed rather than sending local-only work to cloud.
 	case "$tier" in
-	local) current_model="" ;;
-	haiku | flash | health) current_model=$'openai/gpt-5.6-terra\nanthropic/claude-haiku-4-5' ;;
-	sonnet | coding | eval) current_model=$'openai/gpt-5.6-sol\nzai-coding-plan/glm-5.2\nanthropic/claude-sonnet-4-6' ;;
-	pro) current_model=$'openai/gpt-5.6-sol\nanthropic/claude-sonnet-4-6' ;;
-	opus) current_model=$'openai/gpt-5.6-sol\nanthropic/claude-opus-4-6' ;;
+	simple) current_model=$'openai/gpt-5.6-terra\nanthropic/claude-haiku-4-5' ;;
+	standard) current_model=$'openai/gpt-5.6-sol\nzai-coding-plan/glm-5.2\nanthropic/claude-sonnet-4-6' ;;
+	thinking) current_model=$'openai/gpt-5.6-sol\nanthropic/claude-opus-4-6' ;;
 	*) return 1 ;;
 	esac
 	[[ -n "$current_model" ]] || return 1
@@ -227,7 +228,7 @@ get_tier_models() {
 is_known_tier() {
 	local tier="$1"
 	case "$tier" in
-	local | haiku | flash | sonnet | pro | opus | health | eval | coding) return 0 ;;
+	simple | standard | thinking) return 0 ;;
 	*) return 1 ;;
 	esac
 }

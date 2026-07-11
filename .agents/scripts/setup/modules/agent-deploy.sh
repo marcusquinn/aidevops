@@ -218,107 +218,6 @@ _inject_plan_reminder() {
 	return 0
 }
 
-# _resolve_model_tiers_in_frontmatter target_dir
-# Resolves tier shorthands (sonnet, haiku, opus, etc.) in YAML frontmatter
-# `model:` fields to fully-qualified provider/model IDs using model-routing-table.json.
-# This enables runtimes like OpenCode that consume `model:` literally (GH#18043).
-# Source .md files keep tier names; deployed files get FQIDs.
-# Only processes files with YAML frontmatter (--- delimited) where `model:` contains
-# a bare tier name (no `/`). Already-qualified IDs are left unchanged.
-_resolve_model_tiers_in_frontmatter() {
-	local target_dir="$1"
-
-	# Locate routing tables: merge custom overrides with default
-	local default_table="$target_dir/configs/model-routing-table.json"
-	local custom_table="$target_dir/custom/configs/model-routing-table.json"
-
-	if [[ ! -f "$default_table" ]]; then
-		print_warning "model-routing-table.json not found — skipping frontmatter model resolution"
-		return 0
-	fi
-
-	# Requires jq for JSON parsing
-	if ! command -v jq &>/dev/null; then
-		print_warning "jq not available — skipping frontmatter model resolution"
-		return 0
-	fi
-
-	# Build a sed script file from the routing table(s) in ONE jq call.
-	# Custom table overrides specific tiers; default fills in the rest.
-	# Each line is a separate sed command for cross-platform compatibility
-	# (macOS sed doesn't support ; as command separator inside {}).
-	# Generates replacements for both plain and commented forms:
-	#   model: sonnet        → model: anthropic/claude-sonnet-4-6
-	#   model: sonnet  # ... → model: anthropic/claude-sonnet-4-6  # ...
-	local sed_file
-	# t2997: drop .sed — XXXXXX must be at end for BSD mktemp; sed -f reads
-	# script content regardless of extension.
-	sed_file=$(mktemp "${TMPDIR:-/tmp}/model-resolve-XXXXXX")
-	if [[ -f "$custom_table" ]]; then
-		# Merge: custom tiers override default tiers (jq * operator)
-		jq -r -s '
-			(.[0].tiers // {}) * (.[1].tiers // {}) |
-			to_entries[] |
-			"s|^model: \(.key)$|model: \(.value.models[0])|",
-			"s|^model: \(.key)  #|model: \(.value.models[0])  #|"
-		' "$default_table" "$custom_table" >"$sed_file" 2>/dev/null
-	else
-		jq -r '
-			.tiers | to_entries[] |
-			"s|^model: \(.key)$|model: \(.value.models[0])|",
-			"s|^model: \(.key)  #|model: \(.value.models[0])  #|"
-		' "$default_table" >"$sed_file" 2>/dev/null
-	fi
-
-	if [[ ! -s "$sed_file" ]]; then
-		rm -f "$sed_file"
-		print_warning "No tiers found in routing table — skipping frontmatter model resolution"
-		return 0
-	fi
-
-	# Build a grep pattern to find only files with bare tier names.
-	# This avoids scanning all 3000+ .md files — only ~60 need changes.
-	# Extract tier names from the sed file (each line has the tier name after "model: ")
-	local tier_names
-	if [[ -f "$custom_table" ]]; then
-		tier_names=$(jq -r -s '(.[0].tiers // {}) * (.[1].tiers // {}) | keys[]' "$default_table" "$custom_table" 2>/dev/null | paste -sd'|' -)
-	else
-		tier_names=$(jq -r '.tiers | keys[]' "$default_table" 2>/dev/null | paste -sd'|' -)
-	fi
-	if [[ -z "$tier_names" ]]; then
-		rm -f "$sed_file"
-		return 0
-	fi
-
-	# Find candidate files: have a model: line with a bare tier name (no /)
-	# grep -rl is fast — scans content without loading full files
-	# The || true prevents set -e from exiting when grep finds no matches
-	local md_file
-	{ grep -rlE "^model: ($tier_names)(\$|  #)" "$target_dir" --include='*.md' 2>/dev/null || true; } | while IFS= read -r md_file; do
-		[[ -n "$md_file" ]] || continue
-		# Verify the match is in YAML frontmatter (first line is ---)
-		local first_line
-		first_line=$(head -1 "$md_file" 2>/dev/null) || continue
-		[[ "$first_line" == "---" ]] || continue
-
-		# Apply sed replacements from the script file (macOS sed -i '' vs GNU sed -i)
-		sed -i '' -f "$sed_file" "$md_file" 2>/dev/null ||
-			sed -i -f "$sed_file" "$md_file" 2>/dev/null || true
-	done
-
-	# Count remaining unresolved files
-	local remaining
-	remaining=$({ grep -rlE "^model: ($tier_names)(\$|  #)" "$target_dir" --include='*.md' 2>/dev/null || true; } | wc -l | tr -d ' ')
-	if [[ "$remaining" -eq 0 ]]; then
-		print_success "Resolved model tiers to FQIDs in deployed agent files (via model-routing-table.json)"
-	else
-		print_warning "Some model tiers could not be resolved ($remaining files remaining)"
-	fi
-
-	rm -f "$sed_file"
-	return 0
-}
-
 # _set_script_permissions_and_report target_dir
 # Sets execute permissions on all deployed scripts and reports deployed counts.
 _set_script_permissions_and_report() {
@@ -686,10 +585,9 @@ _deploy_agents_post_copy() {
 	_inject_plan_reminder "$target_dir"
 	_migrate_mailbox_if_needed "$target_dir"
 	_migrate_wavespeed_md "$target_dir"
-	# Source files keep tier names (sonnet, haiku, opus); deployed files get
-	# fully-qualified IDs (anthropic/claude-sonnet-4-6) that runtimes like
-	# OpenCode can consume directly (GH#18043).
-	_resolve_model_tiers_in_frontmatter "$target_dir"
+	# Keep canonical workload tiers in deployed source. Runtime-specific agent
+	# generation strips them from literal model fields and routing resolves the
+	# available model and reasoning level at execution time.
 	deploy_plugins "$target_dir" "$plugins_file"
 	return 0
 }

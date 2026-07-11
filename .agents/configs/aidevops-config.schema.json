@@ -211,8 +211,8 @@
         },
         "verification_tier": {
           "type": "string",
-          "default": "haiku",
-          "enum": ["haiku", "flash", "sonnet", "pro", "opus"],
+          "default": "simple",
+          "enum": ["simple", "standard", "thinking"],
           "description": "Model tier used for verification checks."
         },
         "max_interactive_sessions": {
@@ -399,8 +399,8 @@
           "enum": ["block", "warn", "allow"]
         },
         "cross_provider": { "type": "boolean", "default": true },
-        "verifier_tier": { "type": "string", "default": "sonnet" },
-        "escalation_tier": { "type": "string", "default": "opus" },
+        "verifier_tier": { "type": "string", "default": "standard", "enum": ["simple", "standard", "thinking"] },
+        "escalation_tier": { "type": "string", "default": "thinking", "enum": ["simple", "standard", "thinking"] },
         "categories": {
           "type": "object",
           "description": "Per-category risk levels and gates.",

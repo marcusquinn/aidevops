@@ -440,7 +440,7 @@ Rules:
 
 	local ai_response=""
 	if [[ -x "$AI_RESEARCH_SCRIPT" ]]; then
-		ai_response=$("$AI_RESEARCH_SCRIPT" --model haiku --prompt "$ai_prompt" 2>/dev/null || echo "")
+		ai_response=$("$AI_RESEARCH_SCRIPT" --model simple --prompt "$ai_prompt" 2>/dev/null || echo "")
 	fi
 
 	local summary="" tone_profile="{}" pending_actions="[]"
@@ -536,7 +536,7 @@ EOF
 
 #######################################
 # Generate an immutable summary for a conversation
-# Uses AI (haiku tier) to produce a concise summary with:
+# Uses simple-tier AI to produce a concise summary with:
 #   - Key topics discussed
 #   - Decisions made
 #   - Pending actions

@@ -1,6 +1,6 @@
 ---
 description: Sandboxed triage review for external contributor issues — zero network access
-model: opus
+model: thinking
 mode: subagent
 temperature: 0.2
 tools:

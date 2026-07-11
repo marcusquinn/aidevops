@@ -195,7 +195,7 @@ ARCHITECTURE:
 
 IDLE DETECTION:
     Replaces fixed sessionIdleTimeout: 300 with intelligent judgment.
-    Uses AI (haiku tier, ~$0.001/call) to analyse last few messages and
+    Uses simple-tier AI to analyse the last few messages and
     determine if the conversation has naturally concluded. Falls back to
     adaptive heuristics when AI is unavailable:
     - Short conversations (< 5 msgs): idle after 10 min

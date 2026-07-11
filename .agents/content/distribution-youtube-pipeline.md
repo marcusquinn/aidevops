@@ -1,7 +1,7 @@
 ---
 description: "YouTube automated research pipeline - cron-driven competitor monitoring and content generation"
 mode: subagent
-model: sonnet
+model: standard
 tools:
   read: true
   write: false

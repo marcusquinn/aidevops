@@ -119,7 +119,7 @@ cat >"$TEST_SIGNALS" <<'JSON'
         "error_category": "not_read_first",
         "count": 50,
         "model_count": 3,
-        "models": ["sonnet", "haiku", "opus"],
+        "models": ["standard", "simple", "thinking"],
         "severity": "high"
       },
       {
@@ -127,7 +127,7 @@ cat >"$TEST_SIGNALS" <<'JSON'
         "error_category": "workdir_not_found",
         "count": 200,
         "model_count": 4,
-        "models": ["sonnet", "haiku", "opus", "gpt-4o"],
+        "models": ["standard", "simple", "thinking", "gpt-4o"],
         "severity": "medium",
         "examples": [
           {
@@ -145,7 +145,7 @@ cat >"$TEST_SIGNALS" <<'JSON'
         "error_category": "other",
         "count": 5,
         "model_count": 1,
-        "models": ["sonnet"],
+        "models": ["standard"],
         "severity": "low"
       },
       {
@@ -153,7 +153,7 @@ cat >"$TEST_SIGNALS" <<'JSON'
         "error_category": "timeout",
         "count": 25,
         "model_count": 2,
-        "models": ["sonnet", "opus"],
+        "models": ["standard", "thinking"],
         "severity": "medium",
         "examples": [
           {

@@ -145,7 +145,7 @@ EOF
 	now_epoch=$(date +%s)
 	elapsed_seconds=$((now_epoch - last_epoch))
 
-	# Try AI judgment first (haiku tier — ~$0.001 per call)
+	# Try simple-tier AI judgment first.
 	if [[ -x "$AI_RESEARCH_SCRIPT" && -n "$recent_messages" ]]; then
 		local ai_prompt="Given these recent messages from a conversation (most recent first) and that ${elapsed_seconds} seconds have passed since the last message, is this conversation idle (naturally concluded or paused) or still active (expecting a response)?
 
@@ -155,7 +155,7 @@ $recent_messages
 Respond with ONLY one word: 'idle' or 'active'"
 
 		local ai_result
-		ai_result=$("$AI_RESEARCH_SCRIPT" --model haiku --prompt "$ai_prompt" 2>/dev/null || echo "")
+		ai_result=$("$AI_RESEARCH_SCRIPT" --model simple --prompt "$ai_prompt" 2>/dev/null || echo "")
 		ai_result=$(echo "$ai_result" | tr '[:upper:]' '[:lower:]' | tr -d '[:space:]')
 
 		if [[ "$ai_result" == "idle" || "$ai_result" == "active" ]]; then
@@ -208,7 +208,7 @@ EOF
 # --- Tone Analysis ---
 
 #######################################
-# Extract tone profile from recent messages using AI (haiku tier).
+# Extract tone profile from recent messages using the simple tier.
 # Prints tone JSON to stdout, or "{}" if AI unavailable.
 # Args: esc_id format
 # Returns 1 if no messages to analyse (caller should return early).
@@ -251,7 +251,7 @@ $recent_messages
 
 Respond with ONLY the JSON, no markdown fences."
 
-		tone_data=$("$AI_RESEARCH_SCRIPT" --model haiku --prompt "$ai_prompt" 2>/dev/null || echo "{}")
+		tone_data=$("$AI_RESEARCH_SCRIPT" --model simple --prompt "$ai_prompt" 2>/dev/null || echo "{}")
 	fi
 
 	echo "$tone_data"

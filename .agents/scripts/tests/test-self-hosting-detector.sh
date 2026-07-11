@@ -208,7 +208,7 @@ test_positive_detection() {
 	setup_test_env
 	local body_file
 	body_file=$(create_body_with_dispatch_path)
-	create_gh_stub "$body_file" "tier:thinking,auto-dispatch" "0"
+	create_gh_stub "$body_file" "tier:standard,auto-dispatch" "0"
 
 	local rc=0
 	"$HELPER_SCRIPT" validate "100" "marcusquinn/aidevops" >/dev/null 2>&1 || rc=$?
@@ -219,7 +219,7 @@ test_positive_detection() {
 
 	# Check that the label was applied
 	local label_applied=1
-	if grep -qF "model:opus-4-7" "$GH_LABEL_LOG" 2>/dev/null; then
+	if grep -qF "tier:thinking" "$GH_LABEL_LOG" 2>/dev/null; then
 		label_applied=0
 	fi
 
@@ -245,7 +245,7 @@ test_negative_detection() {
 	setup_test_env
 	local body_file
 	body_file=$(create_body_docs_only)
-	create_gh_stub "$body_file" "tier:thinking,auto-dispatch" "0"
+	create_gh_stub "$body_file" "tier:standard,auto-dispatch" "0"
 
 	local rc=0
 	"$HELPER_SCRIPT" validate "101" "marcusquinn/aidevops" >/dev/null 2>&1 || rc=$?
@@ -255,7 +255,7 @@ test_negative_detection() {
 
 	# Label should NOT have been applied
 	local label_not_applied=1
-	if ! grep -qF "model:opus-4-7" "$GH_LABEL_LOG" 2>/dev/null; then
+	if ! grep -qF "tier:thinking" "$GH_LABEL_LOG" 2>/dev/null; then
 		label_not_applied=0
 	fi
 
@@ -275,7 +275,7 @@ test_mixed_scope() {
 	setup_test_env
 	local body_file
 	body_file=$(create_body_mixed_scope)
-	create_gh_stub "$body_file" "tier:thinking,auto-dispatch" "0"
+	create_gh_stub "$body_file" "tier:standard,auto-dispatch" "0"
 
 	local rc=0
 	"$HELPER_SCRIPT" validate "102" "marcusquinn/aidevops" >/dev/null 2>&1 || rc=$?
@@ -284,7 +284,7 @@ test_mixed_scope() {
 	[[ "$rc" -eq 0 ]] && exit_ok=0
 
 	local label_applied=1
-	if grep -qF "model:opus-4-7" "$GH_LABEL_LOG" 2>/dev/null; then
+	if grep -qF "tier:thinking" "$GH_LABEL_LOG" 2>/dev/null; then
 		label_applied=0
 	fi
 
@@ -299,13 +299,13 @@ test_mixed_scope() {
 	return 0
 }
 
-# test_idempotency — issue already has model:opus-4-7 → no new label or comment
+# test_idempotency — issue already has tier:thinking → no new label or comment
 test_idempotency() {
 	setup_test_env
 	local body_file
 	body_file=$(create_body_with_dispatch_path)
-	# Labels include model:opus-4-7 already
-	create_gh_stub "$body_file" "tier:thinking,auto-dispatch,model:opus-4-7" "1"
+	# Labels include tier:thinking already
+	create_gh_stub "$body_file" "tier:thinking,auto-dispatch" "1"
 
 	local rc=0
 	"$HELPER_SCRIPT" validate "103" "marcusquinn/aidevops" >/dev/null 2>&1 || rc=$?
@@ -341,7 +341,7 @@ test_bypass_env_var() {
 	setup_test_env
 	local body_file
 	body_file=$(create_body_with_dispatch_path)
-	create_gh_stub "$body_file" "tier:thinking,auto-dispatch" "0"
+	create_gh_stub "$body_file" "tier:standard,auto-dispatch" "0"
 
 	export AIDEVOPS_SKIP_SELF_HOSTING_DETECTOR=1
 
@@ -353,7 +353,7 @@ test_bypass_env_var() {
 
 	# No label should be applied (bypassed)
 	local no_label=1
-	if ! grep -qF "model:opus-4-7" "$GH_LABEL_LOG" 2>/dev/null; then
+	if ! grep -qF "tier:thinking" "$GH_LABEL_LOG" 2>/dev/null; then
 		no_label=0
 	fi
 
@@ -373,7 +373,7 @@ test_dry_run_mode() {
 	setup_test_env
 	local body_file
 	body_file=$(create_body_with_dispatch_path)
-	create_gh_stub "$body_file" "tier:thinking,auto-dispatch" "0"
+	create_gh_stub "$body_file" "tier:standard,auto-dispatch" "0"
 
 	export AIDEVOPS_SELF_HOSTING_DETECTOR_DRY_RUN=1
 
@@ -392,7 +392,7 @@ test_dry_run_mode() {
 
 	# No label should be applied
 	local no_label=1
-	if ! grep -qF "model:opus-4-7" "$GH_LABEL_LOG" 2>/dev/null; then
+	if ! grep -qF "tier:thinking" "$GH_LABEL_LOG" 2>/dev/null; then
 		no_label=0
 	fi
 
@@ -407,12 +407,11 @@ test_dry_run_mode() {
 	return 0
 }
 
-# test_not_tier_thinking — non-tier:thinking issues are skipped
-test_not_tier_thinking() {
+# test_standard_elevates_to_thinking — dispatch-path work is promoted
+test_standard_elevates_to_thinking() {
 	setup_test_env
 	local body_file
 	body_file=$(create_body_with_dispatch_path)
-	# Labels do NOT include tier:thinking
 	create_gh_stub "$body_file" "tier:standard,auto-dispatch" "0"
 
 	local rc=0
@@ -421,17 +420,16 @@ test_not_tier_thinking() {
 	local exit_ok=1
 	[[ "$rc" -eq 0 ]] && exit_ok=0
 
-	# No label should be applied (not tier:thinking)
-	local no_label=1
-	if ! grep -qF "model:opus-4-7" "$GH_LABEL_LOG" 2>/dev/null; then
-		no_label=0
+	local label_applied=1
+	if grep -qF "tier:thinking" "$GH_LABEL_LOG" 2>/dev/null; then
+		label_applied=0
 	fi
 
-	if [[ "$exit_ok" -eq 0 && "$no_label" -eq 0 ]]; then
-		print_result "not_tier_thinking: tier:standard → no mutation" 0
+	if [[ "$exit_ok" -eq 0 && "$label_applied" -eq 0 ]]; then
+		print_result "standard_elevates: tier:standard → tier:thinking" 0
 	else
-		print_result "not_tier_thinking: tier:standard → no mutation" 1 \
-			"exit=${rc} (want 0), no_label=${no_label} (want 0)"
+		print_result "standard_elevates: tier:standard → tier:thinking" 1 \
+			"exit=${rc} (want 0), label_applied=${label_applied} (want 0)"
 	fi
 
 	teardown_test_env
@@ -456,7 +454,7 @@ main() {
 	test_idempotency
 	test_bypass_env_var
 	test_dry_run_mode
-	test_not_tier_thinking
+	test_standard_elevates_to_thinking
 
 	printf '\n%d test(s) run, %d failed.\n' "$TESTS_RUN" "$TESTS_FAILED"
 

@@ -54,9 +54,9 @@ log_fail() {
 tier_order() {
 	local tier="$1"
 	case "$tier" in
-	haiku) echo 1 ;;
-	sonnet) echo 2 ;;
-	opus) echo 3 ;;
+	simple) echo 1 ;;
+	standard) echo 2 ;;
+	thinking) echo 3 ;;
 	*) echo 0 ;;
 	esac
 	return 0
@@ -65,9 +65,9 @@ tier_order() {
 tier_name() {
 	local order="$1"
 	case "$order" in
-	1) echo "haiku" ;;
-	2) echo "sonnet" ;;
-	3) echo "opus" ;;
+	1) echo "simple" ;;
+	2) echo "standard" ;;
+	3) echo "thinking" ;;
 	*) echo "unknown" ;;
 	esac
 	return 0
@@ -216,8 +216,8 @@ run_adjudication() {
 	local model_output="$2"
 	local tier="$3"
 
-	local adjudication_tier="haiku"
-	[[ "$tier" != "haiku" ]] && adjudication_tier="sonnet"
+	local adjudication_tier="simple"
+	[[ "$tier" != "simple" ]] && adjudication_tier="standard"
 
 	local adj_prompt
 	adj_prompt="Compare this model output against the expected behavior. Answer PASS or FAIL with a one-line reason.
@@ -350,7 +350,7 @@ run_scenario() {
 }
 
 #######################################
-# Run one scenario with tier escalation (haiku → sonnet → opus)
+# Run one scenario with tier escalation (simple → standard → thinking)
 # Arguments: $1 — agent file, $2 — scenario JSON
 # Output: "tier_name:json_results_array" on stdout
 # Returns: 0=passed at some tier
@@ -404,7 +404,7 @@ cmd_test() {
 	log_info "Structural complexity: $complexity"
 
 	local all_results="[]"
-	local actual_tier_minimum="haiku"
+	local actual_tier_minimum="simple"
 	local i=0
 
 	while [[ "$i" -lt "$scenario_count" ]]; do
@@ -569,9 +569,9 @@ cmd_pre_filter() {
 	echo "Complexity: $complexity"
 
 	case "$complexity" in
-	simple) echo "Predicted tier: haiku" ;;
-	moderate) echo "Predicted tier: sonnet" ;;
-	complex) echo "Predicted tier: opus" ;;
+	simple) echo "Predicted tier: simple" ;;
+	moderate) echo "Predicted tier: standard" ;;
+	complex) echo "Predicted tier: thinking" ;;
 	*) echo "Predicted tier: unknown" ;;
 	esac
 	return 0

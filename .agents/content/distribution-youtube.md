@@ -2,7 +2,7 @@
 name: youtube
 description: YouTube competitor research, content strategy, and video production automation
 mode: subagent
-model: sonnet
+model: standard
 subagents: [channel-intel, topic-research, script-writer, optimizer, pipeline]
 tools: {read: true, write: false, edit: false, bash: true, glob: true, grep: true, webfetch: true, task: true}
 ---

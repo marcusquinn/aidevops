@@ -119,13 +119,13 @@ select_contest_models() {
 	local registry_helper="${SCRIPT_DIR}/model-registry-helper.sh"
 	if [[ -x "$registry_helper" ]]; then
 		# Get top models from different tiers for diversity
-		local opus_model sonnet_model pro_model
-		opus_model=$("$registry_helper" list --tier opus --json 2>/dev/null | sed -n 's/.*"model_id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1 || echo "")
-		sonnet_model=$("$registry_helper" list --tier sonnet --json 2>/dev/null | sed -n 's/.*"model_id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1 || echo "")
-		pro_model=$("$registry_helper" list --tier pro --json 2>/dev/null | sed -n 's/.*"model_id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1 || echo "")
+		local thinking_model standard_model simple_model
+		thinking_model=$("$registry_helper" list --tier thinking --json 2>/dev/null | sed -n 's/.*"model_id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1 || echo "")
+		standard_model=$("$registry_helper" list --tier standard --json 2>/dev/null | sed -n 's/.*"model_id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1 || echo "")
+		simple_model=$("$registry_helper" list --tier simple --json 2>/dev/null | sed -n 's/.*"model_id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1 || echo "")
 
-		if [[ -n "$opus_model" && -n "$sonnet_model" && -n "$pro_model" ]]; then
-			echo "${opus_model},${sonnet_model},${pro_model}"
+		if [[ -n "$thinking_model" && -n "$standard_model" && -n "$simple_model" ]]; then
+			echo "${thinking_model},${standard_model},${simple_model}"
 			return 0
 		fi
 	fi

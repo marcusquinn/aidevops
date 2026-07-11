@@ -22,7 +22,7 @@ Present response summaries, diff (2-model), judge scores+winner if `--score` use
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `--models` | `sonnet,opus` | Comma-separated tiers: `haiku`, `flash`, `sonnet`, `pro`, `opus`, or full IDs like `gemini-2.5-pro` |
+| `--models` | `standard,thinking` | Comma-separated tiers: `simple`, `standard`, `thinking`, or fully-qualified model IDs |
 | `--score` | off | Auto-score outputs via judge model |
 | `--judge` | `opus` | Judge model tier (used with `--score`) |
 | `--timeout` | `600` | Seconds per model |

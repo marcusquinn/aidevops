@@ -48,7 +48,7 @@ set -euo pipefail
 readonly EVOL_MEMORY_BASE_DIR="${AIDEVOPS_MEMORY_DIR:-$HOME/.aidevops/.agent-workspace/memory}"
 EVOL_MEMORY_DB="${EVOL_MEMORY_BASE_DIR}/memory.db"
 
-# AI research script for intelligent judgments (haiku tier)
+# AI research script for intelligent judgments (simple tier)
 readonly EVOL_AI_RESEARCH_SCRIPT="${SCRIPT_DIR}/ai-research-helper.sh"
 
 # Default lookback window for pattern scanning (24 hours)
@@ -223,7 +223,7 @@ EVIDENCE TRAIL:
     needed and when.
 
 AI JUDGMENT:
-    Pattern scanning uses AI (haiku tier) to identify genuine capability
+    Pattern scanning uses simple-tier AI to identify genuine capability
     gaps vs normal conversation. This follows the Intelligence Over
     Determinism principle — no regex can reliably distinguish "user asked
     for something we can't do" from "user asked a question we answered."

@@ -13,12 +13,12 @@
     "angular.json"
   ],
   "model_defaults": {
-    "implementation": "composer2",
-    "review": "sonnet",
-    "triage": "haiku",
-    "architecture": "opus",
-    "verification": "sonnet",
-    "documentation": "haiku"
+    "implementation": "standard",
+    "review": "standard",
+    "triage": "simple",
+    "architecture": "thinking",
+    "verification": "standard",
+    "documentation": "simple"
   },
   "quality_gates": [
     "eslint",

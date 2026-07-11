@@ -28,7 +28,7 @@
 #                                               the meta-issue (comma-separated).
 #                                               Default:
 #                                                 auto-dispatch,tier:thinking,
-#                                                 model:opus-4-7,bug,pulse,
+#                                                 bug,pulse,
 #                                                 framework,circuit-breaker-meta
 #   AIDEVOPS_CIRCUIT_BREAKER_META_TARGET_REPO   force the repo where the
 #                                               meta-issue is filed. By default,
@@ -76,7 +76,7 @@ source "${SCRIPT_DIR}/shared-constants.sh"
 source "${SCRIPT_DIR}/shared-gh-wrappers.sh"
 
 readonly _CB_META_MARKER='circuit-breaker-meta-filed'
-readonly _CB_META_DEFAULT_LABELS='auto-dispatch,tier:thinking,model:opus-4-7,bug,pulse,framework,circuit-breaker-meta'
+readonly _CB_META_DEFAULT_LABELS='auto-dispatch,tier:thinking,bug,pulse,framework,circuit-breaker-meta'
 readonly _CB_BREAKER_COST='cost'
 readonly _CB_BREAKER_NO_WORK='no_work'
 readonly _CB_LABEL_COST='t2007 cost'

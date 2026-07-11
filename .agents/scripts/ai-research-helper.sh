@@ -2,15 +2,15 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # ai-research-helper.sh — Lightweight multi-provider API wrapper for AI judgments
-# Provides cheap haiku-tier AI calls for threshold decisions, classification,
+# Provides cheap simple-tier AI calls for threshold decisions, classification,
 # and short-form reasoning tasks.
 #
 # Part of the Intelligence Over Determinism principle: use AI judgment where
 # fixed thresholds would fail on outliers.
 #
 # Usage:
-#   ai-research-helper.sh --prompt "Is this conversation idle?" [--provider auto|anthropic|opencode] [--model haiku|sonnet] [--max-tokens 100]
-#   echo "prompt text" | ai-research-helper.sh --stdin [--provider opencode] [--model haiku]
+#   ai-research-helper.sh --prompt "Is this conversation idle?" [--provider auto|anthropic|opencode] [--model simple|standard|thinking] [--max-tokens 100]
+#   echo "prompt text" | ai-research-helper.sh --stdin [--provider opencode] [--model simple]
 #
 # Environment:
 #   AIDEVOPS_AI_RESEARCH_PROVIDER — auto (default), anthropic, or opencode
@@ -28,11 +28,11 @@ set -euo pipefail
 LOG_PREFIX="AI-RESEARCH"
 
 resolve_model_id() {
-	local name="${1:-haiku}"
+	local name="${1:-simple}"
 	case "$name" in
-	haiku) echo "claude-haiku-4-5-20251001" ;;
-	sonnet) echo "claude-sonnet-4-6" ;;
-	opus) echo "claude-opus-4-6" ;;
+	simple) echo "claude-haiku-4-5-20251001" ;;
+	standard) echo "claude-sonnet-4-6" ;;
+	thinking) echo "claude-opus-4-6" ;;
 	anthropic/*) echo "${name#anthropic/}" ;;
 	*) echo "claude-haiku-4-5-20251001" ;;
 	esac
@@ -40,11 +40,11 @@ resolve_model_id() {
 }
 
 resolve_opencode_model_id() {
-	local name="${1:-haiku}"
+	local name="${1:-simple}"
 	case "$name" in
-	haiku | flash | health) echo "openai/gpt-5.6-terra" ;;
+	simple) echo "openai/gpt-5.6-terra" ;;
 	local) echo "openai/gpt-5.4-mini" ;;
-	sonnet | pro | opus | coding | eval) echo "openai/gpt-5.6-sol" ;;
+	standard | thinking) echo "openai/gpt-5.6-sol" ;;
 	openai/* | anthropic/* | google/*) echo "$name" ;;
 	*) echo "$name" ;;
 	esac
@@ -236,7 +236,7 @@ elif filtered:
 
 call_anthropic() {
 	local prompt="$1"
-	local model_name="${2:-haiku}"
+	local model_name="${2:-simple}"
 	local max_tokens="${3:-150}"
 
 	local api_key
@@ -272,7 +272,7 @@ call_anthropic() {
 
 call_opencode() {
 	local prompt="$1"
-	local model_name="${2:-haiku}"
+	local model_name="${2:-simple}"
 	local max_tokens="${3:-150}"
 	: "$max_tokens"
 
@@ -350,7 +350,7 @@ call_ai() {
 
 main() {
 	local prompt=""
-	local model="haiku"
+	local model="simple"
 	local max_tokens="150"
 	local provider="${AIDEVOPS_AI_RESEARCH_PROVIDER:-auto}"
 	local use_stdin=false
@@ -380,8 +380,8 @@ main() {
 			shift
 			;;
 		--help | -h)
-			echo "Usage: ai-research-helper.sh --prompt \"PROMPT\" [--provider auto|anthropic|opencode] [--model haiku|sonnet|opus] [--max-tokens 150]"
-			echo "       printf '%s' \"PROMPT\" | ai-research-helper.sh --stdin [--provider opencode] [--model haiku]"
+			echo "Usage: ai-research-helper.sh --prompt \"PROMPT\" [--provider auto|anthropic|opencode] [--model simple|standard|thinking] [--max-tokens 150]"
+			echo "       printf '%s' \"PROMPT\" | ai-research-helper.sh --stdin [--provider opencode] [--model simple]"
 			echo ""
 			echo "Lightweight multi-provider API wrapper for AI threshold judgments."
 			echo "Default provider: auto (OpenCode runtime first, then Anthropic direct API)."

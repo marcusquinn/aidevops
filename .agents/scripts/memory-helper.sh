@@ -113,7 +113,7 @@ COMMANDS:
     dedup       Remove exact and near-duplicate entries
     consolidate Merge similar memories to reduce redundancy
     insights    Run full memory audit pulse (dedup, prune, graduate, consolidate)
-                Includes cross-memory insight generation via LLM (haiku-tier).
+                Includes cross-memory insight generation via a simple-tier LLM.
                 Delegates to memory-audit-pulse.sh with --force.
     export      Export all memories
     graduate    Promote validated memories into shared docs (delegates to memory-graduate-helper.sh)

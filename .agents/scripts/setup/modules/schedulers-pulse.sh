@@ -129,7 +129,7 @@ _determine_pulse_install() {
 			echo "It will act under your GitHub identity and consume API credits:" >&2
 			echo "  - Dispatches AI workers to implement tasks from GitHub issues" >&2
 			echo "  - Creates PRs, merges passing PRs, files improvement issues" >&2
-			echo "  - 4-hourly strategic review (opus-tier) for queue health" >&2
+			echo "  - 4-hourly strategic review (thinking-tier) for queue health" >&2
 			echo "  - Circuit breaker pauses dispatch on consecutive failures" >&2
 			echo "" >&2
 			setup_prompt enable_pulse "Enable supervisor pulse? [y/N]: " "n"

@@ -2,7 +2,7 @@
 description: Auto-browse workflow — learn, optimize, and graduate repeatable browser operations and web data-mining workflows
 agent: Build+
 mode: subagent
-model: sonnet
+model: standard
 tools:
   read: true
   write: true

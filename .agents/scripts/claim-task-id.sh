@@ -1485,7 +1485,7 @@ _apply_blocked_by_detection() {
 # When a caller requests --labels auto-dispatch on a task whose title or
 # description references dispatch-path scripts, emit a non-blocking stderr
 # advisory noting that the t2819 pre-dispatch detector will auto-elevate the
-# worker to model:opus-4-7. No recommendation to switch to no-auto-dispatch —
+# worker to tier:thinking. No recommendation to switch to no-auto-dispatch —
 # auto-dispatch is the AI-first default; opus-4-7 + worker worktree isolation
 # + CI gates + circuit breaker (t2690) cover the residual risk.
 #
@@ -1537,7 +1537,7 @@ _warn_dispatch_path_auto_dispatch() {
 	[[ -z "$_matched" ]] && return 0
 
 	log_info "t2920: dispatch-path file detected ('${_matched}') with auto-dispatch label."
-	log_info "  The pre-dispatch detector (t2819) will auto-elevate this worker to model:opus-4-7."
+	log_info "  The pre-dispatch detector (t2819) will auto-elevate this worker to tier:thinking."
 	log_info "  No action required — proceed with auto-dispatch as normal."
 	log_info "  See: reference/auto-dispatch.md \"Dispatch-Path Default (t2821 / t2920)\""
 	return 0

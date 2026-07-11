@@ -1,7 +1,7 @@
 ---
 description: Cross-provider verification agent for high-stakes operations
 mode: subagent
-model: haiku
+model: simple
 model-fallback: google/gemini-2.5-flash-preview-05-20
 tools:
   read: true
@@ -92,7 +92,7 @@ Rules:
 | `warn` | Show concerns; interactive → ask user; headless → pause, create GitHub issue |
 | `block` | Stop. Present concerns to user. User decides whether to override. |
 
-**Repeated blocks (3+ in session):** Escalate to opus-tier tiebreaker with full operation context and verifier concerns.
+**Repeated blocks (3+ in session):** Escalate to a thinking-tier tiebreaker with full operation context and verifier concerns.
 
 **Verifier unavailable:** Log skip, proceed with warning. Never block solely because verification infrastructure is down — that makes the safety system a reliability liability.
 

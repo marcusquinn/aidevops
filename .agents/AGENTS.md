@@ -45,6 +45,7 @@ Skip if you lack Edit/Write/Bash tools. Otherwise, before any file modification 
 
 - Use TodoWrite for multi-step work. Mark one task in progress and complete items immediately.
 - Infer task intent: `/full-loop` or "work on this now" means implement now; "background/worker" means create a worker-ready brief and auto-dispatch; "later/save/log" means brief for later and ask numbered dispatch options. Task and issue bodies use `workflows/brief.md`. Details: `reference/task-lifecycle.md`.
+- Keep interactive subagents off the critical path and bounded; prefix delegated prompts with the lowest sufficient `[effort:simple|standard|thinking]`; details: `reference/agent-routing.md`.
 - When UI/UX, branding, iconography, or visual preferences change during a session, update the repo `DESIGN.md` in the same PR or create a worker-ready follow-up if blocked.
 - During in-progress work, classify new user messages before acting: immediate correction/steerage changes the active plan; supplemental context is retained/applied when relevant; follow-up work becomes a todo after the current work reaches a safe pause or completion point.
 - Interactive sessions with active prior task context: if the user starts a clearly unrelated objective where clean context would materially help, briefly recommend `/new` or a new tab and ask whether to continue here. Details: `reference/session.md`.

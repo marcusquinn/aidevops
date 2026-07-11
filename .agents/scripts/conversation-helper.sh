@@ -54,7 +54,7 @@ set -euo pipefail
 readonly CONV_MEMORY_BASE_DIR="${AIDEVOPS_MEMORY_DIR:-$HOME/.aidevops/.agent-workspace/memory}"
 CONV_MEMORY_DB="${CONV_MEMORY_BASE_DIR}/memory.db"
 
-# AI research script for intelligent judgments (haiku tier)
+# AI research script for intelligent judgments (simple tier)
 readonly AI_RESEARCH_SCRIPT="${SCRIPT_DIR}/ai-research-helper.sh"
 
 # Valid conversation statuses

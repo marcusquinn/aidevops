@@ -1,7 +1,7 @@
 ---
 name: chrome-webstore-release
 description: Chrome Web Store release automation - OAuth setup, API publish workflow, version-triggered CI, status checking
-model: sonnet
+model: standard
 tools: [bash, read, write]
 ---
 

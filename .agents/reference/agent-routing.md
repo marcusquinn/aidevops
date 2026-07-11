@@ -17,6 +17,14 @@ Dispatch workers with `headless-runtime-helper.sh run`, not bare runtime CLIs. T
 
 The selected agent changes the system prompt and domain knowledge loaded for the worker.
 
+## Interactive subagent progress
+
+- Use subagents only for independent advisory work; never delegate the active critical path.
+- Dispatch at most two children in one batch and do not launch another batch until they return.
+- Prefix every delegated prompt with `[effort:simple]`, `[effort:standard]`, or `[effort:thinking]`; use the lowest tier that can reliably complete the task.
+- Keep the parent progressing on non-overlapping work. Do not finalize with children pending; use their returned evidence or complete the work locally and disregard late results.
+- Subagents must not dispatch further subagents. OpenCode maps the requested effort to the provider and clamps it so child reasoning never exceeds the parent session.
+
 ## Primary agents
 
 Full index: `subagent-index.toon`.

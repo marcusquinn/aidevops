@@ -10,7 +10,7 @@ tools:
   grep: false
   webfetch: false
   task: false
-model: haiku
+model: simple
 ---
 
 <!-- SPDX-License-Identifier: MIT -->
@@ -22,49 +22,41 @@ model: haiku
 
 ## Quick Reference
 
-- **Default**: `sonnet`. **Rule**: smallest model that produces acceptable quality.
-- **Spectrum**: local ($0) → composer2 (0.17x) → flash (0.20x) → haiku (0.25x) → sonnet (1x) → pro (1.5x) → opus (3x)
-- **Frontmatter**: `model: haiku` in YAML. Absent → `sonnet`. `local` requires an installed local model and otherwise fails closed.
+- **Default**: `standard`. **Rule**: use the lowest tier that reliably completes the task.
+- **Spectrum**: `simple` → `standard` → `thinking`.
+- **Frontmatter**: `model: simple|standard|thinking`. Do not put provider names, model families, or reasoning variants in tier fields.
 - **Vault metadata**: `data_classification`, `runtime_policy`, `needs_vault`, `needs_collections`, `needs_device`, and `needs_remote_unlock` can restrict dispatch before a prompt leaves the device.
 
 ## Model Tiers
 
-| Tier | Model | Use When |
+| Tier | Current ordered mapping | Use When |
 |------|-------|----------|
-| `local` | llama.cpp or Ollama (user models) | Privacy/offline, bulk, experimentation; opt-in only |
-| `composer2` | cursor/composer-2 | Multi-file coding, large refactors (requires Cursor OAuth pool t1549) |
-| `flash` | openai/gpt-5.6-terra → claude-haiku-4-5 | >50K context, summarization, bulk processing, research sweeps |
-| `haiku` | openai/gpt-5.6-terra → claude-haiku-4-5 | Classification, triage, simple transforms, commit messages, routing |
-| `sonnet` | openai/gpt-5.6-sol → zai-coding-plan/glm-5.2 → claude-sonnet-4-6 | Code, review, debugging, docs — most dev tasks |
-| `pro` | openai/gpt-5.6-sol → claude-sonnet-4-6 | >100K codebases + complex reasoning |
-| `opus` | openai/gpt-5.6-sol (`high`) → claude-opus-4-6 | Architecture, novel problems, security audits, complex trade-offs |
+| `simple` | openai/gpt-5.6-terra → anthropic/claude-haiku-4-5 | Classification, search, triage, formatting, and bounded transforms |
+| `standard` | openai/gpt-5.6-sol → zai-coding-plan/glm-5.2 → anthropic/claude-sonnet-4-6 | Code, review, debugging, docs, and most development tasks |
+| `thinking` | openai/gpt-5.6-sol → anthropic/claude-opus-4-6 | Architecture, novel problems, security audits, and complex trade-offs |
 
 **Model IDs**: Always fully-qualified (`claude-sonnet-4-6`, not `claude-sonnet-4`). Short-form → `ProviderModelNotFoundError`. CLI prefix: `anthropic/`, `google/`, `openai/`.
 
-**`local` fallback**: Local is opt-in and fails closed when llama.cpp/Ollama has no configured model. Cloud fallback requires the caller to select a cloud tier explicitly; local-only work is never silently transmitted.
+Only `simple`, `standard`, and `thinking` are valid authored tiers. Concrete models and provider reasoning levels are resolved from the active routing table at execution time.
+
+**Local execution** is a provider/runtime policy, not a workload tier. A local model may be placed in any canonical tier's ordered model list. Privacy policy still fails closed when no approved local runtime is available.
 
 ## Decision Flowchart
 
 ```text
-Privacy/on-device or Vault local-only? → YES → local running? → YES: local | NO: FAIL
-  NO → bulk/offline? → YES → local running? → YES: local | NO: composer2
-    NO → simple classification? → YES: haiku
-      NO → >50K tokens? → YES → deep reasoning? → YES: pro | NO: flash
-        NO → novel architecture? → YES: opus
-          NO → Cursor pool (t1549)? → YES: composer2 | NO: sonnet
+Privacy/on-device or Vault local-only? → YES → approved local mapping available? → use mapped model | NO: FAIL
+  NO → simple classification/search/formatting? → YES: simple
+    NO → novel architecture or complex security reasoning? → YES: thinking
+      NO → standard
 ```
 
 ## Fallback Routing
 
-| Tier | Fallback | Trigger |
+| Tier | Fallback behavior | Trigger |
 |------|----------|---------|
-| `local` | FAIL | No installed local model |
-| `flash` | claude-haiku-4-5 | OpenAI unavailable or provider-disallowed |
-| `haiku` | claude-haiku-4-5 | OpenAI unavailable or provider-disallowed |
-| `composer2` | sonnet | No Cursor OAuth pool |
-| `sonnet` | zai-coding-plan/glm-5.2 → claude-sonnet-4-6 | Earlier provider unavailable, unauthenticated, or disallowed |
-| `pro` | claude-sonnet-4-6 | OpenAI unavailable or provider-disallowed |
-| `opus` | claude-opus-4-6 | OpenAI unavailable or provider-disallowed |
+| `simple` | next configured simple-tier provider | Primary unavailable or provider-disallowed |
+| `standard` | next configured standard-tier provider | Primary unavailable or provider-disallowed |
+| `thinking` | next configured thinking-tier provider | Primary unavailable or provider-disallowed |
 
 Supervisor resolves automatically. Interactive: `compare-models-helper.sh discover`.
 
@@ -75,7 +67,7 @@ Supervisor resolves automatically. Interactive: `compare-models-helper.sh discov
 1. **Routing table** (`configs/model-routing-table.json`, or local override at `custom/configs/model-routing-table.json`) → ordered models per tier
 2. **Provider filter** (`AIDEVOPS_HEADLESS_PROVIDER_ALLOWLIST`) → optional local pinning such as `openai`
 3. **Auth + availability checks** (`headless-runtime-helper.sh`, `model-availability-helper.sh`) → providers/models that can actually run now
-4. **Result**: pulse resolves a sonnet-tier model; workers round-robin across the filtered sonnet-tier list
+4. **Result**: pulse resolves a standard-tier model; workers round-robin across the filtered standard-tier list
 
 Before the selected worker launches, `vault-data-policy-helper.sh` evaluates the
 task title/prompt metadata. Remote providers are denied for `local-only` and
@@ -85,16 +77,16 @@ task title/prompt metadata. Remote providers are denied for `local-only` and
 is always denied because secrets must flow through secret tooling, not prompts.
 
 - **Shared default**: The framework routing table lists smoke-tested OpenAI models first so workers can continue during Anthropic cooldowns. Anthropic remains the fallback, and local custom routing can still reorder or replace these defaults.
-- **Pulse**: Resolves `sonnet` through `model-availability-helper.sh resolve sonnet`, so it follows routing-table order, health checks, local routing-table overrides, and `AIDEVOPS_HEADLESS_PROVIDER_ALLOWLIST`.
-- **Workers**: Round-robin across the routed `sonnet` models after allowlist filtering and auth checks. Tier escalation still uses `resolve` (`tier:simple` → `haiku`, `tier:standard` → `sonnet`, `tier:thinking` → `opus`).
+- **Pulse**: Resolves `standard` through `model-availability-helper.sh resolve standard`, so it follows routing-table order, health checks, local routing-table overrides, and `AIDEVOPS_HEADLESS_PROVIDER_ALLOWLIST`.
+- **Workers**: Round-robin across canonical `simple`, `standard`, or `thinking` routes after allowlist filtering and auth checks.
 - **Local switch**: Set `AIDEVOPS_HEADLESS_PROVIDER_ALLOWLIST=openai` to force both pulse and workers onto the default OpenAI fallbacks. If you want OpenAI primary but Anthropic fallback, reorder `custom/configs/model-routing-table.json` and omit the allowlist.
-- **OpenAI default mapping**: `haiku`/`flash` resolve to `openai/gpt-5.6-terra` at `low`; standard `sonnet`/`coding` workers use `openai/gpt-5.6-sol` at `low`; `pro`/`opus` workers use Sol at `high`.
-- **OpenAI tier rationale**: Terra costs $2.50/M input and $15/M output and is competitive with GPT-5.5, making it the conservative choice for prescriptive/simple work. Sol costs $5/M input and $30/M output and is OpenAI's recommended flagship coding model. Its published `xhigh` agent benchmarks make it the evidence-backed thinking tier.
+- **Current default mapping**: The active routing table currently maps `simple` to OpenAI Terra then Anthropic Haiku, `standard` to OpenAI Sol then Z.AI GLM then Anthropic Sonnet, and `thinking` to OpenAI Sol then Anthropic Opus. Availability and provider policy decide the exact model at execution time.
+- **Reasoning mapping**: The same routing table currently maps OpenAI `simple`, `standard`, and `thinking` to `low`, `medium`, and `xhigh`. Other providers use their provider/runtime defaults unless configured explicitly.
+- **OpenAI tier rationale**: Terra costs $2.50/M input and $15/M output and is competitive with GPT-5.5, making it the conservative choice for prescriptive/simple work. Sol costs $5/M input and $30/M output and is OpenAI's recommended flagship coding model.
 - **OpenAI pro caveat**: `openai/gpt-5.6-sol-pro` passed a live OpenCode ChatGPT OAuth smoke test on 2026-07-10, but OpenAI publishes neither an API price nor comparative Sol Pro benchmarks. It remains excluded from automatic workers pending repository-specific completion-rate evidence. Historical `gpt-5.5-pro` and older `*-pro`/`o3-pro` IDs remain excluded.
-- **Reasoning effort**: OpenCode exposes GPT reasoning variants separately (`none`, `minimal`, `low`, `medium`, `high`, `xhigh`). Briefed background work defaults to Terra/Sol `low` for simple/standard tiers and Sol `high` for thinking tiers. `xhigh` is reserved for an explicit failure-escalation retry. Explicit CLI or environment variants always win.
-- **GPT-5.5 standard workers**: For `openai/gpt-5.5` on worker `sonnet`/`pro` tiers, aidevops omits env-derived variants such as `AIDEVOPS_HEADLESS_VARIANT_SONNET=high` so OpenCode sends no explicit thinking override. Explicit CLI `--variant` still wins because it bypasses automatic variant resolution.
-- **GLM-5.2 option**: Standard/coding/eval routing may use `zai-coding-plan/glm-5.2` when that OpenCode provider is authenticated. Direct `zai/glm-5.2` is intentionally excluded. OpenCode Go can be added once its provider-qualified model ID is observable and smoke-tested.
-- **Tier-aware effort**: `AIDEVOPS_HEADLESS_VARIANT_OPUS` and `AIDEVOPS_HEADLESS_VARIANT_SONNET` override automatic defaults. The GPT-5.5 exception above applies only to legacy GPT-5.5 env-derived sonnet/pro variants.
+- **GPT-5.5 standard workers**: aidevops omits env-derived standard-tier variants so OpenCode sends no explicit thinking override. Explicit CLI `--variant` still wins.
+- **GLM-5.2 option**: Standard routing may use `zai-coding-plan/glm-5.2` when that OpenCode provider is authenticated. Direct `zai/glm-5.2` is intentionally excluded.
+- **Tier-aware effort**: `AIDEVOPS_HEADLESS_VARIANT_SIMPLE`, `AIDEVOPS_HEADLESS_VARIANT_STANDARD`, and `AIDEVOPS_HEADLESS_VARIANT_THINKING` can temporarily override routing-table reasoning.
 - **Fallback**: If routed resolution fails entirely, pulse falls back to `anthropic/claude-sonnet-4-6`; workers fall back to `DEFAULT_HEADLESS_MODELS` when no allowlist is forcing a subset.
 - **Deprecated**: `PULSE_MODEL` and `AIDEVOPS_HEADLESS_MODELS` env vars are respected as overrides for one release cycle with deprecation warnings. Remove from `credentials.sh`.
 
@@ -111,8 +103,8 @@ Example custom override for OpenAI-capable headless routing:
 ```json
 {
   "tiers": {
-    "sonnet": { "models": ["openai/gpt-5.6-sol", "anthropic/claude-sonnet-4-6"] },
-    "opus": { "models": ["openai/gpt-5.6-sol", "anthropic/claude-opus-4-6"] }
+    "standard": { "models": ["openai/gpt-5.6-sol", "anthropic/claude-sonnet-4-6"] },
+    "thinking": { "models": ["openai/gpt-5.6-sol", "anthropic/claude-opus-4-6"] }
   }
 }
 ```
@@ -126,8 +118,8 @@ export AIDEVOPS_HEADLESS_PROVIDER_ALLOWLIST="openai"
 Example reasoning effort override:
 
 ```bash
-export AIDEVOPS_HEADLESS_VARIANT_SONNET="high"
-export AIDEVOPS_HEADLESS_VARIANT_OPUS="xhigh"
+export AIDEVOPS_HEADLESS_VARIANT_STANDARD="high"
+export AIDEVOPS_HEADLESS_VARIANT_THINKING="xhigh"
 ```
 
 Role-specific overrides still exist when needed:
@@ -151,15 +143,15 @@ Interactive: `/compare-models`, `/compare-models-free`, `/route <task>`
 ## Bundle Presets (t1364.6)
 
 ```json
-{ "model_defaults": { "implementation": "sonnet", "review": "sonnet", "triage": "haiku",
-    "architecture": "opus", "verification": "sonnet", "documentation": "haiku" } }
+{ "model_defaults": { "implementation": "standard", "review": "standard", "triage": "simple",
+    "architecture": "thinking", "verification": "standard", "documentation": "simple" } }
 ```
 
-**Precedence** (highest wins): `model:` in TODO.md → subagent frontmatter → bundle `model_defaults` → default `sonnet`. Multiple bundles → most-restrictive tier wins. CLI: `bundle-helper.sh get|resolve`. Integration: `cron-dispatch.sh`, pulse `agent_routing`, `linters-local.sh` `skip_gates`.
+**Precedence** (highest wins): `model:` in TODO.md → subagent frontmatter → bundle `model_defaults` → default `standard`. Multiple bundles → most-capable required tier wins. CLI: `bundle-helper.sh get|resolve`. Integration: `cron-dispatch.sh`, pulse `agent_routing`, `linters-local.sh` `skip_gates`.
 
 ## Failure-Based Escalation (t1416 + GH#14964)
 
-After 2 failed attempts, escalate to next tier (sonnet → opus via `--model anthropic/claude-opus-4-6`). One opus (~3x) < 3+ failed sonnet dispatches. Dispatch/kill comments MUST include model tier for escalation auditing.
+After 2 failed attempts, escalate from `standard` to `thinking`. Dispatch/kill comments must include the canonical tier for escalation auditing.
 
 **Worker BLOCKED policy (GH#14964 — MANDATORY):** Attempt model escalation before exiting `BLOCKED`. Review-policy metadata, nominal GitHub states, and lower-tier model limits are NOT valid blockers on their own — a genuine blocker must persist after escalation. See `prompts/worker-efficiency-protocol.md` "Model escalation before BLOCKED".
 

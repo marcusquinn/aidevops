@@ -334,7 +334,7 @@ If no meaningful connections exist, respond: {\"connections\":[],\"insight\":\"\
 Only include memory IDs that actually appear in the MEMORIES above."
 
 	local response
-	response=$("$ai_helper" --prompt "$prompt" --model haiku --max-tokens 500) || {
+	response=$("$ai_helper" --prompt "$prompt" --model simple --max-tokens 500) || {
 		echo ""
 		return 1
 	}

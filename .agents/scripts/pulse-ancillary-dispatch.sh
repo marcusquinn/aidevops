@@ -1214,7 +1214,7 @@ _dispatch_triage_review_worker() {
 # Dispatch triage review workers for needs-maintainer-review issues
 #
 # Reads the pre-fetched triage status from the triage state file and
-# dispatches opus-tier review workers for issues marked needs-review.
+# dispatches thinking-tier review workers for issues marked needs-review.
 # Respects the 2-per-cycle cap and available worker slots.
 #
 # Arguments:
@@ -1246,9 +1246,9 @@ dispatch_triage_reviews() {
 
 	# Resolve model: prefer opus, fall back to sonnet, then omit --model
 	local resolved_model=""
-	resolved_model=$("$MODEL_AVAILABILITY_HELPER" resolve opus || echo "")
+	resolved_model=$("$MODEL_AVAILABILITY_HELPER" resolve thinking || echo "")
 	if [[ -z "$resolved_model" ]]; then
-		resolved_model=$("$MODEL_AVAILABILITY_HELPER" resolve sonnet || echo "")
+		resolved_model=$("$MODEL_AVAILABILITY_HELPER" resolve standard || echo "")
 	fi
 	[[ -n "$resolved_model" ]] || echo "[pulse-wrapper] dispatch_triage_reviews: model resolution failed (opus and sonnet unavailable)" >>"$LOGFILE"
 

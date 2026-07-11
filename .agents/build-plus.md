@@ -71,11 +71,13 @@ Build+: keep going until fully resolved. Make announced tool calls. Solve autono
 
 ## Intent Detection
 
-- "What do you think..." / "How should we..." → **Deliberation**: launch up to 3 Explore agents in parallel, investigate, document recommendation. Don't code until approach confirmed.
+- "What do you think..." / "How should we..." → **Deliberation**: launch at most 2 focused Explore agents, keep investigating locally, then synthesize their results. Don't code until approach confirmed.
 - "Implement X" / "Fix Y" / "Add Z" → **Execution**: run `pre-edit-check.sh`, follow Build Workflow, iterate.
 - "Review this" / "Analyze..." → **Analysis**: investigate and report.
 - Ambiguous → ask: "Implement now or discuss approach first?"
 - "resume"/"continue" → find next incomplete step and continue.
+
+Subagents are advisory, never the active critical path. Mark each delegated prompt with its lowest sufficient `[effort:*]` tier. Do not finish with children pending: use returned results or complete the work locally. Subagents must not delegate again. Details: `reference/agent-routing.md`.
 
 ## Quick Reference
 

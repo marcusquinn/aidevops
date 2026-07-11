@@ -49,7 +49,7 @@ setup() {
 {"plugins":[{"name":"Example Plugin","repo":"local","branch":"main","namespace":"example-plugin","enabled":true}]}
 JSON
 	cat >"$agents_dir/example-plugin/plugin.json" <<'JSON'
-{"name":"Example Plugin","version":"1.0.0","description":"Example plugin agents","agents":[{"file":"example-agent.md","name":"example-agent","description":"Example agent","model":"sonnet"}]}
+{"name":"Example Plugin","version":"1.0.0","description":"Example plugin agents","agents":[{"file":"example-agent.md","name":"example-agent","description":"Example agent","model":"standard"}]}
 JSON
 	cat >"$agents_dir/example-plugin/example-agent.md" <<'EOF_AGENT'
 ---

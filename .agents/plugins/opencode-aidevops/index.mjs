@@ -39,6 +39,7 @@ import { applyImageSizeGuard } from "./quality-hooks-image.mjs";
 import { createSessionTitleFallbackHandler } from "./session-title-fallback.mjs";
 import { createSessionTitleSuffixHandler } from "./session-title-suffix.mjs";
 import { installPluginConsoleRouter } from "./plugin-console.mjs";
+import { createSubagentEffortHooks, loadTierReasoningPolicies } from "./subagent-effort.mjs";
 
 // Existing modules
 import { createTools } from "./tools.mjs";
@@ -201,6 +202,11 @@ export async function AidevopsPlugin({ directory, client }) {
     scriptsDir: SCRIPTS_DIR,
     workspaceDir: WORKSPACE_DIR,
   });
+  const tierReasoning = loadTierReasoningPolicies([
+    join(AGENTS_DIR, "custom", "configs", "model-routing-table.json"),
+    join(AGENTS_DIR, "configs", "model-routing-table.json"),
+  ]);
+  const subagentEffortHooks = createSubagentEffortHooks(client, { tierReasoning });
 
   // TTSR hooks
   const {
@@ -299,6 +305,10 @@ export async function AidevopsPlugin({ directory, client }) {
 
     // Custom tools + pool management
     tool: baseTools,
+
+    // Select the lowest suitable child effort, capped by the parent session.
+    "chat.message": subagentEffortHooks.chatMessage,
+    "chat.params": subagentEffortHooks.chatParams,
 
     // Quality hooks
     "tool.execute.before": toolExecuteBefore,

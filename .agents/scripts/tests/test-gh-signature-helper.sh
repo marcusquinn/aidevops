@@ -486,13 +486,13 @@ rm -rf "$tmp_home_19"
 echo ""
 echo "Test 20: session-mode footer detection"
 result=$(env -u FULL_LOOP_HEADLESS -u AIDEVOPS_HEADLESS -u OPENCODE_HEADLESS -u AIDEVOPS_SESSION_ORIGIN \
-	OPENCODE=1 AIDEVOPS_HEADLESS_VARIANT_SONNET="high" \
+	OPENCODE=1 AIDEVOPS_HEADLESS_VARIANT_STANDARD="high" \
 	"$HELPER" generate --cli "OpenCode" --model "m" --tokens 1 --time 60)
 assert_contains "variant config alone remains interactive" "with the user in an interactive session" "$result"
 assert_not_contains "variant config does not imply worker" "as a headless worker" "$result"
 
 result=$(env -u FULL_LOOP_HEADLESS -u AIDEVOPS_HEADLESS -u OPENCODE_HEADLESS -u AIDEVOPS_SESSION_ORIGIN \
-	OPENCODE=true AIDEVOPS_HEADLESS_VARIANT_SONNET="high" \
+	OPENCODE=true AIDEVOPS_HEADLESS_VARIANT_STANDARD="high" \
 	"$HELPER" generate --cli "OpenCode" --model "m" --tokens 1 --time 60)
 assert_contains "truthy OPENCODE marks interactive" "with the user in an interactive session" "$result"
 

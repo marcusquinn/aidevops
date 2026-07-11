@@ -2,7 +2,7 @@
 name: context-templates
 description: Context file templates for SEO content creation (brand voice, style guide, keywords, links)
 mode: subagent
-model: haiku
+model: simple
 ---
 
 <!-- SPDX-License-Identifier: MIT -->

@@ -592,9 +592,9 @@ triage_single() {
 	IFS=$'\t' read -r spf_result dkim_result dmarc_result is_phishing <<<"$dns_fields"
 
 	# Phase 3: AI classification (skipped when guard blocks)
-	local selected_model="haiku"
+	local selected_model="simple"
 	if [[ "$heuristic_conf" == "0.62" || "$guard_state" == "warn" ]]; then
-		selected_model="sonnet"
+		selected_model="standard"
 	fi
 
 	local ai_json="{}"

@@ -1,7 +1,7 @@
 ---
 description: Unbuilt.app provider — real-time frontend technology detection via CLI
 mode: subagent
-model: sonnet
+model: standard
 tools:
   read: true
   write: false

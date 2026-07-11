@@ -2,7 +2,7 @@
 name: story
 description: Narrative design, hooks, angles, and frameworks for platform-agnostic storytelling
 mode: subagent
-model: sonnet
+model: standard
 ---
 
 <!-- SPDX-License-Identifier: MIT -->

@@ -2,7 +2,7 @@
 description: Graduate validated memories into shared documentation
 agent: Build+
 mode: subagent
-model: haiku
+model: simple
 ---
 
 <!-- SPDX-License-Identifier: MIT -->

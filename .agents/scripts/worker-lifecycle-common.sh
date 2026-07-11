@@ -1095,7 +1095,7 @@ ${marker}
 **Action:** Tier escalation **skipped**. The issue stays at its current tier so the next retry can succeed cheaply once the infrastructure issue resolves.
 **Reason:** ${safe_reason}
 
-**Why no cascade:** \`no_work\` means the worker never produced reliable implementation evidence — it crashed during runtime setup (FD exhaustion, plugin init failure, branch naming race, auth refresh race) or stale-recovery falsely concluded no progress. A more expensive model cannot fix an infrastructure problem it never reached. Cascading to \`tier:thinking\` would burn opus tokens on a problem sonnet (or haiku) will handle once the infra clears.
+**Why no cascade:** \`no_work\` means the worker never produced reliable implementation evidence — it crashed during runtime setup (FD exhaustion, plugin init failure, branch naming race, auth refresh race) or stale-recovery falsely concluded no progress. A more expensive model cannot fix an infrastructure problem it never reached. Cascading to \`tier:thinking\` would waste capacity on a problem the mapped standard or simple model can handle once the infrastructure clears.
 
 After ${nmr_threshold} consecutive \`no_work\` failures the per-issue no_work circuit breaker (t2769) applies \`needs-maintainer-review\` with a \`cost-circuit-breaker:no_work_loop\` marker that \`_nmr_application_is_circuit_breaker_trip\` (t2386) recognises, so auto-approval correctly preserves NMR.
 
@@ -1354,31 +1354,11 @@ escalate_issue_tier() {
 	local next_label=""
 	local remove_label=""
 
-	# Check for model:opus-4-7 override label first — signals a previous
-	# cascade step already escalated from opus-4.6 to opus-4.7 within
-	# tier:thinking (t2239). When both tier:thinking AND model:opus-4-7
-	# are present, the cascade is exhausted — hand off to NMR.
-	local has_opus_47_label=false
-	case ",$current_labels," in
-	*,model:opus-4-7,*) has_opus_47_label=true ;;
-	esac
-
-	# Determine current tier — tier:thinking is the canonical opus-tier label.
-	# Within tier:thinking there is a further rung: opus-4.6 (default) →
-	# opus-4.7 (via model:opus-4-7 label override) → NMR (t2239).
+	# Thinking is the terminal workload tier. Runtime routing selects the best
+	# currently available model and provider reasoning level for that tier.
 	case ",$current_labels," in
 	*,tier:thinking,*)
-		if [[ "$has_opus_47_label" == "true" ]]; then
-			# Already escalated to opus-4.7 within tier:thinking — terminal
-			return 0
-		fi
-		# tier:thinking on opus-4.6 → add model:opus-4-7 override.
-		# Keep the tier:thinking label for history; the model: override
-		# takes precedence in pulse-model-routing.sh label resolution.
-		current_tier="thinking (opus-4.6)"
-		next_tier="thinking (opus-4.7)"
-		next_label="model:opus-4-7"
-		remove_label=""
+		return 0
 		;;
 	*,tier:standard,*)
 		current_tier="standard"
@@ -1424,21 +1404,12 @@ escalate_issue_tier() {
 	local label_color=""
 	case "$next_label" in
 	tier:thinking)
-		label_desc="Route to opus-tier model for dispatch"
+		label_desc="Route at the thinking workload tier"
 		label_color="7057FF"
 		;;
 	tier:standard)
-		label_desc="Route to sonnet-tier model for dispatch"
+		label_desc="Route at the standard workload tier"
 		label_color="0E8A16"
-		;;
-	model:opus-4-7)
-		# Model-override label (t2239). Takes precedence over tier:*
-		# labels in pulse-model-routing.sh resolve_dispatch_model_for_labels.
-		# Applied either by the cascade (after opus-4.6 exhausts its retries
-		# at tier:thinking) or manually by maintainers to jump straight to
-		# opus-4.7 for short-context high-reasoning tasks.
-		label_desc="Override: route dispatch to claude-opus-4-7 (wins over tier:*)"
-		label_color="0075CA"
 		;;
 	esac
 

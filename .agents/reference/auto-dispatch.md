@@ -97,7 +97,7 @@ Tasks that modify the worker dispatch/spawn path **historically** defaulted to `
 **As of t2920 (Apr 2026), this default is reversed: dispatch-path tasks auto-dispatch like everything else.** The protection cascade now covers the residual risk:
 
 1. **Worker worktree isolation** — workers operate in isolated worktrees; a buggy in-flight fix cannot affect the live pulse.
-2. **t2819 pre-dispatch detector** — auto-elevates dispatch-path tasks to `model:opus-4-7` before dispatch, eliminating wasted cascade attempts at lower tiers.
+2. **t2819 pre-dispatch detector** — auto-elevates dispatch-path tasks to `tier:thinking` before dispatch, eliminating wasted lower-tier attempts while runtime routing chooses the model.
 3. **CI gates** — every PR runs the full quality suite before merge.
 4. **Watchdog kills** — `worker-activity-watchdog.sh` kills workers with no output for 300s.
 5. **t2690 circuit breaker** — pauses ALL dispatch when GraphQL budget < 5%.
@@ -111,7 +111,7 @@ The task's brief `## How` section or `### Files Scope` references any file in th
 
 ### Decision tree (post-t2920)
 
-1. Brief references a dispatch-path file → use `#auto-dispatch` as normal. The t2819 detector applies `model:opus-4-7` before dispatch. The advisory tooling (below) emits non-blocking informational messages.
+1. Brief references a dispatch-path file → use `#auto-dispatch` as normal. The t2819 detector applies `tier:thinking` before dispatch. The advisory tooling below emits non-blocking informational messages.
 2. Author wants to implement interactively (rare — e.g. observing the running system mid-fix) → use `#no-auto-dispatch #interactive` and run `interactive-session-helper.sh claim <N> <slug>`.
 3. No dispatch-path files in brief → normal dispatch rules apply.
 

@@ -11,7 +11,7 @@ tools:
   edit: true
   bash: true
   webfetch: true
-model: sonnet
+model: standard
 ---
 
 <!-- SPDX-License-Identifier: MIT -->
@@ -55,7 +55,7 @@ curl -s -X POST http://colormind.io/api/ \
 
 # Response: {"result":[[R,G,B],[R,G,B],[R,G,B],[R,G,B],[R,G,B]]}
 # 5 colours: darkest to lightest (typically: dark bg, dark accent, mid, light accent, light bg)
-```
+```text
 
 **Models**: `default` (general), `ui` (UI-optimised when available). Check `http://colormind.io/api/` for current models.
 
@@ -97,7 +97,7 @@ Before generating, establish what's fixed:
 # Lock user's primary colour (e.g. #6366f1 = indigo)
 curl -s -X POST http://colormind.io/api/ \
   --data '{"input":[[99,102,241],"N","N","N","N"],"model":"default"}'
-```
+```text
 
 **Option B: From HSL Harmony Rules**
 
@@ -120,7 +120,7 @@ Pick a brand or style from `tools/design/library/`, extract Section 2, and use a
 
 Every DESIGN.md needs these colour roles populated:
 
-```
+```text
 Primary Brand:     primary, secondary
 Accent:            accent, accent-hover
 Text:              text-primary, text-secondary, text-tertiary
@@ -153,7 +153,7 @@ Every text/background pair must pass WCAG 2.1 AA:
 
 **Quick contrast check formula** (approximate):
 
-```
+```text
 luminance(colour) = 0.2126 * R/255 + 0.7152 * G/255 + 0.0722 * B/255
 contrast = (lighter_luminance + 0.05) / (darker_luminance + 0.05)
 ```
@@ -168,7 +168,7 @@ Flag any pair below 4.5:1 and suggest adjustment.
 
 **Hue rotation**: Rotate the primary hue in 30-degree increments, regenerate derived colours.
 
-```
+```text
 Spin 1: Original (hsl 239)
 Spin 2: +30 degrees (hsl 269) -- purple shift
 Spin 3: +60 degrees (hsl 299) -- magenta shift

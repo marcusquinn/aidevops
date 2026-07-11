@@ -2,7 +2,7 @@
 description: Frontier-level coding model via Cursor Composer 2 — complex multi-file implementation and large refactors
 mode: subagent
 model: cursor/composer-2
-model-tier: composer2
+model-tier: standard
 model-fallback: anthropic/claude-sonnet-4-6
 fallback-chain:
   - cursor/composer-2

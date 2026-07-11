@@ -272,7 +272,7 @@ generate_leaderboard() {
 	echo "|-------|-------|-----------|----------|--------------|-----------|"
 
 	# Query each known model tier
-	local tiers="opus sonnet pro flash haiku"
+	local tiers="thinking standard simple"
 	for tier in $tiers; do
 		local successes failures last_used
 		successes=$(sqlite3 "$MEMORY_DB" "

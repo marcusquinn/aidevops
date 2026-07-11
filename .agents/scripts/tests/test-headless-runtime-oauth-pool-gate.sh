@@ -27,6 +27,7 @@ OAUTH_POOL_HELPER="$TMP_DIR/oauth-pool-helper.sh"
 DEFAULT_HEADLESS_MODELS="openai/gpt-5.5"
 unset ANTHROPIC_API_KEY || true
 unset OPENAI_API_KEY || true
+unset AIDEVOPS_OPENAI_API_KEY_SOURCE || true
 
 # shellcheck source=/dev/null
 source "${AGENTS_SCRIPTS}/headless-runtime-provider.sh"
@@ -108,19 +109,19 @@ PY
 TEST_MODELS=("openai/gpt-5.5" "anthropic/claude-sonnet-4-6")
 cooldown="$(future_ms)"
 write_pool "{\"openai\":[{\"email\":\"one@example.test\",\"status\":\"rate-limited\",\"cooldownUntil\":${cooldown}},{\"email\":\"two@example.test\",\"status\":\"auth-error\",\"cooldownUntil\":${cooldown}}],\"anthropic\":[{\"email\":\"ok@example.test\",\"status\":\"active\",\"cooldownUntil\":0}]}"
-actual="$(_choose_model_auto "worker" "sonnet")"
+actual="$(_choose_model_auto "worker" "standard")"
 assert_equals "anthropic/claude-sonnet-4-6" "$actual" "all cooling OpenAI OAuth pool accounts are skipped" || true
 
 cooldown="$(future_ms)"
 write_pool "{\"openai\":[{\"email\":\"one@example.test\",\"status\":\"rate-limited\",\"cooldownUntil\":${cooldown}},{\"email\":\"two@example.test\",\"status\":\"idle\",\"cooldownUntil\":0}]}"
-actual="$(_choose_model_auto "worker" "sonnet")"
+actual="$(_choose_model_auto "worker" "standard")"
 assert_equals "openai/gpt-5.5" "$actual" "one available OpenAI OAuth pool account keeps provider selectable" || true
 
 cooldown="$(future_ms)"
 OPENAI_API_KEY="static-test-key"
 export OPENAI_API_KEY
 write_pool "{\"openai\":[{\"email\":\"one@example.test\",\"status\":\"rate-limited\",\"cooldownUntil\":${cooldown}}]}"
-actual="$(_choose_model_auto "worker" "sonnet")"
+actual="$(_choose_model_auto "worker" "standard")"
 assert_equals "openai/gpt-5.5" "$actual" "static OpenAI API key bypasses OAuth pool cooldown gate" || true
 unset OPENAI_API_KEY
 
@@ -129,17 +130,17 @@ OPENAI_API_KEY="oauth-pool-access-token"
 AIDEVOPS_OPENAI_API_KEY_SOURCE="oauth-pool"
 export OPENAI_API_KEY AIDEVOPS_OPENAI_API_KEY_SOURCE
 write_pool "{\"openai\":[{\"email\":\"one@example.test\",\"status\":\"rate-limited\",\"cooldownUntil\":${cooldown}}],\"anthropic\":[{\"email\":\"ok@example.test\",\"status\":\"active\",\"cooldownUntil\":0}]}"
-actual="$(_choose_model_auto "worker" "sonnet")"
+actual="$(_choose_model_auto "worker" "standard")"
 assert_equals "anthropic/claude-sonnet-4-6" "$actual" "OAuth-injected OpenAI API key does not bypass OAuth pool cooldown gate" || true
 unset OPENAI_API_KEY AIDEVOPS_OPENAI_API_KEY_SOURCE
 
 rm -f "$HOME/.aidevops/oauth-pool.json"
-actual="$(_choose_model_auto "worker" "sonnet")"
+actual="$(_choose_model_auto "worker" "standard")"
 assert_equals "openai/gpt-5.5" "$actual" "missing OAuth pool remains non-blocking for legacy auth" || true
 
 cooldown="$(past_ms)"
 write_pool "{\"openai\":[{\"email\":\"one@example.test\",\"status\":\"idle\",\"cooldownUntil\":${cooldown}}]}"
-actual="$(_choose_model_auto "worker" "sonnet")"
+actual="$(_choose_model_auto "worker" "standard")"
 assert_equals "openai/gpt-5.5" "$actual" "expired cooldown does not block an otherwise idle account" || true
 
 if [[ "$failures" -ne 0 ]]; then

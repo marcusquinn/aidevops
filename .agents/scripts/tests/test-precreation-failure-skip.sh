@@ -144,7 +144,7 @@ _dlw_assign_and_label() { return 0; }
 _dlw_setup_worker_log() { echo "${TMP}/worker.log"; return 0; }
 _dlw_resolve_tier_and_model() {
 	_DLW_DISPATCH_TIER="standard"
-	_DLW_DISPATCH_MODEL_TIER="sonnet"
+	_DLW_DISPATCH_MODEL_TIER="standard"
 	_DLW_SELECTED_MODEL=""
 	return 0
 }
@@ -197,7 +197,7 @@ _ds_now_ns() { printf '0\n'; return 0; }
 _ds_record() { return 0; }
 _dlw_resolve_tier_and_model() {
 	_DLW_DISPATCH_TIER="standard"
-	_DLW_DISPATCH_MODEL_TIER="sonnet"
+	_DLW_DISPATCH_MODEL_TIER="standard"
 	_DLW_SELECTED_MODEL=""
 	return 0
 }

@@ -2,7 +2,7 @@
 description: Google Gemini model for code review with large context window
 mode: subagent
 model: google/gemini-2.5-pro
-model-tier: pro
+model-tier: thinking
 model-fallback: google/gemini-2.5-flash-preview-05-20
 tools:
   read: true

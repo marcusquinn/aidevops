@@ -2,7 +2,7 @@
 description: OpenAI GPT model for code review as a second opinion
 mode: subagent
 model: openai/gpt-4.1
-model-tier: sonnet
+model-tier: standard
 model-fallback: openai/gpt-4o
 tools:
   read: true

@@ -856,7 +856,7 @@ _append_dispatch_path_notice() {
 > **Dispatch-path files detected in this brief.**
 >
 > This task modifies files on the worker dispatch/spawn path. The pre-dispatch
-> detector (t2819) will automatically elevate the worker to `model:opus-4-7`
+> detector (t2819) will automatically elevate the worker to `tier:thinking`
 > before dispatch — workers can fix dispatch code reliably with the right tier.
 >
 > **No special TODO tags required.** Use the normal `#auto-dispatch` flow. Workers

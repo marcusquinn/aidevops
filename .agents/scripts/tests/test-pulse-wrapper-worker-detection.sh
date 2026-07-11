@@ -1015,7 +1015,7 @@ test_dispatch_max_dispatches_up_to_capacity() {
 	: >"$dispatch_log"
 
 	resolve_dispatch_model_for_labels() {
-		# Tier label resolution — tier:thinking is the canonical opus-tier label
+		# Tier label resolution uses canonical workload tiers.
 		case ",${1}," in
 		*,tier:thinking,*)
 			echo "anthropic/claude-opus-4-6"

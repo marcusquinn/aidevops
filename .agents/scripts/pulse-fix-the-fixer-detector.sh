@@ -49,7 +49,7 @@
 #   AIDEVOPS_FIX_THE_FIXER_DETECTOR_DRY_RUN=1   — classify, don't write
 #
 # Tunables:
-#   AIDEVOPS_FIX_THE_FIXER_DETECTOR_MODEL       (default: haiku)
+#   AIDEVOPS_FIX_THE_FIXER_DETECTOR_MODEL       (default: simple)
 #   AIDEVOPS_FIX_THE_FIXER_DETECTOR_LIMIT       (default: 10)
 
 set -euo pipefail
@@ -265,7 +265,7 @@ EOF
 _classify_via_llm() {
 	local issue_title="$1"
 	local issue_body="$2"
-	local model="${AIDEVOPS_FIX_THE_FIXER_DETECTOR_MODEL:-haiku}"
+	local model="${AIDEVOPS_FIX_THE_FIXER_DETECTOR_MODEL:-simple}"
 
 	local prompt
 	prompt=$(_compose_classification_prompt "$issue_title" "$issue_body")
@@ -638,7 +638,7 @@ Bypass:
   AIDEVOPS_FIX_THE_FIXER_DETECTOR_DRY_RUN=1   — same as --dry-run
 
 Tunables:
-  AIDEVOPS_FIX_THE_FIXER_DETECTOR_MODEL       (default: haiku)
+  AIDEVOPS_FIX_THE_FIXER_DETECTOR_MODEL       (default: simple)
   AIDEVOPS_FIX_THE_FIXER_DETECTOR_LIMIT       (default: 10)
 EOF
 	return 0

@@ -207,7 +207,7 @@ gathered by pulse-wrapper.sh BEFORE this session started."
 	fi
 
 	# Run the provider-aware headless wrapper in background.
-	local -a pulse_cmd=("$HEADLESS_RUNTIME_HELPER" run --role pulse --session-key supervisor-pulse --dir "$PULSE_DIR" --title "Supervisor Pulse" --agent Automate --prompt "$prompt" --tier sonnet)
+	local -a pulse_cmd=("$HEADLESS_RUNTIME_HELPER" run --role pulse --session-key supervisor-pulse --dir "$PULSE_DIR" --title "Supervisor Pulse" --agent Automate --prompt "$prompt" --tier standard)
 	if [[ -n "$PULSE_MODEL" ]]; then
 		pulse_cmd+=(--model "$PULSE_MODEL")
 	fi

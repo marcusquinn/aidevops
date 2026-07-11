@@ -15,12 +15,12 @@
     ".github/workflows/"
   ],
   "model_defaults": {
-    "implementation": "sonnet",
-    "review": "opus",
-    "triage": "haiku",
-    "architecture": "opus",
-    "verification": "opus",
-    "documentation": "sonnet"
+    "implementation": "standard",
+    "review": "thinking",
+    "triage": "simple",
+    "architecture": "thinking",
+    "verification": "thinking",
+    "documentation": "standard"
   },
   "quality_gates": [
     "shellcheck",

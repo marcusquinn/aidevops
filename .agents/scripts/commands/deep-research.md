@@ -2,7 +2,7 @@
 description: Deep research — produce a cited decision-grade research report and artifact bundle
 agent: research
 mode: subagent
-model: sonnet
+model: standard
 tools:
   read: true
   write: true

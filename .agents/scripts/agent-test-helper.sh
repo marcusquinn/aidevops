@@ -680,11 +680,9 @@ _cmd_run_sync_pattern_tracker() {
 
 	local model_tier=""
 	case "${suite_model:-}" in
-	*haiku*) model_tier="haiku" ;;
-	*sonnet*) model_tier="sonnet" ;;
-	*opus*) model_tier="opus" ;;
-	*flash*) model_tier="flash" ;;
-	*pro*) model_tier="pro" ;;
+	*haiku* | *terra* | *flash*) model_tier="simple" ;;
+	*opus* | *pro*) model_tier="thinking" ;;
+	*) model_tier="standard" ;;
 	esac
 
 	local pt_quality=""

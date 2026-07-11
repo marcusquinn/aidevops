@@ -2,7 +2,7 @@
 description: Analyse code for simplification opportunities (analysis-only, human-gated)
 agent: Build+
 mode: subagent
-model: opus
+model: thinking
 ---
 
 <!-- SPDX-License-Identifier: MIT -->

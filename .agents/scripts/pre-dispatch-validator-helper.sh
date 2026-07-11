@@ -82,8 +82,7 @@ _PREDISPATCH_CLOSE_REASON_NOT_PLANNED="not planned"
 # Loaded at runtime; falls back to the hardcoded defaults if conf is missing.
 # ---------------------------------------------------------------------------
 # Label applied when self-hosting pattern is detected
-_SELF_HOSTING_TARGET_LABEL="model:opus-4-7"
-_SELF_HOSTING_TIER_REQUIRED="tier:thinking"
+_SELF_HOSTING_TARGET_LABEL="tier:thinking"
 
 # Load patterns from shared conf file (t2821). Non-blocking if conf missing.
 _load_self_hosting_patterns() {
@@ -707,11 +706,11 @@ _sht_apply_label_and_comment() {
 <!-- provenance:start -->
 ## Self-Hosting Tier Override
 
-Pre-dispatch self-hosting detector applied \`${_SELF_HOSTING_TARGET_LABEL}\` to this \`${_SELF_HOSTING_TIER_REQUIRED}\` issue.
+Pre-dispatch self-hosting detector applied \`${_SELF_HOSTING_TARGET_LABEL}\` to this issue.
 
 **Matched pattern:** \`${matched_pattern}\` in issue body
 
-**Rationale:** Issues modifying the dispatch path have a self-referential property — workers dispatched to fix them run through the code being fixed. Starting at opus-4-6 wastes 1-2 attempts before the cascade reaches the tier needed for these task sizes. Applying \`${_SELF_HOSTING_TARGET_LABEL}\` upfront eliminates wasted dispatch cycles.
+**Rationale:** Issues modifying the dispatch path have a self-referential property — workers dispatched to fix them run through the code being fixed. Applying the terminal workload tier upfront avoids wasted lower-tier attempts while runtime routing retains control of the exact model and reasoning level.
 
 **Bypass:** \`AIDEVOPS_SKIP_SELF_HOSTING_DETECTOR=1\`
 
@@ -727,10 +726,8 @@ _Automated by \`pre-dispatch-validator-helper.sh\` (t2819). This comment is post
 # ---------------------------------------------------------------------------
 # Self-hosting dispatch-path detector (t2819)
 #
-# Scans the issue body for references to dispatch-path scripts. When found
-# on a tier:thinking issue without model:opus-4-7, applies the label to
-# short-circuit the cascade (which would eventually reach opus-4-7 anyway
-# after 1-2 wasted attempts at opus-4-6).
+# Scans the issue body for references to dispatch-path scripts. When found,
+# applies tier:thinking to short-circuit lower-tier cascade attempts.
 #
 # Always returns 0 — this is an advisory pre-step, not a dispatch blocker.
 #
@@ -762,7 +759,7 @@ _detect_self_hosting_task() {
 	# Extract implementation sections only (## Files to modify / ## How).
 	# Scanning the full body risks matching incidental mentions in prose that do
 	# not indicate the issue actually modifies the dispatch path, leading to
-	# unintended model:opus-4-7 escalation.
+	# unintended thinking-tier escalation.
 	local scan_target
 	scan_target=$(_sht_extract_scan_target "$issue_body")
 
@@ -778,12 +775,6 @@ _detect_self_hosting_task() {
 	# Fetch issue labels to check tier and existing model label
 	local labels
 	labels=$(gh api "repos/${slug}/issues/${issue_number}" --jq '[.labels[].name] | join(",")' 2>/dev/null) || labels=""
-
-	# Must have the required tier label
-	if ! printf '%s' "$labels" | grep -qF "$_SELF_HOSTING_TIER_REQUIRED"; then
-		_log "INFO" "#${issue_number}: not ${_SELF_HOSTING_TIER_REQUIRED} — self-hosting detector skips"
-		return 0
-	fi
 
 	# Already has target label — idempotent no-op
 	if printf '%s' "$labels" | grep -qF "$_SELF_HOSTING_TARGET_LABEL"; then

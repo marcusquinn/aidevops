@@ -3,8 +3,8 @@
 
 # Comprehension Benchmark
 
-Tests whether agent files are comprehensible at each model tier (haiku, sonnet,
-opus). Produces per-file tier compatibility ratings for dispatch routing.
+Tests whether agent files are comprehensible at each workload tier (`simple`,
+`standard`, `thinking`). Produces per-file compatibility ratings for routing.
 
 ## Schema
 
@@ -13,7 +13,7 @@ Test scenarios use YAML with this structure:
 ```yaml
 # Required fields
 file: .agents/path/to/agent-file.md    # Agent file under test
-tier_minimum: haiku                      # Expected minimum tier (haiku|sonnet|opus)
+tier_minimum: simple                     # Expected minimum tier (simple|standard|thinking)
 
 # Scenarios (2-3 per file)
 scenarios:
@@ -28,8 +28,8 @@ scenarios:
         - "skip"                         # e.g., skip, refuse, analyze, list
       min_length: 50                     # Minimum response length (chars)
       max_length: 2000                   # Maximum response length (chars)
-    reference_answer: |                  # Opus-validated ground truth (set at authoring)
-      Expected output summary from opus tier.
+    reference_answer: |                  # Thinking-tier ground truth (set at authoring)
+      Expected output summary from the thinking tier.
     fast_fail_triggers:                  # Skip adjudication, escalate immediately
       - refusal                          # Model refuses or says "I don't understand"
       - confabulation                    # Hallucinated paths, tools, or task IDs
@@ -40,8 +40,8 @@ scenarios:
 ## Scoring Layers (cheapest first)
 
 1. **Deterministic** (free) -- regex/string matching on output
-2. **Haiku self-check** (~$0.001) -- haiku compares its output to expected spec
-3. **Sonnet adjudication** (~$0.01) -- sonnet judges haiku output vs opus reference
+2. **Simple self-check** -- the mapped simple model compares output to the specification
+3. **Standard adjudication** -- the mapped standard model judges simple output against the thinking-tier reference
 
 ## Fast-Fail Escalation
 
@@ -62,7 +62,7 @@ These signals skip adjudication and escalate to the next tier immediately:
 
 ## Directory Layout
 
-```
+```text
 .agents/tests/comprehension/
   README.md                              # This file (schema docs)
   pilot-results.md                       # Pilot run analysis

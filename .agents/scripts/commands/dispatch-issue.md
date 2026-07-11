@@ -44,7 +44,7 @@ helper deliberately does not.
    - Dry-run: surface all three states as info, still print the planned dispatch.
 4. Resolve tier/model (mirrors `pulse-model-routing.sh::resolve_dispatch_model_for_labels`):
    - `--model <id>` wins (operator explicit intent, highest priority).
-   - `model:opus-4-7` label wins over all tier labels (t2239 — same as pulse).
+   - Tier labels request workload complexity; runtime routing chooses the exact model and reasoning level.
    - Else tier labels: `tier:thinking` → opus, `tier:standard` → sonnet,
      `tier:simple` → haiku. Default = `standard` / sonnet.
    - Other `model:*` labels (e.g. `model:sonnet-4-6`) map to the named model.

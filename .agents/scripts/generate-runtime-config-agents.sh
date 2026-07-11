@@ -265,6 +265,36 @@ _yaml_quote_scalar() {
 	return 0
 }
 
+# Read the runtime guard fields that a generated wrapper must preserve from
+# source frontmatter. The wrapper prompt reads the source body at runtime, but
+# OpenCode resolves variant, steps, and tool availability before that happens.
+# Outputs one tab-separated row: variant, steps, task.
+_read_subagent_runtime_guards() {
+	local f="$1"
+	awk '
+		function value_after_colon(line, value) {
+			value = line
+			sub(/^[^:]+:[[:space:]]*/, "", value)
+			sub(/[[:space:]]+#.*$/, "", value)
+			gsub(/^[[:space:]]+|[[:space:]]+$/, "", value)
+			return value
+		}
+		/^---$/ {
+			frontmatter_delimiters++
+			if (frontmatter_delimiters == 2) exit
+			next
+		}
+		frontmatter_delimiters != 1 { next }
+		/^tools:[[:space:]]*$/ { in_tools = 1; next }
+		/^[^[:space:]]/ { in_tools = 0 }
+		/^variant:[[:space:]]*/ { variant = value_after_colon($0); next }
+		/^steps:[[:space:]]*/ { steps = value_after_colon($0); next }
+		in_tools && /^[[:space:]]+task:[[:space:]]*/ { task = value_after_colon($0); next }
+		END { printf "%s\t%s\t%s\n", variant, steps, task }
+	' "$f" 2>/dev/null
+	return 0
+}
+
 # Write a single subagent markdown stub file.
 # Arguments: $1 - source .md file path
 # Requires: AGENTS_DIR and agent_dir to be set (exported for xargs usage)
@@ -279,7 +309,7 @@ _write_subagent_stub() {
 
 	# GH#18509: If source frontmatter explicitly sets bash: false, the agent is
 	# security-sandboxed or has its own tool restrictions. Copy source verbatim
-	# (with model-name normalisation) instead of writing a permissive stub that
+	# (without workload-tier metadata) instead of writing a permissive stub that
 	# grants bash:true and external_directory:allow -- those would override the
 	# source's intent and become an attack surface for prompt-injected content.
 	local src_bash_false
@@ -289,12 +319,13 @@ _write_subagent_stub() {
 		fm_delim == 2 { exit }
 	' "$f" 2>/dev/null)
 	if [[ -n "$src_bash_false" ]]; then
-		# Deploy source verbatim, normalising short model aliases to full provider/model IDs
-		# (mirrors the mapping in opencode-agent-discovery.py)
+		# Canonical workload tiers are routing intent, not OpenCode model IDs.
+		# Remove those lines so OpenCode inherits the parent model; runtime hooks
+		# map the tier to current provider reasoning. Preserve explicit full IDs.
 		sed \
-			-e 's/^model: opus$/model: anthropic\/claude-opus-4-6/' \
-			-e 's/^model: sonnet$/model: anthropic\/claude-sonnet-4-6/' \
-			-e 's/^model: haiku$/model: anthropic\/claude-haiku-4-5/' \
+			-e '/^model: simple$/d' \
+			-e '/^model: standard$/d' \
+			-e '/^model: thinking$/d' \
 			"$f" >"$agent_dir/$name.md"
 		echo 1
 		return 0
@@ -310,6 +341,19 @@ _write_subagent_stub() {
 	local extra_tools
 	extra_tools=$(_get_subagent_extra_tools "$name")
 
+	local runtime_guards src_variant src_steps src_task
+	runtime_guards=$(_read_subagent_runtime_guards "$f")
+	IFS=$'\t' read -r src_variant src_steps src_task <<<"$runtime_guards"
+	case "$src_variant" in
+	none | minimal | low | medium | high | xhigh | max) ;;
+	*) src_variant="" ;;
+	esac
+	[[ "$src_steps" =~ ^[1-9][0-9]*$ ]] || src_steps=""
+	case "$src_task" in
+	true | false) ;;
+	*) src_task="" ;;
+	esac
+
 	local quoted_desc
 	quoted_desc=$(_yaml_quote_scalar "$src_desc")
 
@@ -317,13 +361,17 @@ _write_subagent_stub() {
 		printf '%s\n' \
 			"---" \
 			"description: ${quoted_desc}" \
-			"mode: subagent" \
+			"mode: subagent"
+		[[ -n "$src_variant" ]] && printf 'variant: %s\n' "$src_variant"
+		[[ -n "$src_steps" ]] && printf 'steps: %s\n' "$src_steps"
+		printf '%s\n' \
 			"temperature: 0.2" \
 			"permission:" \
 			"  external_directory: allow" \
 			"tools:" \
 			"  read: true" \
 			"  bash: true"
+		[[ -n "$src_task" ]] && printf '  task: %s\n' "$src_task"
 		[[ -n "$extra_tools" ]] && printf '%s\n' "$extra_tools"
 		printf '%s\n' \
 			"---" \
@@ -429,6 +477,7 @@ _generate_subagents_opencode() {
 
 	export -f _get_subagent_extra_tools 2>/dev/null || true
 	export -f _yaml_quote_scalar 2>/dev/null || true
+	export -f _read_subagent_runtime_guards 2>/dev/null || true
 	export -f _write_subagent_stub 2>/dev/null || true
 	export AGENTS_DIR
 	export agent_dir
