@@ -5,6 +5,7 @@
 
 [[ -n "${_AIDEVOPS_PLUGIN_SOURCE_TRUST_LIB_LOADED:-}" ]] && return 0
 _AIDEVOPS_PLUGIN_SOURCE_TRUST_LIB_LOADED=1
+readonly PLUGIN_TRUST_TRUE="true"
 
 plugin_trust_valid_commit() {
 	local commit="$1"
@@ -390,17 +391,17 @@ plugin_trust_activate_candidate() {
 	if mv "$stage_dir" "$target_dir"; then
 		activated=true
 	else
-		[[ "$had_previous" == "true" ]] && mv "$backup_dir" "$target_dir" 2>/dev/null || true
+		[[ "$had_previous" == "$PLUGIN_TRUST_TRUE" ]] && mv "$backup_dir" "$target_dir" 2>/dev/null || true
 		plugin_trust_release_write_locks "$plugins_file" "$marker" || true
 		return 1
 	fi
 	if mv "$registry_tmp" "$plugins_file"; then
-		[[ "$had_previous" == "true" ]] && rm -rf "$backup_dir"
+		[[ "$had_previous" == "$PLUGIN_TRUST_TRUE" ]] && rm -rf "$backup_dir"
 		plugin_trust_release_write_locks "$plugins_file" "$marker"
 		return $?
 	fi
-	[[ "$activated" == "true" ]] && rm -rf "$target_dir"
-	if [[ "$had_previous" == "true" ]] && ! mv "$backup_dir" "$target_dir" 2>/dev/null; then
+	[[ "$activated" == "$PLUGIN_TRUST_TRUE" ]] && rm -rf "$target_dir"
+	if [[ "$had_previous" == "$PLUGIN_TRUST_TRUE" ]] && ! mv "$backup_dir" "$target_dir" 2>/dev/null; then
 		return 1
 	fi
 	plugin_trust_release_write_locks "$plugins_file" "$marker" || return 1

@@ -57,6 +57,9 @@ readonly NET_TIER_DENIED_LOG="${NET_TIER_DIR}/denied.jsonl"
 readonly NET_TIER_DEFAULT_CONF="${AIDEVOPS_NETWORK_TIER_POLICY:-${SCRIPT_DIR}/../configs/network-tiers.conf}"
 readonly NET_TIER_USER_CONF="${AIDEVOPS_NETWORK_TIER_USER_POLICY:-${HOME}/.config/aidevops/network-tiers-custom.conf}"
 readonly COMMAND_POLICY_HELPER="${AIDEVOPS_COMMAND_POLICY_HELPER:-${SCRIPT_DIR}/command-policy-helper.py}"
+readonly NET_TIER_BLOCKED_PREFIX="BLOCKED:"
+readonly NET_TIER_FLAGGED_PREFIX="FLAGGED:"
+readonly NET_TIER_TRUE="true"
 
 # File-based tier lookup cache (bash 3.2 compatible — no associative arrays)
 # Format: "exact:domain tier" or "wild:suffix tier", one per line
@@ -79,7 +82,7 @@ _validate_tier_policy() {
 	local saw_tier5=false
 
 	if [[ ! -r "$config_file" ]]; then
-		if [[ "$required" == "true" ]]; then
+		if [[ "$required" == "$NET_TIER_TRUE" ]]; then
 			log_error "Required network tier policy is unavailable: ${config_file}"
 			return 1
 		fi
@@ -105,7 +108,7 @@ _validate_tier_policy() {
 		fi
 	done <"$config_file"
 
-	if [[ "$required" == "true" && "$saw_tier5" != "true" ]]; then
+	if [[ "$required" == "$NET_TIER_TRUE" && "$saw_tier5" != "$NET_TIER_TRUE" ]]; then
 		log_error "Required network tier policy has no [tier5] deny section: ${config_file}"
 		return 1
 	fi
@@ -473,12 +476,12 @@ check_domain() {
 	tier=$(classify_domain "$domain")
 
 	if [[ "$tier" -eq 5 ]]; then
-		log_error "BLOCKED: ${domain} (Tier 5: DENY)"
+		log_error "${NET_TIER_BLOCKED_PREFIX} ${domain} (Tier 5: DENY)"
 		return 1
 	fi
 
 	if [[ "$tier" -eq 4 ]]; then
-		log_warn "FLAGGED: ${domain} (Tier 4: unknown domain)"
+		log_warn "${NET_TIER_FLAGGED_PREFIX} ${domain} (Tier 4: unknown domain)"
 	fi
 
 	return 0
@@ -497,7 +500,7 @@ check_argv() {
 	local analysis=""
 	local status=0
 	local recognized="false"
-	local requires_destination="true"
+	local requires_destination="$NET_TIER_TRUE"
 	local unclassified=""
 	local destinations=""
 	local domain=""
@@ -534,38 +537,38 @@ check_argv() {
 		return 1
 	fi
 	recognized="$(printf '%s' "$analysis" | jq -r '.recognized // false')"
-	if [[ "$recognized" != "true" ]]; then
+	if [[ "$recognized" != "$NET_TIER_TRUE" ]]; then
 		return 0
 	fi
 	requires_destination="$(printf '%s' "$analysis" | jq -r '.requires_destination // true')"
 	unclassified="$(printf '%s' "$analysis" | jq -r '.unclassified[]?')"
 	if [[ -n "$unclassified" ]]; then
-		log_error "BLOCKED: unclassified worker network destination (${unclassified//$'\n'/, })"
+		log_error "${NET_TIER_BLOCKED_PREFIX} unclassified worker network destination (${unclassified//$'\n'/, })"
 		return 1
 	fi
 	destinations="$(printf '%s' "$analysis" | jq -r '.destinations[]?')"
-	if [[ "$requires_destination" == "true" && -z "$destinations" ]]; then
-		log_error "BLOCKED: recognized network client has no classifiable destination"
+	if [[ "$requires_destination" == "$NET_TIER_TRUE" && -z "$destinations" ]]; then
+		log_error "${NET_TIER_BLOCKED_PREFIX} recognized network client has no classifiable destination"
 		return 1
 	fi
 	while IFS= read -r domain; do
 		[[ -z "$domain" ]] && continue
 		tier="$(classify_domain "$domain")" || {
-			log_error "BLOCKED: failed to classify domain ${domain}"
+			log_error "${NET_TIER_BLOCKED_PREFIX} failed to classify domain ${domain}"
 			return 1
 		}
 		if [[ "$tier" == "5" ]]; then
-			log_error "BLOCKED: ${domain} (Tier 5: DENY)"
+			log_error "${NET_TIER_BLOCKED_PREFIX} ${domain} (Tier 5: DENY)"
 			log_access "$domain" "$worker_id" "pre-check-deny" || true
 			denied=true
 		elif [[ "$tier" == "4" ]]; then
-			log_warn "FLAGGED: ${domain} (Tier 4: unknown domain)"
+			log_warn "${NET_TIER_FLAGGED_PREFIX} ${domain} (Tier 4: unknown domain)"
 			log_access "$domain" "$worker_id" "pre-check-flag" || true
 		else
 			log_access "$domain" "$worker_id" "pre-check-allow" || true
 		fi
 	done <<<"$destinations"
-	if [[ "$denied" == "true" ]]; then
+	if [[ "$denied" == "$NET_TIER_TRUE" ]]; then
 		return 1
 	fi
 	return 0
@@ -657,7 +660,7 @@ check_domain_session() {
 		if [[ "$base_tier" -ne 5 ]]; then
 			log_error "BLOCKED (session-elevated): ${domain} T${base_tier}→T5 (session tainted)"
 		else
-			log_error "BLOCKED: ${domain} (Tier 5: DENY)"
+			log_error "${NET_TIER_BLOCKED_PREFIX} ${domain} (Tier 5: DENY)"
 		fi
 		# Record the network flag in session context
 		if [[ -x "$session_helper" ]]; then
@@ -669,7 +672,7 @@ check_domain_session() {
 	fi
 
 	if [[ "$effective_tier" -eq 4 ]]; then
-		log_warn "FLAGGED: ${domain} (Tier 4: unknown domain)"
+		log_warn "${NET_TIER_FLAGGED_PREFIX} ${domain} (Tier 4: unknown domain)"
 		# Record tier 4 access in session context as LOW signal
 		if [[ -x "$session_helper" ]]; then
 			"$session_helper" record-signal "network-flag" "LOW" \
