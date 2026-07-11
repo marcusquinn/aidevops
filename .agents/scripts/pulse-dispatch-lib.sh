@@ -30,6 +30,11 @@
 [[ -n "${_PULSE_DISPATCH_FILL_FLOOR_LIB_LOADED:-}" ]] && return 0
 _PULSE_DISPATCH_FILL_FLOOR_LIB_LOADED=1
 
+_PULSE_DISPATCH_LIB_DIR="${BASH_SOURCE[0]%/*}"
+[[ "$_PULSE_DISPATCH_LIB_DIR" == "${BASH_SOURCE[0]}" ]] && _PULSE_DISPATCH_LIB_DIR="."
+# shellcheck source=shared-runner-identity.sh
+source "${_PULSE_DISPATCH_LIB_DIR}/shared-runner-identity.sh"
+
 # --- Helper functions and module-level round-state vars (extracted) ---
 
 # -----------------------------------------------------------------------------
@@ -217,9 +222,10 @@ _dispatch_candidate_benign_block_reason() {
 _dispatch_recent_dirty_worktree_marker_active() {
 	local issue_number="$1"
 	local repo_slug="$2"
-	local hold_seconds="${DISPATCH_DIRTY_WORKTREE_HOLD_SECONDS:-21600}"
+	local hold_seconds="${DISPATCH_DIRTY_WORKTREE_HOLD_SECONDS:-900}"
+	_DISPATCH_DIRTY_MARKER_STATE="clear"
 
-	[[ "$hold_seconds" =~ ^[0-9]+$ ]] || hold_seconds="21600"
+	[[ "$hold_seconds" =~ ^[0-9]+$ ]] || hold_seconds="900"
 	[[ "$hold_seconds" -gt 0 ]] || return 1
 
 	local comments_json=""
@@ -258,6 +264,7 @@ except ValueError:
 
 latest_marker_ts = None
 latest_resolution_ts = None
+latest_marker_body = ""
 resolution_tokens = (
     "worker-dirty-worktree:resolved",
     "WORKER_DIRTY_WORKTREE_RESOLVED",
@@ -274,6 +281,7 @@ for comment in comments:
         latest_resolution_ts = created
     elif "WORKER_DIRTY_WORKTREE" in body:
         latest_marker_ts = created
+        latest_marker_body = body
 
 if latest_marker_ts is None:
     print(clear_state)
@@ -283,12 +291,18 @@ if latest_resolution_ts is not None and latest_resolution_ts >= latest_marker_ts
     sys.exit(0)
 
 age = max(0, int(now_epoch - latest_marker_ts))
+runner_key = ""
+for token in latest_marker_body.split():
+    if token.startswith("runner_key="):
+        runner_key = token.split("=", 1)[1]
+        break
 if age <= hold_seconds:
-    print(f"block:age={age}")
+    print(f"block:age={age}:runner_key={runner_key}")
 else:
-    print(clear_state)
+    print(f"expired:age={age}:runner_key={runner_key}")
 PY
 ) || marker_state=""
+	_DISPATCH_DIRTY_MARKER_STATE="${marker_state:-clear}"
 
 	[[ "$marker_state" == block:* ]] || return 1
 	return 0
@@ -1027,9 +1041,29 @@ _dispatch_skip_for_dirty_worktree_recovery() {
 	local repo_slug="$2"
 
 	if _dispatch_recent_dirty_worktree_marker_active "$issue_number" "$repo_slug"; then
+		local marker_runner_key=""
+		marker_runner_key="${_DISPATCH_DIRTY_MARKER_STATE##*runner_key=}"
+		local local_runner_key=""
+		if declare -F runner_identity_key >/dev/null 2>&1; then
+			local_runner_key=$(runner_identity_key)
+		fi
+		if [[ -n "$marker_runner_key" && "$marker_runner_key" == "$local_runner_key" ]]; then
+			echo "[pulse-wrapper] Dispatch_max: resuming #${issue_number} (${repo_slug}) on owning runner with preserved dirty worktree" >>"$LOGFILE"
+			_dispatch_stats_increment "dispatch_candidate_dirty_worktree_same_runner_resume"
+			return 1
+		fi
 		echo "[pulse-wrapper] Dispatch_max: skipping #${issue_number} (${repo_slug}) — recent worker dirty-worktree recovery marker is unresolved" >>"$LOGFILE"
 		_dispatch_stats_increment "dispatch_candidate_skipped_dirty_worktree_recovery"
 		return 0
+	fi
+	if [[ "${_DISPATCH_DIRTY_MARKER_STATE:-}" == expired:* ]]; then
+		local resolution_body=""
+		resolution_body=$(printf '<!-- ops:start -->\n<!-- worker-dirty-worktree:resolved -->\nWORKER_DIRTY_WORKTREE_RESOLVED reason=owning-runner-window-expired ts=%s\n\nThe bounded same-runner recovery window expired without a pushed checkpoint. The runner-local ledger/archive remains the audit record; this marker is cleared once so cross-runner redispatch can proceed deterministically.\n<!-- ops:end -->' "$(date -u +%Y-%m-%dT%H:%M:%SZ)")
+		gh api "repos/${repo_slug}/issues/${issue_number}/comments" \
+			--method POST \
+			--field body="$resolution_body" >/dev/null 2>&1 || true
+		echo "[pulse-wrapper] Dispatch_max: cleared expired dirty-worktree marker for #${issue_number} (${repo_slug}); cross-runner takeover may proceed" >>"$LOGFILE"
+		_dispatch_stats_increment "dispatch_candidate_dirty_worktree_recovery_expired"
 	fi
 	return 1
 }

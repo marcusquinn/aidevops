@@ -133,6 +133,23 @@ test_orphan_recovery_uses_configured_pr_base() {
 	return 0
 }
 
+test_dirty_recovery_creates_draft_checkpoint() {
+	rm -f "${TEST_ROOT}/calls/pr-create.argv"
+	if ! _attempt_orphan_recovery_pr "issue-27138" "$TEST_ROOT" "feature/auto-gh27138" "owner/repo" "draft"; then
+		print_result "dirty recovery creates draft checkpoint PR" 1 "_attempt_orphan_recovery_pr failed"
+		return 0
+	fi
+
+	local argv=""
+	argv=$(<"${TEST_ROOT}/calls/pr-create.argv")
+	if [[ "$argv" == *"--draft"* && "$argv" == *"checkpoint: recover dirty worker worktree for #27138"* ]]; then
+		print_result "dirty recovery creates draft checkpoint PR" 0
+		return 0
+	fi
+	print_result "dirty recovery creates draft checkpoint PR" 1 "argv=${argv}"
+	return 0
+}
+
 test_configured_pr_base_overrides_default_branch() {
 	local resolved=""
 	resolved=$(_resolve_orphan_recovery_base_branch "exampleorg/examplerepo" "$TEST_ROOT")
@@ -175,6 +192,7 @@ test_unconfigured_repo_falls_back_to_github_default_branch() {
 main() {
 	setup_test_env
 	test_orphan_recovery_uses_configured_pr_base
+	test_dirty_recovery_creates_draft_checkpoint
 	test_configured_pr_base_overrides_default_branch
 	test_explicit_dispatch_pr_base_overrides_repo_config
 	test_unconfigured_repo_falls_back_to_github_default_branch

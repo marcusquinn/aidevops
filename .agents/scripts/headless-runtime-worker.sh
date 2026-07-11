@@ -39,6 +39,9 @@ if [[ -z "${SCRIPT_DIR:-}" ]]; then
 	unset _lib_path
 fi
 
+# shellcheck source=shared-runner-identity.sh
+source "${SCRIPT_DIR}/shared-runner-identity.sh"
+
 # =============================================================================
 # Runtime invocation support — auth rotation & rate-limit monitoring
 # =============================================================================
@@ -750,10 +753,60 @@ _handle_worker_dirty_worktree() {
 	local branch_name=""
 	branch_name=$(git -C "$work_dir" rev-parse --abbrev-ref HEAD 2>/dev/null || true)
 	local status_summary=""
-	status_summary=$(git -C "$work_dir" status --short 2>/dev/null | sed -n '1,20p' || true)
+	status_summary=$(git -C "$work_dir" status --short 2>/dev/null | sed -n '1,50p' || true)
 	[[ -n "$status_summary" ]] || status_summary="<dirty state unavailable>"
+	local runner_key=""
+	runner_key=$(runner_identity_key)
+
+	# Persist the full runner-local recovery context before any GitHub write.
+	# The ledger retains the private worktree path; the public marker below uses
+	# only a non-identifying runner key and repository-relative changed paths.
+	if [[ -x "${DISPATCH_LEDGER_HELPER:-}" ]]; then
+		"$DISPATCH_LEDGER_HELPER" record-recovery \
+			--session-key "$session_key" \
+			--runner-key "$runner_key" \
+			--worktree "$work_dir" \
+			--branch "$branch_name" \
+			--changed-paths "$status_summary" \
+			--recoverability "same-runner" 2>/dev/null || true
+	fi
 
 	print_info "[lifecycle] worker_dirty_worktree session=${session_key} branch=${branch_name:-<none>} work_dir_present=$([[ -d "$work_dir" ]] && printf 1 || printf 0)"
+
+	# The finish path can classify dirty work before the EXIT trap runs. Give the
+	# owning runner two bounded opportunities to checkpoint, push, and open the
+	# recovery PR now instead of globally pausing all dispatchers.
+	local previous_worktree_path="${_WORKER_WORKTREE_PATH:-}"
+	local recovered=0
+	_WORKER_WORKTREE_PATH="$work_dir"
+	if declare -F _push_wip_commits_on_exit >/dev/null 2>&1 && declare -F _recover_dirty_worker_pr >/dev/null 2>&1; then
+		local recovery_attempt=1
+		while [[ "$recovery_attempt" -le 2 ]]; do
+			_push_wip_commits_on_exit
+			if _recover_dirty_worker_pr "$session_key"; then
+				recovered=1
+				break
+			fi
+			recovery_attempt=$((recovery_attempt + 1))
+		done
+	fi
+	_WORKER_WORKTREE_PATH="$previous_worktree_path"
+
+	if [[ "$recovered" -eq 1 ]]; then
+		if [[ -x "${DISPATCH_LEDGER_HELPER:-}" ]]; then
+			"$DISPATCH_LEDGER_HELPER" record-recovery \
+				--session-key "$session_key" \
+				--runner-key "$runner_key" \
+				--worktree "$work_dir" \
+				--branch "$branch_name" \
+				--changed-paths "$status_summary" \
+				--recoverability "checkpointed" 2>/dev/null || true
+		fi
+		_release_dispatch_claim "$session_key" "$_HRW_REASON_WORKER_COMPLETE"
+		print_info "[lifecycle] worker_dirty_worktree_checkpointed session=${session_key} branch=${branch_name:-<none>}"
+		return 0
+	fi
+
 	_release_dispatch_claim "$session_key" "worker_dirty_worktree"
 
 	if [[ -n "$issue_number" && -n "$repo_slug" ]]; then
@@ -761,14 +814,18 @@ _handle_worker_dirty_worktree() {
 		local _dirty_key="${repo_slug}#${issue_number}#${branch_name:-unknown}#worker_dirty_worktree"
 		local _comments_endpoint="repos/${repo_slug}/issues/${issue_number}/com""ments"
 		# shellcheck disable=SC2016 # backticks are literal markdown, not command substitution
-		_ops_comment=$(printf '<!-- ops:start -->\n<!-- worker-dirty-worktree:key=%s -->\nWORKER_DIRTY_WORKTREE branch=%s session=%s ts=%s\n\nThis worker exited after local file edits but before a commit/PR could be confirmed. Pause redispatch and inspect the runner-local worker metrics/logs for the worktree path, then either recover the edits into a PR or clear this marker after confirming the edits are disposable.\n\nChanged paths reported by git status on the runner:\n\n```\n%s\n```\n<!-- ops:end -->' \
+		_ops_comment=$(printf '<!-- ops:start -->\n<!-- worker-dirty-worktree:key=%s -->\nWORKER_DIRTY_WORKTREE branch=%s session=%s runner_key=%s recoverability=same-runner ts=%s\n\nThe owning runner could not create a pushed checkpoint during bounded teardown recovery. Its dispatch ledger retains the private worktree path. Prefer same-runner resume while that worktree exists; cross-runner takeover is allowed only after the bounded recovery hold expires.\n\nChanged paths reported by git status on the owning runner:\n\n```\n%s\n```\n<!-- ops:end -->' \
 			"$_dirty_key" \
-			"${branch_name:-unknown}" "$session_key" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+			"${branch_name:-unknown}" "$session_key" "$runner_key" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
 			"$status_summary")
-		gh api "$_comments_endpoint" \
-			--method POST \
-			--field body="$_ops_comment" \
-			>/dev/null 2>&1 || true
+		local existing_marker_count="0"
+		existing_marker_count=$(gh api "${_comments_endpoint}?per_page=100" 2>/dev/null | jq -r --arg key "worker-dirty-worktree:key=${_dirty_key}" '[.[] | select((.body // "") | contains($key))] | length' 2>/dev/null || printf '0')
+		if [[ "$existing_marker_count" == "0" ]]; then
+			gh api "$_comments_endpoint" \
+				--method POST \
+				--field body="$_ops_comment" \
+				>/dev/null 2>&1 || true
+		fi
 	fi
 	return 0
 }
