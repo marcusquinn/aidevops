@@ -10,6 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.32.20] - 2026-07-11
+
+### Changed
+
+- Optimise local linter CPU usage (#27062)
+
 ## [3.32.19] - 2026-07-11
 
 ### Added
