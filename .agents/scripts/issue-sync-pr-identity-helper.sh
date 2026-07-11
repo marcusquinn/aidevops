@@ -9,20 +9,20 @@ set -euo pipefail
 
 extract_linked_issues() {
 	local pr_body="$1"
-	printf '%s' "$pr_body" \
-		| grep -ioE '\b(close[ds]?|fix(es|ed)?|resolve[ds]?)\b[[:space:]]+#[0-9]+' \
-		| grep -oE '[0-9]+' \
-		| sort -u \
-		| tr '\n' ' ' || true
+	printf '%s' "$pr_body" |
+		grep -ioE '\b(close[ds]?|fix(es|ed)?|resolve[ds]?)\b[[:space:]]+#[0-9]+' |
+		grep -oE '[0-9]+' |
+		sort -u |
+		tr '\n' ' ' || true
 	return 0
 }
 
 task_ids_for_issue() {
 	local issue_number="$1"
 	local todo_file="$2"
-	grep -E "^[[:space:]]*- \[[ x]\] t[0-9]+(\.[0-9]+)* .*ref:GH#${issue_number}([^0-9]|\$)" "$todo_file" 2>/dev/null \
-		| sed -E 's/^[[:space:]]*- \[[ x]\] (t[0-9]+(\.[0-9]+)*).*/\1/' \
-		| sort -u || true
+	grep -E "^[[:space:]]*- \[[ x]\] t[0-9]+(\.[0-9]+)* .*ref:GH#${issue_number}([^0-9]|\$)" "$todo_file" 2>/dev/null |
+		sed -E 's/^[[:space:]]*- \[[ x]\] (t[0-9]+(\.[0-9]+)*).*/\1/' |
+		sort -u || true
 	return 0
 }
 
