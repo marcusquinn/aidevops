@@ -10,6 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.32.28] - 2026-07-11
+
+### Changed
+
+- feat: provision repository lint policy (#27136)
+
 ## [3.32.27] - 2026-07-11
 
 ### Changed
