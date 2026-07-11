@@ -88,4 +88,9 @@ AIDEVOPS_OBJECTIVE_EVIDENCE_FILE="$evidence_file" \
 	"$HELPER" derive --repo owner/repo --input "$fixture" --now 10000 --ttl 3600 >"$derived"
 jq -e '.[] | select(.number == 1 and .execution_path_state == "recovery" and .preservation.commits == true)' "$derived" >/dev/null || fail "durable lifecycle evidence merge"
 
+printf '%s\n' '{"repo":"owner/repo","issue_number":999,"evidence_timestamp":10000,"event_type":"worker.failed"}' >>"$evidence_file"
+AIDEVOPS_OBJECTIVE_EVIDENCE_FILE="$evidence_file" AIDEVOPS_OBJECTIVE_EVIDENCE_LIMIT=1 \
+	"$HELPER" derive --repo owner/repo --input "$fixture" --now 10000 --ttl 3600 >"$derived"
+jq -e '.[] | select(.number == 1 and .execution_path_state == "idle" and .preservation.commits == false)' "$derived" >/dev/null || fail "durable evidence read must honour the bounded tail"
+
 printf 'PASS objective-reconciliation\n'

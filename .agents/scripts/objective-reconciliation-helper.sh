@@ -57,12 +57,14 @@ _objective_attach_durable_evidence() {
 	local input_json="$1"
 	local repo="$2"
 	local evidence_file="${AIDEVOPS_OBJECTIVE_EVIDENCE_FILE:-${HOME}/.aidevops/state/objective-evidence.jsonl}"
+	local evidence_limit="${AIDEVOPS_OBJECTIVE_EVIDENCE_LIMIT:-2000}"
+	[[ "$evidence_limit" =~ ^[1-9][0-9]*$ ]] || evidence_limit=2000
 	if [[ ! -s "$evidence_file" ]]; then
 		printf '%s\n' "$input_json"
 		return 0
 	fi
 	local evidence_json="[]"
-	evidence_json=$(jq -sc '[.[] | select(type == "object")]' "$evidence_file" 2>/dev/null) || evidence_json="[]"
+	evidence_json=$(tail -n "$evidence_limit" "$evidence_file" 2>/dev/null | jq -sc '[.[] | select(type == "object")]') || evidence_json="[]"
 	jq -nc --arg repo "$repo" --argjson input "$input_json" --argjson evidence "$evidence_json" '
 		(if ($input | type) == "array" then {issues:$input, prs:[], merged_lookup:""} else $input end) |
 		.issues = [(.issues // [])[] | . as $issue |
