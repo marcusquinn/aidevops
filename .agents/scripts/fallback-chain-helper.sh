@@ -47,6 +47,7 @@ load_routing_table() {
 get_tier_models_from_table() {
 	local tier="$1"
 	local table_path="$2"
+	local sol_model="openai/gpt-5.6-sol"
 
 	local models
 	models=$(jq -r --arg t "$tier" '.tiers[$t].models // empty' "$table_path" 2>/dev/null) || true
@@ -59,9 +60,9 @@ get_tier_models_from_table() {
 			return 1
 			;;
 		haiku | flash | health) echo '["openai/gpt-5.6-terra","anthropic/claude-haiku-4-5"]' ;;
-		sonnet | coding | eval) echo '["openai/gpt-5.6-sol","zai-coding-plan/glm-5.2","anthropic/claude-sonnet-4-6"]' ;;
-		pro) echo '["openai/gpt-5.6-sol","anthropic/claude-sonnet-4-6"]' ;;
-		opus) echo '["openai/gpt-5.6-sol","anthropic/claude-opus-4-6"]' ;;
+		sonnet | coding | eval) printf '["%s","zai-coding-plan/glm-5.2","anthropic/claude-sonnet-4-6"]\n' "$sol_model" ;;
+		pro) printf '["%s","anthropic/claude-sonnet-4-6"]\n' "$sol_model" ;;
+		opus) printf '["%s","anthropic/claude-opus-4-6"]\n' "$sol_model" ;;
 		*)
 			print_error "Unknown tier: $tier"
 			return 1
