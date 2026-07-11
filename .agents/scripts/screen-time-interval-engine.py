@@ -11,6 +11,7 @@ import json
 import math
 import os
 import re
+import shutil
 import sqlite3
 import subprocess
 import sys
@@ -267,6 +268,27 @@ SESSION_END = re.compile(r"(?:Removed session|Session) ([A-Za-z0-9_.-]+)(?: logg
 SESSION_ID = re.compile(r"Session ([A-Za-z0-9_.-]+)", re.I)
 
 
+def run_trusted_command(executable_name, arguments):
+    executable = shutil.which(executable_name)
+    if not executable or not os.path.isabs(executable):
+        return None, "executable-not-found"
+    try:
+        # The executable is resolved to an absolute path and callers supply a
+        # fixed argv shape; no command text reaches a shell.
+        result = subprocess.run(  # nosec B603
+            [executable, *arguments],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return None, f"{type(exc).__name__}"
+    if result.returncode != 0:
+        return None, f"exit-{result.returncode}"
+    return result.stdout.splitlines(), None
+
+
 def journal_lines(now):
     fixture = os.environ.get("AIDEVOPS_LOGIND_FIXTURE")
     if fixture:
@@ -274,19 +296,11 @@ def journal_lines(now):
             return Path(fixture).read_text(encoding="utf-8").splitlines(), None
         except OSError as exc:
             return [], f"fixture-read-failed:{type(exc).__name__}"
-    try:
-        result = subprocess.run(
-            ["journalctl", "--since", "366 days ago", "-u", "systemd-logind.service", "--no-pager", "-o", "short-iso"],
-            check=False,
-            capture_output=True,
-            text=True,
-            timeout=30,
-        )
-    except (OSError, subprocess.TimeoutExpired) as exc:
-        return [], f"journal-read-failed:{type(exc).__name__}"
-    if result.returncode != 0:
-        return [], f"journal-read-failed:exit-{result.returncode}"
-    return result.stdout.splitlines(), None
+    lines, error = run_trusted_command(
+        "journalctl",
+        ["--since", "366 days ago", "-u", "systemd-logind.service", "--no-pager", "-o", "short-iso"],
+    )
+    return (lines or []), f"journal-read-failed:{error}" if error else None
 
 
 def parse_last_local_timestamp(value):
@@ -300,49 +314,53 @@ def parse_last_local_timestamp(value):
     return None
 
 
-def wtmp_collection(now, user, journal_reason):
+def read_wtmp_lines(user, journal_reason):
     fixture = os.environ.get("AIDEVOPS_LAST_FIXTURE")
     if fixture:
         try:
-            lines = Path(fixture).read_text(encoding="utf-8").splitlines()
+            return Path(fixture).read_text(encoding="utf-8").splitlines(), None
         except OSError as exc:
-            return {"status": "unavailable", "source": "linux-wtmp", "reason": f"fixture-read-failed:{type(exc).__name__}", "intervals": []}
-    else:
-        try:
-            result = subprocess.run(
-                ["last", "-F", "-s", "-365days", user], check=False, capture_output=True, text=True, timeout=30
-            )
-        except (OSError, subprocess.TimeoutExpired) as exc:
-            return {"status": "unavailable", "source": "linux-logind+wtmp", "reason": f"{journal_reason};wtmp-read-failed:{type(exc).__name__}", "intervals": []}
-        if result.returncode != 0:
-            return {"status": "unavailable", "source": "linux-logind+wtmp", "reason": f"{journal_reason};wtmp-read-failed:exit-{result.returncode}", "intervals": []}
-        lines = result.stdout.splitlines()
+            return None, f"fixture-read-failed:{type(exc).__name__}"
+    lines, error = run_trusted_command("last", ["-F", "-s", "-365days", user])
+    return lines, f"{journal_reason};wtmp-read-failed:{error}" if error else None
+
+
+def parse_wtmp_line(line, now):
+    if not line.strip() or "wtmp begins" in line or line.startswith(("reboot", "shutdown")):
+        return None, False
+    structured = re.match(r"^([0-9]+)\|([0-9]+)$", line.strip())
+    if structured:
+        return (float(structured.group(1)), float(structured.group(2))), False
+    dates = re.findall(r"(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun) [A-Z][a-z]{2}\s+[0-9]{1,2} [0-9:]{8}(?: [+-][0-9]{4})? [0-9]{4}", line)
+    if not dates:
+        return None, True
+    try:
+        left = parse_last_local_timestamp(dates[0])
+        right = now if "still logged in" in line else parse_last_local_timestamp(dates[1]) if len(dates) >= 2 else None
+    except (TypeError, ValueError):
+        return None, True
+    if left is None or right is None or right <= left:
+        return None, True
+    return (left, right), False
+
+
+def parse_wtmp_lines(lines, now):
     intervals = []
     skipped = 0
     for line in lines:
-        if not line.strip() or "wtmp begins" in line or line.startswith(("reboot", "shutdown")):
-            continue
-        structured = re.match(r"^([0-9]+)\|([0-9]+)$", line.strip())
-        if structured:
-            intervals.append((float(structured.group(1)), float(structured.group(2))))
-            continue
-        dates = re.findall(r"(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun) [A-Z][a-z]{2}\s+[0-9]{1,2} [0-9:]{8}(?: [+-][0-9]{4})? [0-9]{4}", line)
-        if dates:
-            try:
-                left = parse_last_local_timestamp(dates[0])
-                if "still logged in" in line:
-                    right = now
-                elif len(dates) >= 2:
-                    right = parse_last_local_timestamp(dates[1])
-                else:
-                    skipped += 1
-                    continue
-                if left is not None and right is not None and right > left:
-                    intervals.append((left, right))
-            except (TypeError, ValueError):
-                skipped += 1
-        else:
-            skipped += 1
+        interval, malformed = parse_wtmp_line(line, now)
+        if interval:
+            intervals.append(interval)
+        skipped += int(malformed)
+    return intervals, skipped
+
+
+def wtmp_collection(now, user, journal_reason):
+    lines, error = read_wtmp_lines(user, journal_reason)
+    if error:
+        source = "linux-wtmp" if error.startswith("fixture-read-failed:") else "linux-logind+wtmp"
+        return {"status": "unavailable", "source": source, "reason": error, "intervals": []}
+    intervals, skipped = parse_wtmp_lines(lines, now)
     if not intervals:
         return {"status": "unavailable", "source": "linux-logind+wtmp", "reason": f"{journal_reason};no-parseable-wtmp-sessions", "intervals": []}
     latest = max(right for _, right in intervals)
@@ -363,24 +381,41 @@ def wtmp_collection(now, user, journal_reason):
     }
 
 
-def linux_collection(now, user):
-    lines, error = journal_lines(now)
-    if error:
-        return wtmp_collection(now, user, error)
-    sessions = {}
-    lid_open = True
-    active = False
-    opened = None
+def linux_is_active(state):
+    return state["lid_open"] and any(not locked for locked in state["sessions"].values())
+
+
+def apply_linux_message(state, message, user):
+    match = SESSION_NEW.search(message)
+    if match and match.group(2) == user:
+        state["sessions"][match.group(1).rstrip(".")] = False
+        return True
+    lowered = message.lower()
+    match = SESSION_ID.search(message) if "locked" in lowered else None
+    session_id = match.group(1).rstrip(".") if match else ""
+    if session_id in state["sessions"]:
+        state["sessions"][session_id] = "unlocked" not in lowered
+        return True
+    if "Lid closed" in message:
+        state["lid_open"] = False
+        return True
+    if "Lid opened" in message:
+        state["lid_open"] = True
+        return True
+    match = SESSION_END.search(message)
+    session_id = match.group(1).rstrip(".") if match else ""
+    if session_id in state["sessions"]:
+        state["sessions"].pop(session_id, None)
+        return True
+    return False
+
+
+def collect_linux_events(lines, now, user):
+    state = {"sessions": {}, "lid_open": True}
     intervals = []
-    observations = 0
     observation_epochs = []
-    latest = None
-    earliest_event = None
-    start = now - WINDOWS["year"]
-
-    def is_active():
-        return lid_open and any(not locked for locked in sessions.values())
-
+    opened = None
+    active = False
     for line in lines:
         first = line.split(None, 1)
         if len(first) != 2:
@@ -389,43 +424,16 @@ def linux_collection(now, user):
         if timestamp is None or timestamp > now:
             continue
         message = first[1]
-        before = is_active()
-        recognized = False
-        match = SESSION_NEW.search(message)
-        if match and match.group(2) == user:
-            sessions[match.group(1).rstrip(".")] = False
-            recognized = True
-        else:
-            lowered = message.lower()
-            match = SESSION_ID.search(message) if "locked" in lowered else None
-            session_id = match.group(1).rstrip(".") if match else ""
-            if session_id in sessions:
-                sessions[session_id] = "unlocked" not in lowered
-                recognized = True
-            elif "Lid closed" in message:
-                lid_open = False
-                recognized = True
-            elif "Lid opened" in message:
-                lid_open = True
-                recognized = True
-            else:
-                match = SESSION_END.search(message)
-                session_id = match.group(1).rstrip(".") if match else ""
-                if session_id in sessions:
-                    sessions.pop(session_id, None)
-                    recognized = True
-        if not recognized:
+        before = linux_is_active(state)
+        if not apply_linux_message(state, message, user):
             continue
+        after = linux_is_active(state)
         if os.environ.get("AIDEVOPS_SCREEN_TIME_DEBUG") == "1":
             print(
-                f"screen-time event ts={timestamp} before={before} after={is_active()} sessions={sessions} lid_open={lid_open} message={message}",
+                f"screen-time event ts={timestamp} before={before} after={after} sessions={state['sessions']} lid_open={state['lid_open']} message={message}",
                 file=sys.stderr,
             )
-        observations += 1
         observation_epochs.append(timestamp)
-        latest = timestamp if latest is None else max(latest, timestamp)
-        earliest_event = timestamp if earliest_event is None else min(earliest_event, timestamp)
-        after = is_active()
         if before == after:
             continue
         if before and opened is not None:
@@ -434,18 +442,26 @@ def linux_collection(now, user):
         active = after
     if active and opened is not None:
         intervals.append((opened, now))
-    intervals = union_intervals(intervals, start, now)
-    if observations == 0:
+    return union_intervals(intervals, now - WINDOWS["year"], now), observation_epochs
+
+
+def linux_collection(now, user):
+    lines, error = journal_lines(now)
+    if error:
+        return wtmp_collection(now, user, error)
+    intervals, observation_epochs = collect_linux_events(lines, now, user)
+    if not observation_epochs:
         return wtmp_collection(now, user, "journal-readable-no-user-observations")
+    latest = max(observation_epochs)
     freshness = max(0.0, (now - latest) / 3600)
     return {
         "status": "stale" if freshness > 72 else "ok",
         "source": "linux-systemd-logind:session-lid-lock-state",
         "reason": "source-observations",
         "intervals": intervals,
-        "observations": observations,
+        "observations": len(observation_epochs),
         "latest_epoch": latest,
-        "earliest_epoch": earliest_event,
+        "earliest_epoch": min(observation_epochs),
         "freshness_hours": round(freshness, 1),
         "observation_epochs": observation_epochs,
         "coverage_start_epoch": min(observation_epochs),

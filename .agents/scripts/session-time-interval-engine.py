@@ -39,6 +39,52 @@ TEMP_PATHS = (
     re.compile(r"^/tmp/opencode(?:[.-].*)?$"),
     re.compile(r"^/var/folders/.*/T/opencode.*$"),
 )
+OBSERVABILITY_QUERY = """
+    SELECT timestamp, session_id, duration_ms, project_path
+    FROM llm_requests
+    WHERE timestamp >= ?
+      AND duration_ms > 0
+      AND typeof(duration_ms) IN ('integer','real')
+      AND session_id IS NOT NULL
+      AND session_id != ''
+"""
+OBSERVABILITY_ROOT_QUERY = """
+    SELECT timestamp, session_id, duration_ms, project_path
+    FROM llm_requests
+    WHERE timestamp >= ?
+      AND duration_ms > 0
+      AND typeof(duration_ms) IN ('integer','real')
+      AND session_id IS NOT NULL
+      AND session_id != ''
+      AND (project_path = ?
+           OR project_path LIKE ? ESCAPE '\\'
+           OR project_path LIKE ? ESCAPE '\\'
+           OR project_path LIKE ? ESCAPE '\\')
+"""
+OBSERVABILITY_PLAN_QUERY = """
+    EXPLAIN QUERY PLAN
+    SELECT timestamp, session_id, duration_ms, project_path
+    FROM llm_requests
+    WHERE timestamp >= ?
+      AND duration_ms > 0
+      AND typeof(duration_ms) IN ('integer','real')
+      AND session_id IS NOT NULL
+      AND session_id != ''
+"""
+OBSERVABILITY_ROOT_PLAN_QUERY = """
+    EXPLAIN QUERY PLAN
+    SELECT timestamp, session_id, duration_ms, project_path
+    FROM llm_requests
+    WHERE timestamp >= ?
+      AND duration_ms > 0
+      AND typeof(duration_ms) IN ('integer','real')
+      AND session_id IS NOT NULL
+      AND session_id != ''
+      AND (project_path = ?
+           OR project_path LIKE ? ESCAPE '\\'
+           OR project_path LIKE ? ESCAPE '\\'
+           OR project_path LIKE ? ESCAPE '\\')
+"""
 
 
 def path_matches(candidate, root):
@@ -170,6 +216,14 @@ def parse_iso_ms(value):
         return None
 
 
+def observability_query(root, cutoff):
+    if not root:
+        return OBSERVABILITY_QUERY, OBSERVABILITY_PLAN_QUERY, (cutoff,)
+    like_root = escaped_like(root)
+    params = (cutoff, root, f"{like_root}/%", f"{like_root}.%", f"{like_root}-%")
+    return OBSERVABILITY_ROOT_QUERY, OBSERVABILITY_ROOT_PLAN_QUERY, params
+
+
 def query_observability(home, root, since, now):
     db_path = Path(os.environ.get("AIDEVOPS_OBS_DB_FILE", home / ".aidevops/.agent-workspace/observability/llm-requests.db"))
     if not db_path.is_file():
@@ -179,16 +233,10 @@ def query_observability(home, root, since, now):
     try:
         with sqlite3.connect(db_path, timeout=5) as connection:
             cutoff = dt.datetime.fromtimestamp(since / 1000, dt.timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
-            where = ["timestamp >= ?", "duration_ms > 0", "typeof(duration_ms) IN ('integer','real')", "session_id IS NOT NULL", "session_id != ''"]
-            params = [cutoff]
-            if root:
-                like_root = escaped_like(root)
-                where.append("(project_path = ? OR project_path LIKE ? ESCAPE '\\' OR project_path LIKE ? ESCAPE '\\' OR project_path LIKE ? ESCAPE '\\')")
-                params.extend((root, f"{like_root}/%", f"{like_root}.%", f"{like_root}-%"))
-            query = f"SELECT timestamp, session_id, duration_ms, project_path FROM llm_requests WHERE {' AND '.join(where)}"
+            query, plan_query, params = observability_query(root, cutoff)
             plan_file = os.environ.get("AIDEVOPS_OBS_QUERY_PLAN_FILE")
             if plan_file:
-                plan = connection.execute("EXPLAIN QUERY PLAN " + query, params).fetchall()
+                plan = connection.execute(plan_query, params).fetchall()
                 with open(plan_file, "w", encoding="utf-8") as handle:
                     handle.write("\n".join(str(row[3]) for row in plan) + "\n")
             selected = 0

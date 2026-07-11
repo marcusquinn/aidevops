@@ -21,6 +21,8 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=portable-stat.sh
+source "${SCRIPT_DIR}/portable-stat.sh"
 METRICS_FILE="${HOME}/.aidevops/.agent-workspace/observability/metrics.jsonl"
 OBS_DB_FILE="${HOME}/.aidevops/.agent-workspace/observability/llm-requests.db"
 OPENCODE_DB_FILE="${HOME}/.local/share/opencode/opencode.db"
@@ -39,10 +41,7 @@ _profile_update_lock_dir() {
 _profile_lock_mtime() {
 	local lock_dir="$1"
 	local modified=""
-	modified=$(stat -c '%Y' "$lock_dir" 2>/dev/null || true)
-	if [[ ! "$modified" =~ ^[0-9]+$ ]]; then
-		modified=$(stat -f '%m' "$lock_dir" 2>/dev/null || true)
-	fi
+	modified=$(_file_mtime_epoch "$lock_dir" 2>/dev/null || true)
 	[[ "$modified" =~ ^[0-9]+$ ]] || modified=0
 	printf '%s\n' "$modified"
 	return 0

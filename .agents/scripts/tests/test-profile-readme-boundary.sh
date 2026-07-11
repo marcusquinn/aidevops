@@ -709,7 +709,7 @@ test_work_with_ai_unavailable_is_not_zero() {
 }
 
 test_profile_update_lock_is_bounded() {
-	local test_name="profile update lock is token-owned, race-safe, and stale-recoverable"
+	local test_name="profile update lock uses portable mtime and remains token-owned, race-safe, and stale-recoverable"
 	TEST_DIR=$(mktemp -d)
 	local result
 	result=$(
@@ -718,6 +718,15 @@ test_profile_update_lock_is_bounded() {
 		source "$SOURCE_HELPER" >/dev/null
 		HOME="${TEST_DIR}/home"
 		export HOME
+		local delegated_mtime
+		delegated_mtime=$(
+			_file_mtime_epoch() { printf '%s\n' 1234567890; }
+			_profile_lock_mtime "${TEST_DIR}/delegation-probe"
+		)
+		if [[ "$delegated_mtime" != "1234567890" ]]; then
+			printf '%s\n' portable-mtime-not-used
+			return 0
+		fi
 		_acquire_profile_update_lock
 		local owner_token="$PROFILE_UPDATE_LOCK_TOKEN"
 		if HOME="$HOME" bash -c 'set -- help; source "$1" >/dev/null; _acquire_profile_update_lock' _ "$SOURCE_HELPER" 2>/dev/null; then
