@@ -264,6 +264,18 @@ ${marker}"
 	return 0
 }
 
+_GH_CI_READY_ARGS=()
+_gh_ci_prepare_parent_contract_and_signature() {
+	local is_parent_task=0
+	if _gh_wrapper_args_have_label "parent-task" "$@" "${_GH_CI_TODO_LABEL_ARGS[@]}"; then
+		is_parent_task=1
+	fi
+	_gh_ci_prepare_parent_close_contract "$is_parent_task" "$@"
+	_gh_wrapper_auto_sig "${_GH_CI_CONTRACT_ARGS[@]}"
+	_GH_CI_READY_ARGS=("${_GH_WRAPPER_SIG_MODIFIED_ARGS[@]}")
+	return 0
+}
+
 gh_create_issue() {
 	_gh_wrapper_enter_cleanup_scope
 	gh_record_call graphql gh_create_issue 2>/dev/null || true
@@ -296,19 +308,9 @@ gh_create_issue() {
 		_todo_label_args=("${_GH_CI_TODO_LABEL_ARGS[@]}")
 	fi
 
-	# Stamp every newly created parent-task with a deterministic close contract.
-	# The contract is added before the signature so the signature remains the
-	# final body footer. Derived TODO labels participate in parent detection.
-	local _is_parent_task=0
-	if _gh_wrapper_args_have_label "parent-task" "$@" "${_todo_label_args[@]}"; then
-		_is_parent_task=1
-	fi
-	_gh_ci_prepare_parent_close_contract "$_is_parent_task" "$@"
-	set -- "${_GH_CI_CONTRACT_ARGS[@]}"
-
-	# t2115: auto-append signature footer when body lacks one
-	_gh_wrapper_auto_sig "$@"
-	set -- "${_GH_WRAPPER_SIG_MODIFIED_ARGS[@]}"
+	# Stamp parent close contracts before the signature so it remains the footer.
+	_gh_ci_prepare_parent_contract_and_signature "$@"
+	set -- "${_GH_CI_READY_ARGS[@]}"
 
 	if [[ ${#_todo_label_args[@]} -gt 0 ]]; then
 		_gh_ci_prepare_status_label "$@" "${_todo_label_args[@]}"

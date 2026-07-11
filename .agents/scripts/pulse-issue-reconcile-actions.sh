@@ -824,6 +824,19 @@ _SP_CPT_NUDGED=0
 _SP_CPT_ESCALATED=0
 _SP_CPT_REOPENED=0
 
+_repair_recently_closed_parent() {
+	local slug="$1" issue_num="$2" issue_body="$3" known_child_count="$4"
+	local issue_state="$5"
+	[[ "$issue_state" == "CLOSED" ]] || return 1
+	if _parent_close_contract_incomplete "$issue_body" "$known_child_count"; then
+		if _repair_closed_parent_contract "$slug" "$issue_num" \
+			"$_PARENT_CLOSE_CONTRACT_REASON"; then
+			_SP_CPT_REOPENED=1
+		fi
+	fi
+	return 0
+}
+
 #######################################
 # Stage 4 action: reconcile a parent-task issue (close/nudge/escalate).
 # (Per-issue body of reconcile_completed_parent_tasks — no slug loop.)
@@ -889,13 +902,8 @@ _action_cpt_single() {
 
 	# Recently closed parents are repair candidates only when deterministic
 	# body evidence proves that the close contract remains incomplete.
-	if [[ "$issue_state" == "CLOSED" ]]; then
-		if _parent_close_contract_incomplete "$issue_body" "$known_child_count"; then
-			if _repair_closed_parent_contract "$slug" "$issue_num" \
-				"$_PARENT_CLOSE_CONTRACT_REASON"; then
-				_SP_CPT_REOPENED=1
-			fi
-		fi
+	if _repair_recently_closed_parent "$slug" "$issue_num" "$issue_body" \
+		"$known_child_count" "$issue_state"; then
 		return 0
 	fi
 
