@@ -8,6 +8,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)" || exit 1
 SANDBOX_HELPER="${SCRIPT_DIR}/sandbox-exec-helper.sh"
 NETWORK_HELPER="${SCRIPT_DIR}/network-tier-helper.sh"
 HEADLESS_HELPER="${SCRIPT_DIR}/headless-runtime-helper.sh"
+HEADLESS_WORKER="${SCRIPT_DIR}/headless-runtime-worker.sh"
 TEST_ROOT="$(mktemp -d)"
 TEST_HOME="${TEST_ROOT}/home"
 BACKEND="${TEST_ROOT}/egress-backend"
@@ -66,7 +67,7 @@ with open(sys.argv[1], "rb") as handle:
     print(hashlib.sha256(handle.read()).hexdigest())
 PY
 )"
-	printf '{"schema":"aidevops.worker-egress-backend.v1","ready":true,"scope":"process-tree","enforcement":"kernel","policy_sha256":"%s","backend_id":"fixture-backend"}' "$policy_sha256"
+	printf '{"schema":"aidevops.worker-egress-backend.v1","ready":true,"scope":"process-tree","enforcement":"kernel","policy_sha256":"%s","backend_id":"fixture-backend","capabilities":["direct-socket-deny","hostname-policy","private-network-deny"],"cleanup":"automatic"}' "$policy_sha256"
 	exit 0
 	;;
 run)
@@ -197,14 +198,20 @@ test_auto_mode_reports_non_containment() {
 }
 
 test_headless_runtime_binds_egress_contract() {
-	local egress_count=0
-	local worker_count=0
-	egress_count="$(grep -cF -- '--egress-mode' "$HEADLESS_HELPER")"
-	worker_count="$(grep -cF -- '--worker-id' "$HEADLESS_HELPER")"
-	if [[ "$egress_count" -eq 2 && "$worker_count" -eq 2 ]]; then
-		pass "headless runtime binds egress mode and worker identity"
+	local opencode_egress_count=0
+	local claude_egress_count=0
+	local required_guard_count=0
+	# Literal source patterns intentionally retain the runtime variable names.
+	# shellcheck disable=SC2016
+	opencode_egress_count="$(grep -cF -- '--egress-mode "$egress_mode" --worker-id "$egress_worker_id"' "$HEADLESS_HELPER")"
+	# shellcheck disable=SC2016
+	claude_egress_count="$(grep -cF -- '--egress-mode "$egress_mode" --worker-id "$egress_worker_id"' "$HEADLESS_WORKER")"
+	# shellcheck disable=SC2016
+	required_guard_count="$(grep -h -cF -- '[[ "$egress_mode" == "required" ]]' "$HEADLESS_HELPER" "$HEADLESS_WORKER" | awk '{ total += $1 } END { print total + 0 }')"
+	if [[ "$opencode_egress_count" -eq 2 && "$claude_egress_count" -eq 4 && "$required_guard_count" -eq 2 ]]; then
+		pass "all headless runtimes bind egress and guard required mode"
 	else
-		fail "headless runtime binds egress mode and worker identity" "egress=${egress_count} worker=${worker_count}"
+		fail "all headless runtimes bind egress and guard required mode" "opencode=${opencode_egress_count} claude=${claude_egress_count} guards=${required_guard_count}"
 	fi
 	return 0
 }

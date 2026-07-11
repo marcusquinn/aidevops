@@ -962,7 +962,9 @@ PY
 #   probe --policy FILE
 #     emits {"schema":"aidevops.worker-egress-backend.v1","ready":true,
 #            "scope":"process-tree","enforcement":"kernel",
-#            "policy_sha256":"...","backend_id":"safe-id"}
+#            "policy_sha256":"...","backend_id":"safe-id",
+#            "capabilities":["direct-socket-deny","hostname-policy",
+#            "private-network-deny"],"cleanup":"automatic"}
 #   run --policy FILE --worker-id ID -- COMMAND [ARG...]
 #     binds COMMAND and all descendants to the policy before exec.
 # Arguments: $1=mode (off|auto|required), $2=policy file, $3=worker ID.
@@ -1023,7 +1025,7 @@ _sandbox_prepare_worker_egress() {
 	fi
 	if ! printf '%s' "$probe_output" | jq -e \
 		--arg policy_sha256 "$expected_policy_sha256" \
-		'.schema == "aidevops.worker-egress-backend.v1" and .ready == true and .scope == "process-tree" and (.enforcement == "kernel" or .enforcement == "equivalent") and .policy_sha256 == $policy_sha256 and (.backend_id | type == "string")' \
+		'.schema == "aidevops.worker-egress-backend.v1" and .ready == true and .scope == "process-tree" and (.enforcement == "kernel" or .enforcement == "equivalent") and .policy_sha256 == $policy_sha256 and (.backend_id | type == "string") and .cleanup == "automatic" and (["direct-socket-deny", "hostname-policy", "private-network-deny"] - .capabilities | length == 0)' \
 		>/dev/null 2>&1; then
 		if [[ "$mode" == "required" ]]; then
 			log_sandbox "ERROR" "Required worker egress backend returned an invalid readiness contract"
@@ -1353,6 +1355,7 @@ sandbox_run() {
 		"$block_network" "$timeout_secs" "$stdout_file" "$stderr_file" \
 		"$egress_backend" "$egress_policy_file" "$worker_id" \
 		"${env_args[@]}" "--" "${cmd_args[@]}" || exit_code=$?
+	rm -f "$egress_policy_file"
 
 	local end_time duration
 	end_time="$(date +%s)"

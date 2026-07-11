@@ -189,6 +189,8 @@ _invoke_opencode() {
 	# way to separate tee output from the exit code in a single $()).
 	(
 		set +e
+		local egress_mode="${AIDEVOPS_WORKER_EGRESS_MODE:-auto}"
+		local egress_worker_id="${AIDEVOPS_WORKER_ID:-${_invoke_session_key:-headless}}"
 		# Inject --print-logs for headless workers so opencode's internal Go logs
 		# (API errors, model resolution, DB writes) appear in the worker log.
 		# This is critical for diagnosing silent exits — the JSON event stream
@@ -216,12 +218,17 @@ _invoke_opencode() {
 			# a temp file and replays it after exit — the watchdog sees nothing
 			# and kills every sandboxed worker at ~93s.
 			if [[ -n "$passthrough_csv" ]]; then
-				run_without_opencode_session_env "$SANDBOX_EXEC_HELPER" run --timeout "$HEADLESS_SANDBOX_TIMEOUT_DEFAULT" --allow-secret-io --stream-stdout --egress-mode "${AIDEVOPS_WORKER_EGRESS_MODE:-auto}" --worker-id "${AIDEVOPS_WORKER_ID:-${_invoke_session_key:-headless}}" --passthrough "$passthrough_csv" -- "${_oc_cmd[@]}" 2>&1 | tee "$output_file"
+				run_without_opencode_session_env "$SANDBOX_EXEC_HELPER" run --timeout "$HEADLESS_SANDBOX_TIMEOUT_DEFAULT" --allow-secret-io --stream-stdout --egress-mode "$egress_mode" --worker-id "$egress_worker_id" --passthrough "$passthrough_csv" -- "${_oc_cmd[@]}" 2>&1 | tee "$output_file"
 			else
-				run_without_opencode_session_env "$SANDBOX_EXEC_HELPER" run --timeout "$HEADLESS_SANDBOX_TIMEOUT_DEFAULT" --allow-secret-io --stream-stdout --egress-mode "${AIDEVOPS_WORKER_EGRESS_MODE:-auto}" --worker-id "${AIDEVOPS_WORKER_ID:-${_invoke_session_key:-headless}}" -- "${_oc_cmd[@]}" 2>&1 | tee "$output_file"
+				run_without_opencode_session_env "$SANDBOX_EXEC_HELPER" run --timeout "$HEADLESS_SANDBOX_TIMEOUT_DEFAULT" --allow-secret-io --stream-stdout --egress-mode "$egress_mode" --worker-id "$egress_worker_id" -- "${_oc_cmd[@]}" 2>&1 | tee "$output_file"
 			fi
 			printf '%s' "${PIPESTATUS[0]}" >"$exit_code_file"
 		else
+			if [[ "$egress_mode" == "required" ]]; then
+				print_error "Whole-process worker egress is required, but the sandbox launcher is disabled or unavailable"
+				printf '%s' "126" >"$exit_code_file"
+				exit 126
+			fi
 			if [[ "${AIDEVOPS_HEADLESS_SANDBOX_DISABLED:-}" == "1" ]]; then
 				print_info "AIDEVOPS_HEADLESS_SANDBOX_DISABLED=1 — using bare timeout (no privilege isolation) (GH#20146 audit)"
 			fi
