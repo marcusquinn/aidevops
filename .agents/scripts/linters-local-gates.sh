@@ -504,13 +504,19 @@ check_shell_portability() {
 	# Reuse the orchestrator inventory rather than running another git ls-files.
 	portability_files+=("${ALL_SH_FILES[@]}")
 
-	local output violations=0
-	output=$(bash "$scanner_script" "${portability_files[@]}" 2>&1) || violations=1
+	local output status=0
+	output=$(bash "$scanner_script" "${portability_files[@]}" 2>&1) || status=$?
+	if [[ "$status" -ne 0 ]] && ! printf '%s\n' "$output" | grep -q 'violation(s)'; then
+		print_warning "Shell portability: scanner infrastructure exit ${status}; retrying once"
+		status=0
+		output=$(bash "$scanner_script" "${portability_files[@]}" 2>&1) || status=$?
+	fi
 
-	if [[ "$violations" -eq 0 ]]; then
+	if [[ "$status" -eq 0 ]]; then
 		print_success "Shell portability: no unguarded platform-specific commands"
 	else
 		print_error "Shell portability: unguarded platform-specific commands found"
+		[[ -n "$output" ]] && printf '%s\n' "$output"
 		# Re-run without --summary to show details
 		bash "$scanner_script" "${ALL_SH_FILES[@]}" 2>&1 || true
 		return 1
