@@ -81,9 +81,27 @@ test_ratchet_counter_reports_progress_and_value() {
 	return 0
 }
 
+test_missing_return_counter_scans_inventory_once() {
+	source_ratchet_helpers
+	local tmp_dir count
+	tmp_dir=$(mktemp -d)
+	printf 'one() {\n\treturn 0\n}\ntwo() {\n\t:\n}\n' >"${tmp_dir}/missing.sh"
+	printf 'complete() {\n\treturn 0\n}\n' >"${tmp_dir}/complete.sh"
+	ALL_SH_FILES=("${tmp_dir}/missing.sh" "${tmp_dir}/complete.sh")
+	count=$(_ratchet_count_missing_return)
+	if [[ "$count" -eq 1 ]]; then
+		print_result "ratchet missing-return counter preserves per-file semantics" 0
+	else
+		print_result "ratchet missing-return counter preserves per-file semantics" 1 "count=$count"
+	fi
+	rm -rf "$tmp_dir"
+	return 0
+}
+
 main() {
 	test_ratchet_counter_times_out_with_diagnostic
 	test_ratchet_counter_reports_progress_and_value
+	test_missing_return_counter_scans_inventory_once
 
 	echo ""
 	if [ "$TESTS_FAILED" -eq 0 ]; then

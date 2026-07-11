@@ -184,21 +184,17 @@ _ratchet_count_silent_errors() {
 # _ratchet_count_missing_return: count files with functions but fewer return statements
 # Returns: count via stdout
 _ratchet_count_missing_return() {
-	local missing_files=0
-	local file funcs returns
-	for file in "${ALL_SH_FILES[@]}"; do
-		[[ -f "$file" ]] || continue
-		funcs=$(safe_grep_count "^[a-zA-Z_][a-zA-Z0-9_]*() {$" "$file")
-		returns=$(grep -cE "return [0-9]+|return \\\$" "$file" 2>/dev/null || echo "0")
-		funcs=$(echo "$funcs" | tr -d '[:space:]')
-		returns=$(echo "$returns" | tr -d '[:space:]')
-		[[ "$funcs" =~ ^[0-9]+$ ]] || funcs=0
-		[[ "$returns" =~ ^[0-9]+$ ]] || returns=0
-		if [[ "$returns" -lt "$funcs" ]]; then
-			missing_files=$((missing_files + 1))
-		fi
-	done
-	echo "$missing_files"
+	[[ ${#ALL_SH_FILES[@]} -gt 0 ]] || {
+		echo "0"
+		return 0
+	}
+	awk '
+		function finish_file() { if (returns < functions) missing++ }
+		FNR == 1 { if (NR > 1) finish_file(); functions = 0; returns = 0 }
+		/^[a-zA-Z_][a-zA-Z0-9_]*\(\) \{$/ { functions++ }
+		/return [0-9]+|return \$/ { returns++ }
+		END { finish_file(); print missing + 0 }
+	' "${ALL_SH_FILES[@]}"
 	return 0
 }
 

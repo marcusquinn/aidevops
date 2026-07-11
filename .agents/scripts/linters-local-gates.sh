@@ -495,11 +495,12 @@ check_targeted_tests() {
 
 	local exit_code=0
 	local mapped_test=false
-	if printf '%s\n' "$changed_files" | grep -Eq '^\.agents/scripts/linters-local(-analysis|-gates|-validators)?\.sh$|^\.agents/scripts/tests/test-linters-local'; then
+	if printf '%s\n' "$changed_files" | grep -Eq '^\.agents/scripts/linters-local(-analysis|-gates|-ratchet|-validators)?\.sh$|^\.agents/scripts/tests/test-linters-local'; then
 		mapped_test=true
 		bash .agents/scripts/tests/test-linters-local-complexity-gates.sh || exit_code=1
 		bash .agents/scripts/tests/test-linters-local-changed-mode.sh || exit_code=1
 		bash .agents/scripts/tests/test-linters-local-cache.sh || exit_code=1
+		bash .agents/scripts/tests/test-linters-local-ratchet-timeout.sh || exit_code=1
 		bash .agents/scripts/tests/test-linters-local-shellcheck-batches.sh || exit_code=1
 	fi
 	if printf '%s\n' "$changed_files" | grep -qxF '.agents/scripts/lint-shell-portability.sh'; then
