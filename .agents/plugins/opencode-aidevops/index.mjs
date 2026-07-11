@@ -40,6 +40,7 @@ import { createSessionTitleFallbackHandler } from "./session-title-fallback.mjs"
 import { createSessionTitleSuffixHandler } from "./session-title-suffix.mjs";
 import { installPluginConsoleRouter } from "./plugin-console.mjs";
 import { createSubagentEffortHooks, loadTierReasoningPolicies } from "./subagent-effort.mjs";
+import { createSessionContinuationGuard } from "./session-continuation-guard.mjs";
 
 // Existing modules
 import { createTools } from "./tools.mjs";
@@ -192,9 +193,14 @@ export async function AidevopsPlugin({ directory, client }) {
     pluginDir: PLUGIN_DIR,
   });
 
+  const continuationGuard = createSessionContinuationGuard({
+    repository: directory,
+    checkpointHelper: join(SCRIPTS_DIR, "session-checkpoint-helper.sh"),
+  });
   const { toolExecuteBefore, toolExecuteAfter, qualityLog } = createQualityHooks({
     scriptsDir: SCRIPTS_DIR,
     logsDir: LOGS_DIR,
+    continuationGuard,
   });
 
   const shellEnvHook = createShellEnvHook({
@@ -270,6 +276,13 @@ export async function AidevopsPlugin({ directory, client }) {
     }
   };
 
+  // Compose recovery completion validation after TTSR annotations. The guard
+  // only changes explicit terminal claims; ordinary progress remains intact.
+  const completionTextHook = async (input, output) => {
+    await textCompleteHook(input, output);
+    continuationGuard.completeText(input, output);
+  };
+
   // Greeting handler (t2724) — emits session-start framework status as
   // TUI toasts via client.tui.showToast(). Fires once per plugin init on
   // the first session.created event. See greeting.mjs for classification
@@ -320,7 +333,7 @@ export async function AidevopsPlugin({ directory, client }) {
     // Soft TTSR — rule enforcement
     "experimental.chat.system.transform": systemTransformHook,
     "experimental.chat.messages.transform": messagesTransformHook,
-    "experimental.text.complete": textCompleteHook,
+    "experimental.text.complete": completionTextHook,
 
     // LLM observability + session-start toast greeting (t2724).
     // Both run on every event; greeting self-gates to session.created.

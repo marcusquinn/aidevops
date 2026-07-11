@@ -9,6 +9,9 @@
 #
 # Commands:
 #   save              Save current session checkpoint
+#   recovery-save     Save a structured safety-stop recovery checkpoint
+#   recovery-resolve  Resolve the current recovery checkpoint with evidence
+#   recovery-status   Print recovery state (use --json for machine output)
 #   load              Load and display current checkpoint
 #   continuation      Generate structured continuation prompt for new sessions
 #   auto-save         Auto-detect state and save (no manual flags needed)
@@ -44,6 +47,7 @@ source "${SCRIPT_DIR}/shared-constants.sh"
 readonly CHECKPOINT_DIR="${HOME}/.aidevops/.agent-workspace/tmp"
 readonly CHECKPOINT_SCOPED_DIR="${CHECKPOINT_DIR}/session-checkpoints"
 readonly LEGACY_CHECKPOINT_FILE="${CHECKPOINT_DIR}/session-checkpoint.md"
+readonly OUTPUT_FORMAT_JSON="json"
 
 [[ -z "${BOLD+x}" ]] && BOLD='\033[1m'
 
@@ -221,6 +225,18 @@ _parse_save_args() {
 	_save_note=""
 	_save_elapsed=""
 	_save_target=""
+	_save_recovery_session=""
+	_save_recovery_objective=""
+	_save_recovery_directions=""
+	_save_recovery_trigger=""
+	_save_recovery_completed=""
+	_save_recovery_remaining=""
+	_save_recovery_unsafe_route=""
+	_save_recovery_next_route=""
+	_save_recovery_resume_condition=""
+	_save_recovery_owner=""
+	_save_recovery_status=""
+	_save_recovery_resolution=""
 
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
@@ -297,6 +313,57 @@ _parse_save_args() {
 	return 0
 }
 
+# Convert a recovery value to a single markdown-safe line.
+_normalize_recovery_value() {
+	local value="$1"
+	value="${value//$'\n'/ }"
+	value="${value//$'\r'/ }"
+	value="${value//|/\\|}"
+	printf '%s' "$value"
+	return 0
+}
+
+# Parse structured recovery fields into the module-scoped _save_recovery_* variables.
+_parse_recovery_args() {
+	local option=""
+	local value=""
+	while [[ $# -gt 0 ]]; do
+		option="${1:-}"
+		if [[ $# -lt 2 ]]; then
+			print_error "${option} requires a value"
+			return 1
+		fi
+		value="$(_normalize_recovery_value "${2:-}")"
+		case "$option" in
+		--session) _save_recovery_session="$value" ;;
+		--objective) _save_recovery_objective="$value" ;;
+		--directions) _save_recovery_directions="$value" ;;
+		--trigger) _save_recovery_trigger="$value" ;;
+		--completed) _save_recovery_completed="$value" ;;
+		--remaining) _save_recovery_remaining="$value" ;;
+		--unsafe-route) _save_recovery_unsafe_route="$value" ;;
+		--next-safe-route) _save_recovery_next_route="$value" ;;
+		--resume-condition) _save_recovery_resume_condition="$value" ;;
+		--owner) _save_recovery_owner="$value" ;;
+		--status) _save_recovery_status="$value" ;;
+		*)
+			print_error "Unknown recovery option: ${option}"
+			return 1
+			;;
+		esac
+		shift 2
+	done
+
+	case "$_save_recovery_status" in
+	recovering | blocked) ;;
+	*)
+		print_error "--status must be recovering or blocked"
+		return 1
+		;;
+	esac
+	return 0
+}
+
 # Write the checkpoint markdown file using current _save_* variables.
 # Expects _save_branch and _save_timestamp to be set by caller.
 # Arguments:
@@ -330,6 +397,24 @@ ${_save_next:-No next tasks specified}
 
 ${_save_note:-No additional context}
 
+$(if [[ -n "$_save_recovery_status" ]]; then
+	cat <<RECOVERY_EOF
+### Safety-Stop Recovery
+
+- **Session:** ${_save_recovery_session:-not yet known}
+- **Original objective:** ${_save_recovery_objective:-not yet known}
+- **Preserved user directions:** ${_save_recovery_directions:-not yet known}
+- **Trigger and evidence:** ${_save_recovery_trigger:-not yet known}
+- **Completed and verified:** ${_save_recovery_completed:-not yet known}
+- **Remaining acceptance criteria:** ${_save_recovery_remaining:-not yet known}
+- **Unsafe route not to repeat:** ${_save_recovery_unsafe_route:-not yet known}
+- **Next safe route:** ${_save_recovery_next_route:-not yet known}
+- **Resume condition:** ${_save_recovery_resume_condition:-not yet known}
+- **Owner and status:** ${_save_recovery_owner:-not yet known} (${_save_recovery_status})
+- **Resolution evidence:** ${_save_recovery_resolution:-not yet known}
+RECOVERY_EOF
+fi)
+
 ## Git Status
 
 $(git status --short 2>/dev/null || echo "Not in a git repo")
@@ -345,9 +430,7 @@ EOF
 	return 0
 }
 
-cmd_save() {
-	_parse_save_args "$@" || return 1
-
+_persist_checkpoint() {
 	ensure_dir
 
 	_save_timestamp="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
@@ -382,6 +465,129 @@ cmd_save() {
 
 	print_success "Checkpoint saved: ${checkpoint_file}"
 	print_info "Task: ${_save_task:-none} | Branch: ${_save_branch} | ${_save_timestamp}"
+	return 0
+}
+
+cmd_save() {
+	_parse_save_args "$@" || return 1
+	_persist_checkpoint
+	return $?
+}
+
+cmd_recovery_save() {
+	_parse_save_args || return 1
+	_parse_recovery_args "$@" || return 1
+	_save_task="recovery:${_save_recovery_session:-unknown}"
+	_save_next="${_save_recovery_next_route:-not yet known}"
+	_save_note="Safety stop remains ${_save_recovery_status}; resume when ${_save_recovery_resume_condition:-not yet known}."
+	_save_branch="$(current_branch_label)"
+	_persist_checkpoint
+	return $?
+}
+
+# Extract the value from a structured recovery bullet.
+_recovery_field() {
+	local checkpoint_file="$1"
+	local label="$2"
+	awk -v label="$label" '
+		index($0, "- **" label ":** ") == 1 {
+			sub("^- \\*\\*" label ":\\*\\* ", "")
+			print
+			exit
+		}
+	' "$checkpoint_file"
+	return 0
+}
+
+_json_escape() {
+	local value="$1"
+	value="${value//\\/\\\\}"
+	value="${value//\"/\\\"}"
+	value="${value//$'\n'/\\n}"
+	value="${value//$'\r'/\\r}"
+	value="${value//$'\t'/\\t}"
+	printf '%s' "$value"
+	return 0
+}
+
+cmd_recovery_status() {
+	local format="text"
+	local option="${1:-}"
+	[[ "$option" == "--json" ]] && format="$OUTPUT_FORMAT_JSON"
+	local checkpoint_file=""
+	checkpoint_file="$(checkpoint_file_for_current_scope)"
+	if [[ ! -f "$checkpoint_file" ]] || ! grep -q '^### Safety-Stop Recovery$' "$checkpoint_file"; then
+		if [[ "$format" == "$OUTPUT_FORMAT_JSON" ]]; then
+			printf '{"status":"none","unresolved":false}\n'
+		else
+			print_info "No recovery checkpoint"
+		fi
+		return 0
+	fi
+
+	local owner_status=""
+	local owner=""
+	local status=""
+	owner_status="$(_recovery_field "$checkpoint_file" "Owner and status")"
+	owner="${owner_status% (*}"
+	status="${owner_status##* (}"
+	status="${status%)}"
+	local unresolved="false"
+	[[ "$status" == "recovering" || "$status" == "blocked" ]] && unresolved="true"
+
+	if [[ "$format" == "$OUTPUT_FORMAT_JSON" ]]; then
+		printf '{"status":"%s","unresolved":%s,"session":"%s","objective":"%s","remaining":"%s","nextSafeRoute":"%s","resumeCondition":"%s","owner":"%s","resolutionEvidence":"%s"}\n' \
+			"$(_json_escape "$status")" \
+			"$unresolved" \
+			"$(_json_escape "$(_recovery_field "$checkpoint_file" "Session")")" \
+			"$(_json_escape "$(_recovery_field "$checkpoint_file" "Original objective")")" \
+			"$(_json_escape "$(_recovery_field "$checkpoint_file" "Remaining acceptance criteria")")" \
+			"$(_json_escape "$(_recovery_field "$checkpoint_file" "Next safe route")")" \
+			"$(_json_escape "$(_recovery_field "$checkpoint_file" "Resume condition")")" \
+			"$(_json_escape "$owner")" \
+			"$(_json_escape "$(_recovery_field "$checkpoint_file" "Resolution evidence")")"
+	else
+		printf 'Recovery status: %s\n' "$status"
+		printf 'Remaining criteria: %s\n' "$(_recovery_field "$checkpoint_file" "Remaining acceptance criteria")"
+		printf 'Next safe route: %s\n' "$(_recovery_field "$checkpoint_file" "Next safe route")"
+	fi
+	return 0
+}
+
+cmd_recovery_resolve() {
+	local option="${1:-}"
+	local evidence="${2:-}"
+	if [[ "$option" != "--evidence" || -z "$evidence" ]]; then
+		print_error "recovery-resolve requires --evidence <terminal evidence>"
+		return 1
+	fi
+	evidence="$(_normalize_recovery_value "$evidence")"
+	local checkpoint_file=""
+	checkpoint_file="$(checkpoint_file_for_current_scope)"
+	if [[ ! -f "$checkpoint_file" ]] || ! grep -q '^### Safety-Stop Recovery$' "$checkpoint_file"; then
+		print_error "No recovery checkpoint to resolve"
+		return 1
+	fi
+
+	local temp_file=""
+	temp_file="$(mktemp "${CHECKPOINT_DIR}/checkpoint-resolve.XXXXXX")" || return 1
+	awk -v evidence="$evidence" '
+		/^- \*\*Owner and status:\*\*/ {
+			sub(/ \((recovering|blocked)\)$/, " (resolved)")
+		}
+		/^- \*\*Resolution evidence:\*\*/ {
+			print "- **Resolution evidence:** " evidence
+			next
+		}
+		{ print }
+	' "$checkpoint_file" >"$temp_file"
+	sanitize_checkpoint "$temp_file"
+	if ! mv "$temp_file" "$checkpoint_file"; then
+		rm -f "$temp_file"
+		print_error "Failed to resolve recovery checkpoint"
+		return 1
+	fi
+	print_success "Recovery checkpoint resolved"
 	return 0
 }
 
@@ -519,6 +725,7 @@ _gather_continuation_state() {
 
 	# Checkpoint note
 	_cont_checkpoint_note="none"
+	_cont_recovery_state="none"
 	if [[ -f "$_cont_checkpoint_file" ]]; then
 		_cont_checkpoint_note="$(awk '
 			/^## Context Note$/ { capture = 1; next }
@@ -528,6 +735,12 @@ _gather_continuation_state() {
 		if [[ -z "$_cont_checkpoint_note" ]]; then
 			_cont_checkpoint_note="none"
 		fi
+		_cont_recovery_state="$(awk '
+			/^### Safety-Stop Recovery$/ { capture = 1 }
+			capture && /^## / { exit }
+			capture { print }
+		' "$_cont_checkpoint_file" || echo "")"
+		[[ -z "$_cont_recovery_state" ]] && _cont_recovery_state="none"
 	fi
 
 	# Memory recall
@@ -588,6 +801,9 @@ ${_cont_worktrees}
 
 **Last checkpoint note**:
 ${_cont_checkpoint_note}
+
+**Safety-stop recovery state**:
+${_cont_recovery_state}
 
 **Repo-scoped memories**:
 ${_cont_recent_memories}
@@ -700,6 +916,9 @@ main() {
 
 	case "$command" in
 	save) cmd_save "$@" ;;
+	recovery-save) cmd_recovery_save "$@" ;;
+	recovery-resolve) cmd_recovery_resolve "$@" ;;
+	recovery-status) cmd_recovery_status "$@" ;;
 	load) cmd_load ;;
 	continuation) cmd_continuation ;;
 	auto-save) cmd_auto_save "$@" ;;

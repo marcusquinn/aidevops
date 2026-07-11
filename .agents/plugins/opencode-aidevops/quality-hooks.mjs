@@ -242,6 +242,8 @@ function recordChildSubagent(taskId, scriptsDir, log) {
  * @param {object} output - Tool output
  */
 function handleToolBefore(ctx, log, input, output) {
+  ctx.continuationGuard?.beforeTool(input, output);
+
   if (isBashTool(input.tool)) {
     const bashCwd = output.args?.workdir || output.args?.cwd || process.cwd();
     checkCanonicalGitSafetyGate(output.args?.command || "", ctx.scriptsDir, bashCwd);
@@ -312,6 +314,11 @@ function handleToolAfter(ctx, log, scriptsDir, input, output) {
     }
   }
 
+  const continuationResult = ctx.continuationGuard?.afterTool(input, output);
+  if (continuationResult?.replan) {
+    log("WARN", `[session-continuation] repeated ${toolName} failure requires replanning`);
+  }
+
   if (isBashTool(toolName)) {
     trackBashOperation(ctx, output.title || "", output.output || "");
   }
@@ -335,7 +342,7 @@ function handleToolAfter(ctx, log, scriptsDir, input, output) {
 }
 
 export function createQualityHooks(deps) {
-  const { scriptsDir, logsDir } = deps;
+  const { scriptsDir, logsDir, continuationGuard } = deps;
   const qualityLogPath = join(logsDir, "quality-hooks.log");
   // t2120: qualityDetailLog (in quality-logging.mjs) reads ctx.detailLogPath
   // and ctx.detailMaxBytes. Previously these were never populated here, so
@@ -354,6 +361,7 @@ export function createQualityHooks(deps) {
     qualityLogPath,
     detailLogPath,
     detailMaxBytes,
+    continuationGuard,
   };
 
   function boundQualityLog(level, message) {
