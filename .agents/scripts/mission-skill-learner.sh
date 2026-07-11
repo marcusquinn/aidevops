@@ -299,7 +299,11 @@ _score_multi_feature_usage() {
 	if [[ -d "$mission_dir" ]]; then
 		local artifact_name
 		artifact_name=$(basename "$artifact_path")
-		ref_count=$(grep -rl "$artifact_name" "$mission_dir" 2>/dev/null | wc -l | tr -d ' ')
+		if command -v rg >/dev/null 2>&1; then
+			ref_count=$({ rg -l -F -- "$artifact_name" "$mission_dir" 2>/dev/null || true; } | wc -l | tr -d ' ')
+		else
+			ref_count=$({ grep -rlF -- "$artifact_name" "$mission_dir" 2>/dev/null || true; } | wc -l | tr -d ' ')
+		fi
 		# Subtract self-reference
 		ref_count=$((ref_count > 0 ? ref_count - 1 : 0))
 	fi
@@ -1247,4 +1251,6 @@ main() {
 	esac
 }
 
-main "$@"
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+	main "$@"
+fi
