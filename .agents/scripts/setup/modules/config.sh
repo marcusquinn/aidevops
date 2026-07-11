@@ -34,6 +34,27 @@ setup_configs() {
 	return 0
 }
 
+_install_aidevops_cli_copy() {
+	local cli_source="$1"
+	local cli_target="$2"
+	local use_sudo="${3:-false}"
+	local cli_temp="${cli_target}.tmp.$$"
+
+	if [[ "$use_sudo" == "true" ]]; then
+		if sudo install -m 0755 "$cli_source" "$cli_temp" && sudo mv -f "$cli_temp" "$cli_target"; then
+			return 0
+		fi
+		sudo rm -f "$cli_temp" 2>/dev/null || true
+		return 1
+	fi
+
+	if install -m 0755 "$cli_source" "$cli_temp" && mv -f "$cli_temp" "$cli_target"; then
+		return 0
+	fi
+	rm -f "$cli_temp" 2>/dev/null || true
+	return 1
+}
+
 install_aidevops_cli() {
 	print_info "Installing aidevops CLI command..."
 
@@ -49,13 +70,14 @@ install_aidevops_cli() {
 
 	# Check if we can write to /usr/local/bin
 	if [[ -w "/usr/local/bin" ]]; then
-		# Direct symlink
-		ln -sf "$cli_source" "$cli_target"
+		# Install a standalone entrypoint. Symlinking here makes the command depend
+		# on the release worktree or temporary checkout that happened to run setup.
+		_install_aidevops_cli_copy "$cli_source" "$cli_target"
 		print_success "Installed aidevops command to $cli_target"
 	elif [[ -w "$HOME/.local/bin" ]] || mkdir -p "$HOME/.local/bin" 2>/dev/null; then
 		# Use ~/.local/bin instead
 		cli_target="$HOME/.local/bin/aidevops"
-		ln -sf "$cli_source" "$cli_target"
+		_install_aidevops_cli_copy "$cli_source" "$cli_target"
 		print_success "Installed aidevops command to $cli_target"
 
 		# Check if ~/.local/bin is in PATH and add it if not
@@ -65,7 +87,7 @@ install_aidevops_cli() {
 	else
 		# Need sudo
 		print_info "Installing aidevops command requires sudo..."
-		if sudo ln -sf "$cli_source" "$cli_target"; then
+		if _install_aidevops_cli_copy "$cli_source" "$cli_target" true; then
 			print_success "Installed aidevops command to $cli_target"
 		else
 			print_warning "Could not install aidevops command globally"
