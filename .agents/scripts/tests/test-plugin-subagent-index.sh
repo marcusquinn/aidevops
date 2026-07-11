@@ -46,7 +46,7 @@ setup() {
 	chmod +x "$agents_dir/scripts/subagent-index-helper.sh" "$agents_dir/scripts/plugin-loader-helper.sh"
 
 	cat >"$config_dir/plugins.json" <<'JSON'
-{"plugins":[{"name":"Example Plugin","repo":"local","branch":"main","namespace":"example-plugin","enabled":true}]}
+{"plugins":[{"name":"Example Plugin","repo":"local","branch":"main","namespace":"example-plugin","enabled":true,"trusted_commit":"1111111111111111111111111111111111111111","deployed_commit":"1111111111111111111111111111111111111111","hooks_enabled":false}]}
 JSON
 	cat >"$agents_dir/example-plugin/plugin.json" <<'JSON'
 {"name":"Example Plugin","version":"1.0.0","description":"Example plugin agents","agents":[{"file":"example-agent.md","name":"example-agent","description":"Example agent","model":"standard"}]}

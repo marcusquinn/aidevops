@@ -7,7 +7,7 @@ Third-party agent plugins extend aidevops with additional capabilities. Plugins 
 
 ## Schema
 
-`.aidevops.json` `plugins` array:
+`~/.config/aidevops/plugins.json` is the single plugin registry and trust store:
 
 ```json
 {
@@ -17,7 +17,10 @@ Third-party agent plugins extend aidevops with additional capabilities. Plugins 
       "repo": "https://github.com/marcusquinn/aidevops-pro.git",
       "branch": "main",
       "namespace": "pro",
-      "enabled": true
+      "enabled": true,
+      "trusted_commit": "0123456789abcdef0123456789abcdef01234567",
+      "deployed_commit": "0123456789abcdef0123456789abcdef01234567",
+      "hooks_enabled": false
     }
   ]
 }
@@ -30,6 +33,9 @@ Third-party agent plugins extend aidevops with additional capabilities. Plugins 
 | `branch` | string | no | Branch to track (default: `main`) |
 | `namespace` | string | yes | Directory name under `~/.aidevops/agents/` |
 | `enabled` | boolean | no | Whether the plugin is active (default: `true`) |
+| `trusted_commit` | string | yes for deployment | Exact full Git object ID approved for deployment |
+| `deployed_commit` | string | yes for loading | Exact object ID currently deployed; must equal `trusted_commit` |
+| `hooks_enabled` | boolean | no | Whether explicit hook invocation is authorized (default: `false`) |
 
 ## Deployment
 
@@ -47,7 +53,7 @@ Third-party agent plugins extend aidevops with additional capabilities. Plugins 
 
 - Namespace must be lowercase, alphanumeric, hyphens only
 - Must NOT collide with reserved names: `custom`, `draft`, `scripts`, `tools`, `services`, `workflows`, `templates`, `memory`, `plugins`
-- Plugins are isolated to their namespace — cannot write outside it or overwrite core agents
+- Plugin manifests and every declared agent, script, and hook are resolved through real paths and must remain inside the plugin namespace
 
 ## Lifecycle
 
@@ -55,13 +61,21 @@ Third-party agent plugins extend aidevops with additional capabilities. Plugins 
 # Add — validates namespace, clones repo, registers in subagent index
 aidevops plugin add https://github.com/marcusquinn/aidevops-pro.git --namespace pro
 
-# Update — pull latest from tracked branch and redeploy
+# Update — stage the tracked branch tip, validate it, then trust and deploy its exact commit
 aidevops plugin update           # all enabled plugins
 aidevops plugin update pro       # specific plugin
+
+# Trust/migrate — explicitly pin an existing registry entry, optionally to a known commit
+aidevops plugin trust pro
+aidevops plugin trust pro --commit 0123456789abcdef0123456789abcdef01234567
 
 # Disable / Enable — disable removes deployed files, preserves config entry
 aidevops plugin disable pro
 aidevops plugin enable pro
+
+# Hook authorization — does not execute a hook
+aidevops plugin hooks pro enable
+aidevops plugin hooks pro disable
 
 # Remove — removes config entry and deployed files
 aidevops plugin remove pro
@@ -71,7 +85,16 @@ aidevops plugin remove pro
 aidevops plugin init ./my-plugin my-plugin my-ns
 ```
 
-`aidevops update` auto-deploys enabled plugins not yet installed. Existing directories are preserved (not re-cloned). Disabled directories are cleaned up. Namespaces are protected during clean mode.
+Add, update, trust, enable, and setup deployment all clone into a sibling staging
+directory. The staged commit and manifest are validated before activation. A
+failed fetch, commit mismatch, containment check, manifest check, or registry
+write leaves the previous plugin directory in place. Activation uses same-filesystem
+renames and updates `deployed_commit` only after the validated tree is ready.
+
+`aidevops update` deploys only `trusted_commit`; it never resolves a mutable
+branch on its own. Existing entries without a trusted commit are skipped with a
+migration command. Disabled directories are cleaned up. Namespaces are protected
+during clean mode.
 
 ## Plugin Repository Structure
 
@@ -136,7 +159,7 @@ plugin-loader-helper.sh load pro   # Load agents from a specific plugin
 plugin-loader-helper.sh validate   # Validate plugin manifest(s)
 plugin-loader-helper.sh agents     # List agents provided by plugins
 plugin-loader-helper.sh index      # Generate subagent-index entries
-plugin-loader-helper.sh hooks pro init  # Run a lifecycle hook
+plugin-loader-helper.sh hooks pro init  # Explicitly run an authorized hook
 plugin-loader-helper.sh status     # Show plugin system status
 ```
 
@@ -150,11 +173,17 @@ from one startup index without reading every plugin file.
 
 ## Lifecycle Hooks
 
-| Hook | When | Use Case |
-|------|------|----------|
-| `init` | Install, update, enable | One-time setup, dependency checks, config creation |
-| `load` | Session start, agent loading | Environment setup, PATH additions |
-| `unload` | Disable, remove | Cleanup temp files, revoke registrations |
+Hooks are disabled by default and are never run by add, update, trust, enable,
+disable, remove, setup, or agent loading. After reviewing the pinned source,
+authorize hooks in `plugins.json` through `aidevops plugin hooks <name> enable`,
+then invoke a named hook explicitly with `plugin-loader-helper.sh hooks <namespace>
+<init|load|unload>`. Authorization and execution are separate actions.
+
+| Hook | Intended explicit use |
+|------|-----------------------|
+| `init` | One-time setup, dependency checks, config creation |
+| `load` | Environment setup or PATH additions |
+| `unload` | Cleanup temporary files or registrations |
 
 Environment variables available to hooks:
 - `AIDEVOPS_PLUGIN_NAMESPACE` — Plugin namespace
@@ -162,12 +191,16 @@ Environment variables available to hooks:
 - `AIDEVOPS_AGENTS_DIR` — Root agents directory
 - `AIDEVOPS_HOOK` — Current hook name (init, load, unload)
 
-Hooks are defined in the manifest under `hooks`, or discovered by convention at `scripts/on-{hook}.sh`.
+Hooks are defined in the manifest under `hooks`, or discovered by convention at
+`scripts/on-{hook}.sh`. In either case, the resolved hook path must remain inside
+the plugin directory.
 
 ## Security
 
-- Plugins are user-installed and user-trusted — review source before installation
-- Plugin scripts are NOT auto-executed; they must be explicitly invoked
+- Plugins are trusted by exact commit in the existing `plugins.json`; review staged source before changing trust
+- A plugin loads only when `trusted_commit` and `deployed_commit` are equal full object IDs
+- Plugin scripts and hooks are not auto-executed; hooks require both explicit authorization and explicit invocation
+- Manifest names must match the registry, and declared members may not escape through traversal or symlinks
 - Plugin agents follow the same security rules as core agents (no credential exposure, pre-edit checks)
 
 ## Integration with Agent Tiers
@@ -181,7 +214,9 @@ Hooks are defined in the manifest under `hooks`, or discovered by convention at 
 
 ## Configuration
 
-Plugin state: `~/.config/aidevops/plugins.json` (global, auto-created on first use). Per-project plugin awareness: `.aidevops.json` `plugins` array. Run `aidevops plugin help` for full CLI documentation.
+Plugin state and trust: `~/.config/aidevops/plugins.json` (global, auto-created
+on first use). No separate plugin trust file is used. Run `aidevops plugin help`
+for full CLI documentation.
 
 ## Official Plugins
 
