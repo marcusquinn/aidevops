@@ -492,12 +492,18 @@ _save_sweep_state() {
 #   $1 - file_path
 #   $2 - smell_count
 #   $3 - rule_breakdown (comma-separated "rule: count" pairs from the caller)
+#   $4 - repository smell count (optional)
+#   $5 - configured threshold (optional)
+#   $6 - repository threshold deficit (optional)
 # Output: issue body markdown to stdout
 #######################################
 _build_simplification_issue_body() {
 	local file_path="$1"
 	local smell_count="$2"
 	local rule_breakdown="$3"
+	local actual_count="${4:-$smell_count}"
+	local smell_threshold="${5:-0}"
+	local smell_deficit="${6:-$actual_count}"
 
 	# t2066: split the rule breakdown into a bulleted list so the reader can
 	# see the distribution at a glance. Input format is "rule1: N, rule2: M".
@@ -519,21 +525,22 @@ _build_simplification_issue_body() {
 	fi
 
 	cat <<BODY
-<!-- aidevops:generator=function-complexity-sweep cited_file=${file_path} smell_count=${smell_count} -->
+<!-- aidevops:generator=function-complexity-sweep cited_file=${file_path} smell_count=${smell_count} actual=${actual_count} threshold=${smell_threshold} deficit=${smell_deficit} -->
 
 ## Qlty Maintainability — ${file_path}
 
 **Smells detected**: ${smell_count}
+**Repository evidence**: actual ${actual_count}, threshold ${smell_threshold}, deficit ${smell_deficit}
 
 ### Rule breakdown
 
 ${rule_breakdown_list}
-This file was flagged by the daily quality sweep for high smell density. The smells are primarily function complexity, nested control flow, and return statement count — all reducible via extract-function refactoring. Prioritise the rules with the highest counts first; they give the biggest grade improvement per edit.
+This file contributes to a verified repository-wide threshold deficit on the current default branch. It is a baseline repair task, not evidence that an unrelated pull request introduced the smells. Low-density files are intentionally eligible so distributed debt cannot evade remediation.
 
 ### Suggested approach
 
-1. Read the file and identify the highest-complexity functions
-2. Extract helper functions to reduce per-function complexity below the threshold (~17)
+1. Read the cited file and inspect the listed Qlty rules and locations
+2. Apply the smallest behavior-preserving refactor that removes those findings
 3. Verify with \`qlty smells ${file_path}\` after each change
 4. No behavior changes — pure structural refactoring
 
@@ -543,20 +550,17 @@ This file was flagged by the daily quality sweep for high smell density. The sme
 
 **Expected CI gate overrides:** If this refactoring splits functions into new files, the PR may trigger complexity or smell regression gates. Apply the \`ratchet-bump\` label AND include a \`## Complexity Bump Justification\` section in the PR body citing the Qlty smell reduction. See the playbook section 4 (Known CI False-Positive Classes).
 
+**Quality gate invariant:** New PR-specific smells remain blocking. Do not raise \`QLTY_SMELL_THRESHOLD\` or use an unrelated-baseline override to absorb findings introduced by this repair.
+
 ### Verification
 
-- Syntax check: \`python3 -c "import ast; ast.parse(open('${file_path}').read())"\` (Python) or \`node --check ${file_path}\` (JS/TS)
+- Run the repository's language-specific syntax/typecheck and focused tests for \`${file_path}\`
 - Smell check: \`qlty smells ${file_path} --no-snippets --quiet\`
 - No public API changes
 
-### Tier
+### Dispatch and review policy
 
-This issue carries \`tier:thinking\` by default (t2066, GH#18774). Simplification refactors on high-complexity functions routinely exceed what Sonnet handles reliably, and Haiku cannot handle them at all. Downgrade the tier label only if you have verified the target functions are under cyclomatic 15.
-
----
-**To approve or decline**, comment on this issue:
-- \`approved\` — removes the review gate and queues for automated dispatch
-- \`declined: <reason>\` — closes this issue (include your reason after the colon)
+Trusted maintainer-owned sweeps label safe structural cleanup for bounded autonomous dispatch at \`tier:thinking\`. External or unverified automation retains \`needs-maintainer-review\`; reserve that gate for an actual behavior, API, security, or architecture trade-off rather than model strength alone.
 BODY
 	return 0
 }

@@ -221,18 +221,18 @@ _sweep_qlty() {
 
 	qlty_section=$(_append_qlty_cloud_grade_if_divergent "$repo_slug" "$qlty_grade" "$qlty_section")
 
-	# --- 2b. Function-complexity-debt bridge (code-simplifier pipeline) ---
-	# For files with high smell density, auto-create function-complexity-debt issues
-	# with needs-maintainer-review label. This bridges the daily sweep to the
-	# code-simplifier's human-gated dispatch pipeline (see code-simplifier.md).
-	# Deduplicates against existing issues. Caps are tuned for throughput:
-	# see _create_simplification_issues for the numbers.
+	# --- 2b. Autonomous Qlty remediation bridge ---
+	# When repository-wide debt exceeds the configured absolute threshold, create
+	# bounded, per-file remediation issues from this same SARIF scan. The pulse
+	# handles dispatch deduplication, worker capacity, and active-PR collisions.
 	if [[ -n "$qlty_sarif" && "$qlty_smell_count" -gt 0 ]]; then
+		local qlty_smell_threshold
+		qlty_smell_threshold=$(_repo_qlty_smell_threshold "$repo_path")
 		local issues_created
-		issues_created=$(_create_simplification_issues "$repo_slug" "$qlty_sarif")
+		issues_created=$(_create_simplification_issues "$repo_slug" "$qlty_sarif" "$qlty_smell_threshold")
 		if [[ -n "$issues_created" && "$issues_created" -gt 0 ]]; then
 			qlty_section="${qlty_section}
-_Created ${issues_created} function-complexity-debt issue(s) for high-smell files (tier:thinking)._
+_Scheduled ${issues_created} autonomous Qlty remediation issue(s) (tier:thinking)._
 "
 		fi
 	fi
@@ -690,47 +690,70 @@ _quality_sweep_for_repo() {
 }
 
 #######################################
-# Create function-complexity-debt issues for files with high Qlty smell density.
-# Bridges the daily quality sweep to the code-simplifier's human-gated
-# dispatch pipeline. Issues are created with function-complexity-debt +
-# needs-maintainer-review + tier:thinking labels and assigned to the
-# repo maintainer.
+# Read the absolute Qlty smell threshold configured by a managed repository.
+# A missing threshold returns 0, preserving remediation for repositories that
+# run the sweep without the aidevops threshold gate.
+#######################################
+_repo_qlty_smell_threshold() {
+	local repo_path="$1"
+	local conf_file="${repo_path}/.agents/configs/complexity-thresholds.conf"
+	local threshold="0"
+
+	if [[ -f "$conf_file" ]]; then
+		threshold=$(grep '^QLTY_SMELL_THRESHOLD=' "$conf_file" | cut -d= -f2 || true)
+	fi
+	[[ "$threshold" =~ ^[0-9]+$ ]] || threshold="0"
+	printf '%s' "$threshold"
+	return 0
+}
+
+#######################################
+# Create bounded Qlty remediation issues for the repository threshold deficit.
+# Every file is eligible, including distributed one- and two-smell files. The
+# loop stops once newly scheduled smells cover the deficit or the cycle cap is
+# reached; existing per-file issues are skipped without consuming that budget.
 #
 # Arguments:
 #   $1 - repo slug (owner/repo)
 #   $2 - SARIF JSON string from qlty smells
+#   $3 - configured absolute smell threshold (0 = remediate any detected debt)
 #
-# Behaviour (t2066 retuned caps — throughput over trickle):
-#   - min_smells_threshold=3 (was 5): catch more medium-density files
-#   - max_issues_per_sweep=5 (was 3): the goal is throughput
-#   - total_open_cap=30 (was 200): the goal isn't backlog, it's flow;
-#     needs-maintainer-review already rate-limits human work
-#   - Default tier label: tier:thinking (Haiku can't refactor 70+ complexity,
-#     and per-user direction tier:thinking is the canonical opus label
-#     going forward)
-#   - Deduplicates: skips files that already have an open function-complexity-debt
-#     issue for the same file
-#   - Includes per-rule breakdown in the body (already computed per file —
-#     the old code dropped it into the title only)
+# Safety controls: max 5 new issues per sweep, max 30 open issues, one issue per
+# file fingerprint, and the pulse's existing repo/worker capacity controls.
 #######################################
 _create_simplification_issues() {
 	local repo_slug="$1"
 	local sarif_json="$2"
-	# t2066: retuned caps for throughput. The old values (5/3/200) were set for
-	# a world where simplification issues were a trickle. With the current
-	# ~109-smell baseline we need flow, not trickle. The review gate is only for
-	# external/non-collaborator automation identities; maintainer-owned sweeps are
-	# already approved by their trusted issue provenance.
+	local smell_threshold="${3:-0}"
 	local max_issues_per_sweep=5
-	local min_smells_threshold=3
 	local total_open_cap=30
 	local issues_created=0
+	local smells_scheduled=0
+	local actual_count
+
+	[[ "$smell_threshold" =~ ^[0-9]+$ ]] || smell_threshold=0
+	actual_count=$(printf '%s\n' "$sarif_json" | jq -r '.runs[0].results | length' 2>/dev/null || true)
+	[[ "$actual_count" =~ ^[0-9]+$ ]] || {
+		echo "[stats] Qlty remediation: invalid SARIF count for ${repo_slug}; skipping" >>"$LOGFILE"
+		printf '%s' "$issues_created"
+		return 0
+	}
+
+	local smell_deficit="$actual_count"
+	if [[ "$smell_threshold" -gt 0 ]]; then
+		smell_deficit=$((actual_count - smell_threshold))
+	fi
+	if [[ "$smell_deficit" -le 0 ]]; then
+		echo "[stats] Qlty remediation: actual=${actual_count} threshold=${smell_threshold} deficit=0; no repair required" >>"$LOGFILE"
+		printf '%s' "$issues_created"
+		return 0
+	fi
 
 	_ensure_simplification_issue_labels "$repo_slug"
 
-	local high_smell_files
-	high_smell_files=$(_high_smell_files_from_sarif "$sarif_json" "$min_smells_threshold")
-	if [[ -z "$high_smell_files" ]]; then
+	local smell_files
+	smell_files=$(_smell_files_from_sarif "$sarif_json")
+	if [[ -z "$smell_files" ]]; then
 		printf '%s' "$issues_created"
 		return 0
 	fi
@@ -749,13 +772,17 @@ _create_simplification_issues() {
 	while IFS=$'\t' read -r smell_count file_path; do
 		[[ -z "$file_path" ]] && continue
 		[[ "$issues_created" -ge "$max_issues_per_sweep" ]] && break
+		[[ "$smells_scheduled" -ge "$smell_deficit" ]] && break
 
 		if _create_single_simplification_issue "$repo_slug" "$sarif_json" "$maintainer" \
-			"$smell_count" "$file_path" "$simplification_labels"; then
+			"$smell_count" "$file_path" "$simplification_labels" "$actual_count" \
+			"$smell_threshold" "$smell_deficit"; then
 			issues_created=$((issues_created + 1))
+			smells_scheduled=$((smells_scheduled + smell_count))
 		fi
-	done <<<"$high_smell_files"
+	done <<<"$smell_files"
 
+	echo "[stats] Qlty remediation: actual=${actual_count} threshold=${smell_threshold} deficit=${smell_deficit} issues_created=${issues_created} smells_scheduled=${smells_scheduled}" >>"$LOGFILE"
 	printf '%s' "$issues_created"
 	return 0
 }
@@ -772,20 +799,26 @@ _ensure_simplification_issue_labels() {
 	gh label create "source:quality-sweep" --repo "$repo_slug" \
 		--description "Auto-created by stats-functions.sh quality sweep" \
 		--color "C2E0C6" --force >/dev/null 2>&1 || true
+	gh label create "quality-debt" --repo "$repo_slug" \
+		--description "Automated code quality remediation" \
+		--color "D4C5F9" >/dev/null 2>&1 || true
+	gh label create "auto-dispatch" --repo "$repo_slug" \
+		--description "Eligible for autonomous worker dispatch" \
+		--color "0E8A16" >/dev/null 2>&1 || true
 	gh label create "tier:thinking" --repo "$repo_slug" \
 		--description "Opus-tier: architecture, deep reasoning, high-complexity refactors" \
 		--color "5319E7" >/dev/null 2>&1 || true
 	return 0
 }
 
-_high_smell_files_from_sarif() {
+_smell_files_from_sarif() {
 	local sarif_json="$1"
-	local min_smells_threshold="$2"
 
-	echo "$sarif_json" | jq -r --argjson threshold "$min_smells_threshold" '
-		[.runs[0].results[] | .locations[0].physicalLocation.artifactLocation.uri] |
+	printf '%s\n' "$sarif_json" | jq -r '
+		[.runs[0].results[] | .locations[0].physicalLocation.artifactLocation.uri |
+		 select(type == "string" and length > 0)] |
 		group_by(.) | map({file: .[0], count: length}) |
-		[.[] | select(.count >= $threshold)] | sort_by(-.count)[:15] |
+		sort_by([-.count, .file]) |
 		.[] | "\(.count)\t\(.file)"
 	' 2>/dev/null || true
 	return 0
@@ -805,7 +838,7 @@ _simplification_issue_maintainer() {
 
 _simplification_issue_label_csv() {
 	local repo_slug="$1"
-	local simplification_labels="function-complexity-debt,source:quality-sweep,tier:thinking"
+	local simplification_labels="function-complexity-debt,quality-debt,source:quality-sweep,auto-dispatch,tier:thinking"
 
 	# #aidevops:trust-boundary — NMR is an external-origin approval gate. When
 	# the authenticated sweep identity has repo write authority, the issue author
@@ -843,13 +876,17 @@ _create_single_simplification_issue() {
 	local smell_count="$4"
 	local file_path="$5"
 	local label_csv="$6"
+	local actual_count="${7:-$smell_count}"
+	local smell_threshold="${8:-0}"
+	local smell_deficit="${9:-$actual_count}"
 	local rule_breakdown file_basename issue_title issue_body qlty_sig
 
 	_simplification_issue_exists "$repo_slug" "$file_path" && return 1
 	rule_breakdown=$(_simplification_rule_breakdown "$sarif_json" "$file_path")
 	file_basename="${file_path##*/}"
 	issue_title="simplification: reduce ${smell_count} Qlty smells in ${file_basename}"
-	issue_body=$(_build_simplification_issue_body "$file_path" "$smell_count" "$rule_breakdown")
+	issue_body=$(_build_simplification_issue_body "$file_path" "$smell_count" "$rule_breakdown" \
+		"$actual_count" "$smell_threshold" "$smell_deficit")
 	qlty_sig=$("${HOME}/.aidevops/agents/scripts/gh-signature-helper.sh" footer --body "$issue_body" 2>/dev/null || true)
 	issue_body="${issue_body}${qlty_sig}"
 
