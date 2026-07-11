@@ -89,38 +89,23 @@ def _load_policy(path: Path) -> dict[str, Any]:
     return policy
 
 
-def _validate_policy_shape(policy: Any) -> None:
-    if not isinstance(policy, dict) or policy.get("schema_version") != 2:
-        raise PolicyError("command policy schema_version must be 2")
-    if policy.get("decision_order") != ["allow", "forbid"]:
-        raise PolicyError("command policy decision_order must be allow, forbid")
-    default = policy.get("default_decision")
-    if not isinstance(default, dict) or default.get("decision") != "allow":
-        raise PolicyError("command policy requires an allow default_decision")
-    guards = policy.get("dynamic_guards")
-    canonical = [
+def _require_dynamic_guard(
+    guards: Any, kind: str, helper: str, error: str
+) -> None:
+    matches = [
         guard
         for guard in guards or []
-        if isinstance(guard, dict) and guard.get("kind") == "canonical_git"
+        if isinstance(guard, dict) and guard.get("kind") == kind
     ]
     if (
-        len(canonical) != 1
-        or canonical[0].get("helper") != "canonical-git-command-guard.py"
-        or canonical[0].get("decision") != "forbid"
+        len(matches) != 1
+        or matches[0].get("helper") != helper
+        or matches[0].get("decision") != "forbid"
     ):
-        raise PolicyError("command policy requires exactly one canonical Git guard")
-    network = [
-        guard
-        for guard in guards or []
-        if isinstance(guard, dict) and guard.get("kind") == "worker_network"
-    ]
-    if (
-        len(network) != 1
-        or network[0].get("helper") != "network-tier-helper.sh"
-        or network[0].get("decision") != "forbid"
-    ):
-        raise PolicyError("command policy requires exactly one worker network guard")
-    rules = policy.get("rules")
+        raise PolicyError(error)
+
+
+def _validate_rules(rules: Any) -> None:
     if not isinstance(rules, list) or not rules:
         raise PolicyError("command policy rules must be a non-empty list")
     seen_ids: set[str] = set()
@@ -140,6 +125,30 @@ def _validate_policy_shape(policy: Any) -> None:
         seen_matchers.add(matcher)
     if seen_matchers != KNOWN_MATCHERS:
         raise PolicyError("command policy must define every required matcher exactly once")
+
+
+def _validate_policy_shape(policy: Any) -> None:
+    if not isinstance(policy, dict) or policy.get("schema_version") != 2:
+        raise PolicyError("command policy schema_version must be 2")
+    if policy.get("decision_order") != ["allow", "forbid"]:
+        raise PolicyError("command policy decision_order must be allow, forbid")
+    default = policy.get("default_decision")
+    if not isinstance(default, dict) or default.get("decision") != "allow":
+        raise PolicyError("command policy requires an allow default_decision")
+    guards = policy.get("dynamic_guards")
+    _require_dynamic_guard(
+        guards,
+        "canonical_git",
+        "canonical-git-command-guard.py",
+        "command policy requires exactly one canonical Git guard",
+    )
+    _require_dynamic_guard(
+        guards,
+        "worker_network",
+        "network-tier-helper.sh",
+        "command policy requires exactly one worker network guard",
+    )
+    _validate_rules(policy.get("rules"))
     fixtures = policy.get("fixtures")
     if not isinstance(fixtures, list) or not fixtures:
         raise PolicyError("command policy requires self-test fixtures")
@@ -163,69 +172,78 @@ def _scan_supported_shell(command: str) -> None:
     single = False
     double = False
     escaped = False
-    index = 0
-    while index < len(command):
-        char = command[index]
-        next_char = command[index + 1] if index + 1 < len(command) else ""
+    for index, char in enumerate(command):
         if escaped:
             escaped = False
-            index += 1
             continue
         if char == "\\" and not single:
             escaped = True
-            index += 1
             continue
         if char == "'" and not double:
             single = not single
-            index += 1
             continue
         if char == '"' and not single:
             double = not double
-            index += 1
             continue
         if single:
-            index += 1
             continue
-        if char in {"`", "$"}:
-            raise CommandParseError("dynamic shell expansion is unsupported")
-        if not double:
-            if char in "<>":
-                raise CommandParseError("shell redirection is unsupported")
-            if char in "(){}":
-                raise CommandParseError("shell grouping and subshell syntax are unsupported")
-            if char == "&" and next_char != "&" and (index == 0 or command[index - 1] != "&"):
-                raise CommandParseError("background shell execution is unsupported")
-            if char in "*[":
-                raise CommandParseError("unquoted shell glob syntax is unsupported")
-        index += 1
+        _validate_shell_character(command, index, char, double)
     if single or double or escaped:
         raise CommandParseError("unterminated shell quoting or escape")
+
+
+def _validate_shell_character(command: str, index: int, char: str, quoted: bool) -> None:
+    if char in {"`", "$"}:
+        raise CommandParseError("dynamic shell expansion is unsupported")
+    if quoted:
+        return
+    next_char = command[index + 1] if index + 1 < len(command) else ""
+    previous_char = command[index - 1] if index else ""
+    if char in "<>":
+        raise CommandParseError("shell redirection is unsupported")
+    if char in "(){}":
+        raise CommandParseError("shell grouping and subshell syntax are unsupported")
+    if char == "&" and next_char != "&" and previous_char != "&":
+        raise CommandParseError("background shell execution is unsupported")
+    if char in "*[":
+        raise CommandParseError("unquoted shell glob syntax is unsupported")
 
 
 def _consume_option(
     argv: list[str], index: int, value_options: set[str], flag_options: set[str]
 ) -> int:
     arg = argv[index]
+    next_index: int
     if arg == "--":
-        return index + 1
-    if arg in value_options:
+        next_index = index + 1
+    elif arg in value_options:
         if index + 1 >= len(argv):
             raise CommandParseError(f"missing value for wrapper option {arg}")
-        return index + 2
-    if any(arg.startswith(option + "=") for option in value_options if option.startswith("--")):
-        return index + 1
-    if any(
+        next_index = index + 2
+    elif any(arg.startswith(option + "=") for option in value_options if option.startswith("--")):
+        next_index = index + 1
+    elif any(
         arg.startswith(option) and arg != option
         for option in value_options
         if option.startswith("-") and not option.startswith("--")
     ):
-        return index + 1
-    if arg in flag_options:
-        return index + 1
-    short_flags = {option[1:] for option in flag_options if re.fullmatch(r"-[A-Za-z0-9]", option)}
-    if arg.startswith("-") and not arg.startswith("--") and set(arg[1:]).issubset(short_flags):
-        return index + 1
-    raise CommandParseError(f"unsupported wrapper option {arg}")
+        next_index = index + 1
+    elif arg in flag_options:
+        next_index = index + 1
+    else:
+        short_flags = {
+            option[1:]
+            for option in flag_options
+            if re.fullmatch(r"-[A-Za-z0-9]", option)
+        }
+        if not (
+            arg.startswith("-")
+            and not arg.startswith("--")
+            and set(arg[1:]).issubset(short_flags)
+        ):
+            raise CommandParseError(f"unsupported wrapper option {arg}")
+        next_index = index + 1
+    return next_index
 
 
 def _unwrap_env(argv: list[str]) -> list[str]:
