@@ -38,6 +38,7 @@ import { createGreetingHandler } from "./greeting.mjs";
 import { applyImageSizeGuard } from "./quality-hooks-image.mjs";
 import { createSessionTitleFallbackHandler } from "./session-title-fallback.mjs";
 import { createSessionTitleSuffixHandler } from "./session-title-suffix.mjs";
+import { installPluginConsoleRouter } from "./plugin-console.mjs";
 
 // Existing modules
 import { createTools } from "./tools.mjs";
@@ -101,31 +102,14 @@ function readIfExists(filepath) {
 }
 
 // ---------------------------------------------------------------------------
-// Plugin logging — informational messages gated behind AIDEVOPS_PLUGIN_DEBUG
-// to avoid stderr text overlapping OpenCode's TUI (GH#TBD).
-// Actual errors always use console.error directly.
+// Plugin diagnostics are persisted without writing over OpenCode's TUI.
+// AIDEVOPS_PLUGIN_DEBUG=1 additionally mirrors them to stderr.
 // ---------------------------------------------------------------------------
 
-/**
- * Plugin stderr suppression — prevents [aidevops] informational messages
- * from rendering over OpenCode's TUI input area. Only actual errors pass
- * through. Set AIDEVOPS_PLUGIN_DEBUG=1 to see all messages.
- *
- * This wraps console.error at the process level so ALL plugin modules
- * benefit without individual imports.
- */
-const PLUGIN_DEBUG = !!process.env.AIDEVOPS_PLUGIN_DEBUG;
-if (!PLUGIN_DEBUG) {
-  const _origConsoleError = console.error;
-  console.error = (...args) => {
-    // Let actual errors through (stack traces, "failed", "error" in message)
-    const msg = typeof args[0] === "string" ? args[0] : "";
-    if (msg.startsWith("[aidevops]") && !(/fail|error|warn|disabled/i.test(msg))) {
-      return; // suppress informational [aidevops] messages
-    }
-    _origConsoleError.apply(console, args);
-  };
-}
+installPluginConsoleRouter({
+  logPath: join(LOGS_DIR, "opencode-plugin.log"),
+  debug: process.env.AIDEVOPS_PLUGIN_DEBUG === "1",
+});
 
 // ---------------------------------------------------------------------------
 // Main Plugin Export

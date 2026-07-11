@@ -17,6 +17,7 @@ import { validateReturnStatements, validatePositionalParams } from "./validators
 import { runMarkdownQualityPipeline } from "./quality-pipeline.mjs";
 
 const CONSOLE_MAX_DETAIL_LINES = 10;
+const QUALITY_LOG_MAX_BYTES = 5 * 1024 * 1024;
 
 /**
  * Run a shell command and return stdout, or empty string on failure.
@@ -46,6 +47,7 @@ function run(cmd, timeout = 5000) {
 export function qualityLog(logsDir, qualityLogPath, level, message) {
   try {
     mkdirSync(logsDir, { recursive: true });
+    rotateLogIfNeeded(qualityLogPath, QUALITY_LOG_MAX_BYTES);
     const timestamp = new Date().toISOString();
     appendFileSync(qualityLogPath, `[${timestamp}] [${level}] ${message}\n`);
   } catch {
