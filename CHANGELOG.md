@@ -10,6 +10,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.32.16] - 2026-07-11
+
+### Changed
+
+- Align briefed background workers with bounded GPT-5.6 reasoning effort, add authenticated GLM-5.2 coding-plan routing, restore provider fallbacks, and make the local tier fail closed (#27046)
+- Deduplicate slash command guidance (#27047)
+
 ## [3.32.15] - 2026-07-11
 
 ### Changed
