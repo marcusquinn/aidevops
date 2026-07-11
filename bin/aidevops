@@ -3,24 +3,32 @@
 # This wrapper handles npm/brew/bun global installs and local development.
 #
 # Priority order (highest to lowest):
-#   1. ~/Git/aidevops/aidevops.sh  — git repo, always current via 'aidevops update'
-#   2. Auto-clone the git repo     — first-run bootstrap for package manager installs
-#   3. npm-bundled aidevops.sh     — snapshot at npm publish time, may be stale
+#   1. ~/.aidevops/agents/aidevops.sh — coherent setup-deployed CLI and modules
+#   2. ~/Git/aidevops/aidevops.sh     — bootstrap/development checkout
+#   3. Auto-clone the git repo         — first-run bootstrap
+#   4. npm-bundled aidevops.sh         — snapshot at publish time
 #
-# The repo copy is preferred so that 'aidevops update' (git pull) immediately
-# takes effect without requiring 'npm update -g aidevops'.
+# Setup's deployed copy is preferred so updates take effect without requiring a
+# package-manager refresh or reading a stale canonical checkout.
 
 set -euo pipefail
 
 REPO_DIR="$HOME/Git/aidevops"
 REPO_URL="https://github.com/marcusquinn/aidevops.git"
+DEPLOYED_CLI="$HOME/.aidevops/agents/aidevops.sh"
 
-# 1. Prefer the git repo copy — always current via 'aidevops update'
+# 1. Prefer the setup-deployed copy. It is released atomically with its modules,
+# so a stale or dirty canonical checkout cannot split the CLI version from them.
+if [[ -f "$DEPLOYED_CLI" ]]; then
+    exec bash "$DEPLOYED_CLI" "$@"
+fi
+
+# 2. Use the git repo for bootstrap and local development.
 if [[ -f "$REPO_DIR/aidevops.sh" ]]; then
     exec bash "$REPO_DIR/aidevops.sh" "$@"
 fi
 
-# 2. Git repo not found — bootstrap it automatically
+# 3. Git repo not found — bootstrap it automatically
 # This runs once on first use after a package manager install (npm/brew/bun).
 # After this, step 1 will always match and the git repo runs directly.
 if command -v git >/dev/null 2>&1; then
