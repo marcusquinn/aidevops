@@ -221,7 +221,12 @@ test_missing_self_pgid_avoids_group_signal() {
 	leader_token="$(_sandbox_get_proc_starttime "$leader_pid")"
 	printf '%s\t%s\t%s\n' "$leader_pid" "$leader_pgid" "$leader_token" >"$snapshot_file"
 	ps() {
-		return 1
+		local ps_args="$*"
+		if [[ "$ps_args" == *"-p $$"* ]]; then
+			return 1
+		fi
+		command ps "$@" || return 1
+		return 0
 	}
 	_sandbox_pgkill_cleanup "" "" "" "$snapshot_file"
 	unset -f ps
