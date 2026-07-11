@@ -349,10 +349,8 @@ USAGE:
                  these as recovery candidates. Does NOT auto-reopen.
 
   interactive-session-helper.sh release-if-dead <issue> <slug>
-      Bounded pulse-safe recovery for one stamped claim. Releases only when
-      the stamp belongs to this host, its PID/argv identity is dead, and the
-      issue is not protected by no-auto-dispatch. Metadata lookup failures,
-      live owners, and cross-host stamps fail closed.
+      Pulse-safe single-claim recovery; releases a dead same-host owner unless
+      no-auto-dispatch applies. Live, cross-host, and unknown states fail closed.
 
   interactive-session-helper.sh post-merge <pr_number> [<slug>]
       Auto-heal two known drift patterns after a planning PR merges (t2225).
