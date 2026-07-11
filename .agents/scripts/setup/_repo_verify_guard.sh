@@ -23,6 +23,13 @@ setup_repo_verify_guard() {
 		setup_track_skipped "Repo verify guard" "repos.json or jq unavailable"
 		return 0
 	fi
+	local repo_list_file
+	repo_list_file=$(mktemp) || return 1
+	if ! jq -r '.initialized_repos[]?.path // empty' "$repos_file" >"$repo_list_file" 2>/dev/null; then
+		rm -f "$repo_list_file"
+		print_warning "Repo verify rollout skipped: repos.json is invalid"
+		return 1
+	fi
 	print_info "Migrating lint policy and refreshing repo-verify hooks..."
 	local repo_root feature_state hook_output
 	local registration_status=0 migration_status=0 installed=0 registered=0 migrated=0 skipped=0 conflicts=0 errors=0
@@ -55,7 +62,8 @@ setup_repo_verify_guard() {
 		*"Refusing to overwrite"* | *"NOT managed"*) conflicts=$((conflicts + 1)) ;;
 		*) errors=$((errors + 1)) ;;
 		esac
-	done < <(jq -r '.initialized_repos[]?.path // empty' "$repos_file")
+	done <"$repo_list_file"
+	rm -f "$repo_list_file"
 	print_info "Repo verify guard: installed=$installed registered=$registered migrated=$migrated skipped=$skipped conflict=$conflicts err=$errors"
 	if [[ "$errors" -gt 0 ]]; then
 		print_warning "Repo verify rollout incomplete: $errors persistent-state or hook installation error(s)"

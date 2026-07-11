@@ -71,6 +71,10 @@ main() {
 	local setup_status=0
 	REPO_VERIFY_INSTALLER="${TEST_TMP_DIR}/missing-installer" HOME="$fake_home" setup_repo_verify_guard || setup_status=$?
 	assert_equal "1" "$setup_status" "setup reports hook rollout failures"
+	printf '{invalid\n' >"${fake_home}/.config/aidevops/repos.json"
+	setup_status=0
+	HOME="$fake_home" setup_repo_verify_guard || setup_status=$?
+	assert_equal "1" "$setup_status" "setup rejects malformed repository registry"
 
 	printf '\nRan %d tests, %d failed.\n' "$((passed + failed))" "$failed"
 	[[ "$failed" -eq 0 ]] || return 1

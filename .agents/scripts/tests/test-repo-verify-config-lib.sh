@@ -35,7 +35,7 @@ test_exact_package_scripts() {
 	local root="$1/package"
 	new_repo "$root"
 	cat >"$root/package.json" <<'JSON'
-{"scripts":{"format":"prettier --write .","format:fix":"prettier --write .","lint":"eslint .","lint:fix":"eslint --fix .","typecheck":"tsc --noEmit"}}
+{"scripts":{"format":"prettier --write . && prettier --check .","format:fix":"prettier --write .","lint":"eslint .","lint:fix":"eslint --fix .","typecheck":"tsc --noEmit"}}
 JSON
 	: >"$root/pnpm-lock.yaml"
 	/usr/bin/git -C "$root" add package.json pnpm-lock.yaml
@@ -84,7 +84,7 @@ test_untracked_evidence_rejected() {
 test_python_evidence() {
 	local root="$1/python-weak"
 	new_repo "$root"
-	printf '%s\n' '[project]' 'name="fixture"' >"$root/pyproject.toml"
+	printf '%s\n' '[project]' 'name="fixture"' '# [tool.ruff]' >"$root/pyproject.toml"
 	/usr/bin/git -C "$root" add pyproject.toml
 	repo_verify_detect "$root" || true
 	assert_equal "none" "$REPO_VERIFY_STATUS" "plain pyproject does not imply Ruff"

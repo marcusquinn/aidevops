@@ -18,51 +18,60 @@ REPO_VERIFY_TYPECHECK=""
 REPO_VERIFY_WARNING=""
 REPO_VERIFY_LOCK_FILE=""
 REPO_VERIFY_LOCK_TOKEN=""
+REPO_VERIFY_LOCK_PID=""
 
 _repo_verify_lock_acquire() {
 	local target_file="$1"
-	local attempts=0 owner_pid="" self_pid=""
+	local attempts=0 owner_pid=""
+	command -v python3 >/dev/null 2>&1 || return 1
 	REPO_VERIFY_LOCK_FILE="${target_file}.aidevops-lock"
-	REPO_VERIFY_LOCK_TOKEN=$(mktemp "${target_file}.aidevops-token.XXXXXX") || return 1
-	self_pid=$(sh -c 'printf "%s\n" "$PPID"') || {
-		rm -f "$REPO_VERIFY_LOCK_TOKEN"
-		return 1
-	}
-	printf '%s\n' "$self_pid" >"$REPO_VERIFY_LOCK_TOKEN" || {
-		rm -f "$REPO_VERIFY_LOCK_TOKEN"
-		return 1
-	}
-	while true; do
-		if [[ -d "${REPO_VERIFY_LOCK_FILE}.reclaim" ]]; then
-			attempts=$((attempts + 1))
-			if [[ "$attempts" -ge 100 ]]; then
-				rm -f "$REPO_VERIFY_LOCK_TOKEN"
-				REPO_VERIFY_LOCK_FILE=""
-				REPO_VERIFY_LOCK_TOKEN=""
-				return 1
-			fi
-			sleep 0.05
-			continue
-		fi
-		if ln "$REPO_VERIFY_LOCK_TOKEN" "$REPO_VERIFY_LOCK_FILE" 2>/dev/null; then
-			break
-		fi
-		owner_pid=$(sed -n '1p' "$REPO_VERIFY_LOCK_FILE" 2>/dev/null || true)
-		if [[ "$owner_pid" =~ ^[0-9]+$ ]] && ! kill -0 "$owner_pid" 2>/dev/null; then
-			if mkdir "${REPO_VERIFY_LOCK_FILE}.reclaim" 2>/dev/null; then
-				owner_pid=$(sed -n '1p' "$REPO_VERIFY_LOCK_FILE" 2>/dev/null || true)
-				if [[ "$owner_pid" =~ ^[0-9]+$ ]] && ! kill -0 "$owner_pid" 2>/dev/null; then
-					rm -f "$REPO_VERIFY_LOCK_FILE"
-				fi
-				rmdir "${REPO_VERIFY_LOCK_FILE}.reclaim" 2>/dev/null || true
-			fi
-			continue
+	REPO_VERIFY_LOCK_TOKEN=$(mktemp "${target_file}.aidevops-ready.XXXXXX") || return 1
+	rm -f "$REPO_VERIFY_LOCK_TOKEN"
+	owner_pid=$(sh -c 'printf "%s\n" "$PPID"') || return 1
+	python3 - "$REPO_VERIFY_LOCK_FILE" "$REPO_VERIFY_LOCK_TOKEN" "$owner_pid" <<'PY' &
+import fcntl
+import os
+import sys
+import time
+
+lock_path, ready_path, owner_pid_text = sys.argv[1:]
+owner_pid = int(owner_pid_text)
+with open(lock_path, "a+", encoding="utf-8") as lock_file:
+    deadline = time.monotonic() + 5
+    while True:
+        try:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            break
+        except BlockingIOError:
+            if time.monotonic() >= deadline:
+                raise SystemExit(1)
+            time.sleep(0.05)
+    with open(ready_path, "w", encoding="utf-8") as ready_file:
+        ready_file.write(str(os.getpid()))
+    while os.path.exists(ready_path):
+        try:
+            os.kill(owner_pid, 0)
+        except ProcessLookupError:
+            break
+        time.sleep(0.05)
+PY
+	REPO_VERIFY_LOCK_PID=$!
+	while [[ ! -f "$REPO_VERIFY_LOCK_TOKEN" ]]; do
+		if ! kill -0 "$REPO_VERIFY_LOCK_PID" 2>/dev/null; then
+			wait "$REPO_VERIFY_LOCK_PID" 2>/dev/null || true
+			REPO_VERIFY_LOCK_FILE=""
+			REPO_VERIFY_LOCK_TOKEN=""
+			REPO_VERIFY_LOCK_PID=""
+			return 1
 		fi
 		attempts=$((attempts + 1))
-		if [[ "$attempts" -ge 100 ]]; then
+		if [[ "$attempts" -ge 120 ]]; then
+			kill "$REPO_VERIFY_LOCK_PID" 2>/dev/null || true
+			wait "$REPO_VERIFY_LOCK_PID" 2>/dev/null || true
 			rm -f "$REPO_VERIFY_LOCK_TOKEN"
 			REPO_VERIFY_LOCK_FILE=""
 			REPO_VERIFY_LOCK_TOKEN=""
+			REPO_VERIFY_LOCK_PID=""
 			return 1
 		fi
 		sleep 0.05
@@ -71,12 +80,11 @@ _repo_verify_lock_acquire() {
 }
 
 _repo_verify_lock_release() {
-	if [[ -n "$REPO_VERIFY_LOCK_FILE" && -n "$REPO_VERIFY_LOCK_TOKEN" ]] && cmp -s "$REPO_VERIFY_LOCK_TOKEN" "$REPO_VERIFY_LOCK_FILE" 2>/dev/null; then
-		rm -f "$REPO_VERIFY_LOCK_FILE"
-	fi
 	[[ -n "$REPO_VERIFY_LOCK_TOKEN" ]] && rm -f "$REPO_VERIFY_LOCK_TOKEN"
+	[[ -n "$REPO_VERIFY_LOCK_PID" ]] && wait "$REPO_VERIFY_LOCK_PID" 2>/dev/null || true
 	REPO_VERIFY_LOCK_FILE=""
 	REPO_VERIFY_LOCK_TOKEN=""
+	REPO_VERIFY_LOCK_PID=""
 	return 0
 }
 
@@ -176,6 +184,17 @@ _repo_verify_package_manager() {
 	return 0
 }
 
+_repo_verify_format_script_is_check() {
+	local script_body="$1"
+	if [[ "$script_body" =~ --write|--fix|(^|[[:space:]])-w([[:space:]]|$)|(^|[[:space:]])write([[:space:]]|$) ]]; then
+		return 1
+	fi
+	if [[ "$script_body" =~ --check|--check-only|--list-different|--dry-run ]]; then
+		return 0
+	fi
+	return 1
+}
+
 _repo_verify_load_package() {
 	local repo_root="$1"
 	local package_file="${repo_root}/package.json"
@@ -203,7 +222,7 @@ _repo_verify_load_package() {
 		REPO_VERIFY_FORMAT="$manager run format-check"
 	else
 		format_body=$(jq -r '.scripts.format // empty' "$package_file")
-		if [[ "$format_body" =~ --check|--check-only|--list-different|--dry-run ]]; then
+		if _repo_verify_format_script_is_check "$format_body"; then
 			REPO_VERIFY_FORMAT="$manager run format"
 		fi
 	fi
@@ -249,6 +268,21 @@ _repo_verify_predicate_matches() {
 		local needle="${payload#*:}"
 		[[ -f "${repo_root}/${relative_path}" ]] && grep -Fq "$needle" "${repo_root}/${relative_path}" 2>/dev/null || return 1
 		_repo_verify_evidence_is_tracked "$repo_root" "$relative_path" || return 1
+		;;
+	section:*)
+		local section_payload="${predicate#section:}"
+		local section_path="${section_payload%%:*}"
+		local section_name="${section_payload#*:}"
+		local section_line=""
+		[[ -f "${repo_root}/${section_path}" ]] || return 1
+		_repo_verify_evidence_is_tracked "$repo_root" "$section_path" || return 1
+		while IFS= read -r section_line; do
+			section_line="${section_line%%#*}"
+			while [[ "$section_line" == *[[:space:]] ]]; do section_line="${section_line%?}"; done
+			section_line="${section_line#"${section_line%%[![:space:]]*}"}"
+			[[ "$section_line" == "[${section_name}]" ]] && return 0
+		done <"${repo_root}/${section_path}"
+		return 1
 		;;
 	*)
 		[[ -f "${repo_root}/${predicate}" ]] || return 1
