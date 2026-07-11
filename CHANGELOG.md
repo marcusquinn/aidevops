@@ -10,6 +10,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.32.18] - 2026-07-11
+
+### Changed
+
+- Maintenance: sync ref:GH#27057 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#27056 to TODO.md [skip ci]
+
+### Fixed
+
+- install durable aidevops CLI entrypoint (#27058)
+
 ## [3.32.17] - 2026-07-11
 
 ### Changed
