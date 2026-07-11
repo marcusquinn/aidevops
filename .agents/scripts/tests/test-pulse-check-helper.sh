@@ -160,6 +160,10 @@ if [[ " $* " == *" repo view "* ]]; then
   printf 'owner/aidevops\n'
   exit 0
 fi
+if [[ " $* " == *" api graphql "* ]]; then
+  printf '%s\n' '{"data":{"repository":{"issue":{"blockedBy":{"nodes":[],"pageInfo":{"hasNextPage":false}}}}}}'
+  exit 0
+fi
 if [[ " $* " == *" --search "* ]]; then
   printf '[]\n'
   exit 0

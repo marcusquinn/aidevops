@@ -144,10 +144,68 @@ mutation($blocked:ID!,$blocking:ID!) {
 	return 1
 }
 
+# Check whether one native blocked-by edge currently exists. A paginated result
+# that does not contain the target is unknown rather than absent.
+# Returns: 0=present, 1=absent, 2=lookup unavailable/incomplete.
+_gh_native_blocked_by_contains() {
+	local blocked_id="$1"
+	local blocking_id="$2"
+	local payload="" has_next="" contains=""
+	payload=$(gh api graphql -f query='
+query($blocked:ID!) {
+  node(id:$blocked) {
+    ... on Issue {
+      blockedBy(first:100) { nodes { id } pageInfo { hasNextPage } }
+    }
+  }
+}' -f blocked="$blocked_id" 2>/dev/null) || return 2
+	contains=$(printf '%s' "$payload" | jq -r --arg id "$blocking_id" \
+		'any(.data.node.blockedBy.nodes[]?; .id == $id)' 2>/dev/null) || return 2
+	[[ "$contains" == "true" ]] && return 0
+	has_next=$(printf '%s' "$payload" | jq -r \
+		'.data.node.blockedBy.pageInfo.hasNextPage // true' 2>/dev/null) || return 2
+	[[ "$has_next" == "false" ]] && return 1
+	return 2
+}
+
+# Remove a deterministic break edge from an already-materialized native cycle.
+# Absence is idempotent success; lookup or mutation uncertainty remains retryable.
+_gh_remove_blocked_by() {
+	local blocked_id="$1"
+	local blocking_id="$2"
+	local contains_rc=0 result=""
+	_gh_native_blocked_by_contains "$blocked_id" "$blocking_id" || contains_rc=$?
+	case "$contains_rc" in
+		1) return 0 ;;
+		2) return 1 ;;
+	esac
+	result=$(gh api graphql -f query='
+mutation($blocked:ID!,$blocking:ID!) {
+  removeBlockedBy(input: {issueId:$blocked, blockingIssueId:$blocking}) {
+    issue { number }
+  }
+}' -f blocked="$blocked_id" -f blocking="$blocking_id" 2>&1)
+	if printf '%s' "$result" | grep -q '"number"'; then
+		return 0
+	fi
+	log_verbose "  removeBlockedBy error: ${result:0:200}"
+	return 1
+}
+
 # Keep a dependency-bearing issue out of the available queue when native
 # relationship repair cannot complete. This is intentionally label-only and
 # retryable: the next relationship pass can repair the edge, while the pulse
 # dependency resolver supplies the positive proof required to unblock it.
+_dependency_sync_has_active_status() {
+	local labels_csv="$1"
+	[[ ",${labels_csv}," == *",status:queued,"* ||
+		",${labels_csv}," == *",status:claimed,"* ||
+		",${labels_csv}," == *",status:in-progress,"* ||
+		",${labels_csv}," == *",status:in-review,"* ||
+		",${labels_csv}," == *",status:done,"* ]]
+	return $?
+}
+
 _hold_dependency_sync_retry() {
 	local issue_num="$1"
 	local repo="$2"
@@ -156,10 +214,24 @@ _hold_dependency_sync_retry() {
 
 	[[ "$issue_num" =~ ^[0-9]+$ && "$repo" == */* ]] || return 1
 	current_labels=$(gh issue view "$issue_num" --repo "$repo" \
+		--json labels --jq '[.labels[].name] | join(",")' 2>/dev/null) || {
+		log_verbose "$issue_num: dependency_relationship_sync_retryable reason=${reason}_status_read_failed"
+		return 1
+	}
+	[[ ",${current_labels}," == *",status:available,"* ]] || return 0
+	_dependency_sync_has_active_status "$current_labels" && return 0
+	if ! gh issue edit "$issue_num" --repo "$repo" \
+		--remove-label "status:available" --add-label "status:blocked" >/dev/null 2>&1; then
+		log_verbose "$issue_num: dependency_relationship_sync_retryable reason=${reason}_status_write_failed"
+		return 1
+	fi
+	# A dispatcher may have advanced state between the read and edit. Repair any
+	# resulting sibling conflict immediately; active lifecycle state wins.
+	current_labels=$(gh issue view "$issue_num" --repo "$repo" \
 		--json labels --jq '[.labels[].name] | join(",")' 2>/dev/null) || current_labels=""
-	if [[ ",${current_labels}," == *",status:available,"* ]]; then
-		gh issue edit "$issue_num" --repo "$repo" \
-			--remove-label "status:available" --add-label "status:blocked" >/dev/null 2>&1 || true
+	if _dependency_sync_has_active_status "$current_labels" && \
+		[[ ",${current_labels}," == *",status:blocked,"* ]]; then
+		gh issue edit "$issue_num" --repo "$repo" --remove-label "status:blocked" >/dev/null 2>&1 || true
 	fi
 	log_verbose "$issue_num: dependency_relationship_sync_retryable reason=${reason}"
 	return 0
@@ -167,6 +239,106 @@ _hold_dependency_sync_retry() {
 
 # Add a sub-issue (parent-child) relationship.
 # Suppresses "duplicate sub-issues" and "only have one parent" errors.
+# Emit the Cartesian product of blocked and blocker issue-number lists while
+# rejecting self edges. Kept separate so the prose parser stays below the
+# repository nesting-depth gate.
+_emit_phase_dependency_pairs() {
+	local blocked_nums="$1"
+	local blocker_nums="$2"
+	local blocked_num="" blocker_num=""
+	while IFS= read -r blocked_num; do
+		[[ -n "$blocked_num" ]] || continue
+		while IFS= read -r blocker_num; do
+			[[ -n "$blocker_num" && "$blocked_num" != "$blocker_num" ]] || continue
+			printf 'PAIR:%s:%s\n' "$blocked_num" "$blocker_num"
+		done <<<"$blocker_nums"
+	done <<<"$blocked_nums"
+	return 0
+}
+
+_RELATIONSHIP_EDGE_CACHE_FILE=""
+_RELATIONSHIP_EDGE_CACHE=""
+
+# Emit declared task dependency edges as blocked-task|blocking-task pairs.
+_relationship_declared_edges() {
+	local todo_file="$1"
+	local task_line="" task_id="" parsed="" key="" value=""
+	local blocked_by="" blocks="" dep_task_id="" saved_ifs=""
+	while IFS= read -r task_line; do
+		task_id=$(printf '%s\n' "$task_line" | grep -oE 't[0-9]+(\.[0-9a-z]+)*' | head -1 || true)
+		[[ -n "$task_id" ]] || continue
+		parsed=$(parse_task_line "$task_line")
+		blocked_by=""
+		blocks=""
+		while IFS='=' read -r key value; do
+			case "$key" in
+			blocked_by) blocked_by="$value" ;;
+			blocks) blocks="$value" ;;
+			esac
+		done <<<"$parsed"
+		saved_ifs="$IFS"
+		IFS=','
+		for dep_task_id in $blocked_by; do
+			dep_task_id="${dep_task_id// /}"
+			[[ -n "$dep_task_id" && "$dep_task_id" != "$task_id" ]] || continue
+			printf '%s|%s\n' "$task_id" "$dep_task_id"
+		done
+		for dep_task_id in $blocks; do
+			dep_task_id="${dep_task_id// /}"
+			[[ -n "$dep_task_id" && "$dep_task_id" != "$task_id" ]] || continue
+			printf '%s|%s\n' "$dep_task_id" "$task_id"
+		done
+		IFS="$saved_ifs"
+	done < <(strip_code_fences <"$todo_file" | grep -E '^[[:space:]]*- \[.\] t[0-9]+(\.[0-9a-z]+)* ' || true)
+	return 0
+}
+
+_relationship_edges_for_file() {
+	local todo_file="$1"
+	if [[ "$_RELATIONSHIP_EDGE_CACHE_FILE" != "$todo_file" ]]; then
+		_RELATIONSHIP_EDGE_CACHE=$(_relationship_declared_edges "$todo_file")
+		_RELATIONSHIP_EDGE_CACHE_FILE="$todo_file"
+	fi
+	printf '%s\n' "$_RELATIONSHIP_EDGE_CACHE"
+	return 0
+}
+
+_declared_dependency_path_exists() {
+	local current_task="$1"
+	local target_task="$2"
+	local edges="$3"
+	local seen_tasks="$4"
+	local edge_from="" edge_to=""
+	[[ "$current_task" == "$target_task" ]] && return 0
+	printf '%s\n' "$seen_tasks" | grep -Fxq -- "$current_task" && return 1
+	seen_tasks="${seen_tasks}${current_task}"$'\n'
+	while IFS='|' read -r edge_from edge_to; do
+		[[ "$edge_from" == "$current_task" && -n "$edge_to" ]] || continue
+		_declared_dependency_path_exists "$edge_to" "$target_task" "$edges" "$seen_tasks" && return 0
+	done <<<"$edges"
+	return 1
+}
+
+# Break declared cycles deterministically before native mutation. At least one
+# edge in every numeric issue cycle ascends, so dropping ascending cycle edges
+# preserves useful ordering without leaving the whole component deadlocked.
+_dependency_cycle_should_skip_edge() {
+	local blocked_task="$1"
+	local blocker_task="$2"
+	local blocked_num="$3"
+	local blocker_num="$4"
+	local todo_file="$5"
+	local edges=""
+	edges=$(_relationship_edges_for_file "$todo_file")
+	_declared_dependency_path_exists "$blocker_task" "$blocked_task" "$edges" "" || return 1
+	if [[ "$blocked_num" =~ ^[0-9]+$ && "$blocker_num" =~ ^[0-9]+$ ]] &&
+		((blocked_num < blocker_num)); then
+		log_verbose "$blocked_task (#$blocked_num): ignoring circular blocked-by edge to $blocker_task (#$blocker_num)"
+		return 0
+	fi
+	return 1
+}
+
 # Arguments:
 #   $1 - parent_node_id
 #   $2 - child_node_id
@@ -269,7 +441,17 @@ _sync_blocked_by_for_task() {
 				continue
 			fi
 
-			if [[ "$DRY_RUN" == "true" ]]; then
+			if _dependency_cycle_should_skip_edge "$task_id" "$dep_task_id" "$this_gh_num" "$dep_gh_num" "$todo_file"; then
+				if [[ "$DRY_RUN" == "true" ]]; then
+					print_info "[DRY-RUN] Would remove circular #$this_gh_num blocked-by #$dep_gh_num ($task_id <- $dep_task_id)"
+				elif ! _gh_remove_blocked_by "$this_node_id" "$dep_node_id"; then
+					retryable_errors=$((retryable_errors + 1))
+					current_retry_errors=$((current_retry_errors + 1))
+				else
+					log_verbose "$task_id (#$this_gh_num): normalized circular native edge to $dep_task_id (#$dep_gh_num)"
+				fi
+				continue
+			elif [[ "$DRY_RUN" == "true" ]]; then
 				print_info "[DRY-RUN] Would set #$this_gh_num blocked-by #$dep_gh_num ($task_id <- $dep_task_id)"
 				rels_set=$((rels_set + 1))
 			elif _gh_add_blocked_by "$this_node_id" "$dep_node_id"; then
@@ -311,7 +493,17 @@ _sync_blocked_by_for_task() {
 				continue
 			fi
 
-			if [[ "$DRY_RUN" == "true" ]]; then
+			if _dependency_cycle_should_skip_edge "$dep_task_id" "$task_id" "$dep_gh_num" "$this_gh_num" "$todo_file"; then
+				if [[ "$DRY_RUN" == "true" ]]; then
+					print_info "[DRY-RUN] Would remove circular #$dep_gh_num blocked-by #$this_gh_num ($dep_task_id <- $task_id)"
+				elif ! _gh_remove_blocked_by "$dep_node_id" "$this_node_id"; then
+					retryable_errors=$((retryable_errors + 1))
+					_hold_dependency_sync_retry "$dep_gh_num" "$repo" "circular_native_edge_remove_failed"
+				else
+					log_verbose "$dep_task_id (#$dep_gh_num): normalized circular native edge to $task_id (#$this_gh_num)"
+				fi
+				continue
+			elif [[ "$DRY_RUN" == "true" ]]; then
 				print_info "[DRY-RUN] Would set #$dep_gh_num blocked-by #$this_gh_num ($dep_task_id <- $task_id)"
 				rels_set=$((rels_set + 1))
 			elif _gh_add_blocked_by "$dep_node_id" "$this_node_id"; then
@@ -509,7 +701,7 @@ cmd_relationships() {
 	local total="${#unique_tasks[@]}"
 	print_info "Syncing relationships for $total task(s) in $repo"
 
-	local blocked_set=0 sub_set=0 processed=0
+	local blocked_set=0 sub_set=0 processed=0 retryable_total=0
 	for task_id in "${unique_tasks[@]}"; do
 		processed=$((processed + 1))
 		# Progress indicator every 25 tasks
@@ -524,6 +716,8 @@ cmd_relationships() {
 		local n
 		n=$(echo "$result" | grep -oE 'RELS:[0-9]+' | head -1 | sed 's/RELS://' || echo "0")
 		blocked_set=$((blocked_set + n))
+		n=$(echo "$result" | grep -oE 'RETRYABLE:[0-9]+' | head -1 | sed 's/RETRYABLE://' || echo "0")
+		retryable_total=$((retryable_total + n))
 
 		# Sub-issue hierarchy
 		result=$(_sync_subtask_hierarchy_for_task "$task_id" "$todo_file" "$repo" 2>/dev/null || echo "RELS:0")
@@ -532,8 +726,9 @@ cmd_relationships() {
 	done
 	[[ $total -gt 25 ]] && printf "\n" >&2
 
-	printf "\n=== Relationships Sync ===\nBlocked-by: %d | Sub-issues: %d | Tasks processed: %d\n" \
-		"$blocked_set" "$sub_set" "${#unique_tasks[@]}"
+	printf "\n=== Relationships Sync ===\nBlocked-by: %d | Sub-issues: %d | Tasks processed: %d | Retryable: %d\n" \
+		"$blocked_set" "$sub_set" "${#unique_tasks[@]}" "$retryable_total"
+	[[ "$retryable_total" -eq 0 ]] || return 1
 	return 0
 }
 
@@ -1291,16 +1486,7 @@ _parse_parent_phase_deps() {
 
 		[[ -z "$blocked_nums" || -z "$blocker_nums" ]] && continue
 
-		# Emit pairs (nested loops over newline-separated lists)
-		local _bn _lr
-		while IFS= read -r _bn; do
-			[[ -z "$_bn" ]] && continue
-			while IFS= read -r _lr; do
-				[[ -z "$_lr" ]] && continue
-				[[ "$_bn" == "$_lr" ]] && continue
-				printf 'PAIR:%s:%s\n' "$_bn" "$_lr"
-			done <<< "$blocker_nums"
-		done <<< "$blocked_nums"
+		_emit_phase_dependency_pairs "$blocked_nums" "$blocker_nums"
 	done < <(printf '%s\n' "$dep_section")
 
 	return 0

@@ -18,6 +18,10 @@ from typing import Any, Optional
 AGGREGATE_KEY = "aggregate"
 ERROR_KEY = "error"
 GH_ERRORS_KEY = "gh_errors"
+NATIVE_ABSENT = "absent"
+NATIVE_CLEAR = "clear"
+NATIVE_UNKNOWN = "unknown"
+NATIVE_UNRESOLVED = "unresolved"
 REPO_SLUG_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 BLOCKING_LABELS = frozenset({
     "parent-task",
@@ -160,13 +164,15 @@ def _run_gh_json(cmd: list[str]) -> Optional[Any]:
         return None
 
 
-def _native_dependency_state(slug: str, issue_number: int) -> Optional[bool]:
-    """Return True for unresolved, False for positively clear, None for absent/unavailable."""
+def _native_dependency_state(slug: str, issue_number: int) -> str:
+    """Classify native blockers without conflating absence and API uncertainty."""
     owner, repo = slug.split("/", 1)
     query = """
 query($owner:String!,$name:String!,$number:Int!) {
   repository(owner:$owner,name:$name) {
-    issue(number:$number) { blockedBy(first:50) { nodes { number state } } }
+    issue(number:$number) {
+      blockedBy(first:50) { nodes { number state } pageInfo { hasNextPage } }
+    }
   }
 }
 """
@@ -175,14 +181,19 @@ query($owner:String!,$name:String!,$number:Int!) {
         "-F", f"owner={owner}", "-F", f"name={repo}", "-F", f"number={issue_number}",
     ])
     if not isinstance(payload, dict):
-        return None
+        return NATIVE_UNKNOWN
     issue_data = (((payload.get("data") or {}).get("repository") or {}).get("issue") or {})
     blocked_by = issue_data.get("blockedBy") or {}
     nodes = blocked_by.get("nodes")
-    if not isinstance(nodes, list) or not nodes:
-        return None
+    page_info = blocked_by.get("pageInfo")
+    if not isinstance(nodes, list) or not isinstance(page_info, dict):
+        return NATIVE_UNKNOWN
+    if page_info.get("hasNextPage") is True:
+        return NATIVE_UNKNOWN
+    if not nodes:
+        return NATIVE_ABSENT
     states = {str(node.get("state") or "").upper() for node in nodes if isinstance(node, dict)}
-    return states != {"CLOSED"}
+    return NATIVE_CLEAR if states == {"CLOSED"} else NATIVE_UNRESOLVED
 
 
 def _declared_dependency_refs(
@@ -211,16 +222,20 @@ def _declared_dependency_refs(
     return task_refs, issue_refs
 
 
-def _text_dependencies_unresolved(slug: str, issue: dict[str, Any], labels: set[str]) -> bool:
+def _text_dependency_state(
+    slug: str, issue: dict[str, Any], labels: set[str]
+) -> tuple[bool, bool]:
     task_refs, issue_refs = _declared_dependency_refs(issue, labels)
     if not task_refs and not issue_refs:
-        return False
+        return False, False
     for blocker in issue_refs:
         payload = _run_gh_json([
             "gh", "issue", "view", str(blocker), "--repo", slug, "--json", "state",
         ])
-        if not isinstance(payload, dict) or str(payload.get("state") or "").upper() != "CLOSED":
-            return True
+        if not isinstance(payload, dict):
+            return True, True
+        if str(payload.get("state") or "").upper() != "CLOSED":
+            return True, False
     current_number = int(issue.get("number") or 0)
     for task_ref in task_refs:
         matches = _run_gh_json([
@@ -229,7 +244,7 @@ def _text_dependencies_unresolved(slug: str, issue: dict[str, Any], labels: set[
             "--json", "number,title,state",
         ])
         if not isinstance(matches, list):
-            return True
+            return True, True
         canonical = [
             match for match in matches
             if isinstance(match, dict)
@@ -243,20 +258,29 @@ def _text_dependencies_unresolved(slug: str, issue: dict[str, Any], labels: set[
         if not canonical or any(
             str(match.get("state") or "").upper() != "CLOSED" for match in canonical
         ):
-            return True
-    return False
+            return True, False
+    return False, False
+
+
+def _dependency_diagnostic(slug: str, issue: dict[str, Any]) -> tuple[bool, bool]:
+    labels = _issue_labels(issue)
+    if "status:available" not in labels:
+        return False, False
+    if "status:blocked" in labels:
+        return True, False
+    native_state = _native_dependency_state(slug, int(issue.get("number") or 0))
+    if native_state == NATIVE_UNRESOLVED:
+        return True, False
+    if native_state == NATIVE_UNKNOWN:
+        return True, True
+    # Explicit text/TODO-compatible declarations remain repair evidence even
+    # when a partial native set is clear; every declared edge must resolve.
+    return _text_dependency_state(slug, issue, labels)
 
 
 def _dependency_inconsistent(slug: str, issue: dict[str, Any]) -> bool:
-    labels = _issue_labels(issue)
-    if "status:available" not in labels:
-        return False
-    if "status:blocked" in labels:
-        return True
-    native_state = _native_dependency_state(slug, int(issue.get("number") or 0))
-    if native_state is not None:
-        return native_state
-    return _text_dependencies_unresolved(slug, issue, labels)
+    inconsistent, _ = _dependency_diagnostic(slug, issue)
+    return inconsistent
 
 
 def _count_issue(
@@ -301,7 +325,9 @@ def _scan_repo(
         aggregate[GH_ERRORS_KEY] += 1
         return
     for issue in issues:
-        issue["dependency_inconsistent"] = _dependency_inconsistent(slug, issue)
+        inconsistent, scan_error = _dependency_diagnostic(slug, issue)
+        issue["dependency_inconsistent"] = inconsistent
+        aggregate[GH_ERRORS_KEY] += int(scan_error)
     repo_available = sum(int(_count_issue(aggregate, issue, now, old_minutes)) for issue in issues)
     aggregate["repos_with_available"] += int(repo_available > 0)
 

@@ -468,13 +468,14 @@ sync_todo_refs_for_repo() {
 	# Materialize TODO dependency edges before the graph and dispatch stages.
 	# Failures remain retryable and the relationship helper moves affected
 	# available issues to blocked rather than exposing an unverified ordering.
-	/bin/bash "${script_dir}/issue-sync-helper.sh" relationships --repo "$repo_slug" --project-root "$repo_path" 2>&1 || true
+	local relationships_rc=0
+	/bin/bash "${script_dir}/issue-sync-helper.sh" relationships --repo "$repo_slug" --project-root "$repo_path" 2>&1 || relationships_rc=$?
 	git -C "$repo_path" diff --quiet TODO.md 2>/dev/null || {
 		git -C "$repo_path" add TODO.md &&
 			git -C "$repo_path" commit -m "chore: sync GitHub issue refs to TODO.md [skip ci]" &&
 			git -C "$repo_path" push
 	} 2>/dev/null || true
-	return 0
+	return "$relationships_rc"
 }
 
 #######################################
@@ -486,7 +487,7 @@ sync_todo_refs_for_repo() {
 #######################################
 sync_todo_refs_all_repos() {
 	local repos_json="${REPOS_JSON:-${HOME}/.config/aidevops/repos.json}"
-	local repo_slug="" repo_path=""
+	local repo_slug="" repo_path="" sync_failed=0
 
 	[[ -f "$repos_json" ]] || return 0
 	while IFS='|' read -r repo_slug repo_path; do
@@ -495,9 +496,9 @@ sync_todo_refs_all_repos() {
 		[[ -d "$repo_path" ]] || continue
 		[[ -f "${repo_path}/TODO.md" ]] || continue
 		_pulse_refresh_repo "$repo_path" || true
-		sync_todo_refs_for_repo "$repo_slug" "$repo_path" || true
+		sync_todo_refs_for_repo "$repo_slug" "$repo_path" || sync_failed=1
 	done < <(jq -r '.initialized_repos[] | select(.pulse == true and (.local_only // false) == false and .slug != "" and .path != "") | [.slug, .path] | join("|")' "$repos_json" 2>/dev/null || true)
-	return 0
+	return "$sync_failed"
 }
 
 # Only run main when executed directly, not when sourced.
