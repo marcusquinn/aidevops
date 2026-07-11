@@ -97,6 +97,18 @@ _filter_core_status_labels() {
 # ISSUE_STATUS_LABEL_PRECEDENCE and emit it on stdout. Empty if none.
 _pick_status_survivor() {
 	local _precedent="" _current=""
+	local _has_available="false" _has_blocked="false"
+	for _current in "$@"; do
+		[[ "$_current" == "available" ]] && _has_available="true"
+		[[ "$_current" == "blocked" ]] && _has_blocked="true"
+	done
+	# A dual blocked/available state is unsafe regardless of ordinary lifecycle
+	# precedence: queue readers may otherwise advertise the issue before the
+	# dependency pass repairs it. Fail closed and make the pair exclusive.
+	if [[ "$_has_available" == "true" && "$_has_blocked" == "true" ]]; then
+		echo "blocked"
+		return 0
+	fi
 	for _precedent in "${ISSUE_STATUS_LABEL_PRECEDENCE[@]}"; do
 		for _current in "$@"; do
 			if [[ "$_current" == "$_precedent" ]]; then

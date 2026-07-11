@@ -4,7 +4,7 @@
 # Intentionally using /bin/bash (not /usr/bin/env bash) for headless compatibility.
 # Some MCP/headless runners provide a stripped PATH where env cannot resolve bash.
 # Keep this exception aligned with issue #2610 and t135.14 standardization context.
-# shellcheck disable=SC2155
+# shellcheck disable=SC2016,SC2155
 # =============================================================================
 # aidevops Issue Sync — Relationships & Backfill (GH#19502)
 # =============================================================================
@@ -144,6 +144,27 @@ mutation($blocked:ID!,$blocking:ID!) {
 	return 1
 }
 
+# Keep a dependency-bearing issue out of the available queue when native
+# relationship repair cannot complete. This is intentionally label-only and
+# retryable: the next relationship pass can repair the edge, while the pulse
+# dependency resolver supplies the positive proof required to unblock it.
+_hold_dependency_sync_retry() {
+	local issue_num="$1"
+	local repo="$2"
+	local reason="$3"
+	local current_labels=""
+
+	[[ "$issue_num" =~ ^[0-9]+$ && "$repo" == */* ]] || return 1
+	current_labels=$(gh issue view "$issue_num" --repo "$repo" \
+		--json labels --jq '[.labels[].name] | join(",")' 2>/dev/null) || current_labels=""
+	if [[ ",${current_labels}," == *",status:available,"* ]]; then
+		gh issue edit "$issue_num" --repo "$repo" \
+			--remove-label "status:available" --add-label "status:blocked" >/dev/null 2>&1 || true
+	fi
+	log_verbose "$issue_num: dependency_relationship_sync_retryable reason=${reason}"
+	return 0
+}
+
 # Add a sub-issue (parent-child) relationship.
 # Suppresses "duplicate sub-issues" and "only have one parent" errors.
 # Arguments:
@@ -210,10 +231,12 @@ _sync_blocked_by_for_task() {
 	this_node_id=$(_cached_node_id "$this_gh_num" "$repo")
 	[[ -z "$this_node_id" ]] && {
 		log_verbose "$task_id: could not resolve node ID for #$this_gh_num"
+		_hold_dependency_sync_retry "$this_gh_num" "$repo" "blocked_issue_node_unresolved"
+		echo "RELS:0 RETRYABLE:1"
 		return 0
 	}
 
-	local rels_set=0
+	local rels_set=0 retryable_errors=0 current_retry_errors=0
 
 	# Process blocked-by: this task IS blocked BY each listed task
 	if [[ -n "$blocked_by" ]]; then
@@ -222,15 +245,29 @@ _sync_blocked_by_for_task() {
 		for dep_task_id in $blocked_by; do
 			dep_task_id="${dep_task_id// /}"
 			[[ -z "$dep_task_id" ]] && continue
+			if [[ "$dep_task_id" == "$task_id" ]]; then
+				log_verbose "$task_id: ignoring self-referential blocked-by edge"
+				continue
+			fi
 			local dep_gh_num
 			dep_gh_num=$(resolve_task_gh_number "$dep_task_id" "$todo_file")
 			[[ -z "$dep_gh_num" ]] && {
 				log_verbose "$task_id: blocked-by $dep_task_id has no ref:GH#"
+				retryable_errors=$((retryable_errors + 1))
+				current_retry_errors=$((current_retry_errors + 1))
 				continue
 			}
+			if [[ "$dep_gh_num" == "$this_gh_num" ]]; then
+				log_verbose "$task_id: ignoring blocked-by edge that resolves back to #$this_gh_num"
+				continue
+			fi
 			local dep_node_id
 			dep_node_id=$(_cached_node_id "$dep_gh_num" "$repo")
-			[[ -z "$dep_node_id" ]] && continue
+			if [[ -z "$dep_node_id" ]]; then
+				retryable_errors=$((retryable_errors + 1))
+				current_retry_errors=$((current_retry_errors + 1))
+				continue
+			fi
 
 			if [[ "$DRY_RUN" == "true" ]]; then
 				print_info "[DRY-RUN] Would set #$this_gh_num blocked-by #$dep_gh_num ($task_id <- $dep_task_id)"
@@ -238,6 +275,9 @@ _sync_blocked_by_for_task() {
 			elif _gh_add_blocked_by "$this_node_id" "$dep_node_id"; then
 				log_verbose "$task_id (#$this_gh_num) blocked-by $dep_task_id (#$dep_gh_num) ✓"
 				rels_set=$((rels_set + 1))
+			else
+				retryable_errors=$((retryable_errors + 1))
+				current_retry_errors=$((current_retry_errors + 1))
 			fi
 		done
 		IFS="$_saved_ifs"
@@ -251,15 +291,25 @@ _sync_blocked_by_for_task() {
 		for dep_task_id in $blocks; do
 			dep_task_id="${dep_task_id// /}"
 			[[ -z "$dep_task_id" ]] && continue
+			if [[ "$dep_task_id" == "$task_id" ]]; then
+				log_verbose "$task_id: ignoring self-referential blocks edge"
+				continue
+			fi
 			local dep_gh_num
 			dep_gh_num=$(resolve_task_gh_number "$dep_task_id" "$todo_file")
 			[[ -z "$dep_gh_num" ]] && {
 				log_verbose "$task_id: blocks $dep_task_id has no ref:GH#"
+				retryable_errors=$((retryable_errors + 1))
 				continue
 			}
+			[[ "$dep_gh_num" == "$this_gh_num" ]] && continue
 			local dep_node_id
 			dep_node_id=$(_cached_node_id "$dep_gh_num" "$repo")
-			[[ -z "$dep_node_id" ]] && continue
+			if [[ -z "$dep_node_id" ]]; then
+				retryable_errors=$((retryable_errors + 1))
+				_hold_dependency_sync_retry "$dep_gh_num" "$repo" "blocking_node_unresolved"
+				continue
+			fi
 
 			if [[ "$DRY_RUN" == "true" ]]; then
 				print_info "[DRY-RUN] Would set #$dep_gh_num blocked-by #$this_gh_num ($dep_task_id <- $task_id)"
@@ -267,12 +317,18 @@ _sync_blocked_by_for_task() {
 			elif _gh_add_blocked_by "$dep_node_id" "$this_node_id"; then
 				log_verbose "$dep_task_id (#$dep_gh_num) blocked-by $task_id (#$this_gh_num) ✓"
 				rels_set=$((rels_set + 1))
+			else
+				retryable_errors=$((retryable_errors + 1))
+				_hold_dependency_sync_retry "$dep_gh_num" "$repo" "native_relationship_write_failed"
 			fi
 		done
 		IFS="$_saved_ifs"
 	fi
 
-	echo "RELS:$rels_set"
+	if [[ "$current_retry_errors" -gt 0 ]]; then
+		_hold_dependency_sync_retry "$this_gh_num" "$repo" "declared_dependency_repair_failed"
+	fi
+	echo "RELS:$rels_set RETRYABLE:$retryable_errors"
 	return 0
 }
 
