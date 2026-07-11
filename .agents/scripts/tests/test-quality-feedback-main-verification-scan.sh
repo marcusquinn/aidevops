@@ -920,6 +920,60 @@ test_scan_single_pr_filters_positive_inline_acknowledgement_reply() {
 	return 0
 }
 
+test_scan_single_pr_filters_resolved_review_threads() {
+	reset_mock_state
+
+	gh() {
+		local command="$1"
+		shift
+		case "$command" in
+		api)
+			if [[ "${1:-}" == "graphql" ]]; then
+				# The real gh invocation applies --jq and emits only resolved IDs.
+				echo '[10]'
+				return 0
+			fi
+			while [[ $# -gt 0 ]]; do
+				case "$1" in
+				repos/*/pulls/*/comments)
+					echo '[{"id":10,"user":{"login":"gemini-code-assist[bot]"},"path":"src/foo.sh","line":null,"original_line":5,"body":"You should add error handling here.","html_url":"https://github.com/example/repo/pull/1#discussion_r10"},{"id":11,"user":{"login":"gemini-code-assist[bot]"},"path":"src/foo.sh","line":6,"original_line":6,"body":"You should validate this input.","html_url":"https://github.com/example/repo/pull/1#discussion_r11"}]'
+					return 0
+					;;
+				repos/*/pulls/*/reviews)
+					echo '[]'
+					return 0
+					;;
+				repos/*/git/trees/*)
+					echo '["src/foo.sh"]'
+					return 0
+					;;
+				repos/*)
+					echo "main"
+					return 0
+					;;
+				esac
+				shift
+			done
+			return 0
+			;;
+		label | pr) return 0 ;;
+		esac
+		return 1
+	}
+
+	local findings ids
+	findings=$(_scan_single_pr "owner/repo" "1" "medium" "false" 2>/dev/null)
+	ids=$(printf '%s' "$findings" | jq -r '[.[].url] | join(",")')
+	if [[ "$ids" == *"discussion_r11"* && "$ids" != *"discussion_r10"* ]]; then
+		print_result "resolved review threads are excluded from quality debt" 0
+	else
+		print_result "resolved review threads are excluded from quality debt" 1 "unexpected findings: ${findings}"
+	fi
+
+	_restore_mock_gh
+	return 0
+}
+
 test_scan_single_pr_filters_parent_of_resolution_reply() {
 	reset_mock_state
 

@@ -463,6 +463,28 @@ _log_debug_skipped_summaries() {
 }
 
 #######################################
+# Return database IDs for inline comments in resolved review threads.
+# GitHub's REST review-comment response does not expose thread resolution, so
+# use GraphQL as a best-effort supplement. API failures preserve the existing
+# REST-only behaviour rather than aborting the scan.
+# Arguments: $1=repo slug $2=PR number
+# Output: JSON array of numeric comment IDs
+_resolved_review_comment_ids() {
+	local repo_slug="$1"
+	local pr_num="$2"
+	local owner="${repo_slug%%/*}"
+	local repo="${repo_slug#*/}"
+
+	# shellcheck disable=SC2016 # GraphQL variables are expanded by GitHub, not the shell.
+	gh api graphql \
+		-f query='query($owner:String!,$repo:String!,$pr:Int!){repository(owner:$owner,name:$repo){pullRequest(number:$pr){reviewThreads(first:100){nodes{isResolved comments(first:100){nodes{databaseId}}}}}}}' \
+		-f owner="$owner" -f repo="$repo" -F pr="$pr_num" \
+		--jq '[.data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved) | .comments.nodes[].databaseId]' \
+		2>/dev/null || printf '[]\n'
+	return 0
+}
+
+#######################################
 # Scan a single merged PR for review feedback
 #
 # Fetches both inline review comments and review bodies from all
@@ -492,6 +514,10 @@ _scan_single_pr() {
 	local comments
 	comments=$(gh api "repos/${repo_slug}/pulls/${pr_num}/comments" \
 		--paginate --jq '.' | jq -s 'add // []') || comments="[]"
+	local resolved_comment_ids
+	resolved_comment_ids=$(_resolved_review_comment_ids "$repo_slug" "$pr_num")
+	comments=$(printf '%s' "$comments" | jq --argjson resolved "$resolved_comment_ids" \
+		'[.[] | select((.id as $id | $resolved | index($id)) == null)]') || comments="[]"
 
 	# --- Fetch review bodies (top-level reviews) ---
 	local reviews
