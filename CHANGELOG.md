@@ -10,6 +10,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.32.13] - 2026-07-11
+
+### Changed
+
+- strip image placeholders from session titles (#27037)
+- Maintenance: sync ref:GH#27036 to TODO.md [skip ci]
+- Refactor: simplify canonical Git command guard (#27029)
+- Maintenance: sync ref:GH#27030 to TODO.md [skip ci]
+- fix: align agent review search permissions (#27027)
+- Fast-forward canonical recovery to origin tip (#27022)
+
 ## [3.32.12] - 2026-07-11
 
 ### Fixed
