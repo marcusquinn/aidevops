@@ -10,6 +10,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.32.15] - 2026-07-11
+
+### Changed
+
+- Maintenance: sync ref:GH#27045 to TODO.md [skip ci]
+- Keep OpenCode diagnostics out of the TUI (#27043)
+
 ## [3.32.14] - 2026-07-11
 
 ### Changed
