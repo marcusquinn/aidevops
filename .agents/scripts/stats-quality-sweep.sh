@@ -734,7 +734,7 @@ _create_simplification_issues() {
 	[[ "$smell_threshold" =~ ^[0-9]+$ ]] || smell_threshold=0
 	actual_count=$(printf '%s\n' "$sarif_json" | jq -r '.runs[0].results | length' 2>/dev/null || true)
 	[[ "$actual_count" =~ ^[0-9]+$ ]] || {
-		echo "[stats] Qlty remediation: invalid SARIF count for ${repo_slug}; skipping" >>"$LOGFILE"
+		echo "[stats] Qlty remediation: invalid SARIF count for ${repo_slug}; skipping" >>"${LOGFILE:-/dev/null}"
 		printf '%s' "$issues_created"
 		return 0
 	}
@@ -744,7 +744,7 @@ _create_simplification_issues() {
 		smell_deficit=$((actual_count - smell_threshold))
 	fi
 	if [[ "$smell_deficit" -le 0 ]]; then
-		echo "[stats] Qlty remediation: actual=${actual_count} threshold=${smell_threshold} deficit=0; no repair required" >>"$LOGFILE"
+		echo "[stats] Qlty remediation: actual=${actual_count} threshold=${smell_threshold} deficit=0; no repair required" >>"${LOGFILE:-/dev/null}"
 		printf '%s' "$issues_created"
 		return 0
 	fi
@@ -782,7 +782,7 @@ _create_simplification_issues() {
 		fi
 	done <<<"$smell_files"
 
-	echo "[stats] Qlty remediation: actual=${actual_count} threshold=${smell_threshold} deficit=${smell_deficit} issues_created=${issues_created} smells_scheduled=${smells_scheduled}" >>"$LOGFILE"
+	echo "[stats] Qlty remediation: actual=${actual_count} threshold=${smell_threshold} deficit=${smell_deficit} issues_created=${issues_created} smells_scheduled=${smells_scheduled}" >>"${LOGFILE:-/dev/null}"
 	printf '%s' "$issues_created"
 	return 0
 }
@@ -815,7 +815,7 @@ _smell_files_from_sarif() {
 	local sarif_json="$1"
 
 	printf '%s\n' "$sarif_json" | jq -r '
-		[.runs[0].results[] | .locations[0].physicalLocation.artifactLocation.uri |
+		[.runs[0].results[]? | .locations[0]?.physicalLocation.artifactLocation.uri? |
 		 select(type == "string" and length > 0)] |
 		group_by(.) | map({file: .[0], count: length}) |
 		sort_by([-.count, .file]) |
