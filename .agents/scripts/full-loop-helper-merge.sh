@@ -806,6 +806,9 @@ cmd_merge() {
 		return 1
 	fi
 	print_success "LIFECYCLE_STATE=MERGED merge_sha=${FULL_LOOP_MERGE_SHA}"
+	if declare -F is_loop_active >/dev/null 2>&1 && is_loop_active && load_state; then
+		save_state "postflight" "$SAVED_PROMPT" "$pr_number" "$STARTED_AT"
+	fi
 	_merge_finalize_post_merge "$pr_number" "$repo" "$has_auto" "$_cleanup_plan"
 
 	return 0

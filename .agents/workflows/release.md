@@ -20,14 +20,14 @@ tools:
 **MANDATORY**: Use this single command for ALL aidevops releases:
 
 ```bash
-./.agents/scripts/version-manager.sh release [major|minor|patch] --skip-preflight
+./.agents/scripts/version-manager.sh release [major|minor|patch] --source-pr <merged-pr-number>
 ```
 
-**Flags**: `--skip-preflight` (faster), `--force` (bypass empty changelog), `--allow-dirty` (not recommended)
+**Flags**: `--force` bypasses only the empty-changelog check. It cannot bypass linked-worktree, canonical-sync, source-PR, or remote-SHA provenance. `--skip-preflight` and `--allow-dirty` are recovery flags and do not satisfy a standard full-loop release.
 
-Atomically: checks uncommitted changes → bumps version in all 6 files (VERSION, README.md, setup.sh, sonar-project.properties, package.json, .claude-plugin/marketplace.json) → auto-generates CHANGELOG.md → validates consistency → commits → tags → pushes → creates GitHub release.
+Requires a fresh detached release worktree at synchronized `origin/main`, verifies the source PR is merged and its merge SHA is reachable, then atomically checks the tree → bumps and validates version files → commits → tags → pushes → creates the GitHub release → runs deploy sync. Publication or deployment failure is a failed release, not warning-only success.
 
-**DO NOT** run separate bump/tag/push commands. **Prerequisites**: `gh auth login` (needs `repo` scope), all changes committed, CHANGELOG.md has unreleased content (or `--force`).
+**DO NOT** run separate bump/tag/push commands. **Prerequisites**: terminal-success PR checks/reviews, observed merged state/SHA, clean synchronized canonical `main`, fresh detached release worktree, authenticated `gh`, and unreleased changelog content (or changelog-only `--force`).
 
 **Related**: `workflows/version-bump.md` · `workflows/changelog.md` · `workflows/postflight.md` · `.agents/scripts/validate-version-consistency.sh`
 
@@ -45,7 +45,7 @@ git push origin main && git push origin --tags
 
 ## Post-Release
 
-**Deploy** (aidevops only): `cd ~/Git/aidevops && ./setup.sh`
+**Deploy** (aidevops only): the release command runs post-release deploy sync and fails if it cannot verify that step. Run postflight afterward; do not manually mutate the canonical checkout.
 
 **Task completion** (automatic): Release script scans commits for task IDs and auto-marks them complete in TODO.md.
 

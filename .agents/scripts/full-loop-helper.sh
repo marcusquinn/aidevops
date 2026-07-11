@@ -182,6 +182,9 @@ Worker aborted PR creation: issue #${issue_number} was already closed by the tim
 	_post_merge_summary "$pr_number" "$repo" "$issue_number" "$summary_what" "$files_changed" "$summary_testing" "$summary_decisions"
 	_label_issue_in_review "$issue_number" "$repo"
 	_label_pr_in_review "$pr_number" "$repo"
+	if is_loop_active && load_state; then
+		save_state "pr-review" "$SAVED_PROMPT" "$pr_number" "$STARTED_AT"
+	fi
 
 	# Output PR number for caller to pass to `merge`
 	printf '%s\n' "$pr_number"
@@ -211,7 +214,9 @@ Commands:
                                 for branch-protected personal-account repos (GH#18731).
                                 --admin and --auto are mutually exclusive at the
                                 gh CLI level; if both are given, --admin wins and
-                                --auto is dropped (GH#19310).
+                                 --auto is dropped (GH#19310).
+  complete-after-cleanup <PR> <removed-worktree-path> [REPO]
+                                 Verify merged, released/deployed, and cleaned evidence.
   help                          Show this help
 Options: --max-task-iterations N (50) | --max-preflight-iterations N (5)
   --max-pr-iterations N (20) | --skip-preflight | --skip-postflight
@@ -241,6 +246,7 @@ main() {
 	commit-and-pr | create-pr) cmd_commit_and_pr "$@" ;;
 	pre-merge-gate) cmd_pre_merge_gate "$@" ;;
 	merge) cmd_merge "$@" ;;
+	complete-after-cleanup) cmd_complete_after_cleanup "$@" ;;
 	help | --help | -h) show_help ;;
 	*)
 		print_error "Unknown command: $command"

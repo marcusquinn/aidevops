@@ -30,16 +30,16 @@ tools:
 ${AIDEVOPS_DIR:-$HOME/.aidevops}/agents/scripts/pre-edit-check.sh  # Verifies branch and canonical-checkout safety
 ```
 
-If the gate reports the canonical checkout: STOP and create a safe linked worktree for the task before editing. This technical gate checks both branch and worktree location; `git status` alone cannot prove the checkout is canonical versus linked. For releases, create a detached linked worktree at `origin/main`; the version manager refuses canonical execution and atomically pushes detached `HEAD` to `main`.
+If the gate reports the canonical checkout: STOP and create a safe linked worktree for the task before editing. This technical gate checks both branch and worktree location; `git status` alone cannot prove the checkout is canonical versus linked. For releases, first verify the canonical checkout is clean and synchronized, then create a fresh detached linked worktree at `origin/main`; the version manager refuses canonical execution and requires source-PR merge provenance.
 
 **First Actions** (before any code changes):
 
 ```bash
-git fetch origin && git status --short
+git status --short
 git log --oneline HEAD..origin/$(git branch --show-current) 2>/dev/null
 ```
 
-Remote has new commits → pull/rebase first. Uncommitted local changes → stash or commit first.
+Inside an existing linked worktree, refresh and rebase before editing. From the canonical checkout, let `worktree-helper.sh add` refresh `origin/<default>` while creating the linked worktree. Preserve unrelated uncommitted work; never stash/reset/clean another session's changes.
 
 **Worktrees** (DEFAULT for all feature work):
 
@@ -48,6 +48,7 @@ Main repo (`~/Git/{repo}/` or grouped `~/Git/{ecosystem}/{repo}/`) ALWAYS stays 
 ```bash
 ${AIDEVOPS_DIR:-$HOME/.aidevops}/agents/scripts/worktree-helper.sh add feature/my-feature
 # Creates e.g. ~/Git/_worktrees/{repo}-feature-my-feature/
+# Fetches origin/<default> first and fails closed if freshness cannot be verified.
 # Then cd into the printed linked worktree path before editing.
 ```
 

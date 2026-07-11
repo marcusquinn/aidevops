@@ -681,13 +681,25 @@ _resolve_worktree_base_ref() {
 	local explicit_base="$1"
 	local env_base="${AIDEVOPS_WORKTREE_BASE:-}"
 
-	# 1. Explicit override (flag preferred, env as fallback).
-	if [[ -n "$explicit_base" ]]; then
-		printf '%s' "$explicit_base"
-		return 0
-	fi
-	if [[ -n "$env_base" ]]; then
-		printf '%s' "$env_base"
+	# 1. Explicit override (flag preferred, env as fallback). Resolve caller
+	# intent to an immutable commit SHA. Remote refs are refreshed first.
+	local requested_base="${explicit_base:-$env_base}"
+	if [[ -n "$requested_base" ]]; then
+		if [[ "$requested_base" == origin/* ]]; then
+			local requested_branch="${requested_base#origin/}"
+			if ! git fetch --no-tags --quiet origin \
+				"+refs/heads/${requested_branch}:refs/remotes/origin/${requested_branch}"; then
+				echo "Error: could not refresh ${requested_base}; refusing stale explicit base" >&2
+				return 1
+			fi
+		fi
+		local requested_sha=""
+		requested_sha=$(git rev-parse --verify "${requested_base}^{commit}" 2>/dev/null || true)
+		if [[ -z "$requested_sha" ]]; then
+			echo "Error: explicit worktree base is not a resolvable commit: ${requested_base}" >&2
+			return 1
+		fi
+		printf '%s' "$requested_sha"
 		return 0
 	fi
 
