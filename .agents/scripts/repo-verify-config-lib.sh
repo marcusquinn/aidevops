@@ -275,7 +275,8 @@ _repo_verify_predicate_matches() {
 		local section_line=""
 		[[ -f "${repo_root}/${section_path}" ]] || return 1
 		_repo_verify_evidence_is_tracked "$repo_root" "$section_path" || return 1
-		while IFS= read -r section_line; do
+		while IFS= read -r section_line || [[ -n "$section_line" ]]; do
+			[[ -n "$section_line" ]] || continue
 			section_line="${section_line%%#*}"
 			while [[ "$section_line" == *[[:space:]] ]]; do
 				section_line="${section_line%?}"
@@ -405,7 +406,7 @@ repo_verify_install_hook() {
 
 repo_verify_registration_has_feature() {
 	local repo_root="$1"
-	local repos_file="${AIDEVOPS_REPOS_FILE:-${HOME}/.config/aidevops/repos.json}"
+	local repos_file="${AIDEVOPS_REPOS_FILE:-${HOME:+$HOME/.config/aidevops/repos.json}}"
 	[[ -f "$repos_file" ]] || return 1
 	jq -e --arg path "$repo_root" '.initialized_repos[]? | select(.path == $path) | (.features // []) | index("code-quality") != null' "$repos_file" >/dev/null 2>&1 || return 1
 	return 0
@@ -429,7 +430,7 @@ repo_verify_feature_state() {
 
 repo_verify_migrate_registration() {
 	local repo_root="$1"
-	local repos_file="${AIDEVOPS_REPOS_FILE:-${HOME}/.config/aidevops/repos.json}"
+	local repos_file="${AIDEVOPS_REPOS_FILE:-${HOME:+$HOME/.config/aidevops/repos.json}}"
 	[[ -f "$repos_file" ]] || return 2
 	local config_file
 	config_file=$(_repo_verify_config_path "$repo_root")

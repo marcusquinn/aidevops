@@ -96,6 +96,31 @@ test_python_evidence() {
 	repo_verify_detect "$root" || true
 	assert_equal "defaults(PYTHON_RUFF)" "$REPO_VERIFY_SOURCE" "committed Ruff config is exact evidence"
 	assert_equal "ruff check ." "$REPO_VERIFY_LINT" "Ruff lint command is seeded"
+
+	root="$1/python-ruff-no-newline"
+	new_repo "$root"
+	printf '%s' '[tool.ruff]' >"$root/pyproject.toml"
+	/usr/bin/git -C "$root" add pyproject.toml
+	repo_verify_detect "$root" || true
+	assert_equal "defaults(PYTHON_RUFF)" "$REPO_VERIFY_SOURCE" "section on final unterminated line is detected"
+	return 0
+}
+
+test_unset_home_registration_lookup() {
+	local root="$1/unset-home"
+	new_repo "$root"
+	local status=0
+	(
+		unset HOME AIDEVOPS_REPOS_FILE
+		repo_verify_registration_has_feature "$root"
+	) || status=$?
+	assert_equal "1" "$status" "registration lookup handles HOME being unset"
+	status=0
+	(
+		unset HOME AIDEVOPS_REPOS_FILE
+		repo_verify_migrate_registration "$root"
+	) || status=$?
+	assert_equal "2" "$status" "registration migration handles HOME being unset"
 	return 0
 }
 
@@ -188,6 +213,7 @@ main() {
 	test_package_manager_declaration_conflict "$TEST_TMP_DIR"
 	test_untracked_evidence_rejected "$TEST_TMP_DIR"
 	test_python_evidence "$TEST_TMP_DIR"
+	test_unset_home_registration_lookup "$TEST_TMP_DIR"
 	test_explicit_opt_out "$TEST_TMP_DIR"
 	test_feature_opt_out "$TEST_TMP_DIR"
 	test_config_merge "$TEST_TMP_DIR"
