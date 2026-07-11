@@ -38,7 +38,7 @@ _generate_greeting_agents_md opencode "$TMP_DIR"
 GENERATED_FILE="${TMP_DIR}/AGENTS.md"
 TEMPLATE_FILE="${REPO_ROOT}/templates/opencode-config-agents.md"
 
-grep -q 'plugin-injected block is authoritative' "$GENERATED_FILE"
+grep -q 'authoritative plugin-injected greeting block' "$GENERATED_FILE"
 grep -q 'plugin injection is unavailable' "$GENERATED_FILE"
 # shellcheck disable=SC2016
 grep -q 'if the cache file is missing, read `~/.aidevops/agents/VERSION`' "$GENERATED_FILE"
@@ -50,7 +50,7 @@ if grep -q 'Run .*aidevops-update-check.sh' "$GENERATED_FILE"; then
 fi
 [[ "$(grep -c '^       Hi!$' "$GENERATED_FILE")" -eq 1 ]]
 
-grep -q 'plugin-injected block is authoritative' "$TEMPLATE_FILE"
+grep -q 'authoritative plugin-injected greeting block' "$TEMPLATE_FILE"
 grep -q 'plugin injection is unavailable' "$TEMPLATE_FILE"
 # shellcheck disable=SC2016
 grep -q 'if the cache file is missing, read `~/.aidevops/agents/VERSION`' "$TEMPLATE_FILE"

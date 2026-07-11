@@ -119,7 +119,7 @@ NOT repeat toast content in the chat.
 
 **On interactive conversation start** (skip for headless sessions like \`/pulse\`, \`/full-loop\`):
 
-1. If this prompt contains a \`## Session-start greeting order\` block, that plugin-injected block is authoritative. Use its already-resolved exact greeting before any tool call or task work. Do not read the cache or VERSION first.
+1. If an earlier system instruction declares itself the authoritative plugin-injected greeting block and supplies exact version values, follow it before any tool call or task work. Do not read the cache or VERSION first.
 2. Otherwise, the plugin injection is unavailable. Read line 1 of \`${cache_path}\`. Format: \`aidevops v{X} running in ${display_name} v{Y} | ...\`. Extract \`{X}\` and \`{Y}\`, then make the first visible text in your first assistant response exactly this template — no extra prose, no status dump:
 
        Hi!
