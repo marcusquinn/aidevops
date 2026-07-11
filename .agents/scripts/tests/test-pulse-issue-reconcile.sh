@@ -201,16 +201,18 @@ test_body_in_prefetch_fetch() {
 	local prefetch_fetch_sh="${SCRIPT_DIR}/../pulse-prefetch-fetch.sh"
 
 	# safe_grep_count inline pattern (t2763): use guard form, not || echo 0.
-	local full_has_body delta_has_body
-	full_has_body=$(grep -c 'number,title,state,labels,updatedAt,assignees,body' "${prefetch_sh}" 2>/dev/null || true)
-	[[ "$full_has_body" =~ ^[0-9]+$ ]] || full_has_body=0
-	delta_has_body=$(grep -c 'number,title,state,labels,updatedAt,assignees,body' "${prefetch_fetch_sh}" 2>/dev/null || true)
-	[[ "$delta_has_body" =~ ^[0-9]+$ ]] || delta_has_body=0
+	# t1987 moved both full and delta fetch implementations into the sourced
+	# pulse-prefetch-fetch.sh module. Verify the source edge plus both field lists.
+	local sources_fetch_module fetch_has_body
+	sources_fetch_module=$(grep -c 'source .*pulse-prefetch-fetch.sh' "${prefetch_sh}" 2>/dev/null || true)
+	[[ "$sources_fetch_module" =~ ^[0-9]+$ ]] || sources_fetch_module=0
+	fetch_has_body=$(grep -c 'number,title,state,labels,updatedAt,assignees,body' "${prefetch_fetch_sh}" 2>/dev/null || true)
+	[[ "$fetch_has_body" =~ ^[0-9]+$ ]] || fetch_has_body=0
 
-	if [[ "$full_has_body" -ge 1 ]] && [[ "$delta_has_body" -ge 1 ]]; then
-		_pass "body-in-prefetch: body field present in both full and delta fetches"
+	if [[ "$sources_fetch_module" -ge 1 ]] && [[ "$fetch_has_body" -ge 2 ]]; then
+		_pass "body-in-prefetch: body field present in delegated full and delta fetches"
 	else
-		_fail "body-in-prefetch: full=${full_has_body} delta=${delta_has_body} (expected ≥1 each)"
+		_fail "body-in-prefetch: source=${sources_fetch_module} fetch_fields=${fetch_has_body} (expected source≥1 fields≥2)"
 	fi
 	return 0
 }
