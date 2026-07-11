@@ -320,6 +320,20 @@ Quality-debt PRs must touch at most 5 files. Create one issue per file or per ti
 
 The quality sweep and pulse LLM are independent systems. Before creating any quality issue, search existing: `gh issue list --repo SLUG --label quality-debt --state open --search "in:title FILENAME"`. The pre-fetched state separates sweep-tracked issues — do NOT create new issues for findings already tracked.
 
+### Autonomous Qlty threshold repair
+
+For managed repositories with `QLTY_SMELL_THRESHOLD`, the daily sweep reuses its
+single SARIF scan to compare the repository count with the absolute threshold.
+When `actual > threshold`, it creates at most five deduplicated, per-file
+`quality-debt` + `auto-dispatch` issues per cycle until newly scheduled smells
+cover the deficit. One- and two-smell files remain eligible, so distributed debt
+cannot sit outside the repair loop. Trusted maintainer-owned scans dispatch
+without routine approval; unverified automation retains
+`needs-maintainer-review`. Existing pulse capacity, worktree, active-PR overlap,
+and cooldown gates remain authoritative. PR-specific Qlty regressions still
+block the introducing PR, while post-merge ratcheting may only lower the
+absolute threshold.
+
 ## Cross-Repo TODO Sync
 
 ```bash

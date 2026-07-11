@@ -61,7 +61,11 @@ gh() {
 		return 0
 		;;
 	*"issue list"*)
-		printf '0\n'
+		if [[ -n "${EXISTING_CITED_FILE:-}" && "$*" == *"cited_file=${EXISTING_CITED_FILE}"* ]]; then
+			printf '1\n'
+		else
+			printf '0\n'
+		fi
 		return 0
 		;;
 	esac
@@ -94,6 +98,18 @@ JSON
 	return 0
 }
 
+make_distributed_sarif() {
+	cat <<'JSON'
+{"runs":[{"results":[
+{"ruleId":"complexity","locations":[{"physicalLocation":{"artifactLocation":{"uri":"src/a.sh"}}}]},
+{"ruleId":"returns","locations":[{"physicalLocation":{"artifactLocation":{"uri":"src/b.sh"}}}]},
+{"ruleId":"nested-control-flow","locations":[{"physicalLocation":{"artifactLocation":{"uri":"src/c.sh"}}}]},
+{"ruleId":"complexity","locations":[{"physicalLocation":{"artifactLocation":{"uri":"src/d.sh"}}}]}
+]}]}
+JSON
+	return 0
+}
+
 printf '\n[a] trusted repo writer skips NMR\n'
 true >"$CREATE_CALLS"
 true >"$COUNT_FILE"
@@ -110,6 +126,12 @@ if grep -q -- '--label needs-maintainer-review' "$CREATE_CALLS" 2>/dev/null; the
 	fail "trusted-writer-no-nmr-label" "unexpected NMR label: $(cat "$CREATE_CALLS")"
 else
 	pass "trusted-writer-no-nmr-label"
+fi
+if grep -q -- '--label auto-dispatch' "$CREATE_CALLS" 2>/dev/null &&
+	grep -q -- '--label quality-debt' "$CREATE_CALLS" 2>/dev/null; then
+	pass "trusted-writer-autonomous-quality-labels"
+else
+	fail "trusted-writer-autonomous-quality-labels" "missing auto-dispatch or quality-debt: $(<"$CREATE_CALLS")"
 fi
 if [[ "$(<"$COUNT_FILE")" == "1" ]]; then
 	pass "simplification-count-stdout"
@@ -148,6 +170,51 @@ if [[ "${qlty_section:-}" == "caller-owned-section" ]]; then
 else
 	fail "unverified-no-caller-qlty-section-mutation" "caller qlty_section mutated to: ${qlty_section:-<unset>}"
 fi
+
+printf '\n[c] distributed low-density debt covers exact deficit\n'
+true >"$CREATE_CALLS"
+true >"$COUNT_FILE"
+unset EXISTING_CITED_FILE
+_gh_current_user_allows_repo_write() { return 0; }
+_create_simplification_issues "test/repo" "$(make_distributed_sarif)" "2" >"$COUNT_FILE"
+if [[ "$(<"$COUNT_FILE")" == "2" ]]; then
+	pass "distributed-one-smell-files-scheduled"
+else
+	fail "distributed-one-smell-files-scheduled" "expected 2 issues for deficit 2, got: $(<"$COUNT_FILE")"
+fi
+if grep -q 'actual=4 threshold=2 deficit=2' "$CREATE_CALLS" 2>/dev/null; then
+	pass "worker-body-carries-threshold-evidence"
+else
+	fail "worker-body-carries-threshold-evidence" "missing structured threshold evidence"
+fi
+
+printf '\n[d] at-threshold state creates no repair issue\n'
+true >"$CREATE_CALLS"
+true >"$COUNT_FILE"
+_create_simplification_issues "test/repo" "$(make_distributed_sarif)" "4" >"$COUNT_FILE"
+if [[ "$(<"$COUNT_FILE")" == "0" && ! -s "$CREATE_CALLS" ]]; then
+	pass "at-threshold-no-remediation"
+else
+	fail "at-threshold-no-remediation" "count=$(<"$COUNT_FILE") calls=$(<"$CREATE_CALLS")"
+fi
+
+printf '\n[e] existing file issue does not consume deficit budget\n'
+true >"$CREATE_CALLS"
+true >"$COUNT_FILE"
+EXISTING_CITED_FILE="src/a.sh"
+export EXISTING_CITED_FILE
+_create_simplification_issues "test/repo" "$(make_distributed_sarif)" "2" >"$COUNT_FILE"
+if [[ "$(<"$COUNT_FILE")" == "2" ]]; then
+	pass "dedup-continues-to-next-file"
+else
+	fail "dedup-continues-to-next-file" "expected 2 new issues after one dedup, got: $(<"$COUNT_FILE")"
+fi
+if grep -q 'cited_file=src/a.sh' "$CREATE_CALLS" 2>/dev/null; then
+	fail "dedup-does-not-recreate-existing-file" "existing file was recreated"
+else
+	pass "dedup-does-not-recreate-existing-file"
+fi
+unset EXISTING_CITED_FILE
 
 export HOME="$ORIGINAL_HOME"
 

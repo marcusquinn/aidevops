@@ -90,6 +90,33 @@ is_valid_sarif_results() {
 	return $?
 }
 
+emit_remediation_evidence() {
+	local _count="$1"
+	local _threshold="$2"
+	local _sarif="$3"
+	local _deficit=$((_count - _threshold))
+	local _evidence=""
+
+	_evidence=$(printf '%s\n' "$_sarif" | jq -c \
+		--argjson actual "$_count" --argjson threshold "$_threshold" --argjson deficit "$_deficit" '
+		{
+			schema: "aidevops.qlty-remediation.v1",
+			actual: $actual,
+			threshold: $threshold,
+			deficit: $deficit,
+			scope: "repository",
+			files: ([.runs[0].results[] |
+				.locations[0].physicalLocation.artifactLocation.uri] |
+				group_by(.) | map({file: .[0], count: length}) | sort_by([-.count, .file])),
+			rules: ([.runs[0].results[].ruleId] |
+				group_by(.) | map({rule: .[0], count: length}) | sort_by([-.count, .rule]))
+		}' 2>/dev/null) || _evidence=""
+	if [ -n "$_evidence" ]; then
+		printf 'QLTY_REMEDIATION_EVIDENCE=%s\n' "$_evidence"
+	fi
+	return 0
+}
+
 run_threshold_check() {
 	local _conf="${1:-.agents/configs/complexity-thresholds.conf}"
 	local _threshold=""
@@ -140,14 +167,15 @@ run_threshold_check() {
 
 	if [ "$_count" -gt "$_threshold" ]; then
 		printf '::error::Qlty smell regression: %s smells exceeds threshold %s\n' "$_count" "$_threshold"
+		emit_remediation_evidence "$_count" "$_threshold" "$_sarif"
 		printf '\nPer-rule breakdown:\n'
 		printf '%s\n' "$_sarif" | jq -r '.runs[0].results | group_by(.ruleId) | map({rule: .[0].ruleId, count: length}) | sort_by(-.count) | .[] | "  \(.count)\t\(.rule)"'
 		printf '\nTop 20 files by smell count:\n'
 		printf '%s\n' "$_sarif" | jq -r '.runs[0].results | group_by(.locations[0].physicalLocation.artifactLocation.uri) | map({file: .[0].locations[0].physicalLocation.artifactLocation.uri, count: length}) | sort_by(-.count) | .[0:20] | .[] | "  \(.count)\t\(.file)"'
 		printf '\nFix options:\n'
-		printf "  1. Reduce smells in your PR (preferred) — run 'qlty smells --all' locally\n"
-		printf '  2. Justify a bump of QLTY_SMELL_THRESHOLD in complexity-thresholds.conf\n'
-		printf '     with a history entry in complexity-thresholds-history.md\n'
+		printf "  1. New PR smells remain blocking — run 'qlty smells --all' locally\n"
+		printf '  2. Pre-existing default-branch debt must enter the autonomous quality-sweep remediation loop\n'
+		printf '  3. Do not raise QLTY_SMELL_THRESHOLD to absorb recurring debt\n'
 		return 1
 	fi
 
