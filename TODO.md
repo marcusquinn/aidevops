@@ -4502,3 +4502,9 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [ ] t18098 Prevent worktree infrastructure markers from breaking worker ownership transfer #auto-dispatch #bug #framework #pulse #reliability ref:GH#27164
 
 - [ ] t18099 Make dispatch claim-to-worker handoff an atomic expiring lease #auto-dispatch #bug #framework #pulse #reliability ref:GH#27165
+
+- [ ] t18102 Deploy CLI, agents, and plugins as one atomic version bundle #auto-dispatch #bug #framework #reliability ref:GH#27168
+
+- [ ] t18101 Repair terminal CI failures in place on existing PR branches #auto-dispatch #bug #framework #pulse #reliability ref:GH#27167
+
+- [ ] t18100 Normalize issue dependencies before dispatch eligibility #auto-dispatch #bug #framework #pulse #reliability ref:GH#27166
