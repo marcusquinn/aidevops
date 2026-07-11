@@ -87,52 +87,43 @@ _objective_attach_durable_evidence() {
 }
 
 _objective_derive_json() {
-	local input_json="$1"
-	local repo="$2"
-	local now_epoch="$3"
-	local ttl_secs="$4"
-	printf '%s' "$input_json" | jq -c \
-		--arg repo "$repo" \
-		--argjson now "$now_epoch" \
-		--argjson ttl "$ttl_secs" '
-		def labels:
-			[(.labels // [])[] | if type == "object" then .name else . end] | map(select(type == "string"));
+	local input_json="$1" repo="$2" now_epoch="$3" ttl_secs="$4"
+	printf '%s' "$input_json" | jq -c --arg repo "$repo" --argjson now "$now_epoch" --argjson ttl "$ttl_secs" '
+		def labels: [(.labels // [])[] | if type == "object" then .name else . end] | map(select(type == "string"));
 		def has_label($name): labels | index($name) != null;
 		def has_status($name): has_label("status:" + $name);
+		def state_completed: "completed"; def state_cancelled: "cancelled"; def state_impossible: "impossible"; def action_none: "none";
+		def action_resume: "resume_session"; def action_recover_branch: "recover_branch"; def action_repair_pr: "repair_pr"; def action_redispatch: "narrow_redispatch";
 		def evidence_epoch:
 			(.evidence_timestamp // .evidence_at // .updatedAt // .updated_at // $now) as $value |
-			if ($value | type) == "number" then $value
-			elif ($value | type) == "string" then (($value | fromdateiso8601?) // ($value | tonumber?) // $now)
-			else $now end;
+			if ($value | type) == "number" then $value elif ($value | type) == "string"
+			then (($value | fromdateiso8601?) // ($value | tonumber?) // $now) else $now end;
 		def issue_number: (.number // .issue_number // 0) | tonumber;
 		def matching_pr($prs):
 			issue_number as $number |
-			first($prs[]? | select(
-				((.issue_number // 0) | tonumber) == $number or
-				((.title // "") | test("(^|[^0-9])#?" + ($number | tostring) + "([^0-9]|$)")) or
-				((.headRefName // .head_ref_name // "") | test("(^|[^0-9])" + ($number | tostring) + "([^0-9]|$)"))
-			)) // {};
+			("(^|[^0-9])#?" + ($number | tostring) + "([^0-9]|$)") as $number_pattern |
+			first($prs[]? | select(((.issue_number // 0) | tonumber) == $number or
+				((.title // "") | test($number_pattern)) or
+				((.headRefName // .head_ref_name // "") | test($number_pattern)))) // {};
 		def ladder($attempt; $authority):
 			if $attempt <= 0 then "retry_infrastructure"
-			elif $attempt == 1 then "resume_session"
-			elif $attempt == 2 then "recover_branch"
-			elif $attempt == 3 then "repair_pr"
-			elif $attempt == 4 then "narrow_redispatch"
+			elif $attempt == 1 then action_resume
+			elif $attempt == 2 then action_recover_branch
+			elif $attempt == 3 then action_repair_pr
+			elif $attempt == 4 then action_redispatch
 			elif $attempt == 5 then "model_escalation"
 			elif $attempt == 6 then "diagnostic_worker"
 			elif $authority then "decision_ready_human_packet"
 			else "diagnostic_worker" end;
 		def owner_for($action):
-			if $action == "monitor_worker" or $action == "resume_session" then "worker-supervisor"
-			elif $action == "monitor_pr" or $action == "repair_pr" then "pr-repair"
+			if $action == "monitor_worker" or $action == action_resume then "worker-supervisor"
+			elif $action == "monitor_pr" or $action == action_repair_pr then "pr-repair"
 			elif $action == "reverify_dependency" then "dependency-monitor"
 			elif $action == "decision_ready_human_packet" then "maintainer-gate"
 			elif $action == "close_issue" then "issue-reconciler"
-			elif $action == "none" then "none"
+			elif $action == action_none then action_none
 			else "pulse-dispatch" end;
-		(.issues // (if type == "array" then . else [] end)) as $issues |
-		(.prs // []) as $prs |
-		(.merged_lookup // "") as $merged_lookup |
+		(.issues // (if type == "array" then . else [] end)) as $issues | (.prs // []) as $prs | (.merged_lookup // "") as $merged_lookup |
 		[$issues[] |
 			. as $issue |
 			labels as $labels |
@@ -151,25 +142,25 @@ _objective_derive_json() {
 			(($issue.recovery_attempt // 0) | tonumber) as $attempt |
 			(($issue.recovery_comment_at // 0) | tonumber) as $recovery_comment |
 			(($issue.subsequent_action_at // 0) | tonumber) as $subsequent_action |
-			(if ($issue.state // "open" | ascii_downcase) == "closed" or $merged or has_status("done") then "completed"
-			 elif ($issue.cancelled // false) == true or has_label("status:cancelled") then "cancelled"
-			 elif ($issue.impossible // false) == true or has_label("status:impossible") then "impossible"
+			(if ($issue.state // "open" | ascii_downcase) == "closed" or $merged or has_status("done") then state_completed
+			 elif ($issue.cancelled // false) == true or has_label("status:cancelled") then state_cancelled
+			 elif ($issue.impossible // false) == true or has_label("status:impossible") then state_impossible
 			 elif $authority then "authority-blocked"
 			 elif $dependency_blocked and ($dependency_resolved | not) then "dependency-blocked"
 			 elif $has_pr_assumption then "under review"
 			 elif $lease and $process then "actively owned"
 			 else "actionable" end) as $objective_state |
 			(if $merged and (($issue.state // "open" | ascii_downcase) != "closed") then "close_issue"
-			 elif $objective_state == "completed" or $objective_state == "cancelled" or $objective_state == "impossible" then "none"
+			 elif [state_completed, state_cancelled, state_impossible] | index($objective_state) then action_none
 			 elif $authority then ladder($attempt; true)
 			 elif $dependency_blocked and ($dependency_resolved | not) then "reverify_dependency"
-			 elif $dependency_resolved then "narrow_redispatch"
+			 elif $dependency_resolved then action_redispatch
 			 elif $recovery_comment > 0 and $subsequent_action <= $recovery_comment then ladder($attempt; false)
-			 elif $has_pr_assumption and (($pr_evidence | length) == 0) then "recover_branch"
-			 elif ($checks == "fail" or $checks == "failed" or $checks == "failure") and (($issue.repair_active // false) | not) then "repair_pr"
-			 elif $lease and ($process | not) and (($issue.worktree_exists // false) == true) then "resume_session"
-			 elif $lease and ($process | not) and (($issue.branch_exists // false) == true) then "recover_branch"
-			 elif $lease and ($process | not) then "narrow_redispatch"
+			 elif $has_pr_assumption and (($pr_evidence | length) == 0) then action_recover_branch
+			 elif ($checks == "fail" or $checks == "failed" or $checks == "failure") and (($issue.repair_active // false) | not) then action_repair_pr
+			 elif $lease and ($process | not) and (($issue.worktree_exists // false) == true) then action_resume
+			 elif $lease and ($process | not) and (($issue.branch_exists // false) == true) then action_recover_branch
+			 elif $lease and ($process | not) then action_redispatch
 			 elif $objective_state == "under review" then "monitor_pr"
 			 elif $objective_state == "actively owned" then "monitor_worker"
 			 else "dispatch_objective" end) as $next_action |
@@ -181,19 +172,16 @@ _objective_derive_json() {
 				execution_path_state: ($issue.execution_path_state // (if $process then "running" elif $lease then "leased" elif $has_pr_assumption then "review" else "idle" end)),
 				evidence_timestamp: $evidence,
 				assumption_expires_at: $expiry,
-				assumption_expired: (($objective_state != "completed" and $objective_state != "cancelled" and $objective_state != "impossible") and $expiry <= $now),
+				assumption_expired: (([state_completed, state_cancelled, state_impossible] | index($objective_state) | not) and $expiry <= $now),
 				next_action: $next_action,
 				trigger_at: (if $next_action == "none" then null else $expiry end),
 				responsible_component: owner_for($next_action),
 				recovery_attempt: $attempt,
-				preservation: {
-					commits: ($issue.commits_preserved // false),
-					logs: ($issue.logs_preserved // false),
-					verification: ($issue.verification_preserved // false)
-				}
+				preservation: {commits: ($issue.commits_preserved // false), logs: ($issue.logs_preserved // false),
+					verification: ($issue.verification_preserved // false)}
 			} |
-			.unattended = ((.objective_state != "completed" and .objective_state != "cancelled" and .objective_state != "impossible") and
-				((.next_action == "" or .next_action == "none" or .trigger_at == null or .responsible_component == "") or .assumption_expired))
+			.unattended = (([state_completed, state_cancelled, state_impossible] | index($objective_state) | not) and
+				((.next_action == "" or .next_action == action_none or .trigger_at == null or .responsible_component == "") or .assumption_expired))
 		]'
 	return $?
 }
@@ -243,8 +231,11 @@ _objective_summary() {
 		return 0
 	fi
 	jq -c '
+		def state_completed: "completed";
+		def state_cancelled: "cancelled";
+		def state_impossible: "impossible";
 		(.objectives // []) as $items |
-		[$items[] | select(.objective_state != "completed" and .objective_state != "cancelled" and .objective_state != "impossible")] as $open |
+		[$items[] | .objective_state as $state | select(([state_completed, state_cancelled, state_impossible] | index($state)) == null)] as $open |
 		{
 			total: ($items | length),
 			nonterminal: ($open | length),
