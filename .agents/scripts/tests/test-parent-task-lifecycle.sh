@@ -419,6 +419,25 @@ assert_grep_fixed \
 	'<!-- parent-close-contract: needs-decomposition -->' \
 	"$WRAPPER_TARGET"
 
+# Exercise inline-body mutation directly. Sourcing defines the helper without
+# invoking any GitHub operations; body-file cleanup is covered by wrapper tests.
+# shellcheck source=/dev/null
+source "$WRAPPER_TARGET"
+_gh_ci_prepare_parent_close_contract 1 --body $'## Phases\n\n- Phase 1 - deliver #101' --label parent-task
+contract_args=$(printf '%s\n' "${_GH_CI_CONTRACT_ARGS[@]}")
+assert_contains "B10e: canonical phase body receives phase-plan contract" \
+	'<!-- parent-close-contract: phase-plan -->' "$contract_args"
+
+_gh_ci_prepare_parent_close_contract 1 --body $'## Children\n\n- #101\n- #102' --label parent-task
+contract_args=$(printf '%s\n' "${_GH_CI_CONTRACT_ARGS[@]}")
+assert_contains "B10f: children body records expected child count" \
+	'<!-- parent-close-contract: expected-children=2 -->' "$contract_args"
+
+_gh_ci_prepare_parent_close_contract 0 --body 'ordinary leaf issue' --label bug
+contract_args=$(printf '%s\n' "${_GH_CI_CONTRACT_ARGS[@]}")
+assert_not_contains "B10g: non-parent issue body remains unstamped" \
+	'<!-- parent-close-contract:' "$contract_args"
+
 # ============================================================
 echo ""
 echo "${TEST_BLUE}=== Results: ${TESTS_RUN} tests, ${TESTS_FAILED} failed ===${TEST_NC}"
