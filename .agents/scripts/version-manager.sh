@@ -445,17 +445,7 @@ _release_dry_run() {
 
 # Handle the "release" action: full release pipeline.
 # Arguments: bump_type [flags...] (all positional args from main, starting at $1=bump_type)
-_main_release() {
-	local bump_type="$1"
-	shift
-
-	if [[ -z "$bump_type" ]]; then
-		print_error "Bump type required. Usage: $0 release [major|minor|patch]"
-		exit 1
-	fi
-
-	# Parse flags (can be in any order after bump_type)
-	local force_flag=0 skip_preflight=0 allow_dirty=0 hotfix_flag=0 dry_run=0 source_pr=""
+_parse_release_args() {
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
 		--force) force_flag=1; shift ;;
@@ -471,6 +461,21 @@ _main_release() {
 		*) print_error "Unknown release option: $1"; return 1 ;;
 		esac
 	done
+	return 0
+}
+
+_main_release() {
+	local bump_type="$1"
+	shift
+
+	if [[ -z "$bump_type" ]]; then
+		print_error "Bump type required. Usage: $0 release [major|minor|patch]"
+		exit 1
+	fi
+
+	# Parse flags (can be in any order after bump_type)
+	local force_flag=0 skip_preflight=0 allow_dirty=0 hotfix_flag=0 dry_run=0 source_pr=""
+	_parse_release_args "$@" || return 1
 
 	# Hotfix releases are restricted to patch bumps and require maintainer identity
 	if [[ "$hotfix_flag" -eq 1 ]]; then

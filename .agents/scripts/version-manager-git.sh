@@ -169,11 +169,12 @@ verify_release_source_pr() {
 		return 1
 	}
 	if ! printf '%s' "$pr_json" | jq -e --arg branch "$branch" '
+		def present: ((. // "") | length > 0);
 		(.state == "MERGED")
-		and ((.mergedAt // "") != "")
+		and (.mergedAt | present)
 		and (.baseRefName == $branch)
-		and ((.headRefOid // "") != "")
-		and ((.mergeCommit.oid // "") != "")
+		and (.headRefOid | present)
+		and (.mergeCommit.oid | present)
 	' >/dev/null; then
 		print_error "Source PR #${source_pr} lacks verified MERGED provenance for ${branch}"
 		return 1
