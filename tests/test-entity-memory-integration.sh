@@ -487,6 +487,9 @@ test_privacy_filtering_output() {
 	entity_id=$(create_entity "Output Privacy" "person" "email" "user@example.com")
 	local conv_id
 	conv_id=$(create_conversation "$entity_id" "email" "user@example.com" "Privacy output test")
+	"$ENTITY_HELPER" profile-update "$entity_id" --key "private_contact" \
+		--value "profile.owner@example.com from 10.20.30.40" \
+		--evidence "privacy regression fixture" >/dev/null 2>&1
 
 	# Add message with email and IP
 	"$CONV_HELPER" add-message "$conv_id" \
@@ -498,8 +501,43 @@ test_privacy_filtering_output() {
 	filtered_context=$("$CONV_HELPER" context "$conv_id" --privacy-filter 2>&1)
 	assert_not_contains "$filtered_context" "alice@secret.com" "Email redacted in privacy-filtered output"
 	assert_not_contains "$filtered_context" "192.168.1.100" "IP redacted in privacy-filtered output"
+	assert_not_contains "$filtered_context" "profile.owner@example.com" "Profile email redacted in conversation context"
+	assert_not_contains "$filtered_context" "10.20.30.40" "Profile IP redacted in conversation context"
 	assert_contains "$filtered_context" "[EMAIL]" "Email replaced with [EMAIL] placeholder"
 	assert_contains "$filtered_context" "[IP]" "IP replaced with [IP] placeholder"
+
+	local filtered_conversation_json
+	filtered_conversation_json=$("$CONV_HELPER" context "$conv_id" --json --privacy-filter 2>&1)
+	assert_not_contains "$filtered_conversation_json" "user@example.com" "Conversation JSON redacts channel email"
+	assert_not_contains "$filtered_conversation_json" "profile.owner@example.com" "Conversation JSON redacts profile email"
+	assert_not_contains "$filtered_conversation_json" "10.20.30.40" "Conversation JSON redacts profile IP"
+	local conversation_json_valid=0
+	if jq -e . >/dev/null 2>&1 <<<"$filtered_conversation_json"; then
+		conversation_json_valid=1
+	fi
+	assert_eq "1" "$conversation_json_valid" "Conversation JSON remains valid after privacy filtering"
+
+	# Entity-level context uses an independent rendering path and must apply the
+	# same portable privacy contract.
+	local filtered_entity_context
+	filtered_entity_context=$("$ENTITY_HELPER" context "$entity_id" --privacy-filter 2>&1)
+	assert_not_contains "$filtered_entity_context" "alice@secret.com" "Entity context redacts email"
+	assert_not_contains "$filtered_entity_context" "192.168.1.100" "Entity context redacts IP"
+	assert_not_contains "$filtered_entity_context" "user@example.com" "Entity context redacts channel email"
+	assert_not_contains "$filtered_entity_context" "profile.owner@example.com" "Entity context redacts profile email"
+	assert_contains "$filtered_entity_context" "[EMAIL]" "Entity context emits [EMAIL] placeholder"
+	assert_contains "$filtered_entity_context" "[IP]" "Entity context emits [IP] placeholder"
+
+	local filtered_entity_json
+	filtered_entity_json=$("$ENTITY_HELPER" context "$entity_id" --json --privacy-filter 2>&1)
+	assert_not_contains "$filtered_entity_json" "user@example.com" "Entity JSON redacts channel email"
+	assert_not_contains "$filtered_entity_json" "profile.owner@example.com" "Entity JSON redacts profile email"
+	assert_not_contains "$filtered_entity_json" "10.20.30.40" "Entity JSON redacts profile IP"
+	local entity_json_valid=0
+	if jq -e . >/dev/null 2>&1 <<<"$filtered_entity_json"; then
+		entity_json_valid=1
+	fi
+	assert_eq "1" "$entity_json_valid" "Entity JSON remains valid after privacy filtering"
 
 	# Load context without privacy filter — should show raw data
 	local raw_context

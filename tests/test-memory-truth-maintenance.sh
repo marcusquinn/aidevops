@@ -8,6 +8,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)" || exit
 MEMORY_HELPER="$REPO_ROOT/.agents/scripts/memory-helper.sh"
+EMBEDDINGS_ENGINE_LIB="$REPO_ROOT/.agents/scripts/memory-embeddings-helper-engine.sh"
 
 TESTS_RUN=0
 TESTS_PASSED=0
@@ -208,6 +209,105 @@ EOF
 	return 0
 }
 
+test_semantic_engine_uses_truth_state() {
+	TESTS_RUN=$((TESTS_RUN + 1))
+	local test_dir
+	test_dir=$(setup_memory_dir)
+	local test_db="$test_dir/memory.db"
+	local engine_path="$test_dir/embeddings-engine.py"
+	local myth_id=""
+	local live_id=""
+	local old_id=""
+	local new_id=""
+	local rc=0
+
+	myth_id=$(store_memory_id "$test_dir" --content "semantic myth epsilon marker is obsolete" --type FAILURE_PATTERN --confidence high)
+	live_id=$(store_memory_id "$test_dir" --content "semantic epsilon marker current source is verified" --type WORKING_SOLUTION --confidence high)
+	store_memory_id "$test_dir" --content "semantic epsilon evidence disproves obsolete myth" --type ERROR_FIX --confidence high --debunks "$myth_id" --replacement "$live_id" --evidence "Regression test" >/dev/null
+	old_id=$(store_memory_id "$test_dir" --content "semantic zeta marker uses old guidance" --type TOOL_CONFIG --confidence high)
+	new_id=$(store_memory_id "$test_dir" --content "semantic zeta marker uses current guidance" --type TOOL_CONFIG --confidence high --supersedes "$old_id" --relation updates)
+
+	(
+		SCRIPT_DIR="$REPO_ROOT/.agents/scripts"
+		PYTHON_SCRIPT="$engine_path"
+		MEMORY_DIR="$test_dir"
+		CONFIG_FILE="$test_dir/.embeddings-config"
+		LOCAL_MODEL_NAME="all-MiniLM-L6-v2"
+		LOCAL_EMBEDDING_DIM=384
+		OPENAI_EMBEDDING_DIM=1536
+		# shellcheck source=../.agents/scripts/shared-constants.sh
+		source "$REPO_ROOT/.agents/scripts/shared-constants.sh"
+		# shellcheck source=../.agents/scripts/memory-embeddings-helper-engine.sh
+		source "$EMBEDDINGS_ENGINE_LIB"
+		create_python_engine
+	) || rc=$?
+
+	if [[ "$rc" -eq 0 ]]; then
+		python3 - "$engine_path" "$test_db" "$myth_id" "$live_id" "$old_id" "$new_id" <<'PYEOF' || rc=$?
+import ast
+import sqlite3
+import sys
+
+engine_path, db_path, myth_id, live_id, old_id, new_id = sys.argv[1:]
+with open(engine_path, encoding="utf-8") as engine_file:
+    tree = ast.parse(engine_file.read(), filename=engine_path)
+
+functions = {
+    node.name: node for node in tree.body
+    if isinstance(node, ast.FunctionDef)
+    and node.name in {"_memory_is_live", "_hybrid_semantic_search"}
+}
+module = ast.Module(body=list(functions.values()), type_ignores=[])
+namespace = {"sqlite3": sqlite3}
+exec(compile(ast.fix_missing_locations(module), engine_path, "exec"), namespace)
+
+connection = sqlite3.connect(db_path)
+try:
+    assert not namespace["_memory_is_live"](connection, myth_id)
+    assert namespace["_memory_is_live"](connection, live_id)
+    assert not namespace["_memory_is_live"](connection, old_id)
+    assert namespace["_memory_is_live"](connection, new_id)
+finally:
+    connection.close()
+
+class FakeEmbeddingConnection:
+    def execute(self, _query, _params):
+        return self
+
+    def fetchall(self):
+        return [
+            ("stale-1", [0.99], 1),
+            ("stale-2", [0.98], 1),
+            ("stale-3", [0.97], 1),
+            ("live-lower-ranked", [0.50], 1),
+        ]
+
+    def close(self):
+        return None
+
+namespace.update({
+    "get_embedding_dim": lambda _provider: 1,
+    "embed_text": lambda _query, _provider: [1.0],
+    "init_embeddings_db": lambda _path: FakeEmbeddingConnection(),
+    "unpack_embedding": lambda blob, _dim: blob,
+    "cosine_similarity": lambda _query, stored: stored[0],
+})
+semantic_candidates = namespace["_hybrid_semantic_search"]("local", "unused", "query")
+assert len(semantic_candidates) == 4
+assert semantic_candidates[-1][0] == "live-lower-ranked"
+PYEOF
+	fi
+
+	if [[ "$rc" -eq 0 ]]; then
+		pass "semantic engine suppresses debunked and superseded memories"
+	else
+		fail "semantic engine suppresses debunked and superseded memories" "generated engine check failed"
+	fi
+
+	rm -rf "$test_dir"
+	return 0
+}
+
 main() {
 	echo ""
 	echo "=== Memory Truth Maintenance Tests ==="
@@ -218,6 +318,7 @@ main() {
 	test_updates_hide_superseded_memory
 	test_validate_reports_truth_state
 	test_migrates_old_relation_constraint
+	test_semantic_engine_uses_truth_state
 
 	echo ""
 	echo "=== Results: $TESTS_PASSED/$TESTS_RUN passed, $TESTS_FAILED failed ==="

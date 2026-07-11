@@ -217,6 +217,19 @@ cmd_log_interaction() {
 # =============================================================================
 
 #######################################
+# Redact sensitive values from a complete entity context payload.
+# Args: payload
+#######################################
+_entity_redact_context_payload() {
+	local payload="$1"
+	printf '%s\n' "$payload" | sed -E \
+		-e 's/[[:alnum:]._+%-]+@[[:alnum:].-]+\.[[:alpha:]]{2,}/[EMAIL]/g' \
+		-e 's/([[:digit:]]{1,3}\.){3}[[:digit:]]{1,3}/[IP]/g' \
+		-e 's/sk-[[:alnum:]_-]{20,}/[API_KEY]/g'
+	return 0
+}
+
+#######################################
 # Emit JSON context for an entity (entity + channels + profile + interactions).
 # Args: esc_id channel_clause limit
 #######################################
@@ -315,11 +328,11 @@ EOF
 		echo "  (no interactions)"
 	else
 		if [[ "$privacy_filter" == true ]]; then
-			# Apply privacy filtering to output (sed required: regex quantifiers/char classes/word boundaries)
-			interactions=$(sed \
-				-e 's/[a-zA-Z0-9._%+-]\+@[a-zA-Z0-9.-]\+\.[a-zA-Z]\{2,\}/[EMAIL]/g' \
-				-e 's/\b[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}\b/[IP]/g' \
-				-e 's/sk-[a-zA-Z0-9_-]\{20,\}/[API_KEY]/g' <<<"$interactions")
+			# POSIX ERE keeps output filtering portable across BSD and GNU sed.
+			interactions=$(printf '%s\n' "$interactions" | sed -E \
+				-e 's/[[:alnum:]._+%-]+@[[:alnum:].-]+\.[[:alpha:]]{2,}/[EMAIL]/g' \
+				-e 's/([[:digit:]]{1,3}\.){3}[[:digit:]]{1,3}/[IP]/g' \
+				-e 's/sk-[[:alnum:]_-]{20,}/[API_KEY]/g')
 		fi
 		echo "$interactions"
 	fi
@@ -374,10 +387,17 @@ cmd_context() {
 		channel_clause="AND i.channel = '$(sql_escape "$channel_filter")'"
 	fi
 
+	local context_output=""
 	if [[ "$format" == "json" ]]; then
-		_context_json "$esc_id" "$channel_clause" "$limit"
+		context_output=$(_context_json "$esc_id" "$channel_clause" "$limit")
 	else
-		_context_text "$entity_id" "$esc_id" "$channel_clause" "$limit" "$privacy_filter"
+		context_output=$(_context_text "$entity_id" "$esc_id" "$channel_clause" "$limit" "$privacy_filter")
+	fi
+
+	if [[ "$privacy_filter" == true ]]; then
+		_entity_redact_context_payload "$context_output"
+	else
+		printf '%s\n' "$context_output"
 	fi
 
 	return 0

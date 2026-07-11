@@ -34,6 +34,7 @@ Skip if you lack Edit/Write/Bash tools. Otherwise, before any file modification 
 ### Mission and style
 
 - Maximise development/operations ROI: leverage, efficiency, self-healing, gap awareness, verified outcomes, traceable git history.
+- Treat human attention as the scarcest resource: use AI context, compute, tools, and verification to resolve safe work autonomously; interrupt people only for taste, inaccessible context, consequential ambiguity, authority, or unknown secrets. Detailed responsibility and escalation model: `reference/self-improvement.md`.
 - Never generate or guess URLs. Use only URLs from user messages, tool output, or files.
 - Short, objective, GitHub-flavoured Markdown. No emojis unless requested. No preamble/postamble. Turn-end progress/status ≤200 words.
 - Every prompt, issue, PR, comment, and brief is mentorship: include file, pattern, and verification context.
@@ -46,6 +47,8 @@ Skip if you lack Edit/Write/Bash tools. Otherwise, before any file modification 
 - Use TodoWrite for multi-step work. Mark one task in progress and complete items immediately.
 - Infer task intent: `/full-loop` or "work on this now" means implement now; "background/worker" means create a worker-ready brief and auto-dispatch; "later/save/log" means brief for later and ask numbered dispatch options. Task and issue bodies use `workflows/brief.md`. Details: `reference/task-lifecycle.md`.
 - Keep interactive subagents off the critical path and bounded; prefix delegated prompts with the lowest sufficient `[effort:simple|standard|thinking]`; details: `reference/agent-routing.md`.
+- When a context-rich session has already established safe, actionable work and the user authorises execution, preserve momentum through implementation and verification in that session; do not defer merely to reduce the current session's scope.
+- Run long checks and waits in the background when the runtime permits; poll at bounded intervals, act on completed gates promptly, and keep the user informed instead of disappearing behind one foreground command. Details: `reference/self-improvement.md`.
 - When UI/UX, branding, iconography, or visual preferences change during a session, update the repo `DESIGN.md` in the same PR or create a worker-ready follow-up if blocked.
 - During in-progress work, classify new user messages before acting: immediate correction/steerage changes the active plan; supplemental context is retained/applied when relevant; follow-up work becomes a todo after the current work reaches a safe pause or completion point.
 - Interactive sessions with active prior task context: if the user starts a clearly unrelated objective where clean context would materially help, briefly recommend `/new` or a new tab and ask whether to continue here. Details: `reference/session.md`.

@@ -19,6 +19,7 @@ REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SCRIPTS_DIR="$REPO_DIR/.agents/scripts"
 MEMORY_SCRIPT="$SCRIPTS_DIR/memory-helper.sh"
 MAIL_SCRIPT="$SCRIPTS_DIR/mail-helper.sh"
+ENTITY_SCRIPT="$SCRIPTS_DIR/entity-helper.sh"
 
 # --- Test Framework ---
 PASS_COUNT=0
@@ -64,6 +65,38 @@ trap 'rm -rf "$TEST_DIR"' EXIT
 # Helper: run memory command
 mem() {
 	bash "$MEMORY_SCRIPT" "$@" 2>&1
+}
+
+assert_scoped_recall_rejected() {
+	local label="$1"
+	shift
+	local output=""
+	local rc=0
+	output=$(mem recall --query "scoped semantic leak marker" "$@") || rc=$?
+	if [[ "$rc" -ne 0 && "$output" == *"does not support scoped filters"* &&
+		"$output" != *"must-not-leak"* ]]; then
+		pass "$label"
+	else
+		fail "$label" "rc=$rc output=$output"
+	fi
+	return 0
+}
+
+extract_json_payload() {
+	local output="$1"
+	local line=""
+	local json=""
+	local capturing=0
+	while IFS= read -r line; do
+		if [[ "$line" == \[* ]]; then
+			capturing=1
+		fi
+		if [[ "$capturing" -eq 1 ]]; then
+			json+="$line"$'\n'
+		fi
+	done <<<"$output"
+	printf '%s' "$json"
+	return 0
 }
 
 # Helper: run mail command
@@ -684,6 +717,41 @@ if echo "$hybrid_output" | grep -qiE "not available|setup|error|not found"; then
 else
 	# It might also succeed if embeddings happen to be available
 	pass "memory recall --hybrid flag accepted"
+fi
+
+# Scoped semantic/hybrid queries must fail closed until the embedding path can
+# apply the same project/type/entity/age filters as keyword recall.
+mem store --content "scoped semantic leak marker must-not-leak" --type WORKING_SOLUTION --tags "scope-test" >/dev/null
+entity_output=$(AIDEVOPS_MEMORY_DIR="$AIDEVOPS_MEMORY_DIR" "$ENTITY_SCRIPT" create --name "Semantic Scope Test" --type person 2>&1)
+entity_id=$(printf '%s\n' "$entity_output" | sed -n 's/.*\(ent_[a-zA-Z0-9_]*\).*/\1/p' | tail -1)
+
+for semantic_mode in --semantic --hybrid; do
+	assert_scoped_recall_rejected "$semantic_mode rejects --type" "$semantic_mode" --type WORKING_SOLUTION
+	assert_scoped_recall_rejected "$semantic_mode rejects --max-age-days" "$semantic_mode" --max-age-days 30
+	assert_scoped_recall_rejected "$semantic_mode rejects --project" "$semantic_mode" --project sample-project
+	assert_scoped_recall_rejected "$semantic_mode rejects --entity" "$semantic_mode" --entity "$entity_id"
+	assert_scoped_recall_rejected "$semantic_mode rejects --auto-only" "$semantic_mode" --auto-only
+	assert_scoped_recall_rejected "$semantic_mode rejects --manual-only" "$semantic_mode" --manual-only
+	assert_scoped_recall_rejected "$semantic_mode rejects --shared" "$semantic_mode" --shared
+done
+
+for incompatible_mode in --semantic --hybrid --shared; do
+	recent_rc=0
+	recent_output=$(mem recall --recent "$incompatible_mode" --type WORKING_SOLUTION --json) || recent_rc=$?
+	if [[ "$recent_rc" -ne 0 && "$recent_output" == *"--recent cannot be combined"* &&
+		"$recent_output" != *"must-not-leak"* ]]; then
+		pass "--recent rejects $incompatible_mode"
+	else
+		fail "--recent did not reject $incompatible_mode" "rc=$recent_rc output=$recent_output"
+	fi
+done
+
+recent_typed_output=$(mem recall --recent --type USER_PREFERENCE --json)
+recent_typed_output=$(extract_json_payload "$recent_typed_output")
+if jq -e 'all(.type == "USER_PREFERENCE")' >/dev/null 2>&1 <<<"$recent_typed_output"; then
+	pass "--recent applies supported type filters"
+else
+	fail "--recent ignored supported type filter" "$recent_typed_output"
 fi
 
 section "Embeddings: Config File Format"

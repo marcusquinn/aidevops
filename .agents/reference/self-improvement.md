@@ -3,7 +3,18 @@
 
 # Self-Improvement
 
-Every session must improve the system. Fix the process, not the symptom.
+Every session should deliver verified value or leave an auditable signal. Fix the process, not the symptom, but promote only scoped, reusable, evidence-backed learning rather than preserving every observation.
+
+## Human Attention and Responsibility
+
+Optimise for **verified value per unit of human attention**. Human time is a constrained, high-value input, not a routine approval mechanism.
+
+- **AI owns routine leverage:** remember details, inspect accumulated context, discover opportunities, compare options, estimate risk, implement and verify reversible improvements, measure outcomes, and maintain consistency across the harness.
+- **Humans supply exclusive inputs:** taste, lived experience, inaccessible or offline context, personal values, feedback from reality, and authority for consequential or irreversible commitments.
+- **Escalate by expected value:** before interrupting, determine whether existing evidence, a safe test, a reversible action, or a scoped inference can resolve the question. Ask only when human input is materially irreplaceable.
+- **Learn preferences autonomously:** infer and apply low-risk, reversible preferences within the narrowest supported scope. Seek confirmation when preferences conflict, scope is materially uncertain, or consequences are difficult to reverse. Personal evidence must not silently become universal policy.
+- **Make autonomous work observable:** launch long checks, CI waits, and worker monitoring in the background when possible; poll at bounded intervals, process results as soon as they are terminal, and report meaningful gate transitions. A synchronous foreground wait that leaves the user unable to distinguish work from a stall wastes attention.
+- **Measure returned time:** track useful work completed, recurring work eliminated, interruptions avoided, correction rate, and free time created—not merely tasks, tokens, or memories accumulated.
 
 ## Core Workflow
 
@@ -49,6 +60,7 @@ Use `framework-issue-helper.sh`, not `claim-task-id.sh`:
 Treat valuable session learning as system input, not disposable transcript context. Outliers are expensive to find intentionally; when one appears during normal work, convert it into reusable system knowledge before it evaporates.
 
 - **Apply now** when the lesson directly improves the user's requested aim without widening risk.
+- **Preserve context momentum:** when the session has enough evidence, authorization, and safe execution paths, continue through implementation and verification instead of handing reconstruction cost to a future session. Defer only for a real dependency, safety boundary, resource fuse, or explicit user choice.
 - **Brief for workers** when the lesson exposes a fixable bug, missing validator, missing doc, recurring failure mode, or automation gap. Use worker-ready context: files, pattern, evidence, verification, and an explicit note when paths are unknown.
 - **Store memory/reference** when the lesson is reusable but not immediately dispatchable, especially diagnostics, edge cases, duplicate patterns, and "similar but different" hazards.
 - **Route design learning by scope:** durable repo-specific UI patterns belong in that repo's `DESIGN.md`; generic aidevops briefing/verification patterns become aidevops issues with anonymised evidence; uncertain or broad design lessons become worker-ready follow-ups instead of bloating global docs.

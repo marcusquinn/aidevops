@@ -90,7 +90,7 @@ Runs on every `store` (at most once per 24h). Removes entries older than 90 days
 
 ## Semantic Search (Opt-in)
 
-Providers: `local` (all-MiniLM-L6-v2, 384d, Python 3.9+ sentence-transformers ~90MB) or `openai` (text-embedding-3-small, 1536d, requires API key). Search modes: keyword (default, FTS5 BM25), `--semantic` (vector similarity), `--hybrid` (keyword + semantic via RRF). Hybrid recommended for natural language queries. New memories auto-indexed once configured. See CLI Reference for setup commands.
+Providers: `local` (all-MiniLM-L6-v2, 384d, Python 3.9+ sentence-transformers ~90MB) or `openai` (text-embedding-3-small, 1536d, requires API key). Search modes: keyword (default, FTS5 BM25), `--semantic` (vector similarity), `--hybrid` (keyword + semantic via RRF). Semantic and hybrid results exclude debunked, retracted, and superseded memories. Until their query engine supports the keyword path's scope filters, combining semantic/hybrid mode with `--type`, `--project`, `--entity`, `--max-age-days`, capture-source filters, or `--shared` fails closed; use keyword recall for those queries. Hybrid is recommended for unscoped natural-language queries. New memories auto-indexed once configured. See CLI Reference for setup commands.
 
 ## Retrieval Feedback Loop
 
@@ -113,7 +113,7 @@ Handled by cross-session memory and pulse supervisor outcome observation (Step 2
 
 ## Memory Graduation
 
-Graduate validated local memories (`confidence = "high"` OR `access_count >= 3`) into shared docs. Appends to `.agents/aidevops/graduated-learnings.md`. **Slash command**: `/graduate-memories` or `/graduate-memories --dry-run`. See CLI Reference for commands.
+Graduate validated, live, unsuperseded local memories (`confidence = "high"` OR `access_count >= 3`) into shared docs. `USER_PREFERENCE` memories remain in their user/project scope and never auto-graduate into all-user guidance. Appends to `.agents/aidevops/graduated-learnings.md`. **Slash command**: `/graduate-memories` or `/graduate-memories --dry-run`. See CLI Reference for commands.
 
 ## Memory Audit Pulse
 

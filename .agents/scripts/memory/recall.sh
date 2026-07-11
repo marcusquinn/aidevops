@@ -186,13 +186,14 @@ _recall_build_auto_filter() {
 
 #######################################
 # Build extra SQL filters (type, age, project)
-# Usage: _recall_build_extra_filters <type_filter> <max_age_days> <project_filter>
+# Usage: _recall_build_extra_filters <type_filter> <max_age_days> <project_filter> [column_prefix]
 # Outputs: SQL fragment or exits non-zero on validation error
 #######################################
 _recall_build_extra_filters() {
 	local type_filter="$1"
 	local max_age_days="$2"
 	local project_filter="$3"
+	local column_prefix="${4:-}"
 	local extra_filters=""
 
 	if [[ -n "$type_filter" ]]; then
@@ -202,21 +203,21 @@ _recall_build_extra_filters() {
 			log_error "Valid types: $VALID_TYPES"
 			return 1
 		fi
-		extra_filters="$extra_filters AND type = '$type_filter'"
+		extra_filters="$extra_filters AND ${column_prefix}type = '$type_filter'"
 	fi
 	if [[ -n "$max_age_days" ]]; then
 		if ! [[ "$max_age_days" =~ ^[0-9]+$ ]]; then
 			log_error "--max-age-days must be a positive integer"
 			return 1
 		fi
-		extra_filters="$extra_filters AND created_at >= datetime('now', '-$max_age_days days')"
+		extra_filters="$extra_filters AND ${column_prefix}created_at >= datetime('now', '-$max_age_days days')"
 	fi
 	if [[ -n "$project_filter" ]]; then
 		local escaped_project="${project_filter//"'"/"''"}"
 		escaped_project="${escaped_project//\\/\\\\}"
 		escaped_project="${escaped_project//%/\\%}"
 		escaped_project="${escaped_project//_/\\_}"
-		extra_filters="$extra_filters AND project_path LIKE '%$escaped_project%' ESCAPE '\\'"
+		extra_filters="$extra_filters AND ${column_prefix}project_path LIKE '%$escaped_project%' ESCAPE '\\'"
 	fi
 
 	printf '%s' "$extra_filters"
@@ -396,7 +397,7 @@ _recall_shared_search() {
 
 #######################################
 # Handle --recent mode: query and print recent memories
-# Usage: _recall_recent <db> <entity_join> <entity_where> <auto_filter> <limit> <format>
+# Usage: _recall_recent <db> <entity_join> <entity_where> <auto_filter> <limit> <format> <extra_filters>
 #######################################
 _recall_recent() {
 	local db_path="$1"
@@ -405,9 +406,10 @@ _recall_recent() {
 	local auto_filter="$4"
 	local limit="$5"
 	local format="$6"
+	local extra_filters="$7"
 
 	local results
-	results=$(db -json "$db_path" "SELECT l.id, l.content, l.type, l.tags, l.confidence, l.created_at, COALESCE(a.last_accessed_at, '') as last_accessed_at, COALESCE(a.access_count, 0) as access_count, COALESCE(a.auto_captured, 0) as auto_captured, COALESCE(a.usefulness_score, 0.0) as usefulness_score, COALESCE(latest_truth.status, 'live') as truth_status, COALESCE(latest_truth.evidence, '') as truth_evidence, COALESCE(latest_truth.replacement_id, '') as replacement_id, COALESCE(superseded_by.id, '') as superseded_by FROM learnings l LEFT JOIN learning_access a ON l.id = a.id LEFT JOIN learning_truth_events latest_truth ON latest_truth.event_id = (SELECT event_id FROM learning_truth_events truth_pick WHERE truth_pick.memory_id = l.id ORDER BY truth_pick.created_at DESC, truth_pick.event_id DESC LIMIT 1) LEFT JOIN learning_relations superseded_by ON superseded_by.supersedes_id = l.id AND superseded_by.relation_type = 'updates' $entity_join WHERE 1=1 $entity_where $auto_filter AND COALESCE(latest_truth.status, 'live') NOT IN ('debunked', 'retracted') AND superseded_by.id IS NULL ORDER BY l.created_at DESC LIMIT $limit;")
+	results=$(db -json "$db_path" "SELECT l.id, l.content, l.type, l.tags, l.confidence, l.created_at, COALESCE(a.last_accessed_at, '') as last_accessed_at, COALESCE(a.access_count, 0) as access_count, COALESCE(a.auto_captured, 0) as auto_captured, COALESCE(a.usefulness_score, 0.0) as usefulness_score, COALESCE(latest_truth.status, 'live') as truth_status, COALESCE(latest_truth.evidence, '') as truth_evidence, COALESCE(latest_truth.replacement_id, '') as replacement_id, COALESCE(superseded_by.id, '') as superseded_by FROM learnings l LEFT JOIN learning_access a ON l.id = a.id LEFT JOIN learning_truth_events latest_truth ON latest_truth.event_id = (SELECT event_id FROM learning_truth_events truth_pick WHERE truth_pick.memory_id = l.id ORDER BY truth_pick.created_at DESC, truth_pick.event_id DESC LIMIT 1) LEFT JOIN learning_relations superseded_by ON superseded_by.supersedes_id = l.id AND superseded_by.relation_type = 'updates' $entity_join WHERE 1=1 $entity_where $auto_filter $extra_filters AND COALESCE(latest_truth.status, 'live') NOT IN ('debunked', 'retracted') AND superseded_by.id IS NULL ORDER BY l.created_at DESC LIMIT $limit;")
 	if [[ "$format" == "json" ]]; then
 		printf '%s\n' "$results"
 	else
@@ -620,7 +622,13 @@ cmd_recall() {
 
 	# Handle --recent mode (no query required)
 	if [[ "$recent_mode" == true ]]; then
-		_recall_recent "$MEMORY_DB" "$entity_join" "$entity_where" "$auto_filter" "$limit" "$format"
+		if [[ "$semantic_mode" == true || "$hybrid_mode" == true || "$shared_mode" == true ]]; then
+			log_error "--recent cannot be combined with --semantic, --hybrid, or --shared"
+			return 1
+		fi
+		local recent_extra_filters=""
+		recent_extra_filters=$(_recall_build_extra_filters "$type_filter" "$max_age_days" "$project_filter" "l.") || return $?
+		_recall_recent "$MEMORY_DB" "$entity_join" "$entity_where" "$auto_filter" "$limit" "$format" "$recent_extra_filters"
 		return 0
 	fi
 
@@ -631,6 +639,15 @@ cmd_recall() {
 
 	# Handle --semantic or --hybrid mode (delegate to embeddings helper)
 	if [[ "$semantic_mode" == true || "$hybrid_mode" == true ]]; then
+		# Semantic retrieval currently owns truth maintenance but does not yet
+		# implement the keyword path's scope/type/age/capture/shared filters. Fail
+		# closed instead of silently returning out-of-scope memories.
+		if [[ -n "$type_filter" || -n "$max_age_days" || -n "$project_filter" ||
+			-n "$entity_filter" || "$auto_only" == true || "$manual_only" == true ||
+			"$shared_mode" == true ]]; then
+			log_error "Semantic/hybrid recall does not support scoped filters yet; use keyword recall for --type, --max-age-days, --project, --entity, --auto-only, --manual-only, or --shared"
+			return 1
+		fi
 		_recall_semantic "$query" "$limit" "$hybrid_mode" "$format"
 		return $?
 	fi
