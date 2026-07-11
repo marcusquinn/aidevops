@@ -1,7 +1,7 @@
 ---
 description: "YouTube channel intelligence - competitor profiling, outlier detection, content DNA analysis"
 mode: subagent
-model: sonnet
+model: standard
 tools:
   read: true
   write: false

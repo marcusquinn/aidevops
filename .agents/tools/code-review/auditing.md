@@ -1,6 +1,7 @@
 ---
 description: Code auditing services and security analysis
 mode: subagent
+steps: 12
 tools:
   read: true
   write: false
@@ -9,7 +10,7 @@ tools:
   glob: true
   grep: true
   webfetch: true
-  task: true
+  task: false
 ---
 
 <!-- SPDX-License-Identifier: MIT -->

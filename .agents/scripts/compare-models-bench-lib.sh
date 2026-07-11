@@ -466,7 +466,7 @@ Respond with ONLY a valid JSON object mapping model names to scores:
 No explanation, no markdown, just the JSON object."
 
 	local judge_result
-	judge_result=$("$ai_helper" --prompt "$judge_prompt" --model haiku --max-tokens 200 2>/dev/null || echo "")
+	judge_result=$("$ai_helper" --prompt "$judge_prompt" --model simple --max-tokens 200 2>/dev/null || echo "")
 
 	if [[ -z "$judge_result" ]]; then
 		print_warning "Judge returned no output"
@@ -499,7 +499,7 @@ if m:
 #        compare-models-helper.sh bench --history [--limit N]
 #
 # Options:
-#   --judge           Enable LLM-as-judge scoring (haiku-tier, ~$0.001/call)
+#   --judge           Enable simple-tier LLM-as-judge scoring
 #   --dataset FILE    Read prompts from JSONL file (each line: {"input":"..."} or {"prompt":"..."})
 #   --max-tokens N    Max output tokens per model (default: 1024)
 #   --dry-run         Show what would happen without making API calls
@@ -678,7 +678,7 @@ _bench_show_plan() {
 	echo ""
 
 	if [[ "$judge_flag" == true ]]; then
-		echo "Judge cost: ~\$0.001 per prompt (haiku-tier)"
+		echo "Judge tier: simple"
 	fi
 	echo ""
 	echo "Run without --dry-run to execute."
@@ -952,4 +952,3 @@ _bench_show_history() {
 	echo ""
 	return 0
 }
-

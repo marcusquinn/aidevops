@@ -2,7 +2,7 @@
 name: social
 description: Social media distribution - X, LinkedIn, Reddit platform-native content
 mode: subagent
-model: sonnet
+model: standard
 ---
 
 <!-- SPDX-License-Identifier: MIT -->

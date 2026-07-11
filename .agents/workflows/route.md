@@ -2,7 +2,7 @@
 description: Suggest optimal model tier for a task description using rules + pattern history
 agent: Build+
 mode: subagent
-model: haiku
+model: simple
 ---
 
 <!-- SPDX-License-Identifier: MIT -->

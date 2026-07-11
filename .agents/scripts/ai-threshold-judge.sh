@@ -2,13 +2,13 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # ai-threshold-judge.sh — AI-judged threshold decisions for aidevops
-# Replaces hardcoded thresholds with haiku-tier AI judgment (~$0.001/call).
+# Replaces hardcoded thresholds with simple-tier AI judgment.
 #
 # Part of the Intelligence Over Determinism principle (p035 / t1363.6):
 # fixed thresholds fail on outliers; AI judgment handles context.
 #
 # Each judgment function:
-#   1. Tries AI judgment via ai-research-helper.sh (haiku tier)
+#   1. Tries AI judgment via ai-research-helper.sh (simple tier)
 #   2. Falls back to improved heuristics if AI unavailable
 #   3. Returns a deterministic result (never blocks on AI failure)
 #
@@ -97,7 +97,7 @@ _prune_heuristic_fallback() {
 
 #######################################
 # AI judgment for prune relevance (borderline cases)
-# Calls ai-research-helper.sh at haiku tier.
+# Calls ai-research-helper.sh at the simple tier.
 #
 # Arguments:
 #   $1  content     Memory content text (will be truncated to 300 chars)
@@ -143,7 +143,7 @@ Consider:
 Respond with ONLY one word: 'prune' or 'keep'"
 
 	local ai_result
-	ai_result=$("$AI_RESEARCH" --model haiku --max-tokens 10 --prompt "$ai_prompt" 2>/dev/null || echo "")
+	ai_result=$("$AI_RESEARCH" --model simple --max-tokens 10 --prompt "$ai_prompt" 2>/dev/null || echo "")
 	ai_result=$(echo "$ai_result" | tr '[:upper:]' '[:lower:]' | tr -d '[:space:]')
 
 	if [[ "$ai_result" == "prune" || "$ai_result" == "keep" ]]; then
@@ -305,7 +305,7 @@ Entry B: ${trunc_b}
 Respond with ONLY one word: 'duplicate' or 'distinct'"
 
 		local ai_result
-		ai_result=$("$AI_RESEARCH" --model haiku --max-tokens 10 --prompt "$ai_prompt" 2>/dev/null || echo "")
+		ai_result=$("$AI_RESEARCH" --model simple --max-tokens 10 --prompt "$ai_prompt" 2>/dev/null || echo "")
 		ai_result=$(echo "$ai_result" | tr '[:upper:]' '[:lower:]' | tr -d '[:space:]')
 
 		if [[ "$ai_result" == "duplicate" || "$ai_result" == "distinct" ]]; then
@@ -398,7 +398,7 @@ Consider:
 Respond with ONLY a number (the recommended max character count)"
 
 		local ai_result
-		ai_result=$("$AI_RESEARCH" --model haiku --max-tokens 10 --prompt "$ai_prompt" 2>/dev/null || echo "")
+		ai_result=$("$AI_RESEARCH" --model simple --max-tokens 10 --prompt "$ai_prompt" 2>/dev/null || echo "")
 		ai_result=$(echo "$ai_result" | tr -dc '0-9')
 
 		if [[ -n "$ai_result" && "$ai_result" -gt 500 && "$ai_result" -lt 20000 ]]; then
@@ -433,7 +433,7 @@ cmd_help() {
 	cat <<'EOF'
 ai-threshold-judge.sh — AI-judged threshold decisions
 
-Replaces hardcoded thresholds with haiku-tier AI judgment (~$0.001/call).
+Replaces hardcoded thresholds with simple-tier AI judgment.
 Falls back to improved heuristics when AI is unavailable.
 
 Commands:

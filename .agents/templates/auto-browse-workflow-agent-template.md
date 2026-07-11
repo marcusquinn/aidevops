@@ -1,6 +1,6 @@
 ---
 mode: subagent
-model: sonnet
+model: standard
 ---
 
 <!-- SPDX-License-Identifier: MIT -->

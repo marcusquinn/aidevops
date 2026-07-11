@@ -1,7 +1,7 @@
 ---
 description: "YouTube topic research - content gaps, trend detection, keyword clustering, angle generation"
 mode: subagent
-model: sonnet
+model: standard
 tools:
   read: true
   write: false

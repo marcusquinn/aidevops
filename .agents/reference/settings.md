@@ -34,7 +34,7 @@
 | `supervisor.pulse_interval_seconds` | number | `180` | -- | Seconds between pulse cycles (30–3600). Default raised from 120 in t2744 to reduce GraphQL pressure. |
 | `supervisor.stale_threshold_seconds` | number | `1800` | -- | Seconds before a worker is considered stuck. |
 | `supervisor.circuit_breaker_max_failures` | number | `3` | -- | Consecutive failures before dispatch pauses. |
-| `supervisor.strategic_review_hours` | number | `4` | -- | Hours between opus-tier queue health reviews. |
+| `supervisor.strategic_review_hours` | number | `4` | -- | Hours between thinking-tier queue health reviews. |
 | `supervisor.peak_hours_enabled` | boolean | `false` | `AIDEVOPS_PEAK_HOURS_ENABLED` | Cap workers during peak window. **Disabled by default.** |
 | `supervisor.peak_hours_start` | number | `5` | `AIDEVOPS_PEAK_HOURS_START` | Peak window start hour (0–23, local time). Overnight: set start > end. |
 | `supervisor.peak_hours_end` | number | `11` | `AIDEVOPS_PEAK_HOURS_END` | Peak window end hour (0–23, exclusive). |
@@ -60,7 +60,7 @@
 
 | Key | Type | Default | Env Var | Description |
 |-----|------|---------|---------|-------------|
-| `model_routing.default_tier` | string | `"sonnet"` | -- | Default tier for untagged tasks (`haiku`, `sonnet`, `opus`, `flash`, `pro`). |
+| `model_routing.default_tier` | string | `"standard"` | -- | Default tier for untagged tasks (`simple`, `standard`, `thinking`). |
 | `model_routing.budget_tracking_enabled` | boolean | `true` | -- | Track per-provider API spend. |
 | `model_routing.prefer_subscription` | boolean | `true` | -- | Prefer subscription over API billing when both available. |
 

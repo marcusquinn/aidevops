@@ -2,7 +2,7 @@
 description: Analyse budget feasibility and recommend tiered outcomes
 agent: Build+
 mode: subagent
-model: haiku
+model: simple
 ---
 
 <!-- SPDX-License-Identifier: MIT -->

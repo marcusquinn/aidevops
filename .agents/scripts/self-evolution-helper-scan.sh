@@ -160,7 +160,7 @@ Rules:
 - Respond with ONLY the JSON array, no markdown fences
 - Maximum 10 patterns per scan"
 
-	"$EVOL_AI_RESEARCH_SCRIPT" --model haiku --prompt "$ai_prompt" 2>/dev/null || echo ""
+	"$EVOL_AI_RESEARCH_SCRIPT" --model simple --prompt "$ai_prompt" 2>/dev/null || echo ""
 	return 0
 }
 
@@ -205,7 +205,7 @@ _scan_patterns_output() {
 #   - Feature requests (explicit or implied)
 #   - Workflow gaps (manual steps that could be automated)
 #
-# Uses haiku-tier AI (~$0.001/call) for pattern significance.
+# Uses simple-tier AI for pattern significance.
 # Falls back to heuristic scanning when AI is unavailable.
 #######################################
 cmd_scan_patterns() {

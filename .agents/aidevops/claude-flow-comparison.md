@@ -8,7 +8,7 @@ tools:
   bash: false
   glob: false
   grep: false
-model: haiku
+model: simple
 ---
 
 <!-- SPDX-License-Identifier: MIT -->
@@ -33,7 +33,7 @@ Selective feature adoption from [ruvnet/claude-flow](https://github.com/ruvnet/c
 
 | Area | Claude-Flow | aidevops | Status | Why |
 |------|-------------|----------|--------|-----|
-| Cost-aware routing | Automatic 3-tier routing via SONA | `model:` frontmatter, `tools/context/model-routing.md`, `/route`, five tiers (haiku, flash, sonnet, pro, opus) | Adopted | Host runtimes already choose models; guidance is a better fit than framework-level automation |
+| Cost-aware routing | Automatic 3-tier routing via SONA | `model:` frontmatter, `tools/context/model-routing.md`, `/route`, three provider-neutral tiers (`simple`, `standard`, `thinking`) | Adopted | Host runtimes choose the concrete models and reasoning levels available at execution time |
 | Semantic memory | Built-in HNSW, always-on semantic search | Optional `memory-embeddings-helper.sh` with all-MiniLM-L6-v2 (~90MB); FTS5 stays default; `memory-helper.sh recall --semantic` opts in | Adopted | Keyword search covers most use; embeddings stay optional to keep the framework lightweight |
 | Outcome learning | SONA tracks routing decisions and outcomes | Pulse supervisor observes GitHub outcomes; agents use `/remember`, `/recall`, and `/patterns`; `pattern-tracker-helper.sh` was retired in favour of universal memory | Adopted | SQLite-backed pattern storage is enough for a small corpus |
 | Swarm consensus | Byzantine/Raft-style consensus | Not adopted | Skipped | Async TOON mailbox handles coordination without adding consensus machinery |

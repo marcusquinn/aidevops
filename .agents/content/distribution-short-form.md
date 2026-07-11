@@ -2,7 +2,7 @@
 name: short-form
 description: TikTok, Reels, and Shorts distribution - 9:16 vertical video optimization
 mode: subagent
-model: sonnet
+model: standard
 ---
 
 <!-- SPDX-License-Identifier: MIT -->

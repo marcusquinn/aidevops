@@ -36,7 +36,7 @@ set -euo pipefail
 # Same DB as pattern-tracker-helper.sh — no duplication of storage.
 
 readonly PATTERN_DB="${AIDEVOPS_MEMORY_DIR:-$HOME/.aidevops/.agent-workspace/memory}/memory.db"
-readonly -a PATTERN_VALID_MODELS=(haiku flash sonnet pro opus)
+readonly -a PATTERN_VALID_MODELS=(simple standard thinking)
 
 # Check if pattern data is available
 has_pattern_data() {
@@ -94,26 +94,20 @@ get_tier_success_rate() {
 }
 
 # Map a model_id to its aidevops tier for pattern lookup
-# Usage: model_id_to_tier "claude-sonnet-4-6" -> "sonnet"
+# Usage: model_id_to_tier "claude-sonnet-4-6" -> "standard"
 model_id_to_tier() {
 	local model_id="$1"
 	case "$model_id" in
-	*opus*) echo "opus" ;;
-	*sonnet*) echo "sonnet" ;;
-	*haiku*) echo "haiku" ;;
-	*flash* | gemini-2.0*) echo "flash" ;;
-	*pro* | gpt-4.1 | o3 | gpt-5.2) echo "pro" ;;
-	gpt-5.4 | gpt-5.4-*) echo "opus" ;;
-	gpt-5.3-codex | gpt-5.3-codex-*) echo "sonnet" ;;
-	o4-mini | gpt-4.1-mini | gpt-4o-mini | deepseek* | llama* | gpt-4.1-nano) echo "haiku" ;;
-	gpt-4o) echo "sonnet" ;;
+	*opus* | *pro* | o3 | gpt-5.2 | gpt-5.4 | gpt-5.4-*) echo "thinking" ;;
+	*haiku* | *flash* | *terra* | gemini-2.0* | o4-mini | gpt-4.1-mini | gpt-4o-mini | deepseek* | llama* | gpt-4.1-nano) echo "simple" ;;
+	*sonnet* | gpt-5.3-codex | gpt-5.3-codex-* | gpt-4.1 | gpt-4o) echo "standard" ;;
 	*) echo "" ;;
 	esac
 	return 0
 }
 
 # Format pattern data for display in tables
-# Usage: format_pattern_badge "sonnet"
+# Usage: format_pattern_badge "standard"
 # Output: "85% (n=47)" or "" if no data
 format_pattern_badge() {
 	local tier="$1"
@@ -152,7 +146,7 @@ get_all_tier_patterns() {
 # Sources: Anthropic, OpenAI, Google official pricing pages.
 
 readonly MODEL_DATA="claude-opus-4-6|Anthropic|Claude Opus 4.6|1000000|5.00|25.00|high|code,reasoning,architecture,vision,tools|Architecture decisions, novel problems, complex multi-step reasoning. 1M context, 800K auto-compact. Framework default for tier:thinking and the cascade's penultimate rung.
-claude-opus-4-7|Anthropic|Claude Opus 4.7|250000|5.00|25.00|high|code,reasoning,architecture,vision,tools|Top auto-escalation rung above 4.6 AND opt-in via model:opus-4-7 label. Better at long-running agentic coherence than 4.6; worse at cold long-context retrieval (MRCR 256K 92%->59%, 1M 78%->32%). +20-60% tokenizer cost on English prompts. 250K cap lets OpenCode's 80% auto-compact trigger at the 200K reliability boundary.
+claude-opus-4-7|Anthropic|Claude Opus 4.7|250000|5.00|25.00|high|code,reasoning,architecture,vision,tools|Optional thinking-tier mapping candidate. Better at long-running agentic coherence than 4.6; worse at cold long-context retrieval (MRCR 256K 92%->59%, 1M 78%->32%). +20-60% tokenizer cost on English prompts. 250K cap lets OpenCode's 80% auto-compact trigger at the 200K reliability boundary.
 claude-sonnet-4-6|Anthropic|Claude Sonnet 4.6|200000|3.00|15.00|medium|code,reasoning,vision,tools|Code implementation, review, most development tasks
 claude-haiku-4-5|Anthropic|Claude Haiku 4.5|200000|1.00|5.00|low|code,reasoning,vision,tools|Triage, classification, simple transforms, formatting
 gpt-4.1|OpenAI|GPT-4.1|1048576|2.00|8.00|medium|code,reasoning,vision,tools,search|Coding, instruction following, long context
@@ -175,11 +169,9 @@ llama-4-scout|Meta|Llama 4 Scout|512000|0.15|0.40|low|code,reasoning,vision,tool
 # =============================================================================
 # Maps aidevops internal tiers to recommended models
 
-readonly TIER_MAP="haiku|claude-haiku-4-5|Triage, classification, simple transforms
-flash|gemini-2.5-flash|Large context reads, summarization, bulk processing
-sonnet|claude-sonnet-4-6|Code implementation, review, most development tasks
-pro|gemini-2.5-pro|Large codebase analysis, complex reasoning with big context
-opus|claude-opus-4-6|Architecture decisions, complex multi-step reasoning"
+readonly TIER_MAP="simple|claude-haiku-4-5|Triage, classification, search, simple transforms
+standard|claude-sonnet-4-6|Code implementation, review, most development tasks
+thinking|claude-opus-4-6|Architecture decisions, complex multi-step reasoning"
 
 # =============================================================================
 # Task-to-Model Recommendations
@@ -697,7 +689,7 @@ cmd_patterns() {
 		echo "No pattern data available."
 		echo ""
 		echo "Record patterns to populate this view:"
-		echo "  pattern-tracker-helper.sh record --outcome success --model sonnet --task-type code-review \\"
+		echo "  pattern-tracker-helper.sh record --outcome success --model standard --task-type code-review \\"
 		echo "    --description \"Completed code review successfully\""
 		echo ""
 		echo "The supervisor also records patterns automatically after each task."
@@ -793,7 +785,7 @@ cmd_help() {
 	echo ""
 	echo "Examples:"
 	echo "  compare-models-helper.sh list"
-	echo "  compare-models-helper.sh compare sonnet gpt-4o gemini-pro"
+	echo "  compare-models-helper.sh compare standard gpt-4o gemini-pro"
 	echo "  compare-models-helper.sh recommend \"code review\""
 	echo "  compare-models-helper.sh pricing"
 	echo "  compare-models-helper.sh capabilities"
@@ -812,9 +804,9 @@ cmd_help() {
 	echo "    --model gpt-5.3-codex --correctness 8 --completeness 7 --quality 7 --clarity 8 --adherence 8 \\"
 	echo "    --winner claude-sonnet-4-6"
 	echo "  compare-models-helper.sh score --task 'review code' --prompt-file prompts/build.txt \\"
-	echo "    --model sonnet --correctness 9 --completeness 8 --quality 8 --clarity 9 --adherence 9"
+	echo "    --model standard --correctness 9 --completeness 8 --quality 8 --clarity 9 --adherence 9"
 	echo "  compare-models-helper.sh results"
-	echo "  compare-models-helper.sh results --model sonnet --limit 5"
+	echo "  compare-models-helper.sh results --model standard --limit 5"
 	echo "  compare-models-helper.sh results --prompt-version a1b2c3d"
 	echo ""
 	echo "Discover options:"
@@ -831,7 +823,7 @@ cmd_help() {
 	echo "    --models 'opus,pro' --timeout 900"
 	echo "  compare-models-helper.sh cross-review \\"
 	echo "    --prompt 'Review this PR diff' --models 'sonnet,gemini-pro' \\"
-	echo "    --score                          # auto-score via judge model (default: opus)"
+	echo "    --score                          # auto-score via judge model (default: thinking)"
 	echo "  compare-models-helper.sh cross-review \\"
 	echo "    --prompt 'Review this PR diff' --models 'sonnet,gemini-pro' \\"
 	echo "    --score --judge sonnet            # use sonnet as judge instead"

@@ -11,12 +11,12 @@
     "subagent-index.toon"
   ],
   "model_defaults": {
-    "implementation": "composer2",
-    "review": "sonnet",
-    "triage": "haiku",
-    "architecture": "opus",
-    "verification": "sonnet",
-    "documentation": "sonnet"
+    "implementation": "standard",
+    "review": "standard",
+    "triage": "simple",
+    "architecture": "thinking",
+    "verification": "standard",
+    "documentation": "standard"
   },
   "quality_gates": [
     "shellcheck",

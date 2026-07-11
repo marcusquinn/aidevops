@@ -386,7 +386,7 @@ _cross_review_judge_score() {
 #          --models "sonnet,opus,pro" [--workdir path] [--timeout N] [--output dir]
 #          [--score] [--judge <model>]
 # Dispatches via runner-helper.sh in parallel, collects outputs, produces summary.
-# With --score: feeds outputs to a judge model (default: opus) for structured scoring
+# With --score: feeds outputs to a thinking-tier judge for structured scoring
 # and records results in the model-comparisons DB + pattern tracker.
 #######################################
 
@@ -536,7 +536,7 @@ _cross_review_wait_results() {
 
 cmd_cross_review() {
 	local prompt="" models_str="" workdir="" review_timeout="600" output_dir=""
-	local score_flag=false judge_model="opus"
+	local score_flag=false judge_model="thinking"
 	local prompt_version="" prompt_file=""
 
 	# Parse arguments
@@ -672,4 +672,3 @@ _cross_review_dispatch_all() {
 	echo ""
 	return 0
 }
-

@@ -1,6 +1,6 @@
 ---
 mode: subagent
-model: sonnet
+model: standard
 tools: [bash, read, write, edit]
 ---
 

@@ -2,7 +2,7 @@
 description: Balanced model for code implementation, review, and most development tasks
 mode: subagent
 model: anthropic/claude-sonnet-4-6
-model-tier: sonnet
+model-tier: standard
 model-fallback: openai/gpt-5.4
 fallback-chain:
   - anthropic/claude-sonnet-4-6

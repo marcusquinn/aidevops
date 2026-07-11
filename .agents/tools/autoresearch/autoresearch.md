@@ -1,7 +1,7 @@
 ---
 description: Autonomous experiment loop runner — reads a research program, generates hypotheses, modifies code, measures results, and keeps only improvements
 mode: subagent
-model: sonnet
+model: standard
 tools:
   read: true
   write: true

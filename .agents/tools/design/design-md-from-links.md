@@ -13,7 +13,7 @@ tools:
   bash: true
   webfetch: true
   task: true
-model: sonnet
+model: standard
 ---
 
 <!-- SPDX-License-Identifier: MIT -->

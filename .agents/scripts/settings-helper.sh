@@ -82,7 +82,7 @@ _generate_defaults() {
     "write_time_linting": true
   },
   "model_routing": {
-    "default_tier": "sonnet",
+    "default_tier": "standard",
     "budget_tracking_enabled": true,
     "prefer_subscription": true
   },
@@ -541,7 +541,7 @@ SETTINGS KEYS (dot-notation):
     quality.shellcheck_enabled           ShellCheck on/off (default: true)
     quality.sonarcloud_enabled           SonarCloud on/off (default: true)
     quality.write_time_linting           Lint on every edit (default: true)
-    model_routing.default_tier           Default model tier (default: sonnet)
+    model_routing.default_tier           Default model tier (default: standard)
     model_routing.budget_tracking_enabled Budget tracking on/off (default: true)
     model_routing.prefer_subscription    Prefer subscription over API (default: true)
     onboarding.completed                 Whether onboarding was completed

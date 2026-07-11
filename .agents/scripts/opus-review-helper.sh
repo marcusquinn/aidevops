@@ -3,8 +3,8 @@
 # SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # opus-review-helper.sh — Cadence control for opus strategic review (t1340)
 #
-# The supervisor pulse runs every 2 minutes at sonnet tier for mechanical
-# dispatch. Every 4 hours, this helper gates an opus-tier strategic review
+# The supervisor pulse runs every 2 minutes at the standard tier for mechanical
+# dispatch. Every 4 hours, this helper gates a thinking-tier strategic review
 # that does what sonnet can't: meta-reasoning about queue health, resource
 # utilisation, stuck chains, and systemic issues.
 #

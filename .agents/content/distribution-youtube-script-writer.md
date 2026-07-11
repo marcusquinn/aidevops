@@ -1,7 +1,7 @@
 ---
 description: "YouTube script writer - hooks, outlines, full scripts, remix mode, retention optimization"
 mode: subagent
-model: sonnet
+model: standard
 tools:
   read: true
   write: false

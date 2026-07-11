@@ -20,9 +20,9 @@ set -euo pipefail
 #   email-compose-helper.sh help
 #
 # Model routing:
-#   --importance high   → opus (important emails, legal, client-facing)
-#   --importance normal → sonnet (routine correspondence)
-#   --importance low    → haiku (acknowledgements, brief notifications)
+#   --importance high   → thinking (important emails, legal, client-facing)
+#   --importance normal → standard (routine correspondence)
+#   --importance low    → simple (acknowledgements, brief notifications)
 #
 # Requires: jq, $EDITOR (or VISUAL), optional: aws CLI for sending via SES
 # Config: configs/email-compose-config.json (from .json.txt template)
@@ -259,11 +259,11 @@ compose_with_ai() {
 	local extra_instructions="${7:-}"
 
 	# Map importance to model tier
-	local model="sonnet"
+	local model="standard"
 	case "$importance" in
-	high | urgent) model="opus" ;;
-	low | brief) model="haiku" ;;
-	*) model="sonnet" ;;
+	high | urgent) model="thinking" ;;
+	low | brief) model="simple" ;;
+	*) model="standard" ;;
 	esac
 
 	local signature
@@ -898,7 +898,7 @@ cmd_acknowledge() {
 	ensure_workspace
 	load_config
 
-	# Acknowledgements are brief — default to haiku unless overridden
+	# Acknowledgements are brief — default to simple unless overridden
 	if [[ "$opt_importance" == "normal" ]]; then
 		opt_importance="low"
 	fi
@@ -910,7 +910,7 @@ cmd_acknowledge() {
 	local subject="${opt_subject:-Re: [original subject]}"
 	local ack_context="Acknowledgement email: confirm receipt, manage expectations for full response. Context: ${opt_context:-received their message}"
 
-	print_info "Composing acknowledgement (haiku-tier, tone: ${opt_tone})..."
+	print_info "Composing acknowledgement (simple tier, tone: ${opt_tone})..."
 
 	local body
 	body=$(compose_with_ai "acknowledge" "$opt_to" "$subject" "$ack_context" "$opt_tone" "$opt_importance" \
@@ -1338,7 +1338,7 @@ Common Options:
   --from <email>       Sender (or from config default_from_email)
   --cc <email>         CC recipients (comma-separated)
   --bcc <email>        BCC recipients (comma-separated)
-  --importance <level> high (opus) | normal (sonnet) | low (haiku)
+  --importance <level> high (thinking) | normal (standard) | low (simple)
   --tone <tone>        formal | casual (auto-detected from recipient if omitted)
   --attach <file>      Attachment path (validates size, warns >25MB, blocks >30MB)
   --signature <name>   Signature name from config (default: "default")
@@ -1359,9 +1359,9 @@ Notify Options:
   --project <name>     Project name for context
 
 Model Routing:
-  --importance high    → opus  (client-facing, legal, important)
-  --importance normal  → sonnet (routine correspondence)
-  --importance low     → haiku  (acknowledgements, brief notifications)
+  --importance high    → thinking (client-facing, legal, important)
+  --importance normal  → standard (routine correspondence)
+  --importance low     → simple (acknowledgements, brief notifications)
 
 Attachment Limits:
   >25MB  Warning — consider file-share link

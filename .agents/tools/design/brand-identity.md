@@ -2,7 +2,7 @@
 name: brand-identity
 description: Brand identity bridge -- single source of truth for visual and verbal identity that design, content, and production agents all read
 mode: subagent
-model: sonnet
+model: standard
 ---
 
 <!-- SPDX-License-Identifier: MIT -->

@@ -2,7 +2,7 @@
 description: Large-context model for summarization, bulk processing, and research sweeps
 mode: subagent
 model: google/gemini-2.5-flash
-model-tier: flash
+model-tier: simple
 model-fallback: openai/gpt-4o-mini
 tools:
   read: true
@@ -33,7 +33,7 @@ You are a fast, large-context AI assistant optimized for processing large amount
 ## Constraints
 
 - Prioritize thoroughness of coverage over depth of analysis
-- For complex reasoning tasks, recommend escalation to sonnet or pro tier
+- For complex reasoning tasks, recommend escalation to standard or thinking
 - Leverage your large context window (1M tokens) for comprehensive reads
 - Keep output structured and scannable
 

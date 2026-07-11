@@ -19,16 +19,16 @@ Core pointers: `AGENTS.md`. Full docs: `tools/ai-assistants/headless-dispatch.md
 
 ## Model Routing
 
-- **Tiers**: `haiku` (classification, formatting) → `flash` (large context, summarization) → `sonnet` (code, default) → `pro` (large codebase + reasoning) → `opus` (architecture, novel problems)
+- **Tiers**: `simple` (classification, search, formatting) → `standard` (code, review, default) → `thinking` (architecture, novel problems). Historical `haiku`/`sonnet`/`opus` names are deprecated aliases.
 - **Subagent frontmatter**: add `model: <tier>` to YAML frontmatter. The supervisor resolves it to a concrete model during headless dispatch, with cross-provider fallback.
 - **Commands**: `/route <task>` for tier suggestions with pattern data, `/compare-models` for pricing/capabilities.
 - **Availability check**: `model-availability-helper.sh check <provider>`. Exit codes: 0=available, 1=unavailable, 2=rate-limited, 3=invalid-key.
-- **Fallback chains**: each tier has a primary model plus cross-provider fallback (e.g., `opus`: `claude-opus-4-6` → `o3`). Handled automatically by `fallback-chain-helper.sh`.
+- **Fallback chains**: each tier has an ordered cross-provider model list, handled automatically by `fallback-chain-helper.sh`.
 - **Vault policy gate**: tasks may declare `needs_vault`, `needs_collections`, `needs_device`, `needs_remote_unlock`, `data_classification`, and `runtime_policy`. `headless-runtime-helper.sh run` checks these with `vault-data-policy-helper.sh` after model selection and before launch. `local-only`/`local-LLM-only` requires local models; `confidential`/`client-confidential` requires `provider-allowed` or explicit provider approval; `secret` never enters prompts.
 
 ### Budget-aware routing (t1100)
 
-- **Token-billed APIs** (Anthropic direct, OpenRouter): track daily spend; degrade when nearing budget caps (e.g., 80% of daily opus budget → route to sonnet unless critical).
+- **Token-billed APIs**: track daily spend; degrade from `thinking` to `standard` near budget caps unless the task is critical.
 - **Subscription APIs** (OAuth with periodic allowances): maximise use within the allowance window; alert near period limits.
 - **CLI**: `budget-tracker-helper.sh [record|check|recommend|status|configure|burn-rate]`. Configure: `budget-tracker-helper.sh configure anthropic --billing-type token --daily-budget 50` or `configure-period opencode --start YYYY-MM-DD --end YYYY-MM-DD --allowance 200`.
 - **Integration**: `dispatch.sh` checks budget state before model selection. Spend recorded automatically after each worker evaluation.
@@ -37,7 +37,7 @@ Full docs: `tools/context/model-routing.md`, `tools/ai-assistants/compare-models
 
 ## Task Decomposition (t1408)
 
-- Pre-dispatch, classify each task as atomic (execute directly) or composite (split into subtasks). Uses haiku-tier calls (~$0.001 each) with heuristic fallback when API is unavailable.
+- Pre-dispatch, classify each task as atomic (execute directly) or composite (split into subtasks). Uses simple-tier calls with heuristic fallback when the provider is unavailable.
 - **CLI**: `task-decompose-helper.sh [classify|decompose|format-lineage|has-subtasks]`
 - **Flow**: task description → classify → if composite, decompose into 2-5 subtasks with dependency edges → create child `TODO.md` entries → dispatch leaf subtasks.
 - `task-decompose-helper.sh has-subtasks <id>` prevents re-decomposition of manually split work.

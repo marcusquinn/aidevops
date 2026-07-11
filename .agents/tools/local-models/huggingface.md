@@ -1,7 +1,7 @@
 ---
 description: HuggingFace model discovery - GGUF format, quantization guidance, hardware-tier recommendations, trusted publishers
 mode: subagent
-model: haiku
+model: simple
 tools:
   read: true
   write: false

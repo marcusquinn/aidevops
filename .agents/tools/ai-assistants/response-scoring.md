@@ -10,7 +10,7 @@ tools:
   grep: false
   webfetch: false
   task: false
-model: sonnet
+model: standard
 ---
 
 <!-- SPDX-License-Identifier: MIT -->

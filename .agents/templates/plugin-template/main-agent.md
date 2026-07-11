@@ -4,7 +4,7 @@ tools:
   - read
   - edit
   - write
-model: sonnet
+model: standard
 ---
 
 <!-- SPDX-License-Identifier: MIT -->

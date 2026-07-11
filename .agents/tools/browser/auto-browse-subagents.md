@@ -1,7 +1,7 @@
 ---
 description: Auto-browse subagent role contracts for browser workflow learning and graduation
 mode: subagent
-model: sonnet
+model: standard
 tools:
   read: true
   write: true

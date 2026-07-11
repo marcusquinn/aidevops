@@ -281,8 +281,8 @@ Use this when a runner's dashboard is fresh but **Active Workers = 0**.
 2. Verify provider/model selection. Fresh installs and updates use the OpenAI-first routing table unless the operator overrides with `custom/configs/model-routing-table.json` or `AIDEVOPS_HEADLESS_PROVIDER_ALLOWLIST`:
 
    ```bash
-   headless-runtime-helper.sh select --role worker --tier sonnet
-   AIDEVOPS_HEADLESS_PROVIDER_ALLOWLIST=openai headless-runtime-helper.sh select --role worker --tier sonnet
+   headless-runtime-helper.sh select --role worker --tier standard
+   AIDEVOPS_HEADLESS_PROVIDER_ALLOWLIST=openai headless-runtime-helper.sh select --role worker --tier standard
    ```
 
 3. Verify recent provider/model/account usage with bounded structured output before
@@ -751,11 +751,11 @@ grep -E '\[worker-lifecycle\]\[t2820\]' /tmp/pulse-*.log | head
 
 Issues that modify the worker dispatch path (`pulse-wrapper.sh`, `pulse-dispatch-*.sh`, `headless-runtime-helper.sh`, `worker-lifecycle-common.sh`, etc.) have a self-referential property: workers dispatched to fix them run through the code being fixed. When `tier:thinking` starts at opus-4-6, the cascade wastes 1-2 attempts before reaching opus-4-7, which these task sizes require.
 
-The self-hosting detector in `pre-dispatch-validator-helper.sh` runs BEFORE generator-marker validators. It scans the issue body for dispatch-path file patterns and, when found on a `tier:thinking` issue without `model:opus-4-7`, applies the label pre-dispatch. This eliminates wasted cascade attempts.
+The self-hosting detector in `pre-dispatch-validator-helper.sh` runs before generator-marker validators. It scans the issue body for dispatch-path file patterns and applies `tier:thinking` pre-dispatch. This eliminates wasted lower-tier attempts.
 
 - **Trigger:** issue body references any of the canonical dispatch-path files (array in `_SELF_HOSTING_PATTERNS`)
-- **Precondition:** issue has `tier:thinking` label, lacks `model:opus-4-7`
-- **Action:** applies `model:opus-4-7` label + posts provenance-wrapped audit comment
+- **Precondition:** issue body references a configured dispatch-path file
+- **Action:** applies `tier:thinking` + posts a provenance-wrapped audit comment
 - **Non-blocking:** always exits 0 (advisory, not a dispatch gate)
 - **Idempotent:** marker comment `<!-- self-hosting-tier-override -->` prevents duplicate posts
 - **Bypass:** `AIDEVOPS_SKIP_SELF_HOSTING_DETECTOR=1`

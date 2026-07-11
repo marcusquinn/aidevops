@@ -134,9 +134,9 @@ test_parse_initial_model_does_not_set_explicit_override() {
 	local model_override="" initial_model="" tier_override="" variant_override="" agent_name="" headless_runtime="" detach=0
 	local -a extra_args=()
 
-	_parse_run_args --initial-model openai/gpt-5.5 --tier sonnet --opencode-arg --print-logs
+	_parse_run_args --initial-model openai/gpt-5.5 --tier standard --opencode-arg --print-logs
 
-	if [[ "$initial_model" == "openai/gpt-5.5" && -z "$model_override" && "$tier_override" == "sonnet" ]]; then
+	if [[ "$initial_model" == "openai/gpt-5.5" && -z "$model_override" && "$tier_override" == "standard" ]]; then
 		print_result "--initial-model does not set explicit model override" 0
 		return 0
 	fi

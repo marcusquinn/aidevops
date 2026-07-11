@@ -2,7 +2,7 @@
 description: Email intelligence patterns for triage, voice mining, model routing, and response quality control
 mode: subagent
 tools: { read: true, write: false, edit: false, bash: false, glob: false, grep: false, webfetch: false, task: false }
-model: haiku
+model: simple
 ---
 
 <!-- SPDX-License-Identifier: MIT -->

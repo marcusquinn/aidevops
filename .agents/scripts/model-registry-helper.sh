@@ -1238,28 +1238,28 @@ _route_classify_tier() {
 	local out_reason="$3"
 	local out_cost="$4"
 
-	local tier="sonnet"
+	local tier="standard"
 	local reason="Default tier for general development tasks"
 	local cost="1x"
 
-	# Opus: architecture, design, security audit, novel, trade-off, evaluate
+	# Thinking: architecture, design, security audit, novel, trade-off, evaluate
 	if echo "$desc_lower" | grep -qE 'architect|system.design|security.audit|novel|trade.?off|evaluat|complex.*(plan|design|decision)|from.scratch'; then
-		tier="opus"
+		tier="thinking"
 		reason="Complex reasoning, architecture, or novel problem-solving"
 		cost="3x"
-	# Haiku: rename, format, classify, triage, commit message, simple
+	# Simple: rename, format, classify, triage, commit message, simple
 	elif echo "$desc_lower" | grep -qE 'rename|reformat|classify|triage|commit.message|simple.*(text|transform)|extract.field|sort|prioriti[sz]e|route|tag|label'; then
-		tier="haiku"
+		tier="simple"
 		reason="Simple classification, formatting, or text transform"
 		cost="0.25x"
-	# Flash: summarize, large context, bulk, read, scan
+	# Simple: summarize, large context, bulk, read, scan
 	elif echo "$desc_lower" | grep -qE 'summari[sz]e|large.*(file|context|document|pdf)|bulk|scan.*files|read.*all|200.page|overview|skim'; then
-		tier="flash"
+		tier="simple"
 		reason="Large context processing or summarization"
 		cost="0.20x"
-	# Pro: large codebase, many files, refactor across
+	# Thinking: large codebase, many files, refactor across
 	elif echo "$desc_lower" | grep -qE 'large.codebase|500.file|many.files|refactor.across|entire.project|full.repo|cross.file'; then
-		tier="pro"
+		tier="thinking"
 		reason="Large codebase analysis requiring both context and reasoning"
 		cost="1.5x"
 	fi
@@ -1284,25 +1284,17 @@ _route_lookup_models() {
 	fallback_model=$(db_query "SELECT model_id FROM models WHERE tier = '$tier' AND is_fallback = 1 LIMIT 1;" 2>/dev/null || echo "")
 
 	case "$tier" in
-	haiku)
-		primary_model="${primary_model:-claude-haiku-4-5}"
-		fallback_model="${fallback_model:-gemini-2.5-flash}"
+	simple)
+		primary_model="${primary_model:-openai/gpt-5.6-terra}"
+		fallback_model="${fallback_model:-anthropic/claude-haiku-4-5}"
 		;;
-	flash)
-		primary_model="${primary_model:-gemini-2.5-flash}"
-		fallback_model="${fallback_model:-gpt-4.1-mini}"
+	standard)
+		primary_model="${primary_model:-openai/gpt-5.6-sol}"
+		fallback_model="${fallback_model:-anthropic/claude-sonnet-4-6}"
 		;;
-	sonnet)
-		primary_model="${primary_model:-claude-sonnet-4-6}"
-		fallback_model="${fallback_model:-gpt-4.1}"
-		;;
-	pro)
-		primary_model="${primary_model:-gemini-2.5-pro}"
-		fallback_model="${fallback_model:-claude-sonnet-4-6}"
-		;;
-	opus)
-		primary_model="${primary_model:-claude-opus-4-6}"
-		fallback_model="${fallback_model:-o3}"
+	thinking)
+		primary_model="${primary_model:-openai/gpt-5.6-sol}"
+		fallback_model="${fallback_model:-anthropic/claude-opus-4-6}"
 		;;
 	esac
 

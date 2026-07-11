@@ -300,7 +300,7 @@ prefetch_triage_review_status() {
 			echo "# Needs Maintainer Review — Triage Status"
 			echo ""
 			echo "Issues with \`needs-maintainer-review\` label and their automated triage review status."
-			echo "Dispatch an opus-tier \`/review-issue-pr\` worker for items marked **needs-review**."
+			echo "Dispatch a thinking-tier \`/review-issue-pr\` worker for items marked **needs-review**."
 			echo "Max 2 triage review dispatches per pulse cycle."
 			echo ""
 			found_any=$_PREFETCH_BOOL_TRUE

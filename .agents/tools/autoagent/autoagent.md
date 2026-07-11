@@ -1,7 +1,7 @@
 ---
 description: Autonomous framework self-improvement loop — mines signals, generates hypotheses, modifies framework files, measures improvement, keeps only what helps
 mode: subagent
-model: sonnet
+model: standard
 tools:
   read: true
   write: true

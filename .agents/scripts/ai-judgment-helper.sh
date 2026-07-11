@@ -2,11 +2,11 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # ai-judgment-helper.sh - Intelligent threshold replacement for aidevops
-# Replaces hardcoded thresholds with AI judgment calls (haiku-tier, ~$0.001 each).
+# Replaces hardcoded thresholds with simple-tier AI judgment calls.
 #
 # Part of the conversational memory system (p035 / t1363.6).
 # Per the Intelligence Over Determinism principle: deterministic rules break on
-# outliers; a haiku-tier call handles edge cases that no fixed threshold can.
+# outliers; a simple-tier call handles edge cases that no fixed threshold can.
 #
 # Thresholds replaced:
 #   1. sessionIdleTimeout: 300 → AI judges "has this conversation naturally paused?"
@@ -112,7 +112,7 @@ cache_judgment() {
 	local key="$1"
 	local judgment="$2"
 	local reasoning="${3:-}"
-	local model="${4:-haiku}"
+	local model="${4:-simple}"
 
 	local escaped_key="${key//\'/\'\'}"
 	local escaped_judgment="${judgment//\'/\'\'}"
@@ -229,7 +229,7 @@ Is this memory still likely to be useful? Consider:
 
 Respond with ONLY one word: 'relevant' or 'prune'"
 	local result
-	result=$("$AI_HELPER" --prompt "$prompt" --model haiku --max-tokens 10 2>/dev/null || echo "")
+	result=$("$AI_HELPER" --prompt "$prompt" --model simple --max-tokens 10 2>/dev/null || echo "")
 	result=$(echo "$result" | tr '[:upper:]' '[:lower:]' | tr -d '[:space:]')
 	if [[ "$result" == "relevant" || "$result" == "prune" ]]; then
 		echo "$result"
@@ -360,7 +360,7 @@ Total interactions: ${interaction_count}
 
 Respond with ONLY a number: 2000 (concise), 4000 (normal), or 8000 (detailed)"
 	local result
-	result=$("$AI_HELPER" --prompt "$prompt" --model haiku --max-tokens 10 2>/dev/null || echo "")
+	result=$("$AI_HELPER" --prompt "$prompt" --model simple --max-tokens 10 2>/dev/null || echo "")
 	result=$(echo "$result" | tr -dc '0-9')
 	if [[ -n "$result" && "$result" -ge 1000 && "$result" -le 16000 ]]; then
 		echo "$result"
@@ -1007,7 +1007,7 @@ _rse_run_ai_evaluator() {
 	local raw_result
 	raw_result=$("$AI_HELPER" --prompt "${system_prompt}
 
-${user_message}" --model haiku --max-tokens 200 || echo "")
+${user_message}" --model simple --max-tokens 200 || echo "")
 	[[ -z "$raw_result" ]] && return 0
 	local json_result
 	json_result=$(_rse_extract_score_json "$raw_result")
@@ -1393,7 +1393,7 @@ _help_commands() {
 	cat <<'HELP'
 ai-judgment-helper.sh - Intelligent threshold replacement & LLM output evaluation
 
-Replaces hardcoded thresholds with AI judgment calls (haiku-tier, ~$0.001 each).
+Replaces hardcoded thresholds with simple-tier AI judgment calls.
 Falls back to deterministic thresholds when AI is unavailable.
 
 Commands:

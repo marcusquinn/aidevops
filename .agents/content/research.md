@@ -2,7 +2,7 @@
 name: research
 description: Audience research, niche validation, and competitor analysis for content strategy
 mode: subagent
-model: sonnet
+model: standard
 tools:
   read: true
   write: true

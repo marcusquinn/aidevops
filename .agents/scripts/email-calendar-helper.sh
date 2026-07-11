@@ -204,7 +204,7 @@ extract_event_from_thread() {
 	prompt=$(build_extraction_prompt "$thread_text" "$participants_csv" "$timezone")
 
 	local llm_output
-	llm_output=$("$ai_helper" --model haiku --max-tokens 700 --prompt "$prompt") || {
+	llm_output=$("$ai_helper" --model simple --max-tokens 700 --prompt "$prompt") || {
 		print_error "AI extraction failed"
 		return 1
 	}

@@ -2,7 +2,7 @@
 name: email
 description: Email distribution - newsletters, sequences, and automated campaigns
 mode: subagent
-model: sonnet
+model: standard
 ---
 
 <!-- SPDX-License-Identifier: MIT -->

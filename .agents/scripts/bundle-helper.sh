@@ -773,12 +773,9 @@ cmd_compose() {
 	echo "$bundles_json" | jq '
 		# Model tier ordering for most-restrictive comparison
 		def tier_rank:
-			if . == "opus" then 6
-			elif . == "pro" then 5
-			elif . == "sonnet" then 4
-			elif . == "flash" then 3
-			elif . == "haiku" then 2
-			elif . == "local" then 1
+			if . == "thinking" then 3
+			elif . == "standard" then 2
+			elif . == "simple" then 1
 			else 0
 			end;
 
@@ -971,7 +968,7 @@ get_quality_gates() {
 # Arguments:
 #   $1 - task type (e.g., "implementation", "review", "triage")
 #   $2 - project path (defaults to current directory)
-# Output: model tier name (e.g., "sonnet", "opus") to stdout
+# Output: model tier name (simple, standard, or thinking) to stdout
 # Returns: 0 on success, 1 if not found
 get_model_default() {
 	local task_type="$1"

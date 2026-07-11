@@ -414,7 +414,7 @@ load_plugin_agents() {
 
 		# Extract description from frontmatter if available
 		local description=""
-		local model="sonnet"
+		local model="standard"
 		if head -1 "$md_file" 2>/dev/null | grep -q '^---'; then
 			# Parse YAML frontmatter (lightweight)
 			local frontmatter

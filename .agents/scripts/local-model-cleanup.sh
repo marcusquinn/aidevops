@@ -359,13 +359,8 @@ cmd_usage() {
 		IFS=$'\t' read -r total_req total_in total_out <<<"$summary"
 		echo "Total: ${total_req} requests, ${total_in} input tokens, ${total_out} output tokens"
 
-		# Estimate cloud cost savings (haiku: $0.25/MTok in, $1.25/MTok out; sonnet: $3/MTok in, $15/MTok out)
-		# Reset IFS before $() subshells — prevents zsh IFS leak corrupting awk PATH lookup
 		if [[ "$total_in" -gt 0 ]] || [[ "$total_out" -gt 0 ]]; then
-			local haiku_cost sonnet_cost
-			haiku_cost="$(IFS= awk -v i="$total_in" -v o="$total_out" 'BEGIN {printf "%.2f", (i * 0.00000025 + o * 0.00000125)}')"
-			sonnet_cost="$(IFS= awk -v i="$total_in" -v o="$total_out" 'BEGIN {printf "%.2f", (i * 0.000003 + o * 0.000015)}')"
-			echo "Estimated cloud cost saved: \$${haiku_cost} (vs haiku), \$${sonnet_cost} (vs sonnet)"
+			echo "Cloud-equivalent cost depends on the active workload-tier routing table."
 		fi
 	fi
 

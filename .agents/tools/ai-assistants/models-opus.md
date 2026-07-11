@@ -2,7 +2,7 @@
 description: Highest-capability model for architecture decisions, novel problems, and complex multi-step reasoning
 mode: subagent
 model: anthropic/claude-opus-4-6
-model-tier: opus
+model-tier: thinking
 model-fallback: openai/gpt-5.4
 fallback-chain:
   - anthropic/claude-opus-4-6
@@ -44,8 +44,8 @@ Highest-capability tier for tasks where stronger reasoning materially changes th
 
 ## Constraints
 
-- Do not use for tasks solvable by sonnet — opus costs 5× more per output token.
-- Do not use for simple classification or formatting — route to haiku.
+- Do not map routine standard-tier work to this model when a cheaper available model is sufficient.
+- Do not map simple classification or formatting work to this model.
 
 ## Model Details
 
@@ -57,26 +57,17 @@ Highest-capability tier for tasks where stronger reasoning materially changes th
 | Max output | 64K tokens |
 | Input cost | $5.00/1M tokens |
 | Output cost | $25.00/1M tokens |
-| Tier | opus (highest capability, highest cost) |
+| Workload tier | Candidate for `thinking` |
 
-Opus 4.6 is the `tier:thinking` default AND the penultimate rung in the
-cascade. If opus-4.6 fails its escalation threshold, the cascade adds the
-`model:opus-4-7` label and re-dispatches on 4.7 before handing off to NMR.
+The active routing table decides whether Opus 4.6 is available for
+`tier:thinking`. Issues and agents request only a workload tier; they never pin
+this concrete model.
 
-## Opus 4.7 (escalation target + opt-in)
+## Opus 4.7
 
-Available as `claude-opus-4-7` (released 2026-04-16). Two paths route to it:
-
-1. **Auto-cascade (failure-driven):** when a `tier:thinking` task exhausts
-   its retries at opus-4.6, `escalate_issue_tier` in
-   `worker-lifecycle-common.sh` adds the `model:opus-4-7` label. The next
-   dispatch routes to 4.7 via `pulse-model-routing.sh`, which honours the
-   label-override before tier resolution. If 4.7 also fails its threshold,
-   the cascade terminates and the issue escalates to NMR (human review).
-2. **Opt-in (intent-driven):** apply the `model:opus-4-7` label manually
-   when you know up-front that 4.7 is the right tool for the task. The
-   label takes precedence over any `tier:*` label, so it also works on
-   a `tier:standard` issue if you want to jump straight to 4.7.
+Available as `claude-opus-4-7` (released 2026-04-16). Routing-table maintainers
+may place it in the `thinking` tier after validating availability, cost, and
+reliability. Task authors still request only `tier:thinking`.
 
 The framework registers 4.7 with a **250K context limit** (not the 1M API
 ceiling) so OpenCode's 80% auto-compact threshold triggers at the 200K
@@ -126,7 +117,7 @@ If you set this and find sessions degrading, unset the env var (or reduce
 the value) and restart OpenCode. The cap exists for a reason; treat the
 override as a calibrated experiment, not a free upgrade.
 
-### When to apply `model:opus-4-7`
+### When to map `thinking` to Opus 4.7
 
 - **Short brief + high-reasoning task.** Architecture calls, security
   audits, novel algorithms where the input is well under 50K tokens. The
@@ -145,14 +136,13 @@ override as a calibrated experiment, not a free upgrade.
 - **Tasks benefitting from the `xhigh` effort level.** This is a 4.7-only
   capability; 4.6 doesn't expose it.
 
-### When NOT to apply `model:opus-4-7`
+### When not to map `thinking` to Opus 4.7
 
 - **Briefs requiring >200K tokens of source material read cold.**
   Whole-repo audits, cross-file refactors with many large references.
   MRCR regression dominates; 4.6 retrieves more reliably. Stay on 4.6.
-- **Routine implementation / bug fixes / refactors.** Sonnet is
-  sufficient, opus-tier is overkill either way — 4.7 is not a
-  sonnet-replacement.
+- **Routine implementation / bug fixes / refactors.** Use the standard tier;
+  a thinking-tier model is unnecessary.
 - **CJK-heavy briefs.** The new tokenizer's English bloat (+58.8%) is
   the main driver of 4.7's cost delta; CJK tokenization is roughly
   flat (+4-6%) so the relative *cost* difference is smaller — but 4.7

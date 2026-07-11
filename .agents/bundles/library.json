@@ -15,12 +15,12 @@
     "src/lib.rs"
   ],
   "model_defaults": {
-    "implementation": "composer2",
-    "review": "opus",
-    "triage": "haiku",
-    "architecture": "opus",
-    "verification": "sonnet",
-    "documentation": "sonnet"
+    "implementation": "standard",
+    "review": "thinking",
+    "triage": "simple",
+    "architecture": "thinking",
+    "verification": "standard",
+    "documentation": "standard"
   },
   "quality_gates": [
     "eslint",

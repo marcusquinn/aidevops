@@ -2,7 +2,7 @@
 description: Auto-research autonomous experiment loop — optimize code, agents, or standalone research programs
 agent: autoresearch
 mode: subagent
-model: sonnet
+model: standard
 tools:
   read: true
   write: true

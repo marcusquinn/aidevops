@@ -238,34 +238,34 @@ test_fallback_chain_helper() {
 		print_result "fallback: resolve (no tier) shows usage" 1 "Expected usage message"
 	fi
 
-	# Test: resolve haiku tier (hardcoded fallback — no config file needed)
+	# Test: resolve simple tier (hardcoded fallback — no config file needed)
 	# Set a fake API key so the lightweight availability check passes
-	export ANTHROPIC_API_KEY="test-key-for-testing"
-	output=$("$helper" resolve haiku --quiet 2>&1) || true
-	if echo "$output" | grep -q "claude-haiku"; then
-		print_result "fallback: resolve haiku -> claude-haiku" 0
+	export OPENAI_API_KEY="test-key-for-testing"
+	output=$("$helper" resolve simple --quiet 2>&1) || true
+	if echo "$output" | grep -q "gpt-5.6-terra"; then
+		print_result "fallback: resolve simple -> gpt-5.6-terra" 0
 	else
-		print_result "fallback: resolve haiku -> claude-haiku" 1 "Got: $output"
+		print_result "fallback: resolve simple -> gpt-5.6-terra" 1 "Got: $output"
 	fi
 
-	# Test: resolve sonnet tier
-	output=$("$helper" resolve sonnet --quiet 2>&1) || true
-	if echo "$output" | grep -q "claude-sonnet"; then
-		print_result "fallback: resolve sonnet -> claude-sonnet" 0
+	# Test: resolve standard tier
+	output=$("$helper" resolve standard --quiet 2>&1) || true
+	if echo "$output" | grep -q "gpt-5.6-sol"; then
+		print_result "fallback: resolve standard -> gpt-5.6-sol" 0
 	else
-		print_result "fallback: resolve sonnet -> claude-sonnet" 1 "Got: $output"
+		print_result "fallback: resolve standard -> gpt-5.6-sol" 1 "Got: $output"
 	fi
 
-	# Test: resolve opus tier
-	output=$("$helper" resolve opus --quiet 2>&1) || true
-	if echo "$output" | grep -q "claude-opus"; then
-		print_result "fallback: resolve opus -> claude-opus" 0
+	# Test: resolve thinking tier
+	output=$("$helper" resolve thinking --quiet 2>&1) || true
+	if echo "$output" | grep -q "gpt-5.6-sol"; then
+		print_result "fallback: resolve thinking -> gpt-5.6-sol" 0
 	else
-		print_result "fallback: resolve opus -> claude-opus" 1 "Got: $output"
+		print_result "fallback: resolve thinking -> gpt-5.6-sol" 1 "Got: $output"
 	fi
 
 	# Test: resolve with --json flag
-	output=$("$helper" resolve haiku --quiet --json 2>&1) || true
+	output=$("$helper" resolve simple --quiet --json 2>&1) || true
 	if echo "$output" | grep -q '"status":"resolved"'; then
 		print_result "fallback: resolve --json output" 0
 	else
@@ -273,7 +273,7 @@ test_fallback_chain_helper() {
 	fi
 
 	# Test: unknown tier — must fail AND produce an error message
-	unset ANTHROPIC_API_KEY
+	unset OPENAI_API_KEY
 	local rc=0
 	output=$("$helper" resolve nonexistent --quiet 2>&1) || rc=$?
 	if [[ $rc -ne 0 ]] && echo "$output" | grep -qiE "unknown|unsupported|invalid|error|fail|no.*tier|not found"; then
@@ -391,7 +391,7 @@ test_budget_tracker_helper() {
 	fi
 
 	# Test: budget-check-tier returns tier unchanged
-	output=$("$helper" budget-check-tier sonnet 2>&1) || true
+	output=$("$helper" budget-check-tier standard 2>&1) || true
 	if [[ "$output" == *"sonnet"* ]]; then
 		print_result "budget: budget-check-tier passthrough" 0
 	else

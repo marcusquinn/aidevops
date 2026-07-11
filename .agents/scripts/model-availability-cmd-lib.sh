@@ -263,7 +263,7 @@ _status_print_tiers() {
 	echo ""
 	printf "  %-8s %-35s %-35s\n" "Tier" "Primary" "Fallback"
 	printf "  %-8s %-35s %-35s\n" "----" "-------" "--------"
-	for tier in haiku flash sonnet pro opus health eval coding; do
+	for tier in simple standard thinking; do
 		local spec
 		spec=$(get_tier_models "$tier" 2>/dev/null) || spec=""
 		local primary="${spec%%|*}"
@@ -424,7 +424,7 @@ cmd_resolve() {
 
 	if [[ -z "$tier" ]]; then
 		print_error "Usage: model-availability-helper.sh resolve <tier>"
-		print_info "Available tiers: haiku flash sonnet pro opus health eval coding"
+		print_info "Available tiers: simple standard thinking"
 		return 1
 	fi
 
@@ -565,7 +565,7 @@ cmd_resolve_chain() {
 
 	if [[ -z "$tier" ]]; then
 		print_error "Usage: model-availability-helper.sh resolve-chain <tier> [--agent file]"
-		print_info "Available tiers: haiku flash sonnet pro opus health eval coding"
+		print_info "Available tiers: simple standard thinking"
 		return 1
 	fi
 
@@ -637,7 +637,7 @@ cmd_help() {
 	echo "  model-availability-helper.sh check anthropic/claude-sonnet-4-6"
 	echo "  model-availability-helper.sh check sonnet"
 	echo "  model-availability-helper.sh probe --all"
-	echo "  model-availability-helper.sh resolve opus --json"
+	echo "  model-availability-helper.sh resolve thinking --json"
 	echo "  model-availability-helper.sh resolve-chain coding --json"
 	echo "  model-availability-helper.sh resolve-chain sonnet --agent models/sonnet.md"
 	echo "  model-availability-helper.sh status"

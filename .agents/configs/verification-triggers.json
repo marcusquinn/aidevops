@@ -149,7 +149,7 @@
     "enabled": true,
     "default_gate": "warn",
     "cross_provider": true,
-    "verifier_tier": "sonnet",
-    "escalation_tier": "opus"
+    "verifier_tier": "standard",
+    "escalation_tier": "thinking"
   }
 }

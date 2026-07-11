@@ -37,13 +37,24 @@ readonly _HEADLESS_RUNTIME_MODEL_LOADED=1
 
 # --- Model Choice ---
 
+_normalize_headless_tier() {
+	local tier="${1:-standard}"
+	case "$tier" in
+	simple | standard | thinking) printf '%s' "$tier" ;;
+	*) printf '%s' "$tier" ;;
+	esac
+	return 0
+}
+
 # Derive the headless model list from the routing table (GH#17769).
-# Flow: routing table sonnet tier -> optional provider allowlist -> providers with
+# Flow: routing table standard tier -> optional provider allowlist -> providers with
 # usable auth at dispatch time. This eliminates AIDEVOPS_HEADLESS_MODELS as a
 # user-configurable env var while allowing temporary provider pinning via
 # AIDEVOPS_HEADLESS_PROVIDER_ALLOWLIST.
 get_configured_models() {
-	local tier_name="${1:-sonnet}"
+	local requested_tier="${1:-standard}"
+	local tier_name
+	tier_name=$(_normalize_headless_tier "$requested_tier")
 	local allowlist_raw="${AIDEVOPS_HEADLESS_PROVIDER_ALLOWLIST:-}"
 	local -a allowlist=()
 	local -a models=()
@@ -101,7 +112,8 @@ get_configured_models() {
 			fi
 
 			models+=("$model")
-		done < <(jq -r --arg tier "$tier_name" '.tiers[$tier].models[]? // empty' "$routing_table" 2>/dev/null)
+		done < <(jq -r --arg canonical "$tier_name" --arg requested "$requested_tier" \
+			'(.tiers[$canonical].models // .tiers[$requested].models // [])[]' "$routing_table" 2>/dev/null)
 	fi
 
 	# Local is a privacy boundary: an empty local tier means unavailable, never
@@ -240,11 +252,9 @@ _choose_model_tier_downgrade() {
 
 	local current_tier=""
 	case "$current_model" in
-	*opus*) current_tier="opus" ;;
-	*sonnet*) current_tier="sonnet" ;;
-	*haiku*) current_tier="haiku" ;;
-	*flash*) current_tier="flash" ;;
-	*pro*) current_tier="pro" ;;
+	*opus* | *pro*) current_tier="thinking" ;;
+	*haiku* | *terra* | *flash*) current_tier="simple" ;;
+	*) current_tier="standard" ;;
 	esac
 	[[ -n "$current_tier" ]] || return 0
 
@@ -275,7 +285,7 @@ _choose_model_tier_downgrade() {
 # Skips models that are backed off or have no auth. Returns 75 if all are backed off.
 _choose_model_auto() {
 	local role="$1"
-	local tier_name="${2:-sonnet}"
+	local tier_name="${2:-standard}"
 	local -a models=()
 	local current_model
 	while IFS= read -r current_model; do
@@ -339,7 +349,7 @@ _choose_model_auto() {
 choose_model() {
 	local role="$1"
 	local explicit_model="${2:-}"
-	local tier_name="${3:-sonnet}"
+	local tier_name="${3:-standard}"
 
 	if [[ -n "$explicit_model" ]]; then
 		_choose_model_explicit "$explicit_model"
@@ -352,7 +362,7 @@ choose_model() {
 
 # --- Cmd Builders ---
 
-_headless_variant_should_omit_gpt55_sonnet() {
+_headless_variant_should_omit_gpt55_standard() {
 	local role="$1"
 	local tier_upper="$2"
 	local selected_model="$3"
@@ -361,7 +371,7 @@ _headless_variant_should_omit_gpt55_sonnet() {
 	[[ "$role" == "worker" ]] || return 1
 	[[ -n "$variant" ]] || return 1
 	case "$tier_upper" in
-	SONNET | PRO) ;;
+	STANDARD) ;;
 	*) return 1 ;;
 	esac
 	case "$selected_model" in
@@ -370,24 +380,57 @@ _headless_variant_should_omit_gpt55_sonnet() {
 	esac
 }
 
+_headless_tier_variant() {
+	local requested_tier="$1"
+	local canonical_tier="$2"
+	local requested_upper canonical_upper
+	requested_upper=$(printf '%s' "$requested_tier" | tr '[:lower:]-' '[:upper:]_')
+	canonical_upper=$(printf '%s' "$canonical_tier" | tr '[:lower:]-' '[:upper:]_')
+	local env_name value=""
+	for env_name in \
+		"AIDEVOPS_HEADLESS_VARIANT_${canonical_upper}" \
+		"AIDEVOPS_HEADLESS_VARIANT_${requested_upper}"; do
+		value="${!env_name:-}"
+		if [[ -n "$value" ]]; then
+			printf '%s' "$value"
+			return 0
+		fi
+	done
+	return 0
+}
+
+_headless_routed_variant() {
+	local tier="$1"
+	local selected_model="$2"
+	local provider="${selected_model%%/*}"
+	local model_script_dir="${BASH_SOURCE[0]%/*}"
+	local routing_table="${model_script_dir}/../custom/configs/model-routing-table.json"
+	if [[ ! -f "$routing_table" ]]; then
+		routing_table="${model_script_dir}/../configs/model-routing-table.json"
+	fi
+	if [[ ! -f "$routing_table" ]] || ! command -v jq >/dev/null 2>&1; then
+		return 0
+	fi
+	jq -r --arg tier "$tier" --arg model "$selected_model" --arg provider "$provider" \
+		'.tiers[$tier].reasoning[$model] // .tiers[$tier].reasoning[$provider] // empty' \
+		"$routing_table" 2>/dev/null || true
+	return 0
+}
+
 resolve_headless_variant() {
 	local role="$1"
 	local tier="${2:-}"
 	local selected_model="${3:-}"
 	local variant="${AIDEVOPS_HEADLESS_VARIANT:-}"
 	local tier_upper=""
+	local canonical_tier=""
 
 	if [[ -n "$tier" ]]; then
-		tier_upper=$(printf '%s' "$tier" | tr '[:lower:]-' '[:upper:]_')
-		case "$tier_upper" in
-		HAIKU | FLASH | SONNET | PRO | OPUS | HEALTH | EVAL | CODING)
-			local tier_env_var="AIDEVOPS_HEADLESS_VARIANT_${tier_upper}"
-			local tier_variant="${!tier_env_var:-}"
-			if [[ -n "$tier_variant" ]]; then
-				variant="$tier_variant"
-			fi
-			;;
-		esac
+		canonical_tier=$(_normalize_headless_tier "$tier")
+		tier_upper=$(printf '%s' "$canonical_tier" | tr '[:lower:]-' '[:upper:]_')
+		local tier_variant
+		tier_variant=$(_headless_tier_variant "$tier" "$canonical_tier")
+		[[ -n "$tier_variant" ]] && variant="$tier_variant"
 	fi
 
 	case "$role" in
@@ -404,39 +447,21 @@ resolve_headless_variant() {
 	esac
 
 	if [[ -n "$tier" ]]; then
-		case "$tier_upper" in
-		HAIKU | FLASH | SONNET | PRO | OPUS | HEALTH | EVAL | CODING)
-			local tier_env_var="AIDEVOPS_HEADLESS_VARIANT_${tier_upper}"
-			local tier_variant="${!tier_env_var:-}"
-			if [[ -n "$tier_variant" ]]; then
-				variant="$tier_variant"
-			fi
-			;;
-		esac
+		local tier_variant
+		tier_variant=$(_headless_tier_variant "$tier" "$canonical_tier")
+		[[ -n "$tier_variant" ]] && variant="$tier_variant"
+	fi
+
+	if [[ -z "$variant" && -n "$canonical_tier" ]]; then
+		variant=$(_headless_routed_variant "$canonical_tier" "$selected_model")
 	fi
 
 	# GPT-5.5 currently benchmarks fastest for standard worker dispatch when
 	# OpenCode sends no explicit reasoning-effort variant. Keep explicit CLI
 	# --variant untouched (caller bypasses this resolver when provided), but
 	# ignore env-derived high/xhigh defaults for non-thinking worker tiers.
-	if _headless_variant_should_omit_gpt55_sonnet "$role" "$tier_upper" "$selected_model" "$variant"; then
+	if _headless_variant_should_omit_gpt55_standard "$role" "$tier_upper" "$selected_model" "$variant"; then
 		variant=""
-	fi
-
-	# Background workers receive prescriptive briefs, so use bounded reasoning
-	# defaults. Explicit CLI/environment variants still win. Reserve xhigh for
-	# failure escalation, where the retry path passes --variant xhigh explicitly.
-	if [[ -z "$variant" && "$role" == "worker" ]]; then
-		case "$tier_upper:$selected_model" in
-		HAIKU:openai/gpt-5.6-terra | HAIKU:openai/gpt-5.6-terra-fast | \
-			FLASH:openai/gpt-5.6-terra | FLASH:openai/gpt-5.6-terra-fast | \
-			HEALTH:openai/gpt-5.6-terra | HEALTH:openai/gpt-5.6-terra-fast | \
-			SONNET:openai/gpt-5.6-sol | SONNET:openai/gpt-5.6-sol-fast | \
-			CODING:openai/gpt-5.6-sol | CODING:openai/gpt-5.6-sol-fast | \
-			EVAL:openai/gpt-5.6-sol | EVAL:openai/gpt-5.6-sol-fast) variant="low" ;;
-		PRO:openai/gpt-5.6-sol | PRO:openai/gpt-5.6-sol-fast | \
-			OPUS:openai/gpt-5.6-sol | OPUS:openai/gpt-5.6-sol-fast) variant="high" ;;
-		esac
 	fi
 
 	printf '%s' "$variant"

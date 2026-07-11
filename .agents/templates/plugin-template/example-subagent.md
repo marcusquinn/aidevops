@@ -2,7 +2,7 @@
 tools:
   - bash
   - read
-model: sonnet
+model: standard
 ---
 
 <!-- SPDX-License-Identifier: MIT -->

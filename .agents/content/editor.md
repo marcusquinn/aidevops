@@ -2,7 +2,7 @@
 name: editor
 description: Transform AI-generated content into human-sounding, engaging articles
 mode: subagent
-model: sonnet
+model: standard
 ---
 
 <!-- SPDX-License-Identifier: MIT -->

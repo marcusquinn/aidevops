@@ -1175,8 +1175,8 @@ COMMANDS:
 
 CREATE OPTIONS:
     --description "DESC"    Runner description
-    --model TIER_OR_MODEL   AI model: tier name (haiku/sonnet/opus/flash/pro/grok)
-                            or full provider/model string (default: sonnet)
+    --model TIER_OR_MODEL   Workload tier (simple/standard/thinking)
+                             or full provider/model string (default: standard)
     --provider PROVIDER     Override provider (e.g., openrouter, google)
     --workdir PATH          Default working directory
 

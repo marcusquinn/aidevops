@@ -1,7 +1,7 @@
 ---
 description: Document creation from prompts, templates, source documents, and scanned images
 mode: subagent
-model: sonnet
+model: standard
 tools:
   read: true
   write: true

@@ -2,7 +2,7 @@
 name: content
 description: Multi-media multi-channel content production pipeline - research to distribution, including AI video generation
 mode: subagent
-model: opus
+model: thinking
 subagents:
   - research
   - story

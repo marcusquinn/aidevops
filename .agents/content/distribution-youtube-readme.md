@@ -2,7 +2,7 @@
 name: youtube-distribution
 description: YouTube long-form distribution - competitor research, content strategy, and video production automation
 mode: subagent
-model: sonnet
+model: standard
 subagents:
   - channel-intel
   - topic-research

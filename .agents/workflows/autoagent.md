@@ -2,7 +2,7 @@
 description: Autonomous framework self-improvement loop — optimize agents, tools, scripts, prompts, orchestration
 agent: autoagent
 mode: subagent
-model: sonnet
+model: standard
 tools:
   read: true
   write: true

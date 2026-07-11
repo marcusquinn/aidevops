@@ -183,14 +183,14 @@ printf '{"bundle":"content-site"}\n' >"${bundle_repo}/.aidevops.json" || fail "f
 HEADLESS_RUNTIME_HELPER="${TEST_TMP}/bin/headless-runtime-helper.sh" \
 	_dlw_resolve_tier_and_model '{"labels":[]}' "" "$bundle_repo"
 
-if [[ "$_DLW_DISPATCH_TIER" != "bundle" || "$_DLW_DISPATCH_MODEL_TIER" != "haiku" || "$_DLW_SELECTED_MODEL" != "selected-haiku" ]]; then
+if [[ "$_DLW_DISPATCH_TIER" != "bundle" || "$_DLW_DISPATCH_MODEL_TIER" != "simple" || "$_DLW_SELECTED_MODEL" != "selected-simple" ]]; then
 	fail "bundle model default was not applied to unlabeled worker dispatch"
 fi
 
 HEADLESS_RUNTIME_HELPER="${TEST_TMP}/bin/headless-runtime-helper.sh" \
 	_dlw_resolve_tier_and_model '{"labels":[{"name":"tier:thinking"}]}' "" "$bundle_repo"
 
-if [[ "$_DLW_DISPATCH_TIER" != "thinking" || "$_DLW_DISPATCH_MODEL_TIER" != "opus" || "$_DLW_SELECTED_MODEL" != "selected-opus" ]]; then
+if [[ "$_DLW_DISPATCH_TIER" != "thinking" || "$_DLW_DISPATCH_MODEL_TIER" != "thinking" || "$_DLW_SELECTED_MODEL" != "selected-thinking" ]]; then
 	fail "explicit tier label did not override bundle model default"
 fi
 

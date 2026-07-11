@@ -863,7 +863,7 @@ ADD OPTIONS:
     --notify mail|none      Notification method (default: none)
     --timeout SECONDS       Max execution time (default: 600)
     --workdir PATH          Working directory (default: current)
-    --model TIER_OR_MODEL   AI model: tier name (haiku/sonnet/opus/flash/pro/grok)
+    --model TIER_OR_MODEL   Workload tier (simple/standard/thinking) or full provider/model
                             or full provider/model string
     --provider PROVIDER     Override provider (e.g., openrouter, google)
     --paused                Create in paused state

@@ -2,7 +2,7 @@
 name: podcast
 description: Podcast distribution - audio-first content, show notes, and syndication
 mode: subagent
-model: sonnet
+model: standard
 ---
 
 <!-- SPDX-License-Identifier: MIT -->

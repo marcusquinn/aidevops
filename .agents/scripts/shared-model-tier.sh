@@ -14,6 +14,7 @@
 #                                       Tries fallback-chain-helper.sh first
 #                                       (availability-aware), falls back to a
 #                                       static mapping.
+#   - normalize_model_tier_name <tier> — provider-neutral canonical tier name.
 #   - detect_ai_backends              — newline-separated list of available
 #                                       AI CLI runtime IDs (opencode, claude).
 #                                       Delegates to rt_detect_installed when
@@ -65,19 +66,34 @@ _SHARED_MODEL_TIER_LOADED=1
 # =============================================================================
 
 #######################################
+# Validate provider-neutral workload tier names.
+# Canonical tiers describe workload complexity, not a model vendor.
+#######################################
+normalize_model_tier_name() {
+	local tier="${1:-standard}"
+	case "$tier" in
+	simple | standard | thinking) echo "$tier" ;;
+	*) echo "$tier" ;;
+	esac
+	return 0
+}
+
+#######################################
 # Resolve a model tier name to a full provider/model string (t132.7)
-# Accepts both tier names (haiku, sonnet, opus, flash, pro, grok, coding, eval, health)
-# and full provider/model strings (passed through unchanged).
+# Accepts canonical tiers (simple, standard, thinking) and full
+# provider/model strings (passed through unchanged).
 # Returns the resolved model string on stdout.
 #######################################
 resolve_model_tier() {
-	local tier="${1:-coding}"
+	local tier="${1:-standard}"
 
 	# If already a full provider/model string (contains /), return as-is
 	if [[ "$tier" == *"/"* ]]; then
 		echo "$tier"
 		return 0
 	fi
+
+	tier=$(normalize_model_tier_name "$tier")
 
 	# Try fallback-chain-helper.sh for availability-aware resolution
 	# Use ${BASH_SOURCE[0]:-$0} for shell portability — BASH_SOURCE is undefined
@@ -96,10 +112,10 @@ resolve_model_tier() {
 
 	# Static fallback: map tier names to concrete models
 	case "$tier" in
-	opus | pro | sonnet | eval | coding)
+	standard | thinking)
 		echo "openai/gpt-5.6-sol"
 		;;
-	haiku | flash | health)
+	simple)
 		echo "openai/gpt-5.6-terra"
 		;;
 	grok)

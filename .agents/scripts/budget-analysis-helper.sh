@@ -12,7 +12,7 @@
 # Usage:
 #   budget-analysis-helper.sh analyse --budget 50 --hours 8
 #   budget-analysis-helper.sh recommend --goal "Build a CRM"
-#   budget-analysis-helper.sh estimate --task "Fix auth bug" --tier sonnet
+#   budget-analysis-helper.sh estimate --task "Fix auth bug" --tier standard
 #   budget-analysis-helper.sh forecast --days 7
 #   budget-analysis-helper.sh help
 
@@ -286,7 +286,7 @@ _analyse_print_footer() {
 # analyse: Full budget analysis for a given budget (money and/or time)
 # Shows what can be accomplished within the budget at different quality tiers.
 cmd_analyse() {
-	local budget_usd="" budget_hours="" tier="sonnet" json_flag=false
+	local budget_usd="" budget_hours="" tier="standard" json_flag=false
 
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
@@ -299,7 +299,7 @@ cmd_analyse() {
 			shift 2
 			;;
 		--tier)
-			tier="${2:-sonnet}"
+			tier="${2:-standard}"
 			shift 2
 			;;
 		--json)
@@ -315,8 +315,8 @@ cmd_analyse() {
 		return 1
 	fi
 
-	local tiers=("haiku" "sonnet" "opus")
-	local tier_labels=("Economy (haiku)" "Standard (sonnet)" "Premium (opus)")
+	local tiers=("simple" "standard" "thinking")
+	local tier_labels=("Simple" "Standard" "Thinking")
 
 	if [[ "$json_flag" == "true" ]]; then
 		printf '{"budget_usd":%s,"budget_hours":%s,"tiers":[' \
@@ -374,7 +374,7 @@ _recommend_print_json() {
 		"$mvp_cost" "$mvp_hours" "$mvp_tokens"
 	printf '{"tier":"production","label":"Production-Ready","cost_usd":%.2f,"hours":%.1f,"tokens":%d,"includes":["Full implementation","Error handling","Unit tests","Basic docs","CI integration"]},' \
 		"$prod_cost" "$prod_hours" "$prod_tokens"
-	printf '{"tier":"polished","label":"Polished + Monitored","cost_usd":%.2f,"hours":%.1f,"tokens":%d,"includes":["Architecture review (opus)","Full implementation","Comprehensive tests","Full docs","Monitoring","CI/CD pipeline","Performance optimisation"]}' \
+	printf '{"tier":"polished","label":"Polished + Monitored","cost_usd":%.2f,"hours":%.1f,"tokens":%d,"includes":["Thinking-tier architecture review","Full implementation","Comprehensive tests","Full docs","Monitoring","CI/CD pipeline","Performance optimisation"]}' \
 		"$polished_cost" "$polished_hours" "$polished_tokens"
 	printf ']}\n'
 	return 0
@@ -395,19 +395,19 @@ _recommend_print_text() {
 
 	printf '  %s1. Basic MVP%s\n' "$GREEN" "$NC"
 	printf '     Cost:     ~$%.2f  |  Time: ~%sh\n' "$mvp_cost" "$mvp_hours"
-	printf '     Model:    haiku-heavy (economy)\n'
+	printf '     Tier:     simple\n'
 	printf '     Includes: Basic implementation, minimal error handling\n'
 	printf '     Skips:    Tests, docs, monitoring\n\n'
 
 	printf '  %s2. Production-Ready%s\n' "$YELLOW" "$NC"
 	printf '     Cost:     ~$%.2f  |  Time: ~%sh\n' "$prod_cost" "$prod_hours"
-	printf '     Model:    sonnet (standard)\n'
+	printf '     Tier:     standard\n'
 	printf '     Includes: Full implementation, error handling, unit tests, basic docs\n'
 	printf '     Skips:    Monitoring, performance tuning, comprehensive docs\n\n'
 
 	printf '  %s3. Polished + Monitored%s\n' "$PURPLE" "$NC"
 	printf '     Cost:     ~$%.2f  |  Time: ~%sh\n' "$polished_cost" "$polished_hours"
-	printf '     Model:    opus (design) + sonnet (implementation)\n'
+	printf '     Tiers:    thinking (design) + standard (implementation)\n'
 	printf '     Includes: Architecture review, full implementation, comprehensive tests,\n'
 	printf '               full docs, monitoring, CI/CD, performance optimisation\n\n'
 
@@ -455,9 +455,9 @@ cmd_recommend() {
 	base_hours=$(get_complexity_hours "$complexity")
 
 	# Three tiers of outcome: MVP, Production, Polished
-	# MVP: haiku-heavy, minimal tests, basic implementation
-	# Production: sonnet-heavy, full tests, error handling, docs
-	# Polished: opus for design + sonnet for impl, monitoring, CI/CD, docs
+	# MVP: simple tier, minimal tests, basic implementation
+	# Production: standard tier, full tests, error handling, docs
+	# Polished: thinking for design + standard for implementation, monitoring, CI/CD, docs
 	local mvp_tokens prod_tokens polished_tokens
 	mvp_tokens=$(awk "BEGIN { printf \"%d\", $base_tokens * 0.6 }")
 	prod_tokens=$(awk "BEGIN { printf \"%d\", $base_tokens * 1.5 }")
@@ -468,14 +468,14 @@ cmd_recommend() {
 	prod_hours=$(awk "BEGIN { printf \"%.1f\", $base_hours * 1.5 }")
 	polished_hours=$(awk "BEGIN { printf \"%.1f\", $base_hours * 3.0 }")
 
-	# Cost calculations (MVP uses haiku, Production uses sonnet, Polished uses opus+sonnet blend)
-	local mvp_cost prod_cost polished_opus_cost polished_sonnet_cost polished_cost
-	mvp_cost=$(calculate_tier_cost "$mvp_tokens" "haiku")
-	prod_cost=$(calculate_tier_cost "$prod_tokens" "sonnet")
-	# Polished: 30% opus (design) + 70% sonnet (implementation)
-	polished_opus_cost=$(calculate_tier_cost "$(awk "BEGIN { printf \"%d\", $polished_tokens * 0.3 }")" "opus")
-	polished_sonnet_cost=$(calculate_tier_cost "$(awk "BEGIN { printf \"%d\", $polished_tokens * 0.7 }")" "sonnet")
-	polished_cost=$(awk "BEGIN { printf \"%.2f\", $polished_opus_cost + $polished_sonnet_cost }")
+	# Cost calculations (simple MVP, standard production, thinking+standard polished blend)
+	local mvp_cost prod_cost polished_thinking_cost polished_standard_cost polished_cost
+	mvp_cost=$(calculate_tier_cost "$mvp_tokens" "simple")
+	prod_cost=$(calculate_tier_cost "$prod_tokens" "standard")
+	# Polished: 30% thinking (design) + 70% standard (implementation)
+	polished_thinking_cost=$(calculate_tier_cost "$(awk "BEGIN { printf \"%d\", $polished_tokens * 0.3 }")" "thinking")
+	polished_standard_cost=$(calculate_tier_cost "$(awk "BEGIN { printf \"%d\", $polished_tokens * 0.7 }")" "standard")
+	polished_cost=$(awk "BEGIN { printf \"%.2f\", $polished_thinking_cost + $polished_standard_cost }")
 
 	if [[ "$json_flag" == "true" ]]; then
 		_recommend_print_json "$goal" "$complexity" \
@@ -493,7 +493,7 @@ cmd_recommend() {
 
 # estimate: Estimate cost for a specific task at a given tier
 cmd_estimate() {
-	local task="" tier="sonnet" complexity="" json_flag=false
+	local task="" tier="standard" complexity="" json_flag=false
 
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
@@ -502,7 +502,7 @@ cmd_estimate() {
 			shift 2
 			;;
 		--tier)
-			tier="${2:-sonnet}"
+			tier="${2:-standard}"
 			shift 2
 			;;
 		--complexity)
@@ -563,7 +563,7 @@ cmd_estimate() {
 
 		# Show alternative tiers
 		printf '  %sAlternative Tiers%s\n' "$YELLOW" "$NC"
-		local alt_tiers=("haiku" "sonnet" "opus")
+		local alt_tiers=("simple" "standard" "thinking")
 		for at in "${alt_tiers[@]}"; do
 			if [[ "$at" == "$tier" ]]; then continue; fi
 			local alt_cost
@@ -685,7 +685,7 @@ Commands:
 Analyse options:
   --budget N    Budget in USD
   --hours N     Time budget in hours
-  --tier X      Default model tier (default: sonnet)
+  --tier X      Default model tier (default: standard)
   --json        Machine-readable output
 
 Recommend options:
@@ -694,7 +694,7 @@ Recommend options:
 
 Estimate options:
   --task "X"       Task description
-  --tier X         Model tier (default: sonnet)
+  --tier X         Model tier (default: standard)
   --complexity X   Override: trivial|simple|moderate|complex|mission
   --json           Machine-readable output
 
@@ -705,7 +705,7 @@ Forecast options:
 Examples:
   budget-analysis-helper.sh analyse --budget 50 --hours 8
   budget-analysis-helper.sh recommend --goal "Build a CRM with contacts and deals"
-  budget-analysis-helper.sh estimate --task "Fix authentication bug" --tier sonnet
+  budget-analysis-helper.sh estimate --task "Fix authentication bug" --tier standard
   budget-analysis-helper.sh forecast --days 30
 
 Integration:

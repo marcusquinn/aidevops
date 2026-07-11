@@ -2,7 +2,7 @@
 name: characters
 description: Character design, facial engineering, character bibles, personas, and consistency across AI-generated content
 mode: subagent
-model: sonnet
+model: standard
 tools:
   read: true
   write: true

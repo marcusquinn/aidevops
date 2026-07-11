@@ -225,21 +225,16 @@ _dsi_check_parent_task() {
 # Resolve model + tier for dispatch.
 # Priority order (mirrors pulse-model-routing.sh::resolve_dispatch_model_for_labels):
 #   1. Explicit --model CLI flag (operator intent, always wins)
-#   2. model:opus-4-7 label (highest-priority opus intent, t2239 — before tier labels)
-#   3. Tier labels: tier:thinking → opus, tier:standard → sonnet, tier:simple → haiku
-#   4. Default tier: sonnet
+#   2. Tier labels: tier:thinking, tier:standard, tier:simple
+#   3. Default tier: standard
 #
-# NOTE: the pulse additionally applies a dispatch-path safety net (t2819) that
-# auto-elevates issues touching self-hosting files to opus-4-7. That safety net
-# is not replicated here because it requires inspecting the issue body + brief
-# file scope, which is a heavier operation than this helper performs. For manual
-# dispatch, ensure the issue carries tier:thinking; the opus route selects Sol
-# and headless-runtime-model.sh applies the xhigh worker default.
+# Runtime routing maps the selected workload tier to an available model and
+# provider reasoning level. Labels never pin a concrete model.
 #
 # Args:
 #   $1 - labels CSV
 #   $2 - --model override (may be empty)
-# Sets: _DSI_TIER (haiku|sonnet|opus), _DSI_SELECTED_MODEL (full model id or empty)
+# Sets: _DSI_TIER (simple|standard|thinking), _DSI_SELECTED_MODEL (full model id or empty)
 #######################################
 _dsi_resolve_model() {
 	local labels_csv="$1"
@@ -250,15 +245,15 @@ _dsi_resolve_model() {
 	if [[ -n "$model_override" ]]; then
 		_DSI_SELECTED_MODEL="$model_override"
 		case "$model_override" in
-		*opus*) _DSI_TIER="opus" ;;
-		*haiku*) _DSI_TIER="haiku" ;;
-		*) _DSI_TIER="sonnet" ;;
+		*opus*) _DSI_TIER="thinking" ;;
+		*haiku* | *terra*) _DSI_TIER="simple" ;;
+		*) _DSI_TIER="standard" ;;
 		esac
 		return 0
 	fi
 
-	# Default tier: sonnet. Labels below may override.
-	_DSI_TIER="sonnet"
+	# Default tier: standard. Labels below may override.
+	_DSI_TIER="standard"
 	_DSI_SELECTED_MODEL=""
 
 	# Normalise labels to lowercase for case-insensitive matching
@@ -267,39 +262,16 @@ _dsi_resolve_model() {
 	labels_lower=$(printf '%s' "$labels_csv" | tr '[:upper:]' '[:lower:]')
 	local needle=",${labels_lower},"
 
-	# model:opus-4-7 label and tier:thinking both elevate to the opus tier.
-	# model:opus-4-7 also pins the configured OpenAI opus-tier model and takes precedence over
-	# tier:* labels (t2239 — same priority order as pulse-model-routing.sh
-	# resolve_dispatch_model_for_labels).
-	if [[ "$needle" == *",model:opus-4-7,"* || "$needle" == *",tier:thinking,"* ]]; then
-		_DSI_TIER="opus"
-		if [[ "$needle" == *",model:opus-4-7,"* ]]; then
-			_DSI_SELECTED_MODEL="${AIDEVOPS_OPUS_ESCALATION_MODEL:-openai/gpt-5.6-sol}"
-		fi
+	if [[ "$needle" == *",tier:thinking,"* ]]; then
+		_DSI_TIER="thinking"
 		return 0
 	fi
 
-	# Remaining tier labels (sonnet is already the default; only haiku changes it)
+	# Remaining tier labels (standard is already the default; only simple changes it)
 	if [[ "$needle" == *",tier:simple,"* ]]; then
-		_DSI_TIER="haiku"
+		_DSI_TIER="simple"
 	fi
 
-	# Other model:* labels (e.g. model:sonnet-4-6) — lower priority than
-	# model:opus-4-7 (handled above) but takes effect over tier default.
-	local m
-	m=$(printf '%s\n' "${labels_lower//,/$'\n'}" | grep -oE '^model:[a-z0-9.-]+' | head -1 || true)
-	if [[ -n "$m" ]]; then
-		local short="${m#model:}"
-		case "$short" in
-		*haiku*)
-			_DSI_TIER="haiku"
-			_DSI_SELECTED_MODEL="openai/gpt-5.6-terra"
-			;;
-		*)
-			_DSI_SELECTED_MODEL="openai/gpt-5.6-sol"
-			;;
-		esac
-	fi
 	return 0
 }
 

@@ -1,6 +1,7 @@
 ---
 description: Documented code quality standards for compliance checking
 mode: subagent
+steps: 12
 tools:
   read: true
   write: false
@@ -9,7 +10,7 @@ tools:
   glob: true
   grep: true
   webfetch: false
-  task: true
+  task: false
 ---
 
 <!-- SPDX-License-Identifier: MIT -->

@@ -114,14 +114,8 @@ DEFAULT_PROMPT = "~/.aidevops/agents/prompts/build.txt"
 # Agents that should NOT use the custom prompt (empty by default - all agents use it)
 SKIP_CUSTOM_PROMPT = set()
 
-# Model routing tiers (from subagent YAML frontmatter 'model:' field)
-MODEL_TIERS = {
-    "haiku": "anthropic/claude-haiku-4-5",
-    "sonnet": "anthropic/claude-sonnet-4-6",
-    "opus": "anthropic/claude-opus-4-6",
-    "flash": "google/gemini-3-flash-preview",
-    "pro": "google/gemini-3-pro-preview",
-}
+# Workload tiers are routing intent, not concrete runtime model IDs.
+WORKLOAD_TIERS = {"simple", "standard", "thinking"}
 
 # Default model tier per agent (overridden by frontmatter 'model:' field)
 AGENT_MODEL_TIERS = {}
@@ -156,7 +150,7 @@ def get_agent_config(display_name, filename, subagents=None, model_tier=None):
         display_name: Agent display name
         filename: Agent markdown filename
         subagents: Optional list of allowed subagent names (from frontmatter)
-        model_tier: Optional model tier from frontmatter (haiku/sonnet/opus/flash/pro)
+        model_tier: Optional provider-neutral tier (simple/standard/thinking) or legacy alias
     """
     tools = AGENT_TOOLS.get(display_name, DEFAULT_TOOLS.copy())
     temp = AGENT_TEMPS.get(display_name, 0.2)
@@ -175,10 +169,11 @@ def get_agent_config(display_name, filename, subagents=None, model_tier=None):
         if os.path.exists(prompt_file):
             config["prompt"] = "{file:" + DEFAULT_PROMPT + "}"
 
-    # Add model routing (from frontmatter or defaults)
+    # Canonical workload tiers inherit the runtime-selected model. Preserve only
+    # explicit full provider/model IDs; those are operator overrides, not tiers.
     effective_tier = model_tier or AGENT_MODEL_TIERS.get(display_name)
-    if effective_tier and effective_tier in MODEL_TIERS:
-        config["model"] = MODEL_TIERS[effective_tier]
+    if effective_tier and effective_tier not in WORKLOAD_TIERS and "/" in effective_tier:
+        config["model"] = effective_tier
 
     # All primary agents get external_directory permission
     config["permission"] = {"external_directory": "allow"}

@@ -181,7 +181,7 @@ cmd_recommend() {
 
 	if [[ "$usable_gb" -lt 4 ]]; then
 		echo "  Your system has limited memory for local models."
-		echo "  Consider cloud tiers (haiku, flash) instead."
+		echo "  Consider the simple cloud tier instead."
 		echo ""
 		echo "  Smallest option: Phi-4-mini Q4_K_M (~1.5 GB)"
 		echo "    local-model-helper.sh download microsoft/Phi-4-mini-instruct-GGUF --quant Q4_K_M"

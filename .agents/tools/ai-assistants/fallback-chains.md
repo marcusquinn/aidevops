@@ -31,7 +31,7 @@ AI reads the routing table directly; bash only checks availability. All routing 
 
 ## Routing Table
 
-`configs/model-routing-table.json` — tiers: `haiku`, `flash`, `sonnet`, `pro`, `opus`, `coding`, `eval`, `health`
+`configs/model-routing-table.json` — tiers: `simple`, `standard`, `thinking`
 
 ## CLI Usage
 

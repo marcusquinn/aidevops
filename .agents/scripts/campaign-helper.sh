@@ -1155,7 +1155,7 @@ P5 Commands (AI creative agent):
       AI-generated content draft grounded in campaign brief, brand assets, and swipe files.
       Channels: facebook, instagram, linkedin, twitter, email, blog.
       Tone defaults to 'professional'. Variant defaults to 1.
-      Model defaults to 'sonnet' (haiku|sonnet|opus).
+      Model defaults to 'standard' (simple|standard|thinking).
       Output: _campaigns/active/<id>/drafts/<channel>-v<N>.md
       Human-gated: drafts require manual review before promotion to creative/.
 

@@ -986,7 +986,7 @@ _T3077_FIX_THE_FIXER="${_T3077_FIX_THE_FIXER:-0}"
 # Detection runs once at worker start (one extra REST hit, ~50ms). Fail-open
 # everywhere — missing args / API failure / unlabeled issue all fall through
 # without modifying the worker's environment. The deterministic t2819
-# detector (model:opus-4-7 elevation) remains the primary safety net.
+# detector (tier:thinking elevation) remains the primary safety net.
 #
 # Args:
 #   $1 - issue number (from WORKER_ISSUE_NUMBER env, may be empty)
@@ -2146,8 +2146,8 @@ headless-runtime-helper.sh - Model-aware headless runtime (OpenCode default, Cla
 
 Usage:
   headless-runtime-helper.sh select [--role pulse|worker|triage] [--model provider/model]
-  headless-runtime-helper.sh canary [--role pulse|worker|triage] [--model provider/model] [--tier haiku|sonnet|opus|...]
-  headless-runtime-helper.sh run --role pulse|worker|triage --session-key KEY --dir PATH --title TITLE (--prompt TEXT | --prompt-file FILE) [--model provider/model | --initial-model provider/model] [--tier haiku|sonnet|opus|...] [--variant NAME] [--agent NAME] [--runtime opencode|claude] [--opencode-arg ARG] [--detach]
+  headless-runtime-helper.sh canary [--role pulse|worker|triage] [--model provider/model] [--tier simple|standard|thinking]
+  headless-runtime-helper.sh run --role pulse|worker|triage --session-key KEY --dir PATH --title TITLE (--prompt TEXT | --prompt-file FILE) [--model provider/model | --initial-model provider/model] [--tier simple|standard|thinking] [--variant NAME] [--agent NAME] [--runtime opencode|claude] [--opencode-arg ARG] [--detach]
   headless-runtime-helper.sh backoff [status|set MODEL-OR-PROVIDER REASON [SECONDS]|clear MODEL-OR-PROVIDER]
   headless-runtime-helper.sh session [status|clear PROVIDER SESSION_KEY]
   headless-runtime-helper.sh metrics [--role pulse|worker|triage] [--hours N] [--model SUBSTRING] [--fast-threshold N]
@@ -2173,8 +2173,8 @@ Defaults:
   Fallback: anthropic/claude-sonnet-4-6 if routing resolution fails.
   AIDEVOPS_HEADLESS_MODELS is deprecated — respected as override for one release cycle.
   AIDEVOPS_HEADLESS_PROVIDER_ALLOWLIST can restrict selection to providers like: openai
-  AIDEVOPS_HEADLESS_VARIANT_SONNET / AIDEVOPS_HEADLESS_VARIANT_OPUS can set tier defaults.
-  GPT-5.5 sonnet-tier worker dispatch omits env-derived variants so OpenCode sends no explicit thinking override.
+  AIDEVOPS_HEADLESS_VARIANT_STANDARD / AIDEVOPS_HEADLESS_VARIANT_THINKING can set tier defaults.
+  GPT-5.5 standard-tier worker dispatch omits env-derived variants so OpenCode sends no explicit thinking override.
   AIDEVOPS_HEADLESS_VARIANT sets an OpenCode model variant (for example: high, xhigh).
   AIDEVOPS_HEADLESS_PULSE_VARIANT / AIDEVOPS_HEADLESS_WORKER_VARIANT override by role.
   AIDEVOPS_HEADLESS_APPEND_CONTRACT=0 disables worker /full-loop contract injection

@@ -2,7 +2,7 @@
 name: optimization
 description: A/B testing, variant generation, analytics loops, and content performance optimization
 mode: subagent
-model: sonnet
+model: standard
 tools:
   read: true
   write: true

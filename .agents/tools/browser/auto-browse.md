@@ -1,7 +1,7 @@
 ---
 description: Auto-browse meta-agent for cost/time-efficient browser operations and web data mining
 mode: subagent
-model: sonnet
+model: standard
 tools:
   read: true
   write: true

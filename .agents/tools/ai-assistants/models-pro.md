@@ -2,7 +2,7 @@
 description: High-capability model for large codebase analysis and complex reasoning with big context
 mode: subagent
 model: google/gemini-2.5-pro
-model-tier: pro
+model-tier: thinking
 model-fallback: anthropic/claude-sonnet-4-6
 tools:
   read: true
@@ -33,9 +33,9 @@ You are a high-capability AI assistant optimized for complex tasks that require 
 ## Constraints
 
 - Use this tier when both large context AND deep reasoning are needed
-- For large context with simple processing, flash tier is more cost-effective
-- For deep reasoning with normal context, sonnet tier is sufficient
-- For architecture decisions and novel problems, opus tier may be better
+- For simple processing, the simple tier is more cost-effective
+- For routine development reasoning, the standard tier is sufficient
+- For architecture decisions and novel problems, use the thinking tier
 
 ## Model Details
 

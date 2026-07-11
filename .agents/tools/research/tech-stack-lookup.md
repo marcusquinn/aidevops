@@ -2,7 +2,7 @@
 name: tech-stack-lookup
 description: Tech stack discovery orchestrator - detect technologies and find sites using specific tech
 mode: subagent
-model: sonnet
+model: standard
 subagents:
   - providers/unbuilt
   - providers/crft-lookup

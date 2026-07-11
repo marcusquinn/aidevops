@@ -1,7 +1,7 @@
 ---
 description: Multi-org data isolation schema and tenant context model
 mode: subagent
-model: sonnet
+model: standard
 tools:
   read: true
   write: false

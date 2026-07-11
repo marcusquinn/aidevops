@@ -2,7 +2,7 @@
 name: blog
 description: Blog distribution - SEO-optimized articles from content pipeline assets
 mode: subagent
-model: sonnet
+model: standard
 ---
 
 <!-- SPDX-License-Identifier: MIT -->

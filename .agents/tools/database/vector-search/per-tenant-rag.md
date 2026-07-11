@@ -1,7 +1,7 @@
 ---
 description: Per-tenant RAG pipeline architecture for multi-tenant SaaS applications
 mode: subagent
-model: sonnet
+model: standard
 tools:
   read: true
   write: false

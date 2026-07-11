@@ -119,7 +119,7 @@ Security hooks, verification, and protective measures.
 |-----|------|---------|-------------|
 | `safety.hooks_enabled` | boolean | `true` | Install git pre-commit/pre-push safety hooks. `false` if hooks conflict with your workflow. |
 | `safety.verification_enabled` | boolean | `true` | Parallel model verification for high-stakes operations. |
-| `safety.verification_tier` | string | `"haiku"` | Model tier for verification. Options: `haiku`, `flash`, `sonnet`, `pro`, `opus`. |
+| `safety.verification_tier` | string | `"simple"` | Workload tier for verification. Options: `simple`, `standard`, `thinking`. |
 
 ### ui
 
@@ -420,9 +420,9 @@ These keys exist only in `settings.json` (no `config.jsonc` equivalent):
 | `supervisor.pulse_interval_seconds` | number | `180` | Seconds between pulse cycles. Range: 30-3600. Default raised from 120 in t2744 to reduce GraphQL pressure. |
 | `supervisor.stale_threshold_seconds` | number | `1800` | Seconds before a worker is considered stale/stuck. |
 | `supervisor.circuit_breaker_max_failures` | number | `3` | Consecutive failures before circuit breaker pauses dispatch. |
-| `supervisor.strategic_review_hours` | number | `4` | Hours between opus-tier strategic reviews of queue health. |
+| `supervisor.strategic_review_hours` | number | `4` | Hours between thinking-tier strategic reviews of queue health. |
 | `repo_sync.schedule` | string | `"daily"` | Sync schedule. Only `daily` supported. |
-| `model_routing.default_tier` | string | `"sonnet"` | Default tier for tasks without explicit tier. Options: `haiku`, `sonnet`, `opus`, `flash`, `pro`. |
+| `model_routing.default_tier` | string | `"standard"` | Default tier for tasks without an explicit tier. Options: `simple`, `standard`, `thinking`. |
 | `model_routing.budget_tracking_enabled` | boolean | `true` | Track per-provider API spend. |
 | `model_routing.prefer_subscription` | boolean | `true` | Prefer subscription plans over API billing when both available. |
 | `onboarding.completed` | boolean | `false` | Whether the user has completed `/onboarding`. |
@@ -487,7 +487,7 @@ A fully customised `~/.config/aidevops/config.jsonc`:
 
   // Use opus for verification (I want the strongest reasoning)
   "safety": {
-    "verification_tier": "opus"
+    "verification_tier": "thinking"
   },
 
   // Quiet startup

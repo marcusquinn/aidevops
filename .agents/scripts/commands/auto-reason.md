@@ -2,7 +2,7 @@
 description: Subjective self-refinement with blind judging, Borda aggregation, and provider-agnostic model routing
 agent: auto-reason
 mode: subagent
-model: sonnet
+model: standard
 tools:
   read: true
   write: true

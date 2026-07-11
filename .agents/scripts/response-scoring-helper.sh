@@ -525,25 +525,16 @@ _sync_comparison_to_patterns() {
 	return 0
 }
 
-# Map a full model name (e.g., "claude-sonnet-4-6") to a tier (e.g., "sonnet").
+# Map a full model name (e.g., "claude-sonnet-4-6") to a canonical tier.
 # Falls back to the full name if no tier match is found.
 _model_to_tier() {
 	local model_id="$1"
 
 	# Order: specific patterns first, then generic fallbacks
 	case "$model_id" in
-	*haiku*) echo "haiku" ;;
-	*opus*) echo "opus" ;;
-	*sonnet*) echo "sonnet" ;;
-	*gemini*pro*) echo "pro" ;;
-	*gemini*flash*) echo "flash" ;;
-	*gemini*) echo "sonnet" ;;
-	*gpt-4o*) echo "pro" ;;
-	*gpt-4*) echo "pro" ;;
-	*gpt-3*) echo "flash" ;;
-	*o1* | *o3*) echo "pro" ;;
-	*pro*) echo "pro" ;;
-	*flash*) echo "flash" ;;
+	*haiku* | *flash* | *terra*) echo "simple" ;;
+	*opus* | *pro* | *o1* | *o3*) echo "thinking" ;;
+	*sonnet* | *gemini* | *gpt-4*) echo "standard" ;;
 	*) echo "$model_id" ;;
 	esac
 	return 0

@@ -1,7 +1,7 @@
 ---
 description: Legal corpus research - contracts, case law, statutes, depositions via agentic RAG over multi-collection schemas
 mode: subagent
-model: sonnet
+model: standard
 tools:
   read: true
   write: false

@@ -99,7 +99,7 @@ _check_compose_cap() {
 # =============================================================================
 
 # Interprets a user's comment on a notification issue to determine the action.
-# Uses ai-research-helper.sh with sonnet tier (good balance of cost and quality
+# Uses ai-research-helper.sh with the standard tier (balanced cost and quality
 # for structured interpretation tasks).
 #
 # Returns a JSON object on stdout:
@@ -162,7 +162,7 @@ Decision rules:
 - If unclear → action: decline (safe default — never post without clear intent)"
 
 	local response
-	response=$("$ai_helper" --prompt "$prompt" --model sonnet --max-tokens 500 2>/dev/null) || {
+	response=$("$ai_helper" --prompt "$prompt" --model standard --max-tokens 500 2>/dev/null) || {
 		_log_error "LLM interpretation call failed"
 		echo '{"action":"error","text":"LLM call failed","extra":""}'
 		return 1

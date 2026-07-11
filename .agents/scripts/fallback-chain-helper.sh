@@ -45,24 +45,23 @@ load_routing_table() {
 # Get the model list for a tier from the routing table.
 # Returns JSON array of model strings.
 get_tier_models_from_table() {
-	local tier="$1"
+	local requested_tier="$1"
 	local table_path="$2"
-	local sol_model="openai/gpt-5.6-sol"
+	local tier
+	tier=$(normalize_model_tier_name "$requested_tier")
 
 	local models
 	models=$(jq -r --arg t "$tier" '.tiers[$t].models // empty' "$table_path" 2>/dev/null) || true
+	if [[ -z "$models" && "$requested_tier" != "$tier" ]]; then
+		models=$(jq -r --arg t "$requested_tier" '.tiers[$t].models // empty' "$table_path" 2>/dev/null) || true
+	fi
 
 	if [[ -z "$models" || "$models" == "null" ]]; then
 		# Hardcoded minimal fallback for missing tier definitions.
 		case "$tier" in
-		local)
-			print_error "No local model is configured"
-			return 1
-			;;
-		haiku | flash | health) echo '["openai/gpt-5.6-terra","anthropic/claude-haiku-4-5"]' ;;
-		sonnet | coding | eval) printf '["%s","zai-coding-plan/glm-5.2","anthropic/claude-sonnet-4-6"]\n' "$sol_model" ;;
-		pro) printf '["%s","anthropic/claude-sonnet-4-6"]\n' "$sol_model" ;;
-		opus) printf '["%s","anthropic/claude-opus-4-6"]\n' "$sol_model" ;;
+		simple) echo '["openai/gpt-5.6-terra","anthropic/claude-haiku-4-5"]' ;;
+		standard) echo '["openai/gpt-5.6-sol","zai-coding-plan/glm-5.2","anthropic/claude-sonnet-4-6"]' ;;
+		thinking) echo '["openai/gpt-5.6-sol","anthropic/claude-opus-4-6"]' ;;
 		*)
 			print_error "Unknown tier: $tier"
 			return 1
@@ -242,7 +241,7 @@ cmd_help() {
 Fallback Chain Helper v2.0 — Simplified model routing
 
 Usage: fallback-chain-helper.sh <command> [options]
-  resolve <tier>  Resolve best available model (tiers: haiku flash sonnet pro opus coding eval health)
+  resolve <tier>  Resolve best available model (tiers: simple standard thinking)
   table           Print the routing table (JSON)
   help            Show this help
 Options: --config PATH | --quiet | --json

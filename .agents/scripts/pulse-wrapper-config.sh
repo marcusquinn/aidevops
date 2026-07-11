@@ -140,7 +140,7 @@ MODEL_AVAILABILITY_HELPER="${MODEL_AVAILABILITY_HELPER:-${SCRIPT_DIR}/model-avai
 _pulse_warn_if_legacy_model_var_from_credentials "PULSE_MODEL" "${PULSE_MODEL:-}"
 _pulse_warn_if_legacy_model_var_from_credentials "AIDEVOPS_HEADLESS_MODELS" "${AIDEVOPS_HEADLESS_MODELS:-}"
 if [[ -z "${PULSE_MODEL:-}" ]] && [[ -x "$MODEL_AVAILABILITY_HELPER" ]]; then
-	PULSE_MODEL=$("$MODEL_AVAILABILITY_HELPER" resolve sonnet --quiet 2>/dev/null || true)
+	PULSE_MODEL=$("$MODEL_AVAILABILITY_HELPER" resolve standard --quiet 2>/dev/null || true)
 fi
 # Absolute fallback if routing resolution fails entirely.
 PULSE_MODEL="${PULSE_MODEL:-anthropic/claude-sonnet-4-6}"

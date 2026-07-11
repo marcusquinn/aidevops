@@ -1448,7 +1448,7 @@ _dispatch_now_ms() {
 #######################################
 # t3022: Per-model concurrency cap guard.
 #
-# Prevents 429 rate-limit cascades when multiple opus-tier workers are
+# Prevents 429 rate-limit cascades when multiple thinking-tier workers are
 # launched simultaneously. A single Anthropic account sustains many
 # concurrent sonnet workers but only ~3-4 concurrent opus before hitting
 # 429s that make workers 20-min zombies (observed: 3 opus-4-6 workers
@@ -1484,7 +1484,7 @@ _dispatch_check_model_concurrency_cap() {
 	# Empty model = auto round-robin (no explicit model:* label) — skip cap check.
 	[[ -z "$resolved_model" ]] && return 0
 
-	# Only cap opus-tier models; sonnet and haiku are unaffected.
+	# Only cap thinking-tier work; standard and simple are unaffected.
 	case "$resolved_model" in
 	*claude-opus*) ;;  # fall through to cap enforcement below
 	*) return 0 ;;

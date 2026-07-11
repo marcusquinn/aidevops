@@ -1,7 +1,7 @@
 ---
 description: ComfyUI management via comfy-cli — install, launch, nodes, models, workflows
 mode: subagent
-model: sonnet
+model: standard
 tools:
   read: true
   write: false

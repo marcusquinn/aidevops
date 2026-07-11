@@ -13,12 +13,12 @@
     "gatsby-config.*"
   ],
   "model_defaults": {
-    "implementation": "haiku",
-    "review": "haiku",
-    "triage": "haiku",
-    "architecture": "sonnet",
-    "verification": "haiku",
-    "documentation": "sonnet"
+    "implementation": "simple",
+    "review": "simple",
+    "triage": "simple",
+    "architecture": "standard",
+    "verification": "simple",
+    "documentation": "standard"
   },
   "quality_gates": [
     "markdownlint",
