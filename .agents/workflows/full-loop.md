@@ -172,7 +172,7 @@ Verify it posted: `gh api "repos/${REPO}/issues/${PR_NUMBER}/comments" --jq '[.[
 full-loop-helper.sh merge "$PR_NUMBER" "$REPO"
 ```
 
-Verifies the exact PR head is open, non-draft, free of changes-requested reviews, and has only terminal-success checks before running `review-bot-gate-helper.sh wait`. It then invokes `gh pr merge --squash` and requires GitHub to report `MERGED`, `mergedAt`, and a merge SHA before finalization. Gate failure or head drift blocks merge. Do NOT call `gh pr merge` directly. `--auto` records a queue request only; it does not claim merge, release, or cleanup completion until GitHub reports merged evidence. For self-modifying fixes, call the committed worktree helper: `"$PWD/.agents/scripts/full-loop-helper.sh" merge "$PR_NUMBER" "$REPO"`.
+Verifies the exact PR head is open, non-draft, free of changes-requested reviews, and has terminal-success required checks before running `review-bot-gate-helper.sh wait`. Historical cancelled optional jobs do not override the current required-check set. It then invokes `gh pr merge --squash` and requires GitHub to report `MERGED`, `mergedAt`, and a merge SHA before finalization. Gate failure or head drift blocks merge. Do NOT call `gh pr merge` directly. `--auto` records a queue request only; it does not claim merge, release, or cleanup completion until GitHub reports merged evidence. For self-modifying fixes, call the committed worktree helper: `"$PWD/.agents/scripts/full-loop-helper.sh" merge "$PR_NUMBER" "$REPO"`.
 
 Check gate without merging: `full-loop-helper.sh pre-merge-gate "$PR_NUMBER" "$REPO"`.
 

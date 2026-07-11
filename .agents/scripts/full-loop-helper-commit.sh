@@ -46,25 +46,31 @@ _full_loop_verify_pr_readiness() {
 	local pr_json=""
 
 	pr_json=$(gh pr view "$pr_number" --repo "$repo" \
-		--json state,isDraft,reviewDecision,statusCheckRollup,headRefOid,headRefName 2>/dev/null) || {
+		--json state,isDraft,reviewDecision,headRefOid,headRefName 2>/dev/null) || {
 		print_error "Cannot read PR #${pr_number} readiness evidence"
 		return 1
 	}
 
 	if ! printf '%s' "$pr_json" | jq -e '
 		def up(v): (v // "" | ascii_upcase);
-		def passish:
-			(up(.conclusion) == "SUCCESS") or
-			(up(.conclusion) == "NEUTRAL") or
-			(up(.conclusion) == "SKIPPED") or
-			(up(.state) == "SUCCESS");
 		(.state == "OPEN")
 		and (.isDraft != true)
 		and (up(.reviewDecision) != "CHANGES_REQUESTED")
 		and ((.headRefOid // "") != "")
-		and ([.statusCheckRollup[]? | select(passish | not)] | length) == 0
 	' >/dev/null; then
-		print_error "PR #${pr_number} is not remotely verified: require OPEN, non-draft, no changes requested, and terminal-success checks"
+		print_error "PR #${pr_number} is not remotely verified: require OPEN, non-draft, no changes requested, and a stable head"
+		return 1
+	fi
+
+	local required_checks=""
+	local required_rc=0
+	required_checks=$(gh pr checks "$pr_number" --repo "$repo" \
+		--required --json name,state,bucket 2>/dev/null) || required_rc=$?
+	if [[ -z "$required_checks" ]] || ! printf '%s' "$required_checks" | jq -e '
+		(type == "array")
+		and ([.[] | select((.bucket // "") != "pass")] | length) == 0
+	' >/dev/null; then
+		print_error "PR #${pr_number} required checks are not terminal-success (gh exit ${required_rc})"
 		return 1
 	fi
 
@@ -85,7 +91,7 @@ _full_loop_verify_pr_readiness() {
 
 	FULL_LOOP_VERIFIED_PR_HEAD_SHA="$verified_head"
 	export FULL_LOOP_VERIFIED_PR_HEAD_SHA
-	print_success "Remote PR evidence verified at head ${verified_head}"
+	print_success "Remote PR evidence verified at head ${verified_head}; required checks are terminal-success"
 	return 0
 }
 
