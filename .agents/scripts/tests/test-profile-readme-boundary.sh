@@ -845,6 +845,95 @@ test_all_time_token_totals_prefers_largest_population() {
 	return 0
 }
 
+test_token_totals_from_selected_model_population_are_equivalent() {
+	local test_name="selected model population derives equivalent token totals"
+	local model_json expected actual
+	model_json='[
+		{"model":"one","requests":2,"input_tokens":100,"output_tokens":20,"cache_read_tokens":300,"cache_write_tokens":10,"cost_total":1},
+		{"model":"two","requests":3,"input_tokens":50,"output_tokens":30,"cache_read_tokens":100,"cache_write_tokens":5,"cost_total":2}
+	]'
+	expected=$(_token_totals_enrich '{"total_input":150,"total_output":50,"total_cache_read":400,"total_cache_write":15}')
+	actual=$(_token_totals_from_model_usage "$model_json")
+	if [[ "$(printf '%s' "$actual" | jq -S -c .)" != "$(printf '%s' "$expected" | jq -S -c .)" ]]; then
+		print_result "$test_name" 1 "expected=${expected} actual=${actual}"
+		return 0
+	fi
+	print_result "$test_name" 0
+	return 0
+}
+
+test_profile_model_bundle_scans_each_population_once() {
+	local test_name="profile model bundle scans each required population once"
+	TEST_DIR=$(mktemp -d)
+	local calls_file="${TEST_DIR}/model-source-calls"
+	_get_model_usage_from_obs_db() {
+		local date_filter="${1:-}"
+		if [[ -n "$date_filter" ]]; then
+			printf '%s\n' recent >>"$calls_file"
+			printf '%s\n' '[{"model":"obs","requests":2,"input_tokens":20,"output_tokens":2,"cache_read_tokens":200,"cache_write_tokens":1,"cost_total":1}]'
+		else
+			printf '%s\n' all >>"$calls_file"
+			printf '%s\n' '[{"model":"obs","requests":5,"input_tokens":50,"output_tokens":5,"cache_read_tokens":500,"cache_write_tokens":2,"cost_total":2}]'
+		fi
+		return 0
+	}
+	_get_model_usage_from_opencode() {
+		printf '%s\n' opencode >>"$calls_file"
+		printf '%s\n' '[{"model":"obs","requests":4,"input_tokens":40,"output_tokens":4,"cache_read_tokens":400,"cache_write_tokens":2,"cost_total":2}]'
+		return 0
+	}
+	_get_model_usage_from_jsonl() {
+		local period="$1"
+		printf 'jsonl-%s\n' "$period" >>"$calls_file"
+		printf '%s\n' '[]'
+		return 0
+	}
+
+	local bundle recent_total all_total
+	bundle=$(_get_profile_model_usage_bundle)
+	recent_total=$(_token_totals_from_model_usage "$(printf '%s' "$bundle" | jq -c '.recent')")
+	all_total=$(_token_totals_from_model_usage "$(printf '%s' "$bundle" | jq -c '.all')")
+	if [[ "$(grep -c '^recent$' "$calls_file" || true)" != "1" || \
+		"$(grep -c '^all$' "$calls_file" || true)" != "1" || \
+		"$(grep -c '^opencode$' "$calls_file" || true)" != "1" || \
+		"$(grep -c '^jsonl-' "$calls_file" || true)" != "0" ]]; then
+		print_result "$test_name" 1 "unexpected source calls: $(tr '\n' ' ' <"$calls_file")"
+		return 0
+	fi
+	if [[ "$(printf '%s' "$recent_total" | jq -r '.total_all')" != "223" || \
+		"$(printf '%s' "$all_total" | jq -r '.total_all')" != "557" ]]; then
+		print_result "$test_name" 1 "derived totals mismatch recent=${recent_total} all=${all_total}"
+		return 0
+	fi
+	: >"$calls_file"
+	_get_model_usage_from_obs_db() {
+		local date_filter="${1:-}"
+		[[ -n "$date_filter" ]] && printf '%s\n' recent-empty >>"$calls_file" || printf '%s\n' all-empty >>"$calls_file"
+		printf '%s\n' ""
+		return 0
+	}
+	_get_model_usage_from_opencode() {
+		printf '%s\n' opencode-empty >>"$calls_file"
+		printf '%s\n' '[]'
+		return 0
+	}
+	_get_model_usage_from_jsonl() {
+		local period="$1"
+		printf 'jsonl-%s\n' "$period" >>"$calls_file"
+		printf '[{"model":"fallback-%s","requests":1,"input_tokens":1,"output_tokens":1,"cache_read_tokens":1,"cache_write_tokens":0,"cost_total":1}]\n' "$period"
+		return 0
+	}
+	bundle=$(_get_profile_model_usage_bundle)
+	if [[ "$(printf '%s' "$bundle" | jq -r '.recent[0].model')" != "fallback-30d" || \
+		"$(printf '%s' "$bundle" | jq -r '.all[0].model')" != "fallback-all" || \
+		"$(grep -c '^jsonl-' "$calls_file" || true)" != "2" ]]; then
+		print_result "$test_name" 1 "fallback selection changed: calls=$(tr '\n' ' ' <"$calls_file") bundle=${bundle}"
+		return 0
+	fi
+	print_result "$test_name" 0
+	return 0
+}
+
 main() {
 	local mode="${1:-all}"
 	if [[ ! -x "${SOURCE_HELPER}" ]]; then
@@ -877,6 +966,10 @@ main() {
 	test_model_usage_undercut_handles_missing_candidate_model
 	teardown
 	test_all_time_token_totals_prefers_largest_population
+	teardown
+	test_token_totals_from_selected_model_population_are_equivalent
+	teardown
+	test_profile_model_bundle_scans_each_population_once
 	teardown
 
 	echo ""

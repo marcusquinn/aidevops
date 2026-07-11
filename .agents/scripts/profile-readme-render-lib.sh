@@ -491,13 +491,14 @@ cmd_generate() {
 	month_json=$(echo "$session_periods" | jq -c '."28d" // {status:"unavailable"}')
 	year_json=$(echo "$session_periods" | jq -c '.year // {status:"unavailable"}')
 
-	local model_json_30d model_json_all
-	model_json_30d=$(_get_model_usage "30d")
-	model_json_all=$(_get_model_usage "all")
+	local model_usage_bundle model_json_30d model_json_all
+	model_usage_bundle=$(_get_profile_model_usage_bundle)
+	model_json_30d=$(printf '%s' "$model_usage_bundle" | jq -c '.recent // []')
+	model_json_all=$(printf '%s' "$model_usage_bundle" | jq -c '.all // []')
 
 	local token_totals_30d token_totals_all
-	token_totals_30d=$(_get_token_totals "30d")
-	token_totals_all=$(_get_token_totals "all")
+	token_totals_30d=$(_token_totals_from_model_usage "$model_json_30d")
+	token_totals_all=$(_token_totals_from_model_usage "$model_json_all")
 
 	# Detect if there's any meaningful data to display.
 	local has_data=false
