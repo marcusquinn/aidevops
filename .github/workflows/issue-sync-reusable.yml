@@ -632,16 +632,6 @@ jobs:
                    2>/dev/null || true
           echo "${SHIM_DIR}" >> "$GITHUB_PATH"
 
-      # GH#27120: task identity may need the caller's TODO.md before the main
-      # checkout. Keep this metadata checkout isolated so the early framework
-      # checkout and gh shim remain available to closing hygiene.
-      - name: Checkout caller TODO metadata
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
-        with:
-          path: __caller
-          ref: main
-          fetch-depth: 1
-
       - name: Extract task ID and collect linked issues
         id: extract
         env:
@@ -649,15 +639,18 @@ jobs:
           PR_BODY: ${{ github.event.pull_request.body }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
-          # Prefer a canonical title task ID. When absent, GH#27120 permits a
-          # fallback only for one closing issue with one unique ref:GH#NNN
-          # mapping in TODO.md. Ambiguous/conflicting identities fail closed.
-          IDENTITY=$(bash __aidevops/.agents/scripts/issue-sync-pr-identity-helper.sh \
-            resolve "$PR_TITLE" "$PR_BODY" __caller/TODO.md)
-          TASK_ID=$(printf '%s\n' "$IDENTITY" | sed -n 's/^task_id=//p')
-          LINKED_ISSUES=$(printf '%s\n' "$IDENTITY" | sed -n 's/^linked_issues=//p')
+          # The title is metadata only; linked issues are resolved against the
+          # caller's checked-out TODO.md before any irreversible issue hygiene.
+          TASK_ID=""
+          if echo "$PR_TITLE" | grep -qE '^t[0-9]+'; then
+            TASK_ID=$(echo "$PR_TITLE" | grep -oE '^t[0-9]+(\.[0-9]+)*')
+          fi
           echo "task_id=$TASK_ID" >> "$GITHUB_OUTPUT"
 
+          LINKED_ISSUES=""
+          if [[ -n "$PR_BODY" ]]; then
+            LINKED_ISSUES=$(printf '%s' "$PR_BODY" | grep -ioE '\b(close[ds]?|fix(es|ed)?|resolve[ds]?)\b[[:space:]]+#[0-9]+' | grep -oE '[0-9]+' | sort -u | tr '\n' ' ' || true)
+          fi
           echo "linked_issues=$LINKED_ISSUES" >> "$GITHUB_OUTPUT"
 
           # t2219: Collect 'For #NNN' and 'Ref #NNN' references (planning convention t2046)
@@ -692,12 +685,47 @@ jobs:
 
           echo "PR #$PR_NUMBER: task_id=$TASK_ID linked_issues=$LINKED_ISSUES for_ref_issues=$FOR_REF_ISSUES range_syntax=$RANGE_SYNTAX"
 
+      - name: Checkout repo before closing-hygiene validation
+        if: steps.extract.outputs.linked_issues != ''
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: main
+          fetch-depth: 1
+          token: ${{ secrets.SYNC_PAT || secrets.GITHUB_TOKEN }}
+
+      - name: Restore framework scripts before task resolution
+        if: steps.extract.outputs.linked_issues != ''
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          repository: marcusquinn/aidevops
+          path: __aidevops
+          ref: ${{ inputs.aidevops_ref || 'main' }}
+          fetch-depth: 1
+
+      - name: Resolve task-backed closing issues
+        id: resolve-tasks
+        if: steps.extract.outputs.linked_issues != ''
+        env:
+          LINKED_ISSUES: ${{ steps.extract.outputs.linked_issues }}
+          FOR_REF_ISSUES: ${{ steps.extract.outputs.for_ref_issues }}
+          TITLE_TASK_ID: ${{ steps.extract.outputs.task_id }}
+        run: |
+          RESULT=$(bash __aidevops/.agents/scripts/issue-sync-pr-task-resolver.sh TODO.md "$LINKED_ISSUES" "$TITLE_TASK_ID" "$FOR_REF_ISSUES")
+          IFS='|' read -r TASK_IDS EFFECTIVE_ISSUES TASK_BACKED ISSUE_TASK_PAIRS <<EOF
+          $RESULT
+          EOF
+          echo "task_ids=$TASK_IDS" >> "$GITHUB_OUTPUT"
+          echo "effective_issues=$EFFECTIVE_ISSUES" >> "$GITHUB_OUTPUT"
+          echo "task_backed=$TASK_BACKED" >> "$GITHUB_OUTPUT"
+          echo "issue_task_pairs=$ISSUE_TASK_PAIRS" >> "$GITHUB_OUTPUT"
+          echo "Resolved task_ids=$TASK_IDS effective_issues=$EFFECTIVE_ISSUES task_backed=$TASK_BACKED issue_task_pairs=$ISSUE_TASK_PAIRS"
+
       - name: Find issue by task ID (fallback)
         id: find-issue
         if: steps.extract.outputs.has_work == 'true' && steps.extract.outputs.task_id != ''
         env:
           TASK_ID: ${{ steps.extract.outputs.task_id }}
-          LINKED_ISSUES: ${{ steps.extract.outputs.linked_issues }}
+          LINKED_ISSUES: ${{ steps.resolve-tasks.outputs.effective_issues }}
           FOR_REF_ISSUES: ${{ steps.extract.outputs.for_ref_issues }}
           REPO: ${{ github.repository }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -722,12 +750,13 @@ jobs:
           PR_NUMBER: ${{ github.event.pull_request.number }}
           PR_TITLE: ${{ github.event.pull_request.title }}
           PR_URL: ${{ github.event.pull_request.html_url }}
-          LINKED_ISSUES: ${{ steps.extract.outputs.linked_issues }}
+          LINKED_ISSUES: ${{ steps.resolve-tasks.outputs.effective_issues }}
           FOUND_ISSUES: ${{ steps.find-issue.outputs.found_issues }}
           # GH#20807: pass For/Ref issues explicitly so we can guard against false status:done.
           # "Ref #NNN" / "For #NNN" are non-closing references — must NEVER receive status:done.
           FOR_REF_ISSUES: ${{ steps.extract.outputs.for_ref_issues }}
-          TASK_ID: ${{ steps.extract.outputs.task_id }}
+          TASK_IDS: ${{ steps.resolve-tasks.outputs.task_ids }}
+          ISSUE_TASK_PAIRS: ${{ steps.resolve-tasks.outputs.issue_task_pairs }}
           REPO: ${{ github.repository }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -776,13 +805,19 @@ jobs:
               echo "Issue #$ISSUE_NUM has rejection label '$REJECTION_MATCH' — using 'Referenced by' instead of 'Completed via'"
             fi
 
-            TASK_LINE=""
-            if [[ -n "${TASK_ID:-}" && -f TODO.md ]]; then
-              TASK_LINE=$(grep -E "^[[:space:]]*- \[ \] ${TASK_ID} " TODO.md | head -1 || true)
-            fi
-            if echo "$TASK_LINE" | grep -qE '(^|[[:space:]])blocked-by:[^[:space:]]+'; then
-              echo "Task $TASK_ID has unresolved blocked-by marker — skipping closing hygiene for #$ISSUE_NUM (GH#23516)"
-              continue
+            MAPPED_TASK_ID=""
+            for ISSUE_TASK_PAIR in $ISSUE_TASK_PAIRS; do
+              if [[ "${ISSUE_TASK_PAIR%%:*}" == "$ISSUE_NUM" ]]; then
+                MAPPED_TASK_ID="${ISSUE_TASK_PAIR#*:}"
+                break
+              fi
+            done
+            if [[ -n "$MAPPED_TASK_ID" ]]; then
+              TASK_LINE=$(grep -E "^[[:space:]]*- \[ \] ${MAPPED_TASK_ID} " TODO.md | head -1 || true)
+              if echo "$TASK_LINE" | grep -qE '(^|[[:space:]])blocked-by:[^[:space:]]+'; then
+                echo "Task $MAPPED_TASK_ID has unresolved blocked-by marker — skipping closing hygiene for #$ISSUE_NUM (GH#23516)"
+                continue
+              fi
             fi
 
             # Post closing comment if none exists from this PR
@@ -792,8 +827,8 @@ jobs:
 
             if [[ "$EXISTING_COMMENT" == "0" ]]; then
               TASK_REF=""
-              if [[ -n "$TASK_ID" ]]; then
-                TASK_REF=" Task $TASK_ID"
+              if [[ -n "$MAPPED_TASK_ID" ]]; then
+                TASK_REF=" Task $MAPPED_TASK_ID"
               fi
 
               # Choose comment text based on rejection state
@@ -993,55 +1028,10 @@ jobs:
             fi
           done
 
-      - name: Checkout repo for TODO.md update
-        if: steps.extract.outputs.task_id != ''
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
-        with:
-          ref: main
-          fetch-depth: 1
-          # t2048: prefer SYNC_PAT (fine-grained PAT scoped to this repo,
-          # Contents: Read and write) to bypass branch protection via
-          # enforce_admins:false. Falls back to GITHUB_TOKEN when the secret
-          # is unset, which routes to the t2029/t2034 loud-failure path.
-          # See todo/tasks/t2038-brief.md Decision section for rationale.
-          token: ${{ secrets.SYNC_PAT || secrets.GITHUB_TOKEN }}
-
-      # GH#22613: re-checkout the framework scripts AFTER the caller-repo
-      # checkout above. The "Checkout repo for TODO.md update" step uses
-      # `actions/checkout@v4` without `clean: false`, which deletes the
-      # workspace contents (including the `__aidevops/` subdirectory created
-      # by the early "Checkout aidevops framework scripts (early — for gh
-      # shim)" step at the top of this job). Without this re-checkout, the
-      # subsequent "Update TODO.md proof-log" step fails with
-      # `bash: __aidevops/.agents/scripts/issue-sync-git-push-helper.sh: No
-      # such file or directory` on every merged PR — the proof-log commit
-      # is created locally but never pushed.
-      #
-      # Why a second checkout (not `clean: false` on the caller-repo checkout):
-      # `clean: false` semantics are version-dependent on `actions/checkout`
-      # and could silently regress on a future action upgrade. An explicit
-      # re-checkout is deterministic and matches the proven pattern used by
-      # the other three jobs (sync-on-push, sync-on-issue, manual-sync) which
-      # only have a single framework checkout because they don't run a
-      # caller-repo checkout afterwards.
-      #
-      # This reverts the t3204 optimization for this one job. The t3204
-      # comment block claiming `__aidevops/` is preserved was incorrect —
-      # confirmed by run 25277909003 log line "Deleting the contents of
-      # '/home/runner/work/aidevops/aidevops'".
-      - name: Re-checkout aidevops framework scripts (workspace wipe restoration)
-        if: steps.extract.outputs.task_id != ''
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
-        with:
-          repository: marcusquinn/aidevops
-          path: __aidevops
-          ref: ${{ inputs.aidevops_ref || 'main' }}
-          fetch-depth: 1
-
       - name: Update TODO.md proof-log
-        if: steps.extract.outputs.task_id != ''
+        if: steps.resolve-tasks.outputs.task_backed == 'true' && steps.extract.outputs.range_syntax != 'true'
         env:
-          TASK_ID: ${{ steps.extract.outputs.task_id }}
+          TASK_IDS: ${{ steps.resolve-tasks.outputs.task_ids }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           # GH#19782 / t2252: pass For/Ref and closing-keyword issue lists
           # so the proof-log step can distinguish planning-only PRs from
@@ -1120,44 +1110,38 @@ jobs:
           TODAY=$(date +%Y-%m-%d)
           PROOF="pr:#${PR_NUMBER} completed:${TODAY}"
 
-          # Check if task exists as unchecked in TODO.md
-          if ! grep -qE "^[[:space:]]*- \[ \] ${TASK_ID} " TODO.md; then
-            echo "Task $TASK_ID not found as unchecked in TODO.md — skipping proof-log"
-            # May already be [x], or may not exist in this repo's TODO.md
+          UPDATED_TASK_IDS=""
+          for RESOLVED_TASK_ID in $TASK_IDS; do
+            TASK_LINE=$(grep -E "^[[:space:]]*- \[[ x]\] ${RESOLVED_TASK_ID} " TODO.md | head -1 || true)
+            if echo "$TASK_LINE" | grep -qE '(^|[[:space:]])blocked-by:[^[:space:]]+'; then
+              echo "::notice::Task $RESOLVED_TASK_ID has unresolved blocked-by marker — skipping TODO.md proof-log (GH#23516)"
+              continue
+            fi
+            if grep -qE "^[[:space:]]*- \[x\] ${RESOLVED_TASK_ID} .*pr:#${PR_NUMBER}" TODO.md; then
+              echo "Task $RESOLVED_TASK_ID already has proof-log for PR #${PR_NUMBER}"
+              continue
+            fi
+            if ! grep -qE "^[[:space:]]*- \[ \] ${RESOLVED_TASK_ID} " TODO.md; then
+              echo "Task $RESOLVED_TASK_ID is not unchecked — skipping proof-log"
+              continue
+            fi
+            sed -i -E "s/^([[:space:]]*- )\[ \] (${RESOLVED_TASK_ID} .*)\$/\1[x] \2 ${PROOF}/" TODO.md
+            if ! grep -qE "^[[:space:]]*- \[x\] ${RESOLVED_TASK_ID} .*pr:#${PR_NUMBER}" TODO.md; then
+              echo "::error::Failed to update TODO.md for $RESOLVED_TASK_ID — sed pattern did not match"
+              exit 1
+            fi
+            UPDATED_TASK_IDS="${UPDATED_TASK_IDS}${UPDATED_TASK_IDS:+ }${RESOLVED_TASK_ID}"
+            echo "Marked $RESOLVED_TASK_ID complete with proof-log: $PROOF"
+          done
+
+          if [[ -z "$UPDATED_TASK_IDS" ]]; then
+            echo "No eligible TODO tasks changed"
             exit 0
           fi
-
-          if [[ -z "${LINKED_ISSUES:-}" ]]; then
-            echo "::notice::PR title task ID without explicit closing issue is metadata only — skipping TODO.md proof-log (GH#23516)"
-            exit 0
-          fi
-
-          TASK_LINE=$(grep -E "^[[:space:]]*- \[ \] ${TASK_ID} " TODO.md | head -1 || true)
-          if echo "$TASK_LINE" | grep -qE '(^|[[:space:]])blocked-by:[^[:space:]]+'; then
-            echo "::notice::Task $TASK_ID has unresolved blocked-by marker — skipping TODO.md proof-log (GH#23516)"
-            exit 0
-          fi
-
-          # Check if already marked complete with this PR
-          if grep -qE "^[[:space:]]*- \[x\] ${TASK_ID} .*pr:#${PR_NUMBER}" TODO.md; then
-            echo "Task $TASK_ID already has proof-log for PR #${PR_NUMBER}"
-            exit 0
-          fi
-
-          # Mark complete: [ ] -> [x], append proof-log
-          sed -i -E "s/^([[:space:]]*- )\[ \] (${TASK_ID} .*)\$/\1[x] \2 ${PROOF}/" TODO.md
-
-          # Verify the change was made
-          if ! grep -qE "^[[:space:]]*- \[x\] ${TASK_ID} .*pr:#${PR_NUMBER}" TODO.md; then
-            echo "::warning::Failed to update TODO.md for $TASK_ID — sed pattern did not match"
-            exit 0
-          fi
-
-          echo "Marked $TASK_ID complete with proof-log: $PROOF"
 
           # Commit and push
           git add TODO.md
-          git commit -m "chore: mark $TASK_ID complete ($PROOF) [skip ci]"
+          git commit -m "chore: mark $UPDATED_TASK_IDS complete ($PROOF) [skip ci]"
 
           # t2029: track success explicitly so a silent branch-protection
           # rejection becomes a loud failure. Without this, GH006 rejections
@@ -1181,7 +1165,7 @@ jobs:
             # gap in 30s instead of papering over each merge.
             echo "::error::Failed to push TODO.md update after 3 attempts — branch protection blocked token $([ -n "${SYNC_PAT_PRESENT:-}" ] && echo "SYNC_PAT" || echo "GITHUB_TOKEN fallback")"
             echo "::error::Root cause fix: gh secret set SYNC_PAT --repo ${GITHUB_REPOSITORY} --body \"<PAT>\" (Contents: Read and write)"
-            echo "::error::Workaround: task-complete-helper.sh $TASK_ID --pr $PR_NUMBER"
+            echo "::error::Workaround: run task-complete-helper.sh for: $UPDATED_TASK_IDS (PR $PR_NUMBER)"
 
             if [[ -n "${SYNC_PAT_PRESENT:-}" ]]; then
               CAUSE_LINE="The \`SYNC_PAT\` secret is set, but the PAT lacks branch-protection bypass. Confirm the fine-grained PAT is scoped to \`${GITHUB_REPOSITORY}\` with \`Contents: Read and write\`, and that the repo admin has \`Do not allow bypassing the above settings\` disabled (classic protection) or added the PAT owner to the ruleset bypass list."
@@ -1197,9 +1181,15 @@ jobs:
           Next \`TODO.md\` push will use the PAT and complete the round-trip. Code path: \`sync-on-pr-merge\` + \`sync-on-push\` + \`sync-on-issue\` + \`manual-sync\` (t2048, t2166)."
             fi
 
+            WORKAROUND_COMMANDS=""
+            for RESOLVED_TASK_ID in $UPDATED_TASK_IDS; do
+              WORKAROUND_COMMANDS="${WORKAROUND_COMMANDS}~/.aidevops/agents/scripts/task-complete-helper.sh ${RESOLVED_TASK_ID} --pr ${PR_NUMBER} --testing-level self-assessed
+          "
+            done
+
             COMMENT_BODY="### TODO.md auto-completion blocked
 
-          The \`sync-on-pr-merge\` workflow tried to mark \`$TASK_ID\` complete in \`TODO.md\` with proof-log \`$PROOF\`, but the push was rejected by branch protection (GH006).
+          The \`sync-on-pr-merge\` workflow tried to mark tasks \`$UPDATED_TASK_IDS\` complete in \`TODO.md\` with proof-log \`$PROOF\`, but the push was rejected by branch protection (GH006).
 
           **Cause:** ${CAUSE_LINE}
 
@@ -1208,7 +1198,7 @@ jobs:
           **Immediate workaround (until the secret is fixed):** run locally to complete the audit trail for this PR only:
 
           \`\`\`bash
-          ~/.aidevops/agents/scripts/task-complete-helper.sh $TASK_ID --pr $PR_NUMBER --testing-level self-assessed
+          ${WORKAROUND_COMMANDS}
           \`\`\`
 
           Context: t2048 (PR #18677) landed the \`SYNC_PAT || GITHUB_TOKEN\` fallback code. t2166 extended it to \`sync-on-push\`/\`sync-on-issue\`/\`manual-sync\` and added visibility warnings. The operational secret still has to be created by the repo maintainer — this comment is that cue.
@@ -1222,9 +1212,9 @@ jobs:
           fi
 
       - name: Sync PLANS.md status from TODO.md completions
-        if: steps.extract.outputs.task_id != ''
+        if: steps.resolve-tasks.outputs.task_backed == 'true' && steps.extract.outputs.range_syntax != 'true'
         env:
-          TASK_ID: ${{ steps.extract.outputs.task_id }}
+          TASK_IDS: ${{ steps.resolve-tasks.outputs.task_ids }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
           # When a task is marked complete in TODO.md, check if it belongs to
@@ -1238,19 +1228,19 @@ jobs:
           fi
 
           PLANS_CHANGED=false
-
-          # Find all plans that reference this task ID
+          # Find all plans that reference each task resolved from closing issues.
           # Plans reference tasks as: **TODO:** t1234 or **TODO:** t1234, t1235
-          PLAN_LINES=$(grep -n "^\*\*TODO:\*\*.*${TASK_ID}" todo/PLANS.md | cut -d: -f1 || true)
+          for RESOLVED_TASK_ID in $TASK_IDS; do
+            PLAN_LINES=$(grep -n "^\*\*TODO:\*\*.*${RESOLVED_TASK_ID}" todo/PLANS.md | cut -d: -f1 || true)
 
-          if [[ -z "$PLAN_LINES" ]]; then
-            echo "Task $TASK_ID not referenced in any PLANS.md plan — skipping"
-            exit 0
-          fi
+            if [[ -z "$PLAN_LINES" ]]; then
+              echo "Task $RESOLVED_TASK_ID not referenced in any PLANS.md plan — skipping"
+              continue
+            fi
 
-          echo "Task $TASK_ID found in PLANS.md at line(s): $PLAN_LINES"
+            echo "Task $RESOLVED_TASK_ID found in PLANS.md at line(s): $PLAN_LINES"
 
-          for TODO_LINE in $PLAN_LINES; do
+            for TODO_LINE in $PLAN_LINES; do
             # Extract all task IDs from this plan's TODO line
             TODO_CONTENT=$(sed -n "${TODO_LINE}p" todo/PLANS.md)
             PLAN_TASKS=$(echo "$TODO_CONTENT" | grep -oE 't[0-9]+(\.[0-9]+)*' | sort -u)
@@ -1334,6 +1324,7 @@ jobs:
 
             PLANS_CHANGED=true
             echo "Updated plan status to Completed (line $STATUS_LINE)"
+            done
           done
 
           if [[ "$PLANS_CHANGED" == "true" ]]; then
@@ -1341,7 +1332,7 @@ jobs:
             if git diff --cached --quiet todo/PLANS.md 2>/dev/null; then
               echo "No PLANS.md changes to commit"
             else
-              git commit -m "chore: sync PLANS.md status for $TASK_ID (PR #${PR_NUMBER}) [skip ci]"
+              git commit -m "chore: sync PLANS.md status for $TASK_IDS (PR #${PR_NUMBER}) [skip ci]"
               for i in 1 2 3; do
                 echo "Push attempt $i..."
                 git pull --rebase origin main || true
