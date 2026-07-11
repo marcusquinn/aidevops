@@ -1422,6 +1422,29 @@ _dlw_build_worker_title() {
 }
 
 #######################################
+# Populate caller-scoped worker lineage variables before launch.
+# Arguments:
+#   $1 - session key
+#######################################
+_dlw_prepare_worker_lineage() {
+	local session_key_arg="$1"
+	local lineage_epoch=""
+	lineage_epoch=$(date +%s 2>/dev/null || printf '0')
+	parent_worker_id="${AIDEVOPS_WORKER_ID:-}"
+	root_worker_id="${AIDEVOPS_ROOT_WORKER_ID:-}"
+	correlation_id="${AIDEVOPS_CORRELATION_ID:-}"
+	worker_id="worker:${session_key_arg}:$$:${lineage_epoch}:${RANDOM:-0}"
+	[[ -n "$root_worker_id" ]] || root_worker_id="${parent_worker_id:-$worker_id}"
+	[[ -n "$correlation_id" ]] || correlation_id="correlation:${root_worker_id}"
+	if declare -F _emit_supervisor_dispatch_event >/dev/null 2>&1; then
+		dispatch_event_id=$(_emit_supervisor_dispatch_event \
+			"$worker_id" "$parent_worker_id" "$root_worker_id" "$correlation_id") || dispatch_event_id=""
+	fi
+	root_event_id="${AIDEVOPS_ROOT_EVENT_ID:-$dispatch_event_id}"
+	return 0
+}
+
+#######################################
 # Launch a worker process detached from the pulse process group.
 # Stdout: worker PID
 #######################################
@@ -1438,21 +1461,13 @@ _dlw_nohup_launch() {
 	local selected_model="${10}"
 	local worker_worktree_path="${11}"
 	local worker_worktree_branch="${12}"
-	local parent_worker_id="${AIDEVOPS_WORKER_ID:-}"
-	local root_worker_id="${AIDEVOPS_ROOT_WORKER_ID:-}"
-	local correlation_id="${AIDEVOPS_CORRELATION_ID:-}"
-	local lineage_epoch=""
-	lineage_epoch=$(date +%s 2>/dev/null || printf '0')
-	local worker_id="worker:${session_key}:$$:${lineage_epoch}:${RANDOM:-0}"
-	[[ -n "$root_worker_id" ]] || root_worker_id="${parent_worker_id:-$worker_id}"
-	[[ -n "$correlation_id" ]] || correlation_id="correlation:${root_worker_id}"
+	local parent_worker_id=""
+	local root_worker_id=""
+	local correlation_id=""
+	local worker_id=""
 	local dispatch_event_id=""
 	local root_event_id=""
-	if declare -F _emit_supervisor_dispatch_event >/dev/null 2>&1; then
-		dispatch_event_id=$(_emit_supervisor_dispatch_event \
-			"$worker_id" "$parent_worker_id" "$root_worker_id" "$correlation_id") || dispatch_event_id=""
-	fi
-	root_event_id="${AIDEVOPS_ROOT_EVENT_ID:-$dispatch_event_id}"
+	_dlw_prepare_worker_lineage "$session_key"
 
 	# Use issue title as session title for searchable history, but keep the
 	# issue marker at the beginning so Tabby tabs and OpenCode session search
