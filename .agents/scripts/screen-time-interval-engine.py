@@ -326,22 +326,25 @@ def read_wtmp_lines(user, journal_reason):
 
 
 def parse_wtmp_line(line, now):
-    if not line.strip() or "wtmp begins" in line or line.startswith(("reboot", "shutdown")):
-        return None, False
-    structured = re.match(r"^([0-9]+)\|([0-9]+)$", line.strip())
-    if structured:
-        return (float(structured.group(1)), float(structured.group(2))), False
-    dates = re.findall(r"(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun) [A-Z][a-z]{2}\s+[0-9]{1,2} [0-9:]{8}(?: [+-][0-9]{4})? [0-9]{4}", line)
-    if not dates:
-        return None, True
-    try:
-        left = parse_last_local_timestamp(dates[0])
-        right = now if "still logged in" in line else parse_last_local_timestamp(dates[1]) if len(dates) >= 2 else None
-    except (TypeError, ValueError):
-        return None, True
-    if left is None or right is None or right <= left:
-        return None, True
-    return (left, right), False
+    interval = None
+    malformed = False
+    ignored = not line.strip() or "wtmp begins" in line or line.startswith(("reboot", "shutdown"))
+    if not ignored:
+        structured = re.match(r"^([0-9]+)\|([0-9]+)$", line.strip())
+        if structured:
+            interval = (float(structured.group(1)), float(structured.group(2)))
+        else:
+            dates = re.findall(r"(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun) [A-Z][a-z]{2}\s+[0-9]{1,2} [0-9:]{8}(?: [+-][0-9]{4})? [0-9]{4}", line)
+            try:
+                left = parse_last_local_timestamp(dates[0]) if dates else None
+                right = now if "still logged in" in line else parse_last_local_timestamp(dates[1]) if len(dates) >= 2 else None
+                if left is not None and right is not None and right > left:
+                    interval = (left, right)
+                else:
+                    malformed = True
+            except (TypeError, ValueError):
+                malformed = True
+    return interval, malformed
 
 
 def parse_wtmp_lines(lines, now):
@@ -386,28 +389,56 @@ def linux_is_active(state):
 
 
 def apply_linux_message(state, message, user):
+    recognized = True
     match = SESSION_NEW.search(message)
     if match and match.group(2) == user:
         state["sessions"][match.group(1).rstrip(".")] = False
-        return True
-    lowered = message.lower()
-    match = SESSION_ID.search(message) if "locked" in lowered else None
-    session_id = match.group(1).rstrip(".") if match else ""
-    if session_id in state["sessions"]:
-        state["sessions"][session_id] = "unlocked" not in lowered
-        return True
-    if "Lid closed" in message:
+    elif "Lid closed" in message:
         state["lid_open"] = False
-        return True
-    if "Lid opened" in message:
+    elif "Lid opened" in message:
         state["lid_open"] = True
-        return True
-    match = SESSION_END.search(message)
-    session_id = match.group(1).rstrip(".") if match else ""
-    if session_id in state["sessions"]:
-        state["sessions"].pop(session_id, None)
-        return True
-    return False
+    else:
+        lowered = message.lower()
+        lock_match = SESSION_ID.search(message) if "locked" in lowered else None
+        lock_session_id = lock_match.group(1).rstrip(".") if lock_match else ""
+        end_match = SESSION_END.search(message)
+        end_session_id = end_match.group(1).rstrip(".") if end_match else ""
+        if lock_session_id in state["sessions"]:
+            state["sessions"][lock_session_id] = "unlocked" not in lowered
+        elif end_session_id in state["sessions"]:
+            state["sessions"].pop(end_session_id, None)
+        else:
+            recognized = False
+    return recognized
+
+
+def parse_linux_journal_line(line, now):
+    first = line.split(None, 1)
+    timestamp = parse_timestamp(first[0]) if len(first) == 2 else None
+    if timestamp is None or timestamp > now:
+        return None
+    return timestamp, first[1]
+
+
+def debug_linux_event(timestamp, before, after, state, message):
+    if os.environ.get("AIDEVOPS_SCREEN_TIME_DEBUG") == "1":
+        print(
+            f"screen-time event ts={timestamp} before={before} after={after} sessions={state['sessions']} lid_open={state['lid_open']} message={message}",
+            file=sys.stderr,
+        )
+
+
+def apply_linux_event(state, message, user, timestamp, opened, intervals):
+    before = linux_is_active(state)
+    if not apply_linux_message(state, message, user):
+        return opened, before, False
+    after = linux_is_active(state)
+    debug_linux_event(timestamp, before, after, state, message)
+    if before != after:
+        if before and opened is not None:
+            intervals.append((opened, timestamp))
+        opened = timestamp if after else None
+    return opened, after, True
 
 
 def collect_linux_events(lines, now, user):
@@ -417,29 +448,13 @@ def collect_linux_events(lines, now, user):
     opened = None
     active = False
     for line in lines:
-        first = line.split(None, 1)
-        if len(first) != 2:
+        event = parse_linux_journal_line(line, now)
+        if event is None:
             continue
-        timestamp = parse_timestamp(first[0])
-        if timestamp is None or timestamp > now:
-            continue
-        message = first[1]
-        before = linux_is_active(state)
-        if not apply_linux_message(state, message, user):
-            continue
-        after = linux_is_active(state)
-        if os.environ.get("AIDEVOPS_SCREEN_TIME_DEBUG") == "1":
-            print(
-                f"screen-time event ts={timestamp} before={before} after={after} sessions={state['sessions']} lid_open={state['lid_open']} message={message}",
-                file=sys.stderr,
-            )
-        observation_epochs.append(timestamp)
-        if before == after:
-            continue
-        if before and opened is not None:
-            intervals.append((opened, timestamp))
-        opened = timestamp if after else None
-        active = after
+        timestamp, message = event
+        opened, active, recognized = apply_linux_event(state, message, user, timestamp, opened, intervals)
+        if recognized:
+            observation_epochs.append(timestamp)
     if active and opened is not None:
         intervals.append((opened, now))
     return union_intervals(intervals, now - WINDOWS["year"], now), observation_epochs
