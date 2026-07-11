@@ -1846,6 +1846,20 @@ test_registered_prompt_temp_cleanup_removes_dir() {
 	return 0
 }
 
+test_launch_helpers_tolerate_unset_state() {
+	unset _HEADLESS_RUNTIME_TEMP_PATHS session_key work_dir title prompt prompt_file
+
+	if _cleanup_headless_runtime_temp_paths &&
+		! _validate_run_args >/dev/null 2>&1; then
+		print_result "launch helpers tolerate unset state under nounset" 0
+		return 0
+	fi
+
+	print_result "launch helpers tolerate unset state under nounset" 1 \
+		"Expected cleanup to succeed and validation to report missing arguments"
+	return 0
+}
+
 # Helper: create a bare git repo and a feature branch with optional commits.
 # Each call uses work_dir-derived remote path to avoid inter-test collisions.
 # Args: $1 = work_dir path, $2 = 1 to add a commit (0 for none)
@@ -2769,6 +2783,7 @@ main() {
 	test_large_opencode_prompt_uses_file_attachment
 	test_large_claude_prompt_uses_stdin_file
 	test_registered_prompt_temp_cleanup_removes_dir
+	test_launch_helpers_tolerate_unset_state
 	test_worker_produced_output_no_commits_returns_noop
 	test_worker_produced_output_with_commits_returns_pr_exists_failopen
 	test_worker_produced_output_non_worker_session_returns_pr_exists
