@@ -102,6 +102,96 @@ verify_remote_sync() {
 	return 0
 }
 
+_release_repo_slug() {
+	local remote_url=""
+	remote_url=$(git -C "$REPO_ROOT" remote get-url origin 2>/dev/null || true)
+	case "$remote_url" in
+	*github.com/*) remote_url="${remote_url#*github.com/}" ;;
+	*github.com:*) remote_url="${remote_url#*github.com:}" ;;
+	*) return 1 ;;
+	esac
+	printf '%s\n' "${remote_url%.git}"
+	return 0
+}
+
+release_source_pr_required() {
+	local repo_slug=""
+	repo_slug=$(_release_repo_slug 2>/dev/null || true)
+	if [[ "$repo_slug" == "marcusquinn/aidevops" ]]; then
+		return 0
+	fi
+	return 1
+}
+
+verify_canonical_default_synced() {
+	local branch="${1:-main}"
+	local canonical_path=""
+	canonical_path=$(git -C "$REPO_ROOT" worktree list --porcelain 2>/dev/null | sed -n 's/^worktree //p' | head -1)
+	[[ -n "$canonical_path" && -d "$canonical_path" ]] || {
+		print_error "Cannot resolve canonical worktree for release"
+		return 1
+	}
+	local canonical_branch=""
+	canonical_branch=$(git -C "$canonical_path" branch --show-current 2>/dev/null || true)
+	local canonical_head=""
+	canonical_head=$(git -C "$canonical_path" rev-parse HEAD 2>/dev/null || true)
+	local remote_head=""
+	remote_head=$(git -C "$REPO_ROOT" rev-parse "origin/${branch}" 2>/dev/null || true)
+	if [[ "$canonical_branch" != "$branch" || -z "$canonical_head" || "$canonical_head" != "$remote_head" ]]; then
+		print_error "Canonical repository is not synchronized to origin/${branch}"
+		print_info "Run canonical-recovery-helper.sh with the linked issue, then recreate the detached release worktree"
+		return 1
+	fi
+	print_success "Canonical repository is synchronized to origin/${branch}"
+	return 0
+}
+
+verify_release_source_pr() {
+	local source_pr="$1"
+	local branch="${2:-main}"
+	local repo_slug="${3:-}"
+	[[ "$source_pr" =~ ^[0-9]+$ ]] || {
+		print_error "Release source PR must be a numeric GitHub pull request"
+		return 1
+	}
+	if [[ -z "$repo_slug" ]]; then
+		repo_slug=$(_release_repo_slug 2>/dev/null || true)
+	fi
+	[[ -n "$repo_slug" ]] || {
+		print_error "Cannot resolve GitHub repository for release provenance"
+		return 1
+	}
+
+	local pr_json=""
+	pr_json=$(gh pr view "$source_pr" --repo "$repo_slug" \
+		--json state,mergedAt,mergeCommit,baseRefName,headRefOid 2>/dev/null) || {
+		print_error "Cannot read source PR #${source_pr}"
+		return 1
+	}
+	if ! printf '%s' "$pr_json" | jq -e --arg branch "$branch" '
+		(.state == "MERGED")
+		and ((.mergedAt // "") != "")
+		and (.baseRefName == $branch)
+		and ((.headRefOid // "") != "")
+		and ((.mergeCommit.oid // "") != "")
+	' >/dev/null; then
+		print_error "Source PR #${source_pr} lacks verified MERGED provenance for ${branch}"
+		return 1
+	fi
+
+	local merge_sha=""
+	merge_sha=$(printf '%s' "$pr_json" | jq -r '.mergeCommit.oid')
+	if ! git -C "$REPO_ROOT" merge-base --is-ancestor "$merge_sha" "origin/${branch}" 2>/dev/null; then
+		print_error "Source PR #${source_pr} merge SHA is not reachable from origin/${branch}"
+		return 1
+	fi
+	VERSION_MANAGER_SOURCE_PR="$source_pr"
+	VERSION_MANAGER_SOURCE_MERGE_SHA="$merge_sha"
+	export VERSION_MANAGER_SOURCE_PR VERSION_MANAGER_SOURCE_MERGE_SHA
+	print_success "Release provenance verified: PR #${source_pr}, merge ${merge_sha}"
+	return 0
+}
+
 # Function to check for uncommitted changes
 check_working_tree_clean() {
 	local uncommitted
