@@ -173,23 +173,33 @@ def _scan_supported_shell(command: str) -> None:
     double = False
     escaped = False
     for index, char in enumerate(command):
-        if escaped:
-            escaped = False
-            continue
-        if char == "\\" and not single:
-            escaped = True
-            continue
-        if char == "'" and not double:
-            single = not single
-            continue
-        if char == '"' and not single:
-            double = not double
+        single, double, escaped, consumed = _update_shell_quote_state(
+            char, single, double, escaped
+        )
+        if consumed:
             continue
         if single:
             continue
         _validate_shell_character(command, index, char, double)
     if single or double or escaped:
         raise CommandParseError("unterminated shell quoting or escape")
+
+
+def _update_shell_quote_state(
+    char: str, single: bool, double: bool, escaped: bool
+) -> tuple[bool, bool, bool, bool]:
+    consumed = True
+    if escaped:
+        escaped = False
+    elif char == "\\" and not single:
+        escaped = True
+    elif char == "'" and not double:
+        single = not single
+    elif char == '"' and not single:
+        double = not double
+    else:
+        consumed = False
+    return single, double, escaped, consumed
 
 
 def _validate_shell_character(command: str, index: int, char: str, quoted: bool) -> None:
@@ -300,31 +310,43 @@ def _unwrap_time(argv: list[str]) -> list[str]:
     return argv[index:]
 
 
+def _next_shell_option(argv: list[str], index: int) -> int | None:
+    arg = argv[index]
+    value_options = {"-O", "+O", "-o", "+o", "--init-file", "--rcfile"}
+    if arg in {"--init-file", "--rcfile"} or arg.startswith(
+        ("--init-file=", "--rcfile=")
+    ):
+        raise CommandParseError(f"shell startup file option is unsupported: {arg}")
+    if arg in value_options:
+        if index + 1 >= len(argv):
+            raise CommandParseError(f"missing value for shell option {arg}")
+        return index + 2
+    if any(
+        arg.startswith(option + "=")
+        for option in value_options
+        if option.startswith("--")
+    ):
+        return index + 1
+    if arg.startswith(("-", "+")):
+        return index + 1
+    return None
+
+
 def _shell_command_index(argv: list[str]) -> int | None:
     index = 1
-    value_options = {"-O", "+O", "-o", "+o", "--init-file", "--rcfile"}
-    while index < len(argv):
+    command_index: int | None = None
+    while index < len(argv) and command_index is None:
         arg = argv[index]
         if arg == "--":
-            return None
+            break
         if arg.startswith("-") and not arg.startswith("--") and "c" in arg[1:]:
-            return index + 1
-        if arg in {"--init-file", "--rcfile"} or arg.startswith(("--init-file=", "--rcfile=")):
-            raise CommandParseError(f"shell startup file option is unsupported: {arg}")
-        if arg in value_options:
-            if index + 1 >= len(argv):
-                raise CommandParseError(f"missing value for shell option {arg}")
-            index += 2
+            command_index = index + 1
             continue
-        if any(arg.startswith(option + "=") for option in value_options if option.startswith("--")):
-            index += 1
-            continue
-        if arg.startswith(("-", "+")):
-            index += 1
-            continue
-        if not arg.startswith("-"):
-            return None
-    return None
+        next_index = _next_shell_option(argv, index)
+        if next_index is None:
+            break
+        index = next_index
+    return command_index
 
 
 def _is_safety_sensitive_assignment(name: str) -> bool:
@@ -363,64 +385,89 @@ def _strip_leading_assignments(argv: list[str]) -> list[str]:
     return argv[index:]
 
 
+def _validate_launcher(argv: list[str], executable: str) -> None:
+    blocked = {
+        ".", "!", "alias", "builtin", "case", "coproc", "declare", "do",
+        "done", "elif", "else", "enable", "esac", "eval", "export", "fi",
+        "for", "function", "if", "local", "parallel", "readonly", "select",
+        "set", "source", "then", "trap", "typeset", "unalias", "unset",
+        "until", "while", "xargs",
+    }
+    if executable in blocked:
+        raise CommandParseError(
+            f"dynamic shell control or launcher is unsupported: {executable}"
+        )
+    if executable == "find" and any(
+        arg in {"-exec", "-execdir", "-ok", "-okdir"} for arg in argv[1:]
+    ):
+        raise CommandParseError("find command execution actions are unsupported")
+
+
+def _unwrap_nohup(argv: list[str]) -> list[str]:
+    index = 2 if len(argv) > 1 and argv[1] == "--" else 1
+    if index >= len(argv) or argv[index].startswith("--"):
+        raise CommandParseError("nohup wrapper has no supported command")
+    return argv[index:]
+
+
+def _unwrap_exec(argv: list[str]) -> list[str]:
+    index = 1
+    while index < len(argv) and argv[index].startswith("-"):
+        index = _consume_option(argv, index, {"-a"}, {"-c", "-l"})
+    if index >= len(argv):
+        raise CommandParseError("exec wrapper has no command")
+    return argv[index:]
+
+
+def _unwrap_command(argv: list[str]) -> list[str] | None:
+    if len(argv) > 1 and argv[1] in {"-v", "-V"}:
+        return None
+    index = 1
+    while index < len(argv) and argv[index] in {"-p", "--"}:
+        index += 1
+    if index >= len(argv):
+        raise CommandParseError("command wrapper has no command")
+    return argv[index:]
+
+
+def _terminal_invocations(argv: list[str], executable: str) -> list[list[str]]:
+    if executable in SHELLS:
+        command_index = _shell_command_index(argv)
+        if command_index is None:
+            return [argv]
+        if command_index >= len(argv):
+            raise CommandParseError("shell -c option has no command string")
+        return _shell_invocations(argv[command_index])
+    if executable in {"cd", "pushd", "popd"}:
+        raise CommandParseError(
+            "directory-changing shell builtins are unsupported; use tool cwd"
+        )
+    return [argv]
+
+
 def _expand_argv(argv: list[str]) -> list[list[str]]:
     current = _validate_argv(argv)
     while current:
         current = _strip_leading_assignments(current)
         executable = os.path.basename(current[0])
-        if executable in {
-            ".", "!", "alias", "builtin", "case", "coproc", "declare", "do",
-            "done", "elif", "else", "enable", "esac", "eval", "export", "fi",
-            "for", "function", "if", "local", "parallel", "readonly", "select",
-            "set", "source", "then", "trap", "typeset", "unalias", "unset",
-            "until", "while", "xargs",
-        }:
-            raise CommandParseError(f"dynamic shell control or launcher is unsupported: {executable}")
-        if executable == "find" and any(arg in {"-exec", "-execdir", "-ok", "-okdir"} for arg in current[1:]):
-            raise CommandParseError("find command execution actions are unsupported")
-        if executable == "env":
-            current = _unwrap_env(current)
-            continue
-        if executable == "sudo":
-            current = _unwrap_sudo(current)
-            continue
-        if executable == "nohup":
-            index = 2 if len(current) > 1 and current[1] == "--" else 1
-            if index >= len(current) or current[index].startswith("--"):
-                raise CommandParseError("nohup wrapper has no supported command")
-            current = current[index:]
-            continue
-        if executable == "time":
-            current = _unwrap_time(current)
-            continue
-        if executable == "exec":
-            index = 1
-            while index < len(current) and current[index].startswith("-"):
-                index = _consume_option(current, index, {"-a"}, {"-c", "-l"})
-            if index >= len(current):
-                raise CommandParseError("exec wrapper has no command")
-            current = current[index:]
+        _validate_launcher(current, executable)
+        unwrap = {
+            "env": _unwrap_env,
+            "sudo": _unwrap_sudo,
+            "nohup": _unwrap_nohup,
+            "time": _unwrap_time,
+            "exec": _unwrap_exec,
+        }.get(executable)
+        if unwrap is not None:
+            current = unwrap(current)
             continue
         if executable == "command":
-            if len(current) > 1 and current[1] in {"-v", "-V"}:
+            unwrapped = _unwrap_command(current)
+            if unwrapped is None:
                 return [current]
-            index = 1
-            while index < len(current) and current[index] in {"-p", "--"}:
-                index += 1
-            if index >= len(current):
-                raise CommandParseError("command wrapper has no command")
-            current = current[index:]
+            current = unwrapped
             continue
-        if executable in SHELLS:
-            command_index = _shell_command_index(current)
-            if command_index is None:
-                return [current]
-            if command_index >= len(current):
-                raise CommandParseError("shell -c option has no command string")
-            return _shell_invocations(current[command_index])
-        if executable in {"cd", "pushd", "popd"}:
-            raise CommandParseError("directory-changing shell builtins are unsupported; use tool cwd")
-        return [current]
+        return _terminal_invocations(current, executable)
     raise CommandParseError("wrapper chain has no command")
 
 
@@ -536,39 +583,57 @@ def _git_parts(argv: list[str]) -> tuple[str, list[str]]:
     return "", []
 
 
-def _matches(matcher: str, argv: list[str], cwd: str) -> bool:
+def _matches_rm(matcher: str, argv: list[str], cwd: str) -> bool:
     executable = os.path.basename(argv[0]) if argv else ""
     args = argv[1:]
+    required_flags = _has_flag(args, "r", "--recursive") and _has_flag(
+        args, "f", "--force"
+    )
+    if executable != "rm" or not required_flags:
+        return False
+    operands = _rm_operands(args)
+    if not operands or all(_is_temp_operand(path, cwd) for path in operands):
+        return False
+    is_root = any(_is_root_or_home_operand(path, cwd) for path in operands)
+    return is_root if matcher == "rm_recursive_force_root" else not is_root
+
+
+def _matches_git_restore(subcommand: str, args: list[str]) -> bool:
+    if subcommand != "restore":
+        return False
+    flags = _short_flags(args)
+    staged = "--staged" in args or "S" in flags
+    worktree = "--worktree" in args or "W" in flags
+    return worktree or not staged
+
+
+def _matches_git(matcher: str, subcommand: str, args: list[str]) -> bool:
+    predicates = {
+        "git_checkout_worktree_path": subcommand == "checkout" and "--" in args,
+        "git_restore_worktree": _matches_git_restore(subcommand, args),
+        "git_reset_destructive": subcommand == "reset"
+        and any(arg in {"--hard", "--merge"} for arg in args),
+        "git_clean_force": subcommand == "clean"
+        and _has_flag(args, "f", "--force")
+        and not _has_flag(args, "n", "--dry-run"),
+        "git_push_force": subcommand == "push"
+        and ("--force" in args or "f" in _short_flags(args)),
+        "git_branch_force_delete": subcommand == "branch"
+        and "D" in _short_flags(args),
+        "git_stash_delete": subcommand == "stash"
+        and bool(args)
+        and args[0] in {"drop", "clear"},
+    }
+    return predicates.get(matcher, False)
+
+
+def _matches(matcher: str, argv: list[str], cwd: str) -> bool:
     if matcher in {"rm_recursive_force_root", "rm_recursive_force"}:
-        if executable != "rm" or not _has_flag(args, "r", "--recursive") or not _has_flag(args, "f", "--force"):
-            return False
-        operands = _rm_operands(args)
-        if not operands or all(_is_temp_operand(path, cwd) for path in operands):
-            return False
-        is_root = any(_is_root_or_home_operand(path, cwd) for path in operands)
-        return is_root if matcher == "rm_recursive_force_root" else not is_root
+        return _matches_rm(matcher, argv, cwd)
     subcommand, git_args = _git_parts(argv)
     if not subcommand:
         return False
-    if matcher == "git_checkout_worktree_path":
-        return subcommand == "checkout" and "--" in git_args
-    if matcher == "git_restore_worktree":
-        if subcommand != "restore":
-            return False
-        staged = "--staged" in git_args or "S" in _short_flags(git_args)
-        worktree = "--worktree" in git_args or "W" in _short_flags(git_args)
-        return worktree or not staged
-    if matcher == "git_reset_destructive":
-        return subcommand == "reset" and any(arg in {"--hard", "--merge"} for arg in git_args)
-    if matcher == "git_clean_force":
-        return subcommand == "clean" and _has_flag(git_args, "f", "--force") and not _has_flag(git_args, "n", "--dry-run")
-    if matcher == "git_push_force":
-        return subcommand == "push" and ("--force" in git_args or "f" in _short_flags(git_args))
-    if matcher == "git_branch_force_delete":
-        return subcommand == "branch" and "D" in _short_flags(git_args)
-    if matcher == "git_stash_delete":
-        return subcommand == "stash" and bool(git_args) and git_args[0] in {"drop", "clear"}
-    return False
+    return _matches_git(matcher, subcommand, git_args)
 
 
 def _evaluate_static(invocations: list[list[str]], cwd: str, policy: dict[str, Any]) -> dict[str, Any]:
