@@ -53,6 +53,22 @@ _restore_mock_gh() {
 	return 0
 }
 
+_assert_scan_single_pr_has_no_findings() {
+	local pr_number="$1"
+	local result_message="$2"
+	local findings
+	findings=$(_scan_single_pr "owner/repo" "$pr_number" "medium" "false" 2>/dev/null)
+	local count
+	count=$(printf '%s' "$findings" | jq 'length' 2>/dev/null || echo "0")
+
+	if [[ "$count" -eq 0 ]]; then
+		print_result "$result_message" 0
+	else
+		print_result "$result_message" 1 "expected 0 findings, got ${count}"
+	fi
+	return 0
+}
+
 # --- Test Functions ---
 
 test_quality_debt_security_labels_for_security_review_feedback() {
@@ -845,37 +861,17 @@ test_scan_single_pr_filters_positive_inline_acknowledgement_reply() {
 		return 0
 	}
 
-	local findings
-	findings=$(_scan_single_pr "owner/repo" "1" "medium" "false" 2>/dev/null)
-	local count
-	count=$(printf '%s' "$findings" | jq 'length' 2>/dev/null || echo "0")
-
-	if [[ "$count" -eq 0 ]]; then
-		print_result "positive inline acknowledgement reply is filtered" 0
-	else
-		print_result "positive inline acknowledgement reply is filtered" 1 "expected 0 findings, got ${count}"
-	fi
+	_assert_scan_single_pr_has_no_findings "1" \
+		"positive inline acknowledgement reply is filtered"
 
 	acknowledgement_body="The implementation looks correct and addressed the stale cleanup path."
-	findings=$(_scan_single_pr "owner/repo" "1" "medium" "false" 2>/dev/null)
-	count=$(printf '%s' "$findings" | jq 'length' 2>/dev/null || echo "0")
-
-	if [[ "$count" -eq 0 ]]; then
-		print_result "positive inline acknowledgement reply using addressed is filtered" 0
-	else
-		print_result "positive inline acknowledgement reply using addressed is filtered" 1 "expected 0 findings, got ${count}"
-	fi
+	_assert_scan_single_pr_has_no_findings "1" \
+		"positive inline acknowledgement reply using addressed is filtered"
 
 	acknowledgement_body='Thank you for the update, marcusquinn. Using `${task_ref:-}` consistently for guard checks is the correct approach to prevent unbound variable errors when `set -u` is enabled. The verification steps you'
 	acknowledgement_body+="'ve taken, including the regression test, provide good confidence in this fix."
-	findings=$(_scan_single_pr "owner/repo" "1" "medium" "false" 2>/dev/null)
-	count=$(printf '%s' "$findings" | jq 'length' 2>/dev/null || echo "0")
-
-	if [[ "$count" -eq 0 ]]; then
-		print_result "issue #26770 positive inline guard-check acknowledgement is filtered" 0
-	else
-		print_result "issue #26770 positive inline guard-check acknowledgement is filtered" 1 "expected 0 findings, got ${count}"
-	fi
+	_assert_scan_single_pr_has_no_findings "1" \
+		"issue #26770 positive inline guard-check acknowledgement is filtered"
 
 	gh() {
 		local command="$1"
@@ -913,14 +909,8 @@ test_scan_single_pr_filters_positive_inline_acknowledgement_reply() {
 		return 1
 	}
 
-	findings=$(_scan_single_pr "owner/repo" "26918" "medium" "false" 2>/dev/null)
-	count=$(printf '%s' "$findings" | jq 'length' 2>/dev/null || echo "0")
-
-	if [[ "$count" -eq 0 ]]; then
-		print_result "issue #26971 addressed reply filters its parent finding" 0
-	else
-		print_result "issue #26971 addressed reply filters its parent finding" 1 "expected 0 findings, got ${count}"
-	fi
+	_assert_scan_single_pr_has_no_findings "26918" \
+		"issue #26971 addressed reply filters its parent finding"
 
 	_restore_mock_gh
 	return 0
