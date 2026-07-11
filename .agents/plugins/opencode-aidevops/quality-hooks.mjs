@@ -180,7 +180,9 @@ function recordGitPattern(scriptsDir, title, outputText) {
  */
 function trackBashOperation(ctx, title, outputText) {
   if (title.includes("git commit") || title.includes("git push")) {
-    console.error(`[aidevops] Git operation detected: ${title}`);
+    // Tool titles can contain entire commands and long file lists. Keep this
+    // informational telemetry in the quality log: writing it to stderr draws
+    // over OpenCode's TUI and makes payload text part of console routing.
     qualityLog(ctx.logsDir, ctx.qualityLogPath, "INFO", `Git operation: ${title}`);
     recordGitPattern(ctx.scriptsDir, title, outputText);
   }
