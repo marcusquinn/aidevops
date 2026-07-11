@@ -118,6 +118,21 @@ test_allows_linked_worktree_edits() {
 	return 0
 }
 
+test_worker_env_does_not_bypass_canonical_guard() {
+	local output=""
+	local exit_code=0
+	output=$(WORKER_WORKTREE_PATH="$TEST_ROOT" WORKER_WORKTREE_BRANCH="forged/worker" \
+		FULL_LOOP_HEADLESS=true run_helper "$TEST_ROOT" 2>&1) || exit_code=$?
+
+	if [[ "$exit_code" -eq 2 ]] && [[ "$output" == *"HEADLESS_BLOCKED=true"* ]]; then
+		print_result "worker environment cannot bypass canonical worktree guard" 0
+		return 0
+	fi
+
+	print_result "worker environment cannot bypass canonical worktree guard" 1 "exit=${exit_code} output=${output}"
+	return 0
+}
+
 test_warns_when_canonical_repo_is_off_main() {
 	git -C "$TEST_ROOT" switch -c bugfix/off-main >/dev/null 2>&1
 
@@ -304,6 +319,7 @@ main() {
 
 	test_blocks_headless_edits_on_main_with_worktree_guidance
 	test_allows_linked_worktree_edits
+	test_worker_env_does_not_bypass_canonical_guard
 	test_warns_when_canonical_repo_is_off_main
 	test_blocks_when_linked_worktree_owned_by_another_live_process
 	test_allows_same_opencode_session_pid_rollover

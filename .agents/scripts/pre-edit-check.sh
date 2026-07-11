@@ -53,21 +53,6 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 [[ -z "${BOLD+x}" ]] && BOLD='\033[1m'
 
 # =============================================================================
-# Fast-path for headless workers with pre-created worktrees
-# =============================================================================
-# When the dispatcher pre-creates a worktree and passes WORKER_WORKTREE_PATH,
-# the worker is already in a safe linked worktree. Skip all detection logic.
-if [[ -n "${WORKER_WORKTREE_PATH:-}" && -d "${WORKER_WORKTREE_PATH:-}" ]]; then
-	# Verify we're actually in the worktree (or the worker's --dir points here)
-	_current_dir="$(pwd -P 2>/dev/null || pwd)"
-	_wt_real="$(cd "$WORKER_WORKTREE_PATH" 2>/dev/null && pwd -P)"
-	if [[ "$_current_dir" == "$_wt_real"* ]]; then
-		echo "OK - Pre-created worktree: ${WORKER_WORKTREE_BRANCH:-unknown branch}"
-		exit 0
-	fi
-fi
-
-# =============================================================================
 # Loop Mode Support
 # =============================================================================
 # When --loop-mode is passed, the script auto-decides based on file path or task description:
@@ -530,7 +515,7 @@ _handle_loop_mode_on_protected() {
 
 	# Derive branch name from --task description or fall back to generic
 	local _wt_branch_name=""
-	local _wt_task_desc="${TASK_DESCRIPTION:-}"
+	local _wt_task_desc="${TASK_DESC:-}"
 	if [[ -n "$_wt_task_desc" ]]; then
 		# Extract issue number if present (e.g., "Implement issue #17642")
 		local _wt_issue_num=""

@@ -662,8 +662,8 @@ _parse_cmd_add_args() {
 # Precedence:
 #   1. Explicit --base <ref> (or AIDEVOPS_WORKTREE_BASE env var) — caller intent wins.
 #   2. origin/<default_branch> — safe, matches what the server will merge into.
-#   3. Local <default_branch> — fallback when remote-tracking ref missing.
-#   4. Empty string — fall through to git's default (HEAD). Caller logs a warning.
+#   3. Local <default_branch> — local-only repositories without an origin.
+#   4. Empty string — fail closed; never inherit an arbitrary current HEAD.
 #
 # Rationale: the pulse calls `worktree-helper.sh add <branch>` from the canonical
 # repo's cwd. If the canonical's HEAD is stale (long-lived feature branch,
@@ -691,10 +691,18 @@ _resolve_worktree_base_ref() {
 		return 0
 	fi
 
-	# 2. origin/<default>
+	# 2. origin/<default>. Refresh the remote-tracking ref before resolving it;
+	# worktree provenance must reflect the server tip observed at creation time.
 	local default_branch
 	default_branch=$(get_default_branch 2>/dev/null) || default_branch=""
 	if [[ -n "$default_branch" ]]; then
+		if git remote get-url origin >/dev/null 2>&1; then
+			if ! git fetch --no-tags --quiet origin \
+				"+refs/heads/${default_branch}:refs/remotes/origin/${default_branch}"; then
+				echo "Error: could not refresh origin/${default_branch}; refusing stale worktree base" >&2
+				return 1
+			fi
+		fi
 		if git rev-parse --verify --quiet "refs/remotes/origin/${default_branch}" >/dev/null 2>&1; then
 			printf 'origin/%s' "$default_branch"
 			return 0
@@ -706,7 +714,7 @@ _resolve_worktree_base_ref() {
 		fi
 	fi
 
-	# 4. No safe base resolved — caller falls back to HEAD and warns.
+	# 4. No safe base resolved — caller fails closed.
 	printf ''
 	return 0
 }
@@ -738,22 +746,16 @@ _cmd_add_create_worktree() {
 	# to prevent scope-leak PRs when canonical HEAD is stale. Canonical
 	# failure: example-repo#2716 (PR #2733, 100-file diff for a 2-line fix).
 	local _base_ref
-	_base_ref=$(_resolve_worktree_base_ref "$_explicit_base")
+	_base_ref=$(_resolve_worktree_base_ref "$_explicit_base") || return 1
 	if [[ -n "$_base_ref" ]]; then
 		echo -e "${BLUE}Creating worktree with new branch '$_branch' based on '$_base_ref'...${NC}"
 		git worktree add -b "$_branch" "$_path" "$_base_ref"
 		return 0
 	fi
 
-	# No remote default and no local default resolved. Surface the
-	# degradation loudly — the resulting branch will be based on the
-	# canonical's current HEAD which may be stale or unrelated.
-	echo -e "${YELLOW}Warning: could not resolve origin/<default> or a local default branch.${NC}" >&2
-	echo -e "${YELLOW}  Falling back to canonical HEAD. If this creates an oversized PR,${NC}" >&2
-	echo -e "${YELLOW}  re-create the worktree with '--base <ref>' or set AIDEVOPS_WORKTREE_BASE.${NC}" >&2
-	echo -e "${BLUE}Creating worktree with new branch '$_branch' (base: HEAD)...${NC}"
-	git worktree add -b "$_branch" "$_path"
-	return 0
+	echo -e "${RED}Error: could not resolve a safe worktree base.${NC}" >&2
+	echo "Fetch origin/<default>, or pass an explicit immutable commit SHA with --base." >&2
+	return 1
 }
 
 # --- cmd_add ---
