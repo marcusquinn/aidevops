@@ -39,6 +39,7 @@ _build_inline_findings() {
 				"(?s:\\bthank you for the update\\b.*?\\busing\\b.*?\\bconsistently\\b.*?\\bcorrect approach\\b.*?\\bverification steps\\b.*?\\bconfidence\\b)|" +
 				"(?s:\\bthank you for the clarification\\b.*?\\byou are (absolutely )?correct\\b.*?\\bproperly managed\\b.*?\\bcleanup routines?\\b)|" +
 				"(?s:\\bthank you for the clarification\\b.*?\\byou are (absolutely )?correct\\b.*?\\bissue is (indeed )?resolved\\b)|" +
+				"(?s:\\bi agree\\b.*?\\bcan be deferred\\b.*?\\brefrain from further comments?\\b)|" +
 				"\\bno further concerns?\\b|" +
 				"\\bno further feedback\\b|" +
 				"\\bno further recommendations?\\b|" +
