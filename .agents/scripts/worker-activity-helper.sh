@@ -83,6 +83,51 @@ WAH_SESSION_OUTCOME_JQ='
 		| map(select(_wah_nonterminal | not));
 '
 
+# Keep failure-family classification outside the shell function body so the
+# rich metric aggregator stays below the function-complexity gate.
+# shellcheck disable=SC2016 # jq variables are evaluated by jq, not the shell
+WAH_FAILURE_FAMILY_JQ='
+	def _wah_empty_if_null: if . == null then "" else . end;
+	def _wah_failure_family:
+		if ((.result // "") | test("rate_limit"))
+			or ((.failure_reason // "") | test("rate_limit"))
+			or (.provider_status == "429") then "rate-limit"
+		elif ((.result // "") | test("watchdog_stall"))
+			or (.launch_failure_cause == "stall_hard_killed")
+			or (.kill_reason == "hard_kill_stall") then "watchdog-stall"
+		elif ((.result // "") | test("recovery"))
+			or ((.failure_reason // "") | test("recovery"))
+			or ((.next_action // "") | test("recovery")) then "recovery-failure"
+		elif (.result == $local_kill_result)
+			or (.launch_failure_cause == $local_kill_result)
+			or ((.kill_reason // "") | test("kill")) then "local-kill"
+		elif (.failure_reason == "local_error")
+			or (.launch_failure_cause == "local_runtime_error")
+			or ((.runtime_error_type | _wah_empty_if_null) != "") then "local-runtime-error"
+		elif ((.launch_failure_cause // "") != "")
+			or ((.result // "") | test("launch")) then "launch-failure"
+		else "other-failure" end;
+	def _wah_failure_family_summary:
+		map(. + {failure_family: _wah_failure_family})
+		| group_by(.failure_family)
+		| map({
+			fingerprint: ("ff-v1:" + .[0].failure_family),
+			family: .[0].failure_family,
+			launch_failure_cause: ([.[].launch_failure_cause // empty | select(length > 0)][0] // "unknown"),
+			kill_reason: ([.[].kill_reason // empty | select(length > 0)][0] // ""),
+			next_action: ([.[].next_action // empty | select(length > 0)][0] // ""),
+			count: length,
+			distinct_sessions: (map((.repo_slug // "legacy") + "|" + (.session_key // (.session_id // "unknown"))) | unique | length),
+			first_ts: (map(.ts // 0) | min),
+			last_ts: (map(.ts // 0) | max),
+			confidence: (if length >= 3 and (map((.repo_slug // "legacy") + "|" + (.session_key // (.session_id // "unknown"))) | unique | length) >= 2 then "high" elif length >= 2 then "medium" else "low" end),
+			recovery_outcome: (if length >= 3 then "recurring" else "observed" end),
+			results: (reduce .[] as $row ({}; .[$row.result // "unknown"] += 1)),
+			examples: (sort_by(.ts // 0) | reverse | .[0:3] | map({ts, result, exit_code, launch_failure_cause, kill_reason, next_action}))
+		})
+		| sort_by(.count) | reverse | .[0:10];
+'
+
 #######################################
 # Convert short window spec to seconds. Caller owns the cutoff math.
 # $1 — one of 1h | 6h | 24h | 48h | 7d
@@ -187,27 +232,7 @@ _wah_metric_details_json() {
 
 	local jq_program
 	# shellcheck disable=SC2016 # jq variables are evaluated by jq, not the shell
-	jq_program=$WAH_SESSION_OUTCOME_JQ'
-		def _wah_empty_if_null: if . == null then "" else . end;
-		def _wah_failure_family:
-			if ((.result // "") | test("rate_limit"))
-				or ((.failure_reason // "") | test("rate_limit"))
-				or (.provider_status == "429") then "rate-limit"
-			elif ((.result // "") | test("watchdog_stall"))
-				or (.launch_failure_cause == "stall_hard_killed")
-				or (.kill_reason == "hard_kill_stall") then "watchdog-stall"
-			elif ((.result // "") | test("recovery"))
-				or ((.failure_reason // "") | test("recovery"))
-				or ((.next_action // "") | test("recovery")) then "recovery-failure"
-			elif (.result == $local_kill_result)
-				or (.launch_failure_cause == $local_kill_result)
-				or ((.kill_reason // "") | test("kill")) then "local-kill"
-			elif (.failure_reason == "local_error")
-				or (.launch_failure_cause == "local_runtime_error")
-				or ((.runtime_error_type | _wah_empty_if_null) != "") then "local-runtime-error"
-			elif ((.launch_failure_cause // "") != "")
-				or ((.result // "") | test("launch")) then "launch-failure"
-			else "other-failure" end;
+	jq_program=$WAH_SESSION_OUTCOME_JQ$WAH_FAILURE_FAMILY_JQ'
 		[inputs | select((.ts // 0) >= $cutoff and (.ts // 0) <= $now)] as $events
 		| ($events | _wah_session_outcomes) as $w
 		| ($w | map(.duration_ms // 0)) as $durations
@@ -276,26 +301,7 @@ _wah_metric_details_json() {
 					examples: (sort_by(.ts // 0) | reverse | .[0:3] | map({ts, session_id, work_dir, output_file, exit_code, duration_ms, provider_error_type, provider_status, runtime_error_type, classification_source, classification_pattern, launch_failure_cause, kill_reason, next_action}))
 				})
 				| sort_by(.count) | reverse | .[0:10]),
-			failure_families: (
-				$failures
-				| map(. + {failure_family: _wah_failure_family})
-				| group_by(.failure_family)
-				| map({
-					fingerprint: ("ff-v1:" + .[0].failure_family),
-					family: .[0].failure_family,
-					launch_failure_cause: ([.[].launch_failure_cause // empty | select(length > 0)][0] // "unknown"),
-					kill_reason: ([.[].kill_reason // empty | select(length > 0)][0] // ""),
-					next_action: ([.[].next_action // empty | select(length > 0)][0] // ""),
-					count: length,
-					distinct_sessions: (map((.repo_slug // "legacy") + "|" + (.session_key // (.session_id // "unknown"))) | unique | length),
-					first_ts: (map(.ts // 0) | min),
-					last_ts: (map(.ts // 0) | max),
-					confidence: (if length >= 3 and (map((.repo_slug // "legacy") + "|" + (.session_key // (.session_id // "unknown"))) | unique | length) >= 2 then "high" elif length >= 2 then "medium" else "low" end),
-					recovery_outcome: (if length >= 3 then "recurring" else "observed" end),
-					results: (reduce .[] as $row ({}; .[$row.result // "unknown"] += 1)),
-					examples: (sort_by(.ts // 0) | reverse | .[0:3] | map({ts, result, exit_code, launch_failure_cause, kill_reason, next_action}))
-				})
-				| sort_by(.count) | reverse | .[0:10])
+			failure_families: ($failures | _wah_failure_family_summary)
 		}'
 	jq -rn --argjson cutoff "$cutoff_epoch" --argjson now "$now_epoch" --arg watchdog_killed_result "$WAH_RESULT_WATCHDOG_STALL_KILLED" --arg local_kill_result "$WAH_RESULT_LOCAL_KILL" "$jq_program" <"$metrics" 2>/dev/null || \
 		printf '{"result_counts":{},"diagnostic_focus":{},"timing_ms":{"avg":0,"max":0,"samples":0},"recent_examples":[],"failure_groups":[],"failure_families":[]}'

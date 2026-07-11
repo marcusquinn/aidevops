@@ -979,6 +979,61 @@ Automation will preserve this gate and will not treat elapsed time as approval."
 	return 0
 }
 
+_nmr_latest_event_json() {
+	local issue_num="$1"
+	local slug="$2"
+	gh api "repos/${slug}/issues/${issue_num}/timeline" --paginate --slurp \
+		2>/dev/null | jq -c '
+			(if type == "array" and (.[0]? | type) == "array" then [.[][]]
+			elif type == "array" then .
+			else [] end)
+			| [.[] | select(.event == "labeled" and .label.name == "needs-maintainer-review")]
+			| last
+			| {actor:(.actor.login // ""),at:(.created_at // "")}' 2>/dev/null
+	return $?
+}
+
+_nmr_evaluate_reason_metadata() {
+	local issue_num="$1"
+	local slug="$2"
+	local nmr_at="$3"
+	_NMR_REASON_ACTION="continue"
+	_NMR_REASON_OVERRIDE=""
+	[[ -n "$nmr_at" ]] || return 0
+
+	local reason_metadata=""
+	local reason_code=""
+	local reason_class=""
+	local reason_source=""
+	reason_metadata=$(_nmr_reason_metadata "$issue_num" "$slug")
+	reason_code=$(printf '%s' "$reason_metadata" | jq -r '.code // "authority"' 2>/dev/null) || reason_code="authority"
+	reason_class=$(printf '%s' "$reason_metadata" | jq -r '.class // "genuine-authority"' 2>/dev/null) || reason_class="genuine-authority"
+	reason_source=$(printf '%s' "$reason_metadata" | jq -r '.source // "default"' 2>/dev/null) || reason_source="default"
+	if [[ "$reason_class" == "temporary" ]]; then
+		_nmr_record_revalidation_state "$issue_num" "$slug" "$reason_metadata" "$nmr_at" "scheduled" || true
+		if _nmr_revalidation_due "$reason_metadata" "$nmr_at"; then
+			local resolved_reason=""
+			resolved_reason=$(_nmr_temporary_assumption_resolved "$issue_num" "$slug" "$reason_code" "$nmr_at") || resolved_reason=""
+			if [[ -n "$resolved_reason" ]]; then
+				#aidevops:trust-boundary -- only trusted markers and existing breaker checks can release temporary NMR
+				_NMR_REASON_ACTION="auto"
+				_NMR_REASON_OVERRIDE="temporary NMR revalidated (${reason_code}): ${resolved_reason}"
+				_nmr_record_revalidation_state "$issue_num" "$slug" "$reason_metadata" "$nmr_at" "automatable" || true
+				return 0
+			fi
+			_nmr_record_revalidation_state "$issue_num" "$slug" "$reason_metadata" "$nmr_at" "rechecked-unresolved" || true
+		fi
+		_NMR_REASON_ACTION="preserve"
+		return 0
+	fi
+	if [[ "$reason_source" != "default" ]]; then
+		_nmr_record_revalidation_state "$issue_num" "$slug" "$reason_metadata" "$nmr_at" "human-authority-required" || true
+		_nmr_emit_decision_packet "$issue_num" "$slug" "$reason_code" || true
+		_NMR_REASON_ACTION="preserve"
+	fi
+	return 0
+}
+
 #######################################
 # Check if the needs-maintainer-review label was most recently applied
 # by the maintainer themselves (indicating a manual hold), OR by a
@@ -1020,54 +1075,25 @@ _nmr_applied_by_maintainer() {
 	[[ -n "$issue_num" && -n "$slug" && -n "$maintainer" ]] || return 1
 
 	# Fetch both actor and creation timestamp of the latest NMR label event.
-	# Use --slurp for paginated timeline reads, then flatten page arrays before
-	# selecting the latest event. Without this, long timelines emit one result per
-	# page and can pass malformed multi-line timestamps into the breaker checks.
-	local nmr_event_json
-	nmr_event_json=$(gh api "repos/${slug}/issues/${issue_num}/timeline" --paginate --slurp \
-		2>/dev/null | jq -c '
-			(if type == "array" and (.[0]? | type) == "array" then [.[][]]
-			elif type == "array" then .
-			else [] end)
-			| [.[] | select(.event == "labeled" and .label.name == "needs-maintainer-review")]
-			| last
-			| {actor:(.actor.login // ""),at:(.created_at // "")}' \
-		2>/dev/null) || nmr_event_json=""
+	local nmr_event_json=""
+	nmr_event_json=$(_nmr_latest_event_json "$issue_num" "$slug") || nmr_event_json=""
 
 	local nmr_actor nmr_at
 	nmr_actor=$(printf '%s' "$nmr_event_json" | jq -r '.actor // ""' 2>/dev/null) || nmr_actor=""
 	nmr_at=$(printf '%s' "$nmr_event_json" | jq -r '.at // ""' 2>/dev/null) || nmr_at=""
 
-	if [[ -n "$nmr_at" ]]; then
-		local reason_metadata=""
-		local reason_code=""
-		local reason_class=""
-		local reason_source=""
-		reason_metadata=$(_nmr_reason_metadata "$issue_num" "$slug")
-		reason_code=$(printf '%s' "$reason_metadata" | jq -r '.code // "authority"' 2>/dev/null) || reason_code="authority"
-		reason_class=$(printf '%s' "$reason_metadata" | jq -r '.class // "genuine-authority"' 2>/dev/null) || reason_class="genuine-authority"
-		reason_source=$(printf '%s' "$reason_metadata" | jq -r '.source // "default"' 2>/dev/null) || reason_source="default"
-		if [[ "$reason_class" == "temporary" ]]; then
-			_nmr_record_revalidation_state "$issue_num" "$slug" "$reason_metadata" "$nmr_at" "scheduled" || true
-			if _nmr_revalidation_due "$reason_metadata" "$nmr_at"; then
-				local resolved_reason=""
-				resolved_reason=$(_nmr_temporary_assumption_resolved "$issue_num" "$slug" "$reason_code" "$nmr_at") || resolved_reason=""
-				if [[ -n "$resolved_reason" ]]; then
-					_NMR_AUTO_APPROVAL_REASON_OVERRIDE="temporary NMR revalidated (${reason_code}): ${resolved_reason}"
-					_nmr_record_revalidation_state "$issue_num" "$slug" "$reason_metadata" "$nmr_at" "automatable" || true
-					echo "[pulse-wrapper] _nmr_applied_by_maintainer: #${issue_num} in ${slug} — temporary reason=${reason_code} revalidated; allowing trusted maintainer-authored retry" >>"$LOGFILE"
-					return 1
-				fi
-				_nmr_record_revalidation_state "$issue_num" "$slug" "$reason_metadata" "$nmr_at" "rechecked-unresolved" || true
-			fi
-			echo "[pulse-wrapper] _nmr_applied_by_maintainer: #${issue_num} in ${slug} — temporary reason=${reason_code} remains unresolved; preserving NMR until scheduled revalidation" >>"$LOGFILE"
+	_nmr_evaluate_reason_metadata "$issue_num" "$slug" "$nmr_at"
+	case "$_NMR_REASON_ACTION" in
+		auto)
+			_NMR_AUTO_APPROVAL_REASON_OVERRIDE="$_NMR_REASON_OVERRIDE"
+			echo "[pulse-wrapper] _nmr_applied_by_maintainer: #${issue_num} in ${slug} — temporary NMR revalidated; allowing trusted maintainer-authored retry" >>"$LOGFILE"
+			return 1
+			;;
+		preserve)
+			echo "[pulse-wrapper] _nmr_applied_by_maintainer: #${issue_num} in ${slug} — reason-coded NMR remains gated" >>"$LOGFILE"
 			return 0
-		elif [[ "$reason_source" != "default" ]]; then
-			_nmr_record_revalidation_state "$issue_num" "$slug" "$reason_metadata" "$nmr_at" "human-authority-required" || true
-			_nmr_emit_decision_packet "$issue_num" "$slug" "$reason_code" || true
-			return 0
-		fi
-	fi
+			;;
+	esac
 
 	# Breaker signatures are authoritative regardless of the token actor. Pulse can
 	# run under any trusted maintainer/member account, so actor-gating this check
