@@ -30,12 +30,14 @@ tools:
 
 | # | Check | Action if failing |
 |---|-------|-------------------|
-| 1 | **Instruction count** (~50-100 main, <100 subagent) | Consolidate, move to subagent, or remove |
-| 2 | **Universal applicability** (>80% tasks) | Extract task-specific content to subagents |
-| 3 | **Duplicate detection** (Grep for `"pattern"` under `.agents/`) | Single authoritative source per concept |
+| 1 | **Instruction count** (~50-100 main, <100 subagent) | Investigate load; counts are heuristics, never standalone removal evidence |
+| 2 | **Universal applicability** (>80% tasks) | Investigate whether a reliable task-specific trigger supports extraction |
+| 3 | **Duplicate detection** (Grep for `"pattern"` under `.agents/`) | Classify exact duplicates vs boundary reinforcement or variants |
 | 4 | **Code examples** (authoritative/working) | Keep; supplement with Grep references for `"pattern"` under `.agents/scripts/` |
 | 5 | **AI-CONTEXT block** (standalone essentials) | Rewrite if an AI would get stuck with only this |
 | 6 | **Slash commands** | Move to `scripts/commands/` or domain subagent |
+
+Before consolidating, relocating, or removing a directive, recover the protected failure/rationale from nearby task IDs, issue/PR context, and recent file history. Record its current enforcement or routing, and distinguish exact duplication from reinforcement at another decision boundary, runtime-specific variants, and similar-but-different hazards. Relocation must name the reliable trigger that delivers the lesson at its decision point. Removal requires evidence that the knowledge is obsolete or fully superseded and identifies any mechanism that preserves or enforces it.
 
 ## Improvement Proposal Format
 
@@ -44,9 +46,13 @@ tools:
 **File**: `.agents/[path]/[file].md`
 **Issue**: [Description]
 **Evidence**: [Failure, contradiction, or feedback]
+**Provenance**: [Protected failure/rationale and recent history inspected]
 **Related Files**: `.agents/[other-file].md` (checked for duplicates)
 **Proposed Change**: [Specific before/after]
-**Impact**: [ ] No conflicts [ ] Instruction count: [+/- N] [ ] Tested
+**Boundary Analysis**: [Exact duplicate, reinforcement, runtime variant, or similar-but-different hazard]
+**Delivery/Preservation**: [Reliable relocation trigger or superseding enforcement mechanism]
+**Verification**: [How retained behaviour and routing were tested]
+**Impact**: [ ] No conflicts [ ] Instruction count (diagnostic): [+/- N] [ ] Tested
 ```
 
 ## Review Categories

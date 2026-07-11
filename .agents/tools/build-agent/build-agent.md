@@ -146,7 +146,7 @@ Linter order: (1) deterministic (ShellCheck, ESLint, Ruff/Pylint), (2) static an
 2. **Universally applicable?** >80% of tasks? If not → more specific subagent
 3. **Pointer instead?** Use `rg "pattern"` or Context7 MCP if content exists elsewhere
 4. **Code example?** Authoritative? Will it drift? Security: placeholders only
-5. **Instruction count?** Combine related, remove redundant
+5. **Instruction count?** Treat budgets as investigation heuristics; before reducing, recover directive provenance and distinguish exact duplicates from boundary reinforcement (see `agent-review.md`)
 6. **Duplicates?** `rg "pattern" .agents/` before adding
 7. **Existing agent?** Call and improve vs duplicate — never create a copy
 8. **Sources verified?** Primary, cross-referenced
