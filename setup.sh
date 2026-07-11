@@ -1605,7 +1605,6 @@ _setup_run_interactive() {
 	confirm_step "Setup SSH key" && setup_ssh_key
 	confirm_step "Setup configuration files" && setup_configs
 	confirm_step "Set secure permissions on config files" && set_permissions
-	confirm_step "Install aidevops CLI command" && install_aidevops_cli
 	confirm_step "Setup shell aliases" && setup_aliases
 	confirm_step "Setup terminal title integration" && setup_terminal_title
 	confirm_step "Deploy AI templates to home directories" && deploy_ai_templates
@@ -1625,6 +1624,9 @@ _setup_run_interactive() {
 	confirm_step "Extract OpenCode prompts" && extract_opencode_prompts
 	confirm_step "Check OpenCode prompt drift" && check_opencode_prompt_drift
 	confirm_step "Deploy aidevops agents to ~/.aidevops/agents/" && { deploy_aidevops_agents; _deploy_hotfix_config; }
+	# Launcher verification reads the deployed VERSION, so it must follow agent
+	# deployment on first-run interactive setup as it already does non-interactively.
+	confirm_step "Install and verify aidevops CLI command" && install_aidevops_cli
 	confirm_step "Sync agents from private repositories" && sync_agent_sources
 	confirm_step "Set up routines repo (private repo for recurring operational jobs)" && setup_routines
 	is_feature_enabled safety_hooks 2>/dev/null && confirm_step "Install Claude Code safety hooks (block destructive commands)" && setup_safety_hooks
@@ -1887,6 +1889,11 @@ main() {
 	fi
 
 	if [[ "$NON_INTERACTIVE" == "true" ]]; then
+		# Full-loop release deployment uses this mutex. It remains held through
+		# deploy_aidevops_agents and install_aidevops_cli, so agent and CLI
+		# convergence are one serialized non-interactive deployment interval.
+		# Direct interactive setup is intentionally outside this guarantee: holding
+		# the mutex across prompts can block unattended full-loop deployments.
 		_setup_acquire_noninteractive_setup_lock "$@" || exit $?
 	fi
 

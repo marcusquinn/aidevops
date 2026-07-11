@@ -8,7 +8,7 @@ trap 'rm -rf "$TEST_HOME"' EXIT
 # shellcheck disable=SC2016
 grep -q 'DEPLOYED_CLI="$HOME/.aidevops/agents/aidevops.sh"' "$REPO_DIR/bin/aidevops"
 # shellcheck disable=SC2016
-grep -q '_install_aidevops_cli_copy "$INSTALL_DIR/aidevops.sh" "$deployed_cli"' \
+grep -q '"$convergence_helper" converge "$cli_source" "$orchestrator_source" "$deployed_cli" "$deployed_version"' \
 	"$REPO_DIR/.agents/scripts/setup/modules/config.sh"
 grep -q 'git clone --depth 1 --branch main' \
 	"$REPO_DIR/.agents/scripts/aidevops-cli/aidevops-update-lib.sh"
