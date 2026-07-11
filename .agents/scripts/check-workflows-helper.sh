@@ -14,6 +14,7 @@
 # Classifies each (repo × workflow) as:
 #
 #   CURRENT/CALLER      — byte-identical to canonical (up to @ref pin variance)
+#   * + LEGACY_ARTIFACTS — known superseded framework files remain downstream
 #   CURRENT/SELF-CALLER — aidevops itself: uses `./.github/workflows/...` instead of remote ref
 #   DRIFTED/CALLER      — uses the reusable workflow but caller YAML has diverged
 #   NEEDS-MIGRATION     — legacy full-copy workflow, no `uses:` → should adopt caller pattern
@@ -34,7 +35,7 @@
 #
 # Exit codes:
 #   0  — all checked repos are CURRENT/CALLER, NO-WORKFLOW, or LOCAL-ONLY
-#   1  — one or more repos are DRIFTED/CALLER or NEEDS-MIGRATION
+#   1  — one or more repos are drifted, need migration, or retain legacy artifacts
 #   2  — configuration or IO error (repos.json missing, template missing, jq unavailable)
 #
 # Why this exists:
@@ -85,6 +86,46 @@ readonly _KNOWN_WORKFLOWS=(
 	"maintainer-gate.yml:maintainer-gate-reusable.yml:maintainer-gate-caller.yml"
 	"loc-badge.yml:loc-badge-reusable.yml:loc-badge-caller.yml"
 )
+
+# Versioned inventory of framework-owned paths superseded by reusable callers.
+# Detection is warning-only: modified or repository-specific files are never
+# removed automatically.
+_resolve_legacy_artifact_manifest() {
+	local _deployed="$HOME/.aidevops/agents/configs/workflow-legacy-artifacts.tsv"
+	local _repo_local="$SELF_DIR/../configs/workflow-legacy-artifacts.tsv"
+	if [[ -f "$_deployed" ]]; then
+		printf '%s\n' "$_deployed"
+		return 0
+	fi
+	if [[ -f "$_repo_local" ]]; then
+		printf '%s\n' "$_repo_local"
+		return 0
+	fi
+	return 1
+}
+
+# _legacy_artifacts_for_repo <repo-path> <workflow-name>
+# Emits comma-separated repository-relative paths from the manifest that exist.
+_legacy_artifacts_for_repo() {
+	local _path="$1"
+	local _workflow_name="$2"
+	local _manifest=""
+	_manifest=$(_resolve_legacy_artifact_manifest) || return 0
+	local _manifest_workflow _artifact_path _superseded_by _introduced_in
+	local _found=""
+	while IFS=$'\t' read -r _manifest_workflow _artifact_path _superseded_by _introduced_in; do
+		[[ -z "$_manifest_workflow" || "$_manifest_workflow" == \#* ]] && continue
+		[[ "$_manifest_workflow" != "$_workflow_name" ]] && continue
+		[[ -f "$_path/$_artifact_path" ]] || continue
+		if [[ -n "$_found" ]]; then
+			_found="${_found}, ${_artifact_path}"
+		else
+			_found="$_artifact_path"
+		fi
+	done <"$_manifest"
+	printf '%s\n' "$_found"
+	return 0
+}
 
 # ─── Path resolution ────────────────────────────────────────────────────────
 
@@ -257,10 +298,10 @@ _normalize_wf_for_compare() {
 	#         (e.g. callers missing `secrets: inherit`) classify as DRIFTED/CALLER.
 	#         Dropping pending at EOF is correct — there is no legitimate scenario
 	#         where a `with:` followed by no children should survive normalisation.
-	sed -E "s|(${_target_escaped})@[^[:space:]]+|\1@REF|g" "$_file" \
-		| sed -E 's|^([[:space:]]+branches:) \[[^]]+\]$|\1 [BRANCH]|' \
-		| sed -E '/^      runner: /d' \
-		| awk '
+	sed -E "s|(${_target_escaped})@[^[:space:]]+|\1@REF|g" "$_file" |
+		sed -E 's|^([[:space:]]+branches:) \[[^]]+\]$|\1 [BRANCH]|' |
+		sed -E '/^      runner: /d' |
+		awk '
 			/^    with:$/ { pending = $0; next }
 			pending {
 				if (/^      /) {
@@ -281,11 +322,11 @@ _normalize_wf_for_compare() {
 _normalize_wf_text_for_compare() {
 	local _content="$1"
 	local _target_escaped="$2"
-	printf '%s\n' "$_content" \
-		| sed -E "s|(${_target_escaped})@[^[:space:]]+|\1@REF|g" \
-		| sed -E 's|^([[:space:]]+branches:) \[[^]]+\]$|\1 [BRANCH]|' \
-		| sed -E '/^      runner: /d' \
-		| awk '
+	printf '%s\n' "$_content" |
+		sed -E "s|(${_target_escaped})@[^[:space:]]+|\1@REF|g" |
+		sed -E 's|^([[:space:]]+branches:) \[[^]]+\]$|\1 [BRANCH]|' |
+		sed -E '/^      runner: /d' |
+		awk '
 			/^    with:$/ { pending = $0; next }
 			pending {
 				if (/^      /) {
@@ -427,10 +468,10 @@ _render_row_human() {
 		_colour_reset=$'\e[0m'
 		case "$_class" in
 		CURRENT/CALLER | CURRENT/SELF-CALLER | CURRENT/REUSABLE) _colour=$'\e[32m' ;; # green
-		DRIFTED/CALLER | DRIFTED/REUSABLE) _colour=$'\e[33m' ;;                       # yellow
-		NEEDS-MIGRATION) _colour=$'\e[31m' ;;                     # red
-		NO-WORKFLOW | LOCAL-ONLY) _colour=$'\e[90m' ;;            # grey
-		NO-TEMPLATE) _colour=$'\e[35m' ;;                         # magenta
+		*LEGACY_ARTIFACTS* | DRIFTED/CALLER | DRIFTED/REUSABLE) _colour=$'\e[33m' ;;  # yellow
+		NEEDS-MIGRATION) _colour=$'\e[31m' ;;                                         # red
+		NO-WORKFLOW | LOCAL-ONLY) _colour=$'\e[90m' ;;                                # grey
+		NO-TEMPLATE) _colour=$'\e[35m' ;;                                             # magenta
 		esac
 	else
 		_colour_reset=''
@@ -597,6 +638,14 @@ _classify_row() {
 		_note="legacy full-copy; run: aidevops sync-workflows --apply"
 		;;
 	esac
+
+	local _workflow_name="${_workflow_file%.yml}"
+	local _legacy_artifacts=""
+	_legacy_artifacts=$(_legacy_artifacts_for_repo "$_path" "$_workflow_name")
+	if [[ -n "$_legacy_artifacts" ]]; then
+		_class="${_class} + LEGACY_ARTIFACTS"
+		_note="known superseded files require manual review: ${_legacy_artifacts}; no files removed"
+	fi
 	printf '%s\t%s\n' "$_class" "$_note"
 	return 0
 }
@@ -635,7 +684,7 @@ _process_rows() {
 	local _filter_workflow="${4:-}"
 
 	local _any_failure=0
-	local _total=0 _current=0 _drifted=0 _needs_mig=0 _no_wf=0 _local_only=0 _no_template=0
+	local _total=0 _current=0 _drifted=0 _needs_mig=0 _legacy=0 _no_wf=0 _local_only=0 _no_template=0
 
 	if [[ "$_mode" == "$_MODE_HUMAN" ]]; then
 		printf '\n  %-50s %-16s %s\n' "REPO [WORKFLOW]" "STATUS" "NOTE"
@@ -649,7 +698,8 @@ _process_rows() {
 	for _wf_tuple in "${_KNOWN_WORKFLOWS[@]}"; do
 		local _workflow_file _reusable_file _template_file
 		_workflow_file="${_wf_tuple%%:*}"
-		_reusable_file="${_wf_tuple#*:}"; _reusable_file="${_reusable_file%%:*}"
+		_reusable_file="${_wf_tuple#*:}"
+		_reusable_file="${_reusable_file%%:*}"
 		_template_file="${_wf_tuple##*:}"
 
 		local _workflow_name="${_workflow_file%.yml}"
@@ -678,38 +728,52 @@ _process_rows() {
 				"$_slug" "$_path" "$_local_only_flag" "$_canonical" \
 				"$_reusable_file" "$_workflow_file" "$_canon_norm")
 
-			case "$_class" in
+			local _base_class="${_class% + LEGACY_ARTIFACTS}"
+			if [[ "$_class" == *" + LEGACY_ARTIFACTS" ]]; then
+				_legacy=$((_legacy + 1))
+				_any_failure=1
+			fi
+			case "$_base_class" in
 			LOCAL-ONLY) _local_only=$((_local_only + 1)) ;;
 			NO-WORKFLOW) _no_wf=$((_no_wf + 1)) ;;
 			NO-TEMPLATE) _no_template=$((_no_template + 1)) ;;
 			CURRENT/CALLER | CURRENT/SELF-CALLER | CURRENT/REUSABLE) _current=$((_current + 1)) ;;
 			DRIFTED/CALLER | DRIFTED/REUSABLE)
-				_drifted=$((_drifted + 1)); _any_failure=1
+				_drifted=$((_drifted + 1))
+				_any_failure=1
 				((_verbose == 1)) && [[ "$_mode" == "$_MODE_HUMAN" ]] && _note="see diff below"
 				;;
 			NEEDS-MIGRATION)
-				_needs_mig=$((_needs_mig + 1)); _any_failure=1 ;;
+				_needs_mig=$((_needs_mig + 1))
+				_any_failure=1
+				;;
 			esac
 
 			if [[ "$_mode" == "$_MODE_JSON" ]]; then
 				_render_row_json "$_label" "$_path" "$_class" "$_note" "$_workflow_name"
 			else
 				_render_row_human "$_label" "$_path" "$_class" "$_note" "$_workflow_name"
-				if ((_verbose == 1)) && [[ "$_class" == "DRIFTED/CALLER" ]] && [[ -n "$_canonical" ]]; then
-					echo ""; _diff_summary "$_path/.github/workflows/${_workflow_file}" "$_canonical"; echo ""
-				elif ((_verbose == 1)) && [[ "$_class" == "DRIFTED/REUSABLE" ]]; then
+				if ((_verbose == 1)) && [[ "$_base_class" == "DRIFTED/CALLER" ]] && [[ -n "$_canonical" ]]; then
+					echo ""
+					_diff_summary "$_path/.github/workflows/${_workflow_file}" "$_canonical"
+					echo ""
+				elif ((_verbose == 1)) && [[ "$_base_class" == "DRIFTED/REUSABLE" ]]; then
 					local _canonical_reusable
 					_canonical_reusable=$(_resolve_canonical_reusable "$_reusable_file") || _canonical_reusable=""
-					[[ -n "$_canonical_reusable" ]] && { echo ""; _diff_summary "$_path/.github/workflows/${_reusable_file}" "$_canonical_reusable"; echo ""; }
+					[[ -n "$_canonical_reusable" ]] && {
+						echo ""
+						_diff_summary "$_path/.github/workflows/${_reusable_file}" "$_canonical_reusable"
+						echo ""
+					}
 				fi
 			fi
 		done <<<"$_rows"
 	done
 
 	if [[ "$_mode" == "$_MODE_HUMAN" ]]; then
-		printf '\n  Summary: %d entries — %d current, %d drifted, %d needs-migration, %d no-workflow, %d local-only, %d no-template\n\n' \
-			"$_total" "$_current" "$_drifted" "$_needs_mig" "$_no_wf" "$_local_only" "$_no_template"
-		((_any_failure == 1)) && printf '  Exit code 1 — see DRIFTED/CALLER or NEEDS-MIGRATION entries above.\n\n'
+		printf '\n  Summary: %d entries — %d current, %d drifted, %d needs-migration, %d legacy-artifacts, %d no-workflow, %d local-only, %d no-template\n\n' \
+			"$_total" "$_current" "$_drifted" "$_needs_mig" "$_legacy" "$_no_wf" "$_local_only" "$_no_template"
+		((_any_failure == 1)) && printf '  Exit code 1 — review drift, migrations, or legacy artifacts above.\n\n'
 	fi
 
 	return "$_any_failure"

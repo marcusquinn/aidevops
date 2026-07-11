@@ -618,10 +618,19 @@ jobs:
 
       - name: Setup gh shim (auto-inject signature footer on writes)
         run: |
-          chmod +x __aidevops/.agents/scripts/gh \
-                   __aidevops/.agents/scripts/gh-signature-helper.sh \
+          # GH#27119: actions/checkout resolves every executable once, then
+          # cleans the workspace. Keep the selected git/gh shims and their
+          # sibling dependencies outside that deletion boundary so the later
+          # caller-repo checkout cannot remove an executable while using it.
+          SHIM_DIR="${RUNNER_TEMP}/aidevops-issue-sync-shims"
+          rm -rf "${SHIM_DIR}"
+          mkdir -p "${SHIM_DIR}"
+          cp -R __aidevops/.agents/scripts/. "${SHIM_DIR}/"
+          chmod +x "${SHIM_DIR}/gh" \
+                   "${SHIM_DIR}/gh-signature-helper.sh" \
+                   "${SHIM_DIR}/git" \
                    2>/dev/null || true
-          echo "${GITHUB_WORKSPACE}/__aidevops/.agents/scripts" >> "$GITHUB_PATH"
+          echo "${SHIM_DIR}" >> "$GITHUB_PATH"
 
       - name: Extract task ID and collect linked issues
         id: extract
@@ -630,19 +639,14 @@ jobs:
           PR_BODY: ${{ github.event.pull_request.body }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
-          # Extract task ID from PR title (e.g., "t1329: Cross-review judge pipeline")
+          # The title is metadata only; linked issues are resolved against the
+          # caller's checked-out TODO.md before any irreversible issue hygiene.
           TASK_ID=""
           if echo "$PR_TITLE" | grep -qE '^t[0-9]+'; then
             TASK_ID=$(echo "$PR_TITLE" | grep -oE '^t[0-9]+(\.[0-9]+)*')
           fi
           echo "task_id=$TASK_ID" >> "$GITHUB_OUTPUT"
 
-          # Collect linked issue numbers from PR body (Closes #NNN, Fixes #NNN, Resolves #NNN).
-          # GH#20807: Use canonical closing-keyword-only regex from pulse-merge.sh::_extract_linked_issue.
-          # Changes from prior regex:
-          #   1. \b word-boundary anchors prevent substring matches (e.g. "discloses #NNN" → "closes")
-          #   2. close[ds]?  / fix(es|ed)? / resolve[ds]? match all grammatical forms (closed, fixed, etc.)
-          #   3. [[:space:]]+ (mandatory) instead of [[:space:]]* (zero-or-more) prevents "closes#NNN"
           LINKED_ISSUES=""
           if [[ -n "$PR_BODY" ]]; then
             LINKED_ISSUES=$(printf '%s' "$PR_BODY" | grep -ioE '\b(close[ds]?|fix(es|ed)?|resolve[ds]?)\b[[:space:]]+#[0-9]+' | grep -oE '[0-9]+' | sort -u | tr '\n' ' ' || true)

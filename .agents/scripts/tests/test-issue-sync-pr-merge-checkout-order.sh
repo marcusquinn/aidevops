@@ -20,6 +20,9 @@
 #   (b) `clean: false` on the `Checkout repo for TODO.md update` step.
 #
 # Either invariant prevents the regression. The current canonical fix is (a).
+# GH#27119 additionally requires the PATH shims to live outside GITHUB_WORKSPACE:
+# actions/checkout may select `git` before cleaning, so restoring the framework
+# after checkout is too late when the selected executable itself was deleted.
 
 set -euo pipefail
 
@@ -92,12 +95,24 @@ if [[ "${JOB_START}" == "0" ]]; then
 	exit 1
 fi
 check 1 "sync-on-pr-merge job present" ""
+JOB_BODY=$(sed -n "${JOB_START},${JOB_END}p" "${WORKFLOW_FILE}")
 
 # ============================================================
-# Test 2: job has merged == true guard (defends against #22607
+# Test 2: PATH shims survive caller-repo workspace cleanup.
+# ============================================================
+# shellcheck disable=SC2016 # Assert literal workflow expressions, not test-shell expansion.
+if printf '%s\n' "${JOB_BODY}" | grep -qE 'SHIM_DIR="\$\{RUNNER_TEMP\}/[^\"]+"' && \
+	printf '%s\n' "${JOB_BODY}" | grep -qE 'echo "\$\{SHIM_DIR\}" >> "\$GITHUB_PATH"'; then
+	check 1 "sync-on-pr-merge stages PATH shims outside GITHUB_WORKSPACE" ""
+else
+	check 0 "sync-on-pr-merge stages PATH shims outside GITHUB_WORKSPACE" \
+		"GITHUB_PATH must reference a RUNNER_TEMP shim directory so actions/checkout cannot delete its selected git executable"
+fi
+
+# ============================================================
+# Test 3: job has merged == true guard (defends against #22607
 #         which falsely claimed the guard was missing)
 # ============================================================
-JOB_BODY=$(sed -n "${JOB_START},${JOB_END}p" "${WORKFLOW_FILE}")
 if printf '%s\n' "${JOB_BODY}" | grep -qE 'github\.event\.pull_request\.merged[[:space:]]*==[[:space:]]*true'; then
 	check 1 "sync-on-pr-merge has merged == true guard" ""
 else
@@ -105,7 +120,7 @@ else
 fi
 
 # ============================================================
-# Test 3: a single caller checkout establishes the validated TODO snapshot,
+# Test 4: a single caller checkout establishes the validated TODO snapshot,
 # followed by framework restoration and resolution. No later caller checkout
 # may replace that snapshot before proof-log mutation.
 # ============================================================
@@ -137,7 +152,7 @@ else
 fi
 
 # ============================================================
-# Test 4: Update TODO.md proof-log step still references __aidevops/
+# Test 5: Update TODO.md proof-log step still references __aidevops/
 #         (sanity check — if this changes, the test premise needs updating)
 # ============================================================
 if printf '%s\n' "${JOB_BODY}" | grep -qE 'bash[[:space:]]+__aidevops/\.agents/scripts/issue-sync-git-push-helper\.sh'; then

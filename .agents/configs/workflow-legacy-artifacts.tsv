@@ -1,0 +1,4 @@
+# schema_version=1
+# workflow<TAB>repository-relative path<TAB>superseded_by<TAB>introduced_in
+issue-sync	.agents/scripts/issue-sync-helper.sh	.github/workflows/issue-sync.yml reusable caller	v3.32.24
+issue-sync	.agents/scripts/issue-sync-lib.sh	.github/workflows/issue-sync.yml reusable caller	v3.32.24

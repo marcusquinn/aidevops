@@ -10,6 +10,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.32.26] - 2026-07-11
+
+### Changed
+
+- fix: resolve TODO tasks from closing issue refs (#27131)
+
+## [3.32.25] - 2026-07-11
+
+### Changed
+
+- Version bump and maintenance updates
+
+
 ## [3.32.24] - 2026-07-11
 
 ### Changed
