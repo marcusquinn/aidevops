@@ -87,6 +87,8 @@ main() {
 	local results=""
 	local preview=""
 	local secret_value=""
+	local service_secret=""
+	local gitlab_secret=""
 
 	preference_id=$(store_memory_id --content "User prefers terse status summaries in personal sessions" --type USER_PREFERENCE --confidence high)
 	live_id=$(store_memory_id --content "Portable privacy filters use POSIX extended regular expressions" --type WORKING_SOLUTION --confidence high)
@@ -99,16 +101,23 @@ main() {
 	store_memory_id --content "Local evidence is stored at /Users/private-user/secret-project/report.md" --type TOOL_CONFIG --confidence high >/dev/null
 	store_memory_id --content "Safe-looking content with private metadata must remain local" --type CONTEXT --confidence high --tags "owner.private@example.test,/Users/private-user/project" >/dev/null
 	secret_value="sk-$(printf '%024d' 0)"
+	service_secret="ghs_$(printf '%020d' 0)"
+	gitlab_secret="glpat-$(printf '%020d' 0)"
 	sqlite3 "$TEST_DIR/memory.db" <<EOF
 INSERT INTO learnings (id, session_id, content, type, tags, confidence, created_at, event_date, project_path, source)
 VALUES ('mem_secret_content_fixture', '', 'Legacy credential $secret_value must remain local', 'CONTEXT', 'legacy', 'high', datetime('now'), '', '', 'legacy');
 INSERT INTO learnings (id, session_id, content, type, tags, confidence, created_at, event_date, project_path, source)
 VALUES ('mem_secret_tag_fixture', '', 'Safe content with credential metadata must remain local', 'CONTEXT', '$secret_value', 'high', datetime('now'), '', '', 'legacy');
+INSERT INTO learnings (id, session_id, content, type, tags, confidence, created_at, event_date, project_path, source)
+VALUES ('mem_service_secret_fixture', '', 'Legacy service credential $service_secret must remain local', 'CONTEXT', 'legacy', 'high', datetime('now'), '', '', 'legacy');
+INSERT INTO learnings (id, session_id, content, type, tags, confidence, created_at, event_date, project_path, source)
+VALUES ('mem_gitlab_secret_tag_fixture', '', 'Safe content with GitLab credential metadata must remain local', 'CONTEXT', '$gitlab_secret', 'high', datetime('now'), '', '', 'legacy');
 EOF
 
 	results=$(candidate_json)
 	if [[ "$results" == *"private.person@example.test"* || "$results" == *"owner.private@example.test"* ||
-		"$results" == *"/Users/private-user/"* || "$results" == *"$secret_value"* ]]; then
+		"$results" == *"/Users/private-user/"* || "$results" == *"$secret_value"* ||
+		"$results" == *"$service_secret"* || "$results" == *"$gitlab_secret"* ]]; then
 		printf 'FAIL: graduation candidate JSON exposed personal content\n' >&2
 		return 1
 	fi
@@ -122,7 +131,8 @@ EOF
 
 	preview=$(graduation_preview)
 	if [[ "$preview" == *"private.person@example.test"* || "$preview" == *"/Users/private-user/"* ||
-		"$preview" == *"$secret_value"* ]]; then
+		"$preview" == *"$secret_value"* || "$preview" == *"$service_secret"* ||
+		"$preview" == *"$gitlab_secret"* ]]; then
 		printf 'FAIL: graduation preview exposed personal content\n' >&2
 		return 1
 	fi
