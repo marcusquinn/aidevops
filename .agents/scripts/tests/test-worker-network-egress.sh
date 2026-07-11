@@ -15,6 +15,7 @@ BACKEND="${TEST_ROOT}/egress-backend"
 TARGET="${TEST_ROOT}/adversary"
 MARKER="${TEST_ROOT}/target-ran"
 CHILD_MARKER="${TEST_ROOT}/child-ran"
+INTERPRETER_MARKER="${TEST_ROOT}/interpreter-ran"
 BACKEND_LOG="${TEST_ROOT}/backend-argv"
 CUSTOM_POLICY="${TEST_ROOT}/network-tiers-custom.conf"
 TESTS=0
@@ -98,7 +99,7 @@ test_policy_export_is_normalized() {
 		return 0
 	}
 	if printf '%s' "$output" | jq -e \
-		'.schema == "aidevops.worker-egress-policy.v1" and .raw_ip_action == "deny" and .private_network_action == "deny" and ([.rules[] | select(.tier == 5)] | length > 0) and ([.rules[] | select(.match == "exact" and .pattern == "github.com" and .action == "allow")] | length == 1) and ([.rules[] | select(.pattern == "api.openai.com" and (.action | startswith("allow")))] | length == 1)' \
+		'.schema == "aidevops.worker-egress-policy.v1" and .raw_ip_action == "deny" and .private_network_action == "deny" and .loopback_action == "deny" and ([.rules[] | select(.tier == 5)] | length > 0) and ([.rules[] | select(.match == "exact" and .pattern == "github.com" and .action == "allow")] | length == 1) and ([.rules[] | select(.pattern == "api.openai.com" and (.action | startswith("allow")))] | length == 1)' \
 		>/dev/null 2>&1; then
 		pass "exports normalized backend policy"
 	else
@@ -183,6 +184,22 @@ test_backend_denial_blocks_arbitrary_binary() {
 	return 0
 }
 
+test_backend_denial_blocks_interpreter() {
+	rm -f "$INTERPRETER_MARKER" "$BACKEND_LOG"
+	local status=0
+	HOME="$TEST_HOME" INTERPRETER_MARKER="$INTERPRETER_MARKER" AIDEVOPS_WORKER_EGRESS_BACKEND="$BACKEND" \
+		FAKE_BACKEND_MODE=deny FAKE_BACKEND_LOG="$BACKEND_LOG" \
+		"$SANDBOX_HELPER" run --egress-mode required --worker-id fixture-worker --passthrough INTERPRETER_MARKER -- \
+		python3 -c 'from pathlib import Path; import os; Path(os.environ["INTERPRETER_MARKER"]).write_text("ran")' \
+		>/dev/null 2>&1 || status=$?
+	if [[ "$status" -eq 77 && ! -e "$INTERPRETER_MARKER" ]]; then
+		pass "backend denial blocks arbitrary interpreter execution"
+	else
+		fail "backend denial blocks arbitrary interpreter execution" "status=${status}"
+	fi
+	return 0
+}
+
 test_auto_mode_reports_non_containment() {
 	rm -f "$MARKER" "$CHILD_MARKER"
 	local output=""
@@ -224,6 +241,7 @@ main() {
 	test_required_mode_rejects_invalid_probe
 	test_backend_wraps_process_tree
 	test_backend_denial_blocks_arbitrary_binary
+	test_backend_denial_blocks_interpreter
 	test_auto_mode_reports_non_containment
 	test_headless_runtime_binds_egress_contract
 	printf '\nTests: %d, Failures: %d\n' "$TESTS" "$FAILURES"
