@@ -827,7 +827,10 @@ _SP_CPT_REOPENED=0
 _repair_recently_closed_parent() {
 	local slug="$1" issue_num="$2" issue_body="$3" known_child_count="$4"
 	local issue_state="$5"
-	[[ "$issue_state" == "CLOSED" ]] || return 1
+	case "$issue_state" in
+	[Cc][Ll][Oo][Ss][Ee][Dd]) ;;
+	*) return 1 ;;
+	esac
 	if _parent_close_contract_incomplete "$issue_body" "$known_child_count"; then
 		if _repair_closed_parent_contract "$slug" "$issue_num" \
 			"$_PARENT_CLOSE_CONTRACT_REASON"; then

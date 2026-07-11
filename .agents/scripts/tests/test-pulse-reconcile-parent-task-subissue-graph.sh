@@ -204,10 +204,10 @@ set_parent_list() {
 }
 
 set_closed_parent_list() {
-	# Args: issue_num title body
-	local num="$1" title="$2" body="$3"
-	jq -n --argjson n "$num" --arg t "$title" --arg b "$body" \
-		'[{number:$n, title:$t, body:$b, state:"CLOSED"}]' >"${TEST_ROOT}/gh-closed-issue-list.json"
+	# Args: issue_num title body [state]
+	local num="$1" title="$2" body="$3" state="${4:-CLOSED}"
+	jq -n --argjson n "$num" --arg t "$title" --arg b "$body" --arg s "$state" \
+		'[{number:$n, title:$t, body:$b, state:$s}]' >"${TEST_ROOT}/gh-closed-issue-list.json"
 	return 0
 }
 
@@ -496,6 +496,24 @@ if [[ "$reopen_count" -eq 1 ]]; then
 else
 	print_result "closed-parent repair: action is bounded to one reopen per scan" 1 \
 		"(reopen_count=${reopen_count})"
+fi
+
+# -----------------------------------------------------------------------------
+# Scenario 13: REST-search fallback returns lowercase issue states. The repair
+# path must treat that shape the same as gh issue list's uppercase GraphQL enum.
+# -----------------------------------------------------------------------------
+reset_scenario
+set_closed_parent_list 1600 "t1600: REST-state premature close" $'## Phases\n\n- Phase 1 - shipped #1601\n- Phase 2 - still unfiled' closed
+set_subissues "1601:CLOSED"
+set_child_states "1601:closed:phase-one"
+
+reconcile_completed_parent_tasks >/dev/null 2>&1
+
+if grep -q "issue reopen 1600" "$GH_CALLS"; then
+	print_result "closed-parent repair: accepts lowercase REST state" 0
+else
+	print_result "closed-parent repair: accepts lowercase REST state" 1 \
+		"(calls: $(tr '\n' '|' <"$GH_CALLS" | head -c 400))"
 fi
 
 # -----------------------------------------------------------------------------

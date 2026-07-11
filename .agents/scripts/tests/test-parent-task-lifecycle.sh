@@ -433,9 +433,27 @@ contract_args=$(printf '%s\n' "${_GH_CI_CONTRACT_ARGS[@]}")
 assert_contains "B10f: children body records expected child count" \
 	'<!-- parent-close-contract: expected-children=2 -->' "$contract_args"
 
+# Parent creation runs inside strict-mode callers. A prose-only Children
+# section must produce the conservative needs-decomposition marker rather than
+# aborting when grep finds no issue references under pipefail.
+strict_contract_args=""
+if strict_contract_args=$(bash -c '
+	set -euo pipefail
+	source "$1"
+	_gh_ci_prepare_parent_close_contract 1 --body "$2" --label parent-task
+	printf "%s\n" "${_GH_CI_CONTRACT_ARGS[@]}"
+' _ "$WRAPPER_TARGET" $'## Children\n\nChild issues have not been filed yet.'); then
+	assert_contains "B10g: no-ref Children section remains safe under strict mode" \
+		'<!-- parent-close-contract: needs-decomposition -->' "$strict_contract_args"
+else
+	TESTS_RUN=$((TESTS_RUN + 1))
+	TESTS_FAILED=$((TESTS_FAILED + 1))
+	echo "${TEST_RED}FAIL${TEST_NC}: B10g: no-ref Children section aborted under strict mode"
+fi
+
 _gh_ci_prepare_parent_close_contract 0 --body 'ordinary leaf issue' --label bug
 contract_args=$(printf '%s\n' "${_GH_CI_CONTRACT_ARGS[@]}")
-assert_not_contains "B10g: non-parent issue body remains unstamped" \
+assert_not_contains "B10h: non-parent issue body remains unstamped" \
 	'<!-- parent-close-contract:' "$contract_args"
 
 # ============================================================
