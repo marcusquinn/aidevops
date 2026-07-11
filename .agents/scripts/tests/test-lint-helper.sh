@@ -40,11 +40,16 @@ main() {
 	trap 'rm -rf "$TEST_TMP_DIR"' EXIT
 	local repo_one="${TEST_TMP_DIR}/repo-one"
 	local repo_two="${TEST_TMP_DIR}/repo-two"
+	local canonical="${TEST_TMP_DIR}/canonical"
 	local fake_home="${TEST_TMP_DIR}/home"
 	make_repo "$repo_one"
 	make_repo "$repo_two"
+	make_repo "$canonical"
+	/usr/bin/git -C "$canonical" add .aidevops.json
+	/usr/bin/git -C "$canonical" commit -q -m fixture
 	mkdir -p "${fake_home}/.config/aidevops"
-	jq -n --arg one "$repo_one" --arg two "$repo_two" '{initialized_repos:[{path:$one,features:[]},{path:$two,features:[]}]}' >"${fake_home}/.config/aidevops/repos.json"
+	jq -n --arg one "$repo_one" --arg two "$repo_two" --arg canonical "$canonical" \
+		'{initialized_repos:[{path:$one,features:[]},{path:$two,features:[]},{path:$canonical,features:["code-quality"]}]}' >"${fake_home}/.config/aidevops/repos.json"
 
 	local output classification before after
 	output=$(HOME="$fake_home" bash "$HELPER" audit --repo "$repo_one" --json)
@@ -72,8 +77,9 @@ main() {
 	rm -f "$plan_stderr"
 
 	HOME="$fake_home" bash "$HELPER" reconcile --all >/dev/null
-	assert_equal "2" "$(jq '[.initialized_repos[] | select((.features // []) | index("code-quality"))] | length' "${fake_home}/.config/aidevops/repos.json")" "update reconciliation seeds every non-opted-out registration"
+	assert_equal "3" "$(jq '[.initialized_repos[] | select((.features // []) | index("code-quality"))] | length' "${fake_home}/.config/aidevops/repos.json")" "update reconciliation seeds every non-opted-out registration"
 	assert_equal "true" "$(jq -r '.features.code_quality' "$repo_two/.aidevops.json")" "update reconciliation migrates existing repo config"
+	assert_equal "false" "$(jq -r '.features.code_quality // false' "$canonical/.aidevops.json")" "update reconciliation defers tracked canonical policy"
 
 	local repo_three="${TEST_TMP_DIR}/repo-three"
 	make_repo "$repo_three"
