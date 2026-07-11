@@ -54,6 +54,8 @@ LEDGER_DIR="${AIDEVOPS_DISPATCH_LEDGER_DIR:-${HOME}/.aidevops/.agent-workspace/t
 LEDGER_FILE="${LEDGER_DIR}/dispatch-ledger.jsonl"
 LEDGER_LOCK="${LEDGER_DIR}/dispatch-ledger.lock"
 DEFAULT_TTL="${AIDEVOPS_DISPATCH_LEDGER_TTL:-3600}" # 60 minutes
+PRELAUNCH_LEASE_TTL="${AIDEVOPS_DISPATCH_PRELAUNCH_LEASE_TTL:-120}"
+ACTIVE_LEASE_TTL="${AIDEVOPS_DISPATCH_ACTIVE_LEASE_TTL:-7200}"
 
 #######################################
 # Ensure ledger directory and file exist
@@ -256,6 +258,42 @@ _iso_to_epoch() {
 }
 
 #######################################
+# Resolve a stable, non-secret device identifier for cross-runner evidence.
+# A test/operator override is accepted; otherwise hash the OS machine identity
+# (or hostname fallback) so raw hardware identifiers never enter the ledger.
+#######################################
+_resolve_runner_device() {
+	if [[ -n "${AIDEVOPS_RUNNER_DEVICE_ID:-}" ]]; then
+		printf '%s' "$AIDEVOPS_RUNNER_DEVICE_ID"
+		return 0
+	fi
+	local raw_id=""
+	if [[ -r /etc/machine-id ]]; then
+		raw_id=$(< /etc/machine-id)
+	elif command -v ioreg >/dev/null 2>&1; then
+		raw_id=$(ioreg -rd1 -c IOPlatformExpertDevice 2>/dev/null | sed -n 's/.*"IOPlatformUUID" = "\([^"]*\)".*/\1/p')
+	fi
+	[[ -n "$raw_id" ]] || raw_id=$(hostname 2>/dev/null || printf '%s' "device")
+	printf 'device-%s' "$(printf '%s' "$raw_id" | cksum | cut -d' ' -f1)"
+	return 0
+}
+
+#######################################
+# Return an ISO timestamp N seconds after now (BSD/GNU date portable).
+#######################################
+_lease_expiry_from_now() {
+	local ttl="$1"
+	[[ "$ttl" =~ ^[0-9]+$ ]] || ttl=120
+	local now_epoch=""
+	now_epoch=$(_now_epoch)
+	local expiry_epoch=$((now_epoch + ttl))
+	date -u -r "$expiry_epoch" '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null ||
+		date -u -d "@${expiry_epoch}" '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null ||
+		_now_utc
+	return 0
+}
+
+#######################################
 # Register a new dispatch in the ledger
 #
 # Args (named):
@@ -277,6 +315,11 @@ cmd_register() {
 	local dispatch_tier=""
 	local dispatch_model=""
 	local worktree_path=""
+	local runner_device=""
+	local worker_session_id=""
+	local lease_phase="pre-launch"
+	local lease_expires_at=""
+	local phase_explicit=0
 
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
@@ -308,6 +351,23 @@ cmd_register() {
 			dispatch_model="${2:-}"
 			shift 2
 			;;
+		--runner-device)
+			runner_device="${2:-}"
+			shift 2
+			;;
+		--session-id)
+			worker_session_id="${2:-}"
+			shift 2
+			;;
+		--phase)
+			lease_phase="${2:-}"
+			phase_explicit=1
+			shift 2
+			;;
+		--lease-expires-at)
+			lease_expires_at="${2:-}"
+			shift 2
+			;;
 		*)
 			echo "Error: Unknown option for register: $1" >&2
 			return 1
@@ -319,6 +379,22 @@ cmd_register() {
 		echo "Error: register requires --session-key" >&2
 		return 1
 	fi
+	case "$lease_phase" in
+	pre-launch | active) ;;
+	*)
+		echo "Error: register --phase must be pre-launch or active" >&2
+		return 1
+		;;
+	esac
+	[[ -n "$runner_device" ]] || runner_device=$(_resolve_runner_device)
+	[[ -n "$worker_session_id" ]] || worker_session_id="$session_key"
+	if [[ -z "$lease_expires_at" ]]; then
+		if [[ "$lease_phase" == "active" ]]; then
+			lease_expires_at=$(_lease_expiry_from_now "$ACTIVE_LEASE_TTL")
+		else
+			lease_expires_at=$(_lease_expiry_from_now "$PRELAUNCH_LEASE_TTL")
+		fi
+	fi
 
 	_ensure_ledger
 	if ! _acquire_lock; then
@@ -328,6 +404,25 @@ cmd_register() {
 
 	local now
 	now=$(_now_utc)
+	local existing_entry=""
+	existing_entry=$(jq -c --arg sk "$session_key" 'select(.session_key == $sk)' "$LEDGER_FILE" 2>/dev/null | tail -1) || existing_entry=""
+	if [[ -n "$existing_entry" ]]; then
+		local existing_status=""
+		existing_status=$(printf '%s' "$existing_entry" | jq -r '.status // ""' 2>/dev/null) || existing_status=""
+		if [[ "$existing_status" == "completed" || "$existing_status" == "failed" ]]; then
+			_release_lock
+			return 0
+		fi
+	fi
+	if [[ -n "$existing_entry" && "$phase_explicit" -eq 0 ]]; then
+		local existing_phase=""
+		existing_phase=$(printf '%s' "$existing_entry" | jq -r '.lease_phase // ""' 2>/dev/null) || existing_phase=""
+		if [[ "$existing_phase" == "active" ]]; then
+			lease_phase="active"
+			lease_expires_at=$(printf '%s' "$existing_entry" | jq -r '.lease_expires_at // ""' 2>/dev/null) || lease_expires_at=""
+			[[ -n "$lease_expires_at" ]] || lease_expires_at=$(_lease_expiry_from_now "$ACTIVE_LEASE_TTL")
+		fi
+	fi
 
 	# Remove any existing entry for this session_key (idempotent re-register)
 	if [[ -s "$LEDGER_FILE" ]]; then
@@ -347,7 +442,12 @@ cmd_register() {
 		--arg tier "$dispatch_tier" \
 		--arg model "$dispatch_model" \
 		--arg worktree "$worktree_path" \
-		'{session_key: $sk, issue_number: $inum, repo_slug: $slug, pid: $pid, dispatched_at: $ts, status: "in-flight", updated_at: $ts, tier: $tier, model: $model, worktree_path: $worktree}' \
+		--arg device "$runner_device" \
+		--arg worker_session "$worker_session_id" \
+		--arg phase "$lease_phase" \
+		--arg expires "$lease_expires_at" \
+		--argjson existing "${existing_entry:-null}" \
+		'{session_key: $sk, issue_number: $inum, repo_slug: $slug, pid: $pid, dispatched_at: ($existing.dispatched_at // $ts), status: "in-flight", updated_at: $ts, tier: $tier, model: $model, worktree_path: $worktree, runner_device: $device, worker_session_id: $worker_session, lease_phase: $phase, lease_expires_at: $expires, readiness_evidence: ($existing.readiness_evidence // null), ready_at: ($existing.ready_at // null)}' \
 		>>"$LEDGER_FILE"
 
 	# Append to tier telemetry log (append-only, never pruned)
@@ -363,6 +463,76 @@ cmd_register() {
 
 	_release_lock
 	return 0
+}
+
+#######################################
+# Acknowledge that a worker crossed its runtime readiness boundary.
+# Args: --session-key KEY [--evidence TEXT] [--session-id ID]
+#######################################
+cmd_ready() {
+	local session_key=""
+	local evidence="runtime-worker-started"
+	local worker_session_id=""
+	while [[ $# -gt 0 ]]; do
+		local option="$1"
+		case "$option" in
+		--session-key | --evidence | --session-id)
+			[[ $# -ge 2 ]] || { echo "Error: $option requires an argument" >&2; return 1; }
+			case "$option" in
+			--session-key) session_key="$2" ;;
+			--evidence) evidence="$2" ;;
+			--session-id) worker_session_id="$2" ;;
+			esac
+			shift 2
+			;;
+		*) echo "Error: Unknown option for ready: $option" >&2; return 1 ;;
+		esac
+	done
+	[[ -n "$session_key" ]] || { echo "Error: ready requires --session-key" >&2; return 1; }
+	_ensure_ledger
+	_acquire_lock || return 1
+	if [[ ! -s "$LEDGER_FILE" ]]; then
+		_release_lock
+		return 1
+	fi
+	local now="" expires="" tmp_file=""
+	now=$(_now_utc)
+	expires=$(_lease_expiry_from_now "$ACTIVE_LEASE_TTL")
+	tmp_file=$(mktemp "${LEDGER_DIR}/dispatch-ledger.XXXXXX") || { _release_lock; return 1; }
+	jq -c --arg sk "$session_key" --arg ts "$now" --arg expires "$expires" \
+		--arg evidence "$evidence" --arg worker_session "$worker_session_id" '
+		if .session_key == $sk and .status == "in-flight" then
+			.lease_phase = "active" |
+			.lease_expires_at = $expires |
+			.ready_at = $ts |
+			.readiness_evidence = $evidence |
+			.updated_at = $ts |
+			if $worker_session != "" then .worker_session_id = $worker_session else . end
+		else . end' "$LEDGER_FILE" >"$tmp_file" 2>/dev/null || {
+		rm -f "$tmp_file"
+		_release_lock
+		return 1
+	}
+	mv "$tmp_file" "$LEDGER_FILE"
+	_release_lock
+	return 0
+}
+
+#######################################
+# Return 0 when an entry is an expired pre-launch lease, 1 otherwise.
+#######################################
+_entry_prelaunch_lease_expired() {
+	local entry_json="$1"
+	local phase="" expires_at="" expires_epoch="" now_epoch=""
+	phase=$(printf '%s' "$entry_json" | jq -r '.lease_phase // "legacy"' 2>/dev/null) || phase="legacy"
+	[[ "$phase" == "pre-launch" ]] || return 1
+	expires_at=$(printf '%s' "$entry_json" | jq -r '.lease_expires_at // ""' 2>/dev/null) || expires_at=""
+	[[ -n "$expires_at" ]] || return 1
+	expires_epoch=$(_iso_to_epoch "$expires_at")
+	now_epoch=$(_now_epoch)
+	[[ "$expires_epoch" =~ ^[0-9]+$ && "$expires_epoch" -gt 0 ]] || return 1
+	((now_epoch >= expires_epoch)) && return 0
+	return 1
 }
 
 #######################################
@@ -472,6 +642,10 @@ cmd_check() {
 	if [[ -z "$match" ]]; then
 		return 1
 	fi
+	if _entry_prelaunch_lease_expired "$match"; then
+		cmd_fail --session-key "$session_key" 2>/dev/null || true
+		return 1
+	fi
 
 	# Verify PID is still alive (stale entry detection)
 	local entry_pid
@@ -556,6 +730,12 @@ cmd_check_issue() {
 	fi
 
 	if [[ -z "$match" ]]; then
+		return 1
+	fi
+	if _entry_prelaunch_lease_expired "$match"; then
+		local expired_sk=""
+		expired_sk=$(printf '%s' "$match" | jq -r '.session_key // ""' 2>/dev/null) || expired_sk=""
+		[[ -z "$expired_sk" ]] || cmd_fail --session-key "$expired_sk" 2>/dev/null || true
 		return 1
 	fi
 
@@ -797,7 +977,7 @@ _update_status() {
 	# must not overwrite a genuinely completed dispatch.
 	jq -c --arg sk "$session_key" --arg st "$new_status" --arg ts "$now" \
 		'if .session_key == $sk and .status == "in-flight"
-			then .status = $st | .updated_at = $ts
+			then .status = $st | .updated_at = $ts | .lease_phase = "terminal" | .lease_expires_at = $ts | .terminal_evidence = ("ledger-status:" + $st)
 			else .
 		end' \
 		"$LEDGER_FILE" >"$tmp_file" 2>/dev/null || cp "$LEDGER_FILE" "$tmp_file"
@@ -1165,8 +1345,11 @@ Tracks workers between dispatch and PR creation to prevent duplicate
 dispatches during the 10-15 minute window before a worker creates its PR.
 
 Usage:
-  dispatch-ledger-helper.sh register --session-key KEY [--issue NUM] [--repo SLUG] [--pid PID]
+  dispatch-ledger-helper.sh register --session-key KEY [--issue NUM] [--repo SLUG] [--pid PID] [--runner-device ID] [--session-id ID] [--phase pre-launch|active]
     Register a new dispatch. Idempotent — re-registering overwrites.
+
+  dispatch-ledger-helper.sh ready --session-key KEY [--evidence TEXT] [--session-id ID]
+    Acknowledge worker readiness and promote the bounded lease to active.
 
   dispatch-ledger-helper.sh check --session-key KEY
     Check if session key has an in-flight entry. Exit 0=in-flight, 1=safe.
@@ -1228,6 +1411,9 @@ main() {
 	case "$command" in
 	register)
 		cmd_register "$@"
+		;;
+	ready)
+		cmd_ready "$@"
 		;;
 	check)
 		cmd_check "$@"

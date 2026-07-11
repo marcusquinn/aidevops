@@ -64,11 +64,95 @@ _ensure_worker_lineage() {
 	return 0
 }
 
+_worker_lease_device_id() {
+	if [[ -n "${AIDEVOPS_RUNNER_DEVICE_ID:-}" ]]; then
+		printf '%s' "$AIDEVOPS_RUNNER_DEVICE_ID"
+		return 0
+	fi
+	local raw_id=""
+	if [[ -r /etc/machine-id ]]; then
+		raw_id=$(< /etc/machine-id)
+	elif command -v ioreg >/dev/null 2>&1; then
+		raw_id=$(ioreg -rd1 -c IOPlatformExpertDevice 2>/dev/null | sed -n 's/.*"IOPlatformUUID" = "\([^"]*\)".*/\1/p')
+	fi
+	[[ -n "$raw_id" ]] || raw_id=$(hostname 2>/dev/null || printf '%s' "device")
+	printf 'device-%s' "$(printf '%s' "$raw_id" | cksum | cut -d' ' -f1)"
+	return 0
+}
+
+_worker_lease_expiry() {
+	local ttl="$1"
+	[[ "$ttl" =~ ^[0-9]+$ ]] || ttl=7200
+	local now_epoch=""
+	now_epoch=$(date +%s 2>/dev/null || printf '0')
+	local expiry_epoch=$((now_epoch + ttl))
+	date -u -r "$expiry_epoch" '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null ||
+		date -u -d "@${expiry_epoch}" '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null ||
+		date -u '+%Y-%m-%dT%H:%M:%SZ'
+	return 0
+}
+
+_emit_dispatch_lease_comment_once() {
+	local phase="$1"
+	local outcome="${2:-}"
+	local session_key="${WORKER_SESSION_KEY:-${AIDEVOPS_SESSION_KEY:-}}"
+	local issue_number="${WORKER_ISSUE_NUMBER:-}"
+	local repo_slug="${DISPATCH_REPO_SLUG:-}"
+	[[ -n "$session_key" && "$issue_number" =~ ^[0-9]+$ && -n "$repo_slug" ]] || return 0
+	local lease_owner="${AIDEVOPS_WORKER_ID:-${session_key}:$$}"
+	local safe_session=""
+	safe_session=$(printf '%s' "$lease_owner" | tr -c 'a-zA-Z0-9._-' '_')
+	local sentinel_dir="${HOME}/.aidevops/cache"
+	local sentinel="${sentinel_dir}/dispatch-lease-${safe_session}-${phase}-${outcome:-none}"
+	mkdir -p "$sentinel_dir" 2>/dev/null || return 0
+	[[ ! -e "$sentinel" ]] || return 0
+	local now="" expires="" device="" body=""
+	now=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
+	device=$(_worker_lease_device_id)
+	if [[ "$phase" == "active" ]]; then
+		expires=$(_worker_lease_expiry "${AIDEVOPS_DISPATCH_ACTIVE_LEASE_TTL:-7200}")
+	else
+		expires="$now"
+	fi
+	body="<!-- ops:start — workers: skip this comment, it is audit trail not implementation context -->
+DISPATCH_LEASE phase=${phase} runner_device=${device} session=${session_key} ts=${now} expires_at=${expires} evidence=worker-self-report${outcome:+ outcome=${outcome}}
+<!-- ops:end -->"
+	if gh api "repos/${repo_slug}/issues/${issue_number}/comments" --method POST --field body="$body" >/dev/null 2>&1; then
+		: >"$sentinel"
+	fi
+	return 0
+}
+
+_update_dispatch_lease_from_runtime_event() {
+	local event_type="$1"
+	local session_key="${WORKER_SESSION_KEY:-${AIDEVOPS_SESSION_KEY:-}}"
+	[[ -n "$session_key" ]] || return 0
+	local ledger_helper="${BASH_SOURCE[0]%/*}/dispatch-ledger-helper.sh"
+	case "$event_type" in
+	worker.started)
+		if [[ -x "$ledger_helper" ]]; then
+			"$ledger_helper" ready --session-key "$session_key" --session-id "$session_key" --evidence "worker.started" >/dev/null 2>&1 || true
+		fi
+		_emit_dispatch_lease_comment_once "active" "" || true
+		;;
+	worker.completed)
+		[[ ! -x "$ledger_helper" ]] || "$ledger_helper" complete --session-key "$session_key" >/dev/null 2>&1 || true
+		_emit_dispatch_lease_comment_once "terminal" "completed" || true
+		;;
+	worker.failed | worker.deferred)
+		[[ ! -x "$ledger_helper" ]] || "$ledger_helper" fail --session-key "$session_key" >/dev/null 2>&1 || true
+		_emit_dispatch_lease_comment_once "terminal" "${event_type#worker.}" || true
+		;;
+	esac
+	return 0
+}
+
 _emit_worker_runtime_event() {
 	local event_type="$1"
 	local status="${2:-}"
 	local classification="${3:-}"
 	local runtime_events="${BASH_SOURCE[0]%/*}/runtime-events.mjs"
+	_update_dispatch_lease_from_runtime_event "$event_type" || true
 	[[ -n "${AIDEVOPS_WORKER_ID:-}" ]] || return 0
 	[[ -f "$runtime_events" ]] || return 0
 	command -v node >/dev/null 2>&1 || return 0

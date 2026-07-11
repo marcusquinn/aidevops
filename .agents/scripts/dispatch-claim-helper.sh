@@ -195,6 +195,41 @@ _resolve_runner() {
 }
 
 #######################################
+# Resolve a stable, non-secret device identifier distinct from GitHub login.
+# The raw OS machine identifier is hashed before it enters public markers.
+#######################################
+_resolve_runner_device() {
+	if [[ -n "${AIDEVOPS_RUNNER_DEVICE_ID:-}" ]]; then
+		printf '%s' "$AIDEVOPS_RUNNER_DEVICE_ID"
+		return 0
+	fi
+	local raw_id=""
+	if [[ -r /etc/machine-id ]]; then
+		raw_id=$(< /etc/machine-id)
+	elif command -v ioreg >/dev/null 2>&1; then
+		raw_id=$(ioreg -rd1 -c IOPlatformExpertDevice 2>/dev/null | sed -n 's/.*"IOPlatformUUID" = "\([^"]*\)".*/\1/p')
+	fi
+	[[ -n "$raw_id" ]] || raw_id=$(hostname 2>/dev/null || printf '%s' "device")
+	printf 'device-%s' "$(printf '%s' "$raw_id" | cksum | cut -d' ' -f1)"
+	return 0
+}
+
+#######################################
+# Return an ISO timestamp N seconds after the supplied/current epoch.
+#######################################
+_lease_expiry() {
+	local ttl="$1"
+	local now_epoch="${2:-}"
+	[[ "$ttl" =~ ^[0-9]+$ ]] || ttl=120
+	[[ "$now_epoch" =~ ^[0-9]+$ ]] || now_epoch=$(_now_epoch)
+	local expiry_epoch=$((now_epoch + ttl))
+	date -u -r "$expiry_epoch" '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null ||
+		date -u -d "@${expiry_epoch}" '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null ||
+		_now_utc
+	return 0
+}
+
+#######################################
 # t2401: Resolve the framework version from AIDEVOPS_VERSION_FILE.
 # Returns: semver string on stdout, "unknown" when file is missing/empty.
 # Always exit 0 — claim emission must never fail on a missing VERSION file.
@@ -254,6 +289,8 @@ _claim_post_error_fallback_path() {
 #   $4 = nonce
 #   $5 = ISO timestamp
 #   $6 = optional reason fields (space-separated key=value tokens)
+#   $7 = runner device identifier
+#   $8 = worker session identifier
 # Returns:
 #   exit 0 + comment ID on stdout if posted
 #   exit 1 on failure
@@ -265,6 +302,8 @@ _post_claim() {
 	local nonce="$4"
 	local ts="$5"
 	local reason_fields="${6:-}"
+	local runner_device="$7"
+	local worker_session_id="$8"
 
 	if declare -F aidevops_can_manage_repo_issue_state >/dev/null 2>&1; then
 		if ! aidevops_can_manage_repo_issue_state "$repo_slug" "$runner"; then
@@ -282,7 +321,9 @@ _post_claim() {
 		opencode_version="${opencode_version:-$AIDEVOPS_UNKNOWN_VERSION}"
 	fi
 
-	local machine_readable_part="${CLAIM_MARKER} nonce=${nonce} runner=${runner} ts=${ts} max_age_s=${DISPATCH_CLAIM_MAX_AGE} version=${version} opencode_version=${opencode_version}"
+	local lease_expires_at=""
+	lease_expires_at=$(_lease_expiry "$DISPATCH_CLAIM_ORPHAN_GRACE")
+	local machine_readable_part="${CLAIM_MARKER} nonce=${nonce} runner=${runner} ts=${ts} max_age_s=${DISPATCH_CLAIM_MAX_AGE} version=${version} opencode_version=${opencode_version} device=${runner_device} session=${worker_session_id} lease_phase=pre-launch lease_expires_at=${lease_expires_at}"
 	if [[ -n "$reason_fields" ]]; then
 		machine_readable_part+=" ${reason_fields}"
 	fi
@@ -473,7 +514,7 @@ _fetch_claim_marker_comments() {
 				.
 			end
 		)[]
-		| select((.body // "" | ascii_downcase) | (contains(($marker | ascii_downcase) + " nonce=") or contains("claim_released") or contains("dispatching worker")))
+		| select((.body // "" | ascii_downcase) | (contains(($marker | ascii_downcase) + " nonce=") or contains("claim_released") or contains("dispatching worker") or contains("dispatch_lease")))
 		| {id: .id, body: .body, created_at: .created_at} ]
 	' || {
 		echo "Error: failed to parse comments for #${issue_number} in ${repo_slug}" >&2
@@ -547,6 +588,10 @@ _fetch_claims() {
 				runner: $fields.runner,
 				ts: $fields.ts,
 				version: ($fields.version // "unknown"),
+				device: ([.body | capture(" device=(?<value>[^ ]+)")? | .value][0] // "legacy"),
+				session: ([.body | capture(" session=(?<value>[^ ]+)")? | .value][0] // ""),
+				lease_phase: ([.body | capture(" lease_phase=(?<value>[^ ]+)")? | .value][0] // "legacy"),
+				lease_expires_at: ([.body | capture(" lease_expires_at=(?<value>[^ ]+)")? | .value][0] // ""),
 				created_at: .created_at,
 				created_epoch: (.created_at | fromdateiso8601? // 0)
 			}
@@ -1106,6 +1151,9 @@ cmd_claim() {
 
 	local runner
 	runner=$(_resolve_runner "$runner_login") || runner="unknown"
+	local runner_device=""
+	runner_device=$(_resolve_runner_device)
+	local worker_session_id="${AIDEVOPS_SESSION_KEY:-${WORKER_SESSION_KEY:-issue-${issue_number}}}"
 
 	if declare -F aidevops_can_manage_repo_issue_state >/dev/null 2>&1; then
 		if ! aidevops_can_manage_repo_issue_state "$repo_slug" "$runner"; then
@@ -1129,7 +1177,7 @@ cmd_claim() {
 	local claim_reason
 	claim_reason=$(_detect_stale_worker_takeover_reason "$issue_number" "$repo_slug")
 
-	comment_id=$(_post_claim "$issue_number" "$repo_slug" "$runner" "$nonce" "$ts" "$claim_reason") || {
+	comment_id=$(_post_claim "$issue_number" "$repo_slug" "$runner" "$nonce" "$ts" "$claim_reason" "$runner_device" "$worker_session_id") || {
 		echo "CLAIM_ERROR: failed to post claim — proceeding (fail-open)" >&2
 		return 2
 	}
@@ -1154,15 +1202,16 @@ cmd_claim() {
 	fi
 
 	# Step 4: Check if our claim is the oldest
-	local oldest_nonce oldest_runner oldest_age_seconds
+	local oldest_nonce oldest_runner oldest_device oldest_age_seconds
 	oldest_nonce=$(printf '%s' "$claims" | jq -r '.[0].nonce // ""' 2>/dev/null) || oldest_nonce=""
 	oldest_runner=$(printf '%s' "$claims" | jq -r '.[0].runner // "unknown"' 2>/dev/null) || oldest_runner="unknown"
+	oldest_device=$(printf '%s' "$claims" | jq -r '.[0].device // "legacy"' 2>/dev/null) || oldest_device="legacy"
 	oldest_age_seconds=$(printf '%s' "$claims" | jq -r '.[0].age_seconds // 0' 2>/dev/null) || oldest_age_seconds=0
 
 	if [[ "$oldest_nonce" == "$nonce" ]]; then
 		# We won — our claim is the oldest
-		printf 'CLAIM_WON: runner=%s nonce=%s issue=#%s comment_id=%s\n' \
-			"$runner" "$nonce" "$issue_number" "$comment_id"
+		printf 'CLAIM_WON: runner=%s device=%s session=%s nonce=%s issue=#%s comment_id=%s lease_phase=pre-launch\n' \
+			"$runner" "$runner_device" "$worker_session_id" "$nonce" "$issue_number" "$comment_id"
 		return 0
 	fi
 
@@ -1173,9 +1222,9 @@ cmd_claim() {
 	#
 	# Same-runner stale claim: another claim from this runner already exists.
 	# The existing claim is still blocking (within TTL), so back off.
-	if [[ "$oldest_runner" == "$runner" && "$oldest_nonce" != "$nonce" ]]; then
-		printf 'CLAIM_STALE_SELF: runner=%s found own prior claim on issue #%s (age=%ss) — backing off (claim retained for audit)\n' \
-			"$runner" "$issue_number" "$oldest_age_seconds"
+	if [[ "$oldest_runner" == "$runner" && ( "$oldest_device" == "$runner_device" || "$oldest_device" == "legacy" ) && "$oldest_nonce" != "$nonce" ]]; then
+		printf 'CLAIM_STALE_SELF: runner=%s device=%s found own prior claim on issue #%s (age=%ss) — backing off (claim retained for audit)\n' \
+			"$runner" "$runner_device" "$issue_number" "$oldest_age_seconds"
 		return 1
 	fi
 

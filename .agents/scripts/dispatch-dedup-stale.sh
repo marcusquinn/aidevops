@@ -157,7 +157,7 @@ _stale_recovery_has_terminal_evidence_since() {
 		[
 			.[] | .[]?
 			| select((.created_at // "") > $since)
-			| select((.body // "") | test("CLAIM_RELEASED reason=worker_failed|Worker Watchdog Kill|provider is backed off|reason=rate_limit|headless-runtime state DB"; "i"))
+			| select((.body // "") | test("CLAIM_RELEASED reason=worker_failed|DISPATCH_LEASE phase=terminal|Worker Watchdog Kill|provider is backed off|reason=rate_limit|headless-runtime state DB"; "i"))
 		] | length > 0
 	' >/dev/null 2>&1; then
 		return 0
@@ -584,9 +584,62 @@ _stale_assignment_fetch_comments_json() {
 	comments_pages=$(gh api "repos/${repo_slug}/issues/${issue_number}/comments" \
 		--paginate --slurp 2>/dev/null) || return 1
 	comments_json=$(printf '%s' "$comments_pages" | jq \
-		'[.[] | .[]? | {created_at: .created_at, author: .user.login, body_start: ((.body // "")[:200])}] | sort_by(.created_at) | reverse' \
+		'[.[] | .[]? | {created_at: .created_at, author: .user.login, body_start: ((.body // "")[:600])}] | sort_by(.created_at) | reverse' \
 		2>/dev/null) || return 1
 	printf '%s' "$comments_json"
+	return 0
+}
+
+#######################################
+# Reverify an expired pre-launch lease before allowing takeover.
+# Returns: 0 reclaimable, 1 no expired pre-launch lease, 2 active/uncertain.
+#######################################
+_stale_assignment_recheck_expired_prelaunch_lease() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local comments_json="$3"
+	local now_epoch="$4"
+	local lease_json=""
+	lease_json=$(printf '%s' "$comments_json" | jq -c '
+		[.[] | select((.body_start // "") | test("DISPATCH_CLAIM .*lease_phase=pre-launch"))] | first // empty
+	' 2>/dev/null) || return 2
+	[[ -n "$lease_json" ]] || return 1
+	local claim_ts="" expires_at="" expires_epoch=""
+	claim_ts=$(printf '%s' "$lease_json" | jq -r '.created_at // ""') || return 2
+	expires_at=$(printf '%s' "$lease_json" | jq -r '(.body_start | capture("lease_expires_at=(?<value>[^ ]+)").value) // ""' 2>/dev/null) || return 2
+	[[ -n "$expires_at" ]] || return 1
+	expires_epoch=$(_ts_to_epoch "$expires_at")
+	[[ "$expires_epoch" -gt 0 ]] || return 2
+	((now_epoch >= expires_epoch)) || return 1
+
+	# Lease-aware workers must self-report readiness. A dispatcher-authored
+	# "Dispatching worker" line proves only spawn intent. A non-expired active
+	# lease blocks takeover; an expired one falls through to fresh evidence.
+	local active_lease_json="" active_expires_at="" active_expires_epoch=""
+	active_lease_json=$(printf '%s' "$comments_json" | jq -c --arg since "$claim_ts" '
+		[.[] | select((.created_at // "") > $since and ((.body_start // "") | test("DISPATCH_LEASE phase=(ready|active)"; "i")))] | first // empty
+	' 2>/dev/null) || return 2
+	if [[ -n "$active_lease_json" ]]; then
+		active_expires_at=$(printf '%s' "$active_lease_json" | jq -r '(.body_start | capture("expires_at=(?<value>[^ ]+)").value) // ""' 2>/dev/null) || return 2
+		[[ -n "$active_expires_at" ]] || return 2
+		active_expires_epoch=$(_ts_to_epoch "$active_expires_at")
+		[[ "$active_expires_epoch" -gt 0 ]] || return 2
+		((now_epoch >= active_expires_epoch)) || return 2
+	fi
+
+	# Same-device process/worktree evidence is represented by an active ledger
+	# entry. The ledger command itself validates phase, expiry, and PID.
+	local ledger_helper="${SCRIPT_DIR}/dispatch-ledger-helper.sh"
+	if [[ -x "$ledger_helper" ]] && "$ledger_helper" check-issue --issue "$issue_number" --repo "$repo_slug" >/dev/null 2>&1; then
+		return 2
+	fi
+
+	# Cross-device branch progress is durable once represented by an open PR.
+	# API uncertainty blocks only this takeover; the next pulse retries.
+	local open_pr="" pr_rc=0
+	open_pr=$(gh pr list --repo "$repo_slug" --state open --search "#${issue_number} in:body" --limit 1 --json number --jq '.[0].number // empty' 2>/dev/null) || pr_rc=$?
+	[[ "$pr_rc" -eq 0 ]] || return 2
+	[[ -z "$open_pr" ]] || return 2
 	return 0
 }
 
@@ -685,8 +738,6 @@ _is_stale_assignment() {
 	read -r is_interactive effective_threshold issue_created_at issue_updated_at \
 		< <(_resolve_stale_threshold "$issue_number" "$repo_slug" | tr '\n' ' ')
 	now_epoch=$(date +%s)
-	# t2153 age-floor guard: issue cannot be stale before it could signal.
-	_issue_too_young_for_staleness "$issue_created_at" "$effective_threshold" "$now_epoch" && return 1
 
 	# Fetch issue comments to find the most recent dispatch claim and
 	# overall activity timestamp. Use --paginate --slurp so gh combines all
@@ -702,6 +753,20 @@ _is_stale_assignment() {
 		# keep the existing assignment protection for this pulse cycle.
 		return 1
 	fi
+
+	local lease_recheck_rc=0
+	_stale_assignment_recheck_expired_prelaunch_lease "$issue_number" "$repo_slug" "$comments_json" "$now_epoch" || lease_recheck_rc=$?
+	if [[ "$lease_recheck_rc" -eq 0 ]]; then
+		_recover_stale_assignment "$issue_number" "$repo_slug" "$blocking_assignees" \
+			"expired pre-launch dispatch lease reverified with no process, PR, or readiness timeline evidence"
+		return 0
+	fi
+	if [[ "$lease_recheck_rc" -eq 2 ]]; then
+		return 1
+	fi
+	# t2153 age-floor remains the legacy-assignment guard. Lease-aware claims
+	# have their own shorter explicit expiry and were handled above.
+	_issue_too_young_for_staleness "$issue_created_at" "$effective_threshold" "$now_epoch" && return 1
 
 	# t2132 Fix D: Find the most recent dispatch/claim comment.
 	# Matches worker dispatch patterns AND interactive session claim pattern.
