@@ -197,10 +197,11 @@ test_genuine_changes_still_block_transfer() {
 	fi
 	local status_output=""
 	status_output=$(git -C "$FIXTURE_WORKTREE" status --porcelain)
-	if [[ "$status_output" != *"task.txt"* ]]; then
+	if [[ "$status_output" != "?? task.txt" ]] ||
+		! git -C "$FIXTURE_WORKTREE" check-ignore -q --no-index .metadata_never_index; then
 		result=1
 	fi
-	print_result "genuine dirty task state still blocks ownership takeover" "$result" \
+	print_result "genuine task state blocks takeover while infrastructure marker is healed" "$result" \
 		"status=${status_output:-<clean>}"
 	return 0
 }

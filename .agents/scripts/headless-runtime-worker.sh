@@ -1005,8 +1005,9 @@ _hrw_worktree_task_status() {
 	# intentionally exact and macOS-only: every other untracked or modified path
 	# remains task state and continues to block ownership transfer or trigger
 	# recovery. An empty regular file proves the known Spotlight marker shape.
-	if [[ "$status_output" == "?? ${_HRW_SPOTLIGHT_MARKER}" && "$(uname -s 2>/dev/null || true)" == "Darwin" && \
-		-f "${work_dir}/${_HRW_SPOTLIGHT_MARKER}" && ! -s "${work_dir}/${_HRW_SPOTLIGHT_MARKER}" ]]; then
+	if [[ "$(uname -s 2>/dev/null || true)" == "Darwin" && \
+		-f "${work_dir}/${_HRW_SPOTLIGHT_MARKER}" && ! -s "${work_dir}/${_HRW_SPOTLIGHT_MARKER}" ]] && \
+		printf '%s\n' "$status_output" | grep -Fqx "?? ${_HRW_SPOTLIGHT_MARKER}"; then
 		local exclude_file=""
 		exclude_file=$(git -C "$work_dir" rev-parse --git-path info/exclude 2>/dev/null) || return 1
 		[[ -n "$exclude_file" ]] || return 1
