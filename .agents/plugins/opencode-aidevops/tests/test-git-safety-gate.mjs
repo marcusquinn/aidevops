@@ -8,7 +8,10 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
-import { checkCommandSafetyGate } from "../quality-hooks-git-safety.mjs";
+import {
+  checkCanonicalGitSafetyGate,
+  checkCommandSafetyGate,
+} from "../quality-hooks-git-safety.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const scriptsDir = join(here, "..", "..", "..", "scripts");

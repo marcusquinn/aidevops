@@ -33,9 +33,14 @@ export function checkCommandSafetyGate(command, scriptsDir, cwd = process.cwd(),
   if (!existsSync(helper)) {
     throw new Error("BLOCKED: required command policy helper is missing");
   }
+  const namesFullLoopCommitAndPr = /full-loop-helper\.sh\s+commit-and-pr(?:\s|$)/.test(command);
+  const trustedFullLoopCommitAndPr = isTrustedFullLoopCommitAndPr(command, scriptsDir, cwd);
+  if (namesFullLoopCommitAndPr && !trustedFullLoopCommitAndPr) {
+    throw new Error("BLOCKED: unclassified nested Git invocation from an untrusted full-loop wrapper");
+  }
   // #aidevops:trust-boundary — only the repository-owned full-loop wrapper
   // receives nested Git authority, and only from a verified linked worktree.
-  const guardedCommand = isTrustedFullLoopCommitAndPr(command, scriptsDir, cwd)
+  const guardedCommand = trustedFullLoopCommitAndPr
     ? "git commit --dry-run"
     : command;
   const helperArgs = [helper, "check-command", "--cwd", cwd, "--command", guardedCommand];
