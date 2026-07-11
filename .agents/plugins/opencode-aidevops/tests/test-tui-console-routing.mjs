@@ -7,20 +7,44 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createQualityHooks } from "../quality-hooks.mjs";
+import { installPluginConsoleRouter } from "../plugin-console.mjs";
+
+test("tagged diagnostics are persisted without payload-based TUI routing", () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "aidevops-console-router-"));
+  const logPath = join(tempDir, "plugin.log");
+  const calls = [];
+  const fakeConsole = { error: (...args) => calls.push(args) };
+  const restore = installPluginConsoleRouter({ consoleObject: fakeConsole, logPath });
+
+  try {
+    fakeConsole.error("[aidevops] account error@example.invalid refreshed");
+    fakeConsole.error("[aidevops] proxy failed", new Error("connection refused"));
+    fakeConsole.error("host error");
+
+    const diagnosticLog = readFileSync(logPath, "utf8");
+    assert.match(diagnosticLog, /account error@example\.invalid refreshed/);
+    assert.match(diagnosticLog, /proxy failed.*connection refused/s);
+    assert.deepEqual(calls, [["host error"]]);
+  } finally {
+    restore();
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
 
 test("post-tool operation telemetry stays out of the TUI and is safely persisted", async () => {
   const tempDir = mkdtempSync(join(tmpdir(), "aidevops-tui-routing-"));
   const trackerPath = join(tempDir, "pattern-tracker-helper.sh");
   const capturePath = join(tempDir, "tracker-args.txt");
+  const injectionMarker = join(tempDir, "must-not-exist");
   const previousCapture = process.env.AIDEVOPS_TEST_PATTERN_CAPTURE;
   const originalConsoleError = console.error;
   const consoleCalls = [];
   const credential = `ghp_${"a".repeat(36)}`;
-  const title = `git commit shellcheck headless-runtime-failure.sh\n${credential}\t${"x".repeat(600)}`;
+  const title = `git commit shellcheck \"$(touch ${injectionMarker})\"; headless-runtime-failure.sh\n${credential}\t${"x".repeat(600)}`;
 
   writeFileSync(
     trackerPath,
@@ -42,8 +66,13 @@ test("post-tool operation telemetry stays out of the TUI and is safely persisted
     assert.match(qualityLog, /\[redacted-credential]/);
     assert.match(qualityLog, /Git operation:/);
     assert.match(qualityLog, /Lint run:/);
+    for (const line of qualityLog.trim().split("\n")) {
+      const payload = line.replace(/^.*(?:Git operation: |Lint run: )/, "").replace(/ — (?:PASS|issues found)$/, "");
+      assert.ok(payload.length <= 500, `telemetry payload exceeded 500 characters: ${payload.length}`);
+    }
     assert.doesNotMatch(trackerArgs, /ghp_|[\r\t]/);
-    assert.equal(consoleCalls.some((args) => args.join(" ").includes("Git operation detected")), false);
+    assert.equal(existsSync(injectionMarker), false);
+    assert.deepEqual(consoleCalls, []);
   } finally {
     console.error = originalConsoleError;
     if (previousCapture === undefined) delete process.env.AIDEVOPS_TEST_PATTERN_CAPTURE;
