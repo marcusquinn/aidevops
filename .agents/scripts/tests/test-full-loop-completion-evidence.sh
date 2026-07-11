@@ -32,12 +32,11 @@ DEFAULT_MAX_TASK_ITERATIONS=50
 DEFAULT_MAX_PREFLIGHT_ITERATIONS=5
 DEFAULT_MAX_PR_ITERATIONS=20
 HEADLESS=false
-BOLD=''
-GREEN=''
-NC=''
 print_error() { return 0; }
 print_info() { return 0; }
 print_warning() { return 0; }
+source '${SCRIPTS_DIR}/shared-constants.sh'
+[[ -z "\${BOLD+x}" ]] && BOLD=''
 source '${SCRIPTS_DIR}/full-loop-helper-state.sh'
 cmd_complete_after_cleanup "\$@"
 RUNNER
