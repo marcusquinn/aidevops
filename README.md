@@ -104,6 +104,8 @@ the required notices and preferred credit text.
 - `aidevops auto-update` - Automatic update polling (enable/disable/status)
 - `aidevops secret` - Manage secrets (gopass encrypted, AI-safe)
 - `aidevops security` - Full security assessment (posture, secrets, supply chain)
+- `aidevops lint audit` - Audit native lint/format/typecheck commands and repo-verify hooks
+- `aidevops lint configure --dry-run` - Preview safe evidence-based lint provisioning
 - `aidevops metrics generate` - Generate local LOC, language, and dependency data for README badges or app about pages
 - `/onboarding` - Interactive setup wizard (in AI assistant)
 - `/design-artifact` - Route artifact-first UI, deck, email, poster, and mobile mockup work

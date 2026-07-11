@@ -1,6 +1,6 @@
 # Pre-Push Guards Reference (t1965, t2198, t2745, t3224)
 
-Five opt-in `pre-push` hooks block common mistakes before they hit CI.
+Six opt-in `pre-push` hooks block common mistakes before they hit CI.
 
 Install all: `install-pre-push-guards.sh install`
 Install individual: `install-pre-push-guards.sh --guard privacy|complexity|scope|credential|dup-todo|repo-verify`
@@ -52,7 +52,7 @@ Reads the brief file for the current branch's task ID and enforces the declared 
 
 Blocks pushes when the pushed commit's `TODO.md` contains two or more checkbox lines with the same task ID (t2745). Root cause: `_seed_orphan_todo_line` in `issue-sync-lib.sh` appends a minimal entry for an issue that already has a rich planning-PR entry. After `git rebase main`, both entries coexist with no merge conflict (different line numbers). This hook catches the duplicate at push time, before it reaches the remote.
 
-Detection pattern: `^[whitespace]*- \[.\] tNNN[.N]* ` — supports top-level and indented subtasks, and hierarchical IDs (e.g., `t1271.1`). Anchored to checkbox-and-task-ID prefix; description-only mentions of a task ID (e.g., `See t2743 for context`) are not flagged.
+Detection pattern: `^[whitespace]*- \[.\] tNNN[.N]*` — supports top-level and indented subtasks, and hierarchical IDs (e.g., `t1271.1`). Anchored to checkbox-and-task-ID prefix; description-only mentions of a task ID (e.g., `See t2743 for context`) are not flagged.
 
 Fix: `grep -nE '^[[:space:]]*- \[.\] tNNN([[:space:]]|$)' TODO.md` to find both entries, remove the minimal (orphan-seeded) one, amend, and push again.
 
@@ -77,22 +77,32 @@ In headless sessions (pulse, CI workers, routines), the guard auto-fixes formatt
    {
      "verify": {
        "enabled": true,
-       "format": "pnpm format",
-       "format_fix": "pnpm format:fix",
-       "lint": "pnpm lint",
-       "lint_fix": "pnpm lint:fix",
-       "typecheck": "pnpm typecheck"
+        "format": "pnpm run format:check",
+        "format_fix": "pnpm run format:fix",
+        "lint": "pnpm run lint",
+        "lint_fix": "pnpm run lint:fix",
+        "typecheck": "pnpm run typecheck"
      }
    }
    ```
 
    Set `"enabled": false` to opt the repo out entirely. Omit any `*_fix` slot to disable autofix for that check (it falls through to the mentor message).
 
-2. **`<repo>/package.json` scripts** — auto-detected when no `.aidevops.json .verify` is set. The guard reads `scripts.format`, `scripts.lint`, `scripts.typecheck` (alias: `type-check`), and prefers `scripts."format:fix"` over `scripts.format_fix` (similarly for lint). Package manager is detected from the lockfile (`pnpm-lock.yaml` → `pnpm`, `yarn.lock` → `yarn`, `bun.lock`/`bun.lockb` → `bun`, else `npm`).
+2. **`<repo>/package.json` scripts** — only exact, non-empty scripts from tracked project metadata are used. Format checks require `format:check`, `format-check`, or a `format` body containing a recognised check/no-write flag. Fix commands require declared `format:fix`/`format_fix` or `lint:fix`/`lint_fix` scripts; aidevops never appends guessed flags. Multiple package-manager lockfiles, or a `packageManager` declaration conflicting with the tracked lockfile, are ambiguous and block inference.
 
-3. **`.agents/configs/repo-verify-defaults.conf`** — toolchain auto-detection by sentinel file (`Cargo.toml` → `cargo fmt -- --check`, `go.mod` → `go vet ./...`, etc.). Add new toolchains here.
+3. **`.agents/configs/repo-verify-defaults.conf`** — evidence-based toolchain detection from tracked files. Cargo and Go have standard commands; Python requires committed Ruff/Black/Flake8 configuration. `pyproject.toml` or `setup.py` alone is not sufficient evidence.
 
 4. **No match: silent skip (exit 0).** Repo is not verify-eligible; nothing to enforce.
+
+Audit with `aidevops lint audit [--repo PATH|--all] [--json] [--strict]`.
+Preview configuration with `aidevops lint configure --dry-run`; apply current-repo
+local policy with `--apply`. `configure --all` never edits canonical repositories;
+`--write-pr-plan` writes worker-ready isolated-PR plans for tracked changes.
+`aidevops init` installs the guard immediately when code quality is enabled, and
+`aidevops update` reruns the idempotent migration/rollout when detector, hook,
+defaults, init, update, or installer implementation changes.
+Concurrent migrations use OS-released advisory locks and atomic replacement, so
+an interrupted writer cannot leave stale lock ownership behind.
 
 ### Auto-fix policy
 
