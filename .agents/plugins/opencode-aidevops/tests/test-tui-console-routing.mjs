@@ -44,11 +44,15 @@ test("diagnostic rotation keeps a bounded set of process archives", () => {
 
   try {
     for (let pid = 100; pid < 105; pid++) writeFileSync(`${logPath}.${pid}.1`, `${pid}`);
+    writeFileSync(`${logPath}.manual.1`, "unrelated");
     writeFileSync(logPath, "x".repeat((5 * 1024 * 1024) + 1));
     fakeConsole.error("[aidevops] rotate now");
 
-    const archives = readdirSync(tempDir).filter((name) => name.startsWith("plugin.log.") && name.endsWith(".1"));
+    const archives = readdirSync(tempDir).filter((name) => /^plugin\.log\.\d+\.1$/.test(name));
     assert.ok(archives.length <= 3, `rotation retained ${archives.length} archives`);
+    assert.ok(archives.includes(`plugin.log.${process.pid}.1`));
+    assert.match(readFileSync(logPath, "utf8"), /\[aidevops] rotate now/);
+    assert.equal(readFileSync(`${logPath}.manual.1`, "utf8"), "unrelated");
   } finally {
     restore();
     rmSync(tempDir, { recursive: true, force: true });

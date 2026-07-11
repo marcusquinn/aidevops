@@ -41,9 +41,10 @@ function sanitizeEntry(args) {
 
 function pruneRotatedLogs(logPath) {
   const logDir = dirname(logPath);
-  const archivePrefix = `${basename(logPath)}.`;
+  const escapedName = basename(logPath).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const archivePattern = new RegExp(`^${escapedName}\\.\\d+\\.1$`);
   const archives = readdirSync(logDir)
-    .filter((name) => name.startsWith(archivePrefix) && name.endsWith(".1"))
+    .filter((name) => archivePattern.test(name))
     .map((name) => {
       const path = join(logDir, name);
       try {
