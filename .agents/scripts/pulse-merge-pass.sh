@@ -204,16 +204,18 @@ _pmp_pause_merge_pr_cursor() {
 	local required_contexts_cache_dir="${11:-}"
 	local author_permission_cache_dir="${12:-}"
 	local next_pr="" last_pr=""
+	local cursor_file="${PULSE_MERGE_PR_CURSOR_FILE:-}"
+	local logfile="${LOGFILE:-/dev/null}"
 
 	next_pr=$(_pmp_pr_number_at_index "$pr_json" "$cursor_index") || next_pr=""
-	_pmp_read_merge_pr_cursor_last "$PULSE_MERGE_PR_CURSOR_FILE" "$repo_slug" last_pr || last_pr=""
-	_pmp_write_merge_pr_cursor "$PULSE_MERGE_PR_CURSOR_FILE" "$repo_slug" "$cursor_index" "$last_pr" "$next_pr"
+	_pmp_read_merge_pr_cursor_last "$cursor_file" "$repo_slug" last_pr || last_pr=""
+	_pmp_write_merge_pr_cursor "$cursor_file" "$repo_slug" "$cursor_index" "$last_pr" "$next_pr"
 	case "$pause_reason" in
 	budget)
-		echo "[pulse-wrapper] Merge pass: graceful time budget exhausted for ${repo_slug}; pausing at PR cursor index=${cursor_index} next_pr=${next_pr:-none}" >>"$LOGFILE"
+		echo "[pulse-wrapper] Merge pass: graceful time budget exhausted for ${repo_slug}; pausing at PR cursor index=${cursor_index} next_pr=${next_pr:-none}" >>"$logfile"
 		;;
 	cooldown)
-		echo "[pulse-wrapper] Merge pass: GitHub cooldown active for ${repo_slug}; pausing remaining PR processing" >>"$LOGFILE"
+		echo "[pulse-wrapper] Merge pass: GitHub cooldown active for ${repo_slug}; pausing remaining PR processing" >>"$logfile"
 		;;
 	stop) ;;
 	esac
@@ -254,7 +256,7 @@ _pmp_prepare_merge_checkpoint_resume() {
 	[[ "$resumed_var" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || return 1
 
 	if [[ -n "$checkpoint_file" && -f "$checkpoint_file" ]]; then
-		IFS= read -r checkpoint <"$checkpoint_file" || [[ -n "$checkpoint" ]]
+		IFS= read -r checkpoint <"$checkpoint_file" || [[ -n "$checkpoint" ]] || true
 		if [[ -n "$checkpoint" ]]; then
 			if _pmp_repo_rows_contain_slug "$repo_rows" "$checkpoint"; then
 				resume_pending=1
@@ -281,7 +283,7 @@ _pmp_checkpoint_resume_skip_repo() {
 	local resume_pending=""
 
 	[[ "$resume_pending_var" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || return 1
-	resume_pending="${!resume_pending_var}"
+	resume_pending="${!resume_pending_var:-}"
 	[[ "$resume_pending" -eq 1 ]] || return 1
 	if [[ "$repo_slug" == "$checkpoint" ]]; then
 		printf -v "$resume_pending_var" '%s' '0'
@@ -295,7 +297,7 @@ _pmp_add_counter_var() {
 	local current=""
 
 	[[ "$counter_var" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || return 1
-	current="${!counter_var}"
+	current="${!counter_var:-}"
 	[[ "$current" =~ ^[0-9]+$ ]] || current=0
 	[[ "$increment" =~ ^[0-9]+$ ]] || increment=0
 	printf -v "$counter_var" '%s' "$((current + increment))"

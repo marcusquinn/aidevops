@@ -110,7 +110,7 @@ _pmrc_snapshot_review_threads_clear() {
 			}
 		}
 	' 2>/dev/null) || return 1
-	if ! printf '%s' "$response" | jq -e '.data.repository.pullRequest != null' >/dev/null; then
+	if ! printf '%s' "$response" | jq -e 'try (.data.repository.pullRequest != null) catch false' >/dev/null; then
 		return 1
 	fi
 	has_next=$(printf '%s' "$response" | jq -r '.data.repository.pullRequest.reviewThreads.pageInfo.hasNextPage // false') || return 1

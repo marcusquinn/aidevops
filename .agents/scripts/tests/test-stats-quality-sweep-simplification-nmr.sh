@@ -165,7 +165,7 @@ fi
 
 printf '\n[a.2] optional logfile is nounset-safe\n'
 if (unset LOGFILE; _create_simplification_issues "test/repo" '{}' >/dev/null) &&
-	(unset LOGFILE; _create_simplification_issues "test/repo" "$(make_sarif)" 3 >/dev/null); then
+	(unset LOGFILE; _create_simplification_issues "test/repo" "$(make_sarif)" 0 >/dev/null); then
 	pass "optional-logfile-nounset-safe"
 else
 	fail "optional-logfile-nounset-safe" "LOGFILE fallback failed under set -u"

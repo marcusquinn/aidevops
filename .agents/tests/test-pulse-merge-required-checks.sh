@@ -79,6 +79,8 @@ test_ruleset_ref_patterns_fail_closed_on_malformed_schema() {
 test_snapshot_review_threads_fail_closed_on_missing_pr_data() {
 	printf '\n=== snapshot review thread fail-closed parsing ===\n'
 	_assert_contains_literal "review threads validate pull request data" \
+		"jq -e 'try (.data.repository.pullRequest != null) catch false' >/dev/null"
+	_assert_not_contains_literal "missing pull request data does not emit jq indexing errors" \
 		"jq -e '.data.repository.pullRequest != null' >/dev/null"
 	_assert_not_contains_literal "review thread pagination does not hide jq diagnostics" \
 		"jq -r '.data.repository.pullRequest.reviewThreads.pageInfo.hasNextPage // false' 2>/dev/null"
