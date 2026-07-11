@@ -39,6 +39,7 @@ OLD_AVAILABLE_MINUTES="${PULSE_CHECK_OLD_AVAILABLE_MINUTES:-30}"
 FAILURE_FAMILY_THRESHOLD="${PULSE_CHECK_FAILURE_FAMILY_THRESHOLD:-3}"
 FAILURE_FAMILY_RECOVERY_SECONDS="${PULSE_CHECK_FAILURE_FAMILY_RECOVERY_SECONDS:-86400}"
 FAILURE_FAMILY_STATE_FILE="${PULSE_CHECK_FAILURE_FAMILY_STATE_FILE:-${HOME}/.aidevops/cache/failure-family-remediation.json}"
+FAILURE_FAMILY_STATUS_RECURRING="recurring"
 
 _usage() {
 	cat <<EOF
@@ -272,7 +273,7 @@ ${recommendation}
 Privacy note: this issue intentionally uses aggregate counts only; do not add private repo names, private basenames, local paths, or issue titles.
 EOF
 	if [[ -n "$family_fingerprint" ]]; then
-		_failure_family_state_section "$family_fingerprint" "$family_count" "$family_recent_count" "recurring"
+		_failure_family_state_section "$family_fingerprint" "$family_count" "$family_recent_count" "$FAILURE_FAMILY_STATUS_RECURRING"
 	fi
 	return 0
 }
@@ -305,7 +306,7 @@ _refresh_failure_family_issue() {
 	local slug="$1"
 	local issue_number="$2"
 	local finding_json="$3"
-	local outcome_status="${4:-recurring}"
+	local outcome_status="${4:-$FAILURE_FAMILY_STATUS_RECURRING}"
 	local fingerprint=""
 	local count="0"
 	local recent_count="0"
@@ -376,7 +377,7 @@ _apply_finding() {
 		local existing_number=""
 		local existing_url=""
 		IFS=$'\t' read -r existing_number existing_url <<<"$existing"
-		_refresh_failure_family_issue "$slug" "$existing_number" "$finding_json" "recurring"
+		_refresh_failure_family_issue "$slug" "$existing_number" "$finding_json" "$FAILURE_FAMILY_STATUS_RECURRING"
 		print_info "pulse-check: finding=${finding_id} already tracked by #${existing_number} (${existing_url})"
 		return 0
 	fi
@@ -455,7 +456,7 @@ _reconcile_failure_family_remediations() {
 		local recent_count="0"
 		current_count=$(printf '%s' "$family_json" | jq -r '.family_count // 0')
 		recent_count=$(printf '%s' "$family_json" | jq -r '.family_recent_count // 0')
-		local outcome_status="recurring"
+		local outcome_status="$FAILURE_FAMILY_STATUS_RECURRING"
 		if [[ "$current_count" -eq 0 && "$recent_count" -eq 0 ]]; then
 			outcome_status="recovery-candidate"
 		elif [[ "$current_count" -lt "$baseline_count" ]]; then

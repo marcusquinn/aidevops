@@ -37,6 +37,7 @@
 # Include guard — prevent double-sourcing.
 [[ -n "${_PULSE_NMR_APPROVAL_LOADED:-}" ]] && return 0
 _PULSE_NMR_APPROVAL_LOADED=1
+NMR_SCRIPT_DIR="$(cd "${BASH_SOURCE[0]%/*}" && pwd)" || return 1
 
 if ! declare -F _gh_collaborator_permission_lookup >/dev/null 2>&1; then
 	_PULSE_NMR_APPROVAL_DIR="${BASH_SOURCE[0]%/*}"
@@ -57,6 +58,35 @@ fi
 
 NMR_REVALIDATION_STATE_FILE="${AIDEVOPS_NMR_REVALIDATION_STATE_FILE:-${HOME}/.aidevops/cache/nmr-revalidation-state.json}"
 NMR_TEMPORARY_REVALIDATE_SECONDS="${AIDEVOPS_NMR_TEMPORARY_REVALIDATE_SECONDS:-3600}"
+NMR_REASON_FILTER="${NMR_SCRIPT_DIR}/pulse-nmr-reason.jq"
+NMR_TRUSTED_RESOLUTION_FILTER="${NMR_SCRIPT_DIR}/pulse-nmr-trusted-resolution.jq"
+NMR_STATE_RECORD_FILTER="${NMR_SCRIPT_DIR}/pulse-nmr-state-record.jq"
+NMR_LATEST_EVENT_FILTER="${NMR_SCRIPT_DIR}/pulse-nmr-latest-event.jq"
+NMR_API_COMMENTS_SUFFIX="/comments"
+NMR_REASON_AUTHORITY="authority"
+NMR_CLASS_GENUINE_AUTHORITY="genuine-authority"
+NMR_CLASS_TEMPORARY="temporary"
+NMR_SOURCE_DEFAULT="default"
+NMR_STATUS_HUMAN_AUTHORITY="human-authority-required"
+
+_nmr_metadata_json() {
+	local code="$1"
+	local reason_class="$2"
+	local source="$3"
+	local requires_crypto="$4"
+	jq -cn --arg code "$code" --arg class "$reason_class" --arg source "$source" \
+		--argjson requires_crypto "$requires_crypto" \
+		'{code:$code,class:$class,source:$source,revalidate_after_seconds:null,requires_crypto:$requires_crypto}'
+	return 0
+}
+
+_nmr_issue_api_path() {
+	local issue_num="$1"
+	local slug="$2"
+	local suffix="${3:-}"
+	printf 'repos/%s/issues/%s%s\n' "$slug" "$issue_num" "$suffix"
+	return 0
+}
 
 #######################################
 # Cached ever-NMR provenance helpers (GH#17458)
@@ -847,28 +877,9 @@ _nmr_reason_metadata_from_comments() {
 	local comments_json="$1"
 	local revalidate_seconds="$NMR_TEMPORARY_REVALIDATE_SECONDS"
 	[[ "$revalidate_seconds" =~ ^[0-9]+$ ]] || revalidate_seconds=3600
-	printf '%s' "$comments_json" | jq -c --argjson revalidate "$revalidate_seconds" '
-		def metadata($code; $class; $source): {
-			code:$code,
-			class:$class,
-			source:$source,
-			revalidate_after_seconds:(if $class == "temporary" then $revalidate else null end),
-			requires_crypto:($class == "genuine-authority")
-		};
-		(if type == "array" and (.[0]? | type) == "array" then [.[][]]
-		 elif type == "array" then . else [] end) as $comments
-		| ([$comments[].body // "" | try capture("nmr-reason code=(?<code>[a-z_-]+) class=(?<class>genuine-authority|temporary)") catch empty] | last) as $explicit
-		| ($comments | map(.body // "") | join("\n") | ascii_downcase) as $text
-		| if $explicit != null then metadata($explicit.code; $explicit.class; "structured-marker")
-		  elif ($text | test("secret|required credential|credential access")) then metadata("secret"; "genuine-authority"; "legacy-marker")
-		  elif ($text | test("destructive|data deletion|irreversible")) then metadata("destructive"; "genuine-authority"; "legacy-marker")
-		  elif ($text | test("billing|cost-circuit-breaker|spend approval")) then metadata("billing"; "genuine-authority"; "legacy-marker")
-		  elif ($text | test("security-sensitive|supply.chain|auth boundary")) then metadata("security"; "genuine-authority"; "legacy-marker")
-		  elif ($text | test("rate_limit_nmr|dispatch-infrastructure-failure|local runtime|launch failure")) then metadata("transient_infrastructure"; "temporary"; "legacy-marker")
-		  elif ($text | test("missing implementation context|missing context")) then metadata("missing_context"; "temporary"; "legacy-marker")
-		  elif ($text | test("stale-recovery|worker_recovery_loop|diagnostic ambiguity")) then metadata("diagnostic_ambiguity"; "temporary"; "legacy-marker")
-		  else metadata("authority"; "genuine-authority"; "default") end
-	' 2>/dev/null || printf '{"code":"authority","class":"genuine-authority","source":"default","revalidate_after_seconds":null,"requires_crypto":true}\n'
+	printf '%s' "$comments_json" | jq -c --argjson revalidate "$revalidate_seconds" \
+		-f "$NMR_REASON_FILTER" 2>/dev/null || \
+		_nmr_metadata_json "$NMR_REASON_AUTHORITY" "$NMR_CLASS_GENUINE_AUTHORITY" "$NMR_SOURCE_DEFAULT" true
 	return 0
 }
 
@@ -876,7 +887,9 @@ _nmr_reason_metadata() {
 	local issue_num="$1"
 	local slug="$2"
 	local comments_json="[]"
-	comments_json=$(gh api "repos/${slug}/issues/${issue_num}/comments" --paginate --slurp 2>/dev/null) || comments_json="[]"
+	local comments_path=""
+	comments_path=$(_nmr_issue_api_path "$issue_num" "$slug" "$NMR_API_COMMENTS_SUFFIX")
+	comments_json=$(gh api "$comments_path" --paginate --slurp 2>/dev/null) || comments_json="[]"
 	_nmr_reason_metadata_from_comments "$comments_json"
 	return 0
 }
@@ -910,7 +923,9 @@ _nmr_temporary_assumption_resolved() {
 	fi
 
 	local issue_json="{}"
-	issue_json=$(gh api "repos/${slug}/issues/${issue_num}" 2>/dev/null) || issue_json="{}"
+	local issue_path=""
+	issue_path=$(_nmr_issue_api_path "$issue_num" "$slug")
+	issue_json=$(gh api "$issue_path" 2>/dev/null) || issue_json="{}"
 	if [[ "$code" == "missing_context" ]] && printf '%s' "$issue_json" | jq -e '
 		((.body // "") | contains("## Worker Guidance")) and
 		((.body // "") | contains("### Verification"))
@@ -920,12 +935,10 @@ _nmr_temporary_assumption_resolved() {
 	fi
 
 	local comments_json="[]"
-	comments_json=$(gh api "repos/${slug}/issues/${issue_num}/comments" --paginate --slurp 2>/dev/null) || comments_json="[]"
-	if printf '%s' "$comments_json" | jq -e '
-		(if type == "array" and (.[0]? | type) == "array" then [.[][]]
-		 elif type == "array" then . else [] end)
-		| any(.[]; ((.author_association // "") | IN("OWNER", "MEMBER", "COLLABORATOR")) and ((.body // "") | contains("<!-- nmr-revalidation resolved=true")))
-	' >/dev/null 2>&1; then
+	local comments_path=""
+	comments_path=$(_nmr_issue_api_path "$issue_num" "$slug" "$NMR_API_COMMENTS_SUFFIX")
+	comments_json=$(gh api "$comments_path" --paginate --slurp 2>/dev/null) || comments_json="[]"
+	if printf '%s' "$comments_json" | jq -e -f "$NMR_TRUSTED_RESOLUTION_FILTER" >/dev/null 2>&1; then
 		printf 'trusted revalidation evidence resolved the temporary assumption\n'
 		return 0
 	fi
@@ -949,11 +962,9 @@ _nmr_record_revalidation_state() {
 	local key="${slug}#${issue_num}"
 	local tmp_file=""
 	tmp_file=$(mktemp "${state_dir}/.nmr-revalidation.XXXXXX") || return 0
-	printf '%s' "$current" | jq --arg key "$key" --arg label_at "$label_at" --arg status "$status" --argjson metadata "$metadata_json" '
-		.entries = (.entries // {})
-		| .entries[$key] = ($metadata + {label_at:$label_at, status:$status, checked_at:now})
-		| .updated_at = now
-	' >"$tmp_file" 2>/dev/null || { rm -f "$tmp_file"; return 0; }
+	printf '%s' "$current" | jq --arg key "$key" --arg label_at "$label_at" --arg status "$status" \
+		--argjson metadata "$metadata_json" -f "$NMR_STATE_RECORD_FILTER" \
+		>"$tmp_file" 2>/dev/null || { rm -f "$tmp_file"; return 0; }
 	mv "$tmp_file" "$NMR_REVALIDATION_STATE_FILE" 2>/dev/null || rm -f "$tmp_file"
 	return 0
 }
@@ -964,7 +975,9 @@ _nmr_emit_decision_packet() {
 	local reason_code="$3"
 	local marker="nmr-decision-packet reason=${reason_code}"
 	local prior_count="0"
-	prior_count=$(gh api "repos/${slug}/issues/${issue_num}/comments" --paginate \
+	local comments_path=""
+	comments_path=$(_nmr_issue_api_path "$issue_num" "$slug" "$NMR_API_COMMENTS_SUFFIX")
+	prior_count=$(gh api "$comments_path" --paginate \
 		--jq "[.[] | select((.body // \"\") | contains(\"${marker}\"))] | length" 2>/dev/null) || prior_count=0
 	[[ "$prior_count" =~ ^[0-9]+$ ]] || prior_count=0
 	[[ "$prior_count" -eq 0 ]] || return 0
@@ -982,14 +995,10 @@ Automation will preserve this gate and will not treat elapsed time as approval."
 _nmr_latest_event_json() {
 	local issue_num="$1"
 	local slug="$2"
-	gh api "repos/${slug}/issues/${issue_num}/timeline" --paginate --slurp \
-		2>/dev/null | jq -c '
-			(if type == "array" and (.[0]? | type) == "array" then [.[][]]
-			elif type == "array" then .
-			else [] end)
-			| [.[] | select(.event == "labeled" and .label.name == "needs-maintainer-review")]
-			| last
-			| {actor:(.actor.login // ""),at:(.created_at // "")}' 2>/dev/null
+	local timeline_path=""
+	timeline_path=$(_nmr_issue_api_path "$issue_num" "$slug" "/timeline")
+	gh api "$timeline_path" --paginate --slurp \
+		2>/dev/null | jq -c -f "$NMR_LATEST_EVENT_FILTER" 2>/dev/null
 	return $?
 }
 
@@ -1006,10 +1015,10 @@ _nmr_evaluate_reason_metadata() {
 	local reason_class=""
 	local reason_source=""
 	reason_metadata=$(_nmr_reason_metadata "$issue_num" "$slug")
-	reason_code=$(printf '%s' "$reason_metadata" | jq -r '.code // "authority"' 2>/dev/null) || reason_code="authority"
-	reason_class=$(printf '%s' "$reason_metadata" | jq -r '.class // "genuine-authority"' 2>/dev/null) || reason_class="genuine-authority"
-	reason_source=$(printf '%s' "$reason_metadata" | jq -r '.source // "default"' 2>/dev/null) || reason_source="default"
-	if [[ "$reason_class" == "temporary" ]]; then
+	reason_code=$(printf '%s' "$reason_metadata" | jq -r --arg fallback "$NMR_REASON_AUTHORITY" '.code // $fallback' 2>/dev/null) || reason_code="$NMR_REASON_AUTHORITY"
+	reason_class=$(printf '%s' "$reason_metadata" | jq -r --arg fallback "$NMR_CLASS_GENUINE_AUTHORITY" '.class // $fallback' 2>/dev/null) || reason_class="$NMR_CLASS_GENUINE_AUTHORITY"
+	reason_source=$(printf '%s' "$reason_metadata" | jq -r --arg fallback "$NMR_SOURCE_DEFAULT" '.source // $fallback' 2>/dev/null) || reason_source="$NMR_SOURCE_DEFAULT"
+	if [[ "$reason_class" == "$NMR_CLASS_TEMPORARY" ]]; then
 		_nmr_record_revalidation_state "$issue_num" "$slug" "$reason_metadata" "$nmr_at" "scheduled" || true
 		if _nmr_revalidation_due "$reason_metadata" "$nmr_at"; then
 			local resolved_reason=""
@@ -1026,8 +1035,8 @@ _nmr_evaluate_reason_metadata() {
 		_NMR_REASON_ACTION="preserve"
 		return 0
 	fi
-	if [[ "$reason_source" != "default" ]]; then
-		_nmr_record_revalidation_state "$issue_num" "$slug" "$reason_metadata" "$nmr_at" "human-authority-required" || true
+	if [[ "$reason_source" != "$NMR_SOURCE_DEFAULT" ]]; then
+		_nmr_record_revalidation_state "$issue_num" "$slug" "$reason_metadata" "$nmr_at" "$NMR_STATUS_HUMAN_AUTHORITY" || true
 		_nmr_emit_decision_packet "$issue_num" "$slug" "$reason_code" || true
 		_NMR_REASON_ACTION="preserve"
 	fi
@@ -1133,8 +1142,9 @@ _nmr_applied_by_maintainer() {
 	fi
 
 	if _nmr_application_is_security_sensitive "$issue_num" "$slug"; then
-		local security_metadata='{"code":"security","class":"genuine-authority","source":"security-label","revalidate_after_seconds":null,"requires_crypto":true}'
-		_nmr_record_revalidation_state "$issue_num" "$slug" "$security_metadata" "$nmr_at" "human-authority-required" || true
+		local security_metadata=""
+		security_metadata=$(_nmr_metadata_json "security" "$NMR_CLASS_GENUINE_AUTHORITY" "security-label" true)
+		_nmr_record_revalidation_state "$issue_num" "$slug" "$security_metadata" "$nmr_at" "$NMR_STATUS_HUMAN_AUTHORITY" || true
 		_nmr_emit_decision_packet "$issue_num" "$slug" "security" || true
 		echo "[pulse-wrapper] _nmr_applied_by_maintainer: #${issue_num} in ${slug} — security-sensitive label present — PRESERVING NMR, requires 'sudo aidevops approve issue ${issue_num} ${slug}'" >>"$LOGFILE"
 		return 0
@@ -1155,9 +1165,10 @@ _nmr_applied_by_maintainer() {
 		fi
 	fi
 
-	local authority_metadata='{"code":"authority","class":"genuine-authority","source":"manual-hold","revalidate_after_seconds":null,"requires_crypto":true}'
-	_nmr_record_revalidation_state "$issue_num" "$slug" "$authority_metadata" "$nmr_at" "human-authority-required" || true
-	_nmr_emit_decision_packet "$issue_num" "$slug" "authority" || true
+	local authority_metadata=""
+	authority_metadata=$(_nmr_metadata_json "$NMR_REASON_AUTHORITY" "$NMR_CLASS_GENUINE_AUTHORITY" "manual-hold" true)
+	_nmr_record_revalidation_state "$issue_num" "$slug" "$authority_metadata" "$nmr_at" "$NMR_STATUS_HUMAN_AUTHORITY" || true
+	_nmr_emit_decision_packet "$issue_num" "$slug" "$NMR_REASON_AUTHORITY" || true
 	return 0
 }
 
