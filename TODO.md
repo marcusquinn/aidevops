@@ -4500,3 +4500,5 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [ ] t18097 Enforce evidence-backed full-loop lifecycle #bug #enhancement #framework #security ref:GH#27144
 
 - [ ] t18098 Prevent worktree infrastructure markers from breaking worker ownership transfer #auto-dispatch #bug #framework #pulse #reliability ref:GH#27164
+
+- [ ] t18099 Make dispatch claim-to-worker handoff an atomic expiring lease #auto-dispatch #bug #framework #pulse #reliability ref:GH#27165
