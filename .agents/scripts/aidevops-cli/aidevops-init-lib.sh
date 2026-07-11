@@ -33,6 +33,97 @@ _AIDEVOPS_INIT_LIB_LOADED=1
 
 _AGENT_SOURCE_TEMPLATE_VERSION="1"
 
+_init_load_repo_verify_lib() {
+	if declare -F repo_verify_detect >/dev/null 2>&1; then
+		return 0
+	fi
+	local candidate="${INSTALL_DIR}/.agents/scripts/repo-verify-config-lib.sh"
+	[[ -f "$candidate" ]] || candidate="${AGENTS_DIR}/scripts/repo-verify-config-lib.sh"
+	[[ -f "$candidate" ]] || return 1
+	# shellcheck source=/dev/null
+	source "$candidate"
+	return 0
+}
+
+_init_write_project_config() {
+	local config_file="$1"
+	local version="$2"
+	local init_scope="$3"
+	local has_interface="$4"
+	local is_agent_source="$5"
+	local enable_planning="$6"
+	local enable_git_workflow="$7"
+	local enable_code_quality="$8"
+	local enable_time_tracking="$9"
+	shift 9
+	local enable_database="$1"
+	local enable_beads="$2"
+	local enable_sops="$3"
+	local enable_security="$4"
+	local desired_file merged_file
+	if [[ -f "$config_file" ]] && ! jq -e 'type == "object"' "$config_file" >/dev/null 2>&1; then
+		return 1
+	fi
+	desired_file=$(mktemp "${config_file}.desired.XXXXXX") || return 1
+	merged_file=$(mktemp "${config_file}.merged.XXXXXX") || {
+		rm -f "$desired_file"
+		return 1
+	}
+	if ! jq -n \
+		--arg version "$version" --arg initialized "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+		--arg init_scope "$init_scope" --argjson has_interface "$has_interface" \
+		--argjson agent_source "$is_agent_source" --argjson planning "$enable_planning" \
+		--argjson git_workflow "$enable_git_workflow" --argjson code_quality "$enable_code_quality" \
+		--argjson time_tracking "$enable_time_tracking" --argjson database "$enable_database" \
+		--argjson beads "$enable_beads" --argjson sops "$enable_sops" --argjson security "$enable_security" \
+		'{version:$version,initialized:$initialized,init_scope:$init_scope,has_interface:$has_interface,agent_source:$agent_source,
+		features:{planning:$planning,git_workflow:$git_workflow,code_quality:$code_quality,time_tracking:$time_tracking,database:$database,beads:$beads,sops:$sops,security:$security},
+		time_tracking:{enabled:$time_tracking,prompt_on_commit:true,auto_record_branch_start:true},
+		database:{enabled:$database,schema_path:"schemas",migrations_path:"migrations",seeds_path:"seeds",auto_generate_migration:true},
+		beads:{enabled:$beads,sync_on_commit:false,auto_ready_check:true},
+		sops:{enabled:$sops,backend:"age",patterns:["*.secret.yaml","*.secret.json","configs/*.enc.json","configs/*.enc.yaml"]},plugins:[]}' >"$desired_file"; then
+		rm -f "$desired_file" "$merged_file"
+		return 1
+	fi
+	if [[ -f "$config_file" ]] && jq -e 'type == "object"' "$config_file" >/dev/null 2>&1; then
+		jq -s --arg version "$version" '.[0] * .[1] | .version = $version' "$desired_file" "$config_file" >"$merged_file" || {
+			rm -f "$desired_file" "$merged_file"
+			return 1
+		}
+	else
+		cp "$desired_file" "$merged_file"
+	fi
+	mv "$merged_file" "$config_file"
+	rm -f "$desired_file"
+	return 0
+}
+
+_init_configure_repo_verify() {
+	local project_root="$1"
+	local config_file="${project_root}/.aidevops.json"
+	[[ -f "$config_file" ]] || return 0
+	[[ "$(jq -r '.features.code_quality == true' "$config_file" 2>/dev/null)" == "true" ]] || return 0
+	if ! _init_load_repo_verify_lib; then
+		print_warning "Repo verify configuration helper unavailable"
+		return 0
+	fi
+	local apply_status=0
+	repo_verify_apply_config "$project_root" false >/dev/null 2>&1 || apply_status=$?
+	case "$apply_status" in
+	0) print_success "Seeded exact repository verify commands" ;;
+	2) print_info "No exact native verify commands detected; leaving verify policy unset" ;;
+	3) print_warning "Tracked verify config requires a linked-worktree change" ;;
+	4) print_info "Explicit verify opt-out preserved" ;;
+	*) print_warning "Repository verify configuration could not be updated" ;;
+	esac
+	if repo_verify_install_hook "$project_root" >/dev/null 2>&1; then
+		print_success "Installed/refreshed repo-verify pre-push hook"
+	else
+		print_warning "Repo-verify hook not installed (inspect unmanaged pre-push hook conflict)"
+	fi
+	return 0
+}
+
 _agent_source_template_dir() {
 	printf '%s\n' "${AGENTS_DIR}/templates/agent-source-repo"
 	return 0
@@ -856,49 +947,13 @@ cmd_init() {
 	local aidevops_version
 	aidevops_version=$(get_version)
 
-	print_info "Creating .aidevops.json..."
-	cat >"$config_file" <<EOF
-{
-  "version": "$aidevops_version",
-  "initialized": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
-  "init_scope": "$init_scope",
-  "has_interface": $has_interface,
-  "agent_source": $is_agent_source,
-  "features": {
-    "planning": $enable_planning,
-    "git_workflow": $enable_git_workflow,
-    "code_quality": $enable_code_quality,
-    "time_tracking": $enable_time_tracking,
-    "database": $enable_database,
-    "beads": $enable_beads,
-    "sops": $enable_sops,
-    "security": $enable_security
-  },
-  "time_tracking": {
-    "enabled": $enable_time_tracking,
-    "prompt_on_commit": true,
-    "auto_record_branch_start": true
-  },
-  "database": {
-    "enabled": $enable_database,
-    "schema_path": "schemas",
-    "migrations_path": "migrations",
-    "seeds_path": "seeds",
-    "auto_generate_migration": true
-  },
-  "beads": {
-    "enabled": $enable_beads,
-    "sync_on_commit": false,
-    "auto_ready_check": true
-  },
-  "sops": {
-    "enabled": $enable_sops,
-    "backend": "age",
-    "patterns": ["*.secret.yaml", "*.secret.json", "configs/*.enc.json", "configs/*.enc.yaml"]
-  },
-  "plugins": []
-}
-EOF
+	print_info "Creating or refreshing .aidevops.json..."
+	_init_write_project_config "$config_file" "$aidevops_version" "$init_scope" "$has_interface" "$is_agent_source" \
+		"$enable_planning" "$enable_git_workflow" "$enable_code_quality" "$enable_time_tracking" \
+		"$enable_database" "$enable_beads" "$enable_sops" "$enable_security" || {
+		print_error "Failed to write .aidevops.json"
+		return 1
+	}
 	# Note: plugins array is always present but empty by default.
 	# Users add plugins via: aidevops plugin add <repo-url> [--namespace <name>]
 	# Schema per plugin entry:
@@ -911,6 +966,7 @@ EOF
 	# }
 	# Plugins deploy to ~/.aidevops/agents/<namespace>/ (namespaced, no collisions)
 	print_success "Created .aidevops.json"
+	_init_configure_repo_verify "$project_root"
 
 	# Derive repo name for scaffolding
 	# In worktrees, basename gives the worktree dir name (e.g., "repo-chore-foo"),

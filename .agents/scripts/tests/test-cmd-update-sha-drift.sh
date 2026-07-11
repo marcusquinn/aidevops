@@ -149,45 +149,45 @@ SETUP_CALLS_LOG="${TEST_ROOT}/setup_calls.log"
 mkdir -p "$SANDBOX_HOME" "$SANDBOX_AIDEVOPS/agents"
 
 # Build sandbox framework repo with a script change + docs-only commit
-git init -q "$SANDBOX_REPO" 2>/dev/null
-git -C "$SANDBOX_REPO" config user.email "test@test.local"
-git -C "$SANDBOX_REPO" config user.name "Test"
-git -C "$SANDBOX_REPO" config commit.gpgsign false
+/usr/bin/git init -q "$SANDBOX_REPO" 2>/dev/null
+/usr/bin/git -C "$SANDBOX_REPO" config user.email "test@test.local"
+/usr/bin/git -C "$SANDBOX_REPO" config user.name "Test"
+/usr/bin/git -C "$SANDBOX_REPO" config commit.gpgsign false
 
 # Baseline — deployed state
 mkdir -p "$SANDBOX_REPO/.agents/scripts"
 printf '#!/usr/bin/env bash\necho v1\n' >"$SANDBOX_REPO/.agents/scripts/foo.sh"
 printf 'v1\n' >"$SANDBOX_REPO/VERSION"
-git -C "$SANDBOX_REPO" add -A
-git -C "$SANDBOX_REPO" commit -qm "initial" 2>/dev/null
-DEPLOYED_SHA=$(git -C "$SANDBOX_REPO" rev-parse HEAD)
+/usr/bin/git -C "$SANDBOX_REPO" add -A
+/usr/bin/git -C "$SANDBOX_REPO" commit -qm "initial" 2>/dev/null
+DEPLOYED_SHA=$(/usr/bin/git -C "$SANDBOX_REPO" rev-parse HEAD)
 
 # Add a framework-code drift commit
 printf '#!/usr/bin/env bash\necho v2\n' >"$SANDBOX_REPO/.agents/scripts/foo.sh"
-git -C "$SANDBOX_REPO" add -A
-git -C "$SANDBOX_REPO" commit -qm "update script" 2>/dev/null
-HEAD_SHA=$(git -C "$SANDBOX_REPO" rev-parse HEAD)
+/usr/bin/git -C "$SANDBOX_REPO" add -A
+/usr/bin/git -C "$SANDBOX_REPO" commit -qm "update script" 2>/dev/null
+HEAD_SHA=$(/usr/bin/git -C "$SANDBOX_REPO" rev-parse HEAD)
 
 # Add a docs-only commit on top
 mkdir -p "$SANDBOX_REPO/.agents/reference"
 printf '# doc\n' >"$SANDBOX_REPO/.agents/reference/readme.md"
-git -C "$SANDBOX_REPO" add -A
-git -C "$SANDBOX_REPO" commit -qm "update docs" 2>/dev/null
-HEAD_WITH_DOCS_SHA=$(git -C "$SANDBOX_REPO" rev-parse HEAD)
+/usr/bin/git -C "$SANDBOX_REPO" add -A
+/usr/bin/git -C "$SANDBOX_REPO" commit -qm "update docs" 2>/dev/null
+HEAD_WITH_DOCS_SHA=$(/usr/bin/git -C "$SANDBOX_REPO" rev-parse HEAD)
 
 # Add a setup.sh-only drift commit (per Gemini feedback on PR #20342:
 # setup.sh drift must trigger redeploy because it controls what gets deployed).
 printf '#!/usr/bin/env bash\necho setup v2\n' >"$SANDBOX_REPO/setup.sh"
-git -C "$SANDBOX_REPO" add -A
-git -C "$SANDBOX_REPO" commit -qm "update setup.sh" 2>/dev/null
-HEAD_WITH_SETUP_DRIFT_SHA=$(git -C "$SANDBOX_REPO" rev-parse HEAD)
+/usr/bin/git -C "$SANDBOX_REPO" add -A
+/usr/bin/git -C "$SANDBOX_REPO" commit -qm "update setup.sh" 2>/dev/null
+HEAD_WITH_SETUP_DRIFT_SHA=$(/usr/bin/git -C "$SANDBOX_REPO" rev-parse HEAD)
 
 # Add an aidevops.sh-only drift commit (per Gemini feedback on PR #20342:
 # aidevops.sh is the deployed CLI entry point, drift must trigger redeploy).
 printf '#!/usr/bin/env bash\necho aidevops v2\n' >"$SANDBOX_REPO/aidevops.sh"
-git -C "$SANDBOX_REPO" add -A
-git -C "$SANDBOX_REPO" commit -qm "update aidevops.sh" 2>/dev/null
-HEAD_WITH_AIDEVOPS_DRIFT_SHA=$(git -C "$SANDBOX_REPO" rev-parse HEAD)
+/usr/bin/git -C "$SANDBOX_REPO" add -A
+/usr/bin/git -C "$SANDBOX_REPO" commit -qm "update aidevops.sh" 2>/dev/null
+HEAD_WITH_AIDEVOPS_DRIFT_SHA=$(/usr/bin/git -C "$SANDBOX_REPO" rev-parse HEAD)
 
 if [[ -z "$DEPLOYED_SHA" || -z "$HEAD_SHA" || -z "$HEAD_WITH_DOCS_SHA" ||
 	-z "$HEAD_WITH_SETUP_DRIFT_SHA" || -z "$HEAD_WITH_AIDEVOPS_DRIFT_SHA" ]]; then
@@ -234,7 +234,7 @@ run_cmd_update_stamp_branch() {
 			deployed_sha=$(tr -d "[:space:]" <"$stamp_file" 2>/dev/null) || deployed_sha=""
 			if [[ -n "$deployed_sha" && "$deployed_sha" != "$local_hash" ]]; then
 				has_code_drift=0
-				if git -C "$INSTALL_DIR" diff --name-only "$deployed_sha" "$local_hash" -- \
+				if /usr/bin/git -C "$INSTALL_DIR" diff --name-only "$deployed_sha" "$local_hash" -- \
 					.agents/scripts/ .agents/agents/ .agents/workflows/ .agents/prompts/ .agents/hooks/ \
 					setup.sh .agents/scripts/setup/modules/ aidevops.sh 2>/dev/null | grep -q .; then
 					has_code_drift=1

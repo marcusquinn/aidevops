@@ -88,6 +88,18 @@ _update_sync_projects() {
 	return 0
 }
 
+_update_reconcile_repo_verify() {
+	local helper="${INSTALL_DIR}/.agents/scripts/lint-helper.sh"
+	[[ -f "$helper" ]] || helper="${HOME}/.aidevops/agents/scripts/lint-helper.sh"
+	if [[ ! -f "$helper" ]]; then
+		print_info "Lint reconciliation helper unavailable"
+		return 0
+	fi
+	print_info "Reconciling repository lint policy and hooks..."
+	bash "$helper" reconcile --all || print_warning "Repository lint reconciliation completed with warnings"
+	return 0
+}
+
 _update_sync_agent_source_repos() {
 	local current_ver="$1"
 	local synced=0 skipped=0 failed=0

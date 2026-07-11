@@ -40,6 +40,8 @@ feedback loops when they find defects.
    active package during the inner loop; affected-package checks before PR;
    full-repo checks only for shared tooling/contracts or final confidence.
    Background runs should avoid TUI output and cap concurrency explicitly.
+   aidevops `linters-local.sh` therefore defaults to changed-file scope and
+   reserves uncached `--full` execution for release boundaries.
 9. Repositories with broad root scripts should expose safe defaults and override
    knobs (for example Turbo `--ui=stream --concurrency=${TURBO_LINT_CONCURRENCY:-4}`)
    so parallel workers do not exhaust local CPU/RAM.

@@ -341,6 +341,9 @@ cmd_update() {
 	fi
 
 	_update_sync_projects "$skip_project_sync" "$(get_version)"
+	# Idempotent even when framework/deployed SHAs already match: this repairs
+	# partial prior setup and provisions newly registered repositories.
+	_update_reconcile_repo_verify
 	_update_check_homebrew
 	_update_check_planning
 	_update_check_tools
@@ -859,6 +862,7 @@ _help_commands() {
 	echo "  repo-sync <cmd>    Daily git pull for repos in parent dirs (enable/disable/status/dirs)"
 	echo "  update-tools       Check for outdated tools (--update to auto-update)"
 	echo "  repos [cmd]        Manage registered projects (list/add/remove/clean)"
+	echo "  lint [cmd]         Audit/configure native repo lint, format, typecheck, and hooks"
 	echo "  design <cmd>       DESIGN.md detection, scaffolding, and brand guideline exports"
 	echo "  cleanup <cmd>      Cleanup helpers (remote branch audit/delete)"
 	echo "  model-accounts-pool OAuth account pool (list/check/diagnose/add/rotate/reset-cooldowns)"
@@ -1543,6 +1547,7 @@ main() {
 	auto-update | autoupdate) _dispatch_helper "auto-update-helper.sh" "auto-update-helper.sh" "$@" ;;
 	repo-sync | reposync) _dispatch_helper "repo-sync-helper.sh" "repo-sync-helper.sh" "$@" ;;
 	update-tools | tools) cmd_update_tools "$@" ;;
+	lint) _dispatch_helper "lint-helper.sh" "lint-helper.sh" "$@" ;;
 	upgrade-planning | up) cmd_upgrade_planning "$@" ;;
 	repos | projects) cmd_repos "$@" ;;
 	design) _dispatch_helper "design-guidelines-helper.sh" "design-guidelines-helper.sh" "$@" ;;

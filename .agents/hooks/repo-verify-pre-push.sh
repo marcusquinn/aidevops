@@ -12,11 +12,10 @@
 #   1. <repo_root>/.aidevops.json `.verify` block
 #      { "format": "...", "format_fix": "...", "lint": "...",
 #        "lint_fix": "...", "typecheck": "...", "enabled": true }
-#   2. <repo_root>/package.json `.scripts.{format,lint,typecheck}`
-#      (auto-derives `format_fix`/`lint_fix` by appending --write/--fix when
-#      a sibling `format:fix` / `lint:fix` script is not declared)
-#   3. .agents/configs/repo-verify-defaults.conf — toolchain auto-detection
-#      by sentinel file presence (pnpm-lock.yaml, Cargo.toml, etc.)
+#   2. <repo_root>/package.json exact declared scripts. Mutating `format`
+#      scripts and ambiguous package-manager lockfiles are never inferred.
+#   3. .agents/configs/repo-verify-defaults.conf — evidence-based toolchain
+#      detection (for example Cargo.toml or committed Ruff configuration)
 #   4. No match: skip silently (exit 0). Repo is not verify-eligible.
 #
 # Auto-fix policy (FORMAT_FAILURE / LINT_FAILURE only — typecheck never auto-fixes):
@@ -85,8 +84,18 @@ _resolve_self() {
 }
 
 HOOK_DIR=$(_resolve_self)
-DEFAULTS_REPO="${HOOK_DIR}/../configs/repo-verify-defaults.conf"
-DEFAULTS_DEPLOYED="${HOME}/.aidevops/agents/configs/repo-verify-defaults.conf"
+VERIFY_LIB_REPO="${HOOK_DIR}/../scripts/repo-verify-config-lib.sh"
+VERIFY_LIB_DEPLOYED="${HOME}/.aidevops/agents/scripts/repo-verify-config-lib.sh"
+if [[ -f "$VERIFY_LIB_REPO" ]]; then
+	# shellcheck source=../scripts/repo-verify-config-lib.sh
+	source "$VERIFY_LIB_REPO"
+elif [[ -f "$VERIFY_LIB_DEPLOYED" ]]; then
+	# shellcheck source=/dev/null
+	source "$VERIFY_LIB_DEPLOYED"
+else
+	_log INFO "repo verify configuration library unavailable — skipping"
+	exit 0
+fi
 
 REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || true)
 if [[ -z "$REPO_ROOT" ]]; then
@@ -107,9 +116,8 @@ AUTOFIX="${AIDEVOPS_PREPUSH_AUTOFIX:-$(_autofix_default)}"
 
 # ----- discovery ----------------------------------------------------------
 
-# Globals populated by _load_verify_*: declared at top scope so all functions
-# in the call chain see them. Bash 3.2 has no `local -n` (nameref), so we
-# couple by convention rather than reference.
+# Globals consumed by the execution path. The shared detector populates its
+# REPO_VERIFY_* namespace; this adapter preserves the hook's established names.
 VERIFY_FORMAT=''
 VERIFY_FORMAT_FIX=''
 VERIFY_LINT=''
@@ -117,134 +125,23 @@ VERIFY_LINT_FIX=''
 VERIFY_TYPECHECK=''
 VERIFY_SOURCE=''
 
-# Load .verify block from <repo_root>/.aidevops.json if present and enabled.
-# Returns 0 on hit, 1 on miss/disabled.
-_load_verify_from_aidevops_json() {
-	local cfg="${REPO_ROOT}/.aidevops.json"
-	[[ -f "$cfg" ]] || return 1
-	command -v jq >/dev/null 2>&1 || { _dbg "jq missing — skipping .aidevops.json"; return 1; }
-
-	local enabled
-	# Note: jq's `//` operator triggers on BOTH null AND false — neither
-	# `// empty` nor `// null` round-trip an explicit `"enabled": false`.
-	# Use an explicit equality check so JSON false is preserved correctly.
-	enabled=$(jq -r '(.verify // {}) | if .enabled == false then "false" else "" end' "$cfg" 2>/dev/null || true)
-	if [[ "$enabled" == "false" ]]; then
-		_dbg ".aidevops.json .verify.enabled=false — opting out"
+_load_verify_config() {
+	repo_verify_detect "$REPO_ROOT" || true
+	if [[ "$REPO_VERIFY_STATUS" == "disabled" ]]; then
 		VERIFY_SOURCE='aidevops-json-disabled'
 		return 0
 	fi
-
-	# `--` separates jq query from positional arg
-	VERIFY_FORMAT=$(jq -r '.verify.format // empty' "$cfg" 2>/dev/null || true)
-	VERIFY_FORMAT_FIX=$(jq -r '.verify.format_fix // empty' "$cfg" 2>/dev/null || true)
-	VERIFY_LINT=$(jq -r '.verify.lint // empty' "$cfg" 2>/dev/null || true)
-	VERIFY_LINT_FIX=$(jq -r '.verify.lint_fix // empty' "$cfg" 2>/dev/null || true)
-	VERIFY_TYPECHECK=$(jq -r '.verify.typecheck // empty' "$cfg" 2>/dev/null || true)
-
-	if [[ -n "$VERIFY_FORMAT$VERIFY_LINT$VERIFY_TYPECHECK" ]]; then
-		VERIFY_SOURCE='aidevops-json'
-		_dbg ".aidevops.json hit: format=${VERIFY_FORMAT:-<none>} lint=${VERIFY_LINT:-<none>} typecheck=${VERIFY_TYPECHECK:-<none>}"
-		return 0
-	fi
-	return 1
-}
-
-# Load scripts from <repo_root>/package.json. We only treat a script as
-# present when the value is non-empty; the `format_fix`/`lint_fix` slots
-# prefer explicit `format:fix`/`lint:fix` scripts when declared.
-_load_verify_from_package_json() {
-	local cfg="${REPO_ROOT}/package.json"
-	[[ -f "$cfg" ]] || return 1
-	command -v jq >/dev/null 2>&1 || { _dbg "jq missing — skipping package.json"; return 1; }
-
-	local fmt fmt_fix_colon fmt_fix_under lnt lnt_fix_colon lnt_fix_under tcheck tcheck_dash
-	fmt=$(jq -r '.scripts.format // empty' "$cfg" 2>/dev/null || true)
-	fmt_fix_colon=$(jq -r '.scripts."format:fix" // empty' "$cfg" 2>/dev/null || true)
-	fmt_fix_under=$(jq -r '.scripts.format_fix // empty' "$cfg" 2>/dev/null || true)
-	lnt=$(jq -r '.scripts.lint // empty' "$cfg" 2>/dev/null || true)
-	lnt_fix_colon=$(jq -r '.scripts."lint:fix" // empty' "$cfg" 2>/dev/null || true)
-	lnt_fix_under=$(jq -r '.scripts.lint_fix // empty' "$cfg" 2>/dev/null || true)
-	tcheck=$(jq -r '.scripts.typecheck // empty' "$cfg" 2>/dev/null || true)
-	tcheck_dash=$(jq -r '.scripts."type-check" // empty' "$cfg" 2>/dev/null || true)
-
-	if [[ -z "$fmt$lnt$tcheck$tcheck_dash" ]]; then
+	if [[ "$REPO_VERIFY_STATUS" != "ready" ]]; then
+		[[ -n "$REPO_VERIFY_WARNING" ]] && _dbg "$REPO_VERIFY_WARNING"
 		return 1
 	fi
-
-	# Detect package manager for npm-script invocation
-	local pm='npm'
-	[[ -f "${REPO_ROOT}/pnpm-lock.yaml" ]] && pm='pnpm'
-	[[ -f "${REPO_ROOT}/yarn.lock" ]] && pm='yarn'
-	[[ -f "${REPO_ROOT}/bun.lockb" || -f "${REPO_ROOT}/bun.lock" ]] && pm='bun'
-
-	[[ -n "$fmt" ]] && VERIFY_FORMAT="$pm run format"
-	if [[ -n "$fmt_fix_colon" ]]; then
-		VERIFY_FORMAT_FIX="$pm run format:fix"
-	elif [[ -n "$fmt_fix_under" ]]; then
-		VERIFY_FORMAT_FIX="$pm run format_fix"
-	fi
-	[[ -n "$lnt" ]] && VERIFY_LINT="$pm run lint"
-	if [[ -n "$lnt_fix_colon" ]]; then
-		VERIFY_LINT_FIX="$pm run lint:fix"
-	elif [[ -n "$lnt_fix_under" ]]; then
-		VERIFY_LINT_FIX="$pm run lint_fix"
-	fi
-	if [[ -n "$tcheck" ]]; then
-		VERIFY_TYPECHECK="$pm run typecheck"
-	elif [[ -n "$tcheck_dash" ]]; then
-		VERIFY_TYPECHECK="$pm run type-check"
-	fi
-
-	VERIFY_SOURCE="package-json($pm)"
-	_dbg "package.json hit (pm=$pm): format=${VERIFY_FORMAT:-<none>} lint=${VERIFY_LINT:-<none>} typecheck=${VERIFY_TYPECHECK:-<none>}"
+	VERIFY_FORMAT="$REPO_VERIFY_FORMAT"
+	VERIFY_FORMAT_FIX="$REPO_VERIFY_FORMAT_FIX"
+	VERIFY_LINT="$REPO_VERIFY_LINT"
+	VERIFY_LINT_FIX="$REPO_VERIFY_LINT_FIX"
+	VERIFY_TYPECHECK="$REPO_VERIFY_TYPECHECK"
+	VERIFY_SOURCE="$REPO_VERIFY_SOURCE"
 	return 0
-}
-
-# Load defaults from .agents/configs/repo-verify-defaults.conf based on
-# sentinel file presence at the repo root. First matching toolchain wins.
-# Conf format: TOOLCHAIN | DETECTOR_FILE | FORMAT | FORMAT_FIX | LINT | LINT_FIX | TYPECHECK
-_load_verify_from_defaults() {
-	local conf=''
-	if [[ -f "$DEFAULTS_REPO" ]]; then
-		conf="$DEFAULTS_REPO"
-	elif [[ -f "$DEFAULTS_DEPLOYED" ]]; then
-		conf="$DEFAULTS_DEPLOYED"
-	else
-		_dbg "no defaults conf found"
-		return 1
-	fi
-
-	local line tc detector fmt fmt_fix lnt lnt_fix tcheck
-	while IFS= read -r line; do
-		# Skip comments and blanks
-		[[ "$line" =~ ^[[:space:]]*# ]] && continue
-		[[ -z "${line// /}" ]] && continue
-
-		# Split on |, trim whitespace from each field
-		IFS='|' read -r tc detector fmt fmt_fix lnt lnt_fix tcheck <<< "$line"
-		tc="${tc## }"; tc="${tc%% }"
-		detector="${detector## }"; detector="${detector%% }"
-		fmt="${fmt## }"; fmt="${fmt%% }"
-		fmt_fix="${fmt_fix## }"; fmt_fix="${fmt_fix%% }"
-		lnt="${lnt## }"; lnt="${lnt%% }"
-		lnt_fix="${lnt_fix## }"; lnt_fix="${lnt_fix%% }"
-		tcheck="${tcheck## }"; tcheck="${tcheck%% }"
-
-		[[ -z "$detector" ]] && continue
-		[[ -e "${REPO_ROOT}/${detector}" ]] || continue
-
-		[[ "$fmt" != '-' && -n "$fmt" ]] && VERIFY_FORMAT="$fmt"
-		[[ "$fmt_fix" != '-' && -n "$fmt_fix" ]] && VERIFY_FORMAT_FIX="$fmt_fix"
-		[[ "$lnt" != '-' && -n "$lnt" ]] && VERIFY_LINT="$lnt"
-		[[ "$lnt_fix" != '-' && -n "$lnt_fix" ]] && VERIFY_LINT_FIX="$lnt_fix"
-		[[ "$tcheck" != '-' && -n "$tcheck" ]] && VERIFY_TYPECHECK="$tcheck"
-
-		VERIFY_SOURCE="defaults($tc)"
-		_dbg "defaults hit: $tc (detector=$detector)"
-		return 0
-	done < "$conf"
-	return 1
 }
 
 # ----- run a single verify check ------------------------------------------
@@ -347,15 +244,11 @@ _emit_mentor_fail() {
 # ----- main orchestration -------------------------------------------------
 
 main() {
-	if _load_verify_from_aidevops_json; then
+	if _load_verify_config; then
 		if [[ "$VERIFY_SOURCE" == "aidevops-json-disabled" ]]; then
 			_log INFO "repo opts out via .aidevops.json .verify.enabled=false"
 			exit 0
 		fi
-	elif _load_verify_from_package_json; then
-		:
-	elif _load_verify_from_defaults; then
-		:
 	else
 		_dbg "no verify config resolved — skipping"
 		exit 0
