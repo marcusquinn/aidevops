@@ -9,7 +9,7 @@ tools: { read: true, write: false, edit: false, bash: false, glob: false, grep: 
 
 # Graduated Learnings
 
-Validated patterns promoted from local memory (3+ accesses or high confidence).
+Validated, live, shareable patterns promoted from local memory (3+ accesses or high confidence). Personal `USER_PREFERENCE` records remain scoped and never auto-graduate into all-user guidance.
 Manage: `memory-graduate-helper.sh` · `memory-helper.sh graduate [candidates|graduate|status]`
 
 ## Anti-Patterns

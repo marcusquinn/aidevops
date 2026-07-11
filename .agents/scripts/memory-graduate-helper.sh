@@ -9,6 +9,7 @@
 #
 # Graduation criteria (configurable):
 #   - High confidence OR frequently accessed (access_count >= threshold)
+#   - Live, unsuperseded, and not a personal USER_PREFERENCE
 #   - Not already graduated
 #   - Content is actionable (not just session metadata)
 #
@@ -78,6 +79,23 @@ ensure_schema() {
 		return 1
 	fi
 
+	local has_truth_tables
+	has_truth_tables=$(db "$MEMORY_DB" \
+		"SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('learning_truth_events', 'learning_relations');" \
+		2>/dev/null || echo "0")
+	if [[ "$has_truth_tables" != "2" ]]; then
+		local memory_helper="$SCRIPT_DIR/memory-helper.sh"
+		if [[ ! -x "$memory_helper" ]]; then
+			log_error "Memory migration helper not found: $memory_helper"
+			return 1
+		fi
+		log_info "Migrating memory truth-maintenance schema before graduation..."
+		if ! AIDEVOPS_MEMORY_DIR="$MEMORY_DIR" "$memory_helper" validate >/dev/null 2>&1; then
+			log_error "Memory schema migration failed; graduation stopped"
+			return 1
+		fi
+	fi
+
 	local has_graduated
 	has_graduated=$(db "$MEMORY_DB" \
 		"SELECT COUNT(*) FROM pragma_table_info('learning_access') WHERE name='graduated_at';" \
@@ -95,11 +113,35 @@ ensure_schema() {
 }
 
 #######################################
-# Filter out session metadata and low-value content
-# Returns 0 if content is actionable, 1 if it should be skipped
+# Return 0 only when content is safe to expose in shared candidate output.
+#######################################
+is_shareable() {
+	local content="$1"
+
+	if [[ "$content" == *"GPG key"* || "$content" == *"pinentry-mac"* ]]; then
+		return 1
+	fi
+	if [[ "$content" =~ [[:alnum:]._+%-]+@[[:alnum:].-]+\.[[:alpha:]]{2,} ]]; then
+		return 1
+	fi
+	if [[ "$content" == *"/Users/"* || "$content" == *"/home/"* ||
+		"$content" == *"~/"* || "$content" == *":\\Users\\"* ||
+		"$content" == *"<private>"* || "$content" == *"</private>"* ]]; then
+		return 1
+	fi
+	return 0
+}
+
+#######################################
+# Filter out session metadata and low-value content.
+# Returns 0 if content is actionable, 1 if it should be skipped.
 #######################################
 is_actionable() {
 	local content="$1"
+
+	if ! is_shareable "$content"; then
+		return 1
+	fi
 
 	# Skip batch retrospectives (session metadata)
 	if [[ "$content" == *"Batch retrospective:"* ]]; then
@@ -123,14 +165,6 @@ is_actionable() {
 
 	# Skip entries shorter than 20 chars (too terse to be useful)
 	if [[ ${#content} -lt 20 ]]; then
-		return 1
-	fi
-
-	# Skip user-specific config (GPG keys, email addresses, local paths)
-	if [[ "$content" == *"GPG key"* || "$content" == *"pinentry-mac"* ]]; then
-		return 1
-	fi
-	if [[ "$content" == *"@"*".com"* && "$content" == *"initialized"* ]]; then
 		return 1
 	fi
 
@@ -161,7 +195,7 @@ categorize_memory() {
 	DECISION | ARCHITECTURAL_DECISION)
 		echo "Architecture Decisions"
 		;;
-	USER_PREFERENCE | TOOL_CONFIG)
+	TOOL_CONFIG)
 		echo "Configuration & Preferences"
 		;;
 	CONTEXT)
@@ -180,8 +214,9 @@ categorize_memory() {
 _query_candidates_json() {
 	local min_access="$1"
 	local limit="$2"
+	local raw_results=""
 
-	db -json "$MEMORY_DB" <<EOF
+	raw_results=$(db -json "$MEMORY_DB" <<EOF
 SELECT
     l.id,
     l.type,
@@ -197,13 +232,36 @@ WHERE (
     l.confidence = 'high'
     OR COALESCE(a.access_count, 0) >= $min_access
 )
+AND l.type != 'USER_PREFERENCE'
+AND COALESCE((
+    SELECT status FROM learning_truth_events truth_pick
+    WHERE truth_pick.memory_id = l.id
+    ORDER BY truth_pick.created_at DESC, truth_pick.event_id DESC
+    LIMIT 1
+), 'live') NOT IN ('debunked', 'retracted')
+AND NOT EXISTS (
+    SELECT 1 FROM learning_relations superseded_by
+    WHERE superseded_by.supersedes_id = l.id
+      AND superseded_by.relation_type = 'updates'
+)
 AND (a.graduated_at IS NULL OR a.graduated_at = '')
 ORDER BY
     CASE WHEN l.confidence = 'high' THEN 0 ELSE 1 END,
     COALESCE(a.access_count, 0) DESC,
-    l.created_at ASC
-LIMIT $limit;
+    l.created_at ASC;
 EOF
+	)
+
+	while IFS= read -r entry; do
+		local content=""
+		local tags=""
+		content=$(printf '%s' "$entry" | jq -r '.content')
+		tags=$(printf '%s' "$entry" | jq -r '.tags // ""')
+		if is_shareable "$content" && is_shareable "$tags"; then
+			printf '%s\n' "$entry"
+		fi
+	done < <(printf '%s' "${raw_results:-[]}" | jq -c '.[]') | jq -s ".[:$limit]"
+	return 0
 }
 
 #######################################
@@ -289,7 +347,8 @@ _candidates_parse_args() {
 
 #######################################
 # Find graduation candidates
-# Criteria: high confidence OR frequently accessed, not yet graduated
+# Criteria: high confidence OR frequently accessed, live, unsuperseded,
+# non-personal, and not yet graduated
 #######################################
 cmd_candidates() {
 	local parsed
@@ -314,7 +373,7 @@ cmd_candidates() {
 
 	if [[ -z "$results" || "$results" == "[]" ]]; then
 		log_info "No graduation candidates found."
-		log_info "Memories qualify when: confidence=high OR access_count >= $min_access"
+		log_info "Memories qualify when live and shareable, with confidence=high OR access_count >= $min_access"
 		return 0
 	fi
 
@@ -472,12 +531,13 @@ tools:
 
 # Graduated Learnings
 
-Validated learnings promoted from local memory databases into shared documentation.
-These patterns have been confirmed through repeated use across sessions.
+Validated, shareable learnings promoted from local memory databases into shared documentation.
+Personal preferences remain scoped to their user/project profiles and never graduate automatically.
 
-**How memories graduate**: Memories qualify when they reach high confidence or are
-accessed frequently (3+ times). The `memory-graduate-helper.sh` script identifies
-candidates and appends them here. Each graduation batch is timestamped.
+**How memories graduate**: Live, unsuperseded, non-personal memories qualify when
+they reach high confidence or are accessed frequently (3+ times). The
+`memory-graduate-helper.sh` script identifies candidates and appends them here.
+Each graduation batch is timestamped.
 
 **Categories**:
 
@@ -692,6 +752,9 @@ cmd_status() {
 SELECT COUNT(*) FROM learnings l
 LEFT JOIN learning_access a ON l.id = a.id
 WHERE l.confidence = 'high'
+AND l.type != 'USER_PREFERENCE'
+AND COALESCE((SELECT status FROM learning_truth_events truth_pick WHERE truth_pick.memory_id = l.id ORDER BY truth_pick.created_at DESC, truth_pick.event_id DESC LIMIT 1), 'live') NOT IN ('debunked', 'retracted')
+AND NOT EXISTS (SELECT 1 FROM learning_relations superseded_by WHERE superseded_by.supersedes_id = l.id AND superseded_by.relation_type = 'updates')
 AND (a.graduated_at IS NULL OR a.graduated_at = '');
 EOF
 	)
@@ -704,6 +767,9 @@ EOF
 SELECT COUNT(*) FROM learnings l
 LEFT JOIN learning_access a ON l.id = a.id
 WHERE COALESCE(a.access_count, 0) >= $DEFAULT_MIN_ACCESS
+AND l.type != 'USER_PREFERENCE'
+AND COALESCE((SELECT status FROM learning_truth_events truth_pick WHERE truth_pick.memory_id = l.id ORDER BY truth_pick.created_at DESC, truth_pick.event_id DESC LIMIT 1), 'live') NOT IN ('debunked', 'retracted')
+AND NOT EXISTS (SELECT 1 FROM learning_relations superseded_by WHERE superseded_by.supersedes_id = l.id AND superseded_by.relation_type = 'updates')
 AND (a.graduated_at IS NULL OR a.graduated_at = '');
 EOF
 	)
@@ -719,6 +785,9 @@ WHERE (
     l.confidence = 'high'
     OR COALESCE(a.access_count, 0) >= $DEFAULT_MIN_ACCESS
 )
+AND l.type != 'USER_PREFERENCE'
+AND COALESCE((SELECT status FROM learning_truth_events truth_pick WHERE truth_pick.memory_id = l.id ORDER BY truth_pick.created_at DESC, truth_pick.event_id DESC LIMIT 1), 'live') NOT IN ('debunked', 'retracted')
+AND NOT EXISTS (SELECT 1 FROM learning_relations superseded_by WHERE superseded_by.supersedes_id = l.id AND superseded_by.relation_type = 'updates')
 AND (a.graduated_at IS NULL OR a.graduated_at = '');
 EOF
 	)

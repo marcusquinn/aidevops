@@ -244,6 +244,38 @@ PYEOF
 }
 
 #######################################
+# Write Python truth-maintenance predicate shared by semantic/hybrid search.
+#######################################
+_write_python_truth_filter() {
+	cat >>"$PYTHON_SCRIPT" <<'PYEOF'
+
+def _memory_is_live(mem_conn, memory_id: str) -> bool:
+    """Return True only for current memories that have not been retracted."""
+    row = mem_conn.execute(
+        """SELECT 1
+           FROM learnings l
+           WHERE l.id = ?
+             AND COALESCE((
+                 SELECT status
+                 FROM learning_truth_events truth_pick
+                 WHERE truth_pick.memory_id = l.id
+                 ORDER BY truth_pick.created_at DESC, truth_pick.event_id DESC
+                 LIMIT 1
+             ), 'live') NOT IN ('debunked', 'retracted')
+             AND NOT EXISTS (
+                 SELECT 1
+                 FROM learning_relations superseded_by
+                 WHERE superseded_by.supersedes_id = l.id
+                   AND superseded_by.relation_type = 'updates'
+             )""",
+        (memory_id,)
+    ).fetchone()
+    return row is not None
+PYEOF
+	return 0
+}
+
+#######################################
 # Write Python engine: DB init and cmd_embed/cmd_search
 #######################################
 _write_python_db_and_search() {
@@ -305,12 +337,14 @@ def cmd_search(provider: str, embeddings_db: str, memory_db: str, query: str, li
         results.append((memory_id, score))
 
     results.sort(key=lambda x: x[1], reverse=True)
-    top_results = results[:limit]
 
-    # Fetch memory content for top results
+    # Fetch only current memory content. Continue past stale top-ranked vectors
+    # until the requested number of live results has been collected.
     mem_conn = sqlite3.connect(memory_db)
     output = []
-    for memory_id, score in top_results:
+    for memory_id, score in results:
+        if not _memory_is_live(mem_conn, memory_id):
+            continue
         row = mem_conn.execute(
             "SELECT content, type, tags, confidence, created_at FROM learnings WHERE id = ?",
             (memory_id,)
@@ -326,6 +360,8 @@ def cmd_search(provider: str, embeddings_db: str, memory_db: str, query: str, li
                 "score": round(score, 4),
                 "search_method": "semantic",
             })
+            if len(output) >= limit:
+                break
     mem_conn.close()
     print(json.dumps(output))
 PYEOF
@@ -338,8 +374,8 @@ PYEOF
 _write_python_hybrid_semantic() {
 	cat >>"$PYTHON_SCRIPT" <<'PYEOF'
 
-def _hybrid_semantic_search(provider: str, embeddings_db: str, query: str, semantic_limit: int) -> list:
-    """Return top semantic candidates as [(memory_id, score)] sorted desc."""
+def _hybrid_semantic_search(provider: str, embeddings_db: str, query: str) -> list:
+    """Return all semantic candidates sorted desc for later truth filtering."""
     dim = get_embedding_dim(provider)
     query_embedding = embed_text(query, provider)
 
@@ -358,7 +394,7 @@ def _hybrid_semantic_search(provider: str, embeddings_db: str, query: str, seman
         results.append((memory_id, score))
 
     results.sort(key=lambda x: x[1], reverse=True)
-    return results[:semantic_limit]
+    return results
 PYEOF
 	return 0
 }
@@ -379,6 +415,17 @@ def _hybrid_fts5_search(mem_conn, query: str, semantic_limit: int) -> list:
             """SELECT id, bm25(learnings) as score
                FROM learnings
                WHERE learnings MATCH ?
+                 AND COALESCE((
+                     SELECT status FROM learning_truth_events truth_pick
+                     WHERE truth_pick.memory_id = learnings.id
+                     ORDER BY truth_pick.created_at DESC, truth_pick.event_id DESC
+                     LIMIT 1
+                 ), 'live') NOT IN ('debunked', 'retracted')
+                 AND NOT EXISTS (
+                     SELECT 1 FROM learning_relations superseded_by
+                     WHERE superseded_by.supersedes_id = learnings.id
+                       AND superseded_by.relation_type = 'updates'
+                 )
                ORDER BY score
                LIMIT ?""",
             (fts_query, semantic_limit)
@@ -452,12 +499,16 @@ def cmd_hybrid(provider: str, embeddings_db: str, memory_db: str, query: str, li
     """Hybrid search: combine FTS5 BM25 + semantic similarity using Reciprocal Rank Fusion."""
     semantic_limit = limit * 3
 
-    semantic_results = _hybrid_semantic_search(provider, embeddings_db, query, semantic_limit)
+    semantic_results = _hybrid_semantic_search(provider, embeddings_db, query)
 
     mem_conn = sqlite3.connect(memory_db)
     mem_conn.execute("PRAGMA busy_timeout=5000")
 
     try:
+        semantic_results = [
+            candidate for candidate in semantic_results
+            if _memory_is_live(mem_conn, candidate[0])
+        ][:semantic_limit]
         fts_results = _hybrid_fts5_search(mem_conn, query, semantic_limit)
         usefulness_lookup = _hybrid_usefulness_lookup(mem_conn, semantic_results, fts_results)
 
@@ -738,6 +789,7 @@ create_python_engine() {
 	: >"$PYTHON_SCRIPT"
 	_write_python_header
 	_write_python_embed_functions
+	_write_python_truth_filter
 	_write_python_db_and_search
 	_write_python_hybrid_semantic
 	_write_python_hybrid_fts5

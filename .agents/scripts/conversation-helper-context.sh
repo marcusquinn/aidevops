@@ -34,6 +34,19 @@ fi
 # --- Context Functions ---
 
 #######################################
+# Redact sensitive values from a complete context payload.
+# Args: payload
+#######################################
+_conversation_redact_context_payload() {
+	local payload="$1"
+	printf '%s\n' "$payload" | sed -E \
+		-e 's/[[:alnum:]._+%-]+@[[:alnum:].-]+\.[[:alpha:]]{2,}/[EMAIL]/g' \
+		-e 's/([[:digit:]]{1,3}\.){3}[[:digit:]]{1,3}/[IP]/g' \
+		-e 's/sk-[[:alnum:]_-]{20,}/[API_KEY]/g'
+	return 0
+}
+
+#######################################
 # Output conversation context as JSON
 # Args: esc_id esc_entity recent_messages
 #######################################
@@ -187,10 +200,10 @@ EOF
 		echo "  (no messages yet)"
 	else
 		if [[ "$privacy_filter" == true ]]; then
-			messages=$(echo "$messages" | sed \
-				-e 's/[a-zA-Z0-9._%+-]\+@[a-zA-Z0-9.-]\+\.[a-zA-Z]\{2,\}/[EMAIL]/g' \
-				-e 's/\b[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}\b/[IP]/g' \
-				-e 's/sk-[a-zA-Z0-9_-]\{20,\}/[API_KEY]/g')
+			messages=$(printf '%s\n' "$messages" | sed -E \
+				-e 's/[[:alnum:]._+%-]+@[[:alnum:].-]+\.[[:alpha:]]{2,}/[EMAIL]/g' \
+				-e 's/([[:digit:]]{1,3}\.){3}[[:digit:]]{1,3}/[IP]/g' \
+				-e 's/sk-[[:alnum:]_-]{20,}/[API_KEY]/g')
 		fi
 		echo "$messages"
 	fi
@@ -304,11 +317,18 @@ EOF
 	local esc_entity
 	esc_entity=$(conv_sql_escape "$entity_id")
 
+	local context_output=""
 	if [[ "$format" == "json" ]]; then
-		_context_output_json "$esc_id" "$esc_entity" "$recent_messages"
+		context_output=$(_context_output_json "$esc_id" "$esc_entity" "$recent_messages")
 	else
-		_context_output_text "$esc_id" "$esc_entity" "$entity_name" "$entity_type" \
-			"$channel" "$topic" "$recent_messages" "$privacy_filter"
+		context_output=$(_context_output_text "$esc_id" "$esc_entity" "$entity_name" "$entity_type" \
+			"$channel" "$topic" "$recent_messages" "$privacy_filter")
+	fi
+
+	if [[ "$privacy_filter" == true ]]; then
+		_conversation_redact_context_payload "$context_output"
+	else
+		printf '%s\n' "$context_output"
 	fi
 
 	return 0
