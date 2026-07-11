@@ -12,7 +12,7 @@ shopt -s inherit_errexit 2>/dev/null || true
 # AI Assistant Server Access Framework Setup Script
 # Helps developers set up the framework for their infrastructure
 #
-# Version: 3.32.20
+# Version: 3.32.31
 #
 # Quick Install:
 #   npm install -g aidevops && aidevops update          (recommended)
@@ -68,7 +68,8 @@ REPO_URL="https://github.com/marcusquinn/aidevops.git"
 # INSTALL_DIR: resolve from the directory where setup.sh is executed (supports worktrees)
 # For bootstrap (curl install), this will be /dev/fd/NN and trigger re-exec after clone
 INSTALL_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-export REPO_URL INSTALL_DIR
+AGENTS_DIR="${AIDEVOPS_AGENTS_DIR:-${HOME}/.aidevops/agents}"
+export REPO_URL INSTALL_DIR AGENTS_DIR
 
 # Source modular setup functions (t316.2)
 # These modules are sourced only when setup.sh is run from the repo directory
@@ -107,6 +108,8 @@ if [[ -d "$SETUP_MODULES_DIR" ]]; then
 	source "$SETUP_MODULES_DIR/_privacy_guard.sh"
 	# shellcheck disable=SC1091
 	source "$SETUP_MODULES_DIR/_complexity_guard.sh"
+	# shellcheck disable=SC1091
+	source "$SETUP_MODULES_DIR/_repo_verify_guard.sh"
 	# shellcheck disable=SC1091
 	source "$SETUP_MODULES_DIR/_task_id_guard.sh"
 	# shellcheck disable=SC1091
@@ -1194,6 +1197,7 @@ _setup_ai_session_reset_plan() {
 	_SETUP_AI_SESSION_NEEDS_AGENTS=0
 	_SETUP_AI_SESSION_NEEDS_CLI=0
 	_SETUP_AI_SESSION_NEEDS_HOOKS=0
+	_SETUP_AI_SESSION_NEEDS_REPO_VERIFY=0
 	_SETUP_AI_SESSION_NEEDS_PULSE=0
 	_SETUP_AI_SESSION_NEEDS_GUI=0
 	_SETUP_AI_SESSION_REQUIRES_FULL=0
@@ -1246,6 +1250,12 @@ _setup_ai_session_plan_file() {
 		;;
 	.agents/hooks/*)
 		_SETUP_AI_SESSION_NEEDS_HOOKS=1
+		[[ "$filepath" == ".agents/hooks/repo-verify-pre-push.sh" ]] && _SETUP_AI_SESSION_NEEDS_REPO_VERIFY=1
+		;;
+	.agents/scripts/repo-verify-config-lib.sh | .agents/scripts/lint-helper.sh | \
+		.agents/scripts/install-pre-push-guards.sh | .agents/configs/repo-verify-defaults.conf | \
+		.agents/scripts/aidevops-cli/aidevops-init-lib.sh | .agents/scripts/aidevops-cli/aidevops-update-lib.sh)
+		_SETUP_AI_SESSION_NEEDS_REPO_VERIFY=1
 		;;
 	.agents/scripts/setup/modules/schedulers*.sh | .agents/scripts/setup/_scheduler_runtime.sh)
 		_SETUP_AI_SESSION_NEEDS_PULSE=1
@@ -1358,6 +1368,9 @@ _setup_run_ai_session_incremental() {
 	fi
 	if [[ "$_SETUP_AI_SESSION_NEEDS_HOOKS" -eq 1 ]]; then
 		_time_step "$SETUP_STAGE_HOOKS" setup_safety_hooks || return $?
+	fi
+	if [[ "$_SETUP_AI_SESSION_NEEDS_REPO_VERIFY" -eq 1 ]]; then
+		_time_step "setup_repo_verify_guard" setup_repo_verify_guard || return $?
 	fi
 	if [[ "$_SETUP_AI_SESSION_NEEDS_PULSE" -eq 1 ]]; then
 		_time_step "$SETUP_STAGE_PULSE" setup_supervisor_pulse "$os" || return $?
@@ -1515,6 +1528,9 @@ _setup_run_non_interactive() {
 	# initialized repo so pushes that introduce new function-complexity,
 	# nesting-depth, or file-size violations are caught before CI (t2198).
 	_time_step "setup_complexity_guard" setup_complexity_guard
+	# Migrate exact repository-native lint policy and install/refresh repo-verify
+	# for eligible registered repositories. Explicit opt-outs are preserved.
+	_time_step "setup_repo_verify_guard" setup_repo_verify_guard
 	# Install/refresh the canonical-on-main post-checkout hook in every
 	# initialized repo so branch switches away from main in the canonical
 	# directory are warned against (t1995). Complements pre-edit-check.sh's
@@ -1605,7 +1621,6 @@ _setup_run_interactive() {
 	confirm_step "Setup SSH key" && setup_ssh_key
 	confirm_step "Setup configuration files" && setup_configs
 	confirm_step "Set secure permissions on config files" && set_permissions
-	confirm_step "Install aidevops CLI command" && install_aidevops_cli
 	confirm_step "Setup shell aliases" && setup_aliases
 	confirm_step "Setup terminal title integration" && setup_terminal_title
 	confirm_step "Deploy AI templates to home directories" && deploy_ai_templates
@@ -1625,6 +1640,9 @@ _setup_run_interactive() {
 	confirm_step "Extract OpenCode prompts" && extract_opencode_prompts
 	confirm_step "Check OpenCode prompt drift" && check_opencode_prompt_drift
 	confirm_step "Deploy aidevops agents to ~/.aidevops/agents/" && { deploy_aidevops_agents; _deploy_hotfix_config; }
+	# Launcher verification reads the deployed VERSION, so it must follow agent
+	# deployment on first-run interactive setup as it already does non-interactively.
+	confirm_step "Install and verify aidevops CLI command" && install_aidevops_cli
 	confirm_step "Sync agents from private repositories" && sync_agent_sources
 	confirm_step "Set up routines repo (private repo for recurring operational jobs)" && setup_routines
 	is_feature_enabled safety_hooks 2>/dev/null && confirm_step "Install Claude Code safety hooks (block destructive commands)" && setup_safety_hooks
@@ -1887,6 +1905,11 @@ main() {
 	fi
 
 	if [[ "$NON_INTERACTIVE" == "true" ]]; then
+		# Full-loop release deployment uses this mutex. It remains held through
+		# deploy_aidevops_agents and install_aidevops_cli, so agent and CLI
+		# convergence are one serialized non-interactive deployment interval.
+		# Direct interactive setup is intentionally outside this guarantee: holding
+		# the mutex across prompts can block unattended full-loop deployments.
 		_setup_acquire_noninteractive_setup_lock "$@" || exit $?
 	fi
 

@@ -27,26 +27,18 @@ fi
 _AIDEVOPS_UPDATE_TRUE=true
 
 _update_fresh_install() {
-	print_warning "Repository not found, performing fresh install..."
-	local tmp_setup
-	# t2997: drop .sh — XXXXXX must be at end for BSD mktemp.
-	tmp_setup=$(mktemp "${TMPDIR:-/tmp}/aidevops-setup-XXXXXX") || {
-		print_error "Failed to create temp file for setup script"
+	print_warning "Repository not found at the active CLI tree, updating from a clean temporary checkout..."
+	local tmp_checkout
+	tmp_checkout=$(mktemp -d "${TMPDIR:-/tmp}/aidevops-update-XXXXXX") || {
+		print_error "Failed to create temporary update checkout"
 		return 1
 	}
-	trap 'rm -f "${tmp_setup:-}"' RETURN
-	if curl -fsSL "https://raw.githubusercontent.com/marcusquinn/aidevops/main/setup.sh" -o "$tmp_setup" 2>/dev/null && [[ -s "$tmp_setup" ]]; then
-		chmod +x "$tmp_setup"
-		bash "$tmp_setup"
-		local setup_exit=$?
-		rm -f "$tmp_setup"
-		[[ $setup_exit -ne 0 ]] && return 1
-	else
-		rm -f "$tmp_setup"
-		print_error "Failed to download setup script"
-		print_info "Try: git clone https://github.com/marcusquinn/aidevops.git $INSTALL_DIR && bash $INSTALL_DIR/setup.sh"
+	trap 'rm -rf "${tmp_checkout:-}"' RETURN
+	if ! git clone --depth 1 --branch main "https://github.com/marcusquinn/aidevops.git" "$tmp_checkout" >/dev/null 2>&1; then
+		print_error "Failed to create clean update checkout"
 		return 1
 	fi
+	bash "$tmp_checkout/setup.sh" --stage ai-session || return $?
 	return 0
 }
 
@@ -94,6 +86,36 @@ _update_sync_projects() {
 	[[ $skipped -gt 0 ]] && print_info "Skipped $skipped uninitialized project(s) (run 'aidevops init' in each to enable)"
 	[[ $failed -gt 0 ]] && print_warning "$failed project(s) failed to sync (jq missing or write error)"
 	return 0
+}
+
+_update_reconcile_repo_verify() {
+	local helper="${INSTALL_DIR}/.agents/scripts/lint-helper.sh"
+	[[ -f "$helper" ]] || helper="${HOME}/.aidevops/agents/scripts/lint-helper.sh"
+	if [[ ! -f "$helper" ]]; then
+		print_info "Lint reconciliation helper unavailable"
+		return 0
+	fi
+	print_info "Reconciling repository lint policy and hooks..."
+	bash "$helper" reconcile --all || print_warning "Repository lint reconciliation completed with warnings"
+	return 0
+}
+
+_update_repo_verify_files_changed() {
+	local old_sha="$1"
+	local new_sha="$2"
+	local changed_file=""
+	[[ -n "$old_sha" && -n "$new_sha" && "$old_sha" != "$new_sha" ]] || return 1
+	while IFS= read -r changed_file; do
+		case "$changed_file" in
+		.agents/hooks/repo-verify-pre-push.sh | .agents/configs/repo-verify-defaults.conf | \
+			.agents/scripts/repo-verify-config-lib.sh | .agents/scripts/lint-helper.sh | \
+			.agents/scripts/install-pre-push-guards.sh | .agents/scripts/setup/_repo_verify_guard.sh | \
+			.agents/scripts/aidevops-cli/aidevops-init-lib.sh | .agents/scripts/aidevops-cli/aidevops-update-lib.sh)
+			return 0
+			;;
+		esac
+	done < <(git -C "$INSTALL_DIR" diff --name-only "$old_sha" "$new_sha" 2>/dev/null)
+	return 1
 }
 
 _update_sync_agent_source_repos() {
@@ -283,7 +305,7 @@ _update_check_setsid() {
 			local keg_setsid="${brew_prefix}/opt/util-linux/bin/setsid"
 			local link_target="${brew_prefix}/bin/setsid"
 			if [[ -x "$keg_setsid" && ! -e "$link_target" ]]; then
-				ln -s "$keg_setsid" "$link_target" && \
+				ln -s "$keg_setsid" "$link_target" &&
 					print_success "Symlinked setsid: $keg_setsid → $link_target"
 			fi
 			if command -v setsid >/dev/null 2>&1; then
@@ -336,9 +358,9 @@ _update_check_workflow_drift() {
 	relevant_files=$(git -C "$INSTALL_DIR" diff --name-only "$old_sha" "$new_sha" -- \
 		'.agents/templates/workflows/' \
 		'.github/workflows/' \
-		2>/dev/null \
-		| grep -E '(\.agents/templates/workflows/.*\.ya?ml$|\.github/workflows/.*-reusable\.ya?ml$)' \
-		|| true)
+		2>/dev/null |
+		grep -E '(\.agents/templates/workflows/.*\.ya?ml$|\.github/workflows/.*-reusable\.ya?ml$)' ||
+		true)
 	[[ -z "$relevant_files" ]] && return 0
 
 	local file_count

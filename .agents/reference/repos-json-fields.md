@@ -17,6 +17,7 @@ Config file: `~/.config/aidevops/repos.json`. Structure: `{"initialized_repos": 
 | `init_scope` | string | `"minimal"`, `"standard"` (default), or `"public"`. Controls `aidevops init` scaffolding |
 | `has_interface` | bool | Explicit GUI/interface flag. `true` forces DESIGN.md scaffolding/backfill; `false` suppresses heuristic interface detection. |
 | `agent_source` | bool | `true` = repo is a managed private agent source pack; `aidevops init` seeds core-style agent structure and `aidevops update` refreshes framework-owned organization templates |
+| `features` | array | Enabled registration capabilities. `"code-quality"` activates lint policy migration and repo-verify hook rollout unless `.aidevops.json` explicitly opts out. |
 
 ### `role` detail
 
@@ -32,6 +33,11 @@ Auto-detected from slug owner vs `gh api user` when omitted.
 - `public`: adds LICENCE, CHANGELOG.md, CONTRIBUTING.md, SECURITY.md, CODE_OF_CONDUCT.md
 
 Auto-inferred when absent: `local_only`/no-remote → `minimal`; others → `standard`. Stored in `.aidevops.json` per project. Preserved on re-registration.
+
+Repository-native verification policy lives in `.aidevops.json.features.code_quality`
+and `.aidevops.json.verify`. `aidevops lint audit` reports registration/config
+drift. Update migrations preserve explicit `false`, unknown keys, and tracked
+configuration on canonical `main`/`master`; tracked changes require a linked-worktree PR.
 
 ### `has_interface` detail
 

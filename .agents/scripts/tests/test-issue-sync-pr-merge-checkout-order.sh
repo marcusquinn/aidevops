@@ -20,6 +20,9 @@
 #   (b) `clean: false` on the `Checkout repo for TODO.md update` step.
 #
 # Either invariant prevents the regression. The current canonical fix is (a).
+# GH#27119 additionally requires the PATH shims to live outside GITHUB_WORKSPACE:
+# actions/checkout may select `git` before cleaning, so restoring the framework
+# after checkout is too late when the selected executable itself was deleted.
 
 set -euo pipefail
 
@@ -92,12 +95,24 @@ if [[ "${JOB_START}" == "0" ]]; then
 	exit 1
 fi
 check 1 "sync-on-pr-merge job present" ""
+JOB_BODY=$(sed -n "${JOB_START},${JOB_END}p" "${WORKFLOW_FILE}")
 
 # ============================================================
-# Test 2: job has merged == true guard (defends against #22607
+# Test 2: PATH shims survive caller-repo workspace cleanup.
+# ============================================================
+# shellcheck disable=SC2016 # Assert literal workflow expressions, not test-shell expansion.
+if printf '%s\n' "${JOB_BODY}" | grep -qE 'SHIM_DIR="\$\{RUNNER_TEMP\}/[^\"]+"' && \
+	printf '%s\n' "${JOB_BODY}" | grep -qE 'echo "\$\{SHIM_DIR\}" >> "\$GITHUB_PATH"'; then
+	check 1 "sync-on-pr-merge stages PATH shims outside GITHUB_WORKSPACE" ""
+else
+	check 0 "sync-on-pr-merge stages PATH shims outside GITHUB_WORKSPACE" \
+		"GITHUB_PATH must reference a RUNNER_TEMP shim directory so actions/checkout cannot delete its selected git executable"
+fi
+
+# ============================================================
+# Test 3: job has merged == true guard (defends against #22607
 #         which falsely claimed the guard was missing)
 # ============================================================
-JOB_BODY=$(sed -n "${JOB_START},${JOB_END}p" "${WORKFLOW_FILE}")
 if printf '%s\n' "${JOB_BODY}" | grep -qE 'github\.event\.pull_request\.merged[[:space:]]*==[[:space:]]*true'; then
 	check 1 "sync-on-pr-merge has merged == true guard" ""
 else
@@ -105,45 +120,39 @@ else
 fi
 
 # ============================================================
-# Test 3: job preserves __aidevops/ across the second checkout.
-#         Either via Option A (clean: false on caller checkout)
-#         or Option B (re-checkout framework after caller checkout).
-#         At least ONE must hold.
+# Test 4: a single caller checkout establishes the validated TODO snapshot,
+# followed by framework restoration and resolution. No later caller checkout
+# may replace that snapshot before proof-log mutation.
 # ============================================================
-# Find the line of "Checkout repo for TODO.md update" within the job body.
-CALLER_CHECKOUT_REL_LINE=$(printf '%s\n' "${JOB_BODY}" | grep -nE 'name:[[:space:]]+Checkout repo for TODO\.md update' | head -1 | cut -d: -f1 || true)
+CALLER_CHECKOUT_REL_LINE=$(printf '%s\n' "${JOB_BODY}" | grep -nE 'name:[[:space:]]+Checkout repo before closing-hygiene validation' | cut -d: -f1 || true)
+RESTORE_REL_LINE=$(printf '%s\n' "${JOB_BODY}" | grep -nE 'name:[[:space:]]+Restore framework scripts before task resolution' | cut -d: -f1 || true)
+RESOLVE_REL_LINE=$(printf '%s\n' "${JOB_BODY}" | grep -nE 'name:[[:space:]]+Resolve task-backed closing issues' | cut -d: -f1 || true)
+PROOF_REL_LINE=$(printf '%s\n' "${JOB_BODY}" | grep -nE 'name:[[:space:]]+Update TODO\.md proof-log' | cut -d: -f1 || true)
+CALLER_CHECKOUT_COUNT=$(printf '%s\n' "${JOB_BODY}" | grep -cE 'name:[[:space:]]+Checkout repo (before closing-hygiene validation|for TODO\.md update)' || true)
 
 if [[ -z "${CALLER_CHECKOUT_REL_LINE}" ]]; then
-	check 0 "Checkout repo for TODO.md update step present" "step missing — proof-log cannot run"
+	check 0 "early caller checkout step present" "validated TODO snapshot checkout is missing"
 else
-	check 1 "Checkout repo for TODO.md update step present" ""
+	check 1 "early caller checkout step present" ""
+fi
 
-	# Option A: 'clean: false' present in the caller checkout step.
-	# Look in a 30-line window after the step name.
-	OPTION_A_OK=0
-	if printf '%s\n' "${JOB_BODY}" | sed -n "${CALLER_CHECKOUT_REL_LINE},+30p" | grep -qE '^\s*clean:[[:space:]]*false'; then
-		OPTION_A_OK=1
-	fi
+if [[ -n "$CALLER_CHECKOUT_REL_LINE" && -n "$RESTORE_REL_LINE" && -n "$RESOLVE_REL_LINE" && -n "$PROOF_REL_LINE" &&
+	"$CALLER_CHECKOUT_REL_LINE" -lt "$RESTORE_REL_LINE" &&
+	"$RESTORE_REL_LINE" -lt "$RESOLVE_REL_LINE" &&
+	"$RESOLVE_REL_LINE" -lt "$PROOF_REL_LINE" ]]; then
+	check 1 "caller snapshot -> framework restore -> resolve -> proof order preserved" ""
+else
+	check 0 "caller snapshot -> framework restore -> resolve -> proof order preserved" "step order is unsafe"
+fi
 
-	# Option B: a 'Re-checkout aidevops framework scripts' step AFTER the
-	# caller checkout. Match common naming variants.
-	OPTION_B_OK=0
-	# All step names following the caller checkout (i.e. lines after the caller checkout).
-	STEPS_AFTER=$(printf '%s\n' "${JOB_BODY}" | tail -n "+${CALLER_CHECKOUT_REL_LINE}")
-	if printf '%s\n' "${STEPS_AFTER}" | grep -qE 'name:[[:space:]]+(Re-checkout|Restore|Re-pull) (aidevops )?framework scripts'; then
-		OPTION_B_OK=1
-	fi
-
-	if [[ "${OPTION_A_OK}" == "1" || "${OPTION_B_OK}" == "1" ]]; then
-		check 1 "__aidevops/ preserved after caller checkout (Option A clean:false OR Option B re-checkout)" ""
-	else
-		check 0 "__aidevops/ preserved after caller checkout (Option A clean:false OR Option B re-checkout)" \
-			"neither 'clean: false' nor a 'Re-checkout aidevops framework scripts' step found after 'Checkout repo for TODO.md update' — workspace wipe will delete __aidevops/ and the push-todo step will fail"
-	fi
+if [[ "$CALLER_CHECKOUT_COUNT" -eq 1 ]]; then
+	check 1 "validated TODO snapshot is not replaced by a later caller checkout" ""
+else
+	check 0 "validated TODO snapshot is not replaced by a later caller checkout" "found $CALLER_CHECKOUT_COUNT caller checkouts"
 fi
 
 # ============================================================
-# Test 4: Update TODO.md proof-log step still references __aidevops/
+# Test 5: Update TODO.md proof-log step still references __aidevops/
 #         (sanity check — if this changes, the test premise needs updating)
 # ============================================================
 if printf '%s\n' "${JOB_BODY}" | grep -qE 'bash[[:space:]]+__aidevops/\.agents/scripts/issue-sync-git-push-helper\.sh'; then

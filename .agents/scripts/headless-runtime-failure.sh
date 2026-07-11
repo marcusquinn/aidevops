@@ -974,7 +974,7 @@ _recover_dirty_worker_pr() {
 	HEAD | main | master | "") return 1 ;;
 	esac
 	if declare -F _attempt_orphan_recovery_pr >/dev/null 2>&1; then
-		_attempt_orphan_recovery_pr "$session_key" "$work_dir" "$branch_name" "$repo_slug"
+		_attempt_orphan_recovery_pr "$session_key" "$work_dir" "$branch_name" "$repo_slug" "draft"
 		return $?
 	fi
 	return 1

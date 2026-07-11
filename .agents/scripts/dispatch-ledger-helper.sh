@@ -38,6 +38,7 @@
 #   dispatch-ledger-helper.sh check-issue NUM [SLUG]
 #   dispatch-ledger-helper.sh complete --session-key KEY
 #   dispatch-ledger-helper.sh fail --session-key KEY
+#   dispatch-ledger-helper.sh record-recovery --session-key KEY --runner-key KEY --worktree PATH --branch BRANCH --changed-paths TEXT --recoverability STATE
 #   dispatch-ledger-helper.sh expire [--ttl SECONDS]
 #   dispatch-ledger-helper.sh count
 #   dispatch-ledger-helper.sh status
@@ -360,6 +361,69 @@ cmd_register() {
 		'{issue: $inum, repo: $slug, tier: $tier, model: $model, dispatched_at: $ts, outcome: "pending"}' \
 		>>"$telemetry_file" 2>/dev/null || true
 
+	_release_lock
+	return 0
+}
+
+#######################################
+# Persist runner-local dirty-worktree recovery metadata.
+# Repeated updates replace the same session entry, making dirty markers
+# idempotent while retaining the private worktree path off public threads.
+#######################################
+cmd_record_recovery() {
+	local session_key=""
+	local runner_key=""
+	local worktree_path=""
+	local branch_name=""
+	local changed_paths=""
+	local recoverability=""
+
+	while [[ $# -gt 0 ]]; do
+		local option="${1:-}"
+		case "$option" in
+		--session-key | --runner-key | --worktree | --branch | --changed-paths | --recoverability)
+			[[ $# -ge 2 ]] || { echo "Error: $option requires an argument" >&2; return 1; }
+			local option_value="$2"
+			case "$option" in
+			--session-key) session_key="$option_value" ;;
+			--runner-key) runner_key="$option_value" ;;
+			--worktree) worktree_path="$option_value" ;;
+			--branch) branch_name="$option_value" ;;
+			--changed-paths) changed_paths="$option_value" ;;
+			--recoverability) recoverability="$option_value" ;;
+			esac
+			shift 2
+			;;
+		*) echo "Error: Unknown option for record-recovery: $option" >&2; return 1 ;;
+		esac
+	done
+
+	[[ -n "$session_key" ]] || { echo "Error: record-recovery requires --session-key" >&2; return 1; }
+	_ensure_ledger
+	_acquire_lock || return 1
+	local now=""
+	now=$(_now_utc)
+	local tmp_file=""
+	tmp_file=$(mktemp "${LEDGER_DIR}/dispatch-ledger.XXXXXX") || { _release_lock; return 1; }
+	jq -c \
+		--arg sk "$session_key" \
+		--arg runner "$runner_key" \
+		--arg worktree "$worktree_path" \
+		--arg branch "$branch_name" \
+		--arg paths "$changed_paths" \
+		--arg recovery "$recoverability" \
+		--arg ts "$now" \
+		'if .session_key == $sk then
+			.runner_key = $runner |
+			.worktree_path = $worktree |
+			.branch = $branch |
+			.changed_paths = ($paths | split("\n") | map(select(length > 0))) |
+			.recoverability = $recovery |
+			.recovery_attempts = ((.recovery_attempts // 0) + 1) |
+			.status = (if $recovery == "checkpointed" then "checkpointed" else "dirty-recovery" end) |
+			.updated_at = $ts
+		else . end' "$LEDGER_FILE" >"$tmp_file" 2>/dev/null || cp "$LEDGER_FILE" "$tmp_file"
+	mv "$tmp_file" "$LEDGER_FILE"
 	_release_lock
 	return 0
 }
@@ -1176,6 +1240,9 @@ main() {
 		;;
 	fail)
 		cmd_fail "$@"
+		;;
+	record-recovery)
+		cmd_record_recovery "$@"
 		;;
 	record-outcome)
 		cmd_record_outcome "$@"

@@ -21,12 +21,112 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=portable-stat.sh
+source "${SCRIPT_DIR}/portable-stat.sh"
 METRICS_FILE="${HOME}/.aidevops/.agent-workspace/observability/metrics.jsonl"
 OBS_DB_FILE="${HOME}/.aidevops/.agent-workspace/observability/llm-requests.db"
 OPENCODE_DB_FILE="${HOME}/.local/share/opencode/opencode.db"
 OPENCODE_ARCHIVE_DB_FILE="${HOME}/.local/share/opencode/opencode-archive.db"
 CONTRIBUTIONS_START_MARKER='<!-- CONTRIBUTIONS-START -->'
 CONTRIBUTIONS_END_MARKER='<!-- CONTRIBUTIONS-END -->'
+PROFILE_UPDATE_LOCK_TOKEN=""
+PROFILE_UPDATE_LOCK_GRACE_SECONDS="${AIDEVOPS_PROFILE_LOCK_GRACE_SECONDS:-30}"
+
+# --- Serialize profile refreshes so scheduler overlap cannot duplicate scans/writes ---
+_profile_update_lock_dir() {
+	printf '%s\n' "${HOME}/.aidevops/cache/profile-readme-update.lock"
+	return 0
+}
+
+_profile_lock_mtime() {
+	local lock_dir="$1"
+	local modified=""
+	modified=$(_file_mtime_epoch "$lock_dir" 2>/dev/null || true)
+	[[ "$modified" =~ ^[0-9]+$ ]] || modified=0
+	printf '%s\n' "$modified"
+	return 0
+}
+
+_profile_lock_owner() {
+	local lock_dir="$1"
+	local owner_line=""
+	if [[ -f "${lock_dir}/owner" ]]; then
+		IFS= read -r owner_line <"${lock_dir}/owner" || true
+		printf '%s\n' "$owner_line"
+	fi
+	return 0
+}
+
+_acquire_profile_update_lock() {
+	local lock_dir token now
+	lock_dir=$(_profile_update_lock_dir)
+	now=$(date +%s)
+	token="$$.${RANDOM}.${now}.${RANDOM}"
+	mkdir -p "${lock_dir%/*}" || return 1
+	if mkdir "$lock_dir" 2>/dev/null; then
+		local owner_tmp="${lock_dir}/owner.${token}"
+		printf '%s|%s|%s\n' "$token" "$$" "$now" >"$owner_tmp" || return 1
+		mv "$owner_tmp" "${lock_dir}/owner" || return 1
+		PROFILE_UPDATE_LOCK_TOKEN="$token"
+		return 0
+	fi
+
+	local owner_before owner_after lock_pid lock_created mtime_before mtime_after age
+	owner_before=$(_profile_lock_owner "$lock_dir")
+	mtime_before=$(_profile_lock_mtime "$lock_dir")
+	IFS='|' read -r _ lock_pid lock_created <<<"$owner_before"
+	age=$((now - mtime_before))
+	if [[ "$lock_pid" =~ ^[0-9]+$ ]] && kill -0 "$lock_pid" 2>/dev/null; then
+		echo "Profile README update already running; skipping overlapping refresh" >&2
+		return 1
+	fi
+	if [[ -z "$owner_before" || ! "$lock_created" =~ ^[0-9]+$ ]] && [[ "$age" -lt "$PROFILE_UPDATE_LOCK_GRACE_SECONDS" ]]; then
+		echo "Profile README lock is being initialized; skipping overlapping refresh" >&2
+		return 1
+	fi
+
+	# Revalidate immediately before the atomic rename. A changed owner/mtime means
+	# another process repaired or replaced the lock while this process inspected it.
+	owner_after=$(_profile_lock_owner "$lock_dir")
+	mtime_after=$(_profile_lock_mtime "$lock_dir")
+	if [[ "$owner_before" != "$owner_after" || "$mtime_before" != "$mtime_after" ]]; then
+		echo "Profile README lock changed during stale-owner validation" >&2
+		return 1
+	fi
+	local stale_dir="${lock_dir}.stale.${token}"
+	if ! mv "$lock_dir" "$stale_dir" 2>/dev/null; then
+		echo "Profile README lock was claimed by another process" >&2
+		return 1
+	fi
+	rm -rf "$stale_dir"
+	if ! mkdir "$lock_dir" 2>/dev/null; then
+		echo "Profile README update already running; skipping overlapping refresh" >&2
+		return 1
+	fi
+	local owner_tmp="${lock_dir}/owner.${token}"
+	printf '%s|%s|%s\n' "$token" "$$" "$now" >"$owner_tmp" || return 1
+	mv "$owner_tmp" "${lock_dir}/owner" || return 1
+	PROFILE_UPDATE_LOCK_TOKEN="$token"
+	return 0
+}
+
+_release_profile_update_lock() {
+	local lock_dir
+	lock_dir=$(_profile_update_lock_dir)
+	if [[ -z "$PROFILE_UPDATE_LOCK_TOKEN" ]]; then
+		return 0
+	fi
+	local owner token
+	owner=$(_profile_lock_owner "$lock_dir")
+	token="${owner%%|*}"
+	if [[ "$token" != "$PROFILE_UPDATE_LOCK_TOKEN" ]]; then
+		echo "Profile README lock owner changed; refusing non-owner release" >&2
+		return 1
+	fi
+	rm -rf "$lock_dir"
+	PROFILE_UPDATE_LOCK_TOKEN=""
+	return 0
+}
 
 # --- Resolve profile repo path from repos.json ---
 _resolve_profile_repo() {
@@ -999,6 +1099,11 @@ cmd_update() {
 	local dry_run=false
 	if [[ "${1:-}" == "--dry-run" ]]; then
 		dry_run=true
+	fi
+	if [[ "${AIDEVOPS_PROFILE_UPDATE_LOCK_HELD:-0}" != "1" ]]; then
+		_acquire_profile_update_lock || return 1
+		export AIDEVOPS_PROFILE_UPDATE_LOCK_HELD=1
+		trap _release_profile_update_lock EXIT
 	fi
 	echo "Profile README update started at $(date -u +%Y-%m-%dT%H:%M:%SZ) (dry_run=${dry_run})"
 

@@ -33,7 +33,8 @@
 #   B4. Guard queries existing comments for idempotency
 #   B5. Guard posts via gh_issue_comment wrapper
 #   B6. _try_close_parent_tracker accepts parent_body as 5th parameter
-#   B7. Guard skips close when declared_count > child_count
+#   B7. Close contract blocks declared/unfiled work while preserving legacy
+#       complete single-child closure
 #   B8. _action_cpt_single passes issue_body to _try_close_parent_tracker
 #   B9. _action_cpt_single bootstraps phase-only parents before advisory nudges
 
@@ -156,6 +157,7 @@ _parse_phases_section() {
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TARGET="$SCRIPT_DIR/pulse-issue-reconcile.sh"
 ACTIONS_TARGET="$SCRIPT_DIR/pulse-issue-reconcile-actions.sh"
+WRAPPER_TARGET="$SCRIPT_DIR/shared-gh-wrappers-create.sh"
 
 if [[ ! -f "$TARGET" || ! -f "$ACTIONS_TARGET" ]]; then
 	echo "${TEST_RED}FATAL${TEST_NC}: reconcile source files not found"
@@ -337,49 +339,31 @@ assert_grep_fixed \
 	'local slug="$1" parent_num="$2" child_nums="$3" child_source="$4" parent_body="${5:-}"' \
 	"$ACTIONS_TARGET"
 
-# B7: declared-vs-filed mismatch composes a closing-comment note
-# instead of blocking close (t3544). Pre-t3544 behaviour returned 1
-# and posted a one-time nudge that produced no follow-on action; this
-# left single-filed-child parents (#22371, #22372) silently rotting
-# with all filed children closed and the parent still OPEN.
-#
-# B7a (post-Gemini-review of PR #22605): note composition is delegated
-# to _compose_unfiled_phases_note. The helper computes _unfiled_count
-# directly from phases-section rows (not _declared_count - child_count)
-# so the count always agrees with the listed unfiled phases even when
-# child_count includes non-Phases-section children.
+# B7: deterministic close contract separates "known children terminal" from
+# "parent objective complete". Legacy parents without deterministic blockers
+# remain compatible, including genuine single-child trackers.
 assert_grep_fixed \
-	'B7a: unfiled-phases helper exists and gates on _unfiled_count > 0' \
-	'_compose_unfiled_phases_note() {' \
+	'B7a: close-contract predicate exists' \
+	'_parent_close_contract_incomplete() {' \
 	"$ACTIONS_TARGET"
 assert_grep_fixed \
-	'B7b: _try_close_parent_tracker captures helper output as _unfiled_note' \
-	'_unfiled_note=$(_compose_unfiled_phases_note "$parent_body" "$parent_num" "$slug" "$child_count")' \
+	'B7b: close path checks the contract after child terminality' \
+	'if _parent_close_contract_incomplete "$parent_body" "$child_count"; then' \
 	"$ACTIONS_TARGET"
 assert_grep_fixed \
-	'B7c: closing comment template embeds the unfiled-phases note' \
-	'${_unfiled_note}' \
+	'B7c: incomplete canonical phases post the idempotent phase nudge' \
+	'_post_parent_phases_unfiled_nudge "$slug" "$parent_num"' \
 	"$ACTIONS_TARGET"
-# B7c-vacuous: t3544 + Gemini — close path requires child_count > 0
+# B7d-vacuous: close path requires child_count > 0
 # alongside all_closed. Pre-fix, a parent referencing only PRs/external
 # refs would skip the per-child loop, leave child_count=0, all_closed
-# defaulting to "true", and produce "All 0 filed child task(s) are
+# defaulting to "true", and produce "All 0 declared child task(s) are
 # resolved." Verify the guard is in place.
 assert_grep_fixed \
-	'B7c-vacuous: close gate requires child_count > 0 (no vacuous-truth close)' \
+	'B7d: close gate requires child_count > 0 (no vacuous-truth close)' \
 	'[[ "$all_closed" == "true" && "$child_count" -gt 0 ]] || return 1' \
 	"$ACTIONS_TARGET"
-# B7c-direct-count: helper computes _unfiled_count from phases-section
-# rows directly, NOT by subtracting child_count from _declared_count.
-TESTS_RUN=$((TESTS_RUN + 1))
-if grep -qE '_unfiled_count=\$\(\(_declared_count[[:space:]]*-[[:space:]]*child_count\)\)' "$ACTIONS_TARGET" 2>/dev/null; then
-	TESTS_FAILED=$((TESTS_FAILED + 1))
-	echo "${TEST_RED}FAIL${TEST_NC}: B7c-direct-count: _unfiled_count must not be derived as _declared_count - child_count (Gemini review of PR #22605)"
-else
-	echo "${TEST_GREEN}PASS${TEST_NC}: B7c-direct-count: _unfiled_count computed directly from phases-section rows"
-fi
-
-# B7d: t3544 — the `child_count >= 2` short-circuit MUST be removed.
+# B7e: the `child_count >= 2` short-circuit MUST remain removed.
 # Single-filed-child parents are legitimate (incremental phase rollout);
 # the prior `[[ "$child_count" -ge 2 ]] || return 1` blocked them from
 # both closing AND from receiving the declared-vs-filed nudge, causing
@@ -387,17 +371,18 @@ fi
 TESTS_RUN=$((TESTS_RUN + 1))
 if grep -qE '\[\[[[:space:]]+"\$child_count"[[:space:]]+-ge[[:space:]]+2[[:space:]]+\]\][[:space:]]+\|\|[[:space:]]+return[[:space:]]+1' "$ACTIONS_TARGET" 2>/dev/null; then
 	TESTS_FAILED=$((TESTS_FAILED + 1))
-	echo "${TEST_RED}FAIL${TEST_NC}: B7d: t3544 — child_count >= 2 short-circuit must be removed from $ACTIONS_TARGET"
+	echo "${TEST_RED}FAIL${TEST_NC}: B7e: child_count >= 2 short-circuit must be removed from $ACTIONS_TARGET"
 else
-	echo "${TEST_GREEN}PASS${TEST_NC}: B7d: t3544 — child_count >= 2 short-circuit removed (single-filed-child parents can close)"
+	echo "${TEST_GREEN}PASS${TEST_NC}: B7e: child_count >= 2 short-circuit removed (complete single-child parents can close)"
 fi
 
-# B7e: closing comment heading reflects "filed" semantics so maintainers
-# understand the close is scoped to currently-filed children, not all
-# declared phases.
 assert_grep_fixed \
-	'B7e: closing-comment heading uses "filed child tasks" wording' \
-	'## All filed child tasks completed' \
+	'B7f: closing-comment heading reflects declared child completion' \
+	'## All declared child tasks completed' \
+	"$ACTIONS_TARGET"
+assert_grep_fixed \
+	'B7g: unchecked parent criteria are deterministic close blockers' \
+	'_PARENT_CLOSE_CONTRACT_REASON="unchecked-criteria"' \
 	"$ACTIONS_TARGET"
 
 # B8: call site passes issue_body as 5th arg
@@ -415,6 +400,53 @@ assert_grep_fixed \
 	"B9b: shared phase bootstrap helper is defined" \
 	'auto_file_next_unfiled_parent_phase() {' \
 	"$SHARED_TARGET"
+
+# B10: parent creation stamps a machine-readable contract before signing.
+assert_grep_fixed \
+	"B10a: parent creation contract helper is defined" \
+	'_gh_ci_prepare_parent_close_contract() {' \
+	"$WRAPPER_TARGET"
+assert_grep_fixed \
+	"B10b: phase-plan contract marker is generated" \
+	'<!-- parent-close-contract: phase-plan -->' \
+	"$WRAPPER_TARGET"
+assert_grep_fixed \
+	"B10c: child-count contract marker is generated" \
+	'<!-- parent-close-contract: expected-children=${children_count} -->' \
+	"$WRAPPER_TARGET"
+assert_grep_fixed \
+	"B10d: undecomposed parents receive a fail-closed marker" \
+	'<!-- parent-close-contract: needs-decomposition -->' \
+	"$WRAPPER_TARGET"
+
+# Exercise inline-body mutation directly. Sourcing defines the helper without
+# invoking any GitHub operations; body-file cleanup is covered by wrapper tests.
+# shellcheck source=/dev/null
+source "$WRAPPER_TARGET"
+_gh_ci_prepare_parent_close_contract 1 --body $'## Phases\n\n- Phase 1 - deliver #101' --label parent-task
+contract_args=$(printf '%s\n' "${_GH_CI_CONTRACT_ARGS[@]}")
+assert_contains "B10e: canonical phase body receives phase-plan contract" \
+	'<!-- parent-close-contract: phase-plan -->' "$contract_args"
+
+_gh_ci_prepare_parent_close_contract 1 --body $'## Children\n\n- #101\n- #102' --label parent-task
+contract_args=$(printf '%s\n' "${_GH_CI_CONTRACT_ARGS[@]}")
+assert_contains "B10f: children body records expected child count" \
+	'<!-- parent-close-contract: expected-children=2 -->' "$contract_args"
+
+_gh_ci_prepare_parent_close_contract 0 --body 'ordinary leaf issue' --label bug
+contract_args=$(printf '%s\n' "${_GH_CI_CONTRACT_ARGS[@]}")
+assert_not_contains "B10g: non-parent issue body remains unstamped" \
+	'<!-- parent-close-contract:' "$contract_args"
+
+_gh_ci_prepare_parent_close_contract 1 --body $'## Children\n\nNo children filed yet.' --label parent-task
+contract_args=$(printf '%s\n' "${_GH_CI_CONTRACT_ARGS[@]}")
+assert_contains "B10h: empty children section remains safe under pipefail" \
+	'<!-- parent-close-contract: needs-decomposition -->' "$contract_args"
+
+assert_grep_fixed \
+	"B10i: close-contract nudge marker varies with the blocking reason" \
+	'<!-- parent-close-contract-incomplete:${_PARENT_CLOSE_CONTRACT_REASON} -->' \
+	"$ACTIONS_TARGET"
 
 # ============================================================
 echo ""

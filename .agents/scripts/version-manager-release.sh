@@ -225,6 +225,10 @@ create_github_release() {
 		fi
 	else
 		# GitHub CLI not available
+		if release_source_pr_required; then
+			print_error "GitHub release publication cannot be verified without authenticated gh CLI access"
+			return 1
+		fi
 		print_warning "GitHub release creation skipped - GitHub CLI not available"
 		print_info "To enable GitHub releases:"
 		print_info "1. Install GitHub CLI: brew install gh (macOS)"
@@ -290,24 +294,22 @@ _create_hotfix_tag() {
 
 	cd "$REPO_ROOT" || return 1
 
-	# Check for existing hotfix tag
-	if git show-ref --tags "$hotfix_tag" &>/dev/null; then
-		print_warning "Hotfix tag $hotfix_tag already exists locally — skipping"
-		return 0
-	fi
-
 	local remote_tag_exit=0
 	git ls-remote -q --exit-code --tags origin "refs/tags/$hotfix_tag" >/dev/null 2>&1 || remote_tag_exit=$?
 	if [ $remote_tag_exit -eq 0 ]; then
-		print_warning "Hotfix tag $hotfix_tag already exists on remote — skipping"
+		print_warning "Hotfix tag $hotfix_tag already exists on remote — propagation complete"
 		return 0
 	fi
 
-	if git tag -a "$hotfix_tag" -m "Hotfix signal: v${version} — triggers immediate runner propagation"; then
-		print_success "Created hotfix signal tag: $hotfix_tag"
+	if git show-ref --tags "$hotfix_tag" &>/dev/null; then
+		print_warning "Hotfix tag $hotfix_tag exists locally but not remotely — retrying propagation"
 	else
-		print_error "Failed to create hotfix signal tag"
-		return 1
+		if git tag -a "$hotfix_tag" -m "Hotfix signal: v${version} — triggers immediate runner propagation"; then
+			print_success "Created hotfix signal tag: $hotfix_tag"
+		else
+			print_error "Failed to create hotfix signal tag"
+			return 1
+		fi
 	fi
 
 	# Push the hotfix tag (the release tag is pushed by push_changes;
@@ -316,8 +318,9 @@ _create_hotfix_tag() {
 	if git push origin "$hotfix_tag" 2>/dev/null; then
 		print_success "Pushed hotfix signal tag: $hotfix_tag"
 	else
-		print_warning "Failed to push hotfix signal tag (non-blocking)"
-		# Non-blocking: the release itself succeeded, just the signal is delayed
+		print_error "Failed to push hotfix signal tag after GitHub release publication"
+		print_info "Recovery: rerun '$0 post-release --hotfix' to retry the idempotent hotfix propagation and local deployment gates"
+		return 1
 	fi
 	return 0
 }
@@ -333,21 +336,54 @@ run_post_release_agent_sync() {
 
 	local deploy_script="${AIDEVOPS_SYNC_DEPLOY_SCRIPT:-$sync_repo_root/.agents/scripts/deploy-agents-on-merge.sh}"
 	if [[ ! -f "$deploy_script" ]]; then
-		print_warning "Post-release sync skipped: deploy script not found at $deploy_script"
-		return 0
+		print_error "Post-release deployment gate cannot run: deploy script not found at $deploy_script"
+		return 1
 	fi
 
 	print_info "Running post-release aidevops agent sync..."
 	local sync_output=""
 	local sync_exit=0
-	sync_output=$(bash "$deploy_script" --repo "$sync_repo_root" --quiet 2>&1) || sync_exit=$?
+	sync_output=$(bash "$deploy_script" --repo "$sync_repo_root" --full --quiet 2>&1) || sync_exit=$?
 
-	if [[ "$sync_exit" -eq 0 || "$sync_exit" -eq 2 ]]; then
-		print_success "Post-release aidevops agent sync completed"
+	if [[ "$sync_exit" -eq 0 ]]; then
+		print_success "Post-release aidevops deployment and CLI convergence completed"
 		return 0
 	fi
 
-	print_warning "Post-release aidevops agent sync failed (non-blocking): $sync_output"
+	print_error "Post-release aidevops deployment or CLI convergence failed: $sync_output"
+	return 1
+}
+
+run_post_publication_gates() {
+	local version="$1"
+	local hotfix_flag="$2"
+	local hotfix_exit=0
+	local deployment_exit=0
+
+	# Publication is already durable at this point. Hotfix propagation must run
+	# before machine-local convergence so a local PATH problem cannot prevent
+	# remote runners receiving the release signal.
+	if [[ "$hotfix_flag" -eq 1 ]]; then
+		_create_hotfix_tag "$version" || hotfix_exit=$?
+	fi
+	run_post_release_agent_sync || deployment_exit=$?
+
+	if [[ "$hotfix_exit" -ne 0 || "$deployment_exit" -ne 0 ]]; then
+		print_error "PARTIAL RELEASE SUCCESS: GitHub release v$version remains published; post-publication gates failed"
+		if [[ "$hotfix_flag" -eq 1 ]]; then
+			if [[ "$hotfix_exit" -eq 0 ]]; then
+				print_info "  Hotfix propagation: completed before local deployment"
+			else
+				print_error "  Hotfix propagation: failed (exit $hotfix_exit)"
+			fi
+		fi
+		if [[ "$deployment_exit" -ne 0 ]]; then
+			print_error "  Local deployment/convergence: failed (exit $deployment_exit)"
+		fi
+		print_info "  Remote tag and GitHub release are retained; repair locally and rerun setup"
+		return 1
+	fi
+
 	return 0
 }
 

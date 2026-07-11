@@ -144,6 +144,10 @@ write_gh_stub_pr_issue_views() {
 	cat >>"${TEST_ROOT}/bin/gh" <<GHSTUB
 
 	if [[ "\$_gh_cmd" == "pr" && "\$_gh_sub" == "view" ]]; then
+	if [[ "\$*" == *"--json state,mergedAt,mergeCommit"* ]]; then
+		echo '{"state":"MERGED","mergedAt":"2026-07-11T00:00:00Z","mergeCommit":{"oid":"merged123sha"}}'
+		exit 0
+	fi
 	if [[ "\$*" == *"--json isDraft,reviewDecision,statusCheckRollup"* ]]; then
 		if [[ "$mode" == "auto-review-required" ]]; then
 			echo '{"isDraft":false,"reviewDecision":"","statusCheckRollup":[{"name":"ci","conclusion":"SUCCESS","status":"COMPLETED"}]}'
@@ -516,7 +520,10 @@ test_graphql_rate_limit_auto_no_rest_fallback() {
 	print_result "GraphQL rate-limit with --auto: merge fails without immediate REST merge" "$((exit_code == 0 ? 1 : 0))"
 
 	local rest_called=0
-	[[ -f "${TEST_ROOT}/logs/gh-api-calls.txt" ]] && rest_called=1
+	if [[ -f "${TEST_ROOT}/logs/gh-api-calls.txt" ]] &&
+		grep -q "repos/testorg/testrepo/pulls/42/merge" "${TEST_ROOT}/logs/gh-api-calls.txt"; then
+		rest_called=1
+	fi
 	print_result "GraphQL rate-limit with --auto: REST fallback not called" "$rest_called"
 
 	return 0

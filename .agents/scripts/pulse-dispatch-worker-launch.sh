@@ -797,6 +797,27 @@ _dlw_restore_worktree_deps() {
 	return 0
 }
 
+_dlw_prepare_existing_worktree() {
+	local existing_path="$1"
+	local repo_path="$2"
+	local existing_status=""
+	existing_status=$(git -C "$existing_path" status --porcelain 2>/dev/null || true)
+	if [[ -n "$existing_status" ]]; then
+		# A same-runner retry must resume staged, unstaged, and untracked edits.
+		# Resetting here destroyed the only useful copy before GH#27138.
+		echo "[dispatch_with_dedup] Preserving dirty existing worktree for same-runner resume: ${existing_path}" >>"$LOGFILE"
+		return 0
+	fi
+
+	# Clean retries restart from the latest default branch.
+	git -C "$existing_path" checkout -- . 2>/dev/null || true
+	git -C "$existing_path" clean -fd 2>/dev/null || true
+	local main_branch=""
+	main_branch=$(git -C "$repo_path" symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's|refs/remotes/origin/||') || main_branch="main"
+	git -C "$existing_path" reset --hard "origin/${main_branch}" 2>/dev/null || true
+	return 0
+}
+
 _dlw_precreate_worktree() {
 	local issue_number="$1"
 	local repo_path="$2"
@@ -829,12 +850,7 @@ _dlw_precreate_worktree() {
 	done < <(git -C "$repo_path" worktree list 2>/dev/null)
 
 	if [[ -n "$_existing_path" ]]; then
-		# Reset to latest main so the worker starts from a clean base
-		git -C "$_existing_path" checkout -- . 2>/dev/null || true
-		git -C "$_existing_path" clean -fd 2>/dev/null || true
-		local _main_branch=""
-		_main_branch=$(git -C "$repo_path" symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's|refs/remotes/origin/||') || _main_branch="main"
-		git -C "$_existing_path" reset --hard "origin/${_main_branch}" 2>/dev/null || true
+		_dlw_prepare_existing_worktree "$_existing_path" "$repo_path"
 		_DLW_WORKTREE_PATH="$_existing_path"
 		_DLW_WORKTREE_BRANCH="$_existing_branch"
 		_DLW_WORKTREE_REUSED=1

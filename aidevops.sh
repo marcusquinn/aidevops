@@ -5,7 +5,7 @@
 # AI DevOps Framework CLI
 # Usage: aidevops <command> [options]
 #
-# Version: 3.32.20
+# Version: 3.32.31
 
 set -euo pipefail
 
@@ -54,8 +54,18 @@ if [[ -n "$_AIDEVOPS_SOURCE_DIR" && -L "$_AIDEVOPS_SOURCE_PATH" ]]; then
 		[[ -n "$_AIDEVOPS_LINK_DIR" ]] && _AIDEVOPS_SOURCE_DIR="$_AIDEVOPS_LINK_DIR"
 	fi
 fi
+_AIDEVOPS_CLI_ROOT="$INSTALL_DIR"
+_AIDEVOPS_CLI_MODULES_SUBDIR=".agents/scripts/aidevops-cli"
 if [[ -n "$_AIDEVOPS_SOURCE_DIR" && -f "$_AIDEVOPS_SOURCE_DIR/.agents/scripts/aidevops-cli/aidevops-repos-lib.sh" ]]; then
 	INSTALL_DIR="$_AIDEVOPS_SOURCE_DIR"
+	_AIDEVOPS_CLI_ROOT="$_AIDEVOPS_SOURCE_DIR"
+elif [[ -n "$_AIDEVOPS_SOURCE_DIR" && -f "$_AIDEVOPS_SOURCE_DIR/scripts/aidevops-cli/aidevops-repos-lib.sh" ]]; then
+	# setup.sh deploys the orchestrator at the agents root and its modules under
+	# scripts/. Keep repository operations pointed at INSTALL_DIR, but load the
+	# CLI and VERSION from this coherent atomic deployment instead of a stale
+	# canonical checkout.
+	_AIDEVOPS_CLI_ROOT="$_AIDEVOPS_SOURCE_DIR"
+	_AIDEVOPS_CLI_MODULES_SUBDIR="scripts/aidevops-cli"
 fi
 unset _AIDEVOPS_SOURCE_PATH _AIDEVOPS_SOURCE_DIR _AIDEVOPS_LINK_TARGET _AIDEVOPS_LINK_DIR
 AGENTS_DIR="$_AIDEVOPS_REAL_HOME/.aidevops/agents"
@@ -63,7 +73,7 @@ CONFIG_DIR="$_AIDEVOPS_REAL_HOME/.config/aidevops"
 REPOS_FILE="$CONFIG_DIR/repos.json"
 # shellcheck disable=SC2034  # Used in fresh install fallback
 REPO_URL="https://github.com/marcusquinn/aidevops.git"
-VERSION_FILE="$INSTALL_DIR/VERSION"
+VERSION_FILE="$_AIDEVOPS_CLI_ROOT/VERSION"
 
 # Portable sed in-place edit (macOS BSD sed vs GNU sed)
 sed_inplace() { if [[ "$(uname)" == "Darwin" ]]; then sed -i '' "$@"; else sed -i "$@"; fi; }
@@ -181,12 +191,11 @@ ensure_trailing_newline() {
 	return 0
 }
 
-# Source CLI implementation modules from the namespaced module tree.
-# INSTALL_DIR is the canonical location of aidevops.sh (set above). Using
-# INSTALL_DIR rather than BASH_SOURCE[0] preserves installed symlink support:
-# /usr/local/bin/aidevops → $INSTALL_DIR/aidevops.sh would otherwise resolve
-# BASH_SOURCE[0] to /usr/local/bin instead of the checkout/deployed tree.
-AIDEVOPS_CLI_MODULES_DIR="${INSTALL_DIR}/.agents/scripts/aidevops-cli"
+# Source CLI implementation modules from the coherent canonical or deployed
+# tree selected above. The launcher executes the deployed orchestrator as a
+# regular file, while local development and package snapshots use .agents/.
+AIDEVOPS_CLI_MODULES_DIR="${_AIDEVOPS_CLI_ROOT}/${_AIDEVOPS_CLI_MODULES_SUBDIR}"
+unset _AIDEVOPS_CLI_ROOT _AIDEVOPS_CLI_MODULES_SUBDIR
 # shellcheck source=.agents/scripts/aidevops-cli/aidevops-repos-lib.sh
 # shellcheck disable=SC1091  # module path resolved at runtime via $INSTALL_DIR
 source "${AIDEVOPS_CLI_MODULES_DIR}/aidevops-repos-lib.sh"
@@ -219,6 +228,7 @@ _run_update_setup() {
 # Update/upgrade command
 cmd_update() {
 	local skip_project_sync=false
+	local reconcile_repo_verify=false
 	local arg
 	for arg in "$@"; do case "$arg" in --skip-project-sync) skip_project_sync=true ;; esac done
 	print_header "Updating AI DevOps Framework"
@@ -266,6 +276,7 @@ cmd_update() {
 					local deployed_sha has_code_drift=0
 					deployed_sha=$(tr -d '[:space:]' <"$stamp_file" 2>/dev/null) || deployed_sha=""
 					if [[ -n "$deployed_sha" && "$deployed_sha" != "$local_hash" ]]; then
+						if _update_repo_verify_files_changed "$deployed_sha" "$local_hash"; then reconcile_repo_verify=true; fi
 						# Per Gemini code-review on PR #20342: use git's path filter +
 						# `grep -q .` to detect drift across the full set of deploy-affecting
 						# paths (not just .agents/ subdirs — also setup.sh, .agents/scripts/setup/modules/,
@@ -307,6 +318,7 @@ cmd_update() {
 			new_version=$(get_version)
 			new_hash=$(git rev-parse HEAD)
 			if [[ "$old_hash" != "$new_hash" ]]; then
+				if _update_repo_verify_files_changed "$old_hash" "$new_hash"; then reconcile_repo_verify=true; fi
 				local total_commits
 				total_commits=$(git rev-list --count "$old_hash..$new_hash" 2>/dev/null || echo "0")
 				if [[ "$total_commits" -gt 0 ]]; then
@@ -341,6 +353,9 @@ cmd_update() {
 	fi
 
 	_update_sync_projects "$skip_project_sync" "$(get_version)"
+	if [[ "$skip_project_sync" != "$_AIDEVOPS_UPDATE_TRUE" && "$reconcile_repo_verify" == "$_AIDEVOPS_UPDATE_TRUE" ]]; then
+		_update_reconcile_repo_verify
+	fi
 	_update_check_homebrew
 	_update_check_planning
 	_update_check_tools
@@ -859,6 +874,7 @@ _help_commands() {
 	echo "  repo-sync <cmd>    Daily git pull for repos in parent dirs (enable/disable/status/dirs)"
 	echo "  update-tools       Check for outdated tools (--update to auto-update)"
 	echo "  repos [cmd]        Manage registered projects (list/add/remove/clean)"
+	echo "  lint [cmd]         Audit/configure native repo lint, format, typecheck, and hooks"
 	echo "  design <cmd>       DESIGN.md detection, scaffolding, and brand guideline exports"
 	echo "  cleanup <cmd>      Cleanup helpers (remote branch audit/delete)"
 	echo "  model-accounts-pool OAuth account pool (list/check/diagnose/add/rotate/reset-cooldowns)"
@@ -1543,6 +1559,7 @@ main() {
 	auto-update | autoupdate) _dispatch_helper "auto-update-helper.sh" "auto-update-helper.sh" "$@" ;;
 	repo-sync | reposync) _dispatch_helper "repo-sync-helper.sh" "repo-sync-helper.sh" "$@" ;;
 	update-tools | tools) cmd_update_tools "$@" ;;
+	lint) _dispatch_helper "lint-helper.sh" "lint-helper.sh" "$@" ;;
 	upgrade-planning | up) cmd_upgrade_planning "$@" ;;
 	repos | projects) cmd_repos "$@" ;;
 	design) _dispatch_helper "design-guidelines-helper.sh" "design-guidelines-helper.sh" "$@" ;;

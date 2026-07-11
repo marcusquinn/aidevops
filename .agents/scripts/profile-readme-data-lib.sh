@@ -37,6 +37,15 @@ if [[ -z "${SCRIPT_DIR:-}" ]]; then
 	unset _lib_path
 fi
 
+PROFILE_EPOCH_DATE="1970-01-01"
+PROFILE_RATE_OPUS="15.0|75.0|1.50"
+PROFILE_RATE_SONNET="3.0|15.0|0.30"
+PROFILE_RATE_GPT="2.50|10.0|0.625"
+PROFILE_RATE_FREE="0.0|0.0|0.0"
+PROFILE_RECENT_MODEL_FILTER="AND timestamp >= strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '-30 days')"
+PROFILE_JSON_ARRAY_TYPE="array"
+PROFILE_EMPTY_TOKEN_TOTALS='{"total_all":0,"cache_hit_pct":0}'
+
 # =============================================================================
 # Format — Number / Hours / Cost / Token Utilities
 # =============================================================================
@@ -116,14 +125,14 @@ _model_cost_rates() {
 	local ms="${model#*/}"
 	ms="${ms%%-202*}"
 	case "$ms" in
-	*opus-4* | *claude-opus*) echo "15.0|75.0|1.50" ;;
-	*sonnet-4* | *claude-sonnet*) echo "3.0|15.0|0.30" ;;
+	*opus-4* | *claude-opus*) echo "$PROFILE_RATE_OPUS" ;;
+	*sonnet-4* | *claude-sonnet*) echo "$PROFILE_RATE_SONNET" ;;
 	*haiku-4* | *haiku-3* | *claude-haiku*) echo "0.80|4.0|0.08" ;;
-	*gpt-5.4*) echo "2.50|10.0|0.625" ;;
-	*gpt-5.3-codex*) echo "2.50|10.0|0.625" ;;
-	*gpt-5.2-codex* | *gpt-5.2*) echo "2.50|10.0|0.625" ;;
-	*gpt-5.1-codex*) echo "2.50|10.0|0.625" ;;
-	*gpt-5.1-chat*) echo "2.50|10.0|0.625" ;;
+	*gpt-5.4*) echo "$PROFILE_RATE_GPT" ;;
+	*gpt-5.3-codex*) echo "$PROFILE_RATE_GPT" ;;
+	*gpt-5.2-codex* | *gpt-5.2*) echo "$PROFILE_RATE_GPT" ;;
+	*gpt-5.1-codex*) echo "$PROFILE_RATE_GPT" ;;
+	*gpt-5.1-chat*) echo "$PROFILE_RATE_GPT" ;;
 	*gpt-4.1-mini*) echo "0.40|1.60|0.10" ;;
 	*gpt-4.1*) echo "2.0|8.0|0.50" ;;
 	*o3*) echo "10.0|40.0|2.50" ;;
@@ -132,9 +141,9 @@ _model_cost_rates() {
 	*gemini-2.5-flash* | *gemini-3-flash*) echo "0.15|0.60|0.0375" ;;
 	*deepseek-r1*) echo "0.55|2.19|0.14" ;;
 	*deepseek-v3*) echo "0.27|1.10|0.07" ;;
-	*grok*) echo "3.0|15.0|0.30" ;;
-	*kimi* | *minimax* | *big-pickle*) echo "0.0|0.0|0.0" ;;
-	*) echo "3.0|15.0|0.30" ;;
+	*grok*) echo "$PROFILE_RATE_SONNET" ;;
+	*kimi* | *minimax* | *big-pickle*) echo "$PROFILE_RATE_FREE" ;;
+	*) echo "$PROFILE_RATE_SONNET" ;;
 	esac
 	return 0
 }
@@ -159,7 +168,8 @@ _compute_model_row_savings() {
 	local cache="$4"
 
 	# Opus rates used as baseline for model routing savings
-	local opus_input_rate="15.0" opus_output_rate="75.0" opus_cache_rate="1.50"
+	local opus_input_rate opus_output_rate opus_cache_rate
+	IFS='|' read -r opus_input_rate opus_output_rate opus_cache_rate <<<"$PROFILE_RATE_OPUS"
 
 	local rates m_input_rate m_output_rate m_cache_rate
 	rates=$(_model_cost_rates "$model")
@@ -200,6 +210,15 @@ _get_session_time() {
 	return 0
 }
 
+# --- Gather all profile AI-session windows in one database aggregation pass ---
+_get_profile_session_times() {
+	local session_json
+	session_json=$("${SCRIPT_DIR}/contributor-activity-helper.sh" session-time \
+		--all-dirs --period profile --format json 2>/dev/null) || session_json='{"day":{"status":"unavailable"},"week":{"status":"unavailable"},"28d":{"status":"unavailable"},"year":{"status":"unavailable"}}'
+	printf '%s\n' "$session_json"
+	return 0
+}
+
 # --- Compute cost from token counts using _model_cost_rates ---
 # Takes JSON array with model/input_tokens/output_tokens/cache_read_tokens,
 # adds cost_total field computed from pricing table, sorts by cost desc.
@@ -234,7 +253,7 @@ _compute_costs_from_tokens() {
 # --- Count model-usage requests in a JSON array ---
 _model_usage_request_count() {
 	local model_json="$1"
-	echo "$model_json" | jq -r 'if type == "array" then ([.[].requests // 0] | add // 0) else 0 end' 2>/dev/null || printf '0\n'
+	echo "$model_json" | jq -r --arg array_type "$PROFILE_JSON_ARRAY_TYPE" 'if type == $array_type then ([.[].requests // 0] | add // 0) else 0 end' 2>/dev/null || printf '0\n'
 	return 0
 }
 
@@ -242,8 +261,8 @@ _model_usage_request_count() {
 _model_usage_undercuts_reference() {
 	local candidate_json="$1"
 	local reference_json="$2"
-	jq -e -n --argjson candidate "${candidate_json:-[]}" --argjson reference "${reference_json:-[]}" '
-		def rows($a): if ($a | type) == "array" then $a else [] end;
+	jq -e -n --argjson candidate "${candidate_json:-[]}" --argjson reference "${reference_json:-[]}" --arg array_type "$PROFILE_JSON_ARRAY_TYPE" '
+		def rows($a): if ($a | type) == $array_type then $a else [] end;
 		(rows($candidate) | INDEX(.model)) as $candidate_by_model
 		| any(rows($reference)[];
 			.model as $model | ($candidate_by_model[$model] // {}) as $candidate_row
@@ -399,11 +418,42 @@ _get_model_usage_from_obs_db() {
 	return 0
 }
 
+# --- Gather model usage from the legacy JSONL metrics fallback ---
+# Usage: _get_model_usage_from_jsonl <30d|all>
+_get_model_usage_from_jsonl() {
+	local period="$1"
+	if [[ ! -f "$METRICS_FILE" ]]; then
+		echo "[]"
+		return 0
+	fi
+	local cutoff="$PROFILE_EPOCH_DATE"
+	if [[ "$period" != "all" ]]; then
+		cutoff=$(date -v-30d +%Y-%m-%d 2>/dev/null || date -d '30 days ago' +%Y-%m-%d 2>/dev/null || echo "$PROFILE_EPOCH_DATE")
+	fi
+	jq -s --arg cutoff "$cutoff" --arg period "$period" '
+		(if $period == "all" then . else [.[] | select(.recorded_at >= $cutoff)] end)
+		| group_by(.model)
+		| map({
+			model: .[0].model,
+			requests: length,
+			input_tokens: ([.[].input_tokens // 0] | add),
+			output_tokens: ([.[].output_tokens // 0] | add),
+			cache_read_tokens: ([.[].cache_read_tokens // 0] | add),
+			cache_write_tokens: ([.[].cache_write_tokens // 0] | add),
+			cost_total: ([.[].cost_total // 0] | add | . * 100 | round / 100)
+		})
+		| sort_by(-.cost_total)
+	' "$METRICS_FILE" 2>/dev/null || echo "[]"
+	return 0
+}
+
 # --- Gather model usage stats ---
-# Usage: _get_model_usage [period]
+# Usage: _get_model_usage [period] [recent-observability-json] [reference-provided]
 #   period: "30d" (default) or "all" (no date filter)
 _get_model_usage() {
 	local period="${1:-30d}"
+	local supplied_recent="${2:-}"
+	local reference_provided="${3:-false}"
 
 	# For "all" period, compare complete local sources and use the one with the
 	# larger request population. This avoids stale OpenCode message JSON causing
@@ -412,9 +462,13 @@ _get_model_usage() {
 	# where observability started later.
 	if [[ "$period" == "all" ]]; then
 		local obs_all_result obs_recent_result oc_result obs_requests oc_requests
-		local recent_filter="AND timestamp >= strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '-30 days')"
+		local recent_filter="$PROFILE_RECENT_MODEL_FILTER"
 		obs_all_result=$(_get_model_usage_from_obs_db "")
-		obs_recent_result=$(_get_model_usage_from_obs_db "$recent_filter")
+		if [[ "$reference_provided" == "true" ]]; then
+			obs_recent_result="$supplied_recent"
+		else
+			obs_recent_result=$(_get_model_usage_from_obs_db "$recent_filter")
+		fi
 		oc_result=$(_get_model_usage_from_opencode)
 		obs_requests=$(_model_usage_request_count "$obs_all_result")
 		oc_requests=$(_model_usage_request_count "$oc_result")
@@ -431,61 +485,39 @@ _get_model_usage() {
 			echo "$oc_result"
 			return 0
 		fi
+		_get_model_usage_from_jsonl "all"
+		return 0
 	fi
 
-	# For 30d or fallback: use observability DB (has accurate cost data).
-	local date_filter=""
-	if [[ "$period" != "all" ]]; then
-		date_filter="AND timestamp >= strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '-30 days')"
-	fi
+	# For 30d: use observability DB (has accurate cost data).
+	local date_filter="$PROFILE_RECENT_MODEL_FILTER"
 
 	local obs_result
 	obs_result=$(_get_model_usage_from_obs_db "$date_filter")
-	if [[ -n "$obs_result" ]]; then
+	if [[ -n "$obs_result" && "$(_model_usage_request_count "$obs_result")" -gt 0 ]]; then
 		echo "$obs_result"
 		return 0
 	fi
 
-	# Legacy fallback: JSONL metrics file.
-	if [[ ! -f "$METRICS_FILE" ]]; then
-		echo "[]"
-		return 0
-	fi
+	_get_model_usage_from_jsonl "$period"
+	return 0
+}
 
-	if [[ "$period" == "all" ]]; then
-		jq -s '
-			group_by(.model)
-			| map({
-				model: .[0].model,
-				requests: length,
-				input_tokens: ([.[].input_tokens // 0] | add),
-				output_tokens: ([.[].output_tokens // 0] | add),
-				cache_read_tokens: ([.[].cache_read_tokens // 0] | add),
-				cache_write_tokens: ([.[].cache_write_tokens // 0] | add),
-				cost_total: ([.[].cost_total // 0] | add | . * 100 | round / 100)
-			})
-			| sort_by(-.cost_total)
-		' "$METRICS_FILE" 2>/dev/null || echo "[]"
+# --- Select both profile model populations without duplicate source scans ---
+# Output: {recent:[...], all:[...]}
+_get_profile_model_usage_bundle() {
+	local recent_filter="$PROFILE_RECENT_MODEL_FILTER"
+	local obs_recent recent_result all_result
+	obs_recent=$(_get_model_usage_from_obs_db "$recent_filter")
+	if [[ -n "$obs_recent" && "$(_model_usage_request_count "$obs_recent")" -gt 0 ]]; then
+		recent_result="$obs_recent"
 	else
-		local cutoff
-		cutoff=$(date -v-30d +%Y-%m-%d 2>/dev/null || date -d '30 days ago' +%Y-%m-%d 2>/dev/null || echo "1970-01-01")
-
-		jq -s --arg cutoff "$cutoff" '
-			[.[] | select(.recorded_at >= $cutoff)]
-			| group_by(.model)
-			| map({
-				model: .[0].model,
-				requests: length,
-				input_tokens: ([.[].input_tokens // 0] | add),
-				output_tokens: ([.[].output_tokens // 0] | add),
-				cache_read_tokens: ([.[].cache_read_tokens // 0] | add),
-				cache_write_tokens: ([.[].cache_write_tokens // 0] | add),
-				cost_total: ([.[].cost_total // 0] | add | . * 100 | round / 100)
-			})
-			| sort_by(-.cost_total)
-		' "$METRICS_FILE" 2>/dev/null || echo "[]"
+		recent_result=$(_get_model_usage_from_jsonl "30d")
 	fi
-
+	[[ -n "$recent_result" ]] || recent_result="[]"
+	all_result=$(_get_model_usage "all" "$obs_recent" "true")
+	[[ -n "$all_result" ]] || all_result="[]"
+	jq -cn --argjson recent "$recent_result" --argjson all "$all_result" '{recent:$recent,all:$all}'
 	return 0
 }
 
@@ -508,9 +540,9 @@ _token_totals_enrich() {
 	jq_totals=$(_token_totals_jq_expr)
 
 	if [[ -n "$raw_json" ]]; then
-		echo "$raw_json" | jq -c "$jq_totals" 2>/dev/null || echo '{"total_all":0,"cache_hit_pct":0}'
+		echo "$raw_json" | jq -c "$jq_totals" 2>/dev/null || echo "$PROFILE_EMPTY_TOKEN_TOTALS"
 	else
-		echo '{"total_all":0,"cache_hit_pct":0}'
+		echo "$PROFILE_EMPTY_TOKEN_TOTALS"
 	fi
 	return 0
 }
@@ -519,6 +551,27 @@ _token_totals_enrich() {
 _token_totals_total_all() {
 	local totals_json="$1"
 	echo "$totals_json" | jq -r '.total_all // 0' 2>/dev/null || printf '0\n'
+	return 0
+}
+
+# --- Derive token totals from an already-selected model usage population ---
+# This keeps table request/cost rows and footer token totals source-consistent.
+_token_totals_from_model_usage() {
+	local model_json="$1"
+	local raw_totals
+	raw_totals=$(printf '%s' "$model_json" | jq -c --arg array_type "$PROFILE_JSON_ARRAY_TYPE" '
+		if type != $array_type then
+			{total_input:0,total_output:0,total_cache_read:0,total_cache_write:0}
+		else
+			{
+				total_input: ([.[].input_tokens // 0] | add // 0),
+				total_output: ([.[].output_tokens // 0] | add // 0),
+				total_cache_read: ([.[].cache_read_tokens // 0] | add // 0),
+				total_cache_write: ([.[].cache_write_tokens // 0] | add // 0)
+			}
+		end
+	' 2>/dev/null || echo '{"total_input":0,"total_output":0,"total_cache_read":0,"total_cache_write":0}')
+	_token_totals_enrich "$raw_totals"
 	return 0
 }
 
@@ -632,7 +685,7 @@ _token_totals_from_jsonl() {
 		' "$METRICS_FILE" 2>/dev/null || { return 1; }
 	else
 		local cutoff
-		cutoff=$(date -v-30d +%Y-%m-%d 2>/dev/null || date -d '30 days ago' +%Y-%m-%d 2>/dev/null || echo "1970-01-01")
+		cutoff=$(date -v-30d +%Y-%m-%d 2>/dev/null || date -d '30 days ago' +%Y-%m-%d 2>/dev/null || echo "$PROFILE_EPOCH_DATE")
 
 		jq -s --arg cutoff "$cutoff" '
 			[.[] | select(.recorded_at >= $cutoff)]
@@ -664,15 +717,15 @@ _get_token_totals() {
 		local best_totals="" best_total=0 candidate_totals candidate_total source
 		for source in obs-db opencode-db jsonl; do
 			case "$source" in
-				obs-db)
-					raw_totals=$(_token_totals_from_obs_db "$period") || continue
-					;;
-				opencode-db)
-					raw_totals=$(_token_totals_from_opencode_db) || continue
-					;;
-				jsonl)
-					raw_totals=$(_token_totals_from_jsonl "$period") || continue
-					;;
+			obs-db)
+				raw_totals=$(_token_totals_from_obs_db "$period") || continue
+				;;
+			opencode-db)
+				raw_totals=$(_token_totals_from_opencode_db) || continue
+				;;
+			jsonl)
+				raw_totals=$(_token_totals_from_jsonl "$period") || continue
+				;;
 			esac
 			candidate_totals=$(_token_totals_enrich "$raw_totals")
 			candidate_total=$(_token_totals_total_all "$candidate_totals")
@@ -700,6 +753,6 @@ _get_token_totals() {
 	}
 
 	# No data source available
-	echo '{"total_all":0,"cache_hit_pct":0}'
+	echo "$PROFILE_EMPTY_TOKEN_TOTALS"
 	return 0
 }

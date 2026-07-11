@@ -19,7 +19,7 @@
 #
 # Dependencies:
 #   - shared-constants.sh (print_error, print_info, log_verbose)
-#   - bash 3.2+, awk, sed, grep
+#   - bash 3.2+, awk, sed, grep; optional rg for faster tree searches
 #
 # Part of aidevops framework: https://aidevops.sh
 
@@ -591,7 +591,11 @@ find_related_files() {
 	# 2. Search for files referencing this task ID in todo/tasks/
 	if [[ -d "$tasks_dir" ]]; then
 		local grep_files
-		grep_files=$(grep -rl "$task_id" "$tasks_dir" || true)
+		if command -v rg >/dev/null 2>&1; then
+			grep_files=$(rg -l -F -- "$task_id" "$tasks_dir" 2>/dev/null || true)
+		else
+			grep_files=$(grep -rlF -- "$task_id" "$tasks_dir" 2>/dev/null || true)
+		fi
 		if [[ -n "$grep_files" ]]; then
 			all_files="${all_files:+$all_files"$'\n'"}$grep_files"
 		fi

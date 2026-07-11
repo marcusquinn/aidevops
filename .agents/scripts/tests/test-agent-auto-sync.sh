@@ -72,7 +72,7 @@ invoke_release_sync() {
 		SYNC_LOG_PATH="$TEST_DIR/sync.log" \
 		MOCK_DEPLOY_EXIT_CODE="${MOCK_DEPLOY_EXIT_CODE:-0}" \
 		bash -c 'source "$1" && run_post_release_agent_sync' _ "$VERSION_HELPER"
-	return 0
+	return $?
 }
 
 create_fake_repo() {
@@ -81,8 +81,8 @@ create_fake_repo() {
 	local repo_path="$TEST_DIR/$repo_name"
 
 	mkdir -p "$repo_path"
-	git init -q "$repo_path"
-	git -C "$repo_path" remote add origin "$remote_url"
+	PATH=/usr/bin:/bin git init -q "$repo_path"
+	PATH=/usr/bin:/bin git -C "$repo_path" remote add origin "$remote_url"
 	printf '%s\n' "$repo_path"
 	return 0
 }
@@ -117,7 +117,7 @@ test_release_sync_triggers_for_aidevops_remote() {
 	repo_path=$(create_fake_repo "release-aidevops" "https://github.com/marcusquinn/aidevops.git")
 	invoke_release_sync "$repo_path"
 
-	if grep -q -- "--repo $repo_path --quiet" "$TEST_DIR/sync.log"; then
+	if grep -q -- "--repo $repo_path --full --quiet" "$TEST_DIR/sync.log"; then
 		print_result "release sync triggers for aidevops remote" 0
 	else
 		print_result "release sync triggers for aidevops remote" 1 "Release sync command was not recorded"
@@ -139,6 +139,18 @@ test_release_sync_skips_other_remotes() {
 	return 0
 }
 
+test_release_sync_propagates_deploy_failure() {
+	: >"$TEST_DIR/sync.log"
+	local repo_path
+	repo_path=$(create_fake_repo "release-failure" "https://github.com/marcusquinn/aidevops.git")
+	if MOCK_DEPLOY_EXIT_CODE=1 invoke_release_sync "$repo_path" >/dev/null 2>&1; then
+		print_result "release sync propagates full deployment failure" 1 "Failure was reported as success"
+	else
+		print_result "release sync propagates full deployment failure" 0
+	fi
+	return 0
+}
+
 main() {
 	echo "Running agent auto-sync regression tests"
 	setup
@@ -147,6 +159,7 @@ main() {
 	test_merge_sync_skips_other_repos
 	test_release_sync_triggers_for_aidevops_remote
 	test_release_sync_skips_other_remotes
+	test_release_sync_propagates_deploy_failure
 
 	teardown
 	trap - EXIT

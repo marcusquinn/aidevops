@@ -4,6 +4,14 @@
 
 set -euo pipefail
 
+export GIT_AUTHOR_NAME="Fixture"
+export GIT_AUTHOR_EMAIL="fixture@example.com"
+export GIT_COMMITTER_NAME="$GIT_AUTHOR_NAME"
+export GIT_COMMITTER_EMAIL="$GIT_AUTHOR_EMAIL"
+export GIT_CONFIG_COUNT=1
+export GIT_CONFIG_KEY_0=commit.gpgsign
+export GIT_CONFIG_VALUE_0=false
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 SOURCE_HELPER="${SCRIPT_DIR}/../profile-readme-helper.sh"
 SOURCE_DATA_LIB="${SCRIPT_DIR}/../profile-readme-data-lib.sh"
@@ -47,6 +55,15 @@ install_helper_with_libs() {
 	chmod +x "${helper_path}"
 	cp "${SOURCE_DATA_LIB}" "${helper_dir}/profile-readme-data-lib.sh"
 	cp "${SOURCE_RENDER_LIB}" "${helper_dir}/profile-readme-render-lib.sh"
+	cp "${SOURCE_HELPER%/*}/portable-stat.sh" \
+		"${SOURCE_HELPER%/*}/screen-time-interval-engine.py" \
+		"${SOURCE_HELPER%/*}/screen_time_interval_common.py" \
+		"${SOURCE_HELPER%/*}/screen_time_macos.py" \
+		"${SOURCE_HELPER%/*}/screen_time_macos_apps.py" \
+		"${SOURCE_HELPER%/*}/screen_time_linux.py" \
+		"${SOURCE_HELPER%/*}/screen_time_linux_logind.py" \
+		"${SOURCE_HELPER%/*}/screen_time_linux_wtmp.py" \
+		"${SOURCE_HELPER%/*}/screen_time_history.py" "$helper_dir/"
 	return 0
 }
 
@@ -70,7 +87,11 @@ EOF
 set -euo pipefail
 
 if [[ "${1:-}" == "session-time" ]]; then
-	printf '%s\n' '{"interactive_human_hours":1.0,"worker_human_hours":2.0,"worker_machine_hours":3.0,"total_human_hours":4.0,"total_machine_hours":5.0,"interactive_sessions":6,"worker_sessions":7}'
+	if [[ " $* " == *" --period profile "* ]]; then
+		printf '%s\n' '{"day":{"interactive_human_hours":1.0,"interactive_machine_hours":1.0,"worker_human_hours":2.0,"worker_machine_hours":3.0,"total_human_hours":3.0,"total_machine_hours":4.0,"interactive_sessions":6,"worker_sessions":7},"week":{"interactive_human_hours":1.0,"interactive_machine_hours":1.0,"worker_human_hours":2.0,"worker_machine_hours":3.0,"total_human_hours":3.0,"total_machine_hours":4.0,"interactive_sessions":6,"worker_sessions":7},"28d":{"interactive_human_hours":1.0,"interactive_machine_hours":1.0,"worker_human_hours":2.0,"worker_machine_hours":3.0,"total_human_hours":3.0,"total_machine_hours":4.0,"interactive_sessions":6,"worker_sessions":7},"year":{"interactive_human_hours":1.0,"interactive_machine_hours":1.0,"worker_human_hours":2.0,"worker_machine_hours":3.0,"total_human_hours":3.0,"total_machine_hours":4.0,"interactive_sessions":6,"worker_sessions":7}}'
+	else
+		printf '%s\n' '{"interactive_human_hours":1.0,"interactive_machine_hours":1.0,"worker_human_hours":2.0,"worker_machine_hours":3.0,"total_human_hours":3.0,"total_machine_hours":4.0,"interactive_sessions":6,"worker_sessions":7}'
+	fi
 else
 	printf '%s\n' '{}'
 fi
@@ -105,9 +126,6 @@ EOF
 
 	git init --bare --initial-branch=main "${remote_repo}" >/dev/null
 	git init -b main "${profile_repo}" >/dev/null
-	git -C "${profile_repo}" config user.name "Fixture"
-	git -C "${profile_repo}" config user.email "fixture@example.com"
-	git -C "${profile_repo}" config commit.gpgsign false
 	git -C "${profile_repo}" remote add origin "${remote_repo}"
 
 	cat >"${profile_repo}/README.md" <<'EOF'
@@ -224,9 +242,6 @@ test_inject_markers_into_existing_readme() {
 	# Create a bare remote and local clone with NO markers
 	git init --bare --initial-branch=main "${fixture_remote}" >/dev/null
 	git init -b main "${fixture_repo}" >/dev/null
-	git -C "${fixture_repo}" config user.name "Fixture"
-	git -C "${fixture_repo}" config user.email "fixture@example.com"
-	git -C "${fixture_repo}" config commit.gpgsign false
 	git -C "${fixture_repo}" remote add origin "${fixture_remote}"
 
 	# Write a user-authored README without any aidevops markers
@@ -310,9 +325,6 @@ test_diverged_history_recovery() {
 	# Create initial remote and local clone with markers
 	git init --bare --initial-branch=main "${fixture_remote}" >/dev/null
 	git init -b main "${fixture_repo}" >/dev/null
-	git -C "${fixture_repo}" config user.name "Fixture"
-	git -C "${fixture_repo}" config user.email "fixture@example.com"
-	git -C "${fixture_repo}" config commit.gpgsign false
 	git -C "${fixture_repo}" remote add origin "${fixture_remote}"
 
 	cat >"${fixture_repo}/README.md" <<'EOF'
@@ -337,9 +349,6 @@ EOF
 	# Push a different initial commit to the new remote (simulating GitHub "Initial commit")
 	local tmp_clone="${TEST_DIR}/tmp-clone"
 	git clone "${fixture_remote}" "${tmp_clone}" 2>/dev/null
-	git -C "${tmp_clone}" config user.name "GitHub"
-	git -C "${tmp_clone}" config user.email "noreply@github.com"
-	git -C "${tmp_clone}" config commit.gpgsign false
 	echo "# fixture" >"${tmp_clone}/README.md"
 	git -C "${tmp_clone}" add README.md
 	git -C "${tmp_clone}" commit -m "Initial commit" >/dev/null
@@ -404,9 +413,6 @@ test_default_template_replaced_with_rich_readme() {
 	# Create a bare remote and local clone with the default GitHub template
 	git init --bare --initial-branch=main "${fixture_remote}" >/dev/null
 	git init -b main "${fixture_repo}" >/dev/null
-	git -C "${fixture_repo}" config user.name "Fixture"
-	git -C "${fixture_repo}" config user.email "fixture@example.com"
-	git -C "${fixture_repo}" config commit.gpgsign false
 	git -C "${fixture_repo}" remote add origin "${fixture_remote}"
 
 	# Write the exact default GitHub profile template
@@ -496,9 +502,6 @@ test_default_template_with_existing_markers_replaced() {
 
 	git init --bare --initial-branch=main "${fixture_remote}" >/dev/null
 	git init -b main "${fixture_repo}" >/dev/null
-	git -C "${fixture_repo}" config user.name "Fixture"
-	git -C "${fixture_repo}" config user.email "fixture@example.com"
-	git -C "${fixture_repo}" config commit.gpgsign false
 	git -C "${fixture_repo}" remote add origin "${fixture_remote}"
 
 	# Simulate Alex's exact case: default GitHub template with markers already
@@ -614,10 +617,10 @@ test_session_time_vars_default_missing_null_values() {
 		return 0
 	fi
 
-	local day_human day_worker day_total day_interactive day_workers
-	local week_human week_worker week_total week_interactive week_workers
-	local month_human month_worker month_total month_interactive month_workers
-	local year_human year_worker year_total year_interactive year_workers
+	local day_human day_interactive_machine day_worker_human day_worker day_total day_interactive day_workers
+	local week_human week_interactive_machine week_worker_human week_worker week_total week_interactive week_workers
+	local month_human month_interactive_machine month_worker_human month_worker month_total month_interactive month_workers
+	local year_human year_interactive_machine year_worker_human year_worker year_total year_interactive year_workers
 	eval "${assignments}"
 	if [[ "${day_human}" != "0.0" || "${day_worker}" != "0.0" || "${day_total}" != "0.0" ]]; then
 		print_result "${test_name}" 1 "missing day hour fields did not default to 0.0"
@@ -627,7 +630,7 @@ test_session_time_vars_default_missing_null_values() {
 		print_result "${test_name}" 1 "missing/null count fields did not default to 0"
 		return 0
 	fi
-	if [[ "${month_human}" != "1.2" || "${month_worker}" != "5.0" || "${month_total}" != "9.0" || "${month_interactive}" != "6" || "${month_workers}" != "7" ]]; then
+	if [[ "${month_human}" != "1.2" || "${month_worker_human}" != "2.0" || "${month_worker}" != "3.0" || "${month_total}" != "9.0" || "${month_interactive}" != "6" || "${month_workers}" != "7" ]]; then
 		print_result "${test_name}" 1 "valid session data rendering changed"
 		return 0
 	fi
@@ -675,17 +678,174 @@ test_work_with_ai_worker_counts_above_thousand() {
 		return 0
 	fi
 
-	if ! grep -qF '| User AI session hours | 1.0h | 10.0h | 100.0h | 100.0h |' "${output_file}"; then
+	if ! grep -qF '| Interactive human attention | 1.0h | 10.0h | 100.0h | 100.0h |' "${output_file}"; then
 		print_result "${test_name}" 1 "user AI session hours were not limited to attended interactive time"
 		return 0
 	fi
 
-	if grep -qF '| User AI session hours | 1.5h | 11.5h | 123.4h | 123.4h |' "${output_file}"; then
+	if grep -qF '| Interactive human attention | 1.5h | 11.5h | 123.4h | 123.4h |' "${output_file}"; then
 		print_result "${test_name}" 1 "user AI session hours still include AI generation time"
 		return 0
 	fi
 
 	print_result "${test_name}" 0
+	return 0
+}
+
+test_work_with_ai_unavailable_is_not_zero() {
+	local test_name="work with AI renders collector failures as unavailable"
+	TEST_DIR=$(mktemp -d)
+	mkdir -p "${TEST_DIR}/home"
+	# shellcheck source=../profile-readme-data-lib.sh
+	source "${SOURCE_DATA_LIB}"
+	# shellcheck source=../profile-readme-render-lib.sh
+	source "${SOURCE_RENDER_LIB}"
+	local screen_json unavailable_json output_file
+	screen_json='{"today_hours":null,"week_hours":null,"month_hours":null,"year_hours":null,"periods":{"day":{"status":"unavailable"},"week":{"status":"unavailable"},"month":{"status":"unavailable"},"year":{"status":"unavailable"}}}'
+	unavailable_json='{"status":"unavailable"}'
+	output_file="${TEST_DIR}/unavailable.md"
+	HOME="${TEST_DIR}/home" _generate_work_with_ai_table "$screen_json" "$unavailable_json" "$unavailable_json" "$unavailable_json" "$unavailable_json" >"$output_file"
+	if ! grep -qF '| Screen time' "$output_file" || ! grep -qF '| unavailable | unavailable | unavailable | unavailable |' "$output_file"; then
+		print_result "$test_name" 1 "unavailable cells were not visibly rendered"
+		return 0
+	fi
+	if grep -qF 'unavailableh' "$output_file"; then
+		print_result "$test_name" 1 "unavailable status was formatted as a numeric hour value"
+		return 0
+	fi
+	print_result "$test_name" 0
+	return 0
+}
+
+test_screen_json_paths_are_optional_and_fail_visibly() {
+	local test_name="screen JSON paths are optional and invalid payloads remain visibly unavailable"
+	TEST_DIR=$(mktemp -d)
+	# shellcheck source=../profile-readme-render-lib.sh
+	source "$SOURCE_RENDER_LIB"
+	local assignments screen_today screen_status screen_source
+	assignments=$(_generate_screen_time_vars '{}')
+	eval "$assignments"
+	if [[ "$screen_today" != "$PROFILE_STATUS_UNAVAILABLE" || "$screen_status" != "$PROFILE_STATUS_UNAVAILABLE" || "$screen_source" != "$PROFILE_STATUS_UNAVAILABLE" ]]; then
+		print_result "$test_name" 1 "missing paths were not rendered unavailable: ${assignments}"
+		return 0
+	fi
+	local warning_file="${TEST_DIR}/screen-warning"
+	assignments=$(_generate_screen_time_vars 'not-json' 2>"$warning_file")
+	eval "$assignments"
+	if [[ "$screen_status" != "$PROFILE_STATUS_UNAVAILABLE" || "$screen_source" != "$PROFILE_STATUS_UNAVAILABLE" ]] ||
+		! grep -qF 'screen-time payload is invalid' "$warning_file"; then
+		print_result "$test_name" 1 "malformed screen payload failure was not visible"
+		return 0
+	fi
+	print_result "$test_name" 0
+	return 0
+}
+
+test_top_apps_batches_jq_processing() {
+	local test_name="top-app rendering batches jq processing"
+	TEST_DIR=$(mktemp -d)
+	# shellcheck source=../profile-readme-render-lib.sh
+	source "$SOURCE_RENDER_LIB"
+	local db_path="${TEST_DIR}/knowledgeC.db"
+	local now core_now
+	now=$(date +%s)
+	core_now=$((now - 978307200))
+	sqlite3 "$db_path" "
+		CREATE TABLE ZOBJECT (ZSTREAMNAME TEXT,ZCREATIONDATE REAL,ZVALUEINTEGER INTEGER,ZSTARTDATE REAL,ZENDDATE REAL,ZVALUESTRING TEXT);
+		WITH RECURSIVE rows(i) AS (SELECT 1 UNION ALL SELECT i+1 FROM rows WHERE i < 10)
+		INSERT INTO ZOBJECT (ZSTREAMNAME,ZSTARTDATE,ZENDDATE,ZVALUESTRING)
+		SELECT '/app/usage', ${core_now} - i*600, ${core_now} - i*600 + 300, 'fixture.app.' || i FROM rows;"
+	local real_jq wrapper_dir count_file
+	real_jq=$(command -v jq)
+	wrapper_dir="${TEST_DIR}/bin"
+	count_file="${TEST_DIR}/jq-count"
+	mkdir -p "$wrapper_dir"
+	cat >"${wrapper_dir}/jq" <<EOF
+#!/usr/bin/env bash
+printf '1\n' >>"${count_file}"
+exec "${real_jq}" "\$@"
+EOF
+	chmod +x "${wrapper_dir}/jq"
+	local result
+	result=$(
+		uname() { printf '%s\n' Darwin; }
+		SCRIPT_DIR="${SOURCE_RENDER_LIB%/*}"
+		PATH="${wrapper_dir}:${PATH}"
+		export SCRIPT_DIR PATH
+		AIDEVOPS_KNOWLEDGE_DB="$db_path" AIDEVOPS_SCREEN_TIME_NOW_EPOCH="$now" _get_top_apps
+	)
+	local jq_calls app_count
+	jq_calls=$(wc -l <"$count_file" | tr -d ' ')
+	app_count=$(printf '%s' "$result" | "$real_jq" -r 'length')
+	if [[ "$jq_calls" -gt 2 || "$app_count" != "10" ]]; then
+		print_result "$test_name" 1 "expected 10 apps with at most two jq processes, apps=${app_count} jq_calls=${jq_calls}"
+		return 0
+	fi
+	print_result "$test_name" 0
+	return 0
+}
+
+test_profile_update_lock_is_bounded() {
+	local test_name="profile update lock uses portable mtime and remains token-owned, race-safe, and stale-recoverable"
+	TEST_DIR=$(mktemp -d)
+	local result
+	result=$(
+		set -- help
+		# shellcheck source=../profile-readme-helper.sh
+		source "$SOURCE_HELPER" >/dev/null
+		HOME="${TEST_DIR}/home"
+		export HOME
+		local delegated_mtime
+		delegated_mtime=$(
+			_file_mtime_epoch() { printf '%s\n' 1234567890; }
+			_profile_lock_mtime "${TEST_DIR}/delegation-probe"
+		)
+		if [[ "$delegated_mtime" != "1234567890" ]]; then
+			printf '%s\n' portable-mtime-not-used
+			return 0
+		fi
+		_acquire_profile_update_lock
+		local owner_token="$PROFILE_UPDATE_LOCK_TOKEN"
+		if HOME="$HOME" bash -c 'set -- help; source "$1" >/dev/null; _acquire_profile_update_lock' _ "$SOURCE_HELPER" 2>/dev/null; then
+			printf '%s\n' overlap-accepted
+			return 0
+		fi
+		PROFILE_UPDATE_LOCK_TOKEN="not-the-owner"
+		if _release_profile_update_lock 2>/dev/null; then
+			printf '%s\n' non-owner-released
+			return 0
+		fi
+		local lock_dir
+		lock_dir=$(_profile_update_lock_dir)
+		[[ -d "$lock_dir" ]] || {
+			printf '%s\n' lock-lost
+			return 0
+		}
+		PROFILE_UPDATE_LOCK_TOKEN="$owner_token"
+		_release_profile_update_lock
+
+		# A fresh PID-less directory receives a grace period rather than deletion.
+		mkdir -p "$lock_dir"
+		PROFILE_UPDATE_LOCK_GRACE_SECONDS=60
+		if _acquire_profile_update_lock 2>/dev/null; then
+			printf '%s\n' pidless-grace-bypassed
+			return 0
+		fi
+		PROFILE_UPDATE_LOCK_GRACE_SECONDS=0
+		_acquire_profile_update_lock
+		local recovered_token="$PROFILE_UPDATE_LOCK_TOKEN"
+		[[ -n "$recovered_token" && "$recovered_token" != "$owner_token" ]] || {
+			printf '%s\n' token-not-unique
+			return 0
+		}
+		printf '%s\n' stale-recovered
+		_release_profile_update_lock
+	)
+	if [[ "$result" != "stale-recovered" ]]; then
+		print_result "$test_name" 1 "unexpected lock result: ${result}"
+		return 0
+	fi
+	print_result "$test_name" 0
 	return 0
 }
 
@@ -777,31 +937,149 @@ test_all_time_token_totals_prefers_largest_population() {
 	return 0
 }
 
+test_token_totals_from_selected_model_population_are_equivalent() {
+	local test_name="selected model population derives equivalent token totals"
+	local model_json expected actual
+	model_json='[
+		{"model":"one","requests":2,"input_tokens":100,"output_tokens":20,"cache_read_tokens":300,"cache_write_tokens":10,"cost_total":1},
+		{"model":"two","requests":3,"input_tokens":50,"output_tokens":30,"cache_read_tokens":100,"cache_write_tokens":5,"cost_total":2}
+	]'
+	expected=$(_token_totals_enrich '{"total_input":150,"total_output":50,"total_cache_read":400,"total_cache_write":15}')
+	actual=$(_token_totals_from_model_usage "$model_json")
+	if [[ "$(printf '%s' "$actual" | jq -S -c .)" != "$(printf '%s' "$expected" | jq -S -c .)" ]]; then
+		print_result "$test_name" 1 "expected=${expected} actual=${actual}"
+		return 0
+	fi
+	print_result "$test_name" 0
+	return 0
+}
+
+test_profile_model_bundle_scans_each_population_once() {
+	local test_name="profile model bundle scans each required population once"
+	TEST_DIR=$(mktemp -d)
+	local calls_file="${TEST_DIR}/model-source-calls"
+	_get_model_usage_from_obs_db() {
+		local date_filter="${1:-}"
+		if [[ -n "$date_filter" ]]; then
+			printf '%s\n' recent >>"$calls_file"
+			printf '%s\n' '[{"model":"obs","requests":2,"input_tokens":20,"output_tokens":2,"cache_read_tokens":200,"cache_write_tokens":1,"cost_total":1}]'
+		else
+			printf '%s\n' all >>"$calls_file"
+			printf '%s\n' '[{"model":"obs","requests":5,"input_tokens":50,"output_tokens":5,"cache_read_tokens":500,"cache_write_tokens":2,"cost_total":2}]'
+		fi
+		return 0
+	}
+	_get_model_usage_from_opencode() {
+		printf '%s\n' opencode >>"$calls_file"
+		printf '%s\n' '[{"model":"obs","requests":4,"input_tokens":40,"output_tokens":4,"cache_read_tokens":400,"cache_write_tokens":2,"cost_total":2}]'
+		return 0
+	}
+	_get_model_usage_from_jsonl() {
+		local period="$1"
+		printf 'jsonl-%s\n' "$period" >>"$calls_file"
+		printf '%s\n' '[]'
+		return 0
+	}
+
+	local bundle recent_total all_total
+	bundle=$(_get_profile_model_usage_bundle)
+	recent_total=$(_token_totals_from_model_usage "$(printf '%s' "$bundle" | jq -c '.recent')")
+	all_total=$(_token_totals_from_model_usage "$(printf '%s' "$bundle" | jq -c '.all')")
+	if [[ "$(grep -c '^recent$' "$calls_file" || true)" != "1" ||
+	"$(grep -c '^all$' "$calls_file" || true)" != "1" ||
+	"$(grep -c '^opencode$' "$calls_file" || true)" != "1" ||
+	"$(grep -c '^jsonl-' "$calls_file" || true)" != "0" ]]; then
+		print_result "$test_name" 1 "unexpected source calls: $(tr '\n' ' ' <"$calls_file")"
+		return 0
+	fi
+	if [[ "$(printf '%s' "$recent_total" | jq -r '.total_all')" != "223" ||
+	"$(printf '%s' "$all_total" | jq -r '.total_all')" != "557" ]]; then
+		print_result "$test_name" 1 "derived totals mismatch recent=${recent_total} all=${all_total}"
+		return 0
+	fi
+	: >"$calls_file"
+	_get_model_usage_from_obs_db() {
+		local date_filter="${1:-}"
+		[[ -n "$date_filter" ]] && printf '%s\n' recent-empty >>"$calls_file" || printf '%s\n' all-empty >>"$calls_file"
+		printf '%s\n' '[]'
+		return 0
+	}
+	_get_model_usage_from_opencode() {
+		printf '%s\n' opencode-empty >>"$calls_file"
+		printf '%s\n' '[]'
+		return 0
+	}
+	_get_model_usage_from_jsonl() {
+		local period="$1"
+		printf 'jsonl-%s\n' "$period" >>"$calls_file"
+		printf '[{"model":"fallback-%s","requests":1,"input_tokens":1,"output_tokens":1,"cache_read_tokens":1,"cache_write_tokens":0,"cost_total":1}]\n' "$period"
+		return 0
+	}
+	bundle=$(_get_profile_model_usage_bundle)
+	if [[ "$(printf '%s' "$bundle" | jq -r '.recent[0].model')" != "fallback-30d" ||
+	"$(printf '%s' "$bundle" | jq -r '.all[0].model')" != "fallback-all" ||
+	"$(grep -c '^jsonl-' "$calls_file" || true)" != "2" ]]; then
+		print_result "$test_name" 1 "fallback selection changed: calls=$(tr '\n' ' ' <"$calls_file") bundle=${bundle}"
+		return 0
+	fi
+	: >"$calls_file"
+	_get_model_usage_from_jsonl() {
+		local period="$1"
+		printf 'jsonl-empty-%s\n' "$period" >>"$calls_file"
+		printf '%s\n' '[]'
+		return 0
+	}
+	bundle=$(_get_profile_model_usage_bundle)
+	if [[ "$(printf '%s' "$bundle" | jq -r '.recent | length')" != "0" ||
+	"$(printf '%s' "$bundle" | jq -r '.all | length')" != "0" ||
+	"$(grep -c '^jsonl-empty-' "$calls_file" || true)" != "2" ]]; then
+		print_result "$test_name" 1 "empty fallback should remain empty only after JSONL check: calls=$(tr '\n' ' ' <"$calls_file") bundle=${bundle}"
+		return 0
+	fi
+	print_result "$test_name" 0
+	return 0
+}
+
 main() {
+	local mode="${1:-all}"
 	if [[ ! -x "${SOURCE_HELPER}" ]]; then
 		echo "Helper script not found or not executable: ${SOURCE_HELPER}" >&2
 		return 1
 	fi
 
-	test_update_preserves_manual_sections
-	teardown
-	test_inject_markers_into_existing_readme
-	teardown
-	test_diverged_history_recovery
-	teardown
-	test_default_template_replaced_with_rich_readme
-	teardown
-	test_default_template_with_existing_markers_replaced
-	teardown
+	if [[ "$mode" != "--unit-only" ]]; then
+		test_update_preserves_manual_sections
+		teardown
+		test_inject_markers_into_existing_readme
+		teardown
+		test_diverged_history_recovery
+		teardown
+		test_default_template_replaced_with_rich_readme
+		teardown
+		test_default_template_with_existing_markers_replaced
+		teardown
+	fi
 	test_session_time_vars_default_missing_null_values
 	teardown
 	test_work_with_ai_worker_counts_above_thousand
+	teardown
+	test_work_with_ai_unavailable_is_not_zero
+	teardown
+	test_screen_json_paths_are_optional_and_fail_visibly
+	teardown
+	test_top_apps_batches_jq_processing
+	teardown
+	test_profile_update_lock_is_bounded
 	teardown
 	test_all_time_model_usage_prefers_larger_complete_source
 	teardown
 	test_model_usage_undercut_handles_missing_candidate_model
 	teardown
 	test_all_time_token_totals_prefers_largest_population
+	teardown
+	test_token_totals_from_selected_model_population_are_equivalent
+	teardown
+	test_profile_model_bundle_scans_each_population_once
 	teardown
 
 	echo ""

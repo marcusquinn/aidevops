@@ -148,6 +148,12 @@ fail_output=$("$HELPER" "$CONF" 2>&1)
 fail_rc=$?
 assert_rc "valid SARIF above threshold fails" "1" "$fail_rc"
 assert_contains "threshold failure remains blocking" "Qlty smell regression" "$fail_output"
+assert_contains "threshold failure emits machine-readable remediation evidence" \
+	'QLTY_REMEDIATION_EVIDENCE={"schema":"aidevops.qlty-remediation.v1","actual":3,"threshold":2,"deficit":1' \
+	"$fail_output"
+assert_contains "threshold failure attributes file distribution" '"file":"b.py","count":2' "$fail_output"
+assert_contains "threshold failure keeps new PR smells blocking" "New PR smells remain blocking" "$fail_output"
+assert_contains "threshold failure rejects baseline inflation" "Do not raise QLTY_SMELL_THRESHOLD" "$fail_output"
 
 echo ""
 if [[ "$TESTS_FAILED" -eq 0 ]]; then

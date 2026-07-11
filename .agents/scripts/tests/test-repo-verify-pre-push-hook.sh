@@ -92,13 +92,13 @@ _mk_repo() {
 	_dir=$(mktemp -d -t aidevops-prepush-test.XXXXXX)
 	(
 		cd "$_dir" || exit 1
-		git init -q
-		git config user.email "test@example.com"
-		git config user.name "Test"
-		git config commit.gpgsign false
+		/usr/bin/git init -q
+		/usr/bin/git config user.email "test@example.com"
+		/usr/bin/git config user.name "Test"
+		/usr/bin/git config commit.gpgsign false
 		printf 'placeholder\n' >.gitkeep
-		git add .gitkeep
-		git commit -q -m 'initial'
+		/usr/bin/git add .gitkeep
+		/usr/bin/git commit -q -m 'initial'
 	) >/dev/null
 	printf '%s\n' "$_dir"
 	return 0
@@ -119,7 +119,7 @@ _run_hook() {
 		env -u FULL_LOOP_HEADLESS -u AIDEVOPS_HEADLESS -u OPENCODE_HEADLESS \
 			-u AIDEVOPS_PREPUSH_AUTOFIX -u AIDEVOPS_PREPUSH_REPO_VERIFY \
 			-u AIDEVOPS_PREPUSH_REPO_VERIFY_DEBUG -u GITHUB_ACTIONS \
-			$@ bash "$HOOK" </dev/null
+			PATH="/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin" $@ bash "$HOOK" </dev/null
 	) 2>"$_err"
 	_ec=$?
 	printf '%s\n' "$_ec"
@@ -176,7 +176,7 @@ echo "${TEST_BLUE}=== test-repo-verify-pre-push-hook.sh (t3224) ===${TEST_NC}"
 	cat >"$repo/.aidevops.json" <<'JSON'
 { "verify": { "enabled": false, "format": "false" } }
 JSON
-	(cd "$repo" && git add .aidevops.json && git commit -q -m 'add config')
+	(cd "$repo" && /usr/bin/git add .aidevops.json && /usr/bin/git commit -q -m 'add config')
 	out=$(_run_hook "$repo")
 	ec=$(printf '%s' "$out" | head -n 1)
 	stderr=$(printf '%s' "$out" | tail -n +2)
@@ -191,7 +191,7 @@ JSON
 	cat >"$repo/.aidevops.json" <<'JSON'
 { "verify": { "format": "true" } }
 JSON
-	(cd "$repo" && git add .aidevops.json && git commit -q -m 'add config')
+	(cd "$repo" && /usr/bin/git add .aidevops.json && /usr/bin/git commit -q -m 'add config')
 	out=$(_run_hook "$repo")
 	ec=$(printf '%s' "$out" | head -n 1)
 	stderr=$(printf '%s' "$out" | tail -n +2)
@@ -206,7 +206,7 @@ JSON
 	cat >"$repo/.aidevops.json" <<'JSON'
 { "verify": { "format": "false" } }
 JSON
-	(cd "$repo" && git add .aidevops.json && git commit -q -m 'add config')
+	(cd "$repo" && /usr/bin/git add .aidevops.json && /usr/bin/git commit -q -m 'add config')
 	out=$(_run_hook "$repo" AIDEVOPS_PREPUSH_AUTOFIX=0)
 	ec=$(printf '%s' "$out" | head -n 1)
 	stderr=$(printf '%s' "$out" | tail -n +2)
@@ -226,7 +226,7 @@ JSON
 { "verify": { "format": "test ! -f .needs-fmt", "format_fix": "rm -f .needs-fmt" } }
 JSON
 	touch "$repo/.needs-fmt"
-	(cd "$repo" && git add .aidevops.json .needs-fmt && git commit -q -m 'add config + sentinel')
+	(cd "$repo" && /usr/bin/git add .aidevops.json .needs-fmt && /usr/bin/git commit -q -m 'add config + sentinel')
 	out=$(_run_hook "$repo" AIDEVOPS_PREPUSH_AUTOFIX=1)
 	ec=$(printf '%s' "$out" | head -n 1)
 	stderr=$(printf '%s' "$out" | tail -n +2)
@@ -235,19 +235,19 @@ JSON
 	rm -rf "$repo"
 }
 
-# Test 9: package.json + pnpm-lock.yaml → 'pnpm run format'
+# Test 9: package.json + pnpm-lock.yaml → 'pnpm run lint'
 {
 	repo=$(_mk_repo)
 	cat >"$repo/package.json" <<'JSON'
-{ "name": "fixture", "scripts": { "format": "false" } }
+{ "name": "fixture", "scripts": { "lint": "false" } }
 JSON
 	touch "$repo/pnpm-lock.yaml"
-	(cd "$repo" && git add . && git commit -q -m 'add pkg + lock')
+	(cd "$repo" && /usr/bin/git add . && /usr/bin/git commit -q -m 'add pkg + lock')
 	# Use debug to surface 'pm=pnpm' in stderr
 	out=$(_run_hook "$repo" AIDEVOPS_PREPUSH_REPO_VERIFY_DEBUG=1 AIDEVOPS_PREPUSH_AUTOFIX=0)
 	stderr=$(printf '%s' "$out" | tail -n +2)
-	assert_contains '9. package.json + pnpm-lock → pm=pnpm' 'pm=pnpm' "$stderr"
-	assert_contains '9b. package.json → "pnpm run format" command echoed' 'pnpm run format' "$stderr"
+	assert_contains '9. package.json + pnpm-lock → pm=pnpm' 'package-json(pnpm)' "$stderr"
+	assert_contains '9b. package.json → "pnpm run lint" command echoed' 'pnpm run lint' "$stderr"
 	rm -rf "$repo"
 }
 
@@ -256,13 +256,13 @@ JSON
 	repo=$(_mk_repo)
 	cat >"$repo/package.json" <<'JSON'
 { "name": "fixture", "scripts": {
-	"format": "false",
+	"format:check": "false",
 	"format:fix": "echo USED_COLON",
 	"format_fix": "echo USED_UNDER"
 } }
 JSON
 	touch "$repo/pnpm-lock.yaml"
-	(cd "$repo" && git add . && git commit -q -m 'add pkg')
+	(cd "$repo" && /usr/bin/git add . && /usr/bin/git commit -q -m 'add pkg')
 	# AUTOFIX=1 + failing format → hook should invoke format_fix. We expect
 	# 'USED_COLON' (preferred), not 'USED_UNDER'.
 	out=$(_run_hook "$repo" AIDEVOPS_PREPUSH_AUTOFIX=1 AIDEVOPS_PREPUSH_REPO_VERIFY_DEBUG=1)
@@ -283,7 +283,7 @@ JSON
 name = "fixture"
 version = "0.0.1"
 TOML
-	(cd "$repo" && git add Cargo.toml && git commit -q -m 'add cargo')
+	(cd "$repo" && /usr/bin/git add Cargo.toml && /usr/bin/git commit -q -m 'add cargo')
 	out=$(_run_hook "$repo" AIDEVOPS_PREPUSH_REPO_VERIFY_DEBUG=1 AIDEVOPS_PREPUSH_AUTOFIX=0)
 	stderr=$(printf '%s' "$out" | tail -n +2)
 	assert_contains '11. Cargo.toml → defaults RUST_CARGO matched' 'defaults(RUST_CARGO)' "$stderr"
@@ -296,7 +296,7 @@ TOML
 	cat >"$repo/.aidevops.json" <<'JSON'
 { "verify": { "typecheck": "false" } }
 JSON
-	(cd "$repo" && git add .aidevops.json && git commit -q -m 'add config')
+	(cd "$repo" && /usr/bin/git add .aidevops.json && /usr/bin/git commit -q -m 'add config')
 	# AUTOFIX=1 — but the hook still must NOT invoke an autofix for typecheck.
 	out=$(_run_hook "$repo" AIDEVOPS_PREPUSH_AUTOFIX=1)
 	ec=$(printf '%s' "$out" | head -n 1)
@@ -321,7 +321,7 @@ JSON
 	cat >"$repo/.aidevops.json" <<'JSON'
 { "verify": { "format": "true" } }
 JSON
-	(cd "$repo" && git add .aidevops.json && git commit -q -m 'add config')
+	(cd "$repo" && /usr/bin/git add .aidevops.json && /usr/bin/git commit -q -m 'add config')
 	# Leave an uncommitted file behind to dirty the WT
 	printf 'untracked\n' >"$repo/.dirty"
 	out=$(_run_hook "$repo")

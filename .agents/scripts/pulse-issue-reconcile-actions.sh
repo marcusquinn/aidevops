@@ -299,51 +299,159 @@ _Detected by \`_try_close_parent_tracker\` (pulse-issue-reconcile.sh, t2786). Po
 	return 0
 }
 
+# Machine-readable parent close-contract result. The predicate below resets
+# these globals on every call so callers can explain and repair an incomplete
+# contract without reparsing the body.
+_PARENT_CLOSE_CONTRACT_REASON=""
+_PARENT_CLOSE_CONTRACT_DECLARED=0
+_PARENT_CLOSE_CONTRACT_UNFILED=""
+
+_parent_comments_api_path() {
+	local slug="$1" parent_num="$2"
+	printf 'repos/%s/issues/%s/comments\n' "$slug" "$parent_num"
+	return 0
+}
+
 #######################################
-# t2786 / GH#20871 / t3544: compose the unfiled-phases note that the
-# parent-close path appends to its closing comment. Returns "" on
-# stdout when there is no `## Phases` section, no parent body, or no
-# unfiled rows. Otherwise returns a multi-line note listing each
-# unfiled phase and a count.
+# Decide whether deterministic parent-body evidence blocks closure.
+# Backward compatibility is deliberate: legacy parents with no contract and
+# no unchecked criteria remain closable once every known child is terminal.
 #
-# Counting is over the structured parser's row output (see
-# _parse_phases_section in shared-phase-filing.sh). Each row is
-# `phase_num\tdescription\tmarker\tchild_ref`. Rows whose 4th tab
-# field (child_ref) is empty are unfiled.
+# Recognised contracts:
+#   - canonical ## Phases rows (every row must contain a child reference)
+#   - <!-- parent-close-contract: expected-children=N -->
+#   - <!-- parent-close-contract: complete -->
+#   - <!-- parent-close-contract: needs-decomposition|keep-open -->
+# Unchecked Markdown task-list criteria also block closure.
 #
-# IMPORTANT: do NOT compute unfiled count as `_declared_count - child_count`.
-# child_count is a union over graph + body + prose extractors and may
-# include children sourced outside `## Phases`. Counting unfiled rows
-# directly from the phases section keeps the count and the listed
-# phases in sync (Gemini review of PR #22605, t3544).
-#
-# Args: $1=parent_body, $2=parent_num, $3=slug, $4=child_count (for log)
-# Output: composed note (possibly empty) on stdout
-# Returns: 0 always
+# Args: $1=parent_body, $2=known_child_count
+# Returns: 0=incomplete, 1=complete or legacy-unknown
 #######################################
-_compose_unfiled_phases_note() {
-	local parent_body="$1" parent_num="$2" slug="$3" child_count="$4"
-	[[ -n "$parent_body" ]] || return 0
+_parent_close_contract_incomplete() {
+	local parent_body="$1"
+	local known_child_count="${2:-0}"
+	_PARENT_CLOSE_CONTRACT_REASON=""
+	_PARENT_CLOSE_CONTRACT_DECLARED=0
+	_PARENT_CLOSE_CONTRACT_UNFILED=""
+	[[ -n "$parent_body" ]] || return 1
 
-	local _phases_section
-	_phases_section=$(_parse_phases_section "$parent_body")
-	[[ -n "$_phases_section" ]] || return 0
+	local phases_section="" unfiled_count=0
+	phases_section=$(_parse_phases_section "$parent_body")
+	if [[ -n "$phases_section" ]]; then
+		_PARENT_CLOSE_CONTRACT_DECLARED=$(printf '%s\n' "$phases_section" | \
+			awk -F'\t' '$1 ~ /^[0-9]+$/ { c++ } END { print c+0 }')
+		_PARENT_CLOSE_CONTRACT_UNFILED=$(printf '%s\n' "$phases_section" | \
+			awk -F'\t' '$1 ~ /^[0-9]+$/ && $4 == "" { printf "Phase %s: %s\n", $1, $2 }')
+		unfiled_count=$(printf '%s\n' "$phases_section" | \
+			awk -F'\t' '$1 ~ /^[0-9]+$/ && $4 == "" { c++ } END { print c+0 }')
+		if [[ "$unfiled_count" -gt 0 ]]; then
+			_PARENT_CLOSE_CONTRACT_REASON="unfiled-phases"
+			return 0
+		fi
+	fi
 
-	local _declared_count="" _unfiled_phases="" _unfiled_count=""
-	_declared_count=$(printf '%s\n' "$_phases_section" | safe_grep_count -E '^[0-9]+	')
-	_unfiled_phases=$(printf '%s\n' "$_phases_section" | \
-		awk -F'\t' '$1 ~ /^[0-9]+$/ && $4 == "" { printf "- Phase %s: %s\n", $1, $2 }')
-	_unfiled_count=$(printf '%s\n' "$_phases_section" | \
-		awk -F'\t' '$1 ~ /^[0-9]+$/ && $4 == "" { c++ } END { print c+0 }')
-	[[ "$_unfiled_count" -gt 0 ]] || return 0
+	local expected_children=""
+	expected_children=$(printf '%s\n' "$parent_body" | \
+		sed -nE 's/.*<!-- parent-close-contract: expected-children=([0-9]+) -->.*/\1/p' | head -n1)
+	if [[ "$expected_children" =~ ^[0-9]+$ ]] && [[ "$known_child_count" -lt "$expected_children" ]]; then
+		_PARENT_CLOSE_CONTRACT_REASON="expected-children:${expected_children}"
+		return 0
+	fi
 
-	# shellcheck disable=SC2016
-	# Single quotes intentional: literal markdown backticks around `## Phases`
-	# must be preserved in the output — no shell expansion is intended.
-	printf '\n\n**Note:** %s declared phase(s) remain unfiled:\n\n%s\nRe-open this parent and file additional phase children if more work is planned. The `## Phases` section is a roadmap, not a contract — closing here reflects that all *filed* children are done.' \
-		"$_unfiled_count" "$_unfiled_phases"
+	if [[ "$parent_body" == *"<!-- parent-close-contract: phase-plan -->"* && \
+		"$_PARENT_CLOSE_CONTRACT_DECLARED" -eq 0 ]]; then
+		_PARENT_CLOSE_CONTRACT_REASON="invalid-phase-plan"
+		return 0
+	fi
+	if [[ "$parent_body" == *"<!-- parent-close-contract: needs-decomposition -->"* || \
+		"$parent_body" == *"<!-- parent-close-contract: keep-open -->"* ]]; then
+		_PARENT_CLOSE_CONTRACT_REASON="needs-decomposition"
+		return 0
+	fi
+	if printf '%s\n' "$parent_body" | grep -qE '^[[:space:]]*[-*][[:space:]]+\[[[:space:]]\]'; then
+		_PARENT_CLOSE_CONTRACT_REASON="unchecked-criteria"
+		return 0
+	fi
 
-	echo "[pulse-wrapper] Reconcile parent-task: closing #${parent_num} in ${slug} with unfiled-phases note — declared ${_declared_count} phases, ${_unfiled_count} unfiled, ${child_count} children counted (t3544)" >>"${LOGFILE:-/dev/null}"
+	return 1
+}
+
+#######################################
+# Post a one-time worker-ready explanation for a non-phase close-contract
+# failure. The caller supplies the marker so open-parent nudges and closed-
+# parent repairs each remain independently idempotent.
+# Args: $1=slug, $2=parent_num, $3=reason, $4=marker
+# Returns: 0=posted, 1=already present or API/comment failure
+#######################################
+_post_parent_close_contract_nudge() {
+	local slug="$1" parent_num="$2" reason="$3" marker="$4"
+	local existing="" comments_api=""
+	comments_api=$(_parent_comments_api_path "$slug" "$parent_num")
+	existing=$(gh api --paginate "$comments_api" \
+		--jq ".[] | select(.body | contains(\"${marker}\")) | .id" \
+		2>/dev/null | wc -l | tr -d ' ') || existing=""
+	[[ "$existing" =~ ^[0-9]+$ ]] || return 1
+	[[ "$existing" -eq 0 ]] || return 1
+
+	local guidance="Complete the declared decomposition and update the parent close contract before closure."
+	case "$reason" in
+	expected-children:*)
+		guidance="Link all ${reason#expected-children:} expected child issues, then rerun reconciliation."
+		;;
+	unchecked-criteria)
+		guidance="Resolve or check every remaining parent acceptance criterion, then rerun reconciliation."
+		;;
+	invalid-phase-plan)
+		guidance="Rewrite the phase plan in canonical list or bold phase form and link each filed child."
+		;;
+	esac
+
+	local comment_body="${marker}
+## Parent Tracker: Close Contract Incomplete
+
+Reconciliation found deterministic evidence that this parent objective is not complete (${reason}). The parent remains open so declared work is not lost.
+
+**Recovery:** ${guidance}
+
+_Posted once by parent close-contract reconciliation._"
+	gh_issue_comment "$parent_num" --repo "$slug" --body "$comment_body" >/dev/null 2>&1 || return 1
+	return 0
+}
+
+_mark_parent_needs_decomposition() {
+	local slug="$1" parent_num="$2"
+	if declare -F gh_issue_edit_safe >/dev/null 2>&1; then
+		gh_issue_edit_safe "$parent_num" --repo "$slug" \
+			--add-label "needs-maintainer-review" >/dev/null 2>&1 || true
+	else
+		gh issue edit "$parent_num" --repo "$slug" \
+			--add-label "needs-maintainer-review" >/dev/null 2>&1 || true
+	fi
+	return 0
+}
+
+#######################################
+# Reopen a recently closed parent only when deterministic close-contract
+# evidence proves that closure was premature. The repair marker makes retries
+# no-ops even if another automation closes the parent again.
+# Args: $1=slug, $2=parent_num, $3=reason
+# Returns: 0=reopened, 1=already repaired or API failure
+#######################################
+_repair_closed_parent_contract() {
+	local slug="$1" parent_num="$2" reason="$3"
+	local marker='<!-- parent-close-contract-repaired -->'
+	local existing="" comments_api=""
+	comments_api=$(_parent_comments_api_path "$slug" "$parent_num")
+	existing=$(gh api --paginate "$comments_api" \
+		--jq ".[] | select(.body | contains(\"${marker}\")) | .id" \
+		2>/dev/null | wc -l | tr -d ' ') || existing=""
+	[[ "$existing" =~ ^[0-9]+$ ]] || return 1
+	[[ "$existing" -eq 0 ]] || return 1
+
+	gh issue reopen "$parent_num" --repo "$slug" >/dev/null 2>&1 || return 1
+	_post_parent_close_contract_nudge "$slug" "$parent_num" "$reason" "$marker" || true
+	_mark_parent_needs_decomposition "$slug" "$parent_num"
+	echo "[pulse-wrapper] Reconcile parent-task: reopened #${parent_num} in ${slug} — incomplete close contract (${reason})" >>"${LOGFILE:-/dev/null}"
 	return 0
 }
 
@@ -353,11 +461,7 @@ _compose_unfiled_phases_note() {
 # threshold and makes the close decision independently testable.
 #
 # Returns 0 if the parent was closed, 1 if skipped (no known children,
-# any child still open, or close call failed). When the parent body
-# declares more phases in `## Phases` than have been filed, the closing
-# comment is augmented with an unfiled-phases note instead of blocking
-# the close (t3544 — pre-t3544 behaviour silently rotted single-filed
-# parents like #22371 / #22372).
+# any child still open, incomplete close contract, or close call failed).
 _try_close_parent_tracker() {
 	local slug="$1" parent_num="$2" child_nums="$3" child_source="$4" parent_body="${5:-}"
 	local all_closed="true" child_summary="" child_count=0
@@ -406,19 +510,27 @@ _try_close_parent_tracker() {
 	# one real child issue (Gemini review of PR #22605, t3544).
 	[[ "$all_closed" == "true" && "$child_count" -gt 0 ]] || return 1
 
-	# t2786 / GH#20871 / t3544: declared-vs-filed augmentation —
-	# delegated to _compose_unfiled_phases_note to keep this function
-	# under the 100-line shell-complexity gate. Returns "" when there
-	# is no `## Phases` section, no parent body, or no unfiled rows.
-	local _unfiled_note=""
-	_unfiled_note=$(_compose_unfiled_phases_note "$parent_body" "$parent_num" "$slug" "$child_count")
+	if _parent_close_contract_incomplete "$parent_body" "$child_count"; then
+		if [[ "$_PARENT_CLOSE_CONTRACT_REASON" == "unfiled-phases" ]]; then
+			_post_parent_phases_unfiled_nudge "$slug" "$parent_num" \
+				"$_PARENT_CLOSE_CONTRACT_DECLARED" "$child_count" \
+				"$_PARENT_CLOSE_CONTRACT_UNFILED" || true
+		else
+			_post_parent_close_contract_nudge "$slug" "$parent_num" \
+				"$_PARENT_CLOSE_CONTRACT_REASON" \
+				"<!-- parent-close-contract-incomplete:${_PARENT_CLOSE_CONTRACT_REASON} -->" || true
+		fi
+		_mark_parent_needs_decomposition "$slug" "$parent_num"
+		echo "[pulse-wrapper] Reconcile parent-task: kept #${parent_num} open in ${slug} — incomplete close contract (${_PARENT_CLOSE_CONTRACT_REASON})" >>"${LOGFILE:-/dev/null}"
+		return 1
+	fi
 
 	gh issue close "$parent_num" --repo "$slug" \
-		--comment "## All filed child tasks completed — closing parent tracker
+		--comment "## All declared child tasks completed — closing parent tracker
 
 ${child_summary}
 
-All ${child_count} filed child issue(s) are resolved. Parent tracker closed automatically.${_unfiled_note}
+All ${child_count} declared child issue(s) are resolved and the parent close contract is complete. Parent tracker closed automatically.
 
 _Detected by reconcile_completed_parent_tasks (pulse-issue-reconcile.sh)._" \
 		>/dev/null 2>&1 || return 1
@@ -712,27 +824,47 @@ _action_oimp_single() {
 _SP_CPT_CLOSED=0
 _SP_CPT_NUDGED=0
 _SP_CPT_ESCALATED=0
+_SP_CPT_REOPENED=0
+
+_repair_recently_closed_parent() {
+	local slug="$1" issue_num="$2" issue_body="$3" known_child_count="$4"
+	local issue_state="$5"
+	case "$issue_state" in
+	CLOSED | closed) ;;
+	*) return 1 ;;
+	esac
+	if _parent_close_contract_incomplete "$issue_body" "$known_child_count"; then
+		if _repair_closed_parent_contract "$slug" "$issue_num" \
+			"$_PARENT_CLOSE_CONTRACT_REASON"; then
+			_SP_CPT_REOPENED=1
+		fi
+	fi
+	return 0
+}
 
 #######################################
 # Stage 4 action: reconcile a parent-task issue (close/nudge/escalate).
 # (Per-issue body of reconcile_completed_parent_tasks — no slug loop.)
 #
-# Sets _SP_CPT_CLOSED / _SP_CPT_NUDGED / _SP_CPT_ESCALATED globals (each 0|1)
+# Sets _SP_CPT_CLOSED / _SP_CPT_NUDGED / _SP_CPT_ESCALATED /
+# _SP_CPT_REOPENED globals (each 0|1)
 # to communicate which actions were taken. Caller reads and resets these.
 #
 # Args:
 #   $1=slug, $2=issue_num, $3=issue_title, $4=issue_body
 #   $5=can_close (1|0), $6=can_nudge (1|0), $7=can_escalate (1|0)
-#   $8=escalation_threshold_hours
+#   $8=escalation_threshold_hours, $9=issue_state (OPEN|CLOSED)
 # Returns: 0 always (action outcomes via globals)
 #######################################
 _action_cpt_single() {
 	local slug="$1" issue_num="$2" issue_title="$3" issue_body="$4"
 	local can_close="${5:-0}" can_nudge="${6:-0}" can_escalate="${7:-0}"
 	local escalation_threshold_hours="${8:-168}"
+	local issue_state="${9:-OPEN}"
 	_SP_CPT_CLOSED=0
 	_SP_CPT_NUDGED=0
 	_SP_CPT_ESCALATED=0
+	_SP_CPT_REOPENED=0
 
 	# Child detection (GH#20872): UNION of (graph, body, prose) sources, not
 	# first-non-empty-wins (the pre-GH#20872 behaviour). Real-world parent
@@ -769,6 +901,16 @@ _action_cpt_single() {
 	child_nums=$(printf '%s\n%s\n%s\n' "$_g_nums" "$_b_nums" "$_p_nums" \
 		| grep -E '^[0-9]+$' | sort -un | grep -v "^${issue_num}$" || true)
 	local child_source="${_src_parts:-none}"
+	local known_child_count=0
+	known_child_count=$(printf '%s\n' "$child_nums" | \
+		awk '$0 ~ /^[0-9]+$/ { c++ } END { print c+0 }')
+
+	# Recently closed parents are repair candidates only when deterministic
+	# body evidence proves that the close contract remains incomplete.
+	if _repair_recently_closed_parent "$slug" "$issue_num" "$issue_body" \
+		"$known_child_count" "$issue_state"; then
+		return 0
+	fi
 
 	if [[ -z "$child_nums" ]]; then
 		# No children — try phase extractor, then nudge/escalate (t2771/t2388/t2442)

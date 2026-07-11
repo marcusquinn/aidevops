@@ -624,11 +624,103 @@ cmd_logs() {
 }
 
 cmd_complete() {
-	load_state 2>/dev/null || true
+	load_state 2>/dev/null || {
+		print_error "Cannot complete full loop without persisted lifecycle state"
+		return 1
+	}
+	if [[ ! "${PR_NUMBER:-}" =~ ^[0-9]+$ ]]; then
+		print_error "Cannot complete full loop without a verified PR number"
+		return 1
+	fi
+	local current_root=""
+	current_root=$(git rev-parse --show-toplevel 2>/dev/null || true)
+	print_warning "LIFECYCLE_STATE=DEPLOYED cleanup remains pending for ${current_root:-unknown-worktree}"
+	print_info "After guarded cleanup, run: full-loop-helper.sh complete-after-cleanup ${PR_NUMBER} '${current_root}'"
+	return 1
+}
+
+_full_loop_resolve_repo() {
+	local repo_arg="${1:-}"
+	if [[ -n "$repo_arg" ]]; then
+		printf '%s\n' "$repo_arg"
+		return 0
+	fi
+	repo_arg=$(gh repo view --json nameWithOwner --jq '.nameWithOwner' 2>/dev/null || true)
+	[[ -n "$repo_arg" ]] || return 1
+	printf '%s\n' "$repo_arg"
+	return 0
+}
+
+_full_loop_verify_merged_pr() {
+	local pr_number="$1"
+	local repo="$2"
+	local pr_json=""
+	pr_json=$(gh pr view "$pr_number" --repo "$repo" --json state,mergedAt,mergeCommit 2>/dev/null) || return 1
+	printf '%s' "$pr_json" | jq -e '
+		(.state == "MERGED")
+		and ((.mergedAt // "") != "")
+		and ((.mergeCommit.oid // "") != "")
+	' >/dev/null
+	return $?
+}
+
+_full_loop_verify_aidevops_release_deploy() {
+	local repo="$1"
+	[[ "$repo" == "marcusquinn/aidevops" ]] || return 0
+	local repo_root=""
+	repo_root=$(git rev-parse --show-toplevel 2>/dev/null || true)
+	local version=""
+	[[ -n "$repo_root" && -f "${repo_root}/VERSION" ]] && IFS= read -r version <"${repo_root}/VERSION"
+	[[ -n "$version" ]] || return 1
+	git ls-remote --exit-code --tags origin "refs/tags/v${version}" >/dev/null 2>&1 || return 1
+	gh release view "v${version}" --repo "$repo" >/dev/null 2>&1 || return 1
+	local deployed_version=""
+	[[ -f "${HOME}/.aidevops/agents/VERSION" ]] && IFS= read -r deployed_version <"${HOME}/.aidevops/agents/VERSION"
+	[[ "$deployed_version" == "$version" ]] || return 1
+	local postflight="${SCRIPT_DIR}/postflight-check.sh"
+	[[ -x "$postflight" ]] || return 1
+	bash "$postflight" --quick >/dev/null 2>&1 || return 1
+	return 0
+}
+
+_full_loop_verify_cleanup_audit() {
+	local removed_worktree="$1"
+	local cleanup_log="${AIDEVOPS_CLEANUP_LOG:-${HOME}/.aidevops/logs/cleanup_worktrees.log}"
+	[[ -f "$cleanup_log" ]] || return 1
+	grep -Fq "worktree-removed: ${removed_worktree} —" "$cleanup_log"
+	return $?
+}
+
+cmd_complete_after_cleanup() {
+	local pr_number="${1:-}"
+	local removed_worktree="${2:-}"
+	local repo=""
+	[[ "$pr_number" =~ ^[0-9]+$ && -n "$removed_worktree" ]] || {
+		print_error "Usage: full-loop-helper.sh complete-after-cleanup <PR> <removed-worktree-path> [REPO]"
+		return 1
+	}
+	repo=$(_full_loop_resolve_repo "${3:-}") || {
+		print_error "Cannot resolve repository for completion evidence"
+		return 1
+	}
+	if [[ -e "$removed_worktree" ]] || git worktree list --porcelain 2>/dev/null | grep -Fq "worktree ${removed_worktree}"; then
+		print_error "LIFECYCLE_STATE=CLEANUP_PENDING worktree=${removed_worktree}"
+		return 1
+	fi
+	_full_loop_verify_cleanup_audit "$removed_worktree" || {
+		print_error "Completion blocked: no removal audit evidence for ${removed_worktree}"
+		return 1
+	}
+	_full_loop_verify_merged_pr "$pr_number" "$repo" || {
+		print_error "Completion blocked: PR #${pr_number} lacks merged evidence"
+		return 1
+	}
+	_full_loop_verify_aidevops_release_deploy "$repo" || {
+		print_error "Completion blocked: release, deployment, or postflight evidence is missing"
+		return 1
+	}
 	printf "\n${BOLD}${GREEN}=== FULL DEVELOPMENT LOOP - COMPLETE ===${NC}\n"
-	printf "Task: done | Preflight: passed | PR: #%s | Postflight: healthy" "${PR_NUMBER:-unknown}"
-	is_aidevops_repo && printf " | Deploy: done"
-	printf "\n\n"
-	rm -f "$STATE_FILE"
+	printf "PR: #%s | Lifecycle: CLEANED\n\n" "$pr_number"
 	echo "<promise>FULL_LOOP_COMPLETE</promise>"
-} # nice — entire dev lifecycle in one pass
+	return 0
+}

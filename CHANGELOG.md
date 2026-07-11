@@ -10,6 +10,98 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.32.31] - 2026-07-11
+
+### Changed
+
+- Fix profile stats reliability and refresh efficiency (#27141)
+
+### Fixed
+
+- converge CLI after full-loop releases (#27159)
+
+## [3.32.30] - 2026-07-11
+
+### Changed
+
+- feat: close autonomous Qlty remediation loop (#27160)
+
+### Fixed
+
+- preserve unmanaged lint hooks during reconciliation (#27157)
+
+## [3.32.29] - 2026-07-11
+
+### Changed
+
+- Maintenance: sync ref:GH#27144 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#27139 to TODO.md [skip ci]
+
+### Fixed
+
+- defer canonical lint policy migration (#27142)
+
+## [3.32.28] - 2026-07-11
+
+### Changed
+
+- feat: provision repository lint policy (#27136)
+
+## [3.32.27] - 2026-07-11
+
+### Changed
+
+- resolve task identity from linked issues (#27127)
+- Maintenance: sync ref:GH#27133 to TODO.md [skip ci]
+- Keep incomplete parent roadmaps open (#27128)
+
+### Fixed
+
+- harden parent close contracts (#27132)
+
+## [3.32.26] - 2026-07-11
+
+### Changed
+
+- fix: resolve TODO tasks from closing issue refs (#27131)
+
+## [3.32.25] - 2026-07-11
+
+### Changed
+
+- Version bump and maintenance updates
+
+
+## [3.32.24] - 2026-07-11
+
+### Changed
+
+- Performance: prefer scoped ripgrep for tree searches (#27125)
+- Maintenance: sync ref:GH#27123 to TODO.md [skip ci]
+
+## [3.32.23] - 2026-07-11
+
+### Changed
+
+- stop runaway file-size debt issue creation (#27118)
+
+## [3.32.22] - 2026-07-11
+
+### Changed
+
+- chore: record runtime safety smell baseline (#27117)
+- Maintenance: sync ref:GH#27116 to TODO.md [skip ci]
+
+## [3.32.21] - 2026-07-11
+
+### Changed
+
+- Maintenance: update simplification state registry
+- Refactor: split headless runtime launch helpers (#27068)
+- feat: add runtime-neutral safety contracts (#27063)
+- Refactor: reduce quality feedback test complexity (#27065)
+- improve human-attention learning reliability (#27064)
+
 ## [3.32.20] - 2026-07-11
 
 ### Changed

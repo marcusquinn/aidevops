@@ -46,6 +46,7 @@ assert_b603_annotated() {
 assert_b603_annotated ".agents/scripts/session-miner/extract.py" "subprocess.run(  # nosec B603"
 assert_b603_annotated ".agents/scripts/session_tail_query.py" "subprocess.run(  # nosec B603"
 assert_b603_annotated ".agents/scripts/vault-crypto-helper.py" "subprocess.Popen(  # nosec B603"
+assert_b603_annotated ".agents/scripts/screen_time_linux.py" "subprocess.run(  # nosec B603"
 
 printf '\nTests run: %s\n' "$TESTS_RUN"
 if [[ "$TESTS_FAILED" -ne 0 ]]; then

@@ -1125,6 +1125,10 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [ ] t18091 Install aidevops CLI independently of release worktrees #auto-dispatch #bug ref:GH#27057
 
+- [ ] t18094 Provision repository lint configuration through init and update #feat ref:GH#27123
+
+- [ ] t18096 Treat canonical lint policy deferrals as safe skips #auto-dispatch #bug ref:GH#27139
+
 ## In Progress
 
 - [x] t2744 raise GraphQL throttle defaults and reduce pulse/stats cycle pressure — circuit breaker default `0.05`→`0.30` (trips at 1500 remaining instead of 250), REST fallback default `10`→`1000` (REST takes over earlier, GraphQL kept in reserve), pulse interval default `120s`→`180s`, stats-wrapper interval `900s`→`3600s`. Also fixes macOS launchd path that ignored `supervisor.pulse_interval_seconds` from settings. Evidence: GraphQL=0/5000 vs REST=4044/5000 with 21 EXHAUSTED events in current pulse log; per-cycle cost (~400-700 pts) × 30 cycles/hr × 14 repos exceeds 5000/hr ceiling by 2-4×. All env-overridable, fully backwards-compatible. See `todo/tasks/t2744-brief.md`. #framework #pulse #interactive ~1h ref:GH#20482 started:2026-04-22 pr:#20483 completed:2026-04-22
@@ -4484,3 +4488,27 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [ ] t18091 Install aidevops CLI independently of release worktrees #auto-dispatch #bug ref:GH#27057
 
 - [ ] t18092 Canonicalize workload model tiers #enhancement #framework ref:GH#27059
+
+- [ ] t18093 Record runtime safety Qlty baseline #bug #quality #interactive #no-auto-dispatch ~1h tier:simple ref:GH#27116 logged:2026-07-11 -> [todo/tasks/t18093-brief.md]
+
+- [ ] t18094 Provision repository lint configuration through init and update #enhancement ref:GH#27123
+
+- [ ] t18095 Close the autonomous Qlty remediation loop #auto-dispatch #bug #quality ref:GH#27133
+
+- [ ] t18096 Treat canonical lint policy deferrals as safe skips #auto-dispatch #bug ref:GH#27139
+
+- [ ] t18097 Enforce evidence-backed full-loop lifecycle #bug #enhancement #framework #security ref:GH#27144
+
+- [ ] t18098 Prevent worktree infrastructure markers from breaking worker ownership transfer #auto-dispatch #bug #framework #pulse #reliability ref:GH#27164
+
+- [ ] t18099 Make dispatch claim-to-worker handoff an atomic expiring lease #auto-dispatch #bug #framework #pulse #reliability ref:GH#27165
+
+- [ ] t18102 Deploy CLI, agents, and plugins as one atomic version bundle #auto-dispatch #bug #framework #reliability ref:GH#27168
+
+- [ ] t18101 Repair terminal CI failures in place on existing PR branches #auto-dispatch #bug #framework #pulse #reliability ref:GH#27167
+
+- [ ] t18100 Normalize issue dependencies before dispatch eligibility #auto-dispatch #bug #framework #pulse #reliability ref:GH#27166
+
+- [ ] t18104 Automate failure-family remediation and human-gate revalidation #auto-dispatch #enhancement #framework #observability #pulse ref:GH#27170
+
+- [ ] t18103 Reconcile stale objectives with expiring assumptions and durable recovery #auto-dispatch #enhancement #framework #pulse #reliability ref:GH#27169

@@ -60,40 +60,26 @@ install_aidevops_cli() {
 
 	# Use INSTALL_DIR (repo root, exported by setup.sh) — not BASH_SOURCE[0]
 	# which resolves to .agents/scripts/setup/modules/ when sourced from setup.sh.
-	local cli_source="${INSTALL_DIR:?INSTALL_DIR not set}/aidevops.sh"
-	local cli_target="/usr/local/bin/aidevops"
+	local cli_source="${INSTALL_DIR:?INSTALL_DIR not set}/bin/aidevops"
+	local orchestrator_source="$INSTALL_DIR/aidevops.sh"
+	local deployed_cli="${AGENTS_DIR:?AGENTS_DIR not set}/aidevops.sh"
+	local convergence_helper="${INSTALL_DIR}/.agents/scripts/aidevops-cli-converge-helper.sh"
+	local deployed_version="${AGENTS_DIR}/VERSION"
 
-	if [[ ! -f "$cli_source" ]]; then
-		print_warning "aidevops.sh not found at $cli_source - skipping CLI installation"
-		return 0
+	if [[ ! -f "$cli_source" || ! -f "$orchestrator_source" || ! -x "$convergence_helper" ]]; then
+		print_warning "aidevops CLI sources not found under $INSTALL_DIR - skipping CLI installation"
+		return 1
 	fi
 
-	# Check if we can write to /usr/local/bin
-	if [[ -w "/usr/local/bin" ]]; then
-		# Install a standalone entrypoint. Symlinking here makes the command depend
-		# on the release worktree or temporary checkout that happened to run setup.
-		_install_aidevops_cli_copy "$cli_source" "$cli_target"
-		print_success "Installed aidevops command to $cli_target"
-	elif [[ -w "$HOME/.local/bin" ]] || mkdir -p "$HOME/.local/bin" 2>/dev/null; then
-		# Use ~/.local/bin instead
-		cli_target="$HOME/.local/bin/aidevops"
-		_install_aidevops_cli_copy "$cli_source" "$cli_target"
-		print_success "Installed aidevops command to $cli_target"
-
-		# Check if ~/.local/bin is in PATH and add it if not
-		if [[ ":$PATH:" != *":$HOME/.local/bin:"* ]]; then
-			add_local_bin_to_path
-		fi
-	else
-		# Need sudo
-		print_info "Installing aidevops command requires sudo..."
-		if _install_aidevops_cli_copy "$cli_source" "$cli_target" true; then
-			print_success "Installed aidevops command to $cli_target"
-		else
-			print_warning "Could not install aidevops command globally"
-			print_info "You can run it directly: $cli_source"
-		fi
+	# When no global launcher exists and /usr/local/bin is not writable, the
+	# helper uses ~/.local/bin. Prepare current and future shell PATHs before its
+	# required command-resolution gate. Never do this to hide a stale global.
+	if [[ ! -e /usr/local/bin/aidevops && ! -w /usr/local/bin && ":$PATH:" != *":$HOME/.local/bin:"* ]]; then
+		add_local_bin_to_path
 	fi
+	AIDEVOPS_CLI_NON_INTERACTIVE="${NON_INTERACTIVE:-true}" \
+		"$convergence_helper" converge "$cli_source" "$orchestrator_source" "$deployed_cli" "$deployed_version" || return 1
+	print_success "Installed and verified aidevops CLI command"
 
 	return 0
 }

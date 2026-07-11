@@ -40,6 +40,61 @@ fi
 #
 # Usage: full-loop-helper.sh pre-merge-gate <PR_NUMBER> [REPO]
 # Exit codes: 0 = safe to merge, 1 = gate failed (do NOT merge)
+_full_loop_verify_pr_readiness() {
+	local pr_number="$1"
+	local repo="$2"
+	local pr_json=""
+
+	pr_json=$(gh pr view "$pr_number" --repo "$repo" \
+		--json state,isDraft,reviewDecision,headRefOid,headRefName 2>/dev/null) || {
+		print_error "Cannot read PR #${pr_number} readiness evidence"
+		return 1
+	}
+
+	if ! printf '%s' "$pr_json" | jq -e '
+		def up(v): (v // "" | ascii_upcase);
+		(.state == "OPEN")
+		and (.isDraft != true)
+		and (up(.reviewDecision) != "CHANGES_REQUESTED")
+		and ((.headRefOid // "") != "")
+	' >/dev/null; then
+		print_error "PR #${pr_number} is not remotely verified: require OPEN, non-draft, no changes requested, and a stable head"
+		return 1
+	fi
+
+	local required_checks=""
+	local required_rc=0
+	required_checks=$(gh pr checks "$pr_number" --repo "$repo" \
+		--required --json name,state,bucket 2>/dev/null) || required_rc=$?
+	if [[ -z "$required_checks" ]] || ! printf '%s' "$required_checks" | jq -e '
+		(type == "array")
+		and ([.[] | select((.bucket // "") != "pass")] | length) == 0
+	' >/dev/null; then
+		print_error "PR #${pr_number} required checks are not terminal-success (gh exit ${required_rc})"
+		return 1
+	fi
+
+	local verified_head=""
+	verified_head=$(printf '%s' "$pr_json" | jq -r '.headRefOid // empty')
+	local pr_head_ref=""
+	pr_head_ref=$(printf '%s' "$pr_json" | jq -r '.headRefName // empty')
+	local local_branch=""
+	local_branch=$(git branch --show-current 2>/dev/null || true)
+	if [[ -n "$local_branch" && "$local_branch" == "$pr_head_ref" ]]; then
+		local local_head=""
+		local_head=$(git rev-parse HEAD 2>/dev/null || true)
+		if [[ -z "$local_head" || "$local_head" != "$verified_head" ]]; then
+			print_error "PR #${pr_number} head drifted from the current worktree; push or refresh review evidence before merge"
+			return 1
+		fi
+	fi
+
+	FULL_LOOP_VERIFIED_PR_HEAD_SHA="$verified_head"
+	export FULL_LOOP_VERIFIED_PR_HEAD_SHA
+	print_success "Remote PR evidence verified at head ${verified_head}; required checks are terminal-success"
+	return 0
+}
+
 cmd_pre_merge_gate() {
 	local pr_number="${1:-}"
 	local repo="${2:-}"
@@ -58,6 +113,8 @@ cmd_pre_merge_gate() {
 		fi
 	fi
 
+	_full_loop_verify_pr_readiness "$pr_number" "$repo" || return 1
+
 	local rbg_helper="${SCRIPT_DIR}/review-bot-gate-helper.sh"
 	if [[ ! -f "$rbg_helper" ]]; then
 		# Fallback to deployed location
@@ -65,8 +122,8 @@ cmd_pre_merge_gate() {
 	fi
 
 	if [[ ! -f "$rbg_helper" ]]; then
-		print_warning "review-bot-gate-helper.sh not found — skipping gate (degraded mode)"
-		return 0
+		print_error "review-bot-gate-helper.sh not found — refusing an unreviewed merge"
+		return 1
 	fi
 
 	print_info "Running review bot gate for PR #${pr_number} in ${repo}..."

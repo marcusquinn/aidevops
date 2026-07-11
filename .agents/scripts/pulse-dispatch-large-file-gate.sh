@@ -315,9 +315,8 @@ _large_file_gate_resolve_full_path() {
 # reduced the file below threshold. Returns:
 #   0 — "continuation is valid" (file now under threshold OR measurement
 #       unavailable; caller should emit the continuation reference)
-#   1 — "continuation is phantom" (file still over threshold; caller should
-#       fall through to create a fresh debt issue, and this helper has
-#       already logged the skip to $LOGFILE)
+#   1 — file still over threshold; caller should reopen the canonical debt
+#       issue, and this helper has already logged the decision to $LOGFILE
 #
 # t2169: When the issue carries the `simplification-incomplete` label
 # (applied by the Simplification Outcome Check workflow when a merged PR
@@ -342,7 +341,7 @@ _large_file_gate_verify_prior_reduced_size() {
 		_sc_labels=$(gh_issue_view "$existing_issue" --repo "$repo_slug" \
 			--json labels --jq '[.labels[].name] | join(",")' 2>/dev/null) || _sc_labels=""
 		if [[ ",$_sc_labels," == *",simplification-incomplete,"* ]]; then
-			echo "[pulse-wrapper] Large-file gate: prior issue #${existing_issue} has simplification-incomplete label; filing fresh debt (outcome-check short-circuit) (t2169)" >>"$LOGFILE"
+			echo "[pulse-wrapper] Large-file gate: prior issue #${existing_issue} has simplification-incomplete label; reopening canonical debt issue (outcome-check short-circuit)" >>"$LOGFILE"
 			return 1
 		fi
 	fi
@@ -365,9 +364,8 @@ _large_file_gate_verify_prior_reduced_size() {
 		return 0
 	fi
 	if [[ "$_verify_lines" -ge "$LARGE_FILE_LINE_THRESHOLD" ]]; then
-		# File still over threshold — log the phantom-continuation skip
-		# so the gate's audit trail captures why a fresh issue is filed.
-		echo "[pulse-wrapper] Large-file gate: prior file-size-debt #${existing_issue} closed but ${lf_path} still ${_verify_lines} lines (threshold ${LARGE_FILE_LINE_THRESHOLD}); filing fresh debt issue (t2164)" >>"$LOGFILE"
+		# File still over threshold — preserve one durable issue per path.
+		echo "[pulse-wrapper] Large-file gate: prior file-size-debt #${existing_issue} closed but ${lf_path} still ${_verify_lines} lines (threshold ${LARGE_FILE_LINE_THRESHOLD}); reopening canonical debt issue" >>"$LOGFILE"
 		return 1
 	fi
 	# wc -l returned 0 (empty file / read error) — treat same as unavailable.
@@ -376,7 +374,8 @@ _large_file_gate_verify_prior_reduced_size() {
 
 #######################################
 # t2164 / t2995 helper — find an open or recently-closed file-size-debt
-# issue that mentions `_lf_basename`. Prints "<state>:<number>" on stdout
+# issue carrying the exact generated `cited_file` marker. Prints
+# "<state>:<number>" on stdout
 # when found (state is "open" or "closed"); prints nothing otherwise.
 #
 # State is emitted as a stdout prefix instead of via `printf -v` because the
@@ -391,7 +390,7 @@ _large_file_gate_verify_prior_reduced_size() {
 # scanner cycle that timed out — observed 7 duplicates for worktree-helper.sh
 # alone over 30 days).
 #
-# Arguments: repo_slug, lf_basename
+# Arguments: repo_slug, lf_path
 # Stdout: "open:12345", "closed:18706", or empty
 # Exit codes:
 #   0 — match found (stdout populated)
@@ -401,54 +400,116 @@ _large_file_gate_verify_prior_reduced_size() {
 #######################################
 _large_file_gate_find_existing_debt_issue() {
 	local repo_slug="$1"
-	local lf_basename="$2"
+	local lf_path="$2"
+	local _marker="generator=large-file-simplification-gate cited_file=${lf_path} "
+	local _server_query="\"${lf_path}\" large-file-simplification-gate in:body sort:created-asc"
 
-	# Open-state lookup. One retry with 2s backoff covers GitHub search
+	# Query both states together so the oldest issue remains canonical even
+	# when it is closed and a newer duplicate is open. One retry with 2s
+	# backoff covers GitHub search
 	# index lag (typically 1-3s after issue creation) — t2995 investigation
 	# step 4. We only retry when the call SUCCEEDED but returned empty;
 	# retrying a real failure would just hit the same timeout twice.
-	local _open _open_rc=0
-	_open=$(gh_issue_list --repo "$repo_slug" --state open \
-		--label "file-size-debt" --search "$lf_basename" \
-		--json number --jq '.[0].number // empty' --limit 5 2>/dev/null) || _open_rc=$?
-	if [[ $_open_rc -eq 0 && -z "$_open" ]]; then
+	local _match _match_json _match_rc=0
+	_match_json=$(gh_issue_list --repo "$repo_slug" --state all \
+		--label "file-size-debt" --search "$_server_query" \
+		--json number,body,state --limit 100 2>/dev/null) || _match_rc=$?
+	_match=$(printf '%s' "$_match_json" | jq -r --arg marker "$_marker" \
+		'[.[] | select((.body // "") | contains($marker))] | sort_by(.number) | .[0] | if . then "\(.state | ascii_downcase):\(.number)" else empty end' 2>/dev/null) || _match_rc=$?
+	if [[ $_match_rc -eq 0 && -z "$_match" ]]; then
 		sleep 2
-		_open=$(gh_issue_list --repo "$repo_slug" --state open \
-			--label "file-size-debt" --search "$lf_basename" \
-			--json number --jq '.[0].number // empty' --limit 5 2>/dev/null) || _open_rc=$?
+		_match_json=$(gh_issue_list --repo "$repo_slug" --state all \
+			--label "file-size-debt" --search "$_server_query" \
+			--json number,body,state --limit 100 2>/dev/null) || _match_rc=$?
+		_match=$(printf '%s' "$_match_json" | jq -r --arg marker "$_marker" \
+			'[.[] | select((.body // "") | contains($marker))] | sort_by(.number) | .[0] | if . then "\(.state | ascii_downcase):\(.number)" else empty end' 2>/dev/null) || _match_rc=$?
 	fi
-	if [[ $_open_rc -ne 0 ]]; then
-		echo "[pulse-wrapper] WARN: file-size-debt dedup open-search failed for ${lf_basename} (rc=${_open_rc}); deferring (t2995)" >>"$LOGFILE"
+	if [[ $_match_rc -ne 0 ]]; then
+		echo "[pulse-wrapper] WARN: file-size-debt dedup all-state search failed for ${lf_path} (rc=${_match_rc}); deferring (t2995)" >>"$LOGFILE"
 		return 2
 	fi
-	if [[ -n "$_open" ]]; then
-		printf 'open:%s' "$_open"
-		return 0
-	fi
-
-	local _reopen_days="${LFG_DEBT_REOPEN_DAYS:-30}"
-	local _recent_date
-	_recent_date=$(date -u "-v-${_reopen_days}d" "+%Y-%m-%d" 2>/dev/null ||
-		date -u -d "${_reopen_days} days ago" "+%Y-%m-%d" 2>/dev/null || true)
-	if [[ -z "$_recent_date" ]]; then
-		return 1
-	fi
-
-	local _closed _closed_rc=0
-	_closed=$(gh_issue_list --repo "$repo_slug" \
-		--state closed --label "file-size-debt" \
-		--search "$lf_basename closed:>$_recent_date" \
-		--json number --jq '.[0].number // empty' \
-		--limit 5 2>/dev/null) || _closed_rc=$?
-	if [[ $_closed_rc -ne 0 ]]; then
-		echo "[pulse-wrapper] WARN: file-size-debt dedup closed-search failed for ${lf_basename} (rc=${_closed_rc}); deferring (t2995)" >>"$LOGFILE"
-		return 2
-	fi
-	if [[ -n "$_closed" ]]; then
-		printf 'closed:%s' "$_closed"
+	if [[ -n "$_match" ]]; then
+		printf '%s' "$_match"
 		return 0
 	fi
 	return 1
+}
+
+#######################################
+# Restore the labels required for an active canonical debt issue.
+# Arguments: issue_number, repo_slug
+#######################################
+_large_file_gate_normalize_debt_issue() {
+	local issue_number="$1"
+	local repo_slug="$2"
+
+	if ! gh issue edit "$issue_number" --repo "$repo_slug" \
+		--add-label "file-size-debt,auto-dispatch" >/dev/null 2>&1; then
+		return 1
+	fi
+	local _labels="" _stale_label
+	_labels=$(gh_issue_view "$issue_number" --repo "$repo_slug" \
+		--json labels --jq '[.labels[].name] | join(",")' 2>/dev/null) || return 1
+	for _stale_label in status:done not-planned simplification-incomplete; do
+		if [[ ",$_labels," == *",$_stale_label,"* ]]; then
+			if ! gh issue edit "$issue_number" --repo "$repo_slug" \
+				--remove-label "$_stale_label" >/dev/null 2>&1; then
+				return 1
+			fi
+		fi
+	done
+	return 0
+}
+
+#######################################
+# Close all open exact-marker matches except the canonical oldest issue.
+# This is retried whenever the canonical issue is encountered, so a transient
+# close failure cannot leave a duplicate permanently active.
+# Arguments: repo_slug, lf_path, canonical_issue
+#######################################
+_large_file_gate_close_duplicate_debt_issues() {
+	local repo_slug="$1"
+	local lf_path="$2"
+	local canonical_issue="$3"
+	local _marker="generator=large-file-simplification-gate cited_file=${lf_path} "
+	local _json="" _duplicate="" _failed=0
+
+	_json=$(gh_issue_list --repo "$repo_slug" --state open --label "file-size-debt" \
+		--search "\"${lf_path}\" large-file-simplification-gate in:body sort:created-asc" \
+		--json number,body --limit 100 2>/dev/null) || return 1
+	while IFS= read -r _duplicate; do
+		[[ -n "$_duplicate" && "$_duplicate" != "$canonical_issue" ]] || continue
+		if ! gh issue close "$_duplicate" --repo "$repo_slug" --reason "not planned" \
+			--comment "Superseded by canonical file-size-debt #${canonical_issue}; closed by duplicate reconciliation." >/dev/null 2>&1; then
+			_failed=1
+		fi
+	done < <(printf '%s' "$_json" | jq -r --arg marker "$_marker" \
+		'.[] | select((.body // "") | contains($marker)) | .number' 2>/dev/null)
+	[[ "$_failed" -eq 0 ]]
+	return $?
+}
+
+#######################################
+# Reopen the canonical debt issue when its cited file remains oversized.
+# Reusing the durable issue identity prevents close/create/auto-dispatch loops.
+# Arguments: issue_number, lf_path, repo_slug
+#######################################
+_large_file_gate_reopen_debt_issue() {
+	local issue_number="$1"
+	local lf_path="$2"
+	local repo_slug="$3"
+
+	if ! gh issue reopen "$issue_number" --repo "$repo_slug" >/dev/null 2>&1; then
+		echo "[pulse-wrapper] WARN: failed to reopen canonical file-size-debt #${issue_number} for ${lf_path}; deferring" >>"$LOGFILE"
+		return 1
+	fi
+	if ! _large_file_gate_normalize_debt_issue "$issue_number" "$repo_slug"; then
+		echo "[pulse-wrapper] WARN: reopened file-size-debt #${issue_number} but failed to normalize labels; next pulse will retry" >>"$LOGFILE"
+		return 1
+	fi
+	echo "[pulse-wrapper] Reopened canonical file-size-debt issue #${issue_number} for ${lf_path}" >>"$LOGFILE"
+	printf '#%s (reopened)' "$issue_number"
+	return 0
 }
 
 #######################################
@@ -509,6 +570,22 @@ _Created by large-file simplification gate (pulse-dispatch-core.sh)_"
 		head -1 |
 		grep -oE '[0-9]+$' || true)
 	if [[ -n "$_new_num" ]]; then
+		# Reconcile concurrent search-then-create races after GitHub's search
+		# index has had time to expose both issues. The oldest exact-marker
+		# match is canonical; any later issue created by this caller is closed.
+		sleep 3
+		local _canonical_combined _canonical_num="" _reconcile_rc=0
+		_canonical_combined=$(_large_file_gate_find_existing_debt_issue "$repo_slug" "$lf_path") || _reconcile_rc=$?
+		if [[ "$_reconcile_rc" -eq 0 && "$_canonical_combined" == open:* ]]; then
+			_canonical_num="${_canonical_combined#open:}"
+		fi
+		if [[ -n "$_canonical_num" && "$_canonical_num" != "$_new_num" ]]; then
+			if ! _large_file_gate_close_duplicate_debt_issues "$repo_slug" "$lf_path" "$_canonical_num"; then
+				echo "[pulse-wrapper] WARN: failed to close one or more duplicate file-size-debt issues for ${lf_path}; next pulse will retry" >>"$LOGFILE"
+			fi
+			printf '#%s (existing)' "$_canonical_num"
+			return 0
+		fi
 		printf '#%s (new)' "$_new_num"
 		echo "[pulse-wrapper] Created file-size-debt issue #${_new_num} for ${lf_path} (blocking #${parent_issue})" >>"$LOGFILE"
 	else
@@ -551,9 +628,6 @@ _large_file_gate_create_debt_issue() {
 	local parent_issue="$2"
 	local repo_slug="$3"
 	local repo_path="${4:-}"
-	local _lf_basename
-	_lf_basename=$(basename "$lf_path")
-
 	# t2164: helper encodes state in stdout as "<state>:<number>" — subshell
 	# boundary prevents `printf -v` from crossing the command substitution.
 	# t2995: helper now returns 2 when lookup fails (timeout / gh failure),
@@ -561,9 +635,9 @@ _large_file_gate_create_debt_issue() {
 	# to filing a fresh issue — that's the duplicate-creation bug. Defer to
 	# the next pulse cycle.
 	local _existing_combined _existing _existing_state _lookup_rc=0
-	_existing_combined=$(_large_file_gate_find_existing_debt_issue "$repo_slug" "$_lf_basename") || _lookup_rc=$?
+	_existing_combined=$(_large_file_gate_find_existing_debt_issue "$repo_slug" "$lf_path") || _lookup_rc=$?
 	if [[ "$_lookup_rc" -eq 2 ]]; then
-		echo "[pulse-wrapper] file-size-debt dedup lookup failed for ${_lf_basename} (parent #${parent_issue}); deferring filing to next cycle (t2995)" >>"$LOGFILE"
+		echo "[pulse-wrapper] file-size-debt dedup lookup failed for ${lf_path} (parent #${parent_issue}); deferring filing to next cycle (t2995)" >>"$LOGFILE"
 		return 0
 	fi
 	if [[ -n "$_existing_combined" && "$_existing_combined" == *:* ]]; then
@@ -575,6 +649,13 @@ _large_file_gate_create_debt_issue() {
 	fi
 
 	if [[ "$_existing_state" == "open" ]]; then
+		if ! _large_file_gate_close_duplicate_debt_issues "$repo_slug" "$lf_path" "$_existing"; then
+			echo "[pulse-wrapper] WARN: duplicate reconciliation incomplete for canonical file-size-debt #${_existing}; next pulse will retry" >>"$LOGFILE"
+		fi
+		if ! _large_file_gate_normalize_debt_issue "$_existing" "$repo_slug"; then
+			echo "[pulse-wrapper] WARN: failed to normalize canonical file-size-debt #${_existing}; deferring" >>"$LOGFILE"
+			return 0
+		fi
 		printf '#%s (existing)' "$_existing"
 		return 0
 	fi
@@ -589,9 +670,9 @@ _large_file_gate_create_debt_issue() {
 			printf '#%s (recently-closed — continuation)' "$_existing"
 			return 0
 		fi
-		# Fall through: prior attempt did not reduce file size — file a
-		# fresh debt issue that references the failed prior attempt.
-		_large_file_gate_file_new_debt_issue "$lf_path" "$parent_issue" "$repo_slug" "$_existing"
+		# The file remains oversized. Reopen the durable per-path issue instead
+		# of creating a successor that can feed an unbounded dispatch loop.
+		_large_file_gate_reopen_debt_issue "$_existing" "$lf_path" "$repo_slug" || true
 		return 0
 	fi
 

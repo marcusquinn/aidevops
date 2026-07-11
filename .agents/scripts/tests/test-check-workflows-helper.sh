@@ -17,6 +17,7 @@
 #   9. repos.json missing → exit 2 with error
 #  10. --repo filter narrows to one row
 #  11. --json output parses as JSON
+#  16. Current caller plus obsolete framework scripts → legacy-artifact warning
 #
 # Strategy: Each scenario writes a temporary repos.json + temporary repo trees
 # under a per-test TMPDIR, points HOME at it, and invokes the helper. No
@@ -77,7 +78,7 @@ _setup_fake_home() {
 _write_repos_json() {
 	local _root="$1"
 	local _json="$2"
-	printf '%s\n' "$_json" > "$_root/.config/aidevops/repos.json"
+	printf '%s\n' "$_json" >"$_root/.config/aidevops/repos.json"
 	return 0
 }
 
@@ -86,7 +87,7 @@ _make_repo_with_workflow() {
 	local _content="${2:-}"
 	mkdir -p "$_path/.github/workflows"
 	if [[ -n "$_content" ]]; then
-		printf '%s' "$_content" > "$_path/.github/workflows/issue-sync.yml"
+		printf '%s' "$_content" >"$_path/.github/workflows/issue-sync.yml"
 	fi
 	return 0
 }
@@ -98,9 +99,9 @@ _make_repo_with_workflow() {
 _run_and_classify() {
 	local _root="$1"
 	shift
-	HOME="$_root" bash "$HELPER" --json "$@" 2>/dev/null \
-		| jq -r 'select(.slug != "") | .classification' \
-		| head -n 1
+	HOME="$_root" bash "$HELPER" --json "$@" 2>/dev/null |
+		jq -r 'select(.slug != "") | .classification' |
+		head -n 1
 	return 0
 }
 
@@ -163,7 +164,7 @@ TMPDIR_4="$(mktemp -d)"
 _setup_fake_home "$TMPDIR_4"
 _make_repo_with_workflow "$TMPDIR_4/repos/downstream-pinned"
 sed 's|issue-sync-reusable\.yml@main|issue-sync-reusable.yml@v3.9.0|g' \
-	"$CANONICAL_TEMPLATE" > "$TMPDIR_4/repos/downstream-pinned/.github/workflows/issue-sync.yml"
+	"$CANONICAL_TEMPLATE" >"$TMPDIR_4/repos/downstream-pinned/.github/workflows/issue-sync.yml"
 _write_repos_json "$TMPDIR_4" \
 	"$(jq -n --arg path "$TMPDIR_4/repos/downstream-pinned" '{initialized_repos: [{slug: "x/pinned", path: $path, local_only: false}]}')"
 result=$(_run_and_classify "$TMPDIR_4")
@@ -183,7 +184,7 @@ _make_repo_with_workflow "$TMPDIR_5/repos/downstream-drifted"
 	cat "$CANONICAL_TEMPLATE"
 	printf '\n# Local customisation — should trigger DRIFTED detection\n'
 	printf '# (any content change after normalising @ref counts as drift)\n'
-} > "$TMPDIR_5/repos/downstream-drifted/.github/workflows/issue-sync.yml"
+} >"$TMPDIR_5/repos/downstream-drifted/.github/workflows/issue-sync.yml"
 _write_repos_json "$TMPDIR_5" \
 	"$(jq -n --arg path "$TMPDIR_5/repos/downstream-drifted" '{initialized_repos: [{slug: "x/drifted", path: $path, local_only: false}]}')"
 result=$(_run_and_classify "$TMPDIR_5")
@@ -323,7 +324,7 @@ _setup_fake_home "$TMPDIR_12"
 _make_repo_with_workflow "$TMPDIR_12/repos/downstream-develop"
 # Take canonical and replace `branches: [main]` with `branches: [develop]`.
 sed 's/branches: \[main\]/branches: [develop]/' \
-	"$CANONICAL_TEMPLATE" > "$TMPDIR_12/repos/downstream-develop/.github/workflows/issue-sync.yml"
+	"$CANONICAL_TEMPLATE" >"$TMPDIR_12/repos/downstream-develop/.github/workflows/issue-sync.yml"
 _write_repos_json "$TMPDIR_12" \
 	"$(jq -n --arg path "$TMPDIR_12/repos/downstream-develop" \
 		'{initialized_repos: [{slug: "x/develop-repo", path: $path, local_only: false}]}')"
@@ -343,7 +344,7 @@ _make_repo_with_workflow "$TMPDIR_13/repos/org-current"
 sed \
 	-e 's|marcusquinn/aidevops/.github/workflows/issue-sync-reusable.yml@main|ORG/.github/.github/workflows/issue-sync-reusable.yml@1234567890abcdef1234567890abcdef12345678|g' \
 	-e 's|marcusquinn/aidevops/.github/workflows/issue-sync-reusable.yml|ORG/.github/.github/workflows/issue-sync-reusable.yml|g' \
-	"$CANONICAL_TEMPLATE" > "$TMPDIR_13/repos/org-current/.github/workflows/issue-sync.yml"
+	"$CANONICAL_TEMPLATE" >"$TMPDIR_13/repos/org-current/.github/workflows/issue-sync.yml"
 _write_repos_json "$TMPDIR_13" \
 	"$(jq -n --arg path "$TMPDIR_13/repos/org-current" '{workflow_reusable_repo: "ORG/.github", workflow_reusable_ref: "1234567890abcdef1234567890abcdef12345678", initialized_repos: [{slug: "x/org-current", path: $path, local_only: false}]}')"
 result=$(_run_and_classify "$TMPDIR_13")
@@ -359,7 +360,7 @@ TMPDIR_14="$(mktemp -d)"
 _setup_fake_home "$TMPDIR_14"
 _make_repo_with_workflow "$TMPDIR_14/repos/untrusted"
 sed 's|marcusquinn/aidevops/.github/workflows/issue-sync-reusable.yml@main|OTHER/.github/.github/workflows/issue-sync-reusable.yml@main|g' \
-	"$CANONICAL_TEMPLATE" > "$TMPDIR_14/repos/untrusted/.github/workflows/issue-sync.yml"
+	"$CANONICAL_TEMPLATE" >"$TMPDIR_14/repos/untrusted/.github/workflows/issue-sync.yml"
 _write_repos_json "$TMPDIR_14" \
 	"$(jq -n --arg path "$TMPDIR_14/repos/untrusted" '{workflow_reusable_repo: "ORG/.github", initialized_repos: [{slug: "x/untrusted", path: $path, local_only: false}]}')"
 result=$(_run_and_classify "$TMPDIR_14")
@@ -374,7 +375,7 @@ rm -rf "$TMPDIR_14"
 TMPDIR_15="$(mktemp -d)"
 _setup_fake_home "$TMPDIR_15"
 mkdir -p "$TMPDIR_15/repos/org-dotgithub/.github/workflows"
-printf '%s\n' 'name: stale org-owned reusable copy' > "$TMPDIR_15/repos/org-dotgithub/.github/workflows/issue-sync-reusable.yml"
+printf '%s\n' 'name: stale org-owned reusable copy' >"$TMPDIR_15/repos/org-dotgithub/.github/workflows/issue-sync-reusable.yml"
 _write_repos_json "$TMPDIR_15" \
 	"$(jq -n --arg path "$TMPDIR_15/repos/org-dotgithub" '{workflow_reusable_repo: "ORG/.github", initialized_repos: [{slug: "ORG/.github", path: $path, local_only: false}]}')"
 result=$(_run_and_classify "$TMPDIR_15" --repo "ORG/.github")
@@ -385,10 +386,33 @@ else
 fi
 rm -rf "$TMPDIR_15"
 
+# Test 16: A current reusable caller must still report known superseded scripts.
+TMPDIR_16="$(mktemp -d)"
+_setup_fake_home "$TMPDIR_16"
+_make_repo_with_workflow "$TMPDIR_16/repos/downstream-legacy-artifacts"
+cp "$CANONICAL_TEMPLATE" "$TMPDIR_16/repos/downstream-legacy-artifacts/.github/workflows/issue-sync.yml"
+mkdir -p "$TMPDIR_16/repos/downstream-legacy-artifacts/.agents/scripts"
+printf '%s\n' '# locally modified legacy helper — warning only' > \
+	"$TMPDIR_16/repos/downstream-legacy-artifacts/.agents/scripts/issue-sync-helper.sh"
+_write_repos_json "$TMPDIR_16" \
+	"$(jq -n --arg path "$TMPDIR_16/repos/downstream-legacy-artifacts" '{initialized_repos: [{slug: "x/legacy-artifacts", path: $path, local_only: false}]}')"
+json_row=$(HOME="$TMPDIR_16" bash "$HELPER" --json --repo "x/legacy-artifacts" --workflow issue-sync 2>/dev/null)
+result=$(printf '%s\n' "$json_row" | jq -r '.classification')
+note=$(printf '%s\n' "$json_row" | jq -r '.note')
+if [[ "$result" == "CURRENT/CALLER + LEGACY_ARTIFACTS" ]] &&
+	[[ "$note" == *".agents/scripts/issue-sync-helper.sh"* ]] &&
+	[[ "$note" == *"no files removed"* ]]; then
+	_pass "current caller with modified obsolete helper → LEGACY_ARTIFACTS warning"
+else
+	_fail "current caller with modified obsolete helper → LEGACY_ARTIFACTS warning" \
+		"classification: $result; note: $note"
+fi
+rm -rf "$TMPDIR_16"
+
 # ─── Summary ────────────────────────────────────────────────────────────────
 
 echo
-if (( TESTS_FAILED == 0 )); then
+if ((TESTS_FAILED == 0)); then
 	printf '%bAll %d test(s) passed%b\n' "$_T_GREEN" "$TESTS_RUN" "$_T_RESET"
 	exit 0
 else

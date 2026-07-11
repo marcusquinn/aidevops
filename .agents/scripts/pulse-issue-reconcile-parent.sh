@@ -300,6 +300,25 @@ _Automated by \`_post_parent_decomposition_escalation\` in \`pulse-issue-reconci
 #          or comment call failed).
 #######################################
 
+_recent_closed_parent_cutoff() {
+	if date --version >/dev/null 2>&1; then
+		date -u -d '7 days ago' +%Y-%m-%d
+	else
+		date -u -v-7d +%Y-%m-%d
+	fi
+	return 0
+}
+
+_fetch_recently_closed_parent_tasks() {
+	local slug="$1" parent_label="$2"
+	local cutoff=""
+	cutoff=$(_recent_closed_parent_cutoff) || return 1
+	gh_issue_list --repo "$slug" --state closed \
+		--label "$parent_label" --search "closed:>=${cutoff}" \
+		--json number,title,body,state --limit 10 2>/dev/null || return 1
+	return 0
+}
+
 reconcile_completed_parent_tasks() {
 	local repos_json="$REPOS_JSON"
 	[[ -f "$repos_json" ]] || return 0
@@ -312,6 +331,9 @@ reconcile_completed_parent_tasks() {
 	# is enough to avoid review-queue spam while still making progress.
 	local total_escalated=0
 	local max_escalations=3
+	local total_reopened=0
+	local max_reopens=5
+	local _open_state="OPEN"
 	# t2442: parent-task escalation threshold — nudge must have sat for
 	# at least this many hours with zero children before we escalate.
 	# 7 days = 168 hours. Override via env for tests / incident response.
@@ -319,22 +341,25 @@ reconcile_completed_parent_tasks() {
 
 	while IFS= read -r slug; do
 		[[ -n "$slug" ]] || continue
-		[[ "$total_closed" -lt "$max_closes" || "$total_nudged" -lt "$max_nudges" || "$total_escalated" -lt "$max_escalations" ]] || break
+		[[ "$total_closed" -lt "$max_closes" || "$total_nudged" -lt "$max_nudges" || "$total_escalated" -lt "$max_escalations" || "$total_reopened" -lt "$max_reopens" ]] || break
 
 		# t2773: prefer prefetch cache (now includes body field); fall back to gh_issue_list.
 		# Use module-level _PIR_PT_LABEL to avoid a second literal (string-literal ratchet).
 		local _cpt_lbl="$_PIR_PT_LABEL"
-		local issues_json _cache_issues_cpt
+		local issues_json="" open_issues_json="" closed_issues_json="" _cache_issues_cpt=""
 		if _cache_issues_cpt=$(_read_cache_issues_for_slug "$slug" 2>/dev/null); then
-			issues_json=$(printf '%s' "$_cache_issues_cpt" | \
-				jq -c --arg lbl "$_cpt_lbl" \
-				'[.[] | select(.labels | map(.name) | index($lbl))] | .[0:10]' \
-				2>/dev/null) || issues_json="[]"
+			open_issues_json=$(printf '%s' "$_cache_issues_cpt" | \
+				jq -c --arg lbl "$_cpt_lbl" --arg state "$_open_state" \
+				'[.[] | select(.labels | map(.name) | index($lbl)) | . + {state:$state}] | .[0:10]' \
+				2>/dev/null) || open_issues_json="[]"
 		else
-			issues_json=$(gh_issue_list --repo "$slug" --state open \
+			open_issues_json=$(gh_issue_list --repo "$slug" --state open \
 				--label "$_cpt_lbl" \
-				--json number,title,body --limit 10 2>/dev/null) || issues_json="[]"
+				--json number,title,body,state --limit 10 2>/dev/null) || open_issues_json="[]"
 		fi
+		closed_issues_json=$(_fetch_recently_closed_parent_tasks "$slug" "$_cpt_lbl") || closed_issues_json="[]"
+		issues_json=$(printf '%s\n%s\n' "$open_issues_json" "$closed_issues_json" | \
+			jq -sc 'add | unique_by(.number) | .[0:20]' 2>/dev/null) || issues_json="[]"
 		[[ -n "$issues_json" && "$issues_json" != "null" ]] || continue
 
 		local issue_count
@@ -342,11 +367,13 @@ reconcile_completed_parent_tasks() {
 		[[ "$issue_count" -gt 0 ]] || continue
 
 		local i=0
-		while [[ "$i" -lt "$issue_count" ]] && [[ "$total_closed" -lt "$max_closes" || "$total_nudged" -lt "$max_nudges" || "$total_escalated" -lt "$max_escalations" ]]; do
-			local issue_num issue_body issue_title
+		while [[ "$i" -lt "$issue_count" ]] && [[ "$total_closed" -lt "$max_closes" || "$total_nudged" -lt "$max_nudges" || "$total_escalated" -lt "$max_escalations" || "$total_reopened" -lt "$max_reopens" ]]; do
+			local issue_num="" issue_body="" issue_title="" issue_state=""
 			issue_num=$(printf '%s' "$issues_json" | jq -r --argjson i "$i" '.[$i].number // ""') || true
 			issue_body=$(printf '%s' "$issues_json" | jq -r --argjson i "$i" '.[$i].body // ""') || true
 			issue_title=$(printf '%s' "$issues_json" | jq -r --argjson i "$i" '.[$i].title // ""') || true
+			issue_state=$(printf '%s' "$issues_json" | \
+				jq -r --argjson i "$i" --arg state "$_open_state" '.[$i].state // $state') || issue_state="$_open_state"
 			i=$((i + 1))
 			[[ "$issue_num" =~ ^[0-9]+$ ]] || continue
 
@@ -359,15 +386,16 @@ reconcile_completed_parent_tasks() {
 			[[ $((_can_close + _can_nudge + _can_escalate)) -gt 0 ]] || continue
 
 			_action_cpt_single "$slug" "$issue_num" "$issue_title" "$issue_body" \
-				"$_can_close" "$_can_nudge" "$_can_escalate" "$escalation_threshold_hours"
+				"$_can_close" "$_can_nudge" "$_can_escalate" "$escalation_threshold_hours" "$issue_state"
 			[[ "$_SP_CPT_CLOSED" -eq 1 ]] && total_closed=$((total_closed + 1))
 			[[ "$_SP_CPT_NUDGED" -eq 1 ]] && total_nudged=$((total_nudged + 1))
 			[[ "$_SP_CPT_ESCALATED" -eq 1 ]] && total_escalated=$((total_escalated + 1))
+			[[ "$_SP_CPT_REOPENED" -eq 1 ]] && total_reopened=$((total_reopened + 1))
 		done
 	done < <(jq -r '.initialized_repos[] | select(.pulse == true and (.local_only // false) == false and .slug != "") | .slug // ""' "$repos_json" || true)
 
-	if [[ "$total_closed" -gt 0 || "$total_nudged" -gt 0 || "$total_escalated" -gt 0 ]]; then
-		echo "[pulse-wrapper] Reconcile completed parent tasks: closed=${total_closed} nudged=${total_nudged} escalated=${total_escalated}" >>"$LOGFILE"
+	if [[ "$total_closed" -gt 0 || "$total_nudged" -gt 0 || "$total_escalated" -gt 0 || "$total_reopened" -gt 0 ]]; then
+		echo "[pulse-wrapper] Reconcile completed parent tasks: closed=${total_closed} reopened=${total_reopened} nudged=${total_nudged} escalated=${total_escalated}" >>"$LOGFILE"
 	fi
 
 	return 0

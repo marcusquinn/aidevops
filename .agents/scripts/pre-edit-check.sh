@@ -53,21 +53,6 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 [[ -z "${BOLD+x}" ]] && BOLD='\033[1m'
 
 # =============================================================================
-# Fast-path for headless workers with pre-created worktrees
-# =============================================================================
-# When the dispatcher pre-creates a worktree and passes WORKER_WORKTREE_PATH,
-# the worker is already in a safe linked worktree. Skip all detection logic.
-if [[ -n "${WORKER_WORKTREE_PATH:-}" && -d "${WORKER_WORKTREE_PATH:-}" ]]; then
-	# Verify we're actually in the worktree (or the worker's --dir points here)
-	_current_dir="$(pwd -P 2>/dev/null || pwd)"
-	_wt_real="$(cd "$WORKER_WORKTREE_PATH" 2>/dev/null && pwd -P)"
-	if [[ "$_current_dir" == "$_wt_real"* ]]; then
-		echo "OK - Pre-created worktree: ${WORKER_WORKTREE_BRANCH:-unknown branch}"
-		exit 0
-	fi
-fi
-
-# =============================================================================
 # Loop Mode Support
 # =============================================================================
 # When --loop-mode is passed, the script auto-decides based on file path or task description:
@@ -496,10 +481,17 @@ run_operation_verification() {
 
 # Handle loop-mode decision on a protected (main/master) branch.
 # Outputs LOOP_DECISION and exits 0 (stay) or 2 (worktree needed).
+_is_explicit_headless_flow() {
+	case "${FULL_LOOP_HEADLESS:-}${AIDEVOPS_HEADLESS:-}${OPENCODE_HEADLESS:-}${CLAUDE_HEADLESS:-}${Claude_HEADLESS:-}${GITHUB_ACTIONS:-}" in
+	*true* | *1*) return 0 ;;
+	*) return 1 ;;
+	esac
+}
+
 _handle_loop_mode_on_protected() {
 	local branch="$1"
 
-	if is_main_write_allowed; then
+	if _is_explicit_headless_flow && is_main_write_allowed; then
 		if [[ -n "$TARGET_FILE" ]]; then
 			echo -e "${YELLOW}LOOP-AUTO${NC}: Allowlisted path '$TARGET_FILE', staying on $branch"
 		else
@@ -530,7 +522,7 @@ _handle_loop_mode_on_protected() {
 
 	# Derive branch name from --task description or fall back to generic
 	local _wt_branch_name=""
-	local _wt_task_desc="${TASK_DESCRIPTION:-}"
+	local _wt_task_desc="${TASK_DESC:-}"
 	if [[ -n "$_wt_task_desc" ]]; then
 		# Extract issue number if present (e.g., "Implement issue #17642")
 		local _wt_issue_num=""
@@ -731,9 +723,9 @@ if [[ "$current_branch" == "main" || "$current_branch" == "master" ]]; then
 	# Loop mode: auto-decide based on file path (preferred) or task description
 	[[ "$LOOP_MODE" == "true" ]] && _handle_loop_mode_on_protected "$current_branch"
 
-	# Short-circuit: explicit --file on an allowlisted path is always allowed,
-	# regardless of loop-mode or headless state (t1712).
-	if [[ -n "$TARGET_FILE" ]] && is_main_allowlisted_path "$TARGET_FILE"; then
+	# Short-circuit only for explicitly identified headless bookkeeping flows.
+	# Interactive sessions never gain a canonical write exemption (t1712).
+	if _is_explicit_headless_flow && [[ -n "$TARGET_FILE" ]] && is_main_allowlisted_path "$TARGET_FILE"; then
 		echo -e "${GREEN}OK${NC} - Allowlisted path '$TARGET_FILE' on $current_branch"
 		echo "MAIN_ALLOWLISTED=true"
 		exit 0
