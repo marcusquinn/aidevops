@@ -404,46 +404,32 @@ _large_file_gate_find_existing_debt_issue() {
 	local _marker="generator=large-file-simplification-gate cited_file=${lf_path} "
 	local _server_query="\"${lf_path}\" large-file-simplification-gate in:body sort:created-asc"
 
-	# Open-state lookup. One retry with 2s backoff covers GitHub search
+	# Query both states together so the oldest issue remains canonical even
+	# when it is closed and a newer duplicate is open. One retry with 2s
+	# backoff covers GitHub search
 	# index lag (typically 1-3s after issue creation) — t2995 investigation
 	# step 4. We only retry when the call SUCCEEDED but returned empty;
 	# retrying a real failure would just hit the same timeout twice.
-	local _open _open_json _open_rc=0
-	_open_json=$(gh_issue_list --repo "$repo_slug" --state open \
+	local _match _match_json _match_rc=0
+	_match_json=$(gh_issue_list --repo "$repo_slug" --state all \
 		--label "file-size-debt" --search "$_server_query" \
-		--json number,body --limit 100 2>/dev/null) || _open_rc=$?
-	_open=$(printf '%s' "$_open_json" | jq -r --arg marker "$_marker" \
-		'[.[] | select((.body // "") | contains($marker)) | .number] | min // empty' 2>/dev/null) || _open_rc=$?
-	if [[ $_open_rc -eq 0 && -z "$_open" ]]; then
+		--json number,body,state --limit 100 2>/dev/null) || _match_rc=$?
+	_match=$(printf '%s' "$_match_json" | jq -r --arg marker "$_marker" \
+		'[.[] | select((.body // "") | contains($marker))] | sort_by(.number) | .[0] | if . then "\(.state | ascii_downcase):\(.number)" else empty end' 2>/dev/null) || _match_rc=$?
+	if [[ $_match_rc -eq 0 && -z "$_match" ]]; then
 		sleep 2
-		_open_json=$(gh_issue_list --repo "$repo_slug" --state open \
+		_match_json=$(gh_issue_list --repo "$repo_slug" --state all \
 			--label "file-size-debt" --search "$_server_query" \
-			--json number,body --limit 100 2>/dev/null) || _open_rc=$?
-		_open=$(printf '%s' "$_open_json" | jq -r --arg marker "$_marker" \
-			'[.[] | select((.body // "") | contains($marker)) | .number] | min // empty' 2>/dev/null) || _open_rc=$?
+			--json number,body,state --limit 100 2>/dev/null) || _match_rc=$?
+		_match=$(printf '%s' "$_match_json" | jq -r --arg marker "$_marker" \
+			'[.[] | select((.body // "") | contains($marker))] | sort_by(.number) | .[0] | if . then "\(.state | ascii_downcase):\(.number)" else empty end' 2>/dev/null) || _match_rc=$?
 	fi
-	if [[ $_open_rc -ne 0 ]]; then
-		echo "[pulse-wrapper] WARN: file-size-debt dedup open-search failed for ${lf_path} (rc=${_open_rc}); deferring (t2995)" >>"$LOGFILE"
+	if [[ $_match_rc -ne 0 ]]; then
+		echo "[pulse-wrapper] WARN: file-size-debt dedup all-state search failed for ${lf_path} (rc=${_match_rc}); deferring (t2995)" >>"$LOGFILE"
 		return 2
 	fi
-	if [[ -n "$_open" ]]; then
-		printf 'open:%s' "$_open"
-		return 0
-	fi
-
-	local _closed _closed_json _closed_rc=0
-	_closed_json=$(gh_issue_list --repo "$repo_slug" \
-		--state closed --label "file-size-debt" \
-		--search "$_server_query" \
-		--json number,body --limit 100 2>/dev/null) || _closed_rc=$?
-	_closed=$(printf '%s' "$_closed_json" | jq -r --arg marker "$_marker" \
-		'[.[] | select((.body // "") | contains($marker)) | .number] | min // empty' 2>/dev/null) || _closed_rc=$?
-	if [[ $_closed_rc -ne 0 ]]; then
-		echo "[pulse-wrapper] WARN: file-size-debt dedup closed-search failed for ${lf_path} (rc=${_closed_rc}); deferring (t2995)" >>"$LOGFILE"
-		return 2
-	fi
-	if [[ -n "$_closed" ]]; then
-		printf 'closed:%s' "$_closed"
+	if [[ -n "$_match" ]]; then
+		printf '%s' "$_match"
 		return 0
 	fi
 	return 1

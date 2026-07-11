@@ -112,6 +112,22 @@ gh_issue_list() {
 		*) shift ;;
 		esac
 	done
+	if [[ "$_state" == "all" ]]; then
+		local _all_n
+		_all_n=$(cat "$OPEN_CALL_COUNTER" 2>/dev/null || echo 0)
+		_all_n=$((_all_n + 1))
+		echo "$_all_n" >"$OPEN_CALL_COUNTER"
+		if [[ "$_all_n" -ge 2 && -n "${STUB_GH_LIST_RETRY_OUT:-}" ]]; then
+			printf '[{"number":%s,"state":"OPEN","body":"generator=large-file-simplification-gate cited_file=worktree-helper.sh threshold=1000 generator=large-file-simplification-gate cited_file=.agents/scripts/worktree-helper.sh threshold=1000"}]' "$STUB_GH_LIST_RETRY_OUT"
+		elif [[ -n "${STUB_GH_LIST_OPEN_OUT:-}" ]]; then
+			printf '[{"number":%s,"state":"OPEN","body":"generator=large-file-simplification-gate cited_file=worktree-helper.sh threshold=1000 generator=large-file-simplification-gate cited_file=.agents/scripts/worktree-helper.sh threshold=1000"}]' "$STUB_GH_LIST_OPEN_OUT"
+		elif [[ -n "${STUB_GH_LIST_CLOSED_OUT:-}" ]]; then
+			printf '[{"number":%s,"state":"CLOSED","body":"generator=large-file-simplification-gate cited_file=worktree-helper.sh threshold=1000 generator=large-file-simplification-gate cited_file=.agents/scripts/worktree-helper.sh threshold=1000"}]' "$STUB_GH_LIST_CLOSED_OUT"
+		else
+			printf '[]'
+		fi
+		return "${STUB_GH_LIST_RC:-0}"
+	fi
 	if [[ "$_state" == "open" ]]; then
 		local _n
 		_n=$(cat "$OPEN_CALL_COUNTER" 2>/dev/null || echo 0)
@@ -281,7 +297,7 @@ if [[ "$rc" == "2" && -z "$out" ]]; then
 else
 	fail "helper:lookup-failed" "rc=$rc out='$out'"
 fi
-if grep -q "file-size-debt dedup open-search failed for worktree-helper.sh" "$LOGFILE"; then
+if grep -q "file-size-debt dedup all-state search failed for worktree-helper.sh" "$LOGFILE"; then
 	pass "helper:lookup-failed logs WARN with basename"
 else
 	fail "helper:lookup-failed logs WARN" "log contents: $(cat "$LOGFILE")"

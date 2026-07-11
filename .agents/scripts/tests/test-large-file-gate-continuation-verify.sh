@@ -128,6 +128,16 @@ gh() {
 		closed) saw_closed="true" ;;
 		esac
 	done
+	if [[ "$1" == "issue" && "$2" == "list" && "$saw_open" == "false" && "$saw_closed" == "false" ]]; then
+		if [[ -n "$GH_OPEN_RESPONSE" ]]; then
+			printf '[{"number":%s,"state":"OPEN","body":"generator=large-file-simplification-gate cited_file=under.sh threshold=2000 generator=large-file-simplification-gate cited_file=over.sh threshold=2000 generator=large-file-simplification-gate cited_file=missing.sh threshold=2000"}]\n' "$GH_OPEN_RESPONSE"
+		elif [[ -n "$GH_CLOSED_RESPONSE" ]]; then
+			printf '[{"number":%s,"state":"CLOSED","body":"generator=large-file-simplification-gate cited_file=under.sh threshold=2000 generator=large-file-simplification-gate cited_file=over.sh threshold=2000 generator=large-file-simplification-gate cited_file=missing.sh threshold=2000"}]\n' "$GH_CLOSED_RESPONSE"
+		else
+			printf '[]\n'
+		fi
+		return 0
+	fi
 
 	if [[ "$1" == "issue" && "$2" == "list" ]]; then
 		if [[ "$saw_closed" == "true" ]]; then
