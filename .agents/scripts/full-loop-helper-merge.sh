@@ -596,6 +596,21 @@ _merge_refresh_canonical_for_cleanup() {
 	return 1
 }
 
+_merge_report_canonical_sync_state() {
+	local cleanup_plan="$1"
+	if [[ -z "$cleanup_plan" ]]; then
+		print_warning "CANONICAL_SYNC_PENDING=true reason=canonical_path_unavailable"
+		return 1
+	fi
+	local worktree_path branch_name canonical_dir
+	IFS=$'\t' read -r worktree_path branch_name canonical_dir <<<"$cleanup_plan"
+	: "$worktree_path" "$branch_name"
+	local default_branch
+	default_branch=$(_merge_default_branch_for_cleanup "$canonical_dir")
+	_merge_refresh_canonical_for_cleanup "$canonical_dir" "$default_branch"
+	return $?
+}
+
 _merge_resolve_worktree_helper() {
 	if [[ -x "${SCRIPT_DIR}/worktree-helper.sh" ]]; then
 		printf '%s\n' "${SCRIPT_DIR}/worktree-helper.sh"
@@ -807,6 +822,7 @@ cmd_merge() {
 		return 1
 	fi
 	print_success "LIFECYCLE_STATE=MERGED merge_sha=${FULL_LOOP_MERGE_SHA}"
+	_merge_report_canonical_sync_state "$_cleanup_plan" || true
 	if declare -F is_loop_active >/dev/null 2>&1 && is_loop_active && load_state; then
 		save_state "postflight" "$SAVED_PROMPT" "$pr_number" "$STARTED_AT"
 	fi

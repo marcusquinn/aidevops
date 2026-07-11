@@ -44,24 +44,32 @@ RUNNER
 chmod +x "$runner"
 
 removed_path="${ROOT}/removed-worktree"
-PATH="${ROOT}/bin:/opt/homebrew/bin:/usr/bin:/bin" bash "$runner" 42 "$removed_path" testorg/repo >/dev/null || {
+cleanup_log="${ROOT}/cleanup.log"
+printf '[2026-07-11T00:00:01Z] [test] worktree-removed: %s — branch-merged — mode=permanent\n' "$removed_path" >"$cleanup_log"
+AIDEVOPS_CLEANUP_LOG="$cleanup_log" PATH="${ROOT}/bin:/opt/homebrew/bin:/usr/bin:/bin" bash "$runner" 42 "$removed_path" testorg/repo >/dev/null || {
 	printf 'FAIL complete merged and cleaned evidence was rejected\n'
 	exit 1
 }
 printf 'PASS merged and cleaned evidence completes lifecycle\n'
 
 mkdir -p "$removed_path"
-if PATH="${ROOT}/bin:/opt/homebrew/bin:/usr/bin:/bin" bash "$runner" 42 "$removed_path" testorg/repo >/dev/null; then
+if AIDEVOPS_CLEANUP_LOG="$cleanup_log" PATH="${ROOT}/bin:/opt/homebrew/bin:/usr/bin:/bin" bash "$runner" 42 "$removed_path" testorg/repo >/dev/null; then
 	printf 'FAIL existing worktree was accepted as cleaned\n'
 	exit 1
 fi
 printf 'PASS existing worktree keeps cleanup pending\n'
 rm -rf "$removed_path"
 
-if COMPLETION_PR_STATE=OPEN PATH="${ROOT}/bin:/opt/homebrew/bin:/usr/bin:/bin" bash "$runner" 42 "$removed_path" testorg/repo >/dev/null; then
+if COMPLETION_PR_STATE=OPEN AIDEVOPS_CLEANUP_LOG="$cleanup_log" PATH="${ROOT}/bin:/opt/homebrew/bin:/usr/bin:/bin" bash "$runner" 42 "$removed_path" testorg/repo >/dev/null; then
 	printf 'FAIL open PR was accepted as complete\n'
 	exit 1
 fi
 printf 'PASS open PR blocks lifecycle completion\n'
+
+if AIDEVOPS_CLEANUP_LOG="${ROOT}/missing.log" PATH="${ROOT}/bin:/opt/homebrew/bin:/usr/bin:/bin" bash "$runner" 42 "$removed_path" testorg/repo >/dev/null; then
+	printf 'FAIL absent cleanup audit was accepted as complete\n'
+	exit 1
+fi
+printf 'PASS absent cleanup audit blocks lifecycle completion\n'
 
 exit 0
