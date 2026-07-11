@@ -44,16 +44,22 @@ main() {
 	trap 'rm -rf "$TEST_TMP_DIR"' EXIT
 	local eligible="${TEST_TMP_DIR}/eligible"
 	local disabled="${TEST_TMP_DIR}/disabled"
+	local canonical="${TEST_TMP_DIR}/canonical"
 	local fake_home="${TEST_TMP_DIR}/home"
 	make_repo "$eligible"
 	make_repo "$disabled"
+	make_repo "$canonical"
 	printf '%s\n' '{"scripts":{"lint":"eslint ."}}' >"$eligible/package.json"
 	/usr/bin/git -C "$eligible" add package.json
 	printf '%s\n' '{"version":"old","features":{"planning":true}}' >"$eligible/.aidevops.json"
 	printf '%s\n' '{"verify":{"enabled":false}}' >"$disabled/.aidevops.json"
+	printf '%s\n' '{"features":{"planning":true}}' >"$canonical/.aidevops.json"
+	printf '%s\n' '{"scripts":{"lint":"eslint ."}}' >"$canonical/package.json"
+	/usr/bin/git -C "$canonical" add .aidevops.json package.json
+	/usr/bin/git -C "$canonical" commit -q -m fixture
 	mkdir -p "${fake_home}/.config/aidevops"
-	jq -n --arg eligible "$eligible" --arg disabled "$disabled" \
-		'{initialized_repos:[{path:$eligible,features:["code-quality"]},{path:$disabled,features:["code-quality"]}]}' >"${fake_home}/.config/aidevops/repos.json"
+	jq -n --arg eligible "$eligible" --arg disabled "$disabled" --arg canonical "$canonical" \
+		'{initialized_repos:[{path:$eligible,features:["code-quality"]},{path:$disabled,features:["code-quality"]},{path:$canonical,features:["code-quality"]}]}' >"${fake_home}/.config/aidevops/repos.json"
 
 	HOME="$fake_home" setup_repo_verify_guard
 	assert_equal "true" "$(jq -r --arg path "$eligible" '.initialized_repos[] | select(.path == $path) | (.features | index("code-quality") != null)' "${fake_home}/.config/aidevops/repos.json")" "setup seeds code-quality registration"
@@ -68,6 +74,7 @@ main() {
 		assert_equal "0" "0" "setup preserves explicit opt-out"
 	fi
 	assert_equal "false" "$(jq -r '.features.code_quality // false' "$disabled/.aidevops.json")" "verify opt-out does not gain code-quality true"
+	assert_equal "false" "$(jq -r '.features.code_quality // false' "$canonical/.aidevops.json")" "setup defers tracked canonical policy without failing"
 	local setup_status=0
 	REPO_VERIFY_INSTALLER="${TEST_TMP_DIR}/missing-installer" HOME="$fake_home" setup_repo_verify_guard || setup_status=$?
 	assert_equal "1" "$setup_status" "setup reports hook rollout failures"

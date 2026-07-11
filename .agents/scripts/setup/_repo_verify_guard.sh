@@ -43,11 +43,11 @@ setup_repo_verify_guard() {
 		registration_status=0
 		repo_verify_migrate_registration "$repo_root" >/dev/null 2>&1 || registration_status=$?
 		[[ "$registration_status" -eq 0 ]] && registered=$((registered + 1))
-		case "$registration_status" in 0 | 2 | 4) ;; *) errors=$((errors + 1)) ;; esac
+		case "$registration_status" in 0 | 2 | 3 | 4) ;; *) errors=$((errors + 1)) ;; esac
 		migration_status=0
 		repo_verify_migrate_config "$repo_root" >/dev/null 2>&1 || migration_status=$?
 		[[ "$migration_status" -eq 0 ]] && migrated=$((migrated + 1))
-		case "$migration_status" in 0 | 2 | 4) ;; *) errors=$((errors + 1)) ;; esac
+		case "$migration_status" in 0 | 2 | 3 | 4) ;; *) errors=$((errors + 1)) ;; esac
 		feature_state=$(repo_verify_feature_state "$repo_root")
 		if [[ "$feature_state" == "false" ]]; then
 			skipped=$((skipped + 1))
