@@ -13,9 +13,24 @@
 
 set -euo pipefail
 
-REPO_DIR="$HOME/Git/aidevops"
+REAL_HOME="$HOME"
+if [[ -n "${SUDO_USER:-}" && "$(id -u)" -eq 0 ]]; then
+	_tmp_real_home=""
+	if command -v getent &>/dev/null; then
+		_tmp_real_home=$(getent passwd "$SUDO_USER" | cut -d: -f6)
+	elif command -v dscl &>/dev/null; then
+		_tmp_real_home=$(dscl . -read "/Users/${SUDO_USER}" NFSHomeDirectory 2>/dev/null | awk '{print $2; exit}' || true)
+	elif [[ -d "/Users/${SUDO_USER}" ]]; then
+		_tmp_real_home="/Users/${SUDO_USER}"
+	fi
+	if [[ -n "$_tmp_real_home" ]]; then
+		REAL_HOME="$_tmp_real_home"
+	fi
+fi
+
+REPO_DIR="${REAL_HOME:+$REAL_HOME/Git/aidevops}"
 REPO_URL="https://github.com/marcusquinn/aidevops.git"
-DEPLOYED_CLI="$HOME/.aidevops/agents/aidevops.sh"
+DEPLOYED_CLI="${REAL_HOME:+$REAL_HOME/.aidevops/agents/aidevops.sh}"
 
 # 1. Prefer the setup-deployed copy. It is released atomically with its modules,
 # so a stale or dirty canonical checkout cannot split the CLI version from them.
@@ -30,7 +45,7 @@ fi
 
 # 3. Git repo not found — bootstrap it automatically
 # This runs once on first use after a package manager install (npm/brew/bun).
-# After this, step 1 will always match and the git repo runs directly.
+# After this, step 1 will always match and the deployed copy runs directly.
 if command -v git >/dev/null 2>&1; then
     echo "[aidevops] First run — cloning git repo to $REPO_DIR for transparent updates..."
     mkdir -p "$(dirname "$REPO_DIR")"
