@@ -730,6 +730,13 @@ test_screen_json_paths_are_optional_and_fail_visibly() {
 		return 0
 	fi
 	local warning_file="${TEST_DIR}/screen-warning"
+	assignments=$(_generate_screen_time_vars '' 2>"$warning_file")
+	eval "$assignments"
+	if [[ "$screen_today" != "$PROFILE_STATUS_UNAVAILABLE" || "$screen_status" != "$PROFILE_STATUS_UNAVAILABLE" || "$screen_source" != "$PROFILE_STATUS_UNAVAILABLE" ]] ||
+		! grep -qF 'screen-time payload is invalid' "$warning_file"; then
+		print_result "$test_name" 1 "empty screen payload failure was not visible"
+		return 0
+	fi
 	assignments=$(_generate_screen_time_vars 'not-json' 2>"$warning_file")
 	eval "$assignments"
 	if [[ "$screen_status" != "$PROFILE_STATUS_UNAVAILABLE" || "$screen_source" != "$PROFILE_STATUS_UNAVAILABLE" ]] ||
