@@ -131,6 +131,25 @@ test_sonnet_alternatives_are_scoped() {
 	return 0
 }
 
+test_coding_plan_requires_provider_auth() {
+	printf '{"openai":{"type":"oauth","access":"test-openai-access"}}\n' >"${HOME}/.local/share/opencode/auth.json"
+	local selected=""
+	selected=$(AIDEVOPS_HEADLESS_PROVIDER_ALLOWLIST=zai-coding-plan bash "$HELPER_SCRIPT" select --role worker --tier sonnet 2>/dev/null || true)
+	if [[ -n "$selected" ]]; then
+		print_result "Coding-plan GLM requires provider-specific auth" 1 "Unexpected model without coding-plan auth: ${selected}"
+		return 0
+	fi
+
+	printf '{"zai-coding-plan":{"type":"oauth","access":"test-zai-access"}}\n' >"${HOME}/.local/share/opencode/auth.json"
+	selected=$(AIDEVOPS_HEADLESS_PROVIDER_ALLOWLIST=zai-coding-plan bash "$HELPER_SCRIPT" select --role worker --tier sonnet 2>/dev/null || true)
+	if [[ "$selected" == "zai-coding-plan/glm-5.2" ]]; then
+		print_result "Coding-plan GLM requires provider-specific auth" 0
+		return 0
+	fi
+	print_result "Coding-plan GLM requires provider-specific auth" 1 "Expected zai-coding-plan/glm-5.2, got ${selected:-<empty>}"
+	return 0
+}
+
 main_test() {
 	setup_test_env
 	test_openai_allowlist_selects_sonnet_tier_model
@@ -139,6 +158,7 @@ main_test() {
 	test_openai_allowlist_requires_openai_auth_entry
 	test_local_tier_never_uses_cloud_fallback
 	test_sonnet_alternatives_are_scoped
+	test_coding_plan_requires_provider_auth
 	teardown_test_env
 
 	printf '\nRan %s tests, %s failed.\n' "$TESTS_RUN" "$TESTS_FAILED"

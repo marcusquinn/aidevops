@@ -149,6 +149,11 @@ provider_auth_available() {
 		fi
 		return 1
 		;;
+	zai-coding-plan)
+		# Z.AI Coding Plan is an OpenCode-managed subscription provider.
+		opencode_auth_has_provider "$provider"
+		return $?
+		;;
 	opencode)
 		# OpenCode gateway models use OpenCode's OAuth session
 		if [[ -f "$OPENCODE_AUTH_FILE" ]]; then

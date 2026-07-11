@@ -113,7 +113,7 @@ get_provider_key_vars() {
 is_known_provider() {
 	local provider="$1"
 	case "$provider" in
-	anthropic | openai | google | openrouter | groq | deepseek | local | ollama) return 0 ;;
+	anthropic | openai | google | openrouter | groq | deepseek | zai-coding-plan | local | ollama) return 0 ;;
 	*) return 1 ;;
 	esac
 }

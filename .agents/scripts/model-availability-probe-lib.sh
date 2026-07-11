@@ -704,6 +704,23 @@ _probe_execute_http() {
 	return "$exit_code"
 }
 
+_probe_opencode_subscription_provider() {
+	local provider="$1"
+	local quiet="$2"
+	local auth_file="${OPENCODE_AUTH_FILE:-${HOME}/.local/share/opencode/auth.json}"
+
+	if [[ -f "$auth_file" ]] && command -v jq >/dev/null 2>&1 && \
+		jq -e --arg provider "$provider" '.[$provider] | type == "object" and ((.access // .refresh // .token // .apiKey // "") != "")' "$auth_file" >/dev/null 2>&1; then
+		_record_health "$provider" "healthy" 200 0 "" 0
+		[[ "$quiet" != "true" ]] && print_success "$provider: authenticated through OpenCode"
+		return 0
+	fi
+
+	_record_health "$provider" "no-key" 0 0 "OpenCode subscription auth unavailable" 0
+	[[ "$quiet" != "true" ]] && print_warning "$provider: no OpenCode subscription auth"
+	return 1
+}
+
 probe_provider() {
 	local provider="$1"
 	local force="${2:-false}"
@@ -728,6 +745,10 @@ probe_provider() {
 	# OpenCode uses its local models cache — no HTTP probe needed
 	if [[ "$provider" == "opencode" ]]; then
 		_probe_opencode "$quiet"
+		return $?
+	fi
+	if [[ "$provider" == "zai-coding-plan" ]]; then
+		_probe_opencode_subscription_provider "$provider" "$quiet"
 		return $?
 	fi
 
