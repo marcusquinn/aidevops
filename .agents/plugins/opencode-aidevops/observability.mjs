@@ -24,6 +24,14 @@ import { fileURLToPath } from "url";
 import {
   setDbPath, sqliteExec, sqliteExecSync, shutdownSqlite as _shutdownSqlite, sqlEscape,
 } from "./observability-sqlite.mjs";
+import {
+  appendRuntimeEvent,
+  RUNTIME_EVENTS_SCHEMA_SQL,
+} from "../../scripts/runtime-events.mjs";
+import {
+  enrichActiveSpan,
+  runtimeEventOtelAttributes,
+} from "./otel-enrichment.mjs";
 
 const HOME = homedir();
 const DEFAULT_OBS_DIR = join(HOME, ".aidevops", ".agent-workspace", "observability");
@@ -209,8 +217,14 @@ function _isSchemaInitialized() {
       "sqlite3 -readonly -separator '|' \"$TARGET_DB\" " +
       "\"SELECT " +
       "(SELECT COUNT(*) FROM sqlite_master WHERE type='table' " +
-      "AND name IN ('llm_requests','tool_calls','session_summaries')) AS tbls, " +
-      "(SELECT COUNT(*) FROM pragma_table_info('tool_calls') WHERE name='intent') AS intent_col;\"",
+       "AND name IN ('llm_requests','tool_calls','session_summaries','runtime_events')) AS tbls, " +
+       "(SELECT COUNT(*) FROM pragma_table_info('tool_calls') WHERE name='intent') AS intent_col, " +
+       "(SELECT COUNT(*) FROM pragma_table_info('runtime_events') " +
+       "WHERE name IN ('envelope_version','event_id','correlation_id','causation_id'," +
+       "'subject_id','session_id','worker_id','root_event_id','parent_event_id'," +
+       "'state_version','payload_json')) AS runtime_cols, " +
+       "(SELECT COUNT(*) FROM sqlite_master WHERE type='trigger' " +
+       "AND name IN ('runtime_events_reject_update','runtime_events_reject_delete')) AS runtime_triggers;\"",
       {
         encoding: "utf-8",
         timeout: 2000,
@@ -219,8 +233,8 @@ function _isSchemaInitialized() {
       },
     ).trim();
     if (!result) return false;
-    const [tbls, intentCol] = result.split("|");
-    return tbls === "3" && intentCol === "1";
+    const [tbls, intentCol, runtimeCols, runtimeTriggers] = result.split("|");
+    return tbls === "4" && intentCol === "1" && runtimeCols === "11" && runtimeTriggers === "2";
   } catch {
     return false;
   }
@@ -305,6 +319,8 @@ CREATE TABLE IF NOT EXISTS session_summaries (
 
 CREATE INDEX IF NOT EXISTS idx_session_summaries_session
   ON session_summaries(session_id);
+
+${RUNTIME_EVENTS_SCHEMA_SQL}
 `;
 
   const result = sqliteExecSync(schema, 10000);
@@ -643,7 +659,40 @@ export function handleEvent(input) {
 
   if (event.type === "message.updated") {
     handleMessageUpdated(event);
+    return;
   }
+
+  recordOpenCodeRuntimeEvent(event);
+}
+
+function projectRuntimeEvent(envelope) {
+  if (!envelope) return;
+  enrichActiveSpan(runtimeEventOtelAttributes(envelope)).catch(() => {});
+}
+
+function recordOpenCodeRuntimeEvent(event, eventType = event.type) {
+  const properties = event.properties || {};
+  const info = properties.info || {};
+  const sessionId = info.sessionID || properties.sessionID || properties.sessionId || null;
+  const subjectId = info.id || properties.id || sessionId || "runtime:opencode";
+  const envelope = appendRuntimeEvent({
+    eventType,
+    subjectId,
+    sessionId,
+    correlationId: properties.correlationID || sessionId || undefined,
+    causationId: properties.causationID,
+    rootEventId: properties.rootEventID,
+    parentEventId: properties.parentEventID,
+    payload: {
+      error_type: info.error?.name || properties.error?.name || null,
+      finish_reason: info.finish || null,
+      model_id: info.modelID || null,
+      provider_id: info.providerID || null,
+      role: info.role || null,
+      source: "opencode",
+    },
+  });
+  projectRuntimeEvent(envelope);
 }
 
 /**
@@ -665,6 +714,8 @@ function handleMessageUpdated(event) {
   // Deduplicate — event may fire multiple times for same message
   if (recordedMessages.has(msg.id)) return;
   recordedMessages.add(msg.id);
+
+  recordOpenCodeRuntimeEvent(event, "message.completed");
 
   // Prevent unbounded memory growth — prune old entries periodically
   if (recordedMessages.size > 10000) {
@@ -867,6 +918,20 @@ export function recordToolCall(input, output, intent, durationMs) {
   });
 
   sqliteExec(sql);
+
+  const runtimeEnvelope = appendRuntimeEvent({
+    eventType: "tool.completed",
+    subjectId: callID || `${sessionID}:${toolName}`,
+    sessionId: sessionID,
+    correlationId: sessionID,
+    payload: {
+      call_id: callID || null,
+      duration_ms: durationMs ?? null,
+      success: isSuccess === 1,
+      tool_name: toolName,
+    },
+  });
+  projectRuntimeEvent(runtimeEnvelope);
 }
 
 /**

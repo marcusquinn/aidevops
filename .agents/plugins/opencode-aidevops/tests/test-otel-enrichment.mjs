@@ -24,6 +24,8 @@ import {
   detectTaskId,
   detectSessionOrigin,
   otelEnabled,
+  runtimeEventOtelAttributes,
+  safeOtelAttributes,
 } from "../otel-enrichment.mjs";
 
 // ---------------------------------------------------------------------------
@@ -234,5 +236,36 @@ describe("otelEnabled", () => {
     // "definitely not ready" signal. Callers use it to skip attribute
     // building when OTEL is disabled, so `false` here is the contract.
     assert.equal(otelEnabled(), false);
+  });
+});
+
+describe("safe OTEL projection", () => {
+  test("drops free-form and causal evidence while bounding safe values", () => {
+    const attrs = safeOtelAttributes({
+      "aidevops.intent": "free-form private intent",
+      "aidevops.runtime_event.event_id": "event-1",
+      "aidevops.runtime_event.payload": "private payload",
+      "aidevops.tool_name": "x".repeat(200),
+      "aidevops.session_origin": "worker",
+    });
+
+    assert.deepEqual(Object.keys(attrs).sort(), [
+      "aidevops.session_origin",
+      "aidevops.tool_name",
+    ]);
+    assert.equal(attrs["aidevops.tool_name"].length, 128);
+  });
+
+  test("runtime events project only low-cardinality type and version", () => {
+    assert.deepEqual(runtimeEventOtelAttributes({
+      envelopeVersion: 1,
+      eventId: "event-1",
+      correlationId: "correlation-1",
+      eventType: "tool.completed",
+      payload: { private: true },
+    }), {
+      "aidevops.runtime_event.type": "tool.completed",
+      "aidevops.runtime_event.envelope_version": 1,
+    });
   });
 });

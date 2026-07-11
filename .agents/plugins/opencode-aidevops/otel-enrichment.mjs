@@ -15,7 +15,7 @@
 // See reference/observability.md "Known limitation: run mode" for details.
 //
 // This module offers a dynamic, fail-soft path to enrich that span with
-// aidevops-specific attributes (intent, task_id, session_origin, runtime)
+// bounded aidevops-specific operational attributes
 // WITHOUT adding @opentelemetry/api as a hard dependency. If the module
 // is unavailable (older opencode, missing install, OTEL disabled), all
 // calls become no-ops.
@@ -52,18 +52,38 @@ async function loadTraceApi() {
 }
 
 /**
- * Filter out undefined/null/empty-string values so we don't leak
- * empty keys through to the trace sink.
+ * OTEL is an optional projection, not the evidence authority. Keep the
+ * projection to bounded, low-cardinality operational attributes. Free-form
+ * intent, payloads, state, paths, and causal identifiers stay in local SQLite.
  *
  * @param {Record<string, any>} attrs
  * @returns {Record<string, string | number | boolean>}
  */
-function cleanAttributes(attrs) {
+const SAFE_ATTRIBUTE_KEYS = new Set([
+  "aidevops.tool_name",
+  "aidevops.task_id",
+  "aidevops.session_origin",
+  "aidevops.runtime",
+  "aidevops.runtime_event.type",
+  "aidevops.runtime_event.envelope_version",
+]);
+
+export function safeOtelAttributes(attrs) {
   const cleaned = {};
   for (const [k, v] of Object.entries(attrs)) {
-    if (v !== undefined && v !== null && v !== "") cleaned[k] = v;
+    if (!SAFE_ATTRIBUTE_KEYS.has(k) || v === undefined || v === null || v === "") continue;
+    if (typeof v === "string") cleaned[k] = v.slice(0, 128);
+    else if (typeof v === "number" || typeof v === "boolean") cleaned[k] = v;
   }
   return cleaned;
+}
+
+export function runtimeEventOtelAttributes(event) {
+  if (!event) return {};
+  return safeOtelAttributes({
+    "aidevops.runtime_event.type": event.eventType,
+    "aidevops.runtime_event.envelope_version": event.envelopeVersion,
+  });
 }
 
 /**
@@ -83,7 +103,7 @@ export async function enrichActiveSpan(attrs) {
     const api = await loadTraceApi();
     const span = api?.getActiveSpan?.();
     if (!span || typeof span.setAttributes !== "function") return false;
-    const cleaned = cleanAttributes(attrs);
+    const cleaned = safeOtelAttributes(attrs);
     if (Object.keys(cleaned).length === 0) return false;
     span.setAttributes(cleaned);
     return true;
