@@ -6,6 +6,7 @@ import { join } from "path";
 
 const AIDEVOPS_TITLE_SUFFIX_RE = /\s+· AIDevOps \d+\.\d+\.\d+$/;
 const DEFAULT_SESSION_TITLE_RE = /^New session - /;
+const IMAGE_PLACEHOLDER_RE = /\[Image\s+\d+\]/gi;
 
 function readIfExists(filepath) {
   try {
@@ -33,8 +34,12 @@ export function readAidevopsVersion(agentsDir) {
   return "";
 }
 
+export function sanitizeSessionTitle(title) {
+  return String(title || "").replace(IMAGE_PLACEHOLDER_RE, " ").replace(/\s+/g, " ").trim();
+}
+
 export function withAidevopsTitleSuffix(title, version) {
-  const baseTitle = String(title || "").replace(AIDEVOPS_TITLE_SUFFIX_RE, "");
+  const baseTitle = sanitizeSessionTitle(String(title || "").replace(AIDEVOPS_TITLE_SUFFIX_RE, ""));
   if (!version) return baseTitle;
   return `${baseTitle} · AIDevOps ${version}`;
 }

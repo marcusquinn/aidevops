@@ -24,7 +24,7 @@ const { isDefaultBranchTitle, isTitleOverwritable } = await import(
   "../../../.opencode/lib/session-rename-guards.ts"
 );
 const { getDbPath } = await import("../../../.opencode/lib/opencode-db-path.ts");
-const { getAidevopsVersion, withAidevopsTitleSuffix } = await import(
+const { getAidevopsVersion, sanitizeSessionTitle, withAidevopsTitleSuffix } = await import(
   "../../../.opencode/lib/session-title-suffix.ts"
 );
 const { isTerminalTitleEnabled, sanitizeTerminalTitle, terminalTitleSequence } = await import(
@@ -185,6 +185,21 @@ assertEq(
   "missing version leaves title without stale suffix",
   "Issue #123: concise title",
   withAidevopsTitleSuffix("Issue #123: concise title · AIDevOps 1.2.3", ""),
+);
+assertEq(
+  "image placeholders are removed from generated titles",
+  "Review the session title rename",
+  sanitizeSessionTitle("[Image 1] Review the session [Image 2] title rename"),
+);
+assertEq(
+  "image placeholder matching is case-insensitive",
+  "Preserve useful title text",
+  sanitizeSessionTitle("Preserve [image 12] useful title text"),
+);
+assertEq(
+  "image placeholders are stripped before suffixing",
+  "Fix title renaming · AIDevOps 9.8.7",
+  withAidevopsTitleSuffix("[Image 1] Fix title renaming", "9.8.7"),
 );
 process.env.AIDEVOPS_VERSION = "7.6.5";
 assertEq("env version override is read", "7.6.5", getAidevopsVersion());

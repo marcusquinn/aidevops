@@ -3,6 +3,7 @@ import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
 
 const AIDEVOPS_TITLE_SUFFIX_RE = /\s+· AIDevOps \d+\.\d+\.\d+$/
+const IMAGE_PLACEHOLDER_RE = /\[Image\s+\d+\]/gi
 
 function readVersionFile(path: string): string {
   try {
@@ -31,8 +32,12 @@ export function getAidevopsVersion(): string {
   return ""
 }
 
+export function sanitizeSessionTitle(title: string): string {
+  return title.replace(IMAGE_PLACEHOLDER_RE, " ").replace(/\s+/g, " ").trim()
+}
+
 export function withAidevopsTitleSuffix(title: string, version = getAidevopsVersion()): string {
-  const baseTitle = title.replace(AIDEVOPS_TITLE_SUFFIX_RE, "")
+  const baseTitle = sanitizeSessionTitle(title.replace(AIDEVOPS_TITLE_SUFFIX_RE, ""))
   if (!version) return baseTitle
   return `${baseTitle} · AIDevOps ${version}`
 }
