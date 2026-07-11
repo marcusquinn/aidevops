@@ -204,7 +204,10 @@ lint_audit() {
 		record=$(lint_audit_record "$repo_root")
 		printf '%s\n' "$record" >>"$records_file"
 		classification=$(printf '%s' "$record" | jq -r '.classification')
-		case "$classification" in READY | EXPLICITLY-DISABLED) ;; *) actionable=$((actionable + 1)) ;; esac
+		case "$classification" in
+		READY | EXPLICITLY-DISABLED) ;;
+		*) actionable=$((actionable + 1)) ;;
+		esac
 	done <"$repo_list_file"
 	if [[ "$LINT_JSON" == "$LINT_TRUE" ]]; then
 		jq -s '.' "$records_file"
@@ -217,7 +220,9 @@ lint_audit() {
 		printf '\nActionable repositories: %s\n' "$actionable"
 	fi
 	rm -f "$records_file" "$repo_list_file"
-	if [[ "$LINT_STRICT" == "$LINT_TRUE" && "$actionable" -gt 0 ]]; then return 1; fi
+	if [[ "$LINT_STRICT" == "$LINT_TRUE" && "$actionable" -gt 0 ]]; then
+		return 1
+	fi
 	return 0
 }
 
@@ -258,8 +263,14 @@ lint_configure_all() {
 	local array_file
 	array_file=$(mktemp)
 	jq -s '.' "$records_file" >"$array_file"
-	if [[ "$LINT_JSON" == "$LINT_TRUE" ]]; then jq '.' "$array_file"; else jq -r '.[] | "\(.classification)\t\(.repo)\t\(.detection.evidence)"' "$array_file"; fi
-	if [[ "$LINT_WRITE_PR_PLAN" == "$LINT_TRUE" ]]; then lint_write_dispatch_plan "$array_file"; fi
+	if [[ "$LINT_JSON" == "$LINT_TRUE" ]]; then
+		jq '.' "$array_file"
+	else
+		jq -r '.[] | "\(.classification)\t\(.repo)\t\(.detection.evidence)"' "$array_file"
+	fi
+	if [[ "$LINT_WRITE_PR_PLAN" == "$LINT_TRUE" ]]; then
+		lint_write_dispatch_plan "$array_file"
+	fi
 	rm -f "$records_file" "$repo_list_file" "$array_file"
 	return 0
 }
@@ -312,11 +323,17 @@ lint_reconcile() {
 		registration_status=0
 		repo_verify_migrate_registration "$repo_root" >/dev/null 2>&1 || registration_status=$?
 		[[ "$registration_status" -eq 0 ]] && registered=$((registered + 1))
-		case "$registration_status" in 0 | 2 | 4) ;; *) failed=$((failed + 1)) ;; esac
+		case "$registration_status" in
+		0 | 2 | 4) ;;
+		*) failed=$((failed + 1)) ;;
+		esac
 		migration_status=0
 		repo_verify_migrate_config "$repo_root" >/dev/null 2>&1 || migration_status=$?
 		[[ "$migration_status" -eq 0 ]] && migrated=$((migrated + 1))
-		case "$migration_status" in 0 | 2 | 4) ;; *) failed=$((failed + 1)) ;; esac
+		case "$migration_status" in
+		0 | 2 | 4) ;;
+		*) failed=$((failed + 1)) ;;
+		esac
 		feature_state=$(lint_registered_feature_state "$repo_root")
 		if [[ "$feature_state" == "false" ]]; then
 			skipped=$((skipped + 1))
@@ -332,7 +349,11 @@ lint_reconcile() {
 			skipped=$((skipped + 1))
 			continue
 		fi
-		if repo_verify_install_hook "$repo_root" >/dev/null 2>&1; then installed=$((installed + 1)); else failed=$((failed + 1)); fi
+		if repo_verify_install_hook "$repo_root" >/dev/null 2>&1; then
+			installed=$((installed + 1))
+		else
+			failed=$((failed + 1))
+		fi
 	done <"$repo_list_file"
 	rm -f "$repo_list_file"
 	printf 'Lint reconciliation: registered=%s migrated=%s installed=%s skipped=%s failed=%s\n' "$registered" "$migrated" "$installed" "$skipped" "$failed"
@@ -349,7 +370,11 @@ main() {
 	case "$LINT_ACTION" in
 	audit) lint_audit ;;
 	configure)
-		if [[ "$LINT_ALL" == "$LINT_TRUE" ]]; then lint_configure_all; else lint_configure_current; fi
+		if [[ "$LINT_ALL" == "$LINT_TRUE" ]]; then
+			lint_configure_all
+		else
+			lint_configure_current
+		fi
 		;;
 	reconcile) lint_reconcile ;;
 	*)

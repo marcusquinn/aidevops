@@ -170,7 +170,10 @@ _repo_verify_package_manager() {
 		return 2
 	fi
 	if [[ -n "$declared" ]]; then
-		case "$declared" in npm | pnpm | yarn | bun) ;; *) return 2 ;; esac
+		case "$declared" in
+		npm | pnpm | yarn | bun) ;;
+		*) return 2 ;;
+		esac
 		if [[ "$count" -eq 1 && "$declared" != "$manager" ]]; then
 			return 2
 		fi
@@ -274,7 +277,9 @@ _repo_verify_predicate_matches() {
 		_repo_verify_evidence_is_tracked "$repo_root" "$section_path" || return 1
 		while IFS= read -r section_line; do
 			section_line="${section_line%%#*}"
-			while [[ "$section_line" == *[[:space:]] ]]; do section_line="${section_line%?}"; done
+			while [[ "$section_line" == *[[:space:]] ]]; do
+				section_line="${section_line%?}"
+			done
 			section_line="${section_line#"${section_line%%[![:space:]]*}"}"
 			[[ "$section_line" == "[${section_name}]" ]] && return 0
 		done <"${repo_root}/${section_path}"
@@ -379,7 +384,11 @@ repo_verify_hook_status() {
 		return 0
 	fi
 	if grep -q '# aidevops-pre-push-guards' "$hook_file" 2>/dev/null; then
-		if grep -q '# guard:repo-verify' "$hook_file" 2>/dev/null; then printf 'installed\n'; else printf 'missing\n'; fi
+		if grep -q '# guard:repo-verify' "$hook_file" 2>/dev/null; then
+			printf 'installed\n'
+		else
+			printf 'missing\n'
+		fi
 	else
 		printf 'unmanaged-conflict\n'
 	fi
@@ -414,7 +423,11 @@ repo_verify_feature_state() {
 		' "$config_file" 2>/dev/null || printf 'invalid\n'
 		return 0
 	fi
-	if repo_verify_registration_has_feature "$repo_root"; then printf 'legacy\n'; else printf 'missing\n'; fi
+	if repo_verify_registration_has_feature "$repo_root"; then
+		printf 'legacy\n'
+	else
+		printf 'missing\n'
+	fi
 	return 0
 }
 
@@ -474,7 +487,9 @@ repo_verify_apply_config() {
 	local create_missing="${2:-false}"
 	local config_file
 	config_file=$(_repo_verify_config_path "$repo_root")
-	if [[ ! -f "$config_file" && "$create_missing" != "$REPO_VERIFY_VALUE_TRUE" ]]; then return 2; fi
+	if [[ ! -f "$config_file" && "$create_missing" != "$REPO_VERIFY_VALUE_TRUE" ]]; then
+		return 2
+	fi
 	repo_verify_config_is_safe_to_modify "$repo_root" || return 3
 	if [[ -f "$config_file" ]] && _repo_verify_config_opted_out "$config_file"; then
 		return 4
