@@ -221,7 +221,7 @@ test_top_apps_sql_and_sweep_are_bounded() {
 	boundaries=$(jq -r '.boundaries' "$instrument")
 	segments=$(jq -r '.attributed_segments' "$instrument")
 	elapsed=$(jq -r '.elapsed_ms' "$instrument")
-	if [[ "$selected" != "200" || "$valid" != "200" || "$boundaries" -gt 402 || "$segments" -gt 401 ]] || \
+	if [[ "$selected" != "200" || "$valid" != "200" || "$boundaries" -gt 402 || "$segments" -gt 401 ]] ||
 		! awk -v elapsed="$elapsed" 'BEGIN {exit !(elapsed < 5000)}'; then
 		fail "top-app query/sweep was unbounded: $(<"$instrument")"
 	fi

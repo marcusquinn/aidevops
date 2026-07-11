@@ -34,6 +34,9 @@ if [[ -z "${SCRIPT_DIR:-}" ]]; then
 	unset _lib_path
 fi
 
+PROFILE_STATUS_UNAVAILABLE="unavailable"
+PROFILE_BOOLEAN_TRUE="true"
+
 # =============================================================================
 # Apps — App Name Mapping and Screen Time Section
 # =============================================================================
@@ -344,6 +347,77 @@ EOF
 
 # --- Generate the Work with AI markdown table ---
 # Usage: _generate_work_with_ai_table <screen_json> <day_json> <week_json> <month_json> <year_json>
+_generate_screen_time_vars() {
+	local screen_json="$1"
+	local values screen_today screen_week screen_month screen_year screen_status year_estimated screen_source
+	values=$(printf '%s' "$screen_json" | jq -r --arg unavailable "$PROFILE_STATUS_UNAVAILABLE" '
+		[
+			(if .today_hours == null then $unavailable else ((.today_hours * 10 | round / 10 | tostring) + "h") end),
+			(if .week_hours == null then $unavailable else ((.week_hours * 10 | round / 10 | tostring) + "h") end),
+			(if .month_hours == null then $unavailable else ((.month_hours * 10 | round / 10 | tostring) + "h") end),
+			(if .year_hours == null then $unavailable else ((.year_hours | round | tostring) + "h") end),
+			([.periods.day.status, .periods.week.status, .periods.month.status, .periods.year.status] | unique | join(", ")),
+			(.periods.year.estimated // false),
+			(.periods.month.source // $unavailable)
+		] | @tsv
+	' 2>/dev/null) || values=$'unavailable\tunavailable\tunavailable\tunavailable\tunavailable\tfalse\tunavailable'
+	IFS=$'\t' read -r screen_today screen_week screen_month screen_year screen_status year_estimated screen_source <<<"$values"
+	local year_prefix="" year_suffix=""
+	if [[ "$year_estimated" == "$PROFILE_BOOLEAN_TRUE" ]]; then
+		year_prefix="~"
+		year_suffix="*"
+	fi
+	printf 'screen_today=%q screen_week=%q screen_month=%q screen_year=%q screen_status=%q screen_source=%q year_prefix=%q year_suffix=%q\n' \
+		"$screen_today" "$screen_week" "$screen_month" "$screen_year" "$screen_status" "$screen_source" "$year_prefix" "$year_suffix"
+	return 0
+}
+
+_generate_work_count_vars() {
+	local day_interactive="$1" week_interactive="$2" month_interactive="$3" year_interactive="$4"
+	local day_workers="$5" week_workers="$6" month_workers="$7" year_workers="$8"
+	local month_total="$9"
+	shift 9
+	local year_total="$1"
+	printf 'f_day_int=%q f_week_int=%q f_month_int=%q f_year_int=%q f_day_wrk=%q f_week_wrk=%q f_month_wrk=%q f_year_wrk=%q f_month_total=%q f_year_total=%q\n' \
+		"$(_format_number "$day_interactive")" "$(_format_number "$week_interactive")" \
+		"$(_format_number "$month_interactive")" "$(_format_number "$year_interactive")" \
+		"$(_format_number "$day_workers")" "$(_format_number "$week_workers")" \
+		"$(_format_number "$month_workers")" "$(_format_number "$year_workers")" \
+		"$(_format_number "$month_total")" "$(_format_number "$year_total")"
+	return 0
+}
+
+_period_unavailable_assignments() {
+	local period_json="$1"
+	shift
+	if ! printf '%s' "$period_json" | jq -e --arg unavailable "$PROFILE_STATUS_UNAVAILABLE" '(.status // "ok") == $unavailable' >/dev/null 2>&1; then
+		return 0
+	fi
+	local variable_name
+	for variable_name in "$@"; do
+		printf '%s=%q ' "$variable_name" "$PROFILE_STATUS_UNAVAILABLE"
+	done
+	printf '\n'
+	return 0
+}
+
+_format_work_hour_cell() {
+	local value="$1"
+	if [[ "$value" == "$PROFILE_STATUS_UNAVAILABLE" ]]; then
+		printf '%s' "$value"
+	else
+		printf '%sh' "$value"
+	fi
+	return 0
+}
+
+_profile_period_json() {
+	local periods_json="$1"
+	local period_key="$2"
+	printf '%s' "$periods_json" | jq -c --arg key "$period_key" --arg unavailable "$PROFILE_STATUS_UNAVAILABLE" '.[$key] // {status:$unavailable}'
+	return 0
+}
+
 _generate_work_with_ai_table() {
 	local screen_json="$1"
 	local day_json="$2"
@@ -351,21 +425,8 @@ _generate_work_with_ai_table() {
 	local month_json="$4"
 	local year_json="$5"
 
-	# Extract screen time values
-	local screen_today screen_week screen_month screen_year
-	screen_today=$(echo "$screen_json" | jq -r 'if .today_hours == null then "unavailable" else ((.today_hours * 10 | round / 10 | tostring) + "h") end')
-	screen_week=$(echo "$screen_json" | jq -r 'if .week_hours == null then "unavailable" else ((.week_hours * 10 | round / 10 | tostring) + "h") end')
-	screen_month=$(echo "$screen_json" | jq -r 'if .month_hours == null then "unavailable" else ((.month_hours * 10 | round / 10 | tostring) + "h") end')
-	screen_year=$(echo "$screen_json" | jq -r 'if .year_hours == null then "unavailable" else ((.year_hours | round | tostring) + "h") end')
-
-	# Check if year is extrapolated (history file has < 365 days)
-	local year_prefix="" year_suffix=""
-	if [[ "$(echo "$screen_json" | jq -r '.periods.year.estimated // false')" == "true" ]]; then
-		year_prefix="~"
-		year_suffix="*"
-	fi
-	local screen_status
-	screen_status=$(echo "$screen_json" | jq -r '[.periods.day.status, .periods.week.status, .periods.month.status, .periods.year.status] | unique | join(", ")' 2>/dev/null || echo "unavailable")
+	local screen_today screen_week screen_month screen_year screen_status screen_source year_prefix year_suffix
+	eval "$(_generate_screen_time_vars "$screen_json")"
 
 	# Extract and format session time variables for all periods
 	local day_human day_interactive_machine day_worker_human day_worker day_total day_interactive day_workers
@@ -374,80 +435,33 @@ _generate_work_with_ai_table() {
 	local year_human year_interactive_machine year_worker_human year_worker year_total year_interactive year_workers
 	eval "$(_generate_session_time_vars "$day_json" "$week_json" "$month_json" "$year_json")"
 
-	# Format screen time and session counts with commas
 	local f_day_int f_week_int f_month_int f_year_int
-	f_day_int=$(_format_number "$day_interactive")
-	f_week_int=$(_format_number "$week_interactive")
-	f_month_int=$(_format_number "$month_interactive")
-	f_year_int=$(_format_number "$year_interactive")
-
 	local f_day_wrk f_week_wrk f_month_wrk f_year_wrk
-	f_day_wrk=$(_format_number "$day_workers")
-	f_week_wrk=$(_format_number "$week_workers")
-	f_month_wrk=$(_format_number "$month_workers")
-	f_year_wrk=$(_format_number "$year_workers")
-
 	local f_month_total f_year_total
-	f_month_total=$(_format_number "$month_total")
-	f_year_total=$(_format_number "$year_total")
+	eval "$(_generate_work_count_vars "$day_interactive" "$week_interactive" "$month_interactive" "$year_interactive" \
+		"$day_workers" "$week_workers" "$month_workers" "$year_workers" "$month_total" "$year_total")"
 
 	# A failed collector is not a valid zero. Preserve legitimate zero values only
 	# when the corresponding period explicitly reports status=ok.
-	if [[ "$(echo "$day_json" | jq -r '.status // "ok"')" == "unavailable" ]]; then
-		day_human="unavailable"
-		day_interactive_machine="unavailable"
-		day_worker_human="unavailable"
-		day_worker="unavailable"
-		day_total="unavailable"
-		f_day_int="unavailable"
-		f_day_wrk="unavailable"
-	fi
-	if [[ "$(echo "$week_json" | jq -r '.status // "ok"')" == "unavailable" ]]; then
-		week_human="unavailable"
-		week_interactive_machine="unavailable"
-		week_worker_human="unavailable"
-		week_worker="unavailable"
-		week_total="unavailable"
-		f_week_int="unavailable"
-		f_week_wrk="unavailable"
-	fi
-	if [[ "$(echo "$month_json" | jq -r '.status // "ok"')" == "unavailable" ]]; then
-		month_human="unavailable"
-		month_interactive_machine="unavailable"
-		month_worker_human="unavailable"
-		month_worker="unavailable"
-		f_month_total="unavailable"
-		f_month_int="unavailable"
-		f_month_wrk="unavailable"
-	fi
-	if [[ "$(echo "$year_json" | jq -r '.status // "ok"')" == "unavailable" ]]; then
-		year_human="unavailable"
-		year_interactive_machine="unavailable"
-		year_worker_human="unavailable"
-		year_worker="unavailable"
-		f_year_total="unavailable"
-		f_year_int="unavailable"
-		f_year_wrk="unavailable"
-	fi
+	eval "$(_period_unavailable_assignments "$day_json" day_human day_interactive_machine day_worker_human day_worker day_total f_day_int f_day_wrk)"
+	eval "$(_period_unavailable_assignments "$week_json" week_human week_interactive_machine week_worker_human week_worker week_total f_week_int f_week_wrk)"
+	eval "$(_period_unavailable_assignments "$month_json" month_human month_interactive_machine month_worker_human month_worker f_month_total f_month_int f_month_wrk)"
+	eval "$(_period_unavailable_assignments "$year_json" year_human year_interactive_machine year_worker_human year_worker f_year_total f_year_int f_year_wrk)"
 
 	# Determine platform label for screen time row
-	local os_type screen_label screen_source
+	local os_type screen_label
 	os_type="$(uname -s)"
 	case "$os_type" in
 	Darwin)
 		screen_label="Screen time (Mac)"
-		screen_source="macOS display events"
 		;;
 	Linux)
 		screen_label="Screen time (Linux)"
-		screen_source="systemd-logind session events"
 		;;
 	*)
 		screen_label="Screen time"
-		screen_source="system events"
 		;;
 	esac
-	screen_source=$(echo "$screen_json" | jq -r '.periods.month.source // "unavailable"')
 
 	local session_coverage_note=""
 	local session_observed_days
@@ -463,11 +477,11 @@ _generate_work_with_ai_table() {
 | Metric | 24h | 7 Days | 28 Days | 365 Days |
 | --- | ---: | ---: | ---: | ---: |
 | ${screen_label} | ${screen_today} | ${screen_week} | ${screen_month} | ${year_prefix}${screen_year}${year_suffix} |
-| Interactive human attention | ${day_human}$([[ "$day_human" != "unavailable" ]] && echo h) | ${week_human}$([[ "$week_human" != "unavailable" ]] && echo h) | ${month_human}$([[ "$month_human" != "unavailable" ]] && echo h) | ${year_human}$([[ "$year_human" != "unavailable" ]] && echo h) |
-| Interactive AI generation | ${day_interactive_machine}$([[ "$day_interactive_machine" != "unavailable" ]] && echo h) | ${week_interactive_machine}$([[ "$week_interactive_machine" != "unavailable" ]] && echo h) | ${month_interactive_machine}$([[ "$month_interactive_machine" != "unavailable" ]] && echo h) | ${year_interactive_machine}$([[ "$year_interactive_machine" != "unavailable" ]] && echo h) |
-| Worker-classified human attention | ${day_worker_human}$([[ "$day_worker_human" != "unavailable" ]] && echo h) | ${week_worker_human}$([[ "$week_worker_human" != "unavailable" ]] && echo h) | ${month_worker_human}$([[ "$month_worker_human" != "unavailable" ]] && echo h) | ${year_worker_human}$([[ "$year_worker_human" != "unavailable" ]] && echo h) |
-| Worker/headless AI generation | ${day_worker}$([[ "$day_worker" != "unavailable" ]] && echo h) | ${week_worker}$([[ "$week_worker" != "unavailable" ]] && echo h) | ${month_worker}$([[ "$month_worker" != "unavailable" ]] && echo h) | ${year_worker}$([[ "$year_worker" != "unavailable" ]] && echo h) |
-| Additive observed work | ${day_total}$([[ "$day_total" != "unavailable" ]] && echo h) | ${week_total}$([[ "$week_total" != "unavailable" ]] && echo h) | ${f_month_total}$([[ "$f_month_total" != "unavailable" ]] && echo h) | ${f_year_total}$([[ "$f_year_total" != "unavailable" ]] && echo h) |
+| Interactive human attention | $(_format_work_hour_cell "$day_human") | $(_format_work_hour_cell "$week_human") | $(_format_work_hour_cell "$month_human") | $(_format_work_hour_cell "$year_human") |
+| Interactive AI generation | $(_format_work_hour_cell "$day_interactive_machine") | $(_format_work_hour_cell "$week_interactive_machine") | $(_format_work_hour_cell "$month_interactive_machine") | $(_format_work_hour_cell "$year_interactive_machine") |
+| Worker-classified human attention | $(_format_work_hour_cell "$day_worker_human") | $(_format_work_hour_cell "$week_worker_human") | $(_format_work_hour_cell "$month_worker_human") | $(_format_work_hour_cell "$year_worker_human") |
+| Worker/headless AI generation | $(_format_work_hour_cell "$day_worker") | $(_format_work_hour_cell "$week_worker") | $(_format_work_hour_cell "$month_worker") | $(_format_work_hour_cell "$year_worker") |
+| Additive observed work | $(_format_work_hour_cell "$day_total") | $(_format_work_hour_cell "$week_total") | $(_format_work_hour_cell "$f_month_total") | $(_format_work_hour_cell "$f_year_total") |
 | Interactive sessions | ${f_day_int} | ${f_week_int} | ${f_month_int} | ${f_year_int} |
 | Worker sessions | ${f_day_wrk} | ${f_week_wrk} | ${f_month_wrk} | ${f_year_wrk} |
 
@@ -486,10 +500,10 @@ cmd_generate() {
 
 	local session_periods day_json week_json month_json year_json
 	session_periods=$(_get_profile_session_times)
-	day_json=$(echo "$session_periods" | jq -c '.day // {status:"unavailable"}')
-	week_json=$(echo "$session_periods" | jq -c '.week // {status:"unavailable"}')
-	month_json=$(echo "$session_periods" | jq -c '."28d" // {status:"unavailable"}')
-	year_json=$(echo "$session_periods" | jq -c '.year // {status:"unavailable"}')
+	day_json=$(_profile_period_json "$session_periods" "day")
+	week_json=$(_profile_period_json "$session_periods" "week")
+	month_json=$(_profile_period_json "$session_periods" "28d")
+	year_json=$(_profile_period_json "$session_periods" "year")
 
 	local model_usage_bundle model_json_30d model_json_all
 	model_usage_bundle=$(_get_profile_model_usage_bundle)
@@ -507,13 +521,13 @@ cmd_generate() {
 	has_model_usage=$(echo "$model_json_all" | jq -r '((if type == "array" then length else 0 end) // 0) > 0')
 	has_screen_time=$(echo "$screen_json" | jq -r '(.month_hours // 0) > 0')
 
-	if [[ "$has_session_time" == "true" ]] ||
-		[[ "$has_model_usage" == "true" ]] ||
-		[[ "$has_screen_time" == "true" ]]; then
-		has_data=true
+	if [[ "$has_session_time" == "$PROFILE_BOOLEAN_TRUE" ]] ||
+		[[ "$has_model_usage" == "$PROFILE_BOOLEAN_TRUE" ]] ||
+		[[ "$has_screen_time" == "$PROFILE_BOOLEAN_TRUE" ]]; then
+		has_data="$PROFILE_BOOLEAN_TRUE"
 	fi
 
-	if [[ "$has_data" == "false" ]]; then
+	if [[ "$has_data" != "$PROFILE_BOOLEAN_TRUE" ]]; then
 		cat <<'EOF'
 ## Work with AI
 

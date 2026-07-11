@@ -731,7 +731,10 @@ test_profile_update_lock_is_bounded() {
 		fi
 		local lock_dir
 		lock_dir=$(_profile_update_lock_dir)
-		[[ -d "$lock_dir" ]] || { printf '%s\n' lock-lost; return 0; }
+		[[ -d "$lock_dir" ]] || {
+			printf '%s\n' lock-lost
+			return 0
+		}
 		PROFILE_UPDATE_LOCK_TOKEN="$owner_token"
 		_release_profile_update_lock
 
@@ -745,7 +748,10 @@ test_profile_update_lock_is_bounded() {
 		PROFILE_UPDATE_LOCK_GRACE_SECONDS=0
 		_acquire_profile_update_lock
 		local recovered_token="$PROFILE_UPDATE_LOCK_TOKEN"
-		[[ -n "$recovered_token" && "$recovered_token" != "$owner_token" ]] || { printf '%s\n' token-not-unique; return 0; }
+		[[ -n "$recovered_token" && "$recovered_token" != "$owner_token" ]] || {
+			printf '%s\n' token-not-unique
+			return 0
+		}
 		printf '%s\n' stale-recovered
 		_release_profile_update_lock
 	)
@@ -893,15 +899,15 @@ test_profile_model_bundle_scans_each_population_once() {
 	bundle=$(_get_profile_model_usage_bundle)
 	recent_total=$(_token_totals_from_model_usage "$(printf '%s' "$bundle" | jq -c '.recent')")
 	all_total=$(_token_totals_from_model_usage "$(printf '%s' "$bundle" | jq -c '.all')")
-	if [[ "$(grep -c '^recent$' "$calls_file" || true)" != "1" || \
-		"$(grep -c '^all$' "$calls_file" || true)" != "1" || \
-		"$(grep -c '^opencode$' "$calls_file" || true)" != "1" || \
-		"$(grep -c '^jsonl-' "$calls_file" || true)" != "0" ]]; then
+	if [[ "$(grep -c '^recent$' "$calls_file" || true)" != "1" ||
+	"$(grep -c '^all$' "$calls_file" || true)" != "1" ||
+	"$(grep -c '^opencode$' "$calls_file" || true)" != "1" ||
+	"$(grep -c '^jsonl-' "$calls_file" || true)" != "0" ]]; then
 		print_result "$test_name" 1 "unexpected source calls: $(tr '\n' ' ' <"$calls_file")"
 		return 0
 	fi
-	if [[ "$(printf '%s' "$recent_total" | jq -r '.total_all')" != "223" || \
-		"$(printf '%s' "$all_total" | jq -r '.total_all')" != "557" ]]; then
+	if [[ "$(printf '%s' "$recent_total" | jq -r '.total_all')" != "223" ||
+	"$(printf '%s' "$all_total" | jq -r '.total_all')" != "557" ]]; then
 		print_result "$test_name" 1 "derived totals mismatch recent=${recent_total} all=${all_total}"
 		return 0
 	fi
@@ -924,9 +930,9 @@ test_profile_model_bundle_scans_each_population_once() {
 		return 0
 	}
 	bundle=$(_get_profile_model_usage_bundle)
-	if [[ "$(printf '%s' "$bundle" | jq -r '.recent[0].model')" != "fallback-30d" || \
-		"$(printf '%s' "$bundle" | jq -r '.all[0].model')" != "fallback-all" || \
-		"$(grep -c '^jsonl-' "$calls_file" || true)" != "2" ]]; then
+	if [[ "$(printf '%s' "$bundle" | jq -r '.recent[0].model')" != "fallback-30d" ||
+	"$(printf '%s' "$bundle" | jq -r '.all[0].model')" != "fallback-all" ||
+	"$(grep -c '^jsonl-' "$calls_file" || true)" != "2" ]]; then
 		print_result "$test_name" 1 "fallback selection changed: calls=$(tr '\n' ' ' <"$calls_file") bundle=${bundle}"
 		return 0
 	fi
@@ -938,9 +944,9 @@ test_profile_model_bundle_scans_each_population_once() {
 		return 0
 	}
 	bundle=$(_get_profile_model_usage_bundle)
-	if [[ "$(printf '%s' "$bundle" | jq -r '.recent | length')" != "0" || \
-		"$(printf '%s' "$bundle" | jq -r '.all | length')" != "0" || \
-		"$(grep -c '^jsonl-empty-' "$calls_file" || true)" != "2" ]]; then
+	if [[ "$(printf '%s' "$bundle" | jq -r '.recent | length')" != "0" ||
+	"$(printf '%s' "$bundle" | jq -r '.all | length')" != "0" ||
+	"$(grep -c '^jsonl-empty-' "$calls_file" || true)" != "2" ]]; then
 		print_result "$test_name" 1 "empty fallback should remain empty only after JSONL check: calls=$(tr '\n' ' ' <"$calls_file") bundle=${bundle}"
 		return 0
 	fi

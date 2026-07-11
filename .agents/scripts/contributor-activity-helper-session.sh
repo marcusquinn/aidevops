@@ -10,6 +10,12 @@ _CONTRIBUTOR_ACTIVITY_SESSION_LIB_LOADED=1
 _SESSION_TIME_LIB_DIR="$(cd "${BASH_SOURCE[0]%/*}" && pwd)"
 SESSION_TIME_INTERVAL_ENGINE="${_SESSION_TIME_LIB_DIR}/session-time-interval-engine.py"
 unset _SESSION_TIME_LIB_DIR
+SESSION_FORMAT_JSON="json"
+SESSION_STATUS_UNAVAILABLE="unavailable"
+SESSION_TOTAL_HUMAN_FIELD="total_human_hours"
+SESSION_TOTAL_MACHINE_FIELD="total_machine_hours"
+SESSION_TOTAL_SESSIONS_FIELD="total_sessions"
+SESSION_WORKER_SESSIONS_FIELD="worker_sessions"
 
 #######################################
 # Format one session-stat object as Markdown.
@@ -24,10 +30,14 @@ _session_time_format_markdown() {
 import json
 import sys
 period = sys.argv[1]
+unavailable = sys.argv[2]
+total_sessions_field = sys.argv[3]
+total_human_field = sys.argv[4]
+total_machine_field = sys.argv[5]
 data = json.load(sys.stdin)
-if data.get("status") == "unavailable":
+if data.get("status") == unavailable:
     print(f"_Session data unavailable for {period}._")
-elif data.get("total_sessions", 0) == 0:
+elif data.get(total_sessions_field, 0) == 0:
     print(f"_No observed sessions for {period}._")
 else:
     print("| Type | Human attention | AI generation | Additive work | Sessions |")
@@ -37,10 +47,10 @@ else:
         machine = data.get(f"{prefix}_machine_hours", 0)
         count = data.get(f"{prefix}_sessions", 0)
         print(f"| {label} | {human}h | {machine}h | {round(human + machine, 1)}h | {count} |")
-    human = data.get("total_human_hours", 0)
-    machine = data.get("total_machine_hours", 0)
-    print(f"| **Total** | **{human}h** | **{machine}h** | **{round(human + machine, 1)}h** | **{data.get('"'"'total_sessions'"'"', 0)}** |")
-' "$period"
+    human = data.get(total_human_field, 0)
+    machine = data.get(total_machine_field, 0)
+    print(f"| **Total** | **{human}h** | **{machine}h** | **{round(human + machine, 1)}h** | **{data.get(total_sessions_field, 0)}** |")
+' "$period" "$SESSION_STATUS_UNAVAILABLE" "$SESSION_TOTAL_SESSIONS_FIELD" "$SESSION_TOTAL_HUMAN_FIELD" "$SESSION_TOTAL_MACHINE_FIELD"
 	return 0
 }
 
@@ -54,17 +64,21 @@ _session_time_format_period_map() {
 	printf '%s\n' "$stats_json" | python3 -c '
 import json
 import sys
+total_sessions_field = sys.argv[1]
+total_human_field = sys.argv[2]
+total_machine_field = sys.argv[3]
+worker_sessions_field = sys.argv[4]
 data = json.load(sys.stdin)
-if not data or all(item.get("total_sessions", 0) == 0 for item in data.values()):
+if not data or all(item.get(total_sessions_field, 0) == 0 for item in data.values()):
     print("_No session data available._")
 else:
     print("| Period | Human attention | AI generation | Additive work | Sessions | Workers |")
     print("| --- | ---: | ---: | ---: | ---: | ---: |")
     for period, item in data.items():
-        human = item.get("total_human_hours", 0)
-        machine = item.get("total_machine_hours", 0)
-        print(f"| {period.capitalize()} | {human}h | {machine}h | {round(human + machine, 1)}h | {item.get('"'"'total_sessions'"'"', 0)} | {item.get('"'"'worker_sessions'"'"', 0)} |")
-'
+        human = item.get(total_human_field, 0)
+        machine = item.get(total_machine_field, 0)
+        print(f"| {period.capitalize()} | {human}h | {machine}h | {round(human + machine, 1)}h | {item.get(total_sessions_field, 0)} | {item.get(worker_sessions_field, 0)} |")
+' "$SESSION_TOTAL_SESSIONS_FIELD" "$SESSION_TOTAL_HUMAN_FIELD" "$SESSION_TOTAL_MACHINE_FIELD" "$SESSION_WORKER_SESSIONS_FIELD"
 	return 0
 }
 
@@ -111,7 +125,7 @@ session_time() {
 		;;
 	esac
 	case "$format" in
-	json | markdown) ;;
+	"$SESSION_FORMAT_JSON" | markdown) ;;
 	*)
 		echo "Error: invalid session format: ${format}" >&2
 		return 1
@@ -131,7 +145,7 @@ session_time() {
 		echo "Error: session aggregation failed" >&2
 		return 1
 	fi
-	if [[ "$format" == "json" ]]; then
+	if [[ "$format" == "$SESSION_FORMAT_JSON" ]]; then
 		printf '%s\n' "$result"
 	elif [[ "$period" == "all" || "$period" == "profile" ]]; then
 		_session_time_format_period_map "$result"
@@ -178,7 +192,7 @@ cross_repo_session_time() {
 			period_stats=$(cross_repo_session_time "${repo_paths[@]}" --period "$period_name" --format json) || return 1
 			period_map=$(printf '%s' "$period_map" | jq --arg name "$period_name" --argjson stats "$period_stats" '. + {($name):$stats}')
 		done
-		if [[ "$format" == "json" ]]; then
+		if [[ "$format" == "$SESSION_FORMAT_JSON" ]]; then
 			printf '%s\n' "$period_map"
 		else
 			_session_time_format_period_map "$period_map"
@@ -198,7 +212,10 @@ cross_repo_session_time() {
 		repo_count=$((repo_count + 1))
 	done
 	local aggregated
-	aggregated=$(printf '%s' "$collected" | jq -s --argjson repo_count "$repo_count" '
+	aggregated=$(printf '%s' "$collected" | jq -s \
+		--argjson repo_count "$repo_count" \
+		--arg total_human_field "$SESSION_TOTAL_HUMAN_FIELD" \
+		--arg total_machine_field "$SESSION_TOTAL_MACHINE_FIELD" '
         def sum_field($name): map(.[$name] // 0) | add // 0;
         {
             interactive_sessions: sum_field("interactive_sessions"),
@@ -207,14 +224,14 @@ cross_repo_session_time() {
             worker_sessions: sum_field("worker_sessions"),
             worker_human_hours: sum_field("worker_human_hours"),
             worker_machine_hours: sum_field("worker_machine_hours"),
-            total_human_hours: sum_field("total_human_hours"),
-            total_machine_hours: sum_field("total_machine_hours"),
+            ($total_human_field): sum_field($total_human_field),
+            ($total_machine_field): sum_field($total_machine_field),
             total_sessions: sum_field("total_sessions"),
             repo_count: $repo_count,
             status: (if length > 0 then "ok" else "unavailable" end)
         }
     ')
-	if [[ "$format" == "json" ]]; then
+	if [[ "$format" == "$SESSION_FORMAT_JSON" ]]; then
 		printf '%s\n' "$aggregated"
 	else
 		_session_time_format_markdown "$aggregated" "$period across ${repo_count} repos"
