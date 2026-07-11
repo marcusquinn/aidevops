@@ -76,9 +76,9 @@ else
 	FAIL=$((FAIL + 1))
 fi
 
-resolve_line=$(grep -n 'id: resolve-tasks' "$WORKFLOW" | cut -d: -f1)
-hygiene_line=$(grep -n 'name: Apply closing hygiene' "$WORKFLOW" | cut -d: -f1)
-if [[ "$resolve_line" -lt "$hygiene_line" ]]; then
+resolve_line=$(grep -n 'id: resolve-tasks' "$WORKFLOW" | cut -d: -f1 || true)
+hygiene_line=$(grep -n 'name: Apply closing hygiene' "$WORKFLOW" | cut -d: -f1 || true)
+if [[ -n "$resolve_line" && -n "$hygiene_line" && "$resolve_line" -lt "$hygiene_line" ]]; then
 	printf 'PASS: task mapping validates before closing hygiene\n'
 	PASS=$((PASS + 1))
 else

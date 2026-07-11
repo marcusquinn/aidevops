@@ -10,7 +10,6 @@ collect_effective_issues() {
 	local vetoed_issue_numbers="$3"
 	local issue_number=""
 	local matches=""
-	local match_count="0"
 
 	for issue_number in $issue_numbers; do
 		if ! [[ "$issue_number" =~ ^[0-9]+$ ]]; then
@@ -22,8 +21,7 @@ collect_effective_issues() {
 		fi
 		RESOLVED_EFFECTIVE_ISSUES="${RESOLVED_EFFECTIVE_ISSUES}${RESOLVED_EFFECTIVE_ISSUES:+ }${issue_number}"
 		matches=$(grep -E "^[[:space:]]*- \[[ x]\] t[0-9]+(\.[0-9]+)* .*ref:GH#${issue_number}([[:space:]]|$)" "$todo_file" || true)
-		match_count=$(printf '%s\n' "$matches" | grep -c . || true)
-		if [[ "$match_count" -gt 0 ]]; then
+		if [[ -n "$matches" ]]; then
 			RESOLVED_TASK_BACKED="true"
 		fi
 	done
@@ -49,7 +47,11 @@ map_issue_tasks() {
 			printf 'ERROR: closing issue #%s has %s ref:GH#%s TODO mappings; expected exactly one\n' "$issue_number" "$match_count" "$issue_number" >&2
 			return 1
 		fi
-		task_id=$(printf '%s\n' "$matches" | grep -oE 't[0-9]+(\.[0-9]+)*' | head -1)
+		if ! [[ "$matches" =~ ^[[:space:]]*-[[:space:]]\[[[:space:]x]\][[:space:]]+(t[0-9]+(\.[0-9]+)*) ]]; then
+			printf 'ERROR: closing issue #%s has an invalid TODO mapping\n' "$issue_number" >&2
+			return 1
+		fi
+		task_id="${BASH_REMATCH[1]}"
 		RESOLVED_ISSUE_TASK_PAIRS="${RESOLVED_ISSUE_TASK_PAIRS}${RESOLVED_ISSUE_TASK_PAIRS:+ }${issue_number}:${task_id}"
 		if [[ " $RESOLVED_TASK_IDS " != *" $task_id "* ]]; then
 			RESOLVED_TASK_IDS="${RESOLVED_TASK_IDS}${RESOLVED_TASK_IDS:+ }${task_id}"

@@ -9,6 +9,7 @@
 #   1. AIDEVOPS_PREPUSH_REPO_VERIFY=0 short-circuits to exit 0
 #   2. GITHUB_ACTIONS=true short-circuits to exit 0
 #   3. Outside a git repo: exit 0 (no-op)
+#  3b. HOME unset does not trigger a set -u failure
 #   4. No verify config anywhere: silent skip (exit 0)
 #   5. .aidevops.json `.verify.enabled=false` opts out (exit 0)
 #   6. .aidevops.json with a passing format command: exit 0
@@ -157,6 +158,18 @@ echo "${TEST_BLUE}=== test-repo-verify-pre-push-hook.sh (t3224) ===${TEST_NC}"
 	ec=$(printf '%s' "$out" | head -n 1)
 	assert_eq '3. outside git repo → exit 0' '0' "$ec"
 	rm -rf "$non_repo"
+}
+
+# Test 3b: HOME may be absent in restricted hook environments
+{
+	repo=$(_mk_repo)
+	(
+		cd "$repo" || exit 1
+		env -u HOME PATH="/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin" bash "$HOOK" </dev/null
+	) >/dev/null 2>&1
+	ec=$?
+	assert_eq '3b. HOME unset → exit 0' '0' "$ec"
+	rm -rf "$repo"
 }
 
 # Test 4: no verify config of any kind
