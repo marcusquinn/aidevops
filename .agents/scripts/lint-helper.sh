@@ -345,7 +345,7 @@ lint_reconcile() {
 			continue
 		fi
 		hook_status=$(repo_verify_hook_status "$repo_root" 2>/dev/null || printf 'unavailable')
-		if [[ "$hook_status" == "installed" ]]; then
+		if [[ "$hook_status" == "installed" || "$hook_status" == "unmanaged-conflict" ]]; then
 			skipped=$((skipped + 1))
 			continue
 		fi
