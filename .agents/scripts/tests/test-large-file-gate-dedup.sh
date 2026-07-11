@@ -112,6 +112,22 @@ gh_issue_list() {
 		*) shift ;;
 		esac
 	done
+	if [[ "$_state" == "all" ]]; then
+		local _all_n
+		_all_n=$(cat "$OPEN_CALL_COUNTER" 2>/dev/null || echo 0)
+		_all_n=$((_all_n + 1))
+		echo "$_all_n" >"$OPEN_CALL_COUNTER"
+		if [[ "$_all_n" -ge 2 && -n "${STUB_GH_LIST_RETRY_OUT:-}" ]]; then
+			printf '[{"number":%s,"state":"OPEN","body":"generator=large-file-simplification-gate cited_file=worktree-helper.sh threshold=1000 generator=large-file-simplification-gate cited_file=.agents/scripts/worktree-helper.sh threshold=1000"}]' "$STUB_GH_LIST_RETRY_OUT"
+		elif [[ -n "${STUB_GH_LIST_OPEN_OUT:-}" ]]; then
+			printf '[{"number":%s,"state":"OPEN","body":"generator=large-file-simplification-gate cited_file=worktree-helper.sh threshold=1000 generator=large-file-simplification-gate cited_file=.agents/scripts/worktree-helper.sh threshold=1000"}]' "$STUB_GH_LIST_OPEN_OUT"
+		elif [[ -n "${STUB_GH_LIST_CLOSED_OUT:-}" ]]; then
+			printf '[{"number":%s,"state":"CLOSED","body":"generator=large-file-simplification-gate cited_file=worktree-helper.sh threshold=1000 generator=large-file-simplification-gate cited_file=.agents/scripts/worktree-helper.sh threshold=1000"}]' "$STUB_GH_LIST_CLOSED_OUT"
+		else
+			printf '[]'
+		fi
+		return "${STUB_GH_LIST_RC:-0}"
+	fi
 	if [[ "$_state" == "open" ]]; then
 		local _n
 		_n=$(cat "$OPEN_CALL_COUNTER" 2>/dev/null || echo 0)
@@ -119,12 +135,20 @@ gh_issue_list() {
 		echo "$_n" >"$OPEN_CALL_COUNTER"
 		# On the SECOND open call, return STUB_GH_LIST_RETRY_OUT if set.
 		if [[ "$_n" -ge 2 && -n "${STUB_GH_LIST_RETRY_OUT:-}" ]]; then
-			printf '%s' "$STUB_GH_LIST_RETRY_OUT"
+			printf '[{"number":%s,"body":"generator=large-file-simplification-gate cited_file=worktree-helper.sh threshold=1000 generator=large-file-simplification-gate cited_file=.agents/scripts/worktree-helper.sh threshold=1000"}]' "$STUB_GH_LIST_RETRY_OUT"
 			return 0
 		fi
-		printf '%s' "${STUB_GH_LIST_OPEN_OUT:-}"
+		if [[ -n "${STUB_GH_LIST_OPEN_OUT:-}" ]]; then
+			printf '[{"number":%s,"body":"generator=large-file-simplification-gate cited_file=worktree-helper.sh threshold=1000 generator=large-file-simplification-gate cited_file=.agents/scripts/worktree-helper.sh threshold=1000"}]' "$STUB_GH_LIST_OPEN_OUT"
+		else
+			printf '[]'
+		fi
 	elif [[ "$_state" == "closed" ]]; then
-		printf '%s' "${STUB_GH_LIST_CLOSED_OUT:-}"
+		if [[ -n "${STUB_GH_LIST_CLOSED_OUT:-}" ]]; then
+			printf '[{"number":%s,"body":"generator=large-file-simplification-gate cited_file=worktree-helper.sh threshold=1000 generator=large-file-simplification-gate cited_file=.agents/scripts/worktree-helper.sh threshold=1000"}]' "$STUB_GH_LIST_CLOSED_OUT"
+		else
+			printf '[]'
+		fi
 	fi
 	return "${STUB_GH_LIST_RC:-0}"
 }
@@ -154,6 +178,19 @@ export -f _large_file_gate_verify_prior_reduced_size
 # short-circuit it for deterministic test runtime.
 sleep() { return 0; }
 export -f sleep
+
+gh() {
+	if [[ "$1" == "issue" && "$2" == "edit" ]]; then
+		return 0
+	fi
+	return 0
+}
+export -f gh
+gh_issue_view() {
+	printf ''
+	return 0
+}
+export -f gh_issue_view
 
 # Bash 3.2 + LARGE_FILE_LINE_THRESHOLD (referenced by the gate script via
 # nested helpers). The dedup helper itself does not depend on this — but
@@ -260,7 +297,7 @@ if [[ "$rc" == "2" && -z "$out" ]]; then
 else
 	fail "helper:lookup-failed" "rc=$rc out='$out'"
 fi
-if grep -q "file-size-debt dedup open-search failed for worktree-helper.sh" "$LOGFILE"; then
+if grep -q "file-size-debt dedup all-state search failed for worktree-helper.sh" "$LOGFILE"; then
 	pass "helper:lookup-failed logs WARN with basename"
 else
 	fail "helper:lookup-failed logs WARN" "log contents: $(cat "$LOGFILE")"
@@ -298,7 +335,7 @@ if [[ "$rc" == "0" && "$new_calls" == "0" ]]; then
 else
 	fail "caller:lookup-failed-defers" "rc=$rc new_calls=$new_calls out='$out'"
 fi
-if grep -q "file-size-debt dedup lookup failed for worktree-helper.sh" "$LOGFILE"; then
+if grep -q "file-size-debt dedup lookup failed for .agents/scripts/worktree-helper.sh" "$LOGFILE"; then
 	pass "caller:lookup-failed-defers logs deferral with parent ref"
 else
 	fail "caller:lookup-failed-defers logs" "log contents: $(cat "$LOGFILE")"
@@ -364,7 +401,7 @@ printf '\n%s\n\n' '--- Wrapper: gh_issue_list REST fallback parity for --search 
 				printf '0\n'
 				return 0
 			fi
-			if [[ "$2" =~ ^/search/issues ]]; then
+			if [[ "$*" == *"/search/issues"* ]]; then
 				# Real endpoint shape: { "items": [{ "number": 4242 }] }.
 				# After --jq ".items | .[0].number // empty" the result is "4242".
 				printf '4242\n'
@@ -387,7 +424,7 @@ printf '\n%s\n\n' '--- Wrapper: gh_issue_list REST fallback parity for --search 
 		--search worktree-helper.sh --json number --jq '.[0].number // empty' --limit 5 2>/dev/null)
 
 	# Verify /search/issues was called AND /repos/owner/repo/issues was NOT.
-	if grep -q "api /search/issues" "$GH_API_PATHS"; then
+	if grep -qE "api .*\/search/issues" "$GH_API_PATHS"; then
 		printf 'PASS_SEARCH\n' >"${TMP}/wrapper_result"
 	else
 		printf 'FAIL_SEARCH out=%s paths=%s\n' "$out" "$(cat "$GH_API_PATHS")" >"${TMP}/wrapper_result"
