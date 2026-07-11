@@ -146,6 +146,50 @@ def macos_collection(db_path, now):
     }
 
 
+def macos_app_stats(db_path, now):
+    if not db_path.exists():
+        return []
+    try:
+        uri = f"file:{db_path}?mode=ro"
+        with sqlite3.connect(uri, uri=True, timeout=5) as connection:
+            rows = connection.execute(
+                "SELECT ZVALUESTRING, ZSTARTDATE, ZENDDATE FROM ZOBJECT "
+                "WHERE ZSTREAMNAME='/app/usage' AND ZVALUESTRING IS NOT NULL"
+            ).fetchall()
+    except sqlite3.Error:
+        return []
+    intervals = [
+        (str(bundle), float(start) + CORE_DATA_EPOCH, float(end) + CORE_DATA_EPOCH)
+        for bundle, start, end in rows
+        if start is not None and end is not None and float(end) > float(start)
+    ]
+    totals = {}
+    for name, seconds in (("today", DAY), ("week", 7 * DAY), ("month", 28 * DAY)):
+        window_start = now - seconds
+        relevant = [(bundle, max(start, window_start), min(end, now), start) for bundle, start, end in intervals if end > window_start and start < now]
+        boundaries = sorted({value for _, left, right, _ in relevant for value in (left, right)})
+        per_app = {}
+        for left, right in zip(boundaries, boundaries[1:]):
+            active = [item for item in relevant if item[1] < right and item[2] > left]
+            if not active:
+                continue
+            # Knowledge DB foreground records can overlap or repeat. Attribute a
+            # segment once to the most recently started active record.
+            bundle = max(active, key=lambda item: item[3])[0]
+            per_app[bundle] = per_app.get(bundle, 0) + right - left
+        totals[name] = per_app
+    month_total = sum(totals.get("month", {}).values())
+    result = []
+    for bundle, month_seconds in sorted(totals.get("month", {}).items(), key=lambda item: (-item[1], item[0]))[:10]:
+        row = {"bundle": bundle}
+        for name in ("today", "week", "month"):
+            denominator = sum(totals.get(name, {}).values())
+            row[f"{name}_pct"] = round(totals.get(name, {}).get(bundle, 0) / denominator * 100) if denominator else 0
+        row["month_seconds"] = round(month_seconds)
+        result.append(row)
+    return result if month_total else []
+
+
 SESSION_NEW = re.compile(r"New session ([A-Za-z0-9_.-]+) of user ([^ .]+)", re.I)
 SESSION_END = re.compile(r"(?:Removed session|Session) ([A-Za-z0-9_.-]+)(?: logged out)?", re.I)
 SESSION_ID = re.compile(r"Session ([A-Za-z0-9_.-]+)", re.I)
@@ -173,10 +217,57 @@ def journal_lines(now):
     return result.stdout.splitlines(), None
 
 
+def wtmp_collection(now, user, journal_reason):
+    fixture = os.environ.get("AIDEVOPS_LAST_FIXTURE")
+    if fixture:
+        try:
+            lines = Path(fixture).read_text(encoding="utf-8").splitlines()
+        except OSError as exc:
+            return {"status": "unavailable", "source": "linux-wtmp", "reason": f"fixture-read-failed:{type(exc).__name__}", "intervals": []}
+    else:
+        try:
+            result = subprocess.run(
+                ["last", "-F", "-s", "-365days", user], check=False, capture_output=True, text=True, timeout=30
+            )
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            return {"status": "unavailable", "source": "linux-logind+wtmp", "reason": f"{journal_reason};wtmp-read-failed:{type(exc).__name__}", "intervals": []}
+        if result.returncode != 0:
+            return {"status": "unavailable", "source": "linux-logind+wtmp", "reason": f"{journal_reason};wtmp-read-failed:exit-{result.returncode}", "intervals": []}
+        lines = result.stdout.splitlines()
+    intervals = []
+    for line in lines:
+        structured = re.match(r"^([0-9]+)\|([0-9]+)$", line.strip())
+        if structured:
+            intervals.append((float(structured.group(1)), float(structured.group(2))))
+            continue
+        dates = re.findall(r"(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun) [A-Z][a-z]{2}\s+[0-9]{1,2} [0-9:]{8} [0-9]{4}", line)
+        if len(dates) >= 2:
+            try:
+                left = dt.datetime.strptime(dates[0], "%a %b %d %H:%M:%S %Y").replace(tzinfo=dt.timezone.utc).timestamp()
+                right = dt.datetime.strptime(dates[1], "%a %b %d %H:%M:%S %Y").replace(tzinfo=dt.timezone.utc).timestamp()
+                if right > left:
+                    intervals.append((left, right))
+            except ValueError:
+                continue
+    if not intervals:
+        return {"status": "unavailable", "source": "linux-logind+wtmp", "reason": f"{journal_reason};no-parseable-wtmp-sessions", "intervals": []}
+    latest = max(right for _, right in intervals)
+    freshness = max(0.0, (now - latest) / 3600)
+    return {
+        "status": "stale" if freshness > 72 else "ok",
+        "source": "linux-wtmp:login-session-proxy",
+        "reason": f"logind-unavailable:{journal_reason}",
+        "intervals": union_intervals(intervals, now - WINDOWS["year"], now),
+        "observations": len(intervals),
+        "latest_epoch": latest,
+        "freshness_hours": round(freshness, 1),
+    }
+
+
 def linux_collection(now, user):
     lines, error = journal_lines(now)
     if error:
-        return {"status": "unavailable", "source": "linux-systemd-logind", "reason": error, "intervals": []}
+        return wtmp_collection(now, user, error)
     sessions = {}
     lid_open = True
     active = False
@@ -370,7 +461,7 @@ def collect(args):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("command", choices=("profile", "query", "date", "earliest"))
+    parser.add_argument("command", choices=("profile", "query", "date", "earliest", "apps"))
     parser.add_argument("--os-type", required=True)
     parser.add_argument("--db", default="")
     parser.add_argument("--history", default="")
@@ -381,6 +472,9 @@ def main():
     args = parser.parse_args()
     if not args.now:
         args.now = dt.datetime.now(dt.timezone.utc).timestamp()
+    if args.command == "apps":
+        print(json.dumps(macos_app_stats(Path(args.db), args.now), sort_keys=True))
+        return 0
     collection = collect(args)
     if args.command == "profile":
         payload = profile_payload(collection, Path(args.history) if args.history else None, args.now)

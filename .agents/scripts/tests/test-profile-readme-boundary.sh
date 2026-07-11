@@ -4,6 +4,14 @@
 
 set -euo pipefail
 
+export GIT_AUTHOR_NAME="Fixture"
+export GIT_AUTHOR_EMAIL="fixture@example.com"
+export GIT_COMMITTER_NAME="$GIT_AUTHOR_NAME"
+export GIT_COMMITTER_EMAIL="$GIT_AUTHOR_EMAIL"
+export GIT_CONFIG_COUNT=1
+export GIT_CONFIG_KEY_0=commit.gpgsign
+export GIT_CONFIG_VALUE_0=false
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 SOURCE_HELPER="${SCRIPT_DIR}/../profile-readme-helper.sh"
 SOURCE_DATA_LIB="${SCRIPT_DIR}/../profile-readme-data-lib.sh"
@@ -70,7 +78,11 @@ EOF
 set -euo pipefail
 
 if [[ "${1:-}" == "session-time" ]]; then
-	printf '%s\n' '{"interactive_human_hours":1.0,"worker_human_hours":2.0,"worker_machine_hours":3.0,"total_human_hours":4.0,"total_machine_hours":5.0,"interactive_sessions":6,"worker_sessions":7}'
+	if [[ " $* " == *" --period profile "* ]]; then
+		printf '%s\n' '{"day":{"interactive_human_hours":1.0,"interactive_machine_hours":1.0,"worker_human_hours":2.0,"worker_machine_hours":3.0,"total_human_hours":3.0,"total_machine_hours":4.0,"interactive_sessions":6,"worker_sessions":7},"week":{"interactive_human_hours":1.0,"interactive_machine_hours":1.0,"worker_human_hours":2.0,"worker_machine_hours":3.0,"total_human_hours":3.0,"total_machine_hours":4.0,"interactive_sessions":6,"worker_sessions":7},"28d":{"interactive_human_hours":1.0,"interactive_machine_hours":1.0,"worker_human_hours":2.0,"worker_machine_hours":3.0,"total_human_hours":3.0,"total_machine_hours":4.0,"interactive_sessions":6,"worker_sessions":7},"year":{"interactive_human_hours":1.0,"interactive_machine_hours":1.0,"worker_human_hours":2.0,"worker_machine_hours":3.0,"total_human_hours":3.0,"total_machine_hours":4.0,"interactive_sessions":6,"worker_sessions":7}}'
+	else
+		printf '%s\n' '{"interactive_human_hours":1.0,"interactive_machine_hours":1.0,"worker_human_hours":2.0,"worker_machine_hours":3.0,"total_human_hours":3.0,"total_machine_hours":4.0,"interactive_sessions":6,"worker_sessions":7}'
+	fi
 else
 	printf '%s\n' '{}'
 fi
@@ -105,9 +117,6 @@ EOF
 
 	git init --bare --initial-branch=main "${remote_repo}" >/dev/null
 	git init -b main "${profile_repo}" >/dev/null
-	git -C "${profile_repo}" config user.name "Fixture"
-	git -C "${profile_repo}" config user.email "fixture@example.com"
-	git -C "${profile_repo}" config commit.gpgsign false
 	git -C "${profile_repo}" remote add origin "${remote_repo}"
 
 	cat >"${profile_repo}/README.md" <<'EOF'
@@ -224,9 +233,6 @@ test_inject_markers_into_existing_readme() {
 	# Create a bare remote and local clone with NO markers
 	git init --bare --initial-branch=main "${fixture_remote}" >/dev/null
 	git init -b main "${fixture_repo}" >/dev/null
-	git -C "${fixture_repo}" config user.name "Fixture"
-	git -C "${fixture_repo}" config user.email "fixture@example.com"
-	git -C "${fixture_repo}" config commit.gpgsign false
 	git -C "${fixture_repo}" remote add origin "${fixture_remote}"
 
 	# Write a user-authored README without any aidevops markers
@@ -310,9 +316,6 @@ test_diverged_history_recovery() {
 	# Create initial remote and local clone with markers
 	git init --bare --initial-branch=main "${fixture_remote}" >/dev/null
 	git init -b main "${fixture_repo}" >/dev/null
-	git -C "${fixture_repo}" config user.name "Fixture"
-	git -C "${fixture_repo}" config user.email "fixture@example.com"
-	git -C "${fixture_repo}" config commit.gpgsign false
 	git -C "${fixture_repo}" remote add origin "${fixture_remote}"
 
 	cat >"${fixture_repo}/README.md" <<'EOF'
@@ -337,9 +340,6 @@ EOF
 	# Push a different initial commit to the new remote (simulating GitHub "Initial commit")
 	local tmp_clone="${TEST_DIR}/tmp-clone"
 	git clone "${fixture_remote}" "${tmp_clone}" 2>/dev/null
-	git -C "${tmp_clone}" config user.name "GitHub"
-	git -C "${tmp_clone}" config user.email "noreply@github.com"
-	git -C "${tmp_clone}" config commit.gpgsign false
 	echo "# fixture" >"${tmp_clone}/README.md"
 	git -C "${tmp_clone}" add README.md
 	git -C "${tmp_clone}" commit -m "Initial commit" >/dev/null
@@ -404,9 +404,6 @@ test_default_template_replaced_with_rich_readme() {
 	# Create a bare remote and local clone with the default GitHub template
 	git init --bare --initial-branch=main "${fixture_remote}" >/dev/null
 	git init -b main "${fixture_repo}" >/dev/null
-	git -C "${fixture_repo}" config user.name "Fixture"
-	git -C "${fixture_repo}" config user.email "fixture@example.com"
-	git -C "${fixture_repo}" config commit.gpgsign false
 	git -C "${fixture_repo}" remote add origin "${fixture_remote}"
 
 	# Write the exact default GitHub profile template
@@ -496,9 +493,6 @@ test_default_template_with_existing_markers_replaced() {
 
 	git init --bare --initial-branch=main "${fixture_remote}" >/dev/null
 	git init -b main "${fixture_repo}" >/dev/null
-	git -C "${fixture_repo}" config user.name "Fixture"
-	git -C "${fixture_repo}" config user.email "fixture@example.com"
-	git -C "${fixture_repo}" config commit.gpgsign false
 	git -C "${fixture_repo}" remote add origin "${fixture_remote}"
 
 	# Simulate Alex's exact case: default GitHub template with markers already
@@ -614,10 +608,10 @@ test_session_time_vars_default_missing_null_values() {
 		return 0
 	fi
 
-	local day_human day_worker day_total day_interactive day_workers
-	local week_human week_worker week_total week_interactive week_workers
-	local month_human month_worker month_total month_interactive month_workers
-	local year_human year_worker year_total year_interactive year_workers
+	local day_human day_interactive_machine day_worker_human day_worker day_total day_interactive day_workers
+	local week_human week_interactive_machine week_worker_human week_worker week_total week_interactive week_workers
+	local month_human month_interactive_machine month_worker_human month_worker month_total month_interactive month_workers
+	local year_human year_interactive_machine year_worker_human year_worker year_total year_interactive year_workers
 	eval "${assignments}"
 	if [[ "${day_human}" != "0.0" || "${day_worker}" != "0.0" || "${day_total}" != "0.0" ]]; then
 		print_result "${test_name}" 1 "missing day hour fields did not default to 0.0"
@@ -627,7 +621,7 @@ test_session_time_vars_default_missing_null_values() {
 		print_result "${test_name}" 1 "missing/null count fields did not default to 0"
 		return 0
 	fi
-	if [[ "${month_human}" != "1.2" || "${month_worker}" != "5.0" || "${month_total}" != "9.0" || "${month_interactive}" != "6" || "${month_workers}" != "7" ]]; then
+	if [[ "${month_human}" != "1.2" || "${month_worker_human}" != "2.0" || "${month_worker}" != "3.0" || "${month_total}" != "9.0" || "${month_interactive}" != "6" || "${month_workers}" != "7" ]]; then
 		print_result "${test_name}" 1 "valid session data rendering changed"
 		return 0
 	fi
@@ -675,17 +669,74 @@ test_work_with_ai_worker_counts_above_thousand() {
 		return 0
 	fi
 
-	if ! grep -qF '| User AI session hours | 1.0h | 10.0h | 100.0h | 100.0h |' "${output_file}"; then
+	if ! grep -qF '| Interactive human attention | 1.0h | 10.0h | 100.0h | 100.0h |' "${output_file}"; then
 		print_result "${test_name}" 1 "user AI session hours were not limited to attended interactive time"
 		return 0
 	fi
 
-	if grep -qF '| User AI session hours | 1.5h | 11.5h | 123.4h | 123.4h |' "${output_file}"; then
+	if grep -qF '| Interactive human attention | 1.5h | 11.5h | 123.4h | 123.4h |' "${output_file}"; then
 		print_result "${test_name}" 1 "user AI session hours still include AI generation time"
 		return 0
 	fi
 
 	print_result "${test_name}" 0
+	return 0
+}
+
+test_work_with_ai_unavailable_is_not_zero() {
+	local test_name="work with AI renders collector failures as unavailable"
+	TEST_DIR=$(mktemp -d)
+	mkdir -p "${TEST_DIR}/home"
+	# shellcheck source=../profile-readme-data-lib.sh
+	source "${SOURCE_DATA_LIB}"
+	# shellcheck source=../profile-readme-render-lib.sh
+	source "${SOURCE_RENDER_LIB}"
+	local screen_json unavailable_json output_file
+	screen_json='{"today_hours":null,"week_hours":null,"month_hours":null,"year_hours":null,"periods":{"day":{"status":"unavailable"},"week":{"status":"unavailable"},"month":{"status":"unavailable"},"year":{"status":"unavailable"}}}'
+	unavailable_json='{"status":"unavailable"}'
+	output_file="${TEST_DIR}/unavailable.md"
+	HOME="${TEST_DIR}/home" _generate_work_with_ai_table "$screen_json" "$unavailable_json" "$unavailable_json" "$unavailable_json" "$unavailable_json" >"$output_file"
+	if ! grep -qF '| Screen time' "$output_file" || ! grep -qF '| unavailable | unavailable | unavailable | unavailable |' "$output_file"; then
+		print_result "$test_name" 1 "unavailable cells were not visibly rendered"
+		return 0
+	fi
+	if grep -qF 'unavailableh' "$output_file"; then
+		print_result "$test_name" 1 "unavailable status was formatted as a numeric hour value"
+		return 0
+	fi
+	print_result "$test_name" 0
+	return 0
+}
+
+test_profile_update_lock_is_bounded() {
+	local test_name="profile update lock rejects overlap and recovers stale owner"
+	TEST_DIR=$(mktemp -d)
+	local result
+	result=$(
+		set -- help
+		# shellcheck source=../profile-readme-helper.sh
+		source "$SOURCE_HELPER" >/dev/null
+		HOME="${TEST_DIR}/home"
+		export HOME
+		_acquire_profile_update_lock
+		if _acquire_profile_update_lock 2>/dev/null; then
+			printf '%s\n' overlap-accepted
+			return 0
+		fi
+		_release_profile_update_lock
+		local lock_dir
+		lock_dir=$(_profile_update_lock_dir)
+		mkdir -p "$lock_dir"
+		printf '%s\n' 999999 >"${lock_dir}/pid"
+		_acquire_profile_update_lock
+		printf '%s\n' stale-recovered
+		_release_profile_update_lock
+	)
+	if [[ "$result" != "stale-recovered" ]]; then
+		print_result "$test_name" 1 "unexpected lock result: ${result}"
+		return 0
+	fi
+	print_result "$test_name" 0
 	return 0
 }
 
@@ -778,24 +829,31 @@ test_all_time_token_totals_prefers_largest_population() {
 }
 
 main() {
+	local mode="${1:-all}"
 	if [[ ! -x "${SOURCE_HELPER}" ]]; then
 		echo "Helper script not found or not executable: ${SOURCE_HELPER}" >&2
 		return 1
 	fi
 
-	test_update_preserves_manual_sections
-	teardown
-	test_inject_markers_into_existing_readme
-	teardown
-	test_diverged_history_recovery
-	teardown
-	test_default_template_replaced_with_rich_readme
-	teardown
-	test_default_template_with_existing_markers_replaced
-	teardown
+	if [[ "$mode" != "--unit-only" ]]; then
+		test_update_preserves_manual_sections
+		teardown
+		test_inject_markers_into_existing_readme
+		teardown
+		test_diverged_history_recovery
+		teardown
+		test_default_template_replaced_with_rich_readme
+		teardown
+		test_default_template_with_existing_markers_replaced
+		teardown
+	fi
 	test_session_time_vars_default_missing_null_values
 	teardown
 	test_work_with_ai_worker_counts_above_thousand
+	teardown
+	test_work_with_ai_unavailable_is_not_zero
+	teardown
+	test_profile_update_lock_is_bounded
 	teardown
 	test_all_time_model_usage_prefers_larger_complete_source
 	teardown

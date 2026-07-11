@@ -33,6 +33,10 @@ if [[ -z "${SCRIPT_DIR:-}" ]]; then
 	unset _lib_path
 fi
 
+_SESSION_TIME_LIB_DIR="$(cd "${BASH_SOURCE[0]%/*}" && pwd)"
+SESSION_TIME_INTERVAL_ENGINE="${_SESSION_TIME_LIB_DIR}/session-time-interval-engine.py"
+unset _SESSION_TIME_LIB_DIR
+
 # --- Functions ---
 
 #######################################
@@ -760,61 +764,48 @@ session_time() {
 		repo_path="${repo_path:-.}"
 	fi
 
-	if ! command -v sqlite3 &>/dev/null; then
+	local -a engine_args=(--period "$period")
+	if [[ "$all_dirs" == "true" ]]; then
+		engine_args+=(--all-dirs)
+	else
+		engine_args+=(--repo "$repo_path")
+	fi
+	[[ -n "$db_path" ]] && engine_args+=(--db-path "$db_path")
+
+	local result
+	if ! result=$(python3 "$SESSION_TIME_INTERVAL_ENGINE" "${engine_args[@]}"); then
 		if [[ "$format" == "json" ]]; then
-			echo '{"interactive_sessions":0,"interactive_human_hours":0,"interactive_machine_hours":0,"worker_sessions":0,"worker_machine_hours":0,"total_human_hours":0,"total_machine_hours":0,"total_sessions":0}'
+			printf '%s\n' '{"status":"unavailable","reason":"session-aggregation-failed"}'
 		else
-			echo "_sqlite3 not available._"
+			printf '%s\n' '_Session data unavailable._'
 		fi
 		return 0
 	fi
 
-	# Handle --period all: collect JSON for each period and output combined table
-	if [[ "$period" == "all" ]]; then
-		# Pass "--all-dirs" as repo_path when aggregating all directories;
-		# _session_time_all_periods passes it through to session_time().
-		local all_repo_arg="$repo_path"
-		[[ "$all_dirs" == "true" ]] && all_repo_arg="--all-dirs"
-		_session_time_all_periods "$all_repo_arg" "$format" "$db_path"
+	if [[ "$format" == "json" ]]; then
+		printf '%s\n' "$result"
 		return 0
 	fi
-
-	local db_paths=""
-	if [[ -n "$db_path" ]]; then
-		db_paths="$db_path"
-	else
-		db_paths=$(_session_time_detect_db_paths)
+	if [[ "$period" != "all" && "$period" != "profile" ]]; then
+		_session_time_format_stats "$result" "$format" "$period"
+		return 0
 	fi
-
-	# Determine --since threshold in milliseconds (single Python call)
-	local seconds
-	case "$period" in
-	day) seconds=86400 ;;
-	week) seconds=604800 ;;
-	28d | 28day | 28days) seconds=2419200 ;;
-	month) seconds=2592000 ;;
-	quarter) seconds=7776000 ;;
-	year) seconds=31536000 ;;
-	*) seconds=2592000 ;;
-	esac
-	local since_ms
-	since_ms=$(python3 -c "import time; print(int((time.time() - ${seconds}) * 1000))")
-
-	# Resolve repo_path to absolute for matching against session.directory
-	# When --all-dirs is set, pass empty string to skip directory filtering
-	local abs_repo_path=""
-	if [[ "$all_dirs" != "true" ]]; then
-		abs_repo_path=$(cd "$repo_path" 2>/dev/null && pwd) || abs_repo_path="$repo_path"
-	fi
-
-	local query_result
-	if [[ -n "$db_paths" ]]; then
-		query_result=$(_session_time_query_db_paths "$db_paths" "$abs_repo_path" "$since_ms")
-	else
-		query_result="[]"
-	fi
-
-	_session_time_process "$query_result" "$format" "$period" "$abs_repo_path" "$since_ms"
+	printf '%s\n' "$result" | python3 -c '
+import json
+import sys
+data = json.load(sys.stdin)
+if not data or all(item.get("total_sessions", 0) == 0 for item in data.values()):
+    print("_No session data available._")
+else:
+    print("| Period | Human attention | AI generation | Additive work | Sessions | Workers |")
+    print("| --- | ---: | ---: | ---: | ---: | ---: |")
+    for period, item in data.items():
+        human = item.get("total_human_hours", 0)
+        machine = item.get("total_machine_hours", 0)
+        sessions = item.get("total_sessions", 0)
+        workers = item.get("worker_sessions", 0)
+        print(f"| {period.capitalize()} | {human}h | {machine}h | {round(human + machine, 1)}h | {sessions} | {workers} |")
+'
 	return 0
 }
 

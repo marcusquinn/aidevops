@@ -154,6 +154,28 @@ SQL
 	return 0
 }
 
+insert_overlapping_attention_fixture() {
+	local db_path="$1"
+	local session_id="$2"
+	local start_ms="$3"
+	local directory="$4"
+	local assistant_completed=$((start_ms + 10000))
+	local user_created=$((assistant_completed + 1800000))
+
+	python3 - "$db_path" "$session_id" "$start_ms" "$directory" "$assistant_completed" "$user_created" <<'PY'
+import json
+import sqlite3
+import sys
+
+db_path, session_id, start_ms, directory, completed, user_created = sys.argv[1:]
+with sqlite3.connect(db_path) as conn:
+    conn.execute("INSERT INTO session(id,title,parent_id,directory) VALUES(?,?,NULL,?)", (session_id, "Interactive overlap", directory))
+    conn.execute("INSERT INTO message(session_id,data,time_created) VALUES(?,?,?)", (session_id, json.dumps({"role":"assistant","time":{"completed":int(completed)}}), int(start_ms)))
+    conn.execute("INSERT INTO message(session_id,data,time_created) VALUES(?,?,?)", (session_id, '{"role":"user"}', int(user_created)))
+PY
+	return 0
+}
+
 test_session_time_includes_archive_and_dedupes() {
 	local test_name="session time includes OpenCode archive and dedupes"
 	setup
@@ -262,12 +284,14 @@ test_session_time_uses_observability_machine_floor() {
 	insert_observability_fixture "$obs_db" "current-interactive" 10000 "$TEST_DIR/repo"
 	insert_observability_fixture "$obs_db" "worker-only" 7200000 "$TEST_DIR/repo-feature-auto-20260616-120000-gh123"
 
-	local all_json repo_json worker_machine total_machine repo_worker_machine
+	local all_json repo_json worker_machine total_machine repo_worker_machine total_sessions worker_sessions
 	all_json=$(HOME="${TEST_DIR}/home" session_time --all-dirs --period day --format json)
 	repo_json=$(HOME="${TEST_DIR}/home" session_time "${TEST_DIR}/repo" --period day --format json)
 	worker_machine=$(echo "$all_json" | jq -r '.worker_machine_hours')
 	total_machine=$(echo "$all_json" | jq -r '.total_machine_hours')
 	repo_worker_machine=$(echo "$repo_json" | jq -r '.worker_machine_hours')
+	total_sessions=$(echo "$all_json" | jq -r '.total_sessions')
+	worker_sessions=$(echo "$all_json" | jq -r '.worker_sessions')
 
 	if [[ "$worker_machine" != "2" && "$worker_machine" != "2.0" ]]; then
 		print_result "$test_name" 1 "expected 2.0 worker machine hours from observability, got ${worker_machine}; JSON: ${all_json}"
@@ -284,7 +308,43 @@ test_session_time_uses_observability_machine_floor() {
 		teardown
 		return 0
 	fi
+	if [[ "$total_sessions" != "2" || "$worker_sessions" != "1" ]]; then
+		print_result "$test_name" 1 "observability hours/count population did not reconcile; total=${total_sessions} workers=${worker_sessions}"
+		teardown
+		return 0
+	fi
 
+	print_result "$test_name" 0
+	teardown
+	return 0
+}
+
+test_profile_periods_scan_once_and_union_attention() {
+	local test_name="profile periods scan once and union overlapping human attention"
+	setup
+	# shellcheck source=../contributor-activity-helper-session.sh
+	source "$SOURCE_SESSION_LIB"
+	local active_db="${TEST_DIR}/home/.local/share/opencode/opencode.db"
+	create_session_db "$active_db"
+	local now_ms start_ms counter output human scans
+	now_ms=$(python3 -c 'import time; print(int(time.time() * 1000))')
+	start_ms=$((now_ms - 3600000))
+	insert_overlapping_attention_fixture "$active_db" "overlap-one" "$start_ms" "$TEST_DIR/repo"
+	insert_overlapping_attention_fixture "$active_db" "overlap-two" "$start_ms" "$TEST_DIR/repo"
+	counter="${TEST_DIR}/scan-count"
+	output=$(HOME="${TEST_DIR}/home" AIDEVOPS_SESSION_SCAN_COUNTER="$counter" session_time --all-dirs --period profile --format json)
+	human=$(echo "$output" | jq -r '.day.total_human_hours')
+	scans=$(wc -l <"$counter" | tr -d ' ')
+	if [[ "$human" != "0.5" ]]; then
+		print_result "$test_name" 1 "expected overlapping 0.5h attention intervals to union to 0.5h, got ${human}"
+		teardown
+		return 0
+	fi
+	if [[ "$scans" != "1" ]]; then
+		print_result "$test_name" 1 "expected one session DB scan for four profile windows, got ${scans}"
+		teardown
+		return 0
+	fi
 	print_result "$test_name" 0
 	teardown
 	return 0
@@ -347,6 +407,7 @@ main() {
 	test_session_time_includes_archive_and_dedupes
 	test_session_time_uses_observability_machine_floor
 	test_session_time_repo_filter_treats_path_metacharacters_literally
+	test_profile_periods_scan_once_and_union_attention
 
 	echo ""
 	echo "Tests run: ${TESTS_RUN}"

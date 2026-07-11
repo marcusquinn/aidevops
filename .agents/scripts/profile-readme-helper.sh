@@ -28,6 +28,37 @@ OPENCODE_ARCHIVE_DB_FILE="${HOME}/.local/share/opencode/opencode-archive.db"
 CONTRIBUTIONS_START_MARKER='<!-- CONTRIBUTIONS-START -->'
 CONTRIBUTIONS_END_MARKER='<!-- CONTRIBUTIONS-END -->'
 
+# --- Serialize profile refreshes so scheduler overlap cannot duplicate scans/writes ---
+_profile_update_lock_dir() {
+	printf '%s\n' "${HOME}/.aidevops/cache/profile-readme-update.lock"
+	return 0
+}
+
+_acquire_profile_update_lock() {
+	local lock_dir
+	lock_dir=$(_profile_update_lock_dir)
+	mkdir -p "${lock_dir%/*}" || return 1
+	if ! mkdir "$lock_dir" 2>/dev/null; then
+		local lock_pid=""
+		[[ -f "${lock_dir}/pid" ]] && lock_pid=$(<"${lock_dir}/pid")
+		if [[ "$lock_pid" =~ ^[0-9]+$ ]] && kill -0 "$lock_pid" 2>/dev/null; then
+			echo "Profile README update already running; skipping overlapping refresh" >&2
+			return 1
+		fi
+		rm -rf "$lock_dir"
+		mkdir "$lock_dir" || return 1
+	fi
+	printf '%s\n' "$$" >"${lock_dir}/pid"
+	return 0
+}
+
+_release_profile_update_lock() {
+	local lock_dir
+	lock_dir=$(_profile_update_lock_dir)
+	rm -rf "$lock_dir"
+	return 0
+}
+
 # --- Resolve profile repo path from repos.json ---
 _resolve_profile_repo() {
 	local repos_json="${HOME}/.config/aidevops/repos.json"
@@ -999,6 +1030,11 @@ cmd_update() {
 	local dry_run=false
 	if [[ "${1:-}" == "--dry-run" ]]; then
 		dry_run=true
+	fi
+	if [[ "${AIDEVOPS_PROFILE_UPDATE_LOCK_HELD:-0}" != "1" ]]; then
+		_acquire_profile_update_lock || return 1
+		export AIDEVOPS_PROFILE_UPDATE_LOCK_HELD=1
+		trap _release_profile_update_lock EXIT
 	fi
 	echo "Profile README update started at $(date -u +%Y-%m-%dT%H:%M:%SZ) (dry_run=${dry_run})"
 

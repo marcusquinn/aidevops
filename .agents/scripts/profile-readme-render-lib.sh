@@ -103,88 +103,29 @@ _friendly_app_name() {
 # --- Get top apps by screen time percentage (macOS only) ---
 # Returns JSON array: [{"app":"Name","today_pct":N,"week_pct":N,"month_pct":N}, ...]
 _get_top_apps() {
-	local knowledge_db="${HOME}/Library/Application Support/Knowledge/knowledgeC.db"
+	local knowledge_db="${AIDEVOPS_KNOWLEDGE_DB:-${HOME}/Library/Application Support/Knowledge/knowledgeC.db}"
 
 	if [[ "$(uname -s)" != "Darwin" ]] || [[ ! -f "$knowledge_db" ]]; then
 		echo "[]"
 		return 0
 	fi
 
-	# Query per-app seconds for each period, output as TSV: bundle\ttoday\tweek\tmonth
 	local app_data
-	app_data=$(sqlite3 "$knowledge_db" "
-		SELECT
-			ZVALUESTRING,
-			COALESCE(SUM(CASE WHEN ZSTARTDATE > (strftime('%s', 'now') - 978307200
-				- (CAST(strftime('%H', 'now', 'localtime') AS INTEGER) * 3600
-				+ CAST(strftime('%M', 'now', 'localtime') AS INTEGER) * 60
-				+ CAST(strftime('%S', 'now', 'localtime') AS INTEGER)))
-				THEN ZENDDATE - ZSTARTDATE ELSE 0 END), 0) as today_secs,
-			COALESCE(SUM(CASE WHEN ZSTARTDATE > (strftime('%s', 'now') - 978307200 - 86400*7)
-				THEN ZENDDATE - ZSTARTDATE ELSE 0 END), 0) as week_secs,
-			COALESCE(SUM(ZENDDATE - ZSTARTDATE), 0) as month_secs
-		FROM ZOBJECT
-		WHERE ZSTREAMNAME = '/app/usage'
-			AND ZSTARTDATE > (strftime('%s', 'now') - 978307200 - 86400*28)
-		GROUP BY ZVALUESTRING
-		HAVING month_secs > 0;
-	" 2>/dev/null) || {
-		echo "[]"
-		return 0
-	}
-
-	if [[ -z "$app_data" ]]; then
-		echo "[]"
-		return 0
-	fi
-
-	# Validate and sum totals for each period (reject non-integer values)
-	local total_today=0 total_week=0 total_month=0
-	while IFS='|' read -r _bundle today_s week_s month_s; do
-		# Skip rows with non-integer values (prevents arithmetic injection)
-		[[ "$today_s" =~ ^[0-9]+$ ]] || continue
-		[[ "$week_s" =~ ^[0-9]+$ ]] || continue
-		[[ "$month_s" =~ ^[0-9]+$ ]] || continue
-		total_today=$((total_today + today_s))
-		total_week=$((total_week + week_s))
-		total_month=$((total_month + month_s))
-	done <<<"$app_data"
-
-	# Build JSON array sorted by month_secs descending, top 10
-	# Uses jq for safe JSON construction (prevents injection from special chars)
+	app_data=$(python3 "${SCRIPT_DIR}/screen-time-interval-engine.py" apps \
+		--os-type Darwin --db "$knowledge_db" 2>/dev/null) || app_data="[]"
 	local json_arr="[]"
-	local count=0
-	while IFS='|' read -r bundle today_s week_s month_s; do
-		if [[ $count -ge 10 ]]; then
-			break
-		fi
-
-		# Validate numeric fields
-		[[ "$today_s" =~ ^[0-9]+$ ]] || continue
-		[[ "$week_s" =~ ^[0-9]+$ ]] || continue
-		[[ "$month_s" =~ ^[0-9]+$ ]] || continue
-
+	while IFS= read -r row; do
+		local bundle today_pct week_pct month_pct
+		bundle=$(echo "$row" | jq -r '.bundle')
+		today_pct=$(echo "$row" | jq -r '.today_pct')
+		week_pct=$(echo "$row" | jq -r '.week_pct')
+		month_pct=$(echo "$row" | jq -r '.month_pct')
 		local name
 		name=$(_friendly_app_name "$bundle")
-
-		# Calculate percentages (integer, rounded)
-		local today_pct=0 week_pct=0 month_pct=0
-		if [[ $total_today -gt 0 ]]; then
-			today_pct=$(((today_s * 100 + total_today / 2) / total_today))
-		fi
-		if [[ $total_week -gt 0 ]]; then
-			week_pct=$(((week_s * 100 + total_week / 2) / total_week))
-		fi
-		if [[ $total_month -gt 0 ]]; then
-			month_pct=$(((month_s * 100 + total_month / 2) / total_month))
-		fi
-
-		# Use jq for safe JSON construction (handles special chars in app names)
 		json_arr=$(echo "$json_arr" | jq --arg app "$name" \
 			--argjson tp "$today_pct" --argjson wp "$week_pct" --argjson mp "$month_pct" \
 			'. + [{app: $app, today_pct: $tp, week_pct: $wp, month_pct: $mp}]')
-		count=$((count + 1))
-	done < <(echo "$app_data" | sort -t'|' -k4 -rn)
+	done < <(echo "$app_data" | jq -c '.[]')
 
 	echo "$json_arr"
 	return 0
@@ -309,9 +250,11 @@ _generate_session_time_vars() {
 	local month_json="$3"
 	local year_json="$4"
 
-	local day_human day_worker day_total day_interactive day_workers
+	local day_human day_interactive_machine day_worker_human day_worker day_total day_interactive day_workers
 	day_human=$(_format_hours "$(echo "$day_json" | jq -r '(.interactive_human_hours // 0)')")
-	day_worker=$(_format_hours "$(echo "$day_json" | jq -r '(.worker_human_hours // 0) + (.worker_machine_hours // 0)')")
+	day_interactive_machine=$(_format_hours "$(echo "$day_json" | jq -r '(.interactive_machine_hours // 0)')")
+	day_worker_human=$(_format_hours "$(echo "$day_json" | jq -r '(.worker_human_hours // 0)')")
+	day_worker=$(_format_hours "$(echo "$day_json" | jq -r '(.worker_machine_hours // 0)')")
 	day_total=$(_format_hours "$(echo "$day_json" | jq -r '(.total_human_hours // 0) + (.total_machine_hours // 0)')")
 	# Keep counts raw here; _generate_work_with_ai_table formats them once.
 	# Pre-formatting creates comma strings that _format_number later rejects as
@@ -319,36 +262,42 @@ _generate_session_time_vars() {
 	day_interactive=$(echo "$day_json" | jq -r '(.interactive_sessions // 0)')
 	day_workers=$(echo "$day_json" | jq -r '(.worker_sessions // 0)')
 
-	local week_human week_worker week_total week_interactive week_workers
+	local week_human week_interactive_machine week_worker_human week_worker week_total week_interactive week_workers
 	week_human=$(_format_hours "$(echo "$week_json" | jq -r '(.interactive_human_hours // 0)')")
-	week_worker=$(_format_hours "$(echo "$week_json" | jq -r '(.worker_human_hours // 0) + (.worker_machine_hours // 0)')")
+	week_interactive_machine=$(_format_hours "$(echo "$week_json" | jq -r '(.interactive_machine_hours // 0)')")
+	week_worker_human=$(_format_hours "$(echo "$week_json" | jq -r '(.worker_human_hours // 0)')")
+	week_worker=$(_format_hours "$(echo "$week_json" | jq -r '(.worker_machine_hours // 0)')")
 	week_total=$(_format_hours "$(echo "$week_json" | jq -r '(.total_human_hours // 0) + (.total_machine_hours // 0)')")
 	week_interactive=$(echo "$week_json" | jq -r '(.interactive_sessions // 0)')
 	week_workers=$(echo "$week_json" | jq -r '(.worker_sessions // 0)')
 
-	local month_human month_worker month_total month_interactive month_workers
+	local month_human month_interactive_machine month_worker_human month_worker month_total month_interactive month_workers
 	month_human=$(_format_hours "$(echo "$month_json" | jq -r '(.interactive_human_hours // 0)')")
-	month_worker=$(_format_hours "$(echo "$month_json" | jq -r '(.worker_human_hours // 0) + (.worker_machine_hours // 0)')")
+	month_interactive_machine=$(_format_hours "$(echo "$month_json" | jq -r '(.interactive_machine_hours // 0)')")
+	month_worker_human=$(_format_hours "$(echo "$month_json" | jq -r '(.worker_human_hours // 0)')")
+	month_worker=$(_format_hours "$(echo "$month_json" | jq -r '(.worker_machine_hours // 0)')")
 	month_total=$(_format_hours "$(echo "$month_json" | jq -r '(.total_human_hours // 0) + (.total_machine_hours // 0)')")
 	month_interactive=$(echo "$month_json" | jq -r '(.interactive_sessions // 0)')
 	month_workers=$(echo "$month_json" | jq -r '(.worker_sessions // 0)')
 
-	local year_human year_worker year_total year_interactive year_workers
+	local year_human year_interactive_machine year_worker_human year_worker year_total year_interactive year_workers
 	year_human=$(_format_hours "$(echo "$year_json" | jq -r '(.interactive_human_hours // 0)')")
-	year_worker=$(_format_hours "$(echo "$year_json" | jq -r '(.worker_human_hours // 0) + (.worker_machine_hours // 0)')")
+	year_interactive_machine=$(_format_hours "$(echo "$year_json" | jq -r '(.interactive_machine_hours // 0)')")
+	year_worker_human=$(_format_hours "$(echo "$year_json" | jq -r '(.worker_human_hours // 0)')")
+	year_worker=$(_format_hours "$(echo "$year_json" | jq -r '(.worker_machine_hours // 0)')")
 	year_total=$(_format_hours "$(echo "$year_json" | jq -r '(.total_human_hours // 0) + (.total_machine_hours // 0)')")
 	year_interactive=$(echo "$year_json" | jq -r '(.interactive_sessions // 0)')
 	year_workers=$(echo "$year_json" | jq -r '(.worker_sessions // 0)')
 
 	# Emit as shell variable assignments for eval
-	printf 'day_human=%q day_worker=%q day_total=%q day_interactive=%q day_workers=%q\n' \
-		"$day_human" "$day_worker" "$day_total" "$day_interactive" "$day_workers"
-	printf 'week_human=%q week_worker=%q week_total=%q week_interactive=%q week_workers=%q\n' \
-		"$week_human" "$week_worker" "$week_total" "$week_interactive" "$week_workers"
-	printf 'month_human=%q month_worker=%q month_total=%q month_interactive=%q month_workers=%q\n' \
-		"$month_human" "$month_worker" "$month_total" "$month_interactive" "$month_workers"
-	printf 'year_human=%q year_worker=%q year_total=%q year_interactive=%q year_workers=%q\n' \
-		"$year_human" "$year_worker" "$year_total" "$year_interactive" "$year_workers"
+	printf 'day_human=%q day_interactive_machine=%q day_worker_human=%q day_worker=%q day_total=%q day_interactive=%q day_workers=%q\n' \
+		"$day_human" "$day_interactive_machine" "$day_worker_human" "$day_worker" "$day_total" "$day_interactive" "$day_workers"
+	printf 'week_human=%q week_interactive_machine=%q week_worker_human=%q week_worker=%q week_total=%q week_interactive=%q week_workers=%q\n' \
+		"$week_human" "$week_interactive_machine" "$week_worker_human" "$week_worker" "$week_total" "$week_interactive" "$week_workers"
+	printf 'month_human=%q month_interactive_machine=%q month_worker_human=%q month_worker=%q month_total=%q month_interactive=%q month_workers=%q\n' \
+		"$month_human" "$month_interactive_machine" "$month_worker_human" "$month_worker" "$month_total" "$month_interactive" "$month_workers"
+	printf 'year_human=%q year_interactive_machine=%q year_worker_human=%q year_worker=%q year_total=%q year_interactive=%q year_workers=%q\n' \
+		"$year_human" "$year_interactive_machine" "$year_worker_human" "$year_worker" "$year_total" "$year_interactive" "$year_workers"
 	return 0
 }
 
@@ -404,38 +353,28 @@ _generate_work_with_ai_table() {
 
 	# Extract screen time values
 	local screen_today screen_week screen_month screen_year
-	screen_today=$(echo "$screen_json" | jq -r '.today_hours | . * 10 | round / 10')
-	screen_week=$(echo "$screen_json" | jq -r '.week_hours | . * 10 | round / 10')
-	screen_month=$(echo "$screen_json" | jq -r '.month_hours | . * 10 | round / 10')
-	screen_year=$(echo "$screen_json" | jq -r '.year_hours | round')
+	screen_today=$(echo "$screen_json" | jq -r 'if .today_hours == null then "unavailable" else ((.today_hours * 10 | round / 10 | tostring) + "h") end')
+	screen_week=$(echo "$screen_json" | jq -r 'if .week_hours == null then "unavailable" else ((.week_hours * 10 | round / 10 | tostring) + "h") end')
+	screen_month=$(echo "$screen_json" | jq -r 'if .month_hours == null then "unavailable" else ((.month_hours * 10 | round / 10 | tostring) + "h") end')
+	screen_year=$(echo "$screen_json" | jq -r 'if .year_hours == null then "unavailable" else ((.year_hours | round | tostring) + "h") end')
 
 	# Check if year is extrapolated (history file has < 365 days)
-	local history_file="${HOME}/.aidevops/.agent-workspace/observability/screen-time.jsonl"
 	local year_prefix="" year_suffix=""
-	if [[ -f "$history_file" ]]; then
-		local history_days
-		history_days=$(wc -l <"$history_file" | tr -d ' ')
-		if [[ "$history_days" -lt 365 ]]; then
-			year_prefix="~"
-			year_suffix="*"
-		fi
-	else
+	if [[ "$(echo "$screen_json" | jq -r '.periods.year.estimated // false')" == "true" ]]; then
 		year_prefix="~"
 		year_suffix="*"
 	fi
+	local screen_status
+	screen_status=$(echo "$screen_json" | jq -r '[.periods.day.status, .periods.week.status, .periods.month.status, .periods.year.status] | unique | join(", ")' 2>/dev/null || echo "unavailable")
 
 	# Extract and format session time variables for all periods
-	local day_human day_worker day_total day_interactive day_workers
-	local week_human week_worker week_total week_interactive week_workers
-	local month_human month_worker month_total month_interactive month_workers
-	local year_human year_worker year_total year_interactive year_workers
+	local day_human day_interactive_machine day_worker_human day_worker day_total day_interactive day_workers
+	local week_human week_interactive_machine week_worker_human week_worker week_total week_interactive week_workers
+	local month_human month_interactive_machine month_worker_human month_worker month_total month_interactive month_workers
+	local year_human year_interactive_machine year_worker_human year_worker year_total year_interactive year_workers
 	eval "$(_generate_session_time_vars "$day_json" "$week_json" "$month_json" "$year_json")"
 
 	# Format screen time and session counts with commas
-	local f_screen_month f_screen_year
-	f_screen_month=$(_format_number "$screen_month")
-	f_screen_year=$(_format_number "$screen_year")
-
 	local f_day_int f_week_int f_month_int f_year_int
 	f_day_int=$(_format_number "$day_interactive")
 	f_week_int=$(_format_number "$week_interactive")
@@ -451,6 +390,45 @@ _generate_work_with_ai_table() {
 	local f_month_total f_year_total
 	f_month_total=$(_format_number "$month_total")
 	f_year_total=$(_format_number "$year_total")
+
+	# A failed collector is not a valid zero. Preserve legitimate zero values only
+	# when the corresponding period explicitly reports status=ok.
+	if [[ "$(echo "$day_json" | jq -r '.status // "ok"')" == "unavailable" ]]; then
+		day_human="unavailable"
+		day_interactive_machine="unavailable"
+		day_worker_human="unavailable"
+		day_worker="unavailable"
+		day_total="unavailable"
+		f_day_int="unavailable"
+		f_day_wrk="unavailable"
+	fi
+	if [[ "$(echo "$week_json" | jq -r '.status // "ok"')" == "unavailable" ]]; then
+		week_human="unavailable"
+		week_interactive_machine="unavailable"
+		week_worker_human="unavailable"
+		week_worker="unavailable"
+		week_total="unavailable"
+		f_week_int="unavailable"
+		f_week_wrk="unavailable"
+	fi
+	if [[ "$(echo "$month_json" | jq -r '.status // "ok"')" == "unavailable" ]]; then
+		month_human="unavailable"
+		month_interactive_machine="unavailable"
+		month_worker_human="unavailable"
+		month_worker="unavailable"
+		f_month_total="unavailable"
+		f_month_int="unavailable"
+		f_month_wrk="unavailable"
+	fi
+	if [[ "$(echo "$year_json" | jq -r '.status // "ok"')" == "unavailable" ]]; then
+		year_human="unavailable"
+		year_interactive_machine="unavailable"
+		year_worker_human="unavailable"
+		year_worker="unavailable"
+		f_year_total="unavailable"
+		f_year_int="unavailable"
+		f_year_wrk="unavailable"
+	fi
 
 	# Determine platform label for screen time row
 	local os_type screen_label screen_source
@@ -469,6 +447,7 @@ _generate_work_with_ai_table() {
 		screen_source="system events"
 		;;
 	esac
+	screen_source=$(echo "$screen_json" | jq -r '.periods.month.source // "unavailable"')
 
 	local session_coverage_note=""
 	local session_observed_days
@@ -483,16 +462,18 @@ _generate_work_with_ai_table() {
 
 | Metric | 24h | 7 Days | 28 Days | 365 Days |
 | --- | ---: | ---: | ---: | ---: |
-| ${screen_label} | ${screen_today}h | ${screen_week}h | ${f_screen_month}h | ${year_prefix}${f_screen_year}h${year_suffix} |
-| User AI session hours | ${day_human}h | ${week_human}h | ${month_human}h | ${year_human}h |
-| AI worker hours | ${day_worker}h | ${week_worker}h | ${month_worker}h | ${year_worker}h |
-| AI concurrency hours | ${day_total}h | ${week_total}h | ${f_month_total}h | ${f_year_total}h |
+| ${screen_label} | ${screen_today} | ${screen_week} | ${screen_month} | ${year_prefix}${screen_year}${year_suffix} |
+| Interactive human attention | ${day_human}$([[ "$day_human" != "unavailable" ]] && echo h) | ${week_human}$([[ "$week_human" != "unavailable" ]] && echo h) | ${month_human}$([[ "$month_human" != "unavailable" ]] && echo h) | ${year_human}$([[ "$year_human" != "unavailable" ]] && echo h) |
+| Interactive AI generation | ${day_interactive_machine}$([[ "$day_interactive_machine" != "unavailable" ]] && echo h) | ${week_interactive_machine}$([[ "$week_interactive_machine" != "unavailable" ]] && echo h) | ${month_interactive_machine}$([[ "$month_interactive_machine" != "unavailable" ]] && echo h) | ${year_interactive_machine}$([[ "$year_interactive_machine" != "unavailable" ]] && echo h) |
+| Worker-classified human attention | ${day_worker_human}$([[ "$day_worker_human" != "unavailable" ]] && echo h) | ${week_worker_human}$([[ "$week_worker_human" != "unavailable" ]] && echo h) | ${month_worker_human}$([[ "$month_worker_human" != "unavailable" ]] && echo h) | ${year_worker_human}$([[ "$year_worker_human" != "unavailable" ]] && echo h) |
+| Worker/headless AI generation | ${day_worker}$([[ "$day_worker" != "unavailable" ]] && echo h) | ${week_worker}$([[ "$week_worker" != "unavailable" ]] && echo h) | ${month_worker}$([[ "$month_worker" != "unavailable" ]] && echo h) | ${year_worker}$([[ "$year_worker" != "unavailable" ]] && echo h) |
+| Additive observed work | ${day_total}$([[ "$day_total" != "unavailable" ]] && echo h) | ${week_total}$([[ "$week_total" != "unavailable" ]] && echo h) | ${f_month_total}$([[ "$f_month_total" != "unavailable" ]] && echo h) | ${f_year_total}$([[ "$f_year_total" != "unavailable" ]] && echo h) |
 | Interactive sessions | ${f_day_int} | ${f_week_int} | ${f_month_int} | ${f_year_int} |
 | Worker sessions | ${f_day_wrk} | ${f_week_wrk} | ${f_month_wrk} | ${f_year_wrk} |
 
-_Screen time from ${screen_source}, snapshotted daily.$([ -n "$year_suffix" ] && echo " *365-day extrapolated (accumulating real data).")_
+_Screen time from ${screen_source}; collection status: ${screen_status}.$([ -n "$year_suffix" ] && echo " *365-day estimate uses observed calendar coverage.")_
 
-_User AI session hours are attended interactive time measured from gaps between AI responses and the next user message; AI concurrency hours include attended time, AI generation, and background workers._${session_coverage_note}
+_Human attention is unioned wall-clock time, so overlapping sessions are not double-counted. AI generation is additive machine work across sessions; it is not wall-clock concurrency._${session_coverage_note}
 EOF
 	return 0
 }
@@ -503,13 +484,12 @@ cmd_generate() {
 	local screen_json
 	screen_json=$(_get_screen_time)
 
-	local day_json week_json month_json year_json
-	day_json=$(_get_session_time day)
-	week_json=$(_get_session_time week)
-	# The profile table column is explicitly 28 days; keep AI session windows
-	# aligned with the screen-time window instead of contributor "month" (30d).
-	month_json=$(_get_session_time 28d)
-	year_json=$(_get_session_time year)
+	local session_periods day_json week_json month_json year_json
+	session_periods=$(_get_profile_session_times)
+	day_json=$(echo "$session_periods" | jq -c '.day // {status:"unavailable"}')
+	week_json=$(echo "$session_periods" | jq -c '.week // {status:"unavailable"}')
+	month_json=$(echo "$session_periods" | jq -c '."28d" // {status:"unavailable"}')
+	year_json=$(echo "$session_periods" | jq -c '.year // {status:"unavailable"}')
 
 	local model_json_30d model_json_all
 	model_json_30d=$(_get_model_usage "30d")

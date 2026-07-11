@@ -200,6 +200,15 @@ _get_session_time() {
 	return 0
 }
 
+# --- Gather all profile AI-session windows in one database aggregation pass ---
+_get_profile_session_times() {
+	local session_json
+	session_json=$("${SCRIPT_DIR}/contributor-activity-helper.sh" session-time \
+		--all-dirs --period profile --format json 2>/dev/null) || session_json='{"day":{"status":"unavailable"},"week":{"status":"unavailable"},"28d":{"status":"unavailable"},"year":{"status":"unavailable"}}'
+	printf '%s\n' "$session_json"
+	return 0
+}
+
 # --- Compute cost from token counts using _model_cost_rates ---
 # Takes JSON array with model/input_tokens/output_tokens/cache_read_tokens,
 # adds cost_total field computed from pricing table, sorts by cost desc.

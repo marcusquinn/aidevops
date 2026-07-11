@@ -74,7 +74,8 @@ create_knowledge_db() {
 			ZCREATIONDATE REAL,
 			ZVALUEINTEGER INTEGER,
 			ZSTARTDATE REAL,
-			ZENDDATE REAL
+			ZENDDATE REAL,
+			ZVALUESTRING TEXT
 		);"
 	return 0
 }
@@ -94,6 +95,11 @@ test_union_clipping_and_failure_status() {
 	local overlap_hours
 	overlap_hours=$(query_hours "$overlap_db" 1)
 	[[ "$overlap_hours" == "5.0" ]] || fail "expected app intervals to union to 5.0h, got ${overlap_hours}"
+	sqlite3 "$overlap_db" "UPDATE ZOBJECT SET ZVALUESTRING='app.one' WHERE ZSTREAMNAME='/app/usage';"
+	local app_json app_seconds
+	app_json=$(AIDEVOPS_SCREEN_TIME_NOW_EPOCH="$now" python3 "${SCRIPTS_DIR}/screen-time-interval-engine.py" apps --os-type Darwin --db "$overlap_db")
+	app_seconds=$(printf '%s' "$app_json" | jq -r '.[0].month_seconds')
+	[[ "$app_seconds" == "18000" ]] || fail "expected repeated/overlapping top-app intervals to union to 18000s, got ${app_seconds}"
 
 	local clip_db="${tmpdir}/clip.db"
 	create_knowledge_db "$clip_db"
@@ -105,9 +111,9 @@ test_union_clipping_and_failure_status() {
 	local repeated_db="${tmpdir}/repeated.db"
 	create_knowledge_db "$repeated_db"
 	sqlite3 "$repeated_db" "
-		INSERT INTO ZOBJECT VALUES('/display/isBacklit', $(core_data_offset "$((now - one_hour * 3))"), 1, NULL, NULL);
-		INSERT INTO ZOBJECT VALUES('/display/isBacklit', $(core_data_offset "$((now - one_hour * 2))"), 1, NULL, NULL);
-		INSERT INTO ZOBJECT VALUES('/display/isBacklit', $(core_data_offset "$((now - one_hour))"), 0, NULL, NULL);"
+		INSERT INTO ZOBJECT VALUES('/display/isBacklit', $(core_data_offset "$((now - one_hour * 3))"), 1, NULL, NULL, NULL);
+		INSERT INTO ZOBJECT VALUES('/display/isBacklit', $(core_data_offset "$((now - one_hour * 2))"), 1, NULL, NULL, NULL);
+		INSERT INTO ZOBJECT VALUES('/display/isBacklit', $(core_data_offset "$((now - one_hour))"), 0, NULL, NULL, NULL);"
 	local repeated_hours
 	repeated_hours=$(query_hours "$repeated_db" 1)
 	[[ "$repeated_hours" == "2.0" ]] || fail "expected repeated ON events not to double count, got ${repeated_hours}"
@@ -153,6 +159,17 @@ PY
 	[[ "$hours" == "3" || "$hours" == "3.0" ]] || fail "expected lock/lid/session state to produce 3.0h, got ${hours}"
 	[[ "$source" == *"session-lid-lock-state"* ]] || fail "Linux provenance missing state semantics: ${source}"
 	pass "Linux state retains username-less session OFF events and clips active windows"
+
+	local missing_journal="${tmpdir}/missing-journal"
+	local wtmp_fixture="${tmpdir}/wtmp.txt"
+	printf '%s|%s\n' "$((now - 7200))" "$((now - 3600))" >"$wtmp_fixture"
+	local fallback
+	fallback=$(AIDEVOPS_SCREEN_TIME_OS_TYPE=Linux AIDEVOPS_LOGIND_FIXTURE="$missing_journal" \
+		AIDEVOPS_LAST_FIXTURE="$wtmp_fixture" AIDEVOPS_SCREEN_TIME_NOW_EPOCH="$now" \
+		AIDEVOPS_SCREEN_TIME_USER=fixture "$HELPER" profile-stats)
+	[[ "$(printf '%s' "$fallback" | jq -r '.today_hours')" == "1" || "$(printf '%s' "$fallback" | jq -r '.today_hours')" == "1.0" ]] || fail "wtmp fallback hours were not parsed"
+	[[ "$(printf '%s' "$fallback" | jq -r '.periods.day.source')" == "linux-wtmp:login-session-proxy" ]] || fail "wtmp fallback provenance was not truthful"
+	pass "Linux collection failure falls back to clipped wtmp sessions with proxy provenance"
 	return 0
 }
 
