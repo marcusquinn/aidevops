@@ -416,11 +416,7 @@ repo_verify_feature_state() {
 	local config_file
 	config_file=$(_repo_verify_config_path "$repo_root")
 	if [[ -f "$config_file" ]]; then
-		jq -r '
-			if (.features.code_quality == false or .verify.enabled == false) then "false"
-			elif .features.code_quality == true then "true"
-			else "missing" end
-		' "$config_file" 2>/dev/null || printf 'invalid\n'
+		jq -r 'if (.features.code_quality == false or .verify.enabled == false) then "false" elif .features.code_quality == true then "true" else "missing" end' "$config_file" 2>/dev/null || printf 'invalid\n'
 		return 0
 	fi
 	if repo_verify_registration_has_feature "$repo_root"; then
@@ -454,7 +450,7 @@ repo_verify_migrate_registration() {
 	}
 	if ! jq --arg path "$repo_root" '
 		.initialized_repos = [(.initialized_repos // [])[] |
-			if .path == $path then .features = (((.features // []) + ["code-quality"]) | unique) else . end]
+			. | if .path == $path then .features = (((.features // []) + ["code-quality"]) | unique) else . end]
 	' "$repos_file" >"$temp_file"; then
 		rm -f "$temp_file"
 		_repo_verify_lock_release
@@ -514,11 +510,11 @@ repo_verify_apply_config() {
 		--arg typecheck "$REPO_VERIFY_TYPECHECK" \
 		'.features = (.features // {}) | .features.code_quality = true |
 		 .verify = (.verify // {}) | .verify.enabled = true |
-		 if ($format | length) > 0 and ((.verify.format?) | length) == 0 then .verify.format = $format else . end |
-		 if ($format_fix | length) > 0 and ((.verify.format_fix?) | length) == 0 then .verify.format_fix = $format_fix else . end |
-		 if ($lint | length) > 0 and ((.verify.lint?) | length) == 0 then .verify.lint = $lint else . end |
-		 if ($lint_fix | length) > 0 and ((.verify.lint_fix?) | length) == 0 then .verify.lint_fix = $lint_fix else . end |
-		 if ($typecheck | length) > 0 and ((.verify.typecheck?) | length) == 0 then .verify.typecheck = $typecheck else . end' \
+		 . | if ($format | length) > 0 and ((.verify.format?) | length) == 0 then .verify.format = $format else . end |
+		 . | if ($format_fix | length) > 0 and ((.verify.format_fix?) | length) == 0 then .verify.format_fix = $format_fix else . end |
+		 . | if ($lint | length) > 0 and ((.verify.lint?) | length) == 0 then .verify.lint = $lint else . end |
+		 . | if ($lint_fix | length) > 0 and ((.verify.lint_fix?) | length) == 0 then .verify.lint_fix = $lint_fix else . end |
+		 . | if ($typecheck | length) > 0 and ((.verify.typecheck?) | length) == 0 then .verify.typecheck = $typecheck else . end' \
 		<<<"$existing" >"$temp_file"; then
 		rm -f "$temp_file"
 		_repo_verify_lock_release
