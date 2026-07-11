@@ -5,6 +5,8 @@
 
 set -uo pipefail
 
+# BASH_SOURCE is a Bash special array and cannot be unset; the indexed form is
+# the repository-standard fallback that also remains safe when invoked by zsh.
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)" || exit 1
 RELEASE_HELPER="${SCRIPT_DIR}/../version-manager-release.sh"
 
