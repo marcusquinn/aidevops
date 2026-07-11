@@ -50,4 +50,13 @@ if (cd "$CANONICAL" && "$HELPER" add test/fetch-failure >/dev/null 2>&1); then
 fi
 printf 'PASS worktree creation fails closed when origin/main cannot refresh\n'
 
+PINNED_SHA=$(git -C "$CANONICAL" rev-parse main)
+(cd "$CANONICAL" && "$HELPER" add test/pinned-base --base "$PINNED_SHA" >/dev/null)
+PINNED_PATH="${WORKTREES}/canonical-test-pinned-base"
+[[ "$(git -C "$PINNED_PATH" rev-parse HEAD)" == "$PINNED_SHA" ]] || {
+	printf 'FAIL immutable explicit base was not preserved\n'
+	exit 1
+}
+printf 'PASS immutable explicit base permits audited offline recovery\n'
+
 exit 0
