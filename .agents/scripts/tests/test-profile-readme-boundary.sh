@@ -55,6 +55,15 @@ install_helper_with_libs() {
 	chmod +x "${helper_path}"
 	cp "${SOURCE_DATA_LIB}" "${helper_dir}/profile-readme-data-lib.sh"
 	cp "${SOURCE_RENDER_LIB}" "${helper_dir}/profile-readme-render-lib.sh"
+	cp "${SOURCE_HELPER%/*}/portable-stat.sh" \
+		"${SOURCE_HELPER%/*}/screen-time-interval-engine.py" \
+		"${SOURCE_HELPER%/*}/screen_time_interval_common.py" \
+		"${SOURCE_HELPER%/*}/screen_time_macos.py" \
+		"${SOURCE_HELPER%/*}/screen_time_macos_apps.py" \
+		"${SOURCE_HELPER%/*}/screen_time_linux.py" \
+		"${SOURCE_HELPER%/*}/screen_time_linux_logind.py" \
+		"${SOURCE_HELPER%/*}/screen_time_linux_wtmp.py" \
+		"${SOURCE_HELPER%/*}/screen_time_history.py" "$helper_dir/"
 	return 0
 }
 
@@ -708,6 +717,74 @@ test_work_with_ai_unavailable_is_not_zero() {
 	return 0
 }
 
+test_screen_json_paths_are_optional_and_fail_visibly() {
+	local test_name="screen JSON paths are optional and invalid payloads remain visibly unavailable"
+	TEST_DIR=$(mktemp -d)
+	# shellcheck source=../profile-readme-render-lib.sh
+	source "$SOURCE_RENDER_LIB"
+	local assignments screen_today screen_status screen_source
+	assignments=$(_generate_screen_time_vars '{}')
+	eval "$assignments"
+	if [[ "$screen_today" != "$PROFILE_STATUS_UNAVAILABLE" || "$screen_status" != "$PROFILE_STATUS_UNAVAILABLE" || "$screen_source" != "$PROFILE_STATUS_UNAVAILABLE" ]]; then
+		print_result "$test_name" 1 "missing paths were not rendered unavailable: ${assignments}"
+		return 0
+	fi
+	local warning_file="${TEST_DIR}/screen-warning"
+	assignments=$(_generate_screen_time_vars 'not-json' 2>"$warning_file")
+	eval "$assignments"
+	if [[ "$screen_status" != "$PROFILE_STATUS_UNAVAILABLE" || "$screen_source" != "$PROFILE_STATUS_UNAVAILABLE" ]] ||
+		! grep -qF 'screen-time payload is invalid' "$warning_file"; then
+		print_result "$test_name" 1 "malformed screen payload failure was not visible"
+		return 0
+	fi
+	print_result "$test_name" 0
+	return 0
+}
+
+test_top_apps_batches_jq_processing() {
+	local test_name="top-app rendering batches jq processing"
+	TEST_DIR=$(mktemp -d)
+	# shellcheck source=../profile-readme-render-lib.sh
+	source "$SOURCE_RENDER_LIB"
+	local db_path="${TEST_DIR}/knowledgeC.db"
+	local now core_now
+	now=$(date +%s)
+	core_now=$((now - 978307200))
+	sqlite3 "$db_path" "
+		CREATE TABLE ZOBJECT (ZSTREAMNAME TEXT,ZCREATIONDATE REAL,ZVALUEINTEGER INTEGER,ZSTARTDATE REAL,ZENDDATE REAL,ZVALUESTRING TEXT);
+		WITH RECURSIVE rows(i) AS (SELECT 1 UNION ALL SELECT i+1 FROM rows WHERE i < 10)
+		INSERT INTO ZOBJECT (ZSTREAMNAME,ZSTARTDATE,ZENDDATE,ZVALUESTRING)
+		SELECT '/app/usage', ${core_now} - i*600, ${core_now} - i*600 + 300, 'fixture.app.' || i FROM rows;"
+	local real_jq wrapper_dir count_file
+	real_jq=$(command -v jq)
+	wrapper_dir="${TEST_DIR}/bin"
+	count_file="${TEST_DIR}/jq-count"
+	mkdir -p "$wrapper_dir"
+	cat >"${wrapper_dir}/jq" <<EOF
+#!/usr/bin/env bash
+printf '1\n' >>"${count_file}"
+exec "${real_jq}" "\$@"
+EOF
+	chmod +x "${wrapper_dir}/jq"
+	local result
+	result=$(
+		uname() { printf '%s\n' Darwin; }
+		SCRIPT_DIR="${SOURCE_RENDER_LIB%/*}"
+		PATH="${wrapper_dir}:${PATH}"
+		export SCRIPT_DIR PATH
+		AIDEVOPS_KNOWLEDGE_DB="$db_path" AIDEVOPS_SCREEN_TIME_NOW_EPOCH="$now" _get_top_apps
+	)
+	local jq_calls app_count
+	jq_calls=$(wc -l <"$count_file" | tr -d ' ')
+	app_count=$(printf '%s' "$result" | "$real_jq" -r 'length')
+	if [[ "$jq_calls" -gt 2 || "$app_count" != "10" ]]; then
+		print_result "$test_name" 1 "expected 10 apps with at most two jq processes, apps=${app_count} jq_calls=${jq_calls}"
+		return 0
+	fi
+	print_result "$test_name" 0
+	return 0
+}
+
 test_profile_update_lock_is_bounded() {
 	local test_name="profile update lock uses portable mtime and remains token-owned, race-safe, and stale-recoverable"
 	TEST_DIR=$(mktemp -d)
@@ -987,6 +1064,10 @@ main() {
 	test_work_with_ai_worker_counts_above_thousand
 	teardown
 	test_work_with_ai_unavailable_is_not_zero
+	teardown
+	test_screen_json_paths_are_optional_and_fail_visibly
+	teardown
+	test_top_apps_batches_jq_processing
 	teardown
 	test_profile_update_lock_is_bounded
 	teardown

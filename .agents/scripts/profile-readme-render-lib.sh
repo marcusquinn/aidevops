@@ -116,21 +116,15 @@ _get_top_apps() {
 	local app_data
 	app_data=$(python3 "${SCRIPT_DIR}/screen-time-interval-engine.py" apps \
 		--os-type Darwin --db "$knowledge_db" 2>/dev/null) || app_data="[]"
-	local json_arr="[]"
-	while IFS= read -r row; do
-		local bundle today_pct week_pct month_pct
-		bundle=$(echo "$row" | jq -r '.bundle')
-		today_pct=$(echo "$row" | jq -r '.today_pct')
-		week_pct=$(echo "$row" | jq -r '.week_pct')
-		month_pct=$(echo "$row" | jq -r '.month_pct')
-		local name
+	local app_rows=""
+	local bundle today_pct week_pct month_pct name
+	while IFS=$'\t' read -r bundle today_pct week_pct month_pct; do
+		[[ -n "$bundle" ]] || continue
 		name=$(_friendly_app_name "$bundle")
-		json_arr=$(echo "$json_arr" | jq --arg app "$name" \
-			--argjson tp "$today_pct" --argjson wp "$week_pct" --argjson mp "$month_pct" \
-			'. + [{app: $app, today_pct: $tp, week_pct: $wp, month_pct: $mp}]')
-	done < <(echo "$app_data" | jq -c '.[]')
+		app_rows="${app_rows}${name}	${today_pct:-0}	${week_pct:-0}	${month_pct:-0}"$'\n'
+	done < <(printf '%s' "$app_data" | jq -r '.[] | [.bundle, .today_pct, .week_pct, .month_pct] | @tsv')
 
-	echo "$json_arr"
+	printf '%s' "$app_rows" | jq -Rn '[inputs | split("\t") | {app: .[0], today_pct: (.[1] | tonumber), week_pct: (.[2] | tonumber), month_pct: (.[3] | tonumber)}]'
 	return 0
 }
 
@@ -310,28 +304,15 @@ _generate_top_apps_section() {
 	local top_apps_json
 	top_apps_json=$(_get_top_apps)
 
-	local app_count
-	app_count=$(echo "$top_apps_json" | jq 'length')
-	if [[ "$app_count" -eq 0 ]]; then
+	if ! printf '%s' "$top_apps_json" | jq -e 'length > 0' >/dev/null 2>&1; then
 		return 0
 	fi
 
-	local app_rows=""
-	while IFS= read -r row; do
-		local app today_pct week_pct month_pct
-		app=$(echo "$row" | jq -r '.app')
-		today_pct=$(echo "$row" | jq -r '.today_pct')
-		week_pct=$(echo "$row" | jq -r '.week_pct')
-		month_pct=$(echo "$row" | jq -r '.month_pct')
-
-		local today_str week_str month_str
-		if [[ "$today_pct" -eq 0 ]]; then today_str="--"; else today_str="${today_pct}%"; fi
-		if [[ "$week_pct" -eq 0 ]]; then week_str="--"; else week_str="${week_pct}%"; fi
-		if [[ "$month_pct" -eq 0 ]]; then month_str="--"; else month_str="${month_pct}%"; fi
-
-		app_rows="${app_rows}| ${app} | ${today_str} | ${week_str} | ${month_str} |
-"
-	done < <(echo "$top_apps_json" | jq -c '.[]')
+	local app_rows
+	app_rows=$(printf '%s' "$top_apps_json" | jq -r '
+		def pct: if . == 0 then "--" else (tostring + "%") end;
+		.[] | "| \(.app) | \(.today_pct | pct) | \(.week_pct | pct) | \(.month_pct | pct) |"
+	')
 
 	cat <<EOF
 
@@ -350,17 +331,23 @@ EOF
 _generate_screen_time_vars() {
 	local screen_json="$1"
 	local values screen_today screen_week screen_month screen_year screen_status year_estimated screen_source
-	values=$(printf '%s' "$screen_json" | jq -r --arg unavailable "$PROFILE_STATUS_UNAVAILABLE" '
+	if ! values=$(printf '%s' "$screen_json" | jq -er --arg unavailable "$PROFILE_STATUS_UNAVAILABLE" '
+		if type != "object" then error("screen payload must be an object") else . end |
 		[
 			(if .today_hours == null then $unavailable else ((.today_hours * 10 | round / 10 | tostring) + "h") end),
 			(if .week_hours == null then $unavailable else ((.week_hours * 10 | round / 10 | tostring) + "h") end),
 			(if .month_hours == null then $unavailable else ((.month_hours * 10 | round / 10 | tostring) + "h") end),
 			(if .year_hours == null then $unavailable else ((.year_hours | round | tostring) + "h") end),
-			([.periods.day.status, .periods.week.status, .periods.month.status, .periods.year.status] | unique | join(", ")),
-			(.periods.year.estimated // false),
-			(.periods.month.source // $unavailable)
+			([.periods?.day?.status // $unavailable, .periods?.week?.status // $unavailable, .periods?.month?.status // $unavailable, .periods?.year?.status // $unavailable] | unique | join(", ")),
+			(.periods?.year?.estimated // false),
+			(.periods?.month?.source // $unavailable)
 		] | @tsv
-	' 2>/dev/null) || values=$'unavailable\tunavailable\tunavailable\tunavailable\tunavailable\tfalse\tunavailable'
+	'); then
+		echo "Warning: screen-time payload is invalid; rendering unavailable values" >&2
+		printf -v values '%s\t%s\t%s\t%s\t%s\tfalse\t%s' \
+			"$PROFILE_STATUS_UNAVAILABLE" "$PROFILE_STATUS_UNAVAILABLE" "$PROFILE_STATUS_UNAVAILABLE" \
+			"$PROFILE_STATUS_UNAVAILABLE" "$PROFILE_STATUS_UNAVAILABLE" "$PROFILE_STATUS_UNAVAILABLE"
+	fi
 	IFS=$'\t' read -r screen_today screen_week screen_month screen_year screen_status year_estimated screen_source <<<"$values"
 	local year_prefix="" year_suffix=""
 	if [[ "$year_estimated" == "$PROFILE_BOOLEAN_TRUE" ]]; then

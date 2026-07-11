@@ -83,6 +83,21 @@ else:
 }
 
 #######################################
+# Validate that a value-taking option has a following argument.
+# Arguments:
+#   option name and remaining argument count
+#######################################
+_session_require_option_value() {
+	local option_name="$1"
+	local remaining_count="$2"
+	if [[ "$remaining_count" -lt 2 ]]; then
+		echo "Error: ${option_name} requires an argument" >&2
+		return 1
+	fi
+	return 0
+}
+
+#######################################
 # Compute observed AI session time.
 # Arguments:
 #   repo path and --period/--format/--db-path/--all-dirs options
@@ -96,14 +111,17 @@ session_time() {
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
 		--period)
+			_session_require_option_value "$1" "$#" || return 1
 			period="${2:-}"
 			shift 2
 			;;
 		--format)
+			_session_require_option_value "$1" "$#" || return 1
 			format="${2:-}"
 			shift 2
 			;;
 		--db-path)
+			_session_require_option_value "$1" "$#" || return 1
 			db_path="${2:-}"
 			shift 2
 			;;
@@ -167,10 +185,12 @@ cross_repo_session_time() {
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
 		--period)
+			_session_require_option_value "$1" "$#" || return 1
 			period="${2:-}"
 			shift 2
 			;;
 		--format)
+			_session_require_option_value "$1" "$#" || return 1
 			format="${2:-}"
 			shift 2
 			;;

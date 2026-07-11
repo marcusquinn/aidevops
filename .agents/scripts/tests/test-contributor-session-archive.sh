@@ -507,6 +507,97 @@ test_malformed_numeric_rows_and_invalid_period() {
 	return 0
 }
 
+assert_missing_option_fails_cleanly() {
+	local function_name="$1"
+	local option_name="$2"
+	local stderr_file="$3"
+	if "$function_name" "$option_name" >"${stderr_file}.out" 2>"$stderr_file"; then
+		return 1
+	fi
+	if grep -qF "Error: ${option_name} requires an argument" "$stderr_file"; then
+		return 0
+	fi
+	return 1
+}
+
+test_value_options_validate_before_shift() {
+	local test_name="session value options fail cleanly before shift"
+	setup
+	# shellcheck source=../contributor-activity-helper-session.sh
+	source "$SOURCE_SESSION_LIB"
+	local stderr_file="${TEST_DIR}/option-error"
+	local failed=0
+	assert_missing_option_fails_cleanly session_time --period "$stderr_file" || failed=1
+	assert_missing_option_fails_cleanly session_time --format "$stderr_file" || failed=1
+	assert_missing_option_fails_cleanly session_time --db-path "$stderr_file" || failed=1
+	assert_missing_option_fails_cleanly cross_repo_session_time --period "$stderr_file" || failed=1
+	assert_missing_option_fails_cleanly cross_repo_session_time --format "$stderr_file" || failed=1
+	if [[ "$failed" -ne 0 ]]; then
+		print_result "$test_name" 1 "a value-taking option did not return an explicit diagnostic"
+		teardown
+		return 0
+	fi
+	print_result "$test_name" 0
+	teardown
+	return 0
+}
+
+test_explicit_db_is_existing_read_only_file_and_cutoff_is_safe() {
+	local test_name="explicit session DBs are existing read-only files and cutoffs are bounded"
+	setup
+	# shellcheck source=../contributor-activity-helper-session.sh
+	source "$SOURCE_SESSION_LIB"
+	local db_path="${TEST_DIR}/explicit.db"
+	local missing_path="${TEST_DIR}/must-not-exist.db"
+	create_session_db "$db_path"
+	local now_ms
+	now_ms=$(($(date +%s) * 1000))
+	insert_session_fixture "$db_path" "explicit-session" "Explicit session" "$((now_ms - 60000))" "$TEST_DIR/repo"
+	chmod 444 "$db_path"
+	local output sessions
+	output=$(HOME="${TEST_DIR}/home" session_time --all-dirs --db-path "$db_path" --period day --format json)
+	sessions=$(printf '%s' "$output" | jq -r '.total_sessions')
+	HOME="${TEST_DIR}/home" session_time --all-dirs --db-path "$missing_path" --period day --format json >/dev/null
+	local cutoff_ok=0
+	PYTHONPATH="${SCRIPT_DIR}/.." python3 - <<'PY' || cutoff_ok=1
+from session_time_db import safe_cutoff
+
+epoch = "1970-01-01T00:00:00.000Z"
+assert safe_cutoff(-1) == epoch
+assert safe_cutoff("corrupt") == epoch
+assert safe_cutoff(10**500) == epoch
+PY
+	local missing_created="no"
+	[[ -e "$missing_path" ]] && missing_created="yes"
+	if [[ "$sessions" != "1" || -e "$missing_path" || "$cutoff_ok" -ne 0 ]]; then
+		print_result "$test_name" 1 "read-only explicit DB or safe cutoff contract failed: sessions=${sessions} missing_created=${missing_created}"
+		teardown
+		return 0
+	fi
+	print_result "$test_name" 0
+	teardown
+	return 0
+}
+
+test_session_engine_sibling_modules_deploy_together() {
+	local test_name="session engine loads deployed sibling modules"
+	setup
+	local deploy_dir="${TEST_DIR}/deployed"
+	mkdir -p "$deploy_dir"
+	cp "${SCRIPT_DIR}/../session-time-interval-engine.py" "${SCRIPT_DIR}/../session_time_common.py" \
+		"${SCRIPT_DIR}/../session_time_db.py" "${SCRIPT_DIR}/../session_time_aggregate.py" "$deploy_dir/"
+	local output
+	output=$(HOME="${TEST_DIR}/home" python3 "${deploy_dir}/session-time-interval-engine.py" --all-dirs --period day)
+	if [[ "$(printf '%s' "$output" | jq -r '.status')" != "unavailable" ]]; then
+		print_result "$test_name" 1 "isolated deployed engine did not load sibling modules: ${output}"
+		teardown
+		return 0
+	fi
+	print_result "$test_name" 0
+	teardown
+	return 0
+}
+
 main() {
 	if [[ ! -f "$SOURCE_SESSION_LIB" ]]; then
 		echo "Session library not found: ${SOURCE_SESSION_LIB}" >&2
@@ -524,6 +615,9 @@ main() {
 	test_partial_observability_unions_with_message_generation
 	test_observability_sql_filters_old_and_other_roots
 	test_malformed_numeric_rows_and_invalid_period
+	test_value_options_validate_before_shift
+	test_explicit_db_is_existing_read_only_file_and_cutoff_is_safe
+	test_session_engine_sibling_modules_deploy_together
 
 	echo ""
 	echo "Tests run: ${TESTS_RUN}"

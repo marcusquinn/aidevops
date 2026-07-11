@@ -354,6 +354,60 @@ PY
 	return 0
 }
 
+test_corrupt_core_data_and_history_paths_are_safe() {
+	local tmpdir="$1"
+	local now="$2"
+	local db="${tmpdir}/corrupt-core-data.db"
+	create_knowledge_db "$db"
+	insert_app_usage "$db" "$((now - 7200))" "$((now - 3600))"
+	sqlite3 "$db" "
+		UPDATE ZOBJECT SET ZVALUESTRING='valid.app' WHERE ZSTREAMNAME='/app/usage';
+		INSERT INTO ZOBJECT (ZSTREAMNAME,ZCREATIONDATE,ZVALUEINTEGER) VALUES('/display/isBacklit','broken',1);
+		INSERT INTO ZOBJECT (ZSTREAMNAME,ZCREATIONDATE,ZVALUEINTEGER) VALUES('/display/isBacklit',1e999,1);
+		INSERT INTO ZOBJECT (ZSTREAMNAME,ZSTARTDATE,ZENDDATE,ZVALUESTRING) VALUES('/app/usage','broken','also-broken','bad.app');
+		INSERT INTO ZOBJECT (ZSTREAMNAME,ZSTARTDATE,ZENDDATE,ZVALUESTRING) VALUES('/app/usage',1e999,1e999,'infinite.app');"
+	local profile_json app_json
+	profile_json=$(AIDEVOPS_SCREEN_TIME_NOW_EPOCH="$now" profile_stats "$db")
+	app_json=$(AIDEVOPS_SCREEN_TIME_NOW_EPOCH="$now" python3 "${SCRIPTS_DIR}/screen-time-interval-engine.py" apps --os-type Darwin --db "$db")
+	local python_ok=0
+	PYTHONPATH="$SCRIPTS_DIR" python3 - <<'PY' || python_ok=1
+from screen_time_interval_common import local_date, safe_core_epoch
+
+assert local_date(10**500) is None
+assert local_date("corrupt") is None
+assert safe_core_epoch("corrupt") is None
+assert safe_core_epoch(float("inf")) is None
+PY
+	local history_json
+	history_json=$(python3 "${SCRIPTS_DIR}/screen-time-interval-engine.py" history-summary --os-type Unsupported --history "$tmpdir")
+	if [[ "$(printf '%s' "$profile_json" | jq -r '.month_hours')" != "1" && "$(printf '%s' "$profile_json" | jq -r '.month_hours')" != "1.0" ]] ||
+		[[ "$(printf '%s' "$app_json" | jq -r 'length')" != "1" ]] ||
+		[[ "$(printf '%s' "$history_json" | jq -r '.valid_rows')" != "0" || "$python_ok" -ne 0 ]]; then
+		fail "corrupt Core Data values or directory history path escaped defensive parsing"
+	fi
+	pass "corrupt Core Data values, local dates, and directory history paths are safe"
+	return 0
+}
+
+test_screen_engine_sibling_modules_deploy_together() {
+	local tmpdir="$1"
+	local deploy_dir="${tmpdir}/deployed-screen-engine"
+	mkdir -p "$deploy_dir"
+	cp "${SCRIPTS_DIR}/screen-time-interval-engine.py" \
+		"${SCRIPTS_DIR}/screen_time_interval_common.py" \
+		"${SCRIPTS_DIR}/screen_time_macos.py" \
+		"${SCRIPTS_DIR}/screen_time_macos_apps.py" \
+		"${SCRIPTS_DIR}/screen_time_linux.py" \
+		"${SCRIPTS_DIR}/screen_time_linux_wtmp.py" \
+		"${SCRIPTS_DIR}/screen_time_linux_logind.py" \
+		"${SCRIPTS_DIR}/screen_time_history.py" "$deploy_dir/"
+	local output
+	output=$(python3 "${deploy_dir}/screen-time-interval-engine.py" history-summary --os-type Unsupported)
+	[[ "$(printf '%s' "$output" | jq -r '.valid_rows')" == "0" ]] || fail "deployed screen engine could not load sibling modules"
+	pass "screen engine loads deployed sibling modules"
+	return 0
+}
+
 main() {
 	local tmpdir
 	tmpdir=$(mktemp -d)
@@ -402,6 +456,8 @@ main() {
 	test_local_midnight_dst_boundaries "$tmpdir"
 	test_linux_state_machine "$tmpdir"
 	test_history_calendar_coverage_and_staleness "$tmpdir"
+	test_corrupt_core_data_and_history_paths_are_safe "$tmpdir" "$now"
+	test_screen_engine_sibling_modules_deploy_together "$tmpdir"
 	return 0
 }
 
