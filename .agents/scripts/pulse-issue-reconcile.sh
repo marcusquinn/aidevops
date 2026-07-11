@@ -762,13 +762,24 @@ _normalize_unassign_stampless_interactive() {
 			[[ "$issue_num" =~ ^[0-9]+$ ]] || continue
 			stamp="${stamp_dir}/${slug_flat}-${issue_num}.json"
 
-			# Skip if a stamp exists — a genuine interactive session
-			# is still responsible. scan-stale Phase 1 handles those
-			# via dead-PID + missing-worktree detection.
-			[[ -f "$stamp" ]] && continue
-
 			local labels_csv=""
 			labels_csv=$(printf '%s' "$json" | jq -r --argjson n "$issue_num" '[.[] | select(.number == $n) | .labels[].name] | join(",")' 2>/dev/null) || labels_csv=""
+			if [[ -f "$stamp" ]]; then
+				# A stamp is only durable liveness evidence while its same-host
+				# PID/argv identity remains alive. Scheduled pulse previously
+				# skipped these forever and relied on a future interactive
+				# session to run scan-stale, leaving footprint reservations and
+				# overlapping auto-dispatch work globally blocked. Reap one
+				# already-aged candidate through the bounded helper command.
+				[[ ",${labels_csv}," == *",no-auto-dispatch,"* ]] && continue
+				local claim_helper="${AIDEVOPS_INTERACTIVE_SESSION_HELPER:-${SCRIPT_DIR}/interactive-session-helper.sh}"
+				if [[ -x "$claim_helper" ]] && "$claim_helper" release-if-dead "$issue_num" "$slug" >>"$LOGFILE" 2>&1; then
+					total_released=$((total_released + 1))
+					echo "[pulse-wrapper] Stamped interactive auto-release: released dead same-host claim #${issue_num} in ${slug}" >>"$LOGFILE"
+				fi
+				continue
+			fi
+
 			if [[ ",${labels_csv}," == *",status:in-review,"* ]]; then
 				local open_pr_count=0 open_pr_rc=0
 				open_pr_count=$(gh_pr_list --repo "$slug" --state open --search "$issue_num" --json number --jq 'length' 2>/dev/null) || open_pr_rc=$?
@@ -847,7 +858,7 @@ normalize_active_issue_assignments() {
 	# Pass 2: reset stale assignments (active label, assignee present, no running worker)
 	_normalize_unassign_stale "$runner_user" "$repos_json" "$now_epoch" "$cross_runner_max_runtime"
 
-	# Pass 2b (t2148): auto-recover stampless origin:interactive claims.
+	# Pass 2b (t2148/GH#27039): recover aged origin:interactive claims.
 	# Closes the leak where `claim-task-id.sh` auto-assigns on creation
 	# (per t1970) but the interactive session never runs the formal
 	# claim flow, leaving an `origin:interactive + assignee` pair that
@@ -856,7 +867,9 @@ normalize_active_issue_assignments() {
 	# of a stamp file is itself the liveness signal: a real interactive
 	# session creates a stamp via `interactive-session-helper.sh claim`,
 	# while ad-hoc self-assigns from `claim-task-id.sh` (per t1970)
-	# never produce one. Override via STAMPLESS_INTERACTIVE_AGE_THRESHOLD
+	# never produce one. Stamped claims are also checked through the bounded
+	# release-if-dead command, which preserves live and cross-host owners.
+	# Override via STAMPLESS_INTERACTIVE_AGE_THRESHOLD
 	# (set to 86400 to restore the original 24h behaviour from t2148).
 	local stampless_age_threshold="${STAMPLESS_INTERACTIVE_AGE_THRESHOLD:-3600}"
 	_normalize_unassign_stampless_interactive "$runner_user" "$repos_json" "$now_epoch" "$stampless_age_threshold"

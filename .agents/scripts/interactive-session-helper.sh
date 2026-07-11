@@ -348,6 +348,12 @@ USAGE:
                  (last 14 days) whose linked issue is still OPEN. Surfaces
                  these as recovery candidates. Does NOT auto-reopen.
 
+  interactive-session-helper.sh release-if-dead <issue> <slug>
+      Bounded pulse-safe recovery for one stamped claim. Releases only when
+      the stamp belongs to this host, its PID/argv identity is dead, and the
+      issue is not protected by no-auto-dispatch. Metadata lookup failures,
+      live owners, and cross-host stamps fail closed.
+
   interactive-session-helper.sh post-merge <pr_number> [<slug>]
       Auto-heal two known drift patterns after a planning PR merges (t2225).
       Call after `gh pr merge` succeeds, alongside `release <N>`.
@@ -426,6 +432,9 @@ main() {
 		;;
 	scan-stale)
 		_isc_cmd_scan_stale "$@" || rc=$?
+		;;
+	release-if-dead)
+		_isc_cmd_release_if_dead "$@" || rc=$?
 		;;
 	post-merge)
 		_isc_cmd_post_merge "$@" || rc=$?
