@@ -10,8 +10,9 @@
 #   2. Uses the graph result (authoritative) when non-empty, even if body has
 #      no #NNN references.
 #   3. Falls back to body-regex for legacy parents whose graph is empty.
-#   4. Still requires >=2 children (single-reference guard preserved).
+#   4. Allows a complete legacy single-child parent to close.
 #   5. Still requires ALL children closed (partial-open no-close preserved).
+#   6. Keeps declared/unfiled phase plans open and repairs premature closes.
 #
 # Primary motivating case: #19222 (t2126 parent with 5 closed children wired
 # via GraphQL, zero #NNN in body). Without this fix the parent stays open
@@ -127,7 +128,9 @@ case "$1" in
 	issue)
 		case "${2:-}" in
 			list)
-				if [[ -f "${TEST_ROOT}/gh-issue-list.json" ]]; then
+				if [[ -f "${TEST_ROOT}/gh-closed-issue-list.json" ]]; then
+					cat "${TEST_ROOT}/gh-closed-issue-list.json"
+				elif [[ -f "${TEST_ROOT}/gh-issue-list.json" ]]; then
 					cat "${TEST_ROOT}/gh-issue-list.json"
 				else
 					echo "[]"
@@ -136,6 +139,9 @@ case "$1" in
 				;;
 			close)
 				# Record the close call; always succeed
+				exit 0
+				;;
+			reopen | comment | edit)
 				exit 0
 				;;
 		esac
@@ -162,13 +168,32 @@ export REPOS_JSON="$REPOS_JSON_FILE"
 # shellcheck source=/dev/null
 source "${TEST_SCRIPTS_DIR}/pulse-issue-reconcile.sh" >/dev/null 2>&1
 
+# Keep this harness deterministic regardless of the host's REST-first/rate-limit
+# wrapper state. Production still exercises the shared wrappers; the test sends
+# their final command shape directly to the local gh stub.
+gh_issue_list() {
+	gh issue list "$@" && return 0
+	return 1
+}
+
+gh_issue_comment() {
+	gh issue comment "$@" && return 0
+	return 1
+}
+
+gh_issue_edit_safe() {
+	gh issue edit "$@" && return 0
+	return 1
+}
+
 # -----------------------------------------------------------------------------
 # Scenario helpers
 # -----------------------------------------------------------------------------
 reset_scenario() {
 	: >"$GH_CALLS"
 	: >"$LOGFILE"
-	rm -f "${TEST_ROOT}/gh-subissues.json" "${TEST_ROOT}/gh-child-states.env" "${TEST_ROOT}/gh-issue-list.json"
+	rm -f "${TEST_ROOT}/gh-subissues.json" "${TEST_ROOT}/gh-child-states.env" \
+		"${TEST_ROOT}/gh-issue-list.json" "${TEST_ROOT}/gh-closed-issue-list.json"
 }
 
 set_parent_list() {
@@ -176,6 +201,14 @@ set_parent_list() {
 	local num="$1" title="$2" body="$3"
 	jq -n --argjson n "$num" --arg t "$title" --arg b "$body" \
 		'[{number:$n, title:$t, body:$b}]' >"${TEST_ROOT}/gh-issue-list.json"
+}
+
+set_closed_parent_list() {
+	# Args: issue_num title body
+	local num="$1" title="$2" body="$3"
+	jq -n --argjson n "$num" --arg t "$title" --arg b "$body" \
+		'[{number:$n, title:$t, body:$b, state:"CLOSED"}]' >"${TEST_ROOT}/gh-closed-issue-list.json"
+	return 0
 }
 
 set_subissues() {
@@ -239,7 +272,7 @@ fi
 # -----------------------------------------------------------------------------
 reset_scenario
 set_parent_list 500 "t500: legacy parent" \
-	"Tracks #501 and #502 as children."
+	$'## Children\n\n- #501\n- #502'
 printf '[]\n' >"${TEST_ROOT}/gh-subissues.json"
 set_child_states "501:closed:child-A" "502:closed:child-B"
 
@@ -278,8 +311,8 @@ else
 fi
 
 # -----------------------------------------------------------------------------
-# Scenario 4: graph has only 1 child (below min-2 threshold).
-# MUST NOT close, even if it's closed — single-reference guard.
+# Scenario 4: complete legacy parent has one real closed child and no
+# deterministic incomplete contract. Backward compatibility MUST close it.
 # -----------------------------------------------------------------------------
 reset_scenario
 set_parent_list 700 "t700: single-ref" "Only references #701."
@@ -289,10 +322,10 @@ set_child_states "701:closed:lone-child"
 reconcile_completed_parent_tasks >/dev/null 2>&1
 
 if grep -q "issue close 700" "$GH_CALLS"; then
-	print_result "single-child guard: does NOT close parent with 1 subissue" 1 \
-		"(unexpected close: $(tr '\n' '|' <"$GH_CALLS" | head -c 400))"
+	print_result "single-child compatibility: closes complete legacy parent" 0
 else
-	print_result "single-child guard: does NOT close parent with 1 subissue" 0
+	print_result "single-child compatibility: closes complete legacy parent" 1 \
+		"(calls: $(tr '\n' '|' <"$GH_CALLS" | head -c 400))"
 fi
 
 # -----------------------------------------------------------------------------
@@ -336,7 +369,7 @@ fi
 # -----------------------------------------------------------------------------
 reset_scenario
 set_parent_list 1000 "t1000: graphql-failure" \
-	"Body has #1001 and #1002 — graph is temporarily broken."
+	$'Graph is temporarily broken.\n\n## Children\n\n- #1001\n- #1002'
 set_child_states "1001:closed:child-x" "1002:closed:child-y"
 
 GH_GRAPHQL_EXIT_CODE=1 reconcile_completed_parent_tasks >/dev/null 2>&1
@@ -362,7 +395,7 @@ fi
 # -----------------------------------------------------------------------------
 reset_scenario
 set_parent_list 1100 "t1100: paginated" \
-	"Body has #1101 and #1102 as backstop refs."
+	$'## Children\n\n- #1101\n- #1102'
 set_child_states "1101:closed:a" "1102:closed:b"
 
 GH_GRAPHQL_HAS_NEXT_PAGE=true reconcile_completed_parent_tasks >/dev/null 2>&1
@@ -396,6 +429,73 @@ if grep -q "issue close 1200" "$GH_CALLS"; then
 		"(unexpected close with paginated graph + empty body; calls: $(tr '\n' '|' <"$GH_CALLS" | head -c 400))"
 else
 	print_result "pagination fail-closed: no body refs = parent stays open" 0
+fi
+
+# -----------------------------------------------------------------------------
+# Scenario 10: one filed closed child does not complete a two-phase contract.
+# The parent stays open and receives an idempotent decomposition nudge.
+# -----------------------------------------------------------------------------
+reset_scenario
+set_parent_list 1300 "t1300: declared roadmap" $'## Phases\n\n- Phase 1 - shipped #1301\n- Phase 2 - still unfiled\n\n## Children\n\n- #1301'
+set_subissues "1301:CLOSED"
+set_child_states "1301:closed:phase-one"
+
+reconcile_completed_parent_tasks >/dev/null 2>&1
+
+if grep -q "issue close 1300" "$GH_CALLS"; then
+	print_result "unfiled phase contract: parent remains open" 1 \
+		"(unexpected close: $(tr '\n' '|' <"$GH_CALLS" | head -c 400))"
+else
+	print_result "unfiled phase contract: parent remains open" 0
+fi
+if grep -q "issue comment 1300" "$GH_CALLS"; then
+	print_result "unfiled phase contract: posts recovery nudge" 0
+else
+	print_result "unfiled phase contract: posts recovery nudge" 1 \
+		"(calls: $(tr '\n' '|' <"$GH_CALLS" | head -c 400))"
+fi
+
+# -----------------------------------------------------------------------------
+# Scenario 11: all canonical phases are filed and terminal, so the close
+# contract is complete and the parent closes normally.
+# -----------------------------------------------------------------------------
+reset_scenario
+set_parent_list 1400 "t1400: complete roadmap" $'## Phases\n\n- Phase 1 - shipped #1401\n- Phase 2 - shipped #1402\n\n## Children\n\n- #1401\n- #1402'
+set_subissues "1401:CLOSED" "1402:CLOSED"
+set_child_states "1401:closed:phase-one" "1402:closed:phase-two"
+
+reconcile_completed_parent_tasks >/dev/null 2>&1
+
+if grep -q "issue close 1400" "$GH_CALLS"; then
+	print_result "complete phase contract: closes parent" 0
+else
+	print_result "complete phase contract: closes parent" 1 \
+		"(calls: $(tr '\n' '|' <"$GH_CALLS" | head -c 400))"
+fi
+
+# -----------------------------------------------------------------------------
+# Scenario 12: bounded recently-closed scan repairs a premature close only
+# when canonical unfiled phase evidence exists.
+# -----------------------------------------------------------------------------
+reset_scenario
+set_closed_parent_list 1500 "t1500: prematurely closed" $'## Phases\n\n- Phase 1 - shipped #1501\n- Phase 2 - still unfiled'
+set_subissues "1501:CLOSED"
+set_child_states "1501:closed:phase-one"
+
+reconcile_completed_parent_tasks >/dev/null 2>&1
+
+if grep -q "issue reopen 1500" "$GH_CALLS"; then
+	print_result "closed-parent repair: reopens deterministic incomplete roadmap" 0
+else
+	print_result "closed-parent repair: reopens deterministic incomplete roadmap" 1 \
+		"(calls: $(tr '\n' '|' <"$GH_CALLS" | head -c 400))"
+fi
+reopen_count=$(grep -c "issue reopen 1500" "$GH_CALLS" 2>/dev/null || true)
+if [[ "$reopen_count" -eq 1 ]]; then
+	print_result "closed-parent repair: action is bounded to one reopen per scan" 0
+else
+	print_result "closed-parent repair: action is bounded to one reopen per scan" 1 \
+		"(reopen_count=${reopen_count})"
 fi
 
 # -----------------------------------------------------------------------------

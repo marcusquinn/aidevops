@@ -186,6 +186,84 @@ _gh_ci_prepare_status_label() {
 	return 0
 }
 
+_GH_CI_CONTRACT_ARGS=()
+_gh_ci_prepare_parent_close_contract() {
+	local is_parent_task="$1"
+	shift
+	_GH_CI_CONTRACT_ARGS=("$@")
+	[[ "$is_parent_task" -eq 1 ]] || return 0
+
+	local i=0 body_idx=-1 body="" body_file_idx=-1 body_file=""
+	local body_eq=0 body_file_eq=0
+	while [[ "$i" -lt ${#_GH_CI_CONTRACT_ARGS[@]} ]]; do
+		case "${_GH_CI_CONTRACT_ARGS[i]}" in
+		--body)
+			body_idx=$i
+			body="${_GH_CI_CONTRACT_ARGS[i + 1]:-}"
+			;;
+		--body=*)
+			body_idx=$i
+			body="${_GH_CI_CONTRACT_ARGS[i]#--body=}"
+			body_eq=1
+			;;
+		--body-file)
+			body_file_idx=$i
+			body_file="${_GH_CI_CONTRACT_ARGS[i + 1]:-}"
+			;;
+		--body-file=*)
+			body_file_idx=$i
+			body_file="${_GH_CI_CONTRACT_ARGS[i]#--body-file=}"
+			body_file_eq=1
+			;;
+		esac
+		i=$((i + 1))
+	done
+	if [[ -z "$body" && -n "$body_file" && -r "$body_file" ]]; then
+		body=$(<"$body_file")
+	fi
+	[[ -n "$body" ]] || return 0
+	[[ "$body" == *"<!-- parent-close-contract:"* ]] && return 0
+
+	local marker='<!-- parent-close-contract: needs-decomposition -->'
+	if printf '%s\n' "$body" | grep -qE '^##[[:space:]]+Phases([[:space:]]|$)'; then
+		marker='<!-- parent-close-contract: phase-plan -->'
+	else
+		local children_count=0
+		children_count=$(printf '%s\n' "$body" | awk '
+			/^##[[:space:]]+(Children|Child Issues|Sub-issues|Sub-tasks)([[:space:]]|$)/ { in_children=1; next }
+			in_children && /^##[[:space:]]/ { exit }
+			in_children { print }
+		' | grep -oE '#[0-9]+' | sort -u | wc -l | tr -d ' ')
+		if [[ "$children_count" =~ ^[0-9]+$ ]] && [[ "$children_count" -gt 0 ]]; then
+			marker="<!-- parent-close-contract: expected-children=${children_count} -->"
+		fi
+	fi
+	local contracted_body="${body}
+
+${marker}"
+
+	if [[ "$body_idx" -ge 0 ]]; then
+		if [[ "$body_eq" -eq 1 ]]; then
+			_GH_CI_CONTRACT_ARGS[body_idx]="--body=${contracted_body}"
+		else
+			_GH_CI_CONTRACT_ARGS[body_idx + 1]="$contracted_body"
+		fi
+		return 0
+	fi
+	if [[ "$body_file_idx" -ge 0 ]]; then
+		local contracted_body_file=""
+		contracted_body_file=$(mktemp "${TMPDIR:-/tmp}/aidevops-parent-body.XXXXXX") || return 0
+		push_cleanup "rm -f \"$contracted_body_file\""
+		printf '%s\n' "$contracted_body" >"$contracted_body_file" || return 0
+		if [[ "$body_file_eq" -eq 1 ]]; then
+			_GH_CI_CONTRACT_ARGS[body_file_idx]="--body-file=${contracted_body_file}"
+		else
+			_GH_CI_CONTRACT_ARGS[body_file_idx + 1]="$contracted_body_file"
+		fi
+	fi
+	return 0
+}
+
 gh_create_issue() {
 	_gh_wrapper_enter_cleanup_scope
 	gh_record_call graphql gh_create_issue 2>/dev/null || true
@@ -205,10 +283,6 @@ gh_create_issue() {
 	# Ensure labels exist on the target repo (once per repo per process)
 	_ensure_origin_labels_for_args "$@"
 
-	# t2115: auto-append signature footer when body lacks one
-	_gh_wrapper_auto_sig "$@"
-	set -- "${_GH_WRAPPER_SIG_MODIFIED_ARGS[@]}"
-
 	# t2436: Derive creation-time labels from TODO.md tags + filter --todo-task-id.
 	# Helper writes _GH_CI_FILTERED_ARGS and _GH_CI_TODO_LABEL_ARGS globals.
 	_gh_ci_prepare_todo_labels "$@"
@@ -221,6 +295,20 @@ gh_create_issue() {
 	if [[ ${#_GH_CI_TODO_LABEL_ARGS[@]} -gt 0 ]]; then
 		_todo_label_args=("${_GH_CI_TODO_LABEL_ARGS[@]}")
 	fi
+
+	# Stamp every newly created parent-task with a deterministic close contract.
+	# The contract is added before the signature so the signature remains the
+	# final body footer. Derived TODO labels participate in parent detection.
+	local _is_parent_task=0
+	if _gh_wrapper_args_have_label "parent-task" "$@" "${_todo_label_args[@]}"; then
+		_is_parent_task=1
+	fi
+	_gh_ci_prepare_parent_close_contract "$_is_parent_task" "$@"
+	set -- "${_GH_CI_CONTRACT_ARGS[@]}"
+
+	# t2115: auto-append signature footer when body lacks one
+	_gh_wrapper_auto_sig "$@"
+	set -- "${_GH_WRAPPER_SIG_MODIFIED_ARGS[@]}"
 
 	if [[ ${#_todo_label_args[@]} -gt 0 ]]; then
 		_gh_ci_prepare_status_label "$@" "${_todo_label_args[@]}"

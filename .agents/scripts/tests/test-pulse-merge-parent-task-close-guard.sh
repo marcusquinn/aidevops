@@ -105,7 +105,11 @@ EOF
 	_release_interactive_claim_on_merge() { return 0; }
 	set_solved_label() { return 0; }
 	auto_file_next_phase() { return 0; }
-	export -f unlock_issue_after_worker fast_fail_reset _release_interactive_claim_on_merge set_solved_label auto_file_next_phase 2>/dev/null || true
+	_pm_handle_partial_parent_closeout() { return 0; }
+	clear_terminal_issue_dispatch_labels() { return 0; }
+	export -f unlock_issue_after_worker fast_fail_reset _release_interactive_claim_on_merge \
+		set_solved_label auto_file_next_phase _pm_handle_partial_parent_closeout \
+		clear_terminal_issue_dispatch_labels 2>/dev/null || true
 
 	# Shim shared-gh-wrappers.sh wrappers → gh binary stub. The function was
 	# refactored post-GH#21595 to use gh_pr_comment / gh_issue_comment instead
