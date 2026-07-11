@@ -7,33 +7,53 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
-import { dirname, resolve } from "node:path";
+import {
+  installPluginConsoleGuard,
+  shouldSuppressPluginConsole,
+} from "../plugin-console.mjs";
+import { sanitizeOperationTitle } from "../quality-hooks.mjs";
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
-const pluginDir = resolve(__dirname, "..");
+test("payload words cannot promote informational diagnostics into TUI errors", () => {
+  const command = "[aidevops] Git operation detected: git add headless-runtime-failure.sh && git commit";
+  assert.equal(shouldSuppressPluginConsole([command], false), true);
+});
 
-test("Bash operation telemetry never writes tool titles to the TUI console", () => {
-  const src = readFileSync(resolve(pluginDir, "quality-hooks.mjs"), "utf8");
-  const tracker = src.match(
-    /function trackBashOperation\([\s\S]+?\n}\n\n\/\*\*/,
-  )?.[0];
+test("actual Error objects and untagged host errors remain visible", () => {
+  assert.equal(shouldSuppressPluginConsole(["[aidevops] request failed", new Error("boom")], false), false);
+  assert.equal(shouldSuppressPluginConsole(["host error"], false), false);
+});
 
-  assert.ok(tracker, "trackBashOperation should remain discoverable for the routing policy test");
-  assert.doesNotMatch(
-    tracker,
-    /console\.(?:error|warn|log)/,
-    "informational operation payloads must not be written over OpenCode's TUI",
-  );
-  assert.match(
-    tracker,
-    /qualityLog\([^\n]+"INFO", `Git operation: \$\{title}`\)/,
-    "Git operation telemetry should remain available in the persistent quality log",
-  );
-  assert.match(
-    tracker,
-    /recordGitPattern\(ctx\.scriptsDir, title, outputText\)/,
-    "removing TUI output must not disable pattern telemetry",
-  );
+test("debug mode preserves tagged plugin diagnostics", () => {
+  assert.equal(shouldSuppressPluginConsole(["[aidevops] diagnostic"], true), false);
+});
+
+test("persisted operation titles are redacted, single-line, and bounded", () => {
+  const credential = `ghp_${"a".repeat(36)}`;
+  const title = `git commit\n${credential}\t${"x".repeat(600)}`;
+  const sanitized = sanitizeOperationTitle(title);
+
+  assert.doesNotMatch(sanitized, /[\r\n\t]/);
+  assert.doesNotMatch(sanitized, /ghp_/);
+  assert.match(sanitized, /\[redacted-credential]/);
+  assert.equal(sanitized.length, 500);
+});
+
+test("installed guard suppresses tagged strings without writing to stderr", () => {
+  const calls = [];
+  const fakeConsole = {
+    error(...args) {
+      calls.push(args);
+    },
+  };
+  const restore = installPluginConsoleGuard(fakeConsole, {});
+
+  fakeConsole.error("[aidevops] Git operation detected: failure.sh");
+  fakeConsole.error("host error");
+  restore();
+  fakeConsole.error("[aidevops] visible after restore");
+
+  assert.deepEqual(calls, [
+    ["host error"],
+    ["[aidevops] visible after restore"],
+  ]);
 });

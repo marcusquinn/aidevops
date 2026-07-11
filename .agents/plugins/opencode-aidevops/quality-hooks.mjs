@@ -5,7 +5,7 @@
 // ---------------------------------------------------------------------------
 
 import { existsSync } from "fs";
-import { execSync, execFile } from "child_process";
+import { execFileSync, execFile } from "child_process";
 import { join } from "path";
 import { recordToolCall } from "./observability.mjs";
 import { extractAndStoreIntent, consumeIntent } from "./intent-tracing.mjs";
@@ -30,6 +30,7 @@ const CREDENTIAL_PATTERN =
   /(^|[^A-Za-z0-9_-])(sk-|ghp_|gho_|ghs_|ghu_|github_pat_|glpat-|xoxb-|xoxp-)[A-Za-z0-9_-]{10,}/g;
 
 const REDACTION_TOKEN = "[redacted-credential]";
+const OPERATION_TITLE_MAX_LENGTH = 500;
 
 /**
  * Scrub known credential token prefixes from a string value.
@@ -43,6 +44,20 @@ export function scrubCredentials(text) {
     return `${boundary}${REDACTION_TOKEN}`;
   });
   return { scrubbed, count };
+}
+
+/**
+ * Prepare an untrusted tool title for bounded, single-line telemetry storage.
+ * @param {string} title
+ * @returns {string}
+ */
+export function sanitizeOperationTitle(title) {
+  const { scrubbed } = scrubCredentials(title);
+  return scrubbed
+    .replace(/[\u0000-\u001f\u007f]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, OPERATION_TITLE_MAX_LENGTH);
 }
 
 /**
@@ -163,8 +178,9 @@ function recordGitPattern(scriptsDir, title, outputText) {
   const patternType = success ? "SUCCESS_PATTERN" : "FAILURE_PATTERN";
 
   try {
-    execSync(
-      `bash "${patternTracker}" record "${patternType}" "git operation: ${title.substring(0, 100)}" --tag "quality-hook" 2>/dev/null`,
+    execFileSync(
+      "bash",
+      [patternTracker, "record", patternType, `git operation: ${title.substring(0, 100)}`, "--tag", "quality-hook"],
       { encoding: "utf-8", timeout: 5000, stdio: ["pipe", "pipe", "pipe"] },
     );
   } catch {
@@ -183,8 +199,9 @@ function trackBashOperation(ctx, title, outputText) {
     // Tool titles can contain entire commands and long file lists. Keep this
     // informational telemetry in the quality log: writing it to stderr draws
     // over OpenCode's TUI and makes payload text part of console routing.
-    qualityLog(ctx.logsDir, ctx.qualityLogPath, "INFO", `Git operation: ${title}`);
-    recordGitPattern(ctx.scriptsDir, title, outputText);
+    const boundedTitle = sanitizeOperationTitle(title);
+    qualityLog(ctx.logsDir, ctx.qualityLogPath, "INFO", `Git operation: ${boundedTitle}`);
+    recordGitPattern(ctx.scriptsDir, boundedTitle, outputText);
   }
 
   if (title.includes("shellcheck") || title.includes("linters-local")) {
