@@ -219,6 +219,7 @@ _run_update_setup() {
 # Update/upgrade command
 cmd_update() {
 	local skip_project_sync=false
+	local reconcile_repo_verify=false
 	local arg
 	for arg in "$@"; do case "$arg" in --skip-project-sync) skip_project_sync=true ;; esac done
 	print_header "Updating AI DevOps Framework"
@@ -266,6 +267,7 @@ cmd_update() {
 					local deployed_sha has_code_drift=0
 					deployed_sha=$(tr -d '[:space:]' <"$stamp_file" 2>/dev/null) || deployed_sha=""
 					if [[ -n "$deployed_sha" && "$deployed_sha" != "$local_hash" ]]; then
+						if _update_repo_verify_files_changed "$deployed_sha" "$local_hash"; then reconcile_repo_verify=true; fi
 						# Per Gemini code-review on PR #20342: use git's path filter +
 						# `grep -q .` to detect drift across the full set of deploy-affecting
 						# paths (not just .agents/ subdirs — also setup.sh, .agents/scripts/setup/modules/,
@@ -307,6 +309,7 @@ cmd_update() {
 			new_version=$(get_version)
 			new_hash=$(git rev-parse HEAD)
 			if [[ "$old_hash" != "$new_hash" ]]; then
+				if _update_repo_verify_files_changed "$old_hash" "$new_hash"; then reconcile_repo_verify=true; fi
 				local total_commits
 				total_commits=$(git rev-list --count "$old_hash..$new_hash" 2>/dev/null || echo "0")
 				if [[ "$total_commits" -gt 0 ]]; then
@@ -341,9 +344,9 @@ cmd_update() {
 	fi
 
 	_update_sync_projects "$skip_project_sync" "$(get_version)"
-	# Idempotent even when framework/deployed SHAs already match: this repairs
-	# partial prior setup and provisions newly registered repositories.
-	_update_reconcile_repo_verify
+	if [[ "$skip_project_sync" != "true" && "$reconcile_repo_verify" == "true" ]]; then
+		_update_reconcile_repo_verify
+	fi
 	_update_check_homebrew
 	_update_check_planning
 	_update_check_tools

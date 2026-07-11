@@ -88,16 +88,16 @@ In headless sessions (pulse, CI workers, routines), the guard auto-fixes formatt
 
    Set `"enabled": false` to opt the repo out entirely. Omit any `*_fix` slot to disable autofix for that check (it falls through to the mentor message).
 
-2. **`<repo>/package.json` scripts** — only exact, non-empty scripts are used. Format checks require `format:check`, `format-check`, or a `format` body containing a recognised check/no-write flag. Fix commands require declared `format:fix`/`format_fix` or `lint:fix`/`lint_fix` scripts; aidevops never appends guessed flags. Multiple package-manager lockfiles are ambiguous and block inference.
+2. **`<repo>/package.json` scripts** — only exact, non-empty scripts from tracked project metadata are used. Format checks require `format:check`, `format-check`, or a `format` body containing a recognised check/no-write flag. Fix commands require declared `format:fix`/`format_fix` or `lint:fix`/`lint_fix` scripts; aidevops never appends guessed flags. Multiple package-manager lockfiles, or a `packageManager` declaration conflicting with the tracked lockfile, are ambiguous and block inference.
 
-3. **`.agents/configs/repo-verify-defaults.conf`** — evidence-based toolchain detection. Cargo and Go have standard commands; Python requires committed Ruff/Black/Flake8 configuration. `pyproject.toml` or `setup.py` alone is not sufficient evidence.
+3. **`.agents/configs/repo-verify-defaults.conf`** — evidence-based toolchain detection from tracked files. Cargo and Go have standard commands; Python requires committed Ruff/Black/Flake8 configuration. `pyproject.toml` or `setup.py` alone is not sufficient evidence.
 
 4. **No match: silent skip (exit 0).** Repo is not verify-eligible; nothing to enforce.
 
 Audit with `aidevops lint audit [--repo PATH|--all] [--json] [--strict]`.
 Preview configuration with `aidevops lint configure --dry-run`; apply current-repo
 local policy with `--apply`. `configure --all` never edits canonical repositories;
-`--dispatch-prs` writes worker-ready isolated-PR plans for tracked changes.
+`--write-pr-plan` writes worker-ready isolated-PR plans for tracked changes.
 `aidevops init` installs the guard immediately when code quality is enabled, and
 `aidevops update` reruns the idempotent migration/rollout when detector, hook,
 defaults, init, update, or installer implementation changes.

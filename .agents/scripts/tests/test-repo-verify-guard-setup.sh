@@ -48,11 +48,12 @@ main() {
 	make_repo "$eligible"
 	make_repo "$disabled"
 	printf '%s\n' '{"scripts":{"lint":"eslint ."}}' >"$eligible/package.json"
+	/usr/bin/git -C "$eligible" add package.json
 	printf '%s\n' '{"version":"old","features":{"planning":true}}' >"$eligible/.aidevops.json"
-	printf '%s\n' '{"features":{"code_quality":false},"verify":{"enabled":false}}' >"$disabled/.aidevops.json"
+	printf '%s\n' '{"verify":{"enabled":false}}' >"$disabled/.aidevops.json"
 	mkdir -p "${fake_home}/.config/aidevops"
 	jq -n --arg eligible "$eligible" --arg disabled "$disabled" \
-		'{initialized_repos:[{path:$eligible,features:["code-quality"]},{path:$disabled,features:[]}]}' >"${fake_home}/.config/aidevops/repos.json"
+		'{initialized_repos:[{path:$eligible,features:["code-quality"]},{path:$disabled,features:["code-quality"]}]}' >"${fake_home}/.config/aidevops/repos.json"
 
 	HOME="$fake_home" setup_repo_verify_guard
 	assert_equal "true" "$(jq -r --arg path "$eligible" '.initialized_repos[] | select(.path == $path) | (.features | index("code-quality") != null)' "${fake_home}/.config/aidevops/repos.json")" "setup seeds code-quality registration"
@@ -66,7 +67,7 @@ main() {
 	else
 		assert_equal "0" "0" "setup preserves explicit opt-out"
 	fi
-	assert_equal "false" "$(jq -r --arg path "$disabled" '.initialized_repos[] | select(.path == $path) | ((.features // []) | index("code-quality") != null)' "${fake_home}/.config/aidevops/repos.json")" "setup does not register explicit opt-out"
+	assert_equal "false" "$(jq -r '.features.code_quality // false' "$disabled/.aidevops.json")" "verify opt-out does not gain code-quality true"
 
 	printf '\nRan %d tests, %d failed.\n' "$((passed + failed))" "$failed"
 	[[ "$failed" -eq 0 ]] || return 1

@@ -16,6 +16,59 @@ REPO_VERIFY_LINT=""
 REPO_VERIFY_LINT_FIX=""
 REPO_VERIFY_TYPECHECK=""
 REPO_VERIFY_WARNING=""
+REPO_VERIFY_LOCK_FILE=""
+REPO_VERIFY_LOCK_TOKEN=""
+
+_repo_verify_lock_acquire() {
+	local target_file="$1"
+	local attempts=0 owner_pid="" self_pid=""
+	REPO_VERIFY_LOCK_FILE="${target_file}.aidevops-lock"
+	REPO_VERIFY_LOCK_TOKEN=$(mktemp "${target_file}.aidevops-token.XXXXXX") || return 1
+	self_pid=$(sh -c 'printf "%s\n" "$PPID"') || {
+		rm -f "$REPO_VERIFY_LOCK_TOKEN"
+		return 1
+	}
+	printf '%s\n' "$self_pid" >"$REPO_VERIFY_LOCK_TOKEN" || {
+		rm -f "$REPO_VERIFY_LOCK_TOKEN"
+		return 1
+	}
+	while ! ln "$REPO_VERIFY_LOCK_TOKEN" "$REPO_VERIFY_LOCK_FILE" 2>/dev/null; do
+		owner_pid=$(sed -n '1p' "$REPO_VERIFY_LOCK_FILE" 2>/dev/null || true)
+		if [[ "$owner_pid" =~ ^[0-9]+$ ]] && ! kill -0 "$owner_pid" 2>/dev/null; then
+			rm -f "$REPO_VERIFY_LOCK_FILE"
+			continue
+		fi
+		attempts=$((attempts + 1))
+		if [[ "$attempts" -ge 100 ]]; then
+			rm -f "$REPO_VERIFY_LOCK_TOKEN"
+			REPO_VERIFY_LOCK_FILE=""
+			REPO_VERIFY_LOCK_TOKEN=""
+			return 1
+		fi
+		sleep 0.05
+	done
+	return 0
+}
+
+_repo_verify_lock_release() {
+	if [[ -n "$REPO_VERIFY_LOCK_FILE" && -n "$REPO_VERIFY_LOCK_TOKEN" ]] && cmp -s "$REPO_VERIFY_LOCK_TOKEN" "$REPO_VERIFY_LOCK_FILE" 2>/dev/null; then
+		rm -f "$REPO_VERIFY_LOCK_FILE"
+	fi
+	[[ -n "$REPO_VERIFY_LOCK_TOKEN" ]] && rm -f "$REPO_VERIFY_LOCK_TOKEN"
+	REPO_VERIFY_LOCK_FILE=""
+	REPO_VERIFY_LOCK_TOKEN=""
+	return 0
+}
+
+_repo_verify_preserve_mode() {
+	local source_file="$1"
+	local target_file="$2"
+	local mode=""
+	[[ -f "$source_file" ]] || return 0
+	mode=$(stat -f '%Lp' "$source_file" 2>/dev/null || stat -c '%a' "$source_file" 2>/dev/null || true)
+	[[ -n "$mode" ]] && chmod "$mode" "$target_file" 2>/dev/null || true
+	return 0
+}
 
 repo_verify_reset() {
 	REPO_VERIFY_STATUS="none"
@@ -46,10 +99,10 @@ _repo_verify_load_explicit() {
 		REPO_VERIFY_WARNING=".aidevops.json is not valid JSON"
 		return 2
 	fi
-	if [[ "$(jq -r '.verify.enabled == false' "$config_file")" == "true" ]]; then
+	if [[ "$(jq -r '.features.code_quality == false or .verify.enabled == false' "$config_file")" == "true" ]]; then
 		REPO_VERIFY_STATUS="disabled"
 		REPO_VERIFY_SOURCE="aidevops-json"
-		REPO_VERIFY_EVIDENCE=".aidevops.json:verify.enabled=false"
+		REPO_VERIFY_EVIDENCE=".aidevops.json:explicit-opt-out"
 		return 0
 	fi
 	REPO_VERIFY_FORMAT=$(jq -r '.verify.format // empty' "$config_file")
@@ -68,25 +121,36 @@ _repo_verify_load_explicit() {
 
 _repo_verify_package_manager() {
 	local repo_root="$1"
-	local count=0 manager="npm"
-	if [[ -f "${repo_root}/pnpm-lock.yaml" ]]; then
+	local package_file="${repo_root}/package.json"
+	local count=0 manager="npm" declared=""
+	declared=$(jq -r '.packageManager // empty | split("@")[0]' "$package_file" 2>/dev/null || true)
+	if [[ -f "${repo_root}/pnpm-lock.yaml" ]] && _repo_verify_evidence_is_tracked "$repo_root" "pnpm-lock.yaml"; then
 		count=$((count + 1))
 		manager="pnpm"
 	fi
-	if [[ -f "${repo_root}/yarn.lock" ]]; then
+	if [[ -f "${repo_root}/yarn.lock" ]] && _repo_verify_evidence_is_tracked "$repo_root" "yarn.lock"; then
 		count=$((count + 1))
 		manager="yarn"
 	fi
-	if [[ -f "${repo_root}/bun.lock" || -f "${repo_root}/bun.lockb" ]]; then
+	if { [[ -f "${repo_root}/bun.lock" ]] && _repo_verify_evidence_is_tracked "$repo_root" "bun.lock"; } ||
+		{ [[ -f "${repo_root}/bun.lockb" ]] && _repo_verify_evidence_is_tracked "$repo_root" "bun.lockb"; }; then
 		count=$((count + 1))
 		manager="bun"
 	fi
-	if [[ -f "${repo_root}/package-lock.json" || -f "${repo_root}/npm-shrinkwrap.json" ]]; then
+	if { [[ -f "${repo_root}/package-lock.json" ]] && _repo_verify_evidence_is_tracked "$repo_root" "package-lock.json"; } ||
+		{ [[ -f "${repo_root}/npm-shrinkwrap.json" ]] && _repo_verify_evidence_is_tracked "$repo_root" "npm-shrinkwrap.json"; }; then
 		count=$((count + 1))
 		manager="npm"
 	fi
 	if [[ "$count" -gt 1 ]]; then
 		return 2
+	fi
+	if [[ -n "$declared" ]]; then
+		case "$declared" in npm | pnpm | yarn | bun) ;; *) return 2 ;; esac
+		if [[ "$count" -eq 1 && "$declared" != "$manager" ]]; then
+			return 2
+		fi
+		manager="$declared"
 	fi
 	printf '%s\n' "$manager"
 	return 0
@@ -96,6 +160,7 @@ _repo_verify_load_package() {
 	local repo_root="$1"
 	local package_file="${repo_root}/package.json"
 	[[ -f "$package_file" ]] || return 1
+	_repo_verify_evidence_is_tracked "$repo_root" "package.json" || return 1
 	jq -e 'type == "object" and (.scripts | type == "object")' "$package_file" >/dev/null 2>&1 || return 1
 	local script_keys=""
 	script_keys=$(jq -r '[.scripts | to_entries[] | select(.value | type == "string" and length > 0) | .key] | join(" ")' "$package_file" 2>/dev/null || true)
@@ -108,7 +173,7 @@ _repo_verify_load_package() {
 		REPO_VERIFY_STATUS="ambiguous"
 		REPO_VERIFY_SOURCE="package-json"
 		REPO_VERIFY_EVIDENCE="package.json:scripts"
-		REPO_VERIFY_WARNING="multiple package-manager lockfiles"
+		REPO_VERIFY_WARNING="package-manager declaration/lockfiles are ambiguous"
 		return 2
 	fi
 	local format_body=""
@@ -153,15 +218,31 @@ _repo_verify_predicate_matches() {
 	local repo_root="$1"
 	local predicate="$2"
 	case "$predicate" in
-	file:*) [[ -f "${repo_root}/${predicate#file:}" ]] || return 1 ;;
+	file:*)
+		local file_path="${predicate#file:}"
+		[[ -f "${repo_root}/${file_path}" ]] || return 1
+		_repo_verify_evidence_is_tracked "$repo_root" "$file_path" || return 1
+		;;
 	contains:*)
 		local payload="${predicate#contains:}"
 		local relative_path="${payload%%:*}"
 		local needle="${payload#*:}"
 		[[ -f "${repo_root}/${relative_path}" ]] && grep -Fq "$needle" "${repo_root}/${relative_path}" 2>/dev/null || return 1
+		_repo_verify_evidence_is_tracked "$repo_root" "$relative_path" || return 1
 		;;
-	*) [[ -f "${repo_root}/${predicate}" ]] || return 1 ;;
+	*)
+		[[ -f "${repo_root}/${predicate}" ]] || return 1
+		_repo_verify_evidence_is_tracked "$repo_root" "$predicate" || return 1
+		;;
 	esac
+	return 0
+}
+
+_repo_verify_evidence_is_tracked() {
+	local repo_root="$1"
+	local relative_path="$2"
+	git -C "$repo_root" rev-parse --git-dir >/dev/null 2>&1 || return 1
+	git -C "$repo_root" ls-files --error-unmatch -- "$relative_path" >/dev/null 2>&1 || return 1
 	return 0
 }
 
@@ -271,6 +352,21 @@ repo_verify_registration_has_feature() {
 	return 0
 }
 
+repo_verify_feature_state() {
+	local repo_root="$1"
+	local config_file="${repo_root}/.aidevops.json"
+	if [[ -f "$config_file" ]]; then
+		jq -r '
+			if (.features.code_quality == false or .verify.enabled == false) then "false"
+			elif .features.code_quality == true then "true"
+			else "missing" end
+		' "$config_file" 2>/dev/null || printf 'invalid\n'
+		return 0
+	fi
+	if repo_verify_registration_has_feature "$repo_root"; then printf 'legacy\n'; else printf 'missing\n'; fi
+	return 0
+}
+
 repo_verify_migrate_registration() {
 	local repo_root="$1"
 	local repos_file="${AIDEVOPS_REPOS_FILE:-${HOME}/.config/aidevops/repos.json}"
@@ -279,17 +375,29 @@ repo_verify_migrate_registration() {
 		[[ "$(jq -r '.features.code_quality == false or .verify.enabled == false' "${repo_root}/.aidevops.json" 2>/dev/null)" == "true" ]]; then
 		return 4
 	fi
-	repo_verify_registration_has_feature "$repo_root" && return 2
+	repo_verify_detect "$repo_root" >/dev/null 2>&1 || return 2
+	[[ "$REPO_VERIFY_STATUS" == "ready" ]] || return 2
+	_repo_verify_lock_acquire "$repos_file" || return 1
+	repo_verify_registration_has_feature "$repo_root" && {
+		_repo_verify_lock_release
+		return 2
+	}
 	local temp_file
-	temp_file=$(mktemp "${repos_file}.tmp.XXXXXX") || return 1
+	temp_file=$(mktemp "${repos_file}.tmp.XXXXXX") || {
+		_repo_verify_lock_release
+		return 1
+	}
 	if ! jq --arg path "$repo_root" '
 		.initialized_repos = [(.initialized_repos // [])[] |
 			if .path == $path then .features = (((.features // []) + ["code-quality"]) | unique) else . end]
 	' "$repos_file" >"$temp_file"; then
 		rm -f "$temp_file"
+		_repo_verify_lock_release
 		return 1
 	fi
+	_repo_verify_preserve_mode "$repos_file" "$temp_file"
 	mv "$temp_file" "$repos_file"
+	_repo_verify_lock_release
 	return 0
 }
 
@@ -298,10 +406,12 @@ repo_verify_config_is_safe_to_modify() {
 	local config_file="${repo_root}/.aidevops.json"
 	[[ -f "$config_file" ]] || return 0
 	if git -C "$repo_root" ls-files --error-unmatch .aidevops.json >/dev/null 2>&1; then
-		local branch=""
-		branch=$(git -C "$repo_root" branch --show-current 2>/dev/null || true)
-		[[ "$branch" != "main" && "$branch" != "master" ]]
-		return $?
+		local canonical_path="" resolved_repo=""
+		canonical_path=$(git -C "$repo_root" worktree list --porcelain 2>/dev/null | awk '/^worktree / {sub(/^worktree /, ""); print; exit}')
+		resolved_repo=$(cd "$repo_root" 2>/dev/null && pwd -P) || return 1
+		[[ -n "$canonical_path" ]] || return 1
+		canonical_path=$(cd "$canonical_path" 2>/dev/null && pwd -P) || return 1
+		[[ "$resolved_repo" != "$canonical_path" ]] || return 1
 	fi
 	return 0
 }
@@ -317,10 +427,18 @@ repo_verify_apply_config() {
 	fi
 	repo_verify_detect "$repo_root" || return 2
 	[[ "$REPO_VERIFY_STATUS" == "ready" ]] || return 2
+	_repo_verify_lock_acquire "$config_file" || return 1
+	if [[ -f "$config_file" ]] && [[ "$(jq -r '.features.code_quality == false or .verify.enabled == false' "$config_file" 2>/dev/null)" == "true" ]]; then
+		_repo_verify_lock_release
+		return 4
+	fi
 	local existing='{}'
-	[[ -f "$config_file" ]] && existing=$(cat "$config_file")
+	[[ -f "$config_file" ]] && existing=$(<"$config_file")
 	local temp_file
-	temp_file=$(mktemp "${config_file}.tmp.XXXXXX") || return 1
+	temp_file=$(mktemp "${config_file}.tmp.XXXXXX") || {
+		_repo_verify_lock_release
+		return 1
+	}
 	if ! jq \
 		--arg format "$REPO_VERIFY_FORMAT" --arg format_fix "$REPO_VERIFY_FORMAT_FIX" \
 		--arg lint "$REPO_VERIFY_LINT" --arg lint_fix "$REPO_VERIFY_LINT_FIX" \
@@ -334,9 +452,12 @@ repo_verify_apply_config() {
 		 if $typecheck != "" and (.verify.typecheck // "") == "" then .verify.typecheck = $typecheck else . end' \
 		<<<"$existing" >"$temp_file"; then
 		rm -f "$temp_file"
+		_repo_verify_lock_release
 		return 1
 	fi
+	_repo_verify_preserve_mode "$config_file" "$temp_file"
 	mv "$temp_file" "$config_file"
+	_repo_verify_lock_release
 	return 0
 }
 
@@ -344,17 +465,35 @@ repo_verify_migrate_config() {
 	local repo_root="$1"
 	local config_file="${repo_root}/.aidevops.json"
 	[[ -f "$config_file" ]] || return 2
+	[[ "$(repo_verify_feature_state "$repo_root")" != "false" ]] || return 4
 	if [[ "$(jq -r 'has("features") and (.features | has("code_quality"))' "$config_file" 2>/dev/null)" == "true" ]]; then
 		return 2
 	fi
 	if repo_verify_registration_has_feature "$repo_root"; then
 		repo_verify_config_is_safe_to_modify "$repo_root" || return 3
+		_repo_verify_lock_acquire "$config_file" || return 1
+		if [[ "$(repo_verify_feature_state "$repo_root")" == "false" ]]; then
+			_repo_verify_lock_release
+			return 4
+		fi
+		if [[ "$(jq -r 'has("features") and (.features | has("code_quality"))' "$config_file" 2>/dev/null)" == "true" ]]; then
+			_repo_verify_lock_release
+			return 2
+		fi
 		local temp_file
-		temp_file=$(mktemp "${config_file}.tmp.XXXXXX") || return 1
-		jq '.features = (.features // {}) | .features.code_quality = true' "$config_file" >"$temp_file" && mv "$temp_file" "$config_file" || {
-			rm -f "$temp_file"
+		temp_file=$(mktemp "${config_file}.tmp.XXXXXX") || {
+			_repo_verify_lock_release
 			return 1
 		}
+		if jq '.features = (.features // {}) | .features.code_quality = true' "$config_file" >"$temp_file"; then
+			_repo_verify_preserve_mode "$config_file" "$temp_file"
+			mv "$temp_file" "$config_file"
+		else
+			rm -f "$temp_file"
+			_repo_verify_lock_release
+			return 1
+		fi
+		_repo_verify_lock_release
 		return 0
 	fi
 	repo_verify_apply_config "$repo_root" false

@@ -34,15 +34,12 @@ setup_repo_verify_guard() {
 		registration_status=0
 		repo_verify_migrate_registration "$repo_root" >/dev/null 2>&1 || registration_status=$?
 		[[ "$registration_status" -eq 0 ]] && registered=$((registered + 1))
+		case "$registration_status" in 0 | 2 | 4) ;; *) errors=$((errors + 1)) ;; esac
 		migration_status=0
 		repo_verify_migrate_config "$repo_root" >/dev/null 2>&1 || migration_status=$?
 		[[ "$migration_status" -eq 0 ]] && migrated=$((migrated + 1))
-		feature_state="missing"
-		if [[ -f "$repo_root/.aidevops.json" ]]; then
-			feature_state=$(jq -r 'if .features.code_quality == true then "true" elif .features.code_quality == false then "false" else "missing" end' "$repo_root/.aidevops.json" 2>/dev/null || printf 'invalid')
-		elif repo_verify_registration_has_feature "$repo_root"; then
-			feature_state="legacy"
-		fi
+		case "$migration_status" in 0 | 2 | 4) ;; *) errors=$((errors + 1)) ;; esac
+		feature_state=$(repo_verify_feature_state "$repo_root")
 		if [[ "$feature_state" == "false" ]]; then
 			skipped=$((skipped + 1))
 			continue

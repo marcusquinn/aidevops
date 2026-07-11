@@ -31,6 +31,7 @@ make_repo() {
 	/usr/bin/git -C "$repo_root" config user.name Test
 	printf '%s\n' '{"scripts":{"lint":"eslint .","lint:fix":"eslint --fix .","typecheck":"tsc --noEmit"}}' >"$repo_root/package.json"
 	printf '%s\n' '{"version":"0.0.1","features":{"planning":true}}' >"$repo_root/.aidevops.json"
+	/usr/bin/git -C "$repo_root" add package.json
 	return 0
 }
 
@@ -60,12 +61,22 @@ main() {
 	assert_equal "npm run lint" "$(jq -r '.verify.lint' "$repo_one/.aidevops.json")" "configure seeds exact native lint command"
 	assert_equal "true" "$(jq -r '.features.planning' "$repo_one/.aidevops.json")" "configure preserves unrelated config"
 
-	HOME="$fake_home" bash "$HELPER" configure --all --dispatch-prs --json >/dev/null
+	local plan_json
+	plan_json=$(HOME="$fake_home" bash "$HELPER" configure --all --write-pr-plan --json 2>/dev/null)
+	assert_equal "array" "$(printf '%s' "$plan_json" | jq -r 'type')" "write-pr-plan keeps JSON stdout machine-readable"
 	assert_equal "true" "$(jq -r 'length > 0' "${fake_home}/.aidevops/.agent-workspace/work/lint-configure-pr-plan.json")" "all-repo mode writes worker-ready PR plans"
 
 	HOME="$fake_home" bash "$HELPER" reconcile --all >/dev/null
 	assert_equal "2" "$(jq '[.initialized_repos[] | select((.features // []) | index("code-quality"))] | length' "${fake_home}/.config/aidevops/repos.json")" "update reconciliation seeds every non-opted-out registration"
 	assert_equal "true" "$(jq -r '.features.code_quality' "$repo_two/.aidevops.json")" "update reconciliation migrates existing repo config"
+
+	local repo_three="${TEST_TMP_DIR}/repo-three"
+	make_repo "$repo_three"
+	jq --arg path "$repo_three" '.initialized_repos += [{path:$path,features:[]}]' "${fake_home}/.config/aidevops/repos.json" >"${fake_home}/repos.next"
+	mv "${fake_home}/repos.next" "${fake_home}/.config/aidevops/repos.json"
+	local reconcile_status=0
+	HOME="$fake_home" REPO_VERIFY_INSTALLER="${TEST_TMP_DIR}/missing-installer" bash "$HELPER" reconcile --all >/dev/null 2>&1 || reconcile_status=$?
+	assert_equal "1" "$reconcile_status" "reconcile returns non-zero when hook installation fails"
 
 	local unsafe_status=0
 	HOME="$fake_home" bash "$HELPER" configure --all --apply >/dev/null 2>&1 || unsafe_status=$?

@@ -15,7 +15,7 @@ LINT_JSON=false
 LINT_STRICT=false
 LINT_APPLY=false
 LINT_INSTALL_HOOK=true
-LINT_DISPATCH_PRS=false
+LINT_WRITE_PR_PLAN=false
 
 lint_usage() {
 	cat <<'EOF'
@@ -32,7 +32,7 @@ Configure options:
   --all             Produce a safe plan for every registered repository
   --apply           Apply exact detected configuration in the current repo
   --no-hook         Do not install/refresh the repo-verify pre-push hook
-  --dispatch-prs    With --all, write worker-ready PR dispatch plans; never edit canonical repos
+  --write-pr-plan   With --all, write worker-ready PR plans; never edit canonical repos
   --dry-run         Explicitly retain the default preview-only behaviour
 EOF
 	return 0
@@ -47,7 +47,11 @@ lint_parse_args() {
 		local option="$1"
 		case "$option" in
 		--repo)
-			LINT_REPO="${2:-}"
+			[[ $# -ge 2 && -n "$2" ]] || {
+				print_error "--repo requires a path"
+				return 2
+			}
+			LINT_REPO="$2"
 			shift 2
 			;;
 		--all)
@@ -74,9 +78,13 @@ lint_parse_args() {
 			LINT_INSTALL_HOOK=true
 			shift
 			;;
-		--dispatch-prs)
-			LINT_DISPATCH_PRS=true
+		--write-pr-plan)
+			LINT_WRITE_PR_PLAN=true
 			shift
+			;;
+		--dispatch-prs)
+			print_error "--dispatch-prs is not implemented; use --write-pr-plan for a safe worker-ready plan"
+			return 2
 			;;
 		--dry-run)
 			LINT_APPLY=false
@@ -98,11 +106,11 @@ lint_parse_args() {
 		return 2
 	fi
 	if [[ "$LINT_ALL" == "true" && "$LINT_APPLY" == "true" ]]; then
-		print_error "--all --apply is unsafe; use --dispatch-prs to create isolated PR plans"
+		print_error "--all --apply is unsafe; use --write-pr-plan to create isolated PR plans"
 		return 2
 	fi
-	if [[ "$LINT_DISPATCH_PRS" == "true" && "$LINT_ALL" != "true" ]]; then
-		print_error "--dispatch-prs requires --all"
+	if [[ "$LINT_WRITE_PR_PLAN" == "true" && "$LINT_ALL" != "true" ]]; then
+		print_error "--write-pr-plan requires --all"
 		return 2
 	fi
 	return 0
@@ -110,18 +118,7 @@ lint_parse_args() {
 
 lint_registered_feature_state() {
 	local repo_root="$1"
-	local config_file="${repo_root}/.aidevops.json"
-	if [[ -f "$config_file" ]]; then
-		local state=""
-		state=$(jq -r 'if .features.code_quality == true then "true" elif .features.code_quality == false then "false" else "missing" end' "$config_file" 2>/dev/null || printf 'invalid')
-		printf '%s\n' "$state"
-		return 0
-	fi
-	if repo_verify_registration_has_feature "$repo_root"; then
-		printf 'legacy\n'
-	else
-		printf 'missing\n'
-	fi
+	repo_verify_feature_state "$repo_root"
 	return 0
 }
 
@@ -226,7 +223,7 @@ lint_write_dispatch_plan() {
 		files:[".aidevops.json",".gitignore"],
 		worker_brief:"Run aidevops lint configure --apply in an isolated linked worktree; preserve opt-outs and unknown keys; commit only tracked policy changes; verify native lint/typecheck; open a PR."}]' \
 		"$records_file" >"$plan_file"
-	printf 'PR dispatch plan written: %s\n' "$plan_file"
+	printf 'Worker-ready PR plan written: %s\n' "$plan_file" >&2
 	return 0
 }
 
@@ -241,7 +238,7 @@ lint_configure_all() {
 	array_file=$(mktemp)
 	jq -s '.' "$records_file" >"$array_file"
 	if [[ "$LINT_JSON" == "true" ]]; then jq '.' "$array_file"; else jq -r '.[] | "\(.classification)\t\(.repo)\t\(.detection.evidence)"' "$array_file"; fi
-	if [[ "$LINT_DISPATCH_PRS" == "true" ]]; then lint_write_dispatch_plan "$array_file"; fi
+	if [[ "$LINT_WRITE_PR_PLAN" == "true" ]]; then lint_write_dispatch_plan "$array_file"; fi
 	rm -f "$records_file" "$array_file"
 	return 0
 }
@@ -261,7 +258,7 @@ lint_configure_current() {
 	0) print_success "Configured repository verify policy from ${REPO_VERIFY_EVIDENCE}" ;;
 	2) print_warning "No exact verify commands detected; configuration unchanged" ;;
 	3)
-		print_error "Tracked .aidevops.json cannot be changed on main/master; use a linked worktree PR"
+		print_error "Tracked .aidevops.json cannot be changed in the canonical worktree; use a linked worktree PR"
 		return 1
 		;;
 	4) print_info "Explicit code-quality/verify opt-out preserved" ;;
@@ -288,11 +285,18 @@ lint_reconcile() {
 		registration_status=0
 		repo_verify_migrate_registration "$repo_root" >/dev/null 2>&1 || registration_status=$?
 		[[ "$registration_status" -eq 0 ]] && registered=$((registered + 1))
+		case "$registration_status" in 0 | 2 | 4) ;; *) failed=$((failed + 1)) ;; esac
 		migration_status=0
 		repo_verify_migrate_config "$repo_root" >/dev/null 2>&1 || migration_status=$?
 		[[ "$migration_status" -eq 0 ]] && migrated=$((migrated + 1))
+		case "$migration_status" in 0 | 2 | 4) ;; *) failed=$((failed + 1)) ;; esac
 		feature_state=$(lint_registered_feature_state "$repo_root")
 		if [[ "$feature_state" == "false" ]]; then
+			skipped=$((skipped + 1))
+			continue
+		fi
+		repo_verify_detect "$repo_root" >/dev/null 2>&1 || true
+		if [[ "$REPO_VERIFY_STATUS" != "ready" && "$feature_state" != "true" && "$feature_state" != "legacy" ]]; then
 			skipped=$((skipped + 1))
 			continue
 		fi
@@ -304,6 +308,7 @@ lint_reconcile() {
 		if repo_verify_install_hook "$repo_root" >/dev/null 2>&1; then installed=$((installed + 1)); else failed=$((failed + 1)); fi
 	done < <(lint_repo_list)
 	printf 'Lint reconciliation: registered=%s migrated=%s installed=%s skipped=%s failed=%s\n' "$registered" "$migrated" "$installed" "$skipped" "$failed"
+	[[ "$failed" -eq 0 ]] || return 1
 	return 0
 }
 

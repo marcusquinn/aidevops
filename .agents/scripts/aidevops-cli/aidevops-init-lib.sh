@@ -61,12 +61,19 @@ _init_write_project_config() {
 	local enable_sops="$3"
 	local enable_security="$4"
 	local desired_file merged_file
+	_init_load_repo_verify_lib || return 1
+	_repo_verify_lock_acquire "$config_file" || return 1
 	if [[ -f "$config_file" ]] && ! jq -e 'type == "object"' "$config_file" >/dev/null 2>&1; then
+		_repo_verify_lock_release
 		return 1
 	fi
-	desired_file=$(mktemp "${config_file}.desired.XXXXXX") || return 1
+	desired_file=$(mktemp "${config_file}.desired.XXXXXX") || {
+		_repo_verify_lock_release
+		return 1
+	}
 	merged_file=$(mktemp "${config_file}.merged.XXXXXX") || {
 		rm -f "$desired_file"
+		_repo_verify_lock_release
 		return 1
 	}
 	if ! jq -n \
@@ -83,18 +90,22 @@ _init_write_project_config() {
 		beads:{enabled:$beads,sync_on_commit:false,auto_ready_check:true},
 		sops:{enabled:$sops,backend:"age",patterns:["*.secret.yaml","*.secret.json","configs/*.enc.json","configs/*.enc.yaml"]},plugins:[]}' >"$desired_file"; then
 		rm -f "$desired_file" "$merged_file"
+		_repo_verify_lock_release
 		return 1
 	fi
 	if [[ -f "$config_file" ]] && jq -e 'type == "object"' "$config_file" >/dev/null 2>&1; then
 		jq -s --arg version "$version" '.[0] * .[1] | .version = $version' "$desired_file" "$config_file" >"$merged_file" || {
 			rm -f "$desired_file" "$merged_file"
+			_repo_verify_lock_release
 			return 1
 		}
 	else
 		cp "$desired_file" "$merged_file"
 	fi
+	_repo_verify_preserve_mode "$config_file" "$merged_file"
 	mv "$merged_file" "$config_file"
 	rm -f "$desired_file"
+	_repo_verify_lock_release
 	return 0
 }
 

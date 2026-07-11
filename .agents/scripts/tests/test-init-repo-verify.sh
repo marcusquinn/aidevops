@@ -40,6 +40,7 @@ main() {
 	/usr/bin/git -C "$repo_root" init -q
 	printf '%s\n' '{"custom":{"keep":true},"features":{"planning":false}}' >"$repo_root/.aidevops.json"
 	printf '%s\n' '{"scripts":{"lint":"eslint .","typecheck":"tsc --noEmit"}}' >"$repo_root/package.json"
+	/usr/bin/git -C "$repo_root" add package.json
 
 	_init_write_project_config "$repo_root/.aidevops.json" "9.9.9" "standard" false false true true true false false false false true
 	assert_equal "true" "$(jq -r '.custom.keep' "$repo_root/.aidevops.json")" "init preserves unknown configuration keys"

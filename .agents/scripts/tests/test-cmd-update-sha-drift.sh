@@ -60,6 +60,7 @@ print_result() {
 AIDEVOPS_SH="$WORKTREE_ROOT/aidevops.sh"
 AUTO_UPDATE_SH="$WORKTREE_ROOT/.agents/scripts/auto-update-helper.sh"
 UPDATE_CHECK_SH="$WORKTREE_ROOT/.agents/scripts/aidevops-update-check.sh"
+UPDATE_LIB="$WORKTREE_ROOT/.agents/scripts/aidevops-cli/aidevops-update-lib.sh"
 
 # Test 1: aidevops.sh cmd_update references .deployed-sha in the VERSION-match branch
 if grep -q '\.deployed-sha' "$AIDEVOPS_SH" &&
@@ -68,6 +69,14 @@ if grep -q '\.deployed-sha' "$AIDEVOPS_SH" &&
 else
 	print_result "aidevops.sh cmd_update has stamp-drift check (t2706 marker)" 1 \
 		"(expected .deployed-sha reference and t2706 marker)"
+fi
+
+if grep -q '_update_repo_verify_files_changed' "$UPDATE_LIB" &&
+	grep -q 'skip_project_sync.*reconcile_repo_verify' "$AIDEVOPS_SH"; then
+	print_result "lint reconciliation is changed-file gated and honours project-sync skip" 0
+else
+	print_result "lint reconciliation is changed-file gated and honours project-sync skip" 1 \
+		"(expected changed-file helper and skip_project_sync gate)"
 fi
 
 # Test 2: aidevops.sh filters for framework code paths (skips docs-only drift)
