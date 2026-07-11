@@ -105,10 +105,11 @@ emit_remediation_evidence() {
 			threshold: $threshold,
 			deficit: $deficit,
 			scope: "repository",
-			files: ([.runs[0].results[] |
-				.locations[0].physicalLocation.artifactLocation.uri] |
+			files: ([.runs[0].results[]? |
+				.locations[0]?.physicalLocation?.artifactLocation?.uri? |
+				select(. != null)] |
 				group_by(.) | map({file: .[0], count: length}) | sort_by([-.count, .file])),
-			rules: ([.runs[0].results[].ruleId] |
+			rules: ([.runs[0].results[]?.ruleId? | select(. != null)] |
 				group_by(.) | map({rule: .[0], count: length}) | sort_by([-.count, .rule]))
 		}' 2>/dev/null) || _evidence=""
 	if [ -n "$_evidence" ]; then
