@@ -124,6 +124,9 @@ is_shareable() {
 	if [[ "$content" =~ [[:alnum:]._+%-]+@[[:alnum:].-]+\.[[:alpha:]]{2,} ]]; then
 		return 1
 	fi
+	if printf '%s' "$content" | grep -qE '(sk-[a-zA-Z0-9_-]{20,}|AKIA[0-9A-Z]{16}|ghp_[a-zA-Z0-9]{36}|gho_[a-zA-Z0-9]{36}|github_pat_[a-zA-Z0-9_]{20,}|xox[baprs]-[a-zA-Z0-9-]{20,})'; then
+		return 1
+	fi
 	if [[ "$content" == *"/Users/"* || "$content" == *"/home/"* ||
 		"$content" == *"~/"* || "$content" == *":\\Users\\"* ||
 		"$content" == *"<private>"* || "$content" == *"</private>"* ]]; then
