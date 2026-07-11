@@ -4508,3 +4508,7 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [ ] t18101 Repair terminal CI failures in place on existing PR branches #auto-dispatch #bug #framework #pulse #reliability ref:GH#27167
 
 - [ ] t18100 Normalize issue dependencies before dispatch eligibility #auto-dispatch #bug #framework #pulse #reliability ref:GH#27166
+
+- [ ] t18104 Automate failure-family remediation and human-gate revalidation #auto-dispatch #enhancement #framework #observability #pulse ref:GH#27170
+
+- [ ] t18103 Reconcile stale objectives with expiring assumptions and durable recovery #auto-dispatch #enhancement #framework #pulse #reliability ref:GH#27169
