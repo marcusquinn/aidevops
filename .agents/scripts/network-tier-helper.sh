@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # network-tier-helper.sh — Network domain tiering for worker sandboxing (t1412.3)
-# Commands: classify | log-access | check | report | init | help
+# Commands: classify | check | check-command | log-access | report | init | help
 #
 # Implements a 4-tier graduated trust model for headless worker network access:
 #   Tier 1: Always allowed, no logging (core infrastructure: github.com)
@@ -30,6 +30,7 @@
 #   network-tier-helper.sh check example.com        # exit 0=allow, 1=deny
 #   network-tier-helper.sh check-session example.com [--session-id ID]
 #                                                   # Session-aware check (t1428.3)
+#   network-tier-helper.sh check-command 'curl https://example.com' --worker-id worker-123
 #   network-tier-helper.sh log-access example.com worker-123 200
 #   network-tier-helper.sh report [--last N] [--flagged-only]
 #   network-tier-helper.sh init                     # Create log dirs and validate config
@@ -52,8 +53,8 @@ readonly NET_TIER_FLAGGED_LOG="${NET_TIER_DIR}/flagged.jsonl"
 readonly NET_TIER_DENIED_LOG="${NET_TIER_DIR}/denied.jsonl"
 
 # Config file locations (default + user override)
-readonly NET_TIER_DEFAULT_CONF="${SCRIPT_DIR}/../configs/network-tiers.conf"
-readonly NET_TIER_USER_CONF="${HOME}/.config/aidevops/network-tiers-custom.conf"
+readonly NET_TIER_DEFAULT_CONF="${AIDEVOPS_NETWORK_TIER_POLICY:-${SCRIPT_DIR}/../configs/network-tiers.conf}"
+readonly NET_TIER_USER_CONF="${AIDEVOPS_NETWORK_TIER_USER_POLICY:-${HOME}/.config/aidevops/network-tiers-custom.conf}"
 
 # File-based tier lookup cache (bash 3.2 compatible — no associative arrays)
 # Format: "exact:domain tier" or "wild:suffix tier", one per line
@@ -63,6 +64,51 @@ _TIER_DATA_LOADED=""
 # =============================================================================
 # Config Parsing
 # =============================================================================
+
+# Validate a tier policy before it can influence worker command decisions.
+# Arguments:
+#   $1 - config path
+#   $2 - required (true|false, default true)
+_validate_tier_policy() {
+	local config_file="$1"
+	local required="${2:-true}"
+	local current_tier=""
+	local line=""
+	local saw_tier5=false
+
+	if [[ ! -r "$config_file" ]]; then
+		if [[ "$required" == "true" ]]; then
+			log_error "Required network tier policy is unavailable: ${config_file}"
+			return 1
+		fi
+		return 0
+	fi
+
+	while IFS= read -r line || [[ -n "$line" ]]; do
+		line="${line#"${line%%[![:space:]]*}"}"
+		line="${line%"${line##*[![:space:]]}"}"
+		[[ -z "$line" || "$line" == \#* ]] && continue
+		if [[ "$line" =~ ^\[tier([1-5])\]$ ]]; then
+			current_tier="${BASH_REMATCH[1]}"
+			[[ "$current_tier" == "5" ]] && saw_tier5=true
+			continue
+		fi
+		if [[ "$line" == \[*\] ]] || [[ -z "$current_tier" ]]; then
+			log_error "Malformed network tier policy entry in ${config_file}: ${line}"
+			return 1
+		fi
+		if [[ ! "$line" =~ ^(\*\.)?[A-Za-z0-9][A-Za-z0-9._-]*$ ]]; then
+			log_error "Invalid network tier domain in ${config_file}: ${line}"
+			return 1
+		fi
+	done <"$config_file"
+
+	if [[ "$required" == "true" && "$saw_tier5" != "true" ]]; then
+		log_error "Required network tier policy has no [tier5] deny section: ${config_file}"
+		return 1
+	fi
+	return 0
+}
 
 # Parse a network-tiers.conf file and append entries to the lookup file.
 # Reads [tierN] sections. User config entries override defaults (last match wins
@@ -123,6 +169,8 @@ _load_tier_data() {
 		return 0
 	fi
 
+	_validate_tier_policy "$NET_TIER_DEFAULT_CONF" true || return 1
+	_validate_tier_policy "$NET_TIER_USER_CONF" false || return 1
 	_TIER_LOOKUP_FILE="$(mktemp)"
 
 	# Load default config first
@@ -357,7 +405,11 @@ log_access() {
 	mkdir -p "$NET_TIER_DIR" 2>/dev/null || true
 
 	# Helper to escape JSON quotes and strip newlines (prevents log injection)
-	_escape_json() { printf '%s' "$1" | tr -d '\n\r' | sed 's/\\/\\\\/g; s/"/\\"/g'; }
+	_escape_json() {
+		local value="$1"
+		printf '%s' "$value" | tr -d '\n\r' | sed 's/\\/\\\\/g; s/"/\\"/g'
+		return 0
+	}
 
 	# Build JSON record (portable — no jq dependency for writing)
 	local record
@@ -422,6 +474,114 @@ check_domain() {
 		log_warn "FLAGGED: ${domain} (Tier 4: unknown domain)"
 	fi
 
+	return 0
+}
+
+# Return success when a command has a DNS-exfiltration shape.
+# Arguments:
+#   $1 - shell command string
+_command_has_dns_exfiltration() {
+	local command_text="$1"
+
+	if printf '%s' "$command_text" | grep -qE '(^|[^A-Za-z0-9_])(dig|nslookup|host)([^A-Za-z0-9_]|$).*(\$\(|\$\{|`)'; then
+		return 0
+	fi
+	if printf '%s' "$command_text" | grep -qE '(^|[^A-Za-z0-9_])(base64|xxd|od[[:space:]]+-[AaxX]|hexdump)([^A-Za-z0-9_]|$).*\|[[:space:]]*(dig|nslookup|host)([^A-Za-z0-9_]|$)'; then
+		return 0
+	fi
+	if printf '%s' "$command_text" | grep -qE '(^|[^A-Za-z0-9_])(for|while)([^A-Za-z0-9_]|$).*(dig|nslookup|host)([^A-Za-z0-9_]|$).*done([^A-Za-z0-9_]|$)'; then
+		return 0
+	fi
+	if printf '%s' "$command_text" | grep -qE '(dns-query|dns\.google|cloudflare-dns\.com/dns-query|doh\.).*(\$\(|\$\{|`)'; then
+		return 0
+	fi
+	if printf '%s' "$command_text" | grep -qiE '(^|[^A-Za-z0-9_.-])(dnslog\.cn|ceye\.io|interact\.sh|burpcollaborator\.net|oastify\.com|oast\.(fun|me|live))([^A-Za-z0-9_.-]|$)'; then
+		return 0
+	fi
+	return 1
+}
+
+# Extract unique network domains referenced by a shell command.
+# Arguments:
+#   $1 - shell command string
+# Output: one normalized domain per line
+extract_command_domains() {
+	local command_text="$1"
+	local url_domains=""
+	local bare_domains=""
+	local ssh_domains=""
+	local dns_domains=""
+
+	url_domains="$(printf '%s' "$command_text" | grep -oE 'https?://[a-zA-Z0-9._-]+' | sed -E 's|https?://||')" || true
+	bare_domains="$(printf '%s' "$command_text" | grep -oE '(curl|wget|fetch|nc|ncat|telnet)[[:space:]]+(-[a-zA-Z0-9]+[[:space:]]+)*([a-zA-Z0-9]([a-zA-Z0-9_-]*\.)+[a-zA-Z]{2,})' | grep -oE '[a-zA-Z0-9]([a-zA-Z0-9_-]*\.)+[a-zA-Z]{2,}$' | grep -vE '\.(sh|py|js|ts|json|txt|log|yml|yaml|md|conf|cfg|xml|html|css|gz|tar|zip)$')" || true
+	ssh_domains="$(printf '%s' "$command_text" | grep -oE '[a-zA-Z0-9_-]+@([a-zA-Z0-9]([a-zA-Z0-9_-]*\.)+[a-zA-Z]{2,})' | sed 's/.*@//')" || true
+	dns_domains="$(printf '%s' "$command_text" | grep -oE '(^|[^A-Za-z0-9_])(dig|nslookup|host)[[:space:]]+[^|;&]*' | sed -E 's/^.*(dig|nslookup|host)[[:space:]]+//' | grep -oE '[a-zA-Z0-9]([a-zA-Z0-9_-]*\.)+[a-zA-Z]{2,}\.?' | sed 's/\.$//' | grep -vE '^\$|^`')" || true
+
+	printf '%s\n%s\n%s\n%s\n' "$url_domains" "$bare_domains" "$ssh_domains" "$dns_domains" |
+		grep -v '^$' | tr '[:upper:]' '[:lower:]' | sort -u || true
+	return 0
+}
+
+# Enforce domain tiers and DNS-exfiltration rules for a complete shell command.
+# Arguments:
+#   $1 - shell command string
+#   Remaining args: --worker-id ID
+# Returns: 0 when allowed, 1 when denied or required policy is invalid
+check_command() {
+	local command_text="$1"
+	shift || true
+	local worker_id="unknown"
+	local domains=""
+	local domain=""
+	local tier=""
+	local denied=false
+
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+		--worker-id)
+			worker_id="${2:-unknown}"
+			shift 2
+			;;
+		*)
+			log_error "Unknown check-command option: $1"
+			return 1
+			;;
+		esac
+	done
+
+	_validate_tier_policy "$NET_TIER_DEFAULT_CONF" true || return 1
+	_validate_tier_policy "$NET_TIER_USER_CONF" false || return 1
+	if [[ -z "$command_text" ]]; then
+		log_error "Command required for network policy check"
+		return 1
+	fi
+	if _command_has_dns_exfiltration "$command_text"; then
+		log_error "BLOCKED: DNS exfiltration command shape (worker=${worker_id})"
+		return 1
+	fi
+
+	domains="$(extract_command_domains "$command_text")"
+	while IFS= read -r domain; do
+		[[ -z "$domain" ]] && continue
+		tier="$(classify_domain "$domain")" || {
+			log_error "BLOCKED: failed to classify domain ${domain}"
+			return 1
+		}
+		if [[ "$tier" == "5" ]]; then
+			log_error "BLOCKED: ${domain} (Tier 5: DENY)"
+			log_access "$domain" "$worker_id" "pre-check-deny" || true
+			denied=true
+		elif [[ "$tier" == "4" ]]; then
+			log_warn "FLAGGED: ${domain} (Tier 4: unknown domain)"
+			log_access "$domain" "$worker_id" "pre-check-flag" || true
+		else
+			log_access "$domain" "$worker_id" "pre-check-allow" || true
+		fi
+	done <<<"$domains"
+
+	if [[ "$denied" == "true" ]]; then
+		return 1
+	fi
 	return 0
 }
 
@@ -734,6 +894,8 @@ network-tier-helper.sh — Network domain tiering for worker sandboxing (t1412.3
 Commands:
   classify <domain>          Classify domain into tier (1-5)
   check <domain>             Check if domain is allowed (exit 0) or denied (exit 1)
+  check-command <command> [--worker-id ID]
+                             Enforce command domains and DNS-exfiltration rules
   check-session <domain> [--session-id ID]
                              Session-aware check — elevates tier if session
                              is tainted (t1428.3). Falls back to check if
@@ -773,6 +935,9 @@ Examples:
   network-tier-helper.sh check requestbin.com
   # Exit 1 (denied)
 
+  network-tier-helper.sh check-command 'curl https://requestbin.com' --worker-id worker-abc
+  # Exit 1 (Tier 5 command denied)
+
   network-tier-helper.sh log-access pypi.org worker-abc 200 /simple/requests/
   network-tier-helper.sh report --flagged-only --last 20
   network-tier-helper.sh report --summary
@@ -801,44 +966,60 @@ HELP
 main() {
 	local cmd="${1:-help}"
 	shift || true
+	local first_arg="${1:-}"
 
 	case "$cmd" in
 	classify)
-		if [[ -z "${1:-}" ]]; then
+		if [[ -z "$first_arg" ]]; then
 			log_error "Domain required. Usage: network-tier-helper.sh classify <domain>"
 			return 1
 		fi
-		classify_domain "$1"
+		classify_domain "$first_arg"
+		return $?
 		;;
 	check)
-		if [[ -z "${1:-}" ]]; then
+		if [[ -z "$first_arg" ]]; then
 			log_error "Domain required. Usage: network-tier-helper.sh check <domain>"
 			return 1
 		fi
-		check_domain "$1"
+		check_domain "$first_arg"
+		return $?
+		;;
+	check-command)
+		if [[ -z "$first_arg" ]]; then
+			log_error "Command required. Usage: network-tier-helper.sh check-command <command> [--worker-id ID]"
+			return 1
+		fi
+		check_command "$@"
+		return $?
 		;;
 	check-session)
-		if [[ -z "${1:-}" ]]; then
+		if [[ -z "$first_arg" ]]; then
 			log_error "Domain required. Usage: network-tier-helper.sh check-session <domain> [--session-id ID]"
 			return 1
 		fi
 		check_domain_session "$@"
+		return $?
 		;;
 	log-access | log)
-		if [[ -z "${1:-}" ]]; then
+		if [[ -z "$first_arg" ]]; then
 			log_error "Domain required. Usage: network-tier-helper.sh log-access <domain> [worker-id] [status] [path]"
 			return 1
 		fi
-		log_access "${1:-}" "${2:-unknown}" "${3:-}" "${4:-}"
+		log_access "$@"
+		return $?
 		;;
 	report)
 		report "$@"
+		return $?
 		;;
 	init)
 		init
+		return $?
 		;;
 	help | --help | -h)
 		show_help
+		return $?
 		;;
 	*)
 		log_error "Unknown command: ${cmd}"
@@ -846,6 +1027,7 @@ main() {
 		return 1
 		;;
 	esac
+	return 0
 }
 
 main "$@"

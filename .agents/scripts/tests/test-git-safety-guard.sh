@@ -6,8 +6,8 @@
 # Tests for git_safety_guard.py covering GH#21814 changes:
 #   - Dynamic default-branch detection (replaces hardcoded "main"/"master")
 #   - Off-default-branch canonical-workspace protection (t1990)
-#   - AIDEVOPS_SKIP_CANONICAL_GUARD=1 escape valve
-#   - Bash-matcher destructive-command checks (regression)
+#   - environment variables cannot bypass canonical protection
+#   - shared command-policy destructive checks (regression)
 #
 # Modelled on test-pre-edit-check.sh for structure.
 
@@ -28,6 +28,13 @@ readonly TEST_RESET='\033[0m'
 TESTS_RUN=0
 TESTS_FAILED=0
 TEST_ROOT=""
+
+# Fixture construction must bypass the deployed guard shim. Hook assertions
+# continue to exercise the shared command policy and canonical Git guard.
+git() {
+	/usr/bin/git "$@"
+	return $?
+}
 
 print_result() {
 	local test_name="$1"

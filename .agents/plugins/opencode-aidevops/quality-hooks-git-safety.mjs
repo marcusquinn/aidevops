@@ -15,25 +15,52 @@ function isTrustedFullLoopCommitAndPr(command, scriptsDir, cwd) {
   return existsSync(expectedPath);
 }
 
-export function checkCanonicalGitSafetyGate(command, scriptsDir, cwd = process.cwd()) {
-  if (typeof command !== "string" || !command.includes("git")) return;
-  const guard = join(scriptsDir, "canonical-git-command-guard.py");
-  if (!existsSync(guard)) {
-    throw new Error("BLOCKED: canonical Git guard is missing; refusing Git command");
+export function checkCommandSafetyGate(command, scriptsDir, cwd = process.cwd()) {
+  if (typeof command !== "string" || !command) return;
+  const helper = join(scriptsDir, "command-policy-helper.py");
+  if (!existsSync(helper)) {
+    throw new Error("BLOCKED: required command policy helper is missing");
   }
+  let raw = "";
   try {
     // #aidevops:trust-boundary — only the repository-owned full-loop wrapper
     // receives nested Git authority, and only from a verified linked worktree.
     const guardedCommand = isTrustedFullLoopCommitAndPr(command, scriptsDir, cwd)
       ? "git commit --dry-run"
       : command;
-    execFileSync("python3", [guard, "--cwd", cwd, "--command", guardedCommand], {
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "pipe"],
-      timeout: 10000,
-    });
+    raw = execFileSync(
+      "python3",
+      [helper, "check-command", "--cwd", cwd, "--command", guardedCommand],
+      {
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "pipe"],
+        timeout: 10000,
+      },
+    );
   } catch (error) {
-    const detail = error?.stderr?.toString().trim() || error?.message || "policy check failed";
-    throw new Error(detail);
+    raw = error?.stdout?.toString() || "";
+    let result;
+    try {
+      result = JSON.parse(raw);
+    } catch {
+      const detail = error?.stderr?.toString().trim() || error?.message || "policy check failed";
+      throw new Error(`BLOCKED: command policy failed closed: ${detail}`);
+    }
+    throw new Error(
+      `BLOCKED by shared command policy (${result.decision || "forbid"}, ${result.rule_id || "policy.invalid-response"}): ${result.reason || "invalid policy response"}`,
+    );
+  }
+  let result;
+  try {
+    result = JSON.parse(raw);
+  } catch {
+    throw new Error("BLOCKED: command policy returned malformed output");
+  }
+  if (result.decision !== "allow") {
+    throw new Error(
+      `BLOCKED by shared command policy (${result.decision || "forbid"}, ${result.rule_id || "policy.invalid-response"}): ${result.reason || "invalid policy response"}`,
+    );
   }
 }
+
+export const checkCanonicalGitSafetyGate = checkCommandSafetyGate;

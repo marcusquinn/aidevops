@@ -1,0 +1,139 @@
+{
+  "schema_version": 1,
+  "decision_order": [
+    "allow",
+    "prompt",
+    "forbid"
+  ],
+  "default_decision": {
+    "decision": "allow",
+    "rule_id": "command.default-allow",
+    "reason": "No safety-floor rule matched"
+  },
+  "dynamic_guards": [
+    {
+      "id": "git.canonical-worktree",
+      "kind": "canonical_git",
+      "helper": "canonical-git-command-guard.py",
+      "decision": "forbid"
+    }
+  ],
+  "rules": [
+    {
+      "id": "filesystem.rm-recursive-force-root",
+      "matcher": "rm_recursive_force_root",
+      "decision": "forbid",
+      "reason": "rm -rf on a root or home path is not permitted by the safety floor"
+    },
+    {
+      "id": "filesystem.rm-recursive-force",
+      "matcher": "rm_recursive_force",
+      "decision": "prompt",
+      "reason": "rm -rf can permanently delete files and requires caller authorization"
+    },
+    {
+      "id": "git.checkout-worktree-path",
+      "matcher": "git_checkout_worktree_path",
+      "decision": "prompt",
+      "reason": "git checkout of worktree paths can discard uncommitted changes"
+    },
+    {
+      "id": "git.restore-worktree",
+      "matcher": "git_restore_worktree",
+      "decision": "prompt",
+      "reason": "git restore of worktree content can discard uncommitted changes"
+    },
+    {
+      "id": "git.reset-destructive",
+      "matcher": "git_reset_destructive",
+      "decision": "prompt",
+      "reason": "git reset --hard/--merge can discard uncommitted changes"
+    },
+    {
+      "id": "git.clean-force",
+      "matcher": "git_clean_force",
+      "decision": "prompt",
+      "reason": "git clean with force can permanently remove untracked files"
+    },
+    {
+      "id": "git.push-force",
+      "matcher": "git_push_force",
+      "decision": "prompt",
+      "reason": "git push --force can overwrite remote history"
+    },
+    {
+      "id": "git.branch-force-delete",
+      "matcher": "git_branch_force_delete",
+      "decision": "prompt",
+      "reason": "git branch -D force-deletes a branch without a merge check"
+    },
+    {
+      "id": "git.stash-delete",
+      "matcher": "git_stash_delete",
+      "decision": "prompt",
+      "reason": "git stash drop/clear permanently deletes stashed changes"
+    }
+  ],
+  "fixtures": [
+    {
+      "name": "safe status",
+      "command": "git status --short",
+      "decision": "allow",
+      "rule_id": "command.default-allow"
+    },
+    {
+      "name": "recursive forced removal",
+      "command": "rm -rf ./build-output",
+      "decision": "prompt",
+      "rule_id": "filesystem.rm-recursive-force"
+    },
+    {
+      "name": "root removal",
+      "command": "rm --recursive --force /",
+      "decision": "forbid",
+      "rule_id": "filesystem.rm-recursive-force-root"
+    },
+    {
+      "name": "temporary cleanup",
+      "command": "rm -rf /tmp/aidevops-example",
+      "decision": "allow",
+      "rule_id": "command.default-allow"
+    },
+    {
+      "name": "hard reset",
+      "command": "git reset --hard HEAD",
+      "decision": "prompt",
+      "rule_id": "git.reset-destructive"
+    },
+    {
+      "name": "safe restore staged",
+      "command": "git restore --staged file.txt",
+      "decision": "allow",
+      "rule_id": "command.default-allow"
+    },
+    {
+      "name": "forced clean",
+      "command": "git clean -fd",
+      "decision": "prompt",
+      "rule_id": "git.clean-force"
+    },
+    {
+      "name": "clean dry run",
+      "command": "git clean -fdn",
+      "decision": "allow",
+      "rule_id": "command.default-allow"
+    },
+    {
+      "name": "force with lease",
+      "command": "git push --force-with-lease origin feature/example",
+      "decision": "allow",
+      "rule_id": "command.default-allow"
+    },
+    {
+      "name": "nested destructive removal",
+      "command": "sh -c 'rm -r -f ./generated'",
+      "decision": "prompt",
+      "rule_id": "filesystem.rm-recursive-force"
+    }
+  ]
+}

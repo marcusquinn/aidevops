@@ -1,11 +1,11 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
-import { checkCanonicalGitSafetyGate } from "../quality-hooks-git-safety.mjs";
+import { checkCommandSafetyGate } from "../quality-hooks-git-safety.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const scriptsDir = join(here, "..", "..", "..", "scripts");
@@ -31,7 +31,7 @@ test("blocks canonical branch mutation before execution", () => {
   const { root, repo } = setupRepo();
   try {
     assert.throws(
-      () => checkCanonicalGitSafetyGate("git branch -m main safety/example", scriptsDir, repo),
+      () => checkCommandSafetyGate("git branch -m main safety/example", scriptsDir, repo),
       /canonical worktree mutation/,
     );
     assert.equal(execFileSync(realGit, ["symbolic-ref", "--short", "HEAD"], { cwd: repo, encoding: "utf8" }).trim(), "main");
@@ -43,8 +43,8 @@ test("blocks canonical branch mutation before execution", () => {
 test("allows read-only canonical commands and linked-worktree mutation", () => {
   const { root, repo, linked } = setupRepo();
   try {
-    assert.doesNotThrow(() => checkCanonicalGitSafetyGate("git status --short", scriptsDir, repo));
-    assert.doesNotThrow(() => checkCanonicalGitSafetyGate("git switch -c feature/child", scriptsDir, linked));
+    assert.doesNotThrow(() => checkCommandSafetyGate("git status --short", scriptsDir, repo));
+    assert.doesNotThrow(() => checkCommandSafetyGate("git switch -c feature/child", scriptsDir, linked));
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -88,7 +88,33 @@ test("does not trust similarly named full-loop wrappers", () => {
 
 test("fails closed when policy engine is missing", () => {
   assert.throws(
-    () => checkCanonicalGitSafetyGate("git status", "/missing/aidevops/scripts", process.cwd()),
-    /guard is missing/,
+    () => checkCommandSafetyGate("printf safe", "/missing/aidevops/scripts", process.cwd()),
+    /policy helper is missing/,
   );
+});
+
+test("blocks generic destructive commands through shared policy", () => {
+  assert.throws(
+    () => checkCommandSafetyGate("rm -rf ./build-output", scriptsDir, process.cwd()),
+    /prompt, filesystem\.rm-recursive-force/,
+  );
+});
+
+test("fails closed when required policy is malformed", () => {
+  const root = mkdtempSync(join(tmpdir(), "aidevops-command-policy-"));
+  const isolatedScripts = join(root, "scripts");
+  const isolatedConfigs = join(root, "configs");
+  mkdirSync(isolatedScripts);
+  mkdirSync(isolatedConfigs);
+  try {
+    copyFileSync(join(scriptsDir, "command-policy-helper.py"), join(isolatedScripts, "command-policy-helper.py"));
+    copyFileSync(join(scriptsDir, "canonical-git-command-guard.py"), join(isolatedScripts, "canonical-git-command-guard.py"));
+    writeFileSync(join(isolatedConfigs, "command-policy.json"), "{not-json\n");
+    assert.throws(
+      () => checkCommandSafetyGate("printf safe", isolatedScripts, process.cwd()),
+      /policy\.invalid.*malformed/,
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
