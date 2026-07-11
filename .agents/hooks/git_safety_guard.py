@@ -53,6 +53,25 @@ MAIN_BRANCH_ALLOWLIST = [
     "TODO.md",
     "todo/",  # prefix: todo/** subtree
 ]
+WORKER_ENV_KEYS = (
+    "FULL_LOOP_HEADLESS",
+    "AIDEVOPS_HEADLESS",
+    "OPENCODE_HEADLESS",
+    "CLAUDE_HEADLESS",
+    "Claude_HEADLESS",
+    "HEADLESS",
+    "GITHUB_ACTIONS",
+)
+
+
+def _is_worker_context() -> bool:
+    """Return True when this per-tool hook is running in a worker process."""
+    if os.environ.get("AIDEVOPS_WORKER_ID", ""):
+        return True
+    return any(
+        os.environ.get(key, "").lower() in {"1", "true", "yes"}
+        for key in WORKER_ENV_KEYS
+    )
 
 
 def _get_current_branch(cwd: str) -> str:
@@ -248,17 +267,22 @@ def _check_command_policy(command: str) -> "dict | None":
     rule_id = "policy.helper-unavailable"
     reason = "required command safety policy helper is unavailable"
     if helper:
+        helper_args = [
+            sys.executable,
+            helper,
+            "check-command",
+            "--cwd",
+            os.getcwd(),
+            "--command",
+            command,
+        ]
+        if _is_worker_context():
+            helper_args.extend(
+                ["--worker", "--worker-id", os.environ.get("AIDEVOPS_WORKER_ID", "claude-worker")]
+            )
         try:
             result = subprocess.run(
-                [
-                    sys.executable,
-                    helper,
-                    "check-command",
-                    "--cwd",
-                    os.getcwd(),
-                    "--command",
-                    command,
-                ],
+                helper_args,
                 capture_output=True,
                 text=True,
                 timeout=10,

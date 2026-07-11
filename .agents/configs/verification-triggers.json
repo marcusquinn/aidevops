@@ -1,6 +1,7 @@
 {
-  "_comment": "Verification trigger patterns for high-stakes operation detection (t1364.1). Machine-readable companion to reference/high-stakes-operations.md. Agent judgment overrides pattern matching.",
+  "_comment": "Secondary high-stakes verification signals (t1364.1). This file never authorizes or classifies shell-command safety; command-policy.json is the sole deterministic command safety authority.",
   "_docs": "See .agents/reference/high-stakes-operations.md for full taxonomy, risk levels, and policy schema.",
+  "_authority": "verification-only",
 
   "version": "1.0.0",
 
@@ -9,16 +10,11 @@
       "risk_level": "critical",
       "default_gate": "block",
       "command_patterns": [
-        "git push --force",
-        "git push -f ",
-        "git push --force-with-lease",
         "git push.*--delete",
-        "git reset --hard",
         "git rebase.*origin/",
         "git filter-branch",
         "git reflog expire",
         "git gc --prune",
-        "git branch -D ",
         "git tag -d ",
         "git push origin :refs/tags/"
       ],
@@ -134,9 +130,7 @@
         "doctl.*delete",
         "hcloud.*delete",
         "docker volume rm",
-        "docker system prune -a",
-        "rm -rf /",
-        "rm -rf /*"
+        "docker system prune -a"
       ],
       "context_signals": {
         "file_patterns": ["**/*.tfstate", "**/Pulumi.*.yaml", "**/terraform.tfvars"],

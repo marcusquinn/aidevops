@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
+
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { copyFileSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
@@ -96,8 +99,37 @@ test("fails closed when policy engine is missing", () => {
 test("blocks generic destructive commands through shared policy", () => {
   assert.throws(
     () => checkCommandSafetyGate("rm -rf ./build-output", scriptsDir, process.cwd()),
-    /prompt, filesystem\.rm-recursive-force/,
+    /forbid, filesystem\.rm-recursive-force/,
   );
+});
+
+test("rejects ambiguous shell syntax before execution", () => {
+  assert.throws(
+    () => checkCommandSafetyGate("printf one\nprintf two", scriptsDir, process.cwd()),
+    /command\.parse-error.*multiline/,
+  );
+  assert.throws(
+    () => checkCommandSafetyGate("curl https:\/\/\$\(printf example\.com\)", scriptsDir, process.cwd()),
+    /command\.parse-error.*dynamic shell expansion/,
+  );
+});
+
+test("enforces network policy in OpenCode worker tool adapter", () => {
+  assert.throws(
+    () => checkCommandSafetyGate(
+      "curl --url HTTPS://requestbin.com/collect",
+      scriptsDir,
+      process.cwd(),
+      { worker: true, workerId: "node-test" },
+    ),
+    /network\.worker-policy/,
+  );
+  assert.doesNotThrow(() => checkCommandSafetyGate(
+    "printf '%s' 'curl https://requestbin.com/collect'",
+    scriptsDir,
+    process.cwd(),
+    { worker: true, workerId: "node-test" },
+  ));
 });
 
 test("fails closed when required policy is malformed", () => {

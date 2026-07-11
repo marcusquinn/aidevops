@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # network-tier-helper.sh — Network domain tiering for worker sandboxing (t1412.3)
-# Commands: classify | check | check-command | log-access | report | init | help
+# Commands: classify | check | check-argv | check-command | log-access | report | init | help
 #
 # Implements a 4-tier graduated trust model for headless worker network access:
 #   Tier 1: Always allowed, no logging (core infrastructure: github.com)
@@ -14,7 +14,7 @@
 # Interactive sessions are unrestricted — tiering only applies to sandboxed workers.
 #
 # Integration:
-#   - sandbox-exec-helper.sh calls `check` before network operations
+#   - command-policy-helper.py calls `check-argv` for every worker tool invocation
 #   - Workers call `log-access` after each network request
 #   - Supervisors call `report` to review flagged domains
 #
@@ -31,6 +31,7 @@
 #   network-tier-helper.sh check-session example.com [--session-id ID]
 #                                                   # Session-aware check (t1428.3)
 #   network-tier-helper.sh check-command 'curl https://example.com' --worker-id worker-123
+#   network-tier-helper.sh check-argv '["curl","https://example.com"]' --worker-id worker-123
 #   network-tier-helper.sh log-access example.com worker-123 200
 #   network-tier-helper.sh report [--last N] [--flagged-only]
 #   network-tier-helper.sh init                     # Create log dirs and validate config
@@ -55,6 +56,7 @@ readonly NET_TIER_DENIED_LOG="${NET_TIER_DIR}/denied.jsonl"
 # Config file locations (default + user override)
 readonly NET_TIER_DEFAULT_CONF="${AIDEVOPS_NETWORK_TIER_POLICY:-${SCRIPT_DIR}/../configs/network-tiers.conf}"
 readonly NET_TIER_USER_CONF="${AIDEVOPS_NETWORK_TIER_USER_POLICY:-${HOME}/.config/aidevops/network-tiers-custom.conf}"
+readonly COMMAND_POLICY_HELPER="${AIDEVOPS_COMMAND_POLICY_HELPER:-${SCRIPT_DIR}/command-policy-helper.py}"
 
 # File-based tier lookup cache (bash 3.2 compatible — no associative arrays)
 # Format: "exact:domain tier" or "wild:suffix tier", one per line
@@ -280,11 +282,16 @@ _is_suspicious_tld() {
 classify_domain() {
 	local domain="$1"
 
-	# Normalize: lowercase, strip port, strip protocol, strip trailing dot
+	# Normalize: lowercase, strip protocol/path/port, preserve raw IPv6.
 	domain="$(printf '%s' "$domain" | tr '[:upper:]' '[:lower:]')"
 	domain="${domain#*://}"
-	domain="${domain%%:*}"
 	domain="${domain%%/*}"
+	if [[ "$domain" == \[*\]* ]]; then
+		domain="${domain#\[}"
+		domain="${domain%%\]*}"
+	elif [[ "$domain" != *:*:* ]]; then
+		domain="${domain%%:*}"
+	fi
 	domain="${domain%.}"
 
 	if [[ -z "$domain" ]]; then
@@ -477,73 +484,39 @@ check_domain() {
 	return 0
 }
 
-# Return success when a command has a DNS-exfiltration shape.
+# Enforce network policy for one exact argv JSON array.
 # Arguments:
-#   $1 - shell command string
-_command_has_dns_exfiltration() {
-	local command_text="$1"
-
-	if printf '%s' "$command_text" | grep -qE '(^|[^A-Za-z0-9_])(dig|nslookup|host)([^A-Za-z0-9_]|$).*(\$\(|\$\{|`)'; then
-		return 0
-	fi
-	if printf '%s' "$command_text" | grep -qE '(^|[^A-Za-z0-9_])(base64|xxd|od[[:space:]]+-[AaxX]|hexdump)([^A-Za-z0-9_]|$).*\|[[:space:]]*(dig|nslookup|host)([^A-Za-z0-9_]|$)'; then
-		return 0
-	fi
-	if printf '%s' "$command_text" | grep -qE '(^|[^A-Za-z0-9_])(for|while)([^A-Za-z0-9_]|$).*(dig|nslookup|host)([^A-Za-z0-9_]|$).*done([^A-Za-z0-9_]|$)'; then
-		return 0
-	fi
-	if printf '%s' "$command_text" | grep -qE '(dns-query|dns\.google|cloudflare-dns\.com/dns-query|doh\.).*(\$\(|\$\{|`)'; then
-		return 0
-	fi
-	if printf '%s' "$command_text" | grep -qiE '(^|[^A-Za-z0-9_.-])(dnslog\.cn|ceye\.io|interact\.sh|burpcollaborator\.net|oastify\.com|oast\.(fun|me|live))([^A-Za-z0-9_.-]|$)'; then
-		return 0
-	fi
-	return 1
-}
-
-# Extract unique network domains referenced by a shell command.
-# Arguments:
-#   $1 - shell command string
-# Output: one normalized domain per line
-extract_command_domains() {
-	local command_text="$1"
-	local url_domains=""
-	local bare_domains=""
-	local ssh_domains=""
-	local dns_domains=""
-
-	url_domains="$(printf '%s' "$command_text" | grep -oE 'https?://[a-zA-Z0-9._-]+' | sed -E 's|https?://||')" || true
-	bare_domains="$(printf '%s' "$command_text" | grep -oE '(curl|wget|fetch|nc|ncat|telnet)[[:space:]]+(-[a-zA-Z0-9]+[[:space:]]+)*([a-zA-Z0-9]([a-zA-Z0-9_-]*\.)+[a-zA-Z]{2,})' | grep -oE '[a-zA-Z0-9]([a-zA-Z0-9_-]*\.)+[a-zA-Z]{2,}$' | grep -vE '\.(sh|py|js|ts|json|txt|log|yml|yaml|md|conf|cfg|xml|html|css|gz|tar|zip)$')" || true
-	ssh_domains="$(printf '%s' "$command_text" | grep -oE '[a-zA-Z0-9_-]+@([a-zA-Z0-9]([a-zA-Z0-9_-]*\.)+[a-zA-Z]{2,})' | sed 's/.*@//')" || true
-	dns_domains="$(printf '%s' "$command_text" | grep -oE '(^|[^A-Za-z0-9_])(dig|nslookup|host)[[:space:]]+[^|;&]*' | sed -E 's/^.*(dig|nslookup|host)[[:space:]]+//' | grep -oE '[a-zA-Z0-9]([a-zA-Z0-9_-]*\.)+[a-zA-Z]{2,}\.?' | sed 's/\.$//' | grep -vE '^\$|^`')" || true
-
-	printf '%s\n%s\n%s\n%s\n' "$url_domains" "$bare_domains" "$ssh_domains" "$dns_domains" |
-		grep -v '^$' | tr '[:upper:]' '[:lower:]' | sort -u || true
-	return 0
-}
-
-# Enforce domain tiers and DNS-exfiltration rules for a complete shell command.
-# Arguments:
-#   $1 - shell command string
-#   Remaining args: --worker-id ID
-# Returns: 0 when allowed, 1 when denied or required policy is invalid
-check_command() {
-	local command_text="$1"
+#   $1 - JSON argv array
+#   Remaining args: --cwd PATH --worker-id ID
+check_argv() {
+	local argv_json="$1"
 	shift || true
+	local cwd="$PWD"
 	local worker_id="unknown"
-	local domains=""
+	local option=""
+	local analysis=""
+	local status=0
+	local recognized="false"
+	local requires_destination="true"
+	local unclassified=""
+	local destinations=""
 	local domain=""
 	local tier=""
 	local denied=false
 
 	while [[ $# -gt 0 ]]; do
-		case "$1" in
+		option="$1"
+		case "$option" in
+		--cwd)
+			cwd="${2:-}"
+			shift 2
+			;;
 		--worker-id)
 			worker_id="${2:-unknown}"
 			shift 2
 			;;
 		*)
-			log_error "Unknown check-command option: $1"
+			log_error "Unknown check-argv option: ${option}"
 			return 1
 			;;
 		esac
@@ -551,16 +524,30 @@ check_command() {
 
 	_validate_tier_policy "$NET_TIER_DEFAULT_CONF" true || return 1
 	_validate_tier_policy "$NET_TIER_USER_CONF" false || return 1
-	if [[ -z "$command_text" ]]; then
-		log_error "Command required for network policy check"
+	if [[ ! -f "$COMMAND_POLICY_HELPER" ]]; then
+		log_error "Required argv analyzer is unavailable: ${COMMAND_POLICY_HELPER}"
 		return 1
 	fi
-	if _command_has_dns_exfiltration "$command_text"; then
-		log_error "BLOCKED: DNS exfiltration command shape (worker=${worker_id})"
+	analysis="$(python3 "$COMMAND_POLICY_HELPER" network-destinations --argv-json "$argv_json" --cwd "$cwd")" || status=$?
+	if [[ "$status" -ne 0 ]] || ! printf '%s' "$analysis" | jq -e . >/dev/null 2>&1; then
+		log_error "Worker network argv analysis failed closed"
 		return 1
 	fi
-
-	domains="$(extract_command_domains "$command_text")"
+	recognized="$(printf '%s' "$analysis" | jq -r '.recognized // false')"
+	if [[ "$recognized" != "true" ]]; then
+		return 0
+	fi
+	requires_destination="$(printf '%s' "$analysis" | jq -r '.requires_destination // true')"
+	unclassified="$(printf '%s' "$analysis" | jq -r '.unclassified[]?')"
+	if [[ -n "$unclassified" ]]; then
+		log_error "BLOCKED: unclassified worker network destination (${unclassified//$'\n'/, })"
+		return 1
+	fi
+	destinations="$(printf '%s' "$analysis" | jq -r '.destinations[]?')"
+	if [[ "$requires_destination" == "true" && -z "$destinations" ]]; then
+		log_error "BLOCKED: recognized network client has no classifiable destination"
+		return 1
+	fi
 	while IFS= read -r domain; do
 		[[ -z "$domain" ]] && continue
 		tier="$(classify_domain "$domain")" || {
@@ -577,9 +564,43 @@ check_command() {
 		else
 			log_access "$domain" "$worker_id" "pre-check-allow" || true
 		fi
-	done <<<"$domains"
-
+	done <<<"$destinations"
 	if [[ "$denied" == "true" ]]; then
+		return 1
+	fi
+	return 0
+}
+
+# Compatibility entry point for shell strings. Strict parsing and exact argv
+# extraction remain owned by command-policy-helper.py.
+check_command() {
+	local command_text="$1"
+	shift || true
+	local worker_id="unknown"
+	local option=""
+	local output=""
+	local status=0
+
+	while [[ $# -gt 0 ]]; do
+		option="$1"
+		case "$option" in
+		--worker-id)
+			worker_id="${2:-unknown}"
+			shift 2
+			;;
+		*)
+			log_error "Unknown check-command option: ${option}"
+			return 1
+			;;
+		esac
+	done
+	if [[ ! -f "$COMMAND_POLICY_HELPER" ]]; then
+		log_error "Required command policy helper is unavailable: ${COMMAND_POLICY_HELPER}"
+		return 1
+	fi
+	output="$(python3 "$COMMAND_POLICY_HELPER" check-command --worker --worker-id "$worker_id" --command "$command_text")" || status=$?
+	if [[ "$status" -ne 0 ]]; then
+		log_error "$(printf '%s' "$output" | jq -r '.reason // "worker command policy denied execution"' 2>/dev/null || printf 'worker command policy denied execution')"
 		return 1
 	fi
 	return 0
@@ -894,8 +915,10 @@ network-tier-helper.sh — Network domain tiering for worker sandboxing (t1412.3
 Commands:
   classify <domain>          Classify domain into tier (1-5)
   check <domain>             Check if domain is allowed (exit 0) or denied (exit 1)
+  check-argv <json> [--cwd PATH] [--worker-id ID]
+                             Enforce exact-argv worker network policy
   check-command <command> [--worker-id ID]
-                             Enforce command domains and DNS-exfiltration rules
+                             Compatibility shell-string entry point
   check-session <domain> [--session-id ID]
                              Session-aware check — elevates tier if session
                              is tainted (t1428.3). Falls back to check if
@@ -991,6 +1014,14 @@ main() {
 			return 1
 		fi
 		check_command "$@"
+		return $?
+		;;
+	check-argv)
+		if [[ -z "$first_arg" ]]; then
+			log_error "Argv JSON required. Usage: network-tier-helper.sh check-argv <json> [--cwd PATH] [--worker-id ID]"
+			return 1
+		fi
+		check_argv "$@"
 		return $?
 		;;
 	check-session)

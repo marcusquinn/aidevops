@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
+
 import json
 import os
 import sys
@@ -125,22 +128,26 @@ def _build_hook_entry():
 
 
 def _ensure_bash_hook(settings):
-    """Ensure the git safety PreToolUse hook is registered for Bash. Returns changed flag."""
+    """Ensure command and Edit|Write hook surfaces are registered."""
     hook_command = "$HOME/.aidevops/hooks/git_safety_guard.py"
     hook_entry = _build_hook_entry()
-    bash_matcher = {"matcher": "Bash", "hooks": [hook_entry]}
-
     settings.setdefault("hooks", {}).setdefault("PreToolUse", [])
-
-    for rule in settings["hooks"]["PreToolUse"]:
-        if rule.get("matcher") == "Bash":
+    changed = False
+    for required_matcher in ("Bash", "Edit|Write"):
+        for rule in settings["hooks"]["PreToolUse"]:
+            if rule.get("matcher") != required_matcher:
+                continue
             existing_commands = [h.get("command", "") for h in rule.get("hooks", [])]
             if hook_command not in existing_commands:
                 rule.setdefault("hooks", []).append(hook_entry)
-                return True
-            return False
-    settings["hooks"]["PreToolUse"].append(bash_matcher)
-    return True
+                changed = True
+            break
+        else:
+            settings["hooks"]["PreToolUse"].append(
+                {"matcher": required_matcher, "hooks": [hook_entry]}
+            )
+            changed = True
+    return changed
 
 
 def _build_permission_rules():
@@ -181,18 +188,14 @@ def _build_permission_rules():
         "Read(./.env)", "Read(./.env.*)", "Read(./secrets/**)",
         "Read(./**/credentials.json)", "Read(./**/.env)", "Read(./**/.env.*)",
         "Read(~/.config/aidevops/credentials.sh)",
-        "Bash(git push --force *)", "Bash(git push -f *)",
-        "Bash(git reset --hard *)", "Bash(git reset --hard)",
-        "Bash(git clean -f *)", "Bash(git clean -f)",
-        "Bash(git checkout -- *)", "Bash(git branch -D *)",
-        "Bash(rm -rf /)", "Bash(rm -rf /*)", "Bash(rm -rf ~)",
-        "Bash(rm -rf ~/*)", "Bash(sudo *)", "Bash(chmod 777 *)",
+        # Runtime capability/secret layer; command classification is delegated
+        # to command-policy-helper.py through the PreToolUse hook.
+        "Bash(sudo *)", "Bash(chmod 777 *)",
         "Bash(gopass show *)", "Bash(pass show *)", "Bash(op read *)",
         "Bash(cat ~/.config/aidevops/credentials.sh)",
     ]
     ask_rules = [
-        "Bash(rm -rf *)", "Bash(rm -r *)",
-        "Bash(curl *)", "Bash(wget *)",
+        "Bash(rm -r *)",
         "Bash(docker *)", "Bash(docker-compose *)", "Bash(orbctl *)",
     ]
     return allow_rules, deny_rules, ask_rules
@@ -219,6 +222,27 @@ def _clean_expanded_path_rules(permissions):
     return False
 
 
+def _clean_legacy_command_safety_rules(permissions):
+    """Remove framework-owned permission decisions migrated to shared policy."""
+    legacy = {
+        "Bash(git push --force *)", "Bash(git push -f *)",
+        "Bash(git reset --hard *)", "Bash(git reset --hard)",
+        "Bash(git clean -f *)", "Bash(git clean -f)",
+        "Bash(git checkout -- *)", "Bash(git branch -D *)",
+        "Bash(rm -rf /)", "Bash(rm -rf /*)", "Bash(rm -rf ~)",
+        "Bash(rm -rf ~/*)", "Bash(rm -rf *)",
+        "Bash(curl *)", "Bash(wget *)",
+    }
+    changed = False
+    for bucket in ("deny", "ask"):
+        existing = permissions.get(bucket, [])
+        cleaned = [rule for rule in existing if rule not in legacy]
+        if cleaned != existing:
+            permissions[bucket] = cleaned
+            changed = True
+    return changed
+
+
 def output_claude_settings():
     """Update ~/.claude/settings.json with hooks and permissions."""
     settings_path = os.path.expanduser("~/.claude/settings.json")
@@ -232,6 +256,8 @@ def output_claude_settings():
 
     permissions = settings.setdefault("permissions", {})
     if _clean_expanded_path_rules(permissions):
+        changed = True
+    if _clean_legacy_command_safety_rules(permissions):
         changed = True
 
     allow_rules, deny_rules, ask_rules = _build_permission_rules()

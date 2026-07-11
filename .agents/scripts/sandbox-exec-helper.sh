@@ -49,9 +49,6 @@ readonly SECRET_IO_GUARD_DEFAULT="true"
 # Minimal environment passthrough — only what's needed for basic operation
 readonly DEFAULT_PASSTHROUGH="PATH HOME USER LANG TERM SHELL"
 
-# Network tier helper (t1412.3)
-readonly NET_TIER_HELPER="${AIDEVOPS_NETWORK_TIER_HELPER:-${SCRIPT_DIR}/network-tier-helper.sh}"
-
 # Runtime-neutral shell-command policy helper
 readonly COMMAND_POLICY_HELPER="${AIDEVOPS_COMMAND_POLICY_HELPER:-${SCRIPT_DIR}/command-policy-helper.py}"
 
@@ -255,34 +252,13 @@ _sandbox_emit_redacted_output() {
 	return 0
 }
 
-# =============================================================================
-# Network Tiering Integration (t1412.3)
-# =============================================================================
-
-# Delegate command-domain and DNS-exfiltration checks to the network authority.
-# Arguments:
-#   $1 - command string
-#   $2 - worker ID for logging
-_sandbox_check_network_tiers() {
-	local command="$1"
-	local wid="$2"
-
-	if [[ ! -x "$NET_TIER_HELPER" ]]; then
-		log_sandbox "ERROR" "Required network policy helper is unavailable: ${NET_TIER_HELPER}"
-		return 1
-	fi
-	if ! "$NET_TIER_HELPER" check-command "$command" --worker-id "$wid"; then
-		log_sandbox "ERROR" "Network command policy denied execution (worker=${wid})"
-		return 1
-	fi
-	return 0
-}
-
 # Enforce the shared runtime-neutral command safety floor.
 # Arguments:
-#   $1 - command string
+#   $1 - exact argv JSON array
+#   $2 - worker ID
 _sandbox_check_command_policy() {
-	local command="$1"
+	local argv_json="$1"
+	local worker_id="$2"
 	local result=""
 	local status=0
 	local decision=""
@@ -293,7 +269,7 @@ _sandbox_check_command_policy() {
 		log_sandbox "ERROR" "Required command policy helper is unavailable: ${COMMAND_POLICY_HELPER}"
 		return 1
 	fi
-	result="$(python3 "$COMMAND_POLICY_HELPER" check-command --cwd "$PWD" --command "$command")" || status=$?
+	result="$(python3 "$COMMAND_POLICY_HELPER" check-command --worker --worker-id "$worker_id" --cwd "$PWD" --argv-json "$argv_json")" || status=$?
 	decision="$(printf '%s' "$result" | jq -r '.decision // empty' 2>/dev/null)" || decision=""
 	rule_id="$(printf '%s' "$result" | jq -r '.rule_id // "policy.invalid-response"' 2>/dev/null)" || rule_id="policy.invalid-response"
 	reason="$(printf '%s' "$result" | jq -r '.reason // "command policy returned an invalid response"' 2>/dev/null)" || reason="command policy returned an invalid response"
@@ -302,6 +278,41 @@ _sandbox_check_command_policy() {
 	fi
 	log_sandbox "ERROR" "Command policy denied execution (${decision:-forbid}, ${rule_id}): ${reason}"
 	return 1
+}
+
+# Serialize exact argv without shell joining or delimiter ambiguity.
+_sandbox_argv_json() {
+	python3 - "$@" <<'PY'
+import json
+import sys
+
+print(json.dumps(sys.argv[1:]))
+PY
+	return 0
+}
+
+# Produce a display-only, shell-escaped command string for logs and legacy
+# secret-output heuristics. It is never used for policy decisions or execution.
+_sandbox_argv_display() {
+	python3 - "$@" <<'PY'
+import shlex
+import sys
+
+print(" ".join(shlex.quote(arg) for arg in sys.argv[1:]))
+PY
+	return 0
+}
+
+# Produce heuristic-only text for legacy secret-output pattern matching. This
+# never feeds policy decisions or command execution; exact argv remains the
+# authority for both.
+_sandbox_argv_heuristic_text() {
+	python3 - "$@" <<'PY'
+import sys
+
+print(" ".join(sys.argv[1:]))
+PY
+	return 0
 }
 
 # =============================================================================
@@ -1045,20 +1056,22 @@ _sandbox_run_check_secret_guard() {
 # Log execution intent and detect secret-tainted output.
 # Prints "true" or "false" to stdout to indicate whether the command is tainted.
 # Arguments:
-#   $1 - cmd_str
+#   $1 - display command string
 #   $2 - timeout_secs
 #   $3 - block_network (true|false)
 #   $4 - network_tiering (true|false)
+#   $5 - heuristic-only command text
 _sandbox_run_pre_exec() {
 	local cmd_str="$1"
 	local timeout_secs="$2"
 	local block_network="$3"
 	local network_tiering="$4"
+	local heuristic_text="$5"
 
 	log_sandbox "INFO" "Executing (timeout=${timeout_secs}s, network_blocked=${block_network}, tiering=${network_tiering}): ${cmd_str:0:200}"
 
 	local command_tainted=false
-	if _sandbox_is_secret_tainted_command "$cmd_str"; then
+	if _sandbox_is_secret_tainted_command "$heuristic_text"; then
 		command_tainted=true
 	fi
 	printf '%s' "$command_tainted"
@@ -1143,18 +1156,18 @@ sandbox_run() {
 		return 1
 	fi
 
-	# Space-joined string for pattern-matching helpers (no execution)
-	local cmd_str="${cmd_args[*]}"
+	local argv_json=""
+	argv_json="$(_sandbox_argv_json "${cmd_args[@]}")" || return 126
+	local cmd_str=""
+	cmd_str="$(_sandbox_argv_display "${cmd_args[@]}")" || return 126
+	local heuristic_text=""
+	heuristic_text="$(_sandbox_argv_heuristic_text "${cmd_args[@]}")" || return 126
 
 	_sandbox_run_check_secret_guard \
-		"$secret_io_guard" "$allow_secret_io" "$cmd_str" \
+		"$secret_io_guard" "$allow_secret_io" "$heuristic_text" \
 		"$timeout_secs" "$block_network" "$extra_passthrough" || return $?
-	if ! _sandbox_check_command_policy "$cmd_str"; then
+	if ! _sandbox_check_command_policy "$argv_json" "$worker_id"; then
 		log_execution "$cmd_str" 126 0 "$timeout_secs" "$block_network" "$extra_passthrough"
-		return 126
-	fi
-	if [[ "$network_tiering" == true ]] && ! _sandbox_check_network_tiers "$cmd_str" "$worker_id"; then
-		log_execution "$cmd_str" 126 0 "$timeout_secs" true "$extra_passthrough"
 		return 126
 	fi
 
@@ -1171,7 +1184,7 @@ sandbox_run() {
 	local stderr_file="${exec_tmpdir}/stderr"
 	local command_tainted
 	command_tainted="$(_sandbox_run_pre_exec \
-		"$cmd_str" "$timeout_secs" "$block_network" "$network_tiering")"
+		"$cmd_str" "$timeout_secs" "$block_network" "$network_tiering" "$heuristic_text")"
 
 	local start_time exit_code=0
 	start_time="$(date +%s)"
@@ -1242,7 +1255,7 @@ sandbox_config() {
 	echo "  Max output:   $((SANDBOX_MAX_OUTPUT_BYTES / 1048576))MB per stream"
 	echo "  Secret guard: ${AIDEVOPS_BLOCK_SECRET_IO:-$SECRET_IO_GUARD_DEFAULT}"
 	echo "  Passthrough:  ${DEFAULT_PASSTHROUGH}"
-	echo "  Net tiering:  $([ -x "$NET_TIER_HELPER" ] && echo "available" || echo "not found")"
+	echo "  Net tiering:  enforced by shared worker command policy"
 	echo ""
 	if [[ -f "$SANDBOX_LOG" ]]; then
 		local count
