@@ -84,6 +84,7 @@ FORCE_CLOSE="${FORCE_CLOSE:-false}"
 FORCE_PUSH="${FORCE_PUSH:-false}"
 FORCE_ENRICH="${FORCE_ENRICH:-false}"
 REPO_SLUG=""
+PROJECT_ROOT_ARG=""
 
 log_verbose() {
 	local msg="$1"
@@ -120,10 +121,28 @@ verify_gh_cli() {
 
 # Common preamble for commands that need project_root, repo, todo_file, gh auth
 _init_cmd() {
-	_CMD_ROOT=$(find_project_root) || return 1
-	_CMD_REPO="${REPO_SLUG:-$(detect_repo_slug "$_CMD_ROOT")}"
+	if [[ -n "$PROJECT_ROOT_ARG" ]]; then
+		_CMD_ROOT=$(cd "$PROJECT_ROOT_ARG" 2>/dev/null && pwd -P) || {
+			print_error "Project root is not an accessible directory"
+			return 1
+		}
+	else
+		_CMD_ROOT=$(find_project_root) || return 1
+	fi
+	[[ -f "$_CMD_ROOT/TODO.md" ]] || {
+		print_error "Project root does not contain TODO.md"
+		return 1
+	}
+	local detected_repo
+	detected_repo=$(detect_repo_slug "$_CMD_ROOT") || return 1
+	_CMD_REPO="${REPO_SLUG:-$detected_repo}"
+	if [[ "$detected_repo" != "$_CMD_REPO" ]]; then
+		print_error "Project root remote does not match --repo (expected $_CMD_REPO, found $detected_repo)"
+		return 1
+	fi
 	_CMD_TODO="$_CMD_ROOT/TODO.md"
 	verify_gh_cli || return 1
+	return 0
 }
 
 _build_title() {
@@ -360,6 +379,10 @@ main() {
 		case "$arg" in
 		--repo)
 			REPO_SLUG="$val"
+			shift 2
+			;;
+		--project-root)
+			PROJECT_ROOT_ARG="$val"
 			shift 2
 			;;
 		--dry-run)
