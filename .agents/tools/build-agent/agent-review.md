@@ -30,10 +30,10 @@ tools:
 
 | # | Check | Action if failing |
 |---|-------|-------------------|
-| 1 | **Instruction count** (~50-100 main, <100 subagent) | Consolidate, move to subagent, or remove |
+| 1 | **Instruction count** (~50-100 per agent; maintainability heuristic) | Investigate overages; consolidate or extract duplication, but do not cut solely to hit the count |
 | 2 | **Universal applicability** (>80% tasks) | Extract task-specific content to subagents |
 | 3 | **Duplicate detection** (Grep for `"pattern"` under `.agents/`) | Single authoritative source per concept |
-| 4 | **Code examples** (authoritative/working) | Keep; supplement with Grep references for `"pattern"` under `.agents/scripts/` |
+| 4 | **Code examples** (authoritative/working) | Keep only when authoritative; otherwise use Grep references for `"pattern"` under `.agents/scripts/` or stable section headings |
 | 5 | **AI-CONTEXT block** (standalone essentials) | Rewrite if an AI would get stuck with only this |
 | 6 | **Slash commands** | Move to `scripts/commands/` or domain subagent |
 
