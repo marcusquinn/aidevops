@@ -96,14 +96,15 @@ test_union_clipping_and_failure_status() {
 	create_knowledge_db "$overlap_db"
 
 	# Force app fallback with overlapping/repeated intervals. The union is 5h,
-	# not the additive 9h, and the 30h interval is clipped to the 24h window.
+	# not the additive 9h. Use a 48h query so yesterday noon remains in the
+	# rolling window regardless of the local time when this test runs.
 	local previous_noon
 	previous_noon=$(local_day_epoch "$now" 1 12)
 	insert_app_usage "$overlap_db" "$previous_noon" "$((previous_noon + one_hour * 5))"
 	insert_app_usage "$overlap_db" "$((previous_noon + one_hour))" "$((previous_noon + one_hour * 4))"
 	insert_app_usage "$overlap_db" "$previous_noon" "$((previous_noon + one_hour * 5))"
 	local overlap_hours
-	overlap_hours=$(query_hours "$overlap_db" 1)
+	overlap_hours=$(query_hours "$overlap_db" 2)
 	[[ "$overlap_hours" == "5.0" ]] || fail "expected app intervals to union to 5.0h, got ${overlap_hours}"
 	sqlite3 "$overlap_db" "UPDATE ZOBJECT SET ZVALUESTRING='app.one' WHERE ZSTREAMNAME='/app/usage';"
 	local app_json app_seconds
@@ -224,7 +225,7 @@ test_top_apps_sql_and_sweep_are_bounded() {
 		SELECT '/app/usage', ${cd_now} - 86400*60 - i*60, ${cd_now} - 86400*60 - i*60 + 30, 'old.app' FROM old_rows;
 		WITH RECURSIVE recent_rows(i) AS (SELECT 1 UNION ALL SELECT i+1 FROM recent_rows WHERE i < 200)
 		INSERT INTO ZOBJECT (ZSTREAMNAME,ZSTARTDATE,ZENDDATE,ZVALUESTRING)
-		SELECT '/app/usage', ${cd_now} - i*300, ${cd_now} - i*300 + 600, 'recent.' || (i % 3) FROM recent_rows;"
+		SELECT '/app/usage', ${cd_now} - 86400 - i*300, ${cd_now} - 86400 - i*300 + 600, 'recent.' || (i % 3) FROM recent_rows;"
 	AIDEVOPS_SCREEN_TIME_NOW_EPOCH="$now" AIDEVOPS_APP_STATS_INSTRUMENT_FILE="$instrument" \
 		python3 "${SCRIPTS_DIR}/screen-time-interval-engine.py" apps --os-type Darwin --db "$db" >/dev/null
 	local selected valid boundaries segments elapsed
