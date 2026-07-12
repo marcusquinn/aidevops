@@ -82,6 +82,40 @@ def _enable_prompt_caching(config):
     config['provider']['anthropic']['options']['setCacheKey'] = True
 
 
+def _persist_managed_external_directories(config):
+    """Persist managed path allows for built-in agents and live config reloads.
+
+    The plugin applies the same rules at startup, including per-agent overrides.
+    Persisting the top-level rules also covers OpenCode's built-in delegated
+    agents and lets a running process observe updated policy when config reload
+    is available. Keep this list aligned with config-hook.mjs.
+    """
+    permission = config.get('permission')
+    if isinstance(permission, str):
+        permission = {'*': permission, 'external_directory': {'*': permission}}
+        config['permission'] = permission
+    elif not isinstance(permission, dict):
+        permission = {}
+        config['permission'] = permission
+
+    existing = permission.get('external_directory')
+    if existing == 'allow':
+        return
+    rules = {'*': existing} if isinstance(existing, str) else dict(existing or {})
+    managed_paths = (
+        '~/.aidevops',
+        '~/.aidevops/**',
+        '~/.config/aidevops',
+        '~/.config/aidevops/**',
+        '~/Git/_worktrees',
+        '~/Git/_worktrees/**',
+    )
+    for path in managed_paths:
+        rules.pop(path, None)
+        rules[path] = 'allow'
+    permission['external_directory'] = rules
+
+
 def output_opencode_json():
     """Write agent config to opencode.json."""
     import shutil
@@ -100,6 +134,7 @@ def output_opencode_json():
     _merge_instructions(config)
     _ensure_plugin_registered(config)
     _enable_prompt_caching(config)
+    _persist_managed_external_directories(config)
 
     config.setdefault('mcp', {})
     config.setdefault('tools', {})
