@@ -129,8 +129,8 @@ out=$("$HELPER" patterns 2>&1) || true
 assert_contains "patterns: shows session ID"         "$out" "sess-A"
 assert_contains "patterns: shows total calls"        "$out" "9 total"
 assert_contains "patterns: shows error count"        "$out" "2 error"
-assert_contains "patterns: flags file-reread loop"   "$out" "/repo/b.sh"
-assert_contains "patterns: hint on reread loops"     "$out" "re-read loop"
+assert_contains "patterns: reports repeated-path evidence" "$out" "/repo/b.sh"
+assert_contains "patterns: requires contextual interpretation" "$out" "Interpret in context"
 
 printf '\n%s=== errors ===%s\n' "$GREEN" "$NC"
 out=$("$HELPER" errors 2>&1) || true
@@ -162,10 +162,10 @@ if command -v jq >/dev/null 2>&1; then
 	fi
 
 	out=$("$HELPER" patterns --json 2>&1) || true
-	if printf '%s' "$out" | jq -e '.file_rereads.hot | length > 0' >/dev/null 2>&1; then
-		pass "patterns --json: surfaces hot reread paths"
+	if printf '%s' "$out" | jq -e '.repeated_file_access.evidence | length > 0' >/dev/null 2>&1; then
+		pass "patterns --json: surfaces repeated-path evidence"
 	else
-		fail "patterns --json: missing file_rereads.hot" "$out"
+		fail "patterns --json: missing repeated_file_access.evidence" "$out"
 	fi
 
 	out=$("$HELPER" sessions --json 2>&1) || true

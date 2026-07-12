@@ -68,6 +68,7 @@ if [[ -n "${TEST_GH_TRACE:-}" ]]; then
 fi
 
 if [[ "${1:-}" == "auth" && "${2:-}" == "status" ]]; then
+	[[ "${TEST_AUTH_STATUS_FAIL:-0}" == "1" ]] && exit 1
 	exit 0
 fi
 
@@ -81,7 +82,7 @@ if [[ "${1:-}" == "issue" && "${2:-}" == "create" ]]; then
 	exit 0
 fi
 
-if [[ "${1:-}" == "api" && "${2:-}" == "user" ]]; then
+if [[ "${1:-}" == "api" && "${2:-}" == "graphql" ]]; then
 	printf '"testuser"\n'
 	exit 0
 fi
@@ -177,6 +178,13 @@ run_case "not-a-number" "https://github.com/marcusquinn/aidevops/issues/9002" "$
 malformed_text=$(<"$malformed_output")
 assert_contains "$malformed_text" "status=created" "malformed duplicate result continues to issue creation"
 assert_not_contains "$malformed_text" "status=duplicate" "malformed duplicate result is not duplicate"
+
+api_auth_output="${TMP_DIR}/api-auth.out"
+TEST_AUTH_STATUS_FAIL=1 run_case "[]" \
+	"https://github.com/marcusquinn/aidevops/issues/9004" "${TMP_DIR}" "$api_auth_output"
+api_auth_text=$(<"$api_auth_output")
+assert_contains "$api_auth_text" "status=created" \
+	"working API token overrides stale keyring auth status"
 
 valid_output="${TMP_DIR}/valid.out"
 run_case "12345" "https://github.com/marcusquinn/aidevops/issues/9003" "${TMP_DIR}" "$valid_output"

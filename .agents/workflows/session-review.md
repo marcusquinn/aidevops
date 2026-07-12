@@ -20,7 +20,7 @@ tools:
 
 **Purpose**: Review current session for completeness, workflow adherence, and knowledge capture.
 **Trigger**: `/session-review [focus]` — focus: `objectives | workflow | knowledge | all` (default). Run at end of significant work, before ending session, or after Ralph loop completion.
-**Output**: Completion score (0-100%), outstanding items, value extraction report, knowledge capture recommendations, session continuation advice.
+**Output**: Completion score (0-100%), outstanding items, value extraction report, evidence-based friction/efficiency retrospective, knowledge capture recommendations, session continuation advice.
 
 <!-- AI-CONTEXT-END -->
 
@@ -96,6 +96,26 @@ Output: practices followed, practices missed with recommendations.
 Output: newly captured items with locations, already-captured items, unfinished threads with created TODOs/issues.
 
 ### Step 6: Session Health Assessment
+
+Before assessing whether to end, run an evidence-based efficiency retrospective:
+
+```bash
+session-introspect-helper.sh patterns
+report-token-use-helper.sh --help
+rtk-helper.sh --adoption-report
+```
+
+Use only the commands relevant and available for the current runtime. Review:
+
+1. lifecycle friction (prompts, policy blocks, retries, duplicate work, manual steps, noisy waits, version drift);
+2. token-use mechanisms already active (narrow queries, RTK, caches, compaction, subagents, summaries) and whether each avoided work or caused fallback;
+3. comprehension safeguards (requirements retained, causal context understood, review and verification complete, no unexplained rediscovery);
+4. unexpected outliers, including useful or harmful behaviour outside known categories.
+
+Do not assign arbitrary problem thresholds or optimise for minimum tokens. Compare
+similar sessions/stages only when the comparison is meaningful. Output evidence,
+interpretation, trade-offs, and at most one deduplicated systemic recommendation
+per mechanism; route it through the existing self-improvement workflow.
 
 | Signal | Recommendation |
 |--------|----------------|
