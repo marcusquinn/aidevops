@@ -717,9 +717,9 @@ _set_origin_label_rest() {
 	local _label
 	for _label in "${ORIGIN_LABELS[@]}"; do
 		[[ "$_label" == "$new_origin" ]] && continue
-		gh api -X DELETE "/repos/${repo_slug}/issues/${issue_num}/labels/origin:${_label}" >/dev/null 2>&1 || true
+		_gh_with_timeout write gh api -X DELETE "/repos/${repo_slug}/issues/${issue_num}/labels/origin:${_label}" >/dev/null 2>&1 || true
 	done
-	gh api -X POST "/repos/${repo_slug}/issues/${issue_num}/labels" \
+	_gh_with_timeout write gh api -X POST "/repos/${repo_slug}/issues/${issue_num}/labels" \
 		-f "labels[]=origin:${new_origin}" >/dev/null 2>&1 || return 1
 	if [[ $# -gt 0 ]]; then
 		if command -v _rest_issue_edit >/dev/null 2>&1; then
@@ -795,11 +795,11 @@ set_origin_label() {
 
 	local _err_file
 	_err_file=$(mktemp -t aidevops-origin-label.XXXXXX) || {
-		gh "$gh_cmd" edit "$issue_num" --repo "$repo_slug" "${_flags[@]}" 2>/dev/null
+		_gh_with_timeout write gh "$gh_cmd" edit "$issue_num" --repo "$repo_slug" "${_flags[@]}" 2>/dev/null
 		return $?
 	}
 	local _gh_rc=0
-	if gh "$gh_cmd" edit "$issue_num" --repo "$repo_slug" "${_flags[@]}" 2>"$_err_file"; then
+	if _gh_with_timeout write gh "$gh_cmd" edit "$issue_num" --repo "$repo_slug" "${_flags[@]}" 2>"$_err_file"; then
 		rm -f "$_err_file"
 		return 0
 	else
@@ -822,10 +822,10 @@ set_origin_label() {
 ensure_solved_labels_exist() {
 	local repo="$1"
 	[[ -z "$repo" ]] && return 1
-	gh label create "solved:worker" --repo "$repo" \
+	_gh_with_timeout write gh label create "solved:worker" --repo "$repo" \
 		--description "Task was solved by a headless worker" \
 		--color "0E8A16" 2>/dev/null || true
-	gh label create "solved:interactive" --repo "$repo" \
+	_gh_with_timeout write gh label create "solved:interactive" --repo "$repo" \
 		--description "Task was solved by an interactive session" \
 		--color "BFD4F2" 2>/dev/null || true
 	return 0
