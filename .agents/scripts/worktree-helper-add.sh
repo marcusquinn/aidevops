@@ -663,8 +663,9 @@ _parse_cmd_add_args() {
 
 # Refresh an origin branch from linked-worktree context so the canonical Git
 # guard remains intact. If no linked worktree exists yet, create a short-lived
-# detached bootstrap worktree from the existing remote-tracking ref, fetch from
-# there, then remove it from that linked context.
+# detached bootstrap worktree from HEAD, fetch from there, then remove it from
+# that linked context. HEAD remains available when the remote-tracking ref has
+# not been created locally yet.
 # Args: branch name
 #######################################
 _worktree_refresh_origin_branch() {
@@ -694,7 +695,7 @@ _worktree_refresh_origin_branch() {
 		repo_name=$(basename "$current_root")
 		mkdir -p "$base_dir" || return 1
 		bootstrap_path="${base_dir}/.${repo_name}-fetch-$$"
-		if ! git worktree add --detach "$bootstrap_path" "refs/remotes/origin/${branch}" >/dev/null 2>&1; then
+		if ! git worktree add -q --detach "$bootstrap_path" HEAD; then
 			return 1
 		fi
 		fetch_cwd="$bootstrap_path"
