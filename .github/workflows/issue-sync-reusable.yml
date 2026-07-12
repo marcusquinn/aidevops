@@ -90,6 +90,7 @@ jobs:
           EVENT_ACTION: ${{ github.event.action || '' }}
           EVENT_MERGED: ${{ github.event.pull_request.merged || false }}
           EVENT_SUBJECT_ID: ${{ github.event.issue.node_id || github.event.pull_request.node_id || github.event.after || inputs.subject_id }}
+          EVENT_DISPLAY_NUMBER: ${{ github.event.issue.number || github.event.pull_request.number || '' }}
           EVENT_CURSOR: ${{ github.event.issue.updated_at || github.event.pull_request.updated_at || github.event.head_commit.timestamp || inputs.cursor }}
           EVENT_DELIVERY_ID: run-${{ github.run_id }}
           EVENT_CURSOR_TIEBREAKER: run-${{ github.run_id }}-attempt-${{ github.run_attempt }}
@@ -99,6 +100,7 @@ jobs:
           REPOSITORY_SLUG: ${{ github.repository }}
           REPOSITORY_PATH: ${{ github.workspace }}
         run: |
+          bash __aidevops/.agents/scripts/forge-event-mapping-helper.sh
           bash __aidevops/.agents/scripts/forge-event-helper.sh
           bash __aidevops/.agents/scripts/task-publication-worker-helper.sh run
 

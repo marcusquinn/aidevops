@@ -21,6 +21,7 @@ assert "forge-event" in jobs
 assert {"sync-on-push", "sync-on-issue", "manual-sync", "sync-on-pr-merge", "label-pr", "check-issue-link", "guard-persistent-issues", "label-closure-reason"} <= set(jobs)
 normal = yaml.safe_dump(jobs["forge-event"])
 assert "forge-event-helper.sh" in normal
+assert "forge-event-mapping-helper.sh" in normal
 assert "task-publication-worker-helper.sh" in normal
 assert "forge-coordinator-state-helper.sh" in normal
 assert "upload-artifact" in normal
