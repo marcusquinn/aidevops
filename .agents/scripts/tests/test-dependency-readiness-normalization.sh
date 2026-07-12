@@ -178,6 +178,40 @@ built_graph=$(_dep_graph_build_repo_data "owner/repo")
 assert_eq "repo graph build prunes circular dependency" '[]' \
 	"$(printf '%s' "$built_graph" | jq -c '.blocked_by["10"].issue_nums')"
 
+# The shared candidate selector must recover an all-blocked roadmap even when
+# called directly by a workers sweep without the full pulse preflight.
+# shellcheck disable=SC1090
+source "${SCRIPTS_DIR}/pulse-repo-meta.sh"
+candidate_fetch_file="${TMP_ROOT}/candidate-fetch-count"
+normalization_file="${TMP_ROOT}/normalization-count"
+printf '0\n' >"$candidate_fetch_file"
+printf '0\n' >"$normalization_file"
+export candidate_fetch_file normalization_file
+gh_issue_list() {
+	local candidate_fetch_count=""
+	candidate_fetch_count=$(<"$candidate_fetch_file")
+	candidate_fetch_count=$((candidate_fetch_count + 1))
+	printf '%s\n' "$candidate_fetch_count" >"$candidate_fetch_file"
+	if [[ "$candidate_fetch_count" -eq 1 ]]; then
+		printf '%s\n' '[{"number":20,"title":"next child","url":"","updatedAt":"2026-07-11T00:00:00Z","assignees":[],"labels":[{"name":"auto-dispatch"},{"name":"status:blocked"}]},{"number":30,"title":"unrelated work","url":"","updatedAt":"2026-07-11T00:00:00Z","assignees":[],"labels":[{"name":"auto-dispatch"},{"name":"status:available"}]}]'
+	else
+		printf '%s\n' '[{"number":20,"title":"next child","url":"","updatedAt":"2026-07-11T00:00:00Z","assignees":[],"labels":[{"name":"auto-dispatch"},{"name":"status:available"}]},{"number":30,"title":"unrelated work","url":"","updatedAt":"2026-07-11T00:00:00Z","assignees":[],"labels":[{"name":"auto-dispatch"},{"name":"status:available"}]}]'
+	fi
+	return 0
+}
+normalize_repo_dependency_readiness_if_due() {
+	local normalization_count=""
+	normalization_count=$(<"$normalization_file")
+	normalization_count=$((normalization_count + 1))
+	printf '%s\n' "$normalization_count" >"$normalization_file"
+	return 0
+}
+export -f gh_issue_list normalize_repo_dependency_readiness_if_due
+recovered_candidates=$(list_dispatchable_issue_candidates_json "owner/repo" 100)
+assert_eq "all-blocked roadmap triggers dependency normalization" "1" "$(<"$normalization_file")"
+assert_eq "next dependency-ready child reaches shared candidate stream" "20" \
+	"$(printf '%s' "$recovered_candidates" | jq -r 'map(select(.number == 20))[0].number')"
+
 status_write=""
 view_counter_file="${TMP_ROOT}/unblock-view-count"
 printf '0\n' >"$view_counter_file"
