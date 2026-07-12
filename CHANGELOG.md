@@ -10,6 +10,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.32.36] - 2026-07-12
+
+### Changed
+
+- Make dispatch handoff an atomic expiring lease (#27286)
+- preserve roadmap and first-turn progress (#27283)
+- Tests: align top-app fixture with completed days (#27285)
+- Maintenance: sync ref:GH#27275 to TODO.md [skip ci]
+- validate causal evidence in bug reports (#27274)
+
+### Fixed
+
+- complete GPT-5.6 model limits (#27282)
+
 ## [3.32.35] - 2026-07-12
 
 ### Changed
