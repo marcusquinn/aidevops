@@ -42,6 +42,7 @@ cmd_prune() {
 	local max_count="${AIDEVOPS_MEMORY_MAX_COUNT:-10000}"
 	local max_bytes="${AIDEVOPS_MEMORY_MAX_BYTES:-52428800}"
 	local dry_run=false
+	local keep_accessed=true
 	local ai_judged=false
 
 	while [[ $# -gt 0 ]]; do
@@ -63,6 +64,7 @@ cmd_prune() {
 			shift
 			;;
 		--include-accessed)
+			keep_accessed=false
 			shift
 			;;
 		--ai-judged)
@@ -89,6 +91,9 @@ cmd_prune() {
 		log_info "Hard age retention applies before relevance judgment; accessed records cannot escape the age bound"
 	fi
 	_prune_flat_threshold "$older_than_days" "$dry_run"
+	if [[ "$ai_judged" == true ]]; then
+		_prune_ai_judged "$older_than_days" "$dry_run" "$keep_accessed"
+	fi
 	_enforce_retention_budgets "$max_count" "$max_bytes" "$dry_run"
 
 	return 0

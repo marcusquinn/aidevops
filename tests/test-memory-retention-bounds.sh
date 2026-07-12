@@ -36,4 +36,10 @@ memory prune --older-than-days 99999 --max-count 100 --max-bytes 1 >/dev/null
 [[ "$(sqlite3 "$db" 'SELECT COUNT(*) FROM observations;')" == "4" ]]
 [[ "$(sqlite3 "$db" 'SELECT COUNT(*) FROM observation_sources;')" == "4" ]]
 
-printf 'PASS: age, count, and byte retention bounds preserve canonical audit evidence\n'
+# AI-judged mode must execute the relevance pass after enforcing the hard age bound.
+prune_source="$REPO_ROOT/.agents/scripts/memory/maintenance-prune.sh"
+flat_line=$(grep -n "_prune_flat_threshold \"\$older_than_days\" \"\$dry_run\"" "$prune_source" | sed -n '1s/:.*//p')
+ai_line=$(grep -n "_prune_ai_judged \"\$older_than_days\" \"\$dry_run\" \"\$keep_accessed\"" "$prune_source" | sed -n '1s/:.*//p')
+[[ -n "$flat_line" && -n "$ai_line" && "$flat_line" -lt "$ai_line" ]]
+
+printf 'PASS: age, AI relevance, count, and byte retention bounds preserve canonical audit evidence\n'
