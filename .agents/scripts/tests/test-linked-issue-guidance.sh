@@ -41,7 +41,15 @@ assert_contains ".github/PULL_REQUEST_TEMPLATE.md" 'Closes #NNN' "PR template cl
 assert_contains ".github/PULL_REQUEST_TEMPLATE.md" 'Ref #NNN' "PR template reference keyword"
 assert_contains ".agents/scripts/commands/log-issue-aidevops.md" 'For #NNN.*Ref #NNN' "command log issue PR reference guidance"
 assert_contains ".agents/workflows/log-issue-aidevops.md" 'For #NNN.*Ref #NNN' "workflow log issue PR reference guidance"
-assert_contains ".github/workflows/linked-issue-check.yml" "state: 'failure'" "linked issue status gate remains blocking"
+assert_contains ".github/workflows/linked-issue-check.yml" "publishStatus\('failure'" "linked issue status gate remains blocking"
 assert_not_contains ".github/workflows/linked-issue-check.yml" 'core\.setFailed' "linked issue policy gate avoids workflow failure"
+assert_contains ".github/workflows/linked-issue-check.yml" "state === 'success' && exhausted" "positive linked issue result tolerates exhausted API quota"
+assert_contains ".github/workflows/linked-issue-check.yml" 'throw error' "negative linked issue result still fails closed"
+
+assert_contains ".github/workflows/review-bot-gate-reusable.yml" 'RESULT="INFRA_RATE_LIMITED"' "review gate classifies API exhaustion truthfully"
+assert_contains ".github/workflows/review-bot-gate-reusable.yml" "result != 'INFRA_RATE_LIMITED'" "review gate avoids follow-up API label lookup during exhaustion"
+assert_contains ".github/workflows/review-bot-gate-reusable.yml" 'skipping immediate status retry' "review gate avoids retry loop during exhaustion"
+assert_contains ".github/workflows/review-bot-gate-reusable.yml" 'infrastructure wait — GitHub API quota exhausted' "review status reports infrastructure wait truthfully"
+assert_not_contains ".github/workflows/review-bot-gate-reusable.yml" 'sleep 5 && gh api' "review gate removed blind status retry"
 
 exit 0
