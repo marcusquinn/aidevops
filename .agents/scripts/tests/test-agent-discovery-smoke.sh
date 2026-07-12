@@ -120,6 +120,44 @@ test_agent_discovery_runs() {
 	return 0
 }
 
+test_opencode_config_persists_managed_directory_permissions() {
+	local fake_home="$TEST_DIR/fake-home"
+	local config_path="$fake_home/.config/opencode/opencode.json"
+	local output
+	if ! output=$(run_discovery_script "$SCRIPTS_DIR/agent-discovery.py" \
+		dummy opencode-json 2>&1); then
+		print_result "OpenCode config persists managed external directories" 1 "$output"
+		return 0
+	fi
+
+	if HOME="$fake_home" python3 - "$config_path" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as handle:
+    config = json.load(handle)
+
+rules = config["permission"]["external_directory"]
+expected = (
+    "~/.aidevops",
+    "~/.aidevops/**",
+    "~/.config/aidevops",
+    "~/.config/aidevops/**",
+    "~/Git/_worktrees",
+    "~/Git/_worktrees/**",
+)
+assert all(rules.get(path) == "allow" for path in expected)
+assert "~/.config/opencode" not in rules
+PY
+	then
+		print_result "OpenCode config persists managed external directories" 0
+	else
+		print_result "OpenCode config persists managed external directories" 1 \
+			"managed rules missing or sensitive OpenCode config was over-allowed"
+	fi
+	return 0
+}
+
 test_opencode_agent_discovery_runs() {
 	local output
 	if output=$(run_discovery_script \
@@ -223,6 +261,7 @@ PYEOF
 main() {
 	setup
 	test_agent_discovery_runs
+	test_opencode_config_persists_managed_directory_permissions
 	test_opencode_agent_discovery_runs
 	test_missing_subagent_warning
 	test_validate_subagent_refs_default_arg
