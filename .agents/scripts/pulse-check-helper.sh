@@ -118,7 +118,7 @@ _run_json_helper() {
 _scan_auto_dispatch_queue() {
 	if [[ ! -f "$QUEUE_SCANNER" ]]; then
 		print_error "pulse-check: queue scanner not found: ${QUEUE_SCANNER}"
-		printf '{"aggregate":{"repos":0,"auto_dispatch_open":0,"available_unassigned":0,"available_old":0,"oldest_available_age_min":0,"repos_with_available":0,"queued":0,"assigned":0,"blocked_labels":0,"needs_tier":0,"needs_status":0,"parent_task":0,"nmr":0,"no_auto_dispatch":0,"gh_errors":0},"error":"queue_scanner_missing"}\n'
+		printf '{"aggregate":{"repos":0,"auto_dispatch_open":0,"available_unassigned":0,"available_old":0,"oldest_available_age_min":0,"repos_with_available":0,"queued":0,"assigned":0,"blocked_labels":0,"dependency_inconsistent_available":0,"needs_tier":0,"needs_status":0,"parent_task":0,"nmr":0,"no_auto_dispatch":0,"gh_errors":0},"error":"queue_scanner_missing"}\n'
 		return 0
 	fi
 

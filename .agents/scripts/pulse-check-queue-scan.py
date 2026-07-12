@@ -15,9 +15,16 @@ import subprocess
 import sys
 from typing import Any, Optional
 
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+import pulse_check_dependencies as dependency_scan
+
 AGGREGATE_KEY = "aggregate"
 ERROR_KEY = "error"
 GH_ERRORS_KEY = "gh_errors"
+NATIVE_ABSENT = dependency_scan.NATIVE_ABSENT
+NATIVE_CLEAR = dependency_scan.NATIVE_CLEAR
+NATIVE_UNKNOWN = dependency_scan.NATIVE_UNKNOWN
+NATIVE_UNRESOLVED = dependency_scan.NATIVE_UNRESOLVED
 REPO_SLUG_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 BLOCKING_LABELS = frozenset({
     "parent-task",
@@ -28,8 +35,6 @@ BLOCKING_LABELS = frozenset({
     "status:blocked",
     "status:in-review",
 })
-
-
 def _int_from_env(name: str, default: int) -> int:
     try:
         return int(os.environ.get(name, str(default)))
@@ -48,6 +53,7 @@ def _empty_aggregate() -> dict[str, int]:
         "queued": 0,
         "assigned": 0,
         "blocked_labels": 0,
+        "dependency_inconsistent_available": 0,
         "needs_tier": 0,
         "needs_status": 0,
         "parent_task": 0,
@@ -113,7 +119,7 @@ def _fetch_repo_issues(slug: str, max_issues: int) -> Optional[list[dict[str, An
         "--state", "open",
         "--label", "auto-dispatch",
         "--limit", str(max_issues),
-        "--json", "number,title,labels,assignees,updatedAt",
+        "--json", "number,title,body,labels,assignees,updatedAt",
     ]
     if _valid_repo_slug(slug):
         try:
@@ -137,6 +143,22 @@ def _fetch_repo_issues(slug: str, max_issues: int) -> Optional[list[dict[str, An
     return issues
 
 
+_run_gh_json = dependency_scan._run_gh_json
+_native_dependency_state = dependency_scan._native_dependency_state
+
+
+def _dependency_diagnostic(slug: str, issue: dict[str, Any]) -> tuple[bool, bool]:
+    # Preserve the scanner's monkeypatch seam used by focused diagnostics tests.
+    dependency_scan._run_gh_json = _run_gh_json
+    dependency_scan._native_dependency_state = _native_dependency_state
+    return dependency_scan.dependency_diagnostic(slug, issue)
+
+
+def _dependency_inconsistent(slug: str, issue: dict[str, Any]) -> bool:
+    inconsistent, _ = _dependency_diagnostic(slug, issue)
+    return inconsistent
+
+
 def _count_issue(
     aggregate: dict[str, int],
     issue: dict[str, Any],
@@ -146,16 +168,18 @@ def _count_issue(
     labels = _issue_labels(issue)
     assigned = bool(issue.get("assignees"))
     blocked = bool(labels & BLOCKING_LABELS)
+    dependency_inconsistent = bool(issue.get("dependency_inconsistent"))
     aggregate["auto_dispatch_open"] += 1
     aggregate["assigned"] += int(assigned)
     aggregate["queued"] += int("status:queued" in labels)
     aggregate["needs_tier"] += int(not any(label.startswith("tier:") for label in labels))
     aggregate["needs_status"] += int(not any(label.startswith("status:") for label in labels))
     aggregate["blocked_labels"] += int(blocked)
+    aggregate["dependency_inconsistent_available"] += int(dependency_inconsistent)
     aggregate["parent_task"] += int("parent-task" in labels)
     aggregate["nmr"] += int("needs-maintainer-review" in labels)
     aggregate["no_auto_dispatch"] += int("no-auto-dispatch" in labels)
-    available = "status:available" in labels and not assigned and not blocked
+    available = "status:available" in labels and not assigned and not blocked and not dependency_inconsistent
     if available:
         aggregate["available_unassigned"] += 1
         age_min = _issue_age_minutes(issue, now)
@@ -176,6 +200,10 @@ def _scan_repo(
     if issues is None:
         aggregate[GH_ERRORS_KEY] += 1
         return
+    for issue in issues:
+        inconsistent, scan_error = _dependency_diagnostic(slug, issue)
+        issue["dependency_inconsistent"] = inconsistent
+        aggregate[GH_ERRORS_KEY] += int(scan_error)
     repo_available = sum(int(_count_issue(aggregate, issue, now, old_minutes)) for issue in issues)
     aggregate["repos_with_available"] += int(repo_available > 0)
 
