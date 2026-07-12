@@ -54,7 +54,7 @@ Exit 0 means structural linked-worktree checks passed. A worker environment vari
 
 **Operation Verification (t1364.3):** `verify-operation-helper.sh check/verify`. Critical/high → block or verify.
 
-Start: `~/.aidevops/agents/scripts/full-loop-helper.sh start "$ARGUMENTS" --background`. `--headless` / `FULL_LOOP_HEADLESS=true`: no prompts, no TODO.md edits.
+Start: `~/.aidevops/agents/scripts/full-loop-helper.sh start "$ARGUMENTS" --background`. Here `--background` means local asynchronous execution, not remote worker dispatch. Issue-started interactive sessions preserve their local-only marker through that child and reject headless/remote-worker routing. `--headless` / `FULL_LOOP_HEADLESS=true`: no prompts, no TODO.md edits.
 
 ---
 
@@ -192,7 +192,7 @@ Check gate without merging: `full-loop-helper.sh pre-merge-gate "$PR_NUMBER" "$R
 
 | Option | Description |
 |--------|-------------|
-| `--background`, `--bg` | Run in background (recommended) |
+| `--background`, `--bg` | Run asynchronously in this local session (recommended; never dispatches a worker) |
 | `--headless` | Fully headless worker mode |
 | `--dry-run` | Simulate without making changes |
 | `--max-task-iterations N` | Max task iterations (default: 50) |

@@ -65,6 +65,14 @@ recovery ladder, terminal exceptions, and completion review:
 
 ## Conversation Intent Routing
 
+**Issue-start override:** Once `interactive-start-helper.sh` starts implementation
+for an issue, that local context is authoritative. It exports
+`AIDEVOPS_INTERACTIVE_ISSUE_IMPLEMENTATION=1`, claims with `--implementing`, and
+treats background execution as local asynchronous work. Generic background/worker
+intent must not redispatch that issue; headless and remote-worker routes reject the
+marker. Sessions that only inspect an issue do not set the marker and remain
+eligible for ordinary pulse dispatch.
+
 Natural-language task capture must be as explicit as slash commands. When a user gives work that could become a TODO or issue, first classify the intent:
 
 | User signal | Route | Confirmation |
@@ -140,7 +148,7 @@ Do not end a save flow with only "start anytime" when the task is worker-ready; 
 
 **`origin:interactive` also skips pulse dispatch (GH#18352)**: When an issue carries `origin:interactive` AND has any human assignee, the pulse's deterministic dedup guard (`dispatch-dedup-helper.sh is-assigned`) treats the assignee as blocking — even if that assignee is the repo owner or maintainer, and regardless of the current `status:*` label. This closes the race where an interactive session claimed a task via `claim-task-id.sh` (applying `status:claimed` + owner assignment) and the pulse dispatched a duplicate worker before the session could open its PR. The full active lifecycle is now recognised: `status:queued`, `status:in-progress`, `status:in-review`, and `status:claimed` all keep owner/maintainer assignees in the blocking set.
 
-**Implementing a `#auto-dispatch` task interactively (MANDATORY):** Start with `interactive-start-helper.sh --issue N --repo owner/repo --task "description" --auto-dispatch`. It claims with `--implementing`, runs the pre-edit loop check, and starts full-loop before any code is written.
+**Implementing a `#auto-dispatch` task interactively (MANDATORY):** Start with `interactive-start-helper.sh --issue N --repo owner/repo --task "description" --auto-dispatch`. All issue-started implementations claim with `--implementing`, export the local-only implementation marker, run the pre-edit loop check, and start full-loop before any code is written. External repositories skip managed issue mutations but still continue local implementation and the normal contribution PR flow.
 
 **General dedup rule — combined signal (t1996):** The dispatch dedup signal is `(active status label) AND (non-self assignee)` — both required, neither sufficient alone. Every code path that emits a dispatch claim must consult `dispatch-dedup-helper.sh is-assigned` (or apply an equivalent combined check inline) before assigning a worker. Label-only or assignee-only filters are not safe in multi-operator conditions. Specifically:
 - A status label without an assignee = degraded state (worker died mid-claim) — safe to reclaim after `normalize_active_issue_assignments` / stale recovery.

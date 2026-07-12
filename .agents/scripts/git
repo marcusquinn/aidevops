@@ -21,7 +21,10 @@ resolve_real_git() {
 		local candidate_real=""
 		candidate_real=$(python3 -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "$candidate" 2>/dev/null || true)
 		case "$candidate_real" in
-		*/.aidevops/agents/scripts/git | */.agents/scripts/git) continue ;;
+		# Every aidevops runtime bundle contains this wrapper. Reject all of
+		# them, not only the deployed and source-tree paths, or concurrent
+		# runtime bundles can select each other and recurse indefinitely.
+		*/agents/scripts/git | */.agents/scripts/git) continue ;;
 		esac
 		printf '%s' "$candidate"
 		return 0
