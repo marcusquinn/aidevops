@@ -79,10 +79,22 @@ create_fake_repo() {
 	local repo_name="$1"
 	local remote_url="$2"
 	local repo_path="$TEST_DIR/$repo_name"
+	local git_bin=""
+	local git_bin_dir
+	local git_candidate
+	while IFS= read -r git_candidate; do
+		case "$git_candidate" in
+		*/.aidevops/*) continue ;;
+		esac
+		git_bin="$git_candidate"
+		break
+	done < <(type -aP git)
+	[[ -n "$git_bin" ]] || return 1
+	git_bin_dir=$(dirname "$git_bin")
 
 	mkdir -p "$repo_path"
-	PATH=/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin git init -q "$repo_path"
-	PATH=/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin git -C "$repo_path" remote add origin "$remote_url"
+	PATH="$git_bin_dir:/usr/bin:/bin" git init -q "$repo_path"
+	PATH="$git_bin_dir:/usr/bin:/bin" git -C "$repo_path" remote add origin "$remote_url"
 	printf '%s\n' "$repo_path"
 	return 0
 }
