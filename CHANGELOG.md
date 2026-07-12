@@ -10,6 +10,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.32.53] - 2026-07-12
+
+### Changed
+
+- Maintenance: update simplification state registry
+
+### Fixed
+
+- allow OpenCode Grep without prompts (#27324)
+
 ## [3.32.52] - 2026-07-12
 
 ### Changed
