@@ -21,6 +21,47 @@ import {
   GPT56_OUTPUT_DEFAULT,
 } from "./model-limits.mjs";
 
+const MANAGED_EXTERNAL_DIRECTORIES = [
+  "~/.aidevops",
+  "~/.aidevops/**",
+  "~/.config/aidevops",
+  "~/.config/aidevops/**",
+  "~/Git/_worktrees",
+  "~/Git/_worktrees/**",
+];
+
+/**
+ * Allow OpenCode to use aidevops-managed state and linked worktrees without
+ * repeatedly asking for external-directory approval. Keep the exception
+ * narrow: unrelated paths retain the user's existing permission policy.
+ * @param {object} config - OpenCode Config object (mutable)
+ * @returns {number} number of managed allow rules added or corrected
+ */
+export function registerManagedDirectoryPermissions(config) {
+  if (typeof config.permission === "string") {
+    config.permission = { external_directory: { "*": config.permission } };
+  } else if (!config.permission) {
+    config.permission = {};
+  }
+
+  const existing = config.permission.external_directory;
+  if (existing === "allow") return 0;
+
+  const rules = typeof existing === "string"
+    ? { "*": existing }
+    : { ...existing };
+  let count = 0;
+  for (const path of MANAGED_EXTERNAL_DIRECTORIES) {
+    if (rules[path] !== "allow") count++;
+    // OpenCode uses the last matching rule, so managed exceptions must follow
+    // broad user defaults such as `"*": "ask"`.
+    delete rules[path];
+    rules[path] = "allow";
+  }
+  config.permission.external_directory = rules;
+  return count;
+}
+
 /**
  * Shared model definition template for Claude models managed by aidevops.
  * @param {object} overrides
@@ -309,6 +350,7 @@ function logConfigSummary(counts) {
     [counts.agents, "agents"],
     [counts.mcps, "MCPs"],
     [counts.agentTools, "agent tool perms"],
+    [counts.directories, "managed directory perms"],
     [counts.poolCleaned, `cleaned ${counts.poolCleaned} stale pool provider${counts.poolCleaned === 1 ? "" : "s"}`],
     [counts.anthropic, "anthropic models"],
     [counts.openai, "OpenAI context limits"],
@@ -356,6 +398,7 @@ export function createConfigHook(deps) {
 
     const mcps = registerMcpServers(config);
     const agentTools = applyAgentMcpTools(config);
+    const directories = registerManagedDirectoryPermissions(config);
     const poolCleaned = registerPoolProvider(config);
     const anthropic = registerAnthropicModels(config);
     const openai = registerGpt56ContextLimits(config);
@@ -393,7 +436,7 @@ export function createConfigHook(deps) {
     const claude = registerClaudeCliModels(config);
 
     logConfigSummary(
-      { agents, mcps, agentTools, poolCleaned, anthropic, openai, cursor, google, claude },
+      { agents, mcps, agentTools, directories, poolCleaned, anthropic, openai, cursor, google, claude },
     );
     logVersionDriftAsync(pluginDir);
   };
