@@ -226,9 +226,18 @@ printf '%s' "$namespaced" | grep -q '^task_count=3$'
 # Shadow mode records the legacy identity but never replaces CAS output.
 (
 	SCRIPT_DIR="${SCRIPT_DIR}/.."
-	log_info() { :; return 0; }
-	log_warn() { :; return 0; }
-	log_error() { :; return 0; }
+	log_info() {
+		:
+		return 0
+	}
+	log_warn() {
+		:
+		return 0
+	}
+	log_error() {
+		:
+		return 0
+	}
 	# shellcheck source=../claim-task-id-counter.sh
 	source "${SCRIPT_DIR}/claim-task-id-counter.sh"
 	AIDEVOPS_TASK_COORDINATOR_MODE=shadow AIDEVOPS_TASK_COORDINATOR_SHADOW_ENABLED=1 _task_coordinator_shadow_legacy 321 1
