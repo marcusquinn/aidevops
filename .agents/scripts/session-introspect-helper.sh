@@ -39,7 +39,7 @@ readonly DEFAULT_OBS_DB="${HOME}/.aidevops/.agent-workspace/observability/llm-re
 readonly DEFAULT_RECENT_N=20
 readonly DEFAULT_SESSIONS_N=10
 readonly DEFAULT_ERRORS_N=10
-readonly FILE_REREAD_THRESHOLD=3
+readonly REPEATED_PATH_MIN_COUNT=2
 
 # =============================================================================
 # Helpers
@@ -250,7 +250,9 @@ cmd_patterns() {
 		ORDER BY n DESC;
 	")
 
-	# File-reread detection — parse filePath from metadata JSON.
+	# Repeated-path evidence — parse filePath from metadata JSON. Two accesses is
+	# the semantic minimum for repetition, not a heuristic problem threshold.
+	# Report the evidence and leave interpretation to the retrospective.
 	# metadata column is an opaque JSON blob; we extract .args.filePath or
 	# .args.file_path where present. Works with both Read and Edit args.
 	local rereads
@@ -263,7 +265,7 @@ cmd_patterns() {
 		WHERE session_id='${sid_esc}' ${since}
 		  AND tool_name IN ('Read','read','Edit','edit','Write','write')
 		GROUP BY fp
-		HAVING fp<>'' AND n >= ${FILE_REREAD_THRESHOLD}
+		HAVING fp<>'' AND n >= ${REPEATED_PATH_MIN_COUNT}
 		ORDER BY n DESC
 		LIMIT 10;
 	")
@@ -303,14 +305,13 @@ _patterns_table() {
 		printf '  (none)\n'
 	fi
 
-	printf '\nFile reread loops (same path read/edited >=%d times):\n' "$FILE_REREAD_THRESHOLD"
+	printf '\nRepeated file access evidence:\n'
 	if [[ -n "$rereads" ]]; then
 		while IFS='|' read -r path n; do
 			[[ -z "$path" ]] && continue
 			printf '  %4sx  %s\n' "$n" "$path"
 		done <<<"$rereads"
-		printf '\nHint: a re-read loop suggests you may be stuck.\n'
-		printf '      Try: git diff, git status, or break out of the loop.\n'
+		printf '\nInterpret in context: verification rereads may be useful; unexplained rediscovery may indicate friction or lost understanding.\n'
 	else
 		printf '  (none detected)\n'
 	fi
@@ -341,13 +342,17 @@ _patterns_json() {
 		--argjson total "${total:-0}" --argjson errors "${errors:-0}" \
 		--argjson avg_dur "${avg_dur:-0}" --arg rate "$rate" \
 		--argjson by_tool "$by_tool_json" --argjson rereads "$rereads_json" \
-		--argjson threshold "$FILE_REREAD_THRESHOLD" '
+		--argjson minimum_repeat_count "$REPEATED_PATH_MIN_COUNT" '
 		{
 			session: $sid,
 			window: { first: $first_ts, last: $last_ts },
 			calls: { total: $total, errors: $errors, rate_per_min: ($rate|tonumber), avg_ms: $avg_dur },
 			by_tool: $by_tool,
-			file_rereads: { threshold: $threshold, hot: $rereads }
+			repeated_file_access: {
+				semantic_minimum: $minimum_repeat_count,
+				evidence: $rereads,
+				classification: "context_required"
+			}
 		}'
 	return 0
 }
@@ -453,7 +458,7 @@ USAGE:
 
 COMMANDS:
     recent [N]       Last N tool calls in the current session (default 20)
-    patterns         Tool distribution, file-reread loops, error rate, calls/min
+    patterns         Tool distribution, repeated-path evidence, errors, calls/min
     errors [N]       Last N failed tool calls with intent (default 10)
     sessions [N]     Recent N sessions with request/cost summary (default 10)
     help             This message
@@ -471,7 +476,7 @@ EXAMPLES:
     # "What have I been doing in the last 5 minutes?"
     session-introspect-helper.sh recent 30 --since 5
 
-    # "Am I stuck in a file-reread loop?"
+    # "Where did repeated access occur, and was it verification or rediscovery?"
     session-introspect-helper.sh patterns
 
     # "Show me my session's error history"
@@ -480,10 +485,10 @@ EXAMPLES:
     # "Summary of the last 5 sessions"
     session-introspect-helper.sh sessions 5 --json | jq '.[].tool_calls'
 
-STUCK-WORKER SIGNALS:
-    - calls/min > 30         Excessive tool chatter
-    - same file read > 3x    Re-read loop (see patterns output)
-    - errors cluster         Recent failures on the same tool (errors output)
+INTERPRETATION:
+    This helper reports evidence, not universal problem thresholds. Compare the
+    task's intent, peer sessions, verification needs, and comprehension outcomes.
+    Preserve unexpected outliers even when they do not fit a known category.
 EOF
 	return 0
 }
