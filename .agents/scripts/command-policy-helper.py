@@ -13,7 +13,7 @@ from typing import Any
 SCRIPT_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(SCRIPT_DIR))
 
-from command_policy_config import (
+from command_policy_config import (  # noqa: F401 -- compatibility facade re-exports
     PolicyError,
     _default_policy_path,
     _decision,
@@ -25,7 +25,7 @@ from command_policy_config import (
     _validate_policy_rules,
     _validate_policy_shape,
 )
-from command_policy_matchers import (
+from command_policy_matchers import (  # noqa: F401 -- compatibility facade re-exports
     _canonical_operand,
     _git_parts,
     _has_flag,
@@ -37,7 +37,7 @@ from command_policy_matchers import (
     _rm_operands,
     _short_flags,
 )
-from command_policy_evaluation import (
+from command_policy_evaluation import (  # noqa: F401 -- compatibility facade re-exports
     _EvaluationOptions,
     _canonical_guard_path,
     _evaluate_canonical_git,
@@ -47,8 +47,8 @@ from command_policy_evaluation import (
     _network_guard_path,
     evaluate_invocations,
 )
-from command_policy_dispatch import CommandParseError, _validate_argv, analyze_network_argv
-from command_policy_http import (
+from command_policy_dispatch import CommandParseError, _validate_argv, analyze_network_argv  # noqa: F401 -- compatibility facade re-exports
+from command_policy_http import (  # noqa: F401 -- compatibility facade re-exports
     _analyze_curl,
     _curl_connect_option,
     _curl_destination_option,
@@ -57,21 +57,21 @@ from command_policy_http import (
     _curl_short_value_index,
     _option_value,
 )
-from command_policy_git import (
+from command_policy_git import (  # noqa: F401 -- compatibility facade re-exports
     _analyze_git,
     _analyze_git_remote,
     _classify_git_candidate,
     _git_network_candidate,
     _record_git_config_overrides,
 )
-from command_policy_network import (
+from command_policy_network import (  # noqa: F401 -- compatibility facade re-exports
     _add_destination,
     _git_effective_cwd,
     _host_candidate,
     _normalize_host,
     _resolve_git_remote,
 )
-from command_policy_transport import (
+from command_policy_transport import (  # noqa: F401 -- compatibility facade re-exports
     _analyze_scp,
     _analyze_ssh,
     _classify_scp_option,
@@ -81,15 +81,15 @@ from command_policy_transport import (
     _ssh_forward_destination,
     _ssh_value_option,
 )
-from command_policy_runtime import (
+from command_policy_runtime import (  # noqa: F401 -- compatibility facade re-exports
     WORKER_ENV_KEYS,
     _argument_parser,
     _network_action,
     _report_policy_error,
     _worker_from_environment,
 )
-from command_policy_wget import _analyze_wget, _wget_arg, _wget_execute_option
-from command_policy_parser import (
+from command_policy_wget import _analyze_wget, _wget_arg, _wget_execute_option  # noqa: F401 -- compatibility facade re-exports
+from command_policy_parser import (  # noqa: F401 -- compatibility facade re-exports
     SHELL_OPERATORS,
     _expand_argv,
     _scan_supported_shell,
@@ -97,7 +97,7 @@ from command_policy_parser import (
     _shell_quote_state,
     _validate_shell_character,
 )
-from command_policy_wrappers import (
+from command_policy_wrappers import (  # noqa: F401 -- compatibility facade re-exports
     SHELLS,
     _consume_option,
     _expand_launcher as _expand_wrapper_launcher,
