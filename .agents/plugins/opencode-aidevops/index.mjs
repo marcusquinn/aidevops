@@ -35,6 +35,7 @@ import { createShellEnvHook } from "./shell-env.mjs";
 import { compactingHook } from "./compaction.mjs";
 import { INTENT_FIELD } from "./intent-tracing.mjs";
 import { createGreetingHandler } from "./greeting.mjs";
+import { createSessionStartGreetingGate } from "./ttsr.mjs";
 import { applyImageSizeGuard } from "./quality-hooks-image.mjs";
 import { createSessionTitleFallbackHandler } from "./session-title-fallback.mjs";
 import { createSessionTitleSuffixHandler } from "./session-title-suffix.mjs";
@@ -247,6 +248,7 @@ export async function AidevopsPlugin({ directory, client }) {
     join(AGENTS_DIR, "configs", "model-routing-table.json"),
   ]);
   const subagentEffortHooks = createSubagentEffortHooks(client, { tierReasoning });
+  const shouldInjectGreeting = createSessionStartGreetingGate(client, isHeadless);
 
   // TTSR hooks
   const {
@@ -261,6 +263,7 @@ export async function AidevopsPlugin({ directory, client }) {
     run,
     intentField: INTENT_FIELD,
     isHeadless,
+    shouldInjectGreeting,
   });
 
   // Lazy-start dispatch table for local proxies. Keys are OpenCode
@@ -324,6 +327,7 @@ export async function AidevopsPlugin({ directory, client }) {
   const greetingHandler = createGreetingHandler({
     scriptsDir: SCRIPTS_DIR,
     client,
+    isHeadless,
   });
   const sessionTitleSuffixHandler = createSessionTitleSuffixHandler({
     agentsDir: AGENTS_DIR,

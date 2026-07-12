@@ -448,6 +448,7 @@ export function createGreetingHandler({
   execGreeting = execAsync,
   maintenanceNoticeFn = getOpenCodeMaintenanceNotice,
   now = Date.now,
+  isHeadless = () => false,
 }) {
   let fired = false;
   const initTime = now();
@@ -456,7 +457,14 @@ export function createGreetingHandler({
 
   return async ({ event }) => {
     if (fired) return;
+    if (isHeadless()) return;
     if (!event || !event.type) return;
+
+    // OpenCode includes session metadata on lifecycle events. A parentID marks
+    // a subagent/subtask session, which must not consume or display the main
+    // interactive session's startup toast.
+    const sessionInfo = event.properties?.info;
+    if (sessionInfo?.parentID) return;
 
     const isPrimary = event.type === "session.created";
     const isFallback =
