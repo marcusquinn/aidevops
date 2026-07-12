@@ -75,6 +75,8 @@ chmod +x "$MOCK_HELPER"
 FAKE_REPO="${TEST_ROOT}/repo"
 mkdir -p "$FAKE_REPO"
 git -C "$FAKE_REPO" init -q
+git -C "$FAKE_REPO" config user.email 'test@example.com'
+git -C "$FAKE_REPO" config user.name 'Test Runner'
 git -C "$FAKE_REPO" remote add origin "https://github.com/testowner/testrepo.git"
 # Need at least one commit for git to work
 echo "init" > "$FAKE_REPO/README.md"
@@ -131,9 +133,9 @@ SCRIPT_DIR="${TEST_SCRIPTS_DIR}"
 # shellcheck source=../task-identity-lib.sh
 source "${TEST_SCRIPTS_DIR}/task-identity-lib.sh"
 
-# Extract only the _interactive_session_auto_claim function from worktree-helper.sh
+# Extract only the _interactive_session_auto_claim function from its sub-library
 # to avoid sourcing the whole file (which has side effects)
-eval "$(sed -n '/^_interactive_session_auto_claim()/,/^}/p' "${TEST_SCRIPTS_DIR}/worktree-helper.sh")"
+eval "$(sed -n '/^_interactive_session_auto_claim()/,/^}/p' "${TEST_SCRIPTS_DIR}/worktree-helper-add.sh")"
 
 # =============================================================================
 # Test helpers
