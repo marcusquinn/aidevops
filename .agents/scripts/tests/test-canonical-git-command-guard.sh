@@ -16,10 +16,22 @@ FAILURES=0
 
 # Fixture setup must bypass the guard under test; policy assertions invoke the
 # shim explicitly below.
-git() { /usr/bin/git "$@"; return $?; }
+git() {
+	/usr/bin/git "$@"
+	return $?
+}
 
-pass() { TESTS=$((TESTS + 1)); printf 'PASS %s\n' "$1"; return 0; }
-fail() { TESTS=$((TESTS + 1)); FAILURES=$((FAILURES + 1)); printf 'FAIL %s\n' "$1"; return 0; }
+pass() {
+	TESTS=$((TESTS + 1))
+	printf 'PASS %s\n' "$1"
+	return 0
+}
+fail() {
+	TESTS=$((TESTS + 1))
+	FAILURES=$((FAILURES + 1))
+	printf 'FAIL %s\n' "$1"
+	return 0
+}
 
 mkdir -p "$REPO"
 git -C "$REPO" init -q -b main
@@ -123,15 +135,40 @@ else
 	[[ "$(/usr/bin/git -C "$REPO" branch --show-current)" == "main" ]] && pass "deployed symlink shim blocks canonical mutation" || fail "symlink shim changed canonical HEAD"
 fi
 
-RUNTIME_A="${TEST_ROOT}/runtime-a/agents/scripts"
-RUNTIME_B="${TEST_ROOT}/runtime-b/agents/scripts"
-mkdir -p "$RUNTIME_A" "$RUNTIME_B"
-ln -s "$SHIM" "${RUNTIME_A}/git"
-ln -s "$SHIM" "${RUNTIME_B}/git"
-if (cd "$REPO" && env PATH="${RUNTIME_A}:${RUNTIME_B}:/usr/bin:/bin" "${RUNTIME_A}/git" status --short >/dev/null); then
-	pass "runtime bundle shim skips other runtime bundle wrappers"
+OLD_BUNDLE="${TEST_ROOT}/.aidevops/runtime-bundles/old/agents/scripts"
+NEW_BUNDLE="${TEST_ROOT}/.aidevops/runtime-bundles/new/agents/scripts"
+mkdir -p "$OLD_BUNDLE" "$NEW_BUNDLE"
+cp "$SHIM" "${OLD_BUNDLE}/git"
+cp "$SHIM" "${NEW_BUNDLE}/git"
+ln -s "$GUARD" "${OLD_BUNDLE}/canonical-git-command-guard.py"
+ln -s "$GUARD" "${NEW_BUNDLE}/canonical-git-command-guard.py"
+ln -s "${SCRIPT_DIR}/canonical_git_policy.py" "${OLD_BUNDLE}/canonical_git_policy.py"
+ln -s "${SCRIPT_DIR}/canonical_git_policy.py" "${NEW_BUNDLE}/canonical_git_policy.py"
+ln -s "${SCRIPT_DIR}/canonical_shell_parser.py" "${OLD_BUNDLE}/canonical_shell_parser.py"
+ln -s "${SCRIPT_DIR}/canonical_shell_parser.py" "${NEW_BUNDLE}/canonical_shell_parser.py"
+if (cd "$REPO" && env PATH="${OLD_BUNDLE}:${NEW_BUNDLE}:/usr/bin:/bin" "${OLD_BUNDLE}/git" status --short >/dev/null); then
+	pass "runtime-bundle shim skips every aidevops shim generation"
 else
-	fail "runtime bundle shim skips other runtime bundle wrappers"
+	fail "runtime-bundle shim skips every aidevops shim generation"
+fi
+
+REENTRY_OUTPUT=$(env AIDEVOPS_CANONICAL_GIT_GUARD_ACTIVE=1 "$SHIM" status 2>&1)
+REENTRY_RC=$?
+if [[ "$REENTRY_RC" -eq 126 && "$REENTRY_OUTPUT" == *"recursive aidevops Git shim invocation"* ]]; then
+	pass "recursive shim re-entry fails immediately with bounded diagnostic"
+else
+	fail "recursive shim re-entry is blocked (rc=$REENTRY_RC output=$REENTRY_OUTPUT)"
+fi
+
+SLOW_GIT="${TEST_ROOT}/slow-git"
+printf '#!/usr/bin/env bash\nsleep 6\n' >"$SLOW_GIT"
+chmod +x "$SLOW_GIT"
+TIMEOUT_OUTPUT=$(python3 "$GUARD" --cwd "$REPO" --argv-json '["status"]' --real-git "$SLOW_GIT" 2>&1)
+TIMEOUT_RC=$?
+if [[ "$TIMEOUT_RC" -eq 42 && "$TIMEOUT_OUTPUT" == *"native Git repository probe timed out"* && "$TIMEOUT_OUTPUT" != *"Traceback"* ]]; then
+	pass "native Git probe timeout fails closed without traceback"
+else
+	fail "native Git probe timeout is bounded (rc=$TIMEOUT_RC output=$TIMEOUT_OUTPUT)"
 fi
 
 LITERAL_REPO="${TEST_ROOT}/repo[1]"
