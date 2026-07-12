@@ -179,7 +179,8 @@ PY
 		insert_app_usage "$sparse_db" "$((now - day * 86400))" "$((now - day * 86400 + 4 * 3600))"
 	done
 	local sparse_json
-	sparse_json=$(AIDEVOPS_SCREEN_TIME_NOW_EPOCH="$now" profile_stats "$sparse_db")
+	mkdir -p "${tmpdir}/sparse-home"
+	sparse_json=$(HOME="${tmpdir}/sparse-home" AIDEVOPS_SCREEN_TIME_NOW_EPOCH="$now" profile_stats "$sparse_db")
 	[[ "$(printf '%s' "$sparse_json" | jq -r '.periods.month.source')" == "macos-knowledge-db:/app/usage-union" ]] || fail "two sparse backlit days incorrectly beat eight app-usage days"
 	[[ "$(printf '%s' "$sparse_json" | jq -r '.month_hours')" == "32" || "$(printf '%s' "$sparse_json" | jq -r '.month_hours')" == "32.0" ]] || fail "relative app coverage duration was not selected"
 	pass "empty sources, explicit zero, and relative sparse-source selection are distinct"
@@ -302,11 +303,25 @@ with open(target, "w", encoding="utf-8") as handle:
     handle.write(row(13 * 3600, "on") + "\n")
     handle.write(row(15 * 3600, "off") + "\n")
 PY
+	local fixture_home="${tmpdir}/pmset-home"
+	mkdir -p "${fixture_home}/.aidevops/.agent-workspace/observability"
+	python3 - "${fixture_home}/.aidevops/.agent-workspace/observability/screen-time.jsonl" "$now" <<'PY'
+import datetime as dt
+import json
+import sys
+
+today = dt.datetime.fromtimestamp(int(sys.argv[2])).date()
+with open(sys.argv[1], "w", encoding="utf-8") as handle:
+    for age in range(1, 29):
+        handle.write(json.dumps({"date": str(today - dt.timedelta(days=age)), "screen_hours": 1}) + "\n")
+PY
 	local output
-	output=$(AIDEVOPS_PMSET_FIXTURE="$fixture" AIDEVOPS_SCREEN_TIME_NOW_EPOCH="$now" profile_stats "$db")
+	output=$(HOME="$fixture_home" AIDEVOPS_PMSET_FIXTURE="$fixture" AIDEVOPS_SCREEN_TIME_NOW_EPOCH="$now" profile_stats "$db")
 	[[ "$(printf '%s' "$output" | jq -r '.today_hours')" == "6" || "$(printf '%s' "$output" | jq -r '.today_hours')" == "6.0" ]] || fail "pmset fallback did not union completed-day display intervals"
 	[[ "$(printf '%s' "$output" | jq -r '.periods.day.source')" == "macos-pmset-display-log" ]] || fail "pmset fallback provenance missing"
 	[[ "$(printf '%s' "$output" | jq -r '.periods.day.period_semantics')" == "completed-local-calendar-days" ]] || fail "pmset fallback changed profile period semantics"
+	[[ "$(printf '%s' "$output" | jq -r '.periods.month.source')" == "screen-time-history:daily-observations" ]] || fail "short pmset coverage displaced richer month history"
+	[[ "$(printf '%s' "$output" | jq -r '.periods.month.reason')" == "richer-calendar-coverage" ]] || fail "richer history selection reason missing"
 	pass "permission-free pmset fallback supplies completed-day screen time"
 	return 0
 }
@@ -433,7 +448,8 @@ test_corrupt_core_data_and_history_paths_are_safe() {
 		INSERT INTO ZOBJECT (ZSTREAMNAME,ZSTARTDATE,ZENDDATE,ZVALUESTRING) VALUES('/app/usage','broken','also-broken','bad.app');
 		INSERT INTO ZOBJECT (ZSTREAMNAME,ZSTARTDATE,ZENDDATE,ZVALUESTRING) VALUES('/app/usage',1e999,1e999,'infinite.app');"
 	local profile_json app_json
-	profile_json=$(AIDEVOPS_SCREEN_TIME_NOW_EPOCH="$now" profile_stats "$db")
+	mkdir -p "${tmpdir}/corrupt-home"
+	profile_json=$(HOME="${tmpdir}/corrupt-home" AIDEVOPS_SCREEN_TIME_NOW_EPOCH="$now" profile_stats "$db")
 	app_json=$(AIDEVOPS_SCREEN_TIME_NOW_EPOCH="$now" python3 "${SCRIPTS_DIR}/screen-time-interval-engine.py" apps --os-type Darwin --db "$db")
 	local python_ok=0
 	PYTHONPATH="$SCRIPTS_DIR" python3 - <<'PY' || python_ok=1
