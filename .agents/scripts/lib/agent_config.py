@@ -177,7 +177,16 @@ def get_agent_config(display_name, filename, subagents=None, model_tier=None):
 
     # Grep is a read-only search tool. Explicitly allow it when enabled so
     # OpenCode does not fall back to its interactive permission default.
-    config["permission"] = {"external_directory": "allow"}
+    config["permission"] = {
+        "external_directory": {
+            "~/.aidevops": "allow",
+            "~/.aidevops/**": "allow",
+            "~/.config/aidevops": "allow",
+            "~/.config/aidevops/**": "allow",
+            "~/Git/_worktrees": "allow",
+            "~/Git/_worktrees/**": "allow",
+        }
+    }
     if tools.get("grep") is True:
         config["permission"]["grep"] = "allow"
 
