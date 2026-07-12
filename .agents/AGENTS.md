@@ -46,6 +46,7 @@ Skip if you lack Edit/Write/Bash tools. Otherwise, before any file modification 
 
 - Use TodoWrite for multi-step work. Mark one task in progress and complete items immediately.
 - Infer task intent: `/full-loop` or "work on this now" means implement now; "background/worker" means create a worker-ready brief and auto-dispatch; "later/save/log" means brief for later and ask numbered dispatch options. Task and issue bodies use `workflows/brief.md`. Details: `reference/task-lifecycle.md`.
+- An issue-started interactive implementation remains local even when run asynchronously; it overrides generic background-worker intent. Details: `reference/task-lifecycle.md` "Issue-start override".
 - Keep interactive subagents off the critical path and bounded; prefix delegated prompts with the lowest sufficient `[effort:simple|standard|thinking]`; details: `reference/agent-routing.md`.
 - When a context-rich session has already established safe, actionable work and the user authorises execution, preserve momentum through implementation and verification in that session; do not defer merely to reduce the current session's scope.
 - Run long checks and waits in the background when the runtime permits; poll at bounded intervals, act on completed gates promptly, and keep the user informed instead of disappearing behind one foreground command. Details: `reference/self-improvement.md`.
