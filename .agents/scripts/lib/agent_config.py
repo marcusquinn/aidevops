@@ -175,8 +175,11 @@ def get_agent_config(display_name, filename, subagents=None, model_tier=None):
     if effective_tier and effective_tier not in WORKLOAD_TIERS and "/" in effective_tier:
         config["model"] = effective_tier
 
-    # All primary agents get external_directory permission
+    # Grep is a read-only search tool. Explicitly allow it when enabled so
+    # OpenCode does not fall back to its interactive permission default.
     config["permission"] = {"external_directory": "allow"}
+    if tools.get("grep") is True:
+        config["permission"]["grep"] = "allow"
 
     # Add subagent filtering via permission.task if subagents specified
     if subagents and isinstance(subagents, list) and len(subagents) > 0:

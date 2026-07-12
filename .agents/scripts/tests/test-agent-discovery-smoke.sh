@@ -187,12 +187,46 @@ PYEOF
 	return 0
 }
 
+test_grep_permission_is_explicit() {
+	local output rc py_out
+	py_out=$(mktemp)
+	SCRIPTS_DIR="$SCRIPTS_DIR" python3 - >"$py_out" 2>&1 <<'PYEOF'
+import os
+import sys
+
+sys.path.insert(0, os.environ["SCRIPTS_DIR"] + "/lib")
+from agent_config import get_agent_config
+
+build = get_agent_config("Build+", "build-plus.md", ["research"])
+assert build["tools"]["grep"] is True
+assert build["permission"]["grep"] == "allow"
+assert build["permission"]["task"] == {"*": "deny", "research": "allow"}
+
+research = get_agent_config("Research", "research.md")
+assert "grep" not in research["tools"]
+assert "grep" not in research["permission"]
+
+print("OK")
+PYEOF
+	rc=$?
+	output=$(cat "$py_out")
+	rm -f "$py_out"
+
+	if [[ $rc -eq 0 && "$output" == *"OK"* ]]; then
+		print_result "enabled Grep tools receive explicit allow permission" 0
+	else
+		print_result "enabled Grep tools receive explicit allow permission" 1 "$output"
+	fi
+	return 0
+}
+
 main() {
 	setup
 	test_agent_discovery_runs
 	test_opencode_agent_discovery_runs
 	test_missing_subagent_warning
 	test_validate_subagent_refs_default_arg
+	test_grep_permission_is_explicit
 
 	echo ""
 	echo "Tests run: $TESTS_RUN, passed: $TESTS_PASSED, failed: $TESTS_FAILED"
