@@ -637,6 +637,33 @@ test_diff_scoped_skip_no_sh_changes() {
 	return 0
 }
 
+test_working_tree_101_line_function_blocks() {
+	setup
+	local _repo="$TEST_ROOT/repo"
+	local _base_sha=""
+	local _rc=0
+	mkdir -p "$_repo"
+	git -C "$_repo" init -q
+	printf '#!/usr/bin/env bash\n' >"$_repo/a.sh"
+	make_sh_function "$_repo/a.sh" "small" 10
+	git -C "$_repo" add a.sh
+	git -C "$_repo" -c user.email=test@test.local -c user.name=Test \
+		-c commit.gpgsign=false commit -q -m "base"
+	_base_sha=$(git -C "$_repo" rev-parse HEAD)
+	make_sh_function "$_repo/a.sh" "new_oversized" 101
+
+	(cd "$_repo" && "$HELPER" check --base "$_base_sha" --working-tree \
+		--metric function-complexity) >/dev/null 2>&1 || _rc=$?
+	if [ "$_rc" -eq 1 ]; then
+		print_result "working-tree contract: newly 101-line function blocks" 0
+	else
+		print_result "working-tree contract: newly 101-line function blocks" 1 \
+			"expected exit 1, got exit $_rc"
+	fi
+	teardown
+	return 0
+}
+
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
@@ -661,6 +688,7 @@ test_bash32_clean_to_new
 test_bash32_stable
 test_diff_scoped_timing
 test_diff_scoped_skip_no_sh_changes
+test_working_tree_101_line_function_blocks
 
 printf '\n'
 if [ "$TESTS_FAILED" -eq 0 ]; then

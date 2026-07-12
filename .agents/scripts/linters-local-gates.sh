@@ -52,6 +52,9 @@ LINTERS_LOCAL_GATES_DELEGATED=""
 LINTERS_LOCAL_MODE_CHANGED="${LINTERS_LOCAL_MODE_CHANGED:-changed}"
 LINTERS_LOCAL_GATE_MARKDOWN=markdownlint
 LINTERS_LOCAL_GATE_FILE_SIZE=file-size
+LINTERS_LOCAL_GATE_FUNCTION_COMPLEXITY=function-complexity
+LINTERS_LOCAL_GATE_NESTING_DEPTH=nesting-depth
+LINTERS_LOCAL_GATE_BASH32=bash32-compat
 LINTERS_LOCAL_SKIP_NON_SHELL="non-shell broad repository sweep; use --full"
 
 _record_gate_run() {
@@ -236,6 +239,8 @@ _linters_local_gate_key() {
 		_linters_local_file_checksum "${SCRIPT_DIR}/linters-local.sh"
 		_linters_local_file_checksum "${SCRIPT_DIR}/linters-local-gates.sh"
 		_linters_local_file_checksum "${SCRIPT_DIR}/linters-local-analysis.sh"
+		_linters_local_file_checksum "${SCRIPT_DIR}/complexity-regression-helper.sh"
+		_linters_local_file_checksum "${SCRIPT_DIR}/../configs/complexity-thresholds.conf"
 		_linters_local_file_checksum "${SCRIPT_DIR}/linters-local-ratchet.sh"
 		_linters_local_file_checksum "${SCRIPT_DIR}/linters-local-validators.sh"
 		_linters_local_file_checksum ".shellcheckrc"
@@ -247,6 +252,43 @@ _linters_local_gate_key() {
 	printf '%s\n' "$key_source"
 	return 0
 }
+
+_linters_local_required_diff_gate() {
+	local metric="$1"
+	local pattern='\.sh$'
+	local changed_files=""
+	local base_ref=""
+	local helper="${SCRIPT_DIR}/complexity-regression-helper.sh"
+
+	[[ "$metric" == "$LINTERS_LOCAL_GATE_FILE_SIZE" ]] && pattern='\.md$'
+	changed_files=$(linters_local_changed_files_matching "$pattern")
+	if [[ -z "$changed_files" ]]; then
+		print_info "${metric}: unaffected (no applicable changed files)"
+		return 0
+	fi
+	if [[ ! -x "$helper" ]]; then
+		print_error "${metric}: canonical required gate unavailable at ${helper}"
+		return 2
+	fi
+	base_ref=$(git merge-base HEAD origin/main 2>/dev/null || git merge-base HEAD main 2>/dev/null || true)
+	if [[ -z "$base_ref" ]]; then
+		print_error "${metric}: merge-base unavailable; required result is incomplete"
+		return 2
+	fi
+	"$helper" check --metric "$metric" --base "$base_ref" --working-tree
+	return $?
+}
+
+_linters_local_run_required_diff_gate() {
+	local metric="$1"
+	_linters_local_run_cached_gate "required-${metric}" "_linters_local_required_diff_gate_${metric//-/_}"
+	return $?
+}
+
+_linters_local_required_diff_gate_function_complexity() { _linters_local_required_diff_gate "$LINTERS_LOCAL_GATE_FUNCTION_COMPLEXITY"; return $?; }
+_linters_local_required_diff_gate_nesting_depth() { _linters_local_required_diff_gate "$LINTERS_LOCAL_GATE_NESTING_DEPTH"; return $?; }
+_linters_local_required_diff_gate_bash32_compat() { _linters_local_required_diff_gate "$LINTERS_LOCAL_GATE_BASH32"; return $?; }
+_linters_local_required_diff_gate_file_size() { _linters_local_required_diff_gate "$LINTERS_LOCAL_GATE_FILE_SIZE"; return $?; }
 
 _linters_local_run_cached_gate() {
 	local gate_name="$1"
@@ -670,20 +712,20 @@ _run_gate_checks_changed() {
 	_record_gate_skipped "ratchets" "broad ratchet summary; use --full/CI"
 	_record_gate_skipped "repo-layout" "broad layout drift audit; use --full/CI"
 
-	_record_gate_run "bash32-compat"
-	check_bash32_compat || exit_code=1
+	_record_gate_run "${LINTERS_LOCAL_GATE_BASH32} (canonical required contract)"
+	_linters_local_run_required_diff_gate "$LINTERS_LOCAL_GATE_BASH32" || exit_code=1
 	echo ""
 
 	_record_gate_run "shell-portability"
 	check_shell_portability || exit_code=1
 	echo ""
 
-	_record_gate_run "function-complexity"
-	check_function_complexity || exit_code=1
+	_record_gate_run "${LINTERS_LOCAL_GATE_FUNCTION_COMPLEXITY} (canonical required contract)"
+	_linters_local_run_required_diff_gate "$LINTERS_LOCAL_GATE_FUNCTION_COMPLEXITY" || exit_code=1
 	echo ""
 
-	_record_gate_run "nesting-depth"
-	check_nesting_depth || exit_code=1
+	_record_gate_run "${LINTERS_LOCAL_GATE_NESTING_DEPTH} (canonical required contract)"
+	_linters_local_run_required_diff_gate "$LINTERS_LOCAL_GATE_NESTING_DEPTH" || exit_code=1
 	echo ""
 
 	_record_gate_skipped "python-complexity" "$LINTERS_LOCAL_SKIP_NON_SHELL"
