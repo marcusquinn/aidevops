@@ -37,14 +37,17 @@ setup() {
 	TEST_DIR=$(mktemp -d)
 	trap teardown EXIT
 	mkdir -p "$TEST_DIR/repo/.agents/scripts"
-	cat >"$TEST_DIR/repo/.agents/scripts/deploy-agents-on-merge.sh" <<'EOF'
+cat >"$TEST_DIR/repo/.agents/scripts/deploy-agents-on-merge.sh" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
+printf 'AIDEVOPS_AGENTS_DIR=%s\n' "${AIDEVOPS_AGENTS_DIR-unset}" >>"${SYNC_ENV_LOG_PATH:?SYNC_ENV_LOG_PATH must be set}"
+printf 'AGENTS_DIR=%s\n' "${AGENTS_DIR-unset}" >>"$SYNC_ENV_LOG_PATH"
 printf '%s\n' "$*" >>"${SYNC_LOG_PATH:?SYNC_LOG_PATH must be set}"
 exit "${MOCK_DEPLOY_EXIT_CODE:-0}"
 EOF
 	chmod +x "$TEST_DIR/repo/.agents/scripts/deploy-agents-on-merge.sh"
 	: >"$TEST_DIR/sync.log"
+	: >"$TEST_DIR/sync-env.log"
 	return 0
 }
 
@@ -60,6 +63,7 @@ invoke_github_sync() {
 	AIDEVOPS_SYNC_REPO_PATH="$TEST_DIR/repo" \
 		AIDEVOPS_SYNC_DEPLOY_SCRIPT="$TEST_DIR/repo/.agents/scripts/deploy-agents-on-merge.sh" \
 		SYNC_LOG_PATH="$TEST_DIR/sync.log" \
+		SYNC_ENV_LOG_PATH="$TEST_DIR/sync-env.log" \
 		MOCK_DEPLOY_EXIT_CODE="${MOCK_DEPLOY_EXIT_CODE:-0}" \
 		bash -c 'source "$1" && trigger_aidevops_post_merge_sync "$2"' _ "$GITHUB_HELPER" "$repo_slug"
 	return 0
@@ -70,6 +74,7 @@ invoke_release_sync() {
 	AIDEVOPS_SYNC_REPO_ROOT="$repo_root" \
 		AIDEVOPS_SYNC_DEPLOY_SCRIPT="$TEST_DIR/repo/.agents/scripts/deploy-agents-on-merge.sh" \
 		SYNC_LOG_PATH="$TEST_DIR/sync.log" \
+		SYNC_ENV_LOG_PATH="$TEST_DIR/sync-env.log" \
 		MOCK_DEPLOY_EXIT_CODE="${MOCK_DEPLOY_EXIT_CODE:-0}" \
 		bash -c 'source "$1" && run_post_release_agent_sync' _ "$VERSION_HELPER"
 	return $?
@@ -83,6 +88,7 @@ create_fake_repo() {
 	mkdir -p "$repo_path"
 	PATH=/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin git init -q "$repo_path"
 	PATH=/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin git -C "$repo_path" remote add origin "$remote_url"
+	printf '#!/usr/bin/env bash\nexit 0\n' >"$repo_path/setup.sh"
 	printf '%s\n' "$repo_path"
 	return 0
 }
@@ -151,6 +157,23 @@ test_release_sync_propagates_deploy_failure() {
 	return 0
 }
 
+test_release_sync_unsets_session_pins() {
+	: >"$TEST_DIR/sync-env.log"
+	local repo_path
+	repo_path=$(create_fake_repo "release-pinned" "https://github.com/marcusquinn/aidevops.git")
+	AIDEVOPS_AGENTS_DIR="$TEST_DIR/.aidevops/runtime-bundles/old/agents" \
+		AGENTS_DIR="$TEST_DIR/.aidevops/runtime-bundles/old/agents" \
+		invoke_release_sync "$repo_path"
+
+	if grep -q '^AIDEVOPS_AGENTS_DIR=unset$' "$TEST_DIR/sync-env.log" && \
+		grep -q '^AGENTS_DIR=unset$' "$TEST_DIR/sync-env.log"; then
+		print_result "release sync isolates inherited runtime pins" 0
+	else
+		print_result "release sync isolates inherited runtime pins" 1 "Deployment child inherited a session pin"
+	fi
+	return 0
+}
+
 main() {
 	echo "Running agent auto-sync regression tests"
 	setup
@@ -160,6 +183,7 @@ main() {
 	test_release_sync_triggers_for_aidevops_remote
 	test_release_sync_skips_other_remotes
 	test_release_sync_propagates_deploy_failure
+	test_release_sync_unsets_session_pins
 
 	teardown
 	trap - EXIT
