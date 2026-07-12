@@ -879,6 +879,7 @@ _help_commands() {
 	echo "  design <cmd>       DESIGN.md detection, scaffolding, and brand guideline exports"
 	echo "  cleanup <cmd>      Cleanup helpers (remote branch audit/delete)"
 	echo "  model-accounts-pool OAuth account pool (list/check/diagnose/add/rotate/reset-cooldowns)"
+	echo "  gpt56-context <cmd> Manage the 300K GPT-5.6 OpenCode context cap (enable/disable/status)"
 	echo "  client-format      Client request format alignment (extract/check/canary/monitor)"
 	echo "  opencode-db <cmd>  OpenCode SQLite maintenance/session lookup (check/report/sessions/maintain/window/status/install)"
 	echo "  opencode [args]    Launch OpenCode with aidevops per-session DB isolation"

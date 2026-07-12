@@ -5,6 +5,7 @@
 set -euo pipefail
 
 SETTINGS_FILE="${AIDEVOPS_SETTINGS_FILE:-${HOME}/.config/aidevops/settings.json}"
+BOOLEAN_TRUE="true"
 
 usage() {
 	cat <<'EOF'
@@ -30,12 +31,12 @@ require_jq() {
 }
 
 is_enabled() {
-	local enabled="true"
+	local enabled="$BOOLEAN_TRUE"
 	if [[ ! -f "$SETTINGS_FILE" ]]; then
 		return 0
 	fi
-	enabled=$(jq -r 'if .runtime.opencode.gpt56_context_cap == false then false else true end' "$SETTINGS_FILE" 2>/dev/null) || enabled="true"
-	[[ "$enabled" == "true" ]]
+	enabled=$(jq -r 'if .runtime.opencode.gpt56_context_cap == false then false else true end' "$SETTINGS_FILE" 2>/dev/null) || enabled="$BOOLEAN_TRUE"
+	[[ "$enabled" == "$BOOLEAN_TRUE" ]]
 }
 
 show_status() {
