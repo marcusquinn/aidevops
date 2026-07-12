@@ -10,6 +10,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.32.33] - 2026-07-12
+
+### Changed
+
+- fix: route remediation updates through safe wrappers (#27265)
+- feat: automate failure remediation and NMR revalidation (#27264)
+- Maintenance: ratchet QLTY_SMELL_THRESHOLD 90→81 (-9) [skip ci]
+- Refactor: reduce runtime event complexity (#27259)
+- Prevent worktree markers from breaking ownership transfer (#27248)
+- feat: enforce worker process-tree egress contract (#27224)
+
+### Fixed
+
+- ignore resolved review threads in quality scans (#27223)
+
 ## [3.32.32] - 2026-07-11
 
 ### Changed
