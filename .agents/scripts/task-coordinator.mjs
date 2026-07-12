@@ -9,7 +9,7 @@ import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { canonicalizeSqliteDbPath, sqlEscape } from "./sqlite-process.mjs";
 
-const SCHEMA_VERSION = 4;
+const SCHEMA_VERSION = 5;
 const PAYLOAD_MAX_BYTES = 64 * 1024;
 const EVIDENCE_MAX_BYTES = 64 * 1024;
 const CROCKFORD = "0123456789abcdefghjkmnpqrstvwxyz";
@@ -19,6 +19,8 @@ const TASK_ID = /^(?:t[1-9][0-9]{0,17}(?:\.[1-9][0-9]{0,17})*|to[0-7][0-9a-hjkmn
 const STATES = new Set(["active", "read-only", "redirected", "retired", "quarantined"]);
 const RESULTS = new Set(["published", "retryable", "indeterminate", "terminal", "conflict"]);
 const MAPPING_ROLES = new Set(["home", "implementation", "upstream"]);
+const FORGE_EVENT_KINDS = new Set(["issue", "pull_request", "push", "manual"]);
+const FORGE_EVENT_ACTIONS = new Set(["opened", "edited", "assigned", "closed", "reopened", "merged", "pushed", "requested"]);
 
 const SCHEMA = `
 PRAGMA foreign_keys=ON;
@@ -90,6 +92,13 @@ CREATE TABLE IF NOT EXISTS issue_mappings (
   UNIQUE(forge, repository_id, issue_id),
   UNIQUE(forge, repository_id, display_number),
   CHECK(forge IN ('github')), CHECK(role IN ('home','implementation','upstream'))
+);
+CREATE TABLE IF NOT EXISTS forge_event_cursors (
+  forge TEXT NOT NULL, repository_id TEXT NOT NULL, subject_kind TEXT NOT NULL, subject_id TEXT NOT NULL,
+  cursor_timestamp TEXT NOT NULL, cursor_tiebreaker TEXT NOT NULL, payload_hash TEXT NOT NULL,
+  operation_id TEXT NOT NULL REFERENCES operations(operation_id), transition_kind TEXT NOT NULL,
+  accepted_at TEXT NOT NULL,
+  PRIMARY KEY(forge, repository_id, subject_kind, subject_id)
 );
 CREATE TRIGGER IF NOT EXISTS tasks_immutable_update BEFORE UPDATE ON tasks BEGIN SELECT RAISE(ABORT, 'tasks are immutable'); END;
 CREATE TRIGGER IF NOT EXISTS tasks_immutable_delete BEFORE DELETE ON tasks BEGIN SELECT RAISE(ABORT, 'tasks are immutable'); END;
@@ -179,15 +188,29 @@ INSERT INTO migration_history(version,applied_at,backup_path,integrity_result) V
 COMMIT;`);
   if (sqlite(path, "PRAGMA integrity_check;\n") !== "ok") throw new Error("migration integrity verification failed");
 }
+function migrateV4ToV5(path) {
+  const copy = backup(path, "pre-migrate-v5");
+  sqlite(path, `BEGIN IMMEDIATE;
+${SCHEMA}
+UPDATE coordinator_meta SET value='5' WHERE key='schema_version';
+INSERT INTO migration_history(version,applied_at,backup_path,integrity_result) VALUES (5,${sqlEscape(now())},${sqlEscape(copy)},'ok');
+COMMIT;`);
+  if (sqlite(path, "PRAGMA integrity_check;\n") !== "ok") throw new Error("migration integrity verification failed");
+}
 function migrate(path, version) {
   if (version === 1) {
     migrateV1ToV2(path);
     migrateV2ToV3(path);
     migrateV3ToV4(path);
+    migrateV4ToV5(path);
   } else if (version === 2) {
     migrateV2ToV3(path);
     migrateV3ToV4(path);
-  } else if (version === 3) migrateV3ToV4(path);
+    migrateV4ToV5(path);
+  } else if (version === 3) {
+    migrateV3ToV4(path);
+    migrateV4ToV5(path);
+  } else if (version === 4) migrateV4ToV5(path);
   else if (version !== SCHEMA_VERSION) throw new Error(`unsupported coordinator schema ${version}`);
 }
 function bootstrap(path) {
@@ -523,6 +546,104 @@ function resolveIssue({ taskId, forge = "github", repositoryId }, path = initial
   if (matches.length !== 1) throw new Error("issue mapping not found");
   return { ...matches[0], syncMetadata: JSON.parse(matches[0].syncMetadataJson) };
 }
+function reconciliationTargets({ repositoryId, limit = 100 }, path = initialise()) {
+  validId(repositoryId, "repository_id");
+  if (!Number.isSafeInteger(limit) || limit < 1 || limit > 500) throw new TypeError("limit must be 1..500");
+  const targets = rows(path, `SELECT task_id AS taskId,issue_id AS subjectId,display_number AS displayNumber,state_cursor AS stateCursor FROM issue_mappings WHERE forge='github' AND repository_id=${sqlEscape(repositoryId)} ORDER BY COALESCE(state_cursor,'') ASC,display_number ASC LIMIT ${limit};`);
+  return { bounded: true, repositoryId, targets };
+}
+function forgeEventInput(input) {
+  const operationId = validId(input.operationId, "operation_id");
+  const repositoryId = validId(input.repositoryId, "repository_id");
+  const repositorySlug = input.repositorySlug;
+  if (typeof repositorySlug !== "string" || !/^[^/\s]+\/[^/\s]+$/.test(repositorySlug)) throw new TypeError("repository_slug is not canonical");
+  const eventKind = input.eventKind;
+  const action = input.action;
+  if (!FORGE_EVENT_KINDS.has(eventKind)) throw new TypeError("unsupported forge event kind");
+  if (!FORGE_EVENT_ACTIONS.has(action)) throw new TypeError("unsupported forge event action");
+  const subjectId = validId(input.subjectId, "subject_id");
+  const deliveryId = validId(input.deliveryId, "delivery_id");
+  const cursorTiebreaker = validId(input.cursorTiebreaker, "cursor_tiebreaker");
+  const cursor = input.cursor;
+  if (typeof cursor !== "string" || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/.test(cursor) || !Number.isFinite(Date.parse(cursor))) {
+    throw new TypeError("cursor must be a canonical UTC RFC3339 timestamp");
+  }
+  const repositoryPath = input.repositoryPath;
+  if (repositoryPath && (typeof repositoryPath !== "string" || !repositoryPath.startsWith("/") || repositoryPath.includes("\0"))) throw new TypeError("repository_path must be absolute");
+  const taskId = input.taskId || null;
+  if (taskId && !TASK_ID.test(taskId)) throw new TypeError("task_id is not canonical");
+  if (eventKind === "manual" && !taskId) throw new TypeError("manual events require an explicit trusted task mapping");
+  return { operationId, repositoryId, repositorySlug, eventKind, action, subjectId, deliveryId, cursorTiebreaker, repositoryPath, taskId, cursor: new Date(cursor).toISOString() };
+}
+function transitionForEvent(eventKind, action) {
+  if (eventKind === "push") return "repository.projection_changed";
+  if (eventKind === "manual") return "task.reconcile_requested";
+  const transitions = {
+    assigned: "task.claimed",
+    closed: "task.completed",
+    edited: "task.metadata_changed",
+    merged: "task.completed",
+    opened: "task.available",
+    reopened: "task.available",
+  };
+  return transitions[action] || "task.metadata_changed";
+}
+function forgeEventMapping(path, value) {
+  if (value.eventKind === "push") return null;
+  const selector = value.taskId ? `task_id=${sqlEscape(value.taskId)}` : `issue_id=${sqlEscape(value.subjectId)}`;
+  return rows(path, `SELECT task_id AS taskId FROM issue_mappings WHERE forge='github' AND repository_id=${sqlEscape(value.repositoryId)} AND ${selector};`)[0];
+}
+function forgeEventCursor(path, value) {
+  return rows(path, `SELECT cursor_timestamp AS cursorTimestamp,cursor_tiebreaker AS cursorTiebreaker,payload_hash AS payloadHash FROM forge_event_cursors WHERE forge='github' AND repository_id=${sqlEscape(value.repositoryId)} AND subject_kind=${sqlEscape(value.eventKind)} AND subject_id=${sqlEscape(value.subjectId)};`)[0];
+}
+function prepareForgeEvent(value, path, transitionKind, payloadText, payloadHash) {
+  const mapping = forgeEventMapping(path, value);
+  const priorCursor = forgeEventCursor(path, value);
+  const timestamp = now();
+  const ordering = priorCursor ? value.cursor.localeCompare(priorCursor.cursorTimestamp) || value.cursorTiebreaker.localeCompare(priorCursor.cursorTiebreaker) : 1;
+  const stale = ordering < 0 || (ordering === 0 && priorCursor?.payloadHash === payloadHash);
+  const conflict = ordering === 0 && priorCursor?.payloadHash !== payloadHash;
+  const repositoryOnly = value.eventKind === "push";
+  const status = conflict ? "conflict" : stale ? "stale" : (!mapping && !repositoryOnly) ? "unmapped" : "accepted";
+  const shouldPublish = status === "accepted" && Boolean(mapping && value.repositoryPath);
+  const intentId = shouldPublish ? randomUUID() : null;
+  const result = { action: value.action, deliveryId: value.deliveryId, eventKind: value.eventKind, mappingMode: repositoryOnly ? "trusted-repository" : value.taskId ? "explicit-task" : "immutable-subject", operationId: value.operationId, repositoryId: value.repositoryId, status, taskId: mapping?.taskId || null, transitionKind };
+  const resultText = JSON.stringify(result);
+  const projection = shouldPublish ? jsonText({ branchName: "main", coalesceKey: "forge-event", maxAttempts: 5, payload: { paths: ["TODO.md"], projection: "forge-event", transition: { kind: transitionKind, taskId: mapping.taskId } }, remoteName: "origin", repositoryId: value.repositoryId, repositoryPath: value.repositoryPath, taskId: mapping.taskId }, "projection") : null;
+  return { conflict, intentId, mapping, payloadHash, payloadText, projection, result, resultText, shouldPublish, status, timestamp, transitionKind, value };
+}
+function forgeEventTransactionSql(event) {
+  const { conflict, intentId, mapping, payloadHash, payloadText, projection, resultText, shouldPublish, status, timestamp, transitionKind, value } = event;
+  const cursorSql = status === "accepted" ? `INSERT INTO forge_event_cursors(forge,repository_id,subject_kind,subject_id,cursor_timestamp,cursor_tiebreaker,payload_hash,operation_id,transition_kind,accepted_at)
+VALUES ('github',${sqlEscape(value.repositoryId)},${sqlEscape(value.eventKind)},${sqlEscape(value.subjectId)},${sqlEscape(value.cursor)},${sqlEscape(value.cursorTiebreaker)},${sqlEscape(payloadHash)},${sqlEscape(value.operationId)},${sqlEscape(transitionKind)},${sqlEscape(timestamp)})
+ON CONFLICT(forge,repository_id,subject_kind,subject_id) DO UPDATE SET cursor_timestamp=excluded.cursor_timestamp,cursor_tiebreaker=excluded.cursor_tiebreaker,payload_hash=excluded.payload_hash,operation_id=excluded.operation_id,transition_kind=excluded.transition_kind,accepted_at=excluded.accepted_at;` : "";
+  const publicationSql = shouldPublish ? `INSERT INTO publication_intents(intent_id,operation_id,task_id,payload_hash,payload_json,status,created_at) VALUES (${sqlEscape(intentId)},${sqlEscape(value.operationId)},${sqlEscape(mapping.taskId)},${sqlEscape(hashText(projection))},${sqlEscape(projection)},'retryable',${sqlEscape(timestamp)});
+INSERT INTO publication_queue(intent_id,repository_id,repository_path,remote_name,branch_name,coalesce_key,sequence,available_at,max_attempts) SELECT ${sqlEscape(intentId)},${sqlEscape(value.repositoryId)},${sqlEscape(value.repositoryPath)},'origin','main','forge-event',COALESCE(MAX(sequence),0)+1,unixepoch(),5 FROM publication_queue;` : "";
+  const terminalState = conflict ? "conflict" : "terminal";
+  return `PRAGMA foreign_keys=ON; BEGIN IMMEDIATE;
+INSERT INTO operations(operation_id,kind,task_id,payload_hash,payload_json,status,result_json,result_hash,created_at,updated_at)
+VALUES (${sqlEscape(value.operationId)},'forge.event',${sqlEscape(mapping?.taskId || null)},${sqlEscape(payloadHash)},${sqlEscape(payloadText)},${sqlEscape(terminalState)},${sqlEscape(resultText)},'sha3-256:'||lower(hex(sha3(${sqlEscape(resultText)},256))),${sqlEscape(timestamp)},${sqlEscape(timestamp)});
+${cursorSql}
+${publicationSql}
+INSERT INTO terminal_evidence(operation_id,result_state,evidence_json,occurred_at) VALUES (${sqlEscape(value.operationId)},${sqlEscape(terminalState)},${sqlEscape(JSON.stringify({ status, transitionKind }))},${sqlEscape(timestamp)}); COMMIT;`;
+}
+function forgeEvent(input, path = initialise()) {
+  const value = forgeEventInput(input);
+  const transitionKind = transitionForEvent(value.eventKind, value.action);
+  const payloadText = jsonText({ action: value.action, cursor: value.cursor, cursorTiebreaker: value.cursorTiebreaker, deliveryId: value.deliveryId, eventKind: value.eventKind, repositoryId: value.repositoryId, subjectId: value.subjectId, taskId: value.taskId, transitionKind }, "forge event");
+  const payloadHash = hashText(payloadText);
+  const prior = operationResult(path, value.operationId, payloadHash);
+  if (prior) return prior;
+  const event = prepareForgeEvent(value, path, transitionKind, payloadText, payloadHash);
+  try {
+    sqlite(path, forgeEventTransactionSql(event));
+  } catch (error) {
+    const raced = operationResult(path, value.operationId, payloadHash);
+    if (!raced) throw error;
+    return raced;
+  }
+  return event.result;
+}
 function validateRestoreEvidence(evidence, fencingToken) {
   const text = jsonText(evidence, "registry_evidence", EVIDENCE_MAX_BYTES);
   if (evidence.cas !== "winner" || evidence.prior_revoked !== true || evidence.fencing_token !== fencingToken || !validId(evidence.transfer_record_id, "transfer_record_id")) {
@@ -569,6 +690,10 @@ function verify(path = initialise()) {
   const result = { duplicateTasks, foreignKeyErrors: foreignKeys.length, incompleteOperations, quickCheck, schemaVersion: SCHEMA_VERSION };
   return { ...result, ok: quickCheck === "ok" && foreignKeys.length === 0 && duplicateTasks === 0 && incompleteOperations === 0 };
 }
+function checkpoint(path = initialise()) {
+  const result = sqlite(path, "PRAGMA wal_checkpoint(TRUNCATE);\n");
+  return { checkpointed: result === "0|0|0" || result === "0|0|0\n", result };
+}
 
 function parseJson(value = "{}") { return JSON.parse(value); }
 function option(args, name, fallback = "") { const index = args.indexOf(name); return index >= 0 && index + 1 < args.length ? args[index + 1] : fallback; }
@@ -584,13 +709,16 @@ const COMMAND_HANDLERS = {
   transition: (args, path) => transition({ state: option(args, "--state"), fencingToken: option(args, "--fencing-token"), evidence: parseJson(option(args, "--evidence", "{}")) }, path),
   "bind-issue": (args, path) => bindIssue({ taskId: option(args, "--task-id"), forge: option(args, "--forge", "github"), repositoryId: option(args, "--repository-id"), repositorySlug: option(args, "--repository-slug"), role: option(args, "--role", "home"), issueId: option(args, "--issue-id"), projectId: option(args, "--project-id"), displayNumber: option(args, "--display-number"), stateCursor: option(args, "--state-cursor"), syncMetadata: parseJson(option(args, "--sync-metadata", "{}")) }, path),
   "resolve-issue": (args, path) => resolveIssue({ taskId: option(args, "--task-id"), forge: option(args, "--forge", "github"), repositoryId: option(args, "--repository-id") }, path),
+  "reconciliation-targets": (args, path) => reconciliationTargets({ repositoryId: option(args, "--repository-id"), limit: Number(option(args, "--limit", "100")) }, path),
+  "forge-event": (args, path) => forgeEvent({ operationId: option(args, "--operation-id"), deliveryId: option(args, "--delivery-id"), cursorTiebreaker: option(args, "--cursor-tiebreaker"), repositoryId: option(args, "--repository-id"), repositorySlug: option(args, "--repository-slug"), repositoryPath: option(args, "--repository-path"), taskId: option(args, "--task-id"), eventKind: option(args, "--event-kind"), action: option(args, "--action"), subjectId: option(args, "--subject-id"), cursor: option(args, "--cursor") }, path),
   restore: (args, path) => restore({ backupPath: option(args, "--backup"), registryEvidence: parseJson(option(args, "--registry-evidence", "{}")), priorEpoch: Number(option(args, "--prior-epoch")), newEpoch: Number(option(args, "--new-epoch")), fencingToken: option(args, "--fencing-token"), publishedHighWater: Number(option(args, "--published-high-water", "0")) }, path),
   verify: (_args, path) => verify(path),
+  checkpoint: (_args, path) => checkpoint(path),
   status: (_args, path) => ({ ...activeOrigin(path), dbPath: path }),
 };
 export function run(args = process.argv.slice(2)) {
   const command = args[0] || "help";
-  if (["help", "--help", "-h"].includes(command)) { process.stdout.write("Usage: task-coordinator.mjs allocate|publication-intent|lease-next|lease-check|lease-renew|lease-finish|publication-metrics|attempt|transition|bind-issue|resolve-issue|restore|verify|status\n"); return 0; }
+  if (["help", "--help", "-h"].includes(command)) { process.stdout.write("Usage: task-coordinator.mjs allocate|publication-intent|lease-next|lease-check|lease-renew|lease-finish|publication-metrics|attempt|transition|bind-issue|resolve-issue|forge-event|restore|verify|status\n"); return 0; }
   const handler = COMMAND_HANDLERS[command];
   const path = initialise();
   if (!handler) throw new TypeError(`unknown task-coordinator command: ${command}`);
@@ -603,4 +731,4 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   try { process.exitCode = run(); } catch (error) { process.stderr.write(`task-coordinator: ${error.message}\n`); process.exitCode = 1; }
 }
 
-export { allocate, backup, bindIssue, hashPayload, initialise, leaseNext, publicationMetrics, resolveIssue, restore, verify };
+export { allocate, backup, bindIssue, forgeEvent, hashPayload, initialise, leaseNext, publicationMetrics, resolveIssue, restore, verify };

@@ -27,12 +27,113 @@ on:
         required: false
         default: 'ubuntu-latest'
         type: string
+      subject_id:
+        description: 'Immutable forge node ID for a manual event'
+        required: false
+        type: string
+        default: ''
+      cursor:
+        description: 'RFC3339 cursor for a manual event'
+        required: false
+        type: string
+        default: ''
+      task_id:
+        description: 'Explicit trusted task mapping for a manual event'
+        required: false
+        type: string
+        default: ''
     secrets:
       SYNC_PAT:
         required: false
         description: 'Fine-grained PAT with Contents:read/write, bypasses branch protection on TODO.md push'
 
 jobs:
+  forge-event:
+    name: Record ordered forge event
+    if: github.event_name != 'workflow_dispatch' || inputs.command == 'event' || inputs.command == 'reconcile' || inputs.command == 'audit'
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 5
+    permissions:
+      actions: read
+      contents: write
+      issues: read
+      pull-requests: read
+    concurrency:
+      group: forge-coordinator-${{ github.repository_id }}
+      cancel-in-progress: false
+    steps:
+      - name: Checkout repository projection
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 1
+          token: ${{ secrets.SYNC_PAT || secrets.GITHUB_TOKEN }}
+
+      - name: Checkout coordinator scripts
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          repository: marcusquinn/aidevops
+          path: __aidevops
+          ref: ${{ inputs.aidevops_ref || 'main' }}
+          fetch-depth: 1
+
+      - name: Restore durable coordinator state
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          STATE_DIR: ${{ runner.temp }}/aidevops-coordinator
+        run: bash __aidevops/.agents/scripts/forge-coordinator-state-helper.sh restore "$STATE_DIR" "${{ github.repository }}" "${{ github.repository_id }}"
+
+      - name: Ingest event and execute publication queue
+        if: github.event_name != 'workflow_dispatch' || inputs.command == 'event'
+        env:
+          AIDEVOPS_TASK_COORDINATOR_DB: ${{ runner.temp }}/aidevops-coordinator/tasks.db
+          EVENT_NAME: ${{ github.event_name }}
+          EVENT_ACTION: ${{ github.event.action || '' }}
+          EVENT_MERGED: ${{ github.event.pull_request.merged || false }}
+          EVENT_SUBJECT_ID: ${{ github.event.issue.node_id || github.event.pull_request.node_id || github.event.after || inputs.subject_id }}
+          EVENT_DISPLAY_NUMBER: ${{ github.event.issue.number || github.event.pull_request.number || '' }}
+          EVENT_CURSOR: ${{ github.event.issue.updated_at || github.event.pull_request.updated_at || github.event.head_commit.timestamp || inputs.cursor }}
+          EVENT_DELIVERY_ID: run-${{ github.run_id }}
+          EVENT_CURSOR_TIEBREAKER: run-${{ github.run_id }}-attempt-${{ github.run_attempt }}
+          EVENT_OPERATION_ID: run-${{ github.run_id }}-attempt-${{ github.run_attempt }}
+          EVENT_TASK_ID: ${{ inputs.task_id }}
+          REPOSITORY_ID: ${{ github.repository_id }}
+          REPOSITORY_SLUG: ${{ github.repository }}
+          REPOSITORY_PATH: ${{ github.workspace }}
+        run: |
+          bash __aidevops/.agents/scripts/forge-event-mapping-helper.sh
+          bash __aidevops/.agents/scripts/forge-event-helper.sh
+          bash __aidevops/.agents/scripts/task-publication-worker-helper.sh run
+
+      - name: Reconcile bounded mapped subjects and execute publication queue
+        if: github.event_name == 'workflow_dispatch' && (inputs.command == 'reconcile' || inputs.command == 'audit')
+        env:
+          AIDEVOPS_TASK_COORDINATOR_DB: ${{ runner.temp }}/aidevops-coordinator/tasks.db
+          AIDEVOPS_RECONCILE_MAX_ISSUES: '100'
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPOSITORY_ID: ${{ github.repository_id }}
+          REPOSITORY_SLUG: ${{ github.repository }}
+          REPOSITORY_PATH: ${{ github.workspace }}
+        run: |
+          bash __aidevops/.agents/scripts/forge-event-reconcile-helper.sh "${{ inputs.command }}"
+          if [[ "${{ inputs.command }}" == "reconcile" ]]; then
+            bash __aidevops/.agents/scripts/task-publication-worker-helper.sh run
+          fi
+
+      - name: Persist durable coordinator state
+        if: always()
+        env:
+          AIDEVOPS_TASK_COORDINATOR_DB: ${{ runner.temp }}/aidevops-coordinator/tasks.db
+        run: node __aidevops/.agents/scripts/task-coordinator.mjs checkpoint
+
+      - name: Upload durable coordinator state
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: forge-coordinator-${{ github.repository_id }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/aidevops-coordinator/tasks.db
+          if-no-files-found: error
+          retention-days: 90
+
   sync-on-push:
     name: Sync TODO.md → GitHub Issues
     if: github.event_name == 'push'
@@ -483,7 +584,7 @@ jobs:
 
   manual-sync:
     name: Manual Sync
-    if: github.event_name == 'workflow_dispatch'
+    if: github.event_name == 'workflow_dispatch' && inputs.command != 'event' && inputs.command != 'reconcile' && inputs.command != 'audit'
     runs-on: ${{ inputs.runner }}
     timeout-minutes: 10
     concurrency:
