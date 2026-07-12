@@ -153,6 +153,8 @@ describe("dashboard shell", () => {
     expect(statusControllerSource).toContain("VAULT_TERMINAL_REFRESH_DELAYS_MS");
     expect(statusControllerSource).toContain("window.setTimeout(runVaultTerminalRefresh, delay)");
     expect(statusControllerSource).toContain("window.clearTimeout(timeoutId)");
+    expect(statusControllerSource).toContain("status.data.vault.status !== vaultStatusAtTerminalLaunch.current");
+    expect(statusControllerSource).toContain("vaultStatusAtTerminalLaunch.current = status.data.vault.status");
     expect(statusControllerSource).toContain("openIntent !== null && openIntent !== currentVaultIntent ? null : openIntent");
   });
 

@@ -20,6 +20,7 @@ export function useGuiStatus(): GuiStatusController {
   const [vaultDialogIntent, setVaultDialogIntent] = useState<VaultDialogIntent | null>(null);
   const hasPromptedVaultSetup = useRef(false);
   const refreshVaultAfterTerminal = useRef(false);
+  const vaultStatusAtTerminalLaunch = useRef<GuiStatusData["vault"]["status"] | null>(null);
   const vaultTerminalRefreshTimeouts = useRef<number[]>([]);
   const currentVaultIntent = vaultDialogIntentForStatus(status.data.vault);
   const shouldPromptSetup = shouldPromptVaultSetup(statusLoading, status.data.vault, hasPromptedVaultSetup.current);
@@ -71,7 +72,16 @@ export function useGuiStatus(): GuiStatusController {
     return () => window.removeEventListener("focus", refreshAfterTerminal);
   }, [clearVaultTerminalRefreshes, refreshStatus]);
 
-  useEffect(() => clearVaultTerminalRefreshes, [clearVaultTerminalRefreshes]);
+  useEffect(() => {
+    if (refreshVaultAfterTerminal.current && status.data.vault.status !== vaultStatusAtTerminalLaunch.current) {
+      refreshVaultAfterTerminal.current = false;
+      clearVaultTerminalRefreshes();
+    }
+  }, [clearVaultTerminalRefreshes, status.data.vault.status]);
+
+  useEffect(() => () => {
+    clearVaultTerminalRefreshes();
+  }, [clearVaultTerminalRefreshes]);
 
   useEffect(() => {
     setVaultDialogIntent((openIntent) => openIntent !== null && openIntent !== currentVaultIntent ? null : openIntent);
@@ -87,6 +97,7 @@ export function useGuiStatus(): GuiStatusController {
   return {
     markVaultTerminalLaunch: () => {
       refreshVaultAfterTerminal.current = true;
+      vaultStatusAtTerminalLaunch.current = status.data.vault.status;
       scheduleVaultTerminalRefreshes();
     },
     refreshStatus,
