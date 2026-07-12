@@ -122,6 +122,22 @@ assert_contains() {
 	return 0
 }
 
+assert_eventually_contains() {
+	local file_path="$1"
+	local expected="$2"
+	local message="$3"
+	local attempt=0
+	while ((attempt < 20)); do
+		if grep -q -- "$expected" "$file_path"; then
+			return 0
+		fi
+		sleep 0.05
+		attempt=$((attempt + 1))
+	done
+	printf 'FAIL %s\n' "$message" >&2
+	exit 1
+}
+
 assert_empty_file() {
 	local file_path="$1"
 	local message="$2"
@@ -181,7 +197,7 @@ fi
 
 assert_contains "$LOGFILE" 'falling back to setsid/nohup' 'expected fallback diagnostic when unit has no MainPID'
 assert_contains "$LOGFILE" 'systemd unit aidevops-worker-23524-' 'expected systemd unit in fallback diagnostic'
-assert_contains "$STUB_SETSID_LOG" '/bin/true' 'expected setsid fallback when unit has no MainPID'
+assert_eventually_contains "$STUB_SETSID_LOG" '/bin/true' 'expected setsid fallback when unit has no MainPID'
 
 reset_logs
 export STUB_SYSTEMD_RUN_WRITE_PID=1
@@ -221,7 +237,7 @@ if [[ ! "$pid" =~ ^[0-9]+$ ]]; then
 	exit 1
 fi
 assert_empty_file "$STUB_SYSTEMD_RUN_LOG" 'non-systemd path must not invoke systemd-run'
-assert_contains "$STUB_SETSID_LOG" '/bin/true' 'non-systemd path should retain setsid semantics'
+assert_eventually_contains "$STUB_SETSID_LOG" '/bin/true' 'non-systemd path should retain setsid semantics'
 export AIDEVOPS_SKIP_SYSTEMD_WORKER_SERVICE=0
 
 printf 'PASS %s\n' "systemd launch readiness, evidence, handoff, and fallback semantics"

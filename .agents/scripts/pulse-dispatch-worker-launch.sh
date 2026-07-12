@@ -1184,6 +1184,33 @@ _dlw_exec_systemd_user_service() {
 	return $?
 }
 
+_dlw_handle_systemd_launch_failure() {
+	local systemd_rc="$1"
+	local systemd_state_file="$2"
+	local worker_log="$3"
+	local issue_number="$4"
+
+	if [[ "$systemd_rc" -ne 2 && "$systemd_rc" -ne 3 ]]; then
+		echo "[dispatch_worker_launch] WARNING: systemd-run worker launch unresolved for #${issue_number}; falling back to setsid/nohup" >>"$LOGFILE"
+		return 0
+	fi
+
+	if [[ -f "$systemd_state_file" ]]; then
+		{
+			if [[ "$systemd_rc" -eq 2 ]]; then
+				printf '[systemd-launch] classification=crash_during_startup\n'
+			else
+				printf '[systemd-launch] classification=readiness_unconfirmed\n'
+			fi
+			while IFS= read -r state_line || [[ -n "$state_line" ]]; do
+				printf '%s\n' "$state_line"
+			done <"$systemd_state_file"
+		} >>"$worker_log"
+	fi
+	echo "[dispatch_worker_launch] ERROR: systemd worker for #${issue_number} did not reach durable readiness (rc=${systemd_rc}); duplicate fallback suppressed" >>"$LOGFILE"
+	return 1
+}
+
 # Execute a worker command via systemd-run (Linux user services) or setsid +
 # nohup fallback, detaching it from the pulse's process group (t2757) and, on
 # systemd, from the pulse oneshot cgroup (GH#23073). Without this, workers
@@ -1236,23 +1263,9 @@ _dlw_exec_detached() {
 			echo "[dispatch_worker_launch] Issue #${issue_number}: worker PID=$worker_pid launched via systemd-run transient user service outside pulse cgroup" >>"$LOGFILE"
 		else
 			systemd_rc=$?
-			if [[ "$systemd_rc" -eq 2 || "$systemd_rc" -eq 3 ]]; then
-				if [[ -f "$systemd_state_file" ]]; then
-					{
-						if [[ "$systemd_rc" -eq 2 ]]; then
-							printf '[systemd-launch] classification=crash_during_startup\n'
-						else
-							printf '[systemd-launch] classification=readiness_unconfirmed\n'
-						fi
-						while IFS= read -r state_line || [[ -n "$state_line" ]]; do
-							printf '%s\n' "$state_line"
-						done <"$systemd_state_file"
-					} >>"$worker_log"
-				fi
-				echo "[dispatch_worker_launch] ERROR: systemd worker for #${issue_number} did not reach durable readiness (rc=${systemd_rc}); duplicate fallback suppressed" >>"$LOGFILE"
+			if ! _dlw_handle_systemd_launch_failure "$systemd_rc" "$systemd_state_file" "$worker_log" "$issue_number"; then
 				return 1
 			fi
-			echo "[dispatch_worker_launch] WARNING: systemd-run worker launch unresolved for #${issue_number}; falling back to setsid/nohup" >>"$LOGFILE"
 		fi
 	fi
 
