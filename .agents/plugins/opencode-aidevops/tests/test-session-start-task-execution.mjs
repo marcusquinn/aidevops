@@ -8,7 +8,10 @@ const instruction = buildSessionStartGreetingInstruction("/missing", () => "");
 
 assert.match(instruction, /greeting is only a required prefix/);
 assert.match(instruction, /SAME assistant turn/);
-assert.match(instruction, /Never stop after acknowledging/);
-assert.match(instruction, /call the appropriate tools immediately/);
+assert.match(instruction, /Tool calls may precede it/);
+assert.match(instruction, /Never emit a greeting-only response/);
+assert.match(instruction, /Call the appropriate tools immediately, before visible text if necessary/);
+assert.match(instruction, /Do not claim that tool access is unavailable without first attempting/);
+assert.doesNotMatch(instruction, /before tool calls, status updates/);
 
 console.log("session-start task execution instruction tests passed");
