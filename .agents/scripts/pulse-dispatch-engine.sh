@@ -309,7 +309,7 @@ build_ranked_dispatch_candidates_json() {
 			continue
 		fi
 
-		printf '%s' "$repo_candidates_json" | jq -c --arg slug "$repo_slug" --arg path "$repo_path" --arg priority "$repo_priority" '
+		printf '%s' "$repo_candidates_json" | jq -c --arg slug "$repo_slug" --arg path "$repo_path" --arg priority "$repo_priority" --arg debt_label "${QUALITY_DEBT_LABEL:-quality-debt}" '
 			.[] |
 			. + {
 				repo_slug: $slug,
@@ -329,13 +329,13 @@ build_ranked_dispatch_candidates_json() {
 					(if ($labels | index("auto-dispatch")) != null then 300 else 0 end) -
 					(if ($labels | index("tier:thinking")) != null then 1200 else 0 end) -
 					(if (($labels | index("research")) != null or ($labels | index("needs-design")) != null) then 800 else 0 end) +
-					(if (($labels | index("quality-debt")) != null and ($labels | index("security")) != null) then 500 else 0 end) +
+					(if (($labels | index($debt_label)) != null and ($labels | index("security")) != null) then 500 else 0 end) +
 					(if ($labels | index("priority:critical")) != null then 10000
 					 elif ($labels | index("priority:high")) != null then 9000
 					 elif ($labels | index("priority:medium")) != null then 8000
 					 elif ($labels | index("bug")) != null then 7000
 					 elif ($labels | index("enhancement")) != null then 6000
-					 elif ($labels | index("quality-debt")) != null then 5000
+					 elif ($labels | index($debt_label)) != null then 5000
 					 elif (($labels | index("file-size-debt")) != null or ($labels | index("function-complexity-debt")) != null) then 4000
 					 elif ($labels | index("priority:low")) != null then 3500
 					 else 3000 end)
@@ -396,9 +396,9 @@ _dispatch_order_idle_borrowing_candidates() {
 		debt_cap_pct=100
 	fi
 
-	printf '%s' "$candidates_json" | jq -c --argjson cap "$((available_slots * debt_cap_pct / 100))" '
+	printf '%s' "$candidates_json" | jq -c --argjson cap "$((available_slots * debt_cap_pct / 100))" --arg debt_label "${QUALITY_DEBT_LABEL:-quality-debt}" '
 		def trusted_review_debt:
-			((.labels // []) | index("quality-debt")) != null and
+			((.labels // []) | index($debt_label)) != null and
 			((.labels // []) | index("source:review-feedback")) != null;
 		[.[] | select(trusted_review_debt)] as $debt |
 		[.[] | select(trusted_review_debt | not)] as $ordinary |
