@@ -398,6 +398,13 @@ _ci_terminal_failed_check_results() {
 	return 0
 }
 
+_ci_merge_check_sets() {
+	local primary_checks="$1"
+	local all_checks="$2"
+	printf '%s\n%s\n' "$primary_checks" "$all_checks" | jq -sc 'add | unique_by([.name, .link])' 2>/dev/null || printf '%s' "${primary_checks:-[]}"
+	return 0
+}
+
 #######################################
 # Route CI failure feedback from a worker/trusted PR to its linked issue, close
 # the PR, and set the issue to status:available for re-dispatch.
@@ -451,8 +458,7 @@ _dispatch_ci_fix_worker() {
 	fi
 	all_checks_json=$(gh pr checks "$pr_number" --repo "$repo_slug" \
 		--json name,bucket,state,link 2>/dev/null) || all_checks_json="[]"
-	checks_json=$(printf '%s\n%s\n' "$checks_json" "$all_checks_json" | \
-		jq -sc 'add | unique_by([.name, .link])' 2>/dev/null) || checks_json="${checks_json:-[]}"
+	checks_json=$(_ci_merge_check_sets "$checks_json" "$all_checks_json")
 	check_results=$(_ci_terminal_failed_check_results "$checks_json" "$terminal_failed_check_filter")
 	failing_checks_json="${check_results%%"$result_marker"*}"
 	failing_names="${check_results#*"$result_marker"}"

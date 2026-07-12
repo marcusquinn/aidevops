@@ -218,6 +218,7 @@ define_feedback_helpers() {
 		_ci_check_url_has_infra_timeout_log
 		_ci_actionable_failed_checks_markdown
 		_ci_terminal_failed_check_results
+		_ci_merge_check_sets
 		_append_feedback_to_issue
 		_transition_issue_for_redispatch
 		_close_and_label_feedback_pr
