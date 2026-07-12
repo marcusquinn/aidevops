@@ -103,6 +103,14 @@ This outputs the section template. Collect and include in the issue body:
 3. **Causal code**: `git blame <file> -L <line>,<line>` output or commit SHA suspected to have introduced the regression
 4. **Call-site sweep**: `rg "<function-or-pattern>" .agents/scripts/` to enumerate all affected locations
 
+For hang, timeout, rate-limit, API-budget, or transport claims, distinguish the
+observed symptom from its cause. A long-running parent process proves only the
+symptom. A confirmed-cause report also needs the exact blocked child command and
+direct backend-state evidence captured during the failure. Without both, file an
+investigation and describe candidate causes as unconfirmed. If the report says
+"all calls" or equivalent, generate and include the complete executable call-site
+inventory; otherwise narrow the claim to the enumerated locations.
+
 Store the collected data under a `## Reproducer` section in the issue body (included in the compose template in Step 4).
 
 A brief filed without a Reproducer section forces the worker to spend 30-60 min reconstructing the failure mode from scratch — the exact time cost described in GH#20008.
@@ -146,7 +154,15 @@ Before filing, check whether this is a customization need rather than a framewor
 
 If the need is customization, explain the `custom/` directory and link to `reference/customization.md`. Do not file an issue.
 
-### Step 3.6: Performance Issue Validation (MANDATORY for performance/optimization claims)
+### Step 3.6: Performance and Causal Attribution Validation
+
+For every hang, timeout, rate-limit, API-budget, or transport-cause claim—even
+when it is not a performance report—require the blocked command/process-tree
+evidence and backend state described in Step 2.5. If either is unavailable, do
+not assert the cause: file an investigation brief with the suspected cause marked
+unconfirmed.
+
+The remaining checks are mandatory for performance/optimization claims:
 
 If the issue involves performance, optimization, O(n^2) claims, or "hot path" assertions:
 

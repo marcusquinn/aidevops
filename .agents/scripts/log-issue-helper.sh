@@ -317,6 +317,14 @@ that captured this failure will be gone after this conversation ends.
 <paste terminal output here>
 ```
 
+For hang, timeout, rate-limit, API-budget, or transport-cause claims, also include:
+
+- **Blocked command**: the exact child command and arguments shown by the process tree or trace
+- **Backend state**: direct rate-limit/API-budget/transport evidence captured during the failure
+
+If those facts are unavailable, frame the report as an investigation and label the suspected
+cause as unconfirmed rather than asserting that it caused the symptom.
+
 **Expected output** (what should have happened instead):
 
 ```
@@ -342,39 +350,76 @@ EOF
 
 # -----------------------------------------------------------------------------
 # Brief Validator (t2410)
-# Checks if an issue body contains the required sections for a framework-bug
-# brief. Returns 0 if valid, 1 if sections are missing.
+# Checks if an issue body contains substantive reproducer evidence for a
+# framework-bug brief. Returns 0 if valid, 1 if evidence is missing.
 #
 # Usage: validate_brief <body-text-or-file>
 #   - Pass a filename if the body is in a file
 #   - Pass body text directly via stdin when called as: validate_brief -
 # -----------------------------------------------------------------------------
 
+_brief_has_placeholder() {
+	local body="$1"
+	if grep -Eqi '<(paste|describe|command|output|provide)[^>]*>|(^|[[:space:]])(TODO|TBD)([[:space:]]|$)' <<<"$body"; then
+		return 0
+	fi
+	return 1
+}
+
+_brief_is_causal_investigation() {
+	local body="$1"
+	if grep -Eqi 'investigation|candidate cause|suspected cause|cause (is )?unconfirmed|causality (is )?not established' <<<"$body"; then
+		return 0
+	fi
+	return 1
+}
+
+_brief_asserts_transport_cause() {
+	local body="$1"
+	local failure='hang|hung|timeout|timed out|rate.?limit|API.?budget|transport'
+	local causal='because|due to|root cause|cause(d|s)?|results? in|leads? to|triggers?'
+	if grep -Eqi "(${causal}).{0,120}(${failure})|(${failure}).{0,120}(${causal})|rate.?limit.{0,120}(hang|hung|timeout)|[→]" <<<"$body"; then
+		return 0
+	fi
+	return 1
+}
+
+_brief_has_transport_evidence() {
+	local body="$1"
+	if grep -Eqi '\*\*Blocked command\*\*[^[:alnum:]]*.{4,}' <<<"$body" &&
+		grep -Eqi '\*\*Backend state\*\*[^[:alnum:]]*.{4,}' <<<"$body"; then
+		return 0
+	fi
+	return 1
+}
+
 validate_brief_has_reproducer() {
 	local body="$1"
-	local missing_sections=()
 
 	# Read from file if body is a file path
 	if [[ -f "$body" ]]; then
-		body=$(cat "$body")
+		body=$(<"$body")
 	fi
 
-	# Check for required sections
-	if ! echo "$body" | grep -qi "## Reproducer"; then
-		missing_sections+=("## Reproducer")
-	fi
-
-	if [[ ${#missing_sections[@]} -eq 0 ]]; then
-		echo "OK: Brief contains all required sections"
-		return 0
-	else
-		echo "ERROR: Brief is missing required sections: ${missing_sections[*]}" >&2
-		echo "Framework-bug briefs MUST include a ## Reproducer section with:" >&2
-		echo "  - Symptom command + actual output" >&2
-		echo "  - Expected output" >&2
-		echo "  - (optional) Causal code / commit SHA" >&2
+	if ! grep -Eqi '^## Reproducer[[:space:]]*$' <<<"$body"; then
+		echo "ERROR: Brief is missing ## Reproducer" >&2
 		return 1
 	fi
+	if ! grep -Eqi '\*\*Symptom command\*\*' <<<"$body" || ! grep -Eqi '\*\*Actual output\*\*' <<<"$body"; then
+		echo "ERROR: Reproducer requires **Symptom command** and **Actual output**" >&2
+		return 1
+	fi
+	if _brief_has_placeholder "$body"; then
+		echo "ERROR: Reproducer still contains placeholder evidence" >&2
+		return 1
+	fi
+	if _brief_asserts_transport_cause "$body" && ! _brief_is_causal_investigation "$body" && ! _brief_has_transport_evidence "$body"; then
+		echo "ERROR: Confirmed hang/timeout/rate-limit/API-budget/transport claims require **Blocked command** and **Backend state** evidence; otherwise frame this as an investigation with an unconfirmed cause" >&2
+		return 1
+	fi
+
+	echo "OK: Brief contains substantive reproducer evidence"
+	return 0
 }
 
 # -----------------------------------------------------------------------------
