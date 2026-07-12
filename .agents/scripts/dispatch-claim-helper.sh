@@ -1083,6 +1083,45 @@ _guard_no_active_assignment_before_claim() {
 	esac
 }
 
+_resolve_claim_race_result() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local runner="$3"
+	local nonce="$4"
+	local comment_id="$5"
+	local claims="$6"
+	local claim_count=""
+	claim_count=$(printf '%s' "$claims" | jq 'length' 2>/dev/null) || claim_count=0
+	if [[ "$claim_count" -eq 0 ]]; then
+		echo "CLAIM_ERROR: no claims found after posting — proceeding (fail-open)" >&2
+		return 2
+	fi
+
+	local oldest_nonce oldest_runner oldest_age_seconds oldest_device our_device lease_expires_at now_epoch
+	oldest_nonce=$(printf '%s' "$claims" | jq -r '.[0].nonce // ""' 2>/dev/null) || oldest_nonce=""
+	oldest_runner=$(printf '%s' "$claims" | jq -r '.[0].runner // "unknown"' 2>/dev/null) || oldest_runner="unknown"
+	oldest_age_seconds=$(printf '%s' "$claims" | jq -r '.[0].age_seconds // 0' 2>/dev/null) || oldest_age_seconds=0
+	oldest_device=$(printf '%s' "$claims" | jq -r --arg fallback "$LEGACY_DEVICE_MARKER" '.[0].device // $fallback' 2>/dev/null) || oldest_device="$LEGACY_DEVICE_MARKER"
+	our_device=$(_resolve_device_id)
+	now_epoch=$(_now_epoch)
+	lease_expires_at="$((now_epoch + DISPATCH_CLAIM_ORPHAN_GRACE))"
+	if [[ "$oldest_nonce" == "$nonce" ]]; then
+		printf 'CLAIM_WON: runner=%s nonce=%s issue=#%s comment_id=%s lease_token=%s device=%s phase=prelaunch expires_at=%s\n' \
+			"$runner" "$nonce" "$issue_number" "$comment_id" "$nonce" "$our_device" "$lease_expires_at"
+		return 0
+	fi
+	if [[ "$oldest_runner" == "$runner" && ( "$oldest_device" == "$LEGACY_DEVICE_MARKER" || "$oldest_device" == "$our_device" ) && "$oldest_nonce" != "$nonce" ]]; then
+		printf 'CLAIM_STALE_SELF: runner=%s found own prior claim on issue #%s (age=%ss) — backing off (claim retained for audit)\n' \
+			"$runner" "$issue_number" "$oldest_age_seconds"
+		return 1
+	fi
+	_handle_close_window_loss "$issue_number" "$repo_slug" "$runner" "$nonce" \
+		"$oldest_runner" "$claims" || true
+	printf 'CLAIM_LOST: runner=%s lost to %s on issue #%s — backing off (both claims retained for audit)\n' \
+		"$runner" "$oldest_runner" "$issue_number"
+	return 1
+}
+
 #######################################
 # Attempt to claim an issue for dispatch.
 #
@@ -1158,55 +1197,8 @@ cmd_claim() {
 		return 2
 	}
 
-	local claim_count
-	claim_count=$(printf '%s' "$claims" | jq 'length' 2>/dev/null) || claim_count=0
-
-	if [[ "$claim_count" -eq 0 ]]; then
-		# No claims found (including ours) — something went wrong, fail-open
-		echo "CLAIM_ERROR: no claims found after posting — proceeding (fail-open)" >&2
-		return 2
-	fi
-
-	# Step 4: Check if our claim is the oldest
-	local oldest_nonce oldest_runner oldest_age_seconds oldest_device our_device lease_expires_at now_epoch
-	oldest_nonce=$(printf '%s' "$claims" | jq -r '.[0].nonce // ""' 2>/dev/null) || oldest_nonce=""
-	oldest_runner=$(printf '%s' "$claims" | jq -r '.[0].runner // "unknown"' 2>/dev/null) || oldest_runner="unknown"
-	oldest_age_seconds=$(printf '%s' "$claims" | jq -r '.[0].age_seconds // 0' 2>/dev/null) || oldest_age_seconds=0
-	oldest_device=$(printf '%s' "$claims" | jq -r --arg fallback "$LEGACY_DEVICE_MARKER" '.[0].device // $fallback' 2>/dev/null) || oldest_device="$LEGACY_DEVICE_MARKER"
-	our_device=$(_resolve_device_id)
-	now_epoch=$(_now_epoch)
-	lease_expires_at="$((now_epoch + DISPATCH_CLAIM_ORPHAN_GRACE))"
-
-	if [[ "$oldest_nonce" == "$nonce" ]]; then
-		# We won — our claim is the oldest
-		printf 'CLAIM_WON: runner=%s nonce=%s issue=#%s comment_id=%s lease_token=%s device=%s phase=prelaunch expires_at=%s\n' \
-			"$runner" "$nonce" "$issue_number" "$comment_id" "$nonce" "$our_device" "$lease_expires_at"
-		return 0
-	fi
-
-	# GH#17503: Claim comments are NEVER deleted — they form the audit trail
-	# of every dispatch attempt. The claim TTL (DISPATCH_CLAIM_MAX_AGE=1800s)
-	# controls how long a claim blocks re-dispatch; after expiry the comment
-	# stays but no longer locks the issue.
-	#
-	# Same-runner stale claim: another claim from this runner already exists.
-	# The existing claim is still blocking (within TTL), so back off.
-	if [[ "$oldest_runner" == "$runner" && ( "$oldest_device" == "$LEGACY_DEVICE_MARKER" || "$oldest_device" == "$our_device" ) && "$oldest_nonce" != "$nonce" ]]; then
-		printf 'CLAIM_STALE_SELF: runner=%s found own prior claim on issue #%s (age=%ss) — backing off (claim retained for audit)\n' \
-			"$runner" "$issue_number" "$oldest_age_seconds"
-		return 1
-	fi
-
-	# Step 5: We lost — another runner's claim is older.
-	# t2422: If this was a close-window race (delta <= DISPATCH_TIEBREAKER_WINDOW),
-	# _handle_close_window_loss emits a CLAIM_DEFERRED audit comment.
-	_handle_close_window_loss "$issue_number" "$repo_slug" "$runner" "$nonce" \
-		"$oldest_runner" "$claims" || true
-
-	printf 'CLAIM_LOST: runner=%s lost to %s on issue #%s — backing off (both claims retained for audit)\n' \
-		"$runner" "$oldest_runner" "$issue_number"
-
-	return 1
+	_resolve_claim_race_result "$issue_number" "$repo_slug" "$runner" "$nonce" "$comment_id" "$claims"
+	return $?
 }
 
 cmd_transition() {
