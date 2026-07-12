@@ -1,6 +1,6 @@
 import { type RefObject, useCallback, useEffect, useRef, useState } from "react";
 import type { VaultDialogIntent } from "./VaultBadges";
-import { isNativeVaultResult, type NativeVaultAction, postNativeVaultCommand, vaultCommandText } from "./vault-command-bridge";
+import { isNativeVaultResult, type NativeVaultAction, type NativeVaultResult, postNativeVaultCommand, vaultCommandText } from "./vault-command-bridge";
 
 export type VaultLaunchStatus = "idle" | "requesting" | "opened" | "copied" | "failed" | "succeeded" | "cancelled";
 
@@ -10,6 +10,13 @@ const terminalActions: Record<VaultDialogIntent, NativeVaultAction | null> = {
   setup: "init",
   unavailable: null,
   unlock: "unlock",
+};
+const nativeResultStatuses: Record<NativeVaultResult, VaultLaunchStatus> = {
+  cancelled: "cancelled",
+  failed: "failed",
+  presented: "opened",
+  running: "opened",
+  succeeded: "succeeded",
 };
 
 export function terminalActionForIntent(intent: VaultDialogIntent): NativeVaultAction | null {
@@ -62,12 +69,7 @@ export function useVaultCommandLaunch({ intent, onRefresh, onTerminalLaunch }: {
     const handleNativeResult = (event: Event) => {
       clearNativeResultTimeout();
       const result = (event as CustomEvent<unknown>).detail;
-      if (!isNativeVaultResult(result)) {
-        setLaunchStatus("failed");
-        return;
-      }
-      if (result === "presented" || result === "running") setLaunchStatus("opened");
-      else setLaunchStatus(result);
+      setLaunchStatus(isNativeVaultResult(result) ? nativeResultStatuses[result] : "failed");
       if (result === "succeeded") void onRefresh();
     };
     window.addEventListener("aidevops:vault-command-result", handleNativeResult);
