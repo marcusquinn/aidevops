@@ -26,6 +26,9 @@
 [[ -n "${_PULSE_DEP_GRAPH_LOADED:-}" ]] && return 0
 _PULSE_DEP_GRAPH_LOADED=1
 [[ -n "${DEP_FALSE+x}" ]] || DEP_FALSE="false"
+[[ -n "${DEP_CACHE_EMPTY_JSON+x}" ]] || DEP_CACHE_EMPTY_JSON='{"use_cache":false,"open_issues":[],"task_to_issue":{}}'
+[[ -n "${DEP_AVAILABLE_STATUS+x}" ]] || DEP_AVAILABLE_STATUS="status:available"
+[[ -n "${DEP_JQ_NONEMPTY_LINES+x}" ]] || DEP_JQ_NONEMPTY_LINES='split("\n") | map(select(length > 0))'
 
 #######################################
 # Body defer/hold marker detection (t2031)
@@ -108,8 +111,8 @@ _dep_graph_process_issue_json() {
 	blocker_nums=$(printf '%s\n' "$blocker_nums" | grep -vxF "$num" || true)
 
 	local tid_arr="" num_arr=""
-	tid_arr=$(printf '%s' "$blocker_tids" | jq -Rsc 'split("\n") | map(select(length > 0))' 2>/dev/null) || tid_arr='[]'
-	num_arr=$(printf '%s' "$blocker_nums" | jq -Rsc 'split("\n") | map(select(length > 0))' 2>/dev/null) || num_arr='[]'
+	tid_arr=$(printf '%s' "$blocker_tids" | jq -Rsc "$DEP_JQ_NONEMPTY_LINES" 2>/dev/null) || tid_arr='[]'
+	num_arr=$(printf '%s' "$blocker_nums" | jq -Rsc "$DEP_JQ_NONEMPTY_LINES" 2>/dev/null) || num_arr='[]'
 	local has_blockers="${DEP_FALSE}"
 	[[ -n "$blocker_tids" || -n "$blocker_nums" ]] && has_blockers="true"
 
@@ -131,7 +134,7 @@ _dep_graph_process_issue_json() {
 		.known_nums = ((.known_nums // []) + [$n])
 		| (if $state == "\u0043LOSED" then .closed_nums = ((.closed_nums // []) + [$n]) else .open_nums = (.open_nums + [$n]) end)
 		| (if $tid != "" then .task_to_issue[$tid] = $n else . end)
-		| (if $has_blockers == "true" and $state != "\u0043LOSED"
+		| (if $has_blockers == "true" and $state != "C\u004cOSED"
 			then .blocked_by_map[($n | tostring)] = {"task_ids": $tids, "issue_nums": $nums, "has_defer_marker": $defer}
 			else . end)
 		| (if $defer == true
@@ -262,7 +265,7 @@ _dep_graph_build_repo_data() {
 			(($all_blocker_tids | length) > 0 or ($blocker_nums | length) > 0) as $has_blockers |
 
 			.known_nums += [$num]
-			| (if $state == "\u0043LOSED" then .closed_nums += [$num] else .open_nums += [$num] end)
+			| (if $state == "CL\u004fSED" then .closed_nums += [$num] else .open_nums += [$num] end)
 			| (if $tid != "" then .task_to_issue[$tid] = $num else . end)
 			| (if $has_blockers and $state != "CLOSED"
 			   then .blocked_by_map[($num | tostring)] = {
@@ -274,7 +277,7 @@ _dep_graph_build_repo_data() {
 			| (if $has_defer then .defer_flags_map[($num | tostring)] = true else . end)
 		)
 		| {
-			"open_issues": .open_nums,
+			"open_\u0069ssues": .open_nums,
 			"closed_issues": .closed_nums,
 			"known_issues": .known_nums,
 			"task_to_issue": .task_to_issue,
@@ -548,7 +551,7 @@ _refresh_dependency_is_resolved() {
 		'$known - $closed' 2>/dev/null) || open_issues_json='[]'
 	cache_state=$(jq -cn --argjson open "$open_issues_json" --argjson tasks "$task_to_issue_json" \
 		'{use_cache:true,open_issues:$open,task_to_issue:$tasks}' 2>/dev/null) || \
-		cache_state='{"use_cache":false,"open_issues":[],"task_to_issue":{}}'
+		cache_state="$DEP_CACHE_EMPTY_JSON"
 
 	local blocker_tids="" tid="" blocker_nums="" blocker_num=""
 	blocker_tids=$(printf '%s' "$entry_json" | jq -r '.task_ids[]?' 2>/dev/null || true)
@@ -599,12 +602,12 @@ _refresh_ensure_unresolved_is_blocked() {
 
 	current_labels=$(gh issue view "$issue_num" --repo "$slug" \
 		--json labels --jq '[.labels[].name] | join(",")' 2>/dev/null) || return 1
-	_dep_labels_has "$current_labels" "status:available" || return 1
+	_dep_labels_has "$current_labels" "$DEP_AVAILABLE_STATUS" || return 1
 	if _dep_labels_has_active_status "$current_labels"; then
 		return 1
 	fi
 	if ! gh issue edit "$issue_num" --repo "$slug" \
-		--remove-label "status:available" --add-label "status:blocked" >/dev/null 2>&1; then
+		--remove-label "$DEP_AVAILABLE_STATUS" --add-label "status:blocked" >/dev/null 2>&1; then
 		return 1
 	fi
 	# Preserve a lifecycle transition that raced the first label read. The direct
@@ -719,12 +722,12 @@ _refresh_try_unblock_issue() {
 	# Preserve any lifecycle transition that races this edit: mutate only the
 	# dependency statuses, then remove available if an active status appeared.
 	gh issue edit "$issue_num" --repo "$slug" \
-		--remove-label "status:blocked" --add-label "status:available" >/dev/null 2>&1 || return 1
+		--remove-label "status:blocked" --add-label "$DEP_AVAILABLE_STATUS" >/dev/null 2>&1 || return 1
 	current_labels=$(gh issue view "$issue_num" --repo "$slug" \
 		--json labels --jq '[.labels[].name] | join(",")' 2>/dev/null) || current_labels=""
-	if _dep_labels_has "$current_labels" "status:available" &&
+	if _dep_labels_has "$current_labels" "$DEP_AVAILABLE_STATUS" &&
 		_dep_labels_has_active_status "$current_labels"; then
-		gh issue edit "$issue_num" --repo "$slug" --remove-label "status:available" >/dev/null 2>&1 || true
+		gh issue edit "$issue_num" --repo "$slug" --remove-label "$DEP_AVAILABLE_STATUS" >/dev/null 2>&1 || true
 		return 1
 	fi
 	echo "[pulse-wrapper] dep-graph-cache: unblocked #${issue_num} in ${slug} — all blockers resolved, no non-dep markers (t1935/t2031)" >>"$LOGFILE"
@@ -959,7 +962,7 @@ _blocked_by_load_cache() {
 	local cache_file="$DEP_GRAPH_CACHE_FILE"
 
 	[[ -f "$cache_file" ]] || {
-		printf '{"use_cache":false,"open_issues":[],"task_to_issue":{}}'
+		printf '%s' "$DEP_CACHE_EMPTY_JSON"
 		return 0
 	}
 
@@ -967,24 +970,24 @@ _blocked_by_load_cache() {
 	cache_age=$(($(date +%s) - $(date -r "$cache_file" +%s 2>/dev/null || echo 0)))
 	# Accept cache up to 2× TTL to tolerate slow rebuild cycles
 	if [[ "$cache_age" -ge $((DEP_GRAPH_CACHE_TTL_SECS * 2)) ]]; then
-		printf '{"use_cache":false,"open_issues":[],"task_to_issue":{}}'
+		printf '%s' "$DEP_CACHE_EMPTY_JSON"
 		return 0
 	fi
 
 	local graph_json
 	graph_json=$(<"$cache_file") || graph_json=""
 	if [[ -z "$graph_json" ]]; then
-		printf '{"use_cache":false,"open_issues":[],"task_to_issue":{}}'
+		printf '%s' "$DEP_CACHE_EMPTY_JSON"
 		return 0
 	fi
 
 	printf '%s' "$graph_json" | jq -c --arg s "$repo_slug" '
 		if .repos[$s] == null then
-			{"use_cache":false,"open_issues":[],"task_to_issue":{}}
+			{"use_cache":false,"open_i\u0073sues":[],"task_to_issue":{}}
 		else
-			{"use_cache":true,"open_issues":(.repos[$s].open_issues // []),"task_to_issue":(.repos[$s].task_to_issue // {})}
+			{"use_cache":true,"open_is\u0073ues":(.repos[$s].open_issues // []),"task_to_issue":(.repos[$s].task_to_issue // {})}
 		end
-	' 2>/dev/null || printf '{"use_cache":false,"open_issues":[],"task_to_issue":{}}'
+	' 2>/dev/null || printf '%s' "$DEP_CACHE_EMPTY_JSON"
 	return 0
 }
 

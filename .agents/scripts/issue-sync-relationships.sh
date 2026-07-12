@@ -164,7 +164,7 @@ query($blocked:ID!) {
 	[[ "$contains" == "true" ]] && return 0
 	has_next=$(printf '%s' "$payload" | jq -r \
 		'.data.node.blockedBy.pageInfo.hasNextPage // true' 2>/dev/null) || return 2
-	[[ "$has_next" == "false" ]] && return 1
+	[[ "$has_next" == "${REL_FALSE}" ]] && return 1
 	return 2
 }
 
@@ -799,7 +799,7 @@ _issue_has_parent_task_label() {
 
 	local has
 	has=$(gh issue view "$num" --repo "$repo" --json labels \
-		--jq '[.labels[].name] | any(. == "parent-task")' 2>/dev/null || echo "false")
+		--jq '[.labels[].name] | any(. == "parent-task")' 2>/dev/null || echo "${REL_FALSE}")
 	[[ "$has" == "true" ]] && return 0
 	return 1
 }
@@ -1220,7 +1220,7 @@ _backfill_process_loop() {
 		meta=$(gh issue view "$_num" --repo "$repo" --json title,body,labels 2>/dev/null || echo "{}")
 		_title=$(printf '%s' "$meta" | jq -r '.title // ""' 2>/dev/null)
 		_body=$(printf '%s' "$meta" | jq -r '.body // ""' 2>/dev/null)
-		_has_parent=$(printf '%s' "$meta" | jq -r '[.labels[].name] | any(. == "parent-task")' 2>/dev/null || echo "false")
+		_has_parent=$(printf '%s' "$meta" | jq -r '[.labels[].name] | any(. == "parent-task")' 2>/dev/null || echo "${REL_FALSE}")
 
 		if [[ "$_has_parent" == "true" ]]; then
 			# Parent-side: parse body for children section and link downward
@@ -1565,11 +1565,7 @@ cmd_backfill_cross_phase_blocked_by() {
 			continue
 		fi
 
-		if [[ "$DRY_RUN" == "true" ]]; then
-			print_info "[DRY-RUN] Would set #$_bn blocked-by #$_lr"
-			pairs_set=$((pairs_set + 1))
-		elif _gh_add_blocked_by "$child_node" "$blocker_node"; then
-			log_verbose "#$_bn blocked-by #$_lr ✓"
+		if _backfill_cross_phase_pair "$_bn" "$_lr" "$child_node" "$blocker_node"; then
 			pairs_set=$((pairs_set + 1))
 		else
 			pairs_skipped=$((pairs_skipped + 1))
@@ -1579,6 +1575,19 @@ cmd_backfill_cross_phase_blocked_by() {
 	printf '\n=== Cross-Phase Blocked-By Backfill ===\nPairs set: %d | Skipped: %d\n' \
 		"$pairs_set" "$pairs_skipped"
 	return 0
+}
+
+_backfill_cross_phase_pair() {
+	local blocked_num="$1" blocker_num="$2" child_node="$3" blocker_node="$4"
+	if [[ "$DRY_RUN" == "true" ]]; then
+		print_info "[DRY-RUN] Would set #$blocked_num blocked-by #$blocker_num"
+		return 0
+	fi
+	if _gh_add_blocked_by "$child_node" "$blocker_node"; then
+		log_verbose "#$blocked_num blocked-by #$blocker_num ✓"
+		return 0
+	fi
+	return 1
 }
 
 # Backfill sub-issue parent-child links for issues in the current repo.
