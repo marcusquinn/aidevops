@@ -185,3 +185,4 @@ and monotonically decreases".
 | 90 | GH#27123/PR #27136 | Pre-existing drift on the merge ref reports 88 smells vs threshold 86. Qlty Maintainability Smells and the per-PR regression gate report no new smells from the shell-focused lint-provisioning diff; qlty check, CodeFactor, Codacy, and SonarCloud pass. 88 actual + 2 buffer = 90; post-merge automation can ratchet down after smell-reducing merges. |
 | 81 | ratchet-post-merge | auto-ratchet after b207eb9 ("refactor: reduce runtime event complexity (#27259)"): count 79 + 2 buffer = 81 (previously 90, reduction 9) |
 | 65 | ratchet-post-merge | auto-ratchet after e9dcd02 ("GH#27175: simplify command policy helper (#27322)"): count 63 + 2 buffer = 65 (previously 81, reduction 16) |
+| 64 | ratchet-post-merge | auto-ratchet after ff60dd5 ("t18107: scope startup greeting to interactive root sessions (#27329)"): count 62 + 2 buffer = 64 (previously 65, reduction 1) |
