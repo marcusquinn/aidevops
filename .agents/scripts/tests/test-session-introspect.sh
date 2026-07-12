@@ -111,9 +111,9 @@ assert_contains() {
 
 printf '\n%s=== recent (default session = sess-A, most recent) ===%s\n' "$GREEN" "$NC"
 out=$("$HELPER" recent 2>&1) || true
-assert_contains "recent: shows current session ID"    "$out" "sess-A"
-assert_contains "recent: shows Edit tool call"        "$out" "Edit"
-assert_contains "recent: shows Bash error (✗)"        "$out" "✗"
+assert_contains "recent: shows current session ID" "$out" "sess-A"
+assert_contains "recent: shows Edit tool call" "$out" "Edit"
+assert_contains "recent: shows Bash error (✗)" "$out" "✗"
 
 printf '\n%s=== recent with limit ===%s\n' "$GREEN" "$NC"
 out=$("$HELPER" recent 3 2>&1) || true
@@ -126,22 +126,22 @@ fi
 
 printf '\n%s=== patterns ===%s\n' "$GREEN" "$NC"
 out=$("$HELPER" patterns 2>&1) || true
-assert_contains "patterns: shows session ID"         "$out" "sess-A"
-assert_contains "patterns: shows total calls"        "$out" "9 total"
-assert_contains "patterns: shows error count"        "$out" "2 error"
+assert_contains "patterns: shows session ID" "$out" "sess-A"
+assert_contains "patterns: shows total calls" "$out" "9 total"
+assert_contains "patterns: shows error count" "$out" "2 error"
 assert_contains "patterns: reports repeated-path evidence" "$out" "/repo/b.sh"
 assert_contains "patterns: requires contextual interpretation" "$out" "Interpret in context"
 
 printf '\n%s=== errors ===%s\n' "$GREEN" "$NC"
 out=$("$HELPER" errors 2>&1) || true
-assert_contains "errors: shows failed Bash call"     "$out" "shellcheck"
-assert_contains "errors: excludes succeeded calls"   "$out" "2 error"
+assert_contains "errors: shows failed Bash call" "$out" "shellcheck"
+assert_contains "errors: excludes succeeded calls" "$out" "2 error"
 
 printf '\n%s=== sessions ===%s\n' "$GREEN" "$NC"
 out=$("$HELPER" sessions 2>&1) || true
-assert_contains "sessions: shows sess-A"             "$out" "sess-A"
-assert_contains "sessions: shows sess-B"             "$out" "sess-B"
-assert_contains "sessions: shows cost column"        "$out" "0.0184"
+assert_contains "sessions: shows sess-A" "$out" "sess-A"
+assert_contains "sessions: shows sess-B" "$out" "sess-B"
+assert_contains "sessions: shows cost column" "$out" "0.0184"
 
 printf '\n%s=== explicit --session flag ===%s\n' "$GREEN" "$NC"
 out=$("$HELPER" recent --session sess-B 2>&1) || true

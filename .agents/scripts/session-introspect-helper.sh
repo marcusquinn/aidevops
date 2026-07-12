@@ -98,13 +98,23 @@ _parse_common_flags() {
 			db_override="${2:-}"
 			shift 2
 			;;
-		--json) json_flag=true; shift ;;
+		--json)
+			json_flag=true
+			shift
+			;;
 		--since)
 			since_min="${2:-}"
 			shift 2
 			;;
-		--) shift; positionals+=("$@"); break ;;
-		*) positionals+=("$1"); shift ;;
+		--)
+			shift
+			positionals+=("$@")
+			break
+			;;
+		*)
+			positionals+=("$1")
+			shift
+			;;
 		esac
 	done
 	printf 'SESSION=%s\nDB=%s\nJSON=%s\nSINCE=%s\n' "$session_id" "$db_override" "$json_flag" "$since_min"
@@ -140,7 +150,8 @@ _escape_sql() {
 # =============================================================================
 
 cmd_recent() {
-	local parsed; parsed=$(_parse_common_flags "$@")
+	local parsed
+	parsed=$(_parse_common_flags "$@")
 	local session_id db_override json_flag since_min limit=""
 	session_id=$(echo "$parsed" | awk -F= '/^SESSION=/{sub(/^SESSION=/,"");print;exit}')
 	db_override=$(echo "$parsed" | awk -F= '/^DB=/{sub(/^DB=/,"");print;exit}')
@@ -148,16 +159,26 @@ cmd_recent() {
 	since_min=$(echo "$parsed" | awk -F= '/^SINCE=/{sub(/^SINCE=/,"");print;exit}')
 	limit=$(echo "$parsed" | awk -F= '/^POS=/{sub(/^POS=/,"");print;exit}')
 	[[ -z "$limit" ]] && limit="$DEFAULT_RECENT_N"
-	[[ "$limit" =~ ^[0-9]+$ ]] || { print_error "N must be a positive integer"; return 1; }
+	[[ "$limit" =~ ^[0-9]+$ ]] || {
+		print_error "N must be a positive integer"
+		return 1
+	}
 
-	local db; db=$(_resolve_db_path "$db_override")
+	local db
+	db=$(_resolve_db_path "$db_override")
 	_require_db "$db" || return 1
 
-	local sid; sid=$(_resolve_session_id "$db" "$session_id")
-	[[ -z "$sid" ]] && { print_warning "no sessions found in $db"; return 0; }
+	local sid
+	sid=$(_resolve_session_id "$db" "$session_id")
+	[[ -z "$sid" ]] && {
+		print_warning "no sessions found in $db"
+		return 0
+	}
 
-	local since; since=$(_since_clause "$since_min") || return 1
-	local sid_esc; sid_esc=$(_escape_sql "$sid")
+	local since
+	since=$(_since_clause "$since_min") || return 1
+	local sid_esc
+	sid_esc=$(_escape_sql "$sid")
 
 	local query="
 		SELECT timestamp, tool_name, COALESCE(intent,''), COALESCE(duration_ms,0), success
@@ -193,8 +214,12 @@ _recent_table() {
 
 _recent_json() {
 	local db="$1" sid="$2" query="$3"
-	command -v jq >/dev/null 2>&1 || { print_error "jq required with --json"; return 1; }
-	local rows; rows=$(sqlite3 -separator '|' "$db" "$query" || true)
+	command -v jq >/dev/null 2>&1 || {
+		print_error "jq required with --json"
+		return 1
+	}
+	local rows
+	rows=$(sqlite3 -separator '|' "$db" "$query" || true)
 	printf '%s' "$rows" | jq -R -s --arg session "$sid" '
 		split("\n") | map(select(length > 0) | split("|") | {
 			timestamp: .[0],
@@ -208,20 +233,28 @@ _recent_json() {
 }
 
 cmd_patterns() {
-	local parsed; parsed=$(_parse_common_flags "$@")
+	local parsed
+	parsed=$(_parse_common_flags "$@")
 	local session_id db_override json_flag since_min
 	session_id=$(echo "$parsed" | awk -F= '/^SESSION=/{sub(/^SESSION=/,"");print;exit}')
 	db_override=$(echo "$parsed" | awk -F= '/^DB=/{sub(/^DB=/,"");print;exit}')
 	json_flag=$(echo "$parsed" | awk -F= '/^JSON=/{sub(/^JSON=/,"");print;exit}')
 	since_min=$(echo "$parsed" | awk -F= '/^SINCE=/{sub(/^SINCE=/,"");print;exit}')
 
-	local db; db=$(_resolve_db_path "$db_override")
+	local db
+	db=$(_resolve_db_path "$db_override")
 	_require_db "$db" || return 1
-	local sid; sid=$(_resolve_session_id "$db" "$session_id")
-	[[ -z "$sid" ]] && { print_warning "no sessions found in $db"; return 0; }
+	local sid
+	sid=$(_resolve_session_id "$db" "$session_id")
+	[[ -z "$sid" ]] && {
+		print_warning "no sessions found in $db"
+		return 0
+	}
 
-	local since; since=$(_since_clause "$since_min") || return 1
-	local sid_esc; sid_esc=$(_escape_sql "$sid")
+	local since
+	since=$(_since_clause "$since_min") || return 1
+	local sid_esc
+	sid_esc=$(_escape_sql "$sid")
 
 	# Aggregate stats for the session.
 	local stats
@@ -321,7 +354,10 @@ _patterns_table() {
 _patterns_json() {
 	local sid="$1" total="$2" errors="$3" first_ts="$4" last_ts="$5"
 	local avg_dur="$6" rate="$7" by_tool="$8" rereads="$9"
-	command -v jq >/dev/null 2>&1 || { print_error "jq required with --json"; return 1; }
+	command -v jq >/dev/null 2>&1 || {
+		print_error "jq required with --json"
+		return 1
+	}
 	local by_tool_json
 	by_tool_json=$(printf '%s' "$by_tool" | jq -R -s '
 		split("\n") | map(select(length > 0) | split("|") | {
@@ -358,7 +394,8 @@ _patterns_json() {
 }
 
 cmd_errors() {
-	local parsed; parsed=$(_parse_common_flags "$@")
+	local parsed
+	parsed=$(_parse_common_flags "$@")
 	local session_id db_override json_flag since_min limit=""
 	session_id=$(echo "$parsed" | awk -F= '/^SESSION=/{sub(/^SESSION=/,"");print;exit}')
 	db_override=$(echo "$parsed" | awk -F= '/^DB=/{sub(/^DB=/,"");print;exit}')
@@ -366,15 +403,25 @@ cmd_errors() {
 	since_min=$(echo "$parsed" | awk -F= '/^SINCE=/{sub(/^SINCE=/,"");print;exit}')
 	limit=$(echo "$parsed" | awk -F= '/^POS=/{sub(/^POS=/,"");print;exit}')
 	[[ -z "$limit" ]] && limit="$DEFAULT_ERRORS_N"
-	[[ "$limit" =~ ^[0-9]+$ ]] || { print_error "N must be a positive integer"; return 1; }
+	[[ "$limit" =~ ^[0-9]+$ ]] || {
+		print_error "N must be a positive integer"
+		return 1
+	}
 
-	local db; db=$(_resolve_db_path "$db_override")
+	local db
+	db=$(_resolve_db_path "$db_override")
 	_require_db "$db" || return 1
-	local sid; sid=$(_resolve_session_id "$db" "$session_id")
-	[[ -z "$sid" ]] && { print_warning "no sessions found in $db"; return 0; }
+	local sid
+	sid=$(_resolve_session_id "$db" "$session_id")
+	[[ -z "$sid" ]] && {
+		print_warning "no sessions found in $db"
+		return 0
+	}
 
-	local since; since=$(_since_clause "$since_min") || return 1
-	local sid_esc; sid_esc=$(_escape_sql "$sid")
+	local since
+	since=$(_since_clause "$since_min") || return 1
+	local sid_esc
+	sid_esc=$(_escape_sql "$sid")
 
 	local query="
 		SELECT timestamp, tool_name, COALESCE(intent,''), COALESCE(duration_ms,0)
@@ -384,7 +431,10 @@ cmd_errors() {
 		LIMIT ${limit};
 	"
 	if [[ "$json_flag" == "true" ]]; then
-		command -v jq >/dev/null 2>&1 || { print_error "jq required with --json"; return 1; }
+		command -v jq >/dev/null 2>&1 || {
+			print_error "jq required with --json"
+			return 1
+		}
 		sqlite3 -separator '|' "$db" "$query" | jq -R -s --arg sid "$sid" '
 			split("\n") | map(select(length > 0) | split("|") | {
 				timestamp: .[0], tool: .[1], intent: .[2],
@@ -406,15 +456,20 @@ cmd_errors() {
 }
 
 cmd_sessions() {
-	local parsed; parsed=$(_parse_common_flags "$@")
+	local parsed
+	parsed=$(_parse_common_flags "$@")
 	local db_override json_flag limit=""
 	db_override=$(echo "$parsed" | awk -F= '/^DB=/{sub(/^DB=/,"");print;exit}')
 	json_flag=$(echo "$parsed" | awk -F= '/^JSON=/{sub(/^JSON=/,"");print;exit}')
 	limit=$(echo "$parsed" | awk -F= '/^POS=/{sub(/^POS=/,"");print;exit}')
 	[[ -z "$limit" ]] && limit="$DEFAULT_SESSIONS_N"
-	[[ "$limit" =~ ^[0-9]+$ ]] || { print_error "N must be a positive integer"; return 1; }
+	[[ "$limit" =~ ^[0-9]+$ ]] || {
+		print_error "N must be a positive integer"
+		return 1
+	}
 
-	local db; db=$(_resolve_db_path "$db_override")
+	local db
+	db=$(_resolve_db_path "$db_override")
 	_require_db "$db" || return 1
 
 	local query="
@@ -425,7 +480,10 @@ cmd_sessions() {
 		LIMIT ${limit};
 	"
 	if [[ "$json_flag" == "true" ]]; then
-		command -v jq >/dev/null 2>&1 || { print_error "jq required with --json"; return 1; }
+		command -v jq >/dev/null 2>&1 || {
+			print_error "jq required with --json"
+			return 1
+		}
 		sqlite3 -separator '|' "$db" "$query" | jq -R -s '
 			split("\n") | map(select(length > 0) | split("|") | {
 				session: .[0],
