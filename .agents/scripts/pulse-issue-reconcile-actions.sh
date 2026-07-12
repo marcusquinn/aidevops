@@ -18,6 +18,7 @@
 #   _fetch_subissue_numbers       — fetch child issue numbers via GraphQL
 #   _extract_children_section     — extract ## Children / ## Sub-tasks section
 #   _extract_children_from_prose  — extract children from narrow prose patterns
+#   _fetch_children_from_trusted_roadmap_comments — extract trusted roadmap refs
 #   _compute_parent_nudge_age_hours — compute age of decomposition nudge comment
 #   _post_parent_phases_unfiled_nudge — nudge when declared phases > filed children
 #   _try_close_parent_tracker     — close parent if all children are resolved
@@ -191,6 +192,38 @@ _extract_children_from_prose() {
 	# Extract the trailing #NNNN from each matched phrase, strip the `#`,
 	# drop anything that isn't a clean positive integer, deduplicate.
 	printf '%s' "$all_matches" | grep -oE '#[0-9]+' | grep -oE '[0-9]+' | sort -un
+	return 0
+}
+
+#######################################
+# Extract child issue numbers from trusted roadmap comments.
+#
+# Parent creation can publish a dependency roadmap as a maintainer comment
+# while leaving the immutable original body unchanged. Reconciliation used to
+# ignore that durable declaration and falsely report zero children. Restrict
+# this source to trusted author associations and an explicit roadmap/children
+# heading so arbitrary prose references cannot affect parent closure.
+#
+# Arguments:
+#   arg1 - repository slug
+#   arg2 - parent issue number
+# Outputs: one child issue number per line, deduplicated and sorted.
+# Returns: 0, including on API failure (no comment evidence).
+#######################################
+_fetch_children_from_trusted_roadmap_comments() {
+	local slug="$1"
+	local issue_num="$2"
+	[[ -n "$slug" ]] || return 0
+	[[ "$issue_num" =~ ^[0-9]+$ ]] || return 0
+
+	gh api --paginate "repos/${slug}/issues/${issue_num}/comments" \
+		--jq '.[] | select((.author_association == "OWNER" or .author_association == "MEMBER" or .author_association == "COLLABORATOR") and (.body | test("(?im)^##[[:space:]]+(Dispatch roadmap|Children|Child issues|Sub-tasks)[[:space:]]*$"))) | .body' \
+		2>/dev/null | awk '
+		BEGIN { in_section = 0 }
+		/^##[[:space:]]+(Dispatch roadmap|Children|Child [Ii]ssues|Sub-?[Tt]asks)[[:space:]]*$/ { in_section = 1; next }
+		in_section && /^##[[:space:]]/ { in_section = 0 }
+		in_section { print }
+	' | grep -oE '#[0-9]+' | grep -oE '[0-9]+' | sort -un || true
 	return 0
 }
 
@@ -882,7 +915,7 @@ _action_cpt_single() {
 	# union step below regardless of whether children_section is
 	# non-empty. Without init, an issue body with no children-section
 	# triggers `_b_nums: unbound variable` and aborts the function.
-	local _g_nums="" _b_nums="" _p_nums="" child_nums=""
+	local _g_nums="" _b_nums="" _p_nums="" _c_nums="" child_nums=""
 	local _src_parts=""
 	_g_nums=$(_fetch_subissue_numbers "$slug" "$issue_num" | sort -un | grep -v "^${issue_num}$" | grep -v '^$' || true)
 	[[ -n "$_g_nums" ]] && _src_parts="${_src_parts:+${_src_parts}+}graph"
@@ -897,8 +930,11 @@ _action_cpt_single() {
 	_p_nums=$(_extract_children_from_prose "$issue_body" | grep -v "^${issue_num}$" || true)
 	[[ -n "$_p_nums" ]] && _src_parts="${_src_parts:+${_src_parts}+}prose"
 
+	_c_nums=$(_fetch_children_from_trusted_roadmap_comments "$slug" "$issue_num" | grep -v "^${issue_num}$" || true)
+	[[ -n "$_c_nums" ]] && _src_parts="${_src_parts:+${_src_parts}+}comments"
+
 	# Union: concatenate, keep numeric lines, dedupe, drop self-reference
-	child_nums=$(printf '%s\n%s\n%s\n' "$_g_nums" "$_b_nums" "$_p_nums" \
+	child_nums=$(printf '%s\n%s\n%s\n%s\n' "$_g_nums" "$_b_nums" "$_p_nums" "$_c_nums" \
 		| grep -E '^[0-9]+$' | sort -un | grep -v "^${issue_num}$" || true)
 	local child_source="${_src_parts:-none}"
 	local known_child_count=0

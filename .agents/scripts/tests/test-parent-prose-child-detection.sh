@@ -215,11 +215,11 @@ fi
 # --- Source wiring assertion — the helper is actually called in reconcile ---
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-TARGET="$SCRIPT_DIR/pulse-issue-reconcile.sh"
+TARGET="$SCRIPT_DIR/pulse-issue-reconcile-actions.sh"
 
 TESTS_RUN=$((TESTS_RUN + 1))
 if grep -qF '_extract_children_from_prose' "$TARGET" 2>/dev/null &&
-	grep -qE 'prose_children=\$\(_extract_children_from_prose' "$TARGET" 2>/dev/null; then
+	grep -qF '_p_nums=$(_extract_children_from_prose' "$TARGET" 2>/dev/null; then
 	echo "${TEST_GREEN}PASS${TEST_NC}: 12: _extract_children_from_prose wired in reconcile_completed_parent_tasks"
 else
 	TESTS_FAILED=$((TESTS_FAILED + 1))
