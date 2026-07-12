@@ -4526,3 +4526,5 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [ ] t18106 Fix agent deployment verification for symlinked runtime bundles #auto-dispatch #bug ref:GH#27275
 
 - [ ] t18107 Scope startup greeting to interactive root sessions #bug ref:GH#27328
+
+- [ ] t18108 Fix GPT-5.6 interactive auto-compaction threshold #bug ref:GH#27335
