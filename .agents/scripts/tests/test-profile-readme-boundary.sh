@@ -761,7 +761,9 @@ test_top_apps_batches_jq_processing() {
 	local db_path="${TEST_DIR}/knowledgeC.db"
 	local now core_now
 	now=$(date +%s)
-	core_now=$((now - 978307200))
+	# Production reports completed calendar days and excludes today. Place the
+	# fixture one day back so it remains inside the prior-day windows.
+	core_now=$((now - 978307200 - 86400))
 	sqlite3 "$db_path" "
 		CREATE TABLE ZOBJECT (ZSTREAMNAME TEXT,ZCREATIONDATE REAL,ZVALUEINTEGER INTEGER,ZSTARTDATE REAL,ZENDDATE REAL,ZVALUESTRING TEXT);
 		WITH RECURSIVE rows(i) AS (SELECT 1 UNION ALL SELECT i+1 FROM rows WHERE i < 10)
