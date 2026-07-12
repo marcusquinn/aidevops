@@ -42,8 +42,10 @@ ${AIDEVOPS_DIR:-$HOME/.aidevops}/agents/scripts/worktree-helper.sh add release/1
 version-manager.sh bump {patch|minor|major}
 # Edit CHANGELOG.md
 
-# 2. Run final checks
-linters-local.sh --full
+# 2. Reuse terminal CI/lint evidence for the exact release SHA. Run a broad
+# gate only when SHA-matched evidence is unavailable or shared/root contracts
+# were not covered by affected checks:
+# linters-local.sh --full
 
 # 3. After implementation PRs merge, release from a fresh detached linked worktree
 git worktree add --detach "$AIDEVOPS_WORKTREE_BASE_DIR/repo-release-1-2-0" origin/main

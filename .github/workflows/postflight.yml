@@ -30,6 +30,10 @@ jobs:
       with:
         ref: ${{ github.event.inputs.tag || github.ref }}
         fetch-depth: 0
+
+    - name: Resolve release commit
+      id: release_commit
+      run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
     
     - name: Setup Bun
       uses: oven-sh/setup-bun@ecf28ddc73e819eb6fa29df6b34ef8921c743461 # v2
@@ -40,7 +44,7 @@ jobs:
       env:
         GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         REPO: ${{ github.repository }}
-        COMMIT_SHA: ${{ github.sha }}
+        COMMIT_SHA: ${{ steps.release_commit.outputs.sha }}
       run: |
         echo "Waiting for all check runs to complete..."
         echo "Note: Excluding this workflow (Verify Release Health) to avoid circular dependency"
@@ -63,13 +67,20 @@ jobs:
             --jq ".check_runs[] | select(.status != \"completed\" and .name != \"$SELF_NAME\") | \"  - \(.name): \(.status)\"" || true
           sleep 30
         done
+
+        REMAINING=$(gh api "repos/${REPO}/commits/${COMMIT_SHA}/check-runs" \
+          --jq "[.check_runs[] | select(.status != \"completed\" and .name != \"$SELF_NAME\")] | length")
+        if [[ "$REMAINING" != "0" ]]; then
+          echo "::error::$REMAINING check runs remained non-terminal after timeout"
+          exit 1
+        fi
     
     - name: Verify CI/CD Status
       id: cicd
       env:
         GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         REPO: ${{ github.repository }}
-        COMMIT_SHA: ${{ github.sha }}
+        COMMIT_SHA: ${{ steps.release_commit.outputs.sha }}
       run: |
         echo "## CI/CD Pipeline Status" >> $GITHUB_STEP_SUMMARY
         echo "" >> $GITHUB_STEP_SUMMARY
@@ -110,6 +121,11 @@ jobs:
         PASSED=$(echo "$CHECK_RUNS" | jq -s '[.[] | select(.conclusion == "success")] | length')
         SKIPPED=$(echo "$CHECK_RUNS" | jq -s '[.[] | select(.conclusion == "skipped")] | length')
         FAILED=$(echo "$CHECK_RUNS" | jq -s '[.[] | select(.conclusion == "failure" or .conclusion == "cancelled" or .conclusion == "timed_out" or .conclusion == "action_required")] | length')
+
+        if [[ "$TOTAL" == "0" ]]; then
+          echo "::error::No terminal check-run evidence exists for release commit ${COMMIT_SHA}"
+          exit 1
+        fi
         
         echo "| Check | Status | Conclusion |" >> $GITHUB_STEP_SUMMARY
         echo "|-------|--------|------------|" >> $GITHUB_STEP_SUMMARY
@@ -191,82 +207,14 @@ jobs:
         fi
       continue-on-error: true
     
-    - name: Security Scan with Snyk
-      if: always()
-      id: snyk
-      run: |
-        echo "" >> $GITHUB_STEP_SUMMARY
-        echo "## Security Scan (Snyk)" >> $GITHUB_STEP_SUMMARY
-        echo "" >> $GITHUB_STEP_SUMMARY
-        
-        # Install Snyk (Bun for faster install)
-        bun install -g snyk
-        
-        # Authenticate if token available
-        if [[ -n "$SNYK_TOKEN" ]]; then
-          snyk auth "$SNYK_TOKEN"
-          
-          # Run security scan
-          if snyk test --severity-threshold=high --json > snyk-results.json 2>/dev/null; then
-            echo "**Status**: No high/critical vulnerabilities found" >> $GITHUB_STEP_SUMMARY
-            echo "snyk_status=passed" >> $GITHUB_OUTPUT
-          else
-            VULN_COUNT=$(jq '.vulnerabilities | length // 0' snyk-results.json)
-            echo "**Status**: $VULN_COUNT vulnerabilities found" >> $GITHUB_STEP_SUMMARY
-            echo "" >> $GITHUB_STEP_SUMMARY
-            echo "| Severity | Package | Title |" >> $GITHUB_STEP_SUMMARY
-            echo "|----------|---------|-------|" >> $GITHUB_STEP_SUMMARY
-            jq -r '.vulnerabilities[:5][] | "| \(.severity) | \(.packageName) | \(.title) |"' snyk-results.json >> $GITHUB_STEP_SUMMARY 2>/dev/null || true
-            echo "snyk_status=issues" >> $GITHUB_OUTPUT
-          fi
-        else
-          echo "**Status**: Skipped (SNYK_TOKEN not configured)" >> $GITHUB_STEP_SUMMARY
-          echo "snyk_status=skipped" >> $GITHUB_OUTPUT
-        fi
-      env:
-        SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
-      continue-on-error: true
-    
-    - name: Check for Secrets
-      if: always()
-      id: secrets
-      run: |
-        echo "" >> $GITHUB_STEP_SUMMARY
-        echo "## Secret Detection (Secretlint)" >> $GITHUB_STEP_SUMMARY
-        echo "" >> $GITHUB_STEP_SUMMARY
-        
-        # Install the repo-pinned secretlint stack. Using the latest global
-        # secretlint can add release-only rules that trip intentional fixture
-        # strings before the repository has opted in to the new major version.
-        bun install --frozen-lockfile
-        
-        # Run scan. Keep intentional credential-scrubber fixtures out of the
-        # release gate while scanning every other production/source path.
-        SECRET_LINT_TARGETS=(
-          "**/*"
-          "!.agents/scripts/tests/test-credential-sanitizer.sh"
-          "!.agents/scripts/tests/test-credential-transcript-scrub.sh"
-        )
-        if bunx --no-install secretlint "${SECRET_LINT_TARGETS[@]}" --secretlintrc .secretlintrc.json --secretlintignore .secretlintignore --format compact 2>/dev/null; then
-          echo "**Status**: No secrets detected" >> $GITHUB_STEP_SUMMARY
-          echo "secrets_status=passed" >> $GITHUB_OUTPUT
-        else
-          echo "**Status**: Potential secrets detected" >> $GITHUB_STEP_SUMMARY
-          echo "::error::Potential secrets detected in codebase"
-          echo "secrets_status=failed" >> $GITHUB_OUTPUT
-        fi
-      continue-on-error: true
-    
     - name: Generate Final Report
       id: report
       if: always()
       env:
         CICD_STATUS: ${{ steps.cicd.outputs.cicd_status }}
         SONAR_STATUS: ${{ steps.sonarcloud.outputs.sonar_status }}
-        SNYK_STATUS: ${{ steps.snyk.outputs.snyk_status }}
-        SECRETS_STATUS: ${{ steps.secrets.outputs.secrets_status }}
         RELEASE_TAG: ${{ github.event.release.tag_name || github.ref_name }}
-        COMMIT_SHA: ${{ github.sha }}
+        COMMIT_SHA: ${{ steps.release_commit.outputs.sha }}
       run: |
         echo "" >> $GITHUB_STEP_SUMMARY
         echo "---" >> $GITHUB_STEP_SUMMARY
@@ -277,15 +225,11 @@ jobs:
         # Default unset outputs to 'skipped' (step didn't produce output)
         CICD="${CICD_STATUS:-skipped}"
         SONAR="${SONAR_STATUS:-skipped}"
-        SNYK="${SNYK_STATUS:-skipped}"
-        SECRETS="${SECRETS_STATUS:-skipped}"
         
         echo "| Check | Status |" >> $GITHUB_STEP_SUMMARY
         echo "|-------|--------|" >> $GITHUB_STEP_SUMMARY
         echo "| CI/CD Pipelines | ${CICD} |" >> $GITHUB_STEP_SUMMARY
         echo "| SonarCloud | ${SONAR} |" >> $GITHUB_STEP_SUMMARY
-        echo "| Snyk Security | ${SNYK} |" >> $GITHUB_STEP_SUMMARY
-        echo "| Secret Detection | ${SECRETS} |" >> $GITHUB_STEP_SUMMARY
         echo "" >> $GITHUB_STEP_SUMMARY
         echo "**Release**: ${RELEASE_TAG}" >> $GITHUB_STEP_SUMMARY
         echo "**Commit**: ${COMMIT_SHA}" >> $GITHUB_STEP_SUMMARY
@@ -294,19 +238,15 @@ jobs:
         echo "*Generated by AI DevOps Framework Postflight Verification*" >> $GITHUB_STEP_SUMMARY
         
         # Determine overall result
-        # Critical failures: CI/CD hard failures or secrets detected
+        # Critical failures: terminal CI/CD hard failures.
         HAS_CRITICAL=false
         HAS_WARNING=false
         
         if [[ "$CICD" == "failed" ]]; then
           HAS_CRITICAL=true
         fi
-        if [[ "$SECRETS" == "failed" ]]; then
-          HAS_CRITICAL=true
-        fi
-        
-        # Warnings: advisory failures, SonarCloud issues, Snyk issues
-        if [[ "$CICD" == "warning" || "$SONAR" == "failed" || "$SNYK" == "issues" ]]; then
+        # Warnings: advisory failures or SonarCloud issues.
+        if [[ "$CICD" == "warning" || "$SONAR" == "failed" ]]; then
           HAS_WARNING=true
         fi
         

@@ -179,8 +179,7 @@ _issue_thread_is_trusted_maintainer_only() {
 
 	[[ -n "$issue_num" && -n "$repo" ]] || return 1
 	case "$issue_author_association" in
-	OWNER | MEMBER)
-		;;
+	OWNER | MEMBER) ;;
 	*)
 		return 1
 		;;
@@ -672,14 +671,19 @@ _full_loop_verify_aidevops_release_deploy() {
 	local version=""
 	[[ -n "$repo_root" && -f "${repo_root}/VERSION" ]] && IFS= read -r version <"${repo_root}/VERSION"
 	[[ -n "$version" ]] || return 1
-	git ls-remote --exit-code --tags origin "refs/tags/v${version}" >/dev/null 2>&1 || return 1
+	local release_sha=""
+	release_sha=$(git ls-remote --exit-code --tags origin "refs/tags/v${version}^{}" 2>/dev/null | cut -f1)
+	if [[ -z "$release_sha" ]]; then
+		release_sha=$(git ls-remote --exit-code --tags origin "refs/tags/v${version}" 2>/dev/null | cut -f1)
+	fi
+	[[ -n "$release_sha" ]] || return 1
 	gh release view "v${version}" --repo "$repo" >/dev/null 2>&1 || return 1
 	local deployed_version=""
 	[[ -f "${HOME}/.aidevops/agents/VERSION" ]] && IFS= read -r deployed_version <"${HOME}/.aidevops/agents/VERSION"
 	[[ "$deployed_version" == "$version" ]] || return 1
 	local postflight="${SCRIPT_DIR}/postflight-check.sh"
 	[[ -x "$postflight" ]] || return 1
-	bash "$postflight" --quick >/dev/null 2>&1 || return 1
+	bash "$postflight" --quick --sha "$release_sha" >/dev/null 2>&1 || return 1
 	return 0
 }
 

@@ -33,8 +33,14 @@ Requires a fresh detached release worktree at synchronized `origin/main`, verifi
 
 ## Manual Release (Non-aidevops Repos)
 
+Reuse terminal-success CI and lint evidence for the exact release SHA. Do not
+repeat a full source scan merely because release follows every merge. Run the
+repository's broad gate only when no trustworthy SHA-matched evidence exists or
+the release changes shared/root contracts that were not covered by affected
+checks.
+
 ```bash
-./.agents/scripts/linters-local.sh --full
+# Conditional only: ./.agents/scripts/linters-local.sh --full
 git add -A && git commit -m "chore(release): prepare v{MAJOR}.{MINOR}.{PATCH}"
 ./.agents/scripts/version-manager.sh tag
 git push origin main && git push origin --tags
@@ -54,7 +60,10 @@ git push origin main && git push origin --tags
 .agents/scripts/version-manager.sh auto-mark-tasks  # Run manually
 ```
 
-**Postflight**: `./.agents/scripts/postflight-check.sh` — see `workflows/postflight.md`.
+**Postflight**: `./.agents/scripts/postflight-check.sh` verifies terminal CI,
+external quality gates, publication, and deployment health. It does not rerun
+source lint/security scans already owned by development, CI, and release
+preflight. See `workflows/postflight.md`.
 
 **Follow-up**: Verify artifacts/download links, update docs site, notify stakeholders, close milestone.
 

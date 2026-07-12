@@ -61,22 +61,24 @@ Check both `main` and tag refs: `gh run list --branch=main --limit=5` and `gh ru
 | CodeRabbit | No blocking issues |
 | Qlty | No new violations |
 
-### 3. Security Scanning
+### 3. Security Evidence
 
 | Tool | Threshold |
 |------|-----------|
-| Snyk | No new high/critical vulnerabilities |
-| Secretlint | No exposed secrets |
-| npm audit | No high/critical issues |
+| Required CI security checks | Terminal success for the released SHA |
 | Dependabot | No new alerts |
 
 ## Running Postflight
 
 Wait for `postflight.yml` GH Actions workflow to complete before running locally. Only declare success if ALL workflows passed.
 
-**Local**: `.agents/scripts/postflight-check.sh` — runs CI/CD wait, SonarCloud gate, Snyk, and Secretlint checks with proper timeouts and error handling.
+**Local**: `.agents/scripts/postflight-check.sh` — verifies CI/CD and external
+quality-gate state. It does not rescan source: targeted/affected checks belong to
+development and PR CI, while release preflight owns any evidence-triggered broad
+gate. Use `--security-only` only for explicit diagnostics, not routine release
+completion.
 
-**Automated**: `.github/workflows/postflight.yml` — triggers on `release: published` and `workflow_dispatch`. Runs the same checks in CI with step summary reporting.
+**Automated**: `.github/workflows/postflight.yml` — triggers on `release: published` and `workflow_dispatch`. Reports terminal CI and external quality evidence without reinstalling scanners or duplicating source analysis.
 
 Do not duplicate these scripts inline — they are the source of truth. Read them directly when implementation details are needed.
 
@@ -108,7 +110,9 @@ ${AIDEVOPS_DIR:-$HOME/.aidevops}/agents/scripts/worktree-helper.sh add hotfix/v{
 # git add <changed-files> && git commit -m "fix: resolve critical issue" && ./.agents/scripts/version-manager.sh release patch
 ```
 
-Post-rollback: `gh run list --limit=5 && .agents/scripts/linters-local.sh`
+Post-rollback: verify terminal CI and deployment health for the rollback SHA. A
+hotfix returns through targeted development checks and normal release preflight;
+postflight does not rerun source lint.
 
 ## Handling SonarCloud Quality Gate Failures
 
