@@ -4532,3 +4532,7 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [ ] t18108 Fix GPT-5.6 interactive auto-compaction threshold #bug ref:GH#27335
 
 - [ ] t18109 Trigger dependency-chain unblocking when blockers close #bug ref:GH#27338
+
+- [ ] t18111 Resolve SonarCloud weak-hash finding in session ID fallback #auto-dispatch #bug ref:GH#27349
+
+- [ ] t18110 Fail postflight when SonarCloud quality gate reports ERROR #auto-dispatch #bug ref:GH#27348
