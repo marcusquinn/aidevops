@@ -13,140 +13,43 @@ from typing import Any
 SCRIPT_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(SCRIPT_DIR))
 
-from command_policy_config import (  # noqa: F401 -- compatibility facade re-exports
+from command_policy_config import (
     PolicyError,
     _default_policy_path,
-    _decision,
-    _has_required_guard,
     _load_policy,
     _parse_error,
-    _policy_error,
-    _validate_policy_guards,
-    _validate_policy_rules,
-    _validate_policy_shape,
 )
-from command_policy_matchers import (  # noqa: F401 -- compatibility facade re-exports
-    _canonical_operand,
-    _git_parts,
-    _has_flag,
-    _is_root_or_home_operand,
-    _is_temp_operand,
-    _matches,
-    _matches_git,
-    _matches_rm,
-    _rm_operands,
-    _short_flags,
-)
-from command_policy_evaluation import (  # noqa: F401 -- compatibility facade re-exports
-    _EvaluationOptions,
-    _canonical_guard_path,
-    _evaluate_canonical_git,
+from command_policy_evaluation import (
     _evaluate_static,
-    _evaluate_worker_network,
-    _evaluation_options,
-    _network_guard_path,
     evaluate_invocations,
 )
-from command_policy_dispatch import CommandParseError, _validate_argv, analyze_network_argv  # noqa: F401 -- compatibility facade re-exports
-from command_policy_http import (  # noqa: F401 -- compatibility facade re-exports
-    _analyze_curl,
-    _curl_connect_option,
-    _curl_destination_option,
-    _curl_other_arg,
-    _curl_resolve_option,
-    _curl_short_value_index,
-    _option_value,
+from command_policy_dispatch import (
+    CommandParseError,
+    _validate_argv,
+    analyze_network_argv as _analyze_network_argv,
 )
-from command_policy_git import (  # noqa: F401 -- compatibility facade re-exports
-    _analyze_git,
-    _analyze_git_remote,
-    _classify_git_candidate,
-    _git_network_candidate,
-    _record_git_config_overrides,
-)
-from command_policy_network import (  # noqa: F401 -- compatibility facade re-exports
-    _add_destination,
-    _git_effective_cwd,
-    _host_candidate,
-    _normalize_host,
-    _resolve_git_remote,
-)
-from command_policy_transport import (  # noqa: F401 -- compatibility facade re-exports
-    _analyze_scp,
-    _analyze_ssh,
-    _classify_scp_option,
-    _scp_arg,
-    _ssh_arg,
-    _ssh_extended_option,
-    _ssh_forward_destination,
-    _ssh_value_option,
-)
-from command_policy_runtime import (  # noqa: F401 -- compatibility facade re-exports
-    WORKER_ENV_KEYS,
+from command_policy_runtime import (
     _argument_parser,
     _network_action,
     _report_policy_error,
     _worker_from_environment,
 )
-from command_policy_wget import _analyze_wget, _wget_arg, _wget_execute_option  # noqa: F401 -- compatibility facade re-exports
-from command_policy_parser import (  # noqa: F401 -- compatibility facade re-exports
-    SHELL_OPERATORS,
+from command_policy_parser import (
     _expand_argv,
-    _scan_supported_shell,
     _shell_invocations,
-    _shell_quote_state,
-    _validate_shell_character,
 )
-from command_policy_wrappers import (  # noqa: F401 -- compatibility facade re-exports
-    SHELLS,
-    _consume_option,
+from command_policy_wrappers import (
     _expand_launcher as _expand_wrapper_launcher,
     _expand_shell_launcher as _expand_wrapper_shell_launcher,
-    _is_attached_value_option,
-    _is_combined_short_flags,
-    _is_safety_sensitive_assignment,
-    _reject_dynamic_launcher,
-    _shell_command_index,
-    _shell_value_option_index,
-    _strip_leading_assignments,
-    _unwrap_command,
-    _unwrap_env,
-    _unwrap_exec,
-    _unwrap_simple_wrapper,
-    _unwrap_sudo,
-    _unwrap_time,
 )
-
-# Keep the original module-level private callables available to importlib users.
-# Referencing compatibility imports explicitly also satisfies static analyzers.
-_COMPAT_EXPORTS = (
-    _decision,
-    _has_required_guard,
-    _canonical_operand,
-    _git_parts,
-    _EvaluationOptions,
-    _canonical_guard_path,
-    analyze_network_argv,
-    _analyze_curl,
-    _curl_connect_option,
-    _analyze_git,
-    _analyze_git_remote,
-    _add_destination,
-    _git_effective_cwd,
-    _analyze_scp,
-    _analyze_ssh,
-    WORKER_ENV_KEYS,
-    _analyze_wget,
-    _wget_arg,
-    SHELL_OPERATORS,
-    _scan_supported_shell,
-    SHELLS,
-    _consume_option,
-)
-__all__ = [name for name in globals() if name.startswith("_") and not name.startswith("__")]
 
 FORBID_EXIT = 20
 POLICY_ERROR_EXIT = 21
+
+
+def analyze_network_argv(argv: list[str], cwd: str) -> dict[str, Any]:
+    """Analyze one network command while preserving the original callable API."""
+    return _analyze_network_argv(argv, cwd)
 
 
 def _expand_launcher(
