@@ -119,13 +119,13 @@ test_extract '' '' '' 'empty body'
 test_extract 'Just a regular issue body with no dependencies.' '' '' 'no markers'
 
 # Body with a single task-ID blocker.
-test_extract 'blocked-by:t143' '143' '' 'single tid bare'
+test_extract 'blocked-by:t143' 't143' '' 'single tid bare'
 
 # Body with a single issue-number blocker.
 test_extract 'blocked-by:#18429' '' '18429' 'single num bare'
 
 # Body with mixed tid and num.
-test_extract $'blocked-by:t143\nblocked-by:#18429' '143' '18429' 'mixed tid and num'
+test_extract $'blocked-by:t143\nblocked-by:#18429' 't143' '18429' 'mixed tid and num'
 
 # Realistic issue body fragment.
 test_extract "$(
@@ -139,7 +139,7 @@ Do the thing.
 blocked-by:t200
 blocked-by:#19000
 EOF
-)" '200' '19000' 'realistic body'
+)" 't200' '19000' 'realistic body'
 
 # ---------------------------------------------------------------------------
 # Invariant 3: no surviving `${...$'\0'...}` patterns in shell code.

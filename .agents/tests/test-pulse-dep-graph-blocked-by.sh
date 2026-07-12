@@ -264,16 +264,26 @@ test_native_relationship_lookup_failure_checks_body_markers() {
 
 test_task_id_blocker_parsing() {
 	printf '\n=== blocked-by task IDs ===\n'
-	_assert_lines_equal "compact comma-separated task IDs" $'001\n002\n003' \
-		"$(_blocked_by_extract_tids 'blocked-by:t001,t002,t003')"
-	_assert_lines_equal "spaced comma-separated task IDs" $'001\n002\n003' \
-		"$(_blocked_by_extract_tids 'Blocked by: t001, t002, t003')"
-	_assert_lines_equal "prose task IDs" $'001\n002' \
-		"$(_blocked_by_extract_tids 'Blocked by t001 and t002')"
-	_assert_lines_equal "one task blocker per line" $'001\n002\n003' \
-		"$(_blocked_by_extract_tids $'blocked-by:t001\nblocked-by:t002\nblocked-by:t003')"
-	_assert_lines_equal "decimal subtask suffixes" $'325.1\n325.2a' \
-		"$(_blocked_by_extract_tids 'blocked-by:t325.1,t325.2a')"
+	local namespaced='to01j2abc3def4gh5jkm6npq7rst-42.3'
+	_assert_lines_equal "compact comma-separated task IDs" $'t1\nt2\nt3' \
+		"$(_blocked_by_extract_tids 'blocked-by:t1,t2,t3')"
+	_assert_lines_equal "mixed legacy and namespaced task IDs" $'t325.1\n'"${namespaced}" \
+		"$(_blocked_by_extract_tids "Blocked by: t325.1, ${namespaced}")"
+	_assert_lines_equal "malformed task IDs fail closed" '__malformed__' \
+		"$(_blocked_by_extract_tids 'Blocked by: t01')"
+	_assert_lines_equal "alternate malformed task markers fail closed" '__malformed__' \
+		"$(_blocked_by_extract_tids 'Blocked by: T7, tXYZ, to81j2abc3def4gh5jkm6npq7rst-1')"
+	return 0
+}
+
+test_refresh_unknown_or_malformed_task_blocker_fails_closed() {
+	printf '\n=== cache refresh fail-closed task blockers ===\n'
+	local rc=0
+	_refresh_all_blockers_resolved '{"task_ids":["t1000"],"issue_nums":[]}' '{}' '[]' '[]' || rc=$?
+	_assert_rc "refresh keeps unmapped canonical blocker blocked" 1 "$rc"
+	rc=0
+	_refresh_all_blockers_resolved '{"task_ids":["__malformed__"],"issue_nums":[]}' '{}' '[]' '[]' || rc=$?
+	_assert_rc "refresh keeps malformed blocker blocked" 1 "$rc"
 	return 0
 }
 
@@ -462,6 +472,7 @@ main() {
 	test_native_relationship_lookup_failure_fails_closed_empty_body
 	test_native_relationship_lookup_failure_checks_body_markers
 	test_unknown_task_blocker_fails_closed
+	test_refresh_unknown_or_malformed_task_blocker_fails_closed
 	test_live_task_lookup_failure_fails_closed
 	test_closed_task_blocker_is_clear
 	test_lowercase_closed_task_blocker_is_clear

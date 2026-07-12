@@ -361,9 +361,8 @@ _validate_tier_checklist() {
 # Returns: parent task ID on stdout, or empty string if top-level
 detect_parent_task_id() {
 	local task_id="$1"
-	if [[ "$task_id" == *"."* ]]; then
-		echo "${task_id%.*}"
-	fi
+	task_identity_parse "$task_id" || return 1
+	[[ -n "$TASK_IDENTITY_PARENT_ID" ]] && echo "$TASK_IDENTITY_PARENT_ID"
 	return 0
 }
 
@@ -434,7 +433,7 @@ _seed_orphan_todo_line() {
 	local todo_file="$5" dry_run="${6:-}"
 
 	# Guard: empty task_id cannot produce a valid TODO line
-	[[ -z "$task_id" ]] && return 1
+	task_identity_validate "$task_id" || return 1
 
 	# Idempotency check: skip if any entry for this task_id already exists
 	local task_id_ere

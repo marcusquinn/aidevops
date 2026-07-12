@@ -12,6 +12,7 @@ readonly TASK_IDENTITY_MAX_SUBTASK_DEPTH=8
 readonly TASK_IDENTITY_LEGACY_ERE='^t[1-9][0-9]{0,17}(\.[1-9][0-9]{0,17}){0,8}$'
 readonly TASK_IDENTITY_NAMESPACED_ERE='^to[0-7][0-9a-hjkmnp-tv-z]{25}-[1-9][0-9]{0,17}(\.[1-9][0-9]{0,17}){0,8}$'
 readonly TASK_IDENTITY_ANY_ERE='^(t[1-9][0-9]{0,17}(\.[1-9][0-9]{0,17}){0,8}|to[0-7][0-9a-hjkmnp-tv-z]{25}-[1-9][0-9]{0,17}(\.[1-9][0-9]{0,17}){0,8})$'
+readonly TASK_IDENTITY_TOKEN_ERE='(to[0-7][0-9a-hjkmnp-tv-z]{25}-[1-9][0-9]{0,17}(\.[1-9][0-9]{0,17}){0,8}|t[1-9][0-9]{0,17}(\.[1-9][0-9]{0,17}){0,8})'
 
 TASK_IDENTITY_KIND=""
 TASK_IDENTITY_CANONICAL_ID=""
@@ -126,5 +127,94 @@ task_identity_ere() {
 	any) printf '%s\n' "$TASK_IDENTITY_ANY_ERE" ;;
 	*) return 1 ;;
 	esac
+	return 0
+}
+
+# Extract the first complete canonical task ID from free text. A dot or an
+# alphanumeric character is not a token boundary because accepting one would
+# turn malformed or truncated IDs into valid shorter IDs. Hyphens and
+# underscores remain valid branch-name delimiters.
+task_identity_extract_first() {
+	local text="${1:-}"
+	local boundary_ere="(^|[^[:alnum:].])(${TASK_IDENTITY_TOKEN_ERE})($|[^[:alnum:].])"
+	local candidate=""
+
+	[[ "$text" =~ $boundary_ere ]] || return 1
+	candidate="${BASH_REMATCH[2]}"
+	task_identity_validate "$candidate" || return 1
+	printf '%s\n' "$candidate"
+	return 0
+}
+
+# Print every complete canonical task ID in encounter order.
+task_identity_extract_all() {
+	local remaining="${1:-}"
+	local boundary_ere="(^|[^[:alnum:].])(${TASK_IDENTITY_TOKEN_ERE})($|[^[:alnum:].])"
+	local matched=""
+	local candidate=""
+
+	while [[ "$remaining" =~ $boundary_ere ]]; do
+		matched="${BASH_REMATCH[0]}"
+		candidate="${BASH_REMATCH[2]}"
+		task_identity_validate "$candidate" || return 1
+		printf '%s\n' "$candidate"
+		remaining="${remaining#*"$matched"}"
+	done
+	return 0
+}
+
+# Parse an issue/PR title beginning with the exact "<task-id>:" contract.
+task_identity_parse_title_prefix() {
+	local title="${1:-}"
+	local candidate=""
+
+	[[ "$title" =~ ^([^:]+): ]] || return 1
+	candidate="${BASH_REMATCH[1]}"
+	task_identity_validate "$candidate" || return 1
+	printf '%s\n' "$candidate"
+	return 0
+}
+
+# Escape a validated ID for use as literal text inside an ERE.
+task_identity_escape_ere() {
+	local task_id="${1:-}"
+
+	task_identity_validate "$task_id" || return 1
+	task_id="${task_id//./\\.}"
+	printf '%s\n' "$task_id"
+	return 0
+}
+
+# Return success when text contains a task-like candidate that is not a valid
+# canonical ID. Callers use this to distinguish invalid input from no marker.
+task_identity_has_malformed_candidate() {
+	local text="${1:-}"
+	local candidate_ere='(^|[^[:alnum:].])([tT][0-9A-Z][[:alnum:].-]*|[tT][oO][[:alnum:]]{26}-[[:alnum:].-]+)($|[^[:alnum:].])'
+	local candidate=""
+	local remaining="$text"
+	local matched=""
+
+	while [[ "$remaining" =~ $candidate_ere ]]; do
+		matched="${BASH_REMATCH[0]}"
+		candidate="${BASH_REMATCH[2]}"
+		if ! task_identity_validate "$candidate"; then
+			return 0
+		fi
+		remaining="${remaining#*"$matched"}"
+	done
+	return 1
+}
+
+# Parse a comma- or whitespace-delimited dependency list and print complete
+# canonical IDs. Any malformed member fails the whole list closed.
+task_identity_parse_list() {
+	local raw="${1:-}"
+	local normalized="${raw//,/ }"
+	local task_id=""
+
+	for task_id in $normalized; do
+		task_identity_validate "$task_id" || return 1
+		printf '%s\n' "$task_id"
+	done
 	return 0
 }

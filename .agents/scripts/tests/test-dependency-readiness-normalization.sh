@@ -52,15 +52,15 @@ parsed=$(_dep_graph_process_issue_json "$issue" "$acc")
 assert_eq "self task reference ignored" '[]' "$(printf '%s' "$parsed" | jq -c '.blocked_by_map["20"].task_ids')"
 assert_eq "self issue reference ignored" '["10"]' "$(printf '%s' "$parsed" | jq -c '.blocked_by_map["20"].issue_nums')"
 
-entry='{"task_ids":["10"],"issue_nums":["11"]}'
+entry='{"task_ids":["t10"],"issue_nums":["11"]}'
 assert_true "closed roadmap predecessors resolve" \
-	_refresh_all_blockers_resolved "$entry" '{"10":10}' '[10,11]' '[10,11,20]'
-if _refresh_all_blockers_resolved "$entry" '{"10":10}' '[10]' '[10,20]'; then
+	_refresh_all_blockers_resolved "$entry" '{"t10":10}' '[10,11]' '[10,11,20]'
+if _refresh_all_blockers_resolved "$entry" '{"t10":10}' '[10]' '[10,20]'; then
 	assert_eq "missing issue fails closed" "blocked" "resolved"
 else
 	assert_eq "missing issue fails closed" "blocked" "blocked"
 fi
-if _refresh_all_blockers_resolved '{"task_ids":["404"],"issue_nums":[]}' '{}' '[]' '[20]'; then
+if _refresh_all_blockers_resolved '{"task_ids":["t404"],"issue_nums":[]}' '{}' '[]' '[20]'; then
 	assert_eq "missing task fails closed" "blocked" "resolved"
 else
 	assert_eq "missing task fails closed" "blocked" "blocked"

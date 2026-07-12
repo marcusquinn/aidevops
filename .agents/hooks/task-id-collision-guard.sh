@@ -33,6 +33,12 @@
 
 set -u
 
+_task_id_guard_dir="${BASH_SOURCE[0]%/*}"
+[[ "$_task_id_guard_dir" == "${BASH_SOURCE[0]}" ]] && _task_id_guard_dir="."
+# shellcheck source=../scripts/task-identity-lib.sh
+source "${_task_id_guard_dir}/../scripts/task-identity-lib.sh"
+unset _task_id_guard_dir
+
 # ---------------------------------------------------------------------------
 # Bypass
 # ---------------------------------------------------------------------------
@@ -330,13 +336,26 @@ _repo_has_claim() {
 # ---------------------------------------------------------------------------
 _extract_tids() {
 	local text="${1:-}"
-	# Match t followed by one or more digits only when NOT preceded by an
-	# alphanumeric character (prevents false positives from subagent or library
-	# names like context7→t7, gpt4→t4, next13→t13).
-	# POSIX ERE lacks \b so we use a two-step approach: first grep anchors the
-	# leading boundary via (^|[^[:alnum:]]), then a second grep strips the
-	# captured leading non-alnum character.  GNU and BSD grep both support this.
-	printf '%s' "$text" | grep -oE '(^|[^[:alnum:]])t[0-9]+' | grep -oE 't[0-9]+' | sort -u
+	local scan_text=""
+	# Allocator range claims are a separate, legacy-only grammar consumed by
+	# _branch_has_claim/_repo_has_claim. Remove only that exact generated form
+	# before lexical task-ID validation so `t120..t130` is not misclassified as
+	# a malformed canonical ID when check-pr scans the claim commit itself.
+	scan_text=$(printf '%s' "$text" | sed -E 's/chore: claim t[0-9]+\.\.t[0-9]+//g')
+	if task_identity_has_malformed_candidate "$scan_text"; then
+		printf '%s\n' '__malformed__'
+		return 0
+	fi
+	task_identity_extract_all "$scan_text" | sort -u
+	return 0
+}
+
+_legacy_sequence_for_collision_check() {
+	local task_id="${1:-}"
+	task_identity_parse "$task_id" || return 1
+	if [[ "$TASK_IDENTITY_KIND" == "legacy" ]]; then
+		printf '%s\n' "$TASK_IDENTITY_SEQUENCE"
+	fi
 	return 0
 }
 
@@ -392,7 +411,9 @@ _verify_tid_via_issues() {
 			continue
 		fi
 		_debug "Issue #${iss_num} title: $title"
-		if printf '%s' "$title" | grep -qE "(^|[^0-9])${tid}([^0-9]|$)"; then
+		local title_tid=""
+		title_tid=$(task_identity_parse_title_prefix "$title" || true)
+		if [[ "$title_tid" == "$tid" ]]; then
 			_debug "$tid confirmed via linked issue #${iss_num}"
 			confirmed=1
 			break
@@ -475,26 +496,26 @@ _check_message() {
 	local tid
 	while IFS= read -r tid; do
 		[[ -z "$tid" ]] && continue
-		local num
-		num=$(printf '%s' "$tid" | tr -d 't')
-		if ! [[ "$num" =~ ^[0-9]+$ ]]; then
-			_debug "Non-numeric suffix for $tid — skipping"
+		local num=""
+		if ! num=$(_legacy_sequence_for_collision_check "$tid"); then
+			violations="${violations}  ${tid} — malformed task identity\n"
 			continue
 		fi
-		# Force base-10 (10#) so leading-zero IDs like "008", "068" don't trip
-		# bash's octal parser. Same root cause as the _compute_counter_seed bug
-		# in claim-task-id.sh — both fixed in this PR (GH#19620).
+		if [[ -z "$num" ]]; then
+			_debug "$tid is origin-namespaced — verifying canonical linked issue binding"
+			local namespaced_verify_rc=0
+			_verify_tid_via_issues "$tid" "$closing_issues" || namespaced_verify_rc=$?
+			if [[ "$namespaced_verify_rc" -eq 2 ]]; then
+				return 2
+			fi
+			if [[ "$namespaced_verify_rc" -ne 0 ]]; then
+				violations="${violations}  ${tid} — namespaced ID is not bound to a linked issue title\n"
+			fi
+			continue
+		fi
+		# Force base-10 so leading-zero legacy IDs do not enter Bash's octal parser.
 		if ((10#$num <= 10#$counter)); then
-			# Phase 1 (t2567 / GH#20001): reuse-without-claim detection.
-			# A t-ID ≤ counter exists globally, but must be claimed on THIS
-			# branch. If no matching `chore: claim tNNN` commit is found on
-			# merge-base..HEAD, check if it was claimed anywhere in repo history
-			# (git log --all) — this handles cross-references to prior merged PRs.
-			# If repo-wide claim exists, allow it. Otherwise, fall through to the
-			# linked-issue check so the worker can still authorise via
-			# `Resolves/Closes/Fixes/Ref/For #NNN` (matching issue title).
-			# If neither claim commit nor linked issue confirms, this becomes a
-			# violation (reuse).
+			# Existing legacy IDs require a branch/repository claim or exact linked issue.
 			if _branch_has_claim "$tid"; then
 				_debug "$tid claimed on this branch — allowed"
 				continue
