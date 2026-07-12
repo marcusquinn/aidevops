@@ -200,6 +200,8 @@ def finding($id; $severity; $title; $evidence; $recommendation; $autofile): {
     ($failure_families[] as $family
       | $family
       | select((.count // 0) >= $failure_threshold and (.distinct_sessions // 0) >= 2 and (.confidence // "low") == "high" and (.family // "") != "other-failure")
+      | (([$recent_failure_families[] | select(.fingerprint == $family.fingerprint)] | first | .count) // 0) as $family_recent_count
+      | select($family_recent_count >= $failure_threshold)
       | finding(
           ("worker-failure-family-" + (.family // "unknown"));
           "high";
@@ -219,7 +221,7 @@ def finding($id; $severity; $title; $evidence; $recommendation; $autofile): {
           family_fingerprint: (.fingerprint // ""),
           family: (.family // "unknown"),
           family_count: (.count // 0),
-          family_recent_count: (([$recent_failure_families[] | select(.fingerprint == $family.fingerprint)] | first | .count) // 0),
+          family_recent_count: $family_recent_count,
           family_first_ts: (.first_ts // 0),
           family_last_ts: (.last_ts // 0),
           family_confidence: (.confidence // "unknown")
