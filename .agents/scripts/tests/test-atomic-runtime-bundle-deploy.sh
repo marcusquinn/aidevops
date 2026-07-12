@@ -18,6 +18,8 @@ print_skip() { local message="$1"; : "$message"; return 0; }
 setup_track_deferred() { return 0; }
 create_backup_with_rotation() { return 0; }
 
+# shellcheck source=../portable-stat.sh
+source "$REPO_ROOT/.agents/scripts/portable-stat.sh"
 # shellcheck source=../setup/modules/plugins.sh
 source "$REPO_ROOT/.agents/scripts/setup/modules/plugins.sh"
 # shellcheck source=../setup/modules/agent-deploy.sh

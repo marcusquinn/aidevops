@@ -741,7 +741,7 @@ _runtime_bundle_prune() {
 			rmdir "$lease_dir" 2>/dev/null || true
 		fi
 		[[ "$has_live_lease" == "true" ]] && continue
-		modified=$(stat -f '%m' "$candidate_dir" 2>/dev/null || stat -c '%Y' "$candidate_dir" 2>/dev/null || printf '%s' "$now")
+		modified=$(_file_mtime_epoch "$candidate_dir")
 		[[ $((now - modified)) -lt "$retention_seconds" ]] && continue
 		rm -rf "$candidate_dir"
 	done
