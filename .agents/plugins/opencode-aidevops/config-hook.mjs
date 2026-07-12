@@ -37,18 +37,18 @@ const MANAGED_EXTERNAL_DIRECTORIES = [
  * @param {object} config - OpenCode Config object (mutable)
  * @returns {number} number of managed allow rules added or corrected
  */
-export function registerManagedDirectoryPermissions(config) {
-  if (typeof config.permission === "string") {
-    const defaultPermission = config.permission;
-    config.permission = {
+function addManagedDirectoryRules(target) {
+  if (typeof target.permission === "string") {
+    const defaultPermission = target.permission;
+    target.permission = {
       "*": defaultPermission,
       external_directory: { "*": defaultPermission },
     };
-  } else if (!config.permission) {
-    config.permission = {};
+  } else if (!target.permission) {
+    target.permission = {};
   }
 
-  const existing = config.permission.external_directory;
+  const existing = target.permission.external_directory;
   if (existing === "allow") return 0;
 
   const rules = typeof existing === "string"
@@ -62,7 +62,15 @@ export function registerManagedDirectoryPermissions(config) {
     delete rules[path];
     rules[path] = "allow";
   }
-  config.permission.external_directory = rules;
+  target.permission.external_directory = rules;
+  return count;
+}
+
+export function registerManagedDirectoryPermissions(config) {
+  let count = addManagedDirectoryRules(config);
+  for (const agent of Object.values(config.agent || {})) {
+    count += addManagedDirectoryRules(agent);
+  }
   return count;
 }
 
