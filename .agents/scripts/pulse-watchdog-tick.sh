@@ -46,6 +46,7 @@ _LOG_DIR="${HOME}/.aidevops/logs"
 _WATCHDOG_LOG="${_LOG_DIR}/pulse-watchdog.log"
 _LAST_RUN_FILE="${_LOG_DIR}/pulse-wrapper-last-run.ts"
 _SETTINGS_FILE="${HOME}/.config/aidevops/settings.json"
+_SYSTEMD_PULSE_UNIT="aidevops-supervisor-pulse.service"
 
 mkdir -p "$_LOG_DIR" 2>/dev/null || true
 
@@ -78,14 +79,45 @@ _read_pulse_interval() {
 	return 0
 }
 
-# Bail early if the lifecycle helper is missing — nothing to revive with.
-if [[ ! -x "$_LIFECYCLE_HELPER" ]]; then
+# Return 0 when the supervisor pulse is owned by a loaded systemd user unit.
+# A command check alone is insufficient because cron fallback hosts can have
+# systemctl installed without a usable pulse unit.
+_systemd_owns_pulse() {
+	command -v systemctl >/dev/null 2>&1 || return 1
+	local _load_state=""
+	_load_state=$(systemctl --user show "$_SYSTEMD_PULSE_UNIT" --property=LoadState --value 2>/dev/null) || return 1
+	[[ "$_load_state" == "loaded" ]]
+}
+
+# Return 0 while systemd owns an active or starting oneshot cycle.
+_systemd_pulse_alive() {
+	local _active_state=""
+	_active_state=$(systemctl --user show "$_SYSTEMD_PULSE_UNIT" --property=ActiveState --value 2>/dev/null) || return 1
+	[[ "$_active_state" == "active" || "$_active_state" == "activating" ]]
+}
+
+_revive_pulse() {
+	if _systemd_owns_pulse; then
+		systemctl --user start "$_SYSTEMD_PULSE_UNIT" >>"$_WATCHDOG_LOG" 2>&1 || _wd_log "systemd revival exit=$?"
+		return 0
+	fi
+	"$_LIFECYCLE_HELPER" start >>"$_WATCHDOG_LOG" 2>&1 || _wd_log "revival exit=$?"
+	return 0
+}
+
+# A systemd-owned pulse does not need the generic lifecycle helper. Other
+# backends still require it for process discovery and revival.
+if ! _systemd_owns_pulse && [[ ! -x "$_LIFECYCLE_HELPER" ]]; then
 	_wd_log "lifecycle-helper missing or non-executable: $_LIFECYCLE_HELPER"
 	exit 0
 fi
 
-# Fast path: pulse alive → no work.
-if "$_LIFECYCLE_HELPER" is-running >/dev/null 2>&1; then
+# Fast path: ask the owning scheduler before falling back to process discovery.
+if _systemd_owns_pulse; then
+	if _systemd_pulse_alive; then
+		exit 0
+	fi
+elif "$_LIFECYCLE_HELPER" is-running >/dev/null 2>&1; then
 	exit 0
 fi
 
@@ -114,16 +146,16 @@ _AGE=$((_NOW - _LAST_RUN))
 # fires before the pulse has ever recorded a timestamp.
 if [[ "$_LAST_RUN" -eq 0 ]]; then
 	_wd_log "no last-run timestamp — reviving pulse"
-	"$_LIFECYCLE_HELPER" start >>"$_WATCHDOG_LOG" 2>&1 || _wd_log "revival exit=$?"
+	_revive_pulse
 	exit 0
 fi
 
-# Within grace window — let launchd's own StartInterval fire on its schedule.
+# Within grace window — let the owning scheduler fire on its schedule.
 if [[ "$_AGE" -lt "$_THRESHOLD" ]]; then
 	exit 0
 fi
 
 # Past grace window — revive.
 _wd_log "pulse dead for ${_AGE}s (threshold ${_THRESHOLD}s = interval ${_INTERVAL} + grace ${_GRACE}) — reviving"
-"$_LIFECYCLE_HELPER" start >>"$_WATCHDOG_LOG" 2>&1 || _wd_log "revival exit=$?"
+_revive_pulse
 exit 0
