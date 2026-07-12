@@ -58,3 +58,20 @@ test("is idempotent and keeps managed rules last", () => {
   assert.equal(registerManagedDirectoryPermissions(config), 0);
   assert.deepEqual(Object.keys(config.permission.external_directory).slice(-6), Object.keys(managedRules));
 });
+
+test("adds managed rules to per-agent permissions that override top-level defaults", () => {
+  const config = {
+    permission: { external_directory: { "*": "ask" } },
+    agent: {
+      "Build+": { permission: { external_directory: "ask", bash: "allow" } },
+      review: { permission: { read: "allow" } },
+    },
+  };
+
+  assert.equal(registerManagedDirectoryPermissions(config), 18);
+  assert.deepEqual(config.agent["Build+"].permission.external_directory, {
+    "*": "ask",
+    ...managedRules,
+  });
+  assert.deepEqual(config.agent.review.permission.external_directory, managedRules);
+});
