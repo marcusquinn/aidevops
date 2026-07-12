@@ -5,10 +5,9 @@
 # brief-readiness-helper.sh — Detect worker-ready issue bodies and generate
 # stub briefs linking to the canonical issue (t2417, GH#20015).
 #
-# An issue body is "worker-ready" when it already contains the structured
-# headings a worker needs to implement autonomously (Task/What, Why, How,
-# Acceptance, Files to modify). In that case, creating a separate brief
-# file at todo/tasks/{id}-brief.md is redundant — the issue IS the brief.
+# Historical issue bodies retain heading-based readiness. Bodies carrying the
+# brief schema-v2 marker must also contain substantive write-surface, hazard,
+# verification, and positive/negative acceptance evidence.
 #
 # This helper provides:
 #   1. A readiness detector (`check`) that scores an issue body against
@@ -61,6 +60,8 @@ fi
 # A body scoring >= THRESHOLD across both sets is worker-ready.
 # ---------------------------------------------------------------------------
 readonly DEFAULT_THRESHOLD=4
+readonly BRIEF_SCHEMA_V2_MARKER='<!-- aidevops:brief-schema=v2 -->'
+readonly BRIEF_BOOL_TRUE="true"
 
 # Primary headings (the brief-template canonical set)
 readonly -a PRIMARY_HEADINGS=(
@@ -100,6 +101,265 @@ _score_body() {
 	return 0
 }
 
+_is_schema_v2_brief() {
+	local -a _args=("$@")
+	local body="${_args[0]}"
+
+	if printf '%s\n' "$body" | grep -qF "$BRIEF_SCHEMA_V2_MARKER"; then
+		return 0
+	fi
+	return 1
+}
+
+_visible_brief_text() {
+	local -a _args=("$@")
+	local body="${_args[0]}"
+
+	printf '%s\n' "$body" | awk '
+		{
+			line = $0
+			while (length(line) > 0) {
+				if (in_comment) {
+					if (match(line, /-->/)) {
+						line = substr(line, RSTART + RLENGTH)
+						in_comment = 0
+						continue
+					}
+					line = ""
+					break
+				}
+				if (match(line, /<!--/)) {
+					prefix = substr(line, 1, RSTART - 1)
+					rest = substr(line, RSTART + RLENGTH)
+					if (match(rest, /-->/)) {
+						line = prefix substr(rest, RSTART + RLENGTH)
+						continue
+					}
+					line = prefix
+					in_comment = 1
+				}
+				break
+			}
+			if (length(line) > 0) print line
+		}'
+	return 0
+}
+
+_extract_markdown_section() {
+	local -a _args=("$@")
+	local body="${_args[0]}"
+	local heading="${_args[1]}"
+	local include_fenced="${_args[2]:-false}"
+
+	printf '%s\n' "$body" | awk -v target="$heading" -v include_fenced="$include_fenced" -v true_value="$BRIEF_BOOL_TRUE" '
+		BEGIN {
+			target = tolower(target)
+			level = (target ~ /^### /) ? 3 : 2
+		}
+		{
+			line = tolower($0)
+			heading_line = line
+			sub(/[[:space:]]+$/, "", heading_line)
+			trimmed = line
+			sub(/^[[:space:]]*/, "", trimmed)
+			marker_char = substr(trimmed, 1, 1)
+			marker_len = 0
+			if (marker_char == "`" || marker_char == "~") {
+				while (substr(trimmed, marker_len + 1, 1) == marker_char) marker_len++
+			}
+			if (!in_fence && marker_len >= 3) {
+				in_fence = 1
+				fence_char = marker_char
+				fence_len = marker_len
+				next
+			}
+			if (in_fence && marker_char == fence_char && marker_len >= fence_len) {
+				remainder = substr(trimmed, marker_len + 1)
+				if (remainder ~ /^[[:space:]]*$/) {
+					in_fence = 0
+					next
+				}
+			}
+			if (!in_fence && !capture && heading_line == target) {
+				capture = 1
+				next
+			}
+			if (!in_fence && capture && ((level == 3 && line ~ /^###[[:space:]]/) || line ~ /^##[[:space:]]/)) {
+				exit
+			}
+			if (capture && (!in_fence || include_fenced == true_value)) print
+		}'
+	return 0
+}
+
+_brief_prose_text() {
+	local -a _args=("$@")
+	local body="${_args[0]}"
+
+	printf '%s\n' "$body" | awk '
+		{
+			trimmed = $0
+			sub(/^[[:space:]]*/, "", trimmed)
+			marker_char = substr(trimmed, 1, 1)
+			marker_len = 0
+			if (marker_char == "`" || marker_char == "~") {
+				while (substr(trimmed, marker_len + 1, 1) == marker_char) marker_len++
+			}
+			if (!in_fence && marker_len >= 3) {
+				in_fence = 1
+				fence_char = marker_char
+				fence_len = marker_len
+				next
+			}
+			if (in_fence && marker_char == fence_char && marker_len >= fence_len) {
+				remainder = substr(trimmed, marker_len + 1)
+				if (remainder ~ /^[[:space:]]*$/) {
+					in_fence = 0
+					next
+				}
+			}
+			if (in_fence) next
+			line = $0
+			gsub(/`[^`]*`/, "", line)
+			print line
+		}'
+	return 0
+}
+
+_field_line() {
+	local -a _args=("$@")
+	local section="${_args[0]}"
+	local field="${_args[1]}"
+
+	printf '%s\n' "$section" | grep -iF -m 1 "**${field}:**" || true
+	return 0
+}
+
+_field_is_substantive() {
+	local -a _args=("$@")
+	local section="${_args[0]}"
+	local field="${_args[1]}"
+	local line=""
+
+	line=$(_field_line "$section" "$field")
+	[[ -n "$line" ]] || return 1
+	if printf '%s\n' "$line" | grep -qiE ':\*\*[[:space:]]*($|TBD$|TODO$|N/?A[[:space:]]*$|unknown[[:space:]]*$|\{|<)'; then
+		return 1
+	fi
+	[[ ${#line} -ge $((${#field} + 18)) ]] || return 1
+	return 0
+}
+
+_write_surface_field_is_valid() {
+	local -a _args=("$@")
+	local section="${_args[0]}"
+	local field="${_args[1]}"
+	local line=""
+
+	_field_is_substantive "$section" "$field" || return 1
+	line=$(_field_line "$section" "$field")
+	if printf '%s\n' "$line" | grep -qE "\`[^\`]+\`|(^|[[:space:]])(EDIT|NEW):"; then
+		return 0
+	fi
+	if printf '%s\n' "$line" | grep -qiE '(N/?A|not applicable|not yet knowable|unknown).*(because|evidence|searched|documentation-only|new-file-only|until|no existing)'; then
+		return 0
+	fi
+	return 1
+}
+
+_has_unfilled_placeholder() {
+	local -a _args=("$@")
+	local body="${_args[0]}"
+	local prose=""
+
+	prose=$(_brief_prose_text "$body")
+	if printf '%s\n' "$prose" | grep -qiE '<[[:alpha:]][^>]*>|\{[^{}]*(command|path|purpose|criterion|rationale|summary|deliverable|problem|evidence|task|title)[^{}]*\}'; then
+		return 0
+	fi
+	return 1
+}
+
+_has_file_target() {
+	local -a _args=("$@")
+	local section="${_args[0]}"
+
+	if printf '%s\n' "$section" | grep -qE "^[[:space:]]*-[[:space:]]+[\`]?(EDIT|NEW):[[:space:]]+[\`]?[^ \`{<]+"; then
+		return 0
+	fi
+	return 1
+}
+
+_has_implementation_step() {
+	local -a _args=("$@")
+	local section="${_args[0]}"
+
+	if printf '%s\n' "$section" | grep -qE '^[[:space:]]*[0-9]+\.[[:space:]]+[^<{][^{}]{8,}'; then
+		return 0
+	fi
+	return 1
+}
+
+_has_executable_verification() {
+	local -a _args=("$@")
+	local section="${_args[0]}"
+
+	if printf '%s\n' "$section" | grep -qE '^[[:space:]]*(\$[[:space:]]*)?(bash |shellcheck |pytest( |$)|python[0-9]* |node |npm |pnpm |yarn |go test( |$)|cargo test( |$)|make |bundle exec |composer |git diff( |$)|\./|[.][[:alnum:]_/-]+\.sh([[:space:]]|$))'; then
+		return 0
+	fi
+	return 1
+}
+
+_validate_v2_body() {
+	local -a _args=("$@")
+	local body="${_args[0]}"
+	local visible=""
+	local files_to_modify=""
+	local write_surface=""
+	local implementation_steps=""
+	local hazards=""
+	local verification=""
+	local acceptance=""
+	local errors=""
+	local field=""
+	local checkbox_count=0
+	local negative_pattern='regression|never|must not|does not|do not|without|rejects?|preserves?|no [[:alnum:]]'
+
+	visible=$(_visible_brief_text "$body")
+	files_to_modify=$(_extract_markdown_section "$visible" "### Files to Modify")
+	write_surface=$(_extract_markdown_section "$visible" "### Complete Write Surface")
+	implementation_steps=$(_extract_markdown_section "$visible" "### Implementation Steps")
+	hazards=$(_extract_markdown_section "$visible" "### Hazards and Compatibility")
+	verification=$(_extract_markdown_section "$visible" "### Verification Before Dispatch" "$BRIEF_BOOL_TRUE")
+	acceptance=$(_extract_markdown_section "$visible" "## Acceptance Criteria")
+
+	_has_file_target "$files_to_modify" || errors="${errors}files-to-modify:target;"
+	_has_implementation_step "$implementation_steps" || errors="${errors}implementation-steps:substantive;"
+
+	for field in "Callers/readers" "Writers/mutation paths" "Tests/fixtures" "Schemas/config" "Generated/deployed mirrors" "Migrations/backfills" "Cleanup/rollback paths"; do
+		_write_surface_field_is_valid "$write_surface" "$field" || errors="${errors}write-surface:${field};"
+	done
+
+	for field in "Concurrency/atomicity" "Migration/rollback" "Mixed-version/backward compatibility" "Idempotency/retry" "Partial failure/recovery"; do
+		_field_is_substantive "$hazards" "$field" || errors="${errors}hazard:${field};"
+	done
+
+	_field_is_substantive "$verification" "Surface mapping" || errors="${errors}verification:surface-mapping;"
+	_has_executable_verification "$verification" || errors="${errors}verification:command;"
+
+	checkbox_count=$(printf '%s\n' "$acceptance" | grep -cE '^[[:space:]]*-[[:space:]]+\[[ xX]\]' || true)
+	[[ "$checkbox_count" -ge 2 ]] || errors="${errors}acceptance:multiple-observable-criteria;"
+	printf '%s\n' "$acceptance" | grep -qiE "$negative_pattern" || errors="${errors}acceptance:negative-regression;"
+	printf '%s\n' "$acceptance" | grep -viE "$negative_pattern" | grep -qE '^[[:space:]]*-[[:space:]]+\[[ xX]\]' || errors="${errors}acceptance:positive;"
+	_has_unfilled_placeholder "$visible" && errors="${errors}placeholder:unfilled;"
+
+	if [[ -n "$errors" ]]; then
+		printf 'VALIDATION_ERRORS=%s\n' "$errors"
+		return 1
+	fi
+	printf 'VALIDATION_ERRORS=none\n'
+	return 0
+}
+
 # ---------------------------------------------------------------------------
 # _is_worker_ready: check whether a body meets the readiness threshold.
 #
@@ -114,10 +374,11 @@ _is_worker_ready() {
 	local score
 	score=$(_score_body "$body")
 
-	if [[ "$score" -ge "$threshold" ]]; then
-		return 0
+	[[ "$score" -ge "$threshold" ]] || return 1
+	if _is_schema_v2_brief "$body"; then
+		_validate_v2_body "$body" >/dev/null || return 1
 	fi
-	return 1
+	return 0
 }
 
 # ---------------------------------------------------------------------------
@@ -194,8 +455,16 @@ cmd_check() {
 	score=$(_score_body "$body")
 	local ready="false"
 	local exit_code=1
+	local schema="legacy"
+	local validation="VALIDATION_ERRORS=not-applicable"
 
-	if [[ "$score" -ge "$threshold" ]]; then
+	if _is_schema_v2_brief "$body"; then
+		schema="v2"
+		if [[ "$score" -ge "$threshold" ]] && validation=$(_validate_v2_body "$body"); then
+			ready="$BRIEF_BOOL_TRUE"
+			exit_code=0
+		fi
+	elif [[ "$score" -ge "$threshold" ]]; then
 		ready="true"
 		exit_code=0
 	fi
@@ -203,6 +472,8 @@ cmd_check() {
 	printf 'WORKER_READY=%s\n' "$ready"
 	printf 'SCORE=%d\n' "$score"
 	printf 'THRESHOLD=%d\n' "$threshold"
+	printf 'SCHEMA=%s\n' "$schema"
+	printf '%s\n' "$validation"
 
 	return "$exit_code"
 }

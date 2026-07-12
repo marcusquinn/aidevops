@@ -28,6 +28,7 @@ Commands:
   verify          <path>   Run all method:bash verify blocks from the brief
   list            <path>   List verify blocks without executing
   check-preflight <path>   Validate Pre-flight block is present and populated (t2409)
+  check-readiness <path>   Validate schema-v2 dispatch readiness (legacy compatible)
   help                     Show this help
 EOF
 	return 0
@@ -340,6 +341,30 @@ _cmd_check_preflight() {
 	return 0
 }
 
+_cmd_check_readiness() {
+	local -a _args=("$@")
+	local brief_path="${_args[0]:-}"
+	local helper_path=""
+	local body=""
+
+	if [[ -z "$brief_path" || ! -f "$brief_path" ]]; then
+		_log "ERROR" "File not found: ${brief_path:-<missing>}"
+		return 2
+	fi
+
+	helper_path="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/brief-readiness-helper.sh"
+	if [[ ! -x "$helper_path" ]]; then
+		_log "ERROR" "Readiness helper not executable: $helper_path"
+		return 2
+	fi
+
+	body=$(<"$brief_path")
+	if "$helper_path" check --body "$body"; then
+		return 0
+	fi
+	return 1
+}
+
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
@@ -371,6 +396,14 @@ main() {
 		local preflight_path="$1"
 		_cmd_check_preflight "$preflight_path"
 		;;
+	check-readiness)
+		if [[ $# -lt 1 ]]; then
+			_log "ERROR" "Missing brief path. Usage: verify-brief-helper.sh check-readiness <path>"
+			return 2
+		fi
+		local readiness_path="$1"
+		_cmd_check_readiness "$readiness_path"
+		;;
 	help | --help | -h)
 		_usage
 		;;
@@ -380,6 +413,7 @@ main() {
 		return 2
 		;;
 	esac
+	return $?
 }
 
 main "$@"

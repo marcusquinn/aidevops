@@ -174,6 +174,256 @@ Created somewhere.
 - EDIT: file.sh
 "
 
+# Markdown fixtures intentionally use literal backticks.
+# shellcheck disable=SC2016
+BODY_V2_COMPLETE='<!-- aidevops:brief-schema=v2 -->
+# Complete schema-v2 brief
+
+## Task
+Harden state updates.
+
+## Why
+Concurrent migration writes must remain compatible.
+
+## How
+
+### Files to Modify
+- EDIT: `src/state.sh`
+
+### Complete Write Surface
+- **Callers/readers:** `src/app.sh` reads the state emitted by the writer
+- **Writers/mutation paths:** `src/state.sh` is the only writer found by search
+- **Tests/fixtures:** `tests/test-state.sh` covers current and migrated state
+- **Schemas/config:** N/A because search found no schema for this shell state
+- **Generated/deployed mirrors:** `dist/state.sh` is generated during deployment
+- **Migrations/backfills:** `scripts/migrate-state.sh` upgrades existing records
+- **Cleanup/rollback paths:** `scripts/rollback-state.sh` restores the prior format
+
+### Implementation Steps
+1. Make the state replacement atomic and version-aware.
+
+### Hazards and Compatibility
+- **Concurrency/atomicity:** write a temporary file and rename it atomically
+- **Migration/rollback:** migrate readers before writers and retain rollback parsing
+- **Mixed-version/backward compatibility:** old readers continue accepting v1 records
+- **Idempotency/retry:** replaying the migration preserves an already migrated record
+- **Partial failure/recovery:** interrupted temporary files are ignored and cleaned up
+
+### Verification Before Dispatch
+shellcheck src/state.sh scripts/migrate-state.sh scripts/rollback-state.sh
+bash tests/test-state.sh
+- **Surface mapping:** shellcheck covers writers and migration scripts; the focused test covers mixed-version reads, retries, and rollback
+
+## Acceptance Criteria
+- [ ] Concurrent writers produce one complete state record.
+- [ ] A failed migration never replaces a valid existing record or regresses v1 reads.
+'
+
+BODY_V2_HEADINGS_ONLY='<!-- aidevops:brief-schema=v2 -->
+## Task
+Do work.
+## Why
+It is needed.
+## How
+### Complete Write Surface
+### Hazards and Compatibility
+### Verification Before Dispatch
+## Acceptance Criteria
+- [ ] Done
+'
+
+# shellcheck disable=SC2016
+BODY_V2_DOC_ONLY='<!-- aidevops:brief-schema=v2 -->
+## Task
+Document the command.
+## Why
+Operators need accurate usage.
+## How
+### Files to Modify
+- NEW: `docs/command.md`
+### Complete Write Surface
+- **Callers/readers:** `docs/index.md` will link to the new guide
+- **Writers/mutation paths:** N/A because documentation-only work performs no writes
+- **Tests/fixtures:** `tests/test-doc-links.sh` checks documentation links
+- **Schemas/config:** N/A because search found no schema or config for prose
+- **Generated/deployed mirrors:** N/A because evidence shows docs deploy directly
+- **Migrations/backfills:** N/A because documentation-only work stores no records
+- **Cleanup/rollback paths:** N/A because git revert removes the new-file-only guide
+### Implementation Steps
+1. Add the guide and index link.
+### Hazards and Compatibility
+- **Concurrency/atomicity:** N/A because documentation-only edits have no runtime writes
+- **Migration/rollback:** rollback is a normal documentation revert
+- **Mixed-version/backward compatibility:** existing command syntax remains documented unchanged
+- **Idempotency/retry:** rebuilding docs repeatedly produces the same output
+- **Partial failure/recovery:** a failed docs build publishes no partial site
+### Verification Before Dispatch
+bash tests/test-doc-links.sh
+- **Surface mapping:** the link test covers the new guide and its only reader
+## Acceptance Criteria
+- [ ] The command guide is reachable from the docs index.
+- [ ] Existing documentation links do not regress or become broken.
+'
+
+# shellcheck disable=SC2016
+BODY_V2_NEW_FILE_ONLY='<!-- aidevops:brief-schema=v2 -->
+## Task
+Add an isolated formatter.
+## Why
+The new format needs a dedicated implementation.
+## How
+### Files to Modify
+- NEW: `src/formatter.sh`
+### Complete Write Surface
+- **Callers/readers:** `src/cli.sh` will call the new formatter
+- **Writers/mutation paths:** N/A because search shows the new-file-only formatter returns text without writes
+- **Tests/fixtures:** `tests/test-formatter.sh` is the new focused fixture
+- **Schemas/config:** N/A because evidence shows plain text has no schema
+- **Generated/deployed mirrors:** `dist/formatter.sh` is copied by the existing build
+- **Migrations/backfills:** N/A because no persisted data exists to migrate
+- **Cleanup/rollback paths:** N/A because removing the caller and new file fully rolls back
+### Implementation Steps
+1. Add the formatter and wire its caller.
+### Hazards and Compatibility
+- **Concurrency/atomicity:** N/A because the pure formatter has no shared state
+- **Migration/rollback:** removal of the new caller restores prior behavior
+- **Mixed-version/backward compatibility:** the existing output remains the default
+- **Idempotency/retry:** repeated calls with the same input return the same output
+- **Partial failure/recovery:** formatter failures return before output is emitted
+### Verification Before Dispatch
+shellcheck src/formatter.sh
+bash tests/test-formatter.sh
+- **Surface mapping:** shellcheck covers the new file and the focused test covers caller compatibility
+## Acceptance Criteria
+- [ ] The caller can select the new formatter.
+- [ ] Invalid input never changes the existing default output.
+'
+
+# shellcheck disable=SC2016
+BODY_V2_NO_FILES=$(printf '%s\n' "$BODY_V2_COMPLETE" | grep -vE '^### Files to Modify$|^- EDIT: `src/state\.sh`$')
+BODY_V2_NO_STEPS=$(printf '%s\n' "$BODY_V2_COMPLETE" | grep -vE '^### Implementation Steps$|^1\. Make the state replacement')
+BODY_V2_VERIFICATION_PROSE_ONLY=$(printf '%s\n' "$BODY_V2_COMPLETE" | grep -vE '^shellcheck |^bash tests/test-state\.sh$')
+BODY_V2_LOOKALIKE_HEADINGS=$(printf '%s\n' "$BODY_V2_COMPLETE" | sed \
+	-e 's/^### Files to Modify$/### Files to Modify Later/' \
+	-e 's/^### Complete Write Surface$/### Complete Write Surface Example/' \
+	-e 's/^### Implementation Steps$/### Implementation Steps TBD/' \
+	-e 's/^### Hazards and Compatibility$/### Hazards and Compatibility Notes/' \
+	-e 's/^### Verification Before Dispatch$/### Verification Before Dispatch Example/' \
+	-e 's/^## Acceptance Criteria$/## Acceptance Criteria Example/')
+
+# shellcheck disable=SC2016
+BODY_V2_FENCED_SECTIONS='<!-- aidevops:brief-schema=v2 -->
+## Task
+Harden state updates.
+## Why
+Readers require compatible records.
+## How
+```markdown
+### Files to Modify
+- EDIT: `src/state.sh`
+### Complete Write Surface
+- **Callers/readers:** `src/app.sh` reads state
+- **Writers/mutation paths:** `src/state.sh` writes state
+- **Tests/fixtures:** `tests/state.sh` tests state
+- **Schemas/config:** N/A because search found no schema
+- **Generated/deployed mirrors:** N/A because evidence shows direct deployment
+- **Migrations/backfills:** `migrate.sh` migrates state
+- **Cleanup/rollback paths:** `rollback.sh` restores state
+### Implementation Steps
+1. Update state atomically.
+### Hazards and Compatibility
+- **Concurrency/atomicity:** use atomic rename
+- **Migration/rollback:** preserve rollback ordering
+- **Mixed-version/backward compatibility:** preserve old readers
+- **Idempotency/retry:** replay is safe
+- **Partial failure/recovery:** ignore partial files
+### Verification Before Dispatch
+shellcheck src/state.sh
+- **Surface mapping:** shellcheck covers the writer
+```
+## Acceptance Criteria
+- [ ] Writers produce a complete record.
+- [ ] Failed writes never replace valid state.
+'
+
+# shellcheck disable=SC2016
+BODY_V2_FENCED_CONTENT='<!-- aidevops:brief-schema=v2 -->
+## Task
+Harden state updates.
+## Why
+Readers require compatible records.
+## How
+### Files to Modify
+```markdown
+- EDIT: `src/state.sh`
+```
+### Complete Write Surface
+```markdown
+- **Callers/readers:** `src/app.sh` reads state
+- **Writers/mutation paths:** `src/state.sh` writes state
+- **Tests/fixtures:** `tests/state.sh` tests state
+- **Schemas/config:** N/A because search found no schema
+- **Generated/deployed mirrors:** N/A because evidence shows direct deployment
+- **Migrations/backfills:** `migrate.sh` migrates state
+- **Cleanup/rollback paths:** `rollback.sh` restores state
+```
+### Implementation Steps
+```markdown
+1. Update state atomically.
+```
+### Hazards and Compatibility
+```markdown
+- **Concurrency/atomicity:** use atomic rename
+- **Migration/rollback:** preserve rollback ordering
+- **Mixed-version/backward compatibility:** preserve old readers
+- **Idempotency/retry:** replay is safe
+- **Partial failure/recovery:** ignore partial files
+```
+### Verification Before Dispatch
+```bash
+shellcheck src/state.sh
+```
+- **Surface mapping:** shellcheck covers the writer
+## Acceptance Criteria
+```markdown
+- [ ] Writers produce a complete record.
+- [ ] Failed writes never replace valid state.
+```
+'
+
+# shellcheck disable=SC2016
+BODY_V2_MIXED_FENCES='<!-- aidevops:brief-schema=v2 -->
+## Task
+Harden state updates.
+## Why
+Readers require compatible records.
+## How
+### Files to Modify
+````markdown
+```text
+- EDIT: `src/state.sh`
+```
+~~~
+{path placeholder inside the four-backtick example}
+~~~
+````
+## Acceptance Criteria
+- [ ] Writers produce a complete record.
+- [ ] Failed writes never replace valid state.
+'
+
+# Legitimate placeholder-like syntax inside code must not fail prose validation.
+# shellcheck disable=SC2016
+BODY_V2_WITH_CODE_SYNTAX="${BODY_V2_COMPLETE}
+
+## Technical Notes
+Use \`\${config_path}\` with \`map<Path>\` at the boundary.
+
+\`\`\`javascript
+const record = { path: configPath, command: runCommand };
+\`\`\`
+"
+
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
@@ -386,6 +636,111 @@ if [[ $rc -eq 0 ]]; then
 	pass "T11: case-insensitive heading matching → exit 0"
 else
 	fail "T11: case-insensitive heading matching → exit 0" "got exit $rc, output: $output"
+fi
+
+# --- Test 12: schema-v2 complete concurrency/migration/compatibility brief passes ---
+output=$("$HELPER" check --body "$BODY_V2_COMPLETE" 2>/dev/null)
+rc=$?
+if [[ $rc -eq 0 && "$output" == *"SCHEMA=v2"* && "$output" == *"VALIDATION_ERRORS=none"* ]]; then
+	pass "T12: substantive schema-v2 brief passes"
+else
+	fail "T12: substantive schema-v2 brief passes" "got exit $rc, output: $output"
+fi
+
+# --- Test 13: headings-only schema-v2 brief fails ---
+output=$("$HELPER" check --body "$BODY_V2_HEADINGS_ONLY" 2>/dev/null)
+rc=$?
+if [[ $rc -eq 1 && "$output" == *"WORKER_READY=false"* && "$output" == *"VALIDATION_ERRORS="* ]]; then
+	pass "T13: headings-only schema-v2 brief is rejected"
+else
+	fail "T13: headings-only schema-v2 brief is rejected" "got exit $rc, output: $output"
+fi
+
+# --- Test 14: evidence-backed documentation-only N/A values pass ---
+output=$("$HELPER" check --body "$BODY_V2_DOC_ONLY" 2>/dev/null)
+rc=$?
+if [[ $rc -eq 0 ]]; then
+	pass "T14: documentation-only schema-v2 brief passes"
+else
+	fail "T14: documentation-only schema-v2 brief passes" "got exit $rc, output: $output"
+fi
+
+# --- Test 15: evidence-backed new-file-only N/A values pass ---
+if "$HELPER" check --body "$BODY_V2_NEW_FILE_ONLY" >/dev/null 2>&1; then
+	pass "T15: new-file-only schema-v2 brief passes"
+else
+	fail "T15: new-file-only schema-v2 brief passes" "readiness check failed"
+fi
+
+# --- Test 16: historical unmarked briefs remain legacy-compatible ---
+output=$("$HELPER" check --body "$BODY_SCORE_4" 2>/dev/null)
+if [[ "$output" == *"WORKER_READY=true"* && "$output" == *"SCHEMA=legacy"* ]]; then
+	pass "T16: historical unmarked brief keeps legacy readiness"
+else
+	fail "T16: historical unmarked brief keeps legacy readiness" "output: $output"
+fi
+
+# --- Test 17: schema-v2 requires a concrete file target ---
+output=$("$HELPER" check --body "$BODY_V2_NO_FILES" 2>/dev/null)
+if [[ "$output" == *"files-to-modify:target"* ]]; then
+	pass "T17: schema-v2 brief without a file target is rejected"
+else
+	fail "T17: missing file target rejection" "output: $output"
+fi
+
+# --- Test 18: schema-v2 requires a substantive implementation step ---
+output=$("$HELPER" check --body "$BODY_V2_NO_STEPS" 2>/dev/null)
+if [[ "$output" == *"implementation-steps:substantive"* ]]; then
+	pass "T18: schema-v2 brief without implementation steps is rejected"
+else
+	fail "T18: missing implementation step rejection" "output: $output"
+fi
+
+# --- Test 19: prose mentioning a tool is not an executable command ---
+output=$("$HELPER" check --body "$BODY_V2_VERIFICATION_PROSE_ONLY" 2>/dev/null)
+if [[ "$output" == *"verification:command"* ]]; then
+	pass "T19: verification prose without a command is rejected"
+else
+	fail "T19: executable verification rejection" "output: $output"
+fi
+
+# --- Test 20: required headings inside a fenced example do not satisfy readiness ---
+output=$("$HELPER" check --body "$BODY_V2_FENCED_SECTIONS" 2>/dev/null)
+if [[ "$output" == *"WORKER_READY=false"* && "$output" == *"write-surface:"* ]]; then
+	pass "T20: fenced example sections do not satisfy schema-v2 readiness"
+else
+	fail "T20: fenced heading rejection" "output: $output"
+fi
+
+# --- Test 21: legitimate shell, generic, and object syntax in code is accepted ---
+if "$HELPER" check --body "$BODY_V2_WITH_CODE_SYNTAX" >/dev/null 2>&1; then
+	pass "T21: placeholder-like syntax inside code remains valid"
+else
+	fail "T21: code syntax false-positive guard" "readiness check failed"
+fi
+
+# --- Test 22: fenced examples cannot populate genuine readiness sections ---
+output=$("$HELPER" check --body "$BODY_V2_FENCED_CONTENT" 2>/dev/null)
+if [[ "$output" == *"files-to-modify:target"* && "$output" == *"write-surface:"* && "$output" == *"acceptance:multiple-observable-criteria"* ]]; then
+	pass "T22: fenced content cannot satisfy genuine schema-v2 sections"
+else
+	fail "T22: fenced content bypass rejection" "output: $output"
+fi
+
+# --- Test 23: mixed and shorter fence delimiters remain inside their opener ---
+output=$("$HELPER" check --body "$BODY_V2_MIXED_FENCES" 2>/dev/null)
+if [[ "$output" == *"files-to-modify:target"* && "$output" != *"placeholder:unfilled"* ]]; then
+	pass "T23: four-character fences ignore shorter and mixed delimiters"
+else
+	fail "T23: Markdown fence delimiter tracking" "output: $output"
+fi
+
+# --- Test 24: suffixed lookalike headings do not satisfy canonical sections ---
+output=$("$HELPER" check --body "$BODY_V2_LOOKALIKE_HEADINGS" 2>/dev/null)
+if [[ "$output" == *"files-to-modify:target"* && "$output" == *"implementation-steps:substantive"* && "$output" == *"acceptance:multiple-observable-criteria"* ]]; then
+	pass "T24: lookalike heading prefixes are rejected"
+else
+	fail "T24: exact schema-v2 heading matching" "output: $output"
 fi
 
 # ---------------------------------------------------------------------------

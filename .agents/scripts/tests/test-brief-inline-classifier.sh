@@ -185,12 +185,104 @@ else
 		"expected Progressive Context Plan inside Worker Guidance"
 fi
 
-# Test A4: no brief file → returns input unchanged
+# Test A4: complete schema-v2 guidance retains every new readiness section
+cat >"$TMP/brief-schema-v2.md" <<'BRIEF'
+<!-- aidevops:brief-schema=v2 -->
+# t9005: schema-v2 brief
+
+## Task
+Preserve compatible state writes.
+
+## Why
+Concurrent readers require complete records.
+
+## How
+
+### Files to Modify
+- EDIT: `state.sh`
+
+### Complete Write Surface
+- **Callers/readers:** `reader.sh` consumes state records
+- **Writers/mutation paths:** `state.sh` writes the records
+- **Tests/fixtures:** `tests/state.sh` covers old and new records
+- **Schemas/config:** N/A because search found no external schema
+- **Generated/deployed mirrors:** N/A because evidence shows direct deployment
+- **Migrations/backfills:** `migrate.sh` upgrades existing records
+- **Cleanup/rollback paths:** `rollback.sh` restores the old format
+
+### Implementation Steps
+1. Update state safely.
+
+### Hazards and Compatibility
+- **Concurrency/atomicity:** preserve atomic replacement
+- **Migration/rollback:** migrate readers before writers
+- **Mixed-version/backward compatibility:** old readers retain compatible fields
+- **Idempotency/retry:** migration replay preserves migrated records
+- **Partial failure/recovery:** interrupted temporary files are ignored
+
+### Verification Before Dispatch
+shellcheck state.sh
+- **Surface mapping:** shellcheck covers the writer and migration compatibility
+
+## Acceptance Criteria
+- [ ] Readers observe one complete state record.
+- [ ] Failed writes never replace valid state or regress old readers.
+BRIEF
+
+result=$(_compose_issue_worker_guidance "base body" "$TMP/brief-schema-v2.md")
+if [[ "$result" == *"## Worker Guidance"* ]] && [[ "$result" == *"### Complete Write Surface"* ]] && [[ "$result" == *"### Hazards and Compatibility"* ]] && [[ "$result" == *"### Verification Before Dispatch"* ]]; then
+	pass "A4 complete schema-v2 sections are promoted together"
+else
+	fail "A4 schema-v2 promotion" "expected all new readiness sections in Worker Guidance"
+fi
+
+# Test A5: incomplete schema-v2 guidance is not promoted
+cat >"$TMP/brief-schema-v2-incomplete.md" <<'BRIEF'
+<!-- aidevops:brief-schema=v2 -->
+## Task
+Update state.
+## Why
+Readers need state.
+## How
+### Files to Modify
+- EDIT: `state.sh`
+### Complete Write Surface
+- **Callers/readers:** {paths and reference flow}
+- **Writers/mutation paths:** {every known write path}
+- **Tests/fixtures:** {tests and fixtures}
+- **Schemas/config:** {schema or config}
+- **Generated/deployed mirrors:** {generated output}
+- **Migrations/backfills:** {migration paths}
+- **Cleanup/rollback paths:** {rollback paths}
+### Implementation Steps
+1. Update state.
+### Hazards and Compatibility
+- **Concurrency/atomicity:** {race analysis}
+- **Migration/rollback:** {rollback ordering}
+- **Mixed-version/backward compatibility:** {compatibility behavior}
+- **Idempotency/retry:** {retry behavior}
+- **Partial failure/recovery:** {recovery behavior}
+### Verification Before Dispatch
+shellcheck state.sh
+- **Surface mapping:** {map commands to affected surfaces}
+## Acceptance Criteria
+- [ ] State is updated.
+- [ ] Existing readers never regress.
+BRIEF
+
+result=$(_compose_issue_worker_guidance "base body" "$TMP/brief-schema-v2-incomplete.md")
+if [[ "$result" == "base body" ]]; then
+	pass "A5 incomplete schema-v2 guidance remains unpromoted"
+else
+	fail "A5 incomplete schema-v2 promotion gate" "expected unchanged body"
+fi
+
+# Test A6: no brief file → returns input unchanged
 result=$(_compose_issue_worker_guidance "base body" "$TMP/nonexistent.md")
 if [[ "$result" == "base body" ]]; then
-	pass "A4 no brief file returns input body unchanged"
+	pass "A6 no brief file returns input body unchanged"
 else
-	fail "A4 no brief file" "expected 'base body', got '$result'"
+	fail "A6 no brief file" "expected 'base body', got '$result'"
 fi
 
 # =============================================================================

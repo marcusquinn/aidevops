@@ -78,6 +78,8 @@ This prevents redundant brief files when the issue body already carries all the 
 
 Every task MUST have a brief at `todo/tasks/{task_id}-brief.md`. Use `templates/brief-template.md`, formatted per `workflows/brief.md`. Required sections:
 
+Before adding `auto-dispatch`, apply the single `workflows/brief.md` "Dispatch Readiness Contract (brief schema v2)" checklist and require `verify-brief-helper.sh check-readiness <brief>` to pass. Historical unmarked briefs keep legacy compatibility.
+
 | Section | Content |
 |---------|---------|
 | **Origin** | Created date, session ID, author (human/ai-supervisor/ai-interactive), parent task |
