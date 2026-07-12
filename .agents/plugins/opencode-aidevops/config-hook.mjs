@@ -16,6 +16,7 @@ import { checkOpenCodeVersionDriftAsync } from "./version-tracking.mjs";
 import {
   CLAUDE_MODEL_LIMITS,
   GPT56_CONTEXT_DEFAULT,
+  GPT56_INPUT_DEFAULT,
   GPT56_MODEL_IDS,
   GPT56_OUTPUT_DEFAULT,
 } from "./model-limits.mjs";
@@ -161,6 +162,7 @@ export function registerGpt56ContextLimits(config) {
         output: GPT56_OUTPUT_DEFAULT,
         ...existing.limit,
         context: GPT56_CONTEXT_DEFAULT,
+        input: GPT56_INPUT_DEFAULT,
       },
     };
   }

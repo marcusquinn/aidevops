@@ -26,10 +26,17 @@ export const OPUS_47_CONTEXT_DEFAULT = 250000;
 export const OPUS_47_CONTEXT_MAX = 1000000;
 
 /**
- * Advertised GPT-5.6 context used by OpenCode. Its 80% compaction threshold
- * therefore fires near 240K, before OpenAI's long-context pricing boundary.
+ * Advertised GPT-5.6 context used by OpenCode.
  */
 export const GPT56_CONTEXT_DEFAULT = 300000;
+
+/**
+ * GPT-5.6 input budget used by OpenCode. OpenCode compacts at
+ * `limit.input - compaction.reserved`; its default 20K reserve therefore
+ * triggers compaction at 240K. Setting context alone does not control the
+ * current compaction threshold when built-in metadata supplies input=380K.
+ */
+export const GPT56_INPUT_DEFAULT = 260000;
 
 /** Maximum GPT-5.6 response size advertised by OpenCode's model registry. */
 export const GPT56_OUTPUT_DEFAULT = 128000;
