@@ -173,9 +173,15 @@ test_nmr_reason_revalidation() {
 	authority=$(_nmr_reason_metadata_from_comments '[{"body":"<!-- nmr-reason code=billing class=genuine-authority -->"}]')
 	assert_eq "billing reason requires cryptographic authority" "true" "$(printf '%s' "$authority" | jq -r '.requires_crypto')"
 
-	_nmr_reason_metadata() { printf '{"code":"missing_context","class":"temporary","source":"structured-marker","revalidate_after_seconds":1,"requires_crypto":false}\n'; return 0; }
+	_nmr_reason_metadata() {
+		printf '{"code":"missing_context","class":"temporary","source":"structured-marker","revalidate_after_seconds":1,"requires_crypto":false}\n'
+		return 0
+	}
 	_nmr_revalidation_due() { return 0; }
-	_nmr_temporary_assumption_resolved() { printf 'worker guidance restored\n'; return 0; }
+	_nmr_temporary_assumption_resolved() {
+		printf 'worker guidance restored\n'
+		return 0
+	}
 	_nmr_record_revalidation_state() { return 0; }
 	_nmr_evaluate_reason_metadata 42 owner/repo 2000-01-01T00:00:00Z
 	assert_eq "resolved temporary NMR returns to automation" "auto" "$_NMR_REASON_ACTION"
