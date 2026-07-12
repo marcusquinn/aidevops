@@ -40,8 +40,6 @@ if [[ -z "${SCRIPT_DIR:-}" ]]; then
 fi
 # shellcheck source=./task-identity-lib.sh
 source "${SCRIPT_DIR}/task-identity-lib.sh"
-# shellcheck source=task-identity-lib.sh
-source "${SCRIPT_DIR}/task-identity-lib.sh"
 
 # Exit code 2 used by commit_version_changes to distinguish "nothing staged"
 # from "commit succeeded" (0). Callers that expect a new bump commit on HEAD

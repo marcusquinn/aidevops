@@ -344,6 +344,15 @@ _extract_tids() {
 	return 0
 }
 
+_legacy_sequence_for_collision_check() {
+	local task_id="${1:-}"
+	task_identity_parse "$task_id" || return 1
+	if [[ "$TASK_IDENTITY_KIND" == "legacy" ]]; then
+		printf '%s\n' "$TASK_IDENTITY_SEQUENCE"
+	fi
+	return 0
+}
+
 # ---------------------------------------------------------------------------
 # Extract issue numbers from Resolves|Closes|Fixes|Ref|For footer lines.
 # Accepts both closing keywords (Resolves, Closes, Fixes) and non-closing
@@ -479,16 +488,15 @@ _check_message() {
 	local tid
 	while IFS= read -r tid; do
 		[[ -z "$tid" ]] && continue
-		if ! task_identity_parse "$tid"; then
+		local num=""
+		if ! num=$(_legacy_sequence_for_collision_check "$tid"); then
 			violations="${violations}  ${tid} — malformed task identity\n"
 			continue
 		fi
-		if [[ "$TASK_IDENTITY_KIND" == "namespaced" ]]; then
+		if [[ -z "$num" ]]; then
 			_debug "$tid is origin-namespaced and collision-safe by construction"
 			continue
 		fi
-		local num
-		num="$TASK_IDENTITY_SEQUENCE"
 		if ! [[ "$num" =~ ^[0-9]+$ ]]; then
 			_debug "Non-numeric suffix for $tid — skipping"
 			continue
