@@ -767,8 +767,8 @@ _blocked_by_load_cache() {
 # Uses the cached dep graph first; falls back to a live `gh issue list`
 # search when the task is not found in the cache.
 #
-	# Arguments:
-	#   $1 - canonical task ID
+# Arguments:
+#   $1 - canonical task ID
 #   $2 - repo slug
 #   $3 - issue_number (for logging)
 #   $4 - cache_state JSON (from _blocked_by_load_cache)
