@@ -2070,10 +2070,10 @@ _dispatch_launch_worker() {
 	fi
 
 	_ds_t0=$(_ds_now_ns)
-	if ! _dlw_assign_and_label "$issue_number" "$repo_slug" "$self_login" "$issue_meta_json"; then
+	_dlw_assign_and_label "$issue_number" "$repo_slug" "$self_login" "$issue_meta_json" || {
 		_ds_record "$issue_number" "$repo_slug" "assign_and_label" "$_ds_t0"
 		return 2
-	fi
+	}
 	_ds_record "$issue_number" "$repo_slug" "assign_and_label" "$_ds_t0"
 
 	local zero_output_comment_metrics=""

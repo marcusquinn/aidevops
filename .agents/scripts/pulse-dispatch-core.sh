@@ -56,6 +56,8 @@
 
 [[ -n "${_PULSE_DISPATCH_CORE_LOADED:-}" ]] && return 0
 _PULSE_DISPATCH_CORE_LOADED=1
+_PULSE_DISPATCH_FALSE="false"
+_PULSE_DISPATCH_ELIGIBILITY_STAGE="eligibility_gate"
 
 # t2863: Module-level variable defaults (set -u guards).
 # Ensures LOGFILE is safe to dereference in all functions when this module
@@ -349,7 +351,7 @@ _count_impl_commits() {
 				;;
 			esac
 		done < <(git -C "$repo_path_inner" diff-tree --no-commit-id --name-only -r "$commit_hash_inner" 2>/dev/null)
-		if [[ "$is_planning_only_inner" == "false" ]]; then
+		if [[ "$is_planning_only_inner" == "$_PULSE_DISPATCH_FALSE" ]]; then
 			match_count_inner=$((match_count_inner + 1))
 		fi
 	done
@@ -666,7 +668,7 @@ _check_nmr_approval_gate() {
 	# GH#18648: bot-generated cleanup exemption. See
 	# _is_bot_generated_cleanup_issue() doc for full rationale.
 	if [[ "$known_ever_nmr" != "true" ]] && _is_bot_generated_cleanup_issue "$issue_meta_json"; then
-		known_ever_nmr="false"
+		known_ever_nmr="$_PULSE_DISPATCH_FALSE"
 		echo "[pulse-wrapper] dispatch_with_dedup: review-followup exemption for #${issue_number} in ${repo_slug} — skipping historical ever-NMR check (GH#18648)" >>"$LOGFILE"
 	fi
 
@@ -971,7 +973,7 @@ _dispatch_target_is_pull_request() {
 	if [[ "$has_pull_request" == "true" ]]; then
 		return 0
 	fi
-	if [[ "$has_pull_request" == "false" ]]; then
+	if [[ "$has_pull_request" == "$_PULSE_DISPATCH_FALSE" ]]; then
 		return 1
 	fi
 	return 2
@@ -1461,7 +1463,7 @@ _rollback_prelaunch_ownership() {
 	local issue_meta_json=""
 	issue_meta_json=$(gh issue view "$issue_number" --repo "$repo_slug" \
 		--json state,labels,assignees,locked 2>/dev/null) || return 1
-	local owns_queued="false"
+	local owns_queued=""
 	owns_queued=$(printf '%s' "$issue_meta_json" | jq -r --arg self "$self_login" '
 		(.state == "OPEN") and
 		(([.labels[].name] | index("status:queued")) != null) and
@@ -1771,11 +1773,11 @@ dispatch_with_dedup() {
 	# t2424/GH#20030: Generic eligibility gate — final check BEFORE worker spawn.
 	_ds_t0=$(_ds_now_ns)
 	if ! _run_eligibility_gate_or_abort "$issue_number" "$repo_slug" "$issue_meta_json"; then
-		_ds_record "$issue_number" "$repo_slug" "eligibility_gate" "$_ds_t0"
-		_release_dispatch_claim_on_abort "$issue_number" "$repo_slug" "$self_login" "eligibility_gate"
+		_ds_record "$issue_number" "$repo_slug" "$_PULSE_DISPATCH_ELIGIBILITY_STAGE" "$_ds_t0"
+		_release_dispatch_claim_on_abort "$issue_number" "$repo_slug" "$self_login" "$_PULSE_DISPATCH_ELIGIBILITY_STAGE"
 		return 1
 	fi
-	_ds_record "$issue_number" "$repo_slug" "eligibility_gate" "$_ds_t0"
+	_ds_record "$issue_number" "$repo_slug" "$_PULSE_DISPATCH_ELIGIBILITY_STAGE" "$_ds_t0"
 
 	# All checks passed — launch the worker.
 	_ds_t0=$(_ds_now_ns)

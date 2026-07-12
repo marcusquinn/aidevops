@@ -48,6 +48,7 @@
 # Include guard — prevent double-sourcing.
 [[ -n "${_PULSE_CLEANUP_LOADED:-}" ]] && return 0
 _PULSE_CLEANUP_LOADED=1
+_PULSE_CLEANUP_FALSE="false"
 
 # t2559: canonical-guard-helper.sh provides is_registered_canonical and
 # assert_git_available, used by guarded removal helpers and
@@ -735,7 +736,7 @@ _evaluate_worktree_removal() {
 				has_open_pr=true
 			fi
 		fi
-		if [[ "$has_open_pr" == "false" ]]; then
+		if [[ "$has_open_pr" == "$_PULSE_CLEANUP_FALSE" ]]; then
 			echo "0 commits, clean, no open PR, age $((wt_age_secs / 60))m (crashed worker)"
 			return 0
 		fi
@@ -755,7 +756,7 @@ _evaluate_worktree_removal() {
 				has_pr=true
 			fi
 		fi
-		if [[ "$has_pr" == "false" ]]; then
+		if [[ "$has_pr" == "$_PULSE_CLEANUP_FALSE" ]]; then
 			echo "${commits_ahead} commits, no PR, age $((wt_age_secs / 3600))h"
 			return 0
 		fi
@@ -2427,9 +2428,9 @@ recover_failed_launch_state() {
 	has_queued=$(echo "$issue_meta_json" | jq -r '([.labels[].name] | index("status:queued")) != null' 2>/dev/null)
 	is_blocked=$(echo "$issue_meta_json" | jq -r '([.labels[].name] | index("status:blocked")) != null' 2>/dev/null)
 
-	[[ "$assigned_to_self" == "true" || "$assigned_to_self" == "false" ]] || assigned_to_self="false"
-	[[ "$has_queued" == "true" || "$has_queued" == "false" ]] || has_queued="false"
-	[[ "$is_blocked" == "true" || "$is_blocked" == "false" ]] || is_blocked="false"
+	[[ "$assigned_to_self" == "true" || "$assigned_to_self" == "$_PULSE_CLEANUP_FALSE" ]] || assigned_to_self=""
+	[[ "$has_queued" == "true" || "$has_queued" == "$_PULSE_CLEANUP_FALSE" ]] || has_queued=""
+	[[ "$is_blocked" == "true" || "$is_blocked" == "$_PULSE_CLEANUP_FALSE" ]] || is_blocked=""
 
 	if [[ "$issue_state" != "OPEN" ]] || [[ "$assigned_to_self" != "true" ]] || [[ "$has_queued" != "true" ]]; then
 		return 0
