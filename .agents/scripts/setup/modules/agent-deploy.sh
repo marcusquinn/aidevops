@@ -239,8 +239,12 @@ _set_script_permissions_and_report() {
 _count_deployed_agent_files() {
 	local target_dir="$1"
 	local file_count="0"
+	local resolved_dir=""
 	if [[ -d "$target_dir" ]]; then
-		file_count=$(find "$target_dir" -type f 2>/dev/null | wc -l | tr -d '[:space:]')
+		resolved_dir=$(cd "$target_dir" 2>/dev/null && pwd -P) || resolved_dir=""
+		if [[ -n "$resolved_dir" ]]; then
+			file_count=$(find "$resolved_dir" -type f 2>/dev/null | wc -l | tr -d '[:space:]')
+		fi
 	fi
 	[[ "$file_count" =~ ^[0-9]+$ ]] || file_count=0
 	printf '%s\n' "$file_count"

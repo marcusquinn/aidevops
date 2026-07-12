@@ -95,6 +95,10 @@ test_initial_activation_and_manifest() {
 
 	[[ -L "$target_dir" ]] || fail "active agents path is an activation symlink"
 	pass "active agents path is an activation symlink"
+	[[ "$(_count_deployed_agent_files "$target_dir")" -gt 0 ]] || fail "deploy verifier counts files through the activation symlink"
+	pass "deploy verifier counts files through the activation symlink"
+	_verify_deployed_agents_tree "$target_dir" || fail "deployed activation symlink passes completeness verification"
+	pass "deployed activation symlink passes completeness verification"
 	assert_eq "2.0.0" "$(tr -d '[:space:]' <"$active_root/VERSION")" "CLI and agents activate at one version"
 	assert_file_contains "$active_root/.bundle-manifest" '^status=validated$' "validated manifest is inside the active bundle"
 	assert_file_contains "$active_root/.bundle-manifest" '^cli_compatibility=2.0.0$' "manifest binds CLI compatibility"
