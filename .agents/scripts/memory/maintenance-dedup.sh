@@ -51,6 +51,18 @@ _dedup_merge_tags() {
 	return 0
 }
 
+_dedup_merge_observation_evidence() {
+	local keep_id_esc="$1"
+	local remove_id_esc="$2"
+	db "$MEMORY_DB" <<EOF
+UPDATE observation_sources
+SET observation_id = 'obs_learning_' || '$keep_id_esc'
+WHERE observation_id = 'obs_learning_' || '$remove_id_esc';
+DELETE FROM observations WHERE observation_id = 'obs_learning_' || '$remove_id_esc';
+EOF
+	return 0
+}
+
 #######################################
 # Phase 1: Remove exact duplicate entries (same content string)
 # Args: dry_run
@@ -63,9 +75,12 @@ _dedup_exact_phase() {
 	local exact_groups
 	exact_groups=$(
 		db "$MEMORY_DB" <<'EOF'
-SELECT GROUP_CONCAT(id, '|') as ids, content, type, COUNT(*) as cnt
-FROM learnings
-GROUP BY content
+SELECT GROUP_CONCAT(l.id, ',') as ids, COUNT(*) as cnt
+FROM learnings l JOIN observations o ON o.observation_id = 'obs_learning_' || l.id
+WHERE o.status = 'active' AND (o.expires_at IS NULL OR o.expires_at > datetime('now'))
+GROUP BY l.content, o.kind, COALESCE(o.owner_id, ''), COALESCE(o.subject_id, ''),
+         COALESCE(o.project_scope, ''), COALESCE(o.organization_scope, ''),
+         COALESCE(o.user_scope, ''), o.framework_scope, o.sensitivity, o.status
 HAVING cnt > 1
 ORDER BY cnt DESC;
 EOF
@@ -73,14 +88,9 @@ EOF
 
 	[[ -z "$exact_groups" ]] && echo "$exact_removed" && return 0
 
-	local dup_contents
-	dup_contents=$(db "$MEMORY_DB" "SELECT content FROM learnings GROUP BY content HAVING COUNT(*) > 1;")
-
-	while IFS= read -r dup_content; do
-		[[ -z "$dup_content" ]] && continue
-		local escaped_dup="${dup_content//"'"/"''"}"
-		local all_ids
-		all_ids=$(db "$MEMORY_DB" "SELECT id FROM learnings WHERE content = '$escaped_dup' ORDER BY created_at ASC;")
+	while IFS='|' read -r id_list _count; do
+		[[ -z "$id_list" ]] && continue
+		local all_ids="${id_list//,/$'\n'}"
 
 		local keep_id=""
 		while IFS= read -r mem_id; do
@@ -96,6 +106,7 @@ EOF
 				log_info "[DRY RUN] Would remove $mem_id (duplicate of $keep_id)" >&2
 			else
 				_dedup_merge_tags "$escaped_keep" "$escaped_remove"
+				_dedup_merge_observation_evidence "$escaped_keep" "$escaped_remove"
 				# Transfer access history (keep higher count)
 				db "$MEMORY_DB" <<EOF
 INSERT INTO learning_access (id, last_accessed_at, access_count)
@@ -113,7 +124,7 @@ EOF
 			fi
 			exact_removed=$((exact_removed + 1))
 		done <<<"$all_ids"
-	done <<<"$dup_contents"
+	done <<<"$exact_groups"
 
 	echo "$exact_removed"
 	return 0
@@ -135,8 +146,11 @@ SELECT GROUP_CONCAT(id, ',') as ids,
        replace(replace(replace(replace(replace(lower(content),
            '.',''),"'",''),',',''),'!',''),'?','') as norm,
        COUNT(*) as cnt
-FROM learnings
-GROUP BY norm
+FROM learnings l JOIN observations o ON o.observation_id = 'obs_learning_' || l.id
+WHERE o.status = 'active' AND (o.expires_at IS NULL OR o.expires_at > datetime('now'))
+GROUP BY norm, o.kind, COALESCE(o.owner_id, ''), COALESCE(o.subject_id, ''),
+         COALESCE(o.project_scope, ''), COALESCE(o.organization_scope, ''),
+         COALESCE(o.user_scope, ''), o.framework_scope, o.sensitivity, o.status
 HAVING cnt > 1
 ORDER BY cnt DESC;
 EOF
@@ -208,6 +222,7 @@ EOF
 				log_info "[DRY RUN] Would remove near-dup $nid (keep $oldest_id): $preview..." >&2
 			else
 				_dedup_merge_tags "$oldest_esc" "$nid_esc"
+				_dedup_merge_observation_evidence "$oldest_esc" "$nid_esc"
 				db_cleanup "$MEMORY_DB" "UPDATE learning_relations SET supersedes_id = '$oldest_esc' WHERE supersedes_id = '$nid_esc';"
 				db_cleanup "$MEMORY_DB" "DELETE FROM learning_relations WHERE id = '$nid_esc';"
 				db "$MEMORY_DB" "DELETE FROM learning_access WHERE id = '$nid_esc';"
@@ -235,13 +250,14 @@ _dedup_semantic_phase() {
 	log_info "Scanning for semantic duplicates (AI-judged)..." >&2
 
 	local types
-	types=$(db "$MEMORY_DB" "SELECT DISTINCT type FROM learnings;")
+	types=$(db "$MEMORY_DB" "SELECT DISTINCT l.type || '|' || COALESCE(o.owner_id, '') || '|' || COALESCE(o.subject_id, '') || '|' || COALESCE(o.project_scope, '') || '|' || COALESCE(o.organization_scope, '') || '|' || COALESCE(o.user_scope, '') || '|' || o.framework_scope || '|' || o.sensitivity FROM learnings l JOIN observations o ON o.observation_id = 'obs_learning_' || l.id WHERE o.status = 'active' AND (o.expires_at IS NULL OR o.expires_at > datetime('now'));")
 
-	while IFS= read -r check_type; do
+	while IFS='|' read -r check_type owner subject project organization user framework sensitivity; do
 		[[ -z "$check_type" ]] && continue
 		local type_esc="${check_type//"'"/"''"}"
+		local scope_where="AND COALESCE(o.owner_id, '') = '${owner//"'"/"''"}' AND COALESCE(o.subject_id, '') = '${subject//"'"/"''"}' AND COALESCE(o.project_scope, '') = '${project//"'"/"''"}' AND COALESCE(o.organization_scope, '') = '${organization//"'"/"''"}' AND COALESCE(o.user_scope, '') = '${user//"'"/"''"}' AND o.framework_scope = '${framework//"'"/"''"}' AND o.sensitivity = '${sensitivity//"'"/"''"}'"
 		local entries
-		entries=$(db "$MEMORY_DB" "SELECT id, substr(content, 1, 200), created_at FROM learnings WHERE type = '$type_esc' ORDER BY created_at ASC LIMIT 50;")
+		entries=$(db "$MEMORY_DB" "SELECT l.id, substr(l.content, 1, 200), l.created_at FROM learnings l JOIN observations o ON o.observation_id = 'obs_learning_' || l.id WHERE l.type = '$type_esc' $scope_where AND o.status = 'active' AND (o.expires_at IS NULL OR o.expires_at > datetime('now')) ORDER BY l.created_at ASC LIMIT 50;")
 
 		local ids_arr=() contents_arr=()
 		while IFS='|' read -r eid econtent _edate; do
@@ -269,6 +285,7 @@ _dedup_semantic_phase() {
 						log_info "[DRY RUN] Semantic dup: remove $remove_id (keep $keep_id): ${contents_arr[$j]:0:50}..." >&2
 					else
 						_dedup_merge_tags "$keep_esc" "$remove_esc"
+						_dedup_merge_observation_evidence "$keep_esc" "$remove_esc"
 						db_cleanup "$MEMORY_DB" "UPDATE learning_relations SET supersedes_id = '$keep_esc' WHERE supersedes_id = '$remove_esc';"
 						db_cleanup "$MEMORY_DB" "DELETE FROM learning_relations WHERE id = '$remove_esc';"
 						db "$MEMORY_DB" "DELETE FROM learning_access WHERE id = '$remove_esc';"

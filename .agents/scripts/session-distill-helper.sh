@@ -10,8 +10,9 @@
 # Usage:
 #   session-distill-helper.sh analyze           # Analyze current session context
 #   session-distill-helper.sh extract           # Extract and format learnings
-#   session-distill-helper.sh store             # Store extracted learnings to memory
-#   session-distill-helper.sh auto              # Full pipeline: analyze → extract → store
+#   session-distill-helper.sh propose [file]    # Persist privacy-scanned proposals
+#   session-distill-helper.sh finalize          # Resume eligible proposal finalization
+#   session-distill-helper.sh auto              # Checkpoint, then best-effort proposal pipeline
 #
 # Integration:
 #   - Called by /session-review at end of sessions
@@ -31,6 +32,10 @@ readonly WORKSPACE_DIR="${AIDEVOPS_WORKSPACE:-$HOME/.aidevops/.agent-workspace}"
 readonly SESSION_DIR="$WORKSPACE_DIR/sessions"
 # shellcheck disable=SC2034  # Reserved for future use
 readonly DISTILL_OUTPUT="$SESSION_DIR/distill-output.json"
+readonly SESSION_ID="${AIDEVOPS_SESSION_ID:-${OPENCODE_SESSION_ID:-${CLAUDE_SESSION_ID:-$(git rev-parse --show-toplevel 2>/dev/null | shasum | cut -c1-12)-$(git branch --show-current 2>/dev/null || printf 'unknown')}}}"
+readonly SAFE_SESSION_ID="${SESSION_ID//[^a-zA-Z0-9_.-]/_}"
+readonly SESSION_STATE_DIR="$SESSION_DIR/$SAFE_SESSION_ID"
+readonly PROPOSALS_FILE="$SESSION_STATE_DIR/observation-proposals.json"
 
 # shellcheck disable=SC2034  # Available for future use
 
@@ -40,7 +45,25 @@ readonly DISTILL_OUTPUT="$SESSION_DIR/distill-output.json"
 # Ensure session directory exists
 #######################################
 init_session_dir() {
-	mkdir -p "$SESSION_DIR"
+	mkdir -p "$SESSION_STATE_DIR"
+	return 0
+}
+
+privacy_redact() {
+	local text="$1"
+	text=$(printf '%s' "$text" | sed -E 's|/Users/[^ ]*|[local-path]|g; s|/home/[^ ]*|[local-path]|g; s|~/Git/[^ ]*|[local-path]|g')
+	text=$(printf '%s' "$text" | sed -E 's/(^|[^A-Za-z0-9_-])(sk-|ghp_|gho_|ghs_|ghu_|github_pat_|glpat-|xoxb-|xoxp-)[A-Za-z0-9_-]{10,}/\1[redacted-credential]/g')
+	text=$(printf '%s' "$text" | sed -E 's/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/[email]/g')
+	printf '%s' "$text"
+	return 0
+}
+
+atomic_write_json() {
+	local target="$1"
+	local content="$2"
+	local temporary="${target}.tmp.$$"
+	printf '%s\n' "$content" >"$temporary"
+	mv "$temporary" "$target"
 	return 0
 }
 
@@ -53,7 +76,7 @@ analyze_session() {
 
 	log_info "Analyzing session context..."
 
-	local analysis_file="$SESSION_DIR/session-analysis.json"
+	local analysis_file="$SESSION_STATE_DIR/session-analysis.json"
 
 	# Gather git context
 	local branch commits_today files_changed
@@ -112,8 +135,8 @@ extract_learnings() {
 
 	log_info "Extracting learnings from session..."
 
-	local analysis_file="$SESSION_DIR/session-analysis.json"
-	local learnings_file="$SESSION_DIR/extracted-learnings.json"
+	local analysis_file="$SESSION_STATE_DIR/session-analysis.json"
+	local learnings_file="$SESSION_STATE_DIR/extracted-learnings.json"
 
 	if [[ ! -f "$analysis_file" ]]; then
 		log_warn "No session analysis found. Running analyze first..."
@@ -201,71 +224,78 @@ extract_learnings() {
 }
 
 #######################################
-# Store extracted learnings to memory
+# Persist extracted observations as resumable proposals
 #######################################
-store_learnings() {
+propose_learnings() {
+	local input_file="${1:-$SESSION_STATE_DIR/extracted-learnings.json}"
 	init_session_dir
-
-	log_info "Storing learnings to memory..."
-
-	local learnings_file="$SESSION_DIR/extracted-learnings.json"
-
-	if [[ ! -f "$learnings_file" ]]; then
+	if [[ ! -f "$input_file" ]]; then
 		log_warn "No extracted learnings found. Running extract first..."
 		extract_learnings
 	fi
+	local source_boundary
+	source_boundary=$(privacy_redact "${AIDEVOPS_OBSERVATION_SOURCE:-git:$PWD}")
+	local existing='[]'
+	[[ -f "$PROPOSALS_FILE" ]] && existing=$(jq -c '.items // []' "$PROPOSALS_FILE")
+	local proposed="$existing"
+	while IFS= read -r learning; do
+		local type content tags explicit risk key item now
+		type=$(printf '%s' "$learning" | jq -r '.type // "CONTEXT"')
+		content=$(privacy_redact "$(printf '%s' "$learning" | jq -r '.content // empty')")
+		tags=$(printf '%s' "$learning" | jq -r '.tags // "session,proposal"')
+		explicit=$(printf '%s' "$learning" | jq -r '.explicit // false')
+		risk=$(printf '%s' "$learning" | jq -r '.risk // "consequential"')
+		[[ -z "$content" ]] && continue
+		key=$(printf '%s\0%s\0%s\0%s' "$SESSION_ID" "$source_boundary" "$type" "$content" | shasum -a 256 | cut -d' ' -f1)
+		if printf '%s' "$proposed" | jq -e --arg key "$key" 'any(.[]; .idempotency_key == $key)' >/dev/null; then
+			continue
+		fi
+		now=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+		item=$(jq -n --arg key "$key" --arg source "$source_boundary" --arg type "$type" --arg content "$content" --arg tags "$tags" --arg risk "$risk" --arg now "$now" --argjson explicit "$explicit" '{idempotency_key:$key,source_boundary:$source,type:$type,content:$content,tags:$tags,explicit:$explicit,risk:$risk,state:"pending_review",created_at:$now,updated_at:$now}')
+		proposed=$(printf '%s' "$proposed" | jq -c --argjson item "$item" '. + [$item]')
+	done < <(jq -c '.[]' "$input_file")
+	local ledger
+	ledger=$(jq -n --arg session "$SESSION_ID" --arg source "$source_boundary" --argjson items "$proposed" '{schema_version:1,session_boundary:$session,source_boundary:$source,items:$items}')
+	atomic_write_json "$PROPOSALS_FILE" "$ledger"
+	log_success "Observation proposals persisted to $PROPOSALS_FILE"
+	return 0
+}
 
-	if [[ ! -f "$MEMORY_HELPER" ]]; then
+finalize_proposals() {
+	init_session_dir
+	[[ -f "$PROPOSALS_FILE" ]] || return 0
+	[[ -x "$MEMORY_HELPER" ]] || {
 		log_error "Memory helper not found: $MEMORY_HELPER"
 		return 1
-	fi
-
-	# Read and store each learning
-	local count=0
-	local stored=0
-
-	while IFS= read -r learning; do
-		local type content tags
-		type=$(echo "$learning" | jq -r '.type')
-		content=$(echo "$learning" | jq -r '.content')
-		tags=$(echo "$learning" | jq -r '.tags')
-
-		if [[ -n "$content" && "$content" != "null" ]]; then
-			# Store to memory
-			if "$MEMORY_HELPER" store --content "$content" --type "$type" --tags "$tags" 2>/dev/null; then
-				stored=$((stored + 1))
-			fi
-			count=$((count + 1))
+	}
+	local key item content type tags now updated status=0
+	while IFS= read -r key; do
+		item=$(jq -c --arg key "$key" '.items[] | select(.idempotency_key == $key)' "$PROPOSALS_FILE")
+		content=$(printf '%s' "$item" | jq -r '.content')
+		type=$(printf '%s' "$item" | jq -r '.type')
+		tags=$(printf '%s' "$item" | jq -r '.tags')
+		if "$MEMORY_HELPER" store --content "$content" --type "$type" --tags "$tags" --session-id "$SESSION_ID" --auto >/dev/null 2>&1; then
+			now=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+			updated=$(jq --arg key "$key" --arg now "$now" '(.items[] | select(.idempotency_key == $key)) |= (.state="finalized" | .updated_at=$now)' "$PROPOSALS_FILE")
+			atomic_write_json "$PROPOSALS_FILE" "$updated"
+		else
+			status=1
 		fi
-	done < <(jq -c '.[]' "$learnings_file" 2>/dev/null)
-
-	log_success "Stored $stored of $count learnings to memory"
-
-	# Clean up session files
-	rm -f "$SESSION_DIR/session-analysis.json" "$SESSION_DIR/extracted-learnings.json"
-	return 0
+	done < <(jq -r '.items[] | select(.state == "pending_review" and .type == "USER_PREFERENCE" and .explicit == true and .risk == "low") | .idempotency_key' "$PROPOSALS_FILE")
+	return "$status"
 }
 
 #######################################
 # Full auto pipeline
 #######################################
 auto_distill() {
-	log_info "Running full session distillation pipeline..."
-	echo ""
-
-	analyze_session
-	echo ""
-
-	extract_learnings
-	echo ""
-
-	store_learnings
-	echo ""
-
+	log_info "Running resumable session finalization..."
+	# Continuity is independent: capture it even when learning extraction or storage fails.
 	emit_checkpoint
-	echo ""
-
-	log_success "Session distillation complete (learnings + operational state)"
+	if ! analyze_session || ! extract_learnings || ! propose_learnings || ! finalize_proposals; then
+		log_warn "Learning finalization is incomplete; persisted proposals will resume on retry"
+	fi
+	log_success "Session checkpoint complete; observation finalization is best effort"
 	return 0
 }
 
@@ -287,7 +317,7 @@ emit_checkpoint() {
 		continuation_output="$(bash "$checkpoint_helper" continuation 2>/dev/null || echo "Checkpoint helper unavailable")"
 
 		# Save to session dir for inclusion in distill output
-		local checkpoint_file="$SESSION_DIR/operational-state.md"
+		local checkpoint_file="$SESSION_STATE_DIR/operational-state.md"
 		echo "$continuation_output" >"$checkpoint_file"
 
 		log_success "Operational state saved to $checkpoint_file"
@@ -342,16 +372,14 @@ $commits_today
 5. What tool configurations worked well? (→ TOOL_CONFIG)
 6. What decisions were made and why? (→ DECISION)
 
-For each learning, use:
+For each observation, create JSON with type, content, tags, explicit, and risk:
 \`\`\`bash
-~/.aidevops/agents/scripts/memory-helper.sh store \\
-  --content "Description of learning" \\
-  --type TYPE \\
-  --tags "relevant,tags"
+~/.aidevops/agents/scripts/session-distill-helper.sh propose observations.json
+~/.aidevops/agents/scripts/session-distill-helper.sh finalize
 \`\`\`
 
-Or use the /remember command:
-\`/remember Fixed CORS issue by adding proxy_set_header in nginx config\`
+Only directly stated, low-risk user preferences may set explicit=true and
+risk=low. Keep inferred and consequential observations pending for review.
 EOF
 	return 0
 }
@@ -366,17 +394,19 @@ Session Distill Helper - Extract learnings from session for memory storage
 Usage:
   session-distill-helper.sh analyze     Analyze current session context
   session-distill-helper.sh extract     Extract and format learnings
-  session-distill-helper.sh store       Store extracted learnings to memory
+  session-distill-helper.sh propose [file] Persist privacy-scanned observation proposals
+  session-distill-helper.sh finalize    Finalize only low-risk explicit preferences
   session-distill-helper.sh checkpoint  Capture operational state (tasks, PRs, git)
-  session-distill-helper.sh auto        Full pipeline: analyze → extract → store → checkpoint
+  session-distill-helper.sh auto        Checkpoint, then best-effort propose → finalize
   session-distill-helper.sh prompt      Generate reflection prompt for AI
   session-distill-helper.sh help        Show this help
 
 The distillation process:
   1. analyze    - Gathers git history, TODO.md changes, session patterns
   2. extract    - Identifies valuable learnings from patterns
-  3. store      - Saves learnings to memory via memory-helper.sh
-  4. checkpoint - Captures operational state for session continuity
+  3. propose    - Privacy-redacts and persists resumable observations
+  4. finalize   - Stores only low-risk explicit preferences
+  5. checkpoint - Captures operational state independently
 
 Learning types detected:
   - ERROR_FIX: Bug fixes and error resolutions
@@ -422,8 +452,11 @@ main() {
 	extract)
 		extract_learnings
 		;;
-	store)
-		store_learnings
+	store | propose)
+		propose_learnings "${1:-}"
+		;;
+	finalize)
+		finalize_proposals
 		;;
 	checkpoint)
 		emit_checkpoint
