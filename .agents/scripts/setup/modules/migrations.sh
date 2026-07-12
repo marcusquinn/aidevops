@@ -12,15 +12,6 @@ trap 'rc=$?; echo "[ERROR] ${BASH_SOURCE[0]}:${LINENO} exit $rc" >&2' ERR
 shopt -s inherit_errexit 2>/dev/null || true
 MIGRATION_PLATFORM_DARWIN="Darwin"
 
-_temp_artifact_mtime() {
-	local path="$1"
-	local mtime=""
-	mtime=$(stat -f '%m' "$path" 2>/dev/null) || mtime=$(stat -c '%Y' "$path" 2>/dev/null) || return 1
-	[[ "$mtime" =~ ^[0-9]+$ ]] || return 1
-	printf '%s' "$mtime"
-	return 0
-}
-
 _legacy_temp_artifact_is_active() {
 	local path="$1"
 	local basename="${path##*/}"
@@ -79,7 +70,7 @@ cleanup_legacy_aidevops_temp_artifacts() {
 		owner=$(stat -f '%u' "$candidate" 2>/dev/null) || owner=$(stat -c '%u' "$candidate" 2>/dev/null) || continue
 		[[ "$owner" == "$uid" ]] || continue
 		local mtime=""
-		mtime=$(_temp_artifact_mtime "$candidate") || continue
+		mtime=$(_file_mtime_epoch "$candidate") || continue
 		((now - mtime > max_age)) || continue
 		_legacy_temp_artifact_is_active "$candidate" && continue
 		rm -rf -- "$candidate" || continue

@@ -43,6 +43,8 @@ print_info() { return 0; }
 print_warning() { return 0; }
 FRAMEWORK_PROCESS_PATTERN='opencode|aidevops'
 _is_process_alive_and_matches() { return 1; }
+# shellcheck source=../portable-stat.sh
+source "$SCRIPTS_DIR/portable-stat.sh"
 # shellcheck source=../setup/modules/migrations.sh
 source "$SCRIPTS_DIR/setup/modules/migrations.sh"
 
