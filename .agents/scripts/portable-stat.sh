@@ -43,10 +43,14 @@ _PORTABLE_STAT_FATAL="FATAL: portable-stat.sh: unsupported stat variant (neither
 _PORTABLE_STAT_UNKNOWN="unknown"
 
 _STAT_VARIANT="$_PORTABLE_STAT_UNKNOWN"
-if _ps_test_val=$(stat -c %Y / 2>/dev/null) && [[ "$_ps_test_val" =~ ^[0-9]+$ ]]; then
+_ps_test_val=$(stat -c %Y / 2>/dev/null || true)
+if [[ "$_ps_test_val" =~ ^[0-9]+$ ]]; then
 	_STAT_VARIANT="gnu"
-elif _ps_test_val=$(stat -f %m / 2>/dev/null) && [[ "$_ps_test_val" =~ ^[0-9]+$ ]]; then
-	_STAT_VARIANT="bsd"
+else
+	_ps_test_val=$(stat -f %m / 2>/dev/null || true)
+	if [[ "$_ps_test_val" =~ ^[0-9]+$ ]]; then
+		_STAT_VARIANT="bsd"
+	fi
 fi
 unset _ps_test_val
 

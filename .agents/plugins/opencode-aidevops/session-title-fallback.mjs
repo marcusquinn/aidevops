@@ -2,6 +2,7 @@
 // SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 
 import { readAidevopsVersion, withAidevopsTitleSuffix } from "./session-title-suffix.mjs";
+import { emitTerminalTitle as defaultEmitTerminalTitle } from "./terminal-title.mjs";
 
 const AIDEVOPS_TITLE_SUFFIX_RE = /\s+· AIDevOps \d+\.\d+\.\d+$/;
 const DEFAULT_SESSION_TITLE_RE = /^New session - /;
@@ -134,6 +135,7 @@ async function applyFallbackTitle(deps, sessionID, prompt) {
   const version = readAidevopsVersion(deps.agentsDir);
   const title = withAidevopsTitleSuffix(deriveFallbackTitleFromPrompt(prompt), version);
   await updateSessionTitle(deps.client, sessionID, title);
+  deps.emitTerminalTitle(title);
   deps.sessionTitles.set(sessionID, title);
   deps.fallbackDone.add(sessionID);
 }
@@ -150,7 +152,12 @@ function scheduleFallback(input, deps) {
   deps.pendingFallbacks.set(sessionID, timer);
 }
 
-export function createSessionTitleFallbackHandler({ agentsDir, client, fallbackDelayMs = FALLBACK_DELAY_MS }) {
+export function createSessionTitleFallbackHandler({
+  agentsDir,
+  client,
+  fallbackDelayMs = FALLBACK_DELAY_MS,
+  emitTerminalTitle = defaultEmitTerminalTitle,
+}) {
   const sessionTitles = new Map();
   const userMessagesBySession = new Map();
   const fallbackDone = new Set();
@@ -163,6 +170,14 @@ export function createSessionTitleFallbackHandler({ agentsDir, client, fallbackD
     rememberUserMessage(input, userMessagesBySession);
     if (!shouldApplyFallback(input, sessionTitles, userMessagesBySession, fallbackDone)) return;
 
-    scheduleFallback(input, { agentsDir, client, fallbackDelayMs, fallbackDone, pendingFallbacks, sessionTitles });
+    scheduleFallback(input, {
+      agentsDir,
+      client,
+      emitTerminalTitle,
+      fallbackDelayMs,
+      fallbackDone,
+      pendingFallbacks,
+      sessionTitles,
+    });
   };
 }

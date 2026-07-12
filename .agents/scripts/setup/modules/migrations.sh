@@ -10,6 +10,78 @@ IFS=$'\n\t'
 # shellcheck disable=SC2154  # rc is assigned by $? in the trap string
 trap 'rc=$?; echo "[ERROR] ${BASH_SOURCE[0]}:${LINENO} exit $rc" >&2' ERR
 shopt -s inherit_errexit 2>/dev/null || true
+MIGRATION_PLATFORM_DARWIN="Darwin"
+
+_legacy_temp_artifact_is_active() {
+	local path="$1"
+	local basename="${path##*/}"
+	local pid=""
+	if [[ "$basename" =~ [.-]([0-9]+)$ ]]; then
+		pid="${BASH_REMATCH[1]}"
+	fi
+	[[ -n "$pid" ]] || return 1
+	_is_process_alive_and_matches "$pid" "$FRAMEWORK_PROCESS_PATTERN"
+	return $?
+}
+
+# Remove only directly attributable aidevops artifacts from the macOS per-user
+# temporary root. Generic tmp.* entries are intentionally excluded because
+# their ownership cannot be proven after creation.
+cleanup_legacy_aidevops_temp_artifacts() {
+	local root="${AIDEVOPS_LEGACY_TEMP_ROOT:-}"
+	if [[ -z "$root" ]]; then
+		[[ "$(uname -s 2>/dev/null || true)" == "$MIGRATION_PLATFORM_DARWIN" ]] || return 0
+		root=$(getconf DARWIN_USER_TEMP_DIR 2>/dev/null || true)
+	fi
+	[[ -n "$root" && -d "$root" ]] || return 0
+	root="${root%/}"
+	if [[ -z "${AIDEVOPS_LEGACY_TEMP_ROOT:-}" && "$root" != /var/folders/*/T ]]; then
+		print_warning "Skipping unexpected macOS temporary root"
+		return 0
+	fi
+
+	local now
+	now=$(date +%s)
+	local max_age="${AIDEVOPS_TEMP_MAX_AGE_SECONDS:-604800}"
+	[[ "$max_age" =~ ^[0-9]+$ ]] || max_age=604800
+	local uid
+	uid=$(id -u)
+	local cleaned=0
+	local candidate=""
+	for candidate in \
+		"$root"/aidevops-update-* \
+		"$root"/aidevops-headless-prompt.* \
+		"$root"/aidevops-worker-auth.* \
+		"$root"/aidevops-canary* \
+		"$root"/aidevops-plugin-verify.* \
+		"$root"/aidevops-pulse-pr-list-provider-* \
+		"$root"/aidevops-pulse-pr-list-cache-* \
+		"$root"/aidevops-pulse-runtime-* \
+		"$root"/aidevops-systemd-worker.* \
+		"$root"/aidevops-systemd-state.* \
+		"$root"/aidevops-inbox-prompt.* \
+		"$root"/aidevops-gh-body.* \
+		"$root"/aidevops-parent-body.* \
+		"$root"/aidevops-gh-response.* \
+		"$root"/aidevops-gh-secondary.*; do
+		[[ -e "$candidate" || -L "$candidate" ]] || continue
+		[[ ! -L "$candidate" ]] || continue
+		local owner=""
+		owner=$(stat -f '%u' "$candidate" 2>/dev/null) || owner=$(stat -c '%u' "$candidate" 2>/dev/null) || continue
+		[[ "$owner" == "$uid" ]] || continue
+		local mtime=""
+		mtime=$(_file_mtime_epoch "$candidate") || continue
+		((now - mtime > max_age)) || continue
+		_legacy_temp_artifact_is_active "$candidate" && continue
+		rm -rf -- "$candidate" || continue
+		((++cleaned))
+	done
+
+	if ((cleaned > 0)); then
+		print_info "Cleaned $cleaned legacy aidevops temporary artifact(s) older than seven days"
+	fi
+	return 0
+}
 
 cleanup_deprecated_paths() {
 	local agents_dir="$HOME/.aidevops/agents"
@@ -1481,7 +1553,7 @@ migrate_orphaned_supervisor() {
 	#    New label: com.aidevops.aidevops-supervisor-pulse (from setup.sh)
 	#    setup.sh already handles the new label cleanup at line ~1000, but
 	#    the old label from cron.sh may also be present
-	if [[ "$(uname -s)" == "Darwin" ]]; then
+	if [[ "$(uname -s)" == "$MIGRATION_PLATFORM_DARWIN" ]]; then
 		local old_label="com.aidevops.supervisor-pulse"
 		local old_plist="$HOME/Library/LaunchAgents/${old_label}.plist"
 		if _launchd_has_agent "$old_label" || [[ -f "$old_plist" ]]; then
@@ -1612,7 +1684,7 @@ backfill_issue_relationships() {
 # Idempotent: uses a marker file to run only once.
 migrate_cron_to_systemd() {
 	# Only run on Linux with systemd available
-	if [[ "$(uname -s)" == "Darwin" ]]; then
+	if [[ "$(uname -s)" == "$MIGRATION_PLATFORM_DARWIN" ]]; then
 		return 0
 	fi
 	if ! command -v systemctl >/dev/null 2>&1 || ! systemctl --user status >/dev/null 2>&1; then

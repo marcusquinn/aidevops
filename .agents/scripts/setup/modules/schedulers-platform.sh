@@ -802,10 +802,16 @@ _install_token_refresh_launchd() {
 TR_PLIST
 	)
 
-	if _launchd_install_if_changed "$tr_label" "$tr_plist" "$tr_plist_content"; then
+	if [[ -f "$tr_plist" ]] && [[ "$(<"$tr_plist")" == "$tr_plist_content" ]] && _launchd_has_agent "$tr_label"; then
+		# An interval job that is already registered does not need launchd recovery
+		# during every setup run. In particular, transient xpcproxy state at the
+		# instant setup runs does not mean that launchd lost the schedule.
+		print_info "OAuth token refresh enabled (launchd, every 30 min)"
+	elif _launchd_install_if_changed "$tr_label" "$tr_plist" "$tr_plist_content"; then
 		print_info "OAuth token refresh enabled (launchd, every 30 min)"
 	else
-		print_warning "Failed to load token refresh LaunchAgent"
+		# shell-portability: ignore next -- recovery text is emitted only from the macOS installer
+		print_warning "Failed to load token refresh LaunchAgent (${tr_label}); retry with: launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/${tr_label}.plist"
 	fi
 	return 0
 }
@@ -1037,8 +1043,8 @@ setup_repo_sync() {
 			print_info "Repo sync enabled (daily). Disable: aidevops repo-sync disable"
 		else
 			echo ""
-			echo "Repo sync keeps your local git repos up to date by running"
-			echo "git pull --ff-only daily on clean repos on their default branch."
+			echo "Repo sync reports remote drift daily without modifying"
+			echo "human canonical checkouts."
 			echo ""
 			setup_prompt enable_repo_sync "Enable daily repo sync? [Y/n]: " "Y"
 			if [[ "$enable_repo_sync" =~ ^[Yy]?$ || -z "$enable_repo_sync" ]]; then

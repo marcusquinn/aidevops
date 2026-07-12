@@ -661,6 +661,27 @@ test_prelaunch_reason_parser_preserves_explicit_reason() {
 	return 0
 }
 
+test_prelaunch_reason_parser_systemd_startup_failure() {
+	local sandbox helper_extract log_file reason
+	sandbox=$(mktemp -d "${TMPDIR:-/tmp}/aidevops-systemd-prelaunch-test.XXXXXX")
+	# shellcheck disable=SC2064
+	trap "rm -rf '$sandbox' 2>/dev/null || true" RETURN
+	helper_extract="${sandbox}/helper.sh"
+	log_file="${sandbox}/worker.log"
+
+	awk '/^_pulse_worker_log_prelaunch_failure_reason\(\) \{/,/^\}/' "$PULSE_ENGINE" >"$helper_extract"
+	printf '[systemd-launch] classification=crash_during_startup\nExecMainStatus=1\nResult=exit-code\n[exit-trap] session=abc reason=worker_noop_zero_output status=0\n' >"$log_file"
+	reason=$(bash -c "source '$helper_extract'; _pulse_worker_log_prelaunch_failure_reason '$log_file'" 2>/dev/null)
+
+	if [[ "$reason" == "crash_during_startup" ]]; then
+		print_result "invariant: systemd status-1 evidence is a startup failure" 0
+		return 0
+	fi
+	print_result "invariant: systemd status-1 evidence is a startup failure" 1 \
+		"Expected crash_during_startup, got '${reason:-<empty>}'"
+	return 0
+}
+
 test_nohup_launch_passes_repo_slug_contract() {
 	# shellcheck disable=SC2016  # literal source snippets — no expansion intended
 	if grep -q 'WORKER_REPO_SLUG="$repo_slug"' "$WORKER_LAUNCH" \
@@ -733,6 +754,7 @@ main_test() {
 	test_worker_worktree_live_owner_skips_fast_fail_state
 	test_prelaunch_reason_parser_behavioural
 	test_prelaunch_reason_parser_preserves_explicit_reason
+	test_prelaunch_reason_parser_systemd_startup_failure
 	test_nohup_launch_passes_repo_slug_contract
 	test_claim_lock_errors_fail_closed
 

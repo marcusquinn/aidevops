@@ -367,7 +367,13 @@ _write_subagent_stub() {
 		printf '%s\n' \
 			"temperature: 0.2" \
 			"permission:" \
-			"  external_directory: allow" \
+			"  external_directory:" \
+			'    "~/.aidevops": allow' \
+			'    "~/.aidevops/**": allow' \
+			'    "~/.config/aidevops": allow' \
+			'    "~/.config/aidevops/**": allow' \
+			'    "~/Git/_worktrees": allow' \
+			'    "~/Git/_worktrees/**": allow' \
 			"tools:" \
 			"  read: true" \
 			"  bash: true"

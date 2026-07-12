@@ -17,6 +17,7 @@
 # fast-forward behaviour without touching real repos.
 
 set -uo pipefail
+export PATH="/usr/bin:/bin:/usr/sbin:/sbin:${PATH}"
 
 TEST_SCRIPTS_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 TEST_RED=$'\033[0;31m'
@@ -235,7 +236,7 @@ EOF
 }
 
 # =============================================================================
-# Test 6: Successful fast-forward
+# Test 6: Stale canonical is diagnosed without mutation
 # =============================================================================
 test_fast_forward_success() {
 	local clone_dir
@@ -247,13 +248,20 @@ test_fast_forward_success() {
 	# Reset cadence
 	rm -f "$CANONICAL_MAINTENANCE_LAST_RUN"
 
+	local before_head before_index before_tree
+	before_head=$(git -C "$clone_dir" rev-parse HEAD)
+	before_index=$(cksum <"$clone_dir/.git/index")
+	before_tree=$(cksum <"$clone_dir/file.txt")
 	true > "$LOGFILE"
 	_canonical_fast_forward "0"
 
-	if grep -q "Fast-forwarded" "$LOGFILE"; then
-		print_result "fast-forward-success" 0
+	if grep -q "Diagnostic:.*differs from origin/main" "$LOGFILE" &&
+		[[ "$before_head" == "$(git -C "$clone_dir" rev-parse HEAD)" ]] &&
+		[[ "$before_index" == "$(cksum <"$clone_dir/.git/index")" ]] &&
+		[[ "$before_tree" == "$(cksum <"$clone_dir/file.txt")" ]]; then
+		print_result "canonical-stale-diagnostic-byte-identity" 0
 	else
-		print_result "fast-forward-success" 1 "(expected 'Fast-forwarded' in log, got: $(cat "$LOGFILE"))"
+		print_result "canonical-stale-diagnostic-byte-identity" 1 "(canonical changed or diagnostic missing: $(cat "$LOGFILE"))"
 	fi
 	return 0
 }
@@ -295,7 +303,7 @@ test_dry_run() {
 	local output
 	output=$(run_canonical_maintenance --dry-run 2>&1)
 
-	if echo "$output" | grep -q "DRY_RUN"; then
+	if echo "$output" | grep -q "DRY_RUN.*diagnose"; then
 		print_result "dry-run-output" 0
 	else
 		print_result "dry-run-output" 1 "(expected DRY_RUN in output)"

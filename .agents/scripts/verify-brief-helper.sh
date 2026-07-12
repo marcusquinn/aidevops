@@ -28,6 +28,7 @@ Commands:
   verify          <path>   Run all method:bash verify blocks from the brief
   list            <path>   List verify blocks without executing
   check-preflight <path>   Validate Pre-flight block is present and populated (t2409)
+  check-readiness <path>   Validate schema-v2 dispatch readiness (legacy compatible)
   help                     Show this help
 EOF
 	return 0
@@ -340,39 +341,72 @@ _cmd_check_preflight() {
 	return 0
 }
 
+_cmd_check_readiness() {
+	local -a _args=("$@")
+	local brief_path="${_args[0]:-}"
+	local helper_path=""
+	local body=""
+
+	if [[ -z "$brief_path" || ! -f "$brief_path" ]]; then
+		_log "ERROR" "File not found: ${brief_path:-<missing>}"
+		return 2
+	fi
+
+	helper_path="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/brief-readiness-helper.sh"
+	if [[ ! -f "$helper_path" ]]; then
+		_log "ERROR" "Readiness helper not found: $helper_path"
+		return 2
+	fi
+
+	body=$(<"$brief_path")
+	if bash "$helper_path" check --body "$body"; then
+		return 0
+	fi
+	return 1
+}
+
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
 main() {
-	local cmd="${1:-help}"
-	shift || true
+	local -a args=("$@")
+	local cmd="${args[0]:-help}"
+	local target_path="${args[1]:-}"
+	local command_status=0
 
 	case "$cmd" in
 	verify)
-		if [[ $# -lt 1 ]]; then
+		if [[ -z "$target_path" ]]; then
 			_log "ERROR" "Missing brief path. Usage: verify-brief-helper.sh verify <path>"
 			return 2
 		fi
-		_cmd_verify "$1"
+		_cmd_verify "$target_path" || command_status=$?
 		;;
 	list)
-		if [[ $# -lt 1 ]]; then
+		if [[ -z "$target_path" ]]; then
 			_log "ERROR" "Missing brief path. Usage: verify-brief-helper.sh list <path>"
 			return 2
 		fi
-		_cmd_list "$1"
+		_cmd_list "$target_path" || command_status=$?
 		;;
 	check-preflight)
-		if [[ $# -lt 1 ]]; then
+		if [[ -z "$target_path" ]]; then
 			_log "ERROR" "Missing brief path. Usage: verify-brief-helper.sh check-preflight <path>"
 			return 2
 		fi
-		local preflight_path="$1"
-		_cmd_check_preflight "$preflight_path"
+		_cmd_check_preflight "$target_path" || command_status=$?
+		;;
+	check-readiness)
+		if [[ -z "$target_path" ]]; then
+			_log "ERROR" "Missing brief path. Usage: verify-brief-helper.sh check-readiness <path>"
+			return 2
+		fi
+		_cmd_check_readiness "$target_path" || command_status=$?
 		;;
 	help | --help | -h)
 		_usage
+		return 0
 		;;
 	*)
 		_log "ERROR" "Unknown command: $cmd"
@@ -380,6 +414,14 @@ main() {
 		return 2
 		;;
 	esac
+
+	if [[ "$command_status" -eq 0 ]]; then
+		return 0
+	fi
+	if [[ "$command_status" -eq 2 ]]; then
+		return 2
+	fi
+	return 1
 }
 
 main "$@"

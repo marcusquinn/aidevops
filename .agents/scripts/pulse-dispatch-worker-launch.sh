@@ -1009,13 +1009,77 @@ _dlw_systemd_unit_name() {
 	return 0
 }
 
+_dlw_systemd_snapshot() {
+	local unit_name="$1"
+	local state_file="$2"
+	local snapshot=""
+
+	snapshot=$(systemctl --user show "$unit_name" \
+		-p Id -p MainPID -p ActiveState -p SubState \
+		-p ExecMainCode -p ExecMainStatus -p Result 2>/dev/null || true)
+	printf 'Unit=%s\n%s\n' "$unit_name" "$snapshot" >"$state_file"
+	printf '%s\n' "$snapshot"
+	return 0
+}
+
+_dlw_systemd_wait_stable() {
+	local unit_name="$1"
+	local issue_number="$2"
+	local state_file="$3"
+	local expected_pid="$4"
+	local attempts="${DLW_SYSTEMD_STABILITY_ATTEMPTS:-3}"
+	local wait_i=0 stable_count=0 snapshot="" main_pid="" active_state="" sub_state=""
+	local exec_main_code="" exec_main_status="" result="" key="" value=""
+
+	[[ "$attempts" =~ ^[1-9][0-9]*$ ]] || attempts=3
+	while [[ "$wait_i" -lt "$attempts" ]]; do
+		snapshot=$(_dlw_systemd_snapshot "$unit_name" "$state_file")
+		main_pid=""
+		active_state=""
+		sub_state=""
+		exec_main_code="" exec_main_status="" result=""
+		while IFS='=' read -r key value || [[ -n "$key" ]]; do
+			case "$key" in
+				MainPID) main_pid="$value" ;;
+				ActiveState) active_state="$value" ;;
+				SubState) sub_state="$value" ;;
+				ExecMainCode) exec_main_code="$value" ;;
+				ExecMainStatus) exec_main_status="$value" ;;
+				Result) result="$value" ;;
+			esac
+		done <<<"$snapshot"
+
+		if [[ "$active_state" == "failed" || "$active_state" == "inactive" ]]; then
+			printf 'LaunchState=startup_failed\n' >>"$state_file"
+			echo "[dispatch_worker_launch] systemd startup_failed unit=${unit_name} issue=${issue_number} MainPID=${main_pid:-0} ExecMainCode=${exec_main_code:-unknown} ExecMainStatus=${exec_main_status:-unknown} Result=${result:-unknown} state=${active_state:-unknown}/${sub_state:-unknown}" >>"$LOGFILE"
+			return 2
+		fi
+
+		if [[ "$main_pid" == "$expected_pid" && "$active_state" == "active" && "$sub_state" == "running" ]]; then
+			stable_count=$((stable_count + 1))
+		else
+			stable_count=0
+		fi
+		wait_i=$((wait_i + 1))
+		[[ "$stable_count" -ge "$attempts" ]] && {
+			printf 'LaunchState=worker_ready\n' >>"$state_file"
+			return 0
+		}
+		sleep "${DLW_SYSTEMD_STABILITY_POLL_SECONDS:-0.2}"
+	done
+
+	printf 'LaunchState=pid_observed\n' >>"$state_file"
+	return 3
+}
+
 _dlw_systemd_resolve_main_pid() {
 	local unit_name="$1"
 	local issue_number="$2"
+	local state_file="${3:-${TMPDIR:-/tmp}/aidevops-systemd-state.$$}"
 	local wait_i=0 snapshot="" main_pid="" active_state="" sub_state="" key="" value=""
 
 	while [[ "$wait_i" -lt 15 ]]; do
-		snapshot=$(systemctl --user show "$unit_name" -p MainPID -p ActiveState -p SubState 2>/dev/null || true)
+		snapshot=$(_dlw_systemd_snapshot "$unit_name" "$state_file")
 		main_pid=""
 		active_state=""
 		sub_state=""
@@ -1035,8 +1099,14 @@ _dlw_systemd_resolve_main_pid() {
 
 		if [[ "$main_pid" =~ ^[1-9][0-9]*$ ]]; then
 			echo "[dispatch_worker_launch] WARNING: systemd worker PID handoff missing for unit ${unit_name}; resolved MainPID=${main_pid} state=${active_state:-unknown}/${sub_state:-unknown} via systemctl, not launching fallback" >>"$LOGFILE"
-			printf '%s\n' "$main_pid"
-			return 0
+			local stable_rc=0
+			if _dlw_systemd_wait_stable "$unit_name" "$issue_number" "$state_file" "$main_pid"; then
+				printf '%s\n' "$main_pid"
+				return 0
+			else
+				stable_rc=$?
+			fi
+			return "$stable_rc"
 		fi
 
 		case "${active_state:-unknown}" in
@@ -1059,6 +1129,7 @@ _dlw_exec_systemd_user_service() {
 	local worker_log="$2"
 	local issue_number="$3"
 	shift 3
+	local state_file="${_DLW_SYSTEMD_STATE_FILE:-${TMPDIR:-/tmp}/aidevops-systemd-state.$$}"
 
 	local pid_file=""
 	pid_file=$(mktemp "${TMPDIR:-/tmp}/aidevops-systemd-worker.XXXXXX") || return 1
@@ -1099,12 +1170,45 @@ _dlw_exec_systemd_user_service() {
 
 	if [[ "$service_pid" =~ ^[0-9]+$ ]]; then
 		echo "[dispatch_worker_launch] systemd unit ${unit_name} reported child PID=${service_pid} for #${issue_number}" >>"$LOGFILE"
-		printf '%s\n' "$service_pid"
+		local stable_rc=0
+		if _dlw_systemd_wait_stable "$unit_name" "$issue_number" "$state_file" "$service_pid"; then
+			printf '%s\n' "$service_pid"
+			return 0
+		else
+			stable_rc=$?
+		fi
+		return "$stable_rc"
+	fi
+
+	_dlw_systemd_resolve_main_pid "$unit_name" "$issue_number" "$state_file"
+	return $?
+}
+
+_dlw_handle_systemd_launch_failure() {
+	local systemd_rc="$1"
+	local systemd_state_file="$2"
+	local worker_log="$3"
+	local issue_number="$4"
+
+	if [[ "$systemd_rc" -ne 2 && "$systemd_rc" -ne 3 ]]; then
+		echo "[dispatch_worker_launch] WARNING: systemd-run worker launch unresolved for #${issue_number}; falling back to setsid/nohup" >>"$LOGFILE"
 		return 0
 	fi
 
-	_dlw_systemd_resolve_main_pid "$unit_name" "$issue_number"
-	return $?
+	if [[ -f "$systemd_state_file" ]]; then
+		{
+			if [[ "$systemd_rc" -eq 2 ]]; then
+				printf '[systemd-launch] classification=crash_during_startup\n'
+			else
+				printf '[systemd-launch] classification=readiness_unconfirmed\n'
+			fi
+			while IFS= read -r state_line || [[ -n "$state_line" ]]; do
+				printf '%s\n' "$state_line"
+			done <"$systemd_state_file"
+		} >>"$worker_log"
+	fi
+	echo "[dispatch_worker_launch] ERROR: systemd worker for #${issue_number} did not reach durable readiness (rc=${systemd_rc}); duplicate fallback suppressed" >>"$LOGFILE"
+	return 1
 }
 
 # Execute a worker command via systemd-run (Linux user services) or setsid +
@@ -1152,12 +1256,16 @@ _dlw_exec_detached() {
 	# `exec` re-opens, or `coproc`. Higher FDs (10+) are rare in this
 	# codebase and can be added if measurement justifies it.
 
-	local worker_pid
+	local worker_pid systemd_rc=1
+	local systemd_state_file="${worker_log}.systemd-launch"
 	if _dlw_systemd_user_service_available; then
-		if worker_pid=$(_dlw_exec_systemd_user_service "aidevops-worker" "$worker_log" "$issue_number" "${worker_command[@]}"); then
+		if worker_pid=$(_DLW_SYSTEMD_STATE_FILE="$systemd_state_file" _dlw_exec_systemd_user_service "aidevops-worker" "$worker_log" "$issue_number" "${worker_command[@]}"); then
 			echo "[dispatch_worker_launch] Issue #${issue_number}: worker PID=$worker_pid launched via systemd-run transient user service outside pulse cgroup" >>"$LOGFILE"
 		else
-			echo "[dispatch_worker_launch] WARNING: systemd-run worker launch failed for #${issue_number}; falling back to setsid/nohup" >>"$LOGFILE"
+			systemd_rc=$?
+			if ! _dlw_handle_systemd_launch_failure "$systemd_rc" "$systemd_state_file" "$worker_log" "$issue_number"; then
+				return 1
+			fi
 		fi
 	fi
 

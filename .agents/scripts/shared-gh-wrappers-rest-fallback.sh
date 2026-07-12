@@ -1372,6 +1372,7 @@ _rest_issue_list() {
 	local state="open"
 	local limit=30
 	local jq_expr=""
+	local user_jq=""
 	local json_fields=""
 	local assignee=""
 	local -a labels
@@ -1402,13 +1403,18 @@ _rest_issue_list() {
 		*) shift ;;
 		esac
 	done
+	user_jq="$jq_expr"
 
 	if [[ -z "$repo" ]]; then
 		printf '_rest_issue_list: --repo is required\n' >&2
 		return 1
 	fi
 
-	local _query="state=${state}&per_page=${limit}"
+	local page_size="$limit"
+	if [[ "$page_size" -gt 100 ]]; then
+		page_size=100
+	fi
+	local _query="state=${state}&per_page=${page_size}"
 	if [[ ${#labels[@]} -gt 0 ]]; then
 		local _labels_encoded=""
 		local _label
@@ -1425,13 +1431,38 @@ _rest_issue_list() {
 		_query="${_query}&assignee=${_assignee_encoded}"
 	fi
 
-	local _path="/repos/${repo}/issues?${_query}"
-	local _gh_cmd=(gh api "$_path")
+	local page=1
+	local raw_page=""
+	local raw_count=0
+	local issue_count=0
+	local combined='[]'
+	while [[ "$issue_count" -lt "$limit" ]]; do
+		local _path="/repos/${repo}/issues?${_query}&page=${page}"
+		if ! raw_page=$(_rest_api_call read gh api "$_path"); then
+			return 1
+		fi
+		raw_count=$(printf '%s' "$raw_page" | jq 'length' 2>/dev/null) || return 1
+		combined=$(jq -cn --argjson prior "$combined" --argjson next "$raw_page" \
+			'$prior + [$next[] | select(.pull_request == null)]') || return 1
+		issue_count=$(printf '%s' "$combined" | jq 'length' 2>/dev/null) || return 1
+		if [[ "$raw_count" -lt "$page_size" ]]; then
+			break
+		fi
+		page=$((page + 1))
+	done
+
 	if [[ -n "$json_fields" ]]; then
-		jq_expr="$(_rest_issue_list_json_jq "$json_fields" "$jq_expr")"
+		jq_expr="$(_rest_issue_list_json_jq "$json_fields" "")"
+	else
+		jq_expr='[.[] | select(.pull_request == null)]'
 	fi
-	[[ -n "$jq_expr" ]] && _gh_cmd+=(--jq "$jq_expr")
-	_rest_api_call read "${_gh_cmd[@]}"
+	local result=""
+	result=$(printf '%s' "$combined" | jq -c "${jq_expr} | .[:${limit}]") || return 1
+	if [[ -n "$user_jq" ]]; then
+		printf '%s' "$result" | jq -r "$user_jq"
+	else
+		printf '%s\n' "$result"
+	fi
 	return $?
 }
 

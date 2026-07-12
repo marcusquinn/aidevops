@@ -17,7 +17,7 @@ fi
 # AI Assistant Server Access Framework Setup Script
 # Helps developers set up the framework for their infrastructure
 #
-# Version: 3.32.64
+# Version: 3.32.76
 #
 # Quick Install:
 #   npm install -g aidevops && aidevops update          (recommended)
@@ -1465,7 +1465,7 @@ _setup_run_non_interactive() {
 	_time_step "backfill_issue_relationships" backfill_issue_relationships
 	_time_step "cleanup_deprecated_mcps" cleanup_deprecated_mcps
 	_time_step "cleanup_stale_bun_opencode" cleanup_stale_bun_opencode
-	_time_step "cleanup_stale_health_issue_caches" cleanup_stale_health_issue_caches
+	_time_step "cleanup_stale_health_issue_caches" cleanup_stale_health_issue_caches; _time_step "cleanup_legacy_aidevops_temp_artifacts" cleanup_legacy_aidevops_temp_artifacts
 	_time_step "cleanup_worktree_entries_in_repos_json" cleanup_worktree_entries_in_repos_json
 	_time_step "_cleanup_legacy_model_config" _cleanup_legacy_model_config
 	_time_step "cleanup_legacy_dashboard_launchagent" cleanup_legacy_dashboard_launchagent
@@ -1640,7 +1640,7 @@ _setup_run_interactive() {
 	confirm_step "Cleanup deprecated MCP entries (hetzner, serper, etc.)" && cleanup_deprecated_mcps
 	confirm_step "Cleanup stale bun opencode install" && cleanup_stale_bun_opencode
 	# Silent one-shot migrations (idempotent, flag-guarded — no prompt needed).
-	cleanup_stale_health_issue_caches; cleanup_worktree_entries_in_repos_json; _cleanup_legacy_model_config; cleanup_legacy_dashboard_launchagent
+	cleanup_stale_health_issue_caches; cleanup_legacy_aidevops_temp_artifacts; cleanup_worktree_entries_in_repos_json; _cleanup_legacy_model_config; cleanup_legacy_dashboard_launchagent
 	confirm_step "Validate and repair OpenCode config schema" && validate_opencode_config
 	confirm_step "Extract OpenCode prompts" && extract_opencode_prompts
 	confirm_step "Check OpenCode prompt drift" && check_opencode_prompt_drift

@@ -16,12 +16,11 @@
 #
 # Main-branch write protection (t1712):
 #   Pass --file <path> for path-based enforcement (preferred).
-#   Allowlisted paths (writable on main without a worktree): README.md, TODO.md, todo/**
-#   All other paths require a linked worktree.
+#   Every path on canonical main/master requires a linked worktree.
 #   --task description heuristics are a fallback when --file is not provided.
 #
 # Exit codes:
-#   0 - OK to proceed (in a linked worktree, or allowlisted path on main)
+#   0 - OK to proceed (in a linked worktree)
 #   1 - STOP (on protected main/master, interactive mode)
 #   2 - Create worktree (loop mode detected non-allowlisted path on main)
 #   3 - Reserved legacy code (canonical invalid states now block)
@@ -57,9 +56,8 @@ source "${SCRIPT_DIR}/task-identity-lib.sh"
 # =============================================================================
 # Loop Mode Support
 # =============================================================================
-# When --loop-mode is passed, the script auto-decides based on file path or task description:
-# - Allowlisted paths (README.md, TODO.md, todo/**) -> stay on main (exit 0)
-# - All other paths -> signal worktree needed (exit 2)
+# When --loop-mode is passed on canonical main/master, the script creates or
+# requests a linked worktree for every edit.
 #
 # Pass --file <path> for path-based enforcement (preferred, harder to bypass).
 # Fall back to --task description heuristics only when no --file is provided.
@@ -164,76 +162,11 @@ PYEOF
 # Canonicalizes the path to a repo-relative form before evaluating the allowlist,
 # preventing path traversal bypasses (e.g. todo/../secret.py).
 #
-# t1990: Interactive sessions have NO main-branch planning exception — every
-# edit on main (including TODO.md, todo/**, README.md) requires a linked
-# worktree. Headless sessions (pulse, CI workers, routines) keep the
-# allowlist so they can continue to write routine state and dispatch
-# bookkeeping directly on main without PR ceremony.
-#
-# Session-origin detection is inlined here (rather than calling
-# detect_session_origin from shared-constants.sh) to avoid any source-order
-# dependency — this function may be called before shared-constants.sh is
-# sourced in the execution flow.
+# Canonical checkouts are read-only to automation. Historical planning and
+# issue-sync allowlists are intentionally retained nowhere.
 is_main_allowlisted_path() {
 	local file_path="$1"
-
-	# t1990: short-circuit FALSE for interactive sessions. A session is
-	# interactive unless one of the known headless env vars is set. This
-	# mirrors detect_session_origin() in shared-constants.sh — keep in sync.
-	if [[ "${FULL_LOOP_HEADLESS:-}" != "true" ]] &&
-		[[ "${AIDEVOPS_HEADLESS:-}" != "true" ]] &&
-		[[ "${OPENCODE_HEADLESS:-}" != "true" ]] &&
-		[[ "${GITHUB_ACTIONS:-}" != "true" ]]; then
-		# Interactive session: no allowlist, always require a worktree.
-		return 1
-	fi
-
-	# Resolve repo root for canonicalization
-	local repo_root
-	repo_root="$(git rev-parse --show-toplevel 2>/dev/null || echo "")"
-
-	local normalised
-	if [[ -n "$repo_root" ]]; then
-		# Canonicalize: resolve ./ and ../ segments, reject paths outside repo root
-		normalised="$(_canonicalize_repo_relative_path "$file_path" "$repo_root")"
-		# Reject paths that escape the repo root
-		if [[ "$normalised" == "OUTSIDE_REPO" ]]; then
-			return 1
-		fi
-	else
-		# No git repo context: fall back to simple normalization
-		# Strip leading ./ to get a repo-relative path
-		normalised=$(echo "$file_path" | sed 's|^\./||')
-
-		# Reject path traversal: any path containing .. segments is not allowlisted.
-		case "$normalised" in
-		*..*)
-			return 1
-			;;
-		esac
-
-		# Reject absolute paths
-		case "$normalised" in
-		/*)
-			return 1
-			;;
-		esac
-	fi
-
-	# Exact matches
-	case "$normalised" in
-	README.md | TODO.md)
-		return 0
-		;;
-	esac
-
-	# Prefix matches (todo/ subtree)
-	case "$normalised" in
-	todo/*)
-		return 0
-		;;
-	esac
-
+	: "$file_path"
 	return 1
 }
 
@@ -304,13 +237,7 @@ is_docs_only() {
 # Unified main-branch write check: path-based when --file provided, else task heuristic.
 # Returns: 0 if write is allowed on main, 1 if worktree required
 is_main_write_allowed() {
-	if [[ -n "$TARGET_FILE" ]]; then
-		is_main_allowlisted_path "$TARGET_FILE"
-		return $?
-	fi
-	# Fallback: task-description heuristic (backward compat)
-	is_docs_only "$TASK_DESC"
-	return $?
+	return 1
 }
 
 # =============================================================================
@@ -492,16 +419,6 @@ _is_explicit_headless_flow() {
 
 _handle_loop_mode_on_protected() {
 	local branch="$1"
-
-	if _is_explicit_headless_flow && is_main_write_allowed; then
-		if [[ -n "$TARGET_FILE" ]]; then
-			echo -e "${YELLOW}LOOP-AUTO${NC}: Allowlisted path '$TARGET_FILE', staying on $branch"
-		else
-			echo -e "${YELLOW}LOOP-AUTO${NC}: Docs-only task detected, staying on $branch"
-		fi
-		echo "LOOP_DECISION=stay"
-		exit 0
-	fi
 
 	if [[ -n "$TARGET_FILE" ]] && is_unsafe_main_target_path "$TARGET_FILE"; then
 		echo -e "${RED}BLOCKED${NC}: unsafe target path '$TARGET_FILE' on protected '$branch'"
@@ -727,14 +644,6 @@ if [[ "$current_branch" == "main" || "$current_branch" == "master" ]]; then
 	# Loop mode: auto-decide based on file path (preferred) or task description
 	[[ "$LOOP_MODE" == "true" ]] && _handle_loop_mode_on_protected "$current_branch"
 
-	# Short-circuit only for explicitly identified headless bookkeeping flows.
-	# Interactive sessions never gain a canonical write exemption (t1712).
-	if _is_explicit_headless_flow && [[ -n "$TARGET_FILE" ]] && is_main_allowlisted_path "$TARGET_FILE"; then
-		echo -e "${GREEN}OK${NC} - Allowlisted path '$TARGET_FILE' on $current_branch"
-		echo "MAIN_ALLOWLISTED=true"
-		exit 0
-	fi
-
 	# Detect headless mode (GH#4400): workers dispatched without --loop-mode
 	# get the interactive prompt and loop forever trying to edit. Detect
 	# headless by checking if stdin is not a terminal (no TTY = headless).
@@ -764,19 +673,20 @@ if [[ "$git_dir" == "$git_common_dir" ]] || [[ "$git_dir" == ".git" ]]; then
 	is_main_worktree=true
 fi
 
-# Sync terminal tab title with repo/branch (silent, non-blocking)
+# Keep the OpenCode session title authoritative while OpenCode is active.
+# Outside OpenCode, retain the repo/branch shell-title fallback.
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 # shellcheck source=/dev/null
 source "${SCRIPT_DIR}/shared-constants.sh"
 
-if [[ -x "$SCRIPT_DIR/terminal-title-helper.sh" ]]; then
-	"$SCRIPT_DIR/terminal-title-helper.sh" sync 2>/dev/null || true
-fi
-
-# Sync OpenCode session title with current branch (silent, non-blocking).
-# Only runs inside OpenCode sessions; helper resolves target session by cwd.
 if [[ "${OPENCODE:-}" == "1" ]] && [[ -x "$SCRIPT_DIR/session-rename-helper.sh" ]]; then
-	"$SCRIPT_DIR/session-rename-helper.sh" sync-branch >/dev/null 2>&1 || true
+	"$SCRIPT_DIR/session-rename-helper.sh" sync-branch "${OPENCODE_SESSION_ID:-}" >/dev/null 2>&1 || true
+	effective_title="$("$SCRIPT_DIR/session-rename-helper.sh" effective-title "${OPENCODE_SESSION_ID:-}" 2>/dev/null || true)"
+	if [[ -n "$effective_title" ]] && [[ -x "$SCRIPT_DIR/terminal-title-helper.sh" ]]; then
+		"$SCRIPT_DIR/terminal-title-helper.sh" rename "$effective_title" 2>/dev/null || true
+	fi
+elif [[ -x "$SCRIPT_DIR/terminal-title-helper.sh" ]]; then
+	"$SCRIPT_DIR/terminal-title-helper.sh" sync 2>/dev/null || true
 fi
 
 # Linked worktree ownership gate (GH#14413 hardening):

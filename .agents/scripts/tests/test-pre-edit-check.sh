@@ -6,6 +6,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit 1
 HELPER="${SCRIPT_DIR}/../pre-edit-check.sh"
+GIT_BIN="$(command -p -v git)"
 
 readonly TEST_RED='\033[0;31m'
 readonly TEST_GREEN='\033[0;32m'
@@ -40,15 +41,15 @@ setup_test_repo() {
 	TEST_ROOT=$(mktemp -d)
 	TEST_REGISTRY_DIR="${TEST_ROOT}/.registry"
 	TEST_REGISTRY_DB="${TEST_REGISTRY_DIR}/worktree-registry.db"
-	git -C "$TEST_ROOT" init -b main >/dev/null 2>&1 || {
-		git -C "$TEST_ROOT" init >/dev/null 2>&1
-		git -C "$TEST_ROOT" checkout -b main >/dev/null 2>&1
+	"$GIT_BIN" -C "$TEST_ROOT" init -b main >/dev/null 2>&1 || {
+		"$GIT_BIN" -C "$TEST_ROOT" init >/dev/null 2>&1
+		"$GIT_BIN" -C "$TEST_ROOT" checkout -b main >/dev/null 2>&1
 	}
-	git -C "$TEST_ROOT" config user.name "Aidevops Test"
-	git -C "$TEST_ROOT" config user.email "test@example.com"
+	"$GIT_BIN" -C "$TEST_ROOT" config user.name "Aidevops Test"
+	"$GIT_BIN" -C "$TEST_ROOT" config user.email "test@example.com"
 	printf 'test\n' >"${TEST_ROOT}/README.md"
-	git -C "$TEST_ROOT" add README.md
-	git -C "$TEST_ROOT" commit -m "test: seed repo" >/dev/null 2>&1
+	"$GIT_BIN" -C "$TEST_ROOT" add README.md
+	"$GIT_BIN" -C "$TEST_ROOT" commit -m "test: seed repo" >/dev/null 2>&1
 	return 0
 }
 
@@ -103,7 +104,7 @@ test_blocks_headless_edits_on_main_with_worktree_guidance() {
 
 test_allows_linked_worktree_edits() {
 	local worktree_path="${TEST_ROOT}/linked-worktree"
-	git -C "$TEST_ROOT" worktree add "$worktree_path" -b bugfix/test-linked-worktree >/dev/null 2>&1
+	"$GIT_BIN" -C "$TEST_ROOT" worktree add "$worktree_path" -b bugfix/test-linked-worktree >/dev/null 2>&1
 
 	local output=""
 	local exit_code=0
@@ -121,10 +122,10 @@ test_allows_linked_worktree_edits() {
 test_namespaced_task_assignee_lookup() {
 	local task_id="to01j2abc3def4gh5jkm6npq7rst-42.3"
 	printf '%s\n' "- [ ] ${task_id} Namespaced assignee fixture assignee:other@example" >"${TEST_ROOT}/TODO.md"
-	git -C "$TEST_ROOT" add TODO.md
-	git -C "$TEST_ROOT" commit -m "test: add namespaced assignee fixture" >/dev/null 2>&1
+	"$GIT_BIN" -C "$TEST_ROOT" add TODO.md
+	"$GIT_BIN" -C "$TEST_ROOT" commit -m "test: add namespaced assignee fixture" >/dev/null 2>&1
 	local worktree_path="${TEST_ROOT}/namespaced-assignee-worktree"
-	git -C "$TEST_ROOT" worktree add "$worktree_path" -b "feature/${task_id}-migration" >/dev/null 2>&1
+	"$GIT_BIN" -C "$TEST_ROOT" worktree add "$worktree_path" -b "feature/${task_id}-migration" >/dev/null 2>&1
 
 	local output=""
 	local exit_code=0
@@ -140,10 +141,10 @@ test_namespaced_task_assignee_lookup() {
 
 test_malformed_task_assignee_fails_closed() {
 	printf '%s\n' "- [ ] t7 Prefix task assignee:other@example" >>"${TEST_ROOT}/TODO.md"
-	git -C "$TEST_ROOT" add TODO.md
-	git -C "$TEST_ROOT" commit -m "test: add malformed-prefix fixture" >/dev/null 2>&1
+	"$GIT_BIN" -C "$TEST_ROOT" add TODO.md
+	"$GIT_BIN" -C "$TEST_ROOT" commit -m "test: add malformed-prefix fixture" >/dev/null 2>&1
 	local worktree_path="${TEST_ROOT}/malformed-assignee-worktree"
-	git -C "$TEST_ROOT" worktree add "$worktree_path" -b "feature/t7.0-malformed" >/dev/null 2>&1
+	"$GIT_BIN" -C "$TEST_ROOT" worktree add "$worktree_path" -b "feature/t7.0-malformed" >/dev/null 2>&1
 
 	local output=""
 	local exit_code=0
@@ -173,7 +174,7 @@ test_worker_env_does_not_bypass_canonical_guard() {
 }
 
 test_warns_when_canonical_repo_is_off_main() {
-	git -C "$TEST_ROOT" switch -c bugfix/off-main >/dev/null 2>&1
+	"$GIT_BIN" -C "$TEST_ROOT" switch -c bugfix/off-main >/dev/null 2>&1
 
 	local output=""
 	local exit_code=0
@@ -190,7 +191,7 @@ test_warns_when_canonical_repo_is_off_main() {
 
 test_blocks_when_linked_worktree_owned_by_another_live_process() {
 	local worktree_path="${TEST_ROOT}/owned-worktree"
-	git -C "$TEST_ROOT" worktree add "$worktree_path" -b bugfix/owned-worktree >/dev/null 2>&1
+	"$GIT_BIN" -C "$TEST_ROOT" worktree add "$worktree_path" -b bugfix/owned-worktree >/dev/null 2>&1
 
 	ensure_registry_schema
 	sqlite3 "$TEST_REGISTRY_DB" "
@@ -223,7 +224,7 @@ test_blocks_when_linked_worktree_owned_by_another_live_process() {
 
 test_allows_same_opencode_session_pid_rollover() {
 	local worktree_path="${TEST_ROOT}/same-session-worktree"
-	git -C "$TEST_ROOT" worktree add "$worktree_path" -b bugfix/same-session-worktree >/dev/null 2>&1
+	"$GIT_BIN" -C "$TEST_ROOT" worktree add "$worktree_path" -b bugfix/same-session-worktree >/dev/null 2>&1
 
 	ensure_registry_schema
 	local original_pid=""
@@ -254,25 +255,25 @@ test_allows_same_opencode_session_pid_rollover() {
 	return 0
 }
 
-test_allowlisted_path_allows_edit_on_main() {
+test_headless_planning_path_requires_worktree() {
 	# Ensure repo is on main for this test
-	git -C "$TEST_ROOT" switch main >/dev/null 2>&1 || true
+	"$GIT_BIN" -C "$TEST_ROOT" switch main >/dev/null 2>&1 || true
 
 	local output=""
 	local exit_code=0
 	output=$(FULL_LOOP_HEADLESS=true run_helper "$TEST_ROOT" --loop-mode --file "README.md" 2>&1) || exit_code=$?
 
-	if [[ "$exit_code" -eq 0 ]] && [[ "$output" == *"LOOP_DECISION=stay"* ]]; then
-		print_result "allowlisted path (README.md) allows edit on main in loop mode" 0
+	if [[ "$exit_code" -ne 0 || "$output" == *"LOOP_DECISION=worktree"* || "$output" == *"LOOP_DECISION=worktree_created"* ]]; then
+		print_result "headless planning path requires a linked worktree" 0
 		return 0
 	fi
 
-	print_result "allowlisted path (README.md) allows edit on main in loop mode" 1 "exit=${exit_code} output=${output}"
+	print_result "headless planning path requires a linked worktree" 1 "exit=${exit_code} output=${output}"
 	return 0
 }
 
 test_interactive_allowlisted_path_still_requires_worktree() {
-	git -C "$TEST_ROOT" switch main >/dev/null 2>&1 || true
+	"$GIT_BIN" -C "$TEST_ROOT" switch main >/dev/null 2>&1 || true
 	local output=""
 	local exit_code=0
 	output=$(run_helper "$TEST_ROOT" --file "README.md" 2>&1) || exit_code=$?
@@ -288,7 +289,7 @@ test_interactive_allowlisted_path_still_requires_worktree() {
 
 test_path_traversal_blocked_on_main() {
 	# Ensure repo is on main for this test
-	git -C "$TEST_ROOT" switch main >/dev/null 2>&1 || true
+	"$GIT_BIN" -C "$TEST_ROOT" switch main >/dev/null 2>&1 || true
 
 	local output=""
 	local exit_code=0
@@ -305,7 +306,7 @@ test_path_traversal_blocked_on_main() {
 
 test_absolute_path_outside_repo_blocked_on_main() {
 	# Ensure repo is on main for this test
-	git -C "$TEST_ROOT" switch main >/dev/null 2>&1 || true
+	"$GIT_BIN" -C "$TEST_ROOT" switch main >/dev/null 2>&1 || true
 
 	local output=""
 	local exit_code=0
@@ -320,21 +321,21 @@ test_absolute_path_outside_repo_blocked_on_main() {
 	return 0
 }
 
-test_todo_subdir_path_allows_edit_on_main() {
+test_todo_subdir_path_requires_worktree() {
 	# Ensure repo is on main for this test
-	git -C "$TEST_ROOT" switch main >/dev/null 2>&1 || true
+	"$GIT_BIN" -C "$TEST_ROOT" switch main >/dev/null 2>&1 || true
 	mkdir -p "${TEST_ROOT}/todo"
 
 	local output=""
 	local exit_code=0
 	output=$(FULL_LOOP_HEADLESS=true run_helper "$TEST_ROOT" --loop-mode --file "todo/tasks/t001-brief.md" 2>&1) || exit_code=$?
 
-	if [[ "$exit_code" -eq 0 ]] && [[ "$output" == *"LOOP_DECISION=stay"* ]]; then
-		print_result "todo/ subdir path allows edit on main in loop mode" 0
+	if [[ "$exit_code" -ne 0 || "$output" == *"LOOP_DECISION=worktree"* || "$output" == *"LOOP_DECISION=worktree_created"* ]]; then
+		print_result "todo/ subdir path requires a linked worktree" 0
 		return 0
 	fi
 
-	print_result "todo/ subdir path allows edit on main in loop mode" 1 "exit=${exit_code} output=${output}"
+	print_result "todo/ subdir path requires a linked worktree" 1 "exit=${exit_code} output=${output}"
 	return 0
 }
 
@@ -342,15 +343,15 @@ test_auto_creates_git_path_worktree_from_ansi_helper_output() {
 	local repo_parent="${TEST_ROOT}/ansi-case/Git"
 	local repo_path="${repo_parent}/aidevops"
 	mkdir -p "$repo_path"
-	git -C "$repo_path" init -b main >/dev/null 2>&1 || {
-		git -C "$repo_path" init >/dev/null 2>&1
-		git -C "$repo_path" checkout -b main >/dev/null 2>&1
+	"$GIT_BIN" -C "$repo_path" init -b main >/dev/null 2>&1 || {
+		"$GIT_BIN" -C "$repo_path" init >/dev/null 2>&1
+		"$GIT_BIN" -C "$repo_path" checkout -b main >/dev/null 2>&1
 	}
-	git -C "$repo_path" config user.name "Aidevops Test"
-	git -C "$repo_path" config user.email "test@example.com"
+	"$GIT_BIN" -C "$repo_path" config user.name "Aidevops Test"
+	"$GIT_BIN" -C "$repo_path" config user.email "test@example.com"
 	printf 'test\n' >"${repo_path}/README.md"
-	git -C "$repo_path" add README.md
-	git -C "$repo_path" commit -m "test: seed ansi repo" >/dev/null 2>&1
+	"$GIT_BIN" -C "$repo_path" add README.md
+	"$GIT_BIN" -C "$repo_path" commit -m "test: seed ansi repo" >/dev/null 2>&1
 
 	local output=""
 	local exit_code=0
@@ -379,11 +380,11 @@ main() {
 	test_warns_when_canonical_repo_is_off_main
 	test_blocks_when_linked_worktree_owned_by_another_live_process
 	test_allows_same_opencode_session_pid_rollover
-	test_allowlisted_path_allows_edit_on_main
+	test_headless_planning_path_requires_worktree
 	test_interactive_allowlisted_path_still_requires_worktree
 	test_path_traversal_blocked_on_main
 	test_absolute_path_outside_repo_blocked_on_main
-	test_todo_subdir_path_allows_edit_on_main
+	test_todo_subdir_path_requires_worktree
 	test_auto_creates_git_path_worktree_from_ansi_helper_output
 
 	printf '\nRan %s tests, %s failed\n' "$TESTS_RUN" "$TESTS_FAILED"

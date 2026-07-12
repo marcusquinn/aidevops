@@ -353,7 +353,7 @@ _pmp_process_merge_repo_for_pass() {
 	_pmp_add_elapsed_seconds _mr_repo_total_s "$_mr_repo_start"
 	_pmp_log_repo_timing_summary "$repo_slug" "$_mr_repo_total_s" "$_mr_repo_list_s" "$_mr_repo_mergeability_s" "$_mr_repo_ruleset_s" "$_mr_repo_branch_protection_s" "$_mr_repo_stuck_detector_s" "$repo_merged" "$repo_closed" "$repo_failed" "$_mr_repo_pr_count"
 	_pmp_write_merge_checkpoint "$checkpoint_file" "$repo_slug"
-	_pmp_clear_merge_pr_cursor "$PULSE_MERGE_PR_CURSOR_FILE"
+	_pmp_clear_merge_pr_cursor "${PULSE_MERGE_PR_CURSOR_FILE:-}"
 
 	if [[ -f "$stop_flag" ]]; then
 		echo "[pulse-wrapper] Deterministic merge pass: stop flag appeared mid-run" >>"$logfile"

@@ -10,6 +10,86 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.32.76] - 2026-07-12
+
+### Added
+
+- enforce read-only canonical automation (#27439)
+
+## [3.32.75] - 2026-07-12
+
+### Changed
+
+- Version bump and maintenance updates
+
+
+## [3.32.74] - 2026-07-12
+
+### Changed
+
+- Version bump and maintenance updates
+
+
+## [3.32.73] - 2026-07-12
+
+### Changed
+
+- Tests: isolate pre-edit fixtures from git guard (#27422)
+- Tests: bypass git guard for session title fixture (#27420)
+
+## [3.32.72] - 2026-07-12
+
+### Changed
+
+- Version bump and maintenance updates
+
+
+## [3.32.71] - 2026-07-12
+
+### Changed
+
+- Version bump and maintenance updates
+
+
+## [3.32.70] - 2026-07-12
+
+### Changed
+
+- Version bump and maintenance updates
+
+
+## [3.32.69] - 2026-07-12
+
+### Changed
+
+- Version bump and maintenance updates
+
+
+## [3.32.68] - 2026-07-12
+
+### Fixed
+
+- align shipped defaults with config schema (#27411)
+
+## [3.32.67] - 2026-07-12
+
+### Changed
+
+- Version bump and maintenance updates
+
+
+## [3.32.66] - 2026-07-12
+
+### Fixed
+
+- prevent cross-runtime Git wrapper recursion (#27409)
+
+## [3.32.65] - 2026-07-12
+
+### Added
+
+- publish planning changes without checkout mutation (#27399)
+
 ## [3.32.64] - 2026-07-12
 
 ### Changed
@@ -22,7 +102,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - Version bump and maintenance updates
-
 
 ## [3.32.62] - 2026-07-12
 
@@ -55,7 +134,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Version bump and maintenance updates
 
-
 ## [3.32.57] - 2026-07-12
 
 ### Added
@@ -74,7 +152,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - Version bump and maintenance updates
-
 
 ## [3.32.54] - 2026-07-12
 
@@ -151,13 +228,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Version bump and maintenance updates
 
-
 ## [3.32.44] - 2026-07-12
 
 ### Changed
 
 - Version bump and maintenance updates
-
 
 ## [3.32.43] - 2026-07-12
 
@@ -177,7 +252,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Version bump and maintenance updates
 
-
 ## [3.32.40] - 2026-07-12
 
 ### Fixed
@@ -196,13 +270,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Version bump and maintenance updates
 
-
 ## [3.32.37] - 2026-07-12
 
 ### Changed
 
 - Version bump and maintenance updates
-
 
 ## [3.32.36] - 2026-07-12
 
@@ -223,7 +295,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - Version bump and maintenance updates
-
 
 ## [3.32.34] - 2026-07-12
 

@@ -13,9 +13,14 @@ Topic/context: $ARGUMENTS
 
 ## Core Rule
 
-All TODOs, plans, and issues created by this workflow MUST use `workflows/brief.md` and `templates/brief-template.md` so future workers can execute without the original chat. Saving is not implementation; if the user says `/full-loop`, "work on it now", or equivalent, route to `/full-loop` instead of stopping after capture.
+All TODOs, plans, and issues created by this workflow MUST use `workflows/brief.md` and `templates/brief-template.md` so future workers can execute without the original chat. For auto-dispatch, use only the shared "Dispatch Readiness Contract (brief schema v2)" checklist and its `verify-brief-helper.sh check-readiness <brief>` gate. Saving is not implementation; if the user says `/full-loop`, "work on it now", or equivalent, route to `/full-loop` instead of stopping after capture.
 
 ## Intent Routing
+
+An issue-started interactive implementation context overrides generic
+"background" wording: continue implementation locally and interpret background
+only as local asynchronous execution. Never create or dispatch a worker for that
+issue from the active interactive implementation session.
 
 | Signal | Action |
 |--------|--------|

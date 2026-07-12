@@ -4,12 +4,12 @@
 
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { execFileSync } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, renameSync, rmSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { canonicalizeSqliteDbPath, sqlEscape } from "./sqlite-process.mjs";
 
-const SCHEMA_VERSION = 3;
+const SCHEMA_VERSION = 5;
 const PAYLOAD_MAX_BYTES = 64 * 1024;
 const EVIDENCE_MAX_BYTES = 64 * 1024;
 const CROCKFORD = "0123456789abcdefghjkmnpqrstvwxyz";
@@ -19,6 +19,8 @@ const TASK_ID = /^(?:t[1-9][0-9]{0,17}(?:\.[1-9][0-9]{0,17})*|to[0-7][0-9a-hjkmn
 const STATES = new Set(["active", "read-only", "redirected", "retired", "quarantined"]);
 const RESULTS = new Set(["published", "retryable", "indeterminate", "terminal", "conflict"]);
 const MAPPING_ROLES = new Set(["home", "implementation", "upstream"]);
+const FORGE_EVENT_KINDS = new Set(["issue", "pull_request", "push", "manual"]);
+const FORGE_EVENT_ACTIONS = new Set(["opened", "edited", "assigned", "closed", "reopened", "merged", "pushed", "requested"]);
 
 const SCHEMA = `
 PRAGMA foreign_keys=ON;
@@ -51,6 +53,17 @@ CREATE TABLE IF NOT EXISTS publication_intents (
   task_id TEXT NOT NULL REFERENCES tasks(task_id), payload_hash TEXT NOT NULL,
   payload_json TEXT NOT NULL CHECK(json_valid(payload_json)), status TEXT NOT NULL DEFAULT 'retryable', created_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS publication_queue (
+  intent_id TEXT PRIMARY KEY REFERENCES publication_intents(intent_id), repository_id TEXT NOT NULL,
+  repository_path TEXT NOT NULL, remote_name TEXT NOT NULL, branch_name TEXT NOT NULL,
+  coalesce_key TEXT NOT NULL, sequence INTEGER NOT NULL UNIQUE, available_at INTEGER NOT NULL,
+  attempt_count INTEGER NOT NULL DEFAULT 0, max_attempts INTEGER NOT NULL DEFAULT 5,
+  lease_token INTEGER, CHECK(attempt_count >= 0), CHECK(max_attempts > 0)
+);
+CREATE TABLE IF NOT EXISTS publication_leases (
+  repository_id TEXT PRIMARY KEY, fencing_token INTEGER NOT NULL CHECK(fencing_token > 0),
+  owner_id TEXT NOT NULL, expires_at INTEGER NOT NULL, acquired_at INTEGER NOT NULL
+);
 CREATE TABLE IF NOT EXISTS publication_attempts (
   id INTEGER PRIMARY KEY, intent_id TEXT NOT NULL REFERENCES publication_intents(intent_id),
   attempt_number INTEGER NOT NULL, status TEXT NOT NULL, evidence_json TEXT NOT NULL CHECK(json_valid(evidence_json)),
@@ -79,6 +92,13 @@ CREATE TABLE IF NOT EXISTS issue_mappings (
   UNIQUE(forge, repository_id, issue_id),
   UNIQUE(forge, repository_id, display_number),
   CHECK(forge IN ('github')), CHECK(role IN ('home','implementation','upstream'))
+);
+CREATE TABLE IF NOT EXISTS forge_event_cursors (
+  forge TEXT NOT NULL, repository_id TEXT NOT NULL, subject_kind TEXT NOT NULL, subject_id TEXT NOT NULL,
+  cursor_timestamp TEXT NOT NULL, cursor_tiebreaker TEXT NOT NULL, payload_hash TEXT NOT NULL,
+  operation_id TEXT NOT NULL REFERENCES operations(operation_id), transition_kind TEXT NOT NULL,
+  accepted_at TEXT NOT NULL,
+  PRIMARY KEY(forge, repository_id, subject_kind, subject_id)
 );
 CREATE TRIGGER IF NOT EXISTS tasks_immutable_update BEFORE UPDATE ON tasks BEGIN SELECT RAISE(ABORT, 'tasks are immutable'); END;
 CREATE TRIGGER IF NOT EXISTS tasks_immutable_delete BEFORE DELETE ON tasks BEGIN SELECT RAISE(ABORT, 'tasks are immutable'); END;
@@ -158,11 +178,39 @@ INSERT INTO migration_history(version,applied_at,backup_path,integrity_result) V
 COMMIT;`);
   if (sqlite(path, "PRAGMA integrity_check;\n") !== "ok") throw new Error("migration integrity verification failed");
 }
+function migrateV3ToV4(path) {
+  const copy = backup(path, "pre-migrate-v4");
+  sqlite(path, `BEGIN IMMEDIATE;
+${SCHEMA}
+UPDATE coordinator_meta SET value='4' WHERE key='schema_version';
+INSERT OR IGNORE INTO coordinator_meta VALUES ('publication_fence','0');
+INSERT INTO migration_history(version,applied_at,backup_path,integrity_result) VALUES (4,${sqlEscape(now())},${sqlEscape(copy)},'ok');
+COMMIT;`);
+  if (sqlite(path, "PRAGMA integrity_check;\n") !== "ok") throw new Error("migration integrity verification failed");
+}
+function migrateV4ToV5(path) {
+  const copy = backup(path, "pre-migrate-v5");
+  sqlite(path, `BEGIN IMMEDIATE;
+${SCHEMA}
+UPDATE coordinator_meta SET value='5' WHERE key='schema_version';
+INSERT INTO migration_history(version,applied_at,backup_path,integrity_result) VALUES (5,${sqlEscape(now())},${sqlEscape(copy)},'ok');
+COMMIT;`);
+  if (sqlite(path, "PRAGMA integrity_check;\n") !== "ok") throw new Error("migration integrity verification failed");
+}
 function migrate(path, version) {
   if (version === 1) {
     migrateV1ToV2(path);
     migrateV2ToV3(path);
-  } else if (version === 2) migrateV2ToV3(path);
+    migrateV3ToV4(path);
+    migrateV4ToV5(path);
+  } else if (version === 2) {
+    migrateV2ToV3(path);
+    migrateV3ToV4(path);
+    migrateV4ToV5(path);
+  } else if (version === 3) {
+    migrateV3ToV4(path);
+    migrateV4ToV5(path);
+  } else if (version === 4) migrateV4ToV5(path);
   else if (version !== SCHEMA_VERSION) throw new Error(`unsupported coordinator schema ${version}`);
 }
 function bootstrap(path) {
@@ -172,21 +220,92 @@ function bootstrap(path) {
   sqlite(path, `PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; BEGIN IMMEDIATE; ${SCHEMA}
 INSERT OR IGNORE INTO coordinator_meta VALUES ('schema_version','${SCHEMA_VERSION}');
 INSERT OR IGNORE INTO coordinator_meta VALUES ('namespaced_emitted','0');
+INSERT OR IGNORE INTO coordinator_meta VALUES ('publication_fence','0');
 INSERT INTO origins SELECT ${sqlEscape(origin)},'active',0,1,${sqlEscape(token)},${sqlEscape(timestamp)} WHERE NOT EXISTS (SELECT 1 FROM origins);
 INSERT INTO origin_transitions(origin_id,from_state,to_state,ownership_epoch,fencing_token,evidence_json,occurred_at)
 SELECT origin_id,NULL,'active',ownership_epoch,fencing_token,'{}',${sqlEscape(timestamp)} FROM origins WHERE NOT EXISTS (SELECT 1 FROM origin_transitions);
 INSERT INTO migration_history SELECT ${SCHEMA_VERSION},${sqlEscape(timestamp)},NULL,'ok' WHERE NOT EXISTS (SELECT 1 FROM migration_history); COMMIT;`);
 }
+function processIsAlive(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    if (error.code === "ESRCH") return false;
+    if (error.code === "EPERM") return true;
+    throw error;
+  }
+}
+function orphanedLockIsOldEnough(lock, orphanGrace) {
+  try {
+    return Date.now() - statSync(lock).mtimeMs >= orphanGrace;
+  } catch (error) {
+    if (error.code === "ENOENT") return false;
+    throw error;
+  }
+}
+function lockCanBeReclaimed(lock, orphanGrace) {
+  try {
+    const owner = JSON.parse(readFileSync(join(lock, "owner.json"), "utf8"));
+    if (!owner || typeof owner.ownerToken !== "string" || !Number.isSafeInteger(Number(owner.pid)) || Number(owner.pid) < 1) throw new TypeError("malformed initialization lock owner");
+    return !processIsAlive(Number(owner.pid));
+  } catch (error) {
+    if (error.code !== "ENOENT" && !(error instanceof SyntaxError) && !(error instanceof TypeError)) throw error;
+    return orphanedLockIsOldEnough(lock, orphanGrace);
+  }
+}
+function reclaimLock(lock) {
+  const stale = `${lock}.stale-${randomUUID()}`;
+  try {
+    renameSync(lock, stale);
+    rmSync(stale, { recursive: true, force: true });
+  } catch (error) {
+    if (error.code !== "ENOENT") throw error;
+  }
+}
+function acquireInitializationLock(lock, ownerToken) {
+  const deadline = Date.now() + Number(process.env.AIDEVOPS_COORDINATOR_INIT_LOCK_TIMEOUT_MS || 30000);
+  const orphanGrace = Number(process.env.AIDEVOPS_COORDINATOR_INIT_LOCK_ORPHAN_GRACE_MS || 1000);
+  while (true) {
+    try {
+      mkdirSync(lock, { mode: 0o700 });
+      writeFileSync(join(lock, "owner.json"), JSON.stringify({ ownerToken, pid: process.pid }), { mode: 0o600 });
+      return;
+    } catch (error) {
+      if (error.code !== "EEXIST") throw error;
+      if (lockCanBeReclaimed(lock, orphanGrace)) reclaimLock(lock);
+      if (Date.now() >= deadline) throw new Error("coordinator initialization lock timed out");
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 25);
+    }
+  }
+}
+function releaseInitializationLock(lock, ownerToken) {
+  try {
+    const owner = JSON.parse(readFileSync(join(lock, "owner.json"), "utf8"));
+    if (owner.ownerToken === ownerToken) rmSync(lock, { recursive: true, force: true });
+  } catch (error) {
+    if (error.code !== "ENOENT") throw error;
+  }
+}
+function bootstrapLocked(path) {
+  const lock = `${path}.init-lock`;
+  const ownerToken = randomUUID();
+  acquireInitializationLock(lock, ownerToken);
+  try {
+    if (!existsSync(path)) bootstrap(path);
+    secureFile(path);
+    const version = Number(sqlite(path, "SELECT value FROM coordinator_meta WHERE key='schema_version';\n"));
+    if (!Number.isSafeInteger(version) || version < 1 || version > SCHEMA_VERSION) throw new Error(`unsupported coordinator schema ${version}`);
+    migrate(path, version);
+    secureFile(path);
+  } finally {
+    releaseInitializationLock(lock, ownerToken);
+  }
+}
 function initialise(path = dbPath()) {
   mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
   chmodSync(dirname(path), 0o700);
-  if (!existsSync(path)) bootstrap(path);
-  secureFile(path);
-  const version = Number(sqlite(path, "SELECT value FROM coordinator_meta WHERE key='schema_version';\n"));
-  if (!Number.isSafeInteger(version) || version < 1 || version > SCHEMA_VERSION) throw new Error(`unsupported coordinator schema ${version}`);
-  migrate(path, version);
-  bootstrap(path);
-  secureFile(path);
+  bootstrapLocked(path);
   return path;
 }
 function activeOrigin(path) {
@@ -242,10 +361,16 @@ INSERT INTO terminal_evidence(operation_id,result_state,evidence_json,occurred_a
   maybeCrash("after-commit");
   return operationResult(path, operationId, payloadHash);
 }
-function publication({ operationId, taskId, payload = {} }, path = initialise()) {
+function publication({ operationId, taskId, repositoryId, repositoryPath, remoteName = "origin", branchName = "main", coalesceKey = "planning", maxAttempts = 5, payload = {} }, path = initialise()) {
   validId(operationId, "operation_id");
   if (!TASK_ID.test(taskId)) throw new TypeError("task_id is not canonical");
-  const payloadText = jsonText(payload, "payload");
+  if (repositoryId) validId(repositoryId, "repository_id");
+  if (repositoryId && (typeof repositoryPath !== "string" || !repositoryPath.startsWith("/") || repositoryPath.includes("\0"))) throw new TypeError("repository_path must be absolute");
+  if (repositoryId) validId(coalesceKey, "coalesce_key");
+  if (repositoryId && (!/^[A-Za-z0-9._-]+$/.test(remoteName) || !/^[A-Za-z0-9._/-]+$/.test(branchName) || branchName.includes(".."))) throw new TypeError("invalid Git publication target");
+  if (!Number.isSafeInteger(maxAttempts) || maxAttempts < 1 || maxAttempts > 20) throw new TypeError("max_attempts must be 1..20");
+  const behavior = { branchName, coalesceKey, maxAttempts, payload, remoteName, repositoryId: repositoryId || null, repositoryPath: repositoryPath || null, taskId };
+  const payloadText = jsonText(behavior, "publication behavior");
   const payloadHash = hashText(payloadText);
   const prior = operationResult(path, operationId, payloadHash);
   if (prior) return prior;
@@ -253,16 +378,95 @@ function publication({ operationId, taskId, payload = {} }, path = initialise())
   const timestamp = now();
   const result = { intentId, operationId, status: "retryable", taskId };
   const resultText = JSON.stringify(result);
+  const queueInsert = repositoryId ? `INSERT INTO publication_queue(intent_id,repository_id,repository_path,remote_name,branch_name,coalesce_key,sequence,available_at,max_attempts)
+SELECT ${sqlEscape(intentId)},${sqlEscape(repositoryId)},${sqlEscape(repositoryPath)},${sqlEscape(remoteName)},${sqlEscape(branchName)},${sqlEscape(coalesceKey)},COALESCE(MAX(sequence),0)+1,unixepoch(),${maxAttempts} FROM publication_queue;` : "";
   try {
     sqlite(path, `PRAGMA foreign_keys=ON; BEGIN IMMEDIATE;
 INSERT INTO operations VALUES (${sqlEscape(operationId)},'publication.intent',${sqlEscape(taskId)},${sqlEscape(payloadHash)},${sqlEscape(payloadText)},'retryable',${sqlEscape(resultText)},'sha3-256:'||lower(hex(sha3(${sqlEscape(resultText)},256))),${sqlEscape(timestamp)},${sqlEscape(timestamp)});
-INSERT INTO publication_intents VALUES (${sqlEscape(intentId)},${sqlEscape(operationId)},${sqlEscape(taskId)},${sqlEscape(payloadHash)},${sqlEscape(payloadText)},'retryable',${sqlEscape(timestamp)}); COMMIT;`);
+INSERT INTO publication_intents VALUES (${sqlEscape(intentId)},${sqlEscape(operationId)},${sqlEscape(taskId)},${sqlEscape(payloadHash)},${sqlEscape(payloadText)},'retryable',${sqlEscape(timestamp)});
+${queueInsert} COMMIT;`);
   } catch (error) {
     const raced = operationResult(path, operationId, payloadHash);
     if (!raced) throw error;
     return raced;
   }
   return result;
+}
+function leaseNext({ ownerId, leaseSeconds = 60, maxActive = 4 }, path = initialise()) {
+  validId(ownerId, "owner_id");
+  if (!Number.isSafeInteger(leaseSeconds) || leaseSeconds < 5 || leaseSeconds > 3600) throw new TypeError("lease_seconds must be 5..3600");
+  if (!Number.isSafeInteger(maxActive) || maxActive < 1 || maxActive > 32) throw new TypeError("max_active must be 1..32");
+  const clock = Math.floor(Date.now() / 1000);
+  const expires = clock + leaseSeconds;
+  sqlite(path, `BEGIN IMMEDIATE;
+DELETE FROM publication_leases WHERE expires_at<=${clock};
+CREATE TEMP TABLE lease_candidate(repository_id TEXT PRIMARY KEY);
+INSERT INTO lease_candidate SELECT q.repository_id FROM publication_queue q JOIN publication_intents i USING(intent_id)
+WHERE i.status='retryable' AND q.available_at<=${clock}
+AND q.sequence=(SELECT MIN(qh.sequence) FROM publication_queue qh JOIN publication_intents ih USING(intent_id) WHERE qh.repository_id=q.repository_id AND ih.status='retryable')
+AND NOT EXISTS (SELECT 1 FROM publication_leases l WHERE l.repository_id=q.repository_id)
+AND (SELECT COUNT(*) FROM publication_leases)<${maxActive} ORDER BY q.sequence LIMIT 1;
+UPDATE coordinator_meta SET value=CAST(value AS INTEGER)+1 WHERE key='publication_fence' AND EXISTS (SELECT 1 FROM lease_candidate);
+INSERT INTO publication_leases(repository_id,fencing_token,owner_id,expires_at,acquired_at)
+SELECT repository_id,(SELECT CAST(value AS INTEGER) FROM coordinator_meta WHERE key='publication_fence'),${sqlEscape(ownerId)},${expires},${clock} FROM lease_candidate;
+DROP TABLE lease_candidate; COMMIT;`);
+  const lease = rows(path, `SELECT repository_id AS repositoryId,fencing_token AS fencingToken,owner_id AS ownerId,expires_at AS expiresAt FROM publication_leases WHERE owner_id=${sqlEscape(ownerId)} ORDER BY acquired_at DESC LIMIT 1;`)[0];
+  if (!lease) return { batch: [], leased: false };
+  const first = rows(path, `SELECT q.coalesce_key,q.repository_path,q.remote_name,q.branch_name FROM publication_queue q JOIN publication_intents i USING(intent_id) WHERE q.repository_id=${sqlEscape(lease.repositoryId)} AND i.status='retryable' AND q.available_at<=${clock} ORDER BY q.sequence LIMIT 1;`)[0];
+  if (!first) return { batch: [], leased: false };
+  sqlite(path, `BEGIN IMMEDIATE; UPDATE publication_queue SET lease_token=${lease.fencingToken},attempt_count=attempt_count+1 WHERE intent_id IN (
+SELECT q.intent_id FROM publication_queue q JOIN publication_intents i USING(intent_id) WHERE q.repository_id=${sqlEscape(lease.repositoryId)} AND q.coalesce_key=${sqlEscape(first.coalesce_key)} AND q.repository_path=${sqlEscape(first.repository_path)} AND q.remote_name=${sqlEscape(first.remote_name)} AND q.branch_name=${sqlEscape(first.branch_name)} AND i.status='retryable' AND q.available_at<=${clock} AND q.sequence<COALESCE((SELECT MIN(q2.sequence) FROM publication_queue q2 JOIN publication_intents i2 USING(intent_id) WHERE q2.repository_id=q.repository_id AND i2.status='retryable' AND q2.available_at<=${clock} AND (q2.coalesce_key<>q.coalesce_key OR q2.repository_path<>q.repository_path OR q2.remote_name<>q.remote_name OR q2.branch_name<>q.branch_name)),9223372036854775807)); COMMIT;`);
+  const batch = rows(path, `SELECT q.intent_id AS intentId,q.sequence,q.repository_path AS repositoryPath,q.remote_name AS remoteName,q.branch_name AS branchName,q.attempt_count AS attemptCount,q.max_attempts AS maxAttempts,i.payload_json AS payloadJson FROM publication_queue q JOIN publication_intents i USING(intent_id) WHERE q.repository_id=${sqlEscape(lease.repositoryId)} AND q.lease_token=${lease.fencingToken} ORDER BY q.sequence;`).map((row) => { const behavior = JSON.parse(row.payloadJson); return { ...row, payload: behavior.payload ?? behavior }; });
+  return { ...lease, batch, leased: batch.length > 0 };
+}
+function checkLease({ ownerId, repositoryId, fencingToken }, path = initialise()) {
+  validId(ownerId, "owner_id"); validId(repositoryId, "repository_id");
+  const token = Number(fencingToken);
+  const owned = Number(sqlite(path, `SELECT COUNT(*) FROM publication_leases WHERE repository_id=${sqlEscape(repositoryId)} AND owner_id=${sqlEscape(ownerId)} AND fencing_token=${token} AND expires_at>unixepoch();`));
+  if (owned !== 1) throw new Error("stale publication fencing token");
+  return { fencingToken: token, owned: true, repositoryId };
+}
+function renewLease({ ownerId, repositoryId, fencingToken, leaseSeconds = 60 }, path = initialise()) {
+  validId(ownerId, "owner_id"); validId(repositoryId, "repository_id");
+  const clock = Math.floor(Date.now() / 1000);
+  const expires = clock + Number(leaseSeconds);
+  sqlite(path, `BEGIN IMMEDIATE; UPDATE publication_leases SET expires_at=${expires} WHERE repository_id=${sqlEscape(repositoryId)} AND owner_id=${sqlEscape(ownerId)} AND fencing_token=${Number(fencingToken)} AND expires_at>${clock}; CREATE TEMP TABLE assert_renew(value INTEGER CHECK(value=1)); INSERT INTO assert_renew VALUES(changes()); DROP TABLE assert_renew; COMMIT;`);
+  return { expiresAt: expires, fencingToken: Number(fencingToken), repositoryId };
+}
+function finishLease({ ownerId, repositoryId, fencingToken, status, evidence = {}, retryAfter = 0 }, path = initialise()) {
+  validId(ownerId, "owner_id"); validId(repositoryId, "repository_id");
+  if (!["published", "retryable", "terminal"].includes(status)) throw new TypeError("invalid worker result state");
+  const evidenceText = jsonText(evidence, "evidence", EVIDENCE_MAX_BYTES);
+  const token = Number(fencingToken);
+  if (status === "published" && (typeof evidence.commitSha !== "string" || !/^[0-9a-f]{40}(?:[0-9a-f]{24})?$/.test(evidence.commitSha))) throw new TypeError("published evidence requires the exact commit SHA");
+  const durableEvidence = jsonText({ ...evidence, fencingToken: token, ownerId }, "evidence", EVIDENCE_MAX_BYTES);
+  const timestamp = now();
+  const clock = Math.floor(Date.now() / 1000);
+  const retryAt = clock + Math.max(1, Number(retryAfter));
+  const count = Number(sqlite(path, `PRAGMA foreign_keys=ON; BEGIN IMMEDIATE;
+CREATE TEMP TABLE assert_owner(value INTEGER CHECK(value=1));
+INSERT INTO assert_owner SELECT COUNT(*) FROM publication_leases WHERE repository_id=${sqlEscape(repositoryId)} AND owner_id=${sqlEscape(ownerId)} AND fencing_token=${token} AND expires_at>${clock};
+CREATE TEMP TABLE finishing AS SELECT q.intent_id,q.attempt_count,q.max_attempts,i.operation_id,i.task_id,
+CASE WHEN ${sqlEscape(status)}='retryable' AND q.attempt_count>=q.max_attempts THEN 'terminal' ELSE ${sqlEscape(status)} END final_status
+FROM publication_queue q JOIN publication_intents i USING(intent_id) WHERE q.repository_id=${sqlEscape(repositoryId)} AND q.lease_token=${token};
+CREATE TEMP TABLE assert_batch(value INTEGER CHECK(value>0)); INSERT INTO assert_batch SELECT COUNT(*) FROM finishing;
+INSERT INTO publication_attempts(intent_id,attempt_number,status,evidence_json,occurred_at)
+SELECT f.intent_id,COALESCE((SELECT MAX(pa.attempt_number) FROM publication_attempts pa WHERE pa.intent_id=f.intent_id),0)+1,f.final_status,${sqlEscape(durableEvidence)},${sqlEscape(timestamp)} FROM finishing f;
+UPDATE publication_intents SET status=(SELECT final_status FROM finishing f WHERE f.intent_id=publication_intents.intent_id) WHERE intent_id IN (SELECT intent_id FROM finishing);
+UPDATE operations SET status=(SELECT final_status FROM finishing f WHERE f.operation_id=operations.operation_id),updated_at=${sqlEscape(timestamp)},
+result_json=(SELECT json_object('intentId',f.intent_id,'operationId',f.operation_id,'status',f.final_status,'taskId',f.task_id,'evidence',json(${sqlEscape(durableEvidence)})) FROM finishing f WHERE f.operation_id=operations.operation_id)
+WHERE operation_id IN (SELECT operation_id FROM finishing);
+UPDATE operations SET result_hash='sha3-256:'||lower(hex(sha3(result_json,256))) WHERE operation_id IN (SELECT operation_id FROM finishing);
+INSERT INTO terminal_evidence(operation_id,result_state,evidence_json,occurred_at)
+SELECT operation_id,final_status,${sqlEscape(durableEvidence)},${sqlEscape(timestamp)} FROM finishing WHERE final_status IN ('published','terminal','conflict');
+UPDATE publication_queue SET available_at=${retryAt},lease_token=NULL WHERE intent_id IN (SELECT intent_id FROM finishing WHERE final_status='retryable');
+DELETE FROM publication_leases WHERE repository_id=${sqlEscape(repositoryId)} AND owner_id=${sqlEscape(ownerId)} AND fencing_token=${token};
+SELECT COUNT(*) FROM finishing; COMMIT;`));
+  return { count, repositoryId, status };
+}
+function publicationMetrics(path = initialise()) {
+  const states = rows(path, "SELECT i.status,COUNT(*) AS count FROM publication_intents i GROUP BY i.status;");
+  return { activeLeases: Number(sqlite(path, "SELECT COUNT(*) FROM publication_leases WHERE expires_at>unixepoch();")), queueDepth: Number(sqlite(path, "SELECT COUNT(*) FROM publication_queue q JOIN publication_intents i USING(intent_id) WHERE i.status='retryable';")), states };
 }
 function attempt({ intentId, status, evidence = {} }, path = initialise()) {
   validId(intentId, "intent_id");
@@ -342,6 +546,104 @@ function resolveIssue({ taskId, forge = "github", repositoryId }, path = initial
   if (matches.length !== 1) throw new Error("issue mapping not found");
   return { ...matches[0], syncMetadata: JSON.parse(matches[0].syncMetadataJson) };
 }
+function reconciliationTargets({ repositoryId, limit = 100 }, path = initialise()) {
+  validId(repositoryId, "repository_id");
+  if (!Number.isSafeInteger(limit) || limit < 1 || limit > 500) throw new TypeError("limit must be 1..500");
+  const targets = rows(path, `SELECT task_id AS taskId,issue_id AS subjectId,display_number AS displayNumber,state_cursor AS stateCursor FROM issue_mappings WHERE forge='github' AND repository_id=${sqlEscape(repositoryId)} ORDER BY COALESCE(state_cursor,'') ASC,display_number ASC LIMIT ${limit};`);
+  return { bounded: true, repositoryId, targets };
+}
+function forgeEventInput(input) {
+  const operationId = validId(input.operationId, "operation_id");
+  const repositoryId = validId(input.repositoryId, "repository_id");
+  const repositorySlug = input.repositorySlug;
+  if (typeof repositorySlug !== "string" || !/^[^/\s]+\/[^/\s]+$/.test(repositorySlug)) throw new TypeError("repository_slug is not canonical");
+  const eventKind = input.eventKind;
+  const action = input.action;
+  if (!FORGE_EVENT_KINDS.has(eventKind)) throw new TypeError("unsupported forge event kind");
+  if (!FORGE_EVENT_ACTIONS.has(action)) throw new TypeError("unsupported forge event action");
+  const subjectId = validId(input.subjectId, "subject_id");
+  const deliveryId = validId(input.deliveryId, "delivery_id");
+  const cursorTiebreaker = validId(input.cursorTiebreaker, "cursor_tiebreaker");
+  const cursor = input.cursor;
+  if (typeof cursor !== "string" || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/.test(cursor) || !Number.isFinite(Date.parse(cursor))) {
+    throw new TypeError("cursor must be a canonical UTC RFC3339 timestamp");
+  }
+  const repositoryPath = input.repositoryPath;
+  if (repositoryPath && (typeof repositoryPath !== "string" || !repositoryPath.startsWith("/") || repositoryPath.includes("\0"))) throw new TypeError("repository_path must be absolute");
+  const taskId = input.taskId || null;
+  if (taskId && !TASK_ID.test(taskId)) throw new TypeError("task_id is not canonical");
+  if (eventKind === "manual" && !taskId) throw new TypeError("manual events require an explicit trusted task mapping");
+  return { operationId, repositoryId, repositorySlug, eventKind, action, subjectId, deliveryId, cursorTiebreaker, repositoryPath, taskId, cursor: new Date(cursor).toISOString() };
+}
+function transitionForEvent(eventKind, action) {
+  if (eventKind === "push") return "repository.projection_changed";
+  if (eventKind === "manual") return "task.reconcile_requested";
+  const transitions = {
+    assigned: "task.claimed",
+    closed: "task.completed",
+    edited: "task.metadata_changed",
+    merged: "task.completed",
+    opened: "task.available",
+    reopened: "task.available",
+  };
+  return transitions[action] || "task.metadata_changed";
+}
+function forgeEventMapping(path, value) {
+  if (value.eventKind === "push") return null;
+  const selector = value.taskId ? `task_id=${sqlEscape(value.taskId)}` : `issue_id=${sqlEscape(value.subjectId)}`;
+  return rows(path, `SELECT task_id AS taskId FROM issue_mappings WHERE forge='github' AND repository_id=${sqlEscape(value.repositoryId)} AND ${selector};`)[0];
+}
+function forgeEventCursor(path, value) {
+  return rows(path, `SELECT cursor_timestamp AS cursorTimestamp,cursor_tiebreaker AS cursorTiebreaker,payload_hash AS payloadHash FROM forge_event_cursors WHERE forge='github' AND repository_id=${sqlEscape(value.repositoryId)} AND subject_kind=${sqlEscape(value.eventKind)} AND subject_id=${sqlEscape(value.subjectId)};`)[0];
+}
+function prepareForgeEvent(value, path, transitionKind, payloadText, payloadHash) {
+  const mapping = forgeEventMapping(path, value);
+  const priorCursor = forgeEventCursor(path, value);
+  const timestamp = now();
+  const ordering = priorCursor ? value.cursor.localeCompare(priorCursor.cursorTimestamp) || value.cursorTiebreaker.localeCompare(priorCursor.cursorTiebreaker) : 1;
+  const stale = ordering < 0 || (ordering === 0 && priorCursor?.payloadHash === payloadHash);
+  const conflict = ordering === 0 && priorCursor?.payloadHash !== payloadHash;
+  const repositoryOnly = value.eventKind === "push";
+  const status = conflict ? "conflict" : stale ? "stale" : (!mapping && !repositoryOnly) ? "unmapped" : "accepted";
+  const shouldPublish = status === "accepted" && Boolean(mapping && value.repositoryPath);
+  const intentId = shouldPublish ? randomUUID() : null;
+  const result = { action: value.action, deliveryId: value.deliveryId, eventKind: value.eventKind, mappingMode: repositoryOnly ? "trusted-repository" : value.taskId ? "explicit-task" : "immutable-subject", operationId: value.operationId, repositoryId: value.repositoryId, status, taskId: mapping?.taskId || null, transitionKind };
+  const resultText = JSON.stringify(result);
+  const projection = shouldPublish ? jsonText({ branchName: "main", coalesceKey: "forge-event", maxAttempts: 5, payload: { paths: ["TODO.md"], projection: "forge-event", transition: { kind: transitionKind, taskId: mapping.taskId } }, remoteName: "origin", repositoryId: value.repositoryId, repositoryPath: value.repositoryPath, taskId: mapping.taskId }, "projection") : null;
+  return { conflict, intentId, mapping, payloadHash, payloadText, projection, result, resultText, shouldPublish, status, timestamp, transitionKind, value };
+}
+function forgeEventTransactionSql(event) {
+  const { conflict, intentId, mapping, payloadHash, payloadText, projection, resultText, shouldPublish, status, timestamp, transitionKind, value } = event;
+  const cursorSql = status === "accepted" ? `INSERT INTO forge_event_cursors(forge,repository_id,subject_kind,subject_id,cursor_timestamp,cursor_tiebreaker,payload_hash,operation_id,transition_kind,accepted_at)
+VALUES ('github',${sqlEscape(value.repositoryId)},${sqlEscape(value.eventKind)},${sqlEscape(value.subjectId)},${sqlEscape(value.cursor)},${sqlEscape(value.cursorTiebreaker)},${sqlEscape(payloadHash)},${sqlEscape(value.operationId)},${sqlEscape(transitionKind)},${sqlEscape(timestamp)})
+ON CONFLICT(forge,repository_id,subject_kind,subject_id) DO UPDATE SET cursor_timestamp=excluded.cursor_timestamp,cursor_tiebreaker=excluded.cursor_tiebreaker,payload_hash=excluded.payload_hash,operation_id=excluded.operation_id,transition_kind=excluded.transition_kind,accepted_at=excluded.accepted_at;` : "";
+  const publicationSql = shouldPublish ? `INSERT INTO publication_intents(intent_id,operation_id,task_id,payload_hash,payload_json,status,created_at) VALUES (${sqlEscape(intentId)},${sqlEscape(value.operationId)},${sqlEscape(mapping.taskId)},${sqlEscape(hashText(projection))},${sqlEscape(projection)},'retryable',${sqlEscape(timestamp)});
+INSERT INTO publication_queue(intent_id,repository_id,repository_path,remote_name,branch_name,coalesce_key,sequence,available_at,max_attempts) SELECT ${sqlEscape(intentId)},${sqlEscape(value.repositoryId)},${sqlEscape(value.repositoryPath)},'origin','main','forge-event',COALESCE(MAX(sequence),0)+1,unixepoch(),5 FROM publication_queue;` : "";
+  const terminalState = conflict ? "conflict" : "terminal";
+  return `PRAGMA foreign_keys=ON; BEGIN IMMEDIATE;
+INSERT INTO operations(operation_id,kind,task_id,payload_hash,payload_json,status,result_json,result_hash,created_at,updated_at)
+VALUES (${sqlEscape(value.operationId)},'forge.event',${sqlEscape(mapping?.taskId || null)},${sqlEscape(payloadHash)},${sqlEscape(payloadText)},${sqlEscape(terminalState)},${sqlEscape(resultText)},'sha3-256:'||lower(hex(sha3(${sqlEscape(resultText)},256))),${sqlEscape(timestamp)},${sqlEscape(timestamp)});
+${cursorSql}
+${publicationSql}
+INSERT INTO terminal_evidence(operation_id,result_state,evidence_json,occurred_at) VALUES (${sqlEscape(value.operationId)},${sqlEscape(terminalState)},${sqlEscape(JSON.stringify({ status, transitionKind }))},${sqlEscape(timestamp)}); COMMIT;`;
+}
+function forgeEvent(input, path = initialise()) {
+  const value = forgeEventInput(input);
+  const transitionKind = transitionForEvent(value.eventKind, value.action);
+  const payloadText = jsonText({ action: value.action, cursor: value.cursor, cursorTiebreaker: value.cursorTiebreaker, deliveryId: value.deliveryId, eventKind: value.eventKind, repositoryId: value.repositoryId, subjectId: value.subjectId, taskId: value.taskId, transitionKind }, "forge event");
+  const payloadHash = hashText(payloadText);
+  const prior = operationResult(path, value.operationId, payloadHash);
+  if (prior) return prior;
+  const event = prepareForgeEvent(value, path, transitionKind, payloadText, payloadHash);
+  try {
+    sqlite(path, forgeEventTransactionSql(event));
+  } catch (error) {
+    const raced = operationResult(path, value.operationId, payloadHash);
+    if (!raced) throw error;
+    return raced;
+  }
+  return event.result;
+}
 function validateRestoreEvidence(evidence, fencingToken) {
   const text = jsonText(evidence, "registry_evidence", EVIDENCE_MAX_BYTES);
   if (evidence.cas !== "winner" || evidence.prior_revoked !== true || evidence.fencing_token !== fencingToken || !validId(evidence.transfer_record_id, "transfer_record_id")) {
@@ -388,24 +690,39 @@ function verify(path = initialise()) {
   const result = { duplicateTasks, foreignKeyErrors: foreignKeys.length, incompleteOperations, quickCheck, schemaVersion: SCHEMA_VERSION };
   return { ...result, ok: quickCheck === "ok" && foreignKeys.length === 0 && duplicateTasks === 0 && incompleteOperations === 0 };
 }
+function checkpoint(path = initialise()) {
+  const result = sqlite(path, "PRAGMA wal_checkpoint(TRUNCATE);\n");
+  return { checkpointed: result === "0|0|0" || result === "0|0|0\n", result };
+}
 
 function parseJson(value = "{}") { return JSON.parse(value); }
 function option(args, name, fallback = "") { const index = args.indexOf(name); return index >= 0 && index + 1 < args.length ? args[index + 1] : fallback; }
+const COMMAND_HANDLERS = {
+  allocate: (args, path) => allocate({ operationId: option(args, "--operation-id") || randomUUID(), count: Number(option(args, "--count", "1")), legacyId: option(args, "--legacy-id"), payload: parseJson(option(args, "--payload", "{}")) }, path),
+  "publication-intent": (args, path) => publication({ operationId: option(args, "--operation-id"), taskId: option(args, "--task-id"), repositoryId: option(args, "--repository-id"), repositoryPath: option(args, "--repository-path"), remoteName: option(args, "--remote", "origin"), branchName: option(args, "--branch", "main"), coalesceKey: option(args, "--coalesce-key", "planning"), maxAttempts: Number(option(args, "--max-attempts", "5")), payload: parseJson(option(args, "--payload", "{}")) }, path),
+  "lease-next": (args, path) => leaseNext({ ownerId: option(args, "--owner-id"), leaseSeconds: Number(option(args, "--lease-seconds", "60")), maxActive: Number(option(args, "--max-active", "4")) }, path),
+  "lease-check": (args, path) => checkLease({ ownerId: option(args, "--owner-id"), repositoryId: option(args, "--repository-id"), fencingToken: Number(option(args, "--fencing-token")) }, path),
+  "lease-renew": (args, path) => renewLease({ ownerId: option(args, "--owner-id"), repositoryId: option(args, "--repository-id"), fencingToken: Number(option(args, "--fencing-token")), leaseSeconds: Number(option(args, "--lease-seconds", "60")) }, path),
+  "lease-finish": (args, path) => finishLease({ ownerId: option(args, "--owner-id"), repositoryId: option(args, "--repository-id"), fencingToken: Number(option(args, "--fencing-token")), status: option(args, "--status"), retryAfter: Number(option(args, "--retry-after", "0")), evidence: parseJson(option(args, "--evidence", "{}")) }, path),
+  "publication-metrics": (_args, path) => publicationMetrics(path),
+  attempt: (args, path) => attempt({ intentId: option(args, "--intent-id"), status: option(args, "--status"), evidence: parseJson(option(args, "--evidence", "{}")) }, path),
+  transition: (args, path) => transition({ state: option(args, "--state"), fencingToken: option(args, "--fencing-token"), evidence: parseJson(option(args, "--evidence", "{}")) }, path),
+  "bind-issue": (args, path) => bindIssue({ taskId: option(args, "--task-id"), forge: option(args, "--forge", "github"), repositoryId: option(args, "--repository-id"), repositorySlug: option(args, "--repository-slug"), role: option(args, "--role", "home"), issueId: option(args, "--issue-id"), projectId: option(args, "--project-id"), displayNumber: option(args, "--display-number"), stateCursor: option(args, "--state-cursor"), syncMetadata: parseJson(option(args, "--sync-metadata", "{}")) }, path),
+  "resolve-issue": (args, path) => resolveIssue({ taskId: option(args, "--task-id"), forge: option(args, "--forge", "github"), repositoryId: option(args, "--repository-id") }, path),
+  "reconciliation-targets": (args, path) => reconciliationTargets({ repositoryId: option(args, "--repository-id"), limit: Number(option(args, "--limit", "100")) }, path),
+  "forge-event": (args, path) => forgeEvent({ operationId: option(args, "--operation-id"), deliveryId: option(args, "--delivery-id"), cursorTiebreaker: option(args, "--cursor-tiebreaker"), repositoryId: option(args, "--repository-id"), repositorySlug: option(args, "--repository-slug"), repositoryPath: option(args, "--repository-path"), taskId: option(args, "--task-id"), eventKind: option(args, "--event-kind"), action: option(args, "--action"), subjectId: option(args, "--subject-id"), cursor: option(args, "--cursor") }, path),
+  restore: (args, path) => restore({ backupPath: option(args, "--backup"), registryEvidence: parseJson(option(args, "--registry-evidence", "{}")), priorEpoch: Number(option(args, "--prior-epoch")), newEpoch: Number(option(args, "--new-epoch")), fencingToken: option(args, "--fencing-token"), publishedHighWater: Number(option(args, "--published-high-water", "0")) }, path),
+  verify: (_args, path) => verify(path),
+  checkpoint: (_args, path) => checkpoint(path),
+  status: (_args, path) => ({ ...activeOrigin(path), dbPath: path }),
+};
 export function run(args = process.argv.slice(2)) {
   const command = args[0] || "help";
-  if (["help", "--help", "-h"].includes(command)) { process.stdout.write("Usage: task-coordinator.mjs allocate|publication-intent|attempt|transition|bind-issue|resolve-issue|restore|verify|status\n"); return 0; }
+  if (["help", "--help", "-h"].includes(command)) { process.stdout.write("Usage: task-coordinator.mjs allocate|publication-intent|lease-next|lease-check|lease-renew|lease-finish|publication-metrics|attempt|transition|bind-issue|resolve-issue|forge-event|restore|verify|status\n"); return 0; }
+  const handler = COMMAND_HANDLERS[command];
   const path = initialise();
-  let result;
-  if (command === "allocate") result = allocate({ operationId: option(args, "--operation-id") || randomUUID(), count: Number(option(args, "--count", "1")), legacyId: option(args, "--legacy-id"), payload: parseJson(option(args, "--payload", "{}")) }, path);
-  else if (command === "publication-intent") result = publication({ operationId: option(args, "--operation-id"), taskId: option(args, "--task-id"), payload: parseJson(option(args, "--payload", "{}")) }, path);
-  else if (command === "attempt") result = attempt({ intentId: option(args, "--intent-id"), status: option(args, "--status"), evidence: parseJson(option(args, "--evidence", "{}")) }, path);
-  else if (command === "transition") result = transition({ state: option(args, "--state"), fencingToken: option(args, "--fencing-token"), evidence: parseJson(option(args, "--evidence", "{}")) }, path);
-  else if (command === "bind-issue") result = bindIssue({ taskId: option(args, "--task-id"), forge: option(args, "--forge", "github"), repositoryId: option(args, "--repository-id"), repositorySlug: option(args, "--repository-slug"), role: option(args, "--role", "home"), issueId: option(args, "--issue-id"), projectId: option(args, "--project-id"), displayNumber: option(args, "--display-number"), stateCursor: option(args, "--state-cursor"), syncMetadata: parseJson(option(args, "--sync-metadata", "{}")) }, path);
-  else if (command === "resolve-issue") result = resolveIssue({ taskId: option(args, "--task-id"), forge: option(args, "--forge", "github"), repositoryId: option(args, "--repository-id") }, path);
-  else if (command === "restore") result = restore({ backupPath: option(args, "--backup"), registryEvidence: parseJson(option(args, "--registry-evidence", "{}")), priorEpoch: Number(option(args, "--prior-epoch")), newEpoch: Number(option(args, "--new-epoch")), fencingToken: option(args, "--fencing-token"), publishedHighWater: Number(option(args, "--published-high-water", "0")) }, path);
-  else if (command === "verify") result = verify(path);
-  else if (command === "status") result = { ...activeOrigin(path), dbPath: path };
-  else throw new TypeError(`unknown task-coordinator command: ${command}`);
+  if (!handler) throw new TypeError(`unknown task-coordinator command: ${command}`);
+  const result = handler(args, path);
   process.stdout.write(`${JSON.stringify(result)}\n`);
   return result.ok === false ? 1 : 0;
 }
@@ -414,4 +731,4 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   try { process.exitCode = run(); } catch (error) { process.stderr.write(`task-coordinator: ${error.message}\n`); process.exitCode = 1; }
 }
 
-export { allocate, backup, bindIssue, hashPayload, initialise, resolveIssue, restore, verify };
+export { allocate, backup, bindIssue, forgeEvent, hashPayload, initialise, leaseNext, publicationMetrics, resolveIssue, restore, verify };

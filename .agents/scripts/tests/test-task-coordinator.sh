@@ -111,12 +111,12 @@ node "$COORDINATOR" restore --backup "$backup" --registry-evidence '{"cas":"winn
 [[ "$(node "$COORDINATOR" status | jq -r '.sequence')" == "100" ]]
 [[ -n "$(ls "${TEST_ROOT}"/coordinator.db-backup-*-pre-restore.db)" ]]
 
-# A real v1 schema migrates through v2 to v3 only after verified backups.
+# A real v1 schema migrates through every version only after verified backups.
 migration_db="${TEST_ROOT}/migration.db"
 AIDEVOPS_TASK_COORDINATOR_DB="$migration_db" node "$COORDINATOR" status >/dev/null
-sqlite3 "$migration_db" "DROP TABLE issue_mappings; ALTER TABLE operations DROP COLUMN result_hash; ALTER TABLE restore_controls DROP COLUMN backup_high_water; UPDATE coordinator_meta SET value='1' WHERE key='schema_version'; UPDATE migration_history SET version=1 WHERE version=3;"
+sqlite3 "$migration_db" "DROP TABLE issue_mappings; DROP TABLE forge_event_cursors; ALTER TABLE operations DROP COLUMN result_hash; ALTER TABLE restore_controls DROP COLUMN backup_high_water; UPDATE coordinator_meta SET value='1' WHERE key='schema_version'; DELETE FROM migration_history; INSERT INTO migration_history VALUES(1,'2026-01-01T00:00:00Z',NULL,'ok');"
 AIDEVOPS_TASK_COORDINATOR_DB="$migration_db" node "$COORDINATOR" status >/dev/null
-[[ "$(sqlite3 "$migration_db" "SELECT value FROM coordinator_meta WHERE key='schema_version';")" == "3" ]]
+[[ "$(sqlite3 "$migration_db" "SELECT value FROM coordinator_meta WHERE key='schema_version';")" == "5" ]]
 [[ "$(sqlite3 "$migration_db" "SELECT COUNT(*) FROM pragma_table_info('operations') WHERE name='result_hash';")" == "1" ]]
 [[ -n "$(ls "${TEST_ROOT}"/migration.db-backup-*-pre-migrate-v2.db)" ]]
 [[ -n "$(ls "${TEST_ROOT}"/migration.db-backup-*-pre-migrate-v3.db)" ]]
@@ -124,11 +124,11 @@ AIDEVOPS_TASK_COORDINATOR_DB="$migration_db" node "$COORDINATOR" status >/dev/nu
 # An untouched v2 database is backed up before any v3 table is applied.
 v2_db="${TEST_ROOT}/v2.db"
 AIDEVOPS_TASK_COORDINATOR_DB="$v2_db" node "$COORDINATOR" status >/dev/null
-sqlite3 "$v2_db" "DROP TABLE issue_mappings; UPDATE coordinator_meta SET value='2' WHERE key='schema_version'; DELETE FROM migration_history WHERE version=3; INSERT OR IGNORE INTO migration_history VALUES(2,'2026-01-01T00:00:00Z',NULL,'ok');"
+sqlite3 "$v2_db" "DROP TABLE issue_mappings; DROP TABLE forge_event_cursors; UPDATE coordinator_meta SET value='2' WHERE key='schema_version'; DELETE FROM migration_history WHERE version=5; INSERT OR IGNORE INTO migration_history VALUES(2,'2026-01-01T00:00:00Z',NULL,'ok');"
 AIDEVOPS_TASK_COORDINATOR_DB="$v2_db" node "$COORDINATOR" status >/dev/null
 v2_backup=$(ls "${TEST_ROOT}"/v2.db-backup-*-pre-migrate-v3.db)
 [[ "$(sqlite3 "$v2_backup" "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='issue_mappings';")" == "0" ]]
-[[ "$(sqlite3 "$v2_db" "SELECT value FROM coordinator_meta WHERE key='schema_version';")" == "3" ]]
+[[ "$(sqlite3 "$v2_db" "SELECT value FROM coordinator_meta WHERE key='schema_version';")" == "5" ]]
 
 # Immutable task/repository identities isolate equal display numbers and allow
 # one task to retain home, implementation, and upstream issue projections.
@@ -182,6 +182,54 @@ if node "$COORDINATOR" bind-issue --task-id "$mapping_task" --repository-id R_ho
 fi
 [[ "$(node "$COORDINATOR" resolve-issue --task-id "$mapping_task" --repository-id R_home | jq -r '.syncMetadata.state')" == "CLOSED" ]]
 
+# Forge deliveries resolve by immutable repository and subject identities only,
+# advance one mapped task, and route its projection through the durable outbox.
+forge_first=$(node "$COORDINATOR" forge-event --operation-id delivery-1 --repository-id R_home \
+	--delivery-id delivery-1 --cursor-tiebreaker run-10 --repository-slug renamed/home --repository-path "$TEST_ROOT" \
+	--event-kind issue --action reopened --subject-id I_home --cursor 2026-07-12T12:00:00Z)
+[[ "$(printf '%s' "$forge_first" | jq -r '.taskId')" == "$mapping_task" ]]
+[[ "$(printf '%s' "$forge_first" | jq -r '.status')" == "accepted" ]]
+[[ "$(printf '%s' "$forge_first" | jq -r '.transitionKind')" == "task.available" ]]
+[[ "$(sqlite3 "$AIDEVOPS_TASK_COORDINATOR_DB" "SELECT COUNT(*) FROM publication_intents WHERE operation_id='delivery-1';")" == "1" ]]
+[[ "$(sqlite3 "$AIDEVOPS_TASK_COORDINATOR_DB" "SELECT COUNT(*) FROM publication_queue q JOIN publication_intents i USING(intent_id) WHERE i.operation_id='delivery-1';")" == "1" ]]
+[[ "$(node "$COORDINATOR" forge-event --operation-id delivery-1 --delivery-id delivery-1 --cursor-tiebreaker run-10 --repository-id R_home --repository-slug renamed/home --repository-path "$TEST_ROOT" --event-kind issue --action reopened --subject-id I_home --cursor 2026-07-12T12:00:00Z)" == "$forge_first" ]]
+stale_forge=$(node "$COORDINATOR" forge-event --operation-id delivery-stale --repository-id R_home \
+	--delivery-id delivery-stale --cursor-tiebreaker run-11 --repository-slug attacker/ignored --event-kind issue --action closed --subject-id I_home --cursor 2026-07-12T11:30:00Z)
+[[ "$(printf '%s' "$stale_forge" | jq -r '.status')" == "stale" ]]
+[[ "$(node "$COORDINATOR" resolve-issue --task-id "$mapping_task" --repository-id R_home | jq -r '.repositorySlug')" == "renamed/home" ]]
+unmapped_forge=$(node "$COORDINATOR" forge-event --operation-id delivery-unmapped --repository-id R_home \
+	--delivery-id delivery-unmapped --cursor-tiebreaker run-12 --repository-slug attacker/ignored --event-kind pull_request --action merged --subject-id I_unmapped --cursor 2026-07-12T13:00:00Z)
+[[ "$(printf '%s' "$unmapped_forge" | jq -r '.status')" == "unmapped" ]]
+[[ "$(sqlite3 "$AIDEVOPS_TASK_COORDINATOR_DB" "SELECT COUNT(*) FROM publication_intents WHERE operation_id IN ('delivery-stale','delivery-unmapped');")" == "0" ]]
+
+# Equal timestamps are ordered by delivery/run identity rather than silently lost.
+equal_forge=$(node "$COORDINATOR" forge-event --operation-id delivery-equal --delivery-id delivery-equal \
+	--cursor-tiebreaker run-20 --repository-id R_home --repository-slug renamed/home --repository-path "$TEST_ROOT" \
+	--event-kind issue --action closed --subject-id I_home --cursor 2026-07-12T12:00:00Z)
+[[ "$(printf '%s' "$equal_forge" | jq -r '.status')" == "accepted" ]]
+[[ "$(printf '%s' "$equal_forge" | jq -r '.transitionKind')" == "task.completed" ]]
+conflict_forge=$(node "$COORDINATOR" forge-event --operation-id delivery-conflict --delivery-id delivery-conflict \
+	--cursor-tiebreaker run-20 --repository-id R_home --repository-slug renamed/home \
+	--event-kind issue --action edited --subject-id I_home --cursor 2026-07-12T12:00:00Z)
+[[ "$(printf '%s' "$conflict_forge" | jq -r '.status')" == "conflict" ]]
+
+# Pushes use trusted repository semantics and never attempt SHA-to-issue mapping.
+push_forge=$(node "$COORDINATOR" forge-event --operation-id delivery-push --delivery-id delivery-push \
+	--cursor-tiebreaker run-30 --repository-id R_home --repository-slug renamed/home \
+	--event-kind push --action pushed --subject-id aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa --cursor 2026-07-12T14:00:00Z)
+[[ "$(printf '%s' "$push_forge" | jq -r '.mappingMode')" == "trusted-repository" ]]
+[[ "$(printf '%s' "$push_forge" | jq -r '.taskId')" == "null" ]]
+
+# Repository identity isolates otherwise identical subjects and cursors.
+other_repo=$(node "$COORDINATOR" forge-event --operation-id delivery-other-repo --delivery-id delivery-other-repo \
+	--cursor-tiebreaker run-10 --repository-id R_other --repository-slug owner/other \
+	--event-kind issue --action opened --subject-id I_home --cursor 2026-07-12T12:00:00Z)
+[[ "$(printf '%s' "$other_repo" | jq -r '.status')" == "unmapped" ]]
+
+# A fresh process observes the same durable cursor and outbox after restart.
+node "$COORDINATOR" status >/dev/null
+[[ "$(sqlite3 "$AIDEVOPS_TASK_COORDINATOR_DB" "SELECT transition_kind FROM forge_event_cursors WHERE repository_id='R_home' AND subject_id='I_home';")" == "task.completed" ]]
+
 # Concurrent conflicting first binds are serialized in SQLite: exactly one
 # identity wins and every competing identity fails without overwriting it.
 for i in $(seq 1 12); do
@@ -226,9 +274,18 @@ printf '%s' "$namespaced" | grep -q '^task_count=3$'
 # Shadow mode records the legacy identity but never replaces CAS output.
 (
 	SCRIPT_DIR="${SCRIPT_DIR}/.."
-	log_info() { :; return 0; }
-	log_warn() { :; return 0; }
-	log_error() { :; return 0; }
+	log_info() {
+		:
+		return 0
+	}
+	log_warn() {
+		:
+		return 0
+	}
+	log_error() {
+		:
+		return 0
+	}
 	# shellcheck source=../claim-task-id-counter.sh
 	source "${SCRIPT_DIR}/claim-task-id-counter.sh"
 	AIDEVOPS_TASK_COORDINATOR_MODE=shadow AIDEVOPS_TASK_COORDINATOR_SHADOW_ENABLED=1 _task_coordinator_shadow_legacy 321 1

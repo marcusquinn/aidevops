@@ -179,7 +179,6 @@ test_concurrent_registration_writes() {
 	/usr/bin/git -C "$root_a" add package.json
 	/usr/bin/git -C "$root_b" add package.json
 	jq -n --arg a "$root_a" --arg b "$root_b" '{initialized_repos:[{path:$a,features:[]},{path:$b,features:[]}]}' >"$repos_file"
-	printf '%s\n' '99999999' >"${repos_file}.aidevops-lock"
 	(AIDEVOPS_REPOS_FILE="$repos_file" repo_verify_migrate_registration "$root_a") &
 	local pid_a=$!
 	(AIDEVOPS_REPOS_FILE="$repos_file" repo_verify_migrate_registration "$root_b") &
@@ -187,6 +186,7 @@ test_concurrent_registration_writes() {
 	wait "$pid_a"
 	wait "$pid_b"
 	assert_equal "2" "$(jq '[.initialized_repos[] | select((.features // []) | index("code-quality"))] | length' "$repos_file")" "concurrent registration migrations preserve both updates"
+	assert_equal "0" "$(find "$1" -maxdepth 1 -name '*.aidevops-lock' -o -name '*.aidevops-ready.*' | wc -l | tr -d ' ')" "repo verify leaves no lock or readiness artifacts beside targets"
 	return 0
 }
 

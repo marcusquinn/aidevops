@@ -107,7 +107,7 @@ assert_file_not_contains "${LAST_CASE_DIR}/gh.log" "auth status" "plain fetch su
 run_case github_fallback FAKE_FETCH_MODE=auth_then_success FAKE_REMOTE_URL=https://github.com/example/repo.git
 assert_rc 0 "$LAST_CASE_RC" "GitHub auth failure retries successfully"
 assert_file_contains "${LAST_CASE_DIR}/git.log" "credential.helper=!gh auth git-credential" "GitHub auth fallback uses transient gh credential helper"
-assert_file_contains "${LAST_CASE_DIR}/home/.aidevops/logs/repo-sync.log" "retrying git fetch with gh credential helper" "GitHub auth fallback is logged without credentials"
+assert_file_contains "${LAST_CASE_DIR}/home/.aidevops/logs/repo-sync.log" "retrying git ls-remote with gh credential helper" "GitHub auth fallback is logged without credentials"
 assert_file_not_contains "${LAST_CASE_DIR}/home/.aidevops/logs/repo-sync.log" "SECRET_TOKEN_github_fallback" "GitHub auth fallback log does not contain token"
 assert_file_not_contains "${LAST_CASE_DIR}/git.log" "SECRET_TOKEN_github_fallback" "GitHub auth fallback command line does not contain token"
 
@@ -117,12 +117,12 @@ assert_file_not_contains "${LAST_CASE_DIR}/git.log" "credential.helper=!gh auth 
 
 run_case dirty_skip FAKE_DIRTY=1 FAKE_FETCH_MODE=auth_then_success
 assert_rc 0 "$LAST_CASE_RC" "dirty worktree remains skipped"
-assert_file_not_contains "${LAST_CASE_DIR}/git.log" "fetch origin main" "dirty worktree skips fetch before auth fallback"
+assert_file_not_contains "${LAST_CASE_DIR}/git.log" "ls-remote origin" "dirty worktree skips remote diagnostic before auth fallback"
 
-run_case diverged_pull FAKE_FETCH_MODE=success FAKE_LOCAL_SHA=aaaa FAKE_UPSTREAM_SHA=bbbb FAKE_PULL_MODE=diverged
-assert_rc 1 "$LAST_CASE_RC" "diverged pull still fails"
-assert_file_not_contains "${LAST_CASE_DIR}/git.log" "credential.helper=!gh auth git-credential" "diverged pull does not use auth fallback"
-assert_file_contains "${LAST_CASE_DIR}/home/.aidevops/logs/repo-sync.log" "git pull --ff-only failed (diverged?)" "diverged pull keeps existing failure message"
+run_case diverged_pull FAKE_FETCH_MODE=success FAKE_LOCAL_SHA=aaaa FAKE_UPSTREAM_SHA=bbbb
+assert_rc 0 "$LAST_CASE_RC" "diverged canonical is diagnostic-only"
+assert_file_not_contains "${LAST_CASE_DIR}/git.log" " pull " "diverged canonical is never pulled"
+assert_file_contains "${LAST_CASE_DIR}/home/.aidevops/logs/repo-sync.log" "human checkout left unchanged" "diverged canonical reports read-only result"
 
 run_case github_fallback_failure_redacts FAKE_FETCH_MODE=auth_always_fail FAKE_REMOTE_URL=https://github.com/example/repo.git
 assert_rc 1 "$LAST_CASE_RC" "failed GitHub fallback exits with failure"

@@ -415,7 +415,7 @@ _compose_issue_brief_workflow_reference() {
 		return 0
 	fi
 
-	body="$body"$'\n\n'"## Brief Workflow"$'\n\n'"This issue body is composed under \`.agents/workflows/brief.md\`. Before implementation, ensure it contains files to modify, a reference pattern, verification commands, and concrete acceptance criteria."
+	body="$body"$'\n\n'"## Brief Workflow"$'\n\n'"This issue body is composed under \`.agents/workflows/brief.md\`. Newly queued auto-dispatch work must pass its \`Dispatch Readiness Contract (brief schema v2)\`: complete write surface, hazards and compatibility, executable verification mapped to affected surfaces, and positive plus negative/regression acceptance criteria."
 
 	echo "$body"
 	return 0
@@ -515,7 +515,8 @@ _compose_issue_sections() {
 }
 
 # Extract worker guidance from the brief's "How" section (t1900).
-# Promotes "Files to Modify", "Implementation Steps", and "Verification"
+# Promotes the complete schema-v2 How contract, including write surface,
+# hazards/compatibility, and verification-before-dispatch sections.
 # into a top-level "Worker Guidance" section in the issue body so workers
 # see actionable context immediately without reading the full brief.
 # Arguments:
@@ -543,18 +544,21 @@ _compose_issue_worker_guidance() {
 		return 0
 	fi
 
-	# Check if the How section has structured subsections (Files to Modify, Steps, Verification).
-	# t2063: case-insensitive match so lowercase "### files to modify" still activates
-	# the Worker Guidance extraction. has_verify is computed for future conditional use
-	# but currently only gates indirectly via has_files/has_steps — see the
-	# `: "${has_verify}"` marker below which suppresses the unused-variable lint.
-	local has_files has_steps has_verify
+	# Historical briefs retain the t2063 heading gate. Schema-v2 briefs use the
+	# complete readiness validator so placeholder-only guidance is never promoted.
+	local has_files has_steps is_schema_v2
 	has_files=$(echo "$how_section" | grep -ic '### Files to Modify\|EDIT:\|NEW:' || true)
 	has_steps=$(echo "$how_section" | grep -ic '### Implementation Steps' || true)
-	has_verify=$(echo "$how_section" | grep -ic '### Verification' || true)
-	: "${has_verify}"
+	is_schema_v2=$(grep -cF '<!-- aidevops:brief-schema=v2 -->' "$brief_file" || true)
 
-	if [[ "$has_files" -gt 0 || "$has_steps" -gt 0 ]]; then
+	if [[ "$is_schema_v2" -gt 0 ]]; then
+		local readiness_helper="$SCRIPT_DIR/brief-readiness-helper.sh"
+		local brief_body=""
+		brief_body=$(<"$brief_file")
+		if [[ -f "$readiness_helper" ]] && bash "$readiness_helper" check --body "$brief_body" >/dev/null 2>&1; then
+			body="$body"$'\n\n'"## Worker Guidance"$'\n\n'"$how_section"
+		fi
+	elif [[ "$has_files" -gt 0 || "$has_steps" -gt 0 ]]; then
 		body="$body"$'\n\n'"## Worker Guidance"$'\n\n'"$how_section"
 	fi
 

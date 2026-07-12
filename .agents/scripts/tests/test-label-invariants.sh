@@ -347,6 +347,11 @@ chmod +x "${STUB_DIR}/gh"
 # shellcheck source=/dev/null
 source "${TEST_SCRIPTS_DIR}/pulse-issue-reconcile.sh" >/dev/null 2>&1
 set +e
+export PATH="${STUB_DIR}:${PATH}"
+gh_issue_list() {
+	gh issue list "$@"
+	return $?
+}
 
 _normalize_label_invariants "test-user" "$REPOS_JSON_FILE" >/dev/null 2>&1
 

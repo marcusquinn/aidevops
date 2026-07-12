@@ -148,6 +148,9 @@ _pulse_worker_log_prelaunch_failure_reason() {
 	[[ -f "$log_path" ]] || { printf '\n'; return 0; }
 
 	reason=$(awk '
+		/\[systemd-launch\] classification=crash_during_startup/ {
+			systemd_startup_failure = 1
+		}
 		/\[exit-trap\] using prelaunch failure reason:/ {
 			line = $0
 			sub(/^.*\[exit-trap\] using prelaunch failure reason:[[:space:]]*/, "", line)
@@ -160,11 +163,14 @@ _pulse_worker_log_prelaunch_failure_reason() {
 			split(line, parts, /[[:space:]]+/)
 			reason = parts[1]
 		}
-		END { if (reason != "") { print reason } }
+		END {
+			if (systemd_startup_failure) { print "crash_during_startup" }
+			else if (reason != "") { print reason }
+		}
 	' "$log_path" 2>/dev/null) || reason=""
 
 	case "$reason" in
-	worker_worktree_live_owner)
+	worker_worktree_live_owner|crash_during_startup)
 		printf '%s\n' "$reason"
 		;;
 	*)
@@ -1413,18 +1419,15 @@ _compute_initial_underfill() {
 _run_early_exit_recycle_loop() {
 	local pulse_duration="$1"
 	local recycle_attempt=0
-
 	while [[ "$recycle_attempt" -lt "$PULSE_BACKFILL_MAX_ATTEMPTS" ]]; do
 		# Only recycle if the pulse ran for less than 5 minutes
 		if [[ "$pulse_duration" -ge 300 ]]; then
 			break
 		fi
-
 		if [[ -f "$STOP_FLAG" ]]; then
 			echo "[pulse-wrapper] Stop flag set — skipping early-exit recycle" >>"$LOGFILE"
 			break
 		fi
-
 		# GH#6453: Wait for newly-dispatched workers to appear in the process list
 		# before re-counting. Workers dispatched by the LLM pulse take up to
 		# PULSE_LAUNCH_GRACE_SECONDS to start (sandbox-exec + opencode startup).
