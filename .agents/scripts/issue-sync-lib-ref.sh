@@ -230,10 +230,27 @@ resolve_task_gh_number() {
 	local repository_id="" mapping="" coordinator="${SCRIPT_DIR}/task-coordinator.mjs"
 	repository_id=$(gh api "repos/${repo}" --jq '.node_id' 2>/dev/null || true)
 	[[ -n "$repository_id" && "$repository_id" != "null" ]] || return 1
-	if [[ -x "$coordinator" ]]; then
+	if [[ -f "$coordinator" ]]; then
 		mapping=$(node "$coordinator" resolve-issue --task-id "$task_id" --forge github \
 			--repository-id "$repository_id" 2>/dev/null || true)
 		if [[ -n "$mapping" ]]; then
+			local mapped_slug="" mapped_role="" mapped_issue_id="" mapped_number="" mapped_project="" mapped_cursor="" mapped_metadata=""
+			mapped_slug=$(printf '%s' "$mapping" | jq -r '.repositorySlug')
+			mapped_role=$(printf '%s' "$mapping" | jq -r '.role')
+			mapped_issue_id=$(printf '%s' "$mapping" | jq -r '.issueId')
+			mapped_number=$(printf '%s' "$mapping" | jq -r '.displayNumber')
+			mapped_project=$(printf '%s' "$mapping" | jq -r '.projectId // empty')
+			mapped_cursor=$(printf '%s' "$mapping" | jq -r '.stateCursor // empty')
+			mapped_metadata=$(printf '%s' "$mapping" | jq -c '.syncMetadata')
+			if [[ "$mapped_slug" != "$repo" ]]; then
+				local refresh_args=()
+				[[ -n "$mapped_project" ]] && refresh_args+=(--project-id "$mapped_project")
+				[[ -n "$mapped_cursor" ]] && refresh_args+=(--state-cursor "$mapped_cursor")
+				node "$coordinator" bind-issue --task-id "$task_id" --forge github \
+					--repository-id "$repository_id" --repository-slug "$repo" --role "$mapped_role" \
+					--issue-id "$mapped_issue_id" --display-number "$mapped_number" \
+					"${refresh_args[@]}" --sync-metadata "$mapped_metadata" >/dev/null 2>&1 || return 1
+			fi
 			printf '%s\n' "$mapping" | jq -r '.displayNumber'
 			return 0
 		fi
@@ -251,7 +268,7 @@ resolve_task_gh_number() {
 	issue_state=$(printf '%s' "$issue_json" | jq -r '.state // empty' 2>/dev/null)
 	issue_cursor=$(printf '%s' "$issue_json" | jq -r '.updatedAt // empty' 2>/dev/null)
 	[[ -n "$issue_id" && "$issue_number" == "$ref" ]] || return 1
-	if [[ -x "$coordinator" ]]; then
+	if [[ -f "$coordinator" ]]; then
 		local bind_args=()
 		[[ -n "$issue_cursor" ]] && bind_args+=(--state-cursor "$issue_cursor")
 		node "$coordinator" bind-issue --task-id "$task_id" --forge github \
