@@ -213,10 +213,11 @@ export function buildSessionStartGreetingInstruction(agentsDir, readIfExists) {
     "",
     "What would you like to work on?",
     "",
-    "Do this before tool calls, status updates, analysis summaries, or task work.",
+    "This greeting constrains the first visible assistant text, not the first assistant action. Tool calls may precede it when needed to start an initial task, especially when the runtime cannot interleave visible text and tool calls.",
     "Do not include startup status or advisory messages in chat; those are already shown by the OpenCode toast/sidebar surfaces.",
     "If the user launched the session with an initial message, the greeting is only a required prefix: immediately execute or fully answer that message in the SAME assistant turn.",
-    "A task request already authorises task work. Never stop after acknowledging, restating, promising, or asking the user to say continue; call the appropriate tools immediately after the greeting unless genuinely blocked.",
+    "A task request already authorises task work. Never emit a greeting-only response or stop after acknowledging, restating, promising, or asking the user to say continue. Call the appropriate tools immediately, before visible text if necessary, unless genuinely blocked.",
+    "Do not claim that tool access is unavailable without first attempting an appropriate configured tool and reporting concrete failure evidence.",
     "If the initial user message is only a greeting/salutation, do not add any additional salutations, greetings, introductory questions, or equivalent help prompts after the exact greeting above.",
     "Do not repeat the greeting after the first assistant turn, and do not duplicate the framework-status toast/sidebar content.",
   ].join("\n");

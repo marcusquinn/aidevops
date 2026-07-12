@@ -147,10 +147,10 @@ fi
 cat >"$TMP/todo3b.md" <<'EOF'
 ## Ready
 
-- [ ] t9003b task with placeholder ref tier:simple ref:none logged:2026-07-02
+- [ ] t9003 task with placeholder ref tier:simple ref:none logged:2026-07-02
 EOF
 
-add_gh_ref_to_todo "t9003b" "1003" "$TMP/todo3b.md"
+add_gh_ref_to_todo "t9003" "1003" "$TMP/todo3b.md"
 if grep -q 'ref:GH#1003' "$TMP/todo3b.md" &&
 	! grep -q 'ref:none' "$TMP/todo3b.md"; then
 	pass "add_gh_ref_to_todo: replaces ref:none placeholder (GH#26355)"
@@ -284,11 +284,11 @@ fi
 # -----------------------------------------------------------------------------
 # Test 10: _escape_ere escapes regex metacharacters
 # -----------------------------------------------------------------------------
-escaped=$(_escape_ere "t001.1")
-if [[ "$escaped" == "t001\\.1" ]]; then
-	pass "_escape_ere: escapes dot in t001.1 sub-task ID"
+escaped=$(_escape_ere "t9001.1")
+if [[ "$escaped" == "t9001\\.1" ]]; then
+	pass "_escape_ere: escapes dot in valid sub-task ID"
 else
-	fail "_escape_ere: wrong escape for t001.1 (got '$escaped')"
+	fail "_escape_ere: wrong escape for t9001.1 (got '$escaped')"
 fi
 
 escaped_plain=$(_escape_ere "t1990")
@@ -386,6 +386,48 @@ if printf '%s\n' "$output14" | grep -q 'keep  keep' &&
 else
 	fail "strip_html_comments: unexpected output"
 	printf '%s\n' "$output14" | sed 's/^/     /'
+fi
+
+# -----------------------------------------------------------------------------
+# Task identity codec integration
+# -----------------------------------------------------------------------------
+ORIGIN_ID="o01j2abc3def4gh5jkm6npq7rst"
+NAMESPACED_ID="t${ORIGIN_ID}-42.3"
+parsed_line=$(parse_task_line "- [ ] ${NAMESPACED_ID} namespaced task blocked-by:t7,${NAMESPACED_ID} blocks:t9.1 ref:GH#100")
+if printf '%s\n' "$parsed_line" | grep -qx "task_id=${NAMESPACED_ID}" &&
+	printf '%s\n' "$parsed_line" | grep -qx "blocked_by=t7,${NAMESPACED_ID}" &&
+	printf '%s\n' "$parsed_line" | grep -qx 'blocks=t9.1'; then
+	pass "parse_task_line: preserves complete namespaced dependency IDs"
+else
+	fail "parse_task_line: truncated namespaced task or dependency ID"
+fi
+
+if parse_task_line '- [ ] t01 malformed task mentioning t7 later' >/dev/null 2>&1; then
+	fail "parse_task_line: accepted malformed checkbox ID via later valid token"
+else
+	pass "parse_task_line: validates the canonical checkbox position"
+fi
+
+if parse_task_line '- [ ] t7 valid task blocked-by:t01' >/dev/null 2>&1; then
+	fail "parse_task_line: accepted malformed dependency"
+else
+	pass "parse_task_line: malformed dependency fails closed"
+fi
+
+mkdir -p "$TMP/project/todo"
+cat >"$TMP/project/todo/PLANS.md" <<'EOF'
+### Root plan
+
+**TODO:** t7
+
+#### Purpose
+Root plan body.
+EOF
+plan_result=$(find_plan_by_task_id 't7.2.3' "$TMP/project")
+if printf '%s\n' "$plan_result" | grep -q 'Root plan'; then
+	pass "find_plan_by_task_id: walks every ancestor to the root"
+else
+	fail "find_plan_by_task_id: failed deep hierarchy root lookup"
 fi
 
 # -----------------------------------------------------------------------------

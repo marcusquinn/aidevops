@@ -16,6 +16,7 @@ TEST_RESET=$'\033[0m'
 
 TESTS_RUN=0
 TESTS_FAILED=0
+ORIGIN_ID="o01j2abc3def4gh5jkm6npq7rst"
 
 print_result() {
 	local name="$1" rc="$2" extra="${3:-}"
@@ -97,6 +98,32 @@ printf 'embedded-prefix\n' >>work.txt
 git add work.txt
 git commit -q -m 'at18081] feat: do not extract embedded ID-like text'
 
+printf 'namespaced-contexts\n' >>work.txt
+git add work.txt
+git commit -q -m "[t${ORIGIN_ID}-41] feat: bracketed namespaced task"
+printf 'namespaced-scope\n' >>work.txt
+git add work.txt
+git commit -q -m "fix(t${ORIGIN_ID}-42.1): scoped namespaced task"
+printf 'namespaced-mark\n' >>work.txt
+git add work.txt
+git commit -q -m "chore: mark t${ORIGIN_ID}-43, t${ORIGIN_ID}-44.2 done"
+printf 'namespaced-after\n' >>work.txt
+git add work.txt
+git commit -q -m "chore: complete t${ORIGIN_ID}-45 and closes t${ORIGIN_ID}-46.1"
+printf 'namespaced-before\n' >>work.txt
+git add work.txt
+git commit -q -m "chore: t${ORIGIN_ID}-47 finished"
+printf 'malformed\n' >>work.txt
+git add work.txt
+git commit -q -m 'chore: complete t01 and t7.0 done; mark t8, t09 complete'
+
+printf 'exact-pr-parent\n' >>work.txt
+git add work.txt
+git commit -q -m 'chore: complete t12 (#1200)'
+printf 'exact-pr-child\n' >>work.txt
+git add work.txt
+git commit -q -m 'chore: complete t123 (#1230)'
+
 SCRIPT_DIR="$TEST_SCRIPTS_DIR"
 REPO_ROOT="$REPO_DIR"
 VERSION_FILE="${REPO_DIR}/VERSION"
@@ -104,13 +131,19 @@ VERSION_FILE="${REPO_DIR}/VERSION"
 source "${TEST_SCRIPTS_DIR}/version-manager-git.sh"
 
 actual=$(extract_task_ids_from_commits)
-expected=$'t123\nt124\nt125\nt126\nt127\nt18079\nt18080.3\nt3375\nt3376\nt3377.2'
+expected=$'t12\nt123\nt124\nt125\nt126\nt127\nt18079\nt18080.3\nt3375\nt3376\nt3377.2\n'"t${ORIGIN_ID}-41"$'\n'"t${ORIGIN_ID}-42.1"$'\n'"t${ORIGIN_ID}-43"$'\n'"t${ORIGIN_ID}-44.2"$'\n'"t${ORIGIN_ID}-45"$'\n'"t${ORIGIN_ID}-46.1"$'\n'"t${ORIGIN_ID}-47"
 assert_lines_equal 'extract_task_ids_from_commits: supports four digit and dotted task IDs' "$expected" "$actual"
 
 if [[ "$actual" != *$'t337\n'* && "$actual" != "t337" ]]; then
 	print_result 'extract_task_ids_from_commits: does not truncate t3375 to t337' 0
 else
 	print_result 'extract_task_ids_from_commits: does not truncate t3375 to t337' 1 "got [$actual]"
+fi
+
+if [[ "$actual" != *"t01"* && "$actual" != *"t7.0"* && "$actual" != *"t09"* ]]; then
+	print_result 'extract_task_ids_from_commits: malformed task-like IDs fail closed' 0
+else
+	print_result 'extract_task_ids_from_commits: malformed task-like IDs fail closed' 1 "got [$actual]"
 fi
 
 if [[ "$actual" != *"t9876"* ]]; then
@@ -123,6 +156,13 @@ if [[ "$actual" != *"t18081"* ]]; then
 	print_result 'extract_task_ids_from_commits: rejects embedded bracket-like task IDs' 0
 else
 	print_result 'extract_task_ids_from_commits: rejects embedded bracket-like task IDs' 1 "got [$actual]"
+fi
+
+pr_for_parent=$(find_pr_for_task_from_commits 't12')
+if [[ "$pr_for_parent" == "1200" ]]; then
+	print_result 'find_pr_for_task_from_commits: requires exact canonical identity' 0
+else
+	print_result 'find_pr_for_task_from_commits: requires exact canonical identity' 1 "expected [1200], got [$pr_for_parent]"
 fi
 
 printf '\nTests run: %s, Failures: %s\n' "$TESTS_RUN" "$TESTS_FAILED"

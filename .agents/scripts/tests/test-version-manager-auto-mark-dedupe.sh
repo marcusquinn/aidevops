@@ -16,6 +16,7 @@ TEST_RESET=$'\033[0m'
 
 TESTS_RUN=0
 TESTS_FAILED=0
+NAMESPACED_TASK_ID="to01j2abc3def4gh5jkm6npq7rst-42.3"
 
 print_result() {
 	local name="$1" rc="$2" extra="${3:-}"
@@ -76,6 +77,8 @@ cat >"$TODO_FILE" <<'TODO'
 - [x] t9999 Release auto-mark duplicate prevention #bug pr:#123 completed:2026-05-02
 - [x] t8888 Already completed duplicate #bug pr:#124 completed:2026-05-02
 - [x] t8888 Already completed duplicate #bug pr:#124 completed:2026-05-02
+- [ ] to01j2abc3def4gh5jkm6npq7rst-42.3 Namespaced duplicate #bug
+- [x] to01j2abc3def4gh5jkm6npq7rst-42.3 Namespaced duplicate #bug pr:#125 completed:2026-05-02
 TODO
 
 rc=0
@@ -96,6 +99,15 @@ else
 	print_result '_mark_single_task_complete: cleans already-completed duplicates' 1 "expected rc=0, got rc=$rc"
 fi
 assert_count '_mark_single_task_complete: keeps one t8888 TODO line' 1 '^[[:space:]]*- \[[ x]\] t8888[[:space:]]' "$TODO_FILE"
+
+rc=0
+_mark_single_task_complete "$NAMESPACED_TASK_ID" "$TODO_FILE" "$today_short" >/dev/null 2>&1 || rc=$?
+if [[ "$rc" -eq 0 ]]; then
+	print_result '_mark_single_task_complete: marks namespaced duplicate task' 0
+else
+	print_result '_mark_single_task_complete: marks namespaced duplicate task' 1 "expected rc=0, got rc=$rc"
+fi
+assert_count '_mark_single_task_complete: keeps one namespaced TODO line' 1 "^[[:space:]]*- \\[[ x]\\] ${NAMESPACED_TASK_ID//./\\.}[[:space:]]" "$TODO_FILE"
 
 printf '\nTests run: %s, Failures: %s\n' "$TESTS_RUN" "$TESTS_FAILED"
 [[ "$TESTS_FAILED" -eq 0 ]]

@@ -49,7 +49,7 @@ cmd_pull() {
 			local num title tid login
 			num=$(echo "$issue_line" | jq -r '.number' 2>/dev/null || echo "")
 			title=$(echo "$issue_line" | jq -r '.title' 2>/dev/null || echo "")
-			tid=$(echo "$title" | grep -oE '^t[0-9]+(\.[0-9]+)*' || echo "")
+			tid=$(task_identity_parse_title_prefix "$title" || true)
 			[[ -z "$tid" ]] && continue
 			local tid_ere
 			tid_ere=$(_escape_ere "$tid")
@@ -145,12 +145,17 @@ cmd_status() {
 	local repo="$_CMD_REPO" todo_file="$_CMD_TODO"
 	local stripped
 	stripped=$(strip_code_fences <"$todo_file")
-	local total_open
-	total_open=$(echo "$stripped" | grep -cE '^\s*- \[ \] t[0-9]+' || true)
-	local total_done
-	total_done=$(echo "$stripped" | grep -cE '^\s*- \[x\] t[0-9]+' || true)
-	local with_ref
-	with_ref=$(echo "$stripped" | grep -cE '^\s*- \[ \] t[0-9]+.*ref:GH#' || true)
+	local total_open=0 total_done=0 with_ref=0 status_line="" status_tid=""
+	while IFS= read -r status_line; do
+		status_tid=$(_task_id_from_todo_line "$status_line" || true)
+		[[ -n "$status_tid" ]] || continue
+		if [[ "$status_line" =~ ^[[:space:]]*-[[:space:]]+\[[[:space:]]\] ]]; then
+			total_open=$((total_open + 1))
+			[[ "$status_line" =~ ref:GH#[0-9]+ ]] && with_ref=$((with_ref + 1))
+		elif [[ "$status_line" =~ ^[[:space:]]*-[[:space:]]+\[x\] ]]; then
+			total_done=$((total_done + 1))
+		fi
+	done <<<"$stripped"
 	local without_ref=$((total_open - with_ref))
 
 	local open_json
@@ -164,7 +169,7 @@ cmd_status() {
 	local drift=0
 	while IFS= read -r il; do
 		local tid
-		tid=$(echo "$il" | jq -r '.title' 2>/dev/null | grep -oE '^t[0-9]+(\.[0-9]+)*' || echo "")
+		tid=$(task_identity_parse_title_prefix "$(echo "$il" | jq -r '.title' 2>/dev/null)" || true)
 		[[ -z "$tid" ]] && continue
 		local tid_ere
 		tid_ere=$(_escape_ere "$tid")
@@ -180,17 +185,18 @@ cmd_status() {
 	open_numbers=$(echo "$open_json" | jq -r '.[].number' 2>/dev/null | sort -n)
 	local reverse_drift=0
 	while IFS= read -r line; do
+		local rtid
+		rtid=$(_task_id_from_todo_line "$line" || true)
+		[[ -n "$rtid" ]] || continue
 		local ref_num
 		ref_num=$(echo "$line" | grep -oE 'ref:GH#[0-9]+' | head -1 | sed 's/ref:GH#//' || echo "")
 		[[ -z "$ref_num" ]] && continue
 		# If the referenced issue number is not in the open set, it's reverse drift
 		if ! echo "$open_numbers" | grep -qx "$ref_num"; then
-			local rtid
-			rtid=$(echo "$line" | grep -oE 't[0-9]+(\.[0-9]+)*' | head -1 || echo "")
 			reverse_drift=$((reverse_drift + 1))
 			print_warning "REVERSE-DRIFT: $rtid ref:GH#$ref_num — TODO open but issue closed"
 		fi
-	done < <(echo "$stripped" | grep -E '^\s*- \[ \] t[0-9]+.*ref:GH#[0-9]+' || true)
+	done < <(echo "$stripped" | grep -E '^[[:space:]]*- \[ \] .*ref:GH#[0-9]+' || true)
 
 	printf "\n=== Sync Status (%s) ===\nTODO open: %d (%d ref, %d no ref) | done: %d\nGitHub open: %s closed: %s | drift: %d | reverse-drift: %d\n" \
 		"$repo" "$total_open" "$with_ref" "$without_ref" "$total_done" "$gh_open" "$gh_closed" "$drift" "$reverse_drift"
@@ -215,14 +221,14 @@ cmd_reconcile() {
 	local ref_fixed=0 ref_ok=0 stale=0 orphans=0
 	while IFS= read -r line; do
 		local tid
-		tid=$(echo "$line" | grep -oE 't[0-9]+(\.[0-9]+)*' | head -1 || echo "")
+		tid=$(_task_id_from_todo_line "$line" || true)
 		local gh_ref
 		gh_ref=$(echo "$line" | grep -oE 'ref:GH#[0-9]+' | head -1 | sed 's/ref:GH#//' || echo "")
 		[[ -z "$tid" || -z "$gh_ref" ]] && continue
 		local it
 		it=$(gh issue view "$gh_ref" --repo "$repo" --json title --jq '.title' 2>/dev/null || echo "")
 		local itid
-		itid=$(echo "$it" | grep -oE '^t[0-9]+(\.[0-9]+)*' || echo "")
+		itid=$(task_identity_parse_title_prefix "$it" || true)
 		[[ "$itid" == "$tid" ]] && {
 			ref_ok=$((ref_ok + 1))
 			continue
@@ -240,7 +246,7 @@ cmd_reconcile() {
 			fi
 			ref_fixed=$((ref_fixed + 1))
 		fi
-	done < <(strip_code_fences <"$todo_file" | grep -E '^\s*- \[.\] t[0-9]+.*ref:GH#[0-9]+' || true)
+	done < <(strip_code_fences <"$todo_file" | grep -E '^[[:space:]]*- \[.\] .*ref:GH#[0-9]+' || true)
 
 	# Forward drift: open GH issue but TODO marked [x]
 	local open_json
@@ -248,7 +254,7 @@ cmd_reconcile() {
 	while IFS= read -r il; do
 		local num tid
 		num=$(echo "$il" | jq -r '.number' 2>/dev/null || echo "")
-		tid=$(echo "$il" | jq -r '.title' 2>/dev/null | grep -oE '^t[0-9]+(\.[0-9]+)*' || echo "")
+		tid=$(task_identity_parse_title_prefix "$(echo "$il" | jq -r '.title' 2>/dev/null)" || true)
 		[[ -z "$tid" ]] && continue
 		local tid_ere
 		tid_ere=$(_escape_ere "$tid")
@@ -267,22 +273,24 @@ cmd_reconcile() {
 	local stripped
 	stripped=$(strip_code_fences <"$todo_file")
 	while IFS= read -r line; do
+		local rtid
+		rtid=$(_task_id_from_todo_line "$line" || true)
+		[[ -n "$rtid" ]] || continue
 		local ref_num
 		ref_num=$(echo "$line" | grep -oE 'ref:GH#[0-9]+' | head -1 | sed 's/ref:GH#//' || echo "")
 		[[ -z "$ref_num" ]] && continue
 		if ! echo "$open_numbers" | grep -qx "$ref_num"; then
-			local rtid
-			rtid=$(echo "$line" | grep -oE 't[0-9]+(\.[0-9]+)*' | head -1 || echo "")
 			reverse_drift=$((reverse_drift + 1))
 			print_warning "REVERSE-DRIFT: $rtid ref:GH#$ref_num — TODO open but issue closed"
 		fi
-	done < <(echo "$stripped" | grep -E '^\s*- \[ \] t[0-9]+.*ref:GH#[0-9]+' || true)
+	done < <(echo "$stripped" | grep -E '^[[:space:]]*- \[ \] .*ref:GH#[0-9]+' || true)
 
 	printf "\n=== Reconciliation ===\nRefs OK: %d | fixed: %d | stale: %d | orphans: %d | reverse-drift: %d\n" \
 		"$ref_ok" "$ref_fixed" "$stale" "$orphans" "$reverse_drift"
 	[[ $stale -gt 0 ]] && print_info "Run 'issue-sync-helper.sh close' for stale issues"
 	[[ $reverse_drift -gt 0 ]] && print_warning "$reverse_drift open TODOs reference closed issues — review each: reopen issue or mark TODO [x]"
 	[[ $ref_fixed -eq 0 && $stale -eq 0 && $orphans -eq 0 && $reverse_drift -eq 0 ]] && print_success "All refs correct"
+	return 0
 }
 
 # =============================================================================

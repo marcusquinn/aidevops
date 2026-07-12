@@ -17,6 +17,9 @@ set -euo pipefail
 
 readonly OPENCODE_DB="${HOME}/.local/share/opencode/opencode.db"
 readonly SUPERVISOR_DB="${HOME}/.aidevops/.agent-workspace/supervisor/supervisor.db"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=./task-identity-lib.sh
+source "${SCRIPT_DIR}/task-identity-lib.sh"
 
 # --- Helpers ---
 
@@ -46,8 +49,8 @@ usage() {
 validate_task_id() {
 	local task_id
 	task_id="$1"
-	if [[ ! "$task_id" =~ ^t[0-9]+(\.[0-9]+)*$ ]]; then
-		log_error "Invalid task ID format: $task_id (expected tNNN or tNNN.N)"
+	if ! task_identity_validate "$task_id"; then
+		log_error "Invalid task ID format: $task_id"
 		return 1
 	fi
 	return 0
@@ -433,11 +436,13 @@ _resolve_task_metadata() {
 	task_id="$1"
 	project_root="$2"
 
+	local task_id_ere=""
+	task_id_ere=$(task_identity_escape_ere "$task_id") || return 1
 	local task_line=""
-	task_line=$(grep -E "^\s*- \[.\] ${task_id} " "$project_root/TODO.md" 2>/dev/null | head -1) || true
+	task_line=$(grep -E "^[[:space:]]*- \[.\] ${task_id_ere}[[:space:]]" "$project_root/TODO.md" 2>/dev/null | head -1) || true
 
 	local task_title=""
-	task_title=$(echo "$task_line" | sed -E 's/^.*\] t[0-9]+(\.[0-9]+)* //' | sed -E 's/ #.*//' | sed -E 's/ ~//')
+	task_title=$(echo "$task_line" | sed -E "s/^.*\\] ${task_id_ere} //" | sed -E 's/ #.*//' | sed -E 's/ ~//')
 
 	local rebase_note=""
 	rebase_note=$(echo "$task_line" | grep -oE '<!-- REBASE:[^>]+-->' | sed 's/<!-- REBASE: //;s/ -->//' || true)
@@ -613,8 +618,10 @@ _try_worker_ready_stub_brief() {
 	[[ -x "$_readiness_helper" ]] || return 1
 
 	# Extract issue number from TODO.md ref:GH#NNN for this task
+	local _task_id_ere=""
+	_task_id_ere=$(task_identity_escape_ere "$task_id") || return 1
 	local _issue_ref=""
-	_issue_ref=$(grep -E "^\s*- \[.\] ${task_id} " "$project_root/TODO.md" 2>/dev/null \
+	_issue_ref=$(grep -E "^[[:space:]]*- \[.\] ${_task_id_ere}[[:space:]]" "$project_root/TODO.md" 2>/dev/null \
 		| grep -oE 'ref:GH#[0-9]+' | head -1 | sed 's/ref:GH#//' || true)
 	[[ -n "$_issue_ref" ]] || return 1
 
@@ -763,9 +770,8 @@ generate_brief() {
 	local sup_id="$_BRIEF_SUP_ID"
 
 	local parent_task=""
-	if echo "$task_id" | grep -qE '\.'; then
-		parent_task=$(echo "$task_id" | sed -E 's/\.[0-9]+$//')
-	fi
+	task_identity_parse "$task_id" || return 1
+	parent_task="$TASK_IDENTITY_PARENT_ID"
 
 	local best_block="${context_block:-${task_block:-${task_line}}}"
 
@@ -891,13 +897,13 @@ main() {
 		local count
 		count=0
 		while IFS= read -r line; do
-			local tid
-			tid=$(echo "$line" | grep -oE 't[0-9]+(\.[0-9]+)*' | head -1)
+			local tid=""
+			tid=$(task_identity_extract_first "$line" 2>/dev/null || true)
 			if [[ -n "$tid" && ! -f "$project_root/todo/tasks/${tid}-brief.md" ]]; then
 				generate_brief "$tid" "$project_root" || true
 				count=$((count + 1))
 			fi
-		done < <(grep -E '^\s*- \[ \] t[0-9]' "$project_root/TODO.md")
+		done < <(grep -E '^[[:space:]]*- \[ \] t' "$project_root/TODO.md")
 		log_info "Generated $count briefs"
 	else
 		validate_task_id "$task_id" || exit 1

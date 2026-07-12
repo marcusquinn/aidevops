@@ -178,7 +178,7 @@ test_rejects_reuse_without_claim() {
 	trap "rm -rf '${TMPDIR_REUSE}'" RETURN
 
 	local msg_file="${TMPDIR_REUSE}/COMMIT_EDITMSG"
-	printf 't100: do something' >"$msg_file"
+	printf 't99: do something' >"$msg_file"
 
 	local no_gh_bin
 	no_gh_bin=$(_make_no_gh_bin "$TMPDIR_REUSE")
@@ -306,11 +306,11 @@ test_allows_via_linked_issue_when_no_branch_claim() {
 
 	local msg_file="${TMPDIR_REUSE}/COMMIT_EDITMSG"
 	# Session B commit: no branch claim, but cross-references via Resolves
-	printf 't100: some work\n\nResolves #42' >"$msg_file"
+	printf 't99: some work\n\nResolves #42' >"$msg_file"
 
-	# Mock gh returns issue #42 with a title containing t100
+	# Mock gh returns issue #42 with a title containing t99
 	local mock_bin
-	mock_bin=$(_make_mock_gh_bin "$TMPDIR_REUSE" "42" "t100: legitimate claimed task title")
+	mock_bin=$(_make_mock_gh_bin "$TMPDIR_REUSE" "42" "t99: legitimate claimed task title")
 
 	local rc
 	PATH="${mock_bin}:$PATH" \
@@ -338,7 +338,7 @@ test_rejects_when_linked_issue_title_does_not_match() {
 	trap "rm -rf '${TMPDIR_REUSE}'" RETURN
 
 	local msg_file="${TMPDIR_REUSE}/COMMIT_EDITMSG"
-	printf 't100: some work\n\nResolves #42' >"$msg_file"
+	printf 't99: some work\n\nResolves #42' >"$msg_file"
 
 	# Mock gh returns issue #42 with an unrelated title (no t100)
 	local mock_bin
@@ -379,6 +379,44 @@ test_bypass_skips_reuse_check() {
 	return 0
 }
 
+test_namespaced_id_requires_linked_issue_binding() {
+	local name="case-7: namespaced ID requires exact linked issue binding"
+	local namespaced_id="to01j2abc3def4gh5jkm6npq7rst-42.3"
+	_setup_t2377_scenario
+	# shellcheck disable=SC2064
+	trap "rm -rf '${TMPDIR_REUSE}'" RETURN
+	local msg_file="${TMPDIR_REUSE}/COMMIT_EDITMSG"
+	printf '%s: work without binding' "$namespaced_id" >"$msg_file"
+	local rc=0
+	GIT_DIR="${SESSB_REPO}/.git" bash "$GUARD" "$msg_file" 2>/dev/null || rc=$?
+	if [[ "$rc" -eq 1 ]]; then
+		pass "$name"
+	else
+		fail "$name" "expected exit 1 for unbound namespaced ID, got $rc"
+	fi
+	return 0
+}
+
+test_namespaced_id_allows_exact_linked_issue_binding() {
+	local name="case-8: namespaced ID allows exact linked issue binding"
+	local namespaced_id="to01j2abc3def4gh5jkm6npq7rst-42.3"
+	_setup_t2377_scenario
+	# shellcheck disable=SC2064
+	trap "rm -rf '${TMPDIR_REUSE}'" RETURN
+	local msg_file="${TMPDIR_REUSE}/COMMIT_EDITMSG"
+	printf '%s: work\n\nResolves #42' "$namespaced_id" >"$msg_file"
+	local mock_bin=""
+	mock_bin=$(_make_mock_gh_bin "$TMPDIR_REUSE" "42" "${namespaced_id}: canonical task")
+	local rc=0
+	PATH="${mock_bin}:$PATH" GIT_DIR="${SESSB_REPO}/.git" bash "$GUARD" "$msg_file" 2>/dev/null || rc=$?
+	if [[ "$rc" -eq 0 ]]; then
+		pass "$name"
+	else
+		fail "$name" "expected exact linked title to allow namespaced ID, got $rc"
+	fi
+	return 0
+}
+
 # ---------------------------------------------------------------------------
 # Run all tests
 # ---------------------------------------------------------------------------
@@ -391,6 +429,8 @@ main() {
 	test_allows_via_linked_issue_when_no_branch_claim
 	test_rejects_when_linked_issue_title_does_not_match
 	test_bypass_skips_reuse_check
+	test_namespaced_id_requires_linked_issue_binding
+	test_namespaced_id_allows_exact_linked_issue_binding
 
 	printf '\n'
 	printf 'Results: %s passed, %s failed\n' "$PASS" "$FAIL"
