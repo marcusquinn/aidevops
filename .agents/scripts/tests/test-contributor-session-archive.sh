@@ -346,15 +346,18 @@ test_profile_periods_scan_once_and_union_attention() {
 	source "$SOURCE_SESSION_LIB"
 	local active_db="${TEST_DIR}/home/.local/share/opencode/opencode.db"
 	create_session_db "$active_db"
-	local now_ms start_ms counter output human scans
+	local now_ms start_ms counter output human scans semantics start_bound end_bound
 	now_ms=$(python3 -c 'import time; print(int(time.time() * 1000))')
-	start_ms=$((now_ms - 3600000))
+	start_ms=$(python3 -c 'import datetime as d,time; today=d.datetime.now().date(); print(int(d.datetime.combine(today-d.timedelta(days=1),d.time(12)).timestamp()*1000))')
 	insert_overlapping_attention_fixture "$active_db" "overlap-one" "$start_ms" "$TEST_DIR/repo"
 	insert_overlapping_attention_fixture "$active_db" "overlap-two" "$start_ms" "$TEST_DIR/repo"
 	counter="${TEST_DIR}/scan-count"
 	output=$(HOME="${TEST_DIR}/home" AIDEVOPS_SESSION_SCAN_COUNTER="$counter" session_time --all-dirs --period profile --format json)
 	human=$(echo "$output" | jq -r '.day.total_human_hours')
 	scans=$(wc -l <"$counter" | tr -d ' ')
+	semantics=$(echo "$output" | jq -r '.day.period_semantics')
+	start_bound=$(echo "$output" | jq -r '.day.period_start_ms')
+	end_bound=$(echo "$output" | jq -r '.day.period_end_ms')
 	if [[ "$human" != "0.5" ]]; then
 		print_result "$test_name" 1 "expected overlapping 0.5h attention intervals to union to 0.5h, got ${human}"
 		teardown
@@ -362,6 +365,11 @@ test_profile_periods_scan_once_and_union_attention() {
 	fi
 	if [[ "$scans" != "1" ]]; then
 		print_result "$test_name" 1 "expected one session DB scan for four profile windows, got ${scans}"
+		teardown
+		return 0
+	fi
+	if [[ "$semantics" != "completed-local-calendar-days" || "$start_bound" -ge "$start_ms" || "$end_bound" -le "$start_ms" ]]; then
+		print_result "$test_name" 1 "profile day did not expose completed local-calendar-day bounds"
 		teardown
 		return 0
 	fi

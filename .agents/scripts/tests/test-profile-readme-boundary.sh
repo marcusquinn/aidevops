@@ -672,6 +672,11 @@ test_work_with_ai_worker_counts_above_thousand() {
 		print_result "${test_name}" 1 "four-digit worker session counts were not preserved and comma-formatted"
 		return 0
 	fi
+	if ! grep -qF '| Metric | Yesterday | Prior 7 Days | Prior 28 Days | Prior 365 Days |' "${output_file}" ||
+		! grep -qF 'Periods are completed local calendar days ending at midnight; today is excluded.' "${output_file}"; then
+		print_result "${test_name}" 1 "completed-calendar-day labels or disclosure were not rendered"
+		return 0
+	fi
 
 	if grep -qF '| Worker sessions | 55 | 0 | 0 | 0 |' "${output_file}"; then
 		print_result "${test_name}" 1 "worker session counts regressed to zero after double-formatting"

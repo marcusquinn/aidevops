@@ -9,7 +9,7 @@ import sqlite3
 import time
 from pathlib import Path
 
-from screen_time_interval_common import CORE_DATA_EPOCH, DAY, safe_core_epoch
+from screen_time_interval_common import CORE_DATA_EPOCH, completed_day_window, safe_core_epoch
 
 
 def read_app_stat_rows(db_path, now):
@@ -17,12 +17,13 @@ def read_app_stat_rows(db_path, now):
         return [], "database-missing"
     try:
         uri = f"file:{db_path}?mode=ro"
+        month_start, period_end = completed_day_window(now, 28)
         with sqlite3.connect(uri, uri=True, timeout=5) as connection:
             rows = connection.execute(
                 "SELECT ZVALUESTRING, ZSTARTDATE, ZENDDATE FROM ZOBJECT "
                 "WHERE ZSTREAMNAME='/app/usage' AND ZVALUESTRING IS NOT NULL "
                 "AND ZENDDATE > ? AND ZSTARTDATE < ? ORDER BY ZSTARTDATE",
-                (now - 28 * DAY - CORE_DATA_EPOCH, now - CORE_DATA_EPOCH),
+                (month_start - CORE_DATA_EPOCH, period_end - CORE_DATA_EPOCH),
             ).fetchall()
         return rows, None
     except (OSError, sqlite3.Error) as exc:
@@ -30,7 +31,7 @@ def read_app_stat_rows(db_path, now):
 
 
 def parse_app_stat_rows(rows, now):
-    month_start = now - 28 * DAY
+    month_start, period_end = completed_day_window(now, 28)
     parsed = []
     for bundle, start, end in rows:
         original_start = safe_core_epoch(start)
@@ -38,7 +39,7 @@ def parse_app_stat_rows(rows, now):
         if original_start is None or original_end is None or original_end <= original_start:
             continue
         left = max(month_start, original_start)
-        right = min(now, original_end)
+        right = min(period_end, original_end)
         if right > left:
             parsed.append((str(bundle), left, right, original_start))
     return parsed
@@ -68,8 +69,7 @@ def attribute_segment(context, left, right):
         return
     bundle = context["latest_heap"][0][3]
     context["stats"]["attributed_segments"] += 1
-    now = context["now"]
-    for name, window_start in (("today", now - DAY), ("week", now - 7 * DAY), ("month", now - 28 * DAY)):
+    for name, window_start in context["window_starts"].items():
         overlap = right - max(left, window_start)
         if overlap > 0:
             totals = context["totals"][name]
@@ -77,13 +77,15 @@ def attribute_segment(context, left, right):
 
 
 def attribute_app_totals(intervals, now):
-    starts, ends, ordered = interval_boundaries(intervals, now - 28 * DAY, now)
+    window_starts = {name: completed_day_window(now, days)[0] for name, days in (("today", 1), ("week", 7), ("month", 28))}
+    period_end = completed_day_window(now, 1)[1]
+    starts, ends, ordered = interval_boundaries(intervals, window_starts["month"], period_end)
     context = {
         "active": set(),
         "latest_heap": [],
         "totals": {name: {} for name in ("today", "week", "month")},
         "stats": {"boundaries": len(ordered), "attributed_segments": 0, "max_active": 0},
-        "now": now,
+        "window_starts": window_starts,
     }
     for left, right in zip(ordered, ordered[1:]):
         update_active_apps(context, starts.get(left, []), ends.get(left, []))
