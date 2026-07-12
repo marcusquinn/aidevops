@@ -11,7 +11,28 @@ from command_policy_network import _add_destination, _normalize_host
 
 
 def _analyze_ssh(argv: list[str], result: dict[str, Any]) -> None:
-    value_options = {"-b", "-c", "-D", "-E", "-e", "-F", "-I", "-i", "-L", "-l", "-m", "-O", "-o", "-p", "-Q", "-R", "-S", "-W", "-w", "-J"}
+    value_options = {
+        "-b",
+        "-c",
+        "-D",
+        "-E",
+        "-e",
+        "-F",
+        "-I",
+        "-i",
+        "-L",
+        "-l",
+        "-m",
+        "-O",
+        "-o",
+        "-p",
+        "-Q",
+        "-R",
+        "-S",
+        "-W",
+        "-w",
+        "-J",
+    }
     index = 1
     target = ""
     while index < len(argv):

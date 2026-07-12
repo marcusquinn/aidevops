@@ -29,8 +29,26 @@ def _analyze_curl(argv: list[str], result: dict[str, Any]) -> None:
     }
     destination_options = {"--url", "--proxy", "--preproxy"}
     short_value_options = {
-        "-A", "-b", "-c", "-d", "-D", "-e", "-E", "-F", "-H", "-K",
-        "-m", "-o", "-Q", "-r", "-T", "-u", "-w", "-X", "-Y", "-z",
+        "-A",
+        "-b",
+        "-c",
+        "-d",
+        "-D",
+        "-e",
+        "-E",
+        "-F",
+        "-H",
+        "-K",
+        "-m",
+        "-o",
+        "-Q",
+        "-r",
+        "-T",
+        "-u",
+        "-w",
+        "-X",
+        "-Y",
+        "-z",
     }
     index = 1
     while index < len(argv):
