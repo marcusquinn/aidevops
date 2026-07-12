@@ -76,7 +76,11 @@ assert_eq "active lifecycle wins blocked available conflict" "in-review" "$(_pic
 status_write=""
 current_status="status:available"
 gh() {
-	if [[ "$1 $2" == "issue view" ]]; then
+	if [[ "$1 $2" == "api repos/owner/repo" ]]; then
+		printf 'R_owner_repo\n'
+	elif [[ "$1 $2" == "issue view" && "$*" == *"--json id,number"* ]]; then
+		printf '{"id":"I_20","number":20}\n'
+	elif [[ "$1 $2" == "issue view" ]]; then
 		printf '%s\n' "$current_status"
 	elif [[ "$1 $2" == "issue edit" ]]; then
 		status_write="$*"
@@ -91,7 +95,11 @@ assert_eq "available issue normalized blocked" "issue edit 20 --repo owner/repo 
 status_write=""
 current_status="status:available,status:queued"
 gh() {
-	if [[ "$1 $2" == "issue view" ]]; then
+	if [[ "$1 $2" == "api repos/owner/repo" ]]; then
+		printf 'R_owner_repo\n'
+	elif [[ "$1 $2" == "issue view" && "$*" == *"--json id,number"* ]]; then
+		printf '{"id":"I_20","number":20}\n'
+	elif [[ "$1 $2" == "issue view" ]]; then
 		printf '%s\n' "$current_status"
 	fi
 	return 0
@@ -104,7 +112,11 @@ status_write=""
 view_counter_file="${TMP_ROOT}/view-count"
 printf '0\n' >"$view_counter_file"
 gh() {
-	if [[ "$1 $2" == "issue view" ]]; then
+	if [[ "$1 $2" == "api repos/owner/repo" ]]; then
+		printf 'R_owner_repo\n'
+	elif [[ "$1 $2" == "issue view" && "$*" == *"--json id,number"* ]]; then
+		printf '{"id":"I_20","number":20}\n'
+	elif [[ "$1 $2" == "issue view" ]]; then
 		local view_count=""
 		view_count=$(<"$view_counter_file")
 		view_count=$((view_count + 1))
@@ -216,7 +228,11 @@ status_write=""
 view_counter_file="${TMP_ROOT}/unblock-view-count"
 printf '0\n' >"$view_counter_file"
 gh() {
-	if [[ "$1 $2" == "issue view" ]]; then
+	if [[ "$1 $2" == "api repos/owner/repo" ]]; then
+		printf 'R_owner_repo\n'
+	elif [[ "$1 $2" == "issue view" && "$*" == *"--json id,number"* ]]; then
+		printf '{"id":"I_20","number":20}\n'
+	elif [[ "$1 $2" == "issue view" ]]; then
 		local view_count=""
 		view_count=$(<"$view_counter_file")
 		view_count=$((view_count + 1))
