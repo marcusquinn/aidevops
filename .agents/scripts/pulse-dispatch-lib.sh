@@ -1042,7 +1042,9 @@ _dispatch_skip_for_dirty_worktree_recovery() {
 
 	if _dispatch_recent_dirty_worktree_marker_active "$issue_number" "$repo_slug"; then
 		local marker_runner_key=""
-		marker_runner_key="${_DISPATCH_DIRTY_MARKER_STATE##*runner_key=}"
+		if [[ "$_DISPATCH_DIRTY_MARKER_STATE" == *":runner_key="* ]]; then
+			marker_runner_key="${_DISPATCH_DIRTY_MARKER_STATE##*runner_key=}"
+		fi
 		local local_runner_key=""
 		if declare -F runner_identity_key >/dev/null 2>&1; then
 			local_runner_key=$(runner_identity_key)
