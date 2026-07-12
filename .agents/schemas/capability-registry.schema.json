@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "aidevops capability registry",
+  "type": "object",
+  "required": ["schema_version", "dimensions", "capabilities"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "dimensions": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
+    "capabilities": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name", "aliases", "owner", "runtimes", "entry_points", "fallback", "required", "probes"],
+        "properties": {
+          "name": {"type": "string", "pattern": "^[a-z0-9-]+$"},
+          "aliases": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
+          "owner": {"type": "string"},
+          "runtimes": {"type": "array", "items": {"enum": ["opencode", "claude-code"]}, "uniqueItems": true},
+          "entry_points": {"type": "array", "items": {"type": "string"}},
+          "mcp": {"type": "string"},
+          "fallback": {"type": "string"},
+          "required": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
+          "probes": {"type": "object"}
+        },
+        "additionalProperties": true
+      }
+    }
+  }
+}

@@ -5,6 +5,8 @@
 
 Read subagents on-demand when trigger words clearly match. Full index: `subagent-index.toon`.
 
+This index describes what is catalogued, not what is usable now. Query `scripts/capability-readiness-helper.py query [capability] --runtime <runtime>` and gate routing with its `route` command. Canonical machine-readable definitions and generated counts are in `configs/capability-registry.json` and `reference/capability-registry.md`.
+
 | Domain | Trigger words | Entry point |
 |--------|---------------|-------------|
 | Business | company ops, strategy, finance, invoice, receipts, runners | `business.md`, `business/company-runners.md` |
