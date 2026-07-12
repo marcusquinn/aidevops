@@ -281,6 +281,7 @@ extract_task_ids_from_commits() {
 # Falls back to gh CLI search if no PR found in commit messages
 find_pr_for_task_from_commits() {
 	local task_id="$1"
+	task_identity_validate "$task_id" || return 1
 
 	local prev_tag
 	prev_tag=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
@@ -296,7 +297,14 @@ find_pr_for_task_from_commits() {
 	local pr_number=""
 	while IFS= read -r commit; do
 		[[ -z "$commit" ]] && continue
-		if [[ "$commit" == *"$task_id"* ]]; then
+		local commit_task_id="" exact_match="false"
+		while IFS= read -r commit_task_id; do
+			if [[ "$commit_task_id" == "$task_id" ]]; then
+				exact_match="true"
+				break
+			fi
+		done < <(task_identity_extract_all "$commit")
+		if [[ "$exact_match" == "true" ]]; then
 			pr_number=$(echo "$commit" | grep -oE '#[0-9]+' | head -1 | tr -d '#')
 			if [[ -n "$pr_number" ]]; then
 				break

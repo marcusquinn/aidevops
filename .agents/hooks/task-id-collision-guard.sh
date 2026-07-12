@@ -336,11 +336,17 @@ _repo_has_claim() {
 # ---------------------------------------------------------------------------
 _extract_tids() {
 	local text="${1:-}"
-	if task_identity_has_malformed_candidate "$text"; then
+	local scan_text=""
+	# Allocator range claims are a separate, legacy-only grammar consumed by
+	# _branch_has_claim/_repo_has_claim. Remove only that exact generated form
+	# before lexical task-ID validation so `t120..t130` is not misclassified as
+	# a malformed canonical ID when check-pr scans the claim commit itself.
+	scan_text=$(printf '%s' "$text" | sed -E 's/chore: claim t[0-9]+\.\.t[0-9]+//g')
+	if task_identity_has_malformed_candidate "$scan_text"; then
 		printf '%s\n' '__malformed__'
 		return 0
 	fi
-	task_identity_extract_all "$text" | sort -u
+	task_identity_extract_all "$scan_text" | sort -u
 	return 0
 }
 
@@ -405,7 +411,9 @@ _verify_tid_via_issues() {
 			continue
 		fi
 		_debug "Issue #${iss_num} title: $title"
-		if printf '%s' "$title" | grep -qE "(^|[^0-9])${tid}([^0-9]|$)"; then
+		local title_tid=""
+		title_tid=$(task_identity_parse_title_prefix "$title" || true)
+		if [[ "$title_tid" == "$tid" ]]; then
 			_debug "$tid confirmed via linked issue #${iss_num}"
 			confirmed=1
 			break
@@ -494,7 +502,15 @@ _check_message() {
 			continue
 		fi
 		if [[ -z "$num" ]]; then
-			_debug "$tid is origin-namespaced and collision-safe by construction"
+			_debug "$tid is origin-namespaced — verifying canonical linked issue binding"
+			local namespaced_verify_rc=0
+			_verify_tid_via_issues "$tid" "$closing_issues" || namespaced_verify_rc=$?
+			if [[ "$namespaced_verify_rc" -eq 2 ]]; then
+				return 2
+			fi
+			if [[ "$namespaced_verify_rc" -ne 0 ]]; then
+				violations="${violations}  ${tid} — namespaced ID is not bound to a linked issue title\n"
+			fi
 			continue
 		fi
 		# Force base-10 (10#) so leading-zero IDs like "008", "068" don't trip

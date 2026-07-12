@@ -389,6 +389,48 @@ else
 fi
 
 # -----------------------------------------------------------------------------
+# Task identity codec integration
+# -----------------------------------------------------------------------------
+ORIGIN_ID="o01j2abc3def4gh5jkm6npq7rst"
+NAMESPACED_ID="t${ORIGIN_ID}-42.3"
+parsed_line=$(parse_task_line "- [ ] ${NAMESPACED_ID} namespaced task blocked-by:t7,${NAMESPACED_ID} blocks:t9.1 ref:GH#100")
+if printf '%s\n' "$parsed_line" | grep -qx "task_id=${NAMESPACED_ID}" &&
+	printf '%s\n' "$parsed_line" | grep -qx "blocked_by=t7,${NAMESPACED_ID}" &&
+	printf '%s\n' "$parsed_line" | grep -qx 'blocks=t9.1'; then
+	pass "parse_task_line: preserves complete namespaced dependency IDs"
+else
+	fail "parse_task_line: truncated namespaced task or dependency ID"
+fi
+
+if parse_task_line '- [ ] t01 malformed task mentioning t7 later' >/dev/null 2>&1; then
+	fail "parse_task_line: accepted malformed checkbox ID via later valid token"
+else
+	pass "parse_task_line: validates the canonical checkbox position"
+fi
+
+if parse_task_line '- [ ] t7 valid task blocked-by:t01' >/dev/null 2>&1; then
+	fail "parse_task_line: accepted malformed dependency"
+else
+	pass "parse_task_line: malformed dependency fails closed"
+fi
+
+mkdir -p "$TMP/project/todo"
+cat >"$TMP/project/todo/PLANS.md" <<'EOF'
+### Root plan
+
+**TODO:** t7
+
+#### Purpose
+Root plan body.
+EOF
+plan_result=$(find_plan_by_task_id 't7.2.3' "$TMP/project")
+if printf '%s\n' "$plan_result" | grep -q 'Root plan'; then
+	pass "find_plan_by_task_id: walks every ancestor to the root"
+else
+	fail "find_plan_by_task_id: failed deep hierarchy root lookup"
+fi
+
+# -----------------------------------------------------------------------------
 # Summary
 # -----------------------------------------------------------------------------
 printf '\n'

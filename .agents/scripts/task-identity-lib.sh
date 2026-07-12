@@ -189,7 +189,7 @@ task_identity_escape_ere() {
 # canonical ID. Callers use this to distinguish invalid input from no marker.
 task_identity_has_malformed_candidate() {
 	local text="${1:-}"
-	local candidate_ere='(^|[^[:alnum:].])(t[0-9][[:alnum:].-]*|to[0-7][[:alnum:].-]*)($|[^[:alnum:].])'
+	local candidate_ere='(^|[^[:alnum:].])([tT][0-9A-Z][[:alnum:].-]*|[tT][oO][[:alnum:]]{26}-[[:alnum:].-]+)($|[^[:alnum:].])'
 	local candidate=""
 	local remaining="$text"
 	local matched=""

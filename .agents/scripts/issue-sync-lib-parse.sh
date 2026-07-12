@@ -114,6 +114,23 @@ _task_id_from_issue_title() {
 	return $?
 }
 
+_task_dependency_value() {
+	local line="$1"
+	local key="$2"
+	local value=""
+	case "$key" in
+	blocked-by | blocks) ;;
+	*) return 1 ;;
+	esac
+	if [[ "$line" =~ (^|[[:space:]])${key}:([^[:space:]]+) ]]; then
+		value="${BASH_REMATCH[2]}"
+	fi
+	[[ -n "$value" ]] || return 0
+	task_identity_parse_list "$value" >/dev/null || return 1
+	printf '%s\n' "$value"
+	return 0
+}
+
 # Find project root (contains TODO.md)
 find_project_root() {
 	local dir="$PWD"
@@ -147,7 +164,7 @@ parse_task_line() {
 
 	# Extract task ID
 	local task_id
-	task_id=$(task_identity_extract_first "$line" || true)
+	task_id=$(_task_id_from_todo_line "$line") || return 1
 
 	# Extract description (between task ID and first metadata field)
 	local description
@@ -195,11 +212,11 @@ parse_task_line() {
 
 	# Extract blocked-by dependencies
 	local blocked_by
-	blocked_by=$(echo "$line" | sed -nE 's/.*blocked-by:([A-Za-z0-9.,]+).*/\1/p' | head -1 || echo "")
+	blocked_by=$(_task_dependency_value "$line" "blocked-by") || return 1
 
 	# Extract blocks (downstream dependencies)
 	local blocks
-	blocks=$(echo "$line" | sed -nE 's/.*blocks:([A-Za-z0-9.,]+).*/\1/p' | head -1 || echo "")
+	blocks=$(_task_dependency_value "$line" "blocks") || return 1
 
 	# Extract verified date
 	local verified
@@ -488,15 +505,27 @@ find_plan_by_task_id() {
 
 	# Resolve lookup IDs: try exact task_id first, then walk up to parent for subtasks
 	local lookup_ids=("$task_id")
-	if [[ -n "$TASK_IDENTITY_PARENT_ID" ]]; then
-		local parent_id="$TASK_IDENTITY_PARENT_ID"
+	local parent_id="$TASK_IDENTITY_PARENT_ID"
+	while [[ -n "$parent_id" ]]; do
 		lookup_ids+=("$parent_id")
-	fi
+		task_identity_parse "$parent_id" || return 1
+		parent_id="$TASK_IDENTITY_PARENT_ID"
+	done
 
 	for lookup_id in "${lookup_ids[@]}"; do
 		# Search for **TODO:** or **Task:** field containing this task ID
-		local match_line match_line_num
-		match_line=$(grep -n "^\*\*\(TODO\|Task\):\*\*.*\b${lookup_id}\b" "$plans_file" | head -1 || true)
+		local match_line="" match_line_num="" candidate_line="" candidate_num="" candidate_text="" candidate_id=""
+		while IFS= read -r candidate_line; do
+			candidate_num="${candidate_line%%:*}"
+			candidate_text="${candidate_line#*:}"
+			[[ "$candidate_text" =~ ^\*\*(TODO|Task):\*\* ]] || continue
+			while IFS= read -r candidate_id; do
+				if [[ "$candidate_id" == "$lookup_id" ]]; then
+					match_line="${candidate_num}:${candidate_text}"
+					break 2
+				fi
+			done < <(task_identity_extract_all "$candidate_text")
+		done < <(grep -nE '^\*\*(TODO|Task):\*\*' "$plans_file" || true)
 		if [[ -z "$match_line" ]]; then
 			continue
 		fi
