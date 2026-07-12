@@ -901,24 +901,22 @@ PY
 	return 0
 }
 
-# Init command - initialize aidevops in a project
-cmd_init() {
-	local features="${1:-all}"
-
-	print_header "Initialize AI DevOps in Project"
-	echo ""
-
-	# Check if we're in a git repo
+# Validate the repository context before init performs any project writes.
+_init_validate_context() {
 	if ! git rev-parse --is-inside-work-tree &>/dev/null; then
 		print_error "Not in a git repository"
 		print_info "Run 'git init' first or navigate to a git repository"
 		return 1
 	fi
 
-	# Check for protected branch and offer worktree
-	if ! check_protected_branch "chore" "aidevops-init"; then
-		return 1
-	fi
+	check_protected_branch "chore" "aidevops-init" || return 1
+	return 0
+}
+
+# Run the init workflow after the public command has validated its context.
+# cmd_init locals remain visible here through Bash dynamic scoping.
+_init_run_workflow() {
+	local features="${1:-all}"
 
 	local project_root
 	project_root=$(git rev-parse --show-toplevel)
@@ -955,6 +953,12 @@ cmd_init() {
 		is_agent_source=true
 		print_info "Agent source repo: true (seeding core-style agent organization)"
 	fi
+
+	_init_config_and_agents || return 1
+	return 0
+}
+
+_init_config_and_agents() {
 
 	# Create .aidevops.json config
 	local config_file="$project_root/.aidevops.json"
@@ -1046,6 +1050,12 @@ cmd_init() {
 		fi
 	fi
 
+	_init_root_agents_file || return 1
+	return 0
+}
+
+_init_root_agents_file() {
+
 	# Scaffold root AGENTS.md if missing
 	if [[ "$is_agent_source" != "true" && ! -f "$project_root/AGENTS.md" ]]; then
 		cat >"$project_root/AGENTS.md" <<ROOTAGENTSEOF
@@ -1084,6 +1094,12 @@ cmd_init() {
 ROOTAGENTSEOF
 		print_success "Created AGENTS.md"
 	fi
+
+	_init_planning_files || return 1
+	return 0
+}
+
+_init_planning_files() {
 
 	# Create planning files if enabled
 	if [[ "$enable_planning" == "true" ]]; then
@@ -1162,6 +1178,12 @@ EOF
 		mission_scope=$(_resolve_mission_control_scope "$repo_slug" "$init_actor" 2>/dev/null || echo "")
 		_seed_mission_control_template "$project_root" "$mission_scope"
 	fi
+
+	_init_database_and_beads || return 1
+	return 0
+}
+
+_init_database_and_beads() {
 
 	# Create database directories if enabled
 	if [[ "$enable_database" == "true" ]]; then
@@ -1248,6 +1270,12 @@ EOF
 		fi
 	fi
 
+	_init_sops_support || return 1
+	return 0
+}
+
+_init_sops_support() {
+
 	# Initialize SOPS if enabled
 	if [[ "$enable_sops" == "true" ]]; then
 		print_info "Setting up SOPS encrypted config support..."
@@ -1318,6 +1346,12 @@ SOPSEOF
 			print_info ".sops.yaml already exists"
 		fi
 	fi
+
+	_init_git_metadata || return 1
+	return 0
+}
+
+_init_git_metadata() {
 
 	# Ensure .gitattributes has ai-training=false (opt out of AI model training)
 	# GitHub and other platforms respect this attribute to exclude repo content
@@ -1413,6 +1447,12 @@ GITATTRSEOF
 		fi
 	fi
 
+	_init_optional_scaffolding || return 1
+	return 0
+}
+
+_init_optional_scaffolding() {
+
 	# Scaffold optional files gated by init_scope (collaborator pointers,
 	# DESIGN.md, courtesy files, MODELS.md). Extracted to reduce cmd_init
 	# nesting depth and function length (t2265).
@@ -1493,6 +1533,12 @@ GITATTRSEOF
 		fi
 	fi
 
+	_init_security_and_registration || return 1
+	return 0
+}
+
+_init_security_and_registration() {
+
 	# Run security posture assessment if enabled (t1412.11)
 	if [[ "$enable_security" == "true" ]]; then
 		local security_posture_script="$AGENTS_DIR/scripts/security-posture-helper.sh"
@@ -1536,6 +1582,12 @@ GITATTRSEOF
 	fi
 	register_repo "$register_path" "$aidevops_version" "$features_list"
 
+	_init_commit_files || return 1
+	return 0
+}
+
+_init_commit_files() {
+
 	# Auto-commit initialized files so they don't linger as mystery unstaged
 	# changes (#2570 bug 2). Collect all files that cmd_init creates/modifies.
 	local init_files=()
@@ -1576,6 +1628,12 @@ GITATTRSEOF
 			fi
 		fi
 	fi
+
+	_init_print_summary || return 1
+	return 0
+}
+
+_init_print_summary() {
 
 	echo ""
 	print_success "AI DevOps initialized! (scope: $init_scope)"
@@ -1635,5 +1693,17 @@ GITATTRSEOF
 		echo "  ${step}. Use /feature to start development"
 	fi
 
+	return 0
+}
+
+# Init command - initialize aidevops in a project
+cmd_init() {
+	local features="${1:-all}"
+
+	print_header "Initialize AI DevOps in Project"
+	echo ""
+
+	_init_validate_context || return 1
+	_init_run_workflow "$features" || return 1
 	return 0
 }
