@@ -623,6 +623,33 @@ CREATE TABLE IF NOT EXISTS observation_outcomes (
     recorded_at TEXT NOT NULL,
     UNIQUE(observation_id, outcome_kind, recorded_at)
 );
+
+CREATE TABLE IF NOT EXISTS outcome_verifications (
+    outcome_id TEXT PRIMARY KEY,
+    verifier_id TEXT NOT NULL,
+    evidence_source_id TEXT NOT NULL,
+    verification_provenance TEXT NOT NULL,
+    verified_at TEXT NOT NULL,
+    FOREIGN KEY (outcome_id) REFERENCES observation_outcomes(outcome_id),
+    FOREIGN KEY (evidence_source_id) REFERENCES observation_sources(source_id)
+);
+
+CREATE TABLE IF NOT EXISTS observation_promotions (
+    promotion_id TEXT PRIMARY KEY,
+    observation_id TEXT NOT NULL,
+    source_id TEXT NOT NULL,
+    outcome_id TEXT NOT NULL,
+    destination TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active', 'corrected', 'revoked')),
+    promoted_at TEXT NOT NULL,
+    changed_at TEXT,
+    change_reason TEXT,
+    UNIQUE(observation_id, destination),
+    FOREIGN KEY (observation_id) REFERENCES observations(observation_id),
+    FOREIGN KEY (source_id) REFERENCES observation_sources(source_id),
+    FOREIGN KEY (outcome_id) REFERENCES observation_outcomes(outcome_id)
+);
+CREATE INDEX IF NOT EXISTS idx_observation_promotions_status ON observation_promotions(status, destination);
 EOF
 	local rc=$?
 	return "$rc"

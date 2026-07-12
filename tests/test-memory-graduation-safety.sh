@@ -17,11 +17,30 @@ cleanup() {
 }
 trap cleanup EXIT
 
+memory() {
+	AIDEVOPS_MEMORY_DIR="$TEST_DIR" AIDEVOPS_VAULT_DIR="$TEST_DIR/no-vault" "$MEMORY_HELPER" "$@"
+	return $?
+}
+
+graduate() {
+	AIDEVOPS_MEMORY_DIR="$TEST_DIR" AIDEVOPS_VAULT_DIR="$TEST_DIR/no-vault" "$GRADUATE_HELPER" "$@"
+	return $?
+}
+
+record_verified_outcome() {
+	local memory_id="$1"
+	local outcome_kind="$2"
+	local source_id="verify_$memory_id"
+	sqlite3 "$TEST_DIR/memory.db" "INSERT INTO observation_sources VALUES ('$source_id','obs_learning_$memory_id','test_result','result_$memory_id','ci-verifier','independent regression evidence','ci:test-suite',strftime('%Y-%m-%dT%H:%M:%fZ','now'));"
+	graduate outcome "$memory_id" "$outcome_kind" --verifier "ci-verifier" --source-id "$source_id" --provenance "ci:test-suite" --details "independent verification" >/dev/null
+	return 0
+}
+
 store_memory_id() {
 	local output=""
 	local line=""
 	local memory_id=""
-	output=$(AIDEVOPS_MEMORY_DIR="$TEST_DIR" "$MEMORY_HELPER" store "$@")
+	output=$(memory store "$@")
 	while IFS= read -r line; do
 		if [[ "$line" == mem_* ]]; then
 			memory_id="$line"
@@ -36,7 +55,7 @@ candidate_json() {
 	local line=""
 	local json=""
 	local capturing=0
-	output=$(AIDEVOPS_MEMORY_DIR="$TEST_DIR" "$GRADUATE_HELPER" candidates --json --limit 50)
+	output=$(graduate candidates --json --limit 50)
 	while IFS= read -r line; do
 		if [[ "$line" == \[* ]]; then
 			capturing=1
@@ -50,7 +69,7 @@ candidate_json() {
 }
 
 graduation_preview() {
-	AIDEVOPS_MEMORY_DIR="$TEST_DIR" "$GRADUATE_HELPER" graduate --dry-run --limit 50 2>&1
+	graduate graduate --dry-run --limit 50 2>&1
 	return $?
 }
 
@@ -60,12 +79,15 @@ test_legacy_schema_migration() {
 	local truth_table_count=""
 	legacy_dir=$(mktemp -d)
 
-	AIDEVOPS_MEMORY_DIR="$legacy_dir" "$MEMORY_HELPER" store \
+	local legacy_id=""
+	legacy_id=$(AIDEVOPS_MEMORY_DIR="$legacy_dir" AIDEVOPS_VAULT_DIR="$legacy_dir/no-vault" "$MEMORY_HELPER" store \
 		--content "Legacy schema graduation remains safely migratable" \
-		--type WORKING_SOLUTION --confidence high >/dev/null
+		--type WORKING_SOLUTION --confidence high | sed -n '$p')
+	sqlite3 "$legacy_dir/memory.db" "INSERT INTO observation_sources VALUES ('verify_$legacy_id','obs_learning_$legacy_id','test_result','result_$legacy_id','ci-verifier','legacy migration regression passed','ci:test-suite',strftime('%Y-%m-%dT%H:%M:%fZ','now'));"
+	AIDEVOPS_MEMORY_DIR="$legacy_dir" AIDEVOPS_VAULT_DIR="$legacy_dir/no-vault" "$GRADUATE_HELPER" outcome "$legacy_id" test_passed --verifier ci-verifier --source-id "verify_$legacy_id" --provenance ci:test-suite >/dev/null
 	sqlite3 "$legacy_dir/memory.db" "DROP TABLE learning_truth_events; DROP TABLE learning_relations;"
 
-	output=$(AIDEVOPS_MEMORY_DIR="$legacy_dir" "$GRADUATE_HELPER" candidates --json --limit 10)
+	output=$(AIDEVOPS_MEMORY_DIR="$legacy_dir" AIDEVOPS_VAULT_DIR="$legacy_dir/no-vault" "$GRADUATE_HELPER" candidates --json --limit 10)
 	truth_table_count=$(sqlite3 "$legacy_dir/memory.db" \
 		"SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('learning_truth_events', 'learning_relations');")
 	rm -rf "$legacy_dir"
@@ -89,6 +111,7 @@ main() {
 	local secret_value=""
 	local service_secret=""
 	local gitlab_secret=""
+	local access_only_id=""
 
 	preference_id=$(store_memory_id --content "User prefers terse status summaries in personal sessions" --type USER_PREFERENCE --confidence high)
 	live_id=$(store_memory_id --content "Portable privacy filters use POSIX extended regular expressions" --type WORKING_SOLUTION --confidence high)
@@ -97,6 +120,11 @@ main() {
 	store_memory_id --content "Evidence disproves the obsolete privacy graduation claim" --type ERROR_FIX --confidence high --debunks "$myth_id" --replacement "$replacement_id" --evidence "Regression test" >/dev/null
 	old_id=$(store_memory_id --content "Old deployment guidance uses the retired memory path" --type TOOL_CONFIG --confidence high)
 	new_id=$(store_memory_id --content "Current deployment guidance uses the supported memory path" --type TOOL_CONFIG --confidence high --supersedes "$old_id" --relation updates)
+	access_only_id=$(store_memory_id --content "Frequently recalled but operationally unverified guidance" --type WORKING_SOLUTION --confidence high)
+	record_verified_outcome "$live_id" test_passed
+	record_verified_outcome "$replacement_id" operational_verified
+	record_verified_outcome "$new_id" pr_merged
+	sqlite3 "$TEST_DIR/memory.db" "INSERT INTO learning_access(id,last_accessed_at,access_count) VALUES ('$access_only_id',datetime('now'),99) ON CONFLICT(id) DO UPDATE SET access_count=99;"
 	store_memory_id --content "Contact private.person@example.test before publishing this workflow" --type CONTEXT --confidence high >/dev/null
 	store_memory_id --content "Local evidence is stored at /Users/private-user/secret-project/report.md" --type TOOL_CONFIG --confidence high >/dev/null
 	store_memory_id --content "Safe-looking content with private metadata must remain local" --type CONTEXT --confidence high --tags "owner.private@example.test,/Users/private-user/project" >/dev/null
@@ -128,6 +156,7 @@ EOF
 	jq -e --arg id "$preference_id" 'map(.id) | index($id) | not' <<<"$results" >/dev/null
 	jq -e --arg id "$myth_id" 'map(.id) | index($id) | not' <<<"$results" >/dev/null
 	jq -e --arg id "$old_id" 'map(.id) | index($id) | not' <<<"$results" >/dev/null
+	jq -e --arg id "$access_only_id" 'map(.id) | index($id) | not' <<<"$results" >/dev/null
 
 	preview=$(graduation_preview)
 	if [[ "$preview" == *"private.person@example.test"* || "$preview" == *"/Users/private-user/"* ||
@@ -138,7 +167,7 @@ EOF
 	fi
 	test_legacy_schema_migration
 
-	printf 'PASS: graduation includes live shareable memories and excludes personal, private, debunked, and superseded records\n'
+	printf 'PASS: verified outcomes govern graduation while access count remains ranking-only\n'
 	return 0
 }
 

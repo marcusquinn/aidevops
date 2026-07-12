@@ -943,6 +943,22 @@ INSERT INTO learning_access (id, last_accessed_at, access_count, usefulness_scor
 VALUES ('$escaped_id', datetime('now'), 0, MAX(-5.0, $reward))
 ON CONFLICT(id) DO UPDATE SET
     usefulness_score = MAX(-5.0, COALESCE(usefulness_score, 0.0) + $reward);
+INSERT OR IGNORE INTO observation_outcomes (
+    outcome_id, observation_id, outcome_kind, outcome_value, details, recorded_at
+)
+VALUES (
+    'out_feedback_${escaped_id}_' || strftime('%Y%m%d%H%M%f', 'now'),
+    'obs_learning_$escaped_id',
+    CASE '$signal'
+        WHEN 'cited' THEN 'helpful_recall'
+        WHEN 'reused' THEN 'verified_reuse'
+        WHEN 'dead_end' THEN 'rejected'
+        WHEN 'false' THEN 'correction'
+        WHEN 'debunked' THEN 'correction'
+        ELSE 'retrieval_feedback'
+    END,
+    $reward, 'signal=${signal:-custom}', strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+);
 EOF
 
 	local new_score

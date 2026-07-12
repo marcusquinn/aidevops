@@ -91,6 +91,19 @@ SELECT 'High confidence', COUNT(*) FROM learnings WHERE confidence = 'high';
 EOF
 
 	echo ""
+	echo "Learning outcome metrics:"
+	db "$MEMORY_DB" <<'EOF'
+SELECT '  Capture precision (%)', printf('%.1f', 100.0 * SUM(CASE WHEN outcome_kind NOT IN ('rejected', 'correction', 'reverted', 'pr_closed') THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0)) FROM observation_outcomes
+UNION ALL SELECT '  Helpful recall', COUNT(*) FROM observation_outcomes WHERE outcome_kind = 'helpful_recall'
+UNION ALL SELECT '  Corrections', COUNT(*) FROM observation_outcomes WHERE outcome_kind = 'correction'
+UNION ALL SELECT '  Verified reuse', COUNT(*) FROM observation_outcomes WHERE outcome_kind = 'verified_reuse'
+UNION ALL SELECT '  Rejections', COUNT(*) FROM observation_outcomes WHERE outcome_kind IN ('rejected', 'pr_closed')
+UNION ALL SELECT '  Stale/privacy escapes', COUNT(*) FROM observation_outcomes WHERE outcome_kind IN ('stale_escape', 'privacy_escape')
+UNION ALL SELECT '  Interruptions', COUNT(*) FROM observation_outcomes WHERE outcome_kind = 'interruption'
+UNION ALL SELECT '  Human time saved (minutes)', printf('%.1f', COALESCE(SUM(outcome_value), 0)) FROM observation_outcomes WHERE outcome_kind = 'human_time_saved';
+EOF
+
+	echo ""
 
 	# Show relation statistics
 	echo "Relational versioning:"
