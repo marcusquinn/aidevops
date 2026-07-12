@@ -157,8 +157,8 @@ _pulse_refresh_repo() {
 		# advisory issue and we proceed with the current checkout.
 		echo "[pulse-wrapper] _pulse_refresh_repo: git pull --ff-only failed for ${repo_path} — attempting canonical-recovery" >>"$LOGFILE"
 		if declare -F pulse_canonical_recover >/dev/null 2>&1; then
-			pulse_canonical_recover "$repo_path" >>"$LOGFILE" 2>&1 \
-				|| echo "[pulse-wrapper] _pulse_refresh_repo: canonical-recovery did not heal ${repo_path} — proceeding with current checkout (advisory filed)" >>"$LOGFILE"
+			pulse_canonical_recover "$repo_path" >>"$LOGFILE" 2>&1 ||
+				echo "[pulse-wrapper] _pulse_refresh_repo: canonical-recovery did not heal ${repo_path} — proceeding with current checkout (advisory filed)" >>"$LOGFILE"
 		else
 			echo "[pulse-wrapper] _pulse_refresh_repo: pulse_canonical_recover unavailable — proceeding with current checkout" >>"$LOGFILE"
 		fi
@@ -394,7 +394,7 @@ _pulse_prime_caches_if_stale() {
 		local _now_epoch="" _stamp_epoch="" _age_s=""
 		_now_epoch=$(date +%s 2>/dev/null)
 		_stamp_epoch=$(_file_mtime_epoch "$_prime_sentinel")
-		_age_s=$(( ${_now_epoch:-0} - ${_stamp_epoch:-0} ))
+		_age_s=$((${_now_epoch:-0} - ${_stamp_epoch:-0}))
 		[[ "$_age_s" -gt "$_prime_max_age" ]] && _should_prime=1
 	fi
 
@@ -436,7 +436,7 @@ _pulse_check_runaway_log() {
 		local _now_epoch="" _stamp_epoch="" _age_s=""
 		_now_epoch=$(date +%s 2>/dev/null)
 		_stamp_epoch=$(_file_mtime_epoch "$_detector_sentinel")
-		_age_s=$(( ${_now_epoch:-0} - ${_stamp_epoch:-0} ))
+		_age_s=$((${_now_epoch:-0} - ${_stamp_epoch:-0}))
 		[[ "$_age_s" -gt "$_detector_max_age" ]] && _should_check=1
 	fi
 
@@ -445,6 +445,30 @@ _pulse_check_runaway_log() {
 		# Touch sentinel regardless of outcome (fail-open)
 		touch "$_detector_sentinel" 2>/dev/null || true
 	fi
+	return 0
+}
+
+_pulse_reconcile_stale_blocked_if_due() {
+	[[ "${AIDEVOPS_SKIP_STALE_BLOCKED_RECONCILE:-0}" == "1" ]] && return 0
+	local sentinel="${HOME}/.aidevops/cache/pulse-stale-blocked-reconcile-last-run"
+	local interval="${PULSE_STALE_BLOCKED_RECONCILE_INTERVAL:-1800}"
+	local now_epoch="" stamp_epoch="" age_s="" repos_json="${REPOS_JSON:-${HOME}/.config/aidevops/repos.json}"
+	local repo_slug="" failures=0
+	[[ "$interval" =~ ^[0-9]+$ ]] || interval=1800
+	[[ -f "$repos_json" ]] || return 0
+	if [[ -f "$sentinel" ]]; then
+		now_epoch=$(date +%s 2>/dev/null) || return 0
+		stamp_epoch=$(_file_mtime_epoch "$sentinel")
+		age_s=$((now_epoch - ${stamp_epoch:-0}))
+		[[ "$age_s" -ge "$interval" ]] || return 0
+	fi
+	mkdir -p "${sentinel%/*}" 2>/dev/null || return 0
+	while IFS= read -r repo_slug; do
+		[[ -n "$repo_slug" ]] || continue
+		reconcile_stale_blocked_issues "$repo_slug" 2>>"$LOGFILE" || failures=$((failures + 1))
+	done < <(jq -r '.initialized_repos[] | select(.pulse == true and (.local_only // false) == false and .slug != "") | .slug' "$repos_json" 2>/dev/null || true)
+	touch "$sentinel" 2>/dev/null || true
+	echo "[pulse-wrapper] stale-blocked reconciliation completed failures=${failures} cadence=${interval}s" >>"$LOGFILE"
 	return 0
 }
 

@@ -101,7 +101,11 @@ gh() {
 		return 0
 		;;
 	"api --paginate")
-		printf '%s\n' "$COMMENTS"
+		if [[ "$*" == *"/issues?state=open"* ]]; then
+			jq -cn --arg body "$BODY20" '[[{number:20,state:"open",title:"t20: direct",body:$body,labels:[{name:"status:blocked"},{name:"blocked-by:#10"}]}]]'
+		else
+			printf '%s\n' "$COMMENTS"
+		fi
 		return 0
 		;;
 	esac
@@ -145,13 +149,20 @@ assert_eq "$namespaced" "$(_der_task_refs "Blocked by: ${namespaced}")" "namespa
 NATIVE_DIRECT=true CLOSED_TITLE="${namespaced}: blocker" BODY20="blocked-by:${namespaced}" EDIT_COUNT=0 REREAD_LABELS="status:blocked"
 assert_eq 1 "$(run_reconcile)" "namespaced task declaration resolves through exact title lookup"
 
+EDIT_COUNT=0 REREAD_LABELS="status:blocked" BODY20="Blocked by #10" COMMENTS='[[]]'
+reconcile_stale_blocked_issues owner/repo >/dev/null 2>&1 || true
+assert_eq 1 "$EDIT_COUNT" "periodic stale sweep releases issue after missed close event"
+EDIT_COUNT=0 REREAD_LABELS="status:blocked" BODY20="Blocked by #10 and #11"
+reconcile_stale_blocked_issues owner/repo >/dev/null 2>&1 || true
+assert_eq 0 "$EDIT_COUNT" "periodic stale sweep preserves another open blocker"
+
 if grep -q 'issues(first:100,states:' "${SCRIPTS_DIR}/dependency-event-reconciler.sh"; then
 	fail "reconciler must not enumerate latest repository issues"
 else
 	pass "reconciler avoids broad repository issue enumeration"
 fi
 if grep -A25 'if ! _merge_verify_completed_state' "${SCRIPTS_DIR}/full-loop-helper-merge.sh" | grep -q '_merge_finalize_post_merge' &&
-	grep -A18 '^_merge_finalize_post_merge()' "${SCRIPTS_DIR}/full-loop-helper-merge.sh" | grep -q 'reconcile_dependants_after_verified_closure'; then
+	grep -A30 '^_merge_reconcile_closing_issues()' "${SCRIPTS_DIR}/full-loop-helper-merge.sh" | grep -q 'reconcile_dependants_after_verified_closure'; then
 	pass "full-loop hook follows verified merge state"
 else
 	fail "full-loop hook follows verified merge state"

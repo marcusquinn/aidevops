@@ -215,7 +215,7 @@ if [[ "$_pulse_skip_jitter" -eq 0 ]]; then
 			# Use lockdir mtime as lock-acquired timestamp (mkdir is atomic).
 			_pw_ffjit_mtime=$(_file_mtime_epoch "$_pw_ffjit_lockdir")
 			_pw_ffjit_now=$(date +%s)
-			_pw_ffjit_age=$(( _pw_ffjit_now - _pw_ffjit_mtime ))
+			_pw_ffjit_age=$((_pw_ffjit_now - _pw_ffjit_mtime))
 			if [[ "$_pw_ffjit_age" -le "${PULSE_LOCK_MAX_AGE_S:-1800}" ]]; then
 				printf '[pulse-wrapper] another instance running (PID %s, age %ss), skipping\n' \
 					"$_pw_ffjit_pid" "$_pw_ffjit_age" \
@@ -494,12 +494,12 @@ _pulse_should_defer_budget_priority_stage() {
 	local _stage="$1"
 	[[ "${AIDEVOPS_PULSE_GRAPHQL_BUDGET_CLASS:-normal}" == "reserve" ]] || return 1
 	case "$_stage" in
-		cache_prime|fix_the_fixer_detector|coderabbit_review|post_merge_scanner|pr_review_thread_response|auto_decomposer_scanner|dedup_cleanup|fast_fail_prune_expired|evaluate_routines|dependabot_alert_monitor|canonical_maintenance|dashboard_freshness_check|llm_supervisor)
-			return 0
-			;;
-		*)
-			return 1
-			;;
+	cache_prime | fix_the_fixer_detector | coderabbit_review | post_merge_scanner | pr_review_thread_response | auto_decomposer_scanner | dedup_cleanup | fast_fail_prune_expired | evaluate_routines | dependabot_alert_monitor | canonical_maintenance | dashboard_freshness_check | llm_supervisor)
+		return 0
+		;;
+	*)
+		return 1
+		;;
 	esac
 }
 
@@ -1142,7 +1142,7 @@ is_no_work_rate_acceptable() {
 		for ts in ${window_timestamps[@]+"${window_timestamps[@]}"}; do
 			printf '%s\n' "$ts"
 		done
-	} > "$tmp_state" 2>/dev/null && mv "$tmp_state" "$state_file" 2>/dev/null || rm -f "$tmp_state" 2>/dev/null || true
+	} >"$tmp_state" 2>/dev/null && mv "$tmp_state" "$state_file" 2>/dev/null || rm -f "$tmp_state" 2>/dev/null || true
 
 	# Check threshold.
 	if [[ "$window_count" -ge "$max_events" ]]; then
@@ -1602,16 +1602,16 @@ main() {
 		_rl_now=$(date +%s)
 		_rl_last=0
 		if [[ -f "$_rl_ts_file" ]]; then
-			read -r _rl_last < "$_rl_ts_file" || _rl_last=0
+			read -r _rl_last <"$_rl_ts_file" || _rl_last=0
 			# Treat corrupt/non-numeric content as 0 (stale) — continue normally
 			[[ "$_rl_last" =~ ^[0-9]+$ ]] || _rl_last=0
 		fi
-		_rl_elapsed=$(( _rl_now - _rl_last ))
-		if (( _rl_elapsed < PULSE_MIN_INTERVAL_S )); then
+		_rl_elapsed=$((_rl_now - _rl_last))
+		if ((_rl_elapsed < PULSE_MIN_INTERVAL_S)); then
 			# t3018: peek at instance lock. No live holder = stale stamp.
 			local _rl_lock_pid=""
 			if [[ -f "${LOCKDIR}/pid" ]]; then
-				read -r _rl_lock_pid < "${LOCKDIR}/pid" 2>/dev/null || _rl_lock_pid=""
+				read -r _rl_lock_pid <"${LOCKDIR}/pid" 2>/dev/null || _rl_lock_pid=""
 			fi
 			if [[ "$_rl_lock_pid" =~ ^[0-9]+$ ]] && kill -0 "$_rl_lock_pid" 2>/dev/null; then
 				echo "[pulse-wrapper] Rate-limited: last run ${_rl_elapsed}s ago < ${PULSE_MIN_INTERVAL_S}s threshold — skipping cycle (GH#20578)" >>"$WRAPPER_LOGFILE"
@@ -1623,10 +1623,10 @@ main() {
 			# cost of a false-proceed (occasional tighter cycle interval)
 			# is far smaller than the cost of false-skip (the bug being fixed).
 			echo "[pulse-wrapper] Rate-limit stamp ${_rl_elapsed}s old but no live lock holder (pid='${_rl_lock_pid:-<missing>}') — clearing stale stamp and proceeding (GH#21570 self-heal)" >>"$WRAPPER_LOGFILE"
-			: > "$_rl_ts_file" 2>/dev/null || true
-			_rl_elapsed=$(( _rl_now - 0 ))
+			: >"$_rl_ts_file" 2>/dev/null || true
+			_rl_elapsed=$((_rl_now - 0))
 		fi
-		printf '%s\n' "$_rl_now" > "$_rl_ts_file" || true
+		printf '%s\n' "$_rl_now" >"$_rl_ts_file" || true
 	fi
 
 	# GH#4513: Acquire exclusive instance lock FIRST — before any other
@@ -1785,6 +1785,10 @@ main() {
 	# Fail-open: never blocks the pulse cycle.
 	_pulse_check_runaway_log || true
 
+	# Recover dependency close events missed by async merge/issue-close races.
+	# Sentinel-gated to bound API use; the reconciler itself fails closed.
+	_pulse_reconcile_stale_blocked_if_due || true
+
 	# t3077: LLM-driven fix-the-fixer detector. Classifies new auto-dispatch
 	# issues — when the work itself touches the worker dispatch system,
 	# applies the `fix-the-fixer` label so the dispatcher can enable extra
@@ -1883,10 +1887,10 @@ main() {
 	if [[ "${AIDEVOPS_SKIP_SOURCE_REEXEC:-0}" != "1" ]]; then
 		local _pw_mtime_now
 		_pw_mtime_now=$(_file_mtime_epoch "$_pw_self")
-		if [[ "$_pw_mtime_now" =~ ^[0-9]+$ ]] \
-			&& [[ "$_pw_mtime_loaded" =~ ^[0-9]+$ ]] \
-			&& [[ "$_pw_mtime_now" -gt 0 ]] \
-			&& [[ "$_pw_mtime_now" != "$_pw_mtime_loaded" ]]; then
+		if [[ "$_pw_mtime_now" =~ ^[0-9]+$ ]] &&
+			[[ "$_pw_mtime_loaded" =~ ^[0-9]+$ ]] &&
+			[[ "$_pw_mtime_now" -gt 0 ]] &&
+			[[ "$_pw_mtime_now" != "$_pw_mtime_loaded" ]]; then
 			echo "[pulse-wrapper] t3033: source modified (${_pw_mtime_loaded} -> ${_pw_mtime_now}) — releasing lock and re-execing for fresh code" >>"$WRAPPER_LOGFILE"
 			release_instance_lock
 			exec "$_pw_self" "$@"
