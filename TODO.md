@@ -4536,3 +4536,5 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [ ] t18111 Resolve SonarCloud weak-hash finding in session ID fallback #auto-dispatch #bug ref:GH#27349
 
 - [ ] t18110 Fail postflight when SonarCloud quality gate reports ERROR #auto-dispatch #bug ref:GH#27348
+
+- [ ] t18112 Repair token-refresh LaunchAgent setup failure #auto-dispatch #bug ref:GH#27350
