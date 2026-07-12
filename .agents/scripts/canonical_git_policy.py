@@ -255,9 +255,12 @@ def classify_git_argv(
     try:
         is_canonical = _is_canonical(real_git_path, effective_cwd, prefix)
     except RuntimeError as error:
-        return False, str(error)
-    if not is_canonical:
-        return True, "linked worktree or non-repository target"
-    if _is_allowed_canonical(subcommand, args):
-        return True, "read-only canonical operation or linked-worktree creation"
-    return False, f"canonical worktree mutation via 'git {subcommand}'"
+        result = False, str(error)
+    else:
+        if not is_canonical:
+            result = True, "linked worktree or non-repository target"
+        elif _is_allowed_canonical(subcommand, args):
+            result = True, "read-only canonical operation or linked-worktree creation"
+        else:
+            result = False, f"canonical worktree mutation via 'git {subcommand}'"
+    return result
