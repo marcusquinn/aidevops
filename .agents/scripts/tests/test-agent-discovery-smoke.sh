@@ -130,7 +130,7 @@ test_opencode_config_persists_managed_directory_permissions() {
 		return 0
 	fi
 
-	if HOME="$fake_home" python3 - "$config_path" <<'PY'
+	if HOME="$fake_home" python3 - "$config_path" <<'PY'; then
 import json
 import sys
 
@@ -149,7 +149,6 @@ expected = (
 assert all(rules.get(path) == "allow" for path in expected)
 assert "~/.config/opencode" not in rules
 PY
-	then
 		print_result "OpenCode config persists managed external directories" 0
 	else
 		print_result "OpenCode config persists managed external directories" 1 \
