@@ -37,6 +37,7 @@ test("converts a top-level default without allowing unrelated directories", () =
   const config = { permission: "ask" };
 
   assert.equal(registerManagedDirectoryPermissions(config), 6);
+  assert.equal(config.permission["*"], "ask");
   assert.deepEqual(config.permission.external_directory, {
     "*": "ask",
     ...managedRules,
