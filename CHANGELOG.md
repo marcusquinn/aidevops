@@ -10,6 +10,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.32.52] - 2026-07-12
+
+### Changed
+
+- Refactor: decompose aidevops init workflow (#27315)
+- Maintenance: update simplification state registry
+- Maintenance: update simplification state registry
+
 ## [3.32.51] - 2026-07-12
 
 ### Changed
