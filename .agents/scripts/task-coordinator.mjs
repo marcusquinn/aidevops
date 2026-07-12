@@ -15,7 +15,7 @@ const EVIDENCE_MAX_BYTES = 64 * 1024;
 const CROCKFORD = "0123456789abcdefghjkmnpqrstvwxyz";
 const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 const LEGACY_ID = /^t[1-9][0-9]{0,17}$/;
-const TASK_ID = /^(?:t[1-9][0-9]{0,17}|to[0-7][0-9a-hjkmnp-tv-z]{25}-[1-9][0-9]{0,17})$/;
+const TASK_ID = /^(?:t[1-9][0-9]{0,17}(?:\.[1-9][0-9]{0,17})*|to[0-7][0-9a-hjkmnp-tv-z]{25}-[1-9][0-9]{0,17}(?:\.[1-9][0-9]{0,17})*)$/;
 const STATES = new Set(["active", "read-only", "redirected", "retired", "quarantined"]);
 const RESULTS = new Set(["published", "retryable", "indeterminate", "terminal", "conflict"]);
 const MAPPING_ROLES = new Set(["home", "implementation", "upstream"]);
@@ -180,7 +180,7 @@ INSERT INTO migration_history SELECT ${SCHEMA_VERSION},${sqlEscape(timestamp)},N
 function initialise(path = dbPath()) {
   mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
   chmodSync(dirname(path), 0o700);
-  bootstrap(path);
+  if (!existsSync(path)) bootstrap(path);
   secureFile(path);
   const version = Number(sqlite(path, "SELECT value FROM coordinator_meta WHERE key='schema_version';\n"));
   if (!Number.isSafeInteger(version) || version < 1 || version > SCHEMA_VERSION) throw new Error(`unsupported coordinator schema ${version}`);
@@ -308,22 +308,30 @@ function issueMappingInput(input) {
   const projectId = input.projectId ? validId(input.projectId, "project_id") : null;
   const displayNumber = Number(input.displayNumber);
   if (!Number.isSafeInteger(displayNumber) || displayNumber < 1) throw new TypeError("display_number must be a positive integer");
-  const stateCursor = input.stateCursor ? validId(input.stateCursor, "state_cursor") : null;
+  const stateCursor = input.stateCursor || null;
+  if (stateCursor && (typeof stateCursor !== "string" || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/.test(stateCursor) || !Number.isFinite(Date.parse(stateCursor)))) {
+    throw new TypeError("state_cursor must be a canonical UTC RFC3339 timestamp");
+  }
   const syncMetadataText = jsonText(input.syncMetadata || {}, "sync_metadata");
   return { taskId, forge, repositoryId, repositorySlug, role, issueId, projectId, displayNumber, stateCursor, syncMetadataText };
 }
 function bindIssue(input, path = initialise()) {
   const value = issueMappingInput(input);
   const timestamp = now();
-  const existing = rows(path, `SELECT * FROM issue_mappings WHERE task_id=${sqlEscape(value.taskId)} AND forge=${sqlEscape(value.forge)} AND repository_id=${sqlEscape(value.repositoryId)};`)[0];
-  if (existing && (existing.issue_id !== value.issueId || Number(existing.display_number) !== value.displayNumber || existing.role !== value.role)) {
-    throw new Error("issue mapping conflict");
-  }
-  sqlite(path, `BEGIN IMMEDIATE;
+  try {
+    sqlite(path, `BEGIN IMMEDIATE;
 INSERT INTO issue_mappings(task_id,forge,repository_id,repository_slug,role,issue_id,project_id,display_number,state_cursor,sync_metadata_json,created_at,updated_at)
 VALUES (${sqlEscape(value.taskId)},${sqlEscape(value.forge)},${sqlEscape(value.repositoryId)},${sqlEscape(value.repositorySlug)},${sqlEscape(value.role)},${sqlEscape(value.issueId)},${sqlEscape(value.projectId)},${value.displayNumber},${sqlEscape(value.stateCursor)},${sqlEscape(value.syncMetadataText)},${sqlEscape(timestamp)},${sqlEscape(timestamp)})
-ON CONFLICT(task_id,forge,repository_id) DO UPDATE SET repository_slug=excluded.repository_slug,project_id=COALESCE(excluded.project_id,issue_mappings.project_id),state_cursor=COALESCE(excluded.state_cursor,issue_mappings.state_cursor),sync_metadata_json=excluded.sync_metadata_json,updated_at=excluded.updated_at;
+ON CONFLICT(task_id,forge,repository_id) DO UPDATE SET repository_slug=excluded.repository_slug,project_id=COALESCE(excluded.project_id,issue_mappings.project_id),state_cursor=COALESCE(excluded.state_cursor,issue_mappings.state_cursor),sync_metadata_json=CASE WHEN excluded.state_cursor>issue_mappings.state_cursor OR issue_mappings.state_cursor IS NULL THEN excluded.sync_metadata_json ELSE issue_mappings.sync_metadata_json END,updated_at=excluded.updated_at
+WHERE issue_mappings.issue_id=excluded.issue_id AND issue_mappings.display_number=excluded.display_number AND issue_mappings.role=excluded.role
+AND ((issue_mappings.state_cursor IS NULL AND excluded.state_cursor IS NULL AND issue_mappings.sync_metadata_json=excluded.sync_metadata_json)
+  OR excluded.state_cursor>issue_mappings.state_cursor
+  OR (excluded.state_cursor=issue_mappings.state_cursor AND issue_mappings.sync_metadata_json=excluded.sync_metadata_json));
+CREATE TEMP TABLE assert_mapping_change(value INTEGER CHECK(value=1)); INSERT INTO assert_mapping_change VALUES(changes()); DROP TABLE assert_mapping_change;
 COMMIT;`);
+  } catch (error) {
+    throw new Error("issue mapping conflict or stale state cursor", { cause: error });
+  }
   return resolveIssue({ taskId: value.taskId, forge: value.forge, repositoryId: value.repositoryId }, path);
 }
 function resolveIssue({ taskId, forge = "github", repositoryId }, path = initialise()) {
