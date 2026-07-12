@@ -42,7 +42,8 @@ import {
 import { readLocalReposSetupSummary } from "./status-local-repos";
 import { readManagedApps } from "./status-managed-apps";
 import { readPulseWorkersSummary } from "./status-pulse-workers";
-import { readSecretInventory, readVaultSummary } from "./status-vault";
+import { readSecretInventory } from "./status-inventory";
+import { readVaultSummary } from "./status-vault";
 
 export { readVaultSummary } from "./status-vault";
 

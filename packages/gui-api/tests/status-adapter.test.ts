@@ -3,7 +3,7 @@ import { chmodSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { readStatus, readVaultStatus, readVaultSummary, STATUS_ADAPTER_COMMAND } from "../src/status-adapter";
-import { readSecretInventory } from "../src/status-vault";
+import { readSecretInventory } from "../src/status-inventory";
 import { resolveBinary } from "../src/status-adapter-utils";
 import { readPulseWorkersSummary } from "../src/status-pulse-workers";
 
