@@ -17,6 +17,7 @@ import {
   CLAUDE_MODEL_LIMITS,
   GPT56_CONTEXT_DEFAULT,
   GPT56_MODEL_IDS,
+  GPT56_OUTPUT_DEFAULT,
 } from "./model-limits.mjs";
 
 /**
@@ -141,7 +142,8 @@ export function gpt56ContextCapEnabled() {
 
 /**
  * Override built-in OpenAI GPT-5.6 model metadata without replacing any other
- * model fields. Sparse provider model entries are merged by OpenCode.
+ * model fields. OpenCode validates plugin-added model entries before merging
+ * built-in registry metadata, so every limit must include required fields.
  * @param {object} config - OpenCode Config object (mutable)
  * @returns {number} number of model limits applied
  */
@@ -155,7 +157,11 @@ export function registerGpt56ContextLimits(config) {
     const existing = config.provider.openai.models[id] || {};
     config.provider.openai.models[id] = {
       ...existing,
-      limit: { ...existing.limit, context: GPT56_CONTEXT_DEFAULT },
+      limit: {
+        output: GPT56_OUTPUT_DEFAULT,
+        ...existing.limit,
+        context: GPT56_CONTEXT_DEFAULT,
+      },
     };
   }
   return GPT56_MODEL_IDS.length;

@@ -31,6 +31,9 @@ export const OPUS_47_CONTEXT_MAX = 1000000;
  */
 export const GPT56_CONTEXT_DEFAULT = 300000;
 
+/** Maximum GPT-5.6 response size advertised by OpenCode's model registry. */
+export const GPT56_OUTPUT_DEFAULT = 128000;
+
 /** GPT-5.6 model IDs currently exposed by the OpenAI provider. */
 export const GPT56_MODEL_IDS = [
   "gpt-5.6-sol",

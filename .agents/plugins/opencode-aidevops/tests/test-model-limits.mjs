@@ -22,10 +22,12 @@ import {
   CLAUDE_MODEL_LIMITS,
   GPT56_CONTEXT_DEFAULT,
   GPT56_MODEL_IDS,
+  GPT56_OUTPUT_DEFAULT,
 } from "../model-limits.mjs";
 
 test("GPT-5.6 context metadata targets 300K for 240K auto-compaction", () => {
   assert.equal(GPT56_CONTEXT_DEFAULT, 300000);
+  assert.equal(GPT56_OUTPUT_DEFAULT, 128000);
   assert.deepEqual(GPT56_MODEL_IDS, [
     "gpt-5.6-sol",
     "gpt-5.6-sol-pro",

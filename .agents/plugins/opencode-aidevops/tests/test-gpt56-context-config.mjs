@@ -42,7 +42,21 @@ test("GPT-5.6 cap defaults on and applies 300K without losing model fields", () 
   assert.equal(registerGpt56ContextLimits(config), 4);
   assert.equal(config.provider.openai.models["gpt-5.6-sol"].name, "Sol");
   assert.equal(config.provider.openai.models["gpt-5.6-sol"].limit.context, 300000);
+  assert.equal(config.provider.openai.models["gpt-5.6-sol"].limit.output, 128000);
   assert.equal(config.provider.openai.models["gpt-5.6-terra"].limit.context, 300000);
+  assert.equal(config.provider.openai.models["gpt-5.6-terra"].limit.output, 128000);
+});
+
+test("GPT-5.6 cap preserves an explicit output limit", () => {
+  settingsFile(undefined);
+  const config = {
+    provider: { openai: { models: { "gpt-5.6-sol": { limit: { output: 64000 } } } } },
+  };
+  registerGpt56ContextLimits(config);
+  assert.deepEqual(config.provider.openai.models["gpt-5.6-sol"].limit, {
+    output: 64000,
+    context: 300000,
+  });
 });
 
 test("GPT-5.6 cap opt-out leaves OpenAI model metadata untouched", () => {
