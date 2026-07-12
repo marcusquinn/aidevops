@@ -949,6 +949,74 @@ test_interval_jobs_skip_unchanged_loaded_recovery() {
 	return 0
 }
 
+test_token_refresh_launchd_lifecycle() {
+	local fake_home="$TEST_DIR/home_token_refresh"
+	local plist="$fake_home/Library/LaunchAgents/sh.aidevops.token-refresh.plist"
+	local stderr_file="$TEST_DIR/token-refresh-stderr.log"
+	local install_count=0
+	local captured_content=""
+	mkdir -p "$fake_home/Library/LaunchAgents"
+
+	_launchd_has_agent() { return 0; }
+	_launchd_install_if_changed() {
+		local _label="$1"
+		local _path="$2"
+		local content="$3"
+		install_count=$((install_count + 1))
+		captured_content="$content"
+		return 0
+	}
+
+	local orig_home="$HOME"
+	HOME="$fake_home"
+	_install_token_refresh_launchd "sh.aidevops.token-refresh" "/fake/oauth-pool-helper.sh" 2>"$stderr_file"
+	printf '%s\n' "$captured_content" >"$plist"
+	_install_token_refresh_launchd "sh.aidevops.token-refresh" "/fake/oauth-pool-helper.sh" 2>>"$stderr_file"
+	HOME="$orig_home"
+	unset -f _launchd_has_agent _launchd_install_if_changed
+
+	if [[ "$install_count" -ne 1 ]]; then
+		print_result "token_refresh_launchd_lifecycle" 1 "expected one install and an idempotent second run, got $install_count installs"
+		return 0
+	fi
+	if grep -q '\[WARN\]' "$stderr_file"; then
+		print_result "token_refresh_launchd_lifecycle" 1 "healthy token refresh install emitted a warning"
+		return 0
+	fi
+	if [[ "$captured_content" != *"$(_resolve_modern_bash)"* ]] ||
+		[[ "$captured_content" != *"refresh anthropic;"* ]] ||
+		[[ "$captured_content" != *"refresh openai"* ]] ||
+		[[ "$captured_content" != *"<key>HOME</key>"* ]] ||
+		[[ "$captured_content" != *"<key>PATH</key>"* ]]; then
+		print_result "token_refresh_launchd_lifecycle" 1 "rendered plist is missing the expected runtime or refresh commands"
+		return 0
+	fi
+
+	print_result "token_refresh_launchd_lifecycle" 0
+	return 0
+}
+
+test_token_refresh_failure_is_actionable() {
+	local fake_home="$TEST_DIR/home_token_refresh_failure"
+	local stderr_file="$TEST_DIR/token-refresh-failure-stderr.log"
+	mkdir -p "$fake_home/Library/LaunchAgents"
+
+	_launchd_has_agent() { return 1; }
+	_launchd_install_if_changed() { return 1; }
+	local orig_home="$HOME"
+	HOME="$fake_home"
+	_install_token_refresh_launchd "sh.aidevops.token-refresh" "/fake/oauth-pool-helper.sh" 2>"$stderr_file"
+	HOME="$orig_home"
+	unset -f _launchd_has_agent _launchd_install_if_changed
+
+	if ! grep -q 'launchctl bootstrap gui/' "$stderr_file" || ! grep -q 'sh.aidevops.token-refresh.plist' "$stderr_file"; then
+		print_result "token_refresh_failure_is_actionable" 1 "failure warning omitted the recovery command"
+		return 0
+	fi
+	print_result "token_refresh_failure_is_actionable" 0
+	return 0
+}
+
 _install_complexity_scan_launchd_render_fixture() {
 	local cs_label="$1"
 	local cs_script="$2"
@@ -1077,6 +1145,8 @@ main() {
 	_load_schedulers_platform_functions
 	test_profile_readme_install_does_not_kickstart
 	test_interval_jobs_skip_unchanged_loaded_recovery
+	test_token_refresh_launchd_lifecycle
+	test_token_refresh_failure_is_actionable
 
 	# Test (b) needs _install_pulse_launchd from schedulers.sh
 	_load_schedulers_functions

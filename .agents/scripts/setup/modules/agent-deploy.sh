@@ -1132,8 +1132,14 @@ deploy_aidevops_agents() {
 	_validate_agent_source_dir "$source_dir" || return 1
 	_collect_deploy_agent_plugin_namespaces "$plugins_file"
 	_prepare_agents_deploy_target "$repo_dir" "$source_dir" "$target_dir"
-	_runtime_bundle_stage "$repo_dir" "$source_dir" "$target_dir" "$plugins_file" \
-		"${_deploy_agent_plugin_namespaces[@]}" || return 1
+	# Bash 3.2 with nounset treats an empty array expansion as unbound. Avoid
+	# expanding it when no plugin namespaces are configured.
+	if [[ ${#_deploy_agent_plugin_namespaces[@]} -gt 0 ]]; then
+		_runtime_bundle_stage "$repo_dir" "$source_dir" "$target_dir" "$plugins_file" \
+			"${_deploy_agent_plugin_namespaces[@]}" || return 1
+	else
+		_runtime_bundle_stage "$repo_dir" "$source_dir" "$target_dir" "$plugins_file" || return 1
+	fi
 	_runtime_bundle_activate "$target_dir" "$_AIDEVOPS_STAGED_BUNDLE_DIR" || return 1
 	_verify_agents_deploy_or_restore "$source_dir" "$target_dir" || return 1
 
