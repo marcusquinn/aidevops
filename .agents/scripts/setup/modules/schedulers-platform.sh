@@ -810,6 +810,7 @@ TR_PLIST
 	elif _launchd_install_if_changed "$tr_label" "$tr_plist" "$tr_plist_content"; then
 		print_info "OAuth token refresh enabled (launchd, every 30 min)"
 	else
+		# shell-portability: ignore next -- recovery text is emitted only from the macOS installer
 		print_warning "Failed to load token refresh LaunchAgent (${tr_label}); retry with: launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/${tr_label}.plist"
 	fi
 	return 0
