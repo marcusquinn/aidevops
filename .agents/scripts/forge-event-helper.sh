@@ -13,6 +13,8 @@ main() {
 	local subject_id="${EVENT_SUBJECT_ID:-}"
 	local cursor="${EVENT_CURSOR:-}"
 	local operation_id="${EVENT_OPERATION_ID:-}"
+	local delivery_id="${EVENT_DELIVERY_ID:-}"
+	local cursor_tiebreaker="${EVENT_CURSOR_TIEBREAKER:-}"
 
 	case "$event_kind" in
 	issues) event_kind="issue" ;;
@@ -33,13 +35,15 @@ main() {
 	if [[ "$event_kind" == "pull_request" && "$action" == "closed" && "${EVENT_MERGED:-false}" == "true" ]]; then
 		action="merged"
 	fi
-	[[ -n "$subject_id" && -n "$cursor" && -n "$operation_id" ]] || {
+	[[ -n "$subject_id" && -n "$cursor" && -n "$operation_id" && -n "$delivery_id" && -n "$cursor_tiebreaker" ]] || {
 		printf 'Forge event is missing immutable identity or cursor\n' >&2
 		return 1
 	}
 
 	node "$COORDINATOR" forge-event --operation-id "$operation_id" \
+		--delivery-id "$delivery_id" --cursor-tiebreaker "$cursor_tiebreaker" \
 		--repository-id "${REPOSITORY_ID:-}" --repository-slug "${REPOSITORY_SLUG:-}" \
+		--repository-path "${REPOSITORY_PATH:-}" --task-id "${EVENT_TASK_ID:-}" \
 		--event-kind "$event_kind" --action "$action" --subject-id "$subject_id" --cursor "$cursor"
 	return 0
 }
