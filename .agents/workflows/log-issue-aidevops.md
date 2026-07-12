@@ -47,7 +47,7 @@ these keywords.
 
 ## Pre-composition Checks (MANDATORY)
 
-Before composing any framework-bug report, run these 6 checks. They are shared with t2409 (`workflows/brief.md` "Pre-composition checks") — referenced here by pointer, not duplicated.
+Before composing any framework-bug report, run these 6 checks. They are shared with t2409 (`workflows/brief.md` "Pre-composition checks") — referenced here by pointer, not duplicated. Before auto-dispatch, use that workflow's single "Dispatch Readiness Contract (brief schema v2)" checklist and run `verify-brief-helper.sh check-readiness <brief>`.
 
 1. **Memory recall**: `memory-helper.sh recall --query "<symptom-keywords>" --limit 5` — surface accumulated lessons before re-diagnosing a known issue. A lesson that says "same error, fixed in t2108" saves 30+ minutes.
 

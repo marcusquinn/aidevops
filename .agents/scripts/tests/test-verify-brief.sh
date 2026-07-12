@@ -159,7 +159,9 @@ Some bug.
 
 ## Reproducer
 
-command output here
+**symptom command**: `aidevops status`
+
+**actual output**: command exits with a reproducible error
 BRIEF
 
 output=$(bash "$HELPER" validate-brief "$TMP/brief-mixed-case.md" 2>&1)
@@ -415,6 +417,95 @@ else
 fi
 
 fi  # end VB_HELPER existence check
+
+# =============================================================================
+# Class F: schema-v2 dispatch readiness validation
+# =============================================================================
+
+printf '\n%sClass F: schema-v2 dispatch readiness validation%s\n' "$TEST_BLUE" "$TEST_NC"
+
+cat >"$TMP/brief-v2-ready.md" <<'BRIEF'
+<!-- aidevops:brief-schema=v2 -->
+## Task
+Preserve compatible state writes.
+## Why
+Concurrent readers require complete records.
+## How
+### Files to Modify
+- EDIT: `state.sh`
+### Complete Write Surface
+- **Callers/readers:** `reader.sh` consumes every state record
+- **Writers/mutation paths:** `state.sh` is the writer found by search
+- **Tests/fixtures:** `tests/state.sh` covers old and new records
+- **Schemas/config:** N/A because search found no external schema
+- **Generated/deployed mirrors:** N/A because evidence shows direct deployment
+- **Migrations/backfills:** `migrate.sh` upgrades existing records
+- **Cleanup/rollback paths:** `rollback.sh` restores the old record format
+### Implementation Steps
+1. Replace records atomically.
+### Hazards and Compatibility
+- **Concurrency/atomicity:** temporary writes are renamed atomically
+- **Migration/rollback:** readers migrate before writers and rollback remains available
+- **Mixed-version/backward compatibility:** v1 readers accept unchanged fields
+- **Idempotency/retry:** migration replay preserves migrated records
+- **Partial failure/recovery:** interrupted temporary files are ignored
+### Verification Before Dispatch
+shellcheck state.sh migrate.sh rollback.sh
+bash tests/state.sh
+- **Surface mapping:** shellcheck covers writers and migration paths; tests cover compatibility and recovery
+## Acceptance Criteria
+- [ ] Concurrent reads observe one complete record.
+- [ ] Failed migration never replaces valid state or regresses v1 compatibility.
+BRIEF
+
+output=$(bash "$VB_HELPER" check-readiness "$TMP/brief-v2-ready.md" 2>&1)
+rc=$?
+if [[ $rc -eq 0 && "$output" == *"WORKER_READY=true"* ]]; then
+	pass "F1 substantive schema-v2 brief passes readiness validation"
+else
+	fail "F1 schema-v2 readiness acceptance" "expected rc=0, got rc=$rc; output: $output"
+fi
+
+cat >"$TMP/brief-v2-headings-only.md" <<'BRIEF'
+<!-- aidevops:brief-schema=v2 -->
+## Task
+Do work.
+## Why
+Needed.
+## How
+### Complete Write Surface
+### Hazards and Compatibility
+### Verification Before Dispatch
+## Acceptance Criteria
+- [ ] Done
+BRIEF
+
+output=$(bash "$VB_HELPER" check-readiness "$TMP/brief-v2-headings-only.md" 2>&1)
+rc=$?
+if [[ $rc -ne 0 && "$output" == *"WORKER_READY=false"* ]]; then
+	pass "F2 headings-only schema-v2 brief is rejected"
+else
+	fail "F2 headings-only schema-v2 rejection" "expected non-zero, got rc=$rc; output: $output"
+fi
+
+cat >"$TMP/brief-legacy-ready.md" <<'BRIEF'
+## Task
+Legacy task.
+## Why
+Legacy reason.
+## How
+Legacy steps.
+## Acceptance
+Legacy completion.
+BRIEF
+
+output=$(bash "$VB_HELPER" check-readiness "$TMP/brief-legacy-ready.md" 2>&1)
+rc=$?
+if [[ $rc -eq 0 && "$output" == *"SCHEMA=legacy"* ]]; then
+	pass "F3 unmarked historical brief remains legacy-compatible"
+else
+	fail "F3 historical brief compatibility" "expected rc=0 legacy, got rc=$rc; output: $output"
+fi
 
 # =============================================================================
 # Summary

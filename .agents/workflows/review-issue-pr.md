@@ -25,6 +25,7 @@ tools:
 - **Focus**: Validate the problem exists, evaluate if the solution is optimal
 - **When**: Before approving/merging contributions, or automatically by the pulse for `needs-maintainer-review` items
 - **Session title**: For interactive reviews, rename the session with the target first: `Issue #123: review <short topic>` or `PR #456: review <short topic>`.
+- **Brief readiness**: When promoting reviewed work to auto-dispatch, use the single `workflows/brief.md` "Dispatch Readiness Contract (brief schema v2)" checklist and `verify-brief-helper.sh check-readiness`; do not restate the checklist here.
 
 **Core Questions**:
 1. **Is the issue real?** — Reproducible? Bug or expected behavior?
