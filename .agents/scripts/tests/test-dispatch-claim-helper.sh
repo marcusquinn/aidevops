@@ -1115,16 +1115,15 @@ test_claim_rejects_stale_same_runner_claim() {
 		print_result "stale same-runner claim emits CLAIM_STALE_SELF" 1 "output: $output"
 	fi
 
-	# GH#17503: claim comments are retained for audit; stale same-runner claims
-	# are rejected without deleting either the old or the fresh comment.
-	if [[ ! -f "${tmp_dir}/delete_ids.log" ]]; then
-		print_result "stale self-claim retains audit comments" 0
+	# Keep only the winning/oldest claim; the fresh losing claim is noise.
+	if [[ -f "${tmp_dir}/delete_ids.log" ]] && grep -qx '999' "${tmp_dir}/delete_ids.log"; then
+		print_result "stale self-claim removes fresh losing comment" 0
 	else
 		local delete_log=""
 		if [[ -f "${tmp_dir}/delete_ids.log" ]]; then
 			delete_log=$(<"${tmp_dir}/delete_ids.log")
 		fi
-		print_result "stale self-claim retains audit comments" 1 "deleted: ${delete_log:-none}"
+		print_result "stale self-claim removes fresh losing comment" 1 "deleted: ${delete_log:-none}"
 	fi
 
 	rm -rf "$tmp_dir"
@@ -1173,16 +1172,14 @@ test_claim_rejects_fresh_same_runner_claim() {
 		print_result "fresh same-runner claim emits CLAIM_STALE_SELF" 1 "output: $output"
 	fi
 
-	# GH#17503: claim comments are retained for audit; duplicate same-runner
-	# claims are rejected without deleting either comment.
-	if [[ ! -f "${tmp_dir}/delete_ids.log" ]]; then
-		print_result "fresh same-runner retains audit comments" 0
+	if [[ -f "${tmp_dir}/delete_ids.log" ]] && grep -qx '999' "${tmp_dir}/delete_ids.log"; then
+		print_result "fresh same-runner removes duplicate losing comment" 0
 	else
 		local delete_log=""
 		if [[ -f "${tmp_dir}/delete_ids.log" ]]; then
 			delete_log=$(<"${tmp_dir}/delete_ids.log")
 		fi
-		print_result "fresh same-runner retains audit comments" 1 "deleted: ${delete_log:-none}"
+		print_result "fresh same-runner removes duplicate losing comment" 1 "deleted: ${delete_log:-none}"
 	fi
 	return 0
 }
