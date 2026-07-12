@@ -815,42 +815,27 @@ cmd_outcome() {
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
 		--value)
-			[[ $# -ge 2 ]] || {
-				log_error "Option --value requires an argument"
-				return 1
-			}
+			[[ $# -ge 2 ]] || { log_error "Option --value requires an argument"; return 1; }
 			outcome_value="$2"
 			shift 2
 			;;
 		--details)
-			[[ $# -ge 2 ]] || {
-				log_error "Option --details requires an argument"
-				return 1
-			}
+			[[ $# -ge 2 ]] || { log_error "Option --details requires an argument"; return 1; }
 			details="$2"
 			shift 2
 			;;
 		--verifier)
-			[[ $# -ge 2 ]] || {
-				log_error "Option --verifier requires an argument"
-				return 1
-			}
+			[[ $# -ge 2 ]] || { log_error "Option --verifier requires an argument"; return 1; }
 			verifier_id="$2"
 			shift 2
 			;;
 		--source-id)
-			[[ $# -ge 2 ]] || {
-				log_error "Option --source-id requires an argument"
-				return 1
-			}
+			[[ $# -ge 2 ]] || { log_error "Option --source-id requires an argument"; return 1; }
 			evidence_source_id="$2"
 			shift 2
 			;;
 		--provenance)
-			[[ $# -ge 2 ]] || {
-				log_error "Option --provenance requires an argument"
-				return 1
-			}
+			[[ $# -ge 2 ]] || { log_error "Option --provenance requires an argument"; return 1; }
 			verification_provenance="$2"
 			shift 2
 			;;
@@ -930,18 +915,12 @@ cmd_revoke() {
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
 		--reason)
-			[[ $# -ge 2 ]] || {
-				log_error "Option --reason requires an argument"
-				return 1
-			}
+			[[ $# -ge 2 ]] || { log_error "Option --reason requires an argument"; return 1; }
 			reason="$2"
 			shift 2
 			;;
 		--corrected-by)
-			[[ $# -ge 2 ]] || {
-				log_error "Option --corrected-by requires an argument"
-				return 1
-			}
+			[[ $# -ge 2 ]] || { log_error "Option --corrected-by requires an argument"; return 1; }
 			corrected_by="$2"
 			shift 2
 			;;
