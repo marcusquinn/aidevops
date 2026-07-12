@@ -42,6 +42,7 @@
 #   10. merge LaunchAgent uses normal spawn priority with explicit KeepAlive=false
 #   11. standalone PATH repair keeps the framework gh shim first
 #   12. leading --repo defaults to the run subcommand (GH#25698)
+#   13. GraphQL budget probing does not depend on the REST core budget
 
 set -uo pipefail
 
@@ -327,6 +328,47 @@ if [[ "$parser_rc" -eq 0 ]]; then
 else
 	fail "12: leading --repo defaults to run subcommand" \
 		"harness rc=${parser_rc}, output=${parser_output}"
+fi
+
+printf '\n=== API budget isolation regression guard ===\n'
+
+BUDGET_HARNESS=$(mktemp "${TMPDIR:-/tmp}/pmr-budget-harness-XXXXXX")
+trap 'rm -f "$PARSER_HARNESS" "$BUDGET_HARNESS"' EXIT
+
+cat >"$BUDGET_HARNESS" <<'BUDGET_HARNESS_EOF'
+#!/usr/bin/env bash
+set -uo pipefail
+
+gh() {
+	if [[ "${1:-}" == "api" && "${2:-}" == "graphql" ]]; then
+		printf '700\n'
+		return 0
+	fi
+	return 22
+}
+
+# Extract the production read wrapper and budget probe without executing the
+# routine entry point. The mock deliberately rejects every non-GraphQL call.
+# shellcheck disable=SC1090
+source <(awk '
+	/^_pmr_gh_read\(\)/ { capture=1 }
+	capture { print }
+	capture && /^}/ { closures++; if (closures == 2) exit }
+' "$ROUTINE_FILE")
+
+unset AIDEVOPS_PULSE_GRAPHQL_BUDGET_REMAINING
+[[ "$(_pmr_graphql_remaining)" == "700" ]]
+BUDGET_HARNESS_EOF
+
+chmod +x "$BUDGET_HARNESS"
+budget_output=$(ROUTINE_FILE="$ROUTINE_FILE" bash "$BUDGET_HARNESS" 2>&1)
+budget_rc=$?
+
+if [[ "$budget_rc" -eq 0 ]]; then
+	pass "13: GraphQL budget probe is independent of REST core rate limit"
+else
+	fail "13: GraphQL budget probe is independent of REST core rate limit" \
+		"harness rc=${budget_rc}, output=${budget_output}"
 fi
 
 # =============================================================================
