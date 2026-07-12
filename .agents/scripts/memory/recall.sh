@@ -294,6 +294,7 @@ SELECT
     bm25(learnings) as bm25_score,
     (bm25(learnings) - (COALESCE(learning_access.usefulness_score, 0.0) * 0.3)) as score
 FROM learnings
+INNER JOIN observations observation ON observation.observation_id = 'obs_learning_' || learnings.id
 LEFT JOIN learning_access ON learnings.id = learning_access.id
 LEFT JOIN learning_truth_events latest_truth ON latest_truth.event_id = (
     SELECT event_id FROM learning_truth_events truth_pick
@@ -305,8 +306,8 @@ LEFT JOIN learning_relations superseded_by ON superseded_by.supersedes_id = lear
     AND superseded_by.relation_type = 'updates'
 $entity_fts_join
 WHERE learnings MATCH :query $extra_filters $auto_join_filter $entity_fts_where
-AND COALESCE(latest_truth.status, 'live') NOT IN ('debunked', 'retracted')
-AND superseded_by.id IS NULL
+AND observation.status = 'active'
+AND (observation.expires_at IS NULL OR observation.expires_at > datetime('now'))
 ORDER BY score
 LIMIT $limit;
 EOF
@@ -409,7 +410,7 @@ _recall_recent() {
 	local extra_filters="$7"
 
 	local results
-	results=$(db -json "$db_path" "SELECT l.id, l.content, l.type, l.tags, l.confidence, l.created_at, COALESCE(a.last_accessed_at, '') as last_accessed_at, COALESCE(a.access_count, 0) as access_count, COALESCE(a.auto_captured, 0) as auto_captured, COALESCE(a.usefulness_score, 0.0) as usefulness_score, COALESCE(latest_truth.status, 'live') as truth_status, COALESCE(latest_truth.evidence, '') as truth_evidence, COALESCE(latest_truth.replacement_id, '') as replacement_id, COALESCE(superseded_by.id, '') as superseded_by FROM learnings l LEFT JOIN learning_access a ON l.id = a.id LEFT JOIN learning_truth_events latest_truth ON latest_truth.event_id = (SELECT event_id FROM learning_truth_events truth_pick WHERE truth_pick.memory_id = l.id ORDER BY truth_pick.created_at DESC, truth_pick.event_id DESC LIMIT 1) LEFT JOIN learning_relations superseded_by ON superseded_by.supersedes_id = l.id AND superseded_by.relation_type = 'updates' $entity_join WHERE 1=1 $entity_where $auto_filter $extra_filters AND COALESCE(latest_truth.status, 'live') NOT IN ('debunked', 'retracted') AND superseded_by.id IS NULL ORDER BY l.created_at DESC LIMIT $limit;")
+	results=$(db -json "$db_path" "SELECT l.id, l.content, l.type, l.tags, l.confidence, l.created_at, COALESCE(a.last_accessed_at, '') as last_accessed_at, COALESCE(a.access_count, 0) as access_count, COALESCE(a.auto_captured, 0) as auto_captured, COALESCE(a.usefulness_score, 0.0) as usefulness_score, o.status as truth_status, '' as truth_evidence, '' as replacement_id, '' as superseded_by FROM learnings l INNER JOIN observations o ON o.observation_id = 'obs_learning_' || l.id LEFT JOIN learning_access a ON l.id = a.id $entity_join WHERE 1=1 $entity_where $auto_filter $extra_filters AND o.status = 'active' AND (o.expires_at IS NULL OR o.expires_at > datetime('now')) ORDER BY l.created_at DESC LIMIT $limit;")
 	if [[ "$format" == "json" ]]; then
 		printf '%s\n' "$results"
 	else
@@ -421,7 +422,7 @@ _recall_recent() {
 
 #######################################
 # Handle --semantic / --hybrid mode: delegate to embeddings helper
-# Usage: _recall_semantic <query> <limit> <hybrid_mode> <format>
+# Usage: _recall_semantic <query> <limit> <hybrid_mode> <format> <project> <entity> <type> <max_age>
 # Returns: exit code from embeddings helper, or 1 if unavailable
 #######################################
 _recall_semantic() {
@@ -429,6 +430,10 @@ _recall_semantic() {
 	local limit="$2"
 	local hybrid_mode="$3"
 	local format="$4"
+	local project_filter="$5"
+	local entity_filter="$6"
+	local type_filter="$7"
+	local max_age_days="$8"
 
 	local embeddings_script
 	embeddings_script="$(dirname "${BASH_SOURCE[0]}")/../memory-embeddings-helper.sh"
@@ -447,7 +452,9 @@ _recall_semantic() {
 	if [[ "$format" == "json" ]]; then
 		semantic_args+=("--json")
 	fi
-	"$embeddings_script" "${semantic_args[@]}"
+	MEMORY_SEARCH_PROJECT="$project_filter" MEMORY_SEARCH_ENTITY="$entity_filter" \
+		MEMORY_SEARCH_TYPE="$type_filter" MEMORY_SEARCH_MAX_AGE_DAYS="$max_age_days" \
+		"$embeddings_script" "${semantic_args[@]}"
 	return $?
 }
 
@@ -639,16 +646,13 @@ cmd_recall() {
 
 	# Handle --semantic or --hybrid mode (delegate to embeddings helper)
 	if [[ "$semantic_mode" == true || "$hybrid_mode" == true ]]; then
-		# Semantic retrieval currently owns truth maintenance but does not yet
-		# implement the keyword path's scope/type/age/capture/shared filters. Fail
-		# closed instead of silently returning out-of-scope memories.
-		if [[ -n "$type_filter" || -n "$max_age_days" || -n "$project_filter" ||
-			-n "$entity_filter" || "$auto_only" == true || "$manual_only" == true ||
+		if [[ "$auto_only" == true || "$manual_only" == true ||
 			"$shared_mode" == true ]]; then
-			log_error "Semantic/hybrid recall does not support scoped filters yet; use keyword recall for --type, --max-age-days, --project, --entity, --auto-only, --manual-only, or --shared"
+			log_error "Semantic/hybrid recall does not support --auto-only, --manual-only, or --shared"
 			return 1
 		fi
-		_recall_semantic "$query" "$limit" "$hybrid_mode" "$format"
+		_recall_semantic "$query" "$limit" "$hybrid_mode" "$format" \
+			"$project_filter" "$entity_filter" "$type_filter" "$max_age_days"
 		return $?
 	fi
 

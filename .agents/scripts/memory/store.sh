@@ -350,6 +350,38 @@ _store_auto_index() {
 	return 0
 }
 
+_store_check_duplicate() {
+	local escaped_content="${_store_content//"'"/"''"}"
+	local escaped_entity="${_store_entity_id//"'"/"''"}"
+	local existing_id
+	existing_id=$(db "$MEMORY_DB" "SELECT l.id FROM learnings l JOIN observations o ON o.observation_id = 'obs_learning_' || l.id WHERE l.content = '$escaped_content' AND l.type = '$_store_type' AND COALESCE(o.owner_id, '') = '$escaped_entity' AND COALESCE(o.subject_id, '') = '$escaped_entity' AND COALESCE(o.project_scope, '') = '$_store_esc_project' AND o.sensitivity = 'internal' AND o.status = 'active' AND (o.expires_at IS NULL OR o.expires_at > datetime('now')) LIMIT 1;" 2>/dev/null || true)
+	if [[ -n "$existing_id" ]]; then
+		printf '%s\n' "$existing_id"
+		return 0
+	fi
+
+	local normalized
+	normalized=$(normalize_content "$_store_content")
+	local candidates
+	candidates=$(db "$MEMORY_DB" "SELECT l.id, l.content FROM learnings l JOIN observations o ON o.observation_id = 'obs_learning_' || l.id WHERE l.type = '$_store_type' AND COALESCE(o.owner_id, '') = '$escaped_entity' AND COALESCE(o.subject_id, '') = '$escaped_entity' AND COALESCE(o.project_scope, '') = '$_store_esc_project' AND o.sensitivity = 'internal' AND o.status = 'active' AND (o.expires_at IS NULL OR o.expires_at > datetime('now'));" 2>/dev/null || true)
+	while IFS='|' read -r candidate_id candidate_content; do
+		[[ -z "$candidate_id" ]] && continue
+		if [[ "$(normalize_content "$candidate_content")" == "$normalized" ]]; then
+			printf '%s\n' "$candidate_id"
+			return 0
+		fi
+	done <<<"$candidates"
+
+	existing_id=$(MEMORY_SEARCH_PROJECT="$_store_project_path" \
+		MEMORY_SEARCH_ENTITY="$_store_entity_id" MEMORY_SEARCH_TYPE="$_store_type" \
+		check_semantic_duplicate "$_store_content" "$_store_type" || true)
+	if [[ -n "$existing_id" ]]; then
+		printf '%s\n' "$existing_id"
+		return 0
+	fi
+	return 1
+}
+
 #######################################
 # Store a learning
 #######################################
@@ -374,21 +406,14 @@ cmd_store() {
 	fi
 
 	init_db
+	_store_prepare_metadata || return 1
 
-	# Deduplication: skip if content already exists (unless it's a relational update)
+	# Deduplication is restricted to the canonical observation identity and live scope.
 	if [[ -z "$_store_supersedes_id" && -z "$_store_debunks_id" ]]; then
 		local existing_id
-		if existing_id=$(check_duplicate "$_store_content" "$_store_type"); then
+		if existing_id=$(_store_check_duplicate); then
 			log_warn "Duplicate detected (matches $existing_id). Skipping store."
-			# Update access tracking on the existing entry to keep it fresh
-			db "$MEMORY_DB" <<EOF
-INSERT INTO learning_access (id, last_accessed_at, access_count)
-VALUES ('$existing_id', datetime('now'), 1)
-ON CONFLICT(id) DO UPDATE SET 
-    last_accessed_at = datetime('now'),
-    access_count = access_count + 1;
-EOF
-			echo "$existing_id"
+			printf '%s\n' "$existing_id"
 			return 0
 		fi
 	fi
@@ -396,13 +421,15 @@ EOF
 	# Opportunistic auto-prune (runs at most once per 24h)
 	auto_prune
 
-	# Prepare metadata: IDs, timestamps, SQL-escaped values
-	_store_prepare_metadata || return 1
-
 	# Insert all records into the database
 	_store_insert_record || return 1
 	# Canonical observations are authoritative; learnings remain the retrieval projection.
 	_backfill_legacy_observations || return 1
+	if [[ -n "$_store_debunks_id" ]]; then
+		db "$MEMORY_DB" "UPDATE observations SET status = 'debunked' WHERE observation_id = 'obs_learning_' || '$_store_esc_supersedes';"
+	elif [[ -n "$_store_supersedes_id" && "$_store_relation_type" == "updates" ]]; then
+		db "$MEMORY_DB" "UPDATE observations SET status = 'superseded' WHERE observation_id = 'obs_learning_' || '$_store_esc_supersedes';"
+	fi
 
 	log_success "Stored learning: $_store_id"
 

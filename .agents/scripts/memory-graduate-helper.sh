@@ -221,7 +221,8 @@ _query_candidates_json() {
 	local limit="$2"
 	local raw_results=""
 
-	raw_results=$(db -json "$MEMORY_DB" <<EOF
+	raw_results=$(
+		db -json "$MEMORY_DB" <<EOF
 SELECT
     l.id,
     l.type,
@@ -232,23 +233,16 @@ SELECT
     COALESCE(a.access_count, 0) as access_count,
     COALESCE(a.last_accessed_at, '') as last_accessed_at
 FROM learnings l
+JOIN observations o ON o.observation_id = 'obs_learning_' || l.id
 LEFT JOIN learning_access a ON l.id = a.id
 WHERE (
     l.confidence = 'high'
     OR COALESCE(a.access_count, 0) >= $min_access
 )
 AND l.type != 'USER_PREFERENCE'
-AND COALESCE((
-    SELECT status FROM learning_truth_events truth_pick
-    WHERE truth_pick.memory_id = l.id
-    ORDER BY truth_pick.created_at DESC, truth_pick.event_id DESC
-    LIMIT 1
-), 'live') NOT IN ('debunked', 'retracted')
-AND NOT EXISTS (
-    SELECT 1 FROM learning_relations superseded_by
-    WHERE superseded_by.supersedes_id = l.id
-      AND superseded_by.relation_type = 'updates'
-)
+AND o.status = 'active'
+AND (o.expires_at IS NULL OR o.expires_at > datetime('now'))
+AND o.sensitivity IN ('public', 'internal')
 AND (a.graduated_at IS NULL OR a.graduated_at = '')
 ORDER BY
     CASE WHEN l.confidence = 'high' THEN 0 ELSE 1 END,

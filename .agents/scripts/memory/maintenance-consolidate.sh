@@ -91,6 +91,8 @@ _consolidate_merge_pair() {
 		echo "[WARN] Failed to transfer access history from $newer_id_esc to $older_id_esc" >&2
 
 	# Re-point relations and delete newer entry
+	db "$MEMORY_DB" "UPDATE observation_sources SET observation_id = 'obs_learning_' || '$older_id_esc' WHERE observation_id = 'obs_learning_' || '$newer_id_esc';"
+	db "$MEMORY_DB" "DELETE FROM observations WHERE observation_id = 'obs_learning_' || '$newer_id_esc';"
 	db "$MEMORY_DB" "UPDATE learning_relations SET supersedes_id = '$older_id_esc' WHERE supersedes_id = '$newer_id_esc';"
 	db "$MEMORY_DB" "DELETE FROM learning_relations WHERE id = '$newer_id_esc';"
 	db "$MEMORY_DB" "DELETE FROM learning_access WHERE id = '$newer_id_esc';"
@@ -119,6 +121,17 @@ FROM learnings l1
 JOIN learnings l2 ON l1.type = l2.type
     AND l1.id < l2.id
     AND l1.content != l2.content
+JOIN observations o1 ON o1.observation_id = 'obs_learning_' || l1.id
+JOIN observations o2 ON o2.observation_id = 'obs_learning_' || l2.id
+    AND o1.kind = o2.kind
+    AND COALESCE(o1.owner_id, '') = COALESCE(o2.owner_id, '')
+    AND COALESCE(o1.subject_id, '') = COALESCE(o2.subject_id, '')
+    AND COALESCE(o1.project_scope, '') = COALESCE(o2.project_scope, '')
+    AND COALESCE(o1.organization_scope, '') = COALESCE(o2.organization_scope, '')
+    AND COALESCE(o1.user_scope, '') = COALESCE(o2.user_scope, '')
+    AND o1.framework_scope = o2.framework_scope
+    AND o1.sensitivity = o2.sensitivity
+    AND o1.status = o2.status
 WHERE (
     (SELECT COUNT(*) FROM (
         SELECT value FROM json_each('["' || replace(lower(l1.content), ' ', '","') || '"]')
@@ -129,6 +142,9 @@ WHERE (
         length(l2.content) - length(replace(l2.content, ' ', '')) + 1
     ) > $similarity_threshold
 )
+AND o1.status = 'active'
+AND (o1.expires_at IS NULL OR o1.expires_at > datetime('now'))
+AND (o2.expires_at IS NULL OR o2.expires_at > datetime('now'))
 LIMIT 20;
 EOF
 	return 0
