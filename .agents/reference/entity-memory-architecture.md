@@ -27,7 +27,7 @@ Cross-channel relationship continuity for agents on Matrix, SimpleX, email, CLI,
 
 | Decision | Why |
 |----------|-----|
-| Same `memory.db`, new tables | Enables cross-queries without cross-DB joins |
+| Same `memory.db`, canonical observations | Enables cross-queries without cross-DB joins and gives every derived fact provenance |
 | Three layers, not two | Layer 0 raw data is primary; summaries and profiles are derived |
 | Versioned profiles via `supersedes_id` | Never update in place; mirrors `learning_relations` |
 | Identity resolution requires confirmation | Never auto-link across channels |
@@ -43,11 +43,11 @@ Cross-channel relationship continuity for agents on Matrix, SimpleX, email, CLI,
 | **1: Conversation context** | Active threads, immutable summaries, tone profile, pending actions | conversations, conversation_summaries | `conversation-helper.sh` |
 | **0: Raw interaction log** | Immutable source of truth; FTS5 indexed; privacy-filtered on write | interactions, interactions_fts | `entity-helper.sh log-interaction` |
 
-**Immutability:** Layer 0 is INSERT-only (except privacy deletion). Layers 1-2 use `supersedes_id` chains — new rows supersede old, never edit in place. Current record = row whose `id` is not referenced by another row's `supersedes_id`. Preserves full audit trail; avoids concurrent-write conflicts.
+**Immutability:** Layer 0 and canonical `observations`/`observation_sources` are INSERT-only (except privacy deletion). Layers 1-2 use `supersedes_id` chains that project to `observation_relations`; new rows supersede old, never edit in place. Deterministic source IDs prevent replay from inflating evidence. Current record = row whose `id` is not referenced by another row's `supersedes_id`. Preserves full audit trail; avoids concurrent-write conflicts.
 
 ## Database Schema
 
-All tables live in `~/.aidevops/.agent-workspace/memory/memory.db` alongside `learnings`, `learning_access`, and `learning_relations`.
+All tables live in `~/.aidevops/.agent-workspace/memory/memory.db`. `observations` is canonical, `observation_sources` holds evidence/provenance, `observation_relations` holds truth and version transitions, and `observation_outcomes` holds usefulness/results. `learnings` remains the compatible FTS retrieval projection.
 
 ### Layer 0: `interactions` + `interactions_fts`
 

@@ -401,6 +401,8 @@ EOF
 
 	# Insert all records into the database
 	_store_insert_record || return 1
+	# Canonical observations are authoritative; learnings remain the retrieval projection.
+	_backfill_legacy_observations || return 1
 
 	log_success "Stored learning: $_store_id"
 
