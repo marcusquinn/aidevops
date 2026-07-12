@@ -396,8 +396,11 @@ test_backward_compat() {
 	local test_dir="$TEST_ROOT/compat-repo"
 	mkdir -p "$test_dir"
 	git -C "$test_dir" init --quiet 2>/dev/null
-	# Add a fake remote
-	git -C "$test_dir" remote add origin "https://github.com/test/test.git" 2>/dev/null
+	# Avoid the canonical-repo mutation guard for this disposable test fixture.
+	cat >>"$test_dir/.git/config" <<'EOF'
+[remote "origin"]
+	url = https://github.com/test/test.git
+EOF
 
 	echo '{"version": "3.0.0"}' > "$test_dir/.aidevops.json"
 
@@ -496,6 +499,30 @@ test_coderabbit_abort_on_close_init_hook() {
 	return 0
 }
 
+test_init_library_function_sizes() {
+	echo ""
+	echo "=== Testing init library function sizes ==="
+
+	local oversized rc=0
+	oversized=$(awk '
+		/^[[:alnum:]_]+\(\)[[:space:]]*\{/ {
+			name = $0
+			sub(/\(.*/, "", name)
+			start = NR
+		}
+		name != "" && /^}/ {
+			func_length = NR - start + 1
+			if (func_length > 100) print name ":" func_length
+			name = ""
+		}
+	' "$AIDEVOPS_INIT_LIB")
+
+	if [[ -z "$oversized" ]]; then rc=0; else rc=1; fi
+	print_result "every aidevops-init-lib.sh function is at most 100 lines" "$rc" "$oversized"
+
+	return 0
+}
+
 # ---- Run all tests ----
 
 echo "test-init-scope.sh — init_scope scaffolding gate tests (t2265)"
@@ -512,6 +539,7 @@ test_backward_compat
 test_label_sync_init_hook
 test_repo_metrics_init_hook
 test_coderabbit_abort_on_close_init_hook
+test_init_library_function_sizes
 
 echo ""
 echo "============================================================="
