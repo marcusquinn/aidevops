@@ -64,7 +64,7 @@ Output: practices followed, practices missed with recommendations.
 
 ### Step 4: Auto-Distill Session Learnings
 
-**MANDATORY**: Run session distillation to extract and store learnings from git commits:
+**MANDATORY**: Run resumable session finalization. It checkpoints operational state independently, privacy-redacts observations before proposal persistence, and only auto-finalizes low-risk preferences explicitly stated by the user:
 
 ```bash
 ~/.aidevops/agents/scripts/session-distill-helper.sh auto
@@ -72,7 +72,7 @@ Output: practices followed, practices missed with recommendations.
 
 ### Step 5: Conversation Value Extraction + Knowledge Capture
 
-**MANDATORY**: Re-read the entire conversation — auto-distill (Step 4) only captures commits; this step surfaces decisions, observations, and insights not in any artifact.
+**MANDATORY**: Re-read the entire conversation. Submit uncaptured observations as proposals with stable session/source boundaries. Mark only directly stated, non-consequential preferences as `explicit: true, risk: low`; inferred or consequential observations remain `pending_review`.
 
 **Signals to capture:**
 
@@ -91,7 +91,7 @@ Output: practices followed, practices missed with recommendations.
 | Tool discoveries | Unexpected tool behaviour | Relevant subagent |
 | Temporary workarounds | Hacks that need proper fixes | TODO.md, code comments |
 
-**Process**: Scan chronologically; for each insight not yet in commit/PR/memory/TODO/doc → capture now; partial → complete. User corrections reveal framework gaps — prioritize. Goal: zero knowledge loss; every insight traceable to an artifact.
+**Process**: Scan chronologically; write candidate JSON and run `session-distill-helper.sh propose <file>`, then `finalize`. Retries process only unfinished items by idempotency key. Never delete proposal inputs or pending ledger items after partial failure. Finalization failure is non-blocking for authorized implementation; report it and leave the ledger resumable. User corrections reveal framework gaps, but consequential or inferred claims require review.
 
 Output: newly captured items with locations, already-captured items, unfinished threads with created TODOs/issues.
 
