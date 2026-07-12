@@ -190,7 +190,8 @@ PYEOF
 test_grep_permission_is_explicit() {
 	local output rc py_out
 	py_out=$(mktemp)
-	SCRIPTS_DIR="$SCRIPTS_DIR" python3 - >"$py_out" 2>&1 <<'PYEOF'
+	rc=0
+	SCRIPTS_DIR="$SCRIPTS_DIR" python3 - >"$py_out" 2>&1 <<'PYEOF' || rc=$?
 import os
 import sys
 
@@ -208,7 +209,6 @@ assert "grep" not in research["permission"]
 
 print("OK")
 PYEOF
-	rc=$?
 	output=$(cat "$py_out")
 	rm -f "$py_out"
 
