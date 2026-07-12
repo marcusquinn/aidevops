@@ -82,7 +82,7 @@ if [[ "${1:-}" == "issue" && "${2:-}" == "create" ]]; then
 	exit 0
 fi
 
-if [[ "${1:-}" == "api" && "${2:-}" == "user" ]]; then
+if [[ "${1:-}" == "api" && "${2:-}" == "graphql" ]]; then
 	printf '"testuser"\n'
 	exit 0
 fi
