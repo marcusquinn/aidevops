@@ -450,6 +450,69 @@ _report_violations() {
 	return 0
 }
 
+# Check one extracted task identity. Sets CHECK_MESSAGE_VIOLATION when the
+# identity is invalid. Returns 0 (clean), 1 (violation), or 2 (fail-open).
+_check_tid() {
+	local tid="$1"
+	local counter="$2"
+	local closing_issues="$3"
+	local num=""
+	CHECK_MESSAGE_VIOLATION=""
+
+	if ! num=$(_legacy_sequence_for_collision_check "$tid"); then
+		CHECK_MESSAGE_VIOLATION="  ${tid} — malformed task identity\n"
+		return 1
+	fi
+	if [[ -z "$num" ]]; then
+		_debug "$tid is origin-namespaced — verifying canonical linked issue binding"
+		local namespaced_verify_rc=0
+		_verify_tid_via_issues "$tid" "$closing_issues" || namespaced_verify_rc=$?
+		if [[ "$namespaced_verify_rc" -eq 2 ]]; then
+			return 2
+		fi
+		if [[ "$namespaced_verify_rc" -ne 0 ]]; then
+			CHECK_MESSAGE_VIOLATION="  ${tid} — namespaced ID is not bound to a linked issue title\n"
+			return 1
+		fi
+		return 0
+	fi
+
+	# Force base-10 so leading-zero legacy IDs do not enter Bash's octal parser.
+	if ((10#$num <= 10#$counter)); then
+		if _branch_has_claim "$tid"; then
+			_debug "$tid claimed on this branch — allowed"
+			return 0
+		fi
+		if _repo_has_claim "$tid"; then
+			_debug "$tid claimed in repo history — allowed (cross-reference)"
+			return 0
+		fi
+		_debug "$tid ≤ counter but no branch/repo claim — verifying via linked issues"
+		local verify_rc=0
+		_verify_tid_via_issues "$tid" "$closing_issues" || verify_rc=$?
+		if [[ "$verify_rc" -eq 2 ]]; then
+			return 2
+		fi
+		if [[ "$verify_rc" -eq 1 ]]; then
+			CHECK_MESSAGE_VIOLATION="  ${tid} — ≤ counter ${counter}, but no 'chore: claim ${tid}' commit on this branch, in repo history, or linked issue title\n"
+			return 1
+		fi
+		return 0
+	fi
+
+	_debug "$tid ($num) > counter ($counter) — suspicious, checking linked issues"
+	local verify_rc=0
+	_verify_tid_via_issues "$tid" "$closing_issues" || verify_rc=$?
+	if [[ "$verify_rc" -eq 2 ]]; then
+		return 2
+	fi
+	if [[ "$verify_rc" -eq 1 ]]; then
+		CHECK_MESSAGE_VIOLATION="  ${tid} — numeric ID ${num} > current counter ${counter}, and not confirmed via a linked issue title\n"
+		return 1
+	fi
+	return 0
+}
+
 # ---------------------------------------------------------------------------
 # Core check: given a commit message, check if any t\d+ reference is invented.
 # Args:
@@ -496,55 +559,13 @@ _check_message() {
 	local tid
 	while IFS= read -r tid; do
 		[[ -z "$tid" ]] && continue
-		local num=""
-		if ! num=$(_legacy_sequence_for_collision_check "$tid"); then
-			violations="${violations}  ${tid} — malformed task identity\n"
-			continue
-		fi
-		if [[ -z "$num" ]]; then
-			_debug "$tid is origin-namespaced — verifying canonical linked issue binding"
-			local namespaced_verify_rc=0
-			_verify_tid_via_issues "$tid" "$closing_issues" || namespaced_verify_rc=$?
-			if [[ "$namespaced_verify_rc" -eq 2 ]]; then
-				return 2
-			fi
-			if [[ "$namespaced_verify_rc" -ne 0 ]]; then
-				violations="${violations}  ${tid} — namespaced ID is not bound to a linked issue title\n"
-			fi
-			continue
-		fi
-		# Force base-10 so leading-zero legacy IDs do not enter Bash's octal parser.
-		if ((10#$num <= 10#$counter)); then
-			# Existing legacy IDs require a branch/repository claim or exact linked issue.
-			if _branch_has_claim "$tid"; then
-				_debug "$tid claimed on this branch — allowed"
-				continue
-			fi
-			if _repo_has_claim "$tid"; then
-				_debug "$tid claimed in repo history — allowed (cross-reference)"
-				continue
-			fi
-			_debug "$tid ≤ counter but no branch/repo claim — verifying via linked issues"
-			local verify_rc
-			_verify_tid_via_issues "$tid" "$closing_issues"
-			verify_rc=$?
-			if [[ "$verify_rc" -eq 2 ]]; then
-				return 2
-			fi
-			if [[ "$verify_rc" -eq 1 ]]; then
-				violations="${violations}  ${tid} — ≤ counter ${counter}, but no 'chore: claim ${tid}' commit on this branch, in repo history, or linked issue title\n"
-			fi
-			continue
-		fi
-		_debug "$tid ($num) > counter ($counter) — suspicious, checking linked issues"
-		local verify_rc
-		_verify_tid_via_issues "$tid" "$closing_issues"
-		verify_rc=$?
-		if [[ "$verify_rc" -eq 2 ]]; then
+		local check_rc=0
+		_check_tid "$tid" "$counter" "$closing_issues" || check_rc=$?
+		if [[ "$check_rc" -eq 2 ]]; then
 			return 2
 		fi
-		if [[ "$verify_rc" -eq 1 ]]; then
-			violations="${violations}  ${tid} — numeric ID ${num} > current counter ${counter}, and not confirmed via a linked issue title\n"
+		if [[ "$check_rc" -eq 1 ]]; then
+			violations="${violations}${CHECK_MESSAGE_VIOLATION}"
 		fi
 	done <<<"$tids"
 
