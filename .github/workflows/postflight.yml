@@ -79,9 +79,31 @@ jobs:
         # cancellation can incorrectly fail an otherwise healthy release.
         SELF_NAME="Verify Release Health"
         CHECK_RUNS_RESPONSE=$(gh api "repos/${REPO}/commits/${COMMIT_SHA}/check-runs?per_page=100")
-        CHECK_RUNS=$(echo "$CHECK_RUNS_RESPONSE" \
-          | jq -c --arg self_name "$SELF_NAME" -f .github/scripts/effective-check-runs.jq \
-          | jq -c '.[] | {name, status, conclusion, app: (.app.slug // .app.name // "unknown")}')
+        EFFECTIVE_CHECK_RUNS=$(echo "$CHECK_RUNS_RESPONSE" \
+          | jq -c --arg self_name "$SELF_NAME" -f .github/scripts/effective-check-runs.jq)
+
+        # A later push to the default branch can cancel checks on the release
+        # commit via cancel-in-progress. Accept only a successful check with the
+        # same name/app on a descendant default-branch commit; real failures and
+        # cancellations without descendant proof remain blocking.
+        DESCENDANT_CHECK_RUNS='[]'
+        DEFAULT_BRANCH=$(gh api "repos/${REPO}" --jq '.default_branch // empty' 2>/dev/null || true)
+        DEFAULT_SHA=$(gh api "repos/${REPO}/commits/${DEFAULT_BRANCH}" --jq '.sha // empty' 2>/dev/null || true)
+        if [[ -n "$DEFAULT_SHA" && "$DEFAULT_SHA" != "$COMMIT_SHA" ]]; then
+          COMPARE_STATUS=$(gh api "repos/${REPO}/compare/${COMMIT_SHA}...${DEFAULT_SHA}" --jq '.status // empty' 2>/dev/null || true)
+          if [[ "$COMPARE_STATUS" == "ahead" || "$COMPARE_STATUS" == "identical" ]]; then
+            DESCENDANT_RESPONSE=$(gh api "repos/${REPO}/commits/${DEFAULT_SHA}/check-runs?per_page=100" 2>/dev/null || true)
+            if [[ -n "$DESCENDANT_RESPONSE" ]]; then
+              DESCENDANT_CHECK_RUNS=$(echo "$DESCENDANT_RESPONSE" \
+                | jq -c --arg self_name "$SELF_NAME" -f .github/scripts/effective-check-runs.jq)
+            fi
+          fi
+        fi
+        CHECK_RUNS=$(jq -cn \
+          --argjson current_runs "$EFFECTIVE_CHECK_RUNS" \
+          --argjson descendant_runs "$DESCENDANT_CHECK_RUNS" \
+          -f .github/scripts/reconcile-superseded-cancellations.jq \
+          | jq -c '.[] | {name, status, conclusion, app: (.app.slug // .app.name // "unknown"), superseded_by_check_run_id}')
         
         # Count results (excluding self)
         TOTAL=$(echo "$CHECK_RUNS" | jq -s 'length')
@@ -96,7 +118,7 @@ jobs:
         echo "$CHECK_RUNS" | jq -rs '.[] | "| \(.name) | \(.status) | \(.conclusion // "pending") |"' >> $GITHUB_STEP_SUMMARY
         
         echo "" >> $GITHUB_STEP_SUMMARY
-        echo "*Note: latest completed run per check name/app is used; 'Verify Release Health' is excluded*" >> $GITHUB_STEP_SUMMARY
+        echo "*Note: latest completed run per check name/app is used; descendant success may replace a superseded cancellation; 'Verify Release Health' is excluded*" >> $GITHUB_STEP_SUMMARY
         
         echo "" >> $GITHUB_STEP_SUMMARY
         echo "**Total**: $TOTAL | **Passed**: $PASSED | **Skipped**: $SKIPPED | **Failed**: $FAILED" >> $GITHUB_STEP_SUMMARY
