@@ -508,7 +508,7 @@ _fetch_claim_marker_comments() {
 			end
 		)[]
 		| select((.body // "" | ascii_downcase) | (contains(($marker | ascii_downcase) + " nonce=") or contains("dispatch_lease") or contains("claim_released") or contains("dispatching worker")))
-		| {id: .id, body: .body, created_at: .created_at} ]
+		| {id: .id, body: .body, created_at: .created_at, author: (.user.login // ""), author_association: (.author_association // "")} ]
 	' || {
 		echo "Error: failed to parse comments for #${issue_number} in ${repo_slug}" >&2
 		return 1
@@ -655,7 +655,7 @@ _filter_claims_with_launch_evidence() {
 			| select((.created_at // "") > ($claim.created_at // ""))
 			| select((.body // "" | ascii_downcase) | contains("dispatching worker"))
 		  ] | length) as $launch_count
-		| select((.age_seconds // 0) <= $orphan_grace or $launch_count > 0)
+		| select(.lease_phase == "ready" or (.age_seconds // 0) <= $orphan_grace or $launch_count > 0)
 		]
 		| sort_by([.created_at, .nonce])
 	' 2>/dev/null || printf '%s' "$parsed_claims"
@@ -1215,11 +1215,18 @@ cmd_transition() {
 	case "$phase" in ready | terminal) ;; *) echo "Error: transition phase must be ready or terminal" >&2; return 1 ;; esac
 	[[ "$issue_number" =~ ^[0-9]+$ && -n "$repo_slug" && -n "$lease_token" ]] || return 1
 	[[ "$ttl" =~ ^[0-9]+$ ]] || ttl="$DISPATCH_READY_LEASE_TTL"
-	local active_claims="" current_phase=""
+	local active_claims="" current_phase="" claim_record="" claim_author="" claim_device="" claim_session="" current_login="" current_device=""
 	active_claims=$(_fetch_claims "$issue_number" "$repo_slug") || return 1
-	current_phase=$(printf '%s' "$active_claims" | jq -r --arg token "$lease_token" \
-		'[.[] | select(.lease_token == $token)] | last | .lease_phase // ""' 2>/dev/null) || current_phase=""
+	claim_record=$(printf '%s' "$active_claims" | jq -c --arg token "$lease_token" '[.[] | select(.lease_token == $token)] | last // empty' 2>/dev/null) || claim_record=""
+	current_phase=$(printf '%s' "$claim_record" | jq -r '.lease_phase // ""' 2>/dev/null) || current_phase=""
 	[[ -n "$current_phase" ]] || return 1
+	claim_author=$(printf '%s' "$claim_record" | jq -r '.claim_author // ""') || return 1
+	claim_device=$(printf '%s' "$claim_record" | jq -r '.device // ""') || return 1
+	claim_session=$(printf '%s' "$claim_record" | jq -r '.session // ""') || return 1
+	current_login=$(_resolve_runner "") || return 1
+	current_device=$(_resolve_device_id)
+	[[ -n "$claim_author" && "$current_login" == "$claim_author" ]] || return 1
+	[[ "$current_device" == "$claim_device" && "${session_key:-issue-${issue_number}}" == "$claim_session" ]] || return 1
 	if [[ "$phase" == "ready" && "$current_phase" != "prelaunch" ]]; then
 		return 1
 	fi

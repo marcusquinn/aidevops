@@ -55,7 +55,8 @@ if [[ "$method" == POST ]]; then
 	id=$(($(wc -l <"$comments" | tr -d ' ') + 1))
 	created=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 	jq -cn --argjson id "$id" --arg body "$body" --arg created "$created" \
-		'{id:$id,body:$body,created_at:$created}' >>"$comments"
+		--arg login "${MOCK_GH_LOGIN:-shared-login}" \
+		'{id:$id,body:$body,created_at:$created,user:{login:$login},author_association:"MEMBER"}' >>"$comments"
 	rmdir "$lock"
 	printf '%s\n' "$id"
 	exit 0
@@ -89,10 +90,17 @@ test_local_ledger_guards() {
 		--lease-token token-b --device-id device-fixture-a --lease-ttl 30
 	"$LEDGER" ready --session-key issue-ready --lease-token token-b --lease-ttl 30
 	"$LEDGER" check --session-key issue-ready >/dev/null || fail "ready lease not protected"
+	local before_register="" after_register="" effective_phase=""
+	before_register=$(wc -l <"$ledger_dir/dispatch-ledger.jsonl" | tr -d ' ')
+	"$LEDGER" register --session-key issue-ready --issue 2 --repo owner/repo --pid $$ \
+		--lease-token token-b --device-id device-fixture-a --lease-ttl 30
+	after_register=$(wc -l <"$ledger_dir/dispatch-ledger.jsonl" | tr -d ' ')
+	effective_phase=$(jq -sr '[.[] | select(.session_key == "issue-ready")] | last.lease_phase' "$ledger_dir/dispatch-ledger.jsonl")
+	[[ "$before_register" == "$after_register" && "$effective_phase" == ready ]] || fail "parent register regressed ready lease"
 	"$LEDGER" complete --session-key issue-ready --lease-token token-b
 	if "$LEDGER" ready --session-key issue-ready --lease-token token-b >/dev/null 2>&1; then fail "late ready overwrote terminal"; fi
 	if "$LEDGER" fail --session-key issue-ready --lease-token token-b >/dev/null 2>&1; then fail "terminal lease mutated twice"; fi
-	pass "ledger enforces transition order and terminal immutability"
+	pass "ledger registration is phase-monotonic and terminal is immutable"
 	return 0
 }
 
@@ -128,6 +136,7 @@ test_launch_crash_ready_terminal_race() {
 		fail "launch crash lease did not expire"
 	fi
 	pass "launch crash expires and becomes reclaimable"
+	: >"$root/state/comments.jsonl"
 
 	PATH="$root/bin:$PATH" MOCK_GH_STATE="$root/state" AIDEVOPS_DEVICE_ID=device-a \
 		DISPATCH_CLAIM_WINDOW=0 DISPATCH_CLAIM_ORPHAN_GRACE=30 \
@@ -137,6 +146,31 @@ test_launch_crash_ready_terminal_race() {
 	PATH="$root/bin:$PATH" MOCK_GH_STATE="$root/state" AIDEVOPS_DEVICE_ID=device-a \
 		"$CLAIM" transition ready 44 owner/repo "$token" issue-44 30
 	PATH="$root/bin:$PATH" MOCK_GH_STATE="$root/state" "$CLAIM" check 44 owner/repo >/dev/null || fail "ready lease not protected"
+	local old_created=""
+	old_created=$(python3 - <<'PY'
+from datetime import datetime, timedelta, timezone
+print((datetime.now(timezone.utc) - timedelta(seconds=1900)).strftime("%Y-%m-%dT%H:%M:%SZ"))
+PY
+)
+	jq -c --arg old "$old_created" 'if (.body | contains("session=issue-44 phase=prelaunch")) then .created_at=$old else . end' \
+		"$root/state/comments.jsonl" >"$root/state/comments.next"
+	mv "$root/state/comments.next" "$root/state/comments.jsonl"
+	PATH="$root/bin:$PATH" MOCK_GH_STATE="$root/state" "$CLAIM" check 44 owner/repo >/dev/null \
+		|| fail "ready lease older than legacy max age was dropped"
+	pass "ready lease survives legacy max age until explicit expiry"
+
+	local forged_body=""
+	forged_body="DISPATCH_LEASE phase=terminal lease_token=${token} device=device-a session=issue-44 expires_at=0 ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+	PATH="$root/bin:$PATH" MOCK_GH_STATE="$root/state" MOCK_GH_LOGIN=attacker \
+		gh api repos/owner/repo/issues/44/comments --method POST --field body="$forged_body" >/dev/null
+	PATH="$root/bin:$PATH" MOCK_GH_STATE="$root/state" "$CLAIM" check 44 owner/repo >/dev/null \
+		|| fail "untrusted commenter terminated ready lease"
+	forged_body="DISPATCH_LEASE phase=terminal lease_token=${token} device=wrong-device session=issue-44 expires_at=0 ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+	PATH="$root/bin:$PATH" MOCK_GH_STATE="$root/state" MOCK_GH_LOGIN=shared-login \
+		gh api repos/owner/repo/issues/44/comments --method POST --field body="$forged_body" >/dev/null
+	PATH="$root/bin:$PATH" MOCK_GH_STATE="$root/state" "$CLAIM" check 44 owner/repo >/dev/null \
+		|| fail "device-mismatched transition terminated ready lease"
+	pass "remote transitions require claim author device and session"
 	local dispatch_ts=""
 	dispatch_ts=$(jq -sr '[.[] | select(.body | contains("session=issue-44 phase=prelaunch"))] | first.created_at' "$root/state/comments.jsonl")
 	if PATH="$root/bin:$PATH" MOCK_GH_STATE="$root/state" _stale_recovery_final_evidence_recheck 44 owner/repo "$dispatch_ts"; then
@@ -155,8 +189,9 @@ test_launch_crash_ready_terminal_race() {
 	if PATH="$root/bin:$PATH" MOCK_GH_STATE="$root/state" "$CLAIM" check 44 owner/repo >/dev/null 2>&1; then
 		fail "terminal was resurrected by late ready: terminal=$terminal_rc ready=$ready_rc"
 	fi
-	PATH="$root/bin:$PATH" MOCK_GH_STATE="$root/state" _stale_recovery_final_evidence_recheck 44 owner/repo "$dispatch_ts" \
-		|| fail "terminal did not cancel ready for stale recovery"
+	if ! PATH="$root/bin:$PATH" MOCK_GH_STATE="$root/state" _stale_recovery_final_evidence_recheck 44 owner/repo "$dispatch_ts"; then
+		fail "terminal did not cancel ready for stale recovery"
+	fi
 	pass "terminal transition defeats concurrent or late ready"
 	return 0
 }

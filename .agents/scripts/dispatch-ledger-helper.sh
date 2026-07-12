@@ -315,6 +315,16 @@ _iso_to_epoch() {
 	return 0
 }
 
+_lease_registration_exists() {
+	local session_key="$1"
+	local lease_token="$2"
+	[[ -n "$lease_token" && -s "$LEDGER_FILE" ]] || return 1
+	local existing="" existing_token=""
+	existing=$(_lease_latest_entry "$session_key") || return 1
+	existing_token=$(printf '%s' "$existing" | jq -r '.lease_token // ""' 2>/dev/null) || return 1
+	[[ -n "$existing" && "$existing_token" == "$lease_token" ]]
+}
+
 #######################################
 # Register a new dispatch in the ledger
 #
@@ -400,7 +410,7 @@ cmd_register() {
 		echo "Error: register aborted — could not acquire lock" >&2
 		return 1
 	fi
-
+	if _lease_registration_exists "$session_key" "$lease_token"; then _release_lock; return 0; fi
 	local now
 	now=$(_now_utc)
 
