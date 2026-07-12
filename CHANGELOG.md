@@ -10,6 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.32.68] - 2026-07-12
+
+### Fixed
+
+- align shipped defaults with config schema (#27411)
+
 ## [3.32.67] - 2026-07-12
 
 ### Changed
