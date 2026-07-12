@@ -70,7 +70,7 @@ reset_guardrail_env() {
 	unset AIDEVOPS_SKIP_PULSE_CURRENT_STATE_GUARDRAILS 2>/dev/null || true
 	export PULSE_DISPATCH_GUARDRAIL_RATE_LIMIT_THRESHOLD=4
 	export PULSE_DISPATCH_GUARDRAIL_FAILURE_THRESHOLD=6
-	export PULSE_DISPATCH_GUARDRAIL_HEALTHY_PR_THRESHOLD=3
+	export PULSE_DISPATCH_GUARDRAIL_OPEN_PR_THRESHOLD=12
 	export PULSE_DISPATCH_GUARDRAIL_NO_DISPATCHABLE_THRESHOLD=2
 	return 0
 }
@@ -87,7 +87,7 @@ guardrail_slots() {
 test_provider_rate_limits_pause_without_success() {
 	reset_guardrail_env
 	local slots
-	slots=$(guardrail_slots "0 4 4 0 0" 8)
+	slots=$(guardrail_slots "0 4 4 0" 8)
 	if [[ "$slots" == "0" ]] && grep -q 'provider_rate_limit_pressure' "$LOGFILE"; then
 		print_result "guardrail: provider-wide rate limits pause launches when no success evidence exists" 0
 	else
@@ -99,7 +99,7 @@ test_provider_rate_limits_pause_without_success() {
 test_provider_rate_limits_keep_probe_slot_with_success() {
 	reset_guardrail_env
 	local slots
-	slots=$(guardrail_slots "2 6 5 0 0" 8)
+	slots=$(guardrail_slots "2 6 5 0" 8)
 	if [[ "$slots" == "1" ]]; then
 		print_result "guardrail: provider pressure keeps one safe probe slot when successes exist" 0
 	else
@@ -111,7 +111,7 @@ test_provider_rate_limits_keep_probe_slot_with_success() {
 test_repeated_failures_pause_without_success() {
 	reset_guardrail_env
 	local slots
-	slots=$(guardrail_slots "0 6 0 0 0" 8)
+	slots=$(guardrail_slots "0 6 0 0" 8)
 	if [[ "$slots" == "0" ]] && grep -q 'repeated_failure_pressure' "$LOGFILE"; then
 		print_result "guardrail: repeated failures pause raw concurrency without success evidence" 0
 	else
@@ -120,14 +120,78 @@ test_repeated_failures_pause_without_success() {
 	return 0
 }
 
-test_healthy_pr_backlog_rations_new_launches() {
+test_open_pr_backlog_is_repo_scoped_with_debt_exemption() {
 	reset_guardrail_env
-	local slots
-	slots=$(guardrail_slots "1 3 0 3 0" 8)
-	if [[ "$slots" == "1" ]] && grep -q 'healthy_pr_backlog' "$LOGFILE"; then
-		print_result "guardrail: active healthy PR evidence rations new issue launches" 0
+	local repos_file="${TEST_ROOT}/repos-pr-backlog.json"
+	cat >"$repos_file" <<'JSON'
+{"initialized_repos":[
+  {"slug":"owner/repo-a","path":"/tmp/repo-a","pulse":true,"priority":"tooling"},
+  {"slug":"owner/repo-b","path":"/tmp/repo-b","pulse":true,"priority":"tooling"}
+]}
+JSON
+	export REPOS_JSON="$repos_file"
+	check_repo_pulse_schedule() {
+		return 0
+	}
+	check_repo_pulse_interval() {
+		return 0
+	}
+	update_repo_pulse_timestamp() {
+		return 0
+	}
+	pulse_pr_list_get() {
+		local repo_slug="" previous_arg=""
+		local arg=""
+		for arg in "$@"; do
+			if [[ "$previous_arg" == "--repo" ]]; then
+				repo_slug="$arg"
+				break
+			fi
+			previous_arg="$arg"
+		done
+		case "$repo_slug" in
+			owner/repo-a) jq -n '[range(0; 12) | {number: .}]' ;;
+			*) printf '[]\n' ;;
+		esac
+		return 0
+	}
+	list_dispatchable_issue_candidates_json() {
+		local repo_slug="$1"
+		local limit="$2"
+		printf '%s' "$limit" >/dev/null
+		case "$repo_slug" in
+			owner/repo-a) printf '%s\n' '[{"number":1,"labels":[{"name":"bug"}]},{"number":2,"labels":[{"name":"quality-debt"},{"name":"source:review-feedback"}]}]' ;;
+			owner/repo-b) printf '%s\n' '[{"number":3,"labels":[{"name":"bug"}]}]' ;;
+			*) printf '[]\n' ;;
+		esac
+		return 0
+	}
+
+	local ranked="" repo_a_numbers="" repo_b_numbers=""
+	ranked=$(build_ranked_dispatch_candidates_json 10)
+	repo_a_numbers=$(jq -r '[.[] | select(.repo_slug == "owner/repo-a") | .number] | join(",")' <<<"$ranked")
+	repo_b_numbers=$(jq -r '[.[] | select(.repo_slug == "owner/repo-b") | .number] | join(",")' <<<"$ranked")
+	if [[ "$repo_a_numbers" == "2" && "$repo_b_numbers" == "3" ]]; then
+		print_result "guardrail: repo A backlog does not throttle repo B and trusted review debt is exempt" 0
 	else
-		print_result "guardrail: active healthy PR evidence rations new issue launches" 1 "slots=${slots}"
+		print_result "guardrail: repo A backlog does not throttle repo B and trusted review debt is exempt" 1 "repo_a=${repo_a_numbers} repo_b=${repo_b_numbers}"
+	fi
+	return 0
+}
+
+test_historical_pr_events_cannot_throttle() {
+	reset_guardrail_env
+	printf '%s\n' 'PR opened #1' 'PR merged #1' 'merged PR #2' 'opened PR #3' >>"$LOGFILE"
+	pulse_pr_list_get() {
+		printf '[]\n'
+		return 0
+	}
+	local counts=""
+	counts=$(_dispatch_recent_current_state_counts)
+	if [[ "$counts" == "0 0 0 0" ]]; then
+		print_result "guardrail: merged and historical PR log events cannot throttle dispatch" 0
+	else
+		print_result "guardrail: merged and historical PR log events cannot throttle dispatch" 1 "counts=${counts}"
 	fi
 	return 0
 }
@@ -135,7 +199,7 @@ test_healthy_pr_backlog_rations_new_launches() {
 test_no_dispatchable_evidence_keeps_probe_slot() {
 	reset_guardrail_env
 	local slots
-	slots=$(guardrail_slots "0 0 0 0 2" 8)
+	slots=$(guardrail_slots "0 0 0 2" 8)
 	if [[ "$slots" == "1" ]] && grep -q 'no_dispatchable_evidence' "$LOGFILE"; then
 		print_result "guardrail: no-dispatchable evidence keeps one probe slot" 0
 	else
@@ -147,7 +211,7 @@ test_no_dispatchable_evidence_keeps_probe_slot() {
 test_no_dispatchable_evidence_preserves_min_floor_slots() {
 	reset_guardrail_env
 	local slots
-	slots=$(guardrail_slots "0 0 0 0 2" 8 1)
+	slots=$(guardrail_slots "0 0 0 2" 8 1)
 	if [[ "$slots" == "8" ]] && grep -q 'no_dispatchable_floor_bypass' "$LOGFILE"; then
 		print_result "guardrail: no-dispatchable evidence preserves minimum floor slots" 0
 	else
@@ -159,7 +223,7 @@ test_no_dispatchable_evidence_preserves_min_floor_slots() {
 test_clean_state_preserves_available_slots() {
 	reset_guardrail_env
 	local slots
-	slots=$(guardrail_slots "3 1 0 0 0" 8)
+	slots=$(guardrail_slots "3 1 0 0" 8)
 	if [[ "$slots" == "8" ]] && grep -q '^pulse_dispatch_guardrail_available_slots=8$' "$STATS_GAUGE_FILE" && grep -q '^pulse_dispatch_guardrail_successes=3$' "$STATS_GAUGE_FILE"; then
 		print_result "guardrail: clean current state preserves safe slots" 0
 	else
@@ -172,7 +236,7 @@ test_disabled_guardrail_still_updates_available_slots_gauge() {
 	reset_guardrail_env
 	export AIDEVOPS_SKIP_PULSE_CURRENT_STATE_GUARDRAILS=1
 	local slots
-	slots=$(guardrail_slots "0 0 0 0 0" 5)
+	slots=$(guardrail_slots "0 0 0 0" 5)
 	if [[ "$slots" == "5" ]] && grep -q '^pulse_dispatch_guardrail_available_slots=5$' "$STATS_GAUGE_FILE"; then
 		print_result "guardrail: disabled current-state path still refreshes slot gauge" 0
 	else
@@ -432,7 +496,8 @@ JSON
 test_provider_rate_limits_pause_without_success
 test_provider_rate_limits_keep_probe_slot_with_success
 test_repeated_failures_pause_without_success
-test_healthy_pr_backlog_rations_new_launches
+test_open_pr_backlog_is_repo_scoped_with_debt_exemption
+test_historical_pr_events_cannot_throttle
 test_no_dispatchable_evidence_keeps_probe_slot
 test_no_dispatchable_evidence_preserves_min_floor_slots
 test_clean_state_preserves_available_slots

@@ -2751,6 +2751,26 @@ test_post_pr_handoff_overrides_watchdog_next_action() {
 	return 0
 }
 
+test_completion_infrastructure_resumes_without_implementation_penalty() {
+	local reason="" evidence_fields="" launch_failure_cause="" next_action=""
+	for reason in github_api_timeout command_policy_timeout prepared_commit_push_blocked completed_locally_remote_completion_blocked; do
+		if ! _worker_failure_reason_is_completion_infrastructure "$reason"; then
+			print_result "completion infrastructure class ${reason}" 1 "Reason was not classified"
+			continue
+		fi
+		evidence_fields=$(_derive_worker_failure_evidence "blocked" "1" "1" "natural" "$reason")
+		launch_failure_cause="${evidence_fields%%$'\t'*}"
+		next_action="${evidence_fields#*$'\t'}"
+		if [[ "$launch_failure_cause" == "$reason" && "$next_action" == "resume_session_with_completion_contract" ]]; then
+			print_result "completion infrastructure class ${reason}" 0
+		else
+			print_result "completion infrastructure class ${reason}" 1 \
+				"cause='${launch_failure_cause}' next='${next_action}'"
+		fi
+	done
+	return 0
+}
+
 main() {
 	setup_test_env
 	test_appends_escalation_contract
@@ -2793,6 +2813,7 @@ main() {
 	test_post_pr_handoff_detects_open_pending_pr
 	test_post_pr_handoff_rejects_pre_pr_stall
 	test_post_pr_handoff_overrides_watchdog_next_action
+	test_completion_infrastructure_resumes_without_implementation_penalty
 	test_canary_pins_vanilla_agent_with_isolated_plugin_config
 	test_opencode_session_env_wrapper_strips_session_vars_only
 	test_worker_opencode_exec_paths_strip_session_env

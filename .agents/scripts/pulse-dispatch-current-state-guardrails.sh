@@ -11,9 +11,51 @@
 _PULSE_DISPATCH_CURRENT_STATE_GUARDRAILS_LOADED=1
 
 #######################################
+# Filter ordinary candidates when their repository has reached its open-PR cap.
+#
+# Args:
+#   $1 - repository slug
+#   $2 - candidate JSON array
+# Stdout: filtered candidate JSON array.
+#######################################
+_dispatch_filter_repo_pr_backlog_candidates() {
+	local repo_slug="$1"
+	local candidates_json="$2"
+	local pr_threshold="${PULSE_DISPATCH_GUARDRAIL_OPEN_PR_THRESHOLD:-12}"
+	[[ "$pr_threshold" =~ ^[0-9]+$ ]] || pr_threshold=12
+	if [[ "$pr_threshold" -eq 0 ]] || ! command -v jq >/dev/null 2>&1 || ! declare -F pulse_pr_list_get >/dev/null 2>&1; then
+		printf '%s\n' "$candidates_json"
+		return 0
+	fi
+
+	local pr_json="" open_prs=0 filtered_json="" candidate_count=0 filtered_count=0
+	pr_json=$(pulse_pr_list_get --repo "$repo_slug" --state open --json number --limit "$pr_threshold" 2>/dev/null) || {
+		printf '%s\n' "$candidates_json"
+		return 0
+	}
+	open_prs=$(jq 'if type == "array" then length else 0 end' <<<"$pr_json" 2>/dev/null) || open_prs=0
+	[[ "$open_prs" =~ ^[0-9]+$ ]] || open_prs=0
+	if ((open_prs < pr_threshold)); then
+		printf '%s\n' "$candidates_json"
+		return 0
+	fi
+
+	filtered_json=$(jq -c '[.[] | select(
+		((.labels // []) | map(.name? // .)) as $labels |
+		(($labels | index("quality-debt")) != null and ($labels | index("source:review-feedback")) != null)
+	)]' <<<"$candidates_json" 2>/dev/null) || filtered_json="$candidates_json"
+	candidate_count=$(jq 'length' <<<"$candidates_json" 2>/dev/null) || candidate_count=0
+	filtered_count=$(jq 'length' <<<"$filtered_json" 2>/dev/null) || filtered_count="$candidate_count"
+	echo "[pulse-wrapper] Repository PR backlog guardrail: repo=${repo_slug} open_prs=${open_prs} threshold=${pr_threshold} ordinary_candidates_suppressed=$((candidate_count - filtered_count)) exempt_candidates=${filtered_count}" >>"$LOGFILE"
+	_dispatch_stats_increment "pulse_dispatch_repo_pr_backlog_guardrail_applied"
+	printf '%s\n' "$filtered_json"
+	return 0
+}
+
+#######################################
 # Count recent current-state signals that should shape launch capacity.
 #
-# Stdout: "<successes> <failures> <rate_limits> <healthy_prs> <no_dispatchable>".
+# Stdout: "<successes> <failures> <rate_limits> <no_dispatchable>".
 #######################################
 _dispatch_recent_current_state_counts() {
 	local override_line="${PULSE_DISPATCH_CURRENT_STATE_COUNTS:-}"
@@ -23,10 +65,10 @@ _dispatch_recent_current_state_counts() {
 	fi
 
 	local metrics_file="${AIDEVOPS_HEADLESS_METRICS_FILE:-${HOME}/.aidevops/logs/headless-runtime-metrics.jsonl}"
-	local log_file="${LOGFILE:-${HOME}/.aidevops/logs/pulse.log}"
 	local window_seconds="${PULSE_DISPATCH_CURRENT_STATE_WINDOW_SECONDS:-900}"
 	[[ "$window_seconds" =~ ^[0-9]+$ ]] || window_seconds=900
-	python3 - "$metrics_file" "$log_file" "$window_seconds" <<'PY'
+	local metrics_counts=""
+	metrics_counts=$(python3 - "$metrics_file" "${LOGFILE:-${HOME}/.aidevops/logs/pulse.log}" "$window_seconds" <<'PY'
 import json
 import sys
 import time
@@ -59,23 +101,23 @@ try:
 except (OSError, ValueError):
     pass
 
-healthy_prs = no_dispatchable = 0
+no_dispatchable = 0
 try:
-    # pulse.log lines usually do not carry machine timestamps, so use the recent tail
-    # as a bounded local current-state proxy rather than issuing API reads.
     with open(log_path, "r", encoding="utf-8", errors="replace") as handle:
         lines = deque(handle, 2000)
     for raw in lines:
         line = raw.lower()
-        if "pr opened" in line or "opened pr" in line or "pr merged" in line or "merged pr" in line:
-            healthy_prs += 1
         if "no ranked candidates" in line or "no eligible candidates" in line or "no dispatchable" in line:
             no_dispatchable += 1
 except OSError:
     pass
 
-print(f"{successes} {failures} {rate_limits} {healthy_prs} {no_dispatchable}")
+print(f"{successes} {failures} {rate_limits} {no_dispatchable}")
 PY
+	) || metrics_counts="0 0 0 0"
+	local successes="" failures="" rate_limits="" no_dispatchable=""
+	read -r successes failures rate_limits no_dispatchable <<<"$metrics_counts"
+	printf '%s %s %s %s\n' "$successes" "$failures" "$rate_limits" "$no_dispatchable"
 	return 0
 }
 
@@ -105,27 +147,23 @@ _dispatch_apply_current_state_guardrails() {
 		return 0
 	fi
 
-	local counts_line="" successes="" failures="" rate_limits="" healthy_prs="" no_dispatchable=""
-	counts_line=$(_dispatch_recent_current_state_counts) || counts_line="0 0 0 0 0"
-	read -r successes failures rate_limits healthy_prs no_dispatchable <<<"$counts_line"
+	local counts_line="" successes="" failures="" rate_limits="" no_dispatchable=""
+	counts_line=$(_dispatch_recent_current_state_counts) || counts_line="0 0 0 0"
+	read -r successes failures rate_limits no_dispatchable <<<"$counts_line"
 	[[ "$successes" =~ ^[0-9]+$ ]] || successes=0
 	[[ "$failures" =~ ^[0-9]+$ ]] || failures=0
 	[[ "$rate_limits" =~ ^[0-9]+$ ]] || rate_limits=0
-	[[ "$healthy_prs" =~ ^[0-9]+$ ]] || healthy_prs=0
 	[[ "$no_dispatchable" =~ ^[0-9]+$ ]] || no_dispatchable=0
 	_dispatch_stats_gauge "pulse_dispatch_guardrail_successes" "$successes"
 	_dispatch_stats_gauge "pulse_dispatch_guardrail_failures" "$failures"
 	_dispatch_stats_gauge "pulse_dispatch_guardrail_rate_limits" "$rate_limits"
-	_dispatch_stats_gauge "pulse_dispatch_guardrail_healthy_prs" "$healthy_prs"
 	_dispatch_stats_gauge "pulse_dispatch_guardrail_no_dispatchable" "$no_dispatchable"
 
 	local rl_threshold="${PULSE_DISPATCH_GUARDRAIL_RATE_LIMIT_THRESHOLD:-4}"
 	local failure_threshold="${PULSE_DISPATCH_GUARDRAIL_FAILURE_THRESHOLD:-6}"
-	local pr_threshold="${PULSE_DISPATCH_GUARDRAIL_HEALTHY_PR_THRESHOLD:-3}"
 	local empty_threshold="${PULSE_DISPATCH_GUARDRAIL_NO_DISPATCHABLE_THRESHOLD:-2}"
 	[[ "$rl_threshold" =~ ^[0-9]+$ ]] || rl_threshold=4
 	[[ "$failure_threshold" =~ ^[0-9]+$ ]] || failure_threshold=6
-	[[ "$pr_threshold" =~ ^[0-9]+$ ]] || pr_threshold=3
 	[[ "$empty_threshold" =~ ^[0-9]+$ ]] || empty_threshold=2
 
 	local capped_slots="$available_slots" reason=""
@@ -153,18 +191,15 @@ _dispatch_apply_current_state_guardrails() {
 	elif ((failure_threshold > 0 && failures >= failure_threshold && capped_slots > 1)); then
 		capped_slots=1
 		reason="repeated_failure_pressure"
-	elif ((pr_threshold > 0 && healthy_prs >= pr_threshold && failures > successes && capped_slots > 1)); then
-		capped_slots=1
-		reason="healthy_pr_backlog"
 	fi
 
 	if ((capped_slots < available_slots)); then
 		max_workers=$((active_workers + capped_slots))
-		echo "[pulse-wrapper] Dispatch current-state guardrail: reason=${reason} capped_available=${capped_slots}/${available_slots} successes=${successes} failures=${failures} rate_limits=${rate_limits} healthy_prs=${healthy_prs} no_dispatchable=${no_dispatchable} min_worker_floor_active=${min_worker_floor_active}" >>"$LOGFILE"
+		echo "[pulse-wrapper] Dispatch current-state guardrail: reason=${reason} capped_available=${capped_slots}/${available_slots} successes=${successes} failures=${failures} rate_limits=${rate_limits} no_dispatchable=${no_dispatchable} min_worker_floor_active=${min_worker_floor_active}" >>"$LOGFILE"
 		_dispatch_stats_increment "pulse_dispatch_current_state_guardrail_applied"
 		_dispatch_stats_increment_candidate_failed "$reason"
 	elif [[ "$reason" == "no_dispatchable_floor_bypass" ]]; then
-		echo "[pulse-wrapper] Dispatch current-state guardrail: reason=${reason} preserved_available=${available_slots} successes=${successes} failures=${failures} rate_limits=${rate_limits} healthy_prs=${healthy_prs} no_dispatchable=${no_dispatchable} min_worker_floor_active=${min_worker_floor_active}" >>"$LOGFILE"
+		echo "[pulse-wrapper] Dispatch current-state guardrail: reason=${reason} preserved_available=${available_slots} successes=${successes} failures=${failures} rate_limits=${rate_limits} no_dispatchable=${no_dispatchable} min_worker_floor_active=${min_worker_floor_active}" >>"$LOGFILE"
 	fi
 	_dispatch_stats_gauge "pulse_dispatch_guardrail_available_slots" "$capped_slots"
 

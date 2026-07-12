@@ -1151,6 +1151,12 @@ _report_failure_to_fast_fail() {
 			return 0
 		fi
 	fi
+	if declare -F _worker_failure_reason_is_completion_infrastructure >/dev/null 2>&1; then
+		if _worker_failure_reason_is_completion_infrastructure "$reason"; then
+			print_info "[fast-fail] skipped completion infrastructure failure #${issue_number} (${repo_slug}) reason=${reason}"
+			return 0
+		fi
+	fi
 
 	local state_file="${HOME}/.aidevops/.agent-workspace/supervisor/fast-fail-counter.json"
 	local state_dir

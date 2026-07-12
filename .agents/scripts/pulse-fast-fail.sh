@@ -495,6 +495,13 @@ _fast_fail_record_locked() {
 			return 0
 		fi
 	fi
+	if declare -F _worker_failure_reason_is_completion_infrastructure >/dev/null 2>&1; then
+		if _worker_failure_reason_is_completion_infrastructure "$reason"; then
+			printf '[pulse-wrapper] fast_fail_record: #%s (%s) skipped completion infrastructure reason=%s\n' \
+				"$issue_number" "$repo_slug" "$reason" >>"$LOGFILE"
+			return 0
+		fi
+	fi
 
 	local key="" now="" state=""
 	key=$(_ff_key "$issue_number" "$repo_slug")

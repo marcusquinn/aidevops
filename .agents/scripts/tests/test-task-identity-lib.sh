@@ -286,6 +286,21 @@ test_structured_helpers() {
 		return 1
 	fi
 	pass "malformed detector accepts valid marker"
+	if task_identity_has_malformed_candidate "truthful throughput testing"; then
+		fail "malformed detector treated ordinary lowercase t-words as task IDs"
+		return 1
+	fi
+	pass "malformed detector ignores ordinary lowercase t-words"
+	if task_identity_has_malformed_candidate "t18113: Improve pulse capacity and full-loop continuity"; then
+		fail "malformed detector rejected a valid task-prefixed title"
+		return 1
+	fi
+	pass "malformed detector accepts a valid task-prefixed title"
+	if task_identity_has_malformed_candidate "TODO.md and Testing evidence"; then
+		fail "malformed detector treated ordinary uppercase T-words as task IDs"
+		return 1
+	fi
+	pass "malformed detector ignores ordinary uppercase T-words"
 
 	parsed=$(task_identity_parse_list "t7, ${namespaced} t9.1") || return 1
 	assert_equal $'t7\n'"${namespaced}"$'\nt9.1' "$parsed" "parse mixed structured list" || return 1
