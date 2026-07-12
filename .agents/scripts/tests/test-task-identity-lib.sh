@@ -274,6 +274,13 @@ test_structured_helpers() {
 		return 1
 	fi
 	pass "malformed detector finds invalid namespaced ID"
+	if ! task_identity_has_malformed_candidate "Blocked by: T7" ||
+		! task_identity_has_malformed_candidate "Blocked by: tXYZ" ||
+		! task_identity_has_malformed_candidate "Blocked by: to81j2abc3def4gh5jkm6npq7rst-1"; then
+		fail "malformed detector missed alternate invalid marker"
+		return 1
+	fi
+	pass "malformed detector finds uppercase, symbolic, and invalid-origin markers"
 	if task_identity_has_malformed_candidate "ordinary text and t7"; then
 		fail "malformed detector rejected valid ID"
 		return 1

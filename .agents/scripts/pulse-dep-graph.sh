@@ -391,8 +391,9 @@ _refresh_all_blockers_resolved() {
 	blocker_tids=$(printf '%s' "$entry_json" | jq -r '.task_ids[]' 2>/dev/null) || blocker_tids=""
 	while IFS= read -r tid; do
 		[[ -n "$tid" ]] || continue
+		task_identity_validate "$tid" || return 1
 		blocker_issue_num=$(printf '%s' "$task_to_issue_json" | jq -r --arg t "$tid" '.[$t] // empty' 2>/dev/null)
-		[[ -n "$blocker_issue_num" ]] || continue
+		[[ -n "$blocker_issue_num" ]] || return 1
 		is_open=$(printf '%s' "$open_issues_json" | jq --argjson n "$blocker_issue_num" 'index($n) != null' 2>/dev/null) || is_open="false"
 		[[ "$is_open" == "true" ]] && return 1
 	done <<<"$blocker_tids"
@@ -799,7 +800,7 @@ _blocked_by_check_task_id() {
 			is_open=$(printf '%s' "$cache_state" |
 				jq --argjson n "$blocker_issue_num" '.open_issues | index($n) != null' 2>/dev/null) || is_open="false"
 			if [[ "$is_open" == "true" ]]; then
-				echo "[pulse-wrapper] is_blocked_by_unresolved: #${issue_number} blocked by t${task_id}=#${blocker_issue_num} (cache: open) — skipping dispatch (t1935)" >>"$LOGFILE"
+				echo "[pulse-wrapper] is_blocked_by_unresolved: #${issue_number} blocked by ${task_id}=#${blocker_issue_num} (cache: open) — skipping dispatch (t1935)" >>"$LOGFILE"
 				return 0
 			fi
 			if _blocked_by_todo_marks_incomplete "$task_id" "$repo_slug" "$issue_number"; then
@@ -869,7 +870,7 @@ _blocked_by_todo_marks_incomplete() {
 	local task_id_ere=""
 	task_id_ere=$(task_identity_escape_ere "$task_id") || return 1
 	if grep -Eq "^- \[ \] ${task_id_ere}([:[:space:]]|$)" "${repo_path}/TODO.md" 2>/dev/null; then
-		echo "[pulse-wrapper] is_blocked_by_unresolved: #${issue_number} stale-todo-after-closed-blocker t${task_id} in ${repo_slug} — GitHub blocker is closed; ignoring stale TODO.md and relying on issue-state sync" >>"$LOGFILE"
+		echo "[pulse-wrapper] is_blocked_by_unresolved: #${issue_number} stale-todo-after-closed-blocker ${task_id} in ${repo_slug} — GitHub blocker is closed; ignoring stale TODO.md and relying on issue-state sync" >>"$LOGFILE"
 		return 1
 	fi
 	return 1

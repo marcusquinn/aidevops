@@ -271,6 +271,19 @@ test_task_id_blocker_parsing() {
 		"$(_blocked_by_extract_tids "Blocked by: t325.1, ${namespaced}")"
 	_assert_lines_equal "malformed task IDs fail closed" '__malformed__' \
 		"$(_blocked_by_extract_tids 'Blocked by: t01')"
+	_assert_lines_equal "alternate malformed task markers fail closed" '__malformed__' \
+		"$(_blocked_by_extract_tids 'Blocked by: T7, tXYZ, to81j2abc3def4gh5jkm6npq7rst-1')"
+	return 0
+}
+
+test_refresh_unknown_or_malformed_task_blocker_fails_closed() {
+	printf '\n=== cache refresh fail-closed task blockers ===\n'
+	local rc=0
+	_refresh_all_blockers_resolved '{"task_ids":["t1000"],"issue_nums":[]}' '{}' '[]' || rc=$?
+	_assert_rc "refresh keeps unmapped canonical blocker blocked" 1 "$rc"
+	rc=0
+	_refresh_all_blockers_resolved '{"task_ids":["__malformed__"],"issue_nums":[]}' '{}' '[]' || rc=$?
+	_assert_rc "refresh keeps malformed blocker blocked" 1 "$rc"
 	return 0
 }
 
@@ -459,6 +472,7 @@ main() {
 	test_native_relationship_lookup_failure_fails_closed_empty_body
 	test_native_relationship_lookup_failure_checks_body_markers
 	test_unknown_task_blocker_fails_closed
+	test_refresh_unknown_or_malformed_task_blocker_fails_closed
 	test_live_task_lookup_failure_fails_closed
 	test_closed_task_blocker_is_clear
 	test_lowercase_closed_task_blocker_is_clear
