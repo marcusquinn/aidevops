@@ -72,14 +72,15 @@ local_tip=$(/usr/bin/git -C "$REPO" rev-parse main)
 printf 'remote divergence\n' >>"${UPDATER}/README.md"
 /usr/bin/git -C "$UPDATER" commit -q -am 'remote divergence'
 /usr/bin/git -C "$UPDATER" push -q origin main
-if AIDEVOPS_REAL_GIT_BIN=/usr/bin/git bash "$HELPER" restore-default --repo "$REPO" --issue 27014 --confirm RESTORE_CANONICAL_DEFAULT >/dev/null 2>&1; then
-	printf 'FAIL recovery accepted divergent default branch\n'
-	exit 1
-fi
-if [[ "$(/usr/bin/git -C "$REPO" branch --show-current)" == "safety/test" ]] &&
-	[[ "$(/usr/bin/git -C "$REPO" rev-parse main)" == "$local_tip" ]]; then
-	printf 'PASS recovery refuses divergence without changing refs\n'
+preservation_ref="refs/aidevops/canonical-recovery/issue-27014/${local_tip}"
+remote_tip=$(/usr/bin/git -C "$REMOTE" rev-parse refs/heads/main)
+if AIDEVOPS_REAL_GIT_BIN=/usr/bin/git bash "$HELPER" restore-default --repo "$REPO" --issue 27014 --confirm RESTORE_CANONICAL_DEFAULT >/dev/null &&
+	[[ "$(/usr/bin/git -C "$REPO" branch --show-current)" == "main" ]] &&
+	[[ "$(/usr/bin/git -C "$REPO" rev-parse main)" == "$remote_tip" ]] &&
+	[[ "$(/usr/bin/git -C "$REPO" rev-parse "$preservation_ref")" == "$local_tip" ]] &&
+	/usr/bin/git -C "$REPO" merge-base --is-ancestor "$local_tip" "$preservation_ref"; then
+	printf 'PASS recovery preserves divergent tip and restores exact origin default\n'
 else
-	printf 'FAIL divergence refusal changed branch or refs\n'
+	printf 'FAIL divergent recovery did not preserve local tip or restore origin\n'
 	exit 1
 fi
