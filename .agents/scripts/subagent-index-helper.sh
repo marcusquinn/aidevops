@@ -35,7 +35,7 @@ CAPABILITY_INDEX_FILE="${AGENTS_DIR}/agent-source-capabilities.toon"
 
 # Directories to scan for subagents (relative to AGENTS_DIR)
 # Covers all tiers: shared, custom, draft; plugins are appended separately
-SUBAGENT_DIRS="aidevops content seo tools services workflows memory custom draft"
+SUBAGENT_DIRS="aidevops content public-relations seo tools services workflows memory custom draft"
 
 generate_plugin_agents_block() {
 	local agents_dir="$1"
@@ -102,6 +102,7 @@ generate_subagents_block() {
         if ($0 ~ /\/references\//) next
         if ($0 ~ /\/node_modules\//) next
         if ($0 ~ /\/loop-state\//) next
+        if ($0 ~ /\/tools\/design\/library\//) next
 
         # Get directory relative to agents_dir
         dir_rel = $0
@@ -201,7 +202,8 @@ count_subagent_markdown_files() {
 		local dir_count
 		dir_count=$(find "$dir_path" -name "*.md" -type f \
 			-not -name "README.md" -not -name "AGENTS.md" \
-			-not -name "*-skill.md" 2>/dev/null | wc -l | tr -d ' ')
+			-not -name "*-skill.md" \
+			-not -path "*/tools/design/library/*" 2>/dev/null | wc -l | tr -d ' ')
 		actual_count=$((actual_count + dir_count))
 	done
 
@@ -275,13 +277,18 @@ cmd_generate() {
 			fi
 			echo "$line"
 		done <"$INDEX_FILE" >"$result_file"
+		# Drop trailing blank lines left before refreshed EOF blocks so repeated
+		# generation is byte-for-byte deterministic.
+		awk '
+			NF { while (blank_lines > 0) { print ""; blank_lines-- }; print; next }
+			{ blank_lines++ }
+		' "$result_file" >"$tmpfile"
 		if [[ -s "$plugin_block_file" ]]; then
-			echo "" >>"$result_file"
-			cat "$plugin_block_file" >>"$result_file"
+			echo "" >>"$tmpfile"
+			cat "$plugin_block_file" >>"$tmpfile"
 		fi
-		echo "" >>"$result_file"
-		cat "$capability_block_file" >>"$result_file"
-		mv "$result_file" "$tmpfile"
+		echo "" >>"$tmpfile"
+		cat "$capability_block_file" >>"$tmpfile"
 	else
 		# No existing file — generate minimal index with just subagents
 		cat "$new_block_file" >"$tmpfile"
