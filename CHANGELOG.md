@@ -10,9 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Fixed
+## [3.32.69] - 2026-07-12
 
-- Route managed sessions and workers through the private aidevops temporary workspace, preserve prompt-free linked-worktree access, and clean attributable legacy macOS temp artifacts (#27402)
+### Changed
+
+- Version bump and maintenance updates
+
 
 ## [3.32.68] - 2026-07-12
 
