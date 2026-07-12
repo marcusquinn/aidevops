@@ -11,10 +11,22 @@ export AIDEVOPS_TASK_COORDINATOR_DB="${TEST_ROOT}/coordinator.db"
 TODO_FILE="${TEST_ROOT}/TODO.md"
 printf '%s\n' '- [ ] t101 first repository task ref:GH#42' '- [ ] t102 second repository task ref:GH#42' '- [ ] t1873.1 dotted task ref:GH#73' >"$TODO_FILE"
 
-_escape_ere() { printf '%s' "$1"; return 0; }
-strip_code_fences() { command cat; return 0; }
+_escape_ere() {
+	printf '%s' "$1"
+	return 0
+}
+strip_code_fences() {
+	command cat
+	return 0
+}
 log_verbose() { return 0; }
 print_error() { return 0; }
+_gh_with_timeout() {
+	local _class="$1"
+	shift
+	"$@"
+	return $?
+}
 
 gh() {
 	local group="$1"
@@ -22,10 +34,10 @@ gh() {
 	if [[ "$group" == "api" ]]; then
 		local endpoint="$1"
 		case "$endpoint" in
-			repos/owner/one | repos/owner/renamed-one) printf '%s\n' R_one ;;
-			repos/owner/two) printf '%s\n' R_two ;;
-			repos/owner/dotted) printf '%s\n' R_dotted ;;
-			*) return 1 ;;
+		repos/owner/one | repos/owner/renamed-one) printf '%s\n' R_one ;;
+		repos/owner/two) printf '%s\n' R_two ;;
+		repos/owner/dotted) printf '%s\n' R_dotted ;;
+		*) return 1 ;;
 		esac
 		return 0
 	fi
@@ -33,13 +45,16 @@ gh() {
 		local issue_number="$2"
 		local repo=""
 		while [[ $# -gt 0 ]]; do
-			if [[ "$1" == "--repo" ]]; then repo="$2"; shift 2; else shift; fi
+			if [[ "$1" == "--repo" ]]; then
+				repo="$2"
+				shift 2
+			else shift; fi
 		done
 		case "$repo" in
-			owner/one | owner/renamed-one) [[ "$issue_number" == "42" ]] && printf '%s\n' '{"id":"I_one_42","number":42,"state":"OPEN","updatedAt":"2026-07-12T10:00:00Z"}' || return 1 ;;
-			owner/two) printf '%s\n' '{"id":"I_two_42","number":42,"state":"CLOSED","updatedAt":"2026-07-12T11:00:00Z"}' ;;
-			owner/dotted) printf '%s\n' '{"id":"I_dotted_73","number":73,"state":"OPEN","updatedAt":"2026-07-12T12:00:00Z"}' ;;
-			*) return 1 ;;
+		owner/one | owner/renamed-one) [[ "$issue_number" == "42" ]] && printf '%s\n' '{"id":"I_one_42","number":42,"state":"OPEN","updatedAt":"2026-07-12T10:00:00Z"}' || return 1 ;;
+		owner/two) printf '%s\n' '{"id":"I_two_42","number":42,"state":"CLOSED","updatedAt":"2026-07-12T11:00:00Z"}' ;;
+		owner/dotted) printf '%s\n' '{"id":"I_dotted_73","number":73,"state":"OPEN","updatedAt":"2026-07-12T12:00:00Z"}' ;;
+		*) return 1 ;;
 		esac
 		return 0
 	fi

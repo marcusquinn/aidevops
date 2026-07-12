@@ -17,9 +17,9 @@ on:
       - 'todo/tasks/**'
   pull_request_target:
     branches: [main]
-    types: [closed, opened, edited]
+    types: [opened, edited, closed, reopened]
   issues:
-    types: [opened, closed]
+    types: [opened, edited, assigned, closed, reopened]
   workflow_dispatch:
     inputs:
       command:
@@ -34,6 +34,20 @@ on:
           - close
           - reconcile
           - enrich
+          - event
+          - audit
+      subject_id:
+        description: 'Immutable forge node ID (manual event only)'
+        required: false
+        type: string
+      cursor:
+        description: 'RFC3339 event cursor (manual event only)'
+        required: false
+        type: string
+      task_id:
+        description: 'Explicit trusted task ID (manual event only)'
+        required: false
+        type: string
 
 jobs:
   sync:
@@ -41,3 +55,6 @@ jobs:
     secrets: inherit
     with:
       command: ${{ inputs.command || '' }}
+      subject_id: ${{ inputs.subject_id || '' }}
+      cursor: ${{ inputs.cursor || '' }}
+      task_id: ${{ inputs.task_id || '' }}
