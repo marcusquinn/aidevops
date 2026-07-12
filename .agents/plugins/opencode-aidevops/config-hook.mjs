@@ -39,7 +39,11 @@ const MANAGED_EXTERNAL_DIRECTORIES = [
  */
 export function registerManagedDirectoryPermissions(config) {
   if (typeof config.permission === "string") {
-    config.permission = { external_directory: { "*": config.permission } };
+    const defaultPermission = config.permission;
+    config.permission = {
+      "*": defaultPermission,
+      external_directory: { "*": defaultPermission },
+    };
   } else if (!config.permission) {
     config.permission = {};
   }
