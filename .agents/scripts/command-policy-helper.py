@@ -121,17 +121,27 @@ from command_policy_wrappers import (
 # Referencing compatibility imports explicitly also satisfies static analyzers.
 _COMPAT_EXPORTS = (
     _decision,
+    _has_required_guard,
     _canonical_operand,
+    _git_parts,
     _EvaluationOptions,
+    _canonical_guard_path,
     analyze_network_argv,
     _analyze_curl,
+    _curl_connect_option,
     _analyze_git,
+    _analyze_git_remote,
     _add_destination,
+    _git_effective_cwd,
     _analyze_scp,
+    _analyze_ssh,
     WORKER_ENV_KEYS,
     _analyze_wget,
+    _wget_arg,
     SHELL_OPERATORS,
+    _scan_supported_shell,
     SHELLS,
+    _consume_option,
 )
 __all__ = [name for name in globals() if name.startswith("_") and not name.startswith("__")]
 
