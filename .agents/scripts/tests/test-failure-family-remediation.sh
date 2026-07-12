@@ -75,6 +75,19 @@ test_threshold_and_privacy() {
 		"$(printf '%s' "$report" | jq -r '.findings[] | select(.id == "worker-failure-family-watchdog-stall") | .autofile')"
 	assert_absent "aggregate report omits repository slug" "private/example" "$report"
 	assert_absent "aggregate report omits local path" "$HOME" "$report"
+
+	local stale_report=""
+	stale_report=$(jq -n --arg window 15m --arg since 24h --arg recent 1h \
+		--argjson threshold 3 --argjson failure_threshold 3 \
+		--argjson current '{}' \
+		--argjson summary "{\"metrics\":{\"failure_families\":[$family]}}" \
+		--argjson recent_summary '{"metrics":{"failure_families":[]}}' \
+		--argjson providers '{}' --argjson runner '{}' --argjson api '{}' \
+		--argjson queue '{"aggregate":{}}' -f "${SCRIPT_DIR}/pulse-check-report.jq")
+	assert_eq "historical-only family is a recovery candidate" "recovery-candidate" \
+		"$(printf '%s' "$stale_report" | jq -r '.failure_family_remediation[0].recovery_outcome')"
+	assert_eq "historical-only family does not trigger a stale finding" "0" \
+		"$(printf '%s' "$stale_report" | jq -r '[.findings[] | select(.id == "worker-failure-family-watchdog-stall")] | length')"
 	return 0
 }
 

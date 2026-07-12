@@ -58,7 +58,11 @@ def finding($id; $severity; $title; $evidence; $recommendation; $autofile): {
     auto_dispatch_scan_state: (if $queue_error == "" then "scanned" else $queue_error end),
     graphql_budget_status: ($current.graphql_budget_status // "unknown"),
     runner_health: ($runner.finding // "unknown"),
-    recurrent_failure_families: ([$failure_families[] | select((.count // 0) >= $failure_threshold and (.confidence // "low") == "high" and (.family // "") != "other-failure")] | length)
+    recurrent_failure_families: ([$failure_families[] as $family
+      | (([$recent_failure_families[] | select(.fingerprint == $family.fingerprint)] | first | .count) // 0) as $recent_count
+      | $family
+      | select((.count // 0) >= $failure_threshold and $recent_count >= $failure_threshold and (.confidence // "low") == "high" and (.family // "") != "other-failure")
+    ] | length)
   },
   queue: ($queue.aggregate // {}),
   current_state: {
@@ -92,7 +96,10 @@ def finding($id; $severity; $title; $evidence; $recommendation; $autofile): {
     first_ts,
     last_ts,
     confidence,
-    recovery_outcome,
+    recovery_outcome: ((([$recent_failure_families[] | select(.fingerprint == $family.fingerprint)] | first | .count) // 0) as $recent_count
+      | if $recent_count >= $failure_threshold then "recurring"
+        elif $recent_count > 0 then "improving"
+        else "recovery-candidate" end),
     recent_count: (([$recent_failure_families[] | select(.fingerprint == $family.fingerprint)] | first | .count) // 0)
   })),
   runner_health: $runner,
@@ -198,8 +205,9 @@ def finding($id; $severity; $title; $evidence; $recommendation; $autofile): {
     else empty end
     ,
     ($failure_families[] as $family
+      | (([$recent_failure_families[] | select(.fingerprint == $family.fingerprint)] | first | .count) // 0) as $recent_count
       | $family
-      | select((.count // 0) >= $failure_threshold and (.distinct_sessions // 0) >= 2 and (.confidence // "low") == "high" and (.family // "") != "other-failure")
+      | select((.count // 0) >= $failure_threshold and $recent_count >= $failure_threshold and (.distinct_sessions // 0) >= 2 and (.confidence // "low") == "high" and (.family // "") != "other-failure")
       | finding(
           ("worker-failure-family-" + (.family // "unknown"));
           "high";
@@ -219,7 +227,7 @@ def finding($id; $severity; $title; $evidence; $recommendation; $autofile): {
           family_fingerprint: (.fingerprint // ""),
           family: (.family // "unknown"),
           family_count: (.count // 0),
-          family_recent_count: (([$recent_failure_families[] | select(.fingerprint == $family.fingerprint)] | first | .count) // 0),
+          family_recent_count: $recent_count,
           family_first_ts: (.first_ts // 0),
           family_last_ts: (.last_ts // 0),
           family_confidence: (.confidence // "unknown")
