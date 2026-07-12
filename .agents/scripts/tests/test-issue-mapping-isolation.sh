@@ -15,6 +15,12 @@ _escape_ere() { printf '%s' "$1"; return 0; }
 strip_code_fences() { command cat; return 0; }
 log_verbose() { return 0; }
 print_error() { return 0; }
+_gh_with_timeout() {
+	local _class="$1"
+	shift
+	"$@"
+	return $?
+}
 
 gh() {
 	local group="$1"
