@@ -68,9 +68,13 @@ Do NOT update version numbers during development. Version bump happens after the
 - [ ] Accessibility requirements met (if UI)
 
 ```bash
-npm test          # or: composer test
-bash ~/.aidevops/agents/scripts/linters-local.sh
+npm test -- <affected-test> # or the project-specific targeted test command
+bash ~/.aidevops/agents/scripts/linters-local.sh --changed
 ```
+
+Broaden to affected packages next. Run a full-repository gate only when the
+feature changes shared config, root tooling, the dependency graph,
+cross-package contracts, or release infrastructure; record that trigger.
 
 ### 7. Commit
 
@@ -97,4 +101,4 @@ Closes #123"
 1. **TODO.md**: Move task to Done section with date
 2. **todo/PLANS.md**: Update status and outcomes (if applicable)
 3. **CHANGELOG.md**: Add entry following `workflows/changelog.md` format
-4. Quality checks pass (`linters-local.sh`)
+4. Targeted tests and changed-file/affected quality checks pass (`linters-local.sh --changed` for aidevops)

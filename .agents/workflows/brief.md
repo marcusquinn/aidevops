@@ -170,6 +170,14 @@ Every piece of GitHub-written content mentors the next reader. Apply these check
 
 A dispatch comment that says "implement issue #42" teaches nothing. One that says "edit `src/auth.ts:45` — replace `([^0-9]|$)` with `\b` — verify with `shellcheck src/auth.ts`" enables tier:simple dispatch.
 
+Verification commands must also mentor efficient execution. Brief ordinary code
+work with focused tests plus changed-file or affected-package lint/typecheck.
+Include a full-repository gate only when named blast-radius evidence requires it
+(shared config, root tooling, dependency graph, cross-package contracts, or
+release infrastructure); never use `linters-local.sh --full` as generic
+completion evidence. Release and postflight reuse terminal evidence for the
+exact SHA instead of duplicating source scans.
+
 ## How to Use This Agent
 
 - **Routing**: See `brief/routing.md` for when to use this agent (work item creation, comments, PR descriptions)

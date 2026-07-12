@@ -38,14 +38,17 @@ Identify root cause before writing code. Document findings in the commit message
 ## 3. Test
 
 - [ ] Bug is fixed, no regression in related functionality
-- [ ] Automated test suite and quality checks pass
+- [ ] Regression and affected-package tests and quality checks pass
 - [ ] Tested on latest and minimum supported versions
 
 ```bash
-# Project-specific test runner (npm test, composer test, pytest, etc.)
-# Then framework quality checks:
-~/.aidevops/agents/scripts/linters-local.sh
+# Project-specific regression test, then affected-package tests when needed
+~/.aidevops/agents/scripts/linters-local.sh --changed
 ```
+
+Do not run a full-repository gate for generic completion evidence. Broaden only
+when the fix changes shared config, root tooling, the dependency graph,
+cross-package contracts, or release infrastructure.
 
 **Frontend bugs (CRITICAL):** HTTP 200 does NOT verify frontend fixes — server returns 200 even when React crashes client-side. Use browser screenshot via `dev-browser-helper.sh start`. See `tools/ui/frontend-debugging.md`.
 
@@ -105,6 +108,6 @@ Standard bugs use the normal worktree + PR flow via `/full-loop`.
 
 - [ ] Root cause identified and documented in commit
 - [ ] Fix is minimal and focused — no unrelated changes
-- [ ] Regression test added, all tests pass
-- [ ] Quality checks pass (`linters-local.sh`)
+- [ ] Regression test added; targeted and affected-package tests pass
+- [ ] Changed-file/affected quality checks pass (`linters-local.sh --changed` for aidevops)
 - [ ] CHANGELOG updated, docs updated if user-facing

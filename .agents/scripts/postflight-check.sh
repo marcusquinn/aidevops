@@ -32,6 +32,7 @@ PASSED=0
 FAILED=0
 WARNINGS=0
 SKIPPED=0
+POSTFLIGHT_COMMIT_SHA=""
 
 print_header() {
 	echo -e "${BLUE}========================================${NC}"
@@ -125,13 +126,17 @@ check_cicd_status() {
 
 	print_info "Repository: $repo"
 
-	# Get latest workflow run
+	# Get the latest workflow run for the exact release commit when supplied.
 	local latest_run
-	latest_run=$(gh run list --repo "$repo" --limit=1 --json databaseId,status,conclusion,name 2>/dev/null || echo "")
+	if [[ -n "$POSTFLIGHT_COMMIT_SHA" ]]; then
+		latest_run=$(gh run list --repo "$repo" --commit "$POSTFLIGHT_COMMIT_SHA" --limit=1 --json databaseId,status,conclusion,name 2>/dev/null || echo "")
+	else
+		latest_run=$(gh run list --repo "$repo" --limit=1 --json databaseId,status,conclusion,name 2>/dev/null || echo "")
+	fi
 
 	if [[ -z "$latest_run" || "$latest_run" == "[]" ]]; then
-		print_warning "No workflow runs found"
-		return 0
+		print_error "No workflow runs found for release evidence"
+		return 1
 	fi
 
 	local run_id status conclusion name
@@ -189,7 +194,11 @@ check_cicd_status() {
 	# Check all recent workflows
 	print_info "Checking all recent workflows..."
 	local all_runs
-	all_runs=$(gh run list --repo "$repo" --limit=5 --json name,conclusion,status 2>/dev/null || echo "[]")
+	if [[ -n "$POSTFLIGHT_COMMIT_SHA" ]]; then
+		all_runs=$(gh run list --repo "$repo" --commit "$POSTFLIGHT_COMMIT_SHA" --limit=5 --json name,conclusion,status 2>/dev/null || echo "[]")
+	else
+		all_runs=$(gh run list --repo "$repo" --limit=5 --json name,conclusion,status 2>/dev/null || echo "[]")
+	fi
 
 	local failed_count
 	failed_count=$(echo "$all_runs" | jq '[.[] | select(.conclusion == "failure")] | length')
@@ -383,28 +392,6 @@ check_npm_audit() {
 	return 0
 }
 
-# Run local quality checks
-check_local_quality() {
-	print_section "Local Quality Checks"
-
-	local quality_script="$REPO_ROOT/.agents/scripts/linters-local.sh"
-
-	if [[ -f "$quality_script" ]]; then
-		print_info "Running linters-local.sh --full..."
-
-		if bash "$quality_script" --full &>/dev/null; then
-			print_success "Local quality checks passed"
-		else
-			print_warning "Local quality checks reported issues"
-			print_info "Run: bash $quality_script --full (for details)"
-		fi
-	else
-		print_skip "linters-local.sh not found"
-	fi
-
-	return 0
-}
-
 # Print summary
 print_summary() {
 	echo ""
@@ -447,6 +434,7 @@ show_usage() {
 	echo "  --full          Run all checks (default)"
 	echo "  --ci-only       Run CI/CD checks only"
 	echo "  --security-only Run security checks only"
+	echo "  --sha SHA       Verify CI evidence for this exact release commit"
 	echo "  --help          Show this help message"
 	echo ""
 	echo "Examples:"
@@ -479,6 +467,14 @@ main() {
 		--security-only)
 			mode="security-only"
 			shift
+			;;
+		--sha)
+			if [[ $# -lt 2 || -z "$2" ]]; then
+				echo "--sha requires a commit SHA"
+				return 1
+			fi
+			POSTFLIGHT_COMMIT_SHA="$2"
+			shift 2
 			;;
 		--help | -h)
 			show_usage
@@ -513,10 +509,6 @@ main() {
 		check_cicd_status || true
 		check_sonarcloud || true
 		check_codacy || true
-		check_snyk || true
-		check_secrets || true
-		check_npm_audit || true
-		check_local_quality || true
 		;;
 	*)
 		print_error "Unknown mode: $mode"

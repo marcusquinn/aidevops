@@ -84,7 +84,7 @@ Subagents are advisory, never the active critical path. Mark each delegated prom
 - Conversation starters: `workflows/conversation-starter.md`. Implementation: `workflows/branch.md`.
 - Git safety: stash before destructive ops. NEVER auto-commit (only when user requests).
 - Context: rg/fd → Augment (semantic) → Context7 (library docs). TOON for data serialization.
-- Quality: pre-commit `linters-local.sh` (`preflight → commit → push`), `tools/code-review/best-practices.md`. Pre-implementation: check existing quality.
+- Quality: targeted tests plus changed-file/affected-package lint (`linters-local.sh --changed`) before commit. Use full-repository gates only for evidenced shared contracts/root tooling/release infrastructure; never as generic completion proof. See `workflows/full-loop.md` and `tools/code-review/best-practices.md`.
 - Draft agents: `~/.aidevops/agents/draft/` with `status: draft`. See `tools/build-agent/build-agent.md`.
 - File reading: re-read only before a second edit or if another tool may have modified the file.
 - Style: clear, direct, casual-professional. Bullet points and code blocks. Write code to files directly — don't display unless asked.
@@ -100,7 +100,7 @@ Subagents are advisory, never the active critical path. Mark each delegated prom
 5. **Plan**: Create a TodoWrite checklist. Check off steps as completed. Don't end turn between steps.
 6. **Code**: Read files before editing. Small, incremental changes. Retry failed patches. Check for `.env` needs.
 7. **Debug**: Root-cause only — don't address symptoms. Use logs/print statements to inspect state.
-8. **Test**: Narrow-to-broad. Add tests if codebase has them. Iterate until all pass. UI changes: `workflows/ui-verification.md` (Playwright screenshots, DevTools console, accessibility). Never self-assess visual changes.
+8. **Test**: Narrow-to-broad. Start with targeted tests and changed-file/affected-package checks. Run full-repository gates only when blast-radius evidence requires them. Add tests if codebase has them. Iterate until all required gates pass. UI changes: `workflows/ui-verification.md` (Playwright screenshots, DevTools console, accessibility). Never self-assess visual changes.
 9. **Validate**: Verify against original intent. Hierarchy: tools (tests/lint/build) → browser (UI) → primary sources → self-review → ask user.
 
 ### External Content Lookup

@@ -365,8 +365,12 @@ from `_parse_phases_section` — then add new logic to the slimmed parent functi
       a follow-up. -->
 
 ```bash
-{Command(s) to confirm the implementation works — e.g., shellcheck, grep, test run}
+{Focused test(s) covering the changed behaviour}
+{Changed-file or affected-package lint/typecheck/build; for aidevops use .agents/scripts/linters-local.sh --changed}
 ```
+
+- **Broad verification trigger:** {Not required | exact evidence that shared config, root tooling, dependency graph, cross-package contracts, or release infrastructure requires a full-repository gate}
+- **Broad verification command:** {Delete when not triggered; never add `linters-local.sh --full` merely as generic completion evidence}
 
 ### Recoverability Checkpoint
 
@@ -378,7 +382,7 @@ from `_parse_phases_section` — then add new logic to the slimmed parent functi
 
 - [ ] Focused tests pass: `{command}`
 - [ ] WIP commit created before broad gates: `wip: {short description}`
-- [ ] Broad verification then run: `{command}`
+- [ ] Evidence-triggered broad verification then run: `{command or not required — reason}`
 
 ### Safety-Stop Recovery
 
@@ -471,8 +475,8 @@ that defines how to machine-check the criterion. See `.agents/scripts/verify-bri
     prompt: "{what the human should check}"
   ```
 
-- [ ] Tests pass (`npm test` / `bun test` / project-specific)
-- [ ] Lint clean (`eslint` / `shellcheck` / project-specific; React/TypeScript ESLint warnings such as `react-hooks/exhaustive-deps` count as actionable even when lint exits `0`)
+- [ ] Task-relevant tests pass (`npm test -- <target>` / `bun test <target>` / project-specific affected test command)
+- [ ] Changed-file or affected-package lint is clean (`linters-local.sh --changed` / scoped `eslint` / `shellcheck`; React/TypeScript ESLint warnings such as `react-hooks/exhaustive-deps` count as actionable even when lint exits `0`)
 - [ ] UI changes cite the checked/updated DESIGN.md source or a follow-up issue; layout changes include mobile/tablet/desktop responsive evidence and named accessibility checks.
 - [ ] Qlty smells resolved (for `#simplification` tasks): `~/.qlty/bin/qlty smells --all 2>&1 | grep '<target_file>' | grep -c . | grep -q '^0$'`
 

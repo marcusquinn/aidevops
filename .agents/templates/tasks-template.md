@@ -58,7 +58,7 @@ Update after completing each sub-task, not just parent tasks.
 
 - [ ] 4.0 Testing ~{Xh} (ai:{Xm} test:{Xh})
   - [ ] 4.1 Write unit tests for new functionality ~{Xm}
-  - [ ] 4.2 Run full test suite and fix failures ~{Xm}
+  - [ ] 4.2 Run targeted and affected-package tests; broaden only when change evidence requires it ~{Xm}
   - [ ] 4.3 Manual testing of feature ~{Xm}
 
 - [ ] 5.0 Documentation ~{Xm} (ai:{Xm} read:{Xm})
@@ -67,7 +67,7 @@ Update after completing each sub-task, not just parent tasks.
   - [ ] 5.3 Update CHANGELOG.md ~{Xm}
 
 - [ ] 6.0 Quality & Review ~{Xm} (ai:{Xm} test:{Xm})
-  - [ ] 6.1 Run linters: `.agents/scripts/linters-local.sh` ~{Xm}
+  - [ ] 6.1 Run changed-file/affected lint: `.agents/scripts/linters-local.sh --changed` ~{Xm}
   - [ ] 6.2 Self-review code changes ~{Xm}
   - [ ] 6.3 Commit with descriptive message ~{Xm}
   - [ ] 6.4 Push worktree ref and create PR ~{Xm}

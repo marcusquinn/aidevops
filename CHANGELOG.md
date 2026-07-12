@@ -10,6 +10,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- make coding briefs and release postflight reuse scoped, exact-SHA quality evidence instead of repeating full source scans
+
 ## [3.32.61] - 2026-07-12
 
 ### Added
