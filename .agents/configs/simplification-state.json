@@ -408,9 +408,9 @@
       "pr": 18172
     },
     ".agents/configs/complexity-thresholds-history.md": {
-      "at": "2026-07-12T05:40:55Z",
-      "hash": "0f9dad89325fc09e8dffb2b3128b0fd464d08313",
-      "passes": 55,
+      "at": "2026-07-12T07:33:37Z",
+      "hash": "aacd1cf505c5e37fc20c2cf4c61c838898d7a9b9",
+      "passes": 56,
       "pr": 17979
     },
     ".agents/content.md": {
@@ -820,9 +820,9 @@
       "pr": 15249
     },
     ".agents/hooks/task-id-collision-guard.sh": {
-      "at": "2026-05-18T17:47:10Z",
-      "hash": "594ef6d7363aa4da9ff9f58efed5c3da5c0d3c97",
-      "passes": 12,
+      "at": "2026-07-12T07:33:40Z",
+      "hash": "01001ddbfe1e9d501774c6135a1cf842908aaf40",
+      "passes": 13,
       "pr": 18718
     },
     ".agents/legal.md": {
@@ -2322,9 +2322,9 @@
       "pr": 18706
     },
     ".agents/scripts/issue-sync-lib.sh": {
-      "at": "2026-04-28T23:43:46Z",
-      "hash": "1ab7142027d44cbd66aa69ba86139e849d826914",
-      "passes": 17,
+      "at": "2026-07-12T07:33:53Z",
+      "hash": "55c7b545bea26de3d4ee0cd21e13bf802c0b7086",
+      "passes": 18,
       "pr": 16471
     },
     ".agents/scripts/linters-local.sh": {
@@ -2406,9 +2406,9 @@
       "pr": 18704
     },
     ".agents/scripts/pulse-dep-graph.sh": {
-      "at": "2026-07-12T06:44:27Z",
-      "hash": "802ecd2dbefab66d0ca1b3cc2a3b8eb4e7ce0929",
-      "passes": 20,
+      "at": "2026-07-12T07:33:54Z",
+      "hash": "fe50ecdb2b46c5edba8f0999616bf082f2fd1639",
+      "passes": 21,
       "pr": 18796
     },
     ".agents/scripts/pulse-dispatch-core.sh": {
@@ -7480,21 +7480,21 @@
       "pr": 16415
     },
     "TODO.md": {
-      "at": "2026-07-12T06:45:20Z",
-      "hash": "a2cc9396240e45c6ff65c5f41c2be4e26f8f9ff4",
-      "passes": 182,
+      "at": "2026-07-12T07:34:40Z",
+      "hash": "65981a53949d0405c4fa5cd6631b2b3c6ef5093a",
+      "passes": 183,
       "pr": 15490
     },
     "aidevops.sh": {
-      "at": "2026-07-12T06:45:20Z",
-      "hash": "f1a300424ade2de37b4fe2b5d910f4f58530e475",
-      "passes": 269,
+      "at": "2026-07-12T07:34:40Z",
+      "hash": "89068ffc3d09701d93c055cf7d3b71c3b1e50ede",
+      "passes": 270,
       "pr": 19029
     },
     "setup.sh": {
-      "at": "2026-07-12T06:45:21Z",
-      "hash": "c155f479cce3e365b6d19d2f5eca06f0d11ea5b7",
-      "passes": 265,
+      "at": "2026-07-12T07:34:40Z",
+      "hash": "8de8fc5b3f4e8b90377132cc2590e1b8f473e903",
+      "passes": 266,
       "pr": 15470
     },
     "todo/tasks/GH#15363-brief.md": {
@@ -7594,10 +7594,10 @@
       "passes": 1
     },
     ".agents/scripts/task-brief-helper.sh": {
-      "hash": "802b7e81f1655f7d5ca8cf085def9fbb30d6668b",
-      "at": "2026-07-11T14:33:32Z",
+      "hash": "ffab6e46e22a0e777a137e7f4c016792d0296d6c",
+      "at": "2026-07-12T07:33:56Z",
       "pr": 20059,
-      "passes": 4
+      "passes": 5
     },
     ".agents/scripts/tests/test-workflow-cascade-lint.sh": {
       "hash": "40a239a36d592f111ec6a001201d21b210d65ad5",
