@@ -1,0 +1,76 @@
+{
+  "$schema": "../schemas/capability-registry.schema.json",
+  "schema_version": 1,
+  "dimensions": ["catalogued", "deployed", "installed", "configured", "enabled", "authenticated", "authorized", "reachable", "runtime_compatible", "tool_visible", "usable"],
+  "capabilities": [
+    {
+      "name": "code-development",
+      "aliases": ["code", "build", "implementation"],
+      "owner": "Build+",
+      "description": "Repository implementation, testing, and pull-request work",
+      "runtimes": ["opencode", "claude-code"],
+      "entry_points": ["build-plus.md"],
+      "fallback": "manual-guidance",
+      "required": ["deployed", "runtime_compatible", "tool_visible"],
+      "probes": {"deployed": {"path": "build-plus.md"}, "tool_visible": {"tool": "bash"}}
+    },
+    {
+      "name": "github-operations",
+      "aliases": ["github", "gh", "pull-requests"],
+      "owner": "Build+",
+      "description": "GitHub issue, pull-request, checks, and release operations",
+      "runtimes": ["opencode", "claude-code"],
+      "entry_points": ["tools/git/github-cli.md"],
+      "fallback": "local-git-only",
+      "required": ["installed", "authenticated", "authorized", "reachable"],
+      "probes": {"installed": {"command": "gh"}, "authenticated": {"command_check": ["gh", "auth", "status"]}, "authorized": {"live": "requires target-specific permission check"}, "reachable": {"live": "requires GitHub API request"}}
+    },
+    {
+      "name": "browser-automation",
+      "aliases": ["browser", "playwright", "web-automation"],
+      "owner": "Build+",
+      "description": "Deterministic browser interaction and visual verification",
+      "runtimes": ["opencode", "claude-code"],
+      "entry_points": ["tools/browser/browser-automation.md"],
+      "mcp": "playwright",
+      "fallback": "static-web-fetch",
+      "required": ["deployed", "enabled", "runtime_compatible", "tool_visible", "reachable"],
+      "probes": {"deployed": {"path": "tools/browser/browser-automation.md"}, "enabled": {"live": "requires runtime MCP configuration"}, "tool_visible": {"tool": "playwright_*"}, "reachable": {"live": "requires MCP handshake"}}
+    },
+    {
+      "name": "cloudflare-management",
+      "aliases": ["cloudflare", "workers", "dns"],
+      "owner": "Aidevops",
+      "description": "Cloudflare resource management through the remote MCP",
+      "runtimes": ["opencode"],
+      "entry_points": ["services/hosting/cloudflare.md"],
+      "mcp": "cloudflare-api",
+      "fallback": "cloudflare-cli-guidance",
+      "required": ["enabled", "authenticated", "authorized", "reachable", "runtime_compatible", "tool_visible"],
+      "probes": {"enabled": {"live": "requires runtime MCP configuration"}, "authenticated": {"live": "requires MCP OAuth state"}, "authorized": {"live": "requires account permission check"}, "reachable": {"live": "requires MCP handshake"}, "tool_visible": {"tool": "cloudflare-api_*"}}
+    },
+    {
+      "name": "seo-data",
+      "aliases": ["seo", "dataforseo", "search-data"],
+      "owner": "SEO",
+      "description": "Authenticated search and ranking data",
+      "runtimes": ["opencode", "claude-code"],
+      "entry_points": ["seo/dataforseo.md"],
+      "mcp": "dataforseo",
+      "fallback": "public-search-research",
+      "required": ["configured", "authenticated", "authorized", "reachable", "tool_visible"],
+      "probes": {"configured": {"env_any": ["DATAFORSEO_USERNAME"]}, "authenticated": {"env_all": ["DATAFORSEO_USERNAME", "DATAFORSEO_PASSWORD"]}, "authorized": {"live": "requires provider permission check"}, "reachable": {"live": "requires MCP handshake"}, "tool_visible": {"tool": "dataforseo_*"}}
+    },
+    {
+      "name": "vault-operations",
+      "aliases": ["vault", "protected-data", "encrypted-memory"],
+      "owner": "Vault",
+      "description": "Protected-data storage, trust, lock, and sync operations",
+      "runtimes": ["opencode", "claude-code"],
+      "entry_points": ["vault.md", "reference/vault.md"],
+      "fallback": "redacted-manual-handoff",
+      "required": ["deployed", "configured", "enabled", "authenticated", "authorized", "usable"],
+      "probes": {"deployed": {"path": "vault.md"}, "configured": {"path_home": ".config/aidevops/vault.json"}, "enabled": {"live": "requires vault status"}, "authenticated": {"live": "requires vault session"}, "authorized": {"live": "requires device trust check"}, "usable": {"live": "requires vault readiness command"}}
+    }
+  ]
+}

@@ -98,6 +98,27 @@ _status_headless_runtime_config() {
 	return 0
 }
 
+_status_capability_readiness() {
+	local helper="$AGENTS_DIR/scripts/capability-readiness-helper.py"
+	local runtime="${AIDEVOPS_RUNTIME:-unknown}"
+	local report=""
+
+	[[ -f "$helper" ]] || return 0
+	print_header "Capability Readiness"
+	report=$(python3 "$helper" query 2>/dev/null) || report=""
+	if [[ -n "$report" ]] && command -v jq >/dev/null 2>&1; then
+		printf '  Runtime: %s\n' "$runtime"
+		printf '  Catalogued: %s\n' "$(printf '%s' "$report" | jq '.capabilities | length')"
+		printf '  Route-ready: %s\n' "$(printf '%s' "$report" | jq '[.capabilities[] | select(.route_ready == true)] | length')"
+		printf '  Unknown/blocked: %s\n' "$(printf '%s' "$report" | jq '[.capabilities[] | select(.route_ready != true)] | length')"
+		print_info "Use capability-readiness-helper.py query for independent readiness dimensions"
+	else
+		print_warning "Capability readiness report unavailable"
+	fi
+	echo ""
+	return 0
+}
+
 # Status command
 cmd_status() {
 	print_header "AI DevOps Framework Status"
@@ -146,6 +167,7 @@ cmd_status() {
 	_status_dev_envs
 	_status_ai_configs
 	_status_headless_runtime_config
+	_status_capability_readiness
 	print_header "SSH Configuration"
 	check_file "$HOME/.ssh/id_ed25519" && print_success "Ed25519 SSH key" || print_warning "Ed25519 SSH key - not found"
 	echo ""

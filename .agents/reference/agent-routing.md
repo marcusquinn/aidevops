@@ -7,11 +7,13 @@
 
 Dispatch workers with `headless-runtime-helper.sh run`, not bare runtime CLIs. The helper provides provider rotation, session persistence, backoff, and lifecycle reinforcement. Bare `claude run`, `claude`, `claude -p`, or similar commands can skip lifecycle reinforcement and stop after PR creation (GH#5096).
 
+Capability cataloguing is not evidence of live usability. Before routing work that depends on an external tool or service, run `scripts/capability-readiness-helper.py route <capability> --runtime <opencode|claude-code>`. Mandatory dimensions that are false **or unknown** force the declared fallback; the structured response reports the reason and coverage impact. The canonical contract is `configs/capability-registry.json`; generated inventory: `reference/capability-registry.md`.
+
 ## Routing order
 
 1. Read the task or issue description.
 2. If it is clearly code work (`implement`, `fix`, `refactor`, `CI`), use Build+ or omit `--agent`.
-3. If trigger words clearly match another domain, pass `--agent <name>` or load the matching skill/subagent before acting.
+3. If trigger words clearly match another domain, resolve its capability readiness. Route to the owner only when every mandatory dimension is true; otherwise use the reported fallback.
 4. If uncertain, default to Build+; it can load narrower docs on demand.
 5. **Bundle-aware routing (t1364.6):** project bundles can define `agent_routing` overrides. Check with `bundle-helper.sh get agent_routing <repo-path>`. An explicit `--agent` flag wins.
 
