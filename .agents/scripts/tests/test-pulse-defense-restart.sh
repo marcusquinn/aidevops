@@ -209,6 +209,30 @@ STUB
 	return 0
 }
 
+_setup_systemctl_stub() {
+	local stub_home="$1"
+	local active_state="$2"
+	local mock_bin="$stub_home/mock-bin"
+	mkdir -p "$mock_bin"
+	cat >"$mock_bin/systemctl" <<STUB
+#!/usr/bin/env bash
+printf 'systemctl:%s\n' "\$*" >>"$stub_home/.aidevops/logs/systemctl-invocations.log"
+if [[ "\$*" == *"--property=LoadState"* ]]; then
+	printf 'loaded\n'
+	exit 0
+fi
+if [[ "\$*" == *"--property=ActiveState"* ]]; then
+	printf '%s\n' "$active_state"
+	exit 0
+fi
+[[ "\$*" == *" start "* || "\$*" == *" start"* ]] && exit 0
+exit 1
+STUB
+	chmod +x "$mock_bin/systemctl"
+	printf '%s' "$mock_bin"
+	return 0
+}
+
 test_tick_alive_fast_exit() {
 	local stub_home="$TEST_DIR/alive"
 	_setup_tick_env "$stub_home" "alive"
@@ -307,6 +331,47 @@ test_tick_disable_flag() {
 	return 0
 }
 
+test_tick_systemd_active_states_no_revive() {
+	local active_state="" stub_home="" mock_bin="" invocations="" helper_invocations=""
+	for active_state in active activating; do
+		stub_home="$TEST_DIR/systemd-$active_state"
+		_setup_tick_env "$stub_home" "dead"
+		mock_bin=$(_setup_systemctl_stub "$stub_home" "$active_state")
+		PATH="$mock_bin:$PATH" HOME="$stub_home" AIDEVOPS_AGENTS_DIR="$stub_home/.aidevops/agents" \
+			bash "$TICK_SH"
+		invocations=$(cat "$stub_home/.aidevops/logs/systemctl-invocations.log" 2>/dev/null || echo "")
+		helper_invocations=$(cat "$stub_home/.aidevops/logs/stub-helper-invocations.log" 2>/dev/null || echo "")
+		if [[ "$invocations" != *"--property=ActiveState"* ]] || [[ "$invocations" == *" start "* ]] || [[ -n "$helper_invocations" ]]; then
+			print_result "test_tick_systemd_${active_state}_no_revive" 1 \
+				"expected state query only; systemctl='$invocations' helper='$helper_invocations'"
+			continue
+		fi
+		print_result "test_tick_systemd_${active_state}_no_revive" 0
+	done
+	return 0
+}
+
+test_tick_systemd_dead_states_revive_via_systemctl() {
+	local active_state="" stub_home="" mock_bin="" rc=0 invocations="" helper_invocations=""
+	for active_state in inactive failed; do
+		stub_home="$TEST_DIR/systemd-$active_state"
+		_setup_tick_env "$stub_home" "dead"
+		mock_bin=$(_setup_systemctl_stub "$stub_home" "$active_state")
+		rc=0
+		PATH="$mock_bin:$PATH" HOME="$stub_home" AIDEVOPS_AGENTS_DIR="$stub_home/.aidevops/agents" \
+			bash "$TICK_SH" || rc=$?
+		invocations=$(cat "$stub_home/.aidevops/logs/systemctl-invocations.log" 2>/dev/null || echo "")
+		helper_invocations=$(cat "$stub_home/.aidevops/logs/stub-helper-invocations.log" 2>/dev/null || echo "")
+		if [[ "$rc" -eq 0 ]] && [[ "$invocations" == *"start aidevops-supervisor-pulse.service"* ]] && [[ -z "$helper_invocations" ]]; then
+			print_result "test_tick_systemd_${active_state}_revives_via_systemctl" 0
+			continue
+		fi
+		print_result "test_tick_systemd_${active_state}_revives_via_systemctl" 1 \
+			"expected systemctl start only; rc=$rc systemctl='$invocations' helper='$helper_invocations'"
+	done
+	return 0
+}
+
 # ---------------------------------------------------------------------------
 # Run all tests
 # ---------------------------------------------------------------------------
@@ -331,6 +396,8 @@ main() {
 	test_tick_dead_past_grace_revives
 	test_tick_no_last_run_revives
 	test_tick_disable_flag
+	test_tick_systemd_active_states_no_revive
+	test_tick_systemd_dead_states_revive_via_systemctl
 
 	echo
 	echo "Tests run:    $TESTS_RUN"
