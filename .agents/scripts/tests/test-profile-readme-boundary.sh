@@ -768,7 +768,7 @@ test_top_apps_batches_jq_processing() {
 		CREATE TABLE ZOBJECT (ZSTREAMNAME TEXT,ZCREATIONDATE REAL,ZVALUEINTEGER INTEGER,ZSTARTDATE REAL,ZENDDATE REAL,ZVALUESTRING TEXT);
 		WITH RECURSIVE rows(i) AS (SELECT 1 UNION ALL SELECT i+1 FROM rows WHERE i < 10)
 		INSERT INTO ZOBJECT (ZSTREAMNAME,ZSTARTDATE,ZENDDATE,ZVALUESTRING)
-		SELECT '/app/usage', ${core_now} - i*600, ${core_now} - i*600 + 300, 'fixture.app.' || i FROM rows;"
+		SELECT '/app/usage', ${core_now} - 86400 - i*600, ${core_now} - 86400 - i*600 + 300, 'fixture.app.' || i FROM rows;"
 	local real_jq wrapper_dir count_file
 	real_jq=$(command -v jq)
 	wrapper_dir="${TEST_DIR}/bin"
