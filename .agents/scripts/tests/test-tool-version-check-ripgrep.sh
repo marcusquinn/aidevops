@@ -26,7 +26,9 @@ assert 'ripgrep) get_public_release_tag "BurntSushi/ripgrep" ;;' in content, (
     "Linux without Homebrew must resolve the latest ripgrep release"
 )
 
-helper = content[content.index("_brew_upgrade_cmd() {"):content.index("# PEP 668-safe")]
+helper_start = content.index("_brew_upgrade_cmd() {")
+helper_end = content.index("\n}", helper_start)
+helper = content[helper_start:helper_end]
 for manager_command in (
     "brew upgrade",
     "apt-get install --only-upgrade",
