@@ -116,8 +116,12 @@ def history_period(rows, now, days, skipped_rows=0):
 def apply_short_history(periods, history, now, skipped):
     for name, days in (("day", 1), ("week", 7), ("month", 28)):
         fallback = history_period(history, now, days, skipped)
-        if periods[name]["status"] == "unavailable" and fallback:
-            periods[name] = fallback
+        if not fallback:
+            continue
+        live_coverage = periods[name].get("coverage_pct", 0) or 0
+        if periods[name]["status"] == "unavailable" or fallback["coverage_pct"] > live_coverage:
+            reason = "live-source-unavailable" if periods[name]["status"] == "unavailable" else "richer-calendar-coverage"
+            periods[name] = dict(fallback, reason=reason)
 
 
 def estimated_year(periods, history, now, skipped):
