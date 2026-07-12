@@ -38,6 +38,8 @@ if [[ -z "${SCRIPT_DIR:-}" ]]; then
 	SCRIPT_DIR="$(cd "$_lib_path" && pwd)"
 	unset _lib_path
 fi
+# shellcheck source=./task-identity-lib.sh
+source "${SCRIPT_DIR}/task-identity-lib.sh"
 
 # =============================================================================
 # Parse — TODO.md Utilities
@@ -90,7 +92,26 @@ strip_html_comments() {
 # Usage: local escaped; escaped=$(_escape_ere "$task_id")
 _escape_ere() {
 	local input="$1"
-	printf '%s' "$input" | sed -E 's/[][(){}.^$*+?|\\]/\\&/g'
+	task_identity_escape_ere "$input"
+	return $?
+}
+
+# Extract and validate the task ID in the canonical TODO checkbox position.
+_task_id_from_todo_line() {
+	local line="$1"
+	local candidate=""
+	if [[ "$line" =~ ^[[:space:]]*-[[:space:]]+\[[[:space:]x-]\][[:space:]]+([^[:space:]]+) ]]; then
+		candidate="${BASH_REMATCH[1]}"
+	fi
+	task_identity_validate "$candidate" || return 1
+	printf '%s\n' "$candidate"
+	return 0
+}
+
+_task_id_from_issue_title() {
+	local title="$1"
+	task_identity_parse_title_prefix "$title"
+	return $?
 }
 
 # Find project root (contains TODO.md)
@@ -126,11 +147,13 @@ parse_task_line() {
 
 	# Extract task ID
 	local task_id
-	task_id=$(echo "$line" | grep -oE 't[0-9]+(\.[0-9]+)*' | head -1 || echo "")
+	task_id=$(task_identity_extract_first "$line" || true)
 
 	# Extract description (between task ID and first metadata field)
 	local description
-	description=$(echo "$line" | sed -E 's/^[[:space:]]*- \[.\] t[0-9]+(\.[0-9]+)* //' |
+	local task_id_ere=""
+	task_id_ere=$(task_identity_escape_ere "$task_id" 2>/dev/null || true)
+	description=$(echo "$line" | sed -E "s/^[[:space:]]*- \\[.\\] ${task_id_ere} //" |
 		sed -E 's/ (#[a-z]|~[0-9]|→ |logged:|started:|completed:|ref:|actual:|blocked-by:|blocks:|assignee:|verified:).*//' ||
 		echo "")
 
@@ -208,6 +231,8 @@ parse_task_line() {
 extract_task_block() {
 	local task_id="$1"
 	local todo_file="$2"
+	local task_id_ere=""
+	task_id_ere=$(task_identity_escape_ere "$task_id") || return 1
 
 	local in_block=false
 	local block=""
@@ -215,7 +240,7 @@ extract_task_block() {
 
 	while IFS= read -r line; do
 		# Check if this is the target task line
-		if [[ "$in_block" == "false" ]] && echo "$line" | grep -qE "^\s*- \[.\] ${task_id} "; then
+		if [[ "$in_block" == "false" ]] && echo "$line" | grep -qE "^[[:space:]]*- \[.\] ${task_id_ere} "; then
 			in_block=true
 			block="$line"
 			# Calculate indent level using pure bash (avoids subshells in loop)
@@ -236,7 +261,7 @@ extract_task_block() {
 			fi
 
 			# If indent is <= task indent and it's a new task, we're done
-			if [[ $current_indent -le $task_indent ]] && echo "$line" | grep -qE '^\s*- \[.\] t[0-9]'; then
+			if [[ $current_indent -le $task_indent ]] && task_identity_extract_first "$line" >/dev/null 2>&1; then
 				break
 			fi
 
@@ -259,7 +284,11 @@ extract_task_block() {
 #   $1 - task block text (multi-line)
 extract_subtasks() {
 	local block="$1"
-	echo "$block" | tail -n +2 | grep -E '^\s+- \[.\] t[0-9]' || true
+	local line=""
+	echo "$block" | tail -n +2 | while IFS= read -r line; do
+		[[ "$line" =~ ^[[:space:]]+-[[:space:]]\[.\][[:space:]] ]] || continue
+		task_identity_extract_first "$line" >/dev/null 2>&1 && printf '%s\n' "$line"
+	done
 	return 0
 }
 
@@ -450,6 +479,7 @@ extract_plan_discoveries() {
 find_plan_by_task_id() {
 	local task_id="$1"
 	local project_root="$2"
+	task_identity_parse "$task_id" || return 1
 
 	local plans_file="$project_root/todo/PLANS.md"
 	if [[ ! -f "$plans_file" ]]; then
@@ -458,8 +488,8 @@ find_plan_by_task_id() {
 
 	# Resolve lookup IDs: try exact task_id first, then walk up to parent for subtasks
 	local lookup_ids=("$task_id")
-	if [[ "$task_id" == *"."* ]]; then
-		local parent_id="${task_id%%.*}"
+	if [[ -n "$TASK_IDENTITY_PARENT_ID" ]]; then
+		local parent_id="$TASK_IDENTITY_PARENT_ID"
 		lookup_ids+=("$parent_id")
 	fi
 

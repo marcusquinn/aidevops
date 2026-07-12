@@ -38,6 +38,10 @@ if [[ -z "${SCRIPT_DIR:-}" ]]; then
 	SCRIPT_DIR="$(cd "$_lib_path" && pwd)"
 	unset _lib_path
 fi
+# shellcheck source=./task-identity-lib.sh
+source "${SCRIPT_DIR}/task-identity-lib.sh"
+# shellcheck source=task-identity-lib.sh
+source "${SCRIPT_DIR}/task-identity-lib.sh"
 
 # Exit code 2 used by commit_version_changes to distinguish "nothing staged"
 # from "commit succeeded" (0). Callers that expect a new bump commit on HEAD
@@ -206,6 +210,7 @@ extract_task_ids_from_commits() {
 	fi
 
 	local -a task_ids=()
+	local conventional_scope_ere='^(feat|fix|docs|refactor|perf|test|chore|style|build|ci)\(([^)]+)\):'
 
 	while IFS= read -r commit; do
 		[[ -z "$commit" ]] && continue
@@ -213,13 +218,13 @@ extract_task_ids_from_commits() {
 		# Pattern 0: Framework squash subjects with a complete leading task ID.
 		# Brackets provide an explicit boundary and avoid matching ID-like text
 		# embedded in unrelated words. Dotted task IDs remain supported.
-		if [[ "$commit" =~ ^\[(t[0-9]+(\.[0-9]+)*)\]([[:space:]]|$) ]]; then
+		if [[ "$commit" =~ ^\[([^]]+)\]([[:space:]]|$) ]] && task_identity_validate "${BASH_REMATCH[1]}"; then
 			task_ids+=("${BASH_REMATCH[1]}")
 		fi
 
 		# Pattern 1: Conventional commits with task ID in scope
 		# e.g., feat(t001):, fix(t3375):, docs(t003.1):, refactor(t004):
-		if [[ "$commit" =~ ^(feat|fix|docs|refactor|perf|test|chore|style|build|ci)\((t[0-9]+(\.[0-9]+)*)\): ]]; then
+		if [[ "$commit" =~ $conventional_scope_ere ]] && task_identity_validate "${BASH_REMATCH[2]}"; then
 			task_ids+=("${BASH_REMATCH[2]}")
 		fi
 
@@ -228,10 +233,12 @@ extract_task_ids_from_commits() {
 		if [[ "$commit" =~ mark[[:space:]]+(.*)[[:space:]]+(done|complete) ]]; then
 			local segment="${BASH_REMATCH[1]}"
 			local id
-			while IFS= read -r id; do
-				[[ -n "$id" ]] || continue
-				task_ids+=("$id")
-			done < <(printf '%s\n' "$segment" | grep -oE 't[0-9]+(\.[0-9]+)*' || true)
+			if ! task_identity_has_malformed_candidate "$segment"; then
+				while IFS= read -r id; do
+					[[ -n "$id" ]] || continue
+					task_ids+=("$id")
+				done < <(task_identity_extract_all "$segment")
+			fi
 		fi
 
 		# Pattern 3: "complete/completes/closes tXXX" - task ID immediately after keyword
@@ -240,10 +247,10 @@ extract_task_ids_from_commits() {
 		while IFS= read -r completion_match; do
 			[[ -n "$completion_match" ]] || continue
 			local id
-			id=$(printf '%s\n' "$completion_match" | grep -oE 't[0-9]+(\.[0-9]+)*' || true)
+			id=$(task_identity_extract_first "$completion_match" || true)
 			[[ -n "$id" ]] || continue
 			task_ids+=("$id")
-		done < <(printf '%s\n' "$commit" | grep -oE '(^|[^[:alnum:]_])(completes?|closes?)[[:space:]]+t[0-9]+(\.[0-9]+)*([^[:alnum:]_]|$)' || true)
+		done < <(printf '%s\n' "$commit" | grep -oE '(^|[^[:alnum:]_])(completes?|closes?)[[:space:]]+[^[:space:]]+' || true)
 
 		# Pattern 4: "tXXX complete/done/finished" - task ID before completion word
 		# e.g., "t001 complete", "t002 done"
@@ -251,10 +258,10 @@ extract_task_ids_from_commits() {
 		while IFS= read -r task_before_completion_match; do
 			[[ -n "$task_before_completion_match" ]] || continue
 			local id
-			id=$(printf '%s\n' "$task_before_completion_match" | grep -oE 't[0-9]+(\.[0-9]+)*' || true)
+			id=$(task_identity_extract_first "$task_before_completion_match" || true)
 			[[ -n "$id" ]] || continue
 			task_ids+=("$id")
-		done < <(printf '%s\n' "$commit" | grep -oE '(^|[^[:alnum:]_])t[0-9]+(\.[0-9]+)*[[:space:]]+(complete|done|finished)($|[^[:alnum:]_])' || true)
+		done < <(printf '%s\n' "$commit" | grep -oE '[^[:space:]]+[[:space:]]+(complete|done|finished)($|[^[:alnum:]_])' || true)
 
 	done <<<"$commits"
 
@@ -263,7 +270,11 @@ extract_task_ids_from_commits() {
 		return 0
 	fi
 
-	printf '%s\n' "${task_ids[@]}" | grep -E '^t[0-9]+(\.[0-9]+)*$' | sort -u
+	local task_id=""
+	for task_id in "${task_ids[@]}"; do
+		task_identity_validate "$task_id" || continue
+		printf '%s\n' "$task_id"
+	done | sort -u
 	return 0
 }
 
@@ -313,7 +324,7 @@ _dedupe_completed_task_lines() {
 	local todo_file="$2"
 	local escaped_id completed_pattern duplicate_count tmp_file
 
-	escaped_id=$(echo "$task_id" | sed 's/\./\\./g')
+	escaped_id=$(task_identity_escape_ere "$task_id") || return 2
 	completed_pattern="^[[:space:]]*- \\[x\\] ${escaped_id}[[:space:]]"
 	duplicate_count=$(grep -Ec "$completed_pattern" "$todo_file" 2>/dev/null || true)
 
@@ -350,15 +361,14 @@ _mark_single_task_complete() {
 	local todo_file="$2"
 	local today_short="$3"
 	local dedupe_rc=0
+	local escaped_id=""
+	escaped_id=$(task_identity_escape_ere "$task_id") || return 2
 
 	# Build regex patterns (avoids shellcheck SC1087 false positive with [[:space:]])
-	local unchecked_pattern="^[[:space:]]*- \\[ \\] ${task_id}[[:space:]]"
-	local checked_pattern="^[[:space:]]*- \\[x\\] ${task_id}[[:space:]]"
+	local unchecked_pattern="^[[:space:]]*- \\[ \\] ${escaped_id}[[:space:]]"
+	local checked_pattern="^[[:space:]]*- \\[x\\] ${escaped_id}[[:space:]]"
 
 	if grep -qE "$unchecked_pattern" "$todo_file"; then
-		local escaped_id
-		escaped_id=$(echo "$task_id" | sed 's/\./\\./g')
-
 		# Discover PR number for proof-log (t1004)
 		local pr_number=""
 		pr_number=$(find_pr_for_task_from_commits "$task_id")

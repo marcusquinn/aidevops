@@ -118,6 +118,45 @@ test_allows_linked_worktree_edits() {
 	return 0
 }
 
+test_namespaced_task_assignee_lookup() {
+	local task_id="to01j2abc3def4gh5jkm6npq7rst-42.3"
+	printf '%s\n' "- [ ] ${task_id} Namespaced assignee fixture assignee:other@example" >"${TEST_ROOT}/TODO.md"
+	git -C "$TEST_ROOT" add TODO.md
+	git -C "$TEST_ROOT" commit -m "test: add namespaced assignee fixture" >/dev/null 2>&1
+	local worktree_path="${TEST_ROOT}/namespaced-assignee-worktree"
+	git -C "$TEST_ROOT" worktree add "$worktree_path" -b "feature/${task_id}-migration" >/dev/null 2>&1
+
+	local output=""
+	local exit_code=0
+	output=$(AIDEVOPS_IDENTITY="me@example" run_helper "$worktree_path" 2>&1) || exit_code=$?
+	if [[ "$exit_code" -eq 0 ]] && [[ "$output" == *"Task ${task_id} is claimed by assignee:other@example"* ]]; then
+		print_result "preserves namespaced task ID in assignee lookup" 0
+		return 0
+	fi
+
+	print_result "preserves namespaced task ID in assignee lookup" 1 "exit=${exit_code} output=${output}"
+	return 0
+}
+
+test_malformed_task_assignee_fails_closed() {
+	printf '%s\n' "- [ ] t7 Prefix task assignee:other@example" >>"${TEST_ROOT}/TODO.md"
+	git -C "$TEST_ROOT" add TODO.md
+	git -C "$TEST_ROOT" commit -m "test: add malformed-prefix fixture" >/dev/null 2>&1
+	local worktree_path="${TEST_ROOT}/malformed-assignee-worktree"
+	git -C "$TEST_ROOT" worktree add "$worktree_path" -b "feature/t7.0-malformed" >/dev/null 2>&1
+
+	local output=""
+	local exit_code=0
+	output=$(AIDEVOPS_IDENTITY="me@example" run_helper "$worktree_path" 2>&1) || exit_code=$?
+	if [[ "$exit_code" -eq 0 ]] && [[ "$output" != *"Task t7 is claimed"* ]]; then
+		print_result "malformed task-like branch does not match valid prefix assignee" 0
+		return 0
+	fi
+
+	print_result "malformed task-like branch does not match valid prefix assignee" 1 "exit=${exit_code} output=${output}"
+	return 0
+}
+
 test_worker_env_does_not_bypass_canonical_guard() {
 	local output=""
 	local exit_code=0
@@ -334,6 +373,8 @@ main() {
 
 	test_blocks_headless_edits_on_main_with_worktree_guidance
 	test_allows_linked_worktree_edits
+	test_namespaced_task_assignee_lookup
+	test_malformed_task_assignee_fails_closed
 	test_worker_env_does_not_bypass_canonical_guard
 	test_warns_when_canonical_repo_is_off_main
 	test_blocks_when_linked_worktree_owned_by_another_live_process

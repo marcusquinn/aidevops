@@ -147,10 +147,10 @@ fi
 cat >"$TMP/todo3b.md" <<'EOF'
 ## Ready
 
-- [ ] t9003b task with placeholder ref tier:simple ref:none logged:2026-07-02
+- [ ] t9003 task with placeholder ref tier:simple ref:none logged:2026-07-02
 EOF
 
-add_gh_ref_to_todo "t9003b" "1003" "$TMP/todo3b.md"
+add_gh_ref_to_todo "t9003" "1003" "$TMP/todo3b.md"
 if grep -q 'ref:GH#1003' "$TMP/todo3b.md" &&
 	! grep -q 'ref:none' "$TMP/todo3b.md"; then
 	pass "add_gh_ref_to_todo: replaces ref:none placeholder (GH#26355)"
@@ -284,11 +284,11 @@ fi
 # -----------------------------------------------------------------------------
 # Test 10: _escape_ere escapes regex metacharacters
 # -----------------------------------------------------------------------------
-escaped=$(_escape_ere "t001.1")
-if [[ "$escaped" == "t001\\.1" ]]; then
-	pass "_escape_ere: escapes dot in t001.1 sub-task ID"
+escaped=$(_escape_ere "t9001.1")
+if [[ "$escaped" == "t9001\\.1" ]]; then
+	pass "_escape_ere: escapes dot in valid sub-task ID"
 else
-	fail "_escape_ere: wrong escape for t001.1 (got '$escaped')"
+	fail "_escape_ere: wrong escape for t9001.1 (got '$escaped')"
 fi
 
 escaped_plain=$(_escape_ere "t1990")

@@ -21,6 +21,8 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 # shellcheck source=/dev/null
 source "${SCRIPT_DIR}/shared-constants.sh"
+# shellcheck source=./task-identity-lib.sh
+source "${SCRIPT_DIR}/task-identity-lib.sh"
 
 # Repository root directory
 # First try git (works when called from any location within a repo)

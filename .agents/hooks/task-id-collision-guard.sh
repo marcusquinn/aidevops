@@ -33,6 +33,12 @@
 
 set -u
 
+_task_id_guard_dir="${BASH_SOURCE[0]%/*}"
+[[ "$_task_id_guard_dir" == "${BASH_SOURCE[0]}" ]] && _task_id_guard_dir="."
+# shellcheck source=../scripts/task-identity-lib.sh
+source "${_task_id_guard_dir}/../scripts/task-identity-lib.sh"
+unset _task_id_guard_dir
+
 # ---------------------------------------------------------------------------
 # Bypass
 # ---------------------------------------------------------------------------
@@ -330,13 +336,11 @@ _repo_has_claim() {
 # ---------------------------------------------------------------------------
 _extract_tids() {
 	local text="${1:-}"
-	# Match t followed by one or more digits only when NOT preceded by an
-	# alphanumeric character (prevents false positives from subagent or library
-	# names like context7→t7, gpt4→t4, next13→t13).
-	# POSIX ERE lacks \b so we use a two-step approach: first grep anchors the
-	# leading boundary via (^|[^[:alnum:]]), then a second grep strips the
-	# captured leading non-alnum character.  GNU and BSD grep both support this.
-	printf '%s' "$text" | grep -oE '(^|[^[:alnum:]])t[0-9]+' | grep -oE 't[0-9]+' | sort -u
+	if task_identity_has_malformed_candidate "$text"; then
+		printf '%s\n' '__malformed__'
+		return 0
+	fi
+	task_identity_extract_all "$text" | sort -u
 	return 0
 }
 
@@ -475,8 +479,16 @@ _check_message() {
 	local tid
 	while IFS= read -r tid; do
 		[[ -z "$tid" ]] && continue
+		if ! task_identity_parse "$tid"; then
+			violations="${violations}  ${tid} — malformed task identity\n"
+			continue
+		fi
+		if [[ "$TASK_IDENTITY_KIND" == "namespaced" ]]; then
+			_debug "$tid is origin-namespaced and collision-safe by construction"
+			continue
+		fi
 		local num
-		num=$(printf '%s' "$tid" | tr -d 't')
+		num="$TASK_IDENTITY_SEQUENCE"
 		if ! [[ "$num" =~ ^[0-9]+$ ]]; then
 			_debug "Non-numeric suffix for $tid — skipping"
 			continue

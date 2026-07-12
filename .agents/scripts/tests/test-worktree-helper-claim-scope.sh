@@ -34,6 +34,8 @@ TEST_RESET=$'\033[0m'
 
 TESTS_RUN=0
 TESTS_FAILED=0
+ORIGIN_ID="o01j2abc3def4gh5jkm6npq7rst"
+NAMESPACED_TASK_ID="t${ORIGIN_ID}-42.3"
 
 print_result() {
 	local name="$1" rc="$2" extra="${3:-}"
@@ -84,6 +86,7 @@ cat > "$FAKE_REPO/TODO.md" <<'TODO'
 
 - [ ] t5000 Fix the widget alignment bug #bugfix ~2h ref:GH#12345 logged:2026-04-18
 - [ ] t5001 Add new feature for dashboard #feature ~4h logged:2026-04-18
+- [ ] to01j2abc3def4gh5jkm6npq7rst-42.3 Namespaced task #feature ref:GH#27149 logged:2026-07-12
 TODO
 
 # Create a brief that contains a decoy issue reference
@@ -125,6 +128,8 @@ GREEN=$'\033[0;32m'
 
 # We need SCRIPT_DIR for the helper fallback path
 SCRIPT_DIR="${TEST_SCRIPTS_DIR}"
+# shellcheck source=../task-identity-lib.sh
+source "${TEST_SCRIPTS_DIR}/task-identity-lib.sh"
 
 # Extract only the _interactive_session_auto_claim function from worktree-helper.sh
 # to avoid sourcing the whole file (which has side effects)
@@ -210,6 +215,20 @@ claimed=$(get_claimed_issue)
 rc=0
 [[ -z "$claimed" ]] || rc=1
 print_result "t5001 branch (no ref:GH# in TODO) → no claim" "$rc" "(got: '$claimed', expected: '')"
+
+# Test 8: namespaced task ID remains complete during TODO lookup
+run_auto_claim "feature/${NAMESPACED_TASK_ID}-consumer-migration" "$FAKE_REPO" ""
+claimed=$(get_claimed_issue)
+rc=0
+[[ "$claimed" == "27149" ]] || rc=1
+print_result "namespaced task branch resolves its exact TODO entry" "$rc" "(got: '$claimed', expected: '27149')"
+
+# Test 9: malformed task-like branch fails closed instead of matching a prefix
+run_auto_claim "feature/t5000.0-malformed" "$FAKE_REPO" ""
+claimed=$(get_claimed_issue)
+rc=0
+[[ -z "$claimed" ]] || rc=1
+print_result "malformed task-like branch does not claim a prefix task" "$rc" "(got: '$claimed', expected: '')"
 
 # =============================================================================
 # Summary
