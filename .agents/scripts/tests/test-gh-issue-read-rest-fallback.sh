@@ -102,6 +102,24 @@ export -f print_info print_warning print_error print_success log_verbose
 export AIDEVOPS_SESSION_ORIGIN=interactive
 export AIDEVOPS_SESSION_USER=testuser
 
+stub_rest_list_result() {
+	local path="$1"
+	if [[ "${STUB_REST_PAGINATED:-0}" == "1" && "$path" == *"page=1" ]]; then
+		jq -cn '[range(1; 101) | {number:., title:"PR", pull_request:{url:"stub"}}]'
+		return 0
+	fi
+	if [[ "${STUB_REST_PAGINATED:-0}" == "1" ]]; then
+		printf '%s\n' '[{"number":27154,"title":"Blocked issue","labels":[]}]'
+		return 0
+	fi
+	if [[ -n "${STUB_REST_LIST_RESULT:-}" ]]; then
+		printf '%s\n' "$STUB_REST_LIST_RESULT"
+		return 0
+	fi
+	printf '%s\n' '[{"number":1,"title":"Issue one","labels":[]},{"number":2,"title":"Issue two","labels":[]}]'
+	return 0
+}
+
 # shellcheck source=../shared-constants.sh
 source "${SCRIPTS_DIR}/shared-constants.sh" >/dev/null 2>&1 || true
 
@@ -163,17 +181,8 @@ gh() {
 			fi
 			_i=$((_i + 1))
 		done
-		local _result='[{"number":1,"title":"Issue one","labels":[]},{"number":2,"title":"Issue two","labels":[]}]'
-		if [[ -n "${STUB_REST_LIST_RESULT:-}" ]]; then
-			_result="$STUB_REST_LIST_RESULT"
-		fi
-		if [[ "${STUB_REST_PAGINATED:-0}" == "1" ]]; then
-			if [[ "$2" == *"page=1" ]]; then
-				_result=$(jq -cn '[range(1; 101) | {number:., title:"PR", pull_request:{url:"stub"}}]')
-			else
-				_result='[{"number":27154,"title":"Blocked issue","labels":[]}]'
-			fi
-		fi
+		local _result=""
+		_result=$(stub_rest_list_result "$2")
 		if [[ -n "$_jq_expr" ]]; then
 			printf '%s\n' "$_result" | jq -r "$_jq_expr" 2>/dev/null
 		else
