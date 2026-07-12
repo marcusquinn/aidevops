@@ -3,7 +3,7 @@
 
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { copyFileSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, mkdtempSync, mkdirSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -143,6 +143,9 @@ test("fails closed when required policy is malformed", () => {
   mkdirSync(isolatedConfigs);
   try {
     copyFileSync(join(scriptsDir, "command-policy-helper.py"), join(isolatedScripts, "command-policy-helper.py"));
+    for (const moduleName of readdirSync(scriptsDir).filter((name) => /^command_policy_.*\.py$/.test(name))) {
+      copyFileSync(join(scriptsDir, moduleName), join(isolatedScripts, moduleName));
+    }
     copyFileSync(join(scriptsDir, "canonical-git-command-guard.py"), join(isolatedScripts, "canonical-git-command-guard.py"));
     writeFileSync(join(isolatedConfigs, "command-policy.json"), "{not-json\n");
     assert.throws(
