@@ -123,6 +123,17 @@ else
 	[[ "$(/usr/bin/git -C "$REPO" branch --show-current)" == "main" ]] && pass "deployed symlink shim blocks canonical mutation" || fail "symlink shim changed canonical HEAD"
 fi
 
+RUNTIME_A="${TEST_ROOT}/runtime-a/agents/scripts"
+RUNTIME_B="${TEST_ROOT}/runtime-b/agents/scripts"
+mkdir -p "$RUNTIME_A" "$RUNTIME_B"
+ln -s "$SHIM" "${RUNTIME_A}/git"
+ln -s "$SHIM" "${RUNTIME_B}/git"
+if (cd "$REPO" && env PATH="${RUNTIME_A}:${RUNTIME_B}:/usr/bin:/bin" "${RUNTIME_A}/git" status --short >/dev/null); then
+	pass "runtime bundle shim skips other runtime bundle wrappers"
+else
+	fail "runtime bundle shim skips other runtime bundle wrappers"
+fi
+
 LITERAL_REPO="${TEST_ROOT}/repo[1]"
 mkdir -p "$LITERAL_REPO"
 /usr/bin/git -C "$LITERAL_REPO" init -q -b main
