@@ -210,6 +210,86 @@ test_cwd_independence_and_regex_contract() {
 	return 0
 }
 
+test_text_extraction() {
+	local namespaced="t${ORIGIN_ID}-42.3"
+	local extracted=""
+
+	extracted=$(task_identity_extract_first "fix: complete ${namespaced}-release") || return 1
+	assert_equal "$namespaced" "$extracted" "extract namespaced ID from branch-like text" || return 1
+	extracted=$(task_identity_extract_first "Refs t18097.2, then ${namespaced}.") || return 1
+	assert_equal "t18097.2" "$extracted" "extract first legacy ID" || return 1
+	extracted=$(task_identity_extract_all "t7, ${namespaced}; t9.1") || return 1
+	assert_equal $'t7\n'"${namespaced}"$'\nt9.1' "$extracted" "extract all IDs in encounter order" || return 1
+
+	if task_identity_extract_first "embeddedxt7value" >/dev/null; then
+		fail "extractor accepted embedded ID"
+		return 1
+	fi
+	pass "extractor rejects embedded ID"
+	if task_identity_extract_first "malformed t7.0 marker" >/dev/null; then
+		fail "extractor accepted valid prefix of malformed ID"
+		return 1
+	fi
+	pass "extractor rejects valid prefix of malformed ID"
+	if task_identity_extract_first "t1234567890123456789" >/dev/null; then
+		fail "extractor accepted truncated overlong ID"
+		return 1
+	fi
+	pass "extractor rejects truncated overlong ID"
+	return 0
+}
+
+test_structured_helpers() {
+	local namespaced="t${ORIGIN_ID}-42.3"
+	local parsed=""
+
+	parsed=$(task_identity_parse_title_prefix "${namespaced}: migrate consumers") || return 1
+	assert_equal "$namespaced" "$parsed" "parse namespaced title prefix" || return 1
+	if task_identity_parse_title_prefix "${namespaced} migrate consumers" >/dev/null; then
+		fail "title parser accepted missing colon"
+		return 1
+	fi
+	pass "title parser requires colon"
+	if task_identity_parse_title_prefix "t01: malformed" >/dev/null; then
+		fail "title parser accepted malformed ID"
+		return 1
+	fi
+	pass "title parser rejects malformed ID"
+
+	parsed=$(task_identity_escape_ere "t7.2") || return 1
+	assert_equal 't7\.2' "$parsed" "escape ID for ERE" || return 1
+	if task_identity_escape_ere "t7.*" >/dev/null; then
+		fail "ERE helper accepted malformed ID"
+		return 1
+	fi
+	pass "ERE helper validates input"
+
+	if ! task_identity_has_malformed_candidate "Blocked by: t01"; then
+		fail "malformed detector missed leading-zero ID"
+		return 1
+	fi
+	pass "malformed detector finds invalid legacy ID"
+	if ! task_identity_has_malformed_candidate "Blocked by: t${ORIGIN_ID}-01"; then
+		fail "malformed detector missed invalid namespaced ID"
+		return 1
+	fi
+	pass "malformed detector finds invalid namespaced ID"
+	if task_identity_has_malformed_candidate "ordinary text and t7"; then
+		fail "malformed detector rejected valid ID"
+		return 1
+	fi
+	pass "malformed detector accepts valid marker"
+
+	parsed=$(task_identity_parse_list "t7, ${namespaced} t9.1") || return 1
+	assert_equal $'t7\n'"${namespaced}"$'\nt9.1' "$parsed" "parse mixed structured list" || return 1
+	if task_identity_parse_list "t7,t01" >/dev/null; then
+		fail "list parser accepted malformed member"
+		return 1
+	fi
+	pass "list parser fails closed"
+	return 0
+}
+
 main() {
 	test_valid_forms_and_fields || return 1
 	test_boundary_forms || return 1
@@ -218,6 +298,8 @@ main() {
 	test_failure_clears_fields || return 1
 	test_validator_preserves_parsed_fields || return 1
 	test_cwd_independence_and_regex_contract || return 1
+	test_text_extraction || return 1
+	test_structured_helpers || return 1
 	if [[ "$FAIL_COUNT" -ne 0 ]]; then
 		printf '%d test(s) failed\n' "$FAIL_COUNT" >&2
 		return 1
