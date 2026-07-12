@@ -2371,9 +2371,9 @@ _verify_launch_recovery_state() {
 		--json state,labels,assignees 2>/dev/null) || return 1
 	printf '%s' "$issue_meta_json" | jq -e --arg self "$self_login" --arg target "status:${target_status}" '
 		.state == "OPEN" and
-		(([.labels[].name] | index("status:queued")) == null) and
-		(([.labels[].name] | index($target)) != null) and
-		(([.assignees[].login] | index($self)) == null)
+		(([.labels[]?.name] | index("status:queued")) == null) and
+		(([.labels[]?.name] | index($target)) != null) and
+		(([.assignees[]?.login] | index($self)) == null)
 	' >/dev/null 2>&1 || return 1
 	return 0
 }

@@ -1466,8 +1466,8 @@ _rollback_prelaunch_ownership() {
 	local owns_queued=""
 	owns_queued=$(printf '%s' "$issue_meta_json" | jq -r --arg self "$self_login" '
 		(.state == "OPEN") and
-		(([.labels[].name] | index("status:queued")) != null) and
-		(([.assignees[].login] | index($self)) != null)
+		(([.labels[]?.name] | index("status:queued")) != null) and
+		(([.assignees[]?.login] | index($self)) != null)
 	' 2>/dev/null) || return 1
 	[[ "$owns_queued" == "true" ]] || return 0
 
@@ -1484,9 +1484,9 @@ _rollback_prelaunch_ownership() {
 		--json state,labels,assignees,locked 2>/dev/null) || return 1
 	if ! printf '%s' "$issue_meta_json" | jq -e --arg self "$self_login" '
 		.state == "OPEN" and
-		(([.labels[].name] | index("status:queued")) == null) and
-		(([.labels[].name] | index("status:available")) != null) and
-		(([.assignees[].login] | index($self)) == null) and
+		(([.labels[]?.name] | index("status:queued")) == null) and
+		(([.labels[]?.name] | index("status:available")) != null) and
+		(([.assignees[]?.login] | index($self)) == null) and
 		(.locked != true)
 	' >/dev/null 2>&1; then
 		echo "[dispatch_with_dedup] Pre-launch rollback verification failed for #${issue_number}; retaining claim for stale recovery" >>"$LOGFILE"

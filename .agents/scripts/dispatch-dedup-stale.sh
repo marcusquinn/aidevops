@@ -339,11 +339,11 @@ _stale_recovery_verify_transition() {
 		--json state,labels,assignees 2>/dev/null) || return 1
 	printf '%s' "$issue_meta_json" | jq -e --arg target "status:${target_status}" --arg stale "$stale_assignees" '
 		($stale | split(",") | map(select(length > 0))) as $stale_users |
-		([.assignees[].login] // []) as $current_users |
+		[.assignees[]?.login] as $current_users |
 		.state == "OPEN" and
-		(([.labels[].name] | index("status:queued")) == null) and
-		(([.labels[].name] | index("status:in-progress")) == null) and
-		(([.labels[].name] | index($target)) != null) and
+		(([.labels[]?.name] | index("status:queued")) == null) and
+		(([.labels[]?.name] | index("status:in-progress")) == null) and
+		(([.labels[]?.name] | index($target)) != null) and
 		([ $stale_users[] as $stale_user |
 			select(($current_users | index($stale_user)) != null) ] | length == 0)
 	' >/dev/null 2>&1 || return 1
