@@ -9,7 +9,7 @@ import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { canonicalizeSqliteDbPath, sqlEscape } from "./sqlite-process.mjs";
 
-const SCHEMA_VERSION = 2;
+const SCHEMA_VERSION = 3;
 const PAYLOAD_MAX_BYTES = 64 * 1024;
 const EVIDENCE_MAX_BYTES = 64 * 1024;
 const CROCKFORD = "0123456789abcdefghjkmnpqrstvwxyz";
@@ -18,6 +18,7 @@ const LEGACY_ID = /^t[1-9][0-9]{0,17}$/;
 const TASK_ID = /^(?:t[1-9][0-9]{0,17}|to[0-7][0-9a-hjkmnp-tv-z]{25}-[1-9][0-9]{0,17})$/;
 const STATES = new Set(["active", "read-only", "redirected", "retired", "quarantined"]);
 const RESULTS = new Set(["published", "retryable", "indeterminate", "terminal", "conflict"]);
+const MAPPING_ROLES = new Set(["home", "implementation", "upstream"]);
 
 const SCHEMA = `
 PRAGMA foreign_keys=ON;
@@ -67,6 +68,17 @@ CREATE TABLE IF NOT EXISTS restore_controls (
   new_epoch INTEGER NOT NULL, fencing_token TEXT NOT NULL UNIQUE,
   registry_evidence_json TEXT NOT NULL CHECK(json_valid(registry_evidence_json)), backup_integrity TEXT NOT NULL,
   backup_high_water INTEGER NOT NULL, published_high_water INTEGER NOT NULL, restored_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS issue_mappings (
+  task_id TEXT NOT NULL, forge TEXT NOT NULL, repository_id TEXT NOT NULL,
+  repository_slug TEXT NOT NULL, role TEXT NOT NULL, issue_id TEXT NOT NULL,
+  project_id TEXT, display_number INTEGER NOT NULL CHECK(display_number > 0),
+  state_cursor TEXT, sync_metadata_json TEXT NOT NULL DEFAULT '{}' CHECK(json_valid(sync_metadata_json)),
+  created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+  PRIMARY KEY(task_id, forge, repository_id),
+  UNIQUE(forge, repository_id, issue_id),
+  UNIQUE(forge, repository_id, display_number),
+  CHECK(forge IN ('github')), CHECK(role IN ('home','implementation','upstream'))
 );
 CREATE TRIGGER IF NOT EXISTS tasks_immutable_update BEFORE UPDATE ON tasks BEGIN SELECT RAISE(ABORT, 'tasks are immutable'); END;
 CREATE TRIGGER IF NOT EXISTS tasks_immutable_delete BEFORE DELETE ON tasks BEGIN SELECT RAISE(ABORT, 'tasks are immutable'); END;
@@ -137,8 +149,20 @@ INSERT INTO migration_history(version,applied_at,backup_path,integrity_result) V
 COMMIT;`);
   if (sqlite(path, "PRAGMA integrity_check;\n") !== "ok") throw new Error("migration integrity verification failed");
 }
+function migrateV2ToV3(path) {
+  const copy = backup(path, "pre-migrate-v3");
+  sqlite(path, `BEGIN IMMEDIATE;
+${SCHEMA}
+UPDATE coordinator_meta SET value='3' WHERE key='schema_version';
+INSERT INTO migration_history(version,applied_at,backup_path,integrity_result) VALUES (3,${sqlEscape(now())},${sqlEscape(copy)},'ok');
+COMMIT;`);
+  if (sqlite(path, "PRAGMA integrity_check;\n") !== "ok") throw new Error("migration integrity verification failed");
+}
 function migrate(path, version) {
-  if (version === 1) migrateV1ToV2(path);
+  if (version === 1) {
+    migrateV1ToV2(path);
+    migrateV2ToV3(path);
+  } else if (version === 2) migrateV2ToV3(path);
   else if (version !== SCHEMA_VERSION) throw new Error(`unsupported coordinator schema ${version}`);
 }
 function bootstrap(path) {
@@ -270,6 +294,45 @@ CREATE TEMP TABLE assert_change(value INTEGER CHECK(value=1)); INSERT INTO asser
 INSERT INTO origin_transitions(origin_id,from_state,to_state,ownership_epoch,fencing_token,evidence_json,occurred_at) VALUES (${sqlEscape(origin.origin_id)},${sqlEscape(origin.state)},${sqlEscape(state)},${origin.ownership_epoch},${sqlEscape(fencingToken)},${sqlEscape(evidenceText)},${sqlEscape(timestamp)}); COMMIT;`);
   return { originId: origin.origin_id, state };
 }
+function issueMappingInput(input) {
+  const taskId = input.taskId;
+  if (!TASK_ID.test(taskId)) throw new TypeError("task_id is not canonical");
+  const forge = input.forge || "github";
+  if (forge !== "github") throw new TypeError("unsupported forge");
+  const repositoryId = validId(input.repositoryId, "repository_id");
+  const repositorySlug = input.repositorySlug;
+  if (typeof repositorySlug !== "string" || !/^[^/\s]+\/[^/\s]+$/.test(repositorySlug)) throw new TypeError("repository_slug is not canonical");
+  const role = input.role || "home";
+  if (!MAPPING_ROLES.has(role)) throw new TypeError("invalid issue mapping role");
+  const issueId = validId(input.issueId, "issue_id");
+  const projectId = input.projectId ? validId(input.projectId, "project_id") : null;
+  const displayNumber = Number(input.displayNumber);
+  if (!Number.isSafeInteger(displayNumber) || displayNumber < 1) throw new TypeError("display_number must be a positive integer");
+  const stateCursor = input.stateCursor ? validId(input.stateCursor, "state_cursor") : null;
+  const syncMetadataText = jsonText(input.syncMetadata || {}, "sync_metadata");
+  return { taskId, forge, repositoryId, repositorySlug, role, issueId, projectId, displayNumber, stateCursor, syncMetadataText };
+}
+function bindIssue(input, path = initialise()) {
+  const value = issueMappingInput(input);
+  const timestamp = now();
+  const existing = rows(path, `SELECT * FROM issue_mappings WHERE task_id=${sqlEscape(value.taskId)} AND forge=${sqlEscape(value.forge)} AND repository_id=${sqlEscape(value.repositoryId)};`)[0];
+  if (existing && (existing.issue_id !== value.issueId || Number(existing.display_number) !== value.displayNumber || existing.role !== value.role)) {
+    throw new Error("issue mapping conflict");
+  }
+  sqlite(path, `BEGIN IMMEDIATE;
+INSERT INTO issue_mappings(task_id,forge,repository_id,repository_slug,role,issue_id,project_id,display_number,state_cursor,sync_metadata_json,created_at,updated_at)
+VALUES (${sqlEscape(value.taskId)},${sqlEscape(value.forge)},${sqlEscape(value.repositoryId)},${sqlEscape(value.repositorySlug)},${sqlEscape(value.role)},${sqlEscape(value.issueId)},${sqlEscape(value.projectId)},${value.displayNumber},${sqlEscape(value.stateCursor)},${sqlEscape(value.syncMetadataText)},${sqlEscape(timestamp)},${sqlEscape(timestamp)})
+ON CONFLICT(task_id,forge,repository_id) DO UPDATE SET repository_slug=excluded.repository_slug,project_id=COALESCE(excluded.project_id,issue_mappings.project_id),state_cursor=COALESCE(excluded.state_cursor,issue_mappings.state_cursor),sync_metadata_json=excluded.sync_metadata_json,updated_at=excluded.updated_at;
+COMMIT;`);
+  return resolveIssue({ taskId: value.taskId, forge: value.forge, repositoryId: value.repositoryId }, path);
+}
+function resolveIssue({ taskId, forge = "github", repositoryId }, path = initialise()) {
+  if (!TASK_ID.test(taskId)) throw new TypeError("task_id is not canonical");
+  validId(repositoryId, "repository_id");
+  const matches = rows(path, `SELECT task_id AS taskId,forge,repository_id AS repositoryId,repository_slug AS repositorySlug,role,issue_id AS issueId,project_id AS projectId,display_number AS displayNumber,state_cursor AS stateCursor,sync_metadata_json AS syncMetadataJson FROM issue_mappings WHERE task_id=${sqlEscape(taskId)} AND forge=${sqlEscape(forge)} AND repository_id=${sqlEscape(repositoryId)};`);
+  if (matches.length !== 1) throw new Error("issue mapping not found");
+  return { ...matches[0], syncMetadata: JSON.parse(matches[0].syncMetadataJson) };
+}
 function validateRestoreEvidence(evidence, fencingToken) {
   const text = jsonText(evidence, "registry_evidence", EVIDENCE_MAX_BYTES);
   if (evidence.cas !== "winner" || evidence.prior_revoked !== true || evidence.fencing_token !== fencingToken || !validId(evidence.transfer_record_id, "transfer_record_id")) {
@@ -321,13 +384,15 @@ function parseJson(value = "{}") { return JSON.parse(value); }
 function option(args, name, fallback = "") { const index = args.indexOf(name); return index >= 0 && index + 1 < args.length ? args[index + 1] : fallback; }
 export function run(args = process.argv.slice(2)) {
   const command = args[0] || "help";
-  if (["help", "--help", "-h"].includes(command)) { process.stdout.write("Usage: task-coordinator.mjs allocate|publication-intent|attempt|transition|restore|verify|status\n"); return 0; }
+  if (["help", "--help", "-h"].includes(command)) { process.stdout.write("Usage: task-coordinator.mjs allocate|publication-intent|attempt|transition|bind-issue|resolve-issue|restore|verify|status\n"); return 0; }
   const path = initialise();
   let result;
   if (command === "allocate") result = allocate({ operationId: option(args, "--operation-id") || randomUUID(), count: Number(option(args, "--count", "1")), legacyId: option(args, "--legacy-id"), payload: parseJson(option(args, "--payload", "{}")) }, path);
   else if (command === "publication-intent") result = publication({ operationId: option(args, "--operation-id"), taskId: option(args, "--task-id"), payload: parseJson(option(args, "--payload", "{}")) }, path);
   else if (command === "attempt") result = attempt({ intentId: option(args, "--intent-id"), status: option(args, "--status"), evidence: parseJson(option(args, "--evidence", "{}")) }, path);
   else if (command === "transition") result = transition({ state: option(args, "--state"), fencingToken: option(args, "--fencing-token"), evidence: parseJson(option(args, "--evidence", "{}")) }, path);
+  else if (command === "bind-issue") result = bindIssue({ taskId: option(args, "--task-id"), forge: option(args, "--forge", "github"), repositoryId: option(args, "--repository-id"), repositorySlug: option(args, "--repository-slug"), role: option(args, "--role", "home"), issueId: option(args, "--issue-id"), projectId: option(args, "--project-id"), displayNumber: option(args, "--display-number"), stateCursor: option(args, "--state-cursor"), syncMetadata: parseJson(option(args, "--sync-metadata", "{}")) }, path);
+  else if (command === "resolve-issue") result = resolveIssue({ taskId: option(args, "--task-id"), forge: option(args, "--forge", "github"), repositoryId: option(args, "--repository-id") }, path);
   else if (command === "restore") result = restore({ backupPath: option(args, "--backup"), registryEvidence: parseJson(option(args, "--registry-evidence", "{}")), priorEpoch: Number(option(args, "--prior-epoch")), newEpoch: Number(option(args, "--new-epoch")), fencingToken: option(args, "--fencing-token"), publishedHighWater: Number(option(args, "--published-high-water", "0")) }, path);
   else if (command === "verify") result = verify(path);
   else if (command === "status") result = { ...activeOrigin(path), dbPath: path };
@@ -340,4 +405,4 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   try { process.exitCode = run(); } catch (error) { process.stderr.write(`task-coordinator: ${error.message}\n`); process.exitCode = 1; }
 }
 
-export { allocate, backup, hashPayload, initialise, restore, verify };
+export { allocate, backup, bindIssue, hashPayload, initialise, resolveIssue, restore, verify };

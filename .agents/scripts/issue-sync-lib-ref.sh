@@ -214,22 +214,53 @@ add_pr_ref_to_todo() {
 # These mutations are NOT idempotent — duplicates return validation errors.
 # All functions suppress "already taken" / "duplicate sub-issues" errors.
 
-# Resolve a task ID to its GitHub issue number from TODO.md.
-# Looks up the ref:GH#NNN field for the given task ID.
+# Resolve a task ID to a repository-validated GitHub issue mapping. The
+# coordinator is authoritative; ref:GH remains a migration projection that is
+# backfilled only after both repository and issue node identities are fetched.
 # Arguments:
 #   $1 - task_id (e.g. t1873.1)
 #   $2 - todo_file path
+#   $3 - repo slug (owner/repo)
 # Returns: issue number on stdout, or empty string if not found
 resolve_task_gh_number() {
 	local task_id="$1"
 	local todo_file="$2"
+	local repo="${3:-}"
+	[[ "$repo" =~ ^[^/[:space:]]+/[^/[:space:]]+$ ]] || return 1
+	local repository_id="" mapping="" coordinator="${SCRIPT_DIR}/task-coordinator.mjs"
+	repository_id=$(gh api "repos/${repo}" --jq '.node_id' 2>/dev/null || true)
+	[[ -n "$repository_id" && "$repository_id" != "null" ]] || return 1
+	if [[ -x "$coordinator" ]]; then
+		mapping=$(node "$coordinator" resolve-issue --task-id "$task_id" --forge github \
+			--repository-id "$repository_id" 2>/dev/null || true)
+		if [[ -n "$mapping" ]]; then
+			printf '%s\n' "$mapping" | jq -r '.displayNumber'
+			return 0
+		fi
+	fi
 	local task_id_ere
 	task_id_ere=$(_escape_ere "$task_id")
 
-	local ref
+	local ref="" issue_json="" issue_id="" issue_number="" issue_state="" issue_cursor=""
 	ref=$(strip_code_fences <"$todo_file" | grep -E "^\s*- \[.\] ${task_id_ere} " | head -1 |
 		grep -oE 'ref:GH#[0-9]+' | head -1 | sed 's/ref:GH#//' || echo "")
-	echo "$ref"
+	[[ "$ref" =~ ^[1-9][0-9]*$ ]] || return 1
+	issue_json=$(gh issue view "$ref" --repo "$repo" --json id,number,state,updatedAt 2>/dev/null || true)
+	issue_id=$(printf '%s' "$issue_json" | jq -r '.id // empty' 2>/dev/null)
+	issue_number=$(printf '%s' "$issue_json" | jq -r '.number // empty' 2>/dev/null)
+	issue_state=$(printf '%s' "$issue_json" | jq -r '.state // empty' 2>/dev/null)
+	issue_cursor=$(printf '%s' "$issue_json" | jq -r '.updatedAt // empty' 2>/dev/null)
+	[[ -n "$issue_id" && "$issue_number" == "$ref" ]] || return 1
+	if [[ -x "$coordinator" ]]; then
+		local bind_args=()
+		[[ -n "$issue_cursor" ]] && bind_args+=(--state-cursor "$issue_cursor")
+		node "$coordinator" bind-issue --task-id "$task_id" --forge github \
+			--repository-id "$repository_id" --repository-slug "$repo" --role home \
+			--issue-id "$issue_id" --display-number "$issue_number" \
+			"${bind_args[@]}" \
+			--sync-metadata "$(jq -cn --arg state "$issue_state" --arg source ref-gh-backfill '{state:$state,source:$source}')" >/dev/null 2>&1 || return 1
+	fi
+	printf '%s\n' "$issue_number"
 	return 0
 }
 

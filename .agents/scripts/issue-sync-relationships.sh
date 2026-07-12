@@ -386,7 +386,7 @@ _sync_declared_blocked_by_edges() {
 				continue
 			fi
 			local dep_gh_num
-			dep_gh_num=$(resolve_task_gh_number "$dep_task_id" "$todo_file")
+			dep_gh_num=$(resolve_task_gh_number "$dep_task_id" "$todo_file" "$repo" || true)
 			[[ -z "$dep_gh_num" ]] && {
 				log_verbose "$task_id: blocked-by $dep_task_id has no ref:GH#"
 				retryable_errors=$((retryable_errors + 1))
@@ -440,7 +440,7 @@ _sync_declared_blocks_edges() {
 				continue
 			fi
 			local dep_gh_num
-			dep_gh_num=$(resolve_task_gh_number "$dep_task_id" "$todo_file")
+			dep_gh_num=$(resolve_task_gh_number "$dep_task_id" "$todo_file" "$repo" || true)
 			[[ -z "$dep_gh_num" ]] && {
 				log_verbose "$task_id: blocks $dep_task_id has no ref:GH#"
 				retryable_errors=$((retryable_errors + 1))
@@ -497,7 +497,7 @@ _sync_blocked_by_for_task() {
 		esac
 	done <<<"$parsed"
 	[[ -z "$blocked_by" && -z "$blocks" ]] && return 0
-	this_gh_num=$(resolve_task_gh_number "$task_id" "$todo_file")
+	this_gh_num=$(resolve_task_gh_number "$task_id" "$todo_file" "$repo" || true)
 	[[ -z "$this_gh_num" ]] && { log_verbose "$task_id: no ref:GH# — skipping relationships"; return 0; }
 	this_node_id=$(_cached_node_id "$this_gh_num" "$repo")
 	if [[ -z "$this_node_id" ]]; then
@@ -537,13 +537,13 @@ _link_sub_issue_pair() {
 	local child_id="$1" parent_id="$2" todo_file="$3" repo="$4"
 
 	local child_gh_num
-	child_gh_num=$(resolve_task_gh_number "$child_id" "$todo_file")
+	child_gh_num=$(resolve_task_gh_number "$child_id" "$todo_file" "$repo" || true)
 	[[ -z "$child_gh_num" ]] && {
 		log_verbose "$child_id: no ref:GH# — skipping sub-issue"
 		return 1
 	}
 	local parent_gh_num
-	parent_gh_num=$(resolve_task_gh_number "$parent_id" "$todo_file")
+	parent_gh_num=$(resolve_task_gh_number "$parent_id" "$todo_file" "$repo" || true)
 	[[ -z "$parent_gh_num" ]] && {
 		log_verbose "$child_id: parent $parent_id has no ref:GH# — skipping sub-issue"
 		return 1

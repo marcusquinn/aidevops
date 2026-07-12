@@ -111,14 +111,44 @@ node "$COORDINATOR" restore --backup "$backup" --registry-evidence '{"cas":"winn
 [[ "$(node "$COORDINATOR" status | jq -r '.sequence')" == "100" ]]
 [[ -n "$(ls "${TEST_ROOT}"/coordinator.db-backup-*-pre-restore.db)" ]]
 
-# A real v1 schema migrates to v2 only after a verified backup.
+# A real v1 schema migrates through v2 to v3 only after verified backups.
 migration_db="${TEST_ROOT}/migration.db"
 AIDEVOPS_TASK_COORDINATOR_DB="$migration_db" node "$COORDINATOR" status >/dev/null
-sqlite3 "$migration_db" "ALTER TABLE operations DROP COLUMN result_hash; ALTER TABLE restore_controls DROP COLUMN backup_high_water; UPDATE coordinator_meta SET value='1' WHERE key='schema_version'; UPDATE migration_history SET version=1 WHERE version=2;"
+sqlite3 "$migration_db" "DROP TABLE issue_mappings; ALTER TABLE operations DROP COLUMN result_hash; ALTER TABLE restore_controls DROP COLUMN backup_high_water; UPDATE coordinator_meta SET value='1' WHERE key='schema_version'; UPDATE migration_history SET version=1 WHERE version=3;"
 AIDEVOPS_TASK_COORDINATOR_DB="$migration_db" node "$COORDINATOR" status >/dev/null
-[[ "$(sqlite3 "$migration_db" "SELECT value FROM coordinator_meta WHERE key='schema_version';")" == "2" ]]
+[[ "$(sqlite3 "$migration_db" "SELECT value FROM coordinator_meta WHERE key='schema_version';")" == "3" ]]
 [[ "$(sqlite3 "$migration_db" "SELECT COUNT(*) FROM pragma_table_info('operations') WHERE name='result_hash';")" == "1" ]]
 [[ -n "$(ls "${TEST_ROOT}"/migration.db-backup-*-pre-migrate-v2.db)" ]]
+[[ -n "$(ls "${TEST_ROOT}"/migration.db-backup-*-pre-migrate-v3.db)" ]]
+
+# Immutable task/repository identities isolate equal display numbers and allow
+# one task to retain home, implementation, and upstream issue projections.
+mapping_task=$(node "$COORDINATOR" allocate --operation-id mapping-task --payload '{}' | jq -r '.tasks[0].taskId')
+node "$COORDINATOR" bind-issue --task-id "$mapping_task" --repository-id R_home --repository-slug owner/home \
+	--role home --issue-id I_home --project-id P_home --display-number 42 --state-cursor cursor-home \
+	--sync-metadata '{"state":"OPEN","source":"backfill"}' >/dev/null
+node "$COORDINATOR" bind-issue --task-id "$mapping_task" --repository-id R_impl --repository-slug owner/implementation \
+	--role implementation --issue-id I_impl --display-number 42 --sync-metadata '{"state":"OPEN"}' >/dev/null
+node "$COORDINATOR" bind-issue --task-id "$mapping_task" --repository-id R_upstream --repository-slug upstream/project \
+	--role upstream --issue-id I_upstream --display-number 42 >/dev/null
+[[ "$(node "$COORDINATOR" resolve-issue --task-id "$mapping_task" --repository-id R_home | jq -r '.issueId')" == "I_home" ]]
+[[ "$(node "$COORDINATOR" resolve-issue --task-id "$mapping_task" --repository-id R_impl | jq -r '.issueId')" == "I_impl" ]]
+[[ "$(sqlite3 "$AIDEVOPS_TASK_COORDINATOR_DB" "SELECT COUNT(*) FROM issue_mappings WHERE task_id='${mapping_task}';")" == "3" ]]
+
+# A renamed slug updates display metadata without changing repository identity;
+# conflicting issue identity or an unvalidated repository fails closed.
+node "$COORDINATOR" bind-issue --task-id "$mapping_task" --repository-id R_home --repository-slug renamed/home \
+	--role home --issue-id I_home --display-number 42 >/dev/null
+[[ "$(node "$COORDINATOR" resolve-issue --task-id "$mapping_task" --repository-id R_home | jq -r '.repositorySlug')" == "renamed/home" ]]
+if node "$COORDINATOR" bind-issue --task-id "$mapping_task" --repository-id R_home --repository-slug renamed/home \
+	--role home --issue-id I_conflict --display-number 42 >/dev/null 2>&1; then
+	printf 'FAIL conflicting issue mapping was accepted\n' >&2
+	exit 1
+fi
+if node "$COORDINATOR" resolve-issue --task-id "$mapping_task" --repository-id R_missing >/dev/null 2>&1; then
+	printf 'FAIL missing repository mapping resolved\n' >&2
+	exit 1
+fi
 
 # Integration defaults to legacy, shadow is additive, and emission needs two gates.
 if AIDEVOPS_TASK_COORDINATOR_MODE=namespaced bash "$CLAIM" --no-issue --title test >/dev/null 2>&1; then
