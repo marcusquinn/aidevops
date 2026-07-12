@@ -94,8 +94,11 @@ fi
 		fi
 		if [[ "$*" == *"name,bucket,state,link"* ]]; then
 			case "${TEST_CHECK_SCENARIO:-terminal_failure}:${_is_required}" in
-				terminal_failure:1 | log_exit_143:1)
+				terminal_failure:1 | log_exit_143:1 | required_and_advisory:1)
 					printf '%s\n' '[{"name":"Lint","bucket":"fail","state":"FAILURE","link":"https://github.com/owner/repo/actions/runs/123/job/456"}]'
+					;;
+				required_and_advisory:0)
+					printf '%s\n' '[{"name":"Lint","bucket":"fail","state":"FAILURE","link":"https://github.com/owner/repo/actions/runs/123/job/456"},{"name":"Qlty","bucket":"fail","state":"FAILURE","link":"https://github.com/owner/repo/actions/runs/124/job/790"}]'
 					;;
 				pending_only:*|mixed_pending_pass:*)
 					printf '[]\n'
@@ -196,6 +199,8 @@ define_process_helper() {
 	_route_pr_to_fix_worker() { local pr_number="$1" repo_slug="$2" linked_issue="$3" mode="$4" pr_labels="${5:-}"; ROUTE_CALLS=$((ROUTE_CALLS + 1)); ROUTE_ARGS="${pr_number}|${repo_slug}|${linked_issue}|${mode}"; ROUTE_LABELS="$pr_labels"; return 0; }
 	_pulse_merge_dismiss_coderabbit_nits() { local pr_number="$1" repo_slug="$2"; [[ -n "$pr_number$repo_slug" ]]; DISMISS_CALLS=$((DISMISS_CALLS + 1)); if [[ "${DISMISS_NITS_RC:-0}" -eq 0 ]]; then return 0; fi; return 1; }
 	_attempt_pr_update_branch() { return 1; }
+	_pulse_merge_changes_requested_thread_remediation_first_enabled() { return 1; }
+	_pulse_merge_preflight_snapshot_gate() { return 0; }
 	_close_conflicting_pr() { return 0; }
 	_pmp_normalize_mergeable_state_into() { return 0; }
 	printf -v PR_OBJECT '%s' '{"number":100,"mergeable":"MERGEABLE","reviewDecision":"","author":{"login":"worker-bot"},"title":"t1: fix"}'
@@ -484,6 +489,24 @@ test_ci_feedback_emits_advisory_failure_when_required_clean() {
 	return 0
 }
 
+test_ci_feedback_includes_required_and_advisory_failures_together() {
+	setup_test_env
+	TEST_CHECK_SCENARIO="required_and_advisory"
+	define_feedback_helpers || { print_result "defines feedback helpers for combined failures" 1 "could not extract feedback helpers"; teardown_test_env; return 0; }
+
+	_dispatch_ci_fix_worker "100" "owner/repo" "42"
+
+	if ! grep -qF '**Lint**: failure' "${TEST_ROOT}/issue-body.txt"; then
+		print_result "combined CI feedback retains required failure" 1 "Body: $(cat "${TEST_ROOT}/issue-body.txt")"
+	elif ! grep -qF '**Qlty**: failure' "${TEST_ROOT}/issue-body.txt"; then
+		print_result "combined CI feedback includes advisory failure" 1 "Body: $(cat "${TEST_ROOT}/issue-body.txt")"
+	else
+		print_result "combined CI feedback includes every terminal failure in one pass" 0
+	fi
+	teardown_test_env
+	return 0
+}
+
 main() {
 	test_red_pr_passes_gates_before_repair_route
 	test_rebase_success_defers_ci_repair_route
@@ -498,6 +521,7 @@ main() {
 	test_ci_feedback_skips_infra_timeout_checks
 	test_ci_feedback_skips_failed_check_with_exit_143_log
 	test_ci_feedback_emits_advisory_failure_when_required_clean
+	test_ci_feedback_includes_required_and_advisory_failures_together
 
 	printf '\nTests run: %d, failed: %d\n' "$TESTS_RUN" "$TESTS_FAILED"
 	if [[ "$TESTS_FAILED" -ne 0 ]]; then

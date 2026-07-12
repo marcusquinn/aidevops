@@ -996,9 +996,9 @@ _apply_ignore_filter() {
 }
 
 #######################################
-# t2422: Post a CLAIM_DEFERRED audit comment when losing a close-window race.
-# The comment makes the tiebreaker outcome visible on the issue timeline so
-# operators grepping for coordination decisions can reconstruct the race.
+# Record a close-window loss in runner logs without adding another issue comment.
+# The winning DISPATCH_CLAIM is the durable ownership record; loser comments
+# are deleted below so multi-runner contention cannot inflate issue threads.
 #
 # Args:
 #   $1 = issue number
@@ -1009,8 +1009,7 @@ _apply_ignore_filter() {
 #   $6 = winner nonce
 #   $7 = |delta| in seconds between claim timestamps
 # Returns:
-#   exit 0 on success (comment posted or skipped intentionally)
-#   exit 1 on post failure (non-fatal — loser still backs off regardless)
+#   exit 0 after the local audit record is emitted
 #######################################
 _post_deferred() {
 	local issue_number="$1"
@@ -1021,17 +1020,18 @@ _post_deferred() {
 	local winner_nonce="$6"
 	local delta_s="$7"
 
-	local ts body
+	local ts
 	ts=$(_now_utc)
-	body="CLAIM_DEFERRED runner=${our_runner} nonce=${our_nonce} ts=${ts} deferring_to_runner=${winner_runner} deferring_to_nonce=${winner_nonce} delta_s=${delta_s}"
+	printf 'CLAIM_DEFERRED runner=%s nonce=%s ts=%s deferring_to_runner=%s deferring_to_nonce=%s delta_s=%s issue=#%s repo=%s\n' \
+		"$our_runner" "$our_nonce" "$ts" "$winner_runner" "$winner_nonce" "$delta_s" "$issue_number" "$repo_slug" >&2
+	return 0
+}
 
-	# Uses `gh issue comment` rather than `gh api repos/.../comments` to
-	# avoid duplicating the pre-existing comments-API literal (t2422 was
-	# flagged by the string-literal ratchet).
-	if ! gh issue comment "$issue_number" --repo "$repo_slug" --body "$body" >/dev/null 2>&1; then
-		echo "Warning: failed to post CLAIM_DEFERRED comment on #${issue_number} in ${repo_slug} (non-fatal)" >&2
-		return 1
-	fi
+_delete_losing_claim_comment() {
+	local repo_slug="$1"
+	local comment_id="$2"
+	[[ "$comment_id" =~ ^[0-9]+$ ]] || return 0
+	gh api "repos/${repo_slug}/issues/comments/${comment_id}" --method DELETE >/dev/null 2>&1 || true
 	return 0
 }
 
@@ -1093,7 +1093,7 @@ _resolve_claim_race_result() {
 	local claim_count=""
 	claim_count=$(printf '%s' "$claims" | jq 'length' 2>/dev/null) || claim_count=0
 	if [[ "$claim_count" -eq 0 ]]; then
-		echo "CLAIM_ERROR: no claims found after posting — proceeding (fail-open)" >&2
+		echo "CLAIM_ERROR: no claims found after posting — blocking dispatch (fail-closed)" >&2
 		return 2
 	fi
 
@@ -1111,13 +1111,15 @@ _resolve_claim_race_result() {
 		return 0
 	fi
 	if [[ "$oldest_runner" == "$runner" && ( "$oldest_device" == "$LEGACY_DEVICE_MARKER" || "$oldest_device" == "$our_device" ) && "$oldest_nonce" != "$nonce" ]]; then
-		printf 'CLAIM_STALE_SELF: runner=%s found own prior claim on issue #%s (age=%ss) — backing off (claim retained for audit)\n' \
+		_delete_losing_claim_comment "$repo_slug" "$comment_id"
+		printf 'CLAIM_STALE_SELF: runner=%s found own prior claim on issue #%s (age=%ss) — backing off (new claim removed)\n' \
 			"$runner" "$issue_number" "$oldest_age_seconds"
 		return 1
 	fi
 	_handle_close_window_loss "$issue_number" "$repo_slug" "$runner" "$nonce" \
 		"$oldest_runner" "$claims" || true
-	printf 'CLAIM_LOST: runner=%s lost to %s on issue #%s — backing off (both claims retained for audit)\n' \
+	_delete_losing_claim_comment "$repo_slug" "$comment_id"
+	printf 'CLAIM_LOST: runner=%s lost to %s on issue #%s — backing off (losing claim removed)\n' \
 		"$runner" "$oldest_runner" "$issue_number"
 	return 1
 }
@@ -1130,8 +1132,8 @@ _resolve_claim_race_result() {
 #   2. Sleep consensus window
 #   3. Fetch all claim comments (sorted by [created_at, nonce] — t2422 tiebreaker)
 #   4. If this runner's claim is the oldest active claim → won
-#   5. If another runner's claim is older → lost; if delta <= TIEBREAKER_WINDOW,
-#      post CLAIM_DEFERRED audit comment
+#   5. If another runner's claim is older → remove our losing claim and back off;
+#      record close-window contention only in runner logs.
 #
 # Args:
 #   $1 = issue number
@@ -1140,7 +1142,7 @@ _resolve_claim_race_result() {
 # Returns:
 #   exit 0 = claim won (safe to dispatch)
 #   exit 1 = claim lost (do NOT dispatch)
-#   exit 2 = error (fail-open — caller should proceed)
+#   exit 2 = coordination error (fail closed; caller must not dispatch)
 #######################################
 cmd_claim() {
 	local issue_number="${1:-}"
@@ -1183,7 +1185,7 @@ cmd_claim() {
 	claim_reason=$(_detect_stale_worker_takeover_reason "$issue_number" "$repo_slug")
 
 	comment_id=$(_post_claim "$issue_number" "$repo_slug" "$runner" "$nonce" "$ts" "$claim_reason") || {
-		echo "CLAIM_ERROR: failed to post claim — proceeding (fail-open)" >&2
+		echo "CLAIM_ERROR: failed to post claim — blocking dispatch (fail-closed)" >&2
 		return 2
 	}
 
@@ -1193,7 +1195,7 @@ cmd_claim() {
 	# Step 3: Fetch all claims
 	local claims
 	claims=$(_fetch_claims "$issue_number" "$repo_slug" "$runner") || {
-		echo "CLAIM_ERROR: failed to fetch claims — proceeding (fail-open)" >&2
+		echo "CLAIM_ERROR: failed to fetch claims — blocking dispatch (fail-closed)" >&2
 		return 2
 	}
 
@@ -1293,7 +1295,7 @@ _handle_close_window_loss() {
 # Returns:
 #   exit 0 = active claim exists (do NOT dispatch — someone is already claiming)
 #   exit 1 = no active claim (safe to proceed to claim step)
-#   exit 2 = error (fail-open — proceed)
+#   exit 2 = coordination error (caller must fail closed)
 #######################################
 cmd_check() {
 	local issue_number="${1:-}"
@@ -1314,7 +1316,7 @@ cmd_check() {
 
 	local claims
 	claims=$(_fetch_claims "$issue_number" "$repo_slug") || {
-		# Fail-open on API error
+		# Callers treat coordination read errors as a dispatch block.
 		return 2
 	}
 
@@ -1349,13 +1351,13 @@ Usage:
     Attempt to claim an issue for dispatch.
     Exit 0 = claim won (safe to dispatch)
     Exit 1 = claim lost (do NOT dispatch)
-    Exit 2 = error (fail-open — proceed with dispatch)
+    Exit 2 = coordination error (fail closed; do NOT dispatch)
 
   dispatch-claim-helper.sh check <issue-number> <repo-slug>
     Query whether an active claim exists on this issue.
     Exit 0 = active claim exists (do NOT dispatch)
     Exit 1 = no active claim (safe to proceed to claim step)
-    Exit 2 = error (fail-open — proceed)
+    Exit 2 = coordination error (fail closed; do NOT dispatch)
 
   dispatch-claim-helper.sh help
     Show this help.
@@ -1373,7 +1375,7 @@ Protocol:
   2. Waits DISPATCH_CLAIM_WINDOW seconds to allow other runners to post
   3. Fetches all claim comments on the issue
   4. Oldest active claim wins (claims older than DISPATCH_CLAIM_MAX_AGE are ignored)
-     — others back off; ALL claim comments are retained as audit trail (GH#17503)
+     — others back off and remove their losing claim comments
   5. Winner proceeds with dispatch; claim blocks re-dispatch until TTL expires
 
 Examples:
@@ -1382,7 +1384,7 @@ Examples:
   #   dispatch-claim-helper.sh claim 42 owner/repo "\$RUNNER"
   #   Exit 0 → won claim, proceed with dispatch
   #   Exit 1 → lost claim, back off
-  #   Exit 2 → error, proceed (fail-open)
+  #   Exit 2 → coordination error, block this dispatch cycle
 HELP
 	return 0
 }

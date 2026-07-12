@@ -84,7 +84,8 @@ write_state 1
 GH_COMMENT_ZERO_COUNT=0
 GH_COMMENT_METRICS=""
 normal_prompt=$(_dlw_prepare_prompt_for_launch 123 owner/repo "Test issue" "FULL EMBEDDED BRIEF")
-if [[ "$normal_prompt" == "FULL EMBEDDED BRIEF" ]]; then
+if [[ "$normal_prompt" == *"FULL EMBEDDED BRIEF"* ]] \
+	&& [[ "$normal_prompt" == *"First-pass completion contract"* ]]; then
 	pass "below fallback threshold keeps embedded prompt"
 else
 	fail "below fallback threshold keeps embedded prompt" "$normal_prompt"

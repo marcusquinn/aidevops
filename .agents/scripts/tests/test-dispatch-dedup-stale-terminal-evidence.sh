@@ -2,10 +2,9 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 #
-# Regression guard: stale-recovery escalation must use GitHub comments as the
-# multi-runner source of truth, but it must not suspend a freshly dispatched
-# worker from historical stale ticks unless the current attempt has terminal
-# worker-failure evidence in the issue comment stream.
+# Regression guard: stale-recovery escalation uses GitHub comments as the
+# multi-runner source of truth and treats a completed stale timeout as terminal
+# no-progress evidence even when a crashed launcher omitted its terminal marker.
 
 set -uo pipefail
 
@@ -118,10 +117,10 @@ COMMENTS_JSON='[[
 
 _recover_stale_assignment 3978 owner/repo runner "dispatch claim 620s old, last activity 620s old (threshold=600s, interactive=false)"
 
-if [[ "$ESCALATED" -eq 0 && "$RECOVERED" -eq 1 ]]; then
-	pass "fresh dispatch without terminal evidence does not escalate"
+if [[ "$ESCALATED" -eq 1 && "$RECOVERED" -eq 0 ]]; then
+	pass "threshold escalation does not require a launcher terminal marker"
 else
-	fail "fresh dispatch without terminal evidence does not escalate" "ESCALATED=${ESCALATED} RECOVERED=${RECOVERED}"
+	fail "threshold escalation does not require a launcher terminal marker" "ESCALATED=${ESCALATED} RECOVERED=${RECOVERED}"
 fi
 
 ESCALATED=0
@@ -136,9 +135,9 @@ COMMENTS_JSON='[[
 _recover_stale_assignment 3978 owner/repo runner "dispatch claim 620s old, last activity 620s old (threshold=600s, interactive=false)"
 
 if [[ "$ESCALATED" -eq 1 && "$RECOVERED" -eq 0 ]]; then
-	pass "terminal evidence allows threshold escalation"
+	pass "terminal evidence remains compatible with threshold escalation"
 else
-	fail "terminal evidence allows threshold escalation" "ESCALATED=${ESCALATED} RECOVERED=${RECOVERED}"
+	fail "terminal evidence remains compatible with threshold escalation" "ESCALATED=${ESCALATED} RECOVERED=${RECOVERED}"
 fi
 
 printf '\nTests run: %s failed: %s\n' "$TESTS_RUN" "$TESTS_FAILED"
