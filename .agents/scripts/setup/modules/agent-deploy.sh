@@ -703,12 +703,49 @@ _runtime_bundle_prune() {
 	local active_root="$2"
 	local previous_root="$3"
 	local candidate_dir=""
+	local bundle_id=""
+	local lease_dir=""
+	local lease_file=""
+	local lease_pid=""
+	local has_live_lease=false
+	local retention_seconds="${AIDEVOPS_RUNTIME_BUNDLE_RETENTION_SECONDS:-2592000}"
+	local now=""
+	local modified=""
+
+	case "$retention_seconds" in
+	'' | *[!0-9]*) retention_seconds=2592000 ;;
+	esac
+	now=$(date +%s) || return 1
 
 	for candidate_dir in "$bundles_dir"/*; do
 		[[ -d "$candidate_dir/agents" ]] || continue
 		[[ "$candidate_dir/agents" == "$active_root" || "$candidate_dir/agents" == "$previous_root" ]] && continue
+		bundle_id="${candidate_dir##*/}"
+		lease_dir="$bundles_dir/.leases/$bundle_id"
+		has_live_lease=false
+		if [[ -d "$lease_dir" ]]; then
+			for lease_file in "$lease_dir"/*; do
+				[[ -f "$lease_file" ]] || continue
+				lease_pid="${lease_file##*/}"
+				case "$lease_pid" in
+				'' | *[!0-9]*) rm -f "$lease_file" ;;
+				*)
+					if kill -0 "$lease_pid" 2>/dev/null; then
+						has_live_lease=true
+					else
+						rm -f "$lease_file"
+					fi
+					;;
+				esac
+			done
+			rmdir "$lease_dir" 2>/dev/null || true
+		fi
+		[[ "$has_live_lease" == "true" ]] && continue
+		modified=$(_file_mtime_epoch "$candidate_dir")
+		[[ $((now - modified)) -lt "$retention_seconds" ]] && continue
 		rm -rf "$candidate_dir"
 	done
+	rmdir "$bundles_dir/.leases" 2>/dev/null || true
 	return 0
 }
 

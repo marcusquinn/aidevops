@@ -18,6 +18,8 @@ print_skip() { local message="$1"; : "$message"; return 0; }
 setup_track_deferred() { return 0; }
 create_backup_with_rotation() { return 0; }
 
+# shellcheck source=../portable-stat.sh
+source "$REPO_ROOT/.agents/scripts/portable-stat.sh"
 # shellcheck source=../setup/modules/plugins.sh
 source "$REPO_ROOT/.agents/scripts/setup/modules/plugins.sh"
 # shellcheck source=../setup/modules/agent-deploy.sh
@@ -152,6 +154,40 @@ test_process_pin_survives_activation() {
 	return 0
 }
 
+test_live_bundle_lease_survives_three_updates() {
+	local target_dir="$HOME/.aidevops/agents"
+	local leased_root=""
+	local leased_bundle=""
+	local version=""
+	leased_root=$(_runtime_bundle_resolve_root "$target_dir")
+	leased_bundle="${leased_root%/agents}"
+	mkdir -p "$HOME/.aidevops/runtime-bundles/.leases/${leased_bundle##*/}"
+	printf '%s\n' "$leased_root" >"$HOME/.aidevops/runtime-bundles/.leases/${leased_bundle##*/}/$$"
+
+	for version in 5.0.0 6.0.0 7.0.0; do
+		write_fake_revision "$version" "update-$version"
+		stage_revision "$target_dir"
+		AIDEVOPS_RUNTIME_BUNDLE_RETENTION_SECONDS=0 _runtime_bundle_activate "$target_dir" "$_AIDEVOPS_STAGED_BUNDLE_DIR"
+	done
+	[[ -x "$leased_root/scripts/helper.sh" ]] || fail "live first bundle helper survives three updates"
+	pass "live first bundle helper survives three updates"
+	return 0
+}
+
+test_stale_lease_and_old_bundle_are_pruned() {
+	local target_dir="$HOME/.aidevops/agents"
+	local stale_bundle="$HOME/.aidevops/runtime-bundles/stale-crash"
+	local stale_pid="99999999"
+	mkdir -p "$stale_bundle/agents/scripts" "$HOME/.aidevops/runtime-bundles/.leases/stale-crash"
+	printf '#!/usr/bin/env bash\n' >"$stale_bundle/agents/scripts/helper.sh"
+	printf '%s\n' "$stale_bundle/agents" >"$HOME/.aidevops/runtime-bundles/.leases/stale-crash/$stale_pid"
+	AIDEVOPS_RUNTIME_BUNDLE_RETENTION_SECONDS=0 _runtime_bundle_prune \
+		"$HOME/.aidevops/runtime-bundles" "$(_runtime_bundle_resolve_root "$target_dir")" ""
+	[[ ! -d "$stale_bundle" ]] || fail "crashed process lease does not retain an old bundle"
+	pass "crashed process lease does not retain an old bundle"
+	return 0
+}
+
 test_macos_and_linux_link_paths() {
 	local os_name=""
 	local os_root=""
@@ -206,6 +242,8 @@ main() {
 	test_interrupted_staging_preserves_active
 	test_failed_activation_rolls_back
 	test_process_pin_survives_activation
+	test_live_bundle_lease_survives_three_updates
+	test_stale_lease_and_old_bundle_are_pruned
 	test_macos_and_linux_link_paths
 
 	printf 'Results: %s checks passed\n' "$TESTS_RUN"
