@@ -293,15 +293,19 @@ import datetime as dt
 import sys
 
 target, start = sys.argv[1], int(sys.argv[2])
-def row(offset, state):
+def display_row(offset, state):
     stamp = dt.datetime.fromtimestamp(start + offset).astimezone().strftime("%Y-%m-%d %H:%M:%S %z")
     return f"{stamp} Notification         Display is turned {state}"
+def assertion_row(offset, duration):
+    stamp = dt.datetime.fromtimestamp(start + offset).astimezone().strftime("%Y-%m-%d %H:%M:%S %z")
+    return f'{stamp} Assertions PID 592(powerd) Released PreventUserIdleSystemSleep "Powerd - Prevent sleep while display is on" {duration}  id:0x1'
 with open(target, "w", encoding="utf-8") as handle:
-    handle.write(row(8 * 3600, "on") + "\n")
+    # This unmatched state event previously remained open across the overnight
+    # gap and inflated the completed day. Assertion durations are authoritative.
+    handle.write(display_row(-2 * 3600, "on") + "\n")
     handle.write("malformed Display is turned on\n")
-    handle.write(row(12 * 3600, "off") + "\n")
-    handle.write(row(13 * 3600, "on") + "\n")
-    handle.write(row(15 * 3600, "off") + "\n")
+    handle.write(assertion_row(12 * 3600, "04:00:00") + "\n")
+    handle.write(assertion_row(15 * 3600, "02:00:00") + "\n")
 PY
 	local fixture_home="${tmpdir}/pmset-home"
 	mkdir -p "${fixture_home}/.aidevops/.agent-workspace/observability"
@@ -312,13 +316,13 @@ import sys
 
 today = dt.datetime.fromtimestamp(int(sys.argv[2])).date()
 with open(sys.argv[1], "w", encoding="utf-8") as handle:
-    for age in range(1, 29):
+    for age in range(2, 30):
         handle.write(json.dumps({"date": str(today - dt.timedelta(days=age)), "screen_hours": 1}) + "\n")
 PY
 	local output
 	output=$(HOME="$fixture_home" AIDEVOPS_PMSET_FIXTURE="$fixture" AIDEVOPS_SCREEN_TIME_NOW_EPOCH="$now" profile_stats "$db")
 	[[ "$(printf '%s' "$output" | jq -r '.today_hours')" == "6" || "$(printf '%s' "$output" | jq -r '.today_hours')" == "6.0" ]] || fail "pmset fallback did not union completed-day display intervals"
-	[[ "$(printf '%s' "$output" | jq -r '.periods.day.source')" == "macos-pmset-display-log" ]] || fail "pmset fallback provenance missing"
+	[[ "$(printf '%s' "$output" | jq -r '.periods.day.source')" == "macos-pmset-display-assertions" ]] || fail "pmset fallback provenance missing"
 	[[ "$(printf '%s' "$output" | jq -r '.periods.day.period_semantics')" == "completed-local-calendar-days" ]] || fail "pmset fallback changed profile period semantics"
 	[[ "$(printf '%s' "$output" | jq -r '.periods.month.source')" == "screen-time-history:daily-observations" ]] || fail "short pmset coverage displaced richer month history"
 	[[ "$(printf '%s' "$output" | jq -r '.periods.month.reason')" == "richer-calendar-coverage" ]] || fail "richer history selection reason missing"

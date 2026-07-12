@@ -119,8 +119,16 @@ def apply_short_history(periods, history, now, skipped):
         if not fallback:
             continue
         live_coverage = periods[name].get("coverage_pct", 0) or 0
-        if periods[name]["status"] == "unavailable" or fallback["coverage_pct"] > live_coverage:
-            reason = "live-source-unavailable" if periods[name]["status"] == "unavailable" else "richer-calendar-coverage"
+        permission_free_proxy = periods[name].get("source") == "macos-pmset-display-assertions"
+        better_coverage = fallback["coverage_pct"] > live_coverage
+        equal_higher_confidence = permission_free_proxy and fallback["coverage_pct"] >= live_coverage
+        if periods[name]["status"] == "unavailable" or better_coverage or equal_higher_confidence:
+            if periods[name]["status"] == "unavailable":
+                reason = "live-source-unavailable"
+            elif equal_higher_confidence and not better_coverage:
+                reason = "higher-confidence-observed-history"
+            else:
+                reason = "richer-calendar-coverage"
             periods[name] = dict(fallback, reason=reason)
 
 
