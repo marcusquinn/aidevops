@@ -146,6 +146,20 @@ generate_changelog_preview() {
 	return 0
 }
 
+# Remove a complete framework work-item prefix from a release squash subject.
+_normalize_commit_work_item_prefix() {
+	local commit="$1"
+	if [[ "$commit" =~ ^\[t[0-9]+(\.[0-9]+)*\][[:space:]]+(.+)$ ]]; then
+		commit="${BASH_REMATCH[2]}"
+	elif [[ "$commit" =~ ^t[0-9]+(\.[0-9]+)*:[[:space:]]+(.+)$ ]]; then
+		commit="${BASH_REMATCH[2]}"
+	elif [[ "$commit" =~ ^GH\#[0-9]+:[[:space:]]+(.+)$ ]]; then
+		commit="${BASH_REMATCH[1]}"
+	fi
+	printf '%s\n' "$commit"
+	return 0
+}
+
 # Classify a single commit message into a changelog category.
 # Appends the formatted entry to the appropriate category variable (passed by name).
 # Arguments: commit message
@@ -156,13 +170,7 @@ _classify_commit_to_category() {
 	# Release squash subjects may begin with the framework work-item ID. Strip
 	# only a complete leading ID token so embedded strings such as "at123" are
 	# left untouched. Dotted task IDs remain valid.
-	if [[ "$commit" =~ ^\[t[0-9]+(\.[0-9]+)*\][[:space:]]+(.+)$ ]]; then
-		commit="${BASH_REMATCH[2]}"
-	elif [[ "$commit" =~ ^t[0-9]+(\.[0-9]+)*:[[:space:]]+(.+)$ ]]; then
-		commit="${BASH_REMATCH[2]}"
-	elif [[ "$commit" =~ ^GH\#[0-9]+:[[:space:]]+(.+)$ ]]; then
-		commit="${BASH_REMATCH[1]}"
-	fi
+	commit=$(_normalize_commit_work_item_prefix "$commit")
 	local clean_msg="$commit"
 
 	case "$commit" in
