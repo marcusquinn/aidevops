@@ -17,8 +17,16 @@ RECONCILE_SH="${SCRIPT_DIR}/../pulse-issue-reconcile.sh"
 pass=0
 fail=0
 
-_pass() { echo "PASS: $1"; pass=$((pass + 1)); return 0; }
-_fail() { echo "FAIL: $1"; fail=$((fail + 1)); return 0; }
+_pass() {
+	echo "PASS: $1"
+	pass=$((pass + 1))
+	return 0
+}
+_fail() {
+	echo "FAIL: $1"
+	fail=$((fail + 1))
+	return 0
+}
 
 # ---------------------------------------------------------------------------
 # Test 1: _read_cache_issues_for_slug — cache miss (file absent)
@@ -26,7 +34,7 @@ _fail() { echo "FAIL: $1"; fail=$((fail + 1)); return 0; }
 test_cache_miss_no_file() {
 	local tmp_cache
 	tmp_cache=$(mktemp)
-	rm -f "$tmp_cache"  # ensure absent
+	rm -f "$tmp_cache" # ensure absent
 
 	# Source only the helper by injecting it in a subshell
 	local result
@@ -76,9 +84,9 @@ test_cache_stale() {
 	tmp_cache=$(mktemp)
 	# Write a cache entry with a last_prefetch 11 minutes ago
 	local old_ts
-	old_ts=$(date -u -v -11M +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || \
-	         date -u -d '11 minutes ago' +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || \
-	         echo "2000-01-01T00:00:00Z")
+	old_ts=$(date -u -v -11M +%Y-%m-%dT%H:%M:%SZ 2>/dev/null ||
+		date -u -d '11 minutes ago' +%Y-%m-%dT%H:%M:%SZ 2>/dev/null ||
+		echo "2000-01-01T00:00:00Z")
 	printf '{"owner/repo":{"last_prefetch":"%s","issues":[{"number":1,"title":"t"}]}}' \
 		"$old_ts" >"$tmp_cache"
 
@@ -134,10 +142,10 @@ test_no_raw_gh_issue_list_outside_fallback() {
 	# Use awk END{NR} to count matching lines safely (avoids grep -c exit-1 on no-match
 	# and the grep|wc -l SC2126 nit — awk always exits 0 and prints 0 on empty input).
 	local raw_count
-	raw_count=$(grep -n 'gh issue list\|gh pr list' "${RECONCILE_SH}" 2>/dev/null | \
-		grep -v ':[[:space:]]*#' | \
-		grep -v 'gh_issue_list\|_gh_pr_list_merged' | \
-		grep -v 'gh pr list "$@"' | \
+	raw_count=$(grep -n 'gh issue list\|gh pr list' "${RECONCILE_SH}" 2>/dev/null |
+		grep -v ':[[:space:]]*#' |
+		grep -v 'gh_issue_list\|_gh_pr_list_merged' |
+		grep -v 'gh pr list "$@"' |
 		awk 'END{print NR}')
 
 	if [[ "$raw_count" -eq 0 ]]; then
@@ -228,7 +236,7 @@ test_should_predicates() {
 	# Extract all five predicate definitions (stop before the first _action_* helper)
 	local actions_sh="${SCRIPT_DIR}/../pulse-issue-reconcile-actions.sh"
 	local pred_defs
-	pred_defs=$(sed -n '/^_should_ciw()/,/^_action_ciw_single()/p' "${actions_sh}" | \
+	pred_defs=$(sed -n '/^_should_ciw()/,/^_action_ciw_single()/p' "${actions_sh}" |
 		grep -v '^_action_ciw_single()' || true)
 
 	# Run predicate checks in one subshell
@@ -265,18 +273,54 @@ test_should_predicates() {
 	local all_ok=1
 
 	# Check each expected result
-	if ! printf '%s\n' "$result" | grep -qx 'ciw:1';         then _fail "_should_ciw: status:available should return 0"; all_ok=0; fi
-	if ! printf '%s\n' "$result" | grep -qx 'ciw-done:0';    then _fail "_should_ciw: status:done should return 1"; all_ok=0; fi
-	if ! printf '%s\n' "$result" | grep -qx 'rsd:1';         then _fail "_should_rsd: status:done should return 0"; all_ok=0; fi
-	if ! printf '%s\n' "$result" | grep -qx 'rsd-avail:0';   then _fail "_should_rsd: status:available should return 1"; all_ok=0; fi
-	if ! printf '%s\n' "$result" | grep -qx 'oimp-parent:0'; then _fail "_should_oimp: parent-task issue should return 1"; all_ok=0; fi
-	if ! printf '%s\n' "$result" | grep -qx 'oimp-nonparent:1'; then _fail "_should_oimp: non-parent issue should return 0"; all_ok=0; fi
-	if ! printf '%s\n' "$result" | grep -qx 'cpt:1';         then _fail "_should_cpt: parent-task should return 0"; all_ok=0; fi
-	if ! printf '%s\n' "$result" | grep -qx 'cpt-noparent:0'; then _fail "_should_cpt: no parent-task should return 1"; all_ok=0; fi
-	if ! printf '%s\n' "$result" | grep -qx 'lia:1';         then _fail "_should_lia: tNNN: title + no labels should return 0"; all_ok=0; fi
-	if ! printf '%s\n' "$result" | grep -qx 'lia-gh:1';      then _fail "_should_lia: GH#NNN: title + no labels should return 0"; all_ok=0; fi
-	if ! printf '%s\n' "$result" | grep -qx 'lia-labeled:0'; then _fail "_should_lia: labeled issue should return 1"; all_ok=0; fi
-	if ! printf '%s\n' "$result" | grep -qx 'lia-badtitle:0'; then _fail "_should_lia: non-task title should return 1"; all_ok=0; fi
+	if ! printf '%s\n' "$result" | grep -qx 'ciw:1'; then
+		_fail "_should_ciw: status:available should return 0"
+		all_ok=0
+	fi
+	if ! printf '%s\n' "$result" | grep -qx 'ciw-done:0'; then
+		_fail "_should_ciw: status:done should return 1"
+		all_ok=0
+	fi
+	if ! printf '%s\n' "$result" | grep -qx 'rsd:1'; then
+		_fail "_should_rsd: status:done should return 0"
+		all_ok=0
+	fi
+	if ! printf '%s\n' "$result" | grep -qx 'rsd-avail:0'; then
+		_fail "_should_rsd: status:available should return 1"
+		all_ok=0
+	fi
+	if ! printf '%s\n' "$result" | grep -qx 'oimp-parent:0'; then
+		_fail "_should_oimp: parent-task issue should return 1"
+		all_ok=0
+	fi
+	if ! printf '%s\n' "$result" | grep -qx 'oimp-nonparent:1'; then
+		_fail "_should_oimp: non-parent issue should return 0"
+		all_ok=0
+	fi
+	if ! printf '%s\n' "$result" | grep -qx 'cpt:1'; then
+		_fail "_should_cpt: parent-task should return 0"
+		all_ok=0
+	fi
+	if ! printf '%s\n' "$result" | grep -qx 'cpt-noparent:0'; then
+		_fail "_should_cpt: no parent-task should return 1"
+		all_ok=0
+	fi
+	if ! printf '%s\n' "$result" | grep -qx 'lia:1'; then
+		_fail "_should_lia: tNNN: title + no labels should return 0"
+		all_ok=0
+	fi
+	if ! printf '%s\n' "$result" | grep -qx 'lia-gh:1'; then
+		_fail "_should_lia: GH#NNN: title + no labels should return 0"
+		all_ok=0
+	fi
+	if ! printf '%s\n' "$result" | grep -qx 'lia-labeled:0'; then
+		_fail "_should_lia: labeled issue should return 1"
+		all_ok=0
+	fi
+	if ! printf '%s\n' "$result" | grep -qx 'lia-badtitle:0'; then
+		_fail "_should_lia: non-task title should return 1"
+		all_ok=0
+	fi
 
 	[[ "$all_ok" == "1" ]] && _pass "_should_* predicates: all 12 cases correct"
 	return 0
@@ -411,9 +455,18 @@ test_batched_field_extraction_parity() {
 	r1_title=$(printf '%s' "$r1_title_b64" | base64 -d 2>/dev/null)
 	r1_body=$(printf '%s' "$r1_body_b64" | base64 -d 2>/dev/null)
 
-	[[ "$r1_num" == "12345" ]] || { _fail "row1 number: expected 12345, got '$r1_num'"; all_ok=0; }
-	[[ "$r1_title" == "t2904: batch jq extraction" ]] || { _fail "row1 title decode mismatch"; all_ok=0; }
-	[[ "$r1_labels" == "origin:worker,status:available" ]] || { _fail "row1 labels: got '$r1_labels'"; all_ok=0; }
+	[[ "$r1_num" == "12345" ]] || {
+		_fail "row1 number: expected 12345, got '$r1_num'"
+		all_ok=0
+	}
+	[[ "$r1_title" == "t2904: batch jq extraction" ]] || {
+		_fail "row1 title decode mismatch"
+		all_ok=0
+	}
+	[[ "$r1_labels" == "origin:worker,status:available" ]] || {
+		_fail "row1 labels: got '$r1_labels'"
+		all_ok=0
+	}
 	# Body must contain BOTH a real newline AND a real tab — the @tsv-only path
 	# would have escaped these to literal \n / \t markers.
 	if ! printf '%s' "$r1_body" | grep -q $'Line 1\nLine 2\twith tab'; then
@@ -433,10 +486,22 @@ test_batched_field_extraction_parity() {
 	# Empty body — base64-decode of empty input is empty.
 	r2_body=$(printf '%s' "$r2_body_b64" | base64 -d 2>/dev/null)
 
-	[[ "$r2_num" == "67890" ]] || { _fail "row2 number: expected 67890, got '$r2_num'"; all_ok=0; }
-	[[ "$r2_title" == "Empty body case" ]] || { _fail "row2 title decode mismatch"; all_ok=0; }
-	[[ -z "$r2_labels" ]] || { _fail "row2 labels: expected empty, got '$r2_labels'"; all_ok=0; }
-	[[ -z "$r2_body" ]] || { _fail "row2 body: expected empty, got '$r2_body'"; all_ok=0; }
+	[[ "$r2_num" == "67890" ]] || {
+		_fail "row2 number: expected 67890, got '$r2_num'"
+		all_ok=0
+	}
+	[[ "$r2_title" == "Empty body case" ]] || {
+		_fail "row2 title decode mismatch"
+		all_ok=0
+	}
+	[[ -z "$r2_labels" ]] || {
+		_fail "row2 labels: expected empty, got '$r2_labels'"
+		all_ok=0
+	}
+	[[ -z "$r2_body" ]] || {
+		_fail "row2 body: expected empty, got '$r2_body'"
+		all_ok=0
+	}
 
 	[[ "$all_ok" == "1" ]] && _pass "batched-extraction: 2 rows decode with multiline/tab/UTF-8/empty fidelity"
 	return 0
@@ -645,9 +710,18 @@ test_t2985_oimp_lookup_no_prefix_collision() {
 	m11=$(printf '%s' "$lookup" | grep -oE "\|11=[0-9]+" 2>/dev/null | head -1 | cut -d= -f2)
 
 	local all_ok=1
-	[[ "$m1"  == "100" ]] || { _fail "t2985: |1=  matched '${m1}', expected 100"; all_ok=0; }
-	[[ "$m10" == "200" ]] || { _fail "t2985: |10= matched '${m10}', expected 200"; all_ok=0; }
-	[[ "$m11" == "300" ]] || { _fail "t2985: |11= matched '${m11}', expected 300"; all_ok=0; }
+	[[ "$m1" == "100" ]] || {
+		_fail "t2985: |1=  matched '${m1}', expected 100"
+		all_ok=0
+	}
+	[[ "$m10" == "200" ]] || {
+		_fail "t2985: |10= matched '${m10}', expected 200"
+		all_ok=0
+	}
+	[[ "$m11" == "300" ]] || {
+		_fail "t2985: |11= matched '${m11}', expected 300"
+		all_ok=0
+	}
 
 	[[ "$all_ok" == "1" ]] && _pass "t2985: |N= boundary anchors prevent prefix-substring false matches (#1 vs #10/#11)"
 	return 0
@@ -746,6 +820,84 @@ test_gh25896_oimp_closes_consolidated_successor() {
 
 	rm -rf "$tmp_dir"
 	[[ "$all_ok" == "1" ]] && _pass "GH#25896: OIMP closes consolidated successor using Supersedes #N merged-PR evidence"
+	return 0
+}
+
+# ---------------------------------------------------------------------------
+# Test 15c (GH#27444): recurrent file-size debt uses current outcome
+# ---------------------------------------------------------------------------
+test_gh27444_recurrent_file_size_debt_current_outcome() {
+	local actions_sh="${SCRIPT_DIR}/../pulse-issue-reconcile-actions.sh"
+	local tmp_dir repo_dir repos_json out_file log_file result
+	tmp_dir=$(mktemp -d)
+	repo_dir="${tmp_dir}/repo"
+	repos_json="${tmp_dir}/repos.json"
+	out_file="${tmp_dir}/gh.out"
+	log_file="${tmp_dir}/pulse.log"
+	mkdir -p "$repo_dir"
+	printf '{"initialized_repos":[{"slug":"test/repo","path":"%s"}]}' "$repo_dir" >"$repos_json"
+	printf 'one\ntwo\nthree\n' >"${repo_dir}/large.sh"
+
+	result=$(bash -c '
+		actions_sh="$1"
+		repos_json="$2"
+		GH_TEST_OUT="$3"
+		log_file="$4"
+		body="$5"
+		LOGFILE="$log_file"
+		REPOS_JSON="$repos_json"
+		export LOGFILE REPOS_JSON GH_TEST_OUT
+		gh() { printf "%s\n" "$*" >>"$GH_TEST_OUT"; return 0; }
+		fast_fail_reset() { return 0; }
+		unlock_issue_after_worker() { return 0; }
+		export -f gh fast_fail_reset unlock_issue_after_worker
+		# shellcheck disable=SC1090
+		source "$actions_sh"
+		_action_oimp_single "test/repo" "27444" "/bin/true" "|27444=27500|" "$body"
+		printf "rc=%s\n" "$?"
+	' -- "$actions_sh" "$repos_json" "$out_file" "$log_file" \
+		'<!-- aidevops:generator=large-file-simplification-gate cited_file=large.sh threshold=3 -->' 2>&1)
+
+	local all_ok=1
+	if [[ "$result" != *"rc=1"* ]] || grep -q 'issue close 27444' "$out_file" 2>/dev/null; then
+		_fail "GH#27444: oversized recurrent debt was closed: ${result}"
+		all_ok=0
+	fi
+
+	printf 'one\ntwo\n' >"${repo_dir}/large.sh"
+	: >"$out_file"
+	result=$(bash -c '
+		LOGFILE="$4" REPOS_JSON="$2" GH_TEST_OUT="$3"; export LOGFILE REPOS_JSON GH_TEST_OUT
+		gh() { printf "%s\n" "$*" >>"$GH_TEST_OUT"; return 0; }
+		fast_fail_reset() { return 0; }
+		unlock_issue_after_worker() { return 0; }
+		source "$1"
+		_action_oimp_single "test/repo" "27444" "/bin/true" "|27444=27500|" "$5"
+		printf "rc=%s\n" "$?"
+	' -- "$actions_sh" "$repos_json" "$out_file" "$log_file" \
+		'<!-- aidevops:generator=large-file-simplification-gate cited_file=large.sh threshold=3 -->' 2>&1)
+	if [[ "$result" != *"rc=0"* ]] || ! grep -q 'issue close 27444' "$out_file" 2>/dev/null; then
+		_fail "GH#27444: resolved debt did not close: ${result}"
+		all_ok=0
+	fi
+
+	: >"$out_file"
+	result=$(bash -c '
+		LOGFILE="$4" REPOS_JSON="$2" GH_TEST_OUT="$3"; export LOGFILE REPOS_JSON GH_TEST_OUT
+		gh() { printf "%s\n" "$*" >>"$GH_TEST_OUT"; return 0; }
+		fast_fail_reset() { return 0; }
+		unlock_issue_after_worker() { return 0; }
+		source "$1"
+		_action_oimp_single "test/repo" "99" "/bin/true" "|99=100|" "ordinary issue"
+		printf "rc=%s\n" "$?"
+	' -- "$actions_sh" "$repos_json" "$out_file" "$log_file" 2>&1)
+	if [[ "$result" != *"rc=0"* ]] || ! grep -q 'issue close 99' "$out_file" 2>/dev/null; then
+		_fail "GH#27444: unrelated issue behavior changed: ${result}"
+		all_ok=0
+	fi
+
+	rm -rf "$tmp_dir"
+	[[ "$all_ok" == "1" ]] && _pass "GH#27444: current oversized debt blocks stale close while resolved and unrelated issues close"
 	return 0
 }
 
@@ -929,6 +1081,7 @@ test_gh22802_oimp_lookup_requires_merged_at
 test_t2985_oimp_lookup_no_prefix_collision
 test_t2985_action_oimp_single_signature
 test_gh25896_oimp_closes_consolidated_successor
+test_gh27444_recurrent_file_size_debt_current_outcome
 test_available_feedback_worker_issue_not_assigned
 test_feedback_backfill_uses_label_constants
 
