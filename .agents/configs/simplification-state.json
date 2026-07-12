@@ -820,9 +820,9 @@
       "pr": 15249
     },
     ".agents/hooks/task-id-collision-guard.sh": {
-      "at": "2026-07-12T07:33:40Z",
-      "hash": "01001ddbfe1e9d501774c6135a1cf842908aaf40",
-      "passes": 13,
+      "at": "2026-07-12T10:04:50Z",
+      "hash": "1e1f6093206d8ff977077b11af85241f189b07b9",
+      "passes": 14,
       "pr": 18718
     },
     ".agents/legal.md": {
