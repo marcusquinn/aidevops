@@ -406,14 +406,14 @@ _ci_merge_check_sets() {
 }
 
 #######################################
-# Route CI failure feedback from a worker/trusted PR to its linked issue, close
-# the PR, and set the issue to status:available for re-dispatch.
+# Route CI failure feedback from a worker/trusted PR to a bounded repair worker
+# on the existing PR branch. Fall back to issue redispatch only when the branch
+# cannot be repaired in place.
 #
-# The next worker sees the failing check names, URLs, and context in the
-# issue body and can address the failures directly. The marker is keyed by
-# PR + head SHA so repeated pulse cycles do not duplicate repair work for the
-# same failing commit, while a newly-pushed head can be routed again if it is
-# still red.
+# The repair worker sees failing check names, URLs, and current-head context.
+# Its durable lease is keyed by repo + PR + head SHA + failure fingerprint so
+# repeated pulse cycles do not duplicate work, while a newly-pushed head can
+# enter repair independently if it is still red.
 #
 # Same pattern as _dispatch_pr_fix_worker (t2093) but for CI failures
 # instead of review CHANGES_REQUESTED.
@@ -430,35 +430,22 @@ _dispatch_ci_fix_worker() {
 	[[ -n "$repo_slug" ]] || return 0
 	[[ "$linked_issue" =~ ^[0-9]+$ ]] || return 0
 
-	# Create labels (idempotent, --force)
-	gh label create "ci-feedback-routed" --repo "$repo_slug" --color "E4E669" \
-		--description "Worker PR with failing CI routed to linked issue for re-dispatch" \
-		--force >/dev/null 2>&1 || true
-	gh label create "source:ci-feedback" --repo "$repo_slug" --color "FEF2C0" \
-		--description "Issue carries CI failure feedback routed from a closed worker PR" \
-		--force >/dev/null 2>&1 || true
-
 	# Collect actionable failed required checks first. Pending/queued/in-progress
 	# checks are not actionable repair evidence and must not be routed into the
 	# linked issue as stale worker guidance. Likewise, cancelled/timed_out checks
 	# usually reflect CI capacity, superseded runs, or job-budget kills; routing
 	# those as code-fix feedback creates duplicate PR churn instead of retrying or
 	# escalating CI infrastructure. If required checks contain no actionable
-	# failures, merge in the full check set as well. This prevents a required
-	# failure from hiding a simultaneous advisory failure from the replacement
-	# worker, which otherwise causes one CI redispatch per omitted check.
+	# failures. Advisory failures do not justify branch ownership or repair work.
 	local terminal_failed_check_filter
 	terminal_failed_check_filter='(.bucket == "fail" or .bucket == "cancel") and (((.conclusion // .state // "") | ascii_downcase) | test("^(failure|action_required)$")) and ((.link // "") != "")'
-	local checks_json="$supplied_checks_json" all_checks_json="[]" result_marker=$'\n__AIDEVOPS_CHECK_NAMES__'
+	local checks_json="$supplied_checks_json" result_marker=$'\n__AIDEVOPS_CHECK_NAMES__'
 	local check_results="" failing_checks_json="" failing_checks="" failing_names="" classification_output=""
 	if [[ -z "$checks_json" ]]; then
 		checks_json=$(gh pr checks "$pr_number" --repo "$repo_slug" --required \
 			--json name,bucket,state,link \
 			2>/dev/null) || checks_json="[]"
 	fi
-	all_checks_json=$(gh pr checks "$pr_number" --repo "$repo_slug" \
-		--json name,bucket,state,link 2>/dev/null) || all_checks_json="[]"
-	checks_json=$(_ci_merge_check_sets "$checks_json" "$all_checks_json")
 	check_results=$(_ci_terminal_failed_check_results "$checks_json" "$terminal_failed_check_filter")
 	failing_checks_json="${check_results%%"$result_marker"*}"
 	failing_names="${check_results#*"$result_marker"}"
@@ -478,27 +465,60 @@ _dispatch_ci_fix_worker() {
 		classification_output=$(_classify_ci_failures_by_pattern "$failing_names" 2>/dev/null) || classification_output=""
 	fi
 
-	# Key dedup by PR + head SHA. A repeated pulse cycle on the same failing
-	# commit sees the same marker and skips; a new push gets a new marker and
-	# can re-enter repair if it is still blocked.
-	local pr_head_sha=""
-	pr_head_sha=$(gh pr view "$pr_number" --repo "$repo_slug" \
-		--json headRefOid --jq '.headRefOid // ""' 2>/dev/null) || pr_head_sha=""
-	[[ -n "$pr_head_sha" ]] || pr_head_sha="unknown"
+	# Bind repair evidence to the current branch head. This refresh also proves
+	# the branch is same-repository and writable before any worker is launched.
+	local pr_info="" pr_head_sha="" pr_head_ref="" is_cross_repo="" maintainer_can_modify=""
+	pr_info=$(gh pr view "$pr_number" --repo "$repo_slug" \
+		--json headRefOid,headRefName,isCrossRepository,maintainerCanModify \
+		--jq '[(.headRefOid // ""),(.headRefName // ""),(.isCrossRepository // false),(.maintainerCanModify // false)] | @tsv' 2>/dev/null) || pr_info=""
+	IFS=$'\t' read -r pr_head_sha pr_head_ref is_cross_repo maintainer_can_modify <<<"$pr_info"
+
+	local failure_fingerprint=""
+	failure_fingerprint=$(printf '%s\n' "$failing_checks_json" | jq -cS '.' 2>/dev/null | shasum -a 256 2>/dev/null | cut -d ' ' -f 1) || failure_fingerprint=""
+	[[ -n "$failure_fingerprint" ]] || failure_fingerprint="unknown"
 
 	# Build the CI Failure Feedback section (with optional pattern guidance).
 	local feedback_section
 	feedback_section=$(_build_ci_feedback_section "$pr_number" "$failing_checks" "$classification_output")
 
-	# Append to issue body (marker-guarded, t2383 fail-safe)
-	local marker="<!-- ci-feedback:PR${pr_number}:SHA${pr_head_sha} -->"
+	local fallback_reason=""
+	if [[ -z "$pr_head_sha" || -z "$pr_head_ref" ]]; then
+		fallback_reason="current PR head branch metadata is unavailable"
+	elif [[ "$is_cross_repo" == "true" ]]; then
+		fallback_reason="the PR head is in a fork and is not an owned repair branch"
+	elif ! declare -F _pulse_merge_repo_path_for_slug >/dev/null 2>&1; then
+		fallback_reason="the repository-path resolver is unavailable"
+	elif ! _dispatch_ci_repair_session "$pr_number" "$repo_slug" "$linked_issue" \
+		"$pr_head_sha" "$pr_head_ref" "$failure_fingerprint" "$failing_checks"; then
+		fallback_reason="the bounded PR-branch repair session could not be launched"
+	else
+		echo "[pulse-wrapper] _dispatch_ci_fix_worker: dispatched in-place CI repair for PR #${pr_number} head ${pr_head_sha} fingerprint ${failure_fingerprint} in ${repo_slug}" >>"$LOGFILE"
+		return 0
+	fi
+
+	# Durable fallback is used only when branch repair is impossible. Include a
+	# stable reason and retry instruction so objective reconciliation has a next
+	# action rather than silently creating duplicate implementation work.
+	local marker="<!-- ci-feedback-fallback:PR${pr_number}:SHA${pr_head_sha:-unknown}:FP${failure_fingerprint} -->"
+	gh label create "ci-feedback-routed" --repo "$repo_slug" --color "E4E669" \
+		--description "Worker PR with failing CI routed to linked issue for re-dispatch" \
+		--force >/dev/null 2>&1 || true
+	gh label create "source:ci-feedback" --repo "$repo_slug" --color "FEF2C0" \
+		--description "Issue carries CI failure feedback routed from a closed worker PR" \
+		--force >/dev/null 2>&1 || true
 	local current_body=""
 	current_body=$(gh issue view "$linked_issue" --repo "$repo_slug" \
 		--json body --jq '.body // ""' 2>/dev/null) || current_body=""
 	if [[ -n "$current_body" ]] && printf '%s' "$current_body" | grep -qF "$marker"; then
-		echo "[pulse-wrapper] _dispatch_ci_fix_worker: issue #${linked_issue} already has CI repair marker for PR #${pr_number} head ${pr_head_sha} — skipping duplicate dispatch (t3508)" >>"$LOGFILE"
+		echo "[pulse-wrapper] _dispatch_ci_fix_worker: issue #${linked_issue} already has CI repair fallback marker for PR #${pr_number} head ${pr_head_sha:-unknown} — skipping duplicate fallback" >>"$LOGFILE"
 		return 0
 	fi
+	feedback_section="${feedback_section}
+
+### In-place repair fallback
+
+- Reason: ${fallback_reason}
+- Retry: re-run the deterministic merge pass after restoring access to branch \`${pr_head_ref:-unknown}\`; keep PR #${pr_number} open until that retry is impossible."
 	_append_feedback_to_issue "$linked_issue" "$repo_slug" "$marker" \
 		"$feedback_section" "_dispatch_ci_fix_worker" || return 0
 
@@ -518,7 +538,70 @@ ${failing_checks}
 _Closed by deterministic merge pass (pulse-merge.sh)._" \
 		"ci-feedback-routed"
 
-	echo "[pulse-wrapper] _dispatch_ci_fix_worker: routed CI failure feedback from PR #${pr_number} to issue #${linked_issue} in ${repo_slug}" >>"$LOGFILE"
+	echo "[pulse-wrapper] _dispatch_ci_fix_worker: in-place repair impossible for PR #${pr_number}; routed fallback to issue #${linked_issue} in ${repo_slug}: ${fallback_reason}" >>"$LOGFILE"
+	return 0
+}
+
+#######################################
+# Launch one bounded repair session for a repository/PR/head/failure tuple.
+# The atomic state directory is the cross-pulse dedup lease. Failed launches
+# remove the lease so a later pulse can retry or take the durable fallback.
+#######################################
+_dispatch_ci_repair_session() {
+	local pr_number="$1"
+	local repo_slug="$2"
+	local linked_issue="$3"
+	local pr_head_sha="$4"
+	local pr_head_ref="$5"
+	local failure_fingerprint="$6"
+	local failing_checks="$7"
+	local repo_path="" helper="" state_root="" state_key="" lease_dir="" prompt_file="" session_key=""
+
+	repo_path=$(_pulse_merge_repo_path_for_slug "$repo_slug" 2>/dev/null) || repo_path=""
+	helper="${AIDEVOPS_HEADLESS_RUNTIME_HELPER:-${_PULSE_MERGE_DIR:-${BASH_SOURCE[0]%/*}}/headless-runtime-helper.sh}"
+	[[ -n "$repo_path" && -d "$repo_path" ]] || return 1
+	[[ -x "$helper" ]] || return 1
+
+	state_root="${AIDEVOPS_CI_REPAIR_STATE_DIR:-${HOME}/.aidevops/.agent-workspace/ci-pr-repair}"
+	state_key=$(printf '%s-%s-%s-%s' "$repo_slug" "$pr_number" "$pr_head_sha" "$failure_fingerprint" | tr '/:' '__')
+	lease_dir="${state_root}/${state_key}"
+	mkdir -p "$state_root" 2>/dev/null || return 1
+	if ! mkdir "$lease_dir" 2>/dev/null; then
+		echo "[pulse-wrapper] _dispatch_ci_repair_session: repair already dispatched for ${repo_slug} PR #${pr_number} head ${pr_head_sha} fingerprint ${failure_fingerprint}" >>"$LOGFILE"
+		return 0
+	fi
+
+	prompt_file="${lease_dir}/prompt.md"
+	cat >"$prompt_file" <<-EOF
+		[effort:thinking] Repair terminal CI failures on the existing PR branch.
+
+		Repository: ${repo_slug}
+		PR: #${pr_number}
+		Linked issue: #${linked_issue}
+		Expected head SHA: ${pr_head_sha}
+		Existing head branch: ${pr_head_ref}
+		Failure fingerprint: ${failure_fingerprint}
+
+		Terminal failed checks:
+		${failing_checks}
+
+		Verify PR #${pr_number} still has head SHA ${pr_head_sha} before editing. If it changed,
+		stop without pushing. Check out the existing remote branch ${pr_head_ref} in a linked
+		worktree, diagnose the cited check logs, make only the CI repair, run focused checks,
+		commit, and push back to that same branch. Do not open or close a PR, do not create a
+		new implementation branch, do not merge, and do not bypass trust or required checks.
+	EOF
+	session_key="ci-repair-${pr_number}-${pr_head_sha:0:12}-${failure_fingerprint:0:12}"
+	WORKER_ISSUE_NUMBER="$linked_issue" WORKER_REPO_SLUG="$repo_slug" GITHUB_REPOSITORY="$repo_slug" \
+		AIDEVOPS_PR_REPAIR_NUMBER="$pr_number" AIDEVOPS_PR_REPAIR_HEAD_SHA="$pr_head_sha" \
+		AIDEVOPS_PR_REPAIR_HEAD_REF="$pr_head_ref" AIDEVOPS_PR_REPAIR_FINGERPRINT="$failure_fingerprint" \
+		"$helper" run --role worker --session-key "$session_key" --dir "$repo_path" \
+		--title "PR #${pr_number}: CI repair" --prompt-file "$prompt_file" \
+		</dev/null >>"$LOGFILE" 2>&1 &
+	local worker_pid=""
+	worker_pid=$!
+	printf '{"repo":"%s","pr":%s,"head":"%s","branch":"%s","fingerprint":"%s","pid":%s,"status":"dispatched"}\n' \
+		"$repo_slug" "$pr_number" "$pr_head_sha" "$pr_head_ref" "$failure_fingerprint" "$worker_pid" >"${lease_dir}/state.json"
 	return 0
 }
 

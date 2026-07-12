@@ -87,6 +87,12 @@ jq -e 'select(.event_type == "worker.failed" and .issue_number == 1 and .next_ac
 AIDEVOPS_OBJECTIVE_EVIDENCE_FILE="$evidence_file" \
 	"$HELPER" derive --repo owner/repo --input "$fixture" --now 10000 --ttl 3600 >"$derived"
 jq -e '.[] | select(.number == 1 and .execution_path_state == "recovery" and .preservation.commits == true)' "$derived" >/dev/null || fail "durable lifecycle evidence merge"
+HOME="$TMP_DIR" WORKER_ISSUE_NUMBER=1 GITHUB_REPOSITORY=owner/repo \
+	AIDEVOPS_WORKER_ID=worker:repair AIDEVOPS_OBJECTIVE_EVIDENCE_FILE="$evidence_file" \
+	AIDEVOPS_PR_REPAIR_NUMBER=30 AIDEVOPS_PR_REPAIR_HEAD_SHA=abc123 \
+	AIDEVOPS_PR_REPAIR_HEAD_REF=feature/repair AIDEVOPS_PR_REPAIR_FINGERPRINT=fp123 \
+	bash -c 'source "$1"; _emit_worker_runtime_event worker.completed completed ci_repair' _ "$LIFECYCLE"
+jq -e 'select(.event_type == "worker.completed" and .pr_repair.pr_number == 30 and .pr_repair.head_sha == "abc123" and .pr_repair.head_ref == "feature/repair" and .pr_repair.failure_fingerprint == "fp123" and .next_action == "monitor_pr")' "$evidence_file" >/dev/null || fail "PR repair lifecycle evidence"
 
 printf '%s\n' '{"repo":"owner/repo","issue_number":999,"evidence_timestamp":10000,"event_type":"worker.failed"}' >>"$evidence_file"
 AIDEVOPS_OBJECTIVE_EVIDENCE_FILE="$evidence_file" AIDEVOPS_OBJECTIVE_EVIDENCE_LIMIT=1 \

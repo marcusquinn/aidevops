@@ -92,6 +92,10 @@ case "$_subcmd" in
 		printf '%s\n' "origin:worker,auto-dispatch"
 		exit 0
 	fi
+	if [[ "$*" == *"headRefOid,headRefName,isCrossRepository,maintainerCanModify"* ]]; then
+		printf 'abc123repairsha\tfix/worker-branch\tfalse\ttrue\n'
+		exit 0
+	fi
 	if [[ "$*" == *"--json headRefName"* ]]; then
 		printf 'fix/worker-branch\n'
 		exit 0
@@ -553,17 +557,17 @@ test_ci_dispatch_dedupes_by_pr_head_marker() {
 			"Expected 1 PR close, got ${pr_close_count}. Log: $(cat "$GH_LOG")"
 		return 0
 	fi
-	if ! grep -qF '<!-- ci-feedback:PR100:SHAabc123repairsha -->' "${TEST_ROOT}/issue-body.txt"; then
-		print_result "CI repair dispatch stores PR/head marker" 1 \
-			"Expected PR/head marker in issue body. Body: $(cat "${TEST_ROOT}/issue-body.txt")"
+	if ! grep -qF '<!-- ci-feedback-fallback:PR100:SHAabc123repairsha:FP' "${TEST_ROOT}/issue-body.txt"; then
+		print_result "CI repair fallback stores PR/head/fingerprint marker" 1 \
+			"Expected fallback marker in issue body. Body: $(cat "${TEST_ROOT}/issue-body.txt")"
 		return 0
 	fi
-	if ! grep -qF 'already has CI repair marker' "$LOGFILE"; then
+	if ! grep -qF 'already has CI repair fallback marker' "$LOGFILE"; then
 		print_result "CI repair dispatch logs duplicate skip" 1 \
 			"Expected duplicate skip log. Log: $(cat "$LOGFILE")"
 		return 0
 	fi
-	print_result "CI repair dispatch dedupes repair routing per PR/head" 0
+	print_result "CI repair fallback dedupes per PR/head/fingerprint" 0
 	return 0
 }
 

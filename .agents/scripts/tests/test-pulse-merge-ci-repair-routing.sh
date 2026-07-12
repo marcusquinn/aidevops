@@ -47,6 +47,15 @@ setup_test_env() {
 	: >"$GH_LOG"
 	export TEST_ROOT GH_LOG
 	export TEST_CHECK_SCENARIO="terminal_failure"
+	export AIDEVOPS_CI_REPAIR_STATE_DIR="${TEST_ROOT}/repair-state"
+	mkdir -p "${TEST_ROOT}/repo"
+	cat >"${TEST_ROOT}/bin/headless-runtime-helper.sh" <<'EOF'
+#!/usr/bin/env bash
+printf '%s|%s|%s|%s|%s\n' "${AIDEVOPS_PR_REPAIR_NUMBER:-}" "${AIDEVOPS_PR_REPAIR_HEAD_SHA:-}" "${AIDEVOPS_PR_REPAIR_HEAD_REF:-}" "${AIDEVOPS_PR_REPAIR_FINGERPRINT:-}" "$*" >>"${GH_LOG}"
+sleep 1
+EOF
+	chmod +x "${TEST_ROOT}/bin/headless-runtime-helper.sh"
+	export AIDEVOPS_HEADLESS_RUNTIME_HELPER="${TEST_ROOT}/bin/headless-runtime-helper.sh"
 	printf 'Original issue body.\n' >"${TEST_ROOT}/issue-body.txt"
 	write_gh_mock
 	return 0
@@ -59,6 +68,10 @@ write_gh_mock() {
 printf '%s\n' "gh $*" >>"${GH_LOG:-/dev/null}"
 
 if [[ "${1:-} ${2:-}" == "pr view" ]]; then
+	if [[ "$*" == *"headRefOid,headRefName,isCrossRepository,maintainerCanModify"* ]]; then
+		printf 'abc123\tfeature/repair\tfalse\ttrue\n'
+		exit 0
+	fi
 	if [[ "$*" == *"--json labels"* ]]; then
 		printf 'origin:worker\n'
 		exit 0
@@ -198,6 +211,8 @@ define_process_helper() {
 	_attempt_pr_ci_rebase_retry() { local pr_number="$1" repo_slug="$2"; [[ -n "$pr_number$repo_slug" ]]; return "$REBASE_RETRY_RC"; }
 	_route_pr_to_fix_worker() { local pr_number="$1" repo_slug="$2" linked_issue="$3" mode="$4" pr_labels="${5:-}"; ROUTE_CALLS=$((ROUTE_CALLS + 1)); ROUTE_ARGS="${pr_number}|${repo_slug}|${linked_issue}|${mode}"; ROUTE_LABELS="$pr_labels"; return 0; }
 	_pulse_merge_dismiss_coderabbit_nits() { local pr_number="$1" repo_slug="$2"; [[ -n "$pr_number$repo_slug" ]]; DISMISS_CALLS=$((DISMISS_CALLS + 1)); if [[ "${DISMISS_NITS_RC:-0}" -eq 0 ]]; then return 0; fi; return 1; }
+	_pulse_merge_changes_requested_thread_remediation_first_enabled() { return 1; }
+	_pulse_merge_preflight_snapshot_gate() { return 0; }
 	_attempt_pr_update_branch() { return 1; }
 	_pulse_merge_changes_requested_thread_remediation_first_enabled() { return 1; }
 	_pulse_merge_preflight_snapshot_gate() { return 0; }
@@ -222,12 +237,14 @@ define_feedback_helpers() {
 		_append_feedback_to_issue
 		_transition_issue_for_redispatch
 		_close_and_label_feedback_pr
+		_dispatch_ci_repair_session
 		_dispatch_ci_fix_worker
 	)
 	local fn fn_src
 	gh_issue_edit_safe() { gh issue edit "$@"; return $?; }
 	_emit_ci_failure_guidance_blocks() { return 0; }
 	_classify_ci_failures_by_pattern() { local failing_names="$1"; printf '%s' "$failing_names" >"${TEST_ROOT}/classified-names.txt"; return 0; }
+	_pulse_merge_repo_path_for_slug() { local repo_slug="$1"; [[ -n "$repo_slug" ]]; printf '%s\n' "${TEST_ROOT}/repo"; return 0; }
 	for fn in "${fns[@]}"; do
 		fn_src=$(extract_function "$fn" "$FEEDBACK_SCRIPT")
 		[[ -n "$fn_src" ]] || return 1
@@ -366,23 +383,22 @@ test_changes_requested_explicit_empty_labels_skip_refetch() {
 	return 0
 }
 
-test_ci_feedback_dedupes_by_pr_head_sha() {
+test_ci_repair_dedupes_by_repo_pr_head_and_fingerprint() {
 	setup_test_env
 	define_feedback_helpers || { print_result "defines feedback helpers" 1 "could not extract feedback helpers"; teardown_test_env; return 0; }
 
 	_dispatch_ci_fix_worker "100" "owner/repo" "42"
 	_dispatch_ci_fix_worker "100" "owner/repo" "42"
 
-	local edit_count marker_count
+	local edit_count state_count
 	edit_count=$(grep -c 'gh issue edit .*--body' "$GH_LOG" || true)
 	[[ "$edit_count" =~ ^[0-9]+$ ]] || edit_count=0
-	marker_count=$(grep -c '<!-- ci-feedback:PR100:SHAabc123 -->' "${TEST_ROOT}/issue-body.txt" || true)
-	[[ "$marker_count" =~ ^[0-9]+$ ]] || marker_count=0
+	state_count=$(find "$AIDEVOPS_CI_REPAIR_STATE_DIR" -name state.json -type f | wc -l | tr -d ' ')
 
-	if [[ "$edit_count" -ne 1 || "$marker_count" -ne 1 ]]; then
-		print_result "CI feedback dedupes per PR/head SHA" 1 "issue_edit_count=${edit_count}, marker_count=${marker_count}"
+	if [[ "$edit_count" -ne 0 || "$state_count" -ne 1 ]]; then
+		print_result "CI repair dedupes by repo/PR/head/fingerprint" 1 "issue_edits=${edit_count}, states=${state_count}"
 	else
-		print_result "CI feedback dedupes per PR/head SHA" 0
+		print_result "CI repair dedupes by repo/PR/head/fingerprint" 0
 	fi
 	teardown_test_env
 	return 0
@@ -428,11 +444,16 @@ test_ci_feedback_emits_terminal_failure_with_conclusion_and_url() {
 	define_feedback_helpers || { print_result "defines feedback helpers for terminal failure" 1 "could not extract feedback helpers"; teardown_test_env; return 0; }
 
 	_dispatch_ci_fix_worker "100" "owner/repo" "42"
+	sleep 1
 
-	if ! grep -qF '**Lint**: failure — [check URL](https://github.com/owner/repo/actions/runs/123/job/456)' "${TEST_ROOT}/issue-body.txt"; then
-		print_result "terminal failure emits conclusion and check URL" 1 "Body: $(cat "${TEST_ROOT}/issue-body.txt")"
+	local prompt_file=""
+	prompt_file=$(find "$AIDEVOPS_CI_REPAIR_STATE_DIR" -name prompt.md -type f -print -quit)
+	if [[ -z "$prompt_file" ]] || ! grep -qF '**Lint**: failure — [check URL](https://github.com/owner/repo/actions/runs/123/job/456)' "$prompt_file"; then
+		print_result "terminal failure dispatch includes conclusion and check URL" 1 "Dispatch log: $(cat "$GH_LOG")"
+	elif grep -qF 'gh pr close 100' "$GH_LOG"; then
+		print_result "terminal failure preserves existing PR" 1 "Unexpected close: $(cat "$GH_LOG")"
 	else
-		print_result "terminal failure emits conclusion and check URL" 0
+		print_result "terminal failure dispatches against and preserves existing PR" 0
 	fi
 	teardown_test_env
 	return 0
@@ -472,19 +493,16 @@ test_ci_feedback_skips_failed_check_with_exit_143_log() {
 	return 0
 }
 
-test_ci_feedback_emits_advisory_failure_when_required_clean() {
+test_ci_feedback_skips_advisory_failure_when_required_clean() {
 	setup_test_env
 	TEST_CHECK_SCENARIO="advisory_failure"
 	define_feedback_helpers || { print_result "defines feedback helpers for advisory failure" 1 "could not extract feedback helpers"; teardown_test_env; return 0; }
 
 	_dispatch_ci_fix_worker "100" "owner/repo" "42"
-
-	if ! grep -qF '**Docs**: failure — [check URL](https://github.com/owner/repo/actions/runs/123/job/789)' "${TEST_ROOT}/issue-body.txt"; then
-		print_result "advisory-only failure emits CI repair feedback" 1 "Body: $(cat "${TEST_ROOT}/issue-body.txt")"
-	elif ! grep -qF 'Docs' "${TEST_ROOT}/classified-names.txt"; then
-		print_result "advisory-only failure populates classification names" 1 "Names: $(cat "${TEST_ROOT}/classified-names.txt" 2>/dev/null || true)"
+	if grep -qF 'PR #100: CI repair' "$GH_LOG"; then
+		print_result "advisory-only failure does not dispatch CI repair" 1 "Dispatch log: $(cat "$GH_LOG")"
 	else
-		print_result "advisory-only failure emits CI repair feedback with classification names" 0
+		print_result "advisory-only failure does not dispatch CI repair" 0
 	fi
 	teardown_test_env
 	return 0
@@ -515,14 +533,13 @@ main() {
 	test_rest_missing_review_decision_refreshes_before_ci_route
 	test_coderabbit_nits_ok_dismissed_once_before_late_gate
 	test_changes_requested_explicit_empty_labels_skip_refetch
-	test_ci_feedback_dedupes_by_pr_head_sha
+	test_ci_repair_dedupes_by_repo_pr_head_and_fingerprint
 	test_ci_feedback_skips_pending_only_checks
 	test_ci_feedback_skips_mixed_pending_pass_checks
 	test_ci_feedback_emits_terminal_failure_with_conclusion_and_url
 	test_ci_feedback_skips_infra_timeout_checks
 	test_ci_feedback_skips_failed_check_with_exit_143_log
-	test_ci_feedback_emits_advisory_failure_when_required_clean
-	test_ci_feedback_includes_required_and_advisory_failures_together
+	test_ci_feedback_skips_advisory_failure_when_required_clean
 
 	printf '\nTests run: %d, failed: %d\n' "$TESTS_RUN" "$TESTS_FAILED"
 	if [[ "$TESTS_FAILED" -ne 0 ]]; then
