@@ -330,6 +330,31 @@ _create_hotfix_tag() {
 	return 0
 }
 
+validate_release_deployment_readiness() {
+	local sync_repo_root="${AIDEVOPS_SYNC_REPO_ROOT:-$REPO_ROOT}"
+	local remote_url
+	remote_url=$(git -C "$sync_repo_root" remote get-url origin 2>/dev/null || echo "")
+	if [[ "$remote_url" != *"marcusquinn/aidevops"* ]]; then
+		return 0
+	fi
+
+	if [[ -z "${HOME:-}" || "$HOME" != /* ]]; then
+		print_error "Release deployment cannot resolve the stable agents target: HOME must be a non-empty absolute path"
+		return 1
+	fi
+
+	local deploy_script="${AIDEVOPS_SYNC_DEPLOY_SCRIPT:-$sync_repo_root/.agents/scripts/deploy-agents-on-merge.sh}"
+	if [[ ! -f "$deploy_script" || ! -r "$deploy_script" ]]; then
+		print_error "Release deployment helper is unavailable: $deploy_script"
+		return 1
+	fi
+	if [[ ! -f "$sync_repo_root/setup.sh" || ! -r "$sync_repo_root/setup.sh" ]]; then
+		print_error "Release setup helper is unavailable: $sync_repo_root/setup.sh"
+		return 1
+	fi
+	return 0
+}
+
 run_post_release_agent_sync() {
 	local sync_repo_root="${AIDEVOPS_SYNC_REPO_ROOT:-$REPO_ROOT}"
 	local remote_url
@@ -344,11 +369,14 @@ run_post_release_agent_sync() {
 		print_error "Post-release deployment gate cannot run: deploy script not found at $deploy_script"
 		return 1
 	fi
+	validate_release_deployment_readiness || return 1
 
 	print_info "Running post-release aidevops agent sync..."
 	local sync_output=""
 	local sync_exit=0
-	sync_output=$(bash "$deploy_script" --repo "$sync_repo_root" --full --quiet 2>&1) || sync_exit=$?
+	sync_output=$(env -u AIDEVOPS_AGENTS_DIR -u AGENTS_DIR \
+		AIDEVOPS_DEPLOY_TARGET="$HOME/.aidevops/agents" \
+		bash "$deploy_script" --repo "$sync_repo_root" --full --quiet 2>&1) || sync_exit=$?
 
 	if [[ "$sync_exit" -eq 0 ]]; then
 		print_success "Post-release aidevops deployment and CLI convergence completed"

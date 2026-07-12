@@ -379,6 +379,10 @@ _release_execute() {
 	print_info "Validating version consistency..."
 	if validate_version_consistency "$new_version"; then
 		print_success "Version validation passed"
+		if ! validate_release_deployment_readiness; then
+			print_error "Aborting release before publication: local deployment prerequisites are unsafe"
+			_release_abort_after_mutation
+		fi
 
 		# t2437/GH#20073: commit the bump, verify HEAD is the bump commit.
 		if ! _release_commit_and_verify_bump "$new_version" "$bump_type"; then
