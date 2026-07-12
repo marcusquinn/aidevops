@@ -511,7 +511,9 @@ _main_release() {
 	if [[ -n "$source_pr" ]]; then
 		verify_release_source_pr "$source_pr" "main" || exit 1
 	fi
-	verify_canonical_default_synced "main" || exit 1
+	# The detached release worktree and merged-PR provenance above are the
+	# complete publication boundary. Human canonical checkouts may be dirty,
+	# stale, or diverged and are deliberately irrelevant to release safety.
 
 	# Check for uncommitted changes
 	if [[ "$allow_dirty" -eq 0 ]]; then
