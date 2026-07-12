@@ -497,10 +497,6 @@ _check_message() {
 			_debug "$tid is origin-namespaced and collision-safe by construction"
 			continue
 		fi
-		if ! [[ "$num" =~ ^[0-9]+$ ]]; then
-			_debug "Non-numeric suffix for $tid — skipping"
-			continue
-		fi
 		# Force base-10 (10#) so leading-zero IDs like "008", "068" don't trip
 		# bash's octal parser. Same root cause as the _compute_counter_seed bug
 		# in claim-task-id.sh — both fixed in this PR (GH#19620).
