@@ -62,6 +62,7 @@ LOGFILE="${TEST_TMP}/pulse.log" \
 	CLEAN_ROOM_COMMENT_CHARS_THRESHOLD=50000 \
 	ZERO_OUTPUT_URL_FALLBACK_THRESHOLD=1 \
 	FAST_FAIL_STATE_FILE="" \
+	ISSUE_BODY_SNAPSHOT_HELPER="/usr/bin/true" \
 	_dlw_prepare_prompt_for_launch "123" "owner/repo" "Metric test" "original prompt" >"${TEST_TMP}/prompt"
 
 if [[ "$(<"${TEST_TMP}/prompt")" != *"Previous dispatch attempts"* ]]; then
@@ -77,6 +78,18 @@ if [[ "$_DLW_ZERO_OUTPUT_EVIDENCE_PATTERN" != *"worker_noop_zero_output"* || "$_
 	fail "shared zero-output evidence pattern lost expected alternatives"
 fi
 
+LOGFILE="${TEST_TMP}/pulse.log" \
+	ISSUE_BODY_SNAPSHOT_HELPER="/usr/bin/false" \
+	CLEAN_ROOM_COMMENT_THRESHOLD=1 \
+	_dlw_prepare_prompt_for_launch "123" "owner/repo" "Metric test" "original composed prompt" $'1\t0\t0\t1' >"${TEST_TMP}/blocked-prompt"
+if [[ "$(<"${TEST_TMP}/blocked-prompt")" != *"Do not implement from this prompt"* ]]; then
+	fail "invalid clean-room snapshot did not produce a non-authorizing blocker"
+fi
+if [[ "$(<"${TEST_TMP}/blocked-prompt")" == *"original composed prompt"* ]]; then
+	fail "clean-room blocker leaked the original composed prompt"
+fi
+
 printf 'PASS: dispatch prompt reuses comment metrics for zero-output fallback\n'
 printf 'PASS: zero-output evidence detection uses one shared pattern\n'
+printf 'PASS: invalid clean-room snapshots cannot authorize implementation\n'
 exit 0
