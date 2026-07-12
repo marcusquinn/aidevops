@@ -250,25 +250,25 @@ _write_python_truth_filter() {
 	cat >>"$PYTHON_SCRIPT" <<'PYEOF'
 
 def _memory_is_live(mem_conn, memory_id: str) -> bool:
-    """Return True only for current memories that have not been retracted."""
+    """Apply the canonical live, privacy, entity, project, type, and age scope."""
+    import os
+    project = os.environ.get("MEMORY_SEARCH_PROJECT", "")
+    entity = os.environ.get("MEMORY_SEARCH_ENTITY", "")
+    mem_type = os.environ.get("MEMORY_SEARCH_TYPE", "")
+    max_age = os.environ.get("MEMORY_SEARCH_MAX_AGE_DAYS", "")
     row = mem_conn.execute(
         """SELECT 1
            FROM learnings l
+           JOIN observations o ON o.observation_id = 'obs_learning_' || l.id
            WHERE l.id = ?
-             AND COALESCE((
-                 SELECT status
-                 FROM learning_truth_events truth_pick
-                 WHERE truth_pick.memory_id = l.id
-                 ORDER BY truth_pick.created_at DESC, truth_pick.event_id DESC
-                 LIMIT 1
-             ), 'live') NOT IN ('debunked', 'retracted')
-             AND NOT EXISTS (
-                 SELECT 1
-                 FROM learning_relations superseded_by
-                 WHERE superseded_by.supersedes_id = l.id
-                   AND superseded_by.relation_type = 'updates'
-             )""",
-        (memory_id,)
+              AND o.status = 'active'
+              AND (o.expires_at IS NULL OR o.expires_at > datetime('now'))
+              AND (? = '' OR o.project_scope = ?)
+              AND (? = '' OR o.subject_id = ? OR o.owner_id = ?)
+              AND (? = '' OR l.type = ?)
+              AND (? = '' OR l.created_at >= datetime('now', '-' || ? || ' days'))""",
+        (memory_id, project, project, entity, entity, entity,
+         mem_type, mem_type, max_age, max_age)
     ).fetchone()
     return row is not None
 PYEOF
@@ -415,22 +415,11 @@ def _hybrid_fts5_search(mem_conn, query: str, semantic_limit: int) -> list:
             """SELECT id, bm25(learnings) as score
                FROM learnings
                WHERE learnings MATCH ?
-                 AND COALESCE((
-                     SELECT status FROM learning_truth_events truth_pick
-                     WHERE truth_pick.memory_id = learnings.id
-                     ORDER BY truth_pick.created_at DESC, truth_pick.event_id DESC
-                     LIMIT 1
-                 ), 'live') NOT IN ('debunked', 'retracted')
-                 AND NOT EXISTS (
-                     SELECT 1 FROM learning_relations superseded_by
-                     WHERE superseded_by.supersedes_id = learnings.id
-                       AND superseded_by.relation_type = 'updates'
-                 )
                ORDER BY score
                LIMIT ?""",
             (fts_query, semantic_limit)
         ).fetchall()
-        return [(row[0], row[1]) for row in fts_rows]
+        return [(row[0], row[1]) for row in fts_rows if _memory_is_live(mem_conn, row[0])]
     except sqlite3.OperationalError:
         # FTS5 query failed (e.g., special characters) — fall back to semantic only
         return []
