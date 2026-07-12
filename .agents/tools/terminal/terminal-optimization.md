@@ -83,7 +83,7 @@ done | tr '\n' ':' | sed 's/:$//')
 | Classic | Modern | Speedup | Install |
 |---------|--------|---------|---------|
 | `find` | `fd` | 5-10x | `brew install fd` |
-| `grep` | `rg` (ripgrep) | 5-20x | `brew install ripgrep` |
+| shell `grep` | shell `rg` (ripgrep) | 5-20x | `brew install ripgrep` |
 | `grep` (PDFs/docs) | `rga` (ripgrep-all) | new capability | `brew install ripgrep-all` |
 | `cat` | `bat` | Syntax highlighting | `brew install bat` |
 | `ls` | `eza` | Better output | `brew install eza` |
@@ -95,6 +95,12 @@ done | tr '\n' ':' | sed 's/:$//')
 | `man` | `tldr` | Quick examples | `brew install tldr` |
 
 `fd`/`rg`/`rga` share the same ecosystem and `.gitignore` awareness: `fd` = files by metadata, `rg` = text content, `rga` = inside non-text files (PDF, DOCX/XLSX/PPTX, ODT, SQLite, zip/tar/gz).
+
+For AI-agent searches, distinguish the runtime tool from the shell command:
+
+- Use the runtime's native Grep tool for bounded, structured content searches. OpenCode's native Grep invokes ripgrep and adds permission checks, output limits, path normalization, and concise previews.
+- Use shell `rg` when Bash is already available and the task needs advanced ripgrep flags, exact match counts, file-list output, or pipelines.
+- Do not replace native Grep with shell `rg` solely for performance; both use ripgrep, while native Grep also works for agents without Bash access.
 
 ### 4. Shell Aliases
 
@@ -162,12 +168,12 @@ Issues Found:
 1. [SLOW] nvm init adds 180ms - suggest lazy-load
 2. [DUP] /usr/local/bin appears 3x in PATH
 3. [MISSING] /opt/homebrew/bin not in PATH but Homebrew installed
-4. [TOOL] Using grep instead of ripgrep (5-20x slower)
+4. [TOOL] Shell scripts use POSIX grep for repository-wide searches where ripgrep is available
 
 Recommendations:
 1. Lazy-load nvm (saves ~180ms)
 2. Deduplicate PATH (saves ~5ms lookup)
-3. Install: fd, ripgrep, bat, eza
+3. Install or update: fd, ripgrep, bat, eza
 4. Add fzf for fuzzy history search
 ```
 

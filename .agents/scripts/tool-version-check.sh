@@ -156,6 +156,7 @@ BREW_TOOLS=(
 	"brew|Worktrunk|wt|--version|max-sixty/worktrunk/wt|$(_brew_upgrade_cmd max-sixty/worktrunk/wt)"
 	"brew|Beads CLI|bd|version|steveyegge/beads/bd|$(_brew_upgrade_cmd steveyegge/beads/bd)"
 	"brew|jq|jq|--version|jq|$(_brew_upgrade_cmd jq)"
+	"brew|ripgrep|rg|--version|ripgrep|$(_brew_upgrade_cmd ripgrep)"
 	"brew|ShellCheck|shellcheck|--version|shellcheck|$(_brew_upgrade_cmd shellcheck)"
 )
 
@@ -383,6 +384,7 @@ get_brew_latest() {
 		glab) get_public_release_tag "gitlab-org/cli" ;;
 		wt) get_public_release_tag "max-sixty/worktrunk" ;;
 		jq) get_public_release_tag "jqlang/jq" ;;
+		ripgrep) get_public_release_tag "BurntSushi/ripgrep" ;;
 		shellcheck) get_public_release_tag "koalaman/shellcheck" ;;
 		*) echo "unknown" ;;
 		esac
