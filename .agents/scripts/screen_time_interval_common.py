@@ -43,6 +43,16 @@ def local_day_bounds(date):
     return (start, end) if end is not None else (None, None)
 
 
+def completed_day_window(now, days):
+    """Return the previous N completed local calendar days as epoch bounds."""
+    end_date = local_date(now)
+    if end_date is None or days < 1:
+        return None, None
+    start = local_midnight_epoch(end_date - dt.timedelta(days=days))
+    end = local_midnight_epoch(end_date)
+    return (start, end) if start is not None and end is not None else (None, None)
+
+
 def safe_core_epoch(value):
     converted = safe_float(value)
     if converted is None:

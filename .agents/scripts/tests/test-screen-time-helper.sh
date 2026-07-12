@@ -34,6 +34,14 @@ core_data_offset() {
 	return 0
 }
 
+local_day_epoch() {
+	local now="$1"
+	local days_ago="$2"
+	local hour="$3"
+	python3 -c 'import datetime as d,sys; day=d.datetime.fromtimestamp(int(sys.argv[1])).date()-d.timedelta(days=int(sys.argv[2])); print(int(d.datetime.combine(day,d.time(int(sys.argv[3]))).timestamp()))' "$now" "$days_ago" "$hour"
+	return 0
+}
+
 insert_backlit_pair() {
 	local db="$1"
 	local on_epoch="$2"
@@ -89,9 +97,11 @@ test_union_clipping_and_failure_status() {
 
 	# Force app fallback with overlapping/repeated intervals. The union is 5h,
 	# not the additive 9h, and the 30h interval is clipped to the 24h window.
-	insert_app_usage "$overlap_db" "$((now - one_hour * 6))" "$((now - one_hour))"
-	insert_app_usage "$overlap_db" "$((now - one_hour * 5))" "$((now - one_hour * 2))"
-	insert_app_usage "$overlap_db" "$((now - one_hour * 6))" "$((now - one_hour))"
+	local previous_noon
+	previous_noon=$(local_day_epoch "$now" 1 12)
+	insert_app_usage "$overlap_db" "$previous_noon" "$((previous_noon + one_hour * 5))"
+	insert_app_usage "$overlap_db" "$((previous_noon + one_hour))" "$((previous_noon + one_hour * 4))"
+	insert_app_usage "$overlap_db" "$previous_noon" "$((previous_noon + one_hour * 5))"
 	local overlap_hours
 	overlap_hours=$(query_hours "$overlap_db" 1)
 	[[ "$overlap_hours" == "5.0" ]] || fail "expected app intervals to union to 5.0h, got ${overlap_hours}"
@@ -221,7 +231,7 @@ test_top_apps_sql_and_sweep_are_bounded() {
 	boundaries=$(jq -r '.boundaries' "$instrument")
 	segments=$(jq -r '.attributed_segments' "$instrument")
 	elapsed=$(jq -r '.elapsed_ms' "$instrument")
-	if [[ "$selected" != "200" || "$valid" != "200" || "$boundaries" -gt 402 || "$segments" -gt 401 ]] ||
+	if [[ "$selected" -lt 1 || "$selected" -gt 200 || "$valid" != "$selected" || "$boundaries" -gt 402 || "$segments" -gt 401 ]] ||
 		! awk -v elapsed="$elapsed" 'BEGIN {exit !(elapsed < 5000)}'; then
 		fail "top-app query/sweep was unbounded: $(<"$instrument")"
 	fi
@@ -248,9 +258,30 @@ test_local_midnight_dst_boundaries() {
 	return 0
 }
 
+test_profile_completed_day_dst_semantics() {
+	local tmpdir="$1"
+	local db="${tmpdir}/profile-dst.db"
+	create_knowledge_db "$db"
+	local values spring_start spring_end spring_now fall_start fall_end fall_now
+	values=$(TZ=America/New_York python3 -c 'import datetime as d,time; time.tzset(); epoch=lambda x:int(x.timestamp()); s=d.date(2026,3,8); f=d.date(2026,11,1); print(epoch(d.datetime.combine(s,d.time.min)),epoch(d.datetime.combine(s+d.timedelta(days=1),d.time.min)),epoch(d.datetime(2026,3,9,12)),epoch(d.datetime.combine(f,d.time.min)),epoch(d.datetime.combine(f+d.timedelta(days=1),d.time.min)),epoch(d.datetime(2026,11,2,12)))')
+	read -r spring_start spring_end spring_now fall_start fall_end fall_now <<<"$values"
+	insert_app_usage "$db" "$spring_start" "$spring_end"
+	insert_app_usage "$db" "$fall_start" "$fall_end"
+	local spring_json fall_json
+	spring_json=$(TZ=America/New_York AIDEVOPS_SCREEN_TIME_NOW_EPOCH="$spring_now" profile_stats "$db")
+	fall_json=$(TZ=America/New_York AIDEVOPS_SCREEN_TIME_NOW_EPOCH="$fall_now" profile_stats "$db")
+	[[ "$(printf '%s' "$spring_json" | jq -r '.today_hours')" == "23" || "$(printf '%s' "$spring_json" | jq -r '.today_hours')" == "23.0" ]] || fail "spring profile day was not the completed 23-hour local day"
+	[[ "$(printf '%s' "$fall_json" | jq -r '.today_hours')" == "25" || "$(printf '%s' "$fall_json" | jq -r '.today_hours')" == "25.0" ]] || fail "fall profile day was not the completed 25-hour local day"
+	[[ "$(printf '%s' "$spring_json" | jq -r '.periods.day.period_semantics')" == "completed-local-calendar-days" ]] || fail "screen profile omitted completed-day semantics"
+	[[ "$(printf '%s' "$spring_json" | jq -r '.periods.day.period_start_epoch | floor')" == "$spring_start" && "$(printf '%s' "$spring_json" | jq -r '.periods.day.period_end_epoch | floor')" == "$spring_end" ]] || fail "screen profile exposed incorrect completed-day bounds"
+	pass "profile screen periods use completed local days across DST"
+	return 0
+}
+
 test_linux_state_machine() {
 	local tmpdir="$1"
-	local now=2000000000
+	local now
+	now=$(python3 -c 'import datetime as d; print(int(d.datetime(2033,5,19,12).timestamp()))')
 	local fixture="${tmpdir}/logind.txt"
 	python3 - "$fixture" "$now" <<'PY'
 import datetime as dt
@@ -259,12 +290,12 @@ import sys
 target = sys.argv[1]
 now = int(sys.argv[2])
 events = [
-    (-6, "New session c1 of user fixture."),
-    (-5, "Session c1 locked."),
-    (-4, "Session c1 unlocked."),
-    (-3, "Lid closed."),
-    (-2, "Lid opened."),
-    (-1, "Removed session c1."),
+    (-30, "New session c1 of user fixture."),
+    (-29, "Session c1 locked."),
+    (-28, "Session c1 unlocked."),
+    (-27, "Lid closed."),
+    (-26, "Lid opened."),
+    (-25, "Removed session c1."),
 ]
 with open(target, "w", encoding="utf-8") as handle:
     for hours, message in events:
@@ -283,7 +314,7 @@ PY
 	python3 - "$zero_fixture" "$now" <<'PY'
 import datetime as dt
 import sys
-stamp = dt.datetime.fromtimestamp(int(sys.argv[2]) - 60, dt.timezone.utc).isoformat()
+stamp = dt.datetime.fromtimestamp(int(sys.argv[2]) - 30 * 3600, dt.timezone.utc).isoformat()
 with open(sys.argv[1], "w", encoding="utf-8") as handle:
     handle.write(f"{stamp} host systemd-logind[1]: New session z1 of user fixture.\n")
     handle.write(f"{stamp} host systemd-logind[1]: Removed session z1.\n")
@@ -296,7 +327,7 @@ PY
 
 	local missing_journal="${tmpdir}/missing-journal"
 	local wtmp_fixture="${tmpdir}/wtmp.txt"
-	printf '%s|%s\n' "$((now - 7200))" "$((now - 3600))" >"$wtmp_fixture"
+	printf '%s|%s\n' "$((now - 30 * 3600))" "$((now - 29 * 3600))" >"$wtmp_fixture"
 	local fallback
 	fallback=$(AIDEVOPS_SCREEN_TIME_OS_TYPE=Linux AIDEVOPS_LOGIND_FIXTURE="$missing_journal" \
 		AIDEVOPS_LAST_FIXTURE="$wtmp_fixture" AIDEVOPS_SCREEN_TIME_NOW_EPOCH="$now" \
@@ -309,14 +340,14 @@ PY
 	local realistic_last="${tmpdir}/last-F.txt"
 	: >"$empty_journal"
 	cat >"$realistic_last" <<'EOF'
-fixture  pts/0  host  Tue May 17 23:33:20 2033 - Wed May 18 00:33:20 2033  (01:00)
-fixture  pts/1  host  Wed May 18 01:33:20 2033   still logged in
+fixture  pts/0  host  Wed May 18 01:00:00 2033 - Wed May 18 02:00:00 2033  (01:00)
+fixture  pts/1  host  Wed May 18 03:00:00 2033   still logged in
 EOF
 	local empty_fallback
 	empty_fallback=$(TZ=UTC AIDEVOPS_SCREEN_TIME_OS_TYPE=Linux AIDEVOPS_LOGIND_FIXTURE="$empty_journal" \
 		AIDEVOPS_LAST_FIXTURE="$realistic_last" AIDEVOPS_SCREEN_TIME_NOW_EPOCH="$now" \
 		AIDEVOPS_SCREEN_TIME_USER=fixture "$HELPER" profile-stats)
-	[[ "$(printf '%s' "$empty_fallback" | jq -r '.today_hours')" == "3" || "$(printf '%s' "$empty_fallback" | jq -r '.today_hours')" == "3.0" ]] || fail "real last -F completed+active records were not clipped to now"
+	[[ "$(printf '%s' "$empty_fallback" | jq -r '.today_hours')" == "22" || "$(printf '%s' "$empty_fallback" | jq -r '.today_hours')" == "22.0" ]] || fail "real last -F completed+active records were not clipped to the completed day"
 	[[ "$(printf '%s' "$empty_fallback" | jq -r '.periods.day.reason')" == *"journal-readable-no-user-observations"* ]] || fail "empty readable logind did not truthfully fall back"
 	pass "empty logind falls back and parses realistic local last -F records"
 	return 0
@@ -359,7 +390,9 @@ test_corrupt_core_data_and_history_paths_are_safe() {
 	local now="$2"
 	local db="${tmpdir}/corrupt-core-data.db"
 	create_knowledge_db "$db"
-	insert_app_usage "$db" "$((now - 7200))" "$((now - 3600))"
+	local previous_noon
+	previous_noon=$(local_day_epoch "$now" 1 12)
+	insert_app_usage "$db" "$previous_noon" "$((previous_noon + 3600))"
 	sqlite3 "$db" "
 		UPDATE ZOBJECT SET ZVALUESTRING='valid.app' WHERE ZSTREAMNAME='/app/usage';
 		INSERT INTO ZOBJECT (ZSTREAMNAME,ZCREATIONDATE,ZVALUEINTEGER) VALUES('/display/isBacklit','broken',1);
@@ -454,6 +487,7 @@ main() {
 	test_snapshot_omits_unobserved_stale_dates "$tmpdir"
 	test_top_apps_sql_and_sweep_are_bounded "$tmpdir" "$now"
 	test_local_midnight_dst_boundaries "$tmpdir"
+	test_profile_completed_day_dst_semantics "$tmpdir"
 	test_linux_state_machine "$tmpdir"
 	test_history_calendar_coverage_and_staleness "$tmpdir"
 	test_corrupt_core_data_and_history_paths_are_safe "$tmpdir" "$now"

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import datetime as dt
 import re
 
 DAY_MS = 86400000
@@ -13,6 +14,15 @@ WINDOWS = {
     "quarter": 90 * DAY_MS,
     "year": 365 * DAY_MS,
 }
+
+
+def completed_day_window(now_ms, days):
+    """Return millisecond bounds for the previous N completed local days."""
+    end_date = dt.datetime.fromtimestamp(now_ms / 1000).date()
+    start_date = end_date - dt.timedelta(days=days)
+    start = dt.datetime.combine(start_date, dt.time.min).timestamp()
+    end = dt.datetime.combine(end_date, dt.time.min).timestamp()
+    return int(start * 1000), int(end * 1000)
 WORKER_PATTERNS = [
     re.compile(pattern, re.I)
     for pattern in (
