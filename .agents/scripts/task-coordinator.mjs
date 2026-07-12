@@ -556,13 +556,19 @@ function forgeEvent(input, path = initialise()) {
   const result = { action: value.action, eventKind: value.eventKind, operationId: value.operationId, repositoryId: value.repositoryId, status, taskId: mapping?.taskId || null };
   const resultText = JSON.stringify(result);
   const projection = mapping && !stale ? jsonText({ paths: ["TODO.md"], projection: "forge-event", repositoryId: value.repositoryId, repositorySlug: value.repositorySlug }, "projection") : null;
-  sqlite(path, `PRAGMA foreign_keys=ON; BEGIN IMMEDIATE;
+  try {
+    sqlite(path, `PRAGMA foreign_keys=ON; BEGIN IMMEDIATE;
 INSERT INTO operations(operation_id,kind,task_id,payload_hash,payload_json,status,result_json,result_hash,created_at,updated_at)
 VALUES (${sqlEscape(value.operationId)},'forge.event',${sqlEscape(mapping?.taskId || null)},${sqlEscape(payloadHash)},${sqlEscape(payloadText)},'terminal',${sqlEscape(resultText)},'sha3-256:'||lower(hex(sha3(${sqlEscape(resultText)},256))),${sqlEscape(timestamp)},${sqlEscape(timestamp)});
 ${mapping && !stale ? `UPDATE issue_mappings SET repository_slug=${sqlEscape(value.repositorySlug)},state_cursor=${sqlEscape(value.cursor)},sync_metadata_json=${sqlEscape(JSON.stringify({ action: value.action, eventKind: value.eventKind, source: "forge-event" }))},updated_at=${sqlEscape(timestamp)} WHERE task_id=${sqlEscape(mapping.taskId)} AND forge='github' AND repository_id=${sqlEscape(value.repositoryId)} AND issue_id=${sqlEscape(value.subjectId)} AND (state_cursor IS NULL OR state_cursor<${sqlEscape(value.cursor)});
 CREATE TEMP TABLE assert_event_mapping(value INTEGER CHECK(value=1)); INSERT INTO assert_event_mapping VALUES(changes()); DROP TABLE assert_event_mapping;
 INSERT INTO publication_intents(intent_id,operation_id,task_id,payload_hash,payload_json,status,created_at) VALUES (${sqlEscape(intentId)},${sqlEscape(value.operationId)},${sqlEscape(mapping.taskId)},${sqlEscape(hashText(projection))},${sqlEscape(projection)},'retryable',${sqlEscape(timestamp)});` : ""}
 INSERT INTO terminal_evidence(operation_id,result_state,evidence_json,occurred_at) VALUES (${sqlEscape(value.operationId)},'terminal',${sqlEscape(JSON.stringify({ status }))},${sqlEscape(timestamp)}); COMMIT;`);
+  } catch (error) {
+    const raced = operationResult(path, value.operationId, payloadHash);
+    if (!raced) throw error;
+    return raced;
+  }
   return result;
 }
 function validateRestoreEvidence(evidence, fencingToken) {
