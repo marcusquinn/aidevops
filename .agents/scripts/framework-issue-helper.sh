@@ -302,8 +302,12 @@ _validate_gh_prereqs() {
 		return 1
 	fi
 
-	if ! gh auth status &>/dev/null; then
-		log_error "GitHub CLI not authenticated — run: gh auth login"
+
+	# `gh auth status` validates stored keyring entries and can fail even when an
+	# active environment/App token successfully serves API requests. Probe the
+	# capability needed by this helper before declaring authentication broken.
+	if ! gh auth status &>/dev/null && ! gh api user --jq .login &>/dev/null; then
+		log_error "GitHub CLI cannot authenticate an API request — run: gh auth login"
 		return 1
 	fi
 
