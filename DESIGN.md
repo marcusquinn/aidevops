@@ -269,7 +269,9 @@ Core component rules:
 - Locked views may show already-approved aggregate counts and readiness classes, but never reference names, usernames, provider identifiers, paths, masked fragments, prefixes, suffixes, lengths, checksums, values, or copy/reveal controls.
 - Unlocked views may show reference names plus non-sensitive configured, missing, or unchecked health. Every row states that values are never displayed and routes management to a secure helper rather than a browser form.
 - Distinguish `uninitialized`, `locked`, `unlocked`, `corrupted`, and `unknown` visually and in text. Setup is offered only after authoritative uninitialized metadata; helper errors, partial/legacy responses, and loading states must never open setup.
-- Browser dialogs never collect Vault credentials. Desktop actions send an allowlisted action identifier to the native wrapper, which opens the fixed local helper in Terminal so secret input remains in a hidden TTY prompt.
+- Browser dialogs never collect Vault credentials. Desktop actions send only the fixed `init`, `unlock`, or `lock` enum to an AppKit overlay. The native wrapper owns the PTY and accepts passphrases only in `NSSecureTextField` after terminal echo is off; terminal streams and input never cross the WebKit bridge. The direct `aidevops vault init|unlock|lock` CLI remains an equivalent fallback.
+- While the secure overlay is active, exclude the window from OS screen capture, disable app/page screenshots, cancel on close, quit, sleep, or session deactivation, and clear native input/output buffers on every exit.
+- Populate unlocked reference inventory only from the deterministic names-only helper contract. Validate bounds, ordering, names, backend health, helper ownership, and a post-read unlocked state; locked, unknown, malformed, timed-out, and lock-raced responses clear names immediately.
 - Use compact 8px border-led cards, fluid 210px minimum metric/capability grids, a desktop table that becomes labelled cards below 720px, green safe setup/unlock actions, and visible focus rings even when decorative borders are hidden.
 
 ## Logo and icon rules

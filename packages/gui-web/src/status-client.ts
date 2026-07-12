@@ -99,6 +99,7 @@ function normalizeStatusEnvelope(envelope: GuiResponseEnvelope<Partial<GuiStatus
       pulse_workers: normalizePulseWorkers(data.pulse_workers),
       capabilities: data.capabilities ?? statusFixture.capabilities,
       secrets: visibleSecrets(vault, data.secrets),
+      secret_backends: vault.status === "unlocked" && vault.unlocked ? data.secret_backends ?? statusFixture.secret_backends : statusFixture.secret_backends,
       placeholders: data.placeholders ?? statusFixture.placeholders,
     },
   };

@@ -141,10 +141,10 @@ describe("dashboard shell", () => {
     expect(terminalActionForIntent("setup")).toBe("init");
     expect(terminalActionForIntent("unlock")).toBe("unlock");
     expect(terminalActionForIntent("lock")).toBe("lock");
-    expect(terminalActionForIntent("recover")).toBe("lost-passphrase");
+    expect(terminalActionForIntent("recover")).toBeNull();
     expect(terminalActionForIntent("unavailable")).toBeNull();
     expect(dialogControllerSource).toContain('aidevops:vault-command-result');
-    expect(dialogControllerSource).toContain('result === "opened"');
+    expect(dialogControllerSource).toContain("isNativeVaultResult(result)");
     expect(dialogControllerSource).toContain("navigator.clipboard.writeText");
     expect(dialogControllerSource).toContain("}, 3000);");
     expect(dialogControllerSource).toContain('button:not([disabled])');
@@ -680,13 +680,17 @@ describe("dashboard shell", () => {
     expect(desktopInstaller).toContain("message.frameInfo.isMainFrame");
     expect(desktopInstaller).toContain('origin.protocol == "http"');
     expect(desktopInstaller).toContain('origin.host == "127.0.0.1"');
-    expect(desktopInstaller).toContain("guard let script = NSAppleScript(source: source)");
-    expect(desktopInstaller).toContain("appleScriptQuote(command)");
+    expect(desktopInstaller).toContain("openpty(&master, &slave");
+    expect(desktopInstaller).toContain("NSSecureTextField()");
+    expect(desktopInstaller).toContain("attributes.c_lflag & tcflag_t(ECHO)");
+    expect(desktopInstaller).toContain("window.sharingType = .none");
+    expect(desktopInstaller).toContain("trustedVaultExecutable(path: helperPath)");
     expect(desktopInstaller).toContain('notifyVaultCommandResult("failed")');
-    expect(desktopInstaller).toContain('notifyVaultCommandResult("opened")');
-    expect(desktopInstaller).toContain('init|unlock|lock|status|lost-passphrase)');
+    expect(desktopInstaller).toContain('notifyVaultCommandResult("presented")');
+    expect(desktopInstaller).toContain('init|unlock|lock)');
     expect(desktopInstaller).toContain('exec /bin/bash "\\' + "$" + '{REPO_ROOT}/aidevops.sh" vault');
     expect(desktopInstaller).toContain('default: return');
+    expect(desktopInstaller).not.toContain("NSAppleScript");
     expect(desktopInstaller).not.toContain('command = "aidevops vault');
   });
 
