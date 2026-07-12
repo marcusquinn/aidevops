@@ -63,6 +63,7 @@ gh() {
 	local top_command="${1:-}"
 	shift || true
 	if [[ "$top_command" == "api" && "${1:-}" == "repos/example/repo" ]]; then
+		printf 'api %s\n' "$*" >>"$GH_LOG"
 		printf '%s\n' R_example
 		return 0
 	fi
@@ -104,6 +105,20 @@ test_unvalidated_repository_fails_closed() {
 	else
 		print_result "unvalidated dependency repository fails closed" 0
 	fi
+	return 0
+}
+
+test_repository_identity_is_cached() {
+	local api_calls=0 line=""
+	_DEP_CACHED_REPO_SLUG=""
+	_DEP_CACHED_REPO_ID=""
+	reset_logs
+	_dep_validate_issue_target "example/repo" "3"
+	_dep_validate_issue_target "example/repo" "4"
+	while IFS= read -r line; do
+		[[ "$line" == api\ * ]] && api_calls=$((api_calls + 1))
+	done <"$GH_LOG"
+	[[ "$api_calls" -eq 1 ]] && print_result "repository identity is cached" 0 || print_result "repository identity is cached" 1 "expected 1 API call; got ${api_calls}"
 	return 0
 }
 
@@ -206,6 +221,7 @@ source "$DEP_GRAPH"
 
 test_label_only_blocker_enters_graph
 test_unvalidated_repository_fails_closed
+test_repository_identity_is_cached
 test_available_issue_stale_label_removed
 test_blocked_issue_label_removed_and_status_available
 test_defer_marker_preserves_label
