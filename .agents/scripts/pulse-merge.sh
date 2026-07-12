@@ -724,7 +724,7 @@ _handle_post_merge_actions() {
 			esac
 			set_solved_label "$linked_issue" "$repo_slug" "$_solved_actor" || true
 			clear_terminal_issue_dispatch_labels "$linked_issue" "$repo_slug" "post-merge-pr-${pr_number}" || true
-			gh issue close "$linked_issue" --repo "$repo_slug" 2>/dev/null || true
+			_gh_with_timeout write gh issue close "$linked_issue" --repo "$repo_slug" 2>/dev/null || true
 			# Reset fast-fail counter now that the issue is resolved (GH#2076)
 			fast_fail_reset "$linked_issue" "$repo_slug" || true
 			# t1934: Unlock the issue (locked at dispatch time)
@@ -764,7 +764,7 @@ _handle_post_merge_actions() {
 				esac
 				set_solved_label "$_superseded_original_issue" "$repo_slug" "$_sup_solved_actor" || true
 				clear_terminal_issue_dispatch_labels "$_superseded_original_issue" "$repo_slug" "post-merge-superseded-pr-${pr_number}" || true
-				gh issue close "$_superseded_original_issue" --repo "$repo_slug" 2>/dev/null || true
+				_gh_with_timeout write gh issue close "$_superseded_original_issue" --repo "$repo_slug" 2>/dev/null || true
 				fast_fail_reset "$_superseded_original_issue" "$repo_slug" || true
 				unlock_issue_after_worker "$_superseded_original_issue" "$repo_slug"
 			fi
@@ -853,7 +853,7 @@ _pm_close_superseded_duplicate_pr_if_issue_solved() {
 	superseding_pr=$(_psh_find_merged_closer_for_closed_issue "$repo_slug" "$linked_issue" "$pr_number" 2>/dev/null) || superseding_pr=""
 	[[ "$superseding_pr" =~ ^[0-9]+$ ]] || return 1
 
-	gh pr close "$pr_number" --repo "$repo_slug" \
+	_gh_with_timeout write gh pr close "$pr_number" --repo "$repo_slug" \
 		--comment "Closing as superseded: linked issue #${linked_issue} is already closed by merged PR #${superseding_pr}. This worker PR uses a closing keyword for the same issue, so merging it would duplicate an already-terminal fix.
 
 Intentional follow-ups should use For #${linked_issue} / Ref #${linked_issue} or an explicit follow-up/protection label instead of a closing keyword.
