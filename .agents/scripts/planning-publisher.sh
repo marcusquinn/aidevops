@@ -10,6 +10,7 @@ _PLANNING_PUBLISHER_LOADED=1
 PLANNING_PUBLISH_MAX_RETRIES="${PLANNING_PUBLISH_MAX_RETRIES:-3}"
 PLANNING_PUBLISH_RESULT=""
 PLANNING_PUBLICATION_ID=""
+PLANNING_PUBLISHED_COMMIT=""
 
 _planning_publish_log() {
 	local level="$1"
@@ -213,6 +214,7 @@ planning_publish() {
 		}
 		if [[ "$tree_sha" == "$(git -C "$repo_path" rev-parse "${parent_sha}^{tree}")" ]]; then
 			PLANNING_PUBLISH_RESULT="noop"
+			PLANNING_PUBLISHED_COMMIT="$parent_sha"
 			rm -rf "$temp_dir"
 			return 0
 		fi
@@ -231,10 +233,25 @@ planning_publish() {
 				return 1
 			}
 		fi
+		if [[ -n "${AIDEVOPS_PLANNING_PUSH_GUARD:-}" ]]; then
+			"$AIDEVOPS_PLANNING_PUSH_GUARD" "$repo_path" "$remote_name" "$branch_name" "$parent_sha" "$candidate_sha" "$attempt" || {
+				rm -rf "$temp_dir"
+				return 3
+			}
+		fi
 		push_rc=0
-		git -C "$repo_path" push -q "$remote_name" "${candidate_sha}:refs/heads/${branch_name}" || push_rc=$?
+		if [[ -n "${AIDEVOPS_PLANNING_FENCE_REF:-}" && -n "${AIDEVOPS_PLANNING_FENCE_SHA:-}" ]]; then
+			git -C "$repo_path" push -q --atomic \
+				--force-with-lease="refs/heads/${branch_name}:${parent_sha}" \
+				--force-with-lease="${AIDEVOPS_PLANNING_FENCE_REF}:${AIDEVOPS_PLANNING_FENCE_SHA}" \
+				"$remote_name" "${candidate_sha}:refs/heads/${branch_name}" \
+				"${AIDEVOPS_PLANNING_FENCE_SHA}:${AIDEVOPS_PLANNING_FENCE_REF}" || push_rc=$?
+		else
+			git -C "$repo_path" push -q --force-with-lease="refs/heads/${branch_name}:${parent_sha}" "$remote_name" "${candidate_sha}:refs/heads/${branch_name}" || push_rc=$?
+		fi
 		if [[ $push_rc -eq 0 ]]; then
 			PLANNING_PUBLISH_RESULT="published"
+			PLANNING_PUBLISHED_COMMIT="$candidate_sha"
 			_planning_publish_log success "Published planning files (${publication_id})"
 			rm -rf "$temp_dir"
 			return 0

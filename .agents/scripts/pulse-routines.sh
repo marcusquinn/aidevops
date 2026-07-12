@@ -281,6 +281,10 @@ _routine_parse_line() {
 # ([x] lines with repeat: fields), checks if due, and dispatches.
 #######################################
 evaluate_routines() {
+	local publication_worker="${SCRIPT_DIR}/task-publication-worker-helper.sh"
+	if [[ -x "$publication_worker" ]]; then
+		"$publication_worker" run >>"$LOGFILE" 2>&1 || echo "[pulse-wrapper] publication worker pass failed" >>"$LOGFILE"
+	fi
 	if [[ ! -x "$ROUTINE_SCHEDULE_HELPER" ]]; then
 		echo "[pulse-wrapper] evaluate_routines: schedule helper not found at ${ROUTINE_SCHEDULE_HELPER} — skipping" >>"$LOGFILE"
 		return 0
