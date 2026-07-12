@@ -72,7 +72,7 @@ test("default session title detection ignores AIDevOps suffix", () => {
   assert.equal(isDefaultSessionTitle("Study newsjack repository capabilities · AIDevOps 3.21.2"), false);
 });
 
-test("fallback title derives concise title from first meaningful prompt line", () => {
+test("fallback title derives a descriptive title from the complete first meaningful prompt line", () => {
   assert.equal(
     deriveFallbackTitleFromPrompt(`https://github.com/elvisun/newsjack
 
@@ -80,6 +80,12 @@ i'd like to add the capabilities this repo offers. there may be overlap`),
     "Add the capabilities this repo offers. there may be overlap",
   );
   assert.equal(deriveFallbackTitleFromPrompt("please review PR #123"), "Review PR #123");
+  const longPrompt =
+    "please improve aidevops session title renaming so issue and PR sessions remain descriptive in OpenCode history without arbitrary truncation";
+  assert.equal(
+    deriveFallbackTitleFromPrompt(longPrompt),
+    "Improve aidevops session title renaming so issue and PR sessions remain descriptive in OpenCode history without arbitrary truncation",
+  );
 });
 
 test("version reader prefers deployed agents VERSION", async () => {

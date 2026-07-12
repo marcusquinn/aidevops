@@ -96,11 +96,11 @@ function syncSessionWithBranch(
 
 export default tool({
   description:
-    "Rename the current session to a meaningful new title. For issue/PR work, start with the issue or PR marker and include the issue/PR title or a recognizable shortened form (for example, 'Issue #123: Fix dispatch title prefix' or 'PR #456: Refresh auth workflow tests') so tabs and session search remain distinguishable. The AIDevOps version suffix is appended automatically and should remain present.",
+    "Rename the current session to a long, descriptive title. For issue/PR work, start with the issue or PR marker and include the complete issue/PR title plus useful action context (for example, 'Issue #123: Fix dispatch title prefix — implementation and release' or 'PR #456: Refresh auth workflow tests — review thread'). Never use only an issue/PR number and do not impose an arbitrary character limit; OpenCode can display long titles. The AIDevOps version suffix is appended automatically and should remain present.",
   args: {
     title: tool.schema
       .string()
-      .describe("New meaningful title for the session (for issue/PR work, prefer 'Issue #123: <issue title>' or 'PR #456: <PR title>'; add a short action suffix like '— review thread' only when helpful; otherwise use a meaningful branch/task summary; keep the automatically appended AIDevOps version suffix)"),
+      .describe("Long, descriptive session title (for issue/PR work, use 'Issue #123: <complete issue title> — <action context>' or 'PR #456: <complete PR title> — <action context>'; never use a bare issue/PR number or an arbitrary character limit; otherwise summarize the task fully; keep the automatically appended AIDevOps version suffix)"),
   },
   async execute(args, context) {
     const { sessionID } = context

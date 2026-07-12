@@ -56,7 +56,7 @@ User-facing instructions must say "create a safe linked worktree for ...". Treat
 
 Non-git artifacts (`.venv/`, `node_modules/`, `dist/`, `.env`) don't transfer between worktrees — recreate in each. See `workflows/worktree.md`.
 
-**Session-Worktree Tracking**: After creating a worktree for issue/PR work, title the session with the work item first (`Issue #123: succinct description` or `PR #456: succinct description`) so Tabby tabs and OpenCode search group by number. Use `session-rename_sync_branch` only when there is no issue/PR context or no meaningful title yet.
+**Session-Worktree Tracking**: After creating a worktree for issue/PR work, give the session a long, descriptive title with the work item first (`Issue #123: <complete issue title> — <action context>` or `PR #456: <complete PR title> — <action context>`) so Tabby tabs and OpenCode search group by number while remaining distinguishable. Never use a bare issue/PR number or impose an arbitrary character limit. Use `session-rename_sync_branch` only when there is no issue/PR context or meaningful task title.
 
 **Scope Monitoring**: When work evolves significantly from the worktree ref/purpose, offer to create a safe linked worktree for the new scope, continue on current, or pause and preserve changes.
 

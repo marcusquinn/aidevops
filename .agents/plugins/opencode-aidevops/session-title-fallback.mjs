@@ -6,7 +6,6 @@ import { readAidevopsVersion, withAidevopsTitleSuffix } from "./session-title-su
 const AIDEVOPS_TITLE_SUFFIX_RE = /\s+· AIDevOps \d+\.\d+\.\d+$/;
 const DEFAULT_SESSION_TITLE_RE = /^New session - /;
 const URL_RE = /https?:\/\/\S+/g;
-const TITLE_MAX_LENGTH = 72;
 const FALLBACK_DELAY_MS = 12000;
 
 export function isDefaultSessionTitle(title) {
@@ -37,12 +36,8 @@ function titleCaseFirstWord(text) {
   return text.replace(/^([a-z])/, (letter) => letter.toUpperCase());
 }
 
-function trimTitle(text) {
-  return text.length <= TITLE_MAX_LENGTH ? text : `${text.slice(0, TITLE_MAX_LENGTH - 1).trimEnd()}…`;
-}
-
 export function deriveFallbackTitleFromPrompt(prompt) {
-  return trimTitle(titleCaseFirstWord(cleanedTitleLine(firstPromptLine(prompt))));
+  return titleCaseFirstWord(cleanedTitleLine(firstPromptLine(prompt)));
 }
 
 function getEventType(input) {
