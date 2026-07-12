@@ -305,6 +305,7 @@ _append_guard_block() {
 	local _guard_name="$2"
 	local _repo_rel_path="$3"
 	local _deployed_path="$4"
+	local _guard_var="${_guard_name//-/_}"
 
 	# Unquoted heredoc — ${_guard_name} and ${_repo_rel_path} expand here;
 	# \$_git_root and \$_stdin_data etc. are escaped so they become literal
@@ -312,14 +313,14 @@ _append_guard_block() {
 	# shellcheck disable=SC2016
 	cat >>"$_hook_path" <<GUARD_BLOCK
 # guard:${_guard_name}
-_${_guard_name}_hook=""
+_${_guard_var}_hook=""
 if [[ -n "\$_git_root" && -f "\${_git_root}/${_repo_rel_path}" ]]; then
-  _${_guard_name}_hook="\${_git_root}/${_repo_rel_path}"
+  _${_guard_var}_hook="\${_git_root}/${_repo_rel_path}"
 elif [[ -f "${_deployed_path}" ]]; then
-  _${_guard_name}_hook="${_deployed_path}"
+  _${_guard_var}_hook="${_deployed_path}"
 fi
-if [[ -n "\$_${_guard_name}_hook" ]]; then
-  printf '%s\n' "\$_stdin_data" | "\$_${_guard_name}_hook" "\$@" || _exit_code=\$?
+if [[ -n "\$_${_guard_var}_hook" ]]; then
+  printf '%s\n' "\$_stdin_data" | "\$_${_guard_var}_hook" "\$@" || _exit_code=\$?
 else
   printf '[pre-push][WARN] ${_guard_name} hook not found -- skipping\n' >&2
 fi

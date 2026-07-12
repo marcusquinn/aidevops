@@ -67,6 +67,7 @@ main() {
 	local common_dir
 	common_dir=$(/usr/bin/git -C "$eligible" rev-parse --git-common-dir)
 	assert_equal "1" "$(grep -c '# guard:repo-verify' "${eligible}/${common_dir}/hooks/pre-push" 2>/dev/null || printf 0)" "setup installs repo-verify in eligible repo"
+	assert_equal "0" "$(bash -n "${eligible}/${common_dir}/hooks/pre-push" 2>/dev/null; printf '%s' "$?")" "generated repo-verify dispatcher has valid shell identifiers"
 	common_dir=$(/usr/bin/git -C "$disabled" rev-parse --git-common-dir)
 	if [[ -f "${disabled}/${common_dir}/hooks/pre-push" ]]; then
 		assert_equal "0" "$(grep -c '# guard:repo-verify' "${disabled}/${common_dir}/hooks/pre-push" 2>/dev/null || printf 0)" "setup preserves explicit opt-out"
