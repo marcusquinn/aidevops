@@ -25,12 +25,42 @@ main() {
 		local arg="$1"
 		shift
 		case "$arg" in
-			--issue) [[ $# -gt 0 ]] || { printf 'ERROR: --issue requires a value\n' >&2; return 2; }; local value="$1"; issue="$value"; shift ;;
-			--repo) [[ $# -gt 0 ]] || { printf 'ERROR: --repo requires a value\n' >&2; return 2; }; local value="$1"; repo="$value"; shift ;;
-			--task) [[ $# -gt 0 ]] || { printf 'ERROR: --task requires a value\n' >&2; return 2; }; local value="$1"; task="$value"; shift ;;
-			--auto-dispatch) auto_dispatch=1 ;;
-			--help|-h) _usage; return 0 ;;
-			*) printf 'ERROR: unknown option: %s\n' "$arg" >&2; return 2 ;;
+		--issue)
+			[[ $# -gt 0 ]] || {
+				printf 'ERROR: --issue requires a value\n' >&2
+				return 2
+			}
+			local value="$1"
+			issue="$value"
+			shift
+			;;
+		--repo)
+			[[ $# -gt 0 ]] || {
+				printf 'ERROR: --repo requires a value\n' >&2
+				return 2
+			}
+			local value="$1"
+			repo="$value"
+			shift
+			;;
+		--task)
+			[[ $# -gt 0 ]] || {
+				printf 'ERROR: --task requires a value\n' >&2
+				return 2
+			}
+			local value="$1"
+			task="$value"
+			shift
+			;;
+		--auto-dispatch) auto_dispatch=1 ;;
+		--help | -h)
+			_usage
+			return 0
+			;;
+		*)
+			printf 'ERROR: unknown option: %s\n' "$arg" >&2
+			return 2
+			;;
 		esac
 	done
 	if [[ -z "$issue" || -z "$repo" || -z "$task" ]]; then
