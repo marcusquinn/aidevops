@@ -93,6 +93,36 @@ gh issue edit <N> --repo <slug> --remove-assignee <user>
 
 The wrapper currently self-assigns in violation of t2157. Until t2406/GH#19991 merges, manual unassign is required to avoid dispatch-blocking.
 
+## Dispatch Readiness Contract (brief schema v2)
+
+New briefs intended for auto-dispatch use `<!-- aidevops:brief-schema=v2 -->`
+from `templates/brief-template.md`. Before adding `auto-dispatch` or moving the
+issue to `status:queued`, run `verify-brief-helper.sh check-readiness <brief>`.
+Unmarked historical briefs retain the legacy heading-based check and are not
+retroactively blocked.
+
+Schema-v2 briefs must contain substantive, evidence-backed content for all of
+the following; headings or `N/A` alone do not pass:
+
+1. **Complete Write Surface:** search and record callers/readers,
+   writers/mutation paths, tests/fixtures, schemas/config, generated or
+   deployed mirrors, migrations/backfills, and cleanup/rollback paths. Name
+   concrete paths. Use `N/A` or "not yet knowable" only with the search or
+   task-shape evidence that makes it true, including documentation-only and
+   new-file-only work.
+2. **Hazards and Compatibility:** assess concurrency/atomicity,
+   migration/rollback ordering, mixed-version/backward compatibility,
+   idempotency/retry behavior, and partial-failure recovery. State the
+   preserved behavior when a hazard is absent.
+3. **Verification Before Dispatch:** provide executable focused commands and
+   map each command to the affected surfaces. Add a broad gate only when named
+   blast-radius evidence requires one.
+4. **Acceptance Criteria:** include at least two observable criteria with both
+   positive behavior and a negative/regression guarantee.
+
+The version marker is the compatibility boundary. Do not add it to an old
+brief unless that brief has been migrated to this complete contract.
+
 ## Core Rule
 
 **The brief IS the product.** A vague brief dispatched to Opus wastes more money than a prescriptive brief dispatched to Haiku. Invest the effort in the brief, not the worker.

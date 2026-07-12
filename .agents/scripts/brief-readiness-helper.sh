@@ -5,10 +5,9 @@
 # brief-readiness-helper.sh — Detect worker-ready issue bodies and generate
 # stub briefs linking to the canonical issue (t2417, GH#20015).
 #
-# An issue body is "worker-ready" when it already contains the structured
-# headings a worker needs to implement autonomously (Task/What, Why, How,
-# Acceptance, Files to modify). In that case, creating a separate brief
-# file at todo/tasks/{id}-brief.md is redundant — the issue IS the brief.
+# Historical issue bodies retain heading-based readiness. Bodies carrying the
+# brief schema-v2 marker must also contain substantive write-surface, hazard,
+# verification, and positive/negative acceptance evidence.
 #
 # This helper provides:
 #   1. A readiness detector (`check`) that scores an issue body against
@@ -61,6 +60,13 @@ fi
 # A body scoring >= THRESHOLD across both sets is worker-ready.
 # ---------------------------------------------------------------------------
 readonly DEFAULT_THRESHOLD=4
+readonly BRIEF_SCHEMA_V2_MARKER='<!-- aidevops:brief-schema=v2 -->'
+readonly BRIEF_BOOL_TRUE="true"
+readonly BRIEF_PARSER_AWK="${SCRIPT_DIR}/brief-readiness-parser.awk"
+readonly BRIEF_PARSE_UNFENCED_MODE="unfenced"
+readonly BRIEF_PARSE_VISIBLE_MODE="visible"
+readonly BRIEF_PARSE_SECTION_MODE="section"
+readonly BRIEF_PARSE_PROSE_MODE="prose"
 
 # Primary headings (the brief-template canonical set)
 readonly -a PRIMARY_HEADINGS=(
@@ -100,6 +106,194 @@ _score_body() {
 	return 0
 }
 
+_is_schema_v2_brief() {
+	local -a _args=("$@")
+	local body="${_args[0]}"
+	local unfenced=""
+
+	unfenced=$(_unfenced_brief_text "$body")
+	if printf '%s\n' "$unfenced" | grep -qF "$BRIEF_SCHEMA_V2_MARKER"; then
+		return 0
+	fi
+	return 1
+}
+
+_unfenced_brief_text() {
+	local -a _args=("$@")
+	local body="${_args[0]}"
+
+	printf '%s\n' "$body" | awk -v mode="$BRIEF_PARSE_UNFENCED_MODE" -f "$BRIEF_PARSER_AWK"
+	return 0
+}
+
+_visible_brief_text() {
+	local -a _args=("$@")
+	local body="${_args[0]}"
+
+	printf '%s\n' "$body" | awk -v mode="$BRIEF_PARSE_VISIBLE_MODE" -f "$BRIEF_PARSER_AWK"
+	return 0
+}
+
+_extract_markdown_section() {
+	local -a _args=("$@")
+	local body="${_args[0]}"
+	local heading="${_args[1]}"
+	local include_fenced="${_args[2]:-false}"
+
+	printf '%s\n' "$body" | awk \
+		-v mode="$BRIEF_PARSE_SECTION_MODE" \
+		-v target="$heading" \
+		-v include_fenced="$include_fenced" \
+		-v true_value="$BRIEF_BOOL_TRUE" \
+		-f "$BRIEF_PARSER_AWK"
+	return 0
+}
+
+_brief_prose_text() {
+	local -a _args=("$@")
+	local body="${_args[0]}"
+
+	printf '%s\n' "$body" | awk -v mode="$BRIEF_PARSE_PROSE_MODE" -f "$BRIEF_PARSER_AWK"
+	return 0
+}
+
+_field_line() {
+	local -a _args=("$@")
+	local section="${_args[0]}"
+	local field="${_args[1]}"
+
+	printf '%s\n' "$section" | grep -iF -m 1 "**${field}:**" || true
+	return 0
+}
+
+_field_is_substantive() {
+	local -a _args=("$@")
+	local section="${_args[0]}"
+	local field="${_args[1]}"
+	local line=""
+
+	line=$(_field_line "$section" "$field")
+	[[ -n "$line" ]] || return 1
+	if printf '%s\n' "$line" | grep -qiE ':\*\*[[:space:]]*($|TBD$|TODO$|N/?A[[:space:]]*$|unknown[[:space:]]*$|\{|<)'; then
+		return 1
+	fi
+	# The field wrapper contributes eight characters. Require at least four
+	# content characters so concrete short paths such as `app.py` remain valid.
+	[[ ${#line} -ge $((${#field} + 12)) ]] || return 1
+	return 0
+}
+
+_write_surface_field_is_valid() {
+	local -a _args=("$@")
+	local section="${_args[0]}"
+	local field="${_args[1]}"
+	local line=""
+
+	_field_is_substantive "$section" "$field" || return 1
+	line=$(_field_line "$section" "$field")
+	if printf '%s\n' "$line" | grep -qE "\`[^\`]+\`|(^|[[:space:]])(EDIT|NEW):"; then
+		return 0
+	fi
+	if printf '%s\n' "$line" | grep -qiE '(N/?A|not applicable|not yet knowable|unknown).*(because|evidence|searched|documentation-only|new-file-only|until|no existing)'; then
+		return 0
+	fi
+	return 1
+}
+
+_has_unfilled_placeholder() {
+	local -a _args=("$@")
+	local body="${_args[0]}"
+	local prose=""
+
+	prose=$(_brief_prose_text "$body")
+	if printf '%s\n' "$prose" | grep -qiE '<[[:alpha:]][^>]*>|\{[^{}]*(command|path|purpose|criterion|rationale|summary|deliverable|problem|evidence|task|title)[^{}]*\}'; then
+		return 0
+	fi
+	return 1
+}
+
+_has_file_target() {
+	local -a _args=("$@")
+	local section="${_args[0]}"
+
+	if printf '%s\n' "$section" | grep -qE "^[[:space:]]*-[[:space:]]+[\`]?(EDIT|NEW):[[:space:]]+[\`]?[^ \`{<]+"; then
+		return 0
+	fi
+	return 1
+}
+
+_has_implementation_step() {
+	local -a _args=("$@")
+	local section="${_args[0]}"
+
+	if printf '%s\n' "$section" | grep -qE '^[[:space:]]*[0-9]+\.[[:space:]]+[^<{][^{}]{8,}'; then
+		return 0
+	fi
+	return 1
+}
+
+_has_executable_verification() {
+	local -a _args=("$@")
+	local section="${_args[0]}"
+
+	if printf '%s\n' "$section" | grep -qE '^[[:space:]]*(\$[[:space:]]*)?(bash |shellcheck |pytest( |$)|python[0-9]* |node |npm |pnpm |yarn |bun |go test( |$)|cargo test( |$)|make |bundle exec |composer |git diff( |$)|\./|[.][[:alnum:]_/-]+\.sh([[:space:]]|$))'; then
+		return 0
+	fi
+	return 1
+}
+
+_validate_v2_body() {
+	local -a _args=("$@")
+	local body="${_args[0]}"
+	local visible=""
+	local files_to_modify=""
+	local write_surface=""
+	local implementation_steps=""
+	local hazards=""
+	local verification=""
+	local acceptance=""
+	local errors=""
+	local field=""
+	local checkbox_count=0
+	local checkbox_pattern='^[[:space:]]*-[[:space:]]+\[[ xX]\]'
+	local negative_pattern='regression|never|must not|does not|do not|without|rejects?|preserves?|no [[:alnum:]]'
+
+	visible=$(_visible_brief_text "$body")
+	files_to_modify=$(_extract_markdown_section "$visible" "### Files to Modify")
+	write_surface=$(_extract_markdown_section "$visible" "### Complete Write Surface")
+	implementation_steps=$(_extract_markdown_section "$visible" "### Implementation Steps")
+	hazards=$(_extract_markdown_section "$visible" "### Hazards and Compatibility")
+	verification=$(_extract_markdown_section "$visible" "### Verification Before Dispatch" "$BRIEF_BOOL_TRUE")
+	acceptance=$(_extract_markdown_section "$visible" "## Acceptance Criteria")
+
+	_has_file_target "$files_to_modify" || errors="${errors}files-to-modify:target;"
+	_has_implementation_step "$implementation_steps" || errors="${errors}implementation-steps:substantive;"
+
+	for field in "Callers/readers" "Writers/mutation paths" "Tests/fixtures" "Schemas/config" "Generated/deployed mirrors" "Migrations/backfills" "Cleanup/rollback paths"; do
+		_write_surface_field_is_valid "$write_surface" "$field" || errors="${errors}write-surface:${field};"
+	done
+
+	for field in "Concurrency/atomicity" "Migration/rollback" "Mixed-version/backward compatibility" "Idempotency/retry" "Partial failure/recovery"; do
+		_field_is_substantive "$hazards" "$field" || errors="${errors}hazard:${field};"
+	done
+
+	_field_is_substantive "$verification" "Surface mapping" || errors="${errors}verification:surface-mapping;"
+	_has_executable_verification "$verification" || errors="${errors}verification:command;"
+
+	checkbox_count=$(printf '%s\n' "$acceptance" | grep -cE "$checkbox_pattern" || true)
+	[[ "$checkbox_count" -ge 2 ]] || errors="${errors}acceptance:multiple-observable-criteria;"
+	printf '%s\n' "$acceptance" | grep -E "$checkbox_pattern" | grep -qiE "$negative_pattern" || errors="${errors}acceptance:negative-regression;"
+	printf '%s\n' "$acceptance" | grep -E "$checkbox_pattern" | grep -viE "$negative_pattern" | grep -q . || errors="${errors}acceptance:positive;"
+	_has_unfilled_placeholder "$visible" && errors="${errors}placeholder:unfilled;"
+
+	if [[ -n "$errors" ]]; then
+		printf 'VALIDATION_ERRORS=%s\n' "$errors"
+		return 1
+	fi
+	printf 'VALIDATION_ERRORS=none\n'
+	return 0
+}
+
 # ---------------------------------------------------------------------------
 # _is_worker_ready: check whether a body meets the readiness threshold.
 #
@@ -110,14 +304,21 @@ _is_worker_ready() {
 	local -a _iwr_args=("$@")
 	local body="${_iwr_args[0]}"
 	local threshold="${_iwr_args[1]:-${BRIEF_READINESS_THRESHOLD:-$DEFAULT_THRESHOLD}}"
+	local score_body="$body"
+	local schema_v2=0
+	local score=""
 
-	local score
-	score=$(_score_body "$body")
-
-	if [[ "$score" -ge "$threshold" ]]; then
-		return 0
+	if _is_schema_v2_brief "$body"; then
+		schema_v2=1
+		score_body=$(_unfenced_brief_text "$body")
 	fi
-	return 1
+	score=$(_score_body "$score_body")
+
+	[[ "$score" -ge "$threshold" ]] || return 1
+	if [[ "$schema_v2" -eq 1 ]]; then
+		_validate_v2_body "$body" >/dev/null || return 1
+	fi
+	return 0
 }
 
 # ---------------------------------------------------------------------------
@@ -190,12 +391,27 @@ cmd_check() {
 		body=$(_fetch_issue_body "$issue_number" "$slug") || return 1
 	fi
 
-	local score
-	score=$(_score_body "$body")
+	local score_body="$body"
+	local schema_v2=0
+	local score=""
 	local ready="false"
 	local exit_code=1
+	local schema="legacy"
+	local validation="VALIDATION_ERRORS=not-applicable"
 
-	if [[ "$score" -ge "$threshold" ]]; then
+	if _is_schema_v2_brief "$body"; then
+		schema_v2=1
+		score_body=$(_unfenced_brief_text "$body")
+	fi
+	score=$(_score_body "$score_body")
+
+	if [[ "$schema_v2" -eq 1 ]]; then
+		schema="v2"
+		if [[ "$score" -ge "$threshold" ]] && validation=$(_validate_v2_body "$body"); then
+			ready="$BRIEF_BOOL_TRUE"
+			exit_code=0
+		fi
+	elif [[ "$score" -ge "$threshold" ]]; then
 		ready="true"
 		exit_code=0
 	fi
@@ -203,6 +419,8 @@ cmd_check() {
 	printf 'WORKER_READY=%s\n' "$ready"
 	printf 'SCORE=%d\n' "$score"
 	printf 'THRESHOLD=%d\n' "$threshold"
+	printf 'SCHEMA=%s\n' "$schema"
+	printf '%s\n' "$validation"
 
 	return "$exit_code"
 }

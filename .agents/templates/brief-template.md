@@ -2,6 +2,8 @@
 mode: subagent
 ---
 
+<!-- aidevops:brief-schema=v2 -->
+
 <!-- SPDX-License-Identifier: MIT -->
 <!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
 # {task_id}: {Title}
@@ -178,8 +180,9 @@ or "Single-file config edit with exact code block provided -> tier:simple"}
 
 <!-- HEADING LOCK (t2063): the `## How` heading below must remain exactly
      "## How" (optionally with " (Approach)" suffix). The subsection headings
-     MUST be exactly "### Files to Modify", "### Implementation Steps", and
-     "### Verification". The issue-sync-lib.sh `_compose_issue_worker_guidance`
+     MUST include "### Files to Modify", "### Complete Write Surface",
+     "### Implementation Steps", "### Hazards and Compatibility", and
+     "### Verification Before Dispatch". The issue-sync-lib.sh `_compose_issue_worker_guidance`
      helper extracts these sections and promotes them to a top-level
      "Worker Guidance" block in the issue body so workers see actionable
      context without hunting for the brief. The matcher is case-insensitive
@@ -286,6 +289,20 @@ or "Single-file config edit with exact code block provided -> tier:simple"}
 - `NEW: path/to/new-file.ts` — {purpose, model on `path/to/reference-file.ts`}
 - `EDIT: path/to/existing.ts:45-60` — {what to change and why}
 
+### Complete Write Surface
+
+<!-- Search every category before dispatch. Each line must name concrete paths
+     or give evidence for N/A/not-yet-knowable. "N/A" alone is not sufficient.
+     Documentation-only and new-file-only tasks may use evidence-backed N/A. -->
+
+- **Callers/readers:** {paths and reference flow, or evidence-backed N/A}
+- **Writers/mutation paths:** {every known write path, or evidence-backed N/A}
+- **Tests/fixtures:** {tests, fixtures, and mocks that encode the behavior}
+- **Schemas/config:** {schema, config, serialization, or evidence-backed N/A}
+- **Generated/deployed mirrors:** {generated output, deployed copy, or evidence-backed N/A}
+- **Migrations/backfills:** {ordering and backfill paths, or evidence-backed N/A}
+- **Cleanup/rollback paths:** {cleanup, rollback, and deletion paths, or evidence-backed N/A}
+
 ### Implementation Steps
 
 <!-- For each file above, read the reference pattern and include a code skeleton
@@ -304,6 +321,17 @@ or "Single-file config edit with exact code block provided -> tier:simple"}
 
 2. {Next step with code skeleton if applicable}
 3. {Final step — e.g., "Run `shellcheck` on new file, verify hook fires with test harness"}
+
+### Hazards and Compatibility
+
+<!-- Assess every category. Record the preserved behavior and evidence when a
+     hazard is not applicable; do not use a bare N/A. -->
+
+- **Concurrency/atomicity:** {races, locking, transactions, or evidence-backed N/A}
+- **Migration/rollback:** {ordering, rollback, and partial migration behavior}
+- **Mixed-version/backward compatibility:** {old/new producer-consumer behavior}
+- **Idempotency/retry:** {safe replay, duplicate work, and retry behavior}
+- **Partial failure/recovery:** {interrupted writes, cleanup, and resume behavior}
 
 ### Complexity Impact
 
@@ -345,7 +373,7 @@ Worker MUST extract before adding new logic. Example:
 `_parse_phase_markers()` (~25 lines), `_validate_phase_entry()` (~15 lines) extracted
 from `_parse_phases_section` — then add new logic to the slimmed parent function.}
 
-### Verification
+### Verification Before Dispatch
 
 <!-- CI gate policy: prefer fast required develop gates (format, lint,
      typecheck, unit tests). Mark E2E/visual/performance checks as advisory
@@ -368,6 +396,8 @@ from `_parse_phases_section` — then add new logic to the slimmed parent functi
 {Focused test(s) covering the changed behaviour}
 {Changed-file or affected-package lint/typecheck/build; for aidevops use .agents/scripts/linters-local.sh --changed}
 ```
+
+- **Surface mapping:** {map each command to the files, write paths, hazards, and acceptance criteria it proves}
 
 - **Broad verification trigger:** {Not required | exact evidence that shared config, root tooling, dependency graph, cross-package contracts, or release infrastructure requires a full-repository gate}
 - **Broad verification command:** {Delete when not triggered; never add `linters-local.sh --full` merely as generic completion evidence}
@@ -430,6 +460,8 @@ from `_parse_phases_section` — then add new logic to the slimmed parent functi
 
 Each criterion may include an optional `verify:` block (YAML in a fenced code block)
 that defines how to machine-check the criterion. See `.agents/scripts/verify-brief.sh` for the runner.
+Schema-v2 briefs require at least two observable criteria: one positive behavior
+and one explicit negative/regression guarantee.
 
 - [ ] {Specific, testable criterion — e.g., "User can toggle sidebar with Cmd+B"}
 

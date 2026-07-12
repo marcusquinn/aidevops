@@ -82,6 +82,8 @@ In headless mode, default to option 1 (skip). See `scripts/brief-readiness-helpe
 
 Read `templates/brief-template.md` and format using `workflows/brief.md` for the classified tier. Populate from interview answers:
 
+For auto-dispatch, use the single `workflows/brief.md` "Dispatch Readiness Contract (brief schema v2)" checklist and run `verify-brief-helper.sh check-readiness <brief>` before queueing.
+
 | Interview Data | Brief Section |
 |---------------|---------------|
 | Task type + goal | **What** |
