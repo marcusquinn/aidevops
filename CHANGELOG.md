@@ -10,6 +10,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.32.56] - 2026-07-12
+
+### Changed
+
+- Maintenance: ratchet QLTY_SMELL_THRESHOLD 65→64 (-1) [skip ci]
+- Maintenance: sync ref:GH#27328 to TODO.md [skip ci]
+
 ## [3.32.55] - 2026-07-12
 
 ### Changed
