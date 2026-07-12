@@ -26,7 +26,13 @@ assert 'ripgrep) get_public_release_tag "BurntSushi/ripgrep" ;;' in content, (
     "Linux without Homebrew must resolve the latest ripgrep release"
 )
 
-helper_start = content.index("_brew_upgrade_cmd() {")
+helper_match = re.search(
+    r"^(?:function\s+)?_brew_upgrade_cmd\s*(?:\(\s*\))?\s*\{",
+    content,
+    re.MULTILINE,
+)
+assert helper_match, "Could not find _brew_upgrade_cmd function definition"
+helper_start = helper_match.start()
 helper_end = content.index("\n}", helper_start)
 helper = content[helper_start:helper_end]
 for manager_command in (
