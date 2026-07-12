@@ -182,6 +182,23 @@ if node "$COORDINATOR" bind-issue --task-id "$mapping_task" --repository-id R_ho
 fi
 [[ "$(node "$COORDINATOR" resolve-issue --task-id "$mapping_task" --repository-id R_home | jq -r '.syncMetadata.state')" == "CLOSED" ]]
 
+# Forge deliveries resolve by immutable repository and subject identities only,
+# advance one mapped task, and route its projection through the durable outbox.
+forge_first=$(node "$COORDINATOR" forge-event --operation-id delivery-1 --repository-id R_home \
+	--repository-slug renamed/home --event-kind issue --action reopened --subject-id I_home --cursor 2026-07-12T12:00:00Z)
+[[ "$(printf '%s' "$forge_first" | jq -r '.taskId')" == "$mapping_task" ]]
+[[ "$(printf '%s' "$forge_first" | jq -r '.status')" == "accepted" ]]
+[[ "$(sqlite3 "$AIDEVOPS_TASK_COORDINATOR_DB" "SELECT COUNT(*) FROM publication_intents WHERE operation_id='delivery-1';")" == "1" ]]
+[[ "$(node "$COORDINATOR" forge-event --operation-id delivery-1 --repository-id R_home --repository-slug renamed/home --event-kind issue --action reopened --subject-id I_home --cursor 2026-07-12T12:00:00Z)" == "$forge_first" ]]
+stale_forge=$(node "$COORDINATOR" forge-event --operation-id delivery-stale --repository-id R_home \
+	--repository-slug attacker/ignored --event-kind issue --action closed --subject-id I_home --cursor 2026-07-12T11:30:00Z)
+[[ "$(printf '%s' "$stale_forge" | jq -r '.status')" == "stale" ]]
+[[ "$(node "$COORDINATOR" resolve-issue --task-id "$mapping_task" --repository-id R_home | jq -r '.repositorySlug')" == "renamed/home" ]]
+unmapped_forge=$(node "$COORDINATOR" forge-event --operation-id delivery-unmapped --repository-id R_home \
+	--repository-slug attacker/ignored --event-kind pull_request --action merged --subject-id I_unmapped --cursor 2026-07-12T13:00:00Z)
+[[ "$(printf '%s' "$unmapped_forge" | jq -r '.status')" == "unmapped" ]]
+[[ "$(sqlite3 "$AIDEVOPS_TASK_COORDINATOR_DB" "SELECT COUNT(*) FROM publication_intents WHERE operation_id IN ('delivery-stale','delivery-unmapped');")" == "0" ]]
+
 # Concurrent conflicting first binds are serialized in SQLite: exactly one
 # identity wins and every competing identity fails without overwriting it.
 for i in $(seq 1 12); do

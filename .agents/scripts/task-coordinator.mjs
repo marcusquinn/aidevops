@@ -19,6 +19,8 @@ const TASK_ID = /^(?:t[1-9][0-9]{0,17}(?:\.[1-9][0-9]{0,17})*|to[0-7][0-9a-hjkmn
 const STATES = new Set(["active", "read-only", "redirected", "retired", "quarantined"]);
 const RESULTS = new Set(["published", "retryable", "indeterminate", "terminal", "conflict"]);
 const MAPPING_ROLES = new Set(["home", "implementation", "upstream"]);
+const FORGE_EVENT_KINDS = new Set(["issue", "pull_request", "push", "manual"]);
+const FORGE_EVENT_ACTIONS = new Set(["opened", "edited", "assigned", "closed", "reopened", "merged", "pushed", "requested"]);
 
 const SCHEMA = `
 PRAGMA foreign_keys=ON;
@@ -523,6 +525,46 @@ function resolveIssue({ taskId, forge = "github", repositoryId }, path = initial
   if (matches.length !== 1) throw new Error("issue mapping not found");
   return { ...matches[0], syncMetadata: JSON.parse(matches[0].syncMetadataJson) };
 }
+function forgeEventInput(input) {
+  const operationId = validId(input.operationId, "operation_id");
+  const repositoryId = validId(input.repositoryId, "repository_id");
+  const repositorySlug = input.repositorySlug;
+  if (typeof repositorySlug !== "string" || !/^[^/\s]+\/[^/\s]+$/.test(repositorySlug)) throw new TypeError("repository_slug is not canonical");
+  const eventKind = input.eventKind;
+  const action = input.action;
+  if (!FORGE_EVENT_KINDS.has(eventKind)) throw new TypeError("unsupported forge event kind");
+  if (!FORGE_EVENT_ACTIONS.has(action)) throw new TypeError("unsupported forge event action");
+  const subjectId = validId(input.subjectId, "subject_id");
+  const cursor = input.cursor;
+  if (typeof cursor !== "string" || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/.test(cursor) || !Number.isFinite(Date.parse(cursor))) {
+    throw new TypeError("cursor must be a canonical UTC RFC3339 timestamp");
+  }
+  return { operationId, repositoryId, repositorySlug, eventKind, action, subjectId, cursor: new Date(cursor).toISOString() };
+}
+function forgeEvent(input, path = initialise()) {
+  const value = forgeEventInput(input);
+  const behavior = { action: value.action, cursor: value.cursor, eventKind: value.eventKind, repositoryId: value.repositoryId, subjectId: value.subjectId };
+  const payloadText = jsonText(behavior, "forge event");
+  const payloadHash = hashText(payloadText);
+  const prior = operationResult(path, value.operationId, payloadHash);
+  if (prior) return prior;
+  const mapping = rows(path, `SELECT task_id AS taskId,state_cursor AS stateCursor FROM issue_mappings WHERE forge='github' AND repository_id=${sqlEscape(value.repositoryId)} AND issue_id=${sqlEscape(value.subjectId)};`)[0];
+  const timestamp = now();
+  const stale = Boolean(mapping?.stateCursor && mapping.stateCursor >= value.cursor);
+  const status = !mapping ? "unmapped" : stale ? "stale" : "accepted";
+  const intentId = mapping && !stale ? randomUUID() : null;
+  const result = { action: value.action, eventKind: value.eventKind, operationId: value.operationId, repositoryId: value.repositoryId, status, taskId: mapping?.taskId || null };
+  const resultText = JSON.stringify(result);
+  const projection = mapping && !stale ? jsonText({ paths: ["TODO.md"], projection: "forge-event", repositoryId: value.repositoryId, repositorySlug: value.repositorySlug }, "projection") : null;
+  sqlite(path, `PRAGMA foreign_keys=ON; BEGIN IMMEDIATE;
+INSERT INTO operations(operation_id,kind,task_id,payload_hash,payload_json,status,result_json,result_hash,created_at,updated_at)
+VALUES (${sqlEscape(value.operationId)},'forge.event',${sqlEscape(mapping?.taskId || null)},${sqlEscape(payloadHash)},${sqlEscape(payloadText)},'terminal',${sqlEscape(resultText)},'sha3-256:'||lower(hex(sha3(${sqlEscape(resultText)},256))),${sqlEscape(timestamp)},${sqlEscape(timestamp)});
+${mapping && !stale ? `UPDATE issue_mappings SET repository_slug=${sqlEscape(value.repositorySlug)},state_cursor=${sqlEscape(value.cursor)},sync_metadata_json=${sqlEscape(JSON.stringify({ action: value.action, eventKind: value.eventKind, source: "forge-event" }))},updated_at=${sqlEscape(timestamp)} WHERE task_id=${sqlEscape(mapping.taskId)} AND forge='github' AND repository_id=${sqlEscape(value.repositoryId)} AND issue_id=${sqlEscape(value.subjectId)} AND (state_cursor IS NULL OR state_cursor<${sqlEscape(value.cursor)});
+CREATE TEMP TABLE assert_event_mapping(value INTEGER CHECK(value=1)); INSERT INTO assert_event_mapping VALUES(changes()); DROP TABLE assert_event_mapping;
+INSERT INTO publication_intents(intent_id,operation_id,task_id,payload_hash,payload_json,status,created_at) VALUES (${sqlEscape(intentId)},${sqlEscape(value.operationId)},${sqlEscape(mapping.taskId)},${sqlEscape(hashText(projection))},${sqlEscape(projection)},'retryable',${sqlEscape(timestamp)});` : ""}
+INSERT INTO terminal_evidence(operation_id,result_state,evidence_json,occurred_at) VALUES (${sqlEscape(value.operationId)},'terminal',${sqlEscape(JSON.stringify({ status }))},${sqlEscape(timestamp)}); COMMIT;`);
+  return result;
+}
 function validateRestoreEvidence(evidence, fencingToken) {
   const text = jsonText(evidence, "registry_evidence", EVIDENCE_MAX_BYTES);
   if (evidence.cas !== "winner" || evidence.prior_revoked !== true || evidence.fencing_token !== fencingToken || !validId(evidence.transfer_record_id, "transfer_record_id")) {
@@ -584,13 +626,14 @@ const COMMAND_HANDLERS = {
   transition: (args, path) => transition({ state: option(args, "--state"), fencingToken: option(args, "--fencing-token"), evidence: parseJson(option(args, "--evidence", "{}")) }, path),
   "bind-issue": (args, path) => bindIssue({ taskId: option(args, "--task-id"), forge: option(args, "--forge", "github"), repositoryId: option(args, "--repository-id"), repositorySlug: option(args, "--repository-slug"), role: option(args, "--role", "home"), issueId: option(args, "--issue-id"), projectId: option(args, "--project-id"), displayNumber: option(args, "--display-number"), stateCursor: option(args, "--state-cursor"), syncMetadata: parseJson(option(args, "--sync-metadata", "{}")) }, path),
   "resolve-issue": (args, path) => resolveIssue({ taskId: option(args, "--task-id"), forge: option(args, "--forge", "github"), repositoryId: option(args, "--repository-id") }, path),
+  "forge-event": (args, path) => forgeEvent({ operationId: option(args, "--operation-id"), repositoryId: option(args, "--repository-id"), repositorySlug: option(args, "--repository-slug"), eventKind: option(args, "--event-kind"), action: option(args, "--action"), subjectId: option(args, "--subject-id"), cursor: option(args, "--cursor") }, path),
   restore: (args, path) => restore({ backupPath: option(args, "--backup"), registryEvidence: parseJson(option(args, "--registry-evidence", "{}")), priorEpoch: Number(option(args, "--prior-epoch")), newEpoch: Number(option(args, "--new-epoch")), fencingToken: option(args, "--fencing-token"), publishedHighWater: Number(option(args, "--published-high-water", "0")) }, path),
   verify: (_args, path) => verify(path),
   status: (_args, path) => ({ ...activeOrigin(path), dbPath: path }),
 };
 export function run(args = process.argv.slice(2)) {
   const command = args[0] || "help";
-  if (["help", "--help", "-h"].includes(command)) { process.stdout.write("Usage: task-coordinator.mjs allocate|publication-intent|lease-next|lease-check|lease-renew|lease-finish|publication-metrics|attempt|transition|bind-issue|resolve-issue|restore|verify|status\n"); return 0; }
+  if (["help", "--help", "-h"].includes(command)) { process.stdout.write("Usage: task-coordinator.mjs allocate|publication-intent|lease-next|lease-check|lease-renew|lease-finish|publication-metrics|attempt|transition|bind-issue|resolve-issue|forge-event|restore|verify|status\n"); return 0; }
   const handler = COMMAND_HANDLERS[command];
   const path = initialise();
   if (!handler) throw new TypeError(`unknown task-coordinator command: ${command}`);
@@ -603,4 +646,4 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   try { process.exitCode = run(); } catch (error) { process.stderr.write(`task-coordinator: ${error.message}\n`); process.exitCode = 1; }
 }
 
-export { allocate, backup, bindIssue, hashPayload, initialise, leaseNext, publicationMetrics, resolveIssue, restore, verify };
+export { allocate, backup, bindIssue, forgeEvent, hashPayload, initialise, leaseNext, publicationMetrics, resolveIssue, restore, verify };
