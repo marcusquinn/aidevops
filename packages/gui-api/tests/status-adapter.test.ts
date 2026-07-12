@@ -3,6 +3,7 @@ import { chmodSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { readStatus, readVaultStatus, readVaultSummary, STATUS_ADAPTER_COMMAND } from "../src/status-adapter";
+import { readSecretInventory } from "../src/status-vault";
 import { resolveBinary } from "../src/status-adapter-utils";
 import { readPulseWorkersSummary } from "../src/status-pulse-workers";
 
@@ -132,6 +133,39 @@ describe("status adapter", () => {
     expect(vault.status).toBe("unlocked");
     expect(vault.setup_state).toBe("migration-ready");
     expect(vault.readiness.migration_allowed).toBe(true);
+  });
+
+  test("accepts only deterministic names-only inventory while unlocked", () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), "aidevops-gui-inventory-"));
+    const scriptsDir = join(repoRoot, ".agents", "scripts");
+    mkdirSync(scriptsDir, { recursive: true });
+    writeFileSync(join(scriptsDir, "vault-helper.sh"), [
+      "case \"$1\" in",
+      "  status) printf '%s\\n' unlocked ;;",
+      "  setup-state) printf '%s\\n' migration-ready ;;",
+      "  *) exit 1 ;;",
+      "esac",
+    ].join("\n"));
+    writeFileSync(join(scriptsDir, "secret-helper.sh"), "printf '%s\\n' '{\"version\":1,\"backends\":{\"gopass\":\"available\",\"credentials\":\"missing\"},\"secrets\":[{\"name\":\"ALPHA_KEY\",\"status\":\"configured\"}]}'\n");
+    chmodSync(join(scriptsDir, "vault-helper.sh"), 0o600);
+    chmodSync(join(scriptsDir, "secret-helper.sh"), 0o600);
+
+    const vault = readVaultSummary(repoRoot);
+    const inventory = readSecretInventory(repoRoot, vault);
+    expect(inventory.secrets).toEqual([{ name: "ALPHA_KEY", status: "configured" }]);
+    expect(inventory.backends.gopass).toBe("available");
+  });
+
+  test("fails closed for malformed unlocked inventory", () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), "aidevops-gui-bad-inventory-"));
+    const scriptsDir = join(repoRoot, ".agents", "scripts");
+    mkdirSync(scriptsDir, { recursive: true });
+    writeFileSync(join(scriptsDir, "vault-helper.sh"), "case \"$1\" in status) echo unlocked ;; setup-state) echo migration-ready ;; esac\n");
+    writeFileSync(join(scriptsDir, "secret-helper.sh"), "printf '%s\\n' '{\"version\":1,\"backends\":{\"gopass\":\"available\",\"credentials\":\"missing\"},\"secrets\":[{\"name\":\"../ESCAPE\",\"status\":\"configured\"}]}'\n");
+    chmodSync(join(scriptsDir, "vault-helper.sh"), 0o600);
+    chmodSync(join(scriptsDir, "secret-helper.sh"), 0o600);
+
+    expect(readSecretInventory(repoRoot, readVaultSummary(repoRoot)).secrets).toEqual([]);
   });
 
   test("preserves documented uninitialized output from nonzero helper exits", () => {

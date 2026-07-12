@@ -1,10 +1,11 @@
 import { spawnSync } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, lstatSync } from "node:fs";
 import { join } from "node:path";
 import {
   type GuiVaultSetupState,
   type GuiVaultStatus,
   type GuiVaultStatusData,
+  type GuiSecretReference,
   statusFixture,
 } from "../../gui-shared/src";
 
@@ -78,6 +79,66 @@ export function readVaultSummary(repoRoot: string): GuiVaultStatusData {
       state: collection.state === "planned" ? "planned" : collectionState,
     })),
   };
+}
+
+export function readSecretInventory(repoRoot: string, vault: GuiVaultStatusData): {
+  backends: { gopass: "available" | "missing" | "error"; credentials: "available" | "missing" | "error" };
+  secrets: GuiSecretReference[];
+} {
+  const empty = { backends: { gopass: "missing", credentials: "missing" } as const, secrets: [] };
+  if (vault.status !== "unlocked" || !vault.unlocked || vault.locked || vault.helper_status !== "available") return empty;
+  const helperPath = join(repoRoot, ".agents", "scripts", "secret-helper.sh");
+  if (!isTrustedHelper(helperPath)) return empty;
+  const result = spawnSync("/bin/bash", [helperPath, "inventory"], {
+    encoding: "utf8",
+    env: vaultProbeEnvironment(),
+    maxBuffer: 65_536,
+    stdio: ["ignore", "pipe", "ignore"],
+    timeout: 300,
+  });
+  if (result.error !== undefined || result.signal !== null || result.status !== 0 || result.stdout.length > 65_535) return empty;
+  try {
+    const value: unknown = JSON.parse(result.stdout);
+    if (!isInventory(value)) return empty;
+    const confirmed = readVaultSummary(repoRoot);
+    if (confirmed.status !== "unlocked" || !confirmed.unlocked || confirmed.locked || confirmed.helper_status !== "available") return empty;
+    return { backends: value.backends, secrets: value.secrets };
+  } catch {
+    return empty;
+  }
+}
+
+function isTrustedHelper(path: string): boolean {
+  try {
+    const stat = lstatSync(path);
+    return stat.isFile() && !stat.isSymbolicLink() && stat.uid === process.getuid?.() && (stat.mode & 0o022) === 0;
+  } catch {
+    return false;
+  }
+}
+
+function isInventory(value: unknown): value is {
+  version: 1;
+  backends: { gopass: "available" | "missing" | "error"; credentials: "available" | "missing" | "error" };
+  secrets: GuiSecretReference[];
+} {
+  if (typeof value !== "object" || value === null) return false;
+  const inventory = value as Record<string, unknown>;
+  if (inventory.version !== 1 || !Array.isArray(inventory.secrets) || inventory.secrets.length > 512) return false;
+  const backends = inventory.backends as Record<string, unknown> | null;
+  const states = ["available", "missing", "error"];
+  if (backends === null || typeof backends !== "object" || !states.includes(String(backends.gopass)) || !states.includes(String(backends.credentials))) return false;
+  let previous = "";
+  const names = new Set<string>();
+  for (const entry of inventory.secrets) {
+    if (typeof entry !== "object" || entry === null) return false;
+    const secret = entry as Record<string, unknown>;
+    if (typeof secret.name !== "string" || !/^[A-Z][A-Z0-9_]{0,127}$/.test(secret.name) || secret.status !== "configured") return false;
+    if (secret.name <= previous || names.has(secret.name) || Object.keys(secret).some((key) => key !== "name" && key !== "status")) return false;
+    previous = secret.name;
+    names.add(secret.name);
+  }
+  return Object.keys(inventory).length === 3 && Object.keys(backends).length === 2;
 }
 
 function readVaultCommand<T extends VaultProbeValue>(

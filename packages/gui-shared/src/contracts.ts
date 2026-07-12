@@ -648,6 +648,10 @@ export interface GuiStatusData {
   pulse_workers: GuiPulseWorkerSummary;
   capabilities: GuiCapabilitySummary[];
   secrets: GuiSecretReference[];
+  secret_backends: {
+    gopass: "available" | "missing" | "error";
+    credentials: "available" | "missing" | "error";
+  };
   placeholders: string[];
 }
 

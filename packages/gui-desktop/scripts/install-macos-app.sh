@@ -202,9 +202,27 @@ run_vault_command() {
   local action="\$1"
   local command_name=""
   case "\$action" in
-    init|unlock|lock|status|lost-passphrase) command_name="\$action" ;;
+    init|unlock|lock) command_name="\$action" ;;
     *) printf 'Unsupported Vault action\n' >&2; return 2 ;;
   esac
+  local trusted_path=""
+  for trusted_path in \
+    "\${REPO_ROOT}/aidevops.sh" \
+    "\${REPO_ROOT}/.agents/scripts/vault-helper.sh" \
+    "\${REPO_ROOT}/.agents/scripts/vault_crypto_core.py"; do
+    if [[ ! -f "\${trusted_path}" || -L "\${trusted_path}" ]]; then
+      printf 'Untrusted Vault helper chain\n' >&2
+      return 2
+    fi
+    local owner_mode=""
+    owner_mode="\$(/usr/bin/stat -f '%u %Lp' "\${trusted_path}" 2>/dev/null)" || return 2
+    local owner="\${owner_mode%% *}"
+    local mode="\${owner_mode##* }"
+    if [[ "\${owner}" != "\$(/usr/bin/id -u)" || \$((8#\${mode} & 8#022)) -ne 0 ]]; then
+      printf 'Untrusted Vault helper chain\n' >&2
+      return 2
+    fi
+  done
   AIDEVOPS_SESSION_ID="gui-desktop" exec /bin/bash "\${REPO_ROOT}/aidevops.sh" vault "\$command_name"
   return 1
 }
@@ -451,6 +469,7 @@ write_webview_source() {
 
   cat > "$swift_source" <<'SWIFT'
 import AppKit
+import Darwin
 import WebKit
 
 final class DraggableTitlebarView: NSView {
@@ -477,10 +496,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     private let serviceQueue = DispatchQueue(label: "sh.aidevops.gui.services")
     private var hasLoadedDashboard = false
     private var servicesStopped = false
+    private var vaultProcess: Process?
+    private var vaultMaster: FileHandle?
+    private var vaultSlaveFD: Int32 = -1
+    private var vaultOverlay: NSView?
+    private var vaultOutput: NSTextView?
+    private var vaultInput: NSSecureTextField?
+    private var vaultSubmit: NSButton?
+    private var vaultAllowsVisibleAcknowledgement = false
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         configureMenu()
         configureWindow()
+        NSWorkspace.shared.notificationCenter.addObserver(self, selector: #selector(cancelVaultForSessionChange(_:)), name: NSWorkspace.sessionDidResignActiveNotification, object: nil)
+        NSWorkspace.shared.notificationCenter.addObserver(self, selector: #selector(cancelVaultForSessionChange(_:)), name: NSWorkspace.screensDidSleepNotification, object: nil)
         startServicesAndLoadApp()
     }
 
@@ -489,6 +518,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        closeVaultTerminal(result: "cancelled")
         saveMainWindowFrame()
         stopServices()
         return .terminateNow
@@ -551,36 +581,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         // action. The bundled launcher independently allowlists it and resolves
         // the repository CLI without PATH lookup.
         switch action {
-        case "init", "unlock", "lock", "status", "lost-passphrase": break
+        case "init", "unlock", "lock": break
         default: return
         }
-
-        guard let helperPath = Bundle.main.path(forResource: "aidevops-gui-services", ofType: "sh") else {
-            NSSound.beep()
-            notifyVaultCommandResult("failed")
-            return
-        }
-        guard helperPath.rangeOfCharacter(from: .newlines) == nil else {
-            NSSound.beep()
-            notifyVaultCommandResult("failed")
-            return
-        }
-
-        let command = "/bin/bash \(shellQuote(helperPath)) vault-command \(shellQuote(action))"
-        let source = "tell application \"Terminal\"\nactivate\ndo script \(appleScriptQuote(command))\nend tell"
-        guard let script = NSAppleScript(source: source) else {
-            NSSound.beep()
-            notifyVaultCommandResult("failed")
-            return
-        }
-        var error: NSDictionary?
-        script.executeAndReturnError(&error)
-        if error != nil {
-            NSSound.beep()
-            notifyVaultCommandResult("failed")
-            return
-        }
-        notifyVaultCommandResult("opened")
+        presentVaultTerminal(action: action)
     }
 
     private func isTrustedVaultMessage(_ message: WKScriptMessage) -> Bool {
@@ -588,20 +592,187 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         return message.frameInfo.isMainFrame && origin.protocol == "http" && origin.host == "127.0.0.1" && origin.port == Int(webPort)
     }
 
-    private func shellQuote(_ value: String) -> String {
-        return "'" + value.replacingOccurrences(of: "'", with: "'\\''") + "'"
-    }
-
-    private func appleScriptQuote(_ value: String) -> String {
-        let escaped = value
-            .replacingOccurrences(of: "\\", with: "\\\\")
-            .replacingOccurrences(of: "\"", with: "\\\"")
-        return "\"\(escaped)\""
-    }
-
     private func notifyVaultCommandResult(_ result: String) {
+        guard ["presented", "running", "succeeded", "failed", "cancelled"].contains(result) else { return }
         let script = "window.dispatchEvent(new CustomEvent('aidevops:vault-command-result', { detail: '\(result)' }))"
         webView.evaluateJavaScript(script, completionHandler: nil)
+    }
+
+    private func presentVaultTerminal(action: String) {
+        guard vaultProcess == nil, let contentView = window.contentView else {
+            notifyVaultCommandResult("failed")
+            return
+        }
+        let helperPath = Bundle.main.path(forResource: "aidevops-gui-services", ofType: "sh") ?? ""
+        guard trustedVaultExecutable(path: helperPath) else {
+            NSSound.beep()
+            notifyVaultCommandResult("failed")
+            return
+        }
+
+        let overlay = NSVisualEffectView()
+        overlay.material = .hudWindow
+        overlay.blendingMode = .withinWindow
+        overlay.translatesAutoresizingMaskIntoConstraints = false
+        let title = NSTextField(labelWithString: "Secure Vault \(action)")
+        title.font = .boldSystemFont(ofSize: 18)
+        title.translatesAutoresizingMaskIntoConstraints = false
+        let scroll = NSScrollView()
+        scroll.hasVerticalScroller = true
+        scroll.translatesAutoresizingMaskIntoConstraints = false
+        let output = NSTextView()
+        output.isEditable = false
+        output.isSelectable = true
+        output.font = .monospacedSystemFont(ofSize: 13, weight: .regular)
+        output.string = "Starting fixed Vault action…\n"
+        scroll.documentView = output
+        let input = NSSecureTextField()
+        input.placeholderString = "Secure input becomes available when requested"
+        input.isEnabled = false
+        input.translatesAutoresizingMaskIntoConstraints = false
+        let submit = NSButton(title: "Submit", target: self, action: #selector(submitVaultInput(_:)))
+        submit.isEnabled = false
+        submit.translatesAutoresizingMaskIntoConstraints = false
+        let cancel = NSButton(title: "Cancel", target: self, action: #selector(cancelVaultTerminal(_:)))
+        cancel.keyEquivalent = "\u{1b}"
+        cancel.translatesAutoresizingMaskIntoConstraints = false
+        for view in [title, scroll, input, submit, cancel] { overlay.addSubview(view) }
+        contentView.addSubview(overlay)
+        NSLayoutConstraint.activate([
+            overlay.leadingAnchor.constraint(equalTo: contentView.leadingAnchor), overlay.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
+            overlay.topAnchor.constraint(equalTo: contentView.topAnchor), overlay.bottomAnchor.constraint(equalTo: contentView.bottomAnchor),
+            title.leadingAnchor.constraint(equalTo: overlay.leadingAnchor, constant: 32), title.topAnchor.constraint(equalTo: overlay.topAnchor, constant: 48),
+            scroll.leadingAnchor.constraint(equalTo: title.leadingAnchor), scroll.trailingAnchor.constraint(equalTo: overlay.trailingAnchor, constant: -32),
+            scroll.topAnchor.constraint(equalTo: title.bottomAnchor, constant: 18), scroll.bottomAnchor.constraint(equalTo: input.topAnchor, constant: -16),
+            input.leadingAnchor.constraint(equalTo: title.leadingAnchor), input.trailingAnchor.constraint(equalTo: submit.leadingAnchor, constant: -10), input.bottomAnchor.constraint(equalTo: overlay.bottomAnchor, constant: -32),
+            submit.trailingAnchor.constraint(equalTo: cancel.leadingAnchor, constant: -10), submit.centerYAnchor.constraint(equalTo: input.centerYAnchor),
+            cancel.trailingAnchor.constraint(equalTo: scroll.trailingAnchor), cancel.centerYAnchor.constraint(equalTo: input.centerYAnchor)
+        ])
+        vaultOverlay = overlay
+        vaultOutput = output
+        vaultInput = input
+        vaultSubmit = submit
+        window.sharingType = .none
+        titlebarCameraButton?.isEnabled = false
+        notifyVaultCommandResult("presented")
+        startVaultPTY(helperPath: helperPath, action: action)
+    }
+
+    private func trustedVaultExecutable(path: String) -> Bool {
+        guard !path.isEmpty, let attributes = try? FileManager.default.attributesOfItem(atPath: path),
+              let type = attributes[.type] as? FileAttributeType, type == .typeRegular,
+              let owner = attributes[.ownerAccountID] as? NSNumber, owner.uint32Value == getuid(),
+              let permissions = attributes[.posixPermissions] as? NSNumber, permissions.intValue & 0o022 == 0 else { return false }
+        let values = try? URL(fileURLWithPath: path).resourceValues(forKeys: [.isSymbolicLinkKey])
+        return values?.isSymbolicLink == false
+    }
+
+    private func startVaultPTY(helperPath: String, action: String) {
+        var master: Int32 = -1
+        var slave: Int32 = -1
+        guard openpty(&master, &slave, nil, nil, nil) == 0 else {
+            closeVaultTerminal(result: "failed")
+            return
+        }
+        vaultSlaveFD = slave
+        let masterHandle = FileHandle(fileDescriptor: master, closeOnDealloc: true)
+        let slaveHandle = FileHandle(fileDescriptor: slave, closeOnDealloc: false)
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/bash")
+        process.arguments = [helperPath, "vault-command", action]
+        process.environment = ["HOME": FileManager.default.homeDirectoryForCurrentUser.path, "PATH": "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin", "AIDEVOPS_SESSION_ID": "gui-desktop-secure-pty", "TERM": "dumb"]
+        process.standardInput = slaveHandle
+        process.standardOutput = slaveHandle
+        process.standardError = slaveHandle
+        masterHandle.readabilityHandler = { [weak self] handle in
+            let data = handle.availableData
+            guard !data.isEmpty else { return }
+            DispatchQueue.main.async { self?.appendVaultOutput(data) }
+        }
+        process.terminationHandler = { [weak self] process in
+            DispatchQueue.main.async { self?.finishVaultTerminal(succeeded: process.terminationStatus == 0) }
+        }
+        vaultMaster = masterHandle
+        vaultProcess = process
+        do {
+            try process.run()
+            close(slave)
+            vaultSlaveFD = -1
+            notifyVaultCommandResult("running")
+        } catch {
+            closeVaultTerminal(result: "failed")
+        }
+    }
+
+    private func appendVaultOutput(_ data: Data) {
+        guard let text = String(data: data, encoding: .utf8) else { return }
+        let sanitized = text.unicodeScalars.filter { scalar in scalar == "\n" || scalar == "\r" || scalar == "\t" || scalar.value >= 0x20 && scalar.value != 0x7f }.map(String.init).joined()
+        vaultOutput?.string.append(String(sanitized.suffix(16_384)))
+        vaultOutput?.scrollToEndOfDocument(nil)
+        var attributes = termios()
+        let echoDisabled = vaultMaster.map { tcgetattr($0.fileDescriptor, &attributes) == 0 && (attributes.c_lflag & tcflag_t(ECHO)) == 0 } ?? false
+        vaultAllowsVisibleAcknowledgement = !echoDisabled && sanitized.contains("I UNDERSTAND")
+        let acceptsInput = echoDisabled || vaultAllowsVisibleAcknowledgement
+        vaultInput?.isEnabled = acceptsInput
+        vaultSubmit?.isEnabled = acceptsInput
+        if acceptsInput { window.makeFirstResponder(vaultInput) }
+    }
+
+    @objc private func submitVaultInput(_ sender: Any?) {
+        guard let input = vaultInput, input.isEnabled, let master = vaultMaster else { return }
+        var attributes = termios()
+        let echoDisabled = tcgetattr(master.fileDescriptor, &attributes) == 0 && (attributes.c_lflag & tcflag_t(ECHO)) == 0
+        if !echoDisabled && (!vaultAllowsVisibleAcknowledgement || input.stringValue != "I UNDERSTAND") {
+            NSSound.beep()
+            return
+        }
+        var bytes = Array(input.stringValue.utf8)
+        input.stringValue = ""
+        vaultAllowsVisibleAcknowledgement = false
+        input.isEnabled = false
+        vaultSubmit?.isEnabled = false
+        guard !bytes.isEmpty else { return }
+        bytes.append(0x0a)
+        let data = Data(bytes)
+        do { try master.write(contentsOf: data) } catch { closeVaultTerminal(result: "failed") }
+        bytes.withUnsafeMutableBytes { buffer in
+            buffer.initializeMemory(as: UInt8.self, repeating: 0)
+        }
+    }
+
+    @objc private func cancelVaultTerminal(_ sender: Any?) {
+        closeVaultTerminal(result: "cancelled")
+    }
+
+    private func finishVaultTerminal(succeeded: Bool) {
+        let result = succeeded ? "succeeded" : "failed"
+        appendVaultOutput(Data("\nVault action \(result). Close this secure surface.\n".utf8))
+        vaultInput?.isEnabled = false
+        vaultSubmit?.isEnabled = false
+        notifyVaultCommandResult(result)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in self?.closeVaultTerminal(result: nil) }
+    }
+
+    private func closeVaultTerminal(result: String?) {
+        vaultProcess?.terminationHandler = nil
+        if vaultProcess?.isRunning == true { vaultProcess?.terminate() }
+        vaultMaster?.readabilityHandler = nil
+        try? vaultMaster?.close()
+        if vaultSlaveFD >= 0 { close(vaultSlaveFD) }
+        vaultInput?.stringValue = ""
+        vaultOutput?.string = ""
+        vaultOverlay?.removeFromSuperview()
+        vaultProcess = nil
+        vaultMaster = nil
+        vaultSlaveFD = -1
+        vaultInput = nil
+        vaultOutput = nil
+        vaultSubmit = nil
+        vaultOverlay = nil
+        vaultAllowsVisibleAcknowledgement = false
+        window?.sharingType = .readOnly
+        titlebarCameraButton?.isEnabled = true
+        if let result = result { notifyVaultCommandResult(result) }
     }
 
     private func revealFileURL(_ url: URL) -> Bool {
@@ -874,7 +1045,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     }
 
     func windowWillClose(_ notification: Notification) {
+        closeVaultTerminal(result: "cancelled")
         saveMainWindowFrame()
+    }
+
+    @objc private func cancelVaultForSessionChange(_ notification: Notification) {
+        closeVaultTerminal(result: "cancelled")
     }
 
     @objc private func reloadPage(_ sender: Any?) {
@@ -1131,6 +1307,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     }
 
     @objc private func captureAppScreenshot(_ sender: Any?) {
+        guard vaultOverlay == nil else { NSSound.beep(); return }
         guard let contentView = window.contentView else {
             return
         }
@@ -1147,6 +1324,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     }
 
     @objc private func capturePageScreenshot(_ sender: Any?) {
+        guard vaultOverlay == nil else { NSSound.beep(); return }
         let script = """
         (() => {
           const el = document.querySelector('.workspace-scroll');

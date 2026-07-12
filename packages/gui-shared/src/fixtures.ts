@@ -495,6 +495,7 @@ export const statusFixture: GuiStatusData = {
     },
   ],
   secrets: [],
+  secret_backends: { gopass: "missing", credentials: "missing" },
   placeholders: [
     "Settings, repos, routines, OpenCode sessions, and capabilities will be added as read-only adapters.",
   ],

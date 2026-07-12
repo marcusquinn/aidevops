@@ -63,11 +63,11 @@ interface DialogContent {
 }
 
 const dialogContentFactories: Record<VaultDialogIntent, (vault: GuiVaultStatusData) => DialogContent> = {
-  lock: () => ({ action: "Open lock terminal", detail: "Locking forgets in-memory keys and hides protected previews again.", notice: "The fixed local command does not receive browser data or secret material.", title: "Lock local Vault" }),
-  recover: () => ({ action: "Open recovery guidance", detail: "Vault metadata appears damaged. Preserve existing encrypted data and review conservative recovery options.", notice: "Do not initialise with --force or overwrite the existing Vault.", title: "Review Vault recovery" }),
-  setup: () => ({ action: "Open setup terminal", detail: "Create this device's Vault once through the secure local helper.", notice: "Save the new passphrase in a trusted password manager. aidevops cannot recover it.", title: "Set up Vault" }),
+  lock: () => ({ action: "Lock Vault", detail: "Locking forgets in-memory keys and hides protected previews again.", notice: "The fixed native action does not receive browser data or secret material.", title: "Lock local Vault" }),
+  recover: () => ({ action: "Refresh status", detail: "Vault metadata appears damaged. Preserve existing encrypted data and use direct CLI recovery guidance.", notice: "Do not initialise with --force or overwrite the existing Vault.", title: "Review Vault recovery" }),
+  setup: () => ({ action: "Set up securely", detail: "Create this device's Vault in the native secure surface.", notice: "Save the new passphrase in a trusted password manager. aidevops cannot recover it.", title: "Set up Vault" }),
   unavailable: () => ({ action: "Retry status", detail: "Vault readiness is not authoritative, so setup and passphrase actions are disabled.", notice: "Check the local helper and crypto runtime, then retry. Existing encrypted data will not be reinitialised.", title: "Vault status unavailable" }),
-  unlock: (vault) => ({ action: "Open secure terminal", detail: "Unlock the existing Vault with the passphrase you already saved.", notice: vault.unlock_hint, title: "Unlock existing Vault" }),
+  unlock: () => ({ action: "Unlock securely", detail: "Unlock the existing Vault with the passphrase you already saved.", notice: "Passphrase input remains in the native secure surface and never enters the web view.", title: "Unlock existing Vault" }),
 };
 
 const dialogIcons: Record<VaultDialogIntent, IconType> = {
@@ -109,6 +109,8 @@ const launchStatusPresentation: Partial<Record<VaultLaunchStatus, { Icon: IconTy
   copied: { Icon: FiClipboard, className: "vault-valid", role: "status", text: "Command copied. Run it in your local terminal." },
   failed: { Icon: FiAlertTriangle, className: "vault-invalid", role: "alert", text: "Open a local terminal and run the displayed command." },
   opened: { Icon: FiCheckCircle, className: "vault-valid", role: "status", text: "Secure terminal opened. Return here after the command completes; status refreshes on focus." },
+  succeeded: { Icon: FiCheckCircle, className: "vault-valid", role: "status", text: "Vault action completed securely." },
+  cancelled: { Icon: FiAlertTriangle, className: "vault-invalid", role: "status", text: "Vault action cancelled and native buffers cleared." },
   requesting: { Icon: FiTerminal, className: "vault-valid", role: "status", text: "Requesting the secure local terminal…" },
 };
 
