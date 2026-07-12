@@ -2087,15 +2087,6 @@ _dispatch_launch_worker() {
 	lock_issue_for_worker "$issue_number" "$repo_slug"
 	_ds_record "$issue_number" "$repo_slug" "lock_issue" "$_ds_t0"
 
-	# GH#17584 / t2433: The git pull that was here has been moved earlier in
-	# the dispatch path to _pulse_refresh_repo (pulse-wrapper.sh), which is
-	# called once per (repo, cycle) before any gate evaluation — including the
-	# large-file gate at pulse-dispatch-core.sh:867. Moving it earlier ensures
-	# the large-file simplification gate measures the post-split line count,
-	# preventing false-positive file-size-debt issues after a split PR merges.
-	# The pull still happens before the worker starts; it now also happens before
-	# the gate that decides whether to dispatch at all. See GH#20071.
-
 	# t2981: capture pre-creation return code — skip dispatch on failure
 	# instead of falling back to canonical repo on the default branch.
 	_ds_t0=$(_ds_now_ns)
