@@ -35,7 +35,6 @@ import { createShellEnvHook } from "./shell-env.mjs";
 import { compactingHook } from "./compaction.mjs";
 import { INTENT_FIELD } from "./intent-tracing.mjs";
 import { createGreetingHandler } from "./greeting.mjs";
-import { createSessionStartGreetingGate } from "./ttsr.mjs";
 import { applyImageSizeGuard } from "./quality-hooks-image.mjs";
 import { createSessionTitleFallbackHandler } from "./session-title-fallback.mjs";
 import { createSessionTitleSuffixHandler } from "./session-title-suffix.mjs";
@@ -46,7 +45,7 @@ import { createSessionContinuationGuard } from "./session-continuation-guard.mjs
 // Existing modules
 import { createTools } from "./tools.mjs";
 import { initObservability, handleEvent } from "./observability.mjs";
-import { createTtsrHooks } from "./ttsr.mjs";
+import { createSessionStartGreetingGate, createTtsrHooks } from "./ttsr.mjs";
 import { createPoolAuthHook, createPoolTool, initPoolAuth, getAccounts } from "./oauth-pool.mjs";
 import { createProviderAuthHook } from "./provider-auth.mjs";
 import { installOpenAIProviderFetchRotation } from "./openai-provider-auth.mjs";

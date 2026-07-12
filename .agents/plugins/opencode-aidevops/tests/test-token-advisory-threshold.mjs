@@ -24,6 +24,7 @@ function createHooks(options = {}) {
     run: () => "",
     intentField: "agent__intent",
     isHeadless: options.isHeadless || (() => false),
+    shouldInjectGreeting: options.shouldInjectGreeting,
   });
   return { hooks, logs };
 }
@@ -139,18 +140,9 @@ describe("token cost advisory threshold", () => {
   test("injects the greeting only on the first request of an interactive root session", async () => {
     const client = { session: { get: async () => ({ data: { id: "root-session" } }) } };
     const shouldInjectGreeting = createSessionStartGreetingGate(client);
-    const { hooks } = createHooks();
+    const { hooks } = createHooks({ shouldInjectGreeting });
     const first = { system: ["base system prompt"] };
     const later = { system: ["base system prompt"] };
-    hooks.systemTransformHook = createTtsrHooks({
-      agentsDir: join(tmpdir(), "greeting-once-agents"),
-      scriptsDir: join(tmpdir(), "greeting-once-scripts"),
-      readIfExists: () => "",
-      qualityLog: () => {},
-      run: () => "",
-      intentField: "agent__intent",
-      shouldInjectGreeting,
-    }).systemTransformHook;
 
     await hooks.systemTransformHook({ sessionID: "root-session", model: { providerID: "openai" } }, first);
     await hooks.systemTransformHook({ sessionID: "root-session", model: { providerID: "openai" } }, later);
@@ -162,19 +154,10 @@ describe("token cost advisory threshold", () => {
   test("does not inject the greeting into subagent sessions", async () => {
     const client = { session: { get: async () => ({ data: { id: "child-session", parentID: "root-session" } }) } };
     const shouldInjectGreeting = createSessionStartGreetingGate(client);
-    const { hooks } = createHooks();
+    const { hooks } = createHooks({ shouldInjectGreeting });
     const output = { system: ["base system prompt"] };
-    const scopedHooks = createTtsrHooks({
-      agentsDir: join(tmpdir(), "greeting-child-agents"),
-      scriptsDir: join(tmpdir(), "greeting-child-scripts"),
-      readIfExists: () => "",
-      qualityLog: () => {},
-      run: () => "",
-      intentField: "agent__intent",
-      shouldInjectGreeting,
-    });
 
-    await scopedHooks.systemTransformHook({ sessionID: "child-session", model: { providerID: "openai" } }, output);
+    await hooks.systemTransformHook({ sessionID: "child-session", model: { providerID: "openai" } }, output);
 
     assert.equal(output.system[0], "base system prompt");
   });
