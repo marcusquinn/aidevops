@@ -240,7 +240,11 @@ _count_deployed_agent_files() {
 	local target_dir="$1"
 	local file_count="0"
 	if [[ -d "$target_dir" ]]; then
-		file_count=$(find "$target_dir" -type f 2>/dev/null | wc -l | tr -d '[:space:]')
+		# Runtime bundle activation makes ~/.aidevops/agents an atomic symlink.
+		# GNU/BSD find do not traverse a command-line symlink unless -L is set,
+		# so the old count returned zero immediately after a successful activation
+		# and rolled the deployment back to the previous bundle.
+		file_count=$(find -L "$target_dir" -type f 2>/dev/null | wc -l | tr -d '[:space:]')
 	fi
 	[[ "$file_count" =~ ^[0-9]+$ ]] || file_count=0
 	printf '%s\n' "$file_count"
