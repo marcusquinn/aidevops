@@ -247,13 +247,17 @@ _push_process_task() {
 	rc=$?
 	if [[ $rc -eq 0 && -n "$_PUSH_CREATED_NUM" ]]; then
 		print_success "Created #${_PUSH_CREATED_NUM}: $title"
+		add_gh_ref_to_todo "$task_id" "$_PUSH_CREATED_NUM" "$todo_file"
+		if ! require_task_issue_mapping "$task_id" "$todo_file" "$repo" "$_PUSH_CREATED_NUM"; then
+			print_error "Created #${_PUSH_CREATED_NUM}, but immutable mapping validation failed; skipping post-create writes"
+			return 1
+		fi
 		# Apply tier label via the replace-not-append helper so any existing
 		# tier:* label is removed first (t2012). Done after creation so the
 		# newly-created issue has a number to address.
 		if [[ -n "$tier_label" ]]; then
 			_apply_tier_label_replace "$repo" "$_PUSH_CREATED_NUM" "$tier_label"
 		fi
-		add_gh_ref_to_todo "$task_id" "$_PUSH_CREATED_NUM" "$todo_file"
 		# Sync relationships (blocked-by, sub-issues) after creation (t1889)
 		sync_relationships_for_task "$task_id" "$todo_file" "$repo"
 		# t2442: if the applied labels include `parent-task` AND the body
@@ -290,6 +294,9 @@ _enrich_process_task() {
 		print_warning "$task_id: no issue found"
 		return 0
 	}
+	if [[ "$DRY_RUN" != "true" ]]; then
+		add_gh_ref_to_todo "$task_id" "$num" "$todo_file"
+	fi
 
 	local parsed
 	parsed=$(parse_task_line "$task_line")
@@ -333,6 +340,7 @@ _enrich_process_task() {
 		echo "ENRICHED"
 		return 0
 	fi
+	require_task_issue_mapping "$task_id" "$todo_file" "$repo" "$num" || return 1
 
 	# t2165: fetch title, body, and labels in a single gh issue view call and
 	# forward to helpers.

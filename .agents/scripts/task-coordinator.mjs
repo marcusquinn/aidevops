@@ -308,10 +308,11 @@ function issueMappingInput(input) {
   const projectId = input.projectId ? validId(input.projectId, "project_id") : null;
   const displayNumber = Number(input.displayNumber);
   if (!Number.isSafeInteger(displayNumber) || displayNumber < 1) throw new TypeError("display_number must be a positive integer");
-  const stateCursor = input.stateCursor || null;
-  if (stateCursor && (typeof stateCursor !== "string" || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/.test(stateCursor) || !Number.isFinite(Date.parse(stateCursor)))) {
+  const rawStateCursor = input.stateCursor || null;
+  if (rawStateCursor && (typeof rawStateCursor !== "string" || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/.test(rawStateCursor) || !Number.isFinite(Date.parse(rawStateCursor)))) {
     throw new TypeError("state_cursor must be a canonical UTC RFC3339 timestamp");
   }
+  const stateCursor = rawStateCursor ? new Date(rawStateCursor).toISOString() : null;
   const syncMetadataText = jsonText(input.syncMetadata || {}, "sync_metadata");
   return { taskId, forge, repositoryId, repositorySlug, role, issueId, projectId, displayNumber, stateCursor, syncMetadataText };
 }

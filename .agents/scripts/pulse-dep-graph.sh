@@ -543,6 +543,22 @@ _dep_labels_has_active_status() {
 	return $?
 }
 
+# Resolve a numeric dependency target only after GitHub proves both the
+# repository node and issue node identities for the supplied slug/number pair.
+_dep_validate_issue_target() {
+	local slug="$1"
+	local issue_num="$2"
+	local repository_id="" issue_json="" resolved_num="" issue_id=""
+	[[ "$slug" =~ ^[^/[:space:]]+/[^/[:space:]]+$ && "$issue_num" =~ ^[1-9][0-9]*$ ]] || return 1
+	repository_id=$(gh api "repos/${slug}" --jq '.node_id' 2>/dev/null || true)
+	[[ -n "$repository_id" && "$repository_id" != "null" ]] || return 1
+	issue_json=$(gh issue view "$issue_num" --repo "$slug" --json id,number 2>/dev/null || true)
+	resolved_num=$(printf '%s' "$issue_json" | jq -r '.number // empty' 2>/dev/null)
+	issue_id=$(printf '%s' "$issue_json" | jq -r '.id // empty' 2>/dev/null)
+	[[ "$resolved_num" == "$issue_num" && -n "$issue_id" ]]
+	return $?
+}
+
 #######################################
 # Atomically move an issue advertised as available to blocked when dependency
 # evidence is unresolved. Re-read labels immediately before the write so a
@@ -555,6 +571,7 @@ _refresh_ensure_unresolved_is_blocked() {
 	local slug="$1"
 	local issue_num="$2"
 	local current_labels=""
+	_dep_validate_issue_target "$slug" "$issue_num" || return 1
 
 	current_labels=$(gh issue view "$issue_num" --repo "$slug" \
 		--json labels --jq '[.labels[].name] | join(",")' 2>/dev/null) || return 1
@@ -598,6 +615,7 @@ _refresh_cleanup_resolved_blocker_labels() {
 	local issue_num="$2"
 	local entry_json="$3"
 	local current_labels="$4"
+	_dep_validate_issue_target "$slug" "$issue_num" || return 1
 
 	local removed_count=0
 	local blocker_nums="" blocker_num="" stale_label=""
@@ -638,6 +656,7 @@ _refresh_try_unblock_issue() {
 	local issue_num="$2"
 	local entry_json="$3"
 	local defer_flags_json="$4"
+	_dep_validate_issue_target "$slug" "$issue_num" || return 1
 
 	local current_labels
 	current_labels=$(gh issue view "$issue_num" --repo "$slug" \

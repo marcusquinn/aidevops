@@ -281,6 +281,22 @@ resolve_task_gh_number() {
 	return 0
 }
 
+# Validate that a task's repository-scoped immutable mapping resolves to the
+# exact display number a caller intends to mutate.
+require_task_issue_mapping() {
+	local task_id="$1"
+	local todo_file="$2"
+	local repo="$3"
+	local issue_number="$4"
+	local resolved=""
+	resolved=$(resolve_task_gh_number "$task_id" "$todo_file" "$repo" || true)
+	if [[ ! "$issue_number" =~ ^[1-9][0-9]*$ || "$resolved" != "$issue_number" ]]; then
+		print_error "Refusing issue write for ${task_id}: #${issue_number} is not validated for ${repo}"
+		return 1
+	fi
+	return 0
+}
+
 # Resolve a GitHub issue number to its GraphQL node ID.
 # Arguments:
 #   $1 - issue_number

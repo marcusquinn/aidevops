@@ -62,6 +62,10 @@ teardown_test() {
 gh() {
 	local top_command="${1:-}"
 	shift || true
+	if [[ "$top_command" == "api" && "${1:-}" == "repos/example/repo" ]]; then
+		printf '%s\n' R_example
+		return 0
+	fi
 	if [[ "$top_command" == "issue" ]]; then
 		local issue_command="${1:-}"
 		shift || true
@@ -69,6 +73,10 @@ gh() {
 		view)
 			local issue_num="${1:-}"
 			shift || true
+			if [[ "$*" == *"--json id,number"* ]]; then
+				printf '{"id":"I_%s","number":%s}\n' "$issue_num" "$issue_num"
+				return 0
+			fi
 			if [[ "$*" == *"--json labels"* ]]; then
 				printf '%s\n' "$GH_LABELS_CSV"
 				return 0
@@ -88,6 +96,15 @@ gh() {
 	fi
 	printf 'unsupported gh %s %s\n' "$top_command" "$*" >&2
 	return 1
+}
+
+test_unvalidated_repository_fails_closed() {
+	if _dep_validate_issue_target "local/only" "3"; then
+		print_result "unvalidated dependency repository fails closed" 1
+	else
+		print_result "unvalidated dependency repository fails closed" 0
+	fi
+	return 0
 }
 
 set_issue_status() {
@@ -188,6 +205,7 @@ trap teardown_test EXIT
 source "$DEP_GRAPH"
 
 test_label_only_blocker_enters_graph
+test_unvalidated_repository_fails_closed
 test_available_issue_stale_label_removed
 test_blocked_issue_label_removed_and_status_available
 test_defer_marker_preserves_label
