@@ -107,8 +107,12 @@ if [[ "\$1" == "pr" && "\$2" == "list" ]]; then
 	exit 0
 fi
 
-# gh issue edit, gh issue comment — silent success (write operations)
+# gh issue view returns the verified post-transition state; edits/comments
+# remain silent successes.
 if [[ "\$1" == "issue" ]]; then
+	if [[ "\$2" == "view" && "\$*" == *"--json state,labels,assignees"* ]]; then
+		printf '%s\n' '{"state":"OPEN","labels":[{"name":"status:available"}],"assignees":[]}'
+	fi
 	exit 0
 fi
 

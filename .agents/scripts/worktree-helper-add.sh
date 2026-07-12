@@ -661,6 +661,55 @@ _parse_cmd_add_args() {
 	return 0
 }
 
+# Refresh an origin branch from linked-worktree context so the canonical Git
+# guard remains intact. If no linked worktree exists yet, create a short-lived
+# detached bootstrap worktree from the existing remote-tracking ref, fetch from
+# there, then remove it from that linked context.
+# Args: branch name
+#######################################
+_worktree_refresh_origin_branch() {
+	local branch="$1"
+	local fetch_cwd=""
+	local current_root=""
+	local git_dir="" common_dir=""
+	local bootstrap_path=""
+
+	current_root=$(git rev-parse --show-toplevel 2>/dev/null) || return 1
+	git_dir=$(git rev-parse --path-format=absolute --git-dir 2>/dev/null) || return 1
+	common_dir=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || return 1
+	if [[ "$git_dir" != "$common_dir" ]]; then
+		fetch_cwd="$current_root"
+	else
+		local worktree_path=""
+		while IFS= read -r worktree_path; do
+			[[ -n "$worktree_path" && "$worktree_path" != "$current_root" && -d "$worktree_path" ]] || continue
+			fetch_cwd="$worktree_path"
+			break
+		done < <(git worktree list --porcelain 2>/dev/null | sed -n 's/^worktree //p')
+	fi
+
+	if [[ -z "$fetch_cwd" ]]; then
+		local base_dir="${AIDEVOPS_WORKTREE_BASE_DIR:-${HOME}/Git/_worktrees}"
+		local repo_name=""
+		repo_name=$(basename "$current_root")
+		mkdir -p "$base_dir" || return 1
+		bootstrap_path="${base_dir}/.${repo_name}-fetch-$$"
+		if ! git worktree add --detach "$bootstrap_path" "refs/remotes/origin/${branch}" >/dev/null 2>&1; then
+			return 1
+		fi
+		fetch_cwd="$bootstrap_path"
+	fi
+
+	local fetch_rc=0
+	git -C "$fetch_cwd" fetch --no-tags --quiet origin \
+		"+refs/heads/${branch}:refs/remotes/origin/${branch}" || fetch_rc=$?
+	if [[ -n "$bootstrap_path" ]]; then
+		git -C "$fetch_cwd" worktree remove --force "$bootstrap_path" >/dev/null 2>&1 || true
+	fi
+	return "$fetch_rc"
+}
+
+#######################################
 # Resolve the base ref for a new worktree branch (t2802).
 # Precedence:
 #   1. Explicit --base <ref> (or AIDEVOPS_WORKTREE_BASE env var) — caller intent wins.
@@ -679,7 +728,8 @@ _parse_cmd_add_args() {
 #   $1 - explicit_base: value of --base (may be empty)
 # Outputs:
 #   Resolved ref on stdout, empty string if no safe base could be resolved.
-# Returns: always 0.
+# Returns: 0 on resolution/no-origin fallback, 1 when an explicit refresh fails.
+#######################################
 _resolve_worktree_base_ref() {
 	local explicit_base="$1"
 	local env_base="${AIDEVOPS_WORKTREE_BASE:-}"
@@ -690,8 +740,7 @@ _resolve_worktree_base_ref() {
 	if [[ -n "$requested_base" ]]; then
 		if [[ "$requested_base" == origin/* ]]; then
 			local requested_branch="${requested_base#origin/}"
-			if ! git fetch --no-tags --quiet origin \
-				"+refs/heads/${requested_branch}:refs/remotes/origin/${requested_branch}"; then
+			if ! _worktree_refresh_origin_branch "$requested_branch"; then
 				echo "Error: could not refresh ${requested_base}; refusing stale explicit base" >&2
 				return 1
 			fi
@@ -712,8 +761,7 @@ _resolve_worktree_base_ref() {
 	default_branch=$(get_default_branch 2>/dev/null) || default_branch=""
 	if [[ -n "$default_branch" ]]; then
 		if git remote get-url origin >/dev/null 2>&1; then
-			if ! git fetch --no-tags --quiet origin \
-				"+refs/heads/${default_branch}:refs/remotes/origin/${default_branch}"; then
+			if ! _worktree_refresh_origin_branch "$default_branch"; then
 				echo "Error: could not refresh origin/${default_branch}; refusing stale worktree base" >&2
 				return 1
 			fi

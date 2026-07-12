@@ -2354,6 +2354,29 @@ Dispatch cooldown active until ${iso} following a no_worker_process launch failu
 	return 0
 }
 
+#######################################
+# Confirm launch recovery removed this runner's queued ownership and applied
+# the intended replacement status before publishing any success receipt.
+# Args: issue number, repo slug, runner login, target status
+#######################################
+_verify_launch_recovery_state() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local self_login="$3"
+	local target_status="$4"
+	local issue_meta_json=""
+
+	issue_meta_json=$(gh issue view "$issue_number" --repo "$repo_slug" \
+		--json state,labels,assignees 2>/dev/null) || return 1
+	printf '%s' "$issue_meta_json" | jq -e --arg self "$self_login" --arg target "status:${target_status}" '
+		.state == "OPEN" and
+		(([.labels[].name] | index("status:queued")) == null) and
+		(([.labels[].name] | index($target)) != null) and
+		(([.assignees[].login] | index($self)) == null)
+	' >/dev/null 2>&1 || return 1
+	return 0
+}
+
 recover_failed_launch_state() {
 	local issue_number="$1"
 	local repo_slug="$2"
@@ -2415,12 +2438,16 @@ recover_failed_launch_state() {
 	# t2033: atomic transitions via set_issue_status. The blocked branch
 	# preserves status:blocked (target = "blocked"); the normal branch
 	# transitions to status:available.
-	if [[ "$is_blocked" == "true" ]]; then
-		set_issue_status "$issue_number" "$repo_slug" "blocked" \
-			--remove-assignee "$self_login" >/dev/null 2>&1 || true
-	else
-		set_issue_status "$issue_number" "$repo_slug" "available" \
-			--remove-assignee "$self_login" >/dev/null 2>&1 || true
+	local target_status="available"
+	[[ "$is_blocked" == "true" ]] && target_status="blocked"
+	if ! set_issue_status "$issue_number" "$repo_slug" "$target_status" \
+		--remove-assignee "$self_login" >/dev/null 2>&1; then
+		echo "[pulse-wrapper] Launch recovery uncertain for #${issue_number} (${repo_slug}): ownership mutation failed" >>"$LOGFILE"
+		return 1
+	fi
+	if ! _verify_launch_recovery_state "$issue_number" "$repo_slug" "$self_login" "$target_status"; then
+		echo "[pulse-wrapper] Launch recovery uncertain for #${issue_number} (${repo_slug}): post-mutation verification failed" >>"$LOGFILE"
+		return 1
 	fi
 
 	# t2394: Invalidate stale cross-runner claims immediately (see helper below).

@@ -18,6 +18,8 @@ LOGFILE="${TEST_ROOT}/pulse.log"
 STATUS_LOG="${TEST_ROOT}/status.log"
 COMMENT_LOG="${TEST_ROOT}/comments.log"
 TEST_ISSUE_BODY=""
+TEST_STATUS="available"
+TEST_STATUS_MUTATION_FAIL=0
 TESTS_RUN=0
 TESTS_FAILED=0
 
@@ -48,8 +50,16 @@ reset_logs() {
 gh() {
 	local resource="${1:-}"
 	local action="${2:-}"
+	if [[ "$resource" == "api" ]]; then
+		printf '[[]]\n'
+		return 0
+	fi
 	if [[ "$resource" == "issue" && "$action" == "view" ]]; then
-		printf '%s\n' "$TEST_ISSUE_BODY"
+		if [[ "$*" == *"--json body"* ]]; then
+			printf '%s\n' "$TEST_ISSUE_BODY"
+		else
+			printf '{"state":"OPEN","labels":[{"name":"status:%s"}],"assignees":[]}\n' "$TEST_STATUS"
+		fi
 		return 0
 	fi
 	return 0
@@ -65,6 +75,8 @@ set_issue_status() {
 	local repo_slug="$2"
 	local status="$3"
 	shift 3
+	[[ "$TEST_STATUS_MUTATION_FAIL" -eq 0 ]] || return 1
+	TEST_STATUS="$status"
 	printf '%s|%s|%s|%s\n' "$issue_number" "$repo_slug" "$status" "$*" >>"$STATUS_LOG"
 	return 0
 }
@@ -84,6 +96,7 @@ source "${SCRIPT_DIR}/dispatch-dedup-stale.sh"
 test_blocked_by_dependency_keeps_issue_blocked() {
 	reset_logs
 	TEST_ISSUE_BODY="blocked-by:t1000"
+	TEST_STATUS="blocked"
 	local output=""
 	output=$(_stale_recovery_apply "123" "owner/repo" "runner-a" "no_work")
 
@@ -108,6 +121,7 @@ test_blocked_by_dependency_keeps_issue_blocked() {
 test_clear_dependency_state_requeues_available() {
 	reset_logs
 	TEST_ISSUE_BODY="No blockers here"
+	TEST_STATUS="available"
 	local output=""
 	output=$(_stale_recovery_apply "124" "owner/repo" "runner-a" "stale_timeout")
 
@@ -124,8 +138,31 @@ test_clear_dependency_state_requeues_available() {
 	return 0
 }
 
+test_failed_transition_emits_no_recovery_success() {
+	reset_logs
+	TEST_ISSUE_BODY="No blockers here"
+	TEST_STATUS="queued"
+	TEST_STATUS_MUTATION_FAIL=1
+	local output=""
+	output=$(_stale_recovery_apply "125" "owner/repo" "runner-a" "stale_timeout")
+	TEST_STATUS_MUTATION_FAIL=0
+
+	if [[ "$output" == *"STALE_RECOVERY_UNCERTAIN"* && "$output" != *"STALE_RECOVERED"* ]]; then
+		pass "failed stale transition emits uncertainty without recovery success"
+	else
+		fail "failed stale transition emits uncertainty without recovery success" "output=${output}"
+	fi
+	if [[ ! -s "$COMMENT_LOG" ]]; then
+		pass "failed stale transition posts no success comment"
+	else
+		fail "failed stale transition posts no success comment" "comments=$(tr '\n' ' ' <"$COMMENT_LOG")"
+	fi
+	return 0
+}
+
 test_blocked_by_dependency_keeps_issue_blocked
 test_clear_dependency_state_requeues_available
+test_failed_transition_emits_no_recovery_success
 
 printf '\nTests run: %s failed: %s\n' "$TESTS_RUN" "$TESTS_FAILED"
 [[ "$TESTS_FAILED" -eq 0 ]] || exit 1

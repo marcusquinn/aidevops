@@ -130,7 +130,10 @@ _dlw_assign_and_label() {
 		[[ -n "$_prev_login" && "$_prev_login" != "$self_login" ]] && _extra_flags+=(--remove-assignee "$_prev_login")
 	done < <(printf '%s' "$issue_meta_json" | jq -r '.assignees[].login' 2>/dev/null)
 
-	set_issue_status "$issue_number" "$repo_slug" "queued" "${_extra_flags[@]}" || true
+	if ! set_issue_status "$issue_number" "$repo_slug" "queued" "${_extra_flags[@]}"; then
+		echo "[dispatch_with_dedup] Failed to assign queued ownership for #${issue_number} in ${repo_slug}; aborting before lock/worktree/spawn" >>"$LOGFILE"
+		return 1
+	fi
 	return 0
 }
 
@@ -2067,7 +2070,10 @@ _dispatch_launch_worker() {
 	fi
 
 	_ds_t0=$(_ds_now_ns)
-	_dlw_assign_and_label "$issue_number" "$repo_slug" "$self_login" "$issue_meta_json"
+	if ! _dlw_assign_and_label "$issue_number" "$repo_slug" "$self_login" "$issue_meta_json"; then
+		_ds_record "$issue_number" "$repo_slug" "assign_and_label" "$_ds_t0"
+		return 2
+	fi
 	_ds_record "$issue_number" "$repo_slug" "assign_and_label" "$_ds_t0"
 
 	local zero_output_comment_metrics=""

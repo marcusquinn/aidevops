@@ -6,6 +6,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit 1
 HELPER="${SCRIPT_DIR}/../worktree-helper.sh"
+REAL_GIT=$(command -v git)
 ROOT=$(mktemp -d)
 trap 'rm -rf "$ROOT"' EXIT
 
@@ -35,6 +36,14 @@ git -C "$UPDATER" commit -q -m remote-tip
 git -C "$UPDATER" push -q origin main
 REMOTE_SHA=$(git -C "$UPDATER" rev-parse HEAD)
 
+# Optional integration mode: prepend the repository Git shim after fixture
+# setup so worktree creation exercises the canonical guard without blocking
+# the fixture's intentional canonical branch/bootstrap mutations.
+if [[ -n "${AIDEVOPS_TEST_GIT_SHIM:-}" ]]; then
+	PATH="$(dirname "$AIDEVOPS_TEST_GIT_SHIM"):${PATH}"
+	export PATH
+fi
+
 (cd "$CANONICAL" && "$HELPER" add test/fresh-base >/dev/null)
 FRESH_PATH="${WORKTREES}/canonical-test-fresh-base"
 [[ "$(git -C "$FRESH_PATH" rev-parse HEAD)" == "$REMOTE_SHA" ]] || {
@@ -42,8 +51,13 @@ FRESH_PATH="${WORKTREES}/canonical-test-fresh-base"
 	exit 1
 }
 printf 'PASS worktree starts at freshly fetched origin/main\n'
+if compgen -G "${WORKTREES}/.canonical-fetch-*" >/dev/null; then
+	printf 'FAIL temporary fetch worktree was not removed\n'
+	exit 1
+fi
+printf 'PASS canonical-guard bootstrap fetch worktree is removed\n'
 
-git -C "$CANONICAL" remote set-url origin "${ROOT}/missing.git"
+"$REAL_GIT" -C "$CANONICAL" remote set-url origin "${ROOT}/missing.git"
 if (cd "$CANONICAL" && "$HELPER" add test/fetch-failure >/dev/null 2>&1); then
 	printf 'FAIL worktree creation accepted an unrefreshable remote base\n'
 	exit 1
