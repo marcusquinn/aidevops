@@ -291,8 +291,13 @@ _verify_maintainer_identity() {
 _create_hotfix_tag() {
 	local version="$1"
 	local hotfix_tag="hotfix-v${version}"
+	local repo_root="${REPO_ROOT:-}"
 
-	cd "$REPO_ROOT" || return 1
+	if [[ -z "$repo_root" ]]; then
+		print_error "Cannot create hotfix tag: REPO_ROOT is not set"
+		return 1
+	fi
+	cd "$repo_root" || return 1
 
 	local remote_tag_exit=0
 	git ls-remote -q --exit-code --tags origin "refs/tags/$hotfix_tag" >/dev/null 2>&1 || remote_tag_exit=$?

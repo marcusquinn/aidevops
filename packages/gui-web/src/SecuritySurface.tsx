@@ -47,6 +47,7 @@ export function SecuritySurface({ onVaultRequest, status }: {
         <SecretMetric detail={vault.unlocked ? "ready for dependent tools" : "visible after local unlock"} icon={<FiCheckCircle />} label="Configured" value={hiddenCount ?? String(configured)} />
         <SecretMetric detail={vault.unlocked ? "missing or not yet checked" : "visible after local unlock"} icon={<FiAlertTriangle />} label="Needs attention" value={hiddenCount ?? String(needsAttention)} />
         <SecretMetric detail="hidden local prompt only" icon={<FiTerminal />} label="Value custody" value="Write-only" />
+        <SecretMetric detail={`credentials: ${status.secret_backends.credentials}`} icon={<FiActivity />} label="gopass backend" value={vault.unlocked ? status.secret_backends.gopass : "Hidden"} />
       </div>
 
       {vault.unlocked ? (

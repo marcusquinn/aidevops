@@ -549,7 +549,7 @@ _gh_auto_link_sub_issue() {
 
 	# Fire and forget — suppress all errors
 	# shellcheck disable=SC2016 # GraphQL variables are expanded by gh, not Bash.
-	gh api graphql -f query='mutation($p:ID!,$c:ID!){addSubIssue(input:{issueId:$p,subIssueId:$c}){issue{number}}}' \
+	_gh_with_timeout write gh api graphql -f query='mutation($p:ID!,$c:ID!){addSubIssue(input:{issueId:$p,subIssueId:$c}){issue{number}}}' \
 		-f p="$parent_node" -f c="$child_node" >/dev/null 2>&1 || true
 	return 0
 }
@@ -681,7 +681,7 @@ gh_issue_comment() {
 	gh_record_call graphql gh_issue_comment 2>/dev/null || true
 	_gh_wrapper_auto_sig "$@"
 	set -- "${_GH_WRAPPER_SIG_MODIFIED_ARGS[@]}"
-	gh issue comment "$@"
+	_gh_with_timeout write gh issue comment "$@"
 	local rc=$?
 	if [[ $rc -ne 0 ]] && _rest_should_fallback; then
 		print_info "[INFO] gh-wrapper: GraphQL exhausted, falling back to REST for issue comment"
@@ -696,7 +696,7 @@ gh_pr_comment() {
 	gh_record_call graphql gh_pr_comment 2>/dev/null || true
 	_gh_wrapper_auto_sig "$@"
 	set -- "${_GH_WRAPPER_SIG_MODIFIED_ARGS[@]}"
-	gh pr comment "$@"
+	_gh_with_timeout write gh pr comment "$@"
 	local rc=$?
 	if [[ $rc -ne 0 ]] && _rest_should_fallback; then
 		print_info "[INFO] gh-wrapper: GraphQL exhausted, falling back to REST for pr comment"
@@ -738,13 +738,13 @@ _ensure_origin_labels_for_args() {
 ensure_origin_labels_exist() {
 	local repo="$1"
 	[[ -z "$repo" ]] && return 1
-	gh label create "origin:worker" --repo "$repo" \
+	_gh_with_timeout write gh label create "origin:worker" --repo "$repo" \
 		--description "Created by headless/pulse worker session" \
 		--color "C5DEF5" 2>/dev/null || true
-	gh label create "origin:interactive" --repo "$repo" \
+	_gh_with_timeout write gh label create "origin:interactive" --repo "$repo" \
 		--description "Created by interactive user session" \
 		--color "BFD4F2" 2>/dev/null || true
-	gh label create "origin:worker-takeover" --repo "$repo" \
+	_gh_with_timeout write gh label create "origin:worker-takeover" --repo "$repo" \
 		--description "Worker took over from interactive session" \
 		--color "D4C5F9" 2>/dev/null || true
 	return 0

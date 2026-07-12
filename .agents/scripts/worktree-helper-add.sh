@@ -397,13 +397,14 @@ _apply_worktree_exclusions() {
 	local wt_path="$1"
 	[[ -n "$wt_path" && -d "$wt_path" ]] || return 0
 
-	# Prefer deployed copy (runtime source of truth); fall back to in-repo
-	# copy when running pre-deploy.
+	# Prefer the sibling copy. In an installed framework it is the deployed
+	# helper; in a source checkout it preserves the source contract instead of
+	# calling a stale helper from a previous deployment.
 	local helper=""
-	if [[ -x "${HOME}/.aidevops/agents/scripts/worktree-exclusions-helper.sh" ]]; then
-		helper="${HOME}/.aidevops/agents/scripts/worktree-exclusions-helper.sh"
-	elif [[ -x "${SCRIPT_DIR}/worktree-exclusions-helper.sh" ]]; then
+	if [[ -x "${SCRIPT_DIR}/worktree-exclusions-helper.sh" ]]; then
 		helper="${SCRIPT_DIR}/worktree-exclusions-helper.sh"
+	elif [[ -x "${HOME}/.aidevops/agents/scripts/worktree-exclusions-helper.sh" ]]; then
+		helper="${HOME}/.aidevops/agents/scripts/worktree-exclusions-helper.sh"
 	fi
 	[[ -n "$helper" ]] || return 0
 

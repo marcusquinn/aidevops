@@ -20,7 +20,7 @@ standard,provider-routed,Code review and implementation
 thinking,provider-routed,Architecture and complex reasoning
 -->
 
-<!--TOON:subagents[223]{folder,purpose,key_files}:
+<!--TOON:subagents[124]{folder,purpose,key_files}:
 aidevops/,aidevops subagents,add-new-mcp-to-aidevops|agent-sources|api-integrations|architecture|badges|campaigns-plane|cases-plane|claude-flow-comparison|configs|docs|extension|feedback
 aidevops/feedback/,aidevops/feedback subagents,capture-retention|cli-routines|mining-promotion
 aidevops/,aidevops subagents,graduated-learnings|knowledge-plane
@@ -29,6 +29,7 @@ aidevops/,aidevops subagents,mcp-integrations|mcp-troubleshooting|memory-pattern
 content/,content subagents,content-calendar|context-templates|distribution-blog|distribution-email|distribution-podcast|distribution-short-form|distribution-social|distribution-youtube-channel-intel|distribution-youtube-optimizer|distribution-youtube-pipeline|distribution-youtube-readme|distribution-youtube-script-writer|distribution-youtube-topic-research|distribution-youtube|editor|guidelines
 content/heygen-skill/,content/heygen-skill subagents,rules-assets|rules-authentication|rules-avatars|rules-backgrounds|rules-captions|rules-dimensions|rules-photo-avatars|rules-quota|rules-remotion-integration|rules-scripts|rules-streaming-avatars|rules-templates|rules-text-overlays|rules-video-agent|rules-video-generation|rules-video-status|rules-video-translation|rules-voices|rules-webhooks
 content/,content subagents,humanise|internal-linker|meta-creator|optimization|platform-personas|production-audio|production-characters|production-image|production-video-01-model-selection|production-video-02-sora-template|production-video-03-veo-workflow|production-video-04-seed-bracketing|production-video-05-camera-shot-reference|production-video-06-two-track-production|production-video-07-post-production|production-video-08-talking-head-pipeline|production-video-09-tools-resources|production-video|production-writing|research|seo-writer|social-bird|social-linkedin|social-reddit|social-xurl|story|summarize|VERIFICATION|video-director|video-enhancor|video-higgsfield-ui|video-higgsfield|video-muapi|video-real-video-enhancer|video-runway|video-wavespeed|youtube-research|youtube-script|youtube-setup|yt-dlp
+public-relations/,public-relations subagents,coverage-tracker|ethics|getting-started|journalist-fit-check|media-list-builder|news-search|newsjack-monitor|newsworthiness-check|pr-strategy|reactive-comment|routines
 seo/,seo subagents,ahrefs|ai-agent-discovery|ai-hallucination-defense|ai-search-kpi-template|ai-search-readiness|ai-search-report-template|ai-search-scoring|analytics-tracking|backlink-checker|bing-webmaster-tools|content-analyzer|contentking|data-export|dataforseo|debug-favicon|debug-opengraph|domain-research-api-reference|domain-research|eeat-score|geo-strategy|google-search-console|gsc-sitemaps|image-seo|keyword-mapper|keyword-research|llm-visibility-instructional-report|llm-visibility-source-accrual|mom-test-ux|moondream|neuronwriter|programmatic-seo|query-fanout-research|ranking-opportunities|rich-results|schema-validator|screaming-frog|semrush|seo-agent-discovery|seo-ai-baseline|seo-ai-readiness|seo-analyze-content|seo-analyze
 seo/seo-audit-skill/,seo/seo-audit-skill subagents,aeo-geo-patterns
 seo/seo-audit-skill/aeo-geo-patterns/,seo/seo-audit-skill/aeo-geo-patterns subagents,01-aeo-patterns|02-geo-patterns|03-authority-signals-and-attribution|04-page-type-tactic-matrix
@@ -97,107 +98,7 @@ tools/deployment/,tools/deployment subagents,agent-skills
 tools/deployment/cloudron-app-packaging-skill/,tools/deployment/cloudron-app-packaging-skill subagents,addons-ref|manifest-ref
 tools/deployment/cloudron-app-packaging-skill/manifest-ref/,tools/deployment/cloudron-app-packaging-skill/manifest-ref subagents,01-overview|02-ports|03-addons|04-metadata|05-behavior|06-post-install|07-versioning
 tools/deployment/,tools/deployment subagents,cloudron-app-packaging|cloudron-git-reference|coolify-cli|coolify-setup|coolify|daytona|fly-io|hosting-comparison|uncloud|vercel
-tools/design/,tools/design subagents,brand-identity|colour-palette|design-inspiration|design-md-from-links|design-md
-tools/design/library/brands/airbnb/,tools/design/library/brands/airbnb subagents,DESIGN
-tools/design/library/brands/airtable/,tools/design/library/brands/airtable subagents,DESIGN
-tools/design/library/brands/apple/,tools/design/library/brands/apple subagents,01-visual-theme|02-color-palette|03-typography|04-components|05-layout|06-depth-elevation|07-dos-and-donts|08-responsive|09-agent-prompt-guide|DESIGN
-tools/design/library/brands/arxiv/,tools/design/library/brands/arxiv subagents,01-visual-theme|02-color-palette|03-typography|04-components|05-layout|06-depth-elevation|07-dos-and-donts|08-responsive|09-agent-prompt-guide|DESIGN
-tools/design/library/brands/axel/,tools/design/library/brands/axel subagents,01-visual-theme|02-color-palette|03-typography|04-components|05-layout|06-depth-elevation|07-dos-and-donts|08-responsive|09-agent-prompt-guide|DESIGN
-tools/design/library/brands/bento/,tools/design/library/brands/bento subagents,01-visual-theme|02-color-palette|03-typography|04-components|05-layout|06-depth-elevation|07-dos-and-donts|08-responsive|09-agent-prompt-guide|DESIGN
-tools/design/library/brands/bmw/,tools/design/library/brands/bmw subagents,DESIGN
-tools/design/library/brands/cabinet/,tools/design/library/brands/cabinet subagents,01-visual-theme|02-color-palette|03-typography|04-components|05-layout|06-depth-elevation|07-dos-and-donts|08-responsive|09-agent-prompt-guide|DESIGN
-tools/design/library/brands/cal/,tools/design/library/brands/cal subagents,DESIGN
-tools/design/library/brands/claude/,tools/design/library/brands/claude subagents,01-visual-theme|02-color-palette|03-typography|04-components|05-layout|06-depth-elevation|07-dos-and-donts|08-agent-prompt-guide|DESIGN
-tools/design/library/brands/clay/,tools/design/library/brands/clay subagents,01-visual-theme|02-color-palette|03-typography|04-components|05-layout|06-depth-elevation|07-dos-and-donts|08-responsive|09-agent-prompt-guide|DESIGN
-tools/design/library/brands/clickhouse/,tools/design/library/brands/clickhouse subagents,01-visual-theme|02-color-palette|03-typography|04-components|05-layout|06-depth-elevation|07-dos-donts|08-responsive|09-agent-prompts|DESIGN
-tools/design/library/brands/cohere/,tools/design/library/brands/cohere subagents,DESIGN
-tools/design/library/brands/coinbase/,tools/design/library/brands/coinbase subagents,DESIGN
-tools/design/library/brands/composio/,tools/design/library/brands/composio subagents,01-visual-theme|02-color-palette|03-typography|04-components|05-layout|06-depth-elevation|07-dos-donts|08-responsive|09-agent-prompts|DESIGN
-tools/design/library/brands/consumer/,tools/design/library/brands/consumer subagents,01-visual-theme|02-color-palette|03-typography|04-components|05-layout|06-depth-elevation|07-dos-and-donts|08-responsive|09-agent-prompt-guide|DESIGN
-tools/design/library/brands/cursor/,tools/design/library/brands/cursor subagents,DESIGN
-tools/design/library/brands/docuseal/,tools/design/library/brands/docuseal subagents,01-visual-theme|02-color-palette|03-typography|04-components|05-layout|06-depth-elevation|07-dos-and-donts|08-responsive|09-agent-prompt-guide|DESIGN
-tools/design/library/brands/elevenlabs/,tools/design/library/brands/elevenlabs subagents,01-visual-theme|02-color-palette|03-typography|04-components|05-layout|06-depth-elevation|07-dos-donts|08-responsive|09-agent-prompt-guide|DESIGN
-tools/design/library/brands/expo/,tools/design/library/brands/expo subagents,01-visual-theme|02-color-palette|03-typography|04-components|05-layout|06-depth-elevation|07-dos-donts|08-responsive|09-agent-prompts|DESIGN
-tools/design/library/brands/exsqueezeme/,tools/design/library/brands/exsqueezeme subagents,01-visual-theme|02-color-palette|03-typography|04-components|05-layout|06-depth-elevation|07-dos-and-donts|08-responsive|09-agent-prompt-guide|DESIGN
-tools/design/library/brands/figma/,tools/design/library/brands/figma subagents,DESIGN
-tools/design/library/brands/framer/,tools/design/library/brands/framer subagents,DESIGN
-tools/design/library/brands/ghost/,tools/design/library/brands/ghost subagents,01-visual-theme|02-color-palette|03-typography|04-components|05-layout|06-depth-elevation|07-dos-and-donts|08-responsive|09-agent-prompt-guide|DESIGN
-tools/design/library/brands/hashicorp/,tools/design/library/brands/hashicorp subagents,01-visual-theme|02-color-palette|03-typography|04-components|05-layout|06-depth-elevation|07-dos-donts|08-responsive|09-agent-prompts|DESIGN
-tools/design/library/brands/heron/,tools/design/library/brands/heron subagents,01-visual-theme|02-color-palette|03-typography|04-components|05-layout|06-depth-elevation|07-dos-and-donts|08-responsive|09-agent-prompt-guide|DESIGN
-tools/design/library/brands/ia/,tools/design/library/brands/ia subagents,01-visual-theme|02-color-palette|03-typography|04-components|05-layout|06-depth-elevation|07-dos-and-donts|08-responsive|09-agent-prompt-guide|DESIGN
-tools/design/library/brands/ibm/,tools/design/library/brands/ibm subagents,01-visual-theme|02-color-palette|03-typography|04-components|05-layout|06-depth-elevation|07-dos-and-donts|08-responsive|09-agent-prompt-guide|DESIGN
-tools/design/library/brands/indexsy/,tools/design/library/brands/indexsy subagents,01-visual-theme|02-color-palette|03-typography|04-components|05-layout|06-depth-elevation|07-dos-and-donts|08-responsive|09-agent-prompt-guide|DESIGN
-tools/design/library/brands/intercom/,tools/design/library/brands/intercom subagents,DESIGN
-tools/design/library/brands/knob/,tools/design/library/brands/knob subagents,01-visual-theme|02-color-palette|03-typography|04-components|05-layout|06-depth-elevation|07-dos-and-donts|08-responsive|09-agent-prompt-guide|DESIGN
-tools/design/library/brands/kraken/,tools/design/library/brands/kraken subagents,DESIGN
-tools/design/library/brands/lifee/,tools/design/library/brands/lifee subagents,01-visual-theme|02-color-palette|03-typography|04-components|05-layout|06-depth-elevation|07-dos-and-donts|08-responsive|09-agent-prompt-guide|DESIGN
-tools/design/library/brands/linear/,tools/design/library/brands/linear subagents,01-visual-theme|02-colour-palette|03-typography|04-components|05-layout|06-depth-elevation|07-dos-and-donts|08-responsive|09-agent-prompts|DESIGN
-tools/design/library/brands/lottiefiles/,tools/design/library/brands/lottiefiles subagents,01-visual-theme|02-color-palette|03-typography|04-components|05-layout|06-depth-elevation|07-dos-and-donts|08-responsive|09-agent-prompt-guide|DESIGN
-tools/design/library/brands/lovable/,tools/design/library/brands/lovable subagents,01-visual-theme|02-color-palette|03-typography|04-components|05-layout|06-depth-elevation|07-dos-donts|08-responsive|09-agent-prompt-guide|DESIGN
-tools/design/library/brands/medium/,tools/design/library/brands/medium subagents,01-visual-theme|02-color-palette|03-typography|04-components|05-layout|06-depth-elevation|07-dos-and-donts|08-responsive|09-agent-prompt-guide|DESIGN
-tools/design/library/brands/mellowyellow/,tools/design/library/brands/mellowyellow subagents,01-visual-theme|02-color-palette|03-typography|04-components|05-layout|06-depth-elevation|07-dos-and-donts|08-responsive|09-agent-prompt-guide|DESIGN
-tools/design/library/brands/minimax/,tools/design/library/brands/minimax subagents,DESIGN
-tools/design/library/brands/mintlify/,tools/design/library/brands/mintlify subagents,01-visual-theme|02-color-palette|03-typography|04-components|05-layout|06-depth-elevation|07-dark-mode|08-responsive|09-agent-prompt-guide|DESIGN
-tools/design/library/brands/miro/,tools/design/library/brands/miro subagents,DESIGN
-tools/design/library/brands/mistral.ai/,tools/design/library/brands/mistral.ai subagents,DESIGN
-tools/design/library/brands/mongodb/,tools/design/library/brands/mongodb subagents,01-visual-theme|02-color-palette|03-typography|04-components|05-layout|06-depth-elevation|07-dos-and-donts|08-responsive|09-agent-prompt-guide|DESIGN
-tools/design/library/brands/notion/,tools/design/library/brands/notion subagents,01-visual-theme|02-color-palette|03-typography|04-components|05-layout|06-depth-elevation|07-responsive|08-accessibility|09-agent-prompt-guide|DESIGN
-tools/design/library/brands/nvidia/,tools/design/library/brands/nvidia subagents,01-visual-theme|02-color-palette|03-typography|04-components|05-layout|06-depth-elevation|07-dos-donts|08-responsive|09-agent-prompts|DESIGN
-tools/design/library/brands/ollama/,tools/design/library/brands/ollama subagents,DESIGN
-tools/design/library/brands/opencode.ai/,tools/design/library/brands/opencode.ai subagents,01-visual-theme|02-color-palette|03-typography|04-components|05-layout|06-depth-elevation|07-interaction-motion|08-responsive|09-agent-prompt-guide|DESIGN
-tools/design/library/brands/outrank/,tools/design/library/brands/outrank subagents,01-visual-theme|02-color-palette|03-typography|04-components|05-layout|06-depth-elevation|07-dos-and-donts|08-responsive|09-agent-prompt-guide|DESIGN
-tools/design/library/brands/pinterest/,tools/design/library/brands/pinterest subagents,DESIGN
-tools/design/library/brands/postedapp/,tools/design/library/brands/postedapp subagents,01-visual-theme|02-color-palette|03-typography|04-components|05-layout|06-depth-elevation|07-dos-and-donts|08-responsive|09-agent-prompt-guide|DESIGN
-tools/design/library/brands/posthog/,tools/design/library/brands/posthog subagents,DESIGN
-tools/design/library/brands/raycast/,tools/design/library/brands/raycast subagents,01-visual-theme|02-color-palette|03-typography|04-components|05-layout|06-depth-elevation|07-dos-donts|08-responsive|09-agent-prompt-guide|DESIGN
-tools/design/library/brands/replicate/,tools/design/library/brands/replicate subagents,DESIGN
-tools/design/library/brands/resend/,tools/design/library/brands/resend subagents,01-visual-theme|02-color-palette|03-typography|04-components|05-layout|06-depth-elevation|07-dos-donts|08-responsive|09-agent-prompt-guide|DESIGN
-tools/design/library/brands/revolut/,tools/design/library/brands/revolut subagents,DESIGN
-tools/design/library/brands/runwayml/,tools/design/library/brands/runwayml subagents,DESIGN
-tools/design/library/brands/sanity/,tools/design/library/brands/sanity subagents,01-visual-theme|02-color-palette|03-typography|04-components|05-layout|06-depth-elevation|07-dos-donts|08-responsive|09-agent-prompt-guide|DESIGN
-tools/design/library/brands/savvy/,tools/design/library/brands/savvy subagents,01-visual-theme|02-color-palette|03-typography|04-components|05-layout|06-depth-elevation|07-dos-and-donts|08-responsive|09-agent-prompt-guide|DESIGN
-tools/design/library/brands/scalefusion/,tools/design/library/brands/scalefusion subagents,01-visual-theme|02-color-palette|03-typography|04-components|05-layout|06-depth-elevation|07-dos-and-donts|08-responsive|09-agent-prompt-guide|DESIGN
-tools/design/library/brands/sentry/,tools/design/library/brands/sentry subagents,DESIGN
-tools/design/library/brands/serper/,tools/design/library/brands/serper subagents,01-visual-theme|02-color-palette|03-typography|04-components|05-layout|06-depth-elevation|07-dos-and-donts|08-responsive|09-agent-prompt-guide|DESIGN
-tools/design/library/brands/signal-agency/,tools/design/library/brands/signal-agency subagents,01-visual-theme|02-color-palette|03-typography|04-components|05-layout|06-depth-elevation|07-dos-and-donts|08-responsive|09-agent-prompt-guide|DESIGN
-tools/design/library/brands/spacex/,tools/design/library/brands/spacex subagents,DESIGN
-tools/design/library/brands/spotify/,tools/design/library/brands/spotify subagents,DESIGN
-tools/design/library/brands/stripe/,tools/design/library/brands/stripe subagents,01-visual-theme|02-color-palette|03-typography|04-components|05-layout|06-depth-elevation|07-dos-donts|08-responsive|09-agent-prompt-guide|DESIGN
-tools/design/library/brands/supabase/,tools/design/library/brands/supabase subagents,DESIGN
-tools/design/library/brands/superhuman/,tools/design/library/brands/superhuman subagents,DESIGN
-tools/design/library/brands/supermemory/,tools/design/library/brands/supermemory subagents,01-visual-theme|02-color-palette|03-typography|04-components|05-layout|06-depth-elevation|07-dos-and-donts|08-responsive|09-agent-prompt-guide|DESIGN
-tools/design/library/brands/superx/,tools/design/library/brands/superx subagents,01-visual-theme|02-color-palette|03-typography|04-components|05-layout|06-depth-elevation|07-dos-and-donts|08-responsive|09-agent-prompt-guide|DESIGN
-tools/design/library/brands/tavily/,tools/design/library/brands/tavily subagents,01-visual-theme|02-color-palette|03-typography|04-components|05-layout|06-depth-elevation|07-dos-and-donts|08-responsive|09-agent-prompt-guide|DESIGN
-tools/design/library/brands/terminalshop/,tools/design/library/brands/terminalshop subagents,01-visual-theme|02-color-palette|03-typography|04-components|05-layout|06-depth-elevation|07-dos-and-donts|08-responsive|09-agent-prompt-guide|DESIGN
-tools/design/library/brands/times/,tools/design/library/brands/times subagents,01-visual-theme|02-color-palette|03-typography|04-components|05-layout|06-depth-elevation|07-dos-and-donts|08-responsive|09-agent-prompt-guide|DESIGN
-tools/design/library/brands/together.ai/,tools/design/library/brands/together.ai subagents,DESIGN
-tools/design/library/brands/uber/,tools/design/library/brands/uber subagents,01-visual-theme|02-color-palette|03-typography|04-components|05-layout|06-depth-elevation|07-dos-donts|08-responsive|09-agent-prompt-guide|DESIGN
-tools/design/library/brands/ulysses/,tools/design/library/brands/ulysses subagents,01-visual-theme|02-color-palette|03-typography|04-components|05-layout|06-depth-elevation|07-dos-and-donts|08-responsive|09-agent-prompt-guide|DESIGN
-tools/design/library/brands/usgraphics/,tools/design/library/brands/usgraphics subagents,01-visual-theme|02-color-palette|03-typography|04-components|05-layout|06-depth-elevation|07-dos-and-donts|08-responsive|09-agent-prompt-guide|DESIGN
-tools/design/library/brands/vercel/,tools/design/library/brands/vercel subagents,01-visual-theme|02-color-palette|03-typography|04-components|05-layout|06-depth-elevation|07-dos-donts|08-responsive|09-agent-prompt-guide|DESIGN
-tools/design/library/brands/voltagent/,tools/design/library/brands/voltagent subagents,01-visual-theme|02-color-palette|03-typography|04-components|05-layout|06-depth-elevation|07-dos-and-donts|08-responsive|09-agent-prompt-guide|DESIGN
-tools/design/library/brands/warp/,tools/design/library/brands/warp subagents,DESIGN
-tools/design/library/brands/webflow/,tools/design/library/brands/webflow subagents,DESIGN
-tools/design/library/brands/wikipedia/,tools/design/library/brands/wikipedia subagents,01-visual-theme|02-color-palette|03-typography|04-components|05-layout|06-depth-elevation|07-dos-and-donts|08-responsive|09-agent-prompt-guide|DESIGN
-tools/design/library/brands/wise/,tools/design/library/brands/wise subagents,DESIGN
-tools/design/library/brands/wpcodebox/,tools/design/library/brands/wpcodebox subagents,01-visual-theme|02-color-palette|03-typography|04-components|05-layout|06-depth-elevation|07-dos-and-donts|08-responsive|09-agent-prompt-guide|DESIGN
-tools/design/library/brands/x.ai/,tools/design/library/brands/x.ai subagents,DESIGN
-tools/design/library/brands/zapier/,tools/design/library/brands/zapier subagents,01-visual-theme|02-color-palette|03-typography|04-components|05-layout|06-depth-elevation|07-dos-donts|08-responsive|09-agent-prompt-guide|DESIGN
-tools/design/library/brands/zeroheight/,tools/design/library/brands/zeroheight subagents,01-visual-theme|02-color-palette|03-typography|04-components|05-layout|06-depth-elevation|07-dos-and-donts|08-responsive|09-agent-prompt-guide|DESIGN
-tools/design/library/styles/agency-creative/,tools/design/library/styles/agency-creative subagents,01-theme|02-colours|03-typography|04-components|05-layout|06-elevation|07-dos-donts|08-responsive|09-agent-prompts|DESIGN
-tools/design/library/styles/agency-feminine/,tools/design/library/styles/agency-feminine subagents,01-theme|02-colours|03-typography|04-components|05-layout|06-elevation|07-dos-donts|08-responsive|09-agent-prompts|DESIGN
-tools/design/library/styles/agency-techie/,tools/design/library/styles/agency-techie subagents,01-theme|02-colours|03-typography|04-components|05-layout|06-elevation|07-dos-donts|08-responsive|09-agent-prompts|DESIGN
-tools/design/library/styles/corporate-friendly/,tools/design/library/styles/corporate-friendly subagents,01-theme-overview|02-colour-palette|03-typography|04-components|05-layout|06-depth-elevation|07-dos-and-donts|08-responsive|09-agent-prompt-guide|DESIGN
-tools/design/library/styles/corporate-modern/,tools/design/library/styles/corporate-modern subagents,01-theme|02-colours|03-typography|04-components|05-layout|06-elevation|07-dos-and-donts|08-responsive|09-agent-prompts|DESIGN
-tools/design/library/styles/corporate-traditional/,tools/design/library/styles/corporate-traditional subagents,01-theme|02-colours|03-typography|04-components|05-layout|06-elevation|07-dos-and-donts|08-responsive|09-agent-prompts|DESIGN
-tools/design/library/styles/developer-dark/,tools/design/library/styles/developer-dark subagents,01-theme|02-colours|03-typography|04-components|05-layout|06-elevation|07-dos-donts|08-responsive|09-agent-prompts|DESIGN
-tools/design/library/styles/editorial-clean/,tools/design/library/styles/editorial-clean subagents,01-visual-theme|02-colour-palette|03-typography|04-components|05-layout|06-depth-elevation|07-dos-and-donts|08-responsive|09-agent-prompt-guide|DESIGN
-tools/design/library/styles/editorial-evidence-report/,tools/design/library/styles/editorial-evidence-report subagents,DESIGN
-tools/design/library/styles/luxury-premium/,tools/design/library/styles/luxury-premium subagents,01-foundations|02-layout-and-form|03-components|04-usage-guidance|DESIGN
-tools/design/library/styles/playful-vibrant/,tools/design/library/styles/playful-vibrant subagents,01-overview|02-colour-palette|03-typography|04-components|05-layout|06-depth-elevation|07-dos-and-donts|08-responsive|09-agent-prompts|DESIGN
-tools/design/library/styles/startup-bold/,tools/design/library/styles/startup-bold subagents,01-theme|02-colours|03-typography|04-components|05-layout|06-elevation|07-dos-donts|08-responsive|09-agent-prompts|DESIGN
-tools/design/library/styles/startup-minimal/,tools/design/library/styles/startup-minimal subagents,01-theme|02-colours|03-typography|04-components|05-layout|06-elevation|07-dos-and-donts|08-responsive|09-agent-prompts|DESIGN
-tools/design/,tools/design subagents,open-design-ingestion|open-design|report-presentation|ui-ux-inspiration
+tools/design/,tools/design subagents,brand-identity|colour-palette|design-inspiration|design-md-from-links|design-md|open-design-ingestion|open-design|report-presentation|ui-ux-inspiration
 tools/diagrams/mermaid-diagrams-skill/,tools/diagrams/mermaid-diagrams-skill subagents,advanced|architecture|cheatsheet|class-er|data-charts|flowcharts|sequence|state-journey
 tools/document/,tools/document subagents,docstrange|document-creation|document-extraction|extraction-schemas
 tools/document/extraction-schemas/,tools/document/extraction-schemas subagents,01-design-principles|02-purchase-invoice|03-expense-receipt|04-credit-note|05-sales-invoice|06-generic-receipt|07-quickfile-mapping|08-vat-handling|09-nominal-codes|10-classification|11-pipeline-integration|12-validation
@@ -385,7 +286,6 @@ simplex-helper.sh,SimpleX Chat CLI helper (install init bot-start bot-stop send 
 skills-helper.sh,Skill discovery and exploration CLI (search browse describe info list categories recommend)
 prompt-guard-helper.sh,Prompt injection defense - scan content for injection patterns with YAML pattern loading and policy enforcement (check scan-stdin scan-file patterns test)
 -->
-
 
 <!--TOON:agent_source_capabilities[0]{source,pack,version,domains,triggers,agents,subagents,commands,helpers,secrets,artifacts,sensitivity,upstream_candidate,status}:
 -->

@@ -672,6 +672,11 @@ test_work_with_ai_worker_counts_above_thousand() {
 		print_result "${test_name}" 1 "four-digit worker session counts were not preserved and comma-formatted"
 		return 0
 	fi
+	if ! grep -qF '| Metric | Yesterday | Prior 7 Days | Prior 28 Days | Prior 365 Days |' "${output_file}" ||
+		! grep -qF 'Periods are completed local calendar days ending at midnight; today is excluded.' "${output_file}"; then
+		print_result "${test_name}" 1 "completed-calendar-day labels or disclosure were not rendered"
+		return 0
+	fi
 
 	if grep -qF '| Worker sessions | 55 | 0 | 0 | 0 |' "${output_file}"; then
 		print_result "${test_name}" 1 "worker session counts regressed to zero after double-formatting"
@@ -730,6 +735,13 @@ test_screen_json_paths_are_optional_and_fail_visibly() {
 		return 0
 	fi
 	local warning_file="${TEST_DIR}/screen-warning"
+	assignments=$(_generate_screen_time_vars '' 2>"$warning_file")
+	eval "$assignments"
+	if [[ "$screen_today" != "$PROFILE_STATUS_UNAVAILABLE" || "$screen_status" != "$PROFILE_STATUS_UNAVAILABLE" || "$screen_source" != "$PROFILE_STATUS_UNAVAILABLE" ]] ||
+		! grep -qF 'screen-time payload is invalid' "$warning_file"; then
+		print_result "$test_name" 1 "empty screen payload failure was not visible"
+		return 0
+	fi
 	assignments=$(_generate_screen_time_vars 'not-json' 2>"$warning_file")
 	eval "$assignments"
 	if [[ "$screen_status" != "$PROFILE_STATUS_UNAVAILABLE" || "$screen_source" != "$PROFILE_STATUS_UNAVAILABLE" ]] ||
@@ -749,12 +761,14 @@ test_top_apps_batches_jq_processing() {
 	local db_path="${TEST_DIR}/knowledgeC.db"
 	local now core_now
 	now=$(date +%s)
-	core_now=$((now - 978307200))
+	# Production reports completed calendar days and excludes today. Place the
+	# fixture one day back so it remains inside the prior-day windows.
+	core_now=$((now - 978307200 - 86400))
 	sqlite3 "$db_path" "
 		CREATE TABLE ZOBJECT (ZSTREAMNAME TEXT,ZCREATIONDATE REAL,ZVALUEINTEGER INTEGER,ZSTARTDATE REAL,ZENDDATE REAL,ZVALUESTRING TEXT);
 		WITH RECURSIVE rows(i) AS (SELECT 1 UNION ALL SELECT i+1 FROM rows WHERE i < 10)
 		INSERT INTO ZOBJECT (ZSTREAMNAME,ZSTARTDATE,ZENDDATE,ZVALUESTRING)
-		SELECT '/app/usage', ${core_now} - i*600, ${core_now} - i*600 + 300, 'fixture.app.' || i FROM rows;"
+		SELECT '/app/usage', ${core_now} - 86400 - i*600, ${core_now} - 86400 - i*600 + 300, 'fixture.app.' || i FROM rows;"
 	local real_jq wrapper_dir count_file
 	real_jq=$(command -v jq)
 	wrapper_dir="${TEST_DIR}/bin"

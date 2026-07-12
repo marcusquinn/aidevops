@@ -30,6 +30,7 @@ _HRW_STATUS_UNKNOWN="unknown"
 _HRW_GIT_HEAD="HEAD"
 _HRW_CRASH_NO_WORK="no_work"
 _HRW_REASON_WORKER_COMPLETE="worker_complete"
+_HRW_SPOTLIGHT_MARKER=".metadata_never_index"
 
 # Defensive SCRIPT_DIR fallback (test harnesses may not set it)
 if [[ -z "${SCRIPT_DIR:-}" ]]; then
@@ -241,6 +242,8 @@ _invoke_claude() {
 
 	(
 		set +e
+		local egress_mode="${AIDEVOPS_WORKER_EGRESS_MODE:-auto}"
+		local egress_worker_id="${AIDEVOPS_WORKER_ID:-${_invoke_session_key:-headless}}"
 		# Set child cwd via shell since claude CLI has no flag for it.
 		if [[ -n "$work_dir" ]]; then
 			if ! cd "$work_dir"; then
@@ -254,19 +257,24 @@ _invoke_claude() {
 			passthrough_csv="$(build_sandbox_passthrough_csv)"
 			if [[ -n "$passthrough_csv" ]]; then
 				if [[ -n "${_HEADLESS_CLAUDE_STDIN_FILE:-}" && -f "${_HEADLESS_CLAUDE_STDIN_FILE:-}" ]]; then
-					"$SANDBOX_EXEC_HELPER" run --timeout "$HEADLESS_SANDBOX_TIMEOUT_DEFAULT" --allow-secret-io --passthrough "$passthrough_csv" -- "${cmd[@]}" <"$_HEADLESS_CLAUDE_STDIN_FILE" 2>&1 | tee "$output_file"
+					"$SANDBOX_EXEC_HELPER" run --timeout "$HEADLESS_SANDBOX_TIMEOUT_DEFAULT" --allow-secret-io --egress-mode "$egress_mode" --worker-id "$egress_worker_id" --passthrough "$passthrough_csv" -- "${cmd[@]}" <"$_HEADLESS_CLAUDE_STDIN_FILE" 2>&1 | tee "$output_file"
 				else
-					"$SANDBOX_EXEC_HELPER" run --timeout "$HEADLESS_SANDBOX_TIMEOUT_DEFAULT" --allow-secret-io --passthrough "$passthrough_csv" -- "${cmd[@]}" 2>&1 | tee "$output_file"
+					"$SANDBOX_EXEC_HELPER" run --timeout "$HEADLESS_SANDBOX_TIMEOUT_DEFAULT" --allow-secret-io --egress-mode "$egress_mode" --worker-id "$egress_worker_id" --passthrough "$passthrough_csv" -- "${cmd[@]}" 2>&1 | tee "$output_file"
 				fi
 			else
 				if [[ -n "${_HEADLESS_CLAUDE_STDIN_FILE:-}" && -f "${_HEADLESS_CLAUDE_STDIN_FILE:-}" ]]; then
-					"$SANDBOX_EXEC_HELPER" run --timeout "$HEADLESS_SANDBOX_TIMEOUT_DEFAULT" --allow-secret-io -- "${cmd[@]}" <"$_HEADLESS_CLAUDE_STDIN_FILE" 2>&1 | tee "$output_file"
+					"$SANDBOX_EXEC_HELPER" run --timeout "$HEADLESS_SANDBOX_TIMEOUT_DEFAULT" --allow-secret-io --egress-mode "$egress_mode" --worker-id "$egress_worker_id" -- "${cmd[@]}" <"$_HEADLESS_CLAUDE_STDIN_FILE" 2>&1 | tee "$output_file"
 				else
-					"$SANDBOX_EXEC_HELPER" run --timeout "$HEADLESS_SANDBOX_TIMEOUT_DEFAULT" --allow-secret-io -- "${cmd[@]}" 2>&1 | tee "$output_file"
+					"$SANDBOX_EXEC_HELPER" run --timeout "$HEADLESS_SANDBOX_TIMEOUT_DEFAULT" --allow-secret-io --egress-mode "$egress_mode" --worker-id "$egress_worker_id" -- "${cmd[@]}" 2>&1 | tee "$output_file"
 				fi
 			fi
 			printf '%s' "${PIPESTATUS[0]}" >"$exit_code_file"
 		else
+			if [[ "$egress_mode" == "required" ]]; then
+				print_error "Whole-process worker egress is required, but the sandbox launcher is disabled or unavailable"
+				printf '%s' "126" >"$exit_code_file"
+				exit 126
+			fi
 			if [[ "${AIDEVOPS_HEADLESS_SANDBOX_DISABLED:-}" == "1" ]]; then
 				print_info "AIDEVOPS_HEADLESS_SANDBOX_DISABLED=1 — using bare exec (no privilege isolation) (GH#20146 audit)"
 			fi
@@ -507,7 +515,12 @@ _worker_produced_output() {
 	# Also covers the t2899 default-branch case: HEAD on main with no/any commits
 	# but no feature branch pushed → noop, not branch_orphan.
 	if [[ "$has_commits" -eq 0 && "$has_pushed_branch" -eq 0 ]]; then
-		if [[ -n "$(git -C "$work_dir" status --porcelain 2>/dev/null || true)" ]]; then
+		local task_status=""
+		if ! task_status=$(_hrw_worktree_task_status "$work_dir"); then
+			printf 'pr_exists' # fail-open: cannot safely classify local state
+			return 0
+		fi
+		if [[ -n "$task_status" ]]; then
 			printf 'dirty_worktree'
 			return 0
 		fi
@@ -983,10 +996,41 @@ PY
 	return 0
 }
 
-_hrw_worktree_clean_for_owner_reclaim() {
+_hrw_worktree_task_status() {
 	local work_dir="$1"
 	local status_output=""
 	status_output=$(git -C "$work_dir" status --porcelain 2>/dev/null) || return 1
+
+	# Heal markers created by the pre-t18098 exclusion helper. This exemption is
+	# intentionally exact and macOS-only: every other untracked or modified path
+	# remains task state and continues to block ownership transfer or trigger
+	# recovery. An empty regular file proves the known Spotlight marker shape.
+	if [[ "$(uname -s 2>/dev/null || true)" == "Darwin" && \
+		-f "${work_dir}/${_HRW_SPOTLIGHT_MARKER}" && ! -L "${work_dir}/${_HRW_SPOTLIGHT_MARKER}" && \
+		! -s "${work_dir}/${_HRW_SPOTLIGHT_MARKER}" ]] && \
+		printf '%s\n' "$status_output" | grep -Fqx "?? ${_HRW_SPOTLIGHT_MARKER}"; then
+		local exclude_file=""
+		exclude_file=$(git -C "$work_dir" rev-parse --git-path info/exclude 2>/dev/null) || return 1
+		[[ -n "$exclude_file" ]] || return 1
+		if [[ "$exclude_file" != /* ]]; then
+			exclude_file="${work_dir}/${exclude_file}"
+		fi
+		[[ -f "$exclude_file" ]] || return 1
+		if ! grep -Fqx "/${_HRW_SPOTLIGHT_MARKER}" "$exclude_file" 2>/dev/null; then
+			printf '/%s\n' "$_HRW_SPOTLIGHT_MARKER" >>"$exclude_file" 2>/dev/null || return 1
+		fi
+		git -C "$work_dir" check-ignore --quiet --no-index -- "$_HRW_SPOTLIGHT_MARKER" 2>/dev/null || return 1
+		status_output=$(git -C "$work_dir" status --porcelain 2>/dev/null) || return 1
+	fi
+
+	printf '%s' "$status_output"
+	return 0
+}
+
+_hrw_worktree_clean_for_owner_reclaim() {
+	local work_dir="$1"
+	local status_output=""
+	status_output=$(_hrw_worktree_task_status "$work_dir") || return 1
 	[[ -z "$status_output" ]] || return 1
 
 	local upstream_ref=""
@@ -1375,6 +1419,13 @@ _cmd_run_prepare() {
 	# can detect workers that haven't created PRs yet. The ledger bridges
 	# the 10-15 minute gap between dispatch and PR creation.
 	_register_dispatch_ledger "$session_key" "$work_dir"
+	if [[ -n "${AIDEVOPS_DISPATCH_LEASE_TOKEN:-}" && -n "${WORKER_ISSUE_NUMBER:-}" && -n "${DISPATCH_REPO_SLUG:-}" ]]; then
+		"${SCRIPT_DIR}/dispatch-ledger-helper.sh" ready --session-key "$session_key" \
+			--lease-token "$AIDEVOPS_DISPATCH_LEASE_TOKEN" 2>/dev/null || return 1
+		"${SCRIPT_DIR}/dispatch-claim-helper.sh" transition ready "$WORKER_ISSUE_NUMBER" \
+			"$DISPATCH_REPO_SLUG" "$AIDEVOPS_DISPATCH_LEASE_TOKEN" "$session_key" \
+			"${AIDEVOPS_DISPATCH_READY_LEASE_TTL:-7200}" 2>/dev/null || return 1
+	fi
 	return 0
 }
 

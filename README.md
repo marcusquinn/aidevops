@@ -60,7 +60,7 @@ The result: an AI operations platform that manages projects across every busines
 [![Copyright](https://img.shields.io/badge/Copyright-Marcus%20Quinn%202025--2026-blue.svg)](https://github.com/marcusquinn)
 
 <!-- Release & Version Info -->
-[![Version](https://img.shields.io/badge/Version-3.32.31-blue.svg)](https://github.com/marcusquinn/aidevops/releases)
+[![Version](https://img.shields.io/badge/Version-3.32.46-blue.svg)](https://github.com/marcusquinn/aidevops/releases)
 [![npm version](https://img.shields.io/npm/v/aidevops)](https://www.npmjs.com/package/aidevops)
 [![Homebrew](https://img.shields.io/badge/homebrew-marcusquinn%2Ftap-orange)](https://github.com/marcusquinn/homebrew-tap)
 [![GitHub repository](https://img.shields.io/badge/github-repository-181717.svg?logo=github)](https://github.com/marcusquinn/aidevops)
@@ -102,6 +102,7 @@ the required notices and preferred credit text.
 - `aidevops init` - Initialize in any project
 - `aidevops update` - Update framework
 - `aidevops auto-update` - Automatic update polling (enable/disable/status)
+- `aidevops gpt56-context [enable|disable|status]` - Keep GPT-5.6 at a 300K advertised context window in OpenCode (enabled by default), so 80% auto-compaction runs near 240K before long-context pricing; disable to use native provider limits
 - `aidevops secret` - Manage secrets (gopass encrypted, AI-safe)
 - `aidevops security` - Full security assessment (posture, secrets, supply chain)
 - `aidevops lint audit` - Audit native lint/format/typecheck commands and repo-verify hooks

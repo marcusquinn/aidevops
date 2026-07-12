@@ -81,7 +81,22 @@ printf '%s\n' "\$*" >> "${GH_CALLS_FILE}"
 # gh api .../comments --jq '... | length'
 # Returns the pre-computed tick count directly (t2008 test shim)
 if [[ "\$1" == "api" && "\$2" == *"/comments" ]]; then
-	printf '%s\n' "${tick_count}"
+	python3 - "${tick_count}" <<'PY'
+import json
+import sys
+
+count = int(sys.argv[1])
+comments = []
+for index in range(1, count + 1):
+    comments.append({"created_at": f"2026-01-01T00:00:{index:02d}Z", "body": f"<!-- stale-recovery-tick:{index} -->"})
+comments.append({
+    "created_at": "2026-01-01T00:01:00Z",
+    "body": "DISPATCH_CLAIM nonce=test runner=stale-runner ts=2026-01-01T00:01:00Z max_age_s=1 lease_token=test device=test session=issue-99999 phase=prelaunch expires_at=1",
+    "user": {"login": "stale-runner"},
+    "author_association": "MEMBER",
+})
+print(json.dumps([comments]))
+PY
 	exit 0
 fi
 
@@ -151,15 +166,15 @@ else
 fi
 
 # =============================================================================
-# Test 2 — Second recovery (1 prior tick → tick:2 comment, STALE_RECOVERED)
+# Test 2 — Second recovery reaches the global threshold and escalates
 # =============================================================================
 
 run_recover 1 ""
 
-if echo "$output" | grep -q "STALE_RECOVERED"; then
-	print_result "Tick 2 (1 prior tick): STALE_RECOVERED emitted, not escalated" 0
+if echo "$output" | grep -q "STALE_ESCALATED"; then
+	print_result "Tick 2 (1 prior tick): STALE_ESCALATED emitted" 0
 else
-	print_result "Tick 2 (1 prior tick): STALE_RECOVERED emitted, not escalated" 1 "(got: '$output')"
+	print_result "Tick 2 (1 prior tick): STALE_ESCALATED emitted" 1 "(got: '$output')"
 fi
 
 # =============================================================================
@@ -200,13 +215,13 @@ fi
 # Test 4 — Reset path: open PR detected → counter reset, STALE_RECOVERED
 # =============================================================================
 
-# 2 prior ticks (above threshold), but open PR #42 detected → should NOT escalate
+# 2 prior ticks, but open PR #42 is durable progress and must be preserved
 run_recover 2 "42"
 
-if echo "$output" | grep -q "STALE_RECOVERED"; then
-	print_result "Reset path (PR #42 detected, 2 ticks): STALE_RECOVERED emitted (no escalation)" 0
+if echo "$output" | grep -q "STALE_PROGRESS_PRESERVED"; then
+	print_result "Open PR path preserves durable progress without stale recovery" 0
 else
-	print_result "Reset path (PR #42 detected, 2 ticks): STALE_RECOVERED emitted (no escalation)" 1 "(got: '$output')"
+	print_result "Open PR path preserves durable progress without stale recovery" 1 "(got: '$output')"
 fi
 
 if ! echo "$output" | grep -q "STALE_ESCALATED"; then
@@ -215,11 +230,11 @@ else
 	print_result "Reset path: STALE_ESCALATED NOT emitted" 1 "(got: '$output')"
 fi
 
-# A reset tick comment should have been posted
-if grep -q "^issue comment" "$GH_CALLS_FILE" 2>/dev/null; then
-	print_result "Reset path: reset comment call made" 0
+# Durable PR activity replaces synthetic reset comments.
+if ! grep -q "^issue comment" "$GH_CALLS_FILE" 2>/dev/null; then
+	print_result "Open PR path posts no synthetic reset comment" 0
 else
-	print_result "Reset path: reset comment call made" 1 "(gh calls: $(head -5 "$GH_CALLS_FILE" 2>/dev/null))"
+	print_result "Open PR path posts no synthetic reset comment" 1 "(gh calls: $(head -5 "$GH_CALLS_FILE" 2>/dev/null))"
 fi
 
 # =============================================================================

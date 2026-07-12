@@ -5,7 +5,7 @@
 # AI DevOps Framework CLI
 # Usage: aidevops <command> [options]
 #
-# Version: 3.32.31
+# Version: 3.32.46
 
 set -euo pipefail
 
@@ -44,7 +44,7 @@ INSTALL_DIR="$_AIDEVOPS_REAL_HOME/Git/aidevops"
 _AIDEVOPS_SOURCE_PATH="${BASH_SOURCE[0]}"
 _AIDEVOPS_SOURCE_DIR="${_AIDEVOPS_SOURCE_PATH%/*}"
 [[ "$_AIDEVOPS_SOURCE_DIR" == "$_AIDEVOPS_SOURCE_PATH" ]] && _AIDEVOPS_SOURCE_DIR="."
-_AIDEVOPS_SOURCE_DIR="$(cd "$_AIDEVOPS_SOURCE_DIR" 2>/dev/null && pwd)" || _AIDEVOPS_SOURCE_DIR=""
+_AIDEVOPS_SOURCE_DIR="$(cd "$_AIDEVOPS_SOURCE_DIR" 2>/dev/null && pwd -P)" || _AIDEVOPS_SOURCE_DIR=""
 if [[ -n "$_AIDEVOPS_SOURCE_DIR" && -L "$_AIDEVOPS_SOURCE_PATH" ]]; then
 	_AIDEVOPS_LINK_TARGET="$(readlink "$_AIDEVOPS_SOURCE_PATH" 2>/dev/null || true)"
 	if [[ -n "$_AIDEVOPS_LINK_TARGET" ]]; then
@@ -68,7 +68,8 @@ elif [[ -n "$_AIDEVOPS_SOURCE_DIR" && -f "$_AIDEVOPS_SOURCE_DIR/scripts/aidevops
 	_AIDEVOPS_CLI_MODULES_SUBDIR="scripts/aidevops-cli"
 fi
 unset _AIDEVOPS_SOURCE_PATH _AIDEVOPS_SOURCE_DIR _AIDEVOPS_LINK_TARGET _AIDEVOPS_LINK_DIR
-AGENTS_DIR="$_AIDEVOPS_REAL_HOME/.aidevops/agents"
+AGENTS_DIR="${AIDEVOPS_AGENTS_DIR:-$_AIDEVOPS_REAL_HOME/.aidevops/agents}"
+export AIDEVOPS_AGENTS_DIR="$AGENTS_DIR"
 CONFIG_DIR="$_AIDEVOPS_REAL_HOME/.config/aidevops"
 REPOS_FILE="$CONFIG_DIR/repos.json"
 # shellcheck disable=SC2034  # Used in fresh install fallback
@@ -878,6 +879,7 @@ _help_commands() {
 	echo "  design <cmd>       DESIGN.md detection, scaffolding, and brand guideline exports"
 	echo "  cleanup <cmd>      Cleanup helpers (remote branch audit/delete)"
 	echo "  model-accounts-pool OAuth account pool (list/check/diagnose/add/rotate/reset-cooldowns)"
+	echo "  gpt56-context <cmd> Manage the 300K GPT-5.6 OpenCode context cap (enable/disable/status)"
 	echo "  client-format      Client request format alignment (extract/check/canary/monitor)"
 	echo "  opencode-db <cmd>  OpenCode SQLite maintenance/session lookup (check/report/sessions/maintain/window/status/install)"
 	echo "  opencode [args]    Launch OpenCode with aidevops per-session DB isolation"
@@ -1123,6 +1125,7 @@ cmd_help() {
 	echo "  aidevops doctor              # Find duplicate/conflicting installs"
 	echo "  aidevops doctor --fix        # Interactively remove duplicates"
 	echo "  aidevops update              # Update framework + check projects"
+	echo "  aidevops gpt56-context       # Manage the 300K GPT-5.6 OpenCode context cap"
 	echo "  aidevops repos               # List registered projects"
 	echo "  aidevops launch-worker 22259 marcusquinn/aidevops --dry-run"
 	echo "  aidevops repos add           # Register current project"
@@ -1647,6 +1650,7 @@ main() {
 	detect | scan) cmd_detect ;;
 	ip-check | ip_check) _dispatch_helper "ip-reputation-helper.sh" "ip-reputation-helper.sh" "$@" ;;
 	model-accounts-pool | map) _dispatch_helper "oauth-pool-helper.sh" "oauth-pool-helper.sh" "$@" ;;
+	gpt56-context | gpt56_context) _dispatch_helper "gpt56-context-helper.sh" "gpt56-context-helper.sh" "$@" ;;
 	cleanup)
 		local _cleanup_sub="${1:-help}"
 		case "$_cleanup_sub" in

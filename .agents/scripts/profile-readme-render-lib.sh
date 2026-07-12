@@ -318,10 +318,10 @@ _generate_top_apps_section() {
 
 ## Top Apps by Screen Time
 
-| App | 24h | 7 Days | 28 Days |
+| App | Yesterday | Prior 7 Days | Prior 28 Days |
 | --- | ---: | ---: | ---: |
 ${app_rows}
-_Top 10 apps by foreground time share. Mac only._
+_Top 10 apps by foreground time share across completed local calendar days. Mac only._
 EOF
 	return 0
 }
@@ -461,7 +461,7 @@ _generate_work_with_ai_table() {
 	cat <<EOF
 ## Work with AI
 
-| Metric | 24h | 7 Days | 28 Days | 365 Days |
+| Metric | Yesterday | Prior 7 Days | Prior 28 Days | Prior 365 Days |
 | --- | ---: | ---: | ---: | ---: |
 | ${screen_label} | ${screen_today} | ${screen_week} | ${screen_month} | ${year_prefix}${screen_year}${year_suffix} |
 | Interactive human attention | $(_format_work_hour_cell "$day_human") | $(_format_work_hour_cell "$week_human") | $(_format_work_hour_cell "$month_human") | $(_format_work_hour_cell "$year_human") |
@@ -473,6 +473,8 @@ _generate_work_with_ai_table() {
 | Worker sessions | ${f_day_wrk} | ${f_week_wrk} | ${f_month_wrk} | ${f_year_wrk} |
 
 _Screen time from ${screen_source}; collection status: ${screen_status}.$([ -n "$year_suffix" ] && echo " *365-day estimate uses observed calendar coverage.")_
+
+_Periods are completed local calendar days ending at midnight; today is excluded._
 
 _Human attention is unioned wall-clock time, so overlapping sessions are not double-counted. AI generation is additive machine work across sessions; it is not wall-clock concurrency._${session_coverage_note}
 EOF

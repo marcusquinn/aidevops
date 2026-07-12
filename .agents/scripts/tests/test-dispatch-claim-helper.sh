@@ -146,7 +146,7 @@ if [[ "$endpoint" == repos/*/issues/*/comments* ]]; then
 		--arg new_body "$new_body" \
 		--arg new_ts "${MOCK_NEW_CLAIM_CREATED_AT:?}" \
 		'[
-			{id: 1, body: ("DISPATCH_CLAIM nonce=old-nonce runner=" + $runner + " ts=" + $old_ts + " max_age_s=120"), created_at: $old_ts},
+			{id: 1, body: ("DISPATCH_CLAIM nonce=old-nonce runner=" + $runner + " ts=" + $old_ts + " max_age_s=120" + (if env.MOCK_OLD_CLAIM_DEVICE then " lease_token=old-nonce device=" + env.MOCK_OLD_CLAIM_DEVICE + " session=issue-42 phase=prelaunch expires_at=4102444800" else "" end)), created_at: $old_ts},
 			{id: 999, body: $new_body, created_at: $new_ts}
 		]'
 	exit 0
@@ -1115,16 +1115,15 @@ test_claim_rejects_stale_same_runner_claim() {
 		print_result "stale same-runner claim emits CLAIM_STALE_SELF" 1 "output: $output"
 	fi
 
-	# GH#17503: claim comments are retained for audit; stale same-runner claims
-	# are rejected without deleting either the old or the fresh comment.
-	if [[ ! -f "${tmp_dir}/delete_ids.log" ]]; then
-		print_result "stale self-claim retains audit comments" 0
+	# Keep only the winning/oldest claim; the fresh losing claim is noise.
+	if [[ -f "${tmp_dir}/delete_ids.log" ]] && grep -qx '999' "${tmp_dir}/delete_ids.log"; then
+		print_result "stale self-claim removes fresh losing comment" 0
 	else
 		local delete_log=""
 		if [[ -f "${tmp_dir}/delete_ids.log" ]]; then
 			delete_log=$(<"${tmp_dir}/delete_ids.log")
 		fi
-		print_result "stale self-claim retains audit comments" 1 "deleted: ${delete_log:-none}"
+		print_result "stale self-claim removes fresh losing comment" 1 "deleted: ${delete_log:-none}"
 	fi
 
 	rm -rf "$tmp_dir"
@@ -1173,17 +1172,38 @@ test_claim_rejects_fresh_same_runner_claim() {
 		print_result "fresh same-runner claim emits CLAIM_STALE_SELF" 1 "output: $output"
 	fi
 
-	# GH#17503: claim comments are retained for audit; duplicate same-runner
-	# claims are rejected without deleting either comment.
-	if [[ ! -f "${tmp_dir}/delete_ids.log" ]]; then
-		print_result "fresh same-runner retains audit comments" 0
+	if [[ -f "${tmp_dir}/delete_ids.log" ]] && grep -qx '999' "${tmp_dir}/delete_ids.log"; then
+		print_result "fresh same-runner removes duplicate losing comment" 0
 	else
 		local delete_log=""
 		if [[ -f "${tmp_dir}/delete_ids.log" ]]; then
 			delete_log=$(<"${tmp_dir}/delete_ids.log")
 		fi
-		print_result "fresh same-runner retains audit comments" 1 "deleted: ${delete_log:-none}"
+		print_result "fresh same-runner removes duplicate losing comment" 1 "deleted: ${delete_log:-none}"
 	fi
+	return 0
+}
+
+test_claim_allows_same_login_on_different_device_after_expiry_protocol() {
+	local tmp_dir mock_path old_created_at new_created_at output exit_code
+	tmp_dir=$(mktemp -d)
+	mock_path=$(create_mock_gh "$tmp_dir")
+	old_created_at="$(iso_seconds_ago 10)"
+	new_created_at="$(iso_seconds_ago 1)"
+	set +e
+	output=$(PATH="${mock_path}:$PATH" MOCK_GH_STATE_DIR="$tmp_dir" \
+		MOCK_OLD_CLAIM_CREATED_AT="$old_created_at" MOCK_NEW_CLAIM_CREATED_AT="$new_created_at" \
+		MOCK_OLD_CLAIM_RUNNER="shared-login" MOCK_OLD_CLAIM_DEVICE="device-b" \
+		AIDEVOPS_DEVICE_ID="device-a" DISPATCH_CLAIM_WINDOW=0 \
+		"$CLAIM_HELPER" claim 42 owner/repo shared-login 2>&1)
+	exit_code=$?
+	set -e
+	if [[ "$exit_code" -eq 1 && "$output" != *"CLAIM_STALE_SELF"* ]]; then
+		print_result "same-login different devices are distinguished" 0
+	else
+		print_result "same-login different devices are distinguished" 1 "exit=${exit_code} output=${output}"
+	fi
+	rm -rf "$tmp_dir"
 	return 0
 }
 
@@ -1577,6 +1597,7 @@ main() {
 	test_check_preserves_claim_with_launch_evidence
 	test_claim_rejects_stale_same_runner_claim
 	test_claim_rejects_fresh_same_runner_claim
+	test_claim_allows_same_login_on_different_device_after_expiry_protocol
 	test_claim_reads_paginated_comment_tail
 	test_claim_reads_lowercase_paginated_claim_marker
 	test_claim_ignore_filter_preserves_self_claim

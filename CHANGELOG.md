@@ -10,6 +10,133 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.32.46] - 2026-07-12
+
+### Added
+
+- add canonical observation contract (#27310)
+
+### Fixed
+
+- reconcile superseded postflight cancellations (#27311)
+
+## [3.32.45] - 2026-07-12
+
+### Changed
+
+- Version bump and maintenance updates
+
+
+## [3.32.44] - 2026-07-12
+
+### Changed
+
+- Version bump and maintenance updates
+
+
+## [3.32.43] - 2026-07-12
+
+### Fixed
+
+- bound cross-runner worker retries (#27301)
+
+## [3.32.42] - 2026-07-12
+
+### Changed
+
+- dispatch subagent test suites through commands (#27300)
+
+## [3.32.41] - 2026-07-12
+
+### Changed
+
+- Version bump and maintenance updates
+
+
+## [3.32.40] - 2026-07-12
+
+### Fixed
+
+- stabilize subagent index generation (#27296)
+
+## [3.32.39] - 2026-07-12
+
+### Changed
+
+- refresh Vault status after terminal handoff (#26999)
+
+## [3.32.38] - 2026-07-12
+
+### Changed
+
+- Version bump and maintenance updates
+
+
+## [3.32.37] - 2026-07-12
+
+### Changed
+
+- Version bump and maintenance updates
+
+
+## [3.32.36] - 2026-07-12
+
+### Changed
+
+- Make dispatch handoff an atomic expiring lease (#27286)
+- preserve roadmap and first-turn progress (#27283)
+- Tests: align top-app fixture with completed days (#27285)
+- Maintenance: sync ref:GH#27275 to TODO.md [skip ci]
+- validate causal evidence in bug reports (#27274)
+
+### Fixed
+
+- complete GPT-5.6 model limits (#27282)
+
+## [3.32.35] - 2026-07-12
+
+### Changed
+
+- Version bump and maintenance updates
+
+
+## [3.32.34] - 2026-07-12
+
+### Changed
+
+- add GPT-5.6 context cap toggle (#27268)
+
+## [3.32.33] - 2026-07-12
+
+### Changed
+
+- fix: route remediation updates through safe wrappers (#27265)
+- feat: automate failure remediation and NMR revalidation (#27264)
+- Maintenance: ratchet QLTY_SMELL_THRESHOLD 90→81 (-9) [skip ci]
+- Refactor: reduce runtime event complexity (#27259)
+- Prevent worktree markers from breaking ownership transfer (#27248)
+- feat: enforce worker process-tree egress contract (#27224)
+
+### Fixed
+
+- ignore resolved review threads in quality scans (#27223)
+
+## [3.32.32] - 2026-07-11
+
+### Changed
+
+- split pulse merge process modules (#27211)
+- Enforce evidence-backed full-loop lifecycle (#27163)
+- recover dirty worker worktrees before redispatch (#27162)
+- Maintenance: sync ref:GH#27169 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#27167 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#27165 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#27164 to TODO.md [skip ci]
+
+### Fixed
+
+- resolve deployed CLI version root (#27173)
+
 ## [3.32.31] - 2026-07-11
 
 ### Changed
@@ -70,7 +197,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - Version bump and maintenance updates
-
 
 ## [3.32.24] - 2026-07-11
 

@@ -42,6 +42,7 @@ import {
 import { readLocalReposSetupSummary } from "./status-local-repos";
 import { readManagedApps } from "./status-managed-apps";
 import { readPulseWorkersSummary } from "./status-pulse-workers";
+import { readSecretInventory } from "./status-inventory";
 import { readVaultSummary } from "./status-vault";
 
 export { readVaultSummary } from "./status-vault";
@@ -82,6 +83,7 @@ export function readStatus(
   const opencodeSessions = readOpenCodeSessions(opencodeDbPath, opencodeDbPathRef, localRepos.repos);
   const oauthPool = readOAuthPoolSummary(oauthPoolPath, oauthPoolPathRef);
   const vault = readVaultSummary(repoRoot);
+  const secretInventory = readSecretInventory(repoRoot, vault);
   const pulseWorkers = readPulseWorkersSummary({ observedAt: options.observedAt, oauthPoolPath, ...options.pulseWorkers });
   const notifications = buildStatusNotifications({
     aiApps,
@@ -153,7 +155,8 @@ export function readStatus(
     notifications,
     vault,
     pulse_workers: pulseWorkers.summary,
-    secrets: vault.unlocked ? statusFixture.secrets : [],
+    secrets: vault.unlocked ? secretInventory.secrets : [],
+    secret_backends: vault.unlocked ? secretInventory.backends : statusFixture.secret_backends,
   };
 
   const envelope = createEnvelope({

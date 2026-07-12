@@ -141,6 +141,28 @@ _stale_recovery_latest_dispatch_ts_from_pages() {
 	return 0
 }
 
+_stale_recovery_final_evidence_recheck() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local expected_dispatch_ts="$3"
+	local pages="" latest_dispatch_ts="" now_epoch=""
+	pages=$(_stale_recovery_fetch_comments_pages "$issue_number" "$repo_slug")
+	[[ -n "$pages" ]] || return 1
+	latest_dispatch_ts=$(_stale_recovery_latest_dispatch_ts_from_pages "$pages")
+	[[ "$latest_dispatch_ts" == "$expected_dispatch_ts" ]] || return 1
+	now_epoch=$(date +%s)
+	local comments="" claims="" parsed=""
+	comments=$(printf '%s' "$pages" | jq -c '[.[] | .[]?]' 2>/dev/null) || return 1
+	claims=$(printf '%s' "$comments" | jq -c '[.[] | select((.body // "") | contains("DISPATCH_CLAIM nonce="))]' 2>/dev/null) || return 1
+	parsed=$(printf '%s' "$claims" | jq -c --argjson now "$now_epoch" --argjson max_age 2147483647 \
+		--argjson comments "$comments" -f "${SCRIPT_DIR}/dispatch-lease-claims.jq" 2>/dev/null) || return 1
+	if printf '%s' "$parsed" | jq -e 'any(.lease_phase == "ready")' >/dev/null 2>&1; then
+		return 1
+	fi
+	# PID exit is deliberately absent: remote completion requires durable evidence.
+	return 0
+}
+
 #######################################
 # Check for terminal worker-failure evidence after a dispatch timestamp.
 # Stale escalation should not infer failure from GitHub silence alone; in a
@@ -225,6 +247,11 @@ _stale_recovery_escalate() {
 	local reason="$4"
 	local _threshold="$5"
 	local _prior_ticks="$6"
+	local expected_dispatch_ts="${7:-}"
+	if ! _stale_recovery_final_evidence_recheck "$issue_number" "$repo_slug" "$expected_dispatch_ts"; then
+		printf 'STALE_RECHECK_BLOCKED: issue #%s in %s — evidence changed before escalation\n' "$issue_number" "$repo_slug"
+		return 0
+	fi
 
 	# Unassign stale workers (still needed to clean up the assignment)
 	local _esc_ifs="${IFS:-}"
@@ -306,9 +333,14 @@ _stale_recovery_apply_blocked_by_hold() {
 	local repo_slug="$2"
 	local stale_assignees="$3"
 	local reason="$4"
-	shift 4
+	local expected_dispatch_ts="$5"
+	shift 5
 	local -a recov_extra=("$@")
 
+	if ! _stale_recovery_final_evidence_recheck "$issue_number" "$repo_slug" "$expected_dispatch_ts"; then
+		printf 'STALE_RECHECK_BLOCKED: issue #%s in %s — evidence changed before blocked takeover\n' "$issue_number" "$repo_slug"
+		return 0
+	fi
 	set_issue_status "$issue_number" "$repo_slug" "blocked" "${recov_extra[@]}" || true
 
 	local _now_ts=""
@@ -358,6 +390,9 @@ _stale_recovery_apply() {
 	local repo_slug="$2"
 	local stale_assignees="$3"
 	local reason="$4"
+	local expected_dispatch_ts="${5:-}"
+	local recovery_tick="${6:-}"
+	local recovery_threshold="${7:-}"
 
 	local saved_ifs="${IFS:-}"
 	local -a assignee_arr=()
@@ -370,7 +405,11 @@ _stale_recovery_apply() {
 		[[ -n "$assignee" ]] && _recov_extra+=(--remove-assignee "$assignee")
 	done
 	if _stale_recovery_has_unresolved_blocked_by "$issue_number" "$repo_slug"; then
-		_stale_recovery_apply_blocked_by_hold "$issue_number" "$repo_slug" "$stale_assignees" "$reason" "${_recov_extra[@]}"
+		_stale_recovery_apply_blocked_by_hold "$issue_number" "$repo_slug" "$stale_assignees" "$reason" "$expected_dispatch_ts" "${_recov_extra[@]}"
+		return 0
+	fi
+	if ! _stale_recovery_final_evidence_recheck "$issue_number" "$repo_slug" "$expected_dispatch_ts"; then
+		printf 'STALE_RECHECK_BLOCKED: issue #%s in %s — evidence changed before takeover\n' "$issue_number" "$repo_slug"
 		return 0
 	fi
 	set_issue_status "$issue_number" "$repo_slug" "available" "${_recov_extra[@]}" || true
@@ -380,11 +419,13 @@ _stale_recovery_apply() {
 	gh_issue_comment "$issue_number" --repo "$repo_slug" \
 		--body "<!-- ops:start — workers: skip this comment, it is audit trail not implementation context -->
 <!-- WORKER_SUPERSEDED runners=${stale_assignees} ts=${_now_ts} -->
+<!-- stale-recovery-tick:${recovery_tick:-1} -->
 **Stale assignment recovered** (GH#15060)
 
 Previously assigned to: ${stale_assignees}
 Reason: ${reason}
 Threshold: ${STALE_ASSIGNMENT_THRESHOLD_SECONDS}s
+Global recovery attempt: ${recovery_tick:-1}/${recovery_threshold:-unknown}
 
 The assigned runner had no active worker process and produced no progress within the threshold. Unassigned and relabeled \`status:available\` for re-dispatch.
 
@@ -402,15 +443,12 @@ _This recovery prevents the orphaned-assignment deadlock where offline runners p
 # Decision flow (t2008 escalation check):
 #   1. Load threshold from config (default 2).
 #   2. Count prior non-reset tick comments from the GitHub issue comment log.
-#   3. Find the latest dispatch marker and terminal worker evidence in that same
-#      GitHub comment log (the cross-machine coordination source).
+#   3. Find the latest dispatch marker in that same GitHub comment log.
 #   4. Look up any open PR referencing this issue.
-#      - If an open PR exists: reset tick counter (progress is being made),
-#        continue to normal recovery.
-#      - Else if prior_ticks >= threshold and the latest dispatch attempt has
-#        terminal evidence: escalate to needs-maintainer-review and return
-#        immediately (no normal recovery).
-#      - Else: increment the tick counter and continue to normal recovery.
+#      - If an open PR exists: preserve ownership and stop; the PR is progress.
+#      - Else increment the global recovery count. At the threshold, escalate
+#        immediately. A stale assignment is itself terminal no-progress evidence.
+#      - Under threshold, record the tick inside the single recovery comment.
 #   5. Normal recovery: unassign stale users, set status:available, post audit.
 #
 # Args:
@@ -430,44 +468,25 @@ _recover_stale_assignment() {
 	# resetting to status:available and apply needs-maintainer-review instead.
 	# Counter is stored as structured comment markers for cross-runner correctness.
 	# Config: .agents/configs/dispatch-stale-recovery.conf
-	local _threshold _prior_ticks _open_pr _comments_pages _latest_dispatch_ts _terminal_evidence=false
+	local _threshold _prior_ticks _open_pr _comments_pages _latest_dispatch_ts _next_tick
 	_threshold=$(_stale_recovery_load_threshold)
 	_comments_pages=$(_stale_recovery_fetch_comments_pages "$issue_number" "$repo_slug")
 	_prior_ticks=$(_stale_recovery_count_ticks_from_pages "$_comments_pages")
 	_latest_dispatch_ts=$(_stale_recovery_latest_dispatch_ts_from_pages "$_comments_pages")
-	if _stale_recovery_has_terminal_evidence_since "$_comments_pages" "$_latest_dispatch_ts"; then
-		_terminal_evidence=true
-	fi
 	_open_pr=$(_stale_recovery_find_open_pr "$issue_number" "$repo_slug")
-
 	if [[ -n "$_open_pr" ]]; then
-		# Open PR exists — counter resets; post a reset marker and allow normal recovery
-		gh_issue_comment "$issue_number" --repo "$repo_slug" \
-			--body "<!-- ops:start — workers: skip this comment, it is audit trail not implementation context -->
-<!-- stale-recovery-tick:0 (reset: open PR #${_open_pr} detected) -->
-Stale recovery tick reset — open PR #${_open_pr} detected (t2008)
-<!-- ops:end -->" \
-			2>/dev/null || true
-	elif [[ "$_prior_ticks" -ge "$_threshold" && "$_terminal_evidence" == "true" ]]; then
-		# Threshold reached with explicit worker terminal evidence — escalate and
-		# bail out (no normal recovery). GH#22780: Do not suspend a fresh multi-runner
-		# dispatch solely because GitHub has been quiet for one stale window.
-		_stale_recovery_escalate "$issue_number" "$repo_slug" "$stale_assignees" "$reason" "$_threshold" "$_prior_ticks"
+		printf 'STALE_PROGRESS_PRESERVED: issue #%s in %s — open PR #%s is durable progress\n' \
+			"$issue_number" "$repo_slug" "$_open_pr"
 		return 0
-	else
-		# Under threshold, or over threshold without terminal worker evidence —
-		# increment the GitHub-backed counter and continue normal recovery.
-		local _next_tick=$((_prior_ticks + 1))
-		gh_issue_comment "$issue_number" --repo "$repo_slug" \
-			--body "<!-- ops:start — workers: skip this comment, it is audit trail not implementation context -->
-<!-- stale-recovery-tick:${_next_tick} -->
-Stale recovery tick ${_next_tick}/${_threshold} (t2008)
-<!-- ops:end -->" \
-			2>/dev/null || true
+	fi
+	_next_tick=$((_prior_ticks + 1))
+	if [[ "$_next_tick" -ge "$_threshold" ]]; then
+		_stale_recovery_escalate "$issue_number" "$repo_slug" "$stale_assignees" "$reason" "$_threshold" "$_next_tick" "$_latest_dispatch_ts"
+		return 0
 	fi
 	# ── End stale-recovery escalation check ──────────────────────────────
 
-	_stale_recovery_apply "$issue_number" "$repo_slug" "$stale_assignees" "$reason"
+	_stale_recovery_apply "$issue_number" "$repo_slug" "$stale_assignees" "$reason" "$_latest_dispatch_ts" "$_next_tick" "$_threshold"
 	return 0
 }
 

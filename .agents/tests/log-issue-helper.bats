@@ -124,6 +124,47 @@ _source_helper() {
 # check_recent_filing / record_filing round-trip
 # =============================================================================
 
+@test "validate brief rejects a heading-only reproducer" {
+	_source_helper
+	run validate_brief_has_reproducer "## Reproducer"
+	[ "$status" -eq 1 ]
+	[[ "$output" == *"requires **Symptom command**"* ]]
+}
+
+@test "validate brief rejects placeholder reproducer evidence" {
+	_source_helper
+	local body
+	body="$(printf '## Reproducer\n**Symptom command**\n```\n<paste command here>\n```\n**Actual output**\n```\n<paste terminal output here>\n```')"
+	run validate_brief_has_reproducer "$body"
+	[ "$status" -eq 1 ]
+	[[ "$output" == *"placeholder evidence"* ]]
+}
+
+@test "validate brief rejects unsupported confirmed rate-limit attribution" {
+	_source_helper
+	local body
+	body="$(printf '## Reproducer\n**Symptom command**\n```\nps -ef\n```\n**Actual output**\n```\npulse parent ran for 26 minutes\n```\nThe raw gh call hung because the API rate limit was exhausted.')"
+	run validate_brief_has_reproducer "$body"
+	[ "$status" -eq 1 ]
+	[[ "$output" == *"require **Blocked command** and **Backend state**"* ]]
+}
+
+@test "validate brief accepts investigation framing without causal proof" {
+	_source_helper
+	local body
+	body="$(printf '## Reproducer\n**Symptom command**\n```\nps -ef\n```\n**Actual output**\n```\npulse parent ran for 26 minutes\n```\nInvestigation: an untimed gh call is a candidate cause; causality is not established.')"
+	run validate_brief_has_reproducer "$body"
+	[ "$status" -eq 0 ]
+}
+
+@test "validate brief accepts confirmed transport claim with direct evidence" {
+	_source_helper
+	local body
+	body="$(printf '## Reproducer\n**Symptom command**\n```\nps -ef --forest\n```\n**Actual output**\n```\npulse -> gh api rate_limit remained blocked\n```\n**Blocked command**: gh api rate_limit (PID 42)\n**Backend state**: x-ratelimit-remaining=0 captured at the same timestamp\nThe exhausted rate limit caused the probe to hang.')"
+	run validate_brief_has_reproducer "$body"
+	[ "$status" -eq 0 ]
+}
+
 @test "check_recent_filing returns OK when no state file" {
 	_source_helper
 	local result

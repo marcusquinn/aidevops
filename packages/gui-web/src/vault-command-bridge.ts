@@ -1,4 +1,10 @@
-export type NativeVaultAction = "init" | "unlock" | "lock" | "status" | "lost-passphrase";
+export type NativeVaultAction = "init" | "unlock" | "lock";
+export type NativeVaultResult = "presented" | "running" | "succeeded" | "failed" | "cancelled";
+const NATIVE_VAULT_RESULTS = new Set<unknown>(["presented", "running", "succeeded", "failed", "cancelled"]);
+
+export function isNativeVaultResult(value: unknown): value is NativeVaultResult {
+  return NATIVE_VAULT_RESULTS.has(value);
+}
 
 interface WebKitVaultCommandWindow extends Window {
   webkit?: {

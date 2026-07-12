@@ -1,0 +1,9 @@
+{
+  "capabilities": {
+    "github-operations": {"installed": "true", "authenticated": "false", "authorized": "unknown", "reachable": "true"},
+    "browser-automation": {"deployed": "true", "enabled": "true", "runtime_compatible": "true", "tool_visible": "false", "reachable": "true"},
+    "cloudflare-management": {"enabled": "true", "authenticated": "true", "authorized": "false", "reachable": "true", "runtime_compatible": "true", "tool_visible": "true"},
+    "seo-data": {"configured": "true", "authenticated": "true", "authorized": "true", "reachable": "false", "tool_visible": "true"},
+    "code-development": {"deployed": "true", "runtime_compatible": "true", "tool_visible": "true"}
+  }
+}

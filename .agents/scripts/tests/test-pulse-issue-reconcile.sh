@@ -202,15 +202,18 @@ test_body_in_prefetch_fetch() {
 
 	# safe_grep_count inline pattern (t2763): use guard form, not || echo 0.
 	local full_has_body delta_has_body
-	full_has_body=$(grep -c 'number,title,state,labels,updatedAt,assignees,body' "${prefetch_sh}" 2>/dev/null || true)
+	# GH#21738 moved both full and delta API fetches into the fetch library;
+	# retain the orchestrator in the scan for compatibility with older layouts.
+	full_has_body=$(grep -c 'number,title,state,labels,updatedAt,assignees,body' \
+		"${prefetch_sh}" "${prefetch_fetch_sh}" 2>/dev/null | awk -F: '{s+=$2} END{print s+0}')
 	[[ "$full_has_body" =~ ^[0-9]+$ ]] || full_has_body=0
 	delta_has_body=$(grep -c 'number,title,state,labels,updatedAt,assignees,body' "${prefetch_fetch_sh}" 2>/dev/null || true)
 	[[ "$delta_has_body" =~ ^[0-9]+$ ]] || delta_has_body=0
 
-	if [[ "$full_has_body" -ge 1 ]] && [[ "$delta_has_body" -ge 1 ]]; then
+	if [[ "$full_has_body" -ge 2 ]] && [[ "$delta_has_body" -ge 2 ]]; then
 		_pass "body-in-prefetch: body field present in both full and delta fetches"
 	else
-		_fail "body-in-prefetch: full=${full_has_body} delta=${delta_has_body} (expected ≥1 each)"
+		_fail "body-in-prefetch: combined=${full_has_body} fetch-lib=${delta_has_body} (expected ≥2 fetch paths)"
 	fi
 	return 0
 }

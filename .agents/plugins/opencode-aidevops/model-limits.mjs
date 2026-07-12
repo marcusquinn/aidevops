@@ -2,8 +2,8 @@
 // SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 //
 // model-limits.mjs — single source of truth for aidevops-managed model
-// context/output limits, with optional user override for the opus-4-7 context
-// window.
+// context/output limits, including the cost-aware GPT-5.6 context cap and the
+// optional user override for the opus-4-7 context window.
 //
 // Why this module exists (t2435):
 //   The opus-4-7 context window is intentionally capped at 250K (not the 1M
@@ -24,6 +24,23 @@ export const OPUS_47_CONTEXT_DEFAULT = 250000;
 
 /** Hard upper bound — Anthropic's API ceiling for opus-4-7. */
 export const OPUS_47_CONTEXT_MAX = 1000000;
+
+/**
+ * Advertised GPT-5.6 context used by OpenCode. Its 80% compaction threshold
+ * therefore fires near 240K, before OpenAI's long-context pricing boundary.
+ */
+export const GPT56_CONTEXT_DEFAULT = 300000;
+
+/** Maximum GPT-5.6 response size advertised by OpenCode's model registry. */
+export const GPT56_OUTPUT_DEFAULT = 128000;
+
+/** GPT-5.6 model IDs currently exposed by the OpenAI provider. */
+export const GPT56_MODEL_IDS = [
+  "gpt-5.6-sol",
+  "gpt-5.6-sol-pro",
+  "gpt-5.6-terra",
+  "gpt-5.6-luna",
+];
 
 /**
  * Resolve the opus-4-7 context window from env, falling back to the default.

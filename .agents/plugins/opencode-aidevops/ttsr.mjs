@@ -190,7 +190,7 @@ function buildCorrectionMessage(violations, sessionID) {
 // Hook implementations (module-level, accept state + deps as parameters)
 // ---------------------------------------------------------------------------
 
-function buildSessionStartGreetingInstruction(agentsDir, readIfExists) {
+export function buildSessionStartGreetingInstruction(agentsDir, readIfExists) {
   const cachePath = join(agentsDir, "..", "cache", "session-greeting.txt");
   const cacheLines = readIfExists(cachePath).split("\n").map((line) => line.trim()).filter(Boolean);
   const cacheLine = cacheLines[0] || "";
@@ -215,7 +215,8 @@ function buildSessionStartGreetingInstruction(agentsDir, readIfExists) {
     "",
     "Do this before tool calls, status updates, analysis summaries, or task work.",
     "Do not include startup status or advisory messages in chat; those are already shown by the OpenCode toast/sidebar surfaces.",
-    "If the user launched the session with an initial message, greet first in the assistant response, then answer that message.",
+    "If the user launched the session with an initial message, the greeting is only a required prefix: immediately execute or fully answer that message in the SAME assistant turn.",
+    "A task request already authorises task work. Never stop after acknowledging, restating, promising, or asking the user to say continue; call the appropriate tools immediately after the greeting unless genuinely blocked.",
     "If the initial user message is only a greeting/salutation, do not add any additional salutations, greetings, introductory questions, or equivalent help prompts after the exact greeting above.",
     "Do not repeat the greeting after the first assistant turn, and do not duplicate the framework-status toast/sidebar content.",
   ].join("\n");

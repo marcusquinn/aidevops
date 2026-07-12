@@ -17,6 +17,7 @@ from screen_time_interval_common import DAY, interval_seconds, local_date, local
 from screen_time_linux import linux_collection
 from screen_time_macos import macos_collection
 from screen_time_macos_apps import macos_app_stats
+from screen_time_macos_pmset import pmset_collection
 
 
 def parser():
@@ -40,7 +41,8 @@ def current_epoch(value):
 
 def collect(args):
     if args.os_type == "Darwin":
-        return macos_collection(Path(args.db), args.now)
+        collection = macos_collection(Path(args.db), args.now)
+        return pmset_collection(args.now) if collection.get("status") == "unavailable" else collection
     if args.os_type == "Linux":
         return linux_collection(args.now, args.user)
     return {"status": "unavailable", "source": "unsupported-platform", "reason": args.os_type, "intervals": []}

@@ -17,9 +17,8 @@ print_warning() { return 0; }
 # shellcheck source=../setup/modules/config.sh
 source "$CONFIG_LIB"
 
-# Exercise setup.sh itself with its default environment, rather than only
-# injecting globals before sourcing the config module. The trace proves the
-# default agents root exists and is exported before setup modules are loaded.
+# Exercise setup.sh itself with its normal default and invalid HOME values.
+# Invalid values must fail before setup can derive or write any user paths.
 setup_home="$TEST_DIR/setup-home"
 mkdir -p "$setup_home"
 setup_trace=$(env -u AGENTS_DIR -u AIDEVOPS_AGENTS_DIR HOME="$setup_home" \
@@ -29,7 +28,23 @@ if [[ "$setup_trace" != *"AGENTS_DIR=$setup_home/.aidevops/agents"* ||
 	printf 'FAIL: setup.sh did not define and export the default AGENTS_DIR\n' >&2
 	exit 1
 fi
-printf 'PASS: setup.sh defines and exports its default AGENTS_DIR before module use\n'
+for home_state in unset empty; do
+	invalid_home_status=0
+	if [[ "$home_state" == "unset" ]]; then
+		invalid_home_trace=$(env -u AGENTS_DIR -u AIDEVOPS_AGENTS_DIR -u HOME \
+			bash "$REPO_ROOT/setup.sh" --help 2>&1) || invalid_home_status=$?
+	else
+		invalid_home_trace=$(env -u AGENTS_DIR -u AIDEVOPS_AGENTS_DIR HOME= \
+			bash "$REPO_ROOT/setup.sh" --help 2>&1) || invalid_home_status=$?
+	fi
+	if [[ "$invalid_home_status" -ne 1 ||
+		"$invalid_home_trace" != *"HOME environment variable is unset or empty"* ||
+		"$invalid_home_trace" == *"/.aidevops"* ]]; then
+		printf 'FAIL: setup.sh did not fail safely with HOME %s\n' "$home_state" >&2
+		exit 1
+	fi
+done
+printf 'PASS: setup.sh rejects unset and empty HOME values\n'
 
 source_cli="$TEST_DIR/source-cli"
 target_cli="$TEST_DIR/bin/aidevops"

@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # network-tier-helper.sh — Network domain tiering for worker sandboxing (t1412.3)
-# Commands: classify | check | check-argv | check-command | log-access | report | init | help
+# Commands: classify | check | check-argv | check-command | export-policy | log-access | report | init | help
 #
 # Implements a 4-tier graduated trust model for headless worker network access:
 #   Tier 1: Always allowed, no logging (core infrastructure: github.com)
@@ -32,6 +32,7 @@
 #                                                   # Session-aware check (t1428.3)
 #   network-tier-helper.sh check-command 'curl https://example.com' --worker-id worker-123
 #   network-tier-helper.sh check-argv '["curl","https://example.com"]' --worker-id worker-123
+#   network-tier-helper.sh export-policy             # Normalized backend policy JSON
 #   network-tier-helper.sh log-access example.com worker-123 200
 #   network-tier-helper.sh report [--last N] [--flagged-only]
 #   network-tier-helper.sh init                     # Create log dirs and validate config
@@ -234,6 +235,63 @@ _tier_count() {
 
 	safe_grep_count "^${type_prefix}:" "$_TIER_LOOKUP_FILE"
 	return 0
+}
+
+# Export the authoritative tier configuration as a deterministic backend policy.
+# The process-containment backend consumes this output instead of parsing the
+# source files itself, so default and user override precedence stays centralized.
+# Output: aidevops.worker-egress-policy.v1 JSON on stdout.
+export_backend_policy() {
+	_load_tier_data || return 1
+	if ! command -v python3 >/dev/null 2>&1; then
+		log_error "python3 is required to export worker egress policy"
+		return 1
+	fi
+
+	python3 - "$_TIER_LOOKUP_FILE" <<'PY'
+import json
+import sys
+
+lookup_path = sys.argv[1]
+rules = {}
+DENY_ACTION = "deny"
+with open(lookup_path, "r", encoding="utf-8") as handle:
+    for raw_line in handle:
+        key, tier_text = raw_line.rstrip("\n").rsplit(" ", 1)
+        match_type, pattern = key.split(":", 1)
+        tier = int(tier_text)
+        rules[(match_type, pattern)] = tier
+
+def action_for_tier(tier):
+    if tier == 1:
+        return "allow"
+    if tier in (2, 3):
+        return "allow-log"
+    if tier == 4:
+        return "allow-flag"
+    return DENY_ACTION
+
+normalized_rules = []
+for (match_type, pattern), tier in sorted(rules.items()):
+    normalized_rules.append({
+        "match": match_type,
+        "pattern": pattern,
+        "tier": tier,
+        "action": action_for_tier(tier),
+    })
+
+policy = {
+    "schema": "aidevops.worker-egress-policy.v1",
+    "default_tier": 4,
+    "default_action": "allow-flag",
+    "raw_ip_action": DENY_ACTION,
+    "private_network_action": DENY_ACTION,
+    "loopback_action": DENY_ACTION,
+    "rules": normalized_rules,
+}
+print(json.dumps(policy, sort_keys=True, separators=(",", ":")))
+PY
+	return $?
 }
 
 # =============================================================================
@@ -922,6 +980,7 @@ Commands:
                              Enforce exact-argv worker network policy
   check-command <command> [--worker-id ID]
                              Compatibility shell-string entry point
+  export-policy              Emit normalized process-backend policy JSON
   check-session <domain> [--session-id ID]
                              Session-aware check — elevates tier if session
                              is tainted (t1428.3). Falls back to check if
@@ -963,6 +1022,9 @@ Examples:
 
   network-tier-helper.sh check-command 'curl https://requestbin.com' --worker-id worker-abc
   # Exit 1 (Tier 5 command denied)
+
+  network-tier-helper.sh export-policy
+  # Output schema: aidevops.worker-egress-policy.v1
 
   network-tier-helper.sh log-access pypi.org worker-abc 200 /simple/requests/
   network-tier-helper.sh report --flagged-only --last 20
@@ -1033,6 +1095,10 @@ main() {
 			return 1
 		fi
 		check_domain_session "$@"
+		return $?
+		;;
+	export-policy)
+		export_backend_policy
 		return $?
 		;;
 	log-access | log)

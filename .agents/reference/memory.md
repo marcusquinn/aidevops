@@ -17,7 +17,7 @@ tools:
 
 # Memory System
 
-Cross-session memory using SQLite FTS5. **Requires**: `sqlite3` CLI (`brew install sqlite3` / `sudo apt install sqlite3`).
+Cross-session memory using a canonical observation contract with SQLite FTS5 as its retrieval projection. **Requires**: `sqlite3` CLI (`brew install sqlite3` / `sudo apt install sqlite3`).
 
 **Motto**: "Compound, then clear" — sessions build on each other.
 
@@ -84,6 +84,12 @@ audit chain.
 
 On store: checks exact and near-duplicates (normalized case/punctuation/whitespace). Increments access count on match instead of creating new entry.
 
+## Canonical Observations
+
+`observations` is the authoritative additive envelope. It records stable observation, source, and session IDs; kind and owner/subject; user/project/organization/framework scope; explicit versus inferred state; confidence; sensitivity and consent; effective/review/expiry time; destination and lifecycle status. `observation_sources` preserves evidence and provenance with one unique source record per legacy or native source, so replay cannot create independent evidence. `observation_relations` records supersession, debunking, correction, revocation, extension, and derivation. `observation_outcomes` records retrieval usefulness, graduation, and later outcomes.
+
+Existing `learnings` remain the FTS retrieval projection. Database initialization idempotently backfills safely derivable learning, entity-profile, capability-gap, truth/relation, access/usefulness, and graduation history using deterministic IDs such as `obs_learning_<legacy-id>` and `src_learning_<legacy-id>`.
+
 ## Auto-Pruning
 
 Runs on every `store` (at most once per 24h). Removes entries older than 90 days with zero access; frequently accessed memories preserved regardless of age.
@@ -138,7 +144,7 @@ Tracks relationships with people, agents, and services across communication chan
 | Layer 2 | Entity relationship model (strategic profiles) | `entity-helper.sh` | `entities`, `entity_channels`, `entity_profiles`, `capability_gaps` |
 | Loop | Self-evolution (gap detection → TODO → upgrade) | `self-evolution-helper.sh` | `capability_gaps`, `gap_evidence` |
 
-**Key concepts:** Entities are people/agents/services. Cross-channel identity links Matrix/SimpleX/email/CLI to the same entity (confidence: confirmed/suggested/inferred). Profiles versioned via `supersedes_id` chain — never updated in place. Layer 0 is append-only; all other layers derived from it.
+**Key concepts:** Entities are people/agents/services. Cross-channel identity links Matrix/SimpleX/email/CLI to the same entity (confidence: confirmed/suggested/inferred). Profiles versioned via `supersedes_id` chain and project into canonical observations; they are never updated in place. Layer 0 is append-only; all other layers are derived from observations and source evidence.
 
 ## Namespaces (Per-Runner Isolation)
 

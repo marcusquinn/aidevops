@@ -76,9 +76,31 @@ test_ruleset_ref_patterns_fail_closed_on_malformed_schema() {
 	return 0
 }
 
+test_snapshot_review_threads_fail_closed_on_missing_pr_data() {
+	printf '\n=== snapshot review thread fail-closed parsing ===\n'
+	_assert_contains_literal "review threads validate pull request data" \
+		"jq -e 'try (.data.repository.pullRequest != null) catch false' >/dev/null"
+	_assert_not_contains_literal "missing pull request data does not emit jq indexing errors" \
+		"jq -e '.data.repository.pullRequest != null' >/dev/null"
+	_assert_not_contains_literal "review thread pagination does not hide jq diagnostics" \
+		"jq -r '.data.repository.pullRequest.reviewThreads.pageInfo.hasNextPage // false' 2>/dev/null"
+	_assert_contains_literal "review thread count preserves jq diagnostics" \
+		"] | length') || return 1"
+	return 0
+}
+
+test_snapshot_quiet_period_allows_no_activity() {
+	printf '\n=== snapshot quiet period without activity ===\n'
+	_assert_contains_literal "empty snapshot activity passes without date parsing" \
+		"[[ -n \"\$latest_at\" ]] || return 0"
+	return 0
+}
+
 main() {
 	test_ruleset_jq_diagnostics_have_safe_log_fallback
 	test_ruleset_ref_patterns_fail_closed_on_malformed_schema
+	test_snapshot_review_threads_fail_closed_on_missing_pr_data
+	test_snapshot_quiet_period_allows_no_activity
 
 	printf '\nSummary: %d passed, %d failed\n' "$TESTS_PASSED" "$TESTS_FAILED"
 	if [[ "$TESTS_FAILED" -ne 0 ]]; then

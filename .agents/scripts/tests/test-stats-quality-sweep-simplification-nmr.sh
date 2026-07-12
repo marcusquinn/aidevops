@@ -110,6 +110,17 @@ JSON
 	return 0
 }
 
+make_partially_unlocated_sarif() {
+	cat <<'JSON'
+{"runs":[{"results":[
+{"ruleId":"metadata-only"},
+{"ruleId":"empty-locations","locations":[]},
+{"ruleId":"complexity","locations":[{"physicalLocation":{"artifactLocation":{"uri":"src/foo.py"}}}]}
+]}]}
+JSON
+	return 0
+}
+
 printf '\n[a] trusted repo writer skips NMR\n'
 true >"$CREATE_CALLS"
 true >"$COUNT_FILE"
@@ -142,6 +153,22 @@ if [[ "${qlty_section:-}" == "caller-owned-section" ]]; then
 	pass "simplification-no-caller-qlty-section-mutation"
 else
 	fail "simplification-no-caller-qlty-section-mutation" "caller qlty_section mutated to: ${qlty_section:-<unset>}"
+fi
+
+printf '\n[a.1] incomplete SARIF locations are ignored\n'
+smell_files=$(_smell_files_from_sarif "$(make_partially_unlocated_sarif)")
+if [[ "$smell_files" == $'1\tsrc/foo.py' ]]; then
+	pass "incomplete-sarif-locations-ignored"
+else
+	fail "incomplete-sarif-locations-ignored" "expected only src/foo.py, got: ${smell_files:-<empty>}"
+fi
+
+printf '\n[a.2] optional logfile is nounset-safe\n'
+if (unset LOGFILE; _create_simplification_issues "test/repo" '{}' >/dev/null) &&
+	(unset LOGFILE; _create_simplification_issues "test/repo" "$(make_sarif)" 0 >/dev/null); then
+	pass "optional-logfile-nounset-safe"
+else
+	fail "optional-logfile-nounset-safe" "LOGFILE fallback failed under set -u"
 fi
 
 printf '\n[b] unverified identity keeps NMR\n'

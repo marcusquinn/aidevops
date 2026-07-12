@@ -179,7 +179,7 @@ lint_audit_record() {
 
 lint_repo_list() {
 	if [[ "$LINT_ALL" == "$LINT_TRUE" ]]; then
-		local repos_file="${AIDEVOPS_REPOS_FILE:-${HOME}/.config/aidevops/repos.json}"
+		local repos_file="${AIDEVOPS_REPOS_FILE:-${HOME:+$HOME/.config/aidevops/repos.json}}"
 		[[ -f "$repos_file" ]] || return 1
 		jq -r '.initialized_repos[]?.path // empty' "$repos_file"
 		return 0
@@ -228,7 +228,7 @@ lint_audit() {
 
 lint_write_dispatch_plan() {
 	local records_file="$1"
-	local plan_dir="${HOME}/.aidevops/.agent-workspace/work"
+	local plan_dir="${HOME:+$HOME/.aidevops/.agent-workspace/work}"
 	local temp_file plan_file
 	mkdir -p "$plan_dir"
 	temp_file=$(mktemp "${plan_dir}/lint-configure-pr-plan.XXXXXX") || return 1

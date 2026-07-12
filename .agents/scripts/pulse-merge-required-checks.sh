@@ -110,13 +110,16 @@ _pmrc_snapshot_review_threads_clear() {
 			}
 		}
 	' 2>/dev/null) || return 1
-	has_next=$(printf '%s' "$response" | jq -r '.data.repository.pullRequest.reviewThreads.pageInfo.hasNextPage // false' 2>/dev/null) || return 1
+	if ! printf '%s' "$response" | jq -e 'try (.data.repository.pullRequest != null) catch false' >/dev/null; then
+		return 1
+	fi
+	has_next=$(printf '%s' "$response" | jq -r '.data.repository.pullRequest.reviewThreads.pageInfo.hasNextPage // false') || return 1
 	[[ "$has_next" == "false" ]] || return 1
 	count=$(printf '%s' "$response" | jq -r --arg bots "$bot_re" '[
 		.data.repository.pullRequest.reviewThreads.nodes[]?
 		| select((.isResolved // false) == false)
 		| select((.comments.nodes[0].author.login // "") | test($bots; "i"))
-	] | length' 2>/dev/null) || return 1
+	] | length') || return 1
 	[[ "$count" =~ ^[0-9]+$ ]] || return 1
 	if [[ "$count" -gt 0 ]]; then
 		echo "[pulse-merge] pre-merge snapshot: PR #${pr_number} in ${repo_slug} has ${count} unresolved review-bot thread(s) — merge blocked until resolved or classified (GH#27137)" >>"$LOGFILE"
@@ -214,6 +217,7 @@ _pmrc_snapshot_quiet_period_passes() {
 	latest_at=$(jq -nr --argjson checks "$checks_json" --argjson activity "$activity_json" '[
 		($checks[]?.observed_at // ""), ($activity.latest_at // "")
 	] | map(select(. != "")) | max // ""') || return 1
+	[[ -n "$latest_at" ]] || return 0
 	latest_epoch=$(_pmrc_iso_to_epoch "$latest_at") || return 1
 	[[ "$now_epoch" =~ ^[0-9]+$ ]] || return 1
 	age=$((now_epoch - latest_epoch))

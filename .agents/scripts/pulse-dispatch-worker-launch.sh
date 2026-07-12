@@ -538,6 +538,19 @@ EOF
 	return 0
 }
 
+_dlw_first_pass_completion_contract() {
+	cat <<'EOF'
+
+First-pass completion contract:
+1. Before editing, verify the issue is still open and not already satisfied by the default branch, an open/closed PR, or a pushed issue branch. Reuse salvageable commits instead of restarting.
+2. Treat prior structured CI/review feedback in the issue body as cumulative evidence. Address every terminal failing check, including advisory checks, not only the first required failure.
+3. Validate the stated target files and verification commands against the current dependency/runtime versions before implementation.
+4. After the first coherent commit, push and create a draft PR early so progress is durable and visible to every runner; continue on that PR through local and remote verification.
+5. Do not post routine dispatch, stale, or progress comments. Prefer commits, the PR, check runs, and one final completion or blocker dossier.
+EOF
+	return 0
+}
+
 _dlw_prepare_prompt_for_launch() {
 	local issue_number="$1"
 	local repo_slug="$2"
@@ -562,6 +575,7 @@ _dlw_prepare_prompt_for_launch() {
 		local issue_body=""
 		issue_body=$(_dlw_fetch_issue_body_for_clean_room "$issue_number" "$repo_slug")
 		_dlw_clean_room_prompt "$issue_number" "$repo_slug" "$issue_title" "$issue_body"
+		_dlw_first_pass_completion_contract
 		return 0
 	fi
 
@@ -574,10 +588,12 @@ _dlw_prepare_prompt_for_launch() {
 	if [[ "$zero_count" -ge "$fallback_threshold" ]]; then
 		echo "[dispatch_with_dedup] #${issue_number} in ${repo_slug}: using URL-only bootstrap prompt after ${zero_count} zero-output launches" >>"$LOGFILE"
 		_dlw_zero_output_fallback_prompt "$issue_number" "$repo_slug" "$issue_title"
+		_dlw_first_pass_completion_contract
 		return 0
 	fi
 
 	printf '%s' "$original_prompt"
+	_dlw_first_pass_completion_contract
 	return 0
 }
 
@@ -1515,6 +1531,8 @@ _dlw_nohup_launch() {
 		WORKER_ISSUE_NUMBER="$issue_number"
 		WORKER_REPO_SLUG="$repo_slug"
 		WORKER_GITHUB_LOGIN="$self_login"
+		AIDEVOPS_DISPATCH_LEASE_TOKEN="${_claim_lease_token:-}"
+		AIDEVOPS_DISPATCH_LEASE_DEVICE="${_claim_lease_device:-}"
 		AIDEVOPS_ALLOW_WORKER_WORKTREE_OWNER_TRANSFER=1
 	)
 	if _dlw_min_worker_floor_active; then
@@ -1606,7 +1624,8 @@ _dlw_post_launch_hooks() {
 		"$ledger_helper" register --session-key "$session_key" \
 			--issue "$issue_number" --repo "$repo_slug" \
 			--pid "$worker_pid" --tier "$dispatch_tier" \
-			--model "$selected_model" 2>/dev/null || true
+			--model "$selected_model" --lease-token "${_claim_lease_token:-}" \
+			--device-id "${_claim_lease_device:-}" 2>/dev/null || true
 	fi
 
 	local dispatch_comment_body

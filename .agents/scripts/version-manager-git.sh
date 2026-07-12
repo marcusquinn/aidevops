@@ -123,29 +123,6 @@ release_source_pr_required() {
 	return 1
 }
 
-verify_canonical_default_synced() {
-	local branch="${1:-main}"
-	local canonical_path=""
-	canonical_path=$(git -C "$REPO_ROOT" worktree list --porcelain 2>/dev/null | sed -n 's/^worktree //p' | head -1)
-	[[ -n "$canonical_path" && -d "$canonical_path" ]] || {
-		print_error "Cannot resolve canonical worktree for release"
-		return 1
-	}
-	local canonical_branch=""
-	canonical_branch=$(git -C "$canonical_path" branch --show-current 2>/dev/null || true)
-	local canonical_head=""
-	canonical_head=$(git -C "$canonical_path" rev-parse HEAD 2>/dev/null || true)
-	local remote_head=""
-	remote_head=$(git -C "$REPO_ROOT" rev-parse "origin/${branch}" 2>/dev/null || true)
-	if [[ "$canonical_branch" != "$branch" || -z "$canonical_head" || "$canonical_head" != "$remote_head" ]]; then
-		print_error "Canonical repository is not synchronized to origin/${branch}"
-		print_info "Run canonical-recovery-helper.sh with the linked issue, then recreate the detached release worktree"
-		return 1
-	fi
-	print_success "Canonical repository is synchronized to origin/${branch}"
-	return 0
-}
-
 verify_release_source_pr() {
 	local source_pr="$1"
 	local branch="${2:-main}"
@@ -232,6 +209,13 @@ extract_task_ids_from_commits() {
 
 	while IFS= read -r commit; do
 		[[ -z "$commit" ]] && continue
+
+		# Pattern 0: Framework squash subjects with a complete leading task ID.
+		# Brackets provide an explicit boundary and avoid matching ID-like text
+		# embedded in unrelated words. Dotted task IDs remain supported.
+		if [[ "$commit" =~ ^\[(t[0-9]+(\.[0-9]+)*)\]([[:space:]]|$) ]]; then
+			task_ids+=("${BASH_REMATCH[1]}")
+		fi
 
 		# Pattern 1: Conventional commits with task ID in scope
 		# e.g., feat(t001):, fix(t3375):, docs(t003.1):, refactor(t004):

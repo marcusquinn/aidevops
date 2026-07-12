@@ -85,6 +85,18 @@ printf 'multi-before-keyword\n' >>work.txt
 git add work.txt
 git commit -q -m 'chore: t126 complete and t127 done'
 
+printf 'bracketed-prefix\n' >>work.txt
+git add work.txt
+git commit -q -m '[t18079] feat: add bracketed release subject support'
+
+printf 'bracketed-dotted-prefix\n' >>work.txt
+git add work.txt
+git commit -q -m '[t18080.3] fix: preserve dotted release subject IDs'
+
+printf 'embedded-prefix\n' >>work.txt
+git add work.txt
+git commit -q -m 'at18081] feat: do not extract embedded ID-like text'
+
 SCRIPT_DIR="$TEST_SCRIPTS_DIR"
 REPO_ROOT="$REPO_DIR"
 VERSION_FILE="${REPO_DIR}/VERSION"
@@ -92,7 +104,7 @@ VERSION_FILE="${REPO_DIR}/VERSION"
 source "${TEST_SCRIPTS_DIR}/version-manager-git.sh"
 
 actual=$(extract_task_ids_from_commits)
-expected=$'t123\nt124\nt125\nt126\nt127\nt3375\nt3376\nt3377.2'
+expected=$'t123\nt124\nt125\nt126\nt127\nt18079\nt18080.3\nt3375\nt3376\nt3377.2'
 assert_lines_equal 'extract_task_ids_from_commits: supports four digit and dotted task IDs' "$expected" "$actual"
 
 if [[ "$actual" != *$'t337\n'* && "$actual" != "t337" ]]; then
@@ -105,6 +117,12 @@ if [[ "$actual" != *"t9876"* ]]; then
 	print_result 'extract_task_ids_from_commits: requires leading boundary before Pattern 4 task ID' 0
 else
 	print_result 'extract_task_ids_from_commits: requires leading boundary before Pattern 4 task ID' 1 "got [$actual]"
+fi
+
+if [[ "$actual" != *"t18081"* ]]; then
+	print_result 'extract_task_ids_from_commits: rejects embedded bracket-like task IDs' 0
+else
+	print_result 'extract_task_ids_from_commits: rejects embedded bracket-like task IDs' 1 "got [$actual]"
 fi
 
 printf '\nTests run: %s, Failures: %s\n' "$TESTS_RUN" "$TESTS_FAILED"

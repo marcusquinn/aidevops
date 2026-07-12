@@ -320,6 +320,8 @@ _dedup_layer7_claim_lock() {
 	# so the dispatch_with_dedup caller always sees a fresh value. Do NOT
 	# declare local here — see function header.
 	_claim_comment_id=""
+	_claim_lease_token=""
+	_claim_lease_device=""
 	if [[ -x "$dedup_helper" ]] && [[ "$issue_number" =~ ^[0-9]+$ ]]; then
 		# GH#17590: Pre-check for existing claims BEFORE posting our own.
 		# Without this, two runners both post claims within seconds, then
@@ -352,6 +354,8 @@ _dedup_layer7_claim_lock() {
 		fi
 		# Extract claim comment_id for post-dispatch cleanup (GH#15317)
 		_claim_comment_id=$(printf '%s' "$claim_output" | sed -n 's/.*comment_id=\([0-9]*\).*/\1/p')
+		_claim_lease_token=$(printf '%s' "$claim_output" | sed -n 's/.*lease_token=\([^ ]*\).*/\1/p')
+		_claim_lease_device=$(printf '%s' "$claim_output" | sed -n 's/.*device=\([^ ]*\).*/\1/p')
 		# claim_exit 0 = won, proceed to dispatch
 	fi
 	return 1

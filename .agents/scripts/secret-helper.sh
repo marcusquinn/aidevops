@@ -11,6 +11,7 @@
 #   secret-helper.sh set NAME              # Interactive hidden input -> gopass
 #   secret-helper.sh get NAME              # Get secret value (for scripts/piping)
 #   secret-helper.sh list                  # List secret names (never values)
+#   secret-helper.sh inventory             # Deterministic names-only JSON inventory
 #   secret-helper.sh run CMD [ARGS...]     # Inject all secrets, redact output
 #   secret-helper.sh NAME [NAME...] -- CMD # Inject specific secrets, redact output
 #   secret-helper.sh init                  # Initialize gopass store
@@ -33,6 +34,8 @@ readonly CONFIG_DIR="$HOME/.config/aidevops"
 readonly CREDENTIALS_FILE="$CONFIG_DIR/credentials.sh"
 readonly TENANTS_DIR="$CONFIG_DIR/tenants"
 readonly GOPASS_PREFIX="aidevops"
+readonly INVENTORY_MAX_NAMES=512
+readonly INVENTORY_MAX_NAME_LENGTH=128
 
 # Check if gopass is available and initialized
 has_gopass() {
@@ -437,6 +440,91 @@ cmd_list() {
 	return 0
 }
 
+# Emit validated secret-name metadata without invoking any value-reading command.
+cmd_inventory() {
+	local gopass_status="missing"
+	local credentials_status="missing"
+	local names_file=""
+	local count=0
+
+	names_file=$(mktemp)
+	trap 'rm -f "$names_file"' EXIT
+
+	if command -v gopass &>/dev/null; then
+		gopass_status="error"
+		local listing=""
+		if listing=$(gopass ls --flat "${GOPASS_PREFIX}/" 2>/dev/null); then
+			gopass_status="available"
+			local secret_path=""
+			while IFS= read -r secret_path; do
+				[[ -z "$secret_path" ]] && continue
+				case "$secret_path" in
+				"${GOPASS_PREFIX}/"*) inventory_add_name "${secret_path#"${GOPASS_PREFIX}/"}" "$names_file" || return 1 ;;
+				*) print_error "Invalid gopass inventory path" >&2; return 1 ;;
+				esac
+			done <<<"$listing"
+		fi
+	fi
+
+	local credential_file=""
+	while IFS= read -r credential_file; do
+		[[ -z "$credential_file" ]] && continue
+		credentials_status="error"
+		if [[ -L "$credential_file" ]] || [[ ! -f "$credential_file" ]]; then
+			print_error "Credentials inventory source must be a regular non-symlink file" >&2
+			return 1
+		fi
+		local permissions=""
+		permissions=$(stat -f '%Lp' "$credential_file" 2>/dev/null || stat -c '%a' "$credential_file" 2>/dev/null || true)
+		if [[ ! "$permissions" =~ ^[046]00$ ]]; then
+			print_error "Credentials inventory source must be owner-only" >&2
+			return 1
+		fi
+		credentials_status="available"
+		local line=""
+		while IFS= read -r line; do
+			if [[ "$line" =~ ^export[[:space:]]+([A-Z][A-Z0-9_]*)= ]]; then
+				inventory_add_name "${BASH_REMATCH[1]}" "$names_file" || return 1
+			fi
+		done <"$credential_file"
+	done < <(resolve_credential_files)
+
+	local sorted_file="${names_file}.sorted"
+	sort -u "$names_file" >"$sorted_file"
+	mv "$sorted_file" "$names_file"
+	count=$(wc -l <"$names_file" | tr -d ' ')
+	if [[ "$count" -gt "$INVENTORY_MAX_NAMES" ]]; then
+		print_error "Secret inventory exceeds ${INVENTORY_MAX_NAMES} names" >&2
+		return 1
+	fi
+
+	printf '{"version":1,"backends":{"gopass":"%s","credentials":"%s"},"secrets":[' "$gopass_status" "$credentials_status"
+	local separator=""
+	local name=""
+	while IFS= read -r name; do
+		[[ -z "$name" ]] && continue
+		printf '%s{"name":"%s","status":"configured"}' "$separator" "$name"
+		separator=","
+	done <"$names_file"
+	printf ']}\n'
+
+	rm -f "$names_file"
+	trap - EXIT
+	return 0
+}
+
+inventory_add_name() {
+	local name="$1"
+	local output_file="$2"
+
+	if [[ ${#name} -gt "$INVENTORY_MAX_NAME_LENGTH" ]] || [[ ! "$name" =~ ^[A-Z][A-Z0-9_]*$ ]]; then
+		print_error "Invalid secret inventory name" >&2
+		return 1
+	fi
+	printf '%s\n' "$name" >>"$output_file"
+	return 0
+}
+
 # Run a command with secrets injected and output redacted
 cmd_run() {
 	local -a cmd_args=("$@")
@@ -673,6 +761,7 @@ cmd_help() {
 	echo "  set <NAME>                        Store a secret (interactive hidden input)"
 	echo "  get <NAME>                        Get a secret value (for scripts/piping)"
 	echo "  list                              List secret names (never values)"
+	echo "  inventory                         Names-only structured local inventory"
 	echo "  status                            Show backend status"
 	echo ""
 	echo "  run CMD [ARGS...]                 Run command with all secrets injected"
@@ -730,6 +819,9 @@ main() {
 		;;
 	list | ls)
 		cmd_list "$@"
+		;;
+	inventory)
+		cmd_inventory "$@"
 		;;
 	run)
 		cmd_run "$@"

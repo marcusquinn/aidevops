@@ -81,8 +81,8 @@ create_fake_repo() {
 	local repo_path="$TEST_DIR/$repo_name"
 
 	mkdir -p "$repo_path"
-	PATH=/usr/bin:/bin git init -q "$repo_path"
-	PATH=/usr/bin:/bin git -C "$repo_path" remote add origin "$remote_url"
+	PATH=/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin git init -q "$repo_path"
+	PATH=/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin git -C "$repo_path" remote add origin "$remote_url"
 	printf '%s\n' "$repo_path"
 	return 0
 }

@@ -91,7 +91,7 @@ readonly _KNOWN_WORKFLOWS=(
 # Detection is warning-only: modified or repository-specific files are never
 # removed automatically.
 _resolve_legacy_artifact_manifest() {
-	local _deployed="$HOME/.aidevops/agents/configs/workflow-legacy-artifacts.tsv"
+	local _deployed="${HOME:-}/.aidevops/agents/configs/workflow-legacy-artifacts.tsv"
 	local _repo_local="$SELF_DIR/../configs/workflow-legacy-artifacts.tsv"
 	if [[ -f "$_deployed" ]]; then
 		printf '%s\n' "$_deployed"
@@ -113,7 +113,8 @@ _legacy_artifacts_for_repo() {
 	_manifest=$(_resolve_legacy_artifact_manifest) || return 0
 	local _manifest_workflow _artifact_path _superseded_by _introduced_in
 	local _found=""
-	while IFS=$'\t' read -r _manifest_workflow _artifact_path _superseded_by _introduced_in; do
+	while IFS=$'\t' read -r _manifest_workflow _artifact_path _superseded_by _introduced_in ||
+		[[ -n "$_manifest_workflow" ]]; do
 		[[ -z "$_manifest_workflow" || "$_manifest_workflow" == \#* ]] && continue
 		[[ "$_manifest_workflow" != "$_workflow_name" ]] && continue
 		[[ -f "$_path/$_artifact_path" ]] || continue
@@ -134,7 +135,7 @@ _legacy_artifacts_for_repo() {
 # e.g. _resolve_canonical_template "issue-sync-caller.yml"
 _resolve_canonical_template() {
 	local _template_filename="$1"
-	local _deployed="$HOME/.aidevops/agents/templates/workflows/${_template_filename}"
+	local _deployed="${HOME:-}/.aidevops/agents/templates/workflows/${_template_filename}"
 	local _repo_local="$SELF_DIR/../templates/workflows/${_template_filename}"
 
 	if [[ -f "$_deployed" ]]; then
@@ -160,7 +161,7 @@ _resolve_canonical_reusable() {
 	return 1
 }
 
-REPOS_JSON="$HOME/.config/aidevops/repos.json"
+REPOS_JSON="${HOME:-}/.config/aidevops/repos.json"
 
 # ─── Logging ────────────────────────────────────────────────────────────────
 

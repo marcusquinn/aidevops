@@ -23,8 +23,8 @@
 //   - google-proxy.mjs    — Google auth-translating proxy
 // ---------------------------------------------------------------------------
 
-import { existsSync, readFileSync } from "fs";
-import { join } from "path";
+import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "fs";
+import { basename, dirname, join } from "path";
 import { homedir } from "os";
 import { execSync } from "child_process";
 
@@ -59,11 +59,45 @@ import { isHeadless } from "./proxy-lifecycle.mjs";
 // ---------------------------------------------------------------------------
 
 const HOME = homedir();
-const AGENTS_DIR = join(HOME, ".aidevops", "agents");
+const ACTIVE_AGENTS_DIR = join(HOME, ".aidevops", "agents");
+// Resolve the activation link exactly once at plugin load. Every hook and shell
+// spawned by this OpenCode process remains pinned to this immutable bundle.
+const AGENTS_DIR = (() => {
+  try {
+    return realpathSync(ACTIVE_AGENTS_DIR);
+  } catch {
+    return ACTIVE_AGENTS_DIR;
+  }
+})();
 const SCRIPTS_DIR = join(AGENTS_DIR, "scripts");
 const PLUGIN_DIR = join(AGENTS_DIR, "plugins", "opencode-aidevops");
 const WORKSPACE_DIR = join(HOME, ".aidevops", ".agent-workspace");
 const LOGS_DIR = join(HOME, ".aidevops", "logs");
+
+// Keep the immutable bundle backing this process until OpenCode exits. Setup
+// also applies an age floor for sessions started before lease support existed.
+const RUNTIME_BUNDLE_LEASE = (() => {
+  const bundleDir = dirname(AGENTS_DIR);
+  if (basename(dirname(bundleDir)) !== "runtime-bundles") return "";
+  const lease = join(dirname(bundleDir), ".leases", basename(bundleDir), String(process.pid));
+  try {
+    mkdirSync(dirname(lease), { recursive: true });
+    writeFileSync(lease, `${AGENTS_DIR}\n`, { mode: 0o600 });
+    return lease;
+  } catch {
+    return "";
+  }
+})();
+
+if (RUNTIME_BUNDLE_LEASE) {
+  process.once("exit", () => {
+    try {
+      rmSync(RUNTIME_BUNDLE_LEASE, { force: true });
+    } catch {
+      // Dead-process lease cleanup is also performed by setup.
+    }
+  });
+}
 
 // ---------------------------------------------------------------------------
 // Utility helpers

@@ -11,7 +11,7 @@ import time
 from pathlib import Path
 
 from session_time_aggregate import aggregate
-from session_time_common import WINDOWS
+from session_time_common import DAY_MS, WINDOWS, completed_day_window
 from session_time_db import db_paths, query_observability, query_session_db
 
 
@@ -49,12 +49,21 @@ def requested_periods(period):
     return [period]
 
 
-def aggregate_periods(periods, context):
+def aggregate_periods(periods, context, completed_days=False):
     result = {}
     for period in periods:
-        since = context["now"] - WINDOWS.get(period, WINDOWS["month"])
-        result[period] = aggregate(context["sessions"], context["obs_rows"], since, context["now"], context["source_ok"])
+        if completed_days:
+            days = WINDOWS.get(period, WINDOWS["month"]) // DAY_MS
+            since, end = completed_day_window(context["now"], days)
+            semantics = "completed-local-calendar-days"
+        else:
+            since, end = context["now"] - WINDOWS.get(period, WINDOWS["month"]), context["now"]
+            semantics = "rolling-clock-window"
+        result[period] = aggregate(context["sessions"], context["obs_rows"], since, end, context["source_ok"])
         result[period]["skipped_malformed_rows"] = context["skipped"]
+        result[period]["period_start_ms"] = since
+        result[period]["period_end_ms"] = end
+        result[period]["period_semantics"] = semantics
     return result
 
 
@@ -62,13 +71,13 @@ def main():
     args = parser().parse_args()
     root = "" if args.all_dirs else os.path.abspath(args.repo or ".")
     home = Path.home()
-    maximum_since = args.now_ms - WINDOWS["year"]
+    maximum_since = args.now_ms - WINDOWS["year"] - 2 * DAY_MS
     sessions, session_ok, skipped = collect_sessions(home, args.db_path, root, maximum_since)
     obs_rows, obs_ok, obs_skipped = query_observability(home, root, maximum_since, args.now_ms)
     skipped += obs_skipped
     periods = requested_periods(args.period)
     context = {"sessions": sessions, "obs_rows": obs_rows, "now": args.now_ms, "source_ok": session_ok or obs_ok, "skipped": skipped}
-    result = aggregate_periods(periods, context)
+    result = aggregate_periods(periods, context, args.period == "profile")
     payload = result if len(periods) > 1 else result[periods[0]]
     print(json.dumps(payload, indent=2, sort_keys=True))
     return 0

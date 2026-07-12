@@ -28,6 +28,48 @@ _seconds() {
 	return 0
 }
 
+_state_file_json() {
+	local path="$1"
+	if [[ -f "$path" ]]; then
+		local content=""
+		content=$(cat "$path" 2>/dev/null) || content="{}"
+		if printf '%s' "$content" | jq empty >/dev/null 2>&1; then
+			printf '%s\n' "$content"
+			return 0
+		fi
+	fi
+	printf '{}\n'
+	return 0
+}
+
+_observability_overlay_json() {
+	local nmr_state_file="${AIDEVOPS_NMR_REVALIDATION_STATE_FILE:-${HOME}/.aidevops/cache/nmr-revalidation-state.json}"
+	local family_state_file="${PULSE_CHECK_FAILURE_FAMILY_STATE_FILE:-${HOME}/.aidevops/cache/failure-family-remediation.json}"
+	local nmr_state="{}"
+	local family_state="{}"
+	nmr_state=$(_state_file_json "$nmr_state_file")
+	family_state=$(_state_file_json "$family_state_file")
+	jq -n --argjson nmr "$nmr_state" --argjson families "$family_state" '
+		($nmr.entries // {} | [.[]]) as $entries
+		| {
+			nmr_revalidation: {
+				total: ($entries | length),
+				reason_counts: (reduce $entries[] as $entry ({}; .[$entry.code // "authority"] += 1)),
+				status_counts: (reduce $entries[] as $entry ({}; .[$entry.status // "unknown"] += 1)),
+				temporary_count: ([$entries[] | select(.class == "temporary")] | length),
+				genuine_authority_count: ([$entries[] | select(.class == "genuine-authority")] | length),
+				oldest_age_seconds: ([$entries[] | try (now - (.label_at | fromdateiso8601) | floor) catch empty] | if length > 0 then max else 0 end)
+			},
+			failure_family_remediation: {
+				updated_at: ($families.updated_at // null),
+				families: [($families.families // [])[] | {fingerprint, family, count, recent_count, confidence, recovery_outcome}],
+				recurrent_count: ([($families.families // [])[] | select((.count // 0) >= 3)] | length),
+				recovery_candidate_count: ([($families.families // [])[] | select((.count // 0) == 0 and (.recent_count // 0) == 0)] | length)
+			}
+		}'
+	return 0
+}
+
 main() {
 	local window="15m"
 	local repo_path="${AIDEVOPS_REPO_PATH:-$HOME/Git/aidevops}"
@@ -37,6 +79,7 @@ main() {
 	local worker_worktree_count="0"
 	local graphql_budget_status=""
 	local runtime_state_file=""
+	local objective_state_file="${AIDEVOPS_OBJECTIVE_STATE_FILE:-$HOME/.aidevops/state/objective-reconciliation.json}"
 	local as_json=0
 	while [[ $# -gt 0 ]]; do
 		local arg="$1"
@@ -71,14 +114,40 @@ main() {
 	fi
 	runtime_state_file=$(mktemp "${TMPDIR:-/tmp}/aidevops-pulse-runtime-state.XXXXXX") || runtime_state_file=""
 	local projection_status=0
+	local projection_output=""
 	AIDEVOPS_ACTIVE_WORKER_PROCESSES="$active_worker_processes" \
 		AIDEVOPS_WORKER_WORKTREE_COUNT="$worker_worktree_count" \
 		AIDEVOPS_GRAPHQL_BUDGET_STATUS="$graphql_budget_status" \
+		AIDEVOPS_OBJECTIVE_STATE_FILE="$objective_state_file" \
 		AIDEVOPS_RUNTIME_STATE_OUTPUT="$runtime_state_file" \
-		python3 "${SCRIPT_DIR}/pulse-current-state.py" \
+		projection_output=$(python3 "${SCRIPT_DIR}/pulse-current-state.py" \
 			"$log_dir" "$repo_path" "$window_s" "$as_json" "$SCRIPT_DIR" \
-			"$review_thread_state_dir" || projection_status=$?
+			"$review_thread_state_dir") || projection_status=$?
+	local overlay_json="{}"
+	overlay_json=$(_observability_overlay_json)
+	if [[ "$projection_status" -eq 0 && "$as_json" -eq 1 ]] && printf '%s' "$projection_output" | jq empty >/dev/null 2>&1; then
+		projection_output=$(jq -n --argjson base "$projection_output" --argjson overlay "$overlay_json" '$base + $overlay')
+	elif [[ "$projection_status" -eq 0 ]]; then
+		projection_output+=$'\n'
+		projection_output+="NMR revalidation: $(printf '%s' "$overlay_json" | jq -c '.nmr_revalidation')"
+		projection_output+=$'\n'
+		projection_output+="Failure-family remediation: $(printf '%s' "$overlay_json" | jq -c '.failure_family_remediation')"
+	fi
+	printf '%s\n' "$projection_output"
 	if [[ "$projection_status" -eq 0 && -s "$runtime_state_file" ]] && command -v node >/dev/null 2>&1; then
+		local runtime_tmp=""
+		runtime_tmp=$(mktemp "${TMPDIR:-/tmp}/aidevops-pulse-runtime-overlay.XXXXXX") || runtime_tmp=""
+		if [[ -n "$runtime_tmp" ]] && jq --argjson overlay "$overlay_json" '. + {
+			nmr_revalidation: $overlay.nmr_revalidation,
+			failure_family_remediation: {
+				recurrent_count: $overlay.failure_family_remediation.recurrent_count,
+				recovery_candidate_count: $overlay.failure_family_remediation.recovery_candidate_count
+			}
+		}' "$runtime_state_file" >"$runtime_tmp" 2>/dev/null; then
+			mv "$runtime_tmp" "$runtime_state_file"
+		else
+			rm -f "$runtime_tmp" 2>/dev/null || true
+		fi
 		node "${SCRIPT_DIR}/runtime-events.mjs" state auto "pulse:current" - <"$runtime_state_file" \
 			>/dev/null 2>&1 || true
 	fi

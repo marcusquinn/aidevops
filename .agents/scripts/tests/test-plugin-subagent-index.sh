@@ -38,7 +38,9 @@ setup() {
 
 	local agents_dir="$TEST_HOME/.aidevops/agents"
 	local config_dir="$TEST_HOME/.config/aidevops"
-	mkdir -p "$agents_dir/scripts" "$agents_dir/example-plugin" "$config_dir"
+	mkdir -p "$agents_dir/scripts" "$agents_dir/example-plugin" \
+		"$agents_dir/public-relations" \
+		"$agents_dir/tools/design/library/brands/example" "$config_dir"
 	cp "$REPO_ROOT/.agents/scripts/subagent-index-helper.sh" "$agents_dir/scripts/"
 	cp "$REPO_ROOT/.agents/scripts/plugin-loader-helper.sh" "$agents_dir/scripts/"
 	cp "$REPO_ROOT/.agents/scripts/plugin-source-trust-lib.sh" "$agents_dir/scripts/"
@@ -55,6 +57,12 @@ name: example-agent
 mode: subagent
 ---
 # Example Agent
+EOF_AGENT
+	cat >"$agents_dir/public-relations/media-list-builder.md" <<'EOF_AGENT'
+# Media List Builder
+EOF_AGENT
+	cat >"$agents_dir/tools/design/library/brands/example/DESIGN.md" <<'EOF_AGENT'
+# Example Design Catalogue
 EOF_AGENT
 	# shellcheck source=/dev/null
 	source "$REPO_ROOT/.agents/scripts/plugin-source-trust-lib.sh"
@@ -94,7 +102,7 @@ test_plugin_namespace_indexed() {
 		return 0
 	fi
 
-	if grep -q '^<!--TOON:plugin_agents\[1\]{folder,purpose,key_files}:$' "$index_file" && \
+	if grep -q '^<!--TOON:plugin_agents\[1\]{folder,purpose,key_files}:$' "$index_file" &&
 		grep -q '^example-plugin/,Example plugin agents,example-agent$' "$index_file"; then
 		print_result "generate includes plugin namespace" 0
 	else
@@ -112,6 +120,34 @@ test_check_validates_plugin_cardinality() {
 		print_result "check validates plugin cardinality" 0
 	else
 		print_result "check validates plugin cardinality" 1 "$output"
+	fi
+	return 0
+}
+
+test_shared_routes_preserved_without_design_catalogue() {
+	local index_file="$TEST_HOME/.aidevops/agents/subagent-index.toon"
+	local first_index="$TEST_HOME/first-subagent-index.toon"
+	local output=""
+	local status=0
+
+	output=$(HOME="$TEST_HOME" AIDEVOPS_AGENTS_DIR="$TEST_HOME/.aidevops/agents" "$TEST_HOME/.aidevops/agents/scripts/subagent-index-helper.sh" generate 2>&1)
+	status=$?
+	if [[ "$status" -ne 0 ]]; then
+		print_result "shared routes exclude design catalogue" 1 "$output"
+		return 0
+	fi
+
+	cp "$index_file" "$first_index"
+	output=$(HOME="$TEST_HOME" AIDEVOPS_AGENTS_DIR="$TEST_HOME/.aidevops/agents" "$TEST_HOME/.aidevops/agents/scripts/subagent-index-helper.sh" generate 2>&1)
+	status=$?
+
+	if [[ "$status" -eq 0 ]] &&
+		grep -q '^public-relations/,public-relations subagents,media-list-builder$' "$index_file" &&
+		! grep -q 'tools/design/library' "$index_file" &&
+		cmp -s "$first_index" "$index_file"; then
+		print_result "shared routes exclude design catalogue" 0
+	else
+		print_result "shared routes exclude design catalogue" 1 "expected deterministic public-relations route without design catalogue"
 	fi
 	return 0
 }
@@ -144,6 +180,7 @@ main() {
 	setup
 	test_plugin_namespace_indexed
 	test_check_validates_plugin_cardinality
+	test_shared_routes_preserved_without_design_catalogue
 	test_unset_globals_do_not_read_stdin
 
 	echo ""

@@ -6,7 +6,7 @@ import datetime as dt
 import json
 import math
 
-from screen_time_interval_common import WINDOWS, interval_seconds, local_date
+from screen_time_interval_common import WINDOWS, completed_day_window, interval_seconds, local_date
 
 
 def coverage(collection, start, end):
@@ -26,11 +26,10 @@ def coverage(collection, start, end):
     return round(days, 1), round(days / window_days * 100, 1)
 
 
-def period_payload(collection, now, seconds):
-    start = now - seconds
-    observed_days, coverage_pct = coverage(collection, start, now)
+def bounded_period_payload(collection, start, end, semantics="rolling-clock-window"):
+    observed_days, coverage_pct = coverage(collection, start, end)
     status = collection.get("status", "unavailable")
-    hours = None if status == "unavailable" else round(interval_seconds(collection.get("intervals", []), start, now) / 3600, 1)
+    hours = None if status == "unavailable" else round(interval_seconds(collection.get("intervals", []), start, end) / 3600, 1)
     return {
         "hours": hours,
         "status": status,
@@ -41,7 +40,14 @@ def period_payload(collection, now, seconds):
         "freshness_hours": collection.get("freshness_hours"),
         "observations": collection.get("observations", 0),
         "estimated": False,
+        "period_start_epoch": start,
+        "period_end_epoch": end,
+        "period_semantics": semantics,
     }
+
+
+def period_payload(collection, now, seconds):
+    return bounded_period_payload(collection, now - seconds, now)
 
 
 def parse_history_row(line):
@@ -88,6 +94,7 @@ def history_period(rows, now, days, skipped_rows=0):
     total = round(sum(item[1][0] for item in selected), 1)
     span = max(1, (max(dates) - min(dates)).days + 1)
     latest_age = (end_date - max(dates)).days
+    start_epoch, end_epoch = completed_day_window(now, days)
     return {
         "hours": min(days * 24.0, total),
         "status": "stale" if latest_age > 2 else "ok",
@@ -100,14 +107,29 @@ def history_period(rows, now, days, skipped_rows=0):
         "observations": len(selected),
         "estimated": False,
         "skipped_history_rows": skipped_rows,
+        "period_start_epoch": start_epoch,
+        "period_end_epoch": end_epoch,
+        "period_semantics": "completed-local-calendar-days",
     }
 
 
 def apply_short_history(periods, history, now, skipped):
     for name, days in (("day", 1), ("week", 7), ("month", 28)):
         fallback = history_period(history, now, days, skipped)
-        if periods[name]["status"] == "unavailable" and fallback:
-            periods[name] = fallback
+        if not fallback:
+            continue
+        live_coverage = periods[name].get("coverage_pct", 0) or 0
+        permission_free_proxy = periods[name].get("source") == "macos-pmset-display-assertions"
+        better_coverage = fallback["coverage_pct"] > live_coverage
+        equal_higher_confidence = permission_free_proxy and fallback["coverage_pct"] >= live_coverage
+        if periods[name]["status"] == "unavailable" or better_coverage or equal_higher_confidence:
+            if periods[name]["status"] == "unavailable":
+                reason = "live-source-unavailable"
+            elif equal_higher_confidence and not better_coverage:
+                reason = "higher-confidence-observed-history"
+            else:
+                reason = "richer-calendar-coverage"
+            periods[name] = dict(fallback, reason=reason)
 
 
 def estimated_year(periods, history, now, skipped):
@@ -125,7 +147,11 @@ def estimated_year(periods, history, now, skipped):
 
 
 def profile_payload(collection, history_path, now):
-    periods = {name: period_payload(collection, now, seconds) for name, seconds in WINDOWS.items()}
+    day_counts = {"day": 1, "week": 7, "month": 28, "year": 365}
+    periods = {}
+    for name in WINDOWS:
+        start, end = completed_day_window(now, day_counts[name])
+        periods[name] = bounded_period_payload(collection, start, end, "completed-local-calendar-days")
     history, skipped = read_history(history_path, now)
     apply_short_history(periods, history, now, skipped)
     periods["year"] = estimated_year(periods, history, now, skipped)

@@ -85,7 +85,7 @@ _resolve_self() {
 
 HOOK_DIR=$(_resolve_self)
 VERIFY_LIB_REPO="${HOOK_DIR}/../scripts/repo-verify-config-lib.sh"
-VERIFY_LIB_DEPLOYED="${HOME}/.aidevops/agents/scripts/repo-verify-config-lib.sh"
+VERIFY_LIB_DEPLOYED="${HOME:+$HOME/.aidevops/agents/scripts/repo-verify-config-lib.sh}"
 if [[ -f "$VERIFY_LIB_REPO" ]]; then
 	# shellcheck source=../scripts/repo-verify-config-lib.sh
 	source "$VERIFY_LIB_REPO"

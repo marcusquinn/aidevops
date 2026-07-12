@@ -208,7 +208,7 @@ _validate_run_args() {
 			print_error "Prompt file not found: ${prompt_file:-}"
 			return 1
 		}
-		prompt=$(<"$prompt_file")
+		prompt=$(<"${prompt_file:-}")
 	fi
 	[[ -n "${prompt:-}" ]] || {
 		print_error "run requires --prompt or --prompt-file"

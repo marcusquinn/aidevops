@@ -47,12 +47,14 @@ readonly SANDBOX_DEFAULT_TIMEOUT=120
 readonly SANDBOX_MAX_TIMEOUT=3600
 readonly SANDBOX_MAX_OUTPUT_BYTES=10485760 # 10MB per stream
 readonly SECRET_IO_GUARD_DEFAULT="true"
+readonly SANDBOX_ERROR_LEVEL="ERROR"
 
 # Minimal environment passthrough — only what's needed for basic operation
 readonly DEFAULT_PASSTHROUGH="PATH HOME USER LANG TERM SHELL"
 
 # Runtime-neutral shell-command policy helper
 readonly COMMAND_POLICY_HELPER="${AIDEVOPS_COMMAND_POLICY_HELPER:-${SCRIPT_DIR}/command-policy-helper.py}"
+readonly NETWORK_TIER_HELPER="${AIDEVOPS_NETWORK_TIER_HELPER:-${SCRIPT_DIR}/network-tier-helper.sh}"
 
 # =============================================================================
 # Helpers
@@ -74,6 +76,8 @@ log_execution() {
 	local timeout_used="$4"
 	local network_blocked="${5:-false}"
 	local passthrough_vars="${6:-}"
+	local egress_state="${7:-not-evaluated}"
+	local egress_backend="${8:-none}"
 	local timestamp
 	timestamp="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
@@ -93,7 +97,9 @@ log_execution() {
 		--argjson timeout "$timeout_used" \
 		--argjson network_blocked "$network_blocked" \
 		--arg passthrough "$passthrough_vars" \
-		'{ts: $ts, cmd: $cmd, exit: $exit, duration_s: $duration, timeout: $timeout, network_blocked: $network_blocked, passthrough: $passthrough}')
+		--arg egress_state "$egress_state" \
+		--arg egress_backend "$egress_backend" \
+		'{ts: $ts, cmd: $cmd, exit: $exit, duration_s: $duration, timeout: $timeout, network_blocked: $network_blocked, passthrough: $passthrough, egress_state: $egress_state, egress_backend: $egress_backend}')
 
 	printf '%s\n' "$log_entry" >>"$SANDBOX_LOG"
 	return 0
@@ -268,7 +274,7 @@ _sandbox_check_command_policy() {
 	local reason=""
 
 	if [[ ! -f "$COMMAND_POLICY_HELPER" ]]; then
-		log_sandbox "ERROR" "Required command policy helper is unavailable: ${COMMAND_POLICY_HELPER}"
+		log_sandbox "$SANDBOX_ERROR_LEVEL" "Required command policy helper is unavailable: ${COMMAND_POLICY_HELPER}"
 		return 1
 	fi
 	result="$(python3 "$COMMAND_POLICY_HELPER" check-command --worker --worker-id "$worker_id" --cwd "$PWD" --argv-json "$argv_json")" || status=$?
@@ -278,7 +284,7 @@ _sandbox_check_command_policy() {
 	if [[ "$status" -eq 0 && "$decision" == "allow" ]]; then
 		return 0
 	fi
-	log_sandbox "ERROR" "Command policy denied execution (${decision:-forbid}, ${rule_id}): ${reason}"
+	log_sandbox "$SANDBOX_ERROR_LEVEL" "Command policy denied execution (${decision:-forbid}, ${rule_id}): ${reason}"
 	return 1
 }
 
@@ -433,12 +439,13 @@ _sandbox_pgkill_cleanup() {
 	fi
 
 	if [[ -n "$cleanup_child_pgid" ]]; then
+		local cleanup_group_target="-${cleanup_child_pgid}"
 		# SIGTERM first — allow graceful shutdown
-		kill -- "-${cleanup_child_pgid}" 2>/dev/null || true
+		kill -- "$cleanup_group_target" 2>/dev/null || true
 		# Brief grace period, then SIGKILL any survivors
 		sleep 0.5
-		kill -0 -- "-${cleanup_child_pgid}" 2>/dev/null &&
-			kill -9 -- "-${cleanup_child_pgid}" 2>/dev/null || true
+		kill -0 -- "$cleanup_group_target" 2>/dev/null &&
+			kill -9 -- "$cleanup_group_target" 2>/dev/null || true
 	elif [[ -n "$cleanup_child_pid" ]]; then
 		# Fallback: setsid unavailable — kill direct child process only
 		kill "$cleanup_child_pid" 2>/dev/null || true
@@ -833,10 +840,11 @@ _sandbox_spawn_watchdog() {
 		touch "$wd_marker" 2>/dev/null || true
 
 		if [[ -n "$wd_pgid" ]]; then
-			kill -- "-${wd_pgid}" 2>/dev/null || true
+			local wd_group_target="-${wd_pgid}"
+			kill -- "$wd_group_target" 2>/dev/null || true
 			sleep 1
-			kill -0 -- "-${wd_pgid}" 2>/dev/null &&
-				kill -9 -- "-${wd_pgid}" 2>/dev/null || true
+			kill -0 -- "$wd_group_target" 2>/dev/null &&
+				kill -9 -- "$wd_group_target" 2>/dev/null || true
 		else
 			kill "$wd_pid" 2>/dev/null || true
 			sleep 1
@@ -928,6 +936,119 @@ _sandbox_build_env_args() {
 	return 0
 }
 
+# Resolve the trusted whole-process egress backend configured by the operator.
+# The path must be absolute so a worker-controlled PATH cannot select a backend.
+# Output: absolute executable path. Returns 1 when no usable backend is set.
+_sandbox_resolve_egress_backend() {
+	local configured_backend="${AIDEVOPS_WORKER_EGRESS_BACKEND:-}"
+	[[ -n "$configured_backend" && "$configured_backend" == /* && -x "$configured_backend" ]] || return 1
+	printf '%s' "$configured_backend"
+	return 0
+}
+
+# Calculate a portable SHA-256 digest for backend policy binding.
+# Arguments: $1=file path. Output: lowercase hex digest.
+_sandbox_file_sha256() {
+	local input_file="$1"
+	python3 - "$input_file" <<'PY'
+import hashlib
+import sys
+
+with open(sys.argv[1], "rb") as handle:
+    print(hashlib.sha256(handle.read()).hexdigest())
+PY
+	return $?
+}
+
+# Prepare and verify process-tree egress containment.
+# Backend contract:
+#   probe --policy FILE
+#     emits {"schema":"aidevops.worker-egress-backend.v1","ready":true,
+#            "scope":"process-tree","enforcement":"kernel",
+#            "policy_sha256":"...","backend_id":"safe-id",
+#            "capabilities":["direct-socket-deny","hostname-policy",
+#            "private-network-deny"],"cleanup":"automatic"}
+#   run --policy FILE --worker-id ID -- COMMAND [ARG...]
+#     binds COMMAND and all descendants to the policy before exec.
+# Arguments: $1=mode (off|auto|required), $2=policy file, $3=worker ID.
+# Sets caller-scoped: egress_state, egress_backend, egress_backend_id.
+_sandbox_prepare_worker_egress() {
+	local mode="$1"
+	local policy_file="$2"
+	local worker_id_value="$3"
+	local candidate=""
+	local probe_output=""
+	local expected_policy_sha256=""
+
+	egress_state="command-policy-only"
+	egress_backend=""
+	egress_backend_id="none"
+	if [[ "$mode" == "off" ]]; then
+		egress_state="off"
+		return 0
+	fi
+
+	if ! candidate="$(_sandbox_resolve_egress_backend)"; then
+		if [[ "$mode" == "required" ]]; then
+			log_sandbox "$SANDBOX_ERROR_LEVEL" "Whole-process worker egress is required but AIDEVOPS_WORKER_EGRESS_BACKEND is not an executable absolute path"
+			return 1
+		fi
+		log_sandbox "WARN" "Whole-process worker egress backend unavailable; state=command-policy-only"
+		return 0
+	fi
+
+	if [[ ! -x "$NETWORK_TIER_HELPER" ]]; then
+		if [[ "$mode" == "required" ]]; then
+			log_sandbox "$SANDBOX_ERROR_LEVEL" "Required network policy authority is unavailable: ${NETWORK_TIER_HELPER}"
+			return 1
+		fi
+		log_sandbox "WARN" "Network policy export unavailable; state=command-policy-only"
+		return 0
+	fi
+	if ! "$NETWORK_TIER_HELPER" export-policy >"$policy_file"; then
+		if [[ "$mode" == "required" ]]; then
+			log_sandbox "$SANDBOX_ERROR_LEVEL" "Required worker egress policy export failed"
+			return 1
+		fi
+		log_sandbox "WARN" "Worker egress policy export failed; state=command-policy-only"
+		return 0
+	fi
+	expected_policy_sha256="$(_sandbox_file_sha256 "$policy_file")" || {
+		log_sandbox "$SANDBOX_ERROR_LEVEL" "Unable to digest normalized worker egress policy"
+		return 1
+	}
+
+	if ! probe_output="$("$candidate" probe --policy "$policy_file" 2>/dev/null)"; then
+		if [[ "$mode" == "required" ]]; then
+			log_sandbox "$SANDBOX_ERROR_LEVEL" "Required worker egress backend probe failed"
+			return 1
+		fi
+		log_sandbox "WARN" "Worker egress backend probe failed; state=command-policy-only"
+		return 0
+	fi
+	if ! printf '%s' "$probe_output" | jq -e \
+		--arg policy_sha256 "$expected_policy_sha256" \
+		'.schema == "aidevops.worker-egress-backend.v1" and .ready == true and .scope == "process-tree" and (.enforcement == "kernel" or .enforcement == "equivalent") and .policy_sha256 == $policy_sha256 and (.backend_id | type == "string") and .cleanup == "automatic" and (["direct-socket-deny", "hostname-policy", "private-network-deny"] - .capabilities | length == 0)' \
+		>/dev/null 2>&1; then
+		if [[ "$mode" == "required" ]]; then
+			log_sandbox "$SANDBOX_ERROR_LEVEL" "Required worker egress backend returned an invalid readiness contract"
+			return 1
+		fi
+		log_sandbox "WARN" "Worker egress backend readiness contract invalid; state=command-policy-only"
+		return 0
+	fi
+
+	egress_backend_id="$(printf '%s' "$probe_output" | jq -r '.backend_id')"
+	if [[ ! "$egress_backend_id" =~ ^[A-Za-z0-9._-]+$ ]]; then
+		log_sandbox "$SANDBOX_ERROR_LEVEL" "Worker egress backend_id contains unsupported characters"
+		return 1
+	fi
+	egress_backend="$candidate"
+	egress_state="enforced"
+	log_sandbox "INFO" "Whole-process worker egress ready (backend=${egress_backend_id}, worker=${worker_id_value})"
+	return 0
+}
+
 # Dispatch the sandboxed command via _sandbox_exec_with_pgkill.
 # Handles optional macOS seatbelt network blocking.
 # Arguments:
@@ -935,6 +1056,9 @@ _sandbox_build_env_args() {
 #   $2 - timeout_secs
 #   $3 - stdout_file
 #   $4 - stderr_file
+#   $5 - egress backend path (empty for none)
+#   $6 - normalized egress policy file
+#   $7 - worker ID
 # Remaining args: env_args elements followed by "--" followed by cmd_args elements.
 # Caller passes: "${env_args[@]}" "--" "${cmd_args[@]}"
 _sandbox_run_dispatch() {
@@ -942,7 +1066,10 @@ _sandbox_run_dispatch() {
 	local timeout_secs="$2"
 	local stdout_file="$3"
 	local stderr_file="$4"
-	shift 4
+	local egress_backend_path="$5"
+	local egress_policy_file="$6"
+	local dispatch_worker_id="$7"
+	shift 7
 	local dispatch_exit=0
 
 	# Split remaining args into env_args and cmd_args at the "--" separator
@@ -960,21 +1087,27 @@ _sandbox_run_dispatch() {
 		fi
 	done
 
+	local -a d_exec_args=()
+	if [[ -n "$egress_backend_path" ]]; then
+		d_exec_args=("$egress_backend_path" run --policy "$egress_policy_file" --worker-id "$dispatch_worker_id" -- "${d_env_args[@]}" "${d_cmd_args[@]}")
+	else
+		d_exec_args=("${d_env_args[@]}" "${d_cmd_args[@]}")
+	fi
+
 	if [[ "$block_network" == true ]] && command -v sandbox-exec &>/dev/null; then
 		# macOS seatbelt: deny network access.
 		# sandbox-exec accepts program + args directly (no shell wrapper needed).
 		local seatbelt_profile="(version 1)(allow default)(deny network*)"
 		_sandbox_exec_with_pgkill "$timeout_secs" "$stdout_file" "$stderr_file" \
 			sandbox-exec -p "$seatbelt_profile" \
-			"${d_env_args[@]}" \
-			"${d_cmd_args[@]}" || dispatch_exit=$?
+			"${d_exec_args[@]}" || dispatch_exit=$?
 	else
 		if [[ "$block_network" == true ]]; then
-			log_sandbox "WARN" "Network blocking requested but sandbox-exec not available (non-macOS); proceeding without"
+			log_sandbox "$SANDBOX_ERROR_LEVEL" "Network blocking requested but no enforcing deny-all backend is available"
+			return 126
 		fi
 		_sandbox_exec_with_pgkill "$timeout_secs" "$stdout_file" "$stderr_file" \
-			"${d_env_args[@]}" \
-			"${d_cmd_args[@]}" || dispatch_exit=$?
+			"${d_exec_args[@]}" || dispatch_exit=$?
 	fi
 
 	return "$dispatch_exit"
@@ -991,6 +1124,8 @@ _sandbox_run_dispatch() {
 #   $7 - duration (seconds)
 #   $8 - block_network (true|false)
 #   $9 - extra_passthrough
+#   $10 - egress_state
+#   $11 - egress_backend_id
 _sandbox_run_post_exec() {
 	local exit_code="$1"
 	local timeout_secs="$2"
@@ -1001,6 +1136,8 @@ _sandbox_run_post_exec() {
 	local duration="$7"
 	local block_network="$8"
 	local extra_passthrough="$9"
+	local egress_state_value="${10}"
+	local egress_backend_value="${11}"
 
 	# Handle timeout (exit code 124 from _sandbox_exec_with_pgkill)
 	if [[ $exit_code -eq 124 ]]; then
@@ -1016,7 +1153,7 @@ _sandbox_run_post_exec() {
 	_sandbox_emit_redacted_output "$stderr_file" "stderr" "$command_tainted"
 
 	# Audit log
-	log_execution "$cmd_str" "$exit_code" "$duration" "$timeout_secs" "$block_network" "$extra_passthrough"
+	log_execution "$cmd_str" "$exit_code" "$duration" "$timeout_secs" "$block_network" "$extra_passthrough" "$egress_state_value" "$egress_backend_value"
 
 	# Async cleanup of old temp dirs (older than 60 minutes).
 	# stderr is not suppressed so permission errors or other persistent failures
@@ -1046,8 +1183,8 @@ _sandbox_run_check_secret_guard() {
 	if [[ "$secret_io_guard" == "true" ]] && [[ "$allow_secret_io" != "true" ]]; then
 		local block_reason
 		if block_reason="$(_sandbox_secret_block_reason "$cmd_str")"; then
-			log_sandbox "ERROR" "Blocked command due to secret leak risk: ${block_reason}"
-			log_sandbox "ERROR" "Use --allow-secret-io only for explicit user-approved local operations"
+			log_sandbox "$SANDBOX_ERROR_LEVEL" "Blocked command due to secret leak risk: ${block_reason}"
+			log_sandbox "$SANDBOX_ERROR_LEVEL" "Use --allow-secret-io only for explicit user-approved local operations"
 			log_execution "$cmd_str" 126 0 "$timeout_secs" "$block_network" "$extra_passthrough"
 			return 126
 		fi
@@ -1063,14 +1200,18 @@ _sandbox_run_check_secret_guard() {
 #   $3 - block_network (true|false)
 #   $4 - network_tiering (true|false)
 #   $5 - heuristic-only command text
+#   $6 - egress state
+#   $7 - egress backend ID
 _sandbox_run_pre_exec() {
 	local cmd_str="$1"
 	local timeout_secs="$2"
 	local block_network="$3"
 	local network_tiering="$4"
 	local heuristic_text="$5"
+	local egress_state_value="$6"
+	local egress_backend_value="$7"
 
-	log_sandbox "INFO" "Executing (timeout=${timeout_secs}s, network_blocked=${block_network}, tiering=${network_tiering}): ${cmd_str:0:200}"
+	log_sandbox "INFO" "Executing (timeout=${timeout_secs}s, network_blocked=${block_network}, tiering=${network_tiering}, egress=${egress_state_value}, backend=${egress_backend_value}): ${cmd_str:0:200}"
 
 	local command_tainted=false
 	if _sandbox_is_secret_tainted_command "$heuristic_text"; then
@@ -1083,7 +1224,7 @@ _sandbox_run_pre_exec() {
 # Parse sandbox_run flags into caller-scoped variables (bash dynamic scoping).
 # Caller must declare all target variables as local before calling this function:
 #   timeout_secs, block_network, network_tiering, allow_secret_io,
-#   worker_id, extra_passthrough, stream_stdout, cmd_args (array).
+#   worker_id, extra_passthrough, stream_stdout, egress_mode, cmd_args (array).
 # Returns 0 on success, 1 if no command was provided after flag parsing.
 _sandbox_run_parse_args() {
 	while [[ $# -gt 0 ]]; do
@@ -1103,6 +1244,10 @@ _sandbox_run_parse_args() {
 		--network-tiering)
 			network_tiering=true
 			shift
+			;;
+		--egress-mode)
+			egress_mode="$2"
+			shift 2
 			;;
 		--allow-secret-io)
 			allow_secret_io=true
@@ -1141,6 +1286,10 @@ sandbox_run() {
 	local allow_secret_io=false
 	local worker_id="sandbox-$$"
 	local extra_passthrough=""
+	local egress_mode="${AIDEVOPS_WORKER_EGRESS_MODE:-auto}"
+	local egress_state="command-policy-only"
+	local egress_backend=""
+	local egress_backend_id="none"
 	local secret_io_guard="${AIDEVOPS_BLOCK_SECRET_IO:-$SECRET_IO_GUARD_DEFAULT}"
 	# Stream stdout mode (GH#15180 bug #4): when true, child stdout flows to
 	# the caller's stdout in real-time instead of being captured to a file and
@@ -1154,9 +1303,16 @@ sandbox_run() {
 	_sandbox_run_parse_args "$@"
 
 	if [[ ${#cmd_args[@]} -eq 0 ]]; then
-		log_sandbox "ERROR" "No command provided"
+		log_sandbox "$SANDBOX_ERROR_LEVEL" "No command provided"
 		return 1
 	fi
+	case "$egress_mode" in
+	off | auto | required) ;;
+	*)
+		log_sandbox "$SANDBOX_ERROR_LEVEL" "Invalid worker egress mode '${egress_mode}' (expected off, auto, or required)"
+		return 2
+		;;
+	esac
 
 	local argv_json=""
 	argv_json="$(_sandbox_argv_json "${cmd_args[@]}")" || return 126
@@ -1181,19 +1337,28 @@ sandbox_run() {
 
 	local -a env_args=()
 	_sandbox_build_env_args "$exec_tmpdir" "$extra_passthrough"
+	local egress_policy_file="${exec_tmpdir}/egress-policy.json"
+	if ! _sandbox_prepare_worker_egress "$egress_mode" "$egress_policy_file" "$worker_id"; then
+		log_execution "$cmd_str" 126 0 "$timeout_secs" "$block_network" "$extra_passthrough" "unavailable" "none"
+		rm -rf "$exec_tmpdir"
+		return 126
+	fi
 
 	local stdout_file="${exec_tmpdir}/stdout"
 	local stderr_file="${exec_tmpdir}/stderr"
 	local command_tainted
 	command_tainted="$(_sandbox_run_pre_exec \
-		"$cmd_str" "$timeout_secs" "$block_network" "$network_tiering" "$heuristic_text")"
+		"$cmd_str" "$timeout_secs" "$block_network" "$network_tiering" "$heuristic_text" \
+		"$egress_state" "$egress_backend_id")"
 
 	local start_time exit_code=0
 	start_time="$(date +%s)"
 
 	_sandbox_run_dispatch \
 		"$block_network" "$timeout_secs" "$stdout_file" "$stderr_file" \
+		"$egress_backend" "$egress_policy_file" "$worker_id" \
 		"${env_args[@]}" "--" "${cmd_args[@]}" || exit_code=$?
+	rm -f "$egress_policy_file"
 
 	local end_time duration
 	end_time="$(date +%s)"
@@ -1201,7 +1366,8 @@ sandbox_run() {
 
 	_sandbox_run_post_exec \
 		"$exit_code" "$timeout_secs" "$stdout_file" "$stderr_file" \
-		"$command_tainted" "$cmd_str" "$duration" "$block_network" "$extra_passthrough"
+		"$command_tainted" "$cmd_str" "$duration" "$block_network" "$extra_passthrough" \
+		"$egress_state" "$egress_backend_id"
 
 	return "$exit_code"
 }
@@ -1258,6 +1424,8 @@ sandbox_config() {
 	echo "  Secret guard: ${AIDEVOPS_BLOCK_SECRET_IO:-$SECRET_IO_GUARD_DEFAULT}"
 	echo "  Passthrough:  ${DEFAULT_PASSTHROUGH}"
 	echo "  Net tiering:  enforced by shared worker command policy"
+	echo "  Egress mode:  ${AIDEVOPS_WORKER_EGRESS_MODE:-auto}"
+	echo "  Egress backend: $([[ -n "${AIDEVOPS_WORKER_EGRESS_BACKEND:-}" ]] && echo configured || echo none)"
 	echo ""
 	if [[ -f "$SANDBOX_LOG" ]]; then
 		local count
@@ -1287,6 +1455,7 @@ Run options:
   --timeout N                Timeout in seconds (default: 120, max: 3600)
   --no-network               Block network access (macOS only, uses seatbelt)
   --network-tiering          Compatibility flag; enforcement is enabled by default
+  --egress-mode MODE         Whole-process backend mode: off|auto|required
   --allow-secret-io          Bypass secret-output guard for this command only
   --worker-id ID             Worker identifier for network tier logs
   --passthrough "VAR1,VAR2"  Additional env vars to pass through
@@ -1311,9 +1480,16 @@ Security model:
   - Secret-output command guard blocks likely credential leakage patterns
   - Optional network blocking (macOS seatbelt)
   - Recognized direct network clients block Tier 5 and DNS-exfiltration targets
-  - Interpreter/custom-binary traffic requires lower-layer egress containment
+  - Configured backends wrap the complete process tree before command execution
+  - required mode fails closed when no verified process-tree backend is ready
+  - auto mode reports command-policy-only when containment is unavailable
   - All executions logged to JSONL audit trail (jq-safe JSON, injection-proof)
   - Output capped at 10MB per stream
+
+Backend contract:
+  Set AIDEVOPS_WORKER_EGRESS_BACKEND to an absolute executable path. The backend
+  must implement `probe --policy FILE` and `run --policy FILE --worker-id ID --
+  COMMAND...` using the v1 JSON contracts documented in this script.
 HELP
 	return 0
 }
@@ -1333,7 +1509,7 @@ main() {
 	config) sandbox_config "$@" || status=$? ;;
 	help) sandbox_help || status=$? ;;
 	*)
-		log_sandbox "ERROR" "Unknown command: ${cmd}"
+		log_sandbox "$SANDBOX_ERROR_LEVEL" "Unknown command: ${cmd}"
 		sandbox_help
 		return 1
 		;;
