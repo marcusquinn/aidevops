@@ -49,7 +49,7 @@ export function registerManagedDirectoryPermissions(config) {
 
   const rules = typeof existing === "string"
     ? { "*": existing }
-    : { ...(existing || {}) };
+    : { ...existing };
   let count = 0;
   for (const path of MANAGED_EXTERNAL_DIRECTORIES) {
     if (rules[path] !== "allow") count++;
