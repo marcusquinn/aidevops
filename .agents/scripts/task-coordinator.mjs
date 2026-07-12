@@ -588,16 +588,17 @@ function transitionForEvent(eventKind, action) {
   };
   return transitions[action] || "task.metadata_changed";
 }
-function forgeEvent(input, path = initialise()) {
-  const value = forgeEventInput(input);
-  const transitionKind = transitionForEvent(value.eventKind, value.action);
-  const behavior = { action: value.action, cursor: value.cursor, cursorTiebreaker: value.cursorTiebreaker, deliveryId: value.deliveryId, eventKind: value.eventKind, repositoryId: value.repositoryId, subjectId: value.subjectId, taskId: value.taskId, transitionKind };
-  const payloadText = jsonText(behavior, "forge event");
-  const payloadHash = hashText(payloadText);
-  const prior = operationResult(path, value.operationId, payloadHash);
-  if (prior) return prior;
-  const mapping = value.eventKind === "push" ? null : value.taskId ? rows(path, `SELECT task_id AS taskId FROM issue_mappings WHERE forge='github' AND repository_id=${sqlEscape(value.repositoryId)} AND task_id=${sqlEscape(value.taskId)};`)[0] : rows(path, `SELECT task_id AS taskId FROM issue_mappings WHERE forge='github' AND repository_id=${sqlEscape(value.repositoryId)} AND issue_id=${sqlEscape(value.subjectId)};`)[0];
-  const priorCursor = rows(path, `SELECT cursor_timestamp AS cursorTimestamp,cursor_tiebreaker AS cursorTiebreaker,payload_hash AS payloadHash FROM forge_event_cursors WHERE forge='github' AND repository_id=${sqlEscape(value.repositoryId)} AND subject_kind=${sqlEscape(value.eventKind)} AND subject_id=${sqlEscape(value.subjectId)};`)[0];
+function forgeEventMapping(path, value) {
+  if (value.eventKind === "push") return null;
+  const selector = value.taskId ? `task_id=${sqlEscape(value.taskId)}` : `issue_id=${sqlEscape(value.subjectId)}`;
+  return rows(path, `SELECT task_id AS taskId FROM issue_mappings WHERE forge='github' AND repository_id=${sqlEscape(value.repositoryId)} AND ${selector};`)[0];
+}
+function forgeEventCursor(path, value) {
+  return rows(path, `SELECT cursor_timestamp AS cursorTimestamp,cursor_tiebreaker AS cursorTiebreaker,payload_hash AS payloadHash FROM forge_event_cursors WHERE forge='github' AND repository_id=${sqlEscape(value.repositoryId)} AND subject_kind=${sqlEscape(value.eventKind)} AND subject_id=${sqlEscape(value.subjectId)};`)[0];
+}
+function prepareForgeEvent(value, path, transitionKind, payloadText, payloadHash) {
+  const mapping = forgeEventMapping(path, value);
+  const priorCursor = forgeEventCursor(path, value);
   const timestamp = now();
   const ordering = priorCursor ? value.cursor.localeCompare(priorCursor.cursorTimestamp) || value.cursorTiebreaker.localeCompare(priorCursor.cursorTiebreaker) : 1;
   const stale = ordering < 0 || (ordering === 0 && priorCursor?.payloadHash === payloadHash);
@@ -609,22 +610,39 @@ function forgeEvent(input, path = initialise()) {
   const result = { action: value.action, deliveryId: value.deliveryId, eventKind: value.eventKind, mappingMode: repositoryOnly ? "trusted-repository" : value.taskId ? "explicit-task" : "immutable-subject", operationId: value.operationId, repositoryId: value.repositoryId, status, taskId: mapping?.taskId || null, transitionKind };
   const resultText = JSON.stringify(result);
   const projection = shouldPublish ? jsonText({ branchName: "main", coalesceKey: "forge-event", maxAttempts: 5, payload: { paths: ["TODO.md"], projection: "forge-event", transition: { kind: transitionKind, taskId: mapping.taskId } }, remoteName: "origin", repositoryId: value.repositoryId, repositoryPath: value.repositoryPath, taskId: mapping.taskId }, "projection") : null;
-  try {
-    sqlite(path, `PRAGMA foreign_keys=ON; BEGIN IMMEDIATE;
-INSERT INTO operations(operation_id,kind,task_id,payload_hash,payload_json,status,result_json,result_hash,created_at,updated_at)
-VALUES (${sqlEscape(value.operationId)},'forge.event',${sqlEscape(mapping?.taskId || null)},${sqlEscape(payloadHash)},${sqlEscape(payloadText)},${sqlEscape(conflict ? "conflict" : "terminal")},${sqlEscape(resultText)},'sha3-256:'||lower(hex(sha3(${sqlEscape(resultText)},256))),${sqlEscape(timestamp)},${sqlEscape(timestamp)});
-${status === "accepted" ? `INSERT INTO forge_event_cursors(forge,repository_id,subject_kind,subject_id,cursor_timestamp,cursor_tiebreaker,payload_hash,operation_id,transition_kind,accepted_at)
+  return { conflict, intentId, mapping, payloadHash, payloadText, projection, result, resultText, shouldPublish, status, timestamp, transitionKind, value };
+}
+function forgeEventTransactionSql(event) {
+  const { conflict, intentId, mapping, payloadHash, payloadText, projection, resultText, shouldPublish, status, timestamp, transitionKind, value } = event;
+  const cursorSql = status === "accepted" ? `INSERT INTO forge_event_cursors(forge,repository_id,subject_kind,subject_id,cursor_timestamp,cursor_tiebreaker,payload_hash,operation_id,transition_kind,accepted_at)
 VALUES ('github',${sqlEscape(value.repositoryId)},${sqlEscape(value.eventKind)},${sqlEscape(value.subjectId)},${sqlEscape(value.cursor)},${sqlEscape(value.cursorTiebreaker)},${sqlEscape(payloadHash)},${sqlEscape(value.operationId)},${sqlEscape(transitionKind)},${sqlEscape(timestamp)})
-ON CONFLICT(forge,repository_id,subject_kind,subject_id) DO UPDATE SET cursor_timestamp=excluded.cursor_timestamp,cursor_tiebreaker=excluded.cursor_tiebreaker,payload_hash=excluded.payload_hash,operation_id=excluded.operation_id,transition_kind=excluded.transition_kind,accepted_at=excluded.accepted_at;` : ""}
-${shouldPublish ? `INSERT INTO publication_intents(intent_id,operation_id,task_id,payload_hash,payload_json,status,created_at) VALUES (${sqlEscape(intentId)},${sqlEscape(value.operationId)},${sqlEscape(mapping.taskId)},${sqlEscape(hashText(projection))},${sqlEscape(projection)},'retryable',${sqlEscape(timestamp)});
-INSERT INTO publication_queue(intent_id,repository_id,repository_path,remote_name,branch_name,coalesce_key,sequence,available_at,max_attempts) SELECT ${sqlEscape(intentId)},${sqlEscape(value.repositoryId)},${sqlEscape(value.repositoryPath)},'origin','main','forge-event',COALESCE(MAX(sequence),0)+1,unixepoch(),5 FROM publication_queue;` : ""}
-INSERT INTO terminal_evidence(operation_id,result_state,evidence_json,occurred_at) VALUES (${sqlEscape(value.operationId)},${sqlEscape(conflict ? "conflict" : "terminal")},${sqlEscape(JSON.stringify({ status, transitionKind }))},${sqlEscape(timestamp)}); COMMIT;`);
+ON CONFLICT(forge,repository_id,subject_kind,subject_id) DO UPDATE SET cursor_timestamp=excluded.cursor_timestamp,cursor_tiebreaker=excluded.cursor_tiebreaker,payload_hash=excluded.payload_hash,operation_id=excluded.operation_id,transition_kind=excluded.transition_kind,accepted_at=excluded.accepted_at;` : "";
+  const publicationSql = shouldPublish ? `INSERT INTO publication_intents(intent_id,operation_id,task_id,payload_hash,payload_json,status,created_at) VALUES (${sqlEscape(intentId)},${sqlEscape(value.operationId)},${sqlEscape(mapping.taskId)},${sqlEscape(hashText(projection))},${sqlEscape(projection)},'retryable',${sqlEscape(timestamp)});
+INSERT INTO publication_queue(intent_id,repository_id,repository_path,remote_name,branch_name,coalesce_key,sequence,available_at,max_attempts) SELECT ${sqlEscape(intentId)},${sqlEscape(value.repositoryId)},${sqlEscape(value.repositoryPath)},'origin','main','forge-event',COALESCE(MAX(sequence),0)+1,unixepoch(),5 FROM publication_queue;` : "";
+  const terminalState = conflict ? "conflict" : "terminal";
+  return `PRAGMA foreign_keys=ON; BEGIN IMMEDIATE;
+INSERT INTO operations(operation_id,kind,task_id,payload_hash,payload_json,status,result_json,result_hash,created_at,updated_at)
+VALUES (${sqlEscape(value.operationId)},'forge.event',${sqlEscape(mapping?.taskId || null)},${sqlEscape(payloadHash)},${sqlEscape(payloadText)},${sqlEscape(terminalState)},${sqlEscape(resultText)},'sha3-256:'||lower(hex(sha3(${sqlEscape(resultText)},256))),${sqlEscape(timestamp)},${sqlEscape(timestamp)});
+${cursorSql}
+${publicationSql}
+INSERT INTO terminal_evidence(operation_id,result_state,evidence_json,occurred_at) VALUES (${sqlEscape(value.operationId)},${sqlEscape(terminalState)},${sqlEscape(JSON.stringify({ status, transitionKind }))},${sqlEscape(timestamp)}); COMMIT;`;
+}
+function forgeEvent(input, path = initialise()) {
+  const value = forgeEventInput(input);
+  const transitionKind = transitionForEvent(value.eventKind, value.action);
+  const payloadText = jsonText({ action: value.action, cursor: value.cursor, cursorTiebreaker: value.cursorTiebreaker, deliveryId: value.deliveryId, eventKind: value.eventKind, repositoryId: value.repositoryId, subjectId: value.subjectId, taskId: value.taskId, transitionKind }, "forge event");
+  const payloadHash = hashText(payloadText);
+  const prior = operationResult(path, value.operationId, payloadHash);
+  if (prior) return prior;
+  const event = prepareForgeEvent(value, path, transitionKind, payloadText, payloadHash);
+  try {
+    sqlite(path, forgeEventTransactionSql(event));
   } catch (error) {
     const raced = operationResult(path, value.operationId, payloadHash);
     if (!raced) throw error;
     return raced;
   }
-  return result;
+  return event.result;
 }
 function validateRestoreEvidence(evidence, fencingToken) {
   const text = jsonText(evidence, "registry_evidence", EVIDENCE_MAX_BYTES);
