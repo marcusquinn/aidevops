@@ -203,42 +203,71 @@ INSERT INTO origin_transitions(origin_id,from_state,to_state,ownership_epoch,fen
 SELECT origin_id,NULL,'active',ownership_epoch,fencing_token,'{}',${sqlEscape(timestamp)} FROM origins WHERE NOT EXISTS (SELECT 1 FROM origin_transitions);
 INSERT INTO migration_history SELECT ${SCHEMA_VERSION},${sqlEscape(timestamp)},NULL,'ok' WHERE NOT EXISTS (SELECT 1 FROM migration_history); COMMIT;`);
 }
-function bootstrapLocked(path) {
-  const lock = `${path}.init-lock`;
-  const ownerToken = randomUUID();
+function processIsAlive(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    if (error.code === "ESRCH") return false;
+    if (error.code === "EPERM") return true;
+    throw error;
+  }
+}
+function orphanedLockIsOldEnough(lock, orphanGrace) {
+  try {
+    return Date.now() - statSync(lock).mtimeMs >= orphanGrace;
+  } catch (error) {
+    if (error.code === "ENOENT") return false;
+    throw error;
+  }
+}
+function lockCanBeReclaimed(lock, orphanGrace) {
+  try {
+    const owner = JSON.parse(readFileSync(join(lock, "owner.json"), "utf8"));
+    if (!owner || typeof owner.ownerToken !== "string" || !Number.isSafeInteger(Number(owner.pid)) || Number(owner.pid) < 1) throw new TypeError("malformed initialization lock owner");
+    return !processIsAlive(Number(owner.pid));
+  } catch (error) {
+    if (error.code !== "ENOENT" && !(error instanceof SyntaxError) && !(error instanceof TypeError)) throw error;
+    return orphanedLockIsOldEnough(lock, orphanGrace);
+  }
+}
+function reclaimLock(lock) {
+  const stale = `${lock}.stale-${randomUUID()}`;
+  try {
+    renameSync(lock, stale);
+    rmSync(stale, { recursive: true, force: true });
+  } catch (error) {
+    if (error.code !== "ENOENT") throw error;
+  }
+}
+function acquireInitializationLock(lock, ownerToken) {
   const deadline = Date.now() + Number(process.env.AIDEVOPS_COORDINATOR_INIT_LOCK_TIMEOUT_MS || 30000);
   const orphanGrace = Number(process.env.AIDEVOPS_COORDINATOR_INIT_LOCK_ORPHAN_GRACE_MS || 1000);
   while (true) {
     try {
       mkdirSync(lock, { mode: 0o700 });
       writeFileSync(join(lock, "owner.json"), JSON.stringify({ ownerToken, pid: process.pid }), { mode: 0o600 });
-      break;
+      return;
     } catch (error) {
       if (error.code !== "EEXIST") throw error;
-      let reclaim = false;
-      try {
-        const owner = JSON.parse(readFileSync(join(lock, "owner.json"), "utf8"));
-        if (!owner || typeof owner.ownerToken !== "string" || !Number.isSafeInteger(Number(owner.pid)) || Number(owner.pid) < 1) throw new TypeError("malformed initialization lock owner");
-        let alive = true;
-        try { process.kill(Number(owner.pid), 0); } catch (killError) { if (killError.code === "ESRCH") alive = false; else if (killError.code !== "EPERM") throw killError; }
-        reclaim = !alive;
-      } catch (ownerError) {
-        if (ownerError.code !== "ENOENT" && !(ownerError instanceof SyntaxError) && !(ownerError instanceof TypeError)) throw ownerError;
-        try { reclaim = Date.now() - statSync(lock).mtimeMs >= orphanGrace; } catch (statError) { if (statError.code !== "ENOENT") throw statError; }
-      }
-      if (reclaim) {
-        const stale = `${lock}.stale-${randomUUID()}`;
-        try {
-          renameSync(lock, stale);
-          rmSync(stale, { recursive: true, force: true });
-        } catch (reclaimError) {
-          if (reclaimError.code !== "ENOENT") throw reclaimError;
-        }
-      }
+      if (lockCanBeReclaimed(lock, orphanGrace)) reclaimLock(lock);
       if (Date.now() >= deadline) throw new Error("coordinator initialization lock timed out");
       Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 25);
     }
   }
+}
+function releaseInitializationLock(lock, ownerToken) {
+  try {
+    const owner = JSON.parse(readFileSync(join(lock, "owner.json"), "utf8"));
+    if (owner.ownerToken === ownerToken) rmSync(lock, { recursive: true, force: true });
+  } catch (error) {
+    if (error.code !== "ENOENT") throw error;
+  }
+}
+function bootstrapLocked(path) {
+  const lock = `${path}.init-lock`;
+  const ownerToken = randomUUID();
+  acquireInitializationLock(lock, ownerToken);
   try {
     if (!existsSync(path)) bootstrap(path);
     secureFile(path);
@@ -247,12 +276,7 @@ function bootstrapLocked(path) {
     migrate(path, version);
     secureFile(path);
   } finally {
-    try {
-      const owner = JSON.parse(readFileSync(join(lock, "owner.json"), "utf8"));
-      if (owner.ownerToken === ownerToken) rmSync(lock, { recursive: true, force: true });
-    } catch (error) {
-      if (error.code !== "ENOENT") throw error;
-    }
+    releaseInitializationLock(lock, ownerToken);
   }
 }
 function initialise(path = dbPath()) {
@@ -548,26 +572,29 @@ function verify(path = initialise()) {
 
 function parseJson(value = "{}") { return JSON.parse(value); }
 function option(args, name, fallback = "") { const index = args.indexOf(name); return index >= 0 && index + 1 < args.length ? args[index + 1] : fallback; }
+const COMMAND_HANDLERS = {
+  allocate: (args, path) => allocate({ operationId: option(args, "--operation-id") || randomUUID(), count: Number(option(args, "--count", "1")), legacyId: option(args, "--legacy-id"), payload: parseJson(option(args, "--payload", "{}")) }, path),
+  "publication-intent": (args, path) => publication({ operationId: option(args, "--operation-id"), taskId: option(args, "--task-id"), repositoryId: option(args, "--repository-id"), repositoryPath: option(args, "--repository-path"), remoteName: option(args, "--remote", "origin"), branchName: option(args, "--branch", "main"), coalesceKey: option(args, "--coalesce-key", "planning"), maxAttempts: Number(option(args, "--max-attempts", "5")), payload: parseJson(option(args, "--payload", "{}")) }, path),
+  "lease-next": (args, path) => leaseNext({ ownerId: option(args, "--owner-id"), leaseSeconds: Number(option(args, "--lease-seconds", "60")), maxActive: Number(option(args, "--max-active", "4")) }, path),
+  "lease-check": (args, path) => checkLease({ ownerId: option(args, "--owner-id"), repositoryId: option(args, "--repository-id"), fencingToken: Number(option(args, "--fencing-token")) }, path),
+  "lease-renew": (args, path) => renewLease({ ownerId: option(args, "--owner-id"), repositoryId: option(args, "--repository-id"), fencingToken: Number(option(args, "--fencing-token")), leaseSeconds: Number(option(args, "--lease-seconds", "60")) }, path),
+  "lease-finish": (args, path) => finishLease({ ownerId: option(args, "--owner-id"), repositoryId: option(args, "--repository-id"), fencingToken: Number(option(args, "--fencing-token")), status: option(args, "--status"), retryAfter: Number(option(args, "--retry-after", "0")), evidence: parseJson(option(args, "--evidence", "{}")) }, path),
+  "publication-metrics": (_args, path) => publicationMetrics(path),
+  attempt: (args, path) => attempt({ intentId: option(args, "--intent-id"), status: option(args, "--status"), evidence: parseJson(option(args, "--evidence", "{}")) }, path),
+  transition: (args, path) => transition({ state: option(args, "--state"), fencingToken: option(args, "--fencing-token"), evidence: parseJson(option(args, "--evidence", "{}")) }, path),
+  "bind-issue": (args, path) => bindIssue({ taskId: option(args, "--task-id"), forge: option(args, "--forge", "github"), repositoryId: option(args, "--repository-id"), repositorySlug: option(args, "--repository-slug"), role: option(args, "--role", "home"), issueId: option(args, "--issue-id"), projectId: option(args, "--project-id"), displayNumber: option(args, "--display-number"), stateCursor: option(args, "--state-cursor"), syncMetadata: parseJson(option(args, "--sync-metadata", "{}")) }, path),
+  "resolve-issue": (args, path) => resolveIssue({ taskId: option(args, "--task-id"), forge: option(args, "--forge", "github"), repositoryId: option(args, "--repository-id") }, path),
+  restore: (args, path) => restore({ backupPath: option(args, "--backup"), registryEvidence: parseJson(option(args, "--registry-evidence", "{}")), priorEpoch: Number(option(args, "--prior-epoch")), newEpoch: Number(option(args, "--new-epoch")), fencingToken: option(args, "--fencing-token"), publishedHighWater: Number(option(args, "--published-high-water", "0")) }, path),
+  verify: (_args, path) => verify(path),
+  status: (_args, path) => ({ ...activeOrigin(path), dbPath: path }),
+};
 export function run(args = process.argv.slice(2)) {
   const command = args[0] || "help";
   if (["help", "--help", "-h"].includes(command)) { process.stdout.write("Usage: task-coordinator.mjs allocate|publication-intent|lease-next|lease-check|lease-renew|lease-finish|publication-metrics|attempt|transition|bind-issue|resolve-issue|restore|verify|status\n"); return 0; }
+  const handler = COMMAND_HANDLERS[command];
   const path = initialise();
-  let result;
-  if (command === "allocate") result = allocate({ operationId: option(args, "--operation-id") || randomUUID(), count: Number(option(args, "--count", "1")), legacyId: option(args, "--legacy-id"), payload: parseJson(option(args, "--payload", "{}")) }, path);
-  else if (command === "publication-intent") result = publication({ operationId: option(args, "--operation-id"), taskId: option(args, "--task-id"), repositoryId: option(args, "--repository-id"), repositoryPath: option(args, "--repository-path"), remoteName: option(args, "--remote", "origin"), branchName: option(args, "--branch", "main"), coalesceKey: option(args, "--coalesce-key", "planning"), maxAttempts: Number(option(args, "--max-attempts", "5")), payload: parseJson(option(args, "--payload", "{}")) }, path);
-  else if (command === "lease-next") result = leaseNext({ ownerId: option(args, "--owner-id"), leaseSeconds: Number(option(args, "--lease-seconds", "60")), maxActive: Number(option(args, "--max-active", "4")) }, path);
-  else if (command === "lease-check") result = checkLease({ ownerId: option(args, "--owner-id"), repositoryId: option(args, "--repository-id"), fencingToken: Number(option(args, "--fencing-token")) }, path);
-  else if (command === "lease-renew") result = renewLease({ ownerId: option(args, "--owner-id"), repositoryId: option(args, "--repository-id"), fencingToken: Number(option(args, "--fencing-token")), leaseSeconds: Number(option(args, "--lease-seconds", "60")) }, path);
-  else if (command === "lease-finish") result = finishLease({ ownerId: option(args, "--owner-id"), repositoryId: option(args, "--repository-id"), fencingToken: Number(option(args, "--fencing-token")), status: option(args, "--status"), retryAfter: Number(option(args, "--retry-after", "0")), evidence: parseJson(option(args, "--evidence", "{}")) }, path);
-  else if (command === "publication-metrics") result = publicationMetrics(path);
-  else if (command === "attempt") result = attempt({ intentId: option(args, "--intent-id"), status: option(args, "--status"), evidence: parseJson(option(args, "--evidence", "{}")) }, path);
-  else if (command === "transition") result = transition({ state: option(args, "--state"), fencingToken: option(args, "--fencing-token"), evidence: parseJson(option(args, "--evidence", "{}")) }, path);
-  else if (command === "bind-issue") result = bindIssue({ taskId: option(args, "--task-id"), forge: option(args, "--forge", "github"), repositoryId: option(args, "--repository-id"), repositorySlug: option(args, "--repository-slug"), role: option(args, "--role", "home"), issueId: option(args, "--issue-id"), projectId: option(args, "--project-id"), displayNumber: option(args, "--display-number"), stateCursor: option(args, "--state-cursor"), syncMetadata: parseJson(option(args, "--sync-metadata", "{}")) }, path);
-  else if (command === "resolve-issue") result = resolveIssue({ taskId: option(args, "--task-id"), forge: option(args, "--forge", "github"), repositoryId: option(args, "--repository-id") }, path);
-  else if (command === "restore") result = restore({ backupPath: option(args, "--backup"), registryEvidence: parseJson(option(args, "--registry-evidence", "{}")), priorEpoch: Number(option(args, "--prior-epoch")), newEpoch: Number(option(args, "--new-epoch")), fencingToken: option(args, "--fencing-token"), publishedHighWater: Number(option(args, "--published-high-water", "0")) }, path);
-  else if (command === "verify") result = verify(path);
-  else if (command === "status") result = { ...activeOrigin(path), dbPath: path };
-  else throw new TypeError(`unknown task-coordinator command: ${command}`);
+  if (!handler) throw new TypeError(`unknown task-coordinator command: ${command}`);
+  const result = handler(args, path);
   process.stdout.write(`${JSON.stringify(result)}\n`);
   return result.ok === false ? 1 : 0;
 }
