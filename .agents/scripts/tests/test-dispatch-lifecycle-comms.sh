@@ -69,10 +69,12 @@ GH_COMMENT_LOG="${TMP_HOME}/gh-comment.log"
 GH_API_COMMENTS_RESPONSE="${TMP_HOME}/gh-api-comments.json"
 GH_PR_LIST_RESPONSE="${TMP_HOME}/gh-pr-list.json"
 GH_API_BRANCHES_RESPONSE="${TMP_HOME}/gh-api-branches.json"
+GH_ISSUE_RESPONSE="${TMP_HOME}/gh-issue.json"
 : >"$GH_COMMENT_LOG"
 printf '[]' >"$GH_API_COMMENTS_RESPONSE"
 printf '[]' >"$GH_PR_LIST_RESPONSE"
 printf '[]' >"$GH_API_BRANCHES_RESPONSE"
+printf '{}' >"$GH_ISSUE_RESPONSE"
 
 # Helper: extract the value of --jq from an argv list, if present.
 _extract_jq_filter() {
@@ -184,8 +186,7 @@ gh() {
 			done
 			;;
 		view)
-			# Used by some helpers to fetch issue body/labels — return empty
-			echo "{}"
+			cat "$GH_ISSUE_RESPONSE"
 			;;
 		*) ;;
 		esac
@@ -223,6 +224,21 @@ count_gh_comments() {
 
 sleep() {
 	printf '%s\n' 'SLEEP_CALLED' >>"$GH_COMMENT_LOG"
+	return 0
+}
+
+STATUS_MUTATION_FAIL=0
+set_issue_status() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local status_name="$3"
+	: "$issue_number" "$repo_slug" "$status_name"
+	[[ "$STATUS_MUTATION_FAIL" -eq 0 ]] || return 1
+	printf '{"state":"OPEN","labels":[{"name":"status:available"}],"assignees":[],"locked":false}' >"$GH_ISSUE_RESPONSE"
+	return 0
+}
+
+unlock_issue_after_worker() {
 	return 0
 }
 
@@ -324,6 +340,8 @@ fi
 
 reset_gh_state
 _claim_comment_id="claim-123"
+printf '[{"id":"claim-123","body":"DISPATCH_CLAIM nonce=test runner=runner-a"}]' >"$GH_API_COMMENTS_RESPONSE"
+printf '{"state":"OPEN","labels":[{"name":"status:queued"}],"assignees":[{"login":"runner-a"}],"locked":true}' >"$GH_ISSUE_RESPONSE"
 _release_dispatch_claim_on_abort "12345" "owner/repo" "runner-a" "worker_launch_rc_2"
 count_abort_release=$(count_gh_comments)
 if [[ "$count_abort_release" -eq 0 ]] &&
@@ -338,6 +356,39 @@ if [[ -z "${_claim_comment_id:-}" ]]; then
 else
 	print_result "Fix C: release helper clears retained claim id" 1 "claim id still set: ${_claim_comment_id}"
 fi
+
+if grep -q 'Pre-launch rollback verified' "$LOGFILE"; then
+	print_result "Fix C: pre-launch abort verifies queued ownership rollback" 0
+else
+	print_result "Fix C: pre-launch abort verifies queued ownership rollback" 1 "log: $(cat "$LOGFILE")"
+fi
+
+reset_gh_state
+_claim_comment_id="claim-old"
+printf '[{"id":"claim-old","body":"DISPATCH_CLAIM nonce=old runner=runner-a"},{"id":"claim-new","body":"DISPATCH_CLAIM nonce=new runner=runner-a"}]' >"$GH_API_COMMENTS_RESPONSE"
+printf '{"state":"OPEN","labels":[{"name":"status:queued"}],"assignees":[{"login":"runner-a"}],"locked":true}' >"$GH_ISSUE_RESPONSE"
+if _release_dispatch_claim_on_abort "12345" "owner/repo" "runner-a" "worker_launch_rc_2"; then
+	print_result "Fix C: older abort cannot clear a newer claim" 1 "rollback unexpectedly succeeded"
+else
+	print_result "Fix C: older abort cannot clear a newer claim" 0
+fi
+if [[ "$_claim_comment_id" == "claim-old" ]] && ! grep -q '^DELETE_COMMENT$' "$GH_COMMENT_LOG"; then
+	print_result "Fix C: uncertain rollback retains claim for stale recovery" 0
+else
+	print_result "Fix C: uncertain rollback retains claim for stale recovery" 1 "claim=${_claim_comment_id}; log=$(cat "$GH_COMMENT_LOG")"
+fi
+
+reset_gh_state
+_claim_comment_id="claim-failed-mutation"
+printf '[{"id":"claim-failed-mutation","body":"DISPATCH_CLAIM nonce=failed runner=runner-a"}]' >"$GH_API_COMMENTS_RESPONSE"
+printf '{"state":"OPEN","labels":[{"name":"status:queued"}],"assignees":[{"login":"runner-a"}],"locked":true}' >"$GH_ISSUE_RESPONSE"
+STATUS_MUTATION_FAIL=1
+if _release_dispatch_claim_on_abort "12345" "owner/repo" "runner-a" "worker_launch_rc_2"; then
+	print_result "Fix C: failed ownership mutation blocks claim deletion" 1 "rollback unexpectedly succeeded"
+else
+	print_result "Fix C: failed ownership mutation blocks claim deletion" 0
+fi
+STATUS_MUTATION_FAIL=0
 
 # --- Fix D: dispatch comment is posted before the stagger window ---
 

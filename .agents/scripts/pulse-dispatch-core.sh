@@ -56,6 +56,8 @@
 
 [[ -n "${_PULSE_DISPATCH_CORE_LOADED:-}" ]] && return 0
 _PULSE_DISPATCH_CORE_LOADED=1
+_PULSE_DISPATCH_FALSE="false"
+_PULSE_DISPATCH_ELIGIBILITY_STAGE="eligibility_gate"
 
 # t2863: Module-level variable defaults (set -u guards).
 # Ensures LOGFILE is safe to dereference in all functions when this module
@@ -349,7 +351,7 @@ _count_impl_commits() {
 				;;
 			esac
 		done < <(git -C "$repo_path_inner" diff-tree --no-commit-id --name-only -r "$commit_hash_inner" 2>/dev/null)
-		if [[ "$is_planning_only_inner" == "false" ]]; then
+		if [[ "$is_planning_only_inner" == "$_PULSE_DISPATCH_FALSE" ]]; then
 			match_count_inner=$((match_count_inner + 1))
 		fi
 	done
@@ -666,7 +668,7 @@ _check_nmr_approval_gate() {
 	# GH#18648: bot-generated cleanup exemption. See
 	# _is_bot_generated_cleanup_issue() doc for full rationale.
 	if [[ "$known_ever_nmr" != "true" ]] && _is_bot_generated_cleanup_issue "$issue_meta_json"; then
-		known_ever_nmr="false"
+		known_ever_nmr="$_PULSE_DISPATCH_FALSE"
 		echo "[pulse-wrapper] dispatch_with_dedup: review-followup exemption for #${issue_number} in ${repo_slug} — skipping historical ever-NMR check (GH#18648)" >>"$LOGFILE"
 	fi
 
@@ -971,7 +973,7 @@ _dispatch_target_is_pull_request() {
 	if [[ "$has_pull_request" == "true" ]]; then
 		return 0
 	fi
-	if [[ "$has_pull_request" == "false" ]]; then
+	if [[ "$has_pull_request" == "$_PULSE_DISPATCH_FALSE" ]]; then
 		return 1
 	fi
 	return 2
@@ -1437,6 +1439,65 @@ _run_eligibility_gate_or_abort() {
 }
 
 #######################################
+# Verify and roll back queued ownership created by this exact pre-launch claim.
+# The claim comment remains present while this runs, providing a lease identity
+# that prevents an older abort from clearing a newer dispatch attempt.
+# Args: issue number, repo slug, runner login, claim comment id
+# Returns: 0 when ownership is absent or verified rolled back; 1 on uncertainty.
+#######################################
+_rollback_prelaunch_ownership() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local self_login="$3"
+	local claim_comment_id="$4"
+	local comments_endpoint="repos/${repo_slug}/issues/${issue_number}/comments"
+	local latest_claim_id=""
+
+	latest_claim_id=$(gh api "$comments_endpoint" --paginate --jq \
+		'[.[] | select((.body // "") | contains("DISPATCH_CLAIM nonce="))] | last | (.id // "")' 2>/dev/null) || return 1
+	if [[ -z "$latest_claim_id" || "$latest_claim_id" != "$claim_comment_id" ]]; then
+		echo "[dispatch_with_dedup] Pre-launch rollback skipped for #${issue_number}: claim ${claim_comment_id} is no longer current (latest=${latest_claim_id:-unknown})" >>"$LOGFILE"
+		return 1
+	fi
+
+	local issue_meta_json=""
+	issue_meta_json=$(gh issue view "$issue_number" --repo "$repo_slug" \
+		--json state,labels,assignees,locked 2>/dev/null) || return 1
+	local owns_queued=""
+	owns_queued=$(printf '%s' "$issue_meta_json" | jq -r --arg self "$self_login" '
+		(.state == "OPEN") and
+		(([.labels[].name] | index("status:queued")) != null) and
+		(([.assignees[].login] | index($self)) != null)
+	' 2>/dev/null) || return 1
+	[[ "$owns_queued" == "true" ]] || return 0
+
+	if ! set_issue_status "$issue_number" "$repo_slug" "available" \
+		--remove-assignee "$self_login" >/dev/null 2>&1; then
+		echo "[dispatch_with_dedup] Pre-launch rollback failed for #${issue_number}: unable to restore available ownership" >>"$LOGFILE"
+		return 1
+	fi
+	if declare -F unlock_issue_after_worker >/dev/null 2>&1; then
+		unlock_issue_after_worker "$issue_number" "$repo_slug" || return 1
+	fi
+
+	issue_meta_json=$(gh issue view "$issue_number" --repo "$repo_slug" \
+		--json state,labels,assignees,locked 2>/dev/null) || return 1
+	if ! printf '%s' "$issue_meta_json" | jq -e --arg self "$self_login" '
+		.state == "OPEN" and
+		(([.labels[].name] | index("status:queued")) == null) and
+		(([.labels[].name] | index("status:available")) != null) and
+		(([.assignees[].login] | index($self)) == null) and
+		(.locked != true)
+	' >/dev/null 2>&1; then
+		echo "[dispatch_with_dedup] Pre-launch rollback verification failed for #${issue_number}; retaining claim for stale recovery" >>"$LOGFILE"
+		return 1
+	fi
+
+	echo "[dispatch_with_dedup] Pre-launch rollback verified for #${issue_number}: queued ownership removed and issue unlocked" >>"$LOGFILE"
+	return 0
+}
+
+#######################################
 # Release a dispatch claim when a post-claim pre-launch step aborts.
 #
 # dispatch-claim-helper.sh posts DISPATCH_CLAIM before later gates and launch
@@ -1483,6 +1544,11 @@ _release_dispatch_claim_on_abort() {
 	esac
 
 	if [[ "$_is_pre_launch_abort" == "1" ]]; then
+		if [[ "$reason" == worker_launch_rc_* ]] &&
+			! _rollback_prelaunch_ownership "$issue_number" "$repo_slug" "$self_login" "$_claim_comment_id"; then
+			echo "[dispatch_with_dedup] Retaining dispatch claim ${_claim_comment_id} after uncertain pre-launch rollback for #${issue_number} (${reason})" >>"$LOGFILE"
+			return 1
+		fi
 		local _claim_helper="${SCRIPT_DIR}/dispatch-claim-helper.sh"
 		if [[ -x "$_claim_helper" ]]; then
 			# Use the helper's _delete_comment if exposed via subcommand,
@@ -1707,11 +1773,11 @@ dispatch_with_dedup() {
 	# t2424/GH#20030: Generic eligibility gate — final check BEFORE worker spawn.
 	_ds_t0=$(_ds_now_ns)
 	if ! _run_eligibility_gate_or_abort "$issue_number" "$repo_slug" "$issue_meta_json"; then
-		_ds_record "$issue_number" "$repo_slug" "eligibility_gate" "$_ds_t0"
-		_release_dispatch_claim_on_abort "$issue_number" "$repo_slug" "$self_login" "eligibility_gate"
+		_ds_record "$issue_number" "$repo_slug" "$_PULSE_DISPATCH_ELIGIBILITY_STAGE" "$_ds_t0"
+		_release_dispatch_claim_on_abort "$issue_number" "$repo_slug" "$self_login" "$_PULSE_DISPATCH_ELIGIBILITY_STAGE"
 		return 1
 	fi
-	_ds_record "$issue_number" "$repo_slug" "eligibility_gate" "$_ds_t0"
+	_ds_record "$issue_number" "$repo_slug" "$_PULSE_DISPATCH_ELIGIBILITY_STAGE" "$_ds_t0"
 
 	# All checks passed — launch the worker.
 	_ds_t0=$(_ds_now_ns)

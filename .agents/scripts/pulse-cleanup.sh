@@ -48,6 +48,7 @@
 # Include guard — prevent double-sourcing.
 [[ -n "${_PULSE_CLEANUP_LOADED:-}" ]] && return 0
 _PULSE_CLEANUP_LOADED=1
+_PULSE_CLEANUP_FALSE="false"
 
 # t2559: canonical-guard-helper.sh provides is_registered_canonical and
 # assert_git_available, used by guarded removal helpers and
@@ -735,7 +736,7 @@ _evaluate_worktree_removal() {
 				has_open_pr=true
 			fi
 		fi
-		if [[ "$has_open_pr" == "false" ]]; then
+		if [[ "$has_open_pr" == "$_PULSE_CLEANUP_FALSE" ]]; then
 			echo "0 commits, clean, no open PR, age $((wt_age_secs / 60))m (crashed worker)"
 			return 0
 		fi
@@ -755,7 +756,7 @@ _evaluate_worktree_removal() {
 				has_pr=true
 			fi
 		fi
-		if [[ "$has_pr" == "false" ]]; then
+		if [[ "$has_pr" == "$_PULSE_CLEANUP_FALSE" ]]; then
 			echo "${commits_ahead} commits, no PR, age $((wt_age_secs / 3600))h"
 			return 0
 		fi
@@ -2354,6 +2355,29 @@ Dispatch cooldown active until ${iso} following a no_worker_process launch failu
 	return 0
 }
 
+#######################################
+# Confirm launch recovery removed this runner's queued ownership and applied
+# the intended replacement status before publishing any success receipt.
+# Args: issue number, repo slug, runner login, target status
+#######################################
+_verify_launch_recovery_state() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local self_login="$3"
+	local target_status="$4"
+	local issue_meta_json=""
+
+	issue_meta_json=$(gh issue view "$issue_number" --repo "$repo_slug" \
+		--json state,labels,assignees 2>/dev/null) || return 1
+	printf '%s' "$issue_meta_json" | jq -e --arg self "$self_login" --arg target "status:${target_status}" '
+		.state == "OPEN" and
+		(([.labels[].name] | index("status:queued")) == null) and
+		(([.labels[].name] | index($target)) != null) and
+		(([.assignees[].login] | index($self)) == null)
+	' >/dev/null 2>&1 || return 1
+	return 0
+}
+
 recover_failed_launch_state() {
 	local issue_number="$1"
 	local repo_slug="$2"
@@ -2404,9 +2428,9 @@ recover_failed_launch_state() {
 	has_queued=$(echo "$issue_meta_json" | jq -r '([.labels[].name] | index("status:queued")) != null' 2>/dev/null)
 	is_blocked=$(echo "$issue_meta_json" | jq -r '([.labels[].name] | index("status:blocked")) != null' 2>/dev/null)
 
-	[[ "$assigned_to_self" == "true" || "$assigned_to_self" == "false" ]] || assigned_to_self="false"
-	[[ "$has_queued" == "true" || "$has_queued" == "false" ]] || has_queued="false"
-	[[ "$is_blocked" == "true" || "$is_blocked" == "false" ]] || is_blocked="false"
+	[[ "$assigned_to_self" == "true" || "$assigned_to_self" == "$_PULSE_CLEANUP_FALSE" ]] || assigned_to_self=""
+	[[ "$has_queued" == "true" || "$has_queued" == "$_PULSE_CLEANUP_FALSE" ]] || has_queued=""
+	[[ "$is_blocked" == "true" || "$is_blocked" == "$_PULSE_CLEANUP_FALSE" ]] || is_blocked=""
 
 	if [[ "$issue_state" != "OPEN" ]] || [[ "$assigned_to_self" != "true" ]] || [[ "$has_queued" != "true" ]]; then
 		return 0
@@ -2415,12 +2439,16 @@ recover_failed_launch_state() {
 	# t2033: atomic transitions via set_issue_status. The blocked branch
 	# preserves status:blocked (target = "blocked"); the normal branch
 	# transitions to status:available.
-	if [[ "$is_blocked" == "true" ]]; then
-		set_issue_status "$issue_number" "$repo_slug" "blocked" \
-			--remove-assignee "$self_login" >/dev/null 2>&1 || true
-	else
-		set_issue_status "$issue_number" "$repo_slug" "available" \
-			--remove-assignee "$self_login" >/dev/null 2>&1 || true
+	local target_status="available"
+	[[ "$is_blocked" == "true" ]] && target_status="blocked"
+	if ! set_issue_status "$issue_number" "$repo_slug" "$target_status" \
+		--remove-assignee "$self_login" >/dev/null 2>&1; then
+		echo "[pulse-wrapper] Launch recovery uncertain for #${issue_number} (${repo_slug}): ownership mutation failed" >>"$LOGFILE"
+		return 1
+	fi
+	if ! _verify_launch_recovery_state "$issue_number" "$repo_slug" "$self_login" "$target_status"; then
+		echo "[pulse-wrapper] Launch recovery uncertain for #${issue_number} (${repo_slug}): post-mutation verification failed" >>"$LOGFILE"
+		return 1
 	fi
 
 	# t2394: Invalidate stale cross-runner claims immediately (see helper below).

@@ -202,6 +202,8 @@ _dlw_resolve_tier_and_model() {
 	return 0
 }
 _dlw_canary_preflight() { return 0; }
+_dlw_prebootstrap_gates() { return 0; }
+_dlw_assign_and_label() { return 0; }
 STUB_REFRESH_STATE="OPEN"
 
 gh() {
@@ -445,6 +447,32 @@ else
 fi
 
 STUB_REFRESH_STATE="OPEN"
+
+# =============================================================================
+# Test 8: assignment failure aborts before lock, worktree, and spawn
+# =============================================================================
+: >"${TMP}/lock-calls.txt"
+: >"${TMP}/precreate-calls.txt"
+: >"${TMP}/setsid-calls.txt"
+_dlw_assign_and_label() { return 1; }
+lock_issue_for_worker() { printf 'lock\n' >>"${TMP}/lock-calls.txt"; return 0; }
+_dlw_precreate_worktree() { printf 'precreate\n' >>"${TMP}/precreate-calls.txt"; return 0; }
+
+assignment_failure_rc=0
+_dispatch_launch_worker "77779" "owner/repo" "test-dispatch" "Test Issue" \
+	"testuser" "$FAKE_REPO" "test prompt" "session-key-assignment-failure" "" "{}" || assignment_failure_rc=$?
+if [[ "$assignment_failure_rc" -eq 2 ]]; then
+	pass "assignment failure returns explicit no-op rc=2"
+else
+	fail "assignment failure returns explicit no-op rc=2" "got rc=$assignment_failure_rc"
+fi
+if [[ ! -s "${TMP}/lock-calls.txt" && ! -s "${TMP}/precreate-calls.txt" && ! -s "${TMP}/setsid-calls.txt" ]]; then
+	pass "assignment failure prevents lock, worktree creation, and spawn"
+else
+	fail "assignment failure prevents lock, worktree creation, and spawn"
+fi
+_dlw_assign_and_label() { return 0; }
+lock_issue_for_worker() { return 0; }
 
 # =============================================================================
 # Test 8: _dispatch_launch_worker skips dispatch when pre-creation fails

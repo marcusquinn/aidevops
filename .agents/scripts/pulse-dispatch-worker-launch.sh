@@ -130,7 +130,10 @@ _dlw_assign_and_label() {
 		[[ -n "$_prev_login" && "$_prev_login" != "$self_login" ]] && _extra_flags+=(--remove-assignee "$_prev_login")
 	done < <(printf '%s' "$issue_meta_json" | jq -r '.assignees[].login' 2>/dev/null)
 
-	set_issue_status "$issue_number" "$repo_slug" "queued" "${_extra_flags[@]}" || true
+	if ! set_issue_status "$issue_number" "$repo_slug" "queued" "${_extra_flags[@]}"; then
+		echo "[dispatch_with_dedup] Failed to assign queued ownership for #${issue_number} in ${repo_slug}; aborting before lock/worktree/spawn" >>"$LOGFILE"
+		return 1
+	fi
 	return 0
 }
 
@@ -2067,7 +2070,10 @@ _dispatch_launch_worker() {
 	fi
 
 	_ds_t0=$(_ds_now_ns)
-	_dlw_assign_and_label "$issue_number" "$repo_slug" "$self_login" "$issue_meta_json"
+	_dlw_assign_and_label "$issue_number" "$repo_slug" "$self_login" "$issue_meta_json" || {
+		_ds_record "$issue_number" "$repo_slug" "assign_and_label" "$_ds_t0"
+		return 2
+	}
 	_ds_record "$issue_number" "$repo_slug" "assign_and_label" "$_ds_t0"
 
 	local zero_output_comment_metrics=""
@@ -2080,15 +2086,6 @@ _dispatch_launch_worker() {
 	_ds_t0=$(_ds_now_ns)
 	lock_issue_for_worker "$issue_number" "$repo_slug"
 	_ds_record "$issue_number" "$repo_slug" "lock_issue" "$_ds_t0"
-
-	# GH#17584 / t2433: The git pull that was here has been moved earlier in
-	# the dispatch path to _pulse_refresh_repo (pulse-wrapper.sh), which is
-	# called once per (repo, cycle) before any gate evaluation — including the
-	# large-file gate at pulse-dispatch-core.sh:867. Moving it earlier ensures
-	# the large-file simplification gate measures the post-split line count,
-	# preventing false-positive file-size-debt issues after a split PR merges.
-	# The pull still happens before the worker starts; it now also happens before
-	# the gate that decides whether to dispatch at all. See GH#20071.
 
 	# t2981: capture pre-creation return code — skip dispatch on failure
 	# instead of falling back to canonical repo on the default branch.

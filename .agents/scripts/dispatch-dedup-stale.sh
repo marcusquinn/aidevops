@@ -325,6 +325,32 @@ _stale_recovery_has_unresolved_blocked_by() {
 }
 
 #######################################
+# Verify a stale-recovery status transition before publishing success.
+# Args: issue number, repo slug, target status, stale assignees CSV
+#######################################
+_stale_recovery_verify_transition() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local target_status="$3"
+	local stale_assignees="$4"
+	local issue_meta_json=""
+
+	issue_meta_json=$(gh issue view "$issue_number" --repo "$repo_slug" \
+		--json state,labels,assignees 2>/dev/null) || return 1
+	printf '%s' "$issue_meta_json" | jq -e --arg target "status:${target_status}" --arg stale "$stale_assignees" '
+		($stale | split(",") | map(select(length > 0))) as $stale_users |
+		([.assignees[].login] // []) as $current_users |
+		.state == "OPEN" and
+		(([.labels[].name] | index("status:queued")) == null) and
+		(([.labels[].name] | index("status:in-progress")) == null) and
+		(([.labels[].name] | index($target)) != null) and
+		([ $stale_users[] as $stale_user |
+			select(($current_users | index($stale_user)) != null) ] | length == 0)
+	' >/dev/null 2>&1 || return 1
+	return 0
+}
+
+#######################################
 # Apply stale recovery as dependency-blocked instead of available.
 # Args mirror _stale_recovery_apply.
 #######################################
@@ -341,7 +367,14 @@ _stale_recovery_apply_blocked_by_hold() {
 		printf 'STALE_RECHECK_BLOCKED: issue #%s in %s — evidence changed before blocked takeover\n' "$issue_number" "$repo_slug"
 		return 0
 	fi
-	set_issue_status "$issue_number" "$repo_slug" "blocked" "${recov_extra[@]}" || true
+	if ! set_issue_status "$issue_number" "$repo_slug" "blocked" "${recov_extra[@]}"; then
+		printf 'STALE_RECOVERY_UNCERTAIN: issue #%s in %s — blocked transition failed\n' "$issue_number" "$repo_slug"
+		return 1
+	fi
+	if ! _stale_recovery_verify_transition "$issue_number" "$repo_slug" "blocked" "$stale_assignees"; then
+		printf 'STALE_RECOVERY_UNCERTAIN: issue #%s in %s — blocked transition verification failed\n' "$issue_number" "$repo_slug"
+		return 1
+	fi
 
 	local _now_ts=""
 	_now_ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)
@@ -412,7 +445,14 @@ _stale_recovery_apply() {
 		printf 'STALE_RECHECK_BLOCKED: issue #%s in %s — evidence changed before takeover\n' "$issue_number" "$repo_slug"
 		return 0
 	fi
-	set_issue_status "$issue_number" "$repo_slug" "available" "${_recov_extra[@]}" || true
+	if ! set_issue_status "$issue_number" "$repo_slug" "available" "${_recov_extra[@]}"; then
+		printf 'STALE_RECOVERY_UNCERTAIN: issue #%s in %s — available transition failed\n' "$issue_number" "$repo_slug"
+		return 1
+	fi
+	if ! _stale_recovery_verify_transition "$issue_number" "$repo_slug" "available" "$stale_assignees"; then
+		printf 'STALE_RECOVERY_UNCERTAIN: issue #%s in %s — available transition verification failed\n' "$issue_number" "$repo_slug"
+		return 1
+	fi
 
 	local _now_ts
 	_now_ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)
@@ -486,7 +526,7 @@ _recover_stale_assignment() {
 	fi
 	# ── End stale-recovery escalation check ──────────────────────────────
 
-	_stale_recovery_apply "$issue_number" "$repo_slug" "$stale_assignees" "$reason" "$_latest_dispatch_ts" "$_next_tick" "$_threshold"
+	_stale_recovery_apply "$issue_number" "$repo_slug" "$stale_assignees" "$reason" "$_latest_dispatch_ts" "$_next_tick" "$_threshold" || return 1
 	return 0
 }
 
