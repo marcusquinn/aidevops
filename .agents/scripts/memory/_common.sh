@@ -560,6 +560,175 @@ _migrate_learning_truth_events() {
 }
 
 #######################################
+# Create the canonical observation envelope and provenance tables.
+# Learnings remain the FTS retrieval projection; observations are authoritative.
+#######################################
+_create_observation_schema() {
+	db "$MEMORY_DB" <<'EOF'
+CREATE TABLE IF NOT EXISTS observations (
+    observation_id TEXT PRIMARY KEY,
+    kind TEXT NOT NULL,
+    owner_id TEXT,
+    subject_id TEXT,
+    session_id TEXT,
+    user_scope TEXT,
+    project_scope TEXT,
+    organization_scope TEXT,
+    framework_scope TEXT NOT NULL DEFAULT 'aidevops',
+    state TEXT NOT NULL CHECK(state IN ('explicit', 'inferred')),
+    statement TEXT NOT NULL,
+    confidence TEXT NOT NULL CHECK(confidence IN ('high', 'medium', 'low')),
+    sensitivity TEXT NOT NULL DEFAULT 'internal' CHECK(sensitivity IN ('public', 'internal', 'confidential', 'restricted')),
+    consent TEXT NOT NULL DEFAULT 'unspecified' CHECK(consent IN ('granted', 'denied', 'unspecified', 'not_applicable')),
+    effective_at TEXT,
+    review_at TEXT,
+    expires_at TEXT,
+    destination TEXT NOT NULL DEFAULT 'memory',
+    status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active', 'superseded', 'debunked', 'corrected', 'revoked', 'expired')),
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_observations_scope ON observations(user_scope, project_scope, organization_scope, framework_scope);
+CREATE INDEX IF NOT EXISTS idx_observations_subject_kind ON observations(subject_id, kind, status);
+
+CREATE TABLE IF NOT EXISTS observation_sources (
+    source_id TEXT PRIMARY KEY,
+    observation_id TEXT NOT NULL,
+    source_kind TEXT NOT NULL,
+    source_record_id TEXT NOT NULL,
+    source_session_id TEXT,
+    evidence TEXT,
+    provenance TEXT NOT NULL,
+    captured_at TEXT NOT NULL,
+    UNIQUE(source_kind, source_record_id),
+    FOREIGN KEY (observation_id) REFERENCES observations(observation_id)
+);
+CREATE INDEX IF NOT EXISTS idx_observation_sources_observation ON observation_sources(observation_id);
+
+CREATE TABLE IF NOT EXISTS observation_relations (
+    relation_id TEXT PRIMARY KEY,
+    observation_id TEXT NOT NULL,
+    target_observation_id TEXT NOT NULL,
+    relation_type TEXT NOT NULL CHECK(relation_type IN ('supersedes', 'debunks', 'corrects', 'revokes', 'extends', 'derives')),
+    evidence_source_id TEXT,
+    created_at TEXT NOT NULL,
+    UNIQUE(observation_id, target_observation_id, relation_type)
+);
+
+CREATE TABLE IF NOT EXISTS observation_outcomes (
+    outcome_id TEXT PRIMARY KEY,
+    observation_id TEXT NOT NULL,
+    outcome_kind TEXT NOT NULL,
+    outcome_value REAL,
+    details TEXT,
+    recorded_at TEXT NOT NULL,
+    UNIQUE(observation_id, outcome_kind, recorded_at)
+);
+EOF
+	local rc=$?
+	return "$rc"
+}
+
+#######################################
+# Losslessly project safely derivable legacy history into observations.
+# Deterministic IDs and uniqueness constraints make repeated runs idempotent.
+#######################################
+_backfill_legacy_observations() {
+	db "$MEMORY_DB" <<'EOF'
+BEGIN TRANSACTION;
+INSERT OR IGNORE INTO observations (
+    observation_id, kind, owner_id, subject_id, session_id, user_scope,
+    project_scope, organization_scope, framework_scope, state, statement,
+    confidence, sensitivity, consent, effective_at, destination, status, created_at
+)
+SELECT 'obs_learning_' || l.id,
+       CASE l.type
+           WHEN 'USER_PREFERENCE' THEN 'preference'
+           WHEN 'DECISION' THEN 'decision'
+           WHEN 'FAILURE' THEN 'failure'
+           WHEN 'SUCCESS' THEN 'success'
+           WHEN 'DIRECTIVE' THEN 'directive'
+           WHEN 'HYPOTHESIS' THEN 'hypothesis'
+           ELSE 'fact'
+       END,
+       NULL, le.entity_id, l.session_id,
+       CASE WHEN l.type = 'USER_PREFERENCE' THEN COALESCE(le.entity_id, 'unknown-user') END,
+       NULLIF(l.project_path, ''), NULL, 'aidevops',
+       CASE WHEN l.type IN ('USER_PREFERENCE', 'DECISION', 'CONTEXT') THEN 'explicit' ELSE 'inferred' END,
+       l.content, COALESCE(NULLIF(l.confidence, ''), 'medium'), 'internal', 'unspecified',
+       COALESCE(NULLIF(l.event_date, ''), l.created_at), 'learnings',
+       CASE COALESCE((SELECT status FROM learning_truth_events t WHERE t.memory_id = l.id ORDER BY t.created_at DESC, t.event_id DESC LIMIT 1), 'live')
+           WHEN 'debunked' THEN 'debunked' WHEN 'retracted' THEN 'revoked'
+           ELSE CASE WHEN EXISTS (SELECT 1 FROM learning_relations r WHERE r.supersedes_id = l.id AND r.relation_type = 'updates') THEN 'superseded' ELSE 'active' END
+       END,
+       l.created_at
+FROM learnings l
+LEFT JOIN learning_entities le ON le.learning_id = l.id;
+
+INSERT OR IGNORE INTO observation_sources (
+    source_id, observation_id, source_kind, source_record_id, source_session_id,
+    evidence, provenance, captured_at
+)
+SELECT 'src_learning_' || id, 'obs_learning_' || id, 'learning', id, session_id,
+       content, 'legacy:learnings', created_at FROM learnings;
+
+INSERT OR IGNORE INTO observations (
+    observation_id, kind, owner_id, subject_id, framework_scope, state, statement,
+    confidence, sensitivity, consent, effective_at, destination, status, created_at
+)
+SELECT 'obs_profile_' || id, 'preference', entity_id, entity_id, 'aidevops', 'inferred',
+       profile_key || ': ' || profile_value, confidence, 'confidential', 'unspecified',
+       created_at, 'entity_profile',
+       CASE WHEN EXISTS (SELECT 1 FROM entity_profiles n WHERE n.supersedes_id = p.id) THEN 'superseded' ELSE 'active' END,
+       created_at FROM entity_profiles p;
+INSERT OR IGNORE INTO observation_sources
+SELECT 'src_profile_' || id, 'obs_profile_' || id, 'entity_profile', id, NULL,
+       evidence, 'legacy:entity_profiles', created_at FROM entity_profiles;
+
+INSERT OR IGNORE INTO observations (
+    observation_id, kind, owner_id, subject_id, project_scope, framework_scope,
+    state, statement, confidence, sensitivity, consent, effective_at,
+    destination, status, created_at
+)
+SELECT 'obs_gap_' || id, 'gap', entity_id, entity_id, NULL, 'aidevops',
+       'inferred', description, 'medium', 'internal', 'not_applicable', created_at,
+       COALESCE(NULLIF(todo_ref, ''), 'memory'),
+       CASE status WHEN 'resolved' THEN 'corrected' WHEN 'wont_fix' THEN 'revoked' ELSE 'active' END,
+       created_at FROM capability_gaps;
+INSERT OR IGNORE INTO observation_sources
+SELECT 'src_gap_' || id, 'obs_gap_' || id, 'capability_gap', id, NULL,
+       evidence, 'legacy:capability_gaps', created_at FROM capability_gaps;
+
+INSERT OR IGNORE INTO observation_relations
+SELECT 'rel_learning_' || r.id || '_' || r.supersedes_id || '_' || r.relation_type,
+       'obs_learning_' || r.id, 'obs_learning_' || r.supersedes_id,
+       CASE r.relation_type WHEN 'updates' THEN 'supersedes' ELSE r.relation_type END,
+       'src_learning_' || r.id, r.created_at FROM learning_relations r;
+INSERT OR IGNORE INTO observation_relations
+SELECT 'rel_profile_' || p.id || '_' || p.supersedes_id,
+       'obs_profile_' || p.id, 'obs_profile_' || p.supersedes_id, 'supersedes',
+       'src_profile_' || p.id, p.created_at FROM entity_profiles p WHERE p.supersedes_id IS NOT NULL;
+
+INSERT OR IGNORE INTO observation_outcomes
+SELECT 'out_access_' || a.id, 'obs_learning_' || a.id, 'retrieval_usefulness',
+       COALESCE(a.usefulness_score, 0.0), 'access_count=' || COALESCE(a.access_count, 0),
+       COALESCE(a.last_accessed_at, '1970-01-01T00:00:00Z') FROM learning_access a;
+INSERT OR IGNORE INTO observation_outcomes
+SELECT 'out_graduated_' || a.id, 'obs_learning_' || a.id, 'graduated', 1.0,
+       'Promoted to shared guidance', a.graduated_at FROM learning_access a
+WHERE a.graduated_at IS NOT NULL AND a.graduated_at != '';
+COMMIT;
+EOF
+	local rc=$?
+	return "$rc"
+}
+
+_migrate_observations() {
+	_create_observation_schema || return 1
+	_backfill_legacy_observations || return 1
+	return 0
+}
+
+#######################################
 # Migrate existing database to new schema
 # With backup-before-modify pattern (t188)
 # Note: t311.4 resolved duplicate migrate_db() — this is the single
@@ -578,6 +747,7 @@ migrate_db() {
 	_migrate_usefulness_score
 	_migrate_learning_relations_debunks
 	_migrate_learning_truth_events
+	_migrate_observations
 	return 0
 }
 
@@ -715,6 +885,9 @@ CREATE TABLE IF NOT EXISTS memory_consolidations (
 CREATE INDEX IF NOT EXISTS idx_consolidations_created ON memory_consolidations(created_at DESC);
 EOF
 	local rc=$?
+	if [[ "$rc" -eq 0 ]]; then
+		_create_observation_schema || return 1
+	fi
 	return "$rc"
 }
 
@@ -759,6 +932,9 @@ init_db() {
 
 	if [[ ! -f "$MEMORY_DB" ]]; then
 		_create_memory_db || return 1
+		# Use the same additive migration path for fresh and legacy databases so
+		# every safely derivable source table exists before observation backfill.
+		migrate_db || return 1
 	else
 		# Migrate existing database if needed
 		migrate_db || return 1
