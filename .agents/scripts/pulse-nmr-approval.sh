@@ -37,6 +37,7 @@
 # Include guard — prevent double-sourcing.
 [[ -n "${_PULSE_NMR_APPROVAL_LOADED:-}" ]] && return 0
 _PULSE_NMR_APPROVAL_LOADED=1
+NMR_SCRIPT_DIR="$(cd "${BASH_SOURCE[0]%/*}" && pwd)" || return 1
 
 if ! declare -F _gh_collaborator_permission_lookup >/dev/null 2>&1; then
 	_PULSE_NMR_APPROVAL_DIR="${BASH_SOURCE[0]%/*}"
@@ -54,6 +55,38 @@ if ! declare -F _gh_collaborator_permission_lookup >/dev/null 2>&1; then
 	fi
 	unset _PULSE_NMR_APPROVAL_DIR
 fi
+
+NMR_REVALIDATION_STATE_FILE="${AIDEVOPS_NMR_REVALIDATION_STATE_FILE:-${HOME}/.aidevops/cache/nmr-revalidation-state.json}"
+NMR_TEMPORARY_REVALIDATE_SECONDS="${AIDEVOPS_NMR_TEMPORARY_REVALIDATE_SECONDS:-3600}"
+NMR_REASON_FILTER="${NMR_SCRIPT_DIR}/pulse-nmr-reason.jq"
+NMR_TRUSTED_RESOLUTION_FILTER="${NMR_SCRIPT_DIR}/pulse-nmr-trusted-resolution.jq"
+NMR_STATE_RECORD_FILTER="${NMR_SCRIPT_DIR}/pulse-nmr-state-record.jq"
+NMR_LATEST_EVENT_FILTER="${NMR_SCRIPT_DIR}/pulse-nmr-latest-event.jq"
+NMR_API_COMMENTS_SUFFIX="/comments"
+NMR_REASON_AUTHORITY="authority"
+NMR_CLASS_GENUINE_AUTHORITY="genuine-authority"
+NMR_CLASS_TEMPORARY="temporary"
+NMR_SOURCE_DEFAULT="default"
+NMR_STATUS_HUMAN_AUTHORITY="human-authority-required"
+
+_nmr_metadata_json() {
+	local code="$1"
+	local reason_class="$2"
+	local source="$3"
+	local requires_crypto="$4"
+	jq -cn --arg code "$code" --arg class "$reason_class" --arg source "$source" \
+		--argjson requires_crypto "$requires_crypto" \
+		'{code:$code,class:$class,source:$source,revalidate_after_seconds:null,requires_crypto:$requires_crypto}'
+	return 0
+}
+
+_nmr_issue_api_path() {
+	local issue_num="$1"
+	local slug="$2"
+	local suffix="${3:-}"
+	printf 'repos/%s/issues/%s%s\n' "$slug" "$issue_num" "$suffix"
+	return 0
+}
 
 #######################################
 # Cached ever-NMR provenance helpers (GH#17458)
@@ -836,6 +869,181 @@ _nmr_breaker_release_retry_reason() {
 }
 
 #######################################
+# Classify an NMR episode into a stable reason code. Explicit structured
+# markers win; legacy breaker text is mapped without copying prose or paths.
+# Stdout: {code,class,source,revalidate_after_seconds,requires_crypto}
+#######################################
+_nmr_reason_metadata_from_comments() {
+	local comments_json="$1"
+	local revalidate_seconds="$NMR_TEMPORARY_REVALIDATE_SECONDS"
+	[[ "$revalidate_seconds" =~ ^[0-9]+$ ]] || revalidate_seconds=3600
+	printf '%s' "$comments_json" | jq -c --argjson revalidate "$revalidate_seconds" \
+		-f "$NMR_REASON_FILTER" 2>/dev/null || \
+		_nmr_metadata_json "$NMR_REASON_AUTHORITY" "$NMR_CLASS_GENUINE_AUTHORITY" "$NMR_SOURCE_DEFAULT" true
+	return 0
+}
+
+_nmr_reason_metadata() {
+	local issue_num="$1"
+	local slug="$2"
+	local comments_json="[]"
+	local comments_path=""
+	comments_path=$(_nmr_issue_api_path "$issue_num" "$slug" "$NMR_API_COMMENTS_SUFFIX")
+	comments_json=$(gh api "$comments_path" --paginate --slurp 2>/dev/null) || comments_json="[]"
+	_nmr_reason_metadata_from_comments "$comments_json"
+	return 0
+}
+
+_nmr_revalidation_due() {
+	local metadata_json="$1"
+	local label_at="$2"
+	local now_epoch=""
+	local label_epoch=""
+	local after_seconds=""
+	now_epoch=$(date +%s 2>/dev/null || true)
+	label_epoch=$(date -u -d "$label_at" '+%s' 2>/dev/null || TZ=UTC date -j -f '%Y-%m-%dT%H:%M:%SZ' "$label_at" '+%s' 2>/dev/null || true)
+	after_seconds=$(printf '%s' "$metadata_json" | jq -r '.revalidate_after_seconds // 0' 2>/dev/null) || after_seconds=0
+	[[ "$now_epoch" =~ ^[0-9]+$ && "$label_epoch" =~ ^[0-9]+$ && "$after_seconds" =~ ^[0-9]+$ ]] || return 1
+	[[ $((now_epoch - label_epoch)) -ge "$after_seconds" ]]
+	return $?
+}
+
+_nmr_temporary_assumption_resolved() {
+	local issue_num="$1"
+	local slug="$2"
+	local code="$3"
+	local label_at="$4"
+	if [[ "$code" == "transient_infrastructure" ]]; then
+		local retry_reason=""
+		retry_reason=$(_nmr_breaker_release_retry_reason "$issue_num" "$slug" "$label_at") || retry_reason=""
+		if [[ -n "$retry_reason" ]]; then
+			printf '%s\n' "$retry_reason"
+			return 0
+		fi
+	fi
+
+	local issue_json="{}"
+	local issue_path=""
+	issue_path=$(_nmr_issue_api_path "$issue_num" "$slug")
+	issue_json=$(gh api "$issue_path" 2>/dev/null) || issue_json="{}"
+	if [[ "$code" == "missing_context" ]] && printf '%s' "$issue_json" | jq -e '
+		((.body // "") | contains("## Worker Guidance")) and
+		((.body // "") | contains("### Verification"))
+	' >/dev/null 2>&1; then
+		printf 'worker guidance and verification are now present\n'
+		return 0
+	fi
+
+	local comments_json="[]"
+	local comments_path=""
+	comments_path=$(_nmr_issue_api_path "$issue_num" "$slug" "$NMR_API_COMMENTS_SUFFIX")
+	comments_json=$(gh api "$comments_path" --paginate --slurp 2>/dev/null) || comments_json="[]"
+	if printf '%s' "$comments_json" | jq -e -f "$NMR_TRUSTED_RESOLUTION_FILTER" >/dev/null 2>&1; then
+		printf 'trusted revalidation evidence resolved the temporary assumption\n'
+		return 0
+	fi
+	return 1
+}
+
+_nmr_record_revalidation_state() {
+	local issue_num="$1"
+	local slug="$2"
+	local metadata_json="$3"
+	local label_at="$4"
+	local status="$5"
+	local state_dir="${NMR_REVALIDATION_STATE_FILE%/*}"
+	[[ "$state_dir" != "$NMR_REVALIDATION_STATE_FILE" ]] || return 0
+	mkdir -p "$state_dir" 2>/dev/null || return 0
+	local current="{}"
+	if [[ -f "$NMR_REVALIDATION_STATE_FILE" ]]; then
+		current=$(cat "$NMR_REVALIDATION_STATE_FILE" 2>/dev/null) || current="{}"
+	fi
+	printf '%s' "$current" | jq empty >/dev/null 2>&1 || current="{}"
+	local key="${slug}#${issue_num}"
+	local tmp_file=""
+	tmp_file=$(mktemp "${state_dir}/.nmr-revalidation.XXXXXX") || return 0
+	printf '%s' "$current" | jq --arg key "$key" --arg label_at "$label_at" --arg status "$status" \
+		--argjson metadata "$metadata_json" -f "$NMR_STATE_RECORD_FILTER" \
+		>"$tmp_file" 2>/dev/null || { rm -f "$tmp_file"; return 0; }
+	mv "$tmp_file" "$NMR_REVALIDATION_STATE_FILE" 2>/dev/null || rm -f "$tmp_file"
+	return 0
+}
+
+_nmr_emit_decision_packet() {
+	local issue_num="$1"
+	local slug="$2"
+	local reason_code="$3"
+	local marker="nmr-decision-packet reason=${reason_code}"
+	local prior_count="0"
+	local comments_path=""
+	comments_path=$(_nmr_issue_api_path "$issue_num" "$slug" "$NMR_API_COMMENTS_SUFFIX")
+	prior_count=$(gh api "$comments_path" --paginate \
+		--jq "[.[] | select((.body // \"\") | contains(\"${marker}\"))] | length" 2>/dev/null) || prior_count=0
+	[[ "$prior_count" =~ ^[0-9]+$ ]] || prior_count=0
+	[[ "$prior_count" -eq 0 ]] || return 0
+	gh_issue_comment "$issue_num" --repo "$slug" --body "<!-- ${marker} -->
+## Maintainer decision required
+
+- Reason: ${reason_code}
+- Evidence: the current NMR reason is classified as genuine authority, not a transient diagnostic or infrastructure condition.
+- Options: approve with \`sudo aidevops approve issue ${issue_num} ${slug}\`, or document the rejected/alternative direction.
+
+Automation will preserve this gate and will not treat elapsed time as approval." 2>/dev/null || true
+	return 0
+}
+
+_nmr_latest_event_json() {
+	local issue_num="$1"
+	local slug="$2"
+	local timeline_path=""
+	timeline_path=$(_nmr_issue_api_path "$issue_num" "$slug" "/timeline")
+	gh api "$timeline_path" --paginate --slurp \
+		2>/dev/null | jq -c -f "$NMR_LATEST_EVENT_FILTER" 2>/dev/null
+	return $?
+}
+
+_nmr_evaluate_reason_metadata() {
+	local issue_num="$1"
+	local slug="$2"
+	local nmr_at="$3"
+	_NMR_REASON_ACTION="continue"
+	_NMR_REASON_OVERRIDE=""
+	[[ -n "$nmr_at" ]] || return 0
+
+	local reason_metadata=""
+	local reason_code=""
+	local reason_class=""
+	local reason_source=""
+	reason_metadata=$(_nmr_reason_metadata "$issue_num" "$slug")
+	reason_code=$(printf '%s' "$reason_metadata" | jq -r --arg fallback "$NMR_REASON_AUTHORITY" '.code // $fallback' 2>/dev/null) || reason_code="$NMR_REASON_AUTHORITY"
+	reason_class=$(printf '%s' "$reason_metadata" | jq -r --arg fallback "$NMR_CLASS_GENUINE_AUTHORITY" '.class // $fallback' 2>/dev/null) || reason_class="$NMR_CLASS_GENUINE_AUTHORITY"
+	reason_source=$(printf '%s' "$reason_metadata" | jq -r --arg fallback "$NMR_SOURCE_DEFAULT" '.source // $fallback' 2>/dev/null) || reason_source="$NMR_SOURCE_DEFAULT"
+	if [[ "$reason_class" == "$NMR_CLASS_TEMPORARY" ]]; then
+		_nmr_record_revalidation_state "$issue_num" "$slug" "$reason_metadata" "$nmr_at" "scheduled" || true
+		if _nmr_revalidation_due "$reason_metadata" "$nmr_at"; then
+			local resolved_reason=""
+			resolved_reason=$(_nmr_temporary_assumption_resolved "$issue_num" "$slug" "$reason_code" "$nmr_at") || resolved_reason=""
+			if [[ -n "$resolved_reason" ]]; then
+				#aidevops:trust-boundary -- only trusted markers and existing breaker checks can release temporary NMR
+				_NMR_REASON_ACTION="auto"
+				_NMR_REASON_OVERRIDE="temporary NMR revalidated (${reason_code}): ${resolved_reason}"
+				_nmr_record_revalidation_state "$issue_num" "$slug" "$reason_metadata" "$nmr_at" "automatable" || true
+				return 0
+			fi
+			_nmr_record_revalidation_state "$issue_num" "$slug" "$reason_metadata" "$nmr_at" "rechecked-unresolved" || true
+		fi
+		_NMR_REASON_ACTION="preserve"
+		return 0
+	fi
+	if [[ "$reason_source" != "$NMR_SOURCE_DEFAULT" ]]; then
+		_nmr_record_revalidation_state "$issue_num" "$slug" "$reason_metadata" "$nmr_at" "$NMR_STATUS_HUMAN_AUTHORITY" || true
+		_nmr_emit_decision_packet "$issue_num" "$slug" "$reason_code" || true
+		_NMR_REASON_ACTION="preserve"
+	fi
+	return 0
+}
+
+#######################################
 # Check if the needs-maintainer-review label was most recently applied
 # by the maintainer themselves (indicating a manual hold), OR by a
 # circuit breaker trip (which must be treated as a hold even though
@@ -876,23 +1084,25 @@ _nmr_applied_by_maintainer() {
 	[[ -n "$issue_num" && -n "$slug" && -n "$maintainer" ]] || return 1
 
 	# Fetch both actor and creation timestamp of the latest NMR label event.
-	# Use --slurp for paginated timeline reads, then flatten page arrays before
-	# selecting the latest event. Without this, long timelines emit one result per
-	# page and can pass malformed multi-line timestamps into the breaker checks.
-	local nmr_event_json
-	nmr_event_json=$(gh api "repos/${slug}/issues/${issue_num}/timeline" --paginate --slurp \
-		2>/dev/null | jq -c '
-			(if type == "array" and (.[0]? | type) == "array" then [.[][]]
-			elif type == "array" then .
-			else [] end)
-			| [.[] | select(.event == "labeled" and .label.name == "needs-maintainer-review")]
-			| last
-			| {actor:(.actor.login // ""),at:(.created_at // "")}' \
-		2>/dev/null) || nmr_event_json=""
+	local nmr_event_json=""
+	nmr_event_json=$(_nmr_latest_event_json "$issue_num" "$slug") || nmr_event_json=""
 
 	local nmr_actor nmr_at
 	nmr_actor=$(printf '%s' "$nmr_event_json" | jq -r '.actor // ""' 2>/dev/null) || nmr_actor=""
 	nmr_at=$(printf '%s' "$nmr_event_json" | jq -r '.at // ""' 2>/dev/null) || nmr_at=""
+
+	_nmr_evaluate_reason_metadata "$issue_num" "$slug" "$nmr_at"
+	case "$_NMR_REASON_ACTION" in
+		auto)
+			_NMR_AUTO_APPROVAL_REASON_OVERRIDE="$_NMR_REASON_OVERRIDE"
+			echo "[pulse-wrapper] _nmr_applied_by_maintainer: #${issue_num} in ${slug} — temporary NMR revalidated; allowing trusted maintainer-authored retry" >>"$LOGFILE"
+			return 1
+			;;
+		preserve)
+			echo "[pulse-wrapper] _nmr_applied_by_maintainer: #${issue_num} in ${slug} — reason-coded NMR remains gated" >>"$LOGFILE"
+			return 0
+			;;
+	esac
 
 	# Breaker signatures are authoritative regardless of the token actor. Pulse can
 	# run under any trusted maintainer/member account, so actor-gating this check
@@ -932,6 +1142,10 @@ _nmr_applied_by_maintainer() {
 	fi
 
 	if _nmr_application_is_security_sensitive "$issue_num" "$slug"; then
+		local security_metadata=""
+		security_metadata=$(_nmr_metadata_json "security" "$NMR_CLASS_GENUINE_AUTHORITY" "security-label" true)
+		_nmr_record_revalidation_state "$issue_num" "$slug" "$security_metadata" "$nmr_at" "$NMR_STATUS_HUMAN_AUTHORITY" || true
+		_nmr_emit_decision_packet "$issue_num" "$slug" "security" || true
 		echo "[pulse-wrapper] _nmr_applied_by_maintainer: #${issue_num} in ${slug} — security-sensitive label present — PRESERVING NMR, requires 'sudo aidevops approve issue ${issue_num} ${slug}'" >>"$LOGFILE"
 		return 0
 	fi
@@ -951,6 +1165,10 @@ _nmr_applied_by_maintainer() {
 		fi
 	fi
 
+	local authority_metadata=""
+	authority_metadata=$(_nmr_metadata_json "$NMR_REASON_AUTHORITY" "$NMR_CLASS_GENUINE_AUTHORITY" "manual-hold" true)
+	_nmr_record_revalidation_state "$issue_num" "$slug" "$authority_metadata" "$nmr_at" "$NMR_STATUS_HUMAN_AUTHORITY" || true
+	_nmr_emit_decision_packet "$issue_num" "$slug" "$NMR_REASON_AUTHORITY" || true
 	return 0
 }
 

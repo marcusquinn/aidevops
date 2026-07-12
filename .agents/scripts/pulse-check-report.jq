@@ -27,6 +27,8 @@ def finding($id; $severity; $title; $evidence; $recommendation; $autofile): {
 ($summary.metrics.total // 0 | number_or_zero) as $hist_total |
 ($summary.metrics.terminal_session_total // $summary.metrics.total // 0 | number_or_zero) as $hist_terminal_total |
 ($summary.metrics.succeeded // 0 | number_or_zero) as $hist_success |
+($summary.metrics.failure_families // []) as $failure_families |
+($recent_summary.metrics.failure_families // []) as $recent_failure_families |
 ($api.graphql_circuit_breaker_trips // 0 | number_or_zero) as $graphql_trips |
 {
   generated_at: (now | todateiso8601),
@@ -53,7 +55,8 @@ def finding($id; $severity; $title; $evidence; $recommendation; $autofile): {
     auto_dispatch_scan_errors: $gh_errors,
     auto_dispatch_scan_state: (if $queue_error == "" then "scanned" else $queue_error end),
     graphql_budget_status: ($current.graphql_budget_status // "unknown"),
-    runner_health: ($runner.finding // "unknown")
+    runner_health: ($runner.finding // "unknown"),
+    recurrent_failure_families: ([$failure_families[] | select((.count // 0) >= $failure_threshold and (.confidence // "low") == "high" and (.family // "") != "other-failure")] | length)
   },
   queue: ($queue.aggregate // {}),
   current_state: {
@@ -79,6 +82,17 @@ def finding($id; $severity; $title; $evidence; $recommendation; $autofile): {
     },
     providers: ($providers.provider_diagnostics // {})
   },
+  failure_family_remediation: ($failure_families | map(. as $family | {
+    fingerprint,
+    family,
+    count,
+    distinct_sessions,
+    first_ts,
+    last_ts,
+    confidence,
+    recovery_outcome,
+    recent_count: (([$recent_failure_families[] | select(.fingerprint == $family.fingerprint)] | first | .count) // 0)
+  })),
   runner_health: $runner,
   api_budget: {
     graphql_circuit_breaker_trips: ($api.graphql_circuit_breaker_trips // 0),
@@ -170,5 +184,33 @@ def finding($id; $severity; $title; $evidence; $recommendation; $autofile): {
         false
       )
     else empty end
+    ,
+    ($failure_families[] as $family
+      | $family
+      | select((.count // 0) >= $failure_threshold and (.distinct_sessions // 0) >= 2 and (.confidence // "low") == "high" and (.family // "") != "other-failure")
+      | finding(
+          ("worker-failure-family-" + (.family // "unknown"));
+          "high";
+          ("Remediate recurrent worker failure family: " + (.family // "unknown"));
+          [
+            ("fingerprint=" + (.fingerprint // "unknown")),
+            ("family=" + (.family // "unknown")),
+            ("failures_in_window=" + ((.count // 0) | tostring)),
+            ("distinct_sessions=" + ((.distinct_sessions // 0) | tostring)),
+            ("confidence=" + (.confidence // "unknown")),
+            ("first_observed_epoch=" + ((.first_ts // 0) | tostring)),
+            ("last_observed_epoch=" + ((.last_ts // 0) | tostring))
+          ];
+          "Fix or reclassify this stable failure family, add a fixture for its canonical metric shape, and verify that its recurrence count falls below threshold in both recent and historical windows.";
+          true
+        ) + {
+          family_fingerprint: (.fingerprint // ""),
+          family: (.family // "unknown"),
+          family_count: (.count // 0),
+          family_recent_count: (([$recent_failure_families[] | select(.fingerprint == $family.fingerprint)] | first | .count) // 0),
+          family_first_ts: (.first_ts // 0),
+          family_last_ts: (.last_ts // 0),
+          family_confidence: (.confidence // "unknown")
+        })
   ])
 }

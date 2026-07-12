@@ -48,6 +48,7 @@ WAH_PR_CACHE_TTL="${WAH_PR_CACHE_TTL:-60}" # seconds
 WAH_SERVICE_INTERRUPTION_RESULT="service_interruption_continue"
 WAH_RESULT_WATCHDOG_STALL_KILLED="watchdog_stall_killed"
 WAH_RESULT_LOCAL_KILL="local_kill"
+WAH_FAILURE_FAMILY_FILTER="${SCRIPT_DIR}/worker-activity-failure-families.jq"
 
 # Shared jq definitions keep terminal-session semantics identical in the scalar
 # and rich aggregators without duplicating a long filter in both functions.
@@ -82,6 +83,13 @@ WAH_SESSION_OUTCOME_JQ='
 		| map(sort_by([(.value.ts // 0), (if (.value.issue_number // null) != null then 1 else 0 end), .key]) | last.value)
 		| map(select(_wah_nonterminal | not));
 '
+
+# Keep failure-family classification outside the shell function body so the
+# rich metric aggregator stays below the function-complexity gate.
+WAH_FAILURE_FAMILY_JQ=""
+if [[ -f "$WAH_FAILURE_FAMILY_FILTER" ]]; then
+	WAH_FAILURE_FAMILY_JQ=$(<"$WAH_FAILURE_FAMILY_FILTER")
+fi
 
 #######################################
 # Convert short window spec to seconds. Caller owns the cutoff math.
@@ -187,8 +195,7 @@ _wah_metric_details_json() {
 
 	local jq_program
 	# shellcheck disable=SC2016 # jq variables are evaluated by jq, not the shell
-	jq_program=$WAH_SESSION_OUTCOME_JQ'
-		def _wah_empty_if_null: if . == null then "" else . end;
+	jq_program=$WAH_SESSION_OUTCOME_JQ$WAH_FAILURE_FAMILY_JQ'
 		[inputs | select((.ts // 0) >= $cutoff and (.ts // 0) <= $now)] as $events
 		| ($events | _wah_session_outcomes) as $w
 		| ($w | map(.duration_ms // 0)) as $durations
@@ -257,18 +264,7 @@ _wah_metric_details_json() {
 					examples: (sort_by(.ts // 0) | reverse | .[0:3] | map({ts, session_id, work_dir, output_file, exit_code, duration_ms, provider_error_type, provider_status, runtime_error_type, classification_source, classification_pattern, launch_failure_cause, kill_reason, next_action}))
 				})
 				| sort_by(.count) | reverse | .[0:10]),
-			failure_families: (
-				$failures
-				| group_by([.launch_failure_cause // "unknown", .kill_reason // "", .next_action // ""])
-				| map({
-					launch_failure_cause: (.[0].launch_failure_cause // "unknown"),
-					kill_reason: (.[0].kill_reason // ""),
-					next_action: (.[0].next_action // ""),
-					count: length,
-					results: (reduce .[] as $row ({}; .[$row.result // "unknown"] += 1)),
-					examples: (sort_by(.ts // 0) | reverse | .[0:3] | map({ts, session_key, issue_number, repo_slug, result, exit_code, output_file, launch_failure_cause, kill_reason, next_action}))
-				})
-				| sort_by(.count) | reverse | .[0:10])
+			failure_families: ($failures | _wah_failure_family_summary)
 		}'
 	jq -rn --argjson cutoff "$cutoff_epoch" --argjson now "$now_epoch" --arg watchdog_killed_result "$WAH_RESULT_WATCHDOG_STALL_KILLED" --arg local_kill_result "$WAH_RESULT_LOCAL_KILL" "$jq_program" <"$metrics" 2>/dev/null || \
 		printf '{"result_counts":{},"diagnostic_focus":{},"timing_ms":{"avg":0,"max":0,"samples":0},"recent_examples":[],"failure_groups":[],"failure_families":[]}'
