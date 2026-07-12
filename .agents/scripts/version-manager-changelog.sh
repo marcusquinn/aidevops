@@ -153,6 +153,16 @@ generate_changelog_preview() {
 # Returns category:entry on stdout as "CATEGORY\tentry" for the caller to accumulate.
 _classify_commit_to_category() {
 	local commit="$1"
+	# Release squash subjects may begin with the framework work-item ID. Strip
+	# only a complete leading ID token so embedded strings such as "at123" are
+	# left untouched. Dotted task IDs remain valid.
+	if [[ "$commit" =~ ^\[t[0-9]+(\.[0-9]+)*\][[:space:]]+(.+)$ ]]; then
+		commit="${BASH_REMATCH[2]}"
+	elif [[ "$commit" =~ ^t[0-9]+(\.[0-9]+)*:[[:space:]]+(.+)$ ]]; then
+		commit="${BASH_REMATCH[2]}"
+	elif [[ "$commit" =~ ^GH\#[0-9]+:[[:space:]]+(.+)$ ]]; then
+		commit="${BASH_REMATCH[1]}"
+	fi
 	local clean_msg="$commit"
 
 	case "$commit" in
