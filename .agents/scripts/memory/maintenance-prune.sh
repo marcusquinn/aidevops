@@ -39,8 +39,9 @@ fi
 #######################################
 cmd_prune() {
 	local older_than_days=$DEFAULT_MAX_AGE_DAYS
+	local max_count="${AIDEVOPS_MEMORY_MAX_COUNT:-10000}"
+	local max_bytes="${AIDEVOPS_MEMORY_MAX_BYTES:-52428800}"
 	local dry_run=false
-	local keep_accessed=true
 	local ai_judged=false
 
 	while [[ $# -gt 0 ]]; do
@@ -49,12 +50,19 @@ cmd_prune() {
 			older_than_days="$2"
 			shift 2
 			;;
+		--max-count)
+			max_count="$2"
+			shift 2
+			;;
+		--max-bytes)
+			max_bytes="$2"
+			shift 2
+			;;
 		--dry-run)
 			dry_run=true
 			shift
 			;;
 		--include-accessed)
-			keep_accessed=false
 			shift
 			;;
 		--ai-judged)
@@ -72,13 +80,73 @@ cmd_prune() {
 		log_error "--older-than-days must be a positive integer"
 		return 1
 	fi
-
-	if [[ "$ai_judged" == true ]]; then
-		_prune_ai_judged "$older_than_days" "$dry_run" "$keep_accessed"
-	else
-		_prune_flat_threshold "$older_than_days" "$dry_run" "$keep_accessed"
+	if ! [[ "$max_count" =~ ^[0-9]+$ && "$max_bytes" =~ ^[0-9]+$ ]]; then
+		log_error "--max-count and --max-bytes must be non-negative integers"
+		return 1
 	fi
 
+	if [[ "$ai_judged" == true ]]; then
+		log_info "Hard age retention applies before relevance judgment; accessed records cannot escape the age bound"
+	fi
+	_prune_flat_threshold "$older_than_days" "$dry_run"
+	_enforce_retention_budgets "$max_count" "$max_bytes" "$dry_run"
+
+	return 0
+}
+
+#######################################
+# Enforce retrieval-projection count and byte budgets. Canonical observation,
+# source, outcome, relation, and promotion rows remain as immutable audit data.
+#######################################
+_enforce_retention_budgets() {
+	local max_count="$1"
+	local max_bytes="$2"
+	local dry_run="$3"
+	local over_count=""
+	db "$MEMORY_DB" <<EOF
+DROP TABLE IF EXISTS retention_prune_ids;
+CREATE TABLE retention_prune_ids (id TEXT PRIMARY KEY);
+INSERT OR IGNORE INTO retention_prune_ids
+SELECT id FROM learnings ORDER BY created_at DESC, id DESC LIMIT -1 OFFSET $max_count;
+INSERT OR IGNORE INTO retention_prune_ids
+SELECT id FROM (
+    SELECT id, SUM(
+        length(CAST(COALESCE(id, '') AS BLOB)) +
+        length(CAST(COALESCE(session_id, '') AS BLOB)) +
+        length(CAST(COALESCE(content, '') AS BLOB)) +
+        length(CAST(COALESCE(type, '') AS BLOB)) +
+        length(CAST(COALESCE(tags, '') AS BLOB)) +
+        length(CAST(COALESCE(confidence, '') AS BLOB)) +
+        length(CAST(COALESCE(created_at, '') AS BLOB)) +
+        length(CAST(COALESCE(event_date, '') AS BLOB)) +
+        length(CAST(COALESCE(project_path, '') AS BLOB)) +
+        length(CAST(COALESCE(source, '') AS BLOB))
+    )
+        OVER (ORDER BY created_at DESC, id DESC) AS cumulative_bytes
+    FROM learnings
+) WHERE cumulative_bytes > $max_bytes;
+EOF
+	over_count=$(db "$MEMORY_DB" "SELECT COUNT(*) FROM retention_prune_ids;")
+	if [[ "$over_count" -eq 0 ]]; then
+		db "$MEMORY_DB" "DROP TABLE retention_prune_ids;"
+		return 0
+	fi
+	if [[ "$dry_run" == true ]]; then
+		log_info "[DRY RUN] Would prune $over_count entries to satisfy count=$max_count and bytes=$max_bytes budgets"
+		db "$MEMORY_DB" "DROP TABLE retention_prune_ids;"
+		return 0
+	fi
+	local prune_backup=""
+	prune_backup=$(backup_sqlite_db "$MEMORY_DB" "pre-retention-budget") || true
+	[[ -n "$prune_backup" ]] || log_warn "Backup failed before retention budget prune -- proceeding cautiously"
+	db "$MEMORY_DB" <<'EOF'
+DELETE FROM learning_relations WHERE id IN (SELECT id FROM retention_prune_ids) OR supersedes_id IN (SELECT id FROM retention_prune_ids);
+DELETE FROM learning_access WHERE id IN (SELECT id FROM retention_prune_ids);
+DELETE FROM learnings WHERE id IN (SELECT id FROM retention_prune_ids);
+INSERT INTO learnings(learnings) VALUES('rebuild');
+DROP TABLE retention_prune_ids;
+EOF
+	log_success "Pruned $over_count retrieval entries to satisfy count and byte budgets; canonical audit evidence retained"
 	return 0
 }
 
@@ -96,7 +164,7 @@ _prune_ai_judged() {
 
 	if [[ ! -x "$threshold_judge" ]]; then
 		log_warn "ai-threshold-judge.sh not found -- falling back to flat threshold"
-		_prune_flat_threshold "$older_than_days" "$dry_run" "$keep_accessed"
+		_prune_flat_threshold "$older_than_days" "$dry_run"
 		return 0
 	fi
 
@@ -185,15 +253,9 @@ _prune_ai_judged() {
 _prune_flat_threshold() {
 	local older_than_days="$1"
 	local dry_run="$2"
-	local keep_accessed="$3"
 
-	# Build query to find stale entries
 	local count
-	if [[ "$keep_accessed" == true ]]; then
-		count=$(db "$MEMORY_DB" "SELECT COUNT(*) FROM learnings l LEFT JOIN learning_access a ON l.id = a.id WHERE l.created_at < datetime('now', '-$older_than_days days') AND a.id IS NULL;")
-	else
-		count=$(db "$MEMORY_DB" "SELECT COUNT(*) FROM learnings WHERE created_at < datetime('now', '-$older_than_days days');")
-	fi
+	count=$(db "$MEMORY_DB" "SELECT COUNT(*) FROM learnings WHERE created_at < datetime('now', '-$older_than_days days');")
 
 	if [[ "$count" -eq 0 ]]; then
 		log_success "No entries to prune"
@@ -203,22 +265,12 @@ _prune_flat_threshold() {
 	if [[ "$dry_run" == true ]]; then
 		log_info "[DRY RUN] Would delete $count entries"
 		echo ""
-		if [[ "$keep_accessed" == true ]]; then
-			db "$MEMORY_DB" <<EOF
-SELECT l.id, l.type, substr(l.content, 1, 50) || '...' as preview, l.created_at
-FROM learnings l
-LEFT JOIN learning_access a ON l.id = a.id
-WHERE l.created_at < datetime('now', '-$older_than_days days') AND a.id IS NULL
-LIMIT 20;
-EOF
-		else
-			db "$MEMORY_DB" <<EOF
+		db "$MEMORY_DB" <<EOF
 SELECT id, type, substr(content, 1, 50) || '...' as preview, created_at
-FROM learnings 
+FROM learnings
 WHERE created_at < datetime('now', '-$older_than_days days')
 LIMIT 20;
 EOF
-		fi
 		return 0
 	fi
 
@@ -229,13 +281,7 @@ EOF
 		log_warn "Backup failed before prune -- proceeding cautiously"
 	fi
 
-	# Use efficient single DELETE with subquery
-	local subquery
-	if [[ "$keep_accessed" == true ]]; then
-		subquery="SELECT l.id FROM learnings l LEFT JOIN learning_access a ON l.id = a.id WHERE l.created_at < datetime('now', '-$older_than_days days') AND a.id IS NULL"
-	else
-		subquery="SELECT id FROM learnings WHERE created_at < datetime('now', '-$older_than_days days')"
-	fi
+	local subquery="SELECT id FROM learnings WHERE created_at < datetime('now', '-$older_than_days days')"
 
 	# Delete from all tables using the subquery (much faster than loop)
 	# Clean up relations first to avoid orphaned references

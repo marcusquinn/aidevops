@@ -8,7 +8,7 @@
 # into the shared codebase (.agents/) so all users benefit from learnings.
 #
 # Graduation criteria (configurable):
-#   - High confidence OR frequently accessed (access_count >= threshold)
+#   - At least one independently verified positive outcome
 #   - Live, unsuperseded, and not a personal USER_PREFERENCE
 #   - Not already graduated
 #   - Content is actionable (not just session metadata)
@@ -16,6 +16,8 @@
 # Usage:
 #   memory-graduate-helper.sh candidates [--limit N] [--min-access N]
 #   memory-graduate-helper.sh graduate [--dry-run] [--limit N] [--min-access N]
+#   memory-graduate-helper.sh outcome <memory-id> <kind> --verifier ID --source-id ID --provenance TEXT
+#   memory-graduate-helper.sh revoke <memory-id> [--corrected-by ID] --reason TEXT
 #   memory-graduate-helper.sh status
 #   memory-graduate-helper.sh help
 #
@@ -39,6 +41,7 @@ readonly DEFAULT_LIMIT=20
 
 # Target file for graduated learnings (relative to repo root)
 readonly GRADUATED_FILE_NAME="graduated-learnings.md"
+readonly GRADUATED_DESTINATION=".agents/aidevops/graduated-learnings.md"
 
 # Logging: uses shared log_* from shared-constants.sh
 
@@ -60,6 +63,10 @@ find_repo_root() {
 # Resolve the graduated learnings file path
 #######################################
 graduated_file_path() {
+	if [[ -n "${AIDEVOPS_GRADUATED_FILE:-}" ]]; then
+		printf '%s\n' "$AIDEVOPS_GRADUATED_FILE"
+		return 0
+	fi
 	local repo_root
 	repo_root=$(find_repo_root)
 	if [[ -z "$repo_root" ]]; then
@@ -231,21 +238,45 @@ SELECT
     l.confidence,
     l.created_at,
     COALESCE(a.access_count, 0) as access_count,
-    COALESCE(a.last_accessed_at, '') as last_accessed_at
+    COALESCE(a.last_accessed_at, '') as last_accessed_at,
+    s.source_id,
+    verified.outcome_id,
+    verified.outcome_kind
 FROM learnings l
 JOIN observations o ON o.observation_id = 'obs_learning_' || l.id
 LEFT JOIN learning_access a ON l.id = a.id
-WHERE (
-    l.confidence = 'high'
-    OR COALESCE(a.access_count, 0) >= $min_access
+JOIN observation_sources s ON s.source_id = (
+    SELECT source_id FROM observation_sources source_pick
+    WHERE source_pick.observation_id = o.observation_id
+      AND NULLIF(TRIM(source_pick.evidence), '') IS NOT NULL
+    ORDER BY captured_at DESC, source_id DESC LIMIT 1
 )
+JOIN observation_outcomes verified ON verified.outcome_id = (
+    SELECT outcome_id FROM observation_outcomes outcome_pick
+    WHERE outcome_pick.observation_id = o.observation_id
+      AND outcome_pick.outcome_kind IN ('test_passed', 'pr_merged', 'operational_verified', 'verified_reuse')
+      AND COALESCE(outcome_pick.outcome_value, 1) > 0
+    ORDER BY recorded_at DESC, outcome_id DESC LIMIT 1
+)
+JOIN outcome_verifications verification ON verification.outcome_id = verified.outcome_id
+WHERE 1=1
 AND l.type != 'USER_PREFERENCE'
 AND o.status = 'active'
 AND (o.expires_at IS NULL OR o.expires_at > datetime('now'))
 AND o.sensitivity IN ('public', 'internal')
+AND o.consent != 'denied'
 AND (a.graduated_at IS NULL OR a.graduated_at = '')
+AND NOT EXISTS (
+    SELECT 1 FROM observation_outcomes negative
+    WHERE negative.observation_id = o.observation_id
+      AND negative.outcome_kind IN ('correction', 'reverted', 'pr_closed', 'rejected', 'stale_escape', 'privacy_escape')
+      AND negative.recorded_at >= verified.recorded_at
+)
+AND NOT EXISTS (
+    SELECT 1 FROM observation_promotions p
+    WHERE p.observation_id = o.observation_id AND p.destination = '$GRADUATED_DESTINATION'
+)
 ORDER BY
-    CASE WHEN l.confidence = 'high' THEN 0 ELSE 1 END,
     COALESCE(a.access_count, 0) DESC,
     l.created_at ASC;
 EOF
@@ -372,7 +403,7 @@ cmd_candidates() {
 
 	if [[ -z "$results" || "$results" == "[]" ]]; then
 		log_info "No graduation candidates found."
-		log_info "Memories qualify when live and shareable, with confidence=high OR access_count >= $min_access"
+		log_info "Memories qualify when live, scoped, shareable, and backed by a verified outcome; access count only ranks candidates"
 		return 0
 	fi
 
@@ -400,12 +431,13 @@ _collect_entries() {
 	local skipped_count=0
 
 	while IFS= read -r entry; do
-		local id type content confidence access_count
+		local id type content confidence access_count outcome_kind
 		id=$(echo "$entry" | jq -r '.id')
 		type=$(echo "$entry" | jq -r '.type')
 		content=$(echo "$entry" | jq -r '.content')
 		confidence=$(echo "$entry" | jq -r '.confidence')
 		access_count=$(echo "$entry" | jq -r '.access_count')
+		outcome_kind=$(echo "$entry" | jq -r '.outcome_kind')
 
 		# Always record the id (actionable or not — both get marked graduated)
 		echo "$id" >>"$tmp_dir/ids"
@@ -424,8 +456,10 @@ _collect_entries() {
 
 		# Append to category file
 		{
+			echo "<!-- aidevops:promotion:$id:begin -->"
 			echo "- **[$type]** $content"
-			echo "  *(confidence: $confidence, validated: ${access_count}x)*"
+			echo "  *(confidence: $confidence, verified outcome: $outcome_kind, recalled: ${access_count}x)*"
+			echo "<!-- aidevops:promotion:$id:end -->"
 			echo ""
 		} >>"$tmp_dir/${safe_category}.entries"
 
@@ -533,10 +567,9 @@ tools:
 Validated, shareable learnings promoted from local memory databases into shared documentation.
 Personal preferences remain scoped to their user/project profiles and never graduate automatically.
 
-**How memories graduate**: Live, unsuperseded, non-personal memories qualify when
-they reach high confidence or are accessed frequently (3+ times). The
-`memory-graduate-helper.sh` script identifies candidates and appends them here.
-Each graduation batch is timestamped.
+**How memories graduate**: Live, unsuperseded, non-personal memories qualify only
+after an independently attributable verified outcome. Recall count affects rank,
+not eligibility. Each generated block is marked for precise correction or revocation.
 
 **Categories**:
 
@@ -716,9 +749,218 @@ mark_graduated() {
 INSERT INTO learning_access (id, last_accessed_at, access_count, graduated_at)
 VALUES ('$escaped_id', datetime('now'), 0, '$timestamp')
 ON CONFLICT(id) DO UPDATE SET graduated_at = '$timestamp';
+INSERT OR IGNORE INTO observation_promotions (
+    promotion_id, observation_id, source_id, outcome_id, destination, status, promoted_at
+)
+SELECT 'promotion_' || l.id, 'obs_learning_' || l.id, s.source_id, verified.outcome_id,
+       '$GRADUATED_DESTINATION', 'active', '$timestamp'
+FROM learnings l
+JOIN observation_sources s ON s.source_id = (
+    SELECT source_id FROM observation_sources WHERE observation_id = 'obs_learning_' || l.id
+    AND NULLIF(TRIM(evidence), '') IS NOT NULL ORDER BY captured_at DESC, source_id DESC LIMIT 1
+)
+JOIN observation_outcomes verified ON verified.outcome_id = (
+    SELECT outcome_id FROM observation_outcomes WHERE observation_id = 'obs_learning_' || l.id
+    AND outcome_kind IN ('test_passed', 'pr_merged', 'operational_verified', 'verified_reuse')
+    AND COALESCE(outcome_value, 1) > 0 ORDER BY recorded_at DESC, outcome_id DESC LIMIT 1
+)
+JOIN outcome_verifications verification ON verification.outcome_id = verified.outcome_id
+WHERE l.id = '$escaped_id';
 EOF
 	done
 
+	return 0
+}
+
+record_outcome() {
+	local memory_id="$1"
+	local outcome_kind="$2"
+	local outcome_value="$3"
+	local details="$4"
+	local verifier_id="${5:-}"
+	local evidence_source_id="${6:-}"
+	local verification_provenance="${7:-}"
+	local escaped_id="${memory_id//"'"/"''"}"
+	local escaped_kind="${outcome_kind//"'"/"''"}"
+	local escaped_details="${details//"'"/"''"}"
+	local exists=""
+	exists=$(db "$MEMORY_DB" "SELECT COUNT(*) FROM observations WHERE observation_id = 'obs_learning_$escaped_id';")
+	if [[ "$exists" != "1" ]]; then
+		log_error "Memory observation not found: $memory_id"
+		return 1
+	fi
+	db "$MEMORY_DB" "INSERT OR IGNORE INTO observation_outcomes (outcome_id, observation_id, outcome_kind, outcome_value, details, recorded_at) VALUES ('out_${escaped_kind}_${escaped_id}_' || strftime('%Y%m%d%H%M%f','now'), 'obs_learning_$escaped_id', '$escaped_kind', $outcome_value, '$escaped_details', strftime('%Y-%m-%dT%H:%M:%fZ','now'));"
+	if [[ -n "$verifier_id" ]]; then
+		local escaped_verifier="${verifier_id//"'"/"''"}"
+		local escaped_source="${evidence_source_id//"'"/"''"}"
+		local escaped_provenance="${verification_provenance//"'"/"''"}"
+		db "$MEMORY_DB" "INSERT OR IGNORE INTO outcome_verifications SELECT outcome_id, '$escaped_verifier', '$escaped_source', '$escaped_provenance', recorded_at FROM observation_outcomes WHERE observation_id='obs_learning_$escaped_id' AND outcome_kind='$escaped_kind' ORDER BY recorded_at DESC, outcome_id DESC LIMIT 1;"
+	fi
+	return 0
+}
+
+cmd_outcome() {
+	local memory_id="${1:-}"
+	local outcome_kind="${2:-}"
+	local outcome_value="1"
+	local details=""
+	local verifier_id=""
+	local evidence_source_id=""
+	local verification_provenance=""
+	[[ -n "$memory_id" && -n "$outcome_kind" ]] || {
+		log_error "Usage: outcome <memory-id> <kind> [--value N] [--details TEXT]"
+		return 1
+	}
+	shift 2
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+		--value)
+			outcome_value="$2"
+			shift 2
+			;;
+		--details)
+			details="$2"
+			shift 2
+			;;
+		--verifier)
+			verifier_id="$2"
+			shift 2
+			;;
+		--source-id)
+			evidence_source_id="$2"
+			shift 2
+			;;
+		--provenance)
+			verification_provenance="$2"
+			shift 2
+			;;
+		*) shift ;;
+		esac
+	done
+	[[ "$outcome_value" =~ ^-?[0-9]+([.][0-9]+)?$ ]] || {
+		log_error "--value must be numeric"
+		return 1
+	}
+	ensure_schema || return 1
+	case "$outcome_kind" in
+	test_passed | pr_merged | operational_verified | verified_reuse)
+		if [[ -z "$verifier_id" || -z "$evidence_source_id" || -z "$verification_provenance" ]]; then
+			log_error "Qualifying outcomes require --verifier, --source-id, and --provenance"
+			return 1
+		fi
+		if [[ "$verifier_id" == "self" ]]; then
+			log_error "Qualifying outcomes reject self-asserted verifier identity"
+			return 1
+		fi
+		local escaped_id="${memory_id//"'"/"''"}"
+		local escaped_source="${evidence_source_id//"'"/"''"}"
+		local escaped_verifier="${verifier_id//"'"/"''"}"
+		local attributable=""
+		attributable=$(db "$MEMORY_DB" "SELECT COUNT(*) FROM observation_sources s JOIN observations o ON o.observation_id=s.observation_id WHERE s.source_id='$escaped_source' AND s.observation_id='obs_learning_$escaped_id' AND s.source_kind IN ('test_result','pull_request','operation','review') AND NULLIF(TRIM(s.evidence),'') IS NOT NULL AND '$escaped_verifier' NOT IN (COALESCE(o.owner_id,''), COALESCE(o.session_id,''));")
+		if [[ "$attributable" != "1" ]]; then
+			log_error "Qualifying outcome evidence must be an independent test_result, pull_request, operation, or review source for this observation"
+			return 1
+		fi
+		;;
+	esac
+	record_outcome "$memory_id" "$outcome_kind" "$outcome_value" "$details" "$verifier_id" "$evidence_source_id" "$verification_provenance"
+	log_success "Outcome recorded: $memory_id $outcome_kind"
+	return 0
+}
+
+remove_promoted_block() {
+	local target_file="$1"
+	local memory_id="$2"
+	local begin_marker="<!-- aidevops:promotion:$memory_id:begin -->"
+	local end_marker="<!-- aidevops:promotion:$memory_id:end -->"
+	local tmp_file=""
+	local skipping=false
+	tmp_file=$(mktemp)
+	while IFS= read -r line || [[ -n "$line" ]]; do
+		if [[ "$line" == "$begin_marker" ]]; then
+			skipping=true
+			continue
+		fi
+		if [[ "$skipping" == true ]]; then
+			if [[ "$line" == "$end_marker" ]]; then
+				skipping=false
+			fi
+			continue
+		fi
+		printf '%s\n' "$line" >>"$tmp_file"
+	done <"$target_file"
+	if [[ "$skipping" == true ]]; then
+		rm -f "$tmp_file"
+		log_error "Promotion block is missing its end marker: $memory_id"
+		return 1
+	fi
+	mv "$tmp_file" "$target_file"
+	return 0
+}
+
+cmd_revoke() {
+	local memory_id="${1:-}"
+	local reason=""
+	local corrected_by=""
+	[[ -n "$memory_id" ]] || {
+		log_error "Usage: revoke <memory-id> [--corrected-by ID] --reason TEXT"
+		return 1
+	}
+	shift
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+		--reason)
+			reason="$2"
+			shift 2
+			;;
+		--corrected-by)
+			corrected_by="$2"
+			shift 2
+			;;
+		*) shift ;;
+		esac
+	done
+	[[ -n "$reason" ]] || {
+		log_error "Revocation requires --reason"
+		return 1
+	}
+	ensure_schema || return 1
+	local escaped_id="${memory_id//"'"/"''"}"
+	local escaped_reason="${reason//"'"/"''"}"
+	local new_status="revoked"
+	local outcome_kind="reverted"
+	if [[ -n "$corrected_by" ]]; then
+		new_status="corrected"
+		outcome_kind="correction"
+		local escaped_corrected_by="${corrected_by//"'"/"''"}"
+		local correction_exists=""
+		correction_exists=$(db "$MEMORY_DB" "SELECT COUNT(*) FROM observations WHERE observation_id='obs_learning_$escaped_corrected_by' AND status='active';")
+		if [[ "$correction_exists" != "1" ]]; then
+			log_error "Correction observation not found or inactive: $corrected_by"
+			return 1
+		fi
+	fi
+	local current_status=""
+	current_status=$(db "$MEMORY_DB" "SELECT status FROM observation_promotions WHERE observation_id='obs_learning_$escaped_id' AND destination='$GRADUATED_DESTINATION';")
+	if [[ -z "$current_status" ]]; then
+		log_error "Active promotion not found: $memory_id"
+		return 1
+	fi
+	local target_file=""
+	target_file=$(graduated_file_path) || return 1
+	if [[ -f "$target_file" ]]; then
+		remove_promoted_block "$target_file" "$memory_id" || return 1
+	fi
+	if [[ "$current_status" == "$new_status" ]]; then
+		log_info "Promotion already $new_status: $memory_id"
+		return 0
+	fi
+	db "$MEMORY_DB" "UPDATE observation_promotions SET status='$new_status', changed_at=strftime('%Y-%m-%dT%H:%M:%fZ','now'), change_reason='$escaped_reason' WHERE observation_id='obs_learning_$escaped_id' AND status='active'; UPDATE observations SET status='$new_status' WHERE observation_id='obs_learning_$escaped_id';"
+	record_outcome "$memory_id" "$outcome_kind" "-1" "$reason"
+	if [[ -n "$corrected_by" ]]; then
+		db "$MEMORY_DB" "INSERT OR IGNORE INTO observation_relations VALUES ('rel_correction_${escaped_corrected_by}_${escaped_id}', 'obs_learning_$escaped_corrected_by', 'obs_learning_$escaped_id', 'corrects', 'src_learning_$escaped_corrected_by', strftime('%Y-%m-%dT%H:%M:%fZ','now'));"
+	fi
+	log_success "Promotion $new_status: $memory_id"
 	return 0
 }
 
@@ -744,53 +986,9 @@ cmd_status() {
 		2>/dev/null || echo "0")
 	echo "Already graduated: $graduated"
 
-	# Candidates (high confidence)
-	local high_conf
-	high_conf=$(
-		db "$MEMORY_DB" <<EOF
-SELECT COUNT(*) FROM learnings l
-LEFT JOIN learning_access a ON l.id = a.id
-WHERE l.confidence = 'high'
-AND l.type != 'USER_PREFERENCE'
-AND COALESCE((SELECT status FROM learning_truth_events truth_pick WHERE truth_pick.memory_id = l.id ORDER BY truth_pick.created_at DESC, truth_pick.event_id DESC LIMIT 1), 'live') NOT IN ('debunked', 'retracted')
-AND NOT EXISTS (SELECT 1 FROM learning_relations superseded_by WHERE superseded_by.supersedes_id = l.id AND superseded_by.relation_type = 'updates')
-AND (a.graduated_at IS NULL OR a.graduated_at = '');
-EOF
-	)
-	echo "High confidence (pending): ${high_conf:-0}"
-
-	# Candidates (frequently accessed)
-	local freq_accessed
-	freq_accessed=$(
-		db "$MEMORY_DB" <<EOF
-SELECT COUNT(*) FROM learnings l
-LEFT JOIN learning_access a ON l.id = a.id
-WHERE COALESCE(a.access_count, 0) >= $DEFAULT_MIN_ACCESS
-AND l.type != 'USER_PREFERENCE'
-AND COALESCE((SELECT status FROM learning_truth_events truth_pick WHERE truth_pick.memory_id = l.id ORDER BY truth_pick.created_at DESC, truth_pick.event_id DESC LIMIT 1), 'live') NOT IN ('debunked', 'retracted')
-AND NOT EXISTS (SELECT 1 FROM learning_relations superseded_by WHERE superseded_by.supersedes_id = l.id AND superseded_by.relation_type = 'updates')
-AND (a.graduated_at IS NULL OR a.graduated_at = '');
-EOF
-	)
-	echo "Frequently accessed (pending): ${freq_accessed:-0}"
-
-	# Total candidates (union)
 	local total_candidates
-	total_candidates=$(
-		db "$MEMORY_DB" <<EOF
-SELECT COUNT(*) FROM learnings l
-LEFT JOIN learning_access a ON l.id = a.id
-WHERE (
-    l.confidence = 'high'
-    OR COALESCE(a.access_count, 0) >= $DEFAULT_MIN_ACCESS
-)
-AND l.type != 'USER_PREFERENCE'
-AND COALESCE((SELECT status FROM learning_truth_events truth_pick WHERE truth_pick.memory_id = l.id ORDER BY truth_pick.created_at DESC, truth_pick.event_id DESC LIMIT 1), 'live') NOT IN ('debunked', 'retracted')
-AND NOT EXISTS (SELECT 1 FROM learning_relations superseded_by WHERE superseded_by.supersedes_id = l.id AND superseded_by.relation_type = 'updates')
-AND (a.graduated_at IS NULL OR a.graduated_at = '');
-EOF
-	)
-	echo "Total candidates: ${total_candidates:-0}"
+	total_candidates=$(_query_candidates_json "$DEFAULT_MIN_ACCESS" 100000 | jq 'length')
+	echo "Verified outcome candidates: ${total_candidates:-0}"
 
 	# Check if graduated-learnings.md exists
 	local target_file
@@ -826,27 +1024,27 @@ USAGE:
 COMMANDS:
     candidates  List memories eligible for graduation
     graduate    Promote eligible memories to shared docs
+    outcome     Record an attributable operational or review outcome
+    revoke      Revoke or correct generated shared guidance
     status      Show graduation statistics
     help        Show this help
 
 CANDIDATE OPTIONS:
     --limit N       Max candidates to show (default: 20)
-    --min-access N  Min access count threshold (default: 3)
     --json          Output as JSON
 
 GRADUATE OPTIONS:
     --dry-run       Preview without writing changes
     --limit N       Max memories to graduate (default: 20)
-    --min-access N  Min access count threshold (default: 3)
 
 GRADUATION CRITERIA:
-    A memory qualifies for graduation when ANY of:
-    - confidence = "high" (manually marked as high-value)
-    - access_count >= 3 (frequently recalled, proving usefulness)
-
-    AND:
+    A memory qualifies when:
+    - A test_passed, pr_merged, operational_verified, or verified_reuse outcome exists
+    - The evidence source is live, scoped, non-empty, and privacy-classified
+    - No correction, revert, rejection, stale escape, or privacy escape follows it
     - Not already graduated (tracked via graduated_at timestamp)
     - Content is actionable (not session metadata or batch logs)
+    Access count only ranks eligible candidates; it never proves usefulness.
 
 CATEGORIES:
     Memories are auto-categorized by type:
@@ -877,9 +1075,6 @@ EXAMPLES:
     # Preview graduation output
     memory-graduate-helper.sh graduate --dry-run
 
-    # Graduate with lower threshold
-    memory-graduate-helper.sh graduate --min-access 2
-
     # Check status
     memory-graduate-helper.sh status
 EOF
@@ -896,6 +1091,8 @@ main() {
 	case "$command" in
 	candidates | list) cmd_candidates "$@" ;;
 	graduate | promote) cmd_graduate "$@" ;;
+	outcome) cmd_outcome "$@" ;;
+	revoke | correct) cmd_revoke "$@" ;;
 	status | stats) cmd_status ;;
 	help | --help | -h) cmd_help ;;
 	*)

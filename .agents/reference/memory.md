@@ -86,13 +86,13 @@ On store: checks exact and near-duplicates (normalized case/punctuation/whitespa
 
 ## Canonical Observations
 
-`observations` is the authoritative additive envelope. It records stable observation, source, and session IDs; kind and owner/subject; user/project/organization/framework scope; explicit versus inferred state; confidence; sensitivity and consent; effective/review/expiry time; destination and lifecycle status. `observation_sources` preserves evidence and provenance with one unique source record per legacy or native source, so replay cannot create independent evidence. `observation_relations` records supersession, debunking, correction, revocation, extension, and derivation. `observation_outcomes` records retrieval usefulness, graduation, and later outcomes.
+`observations` is the authoritative additive envelope. It records stable observation, source, and session IDs; kind and owner/subject; user/project/organization/framework scope; explicit versus inferred state; confidence; sensitivity and consent; effective/review/expiry time; destination and lifecycle status. `observation_sources` preserves evidence and provenance with one unique source record per legacy or native source, so replay cannot create independent evidence. `observation_relations` records supersession, debunking, correction, revocation, extension, and derivation. `observation_outcomes` records retrieval usefulness and operational/review outcomes. Qualifying outcomes require an `outcome_verifications` row naming an independent verifier, an attributable non-learning evidence source, and verification provenance. `observation_promotions` attributes generated guidance to its source and verified outcome, deduplicates each destination, and records correction or revocation without deleting audit evidence.
 
 Existing `learnings` remain the FTS retrieval projection. Database initialization idempotently backfills safely derivable learning, entity-profile, capability-gap, truth/relation, access/usefulness, and graduation history using deterministic IDs such as `obs_learning_<legacy-id>` and `src_learning_<legacy-id>`.
 
 ## Auto-Pruning
 
-Runs on every `store` (at most once per 24h). Removes entries older than 90 days with zero access; frequently accessed memories preserved regardless of age.
+Runs on every `store` (at most once per 24h). The `learnings` FTS retrieval projection is bounded by hard creation age, row count (`AIDEVOPS_MEMORY_MAX_COUNT`, default 10,000), and logical row bytes (`AIDEVOPS_MEMORY_MAX_BYTES`, default 50 MiB). Access cannot exempt a row from the age bound. Logical bytes are the UTF-8 byte lengths of every projected field: `id`, `session_id`, `content`, `type`, `tags`, `confidence`, `created_at`, `event_date`, `project_path`, and `source`. This is not the SQLite file size or canonical audit-table size. Pruning preserves canonical observations, sources, outcomes, relations, verification, and promotion records. Use `--max-count` and `--max-bytes` for explicit maintenance limits.
 
 ## Semantic Search (Opt-in)
 
@@ -119,7 +119,7 @@ Handled by cross-session memory and pulse supervisor outcome observation (Step 2
 
 ## Memory Graduation
 
-Graduate validated, live, unsuperseded local memories (`confidence = "high"` OR `access_count >= 3`) into shared docs. `USER_PREFERENCE` memories remain in their user/project scope and never auto-graduate into all-user guidance. Appends to `.agents/aidevops/graduated-learnings.md`. **Slash command**: `/graduate-memories` or `/graduate-memories --dry-run`. See CLI Reference for commands.
+Graduate live, unsuperseded local memories only after an independently verified `test_passed`, `pr_merged`, `operational_verified`, or `verified_reuse` outcome. The outcome command requires verifier identity, a same-observation `test_result`, `pull_request`, `operation`, or `review` source, and verification provenance; the original learning source and self assertions do not qualify. Access count ranks eligible candidates but never qualifies one. Promotion also requires an allowed privacy classification, consent that is not denied, and no later rejection/correction/privacy escape. Generated destination blocks have exact begin/end markers: revocation removes only that block, and correction additionally records a `corrects` relation while retaining audit evidence.
 
 ## Memory Audit Pulse
 
@@ -191,6 +191,7 @@ memory-helper.sh dedup --exact-only
 memory-helper.sh prune --older-than-days 60 --dry-run
 memory-helper.sh prune --older-than-days 60
 memory-helper.sh prune --older-than-days 180 --include-accessed
+memory-helper.sh prune --older-than-days 90 --max-count 10000 --max-bytes 52428800
 memory-helper.sh log   # Recent auto-captures
 
 # Export
@@ -209,6 +210,9 @@ self-evolution-helper.sh pulse-scan --auto-todo-threshold 3
 memory-graduate-helper.sh candidates
 memory-graduate-helper.sh graduate --dry-run
 memory-graduate-helper.sh graduate
+memory-graduate-helper.sh outcome mem_xxx test_passed --verifier ci-run-123 --source-id src_test_123 --provenance ci:test-suite
+memory-graduate-helper.sh revoke mem_xxx --reason "later evidence disproved guidance"
+memory-graduate-helper.sh revoke mem_old --corrected-by mem_new --reason "replacement verified"
 
 # Embeddings
 memory-embeddings-helper.sh setup --provider local
