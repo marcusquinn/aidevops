@@ -101,8 +101,23 @@ gh_create_issue() {
 	printf 'created-42\n'
 	return 0
 }
+gh_issue_edit_safe() {
+	while [[ $# -gt 0 ]]; do
+		if [[ "$1" == "--body-file" ]]; then
+			cp "$2" "$TEST_EDITED_BODY"
+			cp "$2" "$TEST_ISSUE_BODY"
+			return 0
+		fi
+		shift
+	done
+	return 1
+}
+gh_issue_close_safe() {
+	printf 'closed\n' >"$TEST_CLOSED"
+	return 0
+}
 WRAPPERS
-	export TEST_CREATED="$created" TEST_ISSUE_BODY="$issue_body"
+	export TEST_CREATED="$created" TEST_ISSUE_BODY="$issue_body" TEST_EDITED_BODY="$edited_body" TEST_CLOSED="$closed"
 	export PULSE_CHECK_SOURCE_ONLY=1 PULSE_CHECK_GH_WRAPPERS="$wrappers"
 	# shellcheck source=../pulse-check-helper.sh
 	source "${SCRIPT_DIR}/pulse-check-helper.sh"
@@ -122,20 +137,6 @@ WRAPPERS
 		fi
 		if [[ "$1" == "api" && "$2" == *"/issues/42" ]]; then
 			jq -n --rawfile body "$TEST_ISSUE_BODY" '{body:$body}' | jq -r '.body'
-			return 0
-		fi
-		if [[ "$1 $2" == "issue edit" ]]; then
-			local previous=""
-			while [[ $# -gt 0 ]]; do
-				if [[ "$1" == "--body-file" ]]; then cp "$2" "$edited_body"; cp "$2" "$TEST_ISSUE_BODY"; return 0; fi
-				previous="$1"
-				shift
-			done
-			: "$previous"
-			return 0
-		fi
-		if [[ "$1 $2" == "issue close" ]]; then
-			printf 'closed\n' >"$closed"
 			return 0
 		fi
 		return 1

@@ -302,6 +302,22 @@ EOF
 	return 0
 }
 
+_load_gh_wrappers() {
+	if [[ ! -f "$GH_WRAPPERS" ]]; then
+		print_error "pulse-check: gh wrappers not found: ${GH_WRAPPERS}"
+		return 1
+	fi
+	if [[ "${PULSE_CHECK_GH_WRAPPERS_LOADED:-}" != "$GH_WRAPPERS" ]]; then
+		# shellcheck source=./shared-gh-wrappers.sh
+		source "$GH_WRAPPERS"
+		PULSE_CHECK_GH_WRAPPERS_LOADED="$GH_WRAPPERS"
+	fi
+	declare -F gh_create_issue >/dev/null 2>&1 || return 1
+	declare -F gh_issue_edit_safe >/dev/null 2>&1 || return 1
+	declare -F gh_issue_close_safe >/dev/null 2>&1 || return 1
+	return 0
+}
+
 _refresh_failure_family_issue() {
 	local slug="$1"
 	local issue_number="$2"
@@ -336,7 +352,9 @@ _refresh_failure_family_issue() {
 	local body_file=""
 	body_file=$(mktemp "${TMPDIR:-/tmp}/pulse-check-refresh.XXXXXX") || return 0
 	printf '%s\n' "$updated_body" >"$body_file"
-	gh issue edit "$issue_number" --repo "$slug" --body-file "$body_file" >/dev/null 2>&1 || true
+	if _load_gh_wrappers; then
+		gh_issue_edit_safe "$issue_number" --repo "$slug" --body-file "$body_file" >/dev/null 2>&1 || true
+	fi
 	rm -f "$body_file"
 	return 0
 }
@@ -382,12 +400,7 @@ _apply_finding() {
 		return 0
 	fi
 
-	if [[ ! -f "$GH_WRAPPERS" ]]; then
-		print_error "pulse-check: gh wrappers not found: ${GH_WRAPPERS}"
-		return 1
-	fi
-	# shellcheck source=./shared-gh-wrappers.sh
-	source "$GH_WRAPPERS"
+	_load_gh_wrappers || return 1
 
 	local body_file=""
 	body_file=$(mktemp "${TMPDIR:-/tmp}/pulse-check-issue.XXXXXX") || return 1
@@ -427,6 +440,7 @@ _failure_family_writes_allowed() {
 _reconcile_failure_family_remediations() {
 	local slug="$1"
 	local report_json="$2"
+	_load_gh_wrappers || return 0
 	local tracked_json="[]"
 	tracked_json=$(gh issue list --repo "$slug" --state open \
 		--search 'in:body "failure-family-state:start"' --limit 100 \
@@ -476,7 +490,7 @@ _reconcile_failure_family_remediations() {
 		_refresh_failure_family_issue "$slug" "$issue_number" "$family_json" "$outcome_status"
 
 		if [[ "$outcome_status" == "eliminated" ]]; then
-			gh issue close "$issue_number" --repo "$slug" \
+			gh_issue_close_safe "$issue_number" --repo "$slug" \
 				--comment "<!-- failure-family-recovery --> Stable aggregate ${fingerprint} recorded zero failures in both the ${SINCE} historical and ${RECENT_SINCE} recent windows after a ${age_seconds}s observation period. Closing with measured recovery evidence." \
 				>/dev/null 2>&1 || true
 		fi
