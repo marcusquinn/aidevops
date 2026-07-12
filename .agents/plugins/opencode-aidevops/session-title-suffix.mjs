@@ -3,6 +3,7 @@
 
 import { existsSync, readFileSync } from "fs";
 import { join } from "path";
+import { emitTerminalTitle as defaultEmitTerminalTitle } from "./terminal-title.mjs";
 
 const AIDEVOPS_TITLE_SUFFIX_RE = /\s+· AIDevOps \d+\.\d+\.\d+$/;
 const DEFAULT_SESSION_TITLE_RE = /^New session - /;
@@ -89,7 +90,7 @@ async function updateSessionTitle(client, sessionID, title) {
   }
 }
 
-export function createSessionTitleSuffixHandler({ agentsDir, client }) {
+export function createSessionTitleSuffixHandler({ agentsDir, client, emitTerminalTitle = defaultEmitTerminalTitle }) {
   const inFlight = new Set();
 
   return async function sessionTitleSuffixHandler(input) {
@@ -107,6 +108,7 @@ export function createSessionTitleSuffixHandler({ agentsDir, client }) {
     inFlight.add(update.sessionID);
     try {
       await updateSessionTitle(client, update.sessionID, suffixedTitle);
+      emitTerminalTitle(suffixedTitle);
     } finally {
       inFlight.delete(update.sessionID);
     }
