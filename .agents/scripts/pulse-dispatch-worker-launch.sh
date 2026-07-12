@@ -192,6 +192,11 @@ _dlw_resolve_tier_and_model() {
 	_DLW_DISPATCH_MODEL_TIER="$_DLW_STANDARD_TIER"
 	local issue_labels_csv
 	issue_labels_csv=$(printf '%s' "$issue_meta_json" | jq -r '[.labels[].name] | join(",")' 2>/dev/null) || issue_labels_csv=""
+	_DLW_TRUSTED_ISSUE_PRIORITY=$(printf '%s' "$issue_meta_json" | jq -r '[.labels[]?.name | select(startswith("priority:"))][0] // "" | sub("^priority:"; "")' 2>/dev/null || true)
+	# shellcheck disable=SC2016 # Backticks are literal optional Markdown delimiters.
+	_DLW_TRUSTED_RELEASE_TYPE=$(printf '%s' "$issue_meta_json" | jq -r '.body // ""' 2>/dev/null | sed -nE 's/^\*\*Release scope:\*\*[[:space:]]*`?(patch|minor|major)`?[[:space:]]*$/\1/ip' | head -1)
+	# shellcheck disable=SC2016 # Backticks are literal optional Markdown delimiters.
+	_DLW_TRUSTED_DEPLOY_SCOPE=$(printf '%s' "$issue_meta_json" | jq -r '.body // ""' 2>/dev/null | sed -nE 's/^\*\*Deployment scope:\*\*[[:space:]]*`?(incremental|full)`?[[:space:]]*$/\1/ip' | head -1)
 	local explicit_tier_label=0
 	if _dlw_has_explicit_tier_label "$issue_labels_csv"; then
 		explicit_tier_label=1
@@ -1618,6 +1623,17 @@ _dlw_validate_worktree_for_launch() {
 	return 1
 }
 
+_dlw_append_trusted_release_env() {
+	local trusted_priority="${_DLW_TRUSTED_ISSUE_PRIORITY:-}"
+	local trusted_release_type="${_DLW_TRUSTED_RELEASE_TYPE:-}"
+	local trusted_deploy_scope="${_DLW_TRUSTED_DEPLOY_SCOPE:-}"
+	worker_cmd+=(AIDEVOPS_TRUSTED_ISSUE_PRIORITY="$trusted_priority")
+	if [[ -n "$trusted_release_type" ]]; then
+		worker_cmd+=(AIDEVOPS_RELEASE_INTENT_TRUSTED=1 AIDEVOPS_RELEASE_TYPE="$trusted_release_type" AIDEVOPS_RELEASE_DEPLOY_SCOPE="${trusted_deploy_scope:-incremental}")
+	fi
+	return 0
+}
+
 #######################################
 # Launch a worker process detached from the pulse process group.
 # Stdout: worker PID
@@ -1679,6 +1695,7 @@ _dlw_nohup_launch() {
 		AIDEVOPS_DISPATCH_LEASE_DEVICE="${_claim_lease_device:-}"
 		AIDEVOPS_ALLOW_WORKER_WORKTREE_OWNER_TRANSFER=1
 	)
+	_dlw_append_trusted_release_env
 	if _dlw_min_worker_floor_active; then
 		worker_cmd+=(
 			AIDEVOPS_MIN_WORKER_FLOOR_BYPASS_ACTIVE=1

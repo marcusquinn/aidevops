@@ -773,6 +773,9 @@ _merge_finalize_post_merge() {
 		release_interactive_claim_on_merge "$pr_number" "$repo" "$linked_issue" || true
 	fi
 	_merge_reconcile_closing_issues "$pr_number" "$repo" || true
+	if declare -F _full_loop_record_merged_pr >/dev/null 2>&1; then
+		_full_loop_record_merged_pr "$pr_number" || return 1
+	fi
 	if [[ "$has_auto" -eq 0 && -n "$linked_issue" ]]; then
 		auto_file_next_phase "$linked_issue" "$repo" || true
 	fi
