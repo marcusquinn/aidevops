@@ -10,6 +10,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.32.77] - 2026-07-12
+
+### Changed
+
+- Maintenance: sync ref:GH#27452 to TODO.md [skip ci]
+
+### Fixed
+
+- guard recurrent file-size debt reconciliation (#27451)
+
 ## [3.32.76] - 2026-07-12
 
 ### Added
