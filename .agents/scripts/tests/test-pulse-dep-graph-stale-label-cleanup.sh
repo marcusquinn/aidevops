@@ -179,7 +179,7 @@ test_blocked_issue_label_removed_and_status_available() {
 	reset_logs
 	_refresh_try_unblock_issue "example/repo" "3" "$entry_json" '{}' >/dev/null
 	assert_log_contains "blocked issue removes stale label" "$GH_LOG" "--remove-label blocked-by:#2"
-	assert_log_contains "blocked issue status set available" "$STATUS_LOG" "set_issue_status 3 example/repo available"
+	assert_log_contains "blocked issue status set available" "$GH_LOG" "--remove-label status:blocked --add-label status:available"
 	return 0
 }
 
