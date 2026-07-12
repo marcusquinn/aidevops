@@ -10,6 +10,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.32.48] - 2026-07-12
+
+### Added
+
+- unify observation scope and deduplication (#27318)
+- add resumable session observation proposals (#27317)
+
 ## [3.32.47] - 2026-07-12
 
 ### Changed
