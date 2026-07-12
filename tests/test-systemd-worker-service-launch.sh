@@ -188,6 +188,8 @@ export STUB_SYSTEMD_RUN_WRITE_PID=1
 export STUB_SYSTEMD_RUN_PID=626262
 export STUB_SYSTEMCTL_MAINPID=626262
 export STUB_SYSTEMCTL_SEQUENCE=active_then_failed
+export STUB_SETSID_LOG="${TMP_DIR}/setsid-status-1.log"
+: >"$STUB_SETSID_LOG"
 if _dlw_exec_detached "${TMP_DIR}/worker-status-1.log" "27353" /bin/false >/dev/null; then
 	printf 'FAIL expected active-then-status-1 launch to fail\n' >&2
 	exit 1
@@ -199,6 +201,19 @@ assert_contains "${TMP_DIR}/worker-status-1.log" 'Unit=aidevops-worker-27353-' '
 assert_empty_file "$STUB_SETSID_LOG" 'setsid must not duplicate an active-then-failed systemd worker'
 
 reset_logs
+export STUB_SYSTEMD_RUN_PID=737373
+export STUB_SYSTEMCTL_MAINPID=838383
+export STUB_SETSID_LOG="${TMP_DIR}/setsid-unconfirmed.log"
+: >"$STUB_SETSID_LOG"
+if _dlw_exec_detached "${TMP_DIR}/worker-unconfirmed.log" "27355" /bin/true >/dev/null; then
+	printf 'FAIL expected mismatched provisional PID launch to remain unconfirmed\n' >&2
+	exit 1
+fi
+assert_contains "${TMP_DIR}/worker-unconfirmed.log" 'classification=readiness_unconfirmed' 'expected provisional PID evidence'
+assert_empty_file "$STUB_SETSID_LOG" 'setsid must not duplicate a provisional systemd worker'
+
+reset_logs
+export STUB_SETSID_LOG="${TMP_DIR}/setsid.log"
 export AIDEVOPS_SKIP_SYSTEMD_WORKER_SERVICE=1
 pid="$(_dlw_exec_detached "${TMP_DIR}/worker-non-systemd.log" "27354" /bin/true)"
 if [[ ! "$pid" =~ ^[0-9]+$ ]]; then

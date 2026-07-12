@@ -1069,7 +1069,7 @@ _dlw_systemd_wait_stable() {
 	done
 
 	printf 'LaunchState=pid_observed\n' >>"$state_file"
-	return 1
+	return 3
 }
 
 _dlw_systemd_resolve_main_pid() {
@@ -1236,16 +1236,20 @@ _dlw_exec_detached() {
 			echo "[dispatch_worker_launch] Issue #${issue_number}: worker PID=$worker_pid launched via systemd-run transient user service outside pulse cgroup" >>"$LOGFILE"
 		else
 			systemd_rc=$?
-			if [[ "$systemd_rc" -eq 2 ]]; then
+			if [[ "$systemd_rc" -eq 2 || "$systemd_rc" -eq 3 ]]; then
 				if [[ -f "$systemd_state_file" ]]; then
 					{
-						printf '[systemd-launch] classification=crash_during_startup\n'
+						if [[ "$systemd_rc" -eq 2 ]]; then
+							printf '[systemd-launch] classification=crash_during_startup\n'
+						else
+							printf '[systemd-launch] classification=readiness_unconfirmed\n'
+						fi
 						while IFS= read -r state_line || [[ -n "$state_line" ]]; do
 							printf '%s\n' "$state_line"
 						done <"$systemd_state_file"
 					} >>"$worker_log"
 				fi
-				echo "[dispatch_worker_launch] ERROR: systemd worker for #${issue_number} failed before durable readiness; duplicate fallback suppressed" >>"$LOGFILE"
+				echo "[dispatch_worker_launch] ERROR: systemd worker for #${issue_number} did not reach durable readiness (rc=${systemd_rc}); duplicate fallback suppressed" >>"$LOGFILE"
 				return 1
 			fi
 			echo "[dispatch_worker_launch] WARNING: systemd-run worker launch unresolved for #${issue_number}; falling back to setsid/nohup" >>"$LOGFILE"
