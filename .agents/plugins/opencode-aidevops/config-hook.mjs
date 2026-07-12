@@ -4,6 +4,7 @@
 // ---------------------------------------------------------------------------
 
 import { existsSync, readFileSync, appendFileSync } from "fs";
+import { homedir } from "os";
 import { join } from "path";
 import { loadAgentIndex, applyAgentMcpTools } from "./agent-loader.mjs";
 import { registerMcpServers } from "./mcp-registry.mjs";
@@ -12,7 +13,11 @@ import { getCursorProxyPort, registerCursorProvider } from "./cursor-proxy.mjs";
 import { getGoogleProxyPort, registerGoogleProvider } from "./google-proxy.mjs";
 import { getClaudeProxyPort, registerClaudeProvider } from "./claude-proxy.mjs";
 import { checkOpenCodeVersionDriftAsync } from "./version-tracking.mjs";
-import { CLAUDE_MODEL_LIMITS } from "./model-limits.mjs";
+import {
+  CLAUDE_MODEL_LIMITS,
+  GPT56_CONTEXT_DEFAULT,
+  GPT56_MODEL_IDS,
+} from "./model-limits.mjs";
 
 /**
  * Shared model definition template for Claude models managed by aidevops.
@@ -114,6 +119,46 @@ function registerAnthropicModels(config) {
   }
 
   return count;
+}
+
+/**
+ * Return whether aidevops should advertise a cost-aware 300K GPT-5.6 window.
+ * The feature defaults on; users can opt out with `aidevops gpt56-context
+ * disable`, which writes the durable preference consumed here on startup.
+ * @returns {boolean}
+ */
+export function gpt56ContextCapEnabled() {
+  const settingsPath = process.env.AIDEVOPS_SETTINGS_FILE ||
+    join(homedir(), ".config", "aidevops", "settings.json");
+  try {
+    if (!existsSync(settingsPath)) return true;
+    const settings = JSON.parse(readFileSync(settingsPath, "utf-8"));
+    return settings?.runtime?.opencode?.gpt56_context_cap !== false;
+  } catch {
+    return true;
+  }
+}
+
+/**
+ * Override built-in OpenAI GPT-5.6 model metadata without replacing any other
+ * model fields. Sparse provider model entries are merged by OpenCode.
+ * @param {object} config - OpenCode Config object (mutable)
+ * @returns {number} number of model limits applied
+ */
+export function registerGpt56ContextLimits(config) {
+  if (!gpt56ContextCapEnabled()) return 0;
+  if (!config.provider) config.provider = {};
+  if (!config.provider.openai) config.provider.openai = {};
+  if (!config.provider.openai.models) config.provider.openai.models = {};
+
+  for (const id of GPT56_MODEL_IDS) {
+    const existing = config.provider.openai.models[id] || {};
+    config.provider.openai.models[id] = {
+      ...existing,
+      limit: { ...existing.limit, context: GPT56_CONTEXT_DEFAULT },
+    };
+  }
+  return GPT56_MODEL_IDS.length;
 }
 
 /**
@@ -249,7 +294,7 @@ function registerClaudeCliModels(config) {
 
 /**
  * Log a summary of config hook changes (silent when nothing changed).
- * @param {object} counts - { agents, mcps, agentTools, poolCleaned, anthropic, openai, cursor, google, claude }
+ * @param {object} counts - config registration counts
  */
 function logConfigSummary(counts) {
   const labels = [
@@ -258,6 +303,7 @@ function logConfigSummary(counts) {
     [counts.agentTools, "agent tool perms"],
     [counts.poolCleaned, `cleaned ${counts.poolCleaned} stale pool provider${counts.poolCleaned === 1 ? "" : "s"}`],
     [counts.anthropic, "anthropic models"],
+    [counts.openai, "OpenAI context limits"],
     [counts.cursor, "Cursor models"],
     [counts.google, "Google models"],
     [counts.claude, "Claude CLI models"],
@@ -304,6 +350,7 @@ export function createConfigHook(deps) {
     const agentTools = applyAgentMcpTools(config);
     const poolCleaned = registerPoolProvider(config);
     const anthropic = registerAnthropicModels(config);
+    const openai = registerGpt56ContextLimits(config);
     // Discover and register proxy provider models only when a proxy listener is
     // already active. The normal startup path intentionally leaves these ports
     // null until first use, so unconditional imports/discovery here made config
@@ -338,7 +385,7 @@ export function createConfigHook(deps) {
     const claude = registerClaudeCliModels(config);
 
     logConfigSummary(
-      { agents, mcps, agentTools, poolCleaned, anthropic, cursor, google, claude },
+      { agents, mcps, agentTools, poolCleaned, anthropic, openai, cursor, google, claude },
     );
     logVersionDriftAsync(pluginDir);
   };
