@@ -54,6 +54,46 @@ _format_task_range() {
 	printf 't%03d..t%03d' "$first_num" "$last_num"
 }
 
+# Machine-local coordinator integration. Legacy CAS remains authoritative unless
+# AIDEVOPS_TASK_COORDINATOR_MODE is explicitly set to shadow or namespaced.
+_task_coordinator_cli() {
+	printf '%s/task-coordinator.mjs' "$SCRIPT_DIR"
+	return 0
+}
+
+_task_coordinator_shadow_legacy() {
+	local first_id="$1"
+	local count="$2"
+	[[ "${AIDEVOPS_TASK_COORDINATOR_MODE:-legacy}" == "shadow" ]] || return 0
+	[[ "${AIDEVOPS_TASK_COORDINATOR_SHADOW_ENABLED:-0}" == "1" ]] || return 0
+	local cli=""
+	cli=$(_task_coordinator_cli)
+	local operation_id="legacy-${AIDEVOPS_SESSION_ID:-${BASHPID:-$$}}-${first_id}-${count}"
+	local legacy_id=""
+	printf -v legacy_id 't%03d' "$first_id"
+	if ! node "$cli" allocate --operation-id "$operation_id" --count "$count" \
+		--legacy-id "$legacy_id" --payload '{"source":"legacy-cas-shadow"}' >/dev/null; then
+		log_warn "Task coordinator shadow write failed; legacy CAS allocation remains valid"
+		return 0
+	fi
+	log_info "Task coordinator shadow recorded ${legacy_id} without changing emitted identity"
+	return 0
+}
+
+_task_coordinator_namespaced_allocate() {
+	local count="$1"
+	[[ "${AIDEVOPS_TASK_COORDINATOR_MODE:-legacy}" == "namespaced" ]] || return 1
+	if [[ "${AIDEVOPS_TASK_COORDINATOR_NAMESPACED_EMISSION_ENABLED:-0}" != "1" ]]; then
+		log_error "Namespaced coordinator mode requires AIDEVOPS_TASK_COORDINATOR_NAMESPACED_EMISSION_ENABLED=1"
+		return 2
+	fi
+	local cli=""
+	cli=$(_task_coordinator_cli)
+	node "$cli" allocate --operation-id "${AIDEVOPS_TASK_OPERATION_ID:-$(uuidgen 2>/dev/null || printf 'claim-%s-%s' "${BASHPID:-$$}" "$RANDOM")}" \
+		--count "$count" --payload '{"source":"claim-task-id"}'
+	return $?
+}
+
 # ---------------------------------------------------------------------------
 # Append a structured audit log line for a successful CAS claim.
 # Format: ISO8601 \t pid \t session_id \t tNNN \t attempt \t elapsed_s
@@ -988,6 +1028,7 @@ allocate_online() {
 			log_success "Claimed $(printf 't%03d' "$first_id") (attempt ${attempt}, ${elapsed}s)"
 			# Phase 3 (t2569 / GH#20001): structured audit log.
 			_append_claim_audit_log "$first_id" "$attempt" "$elapsed"
+			_task_coordinator_shadow_legacy "$first_id" "$count"
 			echo "$first_id"
 			return 0
 			;;
