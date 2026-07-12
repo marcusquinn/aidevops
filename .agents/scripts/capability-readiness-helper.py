@@ -45,7 +45,8 @@ def probe_value(spec: dict[str, Any], agents_dir: Path) -> str:
     if "command_check" in spec:
         if not shutil.which(spec["command_check"][0]):
             return "false"
-        result = subprocess.run(spec["command_check"], capture_output=True, check=False, timeout=10)
+        # The committed registry is trusted policy input; shell execution is disabled.
+        result = subprocess.run(spec["command_check"], capture_output=True, check=False, timeout=10)  # nosec B603
         return "true" if result.returncode == 0 else "false"
     if "path" in spec:
         return "true" if (agents_dir / spec["path"]).exists() else "false"

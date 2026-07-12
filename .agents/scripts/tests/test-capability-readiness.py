@@ -4,6 +4,7 @@
 import json
 from pathlib import Path
 import subprocess
+import sys
 import tempfile
 import unittest
 
@@ -14,12 +15,12 @@ FIXTURE = TEST_DIR / "fixtures" / "capability-readiness-states.json"
 
 class CapabilityReadinessTests(unittest.TestCase):
     def run_helper(self, *args: str, expected: int = 0) -> dict:
-        result = subprocess.run(["python3", str(HELPER), "--fixture", str(FIXTURE), *args], text=True, capture_output=True, check=False)
+        result = subprocess.run([sys.executable, str(HELPER), "--fixture", str(FIXTURE), *args], text=True, capture_output=True, check=False)  # nosec B603
         self.assertEqual(expected, result.returncode, result.stderr or result.stdout)
         return json.loads(result.stdout) if result.stdout else {}
 
     def test_registry_has_no_drift(self) -> None:
-        result = subprocess.run(["python3", str(HELPER), "check"], text=True, capture_output=True, check=False)
+        result = subprocess.run([sys.executable, str(HELPER), "check"], text=True, capture_output=True, check=False)  # nosec B603
         self.assertEqual(0, result.returncode, result.stdout)
         self.assertTrue(json.loads(result.stdout)["valid"])
 
@@ -49,7 +50,7 @@ class CapabilityReadinessTests(unittest.TestCase):
         committed = HELPER.parents[1] / "reference" / "capability-registry.md"
         with tempfile.TemporaryDirectory() as directory:
             generated = Path(directory) / "index.md"
-            subprocess.run(["python3", str(HELPER), "generate", "--output", str(generated)], check=True)
+            subprocess.run([sys.executable, str(HELPER), "generate", "--output", str(generated)], check=True)  # nosec B603
             self.assertEqual(committed.read_text(), generated.read_text())
 
 
