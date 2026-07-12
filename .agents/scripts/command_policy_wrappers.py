@@ -26,6 +26,26 @@ from command_policy_wrapper_options import (
     _unwrap_time,
 )
 
+__all__ = [
+    "_consume_option",
+    "_expand_argv",
+    "_expand_launcher",
+    "_expand_shell_launcher",
+    "_is_attached_value_option",
+    "_is_combined_short_flags",
+    "_is_safety_sensitive_assignment",
+    "_reject_dynamic_launcher",
+    "_shell_command_index",
+    "_shell_value_option_index",
+    "_strip_leading_assignments",
+    "_unwrap_command",
+    "_unwrap_env",
+    "_unwrap_exec",
+    "_unwrap_simple_wrapper",
+    "_unwrap_sudo",
+    "_unwrap_time",
+]
+
 SHELLS = {"bash", "dash", "ksh", "sh", "zsh"}
 ShellParser = Callable[[str], list[list[str]]]
 
@@ -56,11 +76,15 @@ def _expand_launcher(
         return expanded, argv if expanded else _unwrap_command(argv)
     if executable in SHELLS:
         return _expand_shell_launcher(argv, shell_parser), argv
+    _reject_directory_launcher(executable)
+    return [argv], argv
+
+
+def _reject_directory_launcher(executable: str) -> None:
     if executable in {"cd", "pushd", "popd"}:
         raise CommandParseError(
             "directory-changing shell builtins are unsupported; use tool cwd"
         )
-    return [argv], argv
 
 
 def _expand_shell_launcher(argv: list[str], shell_parser: ShellParser) -> list[list[str]]:
@@ -91,12 +115,9 @@ def _reject_dynamic_launcher(argv: list[str], executable: str) -> None:
 
 
 def _unwrap_simple_wrapper(argv: list[str], executable: str) -> list[str] | None:
-    if executable == "env":
-        return _unwrap_env(argv)
-    if executable == "sudo":
-        return _unwrap_sudo(argv)
-    if executable == "time":
-        return _unwrap_time(argv)
+    wrappers = {"env": _unwrap_env, "sudo": _unwrap_sudo, "time": _unwrap_time}
+    if executable in wrappers:
+        return wrappers[executable](argv)
     if executable != "nohup":
         return None
     index = 2 if len(argv) > 1 and argv[1] == "--" else 1

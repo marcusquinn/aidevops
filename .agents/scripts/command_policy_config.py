@@ -109,21 +109,28 @@ def _validate_policy_rules(rules: Any) -> None:
     seen_ids: set[str] = set()
     seen_matchers: set[str] = set()
     for rule in rules:
-        if not isinstance(rule, dict):
-            raise PolicyError("command policy rule must be an object")
-        rule_id = rule.get("id")
-        matcher = rule.get("matcher")
-        if not isinstance(rule_id, str) or not rule_id or rule_id in seen_ids:
-            raise PolicyError("command policy rule IDs must be unique non-empty strings")
-        if matcher not in KNOWN_MATCHERS or matcher in seen_matchers:
-            raise PolicyError(f"command policy matcher is invalid or duplicated: {matcher}")
-        if rule.get("decision") != "forbid" or not isinstance(
-            rule.get("reason"), str
-        ):
-            raise PolicyError(
-                f"command policy rule must be forbid with a reason: {rule_id}"
-            )
+        rule_id, matcher = _validate_policy_rule(rule, seen_ids, seen_matchers)
         seen_ids.add(rule_id)
         seen_matchers.add(matcher)
     if seen_matchers != KNOWN_MATCHERS:
         raise PolicyError("command policy must define every required matcher exactly once")
+
+
+def _validate_policy_rule(
+    rule: Any, seen_ids: set[str], seen_matchers: set[str]
+) -> tuple[str, str]:
+    if not isinstance(rule, dict):
+        raise PolicyError("command policy rule must be an object")
+    rule_id = rule.get("id")
+    matcher = rule.get("matcher")
+    if not _is_new_rule_id(rule_id, seen_ids):
+        raise PolicyError("command policy rule IDs must be unique non-empty strings")
+    if matcher not in KNOWN_MATCHERS or matcher in seen_matchers:
+        raise PolicyError(f"command policy matcher is invalid or duplicated: {matcher}")
+    if rule.get("decision") != "forbid" or not isinstance(rule.get("reason"), str):
+        raise PolicyError(f"command policy rule must be forbid with a reason: {rule_id}")
+    return rule_id, matcher
+
+
+def _is_new_rule_id(rule_id: Any, seen_ids: set[str]) -> bool:
+    return isinstance(rule_id, str) and bool(rule_id) and rule_id not in seen_ids

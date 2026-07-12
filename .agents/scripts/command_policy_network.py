@@ -19,14 +19,10 @@ def _normalize_host(value: str) -> str | None:
     if not candidate or any(char in candidate for char in "\x00\n\r"):
         return None
     if re.match(r"^[A-Za-z][A-Za-z0-9+.-]*://", candidate):
-        parsed = urlsplit(candidate)
-        return parsed.hostname.lower().rstrip(".") if parsed.hostname else None
+        return _url_host(candidate)
     candidate = _host_candidate(candidate)
-    try:
-        ipaddress.ip_address(candidate)
+    if _is_ip_address(candidate):
         return candidate
-    except ValueError:
-        pass
     if (
         re.fullmatch(r"[a-z0-9](?:[a-z0-9._-]*[a-z0-9])?", candidate)
         and "." in candidate
@@ -35,14 +31,30 @@ def _normalize_host(value: str) -> str | None:
     return None
 
 
+def _url_host(candidate: str) -> str | None:
+    parsed = urlsplit(candidate)
+    return parsed.hostname.lower().rstrip(".") if parsed.hostname else None
+
+
+def _is_ip_address(candidate: str) -> bool:
+    try:
+        ipaddress.ip_address(candidate)
+        return True
+    except ValueError:
+        return False
+
+
 def _host_candidate(candidate: str) -> str:
     scp_match = re.match(r"^(?:[^@/:]+@)?(\[[^]]+\]|[^/:]+):.+$", candidate)
     if scp_match and not re.match(r"^[A-Za-z]:[\\/]", candidate):
         candidate = scp_match.group(1).strip("[]").lower().rstrip(".")
     elif "@" in candidate and "/" not in candidate:
         candidate = candidate.rsplit("@", 1)[1]
-    if "/" in candidate:
-        candidate = candidate.split("/", 1)[0]
+    return _strip_host_path_and_port(candidate)
+
+
+def _strip_host_path_and_port(candidate: str) -> str:
+    candidate = candidate.split("/", 1)[0]
     if candidate.startswith("[") and "]" in candidate:
         candidate = candidate[1 : candidate.index("]")]
     elif candidate.count(":") == 1:
@@ -61,7 +73,7 @@ def _add_destination(result: dict[str, Any], value: str, label: str) -> None:
 def _resolve_git_remote(cwd: str, remote: str) -> list[str]:
     git_binary = "/usr/bin/git" if Path("/usr/bin/git").is_file() else "git"
     try:
-        resolved = subprocess.run(
+        resolved = subprocess.run(  # nosec B603 -- argv is fixed except validated cwd/remote data; shell execution is disabled.
             [git_binary, "-C", cwd, "remote", "get-url", "--all", remote],
             capture_output=True,
             text=True,

@@ -14,22 +14,27 @@ def _shell_command_index(argv: list[str]) -> int | None:
     value_options = {"-O", "+O", "-o", "+o", "--init-file", "--rcfile"}
     while index < len(argv):
         arg = argv[index]
-        if arg == "--":
-            return None
-        if arg.startswith("-") and not arg.startswith("--") and "c" in arg[1:]:
-            return index + 1
+        command_index = _shell_command_option_index(arg, index)
+        if command_index is not False:
+            return command_index
         if arg in {"--init-file", "--rcfile"} or arg.startswith(("--init-file=", "--rcfile=")):
             raise CommandParseError(f"shell startup file option is unsupported: {arg}")
         consumed = _shell_value_option_index(argv, index, value_options)
         if consumed is not None:
             index = consumed
             continue
-        if arg.startswith(("-", "+")):
-            index += 1
-            continue
-        if not arg.startswith("-"):
-            return None
+        index += 1
     return None
+
+
+def _shell_command_option_index(arg: str, index: int) -> int | None | bool:
+    if arg == "--":
+        return None
+    if arg.startswith("-") and not arg.startswith("--") and "c" in arg[1:]:
+        return index + 1
+    if not arg.startswith(("-", "+")):
+        return None
+    return False
 
 
 def _shell_value_option_index(

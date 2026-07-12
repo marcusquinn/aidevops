@@ -38,28 +38,27 @@ def analyze_network_argv(argv: list[str], cwd: str) -> dict[str, Any]:
         "destinations": [],
         "unclassified": [],
     }
-    if executable == "curl":
+    analyzers = {
+        "curl": _analyze_curl,
+        "wget": _analyze_wget,
+        "ssh": _analyze_ssh,
+        "scp": _analyze_scp,
+    }
+    if executable in analyzers:
         result["recognized"] = True
-        _analyze_curl(exact, result)
-    elif executable == "wget":
-        result["recognized"] = True
-        _analyze_wget(exact, result)
-    elif executable == "ssh":
-        result["recognized"] = True
-        _analyze_ssh(exact, result)
-    elif executable == "scp":
-        result["recognized"] = True
-        _analyze_scp(exact, result)
+        analyzers[executable](exact, result)
     elif executable == "git":
         result["recognized"] = _analyze_git(exact, cwd, result)
     elif executable in {"dig", "nslookup", "host"}:
         result["recognized"] = True
-        candidates = [
-            arg for arg in exact[1:] if not arg.startswith(("-", "+", "@"))
-        ]
-        if not candidates:
-            result["unclassified"].append("dns-query-destination-missing")
-        else:
-            _add_destination(result, candidates[0], "dns-query")
+        _analyze_dns_query(exact, result)
     result["destinations"] = sorted(set(result["destinations"]))
     return result
+
+
+def _analyze_dns_query(argv: list[str], result: dict[str, Any]) -> None:
+    candidates = [arg for arg in argv[1:] if not arg.startswith(("-", "+", "@"))]
+    if candidates:
+        _add_destination(result, candidates[0], "dns-query")
+    else:
+        result["unclassified"].append("dns-query-destination-missing")

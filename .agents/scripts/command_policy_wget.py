@@ -38,14 +38,18 @@ def _wget_arg(
         next_index = _wget_execute_option(argv, index, result)
     elif option in {"-i", "--input-file"}:
         result["unclassified"].append("wget-input-file")
-        next_index = index + (2 if arg == option and "=" not in arg else 1)
+        next_index = _wget_input_file_index(arg, option, index)
     elif option in value_options:
         next_index = _option_value(argv, index)[1]
     elif arg in short_value_options:
-        next_index = index + (2 if index + 1 < len(argv) else 1)
+        next_index = min(index + 2, len(argv))
     elif not arg.startswith("-"):
         _add_destination(result, arg, "url")
     return next_index
+
+
+def _wget_input_file_index(arg: str, option: str, index: int) -> int:
+    return index + (2 if arg == option and "=" not in arg else 1)
 
 
 def _wget_execute_option(argv: list[str], index: int, result: dict[str, Any]) -> int:

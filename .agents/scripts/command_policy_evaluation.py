@@ -58,9 +58,7 @@ def _canonical_guard_path(
 def _evaluate_canonical_git(
     invocations: list[list[str]], cwd: str, guard: Path
 ) -> dict[str, Any]:
-    git_invocations = [
-        argv for argv in invocations if argv and os.path.basename(argv[0]) == "git"
-    ]
+    git_invocations = list(filter(_is_git_invocation, invocations))
     if not git_invocations:
         return _decision("allow", "git.no-invocation", "No Git invocation detected")
     if not guard.is_file():
@@ -70,8 +68,37 @@ def _evaluate_canonical_git(
             f"Canonical Git policy helper is unavailable: {guard}",
         )
     for argv in git_invocations:
-        try:
-            result = subprocess.run(
+        result, error = _run_canonical_guard(argv, cwd, guard)
+        if error:
+            return error
+        denied = _canonical_guard_denial(result)
+        if denied:
+            return denied
+    return _decision(
+        "allow", "git.canonical-allow", "Canonical Git guard allowed every Git argv"
+    )
+
+
+def _is_git_invocation(argv: list[str]) -> bool:
+    return bool(argv) and os.path.basename(argv[0]) == "git"
+
+
+def _canonical_guard_denial(
+    result: subprocess.CompletedProcess[str],
+) -> dict[str, Any] | None:
+    if result.returncode == 0:
+        return None
+    reason = result.stderr.strip() or (
+        f"Canonical Git guard failed with exit {result.returncode}"
+    )
+    return _decision("forbid", "git.canonical-worktree", reason)
+
+
+def _run_canonical_guard(
+    argv: list[str], cwd: str, guard: Path
+) -> tuple[subprocess.CompletedProcess[str] | None, dict[str, Any] | None]:
+    try:
+        result = subprocess.run(  # nosec B603 -- executable is the current Python; guard path is policy-selected and verified as a file.
                 [
                     sys.executable,
                     str(guard),
@@ -84,21 +111,14 @@ def _evaluate_canonical_git(
                 text=True,
                 timeout=10,
                 check=False,
-            )
-        except (OSError, subprocess.SubprocessError) as exc:
-            return _decision(
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        return None, _decision(
                 "forbid",
                 "git.guard-error",
                 f"Canonical Git policy check failed closed: {exc}",
-            )
-        if result.returncode != 0:
-            reason = result.stderr.strip() or (
-                f"Canonical Git guard failed with exit {result.returncode}"
-            )
-            return _decision("forbid", "git.canonical-worktree", reason)
-    return _decision(
-        "allow", "git.canonical-allow", "Canonical Git guard allowed every Git argv"
-    )
+        )
+    return result, None
 
 
 def _network_guard_path(
@@ -128,7 +148,7 @@ def _evaluate_worker_network(
         )
     for argv in invocations:
         try:
-            result = subprocess.run(
+            result = subprocess.run(  # nosec B603 -- /bin/bash is fixed and helper is policy-selected and verified as a file.
                 [
                     "/bin/bash",
                     str(helper),

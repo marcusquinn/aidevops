@@ -28,7 +28,10 @@ def _analyze_curl(argv: list[str], result: dict[str, Any]) -> None:
         "--dns-ipv6-addr",
     }
     destination_options = {"--url", "--proxy", "--preproxy"}
-    short_value_options = {"-A", "-b", "-c", "-d", "-D", "-e", "-E", "-F", "-H", "-K", "-m", "-o", "-Q", "-r", "-T", "-u", "-w", "-X", "-Y", "-z"}
+    short_value_options = {
+        "-A", "-b", "-c", "-d", "-D", "-e", "-E", "-F", "-H", "-K",
+        "-m", "-o", "-Q", "-r", "-T", "-u", "-w", "-X", "-Y", "-z",
+    }
     index = 1
     while index < len(argv):
         special_index = _curl_destination_option(argv, index, result, destination_options)
@@ -88,22 +91,29 @@ def _curl_other_arg(
 ) -> int:
     arg = argv[index]
     option = arg.split("=", 1)[0]
-    next_index = index + 1
     if option in {"--config", "-K"} or arg.startswith("-K"):
         result["unclassified"].append("curl-config-file")
-        next_index = index + (2 if arg in {"--config", "-K"} else 1)
-    elif option in value_options:
-        next_index = _option_value(argv, index)[1]
-    elif arg == "-x" or arg.startswith("-x"):
-        value = argv[index + 1] if arg == "-x" and index + 1 < len(argv) else arg[2:]
-        _add_destination(result, value, "proxy")
-        next_index = index + (2 if arg == "-x" else 1)
-    elif not arg.startswith("-"):
+        return index + (2 if arg in {"--config", "-K"} else 1)
+    if option in value_options:
+        return _option_value(argv, index)[1]
+    proxy_index = _curl_proxy_index(argv, index, result)
+    if proxy_index is not None:
+        return proxy_index
+    if not arg.startswith("-"):
         _add_destination(result, arg, "url")
-    else:
-        short_index = _curl_short_value_index(argv, index, result, short_value_options)
-        next_index = short_index or next_index
-    return next_index
+        return index + 1
+    return _curl_short_value_index(argv, index, result, short_value_options) or index + 1
+
+
+def _curl_proxy_index(
+    argv: list[str], index: int, result: dict[str, Any]
+) -> int | None:
+    arg = argv[index]
+    if arg != "-x" and not arg.startswith("-x"):
+        return None
+    value = argv[index + 1] if arg == "-x" and index + 1 < len(argv) else arg[2:]
+    _add_destination(result, value, "proxy")
+    return index + (2 if arg == "-x" else 1)
 
 
 def _curl_short_value_index(

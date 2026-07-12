@@ -71,15 +71,22 @@ def _git_network_candidate(args: list[str], value_options: set[str]) -> str:
             value, index = _option_value(args, index)
             explicit_repo = value or ""
             continue
-        if option in value_options:
-            index += 1 if "=" in arg else 2
-            continue
-        if arg.startswith("-"):
-            index += 1
-            continue
-        positionals.append(arg)
-        index += 1
+        index = _record_git_argument(arg, option, index, value_options, positionals)
     return explicit_repo or (positionals[0] if positionals else "")
+
+
+def _record_git_argument(
+    arg: str,
+    option: str,
+    index: int,
+    value_options: set[str],
+    positionals: list[str],
+) -> int:
+    if option in value_options:
+        return index + (1 if "=" in arg else 2)
+    if not arg.startswith("-"):
+        positionals.append(arg)
+    return index + 1
 
 
 def _classify_git_candidate(

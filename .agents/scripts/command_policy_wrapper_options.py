@@ -61,16 +61,23 @@ def _unwrap_env(argv: list[str]) -> list[str]:
         if option in {"-C", "--chdir", "-S", "--split-string"} or option.startswith(("-C", "-S", "--chdir=", "--split-string=")):
             raise CommandParseError(f"env option changes command interpretation and is unsupported: {option}")
         index = _consume_option(argv, index, values, flags)
+    index = _environment_command_index(argv, index)
+    if index >= len(argv):
+        raise CommandParseError("env wrapper has no command")
+    return argv[index:]
+
+
+def _environment_command_index(argv: list[str], index: int) -> int:
     while index < len(argv) and "=" in argv[index] and not argv[index].startswith("="):
         name = argv[index].split("=", 1)[0]
         if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", name):
             break
         if _is_safety_sensitive_assignment(name):
-            raise CommandParseError(f"safety-affecting environment assignment is unsupported: {name}")
+            raise CommandParseError(
+                f"safety-affecting environment assignment is unsupported: {name}"
+            )
         index += 1
-    if index >= len(argv):
-        raise CommandParseError("env wrapper has no command")
-    return argv[index:]
+    return index
 
 
 def _unwrap_sudo(argv: list[str]) -> list[str]:
