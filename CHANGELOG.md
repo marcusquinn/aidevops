@@ -10,6 +10,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.32.47] - 2026-07-12
+
+### Changed
+
+- Maintenance: update simplification state registry
+
+### Fixed
+
+- preserve divergent canonical tip during recovery (#27313)
+
 ## [3.32.46] - 2026-07-12
 
 ### Added
