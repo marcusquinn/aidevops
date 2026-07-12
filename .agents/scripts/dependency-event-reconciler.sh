@@ -204,8 +204,9 @@ _der_live_issue_closed() {
 	local issue_number="$2"
 	local state=""
 	state=$(gh issue view "$issue_number" --repo "$repo" --json state --jq '.state' 2>/dev/null) || return 1
-	[[ "$state" == "$DER_STATE_CLOSED" || "$state" == "closed" ]]
-	return $?
+	[[ "$state" == "$DER_STATE_CLOSED" || "$state" == "closed" ]] && return 0
+	[[ "$state" == "OPEN" || "$state" == "open" ]] && return 2
+	return 1
 }
 
 _der_find_task_issue() {
@@ -236,12 +237,12 @@ _der_all_declared_blockers_closed() {
 	text=$(printf '%s' "$candidate_json" | jq -r '(.body // "") + "\n" + ([.labels.nodes[].name] | join("\n"))') || return 1
 	while IFS= read -r blocker; do
 		[[ -n "$blocker" ]] || continue
-		_der_live_issue_closed "$repo" "$blocker" || return 1
+		_der_live_issue_closed "$repo" "$blocker" || return $?
 	done < <(_der_issue_refs "$text")
 	while IFS= read -r task_id; do
 		[[ -n "$task_id" ]] || continue
 		issue_number=$(_der_find_task_issue "$repo" "$task_id") || return 1
-		_der_live_issue_closed "$repo" "$issue_number" || return 1
+		_der_live_issue_closed "$repo" "$issue_number" || return $?
 	done < <(_der_task_refs "$text")
 	return 0
 }
@@ -257,7 +258,7 @@ _der_native_blockers_closed() {
 	printf '%s' "$result" | jq -e --arg repo "$repo" '.data.repository.issue.blockedBy | .pageInfo.hasNextPage == false and all(.nodes[]; .repository.nameWithOwner == $repo)' >/dev/null 2>&1 || return 1
 	while IFS= read -r blocker; do
 		[[ -n "$blocker" ]] || continue
-		[[ "${blocker#*:}" == "$DER_STATE_CLOSED" ]] || return 1
+		[[ "${blocker#*:}" == "$DER_STATE_CLOSED" ]] || return 2
 	done < <(printf '%s' "$result" | jq -r '.data.repository.issue.blockedBy.nodes[]? | "\(.number):\(.state)"' 2>/dev/null)
 	return 0
 }
@@ -275,8 +276,8 @@ _der_try_unblock() {
 	_der_json_pages_valid "$comments_json" || return 1
 	comments=$(printf '%s' "$comments_json" | jq -r '.[][] | .body // ""' 2>/dev/null) || return 1
 	_der_has_hold "$body" "$comments" "$labels" && return 0
-	_der_native_blockers_closed "$repo" "$issue_number" || return 1
-	_der_all_declared_blockers_closed "$repo" "$candidate_json" || return 1
+	_der_native_blockers_closed "$repo" "$issue_number" || return $?
+	_der_all_declared_blockers_closed "$repo" "$candidate_json" || return $?
 	labels=$(gh issue view "$issue_number" --repo "$repo" --json labels --jq '[.labels[].name] | join(",")' 2>/dev/null) || return 1
 	_der_labels_has "$labels" status:blocked || return 0
 	_der_has_active_status "$labels" && return 0
@@ -333,6 +334,8 @@ reconcile_stale_blocked_issues() {
 			continue
 		}
 		if _der_try_unblock "$repo" "$issue_number" "$candidate"; then
+			reconciled=$((reconciled + 1))
+		elif [[ "$?" -eq 2 ]]; then
 			reconciled=$((reconciled + 1))
 		else
 			failed=$((failed + 1))

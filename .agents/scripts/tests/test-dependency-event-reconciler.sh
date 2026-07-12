@@ -153,8 +153,15 @@ EDIT_COUNT=0 REREAD_LABELS="status:blocked" BODY20="Blocked by #10" COMMENTS='[[
 reconcile_stale_blocked_issues owner/repo >/dev/null 2>&1 || true
 assert_eq 1 "$EDIT_COUNT" "periodic stale sweep releases issue after missed close event"
 EDIT_COUNT=0 REREAD_LABELS="status:blocked" BODY20="Blocked by #10 and #11"
-reconcile_stale_blocked_issues owner/repo >/dev/null 2>&1 || true
+stale_sweep_status=0
+reconcile_stale_blocked_issues owner/repo >/dev/null 2>&1 || stale_sweep_status=$?
 assert_eq 0 "$EDIT_COUNT" "periodic stale sweep preserves another open blocker"
+assert_eq 0 "$stale_sweep_status" "periodic stale sweep treats an open blocker as healthy"
+
+EDIT_COUNT=0 REREAD_LABELS="status:blocked" BODY20="Blocked by #10" COMMENTS='not-json'
+stale_sweep_status=0
+reconcile_stale_blocked_issues owner/repo >/dev/null 2>&1 || stale_sweep_status=$?
+assert_eq 1 "$stale_sweep_status" "periodic stale sweep still reports API ambiguity"
 
 if grep -q 'issues(first:100,states:' "${SCRIPTS_DIR}/dependency-event-reconciler.sh"; then
 	fail "reconciler must not enumerate latest repository issues"
