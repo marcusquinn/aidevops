@@ -289,10 +289,10 @@ _build_ci_feedback_section() {
 	cat <<-EOF
 		### Worker guidance
 
-		1. Check out a fresh branch from \`origin/main\` (do NOT reuse the old branch)
-		2. Read the terminal check URLs above for specific error messages
-		3. Fix the issues in the code, not in the CI config
-		4. Ensure all checks pass locally before pushing
+		1. Recover the previous PR branch/commits and continue that work; do not restart from scratch.
+		2. Read every terminal check URL above and preserve the accumulated evidence.
+		3. Rebase the recovered work onto current \`origin/main\`, then fix the code rather than weakening CI.
+		4. Run every listed local check and create the replacement PR from the recovered branch.
 
 		_Routed by deterministic merge pass (pulse-merge.sh)._
 	EOF
@@ -398,6 +398,13 @@ _ci_terminal_failed_check_results() {
 	return 0
 }
 
+_ci_merge_check_sets() {
+	local primary_checks="$1"
+	local all_checks="$2"
+	printf '%s\n%s\n' "$primary_checks" "$all_checks" | jq -sc 'add | unique_by([.name, .link])' 2>/dev/null || printf '%s' "${primary_checks:-[]}"
+	return 0
+}
+
 #######################################
 # Route CI failure feedback from a worker/trusted PR to its linked issue, close
 # the PR, and set the issue to status:available for re-dispatch.
@@ -437,36 +444,27 @@ _dispatch_ci_fix_worker() {
 	# usually reflect CI capacity, superseded runs, or job-budget kills; routing
 	# those as code-fix feedback creates duplicate PR churn instead of retrying or
 	# escalating CI infrastructure. If required checks contain no actionable
-	# failures and the caller did not provide precomputed checks, fall back to the
-	# full check set so advisory-only terminal failures can still carry
-	# pattern-specific repair guidance.
+	# failures, merge in the full check set as well. This prevents a required
+	# failure from hiding a simultaneous advisory failure from the replacement
+	# worker, which otherwise causes one CI redispatch per omitted check.
 	local terminal_failed_check_filter
 	terminal_failed_check_filter='(.bucket == "fail" or .bucket == "cancel") and (((.conclusion // .state // "") | ascii_downcase) | test("^(failure|action_required)$")) and ((.link // "") != "")'
-	local checks_json="$supplied_checks_json" result_marker=$'\n__AIDEVOPS_CHECK_NAMES__'
+	local checks_json="$supplied_checks_json" all_checks_json="[]" result_marker=$'\n__AIDEVOPS_CHECK_NAMES__'
 	local check_results="" failing_checks_json="" failing_checks="" failing_names="" classification_output=""
 	if [[ -z "$checks_json" ]]; then
 		checks_json=$(gh pr checks "$pr_number" --repo "$repo_slug" --required \
 			--json name,bucket,state,link \
 			2>/dev/null) || checks_json="[]"
 	fi
+	all_checks_json=$(gh pr checks "$pr_number" --repo "$repo_slug" \
+		--json name,bucket,state,link 2>/dev/null) || all_checks_json="[]"
+	checks_json=$(_ci_merge_check_sets "$checks_json" "$all_checks_json")
 	check_results=$(_ci_terminal_failed_check_results "$checks_json" "$terminal_failed_check_filter")
 	failing_checks_json="${check_results%%"$result_marker"*}"
 	failing_names="${check_results#*"$result_marker"}"
 	[[ "$failing_names" != "$check_results" ]] || failing_names=""
 	failing_names="${failing_names#$'\n'}"
 	failing_checks=$(_ci_actionable_failed_checks_markdown "$pr_number" "$repo_slug" "$failing_checks_json")
-
-	if [[ -z "$failing_checks" && -z "$supplied_checks_json" ]]; then
-		checks_json=$(gh pr checks "$pr_number" --repo "$repo_slug" \
-			--json name,bucket,state,link \
-			2>/dev/null) || checks_json="[]"
-		check_results=$(_ci_terminal_failed_check_results "$checks_json" "$terminal_failed_check_filter")
-		failing_checks_json="${check_results%%"$result_marker"*}"
-		failing_names="${check_results#*"$result_marker"}"
-		[[ "$failing_names" != "$check_results" ]] || failing_names=""
-		failing_names="${failing_names#$'\n'}"
-		failing_checks=$(_ci_actionable_failed_checks_markdown "$pr_number" "$repo_slug" "$failing_checks_json")
-	fi
 
 	if [[ -z "$failing_checks" ]]; then
 		echo "[pulse-wrapper] _dispatch_ci_fix_worker: PR #${pr_number} in ${repo_slug} has no actionable failed checks with URLs — skipping CI repair routing" >>"$LOGFILE"
