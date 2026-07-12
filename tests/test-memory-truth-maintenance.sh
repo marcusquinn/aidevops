@@ -91,6 +91,10 @@ test_debunk_suppresses_recall() {
 	debunk_id=$(store_memory_id "$test_dir" --content "Evidence: current deployed source disproves the mythical alpha marker outage" --type ERROR_FIX --confidence high --debunks "$myth_id" --replacement "$live_id" --evidence "Verified current source and runtime evidence")
 
 	run_memory "$test_dir" feedback "$myth_id" --signal false >/dev/null
+	if run_memory "$test_dir" feedback "$myth_id" --value "0); DROP TABLE learnings; --" >/dev/null 2>&1; then
+		printf 'FAIL: feedback accepted a non-numeric custom reward\n' >&2
+		exit 1
+	fi
 	results=$(json_payload "$(run_memory "$test_dir" recall --query "alpha marker" --json)")
 
 	if echo "$results" | jq -e --arg myth_id "$myth_id" 'map(.id) | index($myth_id) | not' >/dev/null && \

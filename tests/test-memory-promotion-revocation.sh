@@ -69,7 +69,10 @@ fi
 grep -F "Second verified promotion" "$DESTINATION" >/dev/null
 grep -F "Manual guidance must survive" "$DESTINATION" >/dev/null
 content_after_first_revoke=$(cksum "$DESTINATION")
-graduate revoke "$first_id" --reason "later regression disproved guidance" >/dev/null
+if graduate revoke "$first_id" --reason "later regression disproved guidance" >/dev/null 2>&1; then
+	printf 'FAIL: repeated revocation accepted an inactive promotion\n' >&2
+	exit 1
+fi
 [[ "$(cksum "$DESTINATION")" == "$content_after_first_revoke" ]]
 [[ "$(sqlite3 "$db" "SELECT COUNT(*) FROM observation_outcomes WHERE observation_id='obs_learning_$first_id' AND outcome_kind='reverted';")" == "1" ]]
 
@@ -80,4 +83,13 @@ graduate revoke "$first_id" --corrected-by "$correction_id" --reason "replacemen
 [[ "$(sqlite3 "$db" "SELECT COUNT(*) FROM observation_relations WHERE observation_id='obs_learning_$correction_id' AND target_observation_id='obs_learning_$first_id' AND relation_type='corrects';")" == "1" ]]
 [[ "$(sqlite3 "$db" "SELECT COUNT(*) FROM observation_outcomes WHERE observation_id='obs_learning_$first_id' AND outcome_kind='correction';")" == "1" ]]
 
-printf 'PASS: independently verified promotion, exact idempotent revocation, and correction audit behavior\n'
+if graduate revoke "$second_id" --reason >/dev/null 2>&1; then
+	printf 'FAIL: revocation accepted --reason without a value\n' >&2
+	exit 1
+fi
+if graduate outcome "$second_id" test_passed --value >/dev/null 2>&1; then
+	printf 'FAIL: outcome accepted --value without a value\n' >&2
+	exit 1
+fi
+
+printf 'PASS: independently verified promotion, active-only revocation, safe option parsing, and correction audit behavior\n'

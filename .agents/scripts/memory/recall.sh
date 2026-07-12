@@ -882,10 +882,18 @@ cmd_feedback() {
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
 		--signal | -s)
+			[[ $# -ge 2 ]] || {
+				log_error "Option --signal requires an argument"
+				return 1
+			}
 			signal="$2"
 			shift 2
 			;;
 		--value | -v)
+			[[ $# -ge 2 ]] || {
+				log_error "Option --value requires an argument"
+				return 1
+			}
 			custom_value="$2"
 			shift 2
 			;;
@@ -900,6 +908,10 @@ cmd_feedback() {
 
 	if [[ -z "$memory_id" ]]; then
 		log_error "Memory ID is required. Usage: memory-helper.sh feedback <id> [--signal <type>]"
+		return 1
+	fi
+	if [[ -n "$custom_value" && ! "$custom_value" =~ ^-?[0-9]+([.][0-9]+)?$ ]]; then
+		log_error "--value must be numeric"
 		return 1
 	fi
 
