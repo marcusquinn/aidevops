@@ -102,6 +102,7 @@ the required notices and preferred credit text.
 - `aidevops init` - Initialize in any project
 - `aidevops update` - Update framework
 - `aidevops auto-update` - Automatic update polling (enable/disable/status)
+- `aidevops gpt56-context [enable|disable|status]` - Keep GPT-5.6 at a 300K advertised context window in OpenCode (enabled by default), so 80% auto-compaction runs near 240K before long-context pricing; disable to use native provider limits
 - `aidevops secret` - Manage secrets (gopass encrypted, AI-safe)
 - `aidevops security` - Full security assessment (posture, secrets, supply chain)
 - `aidevops lint audit` - Audit native lint/format/typecheck commands and repo-verify hooks
