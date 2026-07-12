@@ -36,6 +36,7 @@ resolve_pr_identity() {
 	local issue_number=""
 	local mapped_ids=""
 	local mapped_count=0
+	local single_mapped_id=""
 
 	title_task_id=$(printf '%s\n' "$pr_title" | grep -oE '^t[0-9]+(\.[0-9]+)*' || true)
 	linked_issues=$(extract_linked_issues "$pr_body")
@@ -53,6 +54,9 @@ resolve_pr_identity() {
 				printf 'ERROR: PR title task %s conflicts with ref:GH#%s mapping to %s\n' "$title_task_id" "$issue_number" "$mapped_ids" >&2
 				return 1
 			fi
+			if [[ "$mapped_count" -eq 1 ]]; then
+				single_mapped_id="$mapped_ids"
+			fi
 		done
 	fi
 
@@ -64,10 +68,8 @@ resolve_pr_identity() {
 			return 1
 		fi
 		issue_number=${linked_issues%% *}
-		mapped_ids=$(task_ids_for_issue "$issue_number" "$todo_file")
-		mapped_count=$(printf '%s\n' "$mapped_ids" | grep -cE '^t[0-9]+(\.[0-9]+)*$' || true)
-		if [[ "$mapped_count" -eq 1 ]]; then
-			task_id="$mapped_ids"
+		if [[ -n "$single_mapped_id" ]]; then
+			task_id="$single_mapped_id"
 			printf 'Resolved %s from unique ref:GH#%s TODO mapping\n' "$task_id" "$issue_number" >&2
 		fi
 	fi

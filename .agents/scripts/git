@@ -12,20 +12,48 @@ while [[ -L "$SCRIPT_SOURCE" ]]; do
 done
 SCRIPT_DIR="$(cd "$(dirname "$SCRIPT_SOURCE")" && pwd)" || exit 1
 GUARD="${SCRIPT_DIR}/canonical-git-command-guard.py"
+REENTRY_SENTINEL="AIDEVOPS_CANONICAL_GIT_GUARD_ACTIVE"
+
+if [[ "${!REENTRY_SENTINEL:-}" == "1" ]]; then
+	printf 'BLOCKED: recursive aidevops Git shim invocation\n' >&2
+	exit 126
+fi
+
+is_aidevops_git_shim() {
+	local candidate_real="$1"
+	case "$candidate_real" in
+	*/.aidevops/agents/scripts/git | \
+		*/.aidevops/bin/git | \
+		*/.aidevops/runtime-bundles/*/agents/scripts/git | \
+		*/aidevops/.agents/scripts/git | \
+		*/aidevops/.agents/scripts/safe-bin/git | \
+		*/.agents/scripts/git | \
+		*/.agents/scripts/safe-bin/git) return 0 ;;
+	esac
+	return 1
+}
 
 resolve_real_git() {
 	local candidate=""
+	local candidates=""
+	if command -v xcrun >/dev/null 2>&1; then
+		candidates=$(xcrun --find git 2>/dev/null || true)
+	fi
+	for candidate in /usr/bin/git /usr/local/bin/git /opt/homebrew/bin/git; do
+		[[ -x "$candidate" ]] && candidates="${candidates}${candidates:+$'\n'}${candidate}"
+	done
+	candidates="${candidates}${candidates:+$'\n'}$(which -a git 2>/dev/null || true)"
 	while IFS= read -r candidate; do
 		[[ -n "$candidate" ]] || continue
+		[[ -x "$candidate" ]] || continue
 		[[ "$candidate" -ef "$SCRIPT_SOURCE" ]] && continue
 		local candidate_real=""
 		candidate_real=$(python3 -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "$candidate" 2>/dev/null || true)
-		case "$candidate_real" in
-		*/.aidevops/agents/scripts/git | */.agents/scripts/git) continue ;;
-		esac
-		printf '%s' "$candidate"
+		[[ -n "$candidate_real" ]] || continue
+		is_aidevops_git_shim "$candidate_real" && continue
+		printf '%s' "$candidate_real"
 		return 0
-	done < <(which -a git 2>/dev/null)
+	done <<<"$candidates"
 	return 1
 }
 
@@ -39,6 +67,8 @@ if [[ ! -f "$GUARD" ]] || ! command -v python3 >/dev/null 2>&1; then
 	exit 126
 fi
 ARGV_JSON=$(python3 -c 'import json,sys; print(json.dumps(sys.argv[1:]))' "$@") || exit 1
+export AIDEVOPS_CANONICAL_GIT_GUARD_ACTIVE=1
 python3 "$GUARD" --cwd "$PWD" --argv-json "$ARGV_JSON" --real-git "$REAL_GIT" || exit $?
+unset AIDEVOPS_CANONICAL_GIT_GUARD_ACTIVE
 
 exec "$REAL_GIT" "$@"

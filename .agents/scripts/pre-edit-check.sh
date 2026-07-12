@@ -764,19 +764,20 @@ if [[ "$git_dir" == "$git_common_dir" ]] || [[ "$git_dir" == ".git" ]]; then
 	is_main_worktree=true
 fi
 
-# Sync terminal tab title with repo/branch (silent, non-blocking)
+# Keep the OpenCode session title authoritative while OpenCode is active.
+# Outside OpenCode, retain the repo/branch shell-title fallback.
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 # shellcheck source=/dev/null
 source "${SCRIPT_DIR}/shared-constants.sh"
 
-if [[ -x "$SCRIPT_DIR/terminal-title-helper.sh" ]]; then
-	"$SCRIPT_DIR/terminal-title-helper.sh" sync 2>/dev/null || true
-fi
-
-# Sync OpenCode session title with current branch (silent, non-blocking).
-# Only runs inside OpenCode sessions; helper resolves target session by cwd.
 if [[ "${OPENCODE:-}" == "1" ]] && [[ -x "$SCRIPT_DIR/session-rename-helper.sh" ]]; then
-	"$SCRIPT_DIR/session-rename-helper.sh" sync-branch >/dev/null 2>&1 || true
+	"$SCRIPT_DIR/session-rename-helper.sh" sync-branch "${OPENCODE_SESSION_ID:-}" >/dev/null 2>&1 || true
+	effective_title="$("$SCRIPT_DIR/session-rename-helper.sh" effective-title "${OPENCODE_SESSION_ID:-}" 2>/dev/null || true)"
+	if [[ -n "$effective_title" ]] && [[ -x "$SCRIPT_DIR/terminal-title-helper.sh" ]]; then
+		"$SCRIPT_DIR/terminal-title-helper.sh" rename "$effective_title" 2>/dev/null || true
+	fi
+elif [[ -x "$SCRIPT_DIR/terminal-title-helper.sh" ]]; then
+	"$SCRIPT_DIR/terminal-title-helper.sh" sync 2>/dev/null || true
 fi
 
 # Linked worktree ownership gate (GH#14413 hardening):

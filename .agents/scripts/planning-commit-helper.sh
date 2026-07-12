@@ -20,6 +20,8 @@
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 source "${SCRIPT_DIR}/shared-constants.sh"
+# shellcheck source=./planning-publisher.sh
+source "${SCRIPT_DIR}/planning-publisher.sh"
 
 set -euo pipefail
 
@@ -536,8 +538,7 @@ next_task_id() {
 }
 
 # Main commit function
-# Uses todo_commit_push() from shared-constants.sh for serialized locking
-# to prevent race conditions when multiple actors push to TODO.md on main.
+# Publishes from a temporary index and retries bounded fast-forward contention.
 commit_planning_files() {
 	local commit_msg="${1:-plan: update planning files}"
 
@@ -558,14 +559,20 @@ commit_planning_files() {
 	local repo_root
 	repo_root=$(git rev-parse --show-toplevel)
 
-	# Use serialized commit+push (flock + pull-rebase-retry)
+	# Publish through a temporary index so caller HEAD/index/files stay untouched.
 	log_info "Committing: $commit_msg"
-	if todo_commit_push "$repo_root" "$commit_msg" "TODO.md todo/"; then
-		if [[ "${TODO_COMMIT_PUSH_RESULT:-}" == "pr" ]]; then
-			log_success "Planning files submitted via planning PR: ${TODO_COMMIT_PUSH_PR_URL:-created}"
-		else
-			log_success "Planning files committed and pushed" # nice
-		fi
+	local current_branch=""
+	current_branch=$(git -C "$repo_root" symbolic-ref --short HEAD 2>/dev/null) || return 1
+	local default_branch=""
+	default_branch=$(_todo_default_branch "$repo_root")
+	if [[ "$current_branch" == "$default_branch" ]] && _todo_branch_requires_planning_pr "$repo_root" "$default_branch"; then
+		todo_commit_push "$repo_root" "$commit_msg" "TODO.md todo/"
+		return $?
+	fi
+	local changed_paths=""
+	changed_paths=$(_planning_publish_changed_paths "$repo_root")
+	if planning_publish "$repo_root" "$commit_msg" origin "$current_branch" "$changed_paths"; then
+		log_success "Planning files published without changing local Git state"
 	else
 		log_error "Planning file publication failed; no successful direct push or planning PR was created"
 		return 1

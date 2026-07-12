@@ -520,7 +520,7 @@ cmd_desktop_launch() {
     remember_data_dir "${data_dir}"
 
     if ((dry_run == 1)); then
-        printf 'cd %q && XDG_DATA_HOME=%q AIDEVOPS_OPENCODE_ISOLATED_DB=1 %q' "${launch_dir}" "${data_dir}" "${desktop_binary}"
+        printf 'cd %q && TMPDIR=%q TMP=%q TEMP=%q XDG_DATA_HOME=%q AIDEVOPS_OPENCODE_ISOLATED_DB=1 %q' "${launch_dir}" "${TMPDIR}" "${TMP}" "${TEMP}" "${data_dir}" "${desktop_binary}"
         printf ' %q' "${desktop_args[@]}"
         printf '\n'
         return 0
@@ -559,6 +559,7 @@ cmd_desktop() {
 }
 
 main() {
+    aidevops_init_temp_workspace || { print_error "Could not initialize aidevops temporary workspace"; return 1; }
     if [[ "${1:-}" == "desktop" ]]; then
         shift || true
         cmd_desktop "$@"
@@ -619,7 +620,7 @@ main() {
 
     if ((use_shared_db == 1)); then
         if ((dry_run == 1)); then
-            printf 'cd %s && opencode' "${launch_dir}"
+            printf 'cd %q && TMPDIR=%q TMP=%q TEMP=%q opencode' "${launch_dir}" "${TMPDIR}" "${TMP}" "${TEMP}"
             printf ' %q' "${opencode_args[@]}"
             printf '\n'
             return 0
@@ -639,7 +640,7 @@ main() {
     remember_data_dir "${data_dir}"
 
     if ((dry_run == 1)); then
-        printf 'cd %q && XDG_DATA_HOME=%q AIDEVOPS_OPENCODE_ISOLATED_DB=1 opencode' "${launch_dir}" "${data_dir}"
+        printf 'cd %q && TMPDIR=%q TMP=%q TEMP=%q XDG_DATA_HOME=%q AIDEVOPS_OPENCODE_ISOLATED_DB=1 opencode' "${launch_dir}" "${TMPDIR}" "${TMP}" "${TEMP}" "${data_dir}"
         printf ' %q' "${opencode_args[@]}"
         printf '\n'
         return 0

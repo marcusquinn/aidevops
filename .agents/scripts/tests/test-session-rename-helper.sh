@@ -13,6 +13,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)" || exit
 HELPER="${SCRIPT_DIR}/../session-rename-helper.sh"
+GIT_BIN="$(command -p -v git)"
 export AIDEVOPS_VERSION="9.8.7"
 ROOT_VERSION="$(tr -d '[:space:]' <"${SCRIPT_DIR}/../../../VERSION")"
 
@@ -71,10 +72,9 @@ setup_fixture() {
 
 	# Create a minimal git repo so `git rev-parse --abbrev-ref HEAD` works.
 	mkdir -p "$REPO_DIR"
-	git -C "$REPO_DIR" init -q -b main
-	git -C "$REPO_DIR" config user.email "test@aidevops.sh"
-	git -C "$REPO_DIR" config user.name "Test"
-	git -C "$REPO_DIR" commit --allow-empty -q -m "init"
+	"$GIT_BIN" -C "$REPO_DIR" init -q -b main
+	"$GIT_BIN" -C "$REPO_DIR" -c user.email="test@aidevops.sh" -c user.name="Test" \
+		commit --allow-empty -q -m "init"
 
 	# Create a session table matching the OpenCode schema subset the helper touches.
 	sqlite3 "$DB_PATH" <<-'SQL'
@@ -119,7 +119,7 @@ run_sync_on_branch() {
 	local branch="$1"
 	(
 		cd "$REPO_DIR"
-		git checkout -q -B "$branch"
+		"$GIT_BIN" checkout -q -B "$branch"
 		OPENCODE_DB="$DB_PATH" "$HELPER" sync-branch "$SESSION_ID" >/dev/null 2>&1
 	)
 	return $?
@@ -169,6 +169,10 @@ run_sync_on_branch "feature/auto-20260413-025423"
 rc=$?
 assert_exit "exit 0 preserve branch" "0" "$rc"
 assert_eq "meaningful title preserved" "investigating the session rename bug" "$(get_title)"
+assert_eq \
+	"effective title returns preserved title for terminal synchronization" \
+	"investigating the session rename bug" \
+	"$(cd "$REPO_DIR" && OPENCODE_DB="$DB_PATH" "$HELPER" effective-title "$SESSION_ID")"
 
 # Test 5: empty title gets renamed (initial sync still works)
 echo ""

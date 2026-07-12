@@ -123,6 +123,21 @@
           "default": true,
           "description": "Enable daily git pull --ff-only on clean repos. Env: AIDEVOPS_REPO_SYNC"
         },
+        "repo_aidevops_health": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable daily repository aidevops metadata health checks. Env: AIDEVOPS_REPO_HEALTH"
+        },
+        "contribution_watch": {
+          "type": "boolean",
+          "default": true,
+          "description": "Monitor external contributions for activity needing a reply. Env: AIDEVOPS_CONTRIBUTION_WATCH"
+        },
+        "draft_responses": {
+          "type": "boolean",
+          "default": true,
+          "description": "Create private draft-response issues for contribution watch items. Env: AIDEVOPS_DRAFT_RESPONSES"
+        },
         "max_workers_cap": {
           "type": "integer",
           "default": 8,
@@ -160,6 +175,18 @@
           "deprecated": true,
           "description": "DEPRECATED (v3.7+, GH#17769): Model routing is now derived from pool + routing table. This field is ignored. Remove from config."
         },
+        "llm_stall_threshold": {
+          "type": "integer",
+          "default": 3600,
+          "minimum": 1,
+          "description": "Seconds of unchanged backlog before triggering an LLM supervisor session. Env: PULSE_LLM_STALL_THRESHOLD"
+        },
+        "pulse_stale_threshold": {
+          "type": "integer",
+          "default": 900,
+          "minimum": 1,
+          "description": "Hard ceiling in seconds for a single pulse cycle. Env: PULSE_STALE_THRESHOLD"
+        },
         "peak_hours_enabled": {
           "type": "boolean",
           "default": false,
@@ -190,6 +217,31 @@
           "minimum": 0.01,
           "maximum": 1.0,
           "description": "Fraction of off-peak MAX_WORKERS allowed during peak hours (0.2 = 20%). Result is rounded up, minimum 1. Env: AIDEVOPS_PEAK_HOURS_WORKER_FRACTION"
+        }
+      },
+      "additionalProperties": false
+    },
+
+    "foss": {
+      "type": "object",
+      "description": "FOSS contribution budget and concurrency controls.",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "default": false,
+          "description": "Enable FOSS contribution activity. Env: AIDEVOPS_FOSS_ENABLED"
+        },
+        "max_daily_tokens": {
+          "type": "integer",
+          "default": 200000,
+          "minimum": 0,
+          "description": "Daily token ceiling across all FOSS repositories. Env: AIDEVOPS_FOSS_MAX_DAILY_TOKENS"
+        },
+        "max_concurrent_contributions": {
+          "type": "integer",
+          "default": 2,
+          "minimum": 1,
+          "description": "Maximum simultaneous FOSS contribution workers. Env: AIDEVOPS_FOSS_MAX_CONCURRENT"
         }
       },
       "additionalProperties": false
