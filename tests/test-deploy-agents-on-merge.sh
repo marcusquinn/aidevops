@@ -142,6 +142,31 @@ set -e
 assert_eq "$changed_status" "0" "Changed script deploy exits with status 0"
 assert_contains "$changed_output" "using fast scripts-only deploy" "Changed script deploy selects scripts-only path"
 
+# Test 4: Full deploy must isolate immutable session pins from setup.sh
+TEST_REPO_FULL="$TMP_DIR/repo-full"
+create_base_repo "$TEST_REPO_FULL"
+cat >"$TEST_REPO_FULL/setup.sh" <<'EOF'
+#!/usr/bin/env bash
+[[ -z "${AIDEVOPS_AGENTS_DIR+x}" && -z "${AGENTS_DIR+x}" ]]
+EOF
+chmod +x "$TEST_REPO_FULL/setup.sh"
+
+set +e
+full_output="$(HOME="$TMP_DIR/home" AIDEVOPS_AGENTS_DIR="$TMP_DIR/home/.aidevops/runtime-bundles/old/agents" AGENTS_DIR="$TMP_DIR/home/.aidevops/runtime-bundles/old/agents" run_script "$TEST_REPO_FULL" --full)"
+full_status=$?
+set -e
+
+assert_eq "$full_status" "0" "Full deploy unsets inherited runtime pins"
+
+# Test 5: Invalid stable HOME fails before setup mutation
+set +e
+invalid_home_output="$(HOME='' AIDEVOPS_AGENTS_DIR="/tmp/runtime-bundles/old/agents" run_script "$TEST_REPO_FULL" --full)"
+invalid_home_status=$?
+set -e
+
+assert_eq "$invalid_home_status" "1" "Full deploy rejects an empty HOME"
+assert_contains "$invalid_home_output" "stable agents target" "Invalid HOME reports stable-target failure"
+
 printf "\nRan %d tests, %d failed.\n" "$TOTAL_COUNT" "$FAIL_COUNT"
 
 if [[ "$FAIL_COUNT" -ne 0 ]]; then
