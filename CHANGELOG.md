@@ -10,6 +10,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.32.73] - 2026-07-12
+
+### Changed
+
+- Tests: isolate pre-edit fixtures from git guard (#27422)
+- Tests: bypass git guard for session title fixture (#27420)
+
 ## [3.32.72] - 2026-07-12
 
 ### Changed
