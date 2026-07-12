@@ -28,28 +28,9 @@ def _analyze_curl(argv: list[str], result: dict[str, Any]) -> None:
         "--dns-ipv6-addr",
     }
     destination_options = {"--url", "--proxy", "--preproxy"}
-    short_value_options = {
-        "-A",
-        "-b",
-        "-c",
-        "-d",
-        "-D",
-        "-e",
-        "-E",
-        "-F",
-        "-H",
-        "-K",
-        "-m",
-        "-o",
-        "-Q",
-        "-r",
-        "-T",
-        "-u",
-        "-w",
-        "-X",
-        "-Y",
-        "-z",
-    }
+    short_value_options = set(
+        "-A -b -c -d -D -e -E -F -H -K -m -o -Q -r -T -u -w -X -Y -z".split()
+    )
     index = 1
     while index < len(argv):
         special_index = _curl_destination_option(argv, index, result, destination_options)
