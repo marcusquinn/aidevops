@@ -17,6 +17,8 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 source "${SCRIPT_DIR}/shared-constants.sh"
 source "${SCRIPT_DIR}/shared-claim-lifecycle.sh"
+# shellcheck source=./dependency-event-reconciler.sh
+source "${SCRIPT_DIR}/dependency-event-reconciler.sh"
 
 readonly SCRIPT_DIR
 readonly STATE_DIR=".agents/loop-state"

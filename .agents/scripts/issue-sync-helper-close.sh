@@ -32,6 +32,8 @@ if [[ -z "${SCRIPT_DIR:-}" ]]; then
 	SCRIPT_DIR="$(cd "$_lib_path" && pwd)"
 	unset _lib_path
 fi
+# shellcheck source=./dependency-event-reconciler.sh
+source "${SCRIPT_DIR}/dependency-event-reconciler.sh"
 
 # =============================================================================
 # Close Helpers
@@ -354,6 +356,7 @@ _do_close() {
 		fi
 		_mark_issue_done "$repo" "$issue_number"
 		_mark_todo_done "$task_id" "$todo_file"
+		reconcile_dependants_after_verified_closure "$repo" "$issue_number" || true
 		print_success "Closed #$issue_number ($task_id)"
 	else
 		print_error "Failed to close #$issue_number ($task_id)"

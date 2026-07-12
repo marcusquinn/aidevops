@@ -724,7 +724,9 @@ _handle_post_merge_actions() {
 			esac
 			set_solved_label "$linked_issue" "$repo_slug" "$_solved_actor" || true
 			clear_terminal_issue_dispatch_labels "$linked_issue" "$repo_slug" "post-merge-pr-${pr_number}" || true
-			_gh_with_timeout write gh issue close "$linked_issue" --repo "$repo_slug" 2>/dev/null || true
+			if _gh_with_timeout write gh issue close "$linked_issue" --repo "$repo_slug" 2>/dev/null; then
+				reconcile_dependants_after_verified_closure "$repo_slug" "$linked_issue" || true
+			fi
 			# Reset fast-fail counter now that the issue is resolved (GH#2076)
 			fast_fail_reset "$linked_issue" "$repo_slug" || true
 			# t1934: Unlock the issue (locked at dispatch time)
@@ -764,7 +766,9 @@ _handle_post_merge_actions() {
 				esac
 				set_solved_label "$_superseded_original_issue" "$repo_slug" "$_sup_solved_actor" || true
 				clear_terminal_issue_dispatch_labels "$_superseded_original_issue" "$repo_slug" "post-merge-superseded-pr-${pr_number}" || true
-				_gh_with_timeout write gh issue close "$_superseded_original_issue" --repo "$repo_slug" 2>/dev/null || true
+				if _gh_with_timeout write gh issue close "$_superseded_original_issue" --repo "$repo_slug" 2>/dev/null; then
+					reconcile_dependants_after_verified_closure "$repo_slug" "$_superseded_original_issue" || true
+				fi
 				fast_fail_reset "$_superseded_original_issue" "$repo_slug" || true
 				unlock_issue_after_worker "$_superseded_original_issue" "$repo_slug"
 			fi
