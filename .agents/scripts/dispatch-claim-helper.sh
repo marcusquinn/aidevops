@@ -49,6 +49,8 @@ DISPATCH_CLAIM_MAX_AGE="${DISPATCH_CLAIM_MAX_AGE:-1800}"
 # issue still has no assignee and no later "Dispatching worker" comment, treat
 # it as a pre-launch orphan instead of blocking retries for the full TTL.
 DISPATCH_CLAIM_ORPHAN_GRACE="${DISPATCH_CLAIM_ORPHAN_GRACE:-120}"
+DISPATCH_READY_LEASE_TTL="${DISPATCH_READY_LEASE_TTL:-7200}"
+AIDEVOPS_DEVICE_ID_FILE="${AIDEVOPS_DEVICE_ID_FILE:-${HOME}/.aidevops/state/device-id}"
 
 # Number of issue comments to request per GitHub REST page when reading claim
 # markers. GitHub defaults to the oldest 30 comments, which misses fresh claims
@@ -63,6 +65,15 @@ DISPATCH_CLAIM_SELF_RECLAIM_AGE="${DISPATCH_CLAIM_SELF_RECLAIM_AGE:-30}"
 # Claim comment marker — used as both the posting format and the search pattern.
 # Plain text format: visible in rendered GitHub issue view.
 CLAIM_MARKER="DISPATCH_CLAIM"
+LEGACY_DEVICE_MARKER="legacy"
+JSON_NULL_MARKER="null"
+
+_issue_comments_endpoint() {
+	local repo_slug="$1"
+	local issue_number="$2"
+	printf 'repos/%s/issues/%s/comments' "$repo_slug" "$issue_number"
+	return 0
+}
 
 # t2399/t2401: Runtime override for cross-runner dispatch coordination.
 #
@@ -161,6 +172,25 @@ _now_utc() {
 #######################################
 _now_epoch() {
 	date -u '+%s'
+	return 0
+}
+
+_resolve_device_id() {
+	local device_id="${AIDEVOPS_DEVICE_ID:-}"
+	if [[ -n "$device_id" && ! "$device_id" =~ ^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$ ]]; then
+		printf 'Warning: invalid AIDEVOPS_DEVICE_ID ignored\n' >&2
+		device_id=""
+	fi
+	if [[ -z "$device_id" && -r "$AIDEVOPS_DEVICE_ID_FILE" ]]; then
+		device_id=$(tr -d '[:space:]' <"$AIDEVOPS_DEVICE_ID_FILE" 2>/dev/null || true)
+		[[ "$device_id" =~ ^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$ ]] || device_id=""
+	fi
+	if [[ -z "$device_id" ]]; then
+		device_id="device-$(_now_epoch)-$$-${RANDOM:-0}"
+		mkdir -p "${AIDEVOPS_DEVICE_ID_FILE%/*}" 2>/dev/null || true
+		(umask 077; printf '%s\n' "$device_id" >"$AIDEVOPS_DEVICE_ID_FILE") 2>/dev/null || true
+	fi
+	printf '%s' "$device_id"
 	return 0
 }
 
@@ -282,7 +312,11 @@ _post_claim() {
 		opencode_version="${opencode_version:-$AIDEVOPS_UNKNOWN_VERSION}"
 	fi
 
-	local machine_readable_part="${CLAIM_MARKER} nonce=${nonce} runner=${runner} ts=${ts} max_age_s=${DISPATCH_CLAIM_MAX_AGE} version=${version} opencode_version=${opencode_version}"
+	local device_id="" expires_at="" now_epoch=""
+	device_id=$(_resolve_device_id)
+	now_epoch=$(_now_epoch)
+	expires_at="$((now_epoch + DISPATCH_CLAIM_ORPHAN_GRACE))"
+	local machine_readable_part="${CLAIM_MARKER} nonce=${nonce} runner=${runner} ts=${ts} max_age_s=${DISPATCH_CLAIM_MAX_AGE} version=${version} opencode_version=${opencode_version} lease_token=${nonce} device=${device_id} session=issue-${issue_number} phase=prelaunch expires_at=${expires_at}"
 	if [[ -n "$reason_fields" ]]; then
 		machine_readable_part+=" ${reason_fields}"
 	fi
@@ -303,7 +337,7 @@ ${machine_readable_part}
 	local comment_id="" attempt=1 post_err_file="" post_error_summary=""
 	post_err_file=$(mktemp 2>/dev/null || _claim_post_error_fallback_path) || return 1
 	while [[ "$attempt" -le "$attempts" ]]; do
-		comment_id=$(gh api "repos/${repo_slug}/issues/${issue_number}/comments" \
+		comment_id=$(gh api "$(_issue_comments_endpoint "$repo_slug" "$issue_number")" \
 			--method POST \
 			--field body="$body" \
 			--jq '.id' 2>"$post_err_file") && break
@@ -322,7 +356,7 @@ ${machine_readable_part}
 		return 1
 	fi
 
-	if [[ -z "$comment_id" || "$comment_id" == "null" ]]; then
+	if [[ -z "$comment_id" || "$comment_id" == "$JSON_NULL_MARKER" ]]; then
 		echo "Error: claim comment posted but no ID returned" >&2
 		return 1
 	fi
@@ -357,15 +391,15 @@ _detect_stale_worker_takeover_reason() {
 		printf '%s' ""
 		return 0
 	}
-	comments_json=$(printf '%s' "$raw_comments" | jq -c '[ (
-		if (type == "array" and ((.[0]? | type) == "array")) then
+	comments_json=$(printf '%s' "$raw_comments" | jq -c --arg array_type array '[ (
+		if (type == $array_type and ((.[0]? | type) == $array_type)) then
 			.[]
 		else
 			.
 		end
 	)[] | {body_start: ((.body // "")[:300]), created_at: .created_at}]' 2>/dev/null) || comments_json="[]"
 
-	if [[ -z "$comments_json" || "$comments_json" == "null" || "$comments_json" == "[]" ]]; then
+	if [[ -z "$comments_json" || "$comments_json" == "$JSON_NULL_MARKER" || "$comments_json" == "[]" ]]; then
 		printf '%s' ""
 		return 0
 	fi
@@ -375,7 +409,7 @@ _detect_stale_worker_takeover_reason() {
 		[.[] | select((.body_start // "") | test("(^|\\n)Dispatching worker"))]
 		| sort_by(.created_at) | reverse | first // empty
 	' 2>/dev/null) || last_dispatch_json=""
-	if [[ -z "$last_dispatch_json" || "$last_dispatch_json" == "null" ]]; then
+	if [[ -z "$last_dispatch_json" || "$last_dispatch_json" == "$JSON_NULL_MARKER" ]]; then
 		printf '%s' ""
 		return 0
 	fi
@@ -465,16 +499,16 @@ _fetch_claim_marker_comments() {
 		return 1
 	}
 
-	printf '%s' "$raw_comments" | jq -c --arg marker "${CLAIM_MARKER}" '
+	printf '%s' "$raw_comments" | jq -c --arg marker "${CLAIM_MARKER}" --arg array_type array '
 		[ (
-			if (type == "array" and ((.[0]? | type) == "array")) then
+			if (type == $array_type and ((.[0]? | type) == $array_type)) then
 				.[]
 			else
 				.
 			end
 		)[]
-		| select((.body // "" | ascii_downcase) | (contains(($marker | ascii_downcase) + " nonce=") or contains("claim_released") or contains("dispatching worker")))
-		| {id: .id, body: .body, created_at: .created_at} ]
+		| select((.body // "" | ascii_downcase) | (contains(($marker | ascii_downcase) + " nonce=") or contains("dispatch_lease") or contains("claim_released") or contains("dispatching worker")))
+		| {id: .id, body: .body, created_at: .created_at, author: (.user.login // ""), author_association: (.author_association // "")} ]
 	' || {
 		echo "Error: failed to parse comments for #${issue_number} in ${repo_slug}" >&2
 		return 1
@@ -505,7 +539,7 @@ _fetch_claims() {
 	local comments_json
 	comments_json=$(_fetch_claim_marker_comments "$issue_number" "$repo_slug") || return 1
 
-	if [[ -z "$comments_json" || "$comments_json" == "null" || "$comments_json" == "[]" ]]; then
+	if [[ -z "$comments_json" || "$comments_json" == "$JSON_NULL_MARKER" || "$comments_json" == "[]" ]]; then
 		printf '[]'
 		return 0
 	fi
@@ -538,29 +572,9 @@ _fetch_claims() {
 	# t2401: version is an optional trailing field; legacy pre-t2401 claims
 	# lack it and parse as "unknown".
 	local parsed
-	parsed=$(printf '%s' "$claims_only" | jq -c --argjson now "$now_epoch" --argjson max_age "$DISPATCH_CLAIM_MAX_AGE" '
-		[.[] |
-			(.body | capture("nonce=(?<nonce>[^ ]+) runner=(?<runner>[^ ]+) ts=(?<ts>[^ ]+)(?: max_age_s=[^ ]+)?(?: version=(?<version>[^ ]+))?")) as $fields |
-			{
-				id: .id,
-				nonce: $fields.nonce,
-				runner: $fields.runner,
-				ts: $fields.ts,
-				version: ($fields.version // "unknown"),
-				created_at: .created_at,
-				created_epoch: (.created_at | fromdateiso8601? // 0)
-			}
-		] |
-		map(. + {age_seconds: ($now - .created_epoch)}) |
-		map(select(.age_seconds >= 0 and .age_seconds <= $max_age)) |
-		# t2422: Sort primarily by created_at (GitHub timestamp, 1-second
-		# granularity) with nonce as lexicographic tiebreaker. Two runners that
-		# post claims within the same wall-clock second need a deterministic
-		# winner that both observers agree on — nonce is UUID-uniform random,
-		# so lex order is effectively a fair coin flip that is stable across
-		# any runner reading the same comment list.
-		sort_by([.created_at, .nonce])
-	' 2>/dev/null) || {
+	parsed=$(printf '%s' "$claims_only" | jq -c --argjson now "$now_epoch" \
+		--argjson max_age "$DISPATCH_CLAIM_MAX_AGE" --argjson comments "$comments_json" \
+		-f "${DISPATCH_CLAIM_HELPER_DIR}/dispatch-lease-claims.jq" 2>/dev/null) || {
 		echo "Error: failed to parse claim comments" >&2
 		return 1
 	}
@@ -641,7 +655,7 @@ _filter_claims_with_launch_evidence() {
 			| select((.created_at // "") > ($claim.created_at // ""))
 			| select((.body // "" | ascii_downcase) | contains("dispatching worker"))
 		  ] | length) as $launch_count
-		| select((.age_seconds // 0) <= $orphan_grace or $launch_count > 0)
+		| select(.lease_phase == "ready" or (.age_seconds // 0) <= $orphan_grace or $launch_count > 0)
 		]
 		| sort_by([.created_at, .nonce])
 	' 2>/dev/null || printf '%s' "$parsed_claims"
@@ -663,7 +677,7 @@ _post_orphan_claim_release() {
 	body="<!-- ops:start — workers: skip this comment, it is audit trail not implementation context -->
 CLAIM_RELEASED reason=claim_only_no_worker runner=${runner} ts=$(_now_utc) removed_claims=${removed_count}
 <!-- ops:end -->"
-	gh api "repos/${repo_slug}/issues/${issue_number}/comments" \
+	gh api "$(_issue_comments_endpoint "$repo_slug" "$issue_number")" \
 		--method POST \
 		--field body="$body" >/dev/null 2>&1 || return 1
 	return 0
@@ -1069,6 +1083,45 @@ _guard_no_active_assignment_before_claim() {
 	esac
 }
 
+_resolve_claim_race_result() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local runner="$3"
+	local nonce="$4"
+	local comment_id="$5"
+	local claims="$6"
+	local claim_count=""
+	claim_count=$(printf '%s' "$claims" | jq 'length' 2>/dev/null) || claim_count=0
+	if [[ "$claim_count" -eq 0 ]]; then
+		echo "CLAIM_ERROR: no claims found after posting — proceeding (fail-open)" >&2
+		return 2
+	fi
+
+	local oldest_nonce oldest_runner oldest_age_seconds oldest_device our_device lease_expires_at now_epoch
+	oldest_nonce=$(printf '%s' "$claims" | jq -r '.[0].nonce // ""' 2>/dev/null) || oldest_nonce=""
+	oldest_runner=$(printf '%s' "$claims" | jq -r '.[0].runner // "unknown"' 2>/dev/null) || oldest_runner="unknown"
+	oldest_age_seconds=$(printf '%s' "$claims" | jq -r '.[0].age_seconds // 0' 2>/dev/null) || oldest_age_seconds=0
+	oldest_device=$(printf '%s' "$claims" | jq -r --arg fallback "$LEGACY_DEVICE_MARKER" '.[0].device // $fallback' 2>/dev/null) || oldest_device="$LEGACY_DEVICE_MARKER"
+	our_device=$(_resolve_device_id)
+	now_epoch=$(_now_epoch)
+	lease_expires_at="$((now_epoch + DISPATCH_CLAIM_ORPHAN_GRACE))"
+	if [[ "$oldest_nonce" == "$nonce" ]]; then
+		printf 'CLAIM_WON: runner=%s nonce=%s issue=#%s comment_id=%s lease_token=%s device=%s phase=prelaunch expires_at=%s\n' \
+			"$runner" "$nonce" "$issue_number" "$comment_id" "$nonce" "$our_device" "$lease_expires_at"
+		return 0
+	fi
+	if [[ "$oldest_runner" == "$runner" && ( "$oldest_device" == "$LEGACY_DEVICE_MARKER" || "$oldest_device" == "$our_device" ) && "$oldest_nonce" != "$nonce" ]]; then
+		printf 'CLAIM_STALE_SELF: runner=%s found own prior claim on issue #%s (age=%ss) — backing off (claim retained for audit)\n' \
+			"$runner" "$issue_number" "$oldest_age_seconds"
+		return 1
+	fi
+	_handle_close_window_loss "$issue_number" "$repo_slug" "$runner" "$nonce" \
+		"$oldest_runner" "$claims" || true
+	printf 'CLAIM_LOST: runner=%s lost to %s on issue #%s — backing off (both claims retained for audit)\n' \
+		"$runner" "$oldest_runner" "$issue_number"
+	return 1
+}
+
 #######################################
 # Attempt to claim an issue for dispatch.
 #
@@ -1144,51 +1197,39 @@ cmd_claim() {
 		return 2
 	}
 
-	local claim_count
-	claim_count=$(printf '%s' "$claims" | jq 'length' 2>/dev/null) || claim_count=0
+	_resolve_claim_race_result "$issue_number" "$repo_slug" "$runner" "$nonce" "$comment_id" "$claims"
+	return $?
+}
 
-	if [[ "$claim_count" -eq 0 ]]; then
-		# No claims found (including ours) — something went wrong, fail-open
-		echo "CLAIM_ERROR: no claims found after posting — proceeding (fail-open)" >&2
-		return 2
-	fi
-
-	# Step 4: Check if our claim is the oldest
-	local oldest_nonce oldest_runner oldest_age_seconds
-	oldest_nonce=$(printf '%s' "$claims" | jq -r '.[0].nonce // ""' 2>/dev/null) || oldest_nonce=""
-	oldest_runner=$(printf '%s' "$claims" | jq -r '.[0].runner // "unknown"' 2>/dev/null) || oldest_runner="unknown"
-	oldest_age_seconds=$(printf '%s' "$claims" | jq -r '.[0].age_seconds // 0' 2>/dev/null) || oldest_age_seconds=0
-
-	if [[ "$oldest_nonce" == "$nonce" ]]; then
-		# We won — our claim is the oldest
-		printf 'CLAIM_WON: runner=%s nonce=%s issue=#%s comment_id=%s\n' \
-			"$runner" "$nonce" "$issue_number" "$comment_id"
-		return 0
-	fi
-
-	# GH#17503: Claim comments are NEVER deleted — they form the audit trail
-	# of every dispatch attempt. The claim TTL (DISPATCH_CLAIM_MAX_AGE=1800s)
-	# controls how long a claim blocks re-dispatch; after expiry the comment
-	# stays but no longer locks the issue.
-	#
-	# Same-runner stale claim: another claim from this runner already exists.
-	# The existing claim is still blocking (within TTL), so back off.
-	if [[ "$oldest_runner" == "$runner" && "$oldest_nonce" != "$nonce" ]]; then
-		printf 'CLAIM_STALE_SELF: runner=%s found own prior claim on issue #%s (age=%ss) — backing off (claim retained for audit)\n' \
-			"$runner" "$issue_number" "$oldest_age_seconds"
+cmd_transition() {
+	local phase="${1:-}" issue_number="${2:-}" repo_slug="${3:-}" lease_token="${4:-}" session_key="${5:-}"
+	local ttl="${6:-$DISPATCH_READY_LEASE_TTL}"
+	case "$phase" in ready | terminal) ;; *) echo "Error: transition phase must be ready or terminal" >&2; return 1 ;; esac
+	[[ "$issue_number" =~ ^[0-9]+$ && -n "$repo_slug" && -n "$lease_token" ]] || return 1
+	[[ "$ttl" =~ ^[0-9]+$ ]] || ttl="$DISPATCH_READY_LEASE_TTL"
+	local active_claims="" current_phase="" claim_record="" claim_author="" claim_device="" claim_session="" current_login="" current_device=""
+	active_claims=$(_fetch_claims "$issue_number" "$repo_slug") || return 1
+	claim_record=$(printf '%s' "$active_claims" | jq -c --arg token "$lease_token" '[.[] | select(.lease_token == $token)] | last // empty' 2>/dev/null) || claim_record=""
+	current_phase=$(printf '%s' "$claim_record" | jq -r '.lease_phase // ""' 2>/dev/null) || current_phase=""
+	[[ -n "$current_phase" ]] || return 1
+	claim_author=$(printf '%s' "$claim_record" | jq -r '.claim_author // ""') || return 1
+	claim_device=$(printf '%s' "$claim_record" | jq -r '.device // ""') || return 1
+	claim_session=$(printf '%s' "$claim_record" | jq -r '.session // ""') || return 1
+	current_login=$(_resolve_runner "") || return 1
+	current_device=$(_resolve_device_id)
+	[[ -n "$claim_author" && "$current_login" == "$claim_author" ]] || return 1
+	[[ "$current_device" == "$claim_device" && "${session_key:-issue-${issue_number}}" == "$claim_session" ]] || return 1
+	if [[ "$phase" == "ready" && "$current_phase" != "prelaunch" ]]; then
 		return 1
 	fi
-
-	# Step 5: We lost — another runner's claim is older.
-	# t2422: If this was a close-window race (delta <= DISPATCH_TIEBREAKER_WINDOW),
-	# _handle_close_window_loss emits a CLAIM_DEFERRED audit comment.
-	_handle_close_window_loss "$issue_number" "$repo_slug" "$runner" "$nonce" \
-		"$oldest_runner" "$claims" || true
-
-	printf 'CLAIM_LOST: runner=%s lost to %s on issue #%s — backing off (both claims retained for audit)\n' \
-		"$runner" "$oldest_runner" "$issue_number"
-
-	return 1
+	local expires_at="0" now_epoch="" body=""
+	now_epoch=$(_now_epoch)
+	[[ "$phase" == "terminal" ]] || expires_at="$((now_epoch + ttl))"
+	body="<!-- ops:start — workers: skip this comment, it is audit trail not implementation context -->
+DISPATCH_LEASE phase=${phase} lease_token=${lease_token} device=$(_resolve_device_id) session=${session_key:-issue-${issue_number}} expires_at=${expires_at} ts=$(_now_utc)
+<!-- ops:end -->"
+	gh api "$(_issue_comments_endpoint "$repo_slug" "$issue_number")" --method POST --field body="$body" >/dev/null 2>&1 || return 1
+	return 0
 }
 
 #######################################
@@ -1359,6 +1400,9 @@ main() {
 		;;
 	check)
 		cmd_check "$@"
+		;;
+	transition)
+		cmd_transition "$@"
 		;;
 	help | --help | -h)
 		show_help

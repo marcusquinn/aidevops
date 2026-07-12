@@ -1349,6 +1349,9 @@ _register_dispatch_ledger() {
 	fi
 
 	local ledger_args=(register --session-key "$ledger_session_key" --pid "$$")
+	if [[ -n "${AIDEVOPS_DISPATCH_LEASE_TOKEN:-}" ]]; then
+		ledger_args+=(--lease-token "$AIDEVOPS_DISPATCH_LEASE_TOKEN" --device-id "${AIDEVOPS_DISPATCH_LEASE_DEVICE:-}")
+	fi
 	[[ -n "$ledger_issue" ]] && ledger_args+=(--issue "$ledger_issue")
 	[[ -n "$ledger_repo" ]] && ledger_args+=(--repo "$ledger_repo")
 	[[ -n "$ledger_work_dir" ]] && ledger_args+=(--worktree "$ledger_work_dir")
@@ -1365,7 +1368,9 @@ _update_dispatch_ledger() {
 
 	[[ -x "$DISPATCH_LEDGER_HELPER" ]] || return 0
 
-	"$DISPATCH_LEDGER_HELPER" "$ledger_status" --session-key "$ledger_session_key" 2>/dev/null || true
+	local -a ledger_args=("$ledger_status" --session-key "$ledger_session_key")
+	[[ -n "${AIDEVOPS_DISPATCH_LEASE_TOKEN:-}" ]] && ledger_args+=(--lease-token "$AIDEVOPS_DISPATCH_LEASE_TOKEN")
+	"$DISPATCH_LEDGER_HELPER" "${ledger_args[@]}" 2>/dev/null || true
 	return 0
 }
 

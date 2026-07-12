@@ -1515,6 +1515,8 @@ _dlw_nohup_launch() {
 		WORKER_ISSUE_NUMBER="$issue_number"
 		WORKER_REPO_SLUG="$repo_slug"
 		WORKER_GITHUB_LOGIN="$self_login"
+		AIDEVOPS_DISPATCH_LEASE_TOKEN="${_claim_lease_token:-}"
+		AIDEVOPS_DISPATCH_LEASE_DEVICE="${_claim_lease_device:-}"
 		AIDEVOPS_ALLOW_WORKER_WORKTREE_OWNER_TRANSFER=1
 	)
 	if _dlw_min_worker_floor_active; then
@@ -1606,7 +1608,8 @@ _dlw_post_launch_hooks() {
 		"$ledger_helper" register --session-key "$session_key" \
 			--issue "$issue_number" --repo "$repo_slug" \
 			--pid "$worker_pid" --tier "$dispatch_tier" \
-			--model "$selected_model" 2>/dev/null || true
+			--model "$selected_model" --lease-token "${_claim_lease_token:-}" \
+			--device-id "${_claim_lease_device:-}" 2>/dev/null || true
 	fi
 
 	local dispatch_comment_body
