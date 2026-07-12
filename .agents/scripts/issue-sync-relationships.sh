@@ -103,7 +103,7 @@ _cached_node_id() {
 	# Uses the same core-pool 5000/hr budget that the t2574 write-path fallbacks use.
 	if _rest_should_fallback; then
 		local rest_nid
-		rest_nid=$(gh api "/repos/${repo}/issues/${num}" --jq '.node_id // ""' 2>/dev/null || echo "")
+		rest_nid=$(_gh_with_timeout read gh api "/repos/${repo}/issues/${num}" --jq '.node_id // ""' 2>/dev/null || echo "")
 		if [[ -n "$rest_nid" ]]; then
 			echo "${num}=${rest_nid}" >>"$_NODE_ID_CACHE_FILE"
 			echo "$rest_nid"
@@ -125,7 +125,7 @@ _cached_node_id() {
 _gh_add_blocked_by() {
 	local blocked_id="$1" blocking_id="$2"
 	local result
-	result=$(gh api graphql -f query='
+	result=$(_gh_with_timeout write gh api graphql -f query='
 mutation($blocked:ID!,$blocking:ID!) {
   addBlockedBy(input: {issueId:$blocked, blockingIssueId:$blocking}) {
     issue { number }
@@ -151,7 +151,7 @@ _gh_native_blocked_by_contains() {
 	local blocked_id="$1"
 	local blocking_id="$2"
 	local payload="" has_next="" contains=""
-	payload=$(gh api graphql -f query='
+	payload=$(_gh_with_timeout read gh api graphql -f query='
 query($blocked:ID!) {
   node(id:$blocked) {
     ... on Issue {
@@ -179,7 +179,7 @@ _gh_remove_blocked_by() {
 		1) return 0 ;;
 		2) return 1 ;;
 	esac
-	result=$(gh api graphql -f query='
+	result=$(_gh_with_timeout write gh api graphql -f query='
 mutation($blocked:ID!,$blocking:ID!) {
   removeBlockedBy(input: {issueId:$blocked, blockingIssueId:$blocking}) {
     issue { number }
@@ -221,25 +221,25 @@ _hold_dependency_sync_retry() {
 	local current_labels=""
 
 	[[ "$issue_num" =~ ^[0-9]+$ && "$repo" == */* ]] || return 1
-	current_labels=$(gh issue view "$issue_num" --repo "$repo" \
+	current_labels=$(_gh_with_timeout read gh issue view "$issue_num" --repo "$repo" \
 		--json labels --jq '[.labels[].name] | join(",")' 2>/dev/null) || {
 		log_verbose "$issue_num: dependency_relationship_sync_retryable reason=${reason}_status_read_failed"
 		return 1
 	}
 	[[ ",${current_labels}," == *",status:available,"* ]] || return 0
 	_dependency_sync_has_active_status "$current_labels" && return 0
-	if ! gh issue edit "$issue_num" --repo "$repo" \
+	if ! _gh_with_timeout write gh issue edit "$issue_num" --repo "$repo" \
 		--remove-label "status:available" --add-label "status:blocked" >/dev/null 2>&1; then
 		log_verbose "$issue_num: dependency_relationship_sync_retryable reason=${reason}_status_write_failed"
 		return 1
 	fi
 	# A dispatcher may have advanced state between the read and edit. Repair any
 	# resulting sibling conflict immediately; active lifecycle state wins.
-	current_labels=$(gh issue view "$issue_num" --repo "$repo" \
+	current_labels=$(_gh_with_timeout read gh issue view "$issue_num" --repo "$repo" \
 		--json labels --jq '[.labels[].name] | join(",")' 2>/dev/null) || current_labels=""
 	if _dependency_sync_has_active_status "$current_labels" && \
 		[[ ",${current_labels}," == *",status:blocked,"* ]]; then
-		gh issue edit "$issue_num" --repo "$repo" --remove-label "status:blocked" >/dev/null 2>&1 || true
+		_gh_with_timeout write gh issue edit "$issue_num" --repo "$repo" --remove-label "status:blocked" >/dev/null 2>&1 || true
 	fi
 	log_verbose "$issue_num: dependency_relationship_sync_retryable reason=${reason}"
 	return 0
@@ -354,7 +354,7 @@ _dependency_cycle_should_skip_edge() {
 _gh_add_sub_issue() {
 	local parent_id="$1" child_id="$2"
 	local result
-	result=$(gh api graphql -f query='
+	result=$(_gh_with_timeout write gh api graphql -f query='
 mutation($parent:ID!,$child:ID!) {
   addSubIssue(input: {issueId:$parent, subIssueId:$child}) {
     issue { number }
@@ -798,7 +798,7 @@ _issue_has_parent_task_label() {
 	[[ -z "$num" || -z "$repo" ]] && return 1
 
 	local has
-	has=$(gh issue view "$num" --repo "$repo" --json labels \
+	has=$(_gh_with_timeout read gh issue view "$num" --repo "$repo" --json labels \
 		--jq '[.labels[].name] | any(. == "parent-task")' 2>/dev/null || echo "${REL_FALSE}")
 	[[ "$has" == "true" ]] && return 0
 	return 1
@@ -916,7 +916,7 @@ _backfill_one_issue() {
 		body="$prefetched_body"
 	else
 		local meta
-		meta=$(gh issue view "$num" --repo "$repo" --json title,body 2>/dev/null || echo "{}")
+		meta=$(_gh_with_timeout read gh issue view "$num" --repo "$repo" --json title,body 2>/dev/null || echo "{}")
 		title=$(printf '%s' "$meta" | jq -r '.title // ""' 2>/dev/null)
 		body=$(printf '%s' "$meta" | jq -r '.body // ""' 2>/dev/null)
 	fi
@@ -1164,7 +1164,7 @@ _backfill_fetch_issue_numbers() {
 		print_error "backfill-sub-issues: mktemp failed"
 		return 1
 	}
-	list_json=$(gh issue list --repo "$repo" --state open --limit 500 \
+	list_json=$(_gh_with_timeout read gh issue list --repo "$repo" --state open --limit 500 \
 		--json number 2>"$list_err")
 	list_rc=$?
 	if [[ "$list_rc" -ne 0 ]]; then
@@ -1217,7 +1217,7 @@ _backfill_process_loop() {
 
 		# Pre-fetch issue data (title, body, labels) for routing (GH#19942).
 		# A single API call per issue avoids double-fetch in both paths.
-		meta=$(gh issue view "$_num" --repo "$repo" --json title,body,labels 2>/dev/null || echo "{}")
+		meta=$(_gh_with_timeout read gh issue view "$_num" --repo "$repo" --json title,body,labels 2>/dev/null || echo "{}")
 		_title=$(printf '%s' "$meta" | jq -r '.title // ""' 2>/dev/null)
 		_body=$(printf '%s' "$meta" | jq -r '.body // ""' 2>/dev/null)
 		_has_parent=$(printf '%s' "$meta" | jq -r '[.labels[].name] | any(. == "parent-task")' 2>/dev/null || echo "${REL_FALSE}")
@@ -1526,7 +1526,7 @@ cmd_backfill_cross_phase_blocked_by() {
 
 	# Fetch the parent issue body
 	local body
-	body=$(gh issue view "$target_issue" --repo "$repo" \
+	body=$(_gh_with_timeout read gh issue view "$target_issue" --repo "$repo" \
 		--json body --jq '.body // ""' 2>/dev/null) || body=""
 
 	if [[ -z "$body" ]]; then
