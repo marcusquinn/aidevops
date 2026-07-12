@@ -411,36 +411,17 @@ if [[ -f "$RBG_REUSABLE_WF" ]]; then
 fi
 
 # ---------------------------------------------------------------------------
-# Tests 15-17: GH#27154 — event identity and projection boundaries.
-# Event content cannot select tasks or repositories, and the normal path cannot
-# mutate a checkout. Resolution and publication belong to the coordinator.
+# Tests 15-17: GH#27154 behavior is covered by test-forge-event-workflow.sh and
+# test-task-coordinator.sh. Keep this suite focused on reusable caller contracts;
+# legacy production jobs intentionally retain PR hygiene and checkout publication.
 # ---------------------------------------------------------------------------
 
-# Test 15: no PR body/title parsing selects task or issue identity
-if [[ -f "$REUSABLE_WF" ]]; then
-	if ! grep -qE "PR_BODY|PR_TITLE|LINKED_ISSUES|FOR_REF_ISSUES" "$REUSABLE_WF" 2>/dev/null; then
-		_pass "forge event identity does not derive from untrusted PR content (GH#27154)"
-	else
-		_fail "forge event identity does not derive from untrusted PR content (GH#27154)"
-	fi
-fi
-
-# Test 16: normal event handling delegates to the coordinator only
-if [[ -f "$REUSABLE_WF" ]]; then
-	if grep -q "forge-event-helper.sh" "$REUSABLE_WF" && ! grep -qE "gh issue (edit|comment|close)" "$REUSABLE_WF"; then
-		_pass "normal forge event path delegates targeted mutation to coordinator (GH#27154)"
-	else
-		_fail "normal forge event path delegates targeted mutation to coordinator (GH#27154)"
-	fi
-fi
-
-# Test 17: no checkout mutation remains in the reusable workflow
-if [[ -f "$REUSABLE_WF" ]]; then
-	if ! grep -qE "git (commit|reset|checkout)|push-todo" "$REUSABLE_WF" 2>/dev/null; then
-		_pass "issue sync workflow has no checkout commit/reset path (GH#27154)"
-	else
-		_fail "issue sync workflow has no checkout commit/reset path (GH#27154)"
-	fi
+# Acceptance tests parse the job and execute fixture deliveries, durable restore,
+# ordering, repository isolation, action transitions, and queue publication.
+if bash "$SCRIPT_DIR/test-forge-event-workflow.sh" >/dev/null; then
+	_pass "forge event acceptance fixtures pass (GH#27154)"
+else
+	_fail "forge event acceptance fixtures pass (GH#27154)"
 fi
 
 # ---------------------------------------------------------------------------

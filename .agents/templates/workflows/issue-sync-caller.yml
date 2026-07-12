@@ -42,11 +42,16 @@ on:
       command:
         description: 'Sync command to run'
         required: true
-        default: 'event'
+        default: 'status'
         type: choice
         options:
-          - event
+          - status
+          - pull
+          - push
+          - close
           - reconcile
+          - enrich
+          - event
           - audit
       subject_id:
         description: 'Immutable forge node ID (manual event only)'
@@ -54,6 +59,10 @@ on:
         type: string
       cursor:
         description: 'RFC3339 event cursor (manual event only)'
+        required: false
+        type: string
+      task_id:
+        description: 'Explicit trusted task ID (manual event only)'
         required: false
         type: string
 
@@ -71,3 +80,4 @@ jobs:
       command: ${{ inputs.command || '' }}
       subject_id: ${{ inputs.subject_id || '' }}
       cursor: ${{ inputs.cursor || '' }}
+      task_id: ${{ inputs.task_id || '' }}
