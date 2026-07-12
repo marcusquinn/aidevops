@@ -46,6 +46,21 @@ assert_contains() {
 	return 0
 }
 
+assert_not_contains() {
+	local label="$1"
+	local needle="$2"
+	local haystack="$3"
+	TESTS_RUN=$((TESTS_RUN + 1))
+	if printf '%s' "$haystack" | grep -qF -- "$needle" 2>/dev/null; then
+		TESTS_FAILED=$((TESTS_FAILED + 1))
+		echo "${TEST_RED}FAIL${TEST_NC}: $label"
+		echo "  expected not to find: $(printf '%q' "$needle")"
+	else
+		echo "${TEST_GREEN}PASS${TEST_NC}: $label"
+	fi
+	return 0
+}
+
 write_stub_qlty() {
 	local mode="$1" bin_dir="$2"
 	mkdir -p "$bin_dir"
@@ -168,6 +183,10 @@ assert_contains "location-less SARIF still emits remediation evidence" \
 	"$missing_location_output"
 assert_contains "remediation evidence keeps located file attribution" '"files":[{"file":"a.py","count":1}]' "$missing_location_output"
 assert_contains "remediation evidence omits missing rule identifiers" '"rules":[{"rule":"file-complexity","count":1},{"rule":"global-complexity","count":1}]' "$missing_location_output"
+assert_contains "console breakdown keeps located file attribution" $'  1\ta.py' "$missing_location_output"
+assert_contains "console breakdown keeps available rule identifiers" $'  1\tglobal-complexity' "$missing_location_output"
+assert_not_contains "console breakdown omits missing values" $'\tnull' "$missing_location_output"
+assert_not_contains "console breakdown does not emit jq errors" "jq: error" "$missing_location_output"
 
 echo ""
 if [[ "$TESTS_FAILED" -eq 0 ]]; then
