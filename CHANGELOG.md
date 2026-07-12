@@ -10,6 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.32.43] - 2026-07-12
+
+### Fixed
+
+- bound cross-runner worker retries (#27301)
+
 ## [3.32.42] - 2026-07-12
 
 ### Changed
