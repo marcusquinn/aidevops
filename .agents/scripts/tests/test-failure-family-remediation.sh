@@ -110,14 +110,14 @@ WRAPPERS
 	gh() {
 		if [[ "$1 $2" == "issue list" && "$*" == *"failure-family-state:start"* ]]; then
 			if [[ -s "$TEST_ISSUE_BODY" ]]; then
-				jq -n --rawfile body "$TEST_ISSUE_BODY" '[{number:42,body:$body,createdAt:"2000-01-01T00:00:00Z",url:"https://example.invalid/42"}]'
+				jq -n --rawfile body "$TEST_ISSUE_BODY" '[{number:42,body:$body,createdAt:"2000-01-01T00:00:00Z",url:"fixture-url"}]'
 			else
 				printf '[]\n'
 			fi
 			return 0
 		fi
 		if [[ "$1 $2" == "issue list" ]]; then
-			[[ -s "$TEST_CREATED" ]] && printf '[{"number":42,"url":"https://example.invalid/42"}]\n' || printf '[]\n'
+			[[ -s "$TEST_CREATED" ]] && printf '[{"number":42,"url":"fixture-url"}]\n' || printf '[]\n'
 			return 0
 		fi
 		if [[ "$1" == "api" && "$2" == *"/issues/42" ]]; then
