@@ -1329,6 +1329,10 @@ _SC_SELF="${BASH_SOURCE[0]:-${0:-}}"
 # shellcheck disable=SC1091  # sub-library resolved at runtime via _SC_SELF
 _source_shared_module_with_retry "${_SC_SELF%/*}/shared-todo-commit.sh"
 
+# Managed session/worker temporary workspace.
+# shellcheck source=./shared-temp-workspace.sh
+_source_shared_module_with_retry "${_SC_SELF%/*}/shared-temp-workspace.sh"
+
 # =============================================================================
 # Worktree Ownership Registry (t189) — extracted module
 # =============================================================================

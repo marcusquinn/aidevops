@@ -157,6 +157,11 @@ _isc_cmd_claim() {
 		return 2
 	fi
 
+	if [[ "${AIDEVOPS_INTERACTIVE_ISSUE_IMPLEMENTATION:-0}" == "1" && $implementing -eq 0 ]]; then
+		_isc_err "claim: interactive issue implementation requires --implementing; refusing worker-claim routing"
+		return 2
+	fi
+
 	local user
 	if ! user=$(_isc_resolve_manageable_user "claim" "$issue" "$slug" \
 		"gh offline or not authenticated — skipping claim on #$issue ($slug)" \

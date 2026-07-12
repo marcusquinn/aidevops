@@ -4,7 +4,7 @@
 
 [[ -n "${_DEPENDENCY_EVENT_RECONCILER_LOADED:-}" ]] && return 0
 _DEPENDENCY_EVENT_RECONCILER_LOADED=1
-DER_SEARCH_QUOTE='"'
+DER_SEARCH_QUOTE=$(printf '\042')
 DER_STATE_CLOSED="CLOSED"
 
 _der_dir="${BASH_SOURCE[0]%/*}"
@@ -44,6 +44,12 @@ _der_labels_has() {
 	local labels="$1"
 	local expected="$2"
 	[[ ",${labels}," == *",${expected},"* ]]
+	return $?
+}
+
+_der_json_pages_valid() {
+	local pages="$1"
+	printf '%s' "$pages" | jq -e 'type == "array" and all(.[]; type == "array")' >/dev/null 2>&1
 	return $?
 }
 
@@ -266,7 +272,7 @@ _der_try_unblock() {
 	_der_labels_has "$labels" status:blocked || return 0
 	_der_has_active_status "$labels" && return 0
 	comments_json=$(gh api --paginate --slurp "repos/${repo}/issues/${issue_number}/comments?per_page=100" 2>/dev/null) || return 1
-	printf '%s' "$comments_json" | jq -e 'type == "array" and all(.[]; type == "array")' >/dev/null 2>&1 || return 1
+	_der_json_pages_valid "$comments_json" || return 1
 	comments=$(printf '%s' "$comments_json" | jq -r '.[][] | .body // ""' 2>/dev/null) || return 1
 	_der_has_hold "$body" "$comments" "$labels" && return 0
 	_der_native_blockers_closed "$repo" "$issue_number" || return 1
@@ -305,4 +311,34 @@ reconcile_dependants_after_verified_closure() {
 		_der_try_unblock "$repo" "$issue_number" "$candidate" || return 1
 	done <<<"$candidates"
 	return 0
+}
+
+# Periodically recover status:blocked issues whose close event was missed.
+# REST pagination is consumed in full, then bounded before any mutation.
+reconcile_stale_blocked_issues() {
+	local repo="$1"
+	local max_candidates="${DER_STALE_BLOCKED_MAX_CANDIDATES:-500}"
+	local pages candidates candidate issue_number
+	local total=0 reconciled=0 failed=0
+	[[ "$repo" == */* ]] || return 1
+	[[ "$max_candidates" =~ ^[1-9][0-9]*$ ]] || max_candidates=500
+	pages=$(gh api --paginate --slurp "repos/${repo}/issues?state=open&labels=status%3Ablocked&per_page=100" 2>/dev/null) || return 1
+	_der_json_pages_valid "$pages" || return 1
+	total=$(printf '%s' "$pages" | jq '[.[][] | select(.pull_request == null)] | length') || return 1
+	candidates=$(printf '%s' "$pages" | jq -c --arg repo "$repo" --argjson limit "$max_candidates" '[.[][] | select(.pull_request == null)][: $limit][] | {number,state,title,body,repository:{nameWithOwner:$repo},labels:{nodes:[.labels[] | {name:.name}],pageInfo:{hasNextPage:false}}}') || return 1
+	while IFS= read -r candidate; do
+		[[ -n "$candidate" ]] || continue
+		issue_number=$(printf '%s' "$candidate" | jq -r '.number') || {
+			failed=$((failed + 1))
+			continue
+		}
+		if _der_try_unblock "$repo" "$issue_number" "$candidate"; then
+			reconciled=$((reconciled + 1))
+		else
+			failed=$((failed + 1))
+		fi
+	done <<<"$candidates"
+	printf '[dependency-reconciler] stale sweep repo=%s candidates=%s checked=%s failed=%s batch_limit=%s remaining=%s\n' "$repo" "$total" "$reconciled" "$failed" "$max_candidates" "$((total > max_candidates ? total - max_candidates : 0))" >&2
+	[[ "$failed" -eq 0 ]]
+	return $?
 }

@@ -10,6 +10,7 @@
 # Usage:
 #   session-rename-helper.sh rename <session-id> <new-title>
 #   session-rename-helper.sh sync-branch [session-id]
+#   session-rename-helper.sh effective-title [session-id]
 #   session-rename-helper.sh list [--limit N]
 #   session-rename-helper.sh current
 #   session-rename-helper.sh help
@@ -17,6 +18,7 @@
 # Commands:
 #   rename <session-id> <title>   Rename a specific session by ID
 #   sync-branch [session-id]      Rename session to match current git branch
+#   effective-title [session-id]  Print the authoritative current session title
 #   list [--limit N]              List recent sessions (default: 10)
 #   current                       Show the most recent session ID and title
 #   help                          Show this help
@@ -322,6 +324,28 @@ cmd_sync_branch() {
 	return $?
 }
 
+# Print the authoritative title for the relevant OpenCode session.
+# Arguments:
+#   $1 - session ID (optional; defaults to current-directory session)
+# Returns: 0 on success, 1 on failure
+cmd_effective_title() {
+	local session_id="${1:-}"
+	_require_sqlite3 || return 1
+
+	local db_path
+	db_path="$(_get_db_path)" || return 1
+	session_id="$(_resolve_sync_session_id "$db_path" "$session_id")" || return 1
+
+	local escaped_session_id
+	escaped_session_id="$(_sql_escape "$session_id")"
+	local title
+	title="$(sqlite3 "$db_path" \
+		"SELECT COALESCE(title, '') FROM session WHERE id = '${escaped_session_id}';" 2>/dev/null || echo "")"
+	[[ -n "$title" ]] || return 1
+	printf '%s' "$title"
+	return 0
+}
+
 # List recent sessions from the database.
 # Arguments:
 #   --limit N   Number of sessions to show (default: 10)
@@ -404,6 +428,7 @@ main() {
 	case "$command" in
 	rename) cmd_rename "$@" ;;
 	sync-branch) cmd_sync_branch "$@" ;;
+	effective-title) cmd_effective_title "$@" ;;
 	list) cmd_list "$@" ;;
 	current) cmd_current ;;
 	help | -h | --help) cmd_help ;;

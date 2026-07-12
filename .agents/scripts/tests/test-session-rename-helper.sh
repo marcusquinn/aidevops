@@ -169,6 +169,10 @@ run_sync_on_branch "feature/auto-20260413-025423"
 rc=$?
 assert_exit "exit 0 preserve branch" "0" "$rc"
 assert_eq "meaningful title preserved" "investigating the session rename bug" "$(get_title)"
+assert_eq \
+	"effective title returns preserved title for terminal synchronization" \
+	"investigating the session rename bug" \
+	"$(cd "$REPO_DIR" && OPENCODE_DB="$DB_PATH" "$HELPER" effective-title "$SESSION_ID")"
 
 # Test 5: empty title gets renamed (initial sync still works)
 echo ""
