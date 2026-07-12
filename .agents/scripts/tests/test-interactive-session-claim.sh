@@ -840,6 +840,9 @@ fi
 # Test 23 — GH#21805: release on an OPEN issue applies status:available
 # (existing behaviour preserved).
 # =============================================================================
+export STUB_PERMISSION_FAIL=0
+export STUB_PERMISSION=admin
+export STUB_GH_MODE=online
 _isc_cmd_claim 70001 testowner/testrepo --worktree /tmp/wt-fake >/dev/null 2>&1
 : >"$STUB_LOG"
 export STUB_ISSUE_HAS_IN_REVIEW=1
@@ -879,6 +882,20 @@ fi
 
 # Reset stub state
 export STUB_ISSUE_HAS_IN_REVIEW=0
+
+# =============================================================================
+# Test 25 — issue-start marker fails closed without explicit takeover
+# =============================================================================
+marker_out=$(AIDEVOPS_INTERACTIVE_ISSUE_IMPLEMENTATION=1 \
+	_isc_cmd_claim 70003 testowner/testrepo --worktree /tmp/wt-fake 2>&1)
+marker_rc=$?
+
+if [[ $marker_rc -eq 2 ]] && printf '%s' "$marker_out" | grep -q 'requires --implementing'; then
+	print_result "issue-start marker rejects worker-style claim routing" 0
+else
+	print_result "issue-start marker rejects worker-style claim routing" 1 \
+		"(rc=$marker_rc, out=${marker_out:0:200})"
+fi
 
 # =============================================================================
 # Summary

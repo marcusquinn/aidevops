@@ -37,10 +37,12 @@ main() {
 		_usage >&2
 		return 2
 	fi
-	local claim_args=(claim "$issue" "$repo")
-	if [[ $auto_dispatch -eq 1 ]]; then
-		claim_args+=(--implementing)
-	fi
+	# Reaching this entrypoint means the issue is being implemented locally.
+	# Export the marker so asynchronous local children inherit that authority.
+	export AIDEVOPS_INTERACTIVE_ISSUE_IMPLEMENTATION=1
+	local claim_args=(claim "$issue" "$repo" --implementing)
+	# Retain --auto-dispatch for CLI compatibility; takeover is now unconditional.
+	: "$auto_dispatch"
 	interactive-session-helper.sh "${claim_args[@]}"
 	pre-edit-check.sh --loop-mode --task "$task"
 	full-loop-helper.sh start "GH#${issue} ${task}" --background
