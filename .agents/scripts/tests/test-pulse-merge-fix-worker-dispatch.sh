@@ -229,6 +229,7 @@ define_helpers_under_test() {
 		_ci_actionable_failed_checks_markdown
 		_ci_terminal_failed_check_results
 		_build_ci_feedback_section
+		_route_ci_repair_fallback
 		_dispatch_ci_fix_worker
 		_dispatch_pr_fix_worker
 	)

@@ -496,17 +496,33 @@ _dispatch_ci_fix_worker() {
 		return 0
 	fi
 
-	# Durable fallback is used only when branch repair is impossible. Include a
-	# stable reason and retry instruction so objective reconciliation has a next
-	# action rather than silently creating duplicate implementation work.
+	_route_ci_repair_fallback "$pr_number" "$repo_slug" "$linked_issue" "$pr_head_sha" \
+		"$pr_head_ref" "$failure_fingerprint" "$fallback_reason" "$feedback_section" "$failing_checks"
+	return 0
+}
+
+#######################################
+# Route terminal CI evidence back to the issue when in-place repair is impossible.
+#######################################
+_route_ci_repair_fallback() {
+	local pr_number="$1"
+	local repo_slug="$2"
+	local linked_issue="$3"
+	local pr_head_sha="$4"
+	local pr_head_ref="$5"
+	local failure_fingerprint="$6"
+	local fallback_reason="$7"
+	local feedback_section="$8"
+	local failing_checks="$9"
 	local marker="<!-- ci-feedback-fallback:PR${pr_number}:SHA${pr_head_sha:-unknown}:FP${failure_fingerprint} -->"
+	local current_body=""
+
 	gh label create "ci-feedback-routed" --repo "$repo_slug" --color "E4E669" \
 		--description "Worker PR with failing CI routed to linked issue for re-dispatch" \
 		--force >/dev/null 2>&1 || true
 	gh label create "source:ci-feedback" --repo "$repo_slug" --color "FEF2C0" \
 		--description "Issue carries CI failure feedback routed from a closed worker PR" \
 		--force >/dev/null 2>&1 || true
-	local current_body=""
 	current_body=$(gh issue view "$linked_issue" --repo "$repo_slug" \
 		--json body --jq '.body // ""' 2>/dev/null) || current_body=""
 	if [[ -n "$current_body" ]] && printf '%s' "$current_body" | grep -qF "$marker"; then

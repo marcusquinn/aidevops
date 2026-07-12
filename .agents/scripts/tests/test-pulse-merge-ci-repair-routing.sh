@@ -238,6 +238,7 @@ define_feedback_helpers() {
 		_transition_issue_for_redispatch
 		_close_and_label_feedback_pr
 		_dispatch_ci_repair_session
+		_route_ci_repair_fallback
 		_dispatch_ci_fix_worker
 	)
 	local fn fn_src
