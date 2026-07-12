@@ -1043,8 +1043,8 @@ setup_repo_sync() {
 			print_info "Repo sync enabled (daily). Disable: aidevops repo-sync disable"
 		else
 			echo ""
-			echo "Repo sync keeps your local git repos up to date by running"
-			echo "git pull --ff-only daily on clean repos on their default branch."
+			echo "Repo sync reports remote drift daily without modifying"
+			echo "human canonical checkouts."
 			echo ""
 			setup_prompt enable_repo_sync "Enable daily repo sync? [Y/n]: " "Y"
 			if [[ "$enable_repo_sync" =~ ^[Yy]?$ || -z "$enable_repo_sync" ]]; then

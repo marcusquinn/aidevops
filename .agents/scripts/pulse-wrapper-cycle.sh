@@ -133,7 +133,7 @@ _pulse_refresh_repo() {
 	if [[ "${_PULSE_REFRESHED_THIS_CYCLE[$repo_path]+_}" ]]; then
 		return 0
 	fi
-	# Mark immediately so concurrent callers in the same process don't double-pull.
+	# Mark immediately so concurrent callers in the same process don't duplicate diagnostics.
 	_PULSE_REFRESHED_THIS_CYCLE[$repo_path]=1
 
 	if ! git -C "$repo_path" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
@@ -144,24 +144,16 @@ _pulse_refresh_repo() {
 		return 0
 	fi
 
-	git -C "$repo_path" fetch --quiet origin >>"$LOGFILE" 2>&1 || {
-		echo "[pulse-wrapper] _pulse_refresh_repo: git fetch failed for ${repo_path} — proceeding with current checkout" >>"$LOGFILE"
-		return 0
-	}
-	if ! git -C "$repo_path" pull --ff-only --no-rebase >>"$LOGFILE" 2>&1; then
-		# t2865 (GH#20922): pull may fail because of unmerged files (UU state)
-		# or local uncommitted changes that would be overwritten. Try
-		# canonical-recovery (stash + retry pull + pop) before giving up so the
-		# repo doesn't silently degrade across pulse cycles. Recovery is
-		# content-safe (no auto-resolve); on persistent failure it files an
-		# advisory issue and we proceed with the current checkout.
-		echo "[pulse-wrapper] _pulse_refresh_repo: git pull --ff-only failed for ${repo_path} — attempting canonical-recovery" >>"$LOGFILE"
-		if declare -F pulse_canonical_recover >/dev/null 2>&1; then
-			pulse_canonical_recover "$repo_path" >>"$LOGFILE" 2>&1 ||
-				echo "[pulse-wrapper] _pulse_refresh_repo: canonical-recovery did not heal ${repo_path} — proceeding with current checkout (advisory filed)" >>"$LOGFILE"
-		else
-			echo "[pulse-wrapper] _pulse_refresh_repo: pulse_canonical_recover unavailable — proceeding with current checkout" >>"$LOGFILE"
-		fi
+	local remote_sha="" local_sha=""
+	remote_sha=$(git -C "$repo_path" ls-remote origin "refs/heads/${default_branch}" 2>/dev/null | awk 'NR == 1 {print $1}') || remote_sha=""
+	local_sha=$(git -C "$repo_path" rev-parse HEAD 2>/dev/null || true)
+	if [[ -z "$remote_sha" ]]; then
+		echo "[pulse-wrapper] _pulse_refresh_repo: remote diagnostic failed for ${repo_path} — canonical checkout unchanged" >>"$LOGFILE"
+	elif [[ "$local_sha" != "$remote_sha" ]]; then
+		echo "[pulse-wrapper] _pulse_refresh_repo: diagnostic: ${repo_path} differs from origin/${default_branch}; canonical checkout unchanged" >>"$LOGFILE"
+	fi
+	if declare -F pulse_canonical_recover >/dev/null 2>&1; then
+		pulse_canonical_recover "$repo_path" >>"$LOGFILE" 2>&1 || true
 	fi
 	return 0
 }

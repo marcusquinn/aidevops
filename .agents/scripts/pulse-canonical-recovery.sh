@@ -1,22 +1,19 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
-# pulse-canonical-recovery.sh — auto-recover canonical worktree from pull
-# conflicts (t2865, GH#20922).
+# pulse-canonical-recovery.sh — diagnose canonical worktree conflicts.
 #
-# When pulse calls `git pull --ff-only` on a canonical repo path, two failure
-# modes leave that repo silently un-refreshed:
+# Pulse may observe two canonical states that require human review:
 #
 #   1. Unmerged files: `error: Pulling is not possible because you have
 #      unmerged files` — usually leftover `UU` state from a prior crash or
-#      mid-rebase abort.
-#   2. Local uncommitted changes: `error: Your local changes to the following
-#      files would be overwritten by merge` — typically a concurrent
-#      issue-sync push that left TODO.md modified vs origin during a rebase.
+#      an interrupted human Git operation.
+#   2. Local uncommitted changes, including human work or stale generated
+#      metadata from an older writer.
 #
-# Recovery strategy: optionally `git merge --abort` (for unmerged state) →
-# stash → retry pull → pop. Stash-and-pop is content-safe (no `-X theirs`
-# auto-resolve). On persistent failure, write a LOCAL advisory file
+# Recovery is diagnostic-only for human canonical checkouts. It never changes
+# HEAD, refs, the index, tracked files, untracked files, or stashes. On dirty
+# state, write a LOCAL advisory file
 # (`~/.aidevops/advisories/canonical-recovery-<basename>.advisory`) with
 # the exact remediation commands the user can run. The local file is
 # surfaced in the session-start greeting via aidevops-update-check.sh —
@@ -184,135 +181,6 @@ _pcr_detect_state() {
 	return 0
 }
 
-_pcr_only_todo_dirty() {
-	local repo_path="$1"
-	local status_line path
-	while IFS= read -r status_line; do
-		[[ -n "$status_line" ]] || continue
-		path="${status_line#?? }"
-		case "$path" in
-			TODO.md)
-				;;
-			*)
-				return 1
-				;;
-		esac
-	done < <(git -C "$repo_path" status --porcelain --untracked-files=all 2>/dev/null)
-	return 0
-}
-
-_pcr_normalise_todo_sync_line() {
-	local line="$1"
-	local normalised="$line"
-	local field=""
-
-	case "$normalised" in
-		'- [ ] '*) normalised="- [?] ${normalised#'- [ ] '}" ;;
-		'- [x] '*) normalised="- [?] ${normalised#'- [x] '}" ;;
-		'- [X] '*) normalised="- [?] ${normalised#'- [X] '}" ;;
-	esac
-
-	for field in assignee started completed logged pr actual dispatched origin status; do
-		while [[ "$normalised" =~ ^(.*)[[:space:]]${field}:[^[:space:]]+(.*)$ ]]; do
-			normalised="${BASH_REMATCH[1]}${BASH_REMATCH[2]}"
-		done
-	done
-
-	# Keep this hot-path normalisation pure Bash: TODO sync diffs can contain
-	# many task lines, and spawning sed/awk here would multiply process churn.
-	normalised="${normalised//$'\t'/ }"
-	while [[ "$normalised" == *"  "* ]]; do
-		normalised="${normalised//  / }"
-	done
-	while [[ "$normalised" == " "* ]]; do
-		normalised="${normalised# }"
-	done
-	while [[ "$normalised" == *" " ]]; do
-		normalised="${normalised% }"
-	done
-
-	printf '%s\n' "$normalised"
-	return 0
-}
-
-_pcr_todo_line_is_task() {
-	local line="$1"
-	if [[ "$line" =~ ^-\ \[[xX\ ]\]\ [tr][0-9] ]]; then
-		return 0
-	fi
-	return 1
-}
-
-_pcr_todo_diff_is_generated_sync() {
-	local repo_path="$1"
-	local old_tmp new_tmp diff_line content saw_change=0 ok=1
-	old_tmp=$(mktemp "${TMPDIR:-/tmp}/pcr-todo-old.XXXXXX") || return 1
-	new_tmp=$(mktemp "${TMPDIR:-/tmp}/pcr-todo-new.XXXXXX") || { rm -f "$old_tmp"; return 1; }
-
-	while IFS= read -r diff_line; do
-		case "$diff_line" in
-			---*|+++*|@@*)
-				continue
-				;;
-			-*)
-				content="${diff_line#-}"
-				if ! _pcr_todo_line_is_task "$content"; then
-					ok=0
-					break
-				fi
-				_pcr_normalise_todo_sync_line "$content" >>"$old_tmp"
-				saw_change=1
-				;;
-			+*)
-				content="${diff_line#+}"
-				if ! _pcr_todo_line_is_task "$content"; then
-					ok=0
-					break
-				fi
-				_pcr_normalise_todo_sync_line "$content" >>"$new_tmp"
-				saw_change=1
-				;;
-		esac
-	done < <({ git -C "$repo_path" diff -- TODO.md; git -C "$repo_path" diff --cached -- TODO.md; } 2>/dev/null)
-
-	if [[ "$ok" -eq 1 && "$saw_change" -eq 1 ]] && cmp -s "$old_tmp" "$new_tmp"; then
-		rm -f "$old_tmp" "$new_tmp"
-		return 0
-	fi
-	rm -f "$old_tmp" "$new_tmp"
-	return 1
-}
-
-_pcr_recover_todo_sync_dirty_state() {
-	local repo_path="$1"
-	if ! _pcr_only_todo_dirty "$repo_path"; then
-		return 1
-	fi
-	if ! _pcr_todo_diff_is_generated_sync "$repo_path"; then
-		_pcr_audit "todo-dirty-blocked" "$repo_path" "advisory:human-or-unknown"
-		_pcr_log "TODO.md is dirty but does not match generated sync metadata — filing advisory without stashing"
-		_pcr_file_advisory "$repo_path" "todo-dirty-blocked"
-		return 2
-	fi
-
-	_pcr_audit "todo-sync-reset" "$repo_path" "ok:generated-metadata-only"
-	_pcr_log "discarding generated TODO.md sync metadata before canonical refresh"
-	if ! git -C "$repo_path" reset -q -- TODO.md || ! git -C "$repo_path" checkout -- TODO.md; then
-		_pcr_audit "todo-sync-reset-failed" "$repo_path" "advisory:reset-failed"
-		_pcr_log "failed to reset TODO.md sync metadata — filing advisory"
-		_pcr_file_advisory "$repo_path" "todo-sync-reset-failed"
-		return 2
-	fi
-	if git -C "$repo_path" fetch --quiet origin >>"${LOGFILE:-/dev/null}" 2>&1 \
-		&& git -C "$repo_path" pull --ff-only --no-rebase >>"${LOGFILE:-/dev/null}" 2>&1; then
-		_pcr_audit "todo-sync-refresh" "$repo_path" "ok:no-stash"
-		return 0
-	fi
-	_pcr_audit "todo-sync-refresh-failed" "$repo_path" "advisory:no-stash"
-	_pcr_file_advisory "$repo_path" "todo-sync-refresh-failed"
-	return 2
-}
-
 # Count attempts in the hot window for this repo. Echoes integer.
 # When jq is missing, returns MAX_ATTEMPTS so the caller's threshold check
 # trips and we escalate straight to advisory rather than silently looping
@@ -460,36 +328,24 @@ _pcr_advisory_body() {
 	local sanitised
 	sanitised=$(_pcr_sanitise_path "$repo_path")
 	cat <<EOF
-[CANONICAL RECOVERY] ${repo_basename} stash conflict — manual intervention required
+[CANONICAL DIAGNOSTIC] ${repo_basename} requires manual review
 
-  Pulse cannot \`git pull --ff-only\` your canonical repo at:
+  Pulse found a human canonical checkout requiring review at:
       ${sanitised}
 
   Failure mode: ${failure_mode}
   Effect:       PR processing, CI failure routing, and completion sweep are
                 paused for this repo until the working tree is clean.
 
-  Recovery commands (run in a SEPARATE terminal, not in AI chat):
+  Inspection (run in a SEPARATE terminal, not in AI chat):
 
     cd ${sanitised}
     git status
-    # If you see UU/AA/DD entries (unmerged):
-    git merge --abort 2>/dev/null || true
+    git diff
+    git diff --cached
+    git ls-files --others --exclude-standard
 
-    # Inspect the auto-stash if one was retained:
-    git stash list | grep pulse-auto-stash
-
-    # Restore the stash (resolve conflicts if any):
-    git stash pop          # or: git stash drop  (if the stash content is obsolete)
-
-    # Then refresh:
-    git fetch origin
-    git pull --ff-only
-
-  Acceptance:
-  - \`git status\` shows nothing to commit, working tree clean
-  - \`git pull --ff-only\` succeeds without intervention
-  - Pulse resumes processing PRs/issues for this repo on the next cycle
+  Resolve or preserve this state manually. Pulse will not mutate this checkout.
 
   Dismiss after fixing:  aidevops security dismiss canonical-recovery-${repo_basename}
 EOF
@@ -568,108 +424,6 @@ _pcr_hot_loop_guard_allows_recovery() {
 	return 0
 }
 
-_pcr_try_todo_sync_recovery() {
-	local repo_path="$1"
-	local todo_recovery_rc=0
-	_pcr_recover_todo_sync_dirty_state "$repo_path"
-	todo_recovery_rc=$?
-	case "$todo_recovery_rc" in
-		0)
-			return 0
-			;;
-		2)
-			return 2
-			;;
-	esac
-	return 1
-}
-
-_pcr_has_active_git_operation() {
-	local repo_path="$1"
-	if [[ -e "${repo_path}/.git/MERGE_HEAD" \
-	   || -e "${repo_path}/.git/CHERRY_PICK_HEAD" \
-	   || -e "${repo_path}/.git/REBASE_HEAD" ]]; then
-		return 0
-	fi
-	return 1
-}
-
-_pcr_clear_stale_unmerged_state() {
-	local repo_path="$1"
-	_pcr_log "stale-UU detected (no active merge/cherry-pick/rebase) for $repo_path"
-	_pcr_audit "stale-uu-detect" "$repo_path" "attempting"
-	# merge --abort is a no-op without an active merge but is safe to try — it
-	# may succeed in edge cases where the HEAD file was manually removed. If it
-	# fails, reset --merge HEAD is the definitive fix for stale index conflict
-	# entries.
-	git -C "$repo_path" merge --abort 2>/dev/null \
-		|| git -C "$repo_path" reset --merge HEAD 2>/dev/null \
-		|| true
-	return 0
-}
-
-_pcr_clear_unmerged_state() {
-	local repo_path="$1"
-	local is_stale_uu=0
-	local state=""
-
-	if ! _pcr_has_active_git_operation "$repo_path"; then
-		is_stale_uu=1
-		_pcr_clear_stale_unmerged_state "$repo_path"
-	else
-		# Active merge / cherry-pick / rebase — abort it cleanly.
-		git -C "$repo_path" merge --abort 2>/dev/null || true
-	fi
-
-	state=$(_pcr_detect_state "$repo_path")
-	if [[ "$state" == "clean" ]]; then
-		if [[ "$is_stale_uu" -eq 1 ]]; then
-			_pcr_audit "stale-uu-recover" "$repo_path" "ok:index-reset"
-			_pcr_log "stale-UU cleared via index reset for $repo_path"
-		else
-			_pcr_audit "merge-abort" "$repo_path" "success"
-			_pcr_log "merge --abort cleaned working tree for $repo_path"
-		fi
-		return 0
-	fi
-	return 1
-}
-
-_pcr_stash_refresh_pop() {
-	local repo_path="$1"
-	local stash_message
-	stash_message="pulse-auto-stash-$(date +%s)"
-	if ! git -C "$repo_path" stash push -u -m "$stash_message" >>"${LOGFILE:-/dev/null}" 2>&1; then
-		_pcr_audit "stash-push-failed" "$repo_path" "advisory"
-		_pcr_log "git stash push failed; filing advisory"
-		_pcr_file_advisory "$repo_path" "stash-push-failed"
-		return 1
-	fi
-	_pcr_log "stashed: ${stash_message}"
-	_pcr_audit "stash-push" "$repo_path" "ok:${stash_message}"
-
-	if ! git -C "$repo_path" fetch --quiet origin >>"${LOGFILE:-/dev/null}" 2>&1 \
-		|| ! git -C "$repo_path" pull --ff-only --no-rebase >>"${LOGFILE:-/dev/null}" 2>&1; then
-		# Pull still failed after stashing — leave stash for content safety.
-		_pcr_audit "pull-failed-after-stash" "$repo_path" "advisory:stash-retained:${stash_message}"
-		_pcr_log "pull --ff-only failed after stash — stash retained, filing advisory"
-		_pcr_file_advisory "$repo_path" "pull-failed-after-stash"
-		return 1
-	fi
-
-	# Pop the stash. Conflict on pop → leave stash + advise.
-	if ! git -C "$repo_path" stash pop --quiet >>"${LOGFILE:-/dev/null}" 2>&1; then
-		_pcr_audit "stash-pop-conflict" "$repo_path" "advisory:stash-retained:${stash_message}"
-		_pcr_log "git stash pop conflict — stash retained, filing advisory"
-		_pcr_file_advisory "$repo_path" "stash-pop-conflict"
-		return 1
-	fi
-
-	_pcr_audit "success" "$repo_path" "stash-pull-pop-clean"
-	_pcr_log "recovered cleanly: $repo_path"
-	return 0
-}
-
 # -----------------------------------------------------------------------------
 # Public entry point
 # -----------------------------------------------------------------------------
@@ -692,49 +446,17 @@ pulse_canonical_recover() {
 		return 0
 	fi
 
-	# Hot-loop guard — escalate to advisory after repeated failures.
-	if ! _pcr_hot_loop_guard_allows_recovery "$repo_path" "$state"; then
-		return 1
-	fi
-
 	if _pcr_is_dry_run; then
-		_pcr_log "[dry-run] would recover state=${state} on $repo_path"
+		_pcr_log "[dry-run] would report state=${state} on $repo_path"
 		_pcr_audit "dry-run" "$repo_path" "state:${state}"
 		return 0
 	fi
 
 	_pcr_record_attempt "$repo_path"
-	_pcr_log "recovering ${repo_path} (state=${state})"
-
-	# Generated TODO.md sync metadata can appear in the canonical checkout while
-	# a worker is cleaning up from a linked worktree. Do not create a long-lived
-	# stash for that bookkeeping diff: either reset metadata-only generated state
-	# and refresh, or fail closed with a local advisory when TODO.md looks
-	# human-authored/unknown (GH#22664).
-	if [[ "$state" == "uncommitted" ]]; then
-		local todo_recovery_rc=0
-		_pcr_try_todo_sync_recovery "$repo_path"
-		todo_recovery_rc=$?
-		case "$todo_recovery_rc" in
-			0)
-				return 0
-				;;
-			2)
-				return 1
-				;;
-		esac
-	fi
-
-	# Step 1: clear unmerged state if present.
-	if [[ "$state" == "unmerged" ]]; then
-		if _pcr_clear_unmerged_state "$repo_path"; then
-			return 0
-		fi
-	fi
-
-	# Step 2: stash uncommitted changes (-u includes untracked), refresh, then pop.
-	_pcr_stash_refresh_pop "$repo_path"
-	return $?
+	_pcr_log "diagnostic-only canonical state: ${repo_path} (state=${state})"
+	_pcr_audit "diagnose" "$repo_path" "advisory:${state}"
+	_pcr_file_advisory "$repo_path" "$state"
+	return 1
 }
 
 # -----------------------------------------------------------------------------
@@ -743,7 +465,7 @@ pulse_canonical_recover() {
 
 _pcr_print_help() {
 	cat <<'EOF'
-pulse-canonical-recovery.sh — auto-recover canonical worktree from pull conflicts
+pulse-canonical-recovery.sh — diagnose canonical worktree conflicts
 
 Usage:
   pulse-canonical-recovery.sh [--dry-run] <repo-path>
@@ -754,8 +476,8 @@ Options:
   --help, -h    Show this message.
 
 Exit codes:
-  0  No recovery needed, or recovery succeeded.
-  1  Persistent failure — advisory issue filed (or would be in dry-run).
+  0  No diagnostic needed, or dry-run completed.
+  1  Canonical state needs human review; local advisory filed.
   2  Usage error (missing or extra arguments).
 
 Environment:
