@@ -170,9 +170,9 @@ run_threshold_check() {
 		printf '::error::Qlty smell regression: %s smells exceeds threshold %s\n' "$_count" "$_threshold"
 		emit_remediation_evidence "$_count" "$_threshold" "$_sarif"
 		printf '\nPer-rule breakdown:\n'
-		printf '%s\n' "$_sarif" | jq -r '.runs[0].results | group_by(.ruleId) | map({rule: .[0].ruleId, count: length}) | sort_by(-.count) | .[] | "  \(.count)\t\(.rule)"'
+		printf '%s\n' "$_sarif" | jq -r '[.runs[0].results[]?.ruleId? | select(. != null)] | group_by(.) | map({rule: .[0], count: length}) | sort_by(-.count) | .[] | "  \(.count)\t\(.rule)"'
 		printf '\nTop 20 files by smell count:\n'
-		printf '%s\n' "$_sarif" | jq -r '.runs[0].results | group_by(.locations[0].physicalLocation.artifactLocation.uri) | map({file: .[0].locations[0].physicalLocation.artifactLocation.uri, count: length}) | sort_by(-.count) | .[0:20] | .[] | "  \(.count)\t\(.file)"'
+		printf '%s\n' "$_sarif" | jq -r '[.runs[0].results[]? | .locations[0]?.physicalLocation?.artifactLocation?.uri? | select(. != null)] | group_by(.) | map({file: .[0], count: length}) | sort_by(-.count) | .[0:20] | .[] | "  \(.count)\t\(.file)"'
 		printf '\nFix options:\n'
 		printf "  1. New PR smells remain blocking — run 'qlty smells --all' locally\n"
 		printf '  2. Pre-existing default-branch debt must enter the autonomous quality-sweep remediation loop\n'
