@@ -52,6 +52,9 @@ shift || true
 
 case "$cmd" in
 	ls)
+		if [[ "${1:-}" == "--flat" ]]; then
+			printf '%s\n' 'aidevops/ZETA_KEY' 'aidevops/ALPHA_KEY' 'aidevops/ALPHA_KEY'
+		fi
 		exit 0
 		;;
 	insert)
@@ -73,6 +76,55 @@ EOF
 	export AIDEVOPS_TEST_DIR="$TEST_DIR"
 	export PATH="$TEST_DIR/bin:$ORIG_PATH"
 
+	return 0
+}
+
+test_inventory_is_names_only_deterministic_json() {
+	setup
+	trap 'teardown' RETURN
+	local output=""
+	output=$(HOME="$TEST_DIR/home" bash "$HELPER" inventory)
+
+	if [[ "$output" == '{"version":1,"backends":{"gopass":"available","credentials":"missing"},"secrets":[{"name":"ALPHA_KEY","status":"configured"},{"name":"ZETA_KEY","status":"configured"}]}' && "$output" != *"actual-secret-value"* ]]; then
+		print_result "inventory emits deterministic names-only JSON" 0
+	else
+		print_result "inventory emits deterministic names-only JSON" 1 "$output"
+	fi
+	return 0
+}
+
+test_inventory_rejects_malformed_gopass_name() {
+	setup
+	trap 'teardown' RETURN
+	cat >"$TEST_DIR/bin/gopass" <<'EOF'
+#!/usr/bin/env bash
+if [[ "${1:-}" == "ls" ]]; then printf '%s\n' 'aidevops/../ESCAPE'; exit 0; fi
+exit 1
+EOF
+	chmod +x "$TEST_DIR/bin/gopass"
+	local exit_code=0
+	HOME="$TEST_DIR/home" bash "$HELPER" inventory >/dev/null 2>&1 || exit_code=$?
+	if [[ "$exit_code" -ne 0 ]]; then
+		print_result "inventory rejects malformed gopass names" 0
+	else
+		print_result "inventory rejects malformed gopass names" 1 "Expected failure"
+	fi
+	return 0
+}
+
+test_inventory_requires_owner_only_credentials() {
+	setup
+	trap 'teardown' RETURN
+	mkdir -p "$TEST_DIR/home/.config/aidevops"
+	printf '%s\n' 'export FALLBACK_KEY="never-read-this-value"' >"$TEST_DIR/home/.config/aidevops/credentials.sh"
+	chmod 644 "$TEST_DIR/home/.config/aidevops/credentials.sh"
+	local exit_code=0
+	HOME="$TEST_DIR/home" bash "$HELPER" inventory >/dev/null 2>&1 || exit_code=$?
+	if [[ "$exit_code" -ne 0 ]]; then
+		print_result "inventory requires owner-only credentials fallback" 0
+	else
+		print_result "inventory requires owner-only credentials fallback" 1 "Expected failure"
+	fi
 	return 0
 }
 
@@ -170,6 +222,9 @@ main() {
 	test_set_uses_provided_stdin_value
 	test_credentials_read_unescapes_special_chars
 	test_set_rejects_command_literal_input
+	test_inventory_is_names_only_deterministic_json
+	test_inventory_rejects_malformed_gopass_name
+	test_inventory_requires_owner_only_credentials
 
 	echo ""
 	echo "Tests run: $TESTS_RUN"
