@@ -86,6 +86,9 @@ i'd like to add the capabilities this repo offers. there may be overlap`),
     deriveFallbackTitleFromPrompt(longPrompt),
     "Improve aidevops session title renaming so issue and PR sessions remain descriptive in OpenCode history without arbitrary truncation",
   );
+  const oversizedTitle = deriveFallbackTitleFromPrompt("a".repeat(300));
+  assert.equal(oversizedTitle.length, 256);
+  assert.equal(oversizedTitle, `${"A".padEnd(255, "a")}…`);
 });
 
 test("version reader prefers deployed agents VERSION", async () => {
