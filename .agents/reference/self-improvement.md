@@ -66,6 +66,33 @@ Treat valuable session learning as system input, not disposable transcript conte
 - **Route design learning by scope:** durable repo-specific UI patterns belong in that repo's `DESIGN.md`; generic aidevops briefing/verification patterns become aidevops issues with anonymised evidence; uncertain or broad design lessons become worker-ready follow-ups instead of bloating global docs.
 - **Avoid speculative bloat:** capture observed examples and evidence; do not add global guidance for hypothetical failures.
 
+### Session friction and efficiency retrospective
+
+At the end of significant interactive work, review the actual path from request
+to verified outcome. Use `session-introspect-helper.sh patterns`,
+`report-token-use-helper.sh`, RTK comparison/adoption evidence, lifecycle state,
+and the conversation itself; do not create a parallel telemetry plane.
+
+- Record permission prompts, policy false positives, retries, equivalent-command
+  workarounds, duplicate workers/worktrees, manual lifecycle steps, repeated CI
+  output, version drift, and repeated rediscovery.
+- Do not invent universal numeric thresholds. Compare like-for-like sessions and
+  lifecycle stages where useful, but retain unexpected qualitative outliers that
+  do not fit the existing categories.
+- Audit existing token-saving mechanisms before proposing another one. Establish
+  whether filtering, caching, summarisation, subagents, or compaction reduced
+  discarded output and duplicate work, or instead forced raw fallback and
+  reconstruction.
+- Optimise for tokens per verified outcome and human attention returned—not the
+  lowest token count. Extra context is justified when it materially improves
+  correctness, security, review coverage, or durable understanding.
+- Check comprehension explicitly: missed requirements, incorrect assumptions,
+  repeated rediscovery, incomplete review, weak verification, or loss of causal
+  context are regressions even when token use falls.
+- Route only evidence-backed findings: fix safe in-scope defects now; otherwise
+  deduplicate against memory, tasks, issues, merged fixes, and active work before
+  creating one worker-ready improvement brief.
+
 ### Similar-but-different hazards
 
 - When two patterns look related but differ in contract, scope, or trust boundary, do not merge them mentally or create a third near-duplicate pattern.

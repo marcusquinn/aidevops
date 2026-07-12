@@ -78,6 +78,12 @@ Use comparison results to classify a command:
   comparison shows expansion; older RTK versions still use the noisier
   compact-status behavior.
 
+Do not judge an optimisation by token reduction alone. In session review, check
+whether filtered output was sufficient on the first pass, required raw fallback,
+caused repeated discovery, omitted causal evidence, or weakened requirement and
+verification coverage. Compare similar tasks when evidence exists; do not impose
+arbitrary global thresholds. Preserve unexpected outliers for model judgment.
+
 ## Always bypass RTK
 
 - File reads and source inspection.
