@@ -25,10 +25,19 @@ REPO_VERIFY_LOCK_PID=""
 
 _repo_verify_lock_acquire() {
 	local target_file="$1"
-	local attempts=0 owner_pid=""
+	local attempts=0 owner_pid="" common_dir="" lock_dir="" lock_key=""
 	command -v python3 >/dev/null 2>&1 || return 1
-	REPO_VERIFY_LOCK_FILE="${target_file}.aidevops-lock"
-	REPO_VERIFY_LOCK_TOKEN=$(mktemp "${target_file}.aidevops-ready.XXXXXX") || return 1
+	common_dir=$(git -C "$(dirname "$target_file")" rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)
+	if [[ -n "$common_dir" ]]; then
+		lock_dir="${common_dir}/aidevops-locks/repo-verify"
+	else
+		lock_dir="${AIDEVOPS_LOCK_DIR:-${HOME:?HOME is required}/.aidevops/locks}/repo-verify"
+	fi
+	mkdir -p "$lock_dir" || return 1
+	lock_key=$(printf '%s' "$target_file" | cksum | awk '{print $1 "-" $2}') || return 1
+	REPO_VERIFY_LOCK_FILE="${lock_dir}/${lock_key}.lock"
+	: >"$REPO_VERIFY_LOCK_FILE" || return 1
+	REPO_VERIFY_LOCK_TOKEN=$(mktemp "${lock_dir}/${lock_key}.ready.XXXXXX") || return 1
 	rm -f "$REPO_VERIFY_LOCK_TOKEN"
 	owner_pid=$(sh -c 'printf "%s\n" "$PPID"') || return 1
 	python3 "${REPO_VERIFY_LIB_DIR}/repo-verify-lock.py" "$REPO_VERIFY_LOCK_FILE" "$REPO_VERIFY_LOCK_TOKEN" "$owner_pid" &
