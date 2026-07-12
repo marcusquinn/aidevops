@@ -319,7 +319,7 @@ test_terminal_state_immutability() {
 }
 
 #######################################
-# Test: register retries append audit evidence; readers use the latest entry.
+# Test: legacy tokenless register retries remain idempotent.
 #######################################
 test_register_idempotent() {
 	setup_test_env
@@ -327,15 +327,16 @@ test_register_idempotent() {
 	run_helper "$LEDGER_HELPER" register --session-key "issue-42" --issue 42 --repo "owner/repo" --pid $$
 	run_helper "$LEDGER_HELPER" register --session-key "issue-42" --issue 42 --repo "owner/repo" --pid $$
 
-	local entry_count
+	local entry_count active_count
 	entry_count=$(wc -l <"${AIDEVOPS_DISPATCH_LEDGER_DIR}/dispatch-ledger.jsonl" | tr -d ' ')
+	active_count=$("$LEDGER_HELPER" count)
 
 	local result=0
-	if [[ "$entry_count" -ne 2 ]]; then
+	if [[ "$entry_count" -ne 1 || "$active_count" -ne 1 ]]; then
 		result=1
 	fi
 
-	print_result "register retry is append-only" "$result" "count=${entry_count}"
+	print_result "tokenless register retry does not duplicate active entry" "$result" "entries=${entry_count}, active=${active_count}"
 	teardown_test_env
 	return 0
 }

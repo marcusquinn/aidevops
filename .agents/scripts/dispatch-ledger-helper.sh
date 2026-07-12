@@ -318,11 +318,17 @@ _iso_to_epoch() {
 _lease_registration_exists() {
 	local session_key="$1"
 	local lease_token="$2"
-	[[ -n "$lease_token" && -s "$LEDGER_FILE" ]] || return 1
-	local existing="" existing_token=""
+	[[ -s "$LEDGER_FILE" ]] || return 1
+	local existing="" existing_token="" existing_status=""
 	existing=$(_lease_latest_entry "$session_key") || return 1
 	existing_token=$(printf '%s' "$existing" | jq -r '.lease_token // ""' 2>/dev/null) || return 1
-	[[ -n "$existing" && "$existing_token" == "$lease_token" ]]
+	existing_status=$(printf '%s' "$existing" | jq -r '.status // ""' 2>/dev/null) || return 1
+	if [[ -n "$lease_token" ]]; then
+		[[ -n "$existing" && "$existing_token" == "$lease_token" ]]
+		return $?
+	fi
+	[[ -n "$existing" && -z "$existing_token" && "$existing_status" == "$LEDGER_STATUS_ACTIVE" ]]
+	return $?
 }
 
 #######################################
