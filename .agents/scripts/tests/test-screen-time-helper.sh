@@ -131,7 +131,8 @@ test_union_clipping_and_failure_status() {
 	local invalid_db="${tmpdir}/invalid.db"
 	printf '%s\n' 'not sqlite' >"$invalid_db"
 	local failure_json
-	failure_json=$(profile_stats "$invalid_db")
+	mkdir -p "${tmpdir}/failure-home"
+	failure_json=$(HOME="${tmpdir}/failure-home" profile_stats "$invalid_db")
 	[[ "$(printf '%s' "$failure_json" | jq -r '.collection_status')" == "unavailable" ]] || fail "database access failure was not surfaced"
 	[[ "$(printf '%s' "$failure_json" | jq -r '.today_hours')" == "null" ]] || fail "database failure was rendered as a zero"
 	pass "macOS intervals union, clip, deduplicate, and surface access failures"
@@ -275,6 +276,38 @@ test_profile_completed_day_dst_semantics() {
 	[[ "$(printf '%s' "$spring_json" | jq -r '.periods.day.period_semantics')" == "completed-local-calendar-days" ]] || fail "screen profile omitted completed-day semantics"
 	[[ "$(printf '%s' "$spring_json" | jq -r '.periods.day.period_start_epoch | floor')" == "$spring_start" && "$(printf '%s' "$spring_json" | jq -r '.periods.day.period_end_epoch | floor')" == "$spring_end" ]] || fail "screen profile exposed incorrect completed-day bounds"
 	pass "profile screen periods use completed local days across DST"
+	return 0
+}
+
+test_pmset_permission_free_fallback() {
+	local tmpdir="$1"
+	local now db fixture yesterday_start
+	now=$(python3 -c 'import datetime as d; print(int(d.datetime(2026,7,12,12).astimezone().timestamp()))')
+	yesterday_start=$(local_day_epoch "$now" 1 0)
+	db="${tmpdir}/unreadable-knowledge.db"
+	fixture="${tmpdir}/pmset.log"
+	printf '%s\n' 'not sqlite' >"$db"
+	python3 - "$fixture" "$yesterday_start" <<'PY'
+import datetime as dt
+import sys
+
+target, start = sys.argv[1], int(sys.argv[2])
+def row(offset, state):
+    stamp = dt.datetime.fromtimestamp(start + offset).astimezone().strftime("%Y-%m-%d %H:%M:%S %z")
+    return f"{stamp} Notification         Display is turned {state}"
+with open(target, "w", encoding="utf-8") as handle:
+    handle.write(row(8 * 3600, "on") + "\n")
+    handle.write("malformed Display is turned on\n")
+    handle.write(row(12 * 3600, "off") + "\n")
+    handle.write(row(13 * 3600, "on") + "\n")
+    handle.write(row(15 * 3600, "off") + "\n")
+PY
+	local output
+	output=$(AIDEVOPS_PMSET_FIXTURE="$fixture" AIDEVOPS_SCREEN_TIME_NOW_EPOCH="$now" profile_stats "$db")
+	[[ "$(printf '%s' "$output" | jq -r '.today_hours')" == "6" || "$(printf '%s' "$output" | jq -r '.today_hours')" == "6.0" ]] || fail "pmset fallback did not union completed-day display intervals"
+	[[ "$(printf '%s' "$output" | jq -r '.periods.day.source')" == "macos-pmset-display-log" ]] || fail "pmset fallback provenance missing"
+	[[ "$(printf '%s' "$output" | jq -r '.periods.day.period_semantics')" == "completed-local-calendar-days" ]] || fail "pmset fallback changed profile period semantics"
+	pass "permission-free pmset fallback supplies completed-day screen time"
 	return 0
 }
 
@@ -430,6 +463,7 @@ test_screen_engine_sibling_modules_deploy_together() {
 		"${SCRIPTS_DIR}/screen_time_interval_common.py" \
 		"${SCRIPTS_DIR}/screen_time_macos.py" \
 		"${SCRIPTS_DIR}/screen_time_macos_apps.py" \
+		"${SCRIPTS_DIR}/screen_time_macos_pmset.py" \
 		"${SCRIPTS_DIR}/screen_time_linux.py" \
 		"${SCRIPTS_DIR}/screen_time_linux_wtmp.py" \
 		"${SCRIPTS_DIR}/screen_time_linux_logind.py" \
@@ -449,6 +483,8 @@ main() {
 
 	local db="${tmpdir}/knowledgeC.db"
 	create_knowledge_db "$db"
+	: >"${tmpdir}/empty-pmset.log"
+	export AIDEVOPS_PMSET_FIXTURE="${tmpdir}/empty-pmset.log"
 
 	local now
 	now=$(date +%s)
@@ -488,6 +524,7 @@ main() {
 	test_top_apps_sql_and_sweep_are_bounded "$tmpdir" "$now"
 	test_local_midnight_dst_boundaries "$tmpdir"
 	test_profile_completed_day_dst_semantics "$tmpdir"
+	test_pmset_permission_free_fallback "$tmpdir"
 	test_linux_state_machine "$tmpdir"
 	test_history_calendar_coverage_and_staleness "$tmpdir"
 	test_corrupt_core_data_and_history_paths_are_safe "$tmpdir" "$now"
