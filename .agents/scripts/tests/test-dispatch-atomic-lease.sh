@@ -6,59 +6,191 @@ set -euo pipefail
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SCRIPTS_DIR="${TEST_DIR}/.."
+CLAIM="${SCRIPTS_DIR}/dispatch-claim-helper.sh"
 LEDGER="${SCRIPTS_DIR}/dispatch-ledger-helper.sh"
+SCRIPT_DIR="$SCRIPTS_DIR"
+# shellcheck source=../dispatch-dedup-stale.sh
+source "${SCRIPTS_DIR}/dispatch-dedup-stale.sh"
 TMP_DIR=$(mktemp -d)
 trap 'rm -rf "$TMP_DIR"' EXIT
-export AIDEVOPS_DISPATCH_LEDGER_DIR="${TMP_DIR}/ledger"
-export AIDEVOPS_DEVICE_ID="device-fixture-a"
-mkdir -p "$AIDEVOPS_DISPATCH_LEDGER_DIR"
+export AIDEVOPS_TEST_MODE=1
+export AIDEVOPS_REPO_STATE_GUARD_TEST_BYPASS=1
 
 fail() { printf 'FAIL %s\n' "$1" >&2; return 1; }
 pass() { printf 'PASS %s\n' "$1"; return 0; }
 
-"$LEDGER" register --session-key issue-27165 --issue 27165 --repo owner/repo \
-	--pid 99999999 --lease-token token-a --device-id device-fixture-a --lease-ttl 60
-[[ $(jq -r 'select(.session_key=="issue-27165") | .lease_phase' "$AIDEVOPS_DISPATCH_LEDGER_DIR/dispatch-ledger.jsonl") == prelaunch ]] \
-	|| fail "prelaunch lease is persisted"
-pass "prelaunch lease is persisted"
-
-if "$LEDGER" ready --session-key issue-27165 --lease-token wrong-token >/dev/null 2>&1; then
-	fail "wrong token cannot transition lease"
+create_mock_gh() {
+	local root="$1"
+	mkdir -p "$root/bin"
+	cat >"$root/bin/gh" <<'MOCK'
+#!/usr/bin/env bash
+set -euo pipefail
+state="${MOCK_GH_STATE:?}"
+comments="$state/comments.jsonl"
+mkdir -p "$state"
+touch "$comments"
+if [[ "${1:-}" == api && "${2:-}" == user ]]; then printf 'shared-login\n'; exit 0; fi
+if [[ "${1:-}" == issue && "${2:-}" == comment ]]; then exit 0; fi
+[[ "${1:-}" == api ]] || exit 1
+endpoint="${2:-}"
+shift 2
+if [[ "$endpoint" == repos/*/issues/[0-9]* && "$endpoint" != */comments* ]]; then
+	printf '{"assignees":[]}\n'
+	exit 0
 fi
-pass "wrong token cannot transition lease"
-
-"$LEDGER" ready --session-key issue-27165 --lease-token token-a --lease-ttl 60
-latest=$(jq -sc '[.[] | select(.session_key=="issue-27165")] | last' "$AIDEVOPS_DISPATCH_LEDGER_DIR/dispatch-ledger.jsonl")
-[[ $(printf '%s' "$latest" | jq -r '.lease_phase') == ready ]] || fail "token-qualified ready transition"
-[[ $(printf '%s' "$latest" | jq -r '.runner_device') == device-fixture-a ]] || fail "device identity survives transition"
-pass "token-qualified ready transition preserves device identity"
-
-# A dead local PID must not imply remote completion for a lease-aware record.
-"$LEDGER" check --session-key issue-27165 >/dev/null || fail "ready lease survives local PID exit"
-pass "ready lease survives local PID exit"
-
-"$LEDGER" complete --session-key issue-27165 --lease-token token-a
-latest=$(jq -sc '[.[] | select(.session_key=="issue-27165")] | last' "$AIDEVOPS_DISPATCH_LEDGER_DIR/dispatch-ledger.jsonl")
-[[ $(printf '%s' "$latest" | jq -r '.lease_phase + ":" + .status') == terminal:completed ]] \
-	|| fail "terminal transition is append-only"
-[[ $(wc -l <"$AIDEVOPS_DISPATCH_LEDGER_DIR/dispatch-ledger.jsonl" | tr -d ' ') -eq 3 ]] \
-	|| fail "lease history contains prelaunch ready terminal records"
-pass "terminal transition appends immutable evidence"
-
-# Backward compatibility: legacy records remain readable and retain their
-# historical dead-PID cleanup semantics.
-now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-printf '{"session_key":"legacy","issue_number":"1","repo_slug":"owner/repo","pid":99999999,"dispatched_at":"%s","status":"in-flight","updated_at":"%s"}\n' "$now" "$now" >>"$AIDEVOPS_DISPATCH_LEDGER_DIR/dispatch-ledger.jsonl"
-if "$LEDGER" check --session-key legacy >/dev/null 2>&1; then
-	fail "legacy dead-PID marker remains readable"
+[[ "$endpoint" == repos/*/issues/*/comments* ]] || exit 1
+method=GET
+body=""
+while [[ $# -gt 0 ]]; do
+	case "$1" in
+	--method) method="$2"; shift 2 ;;
+	--field) [[ "$2" == body=* ]] && body="${2#body=}"; shift 2 ;;
+	--jq) shift 2 ;;
+	*) shift ;;
+	esac
+done
+if [[ "$method" == POST ]]; then
+	lock="$state/lock"
+	while ! mkdir "$lock" 2>/dev/null; do sleep 0.01; done
+	id=$(($(wc -l <"$comments" | tr -d ' ') + 1))
+	created=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+	jq -cn --argjson id "$id" --arg body "$body" --arg created "$created" \
+		'{id:$id,body:$body,created_at:$created}' >>"$comments"
+	rmdir "$lock"
+	printf '%s\n' "$id"
+	exit 0
 fi
-pass "legacy markers remain readable"
+jq -sc '[.]' "$comments"
+MOCK
+	chmod +x "$root/bin/gh"
+	return 0
+}
 
-grep -Fq 'AIDEVOPS_DISPATCH_LEASE_TOKEN=' "${SCRIPTS_DIR}/pulse-dispatch-worker-launch.sh" || fail "launch token wiring"
-grep -Fq 'transition ready' "${SCRIPTS_DIR}/headless-runtime-worker.sh" || fail "readiness wiring"
-grep -Fq 'transition terminal' "${SCRIPTS_DIR}/worker-lifecycle-common.sh" || fail "terminal wiring"
-grep -Fq '_stale_recovery_final_evidence_recheck' "${SCRIPTS_DIR}/dispatch-dedup-stale.sh" || fail "takeover recheck wiring"
-pass "launch readiness terminal and takeover wiring is present"
+claim_token() {
+	local output_file="$1"
+	sed -n 's/.*lease_token=\([^ ]*\).*/\1/p' "$output_file"
+	return 0
+}
 
-printf '\nAtomic lease tests passed\n'
+test_local_ledger_guards() {
+	local ledger_dir="${TMP_DIR}/ledger"
+	export AIDEVOPS_DISPATCH_LEDGER_DIR="$ledger_dir"
+	export AIDEVOPS_DEVICE_ID=device-fixture-a
+	mkdir -p "$ledger_dir"
+	"$LEDGER" register --session-key issue-local --issue 1 --repo owner/repo --pid 99999999 \
+		--lease-token token-a --device-id device-fixture-a --lease-ttl 1
+	sleep 2
+	if "$LEDGER" check --session-key issue-local >/dev/null 2>&1; then fail "expired prelaunch ledger lease blocks"; fi
+	if "$LEDGER" check-issue --issue 1 --repo owner/repo >/dev/null 2>&1; then fail "expired issue ledger lease blocks"; fi
+	if "$LEDGER" ready --session-key issue-local --lease-token token-a >/dev/null 2>&1; then fail "expired ledger lease transitions ready"; fi
+	pass "ledger checks enforce expiry without maintenance"
+
+	"$LEDGER" register --session-key issue-ready --issue 2 --repo owner/repo --pid 99999999 \
+		--lease-token token-b --device-id device-fixture-a --lease-ttl 30
+	"$LEDGER" ready --session-key issue-ready --lease-token token-b --lease-ttl 30
+	"$LEDGER" check --session-key issue-ready >/dev/null || fail "ready lease not protected"
+	"$LEDGER" complete --session-key issue-ready --lease-token token-b
+	if "$LEDGER" ready --session-key issue-ready --lease-token token-b >/dev/null 2>&1; then fail "late ready overwrote terminal"; fi
+	if "$LEDGER" fail --session-key issue-ready --lease-token token-b >/dev/null 2>&1; then fail "terminal lease mutated twice"; fi
+	pass "ledger enforces transition order and terminal immutability"
+	return 0
+}
+
+test_concurrent_same_login_devices() {
+	local root="${TMP_DIR}/race" rc_a=0 rc_b=0
+	create_mock_gh "$root"
+	PATH="$root/bin:$PATH" MOCK_GH_STATE="$root/state" AIDEVOPS_DEVICE_ID=device-a \
+		DISPATCH_CLAIM_WINDOW=1 "$CLAIM" claim 42 owner/repo shared-login >"$root/a.out" 2>&1 &
+	local pid_a=$!
+	PATH="$root/bin:$PATH" MOCK_GH_STATE="$root/state" AIDEVOPS_DEVICE_ID=device-b \
+		DISPATCH_CLAIM_WINDOW=1 "$CLAIM" claim 42 owner/repo shared-login >"$root/b.out" 2>&1 &
+	local pid_b=$!
+	wait "$pid_a" || rc_a=$?
+	wait "$pid_b" || rc_b=$?
+	if ! { [[ "$rc_a" -eq 0 && "$rc_b" -eq 1 ]] || [[ "$rc_a" -eq 1 && "$rc_b" -eq 0 ]]; }; then
+		printf 'runner-a: %s\nrunner-b: %s\n' "$(tr '\n' ' ' <"$root/a.out")" "$(tr '\n' ' ' <"$root/b.out")" >&2
+		fail "concurrent claims did not elect one winner: a=$rc_a b=$rc_b"
+	fi
+	grep -Fq 'device=device-a' "$root/state/comments.jsonl" || fail "device-a absent"
+	grep -Fq 'device=device-b' "$root/state/comments.jsonl" || fail "device-b absent"
+	pass "mock GitHub elects one same-login different-device winner"
+	return 0
+}
+
+test_launch_crash_ready_terminal_race() {
+	local root="${TMP_DIR}/lifecycle" token="" terminal_rc=0 ready_rc=0
+	create_mock_gh "$root"
+	PATH="$root/bin:$PATH" MOCK_GH_STATE="$root/state" AIDEVOPS_DEVICE_ID=device-a \
+		DISPATCH_CLAIM_WINDOW=0 DISPATCH_CLAIM_ORPHAN_GRACE=1 \
+		"$CLAIM" claim 43 owner/repo shared-login >"$root/crash.out" 2>&1
+	sleep 2
+	if PATH="$root/bin:$PATH" MOCK_GH_STATE="$root/state" "$CLAIM" check 43 owner/repo >/dev/null 2>&1; then
+		fail "launch crash lease did not expire"
+	fi
+	pass "launch crash expires and becomes reclaimable"
+
+	PATH="$root/bin:$PATH" MOCK_GH_STATE="$root/state" AIDEVOPS_DEVICE_ID=device-a \
+		DISPATCH_CLAIM_WINDOW=0 DISPATCH_CLAIM_ORPHAN_GRACE=30 \
+		"$CLAIM" claim 44 owner/repo shared-login >"$root/ready.out" 2>&1
+	token=$(claim_token "$root/ready.out")
+	[[ -n "$token" ]] || fail "ready claim token missing"
+	PATH="$root/bin:$PATH" MOCK_GH_STATE="$root/state" AIDEVOPS_DEVICE_ID=device-a \
+		"$CLAIM" transition ready 44 owner/repo "$token" issue-44 30
+	PATH="$root/bin:$PATH" MOCK_GH_STATE="$root/state" "$CLAIM" check 44 owner/repo >/dev/null || fail "ready lease not protected"
+	local dispatch_ts=""
+	dispatch_ts=$(jq -sr '[.[] | select(.body | contains("session=issue-44 phase=prelaunch"))] | first.created_at' "$root/state/comments.jsonl")
+	if PATH="$root/bin:$PATH" MOCK_GH_STATE="$root/state" _stale_recovery_final_evidence_recheck 44 owner/repo "$dispatch_ts"; then
+		fail "stale recovery ignored active ready lease"
+	fi
+	pass "ready transition protects active worker"
+
+	PATH="$root/bin:$PATH" MOCK_GH_STATE="$root/state" AIDEVOPS_DEVICE_ID=device-a \
+		"$CLAIM" transition terminal 44 owner/repo "$token" issue-44 0 >/dev/null 2>&1 &
+	local terminal_pid=$!
+	PATH="$root/bin:$PATH" MOCK_GH_STATE="$root/state" AIDEVOPS_DEVICE_ID=device-a \
+		"$CLAIM" transition ready 44 owner/repo "$token" issue-44 30 >/dev/null 2>&1 &
+	local ready_pid=$!
+	wait "$terminal_pid" || terminal_rc=$?
+	wait "$ready_pid" || ready_rc=$?
+	if PATH="$root/bin:$PATH" MOCK_GH_STATE="$root/state" "$CLAIM" check 44 owner/repo >/dev/null 2>&1; then
+		fail "terminal was resurrected by late ready: terminal=$terminal_rc ready=$ready_rc"
+	fi
+	PATH="$root/bin:$PATH" MOCK_GH_STATE="$root/state" _stale_recovery_final_evidence_recheck 44 owner/repo "$dispatch_ts" \
+		|| fail "terminal did not cancel ready for stale recovery"
+	pass "terminal transition defeats concurrent or late ready"
+	return 0
+}
+
+test_takeover_recheck_precedes_mutation() {
+	local root="${TMP_DIR}/takeover"
+	create_mock_gh "$root"
+	PATH="$root/bin:$PATH" MOCK_GH_STATE="$root/state" AIDEVOPS_DEVICE_ID=device-a \
+		DISPATCH_CLAIM_WINDOW=0 "$CLAIM" claim 46 owner/repo shared-login >/dev/null
+	MUTATION_CALLED=0
+	set_issue_status() { MUTATION_CALLED=1; return 0; }
+	_stale_recovery_has_unresolved_blocked_by() { return 1; }
+	PATH="$root/bin:$PATH" MOCK_GH_STATE="$root/state" \
+		_stale_recovery_apply 46 owner/repo shared-login stale "2000-01-01T00:00:00Z" >/dev/null
+	[[ "$MUTATION_CALLED" -eq 0 ]] || fail "takeover mutation ran after evidence changed"
+	pass "final evidence recheck blocks takeover mutation"
+	return 0
+}
+
+test_invalid_device_not_public() {
+	local root="${TMP_DIR}/device"
+	create_mock_gh "$root"
+	PATH="$root/bin:$PATH" MOCK_GH_STATE="$root/state" AIDEVOPS_DEVICE_ID=$'bad device\nINJECTED' \
+		AIDEVOPS_DEVICE_ID_FILE="$root/device-id" DISPATCH_CLAIM_WINDOW=0 \
+		"$CLAIM" claim 45 owner/repo shared-login >/dev/null 2>&1
+	if grep -Fq 'INJECTED' "$root/state/comments.jsonl"; then fail "invalid device reached public marker"; fi
+	pass "invalid device IDs are rejected before public output"
+	return 0
+}
+
+test_local_ledger_guards
+test_concurrent_same_login_devices
+test_launch_crash_ready_terminal_race
+test_invalid_device_not_public
+test_takeover_recheck_precedes_mutation
+printf '\nAtomic lease concurrency tests passed\n'
 exit 0

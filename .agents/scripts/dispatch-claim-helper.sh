@@ -177,8 +177,13 @@ _now_epoch() {
 
 _resolve_device_id() {
 	local device_id="${AIDEVOPS_DEVICE_ID:-}"
+	if [[ -n "$device_id" && ! "$device_id" =~ ^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$ ]]; then
+		printf 'Warning: invalid AIDEVOPS_DEVICE_ID ignored\n' >&2
+		device_id=""
+	fi
 	if [[ -z "$device_id" && -r "$AIDEVOPS_DEVICE_ID_FILE" ]]; then
-		device_id=$(tr -cd 'a-zA-Z0-9._-' <"$AIDEVOPS_DEVICE_ID_FILE" 2>/dev/null || true)
+		device_id=$(tr -d '[:space:]' <"$AIDEVOPS_DEVICE_ID_FILE" 2>/dev/null || true)
+		[[ "$device_id" =~ ^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$ ]] || device_id=""
 	fi
 	if [[ -z "$device_id" ]]; then
 		device_id="device-$(_now_epoch)-$$-${RANDOM:-0}"
@@ -1210,6 +1215,14 @@ cmd_transition() {
 	case "$phase" in ready | terminal) ;; *) echo "Error: transition phase must be ready or terminal" >&2; return 1 ;; esac
 	[[ "$issue_number" =~ ^[0-9]+$ && -n "$repo_slug" && -n "$lease_token" ]] || return 1
 	[[ "$ttl" =~ ^[0-9]+$ ]] || ttl="$DISPATCH_READY_LEASE_TTL"
+	local active_claims="" current_phase=""
+	active_claims=$(_fetch_claims "$issue_number" "$repo_slug") || return 1
+	current_phase=$(printf '%s' "$active_claims" | jq -r --arg token "$lease_token" \
+		'[.[] | select(.lease_token == $token)] | last | .lease_phase // ""' 2>/dev/null) || current_phase=""
+	[[ -n "$current_phase" ]] || return 1
+	if [[ "$phase" == "ready" && "$current_phase" != "prelaunch" ]]; then
+		return 1
+	fi
 	local expires_at="0" now_epoch="" body=""
 	now_epoch=$(_now_epoch)
 	[[ "$phase" == "terminal" ]] || expires_at="$((now_epoch + ttl))"

@@ -151,10 +151,12 @@ _stale_recovery_final_evidence_recheck() {
 	latest_dispatch_ts=$(_stale_recovery_latest_dispatch_ts_from_pages "$pages")
 	[[ "$latest_dispatch_ts" == "$expected_dispatch_ts" ]] || return 1
 	now_epoch=$(date +%s)
-	if printf '%s' "$pages" | jq -e --argjson now "$now_epoch" '
-		[.[] | .[]? | select((.body // "") | contains("DISPATCH_LEASE phase=ready"))
-		 | (.body | capture("lease_token=(?<token>[^ ]+).*expires_at=(?<expires>[0-9]+)"))
-		 | select((.expires | tonumber) >= $now)] | length > 0' >/dev/null 2>&1; then
+	local comments="" claims="" parsed=""
+	comments=$(printf '%s' "$pages" | jq -c '[.[] | .[]?]' 2>/dev/null) || return 1
+	claims=$(printf '%s' "$comments" | jq -c '[.[] | select((.body // "") | contains("DISPATCH_CLAIM nonce="))]' 2>/dev/null) || return 1
+	parsed=$(printf '%s' "$claims" | jq -c --argjson now "$now_epoch" --argjson max_age 2147483647 \
+		--argjson comments "$comments" -f "${SCRIPT_DIR}/dispatch-lease-claims.jq" 2>/dev/null) || return 1
+	if printf '%s' "$parsed" | jq -e 'any(.lease_phase == "ready")' >/dev/null 2>&1; then
 		return 1
 	fi
 	# PID exit is deliberately absent: remote completion requires durable evidence.
@@ -245,6 +247,11 @@ _stale_recovery_escalate() {
 	local reason="$4"
 	local _threshold="$5"
 	local _prior_ticks="$6"
+	local expected_dispatch_ts="${7:-}"
+	if ! _stale_recovery_final_evidence_recheck "$issue_number" "$repo_slug" "$expected_dispatch_ts"; then
+		printf 'STALE_RECHECK_BLOCKED: issue #%s in %s — evidence changed before escalation\n' "$issue_number" "$repo_slug"
+		return 0
+	fi
 
 	# Unassign stale workers (still needed to clean up the assignment)
 	local _esc_ifs="${IFS:-}"
@@ -326,9 +333,14 @@ _stale_recovery_apply_blocked_by_hold() {
 	local repo_slug="$2"
 	local stale_assignees="$3"
 	local reason="$4"
-	shift 4
+	local expected_dispatch_ts="$5"
+	shift 5
 	local -a recov_extra=("$@")
 
+	if ! _stale_recovery_final_evidence_recheck "$issue_number" "$repo_slug" "$expected_dispatch_ts"; then
+		printf 'STALE_RECHECK_BLOCKED: issue #%s in %s — evidence changed before blocked takeover\n' "$issue_number" "$repo_slug"
+		return 0
+	fi
 	set_issue_status "$issue_number" "$repo_slug" "blocked" "${recov_extra[@]}" || true
 
 	local _now_ts=""
@@ -378,6 +390,7 @@ _stale_recovery_apply() {
 	local repo_slug="$2"
 	local stale_assignees="$3"
 	local reason="$4"
+	local expected_dispatch_ts="${5:-}"
 
 	local saved_ifs="${IFS:-}"
 	local -a assignee_arr=()
@@ -390,7 +403,11 @@ _stale_recovery_apply() {
 		[[ -n "$assignee" ]] && _recov_extra+=(--remove-assignee "$assignee")
 	done
 	if _stale_recovery_has_unresolved_blocked_by "$issue_number" "$repo_slug"; then
-		_stale_recovery_apply_blocked_by_hold "$issue_number" "$repo_slug" "$stale_assignees" "$reason" "${_recov_extra[@]}"
+		_stale_recovery_apply_blocked_by_hold "$issue_number" "$repo_slug" "$stale_assignees" "$reason" "$expected_dispatch_ts" "${_recov_extra[@]}"
+		return 0
+	fi
+	if ! _stale_recovery_final_evidence_recheck "$issue_number" "$repo_slug" "$expected_dispatch_ts"; then
+		printf 'STALE_RECHECK_BLOCKED: issue #%s in %s — evidence changed before takeover\n' "$issue_number" "$repo_slug"
 		return 0
 	fi
 	set_issue_status "$issue_number" "$repo_slug" "available" "${_recov_extra[@]}" || true
@@ -459,13 +476,6 @@ _recover_stale_assignment() {
 		_terminal_evidence=true
 	fi
 	_open_pr=$(_stale_recovery_find_open_pr "$issue_number" "$repo_slug")
-	# Re-read the durable evidence immediately before any takeover mutation. A
-	# worker may have become ready or published progress after the first read.
-	if ! _stale_recovery_final_evidence_recheck "$issue_number" "$repo_slug" "$_latest_dispatch_ts"; then
-		printf 'STALE_RECHECK_BLOCKED: issue #%s in %s — evidence changed or active ready lease found\n' "$issue_number" "$repo_slug"
-		return 0
-	fi
-
 	if [[ -n "$_open_pr" ]]; then
 		# Open PR exists — counter resets; post a reset marker and allow normal recovery
 		gh_issue_comment "$issue_number" --repo "$repo_slug" \
@@ -478,7 +488,7 @@ Stale recovery tick reset — open PR #${_open_pr} detected (t2008)
 		# Threshold reached with explicit worker terminal evidence — escalate and
 		# bail out (no normal recovery). GH#22780: Do not suspend a fresh multi-runner
 		# dispatch solely because GitHub has been quiet for one stale window.
-		_stale_recovery_escalate "$issue_number" "$repo_slug" "$stale_assignees" "$reason" "$_threshold" "$_prior_ticks"
+		_stale_recovery_escalate "$issue_number" "$repo_slug" "$stale_assignees" "$reason" "$_threshold" "$_prior_ticks" "$_latest_dispatch_ts"
 		return 0
 	else
 		# Under threshold, or over threshold without terminal worker evidence —
@@ -493,7 +503,7 @@ Stale recovery tick ${_next_tick}/${_threshold} (t2008)
 	fi
 	# ── End stale-recovery escalation check ──────────────────────────────
 
-	_stale_recovery_apply "$issue_number" "$repo_slug" "$stale_assignees" "$reason"
+	_stale_recovery_apply "$issue_number" "$repo_slug" "$stale_assignees" "$reason" "$_latest_dispatch_ts"
 	return 0
 }
 

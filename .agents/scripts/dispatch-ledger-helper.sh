@@ -56,12 +56,18 @@ LEDGER_LOCK="${LEDGER_DIR}/dispatch-ledger.lock"
 DEFAULT_TTL="${AIDEVOPS_DISPATCH_LEDGER_TTL:-3600}" # 60 minutes
 PRELAUNCH_TTL="${AIDEVOPS_DISPATCH_PRELAUNCH_LEASE_TTL:-120}"
 READY_TTL="${AIDEVOPS_DISPATCH_READY_LEASE_TTL:-7200}"
+LEDGER_STATUS_ACTIVE="in-flight"
+LEDGER_STATUS_FAILED="failed"
 
 _lease_device_id() {
 	local id_file="${AIDEVOPS_DEVICE_ID_FILE:-${HOME}/.aidevops/state/device-id}"
 	local id="${AIDEVOPS_DEVICE_ID:-}"
+	if [[ -n "$id" && ! "$id" =~ ^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$ ]]; then
+		id=""
+	fi
 	if [[ -z "$id" && -r "$id_file" ]]; then
-		id=$(tr -cd 'a-zA-Z0-9._-' <"$id_file" 2>/dev/null || true)
+		id=$(tr -d '[:space:]' <"$id_file" 2>/dev/null || true)
+		[[ "$id" =~ ^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$ ]] || id=""
 	fi
 	if [[ -z "$id" ]]; then
 		id="device-$(_now_epoch)-$$-${RANDOM:-0}"
@@ -69,6 +75,24 @@ _lease_device_id() {
 		(umask 077; printf '%s\n' "$id" >"$id_file") 2>/dev/null || true
 	fi
 	printf '%s' "$id"
+	return 0
+}
+
+_lease_latest_entry() {
+	local session_key="$1"
+	jq -sc --arg sk "$session_key" '[.[] | select(.session_key == $sk)] | last // empty' "$LEDGER_FILE" 2>/dev/null
+	return $?
+}
+
+_lease_entry_is_active() {
+	local entry="$1"
+	local now_epoch="" expires_at="" phase="" status=""
+	now_epoch=$(_now_epoch)
+	expires_at=$(printf '%s' "$entry" | jq -r '.lease_expires_at // 0') || return 1
+	phase=$(printf '%s' "$entry" | jq -r '.lease_phase // ""') || return 1
+	status=$(printf '%s' "$entry" | jq -r '.status // ""') || return 1
+	[[ "$status" == "$LEDGER_STATUS_ACTIVE" && "$phase" != "terminal" ]] || return 1
+	[[ "$expires_at" =~ ^[0-9]+$ && "$expires_at" -ge "$now_epoch" ]] || return 1
 	return 0
 }
 
@@ -398,9 +422,9 @@ cmd_register() {
 		--arg token "$lease_token" \
 		--arg device "$runner_device" \
 		--argjson expires "$lease_expires_at" \
-		'{session_key: $sk, issue_number: $inum, repo_slug: $slug, pid: $pid, dispatched_at: $ts, status: "in-flight", updated_at: $ts, tier: $tier, model: $model, worktree_path: $worktree, lease_token:$token, runner_device:$device, lease_phase:"prelaunch", lease_expires_at:$expires}' \
+		--arg status "$LEDGER_STATUS_ACTIVE" \
+		'{session_key: $sk, issue_number: $inum, repo_slug: $slug, pid: $pid, dispatched_at: $ts, status: $status, updated_at: $ts, tier: $tier, model: $model, worktree_path: $worktree, lease_token:$token, runner_device:$device, lease_phase:"prelaunch", lease_expires_at:$expires}' \
 		>>"$LEDGER_FILE"
-
 	_append_tier_telemetry "$issue_number" "$repo_slug" "$dispatch_tier" "$dispatch_model" "$now"
 
 	_release_lock
@@ -418,7 +442,7 @@ cmd_ready() {
 		esac
 	done
 	[[ -n "$session_key" && -n "$lease_token" ]] || { echo "Error: ready requires --session-key and --lease-token" >&2; return 1; }
-	_lease_append_transition "$session_key" "$lease_token" "ready" "in-flight" "$lease_ttl"
+	_lease_append_transition "$session_key" "$lease_token" "ready" "$LEDGER_STATUS_ACTIVE" "$lease_ttl"
 	return $?
 }
 
@@ -431,8 +455,22 @@ _lease_append_transition() {
 	_ensure_ledger
 	_acquire_lock || return 1
 	local current=""
-	current=$(jq -sc --arg sk "$session_key" '[.[] | select(.session_key == $sk)] | last // empty' "$LEDGER_FILE" 2>/dev/null) || current=""
+	current=$(_lease_latest_entry "$session_key") || current=""
 	if [[ -z "$current" || "$(printf '%s' "$current" | jq -r '.lease_token // ""')" != "$lease_token" ]]; then
+		_release_lock
+		return 1
+	fi
+	local current_phase=""
+	current_phase=$(printf '%s' "$current" | jq -r '.lease_phase // ""') || current_phase=""
+	if ! _lease_entry_is_active "$current"; then
+		_release_lock
+		return 1
+	fi
+	if [[ "$lease_phase" == "ready" && "$current_phase" != "prelaunch" ]]; then
+		_release_lock
+		return 1
+	fi
+	if [[ "$lease_phase" == "terminal" && "$current_phase" != "prelaunch" && "$current_phase" != "ready" ]]; then
 		_release_lock
 		return 1
 	fi
@@ -547,9 +585,13 @@ cmd_check() {
 	fi
 
 	local match
-	match=$(jq -sc --arg sk "$session_key" '[.[] | select(.session_key == $sk)] | last | select(.status == "in-flight")' "$LEDGER_FILE" 2>/dev/null) || match=""
+	match=$(_lease_latest_entry "$session_key") || match=""
 
 	if [[ -z "$match" ]]; then
+		return 1
+	fi
+	[[ "$(printf '%s' "$match" | jq -r '.status // ""')" == "$LEDGER_STATUS_ACTIVE" ]] || return 1
+	if [[ -n "$(printf '%s' "$match" | jq -r '.lease_token // ""')" ]] && ! _lease_entry_is_active "$match"; then
 		return 1
 	fi
 
@@ -627,16 +669,19 @@ cmd_check_issue() {
 
 	local match
 	if [[ -n "$repo_slug" ]]; then
-		match=$(jq -sc --arg inum "$issue_number" --arg slug "$repo_slug" \
-			'[.[] | select(.issue_number == $inum and .repo_slug == $slug)] | last | select(.status == "in-flight")' \
+		match=$(jq -sc --arg inum "$issue_number" --arg slug "$repo_slug" --arg active "$LEDGER_STATUS_ACTIVE" \
+			'[.[] | select(.issue_number == $inum and .repo_slug == $slug)] | last | select(.status == $active)' \
 			"$LEDGER_FILE" 2>/dev/null) || match=""
 	else
-		match=$(jq -sc --arg inum "$issue_number" \
-			'[.[] | select(.issue_number == $inum)] | last | select(.status == "in-flight")' \
+		match=$(jq -sc --arg inum "$issue_number" --arg active "$LEDGER_STATUS_ACTIVE" \
+			'[.[] | select(.issue_number == $inum)] | last | select(.status == $active)' \
 			"$LEDGER_FILE" 2>/dev/null) || match=""
 	fi
 
 	if [[ -z "$match" ]]; then
+		return 1
+	fi
+	if [[ -n "$(printf '%s' "$match" | jq -r '.lease_token // ""')" ]] && ! _lease_entry_is_active "$match"; then
 		return 1
 	fi
 
@@ -732,7 +777,7 @@ cmd_fail() {
 		return 1
 	fi
 
-	_update_status "$session_key" "failed" "$lease_token"
+	_update_status "$session_key" "$LEDGER_STATUS_FAILED" "$lease_token"
 	return 0
 }
 
@@ -830,7 +875,7 @@ cmd_tier_report() {
 	total=$(wc -l <"$telemetry_file" | tr -d ' ')
 	success=$(grep -c '"outcome":"success"' "$telemetry_file" 2>/dev/null) || success=0
 	escalated=$(grep -c '"outcome":"escalated"' "$telemetry_file" 2>/dev/null) || escalated=0
-	failed=$(grep -c '"outcome":"failed"' "$telemetry_file" 2>/dev/null) || failed=0
+	failed=$(grep -c "\"outcome\":\"${LEDGER_STATUS_FAILED}\"" "$telemetry_file" 2>/dev/null) || failed=0
 
 	echo "=== Tier Dispatch Telemetry ==="
 	echo "Total dispatches: $total"
@@ -891,8 +936,8 @@ _update_status() {
 	# Only transition entries that are still "in-flight" — terminal statuses
 	# ("completed", "failed") are immutable. A late fail from dead-PID cleanup
 	# must not overwrite a genuinely completed dispatch.
-	jq -c --arg sk "$session_key" --arg st "$new_status" --arg ts "$now" \
-		'if .session_key == $sk and .status == "in-flight"
+	jq -c --arg sk "$session_key" --arg st "$new_status" --arg ts "$now" --arg active "$LEDGER_STATUS_ACTIVE" \
+		'if .session_key == $sk and .status == $active
 			then .status = $st | .updated_at = $ts
 			else .
 		end' \
@@ -968,7 +1013,7 @@ _cmd_expire_collect_indices() {
 
 	while IFS=$'\t' read -r idx status dispatched_at entry_pid; do
 		[[ -z "$idx" ]] && continue
-		[[ "$status" != "in-flight" ]] && continue
+		[[ "$status" != "$LEDGER_STATUS_ACTIVE" ]] && continue
 
 		should_expire=0
 		if [[ -n "$dispatched_at" ]]; then
@@ -1011,11 +1056,11 @@ _cmd_expire_rewrite_failed() {
 	#      `$exp | index(.key)` evaluates `.key` against $exp (an array)
 	#      and jq raises "Cannot index array with string 'key'", which
 	#      `2>/dev/null` would swallow into the cp fallback path.
-	jq -nc --arg ts "$now_ts" --argjson exp "[${indices_csv}]" '
+	jq -nc --arg ts "$now_ts" --arg failed "$LEDGER_STATUS_FAILED" --argjson exp "[${indices_csv}]" '
 		[inputs] | to_entries[]
 		| .key as $k
 		| if (($exp | index($k)) != null)
-		  then .value | .status = "failed" | .updated_at = $ts
+		  then .value | .status = $failed | .updated_at = $ts
 		  else .value
 		  end
 	' "$LEDGER_FILE" >"$tmp_file" 2>/dev/null
@@ -1112,7 +1157,7 @@ cmd_count() {
 	# pid. On a 1200-entry synthetic ledger that made `count` take ~2.4s.
 	# A single jq pass emits just the PIDs; bash keeps the kill -0 liveness
 	# checks because jq cannot query process state.
-	inflight_pids=$(jq -r 'select(.status == "in-flight") | (.pid // 0)' "$LEDGER_FILE" 2>/dev/null) || inflight_pids=""
+	inflight_pids=$(jq -r --arg active "$LEDGER_STATUS_ACTIVE" 'select(.status == $active) | (.pid // 0)' "$LEDGER_FILE" 2>/dev/null) || inflight_pids=""
 
 	if [[ -z "$inflight_pids" ]]; then
 		printf '%s\n' "0"
@@ -1154,11 +1199,11 @@ cmd_status() {
 	# GH#22289: compute all status counts in one jq process instead of three
 	# jq+wc pipelines. The win is modest compared with cmd_count, but this is
 	# still a hot diagnostic path and preserves the single-pass ledger pattern.
-	status_counts=$(jq -nr '
+	status_counts=$(jq -nr --arg active "$LEDGER_STATUS_ACTIVE" '
 		[inputs.status // ""] as $statuses
 		| [
 			($statuses | length),
-			($statuses | map(select(. == "in-flight")) | length),
+			($statuses | map(select(. == $active)) | length),
 			($statuses | map(select(. == "completed")) | length),
 			($statuses | map(select(. == "failed")) | length)
 		]
@@ -1179,7 +1224,7 @@ cmd_status() {
 
 	if [[ "$inflight" -gt 0 ]]; then
 		echo "In-flight entries:"
-		jq -r 'select(.status == "in-flight") | "  \(.session_key) | issue=\(.issue_number) | repo=\(.repo_slug) | pid=\(.pid) | since=\(.dispatched_at)"' "$LEDGER_FILE" 2>/dev/null || true
+		jq -r --arg active "$LEDGER_STATUS_ACTIVE" 'select(.status == $active) | "  \(.session_key) | issue=\(.issue_number) | repo=\(.repo_slug) | pid=\(.pid) | since=\(.dispatched_at)"' "$LEDGER_FILE" 2>/dev/null || true
 	fi
 
 	return 0
@@ -1222,9 +1267,9 @@ cmd_prune() {
 	# fromdateiso8601 in jq parses RFC 3339 / ISO 8601 with the 'Z' suffix
 	# directly; the try/catch falls back to "$now" so unparseable timestamps
 	# keep the entry rather than dropping it.
-	if ! jq -c --argjson now "$now_epoch" --argjson threshold "$prune_threshold" '
+	if ! jq -c --argjson now "$now_epoch" --argjson threshold "$prune_threshold" --arg active "$LEDGER_STATUS_ACTIVE" '
 		select(
-			(.status == "in-flight")
+			(.status == $active)
 			or
 			(((.updated_at // "") | length) == 0)
 			or
