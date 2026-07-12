@@ -229,15 +229,19 @@ check_sonarcloud() {
 
 	if [[ "$qg_status" == "OK" ]]; then
 		print_success "SonarCloud quality gate: PASSED"
+		((++PASSED))
 	elif [[ "$qg_status" == "ERROR" ]]; then
 		print_error "SonarCloud quality gate: FAILED"
+		((++FAILED))
 
 		# Get failing conditions
 		echo "$qg_response" | jq -r '.projectStatus.conditions[] | select(.status == "ERROR") | "  - \(.metricKey): \(.actualValue) (threshold: \(.errorThreshold))"'
 	elif [[ "$qg_status" == "WARN" ]]; then
 		print_warning "SonarCloud quality gate: WARNING"
+		((++WARNINGS))
 	else
 		print_warning "SonarCloud quality gate status: $qg_status"
+		((++WARNINGS))
 	fi
 
 	# Get current metrics
