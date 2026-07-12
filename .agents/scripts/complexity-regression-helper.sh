@@ -40,7 +40,7 @@
 #         [--metric <name>]
 #         Compute the set difference and produce a markdown report.
 #
-#   check --base <sha> [--head <sha>] [--output-md <file>]
+#   check --base <sha> [--head <sha> | --working-tree] [--output-md <file>]
 #         [--allow-increase] [--dry-run] [--metric <name>]
 #         Full regression check using git worktrees. Main entry point.
 #
@@ -980,15 +980,21 @@ _check_regression() {
 	local _output_md="$3"
 	local _allow_increase="$4"
 	local _metric="${5:-function-complexity}"
+	local _working_tree="${6:-0}"
 
-	# Diff-scoped fast path: compute changed .sh/.py files before creating
-	# worktrees. If none changed, no new violations are possible — exit 0
-	# immediately, saving ~1-3s of worktree creation per metric.
+	# Resolve applicable changed files before creating worktrees.
 	local _changed_source
-	_changed_source=$(git diff --name-only "$_base_sha" "$_head_sha" 2>/dev/null \
-		| grep -E '\.(sh|py)$' || true)
+	if [ "$_working_tree" -eq 1 ]; then
+		_changed_source=$({
+			git diff --name-only "$_base_sha" -- 2>/dev/null || true
+			git ls-files --others --exclude-standard 2>/dev/null || true
+		} | grep -E '\.(sh|py|md)$' | sort -u || true)
+	else
+		_changed_source=$(git diff --name-only "$_base_sha" "$_head_sha" 2>/dev/null \
+			| grep -E '\.(sh|py|md)$' || true)
+	fi
 	if [ -z "$_changed_source" ]; then
-		log "[$_metric] no .sh/.py changes between ${_base_sha:0:7}..${_head_sha:0:7} — skipping"
+		log "[$_metric] no applicable changes between ${_base_sha:0:7}..${_head_sha:0:7} — skipping"
 		# Write a clean "no applicable changes" report so any previously-posted
 		# stale report (from a prior run with .sh/.py changes that were later
 		# reverted back to doc-only) is replaced via the CI upsert path.
@@ -1007,7 +1013,7 @@ _check_regression() {
 	fi
 	local _changed_count
 	_changed_count=$(printf '%s\n' "$_changed_source" | wc -l | tr -d ' ')
-	log "[$_metric] diff-scoped: ${_changed_count} .sh/.py file(s) changed — scanning only those"
+	log "[$_metric] diff-scoped: ${_changed_count} applicable file(s) changed — scanning only those"
 
 	TMP_DIR=$(mktemp -d)
 	local _base_scan="$TMP_DIR/base.tsv"
@@ -1022,13 +1028,18 @@ _check_regression() {
 	log "[$_metric] scanning base (${_base_sha:0:7})"
 	scan_dir "$BASE_WORKTREE" "$_base_scan" "$_metric" "$_changed_source"
 
-	HEAD_WORKTREE="$TMP_DIR/head-worktree"
-	log "[$_metric] creating head worktree at ${_head_sha:0:7}"
-	if ! git worktree add --detach --force "$HEAD_WORKTREE" "$_head_sha" >/dev/null 2>&1; then
-		die "failed to create head worktree for $_head_sha"
+	if [ "$_working_tree" -eq 1 ]; then
+		log "[$_metric] scanning current working tree"
+		scan_dir "." "$_head_scan" "$_metric" "$_changed_source"
+	else
+		HEAD_WORKTREE="$TMP_DIR/head-worktree"
+		log "[$_metric] creating head worktree at ${_head_sha:0:7}"
+		if ! git worktree add --detach --force "$HEAD_WORKTREE" "$_head_sha" >/dev/null 2>&1; then
+			die "failed to create head worktree for $_head_sha"
+		fi
+		log "[$_metric] scanning head (${_head_sha:0:7})"
+		scan_dir "$HEAD_WORKTREE" "$_head_scan" "$_metric" "$_changed_source"
 	fi
-	log "[$_metric] scanning head (${_head_sha:0:7})"
-	scan_dir "$HEAD_WORKTREE" "$_head_scan" "$_metric" "$_changed_source"
 
 	local _new_count _base_total _head_total
 	if [ "$_metric" = "bash32-compat" ]; then
@@ -1074,6 +1085,7 @@ cmd_check() {
 	local _allow_increase=0
 	local _dry_run=0
 	local _metric="function-complexity"
+	local _working_tree=0
 
 	while [ $# -gt 0 ]; do
 		case "$1" in
@@ -1105,6 +1117,10 @@ cmd_check() {
 			_metric="$2"
 			shift 2
 			;;
+		--working-tree)
+			_working_tree=1
+			shift
+			;;
 		-h | --help)
 			usage
 			exit 0
@@ -1120,15 +1136,19 @@ cmd_check() {
 	if ! git rev-parse --verify --quiet "${_base}^{commit}" >/dev/null; then
 		die "check: base ref not found in repo: $_base"
 	fi
-	if ! git rev-parse --verify --quiet "${_head}^{commit}" >/dev/null; then
+	if [ "$_working_tree" -eq 0 ] && ! git rev-parse --verify --quiet "${_head}^{commit}" >/dev/null; then
 		die "check: head ref not found in repo: $_head"
 	fi
 
 	local _base_sha _head_sha
 	_base_sha=$(git rev-parse "$_base")
-	_head_sha=$(git rev-parse "$_head")
+	if [ "$_working_tree" -eq 1 ]; then
+		_head_sha="WORKTREE"
+	else
+		_head_sha=$(git rev-parse "$_head")
+	fi
 
-	_check_regression "$_base_sha" "$_head_sha" "$_output_md" "$_allow_increase" "$_metric"
+	_check_regression "$_base_sha" "$_head_sha" "$_output_md" "$_allow_increase" "$_metric" "$_working_tree"
 }
 
 # ===========================================================================
