@@ -179,6 +179,7 @@ check_opencode_server() {
 #   $2 - agent name (optional)
 #   $3 - model override (optional)
 #   $4 - timeout in seconds (optional)
+#   $5 - slash command (optional; required for subagent suites)
 # Returns:
 #   Response text on stdout
 #######################################
@@ -187,10 +188,11 @@ run_prompt() {
 	local agent="${2:-}"
 	local model="${3:-${AGENT_TEST_MODEL:-}}"
 	local timeout="${4:-$DEFAULT_TIMEOUT}"
+	local command="${5:-}"
 
 	case "$AI_CLI" in
 	opencode)
-		run_prompt_opencode "$prompt" "$agent" "$model" "$timeout"
+		run_prompt_opencode "$prompt" "$agent" "$model" "$timeout" "$command"
 		;;
 	*)
 		log_fail "No AI CLI available. Install opencode: https://opencode.ai"
@@ -208,12 +210,16 @@ run_prompt_opencode() {
 	local agent="$2"
 	local model="$3"
 	local timeout="$4"
+	local command="${5:-}"
 
-	# Try server mode first (attach to running server), fall back to standalone CLI
-	if check_opencode_server; then
+	# Slash commands are a CLI dispatch contract; the server message endpoint does
+	# not accept a command selector.
+	if [[ -n "$command" ]]; then
+		run_prompt_opencode_cli "$prompt" "$agent" "$model" "$timeout" "$command"
+	elif check_opencode_server; then
 		run_prompt_opencode_server "$prompt" "$agent" "$model" "$timeout"
 	else
-		run_prompt_opencode_cli "$prompt" "$agent" "$model" "$timeout"
+		run_prompt_opencode_cli "$prompt" "$agent" "$model" "$timeout" ""
 	fi
 }
 
@@ -298,10 +304,13 @@ run_prompt_opencode_cli() {
 	local agent="$2"
 	local model="$3"
 	local timeout="$4"
+	local command="${5:-}"
 
 	local cmd=(opencode run --format json)
 
-	if [[ -n "$agent" ]]; then
+	if [[ -n "$command" ]]; then
+		cmd+=(--command "$command")
+	elif [[ -n "$agent" ]]; then
 		cmd+=(--agent "$agent")
 	fi
 
@@ -309,13 +318,15 @@ run_prompt_opencode_cli() {
 		cmd+=(-m "$model")
 	fi
 
-	local stderr_file raw_output
+	local stderr_file raw_output json_output
 	stderr_file=$(mktemp)
 	raw_output=$(mktemp)
+	json_output=$(mktemp)
 	_save_cleanup_scope
 	trap '_run_cleanups' RETURN
 	push_cleanup "rm -f '${stderr_file}'"
 	push_cleanup "rm -f '${raw_output}'"
+	push_cleanup "rm -f '${json_output}'"
 
 	local exit_code=0
 	timeout_sec "${timeout}" "${cmd[@]}" "$prompt" >"$raw_output" 2>"$stderr_file" || {
@@ -325,33 +336,44 @@ run_prompt_opencode_cli() {
 		elif [[ -s "$stderr_file" ]]; then
 			echo "[ERROR: $(cat "$stderr_file")]"
 		fi
-		rm -f "$stderr_file" "$raw_output"
+		rm -f "$stderr_file" "$raw_output" "$json_output"
 		return $exit_code
 	}
+
+	if [[ -z "$command" && -n "$agent" ]] &&
+		grep -Eqi 'subagent|fall(ing)? back.*(default|primary)|default.*agent' "$stderr_file"; then
+		echo "[ERROR: requested agent '${agent}' was not dispatched; use a suite command for subagents]"
+		rm -f "$stderr_file" "$raw_output" "$json_output"
+		return 1
+	fi
+
+	# OpenCode may mix ANSI warnings with NDJSON on stdout. Keep only complete
+	# JSON events so one warning cannot trigger a jq parse-error cascade.
+	jq -Rrc 'fromjson?' "$raw_output" >"$json_output"
 
 	# Check for error events in the JSON stream
 	local error_msg
 	error_msg=$(jq -r 'select(.type == "error") | .error.data.message // .error.message // empty' \
-		"$raw_output" 2>/dev/null | head -1)
+		"$json_output" 2>/dev/null | head -1)
 
 	if [[ -n "$error_msg" ]]; then
 		echo "[ERROR: ${error_msg}]"
-		rm -f "$stderr_file" "$raw_output"
+		rm -f "$stderr_file" "$raw_output" "$json_output"
 		return 1
 	fi
 
 	# Extract text from JSON event stream
 	# Each line is a JSON event; text content has type="text" with .part.text
 	local result
-	result=$(jq -r 'select(.type == "text") | .part.text // empty' "$raw_output" 2>/dev/null |
+	result=$(jq -r 'select(.type == "text") | .part.text // empty' "$json_output" 2>/dev/null |
 		tr -d '\0')
 
 	if [[ -z "$result" ]]; then
-		# Fallback: try to extract any text-like content
-		result=$(cat "$raw_output")
+		# Fallback: try other structured text-like content.
+		result=$(jq -r '.part.text // .content // .text // empty' "$json_output" 2>/dev/null)
 	fi
 
-	rm -f "$stderr_file" "$raw_output"
+	rm -f "$stderr_file" "$raw_output" "$json_output"
 	echo "$result"
 	return 0
 }
@@ -470,9 +492,10 @@ _cmd_run_print_header() {
 #   $2  - test index (0-based)
 #   $3  - test count (total)
 #   $4  - suite agent (default)
-#   $5  - suite model (default)
-#   $6  - suite timeout (default)
-#   $7  - current results JSON array
+#   $5  - suite command (optional)
+#   $6  - suite model (default)
+#   $7  - suite timeout (default)
+#   $8  - current results JSON array
 # Outputs:
 #   File descriptor 3: updated results JSON array followed by outcome
 #   Standard output: human-readable progress and validation diagnostics
@@ -482,9 +505,10 @@ _cmd_run_execute_test() {
 	local i="$2"
 	local test_count="$3"
 	local suite_agent="$4"
-	local suite_model="$5"
-	local suite_timeout="$6"
-	local results="$7"
+	local suite_command="$5"
+	local suite_model="$6"
+	local suite_timeout="$7"
+	local results="$8"
 
 	local test_id
 	test_id=$(echo "$test_json" | jq -r '.id // "test-'"$i"'"')
@@ -522,7 +546,7 @@ _cmd_run_execute_test() {
 	local response=""
 	local run_status="pass"
 
-	response=$(run_prompt "$test_prompt" "$test_agent" "$test_model" "$test_timeout" 2>&1) || {
+	response=$(run_prompt "$test_prompt" "$test_agent" "$test_model" "$test_timeout" "$suite_command" 2>&1) || {
 		run_status="error"
 	}
 
@@ -793,8 +817,8 @@ _cmd_run_emit_json_metrics() {
 #######################################
 # Capture one test's machine result while routing human output separately
 # Arguments:
-#   $1-$7 - forwarded to _cmd_run_execute_test
-#   $8    - whether JSON-only output is enabled
+#   $1-$8 - forwarded to _cmd_run_execute_test
+#   $9    - whether JSON-only output is enabled
 # Outputs:
 #   Updated results JSON array followed by outcome on stdout
 #######################################
@@ -804,10 +828,11 @@ _cmd_run_capture_test() {
 		local test_index="$2"
 		local test_count="$3"
 		local suite_agent="$4"
-		local suite_model="$5"
-		local suite_timeout="$6"
-		local results="$7"
-		local json_output="$8"
+		local suite_command="$5"
+		local suite_model="$6"
+		local suite_timeout="$7"
+		local results="$8"
+		local json_output="$9"
 
 		exec 3>&1
 		if [[ "$json_output" == "false" ]]; then
@@ -817,7 +842,7 @@ _cmd_run_capture_test() {
 		fi
 		_cmd_run_execute_test \
 			"$test_json" "$test_index" "$test_count" \
-			"$suite_agent" "$suite_model" "$suite_timeout" \
+			"$suite_agent" "$suite_command" "$suite_model" "$suite_timeout" \
 			"$results"
 	)
 	return $?
@@ -855,10 +880,11 @@ cmd_run() {
 	local suite
 	suite=$(cat "$test_file")
 
-	local suite_name suite_desc suite_agent suite_model suite_timeout test_count
+	local suite_name suite_desc suite_agent suite_command suite_model suite_timeout test_count
 	suite_name=$(echo "$suite" | jq -r '.name // "unnamed"')
 	suite_desc=$(echo "$suite" | jq -r '.description // ""')
 	suite_agent=$(echo "$suite" | jq -r '.agent // ""')
+	suite_command=$(echo "$suite" | jq -r '.command // ""')
 	suite_model=$(echo "$suite" | jq -r '.model // ""')
 	suite_timeout=$(echo "$suite" | jq -r '.timeout // 120')
 	test_count=$(echo "$suite" | jq '.tests | length')
@@ -885,7 +911,7 @@ cmd_run() {
 		local exec_output outcome
 		exec_output=$(_cmd_run_capture_test \
 			"$test_json" "$i" "$test_count" \
-			"$suite_agent" "$suite_model" "$suite_timeout" \
+			"$suite_agent" "$suite_command" "$suite_model" "$suite_timeout" \
 			"$results" "$json_output")
 		results=$(echo "$exec_output" | sed '$d')
 		outcome=$(echo "$exec_output" | tail -n 1)

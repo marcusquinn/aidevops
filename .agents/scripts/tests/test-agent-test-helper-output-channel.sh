@@ -20,7 +20,8 @@ run_prompt() {
 	local agent="$2"
 	local model="$3"
 	local timeout="$4"
-	: "$agent" "$model" "$timeout"
+	local command="${5:-}"
+	: "$agent" "$model" "$timeout" "$command"
 
 	case "$prompt" in
 	timeout)
@@ -48,7 +49,7 @@ direct_stdout="$TEST_ROOT/direct.stdout"
 direct_stderr="$TEST_ROOT/direct.stderr"
 direct_test='{"id":"direct-call","prompt":"direct","expect_contains":["mock response"]}'
 {
-	_cmd_run_capture_test "$direct_test" 0 1 "" "" 1 "[]" false
+	_cmd_run_capture_test "$direct_test" 0 1 "" "" "" 1 "[]" false
 	printf '%s\n' "stdout-still-open"
 } >"$direct_stdout" 2>"$direct_stderr"
 grep -q '^stdout-still-open$' "$direct_stdout" ||
@@ -61,7 +62,7 @@ propagated_status=0
 	_cmd_run_execute_test() {
 		return 7
 	}
-	_cmd_run_capture_test "$direct_test" 0 1 "" "" 1 "[]" true
+	_cmd_run_capture_test "$direct_test" 0 1 "" "" "" 1 "[]" true
 ) || propagated_status=$?
 [[ $propagated_status -eq 7 ]] ||
 	fail "capture helper did not propagate the execution status"
@@ -77,7 +78,7 @@ TEST_AGENT_HELPER="$REPO_ROOT/.agents/scripts/agent-test-helper.sh" bash -c '
 		printf "%s\n" "unexpected-continuation" >&3
 		return 0
 	}
-	_cmd_run_capture_test "{}" 0 1 "" "" 1 "[]" true
+	_cmd_run_capture_test "{}" 0 1 "" "" "" 1 "[]" true
 	printf "%s\n" "errexit-survived"
 ' >"$errexit_stdout" 2>&1
 errexit_status=$?
