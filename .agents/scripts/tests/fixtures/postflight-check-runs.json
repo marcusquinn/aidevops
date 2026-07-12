@@ -1,0 +1,60 @@
+{
+  "check_runs": [
+    {
+      "id": 101,
+      "name": "Framework Validation",
+      "status": "completed",
+      "conclusion": "cancelled",
+      "completed_at": "2026-07-12T01:00:00Z",
+      "app": { "slug": "github-actions" }
+    },
+    {
+      "id": 102,
+      "name": "Framework Validation",
+      "status": "completed",
+      "conclusion": "success",
+      "completed_at": "2026-07-12T02:00:00Z",
+      "app": { "slug": "github-actions" }
+    },
+    {
+      "id": 201,
+      "name": "Security Validation",
+      "status": "completed",
+      "conclusion": "success",
+      "completed_at": "2026-07-12T01:00:00Z",
+      "app": { "slug": "github-actions" }
+    },
+    {
+      "id": 202,
+      "name": "Security Validation",
+      "status": "completed",
+      "conclusion": "failure",
+      "completed_at": "2026-07-12T02:00:00Z",
+      "app": { "slug": "github-actions" }
+    },
+    {
+      "id": 301,
+      "name": "Shared Name",
+      "status": "completed",
+      "conclusion": "success",
+      "completed_at": "2026-07-12T02:00:00Z",
+      "app": { "slug": "app-one" }
+    },
+    {
+      "id": 302,
+      "name": "Shared Name",
+      "status": "completed",
+      "conclusion": "failure",
+      "completed_at": "2026-07-12T02:00:00Z",
+      "app": { "slug": "app-two" }
+    },
+    {
+      "id": 401,
+      "name": "Verify Release Health",
+      "status": "completed",
+      "conclusion": "failure",
+      "completed_at": "2026-07-12T03:00:00Z",
+      "app": { "slug": "github-actions" }
+    }
+  ]
+}

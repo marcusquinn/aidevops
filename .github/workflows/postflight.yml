@@ -74,10 +74,14 @@ jobs:
         echo "## CI/CD Pipeline Status" >> $GITHUB_STEP_SUMMARY
         echo "" >> $GITHUB_STEP_SUMMARY
         
-        # Get all check runs, excluding self to avoid counting our own status
+        # Select the latest completed run for each check name/app pair. GitHub
+        # retains superseded runs on a commit, so counting every historical
+        # cancellation can incorrectly fail an otherwise healthy release.
         SELF_NAME="Verify Release Health"
-        CHECK_RUNS=$(gh api "repos/${REPO}/commits/${COMMIT_SHA}/check-runs" \
-          --jq ".check_runs[] | select(.name != \"$SELF_NAME\") | {name, status, conclusion}")
+        CHECK_RUNS_RESPONSE=$(gh api "repos/${REPO}/commits/${COMMIT_SHA}/check-runs?per_page=100")
+        CHECK_RUNS=$(echo "$CHECK_RUNS_RESPONSE" \
+          | jq -c --arg self_name "$SELF_NAME" -f .github/scripts/effective-check-runs.jq \
+          | jq -c '.[] | {name, status, conclusion, app: (.app.slug // .app.name // "unknown")}')
         
         # Count results (excluding self)
         TOTAL=$(echo "$CHECK_RUNS" | jq -s 'length')
@@ -88,12 +92,11 @@ jobs:
         echo "| Check | Status | Conclusion |" >> $GITHUB_STEP_SUMMARY
         echo "|-------|--------|------------|" >> $GITHUB_STEP_SUMMARY
         
-        # Show all check runs including self for transparency
-        gh api "repos/${REPO}/commits/${COMMIT_SHA}/check-runs" \
-          --jq '.check_runs[] | "| \(.name) | \(.status) | \(.conclusion // "pending") |"' >> $GITHUB_STEP_SUMMARY
+        # Show the effective check runs used for pass/fail decisions.
+        echo "$CHECK_RUNS" | jq -rs '.[] | "| \(.name) | \(.status) | \(.conclusion // "pending") |"' >> $GITHUB_STEP_SUMMARY
         
         echo "" >> $GITHUB_STEP_SUMMARY
-        echo "*Note: 'Verify Release Health' (this workflow) is excluded from pass/fail counts*" >> $GITHUB_STEP_SUMMARY
+        echo "*Note: latest completed run per check name/app is used; 'Verify Release Health' is excluded*" >> $GITHUB_STEP_SUMMARY
         
         echo "" >> $GITHUB_STEP_SUMMARY
         echo "**Total**: $TOTAL | **Passed**: $PASSED | **Skipped**: $SKIPPED | **Failed**: $FAILED" >> $GITHUB_STEP_SUMMARY
