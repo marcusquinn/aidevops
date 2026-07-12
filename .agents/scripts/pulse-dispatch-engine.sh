@@ -304,6 +304,7 @@ build_ranked_dispatch_candidates_json() {
 		update_repo_pulse_timestamp "$repo_slug"
 		local repo_candidates_json
 		repo_candidates_json=$(list_dispatchable_issue_candidates_json "$repo_slug" "$per_repo_limit") || repo_candidates_json='[]'
+		repo_candidates_json=$(_dispatch_filter_repo_pr_backlog_candidates "$repo_slug" "$repo_candidates_json")
 		if [[ -z "$repo_candidates_json" || "$repo_candidates_json" == "[]" ]]; then
 			continue
 		fi
@@ -371,6 +372,38 @@ build_ranked_dispatch_candidates_json() {
 
 	jq -cs 'sort_by([-.score, (.updatedAt // "")])' "$tmp_candidates" 2>/dev/null || printf '[]\n'
 	rm -f "$tmp_candidates"
+	return 0
+}
+
+#######################################
+# Keep trusted review-feedback debt within its fairness share while ordinary
+# candidates remain. Excess debt stays at the tail so it can borrow capacity
+# only after ordinary candidates have been attempted by the existing gates.
+#
+# Arguments:
+#   $1 - ranked candidate JSON array
+#   $2 - available implementation slots
+# Returns: reordered JSON array
+#######################################
+_dispatch_order_idle_borrowing_candidates() {
+	local candidates_json="$1"
+	local available_slots="$2"
+	local debt_cap_pct="${QUALITY_DEBT_CAP_PCT:-30}"
+
+	[[ "$available_slots" =~ ^[0-9]+$ ]] || available_slots=0
+	[[ "$debt_cap_pct" =~ ^[0-9]+$ ]] || debt_cap_pct=30
+	if [[ "$debt_cap_pct" -gt 100 ]]; then
+		debt_cap_pct=100
+	fi
+
+	printf '%s' "$candidates_json" | jq -c --argjson cap "$((available_slots * debt_cap_pct / 100))" '
+		def trusted_review_debt:
+			((.labels // []) | index("quality-debt")) != null and
+			((.labels // []) | index("source:review-feedback")) != null;
+		[.[] | select(trusted_review_debt)] as $debt |
+		[.[] | select(trusted_review_debt | not)] as $ordinary |
+		($debt[0:$cap] + $ordinary + $debt[$cap:])
+	' 2>/dev/null || printf '%s\n' "$candidates_json"
 	return 0
 }
 
@@ -442,6 +475,7 @@ dispatch_max() {
 	[[ "$available_slots" =~ ^[0-9]+$ ]] || available_slots=0
 	[[ "$triage_dispatched" =~ ^[0-9]+$ ]] || triage_dispatched=0
 	pulse_dispatch_debug_log "post-prepasses available_slots=${available_slots} triage_dispatched=${triage_dispatched}"
+	candidates_json=$(_dispatch_order_idle_borrowing_candidates "$candidates_json" "$available_slots")
 
 	# Reset module-level round state before the dispatch loop (t1959).
 	_DISPATCH_ROUND_DISPATCHED=0

@@ -547,6 +547,22 @@ else
 fi
 
 # =============================================================================
+# Test 11: a worktree deleted after precreation is rejected at launch boundary
+# =============================================================================
+: >"${TMP}/setsid-calls.txt"
+missing_worktree="${TMP}/deleted-after-precreation"
+_dlw_nohup_launch "88888" "owner/repo" "Dispatch" "Issue" "issue-88888" \
+	"${TMP}/worker.log" "/full-loop test" "$FAKE_REPO" "standard" "" \
+	"$missing_worktree" "feature/auto-88888"
+launch_rc=$?
+if [[ "$launch_rc" -eq 1 && ! -s "${TMP}/setsid-calls.txt" ]] && \
+	grep -q "worktree unavailable for #88888" "$LOGFILE"; then
+	pass "launch boundary rejects a missing worker worktree before setsid"
+else
+	fail "launch boundary rejects a missing worker worktree before setsid" "rc=$launch_rc"
+fi
+
+# =============================================================================
 # Summary
 # =============================================================================
 printf '\n%s\n' "--- Results: ${TESTS_RUN} tests, ${TESTS_FAILED} failed ---"

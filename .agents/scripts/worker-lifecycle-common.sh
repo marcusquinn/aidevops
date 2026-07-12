@@ -1186,6 +1186,30 @@ _worker_failure_reason_is_launch_preflight() {
 	esac
 }
 
+#######################################
+# Detect completion-path infrastructure failures where implementation may be
+# checkpointed locally and the correct action is resume/completion, not an
+# issue-level implementation fast-fail penalty.
+# Args: $1=reason
+# Returns: 0 for completion infrastructure failures, 1 otherwise.
+#######################################
+_worker_failure_reason_is_completion_infrastructure() {
+	local reason="${1:-}"
+
+	case "$reason" in
+	github_api_timeout | command_policy_timeout | prepared_commit_push_blocked | completed_locally_remote_completion_blocked | \
+		*"GitHub API timeout"* | *"github api timeout"* | \
+		*"command-policy timeout"* | *"command policy timeout"* | \
+		*"prepared commit"*"push"*"blocked"* | \
+		*"completed locally"*"remote completion"*"blocked"*)
+		return 0
+		;;
+	*)
+		return 1
+		;;
+	esac
+}
+
 _no_work_reason_is_prelaunch_skip() {
 	local reason="${1:-}"
 	_worker_failure_reason_is_launch_preflight "$reason"

@@ -1612,6 +1612,15 @@ _dlw_nohup_launch() {
 	local root_event_id=""
 	_dlw_prepare_worker_lineage "$session_key"
 
+	# The worktree can disappear after pre-creation but before the detached
+	# runtime starts. Reject that race here rather than spending a model launch
+	# on a path OpenCode cannot resolve.
+	if [[ -z "$worker_worktree_path" || ! -d "$worker_worktree_path" ]]; then
+		printf '[pulse-dispatch] worker launch skipped: worktree unavailable for #%s path=%s\n' \
+			"$issue_number" "${worker_worktree_path:-missing}" >>"$LOGFILE"
+		return 1
+	fi
+
 	# Use issue title as session title for searchable history, but keep the
 	# issue marker at the beginning so Tabby tabs and OpenCode session search
 	# group worker sessions by issue number.
