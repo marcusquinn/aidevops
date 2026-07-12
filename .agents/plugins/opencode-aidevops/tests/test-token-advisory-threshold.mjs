@@ -11,7 +11,7 @@ import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { createTtsrHooks } from "../ttsr.mjs";
+import { createSessionStartGreetingGate, createTtsrHooks } from "../ttsr.mjs";
 
 function createHooks(options = {}) {
   const logs = [];
@@ -24,6 +24,7 @@ function createHooks(options = {}) {
     run: () => "",
     intentField: "agent__intent",
     isHeadless: options.isHeadless || (() => false),
+    shouldInjectGreeting: options.shouldInjectGreeting,
   });
   return { hooks, logs };
 }
@@ -132,6 +133,31 @@ describe("token cost advisory threshold", () => {
     const output = { system: ["base system prompt"] };
 
     await hooks.systemTransformHook({ model: { providerID: "openai" } }, output);
+
+    assert.equal(output.system[0], "base system prompt");
+  });
+
+  test("injects the greeting only on the first request of an interactive root session", async () => {
+    const client = { session: { get: async () => ({ data: { id: "root-session" } }) } };
+    const shouldInjectGreeting = createSessionStartGreetingGate(client);
+    const { hooks } = createHooks({ shouldInjectGreeting });
+    const first = { system: ["base system prompt"] };
+    const later = { system: ["base system prompt"] };
+
+    await hooks.systemTransformHook({ sessionID: "root-session", model: { providerID: "openai" } }, first);
+    await hooks.systemTransformHook({ sessionID: "root-session", model: { providerID: "openai" } }, later);
+
+    assert.match(first.system[0], /Session-start greeting order/);
+    assert.equal(later.system[0], "base system prompt");
+  });
+
+  test("does not inject the greeting into subagent sessions", async () => {
+    const client = { session: { get: async () => ({ data: { id: "child-session", parentID: "root-session" } }) } };
+    const shouldInjectGreeting = createSessionStartGreetingGate(client);
+    const { hooks } = createHooks({ shouldInjectGreeting });
+    const output = { system: ["base system prompt"] };
+
+    await hooks.systemTransformHook({ sessionID: "child-session", model: { providerID: "openai" } }, output);
 
     assert.equal(output.system[0], "base system prompt");
   });

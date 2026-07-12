@@ -45,7 +45,7 @@ import { createSessionContinuationGuard } from "./session-continuation-guard.mjs
 // Existing modules
 import { createTools } from "./tools.mjs";
 import { initObservability, handleEvent } from "./observability.mjs";
-import { createTtsrHooks } from "./ttsr.mjs";
+import { createSessionStartGreetingGate, createTtsrHooks } from "./ttsr.mjs";
 import { createPoolAuthHook, createPoolTool, initPoolAuth, getAccounts } from "./oauth-pool.mjs";
 import { createProviderAuthHook } from "./provider-auth.mjs";
 import { installOpenAIProviderFetchRotation } from "./openai-provider-auth.mjs";
@@ -247,6 +247,7 @@ export async function AidevopsPlugin({ directory, client }) {
     join(AGENTS_DIR, "configs", "model-routing-table.json"),
   ]);
   const subagentEffortHooks = createSubagentEffortHooks(client, { tierReasoning });
+  const shouldInjectGreeting = createSessionStartGreetingGate(client, isHeadless);
 
   // TTSR hooks
   const {
@@ -261,6 +262,7 @@ export async function AidevopsPlugin({ directory, client }) {
     run,
     intentField: INTENT_FIELD,
     isHeadless,
+    shouldInjectGreeting,
   });
 
   // Lazy-start dispatch table for local proxies. Keys are OpenCode
@@ -324,6 +326,7 @@ export async function AidevopsPlugin({ directory, client }) {
   const greetingHandler = createGreetingHandler({
     scriptsDir: SCRIPTS_DIR,
     client,
+    isHeadless,
   });
   const sessionTitleSuffixHandler = createSessionTitleSuffixHandler({
     agentsDir: AGENTS_DIR,

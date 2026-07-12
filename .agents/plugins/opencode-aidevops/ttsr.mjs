@@ -224,17 +224,45 @@ export function buildSessionStartGreetingInstruction(agentsDir, readIfExists) {
 }
 
 /**
+ * Allow the greeting instruction exactly once for each interactive root
+ * session. Child sessions are subagents/subtasks and must never inherit a
+ * startup greeting; otherwise a late child request can reproduce the greeting
+ * immediately before the parent session's summary.
+ */
+export function createSessionStartGreetingGate(client, isHeadless = () => false) {
+  const attemptedSessions = new Set();
+
+  return async function shouldInjectSessionStartGreeting(input) {
+    if (isHeadless()) return false;
+
+    const sessionID = input?.sessionID;
+    if (!sessionID || attemptedSessions.has(sessionID)) return false;
+    // Claim the one startup opportunity before the asynchronous lookup. A
+    // metadata failure must not allow a later turn to inject a stale greeting.
+    attemptedSessions.add(sessionID);
+
+    try {
+      const response = await client.session.get({ path: { id: sessionID } });
+      const session = response?.data ?? response ?? {};
+      return !session.parentID;
+    } catch {
+      return false;
+    }
+  };
+}
+
+/**
  * system.transform hook: prepend session-start greeting order, identity prefix,
  * and quality rules.
  */
-async function ttsrSystemTransform(input, output, state, intentField, isHeadless, agentsDir, readIfExists) {
+async function ttsrSystemTransform(input, output, state, intentField, shouldInjectGreeting, agentsDir, readIfExists) {
   if (input.model?.providerID === "anthropic") {
     const prefix = "You are Claude Code, Anthropic's official CLI for Claude.";
     output.system.unshift(prefix);
     if (output.system[1]) output.system[1] = prefix + "\n\n" + output.system[1];
   }
 
-  if (!isHeadless()) {
+  if (await shouldInjectGreeting(input)) {
     output.system.unshift(buildSessionStartGreetingInstruction(agentsDir, readIfExists));
   }
 
@@ -350,13 +378,14 @@ async function ttsrTextComplete(input, output, state, execDeps, qualityLog) {
 export function createTtsrHooks(deps) {
   const { agentsDir, scriptsDir, readIfExists, qualityLog, run, intentField } = deps;
   const isHeadless = deps.isHeadless || (() => false);
+  const shouldInjectGreeting = deps.shouldInjectGreeting || (async () => !isHeadless());
   const ttsrRulesPath = join(agentsDir, "configs", "ttsr-rules.json");
   const state = createTtsrState(ttsrRulesPath, readIfExists);
   const execDeps = { scriptsDir, run };
 
   return {
     loadTtsrRules: () => loadTtsrRules(state),
-    systemTransformHook: (input, output) => ttsrSystemTransform(input, output, state, intentField, isHeadless, agentsDir, readIfExists),
+    systemTransformHook: (input, output) => ttsrSystemTransform(input, output, state, intentField, shouldInjectGreeting, agentsDir, readIfExists),
     messagesTransformHook: (_input, output) => ttsrMessagesTransform(_input, output, state, qualityLog, isHeadless),
     textCompleteHook: (input, output) => ttsrTextComplete(input, output, state, execDeps, qualityLog),
   };

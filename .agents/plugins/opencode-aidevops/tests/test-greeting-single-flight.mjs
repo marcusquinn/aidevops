@@ -107,6 +107,38 @@ test("fresh cache emits immediately without spawning a refresh", async (t) => {
   assert.equal(f.clients[0].length, 1);
 });
 
+test("headless sessions never emit or refresh a greeting", async (t) => {
+  const f = fixture();
+  t.after(() => f.cleanup());
+  writeFileSync(f.cacheFile, `${OLD_GREETING}\n`);
+  let spawnCount = 0;
+  const handler = createGreetingHandler({
+    ...handlerOptions(f, f.client(), async () => {
+      spawnCount += 1;
+      return { stdout: NEW_GREETING };
+    }),
+    isHeadless: () => true,
+  });
+
+  await handler({ event: { type: "session.created" } });
+
+  assert.equal(spawnCount, 0);
+  assert.equal(f.clients[0].length, 0);
+});
+
+test("subagent session events do not consume or emit the root greeting", async (t) => {
+  const f = fixture();
+  t.after(() => f.cleanup());
+  writeFileSync(f.cacheFile, `${OLD_GREETING}\n`);
+  const handler = createGreetingHandler(handlerOptions(f, f.client(), async () => ({ stdout: NEW_GREETING })));
+
+  await handler({ event: { type: "session.created", properties: { info: { id: "child", parentID: "root" } } } });
+  await handler({ event: { type: "session.created", properties: { info: { id: "root" } } } });
+
+  assert.equal(f.clients[0].length, 1);
+  assert.match(f.clients[0][0].message, /aidevops v1\.0\.0/);
+});
+
 test("stale lock is recovered within the configured bound", async (t) => {
   const f = fixture();
   t.after(() => f.cleanup());

@@ -423,6 +423,31 @@ async function emitToast(client, body) {
 // The caller MUST NOT await runGreetingAsync — doing so would restore the
 // blocking behaviour this change is meant to fix.
 
+function refreshGreetingIfStale({ cached, now, refreshTtlMs, lockDir, lockStaleMs, scriptsDir, client, cacheFile, execGreeting, maintenanceNoticeFn }) {
+  if (cached && now() - cached.mtimeMs <= refreshTtlMs) return;
+
+  const lockToken = acquireRefreshLock(lockDir, lockStaleMs, now());
+  if (lockToken) {
+    runGreetingAsync({
+      scriptsDir,
+      client,
+      cacheFile,
+      lockDir,
+      lockToken,
+      execGreeting,
+      maintenanceNoticeFn,
+    });
+    return;
+  }
+
+  if (!cached) {
+    observeSharedRefresh({ cacheFile, lockDir, lockStaleMs, client, now });
+  }
+  if (process.env.AIDEVOPS_PLUGIN_DEBUG) {
+    console.error("[aidevops] greeting: refresh already running in another process");
+  }
+}
+
 /**
  * Create a handler that fires the greeting once per plugin init. The
  * returned function matches the plugin `event` hook contract so it can be
@@ -448,6 +473,7 @@ export function createGreetingHandler({
   execGreeting = execAsync,
   maintenanceNoticeFn = getOpenCodeMaintenanceNotice,
   now = Date.now,
+  isHeadless = () => false,
 }) {
   let fired = false;
   const initTime = now();
@@ -456,7 +482,14 @@ export function createGreetingHandler({
 
   return async ({ event }) => {
     if (fired) return;
+    if (isHeadless()) return;
     if (!event || !event.type) return;
+
+    // OpenCode includes session metadata on lifecycle events. A parentID marks
+    // a subagent/subtask session, which must not consume or display the main
+    // interactive session's startup toast.
+    const sessionInfo = event.properties?.info;
+    if (sessionInfo?.parentID) return;
 
     const isPrimary = event.type === "session.created";
     const isFallback =
@@ -477,31 +510,18 @@ export function createGreetingHandler({
     const cached = readGreetingCache(cacheFile);
     emitCachedGreeting(client, cached);
 
-    if (!cached || now() - cached.mtimeMs > refreshTtlMs) {
-      const lockToken = acquireRefreshLock(lockDir, lockStaleMs, now());
-      if (lockToken) {
-        // t2729: fire-and-forget — do NOT await. The handler resolves immediately;
-        // the toast arrives whenever the subprocess finishes.
-        runGreetingAsync({
-          scriptsDir,
-          client,
-          cacheFile,
-          lockDir,
-          lockToken,
-          execGreeting,
-          maintenanceNoticeFn,
-        });
-      } else {
-        if (!cached) {
-          // A cold-cache follower still gets the owner's completed greeting;
-          // polling is bounded by the same crashed-lock recovery interval.
-          observeSharedRefresh({ cacheFile, lockDir, lockStaleMs, client, now });
-        }
-        if (process.env.AIDEVOPS_PLUGIN_DEBUG) {
-          console.error("[aidevops] greeting: refresh already running in another process");
-        }
-      }
-    }
+    refreshGreetingIfStale({
+      cached,
+      now,
+      refreshTtlMs,
+      lockDir,
+      lockStaleMs,
+      scriptsDir,
+      client,
+      cacheFile,
+      execGreeting,
+      maintenanceNoticeFn,
+    });
 
     if (process.env.AIDEVOPS_PLUGIN_DEBUG) {
       console.error("[aidevops] greeting: handler-completed");
