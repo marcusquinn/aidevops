@@ -7486,15 +7486,15 @@
       "pr": 15490
     },
     "aidevops.sh": {
-      "at": "2026-07-12T07:34:40Z",
-      "hash": "89068ffc3d09701d93c055cf7d3b71c3b1e50ede",
-      "passes": 270,
+      "at": "2026-07-12T10:57:32Z",
+      "hash": "8b4ab453cf3526426367fa62754780be824ed9f4",
+      "passes": 271,
       "pr": 19029
     },
     "setup.sh": {
-      "at": "2026-07-12T07:34:40Z",
-      "hash": "8de8fc5b3f4e8b90377132cc2590e1b8f473e903",
-      "passes": 266,
+      "at": "2026-07-12T10:57:33Z",
+      "hash": "c02bbda7f1c22f1dc05985b1ccdf6f2d653e0efa",
+      "passes": 267,
       "pr": 15470
     },
     "todo/tasks/GH#15363-brief.md": {
@@ -8102,6 +8102,12 @@
       "at": "2026-07-12T05:41:25Z",
       "pr": 27054,
       "passes": 2
+    },
+    ".agents/scripts/aidevops-cli/aidevops-init-lib.sh": {
+      "hash": "161ab82d5b46a1cd84c96c3926fc202fc4202bbf",
+      "at": "2026-07-12T10:57:33Z",
+      "pr": 27277,
+      "passes": 1
     }
   },
   "setup-modules/agent-deploy.sh": {
