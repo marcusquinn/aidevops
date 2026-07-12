@@ -113,10 +113,30 @@ test_same_runner_skip_gate_proceeds() {
 	return 0
 }
 
+test_marker_without_runner_key_stays_blocked() {
+	_dispatch_recent_dirty_worktree_marker_active() {
+		_DISPATCH_DIRTY_MARKER_STATE="block:age=0"
+		return 0
+	}
+	set +e
+	AIDEVOPS_RUNNER_IDENTITY_KEY="block:age=0" \
+		_dispatch_skip_for_dirty_worktree_recovery "26635" "marcusquinn/aidevops"
+	local rc=$?
+	set -e
+	unset -f _dispatch_recent_dirty_worktree_marker_active
+	if [[ "$rc" -eq 0 ]]; then
+		print_result "marker without runner key cannot impersonate owning runner" 0
+		return 0
+	fi
+	print_result "marker without runner key cannot impersonate owning runner" 1 "state=${_DISPATCH_DIRTY_MARKER_STATE} rc=${rc}"
+	return 0
+}
+
 test_dirty_worktree_reuse_preserves_edits() {
 	git() { /usr/bin/git "$@"; }
 	local fixture_root=""
 	fixture_root=$(mktemp -d)
+	fixture_root=$(cd "$fixture_root" && pwd -P)
 	local origin_dir="${fixture_root}/origin.git"
 	local repo_dir="${fixture_root}/repo"
 	local worktree_dir="${fixture_root}/dirty-worktree"
@@ -124,6 +144,7 @@ test_dirty_worktree_reuse_preserves_edits() {
 	git clone "$origin_dir" "$repo_dir" >/dev/null 2>&1
 	git -C "$repo_dir" config user.email "worker@example.invalid"
 	git -C "$repo_dir" config user.name "Worker Test"
+	git -C "$repo_dir" config commit.gpgsign false
 	git -C "$repo_dir" checkout -b main >/dev/null 2>&1
 	printf 'base\n' >"${repo_dir}/tracked.txt"
 	git -C "$repo_dir" add tracked.txt
@@ -220,6 +241,7 @@ main() {
 	test_later_resolution_clears_marker
 	test_expired_marker_does_not_block
 	test_expired_marker_clears_once_with_audit
+	test_marker_without_runner_key_stays_blocked
 
 	printf '\nRan %s tests, %s failed.\n' "$TESTS_RUN" "$TESTS_FAILED"
 	if [[ "$TESTS_FAILED" -gt 0 ]]; then
