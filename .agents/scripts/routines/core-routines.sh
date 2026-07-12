@@ -408,15 +408,15 @@ $(_scheduler_row_calendar "$os" "StartCalendarInterval: Hour=19, Minute=0" "sh.a
 ## What it does
 
 1. Reads all repos from \`~/.config/aidevops/repos.json\`
-2. For each repo: \`git fetch --all --prune\`
-3. For repos on default branch: \`git pull --ff-only\`
-4. Reports repos that have diverged or have conflicts
+2. Reads each default remote branch with \`git ls-remote\`
+3. Reports repos that differ from their remote default branch
+4. Leaves canonical HEAD, index, refs, tracked and untracked files unchanged
 5. Skips repos with uncommitted changes (safety)
 
 ## What to check
 
 $(_diag_commands "$os" "sh.aidevops.repo-sync" "sh.aidevops.repo-sync")
-- \`git -C <repo> log --oneline -3\` — recent changes pulled
+- \`git -C <repo> status --short --branch\` — local state and reported drift
 - \`~/.config/aidevops/repos.json\` — registered repos
 - Repos with \`local_only: true\` are still synced locally (no fetch)
 $(_platform_footnote "$os")

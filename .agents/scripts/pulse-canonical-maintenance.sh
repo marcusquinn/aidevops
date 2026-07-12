@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
-# pulse-canonical-maintenance.sh — Periodic canonical-repo fast-forward and stale worktree sweep.
+# pulse-canonical-maintenance.sh — Periodic canonical diagnostics and stale worktree sweep.
 #
 # GH#19949: consolidated pulse stage combining two housekeeping tasks:
-#   1. Fast-forward canonical repos to origin/main (avoids stale main)
+#   1. Diagnose canonical repos that differ from origin/main without modifying them
 #   2. Sweep stale worktrees whose branches are merged or PRs are closed
 #
 # Cadence: ~30 min (1800s), not per-cycle. Both operations are deterministic
@@ -230,46 +230,30 @@ _canonical_ff_single_repo() {
 		return 1
 	fi
 
-	# Fetch origin
+	# Human canonical checkouts are diagnostic-only. Query the remote without
+	# updating refs, HEAD, index, tracked files, or untracked files.
 	if [[ "$dry_run" == "1" ]]; then
-		echo "[DRY_RUN] Would fetch origin for ${repo_path}"
+		echo "[DRY_RUN] Would diagnose origin for ${repo_path}"
 	else
-		_canonical_maintenance_run_with_timeout "$CANONICAL_MAINTENANCE_TIMEOUT" git -C "$repo_path" fetch origin --prune --quiet 2>/dev/null || {
-			echo "[pulse-canonical-maintenance] Fetch failed/timed out for ${repo_path}" >>"${LOGFILE:-/dev/null}"
+		local remote_sha=""
+		remote_sha=$(_canonical_maintenance_run_with_timeout "$CANONICAL_MAINTENANCE_TIMEOUT" git -C "$repo_path" ls-remote origin "refs/heads/${main_branch}" 2>/dev/null | awk 'NR == 1 {print $1}') || {
+			echo "[pulse-canonical-maintenance] Remote diagnostic failed/timed out for ${repo_path}" >>"${LOGFILE:-/dev/null}"
 			return 1
 		}
-		# Verify the remote ref exists after fetch — guard against repos where
-		# origin/<branch> was never fetched or the remote branch was renamed.
-		# Without this, rev-list below emits `fatal: ambiguous argument` to stderr.
-		if ! git -C "$repo_path" rev-parse --verify "origin/${main_branch}" >/dev/null 2>&1; then
-			echo "[pulse-canonical-maintenance] Skipping ${repo_path} — origin/${main_branch} not found after fetch" >>"${LOGFILE:-/dev/null}"
+		if [[ -z "$remote_sha" ]]; then
+			echo "[pulse-canonical-maintenance] Skipping ${repo_path} — remote ${main_branch} not found" >>"${LOGFILE:-/dev/null}"
 			return 1
 		fi
-	fi
-
-	# Check commits behind
-	local behind_count=0
-	behind_count=$(git -C "$repo_path" rev-list --count "HEAD..origin/${main_branch}" 2>/dev/null) || behind_count=0
-	[[ "$behind_count" =~ ^[0-9]+$ ]] || behind_count=0
-	if [[ "$behind_count" -eq 0 ]]; then
-		echo "[pulse-canonical-maintenance] ${repo_path} — already up to date" >>"${LOGFILE:-/dev/null}"
-		return 1
-	fi
-
-	# Fast-forward
-	if [[ "$dry_run" == "1" ]]; then
-		echo "[DRY_RUN] Would fast-forward ${repo_path} (${behind_count} commits behind)"
+		local local_sha=""
+		local_sha=$(git -C "$repo_path" rev-parse HEAD 2>/dev/null || true)
+		if [[ "$local_sha" == "$remote_sha" ]]; then
+			echo "[pulse-canonical-maintenance] ${repo_path} — already up to date" >>"${LOGFILE:-/dev/null}"
+			return 1
+		fi
+		echo "[pulse-canonical-maintenance] Diagnostic: ${repo_path} differs from origin/${main_branch}; human checkout left unchanged" >>"${LOGFILE:-/dev/null}"
 		return 0
 	fi
-
-	if _canonical_maintenance_run_with_timeout "$CANONICAL_MAINTENANCE_TIMEOUT" git -C "$repo_path" pull --ff-only "origin" "$main_branch" 2>/dev/null; then
-		echo "[pulse-canonical-maintenance] Fast-forwarded ${repo_path} by ${behind_count} commits" >>"${LOGFILE:-/dev/null}"
-		_canonical_maintenance_audit_log "canonical-maintenance: fast-forwarded ${repo_path} by ${behind_count} commits"
-		return 0
-	fi
-
-	echo "[pulse-canonical-maintenance] Fast-forward failed for ${repo_path} (non-ff divergence?)" >>"${LOGFILE:-/dev/null}"
-	return 1
+	return 0
 }
 
 # ---------------------------------------------------------------------------
@@ -303,7 +287,7 @@ _canonical_fast_forward() {
 		fi
 	done
 
-	echo "[pulse-canonical-maintenance] Fast-forward pass: ${ff_count} repos updated, ${skip_count} skipped" >>"${LOGFILE:-/dev/null}"
+	echo "[pulse-canonical-maintenance] Diagnostic pass: ${ff_count} repos stale/diverged, ${skip_count} skipped" >>"${LOGFILE:-/dev/null}"
 	return 0
 }
 

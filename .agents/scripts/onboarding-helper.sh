@@ -507,8 +507,8 @@ configure_dirs() {
 	echo -e "${BLUE}Configure Git Parent Directories for Repo Sync${NC}"
 	echo "================================================"
 	echo ""
-	echo "Repo sync scans parent directories for git repos and runs"
-	echo "git pull --ff-only daily on clean repos on their default branch."
+	echo "Repo sync scans parent directories and reports remote drift daily"
+	echo "without modifying human canonical checkouts."
 	echo ""
 
 	if ! command -v jq &>/dev/null; then

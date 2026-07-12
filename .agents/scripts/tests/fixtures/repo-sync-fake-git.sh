@@ -85,6 +85,24 @@ fetch)
 		;;
 	esac
 	;;
+ls-remote)
+	case "${FAKE_FETCH_MODE:-success}" in
+	success) printf '%s\trefs/heads/main\n' "${FAKE_UPSTREAM_SHA:-aaaa}"; exit 0 ;;
+	auth_then_success)
+		if [[ "$helper_used" == "1" ]]; then
+			printf '%s\trefs/heads/main\n' "${FAKE_UPSTREAM_SHA:-aaaa}"
+			exit 0
+		fi
+		printf "fatal: could not read Password for 'https://x-access-token:%s@github.com': terminal prompts disabled\n" "${FAKE_TOKEN:-SECRET_TOKEN}" >&2
+		exit 1
+		;;
+	auth_always_fail)
+		printf "fatal: Authentication failed for 'https://x-access-token:%s@github.com/example/repo.git'\n" "${FAKE_TOKEN:-SECRET_TOKEN}" >&2
+		exit 1
+		;;
+	*) exit 1 ;;
+	esac
+	;;
 pull)
 	if [[ "${FAKE_PULL_MODE:-success}" == "diverged" ]]; then
 		printf 'fatal: Not possible to fast-forward, aborting.\n' >&2

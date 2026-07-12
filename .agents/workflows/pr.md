@@ -124,7 +124,7 @@ Report structure: `## PR Review: #NNN - Title` with sections: **Quality Checks**
 1. Add `pr:NNN` to task line, move to `## In Review`; on merge mark `[x]`, add `completed:` timestamp, move to `## Done`
 2. Sync: `~/.aidevops/agents/scripts/beads-sync-helper.sh push`
 3. Delete branch: `git branch -d feature/xyz && git push origin --delete feature/xyz`
-4. Update local main: `git checkout main && git pull origin main`
+4. Leave the human canonical checkout unchanged; create the next linked worktree from freshly fetched `origin/main`.
 5. Create release if applicable: see `workflows/release.md`
 
 ## Fork Workflow (Non-Owner Repositories)

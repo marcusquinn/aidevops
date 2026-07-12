@@ -18,7 +18,7 @@ BRANCH_NAME="$(git rev-parse --abbrev-ref HEAD)"
 CANONICAL_DIR="$(git worktree list --porcelain | sed -n '1s/^worktree //p')"
 
 cd "$CANONICAL_DIR" || cd "$HOME"
-git pull origin main 2>/dev/null || true
+git fetch origin main 2>/dev/null || true
 
 HELPER="$HOME/.aidevops/agents/scripts/worktree-helper.sh"
 if [[ -x "$HELPER" ]]; then
@@ -43,7 +43,7 @@ gh pr merge --squash
 # Return to canonical repo and pull
 CANONICAL_DIR="$(git worktree list --porcelain | sed -n '1s/^worktree //p')"
 cd "$CANONICAL_DIR"
-git pull origin main
+git fetch origin main
 
 # Remove merged worktrees
 wt prune

@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
-# repo-sync-helper.sh - Daily git pull for repos in configured parent directories
+# repo-sync-helper.sh - Daily read-only diagnostics for human canonical repos
 #
 # Scans configured parent directories for git repos cloned from a remote and
-# runs `git pull --ff-only` on repos where:
+# reports remote drift for repos where:
 #   - The working tree is clean (no uncommitted changes)
 #   - The current branch is the default branch (main or master)
 #   - The repo has a configured remote
@@ -510,35 +510,26 @@ sync_repo() {
 		return 0
 	fi
 
-	# Fetch and pull --ff-only
-	log_info "SYNC $repo_name: fetching from $remote..."
-	if ! run_git_with_auth_fallback "$repo_path" "$repo_name" "$remote" "fetch" \
-		fetch "$remote" "$default_branch" --quiet; then
-		log_error "FAIL $repo_name: git fetch failed"
+	# Query the remote without updating any canonical Git or worktree state.
+	log_info "CHECK $repo_name: reading $remote/$default_branch..."
+	local remote_output=""
+	if ! remote_output=$(run_git_with_auth_fallback "$repo_path" "$repo_name" "$remote" "ls-remote" \
+		ls-remote "$remote" "refs/heads/$default_branch"); then
+		log_error "FAIL $repo_name: git ls-remote failed"
 		return 1
 	fi
 
-	# Check if there are upstream changes
 	local local_sha upstream_sha
 	local_sha=$(git -C "$repo_path" rev-parse HEAD 2>/dev/null || true)
-	upstream_sha=$(git -C "$repo_path" rev-parse "${remote}/${default_branch}" 2>/dev/null || true)
+	upstream_sha=$(printf '%s\n' "$remote_output" | awk 'NR == 1 {print $1}')
 
 	if [[ "$local_sha" == "$upstream_sha" ]]; then
 		log_info "OK $repo_name: already up to date"
 		return 0
 	fi
 
-	# Pull with ff-only (safe: never creates merge commits)
-	if run_git_with_auth_fallback "$repo_path" "$repo_name" "$remote" "pull" \
-		pull --ff-only "$remote" "$default_branch" --quiet; then
-		local new_sha
-		new_sha=$(git -C "$repo_path" rev-parse --short HEAD 2>/dev/null || true)
-		log_info "PULLED $repo_name: updated to $new_sha"
-		return 0
-	else
-		log_error "FAIL $repo_name: git pull --ff-only failed (diverged?)"
-		return 1
-	fi
+	log_warn "STALE $repo_name: differs from $remote/$default_branch; human checkout left unchanged"
+	return 0
 }
 
 #######################################
@@ -1422,7 +1413,7 @@ CONFIGURATION:
     Default: ~/Git
 
 SAFETY:
-    - Only runs git pull --ff-only (never creates merge commits)
+    - Never fetches, pulls, or updates human canonical checkouts
     - Skips repos with dirty working trees (uncommitted changes)
     - Skips repos not on their default branch (main/master)
     - Skips repos with no remote configured
@@ -1441,8 +1432,8 @@ HOW IT WORKS:
     4. For each repo:
        a. Skips if no remote, detached HEAD, or not on default branch
        b. Skips if working tree is dirty
-       c. Fetches from remote
-       d. Pulls with --ff-only if upstream has new commits
+       c. Reads the remote ref with ls-remote
+       d. Reports stale/diverged state without changing the checkout
     5. Logs results (pulled/skipped/failed) to ~/.aidevops/logs/repo-sync.log
 
 LOGS:

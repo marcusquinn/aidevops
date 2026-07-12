@@ -255,7 +255,7 @@ test_allows_same_opencode_session_pid_rollover() {
 	return 0
 }
 
-test_allowlisted_path_allows_edit_on_main() {
+test_headless_planning_path_requires_worktree() {
 	# Ensure repo is on main for this test
 	"$GIT_BIN" -C "$TEST_ROOT" switch main >/dev/null 2>&1 || true
 
@@ -263,12 +263,12 @@ test_allowlisted_path_allows_edit_on_main() {
 	local exit_code=0
 	output=$(FULL_LOOP_HEADLESS=true run_helper "$TEST_ROOT" --loop-mode --file "README.md" 2>&1) || exit_code=$?
 
-	if [[ "$exit_code" -eq 0 ]] && [[ "$output" == *"LOOP_DECISION=stay"* ]]; then
-		print_result "allowlisted path (README.md) allows edit on main in loop mode" 0
+	if [[ "$exit_code" -ne 0 || "$output" == *"LOOP_DECISION=worktree"* || "$output" == *"LOOP_DECISION=worktree_created"* ]]; then
+		print_result "headless planning path requires a linked worktree" 0
 		return 0
 	fi
 
-	print_result "allowlisted path (README.md) allows edit on main in loop mode" 1 "exit=${exit_code} output=${output}"
+	print_result "headless planning path requires a linked worktree" 1 "exit=${exit_code} output=${output}"
 	return 0
 }
 
@@ -321,7 +321,7 @@ test_absolute_path_outside_repo_blocked_on_main() {
 	return 0
 }
 
-test_todo_subdir_path_allows_edit_on_main() {
+test_todo_subdir_path_requires_worktree() {
 	# Ensure repo is on main for this test
 	"$GIT_BIN" -C "$TEST_ROOT" switch main >/dev/null 2>&1 || true
 	mkdir -p "${TEST_ROOT}/todo"
@@ -330,12 +330,12 @@ test_todo_subdir_path_allows_edit_on_main() {
 	local exit_code=0
 	output=$(FULL_LOOP_HEADLESS=true run_helper "$TEST_ROOT" --loop-mode --file "todo/tasks/t001-brief.md" 2>&1) || exit_code=$?
 
-	if [[ "$exit_code" -eq 0 ]] && [[ "$output" == *"LOOP_DECISION=stay"* ]]; then
-		print_result "todo/ subdir path allows edit on main in loop mode" 0
+	if [[ "$exit_code" -ne 0 || "$output" == *"LOOP_DECISION=worktree"* || "$output" == *"LOOP_DECISION=worktree_created"* ]]; then
+		print_result "todo/ subdir path requires a linked worktree" 0
 		return 0
 	fi
 
-	print_result "todo/ subdir path allows edit on main in loop mode" 1 "exit=${exit_code} output=${output}"
+	print_result "todo/ subdir path requires a linked worktree" 1 "exit=${exit_code} output=${output}"
 	return 0
 }
 
@@ -380,11 +380,11 @@ main() {
 	test_warns_when_canonical_repo_is_off_main
 	test_blocks_when_linked_worktree_owned_by_another_live_process
 	test_allows_same_opencode_session_pid_rollover
-	test_allowlisted_path_allows_edit_on_main
+	test_headless_planning_path_requires_worktree
 	test_interactive_allowlisted_path_still_requires_worktree
 	test_path_traversal_blocked_on_main
 	test_absolute_path_outside_repo_blocked_on_main
-	test_todo_subdir_path_allows_edit_on_main
+	test_todo_subdir_path_requires_worktree
 	test_auto_creates_git_path_worktree_from_ansi_helper_output
 
 	printf '\nRan %s tests, %s failed\n' "$TESTS_RUN" "$TESTS_FAILED"
