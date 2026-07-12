@@ -708,6 +708,7 @@ _merge_finalize_post_merge() {
 		grep -oE '[0-9]+' | head -1) || linked_issue=""
 	if [[ -n "$linked_issue" ]]; then
 		release_interactive_claim_on_merge "$pr_number" "$repo" "$linked_issue" || true
+		reconcile_dependants_after_verified_closure "$repo" "$linked_issue" || true
 	fi
 	if [[ "$has_auto" -eq 0 && -n "$linked_issue" ]]; then
 		auto_file_next_phase "$linked_issue" "$repo" || true
