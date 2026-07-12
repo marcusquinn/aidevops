@@ -15,6 +15,8 @@ Task/Prompt: $ARGUMENTS
 
 Fatal modes: **GH#5317** (exits without PR), **GH#5096** (exits after PR). Do NOT skip any step:
 
+**Interactive continuity (MANDATORY):** A user's full-loop instruction authorises this entire lifecycle. Continue autonomously from the current stage through `FULL_LOOP_COMPLETE`; do not stop after setup, implementation, PR creation, merge, or release merely to report progress. Pause only for a material blocker requiring user input under the framework rules. Progress reports must name the last verified stage and current action. Say a loop is "running" or "underway" only after verifying a live loop process/job; a worktree, plan, or completed discovery alone is not a running loop.
+
 | # | Step | Signal |
 |---|------|--------|
 | 0 | Commit+PR gate — all changes committed, PR exists | `TASK_COMPLETE` |

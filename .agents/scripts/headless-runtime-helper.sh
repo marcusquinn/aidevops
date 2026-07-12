@@ -793,6 +793,14 @@ _derive_worker_failure_evidence() {
 	local launch_failure_cause=""
 	local next_action="inspect_failure_excerpt"
 
+	if declare -F _worker_failure_reason_is_completion_infrastructure >/dev/null 2>&1 && \
+		_worker_failure_reason_is_completion_infrastructure "$failure_reason"; then
+		launch_failure_cause="$failure_reason"
+		next_action="resume_session_with_completion_contract"
+		printf '%s\t%s\n' "$launch_failure_cause" "$next_action"
+		return 0
+	fi
+
 	case "$result_label" in
 	no_activity | watchdog_startup_continue)
 		launch_failure_cause="startup_no_model_activity"

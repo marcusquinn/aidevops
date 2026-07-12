@@ -1607,6 +1607,17 @@ _dlw_prepare_worker_lineage() {
 	return 0
 }
 
+_dlw_validate_worktree_for_launch() {
+	local issue_number="$1"
+	local worker_worktree_path="$2"
+	if [[ -n "$worker_worktree_path" && -d "$worker_worktree_path" ]]; then
+		return 0
+	fi
+	printf '[pulse-dispatch] worker launch skipped: worktree unavailable for #%s path=%s\n' \
+		"$issue_number" "${worker_worktree_path:-missing}" >>"$LOGFILE"
+	return 1
+}
+
 #######################################
 # Launch a worker process detached from the pulse process group.
 # Stdout: worker PID
@@ -1631,6 +1642,8 @@ _dlw_nohup_launch() {
 	local dispatch_event_id=""
 	local root_event_id=""
 	_dlw_prepare_worker_lineage "$session_key"
+
+	_dlw_validate_worktree_for_launch "$issue_number" "$worker_worktree_path" || return 1
 
 	# Use issue title as session title for searchable history, but keep the
 	# issue marker at the beginning so Tabby tabs and OpenCode session search

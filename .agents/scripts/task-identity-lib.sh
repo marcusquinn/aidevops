@@ -189,7 +189,9 @@ task_identity_escape_ere() {
 # canonical ID. Callers use this to distinguish invalid input from no marker.
 task_identity_has_malformed_candidate() {
 	local text="${1:-}"
-	local candidate_ere='(^|[^[:alnum:].])([tT][0-9A-Z][[:alnum:].-]*|[tT][oO][[:alnum:]]{26}-[[:alnum:].-]+)($|[^[:alnum:].])'
+	# Spell out the uppercase set: locale collation can make A-Z match lowercase
+	# letters, falsely classifying ordinary words such as "throughput" as IDs.
+	local candidate_ere='(^|[^[:alnum:].])([tT][0123456789][[:alnum:].-]*|t[ABCDEFGHIJKLMNOPQRSTUVWXYZ][[:alnum:].-]*|[tT][oO][[:alnum:]]{26}-[[:alnum:].-]+)($|[^[:alnum:].])'
 	local candidate=""
 	local remaining="$text"
 	local matched=""
