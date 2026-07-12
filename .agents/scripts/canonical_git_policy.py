@@ -38,10 +38,6 @@ READ_ONLY = {
 GLOBAL_VALUE_OPTIONS = {"-C", "-c", "--git-dir", "--work-tree", "--namespace"}
 
 
-class GitProbeError(RuntimeError):
-    """A bounded native-Git repository probe could not complete."""
-
-
 def real_git(explicit: str = "") -> str:
     """Resolve the real Git executable without selecting the sibling shim."""
     if explicit:
@@ -72,9 +68,9 @@ def _git_output(real_git_path: str, cwd: str, *args: str) -> str:
             check=False,
         )
     except subprocess.TimeoutExpired as error:
-        raise GitProbeError("native Git repository probe timed out") from error
+        raise RuntimeError("native Git repository probe timed out") from error
     except OSError as error:
-        raise GitProbeError("native Git repository probe failed to start") from error
+        raise RuntimeError("native Git repository probe failed to start") from error
     return result.stdout.strip() if result.returncode == 0 else ""
 
 
@@ -258,7 +254,7 @@ def classify_git_argv(
         return False, "unresolved shell syntax in Git repository target"
     try:
         is_canonical = _is_canonical(real_git_path, effective_cwd, prefix)
-    except GitProbeError as error:
+    except RuntimeError as error:
         return False, str(error)
     if not is_canonical:
         return True, "linked worktree or non-repository target"
