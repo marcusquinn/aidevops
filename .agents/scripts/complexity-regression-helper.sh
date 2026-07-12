@@ -982,9 +982,7 @@ _check_regression() {
 	local _metric="${5:-function-complexity}"
 	local _working_tree="${6:-0}"
 
-	# Diff-scoped fast path: compute changed .sh/.py files before creating
-	# worktrees. If none changed, no new violations are possible — exit 0
-	# immediately, saving ~1-3s of worktree creation per metric.
+	# Resolve applicable changed files before creating worktrees.
 	local _changed_source
 	if [ "$_working_tree" -eq 1 ]; then
 		_changed_source=$({
