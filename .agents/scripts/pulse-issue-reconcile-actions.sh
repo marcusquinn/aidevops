@@ -371,11 +371,11 @@ _parent_close_contract_incomplete() {
 	local phases_section="" unfiled_count=0
 	phases_section=$(_parse_phases_section "$parent_body")
 	if [[ -n "$phases_section" ]]; then
-		_PARENT_CLOSE_CONTRACT_DECLARED=$(printf '%s\n' "$phases_section" | \
+		_PARENT_CLOSE_CONTRACT_DECLARED=$(printf '%s\n' "$phases_section" |
 			awk -F'\t' '$1 ~ /^[0-9]+$/ { c++ } END { print c+0 }')
-		_PARENT_CLOSE_CONTRACT_UNFILED=$(printf '%s\n' "$phases_section" | \
+		_PARENT_CLOSE_CONTRACT_UNFILED=$(printf '%s\n' "$phases_section" |
 			awk -F'\t' '$1 ~ /^[0-9]+$/ && $4 == "" { printf "Phase %s: %s\n", $1, $2 }')
-		unfiled_count=$(printf '%s\n' "$phases_section" | \
+		unfiled_count=$(printf '%s\n' "$phases_section" |
 			awk -F'\t' '$1 ~ /^[0-9]+$/ && $4 == "" { c++ } END { print c+0 }')
 		if [[ "$unfiled_count" -gt 0 ]]; then
 			_PARENT_CLOSE_CONTRACT_REASON="unfiled-phases"
@@ -384,19 +384,19 @@ _parent_close_contract_incomplete() {
 	fi
 
 	local expected_children=""
-	expected_children=$(printf '%s\n' "$parent_body" | \
+	expected_children=$(printf '%s\n' "$parent_body" |
 		sed -nE 's/.*<!-- parent-close-contract: expected-children=([0-9]+) -->.*/\1/p' | head -n1)
 	if [[ "$expected_children" =~ ^[0-9]+$ ]] && [[ "$known_child_count" -lt "$expected_children" ]]; then
 		_PARENT_CLOSE_CONTRACT_REASON="expected-children:${expected_children}"
 		return 0
 	fi
 
-	if [[ "$parent_body" == *"<!-- parent-close-contract: phase-plan -->"* && \
+	if [[ "$parent_body" == *"<!-- parent-close-contract: phase-plan -->"* &&
 		"$_PARENT_CLOSE_CONTRACT_DECLARED" -eq 0 ]]; then
 		_PARENT_CLOSE_CONTRACT_REASON="invalid-phase-plan"
 		return 0
 	fi
-	if [[ "$parent_body" == *"<!-- parent-close-contract: needs-decomposition -->"* || \
+	if [[ "$parent_body" == *"<!-- parent-close-contract: needs-decomposition -->"* ||
 		"$parent_body" == *"<!-- parent-close-contract: keep-open -->"* ]]; then
 		_PARENT_CLOSE_CONTRACT_REASON="needs-decomposition"
 		return 0
@@ -578,7 +578,7 @@ _Detected by reconcile_completed_parent_tasks (pulse-issue-reconcile.sh)._" \
 _should_ciw() {
 	local labels_csv="$1"
 	case "$labels_csv" in
-		*status:available*) return 0 ;;
+	*status:available*) return 0 ;;
 	esac
 	return 1
 }
@@ -588,7 +588,7 @@ _should_ciw() {
 _should_rsd() {
 	local labels_csv="$1"
 	case "$labels_csv" in
-		*status:done*) return 0 ;;
+	*status:done*) return 0 ;;
 	esac
 	return 1
 }
@@ -612,7 +612,7 @@ _should_oimp() {
 _should_cpt() {
 	local labels_csv="$1"
 	case "$labels_csv" in
-		*parent-task*) return 0 ;;
+	*parent-task*) return 0 ;;
 	esac
 	return 1
 }
@@ -629,7 +629,7 @@ _should_lia() {
 	fi
 	# Must have no origin:/tier:/status: labels (unquoted patterns avoid ratchet)
 	case "$labels_csv" in
-		*origin:* | *tier:* | *status:*) return 1 ;;
+	*origin:* | *tier:* | *status:*) return 1 ;;
 	esac
 	return 0
 }
@@ -649,8 +649,8 @@ _pir_extract_superseded_issue_nums() {
 	local issue_body="$1"
 	[[ -n "$issue_body" ]] || return 0
 
-	printf '%s' "$issue_body" | \
-		grep -oiE 'supersedes[[:space:]]+#[0-9]+' 2>/dev/null | \
+	printf '%s' "$issue_body" |
+		grep -oiE 'supersedes[[:space:]]+#[0-9]+' 2>/dev/null |
 		grep -oE '[0-9]+' | sort -un
 	return 0
 }
@@ -665,10 +665,10 @@ _pir_lookup_oimp_pr_for_issue() {
 	local oimp_lookup="$2"
 	[[ "$issue_num" =~ ^[0-9]+$ && -n "$oimp_lookup" ]] || return 0
 
-	printf '%s' "$oimp_lookup" \
-		| grep -oE "\|${issue_num}=[0-9]+" 2>/dev/null \
-		| head -1 \
-		| cut -d= -f2
+	printf '%s' "$oimp_lookup" |
+		grep -oE "\|${issue_num}=[0-9]+" 2>/dev/null |
+		head -1 |
+		cut -d= -f2
 	return 0
 }
 
@@ -780,6 +780,47 @@ _action_rsd_single() {
 }
 
 #######################################
+# Check whether a generated file-size-debt issue still describes current debt.
+# Historical merged-PR evidence is not sufficient to close a recurrent issue
+# while its exact cited file is again at or above the recorded threshold.
+#
+# Args: $1=repo slug, $2=issue body
+# Returns: 0=current debt exists, 1=not generated debt or debt is resolved,
+#          2=current outcome could not be measured (caller must fail safe)
+#######################################
+_pir_file_size_debt_current_outcome() {
+	local slug="$1"
+	local issue_body="$2"
+	local marker="" cited_file="" threshold="" repo_path="" full_path=""
+	local line_count=0 repos_json="${REPOS_JSON:-${HOME}/.config/aidevops/repos.json}"
+
+	marker=$(printf '%s\n' "$issue_body" | grep -m 1 '<!-- aidevops:generator=large-file-simplification-gate cited_file=.* threshold=[0-9][0-9]* -->' 2>/dev/null) || marker=""
+	[[ -n "$marker" ]] || return 1
+	cited_file="${marker#* cited_file=}"
+	cited_file="${cited_file% threshold=*}"
+	threshold="${marker##* threshold=}"
+	threshold="${threshold%% *}"
+	[[ -n "$cited_file" && "$threshold" =~ ^[0-9]+$ && "$threshold" -gt 0 ]] || return 2
+
+	[[ -f "$repos_json" ]] || return 2
+	repo_path=$(jq -r --arg slug "$slug" '.initialized_repos[] | select(.slug == $slug) | .path // empty' "$repos_json" 2>/dev/null | head -1) || repo_path=""
+	[[ -n "$repo_path" && -d "$repo_path" ]] || return 2
+
+	for full_path in "${repo_path}/${cited_file}" "${repo_path}/.agents/${cited_file}" "${repo_path}/.${cited_file}"; do
+		[[ -f "$full_path" ]] && break
+		full_path=""
+	done
+	[[ -n "$full_path" ]] || return 2
+
+	line_count=$(wc -l <"$full_path" 2>/dev/null | tr -d ' ') || line_count=0
+	[[ "$line_count" =~ ^[0-9]+$ ]] || return 2
+	if [[ "$line_count" -ge "$threshold" ]]; then
+		return 0
+	fi
+	return 1
+}
+
+#######################################
 # Stage 3 action: close an open issue whose linked PR has already merged.
 # (Per-issue body of reconcile_open_issues_with_merged_prs — no slug loop.)
 #
@@ -825,6 +866,19 @@ _action_oimp_single() {
 		done < <(_pir_extract_superseded_issue_nums "$issue_body")
 	fi
 	[[ -n "$merged_pr_num" && "$merged_pr_num" =~ ^[0-9]+$ ]] || return 1
+
+	local current_outcome_rc=0
+	_pir_file_size_debt_current_outcome "$slug" "$issue_body" || current_outcome_rc=$?
+	case "$current_outcome_rc" in
+	0)
+		echo "[pulse-wrapper] Reconcile merged-PR: skipped close #${issue_num} in ${slug} — recurrent file-size debt still exceeds its threshold" >>"$LOGFILE"
+		return 1
+		;;
+	2)
+		echo "[pulse-wrapper] Reconcile merged-PR: deferred close #${issue_num} in ${slug} — recurrent file-size debt outcome unavailable" >>"$LOGFILE"
+		return 1
+		;;
+	esac
 
 	# Body keyword check is built into the lookup builder — the jq scan
 	# only emits pairs from PR bodies actually containing
@@ -934,11 +988,11 @@ _action_cpt_single() {
 	[[ -n "$_c_nums" ]] && _src_parts="${_src_parts:+${_src_parts}+}comments"
 
 	# Union: concatenate, keep numeric lines, dedupe, drop self-reference
-	child_nums=$(printf '%s\n%s\n%s\n%s\n' "$_g_nums" "$_b_nums" "$_p_nums" "$_c_nums" \
-		| grep -E '^[0-9]+$' | sort -un | grep -v "^${issue_num}$" || true)
+	child_nums=$(printf '%s\n%s\n%s\n%s\n' "$_g_nums" "$_b_nums" "$_p_nums" "$_c_nums" |
+		grep -E '^[0-9]+$' | sort -un | grep -v "^${issue_num}$" || true)
 	local child_source="${_src_parts:-none}"
 	local known_child_count=0
-	known_child_count=$(printf '%s\n' "$child_nums" | \
+	known_child_count=$(printf '%s\n' "$child_nums" |
 		awk '$0 ~ /^[0-9]+$/ { c++ } END { print c+0 }')
 
 	# Recently closed parents are repair candidates only when deterministic
@@ -972,7 +1026,7 @@ _action_cpt_single() {
 		if [[ "$can_escalate" == "1" ]]; then
 			local _nudge_age_hours
 			_nudge_age_hours=$(_compute_parent_nudge_age_hours "$slug" "$issue_num")
-			if [[ "$_nudge_age_hours" =~ ^[0-9]+$ ]] && \
+			if [[ "$_nudge_age_hours" =~ ^[0-9]+$ ]] &&
 				[[ "$_nudge_age_hours" -ge "$escalation_threshold_hours" ]]; then
 				if _post_parent_decomposition_escalation "$slug" "$issue_num" "$issue_title"; then
 					_SP_CPT_ESCALATED=1

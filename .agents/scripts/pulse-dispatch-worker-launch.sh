@@ -459,11 +459,13 @@ _dlw_comment_bloat_requires_clean_room() {
 _dlw_fetch_issue_body_for_clean_room() {
 	local issue_number="$1"
 	local repo_slug="$2"
+	local snapshot_helper="${ISSUE_BODY_SNAPSHOT_HELPER:-${BASH_SOURCE[0]%/*}/issue-body-snapshot-helper.sh}"
+	local issue_json=""
 
-	local issue_body=""
-	issue_body=$(gh issue view "$issue_number" --repo "$repo_slug" --json body --jq '.body // ""' 2>/dev/null) || issue_body=""
-	printf '%s' "$issue_body"
-	return 0
+	[[ -x "$snapshot_helper" ]] || return 1
+	issue_json=$("$snapshot_helper" fetch "$repo_slug" "$issue_number") || return 1
+	jq -rj '.body' <<<"$issue_json"
+	return $?
 }
 
 _dlw_clean_room_prompt() {
@@ -524,6 +526,14 @@ _dlw_zero_output_fallback_prompt() {
 	local issue_number="$1"
 	local repo_slug="$2"
 	local issue_title="$3"
+	local snapshot_ready="${4:-0}"
+	local snapshot_instruction=""
+
+	if [[ "$snapshot_ready" == "1" ]]; then
+		snapshot_instruction="2. If that live read is unavailable, read the bounded validated snapshot with: ~/.aidevops/agents/scripts/issue-body-snapshot-helper.sh fetch ${repo_slug} ${issue_number}"
+	else
+		snapshot_instruction="2. No validated snapshot was captured. If the live read fails, stop and report that implementation is not authorized without trusted issue context."
+	fi
 
 	cat <<EOF
 You are assigned to work on issue #${issue_number} in ${repo_slug}.
@@ -532,9 +542,10 @@ Previous dispatch attempts for this issue launched a worker but produced zero se
 
 First actions:
 1. Read the issue directly with: gh issue view ${issue_number} --repo ${repo_slug}
-2. Ignore ops/provenance/audit comments as implementation context.
-3. Summarize the actionable task, files, and verification before editing.
-4. If the issue brief is malformed, too broad, or not worker-ready, rewrite the brief or split it into smaller worker-ready issues instead of attempting a speculative implementation.
+${snapshot_instruction}
+3. Ignore ops/provenance/audit comments as implementation context.
+4. Summarize the actionable task, files, and verification before editing.
+5. If the issue brief is malformed, too broad, or not worker-ready, rewrite the brief or split it into smaller worker-ready issues instead of attempting a speculative implementation.
 
 Issue title: ${issue_title:-Issue #${issue_number}}
 EOF
@@ -576,7 +587,11 @@ _dlw_prepare_prompt_for_launch() {
 
 	if _dlw_comment_bloat_requires_clean_room "$issue_number" "$repo_slug" "$comment_metrics"; then
 		local issue_body=""
-		issue_body=$(_dlw_fetch_issue_body_for_clean_room "$issue_number" "$repo_slug")
+		if ! issue_body=$(_dlw_fetch_issue_body_for_clean_room "$issue_number" "$repo_slug"); then
+			echo "[dispatch_with_dedup] #${issue_number} in ${repo_slug}: clean-room issue body unavailable; implementation is not authorized" >>"$LOGFILE"
+			_dlw_clean_room_prompt "$issue_number" "$repo_slug" "$issue_title" "BLOCKER: The live issue body and its validated durable snapshot are unavailable. Do not implement from this prompt. Retry the live gh issue view command and report the snapshot validation error if it remains unavailable."
+			return 0
+		fi
 		_dlw_clean_room_prompt "$issue_number" "$repo_slug" "$issue_title" "$issue_body"
 		_dlw_first_pass_completion_contract
 		return 0
@@ -589,8 +604,13 @@ _dlw_prepare_prompt_for_launch() {
 	[[ "$fallback_threshold" =~ ^[0-9]+$ ]] || fallback_threshold=2
 
 	if [[ "$zero_count" -ge "$fallback_threshold" ]]; then
+		local snapshot_helper="${ISSUE_BODY_SNAPSHOT_HELPER:-${BASH_SOURCE[0]%/*}/issue-body-snapshot-helper.sh}"
+		local snapshot_ready=0
+		if [[ -x "$snapshot_helper" ]] && "$snapshot_helper" fetch "$repo_slug" "$issue_number" >/dev/null 2>&1; then
+			snapshot_ready=1
+		fi
 		echo "[dispatch_with_dedup] #${issue_number} in ${repo_slug}: using URL-only bootstrap prompt after ${zero_count} zero-output launches" >>"$LOGFILE"
-		_dlw_zero_output_fallback_prompt "$issue_number" "$repo_slug" "$issue_title"
+		_dlw_zero_output_fallback_prompt "$issue_number" "$repo_slug" "$issue_title" "$snapshot_ready"
 		_dlw_first_pass_completion_contract
 		return 0
 	fi

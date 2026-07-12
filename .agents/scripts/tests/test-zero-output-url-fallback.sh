@@ -72,13 +72,26 @@ write_state() {
 
 write_state 2
 GH_COMMENT_METRICS=""
+ISSUE_BODY_SNAPSHOT_HELPER="/usr/bin/true"
+export ISSUE_BODY_SNAPSHOT_HELPER
 fallback_prompt=$(_dlw_prepare_prompt_for_launch 123 owner/repo "Test issue" "FULL EMBEDDED BRIEF")
 if printf '%s' "$fallback_prompt" | grep -q 'gh issue view 123 --repo owner/repo' \
+	&& printf '%s' "$fallback_prompt" | grep -q 'issue-body-snapshot-helper.sh fetch owner/repo 123' \
 	&& ! printf '%s' "$fallback_prompt" | grep -q 'FULL EMBEDDED BRIEF'; then
 	pass "repeated zero-output launches switch to URL-only bootstrap prompt"
 else
 	fail "repeated zero-output launches switch to URL-only bootstrap prompt" "$fallback_prompt"
 fi
+
+ISSUE_BODY_SNAPSHOT_HELPER="/usr/bin/false"
+fallback_without_snapshot=$(_dlw_prepare_prompt_for_launch 123 owner/repo "Test issue" "FULL EMBEDDED BRIEF")
+if [[ "$fallback_without_snapshot" == *"implementation is not authorized"* ]] \
+	&& [[ "$fallback_without_snapshot" != *"issue-body-snapshot-helper.sh fetch"* ]]; then
+	pass "URL-only fallback refuses implementation when snapshot capture fails"
+else
+	fail "URL-only fallback refuses implementation when snapshot capture fails" "$fallback_without_snapshot"
+fi
+ISSUE_BODY_SNAPSHOT_HELPER="/usr/bin/true"
 
 write_state 1
 GH_COMMENT_ZERO_COUNT=0
@@ -120,6 +133,12 @@ write_state 1
 GH_COMMENT_ZERO_COUNT=0
 GH_COMMENT_METRICS=$'275\t260\t87\t81500'
 GH_ISSUE_BODY="Clean body only: change app notifications query usage."
+cat >"${TMP}/snapshot-helper" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' '{"body":"Clean body only: change app notifications query usage."}'
+EOF
+chmod +x "${TMP}/snapshot-helper"
+ISSUE_BODY_SNAPSHOT_HELPER="${TMP}/snapshot-helper"
 clean_room_prompt=$(_dlw_prepare_prompt_for_launch 123 owner/repo "Test issue" "FULL EMBEDDED BRIEF WITH COMMENTS")
 if printf '%s' "$clean_room_prompt" | grep -q 'clean-room brief mode' \
 	&& printf '%s' "$clean_room_prompt" | grep -q 'Clean body only' \
