@@ -32,7 +32,31 @@ readonly WORKSPACE_DIR="${AIDEVOPS_WORKSPACE:-$HOME/.aidevops/.agent-workspace}"
 readonly SESSION_DIR="$WORKSPACE_DIR/sessions"
 # shellcheck disable=SC2034  # Reserved for future use
 readonly DISTILL_OUTPUT="$SESSION_DIR/distill-output.json"
-readonly SESSION_ID="${AIDEVOPS_SESSION_ID:-${OPENCODE_SESSION_ID:-${CLAUDE_SESSION_ID:-$(git rev-parse --show-toplevel 2>/dev/null | shasum | cut -c1-12)-$(git branch --show-current 2>/dev/null || printf 'unknown')}}}"
+
+# Build a private, deterministic local identifier when the runtime provides no
+# session ID. This is collision isolation, not authentication; SHA-256 prevents
+# the repository path from being exposed while avoiding weak-hash scanners.
+_distill_fallback_session_id() {
+	local repository_root=""
+	local branch=""
+	local root_hash=""
+	repository_root=$(git rev-parse --show-toplevel 2>/dev/null) || repository_root=$(pwd -P)
+	branch=$(git branch --show-current 2>/dev/null) || branch=""
+	[[ -n "$branch" ]] || branch="unknown"
+
+	if command -v shasum >/dev/null 2>&1; then
+		root_hash=$(printf '%s' "$repository_root" | shasum -a 256 | cut -c1-12)
+	elif command -v sha256sum >/dev/null 2>&1; then
+		root_hash=$(printf '%s' "$repository_root" | sha256sum | cut -c1-12)
+	else
+		root_hash=$(ROOT_PATH="$repository_root" python3 -c 'import hashlib, os; print(hashlib.sha256(os.environ["ROOT_PATH"].encode()).hexdigest()[:12])')
+	fi
+
+	printf '%s-%s' "$root_hash" "$branch"
+	return 0
+}
+
+readonly SESSION_ID="${AIDEVOPS_SESSION_ID:-${OPENCODE_SESSION_ID:-${CLAUDE_SESSION_ID:-$(_distill_fallback_session_id)}}}"
 readonly SAFE_SESSION_ID="${SESSION_ID//[^a-zA-Z0-9_.-]/_}"
 readonly SESSION_STATE_DIR="$SESSION_DIR/$SAFE_SESSION_ID"
 readonly PROPOSALS_FILE="$SESSION_STATE_DIR/observation-proposals.json"
@@ -479,4 +503,6 @@ main() {
 	return 0
 }
 
-main "$@"
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+	main "$@"
+fi
