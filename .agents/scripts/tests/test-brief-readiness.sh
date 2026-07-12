@@ -424,6 +424,35 @@ const record = { path: configPath, command: runCommand };
 \`\`\`
 "
 
+# Short concrete paths remain substantive, and Bun is a supported verifier.
+# shellcheck disable=SC2016
+BODY_V2_SHORT_PATH_BUN=$(printf '%s\n' "$BODY_V2_COMPLETE" | sed \
+	-e 's|^- \*\*Callers/readers:\*\*.*$|- **Callers/readers:** `app.py`|' \
+	-e 's|^shellcheck src/state.sh.*$|bun test|' \
+	-e '/^bash tests\/test-state\.sh$/d')
+
+# Negative language in prose must not replace a negative observable criterion.
+BODY_V2_NEGATIVE_PROSE_ONLY=$(printf '%s\n' "$BODY_V2_COMPLETE" | sed \
+	's/^- \[ \] A failed migration never replaces a valid existing record or regresses v1 reads\.$/- [ ] Migration failures return an observable error./')
+BODY_V2_NEGATIVE_PROSE_ONLY="${BODY_V2_NEGATIVE_PROSE_ONLY}
+This prose says the implementation must not regress readers."
+
+# Fenced headings cannot provide the schema-v2 heading score.
+BODY_V2_FENCED_SCORE_BYPASS=$(printf '%s\n' "$BODY_V2_COMPLETE" | grep -vE '^## (Task|Why|How)$')
+BODY_V2_FENCED_SCORE_BYPASS="${BODY_V2_FENCED_SCORE_BYPASS}
+
+\`\`\`markdown
+## Task
+## Why
+\`\`\`"
+
+# A marker shown only as a fenced example must not upgrade a legacy brief.
+BODY_LEGACY_WITH_FENCED_MARKER="${BODY_SCORE_4}
+
+\`\`\`markdown
+<!-- aidevops:brief-schema=v2 -->
+\`\`\`"
+
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
@@ -741,6 +770,37 @@ if [[ "$output" == *"files-to-modify:target"* && "$output" == *"implementation-s
 	pass "T24: lookalike heading prefixes are rejected"
 else
 	fail "T24: exact schema-v2 heading matching" "output: $output"
+fi
+
+# --- Test 25: short concrete paths and Bun verification remain valid ---
+if "$HELPER" check --body "$BODY_V2_SHORT_PATH_BUN" >/dev/null 2>&1; then
+	pass "T25: short paths and Bun verification are accepted"
+else
+	fail "T25: short path or Bun verifier compatibility" "readiness check failed"
+fi
+
+# --- Test 26: negative evidence must be an observable checkbox criterion ---
+output=$("$HELPER" check --body "$BODY_V2_NEGATIVE_PROSE_ONLY" 2>/dev/null)
+if [[ "$output" == *"acceptance:negative-regression"* ]]; then
+	pass "T26: negative prose cannot replace a negative acceptance criterion"
+else
+	fail "T26: negative acceptance criterion enforcement" "output: $output"
+fi
+
+# --- Test 27: fenced headings cannot provide the schema-v2 heading score ---
+output=$("$HELPER" check --body "$BODY_V2_FENCED_SCORE_BYPASS" 2>/dev/null)
+if [[ "$output" == *"WORKER_READY=false"* && "$output" == *"SCHEMA=v2"* ]]; then
+	pass "T27: fenced headings do not increase the schema-v2 score"
+else
+	fail "T27: fence-aware schema-v2 scoring" "output: $output"
+fi
+
+# --- Test 28: a fenced schema marker does not upgrade a legacy brief ---
+output=$("$HELPER" check --body "$BODY_LEGACY_WITH_FENCED_MARKER" 2>/dev/null)
+if [[ "$output" == *"WORKER_READY=true"* && "$output" == *"SCHEMA=legacy"* ]]; then
+	pass "T28: fenced schema marker remains a legacy example"
+else
+	fail "T28: fence-aware schema marker detection" "output: $output"
 fi
 
 # ---------------------------------------------------------------------------

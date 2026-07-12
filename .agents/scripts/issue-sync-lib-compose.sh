@@ -555,7 +555,7 @@ _compose_issue_worker_guidance() {
 		local readiness_helper="$SCRIPT_DIR/brief-readiness-helper.sh"
 		local brief_body=""
 		brief_body=$(<"$brief_file")
-		if [[ -x "$readiness_helper" ]] && "$readiness_helper" check --body "$brief_body" >/dev/null 2>&1; then
+		if [[ -f "$readiness_helper" ]] && bash "$readiness_helper" check --body "$brief_body" >/dev/null 2>&1; then
 			body="$body"$'\n\n'"## Worker Guidance"$'\n\n'"$how_section"
 		fi
 	elif [[ "$has_files" -gt 0 || "$has_steps" -gt 0 ]]; then

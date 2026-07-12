@@ -62,6 +62,11 @@ fi
 readonly DEFAULT_THRESHOLD=4
 readonly BRIEF_SCHEMA_V2_MARKER='<!-- aidevops:brief-schema=v2 -->'
 readonly BRIEF_BOOL_TRUE="true"
+readonly BRIEF_PARSER_AWK="${SCRIPT_DIR}/brief-readiness-parser.awk"
+readonly BRIEF_PARSE_UNFENCED_MODE="unfenced"
+readonly BRIEF_PARSE_VISIBLE_MODE="visible"
+readonly BRIEF_PARSE_SECTION_MODE="section"
+readonly BRIEF_PARSE_PROSE_MODE="prose"
 
 # Primary headings (the brief-template canonical set)
 readonly -a PRIMARY_HEADINGS=(
@@ -104,44 +109,28 @@ _score_body() {
 _is_schema_v2_brief() {
 	local -a _args=("$@")
 	local body="${_args[0]}"
+	local unfenced=""
 
-	if printf '%s\n' "$body" | grep -qF "$BRIEF_SCHEMA_V2_MARKER"; then
+	unfenced=$(_unfenced_brief_text "$body")
+	if printf '%s\n' "$unfenced" | grep -qF "$BRIEF_SCHEMA_V2_MARKER"; then
 		return 0
 	fi
 	return 1
+}
+
+_unfenced_brief_text() {
+	local -a _args=("$@")
+	local body="${_args[0]}"
+
+	printf '%s\n' "$body" | awk -v mode="$BRIEF_PARSE_UNFENCED_MODE" -f "$BRIEF_PARSER_AWK"
+	return 0
 }
 
 _visible_brief_text() {
 	local -a _args=("$@")
 	local body="${_args[0]}"
 
-	printf '%s\n' "$body" | awk '
-		{
-			line = $0
-			while (length(line) > 0) {
-				if (in_comment) {
-					if (match(line, /-->/)) {
-						line = substr(line, RSTART + RLENGTH)
-						in_comment = 0
-						continue
-					}
-					line = ""
-					break
-				}
-				if (match(line, /<!--/)) {
-					prefix = substr(line, 1, RSTART - 1)
-					rest = substr(line, RSTART + RLENGTH)
-					if (match(rest, /-->/)) {
-						line = prefix substr(rest, RSTART + RLENGTH)
-						continue
-					}
-					line = prefix
-					in_comment = 1
-				}
-				break
-			}
-			if (length(line) > 0) print line
-		}'
+	printf '%s\n' "$body" | awk -v mode="$BRIEF_PARSE_VISIBLE_MODE" -f "$BRIEF_PARSER_AWK"
 	return 0
 }
 
@@ -151,44 +140,12 @@ _extract_markdown_section() {
 	local heading="${_args[1]}"
 	local include_fenced="${_args[2]:-false}"
 
-	printf '%s\n' "$body" | awk -v target="$heading" -v include_fenced="$include_fenced" -v true_value="$BRIEF_BOOL_TRUE" '
-		BEGIN {
-			target = tolower(target)
-			level = (target ~ /^### /) ? 3 : 2
-		}
-		{
-			line = tolower($0)
-			heading_line = line
-			sub(/[[:space:]]+$/, "", heading_line)
-			trimmed = line
-			sub(/^[[:space:]]*/, "", trimmed)
-			marker_char = substr(trimmed, 1, 1)
-			marker_len = 0
-			if (marker_char == "`" || marker_char == "~") {
-				while (substr(trimmed, marker_len + 1, 1) == marker_char) marker_len++
-			}
-			if (!in_fence && marker_len >= 3) {
-				in_fence = 1
-				fence_char = marker_char
-				fence_len = marker_len
-				next
-			}
-			if (in_fence && marker_char == fence_char && marker_len >= fence_len) {
-				remainder = substr(trimmed, marker_len + 1)
-				if (remainder ~ /^[[:space:]]*$/) {
-					in_fence = 0
-					next
-				}
-			}
-			if (!in_fence && !capture && heading_line == target) {
-				capture = 1
-				next
-			}
-			if (!in_fence && capture && ((level == 3 && line ~ /^###[[:space:]]/) || line ~ /^##[[:space:]]/)) {
-				exit
-			}
-			if (capture && (!in_fence || include_fenced == true_value)) print
-		}'
+	printf '%s\n' "$body" | awk \
+		-v mode="$BRIEF_PARSE_SECTION_MODE" \
+		-v target="$heading" \
+		-v include_fenced="$include_fenced" \
+		-v true_value="$BRIEF_BOOL_TRUE" \
+		-f "$BRIEF_PARSER_AWK"
 	return 0
 }
 
@@ -196,33 +153,7 @@ _brief_prose_text() {
 	local -a _args=("$@")
 	local body="${_args[0]}"
 
-	printf '%s\n' "$body" | awk '
-		{
-			trimmed = $0
-			sub(/^[[:space:]]*/, "", trimmed)
-			marker_char = substr(trimmed, 1, 1)
-			marker_len = 0
-			if (marker_char == "`" || marker_char == "~") {
-				while (substr(trimmed, marker_len + 1, 1) == marker_char) marker_len++
-			}
-			if (!in_fence && marker_len >= 3) {
-				in_fence = 1
-				fence_char = marker_char
-				fence_len = marker_len
-				next
-			}
-			if (in_fence && marker_char == fence_char && marker_len >= fence_len) {
-				remainder = substr(trimmed, marker_len + 1)
-				if (remainder ~ /^[[:space:]]*$/) {
-					in_fence = 0
-					next
-				}
-			}
-			if (in_fence) next
-			line = $0
-			gsub(/`[^`]*`/, "", line)
-			print line
-		}'
+	printf '%s\n' "$body" | awk -v mode="$BRIEF_PARSE_PROSE_MODE" -f "$BRIEF_PARSER_AWK"
 	return 0
 }
 
@@ -246,7 +177,9 @@ _field_is_substantive() {
 	if printf '%s\n' "$line" | grep -qiE ':\*\*[[:space:]]*($|TBD$|TODO$|N/?A[[:space:]]*$|unknown[[:space:]]*$|\{|<)'; then
 		return 1
 	fi
-	[[ ${#line} -ge $((${#field} + 18)) ]] || return 1
+	# The field wrapper contributes eight characters. Require at least four
+	# content characters so concrete short paths such as `app.py` remain valid.
+	[[ ${#line} -ge $((${#field} + 12)) ]] || return 1
 	return 0
 }
 
@@ -303,7 +236,7 @@ _has_executable_verification() {
 	local -a _args=("$@")
 	local section="${_args[0]}"
 
-	if printf '%s\n' "$section" | grep -qE '^[[:space:]]*(\$[[:space:]]*)?(bash |shellcheck |pytest( |$)|python[0-9]* |node |npm |pnpm |yarn |go test( |$)|cargo test( |$)|make |bundle exec |composer |git diff( |$)|\./|[.][[:alnum:]_/-]+\.sh([[:space:]]|$))'; then
+	if printf '%s\n' "$section" | grep -qE '^[[:space:]]*(\$[[:space:]]*)?(bash |shellcheck |pytest( |$)|python[0-9]* |node |npm |pnpm |yarn |bun |go test( |$)|cargo test( |$)|make |bundle exec |composer |git diff( |$)|\./|[.][[:alnum:]_/-]+\.sh([[:space:]]|$))'; then
 		return 0
 	fi
 	return 1
@@ -322,6 +255,7 @@ _validate_v2_body() {
 	local errors=""
 	local field=""
 	local checkbox_count=0
+	local checkbox_pattern='^[[:space:]]*-[[:space:]]+\[[ xX]\]'
 	local negative_pattern='regression|never|must not|does not|do not|without|rejects?|preserves?|no [[:alnum:]]'
 
 	visible=$(_visible_brief_text "$body")
@@ -346,10 +280,10 @@ _validate_v2_body() {
 	_field_is_substantive "$verification" "Surface mapping" || errors="${errors}verification:surface-mapping;"
 	_has_executable_verification "$verification" || errors="${errors}verification:command;"
 
-	checkbox_count=$(printf '%s\n' "$acceptance" | grep -cE '^[[:space:]]*-[[:space:]]+\[[ xX]\]' || true)
+	checkbox_count=$(printf '%s\n' "$acceptance" | grep -cE "$checkbox_pattern" || true)
 	[[ "$checkbox_count" -ge 2 ]] || errors="${errors}acceptance:multiple-observable-criteria;"
-	printf '%s\n' "$acceptance" | grep -qiE "$negative_pattern" || errors="${errors}acceptance:negative-regression;"
-	printf '%s\n' "$acceptance" | grep -viE "$negative_pattern" | grep -qE '^[[:space:]]*-[[:space:]]+\[[ xX]\]' || errors="${errors}acceptance:positive;"
+	printf '%s\n' "$acceptance" | grep -E "$checkbox_pattern" | grep -qiE "$negative_pattern" || errors="${errors}acceptance:negative-regression;"
+	printf '%s\n' "$acceptance" | grep -E "$checkbox_pattern" | grep -viE "$negative_pattern" | grep -q . || errors="${errors}acceptance:positive;"
 	_has_unfilled_placeholder "$visible" && errors="${errors}placeholder:unfilled;"
 
 	if [[ -n "$errors" ]]; then
@@ -370,12 +304,18 @@ _is_worker_ready() {
 	local -a _iwr_args=("$@")
 	local body="${_iwr_args[0]}"
 	local threshold="${_iwr_args[1]:-${BRIEF_READINESS_THRESHOLD:-$DEFAULT_THRESHOLD}}"
+	local score_body="$body"
+	local schema_v2=0
+	local score=""
 
-	local score
-	score=$(_score_body "$body")
+	if _is_schema_v2_brief "$body"; then
+		schema_v2=1
+		score_body=$(_unfenced_brief_text "$body")
+	fi
+	score=$(_score_body "$score_body")
 
 	[[ "$score" -ge "$threshold" ]] || return 1
-	if _is_schema_v2_brief "$body"; then
+	if [[ "$schema_v2" -eq 1 ]]; then
 		_validate_v2_body "$body" >/dev/null || return 1
 	fi
 	return 0
@@ -451,14 +391,21 @@ cmd_check() {
 		body=$(_fetch_issue_body "$issue_number" "$slug") || return 1
 	fi
 
-	local score
-	score=$(_score_body "$body")
+	local score_body="$body"
+	local schema_v2=0
+	local score=""
 	local ready="false"
 	local exit_code=1
 	local schema="legacy"
 	local validation="VALIDATION_ERRORS=not-applicable"
 
 	if _is_schema_v2_brief "$body"; then
+		schema_v2=1
+		score_body=$(_unfenced_brief_text "$body")
+	fi
+	score=$(_score_body "$score_body")
+
+	if [[ "$schema_v2" -eq 1 ]]; then
 		schema="v2"
 		if [[ "$score" -ge "$threshold" ]] && validation=$(_validate_v2_body "$body"); then
 			ready="$BRIEF_BOOL_TRUE"

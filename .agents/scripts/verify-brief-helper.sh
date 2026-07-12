@@ -353,13 +353,13 @@ _cmd_check_readiness() {
 	fi
 
 	helper_path="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/brief-readiness-helper.sh"
-	if [[ ! -x "$helper_path" ]]; then
-		_log "ERROR" "Readiness helper not executable: $helper_path"
+	if [[ ! -f "$helper_path" ]]; then
+		_log "ERROR" "Readiness helper not found: $helper_path"
 		return 2
 	fi
 
 	body=$(<"$brief_path")
-	if "$helper_path" check --body "$body"; then
+	if bash "$helper_path" check --body "$body"; then
 		return 0
 	fi
 	return 1
@@ -370,42 +370,43 @@ _cmd_check_readiness() {
 # ---------------------------------------------------------------------------
 
 main() {
-	local cmd="${1:-help}"
-	shift || true
+	local -a args=("$@")
+	local cmd="${args[0]:-help}"
+	local target_path="${args[1]:-}"
+	local command_status=0
 
 	case "$cmd" in
 	verify)
-		if [[ $# -lt 1 ]]; then
+		if [[ -z "$target_path" ]]; then
 			_log "ERROR" "Missing brief path. Usage: verify-brief-helper.sh verify <path>"
 			return 2
 		fi
-		_cmd_verify "$1"
+		_cmd_verify "$target_path" || command_status=$?
 		;;
 	list)
-		if [[ $# -lt 1 ]]; then
+		if [[ -z "$target_path" ]]; then
 			_log "ERROR" "Missing brief path. Usage: verify-brief-helper.sh list <path>"
 			return 2
 		fi
-		_cmd_list "$1"
+		_cmd_list "$target_path" || command_status=$?
 		;;
 	check-preflight)
-		if [[ $# -lt 1 ]]; then
+		if [[ -z "$target_path" ]]; then
 			_log "ERROR" "Missing brief path. Usage: verify-brief-helper.sh check-preflight <path>"
 			return 2
 		fi
-		local preflight_path="$1"
-		_cmd_check_preflight "$preflight_path"
+		_cmd_check_preflight "$target_path" || command_status=$?
 		;;
 	check-readiness)
-		if [[ $# -lt 1 ]]; then
+		if [[ -z "$target_path" ]]; then
 			_log "ERROR" "Missing brief path. Usage: verify-brief-helper.sh check-readiness <path>"
 			return 2
 		fi
-		local readiness_path="$1"
-		_cmd_check_readiness "$readiness_path"
+		_cmd_check_readiness "$target_path" || command_status=$?
 		;;
 	help | --help | -h)
 		_usage
+		return 0
 		;;
 	*)
 		_log "ERROR" "Unknown command: $cmd"
@@ -413,7 +414,14 @@ main() {
 		return 2
 		;;
 	esac
-	return $?
+
+	if [[ "$command_status" -eq 0 ]]; then
+		return 0
+	fi
+	if [[ "$command_status" -eq 2 ]]; then
+		return 2
+	fi
+	return 1
 }
 
 main "$@"
