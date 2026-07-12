@@ -6,6 +6,7 @@
 _DEPENDENCY_EVENT_RECONCILER_LOADED=1
 DER_SEARCH_QUOTE=$(printf '\042')
 DER_STATE_CLOSED="CLOSED"
+DER_NOT_READY=2
 
 _der_dir="${BASH_SOURCE[0]%/*}"
 [[ "$_der_dir" == "${BASH_SOURCE[0]}" ]] && _der_dir="."
@@ -205,7 +206,7 @@ _der_live_issue_closed() {
 	local state=""
 	state=$(gh issue view "$issue_number" --repo "$repo" --json state --jq '.state' 2>/dev/null) || return 1
 	[[ "$state" == "$DER_STATE_CLOSED" || "$state" == "closed" ]] && return 0
-	[[ "$state" == "OPEN" || "$state" == "open" ]] && return 2
+	[[ "$state" == "OPEN" || "$state" == "open" ]] && return "$DER_NOT_READY"
 	return 1
 }
 
@@ -258,7 +259,7 @@ _der_native_blockers_closed() {
 	printf '%s' "$result" | jq -e --arg repo "$repo" '.data.repository.issue.blockedBy | .pageInfo.hasNextPage == false and all(.nodes[]; .repository.nameWithOwner == $repo)' >/dev/null 2>&1 || return 1
 	while IFS= read -r blocker; do
 		[[ -n "$blocker" ]] || continue
-		[[ "${blocker#*:}" == "$DER_STATE_CLOSED" ]] || return 2
+		[[ "${blocker#*:}" == "$DER_STATE_CLOSED" ]] || return "$DER_NOT_READY"
 	done < <(printf '%s' "$result" | jq -r '.data.repository.issue.blockedBy.nodes[]? | "\(.number):\(.state)"' 2>/dev/null)
 	return 0
 }
@@ -335,7 +336,7 @@ reconcile_stale_blocked_issues() {
 		}
 		if _der_try_unblock "$repo" "$issue_number" "$candidate"; then
 			reconciled=$((reconciled + 1))
-		elif [[ "$?" -eq 2 ]]; then
+		elif [[ "$?" -eq "$DER_NOT_READY" ]]; then
 			reconciled=$((reconciled + 1))
 		else
 			failed=$((failed + 1))
