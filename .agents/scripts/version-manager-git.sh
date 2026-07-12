@@ -210,6 +210,13 @@ extract_task_ids_from_commits() {
 	while IFS= read -r commit; do
 		[[ -z "$commit" ]] && continue
 
+		# Pattern 0: Framework squash subjects with a complete leading task ID.
+		# Brackets provide an explicit boundary and avoid matching ID-like text
+		# embedded in unrelated words. Dotted task IDs remain supported.
+		if [[ "$commit" =~ ^\[(t[0-9]+(\.[0-9]+)*)\]([[:space:]]|$) ]]; then
+			task_ids+=("${BASH_REMATCH[1]}")
+		fi
+
 		# Pattern 1: Conventional commits with task ID in scope
 		# e.g., feat(t001):, fix(t3375):, docs(t003.1):, refactor(t004):
 		if [[ "$commit" =~ ^(feat|fix|docs|refactor|perf|test|chore|style|build|ci)\((t[0-9]+(\.[0-9]+)*)\): ]]; then
