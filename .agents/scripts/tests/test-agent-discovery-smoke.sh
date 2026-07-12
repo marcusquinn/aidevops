@@ -153,7 +153,8 @@ test_validate_subagent_refs_default_arg() {
 	# must continue to work.
 	local output rc py_out
 	py_out=$(mktemp)
-	SCRIPTS_DIR="$SCRIPTS_DIR" HOME="$TEST_DIR/fake-home" python3 - >"$py_out" 2>&1 <<'PYEOF'
+	rc=0
+	SCRIPTS_DIR="$SCRIPTS_DIR" HOME="$TEST_DIR/fake-home" python3 - >"$py_out" 2>&1 <<'PYEOF' || rc=$?
 import os, sys
 sys.path.insert(0, os.environ["SCRIPTS_DIR"] + "/lib")
 from subagent_validation import validate_subagent_refs
@@ -175,7 +176,6 @@ assert isinstance(r_none, list), "None-fn call returned non-list"
 
 print("OK")
 PYEOF
-	rc=$?
 	output=$(cat "$py_out")
 	rm -f "$py_out"
 
@@ -190,7 +190,8 @@ PYEOF
 test_grep_permission_is_explicit() {
 	local output rc py_out
 	py_out=$(mktemp)
-	SCRIPTS_DIR="$SCRIPTS_DIR" python3 - >"$py_out" 2>&1 <<'PYEOF'
+	rc=0
+	SCRIPTS_DIR="$SCRIPTS_DIR" python3 - >"$py_out" 2>&1 <<'PYEOF' || rc=$?
 import os
 import sys
 
@@ -208,7 +209,6 @@ assert "grep" not in research["permission"]
 
 print("OK")
 PYEOF
-	rc=$?
 	output=$(cat "$py_out")
 	rm -f "$py_out"
 
