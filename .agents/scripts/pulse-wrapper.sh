@@ -294,6 +294,8 @@ source "${SCRIPT_DIR}/pulse-queue-governor.sh"
 source "${SCRIPT_DIR}/pulse-nmr-approval.sh"
 # shellcheck source=/dev/null
 source "${SCRIPT_DIR}/pulse-dep-graph.sh"
+# shellcheck source=./dependency-event-reconciler.sh
+source "${SCRIPT_DIR}/dependency-event-reconciler.sh"
 # shellcheck source=/dev/null
 source "${SCRIPT_DIR}/pulse-fast-fail.sh"
 # Phase 3 (t1971, GH#18372): 4 operational plumbing clusters extracted from this file.

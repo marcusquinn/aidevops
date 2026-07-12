@@ -352,6 +352,12 @@ close_issue() {
 	print_info "Closing issue #$issue_number in $owner/$repo_name"
 
 	if gh issue close --repo "$owner/$repo_name" "$issue_number"; then
+		local reconciler="${SCRIPT_DIR}/dependency-event-reconciler.sh"
+		if [[ -r "$reconciler" ]]; then
+			# shellcheck source=./dependency-event-reconciler.sh
+			source "$reconciler"
+			reconcile_dependants_after_verified_closure "$owner/$repo_name" "$issue_number" || true
+		fi
 		print_success "$SUCCESS_ISSUE_CLOSED"
 	else
 		print_error "Failed to close issue"
