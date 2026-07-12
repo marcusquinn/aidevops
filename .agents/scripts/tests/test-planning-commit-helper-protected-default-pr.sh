@@ -10,6 +10,18 @@
 
 set -u
 
+# Isolate fixture repositories from the developer's global hooksPath and
+# signing policy; the test installs its own bare-remote protection hook.
+export GIT_CONFIG_GLOBAL=/dev/null
+export GIT_CONFIG_NOSYSTEM=1
+
+# Fixture setup uses disposable repositories; helper subprocesses still resolve
+# the guarded Git shim from PATH because shell functions are not exported.
+git() {
+	/usr/bin/git "$@"
+	return $?
+}
+
 SCRIPT_DIR_TEST="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit 1
 REPO_ROOT="$(cd "${SCRIPT_DIR_TEST}/../../.." && pwd)" || exit 1
 PLANNING_HELPER="${REPO_ROOT}/.agents/scripts/planning-commit-helper.sh"
@@ -38,27 +50,32 @@ setup_repo() {
 	local tmpdir="$1"
 	local protected_default="$2"
 	local bare_dir="${tmpdir}/remote.git"
+	local local_dir="${tmpdir}/local.git"
 	local work_dir="${tmpdir}/work"
+	local blob_sha tree_sha commit_sha
 
-	git init --bare --initial-branch=main "$bare_dir" >/dev/null 2>&1 || git init --bare "$bare_dir" >/dev/null 2>&1 || return 1
-	git clone "$bare_dir" "$work_dir" >/dev/null 2>&1 || return 1
-	git -C "$work_dir" config user.email "test@test.local" >/dev/null 2>&1 || return 1
-	git -C "$work_dir" config user.name "Test" >/dev/null 2>&1 || return 1
-	git -C "$work_dir" config commit.gpgsign false >/dev/null 2>&1 || true
-	printf '# Tasks\n\n' >"${work_dir}/TODO.md"
+	git init --bare --initial-branch=fixture-default "$bare_dir" >/dev/null 2>&1 || return 1
+	git init --bare --initial-branch=fixture-default "$local_dir" >/dev/null 2>&1 || return 1
+	printf '# Tasks\n\n' >"${tmpdir}/TODO.md"
+	blob_sha=$(git --git-dir="$local_dir" hash-object -w "${tmpdir}/TODO.md") || return 1
+	tree_sha=$(printf '100644 blob %s\tTODO.md\n' "$blob_sha" | git --git-dir="$local_dir" mktree) || return 1
+	commit_sha=$(printf 'chore: seed planning files\n' | GIT_AUTHOR_NAME="Test" GIT_AUTHOR_EMAIL="test@test.local" \
+		GIT_COMMITTER_NAME="Test" GIT_COMMITTER_EMAIL="test@test.local" \
+		git --git-dir="$local_dir" commit-tree "$tree_sha") || return 1
+	git --git-dir="$local_dir" update-ref refs/heads/fixture-default "$commit_sha" || return 1
+	printf '[remote "origin"]\n\turl = %s\n\tfetch = +refs/heads/*:refs/remotes/origin/*\n[user]\n\tname = Test\n\temail = test@test.local\n[commit]\n\tgpgsign = false\n' "$bare_dir" >>"${local_dir}/config" || return 1
+	git --git-dir="$local_dir" worktree add "$work_dir" fixture-default >/dev/null 2>&1 || return 1
 	mkdir -p "${work_dir}/todo/tasks" || return 1
-	git -C "$work_dir" add TODO.md >/dev/null 2>&1 || return 1
-	git -C "$work_dir" commit -m "chore: seed planning files" >/dev/null 2>&1 || return 1
-	git -C "$work_dir" push origin main >/dev/null 2>&1 || return 1
-	git -C "$work_dir" fetch origin main >/dev/null 2>&1 || return 1
-	git -C "$work_dir" symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/main >/dev/null 2>&1 || return 1
+	git -C "$work_dir" push origin fixture-default >/dev/null 2>&1 || return 1
+	git -C "$work_dir" fetch origin fixture-default >/dev/null 2>&1 || return 1
+	git -C "$work_dir" symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/fixture-default >/dev/null 2>&1 || return 1
 
 	if [[ "$protected_default" == "true" ]]; then
 		mkdir -p "${bare_dir}/hooks" || return 1
 		cat >"${bare_dir}/hooks/pre-receive" <<'HOOK'
 #!/usr/bin/env bash
 while read -r _old _new ref; do
-	if [[ "$ref" == "refs/heads/main" ]]; then
+		if [[ "$ref" == "refs/heads/fixture-default" ]]; then
 		printf 'remote: error: GH006: Protected branch update failed for %s.\n' "$ref" >&2
 		printf 'remote: error: Changes must be made through a pull request.\n' >&2
 		exit 1
@@ -155,16 +172,28 @@ append_planning_change() {
 test_protected_default_creates_planning_pr() {
 	local name="protected default branch creates planning PR and cleans source"
 	local tmpdir fake_bin work_dir body_file head_file title_file log_file output rc status head_branch remote_todo pr_body
-	tmpdir=$(mktemp -d) || { fail "$name" "mktemp failed"; return 0; }
+	tmpdir=$(mktemp -d) || {
+		fail "$name" "mktemp failed"
+		return 0
+	}
 	fake_bin="${tmpdir}/bin"
 	log_file="${tmpdir}/gh.log"
 	body_file="${tmpdir}/body.md"
 	head_file="${tmpdir}/head.txt"
 	title_file="${tmpdir}/title.txt"
 	: >"$log_file"
-	write_fake_gh "$fake_bin" || { fail "$name" "fake gh setup failed"; return 0; }
-	work_dir=$(setup_repo "$tmpdir" true) || { fail "$name" "repo setup failed"; return 0; }
-	append_planning_change "$work_dir" "t999" || { fail "$name" "planning change failed"; return 0; }
+	write_fake_gh "$fake_bin" || {
+		fail "$name" "fake gh setup failed"
+		return 0
+	}
+	work_dir=$(setup_repo "$tmpdir" true) || {
+		fail "$name" "repo setup failed"
+		return 0
+	}
+	append_planning_change "$work_dir" "t999" || {
+		fail "$name" "planning change failed"
+		return 0
+	}
 
 	rc=0
 	output=$(cd "$work_dir" && PATH="${fake_bin}:$PATH" \
@@ -189,12 +218,15 @@ test_protected_default_creates_planning_pr() {
 		fail "$name" "unexpected PR head: ${head_branch:-<empty>}"
 		return 0
 	fi
-	remote_todo=$(git -C "$work_dir" show "origin/main:TODO.md" 2>/dev/null || true)
+	remote_todo=$(git -C "$work_dir" show "origin/fixture-default:TODO.md" 2>/dev/null || true)
 	if [[ "$remote_todo" == *"t999"* ]]; then
 		fail "$name" "protected default branch was updated directly"
 		return 0
 	fi
-	git -C "$work_dir" fetch origin "$head_branch" >/dev/null 2>&1 || { fail "$name" "PR branch not pushed"; return 0; }
+	git -C "$work_dir" fetch origin "$head_branch" >/dev/null 2>&1 || {
+		fail "$name" "PR branch not pushed"
+		return 0
+	}
 	remote_todo=$(git -C "$work_dir" show FETCH_HEAD:TODO.md 2>/dev/null || true)
 	if [[ "$remote_todo" != *"t999"* ]]; then
 		fail "$name" "PR branch does not contain TODO change"
@@ -217,13 +249,25 @@ test_protected_default_creates_planning_pr() {
 test_unprotected_default_keeps_direct_push() {
 	local name="unprotected default branch keeps direct planning push"
 	local tmpdir fake_bin work_dir log_file output rc status remote_todo
-	tmpdir=$(mktemp -d) || { fail "$name" "mktemp failed"; return 0; }
+	tmpdir=$(mktemp -d) || {
+		fail "$name" "mktemp failed"
+		return 0
+	}
 	fake_bin="${tmpdir}/bin"
 	log_file="${tmpdir}/gh.log"
 	: >"$log_file"
-	write_fake_gh "$fake_bin" || { fail "$name" "fake gh setup failed"; return 0; }
-	work_dir=$(setup_repo "$tmpdir" false) || { fail "$name" "repo setup failed"; return 0; }
-	append_planning_change "$work_dir" "t1000" || { fail "$name" "planning change failed"; return 0; }
+	write_fake_gh "$fake_bin" || {
+		fail "$name" "fake gh setup failed"
+		return 0
+	}
+	work_dir=$(setup_repo "$tmpdir" false) || {
+		fail "$name" "repo setup failed"
+		return 0
+	}
+	append_planning_change "$work_dir" "t1000" || {
+		fail "$name" "planning change failed"
+		return 0
+	}
 	rc=0
 	output=$(cd "$work_dir" && PATH="${fake_bin}:$PATH" GH_STUB_LOG="$log_file" GH_STUB_BODY="${tmpdir}/body" GH_STUB_HEAD="${tmpdir}/head" GH_STUB_TITLE="${tmpdir}/title" \
 		"$PLANNING_HELPER" "plan: add t1000 direct planning" 2>&1) || rc=$?
@@ -232,12 +276,12 @@ test_unprotected_default_keeps_direct_push() {
 		return 0
 	fi
 	status=$(git -C "$work_dir" status --short 2>/dev/null)
-	if [[ -n "$status" ]]; then
-		fail "$name" "source worktree dirty after direct push: $status"
+	if [[ "$status" != *"TODO.md"* ]] || [[ "$status" != *"todo/"* ]]; then
+		fail "$name" "source planning edits were not preserved after checkout-free push: $status"
 		return 0
 	fi
-	git -C "$work_dir" fetch origin main >/dev/null 2>&1 || true
-	remote_todo=$(git -C "$work_dir" show origin/main:TODO.md 2>/dev/null || true)
+	git -C "$work_dir" fetch origin fixture-default >/dev/null 2>&1 || true
+	remote_todo=$(git -C "$work_dir" show origin/fixture-default:TODO.md 2>/dev/null || true)
 	if [[ "$remote_todo" != *"t1000"* ]]; then
 		fail "$name" "direct push did not update origin/main"
 		return 0
@@ -254,17 +298,33 @@ test_unprotected_default_keeps_direct_push() {
 test_pr_unavailable_fails_before_commit() {
 	local name="PR fallback unavailable fails before local commit"
 	local tmpdir work_dir before_head after_head output rc status
-	tmpdir=$(mktemp -d) || { fail "$name" "mktemp failed"; return 0; }
-	work_dir=$(setup_repo "$tmpdir" true) || { fail "$name" "repo setup failed"; return 0; }
-	append_planning_change "$work_dir" "t1001" || { fail "$name" "planning change failed"; return 0; }
-	before_head=$(git -C "$work_dir" rev-parse HEAD 2>/dev/null) || { fail "$name" "missing initial HEAD"; return 0; }
+	tmpdir=$(mktemp -d) || {
+		fail "$name" "mktemp failed"
+		return 0
+	}
+	work_dir=$(setup_repo "$tmpdir" true) || {
+		fail "$name" "repo setup failed"
+		return 0
+	}
+	append_planning_change "$work_dir" "t1001" || {
+		fail "$name" "planning change failed"
+		return 0
+	}
+	before_head=$(git -C "$work_dir" rev-parse HEAD 2>/dev/null) || {
+		fail "$name" "missing initial HEAD"
+		return 0
+	}
 	rc=0
-	output=$(cd "$work_dir" && AIDEVOPS_PLANNING_FORCE_PR_FALLBACK=1 "$PLANNING_HELPER" "plan: add t1001 unavailable pr" 2>&1) || rc=$?
+	output=$(cd "$work_dir" && PATH="${REPO_ROOT}/.agents/scripts:/usr/bin:/bin" \
+		AIDEVOPS_PLANNING_FORCE_PR_FALLBACK=1 "$PLANNING_HELPER" "plan: add t1001 unavailable pr" 2>&1) || rc=$?
 	if [[ $rc -eq 0 ]]; then
 		fail "$name" "helper unexpectedly succeeded: $output"
 		return 0
 	fi
-	after_head=$(git -C "$work_dir" rev-parse HEAD 2>/dev/null) || { fail "$name" "missing final HEAD"; return 0; }
+	after_head=$(git -C "$work_dir" rev-parse HEAD 2>/dev/null) || {
+		fail "$name" "missing final HEAD"
+		return 0
+	}
 	if [[ "$after_head" != "$before_head" ]]; then
 		fail "$name" "local HEAD changed before PR availability was proven"
 		return 0
