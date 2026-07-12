@@ -1294,12 +1294,11 @@ _pulse_run_deterministic_pipeline() {
 	# closed/reopened issue state before constructing the dependency graph.
 	# Without this, a closed blocker can leave stale TODO.md/cache state that
 	# keeps child issues permanently dispatch-blocked.
-	local _dependency_normalization_ready=1
 	if [[ -f "$STOP_FLAG" ]]; then
 		echo "[pulse-wrapper] Stop flag appeared — skipping GitHub issue-state sync" >>"$LOGFILE"
 	else
 		run_stage_with_timeout "sync_todo_refs_all_repos" "$PRE_RUN_STAGE_TIMEOUT" \
-			sync_todo_refs_all_repos || _dependency_normalization_ready=0
+			sync_todo_refs_all_repos || true
 	fi
 
 	# Dependency graph cache (t1935): build once per cycle so that
@@ -1329,8 +1328,6 @@ _pulse_run_deterministic_pipeline() {
 	# regardless of whether the LLM supervisor is running.
 	if [[ -f "$STOP_FLAG" ]]; then
 		echo "[pulse-wrapper] Stop flag appeared — skipping dispatch_max" >>"$LOGFILE"
-	elif [[ "$_dependency_normalization_ready" -ne 1 ]]; then
-		echo "[pulse-wrapper] Dispatch_max skipped: dependency relationship normalization incomplete; retrying next cycle (t18100)" >>"$LOGFILE"
 	else
 		# t2770: cross-issue no_work rate circuit breaker check.
 		# Pauses dispatch when many different issues return no_work in a short

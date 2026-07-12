@@ -102,6 +102,13 @@ def _text_dependency_state(
     task_refs, issue_refs = _declared_dependency_refs(issue, labels)
     if not task_refs and not issue_refs:
         return False, False
+    issue_state = _issue_refs_state(slug, issue_refs)
+    if issue_state != (False, False):
+        return issue_state
+    return _task_refs_state(slug, issue, task_refs)
+
+
+def _issue_refs_state(slug: str, issue_refs: set[int]) -> tuple[bool, bool]:
     for blocker in issue_refs:
         payload = _run_gh_json([
             "gh", "issue", "view", str(blocker), "--repo", slug, "--json", "state",
@@ -110,6 +117,12 @@ def _text_dependency_state(
             return True, True
         if str(payload.get("state") or "").upper() != "CLOSED":
             return True, False
+    return False, False
+
+
+def _task_refs_state(
+    slug: str, issue: dict[str, Any], task_refs: set[str]
+) -> tuple[bool, bool]:
     current_number = int(issue.get("number") or 0)
     for task_ref in task_refs:
         matches = _run_gh_json([

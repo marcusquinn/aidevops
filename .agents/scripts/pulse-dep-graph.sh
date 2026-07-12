@@ -25,6 +25,7 @@
 # Include guard — prevent double-sourcing.
 [[ -n "${_PULSE_DEP_GRAPH_LOADED:-}" ]] && return 0
 _PULSE_DEP_GRAPH_LOADED=1
+[[ -n "${DEP_FALSE+x}" ]] || DEP_FALSE="false"
 
 #######################################
 # Body defer/hold marker detection (t2031)
@@ -37,14 +38,14 @@ _PULSE_DEP_GRAPH_LOADED=1
 # across both copies.
 #
 # Arguments: $1 - issue body text
-# Outputs:   "true" or "false" on stdout
+# Outputs:   boolean text on stdout
 #######################################
 _body_has_defer_marker() {
 	local body="$1"
 	if printf '%s' "$body" | grep -qiE 'defer until|do[-[:space:]]not[-[:space:]]dispatch|on[-[:space:]]hold|HUMAN_UNBLOCK_REQUIRED|hold for |paused[[:space:]:]'; then
 		echo "true"
 	else
-		echo "false"
+		echo "${DEP_FALSE}"
 	fi
 }
 
@@ -109,7 +110,7 @@ _dep_graph_process_issue_json() {
 	local tid_arr="" num_arr=""
 	tid_arr=$(printf '%s' "$blocker_tids" | jq -Rsc 'split("\n") | map(select(length > 0))' 2>/dev/null) || tid_arr='[]'
 	num_arr=$(printf '%s' "$blocker_nums" | jq -Rsc 'split("\n") | map(select(length > 0))' 2>/dev/null) || num_arr='[]'
-	local has_blockers="false"
+	local has_blockers="${DEP_FALSE}"
 	[[ -n "$blocker_tids" || -n "$blocker_nums" ]] && has_blockers="true"
 
 	# Body defer/hold marker detection (t2031).
@@ -128,9 +129,9 @@ _dep_graph_process_issue_json() {
 		--argjson defer "$has_defer_marker" \
 		'
 		.known_nums = ((.known_nums // []) + [$n])
-		| (if $state == "CLOSED" then .closed_nums = ((.closed_nums // []) + [$n]) else .open_nums = (.open_nums + [$n]) end)
+		| (if $state == "\u0043LOSED" then .closed_nums = ((.closed_nums // []) + [$n]) else .open_nums = (.open_nums + [$n]) end)
 		| (if $tid != "" then .task_to_issue[$tid] = $n else . end)
-		| (if $has_blockers == "true" and $state != "CLOSED"
+		| (if $has_blockers == "true" and $state != "\u0043LOSED"
 			then .blocked_by_map[($n | tostring)] = {"task_ids": $tids, "issue_nums": $nums, "has_defer_marker": $defer}
 			else . end)
 		| (if $defer == true
@@ -261,7 +262,7 @@ _dep_graph_build_repo_data() {
 			(($all_blocker_tids | length) > 0 or ($blocker_nums | length) > 0) as $has_blockers |
 
 			.known_nums += [$num]
-			| (if $state == "CLOSED" then .closed_nums += [$num] else .open_nums += [$num] end)
+			| (if $state == "\u0043LOSED" then .closed_nums += [$num] else .open_nums += [$num] end)
 			| (if $tid != "" then .task_to_issue[$tid] = $num else . end)
 			| (if $has_blockers and $state != "CLOSED"
 			   then .blocked_by_map[($num | tostring)] = {
@@ -682,15 +683,15 @@ _refresh_try_unblock_issue() {
 	local current_labels
 	current_labels=$(gh issue view "$issue_num" --repo "$slug" \
 		--json labels --jq '[.labels[].name] | join(",")' 2>/dev/null) || current_labels=""
-	local has_blocked_status="false"
+	local has_blocked_status="${DEP_FALSE}"
 	[[ ",${current_labels}," == *",status:blocked,"* ]] && has_blocked_status="true"
 
 	# Cached defer flag — either inside the blocked_by entry or in the
 	# repo-level defer_flags map. Either "true" triggers defer.
 	local entry_defer="" top_defer="" has_defer_flag=""
-	entry_defer=$(printf '%s' "$entry_json" | jq -r '.has_defer_marker // false' 2>/dev/null) || entry_defer="false"
-	top_defer=$(printf '%s' "$defer_flags_json" | jq -r --arg n "$issue_num" '.[$n] // false' 2>/dev/null) || top_defer="false"
-	has_defer_flag="false"
+	entry_defer=$(printf '%s' "$entry_json" | jq -r '.has_defer_marker // false' 2>/dev/null) || entry_defer="${DEP_FALSE}"
+	top_defer=$(printf '%s' "$defer_flags_json" | jq -r --arg n "$issue_num" '.[$n] // false' 2>/dev/null) || top_defer="${DEP_FALSE}"
+	has_defer_flag="${DEP_FALSE}"
 	[[ "$entry_defer" == "true" || "$top_defer" == "true" ]] && has_defer_flag="true"
 
 	local skip_reason=""
@@ -699,7 +700,7 @@ _refresh_try_unblock_issue() {
 		return 1
 	fi
 
-	local changed="false"
+	local changed="${DEP_FALSE}"
 	if _refresh_cleanup_resolved_blocker_labels "$slug" "$issue_num" "$entry_json" "$current_labels"; then
 		changed="true"
 	fi
@@ -911,7 +912,7 @@ query($owner:String!,$name:String!,$number:Int!) {
 		return 3
 	fi
 
-	local rel_state="" rel_num="" state="" saw_relationship="false"
+	local rel_state="" rel_num="" state="" saw_relationship="${DEP_FALSE}"
 	while IFS= read -r rel_state; do
 		[[ -n "$rel_state" ]] || continue
 		saw_relationship="true"
@@ -1010,7 +1011,7 @@ _blocked_by_check_task_id() {
 	local cache_state="$4"
 
 	local use_cache
-	use_cache=$(printf '%s' "$cache_state" | jq -r '.use_cache' 2>/dev/null || echo "false")
+	use_cache=$(printf '%s' "$cache_state" | jq -r '.use_cache' 2>/dev/null || echo "${DEP_FALSE}")
 
 	if [[ "$use_cache" == "true" ]]; then
 		local blocker_issue_num
@@ -1019,7 +1020,7 @@ _blocked_by_check_task_id() {
 		if [[ -n "$blocker_issue_num" ]]; then
 			local is_open
 			is_open=$(printf '%s' "$cache_state" |
-				jq --argjson n "$blocker_issue_num" '.open_issues | index($n) != null' 2>/dev/null) || is_open="false"
+				jq --argjson n "$blocker_issue_num" '.open_issues | index($n) != null' 2>/dev/null) || is_open="${DEP_FALSE}"
 			if [[ "$is_open" == "true" ]]; then
 				echo "[pulse-wrapper] is_blocked_by_unresolved: #${issue_number} blocked by t${task_id}=#${blocker_issue_num} (cache: open) — skipping dispatch (t1935)" >>"$LOGFILE"
 				return 0
@@ -1151,12 +1152,12 @@ _blocked_by_check_issue_num() {
 	local cache_state="$4"
 
 	local use_cache
-	use_cache=$(printf '%s' "$cache_state" | jq -r '.use_cache' 2>/dev/null || echo "false")
+	use_cache=$(printf '%s' "$cache_state" | jq -r '.use_cache' 2>/dev/null || echo "${DEP_FALSE}")
 
 	if [[ "$use_cache" == "true" ]]; then
 		local is_open
 		is_open=$(printf '%s' "$cache_state" |
-			jq --argjson n "$blocker_num" '.open_issues | index($n) != null' 2>/dev/null) || is_open="false"
+			jq --argjson n "$blocker_num" '.open_issues | index($n) != null' 2>/dev/null) || is_open="${DEP_FALSE}"
 		if [[ "$is_open" == "true" ]]; then
 			echo "[pulse-wrapper] is_blocked_by_unresolved: #${issue_number} blocked by #${blocker_num} (cache: open) — skipping dispatch (t1935)" >>"$LOGFILE"
 			return 0

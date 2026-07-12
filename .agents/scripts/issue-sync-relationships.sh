@@ -198,12 +198,20 @@ mutation($blocked:ID!,$blocking:ID!) {
 # dependency resolver supplies the positive proof required to unblock it.
 _dependency_sync_has_active_status() {
 	local labels_csv="$1"
-	[[ ",${labels_csv}," == *",status:queued,"* ||
-		",${labels_csv}," == *",status:claimed,"* ||
-		",${labels_csv}," == *",status:in-progress,"* ||
-		",${labels_csv}," == *",status:in-review,"* ||
-		",${labels_csv}," == *",status:done,"* ]]
+	local padded_labels=",${labels_csv},"
+	[[ "$padded_labels" == *",status:queued,"* ||
+		"$padded_labels" == *",status:claimed,"* ||
+		"$padded_labels" == *",status:in-progress,"* ||
+		"$padded_labels" == *",status:in-review,"* ||
+		"$padded_labels" == *",status:done,"* ]]
 	return $?
+}
+
+_relationship_task_line() {
+	local task_id="$1" todo_file="$2" task_id_ere=""
+	task_id_ere=$(_escape_ere "$task_id")
+	strip_code_fences <"$todo_file" | grep -E "^\s*- \[.\] ${task_id_ere} " | head -1 || true
+	return 0
 }
 
 _hold_dependency_sync_retry() {
@@ -476,11 +484,10 @@ _sync_declared_blocks_edges() {
 # Sync blocked-by and blocks relationships for a single task.
 _sync_blocked_by_for_task() {
 	local task_id="$1" todo_file="$2" repo="$3"
-	local task_id_ere="" task_line="" parsed="" key="" value="" blocked_by="" blocks=""
+	local task_line="" parsed="" key="" value="" blocked_by="" blocks=""
 	local this_gh_num="" this_node_id="" result="" edge_rels=0 edge_errors=0
 	local rels_set=0 retryable_errors=0 current_retry_errors=0
-	task_id_ere=$(_escape_ere "$task_id")
-	task_line=$(strip_code_fences <"$todo_file" | grep -E "^\s*- \[.\] ${task_id_ere} " | head -1 || echo "")
+	task_line=$(_relationship_task_line "$task_id" "$todo_file")
 	[[ -z "$task_line" ]] && return 0
 	parsed=$(parse_task_line "$task_line")
 	while IFS='=' read -r key value; do
@@ -568,11 +575,8 @@ _link_sub_issue_pair() {
 # Returns: 0 if parent-tagged, 1 otherwise
 _is_parent_tagged_task() {
 	local task_id="$1" todo_file="$2"
-	local task_id_ere
-	task_id_ere=$(_escape_ere "$task_id")
-
 	local task_line
-	task_line=$(strip_code_fences <"$todo_file" | grep -E "^\s*- \[.\] ${task_id_ere} " | head -1 || echo "")
+	task_line=$(_relationship_task_line "$task_id" "$todo_file")
 	[[ -z "$task_line" ]] && return 1
 
 	# Check for #parent, #parent-task, or #meta tags
@@ -603,10 +607,8 @@ _sync_subtask_hierarchy_for_task() {
 	fi
 
 	# Method 2: blocked-by a #parent-tagged task
-	local task_id_ere
-	task_id_ere=$(_escape_ere "$task_id")
 	local task_line
-	task_line=$(strip_code_fences <"$todo_file" | grep -E "^\s*- \[.\] ${task_id_ere} " | head -1 || echo "")
+	task_line=$(_relationship_task_line "$task_id" "$todo_file")
 	if [[ -n "$task_line" ]]; then
 		local blocked_by=""
 		local parsed
