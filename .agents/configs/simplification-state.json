@@ -408,9 +408,9 @@
       "pr": 18172
     },
     ".agents/configs/complexity-thresholds-history.md": {
-      "at": "2026-07-12T05:40:55Z",
-      "hash": "0f9dad89325fc09e8dffb2b3128b0fd464d08313",
-      "passes": 55,
+      "at": "2026-07-12T07:33:37Z",
+      "hash": "aacd1cf505c5e37fc20c2cf4c61c838898d7a9b9",
+      "passes": 56,
       "pr": 17979
     },
     ".agents/content.md": {
@@ -820,9 +820,9 @@
       "pr": 15249
     },
     ".agents/hooks/task-id-collision-guard.sh": {
-      "at": "2026-05-18T17:47:10Z",
-      "hash": "594ef6d7363aa4da9ff9f58efed5c3da5c0d3c97",
-      "passes": 12,
+      "at": "2026-07-12T07:33:40Z",
+      "hash": "01001ddbfe1e9d501774c6135a1cf842908aaf40",
+      "passes": 13,
       "pr": 18718
     },
     ".agents/legal.md": {
@@ -2138,9 +2138,9 @@
       "pr": 17306
     },
     ".agents/scripts/commands/session-review.md": {
-      "at": "2026-05-10T22:09:06Z",
-      "hash": "1a56c09285cc161a84041b0f303001eb74f329ba",
-      "passes": 2,
+      "at": "2026-07-12T06:44:23Z",
+      "hash": "6fc5cb10f628447defad0769c29c98247877d416",
+      "passes": 3,
       "pr": 18147
     },
     ".agents/scripts/commands/show-plan.md": {
@@ -2322,9 +2322,9 @@
       "pr": 18706
     },
     ".agents/scripts/issue-sync-lib.sh": {
-      "at": "2026-04-28T23:43:46Z",
-      "hash": "1ab7142027d44cbd66aa69ba86139e849d826914",
-      "passes": 17,
+      "at": "2026-07-12T07:33:53Z",
+      "hash": "55c7b545bea26de3d4ee0cd21e13bf802c0b7086",
+      "passes": 18,
       "pr": 16471
     },
     ".agents/scripts/linters-local.sh": {
@@ -2406,9 +2406,9 @@
       "pr": 18704
     },
     ".agents/scripts/pulse-dep-graph.sh": {
-      "at": "2026-07-02T02:57:51Z",
-      "hash": "cdc45596b608b9d9f1bf8c57e6e245ca4ff94e72",
-      "passes": 19,
+      "at": "2026-07-12T07:33:54Z",
+      "hash": "fe50ecdb2b46c5edba8f0999616bf082f2fd1639",
+      "passes": 21,
       "pr": 18796
     },
     ".agents/scripts/pulse-dispatch-core.sh": {
@@ -7402,9 +7402,9 @@
       "pr": 13443
     },
     ".agents/workflows/session-review.md": {
-      "at": "2026-05-10T22:15:12Z",
-      "hash": "1a56c09285cc161a84041b0f303001eb74f329ba",
-      "passes": 3,
+      "at": "2026-07-12T06:45:19Z",
+      "hash": "6fc5cb10f628447defad0769c29c98247877d416",
+      "passes": 4,
       "pr": 12889
     },
     ".agents/workflows/show-plan.md": {
@@ -7480,21 +7480,21 @@
       "pr": 16415
     },
     "TODO.md": {
-      "at": "2026-07-12T05:42:22Z",
-      "hash": "704e648e8ef357b5b0e9435fcb17de4014c7bc8d",
-      "passes": 181,
+      "at": "2026-07-12T07:34:40Z",
+      "hash": "65981a53949d0405c4fa5cd6631b2b3c6ef5093a",
+      "passes": 183,
       "pr": 15490
     },
     "aidevops.sh": {
-      "at": "2026-07-12T05:42:22Z",
-      "hash": "f9d03d4c71c78923e46562b41f168fb51df31a78",
-      "passes": 268,
+      "at": "2026-07-12T07:34:40Z",
+      "hash": "89068ffc3d09701d93c055cf7d3b71c3b1e50ede",
+      "passes": 270,
       "pr": 19029
     },
     "setup.sh": {
-      "at": "2026-07-12T05:42:22Z",
-      "hash": "1cce6ffa14c41c1b5a3d8fef0c3ef01547f66eaa",
-      "passes": 264,
+      "at": "2026-07-12T07:34:40Z",
+      "hash": "8de8fc5b3f4e8b90377132cc2590e1b8f473e903",
+      "passes": 266,
       "pr": 15470
     },
     "todo/tasks/GH#15363-brief.md": {
@@ -7594,10 +7594,10 @@
       "passes": 1
     },
     ".agents/scripts/task-brief-helper.sh": {
-      "hash": "802b7e81f1655f7d5ca8cf085def9fbb30d6668b",
-      "at": "2026-07-11T14:33:32Z",
+      "hash": "ffab6e46e22a0e777a137e7f4c016792d0296d6c",
+      "at": "2026-07-12T07:33:56Z",
       "pr": 20059,
-      "passes": 4
+      "passes": 5
     },
     ".agents/scripts/tests/test-workflow-cascade-lint.sh": {
       "hash": "40a239a36d592f111ec6a001201d21b210d65ad5",
@@ -7750,10 +7750,10 @@
       "passes": 8
     },
     ".agents/scripts/issue-sync-relationships.sh": {
-      "hash": "c5c7e37f07c8976bc95194a061e8a728eb4cad19",
-      "at": "2026-05-01T21:34:03Z",
+      "hash": "3e7d04fca79706106358ced76388a0bb4ba718c5",
+      "at": "2026-07-12T06:44:26Z",
       "pr": 20524,
-      "passes": 4
+      "passes": 5
     },
     ".agents/scripts/shared-gh-wrappers-rest-fallback.sh": {
       "hash": "9d97932e520b0274f924f140549df7106b863eba",

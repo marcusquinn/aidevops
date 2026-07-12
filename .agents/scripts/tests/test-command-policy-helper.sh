@@ -47,7 +47,8 @@ assert_decision() {
 	local actual=""
 
 	output="$(python3 "$HELPER" check-command --cwd "$cwd" --command "$command_text")" || status=$?
-	actual="$(python3 - "$output" <<'PY'
+	actual="$(
+		python3 - "$output" <<'PY'
 import json
 import sys
 
@@ -58,7 +59,7 @@ except (json.JSONDecodeError, IndexError):
 else:
     print(f"{result.get('decision', '')}/{result.get('rule_id', '')}")
 PY
-)"
+	)"
 	if [[ "$status" -eq "$expected_status" && "$actual" == "${expected_decision}/${expected_rule}" ]]; then
 		pass "$name"
 	else
@@ -78,20 +79,22 @@ assert_argv_decision() {
 	local output=""
 	local status=0
 	local actual=""
-	argv_json="$(python3 - "$@" <<'PY'
+	argv_json="$(
+		python3 - "$@" <<'PY'
 import json
 import sys
 print(json.dumps(sys.argv[1:]))
 PY
-)"
+	)"
 	output="$(python3 "$HELPER" check-command --cwd "$cwd" --argv-json "$argv_json")" || status=$?
-	actual="$(python3 - "$output" <<'PY'
+	actual="$(
+		python3 - "$output" <<'PY'
 import json
 import sys
 result = json.loads(sys.argv[1])
 print(f"{result.get('decision', '')}/{result.get('rule_id', '')}")
 PY
-)"
+	)"
 	if [[ "$status" -eq "$expected_status" && "$actual" == "${expected_decision}/${expected_rule}" ]]; then
 		pass "$name"
 	else
@@ -105,6 +108,40 @@ test_validation() {
 		pass "validates declarative policy and fixtures"
 	else
 		fail "validates declarative policy and fixtures"
+	fi
+	return 0
+}
+
+test_evaluate_invocations_compatibility() {
+	if python3 - "$HELPER" "$POLICY" <<'PY'; then
+import importlib.util
+import pathlib
+import sys
+
+helper_path, policy_path = map(pathlib.Path, sys.argv[1:])
+spec = importlib.util.spec_from_file_location("command_policy_helper", helper_path)
+module = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = module
+spec.loader.exec_module(module)
+policy = module._load_policy(policy_path)
+expected = module.evaluate_invocations([["printf", "safe"]], "/work", policy)
+positional = module.evaluate_invocations(
+    [["printf", "safe"]], "/work", policy, "", False, "test", ""
+)
+keyword = module.evaluate_invocations(
+    [["printf", "safe"]],
+    "/work",
+    policy,
+    guard_path="",
+    worker=False,
+    worker_id="test",
+    network_helper="",
+)
+assert expected == positional == keyword
+PY
+		pass "evaluate_invocations preserves positional and keyword interfaces"
+	else
+		fail "evaluate_invocations preserves positional and keyword interfaces"
 	fi
 	return 0
 }
@@ -234,7 +271,7 @@ test_secondary_layers() {
 	if python3 - \
 		"${SCRIPT_DIR}/update-claude-settings.py" \
 		"${SCRIPT_DIR}/agent-discovery.py" \
-		"${SCRIPT_DIR}/../configs/verification-triggers.json" <<'PY'
+		"${SCRIPT_DIR}/../configs/verification-triggers.json" <<'PY'; then
 import ast
 import json
 import sys
@@ -268,7 +305,6 @@ assert "git reset --hard" not in patterns
 assert "git push --force-with-lease" not in patterns
 assert "rm -rf /" not in patterns
 PY
-	then
 		pass "permission mirrors and verification triggers remain secondary"
 	else
 		fail "permission mirrors and verification triggers remain secondary"
@@ -283,8 +319,8 @@ import sys
 with open(sys.argv[1], "w", encoding="utf-8") as handle:
     json.dump({"permissions": {"deny": ["Bash(git reset --hard *)"], "ask": ["Bash(curl *)"]}}, handle)
 PY
-	if HOME="$settings_home" python3 "${SCRIPT_DIR}/update-claude-settings.py" >/dev/null && \
-		python3 - "${settings_home}/.claude/settings.json" <<'PY'
+	if HOME="$settings_home" python3 "${SCRIPT_DIR}/update-claude-settings.py" >/dev/null &&
+		python3 - "${settings_home}/.claude/settings.json" <<'PY'; then
 import json
 import sys
 
@@ -298,7 +334,6 @@ assert {"Bash", "Edit|Write"}.issubset(matchers)
 assert "Bash(git reset --hard *)" not in settings["permissions"]["deny"]
 assert "Bash(curl *)" not in settings["permissions"]["ask"]
 PY
-	then
 		pass "Claude settings migration removes duplicate decisions and preserves hook surfaces"
 	else
 		fail "Claude settings migration removes duplicate decisions and preserves hook surfaces"
@@ -348,6 +383,7 @@ test_policy_fail_closed() {
 
 main() {
 	test_validation
+	test_evaluate_invocations_compatibility
 	test_static_decisions
 	test_canonical_delegation
 	test_worker_network_policy

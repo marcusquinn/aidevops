@@ -39,7 +39,10 @@ if [[ -z "${SCRIPT_DIR:-}" ]]; then
 	unset _lib_path
 fi
 # shellcheck source=./task-identity-lib.sh
-source "${SCRIPT_DIR}/task-identity-lib.sh"
+_issue_sync_parse_dir="${BASH_SOURCE[0]%/*}"
+[[ "$_issue_sync_parse_dir" == "${BASH_SOURCE[0]}" ]] && _issue_sync_parse_dir="."
+source "${_issue_sync_parse_dir}/task-identity-lib.sh"
+unset _issue_sync_parse_dir
 
 # =============================================================================
 # Parse — TODO.md Utilities

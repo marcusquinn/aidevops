@@ -10,6 +10,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.32.51] - 2026-07-12
+
+### Changed
+
+- Maintenance: ratchet QLTY_SMELL_THRESHOLD 81→65 (-16) [skip ci]
+
+## [3.32.50] - 2026-07-12
+
+### Changed
+
+- Maintenance: update simplification state registry
+
 ## [3.32.49] - 2026-07-12
 
 ### Fixed
