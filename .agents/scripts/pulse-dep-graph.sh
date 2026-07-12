@@ -29,6 +29,8 @@ _PULSE_DEP_GRAPH_LOADED=1
 [[ -n "${DEP_CACHE_EMPTY_JSON+x}" ]] || DEP_CACHE_EMPTY_JSON='{"use_cache":false,"open_issues":[],"task_to_issue":{}}'
 [[ -n "${DEP_AVAILABLE_STATUS+x}" ]] || DEP_AVAILABLE_STATUS="status:available"
 [[ -n "${DEP_JQ_NONEMPTY_LINES+x}" ]] || DEP_JQ_NONEMPTY_LINES='split("\n") | map(select(length > 0))'
+[[ -n "${_DEP_CACHED_REPO_SLUG+x}" ]] || _DEP_CACHED_REPO_SLUG=""
+[[ -n "${_DEP_CACHED_REPO_ID+x}" ]] || _DEP_CACHED_REPO_ID=""
 
 _pulse_dep_graph_dir="${BASH_SOURCE[0]%/*}"
 [[ "$_pulse_dep_graph_dir" == "${BASH_SOURCE[0]}" ]] && _pulse_dep_graph_dir="."
@@ -550,11 +552,20 @@ _dep_validate_issue_target() {
 	local issue_num="$2"
 	local repository_id="" issue_json="" resolved_num="" issue_id=""
 	[[ "$slug" =~ ^[^/[:space:]]+/[^/[:space:]]+$ && "$issue_num" =~ ^[1-9][0-9]*$ ]] || return 1
-	repository_id=$(gh api "repos/${slug}" --jq '.node_id' 2>/dev/null || true)
-	[[ -n "$repository_id" && "$repository_id" != "null" ]] || return 1
+	if [[ "$_DEP_CACHED_REPO_SLUG" == "$slug" && -n "$_DEP_CACHED_REPO_ID" ]]; then
+		repository_id="$_DEP_CACHED_REPO_ID"
+	else
+		repository_id=$(gh api "repos/${slug}" --jq '.node_id // ""' || true)
+		if [[ -n "$repository_id" ]]; then
+			_DEP_CACHED_REPO_SLUG="$slug"
+			_DEP_CACHED_REPO_ID="$repository_id"
+		fi
+	fi
+	[[ -n "$repository_id" ]] || return 1
 	issue_json=$(gh issue view "$issue_num" --repo "$slug" --json id,number 2>/dev/null || true)
-	resolved_num=$(printf '%s' "$issue_json" | jq -r '.number // empty' 2>/dev/null)
-	issue_id=$(printf '%s' "$issue_json" | jq -r '.id // empty' 2>/dev/null)
+	IFS=$'\t' read -r resolved_num issue_id < <(
+		printf '%s' "$issue_json" | jq -r '[.number // "", .id // ""] | @tsv'
+	)
 	[[ "$resolved_num" == "$issue_num" && -n "$issue_id" ]]
 	return $?
 }
