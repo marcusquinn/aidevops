@@ -33,7 +33,7 @@ function settingsFile(value) {
   return file;
 }
 
-test("GPT-5.6 cap defaults on and applies 300K without losing model fields", () => {
+test("GPT-5.6 cap defaults on and applies a 240K compaction threshold without losing model fields", () => {
   settingsFile(undefined);
   const config = {
     provider: { openai: { models: { "gpt-5.6-sol": { name: "Sol" } } } },
@@ -42,20 +42,24 @@ test("GPT-5.6 cap defaults on and applies 300K without losing model fields", () 
   assert.equal(registerGpt56ContextLimits(config), 4);
   assert.equal(config.provider.openai.models["gpt-5.6-sol"].name, "Sol");
   assert.equal(config.provider.openai.models["gpt-5.6-sol"].limit.context, 300000);
+  assert.equal(config.provider.openai.models["gpt-5.6-sol"].limit.input, 260000);
   assert.equal(config.provider.openai.models["gpt-5.6-sol"].limit.output, 128000);
   assert.equal(config.provider.openai.models["gpt-5.6-terra"].limit.context, 300000);
+  assert.equal(config.provider.openai.models["gpt-5.6-terra"].limit.input, 260000);
   assert.equal(config.provider.openai.models["gpt-5.6-terra"].limit.output, 128000);
+  assert.equal(config.provider.openai.models["gpt-5.6-sol"].limit.input - 20000, 240000);
 });
 
-test("GPT-5.6 cap preserves an explicit output limit", () => {
+test("GPT-5.6 cap preserves an explicit output limit but owns context and input budgets", () => {
   settingsFile(undefined);
   const config = {
-    provider: { openai: { models: { "gpt-5.6-sol": { limit: { output: 64000 } } } } },
+    provider: { openai: { models: { "gpt-5.6-sol": { limit: { context: 400000, input: 380000, output: 64000 } } } } },
   };
   registerGpt56ContextLimits(config);
   assert.deepEqual(config.provider.openai.models["gpt-5.6-sol"].limit, {
     output: 64000,
     context: 300000,
+    input: 260000,
   });
 });
 
