@@ -513,20 +513,9 @@ _check_message() {
 			fi
 			continue
 		fi
-		# Force base-10 (10#) so leading-zero IDs like "008", "068" don't trip
-		# bash's octal parser. Same root cause as the _compute_counter_seed bug
-		# in claim-task-id.sh — both fixed in this PR (GH#19620).
+		# Force base-10 so leading-zero legacy IDs do not enter Bash's octal parser.
 		if ((10#$num <= 10#$counter)); then
-			# Phase 1 (t2567 / GH#20001): reuse-without-claim detection.
-			# A t-ID ≤ counter exists globally, but must be claimed on THIS
-			# branch. If no matching `chore: claim tNNN` commit is found on
-			# merge-base..HEAD, check if it was claimed anywhere in repo history
-			# (git log --all) — this handles cross-references to prior merged PRs.
-			# If repo-wide claim exists, allow it. Otherwise, fall through to the
-			# linked-issue check so the worker can still authorise via
-			# `Resolves/Closes/Fixes/Ref/For #NNN` (matching issue title).
-			# If neither claim commit nor linked issue confirms, this becomes a
-			# violation (reuse).
+			# Existing legacy IDs require a branch/repository claim or exact linked issue.
 			if _branch_has_claim "$tid"; then
 				_debug "$tid claimed on this branch — allowed"
 				continue
