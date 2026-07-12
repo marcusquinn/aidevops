@@ -261,6 +261,26 @@ list_dispatchable_issue_candidates_json() {
 	fi
 	rm -f "$issue_dispatch_err"
 
+	local candidates_json=""
+	candidates_json=$(_filter_dispatchable_issue_candidates_json "$issue_json")
+
+	# Dependency-blocked children are filtered before ranking, so they cannot
+	# reach the dispatch-time readiness guard. Normalize once per bounded TTL
+	# whenever the fetched snapshot contains blocked work; this also covers a
+	# roadmap alongside unrelated runnable candidates.
+	if printf '%s' "$issue_json" | jq -e 'any(.[]; any(.labels[]?; .name == "status:blocked"))' >/dev/null 2>&1 &&
+		declare -F normalize_repo_dependency_readiness_if_due >/dev/null 2>&1; then
+		normalize_repo_dependency_readiness_if_due "$repo_slug" >/dev/null 2>&1 || true
+		issue_json=$(gh_issue_list --repo "$repo_slug" --state open --json number,title,url,assignees,labels,updatedAt --limit "$limit" 2>/dev/null) || issue_json='[]'
+		candidates_json=$(_filter_dispatchable_issue_candidates_json "$issue_json")
+	fi
+
+	printf '%s\n' "$candidates_json"
+	return 0
+}
+
+_filter_dispatchable_issue_candidates_json() {
+	local issue_json="$1"
 	printf '%s' "$issue_json" | jq -c --arg auto_dispatch_label 'auto-dispatch' '
 		[
 			.[] |

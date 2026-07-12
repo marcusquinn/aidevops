@@ -763,6 +763,68 @@ refresh_blocked_status_from_graph() {
 }
 
 #######################################
+# Rebuild and normalize dependency readiness for one repository on demand.
+#
+# Candidate sweeps normally consume the cycle cache built by pulse-wrapper.
+# When every remaining roadmap child is status:blocked, however, the shared
+# candidate selector has no issue on which to run its dispatch-time dependency
+# guard. Daily/worker sweeps can also call that selector without running the
+# full pulse preflight. This repository-scoped fallback provides a fresh view
+# when a candidate snapshot contains dependency-blocked work, so the next
+# dependency-ready child can become available without rebuilding every
+# configured repository.
+#
+# Args: $1=repo slug
+# Returns: 0 when normalization ran, 1 when fresh repository data was unavailable.
+#######################################
+normalize_repo_dependency_readiness() {
+	local slug="$1"
+	local repo_data=""
+	[[ -n "$slug" ]] || return 1
+
+	repo_data=$(_dep_graph_build_repo_data "$slug") || return 1
+	local graph_json=""
+	graph_json=$(jq -cn --arg slug "$slug" --argjson data "$repo_data" \
+		'{repos:{($slug):$data}}' 2>/dev/null) || return 1
+
+	local previous_cache_file="${DEP_GRAPH_CACHE_FILE}"
+	local scoped_cache_file=""
+	scoped_cache_file=$(mktemp 2>/dev/null || true)
+	[[ -n "$scoped_cache_file" ]] || return 1
+	if ! printf '%s\n' "$graph_json" >"$scoped_cache_file"; then
+		rm -f "$scoped_cache_file"
+		return 1
+	fi
+	DEP_GRAPH_CACHE_FILE="$scoped_cache_file"
+	refresh_blocked_status_from_graph
+	DEP_GRAPH_CACHE_FILE="$previous_cache_file"
+	rm -f "$scoped_cache_file"
+	return 0
+}
+
+normalize_repo_dependency_readiness_if_due() {
+	local slug="$1"
+	local ttl_secs="${PULSE_DEP_NORMALIZE_TTL_SECS:-60}"
+	local marker_dir="${HOME}/.aidevops/cache/dependency-normalization"
+	local marker_file=""
+	local marker_age=0
+	[[ -n "$slug" ]] || return 1
+	[[ "$ttl_secs" =~ ^[0-9]+$ ]] || ttl_secs=60
+	marker_file="${marker_dir}/${slug//\//_}"
+
+	if [[ -f "$marker_file" ]]; then
+		marker_age=$(($(date +%s) - $(date -r "$marker_file" +%s 2>/dev/null || echo 0)))
+		[[ "$marker_age" -lt "$ttl_secs" ]] && return 0
+	fi
+	mkdir -p "$marker_dir" 2>/dev/null || return 1
+	if normalize_repo_dependency_readiness "$slug"; then
+		: >"$marker_file"
+		return 0
+	fi
+	return 1
+}
+
+#######################################
 # Extract blocked-by task IDs and issue numbers from an issue body.
 #
 # (GH#18693 refactor helper — keeps is_blocked_by_unresolved under 100 lines.)
