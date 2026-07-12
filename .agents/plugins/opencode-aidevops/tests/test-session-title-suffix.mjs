@@ -113,7 +113,12 @@ test("session.updated handler appends suffix through OpenCode session update API
         },
       };
 
-      const handler = createSessionTitleSuffixHandler({ agentsDir, client });
+      const terminalTitles = [];
+      const handler = createSessionTitleSuffixHandler({
+        agentsDir,
+        client,
+        emitTerminalTitle: (title) => terminalTitles.push(title),
+      });
       await handler({
         event: {
           type: "session.updated",
@@ -130,6 +135,7 @@ test("session.updated handler appends suffix through OpenCode session update API
           body: { title: "Work on live title fix · AIDevOps 3.20.103" },
         },
       ]);
+      assert.deepEqual(terminalTitles, ["Work on live title fix · AIDevOps 3.20.103"]);
     }),
   );
 });
@@ -244,8 +250,14 @@ test("message part fallback replaces stuck New session title", async () => {
     withTempAgentsDir(async (agentsDir) => {
       writeFileSync(join(agentsDir, "VERSION"), "3.21.2\n");
       const calls = [];
+      const terminalTitles = [];
       const client = { session: { update: async (payload) => calls.push(payload) } };
-      const handler = createSessionTitleFallbackHandler({ agentsDir, client, fallbackDelayMs: 1 });
+      const handler = createSessionTitleFallbackHandler({
+        agentsDir,
+        client,
+        fallbackDelayMs: 1,
+        emitTerminalTitle: (title) => terminalTitles.push(title),
+      });
 
       await handler({
         event: {
@@ -285,6 +297,7 @@ test("message part fallback replaces stuck New session title", async () => {
         path: { id: "ses_test" },
         body: { title: "Study the newsjack repository capabilities · AIDevOps 3.21.2" },
       });
+      assert.deepEqual(terminalTitles, ["Study the newsjack repository capabilities · AIDevOps 3.21.2"]);
     }),
   );
 });
