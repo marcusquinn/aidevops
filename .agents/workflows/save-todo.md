@@ -17,6 +17,11 @@ All TODOs, plans, and issues created by this workflow MUST use `workflows/brief.
 
 ## Intent Routing
 
+An issue-started interactive implementation context overrides generic
+"background" wording: continue implementation locally and interpret background
+only as local asynchronous execution. Never create or dispatch a worker for that
+issue from the active interactive implementation session.
+
 | Signal | Action |
 |--------|--------|
 | `/full-loop`, "work on this now", "fix/implement/do this in this session" | Start `/full-loop $ARGUMENTS`; do not ask whether to begin |

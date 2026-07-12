@@ -25,6 +25,14 @@
 #   User config: ~/.config/aidevops/config.jsonc
 #   Old config:  ~/.config/aidevops/feature-toggles.conf (migrated on first use)
 
+# Prevent recursive and repeated sourcing from re-entering initialization or
+# dispatching main(). config-helper.sh and the shared modules intentionally form
+# a source cycle, so the guard must run before direct-execution detection.
+if [[ -n "${_CONFIG_HELPER_LOADED:-}" ]]; then
+	return 0 2>/dev/null || exit 0
+fi
+_CONFIG_HELPER_LOADED=1
+
 # Apply strict mode only when executed directly (not when sourced by another script).
 # Shell portability note (GH#4904):
 #   bash: BASH_SOURCE[0] == $0 when executed directly; differs when sourced.
