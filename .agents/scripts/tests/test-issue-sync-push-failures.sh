@@ -25,6 +25,7 @@ _init_cmd() {
 }
 
 gh_create_label() { return 0; }
+ensure_labels_exist() { return 0; }
 _push_build_task_list() { printf 't999\n'; return 0; }
 
 _push_process_task() {
@@ -61,3 +62,40 @@ fallback_output=$(_push_create_issue_without_labels "example/repo" "t999: title"
 	fail "degraded issue creation helper failed"
 [[ "$fallback_output" == *"/issues/123"* ]] || fail "degraded issue creation helper lost issue URL"
 pass "degraded issue creation without labels preserves durable tracker creation"
+
+# Post-create assignment and locking must remain behind immutable mapping
+# validation, including the hard-failure path after GitHub created the issue.
+WRITE_LOG="$TMPDIR_TEST/write-order.log"
+: >"$WRITE_LOG"
+session_origin_label() { printf 'origin:interactive\n'; return 0; }
+gh_find_issue_by_title() { return 0; }
+add_gh_ref_to_todo() { return 0; }
+log_verbose() { return 0; }
+_push_auto_assign_interactive() { printf 'ASSIGN\n' >>"$WRITE_LOG"; return 0; }
+gh() {
+	if [[ "$1 $2" == "issue create" ]]; then
+		printf 'https://github.com/example/repo/issues/123\n'
+		return 0
+	fi
+	if [[ "$1 $2" == "issue lock" ]]; then
+		printf 'LOCK\n' >>"$WRITE_LOG"
+		return 0
+	fi
+	return 1
+}
+require_task_issue_mapping() { printf 'VALIDATE\n' >>"$WRITE_LOG"; return 1; }
+AIDEVOPS_SESSION_USER=example
+if _push_create_issue t999 example/repo /tmp/todo.md 't999: title' body enhancement ''; then
+	fail "create helper succeeded after mapping validation failed"
+fi
+[[ "$(<"$WRITE_LOG")" == "VALIDATE" ]] || fail "assignment or lock ran before failed mapping validation"
+pass "mapping failure prevents post-create assignment and lock writes"
+
+: >"$WRITE_LOG"
+require_task_issue_mapping() { printf 'VALIDATE\n' >>"$WRITE_LOG"; return 0; }
+_push_create_issue t999 example/repo /tmp/todo.md 't999: title' body enhancement '' || \
+	fail "create helper failed after successful mapping validation"
+[[ "$(sed -n '1p' "$WRITE_LOG")" == "VALIDATE" ]] || fail "mapping validation was not the first post-create operation"
+grep -q '^ASSIGN$' "$WRITE_LOG" || fail "assignment did not run after mapping validation"
+grep -q '^LOCK$' "$WRITE_LOG" || fail "lock did not run after mapping validation"
+pass "mapping validation precedes post-create assignment and lock writes"

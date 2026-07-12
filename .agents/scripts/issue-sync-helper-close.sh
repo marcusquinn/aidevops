@@ -291,6 +291,7 @@ _reopen_mark_if_completed() {
 
 _do_close() {
 	local task_id="$1" issue_number="$2" todo_file="$3" repo="$4"
+	require_task_issue_mapping "$task_id" "$todo_file" "$repo" "$issue_number" || return 1
 	local task_id_ere
 	task_id_ere=$(_escape_ere "$task_id")
 	local task_with_notes task_line pr_info pr_num="" pr_url=""
@@ -534,6 +535,10 @@ cmd_reopen() {
 		# the shim layer.
 		local reopen_comment_body
 		reopen_comment_body=$(_reopen_comment "$repo" "$ref_num")
+		if ! require_task_issue_mapping "$tid" "$todo_file" "$repo" "$ref_num"; then
+			skipped=$((skipped + 1))
+			continue
+		fi
 		gh issue reopen "$ref_num" --repo "$repo" \
 			--comment "$reopen_comment_body" 2>/dev/null && {
 			reopened=$((reopened + 1))

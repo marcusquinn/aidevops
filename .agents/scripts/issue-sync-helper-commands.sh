@@ -90,7 +90,7 @@ cmd_pull() {
 						add_gh_ref_to_todo "$tid" "$num" "$todo_file"
 					fi
 					local updated_ref=""
-					updated_ref=$(resolve_task_gh_number "$tid" "$todo_file")
+					updated_ref=$(resolve_task_gh_number "$tid" "$todo_file" "$repo" || true)
 					if [[ "$updated_ref" == "$num" ]]; then
 						print_success "Added ref:GH#$num to $tid"
 						synced=$((synced + 1))

@@ -102,6 +102,20 @@ _push_create_issue_without_labels() {
 	return $?
 }
 
+_push_lock_created_issue() {
+	local num="$1"
+	local repo="$2"
+	local origin_label="$3"
+	local lock_owner="${repo%%/*}"
+	local lock_user="${AIDEVOPS_SESSION_USER:-}"
+	[[ -z "$lock_user" ]] && lock_user=$(gh api user --jq '.login // ""' 2>/dev/null || echo "")
+	if [[ -n "$lock_user" && "$lock_user" == "$lock_owner" ]] ||
+		[[ "$origin_label" == "origin:worker" ]]; then
+		gh issue lock "$num" --repo "$repo" --reason "resolved" >/dev/null 2>&1 || true
+	fi
+	return 0
+}
+
 # _push_create_issue: create a GitHub issue for task_id with race-condition guard.
 # Sets _PUSH_CREATED_NUM on success (empty on failure/skip).
 # Returns 0=created, 1=skipped (race), 2=error.
@@ -174,6 +188,11 @@ _push_create_issue() {
 			print_warning "gh create exited $gh_exit but issue found via recovery: #$recovery"
 			log_verbose "gh output: ${combined:0:200}"
 			_PUSH_CREATED_NUM="$recovery"
+			add_gh_ref_to_todo "$task_id" "$recovery" "$todo_file"
+			if ! require_task_issue_mapping "$task_id" "$todo_file" "$repo" "$recovery"; then
+				print_error "Recovered #${recovery}, but immutable mapping validation failed"
+				return 2
+			fi
 			return 0
 		fi
 		print_error "Failed to create issue for $task_id (exit $gh_exit): ${combined:0:200}"
@@ -183,23 +202,21 @@ _push_create_issue() {
 	local num
 	num=$(echo "$url" | grep -oE '[0-9]+$' || echo "")
 	[[ -n "$num" ]] && _PUSH_CREATED_NUM="$num"
+	if [[ -n "$num" ]]; then
+		add_gh_ref_to_todo "$task_id" "$num" "$todo_file"
+		if ! require_task_issue_mapping "$task_id" "$todo_file" "$repo" "$num"; then
+			print_error "Created #${num}, but immutable mapping validation failed"
+			return 2
+		fi
+	fi
 
 	# t1970/t1984/t2157: auto-assign interactive origin issues (not auto-dispatch).
 	# Worker issues follow status:claimed + pulse-managed assignment instead.
 	[[ -n "$num" && -z "$assignee" && "$origin_label" == "origin:interactive" ]] &&
 		_push_auto_assign_interactive "$num" "$repo" "$all_labels"
 
-	# Lock maintainer/worker-created issues at creation to prevent
-	# comment prompt-injection across the entire issue lifecycle.
-	if [[ -n "$num" ]]; then
-		local _lock_owner="${repo%%/*}"
-		local _lock_user="${AIDEVOPS_SESSION_USER:-}"
-		[[ -z "$_lock_user" ]] && _lock_user=$(gh api user --jq '.login // ""' 2>/dev/null || echo "")
-		if [[ -n "$_lock_user" && "$_lock_user" == "$_lock_owner" ]] ||
-			[[ "$origin_label" == "origin:worker" ]]; then
-			gh issue lock "$num" --repo "$repo" --reason "resolved" >/dev/null 2>&1 || true
-		fi
-	fi
+	# Mapping validation above must precede this lock mutation.
+	[[ -n "$num" ]] && _push_lock_created_issue "$num" "$repo" "$origin_label"
 	return 0
 }
 

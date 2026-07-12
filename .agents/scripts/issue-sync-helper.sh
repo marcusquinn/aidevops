@@ -172,6 +172,27 @@ _build_title() {
 # via stdout tokens "CREATED" or "SKIPPED" for the caller to count.
 # GH#18041 (t1957): Collision detection — warn if a merged PR already uses
 # this task ID.
+# Complete post-create writes after the create helper has already established
+# the immutable mapping.
+_push_finalize_task_creation() {
+	local task_id="$1" repo="$2" todo_file="$3" title="$4"
+	local tier_label="$5" labels="$6" body="$7"
+	print_success "Created #${_PUSH_CREATED_NUM}: $title"
+	add_gh_ref_to_todo "$task_id" "$_PUSH_CREATED_NUM" "$todo_file"
+	if ! require_task_issue_mapping "$task_id" "$todo_file" "$repo" "$_PUSH_CREATED_NUM"; then
+		print_error "Created #${_PUSH_CREATED_NUM}, but immutable mapping validation failed; skipping post-create writes"
+		return 1
+	fi
+	[[ -n "$tier_label" ]] && _apply_tier_label_replace "$repo" "$_PUSH_CREATED_NUM" "$tier_label"
+	sync_relationships_for_task "$task_id" "$todo_file" "$repo"
+	if [[ ",${labels}," == *",parent-task,"* ]] &&
+		! _parent_body_has_phase_markers "$body"; then
+		_post_parent_task_no_markers_warning "$repo" "$_PUSH_CREATED_NUM" || true
+	fi
+	echo "CREATED"
+	return 0
+}
+
 # IDENTITY KEY: (issue-sync-helper.sh, _push_process_task) — do NOT move.
 _push_process_task() {
 	local task_id="$1" repo="$2" todo_file="$3" project_root="$4"
@@ -246,23 +267,8 @@ _push_process_task() {
 	_push_create_issue "$task_id" "$repo" "$todo_file" "$title" "$body" "$labels" "$assignee"
 	rc=$?
 	if [[ $rc -eq 0 && -n "$_PUSH_CREATED_NUM" ]]; then
-		print_success "Created #${_PUSH_CREATED_NUM}: $title"
-		# Apply tier label via the replace-not-append helper so any existing
-		# tier:* label is removed first (t2012). Done after creation so the
-		# newly-created issue has a number to address.
-		if [[ -n "$tier_label" ]]; then
-			_apply_tier_label_replace "$repo" "$_PUSH_CREATED_NUM" "$tier_label"
-		fi
-		add_gh_ref_to_todo "$task_id" "$_PUSH_CREATED_NUM" "$todo_file"
-		# Sync relationships (blocked-by, sub-issues) after creation (t1889)
-		sync_relationships_for_task "$task_id" "$todo_file" "$repo"
-		# t2442: if the applied labels include `parent-task` AND the body
-		# has no decomposition markers, post a one-time warning.
-		if [[ ",${labels}," == *",parent-task,"* ]] && \
-			! _parent_body_has_phase_markers "$body"; then
-			_post_parent_task_no_markers_warning "$repo" "$_PUSH_CREATED_NUM" || true
-		fi
-		echo "CREATED"
+		_push_finalize_task_creation "$task_id" "$repo" "$todo_file" "$title" \
+			"$tier_label" "$labels" "$body" || return 1
 	elif [[ $rc -eq 1 ]]; then
 		echo "SKIPPED"
 	else
@@ -290,6 +296,9 @@ _enrich_process_task() {
 		print_warning "$task_id: no issue found"
 		return 0
 	}
+	if [[ "$DRY_RUN" != "true" ]]; then
+		add_gh_ref_to_todo "$task_id" "$num" "$todo_file"
+	fi
 
 	local parsed
 	parsed=$(parse_task_line "$task_line")
@@ -333,6 +342,7 @@ _enrich_process_task() {
 		echo "ENRICHED"
 		return 0
 	fi
+	require_task_issue_mapping "$task_id" "$todo_file" "$repo" "$num" || return 1
 
 	# t2165: fetch title, body, and labels in a single gh issue view call and
 	# forward to helpers.

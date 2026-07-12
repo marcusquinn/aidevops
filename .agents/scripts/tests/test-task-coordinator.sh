@@ -111,14 +111,96 @@ node "$COORDINATOR" restore --backup "$backup" --registry-evidence '{"cas":"winn
 [[ "$(node "$COORDINATOR" status | jq -r '.sequence')" == "100" ]]
 [[ -n "$(ls "${TEST_ROOT}"/coordinator.db-backup-*-pre-restore.db)" ]]
 
-# A real v1 schema migrates to v2 only after a verified backup.
+# A real v1 schema migrates through v2 to v3 only after verified backups.
 migration_db="${TEST_ROOT}/migration.db"
 AIDEVOPS_TASK_COORDINATOR_DB="$migration_db" node "$COORDINATOR" status >/dev/null
-sqlite3 "$migration_db" "ALTER TABLE operations DROP COLUMN result_hash; ALTER TABLE restore_controls DROP COLUMN backup_high_water; UPDATE coordinator_meta SET value='1' WHERE key='schema_version'; UPDATE migration_history SET version=1 WHERE version=2;"
+sqlite3 "$migration_db" "DROP TABLE issue_mappings; ALTER TABLE operations DROP COLUMN result_hash; ALTER TABLE restore_controls DROP COLUMN backup_high_water; UPDATE coordinator_meta SET value='1' WHERE key='schema_version'; UPDATE migration_history SET version=1 WHERE version=3;"
 AIDEVOPS_TASK_COORDINATOR_DB="$migration_db" node "$COORDINATOR" status >/dev/null
-[[ "$(sqlite3 "$migration_db" "SELECT value FROM coordinator_meta WHERE key='schema_version';")" == "2" ]]
+[[ "$(sqlite3 "$migration_db" "SELECT value FROM coordinator_meta WHERE key='schema_version';")" == "3" ]]
 [[ "$(sqlite3 "$migration_db" "SELECT COUNT(*) FROM pragma_table_info('operations') WHERE name='result_hash';")" == "1" ]]
 [[ -n "$(ls "${TEST_ROOT}"/migration.db-backup-*-pre-migrate-v2.db)" ]]
+[[ -n "$(ls "${TEST_ROOT}"/migration.db-backup-*-pre-migrate-v3.db)" ]]
+
+# An untouched v2 database is backed up before any v3 table is applied.
+v2_db="${TEST_ROOT}/v2.db"
+AIDEVOPS_TASK_COORDINATOR_DB="$v2_db" node "$COORDINATOR" status >/dev/null
+sqlite3 "$v2_db" "DROP TABLE issue_mappings; UPDATE coordinator_meta SET value='2' WHERE key='schema_version'; DELETE FROM migration_history WHERE version=3; INSERT OR IGNORE INTO migration_history VALUES(2,'2026-01-01T00:00:00Z',NULL,'ok');"
+AIDEVOPS_TASK_COORDINATOR_DB="$v2_db" node "$COORDINATOR" status >/dev/null
+v2_backup=$(ls "${TEST_ROOT}"/v2.db-backup-*-pre-migrate-v3.db)
+[[ "$(sqlite3 "$v2_backup" "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='issue_mappings';")" == "0" ]]
+[[ "$(sqlite3 "$v2_db" "SELECT value FROM coordinator_meta WHERE key='schema_version';")" == "3" ]]
+
+# Immutable task/repository identities isolate equal display numbers and allow
+# one task to retain home, implementation, and upstream issue projections.
+mapping_task=$(node "$COORDINATOR" allocate --operation-id mapping-task --payload '{}' | jq -r '.tasks[0].taskId')
+node "$COORDINATOR" bind-issue --task-id "$mapping_task" --repository-id R_home --repository-slug owner/home \
+	--role home --issue-id I_home --project-id P_home --display-number 42 --state-cursor 2026-07-12T10:00:00Z \
+	--sync-metadata '{"state":"OPEN","source":"backfill"}' >/dev/null
+node "$COORDINATOR" bind-issue --task-id "$mapping_task" --repository-id R_impl --repository-slug owner/implementation \
+	--role implementation --issue-id I_impl --display-number 42 --sync-metadata '{"state":"OPEN"}' >/dev/null
+node "$COORDINATOR" bind-issue --task-id "$mapping_task" --repository-id R_upstream --repository-slug upstream/project \
+	--role upstream --issue-id I_upstream --display-number 42 >/dev/null
+[[ "$(node "$COORDINATOR" resolve-issue --task-id "$mapping_task" --repository-id R_home | jq -r '.issueId')" == "I_home" ]]
+[[ "$(node "$COORDINATOR" resolve-issue --task-id "$mapping_task" --repository-id R_impl | jq -r '.issueId')" == "I_impl" ]]
+[[ "$(sqlite3 "$AIDEVOPS_TASK_COORDINATOR_DB" "SELECT COUNT(*) FROM issue_mappings WHERE task_id='${mapping_task}';")" == "3" ]]
+
+# A renamed slug updates display metadata without changing repository identity;
+# conflicting issue identity or an unvalidated repository fails closed.
+node "$COORDINATOR" bind-issue --task-id "$mapping_task" --repository-id R_home --repository-slug renamed/home \
+	--role home --issue-id I_home --display-number 42 --state-cursor 2026-07-12T10:00:00Z \
+	--sync-metadata '{"state":"OPEN","source":"backfill"}' >/dev/null
+[[ "$(node "$COORDINATOR" resolve-issue --task-id "$mapping_task" --repository-id R_home | jq -r '.repositorySlug')" == "renamed/home" ]]
+if node "$COORDINATOR" bind-issue --task-id "$mapping_task" --repository-id R_home --repository-slug renamed/home \
+	--role home --issue-id I_conflict --display-number 42 >/dev/null 2>&1; then
+	printf 'FAIL conflicting issue mapping was accepted\n' >&2
+	exit 1
+fi
+
+# Dotted legacy task identities bind and resolve through the same codec.
+node "$COORDINATOR" bind-issue --task-id t1873.1 --repository-id R_dotted --repository-slug owner/dotted \
+	--role home --issue-id I_dotted --display-number 73 --state-cursor 2026-07-12T10:00:00Z >/dev/null
+[[ "$(node "$COORDINATOR" resolve-issue --task-id t1873.1 --repository-id R_dotted | jq -r '.displayNumber')" == "73" ]]
+
+# State cursors are monotonic. Newer state advances, equal state is idempotent,
+# and stale or cursor-dropping updates cannot regress synchronization metadata.
+node "$COORDINATOR" bind-issue --task-id "$mapping_task" --repository-id R_home --repository-slug renamed/home \
+	--role home --issue-id I_home --display-number 42 --state-cursor 2026-07-12T11:00:00Z \
+	--sync-metadata '{"state":"CLOSED","source":"webhook"}' >/dev/null
+node "$COORDINATOR" bind-issue --task-id "$mapping_task" --repository-id R_home --repository-slug renamed/home \
+	--role home --issue-id I_home --display-number 42 --state-cursor 2026-07-12T11:00:00Z \
+	--sync-metadata '{"state":"CLOSED","source":"webhook"}' >/dev/null
+if node "$COORDINATOR" bind-issue --task-id "$mapping_task" --repository-id R_home --repository-slug renamed/home \
+	--role home --issue-id I_home --display-number 42 --state-cursor 2026-07-12T10:30:00Z \
+	--sync-metadata '{"state":"OPEN"}' >/dev/null 2>&1; then
+	printf 'FAIL stale synchronization metadata was accepted\n' >&2
+	exit 1
+fi
+if node "$COORDINATOR" bind-issue --task-id "$mapping_task" --repository-id R_home --repository-slug renamed/home \
+	--role home --issue-id I_home --display-number 42 --sync-metadata '{"state":"OPEN"}' >/dev/null 2>&1; then
+	printf 'FAIL synchronization cursor regression was accepted\n' >&2
+	exit 1
+fi
+[[ "$(node "$COORDINATOR" resolve-issue --task-id "$mapping_task" --repository-id R_home | jq -r '.syncMetadata.state')" == "CLOSED" ]]
+
+# Concurrent conflicting first binds are serialized in SQLite: exactly one
+# identity wins and every competing identity fails without overwriting it.
+for i in $(seq 1 12); do
+	(
+		if node "$COORDINATOR" bind-issue --task-id t1999.1 --repository-id R_race --repository-slug owner/race \
+			--role home --issue-id "I_race_${i}" --display-number "$i" --state-cursor 2026-07-12T12:00:00Z >/dev/null 2>&1; then
+			printf '0\n' >"${TEST_ROOT}/race-${i}.rc"
+		else
+			printf '1\n' >"${TEST_ROOT}/race-${i}.rc"
+		fi
+	) &
+done
+wait
+[[ "$(grep -hxc '0' "${TEST_ROOT}"/race-*.rc | awk '{s+=$1} END {print s}')" == "1" ]]
+[[ "$(sqlite3 "$AIDEVOPS_TASK_COORDINATOR_DB" "SELECT COUNT(*) FROM issue_mappings WHERE task_id='t1999.1' AND repository_id='R_race';")" == "1" ]]
+if node "$COORDINATOR" resolve-issue --task-id "$mapping_task" --repository-id R_missing >/dev/null 2>&1; then
+	printf 'FAIL missing repository mapping resolved\n' >&2
+	exit 1
+fi
 
 # Integration defaults to legacy, shadow is additive, and emission needs two gates.
 if AIDEVOPS_TASK_COORDINATOR_MODE=namespaced bash "$CLAIM" --no-issue --title test >/dev/null 2>&1; then
