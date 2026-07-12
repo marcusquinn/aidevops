@@ -364,57 +364,13 @@ mutation($parent:ID!,$child:ID!) {
 	return 1
 }
 
-# Sync blocked-by and blocks relationships for a single task.
-# Parses the task line for blocked-by: and blocks: fields, resolves each
-# referenced task to a GitHub node ID, and creates the relationship.
-# Arguments:
-#   $1 - task_id
-#   $2 - todo_file path
-#   $3 - repo slug
-# Returns: number of relationships set (via stdout "RELS:N")
-_sync_blocked_by_for_task() {
-	local task_id="$1" todo_file="$2" repo="$3"
-	local task_id_ere
-	task_id_ere=$(_escape_ere "$task_id")
-	local task_line
-	task_line=$(strip_code_fences <"$todo_file" | grep -E "^\s*- \[.\] ${task_id_ere} " | head -1 || echo "")
-	[[ -z "$task_line" ]] && return 0
 
-	local parsed
-	parsed=$(parse_task_line "$task_line")
-	local blocked_by="" blocks=""
-	while IFS='=' read -r key value; do
-		case "$key" in
-		blocked_by) blocked_by="$value" ;;
-		blocks) blocks="$value" ;;
-		esac
-	done <<<"$parsed"
-
-	[[ -z "$blocked_by" && -z "$blocks" ]] && return 0
-
-	# Resolve this task's node ID
-	local this_gh_num
-	this_gh_num=$(resolve_task_gh_number "$task_id" "$todo_file")
-	[[ -z "$this_gh_num" ]] && {
-		log_verbose "$task_id: no ref:GH# — skipping relationships"
-		return 0
-	}
-	local this_node_id
-	this_node_id=$(_cached_node_id "$this_gh_num" "$repo")
-	[[ -z "$this_node_id" ]] && {
-		log_verbose "$task_id: could not resolve node ID for #$this_gh_num"
-		_hold_dependency_sync_retry "$this_gh_num" "$repo" "blocked_issue_node_unresolved"
-		echo "RELS:0 RETRYABLE:1"
-		return 0
-	}
-
-	local rels_set=0 retryable_errors=0 current_retry_errors=0
-
-	# Process blocked-by: this task IS blocked BY each listed task
-	if [[ -n "$blocked_by" ]]; then
-		local _saved_ifs="$IFS"
-		IFS=','
-		for dep_task_id in $blocked_by; do
+_sync_declared_blocked_by_edges() {
+	local task_id="$1" todo_file="$2" repo="$3" this_gh_num="$4" this_node_id="$5" blocked_by="$6"
+	local dep_task_id="" dep_gh_num="" dep_node_id="" rels_set=0 retryable_errors=0
+	local saved_ifs="$IFS"
+	IFS=','
+	for dep_task_id in $blocked_by; do
 			dep_task_id="${dep_task_id// /}"
 			[[ -z "$dep_task_id" ]] && continue
 			if [[ "$dep_task_id" == "$task_id" ]]; then
@@ -426,7 +382,6 @@ _sync_blocked_by_for_task() {
 			[[ -z "$dep_gh_num" ]] && {
 				log_verbose "$task_id: blocked-by $dep_task_id has no ref:GH#"
 				retryable_errors=$((retryable_errors + 1))
-				current_retry_errors=$((current_retry_errors + 1))
 				continue
 			}
 			if [[ "$dep_gh_num" == "$this_gh_num" ]]; then
@@ -437,7 +392,6 @@ _sync_blocked_by_for_task() {
 			dep_node_id=$(_cached_node_id "$dep_gh_num" "$repo")
 			if [[ -z "$dep_node_id" ]]; then
 				retryable_errors=$((retryable_errors + 1))
-				current_retry_errors=$((current_retry_errors + 1))
 				continue
 			fi
 
@@ -446,7 +400,6 @@ _sync_blocked_by_for_task() {
 					print_info "[DRY-RUN] Would remove circular #$this_gh_num blocked-by #$dep_gh_num ($task_id <- $dep_task_id)"
 				elif ! _gh_remove_blocked_by "$this_node_id" "$dep_node_id"; then
 					retryable_errors=$((retryable_errors + 1))
-					current_retry_errors=$((current_retry_errors + 1))
 				else
 					log_verbose "$task_id (#$this_gh_num): normalized circular native edge to $dep_task_id (#$dep_gh_num)"
 				fi
@@ -459,18 +412,19 @@ _sync_blocked_by_for_task() {
 				rels_set=$((rels_set + 1))
 			else
 				retryable_errors=$((retryable_errors + 1))
-				current_retry_errors=$((current_retry_errors + 1))
 			fi
-		done
-		IFS="$_saved_ifs"
-	fi
+	done
+	IFS="$saved_ifs"
+	printf '%s:%s\n' "$rels_set" "$retryable_errors"
+	return 0
+}
 
-	# Process blocks: this task BLOCKS each listed task
-	# Inverse of blocked-by: call addBlockedBy with roles swapped
-	if [[ -n "$blocks" ]]; then
-		local _saved_ifs="$IFS"
-		IFS=','
-		for dep_task_id in $blocks; do
+_sync_declared_blocks_edges() {
+	local task_id="$1" todo_file="$2" repo="$3" this_gh_num="$4" this_node_id="$5" blocks="$6"
+	local dep_task_id="" dep_gh_num="" dep_node_id="" rels_set=0 retryable_errors=0
+	local saved_ifs="$IFS"
+	IFS=','
+	for dep_task_id in $blocks; do
 			dep_task_id="${dep_task_id// /}"
 			[[ -z "$dep_task_id" ]] && continue
 			if [[ "$dep_task_id" == "$task_id" ]]; then
@@ -513,8 +467,48 @@ _sync_blocked_by_for_task() {
 				retryable_errors=$((retryable_errors + 1))
 				_hold_dependency_sync_retry "$dep_gh_num" "$repo" "native_relationship_write_failed"
 			fi
-		done
-		IFS="$_saved_ifs"
+	done
+	IFS="$saved_ifs"
+	printf '%s:%s\n' "$rels_set" "$retryable_errors"
+	return 0
+}
+
+# Sync blocked-by and blocks relationships for a single task.
+_sync_blocked_by_for_task() {
+	local task_id="$1" todo_file="$2" repo="$3"
+	local task_id_ere="" task_line="" parsed="" key="" value="" blocked_by="" blocks=""
+	local this_gh_num="" this_node_id="" result="" edge_rels=0 edge_errors=0
+	local rels_set=0 retryable_errors=0 current_retry_errors=0
+	task_id_ere=$(_escape_ere "$task_id")
+	task_line=$(strip_code_fences <"$todo_file" | grep -E "^\s*- \[.\] ${task_id_ere} " | head -1 || echo "")
+	[[ -z "$task_line" ]] && return 0
+	parsed=$(parse_task_line "$task_line")
+	while IFS='=' read -r key value; do
+		case "$key" in
+		blocked_by) blocked_by="$value" ;;
+		blocks) blocks="$value" ;;
+		esac
+	done <<<"$parsed"
+	[[ -z "$blocked_by" && -z "$blocks" ]] && return 0
+	this_gh_num=$(resolve_task_gh_number "$task_id" "$todo_file")
+	[[ -z "$this_gh_num" ]] && { log_verbose "$task_id: no ref:GH# — skipping relationships"; return 0; }
+	this_node_id=$(_cached_node_id "$this_gh_num" "$repo")
+	if [[ -z "$this_node_id" ]]; then
+		log_verbose "$task_id: could not resolve node ID for #$this_gh_num"
+		_hold_dependency_sync_retry "$this_gh_num" "$repo" "blocked_issue_node_unresolved"
+		echo "RELS:0 RETRYABLE:1"
+		return 0
+	fi
+	if [[ -n "$blocked_by" ]]; then
+		result=$(_sync_declared_blocked_by_edges "$task_id" "$todo_file" "$repo" "$this_gh_num" "$this_node_id" "$blocked_by")
+		IFS=':' read -r edge_rels edge_errors <<<"$result"
+		rels_set=$((rels_set + edge_rels)); retryable_errors=$((retryable_errors + edge_errors))
+		current_retry_errors="$edge_errors"
+	fi
+	if [[ -n "$blocks" ]]; then
+		result=$(_sync_declared_blocks_edges "$task_id" "$todo_file" "$repo" "$this_gh_num" "$this_node_id" "$blocks")
+		IFS=':' read -r edge_rels edge_errors <<<"$result"
+		rels_set=$((rels_set + edge_rels)); retryable_errors=$((retryable_errors + edge_errors))
 	fi
 
 	if [[ "$current_retry_errors" -gt 0 ]]; then
