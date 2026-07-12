@@ -60,17 +60,22 @@ if PROVENANCE_MODE=stale PATH="${BIN}:/opt/homebrew/bin:/usr/bin:/bin" verify_re
 fi
 printf 'PASS unreachable merge SHA is rejected\n'
 
-verify_canonical_default_synced main || {
-	printf 'FAIL synchronized canonical main was rejected\n'
-	exit 1
-}
-printf 'PASS synchronized canonical main is accepted\n'
-
 git -C "$REPO" switch -q -c safety/release-test
-if verify_canonical_default_synced main; then
-	printf 'FAIL off-main canonical worktree was accepted\n'
+printf 'canonical human work\n' >>"${REPO}/README.md"
+git -C "$REPO" commit -q -am 'local canonical divergence'
+printf 'uncommitted human work\n' >>"${REPO}/README.md"
+if verify_remote_sync main >/dev/null 2>&1 &&
+	PATH="${BIN}:/opt/homebrew/bin:/usr/bin:/bin" verify_release_source_pr 42 main testorg/aidevops; then
+	printf 'PASS dirty diverged canonical checkout is irrelevant to detached release provenance\n'
+else
+	printf 'FAIL canonical checkout state blocked detached release provenance\n'
 	exit 1
 fi
-printf 'PASS off-main canonical worktree blocks release\n'
+
+if grep -qF 'verify_canonical_default_synced' "${SCRIPT_DIR}/version-manager.sh"; then
+	printf 'FAIL release path still depends on canonical synchronization\n'
+	exit 1
+fi
+printf 'PASS release path has no canonical synchronization dependency\n'
 
 exit 0
