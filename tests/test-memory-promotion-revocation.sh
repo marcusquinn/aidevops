@@ -69,9 +69,25 @@ fi
 grep -F "Second verified promotion" "$DESTINATION" >/dev/null
 grep -F "Manual guidance must survive" "$DESTINATION" >/dev/null
 content_after_first_revoke=$(cksum "$DESTINATION")
-graduate revoke "$first_id" --reason "later regression disproved guidance" >/dev/null
+if graduate revoke "$first_id" --reason "later regression disproved guidance" >/dev/null 2>&1; then
+	printf 'FAIL: repeated revocation accepted an inactive promotion\n' >&2
+	exit 1
+fi
 [[ "$(cksum "$DESTINATION")" == "$content_after_first_revoke" ]]
 [[ "$(sqlite3 "$db" "SELECT COUNT(*) FROM observation_outcomes WHERE observation_id='obs_learning_$first_id' AND outcome_kind='reverted';")" == "1" ]]
+
+for missing_option in --value --details --verifier --source-id --provenance; do
+	if graduate outcome "$second_id" test_passed "$missing_option" >/dev/null 2>&1; then
+		printf 'FAIL: outcome accepted missing value for %s\n' "$missing_option" >&2
+		exit 1
+	fi
+done
+for missing_option in --reason --corrected-by; do
+	if graduate revoke "$second_id" "$missing_option" >/dev/null 2>&1; then
+		printf 'FAIL: revoke accepted missing value for %s\n' "$missing_option" >&2
+		exit 1
+	fi
+done
 
 # Re-activate a fixture promotion to exercise correction separately.
 sqlite3 "$db" "UPDATE observation_promotions SET status='active' WHERE observation_id='obs_learning_$first_id'; UPDATE observations SET status='active' WHERE observation_id='obs_learning_$first_id';"

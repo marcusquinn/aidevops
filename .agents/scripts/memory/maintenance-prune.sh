@@ -89,6 +89,9 @@ cmd_prune() {
 		log_info "Hard age retention applies before relevance judgment; accessed records cannot escape the age bound"
 	fi
 	_prune_flat_threshold "$older_than_days" "$dry_run"
+	if [[ "$ai_judged" == true ]]; then
+		_prune_ai_judged "$older_than_days" "$dry_run" false
+	fi
 	_enforce_retention_budgets "$max_count" "$max_bytes" "$dry_run"
 
 	return 0
@@ -160,7 +163,7 @@ _prune_ai_judged() {
 	local keep_accessed="$3"
 
 	local threshold_judge
-	threshold_judge="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/ai-threshold-judge.sh"
+	threshold_judge="${AIDEVOPS_AI_THRESHOLD_JUDGE:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/ai-threshold-judge.sh}"
 
 	if [[ ! -x "$threshold_judge" ]]; then
 		log_warn "ai-threshold-judge.sh not found -- falling back to flat threshold"

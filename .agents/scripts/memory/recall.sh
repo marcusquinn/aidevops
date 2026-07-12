@@ -765,6 +765,10 @@ cmd_history() {
 		log_error "Memory ID is required. Usage: memory-helper.sh history <id>"
 		return 1
 	fi
+	if [[ -n "$custom_value" ]] && ! [[ "$custom_value" =~ ^-?[0-9]+([.][0-9]+)?$ ]]; then
+		log_error "--value must be numeric"
+		return 1
+	fi
 
 	init_db
 
