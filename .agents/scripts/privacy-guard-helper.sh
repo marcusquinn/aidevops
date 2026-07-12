@@ -517,7 +517,8 @@ _privacy_aidevops_script_reference_basenames() {
 		return 0
 	fi
 
-	for script_path in "$script_dir"/*.sh "$script_dir"/*/*.sh; do
+	for script_path in "$script_dir"/*.sh "$script_dir"/*.mjs \
+		"$script_dir"/*/*.sh "$script_dir"/*/*.mjs; do
 		[[ -f "$script_path" ]] || continue
 		basename="${script_path##*/}"
 		if [[ ! "$basename" =~ $PRIVACY_CREDENTIAL_PREFIX_ERE ]]; then
@@ -535,8 +536,9 @@ _privacy_aidevops_script_reference_basenames() {
 # Some aidevops helper basenames legitimately contain substrings such as
 # "sk-" when they are written as `.agents/scripts/...` file references. Those
 # are filenames, not credential values. Keep the allowlist narrow by only
-# redacting references to shell helper basenames that actually exist beside this
-# helper (or one directory below it, matching `.agents/scripts/tests/...`).
+# redacting references to shell or Node helper basenames that actually exist
+# beside this helper (or one directory below it, matching
+# `.agents/scripts/tests/...`).
 # Arguments:
 #   $1 - text content to redact
 #   $2 - optional newline-delimited precomputed basename allowlist

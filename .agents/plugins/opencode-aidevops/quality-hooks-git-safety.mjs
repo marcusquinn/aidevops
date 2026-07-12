@@ -3,19 +3,24 @@
 
 import { execFileSync } from "child_process";
 import { existsSync } from "fs";
-import { join } from "path";
+import { homedir } from "os";
+import { join, resolve } from "path";
 
 function isTrustedFullLoopCommitAndPr(command, scriptsDir, cwd) {
   const wrapperMatch = command.match(
-    /(?:^|[($;|&\s])(?<wrapper>full-loop-helper\.sh|\.\/\.agents\/scripts\/full-loop-helper\.sh|\$PWD\/\.agents\/scripts\/full-loop-helper\.sh)\s+commit-and-pr(?:\s|$)/,
+    /(?:^|[($;|&\s])(?<wrapper>[^\s'";$|&()]*full-loop-helper\.sh)\s+commit-and-pr(?:\s|$)/,
   );
   if (!wrapperMatch) return false;
 
   const wrapper = wrapperMatch.groups.wrapper;
-  const expectedPath = wrapper === "full-loop-helper.sh"
-    ? join(scriptsDir, wrapper)
-    : join(cwd, ".agents", "scripts", "full-loop-helper.sh");
-  return existsSync(expectedPath);
+  const deployedPath = resolve(scriptsDir, "full-loop-helper.sh");
+  const repositoryPath = resolve(cwd, ".agents", "scripts", "full-loop-helper.sh");
+  let candidatePath;
+  if (wrapper === "full-loop-helper.sh") candidatePath = deployedPath;
+  else if (wrapper.startsWith("~/")) candidatePath = resolve(homedir(), wrapper.slice(2));
+  else if (wrapper.startsWith("$PWD/")) candidatePath = resolve(cwd, wrapper.slice(5));
+  else candidatePath = resolve(cwd, wrapper);
+  return [deployedPath, repositoryPath].includes(candidatePath) && existsSync(candidatePath);
 }
 
 function isWorkerContext(env = process.env) {

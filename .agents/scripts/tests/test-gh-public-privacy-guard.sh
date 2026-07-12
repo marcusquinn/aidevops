@@ -42,6 +42,8 @@ cp "$HELPER_SRC" "$TMP/scripts/privacy-guard-helper.sh"
 # an embedded credential-prefix-shaped substring.
 ALLOWED_BASENAME="ta""sk-dispatch-helper.sh"
 touch "$TMP/scripts/$ALLOWED_BASENAME"
+ALLOWED_NODE_BASENAME="${ALLOWED_BASENAME%.sh}.mjs"
+touch "$TMP/scripts/$ALLOWED_NODE_BASENAME"
 
 # shellcheck source=/dev/null
 source "$TMP/scripts/privacy-guard-helper.sh"
@@ -55,6 +57,15 @@ if [[ "$rc" -eq 0 && -z "$out" && "$err" == *'[privacy-scan][ALLOW] aidevops scr
 	pass "aidevops script path reference is allowed with allowlist output"
 else
 	fail "aidevops script path reference" "rc=$rc out=$out err=$err"
+fi
+
+out=$(privacy_scan_secret_material_text "Worker guidance: edit .agents/scripts/$ALLOWED_NODE_BASENAME" 2>"$TMP/allow-node-path.err")
+rc=$?
+err=$(<"$TMP/allow-node-path.err")
+if [[ "$rc" -eq 0 && -z "$out" && "$err" == *'[privacy-scan][ALLOW] aidevops script file reference'* ]]; then
+	pass "aidevops Node script path reference is allowed with allowlist output"
+else
+	fail "aidevops Node script path reference" "rc=$rc out=$out err=$err"
 fi
 
 precomputed_input="Worker guidance: edit .agents/scripts/$ALLOWED_BASENAME"
