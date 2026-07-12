@@ -10,6 +10,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.32.79] - 2026-07-13
+
+### Changed
+
+- Version bump and maintenance updates
+
+
+## [3.32.78] - 2026-07-12
+
+### Added
+
+- preserve bounded issue recovery snapshots (#27453)
+
 ## [3.32.77] - 2026-07-12
 
 ### Changed
