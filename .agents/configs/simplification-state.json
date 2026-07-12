@@ -2138,9 +2138,9 @@
       "pr": 17306
     },
     ".agents/scripts/commands/session-review.md": {
-      "at": "2026-05-10T22:09:06Z",
-      "hash": "1a56c09285cc161a84041b0f303001eb74f329ba",
-      "passes": 2,
+      "at": "2026-07-12T06:44:23Z",
+      "hash": "6fc5cb10f628447defad0769c29c98247877d416",
+      "passes": 3,
       "pr": 18147
     },
     ".agents/scripts/commands/show-plan.md": {
@@ -2406,9 +2406,9 @@
       "pr": 18704
     },
     ".agents/scripts/pulse-dep-graph.sh": {
-      "at": "2026-07-02T02:57:51Z",
-      "hash": "cdc45596b608b9d9f1bf8c57e6e245ca4ff94e72",
-      "passes": 19,
+      "at": "2026-07-12T06:44:27Z",
+      "hash": "802ecd2dbefab66d0ca1b3cc2a3b8eb4e7ce0929",
+      "passes": 20,
       "pr": 18796
     },
     ".agents/scripts/pulse-dispatch-core.sh": {
@@ -7402,9 +7402,9 @@
       "pr": 13443
     },
     ".agents/workflows/session-review.md": {
-      "at": "2026-05-10T22:15:12Z",
-      "hash": "1a56c09285cc161a84041b0f303001eb74f329ba",
-      "passes": 3,
+      "at": "2026-07-12T06:45:19Z",
+      "hash": "6fc5cb10f628447defad0769c29c98247877d416",
+      "passes": 4,
       "pr": 12889
     },
     ".agents/workflows/show-plan.md": {
@@ -7480,21 +7480,21 @@
       "pr": 16415
     },
     "TODO.md": {
-      "at": "2026-07-12T05:42:22Z",
-      "hash": "704e648e8ef357b5b0e9435fcb17de4014c7bc8d",
-      "passes": 181,
+      "at": "2026-07-12T06:45:20Z",
+      "hash": "a2cc9396240e45c6ff65c5f41c2be4e26f8f9ff4",
+      "passes": 182,
       "pr": 15490
     },
     "aidevops.sh": {
-      "at": "2026-07-12T05:42:22Z",
-      "hash": "f9d03d4c71c78923e46562b41f168fb51df31a78",
-      "passes": 268,
+      "at": "2026-07-12T06:45:20Z",
+      "hash": "f1a300424ade2de37b4fe2b5d910f4f58530e475",
+      "passes": 269,
       "pr": 19029
     },
     "setup.sh": {
-      "at": "2026-07-12T05:42:22Z",
-      "hash": "1cce6ffa14c41c1b5a3d8fef0c3ef01547f66eaa",
-      "passes": 264,
+      "at": "2026-07-12T06:45:21Z",
+      "hash": "c155f479cce3e365b6d19d2f5eca06f0d11ea5b7",
+      "passes": 265,
       "pr": 15470
     },
     "todo/tasks/GH#15363-brief.md": {
@@ -7750,10 +7750,10 @@
       "passes": 8
     },
     ".agents/scripts/issue-sync-relationships.sh": {
-      "hash": "c5c7e37f07c8976bc95194a061e8a728eb4cad19",
-      "at": "2026-05-01T21:34:03Z",
+      "hash": "3e7d04fca79706106358ced76388a0bb4ba718c5",
+      "at": "2026-07-12T06:44:26Z",
       "pr": 20524,
-      "passes": 4
+      "passes": 5
     },
     ".agents/scripts/shared-gh-wrappers-rest-fallback.sh": {
       "hash": "9d97932e520b0274f924f140549df7106b863eba",
