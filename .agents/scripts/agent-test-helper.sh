@@ -212,10 +212,12 @@ run_prompt_opencode() {
 	local timeout="$4"
 	local command="${5:-}"
 
-	# Slash commands are a CLI dispatch contract; the server message endpoint does
-	# not accept a command selector.
+	# Agent and slash-command selectors are CLI dispatch contracts; the server
+	# message endpoint accepts neither selector.
 	if [[ -n "$command" ]]; then
 		run_prompt_opencode_cli "$prompt" "$agent" "$model" "$timeout" "$command"
+	elif [[ -n "$agent" ]]; then
+		run_prompt_opencode_cli "$prompt" "$agent" "$model" "$timeout" ""
 	elif check_opencode_server; then
 		run_prompt_opencode_server "$prompt" "$agent" "$model" "$timeout"
 	else
@@ -341,7 +343,8 @@ run_prompt_opencode_cli() {
 	}
 
 	if [[ -z "$command" && -n "$agent" ]] &&
-		grep -Eqi 'subagent|fall(ing)? back.*(default|primary)|default.*agent' "$stderr_file"; then
+		grep -Eqi 'subagent|fall(ing)? back.*(default|primary)|default.*agent' \
+			"$stderr_file" "$raw_output"; then
 		echo "[ERROR: requested agent '${agent}' was not dispatched; use a suite command for subagents]"
 		rm -f "$stderr_file" "$raw_output" "$json_output"
 		return 1
