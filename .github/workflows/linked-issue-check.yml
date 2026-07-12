@@ -49,34 +49,45 @@ jobs:
             const headSha = pr.head.sha;
             const repo = context.repo;
 
+            // A positive policy result must not become a failed workflow just
+            // because the installation's shared REST quota was exhausted while
+            // publishing the compatibility StatusContext. The workflow check is
+            // itself authoritative; negative policy results still fail closed.
+            const publishStatus = async (state, description) => {
+              try {
+                await github.rest.repos.createCommitStatus({
+                  owner: repo.owner,
+                  repo: repo.repo,
+                  sha: headSha,
+                  state,
+                  context: 'linked-issue-check',
+                  description
+                });
+              } catch (error) {
+                const remaining = error.response?.headers?.['x-ratelimit-remaining'];
+                const exhausted = error.status === 403 && remaining === '0';
+                if (state === 'success' && exhausted) {
+                  core.warning('Linked-issue policy passed, but the compatibility status could not be posted because GitHub API quota is exhausted.');
+                  return;
+                }
+                throw error;
+              }
+            };
+
             // Safety guard: skip if this is an external bot PR from a fork
             // pull_request_target runs in base repo context, but we should not
             // process PRs from non-User accounts in forks
             const isFork = Boolean(pr.head.repo) && pr.head.repo.full_name !== pr.base.repo.full_name;
             if (isFork && pr.user.type === 'Bot') {
               console.log(`External bot PR from fork — skipping linked-issue check`);
-              await github.rest.repos.createCommitStatus({
-                owner: repo.owner,
-                repo: repo.repo,
-                sha: headSha,
-                state: 'success',
-                context: 'linked-issue-check',
-                description: 'External bot PR — skipped'
-              });
+              await publishStatus('success', 'External bot PR — skipped');
               return;
             }
 
             // Bot accounts are exempt
             if (pr.user.type === 'Bot') {
               console.log(`Author ${pr.user.login} is a bot — exempt from linked-issue check`);
-              await github.rest.repos.createCommitStatus({
-                owner: repo.owner,
-                repo: repo.repo,
-                sha: headSha,
-                state: 'success',
-                context: 'linked-issue-check',
-                description: 'Bot PR — exempt from linked-issue requirement'
-              });
+              await publishStatus('success', 'Bot PR — exempt from linked-issue requirement');
               return;
             }
 
@@ -84,14 +95,7 @@ jobs:
             // These are already tracked via the task system / maintainer-gate title lookup
             if (/^(t\d+(\.\d+)*|GH#\d+)[:\s]/.test(title)) {
               console.log(`PR "${title}" has task-ID prefix — exempt from linked-issue check`);
-              await github.rest.repos.createCommitStatus({
-                owner: repo.owner,
-                repo: repo.repo,
-                sha: headSha,
-                state: 'success',
-                context: 'linked-issue-check',
-                description: 'Task-ID prefix detected — issue linkage via task system'
-              });
+              await publishStatus('success', 'Task-ID prefix detected — issue linkage via task system');
               return;
             }
 
@@ -105,14 +109,7 @@ jobs:
               const match = body.match(/(closes?|fixes?|resolves?|for|ref)[:\s]+#(\d+)/i);
               const issueNum = match ? match[2] : 'unknown';
               console.log(`Found linked issue reference — #${issueNum}`);
-              await github.rest.repos.createCommitStatus({
-                owner: repo.owner,
-                repo: repo.repo,
-                sha: headSha,
-                state: 'success',
-                context: 'linked-issue-check',
-                description: `Linked issue found — #${issueNum}`
-              });
+              await publishStatus('success', `Linked issue found — #${issueNum}`);
               return;
             }
 
@@ -120,14 +117,7 @@ jobs:
             // Keep the workflow job green so CI-failure mining does not treat
             // an intentional policy gate as a systemic workflow failure.
             console.log(`No linked issue reference found in PR body`);
-            await github.rest.repos.createCommitStatus({
-              owner: repo.owner,
-              repo: repo.repo,
-              sha: headSha,
-              state: 'failure',
-              context: 'linked-issue-check',
-              description: 'No linked issue — add Closes/Fixes/Resolves/For #NNN to PR body'
-            });
+            await publishStatus('failure', 'No linked issue — add Closes/Fixes/Resolves/For #NNN to PR body');
 
             core.warning(
               'PR body must reference a linked issue.\n' +
