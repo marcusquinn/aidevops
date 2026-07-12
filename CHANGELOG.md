@@ -10,6 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.32.34] - 2026-07-12
+
+### Changed
+
+- add GPT-5.6 context cap toggle (#27268)
+
 ## [3.32.33] - 2026-07-12
 
 ### Changed
