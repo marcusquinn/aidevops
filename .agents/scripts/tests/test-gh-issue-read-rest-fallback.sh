@@ -163,7 +163,17 @@ gh() {
 			fi
 			_i=$((_i + 1))
 		done
-		local _result="${STUB_REST_LIST_RESULT:-[{\"number\":1,\"title\":\"Issue one\",\"labels\":[]},{\"number\":2,\"title\":\"Issue two\",\"labels\":[]}]}"
+		local _result='[{"number":1,"title":"Issue one","labels":[]},{"number":2,"title":"Issue two","labels":[]}]'
+		if [[ -n "${STUB_REST_LIST_RESULT:-}" ]]; then
+			_result="$STUB_REST_LIST_RESULT"
+		fi
+		if [[ "${STUB_REST_PAGINATED:-0}" == "1" ]]; then
+			if [[ "$2" == *"page=1" ]]; then
+				_result=$(jq -cn '[range(1; 101) | {number:., title:"PR", pull_request:{url:"stub"}}]')
+			else
+				_result='[{"number":27154,"title":"Blocked issue","labels":[]}]'
+			fi
+		fi
 		if [[ -n "$_jq_expr" ]]; then
 			printf '%s\n' "$_result" | jq -r "$_jq_expr" 2>/dev/null
 		else
@@ -313,7 +323,7 @@ fi
 
 _rest_issue_list --repo "owner/repo" --label "supervisor" --label "alice" >/dev/null 2>&1 || true
 
-if grep -qE 'labels=supervisor,alice' "$GH_CALLS" 2>/dev/null; then
+if grep -qE 'labels=supervisor(%2C|,)alice' "$GH_CALLS" 2>/dev/null; then
 	pass "_rest_issue_list joins multiple --label flags as comma-separated"
 else
 	fail "_rest_issue_list joins multiple --label flags as comma-separated" \
@@ -353,7 +363,23 @@ fi
 unset STUB_REST_LIST_RESULT
 
 # =============================================================================
-# Test 10: _rest_issue_list includes --assignee in query string
+# Test 10: _rest_issue_list paginates beyond a PR-only first REST page
+# =============================================================================
+: >"$GH_CALLS"
+export STUB_REST_PAGINATED=1
+
+result=$(_rest_issue_list --repo "owner/repo" --state all --limit 500 --json number --jq 'map(.number) | join(",")' 2>/dev/null)
+
+if [[ "$result" == "27154" ]] && grep -q 'page=2' "$GH_CALLS" 2>/dev/null; then
+	pass "_rest_issue_list paginates past PR-only REST pages"
+else
+	fail "_rest_issue_list paginates past PR-only REST pages" \
+		"expected issue 27154 from page 2; got '${result}'; calls=$(cat "$GH_CALLS")"
+fi
+unset STUB_REST_PAGINATED
+
+# =============================================================================
+# Test 11: _rest_issue_list includes --assignee in query string
 # =============================================================================
 : >"$GH_CALLS"
 
