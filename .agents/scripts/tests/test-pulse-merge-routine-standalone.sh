@@ -112,7 +112,10 @@ printf '\n=== Bootstrap tests (PULSE_START_EPOCH unset) ===\n'
 unset PULSE_START_EPOCH PULSE_MERGE_BATCH_LIMIT
 
 help_stderr=$(LC_ALL=C timeout 30 "$ROUTINE_FILE" --help 2>&1 >/dev/null) || true
-help_exit=$(LC_ALL=C timeout 30 "$ROUTINE_FILE" --help >/dev/null 2>&1; printf '%s' "$?")
+help_exit=$(
+	LC_ALL=C timeout 30 "$ROUTINE_FILE" --help >/dev/null 2>&1
+	printf '%s' "$?"
+)
 
 if [[ "$help_exit" == "0" ]]; then
 	pass "1: --help exits 0 with PULSE_START_EPOCH unset"
