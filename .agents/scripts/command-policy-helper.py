@@ -117,11 +117,23 @@ from command_policy_wrappers import (
     _unwrap_time,
 )
 
-__all__ = [
-    name
-    for name in globals()
-    if name.startswith("_") and not name.startswith("__")
-]
+# Keep the original module-level private callables available to importlib users.
+# Referencing compatibility imports explicitly also satisfies static analyzers.
+_COMPAT_EXPORTS = (
+    _decision,
+    _canonical_operand,
+    _EvaluationOptions,
+    analyze_network_argv,
+    _analyze_curl,
+    _analyze_git,
+    _add_destination,
+    _analyze_scp,
+    WORKER_ENV_KEYS,
+    _analyze_wget,
+    SHELL_OPERATORS,
+    SHELLS,
+)
+__all__ = [name for name in globals() if name.startswith("_") and not name.startswith("__")]
 
 FORBID_EXIT = 20
 POLICY_ERROR_EXIT = 21
