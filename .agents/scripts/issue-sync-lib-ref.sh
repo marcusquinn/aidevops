@@ -228,7 +228,7 @@ resolve_task_gh_number() {
 	local repo="${3:-}"
 	[[ "$repo" =~ ^[^/[:space:]]+/[^/[:space:]]+$ ]] || return 1
 	local repository_id="" mapping="" coordinator="${SCRIPT_DIR}/task-coordinator.mjs"
-	repository_id=$(gh api "repos/${repo}" --jq '.node_id' 2>/dev/null || true)
+	repository_id=$(_gh_with_timeout read gh api "repos/${repo}" --jq '.node_id' 2>/dev/null || true)
 	[[ -n "$repository_id" && "$repository_id" != "null" ]] || return 1
 	if [[ -f "$coordinator" ]]; then
 		mapping=$(node "$coordinator" resolve-issue --task-id "$task_id" --forge github \
@@ -262,7 +262,7 @@ resolve_task_gh_number() {
 	ref=$(strip_code_fences <"$todo_file" | grep -E "^\s*- \[.\] ${task_id_ere} " | head -1 |
 		grep -oE 'ref:GH#[0-9]+' | head -1 | sed 's/ref:GH#//' || echo "")
 	[[ "$ref" =~ ^[1-9][0-9]*$ ]] || return 1
-	issue_json=$(gh issue view "$ref" --repo "$repo" --json id,number,state,updatedAt 2>/dev/null || true)
+	issue_json=$(_gh_with_timeout read gh issue view "$ref" --repo "$repo" --json id,number,state,updatedAt 2>/dev/null || true)
 	issue_id=$(printf '%s' "$issue_json" | jq -r '.id // empty' 2>/dev/null)
 	issue_number=$(printf '%s' "$issue_json" | jq -r '.number // empty' 2>/dev/null)
 	issue_state=$(printf '%s' "$issue_json" | jq -r '.state // empty' 2>/dev/null)
@@ -310,7 +310,7 @@ resolve_gh_node_id() {
 
 	local node_id
 	# shellcheck disable=SC2016  # GraphQL variables are expanded by GitHub, not shell.
-	node_id=$(gh api graphql \
+	node_id=$(_gh_with_timeout read gh api graphql \
 		-f query='query($owner:String!,$name:String!,$num:Int!){repository(owner:$owner,name:$name){issue(number:$num){id}}}' \
 		-f owner="$owner" -f name="$name" -F num="$issue_number" \
 		--jq '.data.repository.issue.id' 2>/dev/null || echo "")

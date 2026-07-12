@@ -75,6 +75,21 @@ test("allows the repository full-loop commit-and-pr wrapper only from a linked w
       scriptsDir,
       linked,
     ));
+    assert.doesNotThrow(() => checkCanonicalGitSafetyGate(
+      `${join(scriptsDir, "full-loop-helper.sh")} commit-and-pr --issue 123 --testing 'git tests pass'`,
+      scriptsDir,
+      linked,
+    ));
+    const homeRelativeScripts = scriptsDir.startsWith(`${process.env.HOME}/`)
+      ? `~/${scriptsDir.slice(process.env.HOME.length + 1)}`
+      : null;
+    if (homeRelativeScripts) {
+      assert.doesNotThrow(() => checkCanonicalGitSafetyGate(
+        `${homeRelativeScripts}/full-loop-helper.sh commit-and-pr --issue 123`,
+        scriptsDir,
+        linked,
+      ));
+    }
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

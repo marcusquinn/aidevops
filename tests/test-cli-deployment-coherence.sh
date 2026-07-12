@@ -61,6 +61,18 @@ result=$(PATH="$MOCK_BIN:$PATH" HOME="/root" SUDO_USER="worker" bash "$REPO_DIR/
 	exit 1
 }
 
+# A failed passwd lookup must preserve the HOME fallback under pipefail.
+printf '#!/usr/bin/env bash\nexit 2\n' >"$MOCK_BIN/getent"
+result=$(PATH="$MOCK_BIN:$PATH" HOME="$TEST_HOME" SUDO_USER="missing-worker" bash "$REPO_DIR/bin/aidevops" --version)
+[[ "$result" == "aidevops 9.8.7" ]] || {
+	printf 'FAIL: failed passwd lookup did not preserve HOME fallback: %s\n' "$result" >&2
+	exit 1
+}
+
+# The launcher must remain nounset-safe when an environment omits HOME.
+# shellcheck disable=SC2016
+grep -q 'REAL_HOME="${HOME:-}"' "$REPO_DIR/bin/aidevops"
+
 grep -q 'After this, step 1 will always match and the deployed copy runs directly.' "$REPO_DIR/bin/aidevops"
 
 printf 'PASS: CLI launcher, orchestrator, and clean update checkout remain coherent\n'

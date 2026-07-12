@@ -221,8 +221,8 @@ _merge_linked_issue_numbers() {
 }
 
 # Return every repository-bound issue that GitHub confirms this merged PR
-# closed. A truncated or internally inconsistent connection is ambiguous and
-# fails closed so callers perform no partial dependency reconciliation.
+# closed. A truncated, internally inconsistent, or not-yet-closed connection is
+# ambiguous and fails closed so callers perform no partial reconciliation.
 _merge_confirmed_closing_issue_numbers() {
 	local pr_number="$1"
 	local repo="$2"
@@ -252,9 +252,35 @@ query($owner:String!,$name:String!,$number:Int!) {
         and (($refs.totalCount | type) == "number" and $refs.totalCount <= 100)
         and $refs.pageInfo.hasNextPage == false
         and (($refs.nodes | length) == $refs.totalCount)
-        and all($refs.nodes[]; .repository.nameWithOwner == $repo)' >/dev/null 2>&1 || return 1
-	printf '%s' "$result" | jq -r '.data.repository.pullRequest.closingIssuesReferences.nodes[]? | select(.state == "CLOSED") | .number' 2>/dev/null || return 1
+        and all($refs.nodes[]; .repository.nameWithOwner == $repo and .state == "CLOSED")' >/dev/null 2>&1 || return 1
+	printf '%s' "$result" | jq -r '.data.repository.pullRequest.closingIssuesReferences.nodes[]?.number' 2>/dev/null || return 1
 	return 0
+}
+
+_merge_reconcile_closing_issues() {
+	local pr_number="$1"
+	local repo="$2"
+	local max_attempts="${FULL_LOOP_CLOSING_RECONCILE_ATTEMPTS:-4}"
+	local retry_delay="${FULL_LOOP_CLOSING_RECONCILE_DELAY_SECONDS:-2}"
+	local attempt=1 closing_issues="" closing_issue=""
+	[[ "$max_attempts" =~ ^[1-9][0-9]*$ ]] || max_attempts=4
+	[[ "$retry_delay" =~ ^[0-9]+$ ]] || retry_delay=2
+
+	while [[ "$attempt" -le "$max_attempts" ]]; do
+		if closing_issues=$(_merge_confirmed_closing_issue_numbers "$pr_number" "$repo"); then
+			while IFS= read -r closing_issue; do
+				[[ "$closing_issue" =~ ^[0-9]+$ ]] || continue
+				reconcile_dependants_after_verified_closure "$repo" "$closing_issue" || true
+			done <<<"$closing_issues"
+			print_info "CLOSING_ISSUE_RECONCILIATION=converged pr=${pr_number} attempts=${attempt} references=$(printf '%s\n' "$closing_issues" | grep -cE '^[0-9]+$' || true)"
+			return 0
+		fi
+		print_warning "CLOSING_ISSUE_RECONCILIATION=pending pr=${pr_number} attempt=${attempt}/${max_attempts}"
+		[[ "$attempt" -lt "$max_attempts" && "$retry_delay" -gt 0 ]] && sleep "$retry_delay"
+		attempt=$((attempt + 1))
+	done
+	print_warning "CLOSING_ISSUE_RECONCILIATION=deferred pr=${pr_number} attempts=${max_attempts}; periodic pulse reconciliation will recover stale blocked dependants"
+	return 1
 }
 
 _merge_issue_requires_maintainer_review() {
@@ -739,7 +765,6 @@ _merge_finalize_post_merge() {
 	local has_auto="$3"
 	local cleanup_plan="$4"
 	local linked_issue=""
-	local closing_issues="" closing_issue=""
 	linked_issue=$(gh pr view "$pr_number" --repo "$repo" --json body \
 		--jq '.body' 2>/dev/null |
 		grep -oiE '(close[sd]?|fix(e[sd])?|resolve[sd]?)\s+#[0-9]+' |
@@ -747,11 +772,7 @@ _merge_finalize_post_merge() {
 	if [[ -n "$linked_issue" ]]; then
 		release_interactive_claim_on_merge "$pr_number" "$repo" "$linked_issue" || true
 	fi
-	closing_issues=$(_merge_confirmed_closing_issue_numbers "$pr_number" "$repo") || closing_issues=""
-	while IFS= read -r closing_issue; do
-		[[ "$closing_issue" =~ ^[0-9]+$ ]] || continue
-		reconcile_dependants_after_verified_closure "$repo" "$closing_issue" || true
-	done <<<"$closing_issues"
+	_merge_reconcile_closing_issues "$pr_number" "$repo" || true
 	if [[ "$has_auto" -eq 0 && -n "$linked_issue" ]]; then
 		auto_file_next_phase "$linked_issue" "$repo" || true
 	fi

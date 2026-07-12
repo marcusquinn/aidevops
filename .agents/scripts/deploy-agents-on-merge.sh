@@ -59,7 +59,7 @@ log_error() {
 
 # Defaults
 REPO_DIR="${HOME}/Git/aidevops"
-TARGET_DIR="${HOME}/.aidevops/agents"
+TARGET_DIR="${AIDEVOPS_DEPLOY_TARGET:-${HOME}/.aidevops/agents}"
 PLUGINS_FILE="${HOME}/.config/aidevops/plugins.json"
 SCRIPTS_ONLY=false
 FULL_DEPLOY=false
@@ -161,6 +161,20 @@ validate_repo() {
 		return 1
 	fi
 
+	return 0
+}
+
+validate_stable_target() {
+	if [[ -z "${HOME:-}" || "$HOME" != /* ]]; then
+		log_error "Cannot resolve stable agents target: HOME must be a non-empty absolute path"
+		return 1
+	fi
+
+	local stable_target="$HOME/.aidevops/agents"
+	if [[ "$TARGET_DIR" != "$stable_target" ]]; then
+		log_error "Refusing deployment outside the stable agents target: $TARGET_DIR"
+		return 1
+	fi
 	return 0
 }
 
@@ -492,6 +506,7 @@ deploy_changed_files() {
 main() {
 	parse_args "$@" || return 1
 	validate_repo || return 1
+	validate_stable_target || return 1
 	collect_plugin_namespaces || return 1
 
 	# Full deploy: delegate to setup.sh
@@ -501,7 +516,10 @@ main() {
 			log_info "[dry-run] Would run: AIDEVOPS_NON_INTERACTIVE=true $REPO_DIR/setup.sh --non-interactive"
 			return 0
 		fi
-		AIDEVOPS_NON_INTERACTIVE=true bash "$REPO_DIR/setup.sh" --non-interactive
+		env -u AIDEVOPS_AGENTS_DIR -u AGENTS_DIR \
+			AIDEVOPS_NON_INTERACTIVE=true \
+			AIDEVOPS_DEPLOY_TARGET="$TARGET_DIR" \
+			bash "$REPO_DIR/setup.sh" --non-interactive
 		local _full_rc=$?
 		if [[ "$_full_rc" -eq 75 ]]; then
 			log_warn "setup.sh --non-interactive is locked by another process (exit 75). The lightweight deploy path (deploy-agents-on-merge.sh without --full) is unaffected — re-run without --full for an immediate agent sync while the full setup completes."

@@ -58,14 +58,19 @@ def real_git(explicit: str = "") -> str:
 
 
 def _git_output(real_git_path: str, cwd: str, *args: str) -> str:
-    result = subprocess.run(
-        [real_git_path, *args],
-        cwd=cwd,
-        text=True,
-        capture_output=True,
-        timeout=5,
-        check=False,
-    )
+    try:
+        result = subprocess.run(
+            [real_git_path, *args],
+            cwd=cwd,
+            text=True,
+            capture_output=True,
+            timeout=5,
+            check=False,
+        )
+    except subprocess.TimeoutExpired as error:
+        raise RuntimeError("native Git repository probe timed out") from error
+    except OSError as error:
+        raise RuntimeError("native Git repository probe failed to start") from error
     return result.stdout.strip() if result.returncode == 0 else ""
 
 
@@ -247,8 +252,15 @@ def classify_git_argv(
         for value in repo_values
     ):
         return False, "unresolved shell syntax in Git repository target"
-    if not _is_canonical(real_git_path, effective_cwd, prefix):
-        return True, "linked worktree or non-repository target"
-    if _is_allowed_canonical(subcommand, args):
-        return True, "read-only canonical operation or linked-worktree creation"
-    return False, f"canonical worktree mutation via 'git {subcommand}'"
+    try:
+        is_canonical = _is_canonical(real_git_path, effective_cwd, prefix)
+    except RuntimeError as error:
+        result = False, str(error)
+    else:
+        if not is_canonical:
+            result = True, "linked worktree or non-repository target"
+        elif _is_allowed_canonical(subcommand, args):
+            result = True, "read-only canonical operation or linked-worktree creation"
+        else:
+            result = False, f"canonical worktree mutation via 'git {subcommand}'"
+    return result

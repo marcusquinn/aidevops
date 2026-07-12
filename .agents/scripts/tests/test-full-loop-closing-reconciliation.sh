@@ -14,6 +14,7 @@ FAIL=0
 RECONCILED=""
 RELEASED=""
 FINALIZED=0
+WARNINGS=""
 
 pass() {
 	printf 'PASS: %s\n' "$1"
@@ -57,11 +58,39 @@ reconcile_dependants_after_verified_closure() {
 }
 auto_file_next_phase() { return 0; }
 _merge_unlock_resources() { return 0; }
+print_info() { return 0; }
+print_warning() {
+	WARNINGS="${WARNINGS}${WARNINGS:+ }$1"
+	return 0
+}
 
 # shellcheck disable=SC2218  # The test intentionally replaces this function below.
 _merge_finalize_post_merge 77 owner/repo 0 ""
 assert_eq "10" "$RELEASED" "primary body-linked issue retains claim-release semantics"
 assert_eq "10 11" "$RECONCILED" "all confirmed closing references are reconciled"
+
+ATTEMPT_FILE=$(mktemp)
+printf '0\n' >"$ATTEMPT_FILE"
+RECONCILED=""
+gh() {
+	local command="$1"
+	shift
+	if [[ "$command $1" == "api graphql" ]]; then
+		local graphql_attempts=""
+		graphql_attempts=$(<"$ATTEMPT_FILE")
+		graphql_attempts=$((graphql_attempts + 1))
+		printf '%s\n' "$graphql_attempts" >"$ATTEMPT_FILE"
+		local state="OPEN"
+		[[ "$graphql_attempts" -ge 2 ]] && state="CLOSED"
+		printf '{"data":{"repository":{"nameWithOwner":"owner/repo","pullRequest":{"state":"MERGED","merged":true,"closingIssuesReferences":{"totalCount":1,"pageInfo":{"hasNextPage":false},"nodes":[{"number":12,"state":"%s","repository":{"nameWithOwner":"owner/repo"}}]}}}}}\n' "$state"
+		return 0
+	fi
+	return 1
+}
+FULL_LOOP_CLOSING_RECONCILE_ATTEMPTS=3 FULL_LOOP_CLOSING_RECONCILE_DELAY_SECONDS=0 _merge_reconcile_closing_issues 77 owner/repo
+assert_eq "2" "$(<"$ATTEMPT_FILE")" "temporarily open closing reference is retried"
+assert_eq "12" "$RECONCILED" "closing reference converges after GitHub closes issue"
+rm -f "$ATTEMPT_FILE"
 
 gh() {
 	local command="$1"
@@ -84,7 +113,6 @@ cmd_pre_merge_gate() { return 0; }
 _retarget_stacked_children_interactive() { return 0; }
 _merge_execute() { return 0; }
 _merge_verify_completed_state() { return 1; }
-print_info() { return 0; }
 print_error() { return 0; }
 print_success() { return 0; }
 _merge_finalize_post_merge() {

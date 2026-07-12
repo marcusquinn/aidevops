@@ -481,7 +481,7 @@ _parse_start_options() {
 	return 0
 }
 
-# Launch the loop in the background via nohup.
+# Launch the loop asynchronously in the local session via nohup.
 # Arguments: $1 — prompt string.
 _launch_background() {
 	local prompt="$1"
@@ -502,6 +502,11 @@ cmd_start() {
 
 	_init_start_defaults
 	_parse_start_options "$@" || return 1
+
+	if [[ "${AIDEVOPS_INTERACTIVE_ISSUE_IMPLEMENTATION:-0}" == "1" ]] && is_headless; then
+		print_error "Interactive issue implementation cannot enter headless/remote worker routing"
+		return 1
+	fi
 
 	[[ -z "$prompt" ]] && {
 		print_error "Usage: full-loop-helper.sh start \"<prompt>\" [options]"
@@ -672,9 +677,9 @@ _full_loop_verify_aidevops_release_deploy() {
 	[[ -n "$repo_root" && -f "${repo_root}/VERSION" ]] && IFS= read -r version <"${repo_root}/VERSION"
 	[[ -n "$version" ]] || return 1
 	local release_sha=""
-	release_sha=$(git ls-remote --exit-code --tags origin "refs/tags/v${version}^{}" 2>/dev/null | cut -f1)
+	release_sha=$(git ls-remote --exit-code --tags origin "refs/tags/v${version}^{}" | cut -f1 || true)
 	if [[ -z "$release_sha" ]]; then
-		release_sha=$(git ls-remote --exit-code --tags origin "refs/tags/v${version}" 2>/dev/null | cut -f1)
+		release_sha=$(git ls-remote --exit-code --tags origin "refs/tags/v${version}" | cut -f1 || true)
 	fi
 	[[ -n "$release_sha" ]] || return 1
 	gh release view "v${version}" --repo "$repo" >/dev/null 2>&1 || return 1

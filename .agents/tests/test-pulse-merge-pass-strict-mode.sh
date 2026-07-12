@@ -41,4 +41,18 @@ else
 fi
 [[ "$status" -eq 5 ]]
 
+repo_allows_pulse_write_actions() { return 0; }
+_merge_ready_prs_for_repo() { return 0; }
+_pmp_now_epoch() { printf '0\n'; return 0; }
+_pmp_add_elapsed_seconds() { return 0; }
+_pmp_log_repo_timing_summary() { return 0; }
+
+total_merged=0
+total_closed=0
+total_failed=0
+total_eligible=0
+completed_all=1
+_pmp_process_merge_repo_for_pass "owner/repo" "${tmp_dir}/process-checkpoint" "${tmp_dir}/process.log" \
+	"${tmp_dir}/stop" total_merged total_closed total_failed total_eligible completed_all
+
 printf 'pulse merge-pass strict-mode regression checks passed\n'
