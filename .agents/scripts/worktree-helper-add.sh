@@ -44,6 +44,8 @@ if [[ -z "${SCRIPT_DIR:-}" ]]; then
 	SCRIPT_DIR="$(cd "$_lib_path" && pwd)"
 	unset _lib_path
 fi
+# shellcheck source=./task-identity-lib.sh
+source "${SCRIPT_DIR}/task-identity-lib.sh"
 
 # --- Worktree Path Utilities ---
 
@@ -258,15 +260,15 @@ _interactive_session_auto_claim() {
 	# contains historical issue references that produce false matches).
 	if [[ -z "$issue_num" ]]; then
 		local task_id=""
-		if [[ "$branch" =~ /(t[0-9]+)[-_] ]]; then
-			task_id="${BASH_REMATCH[1]}"
-		fi
+		task_id=$(task_identity_extract_first "$branch" || true)
 		if [[ -n "$task_id" ]]; then
 			local repo_root=""
 			repo_root=$(git rev-parse --show-toplevel 2>/dev/null) || repo_root=""
 			if [[ -n "$repo_root" && -f "$repo_root/TODO.md" ]]; then
 				# Match ONLY the structured ref:GH#NNN field on the task's TODO line
-				issue_num=$(grep -E "^- \[.\] ${task_id}\b" "$repo_root/TODO.md" \
+				local task_id_ere=""
+				task_id_ere=$(task_identity_escape_ere "$task_id") || return 0
+				issue_num=$(grep -E "^- \[.\] ${task_id_ere}([[:space:]]|$)" "$repo_root/TODO.md" \
 					| grep -oE 'ref:GH#[0-9]+' \
 					| grep -oE '[0-9]+' \
 					| head -1 || true)

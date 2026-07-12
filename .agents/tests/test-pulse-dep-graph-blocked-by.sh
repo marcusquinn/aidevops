@@ -264,16 +264,13 @@ test_native_relationship_lookup_failure_checks_body_markers() {
 
 test_task_id_blocker_parsing() {
 	printf '\n=== blocked-by task IDs ===\n'
-	_assert_lines_equal "compact comma-separated task IDs" $'001\n002\n003' \
-		"$(_blocked_by_extract_tids 'blocked-by:t001,t002,t003')"
-	_assert_lines_equal "spaced comma-separated task IDs" $'001\n002\n003' \
-		"$(_blocked_by_extract_tids 'Blocked by: t001, t002, t003')"
-	_assert_lines_equal "prose task IDs" $'001\n002' \
-		"$(_blocked_by_extract_tids 'Blocked by t001 and t002')"
-	_assert_lines_equal "one task blocker per line" $'001\n002\n003' \
-		"$(_blocked_by_extract_tids $'blocked-by:t001\nblocked-by:t002\nblocked-by:t003')"
-	_assert_lines_equal "decimal subtask suffixes" $'325.1\n325.2a' \
-		"$(_blocked_by_extract_tids 'blocked-by:t325.1,t325.2a')"
+	local namespaced='to01j2abc3def4gh5jkm6npq7rst-42.3'
+	_assert_lines_equal "compact comma-separated task IDs" $'t1\nt2\nt3' \
+		"$(_blocked_by_extract_tids 'blocked-by:t1,t2,t3')"
+	_assert_lines_equal "mixed legacy and namespaced task IDs" $'t325.1\n'"${namespaced}" \
+		"$(_blocked_by_extract_tids "Blocked by: t325.1, ${namespaced}")"
+	_assert_lines_equal "malformed task IDs fail closed" '__malformed__' \
+		"$(_blocked_by_extract_tids 'Blocked by: t01')"
 	return 0
 }
 

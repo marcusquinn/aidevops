@@ -49,7 +49,7 @@ cmd_pull() {
 			local num title tid login
 			num=$(echo "$issue_line" | jq -r '.number' 2>/dev/null || echo "")
 			title=$(echo "$issue_line" | jq -r '.title' 2>/dev/null || echo "")
-			tid=$(echo "$title" | grep -oE '^t[0-9]+(\.[0-9]+)*' || echo "")
+			tid=$(task_identity_parse_title_prefix "$title" || true)
 			[[ -z "$tid" ]] && continue
 			local tid_ere
 			tid_ere=$(_escape_ere "$tid")
@@ -164,7 +164,7 @@ cmd_status() {
 	local drift=0
 	while IFS= read -r il; do
 		local tid
-		tid=$(echo "$il" | jq -r '.title' 2>/dev/null | grep -oE '^t[0-9]+(\.[0-9]+)*' || echo "")
+		tid=$(task_identity_parse_title_prefix "$(echo "$il" | jq -r '.title' 2>/dev/null)" || true)
 		[[ -z "$tid" ]] && continue
 		local tid_ere
 		tid_ere=$(_escape_ere "$tid")
@@ -186,7 +186,7 @@ cmd_status() {
 		# If the referenced issue number is not in the open set, it's reverse drift
 		if ! echo "$open_numbers" | grep -qx "$ref_num"; then
 			local rtid
-			rtid=$(echo "$line" | grep -oE 't[0-9]+(\.[0-9]+)*' | head -1 || echo "")
+			rtid=$(task_identity_extract_first "$line" || true)
 			reverse_drift=$((reverse_drift + 1))
 			print_warning "REVERSE-DRIFT: $rtid ref:GH#$ref_num — TODO open but issue closed"
 		fi
@@ -215,14 +215,14 @@ cmd_reconcile() {
 	local ref_fixed=0 ref_ok=0 stale=0 orphans=0
 	while IFS= read -r line; do
 		local tid
-		tid=$(echo "$line" | grep -oE 't[0-9]+(\.[0-9]+)*' | head -1 || echo "")
+		tid=$(task_identity_extract_first "$line" || true)
 		local gh_ref
 		gh_ref=$(echo "$line" | grep -oE 'ref:GH#[0-9]+' | head -1 | sed 's/ref:GH#//' || echo "")
 		[[ -z "$tid" || -z "$gh_ref" ]] && continue
 		local it
 		it=$(gh issue view "$gh_ref" --repo "$repo" --json title --jq '.title' 2>/dev/null || echo "")
 		local itid
-		itid=$(echo "$it" | grep -oE '^t[0-9]+(\.[0-9]+)*' || echo "")
+		itid=$(task_identity_parse_title_prefix "$it" || true)
 		[[ "$itid" == "$tid" ]] && {
 			ref_ok=$((ref_ok + 1))
 			continue
@@ -248,7 +248,7 @@ cmd_reconcile() {
 	while IFS= read -r il; do
 		local num tid
 		num=$(echo "$il" | jq -r '.number' 2>/dev/null || echo "")
-		tid=$(echo "$il" | jq -r '.title' 2>/dev/null | grep -oE '^t[0-9]+(\.[0-9]+)*' || echo "")
+		tid=$(task_identity_parse_title_prefix "$(echo "$il" | jq -r '.title' 2>/dev/null)" || true)
 		[[ -z "$tid" ]] && continue
 		local tid_ere
 		tid_ere=$(_escape_ere "$tid")
@@ -272,7 +272,7 @@ cmd_reconcile() {
 		[[ -z "$ref_num" ]] && continue
 		if ! echo "$open_numbers" | grep -qx "$ref_num"; then
 			local rtid
-			rtid=$(echo "$line" | grep -oE 't[0-9]+(\.[0-9]+)*' | head -1 || echo "")
+			rtid=$(task_identity_extract_first "$line" || true)
 			reverse_drift=$((reverse_drift + 1))
 			print_warning "REVERSE-DRIFT: $rtid ref:GH#$ref_num — TODO open but issue closed"
 		fi

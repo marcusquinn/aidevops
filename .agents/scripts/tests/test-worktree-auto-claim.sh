@@ -95,6 +95,8 @@ GREEN=$'\033[0;32m'
 
 # SCRIPT_DIR is used by the helper-fallback path in the function
 SCRIPT_DIR="${TEST_SCRIPTS_DIR}"
+# shellcheck source=../task-identity-lib.sh
+source "${TEST_SCRIPTS_DIR}/task-identity-lib.sh"
 
 # Extract the _interactive_session_auto_claim function from worktree-helper.sh
 # to avoid running the script's main body (which parses $@ and has side effects).

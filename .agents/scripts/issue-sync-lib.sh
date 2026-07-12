@@ -43,6 +43,12 @@ if [[ -z "${SCRIPT_DIR:-}" ]]; then
 fi
 source "${SCRIPT_DIR}/shared-constants.sh"
 
+# shellcheck source=./task-identity-lib.sh
+# shellcheck disable=SC1091  # shared codec resolved at runtime via $SCRIPT_DIR
+source "${SCRIPT_DIR}/task-identity-lib.sh"
+# shellcheck source=./task-identity-lib.sh
+source "${SCRIPT_DIR}/task-identity-lib.sh"
+
 # --- Source sub-libraries ---
 
 # shellcheck source=./issue-sync-lib-parse.sh

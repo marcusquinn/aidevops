@@ -49,6 +49,8 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 # shellcheck source=shared-constants.sh
 [[ -f "${SCRIPT_DIR}/shared-constants.sh" ]] && source "${SCRIPT_DIR}/shared-constants.sh"
+# shellcheck source=task-identity-lib.sh
+source "${SCRIPT_DIR}/task-identity-lib.sh"
 # BOLD is not in shared-constants.sh — Pattern B fallback
 [[ -z "${BOLD+x}" ]] && BOLD='\033[1m'
 
@@ -668,8 +670,8 @@ _handle_main_repo_off_main() {
 _check_task_assignee() {
 	local branch="$1"
 
-	local task_id_from_branch
-	task_id_from_branch=$(echo "$branch" | grep -oE 't[0-9]+(\.[0-9]+)*' | head -1 || true)
+	local task_id_from_branch=""
+	task_id_from_branch=$(task_identity_extract_first "$branch" 2>/dev/null || true)
 	[[ -z "$task_id_from_branch" ]] && return 0
 
 	local project_root
@@ -677,8 +679,10 @@ _check_task_assignee() {
 	local todo_file="$project_root/TODO.md"
 	[[ ! -f "$todo_file" ]] && return 0
 
+	local task_id_ere=""
+	task_id_ere=$(task_identity_escape_ere "$task_id_from_branch") || return 0
 	local task_line
-	task_line=$(grep -E "^\- \[.\] ${task_id_from_branch} " "$todo_file" | head -1 || true)
+	task_line=$(grep -E "^\- \[.\] ${task_id_ere}[[:space:]]" "$todo_file" | head -1 || true)
 	local task_assignee
 	task_assignee=$(echo "$task_line" | grep -oE 'assignee:[A-Za-z0-9._@-]+' | head -1 | sed 's/^assignee://' || true)
 	[[ -z "$task_assignee" ]] && return 0
