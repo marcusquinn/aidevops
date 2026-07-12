@@ -4,6 +4,8 @@
 
 [[ -n "${_DEPENDENCY_EVENT_RECONCILER_LOADED:-}" ]] && return 0
 _DEPENDENCY_EVENT_RECONCILER_LOADED=1
+DER_SEARCH_QUOTE='"'
+DER_STATE_CLOSED="CLOSED"
 
 _der_dir="${BASH_SOURCE[0]%/*}"
 [[ "$_der_dir" == "${BASH_SOURCE[0]}" ]] && _der_dir="."
@@ -38,11 +40,32 @@ _der_has_hold() {
 	return $?
 }
 
+_der_labels_has() {
+	local labels="$1"
+	local expected="$2"
+	[[ ",${labels}," == *",${expected},"* ]]
+	return $?
+}
+
+_der_seen_has() {
+	local seen="$1"
+	local issue_number="$2"
+	[[ "$seen" == *",${issue_number},"* ]]
+	return $?
+}
+
+_der_seen_add() {
+	local seen="$1"
+	local issue_number="$2"
+	printf '%s%s,' "$seen" "$issue_number"
+	return 0
+}
+
 _der_has_active_status() {
 	local labels="$1"
-	[[ ",${labels}," == *",status:queued,"* || ",${labels}," == *",status:claimed,"* ||
-		",${labels}," == *",status:in-progress,"* || ",${labels}," == *",status:in-review,"* ||
-		",${labels}," == *",status:done,"* ]]
+	_der_labels_has "$labels" status:queued || _der_labels_has "$labels" status:claimed ||
+		_der_labels_has "$labels" status:in-progress || _der_labels_has "$labels" status:in-review ||
+		_der_labels_has "$labels" status:done
 	return $?
 }
 
@@ -121,36 +144,38 @@ _der_collect_candidates() {
 	local closed_number="$2"
 	local closed_task_id="$3"
 	local context="$4"
-	local query="" result="" candidate="" number="" seen=","
+	local query="" result="" number="" seen=","
+	local candidate
 	local native_numbers=""
+	local quote="$DER_SEARCH_QUOTE"
 	native_numbers=$(printf '%s' "$context" | jq -r '.data.repository.issue.blocking.nodes[].number' 2>/dev/null) || return 1
 
 	for query in \
-		"repo:${repo} is:issue is:open in:body \"#${closed_number}\"" \
-		"repo:${repo} is:issue is:open label:\"blocked-by:#${closed_number}\""; do
+		"repo:${repo} is:issue is:open in:body ${quote}#${closed_number}${quote}" \
+		"repo:${repo} is:issue is:open label:${quote}blocked-by:#${closed_number}${quote}"; do
 		result=$(_der_search_issues "$repo" "$query") || return 1
 		while IFS= read -r candidate; do
 			[[ -n "$candidate" ]] || continue
 			_der_candidate_declares "$candidate" "$closed_number" "$closed_task_id" || continue
 			number=$(printf '%s' "$candidate" | jq -r '.number') || return 1
-			[[ "$seen" == *",${number},"* ]] && continue
+			_der_seen_has "$seen" "$number" && continue
 			printf '%s\n' "$candidate"
-			seen="${seen}${number},"
+			seen=$(_der_seen_add "$seen" "$number")
 		done < <(printf '%s' "$result" | jq -c '.[]')
 	done
 
 	if [[ -n "$closed_task_id" ]]; then
 		for query in \
-			"repo:${repo} is:issue is:open in:body \"${closed_task_id}\"" \
-			"repo:${repo} is:issue is:open label:\"blocked-by:${closed_task_id}\""; do
+			"repo:${repo} is:issue is:open in:body ${quote}${closed_task_id}${quote}" \
+			"repo:${repo} is:issue is:open label:${quote}blocked-by:${closed_task_id}${quote}"; do
 			result=$(_der_search_issues "$repo" "$query") || return 1
 			while IFS= read -r candidate; do
 				[[ -n "$candidate" ]] || continue
 				_der_candidate_declares "$candidate" "$closed_number" "$closed_task_id" || continue
 				number=$(printf '%s' "$candidate" | jq -r '.number') || return 1
-				[[ "$seen" == *",${number},"* ]] && continue
+				_der_seen_has "$seen" "$number" && continue
 				printf '%s\n' "$candidate"
-				seen="${seen}${number},"
+				seen=$(_der_seen_add "$seen" "$number")
 			done < <(printf '%s' "$result" | jq -c '.[]')
 		done
 	fi
@@ -158,9 +183,9 @@ _der_collect_candidates() {
 	while IFS= read -r candidate; do
 		[[ -n "$candidate" ]] || continue
 		number=$(printf '%s' "$candidate" | jq -r '.number') || return 1
-		[[ "$seen" == *",${number},"* ]] && continue
+		_der_seen_has "$seen" "$number" && continue
 		printf '%s\n' "$candidate"
-		seen="${seen}${number},"
+		seen=$(_der_seen_add "$seen" "$number")
 	done < <(printf '%s' "$context" | jq -c '.data.repository.issue.blocking.nodes[]')
 	# Empty native relationships are valid; ensure malformed extraction did not
 	# silently turn a non-empty connection into no candidates.
@@ -173,16 +198,18 @@ _der_live_issue_closed() {
 	local issue_number="$2"
 	local state=""
 	state=$(gh issue view "$issue_number" --repo "$repo" --json state --jq '.state' 2>/dev/null) || return 1
-	[[ "$state" == "CLOSED" || "$state" == "closed" ]]
+	[[ "$state" == "$DER_STATE_CLOSED" || "$state" == "closed" ]]
 	return $?
 }
 
 _der_find_task_issue() {
 	local repo="$1"
 	local task_id="$2"
-	local result="" candidate="" parsed="" number="" match="" count=0
+	local result="" parsed="" number="" match="" count=0
+	local candidate
+	local quote="$DER_SEARCH_QUOTE"
 	task_identity_validate "$task_id" || return 1
-	result=$(_der_search_issues "$repo" "repo:${repo} is:issue in:title \"${task_id}:\"") || return 1
+	result=$(_der_search_issues "$repo" "repo:${repo} is:issue in:title ${quote}${task_id}:${quote}") || return 1
 	while IFS= read -r candidate; do
 		[[ -n "$candidate" ]] || continue
 		parsed=$(task_identity_parse_title_prefix "$(printf '%s' "$candidate" | jq -r '.title')" || true)
@@ -224,7 +251,7 @@ _der_native_blockers_closed() {
 	printf '%s' "$result" | jq -e --arg repo "$repo" '.data.repository.issue.blockedBy | .pageInfo.hasNextPage == false and all(.nodes[]; .repository.nameWithOwner == $repo)' >/dev/null 2>&1 || return 1
 	while IFS= read -r blocker; do
 		[[ -n "$blocker" ]] || continue
-		[[ "${blocker#*:}" == "CLOSED" ]] || return 1
+		[[ "${blocker#*:}" == "$DER_STATE_CLOSED" ]] || return 1
 	done < <(printf '%s' "$result" | jq -r '.data.repository.issue.blockedBy.nodes[]? | "\(.number):\(.state)"' 2>/dev/null)
 	return 0
 }
@@ -236,7 +263,7 @@ _der_try_unblock() {
 	local labels="" body="" comments_json="" comments=""
 	labels=$(printf '%s' "$candidate_json" | jq -r '[.labels.nodes[].name] | join(",")') || return 1
 	body=$(printf '%s' "$candidate_json" | jq -r '.body // ""') || return 1
-	[[ ",${labels}," == *",status:blocked,"* ]] || return 0
+	_der_labels_has "$labels" status:blocked || return 0
 	_der_has_active_status "$labels" && return 0
 	comments_json=$(gh api --paginate --slurp "repos/${repo}/issues/${issue_number}/comments?per_page=100" 2>/dev/null) || return 1
 	printf '%s' "$comments_json" | jq -e 'type == "array" and all(.[]; type == "array")' >/dev/null 2>&1 || return 1
@@ -245,7 +272,7 @@ _der_try_unblock() {
 	_der_native_blockers_closed "$repo" "$issue_number" || return 1
 	_der_all_declared_blockers_closed "$repo" "$candidate_json" || return 1
 	labels=$(gh issue view "$issue_number" --repo "$repo" --json labels --jq '[.labels[].name] | join(",")' 2>/dev/null) || return 1
-	[[ ",${labels}," == *",status:blocked,"* ]] || return 0
+	_der_labels_has "$labels" status:blocked || return 0
 	_der_has_active_status "$labels" && return 0
 	gh issue edit "$issue_number" --repo "$repo" --remove-label status:blocked --add-label status:available >/dev/null 2>&1 || return 1
 	return 0
@@ -257,14 +284,15 @@ reconcile_dependants_after_verified_closure() {
 	local closed_number="$2"
 	local owner="${repo%%/*}"
 	local name="${repo#*/}"
-	local context="" closed_task_id="" candidates="" candidate="" issue_number=""
+	local context="" closed_task_id="" candidates="" issue_number=""
+	local candidate
 	[[ "$repo" == */* && "$closed_number" =~ ^[0-9]+$ ]] || return 1
 	[[ -n "$owner" && -n "$name" ]] || return 1
 	_der_live_issue_closed "$repo" "$closed_number" || return 1
 	context=$(_der_fetch_closed_context "$owner" "$name" "$closed_number") || return 1
-	printf '%s' "$context" | jq -e --arg repo "$repo" '
+	printf '%s' "$context" | jq -e --arg repo "$repo" --arg closed "$DER_STATE_CLOSED" '
       .data.repository.nameWithOwner == $repo
-      and .data.repository.issue.state == "CLOSED"
+      and .data.repository.issue.state == $closed
       and .data.repository.issue.blocking.pageInfo.hasNextPage == false
       and all(.data.repository.issue.blocking.nodes[];
           .repository.nameWithOwner == $repo and .labels.pageInfo.hasNextPage == false)' >/dev/null 2>&1 || return 1

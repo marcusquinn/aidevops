@@ -220,6 +220,43 @@ _merge_linked_issue_numbers() {
 	return 0
 }
 
+# Return every repository-bound issue that GitHub confirms this merged PR
+# closed. A truncated or internally inconsistent connection is ambiguous and
+# fails closed so callers perform no partial dependency reconciliation.
+_merge_confirmed_closing_issue_numbers() {
+	local pr_number="$1"
+	local repo="$2"
+	local owner="${repo%%/*}"
+	local name="${repo#*/}"
+	local result=""
+	[[ "$repo" == */* && "$pr_number" =~ ^[0-9]+$ ]] || return 1
+	# shellcheck disable=SC2016
+	result=$(gh api graphql -f query='
+query($owner:String!,$name:String!,$number:Int!) {
+  repository(owner:$owner,name:$name) {
+    nameWithOwner
+    pullRequest(number:$number) {
+      state merged
+      closingIssuesReferences(first:100) {
+        totalCount pageInfo { hasNextPage }
+        nodes { number state repository { nameWithOwner } }
+      }
+    }
+  }
+}' -F owner="$owner" -F name="$name" -F number="$pr_number" 2>/dev/null) || return 1
+	printf '%s' "$result" | jq -e --arg repo "$repo" '
+      .data.repository as $r
+      | $r.pullRequest.closingIssuesReferences as $refs
+      | $r.nameWithOwner == $repo
+        and $r.pullRequest.state == "MERGED" and $r.pullRequest.merged == true
+        and (($refs.totalCount | type) == "number" and $refs.totalCount <= 100)
+        and $refs.pageInfo.hasNextPage == false
+        and (($refs.nodes | length) == $refs.totalCount)
+        and all($refs.nodes[]; .repository.nameWithOwner == $repo)' >/dev/null 2>&1 || return 1
+	printf '%s' "$result" | jq -r '.data.repository.pullRequest.closingIssuesReferences.nodes[]? | select(.state == "CLOSED") | .number' 2>/dev/null || return 1
+	return 0
+}
+
 _merge_issue_requires_maintainer_review() {
 	local issue_number="$1"
 	local repo="$2"
@@ -702,14 +739,19 @@ _merge_finalize_post_merge() {
 	local has_auto="$3"
 	local cleanup_plan="$4"
 	local linked_issue=""
+	local closing_issues="" closing_issue=""
 	linked_issue=$(gh pr view "$pr_number" --repo "$repo" --json body \
 		--jq '.body' 2>/dev/null |
 		grep -oiE '(close[sd]?|fix(e[sd])?|resolve[sd]?)\s+#[0-9]+' |
 		grep -oE '[0-9]+' | head -1) || linked_issue=""
 	if [[ -n "$linked_issue" ]]; then
 		release_interactive_claim_on_merge "$pr_number" "$repo" "$linked_issue" || true
-		reconcile_dependants_after_verified_closure "$repo" "$linked_issue" || true
 	fi
+	closing_issues=$(_merge_confirmed_closing_issue_numbers "$pr_number" "$repo") || closing_issues=""
+	while IFS= read -r closing_issue; do
+		[[ "$closing_issue" =~ ^[0-9]+$ ]] || continue
+		reconcile_dependants_after_verified_closure "$repo" "$closing_issue" || true
+	done <<<"$closing_issues"
 	if [[ "$has_auto" -eq 0 && -n "$linked_issue" ]]; then
 		auto_file_next_phase "$linked_issue" "$repo" || true
 	fi
