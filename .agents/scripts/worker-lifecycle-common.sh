@@ -81,6 +81,10 @@ _emit_objective_recovery_evidence() {
 	local next_action="monitor_worker"
 	local execution_path_state="running"
 	local recovery_attempt="${AIDEVOPS_RECOVERY_ATTEMPT:-0}"
+	local repair_pr_number="${AIDEVOPS_PR_REPAIR_NUMBER:-}"
+	local repair_head_sha="${AIDEVOPS_PR_REPAIR_HEAD_SHA:-}"
+	local repair_head_ref="${AIDEVOPS_PR_REPAIR_HEAD_REF:-}"
+	local repair_fingerprint="${AIDEVOPS_PR_REPAIR_FINGERPRINT:-}"
 	[[ "$recovery_attempt" =~ ^[0-9]+$ ]] || recovery_attempt=0
 	evidence_dir=$(dirname "$evidence_file")
 	mkdir -p "$evidence_dir" 2>/dev/null || return 0
@@ -108,6 +112,10 @@ _emit_objective_recovery_evidence() {
 		--arg next_action "$next_action" \
 		--arg execution_path_state "$execution_path_state" \
 		--argjson recovery_attempt "${recovery_attempt:-0}" \
+		--arg repair_pr_number "$repair_pr_number" \
+		--arg repair_head_sha "$repair_head_sha" \
+		--arg repair_head_ref "$repair_head_ref" \
+		--arg repair_fingerprint "$repair_fingerprint" \
 		--argjson logs_preserved "$([[ -n "$log_path" && -s "$log_path" ]] && printf true || printf false)" \
 		--argjson verification_preserved "$([[ -n "${AIDEVOPS_VERIFICATION_EVIDENCE:-}" ]] && printf true || printf false)" \
 		'{event_type:$event_type,status:$status,classification:$classification,repo:$repo,
@@ -116,7 +124,9 @@ _emit_objective_recovery_evidence() {
 		execution_path_state:$execution_path_state,recovery_attempt:$recovery_attempt,
 		branch_preserved:($branch != ""),worktree_preserved:($worktree != ""),
 		commits_preserved:($commit != ""),logs_preserved:$logs_preserved,
-		verification_preserved:$verification_preserved,subsequent_action_at:$evidence_timestamp}') || evidence_record=""
+		verification_preserved:$verification_preserved,subsequent_action_at:$evidence_timestamp,
+		pr_repair:(if $repair_pr_number == "" then null else {pr_number:($repair_pr_number|tonumber),
+		head_sha:$repair_head_sha,head_ref:$repair_head_ref,failure_fingerprint:$repair_fingerprint} end)}') || evidence_record=""
 	[[ -n "$evidence_record" ]] && printf '%s\n' "$evidence_record" >>"$evidence_file" 2>/dev/null || true
 	return 0
 }
