@@ -128,6 +128,16 @@ _emit_worker_runtime_event() {
 	local runtime_events="${BASH_SOURCE[0]%/*}/runtime-events.mjs"
 	[[ -n "${AIDEVOPS_WORKER_ID:-}" ]] || return 0
 	_emit_objective_recovery_evidence "$event_type" "$status" "$classification"
+	case "$event_type" in
+	worker.completed | worker.failed | worker.deferred)
+		if [[ -n "${AIDEVOPS_DISPATCH_LEASE_TOKEN:-}" && "${WORKER_ISSUE_NUMBER:-}" =~ ^[0-9]+$ && -n "${DISPATCH_REPO_SLUG:-${WORKER_REPO_SLUG:-}}" ]]; then
+			local lease_helper="${BASH_SOURCE[0]%/*}/dispatch-claim-helper.sh"
+			"$lease_helper" transition terminal "$WORKER_ISSUE_NUMBER" \
+				"${DISPATCH_REPO_SLUG:-$WORKER_REPO_SLUG}" "$AIDEVOPS_DISPATCH_LEASE_TOKEN" \
+				"${_invoke_session_key:-issue-${WORKER_ISSUE_NUMBER}}" 0 >/dev/null 2>&1 || true
+		fi
+		;;
+	esac
 	[[ -f "$runtime_events" ]] || return 0
 	command -v node >/dev/null 2>&1 || return 0
 	local -a event_cmd=(node "$runtime_events" emit "$event_type" --source worker_self_reported)

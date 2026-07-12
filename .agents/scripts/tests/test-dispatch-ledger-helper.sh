@@ -319,7 +319,7 @@ test_terminal_state_immutability() {
 }
 
 #######################################
-# Test: register is idempotent (re-register overwrites)
+# Test: register retries append audit evidence; readers use the latest entry.
 #######################################
 test_register_idempotent() {
 	setup_test_env
@@ -331,11 +331,11 @@ test_register_idempotent() {
 	entry_count=$(wc -l <"${AIDEVOPS_DISPATCH_LEDGER_DIR}/dispatch-ledger.jsonl" | tr -d ' ')
 
 	local result=0
-	if [[ "$entry_count" -ne 1 ]]; then
+	if [[ "$entry_count" -ne 2 ]]; then
 		result=1
 	fi
 
-	print_result "register is idempotent (re-register overwrites)" "$result" "count=${entry_count}"
+	print_result "register retry is append-only" "$result" "count=${entry_count}"
 	teardown_test_env
 	return 0
 }

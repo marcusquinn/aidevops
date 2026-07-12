@@ -141,6 +141,26 @@ _stale_recovery_latest_dispatch_ts_from_pages() {
 	return 0
 }
 
+_stale_recovery_final_evidence_recheck() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local expected_dispatch_ts="$3"
+	local pages="" latest_dispatch_ts="" now_epoch=""
+	pages=$(_stale_recovery_fetch_comments_pages "$issue_number" "$repo_slug")
+	[[ -n "$pages" ]] || return 1
+	latest_dispatch_ts=$(_stale_recovery_latest_dispatch_ts_from_pages "$pages")
+	[[ "$latest_dispatch_ts" == "$expected_dispatch_ts" ]] || return 1
+	now_epoch=$(date +%s)
+	if printf '%s' "$pages" | jq -e --argjson now "$now_epoch" '
+		[.[] | .[]? | select((.body // "") | contains("DISPATCH_LEASE phase=ready"))
+		 | (.body | capture("lease_token=(?<token>[^ ]+).*expires_at=(?<expires>[0-9]+)"))
+		 | select((.expires | tonumber) >= $now)] | length > 0' >/dev/null 2>&1; then
+		return 1
+	fi
+	# PID exit is deliberately absent: remote completion requires durable evidence.
+	return 0
+}
+
 #######################################
 # Check for terminal worker-failure evidence after a dispatch timestamp.
 # Stale escalation should not infer failure from GitHub silence alone; in a
@@ -439,6 +459,12 @@ _recover_stale_assignment() {
 		_terminal_evidence=true
 	fi
 	_open_pr=$(_stale_recovery_find_open_pr "$issue_number" "$repo_slug")
+	# Re-read the durable evidence immediately before any takeover mutation. A
+	# worker may have become ready or published progress after the first read.
+	if ! _stale_recovery_final_evidence_recheck "$issue_number" "$repo_slug" "$_latest_dispatch_ts"; then
+		printf 'STALE_RECHECK_BLOCKED: issue #%s in %s — evidence changed or active ready lease found\n' "$issue_number" "$repo_slug"
+		return 0
+	fi
 
 	if [[ -n "$_open_pr" ]]; then
 		# Open PR exists — counter resets; post a reset marker and allow normal recovery

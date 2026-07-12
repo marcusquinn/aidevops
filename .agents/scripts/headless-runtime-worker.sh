@@ -1419,6 +1419,13 @@ _cmd_run_prepare() {
 	# can detect workers that haven't created PRs yet. The ledger bridges
 	# the 10-15 minute gap between dispatch and PR creation.
 	_register_dispatch_ledger "$session_key" "$work_dir"
+	if [[ -n "${AIDEVOPS_DISPATCH_LEASE_TOKEN:-}" && -n "${WORKER_ISSUE_NUMBER:-}" && -n "${DISPATCH_REPO_SLUG:-}" ]]; then
+		"${SCRIPT_DIR}/dispatch-ledger-helper.sh" ready --session-key "$session_key" \
+			--lease-token "$AIDEVOPS_DISPATCH_LEASE_TOKEN" 2>/dev/null || return 1
+		"${SCRIPT_DIR}/dispatch-claim-helper.sh" transition ready "$WORKER_ISSUE_NUMBER" \
+			"$DISPATCH_REPO_SLUG" "$AIDEVOPS_DISPATCH_LEASE_TOKEN" "$session_key" \
+			"${AIDEVOPS_DISPATCH_READY_LEASE_TTL:-7200}" 2>/dev/null || return 1
+	fi
 	return 0
 }
 
