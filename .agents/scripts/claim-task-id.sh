@@ -1543,12 +1543,42 @@ _warn_dispatch_path_auto_dispatch() {
 	return 0
 }
 
+# Handle the allocation-only namespaced mode before any repository access.
+# Sets _CLAIM_NAMESPACED_HANDLED and _CLAIM_NAMESPACED_RC for main().
+_main_handle_namespaced_mode() {
+	_CLAIM_NAMESPACED_HANDLED=false
+	_CLAIM_NAMESPACED_RC=0
+	[[ "${AIDEVOPS_TASK_COORDINATOR_MODE:-legacy}" == "namespaced" ]] || return 0
+	_CLAIM_NAMESPACED_HANDLED=true
+
+	if [[ "$DRY_RUN" == "true" ]]; then
+		printf 'task_id=tDRY_RUN\nref=DRY_RUN\n'
+		return 0
+	fi
+	if [[ "$NO_ISSUE" != "true" ]]; then
+		log_error "Namespaced coordinator allocation currently requires --no-issue"
+		_CLAIM_NAMESPACED_RC=1
+		return 0
+	fi
+
+	local coordinator_output=""
+	coordinator_output=$(_task_coordinator_namespaced_allocate "$ALLOC_COUNT") || _CLAIM_NAMESPACED_RC=$?
+	[[ $_CLAIM_NAMESPACED_RC -eq 0 ]] || return 0
+	printf '%s\n' "$coordinator_output" | jq -r '.tasks[0].taskId | "task_id=\(.)"'
+	if [[ "$ALLOC_COUNT" -gt 1 ]]; then
+		printf '%s\n' "$coordinator_output" | jq -r '.tasks[-1].taskId | "task_id_last=\(.)"'
+		printf 'task_count=%s\n' "$ALLOC_COUNT"
+	fi
+	printf 'ref=none\n'
+	return 0
+}
+
 # Main execution
 main() {
 	parse_args "$@"
+	_main_handle_namespaced_mode
+	[[ "$_CLAIM_NAMESPACED_HANDLED" == "true" ]] && return "$_CLAIM_NAMESPACED_RC"
 
-	# Load project config after parse_args so REPO_PATH is resolved,
-	# but before detect_platform so REMOTE_NAME is set correctly.
 	load_project_config "$REPO_PATH"
 
 	# GH#20834: detect predecessor refs in description and populate
