@@ -10,6 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.32.59] - 2026-07-12
+
+### Added
+
+- add machine-local task coordinator (#27334)
+
 ## [3.32.58] - 2026-07-12
 
 ### Changed
