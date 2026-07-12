@@ -22,6 +22,11 @@ on:
         required: false
         type: string
         default: 'main'
+      legacy_event_sync:
+        description: 'Emergency rollback: run checkout-based event synchronization'
+        required: false
+        type: boolean
+        default: false
       runner:
         description: 'Runner label override (e.g. ubicloud-standard-2). Defaults to ubuntu-latest.'
         required: false
@@ -33,9 +38,52 @@ on:
         description: 'Fine-grained PAT with Contents:read/write, bypasses branch protection on TODO.md push'
 
 jobs:
+  targeted-event:
+    name: Ingest targeted repository event
+    if: >-
+      github.event_name == 'push' ||
+      github.event_name == 'issues' ||
+      ((github.event_name == 'pull_request' || github.event_name == 'pull_request_target') &&
+       github.event.pull_request.merged == true)
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 3
+    concurrency:
+      group: issue-sync-event-${{ github.repository_id }}-${{ github.event.issue.number || github.event.pull_request.number || github.run_id }}
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      issues: read
+      pull-requests: read
+    steps:
+      # Only framework code is checked out. The caller repository, its default
+      # branch, and human worktrees remain untouched by normal event handling.
+      - name: Checkout event ingestion helper
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          repository: marcusquinn/aidevops
+          path: __aidevops
+          ref: ${{ inputs.aidevops_ref || 'main' }}
+          fetch-depth: 1
+
+      - name: Ingest mapped event and queue projection
+        env:
+          EVENT_ACTION: ${{ github.event.action || 'push' }}
+          EVENT_NAME: ${{ github.event_name }}
+          EVENT_PATH: ${{ github.event_path }}
+          REPOSITORY_ID: ${{ github.event.repository.node_id || github.repository_id }}
+          REPOSITORY_PATH: ${{ github.workspace }}
+          REPOSITORY_SLUG: ${{ github.repository }}
+        run: |
+          node __aidevops/.agents/scripts/issue-sync-event-helper.mjs ingest \
+            --event-name "$EVENT_NAME" --action "$EVENT_ACTION" --event-file "$EVENT_PATH" \
+            --repository-id "$REPOSITORY_ID" --repository-slug "$REPOSITORY_SLUG" \
+            --repository-path "$REPOSITORY_PATH"
+
   sync-on-push:
     name: Sync TODO.md → GitHub Issues
-    if: github.event_name == 'push'
+    # Legacy bulk scan is an explicit rollback only. Normal push delivery is
+    # recorded by targeted-event without scanning every task.
+    if: github.event_name == 'push' && inputs.legacy_event_sync == true
     runs-on: ${{ inputs.runner }}
     # t2165: bumped 10 → 20 as an independent safety net alongside the
     # issue-sync-helper.sh enrich optimisation. At ~145 open ref:GH# tasks the
@@ -179,7 +227,9 @@ jobs:
 
   sync-on-issue:
     name: Sync GitHub Issue → TODO.md
-    if: github.event_name == 'issues'
+    # Superseded by targeted-event. Kept temporarily as rollback-readable code;
+    # it cannot execute during normal issue delivery.
+    if: github.event_name == 'issues' && inputs.legacy_event_sync == true
     runs-on: ${{ inputs.runner }}
     timeout-minutes: 5
     concurrency:
@@ -567,7 +617,12 @@ jobs:
   # hygiene treatment — previously only the TODO.md push path ran issue-sync.
   sync-on-pr-merge:
     name: Sync Issue Hygiene on PR Merge
-    if: (github.event_name == 'pull_request_target' || github.event_name == 'pull_request') && github.event.pull_request.merged == true
+    # Superseded by targeted-event. It remains available only as an explicit,
+    # non-advertised rollback path while coordinator event state rolls out.
+    if: >-
+      (github.event_name == 'pull_request_target' || github.event_name == 'pull_request') &&
+      github.event.pull_request.merged == true &&
+      inputs.legacy_event_sync == true
     runs-on: ${{ inputs.runner }}
     timeout-minutes: 5
     concurrency:

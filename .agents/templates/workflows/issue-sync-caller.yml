@@ -36,7 +36,7 @@ on:
   pull_request:
     types: [closed]
   issues:
-    types: [opened, closed]
+    types: [opened, edited, assigned, closed, reopened]
   workflow_dispatch:
     inputs:
       command:

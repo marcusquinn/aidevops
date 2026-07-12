@@ -1,0 +1,10 @@
+{
+  "repository": {"node_id": "R_other", "full_name": "attacker/other"},
+  "issue": {
+    "node_id": "I_fixture_42",
+    "number": 42,
+    "state": "closed",
+    "updated_at": "2026-07-12T12:00:00Z",
+    "assignees": []
+  }
+}

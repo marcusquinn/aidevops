@@ -1,0 +1,20 @@
+[
+  {
+    "event_name": "issues",
+    "action": "reopened",
+    "delivery_id": "reconcile-reopened",
+    "payload": {
+      "repository": {"node_id": "R_fixture", "full_name": "owner/repo"},
+      "issue": {"node_id": "I_fixture_88", "number": 88, "state": "open", "updated_at": "2026-07-12T09:20:00Z", "assignees": []}
+    }
+  },
+  {
+    "event_name": "issues",
+    "action": "closed",
+    "delivery_id": "reconcile-closed",
+    "payload": {
+      "repository": {"node_id": "R_fixture", "full_name": "owner/repo"},
+      "issue": {"node_id": "I_fixture_88", "number": 88, "state": "closed", "updated_at": "2026-07-12T09:10:00Z", "assignees": []}
+    }
+  }
+]

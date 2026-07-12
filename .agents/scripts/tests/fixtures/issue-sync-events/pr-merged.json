@@ -1,0 +1,12 @@
+{
+  "repository": {"node_id": "R_fixture", "full_name": "owner/repo"},
+  "pull_request": {
+    "node_id": "PR_fixture_7",
+    "number": 7,
+    "state": "closed",
+    "merged": true,
+    "merged_at": "2026-07-12T11:00:00Z",
+    "updated_at": "2026-07-12T11:00:00Z",
+    "merge_commit_sha": "0123456789abcdef0123456789abcdef01234567"
+  }
+}
