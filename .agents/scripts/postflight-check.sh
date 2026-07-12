@@ -473,7 +473,7 @@ main() {
 			shift
 			;;
 		--sha)
-			if [[ $# -lt 2 || -z "$2" ]]; then
+			if [[ $# -lt 2 || -z "${2:-}" ]]; then
 				echo "--sha requires a commit SHA"
 				return 1
 			fi

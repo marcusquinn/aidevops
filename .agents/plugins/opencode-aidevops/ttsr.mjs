@@ -232,6 +232,10 @@ export function buildSessionStartGreetingInstruction(agentsDir, readIfExists) {
 export function createSessionStartGreetingGate(client, isHeadless = () => false) {
   const attemptedSessions = new Set();
 
+  if (typeof client?.session?.get !== "function") {
+    return async () => false;
+  }
+
   return async function shouldInjectSessionStartGreeting(input) {
     if (isHeadless()) return false;
 
