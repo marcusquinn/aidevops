@@ -471,7 +471,11 @@ _reconcile_failure_family_remediations() {
 		current_count=$(printf '%s' "$family_json" | jq -r '.family_count // 0')
 		recent_count=$(printf '%s' "$family_json" | jq -r '.family_recent_count // 0')
 		local outcome_status="$FAILURE_FAMILY_STATUS_RECURRING"
-		if [[ "$current_count" -eq 0 && "$recent_count" -eq 0 ]]; then
+		# Historical windows intentionally retain failures after the failure has
+		# stopped recurring. Use the recent observation window as the recovery
+		# signal; otherwise remediations remain open until old samples age out and
+		# can be dispatched to fix a failure that is no longer occurring.
+		if [[ "$recent_count" -eq 0 ]]; then
 			outcome_status="recovery-candidate"
 		elif [[ "$current_count" -lt "$baseline_count" ]]; then
 			outcome_status="improving"
@@ -491,7 +495,7 @@ _reconcile_failure_family_remediations() {
 
 		if [[ "$outcome_status" == "eliminated" ]]; then
 			gh_issue_close_safe "$issue_number" --repo "$slug" \
-				--comment "<!-- failure-family-recovery --> Stable aggregate ${fingerprint} recorded zero failures in both the ${SINCE} historical and ${RECENT_SINCE} recent windows after a ${age_seconds}s observation period. Closing with measured recovery evidence." \
+				--comment "<!-- failure-family-recovery --> Stable aggregate ${fingerprint} recorded zero failures in the ${RECENT_SINCE} recent window after a ${age_seconds}s observation period; the ${SINCE} historical count is ${current_count} and will decay as retained samples age out. Closing with measured recovery evidence." \
 				>/dev/null 2>&1 || true
 		fi
 	done < <(printf '%s' "$tracked_json" | jq -c '.[]')

@@ -75,6 +75,17 @@ test_threshold_and_privacy() {
 		"$(printf '%s' "$report" | jq -r '.findings[] | select(.id == "worker-failure-family-watchdog-stall") | .autofile')"
 	assert_absent "aggregate report omits repository slug" "private/example" "$report"
 	assert_absent "aggregate report omits local path" "$HOME" "$report"
+
+	local stale_report=""
+	stale_report=$(jq -n --arg window 15m --arg since 24h --arg recent 1h \
+		--argjson threshold 3 --argjson failure_threshold 3 \
+		--argjson current '{}' \
+		--argjson summary "{\"metrics\":{\"failure_families\":[$family]}}" \
+		--argjson recent_summary '{"metrics":{"failure_families":[]}}' \
+		--argjson providers '{}' --argjson runner '{}' --argjson api '{}' \
+		--argjson queue '{"aggregate":{}}' -f "${SCRIPT_DIR}/pulse-check-report.jq")
+	assert_eq "historical-only family is not filed as recurrent" "0" \
+		"$(printf '%s' "$stale_report" | jq '[.findings[] | select(.id == "worker-failure-family-watchdog-stall")] | length')"
 	return 0
 }
 
@@ -148,8 +159,9 @@ WRAPPERS
 	assert_absent "worker-ready issue body omits private slug" "private/example" "$(<"$issue_body")"
 	assert_eq "dedup refreshes existing evidence in place" "yes" "$([[ -s "$edited_body" ]] && printf yes || printf no)"
 
-	_reconcile_failure_family_remediations "owner/repo" '{"failure_family_remediation":[]}'
-	assert_eq "zero recurrence after observation closes remediation" "yes" "$([[ -s "$closed" ]] && printf yes || printf no)"
+	_reconcile_failure_family_remediations "owner/repo" \
+		'{"failure_family_remediation":[{"fingerprint":"ff-v1:watchdog-stall","family":"watchdog-stall","count":4,"recent_count":0,"confidence":"high","recovery_outcome":"recurring"}]}'
+	assert_eq "zero recent recurrence closes remediation despite retained history" "yes" "$([[ -s "$closed" ]] && printf yes || printf no)"
 	return 0
 }
 
