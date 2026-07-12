@@ -25,7 +25,7 @@ numeric-only fixtures, and add namespaced and malformed fixtures. Matches in
 examples, generated patches, vendored content, or unrelated words such as
 `timeout` are not production parsers and must not be mechanically rewritten.
 
-The dependency cache currently validates at most 500 fetched issues through the
+The dependency cache currently validates at most 200 fetched issues through the
 shared shell codec. The pulse-performance owner should restore batched cache
 construction only when the batch transports broad candidates back through this
 codec; a second task-ID grammar in `jq` is not an acceptable optimisation.

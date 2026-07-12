@@ -279,10 +279,10 @@ test_task_id_blocker_parsing() {
 test_refresh_unknown_or_malformed_task_blocker_fails_closed() {
 	printf '\n=== cache refresh fail-closed task blockers ===\n'
 	local rc=0
-	_refresh_all_blockers_resolved '{"task_ids":["t1000"],"issue_nums":[]}' '{}' '[]' '[]' || rc=$?
+	_refresh_all_blockers_resolved '{"task_ids":["t1000"],"issue_nums":[]}' '{}' '[]' || rc=$?
 	_assert_rc "refresh keeps unmapped canonical blocker blocked" 1 "$rc"
 	rc=0
-	_refresh_all_blockers_resolved '{"task_ids":["__malformed__"],"issue_nums":[]}' '{}' '[]' '[]' || rc=$?
+	_refresh_all_blockers_resolved '{"task_ids":["__malformed__"],"issue_nums":[]}' '{}' '[]' || rc=$?
 	_assert_rc "refresh keeps malformed blocker blocked" 1 "$rc"
 	return 0
 }
