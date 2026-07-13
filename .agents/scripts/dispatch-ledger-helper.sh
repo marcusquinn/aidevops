@@ -53,6 +53,7 @@ _dlh_dir="${BASH_SOURCE[0]%/*}"
 LEDGER_DIR="${AIDEVOPS_DISPATCH_LEDGER_DIR:-${HOME}/.aidevops/.agent-workspace/tmp}"
 LEDGER_FILE="${LEDGER_DIR}/dispatch-ledger.jsonl"
 LEDGER_LOCK="${LEDGER_DIR}/dispatch-ledger.lock"
+TIER_TELEMETRY_FILTER="${_dlh_dir}/dispatch-tier-telemetry.jq"
 DEFAULT_TTL="${AIDEVOPS_DISPATCH_LEDGER_TTL:-3600}" # 60 minutes
 PRELAUNCH_TTL="${AIDEVOPS_DISPATCH_PRELAUNCH_LEASE_TTL:-120}"
 READY_TTL="${AIDEVOPS_DISPATCH_READY_LEASE_TTL:-7200}"
@@ -417,7 +418,6 @@ cmd_register() {
 		echo "Error: register requires --session-key" >&2
 		return 1
 	fi
-
 	_ensure_ledger
 	if ! _acquire_lock; then
 		echo "Error: register aborted — could not acquire lock" >&2
@@ -433,7 +433,6 @@ cmd_register() {
 	lease_expires_at=$(_lease_expiry "$lease_ttl")
 	local attempt_id="${lease_token:-${session_key}:${now}:${dispatch_pid}}"
 
-	# Append new entry — use jq for safe JSON construction (handles special chars)
 	jq -cn \
 		--arg sk "$session_key" \
 		--arg inum "$issue_number" \
@@ -451,7 +450,6 @@ cmd_register() {
 		'{session_key: $sk, attempt_id: $attempt, issue_number: $inum, repo_slug: $slug, pid: $pid, dispatched_at: $ts, status: $status, updated_at: $ts, tier: $tier, model: $model, worktree_path: $worktree, lease_token:$token, runner_device:$device, lease_phase:"prelaunch", lease_expires_at:$expires}' \
 		>>"$LEDGER_FILE"
 	_append_tier_telemetry "$issue_number" "$repo_slug" "$dispatch_tier" "$dispatch_model" "$now" "$session_key" "$attempt_id"
-
 	_release_lock
 	return 0
 }
@@ -825,6 +823,42 @@ cmd_fail() {
 #
 # Exit codes: 0 always (best-effort, never fatal)
 #######################################
+_find_pending_telemetry_attempt() {
+	local telemetry_file="$1"
+	local attempt_id="$2"
+	local session_key="$3"
+	local issue_number="$4"
+	local repo_slug="$5"
+
+	jq -sc -f "$TIER_TELEMETRY_FILTER" --arg operation find \
+		--arg aid "$attempt_id" --arg sk "$session_key" \
+		--arg inum "$issue_number" --arg slug "$repo_slug" "$telemetry_file" 2>/dev/null
+	return 0
+}
+
+_append_terminal_telemetry() {
+	local telemetry_file="$1"
+	local attempt_id="$2"
+	local session_key="$3"
+	local issue_number="$4"
+	local repo_slug="$5"
+	local tier="$6"
+	local model="$7"
+	local outcome="$8"
+	local reason="$9"
+	local tokens="${10}"
+	local now=""
+	now=$(_now_utc)
+
+	jq -cn --argjson schema 2 --arg aid "$attempt_id" --arg sk "$session_key" \
+		--arg inum "$issue_number" --arg slug "$repo_slug" --arg tier "$tier" \
+		--arg model "$model" --arg outcome "$outcome" --arg reason "$reason" \
+		--argjson tokens "$tokens" --arg ts "$now" \
+		'{schema: $schema, attempt_id: $aid, session_key: $sk, issue: $inum, repo: $slug, tier: $tier, model: $model, outcome: $outcome, reason: $reason, tokens: $tokens, completed_at: $ts}' \
+		>>"$telemetry_file" 2>/dev/null || true
+	return 0
+}
+
 cmd_record_outcome() {
 	local issue_number=""
 	local repo_slug=""
@@ -890,40 +924,11 @@ cmd_record_outcome() {
 
 	[[ -n "$attempt_id" ]] || attempt_id="$lease_token"
 	local pending=""
-	pending=$(jq -sc \
-		--arg aid "$attempt_id" --arg sk "$session_key" \
-		--arg inum "$issue_number" --arg slug "$repo_slug" '
-		def attempt_key:
-			if ((.attempt_id // "") != "") then .attempt_id
-			else "legacy:\(.repo // ""):\(.issue // ""):\(.dispatched_at // ""):\(.tier // ""):\(.model // "")"
-			end;
-		. as $rows |
-		[.[] | select(.outcome == "pending") |
-			select(($aid == "" or attempt_key == $aid) and
-				($sk == "" or (.session_key // "") == $sk) and
-				($inum == "" or (.issue // "") == $inum) and
-				($slug == "" or (.repo // "") == $slug)) |
-			. as $pending |
-			select(if (($pending.attempt_id // "") != "") then
-				attempt_key as $key |
-				([$rows[] | select(.outcome != "pending" and (.attempt_id // "") == $key)] | length) == 0
-			else
-				([$rows[] | select(.outcome != "pending" and
-					(.repo // "") == ($pending.repo // "") and
-					(.issue // "") == ($pending.issue // "") and
-					(.tier // "") == ($pending.tier // ""))] | length) <
-				([$rows[] | select(.outcome == "pending" and (.attempt_id // "") == "" and
-					(.repo // "") == ($pending.repo // "") and
-					(.issue // "") == ($pending.issue // "") and
-					(.tier // "") == ($pending.tier // ""))] | length)
-			end)] |
-		last // empty' "$telemetry_file" 2>/dev/null || true)
+	pending=$(_find_pending_telemetry_attempt "$telemetry_file" "$attempt_id" \
+		"$session_key" "$issue_number" "$repo_slug" || true)
 
 	if [[ -n "$pending" ]]; then
-		attempt_id=$(printf '%s' "$pending" | jq -r '
-			if ((.attempt_id // "") != "") then .attempt_id
-			else "legacy:\(.repo // ""):\(.issue // ""):\(.dispatched_at // ""):\(.tier // ""):\(.model // "")"
-			end')
+		attempt_id=$(printf '%s' "$pending" | jq -r '.attempt_id')
 		[[ -n "$session_key" ]] || session_key=$(printf '%s' "$pending" | jq -r '.session_key // ""')
 		[[ -n "$issue_number" ]] || issue_number=$(printf '%s' "$pending" | jq -r '.issue // ""')
 		[[ -n "$repo_slug" ]] || repo_slug=$(printf '%s' "$pending" | jq -r '.repo // ""')
@@ -945,23 +950,8 @@ cmd_record_outcome() {
 		return 0
 	fi
 
-	local now
-	now=$(_now_utc)
-
-	jq -cn \
-		--argjson schema 2 \
-		--arg aid "$attempt_id" \
-		--arg sk "$session_key" \
-		--arg inum "$issue_number" \
-		--arg slug "$repo_slug" \
-		--arg tier "$tier" \
-		--arg model "$model" \
-		--arg outcome "$outcome" \
-		--arg reason "$reason" \
-		--argjson tokens "${tokens:-0}" \
-		--arg ts "$now" \
-		'{schema: $schema, attempt_id: $aid, session_key: $sk, issue: $inum, repo: $slug, tier: $tier, model: $model, outcome: $outcome, reason: $reason, tokens: $tokens, completed_at: $ts}' \
-		>>"$telemetry_file" 2>/dev/null || true
+	_append_terminal_telemetry "$telemetry_file" "$attempt_id" "$session_key" \
+		"$issue_number" "$repo_slug" "$tier" "$model" "$outcome" "$reason" "$tokens"
 	_release_lock
 
 	return 0
@@ -984,47 +974,9 @@ cmd_tier_report() {
 	fi
 
 	local summary=""
-	summary=$(jq -sc '
-		def dispatch_key:
-			if ((.attempt_id // "") != "") then .attempt_id
-			else "legacy:\(.repo // ""):\(.issue // ""):\(.dispatched_at // ""):\(.tier // ""):\(.model // "")"
-			end;
-		. as $rows |
-		[$rows[] | select(.outcome == "pending")] |
-			group_by(dispatch_key) | map(last) as $dispatches |
-		[$rows[] | select(.outcome != "pending") | . as $terminal |
-			if (($terminal.attempt_id // "") != "") then $terminal
-			else
-				[$dispatches[] | select(
-					(.attempt_id // "") == "" and
-					(.repo // "") == ($terminal.repo // "") and
-					(.issue // "") == ($terminal.issue // "") and
-					(.tier // "") == ($terminal.tier // ""))] as $matches |
-				if ($matches | length) == 1 then $terminal + {attempt_id: ($matches[0] | dispatch_key)} else $terminal end
-			end] as $resolved_terminals |
-		[$resolved_terminals[] | select((.attempt_id // "") != "")] |
-			group_by(.attempt_id) | map(first) as $identified_terminals |
-		[$resolved_terminals[] | select((.attempt_id // "") == "")] as $legacy_terminals |
-		[$identified_terminals[] | select(.attempt_id as $id | any($dispatches[]; dispatch_key == $id))] as $paired |
-		[$paired[] | select(.outcome != "deferred" and .outcome != "timeout")] as $completed |
-		($identified_terminals + $legacy_terminals) as $terminals |
-		{
-			total: ($dispatches | length),
-			success: ([$paired[] | select(.outcome == "success")] | length),
-			escalated: ([$paired[] | select(.outcome == "escalated")] | length),
-			failed: ([$paired[] | select(.outcome == "failed")] | length),
-			deferred: ([$paired[] | select(.outcome == "deferred" or .outcome == "timeout")] | length),
-			pending_unknown: (($dispatches | length) - ($paired | length)),
-			unmatched: (($terminals | length) - ($paired | length)),
-			by_tier: ($dispatches | group_by(.tier // "") | map({tier: (.[0].tier // ""), count: length}) | sort_by(-.count)),
-			reasons: ($terminals | map(select((.reason // "") != "")) | group_by(.reason) | map({reason: .[0].reason, count: length}) | sort_by(-.count)),
-			pass_rates: ($completed | group_by(.tier // "") | map(
-				.[0].tier as $tier | {
-					tier: ($tier // ""),
-					total: length,
-					success: ([.[] | select(.outcome == "success")] | length)
-				}) | sort_by(.tier))
-		}' "$telemetry_file" 2>/dev/null) || summary='{}'
+	summary=$(jq -sc -f "$TIER_TELEMETRY_FILTER" --arg operation report \
+		--arg aid "" --arg sk "" --arg inum "" --arg slug "" \
+		"$telemetry_file" 2>/dev/null) || summary='{}'
 
 	local total success escalated failed deferred pending_unknown unmatched
 	total=$(printf '%s' "$summary" | jq -r '.total // 0')

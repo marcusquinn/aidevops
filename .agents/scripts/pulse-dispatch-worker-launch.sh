@@ -1736,7 +1736,6 @@ _dlw_nohup_launch() {
 		worker_cmd+=(--agent "$bundle_agent")
 	fi
 
-	# t2757: Detach worker via setsid (extracted to helper)
 	_dlw_exec_detached "$worker_log" "$issue_number" "${worker_cmd[@]}"
 	return 0
 }

@@ -30,6 +30,9 @@ _HRW_STATUS_UNKNOWN="unknown"
 _HRW_GIT_HEAD="HEAD"
 _HRW_CRASH_NO_WORK="no_work"
 _HRW_REASON_WORKER_COMPLETE="worker_complete"
+_HRW_TELEMETRY_SUCCESS="success"
+_HRW_TELEMETRY_FAILED="failed"
+_HRW_TELEMETRY_DEFERRED="deferred"
 _HRW_SPOTLIGHT_MARKER=".metadata_never_index"
 
 # Defensive SCRIPT_DIR fallback (test harnesses may not set it)
@@ -651,11 +654,11 @@ _handle_worker_branch_orphan() {
 	if _attempt_orphan_recovery_pr "$session_key" "$work_dir" "$branch_name" "$repo_slug"; then
 		print_info "[lifecycle] Orphan PR auto-created for session=${session_key}"
 		_release_dispatch_claim "$session_key" "$_HRW_REASON_WORKER_COMPLETE"
-		_HRW_TERMINAL_OUTCOME="success"
+		_HRW_TERMINAL_OUTCOME="$_HRW_TELEMETRY_SUCCESS"
 	else
 		print_info "[lifecycle] Orphan recovery failed for session=${session_key}"
 		_release_dispatch_claim "$session_key" "worker_branch_orphan"
-		_HRW_TERMINAL_OUTCOME="failed"
+		_HRW_TERMINAL_OUTCOME="$_HRW_TELEMETRY_FAILED"
 		# Post structured ops comment so the next dispatch knows what happened
 		if [[ -n "$issue_number" && -n "$repo_slug" && -n "$branch_name" ]]; then
 			local _ops_comment
@@ -723,11 +726,11 @@ _handle_worker_local_branch_unpushed() {
 		print_info "[lifecycle] Local branch pushed and recovery PR auto-created for session=${session_key}"
 		local complete_reason="worker_"
 		_release_dispatch_claim "$session_key" "${complete_reason}complete"
-		_HRW_TERMINAL_OUTCOME="success"
+		_HRW_TERMINAL_OUTCOME="$_HRW_TELEMETRY_SUCCESS"
 	else
 		print_info "[lifecycle] Local branch recovery failed for session=${session_key}"
 		_release_dispatch_claim "$session_key" "worker_local_branch_unpushed"
-		_HRW_TERMINAL_OUTCOME="failed"
+		_HRW_TERMINAL_OUTCOME="$_HRW_TELEMETRY_FAILED"
 		if [[ -n "$issue_number" && -n "$repo_slug" && -n "$branch_name" ]]; then
 			local _ops_comment
 			local _local_key="${repo_slug}#${issue_number}#${branch_name}#worker_local_branch_unpushed"
@@ -820,13 +823,13 @@ _handle_worker_dirty_worktree() {
 				--recoverability "checkpointed" 2>/dev/null || true
 		fi
 		_release_dispatch_claim "$session_key" "$_HRW_REASON_WORKER_COMPLETE"
-		_HRW_TERMINAL_OUTCOME="success"
+		_HRW_TERMINAL_OUTCOME="$_HRW_TELEMETRY_SUCCESS"
 		print_info "[lifecycle] worker_dirty_worktree_checkpointed session=${session_key} branch=${branch_name:-<none>}"
 		return 0
 	fi
 
 	_release_dispatch_claim "$session_key" "worker_dirty_worktree"
-	_HRW_TERMINAL_OUTCOME="failed"
+	_HRW_TERMINAL_OUTCOME="$_HRW_TELEMETRY_FAILED"
 
 	if [[ -n "$issue_number" && -n "$repo_slug" ]]; then
 		local _ops_comment
@@ -1210,14 +1213,14 @@ _hrw_finish_failed_run() {
 		_release_dispatch_claim "$session_key" "worker_failed"
 	fi
 	if [[ "$failure_recovered" -eq 1 ]]; then
-		_HRW_TERMINAL_OUTCOME="success"
+		_HRW_TERMINAL_OUTCOME="$_HRW_TELEMETRY_SUCCESS"
 		_HRW_FINAL_RUNTIME_EVENT="worker.completed"
 		_HRW_FINAL_RUNTIME_STATUS="recovered"
 		_HRW_FINAL_RUNTIME_CLASSIFICATION="$_HRW_REASON_WORKER_COMPLETE"
 	else
-		_HRW_TERMINAL_OUTCOME="failed"
+		_HRW_TERMINAL_OUTCOME="$_HRW_TELEMETRY_FAILED"
 		_HRW_FINAL_RUNTIME_EVENT="worker.failed"
-		_HRW_FINAL_RUNTIME_STATUS="failed"
+		_HRW_FINAL_RUNTIME_STATUS="$_HRW_TELEMETRY_FAILED"
 		_HRW_FINAL_RUNTIME_CLASSIFICATION="${_run_failure_reason:-worker_failed}"
 	fi
 
@@ -1298,9 +1301,9 @@ _hrw_finish_success_run() {
 			_report_failure_to_fast_fail "$session_key" "worker_noop_zero_output" "$_HRW_CRASH_NO_WORK"
 			release_needed=0
 			_HRW_FINAL_RUNTIME_EVENT="worker.failed"
-			_HRW_FINAL_RUNTIME_STATUS="failed"
+			_HRW_FINAL_RUNTIME_STATUS="$_HRW_TELEMETRY_FAILED"
 			_HRW_FINAL_RUNTIME_CLASSIFICATION="$_HRW_CRASH_NO_WORK"
-			_HRW_TERMINAL_OUTCOME="failed"
+			_HRW_TERMINAL_OUTCOME="$_HRW_TELEMETRY_FAILED"
 			;;
 		branch_orphan)
 			_handle_worker_branch_orphan "$session_key" "$work_dir"
@@ -1322,7 +1325,7 @@ _hrw_finish_success_run() {
 		# reason=worker_complete so the audit trail shows the full lifecycle even
 		# when no PR was created.
 		_release_dispatch_claim "$session_key" "$_HRW_REASON_WORKER_COMPLETE"
-		_HRW_TERMINAL_OUTCOME="success"
+		_HRW_TERMINAL_OUTCOME="$_HRW_TELEMETRY_SUCCESS"
 	fi
 
 	return 0
@@ -1353,7 +1356,7 @@ _cmd_run_finish() {
 	_HRW_FINAL_RUNTIME_EVENT="worker.completed"
 	_HRW_FINAL_RUNTIME_STATUS="${_run_result_label:-$ledger_status}"
 	_HRW_FINAL_RUNTIME_CLASSIFICATION="${_run_failure_reason:-}"
-	_HRW_TERMINAL_OUTCOME="success"
+	_HRW_TERMINAL_OUTCOME="$_HRW_TELEMETRY_SUCCESS"
 
 	# Release the dispatch claim so the issue is immediately available for
 	# re-dispatch (next 2-min pulse cycle) instead of waiting for the
@@ -1376,7 +1379,7 @@ _cmd_run_finish() {
 		_HRW_FINAL_RUNTIME_EVENT="worker.deferred"
 		_HRW_FINAL_RUNTIME_STATUS="rate_limit_fast"
 		_HRW_FINAL_RUNTIME_CLASSIFICATION="rate_limit"
-		_HRW_TERMINAL_OUTCOME="deferred"
+		_HRW_TERMINAL_OUTCOME="$_HRW_TELEMETRY_DEFERRED"
 	else
 		_hrw_finish_success_run "$session_key" "$work_dir"
 	fi
