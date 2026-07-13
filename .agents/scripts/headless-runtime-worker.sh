@@ -27,16 +27,21 @@ _HEADLESS_RUNTIME_WORKER_LIB_LOADED=1
 # Module-local string constants (avoid ratchet repeated-literal violations)
 _HRW_STATUS_FAIL="fail"
 _HRW_STATUS_FAILED="failed"
+_HRW_STATUS_ESCALATED="escalated"
 _HRW_STATUS_UNKNOWN="unknown"
 _HRW_GIT_HEAD="HEAD"
 _HRW_CRASH_NO_WORK="no_work"
+_HRW_CRASH_OVERWHELMED="overwhelmed"
 _HRW_REASON_WORKER_COMPLETE="worker_complete"
 _HRW_TELEMETRY_SUCCESS="success"
 _HRW_TELEMETRY_FAILED="failed"
 _HRW_TELEMETRY_DEFERRED="deferred"
 _HRW_REASON_DRAFT_CHECKPOINT="worker_draft_checkpoint"
+_HRW_REASON_DRAFT_ESCALATION_FAILED="worker_draft_checkpoint_escalation_failed"
+_HRW_REASON_READY_FAILED="worker_ready_failed"
 _HRW_REASON_CLOSED_UNMERGED="worker_closed_unmerged_pr"
 _HRW_EVENT_FAILED="worker.failed"
+_HRW_NMR_LABEL="needs-maintainer-review"
 _HRW_SPOTLIGHT_MARKER=".metadata_never_index"
 _HRW_RECOVERY_CLASSIFICATION=""
 
@@ -458,6 +463,9 @@ _hrw_resolve_default_branch() {
 #   "dirty_worktree"        — uncommitted/untracked edits exist after a crash
 #   "draft_checkpoint"       — open draft PR preserves progress, not completion
 #   "closed_unmerged"        — prior PR closed without delivery
+#   "protected_draft"        — draft is not eligible for worker automation
+#   "ready_failed"           — ready PR has terminal failing checks
+#   "unverified_open_pr"     — issue search found a non-exact open PR
 #   "noop"                  — no commits, no pushed branch, no PR
 #
 # Fail-open semantics are preserved: any condition that prevents confident
@@ -558,6 +566,7 @@ _worker_produced_output() {
 		draft_checkpoint) printf 'draft_checkpoint'; return 0 ;;
 		ready_handoff | merged) printf 'pr_exists'; return 0 ;;
 		closed_unmerged) printf 'closed_unmerged'; return 0 ;;
+		protected_draft | ready_failed | unverified_open_pr) printf '%s' "$pr_handoff_state"; return 0 ;;
 		absent)
 			if [[ "$has_pushed_branch" -eq 1 ]]; then
 				printf 'branch_orphan'
@@ -580,27 +589,49 @@ _escalate_worker_draft_checkpoint() {
 	local session_key="$1"
 	local repo_slug="$2"
 	local lifecycle_state="$3"
+	local release_reason="${4:-$_HRW_REASON_DRAFT_CHECKPOINT}"
 	local issue_number=""
 	local runner_login=""
-	local -a status_args=(--add-label "needs-maintainer-review")
+	local -a status_args=(--add-label "$_HRW_NMR_LABEL")
 
 	issue_number=$(printf '%s' "$session_key" | grep -oE '[0-9]+$' || true)
 	[[ -n "$issue_number" && -n "$repo_slug" ]] || return 1
 
-	_release_dispatch_claim "$session_key" "$_HRW_REASON_DRAFT_CHECKPOINT"
 	if declare -F _hrff_resolve_release_runner_login >/dev/null 2>&1; then
 		runner_login=$(_hrff_resolve_release_runner_login)
 		[[ -n "$runner_login" ]] && status_args+=(--remove-assignee "$runner_login")
 	fi
 	if declare -F set_issue_status >/dev/null 2>&1; then
-		set_issue_status "$issue_number" "$repo_slug" "" "${status_args[@]}" || true
+		if ! set_issue_status "$issue_number" "$repo_slug" "" "${status_args[@]}"; then
+			print_warning "[lifecycle] ${_HRW_REASON_DRAFT_ESCALATION_FAILED} session=${session_key} — blocking transition failed; retaining claim"
+			_HRW_RECOVERY_CLASSIFICATION="$_HRW_REASON_DRAFT_ESCALATION_FAILED"
+			return 0
+		fi
 	else
-		gh issue edit "$issue_number" --repo "$repo_slug" \
-			--add-label "needs-maintainer-review" >/dev/null 2>&1 || true
+		if ! gh issue edit "$issue_number" --repo "$repo_slug" \
+			--add-label "$_HRW_NMR_LABEL" >/dev/null 2>&1; then
+			print_warning "[lifecycle] ${_HRW_REASON_DRAFT_ESCALATION_FAILED} session=${session_key} — blocking transition failed; retaining claim"
+			_HRW_RECOVERY_CLASSIFICATION="$_HRW_REASON_DRAFT_ESCALATION_FAILED"
+			return 0
+		fi
 	fi
+	if ! _worker_draft_checkpoint_escalation_visible "$issue_number" "$repo_slug"; then
+		print_warning "[lifecycle] ${_HRW_REASON_DRAFT_ESCALATION_FAILED} session=${session_key} — blocking label not visible; retaining claim"
+		_HRW_RECOVERY_CLASSIFICATION="$_HRW_REASON_DRAFT_ESCALATION_FAILED"
+		return 0
+	fi
+	_release_dispatch_claim "$session_key" "$release_reason"
 	print_warning "[lifecycle] worker_draft_checkpoint_escalated session=${session_key} state=${lifecycle_state} — durable draft preserved; maintainer review required"
-	_HRW_RECOVERY_CLASSIFICATION="$_HRW_REASON_DRAFT_CHECKPOINT"
+	_HRW_RECOVERY_CLASSIFICATION="$release_reason"
 	return 0
+}
+
+_worker_draft_checkpoint_escalation_visible() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	gh issue view "$issue_number" --repo "$repo_slug" --json labels 2>/dev/null \
+		| jq -e --arg nmr "$_HRW_NMR_LABEL" '([.labels[].name] | index($nmr)) != null' >/dev/null 2>&1
+	return $?
 }
 
 # =============================================================================
@@ -939,6 +970,10 @@ _recover_worker_output_on_failure() {
 			_escalate_worker_draft_checkpoint "$session_key" "$repo_slug" "$pr_handoff_state"
 			return $?
 		fi
+		if [[ "$pr_handoff_state" == "ready_failed" ]]; then
+			_escalate_worker_draft_checkpoint "$session_key" "$repo_slug" "$pr_handoff_state" "$_HRW_REASON_READY_FAILED"
+			return $?
+		fi
 	fi
 
 	local output_class=""
@@ -1232,7 +1267,7 @@ _hrw_run_finish_crash_type() {
 		# Model attempted real work (read files, created worktree) but couldn't
 		# produce commits/PR. This is "overwhelmed" — the model tried and failed
 		# due to task complexity, not infra issues.
-		printf '%s\n' "overwhelmed"
+		printf '%s\n' "$_HRW_CRASH_OVERWHELMED"
 		;;
 	no_activity)
 		# No LLM output at all — infra/setup failure.
@@ -1268,8 +1303,16 @@ _hrw_finish_failed_run() {
 	elif [[ "${_HRW_RECOVERY_CLASSIFICATION:-}" == "$_HRW_REASON_DRAFT_CHECKPOINT" ]]; then
 		_HRW_TERMINAL_OUTCOME="$_HRW_TELEMETRY_FAILED"
 		_HRW_FINAL_RUNTIME_EVENT="$_HRW_EVENT_FAILED"
-		_HRW_FINAL_RUNTIME_STATUS="escalated"
+		_HRW_FINAL_RUNTIME_STATUS="$_HRW_STATUS_ESCALATED"
 		_HRW_FINAL_RUNTIME_CLASSIFICATION="$_HRW_REASON_DRAFT_CHECKPOINT"
+	elif [[ "${_HRW_RECOVERY_CLASSIFICATION:-}" == "$_HRW_REASON_READY_FAILED" ]]; then
+		_HRW_FINAL_RUNTIME_EVENT="$_HRW_EVENT_FAILED"
+		_HRW_FINAL_RUNTIME_STATUS="$_HRW_STATUS_ESCALATED"
+		_HRW_FINAL_RUNTIME_CLASSIFICATION="$_HRW_REASON_READY_FAILED"
+	elif [[ -n "${_HRW_RECOVERY_CLASSIFICATION:-}" ]]; then
+		_HRW_FINAL_RUNTIME_EVENT="$_HRW_EVENT_FAILED"
+		_HRW_FINAL_RUNTIME_STATUS="$_HRW_STATUS_FAILED"
+		_HRW_FINAL_RUNTIME_CLASSIFICATION="$_HRW_RECOVERY_CLASSIFICATION"
 	else
 		_HRW_TERMINAL_OUTCOME="$_HRW_TELEMETRY_FAILED"
 		_HRW_FINAL_RUNTIME_EVENT="$_HRW_EVENT_FAILED"
@@ -1341,6 +1384,9 @@ _hrw_finish_success_run() {
 	#   dirty_worktree        — local edits exist but no commit/PR → preserve marker
 	#   draft_checkpoint      — durable open draft → explicit escalation
 	#   closed_unmerged       — closed PR without delivery → failure
+	#   protected_draft       — non-worker/held draft → no automated mutation
+	#   ready_failed          — ready PR with terminal failed checks → failure
+	#   unverified_open_pr    — non-exact issue-search match → failure
 	#   pr_exists             — PR confirmed, or fail-open → worker_complete
 	#
 	# Fail-open semantics are preserved: when signals cannot be evaluated (no git
@@ -1376,17 +1422,42 @@ _hrw_finish_success_run() {
 			_escalate_worker_draft_checkpoint "$session_key" "${DISPATCH_REPO_SLUG:-}" "draft_checkpoint"
 			release_needed=0
 			_HRW_FINAL_RUNTIME_EVENT="$_HRW_EVENT_FAILED"
-			_HRW_FINAL_RUNTIME_STATUS="escalated"
-			_HRW_FINAL_RUNTIME_CLASSIFICATION="$_HRW_REASON_DRAFT_CHECKPOINT"
+			if [[ "$_HRW_RECOVERY_CLASSIFICATION" == "$_HRW_REASON_DRAFT_CHECKPOINT" ]]; then
+				_HRW_FINAL_RUNTIME_STATUS="$_HRW_STATUS_ESCALATED"
+			else
+				_HRW_FINAL_RUNTIME_STATUS="$_HRW_STATUS_FAILED"
+			fi
+			_HRW_FINAL_RUNTIME_CLASSIFICATION="$_HRW_RECOVERY_CLASSIFICATION"
 			;;
 		closed_unmerged)
 			print_warning "[lifecycle] ${_HRW_REASON_CLOSED_UNMERGED} session=${session_key} — closed PR is not completion evidence"
 			_release_dispatch_claim "$session_key" "$_HRW_REASON_CLOSED_UNMERGED"
-			_report_failure_to_fast_fail "$session_key" "$_HRW_REASON_CLOSED_UNMERGED" "overwhelmed"
+			_report_failure_to_fast_fail "$session_key" "$_HRW_REASON_CLOSED_UNMERGED" "$_HRW_CRASH_OVERWHELMED"
 			release_needed=0
 			_HRW_FINAL_RUNTIME_EVENT="$_HRW_EVENT_FAILED"
 			_HRW_FINAL_RUNTIME_STATUS="$_HRW_STATUS_FAILED"
 			_HRW_FINAL_RUNTIME_CLASSIFICATION="$_HRW_REASON_CLOSED_UNMERGED"
+			;;
+		ready_failed)
+			_escalate_worker_draft_checkpoint "$session_key" "${DISPATCH_REPO_SLUG:-}" "$output_class" "$_HRW_REASON_READY_FAILED"
+			release_needed=0
+			_HRW_FINAL_RUNTIME_EVENT="$_HRW_EVENT_FAILED"
+			if [[ "$_HRW_RECOVERY_CLASSIFICATION" == "$_HRW_REASON_READY_FAILED" ]]; then
+				_HRW_FINAL_RUNTIME_STATUS="$_HRW_STATUS_ESCALATED"
+			else
+				_HRW_FINAL_RUNTIME_STATUS="$_HRW_STATUS_FAILED"
+			fi
+			_HRW_FINAL_RUNTIME_CLASSIFICATION="$_HRW_RECOVERY_CLASSIFICATION"
+			;;
+		protected_draft | unverified_open_pr)
+			local noncomplete_reason="worker_${output_class}"
+			print_warning "[lifecycle] ${noncomplete_reason} session=${session_key} — PR state is not completion evidence"
+			_release_dispatch_claim "$session_key" "$noncomplete_reason"
+			_report_failure_to_fast_fail "$session_key" "$noncomplete_reason" "$_HRW_CRASH_OVERWHELMED"
+			release_needed=0
+			_HRW_FINAL_RUNTIME_EVENT="$_HRW_EVENT_FAILED"
+			_HRW_FINAL_RUNTIME_STATUS="$_HRW_STATUS_FAILED"
+			_HRW_FINAL_RUNTIME_CLASSIFICATION="$noncomplete_reason"
 			;;
 		esac
 	fi

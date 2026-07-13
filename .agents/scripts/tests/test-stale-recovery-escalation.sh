@@ -45,6 +45,7 @@ print_result() {
 		printf '%sFAIL%s %s %s\n' "$TEST_RED" "$TEST_RESET" "$name" "$extra"
 		TESTS_FAILED=$((TESTS_FAILED + 1))
 	fi
+	return 0
 }
 
 # Sandbox HOME so sourcing is side-effect-free
@@ -63,7 +64,7 @@ GH_CALLS_FILE="${TEST_ROOT}/gh_calls.log"
 #   - Returns STUB_TICK_COUNT for 'gh api *comments --jq ...'
 #     (simulates the count of stale-recovery-tick comments)
 #   - Returns STUB_OPEN_PR for 'gh pr list --state open ...'
-#     (simulates "number|isDraft", or empty for none)
+#     (simulates "number|lifecycle-kind", or empty for none)
 #   - Silently succeeds for all write calls (issue edit, issue comment)
 #
 # Called with env vars STUB_TICK_COUNT and STUB_OPEN_PR set.
@@ -71,6 +72,7 @@ GH_CALLS_FILE="${TEST_ROOT}/gh_calls.log"
 write_stub_gh() {
 	local tick_count="${1:-0}"
 	local open_pr="${2:-}"
+	local verified_labels="${3:-1}"
 	: >"$GH_CALLS_FILE"
 
 	cat >"${STUB_DIR}/gh" <<STUBEOF
@@ -103,13 +105,35 @@ fi
 # gh pr list --state open ...
 # Returns open PR number if configured, empty if not
 if [[ "\$1" == "pr" && "\$2" == "list" ]]; then
-	printf '%s\n' "${open_pr}"
+	if [[ "${open_pr}" == "status-context-failure" ]]; then
+		jq_query=""
+		capture_jq=0
+		for arg in "\$@"; do
+			if [[ "\$capture_jq" -eq 1 ]]; then
+				jq_query="\$arg"
+				capture_jq=0
+				continue
+			fi
+			[[ "\$arg" == "--jq" ]] && capture_jq=1
+		done
+		printf '%s\n' '[{"number":46,"isDraft":false,"labels":[{"name":"origin:worker"}],"statusCheckRollup":[{"state":"FAILURE"}]}]' | jq -r "\$jq_query"
+	else
+		printf '%s\n' "${open_pr}"
+	fi
 	exit 0
 fi
 
 # gh issue view returns the verified post-transition state; edits/comments
 # remain silent successes.
 if [[ "\$1" == "issue" ]]; then
+	if [[ "\$2" == "view" && "\$*" == *"--json labels"* ]]; then
+		if [[ "${verified_labels}" == "1" ]]; then
+			printf '%s\n' '{"labels":[{"name":"needs-maintainer-review"}]}'
+		else
+			printf '%s\n' '{"labels":[]}'
+		fi
+		exit 0
+	fi
 	if [[ "\$2" == "view" && "\$*" == *"--json state,labels,assignees"* ]]; then
 		printf '%s\n' '{"state":"OPEN","labels":[{"name":"status:available"}],"assignees":[]}'
 	fi
@@ -136,7 +160,8 @@ rc=0
 run_recover() {
 	local tick_count="${1:-0}"
 	local open_pr="${2:-}"
-	write_stub_gh "$tick_count" "$open_pr"
+	local verified_labels="${3:-1}"
+	write_stub_gh "$tick_count" "$open_pr" "$verified_labels"
 	set +e
 	output=$(
 		STALE_ASSIGNMENT_THRESHOLD_SECONDS=0
@@ -179,6 +204,26 @@ if echo "$output" | grep -q "STALE_ESCALATED"; then
 	print_result "Tick 2 (1 prior tick): STALE_ESCALATED emitted" 0
 else
 	print_result "Tick 2 (1 prior tick): STALE_ESCALATED emitted" 1 "(got: '$output')"
+fi
+
+# =============================================================================
+# Test 8 — Failed draft transition remains unresolved and returns nonzero
+# =============================================================================
+
+run_recover 0 "45|draft_checkpoint" 0
+
+if [[ "$rc" -ne 0 ]] && ! echo "$output" | grep -q "STALE_DRAFT_ESCALATED"; then
+	print_result "Failed draft escalation propagates failure" 0
+else
+	print_result "Failed draft escalation propagates failure" 1 "(rc=${rc}, got: '$output')"
+fi
+
+run_recover 0 "status-context-failure"
+
+if [[ "$rc" -eq 0 ]] && echo "$output" | grep -q "STALE_READY_FAILED_ESCALATED"; then
+	print_result "StatusContext failure escalates ready PR instead of preserving it" 0
+else
+	print_result "StatusContext failure escalates ready PR instead of preserving it" 1 "(rc=${rc}, got: '$output')"
 fi
 
 # =============================================================================
@@ -228,7 +273,7 @@ fi
 # =============================================================================
 
 # 2 prior ticks, but ready open PR #42 is a handoff and must be preserved
-run_recover 2 "42|false"
+run_recover 2 "42|ready"
 
 if echo "$output" | grep -q "STALE_PROGRESS_PRESERVED"; then
 	print_result "Open PR path preserves durable progress without stale recovery" 0
@@ -253,7 +298,7 @@ fi
 # Test 5 — Draft checkpoint is escalated, not reported as completed progress
 # =============================================================================
 
-run_recover 0 "43|true"
+run_recover 0 "43|draft_checkpoint"
 
 if echo "$output" | grep -q "STALE_DRAFT_ESCALATED"; then
 	print_result "Draft checkpoint path emits explicit escalation" 0
@@ -274,7 +319,25 @@ else
 fi
 
 # =============================================================================
-# Test 6 — Above-threshold (3 prior ticks >= threshold=2 → STALE_ESCALATED)
+# Test 6 — Protected/human draft is not mutated
+# =============================================================================
+
+run_recover 0 "44|protected_draft"
+
+if echo "$output" | grep -q "STALE_DRAFT_PROTECTED"; then
+	print_result "Protected draft remains untouched by stale recovery" 0
+else
+	print_result "Protected draft remains untouched by stale recovery" 1 "(got: '$output')"
+fi
+
+if ! grep -q "issue edit.*needs-maintainer-review" "$GH_CALLS_FILE" 2>/dev/null; then
+	print_result "Protected draft does not receive automated NMR mutation" 0
+else
+	print_result "Protected draft does not receive automated NMR mutation" 1
+fi
+
+# =============================================================================
+# Test 7 — Above-threshold (3 prior ticks >= threshold=2 → STALE_ESCALATED)
 # =============================================================================
 
 run_recover 3 ""

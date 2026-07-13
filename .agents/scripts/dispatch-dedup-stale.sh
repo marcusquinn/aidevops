@@ -21,6 +21,7 @@
 # 28 min of dispatch capacity per crash.
 #######################################
 STALE_ASSIGNMENT_THRESHOLD_SECONDS="${STALE_ASSIGNMENT_THRESHOLD_SECONDS:-${DISPATCH_COMMENT_MAX_AGE:-600}}"
+_DDS_NMR_LABEL="needs-maintainer-review"
 
 #######################################
 # t2132: Separate threshold for interactive claims.
@@ -192,7 +193,7 @@ _stale_recovery_has_terminal_evidence_since() {
 # Ready PRs are review handoffs. Draft PRs are durable checkpoints but not
 # completion or liveness evidence, so callers must continue or escalate them.
 # Args: $1 = issue number, $2 = repo slug
-# Output: "<number>|<true|false>" (or empty) on stdout
+# Output: "<number>|<ready|ready_failed|draft_checkpoint|protected_draft>" (or empty)
 #######################################
 _stale_recovery_find_open_pr() {
 	local issue_number="$1"
@@ -200,15 +201,23 @@ _stale_recovery_find_open_pr() {
 	local _open_pr
 	_open_pr=$(gh pr list --repo "$repo_slug" --state open \
 		--search "#${issue_number} in:body" --limit 1 \
-		--json number,isDraft --jq '.[0] | if . then "\(.number)|\(.isDraft // false)" else "" end' 2>/dev/null) || _open_pr=""
+		--json number,isDraft,labels,statusCheckRollup --jq '
+			def names: [.labels[]?.name];
+			def protected: names | any(. == "origin:interactive" or . == "hold-for-review" or . == "no-auto-dispatch" or . == "needs-maintainer-review");
+			def worker_owned: names | any(. == "origin:worker" or . == "origin:worker-takeover");
+			def terminal_failure: [.statusCheckRollup[]? | (.conclusion // .status // .state // empty) | ascii_upcase]
+				| any(. == "FAILURE" or . == "ERROR" or . == "CANCELLED" or . == "TIMED_OUT" or . == "ACTION_REQUIRED");
+			.[0] | if . then
+				"\(.number)|\(if (.isDraft != true) and terminal_failure then "ready_failed" elif (.isDraft != true) then "ready" elif worker_owned and (protected | not) then "draft_checkpoint" else "protected_draft" end)"
+			else "" end' 2>/dev/null) || _open_pr=""
 	printf '%s' "$_open_pr"
 	return 0
 }
 
 #######################################
-# Escalate an ownerless draft checkpoint instead of preserving stale ownership
+# Escalate an ownerless PR checkpoint instead of preserving stale ownership
 # indefinitely or allowing a competing ordinary redispatch.
-# Args: issue, repo, stale assignees, reason, PR number, dispatch timestamp
+# Args: issue, repo, stale assignees, reason, PR number, dispatch timestamp, kind
 #######################################
 _stale_recovery_escalate_draft_checkpoint() {
 	local issue_number="$1"
@@ -217,10 +226,17 @@ _stale_recovery_escalate_draft_checkpoint() {
 	local reason="$4"
 	local pr_number="$5"
 	local expected_dispatch_ts="${6:-}"
+	local checkpoint_kind="${7:-draft_checkpoint}"
+	local checkpoint_description="draft PR"
+	local escalation_event="STALE_DRAFT_ESCALATED"
+	if [[ "$checkpoint_kind" == "ready_failed" ]]; then
+		checkpoint_description="ready PR with terminally failed checks"
+		escalation_event="STALE_READY_FAILED_ESCALATED"
+	fi
 	local _assignee=""
 	local _old_ifs="${IFS:-}"
 	local -a _assignees=()
-	local -a _status_args=(--add-label "needs-maintainer-review")
+	local -a _status_args=(--add-label "$_DDS_NMR_LABEL")
 
 	if ! _stale_recovery_final_evidence_recheck "$issue_number" "$repo_slug" "$expected_dispatch_ts"; then
 		printf 'STALE_RECHECK_BLOCKED: issue #%s in %s — evidence changed before draft escalation\n' "$issue_number" "$repo_slug"
@@ -232,21 +248,29 @@ _stale_recovery_escalate_draft_checkpoint() {
 	for _assignee in "${_assignees[@]}"; do
 		[[ -n "$_assignee" ]] && _status_args+=(--remove-assignee "$_assignee")
 	done
-	set_issue_status "$issue_number" "$repo_slug" "" "${_status_args[@]}" || true
+	if ! set_issue_status "$issue_number" "$repo_slug" "" "${_status_args[@]}"; then
+		printf 'STALE_DRAFT_ESCALATION_FAILED: issue #%s in %s — blocking transition failed; ownership retained\n' "$issue_number" "$repo_slug"
+		return 1
+	fi
+	if ! gh issue view "$issue_number" --repo "$repo_slug" --json labels 2>/dev/null \
+		| jq -e --arg nmr "$_DDS_NMR_LABEL" '([.labels[].name] | index($nmr)) != null' >/dev/null 2>&1; then
+		printf 'STALE_DRAFT_ESCALATION_FAILED: issue #%s in %s — blocking label not visible; ownership retained\n' "$issue_number" "$repo_slug"
+		return 1
+	fi
 	gh_issue_comment "$issue_number" --repo "$repo_slug" \
 		--body "<!-- ops:start — workers: skip this comment, it is audit trail not implementation context -->
 <!-- stale-draft-checkpoint:escalated pr=${pr_number} -->
-**Draft checkpoint requires continuation review**
+**PR checkpoint requires continuation review**
 
-Draft PR #${pr_number} preserves committed progress, but no active worker owns its continuation. The draft was not treated as completed output and ordinary redispatch remains blocked to avoid a competing implementation.
+The ${checkpoint_description} #${pr_number} preserves committed progress, but no active worker owns its continuation. It was not treated as completed output and ordinary redispatch remains blocked to avoid a competing implementation.
 
 Previously assigned to: ${stale_assignees}
 Stale reason: ${reason}
 
-Applied \`needs-maintainer-review\`. Continue from the existing PR head or close the checkpoint before re-enabling ordinary dispatch.
+Applied \`${_DDS_NMR_LABEL}\`. Continue from the existing PR head or close the checkpoint before re-enabling ordinary dispatch.
 <!-- ops:end -->" 2>/dev/null || true
-	printf 'STALE_DRAFT_ESCALATED: issue #%s in %s — draft PR #%s preserved, applied needs-maintainer-review\n' \
-		"$issue_number" "$repo_slug" "$pr_number"
+	printf '%s: issue #%s in %s — PR #%s preserved, applied %s\n' \
+		"$escalation_event" "$issue_number" "$repo_slug" "$pr_number" "$_DDS_NMR_LABEL"
 	return 0
 }
 
@@ -310,7 +334,7 @@ _stale_recovery_escalate() {
 	# otherwise a racing recovery can restore status:available and make the
 	# held issue look runnable to idle-backoff even though dispatch rejects it.
 	local -a _esc_extra=(
-		--add-label "needs-maintainer-review"
+		--add-label "$_DDS_NMR_LABEL"
 		--remove-label "auto-dispatch"
 	)
 	for _esc_assignee in "${_esc_assignee_arr[@]}"; do
@@ -561,7 +585,7 @@ _recover_stale_assignment() {
 	# resetting to status:available and apply needs-maintainer-review instead.
 	# Counter is stored as structured comment markers for cross-runner correctness.
 	# Config: .agents/configs/dispatch-stale-recovery.conf
-	local _threshold _prior_ticks _open_pr _open_pr_number _open_pr_is_draft _comments_pages _latest_dispatch_ts _next_tick
+	local _threshold _prior_ticks _open_pr _open_pr_number _open_pr_kind _comments_pages _latest_dispatch_ts _next_tick
 	_threshold=$(_stale_recovery_load_threshold)
 	_comments_pages=$(_stale_recovery_fetch_comments_pages "$issue_number" "$repo_slug")
 	_prior_ticks=$(_stale_recovery_count_ticks_from_pages "$_comments_pages")
@@ -569,8 +593,8 @@ _recover_stale_assignment() {
 	_open_pr=$(_stale_recovery_find_open_pr "$issue_number" "$repo_slug")
 	if [[ -n "$_open_pr" ]]; then
 		_open_pr_number="${_open_pr%%|*}"
-		_open_pr_is_draft="${_open_pr#*|}"
-		if [[ "$_open_pr_is_draft" == "true" ]]; then
+		_open_pr_kind="${_open_pr#*|}"
+		if [[ "$_open_pr_kind" == "draft_checkpoint" || "$_open_pr_kind" == "ready_failed" ]]; then
 			if printf '%s' "$_comments_pages" | jq -e --arg marker "stale-draft-checkpoint:escalated pr=${_open_pr_number}" \
 				'any(.[] | .[]?; (.body // "") | contains($marker))' >/dev/null 2>&1; then
 				printf 'STALE_DRAFT_ESCALATED: issue #%s in %s — draft PR #%s already escalated\n' \
@@ -578,7 +602,12 @@ _recover_stale_assignment() {
 				return 0
 			fi
 			_stale_recovery_escalate_draft_checkpoint "$issue_number" "$repo_slug" "$stale_assignees" \
-				"$reason" "$_open_pr_number" "$_latest_dispatch_ts"
+				"$reason" "$_open_pr_number" "$_latest_dispatch_ts" "$_open_pr_kind" || return 1
+			return 0
+		fi
+		if [[ "$_open_pr_kind" == "protected_draft" ]]; then
+			printf 'STALE_DRAFT_PROTECTED: issue #%s in %s — draft PR #%s is held or not worker-owned; no automated mutation\n' \
+				"$issue_number" "$repo_slug" "$_open_pr_number"
 			return 0
 		fi
 		printf 'STALE_PROGRESS_PRESERVED: issue #%s in %s — open PR #%s is durable progress\n' \

@@ -17,6 +17,14 @@ TESTS_FAILED=0
 TEST_ROOT=""
 ORIGINAL_HOME="${HOME}"
 
+# The integration fixtures are disposable single-worktree repositories. Use
+# platform Git directly so the production canonical-worktree shim does not
+# classify those isolated fixtures as user repositories.
+git() {
+	/usr/bin/git "$@"
+	return $?
+}
+
 print_result() {
 	local test_name="$1"
 	local passed="$2"
@@ -2396,10 +2404,11 @@ test_handle_worker_branch_orphan_empty_branch_existing_pr_releases_complete() {
 	mkdir -p "$work_dir"
 	DISPATCH_REPO_SLUG="test-owner/test-repo"
 
-	# Stub gh: empty branch skips --head and falls back to issue search; existing PR found.
+	# Stub gh: empty branch skips --head and the provenance-constrained issue
+	# search confirms a worker-owned linked PR.
 	gh() {
-		if [[ "${*}" == *"pr list"* && "${*}" == *"--search 99999"* ]]; then
-			printf '1'
+		if [[ "${*}" == *"pr list"* && "${*}" == *"--search #99999 in:body"* ]]; then
+			printf 'unverified_open_pr'
 			return 0
 		fi
 		printf '0'

@@ -128,6 +128,14 @@ STUB
 chmod +x "${GH_STUB_DIR}/gh"
 export PATH="${GH_STUB_DIR}:${PATH}"
 
+# This suite intentionally creates disposable single-worktree repositories.
+# Use the platform Git directly so the production canonical-worktree shim does
+# not classify those isolated fixtures as user repositories.
+git() {
+	/usr/bin/git "$@"
+	return $?
+}
+
 # Source the helper. set -e is disabled while sourcing so transient command
 # failures (auth checks, optional helper presence) don't abort the test.
 set +e
@@ -483,6 +491,7 @@ test_draft_checkpoint_escalation_is_explicit() {
 	_release_dispatch_claim() { released_reason="$2"; return 0; }
 	_hrff_resolve_release_runner_login() { printf 'worker-login'; return 0; }
 	set_issue_status() { captured_status_args="$*"; return 0; }
+	_worker_draft_checkpoint_escalation_visible() { return 0; }
 	print_warning() { return 0; }
 
 	if _escalate_worker_draft_checkpoint "issue-1011" "owner/repo" "draft_checkpoint" \
@@ -492,6 +501,26 @@ test_draft_checkpoint_escalation_is_explicit() {
 		print_result "case 11: draft checkpoint gets explicit escalation, not completion" 0
 	else
 		print_result "case 11: draft checkpoint gets explicit escalation, not completion" 1 \
+			"reason=${released_reason}, status=${captured_status_args}, classification=${_HRW_RECOVERY_CLASSIFICATION}"
+	fi
+	return 0
+}
+
+test_draft_checkpoint_retains_claim_when_block_not_visible() {
+	local released_reason="" captured_status_args=""
+	_release_dispatch_claim() { released_reason="$2"; return 0; }
+	_hrff_resolve_release_runner_login() { printf 'worker-login'; return 0; }
+	set_issue_status() { captured_status_args="$*"; return 0; }
+	_worker_draft_checkpoint_escalation_visible() { return 1; }
+	print_warning() { return 0; }
+
+	_escalate_worker_draft_checkpoint "issue-1012" "owner/repo" "draft_checkpoint"
+	if [[ -z "$released_reason" ]] \
+		&& [[ "$captured_status_args" == *"needs-maintainer-review"* ]] \
+		&& [[ "$_HRW_RECOVERY_CLASSIFICATION" == "worker_draft_checkpoint_escalation_failed" ]]; then
+		print_result "case 12: invisible blocking transition retains the worker claim" 0
+	else
+		print_result "case 12: invisible blocking transition retains the worker claim" 1 \
 			"reason=${released_reason}, status=${captured_status_args}, classification=${_HRW_RECOVERY_CLASSIFICATION}"
 	fi
 	return 0
@@ -512,6 +541,7 @@ test_external_terminal_complete_guards_before_github_calls
 test_dirty_feature_worktree_preserved
 test_pr_lifecycle_states_do_not_collapse_to_completion
 test_draft_checkpoint_escalation_is_explicit
+test_draft_checkpoint_retains_claim_when_block_not_visible
 
 printf '\nRan %d test(s), %d failed\n' "$TESTS_RUN" "$TESTS_FAILED"
 

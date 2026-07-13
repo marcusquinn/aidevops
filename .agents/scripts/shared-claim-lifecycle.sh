@@ -159,7 +159,8 @@ _release_interactive_claim_on_merge() {
 #   $2 = issue_number  (may be empty)
 #   $3 = repo_slug
 # Outputs one of:
-#   draft_checkpoint | ready_handoff | merged | closed_unmerged | absent | unknown
+#   draft_checkpoint | protected_draft | ready_handoff | ready_failed |
+#   merged | closed_unmerged | unverified_open_pr | absent | unknown
 #######################################
 _pr_handoff_state_for_branch_or_issue() {
 	local branch_name="$1"
@@ -168,13 +169,22 @@ _pr_handoff_state_for_branch_or_issue() {
 	local pr_state=""
 	local state_open="OPEN"
 	local state_ready="ready_handoff"
-	local state_jq="def disposition:
-		if ((.mergedAt? | strings | length) > 0) or (.state == \"MERGED\") then \"merged\"
-		elif (.state == \"${state_open}\") and (.isDraft == true) then \"draft_checkpoint\"
+	local state_jq="def terminal_failure:
+		[.statusCheckRollup[]? | (.conclusion // .status // .state // empty) | ascii_upcase]
+		| any(. == \"FAILURE\" or . == \"ERROR\" or . == \"CANCELLED\" or . == \"TIMED_OUT\" or . == \"ACTION_REQUIRED\");
+	def protected_label:
+		[.labels[]?.name] | any(. == \"origin:interactive\" or . == \"hold-for-review\" or . == \"no-auto-dispatch\" or . == \"needs-maintainer-review\");
+	def worker_owned:
+		[.labels[]?.name] | any(. == \"origin:worker\" or . == \"origin:worker-takeover\");
+	def disposition:
+		if (((.mergedAt? // \"\") | length) > 0) or (.state == \"MERGED\") then \"merged\"
+		elif (.state == \"${state_open}\") and (.isDraft == true) and worker_owned and (protected_label | not) then \"draft_checkpoint\"
+		elif (.state == \"${state_open}\") and (.isDraft == true) then \"protected_draft\"
+		elif (.state == \"${state_open}\") and terminal_failure then \"ready_failed\"
 		elif (.state == \"${state_open}\") then \"${state_ready}\"
 		else \"closed_unmerged\" end;
 		if length == 0 then \"\" else
-			((map(select(.state == \"${state_open}\")) + map(select(.state == \"MERGED\" or ((.mergedAt? | strings | length) > 0))) + .)
+			((map(select(.state == \"${state_open}\")) + map(select(.state == \"MERGED\" or (((.mergedAt? // \"\") | length) > 0))) + .)
 			| .[0] | disposition)
 		end"
 
@@ -185,7 +195,7 @@ _pr_handoff_state_for_branch_or_issue() {
 
 	if [[ -n "$branch_name" ]]; then
 		if ! pr_state=$(gh_pr_list --repo "$repo_slug" --head "$branch_name" \
-			--state all --json number,state,isDraft,mergedAt --jq "$state_jq" 2>/dev/null); then
+			--state all --json number,state,isDraft,mergedAt,labels,statusCheckRollup --jq "$state_jq" 2>/dev/null); then
 			printf 'unknown'
 			return 0
 		fi
@@ -204,8 +214,10 @@ _pr_handoff_state_for_branch_or_issue() {
 	fi
 
 	if [[ -n "$issue_number" ]]; then
-		if ! pr_state=$(gh_pr_list --repo "$repo_slug" --search "$issue_number" \
-			--state all --json number,state,isDraft,mergedAt --jq "$state_jq" 2>/dev/null); then
+		if ! pr_state=$(gh_pr_list --repo "$repo_slug" --search "#${issue_number} in:body" \
+			--state open --json number,labels --jq '
+				[.[] | select([.labels[]?.name] | any(. == "origin:worker" or . == "origin:worker-takeover"))]
+				| if length > 0 then "unverified_open_pr" else "" end' 2>/dev/null); then
 			printf 'unknown'
 			return 0
 		fi
@@ -213,7 +225,7 @@ _pr_handoff_state_for_branch_or_issue() {
 		0) pr_state="" ;;
 		*[!0-9]*) ;;
 		"") ;;
-		*) pr_state="$state_ready" ;;
+		*) pr_state="unverified_open_pr" ;;
 		esac
 		if [[ -n "$pr_state" ]]; then
 			printf '%s' "$pr_state"
@@ -268,7 +280,7 @@ _pr_exists_for_branch_or_issue() {
 
 	handoff_state=$(_pr_handoff_state_for_branch_or_issue "$branch_name" "$issue_number" "$repo_slug")
 	case "$handoff_state" in
-	draft_checkpoint | ready_handoff | merged | closed_unmerged) printf 'found' ;;
+	draft_checkpoint | protected_draft | ready_handoff | ready_failed | merged | closed_unmerged | unverified_open_pr) printf 'found' ;;
 	absent) printf 'absent' ;;
 	*) printf 'unknown' ;;
 	esac

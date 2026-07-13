@@ -101,10 +101,18 @@ cat >"${GH_STUB_DIR}/gh" <<'STUB'
 #   `gh repo view ...`                   → emit defaultBranchRef.name=main JSON
 #   anything else                        → empty JSON `{}`
 mode=""
+jq_expr=""
+capture_jq=0
 for a in "$@"; do
+	if [[ "$capture_jq" -eq 1 ]]; then
+		jq_expr="$a"
+		capture_jq=0
+		continue
+	fi
 	case "$a" in
 		--head) mode="head" ;;
 		--search) mode="search" ;;
+		--jq) capture_jq=1 ;;
 	esac
 done
 case "${1:-}" in
@@ -112,7 +120,9 @@ case "${1:-}" in
 		case "${2:-}" in
 			list)
 				if [[ "$mode" == "head" ]]; then
-					if [[ -n "${STUB_HEAD_STATE:-}" ]]; then
+					if [[ -n "${STUB_HEAD_JSON:-}" ]]; then
+						printf '%s\n' "$STUB_HEAD_JSON" | jq -r "$jq_expr"
+					elif [[ -n "${STUB_HEAD_STATE:-}" ]]; then
 						printf '%s\n' "$STUB_HEAD_STATE"
 					elif [[ "${STUB_HEAD_COUNT:-0}" -gt 0 ]]; then
 						printf 'ready_handoff\n'
@@ -305,25 +315,16 @@ test_case_f_orphan_recovery_proceeds_when_no_pr() {
 	local pr_log="${TEST_ROOT}/pr-create-2.log"
 	: >"$pr_log"
 	export STUB_PR_CREATE_LOG="$pr_log"
-	local origin_dir="${TEST_ROOT}/case-f-origin.git"
-	local work_dir="${TEST_ROOT}/case-f-work"
-	git init --bare "$origin_dir" >/dev/null 2>&1 || return 1
-	git init "$work_dir" >/dev/null 2>&1 || return 1
-	git -C "$work_dir" config user.email test@example.invalid || return 1
-	git -C "$work_dir" config user.name "Test User" || return 1
-	printf 'base\n' >"${work_dir}/README.md"
-	git -C "$work_dir" add README.md >/dev/null 2>&1 || return 1
-	git -C "$work_dir" commit -m base >/dev/null 2>&1 || return 1
-	git -C "$work_dir" branch -M main >/dev/null 2>&1 || return 1
-	git -C "$work_dir" remote add origin "$origin_dir" || return 1
-	git -C "$work_dir" push origin main >/dev/null 2>&1 || return 1
-	git -C "$work_dir" checkout -b feature/real-orphan >/dev/null 2>&1 || return 1
-	printf 'change\n' >>"${work_dir}/README.md"
-	git -C "$work_dir" add README.md >/dev/null 2>&1 || return 1
-	git -C "$work_dir" commit -m change >/dev/null 2>&1 || return 1
-	git -C "$work_dir" push origin feature/real-orphan >/dev/null 2>&1 || return 1
+	_ensure_orphan_recovery_branch_remote() {
+		printf 'remote\n'
+		return 0
+	}
+	_resolve_orphan_recovery_base_branch() {
+		printf 'main\n'
+		return 0
+	}
 
-	_attempt_orphan_recovery_pr "issue-99999" "$work_dir" \
+	_attempt_orphan_recovery_pr "issue-99999" "/tmp/stub-workdir" \
 		"feature/real-orphan" "owner/repo" || true
 	# Whether create succeeded matters less than: did we ATTEMPT it?
 	if [[ -s "$pr_log" ]]; then
@@ -340,7 +341,7 @@ test_case_g_lifecycle_states_are_preserved() {
 	export STUB_HEAD_COUNT=0
 	export STUB_SEARCH_COUNT=0
 	local state got
-	for state in draft_checkpoint ready_handoff merged closed_unmerged; do
+	for state in draft_checkpoint protected_draft ready_handoff ready_failed merged closed_unmerged unverified_open_pr; do
 		export STUB_HEAD_STATE="$state"
 		got=$(_pr_handoff_state_for_branch_or_issue "feature/state-test" "21870" "owner/repo")
 		if [[ "$got" == "$state" ]]; then
@@ -350,6 +351,39 @@ test_case_g_lifecycle_states_are_preserved() {
 		fi
 	done
 	unset STUB_HEAD_STATE STUB_SEARCH_STATE 2>/dev/null || true
+	return 0
+}
+
+test_case_h_real_pr_shapes_are_classified() {
+	export STUB_HEAD_COUNT=0
+	export STUB_SEARCH_COUNT=0
+	unset STUB_HEAD_STATE STUB_SEARCH_STATE 2>/dev/null || true
+	local got=""
+
+	export STUB_HEAD_JSON='[{"number":1,"state":"OPEN","isDraft":false,"mergedAt":null,"labels":[{"name":"origin:worker"}],"statusCheckRollup":[{"state":"FAILURE"}]}]'
+	got=$(_pr_handoff_state_for_branch_or_issue "feature/state-shapes" "21870" "owner/repo")
+	if [[ "$got" == "ready_failed" ]]; then
+		print_result "case H: StatusContext state=FAILURE is not a ready handoff" 0
+	else
+		print_result "case H: StatusContext state=FAILURE is not a ready handoff" 1 "got: '$got'"
+	fi
+
+	export STUB_HEAD_JSON='[{"number":2,"state":"OPEN","isDraft":true,"mergedAt":null,"labels":[{"name":"origin:worker"}],"statusCheckRollup":[]}]'
+	got=$(_pr_handoff_state_for_branch_or_issue "feature/state-shapes" "21870" "owner/repo")
+	if [[ "$got" == "draft_checkpoint" ]]; then
+		print_result "case H: worker-owned draft is a checkpoint" 0
+	else
+		print_result "case H: worker-owned draft is a checkpoint" 1 "got: '$got'"
+	fi
+
+	export STUB_HEAD_JSON='[{"number":3,"state":"OPEN","isDraft":true,"mergedAt":null,"labels":[{"name":"origin:interactive"}],"statusCheckRollup":[]}]'
+	got=$(_pr_handoff_state_for_branch_or_issue "feature/state-shapes" "21870" "owner/repo")
+	if [[ "$got" == "protected_draft" ]]; then
+		print_result "case H: interactive draft is protected" 0
+	else
+		print_result "case H: interactive draft is protected" 1 "got: '$got'"
+	fi
+	unset STUB_HEAD_JSON 2>/dev/null || true
 	return 0
 }
 
@@ -365,6 +399,7 @@ test_case_d2_empty_repo_unknown
 test_case_e_orphan_recovery_skips_when_pr_exists
 test_case_f_orphan_recovery_proceeds_when_no_pr
 test_case_g_lifecycle_states_are_preserved
+test_case_h_real_pr_shapes_are_classified
 
 printf '\nRan %d test(s), %d failed\n' "$TESTS_RUN" "$TESTS_FAILED"
 
