@@ -60,7 +60,10 @@ if grep -Fq -- '--argjson current_runs' "${REPO_ROOT}/.github/workflows/postflig
 	exit 1
 fi
 
-grep -Fq -- '--slurpfile current_run_documents' "${REPO_ROOT}/.github/workflows/postflight.yml"
+if ! grep -Fq -- '--slurpfile current_run_documents' "${REPO_ROOT}/.github/workflows/postflight.yml"; then
+	printf 'FAIL: postflight does not use --slurpfile for current_run_documents\n' >&2
+	exit 1
+fi
 
 printf 'PASS: postflight reconciliation avoids argv size limits\n'
 
