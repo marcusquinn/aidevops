@@ -34,10 +34,13 @@ main() {
 
 	local version_manager="${AIDEVOPS_FULL_LOOP_VERSION_MANAGER:-$release_path/.agents/scripts/version-manager.sh}"
 	[[ -f "$version_manager" ]] || return 1
-	AIDEVOPS_RELEASE_INTENT_TRUSTED=1 \
-		AIDEVOPS_TRUSTED_ISSUE_PRIORITY="${AIDEVOPS_TRUSTED_ISSUE_PRIORITY:-}" \
-		AIDEVOPS_RELEASE_DEPLOY_SCOPE="$deployment_scope" \
-		bash "$version_manager" release "$release_type" --source-pr "$source_pr"
+	(
+		cd "$release_path" || exit 1
+		AIDEVOPS_RELEASE_INTENT_TRUSTED=1 \
+			AIDEVOPS_TRUSTED_ISSUE_PRIORITY="${AIDEVOPS_TRUSTED_ISSUE_PRIORITY:-}" \
+			AIDEVOPS_RELEASE_DEPLOY_SCOPE="$deployment_scope" \
+			bash "$version_manager" release "$release_type" --source-pr "$source_pr"
+	)
 	return $?
 }
 
