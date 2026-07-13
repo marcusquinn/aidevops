@@ -64,7 +64,11 @@ next_action: "${NEXT_ACTION:-resume}"
 terminal_evidence: "${TERMINAL_EVIDENCE:-}"
 executor_status: ${EXECUTOR_STATUS:-$_FULL_LOOP_EXECUTOR_INITIALIZED}
 executor_pid: "${EXECUTOR_PID:-}"
+executor_identity: "${EXECUTOR_IDENTITY:-}"
 heartbeat_at: "${HEARTBEAT_AT:-}"
+pr_check_status: "${PR_CHECK_STATUS:-}"
+pr_check_head: "${PR_CHECK_HEAD:-}"
+pr_check_evidence: "${PR_CHECK_EVIDENCE:-}"
 manual_resume_count: ${MANUAL_RESUME_COUNT:-0}
 reused_subagent_units: ${REUSED_SUBAGENT_UNITS:-0}
 duplicate_work_avoided: ${DUPLICATE_WORK_AVOIDED:-0}
@@ -125,7 +129,11 @@ load_state() {
 	TERMINAL_EVIDENCE=""
 	EXECUTOR_STATUS="$_FULL_LOOP_EXECUTOR_INITIALIZED"
 	EXECUTOR_PID=""
+	EXECUTOR_IDENTITY=""
 	HEARTBEAT_AT=""
+	PR_CHECK_STATUS=""
+	PR_CHECK_HEAD=""
+	PR_CHECK_EVIDENCE=""
 	MANUAL_RESUME_COUNT="0"
 	REUSED_SUBAGENT_UNITS="0"
 	DUPLICATE_WORK_AVOIDED="0"
@@ -157,7 +165,8 @@ load_state() {
 		case "$_key" in
 		PHASE | ACTIVE | ITERATION | STARTED_AT | UPDATED_AT | RUN_ID | STATE_REVISION | \
 			PHASE_STATUS | PHASE_ATTEMPT | PHASE_STARTED_AT | PHASE_ENDED_AT | NEXT_ACTION | TERMINAL_EVIDENCE | \
-			EXECUTOR_STATUS | EXECUTOR_PID | HEARTBEAT_AT | MANUAL_RESUME_COUNT | REUSED_SUBAGENT_UNITS | DUPLICATE_WORK_AVOIDED | \
+			EXECUTOR_STATUS | EXECUTOR_PID | EXECUTOR_IDENTITY | HEARTBEAT_AT | PR_CHECK_STATUS | PR_CHECK_HEAD | PR_CHECK_EVIDENCE | \
+			MANUAL_RESUME_COUNT | REUSED_SUBAGENT_UNITS | DUPLICATE_WORK_AVOIDED | \
 			MAX_TASK_ITERATIONS | MAX_PREFLIGHT_ITERATIONS | \
 			MAX_PR_ITERATIONS | SKIP_PREFLIGHT | SKIP_POSTFLIGHT | SKIP_RUNTIME_TESTING | \
 			NO_AUTO_PR | NO_AUTO_DEPLOY | RELEASE_INTENT | RELEASE_TYPE | DEPLOYMENT_SCOPE | RELEASE_STATUS | HEADLESS | PR_NUMBER)
@@ -670,8 +679,21 @@ _launch_background() {
 	export SKIP_PREFLIGHT SKIP_POSTFLIGHT SKIP_RUNTIME_TESTING NO_AUTO_PR NO_AUTO_DEPLOY RELEASE_INTENT RELEASE_TYPE DEPLOYMENT_SCOPE RELEASE_STATUS FULL_LOOP_HEADLESS="$HEADLESS"
 	nohup "$AIDEVOPS_FULL_LOOP_EXECUTOR" "$0" "$prompt" >"${STATE_DIR}/full-loop.log" 2>&1 &
 	EXECUTOR_PID="$!"
+	EXECUTOR_IDENTITY="${AIDEVOPS_FULL_LOOP_EXECUTOR##*/}"
 	echo "$EXECUTOR_PID" >"${STATE_DIR}/full-loop.pid"
-	if kill -0 "$EXECUTOR_PID" 2>/dev/null; then
+	local heartbeat_file="${STATE_DIR}/full-loop.heartbeat"
+	local handshake_attempt=0
+	local heartbeat_run=""
+	while [[ "$handshake_attempt" -lt 20 ]]; do
+		handshake_attempt=$((handshake_attempt + 1))
+		if [[ -f "$heartbeat_file" ]]; then
+			read -r heartbeat_run HEARTBEAT_AT <"$heartbeat_file" || true
+			[[ "$heartbeat_run" == "$RUN_ID" ]] && break
+		fi
+		kill -0 "$EXECUTOR_PID" 2>/dev/null || break
+		sleep 0.1
+	done
+	if kill -0 "$EXECUTOR_PID" 2>/dev/null && [[ "$heartbeat_run" == "$RUN_ID" ]]; then
 		EXECUTOR_STATUS="$_FULL_LOOP_PHASE_RUNNING"
 		HEARTBEAT_AT="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
 		NEXT_ACTION="monitor"
@@ -682,6 +704,7 @@ _launch_background() {
 		printf 'FULL_LOOP_START_RESULT=running\n'
 		return 0
 	fi
+	kill "$EXECUTOR_PID" 2>/dev/null || true
 	EXECUTOR_STATUS="$_FULL_LOOP_EXECUTOR_INITIALIZED"
 	EXECUTOR_PID=""
 	NEXT_ACTION="attach-executor-or-resume"
@@ -690,6 +713,36 @@ _launch_background() {
 	_full_loop_append_event "executor.start_failed" "$_FULL_LOOP_EXECUTOR_INITIALIZED"
 	print_warning "Background executor exited before liveness could be verified."
 	printf 'FULL_LOOP_START_RESULT=initialized-only\n'
+	return 0
+}
+
+_full_loop_acquire_transition_lock() {
+	local lock_dir="${STATE_DIR}/full-loop-transition.lock"
+	local owner_file="${lock_dir}/pid"
+	if mkdir "$lock_dir" 2>/dev/null; then
+		printf '%s\n' "$$" >"$owner_file"
+		return 0
+	fi
+	local owner_pid=""
+	[[ -f "$owner_file" ]] && owner_pid=$(<"$owner_file")
+	if [[ "$owner_pid" =~ ^[0-9]+$ ]] && kill -0 "$owner_pid" 2>/dev/null; then
+		print_error "Another lifecycle transition owns the full-loop state lock (PID: ${owner_pid})"
+		return 1
+	fi
+	rm -f "$owner_file"
+	rmdir "$lock_dir" 2>/dev/null || return 1
+	if mkdir "$lock_dir" 2>/dev/null; then
+		printf '%s\n' "$$" >"$owner_file"
+		return 0
+	fi
+	print_error "Could not acquire the full-loop state transition lock"
+	return 1
+}
+
+_full_loop_release_transition_lock() {
+	local lock_dir="${STATE_DIR}/full-loop-transition.lock"
+	rm -f "${lock_dir}/pid"
+	rmdir "$lock_dir" 2>/dev/null || true
 	return 0
 }
 
@@ -778,7 +831,11 @@ cmd_resume() {
 		print_error "No active loop to resume"
 		return 1
 	}
-	load_state
+	_full_loop_acquire_transition_lock || return 1
+	load_state || {
+		_full_loop_release_transition_lock
+		return 1
+	}
 	print_info "Resuming from phase: $CURRENT_PHASE"
 	MANUAL_RESUME_COUNT=$((MANUAL_RESUME_COUNT + 1))
 	PHASE_STATUS="completed"
@@ -788,6 +845,7 @@ cmd_resume() {
 	local transition
 	transition=$(_next_phase "$CURRENT_PHASE") || {
 		print_error "Unknown phase: $CURRENT_PHASE"
+		_full_loop_release_transition_lock
 		return 1
 	}
 	local next_phase="${transition%% *}" emit_fn="${transition#* }"
@@ -805,11 +863,13 @@ cmd_resume() {
 		NEXT_ACTION="retry-${next_phase}"
 		_full_loop_append_event "phase.failed" "$_FULL_LOOP_PHASE_FAILED"
 		save_state "$next_phase" "$SAVED_PROMPT" "${PR_NUMBER:-}" "$STARTED_AT"
+		_full_loop_release_transition_lock
 		return 1
 	fi
 	PHASE_STATUS="$_FULL_LOOP_PHASE_WAITING"
 	NEXT_ACTION="complete-${next_phase}"
 	save_state "$next_phase" "$SAVED_PROMPT" "${PR_NUMBER:-}" "$STARTED_AT"
+	_full_loop_release_transition_lock
 	return 0
 }
 
@@ -825,13 +885,23 @@ _full_loop_record_merged_pr() {
 
 cmd_status() {
 	is_loop_active || {
+		if [[ "${1:-}" == "--json" ]]; then
+			printf '{"active":false,"executor_status":"inactive"}\n'
+			return 0
+		fi
 		echo "No active full loop"
 		return 0
 	}
 	load_state
 	local observed_status="$EXECUTOR_STATUS"
 	if [[ "$observed_status" == "$_FULL_LOOP_PHASE_RUNNING" ]]; then
-		if [[ ! "$EXECUTOR_PID" =~ ^[0-9]+$ ]] || ! kill -0 "$EXECUTOR_PID" 2>/dev/null; then
+		local observed_command=""
+		local heartbeat_file="${STATE_DIR}/full-loop.heartbeat"
+		local heartbeat_run="" heartbeat_timestamp=""
+		[[ -f "$heartbeat_file" ]] && read -r heartbeat_run heartbeat_timestamp <"$heartbeat_file" || true
+		[[ "$EXECUTOR_PID" =~ ^[0-9]+$ ]] && observed_command=$(ps -p "$EXECUTOR_PID" -o command= 2>/dev/null || true)
+		if [[ ! "$EXECUTOR_PID" =~ ^[0-9]+$ ]] || ! kill -0 "$EXECUTOR_PID" 2>/dev/null || \
+			[[ -z "$EXECUTOR_IDENTITY" || "$observed_command" != *"$EXECUTOR_IDENTITY"* || "$heartbeat_run" != "$RUN_ID" ]]; then
 			observed_status="stale"
 		fi
 	fi

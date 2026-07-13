@@ -43,6 +43,8 @@ readonly DECOMPOSE_FALSE="false"
 readonly DECOMPOSE_BREADTH="breadth-first"
 readonly DECOMPOSE_STANDARD="standard"
 readonly DECOMPOSE_KIND_KEY="kind"
+readonly DECOMPOSE_DESCRIPTION_KEY="description"
+readonly DECOMPOSE_BLOCKED_KEY="blocked_by"
 # DECOMPOSE_NO_LLM or legacy DECOMPOSE_TEST_NO_LLM disables LLM calls (for testing)
 readonly NO_LLM="${DECOMPOSE_NO_LLM:-${DECOMPOSE_TEST_NO_LLM:-false}}"
 
@@ -552,6 +554,33 @@ ${lineage}
 #   $2 — max subtasks allowed
 # Output: validated JSON on stdout, or empty string
 #######################################
+_decompose_plan_is_acyclic() {
+	local plan="$1"
+	local count
+	count=$(printf '%s' "$plan" | jq -r '.subtasks | length') || return 1
+	local resolved="," remaining="$count" pass=0
+	while [[ "$pass" -lt "$count" && "$remaining" -gt 0 ]]; do
+		pass=$((pass + 1))
+		local progress=0 index=0
+		while [[ "$index" -lt "$count" ]]; do
+			case "$resolved" in *",${index},"*) index=$((index + 1)); continue ;; esac
+			local ready=true dependency
+			while IFS= read -r dependency; do
+				[[ -z "$dependency" ]] && continue
+				case "$resolved" in *",${dependency},"*) ;; *) ready=false; break ;; esac
+			done < <(printf '%s' "$plan" | jq -r --argjson index "$index" '.subtasks[$index].blocked_by[]?')
+			if [[ "$ready" == true ]]; then
+				resolved="${resolved}${index},"
+				remaining=$((remaining - 1))
+				progress=$((progress + 1))
+			fi
+			index=$((index + 1))
+		done
+		[[ "$progress" -gt 0 ]] || return 1
+	done
+	[[ "$remaining" -eq 0 ]]
+}
+
 extract_decompose_json() {
 	local response="$1"
 	local max_subtasks="${2:-5}"
@@ -616,12 +645,14 @@ if match:
 			and all(.subtasks[]; (.effort == "simple" or .effort == $standard or .effort == "thinking"))
 			and ([.subtasks | to_entries[] | .key as $i | .value.blocked_by[] | select((type != "number") or . < 0 or . >= $n or . == $i)] | length) == 0
 			and all(.subtasks[]; ((.owns.files | length) + (.owns.questions | length)) > 0)
+			and all(.subtasks[].owns.files[]; type == "string" and length > 0 and (startswith("/") | not)
+				and (test("(^|/)\\.{1,2}(/|$)") | not) and (contains("//") | not))
 			and ([range(0; $n) as $i | range($i + 1; $n) as $j
 				| select((([$plan.subtasks[$i].owns.files[]] - ([$plan.subtasks[$i].owns.files[]] - [$plan.subtasks[$j].owns.files[]])) | length) > 0)
 				| select(($plan.subtasks[$j].blocked_by | index($i)) == null)
 				| select(($plan.subtasks[$i].blocked_by | index($j)) == null)] | length) == 0
 		' 2>/dev/null || echo "$DECOMPOSE_FALSE")
-		if [[ "$valid" == "true" ]]; then
+		if [[ "$valid" == "true" ]] && _decompose_plan_is_acyclic "$normalized"; then
 			echo "$normalized"
 			return 0
 		fi
@@ -671,6 +702,16 @@ heuristic_decompose() {
 	fi
 
 	# Build JSON output
+	if ! command -v jq >/dev/null 2>&1; then
+		local legacy_json='{"subtasks":[' legacy_separator="" legacy_item=""
+		for st in "${subtasks[@]}"; do
+			legacy_item=$(printf '%s' "$st" | sed 's/\\/\\\\/g; s/"/\\"/g')
+			legacy_json="${legacy_json}${legacy_separator}{\"${DECOMPOSE_DESCRIPTION_KEY}\":\"${legacy_item}\",\"${DECOMPOSE_BLOCKED_KEY}\":[]}"
+			legacy_separator=","
+		done
+		printf '%s],"strategy":"%s"}\n' "$legacy_json" "$DECOMPOSE_BREADTH"
+		return 0
+	fi
 	local json_output
 	json_output=$(jq -cn --arg strategy "$DECOMPOSE_BREADTH" '{schema_version:1,max_parallel:2,subtasks:[],strategy:$strategy}')
 	local unit_index=0

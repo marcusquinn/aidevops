@@ -41,6 +41,21 @@ fi
 #
 # Usage: full-loop-helper.sh pre-merge-gate <PR_NUMBER> [REPO]
 # Exit codes: 0 = safe to merge, 1 = gate failed (do NOT merge)
+_full_loop_persist_pr_check_evidence() {
+	local status="$1"
+	local head_sha="$2"
+	local evidence="${3:-}"
+	command -v load_state >/dev/null 2>&1 || return 0
+	command -v save_state >/dev/null 2>&1 || return 0
+	[[ -f "${STATE_FILE:-}" ]] || return 0
+	load_state || return 1
+	PR_CHECK_STATUS="$status"
+	PR_CHECK_HEAD="$head_sha"
+	PR_CHECK_EVIDENCE="$evidence"
+	save_state "${CURRENT_PHASE:-pr-review}" "$SAVED_PROMPT" "${PR_NUMBER:-}" "$STARTED_AT"
+	return 0
+}
+
 _full_loop_verify_pr_readiness() {
 	local pr_number="$1"
 	local repo="$2"
@@ -62,6 +77,8 @@ _full_loop_verify_pr_readiness() {
 		print_error "PR #${pr_number} is not remotely verified: require OPEN, non-draft, no changes requested, and a stable head"
 		return 1
 	fi
+	local verified_head=""
+	verified_head=$(printf '%s' "$pr_json" | jq -r '.headRefOid // empty')
 
 	local required_checks=""
 	local required_rc=0
@@ -70,6 +87,7 @@ _full_loop_verify_pr_readiness() {
 	if [[ -z "$required_checks" ]] || ! printf '%s' "$required_checks" | jq -e 'type == "array"' >/dev/null; then
 		FULL_LOOP_PR_CHECK_STATUS="indeterminate"
 		export FULL_LOOP_PR_CHECK_STATUS
+		_full_loop_persist_pr_check_evidence "$FULL_LOOP_PR_CHECK_STATUS" "$verified_head" "unavailable" || true
 		print_error "PR #${pr_number} required-check evidence is indeterminate (gh exit ${required_rc})"
 		return 1
 	fi
@@ -79,20 +97,22 @@ _full_loop_verify_pr_readiness() {
 		if printf '%s' "$non_passing" | jq -e --arg pending "$_FULL_LOOP_CHECK_PENDING" 'all(.[]; (.bucket // "") == $pending)' >/dev/null 2>&1; then
 			FULL_LOOP_PR_CHECK_STATUS="$_FULL_LOOP_CHECK_PENDING"
 			export FULL_LOOP_PR_CHECK_STATUS
+			_full_loop_persist_pr_check_evidence "$FULL_LOOP_PR_CHECK_STATUS" "$verified_head" "required-checks-pending" || true
 			print_info "PR #${pr_number} required checks are pending at the current head; no repair action is eligible"
 		else
 			FULL_LOOP_PR_CHECK_STATUS="terminal-failure"
 			FULL_LOOP_PR_FAILURE_EVIDENCE=$(printf '%s' "$non_passing" | jq -c --arg pending "$_FULL_LOOP_CHECK_PENDING" '[.[] | select((.bucket // "") != $pending) | {name,state,bucket}]')
 			export FULL_LOOP_PR_CHECK_STATUS FULL_LOOP_PR_FAILURE_EVIDENCE
+			local failure_names=""
+			failure_names=$(printf '%s' "$FULL_LOOP_PR_FAILURE_EVIDENCE" | jq -r 'map(.name) | join(",")')
+			_full_loop_persist_pr_check_evidence "$FULL_LOOP_PR_CHECK_STATUS" "$verified_head" "$failure_names" || true
 			print_error "PR #${pr_number} has terminal required-check failures at the current head"
 		fi
 		return 1
 	fi
 	FULL_LOOP_PR_CHECK_STATUS="terminal-success"
 	export FULL_LOOP_PR_CHECK_STATUS
-
-	local verified_head=""
-	verified_head=$(printf '%s' "$pr_json" | jq -r '.headRefOid // empty')
+	_full_loop_persist_pr_check_evidence "$FULL_LOOP_PR_CHECK_STATUS" "$verified_head" "required-checks-pass" || true
 	local pr_head_ref=""
 	pr_head_ref=$(printf '%s' "$pr_json" | jq -r '.headRefName // empty')
 	local local_branch=""
