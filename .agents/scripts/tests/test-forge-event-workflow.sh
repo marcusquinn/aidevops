@@ -67,7 +67,13 @@ cat >"${test_root}/bin/gh" <<'GH'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >>"$GH_CALL_LOG"
 if [[ "$*" == *"actions/artifacts?per_page=100"* ]]; then
-	if [[ "$*" == *"--paginate --slurp"* ]]; then printf '22\n'; else printf '11\n22\n'; fi
+	if [[ "${GH_ARTIFACT_FIXTURE:-pages}" == "malformed" ]]; then
+		printf '22\n23\n'
+	else
+		[[ "$*" == *'sort_by([.created_at, .id])'* ]]
+		[[ "$*" == *'.expired // false'* ]]
+		printf '24\n'
+	fi
 	exit 0
 fi
 [[ "$*" != *$'\n'* ]] || exit 1
@@ -83,6 +89,20 @@ GH_CALL_LOG="${test_root}/api.log" PATH="${test_root}/bin:/usr/bin:/bin" bash "$
 [[ "$(cat "${test_root}/state/tasks.db")" == "durable-db" ]]
 grep -q 'repos/owner/repo/actions/artifacts?per_page=100' "${test_root}/api.log"
 grep -q -- '--paginate --slurp' "${test_root}/api.log"
-grep -q 'repos/owner/repo/actions/artifacts/22/zip' "${test_root}/api.log"
+grep -q 'repos/owner/repo/actions/artifacts/24/zip' "${test_root}/api.log"
+[[ "$(grep -c '/zip' "${test_root}/api.log")" -eq 1 ]]
+
+# A malformed multi-line selector result must fail before URL construction.
+: >"${test_root}/api.log"
+if GH_ARTIFACT_FIXTURE=malformed GH_CALL_LOG="${test_root}/api.log" PATH="${test_root}/bin:/usr/bin:/bin" \
+	bash "$STATE_HELPER" restore "${test_root}/state" owner/repo R_1 2>"${test_root}/restore-error"; then
+	printf 'FAIL malformed artifact ID unexpectedly restored\n' >&2
+	exit 1
+fi
+grep -q 'Invalid coordinator artifact ID' "${test_root}/restore-error"
+if grep -q '/zip' "${test_root}/api.log"; then
+	printf 'FAIL malformed artifact ID reached the download endpoint\n' >&2
+	exit 1
+fi
 
 printf 'PASS forge event workflow is targeted, repository-bound, and repair scans are manual only\n'
