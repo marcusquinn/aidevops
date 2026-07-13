@@ -645,9 +645,12 @@ _trusted_existing_approver() {
 	local pr_number="$2"
 	local approval_head_sha="${3:-__any_head__}"
 	local existing_approver=""
+	local reviews_response=""
 
-	existing_approver=$(gh api "repos/${repo_slug}/pulls/${pr_number}/reviews" |
-		jq -r --arg head "$approval_head_sha" '[.[]? | select(.state == "APPROVED" and ($head == "__any_head__" or .commit_id == $head) and (.author_association == "OWNER" or .author_association == "MEMBER" or .author_association == "COLLABORATOR")) | .user.login][0] // ""') || existing_approver=""
+	reviews_response=$(gh api "repos/${repo_slug}/pulls/${pr_number}/reviews") || reviews_response=""
+	if [[ -n "$reviews_response" ]]; then
+		existing_approver=$(jq -r --arg head "$approval_head_sha" '[.[]? | select(.state == "APPROVED" and ($head == "__any_head__" or .commit_id == $head) and (.author_association == "OWNER" or .author_association == "MEMBER" or .author_association == "COLLABORATOR")) | .user.login][0] // ""' <<<"$reviews_response") || existing_approver=""
+	fi
 	printf '%s\n' "$existing_approver"
 	return 0
 }

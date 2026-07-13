@@ -83,6 +83,7 @@ EOF
 	echo "pulse-runner" >"${TEST_ROOT}/current-user.txt"
 	# Default: no prior reviews.
 	printf '[]\n' >"${TEST_ROOT}/reviews.json"
+	printf '0\n' >"${TEST_ROOT}/reviews-exit-code.txt"
 	# Default: no crypto-approval markers in comments (count 0).
 	# Controls the mock gh comments endpoint response for _has_maintainer_crypto_approval.
 	echo "0" >"${TEST_ROOT}/crypto-comment-count.txt"
@@ -148,6 +149,10 @@ fi
 
 # `gh api repos/SLUG/pulls/N/reviews --jq ...` — existing trusted approval
 if [[ "${1:-}" == "api" && "$*" == *"/pulls/"*"/reviews"* ]]; then
+	_reviews_exit_code=$(<"${TEST_ROOT}/reviews-exit-code.txt")
+	if [[ "$_reviews_exit_code" -ne 0 ]]; then
+		exit "$_reviews_exit_code"
+	fi
 	jq -r "${4:-.}" "${TEST_ROOT}/reviews.json"
 	exit 0
 fi
@@ -475,6 +480,53 @@ EOF
 }
 
 # =============================================================================
+# Case G (GH#27525): an empty reviews response must not be passed to jq.
+# API failures fail open without adding a misleading jq parse error to stderr.
+# =============================================================================
+
+test_case_g_empty_reviews_response_skips_jq() {
+	reset_mock_state
+	: >"${TEST_ROOT}/reviews.json"
+	local approver=""
+	local stderr_file="${TEST_ROOT}/trusted-approval.stderr"
+
+	approver=$(_trusted_existing_approver "owner/repo" "700" "head-700" 2>"$stderr_file")
+	if [[ -n "$approver" ]]; then
+		print_result "Case G: empty reviews response — no approver returned" 1 \
+			"Expected an empty approver, got ${approver}"
+		return 0
+	fi
+	if [[ -s "$stderr_file" ]]; then
+		print_result "Case G: empty reviews response — jq is not invoked" 1 \
+			"Expected empty stderr, got: $(<"$stderr_file")"
+		return 0
+	fi
+	print_result "Case G: empty reviews response — jq is not invoked" 0
+	return 0
+}
+
+test_case_h_failed_reviews_request_skips_jq() {
+	reset_mock_state
+	printf '1\n' >"${TEST_ROOT}/reviews-exit-code.txt"
+	local approver=""
+	local stderr_file="${TEST_ROOT}/trusted-approval-failure.stderr"
+
+	approver=$(_trusted_existing_approver "owner/repo" "800" "head-800" 2>"$stderr_file")
+	if [[ -n "$approver" ]]; then
+		print_result "Case H: failed reviews request — no approver returned" 1 \
+			"Expected an empty approver, got ${approver}"
+		return 0
+	fi
+	if [[ -s "$stderr_file" ]]; then
+		print_result "Case H: failed reviews request — jq is not invoked" 1 \
+			"Expected empty stderr, got: $(<"$stderr_file")"
+		return 0
+	fi
+	print_result "Case H: failed reviews request — jq is not invoked" 0
+	return 0
+}
+
+# =============================================================================
 # Case N (t3063): CONTRIBUTOR author + crypto-approval on PR itself → approves.
 # The crypto-approval bypass in approve_collaborator_pr should allow approval
 # even though the PR author is not a collaborator.
@@ -602,6 +654,8 @@ main() {
 	test_case_d_runner_lacks_write_access_skipped
 	test_case_e_cross_account_approval_short_circuits
 	test_case_f_untrusted_or_stale_approval_does_not_short_circuit
+	test_case_g_empty_reviews_response_skips_jq
+	test_case_h_failed_reviews_request_skips_jq
 	test_case_n_contributor_with_crypto_on_pr
 	test_case_o_contributor_with_crypto_on_linked_issue
 	test_case_p_contributor_no_crypto_still_refused
