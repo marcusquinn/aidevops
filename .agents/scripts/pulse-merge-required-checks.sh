@@ -187,11 +187,18 @@ _pmrc_snapshot_review_gate_fresh() {
 	local pr_number="$2"
 	local checks_json="$3"
 	local activity_json="$4"
+	local live_gate_evidence="${5:-}"
 	local gate_at="" activity_at="" gate_epoch="" activity_epoch=""
 
 	gate_at=$(jq -r --arg completed "$PMRC_CHECK_COMPLETED" --arg success "$PMRC_CHECK_SUCCESS" '[.[]? | select((.name == "review-bot-gate" or .name == "gate / review-bot-gate") and .status == $completed and .conclusion == $success) | .observed_at | select(. != "")] | max // ""' <<<"$checks_json") || return 1
 	activity_at=$(jq -r '.latest_at // ""' <<<"$activity_json") || return 1
 	if [[ -z "$gate_at" ]]; then
+		#aidevops:trust-boundary — the live helper ran for this exact PR/head, and
+		# the caller immediately revalidates that head before reaching this check.
+		if [[ -n "$live_gate_evidence" ]]; then
+			echo "[pulse-merge] pre-merge snapshot: accepted live review-bot gate bound to the current head for PR #${pr_number} in ${repo_slug}; no status context is installed (GH#27483)" >>"$LOGFILE"
+			return 0
+		fi
 		echo "[pulse-merge] pre-merge snapshot: no successful review-bot gate is bound to the current head for PR #${pr_number} in ${repo_slug} (GH#27137)" >>"$LOGFILE"
 		return 1
 	fi
@@ -232,6 +239,8 @@ _pulse_merge_preflight_snapshot_gate() {
 	local repo_slug="$1"
 	local pr_number="$2"
 	local expected_head_sha="$3"
+	local expected_gate_evidence="${repo_slug}#${pr_number}@${expected_head_sha}"
+	local live_gate_evidence="${_PULSE_REVIEW_GATE_EVIDENCE:-}"
 	local pr_json="" current_head_sha="" required_contexts="" checks_json="" activity_json=""
 
 	pr_json=$(_pmrc_gh_read gh api "repos/${repo_slug}/pulls/${pr_number}" 2>/dev/null) || return 1
@@ -243,7 +252,8 @@ _pulse_merge_preflight_snapshot_gate() {
 	required_contexts=$(_required_contexts_for_default_branch "$repo_slug") || return 1
 	checks_json=$(_pmrc_snapshot_checks_json "$repo_slug" "$current_head_sha") || return 1
 	activity_json=$(_pmrc_snapshot_bot_activity_json "$repo_slug" "$pr_number") || return 1
-	_pmrc_snapshot_review_gate_fresh "$repo_slug" "$pr_number" "$checks_json" "$activity_json" || return 1
+	[[ "$live_gate_evidence" == "$expected_gate_evidence" ]] || live_gate_evidence=""
+	_pmrc_snapshot_review_gate_fresh "$repo_slug" "$pr_number" "$checks_json" "$activity_json" "$live_gate_evidence" || return 1
 	_pmrc_snapshot_review_threads_clear "$repo_slug" "$pr_number" || return 1
 	_pmrc_snapshot_checks_acceptable "$repo_slug" "$pr_number" "$checks_json" "$required_contexts" || return 1
 	_pmrc_snapshot_quiet_period_passes "$repo_slug" "$pr_number" "$checks_json" "$activity_json" || return 1
