@@ -199,7 +199,7 @@ process_repo() {
 
 	# Build search query excluding all status:* and protected labels
 	local search_query
-	search_query="label:auto-dispatch$(build_exclusion_query)"
+	search_query="label:auto-dispatch$(build_exclusion_query) sort:created-asc"
 
 	local issues_json
 	issues_json=$(gh issue list --repo "$repo" \
