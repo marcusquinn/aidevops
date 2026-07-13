@@ -57,7 +57,8 @@ available diagnostics. Obtain the current runtime ID with
 `printenv OPENCODE_SESSION_ID || printenv CLAUDE_SESSION_ID || true`, then
 substitute the returned literal for `<session-id>`; this remains successful when
 neither variable is set and avoids expansion that command-policy parsing may
-reject.
+reject. If the command returns no literal, mark session-specific diagnostics
+unavailable and skip every command requiring `<session-id>`.
 
 | Evidence | Command or source | Run when |
 |---|---|---|
