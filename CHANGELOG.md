@@ -10,6 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.32.87] - 2026-07-13
+
+### Fixed
+
+- select one coordinator artifact across pages (#27475)
+
 ## [3.32.86] - 2026-07-13
 
 ### Changed
