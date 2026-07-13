@@ -943,9 +943,9 @@ cmd_record_outcome() {
 		fi
 	fi
 
-	if [[ -n "$attempt_id" ]] && jq -e --arg aid "$attempt_id" \
-		'select(.outcome != "pending" and (.attempt_id // "") == $aid)' \
-		"$telemetry_file" >/dev/null 2>&1; then
+	if [[ -n "$attempt_id" ]] && jq -es --arg aid "$attempt_id" \
+		'any(.[]; .outcome != "pending" and (.attempt_id // "") == $aid)' \
+		"$telemetry_file" >/dev/null; then
 		_release_lock
 		return 0
 	fi
