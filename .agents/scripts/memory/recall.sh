@@ -873,82 +873,80 @@ EOF
 #   memory-helper.sh feedback mem_xxx --signal dead_end
 #   memory-helper.sh feedback mem_xxx --value 0.8
 #######################################
-cmd_feedback() {
-	local memory_id=""
-	local signal=""
-	local custom_value=""
+_feedback_parse_args() {
+	_FEEDBACK_MEMORY_ID=""
+	_FEEDBACK_SIGNAL=""
+	_FEEDBACK_CUSTOM_VALUE=""
 
 	while [[ $# -gt 0 ]]; do
-		case "$1" in
+		local arg="$1"
+		local next_arg="${2:-}"
+		case "$arg" in
 		--signal | -s)
 			[[ $# -ge 2 ]] || {
-				log_error "Option $1 requires an argument"
+				log_error "Option $arg requires an argument"
 				return 1
 			}
-			signal="$2"
+			_FEEDBACK_SIGNAL="$next_arg"
 			shift 2
 			;;
 		--value | -v)
 			[[ $# -ge 2 ]] || {
-				log_error "Option $1 requires an argument"
+				log_error "Option $arg requires an argument"
 				return 1
 			}
-			custom_value="$2"
+			_FEEDBACK_CUSTOM_VALUE="$next_arg"
 			shift 2
 			;;
 		*)
-			if [[ -z "$memory_id" ]]; then
-				memory_id="$1"
+			if [[ -z "$_FEEDBACK_MEMORY_ID" ]]; then
+				_FEEDBACK_MEMORY_ID="$arg"
 			fi
 			shift
 			;;
 		esac
 	done
 
-	if [[ -z "$memory_id" ]]; then
+	if [[ -z "$_FEEDBACK_MEMORY_ID" ]]; then
 		log_error "Memory ID is required. Usage: memory-helper.sh feedback <id> [--signal <type>]"
 		return 1
 	fi
-	if [[ -n "$custom_value" ]] && ! [[ "$custom_value" =~ ^-?[0-9]+([.][0-9]+)?$ ]]; then
+	if [[ -n "$_FEEDBACK_CUSTOM_VALUE" ]] && ! [[ "$_FEEDBACK_CUSTOM_VALUE" =~ ^-?[0-9]+([.][0-9]+)?$ ]]; then
 		log_error "--value must be numeric"
 		return 1
 	fi
+	return 0
+}
 
-	init_db
-
-	# Validate memory exists
-	local escaped_id="${memory_id//"'"/"''"}"
-	local exists
-	exists=$(db "$MEMORY_DB" "SELECT COUNT(*) FROM learnings WHERE id = '$escaped_id';")
-	if [[ "$exists" == "0" ]]; then
-		log_error "Memory not found: $memory_id"
-		return 1
-	fi
-
-	# Determine reward value from signal type or custom value
-	local reward="0.5" # default: moderate positive signal
+_feedback_resolve_reward() {
+	local custom_value="$1"
+	local signal="$2"
 	if [[ -n "$custom_value" ]]; then
-		reward="$custom_value"
-	elif [[ -n "$signal" ]]; then
-		case "$signal" in
-		cited) reward="1.0" ;;
-		edited) reward="0.5" ;;
-		led_to_new) reward="0.6" ;;
-		reused) reward="0.4" ;;
-		dead_end) reward="-0.15" ;;
-		false | debunked) reward="-2.0" ;;
-		*)
-			log_error "Unknown signal type: $signal"
-			log_error "Valid signals: cited, edited, led_to_new, reused, dead_end, false, debunked"
-			return 1
-			;;
-		esac
+		printf '%s' "$custom_value"
+		return 0
 	fi
+	case "$signal" in
+	"") printf '0.5' ;;
+	cited) printf '1.0' ;;
+	edited) printf '0.5' ;;
+	led_to_new) printf '0.6' ;;
+	reused) printf '0.4' ;;
+	dead_end) printf '%s' '-0.15' ;;
+	false | debunked) printf '%s' '-2.0' ;;
+	*)
+		log_error "Unknown signal type: $signal"
+		log_error "Valid signals: cited, edited, led_to_new, reused, dead_end, false, debunked"
+		return 1
+		;;
+	esac
+	return 0
+}
 
-	# Upsert: create learning_access row if missing, then update usefulness_score.
-	# Score is additive (EMA-like accumulation) — each feedback event shifts the
-	# score. Floor at -5.0 so false/debunked signals can strongly demote myth-like
-	# memories while still keeping the audit trail intact.
+_feedback_store_outcome() {
+	local escaped_id="$1"
+	local reward="$2"
+	local signal="$3"
+
 	db "$MEMORY_DB" <<EOF
 INSERT INTO learning_access (id, last_accessed_at, access_count, usefulness_score)
 VALUES ('$escaped_id', datetime('now'), 0, MAX(-5.0, $reward))
@@ -971,9 +969,29 @@ VALUES (
     $reward, 'signal=${signal:-custom}', strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
 );
 EOF
+	db "$MEMORY_DB" "SELECT COALESCE(usefulness_score, 0.0) FROM learning_access WHERE id = '$escaped_id';" 2>/dev/null || printf '0.0'
+	return 0
+}
 
-	local new_score
-	new_score=$(db "$MEMORY_DB" "SELECT COALESCE(usefulness_score, 0.0) FROM learning_access WHERE id = '$escaped_id';" 2>/dev/null || echo "0.0")
+cmd_feedback() {
+	_feedback_parse_args "$@" || return 1
+	local memory_id="$_FEEDBACK_MEMORY_ID"
+	local signal="$_FEEDBACK_SIGNAL"
+	local custom_value="$_FEEDBACK_CUSTOM_VALUE"
+	local escaped_id="${memory_id//"'"/"''"}"
+
+	init_db
+	local exists=""
+	exists=$(db "$MEMORY_DB" "SELECT COUNT(*) FROM learnings WHERE id = '$escaped_id';")
+	if [[ "$exists" == "0" ]]; then
+		log_error "Memory not found: $memory_id"
+		return 1
+	fi
+
+	local reward=""
+	reward=$(_feedback_resolve_reward "$custom_value" "$signal") || return 1
+	local new_score=""
+	new_score=$(_feedback_store_outcome "$escaped_id" "$reward" "$signal")
 
 	if [[ -n "$signal" ]]; then
 		log_success "Feedback recorded: $memory_id signal=$signal reward=$reward (score now: $new_score)"
