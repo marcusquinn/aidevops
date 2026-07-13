@@ -10,6 +10,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.32.102] - 2026-07-13
+
+### Changed
+
+- Maintenance: sync ref:GH#27564 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#27560 to TODO.md [skip ci]
+- Tests: short-circuit absent fixture git (#27553)
+
+### Fixed
+
+- scope postflight to release-owned checks (#27559)
+
 ## [3.32.101] - 2026-07-13
 
 ### Fixed
