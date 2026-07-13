@@ -238,6 +238,7 @@ export async function AidevopsPlugin({ directory, client }) {
   });
 
   const shellEnvHook = createShellEnvHook({
+    activeAgentsDir: ACTIVE_AGENTS_DIR,
     agentsDir: AGENTS_DIR,
     scriptsDir: SCRIPTS_DIR,
     workspaceDir: WORKSPACE_DIR,
