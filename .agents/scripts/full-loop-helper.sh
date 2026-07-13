@@ -184,8 +184,8 @@ Worker aborted PR creation: issue #${issue_number} was already closed by the tim
 	_post_merge_summary "$pr_number" "$repo" "$issue_number" "$summary_what" "$files_changed" "$summary_testing" "$summary_decisions"
 	_label_issue_in_review "$issue_number" "$repo"
 	_label_pr_in_review "$pr_number" "$repo"
-	if is_loop_active && load_state; then
-		save_state "pr-review" "$SAVED_PROMPT" "$pr_number" "$STARTED_AT"
+	if is_loop_active; then
+		_full_loop_record_phase "pr-review" "$pr_number" || return 1
 	fi
 
 	# Output PR number for caller to pass to `merge`
@@ -202,7 +202,7 @@ Usage: full-loop-helper.sh <command> [options]
 Commands:
   start "<prompt>"              Start a new development loop
   resume                        Resume from last phase
-  status                        Show current loop state
+  status [--json]               Show observed executor and lifecycle state
   cancel                        Cancel active loop
   logs [N]                      Show last N log lines (default: 50)
   commit-and-pr|create-pr --issue N --message "msg"
@@ -243,7 +243,7 @@ main() {
 	local command="${1:-help}"
 	shift || true
 	case "$command" in
-	start) cmd_start "$@" ;; resume) cmd_resume ;; status) cmd_status ;;
+	start) cmd_start "$@" ;; resume) cmd_resume ;; status) cmd_status "$@" ;;
 	cancel) cmd_cancel ;; logs) cmd_logs "$@" ;; _run_foreground) _run_foreground "$@" ;;
 	commit-and-pr | create-pr) cmd_commit_and_pr "$@" ;;
 	pre-merge-gate) cmd_pre_merge_gate "$@" ;;

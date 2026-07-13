@@ -26,6 +26,10 @@ The selected agent changes the system prompt and domain knowledge loaded for the
 - Prefix every delegated prompt with `[effort:simple]`, `[effort:standard]`, or `[effort:thinking]`; use the lowest tier that can reliably complete the task.
 - Keep the parent progressing on non-overlapping work. Do not finalize with children pending; use their returned evidence or complete the work locally and disregard late results.
 - Subagents must not dispatch further subagents. OpenCode maps the requested effort to the provider and clamps it so child reasoning never exceeds the parent session.
+- For full-loop work, persist stable unit IDs, dependencies, explicit file/question ownership, effort tier, and a reuse key before dispatch. Parallel-ready units must have disjoint file ownership; overlap is serialized even when capacity is available.
+- Effective concurrency is the minimum of the plan cap, mode cap, and available global slots. Interactive batches remain capped at two; headless uses its configured per-task cap.
+- Persist completed-unit evidence and reuse it after retries or runtime interruption. The primary repeats delegated exploration only when its evidence is absent, stale, or contradictory.
+- Consolidate adversarial review into bounded correctness/concurrency, security/trust, compatibility/quality, and test-adequacy units, followed by one synthesis and one repair pass.
 
 ## Primary agents
 

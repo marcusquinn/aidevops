@@ -105,6 +105,20 @@ check_targeted_tests() {
 	return 0
 }
 
+_linters_local_required_diff_gate() {
+	local metric="$1"
+	record_call "$metric"
+	return 0
+}
+
+_linters_local_run_cached_gate() {
+	local gate_name="$1"
+	local gate_function="$2"
+	: "$gate_name"
+	"$gate_function"
+	return $?
+}
+
 assert_called() {
 	local name="$1"
 	if printf '%s\n' "$CALLS" | grep -qxF "$name"; then

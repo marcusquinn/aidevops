@@ -39,8 +39,24 @@ set -euo pipefail
 readonly DEFAULT_MAX_DEPTH="${DECOMPOSE_MAX_DEPTH:-3}"
 readonly DEFAULT_MAX_SUBTASKS="${DECOMPOSE_MAX_SUBTASKS:-5}"
 readonly AI_HELPER="${SCRIPT_DIR}/ai-research-helper.sh"
+readonly DECOMPOSE_FALSE="false"
+readonly DECOMPOSE_BREADTH="breadth-first"
+readonly DECOMPOSE_STANDARD="standard"
+readonly DECOMPOSE_ATOMIC="atomic"
+readonly DECOMPOSE_COMPOSITE="composite"
+readonly DECOMPOSE_KIND_KEY="kind"
+readonly DECOMPOSE_DESCRIPTION_KEY="description"
+readonly DECOMPOSE_BLOCKED_KEY="blocked_by"
 # DECOMPOSE_NO_LLM or legacy DECOMPOSE_TEST_NO_LLM disables LLM calls (for testing)
 readonly NO_LLM="${DECOMPOSE_NO_LLM:-${DECOMPOSE_TEST_NO_LLM:-false}}"
+
+_decompose_classification_json() {
+	local kind="$1"
+	local confidence="$2"
+	local reasoning="$3"
+	printf '{"kind":"%s","confidence":%s,"reasoning":"%s"}\n' "$kind" "$confidence" "$reasoning"
+	return 0
+}
 
 #######################################
 # Check if LLM calls are available and enabled
@@ -69,7 +85,7 @@ check_existing_subtasks() {
 	local todo_file="$2"
 
 	if [[ -z "$task_id" || ! -f "$todo_file" ]]; then
-		echo "false"
+		echo "$DECOMPOSE_FALSE"
 		return 0
 	fi
 
@@ -86,7 +102,7 @@ check_existing_subtasks() {
 	if grep -qE "$parent_pattern" "$todo_file" && grep -qE "$child_pattern" "$todo_file"; then
 		echo "true"
 	else
-		echo "false"
+		echo "$DECOMPOSE_FALSE"
 	fi
 	return 0
 }
@@ -220,14 +236,14 @@ cmd_classify() {
 		local has_children
 		has_children=$(check_existing_subtasks "$task_id" "$todo_file")
 		if [[ "$has_children" == "true" ]]; then
-			echo '{"kind": "atomic", "confidence": 1.0, "reasoning": "Task already has subtasks in TODO.md — skip re-decomposition"}'
+			_decompose_classification_json "$DECOMPOSE_ATOMIC" "1.0" "Task already has subtasks in TODO.md — skip re-decomposition"
 			return 0
 		fi
 	fi
 
 	# Fast-path: depth 2+ is almost certainly atomic
 	if [[ "$depth" -ge 2 ]]; then
-		echo '{"kind": "atomic", "confidence": 0.9, "reasoning": "Depth >= 2, biased toward atomic per decomposition rules"}'
+		_decompose_classification_json "$DECOMPOSE_ATOMIC" "0.9" "Depth >= 2, biased toward atomic per decomposition rules"
 		return 0
 	fi
 
@@ -274,7 +290,7 @@ extract_classify_json() {
 	if [[ -n "$json_result" ]]; then
 		local kind
 		kind=$(echo "$json_result" | sed -n 's/.*"kind"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
-		if [[ "$kind" == "atomic" || "$kind" == "composite" ]]; then
+		if [[ "$kind" == "$DECOMPOSE_ATOMIC" || "$kind" == "$DECOMPOSE_COMPOSITE" ]]; then
 			echo "$json_result"
 			return 0
 		fi
@@ -283,11 +299,11 @@ extract_classify_json() {
 	# Try 2: extract kind from freeform response
 	local lower_result
 	lower_result=$(echo "$response" | tr '[:upper:]' '[:lower:]')
-	if echo "$lower_result" | grep -q "composite"; then
-		echo '{"kind": "composite", "confidence": 0.7, "reasoning": "LLM indicated composite (parsed from freeform response)"}'
+	if echo "$lower_result" | grep -q "$DECOMPOSE_COMPOSITE"; then
+		_decompose_classification_json "$DECOMPOSE_COMPOSITE" "0.7" "LLM indicated composite (parsed from freeform response)"
 		return 0
-	elif echo "$lower_result" | grep -q "atomic"; then
-		echo '{"kind": "atomic", "confidence": 0.7, "reasoning": "LLM indicated atomic (parsed from freeform response)"}'
+	elif echo "$lower_result" | grep -q "$DECOMPOSE_ATOMIC"; then
+		_decompose_classification_json "$DECOMPOSE_ATOMIC" "0.7" "LLM indicated atomic (parsed from freeform response)"
 		return 0
 	fi
 
@@ -312,7 +328,7 @@ heuristic_classify() {
 
 	# At depth 2+, always atomic
 	if [[ "$depth" -ge 2 ]]; then
-		echo '{"kind": "atomic", "confidence": 0.9, "reasoning": "Heuristic: depth >= 2, biased toward atomic"}'
+		_decompose_classification_json "$DECOMPOSE_ATOMIC" "0.9" "Heuristic: depth >= 2, biased toward atomic"
 		return 0
 	fi
 
@@ -358,9 +374,9 @@ heuristic_classify() {
 	fi
 
 	if [[ "$composite_signals" -ge 2 ]]; then
-		echo '{"kind": "composite", "confidence": 0.5, "reasoning": "Heuristic: multiple composite signals detected (commas, ands, multi-feature keywords)"}'
+		_decompose_classification_json "$DECOMPOSE_COMPOSITE" "0.5" "Heuristic: multiple composite signals detected (commas, ands, multi-feature keywords)"
 	else
-		echo '{"kind": "atomic", "confidence": 0.6, "reasoning": "Heuristic: few composite signals, defaulting to atomic"}'
+		_decompose_classification_json "$DECOMPOSE_ATOMIC" "0.6" "Heuristic: few composite signals, defaulting to atomic"
 	fi
 	return 0
 }
@@ -389,6 +405,9 @@ Rules:
 - Use the blocked_by array to express dependencies (0-indexed subtask numbers).
 - Suggest a batch strategy: 'depth-first' if subtasks have sequential dependencies, 'breadth-first' if mostly independent.
 - Each subtask description should be specific enough to be a standalone task brief — not vague like 'handle edge cases'.
+- Give every unit a stable id, kind, lowest-sufficient effort tier, and explicit ownership of repo-relative files and/or bounded questions.
+- Parallel-ready units must not own the same file. Order overlapping ownership through dependency edges.
+- Set max_parallel to the smallest useful cap (never more than 2 for an interactive plan).
 
 Examples:
 
@@ -409,9 +428,11 @@ Task to decompose: ${description}
 
 Respond with ONLY a JSON object (no markdown, no explanation outside the JSON):
 {
+  \"schema_version\": 1,
+  \"max_parallel\": 2,
   \"subtasks\": [
-    {\"description\": \"subtask description\", \"blocked_by\": []},
-    {\"description\": \"subtask description\", \"blocked_by\": [0]}
+    {\"id\": \"unit-1\", \"${DECOMPOSE_KIND_KEY}\": \"discovery\", \"description\": \"subtask description\", \"effort\": \"simple\", \"owns\": {\"files\": [], \"questions\": [\"bounded question\"]}, \"blocked_by\": [], \"reuse_key\": \"unit-1-input\"},
+    {\"id\": \"unit-2\", \"${DECOMPOSE_KIND_KEY}\": \"implementation\", \"description\": \"subtask description\", \"effort\": \"${DECOMPOSE_STANDARD}\", \"owns\": {\"files\": [\"repo/relative/path\"], \"questions\": []}, \"blocked_by\": [0], \"reuse_key\": \"unit-2-input\"}
   ],
   \"strategy\": \"depth-first\" or \"breadth-first\"
 }"
@@ -543,6 +564,33 @@ ${lineage}
 #   $2 — max subtasks allowed
 # Output: validated JSON on stdout, or empty string
 #######################################
+_decompose_plan_is_acyclic() {
+	local plan="$1"
+	local count
+	count=$(printf '%s' "$plan" | jq -r '.subtasks | length') || return 1
+	local resolved="," remaining="$count" pass=0
+	while [[ "$pass" -lt "$count" && "$remaining" -gt 0 ]]; do
+		pass=$((pass + 1))
+		local progress=0 index=0
+		while [[ "$index" -lt "$count" ]]; do
+			case "$resolved" in *",${index},"*) index=$((index + 1)); continue ;; esac
+			local ready=true dependency
+			while IFS= read -r dependency; do
+				[[ -z "$dependency" ]] && continue
+				case "$resolved" in *",${dependency},"*) ;; *) ready=false; break ;; esac
+			done < <(printf '%s' "$plan" | jq -r --argjson index "$index" '.subtasks[$index].blocked_by[]?')
+			if [[ "$ready" == true ]]; then
+				resolved="${resolved}${index},"
+				remaining=$((remaining - 1))
+				progress=$((progress + 1))
+			fi
+			index=$((index + 1))
+		done
+		[[ "$progress" -gt 0 ]] || return 1
+	done
+	[[ "$remaining" -eq 0 ]]
+}
+
 extract_decompose_json() {
 	local response="$1"
 	local max_subtasks="${2:-5}"
@@ -578,12 +626,45 @@ if match:
 " 2>/dev/null || echo "")
 	fi
 
-	# Validate subtask count
+	# Normalize legacy model output into the session-plan contract, then validate
+	# bounded concurrency, stable ownership, dependency indexes, and effort tiers.
 	if [[ -n "$json_result" ]]; then
-		local count
-		count=$(echo "$json_result" | jq '.subtasks | length' 2>/dev/null || echo "0")
-		if [[ "$count" -ge 2 && "$count" -le "$max_subtasks" ]]; then
-			echo "$json_result"
+		local normalized
+		normalized=$(printf '%s' "$json_result" | jq -c --arg breadth "$DECOMPOSE_BREADTH" --arg standard "$DECOMPOSE_STANDARD" '
+			.schema_version = (.schema_version // 1)
+			| .max_parallel = ([2, (.max_parallel // 2)] | min)
+			| .strategy = (.strategy // $breadth)
+			| .subtasks = [.subtasks | to_entries[]
+				| .key as $index | .value
+				| .id = (.id // "unit-\($index + 1)")
+				| .kind = (.kind // "implementation")
+				| .effort = (.effort // $standard)
+				| .blocked_by = (.blocked_by // [])
+				| .owns = (.owns // {})
+				| .owns.files = (.owns.files // [])
+				| .owns.questions = (if ((.owns.questions // []) | length) == 0 and (.owns.files | length) == 0 then [.description] else (.owns.questions // []) end)
+				| .reuse_key = (.reuse_key // .id)]
+		' 2>/dev/null || echo "")
+		local valid
+		valid=$(printf '%s' "$normalized" | jq -r --argjson max "$max_subtasks" --arg breadth "$DECOMPOSE_BREADTH" --arg standard "$DECOMPOSE_STANDARD" '
+			. as $plan | (.subtasks | length) as $n
+			| ($n >= 2 and $n <= $max)
+			and (.max_parallel >= 1 and .max_parallel <= 2)
+			and (.strategy == "depth-first" or .strategy == $breadth)
+			and (([.subtasks[].id] | unique | length) == $n)
+			and all(.subtasks[]; (.effort == "simple" or .effort == $standard or .effort == "thinking"))
+			and ([.subtasks | to_entries[] | .key as $i | .value.blocked_by[] | select((type != "number") or . < 0 or . >= $n or . == $i)] | length) == 0
+			and all(.subtasks[]; ((.owns.files | length) + (.owns.questions | length)) > 0)
+			and all(.subtasks[].owns.files[]; type == "string" and length > 0 and (startswith("/") | not)
+				and (endswith("/") | not) and (contains("\\") | not)
+				and (test("(^|/)\\.{1,2}(/|$)") | not) and (contains("//") | not))
+			and ([range(0; $n) as $i | range($i + 1; $n) as $j
+				| select((([$plan.subtasks[$i].owns.files[]] - ([$plan.subtasks[$i].owns.files[]] - [$plan.subtasks[$j].owns.files[]])) | length) > 0)
+				| select(($plan.subtasks[$j].blocked_by | index($i)) == null)
+				| select(($plan.subtasks[$i].blocked_by | index($j)) == null)] | length) == 0
+		' 2>/dev/null || echo "$DECOMPOSE_FALSE")
+		if [[ "$valid" == "true" ]] && _decompose_plan_is_acyclic "$normalized"; then
+			echo "$normalized"
 			return 0
 		fi
 	fi
@@ -632,20 +713,25 @@ heuristic_decompose() {
 	fi
 
 	# Build JSON output
-	local json_output='{"subtasks": ['
-	local first=true
+	if ! command -v jq >/dev/null 2>&1; then
+		local legacy_json='{"schema_version":1,"max_parallel":2,"subtasks":[' legacy_separator="" legacy_item="" legacy_index=0
+		for st in "${subtasks[@]}"; do
+			legacy_index=$((legacy_index + 1))
+			legacy_item=$(printf '%s' "$st" | sed 's/\\/\\\\/g; s/"/\\"/g')
+			legacy_json="${legacy_json}${legacy_separator}{\"id\":\"unit-${legacy_index}\",\"kind\":\"implementation\",\"${DECOMPOSE_DESCRIPTION_KEY}\":\"${legacy_item}\",\"effort\":\"${DECOMPOSE_STANDARD}\",\"owns\":{\"files\":[],\"questions\":[\"${legacy_item}\"]},\"${DECOMPOSE_BLOCKED_KEY}\":[],\"reuse_key\":\"unit-${legacy_index}\"}"
+			legacy_separator=","
+		done
+		printf '%s],"strategy":"%s"}\n' "$legacy_json" "$DECOMPOSE_BREADTH"
+		return 0
+	fi
+	local json_output
+	json_output=$(jq -cn --arg strategy "$DECOMPOSE_BREADTH" '{schema_version:1,max_parallel:2,subtasks:[],strategy:$strategy}')
+	local unit_index=0
 	for st in "${subtasks[@]}"; do
-		if [[ "$first" == true ]]; then
-			first=false
-		else
-			json_output="${json_output},"
-		fi
-		# Escape description for JSON
-		local escaped_st
-		escaped_st=$(printf '%s' "$st" | sed 's/\\/\\\\/g; s/"/\\"/g')
-		json_output="${json_output}{\"description\": \"${escaped_st}\", \"blocked_by\": []}"
+		unit_index=$((unit_index + 1))
+		json_output=$(printf '%s' "$json_output" | jq -c --arg id "unit-${unit_index}" --arg description "$st" --arg standard "$DECOMPOSE_STANDARD" \
+			'.subtasks += [{id:$id,kind:"implementation",description:$description,effort:$standard,owns:{files:[],questions:[$description]},blocked_by:[],reuse_key:$id}]')
 	done
-	json_output="${json_output}], \"strategy\": \"breadth-first\"}"
 
 	echo "$json_output"
 	return 0
@@ -756,7 +842,7 @@ format_lineage_block() {
 # Returns: 0 if all checks pass, 1 if any fail
 #######################################
 format_lineage_self_test() {
-	local parent="Build a CRM with contacts, deals, and email"
+	local parent='Build a CRM with contacts, deals, and email'
 	local children='[{"description": "Implement contact management module"}, {"description": "Implement deal pipeline module"}, {"description": "Implement email integration module"}]'
 	local current=1
 
@@ -894,21 +980,21 @@ Examples:
   # Output: {"kind": "atomic", "confidence": 0.9, ...}
 
   # Classify with TODO.md context (skips already-decomposed tasks)
-  task-decompose-helper.sh classify "Build CRM" --task-id t1408 --todo-file ./TODO.md
+  task-decompose-helper.sh classify 'Build CRM' --task-id t1408 --todo-file ./TODO.md
 
   # Classify with lineage context
-  task-decompose-helper.sh classify "Implement deal pipeline" --lineage '{"parent": "Build CRM"}'
+  task-decompose-helper.sh classify 'Implement deal pipeline' --lineage '{"parent": "Build CRM"}'
 
   # Decompose a composite task
-  task-decompose-helper.sh decompose "Build auth with login, registration, password reset, and OAuth"
+  task-decompose-helper.sh decompose 'Build auth with login, registration, password reset, and OAuth'
   # Output: {"subtasks": [...], "strategy": "depth-first"}
 
   # Decompose with guard against re-decomposition
-  task-decompose-helper.sh decompose "Build CRM" --task-id t1408 --todo-file ./TODO.md
+  task-decompose-helper.sh decompose 'Build CRM' --task-id t1408 --todo-file ./TODO.md
 
   # Format lineage for a worker
   task-decompose-helper.sh format-lineage \
-    --parent "Build a CRM" \
+    --parent 'Build a CRM' \
     --children '[{"description": "contacts"}, {"description": "deals"}]' \
     --current 1
 
