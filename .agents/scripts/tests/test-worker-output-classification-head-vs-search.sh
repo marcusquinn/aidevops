@@ -316,6 +316,18 @@ test_case_head_only_does_not_capture_unrelated_issue_draft() {
 	return 0
 }
 
+test_case_active_pr_wins_over_historical_pr() {
+	export STUB_HEAD_JSON='[{"number":326,"state":"CLOSED","isDraft":false},{"number":327,"state":"OPEN","isDraft":true}]'
+	local got
+	got=$(_pr_handoff_state_for_branch_or_issue "feature/reopened" "27501" "owner/repo" "head-only")
+	if [[ "$got" == "draft|327" ]]; then
+		print_result "active draft wins over historical closed PR on same head" 0
+	else
+		print_result "active draft wins over historical closed PR on same head" 1 "got: '$got'"
+	fi
+	return 0
+}
+
 # Case E: orphan recovery pre-check. When a PR exists for the branch
 # (--head=1), recovery returns 0 with NO `gh pr create` attempt.
 test_case_e_orphan_recovery_skips_when_pr_exists() {
@@ -395,6 +407,7 @@ test_case_d2_empty_repo_unknown
 test_case_draft_state_is_preserved
 test_case_ready_and_terminal_states_are_preserved
 test_case_head_only_does_not_capture_unrelated_issue_draft
+test_case_active_pr_wins_over_historical_pr
 test_case_e_orphan_recovery_skips_when_pr_exists
 test_case_f_orphan_recovery_proceeds_when_no_pr
 

@@ -239,6 +239,23 @@ _pr_exists_for_branch_or_issue() {
 # Output: "draft|N", "ready|N", "merged|N", "closed|N", "absent|", or
 #         "unknown|". Returns 0 always.
 #######################################
+_pr_handoff_state_from_json() {
+	local pr_json="$1"
+	printf '%s' "$pr_json" | jq -r --arg closed "CLO""SED" '
+		def rank:
+			if .state == "OPEN" and (.isDraft // false | not) then 0
+			elif .state == "OPEN" then 1
+			elif .state == "MERGED" then 2
+			else 3 end;
+		sort_by(rank) | .[0]
+		| if . == null then ""
+		elif .state == "MERGED" then "merged|\(.number)"
+		elif .state == $closed then "closed|\(.number)"
+		elif (.isDraft // false) then "draft|\(.number)"
+		else "ready|\(.number)" end' 2>/dev/null || true
+	return 0
+}
+
 _pr_handoff_state_for_branch_or_issue() {
 	local branch_name="$1"
 	local issue_number="$2"
@@ -255,14 +272,9 @@ _pr_handoff_state_for_branch_or_issue() {
 
 	if [[ -n "$branch_name" ]]; then
 		if pr_json=$(gh_pr_list --repo "$repo_slug" --head "$branch_name" --state all \
-			--limit 1 --json number,state,isDraft 2>/dev/null); then
+			--limit 10 --json number,state,isDraft 2>/dev/null); then
 			queried=1
-			pr_state=$(printf '%s' "$pr_json" | jq -r --arg closed "CLO""SED" '
-				.[0] | if . == null then ""
-				elif .state == "MERGED" then "merged|\(.number)"
-				elif .state == $closed then "closed|\(.number)"
-				elif (.isDraft // false) then "draft|\(.number)"
-				else "ready|\(.number)" end' 2>/dev/null || true)
+			pr_state=$(_pr_handoff_state_from_json "$pr_json")
 			if [[ -n "$pr_state" ]]; then
 				printf '%s' "$pr_state"
 				return 0
@@ -272,14 +284,9 @@ _pr_handoff_state_for_branch_or_issue() {
 
 	if [[ -n "$issue_number" && "$match_scope" != "head-only" ]]; then
 		if pr_json=$(gh_pr_list --repo "$repo_slug" --search "$issue_number" --state all \
-			--limit 1 --json number,state,isDraft 2>/dev/null); then
+			--limit 10 --json number,state,isDraft 2>/dev/null); then
 			queried=1
-			pr_state=$(printf '%s' "$pr_json" | jq -r --arg closed "CLO""SED" '
-				.[0] | if . == null then ""
-				elif .state == "MERGED" then "merged|\(.number)"
-				elif .state == $closed then "closed|\(.number)"
-				elif (.isDraft // false) then "draft|\(.number)"
-				else "ready|\(.number)" end' 2>/dev/null || true)
+			pr_state=$(_pr_handoff_state_from_json "$pr_json")
 			if [[ -n "$pr_state" ]]; then
 				printf '%s' "$pr_state"
 				return 0
