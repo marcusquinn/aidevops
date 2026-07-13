@@ -66,7 +66,11 @@ mkdir -p "${test_root}/bin" "${test_root}/state"
 cat >"${test_root}/bin/gh" <<'GH'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >>"$GH_CALL_LOG"
-if [[ "$*" == *"actions/artifacts?per_page=100"* ]]; then printf '22\n'; exit 0; fi
+if [[ "$*" == *"actions/artifacts?per_page=100"* ]]; then
+	if [[ "$*" == *"--paginate --slurp"* ]]; then printf '22\n'; else printf '11\n22\n'; fi
+	exit 0
+fi
+[[ "$*" != *$'\n'* ]] || exit 1
 printf 'fixture archive'
 GH
 cat >"${test_root}/bin/unzip" <<'UNZIP'
@@ -78,6 +82,7 @@ chmod +x "${test_root}/bin/gh" "${test_root}/bin/unzip"
 GH_CALL_LOG="${test_root}/api.log" PATH="${test_root}/bin:/usr/bin:/bin" bash "$STATE_HELPER" restore "${test_root}/state" owner/repo R_1
 [[ "$(cat "${test_root}/state/tasks.db")" == "durable-db" ]]
 grep -q 'repos/owner/repo/actions/artifacts?per_page=100' "${test_root}/api.log"
+grep -q -- '--paginate --slurp' "${test_root}/api.log"
 grep -q 'repos/owner/repo/actions/artifacts/22/zip' "${test_root}/api.log"
 
 printf 'PASS forge event workflow is targeted, repository-bound, and repair scans are manual only\n'
