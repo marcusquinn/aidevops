@@ -10,6 +10,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.32.93] - 2026-07-13
+
+### Added
+
+- add evidence-backed session analysis (t18115) (#27499)
+
+### Changed
+
+- Maintenance: sync ref:GH#27498 to TODO.md [skip ci]
+
 ## [3.32.92] - 2026-07-13
 
 ### Fixed
