@@ -509,6 +509,13 @@ else
 	fail "dispatch skip returns explicit no-op rc=2" "got rc=$launch_rc"
 fi
 
+if [[ "${_DLW_LAST_PRE_RUNTIME_FAILURE:-}" == "worktree_precreation_failed" ]] && \
+	grep -q "PRE_RUNTIME_FAILURE issue=77777 repo=owner/repo reason=worktree_precreation_failed" "$LOGFILE" 2>/dev/null; then
+	pass "pre-runtime failure records issue-correlated worktree reason"
+else
+	fail "pre-runtime failure records issue-correlated worktree reason" "reason=${_DLW_LAST_PRE_RUNTIME_FAILURE:-unset}; log=$(cat "$LOGFILE")"
+fi
+
 if grep -q '^77777$' "$CLAIM_LOCK_CALLS_FILE" 2>/dev/null; then
 	pass "pre-creation failure happens after claim lock"
 else

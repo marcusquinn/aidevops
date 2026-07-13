@@ -215,6 +215,14 @@ else
 	print_result "Escalation: status:available NOT added (correct; only removed if present)" 1 "(gh calls: $(cat "$GH_CALLS_FILE" 2>/dev/null))"
 fi
 
+# auto-dispatch must be removed in the same escalation mutation so a later
+# status recovery cannot make this NMR-held issue appear runnable.
+if grep -q -- "--remove-label auto-dispatch" "$GH_CALLS_FILE" 2>/dev/null; then
+	print_result "Escalation: auto-dispatch removed with NMR hold" 0
+else
+	print_result "Escalation: auto-dispatch removed with NMR hold" 1 "(gh calls: $(cat "$GH_CALLS_FILE" 2>/dev/null))"
+fi
+
 # =============================================================================
 # Test 4 — Reset path: open PR detected → counter reset, STALE_RECOVERED
 # =============================================================================

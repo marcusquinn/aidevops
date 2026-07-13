@@ -35,12 +35,14 @@ setup_test_env() {
 	export LOGFILE="${TEST_ROOT}/pulse.log"
 	export REPOS_JSON="${TEST_ROOT}/repos.json"
 	export POSTED_COMMENT="${TEST_ROOT}/posted-comment.txt"
+	export STATUS_CALLS_FILE="${TEST_ROOT}/status-calls.txt"
 	export ISSUE_ASSOC="OWNER"
 	export ISSUE_API_AUTHOR="maintainer"
 	export ISSUE_LIST_AUTHOR="maintainer"
 	export ACTOR_PERMISSION="write"
 	: >"$LOGFILE"
 	: >"$POSTED_COMMENT"
+	: >"$STATUS_CALLS_FILE"
 	printf '{"initialized_repos":[{"slug":"owner/repo","maintainer":"maintainer","pulse":true}]}' >"$REPOS_JSON"
 	cat >"${TEST_ROOT}/bin/gh" <<'GH_STUB'
 #!/usr/bin/env bash
@@ -126,6 +128,12 @@ gh_issue_comment() {
 }
 export -f gh_issue_comment
 
+set_issue_status() {
+	printf '%s\n' "$*" >"$STATUS_CALLS_FILE"
+	return 0
+}
+export -f set_issue_status
+
 run_auto_approve() {
 	# shellcheck disable=SC1090
 	source "$NMR_SCRIPT"
@@ -184,6 +192,11 @@ test_allows_owner_author_with_write_permission() {
 		print_result "auto-approval allows upstream OWNER author and write-capable runner" 0
 	else
 		print_result "auto-approval allows upstream OWNER author and write-capable runner" 1 "approval comment missing"
+	fi
+	if grep -q -- '^24479 owner/repo available --remove-label needs-maintainer-review --add-label auto-dispatch$' "$STATUS_CALLS_FILE" 2>/dev/null; then
+		print_result "auto-approval atomically restores complete dispatchable state" 0
+	else
+		print_result "auto-approval atomically restores complete dispatchable state" 1 "status call: $(cat "$STATUS_CALLS_FILE")"
 	fi
 	teardown_test_env
 	return 0

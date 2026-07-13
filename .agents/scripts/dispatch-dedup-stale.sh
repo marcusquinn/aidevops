@@ -259,9 +259,14 @@ _stale_recovery_escalate() {
 	IFS=',' read -ra _esc_assignee_arr <<<"$stale_assignees"
 	IFS="$_esc_ifs"
 	# t2033: build remove-assignee flags and clear all core status labels
-	# in one atomic edit via set_issue_status (empty target = clear only,
-	# pass-through --add-label "needs-maintainer-review").
-	local -a _esc_extra=(--add-label "needs-maintainer-review")
+	# in one atomic edit via set_issue_status (empty target = clear only).
+	# NMR is a dispatch hold, so remove auto-dispatch in the same mutation;
+	# otherwise a racing recovery can restore status:available and make the
+	# held issue look runnable to idle-backoff even though dispatch rejects it.
+	local -a _esc_extra=(
+		--add-label "needs-maintainer-review"
+		--remove-label "auto-dispatch"
+	)
 	for _esc_assignee in "${_esc_assignee_arr[@]}"; do
 		_esc_extra+=(--remove-assignee "$_esc_assignee")
 	done

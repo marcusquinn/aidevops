@@ -1788,7 +1788,11 @@ dispatch_with_dedup() {
 		"$model_override" "$issue_meta_json" || _launch_rc=$?
 	_ds_record "$issue_number" "$repo_slug" "worker_launch_total" "$_ds_t0"
 	if [[ "$_launch_rc" -ne 0 ]]; then
-		_release_dispatch_claim_on_abort "$issue_number" "$repo_slug" "$self_login" "worker_launch_rc_${_launch_rc}"
+		local _launch_abort_reason="worker_launch_rc_${_launch_rc}"
+		if [[ -n "${_DLW_LAST_PRE_RUNTIME_FAILURE:-}" ]]; then
+			_launch_abort_reason="${_launch_abort_reason}:${_DLW_LAST_PRE_RUNTIME_FAILURE}"
+		fi
+		_release_dispatch_claim_on_abort "$issue_number" "$repo_slug" "$self_login" "$_launch_abort_reason"
 	fi
 
 	# t3034: record total ceremony time
