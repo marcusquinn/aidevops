@@ -107,6 +107,8 @@ def _persist_managed_external_directories(config):
         '~/.aidevops/**',
         '~/.config/aidevops',
         '~/.config/aidevops/**',
+        '~/.config/opencode/command',
+        '~/.config/opencode/command/**',
         '~/Git/_worktrees',
         '~/Git/_worktrees/**',
     )

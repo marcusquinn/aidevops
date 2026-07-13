@@ -11,6 +11,8 @@ const managedRules = {
   "~/.aidevops/**": "allow",
   "~/.config/aidevops": "allow",
   "~/.config/aidevops/**": "allow",
+  "~/.config/opencode/command": "allow",
+  "~/.config/opencode/command/**": "allow",
   "~/Git/_worktrees": "allow",
   "~/Git/_worktrees/**": "allow",
 };
@@ -25,7 +27,7 @@ test("adds narrow managed-directory exceptions after a broad ask rule", () => {
     },
   };
 
-  assert.equal(registerManagedDirectoryPermissions(config), 6);
+  assert.equal(registerManagedDirectoryPermissions(config), 8);
   assert.deepEqual(config.permission.external_directory, {
     "*": "ask",
     "~/Documents/**": "deny",
@@ -36,7 +38,7 @@ test("adds narrow managed-directory exceptions after a broad ask rule", () => {
 test("converts a top-level default without allowing unrelated directories", () => {
   const config = { permission: "ask" };
 
-  assert.equal(registerManagedDirectoryPermissions(config), 6);
+  assert.equal(registerManagedDirectoryPermissions(config), 8);
   assert.equal(config.permission["*"], "ask");
   assert.deepEqual(config.permission.external_directory, {
     "*": "ask",
@@ -54,9 +56,9 @@ test("leaves an existing global external-directory allow unchanged", () => {
 test("is idempotent and keeps managed rules last", () => {
   const config = { permission: { external_directory: { "*": "ask" } } };
 
-  assert.equal(registerManagedDirectoryPermissions(config), 6);
+  assert.equal(registerManagedDirectoryPermissions(config), 8);
   assert.equal(registerManagedDirectoryPermissions(config), 0);
-  assert.deepEqual(Object.keys(config.permission.external_directory).slice(-6), Object.keys(managedRules));
+  assert.deepEqual(Object.keys(config.permission.external_directory).slice(-8), Object.keys(managedRules));
 });
 
 test("adds managed rules to per-agent permissions that override top-level defaults", () => {
@@ -68,7 +70,7 @@ test("adds managed rules to per-agent permissions that override top-level defaul
     },
   };
 
-  assert.equal(registerManagedDirectoryPermissions(config), 18);
+  assert.equal(registerManagedDirectoryPermissions(config), 24);
   assert.deepEqual(config.agent["Build+"].permission.external_directory, {
     "*": "ask",
     ...managedRules,
