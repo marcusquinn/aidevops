@@ -23,6 +23,8 @@
 # Include guard
 [[ -n "${_FULL_LOOP_STATE_LIB_LOADED:-}" ]] && return 0
 _FULL_LOOP_STATE_LIB_LOADED=1
+_FULL_LOOP_RELEASE_NOT_REQUESTED="not-requested"
+_FULL_LOOP_RELEASE_PUBLISHED="published"
 
 # Defensive SCRIPT_DIR fallback
 if [[ -z "${SCRIPT_DIR:-}" ]]; then
@@ -52,6 +54,10 @@ skip_postflight: ${SKIP_POSTFLIGHT:-false}
 skip_runtime_testing: ${SKIP_RUNTIME_TESTING:-false}
 no_auto_pr: ${NO_AUTO_PR:-false}
 no_auto_deploy: ${NO_AUTO_DEPLOY:-false}
+release_intent: ${RELEASE_INTENT:-false}
+release_type: ${RELEASE_TYPE:-patch}
+deployment_scope: ${DEPLOYMENT_SCOPE:-incremental}
+release_status: ${RELEASE_STATUS:-$_FULL_LOOP_RELEASE_NOT_REQUESTED}
 headless: ${HEADLESS:-false}
 ---
 
@@ -78,6 +84,10 @@ load_state() {
 	SKIP_RUNTIME_TESTING="false"
 	NO_AUTO_PR="false"
 	NO_AUTO_DEPLOY="false"
+	RELEASE_INTENT="false"
+	RELEASE_TYPE="patch"
+	DEPLOYMENT_SCOPE="incremental"
+	RELEASE_STATUS="$_FULL_LOOP_RELEASE_NOT_REQUESTED"
 	HEADLESS="${FULL_LOOP_HEADLESS:-false}"
 	SAVED_PROMPT=""
 	# Single-pass parse of YAML frontmatter — safe variable assignment via printf -v
@@ -90,7 +100,7 @@ load_state() {
 		PHASE | ACTIVE | ITERATION | STARTED_AT | UPDATED_AT | \
 			MAX_TASK_ITERATIONS | MAX_PREFLIGHT_ITERATIONS | \
 			MAX_PR_ITERATIONS | SKIP_PREFLIGHT | SKIP_POSTFLIGHT | SKIP_RUNTIME_TESTING | \
-			NO_AUTO_PR | NO_AUTO_DEPLOY | HEADLESS | PR_NUMBER)
+			NO_AUTO_PR | NO_AUTO_DEPLOY | RELEASE_INTENT | RELEASE_TYPE | DEPLOYMENT_SCOPE | RELEASE_STATUS | HEADLESS | PR_NUMBER)
 			printf -v "$_key" '%s' "$_val"
 			;;
 		esac
@@ -150,6 +160,25 @@ emit_pr_review_phase() {
 }
 emit_postflight_phase() {
 	print_phase "Postflight" "AI verifies release health"
+	[[ "${RELEASE_INTENT:-false}" == "true" ]] || {
+		RELEASE_STATUS="$_FULL_LOOP_RELEASE_NOT_REQUESTED"
+		_full_loop_persist_release_status "$RELEASE_STATUS"
+		print_info "release:not-requested — publication was not explicitly authorized"
+		return 0
+	}
+	if [[ "$RELEASE_STATUS" == "$_FULL_LOOP_RELEASE_PUBLISHED" ]]; then
+		print_info "release:published — publication gate already completed"
+		return 0
+	fi
+	if ! _full_loop_invoke_authorized_release; then
+		RELEASE_STATUS="failed"
+		_full_loop_persist_release_status "$RELEASE_STATUS"
+		print_error "release:failed"
+		return 1
+	fi
+	RELEASE_STATUS="$_FULL_LOOP_RELEASE_PUBLISHED"
+	_full_loop_persist_release_status "$RELEASE_STATUS"
+	print_success "release:published"
 	[[ "${SKIP_POSTFLIGHT:-false}" == "true" ]] && {
 		print_warning "Postflight skipped"
 		echo "<promise>POSTFLIGHT_SKIPPED</promise>"
@@ -157,8 +186,58 @@ emit_postflight_phase() {
 	}
 	echo "Verify release per full-loop.md guidance."
 }
+
+_full_loop_release_receipt_path() {
+	local repo="$1"
+	local pr_number="$2"
+	local receipt_dir="${AIDEVOPS_FULL_LOOP_RECEIPT_DIR:-${HOME}/.aidevops/state/full-loop-release}"
+	local safe_repo="${repo//\//_}"
+	printf '%s/%s-%s.status\n' "$receipt_dir" "$safe_repo" "$pr_number"
+	return 0
+}
+
+_full_loop_persist_release_status() {
+	local status="$1"
+	local repo=""
+	[[ "$status" == "not-requested" || "$status" == "$_FULL_LOOP_RELEASE_PUBLISHED" || "$status" == "failed" ]] || return 1
+	if [[ -f "$STATE_FILE" ]]; then
+		save_state "${CURRENT_PHASE:-${PHASE:-postflight}}" "$SAVED_PROMPT" "${PR_NUMBER:-}" "${STARTED_AT:-$(date -u '+%Y-%m-%dT%H:%M:%SZ')}"
+	fi
+	[[ "${PR_NUMBER:-}" =~ ^[0-9]+$ ]] || return 0
+	repo=$(_full_loop_resolve_repo "${AIDEVOPS_FULL_LOOP_REPO:-}") || return 1
+	local receipt_path=""
+	receipt_path=$(_full_loop_release_receipt_path "$repo" "$PR_NUMBER") || return 1
+	mkdir -p "${receipt_path%/*}" || return 1
+	printf '%s\n' "$status" >"${receipt_path}.tmp.$$" || return 1
+	mv "${receipt_path}.tmp.$$" "$receipt_path" || return 1
+	return 0
+}
+
+_full_loop_invoke_authorized_release() {
+	[[ "${PR_NUMBER:-}" =~ ^[0-9]+$ ]] || {
+		print_error "Authorized release requires a persisted PR number"
+		return 1
+	}
+	local runner="${AIDEVOPS_FULL_LOOP_RELEASE_RUNNER:-${SCRIPT_DIR}/full-loop-release-helper.sh}"
+	[[ -x "$runner" ]] || {
+		print_error "Authorized release runner is unavailable: $runner"
+		return 1
+	}
+	AIDEVOPS_RELEASE_INTENT_TRUSTED=1 \
+		AIDEVOPS_TRUSTED_ISSUE_PRIORITY="${AIDEVOPS_TRUSTED_ISSUE_PRIORITY:-}" \
+		"$runner" "$RELEASE_TYPE" "$PR_NUMBER" "$DEPLOYMENT_SCOPE"
+	return $?
+}
 emit_deploy_phase() {
 	print_phase "Deploy" "AI deploys changes"
+	[[ "${RELEASE_INTENT:-false}" == "true" ]] || {
+		print_info "release:not-requested — deployment skipped"
+		return 0
+	}
+	[[ "$RELEASE_STATUS" == "$_FULL_LOOP_RELEASE_PUBLISHED" ]] && {
+		print_info "release:published — deployment completed by the release runner"
+		return 0
+	}
 	! is_aidevops_repo && {
 		print_info "Not aidevops repo, skipping deploy"
 		return 0
@@ -417,6 +496,14 @@ _init_start_defaults() {
 	SKIP_RUNTIME_TESTING="${SKIP_RUNTIME_TESTING:-false}"
 	NO_AUTO_PR="${NO_AUTO_PR:-false}"
 	NO_AUTO_DEPLOY="${NO_AUTO_DEPLOY:-false}"
+	if [[ "${AIDEVOPS_RELEASE_INTENT_TRUSTED:-}" == "1" ]]; then
+		RELEASE_INTENT="true"
+	else
+		RELEASE_INTENT="${RELEASE_INTENT:-false}"
+	fi
+	RELEASE_TYPE="${RELEASE_TYPE:-${AIDEVOPS_RELEASE_TYPE:-patch}}"
+	DEPLOYMENT_SCOPE="${DEPLOYMENT_SCOPE:-${AIDEVOPS_RELEASE_DEPLOY_SCOPE:-incremental}}"
+	RELEASE_STATUS="${RELEASE_STATUS:-not-requested}"
 	DRY_RUN="${DRY_RUN:-false}"
 	_BACKGROUND=false
 	return 0
@@ -460,6 +547,23 @@ _parse_start_options() {
 			NO_AUTO_DEPLOY=true
 			shift
 			;;
+		--release-intent)
+			RELEASE_INTENT=true
+			RELEASE_STATUS=authorized
+			shift
+			;;
+		--release-type)
+			RELEASE_TYPE="${2:-}"
+			case "$RELEASE_TYPE" in patch | minor | major) ;; *) print_error "Invalid release type: $RELEASE_TYPE"; return 1 ;; esac
+			RELEASE_INTENT=true
+			RELEASE_STATUS=authorized
+			shift 2
+			;;
+		--deployment-scope)
+			DEPLOYMENT_SCOPE="${2:-}"
+			case "$DEPLOYMENT_SCOPE" in incremental | full) ;; *) print_error "Invalid deployment scope: $DEPLOYMENT_SCOPE"; return 1 ;; esac
+			shift 2
+			;;
 		--headless)
 			HEADLESS=true
 			shift
@@ -486,8 +590,9 @@ _parse_start_options() {
 _launch_background() {
 	local prompt="$1"
 	mkdir -p "$STATE_DIR"
+	export AIDEVOPS_RELEASE_TYPE="$RELEASE_TYPE" AIDEVOPS_RELEASE_DEPLOY_SCOPE="$DEPLOYMENT_SCOPE"
 	export MAX_TASK_ITERATIONS MAX_PREFLIGHT_ITERATIONS MAX_PR_ITERATIONS
-	export SKIP_PREFLIGHT SKIP_POSTFLIGHT SKIP_RUNTIME_TESTING NO_AUTO_PR NO_AUTO_DEPLOY FULL_LOOP_HEADLESS="$HEADLESS"
+	export SKIP_PREFLIGHT SKIP_POSTFLIGHT SKIP_RUNTIME_TESTING NO_AUTO_PR NO_AUTO_DEPLOY RELEASE_INTENT RELEASE_TYPE DEPLOYMENT_SCOPE RELEASE_STATUS FULL_LOOP_HEADLESS="$HEADLESS"
 	nohup "$0" _run_foreground "$prompt" >"${STATE_DIR}/full-loop.log" 2>&1 &
 	echo "$!" >"${STATE_DIR}/full-loop.pid"
 	print_success "Background loop started (PID: $!). Use 'status' or 'logs' to monitor."
@@ -502,6 +607,10 @@ cmd_start() {
 
 	_init_start_defaults
 	_parse_start_options "$@" || return 1
+	if [[ "$RELEASE_INTENT" == "true" && "$HEADLESS" != "true" ]]; then
+		export AIDEVOPS_RELEASE_INTENT_TRUSTED=1
+	fi
+	export AIDEVOPS_RELEASE_TYPE="$RELEASE_TYPE" AIDEVOPS_RELEASE_DEPLOY_SCOPE="$DEPLOYMENT_SCOPE"
 
 	if [[ "${AIDEVOPS_INTERACTIVE_ISSUE_IMPLEMENTATION:-0}" == "1" ]] && is_headless; then
 		print_error "Interactive issue implementation cannot enter headless/remote worker routing"
@@ -578,7 +687,22 @@ cmd_resume() {
 	}
 	local next_phase="${transition%% *}" emit_fn="${transition#* }"
 	save_state "$next_phase" "$SAVED_PROMPT" "${PR_NUMBER:-}" "$STARTED_AT"
-	$emit_fn
+	CURRENT_PHASE="$next_phase"
+	if ! "$emit_fn"; then
+		return 1
+	fi
+	save_state "$next_phase" "$SAVED_PROMPT" "${PR_NUMBER:-}" "$STARTED_AT"
+	return 0
+}
+
+_full_loop_record_merged_pr() {
+	local pr_number="$1"
+	[[ "$pr_number" =~ ^[0-9]+$ ]] || return 1
+	[[ -f "$STATE_FILE" ]] || return 0
+	load_state || return 1
+	PR_NUMBER="$pr_number"
+	save_state "pr-review" "$SAVED_PROMPT" "$PR_NUMBER" "$STARTED_AT"
+	return 0
 }
 
 cmd_status() {
@@ -636,6 +760,17 @@ cmd_complete() {
 		print_error "Cannot complete full loop without a verified PR number"
 		return 1
 	fi
+	case "${RELEASE_STATUS:-$_FULL_LOOP_RELEASE_NOT_REQUESTED}" in
+	failed | authorized)
+		print_error "Cleanup blocked: release:${RELEASE_STATUS} is not terminal-success"
+		return 1
+		;;
+	"$_FULL_LOOP_RELEASE_PUBLISHED" | "$_FULL_LOOP_RELEASE_NOT_REQUESTED") ;;
+	*)
+		print_error "Cleanup blocked: unknown release status ${RELEASE_STATUS:-missing}"
+		return 1
+		;;
+	esac
 	local current_root=""
 	current_root=$(git rev-parse --show-toplevel 2>/dev/null || true)
 	print_warning "LIFECYCLE_STATE=DEPLOYED cleanup remains pending for ${current_root:-unknown-worktree}"
@@ -670,7 +805,14 @@ _full_loop_verify_merged_pr() {
 
 _full_loop_verify_aidevops_release_deploy() {
 	local repo="$1"
+	local pr_number="$2"
+	local receipt_path=""
+	receipt_path=$(_full_loop_release_receipt_path "$repo" "$pr_number") || return 1
+	local release_status=""
+	[[ -f "$receipt_path" ]] && IFS= read -r release_status <"$receipt_path"
 	[[ "$repo" == "marcusquinn/aidevops" ]] || return 0
+	[[ "$release_status" == "$_FULL_LOOP_RELEASE_NOT_REQUESTED" ]] && return 0
+	[[ "$release_status" == "$_FULL_LOOP_RELEASE_PUBLISHED" ]] || return 1
 	local repo_root=""
 	repo_root=$(git rev-parse --show-toplevel 2>/dev/null || true)
 	local version=""
@@ -724,12 +866,15 @@ cmd_complete_after_cleanup() {
 		print_error "Completion blocked: PR #${pr_number} lacks merged evidence"
 		return 1
 	}
-	_full_loop_verify_aidevops_release_deploy "$repo" || {
+	_full_loop_verify_aidevops_release_deploy "$repo" "$pr_number" || {
 		print_error "Completion blocked: release, deployment, or postflight evidence is missing"
 		return 1
 	}
 	printf "\n${BOLD}${GREEN}=== FULL DEVELOPMENT LOOP - COMPLETE ===${NC}\n"
-	printf "PR: #%s | Lifecycle: CLEANED\n\n" "$pr_number"
+	local receipt_path="" release_status="$_FULL_LOOP_RELEASE_NOT_REQUESTED"
+	receipt_path=$(_full_loop_release_receipt_path "$repo" "$pr_number") || return 1
+	[[ -f "$receipt_path" ]] && IFS= read -r release_status <"$receipt_path"
+	printf "PR: #%s | Lifecycle: CLEANED | release:%s\n\n" "$pr_number" "$release_status"
 	echo "<promise>FULL_LOOP_COMPLETE</promise>"
 	return 0
 }

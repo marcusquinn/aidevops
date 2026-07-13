@@ -71,7 +71,9 @@ invoke_github_sync() {
 
 invoke_release_sync() {
 	local repo_root="$1"
+	local deployment_scope="${2:-incremental}"
 	AIDEVOPS_SYNC_REPO_ROOT="$repo_root" \
+		AIDEVOPS_RELEASE_DEPLOY_SCOPE="$deployment_scope" \
 		AIDEVOPS_SYNC_DEPLOY_SCRIPT="$TEST_DIR/repo/.agents/scripts/deploy-agents-on-merge.sh" \
 		SYNC_LOG_PATH="$TEST_DIR/sync.log" \
 		SYNC_ENV_LOG_PATH="$TEST_DIR/sync-env.log" \
@@ -123,10 +125,23 @@ test_release_sync_triggers_for_aidevops_remote() {
 	repo_path=$(create_fake_repo "release-aidevops" "https://github.com/marcusquinn/aidevops.git")
 	invoke_release_sync "$repo_path"
 
-	if grep -q -- "--repo $repo_path --full --quiet" "$TEST_DIR/sync.log"; then
-		print_result "release sync triggers for aidevops remote" 0
+	if grep -q -- "--repo $repo_path --quiet" "$TEST_DIR/sync.log" && ! grep -q -- "--full" "$TEST_DIR/sync.log"; then
+		print_result "release sync defaults to incremental for aidevops remote" 0
 	else
 		print_result "release sync triggers for aidevops remote" 1 "Release sync command was not recorded"
+	fi
+	return 0
+}
+
+test_release_sync_explicit_full() {
+	: >"$TEST_DIR/sync.log"
+	local repo_path
+	repo_path=$(create_fake_repo "release-full" "https://github.com/marcusquinn/aidevops.git")
+	invoke_release_sync "$repo_path" full
+	if grep -q -- "--repo $repo_path --quiet --full" "$TEST_DIR/sync.log"; then
+		print_result "release sync supports explicit full deployment" 0
+	else
+		print_result "release sync supports explicit full deployment" 1 "Full sync command was not recorded"
 	fi
 	return 0
 }
@@ -181,6 +196,7 @@ main() {
 	test_merge_sync_triggers_for_aidevops
 	test_merge_sync_skips_other_repos
 	test_release_sync_triggers_for_aidevops_remote
+	test_release_sync_explicit_full
 	test_release_sync_skips_other_remotes
 	test_release_sync_propagates_deploy_failure
 	test_release_sync_unsets_session_pins

@@ -63,24 +63,17 @@ _version_manager_is_headless_task_worker() {
 }
 
 _version_manager_has_approved_release_context() {
-	local branch_name="${1:-}"
-	local session_key="${WORKER_SESSION_KEY:-${AIDEVOPS_SESSION_KEY:-}}"
-	local session_key_lower=""
-	local session_title="${AIDEVOPS_SESSION_TITLE:-${WORKER_SESSION_TITLE:-}}"
-	local session_title_lower=""
-	if [[ -z "$branch_name" ]]; then
-		branch_name=$(_version_manager_current_branch_name)
-	fi
-	session_key_lower=$(printf '%s' "$session_key" | tr '[:upper:]' '[:lower:]')
-	session_title_lower=$(printf '%s' "$session_title" | tr '[:upper:]' '[:lower:]')
+	local release_intent="${AIDEVOPS_RELEASE_INTENT_TRUSTED:-}"
+	local priority="${AIDEVOPS_TRUSTED_ISSUE_PRIORITY:-}"
 
-	[[ "${AIDEVOPS_RELEASE_CONTEXT_APPROVED:-}" == "1" ]] && return 0
-	[[ "${VERSION_MANAGER_RELEASE_CONTEXT_APPROVED:-}" == "1" ]] && return 0
-	[[ "${AIDEVOPS_TASK_SCOPE:-}" == "$_VERSION_MANAGER_ACTION_RELEASE" ]] && return 0
-	[[ "$branch_name" == release/* || "$branch_name" == hotfix/* ]] && return 0
-	[[ "$session_key_lower" == release-* || "$session_key_lower" == hotfix-* ]] && return 0
-	[[ "$session_title_lower" == release || "$session_title_lower" == release[![:alnum:]]* ]] && return 0
-	return 1
+	[[ "$release_intent" == "1" ]] || return 1
+	if ! _version_manager_is_headless_task_worker; then
+		return 0
+	fi
+	case "$priority" in
+	high | critical) return 0 ;;
+	*) return 1 ;;
+	esac
 }
 
 _version_manager_current_branch_name() {
@@ -115,16 +108,18 @@ _version_manager_guard_headless_release_scope() {
 	local action="$1"
 	shift || true
 
-	_version_manager_is_headless_task_worker || return 0
 	_version_manager_action_is_read_only "$action" "$@" && return 0
+	[[ "$action" == "$_VERSION_MANAGER_ACTION_RELEASE" || "$action" == "post-release" ]] || {
+		_version_manager_is_headless_task_worker || return 0
+	}
 
 	local branch_name=""
 	branch_name=$(_version_manager_current_branch_name)
 	_version_manager_has_approved_release_context "$branch_name" && return 0
 
-	print_warning "Skipping version-manager ${action:-help}: release/write operations are blocked in ordinary headless task-worker context."
+	print_warning "Skipping version-manager ${action:-help}: publication requires explicit trusted release intent."
 	print_info "Task worker: ${WORKER_TASK_NUMBER:-unknown}; issue: ${WORKER_ISSUE_NUMBER:-unknown}; repo: ${REPO_ROOT}; session: ${WORKER_SESSION_KEY:-${AIDEVOPS_SESSION_KEY:-unknown}}; branch: ${branch_name}"
-	print_info "Approved release contexts: AIDEVOPS_RELEASE_CONTEXT_APPROVED=1, VERSION_MANAGER_RELEASE_CONTEXT_APPROVED=1, AIDEVOPS_TASK_SCOPE=release, or a release/*/hotfix/* branch/session."
+	print_info "Interactive publication requires AIDEVOPS_RELEASE_INTENT_TRUSTED=1. Headless publication also requires AIDEVOPS_TRUSTED_ISSUE_PRIORITY=high or critical."
 	print_info "This guard is non-fatal so the original issue workflow can continue without treating release cleanup as required."
 	return 1
 }
@@ -398,8 +393,10 @@ _release_execute() {
 		fi
 		if ! create_github_release "$new_version"; then
 			print_error "GitHub release publication failed for v$new_version"
+			print_error "release:failed"
 			return 1
 		fi
+		print_success "release:published"
 		# The remote tag and GitHub release are now durable. Never run the local
 		# mutation rollback trap for a later hotfix/deployment convergence failure.
 		_release_disable_failure_rollback
@@ -471,13 +468,9 @@ _parse_release_args() {
 }
 
 _main_release() {
-	local bump_type="$1"
+	local bump_type="${1:-patch}"
 	shift
-
-	if [[ -z "$bump_type" ]]; then
-		print_error "Bump type required. Usage: $0 release [major|minor|patch]"
-		exit 1
-	fi
+	[[ -n "$bump_type" ]] || bump_type="patch"
 
 	# Parse flags (can be in any order after bump_type)
 	local force_flag=0 skip_preflight=0 allow_dirty=0 hotfix_flag=0 dry_run=0 source_pr=""
@@ -575,7 +568,7 @@ _main_usage() {
 	echo "  github-release                Create GitHub release for current version"
 	echo "  post-release [--hotfix]       Retry post-publication propagation and deployment gates"
 	echo "  release [major|minor|patch] --source-pr N"
-	echo "                                 Bump version, tag, publish, and deploy from a verified merged PR"
+	echo "                                 Bump version (default: patch), tag, publish, and deploy from a verified merged PR"
 	echo "  release patch --hotfix       Patch release with hotfix signal for immediate runner propagation"
 	echo "  preflight [major|minor|patch] Run release preflight checks only"
 	echo "  validate                      Validate version consistency across all files"
@@ -629,7 +622,11 @@ main() {
 		create_git_tag "$version"
 		;;
 	"$_VERSION_MANAGER_ACTION_RELEASE")
-		_main_release "$bump_type" "${@:3}"
+		if [[ "$bump_type" == --* ]]; then
+			_main_release patch "${@:2}"
+		else
+			_main_release "${bump_type:-patch}" "${@:3}"
+		fi
 		;;
 	"github-release")
 		local version
