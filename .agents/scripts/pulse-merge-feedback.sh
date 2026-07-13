@@ -581,14 +581,16 @@ _ci_repair_write_state() {
 	local status="${11:-preparing}"
 	local session_key="${12:-}"
 	local tmp_file="${state_file}.tmp.$$"
+	local updated_at=""
 
+	updated_at=$(date +%s 2>/dev/null) || updated_at=0
 	jq -nc \
 		--arg repo "$repo_slug" --argjson pr "$pr_number" --arg head "$pr_head_sha" \
 		--arg branch "$pr_head_ref" --arg fingerprint "$failure_fingerprint" \
 		--arg worktree "$worktree_path" --argjson pid "$worker_pid" --arg pid_start "$pid_start" \
-		--argjson attempt "$attempt" --arg status "$status" --arg session "$session_key" \
+		--argjson attempt "$attempt" --arg status "$status" --arg session "$session_key" --argjson updated_at "$updated_at" \
 		'{repo:$repo,pr:$pr,head:$head,branch:$branch,fingerprint:$fingerprint,
-		worktree:$worktree,pid:$pid,pid_start:$pid_start,attempt:$attempt,status:$status,session:$session}' \
+		worktree:$worktree,pid:$pid,pid_start:$pid_start,attempt:$attempt,status:$status,session:$session,updated_at:$updated_at}' \
 		>"$tmp_file" 2>/dev/null || {
 		rm -f "$tmp_file"
 		return 1
@@ -646,7 +648,7 @@ _ci_repair_publish_lock_owner() {
 }
 
 #######################################
-# Return whether a lock is old enough to recover when ownership is unreadable.
+# Return whether a claim is old enough to treat missing ownership as abandoned.
 #######################################
 _ci_repair_lock_is_stale() {
 	local lock_dir="$1"
@@ -663,68 +665,21 @@ _ci_repair_lock_is_stale() {
 }
 
 #######################################
-# Acquire a crash-recoverable directory lock for one lease transition.
+# Return whether an append-only attempt claim is still active.
 #######################################
-_ci_repair_acquire_lock() {
-	local lock_dir="$1"
-	local owner_file="${lock_dir}/owner.json"
-	local reclaim_dir="${lock_dir}.reclaim"
-	local owner_pid="" owner_start="" acquire_result=1
+_ci_repair_claim_dir_is_active() {
+	local claim_dir="$1"
+	local owner_file="${claim_dir}/owner.json"
+	local owner_pid="" owner_start=""
 
-	if mkdir "$lock_dir" 2>/dev/null; then
-		_ci_repair_publish_lock_owner "$lock_dir" || {
-			rmdir "$lock_dir" 2>/dev/null || true
-			return 1
-		}
-		return 0
-	fi
-	[[ -d "$lock_dir" ]] || return 1
 	if [[ -f "$owner_file" ]]; then
 		owner_pid=$(jq -r '.pid // empty' "$owner_file" 2>/dev/null) || owner_pid=""
 		owner_start=$(jq -r '.pid_start // empty' "$owner_file" 2>/dev/null) || owner_start=""
-		if [[ "$owner_pid" =~ ^[0-9]+$ && -n "$owner_start" ]]; then
-			_ci_repair_pid_is_live "$owner_pid" "$owner_start" && return 1
-		else
-			_ci_repair_lock_is_stale "$lock_dir" || return 1
-		fi
-	else
-		_ci_repair_lock_is_stale "$lock_dir" || return 1
-	fi
-	# Serialize stale-owner replacement. A contender that did not acquire this
-	# mutex must not delete a lock that another contender may have replaced.
-	mkdir "$reclaim_dir" 2>/dev/null || return 1
-	owner_pid=$(jq -r '.pid // empty' "$owner_file" 2>/dev/null) || owner_pid=""
-	owner_start=$(jq -r '.pid_start // empty' "$owner_file" 2>/dev/null) || owner_start=""
-	if [[ "$owner_pid" =~ ^[0-9]+$ && -n "$owner_start" ]] \
-		&& _ci_repair_pid_is_live "$owner_pid" "$owner_start"; then
-		rmdir "$reclaim_dir" 2>/dev/null || true
-		return 1
-	fi
-	rm -f "$owner_file" "${lock_dir}"/owner.json.tmp.* 2>/dev/null || true
-	if rmdir "$lock_dir" 2>/dev/null && mkdir "$lock_dir" 2>/dev/null; then
-		if _ci_repair_publish_lock_owner "$lock_dir"; then
-			acquire_result=0
-		else
-			rm -f "${lock_dir}/owner.json" 2>/dev/null || true
-			rmdir "$lock_dir" 2>/dev/null || true
+		if _ci_repair_pid_is_live "$owner_pid" "$owner_start"; then
+			return 0
 		fi
 	fi
-	rmdir "$reclaim_dir" 2>/dev/null || true
-	return "$acquire_result"
-}
-
-_ci_repair_release_lock() {
-	local lock_dir="$1"
-	local owner_file="${lock_dir}/owner.json"
-	local owner_pid="" owner_start="" current_start=""
-
-	[[ -f "$owner_file" ]] || return 1
-	owner_pid=$(jq -r '.pid // empty' "$owner_file" 2>/dev/null) || owner_pid=""
-	owner_start=$(jq -r '.pid_start // empty' "$owner_file" 2>/dev/null) || owner_start=""
-	current_start=$(_ci_repair_process_start "$$")
-	[[ "$owner_pid" == "$$" && -n "$owner_start" && "$owner_start" == "$current_start" ]] || return 1
-	rm -f "${lock_dir}/owner.json" 2>/dev/null || true
-	rmdir "$lock_dir" 2>/dev/null || true
+	_ci_repair_lock_is_stale "$claim_dir" && return 1
 	return 0
 }
 
@@ -740,6 +695,40 @@ _ci_repair_status_dispatched() {
 
 _ci_repair_result_active() {
 	printf 'active'
+	return 0
+}
+
+_ci_repair_result_exhausted() {
+	printf 'exhausted'
+	return 0
+}
+
+#######################################
+# Atomically claim the first unconsumed bounded repair attempt.
+#######################################
+_ci_repair_claim_next_attempt() {
+	local lease_dir="$1"
+	local first_attempt="$2"
+	local max_attempts="$3"
+	local attempt="$first_attempt"
+	local claim_dir="" active_result="" exhausted_result=""
+
+	active_result=$(_ci_repair_result_active)
+	exhausted_result=$(_ci_repair_result_exhausted)
+	while [[ "$attempt" -le "$max_attempts" ]]; do
+		claim_dir="${lease_dir}/attempt-${attempt}.claim"
+		if mkdir "$claim_dir" 2>/dev/null; then
+			_ci_repair_publish_lock_owner "$claim_dir" || return 1
+			printf '%s' "$attempt"
+			return 0
+		fi
+		if _ci_repair_claim_dir_is_active "$claim_dir"; then
+			printf '%s' "$active_result"
+			return 0
+		fi
+		attempt=$((attempt + 1))
+	done
+	printf '%s' "$exhausted_result"
 	return 0
 }
 
@@ -833,28 +822,38 @@ _ci_repair_claim_lease() {
 	local session_key="$8"
 	local state_file="${lease_dir}/state.json"
 	local existing_pid="" existing_pid_start="" existing_attempt="1"
-	local existing_worktree="" next_attempt="" archive_payload="" archived_attempt="0"
-	local active_result=""
+	local existing_worktree="" next_attempt="" archive_payload="" archived_attempt="0" claim_result=""
+	local existing_status="" updated_at="0" now="0" launch_grace="${AIDEVOPS_CI_REPAIR_LAUNCH_GRACE_SECONDS:-}"
+	local canary_timeout="${CANARY_TIMEOUT_SECONDS:-180}"
+	local active_result="" exhausted_result=""
 
 	active_result=$(_ci_repair_result_active)
+	exhausted_result=$(_ci_repair_result_exhausted)
 	[[ "$max_attempts" =~ ^[0-9]+$ ]] || max_attempts=2
 	[[ "$max_attempts" -gt 0 ]] || max_attempts=2
+	[[ "$canary_timeout" =~ ^[0-9]+$ ]] || canary_timeout=180
+	[[ "$launch_grace" =~ ^[0-9]+$ ]] || launch_grace=$((canary_timeout + 60))
 	[[ -d "$lease_dir" ]] || return 1
 
 	if [[ ! -f "$state_file" ]]; then
 		archive_payload=$(_ci_repair_latest_archive "$lease_dir")
 		archived_attempt="${archive_payload%%|*}"
 		existing_worktree="${archive_payload#*|}"
-		if [[ "$archived_attempt" -ge "$max_attempts" ]]; then
-			printf 'exhausted'
-			return 0
-		fi
 		next_attempt=$((archived_attempt + 1))
 		if _ci_repair_adopt_live_session "$state_file" "$repo_slug" "$pr_number" "$pr_head_sha" "$pr_head_ref" \
 			"$failure_fingerprint" "$existing_worktree" "$next_attempt" "$session_key"; then
 			printf '%s' "$active_result"
 			return 0
 		fi
+		claim_result=$(_ci_repair_claim_next_attempt "$lease_dir" "$next_attempt" "$max_attempts") || return 1
+		case "$claim_result" in
+		"$active_result" | "$exhausted_result")
+			printf '%s' "$claim_result"
+			return 0
+			;;
+		*) [[ "$claim_result" =~ ^[0-9]+$ ]] || return 1 ;;
+		esac
+		next_attempt="$claim_result"
 		_ci_repair_prepare_attempt "$state_file" "$repo_slug" "$pr_number" "$pr_head_sha" "$pr_head_ref" \
 			"$failure_fingerprint" "$existing_worktree" "$next_attempt" "$session_key" || return 1
 		echo "[pulse-wrapper] _dispatch_ci_repair_session: recovered incomplete lease state for ${repo_slug} PR #${pr_number} as attempt ${next_attempt}/${max_attempts}" >>"$LOGFILE"
@@ -864,7 +863,10 @@ _ci_repair_claim_lease() {
 	existing_pid=$(jq -r '.pid // empty' "$state_file" 2>/dev/null) || existing_pid=""
 	existing_pid_start=$(jq -r '.pid_start // empty' "$state_file" 2>/dev/null) || existing_pid_start=""
 	existing_attempt=$(jq -r '.attempt // 1' "$state_file" 2>/dev/null) || existing_attempt="1"
+	existing_status=$(jq -r '.status // empty' "$state_file" 2>/dev/null) || existing_status=""
+	updated_at=$(jq -r '.updated_at // 0' "$state_file" 2>/dev/null) || updated_at="0"
 	[[ "$existing_attempt" =~ ^[0-9]+$ ]] || existing_attempt=1
+	[[ "$updated_at" =~ ^[0-9]+$ ]] || updated_at=0
 	if _ci_repair_pid_is_live "$existing_pid" "$existing_pid_start"; then
 		echo "[pulse-wrapper] _dispatch_ci_repair_session: repair already active for ${repo_slug} PR #${pr_number} head ${pr_head_sha} fingerprint ${failure_fingerprint} (pid ${existing_pid}, attempt ${existing_attempt})" >>"$LOGFILE"
 		printf '%s' "$active_result"
@@ -876,12 +878,24 @@ _ci_repair_claim_lease() {
 		printf '%s' "$active_result"
 		return 0
 	fi
-	if [[ "$existing_attempt" -ge "$max_attempts" ]]; then
-		echo "[pulse-wrapper] _dispatch_ci_repair_session: stale repair exhausted ${max_attempts} attempts for ${repo_slug} PR #${pr_number} head ${pr_head_sha} fingerprint ${failure_fingerprint}" >>"$LOGFILE"
-		printf 'exhausted'
+	now=$(date +%s 2>/dev/null) || now=0
+	if [[ "$existing_status" == "$(_ci_repair_status_preparing)" && $((now - updated_at)) -lt "$launch_grace" ]]; then
+		printf '%s' "$active_result"
 		return 0
 	fi
 	next_attempt=$((existing_attempt + 1))
+	claim_result=$(_ci_repair_claim_next_attempt "$lease_dir" "$next_attempt" "$max_attempts") || return 1
+	if [[ "$claim_result" == "$active_result" ]]; then
+		printf '%s' "$active_result"
+		return 0
+	fi
+	if [[ "$claim_result" == "$exhausted_result" ]]; then
+		echo "[pulse-wrapper] _dispatch_ci_repair_session: stale repair exhausted ${max_attempts} attempts for ${repo_slug} PR #${pr_number} head ${pr_head_sha} fingerprint ${failure_fingerprint}" >>"$LOGFILE"
+		printf '%s' "$exhausted_result"
+		return 0
+	fi
+	[[ "$claim_result" =~ ^[0-9]+$ ]] || return 1
+	next_attempt="$claim_result"
 	if ! mv "$state_file" "${lease_dir}/state-attempt-${existing_attempt}.json" 2>/dev/null; then
 		printf '%s' "$active_result"
 		return 0
@@ -949,21 +963,20 @@ _ci_repair_session_identity() {
 	local lock_file=""
 	local lock_value=""
 	local worker_pid=""
+	local stored_hash=""
 	local process_start=""
-	local process_command=""
+	local process_pattern="${WORKER_PROCESS_PATTERN:-opencode|claude|Claude}|headless-runtime-helper"
 
 	safe_key=$(printf '%s' "$session_key" | tr '/ ' '__')
 	lock_file="${state_dir}/locks/${safe_key}.pid"
 	[[ -f "$lock_file" ]] || return 1
 	lock_value=$(sed -n '1p' "$lock_file" 2>/dev/null) || lock_value=""
 	worker_pid="${lock_value%%|*}"
+	stored_hash="${lock_value#*|}"
+	[[ "$stored_hash" == "$worker_pid" ]] && stored_hash=""
 	[[ "$worker_pid" =~ ^[0-9]+$ ]] || return 1
-	kill -0 "$worker_pid" 2>/dev/null || return 1
-	process_command=$(ps -p "$worker_pid" -o command= 2>/dev/null) || process_command=""
-	case "$process_command" in
-	*headless-runtime-helper* | *opencode* | *claude*) ;;
-	*) return 1 ;;
-	esac
+	declare -F _is_process_alive_and_matches >/dev/null 2>&1 || return 1
+	_is_process_alive_and_matches "$worker_pid" "$process_pattern" "$stored_hash" || return 1
 	process_start=$(_ci_repair_process_start "$worker_pid")
 	[[ -n "$process_start" ]] || return 1
 	printf '%s|%s' "$worker_pid" "$process_start"
@@ -993,12 +1006,13 @@ _ci_repair_launch_worker() {
 	local dispatched_status=""
 	local wait_count=0
 	local wait_max="${AIDEVOPS_CI_REPAIR_SESSION_LOCK_WAIT_STEPS:-200}"
+	local process_pattern="${WORKER_PROCESS_PATTERN:-opencode|claude|Claude}|headless-runtime-helper"
 
 	[[ "$wait_max" =~ ^[0-9]+$ ]] || wait_max=200
 	launch_output=$(env \
 		HEADLESS=1 WORKER_ISSUE_NUMBER="$linked_issue" WORKER_REPO_SLUG="$repo_slug" \
 		WORKER_WORKTREE_PATH="$worktree_path" GITHUB_REPOSITORY="$repo_slug" \
-		WORKER_NO_EXIT_PUSH=1 AIDEVOPS_ALLOW_WORKER_WORKTREE_OWNER_TRANSFER=1 \
+		WORKER_NO_EXIT_PUSH=1 WORKER_PROCESS_PATTERN="$process_pattern" AIDEVOPS_ALLOW_WORKER_WORKTREE_OWNER_TRANSFER=1 \
 		AIDEVOPS_PR_REPAIR_NUMBER="$pr_number" AIDEVOPS_PR_REPAIR_HEAD_SHA="$pr_head_sha" \
 		AIDEVOPS_PR_REPAIR_HEAD_REF="$pr_head_ref" AIDEVOPS_PR_REPAIR_FINGERPRINT="$failure_fingerprint" \
 		"$helper" run --role worker --session-key "$session_key" --dir "$worktree_path" \
@@ -1080,16 +1094,18 @@ _dispatch_ci_repair_session() {
 	local pr_head_ref="$5"
 	local failure_fingerprint="$6"
 	local failing_checks="$7"
-	local repo_path="" helper="" state_root="" state_key="" lease_dir="" prompt_file="" session_key="" transition_lock=""
+	local repo_path="" helper="" state_root="" state_key="" lease_dir="" prompt_file="" session_key=""
 	local lease_action=""
 	local max_attempts="${AIDEVOPS_CI_REPAIR_MAX_ATTEMPTS:-2}"
 	local attempt=""
 	local worktree_path=""
 	local launch_payload=""
 	local active_result=""
+	local exhausted_result=""
 	local dispatched_status=""
 	_CI_REPAIR_DISPATCH_RESULT="failed"
 	active_result=$(_ci_repair_result_active)
+	exhausted_result=$(_ci_repair_result_exhausted)
 	dispatched_status=$(_ci_repair_status_dispatched)
 
 	repo_path=$(_pulse_merge_repo_path_for_slug "$repo_slug" 2>/dev/null) || repo_path=""
@@ -1101,26 +1117,16 @@ _dispatch_ci_repair_session() {
 	state_key=$(printf '%s-%s-%s-%s' "$repo_slug" "$pr_number" "$pr_head_sha" "$failure_fingerprint" | tr '/:' '__')
 	lease_dir="${state_root}/${state_key}"
 	session_key="ci-repair-${pr_number}-${pr_head_sha:0:12}-${failure_fingerprint:0:12}"
-	transition_lock="${lease_dir}/transition.lock"
 	mkdir -p "$lease_dir" 2>/dev/null || return 1
-	if ! _ci_repair_acquire_lock "$transition_lock"; then
-		_CI_REPAIR_DISPATCH_RESULT="$active_result"
-		return 0
-	fi
 	lease_action=$(_ci_repair_claim_lease "$lease_dir" "$repo_slug" "$pr_number" "$pr_head_sha" \
-		"$failure_fingerprint" "$max_attempts" "$pr_head_ref" "$session_key") || {
-		_ci_repair_release_lock "$transition_lock" || true
-		return 1
-	}
+		"$failure_fingerprint" "$max_attempts" "$pr_head_ref" "$session_key") || return 1
 	case "$lease_action" in
 	"$active_result")
 		_CI_REPAIR_DISPATCH_RESULT="$active_result"
-		_ci_repair_release_lock "$transition_lock" || true
 		return 0
 		;;
-	exhausted)
-		_CI_REPAIR_DISPATCH_RESULT="exhausted"
-		_ci_repair_release_lock "$transition_lock" || true
+	"$exhausted_result")
+		_CI_REPAIR_DISPATCH_RESULT="$exhausted_result"
 		return 1
 		;;
 	launch\|*)
@@ -1128,12 +1134,10 @@ _dispatch_ci_repair_session() {
 		attempt="${launch_payload%%|*}"
 		worktree_path="${launch_payload#*|}"
 		if [[ ! "$attempt" =~ ^[0-9]+$ ]]; then
-			_ci_repair_release_lock "$transition_lock" || true
 			return 1
 		fi
 		;;
 	*)
-		_ci_repair_release_lock "$transition_lock" || true
 		return 1
 		;;
 	esac
@@ -1147,27 +1151,18 @@ _dispatch_ci_repair_session() {
 	if [[ -z "$worktree_path" || ! -d "$worktree_path" ]]; then
 		_ci_repair_write_state "${lease_dir}/state.json" "$repo_slug" "$pr_number" "$pr_head_sha" "$pr_head_ref" \
 			"$failure_fingerprint" "" "0" "" "$attempt" "worktree_failed" "$session_key" || true
-		_ci_repair_release_lock "$transition_lock" || true
 		return 1
 	fi
 	_ci_repair_prepare_attempt "${lease_dir}/state.json" "$repo_slug" "$pr_number" "$pr_head_sha" "$pr_head_ref" \
-		"$failure_fingerprint" "$worktree_path" "$attempt" "$session_key" || {
-		_ci_repair_release_lock "$transition_lock" || true
-		return 1
-	}
+		"$failure_fingerprint" "$worktree_path" "$attempt" "$session_key" || return 1
 
 	prompt_file="${lease_dir}/prompt.md"
 	_ci_repair_write_prompt "$prompt_file" "$repo_slug" "$pr_number" "$linked_issue" "$pr_head_sha" \
-		"$pr_head_ref" "$failure_fingerprint" "$failing_checks" || {
-		_ci_repair_release_lock "$transition_lock" || true
-		return 1
-	}
+		"$pr_head_ref" "$failure_fingerprint" "$failing_checks" || return 1
 	if ! _ci_repair_launch_worker "$lease_dir" "$helper" "$repo_slug" "$pr_number" "$linked_issue" \
 		"$pr_head_sha" "$pr_head_ref" "$failure_fingerprint" "$worktree_path" "$attempt" "$session_key" "$prompt_file"; then
-		_ci_repair_release_lock "$transition_lock" || true
 		return 1
 	fi
-	_ci_repair_release_lock "$transition_lock" || true
 	_CI_REPAIR_DISPATCH_RESULT="$dispatched_status"
 	return 0
 }

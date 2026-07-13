@@ -307,11 +307,12 @@ define_feedback_helpers() {
 		_ci_repair_pid_is_live
 		_ci_repair_publish_lock_owner
 		_ci_repair_lock_is_stale
-		_ci_repair_acquire_lock
-		_ci_repair_release_lock
+		_ci_repair_claim_dir_is_active
 		_ci_repair_status_preparing
 		_ci_repair_status_dispatched
 		_ci_repair_result_active
+		_ci_repair_result_exhausted
+		_ci_repair_claim_next_attempt
 		_ci_repair_latest_archive
 		_ci_repair_prepare_attempt
 		_ci_repair_adopt_live_session
@@ -645,30 +646,55 @@ test_ci_repair_recovers_one_stale_lease_then_exhausts() {
 	return 0
 }
 
-test_ci_repair_recovers_incomplete_state_and_dead_lock() {
+test_ci_repair_consumes_abandoned_append_only_claim() {
 	setup_test_env
-	export AIDEVOPS_CI_REPAIR_STATE_GRACE_SECONDS="0"
+	export AIDEVOPS_CI_REPAIR_LOCK_GRACE_SECONDS="0"
 	define_feedback_helpers || { print_result "defines feedback helpers for incomplete lease" 1 "could not extract feedback helpers"; teardown_test_env; return 0; }
 
 	local lease_dir="${AIDEVOPS_CI_REPAIR_STATE_DIR}/incomplete"
 	local action=""
-	mkdir -p "${lease_dir}/transition.lock"
-	printf '{"pid":999999,"pid_start":"stale"}\n' >"${lease_dir}/transition.lock/owner.json"
-	_ci_repair_acquire_lock "${lease_dir}/transition.lock" || {
-		print_result "dead CI repair transition lock is reclaimed" 1 "could not acquire stale lock"
-		teardown_test_env
-		return 0
-	}
+	mkdir -p "${lease_dir}/attempt-1.claim"
+	printf '{"pid":999999,"pid_start":"stale"}\n' >"${lease_dir}/attempt-1.claim/owner.json"
 	action=$(_ci_repair_claim_lease "$lease_dir" "owner/repo" "100" "$TEST_PR_HEAD_SHA" \
 		"fingerprint" "2" "feature/repair" "ci-repair-test")
-	_ci_repair_release_lock "${lease_dir}/transition.lock" || true
 
-	if [[ "$action" != "launch|1|" ]]; then
-		print_result "incomplete CI repair lease is reclaimed" 1 "action=${action}"
-	elif ! jq -e '.status == "preparing" and .attempt == 1 and .session == "ci-repair-test"' "${lease_dir}/state.json" >/dev/null; then
+	if [[ "$action" != "launch|2|" ]]; then
+		print_result "abandoned CI repair attempt advances safely" 1 "action=${action}"
+	elif ! jq -e '.status == "preparing" and .attempt == 2 and .session == "ci-repair-test"' "${lease_dir}/state.json" >/dev/null; then
 		print_result "reclaimed CI repair state is complete JSON" 1 "State: $(cat "${lease_dir}/state.json")"
 	else
-		print_result "incomplete CI repair state and dead lock are reclaimed atomically" 0
+		print_result "abandoned append-only claim is consumed without lock replacement" 0
+	fi
+	teardown_test_env
+	return 0
+}
+
+test_ci_repair_waits_for_prelock_startup_before_retry() {
+	setup_test_env
+	export AIDEVOPS_CI_REPAIR_LOCK_GRACE_SECONDS="0"
+	export AIDEVOPS_CI_REPAIR_LAUNCH_GRACE_SECONDS="240"
+	define_feedback_helpers || { print_result "defines feedback helpers for startup grace" 1 "could not extract feedback helpers"; teardown_test_env; return 0; }
+
+	local lease_dir="${AIDEVOPS_CI_REPAIR_STATE_DIR}/startup-grace"
+	local state_file="${lease_dir}/state.json"
+	local action="" expired_action=""
+	mkdir -p "${lease_dir}/attempt-1.claim"
+	printf '{"pid":999999,"pid_start":"stale"}\n' >"${lease_dir}/attempt-1.claim/owner.json"
+	_ci_repair_write_state "$state_file" "owner/repo" "100" "$TEST_PR_HEAD_SHA" "feature/repair" \
+		"fingerprint" "${TEST_ROOT}/worktrees/preserved" "999999" "stale" "1" "preparing" "ci-repair-test"
+	action=$(_ci_repair_claim_lease "$lease_dir" "owner/repo" "100" "$TEST_PR_HEAD_SHA" \
+		"fingerprint" "2" "feature/repair" "ci-repair-test")
+	jq '.updated_at = 0' "$state_file" >"${state_file}.tmp"
+	mv "${state_file}.tmp" "$state_file"
+	expired_action=$(_ci_repair_claim_lease "$lease_dir" "owner/repo" "100" "$TEST_PR_HEAD_SHA" \
+		"fingerprint" "2" "feature/repair" "ci-repair-test")
+
+	if [[ "$action" != "active" ]]; then
+		print_result "pre-lock startup grace suppresses duplicate launch" 1 "action=${action}"
+	elif [[ "$expired_action" != "launch|2|${TEST_ROOT}/worktrees/preserved" ]]; then
+		print_result "expired startup grace permits bounded retry" 1 "expired_action=${expired_action}"
+	else
+		print_result "pre-lock startup grace blocks overlap then permits bounded retry" 0
 	fi
 	teardown_test_env
 	return 0
@@ -722,7 +748,8 @@ main() {
 	test_ci_feedback_skips_failed_check_with_exit_143_log
 	test_ci_feedback_skips_registry_rate_limit_failure
 	test_ci_repair_recovers_one_stale_lease_then_exhausts
-	test_ci_repair_recovers_incomplete_state_and_dead_lock
+	test_ci_repair_consumes_abandoned_append_only_claim
+	test_ci_repair_waits_for_prelock_startup_before_retry
 	test_ci_feedback_skips_advisory_failure_when_required_clean
 
 	printf '\nTests run: %d, failed: %d\n' "$TESTS_RUN" "$TESTS_FAILED"
