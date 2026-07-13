@@ -1,5 +1,5 @@
 ---
-description: Start end-to-end development loop (task → preflight → PR → postflight → deploy)
+description: Start end-to-end development loop (task → preflight → PR → optional release/deploy)
 agent: Build+
 mode: subagent
 ---
@@ -11,7 +11,9 @@ Task/Prompt: $ARGUMENTS
 
 ## Lifecycle Gate (t5096 + GH#5317 — MANDATORY)
 
-`WORKTREE → LOCAL_VERIFIED → PR_OPEN → REMOTE_VERIFIED → MERGED → CANONICAL_SYNCED → RELEASED → DEPLOYED → CLEANED`
+`WORKTREE → LOCAL_VERIFIED → PR_OPEN → REMOTE_VERIFIED → MERGED → [RELEASED → DEPLOYED] → CLEANED`
+
+Release is conditional. Generic full-loop, merge, or "ship the PR" consent is not publication consent. Interactive publication requires explicit trusted release intent in the current issue-started session. Headless publication additionally requires explicit trusted brief scope and trusted `priority:high` or `priority:critical` metadata.
 
 Fatal modes: **GH#5317** (exits without PR), **GH#5096** (exits after PR). Do NOT skip any step:
 
@@ -23,9 +25,9 @@ Fatal modes: **GH#5317** (exits without PR), **GH#5096** (exits after PR). Do NO
 | 1 | Review bot gate — code-enforced via `full-loop-helper.sh merge` (GH#17541) | |
 | 2 | Address critical bot review findings | |
 | 3 | Merge — `full-loop-helper.sh merge` (enforces gate + squash, no `--delete-branch`) | |
-| 4 | Auto-release — bump patch + GitHub release (aidevops repo only) | |
+| 4 | Authorized release only — omitted type defaults patch (aidevops repo only) | `release:published` or `release:failed` |
 | 5 | Issue closing comment — structured comment on every linked issue | |
-| 6 | Postflight + deploy — verify release health and deployed version | |
+| 6 | Authorized postflight + deploy — incremental unless full was explicit | |
 | 7 | Guarded worktree cleanup after the owner exits | `FULL_LOOP_COMPLETE` |
 
 ---
@@ -180,11 +182,11 @@ Check gate without merging: `full-loop-helper.sh pre-merge-gate "$PR_NUMBER" "$R
 
 **4.5 Merge (via wrapper only):** Workers MUST use `full-loop-helper.sh merge`. Direct `gh pr merge --squash` bypasses exact-head, terminal-check, review-bot, and observed-merge gates. The wrapper never equates a successful queue command with a merged PR.
 
-**4.6 Detached Release (aidevops only):** Ignore `CANONICAL_SYNC_PENDING` for publication; human canonical checkout state is never a release prerequisite. Create a fresh detached release worktree at `origin/main` and run one command: `version-manager.sh release patch --source-pr "$PR_NUMBER"`. The version manager requires the worktree to equal `origin/main` and the source PR's observed merge SHA to be reachable from it; `--force` cannot bypass this provenance. It publishes the tag/GitHub release and runs post-release deploy sync. Preserve dirty/diverged canonical state separately; never clean it merely to release.
+**4.6 Conditional Detached Release (aidevops only):** Without explicit trusted release intent, record `release:not-requested` and continue directly to closing and guarded cleanup. Authorized releases use a fresh detached release worktree at `origin/main`; omitted type defaults to patch and omitted deployment scope defaults to incremental. Major/minor and full deployment must be selected explicitly. Record terminal publication as `release:published` or `release:failed`; do not repeat publication gates after publication succeeds.
 
 **4.7 Closing Comments (MANDATORY):** Post structured closing comment on **both** issue AND PR: What done, Testing Evidence, Key decisions, Files changed, Blockers, Follow-up, Released in. PR comment: `Resolves #NNN`. Issue comment: `PR #NNN`. **Pre-close verification (GH#17372):** Only close if your session created the fixing PR. Never close citing someone else's PR without `verify-issue-close-helper.sh check`.
 
-**4.8 Postflight + Deploy:** verify the release tag, GitHub release, required checks, and deployed agent version. A publication or deploy-sync failure keeps the lifecycle open.
+**4.8 Conditional Postflight + Deploy:** only after `release:published`, verify the tag, GitHub release, required checks, and deployed agent version. Reuse `deploy-agents-on-merge.sh`; incremental is default and `--full` is explicit only. `release:not-requested` skips these stages and still completes closing/cleanup. `release:failed` keeps the lifecycle open.
 
 **4.9 Worktree Cleanup (GH#6740 — MANDATORY):** immediate merges defer current-worktree removal until the parent runtime exits. Never force-remove an actively owned worktree. Confirm guarded cleanup succeeded exactly once, then emit `<promise>FULL_LOOP_COMPLETE</promise>`.
 

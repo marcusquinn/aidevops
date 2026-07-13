@@ -365,6 +365,16 @@ run_post_release_agent_sync() {
 	fi
 
 	local deploy_script="${AIDEVOPS_SYNC_DEPLOY_SCRIPT:-$sync_repo_root/.agents/scripts/deploy-agents-on-merge.sh}"
+	local deployment_scope="${AIDEVOPS_RELEASE_DEPLOY_SCOPE:-incremental}"
+	local -a deploy_args=(--repo "$sync_repo_root" --quiet)
+	case "$deployment_scope" in
+	incremental) ;;
+	full) deploy_args+=(--full) ;;
+	*)
+		print_error "Invalid release deployment scope: $deployment_scope (expected incremental or full)"
+		return 1
+		;;
+	esac
 	if [[ ! -f "$deploy_script" ]]; then
 		print_error "Post-release deployment gate cannot run: deploy script not found at $deploy_script"
 		return 1
@@ -376,7 +386,7 @@ run_post_release_agent_sync() {
 	local sync_exit=0
 	sync_output=$(env -u AIDEVOPS_AGENTS_DIR -u AGENTS_DIR \
 		AIDEVOPS_DEPLOY_TARGET="$HOME/.aidevops/agents" \
-		bash "$deploy_script" --repo "$sync_repo_root" --full --quiet 2>&1) || sync_exit=$?
+		bash "$deploy_script" "${deploy_args[@]}" 2>&1) || sync_exit=$?
 
 	if [[ "$sync_exit" -eq 0 ]]; then
 		print_success "Post-release aidevops deployment and CLI convergence completed"

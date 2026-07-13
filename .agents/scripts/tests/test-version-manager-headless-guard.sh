@@ -30,6 +30,7 @@ reset_guard_env() {
 	unset AIDEVOPS_HEADLESS FULL_LOOP_HEADLESS OPENCODE_HEADLESS HEADLESS
 	unset WORKER_TASK_NUMBER WORKER_ISSUE_NUMBER WORKER_SESSION_KEY AIDEVOPS_SESSION_KEY
 	unset AIDEVOPS_RELEASE_CONTEXT_APPROVED VERSION_MANAGER_RELEASE_CONTEXT_APPROVED AIDEVOPS_TASK_SCOPE
+	unset AIDEVOPS_RELEASE_INTENT_TRUSTED AIDEVOPS_TRUSTED_ISSUE_PRIORITY
 	unset AIDEVOPS_SESSION_TITLE WORKER_SESSION_TITLE
 	return 0
 }
@@ -119,76 +120,42 @@ else
 	print_result 'branch lookup falls back when repo root is not a git worktree' 1 "branch_name=$branch_name"
 fi
 
-reset_guard_env
-original_repo_root="$REPO_ROOT"
-REPO_ROOT="${TMPDIR:-/tmp}/aidevops-version-manager-missing-repo-root-arg-$$"
-rc=0
-_version_manager_has_approved_release_context 'release/precomputed' >/dev/null 2>&1 || rc=$?
-REPO_ROOT="$original_repo_root"
-if [[ "$rc" -eq 0 ]]; then
-	print_result 'release context accepts precomputed branch name' 0
-else
-	print_result 'release context accepts precomputed branch name' 1 "rc=$rc"
-fi
+for priority in low medium ''; do
+	reset_guard_env
+	export AIDEVOPS_HEADLESS=1 WORKER_ISSUE_NUMBER=24089 AIDEVOPS_RELEASE_INTENT_TRUSTED=1
+	export AIDEVOPS_TRUSTED_ISSUE_PRIORITY="$priority"
+	rc=0
+	_version_manager_has_approved_release_context main >/dev/null 2>&1 || rc=$?
+	[[ "$rc" -ne 0 ]] && print_result "worker priority ${priority:-omitted} cannot authorize release" 0 || print_result "worker priority ${priority:-omitted} cannot authorize release" 1
+done
+
+for priority in high critical; do
+	reset_guard_env
+	export AIDEVOPS_HEADLESS=1 WORKER_ISSUE_NUMBER=24089 AIDEVOPS_RELEASE_INTENT_TRUSTED=1
+	export AIDEVOPS_TRUSTED_ISSUE_PRIORITY="$priority"
+	rc=0
+	_version_manager_has_approved_release_context main >/dev/null 2>&1 || rc=$?
+	[[ "$rc" -eq 0 ]] && print_result "worker priority $priority with trusted scope authorizes release" 0 || print_result "worker priority $priority with trusted scope authorizes release" 1 "rc=$rc"
+done
 
 reset_guard_env
-export AIDEVOPS_SESSION_KEY='RELEASE-20260525'
+export AIDEVOPS_RELEASE_INTENT_TRUSTED=1
 rc=0
-_version_manager_has_approved_release_context 'main' >/dev/null 2>&1 || rc=$?
-if [[ "$rc" -eq 0 ]]; then
-	print_result 'release context accepts case-insensitive session key match' 0
-else
-	print_result 'release context accepts case-insensitive session key match' 1 "rc=$rc"
-fi
+_version_manager_has_approved_release_context main >/dev/null 2>&1 || rc=$?
+[[ "$rc" -eq 0 ]] && print_result 'interactive explicit trusted intent authorizes release' 0 || print_result 'interactive explicit trusted intent authorizes release' 1 "rc=$rc"
 
 reset_guard_env
-export WORKER_SESSION_TITLE='Release cleanup'
 rc=0
-_version_manager_has_approved_release_context 'main' >/dev/null 2>&1 || rc=$?
-if [[ "$rc" -eq 0 ]]; then
-	print_result 'release context accepts case-insensitive title prefix match' 0
-else
-	print_result 'release context accepts case-insensitive title prefix match' 1 "rc=$rc"
-fi
+_version_manager_guard_headless_release_scope release patch >/dev/null 2>&1 || rc=$?
+[[ "$rc" -ne 0 ]] && print_result 'interactive generic invocation does not authorize release' 0 || print_result 'interactive generic invocation does not authorize release' 1
 
 reset_guard_env
-export WORKER_SESSION_TITLE='release-3.20.6'
-rc=0
-_version_manager_has_approved_release_context 'main' >/dev/null 2>&1 || rc=$?
-if [[ "$rc" -eq 0 ]]; then
-	print_result 'release context accepts hyphenated title prefix match' 0
+output=$(main release --dry-run 2>&1)
+rc=$?
+if [[ "$rc" -eq 0 && "$output" == *"Bump type: patch"* ]]; then
+	print_result 'authorized release with omitted type defaults to patch' 0
 else
-	print_result 'release context accepts hyphenated title prefix match' 1 "rc=$rc"
-fi
-
-reset_guard_env
-export WORKER_SESSION_TITLE='release/3.20.6'
-rc=0
-_version_manager_has_approved_release_context 'main' >/dev/null 2>&1 || rc=$?
-if [[ "$rc" -eq 0 ]]; then
-	print_result 'release context accepts slash title prefix match' 0
-else
-	print_result 'release context accepts slash title prefix match' 1 "rc=$rc"
-fi
-
-reset_guard_env
-export WORKER_SESSION_TITLE='release: 3.20.6'
-rc=0
-_version_manager_has_approved_release_context 'main' >/dev/null 2>&1 || rc=$?
-if [[ "$rc" -eq 0 ]]; then
-	print_result 'release context accepts colon title prefix match' 0
-else
-	print_result 'release context accepts colon title prefix match' 1 "rc=$rc"
-fi
-
-reset_guard_env
-export WORKER_SESSION_TITLE='releasecandidate cleanup'
-rc=0
-_version_manager_has_approved_release_context 'main' >/dev/null 2>&1 || rc=$?
-if [[ "$rc" -ne 0 ]]; then
-	print_result 'release context denies alphanumeric title prefix match' 0
-else
-	print_result 'release context denies alphanumeric title prefix match' 1 "rc=$rc"
+	print_result 'authorized release with omitted type defaults to patch' 1 "rc=$rc output=$output"
 fi
 
 reset_guard_env
