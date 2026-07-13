@@ -4542,3 +4542,5 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [ ] t18112 Repair token-refresh LaunchAgent setup failure #auto-dispatch #bug ref:GH#27350
 
 - [ ] t18113 Harden pulse throughput and full-loop continuity #bug #type:bug ref:GH#27452
+
+- [ ] t18114 Fix CI repair infrastructure classification and dead lease recovery #bug ref:GH#27487
