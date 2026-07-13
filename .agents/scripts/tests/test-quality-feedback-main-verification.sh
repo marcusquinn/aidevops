@@ -220,6 +220,7 @@ main() {
 
 	echo "Running quality-feedback main-branch verification tests"
 	test_skips_resolved_finding_when_snippet_missing
+	test_skips_resolved_embedded_inline_problem_snippet
 	test_creates_issue_when_snippet_still_exists
 	test_skips_deleted_file
 	test_handles_diff_fence_without_false_positive

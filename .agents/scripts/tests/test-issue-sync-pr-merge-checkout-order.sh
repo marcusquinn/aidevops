@@ -158,7 +158,7 @@ cp "${REPO_ROOT}/.agents/scripts/git" "${FIXTURE_SHIM_DIR}/aidevops-git-guard"
 if (
 	export HOME="${FIXTURE_HOME}"
 	export PATH="${FIXTURE_SHIM_DIR}:/usr/bin:/bin"
-	FIXTURE_GIT=$(command -v git)
+	FIXTURE_GIT=$(command -v git) &&
 	[[ "${FIXTURE_GIT}" != "${FIXTURE_SHIM_DIR}/git" ]] &&
 		git config --global --add safe.directory "${FIXTURE_REPO}" &&
 		git init -q "${FIXTURE_REPO}" &&
