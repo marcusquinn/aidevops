@@ -2168,6 +2168,26 @@ _dlw_preclaim_state_refresh_or_skip() {
 }
 
 #######################################
+# Record why dispatch stopped before the canonical worker runtime started.
+# Canonical runtime metrics must not include attempts that never crossed the
+# runtime boundary, so this evidence remains in the issue-correlated dispatch
+# stage stream and pulse log.
+# Args: issue number, repo slug, low-cardinality reason, return code
+#######################################
+_dlw_pre_runtime_failure() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local reason="$3"
+	local return_code="${4:-2}"
+	_DLW_LAST_PRE_RUNTIME_FAILURE="$reason"
+	local failure_started_ns=""
+	failure_started_ns=$(_ds_now_ns)
+	_ds_record "$issue_number" "$repo_slug" "pre_runtime_failure:${reason}" "$failure_started_ns"
+	echo "[dispatch_with_dedup] PRE_RUNTIME_FAILURE issue=${issue_number} repo=${repo_slug} reason=${reason}" >>"$LOGFILE"
+	return "$return_code"
+}
+
+#######################################
 # Thin orchestrator for worker launch. Delegates each distinct concern
 # (assignment + labels, log files, model resolution, issue lock, repo pull,
 # worktree pre-creation, nohup launch, post-launch bookkeeping) to dedicated
@@ -2197,6 +2217,7 @@ _dispatch_launch_worker() {
 	local session_key="$8"
 	local model_override="$9"
 	local issue_meta_json="${10}"
+	_DLW_LAST_PRE_RUNTIME_FAILURE=""
 
 	# t3034: per-stage timing for launch sub-stages
 	local _ds_t0
@@ -2205,7 +2226,8 @@ _dispatch_launch_worker() {
 	worker_log=$(_dlw_setup_worker_log "$repo_slug" "$issue_number")
 
 	if ! _dlw_prebootstrap_gates "$issue_number" "$repo_slug" "$issue_meta_json" "$repo_path"; then
-		return 2
+		_dlw_pre_runtime_failure "$issue_number" "$repo_slug" "prebootstrap_gate" 2
+		return $?
 	fi
 
 	_ds_t0=$(_ds_now_ns)
@@ -2217,27 +2239,34 @@ _dispatch_launch_worker() {
 	if ! _dlw_canary_preflight "$issue_number" "$repo_slug" "$worker_log" \
 		"$dispatch_model_tier" "$selected_model"; then
 		_ds_record "$issue_number" "$repo_slug" "canary_preflight" "$_ds_t0"
-		return 2
+		_dlw_pre_runtime_failure "$issue_number" "$repo_slug" "canary_preflight" 2
+		return $?
 	fi
 	_ds_record "$issue_number" "$repo_slug" "canary_preflight" "$_ds_t0"
 
-	_dlw_preclaim_state_refresh_or_skip "$issue_number" "$repo_slug" || return 2
+	if ! _dlw_preclaim_state_refresh_or_skip "$issue_number" "$repo_slug"; then
+		_dlw_pre_runtime_failure "$issue_number" "$repo_slug" "preclaim_state_changed" 2
+		return $?
+	fi
 
 	if ! _dlw_claim_lock_after_canary "$issue_number" "$repo_slug" "$self_login"; then
-		return 2
+		_dlw_pre_runtime_failure "$issue_number" "$repo_slug" "claim_lock_failed" 2
+		return $?
 	fi
 
 	_ds_t0=$(_ds_now_ns)
 	_dlw_assign_and_label "$issue_number" "$repo_slug" "$self_login" "$issue_meta_json" || {
 		_ds_record "$issue_number" "$repo_slug" "assign_and_label" "$_ds_t0"
-		return 2
+		_dlw_pre_runtime_failure "$issue_number" "$repo_slug" "assignment_failed" 2
+		return $?
 	}
 	_ds_record "$issue_number" "$repo_slug" "assign_and_label" "$_ds_t0"
 
 	local zero_output_comment_metrics=""
 	zero_output_comment_metrics=$(_dlw_comment_bloat_metrics "$issue_number" "$repo_slug")
 	if _dlw_hold_repeated_zero_output "$issue_number" "$repo_slug" "$zero_output_comment_metrics"; then
-		return 2
+		_dlw_pre_runtime_failure "$issue_number" "$repo_slug" "repeated_zero_output_hold" 2
+		return $?
 	fi
 
 	# t1894/t1934: Lock issue and linked PRs during worker execution
@@ -2252,14 +2281,16 @@ _dispatch_launch_worker() {
 		_ds_record "$issue_number" "$repo_slug" "precreate_worktree" "$_ds_t0"
 		pulse_stats_increment "worktree_precreation_failed_count" 2>/dev/null || true
 		echo "[dispatch_with_dedup] Skipping #${issue_number} — pre-creation failed; will retry next cycle" >>"$LOGFILE"
-		return 2
+		_dlw_pre_runtime_failure "$issue_number" "$repo_slug" "worktree_precreation_failed" 2
+		return $?
 	fi
 	_ds_record "$issue_number" "$repo_slug" "precreate_worktree" "$_ds_t0"
 	local worker_worktree_path="$_DLW_WORKTREE_PATH"
 	local worker_worktree_branch="$_DLW_WORKTREE_BRANCH"
 	local worker_worktree_reused="${_DLW_WORKTREE_REUSED:-0}"
 	if _dlw_check_worker_branch_orphan_loop "$issue_number" "$repo_slug" "$worker_worktree_branch" "$worker_worktree_reused" "${repo_path}/TODO.md" "$worker_worktree_path"; then
-		return 2
+		_dlw_pre_runtime_failure "$issue_number" "$repo_slug" "worker_branch_orphan_hold" 2
+		return $?
 	fi
 
 	_ds_t0=$(_ds_now_ns)
