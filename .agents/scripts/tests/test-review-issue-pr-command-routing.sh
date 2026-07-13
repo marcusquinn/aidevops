@@ -30,13 +30,9 @@ source "$COMMAND_LIB"
 # A previous generator left this command permanently routed to a child session.
 printf '%s\n' '---' 'agent: Build+' 'subtask: true' '---' 'stale body' >"${COMMAND_DIR}/review-issue-pr.md"
 
-set +e
 _generate_hardcoded_quality_commands "opencode" "$COMMAND_DIR"
-quality_count=$?
-set -e
-
-[[ "$quality_count" -eq 4 ]] || {
-	printf 'FAIL expected four generated quality commands, got %s\n' "$quality_count" >&2
+[[ "$_GENERATED_HARDCODED_COMMAND_COUNT" -eq 4 ]] || {
+	printf 'FAIL expected four generated quality commands, got %s\n' "$_GENERATED_HARDCODED_COMMAND_COUNT" >&2
 	exit 1
 }
 grep -Fq 'agent: Build+' "${COMMAND_DIR}/review-issue-pr.md" || {
@@ -53,6 +49,15 @@ grep -Fq 'workflows/review-issue-pr.md' "${COMMAND_DIR}/review-issue-pr.md" || {
 }
 grep -Fq 'subtask: true' "${COMMAND_DIR}/agent-review.md" || {
 	printf 'FAIL unrelated subtask routing was removed\n' >&2
+	exit 1
+}
+
+_generate_hardcoded_commands "opencode" "$COMMAND_DIR" || {
+	printf 'FAIL successful hardcoded generation returned nonzero\n' >&2
+	exit 1
+}
+[[ "$_GENERATED_HARDCODED_COMMAND_COUNT" -eq 7 ]] || {
+	printf 'FAIL expected seven total hardcoded commands, got %s\n' "$_GENERATED_HARDCODED_COMMAND_COUNT" >&2
 	exit 1
 }
 
