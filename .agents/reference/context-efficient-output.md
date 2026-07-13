@@ -59,12 +59,14 @@ noise:
 session-review-helper.sh output-efficiency --json
 ```
 
-The `aidevops.session-output-efficiency/v1` report detects exact repeated tool
-snapshots and oversized results, estimates avoidable context from byte counts,
-and emits only tool names, metrics, and opaque fingerprints. It never reproduces
-tool inputs, commands, outputs, or transcript paths. Findings are deterministic
-candidates for session-analysis judgment, not automatic proof that a safeguard
-or exact evidence should be removed.
+The `aidevops.session-output-efficiency/v1` report distinguishes model-visible
+output from receipt-declared background evidence. It detects unchanged snapshots,
+duplicate results, repeated lines/blocks, successful oversized results, raw
+fallbacks, and exact-output bypasses, then estimates avoidable context from byte
+counts. It emits only tool names, metrics, and opaque fingerprints; tool inputs,
+commands, outputs, transcript paths, and background content remain omitted.
+Findings are deterministic candidates for session-analysis judgment, not
+automatic proof that a safeguard or exact evidence should be removed.
 
 ## Default workflow
 

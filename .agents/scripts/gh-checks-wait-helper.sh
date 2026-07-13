@@ -158,7 +158,7 @@ classify_state() {
 	local count=""
 	count=$(printf '%s' "$checks" | jq 'length')
 	if [[ "$count" -eq 0 ]]; then
-		printf 'indeterminate\n'
+		printf 'success\n'
 		return 0
 	fi
 	if printf '%s' "$checks" | jq -e --arg pass "$_GCW_BUCKET_PASS" --arg pending "$_GCW_BUCKET_PENDING" \
@@ -185,7 +185,7 @@ emit_failure_details() {
 read_head_sha() {
 	local pr_number="$1"
 	local repo="$2"
-	if [[ -n "${AIDEVOPS_GH_CHECKS_TEST_HEAD:-}" ]]; then
+	if [[ -n "${AIDEVOPS_GH_CHECKS_TEST_HEAD+x}" ]]; then
 		printf '%s\n' "$AIDEVOPS_GH_CHECKS_TEST_HEAD"
 		return 0
 	fi
@@ -223,36 +223,28 @@ next_interval() {
 }
 
 wait_for_checks() {
-	local pr_number="$1"
-	local repo="$2"
-	local required_only="$3"
-	local timeout="$4"
-	local initial_interval="$5"
-	local max_interval="$6"
-	local heartbeat_interval="$7"
+	local pr_number="$1" repo="$2" required_only="$3" timeout="$4"
+	local initial_interval="$5" max_interval="$6" heartbeat_interval="$7"
 	local start_epoch=""
 	start_epoch=$(date +%s)
 	local next_heartbeat=$((start_epoch + heartbeat_interval))
-	local interval="$initial_interval"
-	local previous=""
-	local initial_head=""
+	local interval="$initial_interval" previous="" initial_head=""
 	initial_head=$(read_head_sha "$pr_number" "$repo" 2>/dev/null || true)
-	local poll_number=0
-	local valid_state_seen=0
-	local api_error_visible=0
+	if [[ -z "$initial_head" ]]; then
+		printf 'INDETERMINATE: PR head could not be verified before required-check observation\n' >&2
+		return 2
+	fi
+	local poll_number=0 valid_state_seen=0 api_error_visible=0
 	while true; do
 		poll_number=$((poll_number + 1))
 		write_runtime_heartbeat
-		local raw=""
-		local fetch_rc=0
+		local raw="" fetch_rc=0 current="" now_epoch="" elapsed=0 changed=0 classification="" final_head=""
 		raw=$(fetch_checks "$pr_number" "$repo" "$required_only" "$poll_number") || fetch_rc=$?
-		local current=""
 		if [[ "$fetch_rc" -eq 0 ]]; then
 			current=$(canonicalize_checks "$raw" 2>/dev/null || true)
 		fi
-		local now_epoch=""
 		now_epoch=$(date +%s)
-		local elapsed=$((now_epoch - start_epoch))
+		elapsed=$((now_epoch - start_epoch))
 		if [[ -z "$current" ]]; then
 			if [[ "$api_error_visible" -eq 0 ]]; then
 				printf 'WARN: required-check state unavailable; retaining the last verified state and retrying\n' >&2
@@ -271,7 +263,6 @@ wait_for_checks() {
 			api_error_visible=0
 		fi
 		valid_state_seen=1
-		local changed=0
 		if [[ -z "$previous" ]]; then
 			emit_initial_state "$current"
 			changed=1
@@ -282,8 +273,10 @@ wait_for_checks() {
 			printf 'heartbeat: required checks unchanged for %ss (%s)\n' "$elapsed" "$(state_counts "$current")"
 			next_heartbeat=$((now_epoch + heartbeat_interval))
 		fi
+		if [[ "$changed" -eq 1 ]]; then
+			next_heartbeat=$((now_epoch + heartbeat_interval))
+		fi
 
-		local classification=""
 		classification=$(classify_state "$current")
 		case "$classification" in
 		failure)
@@ -291,8 +284,11 @@ wait_for_checks() {
 			return 1
 			;;
 		success)
-			local final_head=""
 			final_head=$(read_head_sha "$pr_number" "$repo" 2>/dev/null || true)
+			if [[ -z "$final_head" ]]; then
+				printf 'INDETERMINATE: PR head could not be verified after required checks completed\n' >&2
+				return 2
+			fi
 			if [[ -n "$initial_head" && -n "$final_head" && "$initial_head" != "$final_head" ]]; then
 				printf '+ PR head changed while waiting; restarting required-check observation\n'
 				initial_head="$final_head"

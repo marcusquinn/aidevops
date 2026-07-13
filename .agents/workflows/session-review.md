@@ -104,9 +104,10 @@ transcript history is available:
 session-review-helper.sh output-efficiency --session <session-id> --json
 ```
 
-Use exact-repeat and oversized-output findings as candidates to correlate with
-the conversation timeline. Keep raw transcript content private, and do not treat
-aggregate counts alone as proof that a required safeguard was wasteful.
+Use unchanged-snapshot, duplicate-output, repeated-fragment, success-verbosity,
+and fallback findings as candidates to correlate with the conversation timeline.
+Keep raw transcript content private, and do not treat aggregate counts alone as
+proof that a required safeguard was wasteful.
 
 Before assessing whether to end, read and run
 `workflows/session-analysis.md` with focus `all`. Include its outcome baseline,

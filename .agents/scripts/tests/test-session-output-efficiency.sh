@@ -64,12 +64,33 @@ import sys
 normalized_path, claude_path, database_path = sys.argv[1:]
 repeated = "unchanged status snapshot SECRET-MARKER " + ("x" * 100)
 oversized = "large setup output " + ("y" * 9000)
+duplicate = "duplicate tool result " + ("d" * 100)
+repeated_line = "repeated line inside one model-visible result " + ("l" * 40)
+block = "\n".join([
+    "block line alpha " + ("a" * 40),
+    "block line beta " + ("b" * 40),
+    "block line gamma " + ("c" * 40),
+])
+fragment_output = "\n".join([repeated_line, repeated_line, repeated_line, block, block])
+receipt = "\n".join([
+    "output_id: out_123_example",
+    "outcome: succeeded",
+    "exit_code: 0",
+    "process_exit: 0",
+    "evidence: bytes=23067 lines=134 sensitive_redacted=0 basis=exit-code",
+])
 
 with open(normalized_path, "w", encoding="utf-8") as handle:
     for _ in range(3):
         handle.write(json.dumps({"tool": "bash", "input": {"command": "poll"}, "output": repeated}) + "\n")
     handle.write(json.dumps({"tool": "bash", "input": {"command": "poll"}, "output": "changed status"}) + "\n")
-    handle.write(json.dumps({"tool": "bash", "input": {"command": "setup"}, "output": oversized}) + "\n")
+    handle.write(json.dumps({"tool": "bash", "input": {"command": "setup"}, "output": oversized, "success": True}) + "\n")
+    handle.write(json.dumps({"tool": "bash", "input": {"command": "fragments"}, "output": fragment_output, "success": True}) + "\n")
+    handle.write(json.dumps({"tool": "read", "input": {"path": "one"}, "output": duplicate, "success": True}) + "\n")
+    handle.write(json.dumps({"tool": "read", "input": {"path": "two"}, "output": duplicate, "success": True}) + "\n")
+    handle.write(json.dumps({"tool": "bash", "input": {"command": "receipt"}, "output": receipt, "success": True}) + "\n")
+    handle.write(json.dumps({"tool": "bash", "input": {"command": "fallback"}, "output": "output_sandbox: evidence store unavailable; running with native output\nnative output", "success": True}) + "\n")
+    handle.write(json.dumps({"tool": "bash", "input": {"command": "exact"}, "output": "output_sandbox: bypass exact/verbatim command\nexact output", "success": True}) + "\n")
 
 with open(claude_path, "w", encoding="utf-8") as handle:
     for call_id in ("call-1", "call-2"):
@@ -99,11 +120,15 @@ PY
 text_output=$(OPENCODE_SESSION_ID='' CLAUDE_SESSION_ID='' "$HELPER" --input "$normalized_fixture")
 assert_contains "text reports one repeated group" "Repeated unchanged snapshots: 1 groups, 2 redundant results" "$text_output"
 assert_contains "text reports oversized output" "Oversized tool results: 1" "$text_output"
-assert_contains "text identifies aggregate repeat" "exact-repeat" "$text_output"
+assert_contains "text identifies unchanged snapshots" "unchanged-snapshot" "$text_output"
+assert_contains "text identifies duplicate tool output" "Duplicate tool-output groups: 1" "$text_output"
+assert_contains "text identifies repeated blocks" "Repeated line/block groups:" "$text_output"
+assert_contains "text distinguishes receipt background evidence" "23067 declared bytes across 1 receipts" "$text_output"
+assert_contains "text reports raw fallback and exact bypass" "Raw fallback / exact-output bypass results: 1 / 1" "$text_output"
 assert_omits "text omits raw output" "SECRET-MARKER" "$text_output"
 
 json_output=$(OPENCODE_SESSION_ID='' CLAUDE_SESSION_ID='' "$HELPER" --input "$normalized_fixture" --json)
-if python3 -c 'import json,sys; report=json.load(sys.stdin); assert report["schema"] == "aidevops.session-output-efficiency/v1"; assert report["stats"]["redundant_tool_results"] == 2; assert report["stats"]["oversized_tool_results"] == 1' <<<"$json_output"; then
+if python3 -c 'import json,sys; report=json.load(sys.stdin); stats=report["stats"]; visibility=report["visibility"]; assert report["schema"] == "aidevops.session-output-efficiency/v1"; assert stats["redundant_tool_results"] == 2; assert stats["duplicate_output_groups"] == 1; assert stats["repeated_line_groups"] >= 1; assert stats["repeated_block_groups"] >= 1; assert stats["oversized_tool_results"] == 1; assert stats["successful_oversized_results"] == 1; assert stats["raw_fallback_results"] == 1; assert stats["exact_output_bypass_results"] == 1; assert visibility["receipt_results"] == 1; assert visibility["declared_background_evidence_bytes"] == 23067; assert visibility["background_content_scanned"] is False' <<<"$json_output"; then
 	pass "JSON contract exposes aggregate metrics"
 else
 	fail "JSON contract exposes aggregate metrics"
@@ -114,6 +139,16 @@ assert_contains "Claude JSONL tool results are correlated" "Repeated unchanged s
 
 database_output=$(OPENCODE_SESSION_ID='' CLAUDE_SESSION_ID='' "$HELPER" --runtime opencode --db "$opencode_db" --session session-test)
 assert_contains "OpenCode database tool parts are analysed" "Repeated unchanged snapshots: 1 groups, 1 redundant results" "$database_output"
+
+set +e
+missing_session_output=$(OPENCODE_SESSION_ID='' CLAUDE_SESSION_ID='' "$HELPER" --runtime opencode --db "$opencode_db" --session absent-session 2>&1)
+missing_session_rc=$?
+invalid_session_output=$(OPENCODE_SESSION_ID='' CLAUDE_SESSION_ID='' "$HELPER" --runtime opencode --db "$opencode_db" --session '../*' 2>&1)
+invalid_session_rc=$?
+set -e
+[[ "$missing_session_rc" -eq 2 ]] && pass "missing database session is unavailable" || fail "missing database session is unavailable" "got ${missing_session_rc}"
+[[ "$invalid_session_rc" -eq 2 ]] && pass "unsafe session filter is rejected" || fail "unsafe session filter is rejected" "got ${invalid_session_rc}"
+assert_omits "session errors do not expose database path" "$opencode_db" "${missing_session_output}${invalid_session_output}"
 
 review_output=$(OPENCODE_SESSION_ID='' CLAUDE_SESSION_ID='' "$REVIEW_HELPER" output-efficiency --input "$normalized_fixture" --json)
 assert_contains "session review delegates output analysis" '"schema":"aidevops.session-output-efficiency/v1"' "$review_output"

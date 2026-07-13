@@ -211,6 +211,23 @@ PY
 	return 0
 }
 
+emit_native_capture() {
+	local stdout_path="$1"
+	local stderr_path="$2"
+	python3 - "$stdout_path" "$stderr_path" <<'PY'
+import sys
+stdout_path, stderr_path = sys.argv[1:]
+for path, destination in ((stdout_path, sys.stdout.buffer), (stderr_path, sys.stderr.buffer)):
+    try:
+        with open(path, 'rb') as source:
+            destination.write(source.read())
+            destination.flush()
+    except OSError:
+        pass
+PY
+	return 0
+}
+
 redact_capture_files() {
 	local raw_path="$1"
 	local stdout_path="$2"
@@ -218,8 +235,8 @@ redact_capture_files() {
 	local path=""
 	for path in "$raw_path" "$stdout_path" "$stderr_path"; do
 		local redacted_path="${path}.redacted"
-		redact_file "$path" "$redacted_path"
-		mv "$redacted_path" "$path"
+		redact_file "$path" "$redacted_path" || return 1
+		mv "$redacted_path" "$path" || return 1
 	done
 	return 0
 }
@@ -250,6 +267,9 @@ record_output() {
 	local sensitive="$9"
 	local summary_file="${10}"
 	local repo
+	if [[ "${AIDEVOPS_OUTPUT_SANDBOX_TEST_RECORD_FAIL:-0}" == "1" ]]; then
+		return 1
+	fi
 	repo=$(repo_slug "$cwd")
 	python3 - "$SANDBOX_DB" "$output_id" "$command_text" "$cwd" "$repo" "$exit_code" "$tag" "$raw_path" "$byte_count" "$line_count" "$sensitive" "$summary_file" <<'PY'
 import sqlite3, sys
@@ -405,13 +425,9 @@ cmd_store() {
 }
 
 cmd_run() {
-	local tag="run"
-	local summary_lines="$DEFAULT_SUMMARY_LINES"
-	local diagnostic_lines="$DEFAULT_DIAGNOSTIC_LINES"
-	local success_mode="receipt"
-	local failure_mode="diagnostic"
-	local expected_text=""
-	local format="text"
+	local tag="run" summary_lines="$DEFAULT_SUMMARY_LINES" diagnostic_lines="$DEFAULT_DIAGNOSTIC_LINES"
+	local success_mode="receipt" failure_mode="diagnostic"
+	local expected_text="" format="text"
 	while [[ $# -gt 0 ]]; do
 		local opt="$1"
 		case "$opt" in
@@ -446,8 +462,7 @@ cmd_run() {
 		log_error "Invalid format: $format"
 		return 1
 	fi
-	local command_text="${1##*/}"
-	local command_shape="$*"
+	local command_text="${1##*/}" command_shape="$*"
 	if should_bypass_command "$command_shape"; then
 		printf 'output_sandbox: bypass exact/verbatim command\n' >&2
 		"$@"
@@ -470,7 +485,11 @@ cmd_run() {
 	"$@" >"$stdout_path" 2>"$stderr_path"
 	process_exit=$?
 	set -e
-	combine_streams "$stdout_path" "$stderr_path" "$raw_path"
+	if ! combine_streams "$stdout_path" "$stderr_path" "$raw_path"; then
+		printf 'output_sandbox: evidence capture failed; returning native output\n' >&2
+		emit_native_capture "$stdout_path" "$stderr_path"
+		return "$process_exit"
+	fi
 	exit_code="$process_exit"
 	basis="exit-code"
 	if [[ "$process_exit" -eq 0 && -n "$expected_text" ]] && ! grep -Fq -- "$expected_text" "$raw_path"; then
@@ -480,13 +499,20 @@ cmd_run() {
 	sensitive=0
 	if looks_sensitive_file "$raw_path"; then
 		sensitive=1
-		redact_capture_files "$raw_path" "$stdout_path" "$stderr_path"
+		if ! redact_capture_files "$raw_path" "$stdout_path" "$stderr_path"; then
+			printf 'output_sandbox: evidence redaction failed; captured output suppressed\n' >&2
+			return "$exit_code"
+		fi
 	fi
 	byte_count=$(wc -c <"$raw_path" | tr -d ' ')
 	line_count=$(wc -l <"$raw_path" | tr -d ' ')
-	summarize_file "$raw_path" "$summary_lines" "$sensitive" >"$summary_file"
-	diagnose_file "$raw_path" "$diagnostic_lines" "$sensitive" >"$diagnostic_file"
-	record_output "$output_id" "$command_text" "$PWD" "$exit_code" "$tag" "$raw_path" "$byte_count" "$line_count" "$sensitive" "$summary_file"
+	if ! summarize_file "$raw_path" "$summary_lines" "$sensitive" >"$summary_file" || \
+		! diagnose_file "$raw_path" "$diagnostic_lines" "$sensitive" >"$diagnostic_file" || \
+		! record_output "$output_id" "$command_text" "$PWD" "$exit_code" "$tag" "$raw_path" "$byte_count" "$line_count" "$sensitive" "$summary_file"; then
+		printf 'output_sandbox: evidence finalization failed; returning native output\n' >&2
+		emit_native_capture "$stdout_path" "$stderr_path"
+		return "$exit_code"
+	fi
 	outcome="succeeded"
 	mode="$success_mode"
 	if [[ "$exit_code" -ne 0 ]]; then

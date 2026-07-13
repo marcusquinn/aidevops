@@ -53,7 +53,7 @@ run_fixture_wait() {
 	shift
 	AIDEVOPS_GH_CHECKS_FIXTURE_DIR="$fixture_dir" \
 		AIDEVOPS_GH_CHECKS_TEST_NO_SLEEP=1 \
-		AIDEVOPS_GH_CHECKS_TEST_HEAD=fixture-head \
+		AIDEVOPS_GH_CHECKS_TEST_HEAD="${AIDEVOPS_GH_CHECKS_TEST_HEAD_OVERRIDE-fixture-head}" \
 		"$HELPER" wait 123 --repo example/repo --initial-interval 1 --max-interval 4 "$@"
 	return $?
 }
@@ -69,6 +69,18 @@ assert_contains "wait prints state transition" "+ Complexity: pending -> pass" "
 assert_contains "wait prints terminal success" "PASS: required checks completed" "$transition_output"
 pending_count=$(printf '%s\n' "$transition_output" | grep -c '^  Complexity: pending$' || true)
 [[ "$pending_count" -eq 1 ]] && pass "unchanged snapshot is not replayed" || fail "unchanged snapshot is not replayed" "count ${pending_count}"
+
+empty_dir="${TMPDIR_TEST}/empty"
+write_fixture "$empty_dir" 1 '[]'
+empty_output=$(run_fixture_wait "$empty_dir")
+assert_contains "no required checks is terminal success" "PASS: required checks completed" "$empty_output"
+
+set +e
+head_unavailable_output=$(AIDEVOPS_GH_CHECKS_TEST_HEAD_OVERRIDE='' run_fixture_wait "$empty_dir" 2>&1)
+head_unavailable_rc=$?
+set -e
+[[ "$head_unavailable_rc" -eq 2 ]] && pass "unverified PR head is indeterminate" || fail "unverified PR head is indeterminate" "got ${head_unavailable_rc}"
+assert_contains "unverified PR head is diagnosed" "PR head could not be verified" "$head_unavailable_output"
 
 failure_dir="${TMPDIR_TEST}/failure"
 write_fixture "$failure_dir" 1 '[{"name":"ShellCheck","workflow":"CI","state":"FAILURE","bucket":"fail","link":"https://example.invalid/failure"}]'

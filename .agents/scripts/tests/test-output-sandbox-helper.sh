@@ -119,6 +119,22 @@ set -e
 assert_contains "storage failure falls back to native output" "native fail-open output" "$fail_open_output"
 assert_contains "storage failure explains fallback" "evidence store unavailable" "$fail_open_output"
 
+set +e
+late_fail_open_output=$(AIDEVOPS_OUTPUT_SANDBOX_TEST_RECORD_FAIL=1 "$HELPER" run -- bash -c 'printf "late native stdout\n"; printf "late native stderr\n" >&2' 2>&1)
+late_fail_open_rc=$?
+set -e
+[[ "$late_fail_open_rc" -eq 0 ]] && pass "late storage failure preserves command success" || fail "late storage failure preserves command success" "got ${late_fail_open_rc}"
+assert_contains "late storage failure returns stdout" "late native stdout" "$late_fail_open_output"
+assert_contains "late storage failure returns stderr" "late native stderr" "$late_fail_open_output"
+assert_contains "late storage failure explains fallback" "evidence finalization failed" "$late_fail_open_output"
+
+set +e
+late_failure_output=$(AIDEVOPS_OUTPUT_SANDBOX_TEST_RECORD_FAIL=1 "$HELPER" run -- bash -c 'printf "late failed command\n"; exit 9' 2>&1)
+late_failure_rc=$?
+set -e
+[[ "$late_failure_rc" -eq 9 ]] && pass "late storage failure preserves command failure" || fail "late storage failure preserves command failure" "got ${late_failure_rc}"
+assert_contains "late storage failure returns failed output" "late failed command" "$late_failure_output"
+
 cleanup_output=$("$HELPER" cleanup --max-age-days 0)
 assert_contains "cleanup reports deletion count" "deleted:" "$cleanup_output"
 
