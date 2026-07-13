@@ -52,6 +52,33 @@ test_skips_resolved_finding_when_snippet_missing() {
 	return 0
 }
 
+test_skips_resolved_embedded_inline_problem_snippet() {
+	reset_mock_state
+	GH_RAW_CONTENT='- Put artifacts under `${AIDEVOPS_TEMP_DIR:-$HOME/.aidevops/.agent-workspace/tmp}`.'
+
+	local findings
+	findings='[{"file":".agents/AGENTS.md","line":79,"body_full":"Using `~` inside `${AIDEVOPS_TEMP_DIR:-~/.aidevops/.agent-workspace/tmp}` is unsafe. Use `$HOME` instead of `~`.","reviewer":"gemini","reviewer_login":"gemini-code-assist[bot]","severity":"medium","url":"https://example.test/comment"}]'
+
+	local out_file
+	out_file=$(mktemp)
+	local created
+	_create_quality_debt_issues "owner/repo" "123" "$findings" >"$out_file"
+	created=$(<"$out_file")
+	rm -f "$out_file"
+
+	local created_count
+	created_count=$(wc -l <"$GH_CREATE_LOG" | tr -d ' ')
+	rm -f "$GH_CREATE_LOG"
+	rm -f "$GH_API_LOG"
+
+	if [[ "$created" == "0" && "$created_count" -eq 0 ]]; then
+		print_result "skip resolved problem snippet embedded in review prose" 0
+	else
+		print_result "skip resolved problem snippet embedded in review prose" 1 "created=${created}, issues=${created_count}"
+	fi
+	return 0
+}
+
 test_creates_issue_when_snippet_still_exists() {
 	reset_mock_state
 	GH_RAW_CONTENT=$'#!/usr/bin/env bash\nverification marker present\nreturn 1\n'

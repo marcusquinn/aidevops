@@ -163,6 +163,9 @@ _check_write_permission() {
 _extract_snippet_from_inline_code() {
 	local body_full="$1"
 	local line=""
+	local inline_code_pattern="\`([^\`]+)\`"
+	local remaining=""
+	local snippet=""
 
 	while IFS= read -r line; do
 		case "$line" in
@@ -179,6 +182,18 @@ _extract_snippet_from_inline_code() {
 			line="${line//\`/}"
 			;;
 		*)
+			# Reviewers commonly embed the stale problem snippet in prose, for
+			# example "Using `<problem>` is unsafe". Inspect each inline code
+			# span rather than requiring the line to begin with a backtick.
+			remaining="$line"
+			while [[ "$remaining" =~ $inline_code_pattern ]]; do
+				snippet=$(_trim_whitespace "${BASH_REMATCH[1]}")
+				if [[ -n "$snippet" && ${#snippet} -ge 12 ]]; then
+					echo "$snippet"
+					return 0
+				fi
+				remaining="${remaining#*\`"${BASH_REMATCH[1]}"\`}"
+			done
 			continue
 			;;
 		esac
