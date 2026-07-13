@@ -54,7 +54,7 @@ runtime_artifact_files=(
 	"$SCRIPTS_DIR/../workflows/ui-verification.md"
 )
 assert "agent guidance directs readable artifacts to the managed workspace" grep -q 'temporary artifacts.*AIDEVOPS_TEMP_DIR.*never host `/tmp`' "$SCRIPTS_DIR/../AGENTS.md"
-assert "runtime-visible artifact defaults avoid host /tmp paths" test "$(grep -El '/tmp/(browser-qa|aidevops-(pr-body|merge-summary|issue-body)|ui-verify|worker-)' "${runtime_artifact_files[@]}" 2>/dev/null | wc -l | tr -d ' ')" -eq 0
+assert "runtime-visible artifact defaults avoid host /tmp paths" test -z "$(grep -El '/tmp/(browser-qa|aidevops-(pr-body|merge-summary|issue-body)|ui-verify|worker-)' "${runtime_artifact_files[@]}" || true)"
 
 print_info() { return 0; }
 print_warning() { return 0; }

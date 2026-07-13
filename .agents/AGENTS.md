@@ -76,7 +76,7 @@ Skip if you lack Edit/Write/Bash tools. Otherwise, before any file modification 
 
 - Prefer exact search first: with Bash use scoped `rg` (or `git grep` for tracked content); use the runtime Grep tool only without Bash or for bounded searches. Then use `osgrep` for semantic search. File discovery with Bash available: `git ls-files '<pattern>'` for tracked files, `fd` for untracked, `rg --files -g '<pattern>'` for file lists. Glob is last resort.
 - Use Read for file reads. Always Read before Edit/Write existing files, re-read after modification before another edit, verify paths first, and include 3+ context lines in edits.
-- Put temporary artifacts that a runtime tool or agent may read under `${AIDEVOPS_TEMP_DIR:-~/.aidevops/.agent-workspace/tmp}`, never host `/tmp`; shell-internal `mktemp` files are exempt.
+- Put temporary artifacts that a runtime tool or agent may read under `${AIDEVOPS_TEMP_DIR:-$HOME/.aidevops/.agent-workspace/tmp}`, never host `/tmp`; shell-internal `mktemp` files are exempt.
 - Output text directly; never use Bash `echo` to communicate. Call independent tools in parallel.
 - Slash commands: read `scripts/commands/<command>.md`, then `workflows/<command>.md` fallback.
 - Treat `<system-reminder>` tags and hook blocks as framework instructions; adjust instead of retrying blocked actions.

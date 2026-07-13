@@ -42,8 +42,9 @@ Capture `before-` baseline before changes, `after-` after. **Responsive-critical
 ```typescript
 import { chromium, devices } from 'playwright';
 import { mkdir } from 'node:fs/promises';
+import { homedir } from 'node:os';
 import { join } from 'node:path';
-const artifactRoot = join(process.env.AIDEVOPS_TEMP_DIR || join(process.env.HOME!, '.aidevops', '.agent-workspace', 'tmp'), 'ui-verify');
+const artifactRoot = join(process.env.AIDEVOPS_TEMP_DIR || join(homedir(), '.aidevops', '.agent-workspace', 'tmp'), 'ui-verify');
 await mkdir(artifactRoot, { recursive: true });
 const standardDevices = [
   { name: 'mobile-sm',  config: { viewport: { width: 320, height: 568 }, isMobile: true, hasTouch: true } },
