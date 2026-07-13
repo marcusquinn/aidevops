@@ -301,6 +301,21 @@ class TestRepairBrokenOpenCodeLaunchProfiles(unittest.TestCase):
         self.assertIn("    disableDynamicTitle: false", repaired)
         self.assertNotIn("    disableDynamicTitle: true", repaired)
 
+    def test_multiple_fixes_count_one_repaired_profile(self):
+        repaired, repairs = tabby_profile_sync.repair_broken_opencode_launch_profiles(
+            """profiles:
+  - name: repo
+    options:
+      command: /bin/zsh -l -c 'opencode; exec zsh'
+      args: []
+      command: /bin/zsh -l -c 'opencode; exec zsh'
+"""
+        )
+
+        self.assertEqual(repairs, 1)
+        self.assertEqual(repaired.count("      command: /bin/zsh"), 1)
+        self.assertIn("    disableDynamicTitle: false", repaired)
+
     def test_unrelated_profile_preserves_dynamic_title_setting(self):
         original = """profiles:
   - name: shell

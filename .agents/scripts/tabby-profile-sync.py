@@ -526,7 +526,8 @@ def repair_broken_opencode_launch_profiles(config_text: str) -> tuple[str, int]:
         repaired_block, repaired_count = _repair_broken_opencode_launch_profile_block(original_block)
         repaired_block, dynamic_title_changed = _enable_dynamic_title(repaired_block)
         repaired.extend(repaired_block.split("\n"))
-        repairs += max(repaired_count, int(dynamic_title_changed))
+        if repaired_count > 0 or dynamic_title_changed:
+            repairs += 1
         i = block_end
 
     return "\n".join(repaired), repairs
