@@ -894,7 +894,7 @@ run_browser_qa() {
 	if [[ -d "$mission_dir" ]]; then
 		qa_output_dir="${mission_dir}/assets/qa"
 	else
-		qa_output_dir="/tmp/browser-qa-$(date +%Y%m%d-%H%M%S)"
+		qa_output_dir="${AIDEVOPS_TEMP_DIR:-${HOME}/.aidevops/.agent-workspace/tmp}/browser-qa-$(date +%Y%m%d-%H%M%S)"
 	fi
 
 	# Build arguments

@@ -37,7 +37,24 @@ expected=$(cd "$HOME/.aidevops/.agent-workspace/tmp" && pwd -P)
 assert "initializer overrides TMPDIR" test "$TMPDIR" = "$expected"
 assert "initializer aligns TMP" test "$TMP" = "$expected"
 assert "initializer aligns TEMP" test "$TEMP" = "$expected"
+assert "initializer exports the canonical aidevops temp directory" test "$AIDEVOPS_TEMP_DIR" = "$expected"
 assert "managed temp directory exists" test -d "$expected"
+managed_temp_file=$(mktemp "$AIDEVOPS_TEMP_DIR/aidevops-test.XXXXXX")
+assert "canonical temp directory supports managed artifacts" test "${managed_temp_file#"$expected"/}" != "$managed_temp_file"
+
+runtime_artifact_files=(
+	"$SCRIPTS_DIR/../AGENTS.md"
+	"$SCRIPTS_DIR/browser-qa-worker.sh"
+	"$SCRIPTS_DIR/browser-qa/browser-qa.mjs"
+	"$SCRIPTS_DIR/milestone-validation-worker.sh"
+	"$SCRIPTS_DIR/../prompts/worker-efficiency-protocol.md"
+	"$SCRIPTS_DIR/../workflows/full-loop.md"
+	"$SCRIPTS_DIR/../workflows/log-issue-aidevops.md"
+	"$SCRIPTS_DIR/../workflows/runners.md"
+	"$SCRIPTS_DIR/../workflows/ui-verification.md"
+)
+assert "agent guidance directs readable artifacts to the managed workspace" grep -q 'temporary artifacts.*AIDEVOPS_TEMP_DIR.*never host `/tmp`' "$SCRIPTS_DIR/../AGENTS.md"
+assert "runtime-visible artifact defaults avoid host /tmp paths" test -z "$(grep -El '/tmp/(browser-qa|aidevops-(pr-body|merge-summary|issue-body)|ui-verify|worker-)' "${runtime_artifact_files[@]}" || true)"
 
 print_info() { return 0; }
 print_warning() { return 0; }
