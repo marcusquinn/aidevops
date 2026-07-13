@@ -363,6 +363,7 @@ EOF
 	_classify_ci_failures_by_pattern() { local failing_names="$1"; printf '%s' "$failing_names" >"${TEST_ROOT}/classified-names.txt"; return 0; }
 	_pulse_merge_repo_path_for_slug() { local repo_slug="$1"; [[ -n "$repo_slug" ]]; printf '%s\n' "${TEST_ROOT}/repo"; return 0; }
 	_is_process_alive_and_matches() { local process_pid="$1"; local process_pattern="$2"; local stored_hash="$3"; [[ -n "$process_pattern" || -n "$stored_hash" ]]; kill -0 "$process_pid" 2>/dev/null; return $?; }
+	_file_mtime_epoch() { local file_path="$1"; [[ -e "$file_path" ]] || return 1; date +%s; return 0; }
 	for fn in "${fns[@]}"; do
 		fn_src=$(extract_function "$fn" "$FEEDBACK_SCRIPT")
 		[[ -n "$fn_src" ]] || return 1

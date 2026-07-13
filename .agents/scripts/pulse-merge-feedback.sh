@@ -671,7 +671,7 @@ _ci_repair_lock_is_stale() {
 
 	[[ "$grace_seconds" =~ ^[0-9]+$ ]] || grace_seconds=2
 	now=$(date +%s 2>/dev/null) || now=0
-	lock_mtime=$(stat -f '%m' "$lock_dir" 2>/dev/null) || lock_mtime=$(stat -c '%Y' "$lock_dir" 2>/dev/null) || lock_mtime="$now"
+	lock_mtime=$(_file_mtime_epoch "$lock_dir" 2>/dev/null) || lock_mtime="$now"
 	[[ "$lock_mtime" =~ ^[0-9]+$ ]] || lock_mtime="$now"
 	lock_age=$((now - lock_mtime))
 	[[ "$lock_age" -ge "$grace_seconds" ]]
