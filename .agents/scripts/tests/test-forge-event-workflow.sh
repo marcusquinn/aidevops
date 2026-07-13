@@ -67,12 +67,11 @@ cat >"${test_root}/bin/gh" <<'GH'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >>"$GH_CALL_LOG"
 if [[ "$*" == *"actions/artifacts?per_page=100"* ]]; then
-	if [[ "${GH_ARTIFACT_FIXTURE:-pages}" == "malformed" ]]; then
-		printf '22\n23\n'
+	[[ "$*" != *"--jq"* ]] || exit 64
+	if [[ "$*" == *"--paginate --slurp"* ]]; then
+		printf '[{"artifacts":[{"id":11,"name":"forge-coordinator-R_1-old","created_at":"2026-01-01T00:00:00Z","expired":false}]},{"artifacts":[{"id":23,"name":"forge-coordinator-R_1-new-a","created_at":"2026-02-01T00:00:00Z","expired":false},{"id":24,"name":"forge-coordinator-R_1-new-b","created_at":"2026-02-01T00:00:00Z","expired":false},{"id":25,"name":"forge-coordinator-R_1-expired","created_at":"2026-03-01T00:00:00Z","expired":true}]}]\n'
 	else
-		[[ "$*" == *'sort_by([.created_at, .id])'* ]]
-		[[ "$*" == *'.expired // false'* ]]
-		printf '24\n'
+		printf '11\n22\n'
 	fi
 	exit 0
 fi
@@ -85,16 +84,27 @@ printf '%s\n' "$*" >>"$GH_CALL_LOG"
 printf 'durable-db\n' >"${@: -1}/tasks.db"
 UNZIP
 chmod +x "${test_root}/bin/gh" "${test_root}/bin/unzip"
-GH_CALL_LOG="${test_root}/api.log" PATH="${test_root}/bin:/usr/bin:/bin" bash "$STATE_HELPER" restore "${test_root}/state" owner/repo R_1
+jq_dir=$(dirname "$(command -v jq)")
+GH_CALL_LOG="${test_root}/api.log" PATH="${test_root}/bin:${jq_dir}:/usr/bin:/bin" bash "$STATE_HELPER" restore "${test_root}/state" owner/repo R_1
 [[ "$(cat "${test_root}/state/tasks.db")" == "durable-db" ]]
 grep -q 'repos/owner/repo/actions/artifacts?per_page=100' "${test_root}/api.log"
 grep -q -- '--paginate --slurp' "${test_root}/api.log"
+if grep -q -- '--jq' "${test_root}/api.log"; then
+	printf 'FAIL: gh api must not combine --slurp with --jq\n' >&2
+	exit 1
+fi
 grep -q 'repos/owner/repo/actions/artifacts/24/zip' "${test_root}/api.log"
 [[ "$(grep -c '/zip' "${test_root}/api.log")" -eq 1 ]]
 
 # A malformed multi-line selector result must fail before URL construction.
+mkdir -p "${test_root}/malformed-bin"
+cat >"${test_root}/malformed-bin/jq" <<'JQ'
+#!/usr/bin/env bash
+printf '22\n23\n'
+JQ
+chmod +x "${test_root}/malformed-bin/jq"
 : >"${test_root}/api.log"
-if GH_ARTIFACT_FIXTURE=malformed GH_CALL_LOG="${test_root}/api.log" PATH="${test_root}/bin:/usr/bin:/bin" \
+if GH_CALL_LOG="${test_root}/api.log" PATH="${test_root}/malformed-bin:${test_root}/bin:/usr/bin:/bin" \
 	bash "$STATE_HELPER" restore "${test_root}/state" owner/repo R_1 2>"${test_root}/restore-error"; then
 	printf 'FAIL malformed artifact ID unexpectedly restored\n' >&2
 	exit 1
