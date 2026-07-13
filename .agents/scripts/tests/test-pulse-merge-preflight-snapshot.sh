@@ -69,7 +69,11 @@ gh() {
 	*commits/sha-reviewed/status*)
 		local gate_at="2026-01-01T00:01:10Z"
 		[[ "$SNAPSHOT_MODE" == "stale_gate" ]] && gate_at="2026-01-01T00:00:20Z"
-		printf '{"statuses":[{"context":"review-bot-gate","state":"success","updated_at":"%s"}]}\n' "$gate_at"
+		if [[ "$SNAPSHOT_MODE" == "no_status_gate" ]]; then
+			printf '%s\n' '{"statuses":[]}'
+		else
+			printf '{"statuses":[{"context":"review-bot-gate","state":"success","updated_at":"%s"}]}\n' "$gate_at"
+		fi
 		;;
 	*pulls/7/reviews*)
 		printf '%s\n' '[[{"user":{"login":"gemini-code-assist[bot]"},"submitted_at":"2026-01-01T00:00:30Z"}]]'
@@ -124,6 +128,13 @@ main() {
 	assert_gate "unclassified non-required failure blocks merge" unclassified_fail 1
 	assert_gate "unresolved late inline finding blocks merge" unresolved 1
 	assert_gate "late review activity invalidates stale gate success" stale_gate 1
+	_PULSE_REVIEW_GATE_EVIDENCE=""
+	assert_gate "missing status gate fails closed without live evidence" no_status_gate 1
+	_PULSE_REVIEW_GATE_EVIDENCE="owner/repo#7@sha-reviewed"
+	assert_gate "live gate evidence permits repositories without a status context" no_status_gate 0
+	_PULSE_REVIEW_GATE_EVIDENCE="owner/repo#7@sha-other"
+	assert_gate "live gate evidence for another head fails closed" no_status_gate 1
+	_PULSE_REVIEW_GATE_EVIDENCE=""
 	assert_gate "new commit invalidates reviewed head" new_head 1
 	assert_gate "bounded quiet period blocks recent check completion" recent 1
 	printf '\nTests run: %d\nTests failed: %d\n' "$TESTS_RUN" "$TESTS_FAILED"

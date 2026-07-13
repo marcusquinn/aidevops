@@ -286,7 +286,8 @@ _handle_changes_requested_review_gate() {
 # Run all merge-eligibility gate checks for a single PR.
 # Returns 0 if all gates pass (PR may proceed to merge).
 # Returns 1 if any gate fails (PR should be skipped).
-# Args: $1=pr_number, $2=repo_slug, $3=pr_author, $4=pr_review, $5=linked_issue, $6=pr_labels (optional)
+# Args: $1=pr_number, $2=repo_slug, $3=pr_author, $4=pr_review, $5=linked_issue,
+#       $6=pr_labels (optional), $7=expected_head_sha (optional)
 #######################################
 _check_pr_merge_gates() {
 	local pr_number="$1"
@@ -295,6 +296,8 @@ _check_pr_merge_gates() {
 	local pr_review="$4"
 	local linked_issue="$5"
 	local pr_labels="${6:-}"
+	local expected_head_sha="${7:-}"
+	_PULSE_REVIEW_GATE_EVIDENCE=""
 
 	# Skip CHANGES_REQUESTED — needs a fix worker, not a merge.
 	#
@@ -433,6 +436,7 @@ _check_pr_merge_gates() {
 	local rbg_helper="${AGENTS_DIR:-$HOME/.aidevops/agents}/scripts/review-bot-gate-helper.sh"
 	if [[ -f "$rbg_helper" ]]; then
 		if _is_trusted_dependabot_update_pr "$pr_number" "$repo_slug" "$pr_author"; then
+			_PULSE_REVIEW_GATE_EVIDENCE="${repo_slug}#${pr_number}@${expected_head_sha}"
 			echo "[pulse-wrapper] Review bot gate: SKIP for trusted Dependabot dependency update PR #${pr_number} in ${repo_slug} (GH#24473)" >>"$LOGFILE"
 			return 0
 		fi
@@ -441,6 +445,7 @@ _check_pr_merge_gates() {
 		rbg_status=$(printf '%s' "$rbg_result" | grep -oE '^(PASS|SKIP|WAITING|PASS_RATE_LIMITED)' | head -1)
 		case "$rbg_status" in
 		PASS | SKIP | PASS_RATE_LIMITED)
+			_PULSE_REVIEW_GATE_EVIDENCE="${repo_slug}#${pr_number}@${expected_head_sha}"
 			echo "[pulse-wrapper] Review bot gate: ${rbg_status} for PR #${pr_number} in ${repo_slug}" >>"$LOGFILE"
 			;;
 		*)
@@ -1056,7 +1061,7 @@ _process_single_ready_pr() {
 	# maintainer gate, external-contributor gate, review bot gate) before both
 	# merge and CI-repair paths. This preserves the security boundary for PRs
 	# that are red but would not be trusted if green.
-	if ! _check_pr_merge_gates "$pr_number" "$repo_slug" "$pr_author" "$pr_review" "$linked_issue" "$pr_labels"; then
+	if ! _check_pr_merge_gates "$pr_number" "$repo_slug" "$pr_author" "$pr_review" "$linked_issue" "$pr_labels" "$pr_head_ref_oid"; then
 		return 1
 	fi
 
