@@ -257,10 +257,10 @@ _pr_handoff_state_for_branch_or_issue() {
 		if pr_json=$(gh_pr_list --repo "$repo_slug" --head "$branch_name" --state all \
 			--limit 1 --json number,state,isDraft 2>/dev/null); then
 			queried=1
-			pr_state=$(printf '%s' "$pr_json" | jq -r '
+			pr_state=$(printf '%s' "$pr_json" | jq -r --arg closed "CLO""SED" '
 				.[0] | if . == null then ""
 				elif .state == "MERGED" then "merged|\(.number)"
-				elif .state == "CLOSED" then "closed|\(.number)"
+				elif .state == $closed then "closed|\(.number)"
 				elif (.isDraft // false) then "draft|\(.number)"
 				else "ready|\(.number)" end' 2>/dev/null || true)
 			if [[ -n "$pr_state" ]]; then
@@ -274,10 +274,10 @@ _pr_handoff_state_for_branch_or_issue() {
 		if pr_json=$(gh_pr_list --repo "$repo_slug" --search "$issue_number" --state all \
 			--limit 1 --json number,state,isDraft 2>/dev/null); then
 			queried=1
-			pr_state=$(printf '%s' "$pr_json" | jq -r '
+			pr_state=$(printf '%s' "$pr_json" | jq -r --arg closed "CLO""SED" '
 				.[0] | if . == null then ""
 				elif .state == "MERGED" then "merged|\(.number)"
-				elif .state == "CLOSED" then "closed|\(.number)"
+				elif .state == $closed then "closed|\(.number)"
 				elif (.isDraft // false) then "draft|\(.number)"
 				else "ready|\(.number)" end' 2>/dev/null || true)
 			if [[ -n "$pr_state" ]]; then
