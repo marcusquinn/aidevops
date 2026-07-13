@@ -109,12 +109,16 @@ check_present \
 	.agents/scripts/dispatch-single-issue-helper.sh
 
 check_present \
-	"exact model overrides are marked as advanced compatibility behavior" \
+	"command docs mark exact model overrides as advanced compatibility behavior" \
 	'[Aa]dvanced compatibility override' \
-	.agents/scripts/commands/dispatch-issue.md \
+	.agents/scripts/commands/dispatch-issue.md
+
+check_present \
+	"CLI help marks exact model overrides as advanced compatibility behavior" \
+	'[Aa]dvanced compatibility override' \
 	.agents/scripts/dispatch-single-issue-helper.sh
 
-actual_tiers=$(jq -r '.tiers | keys | sort | join(",")' .agents/configs/model-routing-table.json)
+actual_tiers=$(jq -r '.tiers | keys | sort | join(",")' .agents/configs/model-routing-table.json || true)
 if [[ "$actual_tiers" == "simple,standard,thinking" ]]; then
 	printf 'PASS: routing table exposes exactly three workload tiers\n'
 else
