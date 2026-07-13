@@ -1266,7 +1266,7 @@ _hrw_record_terminal_outcome() {
 		--session-key "$session_key" \
 		--lease-token "${AIDEVOPS_DISPATCH_LEASE_TOKEN:-}" \
 		--issue "${WORKER_ISSUE_NUMBER:-}" \
-		--repo "${DISPATCH_REPO_SLUG:-}" \
+		--repo "${DISPATCH_REPO_SLUG:-${WORKER_REPO_SLUG:-}}" \
 		--outcome "$outcome" \
 		--reason "$reason" 2>/dev/null || true
 	return 0

@@ -903,8 +903,20 @@ cmd_record_outcome() {
 				($sk == "" or (.session_key // "") == $sk) and
 				($inum == "" or (.issue // "") == $inum) and
 				($slug == "" or (.repo // "") == $slug)) |
-			select(attempt_key as $key |
-				([$rows[] | select(.outcome != "pending" and (.attempt_id // "") == $key)] | length) == 0)] |
+			. as $pending |
+			select(if (($pending.attempt_id // "") != "") then
+				attempt_key as $key |
+				([$rows[] | select(.outcome != "pending" and (.attempt_id // "") == $key)] | length) == 0
+			else
+				([$rows[] | select(.outcome != "pending" and
+					(.repo // "") == ($pending.repo // "") and
+					(.issue // "") == ($pending.issue // "") and
+					(.tier // "") == ($pending.tier // ""))] | length) <
+				([$rows[] | select(.outcome == "pending" and (.attempt_id // "") == "" and
+					(.repo // "") == ($pending.repo // "") and
+					(.issue // "") == ($pending.issue // "") and
+					(.tier // "") == ($pending.tier // ""))] | length)
+			end)] |
 		last // empty' "$telemetry_file" 2>/dev/null || true)
 
 	if [[ -n "$pending" ]]; then
@@ -920,6 +932,10 @@ cmd_record_outcome() {
 		model=$(printf '%s' "$pending" | jq -r '.model // ""')
 	else
 		local model=""
+		if [[ -z "$attempt_id" ]]; then
+			_release_lock
+			return 0
+		fi
 	fi
 
 	if [[ -n "$attempt_id" ]] && jq -e --arg aid "$attempt_id" \
@@ -967,43 +983,80 @@ cmd_tier_report() {
 		return 0
 	fi
 
-	local total success escalated failed terminal pending_unknown
-	total=$(jq -s '[.[] | select(.outcome == "pending")] | length' "$telemetry_file" 2>/dev/null) || total=0
-	success=$(jq -s '[.[] | select(.outcome == "success")] | length' "$telemetry_file" 2>/dev/null) || success=0
-	escalated=$(jq -s '[.[] | select(.outcome == "escalated")] | length' "$telemetry_file" 2>/dev/null) || escalated=0
-	failed=$(jq -s --arg failed "$LEDGER_STATUS_FAILED" '[.[] | select(.outcome == $failed)] | length' "$telemetry_file" 2>/dev/null) || failed=0
-	terminal=$(jq -s '[.[] | select(.outcome != "pending")] | length' "$telemetry_file" 2>/dev/null) || terminal=0
-	pending_unknown=$((total - terminal))
-	[[ "$pending_unknown" -ge 0 ]] || pending_unknown=0
+	local summary=""
+	summary=$(jq -sc '
+		def dispatch_key:
+			if ((.attempt_id // "") != "") then .attempt_id
+			else "legacy:\(.repo // ""):\(.issue // ""):\(.dispatched_at // ""):\(.tier // ""):\(.model // "")"
+			end;
+		. as $rows |
+		[$rows[] | select(.outcome == "pending")] |
+			group_by(dispatch_key) | map(last) as $dispatches |
+		[$rows[] | select(.outcome != "pending") | . as $terminal |
+			if (($terminal.attempt_id // "") != "") then $terminal
+			else
+				[$dispatches[] | select(
+					(.attempt_id // "") == "" and
+					(.repo // "") == ($terminal.repo // "") and
+					(.issue // "") == ($terminal.issue // "") and
+					(.tier // "") == ($terminal.tier // ""))] as $matches |
+				if ($matches | length) == 1 then $terminal + {attempt_id: ($matches[0] | dispatch_key)} else $terminal end
+			end] as $resolved_terminals |
+		[$resolved_terminals[] | select((.attempt_id // "") != "")] |
+			group_by(.attempt_id) | map(first) as $identified_terminals |
+		[$resolved_terminals[] | select((.attempt_id // "") == "")] as $legacy_terminals |
+		[$identified_terminals[] | select(.attempt_id as $id | any($dispatches[]; dispatch_key == $id))] as $paired |
+		[$paired[] | select(.outcome != "deferred" and .outcome != "timeout")] as $completed |
+		($identified_terminals + $legacy_terminals) as $terminals |
+		{
+			total: ($dispatches | length),
+			success: ([$paired[] | select(.outcome == "success")] | length),
+			escalated: ([$paired[] | select(.outcome == "escalated")] | length),
+			failed: ([$paired[] | select(.outcome == "failed")] | length),
+			deferred: ([$paired[] | select(.outcome == "deferred" or .outcome == "timeout")] | length),
+			pending_unknown: (($dispatches | length) - ($paired | length)),
+			unmatched: (($terminals | length) - ($paired | length)),
+			by_tier: ($dispatches | group_by(.tier // "") | map({tier: (.[0].tier // ""), count: length}) | sort_by(-.count)),
+			reasons: ($terminals | map(select((.reason // "") != "")) | group_by(.reason) | map({reason: .[0].reason, count: length}) | sort_by(-.count)),
+			pass_rates: ($completed | group_by(.tier // "") | map(
+				.[0].tier as $tier | {
+					tier: ($tier // ""),
+					total: length,
+					success: ([.[] | select(.outcome == "success")] | length)
+				}) | sort_by(.tier))
+		}' "$telemetry_file" 2>/dev/null) || summary='{}'
+
+	local total success escalated failed deferred pending_unknown unmatched
+	total=$(printf '%s' "$summary" | jq -r '.total // 0')
+	success=$(printf '%s' "$summary" | jq -r '.success // 0')
+	escalated=$(printf '%s' "$summary" | jq -r '.escalated // 0')
+	failed=$(printf '%s' "$summary" | jq -r '.failed // 0')
+	deferred=$(printf '%s' "$summary" | jq -r '.deferred // 0')
+	pending_unknown=$(printf '%s' "$summary" | jq -r '.pending_unknown // 0')
+	unmatched=$(printf '%s' "$summary" | jq -r '.unmatched // 0')
 
 	echo "=== Tier Dispatch Telemetry ==="
 	echo "Total dispatches: $total"
 	echo "Success: $success"
 	echo "Escalated: $escalated"
 	echo "Failed: $failed"
+	echo "Deferred/timeout: $deferred"
 	echo "Pending/unknown: $pending_unknown"
+	echo "Legacy/unmatched terminal events: $unmatched"
 	echo ""
 	echo "By tier:"
-	jq -r 'select(.outcome == "pending") | .tier' "$telemetry_file" 2>/dev/null | sort | uniq -c | sort -rn
+	printf '%s' "$summary" | jq -r '.by_tier[] | "\(.count | tostring | if length < 6 then (" " * (6 - length)) + . else . end) \(.tier)"'
 	echo ""
 	echo "Escalation reasons:"
-	jq -r 'select(.reason != "" and .reason != null) | .reason' "$telemetry_file" 2>/dev/null | sort | uniq -c | sort -rn
+	printf '%s' "$summary" | jq -r '.reasons[] | "\(.count | tostring | if length < 6 then (" " * (6 - length)) + . else . end) \(.reason)"'
 	echo ""
 	echo "Pass rate by tier:"
-	local tiers=""
-	tiers=$(jq -r 'select(.outcome == "pending" and (.tier // "") != "") | .tier' "$telemetry_file" 2>/dev/null | sort -u)
-	local t=""
-	while IFS= read -r t; do
-		[[ -n "$t" ]] || continue
-		local t_total t_success
-		t_total=$(jq -s --arg tier "$t" '[.[] | select(.tier == $tier and .outcome == "pending")] | length' "$telemetry_file" 2>/dev/null) || t_total=0
-		t_success=$(jq -s --arg tier "$t" '[.[] | select(.tier == $tier and .outcome == "success")] | length' "$telemetry_file" 2>/dev/null) || t_success=0
-		if [[ "$t_total" -gt 0 ]]; then
-			local pct
-			pct=$(awk "BEGIN {printf \"%.1f\", ${t_success}/${t_total}*100}")
-			echo "  tier:$t — $t_success/$t_total ($pct%)"
-		fi
-	done <<<"$tiers"
+	printf '%s' "$summary" | jq -r '.pass_rates[] | select(.tier != "" and .total > 0) | [.tier, .success, .total] | @tsv' |
+		while IFS=$'\t' read -r tier_name tier_success tier_total; do
+			local pct=""
+			pct=$(awk "BEGIN {printf \"%.1f\", ${tier_success}/${tier_total}*100}")
+			printf '  tier:%s — %s/%s (%s%%)\n' "$tier_name" "$tier_success" "$tier_total" "$pct"
+		done
 
 	return 0
 }
@@ -1424,6 +1477,12 @@ Usage:
 
   dispatch-ledger-helper.sh fail --session-key KEY
     Mark dispatch as failed (worker errored or timed out).
+
+  dispatch-ledger-helper.sh record-outcome --outcome OUTCOME [--session-key KEY]
+    Record one correlated terminal tier-telemetry event. First outcome wins.
+
+  dispatch-ledger-helper.sh tier-report
+    Report logical dispatch attempts, terminal outcomes, and pass rates by tier.
 
   dispatch-ledger-helper.sh expire [--ttl SECONDS]
     Expire stale in-flight entries (default TTL: 3600s / 60 min).

@@ -153,6 +153,10 @@ test_tier_telemetry_correlates_terminal_outcomes() {
 		--lease-token attempt-42 --issue 42 --repo "owner/repo" --outcome success
 	run_helper "$LEDGER_HELPER" record-outcome --session-key "issue-42" \
 		--lease-token attempt-42 --issue 42 --repo "owner/repo" --outcome failed
+	# Raw duplicate and unmatched rows model pre-v2 data or manual corruption.
+	# The report must normalize the known attempt and keep unmatched data separate.
+	printf '%s\n' '{"schema":2,"attempt_id":"attempt-42","issue":"42","repo":"owner/repo","tier":"simple","outcome":"success","completed_at":"2026-01-01T00:00:00Z"}' >>"${AIDEVOPS_DISPATCH_LEDGER_DIR}/tier-telemetry.jsonl"
+	printf '%s\n' '{"issue":"999","repo":"owner/repo","tier":"simple","outcome":"success","completed_at":"2026-01-01T00:00:00Z"}' >>"${AIDEVOPS_DISPATCH_LEDGER_DIR}/tier-telemetry.jsonl"
 
 	local telemetry_file="${AIDEVOPS_DISPATCH_LEDGER_DIR}/tier-telemetry.jsonl"
 	local result=0
@@ -160,12 +164,13 @@ test_tier_telemetry_correlates_terminal_outcomes() {
 	pending_count=$(jq -s '[.[] | select(.outcome == "pending")] | length' "$telemetry_file")
 	success_count=$(jq -s '[.[] | select(.outcome == "success")] | length' "$telemetry_file")
 	terminal_count=$(jq -s '[.[] | select(.outcome != "pending")] | length' "$telemetry_file")
-	terminal_tier=$(jq -r 'select(.outcome == "success") | .tier' "$telemetry_file")
+	terminal_tier=$(jq -rs 'first(.[] | select(.attempt_id == "attempt-42" and .outcome == "success") | .tier)' "$telemetry_file")
 	report=$("$LEDGER_HELPER" tier-report)
-	[[ "$pending_count" == "2" && "$success_count" == "1" && "$terminal_count" == "1" ]] || result=1
+	[[ "$pending_count" == "2" && "$success_count" == "3" && "$terminal_count" == "3" ]] || result=1
 	[[ "$terminal_tier" == "simple" ]] || result=1
 	[[ "$report" == *"Total dispatches: 2"* && "$report" == *"Pending/unknown: 1"* ]] || result=1
-	[[ "$report" == *"tier:simple — 1/1 (100.0%)"* && "$report" == *"tier:standard — 0/1 (0.0%)"* ]] || result=1
+	[[ "$report" == *"Success: 1"* && "$report" == *"Legacy/unmatched terminal events: 1"* ]] || result=1
+	[[ "$report" == *"tier:simple — 1/1 (100.0%)"* && "$report" != *"tier:standard"* ]] || result=1
 	print_result "tier telemetry correlates and idempotently reports terminal outcomes" "$result" \
 		"pending=${pending_count}, success=${success_count}, terminal=${terminal_count}, tier=${terminal_tier}"
 	teardown_test_env
@@ -176,17 +181,22 @@ test_tier_telemetry_handles_retries_and_legacy_pending() {
 	setup_test_env
 	local telemetry_file="${AIDEVOPS_DISPATCH_LEDGER_DIR}/tier-telemetry.jsonl"
 	printf '%s\n' '{"issue":"7","repo":"owner/repo","tier":"simple","model":"legacy-model","dispatched_at":"2026-01-01T00:00:00Z","outcome":"pending"}' >"$telemetry_file"
+	printf '%s\n' '{"issue":"7","repo":"owner/repo","tier":"simple","outcome":"failed","reason":"legacy_failure","completed_at":"2026-01-01T01:00:00Z"}' >>"$telemetry_file"
 	run_helper "$LEDGER_HELPER" register --session-key "issue-7" --issue 7 \
 		--repo "owner/repo" --pid $$ --tier thinking --model model-new --lease-token retry-7
 	run_helper "$LEDGER_HELPER" record-outcome --issue 7 --repo "owner/repo" --outcome success
 	run_helper "$LEDGER_HELPER" record-outcome --issue 7 --repo "owner/repo" --outcome failed
 
 	local result=0
-	local success_tier="" failed_tier="" legacy_pending=""
+	local success_tier="" failed_tier="" legacy_pending="" terminal_count="" report=""
 	success_tier=$(jq -r 'select(.outcome == "success") | .tier' "$telemetry_file")
 	failed_tier=$(jq -r 'select(.outcome == "failed") | .tier' "$telemetry_file")
 	legacy_pending=$(jq -s '[.[] | select(.outcome == "pending" and .model == "legacy-model")] | length' "$telemetry_file")
-	[[ "$success_tier" == "thinking" && "$failed_tier" == "simple" && "$legacy_pending" == "1" ]] || result=1
+	terminal_count=$(jq -s '[.[] | select(.outcome != "pending")] | length' "$telemetry_file")
+	report=$("$LEDGER_HELPER" tier-report)
+	[[ "$success_tier" == "thinking" && "$failed_tier" == "simple" && "$legacy_pending" == "1" && "$terminal_count" == "2" ]] || result=1
+	[[ "$report" == *"Success: 1"* && "$report" == *"Failed: 1"* && "$report" == *"Pending/unknown: 0"* ]] || result=1
+	[[ "$report" == *"Legacy/unmatched terminal events: 0"* ]] || result=1
 	print_result "tier telemetry pairs retries newest-first and supports legacy pending rows" "$result" \
 		"success_tier=${success_tier}, failed_tier=${failed_tier}, legacy=${legacy_pending}"
 	teardown_test_env

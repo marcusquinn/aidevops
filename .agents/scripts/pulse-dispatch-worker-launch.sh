@@ -1693,6 +1693,8 @@ _dlw_nohup_launch() {
 		WORKER_GITHUB_LOGIN="$self_login"
 		AIDEVOPS_DISPATCH_LEASE_TOKEN="${_claim_lease_token:-}"
 		AIDEVOPS_DISPATCH_LEASE_DEVICE="${_claim_lease_device:-}"
+		AIDEVOPS_DISPATCH_TIER="$dispatch_model_tier"
+		AIDEVOPS_DISPATCH_MODEL="$selected_model"
 		AIDEVOPS_ALLOW_WORKER_WORKTREE_OWNER_TRANSFER=1
 	)
 	_dlw_append_trusted_release_env
