@@ -188,9 +188,9 @@ _stale_recovery_has_terminal_evidence_since() {
 }
 
 #######################################
-# Look up any ready open PR referencing this issue (counter reset signal).
-# Draft checkpoints are durable progress but not a live/completed handoff, so
-# they must not suppress the bounded stale-recovery escalation counter.
+# Look up any open PR referencing this issue while preserving draft state.
+# Ready PRs reset stale recovery; draft checkpoints escalate instead of being
+# treated as either completion or permission for a competing implementation.
 # Args: $1 = issue number, $2 = repo slug
 # Output: PR number (or empty) on stdout
 #######################################
@@ -200,7 +200,7 @@ _stale_recovery_find_open_pr() {
 	local _open_pr
 	_open_pr=$(gh pr list --repo "$repo_slug" --state open \
 		--search "#${issue_number} in:body" --limit 1 \
-		--json number,isDraft --jq '[.[] | select(.isDraft != true)][0].number // empty' 2>/dev/null) || _open_pr=""
+		--json number,isDraft --jq '.[0] | if . == null then "" elif .isDraft then "draft|\(.number)" else "ready|\(.number)" end' 2>/dev/null) || _open_pr=""
 	printf '%s' "$_open_pr"
 	return 0
 }
@@ -521,6 +521,14 @@ _recover_stale_assignment() {
 	_latest_dispatch_ts=$(_stale_recovery_latest_dispatch_ts_from_pages "$_comments_pages")
 	_open_pr=$(_stale_recovery_find_open_pr "$issue_number" "$repo_slug")
 	if [[ -n "$_open_pr" ]]; then
+		if [[ "$_open_pr" == draft\|* ]]; then
+			_next_tick=$((_prior_ticks + 1))
+			_stale_recovery_escalate "$issue_number" "$repo_slug" "$stale_assignees" \
+				"terminal worker left incomplete draft PR #${_open_pr#*|}: ${reason}" \
+				"$_threshold" "$_next_tick" "$_latest_dispatch_ts"
+			return 0
+		fi
+		_open_pr="${_open_pr#ready|}"
 		printf 'STALE_PROGRESS_PRESERVED: issue #%s in %s — open PR #%s is durable progress\n' \
 			"$issue_number" "$repo_slug" "$_open_pr"
 		return 0
