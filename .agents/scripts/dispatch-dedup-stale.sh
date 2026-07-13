@@ -188,8 +188,9 @@ _stale_recovery_has_terminal_evidence_since() {
 }
 
 #######################################
-# Look up any open PR referencing this issue (counter reset signal).
-# A PR means progress is being made — don't escalate yet.
+# Look up any ready open PR referencing this issue (counter reset signal).
+# Draft checkpoints are durable progress but not a live/completed handoff, so
+# they must not suppress the bounded stale-recovery escalation counter.
 # Args: $1 = issue number, $2 = repo slug
 # Output: PR number (or empty) on stdout
 #######################################
@@ -199,7 +200,7 @@ _stale_recovery_find_open_pr() {
 	local _open_pr
 	_open_pr=$(gh pr list --repo "$repo_slug" --state open \
 		--search "#${issue_number} in:body" --limit 1 \
-		--json number --jq '.[0].number // empty' 2>/dev/null) || _open_pr=""
+		--json number,isDraft --jq '[.[] | select(.isDraft != true)][0].number // empty' 2>/dev/null) || _open_pr=""
 	printf '%s' "$_open_pr"
 	return 0
 }
