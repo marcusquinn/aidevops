@@ -27,6 +27,9 @@ _FULL_LOOP_RELEASE_NOT_REQUESTED="not-requested"
 _FULL_LOOP_RELEASE_PUBLISHED="published"
 _FULL_LOOP_EXECUTOR_INITIALIZED="initialized-only"
 _FULL_LOOP_PHASE_FAILED="failed"
+_FULL_LOOP_PHASE_RUNNING="running"
+_FULL_LOOP_PHASE_WAITING="waiting"
+_FULL_LOOP_PHASE_TASK="task"
 
 # Defensive SCRIPT_DIR fallback
 if [[ -z "${SCRIPT_DIR:-}" ]]; then
@@ -228,7 +231,7 @@ emit_postflight_phase() {
 		return 0
 	fi
 	if ! _full_loop_invoke_authorized_release; then
-		RELEASE_STATUS="failed"
+		RELEASE_STATUS="$_FULL_LOOP_PHASE_FAILED"
 		_full_loop_persist_release_status "$RELEASE_STATUS"
 		print_error "release:failed"
 		return 1
@@ -256,7 +259,7 @@ _full_loop_release_receipt_path() {
 _full_loop_persist_release_status() {
 	local status="$1"
 	local repo=""
-	[[ "$status" == "not-requested" || "$status" == "$_FULL_LOOP_RELEASE_PUBLISHED" || "$status" == "failed" ]] || return 1
+	[[ "$status" == "not-requested" || "$status" == "$_FULL_LOOP_RELEASE_PUBLISHED" || "$status" == "$_FULL_LOOP_PHASE_FAILED" ]] || return 1
 	if [[ -f "$STATE_FILE" ]]; then
 		save_state "${CURRENT_PHASE:-${PHASE:-postflight}}" "$SAVED_PROMPT" "${PR_NUMBER:-}" "${STARTED_AT:-$(date -u '+%Y-%m-%dT%H:%M:%SZ')}"
 	fi
@@ -655,8 +658,8 @@ _launch_background() {
 		EXECUTOR_STATUS="$_FULL_LOOP_EXECUTOR_INITIALIZED"
 		EXECUTOR_PID=""
 		NEXT_ACTION="attach-executor-or-resume"
-		PHASE_STATUS="waiting"
-		save_state "task" "$prompt" "" "${STARTED_AT:-$(date -u '+%Y-%m-%dT%H:%M:%SZ')}"
+		PHASE_STATUS="$_FULL_LOOP_PHASE_WAITING"
+		save_state "$_FULL_LOOP_PHASE_TASK" "$prompt" "" "${STARTED_AT:-$(date -u '+%Y-%m-%dT%H:%M:%SZ')}"
 		_full_loop_append_event "executor.initialized" "$_FULL_LOOP_EXECUTOR_INITIALIZED"
 		print_warning "Background loop initialized, but no executor was launched."
 		printf 'FULL_LOOP_START_RESULT=initialized-only\n'
@@ -669,12 +672,12 @@ _launch_background() {
 	EXECUTOR_PID="$!"
 	echo "$EXECUTOR_PID" >"${STATE_DIR}/full-loop.pid"
 	if kill -0 "$EXECUTOR_PID" 2>/dev/null; then
-		EXECUTOR_STATUS="running"
+		EXECUTOR_STATUS="$_FULL_LOOP_PHASE_RUNNING"
 		HEARTBEAT_AT="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
 		NEXT_ACTION="monitor"
-		PHASE_STATUS="running"
-		save_state "task" "$prompt" "" "${STARTED_AT:-$(date -u '+%Y-%m-%dT%H:%M:%SZ')}"
-		_full_loop_append_event "executor.started" "running"
+		PHASE_STATUS="$_FULL_LOOP_PHASE_RUNNING"
+		save_state "$_FULL_LOOP_PHASE_TASK" "$prompt" "" "${STARTED_AT:-$(date -u '+%Y-%m-%dT%H:%M:%SZ')}"
+		_full_loop_append_event "executor.started" "$_FULL_LOOP_PHASE_RUNNING"
 		print_success "Background executor started (PID: ${EXECUTOR_PID}). Use 'status' or 'logs' to monitor."
 		printf 'FULL_LOOP_START_RESULT=running\n'
 		return 0
@@ -682,8 +685,8 @@ _launch_background() {
 	EXECUTOR_STATUS="$_FULL_LOOP_EXECUTOR_INITIALIZED"
 	EXECUTOR_PID=""
 	NEXT_ACTION="attach-executor-or-resume"
-	PHASE_STATUS="waiting"
-	save_state "task" "$prompt" "" "${STARTED_AT:-$(date -u '+%Y-%m-%dT%H:%M:%SZ')}"
+	PHASE_STATUS="$_FULL_LOOP_PHASE_WAITING"
+	save_state "$_FULL_LOOP_PHASE_TASK" "$prompt" "" "${STARTED_AT:-$(date -u '+%Y-%m-%dT%H:%M:%SZ')}"
 	_full_loop_append_event "executor.start_failed" "$_FULL_LOOP_EXECUTOR_INITIALIZED"
 	print_warning "Background executor exited before liveness could be verified."
 	printf 'FULL_LOOP_START_RESULT=initialized-only\n'
@@ -740,14 +743,14 @@ cmd_start() {
 		return 0
 	}
 
-	PHASE_STATUS="waiting"
+	PHASE_STATUS="$_FULL_LOOP_PHASE_WAITING"
 	PHASE_ATTEMPT=1
 	PHASE_STARTED_AT="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
 	NEXT_ACTION="complete-task-development"
 	EXECUTOR_STATUS="$_FULL_LOOP_EXECUTOR_INITIALIZED"
-	save_state "task" "$prompt"
+	save_state "$_FULL_LOOP_PHASE_TASK" "$prompt"
 	SAVED_PROMPT="$prompt"
-	_full_loop_append_event "phase.started" "waiting"
+	_full_loop_append_event "phase.started" "$_FULL_LOOP_PHASE_WAITING"
 
 	if [[ "$_BACKGROUND" == "true" ]]; then
 		_launch_background "$prompt"
@@ -788,7 +791,7 @@ cmd_resume() {
 		return 1
 	}
 	local next_phase="${transition%% *}" emit_fn="${transition#* }"
-	PHASE_STATUS="running"
+	PHASE_STATUS="$_FULL_LOOP_PHASE_RUNNING"
 	PHASE_ATTEMPT=1
 	PHASE_STARTED_AT="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
 	PHASE_ENDED_AT=""
@@ -796,7 +799,7 @@ cmd_resume() {
 	TERMINAL_EVIDENCE=""
 	save_state "$next_phase" "$SAVED_PROMPT" "${PR_NUMBER:-}" "$STARTED_AT"
 	CURRENT_PHASE="$next_phase"
-	_full_loop_append_event "phase.started" "running"
+	_full_loop_append_event "phase.started" "$_FULL_LOOP_PHASE_RUNNING"
 	if ! "$emit_fn"; then
 		PHASE_STATUS="$_FULL_LOOP_PHASE_FAILED"
 		NEXT_ACTION="retry-${next_phase}"
@@ -804,7 +807,7 @@ cmd_resume() {
 		save_state "$next_phase" "$SAVED_PROMPT" "${PR_NUMBER:-}" "$STARTED_AT"
 		return 1
 	fi
-	PHASE_STATUS="waiting"
+	PHASE_STATUS="$_FULL_LOOP_PHASE_WAITING"
 	NEXT_ACTION="complete-${next_phase}"
 	save_state "$next_phase" "$SAVED_PROMPT" "${PR_NUMBER:-}" "$STARTED_AT"
 	return 0
@@ -827,7 +830,7 @@ cmd_status() {
 	}
 	load_state
 	local observed_status="$EXECUTOR_STATUS"
-	if [[ "$observed_status" == "running" ]]; then
+	if [[ "$observed_status" == "$_FULL_LOOP_PHASE_RUNNING" ]]; then
 		if [[ ! "$EXECUTOR_PID" =~ ^[0-9]+$ ]] || ! kill -0 "$EXECUTOR_PID" 2>/dev/null; then
 			observed_status="stale"
 		fi
