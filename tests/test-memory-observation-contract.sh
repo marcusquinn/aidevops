@@ -62,6 +62,9 @@ assert_eq 1 "$(db_query 'SELECT COUNT(*) FROM observation_relations WHERE relati
 if run_memory feedback mem_new --value "0); DROP TABLE learnings; --" >/dev/null 2>&1; then
 	fail "feedback accepted a non-numeric custom reward"
 fi
+if run_memory feedback mem_new --value 1.0 --signal "'; DROP TABLE learnings; --" >/dev/null 2>&1; then
+	fail "feedback accepted a malicious signal with custom value"
+fi
 if run_memory feedback mem_new --value >/dev/null 2>&1; then
 	fail "feedback accepted a missing custom reward"
 fi
