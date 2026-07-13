@@ -239,3 +239,64 @@ remove_worktree_path_permanently() {
 
 	return 1
 }
+
+# Resolve native Git without selecting the canonical mutation-guard shim. This
+# helper is the audited exception for pruning metadata after a guarded removal
+# has already moved a linked worktree directory to trash.
+_worktree_cleanup_real_git() {
+	local candidate="${AIDEVOPS_REAL_GIT_BIN:-}"
+
+	if [[ -n "$candidate" && -x "$candidate" ]]; then
+		printf '%s\n' "$candidate"
+		return 0
+	fi
+
+	for candidate in /usr/bin/git /usr/local/bin/git /opt/homebrew/bin/git; do
+		if [[ -x "$candidate" ]]; then
+			printf '%s\n' "$candidate"
+			return 0
+		fi
+	done
+
+	return 1
+}
+
+# Return 0 when Git still lists the exact worktree path in its shared metadata.
+_worktree_metadata_contains_path() {
+	local real_git="$1"
+	local repo_context="$2"
+	local wt_path="$3"
+	local listed_path=""
+
+	while IFS= read -r listed_path; do
+		[[ "$listed_path" == "worktree $wt_path" ]] && return 0
+	done < <("$real_git" -C "$repo_context" worktree list --porcelain 2>/dev/null || true)
+
+	return 1
+}
+
+# Prune a missing linked worktree through the narrowly scoped native-Git
+# primitive, then verify its exact metadata entry disappeared. The target must
+# already be absent so this cannot remove a live worktree directory.
+# Args: $1=repository context, $2=missing worktree path
+# Returns 0 only when the target metadata is absent after pruning.
+prune_missing_worktree_metadata() {
+	local repo_context="$1"
+	local wt_path="$2"
+	local real_git=""
+
+	[[ -n "$repo_context" && -d "$repo_context" && -n "$wt_path" ]] || return 1
+	[[ ! -e "$wt_path" ]] || return 1
+	real_git=$(_worktree_cleanup_real_git) || return 1
+
+	if ! _worktree_metadata_contains_path "$real_git" "$repo_context" "$wt_path"; then
+		return 0
+	fi
+
+	"$real_git" -C "$repo_context" worktree prune >/dev/null 2>&1 || return 1
+	if _worktree_metadata_contains_path "$real_git" "$repo_context" "$wt_path"; then
+		return 1
+	fi
+
+	return 0
+}

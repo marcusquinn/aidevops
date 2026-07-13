@@ -154,6 +154,8 @@ _remove_validate_path() {
 # Returns 0 on success, 1 on failure.
 _remove_cleanup_and_execute() {
 	local path_to_remove="$1"
+	local repo_context=""
+	repo_context=$(get_repo_root) || return 1
 
 	# Clean up aidevops runtime files before removal (prevents "contains untracked files" error)
 	# Use trash_path for recoverable deletion; fall back to rm -rf if trash unavailable.
@@ -178,7 +180,12 @@ _remove_cleanup_and_execute() {
 		# trash unavailable or failed — fall back to git worktree remove
 		git worktree remove "$path_to_remove" || return 1
 	else
-		git worktree prune 2>/dev/null || true
+		if ! prune_missing_worktree_metadata "$repo_context" "$path_to_remove"; then
+			echo -e "${YELLOW}Partial cleanup: worktree files moved to trash, but Git metadata remains.${NC}"
+			echo "Recovery: resolve Git metadata permissions or locks, then prune the missing worktree from a linked worktree and verify it is absent from 'git worktree list --porcelain'."
+			log_worktree_removal_event "$_WTAR_SKIPPED" "$_WTAR_WH_CALLER" "$path_to_remove" "metadata-prune-failed" "partial-cleanup"
+			return 1
+		fi
 	fi
 
 	# Unregister ownership (t189)
