@@ -372,6 +372,8 @@ _write_subagent_stub() {
 			'    "~/.aidevops/**": allow' \
 			'    "~/.config/aidevops": allow' \
 			'    "~/.config/aidevops/**": allow' \
+			'    "~/.config/opencode/command": allow' \
+			'    "~/.config/opencode/command/**": allow' \
 			'    "~/Git/_worktrees": allow' \
 			'    "~/Git/_worktrees/**": allow' \
 			"tools:" \

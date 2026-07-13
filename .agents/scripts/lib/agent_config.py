@@ -183,6 +183,8 @@ def get_agent_config(display_name, filename, subagents=None, model_tier=None):
             "~/.aidevops/**": "allow",
             "~/.config/aidevops": "allow",
             "~/.config/aidevops/**": "allow",
+            "~/.config/opencode/command": "allow",
+            "~/.config/opencode/command/**": "allow",
             "~/Git/_worktrees": "allow",
             "~/Git/_worktrees/**": "allow",
         }
