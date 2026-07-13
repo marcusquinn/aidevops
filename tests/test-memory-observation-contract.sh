@@ -59,4 +59,14 @@ run_memory stats >/dev/null
 assert_eq 2 "$(db_query 'SELECT COUNT(*) FROM observation_sources WHERE source_kind="learning";')" "repeat migration does not fabricate evidence"
 assert_eq 1 "$(db_query 'SELECT COUNT(*) FROM observation_relations WHERE relation_type="supersedes";')" "repeat migration keeps one relation"
 
+if run_memory feedback mem_new --value "0); DROP TABLE learnings; --" >/dev/null 2>&1; then
+	fail "feedback accepted a non-numeric custom reward"
+fi
+if run_memory feedback mem_new --value >/dev/null 2>&1; then
+	fail "feedback accepted a missing custom reward"
+fi
+assert_eq 2 "$(db_query 'SELECT COUNT(*) FROM learnings;')" "invalid custom reward cannot alter the database"
+run_memory feedback mem_new --value -0.25 >/dev/null
+assert_eq 1.25 "$(db_query 'SELECT usefulness_score FROM learning_access WHERE id="mem_new";')" "numeric custom reward remains supported"
+
 printf 'PASS: canonical observation migration, idempotency, scope, supersession, and privacy metadata\n'

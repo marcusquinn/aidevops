@@ -36,4 +36,19 @@ memory prune --older-than-days 99999 --max-count 100 --max-bytes 1 >/dev/null
 [[ "$(sqlite3 "$db" 'SELECT COUNT(*) FROM observations;')" == "4" ]]
 [[ "$(sqlite3 "$db" 'SELECT COUNT(*) FROM observation_sources;')" == "4" ]]
 
+judge_log="$TEST_DIR/judge.log"
+judge_stub="$TEST_DIR/judge.sh"
+cat >"$judge_stub" <<EOF
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >>"$judge_log"
+printf 'keep\n'
+EOF
+chmod +x "$judge_stub"
+memory store --content "AI relevance fixture" --type CONTEXT >/dev/null
+ai_id=$(sqlite3 "$db" "SELECT id FROM learnings ORDER BY rowid DESC LIMIT 1;")
+sqlite3 "$db" "UPDATE learnings SET created_at=datetime('now', '-70 days') WHERE id='$ai_id';"
+AIDEVOPS_AI_THRESHOLD_JUDGE="$judge_stub" memory prune --older-than-days 90 --ai-judged --max-count 100 --max-bytes 100000 >/dev/null
+grep -F "judge-prune-relevance" "$judge_log" >/dev/null
+[[ "$(sqlite3 "$db" "SELECT COUNT(*) FROM learnings WHERE id='$ai_id';")" == "1" ]]
+
 printf 'PASS: age, count, and byte retention bounds preserve canonical audit evidence\n'

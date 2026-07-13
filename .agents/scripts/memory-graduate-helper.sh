@@ -815,22 +815,42 @@ cmd_outcome() {
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
 		--value)
+			[[ $# -ge 2 ]] || {
+				log_error "Option --value requires an argument"
+				return 1
+			}
 			outcome_value="$2"
 			shift 2
 			;;
 		--details)
+			[[ $# -ge 2 ]] || {
+				log_error "Option --details requires an argument"
+				return 1
+			}
 			details="$2"
 			shift 2
 			;;
 		--verifier)
+			[[ $# -ge 2 ]] || {
+				log_error "Option --verifier requires an argument"
+				return 1
+			}
 			verifier_id="$2"
 			shift 2
 			;;
 		--source-id)
+			[[ $# -ge 2 ]] || {
+				log_error "Option --source-id requires an argument"
+				return 1
+			}
 			evidence_source_id="$2"
 			shift 2
 			;;
 		--provenance)
+			[[ $# -ge 2 ]] || {
+				log_error "Option --provenance requires an argument"
+				return 1
+			}
 			verification_provenance="$2"
 			shift 2
 			;;
@@ -910,10 +930,18 @@ cmd_revoke() {
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
 		--reason)
+			[[ $# -ge 2 ]] || {
+				log_error "Option --reason requires an argument"
+				return 1
+			}
 			reason="$2"
 			shift 2
 			;;
 		--corrected-by)
+			[[ $# -ge 2 ]] || {
+				log_error "Option --corrected-by requires an argument"
+				return 1
+			}
 			corrected_by="$2"
 			shift 2
 			;;
@@ -942,7 +970,7 @@ cmd_revoke() {
 	fi
 	local current_status=""
 	current_status=$(db "$MEMORY_DB" "SELECT status FROM observation_promotions WHERE observation_id='obs_learning_$escaped_id' AND destination='$GRADUATED_DESTINATION';")
-	if [[ -z "$current_status" ]]; then
+	if [[ "$current_status" != "active" ]]; then
 		log_error "Active promotion not found: $memory_id"
 		return 1
 	fi
@@ -950,10 +978,6 @@ cmd_revoke() {
 	target_file=$(graduated_file_path) || return 1
 	if [[ -f "$target_file" ]]; then
 		remove_promoted_block "$target_file" "$memory_id" || return 1
-	fi
-	if [[ "$current_status" == "$new_status" ]]; then
-		log_info "Promotion already $new_status: $memory_id"
-		return 0
 	fi
 	db "$MEMORY_DB" "UPDATE observation_promotions SET status='$new_status', changed_at=strftime('%Y-%m-%dT%H:%M:%fZ','now'), change_reason='$escaped_reason' WHERE observation_id='obs_learning_$escaped_id' AND status='active'; UPDATE observations SET status='$new_status' WHERE observation_id='obs_learning_$escaped_id';"
 	record_outcome "$memory_id" "$outcome_kind" "-1" "$reason"
