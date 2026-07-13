@@ -36,6 +36,14 @@ git -C "$UPDATER" commit -q -m remote-tip
 git -C "$UPDATER" push -q origin main
 REMOTE_SHA=$(git -C "$UPDATER" rev-parse HEAD)
 
+# Simulate a remote branch that has not been fetched into the canonical repo.
+# The bootstrap worktree must not depend on the missing remote-tracking ref.
+git -C "$CANONICAL" update-ref -d refs/remotes/origin/main
+if git -C "$CANONICAL" show-ref --verify --quiet refs/remotes/origin/main; then
+	printf 'FAIL origin/main still exists before bootstrap test\n'
+	exit 1
+fi
+
 # Optional integration mode: prepend the repository Git shim after fixture
 # setup so worktree creation exercises the canonical guard without blocking
 # the fixture's intentional canonical branch/bootstrap mutations.
