@@ -1592,6 +1592,28 @@ Knowledge source \`${source_id}\` promoted from staging to \`sources/\` after cr
 }
 
 #######################################
+# Restore the complete dispatchable state after trusted NMR approval.
+# Stale escalation removes both core status labels and auto-dispatch, so the
+# approval transition must not depend on a racing recovery writer.
+# Args: issue number, repo slug
+#######################################
+_nmr_restore_dispatchable_state() {
+	local issue_num="$1"
+	local slug="$2"
+	if declare -F set_issue_status >/dev/null 2>&1; then
+		set_issue_status "$issue_num" "$slug" "available" \
+			--remove-label "needs-maintainer-review" \
+			--add-label "auto-dispatch" >/dev/null 2>&1
+		return $?
+	fi
+	gh issue edit "$issue_num" --repo "$slug" \
+		--remove-label "needs-maintainer-review" \
+		--add-label "status:available" \
+		--add-label "auto-dispatch" >/dev/null 2>&1
+	return $?
+}
+
+#######################################
 # Auto-approve needs-maintainer-review issues using cryptographic
 # signature verification (t1894, replaces GH#16842 comment-based check).
 #
@@ -1682,20 +1704,7 @@ auto_approve_maintainer_issues() {
 Auto-approved: ${approval_reason}. Stale recovery tick reset." \
 					2>/dev/null || true
 
-				# Restore the complete dispatchable state in one status mutation.
-				# Stale escalation removes both core status labels and auto-dispatch;
-				# approval must therefore restore status:available as well as the
-				# routing label, rather than depending on a racing recovery writer.
-				if declare -F set_issue_status >/dev/null 2>&1; then
-					set_issue_status "$issue_num" "$slug" "available" \
-						--remove-label "needs-maintainer-review" \
-						--add-label "auto-dispatch" >/dev/null 2>&1
-				else
-					gh issue edit "$issue_num" --repo "$slug" \
-						--remove-label "needs-maintainer-review" \
-						--add-label "status:available" \
-						--add-label "auto-dispatch" >/dev/null 2>&1
-				fi
+				_nmr_restore_dispatchable_state "$issue_num" "$slug"
 				local edit_exit=$?
 				if [[ "$edit_exit" -eq 0 ]]; then
 					echo "[pulse-wrapper] Auto-approved #${issue_num} in ${slug} — ${approval_reason} (locked + approval marker + tick reset)" >>"$LOGFILE"
