@@ -12,7 +12,7 @@
 #   5. `gh issue comment --body-file` with marker passes through
 #   6. `gh pr create --body` without marker gets sig appended
 #   7. `AIDEVOPS_GH_SHIM_DISABLE=1` bypasses the shim entirely
-#   8. Recursion guard: `_AIDEVOPS_GH_SHIM_ACTIVE=1` triggers pass-through
+#   8. Recursion guard: `_AIDEVOPS_GH_SHIM_ACTIVE=1` fails closed immediately
 #
 # Strategy: run the shim against a stub `gh` binary that logs its args, and
 # a stub `gh-signature-helper.sh` that emits a predictable footer. Assert
@@ -344,12 +344,16 @@ fi
 echo ""
 echo "Test 8: recursion guard"
 _reset_log
-_AIDEVOPS_GH_SHIM_ACTIVE=1 "$SHIM_RUN" issue comment 111 --repo owner/repo --body "recursive" 2>/dev/null
-argv=$(_read_argv)
-if [[ "$argv" != *"<!-- aidevops:sig -->"* ]]; then
-	_pass "recursion guard skips injection"
+if _AIDEVOPS_GH_SHIM_ACTIVE=1 "$SHIM_RUN" issue comment 111 --repo owner/repo --body "recursive" 2>"$TMP/recursive.err"; then
+	_fail "recursion guard" "recursive invocation unexpectedly passed"
 else
-	_fail "recursion guard" "sig was injected despite guard; argv: $argv"
+	rc=$?
+	argv=$(_read_argv)
+	if [[ $rc -eq 126 && -z "$argv" ]] && grep -q "recursive aidevops gh shim invocation blocked" "$TMP/recursive.err"; then
+		_pass "recursion guard fails closed before native gh exec"
+	else
+		_fail "recursion guard" "rc=$rc argv: $argv err: $(cat "$TMP/recursive.err" 2>/dev/null || true)"
+	fi
 fi
 
 # =============================================================================
@@ -444,7 +448,7 @@ rm -f "$AIDEVOPS_GH_API_LOG"
 output=$(STUB_RATE_LIMIT_REMAINING=0 "$SHIM_RUN" issue list --repo owner/repo \
 	--state open --json number,title,url,assignees,labels,updatedAt --jq '.[0].title' 2>/dev/null || true)
 argv=$(_read_argv)
-if [[ "$output" == '"Reduce GraphQL list-call pressure"' ]] &&
+if [[ "$output" == "Reduce GraphQL list-call pressure" ]] &&
 	[[ "$argv" == *"/repos/owner/repo/issues?state=open&per_page=30"* ]] &&
 	grep -q $'\tgh_issue_list\trest' "$AIDEVOPS_GH_API_LOG"; then
 	_pass "gh issue list --json uses REST fallback with compact issue fields"

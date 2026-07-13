@@ -77,7 +77,91 @@
 #   .agents/scripts/shared-gh-wrappers.sh _gh_wrapper_auto_sig — reference impl
 # =============================================================================
 
-_SHIM_DIR="$(cd "$(dirname "$0")" 2>/dev/null && pwd)" || _SHIM_DIR=""
+_SHIM_SOURCE="${BASH_SOURCE[0]:-$0}"
+while [[ -L "$_SHIM_SOURCE" ]]; do
+	_SHIM_LINK_DIR="$(cd "$(dirname "$_SHIM_SOURCE")" 2>/dev/null && pwd)" || exit 127
+	_SHIM_SOURCE=$(readlink "$_SHIM_SOURCE") || exit 127
+	[[ "$_SHIM_SOURCE" == /* ]] || _SHIM_SOURCE="${_SHIM_LINK_DIR}/${_SHIM_SOURCE}"
+done
+_SHIM_DIR="$(cd "$(dirname "$_SHIM_SOURCE")" 2>/dev/null && pwd)" || _SHIM_DIR=""
+_SHIM_SOURCE="${_SHIM_DIR}/$(basename "$_SHIM_SOURCE")"
+
+# Reject recursive entry rather than forwarding to another shim generation.
+# The resolver below prevents normal cross-generation selection; this sentinel
+# bounds any unexpected re-entry caused by a child process or stale shim.
+if [[ -n "${_AIDEVOPS_GH_SHIM_ACTIVE:-}" ]]; then
+	printf '[aidevops] gh shim: recursive aidevops gh shim invocation blocked\n' >&2
+	exit 126
+fi
+
+_shim_is_aidevops_gh() {
+	local candidate_real="$1"
+	case "$candidate_real" in
+	*/.aidevops/agents/scripts/gh | \
+		*/.aidevops/bin/gh | \
+		*/.aidevops/runtime-bundles/*/agents/scripts/gh | \
+		*/runtime-bundles/*/agents/scripts/gh | \
+		*/aidevops/.agents/scripts/gh | \
+		*/.agents/scripts/gh | \
+		*/.agents/scripts/safe-bin/gh | \
+		*/agents/scripts/gh) return 0 ;;
+	esac
+	return 1
+}
+
+_shim_canonical_path() {
+	local candidate="$1"
+	local candidate_dir=""
+	local candidate_name=""
+	if command -v python3 >/dev/null 2>&1; then
+		python3 -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "$candidate" 2>/dev/null
+		return $?
+	fi
+	candidate_dir=$(cd "$(dirname "$candidate")" 2>/dev/null && pwd -P) || return 1
+	candidate_name=$(basename "$candidate")
+	printf '%s/%s\n' "$candidate_dir" "$candidate_name"
+	return 0
+}
+
+# Resolve a trusted native gh executable. Merely excluding this shim's own
+# directory is insufficient: hot deployment can leave several aidevops shim
+# generations on PATH, each of which would otherwise select the next one.
+_find_real_gh() {
+	local path_dir=""
+	local candidate=""
+	local candidate_real=""
+	local IFS=:
+	for path_dir in $PATH; do
+		[[ -n "$path_dir" ]] || path_dir="."
+		candidate="${path_dir}/gh"
+		[[ -x "$candidate" ]] || continue
+		candidate_real=$(_shim_canonical_path "$candidate" 2>/dev/null || true)
+		[[ -n "$candidate_real" ]] || continue
+		[[ "$candidate_real" -ef "$_SHIM_SOURCE" ]] && continue
+		_shim_is_aidevops_gh "$candidate_real" && continue
+		printf '%s\n' "$candidate_real"
+		return 0
+	done
+	for candidate in /opt/homebrew/bin/gh /usr/local/bin/gh /usr/bin/gh; do
+		[[ -x "$candidate" ]] || continue
+		candidate_real=$(_shim_canonical_path "$candidate" 2>/dev/null || true)
+		[[ -n "$candidate_real" ]] || continue
+		_shim_is_aidevops_gh "$candidate_real" && continue
+		printf '%s\n' "$candidate_real"
+		return 0
+	done
+	return 1
+}
+
+# The documented emergency bypass must avoid instrumentation and all normal
+# shim policy while still rejecting every other aidevops-managed gh wrapper.
+if [[ "${AIDEVOPS_GH_SHIM_DISABLE:-0}" == "1" ]]; then
+	_real_gh="$(_find_real_gh)" || {
+		printf '[aidevops] gh shim: native gh binary not found on PATH\n' >&2
+		exit 127
+	}
+	exec "$_real_gh" "$@"
+fi
 
 # -----------------------------------------------------------------------------
 # Source instrumentation helper for gh_record_call (GH#21857 — full visibility).
@@ -156,29 +240,6 @@ _shim_caller_label() {
 	*) printf 'gh_%s%s' "${sub1:-unknown}" "${sub2:+_${sub2}}" ;;
 	esac
 	return 0
-}
-
-# -----------------------------------------------------------------------------
-# Locate the REAL gh binary, excluding our own shim directory from PATH lookup
-# so we never recurse into ourselves even if PATH is unusual.
-# -----------------------------------------------------------------------------
-_find_real_gh() {
-	local p
-	local IFS=:
-	for p in $PATH; do
-		[[ -n "$_SHIM_DIR" && "$p" == "$_SHIM_DIR" ]] && continue
-		[[ -x "$p/gh" ]] || continue
-		printf '%s\n' "$p/gh"
-		return 0
-	done
-	# Fallback: well-known install locations
-	for p in /opt/homebrew/bin/gh /usr/local/bin/gh /usr/bin/gh; do
-		[[ -x "$p" ]] && {
-			printf '%s\n' "$p"
-			return 0
-		}
-	done
-	return 1
 }
 
 # -----------------------------------------------------------------------------
@@ -389,25 +450,6 @@ api:*)
 	;;
 esac
 
-# -----------------------------------------------------------------------------
-# Emergency bypass — matches the escape hatch documented in build.txt.
-# -----------------------------------------------------------------------------
-if [[ "${AIDEVOPS_GH_SHIM_DISABLE:-0}" == "1" ]]; then
-	_real_gh="$(_find_real_gh)" || {
-		echo "[aidevops] gh shim: real gh binary not found on PATH" >&2
-		exit 127
-	}
-	exec "$_real_gh" "$@"
-fi
-
-# -----------------------------------------------------------------------------
-# Recursion guard. If a subprocess somehow re-invokes us (e.g., PATH inherited
-# by a child that also has us first), short-circuit to the real gh.
-# -----------------------------------------------------------------------------
-if [[ -n "${_AIDEVOPS_GH_SHIM_ACTIVE:-}" ]]; then
-	_real_gh="$(_find_real_gh)" || exit 127
-	exec "$_real_gh" "$@"
-fi
 export _AIDEVOPS_GH_SHIM_ACTIVE=1
 
 REAL_GH="$(_find_real_gh)" || {
