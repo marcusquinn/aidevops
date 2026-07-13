@@ -10,7 +10,7 @@
 // Usage: node browser-qa.mjs <base-url> [options]
 //
 // Options:
-//   --output-dir <dir>     Directory for screenshots and report (default: /tmp/browser-qa)
+//   --output-dir <dir>     Directory for screenshots and report (default: managed aidevops temp workspace)
 //   --flows <json>         JSON array of flow definitions (URLs or {url, actions} objects)
 //   --timeout <ms>         Page load timeout (default: 30000)
 //   --viewport <WxH>       Viewport size (default: 1280x720)
@@ -21,6 +21,7 @@
 //   --help                 Show help
 
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { chromium } from 'playwright';
 
@@ -31,7 +32,7 @@ import { chromium } from 'playwright';
 /** Default option values for parseArgs. */
 const DEFAULT_OPTIONS = {
   baseUrl: null,
-  outputDir: '/tmp/browser-qa',
+  outputDir: join(process.env.AIDEVOPS_TEMP_DIR || join(homedir(), '.aidevops', '.agent-workspace', 'tmp'), 'browser-qa'),
   flows: null,
   timeout: 30000,
   viewportWidth: 1280,
@@ -96,7 +97,7 @@ function printUsage() {
   console.log(`Usage: node browser-qa.mjs <base-url> [options]
 
 Options:
-  --output-dir <dir>     Screenshot/report directory (default: /tmp/browser-qa)
+  --output-dir <dir>     Screenshot/report directory (default: managed aidevops temp workspace)
   --flows <json>         JSON array of URLs or {url, name, actions} objects
   --timeout <ms>         Page load timeout (default: 30000)
   --viewport <WxH>       Viewport size (default: 1280x720)

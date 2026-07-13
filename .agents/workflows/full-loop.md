@@ -150,7 +150,7 @@ Create and sign the merge-summary body in one Bash tool call, then post it with
 blocked by the signature gate.
 
 ```bash
-MERGE_SUMMARY_FILE=/tmp/aidevops-merge-summary.md
+MERGE_SUMMARY_FILE="${AIDEVOPS_TEMP_DIR:-$HOME/.aidevops/.agent-workspace/tmp}/aidevops-merge-summary.md"
 cat <<'EOF' > "$MERGE_SUMMARY_FILE"
 <!-- MERGE_SUMMARY -->
 ## Completion Summary
@@ -165,7 +165,7 @@ EOF
 ```
 
 ```bash
-gh pr comment "$PR_NUMBER" --repo "$REPO" --body-file /tmp/aidevops-merge-summary.md
+gh pr comment "$PR_NUMBER" --repo "$REPO" --body-file "$MERGE_SUMMARY_FILE"
 ```
 
 Verify it posted: `gh api "repos/${REPO}/issues/${PR_NUMBER}/comments" --jq '[.[] | select(.body | test("MERGE_SUMMARY"))] | length'` must return `1`.

@@ -58,7 +58,7 @@ $HELPER run \
 # Returns immediately with: "Dispatched PID: 12345"
 ```
 
-**Legacy (no `--detach`):** redirect at caller level: `$HELPER run ... </dev/null >>/tmp/worker-${session_key}.log 2>&1 &`
+**Legacy (no `--detach`):** redirect at caller level: `$HELPER run ... </dev/null >>"${AIDEVOPS_TEMP_DIR:-$HOME/.aidevops/.agent-workspace/tmp}/worker-${session_key}.log" 2>&1 &`
 
 ### Dispatch Rules
 

@@ -15,7 +15,7 @@
 #   --url <url>            Base URL of the application to test
 #
 # Options:
-#   --output-dir <dir>     Screenshot/report directory (default: /tmp/browser-qa-{timestamp})
+#   --output-dir <dir>     Screenshot/report directory (default: managed aidevops temp workspace)
 #   --flows <json>         JSON array of URLs or {url, name} objects to visit
 #   --flows-file <path>    File containing flows JSON (one per line or JSON array)
 #   --mission-file <path>  Read acceptance criteria from mission file for flow generation
@@ -211,7 +211,7 @@ parse_args() {
 
 	# Set default output dir if not specified
 	if [[ -z "$OUTPUT_DIR" ]]; then
-		OUTPUT_DIR="/tmp/browser-qa-$(date +%Y%m%d-%H%M%S)"
+		OUTPUT_DIR="${AIDEVOPS_TEMP_DIR:-${HOME}/.aidevops/.agent-workspace/tmp}/browser-qa-$(date +%Y%m%d-%H%M%S)"
 	fi
 
 	return 0
