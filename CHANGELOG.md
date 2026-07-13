@@ -10,6 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.32.99] - 2026-07-13
+
+### Fixed
+
+- safely parse trusted approval reviews (#27521)
+
 ## [3.32.98] - 2026-07-13
 
 ### Changed
