@@ -967,11 +967,11 @@ _check_dry_run() {
 # Scan base+head via worktrees, compute diff, optionally write report.
 # Exits 0 (no regression), 1 (regression), or 2 (error).
 #
-# Diff-scoped optimisation (t2827): computes the list of .sh/.py files that
+# Diff-scoped optimisation (t2827): computes the list of .sh/.py/.md files that
 # changed between base and head and passes it to scan_dir so each worktree
 # scan covers only those files instead of the full repo. This reduces
 # wall-clock time from ~98s to <10s for a 2-file diff (949 .sh files → 2).
-# If no .sh/.py files changed, exits 0 immediately without creating worktrees.
+# If no .sh/.py/.md files changed, exits 0 immediately without creating worktrees.
 # The `scan` subcommand (CI full-repo path) is unaffected.
 # ---------------------------------------------------------------------------
 _check_regression() {
@@ -996,7 +996,7 @@ _check_regression() {
 	if [ -z "$_changed_source" ]; then
 		log "[$_metric] no applicable changes between ${_base_sha:0:7}..${_head_sha:0:7} — skipping"
 		# Write a clean "no applicable changes" report so any previously-posted
-		# stale report (from a prior run with .sh/.py changes that were later
+		# stale report (from a prior run with .sh/.py/.md changes that were later
 		# reverted back to doc-only) is replaced via the CI upsert path.
 		if [ -n "$_output_md" ]; then
 			local _title_str
@@ -1004,7 +1004,7 @@ _check_regression() {
 			{
 				printf '## %s Regression Gate\n\n' "$_title_str"
 				# shellcheck disable=SC2016
-				printf '✅ **No applicable changes** — no `.sh`/`.py` files changed in this PR.\n\n'
+				printf '✅ **No applicable changes** — no `.sh`/`.py`/`.md` files changed in this PR.\n\n'
 				printf '<!-- complexity-regression-gate:%s -->\n' "$_metric"
 			} >"$_output_md"
 			log "[$_metric] wrote no-changes report to $_output_md"

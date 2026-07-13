@@ -596,10 +596,10 @@ test_diff_scoped_timing() {
 }
 
 # ---------------------------------------------------------------------------
-# Test 15: diff-scoped skip — doc-only diff (no .sh/.py changes) exits 0 (t2827)
+# Test 15: diff-scoped skip — non-source diff exits 0 (t2827)
 #
-# When the diff between base and head contains no .sh or .py files, the check
-# subcommand should exit 0 immediately without creating any worktrees.
+# When the diff between base and head contains no .sh, .py, or .md files, the
+# check subcommand should exit 0 immediately and report the applicable types.
 # ---------------------------------------------------------------------------
 test_diff_scoped_skip_no_sh_changes() {
 	setup
@@ -618,20 +618,23 @@ test_diff_scoped_skip_no_sh_changes() {
 	local _base_sha
 	_base_sha=$(git -C "$_repo" rev-parse HEAD)
 
-	# Head commit: only a doc file changed (no .sh/.py)
-	printf 'hello\n' >"$_repo/README.md"
-	git -C "$_repo" add README.md
-	git -C "$_repo" commit -q -m "head: docs only"
+	# Head commit: only a non-source file changed (no .sh/.py/.md)
+	printf 'hello\n' >"$_repo/fixture.txt"
+	git -C "$_repo" add fixture.txt
+	git -C "$_repo" commit -q -m "head: fixture only"
 
 	local _rc=0
-	(cd "$_repo" && "$HELPER" check --base "$_base_sha" --metric function-complexity) \
-		>/dev/null 2>&1 || _rc=$?
+	local _report="$_repo/report.md"
+	(cd "$_repo" && "$HELPER" check --base "$_base_sha" --metric function-complexity \
+		--output-md "$_report") >/dev/null 2>&1 || _rc=$?
 
-	if [ "$_rc" -eq 0 ]; then
-		print_result "diff-scoped skip: doc-only diff exits 0 (no .sh changes)" 0
+	# Literal Markdown backticks are intentional.
+	# shellcheck disable=SC2016
+	if [ "$_rc" -eq 0 ] && grep -Fq 'no `.sh`/`.py`/`.md` files changed' "$_report"; then
+		print_result "diff-scoped skip: non-source diff reports all applicable types" 0
 	else
-		print_result "diff-scoped skip: doc-only diff exits 0 (no .sh changes)" 1 \
-			"expected exit 0, got exit $_rc"
+		print_result "diff-scoped skip: non-source diff reports all applicable types" 1 \
+			"expected exit 0 and .sh/.py/.md report text, got exit $_rc"
 	fi
 	teardown
 	return 0
