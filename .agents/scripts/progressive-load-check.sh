@@ -18,7 +18,8 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit 2
-AGENTS_DIR="$(cd "$SCRIPT_DIR/.." && pwd)" || exit 2
+DEFAULT_AGENTS_DIR="$(cd "$SCRIPT_DIR/.." && pwd)" || exit 2
+AGENTS_DIR="${PROGRESSIVE_LOAD_AGENTS_DIR:-$DEFAULT_AGENTS_DIR}"
 BUILD_TXT="$AGENTS_DIR/prompts/build.txt"
 AGENTS_MD="$AGENTS_DIR/AGENTS.md"
 REFERENCE_DIR="$AGENTS_DIR/reference"
@@ -58,20 +59,20 @@ trim_field() {
 	return 0
 }
 
-check_extraction() {
+check_pointer() {
 	local section="$1"
 	local source_file="$2"
-	local ref_file="$3"
+	local target_file="$3"
 	local pointer_pattern="$4"
 
 	[[ "$QUIET" != "--quiet" ]] && printf "\n[%s]\n" "$section"
 
-	# Check 1: reference file exists
-	local ref_path="$REFERENCE_DIR/$ref_file"
-	if [[ -f "$ref_path" ]]; then
-		log_pass "reference file exists: reference/$ref_file"
+	# Check 1: the canonical target exists
+	local target_path="$AGENTS_DIR/$target_file"
+	if [[ -f "$target_path" ]]; then
+		log_pass "target file exists: $target_file"
 	else
-		log_fail "reference file MISSING: reference/$ref_file"
+		log_fail "target file MISSING: $target_file"
 		return 0
 	fi
 
@@ -82,6 +83,16 @@ check_extraction() {
 		log_fail "inline trigger MISSING in $(basename "$source_file") (pattern: $pointer_pattern)"
 	fi
 
+	return 0
+}
+
+check_extraction() {
+	local section="$1"
+	local source_file="$2"
+	local ref_file="$3"
+	local pointer_pattern="$4"
+
+	check_pointer "$section" "$source_file" "reference/$ref_file" "$pointer_pattern"
 	return 0
 }
 
@@ -124,17 +135,17 @@ check_framework_rules_extractions() {
 		"secret-handling.md" \
 		"reference/secret-handling\.md"
 
-	check_extraction \
+	check_pointer \
 		"External Repo Issue/PR Submission" \
 		"$AGENTS_MD" \
-		"external-repo-submissions.md" \
-		"reference/external-repo-submissions\.md"
+		"workflows/git-workflow.md" \
+		"external non-maintainer repos.*workflows/git-workflow\.md"
 
-	# Bash 3.2 Compatibility: reference file is a supplement; inline content kept in AGENTS.md
-	check_inline_only \
-		"Bash 3.2 Compatibility — inline + reference/bash-compat.md supplement" \
+	check_extraction \
+		"Bash Compatibility" \
 		"$AGENTS_MD" \
-		"Bash 3\.2 Compatibility|bash 3\.2"
+		"bash-compat.md" \
+		"reference/bash-compat\.md"
 
 	check_extraction \
 		"Conversational Memory Lookup" \
@@ -153,10 +164,11 @@ check_framework_rules_extractions() {
 		"$AGENTS_MD" \
 		"audit-log-helper\.sh"
 
-	check_inline_only \
-		"Review Bot Gate (still inline)" \
+	check_extraction \
+		"Review Bot Gate" \
 		"$AGENTS_MD" \
-		"review-bot-gate-helper\.sh"
+		"review-bot-gate.md" \
+		"reference/review-bot-gate\.md"
 
 	return 0
 }
@@ -170,11 +182,11 @@ check_agents_md_extractions() {
 		"domain-index.md" \
 		"reference/domain-index\.md"
 
-	# Self-Improvement: reference file is a supplement; inline content kept in AGENTS.md
-	check_inline_only \
-		"Self-Improvement — inline + reference/self-improvement.md supplement" \
+	check_extraction \
+		"Self-Improvement" \
 		"$AGENTS_MD" \
-		"## Self-Improvement|framework-issue-helper\.sh"
+		"self-improvement.md" \
+		"reference/self-improvement\.md"
 
 	check_extraction \
 		"Agent Routing" \
