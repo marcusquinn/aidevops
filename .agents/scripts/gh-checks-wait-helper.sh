@@ -93,7 +93,7 @@ PY
 		return 0
 	fi
 	local args=(pr checks "$pr_number" --repo "$repo" --json "name,state,bucket,link,workflow")
-	if [[ "$required_only" == "true" ]]; then
+	if [[ "$required_only" -eq 1 ]]; then
 		args+=(--required)
 	fi
 	local rc=0
@@ -235,8 +235,8 @@ wait_for_checks() {
 	local initial_head=""
 	initial_head=$(read_head_sha "$pr_number" "$repo" 2>/dev/null || true)
 	local poll_number=0
-	local valid_state_seen=false
-	local api_error_visible=false
+	local valid_state_seen=0
+	local api_error_visible=0
 	while true; do
 		poll_number=$((poll_number + 1))
 		write_runtime_heartbeat
@@ -251,9 +251,9 @@ wait_for_checks() {
 		now_epoch=$(date +%s)
 		local elapsed=$((now_epoch - start_epoch))
 		if [[ -z "$current" ]]; then
-			if [[ "$api_error_visible" == "false" ]]; then
+			if [[ "$api_error_visible" -eq 0 ]]; then
 				printf 'WARN: required-check state unavailable; retaining the last verified state and retrying\n' >&2
-				api_error_visible=true
+				api_error_visible=1
 			fi
 			if [[ "$elapsed" -ge "$timeout" ]]; then
 				printf 'INDETERMINATE: required-check state unavailable after %ss\n' "$elapsed" >&2
@@ -263,18 +263,18 @@ wait_for_checks() {
 			interval=$(next_interval "$interval" "$max_interval")
 			continue
 		fi
-		if [[ "$api_error_visible" == "true" ]]; then
+		if [[ "$api_error_visible" -eq 1 ]]; then
 			printf 'API state recovered: %s\n' "$(state_counts "$current")"
-			api_error_visible=false
+			api_error_visible=0
 		fi
-		valid_state_seen=true
-		local changed=false
+		valid_state_seen=1
+		local changed=0
 		if [[ -z "$previous" ]]; then
 			emit_initial_state "$current"
-			changed=true
+			changed=1
 		elif [[ "$current" != "$previous" ]]; then
 			emit_transitions "$previous" "$current"
-			changed=true
+			changed=1
 		elif [[ "$heartbeat_interval" -gt 0 && "$now_epoch" -ge "$next_heartbeat" ]]; then
 			printf 'heartbeat: required checks unchanged for %ss (%s)\n' "$elapsed" "$(state_counts "$current")"
 			next_heartbeat=$((now_epoch + heartbeat_interval))
@@ -304,14 +304,14 @@ wait_for_checks() {
 		pending | indeterminate) ;;
 		esac
 		if [[ "$elapsed" -ge "$timeout" ]]; then
-			if [[ "$valid_state_seen" == "true" ]]; then
+			if [[ "$valid_state_seen" -eq 1 ]]; then
 				printf 'TIMEOUT: required checks remain non-terminal after %ss (%s)\n' "$elapsed" "$(state_counts "$current")" >&2
 				return 8
 			fi
 			return 2
 		fi
 		previous="$current"
-		if [[ "$changed" == "true" ]]; then
+		if [[ "$changed" -eq 1 ]]; then
 			interval="$initial_interval"
 		else
 			interval=$(next_interval "$interval" "$max_interval")
@@ -328,7 +328,7 @@ cmd_wait() {
 	}
 	shift
 	local repo=""
-	local required_only=true
+	local required_only=1
 	local timeout="$_GCW_DEFAULT_TIMEOUT"
 	local initial_interval="$_GCW_DEFAULT_INITIAL_INTERVAL"
 	local max_interval="$_GCW_DEFAULT_MAX_INTERVAL"
@@ -337,7 +337,7 @@ cmd_wait() {
 		local opt="$1"
 		case "$opt" in
 		--repo) local repo_value="$2"; repo="$repo_value"; shift 2 ;;
-		--all) required_only=false; shift ;;
+		--all) required_only=0; shift ;;
 		--timeout) local timeout_value="$2"; timeout="$timeout_value"; shift 2 ;;
 		--initial-interval) local initial_value="$2"; initial_interval="$initial_value"; shift 2 ;;
 		--max-interval) local max_value="$2"; max_interval="$max_value"; shift 2 ;;
