@@ -147,6 +147,10 @@ test_tier_telemetry_correlates_terminal_outcomes() {
 		--repo "owner/repo" --pid $$ --tier standard --model model-b --lease-token attempt-43
 	run_helper "$LEDGER_HELPER" record-outcome --session-key "issue-42" \
 		--lease-token attempt-42 --issue 42 --repo "owner/repo" --outcome success
+	# Aggregate the streamed records so a later unrelated row cannot hide an
+	# existing terminal outcome for this attempt.
+	run_helper "$LEDGER_HELPER" register --session-key "issue-44" --issue 44 \
+		--repo "owner/repo" --pid $$ --tier standard --model model-c --lease-token attempt-44
 	# Repeated cleanup and a conflicting late event must not create or replace the
 	# first terminal result for this attempt.
 	run_helper "$LEDGER_HELPER" record-outcome --session-key "issue-42" \
@@ -166,9 +170,9 @@ test_tier_telemetry_correlates_terminal_outcomes() {
 	terminal_count=$(jq -s '[.[] | select(.outcome != "pending")] | length' "$telemetry_file")
 	terminal_tier=$(jq -rs 'first(.[] | select(.attempt_id == "attempt-42" and .outcome == "success") | .tier)' "$telemetry_file")
 	report=$("$LEDGER_HELPER" tier-report)
-	[[ "$pending_count" == "2" && "$success_count" == "3" && "$terminal_count" == "3" ]] || result=1
+	[[ "$pending_count" == "3" && "$success_count" == "3" && "$terminal_count" == "3" ]] || result=1
 	[[ "$terminal_tier" == "simple" ]] || result=1
-	[[ "$report" == *"Total dispatches: 2"* && "$report" == *"Pending/unknown: 1"* ]] || result=1
+	[[ "$report" == *"Total dispatches: 3"* && "$report" == *"Pending/unknown: 2"* ]] || result=1
 	[[ "$report" == *"Success: 1"* && "$report" == *"Legacy/unmatched terminal events: 1"* ]] || result=1
 	[[ "$report" == *"tier:simple — 1/1 (100.0%)"* && "$report" != *"tier:standard"* ]] || result=1
 	print_result "tier telemetry correlates and idempotently reports terminal outcomes" "$result" \
