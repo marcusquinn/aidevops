@@ -305,10 +305,16 @@ cmd_run() {
 	if [[ -z "${REPOS_JSON:-}" ]]; then
 		return 1
 	fi
-	if grep -q '"slug":"example/repo"' "$REPOS_JSON"; then
-		return 0
+	if ! grep -q '"slug":"example/repo"' "$REPOS_JSON"; then
+		return 1
 	fi
-	return 1
+	if [[ -n "${EXPECT_PR:-}" ]]; then
+		[[ "${PULSE_MERGE_ROUTINE_TARGET_REPO:-}" == "example/repo" ]] || return 1
+		[[ "${PULSE_MERGE_ROUTINE_TARGET_PR:-}" == "$EXPECT_PR" ]] || return 1
+	else
+		[[ -z "${PULSE_MERGE_ROUTINE_TARGET_PR:-}" ]] || return 1
+	fi
+	return 0
 }
 
 # Extract only _pmr_main so this test does not run the real merge routine.
@@ -319,11 +325,11 @@ source <(awk '
 	capture && /^}/ { capture=0 }
 ' "$ROUTINE_FILE")
 
-_pmr_main --repo example/repo
+_pmr_main "$@"
 PARSER_HARNESS_EOF
 
 chmod +x "$PARSER_HARNESS"
-parser_output=$(ROUTINE_FILE="$ROUTINE_FILE" bash "$PARSER_HARNESS" 2>&1)
+parser_output=$(ROUTINE_FILE="$ROUTINE_FILE" bash "$PARSER_HARNESS" --repo example/repo 2>&1)
 parser_rc=$?
 
 if [[ "$parser_rc" -eq 0 ]]; then
@@ -333,10 +339,83 @@ else
 		"harness rc=${parser_rc}, output=${parser_output}"
 fi
 
+parser_output=$(EXPECT_PR=42 ROUTINE_FILE="$ROUTINE_FILE" bash "$PARSER_HARNESS" --repo example/repo --pr 42 2>&1)
+parser_rc=$?
+
+if [[ "$parser_rc" -eq 0 ]]; then
+	pass "13: --pr configures an exact target"
+else
+	fail "13: --pr configures an exact target" \
+		"harness rc=${parser_rc}, output=${parser_output}"
+fi
+
+parser_output=$(ROUTINE_FILE="$ROUTINE_FILE" bash "$PARSER_HARNESS" --pr 42 2>&1)
+parser_rc=$?
+
+if [[ "$parser_rc" -eq 2 && "$parser_output" == *"Option --pr requires --repo."* ]]; then
+	pass "14: --pr rejects a missing --repo"
+else
+	fail "14: --pr rejects a missing --repo" \
+		"harness rc=${parser_rc}, output=${parser_output}"
+fi
+
+if awk '
+	/if \[\[ "\$\{DRY_RUN:-0\}" == "1" \]\]/ { dry_guard=NR }
+	/_attempt_pr_ci_rebase_retry/ && dry_guard > 0 && dry_guard < NR { rebase_guarded=1 }
+	/_route_pr_to_fix_worker .*"ci"/ && dry_guard > 0 && dry_guard < NR { route_guarded=1 }
+	END { exit (rebase_guarded && route_guarded) ? 0 : 1 }
+' "${REPO_ROOT}/.agents/scripts/pulse-merge.sh"; then
+	pass "15: dry-run stops before CI repair writes"
+else
+	fail "15: dry-run stops before CI repair writes" \
+		"DRY_RUN must return before CI update-branch and repair dispatch calls"
+fi
+
+SCOPE_HARNESS=$(mktemp "${TMPDIR:-/tmp}/pmr-scope-harness-XXXXXX")
+trap 'rm -f "$PARSER_HARNESS" "$SCOPE_HARNESS"' EXIT
+
+cat >"$SCOPE_HARNESS" <<'SCOPE_HARNESS_EOF'
+#!/usr/bin/env bash
+set -uo pipefail
+
+PULSE_MERGE_ROUTINE_TARGET_REPO="example/repo"
+PULSE_MERGE_ROUTINE_TARGET_PR="42"
+_pmr_log() { return 0; }
+merge_ready_prs_all_repos() {
+	printf 'all-prs\n'
+	return 0
+}
+process_pr() {
+	local repo_slug="$1"
+	local pr_number="$2"
+	printf 'target:%s:%s\n' "$repo_slug" "$pr_number"
+	return 1
+}
+
+# shellcheck disable=SC1090
+source <(awk '
+	/^_pmr_run_merge_scope\(\)/ { capture=1 }
+	capture { print }
+	capture && /^}/ { capture=0 }
+' "$ROUTINE_FILE")
+
+_pmr_run_merge_scope
+SCOPE_HARNESS_EOF
+
+scope_output=$(ROUTINE_FILE="$ROUTINE_FILE" bash "$SCOPE_HARNESS" 2>&1)
+scope_rc=$?
+
+if [[ "$scope_rc" -eq 0 && "$scope_output" == "target:example/repo:42" ]]; then
+	pass "16: exact spot-check bypasses the all-PR merge pass"
+else
+	fail "16: exact spot-check bypasses the all-PR merge pass" \
+		"harness rc=${scope_rc}, output=${scope_output}"
+fi
+
 printf '\n=== API budget isolation regression guard ===\n'
 
 BUDGET_HARNESS=$(mktemp "${TMPDIR:-/tmp}/pmr-budget-harness-XXXXXX")
-trap 'rm -f "$PARSER_HARNESS" "$BUDGET_HARNESS"' EXIT
+trap 'rm -f "$PARSER_HARNESS" "$SCOPE_HARNESS" "$BUDGET_HARNESS"' EXIT
 
 cat >"$BUDGET_HARNESS" <<'BUDGET_HARNESS_EOF'
 #!/usr/bin/env bash
@@ -368,9 +447,9 @@ budget_output=$(ROUTINE_FILE="$ROUTINE_FILE" bash "$BUDGET_HARNESS" 2>&1)
 budget_rc=$?
 
 if [[ "$budget_rc" -eq 0 ]]; then
-	pass "13: GraphQL budget probe is independent of REST core rate limit"
+	pass "17: GraphQL budget probe is independent of REST core rate limit"
 else
-	fail "13: GraphQL budget probe is independent of REST core rate limit" \
+	fail "17: GraphQL budget probe is independent of REST core rate limit" \
 		"harness rc=${budget_rc}, output=${budget_output}"
 fi
 

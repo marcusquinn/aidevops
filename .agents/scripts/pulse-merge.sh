@@ -325,7 +325,9 @@ _check_pr_merge_gates() {
 	_author_collab_rc=$?
 	local _author_collab_permission="${_PULSE_AUTHOR_PERMISSION_VALUE:-}"
 	if [[ "$_author_collab_rc" -eq 2 ]]; then
-		check_permission_failure_pr "$pr_number" "$repo_slug" "$pr_author" "${_PULSE_AUTHOR_PERMISSION_HTTP:-unknown}" || true
+		if [[ "${DRY_RUN:-0}" != "1" ]]; then
+			check_permission_failure_pr "$pr_number" "$repo_slug" "$pr_author" "${_PULSE_AUTHOR_PERMISSION_HTTP:-unknown}" || true
+		fi
 		echo "[pulse-wrapper] Merge pass: skipping PR #${pr_number} in ${repo_slug} — permission check failed for author ${pr_author} (HTTP ${_PULSE_AUTHOR_PERMISSION_HTTP:-unknown})" >>"$LOGFILE"
 		return 1
 	fi
@@ -942,6 +944,10 @@ _process_single_ready_pr() {
 	# maintainer review latency by throwing away worker work — see t2116
 	# post-mortem for PR #18988, #19083).
 	if [[ "$pr_mergeable" == "CONFLICTING" && "$PULSE_MERGE_CLOSE_CONFLICTING" == "true" ]]; then
+		if [[ "${DRY_RUN:-0}" == "1" ]]; then
+			echo "[pulse-wrapper] DRY-RUN: PR #${pr_number} in ${repo_slug} is CONFLICTING; would evaluate rebase, repair routing, or protected close" >>"$LOGFILE"
+			return 2
+		fi
 		# Skip CONFLICTING-close entirely for PRs whose linked issue has
 		# needs-maintainer-review — they are parked legitimately waiting for
 		# a human and MUST NOT be auto-closed (t2116). Post the one-time
@@ -1010,6 +1016,10 @@ _process_single_ready_pr() {
 	# above retains precedence, and the helper only routes/skips CHANGES_REQUESTED
 	# via the same origin-label and stale-handover checks used by the later gate.
 	if [[ "$pr_review" == "CHANGES_REQUESTED" ]]; then
+		if [[ "${DRY_RUN:-0}" == "1" ]]; then
+			echo "[pulse-wrapper] DRY-RUN: PR #${pr_number} in ${repo_slug} has CHANGES_REQUESTED; would evaluate review remediation or repair routing" >>"$LOGFILE"
+			return 1
+		fi
 		local _early_review_linked_issue=""
 		local _early_review_dismissed="0"
 		_early_review_linked_issue=$(_extract_linked_issue "$pr_number" "$repo_slug" 2>/dev/null) || _early_review_linked_issue=""
@@ -1050,7 +1060,8 @@ _process_single_ready_pr() {
 		return 1
 	fi
 
-	if declare -F _pm_close_superseded_duplicate_pr_if_issue_solved >/dev/null 2>&1 \
+	if [[ "${DRY_RUN:-0}" != "1" ]] \
+		&& declare -F _pm_close_superseded_duplicate_pr_if_issue_solved >/dev/null 2>&1 \
 		&& _pm_close_superseded_duplicate_pr_if_issue_solved "$pr_number" "$repo_slug" "$linked_issue" "$pr_labels"; then
 		return 1
 	fi
@@ -1083,6 +1094,10 @@ _process_single_ready_pr() {
 			echo "[pulse-merge] PR #${pr_number} in ${repo_slug}: _pr_required_checks_pass bypassed for origin:worker — branch-protection required contexts all pass (t2922)" >>"$LOGFILE"
 			# Fall through to linked-issue fetch and merge gate checks
 		else
+			if [[ "${DRY_RUN:-0}" == "1" ]]; then
+				echo "[pulse-wrapper] DRY-RUN: PR #${pr_number} in ${repo_slug} has non-passing required checks; would evaluate CI-drift rebase or repair routing" >>"$LOGFILE"
+				return 1
+			fi
 			# t2805: try cheap rebase first if PR is behind base — pre-existing
 			# failures in unrelated tests are often fixed by base advancement.
 			# If rebase succeeds, skip fix-worker routing — next pulse cycle

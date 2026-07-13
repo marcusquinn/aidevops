@@ -173,6 +173,8 @@ PULSE_MERGE_ROUTINE_TIMEOUT_SECONDS="${PULSE_MERGE_ROUTINE_TIMEOUT_SECONDS:-600}
 RUNNER_LOG_FILE="${HOME}/.aidevops/logs/pulse-merge-routine.log"
 LOCK_DIR="${HOME}/.aidevops/.agent-workspace/locks/pulse-merge-routine.lock"
 PULSE_MERGE_ROUTINE_LAST_RUN="${HOME}/.aidevops/logs/pulse-merge-routine-last-run"
+PULSE_MERGE_ROUTINE_TARGET_REPO=""
+PULSE_MERGE_ROUTINE_TARGET_PR=""
 
 mkdir -p "$(dirname "$RUNNER_LOG_FILE")" "$(dirname "$LOCK_DIR")"
 
@@ -351,6 +353,43 @@ _pmr_acquire_lock() {
 # Commands
 # =============================================================================
 
+_pmr_run_merge_scope() {
+	if [[ -z "$PULSE_MERGE_ROUTINE_TARGET_PR" ]]; then
+		merge_ready_prs_all_repos
+		return $?
+	fi
+
+	local process_exit=0
+	process_pr "$PULSE_MERGE_ROUTINE_TARGET_REPO" "$PULSE_MERGE_ROUTINE_TARGET_PR" || process_exit=$?
+	case "$process_exit" in
+	0)
+		if [[ "${DRY_RUN:-0}" == "1" ]]; then
+			_pmr_log INFO "Spot-check result: repo=${PULSE_MERGE_ROUTINE_TARGET_REPO} pr=${PULSE_MERGE_ROUTINE_TARGET_PR} disposition=would-merge"
+		else
+			_pmr_log INFO "Spot-check result: repo=${PULSE_MERGE_ROUTINE_TARGET_REPO} pr=${PULSE_MERGE_ROUTINE_TARGET_PR} disposition=merged"
+		fi
+		;;
+	1)
+		_pmr_log INFO "Spot-check result: repo=${PULSE_MERGE_ROUTINE_TARGET_REPO} pr=${PULSE_MERGE_ROUTINE_TARGET_PR} disposition=skipped reason=merge-gate"
+		;;
+	2)
+		_pmr_log INFO "Spot-check result: repo=${PULSE_MERGE_ROUTINE_TARGET_REPO} pr=${PULSE_MERGE_ROUTINE_TARGET_PR} disposition=closed-conflicting"
+		;;
+	3)
+		_pmr_log ERROR "Spot-check result: repo=${PULSE_MERGE_ROUTINE_TARGET_REPO} pr=${PULSE_MERGE_ROUTINE_TARGET_PR} disposition=merge-failed"
+		return 3
+		;;
+	4)
+		_pmr_log INFO "Spot-check result: repo=${PULSE_MERGE_ROUTINE_TARGET_REPO} pr=${PULSE_MERGE_ROUTINE_TARGET_PR} disposition=deferred"
+		;;
+	*)
+		_pmr_log ERROR "Spot-check result: repo=${PULSE_MERGE_ROUTINE_TARGET_REPO} pr=${PULSE_MERGE_ROUTINE_TARGET_PR} disposition=unexpected exit=${process_exit}"
+		return "$process_exit"
+		;;
+	esac
+	return 0
+}
+
 cmd_run() {
 	_pmr_log INFO "Starting merge routine (pid=$$, timeout=${PULSE_MERGE_ROUTINE_TIMEOUT_SECONDS}s)"
 	if ! _pmr_acquire_lock; then
@@ -366,7 +405,7 @@ cmd_run() {
 	# retry loop, dead-PID wait), the routine cannot exceed this ceiling. On
 	# timeout, _pmr_run_with_timeout returns 124 (matching GNU `timeout`).
 	local merge_exit=0
-	_pmr_run_with_timeout "$PULSE_MERGE_ROUTINE_TIMEOUT_SECONDS" merge_ready_prs_all_repos || merge_exit=$?
+	_pmr_run_with_timeout "$PULSE_MERGE_ROUTINE_TIMEOUT_SECONDS" _pmr_run_merge_scope || merge_exit=$?
 
 	# Always write the last-run marker so pulse-wrapper.sh short-circuit can
 	# compare elapsed time (consistent with DIRTY_PR_SWEEP_LAST_RUN pattern).
@@ -429,7 +468,7 @@ cmd_dry_run() {
 
 	# Same timeout protection as cmd_run (t3041, GH#21708).
 	local merge_exit=0
-	_pmr_run_with_timeout "$PULSE_MERGE_ROUTINE_TIMEOUT_SECONDS" merge_ready_prs_all_repos || merge_exit=$?
+	_pmr_run_with_timeout "$PULSE_MERGE_ROUTINE_TIMEOUT_SECONDS" _pmr_run_merge_scope || merge_exit=$?
 
 	if [[ "$merge_exit" -eq 124 ]]; then
 		_pmr_log ERROR "DRY-RUN merge routine TIMED OUT (exit=124, ceiling=${PULSE_MERGE_ROUTINE_TIMEOUT_SECONDS}s)"
@@ -461,6 +500,10 @@ _pmr_main() {
 			shift
 			;;
 		--repo)
+			if [[ -z "$_next" || "$_next" == --* ]]; then
+				printf '%s\n' 'Option --repo requires a repository slug.' >&2
+				return 2
+			fi
 			_repo_filter="$_next"
 			shift 2
 			;;
@@ -469,6 +512,10 @@ _pmr_main() {
 			shift
 			;;
 		--pr)
+			if [[ -z "$_next" || "$_next" == --* ]]; then
+				printf '%s\n' 'Option --pr requires a pull request number.' >&2
+				return 2
+			fi
 			_pr_filter="$_next"
 			shift 2
 			;;
@@ -488,6 +535,15 @@ _pmr_main() {
 		esac
 	done
 
+	if [[ -n "$_pr_filter" && -z "$_repo_filter" ]]; then
+		printf '%s\n' 'Option --pr requires --repo.' >&2
+		return 2
+	fi
+	if [[ -n "$_pr_filter" && ! "$_pr_filter" =~ ^[1-9][0-9]*$ ]]; then
+		printf 'Invalid pull request number: %s\n' "$_pr_filter" >&2
+		return 2
+	fi
+
 	# Single-repo or single-PR spot mode: override REPOS_JSON with a synthetic
 	# single-entry repo list so merge_ready_prs_all_repos only processes that repo.
 	if [[ -n "$_repo_filter" ]]; then
@@ -500,11 +556,8 @@ _pmr_main() {
 		REPOS_JSON="$_SPOT_REPOS_JSON"
 		if [[ -n "$_pr_filter" ]]; then
 			_pmr_log INFO "Spot-check: --repo=${_repo_filter} --pr=${_pr_filter}"
-			# For single-PR mode, set PULSE_MERGE_BATCH_LIMIT to 1 and let the
-			# function discover and process only that PR. Note: the current
-			# merge_ready_prs_all_repos API processes all open ready PRs for the
-			# repo; single-PR filtering is a best-effort convenience.
-			PULSE_MERGE_BATCH_LIMIT=1
+			PULSE_MERGE_ROUTINE_TARGET_REPO="$_repo_filter"
+			PULSE_MERGE_ROUTINE_TARGET_PR="$_pr_filter"
 		else
 			_pmr_log INFO "Spot-check: --repo=${_repo_filter}"
 		fi
