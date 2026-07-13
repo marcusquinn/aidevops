@@ -51,4 +51,13 @@ AIDEVOPS_AI_THRESHOLD_JUDGE="$judge_stub" memory prune --older-than-days 90 --ai
 grep -F "judge-prune-relevance" "$judge_log" >/dev/null
 [[ "$(sqlite3 "$db" "SELECT COUNT(*) FROM learnings WHERE id='$ai_id';")" == "1" ]]
 
+: >"$judge_log"
+memory store --content $'AI fixture with pipe|and\na newline' --type CONTEXT >/dev/null
+delimited_id=$(sqlite3 "$db" "SELECT id FROM learnings ORDER BY rowid DESC LIMIT 1;")
+sqlite3 "$db" "UPDATE learnings SET created_at=datetime('now', '-70 days') WHERE id='$delimited_id';"
+AIDEVOPS_AI_THRESHOLD_JUDGE="$judge_stub" memory prune --older-than-days 90 --ai-judged --max-count 100 --max-bytes 100000 >/dev/null
+grep -F -- "--content AI fixture with pipe and a newline" "$judge_log" >/dev/null
+[[ "$(grep -c 'judge-prune-relevance' "$judge_log")" == "2" ]]
+[[ "$(sqlite3 "$db" "SELECT COUNT(*) FROM learnings WHERE id='$delimited_id';")" == "1" ]]
+
 printf 'PASS: age, count, and byte retention bounds preserve canonical audit evidence\n'

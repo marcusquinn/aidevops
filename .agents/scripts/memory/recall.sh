@@ -915,6 +915,14 @@ _feedback_parse_args() {
 		log_error "--value must be numeric"
 		return 1
 	fi
+	case "$_FEEDBACK_SIGNAL" in
+	"" | cited | edited | led_to_new | reused | dead_end | false | debunked) ;;
+	*)
+		log_error "Unknown signal type: $_FEEDBACK_SIGNAL"
+		log_error "Valid signals: cited, edited, led_to_new, reused, dead_end, false, debunked"
+		return 1
+		;;
+	esac
 	return 0
 }
 

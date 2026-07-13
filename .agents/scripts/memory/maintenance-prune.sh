@@ -179,9 +179,9 @@ _prune_ai_judged() {
 
 	local candidates
 	if [[ "$keep_accessed" == true ]]; then
-		candidates=$(db "$MEMORY_DB" "SELECT l.id, l.type, l.confidence, substr(l.content, 1, 300), CAST(julianday('now') - julianday(l.created_at) AS INTEGER) FROM learnings l LEFT JOIN learning_access a ON l.id = a.id WHERE l.created_at < datetime('now', '-$min_age days') AND a.id IS NULL;")
+		candidates=$(db "$MEMORY_DB" "SELECT l.id, l.type, l.confidence, replace(replace(replace(substr(l.content, 1, 300), char(10), ' '), char(13), ' '), '|', ' '), CAST(julianday('now') - julianday(l.created_at) AS INTEGER) FROM learnings l LEFT JOIN learning_access a ON l.id = a.id WHERE l.created_at < datetime('now', '-$min_age days') AND a.id IS NULL;")
 	else
-		candidates=$(db "$MEMORY_DB" "SELECT l.id, l.type, l.confidence, substr(l.content, 1, 300), CAST(julianday('now') - julianday(l.created_at) AS INTEGER), CASE WHEN a.id IS NOT NULL THEN 'true' ELSE 'false' END FROM learnings l LEFT JOIN learning_access a ON l.id = a.id WHERE l.created_at < datetime('now', '-$min_age days');")
+		candidates=$(db "$MEMORY_DB" "SELECT l.id, l.type, l.confidence, replace(replace(replace(substr(l.content, 1, 300), char(10), ' '), char(13), ' '), '|', ' '), CAST(julianday('now') - julianday(l.created_at) AS INTEGER), CASE WHEN a.id IS NOT NULL THEN 'true' ELSE 'false' END FROM learnings l LEFT JOIN learning_access a ON l.id = a.id WHERE l.created_at < datetime('now', '-$min_age days');")
 	fi
 
 	if [[ -z "$candidates" ]]; then
