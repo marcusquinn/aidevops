@@ -190,6 +190,7 @@ define_helpers_under_test() {
 	local approve_src
 	local runner_src
 	local crypto_src
+	local trusted_approval_src
 	approve_src=$(awk '
 		/^approve_collaborator_pr\(\) \{/,/^}$/ { print }
 	' "$MERGE_SCRIPT")
@@ -199,6 +200,9 @@ define_helpers_under_test() {
 	# _has_maintainer_crypto_approval was added in t3063
 	crypto_src=$(awk '
 		/^_has_maintainer_crypto_approval\(\) \{/,/^}$/ { print }
+	' "$MERGE_SCRIPT")
+	trusted_approval_src=$(awk '
+		/^_trusted_existing_approver\(\) \{/,/^}$/ { print }
 	' "$MERGE_SCRIPT")
 
 	if [[ -z "$approve_src" ]]; then
@@ -211,6 +215,10 @@ define_helpers_under_test() {
 	fi
 	if [[ -z "$crypto_src" ]]; then
 		printf 'ERROR: could not extract _has_maintainer_crypto_approval from %s\n' "$MERGE_SCRIPT" >&2
+		return 1
+	fi
+	if [[ -z "$trusted_approval_src" ]]; then
+		printf 'ERROR: could not extract _trusted_existing_approver from %s\n' "$MERGE_SCRIPT" >&2
 		return 1
 	fi
 
@@ -231,6 +239,8 @@ define_helpers_under_test() {
 	eval "$runner_src"
 	# shellcheck disable=SC1090
 	eval "$crypto_src"
+	# shellcheck disable=SC1090
+	eval "$trusted_approval_src"
 	# shellcheck disable=SC1090
 	eval "$approve_src"
 	return 0

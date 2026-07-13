@@ -140,6 +140,7 @@ define_helpers_under_test() {
 	local dependabot_src=""
 	local approve_src=""
 	local runner_src=""
+	local trusted_approval_src=""
 	dependabot_src=$(awk '
 		/^_trusted_dependabot_updates_conf\(\) \{/,/^}$/ { print }
 		/^_trusted_dependabot_dependency_allowed\(\) \{/,/^}$/ { print }
@@ -148,7 +149,8 @@ define_helpers_under_test() {
 	' "$GATES_SCRIPT")
 	approve_src=$(awk '/^approve_collaborator_pr\(\) \{/,/^}$/ { print }' "$GATES_SCRIPT")
 	runner_src=$(awk '/^_approve_collaborator_runner_has_write\(\) \{/,/^}$/ { print }' "$GATES_SCRIPT")
-	[[ -n "$dependabot_src" && -n "$approve_src" && -n "$runner_src" ]] || return 1
+	trusted_approval_src=$(awk '/^_trusted_existing_approver\(\) \{/,/^}$/ { print }' "$GATES_SCRIPT")
+	[[ -n "$dependabot_src" && -n "$approve_src" && -n "$runner_src" && -n "$trusted_approval_src" ]] || return 1
 
 	_has_maintainer_crypto_approval() { return 1; }
 	# shellcheck source=../pulse-merge-author-checks.sh
@@ -157,6 +159,8 @@ define_helpers_under_test() {
 	eval "$runner_src"
 	# shellcheck disable=SC1090
 	eval "$dependabot_src"
+	# shellcheck disable=SC1090
+	eval "$trusted_approval_src"
 	# shellcheck disable=SC1090
 	eval "$approve_src"
 	return 0

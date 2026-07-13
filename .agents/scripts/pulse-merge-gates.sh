@@ -628,6 +628,31 @@ _approve_collaborator_runner_has_write() {
 }
 
 #######################################
+# Return the login for a trusted approval on the requested PR head.
+#
+# #aidevops:trust-boundary — GH#17671 defence-in-depth:
+# Never let an external review suppress the guarded pulse approval. GitHub's
+# author_association is returned in the same reviews response, avoiding a
+# per-reviewer permission lookup while restricting the shortcut to repository
+# owners, organisation members, and explicitly invited collaborators.
+#
+# Args: $1=repo_slug, $2=pr_number, $3=PR head SHA (optional)
+# Outputs: approver login, or an empty string
+# Returns: 0 (API failures fail open to the guarded approval path)
+#######################################
+_trusted_existing_approver() {
+	local repo_slug="$1"
+	local pr_number="$2"
+	local approval_head_sha="${3:-__any_head__}"
+	local existing_approver=""
+
+	existing_approver=$(gh api "repos/${repo_slug}/pulls/${pr_number}/reviews" \
+		--jq "[.[] | select(.state == \"APPROVED\" and (\"${approval_head_sha}\" == \"__any_head__\" or .commit_id == \"${approval_head_sha}\") and (.author_association == \"OWNER\" or .author_association == \"MEMBER\" or .author_association == \"COLLABORATOR\")) | .user.login][0] // \"\"" 2>/dev/null) || existing_approver=""
+	printf '%s\n' "$existing_approver"
+	return 0
+}
+
+#######################################
 # Auto-approve a collaborator's PR before merging (GH#10522, t1691)
 #
 # Branch protection requires required_approving_review_count=1.
@@ -663,22 +688,9 @@ approve_collaborator_pr() {
 		return 2
 	fi
 
-	# A trusted approval on this head satisfies the review requirement regardless
-	# of which pulse identity created it. Check this before resolving the current
-	# identity or its permission so already-approved PRs cost one read and no
-	# redundant review write. GitHub marks superseded reviews DISMISSED in repos
-	# that dismiss stale approvals; the explicit head match also protects repos
-	# whose review policy leaves old approvals active.
-	#
-	# #aidevops:trust-boundary — GH#17671 defence-in-depth:
-	# Never let an external review suppress the guarded pulse approval. GitHub's
-	# author_association is returned in the same reviews response, avoiding a
-	# per-reviewer permission lookup while restricting the shortcut to repository
-	# owners, organisation members, and explicitly invited collaborators.
-	local approval_head_sha="${pr_head_sha:-__any_head__}"
+	# Check before identity/permission reads; the head match rejects stale reviews.
 	local existing_approver
-	existing_approver=$(gh api "repos/${repo_slug}/pulls/${pr_number}/reviews" \
-		--jq "[.[] | select(.state == \"APPROVED\" and (\"${approval_head_sha}\" == \"__any_head__\" or .commit_id == \"${approval_head_sha}\") and (.author_association == \"OWNER\" or .author_association == \"MEMBER\" or .author_association == \"COLLABORATOR\")) | .user.login][0] // \"\"" 2>/dev/null || echo "")
+	existing_approver=$(_trusted_existing_approver "$repo_slug" "$pr_number" "$pr_head_sha")
 	if [[ -n "$existing_approver" ]]; then
 		echo "[pulse-wrapper] approve_collaborator_pr: PR #$pr_number in $repo_slug already has a trusted approval on ${pr_head_sha:-the active head} from $existing_approver — skipping" >>"$LOGFILE"
 		return 0
