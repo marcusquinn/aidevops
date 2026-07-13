@@ -233,8 +233,55 @@ detect_changes() {
 	return 0
 }
 
+# Rebuild derived runtime files after synchronizing their source tree. The
+# generator's per-runtime source hash keeps unrelated deployments fast while
+# ensuring command, agent, prompt, and MCP outputs cannot remain stale.
+regenerate_runtime_config() {
+	local generator="$TARGET_DIR/scripts/generate-runtime-config.sh"
+
+	if [[ "$DRY_RUN" == "true" ]]; then
+		log_info "[dry-run] Would regenerate derived runtime configuration"
+		return 0
+	fi
+	if [[ ! -f "$generator" ]]; then
+		log_error "Runtime config generator not found after deployment: $generator"
+		return 1
+	fi
+
+	log_info "Regenerating derived runtime configuration..."
+	if ! bash "$generator" all; then
+		log_error "Derived runtime configuration regeneration failed"
+		return 1
+	fi
+	log_success "Derived runtime configuration regenerated"
+	return 0
+}
+
+runtime_config_changes_detected() {
+	local changed_files="${1:-}"
+	local file
+
+	# Explicit --scripts-only deployments do not provide a diff; regenerate to
+	# preserve correctness. Diff-based deployment can retain the fast path.
+	[[ -z "$changed_files" ]] && return 0
+	while IFS= read -r file; do
+		case "$file" in
+		.agents/scripts/commands/* | \
+			.agents/scripts/generate-runtime-config*.sh | \
+			.agents/scripts/generate-opencode-*.sh | \
+			.agents/scripts/generate-claude-*.sh | \
+			.agents/scripts/runtime-registry.sh | \
+			.agents/scripts/mcp-config-adapter.sh | \
+			.agents/scripts/prompt-injection-adapter.sh | \
+			.agents/scripts/lib/agent_config.py) return 0 ;;
+		esac
+	done <<<"$changed_files"
+	return 1
+}
+
 # Deploy scripts only (fastest path)
 deploy_scripts_only() {
+	local changed_files="${1:-}"
 	local source_dir="$REPO_DIR/.agents/scripts"
 	local target_scripts_dir="$TARGET_DIR/scripts"
 
@@ -274,6 +321,9 @@ deploy_scripts_only() {
 	count=$(find "$target_scripts_dir" -name "*.sh" -type f | wc -l | tr -d ' ')
 	log_success "Deployed $count scripts"
 
+	if runtime_config_changes_detected "$changed_files"; then
+		regenerate_runtime_config || return 1
+	fi
 	return 0
 }
 
@@ -402,6 +452,7 @@ deploy_all_agents() {
 	script_count=$(find "$TARGET_DIR/scripts" -name "*.sh" -type f 2>/dev/null | wc -l | tr -d ' ')
 	log_success "Deployed $agent_count agent files and $script_count scripts"
 
+	regenerate_runtime_config || return 1
 	return 0
 }
 
@@ -500,6 +551,7 @@ deploy_changed_files() {
 	fi
 
 	log_success "Deployed $deployed changed files"
+	regenerate_runtime_config || return 1
 	return 0
 }
 
@@ -563,7 +615,7 @@ main() {
 		fi
 		if [[ "$non_script_changes" -eq 0 ]]; then
 			log_info "Only scripts changed — using fast scripts-only deploy"
-			deploy_scripts_only
+			deploy_scripts_only "$changed"
 			return $?
 		fi
 
@@ -585,4 +637,6 @@ main() {
 	return $?
 }
 
-main "$@"
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+	main "$@"
+fi
