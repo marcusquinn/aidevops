@@ -28,6 +28,7 @@
 #   8. _rest_issue_list → applies --jq expression
 #   9. _rest_issue_list → filters pull requests returned by REST /issues
 #  10. _rest_issue_list → includes --assignee in query string
+#  11. _rest_issue_list → handles response bodies larger than ARG_MAX
 #  11. _rest_issue_list → returns error when --repo is missing
 #  12. gh_issue_view falls back to REST when primary fails AND GraphQL exhausted
 #  13. gh_issue_view does NOT fall back when primary succeeds
@@ -110,6 +111,10 @@ stub_rest_list_result() {
 	fi
 	if [[ "${STUB_REST_PAGINATED:-0}" == "1" ]]; then
 		printf '%s\n' '[{"number":27154,"title":"Blocked issue","labels":[]}]'
+		return 0
+	fi
+	if [[ "${STUB_REST_LARGE_BODY:-0}" == "1" ]]; then
+		jq -cn '[{number:27463, title:"Large issue", body:("x" * 3000000), labels:[]}]'
 		return 0
 	fi
 	if [[ -n "${STUB_REST_LIST_RESULT:-}" ]]; then
@@ -388,7 +393,23 @@ fi
 unset STUB_REST_PAGINATED
 
 # =============================================================================
-# Test 11: _rest_issue_list includes --assignee in query string
+# Test 11: _rest_issue_list handles a REST response larger than ARG_MAX
+# =============================================================================
+: >"$GH_CALLS"
+export STUB_REST_LARGE_BODY=1
+
+result=$(_rest_issue_list --repo "owner/repo" --state open --limit 1 --json number --jq '.[0].number' 2>/dev/null)
+
+if [[ "$result" == "27463" ]]; then
+	pass "_rest_issue_list streams large REST pages to jq without argv overflow"
+else
+	fail "_rest_issue_list streams large REST pages to jq without argv overflow" \
+		"expected issue 27463, got '${result}'"
+fi
+unset STUB_REST_LARGE_BODY
+
+# =============================================================================
+# Test 12: _rest_issue_list includes --assignee in query string
 # =============================================================================
 : >"$GH_CALLS"
 

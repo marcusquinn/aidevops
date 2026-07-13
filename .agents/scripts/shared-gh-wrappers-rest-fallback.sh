@@ -1442,8 +1442,8 @@ _rest_issue_list() {
 			return 1
 		fi
 		raw_count=$(printf '%s' "$raw_page" | jq 'length' 2>/dev/null) || return 1
-		combined=$(jq -cn --argjson prior "$combined" --argjson next "$raw_page" \
-			'$prior + [$next[] | select(.pull_request == null)]') || return 1
+		combined=$(printf '%s\n%s\n' "$combined" "$raw_page" | jq -sc \
+			'.[0] + [.[1][] | select(.pull_request == null)]') || return 1
 		issue_count=$(printf '%s' "$combined" | jq 'length' 2>/dev/null) || return 1
 		if [[ "$raw_count" -lt "$page_size" ]]; then
 			break
