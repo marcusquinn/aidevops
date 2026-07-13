@@ -138,23 +138,29 @@ fi
 # Exercise the command sequence used by actions/checkout while the shim is
 # parked. This fixture catches any future change that republishes `git` early.
 FIXTURE_ROOT=$(mktemp -d)
+trap 'rm -rf "${FIXTURE_ROOT}"' EXIT
 FIXTURE_SHIM_DIR="${FIXTURE_ROOT}/shim"
 FIXTURE_HOME="${FIXTURE_ROOT}/home"
 FIXTURE_REPO="${FIXTURE_ROOT}/repo"
 mkdir -p "${FIXTURE_SHIM_DIR}" "${FIXTURE_HOME}"
 cp "${REPO_ROOT}/.agents/scripts/git" "${FIXTURE_SHIM_DIR}/aidevops-git-guard"
-FIXTURE_GIT=$(PATH="${FIXTURE_SHIM_DIR}:/usr/bin:/bin" command -v git)
-if [[ "${FIXTURE_GIT}" != "${FIXTURE_SHIM_DIR}/git" ]] &&
-	HOME="${FIXTURE_HOME}" PATH="${FIXTURE_SHIM_DIR}:/usr/bin:/bin" git config --global --add safe.directory "${FIXTURE_REPO}" &&
-	HOME="${FIXTURE_HOME}" PATH="${FIXTURE_SHIM_DIR}:/usr/bin:/bin" git init "${FIXTURE_REPO}" >/dev/null &&
-	HOME="${FIXTURE_HOME}" PATH="${FIXTURE_SHIM_DIR}:/usr/bin:/bin" git -C "${FIXTURE_REPO}" remote add origin "${FIXTURE_ROOT}/upstream.git" &&
-	HOME="${FIXTURE_HOME}" PATH="${FIXTURE_SHIM_DIR}:/usr/bin:/bin" git -C "${FIXTURE_REPO}" config --local gc.auto 0 &&
-	HOME="${FIXTURE_HOME}" PATH="${FIXTURE_SHIM_DIR}:/usr/bin:/bin" git -C "${FIXTURE_REPO}" submodule foreach --recursive true; then
+if (
+	export HOME="${FIXTURE_HOME}"
+	export PATH="${FIXTURE_SHIM_DIR}:/usr/bin:/bin"
+	FIXTURE_GIT=$(command -v git)
+	[[ "${FIXTURE_GIT}" != "${FIXTURE_SHIM_DIR}/git" ]] &&
+		git config --global --add safe.directory "${FIXTURE_REPO}" &&
+		git init -q "${FIXTURE_REPO}" &&
+		git -C "${FIXTURE_REPO}" remote add origin "${FIXTURE_ROOT}/upstream.git" &&
+		git -C "${FIXTURE_REPO}" config --local gc.auto 0 &&
+		git -C "${FIXTURE_REPO}" submodule foreach --recursive true
+); then
 	check 1 "trusted checkout init/config/remote/submodule fixture bypasses parked guard" ""
 else
 	check 0 "trusted checkout init/config/remote/submodule fixture bypasses parked guard" "trusted actions/checkout commands did not use the runner Git binary"
 fi
 rm -rf "${FIXTURE_ROOT}"
+trap - EXIT
 
 # ============================================================
 # Test 4: job has merged == true guard (defends against #22607
