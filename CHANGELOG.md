@@ -10,6 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.32.84] - 2026-07-13
+
+### Changed
+
+- Documentation: harden issue approval reviews (#27468)
+
 ## [3.32.83] - 2026-07-13
 
 ### Added
