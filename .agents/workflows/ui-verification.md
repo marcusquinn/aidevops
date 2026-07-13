@@ -41,6 +41,11 @@ Capture `before-` baseline before changes, `after-` after. **Responsive-critical
 
 ```typescript
 import { chromium, devices } from 'playwright';
+import { mkdir } from 'node:fs/promises';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
+const artifactRoot = join(process.env.AIDEVOPS_TEMP_DIR || join(homedir(), '.aidevops', '.agent-workspace', 'tmp'), 'ui-verify');
+await mkdir(artifactRoot, { recursive: true });
 const standardDevices = [
   { name: 'mobile-sm',  config: { viewport: { width: 320, height: 568 }, isMobile: true, hasTouch: true } },
   { name: 'mobile',     config: devices['iPhone 14'] },           // 390x844
@@ -59,7 +64,7 @@ for (const { name, config } of standardDevices) {
   page.on('requestfailed', r => failed.push({ url: r.url(), err: r.failure()?.errorText }));
   await page.goto(targetUrl);
   await page.waitForLoadState('networkidle');
-  await page.screenshot({ path: `/tmp/ui-verify/before-${name}.png` });
+  await page.screenshot({ path: join(artifactRoot, `before-${name}.png`) });
   if (errors.length) console.error(`[${name}] errors:`, errors);
   if (failed.length) console.error(`[${name}] failed:`, failed);
   await ctx.close();

@@ -300,7 +300,7 @@ documented in GH#20322. Do not skip it even if Step 3 returned no results.
 First Bash tool call: create and sign an absolute body file.
 
 ```bash
-BODY_FILE=/tmp/aidevops-issue-body.md
+BODY_FILE="${AIDEVOPS_TEMP_DIR:-$HOME/.aidevops/.agent-workspace/tmp}/aidevops-issue-body.md"
 cat <<'EOF' > "$BODY_FILE"
 BODY_CONTENT
 EOF
@@ -313,7 +313,7 @@ creation and the `gh issue create` write in the same Bash tool call.
 ```bash
 gh issue create -R marcusquinn/aidevops \
   --title "TITLE" \
-  --body-file /tmp/aidevops-issue-body.md \
+  --body-file "$BODY_FILE" \
   --label "LABEL"
 ```
 

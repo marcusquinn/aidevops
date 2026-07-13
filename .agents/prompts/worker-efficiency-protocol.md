@@ -19,7 +19,7 @@ git add -A && git commit -m 'feat: <what you just did> (<task-id>)'
 ```bash
 git push -u origin HEAD
 gh_issue=$(grep -E '^\s*- \[.\] <task-id> ' TODO.md 2>/dev/null | grep -oE 'ref:GH#[0-9]+' | head -1 | sed 's/ref:GH#//' || true)
-PR_BODY_FILE=/tmp/aidevops-pr-body.md
+PR_BODY_FILE="${AIDEVOPS_TEMP_DIR:-$HOME/.aidevops/.agent-workspace/tmp}/aidevops-pr-body.md"
 cat <<'EOF' > "$PR_BODY_FILE"
 WIP - incremental commits
 EOF
@@ -31,7 +31,7 @@ Run the GitHub write in the next Bash tool call so the signature gate can read
 the completed body file before execution:
 
 ```bash
-gh pr create --draft --title '<task-id>: <description>' --body-file /tmp/aidevops-pr-body.md
+gh pr create --draft --title '<task-id>: <description>' --body-file "$PR_BODY_FILE"
 ```
 
 - **ShellCheck before push for `.sh` files (t234).** Do not push violations. If `shellcheck` is missing, skip and note it in the PR body.

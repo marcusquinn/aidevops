@@ -15,5 +15,6 @@ aidevops_init_temp_workspace() {
 	export TMPDIR="$temp_root"
 	export TMP="$temp_root"
 	export TEMP="$temp_root"
+	export AIDEVOPS_TEMP_DIR="$temp_root"
 	return 0
 }
