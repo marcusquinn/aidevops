@@ -100,6 +100,7 @@ assert_blocked "blocks canonical symbolic-ref short deletion" "git symbolic-ref 
 assert_blocked "blocks canonical symbolic-ref combined deletion flags" "git symbolic-ref -qd refs/remotes/origin/HEAD"
 assert_blocked "blocks canonical symbolic-ref unknown options" "git symbolic-ref --bogus refs/remotes/origin/HEAD"
 assert_blocked "blocks canonical symbolic-ref without a ref" "git symbolic-ref --short"
+assert_blocked "blocks canonical symbolic-ref option terminator" "git symbolic-ref -- refs/remotes/origin/HEAD"
 assert_blocked "blocks canonical symbolic-ref second ref after option terminator" "git symbolic-ref -- HEAD refs/heads/safety/example"
 
 if [[ "$(git -C "$REPO" symbolic-ref --short HEAD)" == "main" ]] &&
@@ -118,7 +119,6 @@ assert_allowed "allows canonical symbolic-ref query" "$REPO" "git symbolic-ref r
 assert_allowed "allows canonical short symbolic-ref query" "$REPO" "git symbolic-ref --short refs/remotes/origin/HEAD"
 assert_allowed "allows reordered canonical symbolic-ref query flags" "$REPO" "git symbolic-ref refs/remotes/origin/HEAD --quiet --short"
 assert_allowed "allows canonical non-recursive symbolic-ref query" "$REPO" "git symbolic-ref --no-recurse refs/remotes/origin/HEAD"
-assert_allowed "allows canonical symbolic-ref query with option terminator" "$REPO" "git symbolic-ref -- refs/remotes/origin/HEAD"
 assert_allowed "allows canonical worktree creation" "$REPO" "git worktree add '$LINKED' -b feature/example"
 git -C "$REPO" worktree add -q -b feature/example "$LINKED"
 assert_allowed "allows normal Git mutation in linked worktree" "$LINKED" "git switch -c feature/linked-child"

@@ -210,18 +210,10 @@ def _tag_is_read_only(args: list[str]) -> bool:
 
 def _symbolic_ref_is_read_only(args: list[str]) -> bool:
     read_flags = {"-q", "--quiet", "--short", "--recurse", "--no-recurse"}
-    refs: list[str] = []
-    parse_options = True
-    for arg in args:
-        if parse_options and arg == "--":
-            parse_options = False
-        elif parse_options and arg in read_flags:
-            continue
-        elif parse_options and arg.startswith("-"):
-            return False
-        else:
-            refs.append(arg)
-    return len(refs) == 1
+    return (
+        sum(arg not in read_flags for arg in args) == 1
+        and all(arg in read_flags or not arg.startswith("-") for arg in args)
+    )
 
 
 CANONICAL_CHECKS: dict[str, Callable[[list[str]], bool]] = {
