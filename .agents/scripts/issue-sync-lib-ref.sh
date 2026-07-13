@@ -251,7 +251,7 @@ resolve_task_gh_number() {
 					--issue-id "$mapped_issue_id" --display-number "$mapped_number" \
 					"${refresh_args[@]}" --sync-metadata "$mapped_metadata" >/dev/null 2>&1 || return 1
 			fi
-			printf '%s\n' "$mapping" | jq -r '.displayNumber'
+			printf '%s\n' "$mapped_number"
 			return 0
 		fi
 	fi
@@ -263,10 +263,12 @@ resolve_task_gh_number() {
 		grep -oE 'ref:GH#[0-9]+' | head -1 | sed 's/ref:GH#//' || echo "")
 	[[ "$ref" =~ ^[1-9][0-9]*$ ]] || return 1
 	issue_json=$(_gh_with_timeout read gh issue view "$ref" --repo "$repo" --json id,number,state,updatedAt 2>/dev/null || true)
-	issue_id=$(printf '%s' "$issue_json" | jq -r '.id // empty' 2>/dev/null)
-	issue_number=$(printf '%s' "$issue_json" | jq -r '.number // empty' 2>/dev/null)
-	issue_state=$(printf '%s' "$issue_json" | jq -r '.state // empty' 2>/dev/null)
-	issue_cursor=$(printf '%s' "$issue_json" | jq -r '.updatedAt // empty' 2>/dev/null)
+	if ! IFS=$'\034' read -r issue_id issue_number issue_state issue_cursor < <(
+		printf '%s' "$issue_json" | jq -r \
+			'[.id // "", (.number // "" | tostring), .state // "", .updatedAt // ""] | join("\u001c")'
+	); then
+		return 1
+	fi
 	[[ -n "$issue_id" && "$issue_number" == "$ref" ]] || return 1
 	if [[ -f "$coordinator" ]]; then
 		local bind_args=()
