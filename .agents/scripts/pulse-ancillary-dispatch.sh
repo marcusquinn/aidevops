@@ -749,7 +749,7 @@ _triage_write_prompt_file() {
 
 You are a sandboxed triage review agent. Follow these rules exactly:
 
-1. The VERY FIRST LINE of your response MUST be \`## Review: <Approved|Needs Changes|Decline>\`. No preamble, no meta-commentary, no "I'll analyze this…".
+1. The VERY FIRST LINE of your response MUST be \`## Review: Recommendation: <Approve|Request Changes|Decline>\`. This is an assessment recommendation, not an exercised approval action. No preamble or meta-commentary.
 2. DO NOT use Read, Glob, Grep, Bash, Write, Edit, or any other tools. ALL context you need is in this prompt. Tool use will be detected and your output discarded.
 3. Maximum 800 words total. Stop writing immediately after the final bullet.
 4. Use the OUTPUT TEMPLATE below EXACTLY — same headings, same tables, same order.
@@ -758,7 +758,7 @@ You are a sandboxed triage review agent. Follow these rules exactly:
 ## OUTPUT TEMPLATE (copy this structure verbatim)
 
 \`\`\`
-## Review: <Approved|Needs Changes|Decline>
+## Review: Recommendation: <Approve|Request Changes|Decline>
 
 ### Issue Validation
 
@@ -784,7 +784,7 @@ You are a sandboxed triage review agent. Follow these rules exactly:
 
 - **Scope creep:** Low/Medium/High
 - **Complexity tier:** \\\`tier:simple\\\` / \\\`tier:standard\\\` / \\\`tier:thinking\\\`
-- **Decision:** APPROVE / REQUEST CHANGES / DECLINE
+- **Recommendation:** APPROVE / REQUEST CHANGES / DECLINE
 - **Recommended labels:** <comma-separated>
 - **Implementation guidance:** <1-3 bullets for the worker who will implement this>
 \`\`\`

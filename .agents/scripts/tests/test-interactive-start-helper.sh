@@ -38,15 +38,19 @@ if ! grep -Fq 'interactive-session-helper.sh marker=1 args=claim 42 owner/repo -
 	printf 'FAIL ordinary issue start did not claim as local implementation\n' >&2
 	exit 1
 fi
-if ! grep -Fq 'full-loop-helper.sh marker=1 args=start GH#42 local fix --background' "$call_log"; then
-	printf 'FAIL local asynchronous loop did not inherit implementation marker\n' >&2
+if ! grep -Fxq 'full-loop-helper.sh marker=1 args=start GH#42 local fix' "$call_log"; then
+	printf 'FAIL interactive issue start was not foreground by default\n' >&2
 	exit 1
 fi
 
 : >"$call_log"
-PATH="${stub_dir}:$PATH" "$helper" --issue 43 --repo owner/repo --task "queued fix" --auto-dispatch || exit 1
+PATH="${stub_dir}:$PATH" "$helper" --issue 43 --repo owner/repo --task "queued fix" --auto-dispatch --background || exit 1
 if ! grep -Fq 'interactive-session-helper.sh marker=1 args=claim 43 owner/repo --implementing' "$call_log"; then
 	printf 'FAIL auto-dispatch issue was not taken over locally\n' >&2
+	exit 1
+fi
+if ! grep -Fxq 'full-loop-helper.sh marker=1 args=start GH#43 queued fix --background' "$call_log"; then
+	printf 'FAIL explicit background start did not remain local\n' >&2
 	exit 1
 fi
 

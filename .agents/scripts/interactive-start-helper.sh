@@ -8,10 +8,11 @@ set -euo pipefail
 
 _usage() {
 	cat <<'EOF'
-Usage: interactive-start-helper.sh --issue N --repo owner/repo --task "description" [--auto-dispatch]
+Usage: interactive-start-helper.sh --issue N --repo owner/repo --task "description" [--auto-dispatch] [--background]
 
 Claims the issue for interactive implementation, runs the pre-edit loop check,
-and starts full-loop in the current repo/worktree.
+and starts full-loop in the current repo/worktree. Foreground is the default;
+--background requires explicit user background intent.
 EOF
 	return 0
 }
@@ -21,6 +22,7 @@ main() {
 	local repo=""
 	local task=""
 	local auto_dispatch=0
+	local background=0
 	while [[ $# -gt 0 ]]; do
 		local arg="$1"
 		shift
@@ -53,6 +55,7 @@ main() {
 			shift
 			;;
 		--auto-dispatch) auto_dispatch=1 ;;
+		--background | --bg) background=1 ;;
 		--help | -h)
 			_usage
 			return 0
@@ -75,7 +78,11 @@ main() {
 	: "$auto_dispatch"
 	interactive-session-helper.sh "${claim_args[@]}"
 	pre-edit-check.sh --loop-mode --task "$task"
-	full-loop-helper.sh start "GH#${issue} ${task}" --background
+	local start_args=(start "GH#${issue} ${task}")
+	if [[ $background -eq 1 ]]; then
+		start_args+=(--background)
+	fi
+	full-loop-helper.sh "${start_args[@]}"
 	return 0
 }
 
