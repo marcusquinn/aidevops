@@ -41,25 +41,83 @@ assert_contains() {
 	return 0
 }
 
+assert_not_contains() {
+	local name="$1"
+	local needle="$2"
+	local haystack="$3"
+	if [[ "$haystack" == *"$needle"* ]]; then
+		fail "$name" "unexpected ${needle}"
+	else
+		pass "$name"
+	fi
+	return 0
+}
+
+file_mode() {
+	local path="$1"
+	stat -f '%Lp' "$path" 2>/dev/null || stat -c '%a' "$path" 2>/dev/null
+	return 0
+}
+
 # shellcheck disable=SC2016 # Inner bash expands $i, not this test harness.
 run_output=$("$HELPER" run --summary-lines 4 -- bash -c 'for i in 1 2 3 4 5 6; do printf "line%s\n" "$i"; done')
 assert_contains "run prints output id" "output_id: out_" "$run_output"
-assert_contains "run prints raw path" "raw_path:" "$run_output"
-assert_contains "run summarizes omission" "omitted" "$run_output"
+assert_contains "successful run reports outcome" "outcome: succeeded" "$run_output"
+assert_not_contains "success receipt hides raw path" "raw_path:" "$run_output"
+assert_not_contains "success receipt hides command output" "line1" "$run_output"
 
 output_id=$(printf '%s\n' "$run_output" | awk '/^output_id:/ {print $2; exit}')
 show_output=$("$HELPER" show "$output_id" --offset 2 --limit 2)
 assert_contains "show returns exact numbered slice" "2: line2" "$show_output"
 assert_contains "show respects limit" "3: line3" "$show_output"
 
+# shellcheck disable=SC2016 # Inner bash expands $i, not this test harness.
+summary_output=$("$HELPER" run --success-mode summary --summary-lines 4 -- bash -c 'for i in 1 2 3 4 5 6; do printf "line%s\n" "$i"; done')
+assert_contains "explicit success summary reports omission" "omitted" "$summary_output"
+
+set +e
+failure_output=$("$HELPER" run --diagnostic-lines 4 -- bash -c 'printf "routine line\n"; printf "fatal: fixture failed\n" >&2; exit 7')
+failure_rc=$?
+set -e
+[[ "$failure_rc" -eq 7 ]] && pass "failure preserves process exit" || fail "failure preserves process exit" "got ${failure_rc}"
+assert_contains "failure reports outcome" "outcome: failed" "$failure_output"
+assert_contains "failure shows bounded diagnostic" "fatal: fixture failed" "$failure_output"
+assert_not_contains "failure diagnostic omits unrelated full output" "output:" "$failure_output"
+
+set +e
+sentinel_output=$("$HELPER" run --expect-text '[EXPECTED_SENTINEL]' -- bash -c 'printf "completed without sentinel\n"')
+sentinel_rc=$?
+set -e
+[[ "$sentinel_rc" -eq 1 ]] && pass "missing expected text fails verified outcome" || fail "missing expected text fails verified outcome" "got ${sentinel_rc}"
+assert_contains "missing sentinel records outcome basis" "basis=missing-expected-text" "$sentinel_output"
+
+json_output=$("$HELPER" run --format json -- bash -c 'printf "json fixture\n"')
+printf '%s' "$json_output" | jq -e '.schema == "aidevops.operation-result/v1" and .outcome == "succeeded" and .evidence.bytes > 0' >/dev/null && \
+	pass "JSON receipt follows operation-result contract" || fail "JSON receipt follows operation-result contract"
+
 sensitive_output=$(printf 'api_key=abcdefghijklmnopqrstuvwxyz123456\n' | "$HELPER" store --command "fixture" --tag secret-test)
-assert_contains "sensitive output is flagged" "sensitive_redacted: 1" "$sensitive_output"
+assert_contains "sensitive output is flagged" "sensitive_redacted=1" "$sensitive_output"
 sensitive_id=$(printf '%s\n' "$sensitive_output" | awk '/^output_id:/ {print $2; exit}')
 sensitive_show=$("$HELPER" show "$sensitive_id" 2>&1 || true)
 assert_contains "sensitive value redacted" "[REDACTED]" "$sensitive_show"
 
 bypass_output=$("$HELPER" run -- git diff --no-index /dev/null /dev/null 2>&1 || true)
 assert_contains "exact diff bypasses sandbox" "output_sandbox: bypass exact/verbatim command" "$bypass_output"
+
+root_mode=$(file_mode "$AIDEVOPS_OUTPUT_SANDBOX_DIR")
+raw_mode=$(file_mode "$AIDEVOPS_OUTPUT_SANDBOX_DIR/raw/${output_id}.txt")
+[[ "$root_mode" == "700" ]] && pass "sandbox directory is private" || fail "sandbox directory is private" "mode ${root_mode}"
+[[ "$raw_mode" == "600" ]] && pass "raw evidence is private" || fail "raw evidence is private" "mode ${raw_mode}"
+
+blocked_parent="${TMPDIR_TEST}/not-a-directory"
+printf 'block directory creation\n' >"$blocked_parent"
+set +e
+fail_open_output=$(AIDEVOPS_OUTPUT_SANDBOX_DIR="${blocked_parent}/sandbox" "$HELPER" run -- bash -c 'printf "native fail-open output\n"' 2>&1)
+fail_open_rc=$?
+set -e
+[[ "$fail_open_rc" -eq 0 ]] && pass "storage failure preserves command success" || fail "storage failure preserves command success" "got ${fail_open_rc}"
+assert_contains "storage failure falls back to native output" "native fail-open output" "$fail_open_output"
+assert_contains "storage failure explains fallback" "evidence store unavailable" "$fail_open_output"
 
 cleanup_output=$("$HELPER" cleanup --max-age-days 0)
 assert_contains "cleanup reports deletion count" "deleted:" "$cleanup_output"
