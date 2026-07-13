@@ -168,7 +168,7 @@ fi
 mv "${FIXTURE_SHIM_DIR}/aidevops-git-guard" "${FIXTURE_SHIM_DIR}/git"
 ACTIVE_GIT=$(PATH="${FIXTURE_SHIM_DIR}:/usr/bin:/bin" command -v git)
 mv "${FIXTURE_SHIM_DIR}/git" "${FIXTURE_SHIM_DIR}/aidevops-git-guard"
-CLEANUP_GIT=$(PATH="${FIXTURE_SHIM_DIR}:/usr/bin:/bin" command -v git)
+CLEANUP_GIT=$(PATH="${FIXTURE_SHIM_DIR}:/usr/bin:/bin" command -v git || true)
 if [[ "${ACTIVE_GIT}" == "${FIXTURE_SHIM_DIR}/git" && "${CLEANUP_GIT}" != "${FIXTURE_SHIM_DIR}/git" ]]; then
 	check 1 "guard activation is bounded to workflow shell steps" ""
 else
