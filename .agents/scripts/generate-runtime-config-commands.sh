@@ -90,6 +90,22 @@ _copy_cmd_strip_opencode_fields() {
 	sed -E '/^---$/,/^---$/{/^(agent|subtask|mode):/d;}' "$src" >"$dest"
 }
 
+# OpenCode requires model fields to contain concrete provider/model IDs. Source
+# commands may instead carry canonical workload tiers for other orchestrators;
+# strip only those tier values and inherit the active session model.
+_copy_cmd_for_opencode() {
+	local src="$1"
+	local dest="$2"
+
+	awk '
+		NR == 1 && /^---$/ { in_fm = 1; print; next }
+		in_fm && /^---$/ { in_fm = 0; print; next }
+		in_fm && /^model: (simple|standard|thinking)$/ { next }
+		{ print }
+	' "$src" >"$dest" || return 1
+	return 0
+}
+
 # Helper: Cursor command files -- Cursor Commands (1.6+) do not support
 # YAML frontmatter at all. Strip the entire leading frontmatter block
 # and emit only the markdown body.
@@ -287,9 +303,9 @@ _deploy_one_command() {
 
 	case "$runtime_id" in
 	opencode)
-		# OpenCode is the source format -- copy as-is.
+		# Canonical workload tiers are routing intent, not OpenCode model IDs.
 		dest="${cmd_dir}/${name}.md"
-		cp "$src" "$dest" || return 1
+		_copy_cmd_for_opencode "$src" "$dest" || return 1
 		;;
 	claude-code | codex | droid | amp | qwen)
 		# Markdown + YAML frontmatter clients: strip opencode-only fields

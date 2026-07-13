@@ -140,6 +140,20 @@ define_automation_commands
 # Each file should have frontmatter with description and agent
 # This prevents needing to manually add new commands to this script
 
+copy_discovered_command() {
+	local src="$1"
+	local dest="$2"
+
+	# OpenCode treats model values as concrete IDs, not workload tiers.
+	awk '
+		NR == 1 && /^---$/ { in_fm = 1; print; next }
+		in_fm && /^---$/ { in_fm = 0; print; next }
+		in_fm && /^model: (simple|standard|thinking)$/ { next }
+		{ print }
+	' "$src" >"$dest" || return 1
+	return 0
+}
+
 discover_commands() {
 	local commands_dir="${AIDEVOPS_DIR:-$HOME/.aidevops}/agents/scripts/commands"
 
@@ -157,8 +171,8 @@ discover_commands() {
 		# Skip if already manually defined (avoid duplicates)
 		[[ -f "$OPENCODE_COMMAND_DIR/$cmd_name.md" ]] && continue
 
-		# Copy command file directly (it already has proper frontmatter)
-		if cp "$cmd_file" "$OPENCODE_COMMAND_DIR/$cmd_name.md"; then
+		# Preserve OpenCode frontmatter while removing provider-neutral tiers.
+		if copy_discovered_command "$cmd_file" "$OPENCODE_COMMAND_DIR/$cmd_name.md"; then
 			((++command_count))
 			echo -e "  ${GREEN}✓${NC} Auto-discovered /$cmd_name command"
 		elif [[ ! -f "$cmd_file" ]]; then
