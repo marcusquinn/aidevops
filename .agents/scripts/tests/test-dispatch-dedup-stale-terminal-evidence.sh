@@ -46,6 +46,8 @@ source "${SCRIPTS_DIR}/dispatch-dedup-stale.sh"
 COMMENTS_JSON='[]'
 ESCALATED=0
 RECOVERED=0
+OPEN_PR_STATE=""
+ESCALATION_REASON=""
 COMMENT_BODIES="${TMP_HOME}/comments.log"
 : >"$COMMENT_BODIES"
 
@@ -83,6 +85,7 @@ set_issue_status() {
 }
 
 _stale_recovery_find_open_pr() {
+	printf '%s' "$OPEN_PR_STATE"
 	return 0
 }
 
@@ -95,6 +98,7 @@ _stale_recovery_escalate() {
 	local _prior_ticks="$6"
 	: "$_issue_number" "$_repo_slug" "$_stale_assignees" "$_reason" "$_threshold" "$_prior_ticks"
 	ESCALATED=1
+	ESCALATION_REASON="$_reason"
 	return 0
 }
 
@@ -125,6 +129,24 @@ fi
 
 ESCALATED=0
 RECOVERED=0
+ESCALATION_REASON=""
+OPEN_PR_STATE="draft|456"
+COMMENTS_JSON='[[
+  {"created_at":"2026-05-04T12:43:16Z","body":"DISPATCH_CLAIM nonce=fresh runner=runner ts=2026-05-04T12:43:16Z"}
+]]'
+
+_recover_stale_assignment 3978 owner/repo runner "worker lease expired"
+
+if [[ "$ESCALATED" -eq 1 && "$RECOVERED" -eq 0 && "$ESCALATION_REASON" == *"incomplete draft PR #456"* ]]; then
+	pass "stale draft checkpoint escalates without competing redispatch"
+else
+	fail "stale draft checkpoint escalates without competing redispatch" \
+		"ESCALATED=${ESCALATED} RECOVERED=${RECOVERED} REASON=${ESCALATION_REASON}"
+fi
+
+ESCALATED=0
+RECOVERED=0
+OPEN_PR_STATE=""
 COMMENTS_JSON='[[
   {"created_at":"2026-05-04T10:00:00Z","body":"<!-- stale-recovery-tick:1 -->\nStale recovery tick 1/2"},
   {"created_at":"2026-05-04T11:00:00Z","body":"<!-- stale-recovery-tick:2 -->\nStale recovery tick 2/2"},

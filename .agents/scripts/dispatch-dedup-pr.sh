@@ -125,7 +125,7 @@ _has_open_pr_check_open_commits() {
 
 	local open_pr_json open_pr_count
 	open_pr_json=$(gh pr list --repo "$repo_slug" --state open \
-		--json number,title,commits --limit 10 2>/dev/null) || open_pr_json="[]"
+		--json number,title,commits,isDraft --limit 10 2>/dev/null) || open_pr_json="[]"
 	open_pr_count=$(printf '%s' "$open_pr_json" | jq 'length' 2>/dev/null) || open_pr_count=0
 	[[ "$open_pr_count" =~ ^[0-9]+$ ]] || open_pr_count=0
 	[[ "$open_pr_count" -eq 0 ]] && return 1
@@ -136,9 +136,10 @@ _has_open_pr_check_open_commits() {
 
 	local match_pr
 	match_pr=$(printf '%s' "$open_pr_json" | jq -r --arg cp "$close_pattern" --arg tp "$title_pattern" \
-		'[.[] | select(
+		'[.[] | select((.isDraft // false | not) and (
 			(.title // "" | test($tp)) or
 			((.commits // [])[] | .messageHeadline // "" | test($cp; "i"))
+		))
 		)] | .[0].number // empty' 2>/dev/null) || match_pr=""
 	if [[ -n "$match_pr" ]]; then
 		printf 'open PR #%s has commits targeting issue #%s\n' "$match_pr" "$issue_number"
@@ -183,7 +184,7 @@ _has_open_pr_check_open_body_keyword() {
 	# included in this single request to avoid separate gh pr view calls.
 	pr_json=$(gh pr list --repo "$repo_slug" --state open \
 		--search "#${issue_number} in:body" --limit 20 \
-		--json number,body 2>/dev/null) || pr_json="[]"
+		--json number,body,isDraft 2>/dev/null) || pr_json="[]"
 
 	# Match: closing keyword + optional whitespace + #NNN or owner/repo#NNN
 	# followed by a non-word char or end-of-string (GH#18641 semantics).
@@ -191,7 +192,7 @@ _has_open_pr_check_open_body_keyword() {
 	close_pattern="(close[sd]?|fix(e[sd])?|resolve[sd]?)[[:space:]]+([a-zA-Z0-9._-]+/[a-zA-Z0-9._-]+)?#${issue_number}([^[:alnum:]_]|$)"
 
 	match_pr=$(printf '%s' "$pr_json" | jq -r --arg pattern "$close_pattern" \
-		'[.[] | select(.body // "" | test($pattern; "i"))] | .[0].number // empty' \
+		'[.[] | select((.isDraft // false | not) and (.body // "" | test($pattern; "i")))] | .[0].number // empty' \
 		2>/dev/null) || match_pr=""
 
 	if [[ -n "$match_pr" ]]; then

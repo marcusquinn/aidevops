@@ -288,6 +288,19 @@ test_has_open_pr_detects_open_body_closing_keyword() {
 	return 0
 }
 
+test_has_open_pr_ignores_draft_body_closing_keyword() {
+	set_gh_fixtures 'marcusquinn/aidevops|open|#18779 in:body|[{"number":18906,"body":"Resolves #18779. Incomplete worker checkpoint.","isDraft":true}]'
+
+	if "$HELPER_SCRIPT" has-open-pr 18779 marcusquinn/aidevops 't2071: incomplete checkpoint'; then
+		print_result "has-open-pr ignores draft checkpoint closing keyword" 1 \
+			"Expected draft checkpoint not to count as a completed handoff"
+		return 0
+	fi
+
+	print_result "has-open-pr ignores draft checkpoint closing keyword" 0
+	return 0
+}
+
 # t2085: planning-only OPEN PR bodies use `For #N` / `Ref #N` instead of a
 # closing keyword. The new open-body check must NOT treat those as evidence,
 # matching the existing planning-aware semantics already enforced by
@@ -554,6 +567,7 @@ main() {
 	test_has_open_pr_requires_close_keyword_for_our_issue
 	test_has_open_pr_allows_dispatch_on_task_id_collision
 	test_has_open_pr_detects_open_body_closing_keyword
+	test_has_open_pr_ignores_draft_body_closing_keyword
 	test_has_open_pr_ignores_open_body_planning_for_reference
 	test_has_open_pr_requires_open_close_keyword_for_our_issue
 	test_has_open_pr_blocks_approved_mergeable_sibling

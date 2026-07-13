@@ -99,16 +99,30 @@ cat >"${GH_STUB_DIR}/gh" <<'STUB'
 #   `gh repo view ...`                   → emit defaultBranchRef.name=main JSON
 #   anything else                        → empty JSON `{}`
 mode=""
+json_fields=""
+previous=""
 for a in "$@"; do
+	if [[ "$previous" == "--json" ]]; then
+		json_fields="$a"
+	fi
 	case "$a" in
 		--head) mode="head" ;;
 		--search) mode="search" ;;
 	esac
+	previous="$a"
 done
 case "${1:-}" in
 	pr)
 		case "${2:-}" in
 			list)
+				if [[ "$json_fields" == "number,state,isDraft" ]]; then
+					if [[ "$mode" == "head" ]]; then
+						printf '%s\n' "${STUB_HEAD_JSON:-[]}"
+					else
+						printf '%s\n' "${STUB_SEARCH_JSON:-[]}"
+					fi
+					exit 0
+				fi
 				if [[ "$mode" == "head" ]]; then
 					printf '%s\n' "${STUB_HEAD_COUNT:-0}"
 				elif [[ "$mode" == "search" ]]; then
@@ -167,6 +181,12 @@ if ! declare -F _attempt_orphan_recovery_pr >/dev/null 2>&1; then
 		"$TEST_RED" "$TEST_RESET"
 	exit 1
 fi
+
+# Keep these unit tests independent of live GraphQL/REST routing state.
+gh_pr_list() {
+	gh pr list "$@"
+	return $?
+}
 
 # -----------------------------------------------------------------------------
 # Cases
@@ -248,6 +268,66 @@ test_case_d2_empty_repo_unknown() {
 	return 0
 }
 
+test_case_draft_state_is_preserved() {
+	export STUB_HEAD_JSON='[{"number":321,"state":"OPEN","isDraft":true}]'
+	export STUB_SEARCH_JSON='[]'
+	local got
+	got=$(_pr_handoff_state_for_branch_or_issue "feature/checkpoint" "27501" "owner/repo")
+	if [[ "$got" == "draft|321" ]]; then
+		print_result "draft PR is classified as durable checkpoint, not completed handoff" 0
+	else
+		print_result "draft PR is classified as durable checkpoint, not completed handoff" 1 "got: '$got'"
+	fi
+	return 0
+}
+
+test_case_ready_and_terminal_states_are_preserved() {
+	local fixture expected got
+	for fixture in \
+		'[{"number":322,"state":"OPEN","isDraft":false}]' \
+		'[{"number":323,"state":"MERGED","isDraft":false}]' \
+		'[{"number":324,"state":"CLOSED","isDraft":false}]'; do
+		case "$fixture" in
+			*322*) expected="ready|322" ;;
+			*323*) expected="merged|323" ;;
+			*) expected="closed|324" ;;
+		esac
+		export STUB_HEAD_JSON="$fixture"
+		got=$(_pr_handoff_state_for_branch_or_issue "feature/checkpoint" "27501" "owner/repo")
+		if [[ "$got" == "$expected" ]]; then
+			print_result "PR lifecycle state ${expected%%|*} is preserved" 0
+		else
+			print_result "PR lifecycle state ${expected%%|*} is preserved" 1 "got: '$got'"
+		fi
+	done
+	return 0
+}
+
+test_case_head_only_does_not_capture_unrelated_issue_draft() {
+	export STUB_HEAD_JSON='[]'
+	export STUB_SEARCH_JSON='[{"number":325,"state":"OPEN","isDraft":true}]'
+	local got
+	got=$(_pr_handoff_state_for_branch_or_issue "feature/worker" "27501" "owner/repo" "head-only")
+	if [[ "$got" == "absent|" ]]; then
+		print_result "head-only worker lookup ignores unrelated issue-search draft" 0
+	else
+		print_result "head-only worker lookup ignores unrelated issue-search draft" 1 "got: '$got'"
+	fi
+	return 0
+}
+
+test_case_active_pr_wins_over_historical_pr() {
+	export STUB_HEAD_JSON='[{"number":326,"state":"CLOSED","isDraft":false},{"number":327,"state":"OPEN","isDraft":true}]'
+	local got
+	got=$(_pr_handoff_state_for_branch_or_issue "feature/reopened" "27501" "owner/repo" "head-only")
+	if [[ "$got" == "draft|327" ]]; then
+		print_result "active draft wins over historical closed PR on same head" 0
+	else
+		print_result "active draft wins over historical closed PR on same head" 1 "got: '$got'"
+	fi
+	return 0
+}
+
 # Case E: orphan recovery pre-check. When a PR exists for the branch
 # (--head=1), recovery returns 0 with NO `gh pr create` attempt.
 test_case_e_orphan_recovery_skips_when_pr_exists() {
@@ -324,6 +404,10 @@ test_case_b_definitive_absence
 test_case_c_search_fallback_empty_branch
 test_case_d_no_inputs_unknown
 test_case_d2_empty_repo_unknown
+test_case_draft_state_is_preserved
+test_case_ready_and_terminal_states_are_preserved
+test_case_head_only_does_not_capture_unrelated_issue_draft
+test_case_active_pr_wins_over_historical_pr
 test_case_e_orphan_recovery_skips_when_pr_exists
 test_case_f_orphan_recovery_proceeds_when_no_pr
 
