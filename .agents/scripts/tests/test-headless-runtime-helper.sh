@@ -2717,6 +2717,39 @@ test_post_pr_handoff_detects_open_pending_pr() {
 	return 0
 }
 
+test_post_pr_handoff_rejects_draft_checkpoint() {
+	local work_dir="${TEST_ROOT}/repo-post-pr-draft-checkpoint"
+	mkdir -p "$work_dir"
+	init_git_worktree "$work_dir"
+	git -C "$work_dir" checkout -q -b "feature/auto-test-draft-issue-99999"
+	DISPATCH_REPO_SLUG="test-owner/test-repo"
+
+	gh() {
+		local args="$*"
+		if [[ "$args" == *"pr list"* && "$args" == *"--state open"* ]]; then
+			if [[ "$args" == *"isDraft"* && "$args" == *".isDraft"* ]]; then
+				printf '0'
+			else
+				printf '1'
+			fi
+			return 0
+		fi
+		printf '0'
+		return 0
+	}
+
+	if _worker_post_pr_handoff_confirmed "issue-99999" "$work_dir"; then
+		print_result "post-PR watchdog handoff rejects draft checkpoint" 1 \
+			"Draft durability must not classify as a completed handoff"
+	else
+		print_result "post-PR watchdog handoff rejects draft checkpoint" 0
+	fi
+
+	unset DISPATCH_REPO_SLUG 2>/dev/null || true
+	unset -f gh 2>/dev/null || true
+	return 0
+}
+
 test_post_pr_handoff_rejects_pre_pr_stall() {
 	local work_dir="${TEST_ROOT}/repo-pre-pr-stall"
 	mkdir -p "$work_dir"
@@ -2839,6 +2872,7 @@ main() {
 	test_service_interruption_candidate_uses_separate_path
 	test_service_interruption_exhausted_metric_preserves_context
 	test_post_pr_handoff_detects_open_pending_pr
+	test_post_pr_handoff_rejects_draft_checkpoint
 	test_post_pr_handoff_rejects_pre_pr_stall
 	test_post_pr_handoff_overrides_watchdog_next_action
 	test_completion_infrastructure_resumes_without_implementation_penalty

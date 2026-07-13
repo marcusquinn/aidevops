@@ -188,10 +188,11 @@ _stale_recovery_has_terminal_evidence_since() {
 }
 
 #######################################
-# Look up any open PR referencing this issue (counter reset signal).
-# A PR means progress is being made — don't escalate yet.
+# Look up any open PR referencing this issue.
+# Ready PRs are review handoffs. Draft PRs are durable checkpoints but not
+# completion or liveness evidence, so callers must continue or escalate them.
 # Args: $1 = issue number, $2 = repo slug
-# Output: PR number (or empty) on stdout
+# Output: "<number>|<true|false>" (or empty) on stdout
 #######################################
 _stale_recovery_find_open_pr() {
 	local issue_number="$1"
@@ -199,8 +200,53 @@ _stale_recovery_find_open_pr() {
 	local _open_pr
 	_open_pr=$(gh pr list --repo "$repo_slug" --state open \
 		--search "#${issue_number} in:body" --limit 1 \
-		--json number --jq '.[0].number // empty' 2>/dev/null) || _open_pr=""
+		--json number,isDraft --jq '.[0] | if . then "\(.number)|\(.isDraft // false)" else "" end' 2>/dev/null) || _open_pr=""
 	printf '%s' "$_open_pr"
+	return 0
+}
+
+#######################################
+# Escalate an ownerless draft checkpoint instead of preserving stale ownership
+# indefinitely or allowing a competing ordinary redispatch.
+# Args: issue, repo, stale assignees, reason, PR number, dispatch timestamp
+#######################################
+_stale_recovery_escalate_draft_checkpoint() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local stale_assignees="$3"
+	local reason="$4"
+	local pr_number="$5"
+	local expected_dispatch_ts="${6:-}"
+	local _assignee=""
+	local _old_ifs="${IFS:-}"
+	local -a _assignees=()
+	local -a _status_args=(--add-label "needs-maintainer-review")
+
+	if ! _stale_recovery_final_evidence_recheck "$issue_number" "$repo_slug" "$expected_dispatch_ts"; then
+		printf 'STALE_RECHECK_BLOCKED: issue #%s in %s — evidence changed before draft escalation\n' "$issue_number" "$repo_slug"
+		return 0
+	fi
+
+	IFS=',' read -ra _assignees <<<"$stale_assignees"
+	IFS="$_old_ifs"
+	for _assignee in "${_assignees[@]}"; do
+		[[ -n "$_assignee" ]] && _status_args+=(--remove-assignee "$_assignee")
+	done
+	set_issue_status "$issue_number" "$repo_slug" "" "${_status_args[@]}" || true
+	gh_issue_comment "$issue_number" --repo "$repo_slug" \
+		--body "<!-- ops:start — workers: skip this comment, it is audit trail not implementation context -->
+<!-- stale-draft-checkpoint:escalated pr=${pr_number} -->
+**Draft checkpoint requires continuation review**
+
+Draft PR #${pr_number} preserves committed progress, but no active worker owns its continuation. The draft was not treated as completed output and ordinary redispatch remains blocked to avoid a competing implementation.
+
+Previously assigned to: ${stale_assignees}
+Stale reason: ${reason}
+
+Applied \`needs-maintainer-review\`. Continue from the existing PR head or close the checkpoint before re-enabling ordinary dispatch.
+<!-- ops:end -->" 2>/dev/null || true
+	printf 'STALE_DRAFT_ESCALATED: issue #%s in %s — draft PR #%s preserved, applied needs-maintainer-review\n' \
+		"$issue_number" "$repo_slug" "$pr_number"
 	return 0
 }
 
@@ -490,7 +536,9 @@ _This recovery prevents the orphaned-assignment deadlock where offline runners p
 #   2. Count prior non-reset tick comments from the GitHub issue comment log.
 #   3. Find the latest dispatch marker in that same GitHub comment log.
 #   4. Look up any open PR referencing this issue.
-#      - If an open PR exists: preserve ownership and stop; the PR is progress.
+#      - Ready PR: preserve ownership and stop; review handoff is progress.
+#      - Draft PR: preserve the checkpoint but explicitly escalate when no
+#        continuation owns it; never treat durability as liveness/completion.
 #      - Else increment the global recovery count. At the threshold, escalate
 #        immediately. A stale assignment is itself terminal no-progress evidence.
 #      - Under threshold, record the tick inside the single recovery comment.
@@ -513,15 +561,28 @@ _recover_stale_assignment() {
 	# resetting to status:available and apply needs-maintainer-review instead.
 	# Counter is stored as structured comment markers for cross-runner correctness.
 	# Config: .agents/configs/dispatch-stale-recovery.conf
-	local _threshold _prior_ticks _open_pr _comments_pages _latest_dispatch_ts _next_tick
+	local _threshold _prior_ticks _open_pr _open_pr_number _open_pr_is_draft _comments_pages _latest_dispatch_ts _next_tick
 	_threshold=$(_stale_recovery_load_threshold)
 	_comments_pages=$(_stale_recovery_fetch_comments_pages "$issue_number" "$repo_slug")
 	_prior_ticks=$(_stale_recovery_count_ticks_from_pages "$_comments_pages")
 	_latest_dispatch_ts=$(_stale_recovery_latest_dispatch_ts_from_pages "$_comments_pages")
 	_open_pr=$(_stale_recovery_find_open_pr "$issue_number" "$repo_slug")
 	if [[ -n "$_open_pr" ]]; then
+		_open_pr_number="${_open_pr%%|*}"
+		_open_pr_is_draft="${_open_pr#*|}"
+		if [[ "$_open_pr_is_draft" == "true" ]]; then
+			if printf '%s' "$_comments_pages" | jq -e --arg marker "stale-draft-checkpoint:escalated pr=${_open_pr_number}" \
+				'any(.[] | .[]?; (.body // "") | contains($marker))' >/dev/null 2>&1; then
+				printf 'STALE_DRAFT_ESCALATED: issue #%s in %s — draft PR #%s already escalated\n' \
+					"$issue_number" "$repo_slug" "$_open_pr_number"
+				return 0
+			fi
+			_stale_recovery_escalate_draft_checkpoint "$issue_number" "$repo_slug" "$stale_assignees" \
+				"$reason" "$_open_pr_number" "$_latest_dispatch_ts"
+			return 0
+		fi
 		printf 'STALE_PROGRESS_PRESERVED: issue #%s in %s — open PR #%s is durable progress\n' \
-			"$issue_number" "$repo_slug" "$_open_pr"
+			"$issue_number" "$repo_slug" "$_open_pr_number"
 		return 0
 	fi
 	_next_tick=$((_prior_ticks + 1))

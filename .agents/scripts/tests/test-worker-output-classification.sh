@@ -440,6 +440,63 @@ test_dirty_feature_worktree_preserved() {
 	return 0
 }
 
+test_pr_lifecycle_states_do_not_collapse_to_completion() {
+	make_repo_pair "case10" || {
+		print_result "case 10: draft and closed PR states remain non-complete" 1 "fixture setup failed"
+		return 0
+	}
+	(
+		cd "$WORK_DIR" || exit 1
+		git checkout -q -b feature/t9999-pr-state
+		printf '%s\n' "feature change" > feature.txt
+		git add feature.txt
+		git commit -q -m "feature commit"
+		git push -q origin feature/t9999-pr-state
+	) || {
+		print_result "case 10: draft and closed PR states remain non-complete" 1 "feature setup failed"
+		return 0
+	}
+
+	_pr_handoff_state_for_branch_or_issue() {
+		printf '%s' "${TEST_PR_HANDOFF_STATE:-unknown}"
+		return 0
+	}
+
+	local got_draft="" got_closed=""
+	TEST_PR_HANDOFF_STATE="draft_checkpoint"
+	got_draft=$(_worker_produced_output "issue-1010" "$WORK_DIR")
+	TEST_PR_HANDOFF_STATE="closed_unmerged"
+	got_closed=$(_worker_produced_output "issue-1010" "$WORK_DIR")
+	unset TEST_PR_HANDOFF_STATE
+
+	if [[ "$got_draft" == "draft_checkpoint" && "$got_closed" == "closed_unmerged" ]]; then
+		print_result "case 10: draft and closed PR states remain non-complete" 0
+	else
+		print_result "case 10: draft and closed PR states remain non-complete" 1 \
+			"draft=${got_draft}, closed=${got_closed}"
+	fi
+	return 0
+}
+
+test_draft_checkpoint_escalation_is_explicit() {
+	local released_reason="" captured_status_args=""
+	_release_dispatch_claim() { released_reason="$2"; return 0; }
+	_hrff_resolve_release_runner_login() { printf 'worker-login'; return 0; }
+	set_issue_status() { captured_status_args="$*"; return 0; }
+	print_warning() { return 0; }
+
+	if _escalate_worker_draft_checkpoint "issue-1011" "owner/repo" "draft_checkpoint" \
+		&& [[ "$released_reason" == "worker_draft_checkpoint" ]] \
+		&& [[ "$captured_status_args" == *"needs-maintainer-review"* ]] \
+		&& [[ "$_HRW_RECOVERY_CLASSIFICATION" == "worker_draft_checkpoint" ]]; then
+		print_result "case 11: draft checkpoint gets explicit escalation, not completion" 0
+	else
+		print_result "case 11: draft checkpoint gets explicit escalation, not completion" 1 \
+			"reason=${released_reason}, status=${captured_status_args}, classification=${_HRW_RECOVERY_CLASSIFICATION}"
+	fi
+	return 0
+}
+
 # -----------------------------------------------------------------------------
 # Run
 # -----------------------------------------------------------------------------
@@ -453,6 +510,8 @@ test_feature_branch_without_default_ref_returns_branch_orphan
 test_external_terminal_complete_uses_trailing_issue_digits
 test_external_terminal_complete_guards_before_github_calls
 test_dirty_feature_worktree_preserved
+test_pr_lifecycle_states_do_not_collapse_to_completion
+test_draft_checkpoint_escalation_is_explicit
 
 printf '\nRan %d test(s), %d failed\n' "$TESTS_RUN" "$TESTS_FAILED"
 

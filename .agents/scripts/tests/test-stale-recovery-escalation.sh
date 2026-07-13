@@ -63,7 +63,7 @@ GH_CALLS_FILE="${TEST_ROOT}/gh_calls.log"
 #   - Returns STUB_TICK_COUNT for 'gh api *comments --jq ...'
 #     (simulates the count of stale-recovery-tick comments)
 #   - Returns STUB_OPEN_PR for 'gh pr list --state open ...'
-#     (simulates finding an open PR by number, or empty for none)
+#     (simulates "number|isDraft", or empty for none)
 #   - Silently succeeds for all write calls (issue edit, issue comment)
 #
 # Called with env vars STUB_TICK_COUNT and STUB_OPEN_PR set.
@@ -227,8 +227,8 @@ fi
 # Test 4 — Reset path: open PR detected → counter reset, STALE_RECOVERED
 # =============================================================================
 
-# 2 prior ticks, but open PR #42 is durable progress and must be preserved
-run_recover 2 "42"
+# 2 prior ticks, but ready open PR #42 is a handoff and must be preserved
+run_recover 2 "42|false"
 
 if echo "$output" | grep -q "STALE_PROGRESS_PRESERVED"; then
 	print_result "Open PR path preserves durable progress without stale recovery" 0
@@ -250,7 +250,31 @@ else
 fi
 
 # =============================================================================
-# Test 5 — Above-threshold (3 prior ticks >= threshold=2 → STALE_ESCALATED)
+# Test 5 — Draft checkpoint is escalated, not reported as completed progress
+# =============================================================================
+
+run_recover 0 "43|true"
+
+if echo "$output" | grep -q "STALE_DRAFT_ESCALATED"; then
+	print_result "Draft checkpoint path emits explicit escalation" 0
+else
+	print_result "Draft checkpoint path emits explicit escalation" 1 "(got: '$output')"
+fi
+
+if grep -q "needs-maintainer-review" "$GH_CALLS_FILE" 2>/dev/null; then
+	print_result "Draft checkpoint path applies needs-maintainer-review" 0
+else
+	print_result "Draft checkpoint path applies needs-maintainer-review" 1
+fi
+
+if ! echo "$output" | grep -q "STALE_PROGRESS_PRESERVED"; then
+	print_result "Draft checkpoint is not indefinite liveness evidence" 0
+else
+	print_result "Draft checkpoint is not indefinite liveness evidence" 1 "(got: '$output')"
+fi
+
+# =============================================================================
+# Test 6 — Above-threshold (3 prior ticks >= threshold=2 → STALE_ESCALATED)
 # =============================================================================
 
 run_recover 3 ""

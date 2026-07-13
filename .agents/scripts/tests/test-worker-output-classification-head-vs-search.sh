@@ -83,8 +83,10 @@ ORIGINAL_HOME="$HOME"
 export HOME="${TEST_ROOT}/home"
 mkdir -p "${HOME}/.aidevops/logs"
 
-# `gh` stub: we partition counts by probe type using STUB_HEAD_COUNT and
-# STUB_SEARCH_COUNT. Any other gh invocation prints empty JSON {} and exits 0
+# `gh` stub: we partition lifecycle results by probe type using STUB_HEAD_STATE
+# and STUB_SEARCH_STATE. The legacy count variables map positive values to a
+# ready handoff so the original search-lag cases remain readable. Any other gh
+# invocation prints empty JSON {} and exits 0
 # so source-time `gh api user` calls in dependent helpers don't crash.
 GH_STUB_DIR="${TEST_ROOT}/stubs"
 mkdir -p "$GH_STUB_DIR"
@@ -110,11 +112,23 @@ case "${1:-}" in
 		case "${2:-}" in
 			list)
 				if [[ "$mode" == "head" ]]; then
-					printf '%s\n' "${STUB_HEAD_COUNT:-0}"
+					if [[ -n "${STUB_HEAD_STATE:-}" ]]; then
+						printf '%s\n' "$STUB_HEAD_STATE"
+					elif [[ "${STUB_HEAD_COUNT:-0}" -gt 0 ]]; then
+						printf 'ready_handoff\n'
+					else
+						printf '\n'
+					fi
 				elif [[ "$mode" == "search" ]]; then
-					printf '%s\n' "${STUB_SEARCH_COUNT:-0}"
+					if [[ -n "${STUB_SEARCH_STATE:-}" ]]; then
+						printf '%s\n' "$STUB_SEARCH_STATE"
+					elif [[ "${STUB_SEARCH_COUNT:-0}" -gt 0 ]]; then
+						printf 'ready_handoff\n'
+					else
+						printf '\n'
+					fi
 				else
-					printf '0\n'
+					printf '\n'
 				fi
 				;;
 			create)
@@ -175,6 +189,7 @@ fi
 # Case A: search-lag survival. --head returns 1, --search returns 0.
 # This is the regression case from t3195 / GH#21889.
 test_case_a_head_wins_over_search_lag() {
+	unset STUB_HEAD_STATE STUB_SEARCH_STATE 2>/dev/null || true
 	export STUB_HEAD_COUNT=1
 	export STUB_SEARCH_COUNT=0
 	local got
@@ -190,6 +205,7 @@ test_case_a_head_wins_over_search_lag() {
 
 # Case B: definitive absence. Both probes return 0.
 test_case_b_definitive_absence() {
+	unset STUB_HEAD_STATE STUB_SEARCH_STATE 2>/dev/null || true
 	export STUB_HEAD_COUNT=0
 	export STUB_SEARCH_COUNT=0
 	local got
@@ -205,6 +221,7 @@ test_case_b_definitive_absence() {
 
 # Case C: search fallback when branch_name empty.
 test_case_c_search_fallback_empty_branch() {
+	unset STUB_HEAD_STATE STUB_SEARCH_STATE 2>/dev/null || true
 	export STUB_HEAD_COUNT=0  # never queried — branch is empty
 	export STUB_SEARCH_COUNT=1
 	local got
@@ -220,6 +237,7 @@ test_case_c_search_fallback_empty_branch() {
 
 # Case D: no usable inputs → unknown.
 test_case_d_no_inputs_unknown() {
+	unset STUB_HEAD_STATE STUB_SEARCH_STATE 2>/dev/null || true
 	export STUB_HEAD_COUNT=0
 	export STUB_SEARCH_COUNT=0
 	local got
@@ -235,6 +253,7 @@ test_case_d_no_inputs_unknown() {
 
 # Case D2: empty repo_slug → unknown regardless of probes.
 test_case_d2_empty_repo_unknown() {
+	unset STUB_HEAD_STATE STUB_SEARCH_STATE 2>/dev/null || true
 	export STUB_HEAD_COUNT=1
 	export STUB_SEARCH_COUNT=1
 	local got
@@ -251,6 +270,7 @@ test_case_d2_empty_repo_unknown() {
 # Case E: orphan recovery pre-check. When a PR exists for the branch
 # (--head=1), recovery returns 0 with NO `gh pr create` attempt.
 test_case_e_orphan_recovery_skips_when_pr_exists() {
+	unset STUB_HEAD_STATE STUB_SEARCH_STATE 2>/dev/null || true
 	export STUB_HEAD_COUNT=1
 	export STUB_SEARCH_COUNT=0
 	local pr_log="${TEST_ROOT}/pr-create.log"
@@ -279,6 +299,7 @@ test_case_e_orphan_recovery_skips_when_pr_exists() {
 # does NOT block legitimate recovery when the absence is real. We allow the
 # stub `gh pr create` to "succeed" so we can observe it being called.
 test_case_f_orphan_recovery_proceeds_when_no_pr() {
+	unset STUB_HEAD_STATE STUB_SEARCH_STATE 2>/dev/null || true
 	export STUB_HEAD_COUNT=0
 	export STUB_SEARCH_COUNT=0
 	local pr_log="${TEST_ROOT}/pr-create-2.log"
@@ -315,6 +336,23 @@ test_case_f_orphan_recovery_proceeds_when_no_pr() {
 	return 0
 }
 
+test_case_g_lifecycle_states_are_preserved() {
+	export STUB_HEAD_COUNT=0
+	export STUB_SEARCH_COUNT=0
+	local state got
+	for state in draft_checkpoint ready_handoff merged closed_unmerged; do
+		export STUB_HEAD_STATE="$state"
+		got=$(_pr_handoff_state_for_branch_or_issue "feature/state-test" "21870" "owner/repo")
+		if [[ "$got" == "$state" ]]; then
+			print_result "case G: lifecycle state ${state} is preserved" 0
+		else
+			print_result "case G: lifecycle state ${state} is preserved" 1 "got: '$got'"
+		fi
+	done
+	unset STUB_HEAD_STATE STUB_SEARCH_STATE 2>/dev/null || true
+	return 0
+}
+
 # -----------------------------------------------------------------------------
 # Run
 # -----------------------------------------------------------------------------
@@ -326,6 +364,7 @@ test_case_d_no_inputs_unknown
 test_case_d2_empty_repo_unknown
 test_case_e_orphan_recovery_skips_when_pr_exists
 test_case_f_orphan_recovery_proceeds_when_no_pr
+test_case_g_lifecycle_states_are_preserved
 
 printf '\nRan %d test(s), %d failed\n' "$TESTS_RUN" "$TESTS_FAILED"
 

@@ -147,6 +147,87 @@ _release_interactive_claim_on_merge() {
 }
 
 #######################################
+# _pr_handoff_state_for_branch_or_issue — Classify PR lifecycle state.
+#
+# Completion-sensitive callers must distinguish an early draft checkpoint from
+# a ready handoff. A draft proves durable progress, but it is not completion.
+# The exact-head probe remains authoritative so GitHub search-index lag cannot
+# hide a newly-created worker PR.
+#
+# Args:
+#   $1 = branch_name   (may be empty)
+#   $2 = issue_number  (may be empty)
+#   $3 = repo_slug
+# Outputs one of:
+#   draft_checkpoint | ready_handoff | merged | closed_unmerged | absent | unknown
+#######################################
+_pr_handoff_state_for_branch_or_issue() {
+	local branch_name="$1"
+	local issue_number="$2"
+	local repo_slug="$3"
+	local pr_state=""
+	local state_jq='def disposition:
+		if ((.mergedAt // "") != "") or ((.state // "") == "MERGED") then "merged"
+		elif ((.state // "") == "OPEN") and (.isDraft // false) then "draft_checkpoint"
+		elif ((.state // "") == "OPEN") then "ready_handoff"
+		else "closed_unmerged" end;
+		if length == 0 then "" else
+			((map(select((.state // "") == "OPEN")) + map(select((.state // "") == "MERGED" or ((.mergedAt // "") != ""))) + .)
+			| .[0] | disposition)
+		end'
+
+	if [[ -z "$repo_slug" ]]; then
+		printf 'unknown'
+		return 0
+	fi
+
+	if [[ -n "$branch_name" ]]; then
+		if ! pr_state=$(gh_pr_list --repo "$repo_slug" --head "$branch_name" \
+			--state all --json number,state,isDraft,mergedAt --jq "$state_jq" 2>/dev/null); then
+			printf 'unknown'
+			return 0
+		fi
+		# Compatibility for wrappers/tests that still return the historical
+		# count contract while they migrate to lifecycle-state output.
+		case "$pr_state" in
+		0) pr_state="" ;;
+		*[!0-9]*) ;;
+		"") ;;
+		*) pr_state="ready_handoff" ;;
+		esac
+		if [[ -n "$pr_state" ]]; then
+			printf '%s' "$pr_state"
+			return 0
+		fi
+	fi
+
+	if [[ -n "$issue_number" ]]; then
+		if ! pr_state=$(gh_pr_list --repo "$repo_slug" --search "$issue_number" \
+			--state all --json number,state,isDraft,mergedAt --jq "$state_jq" 2>/dev/null); then
+			printf 'unknown'
+			return 0
+		fi
+		case "$pr_state" in
+		0) pr_state="" ;;
+		*[!0-9]*) ;;
+		"") ;;
+		*) pr_state="ready_handoff" ;;
+		esac
+		if [[ -n "$pr_state" ]]; then
+			printf '%s' "$pr_state"
+			return 0
+		fi
+	fi
+
+	if [[ -n "$branch_name" || -n "$issue_number" ]]; then
+		printf 'absent'
+	else
+		printf 'unknown'
+	fi
+	return 0
+}
+
+#######################################
 # _pr_exists_for_branch_or_issue — Probe for an existing PR (t3195 / GH#21889)
 #
 # Determines whether a PR exists for a given head branch and/or linked issue.
@@ -174,56 +255,21 @@ _release_interactive_claim_on_merge() {
 #   "absent"  — definitive zero matches (caller may classify as branch_orphan)
 #   "unknown" — cannot evaluate (no inputs / repo_slug missing) — fail-open
 #
-# Always returns 0. gh CLI failures on either probe are silently treated as
-# zero matches for that probe — the helper continues to the fallback or
-# returns "absent" (callers fail-open via "unknown" only when no probe ran).
+# Always returns 0. GitHub/API failures map to "unknown" so completion-sensitive
+# callers never mistake an unavailable probe for either absence or completion.
 #######################################
 _pr_exists_for_branch_or_issue() {
 	local branch_name="$1"
 	local issue_number="$2"
 	local repo_slug="$3"
+	local handoff_state=""
 
-	if [[ -z "$repo_slug" ]]; then
-		printf 'unknown'
-		return 0
-	fi
-
-	# Primary: --head match (no search-index lag, hits pulls API directly).
-	if [[ -n "$branch_name" ]]; then
-		local pr_count_head=0
-		pr_count_head=$(gh_pr_list --repo "$repo_slug" --head "$branch_name" \
-			--state all --json number --jq 'length' 2>/dev/null || true)
-		[[ "$pr_count_head" =~ ^[0-9]+$ ]] || pr_count_head=0
-		if [[ "$pr_count_head" -gt 0 ]]; then
-			printf 'found'
-			return 0
-		fi
-	fi
-
-	# Fallback: --search by issue_number when --head missed (or branch unknown).
-	# Search-index lag is acceptable here because the primary --head probe
-	# already returned zero — this is the second-chance covering cases where
-	# the actual pushed branch differs from the detected branch_name.
-	if [[ -n "$issue_number" ]]; then
-		local pr_count_search=0
-		pr_count_search=$(gh_pr_list --repo "$repo_slug" --search "$issue_number" \
-			--json number --jq 'length' 2>/dev/null || true)
-		[[ "$pr_count_search" =~ ^[0-9]+$ ]] || pr_count_search=0
-		if [[ "$pr_count_search" -gt 0 ]]; then
-			printf 'found'
-			return 0
-		fi
-	fi
-
-	# Both probes returned zero (or only one ran and returned zero) — definitive
-	# absence. Distinct from "unknown" because we DID actually query.
-	if [[ -n "$branch_name" || -n "$issue_number" ]]; then
-		printf 'absent'
-		return 0
-	fi
-
-	# No usable inputs — fail-open with "unknown".
-	printf 'unknown'
+	handoff_state=$(_pr_handoff_state_for_branch_or_issue "$branch_name" "$issue_number" "$repo_slug")
+	case "$handoff_state" in
+	draft_checkpoint | ready_handoff | merged | closed_unmerged) printf 'found' ;;
+	absent) printf 'absent' ;;
+	*) printf 'unknown' ;;
+	esac
 	return 0
 }
 
