@@ -1622,9 +1622,9 @@
       "pr": 14943
     },
     ".agents/reference/agent-routing.md": {
-      "at": "2026-07-12T05:41:08Z",
-      "hash": "cab264ad9a9563eece7979edaa740740c7dfd810",
-      "passes": 11,
+      "at": "2026-07-13T02:35:39Z",
+      "hash": "c875010785d4e645d3d310855b17b2f3fdd3b7d3",
+      "passes": 12,
       "pr": 14650
     },
     ".agents/reference/attribution-monitoring.md": {
@@ -1952,9 +1952,9 @@
       "pr": 16797
     },
     ".agents/scripts/commands/full-loop.md": {
-      "at": "2026-07-13T01:29:49Z",
-      "hash": "2269653f136a3bc7abab09a34eb61bda668a4276",
-      "passes": 31,
+      "at": "2026-07-13T02:35:45Z",
+      "hash": "41d225ba38714173f90ac8b3db1edd98b5d3cb7b",
+      "passes": 32,
       "pr": 14590
     },
     ".agents/scripts/commands/init-routines.md": {
@@ -2262,9 +2262,9 @@
       "pr": 12145
     },
     ".agents/scripts/full-loop-helper.sh": {
-      "at": "2026-07-13T01:29:53Z",
-      "hash": "0e9f3195c1a6ef4e9a1039c0d8fb58002833209c",
-      "passes": 31,
+      "at": "2026-07-13T02:35:48Z",
+      "hash": "bde4d3d668695660311e32eb1ee62ac7d8678b15",
+      "passes": 32,
       "pr": 19046
     },
     ".agents/scripts/generate-claude-commands.sh": {
@@ -7193,9 +7193,9 @@
       "pr": 13065
     },
     ".agents/workflows/full-loop.md": {
-      "at": "2026-07-13T01:30:46Z",
-      "hash": "2269653f136a3bc7abab09a34eb61bda668a4276",
-      "passes": 20,
+      "at": "2026-07-13T02:36:54Z",
+      "hash": "41d225ba38714173f90ac8b3db1edd98b5d3cb7b",
+      "passes": 21,
       "pr": 19047
     },
     ".agents/workflows/git-workflow.md": {
@@ -7480,21 +7480,21 @@
       "pr": 16415
     },
     "TODO.md": {
-      "at": "2026-07-13T01:30:50Z",
-      "hash": "306a34b7250922f45c43f8b9e44ff1c9cfcae91e",
-      "passes": 184,
+      "at": "2026-07-13T02:36:57Z",
+      "hash": "597a45609fbb339a5c040b9a28a6f8903b2556d6",
+      "passes": 185,
       "pr": 15490
     },
     "aidevops.sh": {
-      "at": "2026-07-13T01:30:50Z",
-      "hash": "158f4f7791e683c942bace5936c25a9e690f0f1b",
-      "passes": 272,
+      "at": "2026-07-13T02:36:58Z",
+      "hash": "476247f031513d46d426f0185ff63968726c3c36",
+      "passes": 273,
       "pr": 19029
     },
     "setup.sh": {
-      "at": "2026-07-13T01:30:50Z",
-      "hash": "ab0a4fdedaee6b8ad3236bcda642713889e89784",
-      "passes": 268,
+      "at": "2026-07-13T02:36:58Z",
+      "hash": "bc15bf27bc063e293ef500c8fb7fe0cc89211c7d",
+      "passes": 269,
       "pr": 15470
     },
     "todo/tasks/GH#15363-brief.md": {
@@ -7630,10 +7630,10 @@
       "passes": 8
     },
     ".agents/reference/observability.md": {
-      "hash": "564f45a177a8f1c30e587a137a6c8b99618cd0df",
-      "at": "2026-07-11T14:31:56Z",
+      "hash": "7f7169e73505f300f653bb0a3fdd49237454144b",
+      "at": "2026-07-13T02:35:41Z",
       "pr": 20108,
-      "passes": 4
+      "passes": 5
     },
     ".agents/reference/large-file-split.md": {
       "hash": "32ee470f00b2f85799ddb0cf2ba85c83a305fb84",
