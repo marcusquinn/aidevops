@@ -278,8 +278,41 @@ class TestRepairBrokenOpenCodeLaunchProfiles(unittest.TestCase):
             group_id="group-1",
         )
 
-        self.assertIn("        - 'opencode; exec zsh'", profile)
-        self.assertNotIn("        - opencode; exec zsh", profile)
+        self.assertIn("        - 'aidevops opencode; exec zsh'", profile)
+        self.assertNotIn("        - aidevops opencode; exec zsh", profile)
+        self.assertIn("    disableDynamicTitle: false", profile)
+
+    def test_existing_opencode_profile_enables_dynamic_title(self):
+        repaired, repairs = tabby_profile_sync.repair_broken_opencode_launch_profiles(
+            """profiles:
+  - name: repo
+    options:
+      command: /bin/zsh
+      args:
+        - '-l'
+        - '-c'
+        - 'aidevops opencode; exec zsh'
+    disableDynamicTitle: true
+    type: local
+"""
+        )
+
+        self.assertEqual(repairs, 1)
+        self.assertIn("    disableDynamicTitle: false", repaired)
+        self.assertNotIn("    disableDynamicTitle: true", repaired)
+
+    def test_unrelated_profile_preserves_dynamic_title_setting(self):
+        original = """profiles:
+  - name: shell
+    options:
+      command: /bin/zsh
+    disableDynamicTitle: true
+    type: local
+"""
+        repaired, repairs = tabby_profile_sync.repair_broken_opencode_launch_profiles(original)
+
+        self.assertEqual(repairs, 0)
+        self.assertEqual(repaired, original)
 
     def test_command_field_with_trailing_comment_is_repaired(self):
         repaired, repairs = tabby_profile_sync.repair_broken_opencode_launch_profiles(
@@ -293,7 +326,7 @@ class TestRepairBrokenOpenCodeLaunchProfiles(unittest.TestCase):
 
         self.assertEqual(repairs, 1)
         self.assertIn("      command: /bin/zsh", repaired)
-        self.assertIn("        - 'opencode; exec zsh'", repaired)
+        self.assertIn("        - 'aidevops opencode; exec zsh'", repaired)
 
     def test_inline_args_blank_line_before_env_does_not_duplicate_env(self):
         repaired, repairs = tabby_profile_sync.repair_broken_opencode_launch_profiles(
@@ -309,7 +342,7 @@ class TestRepairBrokenOpenCodeLaunchProfiles(unittest.TestCase):
 
         self.assertEqual(repairs, 1)
         self.assertEqual(repaired.count("      env:"), 1)
-        self.assertIn("        - 'opencode; exec zsh'", repaired)
+        self.assertIn("        - 'aidevops opencode; exec zsh'", repaired)
 
     def test_block_args_comment_before_env_does_not_duplicate_env(self):
         repaired, repairs = tabby_profile_sync.repair_broken_opencode_launch_profiles(

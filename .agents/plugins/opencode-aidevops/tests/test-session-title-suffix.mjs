@@ -89,14 +89,21 @@ i'd like to add the capabilities this repo offers. there may be overlap`),
 });
 
 test("version reader prefers deployed agents VERSION", async () => {
-  await withoutEnvVersion(() =>
-    withTempAgentsDir((agentsDir) => {
-      writeFileSync(join(agentsDir, "VERSION"), "3.20.102\n");
-      writeFileSync(join(agentsDir, "..", "version"), "2.44.2\n");
+  await withTempAgentsDir((activeAgentsDir) => {
+    const runtimeAgentsDir = join(activeAgentsDir, "..", "runtime-agents");
+    mkdirSync(runtimeAgentsDir);
+    writeFileSync(join(activeAgentsDir, "VERSION"), "3.20.102\n");
+    writeFileSync(join(runtimeAgentsDir, "VERSION"), "3.20.101\n");
+    const saved = process.env.AIDEVOPS_VERSION;
+    process.env.AIDEVOPS_VERSION = "3.20.100";
 
-      assert.equal(readAidevopsVersion(agentsDir), "3.20.102");
-    }),
-  );
+    try {
+      assert.equal(readAidevopsVersion(activeAgentsDir, runtimeAgentsDir), "3.20.102");
+    } finally {
+      if (saved === undefined) delete process.env.AIDEVOPS_VERSION;
+      else process.env.AIDEVOPS_VERSION = saved;
+    }
+  });
 });
 
 test("session.updated handler appends suffix through OpenCode session update API", async () => {
@@ -144,8 +151,13 @@ test("session.updated handler is idempotent when suffix already exists", async (
   await withTempAgentsDir(async (agentsDir) => {
     writeFileSync(join(agentsDir, "VERSION"), "3.20.103\n");
     const calls = [];
+    const terminalTitles = [];
     const client = { session: { update: async (payload) => calls.push(payload) } };
-    const handler = createSessionTitleSuffixHandler({ agentsDir, client });
+    const handler = createSessionTitleSuffixHandler({
+      agentsDir,
+      client,
+      emitTerminalTitle: (title) => terminalTitles.push(title),
+    });
 
     await handler({
       event: {
@@ -158,6 +170,31 @@ test("session.updated handler is idempotent when suffix already exists", async (
     });
 
     assert.deepEqual(calls, []);
+    assert.deepEqual(terminalTitles, ["Work · AIDevOps 3.20.103"]);
+  });
+});
+
+test("session.created handler reasserts a restored session title to the terminal", async () => {
+  await withTempAgentsDir(async (agentsDir) => {
+    writeFileSync(join(agentsDir, "VERSION"), "3.20.103\n");
+    const terminalTitles = [];
+    const handler = createSessionTitleSuffixHandler({
+      agentsDir,
+      client: { session: {} },
+      emitTerminalTitle: (title) => terminalTitles.push(title),
+    });
+
+    await handler({
+      event: {
+        type: "session.created",
+        properties: {
+          sessionID: "ses_restored",
+          info: { id: "ses_restored", title: "Restored work · AIDevOps 3.20.103" },
+        },
+      },
+    });
+
+    assert.deepEqual(terminalTitles, ["Restored work · AIDevOps 3.20.103"]);
   });
 });
 

@@ -14,14 +14,16 @@ function readVersionFile(path: string): string {
   }
 }
 
-export function getAidevopsVersion(): string {
-  if (process.env.AIDEVOPS_VERSION) return process.env.AIDEVOPS_VERSION.trim()
-
+export function getAidevopsVersion(env: NodeJS.ProcessEnv = process.env): string {
   const here = dirname(fileURLToPath(import.meta.url))
+  const activeAgentsDir = env.AIDEVOPS_ACTIVE_AGENTS_DIR || join(env.HOME || "", ".aidevops", "agents")
+  const activeVersion = readVersionFile(join(activeAgentsDir, "VERSION"))
+  if (activeVersion) return activeVersion
+  if (env.AIDEVOPS_VERSION?.trim()) return env.AIDEVOPS_VERSION.trim()
+
   const candidates = [
     join(here, "..", "..", "VERSION"),
     join(here, "..", "..", ".agents", "VERSION"),
-    join(process.env.HOME || "", ".aidevops", "agents", "VERSION"),
   ]
 
   for (const candidate of candidates) {

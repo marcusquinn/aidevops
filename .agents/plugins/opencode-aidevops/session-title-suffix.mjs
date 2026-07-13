@@ -20,11 +20,15 @@ function readIfExists(filepath) {
   return "";
 }
 
-export function readAidevopsVersion(agentsDir) {
+export function readAidevopsVersion(activeAgentsDir, runtimeAgentsDir = activeAgentsDir) {
+  const activeVersion = readIfExists(join(activeAgentsDir, "VERSION"));
+  if (activeVersion) return activeVersion;
+  if (process.env.AIDEVOPS_VERSION?.trim()) return process.env.AIDEVOPS_VERSION.trim();
+
   const candidates = [
-    join(agentsDir, "VERSION"),
-    join(agentsDir, "..", "VERSION"),
-    join(agentsDir, "..", "version"),
+    join(runtimeAgentsDir, "VERSION"),
+    join(runtimeAgentsDir, "..", "VERSION"),
+    join(runtimeAgentsDir, "..", "version"),
   ];
 
   for (const candidate of candidates) {
@@ -50,8 +54,8 @@ function isDefaultSessionTitle(title) {
   return DEFAULT_SESSION_TITLE_RE.test(baseTitle) || baseTitle === "New Session";
 }
 
-function shouldSuffixSessionTitle(update) {
-  if (update.eventType !== "session.updated") return false;
+function shouldSynchronizeSessionTitle(update) {
+  if (update.eventType !== "session.created" && update.eventType !== "session.updated") return false;
   if (!update.title) return false;
   return !isDefaultSessionTitle(update.title);
 }
@@ -90,20 +94,26 @@ async function updateSessionTitle(client, sessionID, title) {
   }
 }
 
-export function createSessionTitleSuffixHandler({ agentsDir, client, emitTerminalTitle = defaultEmitTerminalTitle }) {
+export function createSessionTitleSuffixHandler({
+  activeAgentsDir,
+  agentsDir = activeAgentsDir,
+  client,
+  emitTerminalTitle = defaultEmitTerminalTitle,
+}) {
   const inFlight = new Set();
 
   return async function sessionTitleSuffixHandler(input) {
-    if (typeof client?.session?.update !== "function") return;
-
     const update = getSessionUpdate(input);
-    if (!shouldSuffixSessionTitle(update)) return;
+    if (!shouldSynchronizeSessionTitle(update)) return;
 
-    const version = readAidevopsVersion(agentsDir);
+    const version = readAidevopsVersion(activeAgentsDir || agentsDir, agentsDir);
     const suffixedTitle = withAidevopsTitleSuffix(update.title, version);
-    if (suffixedTitle === update.title) return;
-
     if (!update.sessionID || inFlight.has(update.sessionID)) return;
+    if (suffixedTitle === update.title) {
+      emitTerminalTitle(suffixedTitle);
+      return;
+    }
+    if (typeof client?.session?.update !== "function") return;
 
     inFlight.add(update.sessionID);
     try {

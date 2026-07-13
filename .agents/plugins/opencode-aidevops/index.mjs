@@ -329,11 +329,12 @@ export async function AidevopsPlugin({ directory, client }) {
     isHeadless,
   });
   const sessionTitleSuffixHandler = createSessionTitleSuffixHandler({
+    activeAgentsDir: ACTIVE_AGENTS_DIR,
     agentsDir: AGENTS_DIR,
     client,
   });
   const sessionTitleFallbackHandler = createSessionTitleFallbackHandler({
-    agentsDir: AGENTS_DIR,
+    agentsDir: ACTIVE_AGENTS_DIR,
     client,
   });
 
