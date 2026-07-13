@@ -225,11 +225,12 @@ define_helpers_under_test() {
 		_append_feedback_to_issue
 		_transition_issue_for_redispatch
 		_close_and_label_feedback_pr
-		_ci_check_url_has_infra_timeout_log
+		_ci_check_url_has_infra_failure_log
 		_ci_actionable_failed_checks_markdown
 		_ci_terminal_failed_check_results
 		_build_ci_feedback_section
 		_route_ci_repair_fallback
+		_ci_repair_hash_text
 		_dispatch_ci_fix_worker
 		_dispatch_pr_fix_worker
 	)
@@ -541,6 +542,8 @@ test_ci_dispatch_dedupes_by_pr_head_marker() {
 
 	_dispatch_ci_fix_worker "100" "owner/repo" "42"
 	_dispatch_ci_fix_worker "100" "owner/repo" "42"
+	_route_ci_repair_fallback "100" "owner/repo" "42" "abc123repairsha" "feature/worker" \
+		"changed-fingerprint" "retry budget exhausted" "## CI Failure Feedback" "- **Unit**: failure"
 
 	local body_edit_count pr_close_count
 	body_edit_count=$(grep -cE 'gh issue edit 42 --repo owner/repo --body' "$GH_LOG" 2>/dev/null || true)
@@ -558,8 +561,8 @@ test_ci_dispatch_dedupes_by_pr_head_marker() {
 			"Expected 1 PR close, got ${pr_close_count}. Log: $(cat "$GH_LOG")"
 		return 0
 	fi
-	if ! grep -qF '<!-- ci-feedback-fallback:PR100:SHAabc123repairsha:FP' "${TEST_ROOT}/issue-body.txt"; then
-		print_result "CI repair fallback stores PR/head/fingerprint marker" 1 \
+	if ! grep -qF '<!-- ci-feedback-fallback:PR100:SHAabc123repairsha -->' "${TEST_ROOT}/issue-body.txt"; then
+		print_result "CI repair fallback stores PR/head marker" 1 \
 			"Expected fallback marker in issue body. Body: $(cat "${TEST_ROOT}/issue-body.txt")"
 		return 0
 	fi
@@ -568,7 +571,7 @@ test_ci_dispatch_dedupes_by_pr_head_marker() {
 			"Expected duplicate skip log. Log: $(cat "$LOGFILE")"
 		return 0
 	fi
-	print_result "CI repair fallback dedupes per PR/head/fingerprint" 0
+	print_result "CI repair fallback dedupes changed evidence per PR/head" 0
 	return 0
 }
 
