@@ -102,7 +102,7 @@ JOB_BODY=$(sed -n "${JOB_START},${JOB_END}p" "${WORKFLOW_FILE}")
 # Test 2: PATH shims survive caller-repo workspace cleanup.
 # ============================================================
 # shellcheck disable=SC2016 # Assert literal workflow expressions, not test-shell expansion.
-if printf '%s\n' "${JOB_BODY}" | grep -qE 'SHIM_DIR[[:space:]]*=[[:space:]]*"?\$\{?RUNNER_TEMP\}?/[^"]+"?' && \
+if printf '%s\n' "${JOB_BODY}" | grep -qE 'SHIM_DIR[[:space:]]*=[[:space:]]*"?\$\{?RUNNER_TEMP\}?/[^"]+"?' &&
 	printf '%s\n' "${JOB_BODY}" | grep -qE 'echo[[:space:]]+"?\$\{?SHIM_DIR\}?"?[[:space:]]*>>[[:space:]]*"?\$\{?GITHUB_PATH\}?"?'; then
 	check 1 "sync-on-pr-merge stages PATH shims outside GITHUB_WORKSPACE" ""
 else
