@@ -4556,3 +4556,5 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [ ] t18116 Fix quality-debt dispatch recovery state and pre-runtime telemetry #bug ref:GH#27503
 
 - [ ] t18117 Add token-efficient output receipts and delta-aware waits #enhancement #framework ref:GH#27529
+
+- [ ] t18118 security: bind external approvals and advisory merge evidence to immutable cu... #auto-dispatch #bug #framework #pulse #security ref:GH#27560
