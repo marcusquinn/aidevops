@@ -12,7 +12,8 @@ from pathlib import Path
 from typing import Any
 
 from session_output_metrics import AnalysisConfig, analyse
-from session_output_transcript import extract_jsonl, extract_opencode_db, resolve_jsonl
+from session_output_opencode import extract_opencode_db
+from session_output_transcript import extract_jsonl, resolve_jsonl
 
 
 def print_text(report: dict[str, Any]) -> None:

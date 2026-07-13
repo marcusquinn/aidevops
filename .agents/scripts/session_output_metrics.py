@@ -4,13 +4,12 @@
 from __future__ import annotations
 
 import hashlib
-import json
 import math
-import re
 from collections import defaultdict
 from dataclasses import dataclass
 from typing import Any, Iterable
 
+from session_output_receipts import receipt_background_bytes
 from session_output_transcript import ToolResult
 
 
@@ -35,22 +34,6 @@ def digest(*values: str) -> str:
 
 def byte_length(value: str) -> int:
     return len(value.encode("utf-8", errors="replace"))
-
-
-def receipt_background_bytes(output: str) -> int | None:
-    try:
-        payload = json.loads(output)
-    except json.JSONDecodeError:
-        payload = None
-    if isinstance(payload, dict) and payload.get("schema") == "aidevops.operation-result/v1":
-        evidence = payload.get("evidence")
-        if isinstance(evidence, dict) and isinstance(evidence.get("bytes"), int):
-            return evidence["bytes"]
-    if re.search(r"(?m)^output_id: out_[A-Za-z0-9_]+$", output):
-        match = re.search(r"(?m)^evidence: bytes=([0-9]+)\b", output)
-        if match:
-            return int(match.group(1))
-    return None
 
 
 def _redundant_finding(kind: str, tool: str, fingerprint: str, count: int, size: int) -> dict[str, Any]:
@@ -91,6 +74,8 @@ def repeated_fragment_findings(results: list[ToolResult]) -> tuple[list[dict[str
     line_groups: dict[tuple[str, str], dict[str, int | str]] = {}
     block_groups: dict[tuple[str, str], dict[str, int | str]] = {}
     for result in results:
+        if byte_length(result.output) > 100_000:
+            continue
         lines = [line.rstrip() for line in result.output.splitlines() if line.strip()]
         for line in lines:
             size = byte_length(line)

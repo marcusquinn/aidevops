@@ -54,7 +54,7 @@ assert_omits() {
 
 normalized_fixture="${TMPDIR_TEST}/normalized.jsonl"
 claude_fixture="${TMPDIR_TEST}/claude.jsonl"
-opencode_db="${TMPDIR_TEST}/opencode-history"
+opencode_db="${TMPDIR_TEST}/opencode history?#.db"
 
 python3 - "$normalized_fixture" "$claude_fixture" "$opencode_db" <<'PY'
 import json
@@ -72,6 +72,7 @@ block = "\n".join([
     "block line gamma " + ("c" * 40),
 ])
 fragment_output = "\n".join([repeated_line, repeated_line, repeated_line, block, block])
+huge_fragment_output = "\n".join(["very large repeated fragment " + ("z" * 80)] * 1500)
 receipt = "\n".join([
     "output_id: out_123_example",
     "outcome: succeeded",
@@ -79,6 +80,10 @@ receipt = "\n".join([
     "process_exit: 0",
     "evidence: bytes=23067 lines=134 sensitive_redacted=0 basis=exit-code",
 ])
+json_receipt = json.dumps({
+    "schema": "aidevops.operation-result/v1",
+    "evidence": {"bytes": 4096},
+})
 
 with open(normalized_path, "w", encoding="utf-8") as handle:
     for _ in range(3):
@@ -86,9 +91,11 @@ with open(normalized_path, "w", encoding="utf-8") as handle:
     handle.write(json.dumps({"tool": "bash", "input": {"command": "poll"}, "output": "changed status"}) + "\n")
     handle.write(json.dumps({"tool": "bash", "input": {"command": "setup"}, "output": oversized, "success": True}) + "\n")
     handle.write(json.dumps({"tool": "bash", "input": {"command": "fragments"}, "output": fragment_output, "success": True}) + "\n")
+    handle.write(json.dumps({"tool": "bash", "input": {"command": "huge-fragments"}, "output": huge_fragment_output, "success": True}) + "\n")
     handle.write(json.dumps({"tool": "read", "input": {"path": "one"}, "output": duplicate, "success": True}) + "\n")
     handle.write(json.dumps({"tool": "read", "input": {"path": "two"}, "output": duplicate, "success": True}) + "\n")
     handle.write(json.dumps({"tool": "bash", "input": {"command": "receipt"}, "output": receipt, "success": True}) + "\n")
+    handle.write(json.dumps({"tool": "bash", "input": {"command": "json-receipt"}, "output": json_receipt, "success": True}) + "\n")
     handle.write(json.dumps({"tool": "bash", "input": {"command": "fallback"}, "output": "output_sandbox: evidence store unavailable; running with native output\nnative output", "success": True}) + "\n")
     handle.write(json.dumps({"tool": "bash", "input": {"command": "exact"}, "output": "output_sandbox: bypass exact/verbatim command\nexact output", "success": True}) + "\n")
 
@@ -119,16 +126,16 @@ PY
 
 text_output=$(OPENCODE_SESSION_ID='' CLAUDE_SESSION_ID='' "$HELPER" --input "$normalized_fixture")
 assert_contains "text reports one repeated group" "Repeated unchanged snapshots: 1 groups, 2 redundant results" "$text_output"
-assert_contains "text reports oversized output" "Oversized tool results: 1" "$text_output"
+assert_contains "text reports oversized output" "Oversized tool results: 2" "$text_output"
 assert_contains "text identifies unchanged snapshots" "unchanged-snapshot" "$text_output"
 assert_contains "text identifies duplicate tool output" "Duplicate tool-output groups: 1" "$text_output"
 assert_contains "text identifies repeated blocks" "Repeated line/block groups:" "$text_output"
-assert_contains "text distinguishes receipt background evidence" "23067 declared bytes across 1 receipts" "$text_output"
+assert_contains "text distinguishes receipt background evidence" "27163 declared bytes across 2 receipts" "$text_output"
 assert_contains "text reports raw fallback and exact bypass" "Raw fallback / exact-output bypass results: 1 / 1" "$text_output"
 assert_omits "text omits raw output" "SECRET-MARKER" "$text_output"
 
 json_output=$(OPENCODE_SESSION_ID='' CLAUDE_SESSION_ID='' "$HELPER" --input "$normalized_fixture" --json)
-if python3 -c 'import json,sys; report=json.load(sys.stdin); stats=report["stats"]; visibility=report["visibility"]; assert report["schema"] == "aidevops.session-output-efficiency/v1"; assert stats["redundant_tool_results"] == 2; assert stats["duplicate_output_groups"] == 1; assert stats["repeated_line_groups"] >= 1; assert stats["repeated_block_groups"] >= 1; assert stats["oversized_tool_results"] == 1; assert stats["successful_oversized_results"] == 1; assert stats["raw_fallback_results"] == 1; assert stats["exact_output_bypass_results"] == 1; assert visibility["receipt_results"] == 1; assert visibility["declared_background_evidence_bytes"] == 23067; assert visibility["background_content_scanned"] is False' <<<"$json_output"; then
+if python3 -c 'import json,sys; report=json.load(sys.stdin); stats=report["stats"]; visibility=report["visibility"]; assert report["schema"] == "aidevops.session-output-efficiency/v1"; assert stats["redundant_tool_results"] == 2; assert stats["duplicate_output_groups"] == 1; assert stats["repeated_line_groups"] == 2; assert stats["repeated_block_groups"] >= 1; assert stats["oversized_tool_results"] == 2; assert stats["successful_oversized_results"] == 2; assert stats["raw_fallback_results"] == 1; assert stats["exact_output_bypass_results"] == 1; assert visibility["receipt_results"] == 2; assert visibility["declared_background_evidence_bytes"] == 27163; assert visibility["background_content_scanned"] is False' <<<"$json_output"; then
 	pass "JSON contract exposes aggregate metrics"
 else
 	fail "JSON contract exposes aggregate metrics"
