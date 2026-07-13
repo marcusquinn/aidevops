@@ -68,11 +68,10 @@ cat >"${test_root}/bin/gh" <<'GH'
 printf '%s\n' "$*" >>"$GH_CALL_LOG"
 if [[ "$*" == *"actions/artifacts?per_page=100"* ]]; then
 	if [[ "${GH_ARTIFACT_FIXTURE:-pages}" == "malformed" ]]; then
-		printf '22\n23\n'
+		printf '%s\n' '[{"artifacts":[{"id":"22\n23","name":"forge-coordinator-R_1-malformed","created_at":"2026-07-12T12:00:00Z"}]}]'
 	else
-		[[ "$*" == *'sort_by([.created_at, .id])'* ]]
-		[[ "$*" == *'.expired // false'* ]]
-		printf '24\n'
+		[[ "$*" == *"--paginate --slurp"* && "$*" != *"--jq"* ]]
+		printf '%s\n' '[{"artifacts":[{"id":11,"name":"forge-coordinator-R_1-old","created_at":"2026-07-12T10:00:00Z"}]},{"artifacts":[{"id":24,"name":"forge-coordinator-R_1-new","created_at":"2026-07-12T11:00:00Z"},{"id":25,"name":"forge-coordinator-R_1-expired","created_at":"2026-07-12T12:00:00Z","expired":true},{"id":99,"name":"other-artifact","created_at":"2026-07-12T13:00:00Z"}]}]'
 	fi
 	exit 0
 fi
