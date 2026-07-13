@@ -2102,11 +2102,12 @@ test_cmd_run_finish_emits_noop_for_zero_output() {
 	unset DISPATCH_REPO_SLUG 2>/dev/null || true
 
 	# Stub lifecycle functions to capture what was called
-	local released_reason="" fast_fail_reason="" fast_fail_crash=""
+	local released_reason="" fast_fail_reason="" fast_fail_crash="" recorded_outcome=""
 	_release_dispatch_claim() { released_reason="$2"; return 0; }
 	_report_failure_to_fast_fail() { fast_fail_reason="$2"; fast_fail_crash="$3"; return 0; }
 	_update_dispatch_ledger() { return 0; }
 	_release_session_lock() { return 0; }
+	_hrw_record_terminal_outcome() { recorded_outcome="$2"; return 0; }
 
 	_cmd_run_finish "issue-99999" "complete" "$work_dir"
 
@@ -2123,6 +2124,12 @@ test_cmd_run_finish_emits_noop_for_zero_output() {
 		print_result "_cmd_run_finish increments fast-fail on noop" 1 \
 			"Expected fast_fail reason=worker_noop_zero_output/crash=no_work, got '${fast_fail_reason}'/'${fast_fail_crash}'"
 	fi
+	if [[ "$recorded_outcome" == "failed" ]]; then
+		print_result "_cmd_run_finish records failed telemetry for zero-output exit" 0
+	else
+		print_result "_cmd_run_finish records failed telemetry for zero-output exit" 1 \
+			"Expected failed telemetry, got '${recorded_outcome}'"
+	fi
 	return 0
 }
 
@@ -2131,11 +2138,12 @@ test_cmd_run_finish_emits_complete_for_real_output() {
 	_setup_test_git_repo "$work_dir" 1
 	unset DISPATCH_REPO_SLUG 2>/dev/null || true
 
-	local released_reason="" fast_fail_called=0
+	local released_reason="" fast_fail_called=0 recorded_outcome=""
 	_release_dispatch_claim() { released_reason="$2"; return 0; }
 	_report_failure_to_fast_fail() { fast_fail_called=1; return 0; }
 	_update_dispatch_ledger() { return 0; }
 	_release_session_lock() { return 0; }
+	_hrw_record_terminal_outcome() { recorded_outcome="$2"; return 0; }
 
 	_cmd_run_finish "issue-99999" "complete" "$work_dir"
 
@@ -2151,6 +2159,12 @@ test_cmd_run_finish_emits_complete_for_real_output() {
 	else
 		print_result "_cmd_run_finish does NOT increment fast-fail for real output" 1 \
 			"fast-fail should not be called when worker produced real output"
+	fi
+	if [[ "$recorded_outcome" == "success" ]]; then
+		print_result "_cmd_run_finish records success telemetry for real output" 0
+	else
+		print_result "_cmd_run_finish records success telemetry for real output" 1 \
+			"Expected success telemetry, got '${recorded_outcome}'"
 	fi
 	return 0
 }
@@ -2535,7 +2549,7 @@ test_cmd_run_finish_local_unpushed_push_failure_emits_distinct_reason() {
 
 test_cmd_run_finish_fail_recovers_branch_orphan_output() {
 	local work_dir="${TEST_ROOT}/repo-fail-orphan-ok"
-	local released_reason="" fast_fail_called=0
+	local released_reason="" fast_fail_called=0 recorded_outcome=""
 	_setup_test_git_repo "$work_dir" 1
 	git -C "$work_dir" push -q origin "feature/auto-test-issue-99999"
 	DISPATCH_REPO_SLUG="test-owner/test-repo"
@@ -2551,6 +2565,7 @@ test_cmd_run_finish_fail_recovers_branch_orphan_output() {
 	_update_dispatch_ledger() { return 0; }
 	_release_session_lock() { return 0; }
 	_increment_orphan_count_stat() { return 0; }
+	_hrw_record_terminal_outcome() { recorded_outcome="$2"; return 0; }
 	_cmd_run_finish "issue-99999" "fail" "$work_dir"
 	unset DISPATCH_REPO_SLUG 2>/dev/null || true
 	unset -f gh 2>/dev/null || true
@@ -2560,12 +2575,18 @@ test_cmd_run_finish_fail_recovers_branch_orphan_output() {
 		print_result "_cmd_run_finish fail recovers branch-orphan output" 1 \
 			"Expected worker_complete and no fast-fail, got reason='${released_reason}' fast_fail=${fast_fail_called}"
 	fi
+	if [[ "$recorded_outcome" == "success" ]]; then
+		print_result "_cmd_run_finish records success for recovered failed run" 0
+	else
+		print_result "_cmd_run_finish records success for recovered failed run" 1 \
+			"Expected success telemetry, got '${recorded_outcome}'"
+	fi
 	return 0
 }
 
 test_cmd_run_finish_fail_closed_issue_without_merged_pr_fails() {
 	local work_dir="${TEST_ROOT}/repo-fail-issue-closed"
-	local released_reason="" fast_fail_called=0
+	local released_reason="" fast_fail_called=0 recorded_outcome=""
 	_setup_test_git_repo "$work_dir" 0
 	DISPATCH_REPO_SLUG="test-owner/test-repo"
 	gh() {
@@ -2579,6 +2600,7 @@ test_cmd_run_finish_fail_closed_issue_without_merged_pr_fails() {
 	_update_dispatch_ledger() { return 0; }
 	_release_session_lock() { return 0; }
 	_increment_orphan_count_stat() { return 0; }
+	_hrw_record_terminal_outcome() { recorded_outcome="$2"; return 0; }
 
 	_cmd_run_finish "issue-99999" "fail" "$work_dir"
 
@@ -2589,6 +2611,12 @@ test_cmd_run_finish_fail_closed_issue_without_merged_pr_fails() {
 	else
 		print_result "_cmd_run_finish fail requires merged PR beyond closed issue" 1 \
 			"Expected worker_failed and fast-fail, got reason='${released_reason}' fast_fail=${fast_fail_called}"
+	fi
+	if [[ "$recorded_outcome" == "failed" ]]; then
+		print_result "_cmd_run_finish records failed telemetry for genuine failure" 0
+	else
+		print_result "_cmd_run_finish records failed telemetry for genuine failure" 1 \
+			"Expected failed telemetry, got '${recorded_outcome}'"
 	fi
 	return 0
 }

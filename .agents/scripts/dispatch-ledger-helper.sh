@@ -53,6 +53,7 @@ _dlh_dir="${BASH_SOURCE[0]%/*}"
 LEDGER_DIR="${AIDEVOPS_DISPATCH_LEDGER_DIR:-${HOME}/.aidevops/.agent-workspace/tmp}"
 LEDGER_FILE="${LEDGER_DIR}/dispatch-ledger.jsonl"
 LEDGER_LOCK="${LEDGER_DIR}/dispatch-ledger.lock"
+TIER_TELEMETRY_FILTER="${_dlh_dir}/dispatch-tier-telemetry.jq"
 DEFAULT_TTL="${AIDEVOPS_DISPATCH_LEDGER_TTL:-3600}" # 60 minutes
 PRELAUNCH_TTL="${AIDEVOPS_DISPATCH_PRELAUNCH_LEASE_TTL:-120}"
 READY_TTL="${AIDEVOPS_DISPATCH_READY_LEASE_TTL:-7200}"
@@ -106,11 +107,18 @@ _lease_expiry() {
 }
 
 _append_tier_telemetry() {
-	local issue_number="$1" repo_slug="$2" dispatch_tier="$3" dispatch_model="$4" now="$5"
+	local issue_number="$1"
+	local repo_slug="$2"
+	local dispatch_tier="$3"
+	local dispatch_model="$4"
+	local now="$5"
+	local session_key="$6"
+	local attempt_id="$7"
 	local telemetry_file="${LEDGER_DIR}/tier-telemetry.jsonl"
 	jq -cn --arg inum "$issue_number" --arg slug "$repo_slug" \
 		--arg tier "$dispatch_tier" --arg model "$dispatch_model" --arg ts "$now" \
-		'{issue: $inum, repo: $slug, tier: $tier, model: $model, dispatched_at: $ts, outcome: "pending"}' \
+		--arg sk "$session_key" --arg aid "$attempt_id" \
+		'{schema: 2, attempt_id: $aid, session_key: $sk, issue: $inum, repo: $slug, tier: $tier, model: $model, dispatched_at: $ts, outcome: "pending"}' \
 		>>"$telemetry_file" 2>/dev/null || true
 	return 0
 }
@@ -410,7 +418,6 @@ cmd_register() {
 		echo "Error: register requires --session-key" >&2
 		return 1
 	fi
-
 	_ensure_ledger
 	if ! _acquire_lock; then
 		echo "Error: register aborted — could not acquire lock" >&2
@@ -424,8 +431,8 @@ cmd_register() {
 	[[ "$lease_ttl" =~ ^[0-9]+$ ]] || lease_ttl="$PRELAUNCH_TTL"
 	local lease_expires_at=""
 	lease_expires_at=$(_lease_expiry "$lease_ttl")
+	local attempt_id="${lease_token:-${session_key}:${now}:${dispatch_pid}}"
 
-	# Append new entry — use jq for safe JSON construction (handles special chars)
 	jq -cn \
 		--arg sk "$session_key" \
 		--arg inum "$issue_number" \
@@ -436,13 +443,13 @@ cmd_register() {
 		--arg model "$dispatch_model" \
 		--arg worktree "$worktree_path" \
 		--arg token "$lease_token" \
+		--arg attempt "$attempt_id" \
 		--arg device "$runner_device" \
 		--argjson expires "$lease_expires_at" \
 		--arg status "$LEDGER_STATUS_ACTIVE" \
-		'{session_key: $sk, issue_number: $inum, repo_slug: $slug, pid: $pid, dispatched_at: $ts, status: $status, updated_at: $ts, tier: $tier, model: $model, worktree_path: $worktree, lease_token:$token, runner_device:$device, lease_phase:"prelaunch", lease_expires_at:$expires}' \
+		'{session_key: $sk, attempt_id: $attempt, issue_number: $inum, repo_slug: $slug, pid: $pid, dispatched_at: $ts, status: $status, updated_at: $ts, tier: $tier, model: $model, worktree_path: $worktree, lease_token:$token, runner_device:$device, lease_phase:"prelaunch", lease_expires_at:$expires}' \
 		>>"$LEDGER_FILE"
-	_append_tier_telemetry "$issue_number" "$repo_slug" "$dispatch_tier" "$dispatch_model" "$now"
-
+	_append_tier_telemetry "$issue_number" "$repo_slug" "$dispatch_tier" "$dispatch_model" "$now" "$session_key" "$attempt_id"
 	_release_lock
 	return 0
 }
@@ -800,8 +807,8 @@ cmd_fail() {
 #######################################
 # Record dispatch outcome in the tier telemetry log
 #
-# Appends outcome to the append-only tier-telemetry.jsonl.
-# Called by workers on completion or by the escalation function on failure.
+# Appends one correlated terminal outcome to tier-telemetry.jsonl. The first
+# terminal event for an attempt wins, making retries and repeated cleanup safe.
 #
 # Args:
 #   --issue NUM          issue number
@@ -810,9 +817,48 @@ cmd_fail() {
 #   --reason REASON      escalation reason code (optional)
 #   --tokens NUM         tokens used (optional)
 #   --tier TIER          tier at dispatch time (optional, for context)
+#   --session-key KEY    worker session key (preferred correlation fallback)
+#   --lease-token TOKEN  dispatch lease token (preferred exact correlation)
+#   --attempt-id ID      explicit telemetry attempt ID
 #
 # Exit codes: 0 always (best-effort, never fatal)
 #######################################
+_find_pending_telemetry_attempt() {
+	local telemetry_file="$1"
+	local attempt_id="$2"
+	local session_key="$3"
+	local issue_number="$4"
+	local repo_slug="$5"
+
+	jq -sc -f "$TIER_TELEMETRY_FILTER" --arg operation find \
+		--arg aid "$attempt_id" --arg sk "$session_key" \
+		--arg inum "$issue_number" --arg slug "$repo_slug" "$telemetry_file" 2>/dev/null
+	return 0
+}
+
+_append_terminal_telemetry() {
+	local telemetry_file="$1"
+	local attempt_id="$2"
+	local session_key="$3"
+	local issue_number="$4"
+	local repo_slug="$5"
+	local tier="$6"
+	local model="$7"
+	local outcome="$8"
+	local reason="$9"
+	local tokens="${10}"
+	local now=""
+	now=$(_now_utc)
+
+	jq -cn --argjson schema 2 --arg aid "$attempt_id" --arg sk "$session_key" \
+		--arg inum "$issue_number" --arg slug "$repo_slug" --arg tier "$tier" \
+		--arg model "$model" --arg outcome "$outcome" --arg reason "$reason" \
+		--argjson tokens "$tokens" --arg ts "$now" \
+		'{schema: $schema, attempt_id: $aid, session_key: $sk, issue: $inum, repo: $slug, tier: $tier, model: $model, outcome: $outcome, reason: $reason, tokens: $tokens, completed_at: $ts}' \
+		>>"$telemetry_file" 2>/dev/null || true
+	return 0
+}
+
 cmd_record_outcome() {
 	local issue_number=""
 	local repo_slug=""
@@ -820,6 +866,9 @@ cmd_record_outcome() {
 	local reason=""
 	local tokens="0"
 	local tier=""
+	local session_key=""
+	local lease_token=""
+	local attempt_id=""
 
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
@@ -847,26 +896,63 @@ cmd_record_outcome() {
 			tier="${2:-}"
 			shift 2
 			;;
+		--session-key)
+			session_key="${2:-}"
+			shift 2
+			;;
+		--lease-token)
+			lease_token="${2:-}"
+			shift 2
+			;;
+		--attempt-id)
+			attempt_id="${2:-}"
+			shift 2
+			;;
 		*) shift ;;
 		esac
 	done
 
 	[[ -n "$outcome" ]] || return 0
+	[[ "$tokens" =~ ^[0-9]+$ ]] || tokens=0
 
 	local telemetry_file="${LEDGER_DIR}/tier-telemetry.jsonl"
-	local now
-	now=$(_now_utc)
+	_ensure_ledger
+	touch "$telemetry_file" 2>/dev/null || return 0
+	if ! _acquire_lock; then
+		return 0
+	fi
 
-	jq -cn \
-		--arg inum "$issue_number" \
-		--arg slug "$repo_slug" \
-		--arg tier "$tier" \
-		--arg outcome "$outcome" \
-		--arg reason "$reason" \
-		--argjson tokens "${tokens:-0}" \
-		--arg ts "$now" \
-		'{issue: $inum, repo: $slug, tier: $tier, outcome: $outcome, reason: $reason, tokens: $tokens, completed_at: $ts}' \
-		>>"$telemetry_file" 2>/dev/null || true
+	[[ -n "$attempt_id" ]] || attempt_id="$lease_token"
+	local pending=""
+	pending=$(_find_pending_telemetry_attempt "$telemetry_file" "$attempt_id" \
+		"$session_key" "$issue_number" "$repo_slug" || true)
+
+	if [[ -n "$pending" ]]; then
+		attempt_id=$(printf '%s' "$pending" | jq -r '.attempt_id')
+		[[ -n "$session_key" ]] || session_key=$(printf '%s' "$pending" | jq -r '.session_key // ""')
+		[[ -n "$issue_number" ]] || issue_number=$(printf '%s' "$pending" | jq -r '.issue // ""')
+		[[ -n "$repo_slug" ]] || repo_slug=$(printf '%s' "$pending" | jq -r '.repo // ""')
+		tier=$(printf '%s' "$pending" | jq -r '.tier // ""')
+		local model=""
+		model=$(printf '%s' "$pending" | jq -r '.model // ""')
+	else
+		local model=""
+		if [[ -z "$attempt_id" ]]; then
+			_release_lock
+			return 0
+		fi
+	fi
+
+	if [[ -n "$attempt_id" ]] && jq -e --arg aid "$attempt_id" \
+		'select(.outcome != "pending" and (.attempt_id // "") == $aid)' \
+		"$telemetry_file" >/dev/null 2>&1; then
+		_release_lock
+		return 0
+	fi
+
+	_append_terminal_telemetry "$telemetry_file" "$attempt_id" "$session_key" \
+		"$issue_number" "$repo_slug" "$tier" "$model" "$outcome" "$reason" "$tokens"
+	_release_lock
 
 	return 0
 }
@@ -887,35 +973,42 @@ cmd_tier_report() {
 		return 0
 	fi
 
-	local total success escalated failed
-	total=$(wc -l <"$telemetry_file" | tr -d ' ')
-	success=$(grep -c '"outcome":"success"' "$telemetry_file" 2>/dev/null) || success=0
-	escalated=$(grep -c '"outcome":"escalated"' "$telemetry_file" 2>/dev/null) || escalated=0
-	failed=$(grep -c "\"outcome\":\"${LEDGER_STATUS_FAILED}\"" "$telemetry_file" 2>/dev/null) || failed=0
+	local summary=""
+	summary=$(jq -sc -f "$TIER_TELEMETRY_FILTER" --arg operation report \
+		--arg aid "" --arg sk "" --arg inum "" --arg slug "" \
+		"$telemetry_file" 2>/dev/null) || summary='{}'
+
+	local total success escalated failed deferred pending_unknown unmatched
+	total=$(printf '%s' "$summary" | jq -r '.total // 0')
+	success=$(printf '%s' "$summary" | jq -r '.success // 0')
+	escalated=$(printf '%s' "$summary" | jq -r '.escalated // 0')
+	failed=$(printf '%s' "$summary" | jq -r '.failed // 0')
+	deferred=$(printf '%s' "$summary" | jq -r '.deferred // 0')
+	pending_unknown=$(printf '%s' "$summary" | jq -r '.pending_unknown // 0')
+	unmatched=$(printf '%s' "$summary" | jq -r '.unmatched // 0')
 
 	echo "=== Tier Dispatch Telemetry ==="
 	echo "Total dispatches: $total"
 	echo "Success: $success"
 	echo "Escalated: $escalated"
 	echo "Failed: $failed"
+	echo "Deferred/timeout: $deferred"
+	echo "Pending/unknown: $pending_unknown"
+	echo "Legacy/unmatched terminal events: $unmatched"
 	echo ""
 	echo "By tier:"
-	jq -r '.tier' "$telemetry_file" 2>/dev/null | sort | uniq -c | sort -rn
+	printf '%s' "$summary" | jq -r '.by_tier[] | "\(.count | tostring | if length < 6 then (" " * (6 - length)) + . else . end) \(.tier)"'
 	echo ""
 	echo "Escalation reasons:"
-	jq -r 'select(.reason != "" and .reason != null) | .reason' "$telemetry_file" 2>/dev/null | sort | uniq -c | sort -rn
+	printf '%s' "$summary" | jq -r '.reasons[] | "\(.count | tostring | if length < 6 then (" " * (6 - length)) + . else . end) \(.reason)"'
 	echo ""
 	echo "Pass rate by tier:"
-	for t in simple standard reasoning; do
-		local t_total t_success
-		t_total=$(grep -c "\"tier\":\"$t\"" "$telemetry_file" 2>/dev/null) || t_total=0
-		t_success=$(jq -r "select(.tier == \"$t\" and .outcome == \"success\") | .tier" "$telemetry_file" 2>/dev/null | wc -l | tr -d ' ') || t_success=0
-		if [[ "$t_total" -gt 0 ]]; then
-			local pct
-			pct=$(awk "BEGIN {printf \"%.1f\", ${t_success}/${t_total}*100}")
-			echo "  tier:$t — $t_success/$t_total ($pct%)"
-		fi
-	done
+	printf '%s' "$summary" | jq -r '.pass_rates[] | select(.tier != "" and .total > 0) | [.tier, .success, .total] | @tsv' |
+		while IFS=$'\t' read -r tier_name tier_success tier_total; do
+			local pct=""
+			pct=$(awk "BEGIN {printf \"%.1f\", ${tier_success}/${tier_total}*100}")
+			printf '  tier:%s — %s/%s (%s%%)\n' "$tier_name" "$tier_success" "$tier_total" "$pct"
+		done
 
 	return 0
 }
@@ -1336,6 +1429,12 @@ Usage:
 
   dispatch-ledger-helper.sh fail --session-key KEY
     Mark dispatch as failed (worker errored or timed out).
+
+  dispatch-ledger-helper.sh record-outcome --outcome OUTCOME [--session-key KEY]
+    Record one correlated terminal tier-telemetry event. First outcome wins.
+
+  dispatch-ledger-helper.sh tier-report
+    Report logical dispatch attempts, terminal outcomes, and pass rates by tier.
 
   dispatch-ledger-helper.sh expire [--ttl SECONDS]
     Expire stale in-flight entries (default TTL: 3600s / 60 min).

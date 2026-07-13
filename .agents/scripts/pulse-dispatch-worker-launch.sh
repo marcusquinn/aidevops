@@ -1693,6 +1693,8 @@ _dlw_nohup_launch() {
 		WORKER_GITHUB_LOGIN="$self_login"
 		AIDEVOPS_DISPATCH_LEASE_TOKEN="${_claim_lease_token:-}"
 		AIDEVOPS_DISPATCH_LEASE_DEVICE="${_claim_lease_device:-}"
+		AIDEVOPS_DISPATCH_TIER="$dispatch_model_tier"
+		AIDEVOPS_DISPATCH_MODEL="$selected_model"
 		AIDEVOPS_ALLOW_WORKER_WORKTREE_OWNER_TRANSFER=1
 	)
 	_dlw_append_trusted_release_env
@@ -1734,7 +1736,6 @@ _dlw_nohup_launch() {
 		worker_cmd+=(--agent "$bundle_agent")
 	fi
 
-	# t2757: Detach worker via setsid (extracted to helper)
 	_dlw_exec_detached "$worker_log" "$issue_number" "${worker_cmd[@]}"
 	return 0
 }

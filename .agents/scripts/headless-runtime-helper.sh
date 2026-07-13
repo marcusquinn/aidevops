@@ -1502,6 +1502,7 @@ cmd_run() {
 	print_info "[lifecycle] pre_canary session=$session_key model=$selected_model pid=$$"
 	if ! _run_canary_test "$selected_model"; then
 		print_warning "Canary failed — aborting dispatch for session $session_key (no claim posted)"
+		_hrw_record_terminal_outcome "$session_key" "deferred" "canary_failed"
 		return 1
 	fi
 	print_info "[lifecycle] post_canary session=$session_key model=$selected_model pid=$$"
@@ -1519,9 +1520,11 @@ cmd_run() {
 	print_info "[lifecycle] pre_worker_prepare session=$session_key work_dir=$work_dir pid=$$"
 	_cmd_run_prepare "$session_key" "$work_dir" || prepare_exit=$?
 	if [[ "$prepare_exit" -eq 2 ]]; then
+		_hrw_record_terminal_outcome "$session_key" "deferred" "duplicate_session"
 		return 0
 	fi
 	if [[ "$prepare_exit" -ne 0 ]]; then
+		_hrw_record_terminal_outcome "$session_key" "failed" "worker_prepare_failed"
 		return "$prepare_exit"
 	fi
 	print_info "[lifecycle] post_worker_prepare session=$session_key work_dir=$work_dir pid=$$"

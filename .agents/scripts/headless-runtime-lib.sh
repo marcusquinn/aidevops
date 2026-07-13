@@ -1355,6 +1355,8 @@ _register_dispatch_ledger() {
 	[[ -n "$ledger_issue" ]] && ledger_args+=(--issue "$ledger_issue")
 	[[ -n "$ledger_repo" ]] && ledger_args+=(--repo "$ledger_repo")
 	[[ -n "$ledger_work_dir" ]] && ledger_args+=(--worktree "$ledger_work_dir")
+	[[ -n "${AIDEVOPS_DISPATCH_TIER:-}" ]] && ledger_args+=(--tier "$AIDEVOPS_DISPATCH_TIER")
+	[[ -n "${AIDEVOPS_DISPATCH_MODEL:-}" ]] && ledger_args+=(--model "$AIDEVOPS_DISPATCH_MODEL")
 
 	"$DISPATCH_LEDGER_HELPER" "${ledger_args[@]}" 2>/dev/null || true
 	return 0

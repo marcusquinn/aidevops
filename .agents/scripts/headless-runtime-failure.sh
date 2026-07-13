@@ -953,6 +953,12 @@ _exit_trap_handler() {
 			_emit_worker_runtime_event "worker.failed" "failed" "$reason"
 		fi
 	fi
+	if declare -F _hrw_record_terminal_outcome >/dev/null 2>&1; then
+		local terminal_outcome="failed"
+		local complete_reason="${_HRW_REASON_WORKER_COMPLETE:-worker_complete}"
+		[[ "$reason" == "$complete_reason" ]] && terminal_outcome="success"
+		_hrw_record_terminal_outcome "$session_key" "$terminal_outcome" "$reason"
+	fi
 	if declare -F _cleanup_headless_runtime_temp_paths >/dev/null 2>&1; then
 		_cleanup_headless_runtime_temp_paths
 	fi
