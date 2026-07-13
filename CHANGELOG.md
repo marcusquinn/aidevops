@@ -10,6 +10,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.32.83] - 2026-07-13
+
+### Added
+
+- require explicit release intent (#27461)
+
+### Fixed
+
+- target pulse merge spot checks exactly (#27465)
+
 ## [3.32.82] - 2026-07-13
 
 ### Changed
