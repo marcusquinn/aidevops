@@ -139,6 +139,60 @@ test_record_recovery_rejects_missing_option_values() {
 	return 0
 }
 
+test_tier_telemetry_correlates_terminal_outcomes() {
+	setup_test_env
+	run_helper "$LEDGER_HELPER" register --session-key "issue-42" --issue 42 \
+		--repo "owner/repo" --pid $$ --tier simple --model model-a --lease-token attempt-42
+	run_helper "$LEDGER_HELPER" register --session-key "issue-43" --issue 43 \
+		--repo "owner/repo" --pid $$ --tier standard --model model-b --lease-token attempt-43
+	run_helper "$LEDGER_HELPER" record-outcome --session-key "issue-42" \
+		--lease-token attempt-42 --issue 42 --repo "owner/repo" --outcome success
+	# Repeated cleanup and a conflicting late event must not create or replace the
+	# first terminal result for this attempt.
+	run_helper "$LEDGER_HELPER" record-outcome --session-key "issue-42" \
+		--lease-token attempt-42 --issue 42 --repo "owner/repo" --outcome success
+	run_helper "$LEDGER_HELPER" record-outcome --session-key "issue-42" \
+		--lease-token attempt-42 --issue 42 --repo "owner/repo" --outcome failed
+
+	local telemetry_file="${AIDEVOPS_DISPATCH_LEDGER_DIR}/tier-telemetry.jsonl"
+	local result=0
+	local pending_count="" success_count="" terminal_count="" terminal_tier="" report=""
+	pending_count=$(jq -s '[.[] | select(.outcome == "pending")] | length' "$telemetry_file")
+	success_count=$(jq -s '[.[] | select(.outcome == "success")] | length' "$telemetry_file")
+	terminal_count=$(jq -s '[.[] | select(.outcome != "pending")] | length' "$telemetry_file")
+	terminal_tier=$(jq -r 'select(.outcome == "success") | .tier' "$telemetry_file")
+	report=$("$LEDGER_HELPER" tier-report)
+	[[ "$pending_count" == "2" && "$success_count" == "1" && "$terminal_count" == "1" ]] || result=1
+	[[ "$terminal_tier" == "simple" ]] || result=1
+	[[ "$report" == *"Total dispatches: 2"* && "$report" == *"Pending/unknown: 1"* ]] || result=1
+	[[ "$report" == *"tier:simple — 1/1 (100.0%)"* && "$report" == *"tier:standard — 0/1 (0.0%)"* ]] || result=1
+	print_result "tier telemetry correlates and idempotently reports terminal outcomes" "$result" \
+		"pending=${pending_count}, success=${success_count}, terminal=${terminal_count}, tier=${terminal_tier}"
+	teardown_test_env
+	return 0
+}
+
+test_tier_telemetry_handles_retries_and_legacy_pending() {
+	setup_test_env
+	local telemetry_file="${AIDEVOPS_DISPATCH_LEDGER_DIR}/tier-telemetry.jsonl"
+	printf '%s\n' '{"issue":"7","repo":"owner/repo","tier":"simple","model":"legacy-model","dispatched_at":"2026-01-01T00:00:00Z","outcome":"pending"}' >"$telemetry_file"
+	run_helper "$LEDGER_HELPER" register --session-key "issue-7" --issue 7 \
+		--repo "owner/repo" --pid $$ --tier thinking --model model-new --lease-token retry-7
+	run_helper "$LEDGER_HELPER" record-outcome --issue 7 --repo "owner/repo" --outcome success
+	run_helper "$LEDGER_HELPER" record-outcome --issue 7 --repo "owner/repo" --outcome failed
+
+	local result=0
+	local success_tier="" failed_tier="" legacy_pending=""
+	success_tier=$(jq -r 'select(.outcome == "success") | .tier' "$telemetry_file")
+	failed_tier=$(jq -r 'select(.outcome == "failed") | .tier' "$telemetry_file")
+	legacy_pending=$(jq -s '[.[] | select(.outcome == "pending" and .model == "legacy-model")] | length' "$telemetry_file")
+	[[ "$success_tier" == "thinking" && "$failed_tier" == "simple" && "$legacy_pending" == "1" ]] || result=1
+	print_result "tier telemetry pairs retries newest-first and supports legacy pending rows" "$result" \
+		"success_tier=${success_tier}, failed_tier=${failed_tier}, legacy=${legacy_pending}"
+	teardown_test_env
+	return 0
+}
+
 #######################################
 # Test: check detects in-flight entry
 #######################################
@@ -800,6 +854,8 @@ main() {
 	test_register_creates_entry
 	test_record_recovery_is_idempotent
 	test_record_recovery_rejects_missing_option_values
+	test_tier_telemetry_correlates_terminal_outcomes
+	test_tier_telemetry_handles_retries_and_legacy_pending
 	test_check_detects_inflight
 	test_check_returns_1_for_unknown
 	test_check_issue_detects_inflight

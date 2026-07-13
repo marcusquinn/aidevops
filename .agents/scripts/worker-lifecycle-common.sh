@@ -1642,6 +1642,7 @@ _Automated by \`escalate_issue_tier()\` cascade dispatch in worker-lifecycle-com
 	if [[ -x "$ledger_helper" ]]; then
 		"$ledger_helper" record-outcome \
 			--issue "$issue_number" --repo "$repo_slug" \
+			--session-key "issue-${issue_number}" \
 			--outcome "escalated" --tier "$current_tier" \
 			--reason "$safe_reason" 2>/dev/null || true
 	fi
