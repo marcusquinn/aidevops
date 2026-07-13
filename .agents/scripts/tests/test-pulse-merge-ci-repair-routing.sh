@@ -49,6 +49,8 @@ setup_test_env() {
 	export TEST_ROOT GH_LOG
 	export TEST_CHECK_SCENARIO="terminal_failure"
 	export TEST_WORKER_SLEEP_SECONDS="2"
+	unset TEST_INITIAL_PR_HEAD_SHA
+	unset TEST_INITIAL_PR_HEAD_EMPTY
 	export AIDEVOPS_CI_REPAIR_STATE_DIR="${TEST_ROOT}/repair-state"
 	export AIDEVOPS_CI_REPAIR_WORKTREE_BASE_DIR="${TEST_ROOT}/worktrees"
 	export AIDEVOPS_HEADLESS_RUNTIME_DIR="${TEST_ROOT}/headless-runtime"
@@ -87,7 +89,7 @@ add)
 		*) shift ;;
 		esac
 	done
-	printf 'worktree add %s %s %s\n' "$branch" "$path" "$base" >>"${GH_LOG}"
+	printf 'worktree add %s %s %s %s\n' "$branch" "$path" "$base" "${AIDEVOPS_WORKTREE_BASE_DIR:-}" >>"${GH_LOG}"
 	mkdir -p "$path"
 	;;
 remove)
@@ -121,7 +123,11 @@ if [[ "${1:-} ${2:-}" == "pr view" ]]; then
 		exit 0
 	fi
 	if [[ "$*" == *"--json headRefOid"* ]]; then
-		printf '%s\n' "${TEST_PR_HEAD_SHA}"
+		if [[ "${TEST_INITIAL_PR_HEAD_EMPTY:-0}" == "1" ]]; then
+			printf '\n'
+		else
+			printf '%s\n' "${TEST_INITIAL_PR_HEAD_SHA:-${TEST_PR_HEAD_SHA}}"
+		fi
 		exit 0
 	fi
 	exit 0
@@ -135,6 +141,9 @@ if [[ "${1:-} ${2:-}" == "run view" ]]; then
 	infra_registry_rate_limit)
 		printf '%s\n' 'Error response from daemon: toomanyrequests: Rate exceeded while pulling public.ecr.aws/docker/library/postgres:18'
 		;;
+	infra_dockerhub_rate_limit)
+		printf '%s\n' 'toomanyrequests: You have reached your unauthenticated pull rate limit.'
+		;;
 	log_exit_143)
 		printf '%s\n' 'Lint Run ##[error]Process completed with exit code 143.'
 		;;
@@ -144,7 +153,14 @@ if [[ "${1:-} ${2:-}" == "run view" ]]; then
 	esac
 	exit 0
 fi
+GHEOF
+	_append_gh_mock_routes
+	chmod +x "${TEST_ROOT}/bin/gh"
+	return 0
+}
 
+_append_gh_mock_routes() {
+	cat >>"${TEST_ROOT}/bin/gh" <<'GHEOF'
 	if [[ "${1:-} ${2:-}" == "pr checks" ]]; then
 		_is_required=0
 		[[ "$*" == *" --required "* || "$*" == *" --required"* ]] && _is_required=1
@@ -154,7 +170,7 @@ fi
 		fi
 		if [[ "$*" == *"name,bucket,state,link"* ]]; then
 			case "${TEST_CHECK_SCENARIO:-terminal_failure}:${_is_required}" in
-				terminal_failure:1 | log_exit_143:1 | required_and_advisory:1 | infra_registry_rate_limit:1)
+				terminal_failure:1 | log_exit_143:1 | required_and_advisory:1 | infra_registry_rate_limit:1 | infra_dockerhub_rate_limit:1)
 					printf '%s\n' '[{"name":"Lint","bucket":"fail","state":"FAILURE","link":"https://github.com/owner/repo/actions/runs/123/job/456"}]'
 					;;
 				required_and_advisory:0)
@@ -200,18 +216,19 @@ fi
 
 exit 0
 GHEOF
-	chmod +x "${TEST_ROOT}/bin/gh"
 	return 0
 }
 
 teardown_test_env() {
 	if [[ -n "$TEST_ROOT" && -d "$TEST_ROOT" ]]; then
-		local state_file="" worker_pid="" worker_status=""
+		local state_file="" worker_pid="" worker_start="" worker_status=""
 		while IFS= read -r state_file; do
 			worker_pid=$(jq -r '.pid // empty' "$state_file" 2>/dev/null) || worker_pid=""
+			worker_start=$(jq -r '.pid_start // empty' "$state_file" 2>/dev/null) || worker_start=""
 			worker_status=$(jq -r '.status // empty' "$state_file" 2>/dev/null) || worker_status=""
 			if [[ "$worker_status" == "dispatched" && "$worker_pid" =~ ^[0-9]+$ && "$worker_pid" != "$$" ]] \
-				&& kill -0 "$worker_pid" 2>/dev/null; then
+				&& declare -F _ci_repair_pid_is_live >/dev/null 2>&1 \
+				&& _ci_repair_pid_is_live "$worker_pid" "$worker_start"; then
 				kill "$worker_pid" 2>/dev/null || true
 				wait "$worker_pid" 2>/dev/null || true
 			fi
@@ -321,6 +338,9 @@ define_feedback_helpers() {
 		_ci_repair_session_identity
 		_ci_repair_launch_worker
 		_ci_repair_write_prompt
+		_ci_repair_legacy_lease_is_active
+		_ci_repair_hash_text
+		_ci_repair_session_key
 		_dispatch_ci_repair_session
 		_route_ci_repair_fallback
 		_dispatch_ci_fix_worker
@@ -342,6 +362,7 @@ EOF
 	_emit_ci_failure_guidance_blocks() { return 0; }
 	_classify_ci_failures_by_pattern() { local failing_names="$1"; printf '%s' "$failing_names" >"${TEST_ROOT}/classified-names.txt"; return 0; }
 	_pulse_merge_repo_path_for_slug() { local repo_slug="$1"; [[ -n "$repo_slug" ]]; printf '%s\n' "${TEST_ROOT}/repo"; return 0; }
+	_is_process_alive_and_matches() { local process_pid="$1"; local process_pattern="$2"; local stored_hash="$3"; [[ -n "$process_pattern" || -n "$stored_hash" ]]; kill -0 "$process_pid" 2>/dev/null; return $?; }
 	for fn in "${fns[@]}"; do
 		fn_src=$(extract_function "$fn" "$FEEDBACK_SCRIPT")
 		[[ -n "$fn_src" ]] || return 1
@@ -480,7 +501,7 @@ test_changes_requested_explicit_empty_labels_skip_refetch() {
 	return 0
 }
 
-test_ci_repair_dedupes_by_repo_pr_head_and_fingerprint() {
+test_ci_repair_dedupes_identical_evidence_for_same_head() {
 	setup_test_env
 	define_feedback_helpers || { print_result "defines feedback helpers" 1 "could not extract feedback helpers"; teardown_test_env; return 0; }
 
@@ -496,11 +517,98 @@ test_ci_repair_dedupes_by_repo_pr_head_and_fingerprint() {
 	active_count=$(grep -c 'in-place CI repair already active' "$LOGFILE" || true)
 
 	if [[ "$edit_count" -ne 0 || "$state_count" -ne 1 || "$worktree_count" -ne 1 ]]; then
-		print_result "CI repair dedupes by repo/PR/head/fingerprint" 1 "issue_edits=${edit_count}, states=${state_count}, worktrees=${worktree_count}"
+		print_result "CI repair dedupes identical evidence by repo/PR/head" 1 "issue_edits=${edit_count}, states=${state_count}, worktrees=${worktree_count}"
 	elif [[ "$dispatch_count" -ne 1 || "$active_count" -ne 1 ]]; then
 		print_result "CI repair distinguishes dispatch from a live lease" 1 "dispatches=${dispatch_count}, active=${active_count}"
 	else
 		print_result "CI repair dedupes and reports a live lease without false dispatch" 0
+	fi
+	teardown_test_env
+	return 0
+}
+
+test_ci_repair_dedupes_changed_evidence_for_same_head() {
+	setup_test_env
+	define_feedback_helpers || { print_result "defines feedback helpers for changed evidence" 1 "could not extract feedback helpers"; teardown_test_env; return 0; }
+
+	_dispatch_ci_repair_session "100" "owner/repo" "42" "$TEST_PR_HEAD_SHA" "feature/repair" \
+		"fingerprint-one" "- **Lint**: failure — [check URL](https://github.com/owner/repo/actions/runs/123/job/456)"
+	_dispatch_ci_repair_session "100" "owner/repo" "42" "$TEST_PR_HEAD_SHA" "feature/repair" \
+		"fingerprint-two" "- **Unit**: failure — [check URL](https://github.com/owner/repo/actions/runs/124/job/789)"
+
+	local state_count=0 worktree_count=0
+	state_count=$(find "$AIDEVOPS_CI_REPAIR_STATE_DIR" -name state.json -type f | wc -l | tr -d ' ')
+	worktree_count=$(grep -c '^worktree add ' "$GH_LOG" || true)
+	if [[ "$state_count" -ne 1 || "$worktree_count" -ne 1 ]]; then
+		print_result "changed CI evidence shares one PR/head lease" 1 "states=${state_count}, worktrees=${worktree_count}"
+	else
+		print_result "changed CI evidence cannot overlap repair workers for one head" 0
+	fi
+	teardown_test_env
+	return 0
+}
+
+test_ci_repair_respects_live_legacy_lease() {
+	setup_test_env
+	define_feedback_helpers || { print_result "defines feedback helpers for legacy lease" 1 "could not extract feedback helpers"; teardown_test_env; return 0; }
+
+	local legacy_key="owner_repo-100-${TEST_PR_HEAD_SHA}-legacyfingerprint"
+	local legacy_dir="${AIDEVOPS_CI_REPAIR_STATE_DIR}/${legacy_key}"
+	local legacy_pid=""
+	sleep 30 &
+	legacy_pid=$!
+	mkdir -p "$legacy_dir"
+	printf '{"repo":"owner/repo","pr":100,"head":"%s","fingerprint":"legacyfingerprint","pid":%s,"status":"dispatched"}\n' \
+		"$TEST_PR_HEAD_SHA" "$legacy_pid" >"${legacy_dir}/state.json"
+	mkdir -p "${AIDEVOPS_HEADLESS_RUNTIME_DIR}/locks"
+	printf '%s|\n' "$legacy_pid" >"${AIDEVOPS_HEADLESS_RUNTIME_DIR}/locks/ci-repair-100-${TEST_PR_HEAD_SHA:0:12}-legacyfinger.pid"
+	_dispatch_ci_repair_session "100" "owner/repo" "42" "$TEST_PR_HEAD_SHA" "feature/repair" \
+		"new-fingerprint" "- **Lint**: failure — [check URL](https://github.com/owner/repo/actions/runs/123/job/456)"
+	kill "$legacy_pid" 2>/dev/null || true
+	wait "$legacy_pid" 2>/dev/null || true
+
+	local worktree_count=0
+	worktree_count=$(grep -c '^worktree add ' "$GH_LOG" || true)
+	if [[ "$worktree_count" -ne 0 || "${_CI_REPAIR_DISPATCH_RESULT:-}" != "active" ]]; then
+		print_result "live legacy CI lease blocks migrated overlap" 1 "worktrees=${worktree_count}, result=${_CI_REPAIR_DISPATCH_RESULT:-unset}"
+	else
+		print_result "live legacy fingerprint lease remains exclusive during migration" 0
+	fi
+	teardown_test_env
+	return 0
+}
+
+test_ci_repair_session_keys_are_repository_scoped() {
+	setup_test_env
+	define_feedback_helpers || { print_result "defines feedback helpers for repository session keys" 1 "could not extract feedback helpers"; teardown_test_env; return 0; }
+
+	local first_key="" second_key=""
+	first_key=$(_ci_repair_session_key "acme/foo_bar" "100" "$TEST_PR_HEAD_SHA")
+	second_key=$(_ci_repair_session_key "acme_foo/bar" "100" "$TEST_PR_HEAD_SHA")
+	if [[ "$first_key" == "$second_key" ]]; then
+		print_result "CI repair session keys include repository identity" 1 "first=${first_key}, second=${second_key}"
+	else
+		print_result "flattening-collision repository slugs have isolated session keys" 0
+	fi
+	teardown_test_env
+	return 0
+}
+
+test_ci_repair_worktree_paths_are_repository_scoped() {
+	setup_test_env
+	define_feedback_helpers || { print_result "defines feedback helpers for repository worktrees" 1 "could not extract feedback helpers"; teardown_test_env; return 0; }
+
+	local first_path="" second_path=""
+	first_path=$(_ci_repair_create_worktree "${TEST_ROOT}/repo" "first/repo" "42" "100" "$TEST_PR_HEAD_SHA" \
+		"feature/repair" "fingerprint" "1")
+	second_path=$(_ci_repair_create_worktree "${TEST_ROOT}/repo" "second/repo" "42" "100" "$TEST_PR_HEAD_SHA" \
+		"feature/repair" "fingerprint" "1")
+	if [[ "$first_path" == "$second_path" || -z "$first_path" || -z "$second_path" ]]; then
+		print_result "CI repair worktree paths include repository identity" 1 "first=${first_path}, second=${second_path}"
+	elif ! grep -q " ${AIDEVOPS_CI_REPAIR_WORKTREE_BASE_DIR}$" "$GH_LOG"; then
+		print_result "CI-specific worktree base reaches worktree helper validation" 1 "Log: $(cat "$GH_LOG")"
+	else
+		print_result "same-basename repositories have isolated repair worktrees" 0
 	fi
 	teardown_test_env
 	return 0
@@ -563,6 +671,40 @@ test_ci_feedback_emits_terminal_failure_with_conclusion_and_url() {
 	return 0
 }
 
+test_ci_feedback_defers_when_head_changes_during_collection() {
+	setup_test_env
+	export TEST_INITIAL_PR_HEAD_SHA="1111111111111111111111111111111111111111"
+	define_feedback_helpers || { print_result "defines feedback helpers for moving head" 1 "could not extract feedback helpers"; teardown_test_env; return 0; }
+
+	_dispatch_ci_fix_worker "100" "owner/repo" "42"
+	if grep -q '^worktree add ' "$GH_LOG"; then
+		print_result "moving PR head defers stale CI evidence" 1 "Dispatch log: $(cat "$GH_LOG")"
+	elif ! grep -qF 'head changed while collecting CI evidence' "$LOGFILE"; then
+		print_result "moving PR head records repair deferral" 1 "Log: $(cat "$LOGFILE")"
+	else
+		print_result "CI evidence is not bound to a concurrently changed head" 0
+	fi
+	teardown_test_env
+	return 0
+}
+
+test_ci_feedback_defers_without_initial_head_snapshot() {
+	setup_test_env
+	export TEST_INITIAL_PR_HEAD_EMPTY="1"
+	define_feedback_helpers || { print_result "defines feedback helpers for missing head snapshot" 1 "could not extract feedback helpers"; teardown_test_env; return 0; }
+
+	_dispatch_ci_fix_worker "100" "owner/repo" "42"
+	if grep -q '^worktree add ' "$GH_LOG"; then
+		print_result "missing PR head snapshot defers CI repair" 1 "Dispatch log: $(cat "$GH_LOG")"
+	elif ! grep -qF 'head snapshot unavailable' "$LOGFILE"; then
+		print_result "missing PR head snapshot records repair deferral" 1 "Log: $(cat "$LOGFILE")"
+	else
+		print_result "CI repair fails closed without an initial head snapshot" 0
+	fi
+	teardown_test_env
+	return 0
+}
+
 test_ci_feedback_skips_infra_timeout_checks() {
 	setup_test_env
 	TEST_CHECK_SCENARIO="infra_timeout"
@@ -610,6 +752,23 @@ test_ci_feedback_skips_registry_rate_limit_failure() {
 		print_result "registry rate limit records infrastructure classification" 1 "Log: $(cat "$LOGFILE")"
 	else
 		print_result "registry rate limit is classified as infrastructure" 0
+	fi
+	teardown_test_env
+	return 0
+}
+
+test_ci_feedback_skips_dockerhub_pull_rate_limit_failure() {
+	setup_test_env
+	TEST_CHECK_SCENARIO="infra_dockerhub_rate_limit"
+	define_feedback_helpers || { print_result "defines feedback helpers for Docker Hub rate limit" 1 "could not extract feedback helpers"; teardown_test_env; return 0; }
+
+	_dispatch_ci_fix_worker "100" "owner/repo" "42"
+	if grep -qF 'PR #100: CI repair' "$GH_LOG"; then
+		print_result "Docker Hub pull rate limit does not dispatch code repair" 1 "Dispatch log: $(cat "$GH_LOG")"
+	elif ! grep -qF 'classified as infrastructure failure' "$LOGFILE"; then
+		print_result "Docker Hub pull rate limit records infrastructure classification" 1 "Log: $(cat "$LOGFILE")"
+	else
+		print_result "Docker Hub unauthenticated pull limit is classified as infrastructure" 0
 	fi
 	teardown_test_env
 	return 0
@@ -740,13 +899,20 @@ main() {
 	test_rest_missing_review_decision_refreshes_before_ci_route
 	test_coderabbit_nits_ok_dismissed_once_before_late_gate
 	test_changes_requested_explicit_empty_labels_skip_refetch
-	test_ci_repair_dedupes_by_repo_pr_head_and_fingerprint
+	test_ci_repair_dedupes_identical_evidence_for_same_head
+	test_ci_repair_dedupes_changed_evidence_for_same_head
+	test_ci_repair_respects_live_legacy_lease
+	test_ci_repair_session_keys_are_repository_scoped
+	test_ci_repair_worktree_paths_are_repository_scoped
 	test_ci_feedback_skips_pending_only_checks
 	test_ci_feedback_skips_mixed_pending_pass_checks
 	test_ci_feedback_emits_terminal_failure_with_conclusion_and_url
+	test_ci_feedback_defers_when_head_changes_during_collection
+	test_ci_feedback_defers_without_initial_head_snapshot
 	test_ci_feedback_skips_infra_timeout_checks
 	test_ci_feedback_skips_failed_check_with_exit_143_log
 	test_ci_feedback_skips_registry_rate_limit_failure
+	test_ci_feedback_skips_dockerhub_pull_rate_limit_failure
 	test_ci_repair_recovers_one_stale_lease_then_exhausts
 	test_ci_repair_consumes_abandoned_append_only_claim
 	test_ci_repair_waits_for_prelock_startup_before_retry

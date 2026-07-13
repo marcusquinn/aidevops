@@ -333,7 +333,7 @@ _ci_check_url_has_infra_failure_log() {
 	failed_log=$(gh run view "$run_id" --repo "$repo_slug" --job "$job_id" --log-failed 2>/dev/null) || failed_log=""
 	[[ -n "$failed_log" ]] || return 1
 
-	if printf '%s\n' "$failed_log" | grep -Eiq '(Process completed with exit code (124|137|143)|timed out after|[[:space:]]Killed[[:space:]]+timeout|timeout --kill-after|The operation was canceled|cancelled due to timeout|toomanyrequests:[[:space:]]*Rate exceeded|Error response from daemon:.*(429|Too Many Requests|Rate exceeded)|(failed to pull image|failed to resolve source metadata|failed to authorize).*(429|Too Many Requests|Rate exceeded|TLS handshake timeout|i/o timeout|connection reset by peer|Service Unavailable)|(public\.ecr\.aws|docker\.io|ghcr\.io|registry[^[:space:]]*).*(429|Too Many Requests|Rate exceeded|TLS handshake timeout|i/o timeout|connection reset by peer|Service Unavailable))'; then
+	if printf '%s\n' "$failed_log" | grep -Eiq '(Process completed with exit code (124|137|143)|timed out after|[[:space:]]Killed[[:space:]]+timeout|timeout --kill-after|The operation was canceled|cancelled due to timeout|toomanyrequests:.*(Rate exceeded|pull rate limit|reached your.*rate limit)|Error response from daemon:.*(429|Too Many Requests|Rate exceeded)|(failed to pull image|failed to resolve source metadata|failed to authorize).*(429|Too Many Requests|Rate exceeded|TLS handshake timeout|i/o timeout|connection reset by peer|Service Unavailable)|(public\.ecr\.aws|docker\.io|ghcr\.io|registry[^[:space:]]*).*(429|Too Many Requests|Rate exceeded|TLS handshake timeout|i/o timeout|connection reset by peer|Service Unavailable))'; then
 		return 0
 	fi
 	return 1
@@ -411,9 +411,9 @@ _ci_merge_check_sets() {
 # cannot be repaired in place.
 #
 # The repair worker sees failing check names, URLs, and current-head context.
-# Its durable lease is keyed by repo + PR + head SHA + failure fingerprint so
-# repeated pulse cycles do not duplicate work, while a newly-pushed head can
-# enter repair independently if it is still red.
+# Its durable lease is keyed by repo + PR + head SHA so reordered or changing
+# check evidence cannot launch overlapping workers against one branch head. A
+# newly-pushed head can enter repair independently if it is still red.
 #
 # Same pattern as _dispatch_pr_fix_worker (t2093) but for CI failures
 # instead of review CHANGES_REQUESTED.
@@ -429,6 +429,12 @@ _dispatch_ci_fix_worker() {
 	[[ "$pr_number" =~ ^[0-9]+$ ]] || return 0
 	[[ -n "$repo_slug" ]] || return 0
 	[[ "$linked_issue" =~ ^[0-9]+$ ]] || return 0
+	local initial_head_sha=""
+	initial_head_sha=$(gh pr view "$pr_number" --repo "$repo_slug" --json headRefOid --jq '.headRefOid // ""' 2>/dev/null) || initial_head_sha=""
+	if [[ -z "$initial_head_sha" ]]; then
+		echo "[pulse-wrapper] _dispatch_ci_fix_worker: PR #${pr_number} head snapshot unavailable before collecting CI evidence — deferring repair routing" >>"$LOGFILE"
+		return 0
+	fi
 
 	# Collect actionable failed required checks first. Pending/queued/in-progress
 	# checks are not actionable repair evidence and must not be routed into the
@@ -472,9 +478,13 @@ _dispatch_ci_fix_worker() {
 		--json headRefOid,headRefName,isCrossRepository,maintainerCanModify \
 		--jq '[(.headRefOid // ""),(.headRefName // ""),(.isCrossRepository // false),(.maintainerCanModify // false)] | @tsv' 2>/dev/null) || pr_info=""
 	IFS=$'\t' read -r pr_head_sha pr_head_ref is_cross_repo maintainer_can_modify <<<"$pr_info"
+	if [[ -n "$initial_head_sha" && "$pr_head_sha" != "$initial_head_sha" ]]; then
+		echo "[pulse-wrapper] _dispatch_ci_fix_worker: PR #${pr_number} head changed while collecting CI evidence (${initial_head_sha} -> ${pr_head_sha:-unknown}) — deferring repair routing" >>"$LOGFILE"
+		return 0
+	fi
 
 	local failure_fingerprint=""
-	failure_fingerprint=$(printf '%s\n' "$failing_checks_json" | jq -cS '.' 2>/dev/null | shasum -a 256 2>/dev/null | cut -d ' ' -f 1) || failure_fingerprint=""
+	failure_fingerprint=$(_ci_repair_hash_text "$(printf '%s\n' "$failing_checks_json" | jq -cS '.' 2>/dev/null)") || failure_fingerprint=""
 	[[ -n "$failure_fingerprint" ]] || failure_fingerprint="unknown"
 
 	# Build the CI Failure Feedback section (with optional pattern guidance).
@@ -520,8 +530,10 @@ _route_ci_repair_fallback() {
 	local fallback_reason="$7"
 	local feedback_section="$8"
 	local failing_checks="$9"
-	local marker="<!-- ci-feedback-fallback:PR${pr_number}:SHA${pr_head_sha:-unknown}:FP${failure_fingerprint} -->"
+	local marker_prefix="<!-- ci-feedback-fallback:PR${pr_number}:SHA${pr_head_sha:-unknown}"
+	local marker="${marker_prefix} -->"
 	local current_body=""
+	: "$failure_fingerprint"
 
 	gh label create "ci-feedback-routed" --repo "$repo_slug" --color "E4E669" \
 		--description "Worker PR with failing CI routed to linked issue for re-dispatch" \
@@ -531,7 +543,9 @@ _route_ci_repair_fallback() {
 		--force >/dev/null 2>&1 || true
 	current_body=$(gh issue view "$linked_issue" --repo "$repo_slug" \
 		--json body --jq '.body // ""' 2>/dev/null) || current_body=""
-	if [[ -n "$current_body" ]] && printf '%s' "$current_body" | grep -qF "$marker"; then
+	# Match both the PR/head marker and the legacy marker that appended :FP...
+	# so an upgrade cannot replay an already-routed fallback.
+	if [[ -n "$current_body" ]] && printf '%s' "$current_body" | grep -qF "$marker_prefix"; then
 		echo "[pulse-wrapper] _dispatch_ci_fix_worker: issue #${linked_issue} already has CI repair fallback marker for PR #${pr_number} head ${pr_head_sha:-unknown} — skipping duplicate fallback" >>"$LOGFILE"
 		return 0
 	fi
@@ -914,15 +928,17 @@ _ci_repair_claim_lease() {
 #######################################
 _ci_repair_create_worktree() {
 	local repo_path="$1"
-	local linked_issue="$2"
-	local pr_number="$3"
-	local pr_head_sha="$4"
-	local pr_head_ref="$5"
-	local failure_fingerprint="$6"
-	local attempt="$7"
+	local repo_slug="$2"
+	local linked_issue="$3"
+	local pr_number="$4"
+	local pr_head_sha="$5"
+	local pr_head_ref="$6"
+	local failure_fingerprint="$7"
+	local attempt="$8"
 	local worktree_helper="${AIDEVOPS_WORKTREE_HELPER:-${_PULSE_MERGE_DIR:-${BASH_SOURCE[0]%/*}}/worktree-helper.sh}"
 	local worktree_base="${AIDEVOPS_CI_REPAIR_WORKTREE_BASE_DIR:-${AIDEVOPS_WORKTREE_BASE_DIR:-${HOME}/Git/_worktrees}}"
 	local repo_name=""
+	local repo_hash=""
 	local repair_branch=""
 	local worktree_path=""
 	local actual_head=""
@@ -936,10 +952,11 @@ _ci_repair_create_worktree() {
 	git -C "$repo_path" cat-file -e "${pr_head_sha}^{commit}" 2>/dev/null || return 1
 
 	repo_name=$(basename "$repo_path")
-	repair_branch="repair/pr-${pr_number}-${pr_head_sha:0:12}-${failure_fingerprint:0:12}-a${attempt}"
-	worktree_path="${worktree_base}/${repo_name}-ci-repair-pr${pr_number}-${pr_head_sha:0:12}-${failure_fingerprint:0:12}-a${attempt}"
+	repo_hash=$(_ci_repair_hash_text "$repo_slug") || return 1
+	repair_branch="repair/${repo_hash}-pr-${pr_number}-${pr_head_sha:0:12}-${failure_fingerprint:0:12}-a${attempt}"
+	worktree_path="${worktree_base}/${repo_name}-${repo_hash}-ci-repair-pr${pr_number}-${pr_head_sha:0:12}-${failure_fingerprint:0:12}-a${attempt}"
 	mkdir -p "$worktree_base" 2>/dev/null || return 1
-	if ! (cd "$repo_path" && AIDEVOPS_SKIP_AUTO_CLAIM=1 "$worktree_helper" add "$repair_branch" "$worktree_path" \
+	if ! (cd "$repo_path" && AIDEVOPS_SKIP_AUTO_CLAIM=1 AIDEVOPS_WORKTREE_BASE_DIR="$worktree_base" "$worktree_helper" add "$repair_branch" "$worktree_path" \
 		--base "$pr_head_sha" --issue "$linked_issue") >>"$LOGFILE" 2>&1; then
 		return 1
 	fi
@@ -1082,7 +1099,57 @@ _ci_repair_write_prompt() {
 }
 
 #######################################
-# Launch one bounded repair session for a repository/PR/head/failure tuple.
+# Return whether a legacy fingerprint-scoped lease still owns a live worker.
+#######################################
+_ci_repair_legacy_lease_is_active() {
+	local legacy_dir="$1"
+	local expected_repo="$2"
+	local expected_pr="$3"
+	local expected_head="$4"
+	local state_file="${legacy_dir}/state.json"
+	local state_identity="" state_repo="" state_pr="" state_head="" state_fingerprint="" state_status=""
+	local legacy_session_key="" legacy_session_identity=""
+
+	[[ -f "$state_file" ]] || return 1
+	state_identity=$(jq -r '[.repo // "", (.pr // "" | tostring), .head // "", .fingerprint // "", .status // ""] | @tsv' "$state_file" 2>/dev/null) || return 1
+	IFS=$'\t' read -r state_repo state_pr state_head state_fingerprint state_status <<<"$state_identity"
+	[[ "$state_repo" == "$expected_repo" && "$state_pr" == "$expected_pr" && "$state_head" == "$expected_head" ]] || return 1
+	[[ "$state_status" == "$(_ci_repair_status_dispatched)" && -n "$state_fingerprint" ]] || return 1
+	legacy_session_key="ci-repair-${expected_pr}-${expected_head:0:12}-${state_fingerprint:0:12}"
+	legacy_session_identity=$(_ci_repair_session_identity "$legacy_session_key" 2>/dev/null) || return 1
+	[[ -n "$legacy_session_identity" ]]
+	return $?
+}
+
+_ci_repair_hash_text() {
+	local input_text="$1"
+	local content_hash=""
+
+	if command -v sha256sum >/dev/null 2>&1; then
+		content_hash=$(printf '%s' "$input_text" | sha256sum 2>/dev/null | cut -d ' ' -f 1) || return 1
+	elif command -v shasum >/dev/null 2>&1; then
+		content_hash=$(printf '%s' "$input_text" | shasum -a 256 2>/dev/null | cut -d ' ' -f 1) || return 1
+	else
+		return 1
+	fi
+	[[ "$content_hash" =~ ^[0-9a-f]{64}$ ]] || return 1
+	printf '%s' "$content_hash"
+	return 0
+}
+
+_ci_repair_session_key() {
+	local repo_slug="$1"
+	local pr_number="$2"
+	local pr_head_sha="$3"
+	local repo_hash=""
+
+	repo_hash=$(_ci_repair_hash_text "$repo_slug") || return 1
+	printf 'ci-repair-%s-%s-%s' "$repo_hash" "$pr_number" "${pr_head_sha:0:12}"
+	return 0
+}
+
+#######################################
+# Launch one bounded repair session for a repository/PR/head tuple.
 # The state directory is the cross-pulse dedup lease. A dead worker may be
 # retried once; repeated terminal attempts take the durable fallback.
 #######################################
@@ -1094,7 +1161,7 @@ _dispatch_ci_repair_session() {
 	local pr_head_ref="$5"
 	local failure_fingerprint="$6"
 	local failing_checks="$7"
-	local repo_path="" helper="" state_root="" state_key="" lease_dir="" prompt_file="" session_key=""
+	local repo_path="" helper="" state_root="" state_key="" legacy_state_key="" lease_dir="" prompt_file="" session_key="" legacy_dir="" repo_hash=""
 	local lease_action=""
 	local max_attempts="${AIDEVOPS_CI_REPAIR_MAX_ATTEMPTS:-2}"
 	local attempt=""
@@ -1114,9 +1181,19 @@ _dispatch_ci_repair_session() {
 	[[ -x "$helper" ]] || return 1
 
 	state_root="${AIDEVOPS_CI_REPAIR_STATE_DIR:-${HOME}/.aidevops/.agent-workspace/ci-pr-repair}"
-	state_key=$(printf '%s-%s-%s-%s' "$repo_slug" "$pr_number" "$pr_head_sha" "$failure_fingerprint" | tr '/:' '__')
+	repo_hash=$(_ci_repair_hash_text "$repo_slug") || return 1
+	state_key="${repo_hash}-${pr_number}-${pr_head_sha}"
+	legacy_state_key=$(printf '%s-%s-%s' "$repo_slug" "$pr_number" "$pr_head_sha" | tr '/:' '__')
 	lease_dir="${state_root}/${state_key}"
-	session_key="ci-repair-${pr_number}-${pr_head_sha:0:12}-${failure_fingerprint:0:12}"
+	for legacy_dir in "${state_root}/${legacy_state_key}-"*; do
+		[[ -d "$legacy_dir" ]] || continue
+		if _ci_repair_legacy_lease_is_active "$legacy_dir" "$repo_slug" "$pr_number" "$pr_head_sha"; then
+			echo "[pulse-wrapper] _dispatch_ci_repair_session: legacy repair lease remains active for ${repo_slug} PR #${pr_number} head ${pr_head_sha}" >>"$LOGFILE"
+			_CI_REPAIR_DISPATCH_RESULT="$active_result"
+			return 0
+		fi
+	done
+	session_key=$(_ci_repair_session_key "$repo_slug" "$pr_number" "$pr_head_sha")
 	mkdir -p "$lease_dir" 2>/dev/null || return 1
 	lease_action=$(_ci_repair_claim_lease "$lease_dir" "$repo_slug" "$pr_number" "$pr_head_sha" \
 		"$failure_fingerprint" "$max_attempts" "$pr_head_ref" "$session_key") || return 1
@@ -1145,7 +1222,7 @@ _dispatch_ci_repair_session() {
 	if [[ -n "$worktree_path" && -d "$worktree_path" ]]; then
 		echo "[pulse-wrapper] _dispatch_ci_repair_session: resuming stale repair worktree ${worktree_path} for ${repo_slug} PR #${pr_number} attempt ${attempt}/${max_attempts}" >>"$LOGFILE"
 	else
-		worktree_path=$(_ci_repair_create_worktree "$repo_path" "$linked_issue" "$pr_number" "$pr_head_sha" \
+		worktree_path=$(_ci_repair_create_worktree "$repo_path" "$repo_slug" "$linked_issue" "$pr_number" "$pr_head_sha" \
 			"$pr_head_ref" "$failure_fingerprint" "$attempt") || worktree_path=""
 	fi
 	if [[ -z "$worktree_path" || ! -d "$worktree_path" ]]; then
