@@ -33,6 +33,9 @@ _HRW_REASON_WORKER_COMPLETE="worker_complete"
 _HRW_TELEMETRY_SUCCESS="success"
 _HRW_TELEMETRY_FAILED="failed"
 _HRW_TELEMETRY_DEFERRED="deferred"
+_HRW_REASON_DRAFT_CHECKPOINT="worker_draft_checkpoint"
+_HRW_EVENT_DEFERRED="worker.deferred"
+_HRW_PR_SCOPE_HEAD_ONLY="head-only"
 _HRW_SPOTLIGHT_MARKER=".metadata_never_index"
 
 # Defensive SCRIPT_DIR fallback (test harnesses may not set it)
@@ -546,13 +549,9 @@ _worker_produced_output() {
 	issue_number=$(printf '%s' "$session_key" | grep -oE '[0-9]+$' || true)
 	local repo_slug="${DISPATCH_REPO_SLUG:-}"
 	local pr_existence=""
-	if declare -F _pr_handoff_state_for_branch_or_issue >/dev/null 2>&1; then
-		local pr_handoff=""
-		pr_handoff=$(_pr_handoff_state_for_branch_or_issue "$branch_name" "$issue_number" "$repo_slug" "head-only")
-		if [[ "${pr_handoff%%|*}" == "draft" ]]; then
-			printf 'draft_checkpoint'
-			return 0
-		fi
+	if _worker_pr_is_draft_checkpoint "$branch_name" "$issue_number" "$repo_slug"; then
+		printf 'draft_checkpoint'
+		return 0
 	fi
 	pr_existence=$(_pr_exists_for_branch_or_issue "$branch_name" "$issue_number" "$repo_slug")
 	case "$pr_existence" in
@@ -569,6 +568,18 @@ _worker_produced_output() {
 	esac
 }
 
+_worker_pr_is_draft_checkpoint() {
+	local branch_name="$1"
+	local issue_number="$2"
+	local repo_slug="$3"
+	local pr_handoff=""
+
+	declare -F _pr_handoff_state_for_branch_or_issue >/dev/null 2>&1 || return 1
+	pr_handoff=$(_pr_handoff_state_for_branch_or_issue "$branch_name" "$issue_number" "$repo_slug" "$_HRW_PR_SCOPE_HEAD_ONLY")
+	[[ "${pr_handoff%%|*}" == "draft" ]] || return 1
+	return 0
+}
+
 #######################################
 # Preserve an incomplete draft checkpoint and move it to explicit escalation.
 # Args: $1=session key, $2=issue number, $3=repo slug, $4=branch, $5=PR number
@@ -580,13 +591,13 @@ _handle_worker_draft_checkpoint() {
 	local branch_name="$4"
 	local pr_number="$5"
 
-	print_info "[lifecycle] worker_draft_checkpoint session=${session_key} branch=${branch_name:-unknown} pr=${pr_number:-unknown}"
+	print_info "[lifecycle] ${_HRW_REASON_DRAFT_CHECKPOINT} session=${session_key} branch=${branch_name:-unknown} pr=${pr_number:-unknown}"
 	if [[ -n "$issue_number" && -n "$repo_slug" ]]; then
 		if gh issue edit "$issue_number" --repo "$repo_slug" \
 			--add-label "needs-maintainer-review" \
 			--remove-label "status:queued" \
 			--remove-label "status:in-progress" >/dev/null 2>&1; then
-			_release_dispatch_claim "$session_key" "worker_draft_checkpoint"
+			_release_dispatch_claim "$session_key" "$_HRW_REASON_DRAFT_CHECKPOINT"
 			return 0
 		fi
 		print_warning "[lifecycle] draft checkpoint escalation write failed; preserving claim session=${session_key}"
@@ -921,7 +932,7 @@ _recover_worker_output_on_failure() {
 		declare -F _pr_handoff_state_for_branch_or_issue >/dev/null 2>&1; then
 		local pr_handoff="unknown|"
 		if declare -F _pr_handoff_state_for_branch_or_issue >/dev/null 2>&1; then
-			pr_handoff=$(_pr_handoff_state_for_branch_or_issue "$branch_name" "$issue_number" "$repo_slug" "head-only")
+			pr_handoff=$(_pr_handoff_state_for_branch_or_issue "$branch_name" "$issue_number" "$repo_slug" "$_HRW_PR_SCOPE_HEAD_ONLY")
 		fi
 		local pr_state="${pr_handoff%%|*}"
 		local pr_number="${pr_handoff#*|}"
@@ -934,7 +945,7 @@ _recover_worker_output_on_failure() {
 			# A draft proves durability, not completion. Stop automatic dispatch so
 			# the incomplete exact-head checkpoint cannot race another implementation.
 			_handle_worker_draft_checkpoint "$session_key" "$issue_number" "$repo_slug" "$branch_name" "$pr_number"
-			_HRW_FAILURE_RECOVERY_CLASSIFICATION="worker_draft_checkpoint"
+			_HRW_FAILURE_RECOVERY_CLASSIFICATION="$_HRW_REASON_DRAFT_CHECKPOINT"
 			return 0
 		fi
 	fi
@@ -1259,12 +1270,13 @@ _hrw_finish_failed_run() {
 		_release_dispatch_claim "$session_key" "worker_failed"
 	fi
 	if [[ "$failure_recovered" -eq 1 ]]; then
-		_HRW_TERMINAL_OUTCOME="$_HRW_TELEMETRY_SUCCESS"
-		if [[ "${_HRW_FAILURE_RECOVERY_CLASSIFICATION:-}" == "worker_draft_checkpoint" ]]; then
-			_HRW_FINAL_RUNTIME_EVENT="worker.deferred"
+		if [[ "${_HRW_FAILURE_RECOVERY_CLASSIFICATION:-}" == "$_HRW_REASON_DRAFT_CHECKPOINT" ]]; then
+			_HRW_TERMINAL_OUTCOME="$_HRW_TELEMETRY_DEFERRED"
+			_HRW_FINAL_RUNTIME_EVENT="$_HRW_EVENT_DEFERRED"
 			_HRW_FINAL_RUNTIME_STATUS="escalated"
-			_HRW_FINAL_RUNTIME_CLASSIFICATION="worker_draft_checkpoint"
+			_HRW_FINAL_RUNTIME_CLASSIFICATION="$_HRW_REASON_DRAFT_CHECKPOINT"
 		else
+			_HRW_TERMINAL_OUTCOME="$_HRW_TELEMETRY_SUCCESS"
 			_HRW_FINAL_RUNTIME_EVENT="worker.completed"
 			_HRW_FINAL_RUNTIME_STATUS="recovered"
 			_HRW_FINAL_RUNTIME_CLASSIFICATION="$_HRW_REASON_WORKER_COMPLETE"
@@ -1376,12 +1388,12 @@ _hrw_finish_success_run() {
 			local draft_handoff="draft|"
 			draft_issue_number=$(printf '%s' "$session_key" | grep -oE '[0-9]+$' || true)
 			draft_branch_name=$(git -C "$work_dir" rev-parse --abbrev-ref HEAD 2>/dev/null || true)
-			draft_handoff=$(_pr_handoff_state_for_branch_or_issue "$draft_branch_name" "$draft_issue_number" "${DISPATCH_REPO_SLUG:-}" "head-only")
+			draft_handoff=$(_pr_handoff_state_for_branch_or_issue "$draft_branch_name" "$draft_issue_number" "${DISPATCH_REPO_SLUG:-}" "$_HRW_PR_SCOPE_HEAD_ONLY")
 			_handle_worker_draft_checkpoint "$session_key" "$draft_issue_number" "${DISPATCH_REPO_SLUG:-}" "$draft_branch_name" "${draft_handoff#*|}"
 			release_needed=0
-			_HRW_FINAL_RUNTIME_EVENT="worker.deferred"
+			_HRW_FINAL_RUNTIME_EVENT="$_HRW_EVENT_DEFERRED"
 			_HRW_FINAL_RUNTIME_STATUS="escalated"
-			_HRW_FINAL_RUNTIME_CLASSIFICATION="worker_draft_checkpoint"
+			_HRW_FINAL_RUNTIME_CLASSIFICATION="$_HRW_REASON_DRAFT_CHECKPOINT"
 			;;
 		esac
 	fi
@@ -1442,7 +1454,7 @@ _cmd_run_finish() {
 		_hrw_finish_failed_run "$session_key" "$work_dir"
 	elif [[ "$ledger_status" == "rate_limit_fast" ]]; then
 		_hrw_finish_rate_limit_fast_run "$session_key"
-		_HRW_FINAL_RUNTIME_EVENT="worker.deferred"
+		_HRW_FINAL_RUNTIME_EVENT="$_HRW_EVENT_DEFERRED"
 		_HRW_FINAL_RUNTIME_STATUS="rate_limit_fast"
 		_HRW_FINAL_RUNTIME_CLASSIFICATION="rate_limit"
 		_HRW_TERMINAL_OUTCOME="$_HRW_TELEMETRY_DEFERRED"
