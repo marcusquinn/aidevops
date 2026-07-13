@@ -596,6 +596,11 @@ check_targeted_tests() {
 		mapped_test=true
 		bash .agents/scripts/tests/test-lint-shell-portability.sh || exit_code=1
 	fi
+	if printf '%s\n' "$changed_files" | grep -Eq '^\.agents/scripts/full-loop-helper.*\.sh$|^\.agents/scripts/task-decompose-helper\.sh$|^\.agents/scripts/tests/test-full-loop-efficient-orchestration\.sh$|^\.agents/workflows/full-loop\.md$|^\.agents/reference/(agent-routing|observability)\.md$'; then
+		mapped_test=true
+		bash .agents/scripts/tests/test-full-loop-efficient-orchestration.sh || exit_code=1
+		bash .agents/scripts/tests/test-task-decompose.sh || exit_code=1
+	fi
 	if [[ "$mapped_test" == false ]]; then
 		print_success "Targeted tests: no mapped changed files"
 	fi
