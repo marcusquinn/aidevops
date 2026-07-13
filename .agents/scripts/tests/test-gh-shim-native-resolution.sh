@@ -33,7 +33,10 @@ mkdir -p \
 	"$TMP/repo/.agents/scripts" \
 	"$TMP/home/.aidevops/bin" \
 	"$TMP/native-linux" \
-	"$TMP/native-homebrew"
+	"$TMP/native-homebrew" \
+	"$TMP/fallback-tools" \
+	"$TMP/fallback-bin" \
+	"$TMP/fallback-native"
 
 for shim_path in \
 	"$TMP/runtime-bundles/old/agents/scripts/gh" \
@@ -51,6 +54,13 @@ exit 0
 EOF
 chmod +x "$TMP/native-linux/gh"
 cp "$TMP/native-linux/gh" "$TMP/native-homebrew/gh"
+cp "$TMP/native-linux/gh" "$TMP/fallback-native/gh"
+
+for tool in bash dirname readlink basename; do
+	tool_path=$(command -v "$tool")
+	ln -s "$tool_path" "$TMP/fallback-tools/$tool"
+done
+ln -s "$TMP/home/.aidevops/agents/scripts/gh" "$TMP/fallback-bin/gh"
 
 run_case() {
 	local name="$1"
@@ -97,6 +107,14 @@ if NATIVE_GH_LOG="$TMP/native.log" PATH="$TMP/runtime-bundles/old/agents/scripts
 	pass "Homebrew-style native fixture resolves after managed shim"
 else
 	fail "Homebrew-style native fixture was not resolved"
+fi
+
+: >"$TMP/native.log"
+if NATIVE_GH_LOG="$TMP/native.log" PATH="$TMP/fallback-tools:$TMP/fallback-bin:$TMP/fallback-native" \
+	"$TMP/runtime-bundles/old/agents/scripts/gh" --version && [[ $(wc -l <"$TMP/native.log" | tr -d ' ') -eq 1 ]]; then
+	pass "shell fallback resolves a symlinked managed shim without python3"
+else
+	fail "shell fallback selected a symlinked managed shim"
 fi
 
 : >"$TMP/native.log"

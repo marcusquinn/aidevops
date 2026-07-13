@@ -113,10 +113,16 @@ _shim_canonical_path() {
 	local candidate="$1"
 	local candidate_dir=""
 	local candidate_name=""
+	local link_dir=""
 	if command -v python3 >/dev/null 2>&1; then
 		python3 -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "$candidate" 2>/dev/null
 		return $?
 	fi
+	while [[ -L "$candidate" ]]; do
+		link_dir=$(cd "$(dirname "$candidate")" 2>/dev/null && pwd -P) || return 1
+		candidate=$(readlink "$candidate") || return 1
+		[[ "$candidate" == /* ]] || candidate="${link_dir}/${candidate}"
+	done
 	candidate_dir=$(cd "$(dirname "$candidate")" 2>/dev/null && pwd -P) || return 1
 	candidate_name=$(basename "$candidate")
 	printf '%s/%s\n' "$candidate_dir" "$candidate_name"
