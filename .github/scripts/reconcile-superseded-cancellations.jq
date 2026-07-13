@@ -1,15 +1,19 @@
 def run_key: [(.name // ""), (.app.slug // .app.name // "")];
 
+def current_runs: $current_run_documents[0] // [];
+
+def descendant_runs: $descendant_run_documents[0] // [];
+
 def successful_descendant($key):
   [
-    $descendant_runs[]
+    descendant_runs[]
     | select(run_key == $key)
     | select(.status == "completed" and .conclusion == "success")
   ]
   | last // null;
 
 [
-  $current_runs[]
+  current_runs[]
   | if .conclusion == "cancelled" then
       run_key as $key
       | successful_descendant($key) as $replacement

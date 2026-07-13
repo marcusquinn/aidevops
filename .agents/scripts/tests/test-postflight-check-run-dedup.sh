@@ -32,8 +32,8 @@ DESCENDANT_RUNS='[
   {"id":22,"name":"Security Validation","status":"completed","conclusion":"failure","app":{"slug":"github-actions"}}
 ]'
 RECONCILED=$(jq -cn \
-	--argjson current_runs "$CURRENT_RUNS" \
-	--argjson descendant_runs "$DESCENDANT_RUNS" \
+	--slurpfile current_run_documents <(printf '%s\n' "$CURRENT_RUNS") \
+	--slurpfile descendant_run_documents <(printf '%s\n' "$DESCENDANT_RUNS") \
 	-f "$RECONCILE_FILTER")
 
 jq -e '
@@ -43,6 +43,26 @@ jq -e '
 ' <<<"$RECONCILED" >/dev/null
 
 printf 'PASS: postflight accepts only cancelled checks superseded by descendant success\n'
+
+LARGE_TEXT=$(printf '%*s' 300000 '' | tr ' ' x)
+LARGE_CURRENT_RUNS=$(jq --rawfile output <(printf '%s' "$LARGE_TEXT") \
+	'.[0].output = {text: $output}' <<<"$CURRENT_RUNS")
+LARGE_RECONCILED=$(jq -cn \
+	--slurpfile current_run_documents <(printf '%s\n' "$LARGE_CURRENT_RUNS") \
+	--slurpfile descendant_run_documents <(printf '%s\n' "$DESCENDANT_RUNS") \
+	-f "$RECONCILE_FILTER")
+
+jq -e 'length == 3 and (.[0].output.text | length) == 300000' \
+	<<<"$LARGE_RECONCILED" >/dev/null
+
+if grep -Fq -- '--argjson current_runs' "${REPO_ROOT}/.github/workflows/postflight.yml"; then
+	printf 'FAIL: postflight passes check-run payloads through argv\n' >&2
+	exit 1
+fi
+
+grep -Fq -- '--slurpfile current_run_documents' "${REPO_ROOT}/.github/workflows/postflight.yml"
+
+printf 'PASS: postflight reconciliation avoids argv size limits\n'
 
 PAGINATED_RESPONSE=$(jq -cn '
   [
