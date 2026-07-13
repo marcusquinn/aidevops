@@ -38,13 +38,33 @@ fi
 
 save_state() {
 	local phase="$1" prompt="$2" pr_number="${3:-}" started_at="${4:-$(date -u '+%Y-%m-%dT%H:%M:%SZ')}"
+	local now
+	now="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+	local tmp_file="${STATE_FILE}.tmp.$$"
+	RUN_ID="${RUN_ID:-run-$(date -u '+%Y%m%dT%H%M%SZ')-$$}"
+	STATE_REVISION=$(( ${STATE_REVISION:-0} + 1 ))
 	mkdir -p "$STATE_DIR"
-	cat >"$STATE_FILE" <<EOF
+	cat >"$tmp_file" <<EOF
 ---
+schema_version: 2
 active: true
+run_id: "${RUN_ID}"
+state_revision: ${STATE_REVISION}
 phase: ${phase}
+phase_status: ${PHASE_STATUS:-initialized}
+phase_attempt: ${PHASE_ATTEMPT:-0}
+phase_started_at: "${PHASE_STARTED_AT:-}"
+phase_ended_at: "${PHASE_ENDED_AT:-}"
+next_action: "${NEXT_ACTION:-resume}"
+terminal_evidence: "${TERMINAL_EVIDENCE:-}"
+executor_status: ${EXECUTOR_STATUS:-initialized-only}
+executor_pid: "${EXECUTOR_PID:-}"
+heartbeat_at: "${HEARTBEAT_AT:-}"
+manual_resume_count: ${MANUAL_RESUME_COUNT:-0}
+reused_subagent_units: ${REUSED_SUBAGENT_UNITS:-0}
+duplicate_work_avoided: ${DUPLICATE_WORK_AVOIDED:-0}
 started_at: "${started_at}"
-updated_at: "$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+updated_at: "${now}"
 pr_number: "${pr_number}"
 max_task_iterations: ${MAX_TASK_ITERATIONS:-$DEFAULT_MAX_TASK_ITERATIONS}
 max_preflight_iterations: ${MAX_PREFLIGHT_ITERATIONS:-$DEFAULT_MAX_PREFLIGHT_ITERATIONS}
@@ -63,6 +83,25 @@ headless: ${HEADLESS:-false}
 
 ${prompt}
 EOF
+	mv "$tmp_file" "$STATE_FILE"
+	return 0
+}
+
+_full_loop_append_event() {
+	local event_type="$1"
+	local status="$2"
+	local event_file="${STATE_DIR}/full-loop-events.jsonl"
+	local now
+	now="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+	mkdir -p "$STATE_DIR" || return 0
+	if command -v jq >/dev/null 2>&1; then
+		jq -cn --arg event_type "$event_type" --arg run_id "${RUN_ID:-unknown}" \
+			--arg phase "${CURRENT_PHASE:-${PHASE:-unknown}}" --arg status "$status" \
+			--arg timestamp "$now" --argjson attempt "${PHASE_ATTEMPT:-0}" \
+			'{event_type:$event_type,run_id:$run_id,phase:$phase,status:$status,attempt:$attempt,timestamp:$timestamp}' \
+			>>"$event_file" 2>/dev/null || true
+	fi
+	return 0
 }
 
 load_state() {
@@ -71,6 +110,20 @@ load_state() {
 	# not abort when the state file is incomplete (missing fields are never set
 	# by the awk parse loop, leaving variables unbound).
 	PHASE=""
+	RUN_ID=""
+	STATE_REVISION="0"
+	PHASE_STATUS="initialized"
+	PHASE_ATTEMPT="0"
+	PHASE_STARTED_AT=""
+	PHASE_ENDED_AT=""
+	NEXT_ACTION="resume"
+	TERMINAL_EVIDENCE=""
+	EXECUTOR_STATUS="initialized-only"
+	EXECUTOR_PID=""
+	HEARTBEAT_AT=""
+	MANUAL_RESUME_COUNT="0"
+	REUSED_SUBAGENT_UNITS="0"
+	DUPLICATE_WORK_AVOIDED="0"
 	ACTIVE=""
 	ITERATION=""
 	STARTED_AT="unknown"
@@ -97,7 +150,9 @@ load_state() {
 		_val="${_line#*=}"
 		# Allowlist: only set known state variables
 		case "$_key" in
-		PHASE | ACTIVE | ITERATION | STARTED_AT | UPDATED_AT | \
+		PHASE | ACTIVE | ITERATION | STARTED_AT | UPDATED_AT | RUN_ID | STATE_REVISION | \
+			PHASE_STATUS | PHASE_ATTEMPT | PHASE_STARTED_AT | PHASE_ENDED_AT | NEXT_ACTION | TERMINAL_EVIDENCE | \
+			EXECUTOR_STATUS | EXECUTOR_PID | HEARTBEAT_AT | MANUAL_RESUME_COUNT | REUSED_SUBAGENT_UNITS | DUPLICATE_WORK_AVOIDED | \
 			MAX_TASK_ITERATIONS | MAX_PREFLIGHT_ITERATIONS | \
 			MAX_PR_ITERATIONS | SKIP_PREFLIGHT | SKIP_POSTFLIGHT | SKIP_RUNTIME_TESTING | \
 			NO_AUTO_PR | NO_AUTO_DEPLOY | RELEASE_INTENT | RELEASE_TYPE | DEPLOYMENT_SCOPE | RELEASE_STATUS | HEADLESS | PR_NUMBER)
@@ -590,12 +645,46 @@ _parse_start_options() {
 _launch_background() {
 	local prompt="$1"
 	mkdir -p "$STATE_DIR"
+	# The shell helper is a lifecycle coordinator, not an AI executor. Unless a
+	# runtime adapter explicitly supplies an executor, persist an honest
+	# initialized-only checkpoint instead of launching a child that prints one
+	# prompt, exits, and is then incorrectly reported as a running loop.
+	if [[ -z "${AIDEVOPS_FULL_LOOP_EXECUTOR:-}" ]]; then
+		EXECUTOR_STATUS="initialized-only"
+		EXECUTOR_PID=""
+		NEXT_ACTION="attach-executor-or-resume"
+		PHASE_STATUS="waiting"
+		save_state "task" "$prompt" "" "${STARTED_AT:-$(date -u '+%Y-%m-%dT%H:%M:%SZ')}"
+		_full_loop_append_event "executor.initialized" "initialized-only"
+		print_warning "Background loop initialized, but no executor was launched."
+		printf 'FULL_LOOP_START_RESULT=initialized-only\n'
+		return 0
+	fi
 	export AIDEVOPS_RELEASE_TYPE="$RELEASE_TYPE" AIDEVOPS_RELEASE_DEPLOY_SCOPE="$DEPLOYMENT_SCOPE"
 	export MAX_TASK_ITERATIONS MAX_PREFLIGHT_ITERATIONS MAX_PR_ITERATIONS
 	export SKIP_PREFLIGHT SKIP_POSTFLIGHT SKIP_RUNTIME_TESTING NO_AUTO_PR NO_AUTO_DEPLOY RELEASE_INTENT RELEASE_TYPE DEPLOYMENT_SCOPE RELEASE_STATUS FULL_LOOP_HEADLESS="$HEADLESS"
-	nohup "$0" _run_foreground "$prompt" >"${STATE_DIR}/full-loop.log" 2>&1 &
-	echo "$!" >"${STATE_DIR}/full-loop.pid"
-	print_success "Background loop started (PID: $!). Use 'status' or 'logs' to monitor."
+	nohup "$AIDEVOPS_FULL_LOOP_EXECUTOR" "$0" "$prompt" >"${STATE_DIR}/full-loop.log" 2>&1 &
+	EXECUTOR_PID="$!"
+	echo "$EXECUTOR_PID" >"${STATE_DIR}/full-loop.pid"
+	if kill -0 "$EXECUTOR_PID" 2>/dev/null; then
+		EXECUTOR_STATUS="running"
+		HEARTBEAT_AT="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+		NEXT_ACTION="monitor"
+		PHASE_STATUS="running"
+		save_state "task" "$prompt" "" "${STARTED_AT:-$(date -u '+%Y-%m-%dT%H:%M:%SZ')}"
+		_full_loop_append_event "executor.started" "running"
+		print_success "Background executor started (PID: ${EXECUTOR_PID}). Use 'status' or 'logs' to monitor."
+		printf 'FULL_LOOP_START_RESULT=running\n'
+		return 0
+	fi
+	EXECUTOR_STATUS="initialized-only"
+	EXECUTOR_PID=""
+	NEXT_ACTION="attach-executor-or-resume"
+	PHASE_STATUS="waiting"
+	save_state "task" "$prompt" "" "${STARTED_AT:-$(date -u '+%Y-%m-%dT%H:%M:%SZ')}"
+	_full_loop_append_event "executor.start_failed" "initialized-only"
+	print_warning "Background executor exited before liveness could be verified."
+	printf 'FULL_LOOP_START_RESULT=initialized-only\n'
 	return 0
 }
 
@@ -649,8 +738,14 @@ cmd_start() {
 		return 0
 	}
 
+	PHASE_STATUS="waiting"
+	PHASE_ATTEMPT=1
+	PHASE_STARTED_AT="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+	NEXT_ACTION="complete-task-development"
+	EXECUTOR_STATUS="initialized-only"
 	save_state "task" "$prompt"
 	SAVED_PROMPT="$prompt"
+	_full_loop_append_event "phase.started" "waiting"
 
 	if [[ "$_BACKGROUND" == "true" ]]; then
 		_launch_background "$prompt"
@@ -680,17 +775,35 @@ cmd_resume() {
 	}
 	load_state
 	print_info "Resuming from phase: $CURRENT_PHASE"
+	MANUAL_RESUME_COUNT=$((MANUAL_RESUME_COUNT + 1))
+	PHASE_STATUS="completed"
+	PHASE_ENDED_AT="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+	TERMINAL_EVIDENCE="manual-resume"
+	_full_loop_append_event "phase.completed" "completed"
 	local transition
 	transition=$(_next_phase "$CURRENT_PHASE") || {
 		print_error "Unknown phase: $CURRENT_PHASE"
 		return 1
 	}
 	local next_phase="${transition%% *}" emit_fn="${transition#* }"
+	PHASE_STATUS="running"
+	PHASE_ATTEMPT=1
+	PHASE_STARTED_AT="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+	PHASE_ENDED_AT=""
+	NEXT_ACTION="run-${next_phase}"
+	TERMINAL_EVIDENCE=""
 	save_state "$next_phase" "$SAVED_PROMPT" "${PR_NUMBER:-}" "$STARTED_AT"
 	CURRENT_PHASE="$next_phase"
+	_full_loop_append_event "phase.started" "running"
 	if ! "$emit_fn"; then
+		PHASE_STATUS="failed"
+		NEXT_ACTION="retry-${next_phase}"
+		_full_loop_append_event "phase.failed" "failed"
+		save_state "$next_phase" "$SAVED_PROMPT" "${PR_NUMBER:-}" "$STARTED_AT"
 		return 1
 	fi
+	PHASE_STATUS="waiting"
+	NEXT_ACTION="complete-${next_phase}"
 	save_state "$next_phase" "$SAVED_PROMPT" "${PR_NUMBER:-}" "$STARTED_AT"
 	return 0
 }
@@ -711,8 +824,24 @@ cmd_status() {
 		return 0
 	}
 	load_state
+	local observed_status="$EXECUTOR_STATUS"
+	if [[ "$observed_status" == "running" ]]; then
+		if [[ ! "$EXECUTOR_PID" =~ ^[0-9]+$ ]] || ! kill -0 "$EXECUTOR_PID" 2>/dev/null; then
+			observed_status="stale"
+		fi
+	fi
+	if [[ "${1:-}" == "--json" ]]; then
+		jq -cn --arg run_id "$RUN_ID" --arg phase "$CURRENT_PHASE" --arg phase_status "$PHASE_STATUS" \
+			--arg executor_status "$observed_status" --arg next_action "$NEXT_ACTION" --arg pr_number "${PR_NUMBER:-}" \
+			--argjson revision "$STATE_REVISION" --argjson attempts "$PHASE_ATTEMPT" --argjson manual_resumes "$MANUAL_RESUME_COUNT" \
+			'{run_id:$run_id,phase:$phase,phase_status:$phase_status,executor_status:$executor_status,next_action:$next_action,pr_number:$pr_number,state_revision:$revision,phase_attempts:$attempts,manual_resumes:$manual_resumes}'
+		return 0
+	fi
 	printf "\n${BOLD}Full Loop Status${NC}\nPhase: ${CYAN}%s${NC} | Started: %s | PR: %s | Headless: %s\nPrompt: %s\n\n" \
 		"$CURRENT_PHASE" "$STARTED_AT" "${PR_NUMBER:-none}" "$HEADLESS" "$(echo "$SAVED_PROMPT" | head -3)"
+	printf 'Executor: %s | Phase status: %s | Attempts: %s | Next: %s\n' \
+		"$observed_status" "$PHASE_STATUS" "$PHASE_ATTEMPT" "$NEXT_ACTION"
+	return 0
 }
 
 cmd_cancel() {
