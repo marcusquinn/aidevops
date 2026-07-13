@@ -238,6 +238,7 @@ export async function AidevopsPlugin({ directory, client }) {
   });
 
   const shellEnvHook = createShellEnvHook({
+    activeAgentsDir: ACTIVE_AGENTS_DIR,
     agentsDir: AGENTS_DIR,
     scriptsDir: SCRIPTS_DIR,
     workspaceDir: WORKSPACE_DIR,
@@ -329,11 +330,12 @@ export async function AidevopsPlugin({ directory, client }) {
     isHeadless,
   });
   const sessionTitleSuffixHandler = createSessionTitleSuffixHandler({
+    activeAgentsDir: ACTIVE_AGENTS_DIR,
     agentsDir: AGENTS_DIR,
     client,
   });
   const sessionTitleFallbackHandler = createSessionTitleFallbackHandler({
-    agentsDir: AGENTS_DIR,
+    agentsDir: ACTIVE_AGENTS_DIR,
     client,
   });
 

@@ -87,29 +87,25 @@ _sql_escape() {
 # Read the currently deployed aidevops version.
 # Output: version on stdout, or empty string if unavailable.
 _get_aidevops_version() {
+	local active_agents_dir="${AIDEVOPS_ACTIVE_AGENTS_DIR:-${HOME:-}/.aidevops/agents}"
+	local version_file="${active_agents_dir}/VERSION"
+	if [[ -f "$version_file" ]]; then
+		tr -d '[:space:]' <"$version_file"
+		return 0
+	fi
+
 	if [[ -n "${AIDEVOPS_VERSION:-}" ]]; then
 		printf '%s' "$AIDEVOPS_VERSION"
 		return 0
 	fi
 
-	local version_file="${SCRIPT_DIR}/../../VERSION"
+	version_file="${SCRIPT_DIR}/../../VERSION"
 	if [[ -f "$version_file" ]]; then
 		tr -d '[:space:]' <"$version_file"
 		return 0
 	fi
 
 	version_file="${SCRIPT_DIR}/../VERSION"
-	if [[ -f "$version_file" ]]; then
-		tr -d '[:space:]' <"$version_file"
-		return 0
-	fi
-
-	local home_dir="${HOME:-}"
-	if [[ -z "$home_dir" ]]; then
-		return 0
-	fi
-
-	version_file="${home_dir}/.aidevops/agents/VERSION"
 	if [[ -f "$version_file" ]]; then
 		tr -d '[:space:]' <"$version_file"
 		return 0

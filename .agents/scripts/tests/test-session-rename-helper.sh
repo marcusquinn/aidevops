@@ -69,6 +69,9 @@ setup_fixture() {
 	TMPDIR_ROOT="$(mktemp -d)"
 	REPO_DIR="${TMPDIR_ROOT}/fake-repo"
 	DB_PATH="${TMPDIR_ROOT}/opencode.db"
+	export AIDEVOPS_ACTIVE_AGENTS_DIR="${TMPDIR_ROOT}/active-agents"
+	mkdir -p "$AIDEVOPS_ACTIVE_AGENTS_DIR"
+	printf '%s\n' "9.8.7" >"${AIDEVOPS_ACTIVE_AGENTS_DIR}/VERSION"
 
 	# Create a minimal git repo so `git rev-parse --abbrev-ref HEAD` works.
 	mkdir -p "$REPO_DIR"
@@ -236,10 +239,20 @@ assert_eq "issue prefix preserved before suffix" "Issue #456: preserve prefix ·
 echo ""
 echo "Test 11: repo-root VERSION fallback works"
 seed_session "New Session"
-env -u AIDEVOPS_VERSION OPENCODE_DB="$DB_PATH" "$HELPER" rename "$SESSION_ID" "Issue #789: root version" >/dev/null 2>&1
+env -u AIDEVOPS_VERSION AIDEVOPS_ACTIVE_AGENTS_DIR="${TMPDIR_ROOT}/missing-agents" OPENCODE_DB="$DB_PATH" "$HELPER" rename "$SESSION_ID" "Issue #789: root version" >/dev/null 2>&1
 rc=$?
 assert_exit "exit 0 root version fallback" "0" "$rc"
 assert_eq "root VERSION suffix used" "Issue #789: root version · AIDevOps ${ROOT_VERSION}" "$(get_title)"
+
+# Test 12: live deployed VERSION wins over a stale process environment value.
+echo ""
+echo "Test 12: active deployed VERSION wins over stale environment"
+seed_session "New Session"
+printf '%s\n' "9.8.8" >"${AIDEVOPS_ACTIVE_AGENTS_DIR}/VERSION"
+AIDEVOPS_VERSION="9.8.7" OPENCODE_DB="$DB_PATH" "$HELPER" rename "$SESSION_ID" "Issue #790: deployed version" >/dev/null 2>&1
+rc=$?
+assert_exit "exit 0 deployed version precedence" "0" "$rc"
+assert_eq "active deployed version used" "Issue #790: deployed version · AIDevOps 9.8.8" "$(get_title)"
 
 # -----------------------------------------------------------------------------
 # Summary

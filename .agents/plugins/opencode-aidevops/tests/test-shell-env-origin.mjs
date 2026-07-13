@@ -168,6 +168,29 @@ test("shell env version prefers deployed agents VERSION over legacy version", as
   });
 });
 
+test("shell env version follows active deployment instead of pinned runtime bundle", async () => {
+  await withTempAgentsDir(async (activeAgentsDir) => {
+    const runtimeAgentsDir = join(activeAgentsDir, "..", "runtime-agents");
+    mkdirSync(runtimeAgentsDir);
+    writeFileSync(join(activeAgentsDir, "VERSION"), "3.20.103\n");
+    writeFileSync(join(runtimeAgentsDir, "VERSION"), "3.20.102\n");
+
+    const hook = createShellEnvHook({
+      activeAgentsDir,
+      agentsDir: runtimeAgentsDir,
+      scriptsDir: join(runtimeAgentsDir, "scripts"),
+      workspaceDir: "/tmp/aidevops-workspace",
+    });
+    const output = { env: { PATH: "/usr/bin:/bin", AIDEVOPS_VERSION: "3.20.101" } };
+
+    await hook({ sessionID: "interactive-session" }, output);
+
+    assert.equal(output.env.AIDEVOPS_ACTIVE_AGENTS_DIR, activeAgentsDir);
+    assert.equal(output.env.AIDEVOPS_AGENTS_DIR, runtimeAgentsDir);
+    assert.equal(output.env.AIDEVOPS_VERSION, "3.20.103");
+  });
+});
+
 test("shell env version uses precomputed dependency before filesystem fallbacks", async () => {
   await withTempAgentsDir(async (agentsDir) => {
     writeFileSync(join(agentsDir, "VERSION"), "3.20.102\n");

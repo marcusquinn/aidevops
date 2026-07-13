@@ -201,9 +201,26 @@ assertEq(
   "Fix title renaming · AIDevOps 9.8.7",
   withAidevopsTitleSuffix("[Image 1] Fix title renaming", "9.8.7"),
 );
-process.env.AIDEVOPS_VERSION = "7.6.5";
-assertEq("env version override is read", "7.6.5", getAidevopsVersion());
-delete process.env.AIDEVOPS_VERSION;
+const versionRoot = mkdtempSync(join(tmpdir(), "title-version-"));
+try {
+  const activeAgentsDir = join(versionRoot, "active-agents");
+  const missingAgentsDir = join(versionRoot, "missing-agents");
+  const { mkdirSync, writeFileSync } = await import("node:fs");
+  mkdirSync(activeAgentsDir);
+  writeFileSync(join(activeAgentsDir, "VERSION"), "7.6.6\n");
+  assertEq(
+    "active deployed version wins over stale env",
+    "7.6.6",
+    getAidevopsVersion({ AIDEVOPS_ACTIVE_AGENTS_DIR: activeAgentsDir, AIDEVOPS_VERSION: "7.6.5" }),
+  );
+  assertEq(
+    "env version remains a fallback",
+    "7.6.5",
+    getAidevopsVersion({ AIDEVOPS_ACTIVE_AGENTS_DIR: missingAgentsDir, AIDEVOPS_VERSION: "7.6.5" }),
+  );
+} finally {
+  rmSync(versionRoot, { recursive: true, force: true });
+}
 
 // --- OpenCode DB path helpers ------------------------------------------------
 console.log("\nGroup 5: OpenCode DB path helpers");

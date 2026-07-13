@@ -142,6 +142,7 @@ def build_profile_yaml(
     color: '{tab_colour}'
     id: {profile_id}
     group: {group_id}
+    disableDynamicTitle: false
     type: local"""
 
     return profile
@@ -327,6 +328,26 @@ def _profile_block_end(lines: list[str], start: int) -> int:
     return _block_end(lines, start, 2)
 
 
+def _enable_dynamic_title(profile_text: str) -> tuple[str, bool]:
+    """Allow OSC title updates for one aidevops-managed OpenCode profile."""
+    lines = profile_text.split("\n")
+    for index, line in enumerate(lines):
+        if re.match(r"^    disableDynamicTitle:\s*", line):
+            replacement = "    disableDynamicTitle: false"
+            if line == replacement:
+                return profile_text, False
+            lines[index] = replacement
+            return "\n".join(lines), True
+
+    insert_at = len(lines)
+    for index, line in enumerate(lines):
+        if re.match(r"^    type:\s*", line):
+            insert_at = index
+            break
+    lines.insert(insert_at, "    disableDynamicTitle: false")
+    return "\n".join(lines), True
+
+
 def _repair_broken_opencode_launch_profile_block(config_text: str) -> tuple[str, int]:
     """Repair fragile Tabby OpenCode launch profiles inside one profile block.
 
@@ -501,11 +522,11 @@ def repair_broken_opencode_launch_profiles(config_text: str) -> tuple[str, int]:
             i = block_end
             continue
 
-        repaired_block, repaired_count = _repair_broken_opencode_launch_profile_block(
-            "\n".join(profile_lines)
-        )
+        original_block = "\n".join(profile_lines)
+        repaired_block, repaired_count = _repair_broken_opencode_launch_profile_block(original_block)
+        repaired_block, dynamic_title_changed = _enable_dynamic_title(repaired_block)
         repaired.extend(repaired_block.split("\n"))
-        repairs += repaired_count
+        repairs += max(repaired_count, int(dynamic_title_changed))
         i = block_end
 
     return "\n".join(repaired), repairs

@@ -105,11 +105,11 @@ function shellSessionOrigin(env) {
 
 /**
  * Create the shell environment hook.
- * @param {object} deps - { agentsDir, scriptsDir, workspaceDir, version? }
+ * @param {object} deps - { activeAgentsDir?, agentsDir, scriptsDir, workspaceDir, version? }
  * @returns {Function} Shell env hook function
  */
 export function createShellEnvHook(deps) {
-  const { agentsDir = "", scriptsDir = "", workspaceDir = "", version } = deps || {};
+  const { activeAgentsDir = "", agentsDir = "", scriptsDir = "", workspaceDir = "", version } = deps || {};
   const precomputedVersion = typeof version === "string" ? version.trim() : "";
 
   /**
@@ -127,6 +127,7 @@ export function createShellEnvHook(deps) {
 
     // Set aidevops workspace directory
     output.env.AIDEVOPS_AGENTS_DIR = agentsDir;
+    if (hasAgentsDir(activeAgentsDir)) output.env.AIDEVOPS_ACTIVE_AGENTS_DIR = activeAgentsDir;
     output.env.AIDEVOPS_WORKSPACE_DIR = workspaceDir;
     const sessionOrigin = shellSessionOrigin(output.env);
     output.env.AIDEVOPS_SESSION_ORIGIN = sessionOrigin;
@@ -141,6 +142,7 @@ export function createShellEnvHook(deps) {
     // Set aidevops version if available. Prefer the deployed framework version
     // source; ~/.aidevops/version is a legacy/stale compatibility fallback.
     const version = precomputedVersion ||
+      (hasAgentsDir(activeAgentsDir) ? readIfExists(join(activeAgentsDir, "VERSION")) : "") ||
       (hasAgentsDir(agentsDir)
         ? readIfExists(join(agentsDir, "VERSION")) ||
           readIfExists(join(agentsDir, "..", "VERSION")) ||
