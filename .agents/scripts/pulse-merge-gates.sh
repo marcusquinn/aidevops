@@ -628,6 +628,31 @@ _approve_collaborator_runner_has_write() {
 }
 
 #######################################
+# Return the login for a trusted approval on the requested PR head.
+#
+# #aidevops:trust-boundary — GH#17671 defence-in-depth:
+# Never let an external review suppress the guarded pulse approval. GitHub's
+# author_association is returned in the same reviews response, avoiding a
+# per-reviewer permission lookup while restricting the shortcut to repository
+# owners, organisation members, and explicitly invited collaborators.
+#
+# Args: $1=repo_slug, $2=pr_number, $3=PR head SHA (optional)
+# Outputs: approver login, or an empty string
+# Returns: 0 (API failures fail open to the guarded approval path)
+#######################################
+_trusted_existing_approver() {
+	local repo_slug="$1"
+	local pr_number="$2"
+	local approval_head_sha="${3:-__any_head__}"
+	local existing_approver=""
+
+	existing_approver=$(gh api "repos/${repo_slug}/pulls/${pr_number}/reviews" \
+		--jq "[.[] | select(.state == \"APPROVED\" and (\"${approval_head_sha}\" == \"__any_head__\" or .commit_id == \"${approval_head_sha}\") and (.author_association == \"OWNER\" or .author_association == \"MEMBER\" or .author_association == \"COLLABORATOR\")) | .user.login][0] // \"\"" 2>/dev/null) || existing_approver=""
+	printf '%s\n' "$existing_approver"
+	return 0
+}
+
+#######################################
 # Auto-approve a collaborator's PR before merging (GH#10522, t1691)
 #
 # Branch protection requires required_approving_review_count=1.
@@ -638,13 +663,14 @@ _approve_collaborator_runner_has_write() {
 # confirmed the PR author is a collaborator (admin/maintain/write).
 # NEVER call this for external contributor PRs.
 #
-# Idempotent — if the PR already has an approving review from the
-# current user, this is a no-op (GitHub ignores duplicate approvals).
+# Idempotent — if the current head already has a trusted approving review,
+# this is a no-op across all pulse identities.
 #
 # Arguments:
 #   $1 - PR number
 #   $2 - repo slug (owner/repo)
 #   $3 - PR author login (for logging only)
+#   $4 - current PR head SHA (optional; callers should provide when available)
 #
 # Exit codes:
 #   0 - PR approved (or already approved)
@@ -655,13 +681,23 @@ approve_collaborator_pr() {
 	local pr_number="$1"
 	local repo_slug="$2"
 	local pr_author="${3:-unknown}"
+	local pr_head_sha="${4:-}"
 
 	if [[ -z "$pr_number" || -z "$repo_slug" ]]; then
 		echo "[pulse-wrapper] approve_collaborator_pr: missing arguments" >>"$LOGFILE"
 		return 2
 	fi
 
-	# Check if we already approved (avoid noisy duplicate approvals in the timeline)
+	# Check before identity/permission reads; the head match rejects stale reviews.
+	local existing_approver
+	existing_approver=$(_trusted_existing_approver "$repo_slug" "$pr_number" "$pr_head_sha")
+	if [[ -n "$existing_approver" ]]; then
+		echo "[pulse-wrapper] approve_collaborator_pr: PR #$pr_number in $repo_slug already has a trusted approval on ${pr_head_sha:-the active head} from $existing_approver — skipping" >>"$LOGFILE"
+		return 0
+	fi
+
+	# No trusted approval exists, so resolve and validate the pulse identity before
+	# creating one.
 	local current_user
 	current_user=$(gh api user --jq '.login' 2>/dev/null || echo "")
 
@@ -675,15 +711,6 @@ approve_collaborator_pr() {
 		fi
 
 		if ! _approve_collaborator_runner_has_write "$current_user" "$repo_slug"; then
-			return 0
-		fi
-
-		local existing_approval
-		existing_approval=$(gh api "repos/${repo_slug}/pulls/${pr_number}/reviews" \
-			--jq "[.[] | select(.user.login == \"${current_user}\" and .state == \"APPROVED\")] | length" 2>/dev/null || echo "0")
-
-		if [[ "$existing_approval" -gt 0 ]]; then
-			echo "[pulse-wrapper] approve_collaborator_pr: PR #$pr_number in $repo_slug already approved by $current_user — skipping" >>"$LOGFILE"
 			return 0
 		fi
 	fi

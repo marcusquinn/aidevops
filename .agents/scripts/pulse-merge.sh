@@ -1353,7 +1353,7 @@ _process_single_ready_pr() {
 	fi
 
 	# Approve (satisfies REVIEW_REQUIRED for collaborator PRs)
-	approve_collaborator_pr "$pr_number" "$repo_slug" "$pr_author" 2>/dev/null || true
+	approve_collaborator_pr "$pr_number" "$repo_slug" "$pr_author" "$pr_head_ref_oid" 2>/dev/null || true
 	[[ -n "$timing_prefix" ]] && _ruleset_start=$(_pmp_now_epoch)
 	if ! _check_ruleset_required_reviews_passing "$repo_slug" "$pr_number" "$pr_author"; then
 		[[ -n "$timing_prefix" ]] && _pmp_add_elapsed_seconds "${timing_prefix}ruleset_s" "$_ruleset_start"
