@@ -147,8 +147,8 @@ test_tier_telemetry_correlates_terminal_outcomes() {
 		--repo "owner/repo" --pid $$ --tier standard --model model-b --lease-token attempt-43
 	run_helper "$LEDGER_HELPER" record-outcome --session-key "issue-42" \
 		--lease-token attempt-42 --issue 42 --repo "owner/repo" --outcome success
-	# A later unrelated record must not hide the existing terminal outcome. jq -e
-	# reports only its final streamed result unless the JSONL input is slurped.
+	# Aggregate the streamed records so a later unrelated row cannot hide an
+	# existing terminal outcome for this attempt.
 	run_helper "$LEDGER_HELPER" register --session-key "issue-44" --issue 44 \
 		--repo "owner/repo" --pid $$ --tier standard --model model-c --lease-token attempt-44
 	# Repeated cleanup and a conflicting late event must not create or replace the
