@@ -442,28 +442,28 @@ _generate_commands_for_runtime() {
 	return 0
 }
 
-# Write a hardcoded command if not already present from auto-discovery.
-# Writes using the appropriate format for the given runtime.
+# Write a canonical hardcoded command using the appropriate runtime format.
+# These names are owned by the generator, so replace stale legacy output on
+# every uncached generation rather than preserving obsolete routing metadata.
 # Arguments:
 #   $1 - runtime_id
 #   $2 - cmd_dir
 #   $3 - command name
 #   $4 - description
 #   $5 - body content
-# Returns: 0 if written, 1 if skipped (already exists)
+#   $6 - OpenCode subtask flag (optional, defaults to true)
+# Returns: 0 when written
 _maybe_write_hardcoded_command() {
 	local runtime_id="$1"
 	local cmd_dir="$2"
 	local name="$3"
 	local description="$4"
 	local body="$5"
-
-	# Skip if already exists from auto-discovery
-	[[ -f "${cmd_dir}/${name}.md" ]] && return 1
+	local subtask="${6:-true}"
 
 	case "$runtime_id" in
 	opencode)
-		_write_opencode_command "$cmd_dir" "$name" "$description" "Build+" "true" "$body"
+		_write_opencode_command "$cmd_dir" "$name" "$description" "Build+" "$subtask" "$body"
 		;;
 	*)
 		_write_claude_command "$cmd_dir" "$name" "$description" "$body"
@@ -472,7 +472,7 @@ _maybe_write_hardcoded_command() {
 	return 0
 }
 
-# Generate quality/review hardcoded commands (agent-review, preflight, postflight).
+# Generate quality/review hardcoded commands.
 # Arguments: $1 - runtime_id, $2 - cmd_dir
 # Returns: count of generated commands via exit code
 _generate_hardcoded_quality_commands() {
@@ -496,6 +496,29 @@ If no specific file is provided, review the agents used in this session and prop
 5. Duplicate detection across agents
 
 Follow the improvement proposal format from the agent-review instructions.'; then
+		count=$((count + 1))
+	fi
+
+	# --- Issue / PR Review ---
+	# Opening-message reviews must remain in the primary conversation so the
+	# evidence trail and maintainer decisions stay visible in the parent session.
+	# shellcheck disable=SC2016
+	if _maybe_write_hardcoded_command "$runtime_id" "$cmd_dir" "review-issue-pr" \
+		"Review external issue or PR - validate problem and evaluate solution" \
+		'Read ~/.aidevops/agents/workflows/review-issue-pr.md and follow its instructions.
+
+Review this issue or PR: $ARGUMENTS
+
+**Usage:**
+- `/review-issue-pr 123` - Review issue or PR by number
+- `/review-issue-pr https://github.com/owner/repo/issues/123` - Review by URL
+- `/review-issue-pr https://github.com/owner/repo/pull/456` - Review PR by URL
+
+**Core questions to answer:**
+1. Is the issue real? (reproducible, not duplicate, actually a bug)
+2. Is this the best solution? (simplest approach, fixes root cause)
+3. Is the scope appropriate? (minimal changes, no scope creep)' \
+		"false"; then
 		count=$((count + 1))
 	fi
 
