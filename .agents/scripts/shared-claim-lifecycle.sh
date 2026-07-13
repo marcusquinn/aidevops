@@ -228,6 +228,72 @@ _pr_exists_for_branch_or_issue() {
 }
 
 #######################################
+# Resolve the lifecycle state of the PR for a worker branch or issue.
+#
+# Unlike _pr_exists_for_branch_or_issue, this helper preserves the distinction
+# between a durable draft checkpoint and a completed handoff. The live head
+# query remains primary so newly-created PRs are not hidden by search lag.
+#
+# Args: $1=branch name, $2=issue number, $3=repo slug
+# Output: "draft|N", "ready|N", "merged|N", "closed|N", "absent|", or
+#         "unknown|". Returns 0 always.
+#######################################
+_pr_handoff_state_for_branch_or_issue() {
+	local branch_name="$1"
+	local issue_number="$2"
+	local repo_slug="$3"
+	local pr_json=""
+	local pr_state=""
+	local queried=0
+
+	if [[ -z "$repo_slug" ]]; then
+		printf 'unknown|'
+		return 0
+	fi
+
+	if [[ -n "$branch_name" ]]; then
+		if pr_json=$(gh_pr_list --repo "$repo_slug" --head "$branch_name" --state all \
+			--limit 1 --json number,state,isDraft 2>/dev/null); then
+			queried=1
+			pr_state=$(printf '%s' "$pr_json" | jq -r '
+				.[0] | if . == null then ""
+				elif .state == "MERGED" then "merged|\(.number)"
+				elif .state == "CLOSED" then "closed|\(.number)"
+				elif (.isDraft // false) then "draft|\(.number)"
+				else "ready|\(.number)" end' 2>/dev/null || true)
+			if [[ -n "$pr_state" ]]; then
+				printf '%s' "$pr_state"
+				return 0
+			fi
+		fi
+	fi
+
+	if [[ -n "$issue_number" ]]; then
+		if pr_json=$(gh_pr_list --repo "$repo_slug" --search "$issue_number" --state all \
+			--limit 1 --json number,state,isDraft 2>/dev/null); then
+			queried=1
+			pr_state=$(printf '%s' "$pr_json" | jq -r '
+				.[0] | if . == null then ""
+				elif .state == "MERGED" then "merged|\(.number)"
+				elif .state == "CLOSED" then "closed|\(.number)"
+				elif (.isDraft // false) then "draft|\(.number)"
+				else "ready|\(.number)" end' 2>/dev/null || true)
+			if [[ -n "$pr_state" ]]; then
+				printf '%s' "$pr_state"
+				return 0
+			fi
+		fi
+	fi
+
+	if [[ "$queried" -eq 1 ]]; then
+		printf 'absent|'
+	else
+		printf 'unknown|'
+	fi
+	return 0
+}
+
+#######################################
 # _resolve_orphan_recovery_base_branch — PR base for orphan recovery.
 #
 # Prefers an explicit dispatch PR base, then repository configuration, over

@@ -884,11 +884,28 @@ _recover_worker_output_on_failure() {
 
 	if [[ -n "$repo_slug" && -n "$issue_number" && -n "$branch_name" && "$branch_name" != "$_HRW_GIT_HEAD" && "$branch_name" != "$default_branch" ]] && \
 		declare -F _pr_exists_for_branch_or_issue >/dev/null 2>&1; then
-		local pr_existence=""
-		pr_existence=$(_pr_exists_for_branch_or_issue "$branch_name" "$issue_number" "$repo_slug")
-		if [[ "$pr_existence" == "found" ]]; then
+		local pr_handoff="unknown|"
+		if declare -F _pr_handoff_state_for_branch_or_issue >/dev/null 2>&1; then
+			pr_handoff=$(_pr_handoff_state_for_branch_or_issue "$branch_name" "$issue_number" "$repo_slug")
+		fi
+		local pr_state="${pr_handoff%%|*}"
+		local pr_number="${pr_handoff#*|}"
+		if [[ "$pr_state" == "ready" || "$pr_state" == "merged" ]]; then
 			print_info "[lifecycle] worker_failure_recovered_existing_pr session=${session_key} branch=${branch_name}"
 			_release_dispatch_claim "$session_key" "$_HRW_REASON_WORKER_COMPLETE"
+			return 0
+		fi
+		if [[ "$pr_state" == "draft" ]]; then
+			print_info "[lifecycle] worker_failure_preserved_draft_checkpoint session=${session_key} branch=${branch_name} pr=${pr_number:-unknown}"
+			# A draft proves durability, not completion. Stop automatic dispatch so
+			# the incomplete exact-head checkpoint remains visible and cannot race a
+			# competing implementation. This is the bounded escalation state.
+			gh issue edit "$issue_number" --repo "$repo_slug" \
+				--add-label "needs-maintainer-review" \
+				--remove-label "status:queued" \
+				--remove-label "status:in-progress" >/dev/null 2>&1 || true
+			_release_dispatch_claim "$session_key" "worker_draft_checkpoint"
+			_HRW_FAILURE_RECOVERY_CLASSIFICATION="worker_draft_checkpoint"
 			return 0
 		fi
 	fi
@@ -1214,9 +1231,15 @@ _hrw_finish_failed_run() {
 	fi
 	if [[ "$failure_recovered" -eq 1 ]]; then
 		_HRW_TERMINAL_OUTCOME="$_HRW_TELEMETRY_SUCCESS"
-		_HRW_FINAL_RUNTIME_EVENT="worker.completed"
-		_HRW_FINAL_RUNTIME_STATUS="recovered"
-		_HRW_FINAL_RUNTIME_CLASSIFICATION="$_HRW_REASON_WORKER_COMPLETE"
+		if [[ "${_HRW_FAILURE_RECOVERY_CLASSIFICATION:-}" == "worker_draft_checkpoint" ]]; then
+			_HRW_FINAL_RUNTIME_EVENT="worker.deferred"
+			_HRW_FINAL_RUNTIME_STATUS="escalated"
+			_HRW_FINAL_RUNTIME_CLASSIFICATION="worker_draft_checkpoint"
+		else
+			_HRW_FINAL_RUNTIME_EVENT="worker.completed"
+			_HRW_FINAL_RUNTIME_STATUS="recovered"
+			_HRW_FINAL_RUNTIME_CLASSIFICATION="$_HRW_REASON_WORKER_COMPLETE"
+		fi
 	else
 		_HRW_TERMINAL_OUTCOME="$_HRW_TELEMETRY_FAILED"
 		_HRW_FINAL_RUNTIME_EVENT="worker.failed"

@@ -897,17 +897,17 @@ _worker_post_pr_handoff_confirmed() {
 	fi
 
 	local open_pr_safe_count
-	local safe_pr_jq='map(select(([.statusCheckRollup[]? | (.conclusion // .status // empty) | ascii_upcase] | any(. == "FAILURE" or . == "ERROR" or . == "CANCELLED" or . == "TIMED_OUT" or . == "ACTION_REQUIRED") | not))) | length'
+	local safe_pr_jq='map(select((.isDraft // false | not) and ([.statusCheckRollup[]? | (.conclusion // .status // empty) | ascii_upcase] | any(. == "FAILURE" or . == "ERROR" or . == "CANCELLED" or . == "TIMED_OUT" or . == "ACTION_REQUIRED") | not))) | length'
 	if [[ -n "$branch_name" ]]; then
 		open_pr_safe_count=$(gh pr list --repo "$repo_slug" --head "$branch_name" --state open \
-			--json number,statusCheckRollup --jq "$safe_pr_jq" 2>/dev/null || true)
+			--json number,isDraft,statusCheckRollup --jq "$safe_pr_jq" 2>/dev/null || true)
 		[[ "$open_pr_safe_count" =~ ^[0-9]+$ ]] || open_pr_safe_count=0
 		[[ "$open_pr_safe_count" -gt 0 ]] && return 0
 	fi
 
 	if [[ -n "$issue_number" ]]; then
 		open_pr_safe_count=$(gh pr list --repo "$repo_slug" --search "$issue_number" --state open \
-			--json number,statusCheckRollup --jq "$safe_pr_jq" 2>/dev/null || true)
+			--json number,isDraft,statusCheckRollup --jq "$safe_pr_jq" 2>/dev/null || true)
 		[[ "$open_pr_safe_count" =~ ^[0-9]+$ ]] || open_pr_safe_count=0
 		[[ "$open_pr_safe_count" -gt 0 ]] && return 0
 	fi
