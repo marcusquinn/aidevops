@@ -72,7 +72,7 @@ source "${SCRIPT_DIR}/issue-sync-lib-ref.sh"
 
 : >"$JQ_CALL_LOG"
 [[ "$(resolve_task_gh_number t101 "$TODO_FILE" owner/one)" == "42" ]]
-if [[ "$(wc -l <"$JQ_CALL_LOG")" != "2" ]]; then
+if [[ "$(wc -l <"$JQ_CALL_LOG" | tr -d ' ')" != "2" ]]; then
 	printf 'FAIL issue backfill did not parse fields with one jq process\n' >&2
 	exit 1
 fi

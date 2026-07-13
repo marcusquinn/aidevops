@@ -263,6 +263,7 @@ resolve_task_gh_number() {
 		grep -oE 'ref:GH#[0-9]+' | head -1 | sed 's/ref:GH#//' || echo "")
 	[[ "$ref" =~ ^[1-9][0-9]*$ ]] || return 1
 	issue_json=$(_gh_with_timeout read gh issue view "$ref" --repo "$repo" --json id,number,state,updatedAt 2>/dev/null || true)
+	[[ -n "$issue_json" ]] || return 1
 	if ! IFS=$'\034' read -r issue_id issue_number issue_state issue_cursor < <(
 		printf '%s' "$issue_json" | jq -r \
 			'[.id // "", (.number // "" | tostring), .state // "", .updatedAt // ""] | join("\u001c")'
