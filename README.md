@@ -2259,6 +2259,7 @@ Configure time tracking per-repo via `.aidevops.json`.
 |---------|---------|
 | `/add-skill` | Import external skills from GitHub repos (SKILL.md, AGENTS.md, .cursorrules) |
 | `/agent-review` | Analyze session and suggest agent improvements |
+| `/session-analysis` | Find evidence-backed harness, model-routing, and repository optimisation opportunities |
 | `/session-review` | Review session for completeness and capture learnings |
 | `/full-loop` | End-to-end development loop (task → preflight → PR → postflight → deploy) |
 | `/preflight-loop` | Run preflight checks iteratively until all pass |

@@ -97,25 +97,12 @@ Output: newly captured items with locations, already-captured items, unfinished 
 
 ### Step 6: Session Health Assessment
 
-Before assessing whether to end, run an evidence-based efficiency retrospective:
-
-```bash
-session-introspect-helper.sh patterns
-report-token-use-helper.sh --help
-rtk-helper.sh --adoption-report
-```
-
-Use only the commands relevant and available for the current runtime. Review:
-
-1. lifecycle friction (prompts, policy blocks, retries, duplicate work, manual steps, noisy waits, version drift);
-2. token-use mechanisms already active (narrow queries, RTK, caches, compaction, subagents, summaries) and whether each avoided work or caused fallback;
-3. comprehension safeguards (requirements retained, causal context understood, review and verification complete, no unexplained rediscovery);
-4. unexpected outliers, including useful or harmful behaviour outside known categories.
-
-Do not assign arbitrary problem thresholds or optimise for minimum tokens. Compare
-similar sessions/stages only when the comparison is meaningful. Output evidence,
-interpretation, trade-offs, and at most one deduplicated systemic recommendation
-per mechanism; route it through the existing self-improvement workflow.
+Before assessing whether to end, read and run
+`workflows/session-analysis.md` with focus `all`. Include its outcome baseline,
+shortest safe replay, model/reasoning fit, material harness and repository
+findings, and retained safeguards in the session review. Keep the analysis
+evidence-backed and route any deduplicated systemic candidate through
+`reference/self-improvement.md`.
 
 | Signal | Recommendation |
 |--------|----------------|
@@ -159,6 +146,7 @@ session-review-helper.sh gather --security     # Include in standard gather
 ## Related
 
 - `workflows/session-manager.md` - Session lifecycle management
+- `workflows/session-analysis.md` - Harness, model-routing, and observed-repository analysis
 - `tools/build-agent/agent-review.md` - Agent improvement process
 - `workflows/preflight.md` - Pre-commit quality checks
 - `workflows/postflight.md` - Post-release verification
