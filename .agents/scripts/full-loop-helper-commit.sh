@@ -48,11 +48,20 @@ _full_loop_persist_pr_check_evidence() {
 	command -v load_state >/dev/null 2>&1 || return 0
 	command -v save_state >/dev/null 2>&1 || return 0
 	[[ -f "${STATE_FILE:-}" ]] || return 0
-	load_state || return 1
+	command -v _full_loop_acquire_transition_lock >/dev/null 2>&1 || return 1
+	_full_loop_acquire_transition_lock || return 1
+	load_state || {
+		_full_loop_release_transition_lock
+		return 1
+	}
 	PR_CHECK_STATUS="$status"
 	PR_CHECK_HEAD="$head_sha"
 	PR_CHECK_EVIDENCE="$evidence"
-	save_state "${CURRENT_PHASE:-pr-review}" "$SAVED_PROMPT" "${PR_NUMBER:-}" "$STARTED_AT"
+	if ! save_state "${CURRENT_PHASE:-pr-review}" "$SAVED_PROMPT" "${PR_NUMBER:-}" "$STARTED_AT"; then
+		_full_loop_release_transition_lock
+		return 1
+	fi
+	_full_loop_release_transition_lock
 	return 0
 }
 
@@ -91,6 +100,15 @@ _full_loop_verify_pr_readiness() {
 		print_error "PR #${pr_number} required-check evidence is indeterminate (gh exit ${required_rc})"
 		return 1
 	fi
+	local post_checks_head=""
+	post_checks_head=$(gh pr view "$pr_number" --repo "$repo" --json headRefOid --jq '.headRefOid // empty' 2>/dev/null) || true
+	if [[ -z "$post_checks_head" || "$post_checks_head" != "$verified_head" ]]; then
+		FULL_LOOP_PR_CHECK_STATUS="indeterminate"
+		export FULL_LOOP_PR_CHECK_STATUS
+		_full_loop_persist_pr_check_evidence "$FULL_LOOP_PR_CHECK_STATUS" "$post_checks_head" "head-drift-during-check-query" || true
+		print_error "PR #${pr_number} head changed while required checks were queried; refresh exact-head evidence"
+		return 1
+	fi
 	local non_passing=""
 	non_passing=$(printf '%s' "$required_checks" | jq -c '[.[] | select((.bucket // "") != "pass")]')
 	if [[ "$(printf '%s' "$non_passing" | jq 'length')" -gt 0 ]]; then
@@ -112,7 +130,6 @@ _full_loop_verify_pr_readiness() {
 	fi
 	FULL_LOOP_PR_CHECK_STATUS="terminal-success"
 	export FULL_LOOP_PR_CHECK_STATUS
-	_full_loop_persist_pr_check_evidence "$FULL_LOOP_PR_CHECK_STATUS" "$verified_head" "required-checks-pass" || true
 	local pr_head_ref=""
 	pr_head_ref=$(printf '%s' "$pr_json" | jq -r '.headRefName // empty')
 	local local_branch=""
@@ -125,6 +142,7 @@ _full_loop_verify_pr_readiness() {
 			return 1
 		fi
 	fi
+	_full_loop_persist_pr_check_evidence "$FULL_LOOP_PR_CHECK_STATUS" "$verified_head" "required-checks-pass" || true
 
 	FULL_LOOP_VERIFIED_PR_HEAD_SHA="$verified_head"
 	export FULL_LOOP_VERIFIED_PR_HEAD_SHA

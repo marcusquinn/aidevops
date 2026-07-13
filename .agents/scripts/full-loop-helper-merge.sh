@@ -178,6 +178,7 @@ _merge_try_interactive_admin_auto_fallback() {
 	local repo="$2"
 	local merge_method="$3"
 	local merge_output="$4"
+	local expected_head_sha="$5"
 
 	[[ "$pr_number" =~ ^[0-9]+$ && -n "$repo" ]] || return 1
 	! _merge_is_headless_session || return 1
@@ -187,7 +188,7 @@ _merge_try_interactive_admin_auto_fallback() {
 	#aidevops:trust-boundary -- interactive admin fallback still enforces linked NMR crypto gate before bypassing review-count protection.
 	_merge_guard_admin_merge_maintainer_review "$pr_number" "$repo" || return 2
 	print_info "Auto-merge is blocked only by review-required branch policy/self-approval; interactive maintainer session is using --admin merge after gates passed."
-	if gh pr merge "$pr_number" --repo "$repo" "$merge_method" --admin 2>&1; then
+	if gh pr merge "$pr_number" --repo "$repo" "$merge_method" --admin --match-head-commit "$expected_head_sha" 2>&1; then
 		print_success "PR #${pr_number} merged with interactive --admin fallback"
 		_signal_admin_merge_fallback "$pr_number" "$repo" "$merge_method" "$merge_output"
 		return 0
@@ -407,6 +408,21 @@ _merge_rest_fallback() {
 #
 # Args: pr_number repo merge_method has_admin has_auto
 # Returns: 0 = merged or queued, 1 = failed
+_merge_resolve_match_head() {
+	local pr_number="$1"
+	local repo="$2"
+	local pre_merge_head_sha=""
+	pre_merge_head_sha=$(_merge_fetch_head_sha_rest "$pr_number" "$repo" || true)
+	if [[ -n "${FULL_LOOP_VERIFIED_PR_HEAD_SHA:-}" && "$pre_merge_head_sha" != "$FULL_LOOP_VERIFIED_PR_HEAD_SHA" ]]; then
+		print_error "PR #${pr_number} head changed after remote verification; refusing merge"
+		return 1
+	fi
+	local match_head_sha="${FULL_LOOP_VERIFIED_PR_HEAD_SHA:-$pre_merge_head_sha}"
+	[[ -n "$match_head_sha" ]] || return 1
+	printf '%s\n' "$match_head_sha"
+	return 0
+}
+
 _merge_execute() {
 	local pr_number="$1"
 	local repo="$2"
@@ -426,15 +442,12 @@ _merge_execute() {
 	[[ ${#merge_flags[@]} -gt 0 ]] && merge_desc+=" ${merge_flags[*]}"
 	print_info "Merging PR #${pr_number} in ${repo} (${merge_desc})..."
 
-	local pre_merge_head_sha=""
-	pre_merge_head_sha=$(_merge_fetch_head_sha_rest "$pr_number" "$repo" || true)
-	if [[ -n "${FULL_LOOP_VERIFIED_PR_HEAD_SHA:-}" && "$pre_merge_head_sha" != "$FULL_LOOP_VERIFIED_PR_HEAD_SHA" ]]; then
-		print_error "PR #${pr_number} head changed after remote verification; refusing merge"
+	local match_head_sha=""
+	match_head_sha=$(_merge_resolve_match_head "$pr_number" "$repo") || {
+		print_error "Cannot bind merge to a remotely verified PR head SHA"
 		return 1
-	fi
-	if [[ -z "$pre_merge_head_sha" && "$has_auto" -eq 0 ]]; then
-		print_warning "Could not verify PR head SHA before merge; REST rate-limit fallback will be unavailable"
-	fi
+	}
+	merge_flags+=("--match-head-commit" "$match_head_sha")
 
 	# Capture output AND exit code under set -e. A bare assignment `out=$(cmd)`
 	# triggers errexit before `rc=$?` is reached; the if-form keeps both available.
@@ -466,11 +479,11 @@ ${_merge_retry_out}"
 		# caller reached the merge execution stage (cmd_merge runs review-bot-gate
 		# first). Do not turn --auto into an immediate REST merge.
 		if [[ $has_auto -eq 0 ]] && _merge_output_is_graphql_rate_limit "$_merge_out"; then
-			_merge_rest_fallback "$pr_number" "$repo" "$merge_method" "$pre_merge_head_sha" && return 0
+			_merge_rest_fallback "$pr_number" "$repo" "$merge_method" "$match_head_sha" && return 0
 			return 1
 		elif [[ $has_admin -eq 0 && $has_auto -eq 1 ]]; then
 			local auto_admin_rc=0
-			_merge_try_interactive_admin_auto_fallback "$pr_number" "$repo" "$merge_method" "$_merge_out" || auto_admin_rc=$?
+			_merge_try_interactive_admin_auto_fallback "$pr_number" "$repo" "$merge_method" "$_merge_out" "$match_head_sha" || auto_admin_rc=$?
 			[[ "$auto_admin_rc" -eq 0 ]] && return 0
 			[[ "$auto_admin_rc" -eq 2 ]] && return 1
 			print_error "Merge failed for PR #${pr_number}"
@@ -480,7 +493,7 @@ ${_merge_retry_out}"
 			printf '%s' "$_merge_out" | grep -qE 'base branch policy prohibits|Required status checks? (is|are) expected|At least [0-9]+ approving review'; then
 			_merge_guard_admin_merge_maintainer_review "$pr_number" "$repo" || return 1
 			print_info "Branch protection blocked plain merge; retrying with --admin (workers share the maintainer's gh auth per GH#18538)..."
-			if gh pr merge "$pr_number" --repo "$repo" "$merge_method" --admin 2>&1; then
+			if gh pr merge "$pr_number" --repo "$repo" "$merge_method" --admin --match-head-commit "$match_head_sha" 2>&1; then
 				print_success "PR #${pr_number} merged with --admin fallback"
 				# t2247: Signal that admin-merge fallback was used — three artifacts:
 				# (a) PR comment with error context + remediation
@@ -890,8 +903,8 @@ cmd_merge() {
 	fi
 	print_success "LIFECYCLE_STATE=MERGED merge_sha=${FULL_LOOP_MERGE_SHA}"
 	_merge_report_canonical_sync_state "$_cleanup_plan" || true
-	if declare -F is_loop_active >/dev/null 2>&1 && is_loop_active && load_state; then
-		save_state "postflight" "$SAVED_PROMPT" "$pr_number" "$STARTED_AT"
+	if declare -F is_loop_active >/dev/null 2>&1 && is_loop_active; then
+		_full_loop_record_phase "postflight" "$pr_number" || return 1
 	fi
 	_merge_finalize_post_merge "$pr_number" "$repo" "$has_auto" "$_cleanup_plan"
 

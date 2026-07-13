@@ -52,11 +52,19 @@ load_state
 pass "background start never implies an unlaunched executor is running"
 
 _full_loop_acquire_transition_lock || fail "first transition lock acquisition failed"
-if _full_loop_acquire_transition_lock 2>/dev/null; then
-	fail "live transition lock permitted a concurrent transition"
-fi
+_full_loop_acquire_transition_lock || fail "re-entrant transition lock acquisition failed"
 _full_loop_release_transition_lock
-[[ ! -d "${STATE_DIR}/full-loop-transition.lock" ]] || fail "transition lock was not released"
+[[ -f "${STATE_DIR}/full-loop-transition.lock" ]] || fail "nested release dropped an outer transition lock"
+_full_loop_release_transition_lock
+[[ ! -e "${STATE_DIR}/full-loop-transition.lock" ]] || fail "transition lock was not released"
+printf '%s:%s:1\n' "$$" "$(date +%s)" >"${STATE_DIR}/full-loop-transition.lock"
+if _full_loop_acquire_transition_lock 2>/dev/null; then
+	fail "transition lock accepted a different live owner token"
+fi
+rm -f "${STATE_DIR}/full-loop-transition.lock"
+printf '999999:%s:1\n' "$(date +%s)" >"${STATE_DIR}/full-loop-transition.lock"
+_full_loop_acquire_transition_lock || fail "stale transition lock was not reclaimed"
+_full_loop_release_transition_lock
 pass "state transitions are protected by an ownership-aware lock"
 
 # shellcheck source=../task-decompose-helper.sh
@@ -70,6 +78,8 @@ cycle=$(extract_decompose_json '{"subtasks":[{"description":"A","owns":{"files":
 [[ -z "$cycle" ]] || fail "cyclic dependency graph was accepted"
 alias_path=$(extract_decompose_json '{"subtasks":[{"description":"A","owns":{"files":["src/a.sh"]},"blocked_by":[]},{"description":"B","owns":{"files":["./src/a.sh"]},"blocked_by":[]}],"strategy":"breadth-first"}' 5)
 [[ -z "$alias_path" ]] || fail "non-canonical ownership path was accepted"
+trailing_path=$(extract_decompose_json '{"subtasks":[{"description":"A","owns":{"files":["src/module/"]},"blocked_by":[]}],"strategy":"breadth-first"}' 5)
+[[ -z "$trailing_path" ]] || fail "trailing-slash ownership path was accepted"
 pass "session plan validates dependencies, tiers, and non-overlapping ownership"
 
 legacy_plan=$(
@@ -84,13 +94,21 @@ legacy_plan=$(
 )
 printf '%s' "$legacy_plan" | grep -q '"subtasks"' || fail "no-jq heuristic fallback emitted no plan"
 printf '%s' "$legacy_plan" | grep -q '"strategy":"breadth-first"' || fail "no-jq heuristic fallback omitted strategy"
+printf '%s' "$legacy_plan" | grep -q '"schema_version":1' || fail "no-jq heuristic fallback omitted schema version"
+printf '%s' "$legacy_plan" | grep -q '"owns":{"files":\[\],"questions":' || fail "no-jq heuristic fallback omitted ownership"
+printf '%s' "$legacy_plan" | grep -q '"reuse_key":"unit-1"' || fail "no-jq heuristic fallback omitted reuse key"
 pass "heuristic decomposition remains available without jq"
 
 # shellcheck source=../full-loop-helper-commit.sh
 source "${SCRIPTS_DIR}/full-loop-helper-commit.sh"
 CHECK_MODE="pending"
+POST_CHECK_HEAD="abc123"
 gh() {
 	if [[ "$1 $2" == "pr view" ]]; then
+		if printf '%s\n' "$*" | grep -q -- '--jq'; then
+			printf '%s\n' "$POST_CHECK_HEAD"
+			return 0
+		fi
 		printf '{"state":"OPEN","isDraft":false,"reviewDecision":"","headRefOid":"abc123","headRefName":"fixture-remote"}\n'
 		return 0
 	fi
@@ -120,7 +138,22 @@ _full_loop_verify_pr_readiness 42 owner/repo || fail "terminal success failed re
 [[ "$FULL_LOOP_PR_CHECK_STATUS" == "terminal-success" ]] || fail "terminal success was not classified"
 load_state
 [[ "$PR_CHECK_STATUS" == "terminal-success" && "$PR_CHECK_HEAD" == "abc123" ]] || fail "terminal success evidence was not persisted"
+POST_CHECK_HEAD="def456"
+_full_loop_verify_pr_readiness 42 owner/repo && fail "head drift during check query passed readiness"
+load_state
+[[ "$PR_CHECK_STATUS" == "indeterminate" && "$PR_CHECK_HEAD" == "def456" ]] || fail "head drift did not invalidate durable success evidence"
+POST_CHECK_HEAD="abc123"
 pass "PR convergence distinguishes pending, terminal failure, and exact-head success"
+
+EXECUTOR_STATUS="running"
+EXECUTOR_PID="$$"
+EXECUTOR_IDENTITY="bash"
+PHASE_STATUS="running"
+printf '%s %s\n' "$RUN_ID" '2020-01-01T00:00:00Z' >"${STATE_DIR}/full-loop.heartbeat"
+save_state "task" "fixture task"
+stale_status=$(cmd_status --json)
+printf '%s' "$stale_status" | jq -e '.executor_status == "stale" and .heartbeat_at == "2020-01-01T00:00:00Z"' >/dev/null || fail "stale heartbeat was reported as live"
+pass "executor status requires a fresh run-associated heartbeat"
 
 rm -f "$STATE_FILE"
 inactive_status=$(cmd_status --json)

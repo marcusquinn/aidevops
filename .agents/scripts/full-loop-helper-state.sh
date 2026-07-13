@@ -30,6 +30,8 @@ _FULL_LOOP_PHASE_FAILED="failed"
 _FULL_LOOP_PHASE_RUNNING="running"
 _FULL_LOOP_PHASE_WAITING="waiting"
 _FULL_LOOP_PHASE_TASK="task"
+FULL_LOOP_TRANSITION_LOCK_TOKEN=""
+FULL_LOOP_TRANSITION_LOCK_DEPTH=0
 
 # Defensive SCRIPT_DIR fallback
 if [[ -z "${SCRIPT_DIR:-}" ]]; then
@@ -677,14 +679,18 @@ _launch_background() {
 	export AIDEVOPS_RELEASE_TYPE="$RELEASE_TYPE" AIDEVOPS_RELEASE_DEPLOY_SCOPE="$DEPLOYMENT_SCOPE"
 	export MAX_TASK_ITERATIONS MAX_PREFLIGHT_ITERATIONS MAX_PR_ITERATIONS
 	export SKIP_PREFLIGHT SKIP_POSTFLIGHT SKIP_RUNTIME_TESTING NO_AUTO_PR NO_AUTO_DEPLOY RELEASE_INTENT RELEASE_TYPE DEPLOYMENT_SCOPE RELEASE_STATUS FULL_LOOP_HEADLESS="$HEADLESS"
+	local heartbeat_file="${STATE_DIR}/full-loop.heartbeat"
+	export AIDEVOPS_FULL_LOOP_RUN_ID="$RUN_ID"
+	export AIDEVOPS_FULL_LOOP_HEARTBEAT_FILE="$heartbeat_file"
 	nohup "$AIDEVOPS_FULL_LOOP_EXECUTOR" "$0" "$prompt" >"${STATE_DIR}/full-loop.log" 2>&1 &
 	EXECUTOR_PID="$!"
 	EXECUTOR_IDENTITY="${AIDEVOPS_FULL_LOOP_EXECUTOR##*/}"
 	echo "$EXECUTOR_PID" >"${STATE_DIR}/full-loop.pid"
-	local heartbeat_file="${STATE_DIR}/full-loop.heartbeat"
 	local handshake_attempt=0
+	local handshake_limit="${AIDEVOPS_FULL_LOOP_HANDSHAKE_ATTEMPTS:-100}"
+	[[ "$handshake_limit" =~ ^[1-9][0-9]*$ ]] || handshake_limit=100
 	local heartbeat_run=""
-	while [[ "$handshake_attempt" -lt 20 ]]; do
+	while [[ "$handshake_attempt" -lt "$handshake_limit" ]]; do
 		handshake_attempt=$((handshake_attempt + 1))
 		if [[ -f "$heartbeat_file" ]]; then
 			read -r heartbeat_run HEARTBEAT_AT <"$heartbeat_file" || true
@@ -716,39 +722,76 @@ _launch_background() {
 	return 0
 }
 
+_full_loop_iso_epoch() {
+	local timestamp="$1"
+	local epoch=""
+	epoch=$(date -j -u -f '%Y-%m-%dT%H:%M:%SZ' "$timestamp" '+%s' 2>/dev/null || true)
+	if [[ -z "$epoch" ]]; then
+		epoch=$(date -u -d "$timestamp" '+%s' 2>/dev/null || true)
+	fi
+	[[ "$epoch" =~ ^[0-9]+$ ]] || return 1
+	printf '%s\n' "$epoch"
+	return 0
+}
+
 _full_loop_acquire_transition_lock() {
-	local lock_dir="${STATE_DIR}/full-loop-transition.lock"
-	local owner_file="${lock_dir}/pid"
-	if mkdir "$lock_dir" 2>/dev/null; then
-		printf '%s\n' "$$" >"$owner_file"
-		return 0
+	local lock_file="${STATE_DIR}/full-loop-transition.lock"
+	local reclaim_dir="${lock_file}.reclaim"
+	local current_token=""
+	if [[ -n "$FULL_LOOP_TRANSITION_LOCK_TOKEN" && -f "$lock_file" ]]; then
+		current_token=$(<"$lock_file")
+		if [[ "$current_token" == "$FULL_LOOP_TRANSITION_LOCK_TOKEN" ]]; then
+			FULL_LOOP_TRANSITION_LOCK_DEPTH=$((FULL_LOOP_TRANSITION_LOCK_DEPTH + 1))
+			return 0
+		fi
 	fi
-	local owner_pid=""
-	[[ -f "$owner_file" ]] && owner_pid=$(<"$owner_file")
-	if [[ "$owner_pid" =~ ^[0-9]+$ ]] && kill -0 "$owner_pid" 2>/dev/null; then
-		print_error "Another lifecycle transition owns the full-loop state lock (PID: ${owner_pid})"
-		return 1
-	fi
-	rm -f "$owner_file"
-	rmdir "$lock_dir" 2>/dev/null || return 1
-	if mkdir "$lock_dir" 2>/dev/null; then
-		printf '%s\n' "$$" >"$owner_file"
-		return 0
-	fi
+	mkdir -p "$STATE_DIR" || return 1
+	local attempt=0 candidate="" token="" owner_pid=""
+	while [[ "$attempt" -lt 2 ]]; do
+		attempt=$((attempt + 1))
+		candidate=$(mktemp "${STATE_DIR}/.full-loop-transition.XXXXXX") || return 1
+		token="$$:$(date +%s):${RANDOM}"
+		printf '%s\n' "$token" >"$candidate"
+		if ln "$candidate" "$lock_file" 2>/dev/null; then
+			rm -f "$candidate"
+			FULL_LOOP_TRANSITION_LOCK_TOKEN="$token"
+			FULL_LOOP_TRANSITION_LOCK_DEPTH=1
+			return 0
+		fi
+		rm -f "$candidate"
+		current_token=$(cat "$lock_file" 2>/dev/null || true)
+		owner_pid=${current_token%%:*}
+		if [[ "$current_token" =~ ^[0-9]+:[0-9]+:[0-9]+$ ]] && kill -0 "$owner_pid" 2>/dev/null; then
+			print_error "Another lifecycle transition owns the full-loop state lock (PID: ${owner_pid})"
+			return 1
+		fi
+		mkdir "$reclaim_dir" 2>/dev/null || return 1
+		if [[ "$(cat "$lock_file" 2>/dev/null || true)" == "$current_token" ]]; then
+			rm -f "$lock_file"
+		fi
+		rmdir "$reclaim_dir" 2>/dev/null || true
+	done
 	print_error "Could not acquire the full-loop state transition lock"
 	return 1
 }
 
 _full_loop_release_transition_lock() {
-	local lock_dir="${STATE_DIR}/full-loop-transition.lock"
-	rm -f "${lock_dir}/pid"
-	rmdir "$lock_dir" 2>/dev/null || true
+	local lock_file="${STATE_DIR}/full-loop-transition.lock"
+	[[ "$FULL_LOOP_TRANSITION_LOCK_DEPTH" -gt 0 ]] || return 0
+	FULL_LOOP_TRANSITION_LOCK_DEPTH=$((FULL_LOOP_TRANSITION_LOCK_DEPTH - 1))
+	[[ "$FULL_LOOP_TRANSITION_LOCK_DEPTH" -eq 0 ]] || return 0
+	local current_token=""
+	[[ -f "$lock_file" ]] && current_token=$(<"$lock_file")
+	if [[ -n "$FULL_LOOP_TRANSITION_LOCK_TOKEN" && "$current_token" == "$FULL_LOOP_TRANSITION_LOCK_TOKEN" ]]; then
+		rm -f "$lock_file"
+	fi
+	FULL_LOOP_TRANSITION_LOCK_TOKEN=""
 	return 0
 }
 
 # --- Lifecycle Commands ---
 
-cmd_start() {
+_cmd_start_locked() {
 	local prompt="$1"
 	shift
 
@@ -812,6 +855,14 @@ cmd_start() {
 	emit_task_phase "$prompt"
 }
 
+cmd_start() {
+	_full_loop_acquire_transition_lock || return 1
+	local status=0
+	_cmd_start_locked "$@" || status=$?
+	_full_loop_release_transition_lock
+	return "$status"
+}
+
 # Phase transition map: current -> next phase + emit function
 _next_phase() {
 	case "$1" in
@@ -873,14 +924,29 @@ cmd_resume() {
 	return 0
 }
 
-_full_loop_record_merged_pr() {
-	local pr_number="$1"
+_full_loop_record_phase() {
+	local phase="$1"
+	local pr_number="$2"
 	[[ "$pr_number" =~ ^[0-9]+$ ]] || return 1
 	[[ -f "$STATE_FILE" ]] || return 0
-	load_state || return 1
+	_full_loop_acquire_transition_lock || return 1
+	load_state || {
+		_full_loop_release_transition_lock
+		return 1
+	}
 	PR_NUMBER="$pr_number"
-	save_state "pr-review" "$SAVED_PROMPT" "$PR_NUMBER" "$STARTED_AT"
+	if ! save_state "$phase" "$SAVED_PROMPT" "$PR_NUMBER" "$STARTED_AT"; then
+		_full_loop_release_transition_lock
+		return 1
+	fi
+	_full_loop_release_transition_lock
 	return 0
+}
+
+_full_loop_record_merged_pr() {
+	local pr_number="$1"
+	_full_loop_record_phase "pr-review" "$pr_number"
+	return $?
 }
 
 cmd_status() {
@@ -898,18 +964,24 @@ cmd_status() {
 		local observed_command=""
 		local heartbeat_file="${STATE_DIR}/full-loop.heartbeat"
 		local heartbeat_run="" heartbeat_timestamp=""
+		local heartbeat_epoch=0 now_epoch=0 max_heartbeat_age="${AIDEVOPS_FULL_LOOP_HEARTBEAT_MAX_AGE_SECONDS:-120}"
 		[[ -f "$heartbeat_file" ]] && read -r heartbeat_run heartbeat_timestamp <"$heartbeat_file" || true
+		heartbeat_epoch=$(_full_loop_iso_epoch "$heartbeat_timestamp" 2>/dev/null || printf '0')
+		now_epoch=$(date +%s)
+		[[ "$max_heartbeat_age" =~ ^[1-9][0-9]*$ ]] || max_heartbeat_age=120
 		[[ "$EXECUTOR_PID" =~ ^[0-9]+$ ]] && observed_command=$(ps -p "$EXECUTOR_PID" -o command= 2>/dev/null || true)
 		if [[ ! "$EXECUTOR_PID" =~ ^[0-9]+$ ]] || ! kill -0 "$EXECUTOR_PID" 2>/dev/null || \
-			[[ -z "$EXECUTOR_IDENTITY" || "$observed_command" != *"$EXECUTOR_IDENTITY"* || "$heartbeat_run" != "$RUN_ID" ]]; then
+			[[ -z "$EXECUTOR_IDENTITY" || "$observed_command" != *"$EXECUTOR_IDENTITY"* || "$heartbeat_run" != "$RUN_ID" ]] || \
+			[[ "$heartbeat_epoch" -eq 0 || $((now_epoch - heartbeat_epoch)) -gt "$max_heartbeat_age" ]]; then
 			observed_status="stale"
 		fi
 	fi
 	if [[ "${1:-}" == "--json" ]]; then
 		jq -cn --arg run_id "$RUN_ID" --arg phase "$CURRENT_PHASE" --arg phase_status "$PHASE_STATUS" \
 			--arg executor_status "$observed_status" --arg next_action "$NEXT_ACTION" --arg pr_number "${PR_NUMBER:-}" \
+			--arg heartbeat_at "${heartbeat_timestamp:-${HEARTBEAT_AT:-}}" \
 			--argjson revision "$STATE_REVISION" --argjson attempts "$PHASE_ATTEMPT" --argjson manual_resumes "$MANUAL_RESUME_COUNT" \
-			'{run_id:$run_id,phase:$phase,phase_status:$phase_status,executor_status:$executor_status,next_action:$next_action,pr_number:$pr_number,state_revision:$revision,phase_attempts:$attempts,manual_resumes:$manual_resumes}'
+			'{run_id:$run_id,phase:$phase,phase_status:$phase_status,executor_status:$executor_status,heartbeat_at:$heartbeat_at,next_action:$next_action,pr_number:$pr_number,state_revision:$revision,phase_attempts:$attempts,manual_resumes:$manual_resumes}'
 		return 0
 	fi
 	printf "\n${BOLD}Full Loop Status${NC}\nPhase: ${CYAN}%s${NC} | Started: %s | PR: %s | Headless: %s\nPrompt: %s\n\n" \
@@ -919,7 +991,7 @@ cmd_status() {
 	return 0
 }
 
-cmd_cancel() {
+_cmd_cancel_locked() {
 	is_loop_active || {
 		print_warning "No active loop to cancel"
 		return 0
@@ -937,6 +1009,15 @@ cmd_cancel() {
 	fi
 	rm -f "$STATE_FILE" ".agents/loop-state/ralph-loop.local.state" ".agents/loop-state/quality-loop.local.state" 2>/dev/null
 	print_success "Full loop cancelled"
+	return 0
+}
+
+cmd_cancel() {
+	_full_loop_acquire_transition_lock || return 1
+	local status=0
+	_cmd_cancel_locked "$@" || status=$?
+	_full_loop_release_transition_lock
+	return "$status"
 }
 
 cmd_logs() {

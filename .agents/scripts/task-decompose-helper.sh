@@ -42,11 +42,21 @@ readonly AI_HELPER="${SCRIPT_DIR}/ai-research-helper.sh"
 readonly DECOMPOSE_FALSE="false"
 readonly DECOMPOSE_BREADTH="breadth-first"
 readonly DECOMPOSE_STANDARD="standard"
+readonly DECOMPOSE_ATOMIC="atomic"
+readonly DECOMPOSE_COMPOSITE="composite"
 readonly DECOMPOSE_KIND_KEY="kind"
 readonly DECOMPOSE_DESCRIPTION_KEY="description"
 readonly DECOMPOSE_BLOCKED_KEY="blocked_by"
 # DECOMPOSE_NO_LLM or legacy DECOMPOSE_TEST_NO_LLM disables LLM calls (for testing)
 readonly NO_LLM="${DECOMPOSE_NO_LLM:-${DECOMPOSE_TEST_NO_LLM:-false}}"
+
+_decompose_classification_json() {
+	local kind="$1"
+	local confidence="$2"
+	local reasoning="$3"
+	printf '{"kind":"%s","confidence":%s,"reasoning":"%s"}\n' "$kind" "$confidence" "$reasoning"
+	return 0
+}
 
 #######################################
 # Check if LLM calls are available and enabled
@@ -226,14 +236,14 @@ cmd_classify() {
 		local has_children
 		has_children=$(check_existing_subtasks "$task_id" "$todo_file")
 		if [[ "$has_children" == "true" ]]; then
-			echo '{"kind": "atomic", "confidence": 1.0, "reasoning": "Task already has subtasks in TODO.md — skip re-decomposition"}'
+			_decompose_classification_json "$DECOMPOSE_ATOMIC" "1.0" "Task already has subtasks in TODO.md — skip re-decomposition"
 			return 0
 		fi
 	fi
 
 	# Fast-path: depth 2+ is almost certainly atomic
 	if [[ "$depth" -ge 2 ]]; then
-		echo '{"kind": "atomic", "confidence": 0.9, "reasoning": "Depth >= 2, biased toward atomic per decomposition rules"}'
+		_decompose_classification_json "$DECOMPOSE_ATOMIC" "0.9" "Depth >= 2, biased toward atomic per decomposition rules"
 		return 0
 	fi
 
@@ -280,7 +290,7 @@ extract_classify_json() {
 	if [[ -n "$json_result" ]]; then
 		local kind
 		kind=$(echo "$json_result" | sed -n 's/.*"kind"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
-		if [[ "$kind" == "atomic" || "$kind" == "composite" ]]; then
+		if [[ "$kind" == "$DECOMPOSE_ATOMIC" || "$kind" == "$DECOMPOSE_COMPOSITE" ]]; then
 			echo "$json_result"
 			return 0
 		fi
@@ -289,11 +299,11 @@ extract_classify_json() {
 	# Try 2: extract kind from freeform response
 	local lower_result
 	lower_result=$(echo "$response" | tr '[:upper:]' '[:lower:]')
-	if echo "$lower_result" | grep -q "composite"; then
-		echo '{"kind": "composite", "confidence": 0.7, "reasoning": "LLM indicated composite (parsed from freeform response)"}'
+	if echo "$lower_result" | grep -q "$DECOMPOSE_COMPOSITE"; then
+		_decompose_classification_json "$DECOMPOSE_COMPOSITE" "0.7" "LLM indicated composite (parsed from freeform response)"
 		return 0
-	elif echo "$lower_result" | grep -q "atomic"; then
-		echo '{"kind": "atomic", "confidence": 0.7, "reasoning": "LLM indicated atomic (parsed from freeform response)"}'
+	elif echo "$lower_result" | grep -q "$DECOMPOSE_ATOMIC"; then
+		_decompose_classification_json "$DECOMPOSE_ATOMIC" "0.7" "LLM indicated atomic (parsed from freeform response)"
 		return 0
 	fi
 
@@ -318,7 +328,7 @@ heuristic_classify() {
 
 	# At depth 2+, always atomic
 	if [[ "$depth" -ge 2 ]]; then
-		echo '{"kind": "atomic", "confidence": 0.9, "reasoning": "Heuristic: depth >= 2, biased toward atomic"}'
+		_decompose_classification_json "$DECOMPOSE_ATOMIC" "0.9" "Heuristic: depth >= 2, biased toward atomic"
 		return 0
 	fi
 
@@ -364,9 +374,9 @@ heuristic_classify() {
 	fi
 
 	if [[ "$composite_signals" -ge 2 ]]; then
-		echo '{"kind": "composite", "confidence": 0.5, "reasoning": "Heuristic: multiple composite signals detected (commas, ands, multi-feature keywords)"}'
+		_decompose_classification_json "$DECOMPOSE_COMPOSITE" "0.5" "Heuristic: multiple composite signals detected (commas, ands, multi-feature keywords)"
 	else
-		echo '{"kind": "atomic", "confidence": 0.6, "reasoning": "Heuristic: few composite signals, defaulting to atomic"}'
+		_decompose_classification_json "$DECOMPOSE_ATOMIC" "0.6" "Heuristic: few composite signals, defaulting to atomic"
 	fi
 	return 0
 }
@@ -646,6 +656,7 @@ if match:
 			and ([.subtasks | to_entries[] | .key as $i | .value.blocked_by[] | select((type != "number") or . < 0 or . >= $n or . == $i)] | length) == 0
 			and all(.subtasks[]; ((.owns.files | length) + (.owns.questions | length)) > 0)
 			and all(.subtasks[].owns.files[]; type == "string" and length > 0 and (startswith("/") | not)
+				and (endswith("/") | not) and (contains("\\") | not)
 				and (test("(^|/)\\.{1,2}(/|$)") | not) and (contains("//") | not))
 			and ([range(0; $n) as $i | range($i + 1; $n) as $j
 				| select((([$plan.subtasks[$i].owns.files[]] - ([$plan.subtasks[$i].owns.files[]] - [$plan.subtasks[$j].owns.files[]])) | length) > 0)
@@ -703,10 +714,11 @@ heuristic_decompose() {
 
 	# Build JSON output
 	if ! command -v jq >/dev/null 2>&1; then
-		local legacy_json='{"subtasks":[' legacy_separator="" legacy_item=""
+		local legacy_json='{"schema_version":1,"max_parallel":2,"subtasks":[' legacy_separator="" legacy_item="" legacy_index=0
 		for st in "${subtasks[@]}"; do
+			legacy_index=$((legacy_index + 1))
 			legacy_item=$(printf '%s' "$st" | sed 's/\\/\\\\/g; s/"/\\"/g')
-			legacy_json="${legacy_json}${legacy_separator}{\"${DECOMPOSE_DESCRIPTION_KEY}\":\"${legacy_item}\",\"${DECOMPOSE_BLOCKED_KEY}\":[]}"
+			legacy_json="${legacy_json}${legacy_separator}{\"id\":\"unit-${legacy_index}\",\"kind\":\"implementation\",\"${DECOMPOSE_DESCRIPTION_KEY}\":\"${legacy_item}\",\"effort\":\"${DECOMPOSE_STANDARD}\",\"owns\":{\"files\":[],\"questions\":[\"${legacy_item}\"]},\"${DECOMPOSE_BLOCKED_KEY}\":[],\"reuse_key\":\"unit-${legacy_index}\"}"
 			legacy_separator=","
 		done
 		printf '%s],"strategy":"%s"}\n' "$legacy_json" "$DECOMPOSE_BREADTH"
@@ -830,7 +842,7 @@ format_lineage_block() {
 # Returns: 0 if all checks pass, 1 if any fail
 #######################################
 format_lineage_self_test() {
-	local parent="Build a CRM with contacts, deals, and email"
+	local parent='Build a CRM with contacts, deals, and email'
 	local children='[{"description": "Implement contact management module"}, {"description": "Implement deal pipeline module"}, {"description": "Implement email integration module"}]'
 	local current=1
 
@@ -968,21 +980,21 @@ Examples:
   # Output: {"kind": "atomic", "confidence": 0.9, ...}
 
   # Classify with TODO.md context (skips already-decomposed tasks)
-  task-decompose-helper.sh classify "Build CRM" --task-id t1408 --todo-file ./TODO.md
+  task-decompose-helper.sh classify 'Build CRM' --task-id t1408 --todo-file ./TODO.md
 
   # Classify with lineage context
-  task-decompose-helper.sh classify "Implement deal pipeline" --lineage '{"parent": "Build CRM"}'
+  task-decompose-helper.sh classify 'Implement deal pipeline' --lineage '{"parent": "Build CRM"}'
 
   # Decompose a composite task
-  task-decompose-helper.sh decompose "Build auth with login, registration, password reset, and OAuth"
+  task-decompose-helper.sh decompose 'Build auth with login, registration, password reset, and OAuth'
   # Output: {"subtasks": [...], "strategy": "depth-first"}
 
   # Decompose with guard against re-decomposition
-  task-decompose-helper.sh decompose "Build CRM" --task-id t1408 --todo-file ./TODO.md
+  task-decompose-helper.sh decompose 'Build CRM' --task-id t1408 --todo-file ./TODO.md
 
   # Format lineage for a worker
   task-decompose-helper.sh format-lineage \
-    --parent "Build a CRM" \
+    --parent 'Build a CRM' \
     --children '[{"description": "contacts"}, {"description": "deals"}]' \
     --current 1
 
