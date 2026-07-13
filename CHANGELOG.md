@@ -10,6 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.32.107] - 2026-07-14
+
+### Fixed
+
+- guard OpenCode command model tiers (#27571)
+
 ## [3.32.106] - 2026-07-13
 
 ### Changed
