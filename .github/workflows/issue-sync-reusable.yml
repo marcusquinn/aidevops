@@ -1455,6 +1455,17 @@ jobs:
             fi
           fi
 
+      - name: Park canonical Git guard before action cleanup
+        if: always()
+        run: |
+          # actions/checkout resolves Git again in its post-job phase. Remove
+          # the command name after all workflow shell mutations so checkout's
+          # config/submodule cleanup uses the runner Git binary too.
+          SHIM_DIR="${RUNNER_TEMP}/aidevops-issue-sync-shims"
+          if [[ -x "${SHIM_DIR}/git" ]]; then
+            mv "${SHIM_DIR}/git" "${SHIM_DIR}/aidevops-git-guard"
+          fi
+
   # =========================================================================
   # t1339: Apply conventional-commit labels to PRs
   # t3851: Fixed — uses pull_request_target for fork PR write permissions

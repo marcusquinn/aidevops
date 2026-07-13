@@ -112,13 +112,16 @@ fi
 
 # ============================================================
 # Test 3: trusted checkouts cannot select the canonical Git guard. The guard is
-# parked before the caller checkout and enabled only after framework restore.
+# parked before the caller checkout, enabled only after framework restore, and
+# parked again before actions/checkout performs its post-job cleanup.
 # ============================================================
-PARK_GUARD_REL_LINE=$(printf '%s\n' "${JOB_BODY}" | grep -nE 'mv[[:space:]]+"?\$\{SHIM_DIR\}/git"?[[:space:]]+"?\$\{SHIM_DIR\}/aidevops-git-guard"?' | cut -d: -f1 || true)
+PARK_GUARD_REL_LINE=$(printf '%s\n' "${JOB_BODY}" | grep -nE 'mv[[:space:]]+"?\$\{SHIM_DIR\}/git"?[[:space:]]+"?\$\{SHIM_DIR\}/aidevops-git-guard"?' | cut -d: -f1 | head -1 || true)
 CALLER_CHECKOUT_REL_LINE=$(printf '%s\n' "${JOB_BODY}" | grep -nE 'name:[[:space:]]+Checkout repo before closing-hygiene validation' | cut -d: -f1 || true)
 RESTORE_REL_LINE=$(printf '%s\n' "${JOB_BODY}" | grep -nE 'name:[[:space:]]+Restore framework scripts before task resolution' | cut -d: -f1 || true)
 ENABLE_GUARD_REL_LINE=$(printf '%s\n' "${JOB_BODY}" | grep -nE 'name:[[:space:]]+Enable canonical Git guard after trusted checkouts' | cut -d: -f1 || true)
 RESOLVE_REL_LINE=$(printf '%s\n' "${JOB_BODY}" | grep -nE 'name:[[:space:]]+Resolve task-backed closing issues' | cut -d: -f1 || true)
+PLANS_REL_LINE=$(printf '%s\n' "${JOB_BODY}" | grep -nE 'name:[[:space:]]+Sync PLANS\.md status from TODO\.md completions' | cut -d: -f1 || true)
+PARK_CLEANUP_REL_LINE=$(printf '%s\n' "${JOB_BODY}" | grep -nE 'name:[[:space:]]+Park canonical Git guard before action cleanup' | cut -d: -f1 || true)
 
 if [[ -n "${PARK_GUARD_REL_LINE}" && -n "${CALLER_CHECKOUT_REL_LINE}" &&
 	"${PARK_GUARD_REL_LINE}" -lt "${CALLER_CHECKOUT_REL_LINE}" ]]; then
@@ -133,6 +136,14 @@ if [[ -n "${RESTORE_REL_LINE}" && -n "${ENABLE_GUARD_REL_LINE}" && -n "${RESOLVE
 	check 1 "canonical Git guard is enabled after trusted checkouts" ""
 else
 	check 0 "canonical Git guard is enabled after trusted checkouts" "guard activation must follow framework restore and precede shell mutation steps"
+fi
+
+if [[ -n "${PLANS_REL_LINE}" && -n "${PARK_CLEANUP_REL_LINE}" &&
+	"${PLANS_REL_LINE}" -lt "${PARK_CLEANUP_REL_LINE}" ]] &&
+	printf '%s\n' "${JOB_BODY}" | grep -A1 -E 'name:[[:space:]]+Park canonical Git guard before action cleanup' | grep -qE 'if:[[:space:]]+always\(\)'; then
+	check 1 "canonical Git guard is always parked before action cleanup" ""
+else
+	check 0 "canonical Git guard is always parked before action cleanup" "final guard parking must follow every guarded shell mutation and run even after failures"
 fi
 
 # Exercise the command sequence used by actions/checkout while the shim is
@@ -153,6 +164,15 @@ if [[ "${FIXTURE_GIT}" != "${FIXTURE_SHIM_DIR}/git" ]] &&
 	check 1 "trusted checkout init/config/remote/submodule fixture bypasses parked guard" ""
 else
 	check 0 "trusted checkout init/config/remote/submodule fixture bypasses parked guard" "trusted actions/checkout commands did not use the runner Git binary"
+fi
+mv "${FIXTURE_SHIM_DIR}/aidevops-git-guard" "${FIXTURE_SHIM_DIR}/git"
+ACTIVE_GIT=$(PATH="${FIXTURE_SHIM_DIR}:/usr/bin:/bin" command -v git)
+mv "${FIXTURE_SHIM_DIR}/git" "${FIXTURE_SHIM_DIR}/aidevops-git-guard"
+CLEANUP_GIT=$(PATH="${FIXTURE_SHIM_DIR}:/usr/bin:/bin" command -v git || true)
+if [[ "${ACTIVE_GIT}" == "${FIXTURE_SHIM_DIR}/git" && "${CLEANUP_GIT}" != "${FIXTURE_SHIM_DIR}/git" ]]; then
+	check 1 "guard activation is bounded to workflow shell steps" ""
+else
+	check 0 "guard activation is bounded to workflow shell steps" "post-job cleanup could still resolve the canonical guard"
 fi
 rm -rf "${FIXTURE_ROOT}"
 
