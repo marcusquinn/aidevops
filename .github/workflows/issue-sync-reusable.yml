@@ -719,17 +719,18 @@ jobs:
 
       - name: Setup gh shim (auto-inject signature footer on writes)
         run: |
-          # GH#27119: actions/checkout resolves every executable once, then
-          # cleans the workspace. Keep the selected git/gh shims and their
-          # sibling dependencies outside that deletion boundary so the later
-          # caller-repo checkout cannot remove an executable while using it.
+          # GH#27119: keep the gh shim and its sibling dependencies outside the
+          # workspace deletion boundary, but park the canonical Git guard under
+          # a non-command name. The trusted actions/checkout steps must select
+          # the runner Git binary for their init/config/remote/submodule work.
           SHIM_DIR="${RUNNER_TEMP}/aidevops-issue-sync-shims"
           rm -rf "${SHIM_DIR}"
           mkdir -p "${SHIM_DIR}"
           cp -R __aidevops/.agents/scripts/. "${SHIM_DIR}/"
+          mv "${SHIM_DIR}/git" "${SHIM_DIR}/aidevops-git-guard"
           chmod +x "${SHIM_DIR}/gh" \
                    "${SHIM_DIR}/gh-signature-helper.sh" \
-                   "${SHIM_DIR}/git" \
+                   "${SHIM_DIR}/aidevops-git-guard" \
                    2>/dev/null || true
           echo "${SHIM_DIR}" >> "$GITHUB_PATH"
 
@@ -802,6 +803,14 @@ jobs:
           path: __aidevops
           ref: ${{ inputs.aidevops_ref || 'main' }}
           fetch-depth: 1
+
+      - name: Enable canonical Git guard after trusted checkouts
+        run: |
+          # The shim directory is already on PATH. Publishing the parked guard
+          # now protects every later shell step without affecting checkout's
+          # own repository initialization or its post-job cleanup.
+          mv "${RUNNER_TEMP}/aidevops-issue-sync-shims/aidevops-git-guard" \
+             "${RUNNER_TEMP}/aidevops-issue-sync-shims/git"
 
       - name: Resolve task-backed closing issues
         id: resolve-tasks
