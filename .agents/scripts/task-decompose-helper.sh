@@ -389,6 +389,9 @@ Rules:
 - Use the blocked_by array to express dependencies (0-indexed subtask numbers).
 - Suggest a batch strategy: 'depth-first' if subtasks have sequential dependencies, 'breadth-first' if mostly independent.
 - Each subtask description should be specific enough to be a standalone task brief — not vague like 'handle edge cases'.
+- Give every unit a stable id, kind, lowest-sufficient effort tier, and explicit ownership of repo-relative files and/or bounded questions.
+- Parallel-ready units must not own the same file. Order overlapping ownership with blocked_by.
+- Set max_parallel to the smallest useful cap (never more than 2 for an interactive plan).
 
 Examples:
 
@@ -409,9 +412,11 @@ Task to decompose: ${description}
 
 Respond with ONLY a JSON object (no markdown, no explanation outside the JSON):
 {
+  \"schema_version\": 1,
+  \"max_parallel\": 2,
   \"subtasks\": [
-    {\"description\": \"subtask description\", \"blocked_by\": []},
-    {\"description\": \"subtask description\", \"blocked_by\": [0]}
+    {\"id\": \"unit-1\", \"kind\": \"discovery\", \"description\": \"subtask description\", \"effort\": \"simple\", \"owns\": {\"files\": [], \"questions\": [\"bounded question\"]}, \"blocked_by\": [], \"reuse_key\": \"unit-1-input\"},
+    {\"id\": \"unit-2\", \"kind\": \"implementation\", \"description\": \"subtask description\", \"effort\": \"standard\", \"owns\": {\"files\": [\"repo/relative/path\"], \"questions\": []}, \"blocked_by\": [0], \"reuse_key\": \"unit-2-input\"}
   ],
   \"strategy\": \"depth-first\" or \"breadth-first\"
 }"
@@ -578,12 +583,42 @@ if match:
 " 2>/dev/null || echo "")
 	fi
 
-	# Validate subtask count
+	# Normalize legacy model output into the session-plan contract, then validate
+	# bounded concurrency, stable ownership, dependency indexes, and effort tiers.
 	if [[ -n "$json_result" ]]; then
-		local count
-		count=$(echo "$json_result" | jq '.subtasks | length' 2>/dev/null || echo "0")
-		if [[ "$count" -ge 2 && "$count" -le "$max_subtasks" ]]; then
-			echo "$json_result"
+		local normalized
+		normalized=$(printf '%s' "$json_result" | jq -c '
+			.schema_version = (.schema_version // 1)
+			| .max_parallel = ([2, (.max_parallel // 2)] | min)
+			| .strategy = (.strategy // "breadth-first")
+			| .subtasks = [.subtasks | to_entries[]
+				| .key as $index | .value
+				| .id = (.id // "unit-\($index + 1)")
+				| .kind = (.kind // "implementation")
+				| .effort = (.effort // "standard")
+				| .blocked_by = (.blocked_by // [])
+				| .owns = (.owns // {})
+				| .owns.files = (.owns.files // [])
+				| .owns.questions = (if ((.owns.questions // []) | length) == 0 and (.owns.files | length) == 0 then [.description] else (.owns.questions // []) end)
+				| .reuse_key = (.reuse_key // .id)]
+		' 2>/dev/null || echo "")
+		local valid
+		valid=$(printf '%s' "$normalized" | jq -r --argjson max "$max_subtasks" '
+			. as $plan | (.subtasks | length) as $n
+			| ($n >= 2 and $n <= $max)
+			and (.max_parallel >= 1 and .max_parallel <= 2)
+			and (.strategy == "depth-first" or .strategy == "breadth-first")
+			and (([.subtasks[].id] | unique | length) == $n)
+			and all(.subtasks[]; (.effort == "simple" or .effort == "standard" or .effort == "thinking"))
+			and ([.subtasks | to_entries[] | .key as $i | .value.blocked_by[] | select((type != "number") or . < 0 or . >= $n or . == $i)] | length) == 0
+			and all(.subtasks[]; ((.owns.files | length) + (.owns.questions | length)) > 0)
+			and ([range(0; $n) as $i | range($i + 1; $n) as $j
+				| select((([$plan.subtasks[$i].owns.files[]] - ([$plan.subtasks[$i].owns.files[]] - [$plan.subtasks[$j].owns.files[]])) | length) > 0)
+				| select(($plan.subtasks[$j].blocked_by | index($i)) == null)
+				| select(($plan.subtasks[$i].blocked_by | index($j)) == null)] | length) == 0
+		' 2>/dev/null || echo "false")
+		if [[ "$valid" == "true" ]]; then
+			echo "$normalized"
 			return 0
 		fi
 	fi
@@ -632,9 +667,11 @@ heuristic_decompose() {
 	fi
 
 	# Build JSON output
-	local json_output='{"subtasks": ['
+	local json_output='{"schema_version": 1, "max_parallel": 2, "subtasks": ['
 	local first=true
+	local unit_index=0
 	for st in "${subtasks[@]}"; do
+		unit_index=$((unit_index + 1))
 		if [[ "$first" == true ]]; then
 			first=false
 		else
@@ -643,7 +680,7 @@ heuristic_decompose() {
 		# Escape description for JSON
 		local escaped_st
 		escaped_st=$(printf '%s' "$st" | sed 's/\\/\\\\/g; s/"/\\"/g')
-		json_output="${json_output}{\"description\": \"${escaped_st}\", \"blocked_by\": []}"
+		json_output="${json_output}{\"id\": \"unit-${unit_index}\", \"kind\": \"implementation\", \"description\": \"${escaped_st}\", \"effort\": \"standard\", \"owns\": {\"files\": [], \"questions\": [\"${escaped_st}\"]}, \"blocked_by\": [], \"reuse_key\": \"unit-${unit_index}\"}"
 	done
 	json_output="${json_output}], \"strategy\": \"breadth-first\"}"
 

@@ -73,6 +73,8 @@ Retention is not currently enforced for `runtime_events`: history can grow.
 Storage pressure is reduced by no-op state suppression and bounded payloads,
 but those controls do not constitute bounded history or an age/count policy.
 
+Full-loop keeps authoritative resumable state in `.agents/loop-state/full-loop.local.state` and appends local transition evidence to `full-loop-events.jsonl`. Schema v2 records the run ID, state revision, phase status/start/end/attempt, terminal evidence, next safe action, observed executor status/PID/heartbeat, manual resumes, reused subagent units, and duplicate work avoided. Status must validate executor liveness instead of trusting a stale PID. These records drive lifecycle recovery; runtime events and plugin cost/tool data remain fail-open reporting evidence. Aggregate phase wall time, active compute, CI wait/repair, release/cleanup time, calls by tier, retries/outcomes, reuse, false-positive gates, and manual resumes when producing performance reports.
+
 Inspect recent events without exposing any other store:
 
 ```bash

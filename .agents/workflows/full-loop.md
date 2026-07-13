@@ -19,6 +19,8 @@ Fatal modes: **GH#5317** (exits without PR), **GH#5096** (exits after PR). Do NO
 
 **Interactive continuity (MANDATORY):** A user's full-loop instruction authorises this entire lifecycle. Continue autonomously from the current stage through `FULL_LOOP_COMPLETE`; do not stop after setup, implementation, PR creation, merge, or release merely to report progress. Pause only for a material blocker requiring user input under the framework rules. Progress reports must name the last verified stage and current action. Say a loop is "running" or "underway" only after verifying a live loop process/job; a worktree, plan, or completed discovery alone is not a running loop.
 
+**Dual-mode executor contract:** Interactive and headless runs share the persisted lifecycle transitions and terminal evidence. Mode changes interaction policy only: interactive keeps the primary responsive and surfaces safe resume actions; headless never prompts and autonomously resumes within its brief and budgets. `start --background` reports `FULL_LOOP_START_RESULT=running` only for a live executor, otherwise `FULL_LOOP_START_RESULT=initialized-only`. `status --json` is the authoritative machine-readable observation.
+
 | # | Step | Signal |
 |---|------|--------|
 | 0 | Commit+PR gate — all changes committed, PR exists | `TASK_COMPLETE` |
@@ -87,7 +89,7 @@ Iterate until emitting `<promise>TASK_COMPLETE</promise>`.
 
 ANY critical pattern → entire PR requires `runtime-verified`. Critical/high + no runtime → **BLOCK**. Use `.aidevops/testing.json` if present. Record `## Runtime Testing` in PR body.
 
-**Key rules:** Parallelism (t217) — use Task tool. CI (t1334) — `gh pr checks`, `gh run view --log`. Blast radius (t1422) — quality-debt PRs ≤5 files.
+**Key rules:** Parallelism (t217) — use a persisted decomposition plan with stable unit IDs, explicit file/question ownership, dependencies, effort tiers, and a mode-bounded concurrency cap. Reuse completed unit evidence after retries; never repeat delegated exploration unless evidence is missing, stale, or contradictory. CI (t1334) — pending is a wait state, not a repair trigger; key terminal evidence to the exact PR head and retrieve only failing required checks. Resume on provider/check events or bounded adaptive backoff, never correctness-dependent fixed sleeps. Blast radius (t1422) — quality-debt PRs ≤5 files.
 
 ### Resource-Aware Quality Gates (MANDATORY)
 

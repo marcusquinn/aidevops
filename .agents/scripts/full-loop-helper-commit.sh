@@ -66,13 +66,29 @@ _full_loop_verify_pr_readiness() {
 	local required_rc=0
 	required_checks=$(gh pr checks "$pr_number" --repo "$repo" \
 		--required --json name,state,bucket 2>/dev/null) || required_rc=$?
-	if [[ -z "$required_checks" ]] || ! printf '%s' "$required_checks" | jq -e '
-		(type == "array")
-		and ([.[] | select((.bucket // "") != "pass")] | length) == 0
-	' >/dev/null; then
-		print_error "PR #${pr_number} required checks are not terminal-success (gh exit ${required_rc})"
+	if [[ -z "$required_checks" ]] || ! printf '%s' "$required_checks" | jq -e 'type == "array"' >/dev/null; then
+		FULL_LOOP_PR_CHECK_STATUS="indeterminate"
+		export FULL_LOOP_PR_CHECK_STATUS
+		print_error "PR #${pr_number} required-check evidence is indeterminate (gh exit ${required_rc})"
 		return 1
 	fi
+	local non_passing=""
+	non_passing=$(printf '%s' "$required_checks" | jq -c '[.[] | select((.bucket // "") != "pass")]')
+	if [[ "$(printf '%s' "$non_passing" | jq 'length')" -gt 0 ]]; then
+		if printf '%s' "$non_passing" | jq -e 'all(.[]; (.bucket // "") == "pending")' >/dev/null 2>&1; then
+			FULL_LOOP_PR_CHECK_STATUS="pending"
+			export FULL_LOOP_PR_CHECK_STATUS
+			print_info "PR #${pr_number} required checks are pending at the current head; no repair action is eligible"
+		else
+			FULL_LOOP_PR_CHECK_STATUS="terminal-failure"
+			FULL_LOOP_PR_FAILURE_EVIDENCE=$(printf '%s' "$non_passing" | jq -c '[.[] | select((.bucket // "") != "pending") | {name,state,bucket}]')
+			export FULL_LOOP_PR_CHECK_STATUS FULL_LOOP_PR_FAILURE_EVIDENCE
+			print_error "PR #${pr_number} has terminal required-check failures at the current head"
+		fi
+		return 1
+	fi
+	FULL_LOOP_PR_CHECK_STATUS="terminal-success"
+	export FULL_LOOP_PR_CHECK_STATUS
 
 	local verified_head=""
 	verified_head=$(printf '%s' "$pr_json" | jq -r '.headRefOid // empty')
@@ -128,10 +144,10 @@ cmd_pre_merge_gate() {
 
 	print_info "Running review bot gate for PR #${pr_number} in ${repo}..."
 
-	# Use 'wait' mode (polls up to 600s) — same as full-loop.md step 4.4 instructs,
-	# but now enforced in code rather than relying on prompt compliance.
+	# Check once. Pending review is persisted by the lifecycle caller and resumed
+	# by the next provider/check event; this avoids a fixed-duration polling loop.
 	local rbg_result=""
-	rbg_result=$(bash "$rbg_helper" wait "$pr_number" "$repo" 2>&1) || true
+	rbg_result=$(bash "$rbg_helper" check "$pr_number" "$repo" 2>&1) || true
 
 	local rbg_status=""
 	rbg_status=$(printf '%s' "$rbg_result" | grep -oE '(PASS|SKIP|WAITING|PASS_RATE_LIMITED)' | tail -1)
