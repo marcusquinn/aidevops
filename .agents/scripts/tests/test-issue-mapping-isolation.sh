@@ -21,6 +21,12 @@ strip_code_fences() {
 }
 log_verbose() { return 0; }
 print_error() { return 0; }
+JQ_CALL_LOG="${TEST_ROOT}/jq-calls.log"
+jq() {
+	printf 'call\n' >>"$JQ_CALL_LOG"
+	command jq "$@"
+	return $?
+}
 _gh_with_timeout() {
 	local _class="$1"
 	shift
@@ -64,7 +70,12 @@ gh() {
 # shellcheck source=../issue-sync-lib-ref.sh
 source "${SCRIPT_DIR}/issue-sync-lib-ref.sh"
 
+: >"$JQ_CALL_LOG"
 [[ "$(resolve_task_gh_number t101 "$TODO_FILE" owner/one)" == "42" ]]
+if [[ "$(wc -l <"$JQ_CALL_LOG" | tr -d ' ')" != "2" ]]; then
+	printf 'FAIL issue backfill did not parse fields with one jq process\n' >&2
+	exit 1
+fi
 [[ "$(resolve_task_gh_number t102 "$TODO_FILE" owner/two)" == "42" ]]
 [[ "$(resolve_task_gh_number t1873.1 "$TODO_FILE" owner/dotted)" == "73" ]]
 [[ "$(node "${SCRIPT_DIR}/task-coordinator.mjs" resolve-issue --task-id t101 --repository-id R_one | jq -r '.issueId')" == "I_one_42" ]]
