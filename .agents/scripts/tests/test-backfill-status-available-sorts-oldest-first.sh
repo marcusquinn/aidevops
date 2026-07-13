@@ -102,6 +102,9 @@ main() {
 	if [[ "$search_query" != *" sort:created-asc" ]]; then
 		fail "expected sort:created-asc at the end of the search query"
 	fi
+	if [[ "$search_query" != *'-label:"persistent"'* ]]; then
+		fail "expected persistent issues to remain excluded from backfill"
+	fi
 	if grep -Fxq -- '--sort' "$GH_ARGS_FILE" || grep -Fxq -- '--direction' "$GH_ARGS_FILE"; then
 		fail "unsupported gh issue list sorting flags were passed"
 	fi
