@@ -234,7 +234,8 @@ _pr_exists_for_branch_or_issue() {
 # between a durable draft checkpoint and a completed handoff. The live head
 # query remains primary so newly-created PRs are not hidden by search lag.
 #
-# Args: $1=branch name, $2=issue number, $3=repo slug
+# Args: $1=branch name, $2=issue number, $3=repo slug,
+#       $4=scope (optional: "head-only" disables issue-search fallback)
 # Output: "draft|N", "ready|N", "merged|N", "closed|N", "absent|", or
 #         "unknown|". Returns 0 always.
 #######################################
@@ -242,6 +243,7 @@ _pr_handoff_state_for_branch_or_issue() {
 	local branch_name="$1"
 	local issue_number="$2"
 	local repo_slug="$3"
+	local match_scope="${4:-branch-or-issue}"
 	local pr_json=""
 	local pr_state=""
 	local queried=0
@@ -268,7 +270,7 @@ _pr_handoff_state_for_branch_or_issue() {
 		fi
 	fi
 
-	if [[ -n "$issue_number" ]]; then
+	if [[ -n "$issue_number" && "$match_scope" != "head-only" ]]; then
 		if pr_json=$(gh_pr_list --repo "$repo_slug" --search "$issue_number" --state all \
 			--limit 1 --json number,state,isDraft 2>/dev/null); then
 			queried=1

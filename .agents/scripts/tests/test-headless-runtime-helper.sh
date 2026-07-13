@@ -2689,6 +2689,40 @@ test_post_pr_handoff_detects_open_pending_pr() {
 	return 0
 }
 
+test_failed_worker_draft_checkpoint_escalates_without_completion() {
+	local result=""
+	local escalation_marker="${TEST_ROOT}/draft-checkpoint-escalated"
+	rm -f "$escalation_marker"
+	result=$(
+		(
+			DISPATCH_REPO_SLUG="test-owner/test-repo"
+			git() {
+				if [[ "${*}" == *"rev-parse --abbrev-ref HEAD"* ]]; then
+					printf 'feature/auto-test-issue-99999'
+				fi
+				return 0
+			}
+			_hrw_resolve_default_branch() { printf 'main'; return 0; }
+			_pr_handoff_state_for_branch_or_issue() { printf 'draft|456'; return 0; }
+			_release_dispatch_claim() { printf 'release=%s\n' "$2"; return 0; }
+			gh() {
+				if [[ "${*}" == *"issue edit 99999"* && "${*}" == *"needs-maintainer-review"* ]]; then
+					: >"$escalation_marker"
+				fi
+				return 0
+			}
+			_recover_worker_output_on_failure "issue-99999" "${TEST_ROOT}"
+			printf 'classification=%s\n' "${_HRW_FAILURE_RECOVERY_CLASSIFICATION:-}"
+		)
+	)
+	if [[ "$result" == *"release=worker_draft_checkpoint"* && -f "$escalation_marker" && "$result" == *"classification=worker_draft_checkpoint"* ]]; then
+		print_result "failed worker draft checkpoint escalates without worker_complete" 0
+	else
+		print_result "failed worker draft checkpoint escalates without worker_complete" 1 "$result"
+	fi
+	return 0
+}
+
 test_post_pr_handoff_rejects_pre_pr_stall() {
 	local work_dir="${TEST_ROOT}/repo-pre-pr-stall"
 	mkdir -p "$work_dir"
@@ -2811,6 +2845,7 @@ main() {
 	test_service_interruption_candidate_uses_separate_path
 	test_service_interruption_exhausted_metric_preserves_context
 	test_post_pr_handoff_detects_open_pending_pr
+	test_failed_worker_draft_checkpoint_escalates_without_completion
 	test_post_pr_handoff_rejects_pre_pr_stall
 	test_post_pr_handoff_overrides_watchdog_next_action
 	test_completion_infrastructure_resumes_without_implementation_penalty
