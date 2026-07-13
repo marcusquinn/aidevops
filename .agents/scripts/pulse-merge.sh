@@ -499,6 +499,131 @@ _Merged by deterministic merge pass (pulse-wrapper.sh). Neither MERGE_SUMMARY co
 }
 
 #######################################
+# Return the preferred comment ID for a PR merge closeout upsert.
+#
+# Prefer an existing deterministic closeout marker. Otherwise reuse the
+# worker's canonical MERGE_SUMMARY comment so post-merge handling transforms
+# that singleton instead of appending a second completion summary.
+#
+# Args: $1=comments JSON (gh --paginate --slurp shape), $2=PR number
+# Stdout: comment ID, or empty
+# Returns: 0 always
+#######################################
+_pm_select_pr_closeout_comment_id() {
+	local comments_json="$1"
+	local pr_number="$2"
+	local closeout_marker="<!-- PULSE_MERGE_CLOSEOUT:PR#${pr_number} -->"
+
+	printf '%s' "$comments_json" | jq -r \
+		--arg closeout_marker "$closeout_marker" \
+		--arg summary_marker '<!-- MERGE_SUMMARY -->' '
+		(if type == "array" and (.[0]? | type) == "array" then [.[][]]
+		elif type == "array" then .
+		else [] end)
+		| [ .[]
+			| select(
+				((.body // "") | contains($closeout_marker)) or
+				((.body // "") | contains($summary_marker))
+			)
+			| {
+				id: .id,
+				created_at: (.created_at // ""),
+				rank: (if ((.body // "") | contains($closeout_marker)) then 0 else 1 end)
+			} ]
+		| sort_by(.rank, .created_at, .id)
+		| first
+		| .id // empty
+	' 2>/dev/null || true
+	return 0
+}
+
+#######################################
+# Converge deterministic PR closeout comments to one marker-bearing comment.
+#
+# Each concurrent runner performs reconciliation after its own write. The
+# later writer therefore observes the earlier marker and removes every newer
+# duplicate while preserving the oldest canonical closeout.
+#
+# Args: $1=PR number, $2=repo slug
+# Returns: 0 always (best-effort post-merge hygiene)
+#######################################
+_pm_reconcile_pr_closeout_comments() {
+	local pr_number="$1"
+	local repo_slug="$2"
+	local comments_json="" closeout_ids="" keep_id="" comment_id=""
+	local closeout_marker="<!-- PULSE_MERGE_CLOSEOUT:PR#${pr_number} -->"
+
+	comments_json=$(gh api "repos/${repo_slug}/issues/${pr_number}/comments?per_page=100" \
+		--paginate --slurp 2>/dev/null) || comments_json=""
+	[[ -n "$comments_json" ]] || return 0
+
+	closeout_ids=$(printf '%s' "$comments_json" | jq -r \
+		--arg closeout_marker "$closeout_marker" '
+		(if type == "array" and (.[0]? | type) == "array" then [.[][]]
+		elif type == "array" then .
+		else [] end)
+		| [ .[]
+			| select((.body // "") | contains($closeout_marker))
+			| {id: .id, created_at: (.created_at // "")} ]
+		| sort_by(.created_at, .id)
+		| .[].id
+	' 2>/dev/null) || closeout_ids=""
+
+	while IFS= read -r comment_id; do
+		[[ -n "$comment_id" ]] || continue
+		if [[ -z "$keep_id" ]]; then
+			keep_id="$comment_id"
+			continue
+		fi
+		gh api "repos/${repo_slug}/issues/comments/${comment_id}" \
+			--method DELETE >/dev/null 2>&1 || true
+		echo "[pulse-wrapper] Deterministic merge: removed duplicate PR closeout comment ${comment_id} for ${repo_slug}#${pr_number} (GH#27502)" >>"$LOGFILE"
+	done <<<"$closeout_ids"
+	return 0
+}
+
+#######################################
+# Upsert the deterministic PR merge closeout without duplicate summaries.
+#
+# The normal path patches the existing MERGE_SUMMARY comment. The fallback
+# posts one marker-bearing comment, then reconciles concurrent fallback writes.
+# This is cross-runner safe; local pulse locks only coordinate one machine.
+#
+# Args: $1=PR number, $2=repo slug, $3=closing comment body
+# Returns: 0 always (best-effort post-merge hygiene)
+#######################################
+_pm_upsert_pr_closing_comment() {
+	local pr_number="$1"
+	local repo_slug="$2"
+	local closing_comment="$3"
+	local comments_json="" existing_comment_id="" marked_comment=""
+
+	marked_comment="<!-- PULSE_MERGE_CLOSEOUT:PR#${pr_number} -->
+${closing_comment}"
+	comments_json=$(gh api "repos/${repo_slug}/issues/${pr_number}/comments?per_page=100" \
+		--paginate --slurp 2>/dev/null) || comments_json=""
+	if [[ -n "$comments_json" ]]; then
+		existing_comment_id=$(_pm_select_pr_closeout_comment_id "$comments_json" "$pr_number")
+	fi
+
+	if [[ -n "$existing_comment_id" ]] && gh api \
+		"repos/${repo_slug}/issues/comments/${existing_comment_id}" \
+		--method PATCH --field body="$marked_comment" >/dev/null 2>&1; then
+		echo "[pulse-wrapper] Deterministic merge: upserted PR closeout comment ${existing_comment_id} for ${repo_slug}#${pr_number} (GH#27502)" >>"$LOGFILE"
+		_pm_reconcile_pr_closeout_comments "$pr_number" "$repo_slug"
+		return 0
+	fi
+
+	gh_pr_comment "$pr_number" --repo "$repo_slug" \
+		--body "$marked_comment" 2>/dev/null || true
+	# Give GitHub's comments listing a bounded visibility window before the
+	# post-write convergence pass. The later concurrent writer also reconciles.
+	sleep 1
+	_pm_reconcile_pr_closeout_comments "$pr_number" "$repo_slug"
+	return 0
+}
+
+#######################################
 # Resolve the original issue behind a superseded PR reference.
 #
 # When PR B resolves PR A, GitHub treats PR A as an issue number. The normal
@@ -675,9 +800,9 @@ _handle_post_merge_actions() {
 	closing_comment=$(_pm_build_closing_comment "$pr_number" "$repo_slug" \
 		"$linked_issue" "$merge_summary" "$pr_base_ref_name")
 
-	# Post closing comment on PR; unlock the merged PR (t1934)
-	gh_pr_comment "$pr_number" --repo "$repo_slug" \
-		--body "$closing_comment" 2>/dev/null || true
+	# Upsert one canonical PR closeout across concurrent runner accounts, then
+	# unlock the merged PR (t1934, GH#27502).
+	_pm_upsert_pr_closing_comment "$pr_number" "$repo_slug" "$closing_comment"
 	unlock_issue_after_worker "$pr_number" "$repo_slug"
 
 	# Close linked issue with the same closing comment

@@ -2,12 +2,13 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 #
-# test-pulse-merge-post-merge-label-fetch.sh — GH#22219 regression guard.
+# test-pulse-merge-post-merge-label-fetch.sh — GH#22219/GH#27502 regression guard.
 #
 # Verifies _handle_post_merge_actions behaviour around optional PR labels:
 # a provided empty 5th argument is authoritative and must not refetch, while an
 # omitted 5th argument falls back to fetching PR labels before setting solved
-# attribution.
+# attribution. It also verifies that repeated or concurrent post-merge handling
+# converges on one marker-bearing PR completion summary.
 
 set -euo pipefail
 
@@ -71,6 +72,9 @@ define_function_under_test() {
 	fn_src=$(awk '
 		/^_pm_issue_api\(\) \{/,/^}$/ { print }
 		/^_pm_build_closing_comment\(\) \{/,/^}$/ { print }
+		/^_pm_select_pr_closeout_comment_id\(\) \{/,/^}$/ { print }
+		/^_pm_reconcile_pr_closeout_comments\(\) \{/,/^}$/ { print }
+		/^_pm_upsert_pr_closing_comment\(\) \{/,/^}$/ { print }
 		/^_pm_resolve_superseded_original_issue\(\) \{/,/^}$/ { print }
 		/^_handle_post_merge_actions\(\) \{/,/^}$/ { print }
 		/^_extract_linked_issue\(\) \{/,/^}$/ { print }
@@ -85,6 +89,7 @@ define_function_under_test() {
 }
 
 install_helper_stubs() {
+	export TEST_PR_COMMENTS_JSON='[[]]'
 	gh() {
 		printf '%s\n' "$*" >>"$GH_CALL_LOG"
 		if [[ "$1" == "api" && "$2" == "repos/marcusquinn/aidevops/pulls/33333" ]]; then
@@ -93,6 +98,10 @@ install_helper_stubs() {
 		fi
 		if [[ "$1" == "api" && "$2" == "repos/marcusquinn/aidevops/pulls/"* ]]; then
 			return 1
+		fi
+		if [[ "$1" == "api" && "$2" == *"/comments?per_page=100" ]]; then
+			printf '%s\n' "$TEST_PR_COMMENTS_JSON"
+			return 0
 		fi
 		if [[ "$1" == "api" && "$*" == *"/comments"* ]]; then
 			printf '[]\n'
@@ -107,6 +116,13 @@ install_helper_stubs() {
 	gh_issue_comment() {
 		gh issue comment "$@"
 		return 0
+	}
+	_gh_with_timeout() {
+		local access_mode="$1"
+		shift
+		: "$access_mode"
+		"$@"
+		return $?
 	}
 	gh_pr_view() {
 		printf 'pr view %s\n' "$*" >>"$GH_CALL_LOG"
@@ -137,10 +153,12 @@ install_helper_stubs() {
 	}
 	unlock_issue_after_worker() { return 0; }
 	fast_fail_reset() { return 0; }
+	reconcile_dependants_after_verified_closure() { return 0; }
 	_release_interactive_claim_on_merge() { return 0; }
 	auto_file_next_phase() { return 0; }
 	_unblock_circuit_breaker_meta_pr() { return 0; }
 	_pm_handle_partial_parent_closeout() { return 0; }
+	sleep() { return 0; }
 	return 0
 }
 
@@ -242,6 +260,61 @@ test_closing_comment_defaults_to_main_for_legacy_callers() {
 	return 0
 }
 
+test_pr_closeout_reuses_merge_summary_comment() {
+	: >"$GH_CALL_LOG"
+	export TEST_PR_COMMENTS_JSON='[[{"id":101,"created_at":"2026-07-13T16:00:00Z","body":"<!-- MERGE_SUMMARY --> original"}]]'
+
+	_handle_post_merge_actions "755" "marcusquinn/aidevops" "" "merged" "origin:worker"
+
+	assert_log_contains "$GH_CALL_LOG" "issues/comments/101 --method PATCH" \
+		"PR closeout patches the canonical MERGE_SUMMARY comment"
+	assert_log_contains "$GH_CALL_LOG" "PULSE_MERGE_CLOSEOUT:PR#755" \
+		"patched PR closeout receives the deterministic singleton marker"
+	assert_log_not_contains "$GH_CALL_LOG" "pr comment 755" \
+		"PR closeout does not append when MERGE_SUMMARY exists"
+	return 0
+}
+
+test_pr_closeout_reuses_existing_closeout_comment() {
+	: >"$GH_CALL_LOG"
+	export TEST_PR_COMMENTS_JSON='[[{"id":201,"created_at":"2026-07-13T16:00:00Z","body":"<!-- PULSE_MERGE_CLOSEOUT:PR#756 --> existing"}]]'
+
+	_handle_post_merge_actions "756" "marcusquinn/aidevops" "" "merged" "origin:worker"
+	_handle_post_merge_actions "756" "marcusquinn/aidevops" "" "merged" "origin:worker"
+
+	assert_log_contains "$GH_CALL_LOG" "issues/comments/201 --method PATCH" \
+		"repeated PR closeout handling updates the existing singleton"
+	assert_log_not_contains "$GH_CALL_LOG" "pr comment 756" \
+		"repeated PR closeout handling never appends another summary"
+	return 0
+}
+
+test_pr_closeout_reconciles_concurrent_duplicates() {
+	: >"$GH_CALL_LOG"
+	export TEST_PR_COMMENTS_JSON='[[{"id":301,"created_at":"2026-07-13T16:00:00Z","body":"<!-- PULSE_MERGE_CLOSEOUT:PR#757 --> first"},{"id":302,"created_at":"2026-07-13T16:00:08Z","body":"<!-- PULSE_MERGE_CLOSEOUT:PR#757 --> duplicate"}]]'
+
+	_handle_post_merge_actions "757" "marcusquinn/aidevops" "" "merged" "origin:worker"
+
+	assert_log_contains "$GH_CALL_LOG" "issues/comments/301 --method PATCH" \
+		"concurrent closeout reconciliation preserves the oldest singleton"
+	assert_log_contains "$GH_CALL_LOG" "issues/comments/302 --method DELETE" \
+		"concurrent closeout reconciliation deletes the newer duplicate"
+	return 0
+}
+
+test_pr_closeout_fallback_posts_marked_comment() {
+	: >"$GH_CALL_LOG"
+	export TEST_PR_COMMENTS_JSON='[[]]'
+
+	_handle_post_merge_actions "758" "marcusquinn/aidevops" "" "merged" "origin:worker"
+
+	assert_log_contains "$GH_CALL_LOG" "pr comment 758" \
+		"PR closeout fallback posts when no reusable comment exists"
+	assert_log_contains "$GH_CALL_LOG" "PULSE_MERGE_CLOSEOUT:PR#758" \
+		"PR closeout fallback is marked for post-write convergence"
+	return 0
+}
+
 main() {
 	trap teardown_test_env EXIT
 	setup_test_env
@@ -253,6 +326,10 @@ main() {
 	test_superseded_pr_closes_original_issue
 	test_closing_comment_uses_pr_base_ref
 	test_closing_comment_defaults_to_main_for_legacy_callers
+	test_pr_closeout_reuses_merge_summary_comment
+	test_pr_closeout_reuses_existing_closeout_comment
+	test_pr_closeout_reconciles_concurrent_duplicates
+	test_pr_closeout_fallback_posts_marked_comment
 
 	printf '\nTests run: %s, failed: %s\n' "$TESTS_RUN" "$TESTS_FAILED"
 	if [[ "$TESTS_FAILED" -eq 0 ]]; then
