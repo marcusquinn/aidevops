@@ -10,6 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.32.92] - 2026-07-13
+
+### Fixed
+
+- run releases from detached worktree (#27496)
+
 ## [3.32.91] - 2026-07-13
 
 ### Fixed
