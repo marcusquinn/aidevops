@@ -33,8 +33,10 @@ main() {
 	trap 'cleanup_release_worktree' EXIT
 
 	local version_manager="${AIDEVOPS_FULL_LOOP_VERSION_MANAGER:-$release_path/.agents/scripts/version-manager.sh}"
+	[[ "$version_manager" = /* ]] || version_manager="$PWD/$version_manager"
 	[[ -f "$version_manager" ]] || return 1
 	(
+		trap - EXIT
 		cd "$release_path" || exit 1
 		AIDEVOPS_RELEASE_INTENT_TRUSTED=1 \
 			AIDEVOPS_TRUSTED_ISSUE_PRIORITY="${AIDEVOPS_TRUSTED_ISSUE_PRIORITY:-}" \

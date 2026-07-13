@@ -47,7 +47,7 @@ chmod +x "$ROOT/version-manager.sh"
 		VM_CALL_LOG="$ROOT/vm.log" \
 		FAKE_REPO_ROOT="$ROOT/repo" \
 		AIDEVOPS_WORKTREE_BASE_DIR="$ROOT/worktrees" \
-		AIDEVOPS_FULL_LOOP_VERSION_MANAGER="$ROOT/version-manager.sh" \
+		AIDEVOPS_FULL_LOOP_VERSION_MANAGER="../../version-manager.sh" \
 		AIDEVOPS_TRUSTED_ISSUE_PRIORITY=critical \
 		bash "$SCRIPT_DIR/full-loop-release-helper.sh" minor 42 full
 )
