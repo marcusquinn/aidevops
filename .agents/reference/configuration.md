@@ -137,28 +137,26 @@ Model routing, tiers, provider configuration, rate limits, fallback chains, and 
 
 #### models.tiers
 
-Each tier maps to an ordered list of models. First available model is used; optional `fallback` tier is tried if all are unavailable.
+Each workload tier maps to an ordered list of models. Runtime routing chooses
+the preferred available provider and model, applies any provider-specific
+reasoning level, and then follows the configured fallback chain.
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
 | `models.tiers.<name>.models` | string[] | (see defaults) | Ordered list of model identifiers. |
 | `models.tiers.<name>.fallback` | string | (none) | Tier to fall back to if all models unavailable. |
 
-**Default tiers:**
+**Canonical workload tiers:**
 
-| Tier | Models | Fallback | Purpose |
-|------|--------|----------|---------|
-| `local` | `local/llama.cpp` | `haiku` | Offline / privacy-first tasks |
-| `haiku` | `anthropic/claude-haiku-4-5` | -- | Fast, low-cost (primary name) |
-| `flash` | `anthropic/claude-haiku-4-5` | -- | Alias for `haiku` |
-| `sonnet` | `anthropic/claude-sonnet-4-6` | -- | Balanced capability/cost (primary name) |
-| `pro` | `anthropic/claude-sonnet-4-6` | -- | Alias for `sonnet` |
-| `opus` | `anthropic/claude-opus-4-6` | -- | Highest capability, highest cost |
-| `coding` | `anthropic/claude-opus-4-6`, `anthropic/claude-sonnet-4-6` | -- | Code tasks: opus first, sonnet fallback |
-| `eval` | `anthropic/claude-sonnet-4-6` | -- | Evaluation and grading |
-| `health` | `anthropic/claude-sonnet-4-6` | -- | Health/wellness domain |
+| Tier | Purpose |
+|------|---------|
+| `simple` | Bounded classification, search, and formatting work |
+| `standard` | General implementation and review work; the default |
+| `thinking` | Architecture, novel problems, and other complex work |
 
-> `haiku`/`flash` and `sonnet`/`pro` are aliases — they resolve to the same model. Changing one automatically applies to the other.
+The exact provider/model order and reasoning preferences live in
+`configs/model-routing-table.json`; installations can override that table
+without changing the workload-tier interface.
 
 **Example — add a custom tier:**
 
@@ -210,7 +208,10 @@ Provider endpoint and authentication configuration.
 
 #### models.fallback_chains
 
-Per-tier fallback chains for model-level failover. Each key is a tier name; value is an ordered list of model identifiers. By default, each tier's chain matches its `models.tiers` model list (e.g., `coding` chain = `[claude-opus-4-6, claude-sonnet-4-6]`). The `default` chain resolves to `anthropic/claude-sonnet-4-6`.
+Per-tier fallback chains for model-level failover. Each key is a tier name;
+value is an ordered list of model identifiers. By default, the `simple`,
+`standard`, and `thinking` chains match their `models.tiers` model lists, and
+the `default` chain follows `standard`.
 
 #### models.fallback_triggers
 

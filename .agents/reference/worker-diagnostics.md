@@ -67,16 +67,21 @@ worker launch instead of waiting for the next pulse cycle. Common cases:
 - Smoke-test a newly filed issue.
 - Retry after fixing a dispatch blocker.
 - Validate worker-readiness for a brief.
-- Start a small batch with an explicit model.
+- Start a small batch with an explicit workload tier.
 
 Examples:
 
 ```bash
 aidevops launch-worker 22259 marcusquinn/aidevops --dry-run
-aidevops launch-worker 22259 marcusquinn/aidevops --model anthropic/claude-opus-4-7
+aidevops launch-worker 22259 marcusquinn/aidevops
 aidevops launch-worker --batch 22259,22260 marcusquinn/aidevops --agent Build+
 aidevops launch-worker status 22259 marcusquinn/aidevops
 ```
+
+For normal routing, label each issue `tier:simple`, `tier:standard`, or
+`tier:thinking` before launch. Runtime routing selects the preferred available
+provider, model, and reasoning level. The underlying helper retains `--model`
+only as an advanced compatibility override for exact model IDs.
 
 The command wraps `dispatch-single-issue-helper.sh dispatch`, so it preserves the
 manual-dispatch ceremony: open-issue validation, parent-task block, fail-closed

@@ -15,12 +15,41 @@ check_absent() {
 	local description="$1"
 	local pattern="$2"
 	shift 2
-	if rg -n "$pattern" "$@"; then
+	local matches=""
+	local rc=0
+	matches=$(rg -n -e "$pattern" "$@" 2>&1) || rc=$?
+	if [[ "$rc" -eq 0 ]]; then
+		printf '%s\n' "$matches"
 		printf 'FAIL: %s\n' "$description" >&2
 		failures=$((failures + 1))
 		return 0
 	fi
+	if [[ "$rc" -ne 1 ]]; then
+		printf 'FAIL: %s (rg exited %d: %s)\n' "$description" "$rc" "$matches" >&2
+		failures=$((failures + 1))
+		return 0
+	fi
 	printf 'PASS: %s\n' "$description"
+	return 0
+}
+
+check_present() {
+	local description="$1"
+	local pattern="$2"
+	shift 2
+	local rc=0
+	rg -q -e "$pattern" "$@" || rc=$?
+	if [[ "$rc" -eq 0 ]]; then
+		printf 'PASS: %s\n' "$description"
+		return 0
+	fi
+	if [[ "$rc" -ne 1 ]]; then
+		printf 'FAIL: %s (rg exited %d)\n' "$description" "$rc" >&2
+		failures=$((failures + 1))
+		return 0
+	fi
+	printf 'FAIL: %s\n' "$description" >&2
+	failures=$((failures + 1))
 	return 0
 }
 
@@ -54,6 +83,36 @@ check_absent \
 	"legacy tier-specific reasoning environment variables are absent" \
 	'AIDEVOPS_HEADLESS_VARIANT_(HAIKU|SONNET|OPUS|FLASH|PRO)' \
 	.agents --glob '*.{md,sh,py,mjs,json,jsonc,toon}'
+
+manual_dispatch_surfaces=(
+	.agents/scripts/commands/dispatch-issue.md
+	.agents/scripts/dispatch-single-issue-helper.sh
+)
+check_absent \
+	"manual dispatch command surfaces do not recommend a provider-specific model pin" \
+	'--model[[:space:]]+[[:alnum:]_.-]+/[[:alnum:]_.-]+' \
+	"${manual_dispatch_surfaces[@]}"
+
+check_absent \
+	"launch-worker examples do not recommend a provider-specific model pin" \
+	'aidevops launch-worker[^\r\n]*--model[[:space:]]+[[:alnum:]_.-]+/[[:alnum:]_.-]+' \
+	.agents/reference/worker-diagnostics.md
+
+check_present \
+	"manual dispatch command guidance recommends canonical workload tiers" \
+	'tier:simple.*tier:standard.*tier:thinking' \
+	.agents/scripts/commands/dispatch-issue.md
+
+check_present \
+	"manual dispatch help recommends canonical workload tiers" \
+	'tier:simple.*tier:standard.*tier:thinking' \
+	.agents/scripts/dispatch-single-issue-helper.sh
+
+check_present \
+	"exact model overrides are marked as advanced compatibility behavior" \
+	'[Aa]dvanced compatibility override' \
+	.agents/scripts/commands/dispatch-issue.md \
+	.agents/scripts/dispatch-single-issue-helper.sh
 
 actual_tiers=$(jq -r '.tiers | keys | sort | join(",")' .agents/configs/model-routing-table.json)
 if [[ "$actual_tiers" == "simple,standard,thinking" ]]; then

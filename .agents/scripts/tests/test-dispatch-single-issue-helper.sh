@@ -444,6 +444,49 @@ test_no_ceremony_flag_parses_correctly() {
 	return 0
 }
 
+test_model_override_guidance_is_provider_neutral() {
+	reset_test_state
+
+	local rc=0
+	_dsi_parse_dispatch_args 12345 owner/repo --model compatibility/model-id >/dev/null 2>&1 || rc=$?
+	local override_check=1
+	[[ "$rc" -eq 0 && "$_DSI_ARG_MODEL" == "compatibility/model-id" ]] && override_check=0
+	print_result "advanced --model compatibility override still parses" "$override_check" \
+		"rc=$rc model=$_DSI_ARG_MODEL"
+
+	local help_out
+	help_out=$(_dispatch_usage)
+	local help_check=1
+	if [[ "$help_out" == *"Advanced compatibility override"* &&
+		"$help_out" == *"tier:simple"* &&
+		"$help_out" == *"tier:standard"* &&
+		"$help_out" == *"tier:thinking"* &&
+		"$help_out" != *"anthropic/"* &&
+		"$help_out" != *"openai/"* &&
+		"$help_out" != *"google/"* ]]; then
+		help_check=0
+	fi
+	print_result "dispatch help recommends tiers without a provider pin" "$help_check" "$help_out"
+
+	rc=0
+	local error_out
+	error_out=$(_dsi_parse_dispatch_args 12345 owner/repo --model --dry-run 2>&1) || rc=$?
+	local error_check=1
+	if [[ "$rc" -eq 2 &&
+		"$error_out" == *"tier:simple"* &&
+		"$error_out" == *"tier:standard"* &&
+		"$error_out" == *"tier:thinking"* &&
+		"$error_out" != *"anthropic/"* &&
+		"$error_out" != *"openai/"* &&
+		"$error_out" != *"google/"* ]]; then
+		error_check=0
+	fi
+	print_result "missing --model error recommends tiers without a provider pin" "$error_check" \
+		"rc=$rc output=$error_out"
+
+	return 0
+}
+
 test_load_issue_meta_accepts_lowercase_open() {
 	MOCK_GH_FAIL="0"
 	MOCK_GH_ISSUE_STATE="open"
@@ -1121,6 +1164,7 @@ _run_tests() {
 	test_ceremony_handles_empty_self_login
 	test_ceremony_handles_set_issue_status_failure
 	test_no_ceremony_flag_parses_correctly
+	test_model_override_guidance_is_provider_neutral
 	test_load_issue_meta_accepts_lowercase_open
 	test_load_issue_meta_blocks_lowercase_closed
 	test_pr_target_guard_detects_pull_request

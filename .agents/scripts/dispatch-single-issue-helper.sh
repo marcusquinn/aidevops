@@ -12,6 +12,8 @@
 #
 # Subcommands:
 #   dispatch <issue_number> <owner/repo> [--model <id>] [--dry-run] [--no-ceremony]
+#   Normal routing uses the issue's tier:simple, tier:standard, or tier:thinking
+#   label. --model is an advanced compatibility override for exact model IDs.
 #   status <issue_number> <owner/repo>
 #   help
 #
@@ -926,7 +928,7 @@ _dsi_parse_dispatch_args() {
 			# ${...} braced form keeps the positional-parameter ratchet
 			# (which matches bare \$[1-9]) happy.
 			if [[ $# -lt 2 || -z "${2:-}" || "${2:-}" == --* ]]; then
-				_dsi_err "--model requires a model id (e.g. anthropic/claude-opus-4-7)"
+				_dsi_err "--model requires an exact model id; prefer a tier:simple, tier:standard, or tier:thinking issue label for normal routing"
 				return 2
 			fi
 			_DSI_ARG_MODEL="${2}"
@@ -1477,8 +1479,10 @@ _dispatch_usage() {
 Usage: dispatch-single-issue-helper.sh dispatch <issue_number> <owner/repo> [options]
 
 Options:
-  --model <id>    Override model (e.g. anthropic/claude-opus-4-7).
-                  Default: inferred from tier:* and model:* labels.
+  --model <id>    Advanced compatibility override for an exact model ID.
+                  Prefer a tier:simple, tier:standard, or tier:thinking issue
+                  label; runtime routing selects the preferred available
+                  provider, model, and reasoning level. Default: standard.
   --agent <name>  Worker agent name. Default: Build+.
   --base <ref>    Worktree base branch/ref. Default: repo dispatch/PR base
                   policy from config, falling back to origin/HEAD.
@@ -1490,7 +1494,6 @@ Options:
 
 Examples:
   dispatch-single-issue-helper.sh dispatch 20882 marcusquinn/aidevops
-  dispatch-single-issue-helper.sh dispatch 20882 marcusquinn/aidevops --model anthropic/claude-opus-4-7
   dispatch-single-issue-helper.sh dispatch 20882 marcusquinn/aidevops --agent Build+
   dispatch-single-issue-helper.sh dispatch 20882 marcusquinn/aidevops --base origin/develop
   dispatch-single-issue-helper.sh dispatch 20882 marcusquinn/aidevops --dry-run
@@ -1512,11 +1515,11 @@ Examples:
   # Smoke-test a newly-filed issue
   dispatch-single-issue-helper.sh dispatch 20882 marcusquinn/aidevops --dry-run
 
-  # Real dispatch (model inferred from labels)
+  # Real dispatch (tier inferred from tier:simple, tier:standard, or tier:thinking)
   dispatch-single-issue-helper.sh dispatch 20882 marcusquinn/aidevops
 
-  # Force a specific model
-  dispatch-single-issue-helper.sh dispatch 20882 marcusquinn/aidevops --model anthropic/claude-opus-4-7
+  # Runtime routing selects the preferred provider, model, and reasoning level
+  # for that workload tier. --model remains an advanced compatibility override.
 
   # Force an agent name (default: Build+)
   dispatch-single-issue-helper.sh dispatch 20882 marcusquinn/aidevops --agent Build+
