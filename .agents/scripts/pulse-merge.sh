@@ -515,10 +515,11 @@ _pm_select_pr_closeout_comment_id() {
 	local closeout_marker="<!-- PULSE_MERGE_CLOSEOUT:PR#${pr_number} -->"
 
 	printf '%s' "$comments_json" | jq -r \
+		--arg array_type 'array' \
 		--arg closeout_marker "$closeout_marker" \
 		--arg summary_marker '<!-- MERGE_SUMMARY -->' '
-		(if type == "array" and (.[0]? | type) == "array" then [.[][]]
-		elif type == "array" then .
+		(if type == $array_type and (.[0]? | type) == $array_type then [.[][]]
+		elif type == $array_type then .
 		else [] end)
 		| [ .[]
 			| select(
@@ -558,9 +559,10 @@ _pm_reconcile_pr_closeout_comments() {
 	[[ -n "$comments_json" ]] || return 0
 
 	closeout_ids=$(printf '%s' "$comments_json" | jq -r \
+		--arg array_type 'array' \
 		--arg closeout_marker "$closeout_marker" '
-		(if type == "array" and (.[0]? | type) == "array" then [.[][]]
-		elif type == "array" then .
+		(if type == $array_type and (.[0]? | type) == $array_type then [.[][]]
+		elif type == $array_type then .
 		else [] end)
 		| [ .[]
 			| select((.body // "") | contains($closeout_marker))
