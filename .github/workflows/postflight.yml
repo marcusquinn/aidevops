@@ -123,9 +123,11 @@ jobs:
             fi
           fi
         fi
+        # Stream large API responses through file descriptors instead of argv.
+        # Check-run output payloads can exceed the runner's ARG_MAX limit.
         CHECK_RUNS=$(jq -cn \
-          --argjson current_runs "$EFFECTIVE_CHECK_RUNS" \
-          --argjson descendant_runs "$DESCENDANT_CHECK_RUNS" \
+          --slurpfile current_run_documents <(printf '%s\n' "$EFFECTIVE_CHECK_RUNS") \
+          --slurpfile descendant_run_documents <(printf '%s\n' "$DESCENDANT_CHECK_RUNS") \
           -f .github/scripts/reconcile-superseded-cancellations.jq \
           | jq -c '.[] | {name, status, conclusion, app: (.app.slug // .app.name // "unknown"), superseded_by_check_run_id}')
         
