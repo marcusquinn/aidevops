@@ -1,4 +1,5 @@
 ($release_run_documents
+ | flatten
  | map(.workflow_runs // [])
  | add
  | map(

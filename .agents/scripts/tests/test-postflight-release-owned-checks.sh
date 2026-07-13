@@ -27,6 +27,16 @@ jq -e '
 
 printf 'PASS: unrelated queued issue checks do not delay successful release checks\n'
 
+PAGINATED_SCOPED=$(jq -c \
+	--arg release_sha "release-sha" \
+	--arg self_name "Verify Release Health" \
+	--slurpfile release_run_documents <(jq -s '.' "$WORKFLOW_FIXTURE") \
+	-f "$FILTER" \
+	"$CHECK_FIXTURE")
+jq -e '(.check_runs | length) == 2' <<<"$PAGINATED_SCOPED" >/dev/null
+
+printf 'PASS: paginated workflow-run response retains release-owned suites\n'
+
 PENDING_INPUT=$(jq '(.check_runs[] | select(.id == 2001)) |= (.status = "in_progress" | .conclusion = null)' "$CHECK_FIXTURE")
 PENDING=$(scope_checks <<<"$PENDING_INPUT")
 jq -e '[.check_runs[] | select(.status != "completed")] | length == 1' <<<"$PENDING" >/dev/null
