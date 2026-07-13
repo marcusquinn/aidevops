@@ -239,3 +239,86 @@ remove_worktree_path_permanently() {
 
 	return 1
 }
+
+# Resolve native Git without selecting the canonical mutation-guard shim. This
+# helper is the audited exception for pruning metadata after a guarded removal
+# has already moved a linked worktree directory to trash.
+_worktree_cleanup_real_git() {
+	local candidate="${AIDEVOPS_REAL_GIT_BIN:-}"
+
+	if [[ -n "$candidate" && -x "$candidate" ]]; then
+		printf '%s\n' "$candidate"
+		return 0
+	fi
+
+	for candidate in /usr/bin/git /usr/local/bin/git /opt/homebrew/bin/git; do
+		if [[ -x "$candidate" ]]; then
+			printf '%s\n' "$candidate"
+			return 0
+		fi
+	done
+
+	return 1
+}
+
+# Return 0 when Git still lists the exact worktree path in its shared metadata.
+_worktree_metadata_contains_path() {
+	local real_git="$1"
+	local repo_context="$2"
+	local wt_path="$3"
+	local clean_wt_path="$wt_path"
+	local list_output=""
+	local listed_path=""
+
+	while [[ "$clean_wt_path" != "/" && "$clean_wt_path" == */ ]]; do
+		clean_wt_path="${clean_wt_path%/}"
+	done
+	if ! list_output=$("$real_git" -C "$repo_context" worktree list --porcelain); then
+		return 2
+	fi
+
+	while IFS= read -r listed_path; do
+		listed_path="${listed_path%$'\r'}"
+		[[ "$listed_path" == "worktree $clean_wt_path" ]] && return 0
+	done <<<"$list_output"
+
+	return 1
+}
+
+# Prune a missing linked worktree through the narrowly scoped native-Git
+# primitive, then verify its exact metadata entry disappeared. The target must
+# already be absent so this cannot remove a live worktree directory.
+# Args: $1=repository context, $2=missing worktree path
+# Returns 0 only when the target metadata is absent after pruning.
+prune_missing_worktree_metadata() {
+	local repo_context="$1"
+	local wt_path="$2"
+	local real_git=""
+	local metadata_status=0
+
+	[[ -n "$repo_context" && -d "$repo_context" && -n "$wt_path" ]] || return 1
+	[[ ! -e "$wt_path" ]] || return 1
+	real_git=$(_worktree_cleanup_real_git) || return 1
+	[[ -n "$real_git" ]] || return 1
+
+	if _worktree_metadata_contains_path "$real_git" "$repo_context" "$wt_path"; then
+		metadata_status=0
+	else
+		metadata_status=$?
+	fi
+	if [[ "$metadata_status" -eq 1 ]]; then
+		return 0
+	elif [[ "$metadata_status" -ne 0 ]]; then
+		return 1
+	fi
+
+	"$real_git" -C "$repo_context" worktree prune >/dev/null || return 1
+	if _worktree_metadata_contains_path "$real_git" "$repo_context" "$wt_path"; then
+		metadata_status=0
+	else
+		metadata_status=$?
+	fi
+	[[ "$metadata_status" -eq 1 ]] || return 1
+
+	return 0
+}
