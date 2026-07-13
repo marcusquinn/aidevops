@@ -21,7 +21,7 @@ ORIGINAL_HOME="${HOME}"
 # platform Git directly so the production canonical-worktree shim does not
 # classify those isolated fixtures as user repositories.
 git() {
-	/usr/bin/git "$@"
+	command -p git "$@"
 	return $?
 }
 

@@ -630,7 +630,7 @@ _worker_draft_checkpoint_escalation_visible() {
 	local issue_number="$1"
 	local repo_slug="$2"
 	gh issue view "$issue_number" --repo "$repo_slug" --json labels 2>/dev/null \
-		| jq -e --arg nmr "$_HRW_NMR_LABEL" '([.labels[].name] | index($nmr)) != null' >/dev/null 2>&1
+		| jq -e --arg nmr "$_HRW_NMR_LABEL" '([.labels[]?.name] | index($nmr)) != null' >/dev/null 2>&1
 	return $?
 }
 

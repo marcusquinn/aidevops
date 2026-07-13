@@ -229,12 +229,14 @@ _stale_recovery_escalate_draft_checkpoint() {
 	local checkpoint_kind="${7:-draft_checkpoint}"
 	local checkpoint_description="draft PR"
 	local escalation_event="STALE_DRAFT_ESCALATED"
+	local _ifs_was_set=0
 	if [[ "$checkpoint_kind" == "ready_failed" ]]; then
 		checkpoint_description="ready PR with terminally failed checks"
 		escalation_event="STALE_READY_FAILED_ESCALATED"
 	fi
 	local _assignee=""
-	local _old_ifs="${IFS:-}"
+	local _old_ifs="${IFS-}"
+	[[ -n "${IFS+x}" ]] && _ifs_was_set=1
 	local -a _assignees=()
 	local -a _status_args=(--add-label "$_DDS_NMR_LABEL")
 
@@ -244,7 +246,11 @@ _stale_recovery_escalate_draft_checkpoint() {
 	fi
 
 	IFS=',' read -ra _assignees <<<"$stale_assignees"
-	IFS="$_old_ifs"
+	if [[ "$_ifs_was_set" -eq 1 ]]; then
+		IFS="$_old_ifs"
+	else
+		unset IFS
+	fi
 	for _assignee in "${_assignees[@]}"; do
 		[[ -n "$_assignee" ]] && _status_args+=(--remove-assignee "$_assignee")
 	done
@@ -253,7 +259,7 @@ _stale_recovery_escalate_draft_checkpoint() {
 		return 1
 	fi
 	if ! gh issue view "$issue_number" --repo "$repo_slug" --json labels 2>/dev/null \
-		| jq -e --arg nmr "$_DDS_NMR_LABEL" '([.labels[].name] | index($nmr)) != null' >/dev/null 2>&1; then
+		| jq -e --arg nmr "$_DDS_NMR_LABEL" '([.labels[]?.name] | index($nmr)) != null' >/dev/null 2>&1; then
 		printf 'STALE_DRAFT_ESCALATION_FAILED: issue #%s in %s — blocking label not visible; ownership retained\n' "$issue_number" "$repo_slug"
 		return 1
 	fi

@@ -132,7 +132,7 @@ export PATH="${GH_STUB_DIR}:${PATH}"
 # Use the platform Git directly so the production canonical-worktree shim does
 # not classify those isolated fixtures as user repositories.
 git() {
-	/usr/bin/git "$@"
+	command -p git "$@"
 	return $?
 }
 
@@ -465,17 +465,21 @@ test_pr_lifecycle_states_do_not_collapse_to_completion() {
 		return 0
 	}
 
-	_pr_handoff_state_for_branch_or_issue() {
-		printf '%s' "${TEST_PR_HANDOFF_STATE:-unknown}"
-		return 0
-	}
+	local got_draft="" got_closed="" lifecycle_results=""
+	lifecycle_results=$(
+		_pr_handoff_state_for_branch_or_issue() {
+			printf '%s' "${TEST_PR_HANDOFF_STATE:-unknown}"
+			return 0
+		}
 
-	local got_draft="" got_closed=""
-	TEST_PR_HANDOFF_STATE="draft_checkpoint"
-	got_draft=$(_worker_produced_output "issue-1010" "$WORK_DIR")
-	TEST_PR_HANDOFF_STATE="closed_unmerged"
-	got_closed=$(_worker_produced_output "issue-1010" "$WORK_DIR")
-	unset TEST_PR_HANDOFF_STATE
+		TEST_PR_HANDOFF_STATE="draft_checkpoint"
+		got_draft=$(_worker_produced_output "issue-1010" "$WORK_DIR")
+		TEST_PR_HANDOFF_STATE="closed_unmerged"
+		got_closed=$(_worker_produced_output "issue-1010" "$WORK_DIR")
+		printf '%s|%s' "$got_draft" "$got_closed"
+	)
+	got_draft="${lifecycle_results%%|*}"
+	got_closed="${lifecycle_results#*|}"
 
 	if [[ "$got_draft" == "draft_checkpoint" && "$got_closed" == "closed_unmerged" ]]; then
 		print_result "case 10: draft and closed PR states remain non-complete" 0
