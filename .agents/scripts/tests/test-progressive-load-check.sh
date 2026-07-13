@@ -11,7 +11,11 @@ TEST_ROOT=$(mktemp -d "${TMPDIR:-/tmp}/progressive-load-check.XXXXXX")
 FIXTURE_DIR="$TEST_ROOT/agents"
 
 cleanup() {
-	rm -rf "$TEST_ROOT"
+	local test_root="${TEST_ROOT:-}"
+
+	if [[ -n "$test_root" ]]; then
+		rm -rf "$test_root"
+	fi
 	return 0
 }
 trap cleanup EXIT
