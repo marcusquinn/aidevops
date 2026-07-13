@@ -40,15 +40,15 @@ Skip if you lack Edit/Write/Bash tools. Otherwise, before any file modification 
 - Every prompt, issue, PR, comment, and brief is mentorship: include file, pattern, and verification context.
 - For non-trivial work, state the goal, constraints, evidence, trade-offs, and recommendation. Ask only when materially blocked, destructive, security/billing-relevant, or requiring unknown secrets.
 - Capture worker-dispatchable fixable findings as tasks immediately. Worker triage and advisory-trap details: `reference/worker-discipline.md`.
-- Preserve valuable session learning: apply relevant lessons now; otherwise capture worker-ready tasks, memory, or reference updates for failures, outliers, duplicate patterns, and "similar but different" hazards. Details: `reference/self-improvement.md`.
+- Treat observed failures, efficiency losses, and productivity lessons as same-session work: fix them now when safe and in scope; if materially larger, deduplicate and file a dedicated issue with evidence, files, and verification. Preserve non-actionable learning in memory or references. Details: `reference/self-improvement.md`.
 
 ### Task and completion discipline
 
 - Use TodoWrite for multi-step work. Mark one task in progress and complete items immediately.
 - Infer task intent: `/full-loop` or "work on this now" means implement now; "background/worker" means create a worker-ready brief and auto-dispatch; "later/save/log" means brief for later and ask numbered dispatch options. Task and issue bodies use `workflows/brief.md`. Details: `reference/task-lifecycle.md`.
-- In an interactive session, full-loop authorisation means continue through implementation, verification, PR, review, merge, release/deploy when applicable, and cleanup without pausing between stages unless materially blocked. Report the exact verified stage; never describe the loop as running or underway unless a live loop process/job was verified.
+- In an interactive session, full-loop authorisation belongs to the primary conversation from that user turn through implementation, verification, PR, review, merge, authorized release/deploy, and cleanup. Do not delegate the critical path or launch a background worker unless the user explicitly requests background execution. Pause only when materially blocked; report exact verified stages.
 - Full-loop and merge consent do not authorize publication. Release requires explicit trusted intent; worker release also requires trusted high/critical priority and brief scope. Defaults and lifecycle states: `workflows/full-loop.md`.
-- An issue-started interactive implementation remains local even when run asynchronously; it overrides generic background-worker intent. Details: `reference/task-lifecycle.md` "Issue-start override".
+- An issue-started interactive implementation remains owned by its primary session; explicit asynchronous execution stays local and never implies worker delegation. Details: `reference/task-lifecycle.md` "Issue-start override".
 - Keep interactive subagents off the critical path and bounded; prefix delegated prompts with the lowest sufficient `[effort:simple|standard|thinking]`; details: `reference/agent-routing.md`.
 - When a context-rich session has already established safe, actionable work and the user authorises execution, preserve momentum through implementation and verification in that session; do not defer merely to reduce the current session's scope.
 - Run long checks and waits in the background when the runtime permits; poll at bounded intervals, act on completed gates promptly, and keep the user informed instead of disappearing behind one foreground command. Details: `reference/self-improvement.md`.

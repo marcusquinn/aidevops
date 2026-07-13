@@ -17,9 +17,9 @@ Release is conditional. Generic full-loop, merge, or "ship the PR" consent is no
 
 Fatal modes: **GH#5317** (exits without PR), **GH#5096** (exits after PR). Do NOT skip any step:
 
-**Interactive continuity (MANDATORY):** A user's full-loop instruction authorises this entire lifecycle. Continue autonomously from the current stage through `FULL_LOOP_COMPLETE`; do not stop after setup, implementation, PR creation, merge, or release merely to report progress. Pause only for a material blocker requiring user input under the framework rules. Progress reports must name the last verified stage and current action. Say a loop is "running" or "underway" only after verifying a live loop process/job; a worktree, plan, or completed discovery alone is not a running loop.
+**Interactive continuity (MANDATORY):** A user's full-loop instruction assigns this entire lifecycle to the primary conversation that received it. Keep the critical path in that session through `FULL_LOOP_COMPLETE`; do not launch a background worker or delegate completion unless the user explicitly requests background execution. Continue autonomously from the current stage and do not stop after setup, implementation, PR creation, merge, or release merely to report progress. Pause only for a material blocker requiring user input. Progress reports must name the last verified stage and current action.
 
-**Dual-mode executor contract:** Interactive and headless runs share the persisted lifecycle transitions and terminal evidence. Mode changes interaction policy only: interactive keeps the primary responsive and surfaces safe resume actions; headless never prompts and autonomously resumes within its brief and budgets. `start --background` reports `FULL_LOOP_START_RESULT=running` only for a live executor, otherwise `FULL_LOOP_START_RESULT=initialized-only`. Custom executor adapters receive `AIDEVOPS_FULL_LOOP_RUN_ID` and `AIDEVOPS_FULL_LOOP_HEARTBEAT_FILE`; they must refresh that file as `<run-id> <UTC-ISO-timestamp>`. `status --json` is the authoritative machine-readable observation.
+**Dual-mode executor contract:** Interactive and headless runs share persisted lifecycle transitions and terminal evidence. Foreground is the interactive default. Explicit `start --background` stays local to the authorizing session and reports `FULL_LOOP_START_RESULT=running` only for a live executor, otherwise `FULL_LOOP_START_RESULT=initialized-only`; it is not permission for remote/headless dispatch. Headless runs never prompt and resume within their brief and budgets. Custom adapters receive `AIDEVOPS_FULL_LOOP_RUN_ID` and `AIDEVOPS_FULL_LOOP_HEARTBEAT_FILE`; `status --json` is authoritative.
 
 | # | Step | Signal |
 |---|------|--------|
@@ -60,7 +60,7 @@ Exit 0 means structural linked-worktree checks passed. A worker environment vari
 
 **Operation Verification (t1364.3):** `verify-operation-helper.sh check/verify`. Critical/high → block or verify.
 
-Start: `~/.aidevops/agents/scripts/full-loop-helper.sh start "$ARGUMENTS" --background`. Here `--background` means local asynchronous execution, not remote worker dispatch. Issue-started interactive sessions preserve their local-only marker through that child and reject headless/remote-worker routing. `--headless` / `FULL_LOOP_HEADLESS=true`: no prompts, no TODO.md edits.
+Start: `~/.aidevops/agents/scripts/full-loop-helper.sh start "$ARGUMENTS"`. Add `--background` only after explicit user background intent; it means local asynchronous execution, never remote worker dispatch. Issue-started interactive sessions preserve their local-only marker through that child and reject headless/remote-worker routing. `--headless` / `FULL_LOOP_HEADLESS=true`: no prompts, no TODO.md edits.
 
 ---
 

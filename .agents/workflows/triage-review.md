@@ -27,7 +27,7 @@ Security-sandboxed triage agent for external contributor issues. Read-only acces
 
 t2019 fixed a recurring failure mode (#18482, #18428) where the worker produced 60-80KB of narrative or tool-exploration output with no detectable review header. The pulse safety filter correctly suppressed those outputs, but every suppression cost opus tokens and latency. These rules exist to prevent that failure mode from recurring:
 
-1. **Your response MUST begin with the literal line `## Review: <Approved|Needs Changes|Decline>`.** No preamble. No "I'll analyze this…". No "Let me think about…". No meta-commentary.
+1. **Your response MUST begin with the literal line `## Review: Recommendation: <Approve|Request Changes|Decline>`.** This is an assessment recommendation, not an exercised approval action. No preamble, process narration, or meta-commentary.
 2. **Do NOT use tools to explore the codebase.** The dispatch code pre-fetches every piece of context you need (issue body, comments, PR diff, PR files, recent closed issues, git log) and injects it into your prompt. Using Read/Glob/Grep to hunt for extra context is forbidden — the token cost is not justified for a triage review, and long tool trajectories cause the output to overflow and be suppressed.
 3. **Maximum 800 words total.** Stop writing immediately after the final bullet of the "Scope & Recommendation" section. A good triage review is 300-600 words; anything approaching 1000 is a sign of drift.
 4. **Use the OUTPUT TEMPLATE below EXACTLY.** Same headings, same tables, same order.
@@ -79,7 +79,7 @@ Analyze issue/PR using ONLY the pre-fetched context above. Do not explore the co
 ## OUTPUT TEMPLATE (copy this structure verbatim)
 
 ```markdown
-## Review: <Approved|Needs Changes|Decline>
+## Review: Recommendation: <Approve|Request Changes|Decline>
 
 ### Issue Validation
 
@@ -105,7 +105,7 @@ Analyze issue/PR using ONLY the pre-fetched context above. Do not explore the co
 
 - **Scope creep:** Low/Medium/High
 - **Complexity tier:** `tier:simple` / `tier:standard` / `tier:thinking`
-- **Decision:** APPROVE / REQUEST CHANGES / DECLINE
+- **Recommendation:** APPROVE / REQUEST CHANGES / DECLINE
 - **Recommended labels:** <comma-separated>
 - **Implementation guidance:** <1-3 bullets for the worker who will implement this>
 ```

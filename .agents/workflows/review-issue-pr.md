@@ -219,12 +219,14 @@ For interactive maintainer review, complete the full checklist and post the stru
 1. Verify checkout freshness and report provenance.
 2. Complete duplicate, temporal, root-cause, safety, and dispatchability checks.
 3. Post the review using the format below so the decision has durable evidence.
-4. Only after an `APPROVE` verdict is posted, state that cryptographic approval is appropriate and provide the approval command if the user requests it.
+4. Only after an `Approve` recommendation is posted, state that cryptographic approval is appropriate and provide the approval command if the user requests it.
 
 Do not expose an approval command as the next action merely because a dispatch helper reports `needs-maintainer-review`; that gate identifies missing authority, not review quality. If review evidence is incomplete, recommend investigation rather than approval.
 
+Assessment language describes a recommendation, not an exercised authority action. Use `Recommendation: Approve`, never `Approved`, until a trusted maintainer actually performs the approval step. Apply the same distinction in the task-tool result and user-facing summary.
+
 ```markdown
-## Review: Approved / Needs Changes / Decline
+## Review: Recommendation: Approve / Request Changes / Decline
 
 ### Pre-Review Context
 
@@ -272,7 +274,7 @@ Do not expose an approval command as the next action merely because a dispatch h
 
 - Scope creep: Low/Medium/High
 - Complexity: Low (`tier:simple`) / Medium (`tier:standard`) / High (`tier:thinking`)
-- **Decision**: APPROVE / REQUEST CHANGES / DECLINE
+- **Recommendation**: APPROVE / REQUEST CHANGES / DECLINE
 - **Labels**: [e.g., `tier:simple`, `bug`, `status:available`]
 - **Implementation guidance**: [key steps, test cases to add]
 
@@ -297,10 +299,10 @@ After a verdict is reached, the reporter must always be informed — regardless 
 
 | Outcome | Action |
 |---------|--------|
-| APPROVE → internal task created | Comment on source issue: thank reporter, link to internal task/PR, set expectation on timeline |
-| APPROVE → PR merged same session | Comment on source issue: thank reporter, link to merged PR, close issue |
-| REQUEST CHANGES | Comment explaining what needs to change before the fix can proceed |
-| DECLINE | Comment explaining why (out of scope, by design, duplicate) and close issue |
+| Recommend APPROVE → internal task created | Comment on source issue: thank reporter, link to internal task/PR, set expectation on timeline |
+| Recommend APPROVE → PR merged same session | Comment on source issue: thank reporter, link to merged PR, close issue |
+| Recommend REQUEST CHANGES | Comment explaining what needs to change before the fix can proceed |
+| Recommend DECLINE | Comment explaining why (out of scope, by design, duplicate) and close issue |
 
 **Template — issue converted to internal task:**
 

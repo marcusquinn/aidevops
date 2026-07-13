@@ -59,9 +59,9 @@ Use `framework-issue-helper.sh`, not `claim-task-id.sh`:
 
 Treat valuable session learning as system input, not disposable transcript context. Outliers are expensive to find intentionally; when one appears during normal work, convert it into reusable system knowledge before it evaporates.
 
-- **Apply now** when the lesson directly improves the user's requested aim without widening risk.
+- **Apply now by default:** repair an observed failure, efficiency loss, or productivity gap in the current session when it is safe, authorized, and in scope; verify the repair before moving on.
 - **Preserve context momentum:** when the session has enough evidence, authorization, and safe execution paths, continue through implementation and verification instead of handing reconstruction cost to a future session. Defer only for a real dependency, safety boundary, resource fuse, or explicit user choice.
-- **Brief for workers** when the lesson exposes a fixable bug, missing validator, missing doc, recurring failure mode, or automation gap. Use worker-ready context: files, pattern, evidence, verification, and an explicit note when paths are unknown.
+- **File larger work separately** when the repair would materially widen scope or delay the active objective. Deduplicate first, then create a dedicated issue with files, pattern, evidence, verification, and an explicit note when paths are unknown; do not leave an actionable lesson only in chat or memory.
 - **Store memory/reference** when the lesson is reusable but not immediately dispatchable, especially diagnostics, edge cases, duplicate patterns, and "similar but different" hazards.
 - **Route design learning by scope:** durable repo-specific UI patterns belong in that repo's `DESIGN.md`; generic aidevops briefing/verification patterns become aidevops issues with anonymised evidence; uncertain or broad design lessons become worker-ready follow-ups instead of bloating global docs.
 - **Avoid speculative bloat:** capture observed examples and evidence; do not add global guidance for hypothetical failures.
