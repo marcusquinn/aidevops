@@ -1,0 +1,44 @@
+{
+  "check_runs": [
+    {
+      "id": 2001,
+      "name": "Framework Validation",
+      "status": "completed",
+      "conclusion": "success",
+      "check_suite": { "id": 501 },
+      "app": { "slug": "github-actions" }
+    },
+    {
+      "id": 2002,
+      "name": "Publish npm package",
+      "status": "completed",
+      "conclusion": "success",
+      "check_suite": { "id": 502 },
+      "app": { "slug": "github-actions" }
+    },
+    {
+      "id": 2003,
+      "name": "Security Validation",
+      "status": "queued",
+      "conclusion": null,
+      "check_suite": { "id": 503 },
+      "app": { "slug": "github-actions" }
+    },
+    {
+      "id": 2004,
+      "name": "gate / Re-evaluate PR Gate on Issue Change",
+      "status": "in_progress",
+      "conclusion": null,
+      "check_suite": { "id": 504 },
+      "app": { "slug": "github-actions" }
+    },
+    {
+      "id": 2005,
+      "name": "Historical Framework Validation",
+      "status": "completed",
+      "conclusion": "failure",
+      "check_suite": { "id": 505 },
+      "app": { "slug": "github-actions" }
+    }
+  ]
+}
