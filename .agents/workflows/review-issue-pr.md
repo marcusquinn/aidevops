@@ -40,6 +40,20 @@ Before reading the proposed fix, establish the current state of the codebase and
 
 **Implementer-side mirror (t2046):** The same discipline applies at implementation time — see `AGENTS.md` "Pre-implementation discovery" for the rule every agent runs before writing code. Reviewers and implementers share the discovery habit; this section is the reviewer-side version of the same check.
 
+### 0.0 Checkout freshness and report provenance
+
+Before treating local files as current evidence, compare the checked-out commit with the remote default branch. A clean checkout can still be materially stale.
+
+```bash
+git fetch origin
+git status --short --branch
+git rev-list --left-right --count HEAD...origin/$(git remote show origin | sed -n '/HEAD branch/s/.*: //p')
+```
+
+If the checkout is behind, inspect the cited file at `origin/<default-branch>` or create a fresh linked worktree from that ref. Never reject or approve an issue from stale local code. Preserve dirty canonical work; do not reset, clean, or switch it.
+
+Establish what triggered the report before drawing a verdict: correlate the issue creation time and reported version with recent commits, merged PRs, releases, and the exact causal lines. A mismatch between local code and the report is a prompt to investigate provenance, not evidence that the report is stale.
+
 ### 0.1 Duplicate and temporal-duplicate check
 
 Two distinct checks, both required. The second is what's usually missed: an issue filed last week may have been silently solved by unrelated work that landed yesterday.
@@ -197,6 +211,17 @@ For every non-trivial change, enumerate the downstream code paths that will beha
 ## Review Output Format
 
 Heading MUST contain `## Review:` or `## Issue/PR Review:` — pulse idempotency guard uses this marker to detect existing triage reviews.
+
+### Approval sequencing (MANDATORY)
+
+For interactive maintainer review, complete the full checklist and post the structured review comment before presenting or running any maintainer-approval command. The order is fail-closed:
+
+1. Verify checkout freshness and report provenance.
+2. Complete duplicate, temporal, root-cause, safety, and dispatchability checks.
+3. Post the review using the format below so the decision has durable evidence.
+4. Only after an `APPROVE` verdict is posted, state that cryptographic approval is appropriate and provide the approval command if the user requests it.
+
+Do not expose an approval command as the next action merely because a dispatch helper reports `needs-maintainer-review`; that gate identifies missing authority, not review quality. If review evidence is incomplete, recommend investigation rather than approval.
 
 ```markdown
 ## Review: Approved / Needs Changes / Decline
