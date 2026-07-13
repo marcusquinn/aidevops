@@ -195,6 +195,16 @@ Worker aborted PR creation: issue #${issue_number} was already closed by the tim
 
 # --- Help & Main ---
 
+cmd_wait_checks() {
+	local helper="${SCRIPT_DIR}/gh-checks-wait-helper.sh"
+	if [[ ! -x "$helper" ]]; then
+		print_error "Required-check wait helper unavailable: $helper"
+		return 1
+	fi
+	"$helper" wait "$@"
+	return $?
+}
+
 show_help() {
 	cat <<'EOF'
 Full Development Loop Orchestrator
@@ -210,6 +220,7 @@ Commands:
                 [--skip-hooks]             Pass --no-verify to git push (doc-only PRs, GH#20138)
                 [--no-rebase]              Explicit recovery mode after a failed/aborted rebase
   pre-merge-gate <PR> [REPO]    Check review bot gate before merge (GH#17541)
+  wait-checks <PR> [options]     Wait with transition-only required-check output
   merge <PR> [REPO] [--squash|--merge|--rebase] [--admin] [--auto]
                                 Gate-enforced merge (runs pre-merge-gate first).
                                 --admin / --auto pass through to gh pr merge
@@ -247,6 +258,7 @@ main() {
 	cancel) cmd_cancel ;; logs) cmd_logs "$@" ;; _run_foreground) _run_foreground "$@" ;;
 	commit-and-pr | create-pr) cmd_commit_and_pr "$@" ;;
 	pre-merge-gate) cmd_pre_merge_gate "$@" ;;
+	wait-checks) cmd_wait_checks "$@" ;;
 	merge) cmd_merge "$@" ;;
 	complete-after-cleanup) cmd_complete_after_cleanup "$@" ;;
 	help | --help | -h) show_help ;;

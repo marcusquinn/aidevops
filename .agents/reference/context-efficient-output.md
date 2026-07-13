@@ -7,6 +7,67 @@ RTK reduces context load for noisy terminal summaries. It is an efficiency layer
 not an evidence boundary: capability, correctness, and exact output take priority
 over token savings.
 
+## Evidence receipts for noisy operations
+
+Use `output-sandbox-helper.sh run` when a deterministic operation may produce
+large setup, build, migration, or deployment output but the immediate decision
+needs only the outcome and bounded evidence:
+
+```bash
+output-sandbox-helper.sh run --tag setup --expect-text '[SETUP_COMPLETE]' -- ./setup.sh --non-interactive
+```
+
+Success defaults to a compact receipt; failure defaults to bounded diagnostic
+lines. The text receipt and `--format json` contract (`aidevops.operation-result/v1`)
+include the operation outcome, process exit, decision basis, byte/line counts,
+sensitivity-redaction state, and an opaque `output_id`. Raw content remains in a
+private `0700`/`0600` local evidence store and can be retrieved deliberately with
+`output-sandbox-helper.sh show OUTPUT_ID`. Receipts never expose the raw storage
+path.
+
+Use `--success-mode summary|full` or `--failure-mode summary|full` only when the
+next decision requires content. Exact reads, JSON, diffs, security, secret, and
+credential commands bypass the store and retain native output semantics. Storage
+failure also fails open to native execution rather than blocking the operation.
+
+`aidevops update` applies this contract automatically for non-TTY setup output.
+Use `--compact` to request it explicitly or `--verbose` to retain native streaming.
+The compact path verifies the setup completion sentinel before reporting success.
+
+## Delta-aware required-check waits
+
+Do not repeatedly print unchanged `gh pr checks` snapshots. Use:
+
+```bash
+full-loop-helper.sh wait-checks 123 --repo owner/repo
+```
+
+The wait prints the initial required-check state once, then only transitions,
+sparse heartbeats, and the terminal result. Its polling interval backs off while
+state is unchanged and resets after a transition. Failed-check links are emitted
+once; PR-head changes and API loss remain explicit. Exit `8` means checks are
+still pending at timeout, `1` means terminal failure, and `2` means indeterminate
+API failure. These states must not be collapsed into a generic failure.
+
+## Session output-efficiency evidence
+
+Session review gathers aggregate transcript evidence automatically when a current
+runtime session is available. Run it directly when investigating token or output
+noise:
+
+```bash
+session-review-helper.sh output-efficiency --json
+```
+
+The `aidevops.session-output-efficiency/v1` report distinguishes model-visible
+output from receipt-declared background evidence. It detects unchanged snapshots,
+duplicate results, repeated lines/blocks, successful oversized results, raw
+fallbacks, and exact-output bypasses, then estimates avoidable context from byte
+counts. It emits only tool names, metrics, and opaque fingerprints; tool inputs,
+commands, outputs, transcript paths, and background content remain omitted.
+Findings are deterministic candidates for session-analysis judgment, not
+automatic proof that a safeguard or exact evidence should be removed.
+
 ## Default workflow
 
 1. **Start narrow** with `rtk-helper.sh` for supported summary commands:

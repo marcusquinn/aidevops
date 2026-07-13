@@ -217,10 +217,31 @@ source "${AIDEVOPS_CLI_MODULES_DIR}/aidevops-update-lib.sh"
 source "${AIDEVOPS_CLI_MODULES_DIR}/aidevops-upgrade-planning-lib.sh"
 
 _run_update_setup() {
+	local output_mode="${1:-${AIDEVOPS_OUTPUT_MODE:-auto}}"
 	local setup_script="${INSTALL_DIR}/setup.sh"
 	if [[ ! -f "$setup_script" ]]; then
 		print_error "setup.sh not found at $setup_script"
 		return 1
+	fi
+	local use_compact=false
+	case "$output_mode" in
+	compact) use_compact=true ;;
+	full) use_compact=false ;;
+	auto) [[ ! -t 1 ]] && use_compact=true ;;
+	*)
+		print_error "Unknown update output mode: $output_mode"
+		return 1
+		;;
+	esac
+	local sandbox_helper="${INSTALL_DIR}/.agents/scripts/output-sandbox-helper.sh"
+	if [[ "$use_compact" == "true" && -x "$sandbox_helper" ]]; then
+		"$sandbox_helper" run \
+			--tag aidevops-update-setup \
+			--success-mode receipt \
+			--failure-mode diagnostic \
+			--expect-text '[SETUP_COMPLETE]' \
+			-- bash "$setup_script" --stage ai-session
+		return $?
 	fi
 	bash "$setup_script" --stage ai-session
 	return $?
@@ -230,8 +251,15 @@ _run_update_setup() {
 cmd_update() {
 	local skip_project_sync=false
 	local reconcile_repo_verify=false
+	local update_output_mode="${AIDEVOPS_OUTPUT_MODE:-auto}"
 	local arg
-	for arg in "$@"; do case "$arg" in --skip-project-sync) skip_project_sync=true ;; esac done
+	for arg in "$@"; do
+		case "$arg" in
+		--skip-project-sync) skip_project_sync=true ;;
+		--compact) update_output_mode="compact" ;;
+		--verbose) update_output_mode="full" ;;
+		esac
+	done
 	print_header "Updating AI DevOps Framework"
 	echo ""
 	local current_version
@@ -265,7 +293,7 @@ cmd_update() {
 			if [[ "$repo_version" != "$deployed_version" ]]; then
 				print_warning "Deployed agents ($deployed_version) don't match repo ($repo_version)"
 				print_info "Re-running incremental setup to sync agents..."
-				_run_update_setup
+				_run_update_setup "$update_output_mode"
 			else
 				# t2706: VERSION matches but .deployed-sha may lag HEAD when
 				# fixes land between releases. Detect and redeploy on framework
@@ -290,7 +318,7 @@ cmd_update() {
 						if [[ "$has_code_drift" -eq 1 ]]; then
 							print_warning "Deployed scripts drifted (${deployed_sha:0:7}→${local_hash:0:7})"
 							print_info "Re-running incremental setup to deploy latest scripts..."
-							_run_update_setup
+							_run_update_setup "$update_output_mode"
 						fi
 						# GH#21735: workflow templates can change between
 						# releases without triggering has_code_drift (templates
@@ -338,7 +366,7 @@ cmd_update() {
 			echo ""
 			print_info "Running incremental setup to apply changes (falls back to full setup if needed)..."
 			local setup_exit=0
-			_run_update_setup || setup_exit=$?
+			_run_update_setup "$update_output_mode" || setup_exit=$?
 			git checkout -- . 2>/dev/null || true
 			local repo_version deployed_version
 			repo_version=$(cat "$INSTALL_DIR/VERSION" 2>/dev/null || echo "unknown")

@@ -180,9 +180,11 @@ The helper exposes data for course-correction; it does not kill the session.
 
 `output-sandbox-helper.sh` stores noisy raw command output in
 `~/.aidevops/.agent-workspace/output-sandbox/` with a SQLite index and WAL mode.
-The assistant receives a compact receipt instead of full logs: output ID, exit
-code, byte/line counts, raw path, and a bounded summary. Exact evidence remains
-retrievable with `output-sandbox-helper.sh show OUTPUT_ID --offset N --limit N`.
+The assistant receives a compact receipt instead of full logs: output ID,
+outcome, process/verified exit codes, decision basis, byte/line counts, and
+redaction state. Raw storage paths are never model-visible. Failure defaults to
+bounded diagnostic lines; exact evidence remains retrievable deliberately with
+`output-sandbox-helper.sh show OUTPUT_ID --offset N --limit N`.
 
 Use it for repeatable noisy flows such as diagnostics, CI logs, worker output,
 and browser/tool logs. Do not use it for file reads, JSON assertions, security
@@ -194,6 +196,20 @@ before storage.
 Maintenance: `output-sandbox-helper.sh cleanup --max-age-days 14` removes old
 raw files, deletes matching SQLite rows, and runs `VACUUM` to keep the local
 store bounded.
+
+### 5. Session output-efficiency evidence
+
+`session-review-helper.sh output-efficiency --session ID --json` reads the exact
+local OpenCode or Claude Code transcript through the Vault-managed history gate.
+It reports only aggregate, model-visible tool-output evidence: unchanged
+snapshots, duplicate results, repeated lines/blocks, successful oversized
+results, raw fallbacks, and exact-output bypasses. Receipt-declared background
+evidence bytes are reported separately; background content is not scanned or
+copied into model context. Inputs, commands, outputs, transcript paths, and raw
+fragments remain omitted.
+
+The report is a diagnostic lead, not a policy verdict. Correlate fingerprints
+with the conversation timeline before changing a safeguard or exact-output path.
 
 ## Known limitation: `run` mode does not emit per-tool OTEL spans (t2187)
 

@@ -63,6 +63,7 @@ variable expansion.
 | Tool distribution, errors, and rereads | `session-introspect-helper.sh patterns --session <session-id>` | Any substantial session with local observability |
 | Error details | `session-introspect-helper.sh errors 10 --session <session-id>` | The pattern summary reports errors |
 | Current model and token fields | `report-token-use-helper.sh data --json --limit 1 --daily-days 0 --session <session-id>` | The runtime database has a current-session record |
+| Repeated or oversized tool output | `session-review-helper.sh output-efficiency --session <session-id> --json` | Transcript history for this exact session is available |
 | Model-tier history | `workflows/patterns.md` and `tools/context/model-routing.md` | A tier or reasoning change is under consideration |
 | Task-shape tier rules | `reference/task-taxonomy.md` | Assessing whether the session was under- or over-tiered |
 | Repository friction | Existing searches, reads, diffs, tests, and path history | The session encountered repo code or documentation |
@@ -73,6 +74,11 @@ session has no record, mark the metric unavailable; never fall back to another
 recent session or a broad daily report. A missing data source is not a reason to
 add telemetry. Avoid broad logs, generated reports, remote lookups, or repeated
 reads unless a specific finding cannot otherwise be proved.
+
+Treat output-efficiency fingerprints as aggregate leads. Correlate a repeated
+snapshot or oversized result with the chronological tool calls before proposing
+a change; exact repeat counts do not prove the call was unnecessary. Do not seek
+or reproduce raw transcript content when the aggregate evidence is sufficient.
 
 When compaction occurred, use the rollover summary, persisted checkpoint, and
 aggregated session metrics as evidence with explicit provenance. Treat any

@@ -12,6 +12,7 @@
 #   summary   Quick summary only
 #   json      Output as JSON for programmatic use
 #   security  Post-session security summary (t1428.5)
+#   output-efficiency  Detect repeated and oversized tool outputs
 #
 # Options:
 #   --focus <area>  Focus on: objectives, workflow, knowledge, all (default: all)
@@ -980,10 +981,37 @@ check_workflow_adherence() {
 	return 0
 }
 
+run_output_efficiency() {
+	local helper="${SCRIPT_DIR}/session-output-efficiency-helper.sh"
+	if [[ ! -x "$helper" ]]; then
+		echo "Output-efficiency analyzer unavailable" >&2
+		return 2
+	fi
+	"$helper" "$@"
+	return $?
+}
+
+gather_output_efficiency() {
+	local session_filter="${1:-}"
+	if [[ -z "$session_filter" && -z "${OPENCODE_SESSION_ID:-}" && -z "${CLAUDE_SESSION_ID:-}" ]]; then
+		return 0
+	fi
+	local -a args=()
+	if [[ -n "$session_filter" ]]; then
+		args+=("--session" "$session_filter")
+	fi
+	if ! run_output_efficiency "${args[@]+"${args[@]}"}"; then
+		echo "Output-efficiency evidence unavailable for this session"
+	fi
+	echo ""
+	return 0
+}
+
 # Gather all context
 gather_context() {
 	local project_root="$1"
 	local focus="${2:-all}"
+	local session_filter="${3:-}"
 
 	echo -e "${BOLD}${BLUE}=== Session Review Context ===${NC}"
 	echo ""
@@ -1030,6 +1058,10 @@ gather_context() {
 		echo "Ralph loop: $(get_ralph_status "$project_root")"
 		echo "Open PRs: $(get_pr_status)"
 		echo ""
+	fi
+
+	if [[ "$focus" == "all" || "$focus" == "workflow" ]]; then
+		gather_output_efficiency "$session_filter"
 	fi
 
 	# Recommendations
@@ -1147,6 +1179,7 @@ Commands:
   summary   Quick summary only
   json      Output as JSON for programmatic use
   security  Post-session security summary (t1428.5)
+  output-efficiency  Detect exact repeated snapshots and oversized tool results
   help      Show this help
 
 Options:
@@ -1164,6 +1197,7 @@ Examples:
   session-review-helper.sh security --json           # Security summary as JSON
   session-review-helper.sh security --session abc123 # Filter to session
   session-review-helper.sh gather --security         # Full review + security
+  session-review-helper.sh output-efficiency --json  # Aggregate transcript evidence
 
 EOF
 	return 0
@@ -1171,6 +1205,12 @@ EOF
 
 # Main
 main() {
+	if [[ "${1:-}" == "output-efficiency" ]]; then
+		shift
+		run_output_efficiency "$@"
+		return $?
+	fi
+
 	local command="gather"
 	local focus="all"
 	local include_security=false
@@ -1226,7 +1266,7 @@ main() {
 
 	case "$command" in
 	gather)
-		gather_context "$project_root" "$focus"
+		gather_context "$project_root" "$focus" "$session_filter"
 		if [[ "$include_security" == "true" ]]; then
 			output_security_summary "$session_filter" "text"
 		fi
