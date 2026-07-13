@@ -26,6 +26,7 @@ _HEADLESS_RUNTIME_WORKER_LIB_LOADED=1
 
 # Module-local string constants (avoid ratchet repeated-literal violations)
 _HRW_STATUS_FAIL="fail"
+_HRW_STATUS_FAILED="failed"
 _HRW_STATUS_UNKNOWN="unknown"
 _HRW_GIT_HEAD="HEAD"
 _HRW_CRASH_NO_WORK="no_work"
@@ -34,6 +35,8 @@ _HRW_TELEMETRY_SUCCESS="success"
 _HRW_TELEMETRY_FAILED="failed"
 _HRW_TELEMETRY_DEFERRED="deferred"
 _HRW_REASON_DRAFT_CHECKPOINT="worker_draft_checkpoint"
+_HRW_REASON_CLOSED_UNMERGED="worker_closed_unmerged_pr"
+_HRW_EVENT_FAILED="worker.failed"
 _HRW_SPOTLIGHT_MARKER=".metadata_never_index"
 _HRW_RECOVERY_CLASSIFICATION=""
 
@@ -1264,13 +1267,13 @@ _hrw_finish_failed_run() {
 		_HRW_FINAL_RUNTIME_CLASSIFICATION="$_HRW_REASON_WORKER_COMPLETE"
 	elif [[ "${_HRW_RECOVERY_CLASSIFICATION:-}" == "$_HRW_REASON_DRAFT_CHECKPOINT" ]]; then
 		_HRW_TERMINAL_OUTCOME="$_HRW_TELEMETRY_FAILED"
-		_HRW_FINAL_RUNTIME_EVENT="worker.failed"
+		_HRW_FINAL_RUNTIME_EVENT="$_HRW_EVENT_FAILED"
 		_HRW_FINAL_RUNTIME_STATUS="escalated"
 		_HRW_FINAL_RUNTIME_CLASSIFICATION="$_HRW_REASON_DRAFT_CHECKPOINT"
 	else
 		_HRW_TERMINAL_OUTCOME="$_HRW_TELEMETRY_FAILED"
-		_HRW_FINAL_RUNTIME_EVENT="worker.failed"
-		_HRW_FINAL_RUNTIME_STATUS="$_HRW_TELEMETRY_FAILED"
+		_HRW_FINAL_RUNTIME_EVENT="$_HRW_EVENT_FAILED"
+		_HRW_FINAL_RUNTIME_STATUS="$_HRW_STATUS_FAILED"
 		_HRW_FINAL_RUNTIME_CLASSIFICATION="${_run_failure_reason:-worker_failed}"
 	fi
 
@@ -1352,8 +1355,8 @@ _hrw_finish_success_run() {
 			_release_dispatch_claim "$session_key" "worker_noop"
 			_report_failure_to_fast_fail "$session_key" "worker_noop_zero_output" "$_HRW_CRASH_NO_WORK"
 			release_needed=0
-			_HRW_FINAL_RUNTIME_EVENT="worker.failed"
-			_HRW_FINAL_RUNTIME_STATUS="$_HRW_TELEMETRY_FAILED"
+			_HRW_FINAL_RUNTIME_EVENT="$_HRW_EVENT_FAILED"
+			_HRW_FINAL_RUNTIME_STATUS="$_HRW_STATUS_FAILED"
 			_HRW_FINAL_RUNTIME_CLASSIFICATION="$_HRW_CRASH_NO_WORK"
 			_HRW_TERMINAL_OUTCOME="$_HRW_TELEMETRY_FAILED"
 			;;
@@ -1372,18 +1375,18 @@ _hrw_finish_success_run() {
 		draft_checkpoint)
 			_escalate_worker_draft_checkpoint "$session_key" "${DISPATCH_REPO_SLUG:-}" "draft_checkpoint"
 			release_needed=0
-			_HRW_FINAL_RUNTIME_EVENT="worker.failed"
+			_HRW_FINAL_RUNTIME_EVENT="$_HRW_EVENT_FAILED"
 			_HRW_FINAL_RUNTIME_STATUS="escalated"
 			_HRW_FINAL_RUNTIME_CLASSIFICATION="$_HRW_REASON_DRAFT_CHECKPOINT"
 			;;
 		closed_unmerged)
-			print_warning "[lifecycle] worker_closed_unmerged_pr session=${session_key} — closed PR is not completion evidence"
-			_release_dispatch_claim "$session_key" "worker_closed_unmerged_pr"
-			_report_failure_to_fast_fail "$session_key" "worker_closed_unmerged_pr" "overwhelmed"
+			print_warning "[lifecycle] ${_HRW_REASON_CLOSED_UNMERGED} session=${session_key} — closed PR is not completion evidence"
+			_release_dispatch_claim "$session_key" "$_HRW_REASON_CLOSED_UNMERGED"
+			_report_failure_to_fast_fail "$session_key" "$_HRW_REASON_CLOSED_UNMERGED" "overwhelmed"
 			release_needed=0
-			_HRW_FINAL_RUNTIME_EVENT="worker.failed"
-			_HRW_FINAL_RUNTIME_STATUS="failed"
-			_HRW_FINAL_RUNTIME_CLASSIFICATION="worker_closed_unmerged_pr"
+			_HRW_FINAL_RUNTIME_EVENT="$_HRW_EVENT_FAILED"
+			_HRW_FINAL_RUNTIME_STATUS="$_HRW_STATUS_FAILED"
+			_HRW_FINAL_RUNTIME_CLASSIFICATION="$_HRW_REASON_CLOSED_UNMERGED"
 			;;
 		esac
 	fi

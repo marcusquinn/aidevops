@@ -166,15 +166,17 @@ _pr_handoff_state_for_branch_or_issue() {
 	local issue_number="$2"
 	local repo_slug="$3"
 	local pr_state=""
-	local state_jq='def disposition:
-		if ((.mergedAt // "") != "") or ((.state // "") == "MERGED") then "merged"
-		elif ((.state // "") == "OPEN") and (.isDraft // false) then "draft_checkpoint"
-		elif ((.state // "") == "OPEN") then "ready_handoff"
-		else "closed_unmerged" end;
-		if length == 0 then "" else
-			((map(select((.state // "") == "OPEN")) + map(select((.state // "") == "MERGED" or ((.mergedAt // "") != ""))) + .)
+	local state_open="OPEN"
+	local state_ready="ready_handoff"
+	local state_jq="def disposition:
+		if ((.mergedAt? | strings | length) > 0) or (.state == \"MERGED\") then \"merged\"
+		elif (.state == \"${state_open}\") and (.isDraft == true) then \"draft_checkpoint\"
+		elif (.state == \"${state_open}\") then \"${state_ready}\"
+		else \"closed_unmerged\" end;
+		if length == 0 then \"\" else
+			((map(select(.state == \"${state_open}\")) + map(select(.state == \"MERGED\" or ((.mergedAt? | strings | length) > 0))) + .)
 			| .[0] | disposition)
-		end'
+		end"
 
 	if [[ -z "$repo_slug" ]]; then
 		printf 'unknown'
@@ -193,7 +195,7 @@ _pr_handoff_state_for_branch_or_issue() {
 		0) pr_state="" ;;
 		*[!0-9]*) ;;
 		"") ;;
-		*) pr_state="ready_handoff" ;;
+		*) pr_state="$state_ready" ;;
 		esac
 		if [[ -n "$pr_state" ]]; then
 			printf '%s' "$pr_state"
@@ -211,7 +213,7 @@ _pr_handoff_state_for_branch_or_issue() {
 		0) pr_state="" ;;
 		*[!0-9]*) ;;
 		"") ;;
-		*) pr_state="ready_handoff" ;;
+		*) pr_state="$state_ready" ;;
 		esac
 		if [[ -n "$pr_state" ]]; then
 			printf '%s' "$pr_state"

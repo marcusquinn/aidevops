@@ -84,8 +84,8 @@ _has_open_pr_check_healthy_sibling() {
 		--arg issue_pattern "$issue_ref_pattern" '
 		[
 			.[] | select(
-				(.isDraft // false) and
-				(((.title // "") | test($issue_pattern; "i")) or ((.body // "") | test($issue_pattern; "i")))
+				(.isDraft == true) and
+				([.title?, .body?] | map(strings) | any(test($issue_pattern; "i")))
 			)
 		] | .[0].number // empty' 2>/dev/null) || draft_pr=""
 	if [[ -n "$draft_pr" ]]; then
