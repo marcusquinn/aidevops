@@ -181,8 +181,8 @@ _remove_cleanup_and_execute() {
 		git worktree remove "$path_to_remove" || return 1
 	else
 		if ! prune_missing_worktree_metadata "$repo_context" "$path_to_remove"; then
-			echo -e "${YELLOW}Partial cleanup: worktree files moved to trash, but Git metadata remains.${NC}"
-			echo "Recovery: resolve Git metadata permissions or locks, then prune the missing worktree from a linked worktree and verify it is absent from 'git worktree list --porcelain'."
+			printf '%b\n' "${YELLOW}Partial cleanup: worktree files moved to trash, but Git metadata remains.${NC}"
+			printf '%s\n' "Recovery: resolve Git metadata permissions or locks, then prune the missing worktree from a linked worktree and verify it is absent from 'git worktree list --porcelain'."
 			log_worktree_removal_event "$_WTAR_SKIPPED" "$_WTAR_WH_CALLER" "$path_to_remove" "metadata-prune-failed" "partial-cleanup"
 			return 1
 		fi

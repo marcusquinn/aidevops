@@ -266,11 +266,21 @@ _worktree_metadata_contains_path() {
 	local real_git="$1"
 	local repo_context="$2"
 	local wt_path="$3"
+	local clean_wt_path="$wt_path"
+	local list_output=""
 	local listed_path=""
 
+	while [[ "$clean_wt_path" != "/" && "$clean_wt_path" == */ ]]; do
+		clean_wt_path="${clean_wt_path%/}"
+	done
+	if ! list_output=$("$real_git" -C "$repo_context" worktree list --porcelain); then
+		return 2
+	fi
+
 	while IFS= read -r listed_path; do
-		[[ "$listed_path" == "worktree $wt_path" ]] && return 0
-	done < <("$real_git" -C "$repo_context" worktree list --porcelain 2>/dev/null || true)
+		listed_path="${listed_path%$'\r'}"
+		[[ "$listed_path" == "worktree $clean_wt_path" ]] && return 0
+	done <<<"$list_output"
 
 	return 1
 }
@@ -284,19 +294,31 @@ prune_missing_worktree_metadata() {
 	local repo_context="$1"
 	local wt_path="$2"
 	local real_git=""
+	local metadata_status=0
 
 	[[ -n "$repo_context" && -d "$repo_context" && -n "$wt_path" ]] || return 1
 	[[ ! -e "$wt_path" ]] || return 1
 	real_git=$(_worktree_cleanup_real_git) || return 1
+	[[ -n "$real_git" ]] || return 1
 
-	if ! _worktree_metadata_contains_path "$real_git" "$repo_context" "$wt_path"; then
-		return 0
-	fi
-
-	"$real_git" -C "$repo_context" worktree prune >/dev/null 2>&1 || return 1
 	if _worktree_metadata_contains_path "$real_git" "$repo_context" "$wt_path"; then
+		metadata_status=0
+	else
+		metadata_status=$?
+	fi
+	if [[ "$metadata_status" -eq 1 ]]; then
+		return 0
+	elif [[ "$metadata_status" -ne 0 ]]; then
 		return 1
 	fi
+
+	"$real_git" -C "$repo_context" worktree prune >/dev/null || return 1
+	if _worktree_metadata_contains_path "$real_git" "$repo_context" "$wt_path"; then
+		metadata_status=0
+	else
+		metadata_status=$?
+	fi
+	[[ "$metadata_status" -eq 1 ]] || return 1
 
 	return 0
 }

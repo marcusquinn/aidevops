@@ -12,6 +12,7 @@ LINKED="${TEST_ROOT}/linked"
 FAILED_LINKED="${TEST_ROOT}/failed-linked"
 SHIM_BIN="${TEST_ROOT}/bin"
 FAILING_GIT="${TEST_ROOT}/failing-git"
+QUERY_FAILING_GIT="${TEST_ROOT}/query-failing-git"
 
 teardown() {
 	rm -rf "$TEST_ROOT"
@@ -81,3 +82,20 @@ if [[ "$output" != *"Partial cleanup:"* || "$output" != *"Recovery:"* ]]; then
 	exit 1
 fi
 printf 'PASS worktree-helper returns partial-cleanup guidance when metadata prune fails\n'
+
+cat >"$QUERY_FAILING_GIT" <<'EOF'
+#!/usr/bin/env bash
+if [[ "$*" == *"worktree list --porcelain"* ]]; then
+	exit 1
+fi
+exec /usr/bin/git "$@"
+EOF
+chmod +x "$QUERY_FAILING_GIT"
+# shellcheck source=../audit-worktree-removal-helper.sh
+source "${SCRIPT_DIR}/audit-worktree-removal-helper.sh"
+if AIDEVOPS_REAL_GIT_BIN="$QUERY_FAILING_GIT" \
+	prune_missing_worktree_metadata "$REPO" "${TEST_ROOT}/missing-query-target"; then
+	printf 'FAIL metadata query failure was treated as successful cleanup\n'
+	exit 1
+fi
+printf 'PASS metadata query failure cannot report cleanup success\n'
