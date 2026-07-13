@@ -10,6 +10,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.32.91] - 2026-07-13
+
+### Fixed
+
+- keep interactive full loops in session (#27493)
+- prevent cross-generation gh shim recursion (#27488)
+
 ## [3.32.90] - 2026-07-13
 
 ### Changed
