@@ -23,6 +23,7 @@
 # Include guard
 [[ -n "${_FULL_LOOP_COMMIT_LIB_LOADED:-}" ]] && return 0
 _FULL_LOOP_COMMIT_LIB_LOADED=1
+_FULL_LOOP_CHECK_PENDING="pending"
 
 # Defensive SCRIPT_DIR fallback
 if [[ -z "${SCRIPT_DIR:-}" ]]; then
@@ -75,13 +76,13 @@ _full_loop_verify_pr_readiness() {
 	local non_passing=""
 	non_passing=$(printf '%s' "$required_checks" | jq -c '[.[] | select((.bucket // "") != "pass")]')
 	if [[ "$(printf '%s' "$non_passing" | jq 'length')" -gt 0 ]]; then
-		if printf '%s' "$non_passing" | jq -e 'all(.[]; (.bucket // "") == "pending")' >/dev/null 2>&1; then
-			FULL_LOOP_PR_CHECK_STATUS="pending"
+		if printf '%s' "$non_passing" | jq -e --arg pending "$_FULL_LOOP_CHECK_PENDING" 'all(.[]; (.bucket // "") == $pending)' >/dev/null 2>&1; then
+			FULL_LOOP_PR_CHECK_STATUS="$_FULL_LOOP_CHECK_PENDING"
 			export FULL_LOOP_PR_CHECK_STATUS
 			print_info "PR #${pr_number} required checks are pending at the current head; no repair action is eligible"
 		else
 			FULL_LOOP_PR_CHECK_STATUS="terminal-failure"
-			FULL_LOOP_PR_FAILURE_EVIDENCE=$(printf '%s' "$non_passing" | jq -c '[.[] | select((.bucket // "") != "pending") | {name,state,bucket}]')
+			FULL_LOOP_PR_FAILURE_EVIDENCE=$(printf '%s' "$non_passing" | jq -c --arg pending "$_FULL_LOOP_CHECK_PENDING" '[.[] | select((.bucket // "") != $pending) | {name,state,bucket}]')
 			export FULL_LOOP_PR_CHECK_STATUS FULL_LOOP_PR_FAILURE_EVIDENCE
 			print_error "PR #${pr_number} has terminal required-check failures at the current head"
 		fi

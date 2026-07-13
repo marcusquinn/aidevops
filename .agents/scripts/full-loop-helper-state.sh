@@ -25,6 +25,8 @@
 _FULL_LOOP_STATE_LIB_LOADED=1
 _FULL_LOOP_RELEASE_NOT_REQUESTED="not-requested"
 _FULL_LOOP_RELEASE_PUBLISHED="published"
+_FULL_LOOP_EXECUTOR_INITIALIZED="initialized-only"
+_FULL_LOOP_PHASE_FAILED="failed"
 
 # Defensive SCRIPT_DIR fallback
 if [[ -z "${SCRIPT_DIR:-}" ]]; then
@@ -57,7 +59,7 @@ phase_started_at: "${PHASE_STARTED_AT:-}"
 phase_ended_at: "${PHASE_ENDED_AT:-}"
 next_action: "${NEXT_ACTION:-resume}"
 terminal_evidence: "${TERMINAL_EVIDENCE:-}"
-executor_status: ${EXECUTOR_STATUS:-initialized-only}
+executor_status: ${EXECUTOR_STATUS:-$_FULL_LOOP_EXECUTOR_INITIALIZED}
 executor_pid: "${EXECUTOR_PID:-}"
 heartbeat_at: "${HEARTBEAT_AT:-}"
 manual_resume_count: ${MANUAL_RESUME_COUNT:-0}
@@ -118,7 +120,7 @@ load_state() {
 	PHASE_ENDED_AT=""
 	NEXT_ACTION="resume"
 	TERMINAL_EVIDENCE=""
-	EXECUTOR_STATUS="initialized-only"
+	EXECUTOR_STATUS="$_FULL_LOOP_EXECUTOR_INITIALIZED"
 	EXECUTOR_PID=""
 	HEARTBEAT_AT=""
 	MANUAL_RESUME_COUNT="0"
@@ -650,12 +652,12 @@ _launch_background() {
 	# initialized-only checkpoint instead of launching a child that prints one
 	# prompt, exits, and is then incorrectly reported as a running loop.
 	if [[ -z "${AIDEVOPS_FULL_LOOP_EXECUTOR:-}" ]]; then
-		EXECUTOR_STATUS="initialized-only"
+		EXECUTOR_STATUS="$_FULL_LOOP_EXECUTOR_INITIALIZED"
 		EXECUTOR_PID=""
 		NEXT_ACTION="attach-executor-or-resume"
 		PHASE_STATUS="waiting"
 		save_state "task" "$prompt" "" "${STARTED_AT:-$(date -u '+%Y-%m-%dT%H:%M:%SZ')}"
-		_full_loop_append_event "executor.initialized" "initialized-only"
+		_full_loop_append_event "executor.initialized" "$_FULL_LOOP_EXECUTOR_INITIALIZED"
 		print_warning "Background loop initialized, but no executor was launched."
 		printf 'FULL_LOOP_START_RESULT=initialized-only\n'
 		return 0
@@ -677,12 +679,12 @@ _launch_background() {
 		printf 'FULL_LOOP_START_RESULT=running\n'
 		return 0
 	fi
-	EXECUTOR_STATUS="initialized-only"
+	EXECUTOR_STATUS="$_FULL_LOOP_EXECUTOR_INITIALIZED"
 	EXECUTOR_PID=""
 	NEXT_ACTION="attach-executor-or-resume"
 	PHASE_STATUS="waiting"
 	save_state "task" "$prompt" "" "${STARTED_AT:-$(date -u '+%Y-%m-%dT%H:%M:%SZ')}"
-	_full_loop_append_event "executor.start_failed" "initialized-only"
+	_full_loop_append_event "executor.start_failed" "$_FULL_LOOP_EXECUTOR_INITIALIZED"
 	print_warning "Background executor exited before liveness could be verified."
 	printf 'FULL_LOOP_START_RESULT=initialized-only\n'
 	return 0
@@ -742,7 +744,7 @@ cmd_start() {
 	PHASE_ATTEMPT=1
 	PHASE_STARTED_AT="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
 	NEXT_ACTION="complete-task-development"
-	EXECUTOR_STATUS="initialized-only"
+	EXECUTOR_STATUS="$_FULL_LOOP_EXECUTOR_INITIALIZED"
 	save_state "task" "$prompt"
 	SAVED_PROMPT="$prompt"
 	_full_loop_append_event "phase.started" "waiting"
@@ -796,9 +798,9 @@ cmd_resume() {
 	CURRENT_PHASE="$next_phase"
 	_full_loop_append_event "phase.started" "running"
 	if ! "$emit_fn"; then
-		PHASE_STATUS="failed"
+		PHASE_STATUS="$_FULL_LOOP_PHASE_FAILED"
 		NEXT_ACTION="retry-${next_phase}"
-		_full_loop_append_event "phase.failed" "failed"
+		_full_loop_append_event "phase.failed" "$_FULL_LOOP_PHASE_FAILED"
 		save_state "$next_phase" "$SAVED_PROMPT" "${PR_NUMBER:-}" "$STARTED_AT"
 		return 1
 	fi

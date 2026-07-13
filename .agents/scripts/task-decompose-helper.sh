@@ -390,7 +390,7 @@ Rules:
 - Suggest a batch strategy: 'depth-first' if subtasks have sequential dependencies, 'breadth-first' if mostly independent.
 - Each subtask description should be specific enough to be a standalone task brief — not vague like 'handle edge cases'.
 - Give every unit a stable id, kind, lowest-sufficient effort tier, and explicit ownership of repo-relative files and/or bounded questions.
-- Parallel-ready units must not own the same file. Order overlapping ownership with blocked_by.
+- Parallel-ready units must not own the same file. Order overlapping ownership through dependency edges.
 - Set max_parallel to the smallest useful cap (never more than 2 for an interactive plan).
 
 Examples:
