@@ -198,9 +198,14 @@ _stale_recovery_find_open_pr() {
 	local issue_number="$1"
 	local repo_slug="$2"
 	local _open_pr
+	# shellcheck disable=SC2016 # $ready is a jq variable, not a shell variable.
 	_open_pr=$(gh pr list --repo "$repo_slug" --state open \
-		--search "#${issue_number} in:body" --limit 1 \
-		--json number,isDraft --jq '.[0] | if . == null then "" elif .isDraft then "draft|\(.number)" else "ready|\(.number)" end' 2>/dev/null) || _open_pr=""
+		--search "#${issue_number} in:body" --limit 20 \
+		--json number,isDraft --jq '
+			([.[] | select(.isDraft != true)][0]) as $ready
+			| if $ready != null then "ready|\($ready.number)"
+			elif .[0] != null then "draft|\(.[0].number)"
+			else "" end' 2>/dev/null) || _open_pr=""
 	printf '%s' "$_open_pr"
 	return 0
 }

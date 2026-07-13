@@ -2751,6 +2751,29 @@ test_failed_worker_draft_checkpoint_escalates_without_completion() {
 	return 0
 }
 
+test_failed_worker_ready_pr_remains_completed_handoff() {
+	local result=""
+	result=$(
+		(
+			DISPATCH_REPO_SLUG="test-owner/test-repo"
+			git() {
+				[[ "${*}" == *"rev-parse --abbrev-ref HEAD"* ]] && printf 'feature/auto-test-issue-99999'
+				return 0
+			}
+			_hrw_resolve_default_branch() { printf 'main'; return 0; }
+			_pr_handoff_state_for_branch_or_issue() { printf 'ready|457'; return 0; }
+			_release_dispatch_claim() { printf 'release=%s\n' "$2"; return 0; }
+			_recover_worker_output_on_failure "issue-99999" "${TEST_ROOT}"
+		)
+	)
+	if [[ "$result" == *"release=worker_complete"* && "$result" != *"worker_draft_checkpoint"* ]]; then
+		print_result "failed worker ready PR remains a completed handoff" 0
+	else
+		print_result "failed worker ready PR remains a completed handoff" 1 "$result"
+	fi
+	return 0
+}
+
 test_post_pr_handoff_rejects_pre_pr_stall() {
 	local work_dir="${TEST_ROOT}/repo-pre-pr-stall"
 	mkdir -p "$work_dir"
@@ -2874,6 +2897,7 @@ main() {
 	test_service_interruption_exhausted_metric_preserves_context
 	test_post_pr_handoff_detects_open_pending_pr
 	test_failed_worker_draft_checkpoint_escalates_without_completion
+	test_failed_worker_ready_pr_remains_completed_handoff
 	test_post_pr_handoff_rejects_pre_pr_stall
 	test_post_pr_handoff_overrides_watchdog_next_action
 	test_completion_infrastructure_resumes_without_implementation_penalty
