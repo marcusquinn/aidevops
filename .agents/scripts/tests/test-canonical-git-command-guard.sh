@@ -93,6 +93,15 @@ assert_blocked "blocks chained canonical mutation" "git status && git branch -M 
 assert_blocked "blocks canonical update-ref plumbing" "/usr/bin/git update-ref refs/heads/main HEAD"
 assert_blocked "blocks destructive clean with exclude containing n" "git clean --force --exclude=nope"
 assert_blocked "blocks interactive clean" "git clean --interactive"
+assert_blocked "blocks canonical symbolic-ref update" "git symbolic-ref HEAD refs/heads/safety/example"
+assert_blocked "blocks canonical symbolic-ref update with reflog reason" "git symbolic-ref -m reason HEAD refs/heads/safety/example"
+assert_blocked "blocks canonical symbolic-ref deletion" "git symbolic-ref --delete refs/remotes/origin/HEAD"
+assert_blocked "blocks canonical symbolic-ref short deletion" "git symbolic-ref -d refs/remotes/origin/HEAD"
+assert_blocked "blocks canonical symbolic-ref combined deletion flags" "git symbolic-ref -qd refs/remotes/origin/HEAD"
+assert_blocked "blocks canonical symbolic-ref unknown options" "git symbolic-ref --bogus refs/remotes/origin/HEAD"
+assert_blocked "blocks canonical symbolic-ref without a ref" "git symbolic-ref --short"
+assert_blocked "blocks canonical symbolic-ref option terminator" "git symbolic-ref -- refs/remotes/origin/HEAD"
+assert_blocked "blocks canonical symbolic-ref second ref after option terminator" "git symbolic-ref -- HEAD refs/heads/safety/example"
 
 if [[ "$(git -C "$REPO" symbolic-ref --short HEAD)" == "main" ]] &&
 	[[ "$(git -C "$REPO" rev-parse HEAD)" == "$INITIAL_HEAD" ]] &&
@@ -106,9 +115,36 @@ assert_allowed "allows canonical status" "$REPO" "git status --short"
 assert_allowed "allows canonical branch listing" "$REPO" "git branch -vv --no-abbrev"
 assert_allowed "allows canonical branch pattern listing" "$REPO" "git branch --list 'feature/*'"
 assert_allowed "allows canonical branch containment query" "$REPO" "git branch --contains main"
+assert_allowed "allows canonical symbolic-ref query" "$REPO" "git symbolic-ref refs/remotes/origin/HEAD"
+assert_allowed "allows canonical short symbolic-ref query" "$REPO" "git symbolic-ref --short refs/remotes/origin/HEAD"
+assert_allowed "allows reordered canonical symbolic-ref query flags" "$REPO" "git symbolic-ref refs/remotes/origin/HEAD --quiet --short"
+assert_allowed "allows canonical non-recursive symbolic-ref query" "$REPO" "git symbolic-ref --no-recurse refs/remotes/origin/HEAD"
 assert_allowed "allows canonical worktree creation" "$REPO" "git worktree add '$LINKED' -b feature/example"
 git -C "$REPO" worktree add -q -b feature/example "$LINKED"
 assert_allowed "allows normal Git mutation in linked worktree" "$LINKED" "git switch -c feature/linked-child"
+
+git -C "$REPO" symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/develop
+DEFAULT_BRANCH=$(
+	unset -f git
+	export PATH="${SCRIPT_DIR}:/usr/bin:/bin"
+	# shellcheck source=/dev/null
+	source "${SCRIPT_DIR}/pulse-canonical-maintenance.sh"
+	_get_default_branch_for_repo "$REPO"
+)
+if [[ "$DEFAULT_BRANCH" == "develop" ]]; then
+	pass "deployed shim lets pulse resolve a non-main default branch"
+else
+	fail "deployed shim lets pulse resolve a non-main default branch (output=$DEFAULT_BRANCH)"
+fi
+
+if (cd "$REPO" && PATH="${SCRIPT_DIR}:/usr/bin:/bin" "$SHIM" symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/unsafe >/dev/null 2>&1) ||
+	(cd "$REPO" && PATH="${SCRIPT_DIR}:/usr/bin:/bin" "$SHIM" symbolic-ref --delete refs/remotes/origin/HEAD >/dev/null 2>&1); then
+	fail "PATH shim blocks symbolic-ref mutation before execution"
+elif [[ "$(git -C "$REPO" symbolic-ref --short refs/remotes/origin/HEAD)" == "origin/develop" ]]; then
+	pass "PATH shim blocks symbolic-ref mutation before execution"
+else
+	fail "PATH shim left canonical symbolic ref changed"
+fi
 
 if (cd "$REPO" && PATH="${SCRIPT_DIR}:$PATH" "$SHIM" switch --detach main >/dev/null 2>&1); then
 	fail "PATH shim blocks canonical detached switch"

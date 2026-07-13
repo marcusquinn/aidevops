@@ -208,11 +208,20 @@ def _tag_is_read_only(args: list[str]) -> bool:
     )
 
 
+def _symbolic_ref_is_read_only(args: list[str]) -> bool:
+    read_flags = {"-q", "--quiet", "--short", "--recurse", "--no-recurse"}
+    return (
+        sum(arg not in read_flags for arg in args) == 1
+        and all(arg in read_flags or not arg.startswith("-") for arg in args)
+    )
+
+
 CANONICAL_CHECKS: dict[str, Callable[[list[str]], bool]] = {
     "branch": _branch_is_read_only,
     "config": _config_is_read_only,
     "clean": _clean_is_read_only,
     "remote": _remote_is_read_only,
+    "symbolic-ref": _symbolic_ref_is_read_only,
     "worktree": _worktree_is_allowed,
     "tag": _tag_is_read_only,
 }
