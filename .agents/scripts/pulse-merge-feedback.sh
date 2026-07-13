@@ -301,15 +301,15 @@ _build_ci_feedback_section() {
 
 #######################################
 # Return whether a failed check URL points at a GitHub Actions job whose failed
-# log is an infrastructure timeout/kill rather than actionable code feedback.
+# log is an infrastructure failure rather than actionable code feedback.
 #
 # Args:
 #   $1 - repo_slug
 #   $2 - check URL
 #
-# Returns: 0=infra timeout/kill detected, 1=not detected or unavailable.
+# Returns: 0=infrastructure failure detected, 1=not detected or unavailable.
 #######################################
-_ci_check_url_has_infra_timeout_log() {
+_ci_check_url_has_infra_failure_log() {
 	local repo_slug="$1"
 	local check_url="$2"
 
@@ -333,7 +333,7 @@ _ci_check_url_has_infra_timeout_log() {
 	failed_log=$(gh run view "$run_id" --repo "$repo_slug" --job "$job_id" --log-failed 2>/dev/null) || failed_log=""
 	[[ -n "$failed_log" ]] || return 1
 
-	if printf '%s\n' "$failed_log" | grep -Eiq '(Process completed with exit code (124|137|143)|timed out after|[[:space:]]Killed[[:space:]]+timeout|timeout --kill-after|The operation was canceled|cancelled due to timeout)'; then
+	if printf '%s\n' "$failed_log" | grep -Eiq '(Process completed with exit code (124|137|143)|timed out after|[[:space:]]Killed[[:space:]]+timeout|timeout --kill-after|The operation was canceled|cancelled due to timeout|toomanyrequests:[[:space:]]*Rate exceeded|Error response from daemon:.*(429|Too Many Requests|Rate exceeded)|(failed to pull image|failed to resolve source metadata|failed to authorize).*(429|Too Many Requests|Rate exceeded|TLS handshake timeout|i/o timeout|connection reset by peer|Service Unavailable)|(public\.ecr\.aws|docker\.io|ghcr\.io|registry[^[:space:]]*).*(429|Too Many Requests|Rate exceeded|TLS handshake timeout|i/o timeout|connection reset by peer|Service Unavailable))'; then
 		return 0
 	fi
 	return 1
@@ -341,7 +341,7 @@ _ci_check_url_has_infra_timeout_log() {
 
 #######################################
 # Filter required failed checks down to actionable code failures by excluding
-# GitHub Actions jobs whose logs show timeout/kill infrastructure signatures.
+# GitHub Actions jobs whose logs show infrastructure-failure signatures.
 #
 # Args:
 #   $1 - pr_number
@@ -365,8 +365,8 @@ _ci_actionable_failed_checks_markdown() {
 		name=$(printf '%s' "$checks_json" | jq -r --argjson i "$idx" '.[$i].name // empty' 2>/dev/null) || name=""
 		conclusion=$(printf '%s' "$checks_json" | jq -r --argjson i "$idx" '.[$i].conclusion // empty' 2>/dev/null) || conclusion=""
 		link=$(printf '%s' "$checks_json" | jq -r --argjson i "$idx" '.[$i].link // empty' 2>/dev/null) || link=""
-		if _ci_check_url_has_infra_timeout_log "$repo_slug" "$link"; then
-			echo "[pulse-wrapper] _dispatch_ci_fix_worker: PR #${pr_number} check '${name}' classified as infra-timeout from failed log — skipping code redispatch" >>"$LOGFILE"
+		if _ci_check_url_has_infra_failure_log "$repo_slug" "$link"; then
+			echo "[pulse-wrapper] _dispatch_ci_fix_worker: PR #${pr_number} check '${name}' classified as infrastructure failure from failed log — skipping code redispatch" >>"$LOGFILE"
 		else
 			printf -- '- **%s**: %s — [check URL](%s)\n' "$name" "$conclusion" "$link"
 		fi
@@ -488,12 +488,18 @@ _dispatch_ci_fix_worker() {
 		fallback_reason="the PR head is in a fork and is not an owned repair branch"
 	elif ! declare -F _pulse_merge_repo_path_for_slug >/dev/null 2>&1; then
 		fallback_reason="the repository-path resolver is unavailable"
-	elif ! _dispatch_ci_repair_session "$pr_number" "$repo_slug" "$linked_issue" \
+	elif _dispatch_ci_repair_session "$pr_number" "$repo_slug" "$linked_issue" \
 		"$pr_head_sha" "$pr_head_ref" "$failure_fingerprint" "$failing_checks"; then
-		fallback_reason="the bounded PR-branch repair session could not be launched"
-	else
-		echo "[pulse-wrapper] _dispatch_ci_fix_worker: dispatched in-place CI repair for PR #${pr_number} head ${pr_head_sha} fingerprint ${failure_fingerprint} in ${repo_slug}" >>"$LOGFILE"
+		if [[ "${_CI_REPAIR_DISPATCH_RESULT:-}" == "active" ]]; then
+			echo "[pulse-wrapper] _dispatch_ci_fix_worker: in-place CI repair already active for PR #${pr_number} head ${pr_head_sha} fingerprint ${failure_fingerprint} in ${repo_slug}" >>"$LOGFILE"
+		else
+			echo "[pulse-wrapper] _dispatch_ci_fix_worker: dispatched in-place CI repair for PR #${pr_number} head ${pr_head_sha} fingerprint ${failure_fingerprint} in ${repo_slug}" >>"$LOGFILE"
+		fi
 		return 0
+	elif [[ "${_CI_REPAIR_DISPATCH_RESULT:-}" == "exhausted" ]]; then
+		fallback_reason="the bounded PR-branch repair session exhausted its retry budget"
+	else
+		fallback_reason="the bounded PR-branch repair session could not be launched"
 	fi
 
 	_route_ci_repair_fallback "$pr_number" "$repo_slug" "$linked_issue" "$pr_head_sha" \
@@ -559,35 +565,485 @@ _Closed by deterministic merge pass (pulse-merge.sh)._" \
 }
 
 #######################################
-# Launch one bounded repair session for a repository/PR/head/failure tuple.
-# The atomic state directory is the cross-pulse dedup lease. Failed launches
-# remove the lease so a later pulse can retry or take the durable fallback.
+# Write one CI repair state transition atomically.
 #######################################
-_dispatch_ci_repair_session() {
-	local pr_number="$1"
+_ci_repair_write_state() {
+	local state_file="$1"
 	local repo_slug="$2"
-	local linked_issue="$3"
+	local pr_number="$3"
 	local pr_head_sha="$4"
 	local pr_head_ref="$5"
 	local failure_fingerprint="$6"
-	local failing_checks="$7"
-	local repo_path="" helper="" state_root="" state_key="" lease_dir="" prompt_file="" session_key=""
+	local worktree_path="$7"
+	local worker_pid="$8"
+	local pid_start="$9"
+	local attempt="${10:-1}"
+	local status="${11:-preparing}"
+	local session_key="${12:-}"
+	local tmp_file="${state_file}.tmp.$$"
 
-	repo_path=$(_pulse_merge_repo_path_for_slug "$repo_slug" 2>/dev/null) || repo_path=""
-	helper="${AIDEVOPS_HEADLESS_RUNTIME_HELPER:-${_PULSE_MERGE_DIR:-${BASH_SOURCE[0]%/*}}/headless-runtime-helper.sh}"
-	[[ -n "$repo_path" && -d "$repo_path" ]] || return 1
-	[[ -x "$helper" ]] || return 1
+	jq -nc \
+		--arg repo "$repo_slug" --argjson pr "$pr_number" --arg head "$pr_head_sha" \
+		--arg branch "$pr_head_ref" --arg fingerprint "$failure_fingerprint" \
+		--arg worktree "$worktree_path" --argjson pid "$worker_pid" --arg pid_start "$pid_start" \
+		--argjson attempt "$attempt" --arg status "$status" --arg session "$session_key" \
+		'{repo:$repo,pr:$pr,head:$head,branch:$branch,fingerprint:$fingerprint,
+		worktree:$worktree,pid:$pid,pid_start:$pid_start,attempt:$attempt,status:$status,session:$session}' \
+		>"$tmp_file" 2>/dev/null || {
+		rm -f "$tmp_file"
+		return 1
+	}
+	if ! mv "$tmp_file" "$state_file" 2>/dev/null; then
+		rm -f "$tmp_file"
+		return 1
+	fi
+	return 0
+}
 
-	state_root="${AIDEVOPS_CI_REPAIR_STATE_DIR:-${HOME}/.aidevops/.agent-workspace/ci-pr-repair}"
-	state_key=$(printf '%s-%s-%s-%s' "$repo_slug" "$pr_number" "$pr_head_sha" "$failure_fingerprint" | tr '/:' '__')
-	lease_dir="${state_root}/${state_key}"
-	mkdir -p "$state_root" 2>/dev/null || return 1
-	if ! mkdir "$lease_dir" 2>/dev/null; then
-		echo "[pulse-wrapper] _dispatch_ci_repair_session: repair already dispatched for ${repo_slug} PR #${pr_number} head ${pr_head_sha} fingerprint ${failure_fingerprint}" >>"$LOGFILE"
+#######################################
+# Return the stable process-start token used to reject reused PIDs.
+#######################################
+_ci_repair_process_start() {
+	local worker_pid="$1"
+	ps -p "$worker_pid" -o lstart= 2>/dev/null || true
+	return 0
+}
+
+#######################################
+# Return whether a recorded process identity is still live.
+#######################################
+_ci_repair_pid_is_live() {
+	local worker_pid="$1"
+	local expected_start="$2"
+	local current_start=""
+
+	[[ "$worker_pid" =~ ^[0-9]+$ ]] || return 1
+	[[ -n "$expected_start" ]] || return 1
+	kill -0 "$worker_pid" 2>/dev/null || return 1
+	current_start=$(_ci_repair_process_start "$worker_pid")
+	[[ -n "$current_start" && "$current_start" == "$expected_start" ]] || return 1
+	return 0
+}
+
+#######################################
+# Publish ownership for a newly acquired transition lock.
+#######################################
+_ci_repair_publish_lock_owner() {
+	local lock_dir="$1"
+	local owner_file="${lock_dir}/owner.json"
+	local owner_tmp="${lock_dir}/owner.json.tmp.$$"
+	local current_start=""
+
+	current_start=$(_ci_repair_process_start "$$")
+	[[ -n "$current_start" ]] || return 1
+	jq -nc --argjson pid "$$" --arg pid_start "$current_start" \
+		'{pid:$pid,pid_start:$pid_start}' >"$owner_tmp" 2>/dev/null || return 1
+	mv "$owner_tmp" "$owner_file" 2>/dev/null || {
+		rm -f "$owner_tmp"
+		return 1
+	}
+	return 0
+}
+
+#######################################
+# Return whether a lock is old enough to recover when ownership is unreadable.
+#######################################
+_ci_repair_lock_is_stale() {
+	local lock_dir="$1"
+	local grace_seconds="${AIDEVOPS_CI_REPAIR_LOCK_GRACE_SECONDS:-2}"
+	local now="" lock_mtime="" lock_age=""
+
+	[[ "$grace_seconds" =~ ^[0-9]+$ ]] || grace_seconds=2
+	now=$(date +%s 2>/dev/null) || now=0
+	lock_mtime=$(stat -f '%m' "$lock_dir" 2>/dev/null) || lock_mtime=$(stat -c '%Y' "$lock_dir" 2>/dev/null) || lock_mtime="$now"
+	[[ "$lock_mtime" =~ ^[0-9]+$ ]] || lock_mtime="$now"
+	lock_age=$((now - lock_mtime))
+	[[ "$lock_age" -ge "$grace_seconds" ]]
+	return $?
+}
+
+#######################################
+# Acquire a crash-recoverable directory lock for one lease transition.
+#######################################
+_ci_repair_acquire_lock() {
+	local lock_dir="$1"
+	local owner_file="${lock_dir}/owner.json"
+	local reclaim_dir="${lock_dir}.reclaim"
+	local owner_pid="" owner_start="" acquire_result=1
+
+	if mkdir "$lock_dir" 2>/dev/null; then
+		_ci_repair_publish_lock_owner "$lock_dir" || {
+			rmdir "$lock_dir" 2>/dev/null || true
+			return 1
+		}
 		return 0
 	fi
+	[[ -d "$lock_dir" ]] || return 1
+	if [[ -f "$owner_file" ]]; then
+		owner_pid=$(jq -r '.pid // empty' "$owner_file" 2>/dev/null) || owner_pid=""
+		owner_start=$(jq -r '.pid_start // empty' "$owner_file" 2>/dev/null) || owner_start=""
+		if [[ "$owner_pid" =~ ^[0-9]+$ && -n "$owner_start" ]]; then
+			_ci_repair_pid_is_live "$owner_pid" "$owner_start" && return 1
+		else
+			_ci_repair_lock_is_stale "$lock_dir" || return 1
+		fi
+	else
+		_ci_repair_lock_is_stale "$lock_dir" || return 1
+	fi
+	# Serialize stale-owner replacement. A contender that did not acquire this
+	# mutex must not delete a lock that another contender may have replaced.
+	mkdir "$reclaim_dir" 2>/dev/null || return 1
+	owner_pid=$(jq -r '.pid // empty' "$owner_file" 2>/dev/null) || owner_pid=""
+	owner_start=$(jq -r '.pid_start // empty' "$owner_file" 2>/dev/null) || owner_start=""
+	if [[ "$owner_pid" =~ ^[0-9]+$ && -n "$owner_start" ]] \
+		&& _ci_repair_pid_is_live "$owner_pid" "$owner_start"; then
+		rmdir "$reclaim_dir" 2>/dev/null || true
+		return 1
+	fi
+	rm -f "$owner_file" "${lock_dir}"/owner.json.tmp.* 2>/dev/null || true
+	if rmdir "$lock_dir" 2>/dev/null && mkdir "$lock_dir" 2>/dev/null; then
+		if _ci_repair_publish_lock_owner "$lock_dir"; then
+			acquire_result=0
+		else
+			rm -f "${lock_dir}/owner.json" 2>/dev/null || true
+			rmdir "$lock_dir" 2>/dev/null || true
+		fi
+	fi
+	rmdir "$reclaim_dir" 2>/dev/null || true
+	return "$acquire_result"
+}
 
-	prompt_file="${lease_dir}/prompt.md"
+_ci_repair_release_lock() {
+	local lock_dir="$1"
+	local owner_file="${lock_dir}/owner.json"
+	local owner_pid="" owner_start="" current_start=""
+
+	[[ -f "$owner_file" ]] || return 1
+	owner_pid=$(jq -r '.pid // empty' "$owner_file" 2>/dev/null) || owner_pid=""
+	owner_start=$(jq -r '.pid_start // empty' "$owner_file" 2>/dev/null) || owner_start=""
+	current_start=$(_ci_repair_process_start "$$")
+	[[ "$owner_pid" == "$$" && -n "$owner_start" && "$owner_start" == "$current_start" ]] || return 1
+	rm -f "${lock_dir}/owner.json" 2>/dev/null || true
+	rmdir "$lock_dir" 2>/dev/null || true
+	return 0
+}
+
+_ci_repair_status_preparing() {
+	printf 'preparing'
+	return 0
+}
+
+_ci_repair_status_dispatched() {
+	printf 'dispatched'
+	return 0
+}
+
+_ci_repair_result_active() {
+	printf 'active'
+	return 0
+}
+
+#######################################
+# Return the latest archived attempt and its preserved worktree.
+#######################################
+_ci_repair_latest_archive() {
+	local lease_dir="$1"
+	local archived_state=""
+	local archived_attempt="0"
+	local candidate_attempt="0"
+	local worktree_path=""
+
+	for archived_state in "${lease_dir}"/state-attempt-*.json; do
+		[[ -f "$archived_state" ]] || continue
+		candidate_attempt=$(jq -r '.attempt // 0' "$archived_state" 2>/dev/null) || candidate_attempt="0"
+		[[ "$candidate_attempt" =~ ^[0-9]+$ ]] || candidate_attempt=0
+		if [[ "$candidate_attempt" -ge "$archived_attempt" ]]; then
+			archived_attempt="$candidate_attempt"
+			worktree_path=$(jq -r '.worktree // empty' "$archived_state" 2>/dev/null) || worktree_path=""
+		fi
+	done
+	printf '%s|%s' "$archived_attempt" "$worktree_path"
+	return 0
+}
+
+#######################################
+# Publish dispatcher ownership for one attempt while the transition lock is held.
+#######################################
+_ci_repair_prepare_attempt() {
+	local state_file="$1"
+	local repo_slug="$2"
+	local pr_number="$3"
+	local pr_head_sha="$4"
+	local pr_head_ref="$5"
+	local failure_fingerprint="$6"
+	local worktree_path="$7"
+	local attempt="$8"
+	local session_key="$9"
+	local process_start=""
+	local preparing_status=""
+
+	process_start=$(_ci_repair_process_start "$$")
+	preparing_status=$(_ci_repair_status_preparing)
+	_ci_repair_write_state "$state_file" "$repo_slug" "$pr_number" "$pr_head_sha" "$pr_head_ref" \
+		"$failure_fingerprint" "$worktree_path" "$$" "$process_start" "$attempt" "$preparing_status" "$session_key"
+	return $?
+}
+
+#######################################
+# Adopt a live native headless session after an interrupted dispatcher handoff.
+#######################################
+_ci_repair_adopt_live_session() {
+	local state_file="$1"
+	local repo_slug="$2"
+	local pr_number="$3"
+	local pr_head_sha="$4"
+	local pr_head_ref="$5"
+	local failure_fingerprint="$6"
+	local worktree_path="$7"
+	local attempt="$8"
+	local session_key="$9"
+	local session_identity=""
+	local worker_pid=""
+	local process_start=""
+	local dispatched_status=""
+
+	session_identity=$(_ci_repair_session_identity "$session_key" 2>/dev/null) || return 1
+	worker_pid="${session_identity%%|*}"
+	process_start="${session_identity#*|}"
+	dispatched_status=$(_ci_repair_status_dispatched)
+	_ci_repair_write_state "$state_file" "$repo_slug" "$pr_number" "$pr_head_sha" "$pr_head_ref" \
+		"$failure_fingerprint" "$worktree_path" "$worker_pid" "$process_start" "$attempt" "$dispatched_status" "$session_key" || return 1
+	echo "[pulse-wrapper] _dispatch_ci_repair_session: adopted live native session ${session_key} after interrupted lease handoff (pid ${worker_pid})" >>"$LOGFILE"
+	return 0
+}
+
+#######################################
+# Claim or recover the durable lease for one CI repair tuple.
+#
+# Output: "launch|ATTEMPT|WORKTREE", "active", or "exhausted".
+#######################################
+_ci_repair_claim_lease() {
+	local lease_dir="$1"
+	local repo_slug="$2"
+	local pr_number="$3"
+	local pr_head_sha="$4"
+	local failure_fingerprint="$5"
+	local max_attempts="$6"
+	local pr_head_ref="$7"
+	local session_key="$8"
+	local state_file="${lease_dir}/state.json"
+	local existing_pid="" existing_pid_start="" existing_attempt="1"
+	local existing_worktree="" next_attempt="" archive_payload="" archived_attempt="0"
+	local active_result=""
+
+	active_result=$(_ci_repair_result_active)
+	[[ "$max_attempts" =~ ^[0-9]+$ ]] || max_attempts=2
+	[[ "$max_attempts" -gt 0 ]] || max_attempts=2
+	[[ -d "$lease_dir" ]] || return 1
+
+	if [[ ! -f "$state_file" ]]; then
+		archive_payload=$(_ci_repair_latest_archive "$lease_dir")
+		archived_attempt="${archive_payload%%|*}"
+		existing_worktree="${archive_payload#*|}"
+		if [[ "$archived_attempt" -ge "$max_attempts" ]]; then
+			printf 'exhausted'
+			return 0
+		fi
+		next_attempt=$((archived_attempt + 1))
+		if _ci_repair_adopt_live_session "$state_file" "$repo_slug" "$pr_number" "$pr_head_sha" "$pr_head_ref" \
+			"$failure_fingerprint" "$existing_worktree" "$next_attempt" "$session_key"; then
+			printf '%s' "$active_result"
+			return 0
+		fi
+		_ci_repair_prepare_attempt "$state_file" "$repo_slug" "$pr_number" "$pr_head_sha" "$pr_head_ref" \
+			"$failure_fingerprint" "$existing_worktree" "$next_attempt" "$session_key" || return 1
+		echo "[pulse-wrapper] _dispatch_ci_repair_session: recovered incomplete lease state for ${repo_slug} PR #${pr_number} as attempt ${next_attempt}/${max_attempts}" >>"$LOGFILE"
+		printf 'launch|%s|%s' "$next_attempt" "$existing_worktree"
+		return 0
+	fi
+	existing_pid=$(jq -r '.pid // empty' "$state_file" 2>/dev/null) || existing_pid=""
+	existing_pid_start=$(jq -r '.pid_start // empty' "$state_file" 2>/dev/null) || existing_pid_start=""
+	existing_attempt=$(jq -r '.attempt // 1' "$state_file" 2>/dev/null) || existing_attempt="1"
+	[[ "$existing_attempt" =~ ^[0-9]+$ ]] || existing_attempt=1
+	if _ci_repair_pid_is_live "$existing_pid" "$existing_pid_start"; then
+		echo "[pulse-wrapper] _dispatch_ci_repair_session: repair already active for ${repo_slug} PR #${pr_number} head ${pr_head_sha} fingerprint ${failure_fingerprint} (pid ${existing_pid}, attempt ${existing_attempt})" >>"$LOGFILE"
+		printf '%s' "$active_result"
+		return 0
+	fi
+	existing_worktree=$(jq -r '.worktree // empty' "$state_file" 2>/dev/null) || existing_worktree=""
+	if _ci_repair_adopt_live_session "$state_file" "$repo_slug" "$pr_number" "$pr_head_sha" "$pr_head_ref" \
+		"$failure_fingerprint" "$existing_worktree" "$existing_attempt" "$session_key"; then
+		printf '%s' "$active_result"
+		return 0
+	fi
+	if [[ "$existing_attempt" -ge "$max_attempts" ]]; then
+		echo "[pulse-wrapper] _dispatch_ci_repair_session: stale repair exhausted ${max_attempts} attempts for ${repo_slug} PR #${pr_number} head ${pr_head_sha} fingerprint ${failure_fingerprint}" >>"$LOGFILE"
+		printf 'exhausted'
+		return 0
+	fi
+	next_attempt=$((existing_attempt + 1))
+	if ! mv "$state_file" "${lease_dir}/state-attempt-${existing_attempt}.json" 2>/dev/null; then
+		printf '%s' "$active_result"
+		return 0
+	fi
+	_ci_repair_prepare_attempt "$state_file" "$repo_slug" "$pr_number" "$pr_head_sha" "$pr_head_ref" \
+		"$failure_fingerprint" "$existing_worktree" "$next_attempt" "$session_key" || return 1
+	echo "[pulse-wrapper] _dispatch_ci_repair_session: recovering stale repair for ${repo_slug} PR #${pr_number} head ${pr_head_sha} fingerprint ${failure_fingerprint} as attempt ${next_attempt}/${max_attempts}" >>"$LOGFILE"
+	printf 'launch|%s|%s' "$next_attempt" "$existing_worktree"
+	return 0
+}
+
+#######################################
+# Create a linked repair worktree at the exact PR head SHA.
+#
+# Output: absolute worktree path.
+#######################################
+_ci_repair_create_worktree() {
+	local repo_path="$1"
+	local linked_issue="$2"
+	local pr_number="$3"
+	local pr_head_sha="$4"
+	local pr_head_ref="$5"
+	local failure_fingerprint="$6"
+	local attempt="$7"
+	local worktree_helper="${AIDEVOPS_WORKTREE_HELPER:-${_PULSE_MERGE_DIR:-${BASH_SOURCE[0]%/*}}/worktree-helper.sh}"
+	local worktree_base="${AIDEVOPS_CI_REPAIR_WORKTREE_BASE_DIR:-${AIDEVOPS_WORKTREE_BASE_DIR:-${HOME}/Git/_worktrees}}"
+	local repo_name=""
+	local repair_branch=""
+	local worktree_path=""
+	local actual_head=""
+
+	[[ -x "$worktree_helper" ]] || return 1
+	[[ "$pr_head_sha" =~ ^[0-9a-fA-F]{7,64}$ ]] || return 1
+	[[ -n "$pr_head_ref" ]] || return 1
+	if ! git -C "$repo_path" cat-file -e "${pr_head_sha}^{commit}" 2>/dev/null; then
+		git -C "$repo_path" fetch --no-tags --quiet origin "$pr_head_ref" >/dev/null 2>&1 || return 1
+	fi
+	git -C "$repo_path" cat-file -e "${pr_head_sha}^{commit}" 2>/dev/null || return 1
+
+	repo_name=$(basename "$repo_path")
+	repair_branch="repair/pr-${pr_number}-${pr_head_sha:0:12}-${failure_fingerprint:0:12}-a${attempt}"
+	worktree_path="${worktree_base}/${repo_name}-ci-repair-pr${pr_number}-${pr_head_sha:0:12}-${failure_fingerprint:0:12}-a${attempt}"
+	mkdir -p "$worktree_base" 2>/dev/null || return 1
+	if ! (cd "$repo_path" && AIDEVOPS_SKIP_AUTO_CLAIM=1 "$worktree_helper" add "$repair_branch" "$worktree_path" \
+		--base "$pr_head_sha" --issue "$linked_issue") >>"$LOGFILE" 2>&1; then
+		return 1
+	fi
+	actual_head=$(git -C "$worktree_path" rev-parse HEAD 2>/dev/null) || actual_head=""
+	if [[ "$actual_head" != "$pr_head_sha" ]]; then
+		echo "[pulse-wrapper] _dispatch_ci_repair_session: repair worktree head mismatch for PR #${pr_number}: expected ${pr_head_sha}, got ${actual_head:-unknown}" >>"$LOGFILE"
+		(cd "$repo_path" && "$worktree_helper" remove "$worktree_path" --force) >>"$LOGFILE" 2>&1 || true
+		return 1
+	fi
+	printf '%s' "$worktree_path"
+	return 0
+}
+
+#######################################
+# Return a live headless runtime session lock as PID|process-start.
+#######################################
+_ci_repair_session_identity() {
+	local session_key="$1"
+	local state_dir="${AIDEVOPS_HEADLESS_RUNTIME_DIR:-${HOME}/.aidevops/.agent-workspace/headless-runtime}"
+	local safe_key=""
+	local lock_file=""
+	local lock_value=""
+	local worker_pid=""
+	local process_start=""
+	local process_command=""
+
+	safe_key=$(printf '%s' "$session_key" | tr '/ ' '__')
+	lock_file="${state_dir}/locks/${safe_key}.pid"
+	[[ -f "$lock_file" ]] || return 1
+	lock_value=$(sed -n '1p' "$lock_file" 2>/dev/null) || lock_value=""
+	worker_pid="${lock_value%%|*}"
+	[[ "$worker_pid" =~ ^[0-9]+$ ]] || return 1
+	kill -0 "$worker_pid" 2>/dev/null || return 1
+	process_command=$(ps -p "$worker_pid" -o command= 2>/dev/null) || process_command=""
+	case "$process_command" in
+	*headless-runtime-helper* | *opencode* | *claude*) ;;
+	*) return 1 ;;
+	esac
+	process_start=$(_ci_repair_process_start "$worker_pid")
+	[[ -n "$process_start" ]] || return 1
+	printf '%s|%s' "$worker_pid" "$process_start"
+	return 0
+}
+
+#######################################
+# Launch through the runtime's native detach path and publish its process identity.
+#######################################
+_ci_repair_launch_worker() {
+	local lease_dir="$1"
+	local helper="$2"
+	local repo_slug="$3"
+	local pr_number="$4"
+	local linked_issue="$5"
+	local pr_head_sha="$6"
+	local pr_head_ref="$7"
+	local failure_fingerprint="$8"
+	local worktree_path="$9"
+	local attempt="${10:-1}"
+	local session_key="${11:-}"
+	local prompt_file="${12:-}"
+	local launch_output=""
+	local worker_pid=""
+	local process_start=""
+	local session_identity=""
+	local dispatched_status=""
+	local wait_count=0
+	local wait_max="${AIDEVOPS_CI_REPAIR_SESSION_LOCK_WAIT_STEPS:-200}"
+
+	[[ "$wait_max" =~ ^[0-9]+$ ]] || wait_max=200
+	launch_output=$(env \
+		HEADLESS=1 WORKER_ISSUE_NUMBER="$linked_issue" WORKER_REPO_SLUG="$repo_slug" \
+		WORKER_WORKTREE_PATH="$worktree_path" GITHUB_REPOSITORY="$repo_slug" \
+		WORKER_NO_EXIT_PUSH=1 AIDEVOPS_ALLOW_WORKER_WORKTREE_OWNER_TRANSFER=1 \
+		AIDEVOPS_PR_REPAIR_NUMBER="$pr_number" AIDEVOPS_PR_REPAIR_HEAD_SHA="$pr_head_sha" \
+		AIDEVOPS_PR_REPAIR_HEAD_REF="$pr_head_ref" AIDEVOPS_PR_REPAIR_FINGERPRINT="$failure_fingerprint" \
+		"$helper" run --role worker --session-key "$session_key" --dir "$worktree_path" \
+		--title "PR #${pr_number}: CI repair" --prompt-file "$prompt_file" --detach \
+		</dev/null 2>&1) || {
+		printf '%s\n' "$launch_output" >>"$LOGFILE"
+		return 1
+	}
+	printf '%s\n' "$launch_output" >>"$LOGFILE"
+	worker_pid=$(printf '%s\n' "$launch_output" | sed -n 's/.*Dispatched PID: \([0-9][0-9]*\).*/\1/p' | sed -n '$p')
+	while [[ "$wait_count" -lt "$wait_max" ]]; do
+		session_identity=$(_ci_repair_session_identity "$session_key" 2>/dev/null) || session_identity=""
+		[[ -n "$session_identity" ]] && break
+		sleep 0.05
+		wait_count=$((wait_count + 1))
+	done
+	if [[ -n "$session_identity" ]]; then
+		worker_pid="${session_identity%%|*}"
+		process_start="${session_identity#*|}"
+	else
+		[[ "$worker_pid" =~ ^[0-9]+$ ]] || return 1
+		process_start=$(_ci_repair_process_start "$worker_pid")
+		_ci_repair_pid_is_live "$worker_pid" "$process_start" || return 1
+	fi
+	dispatched_status=$(_ci_repair_status_dispatched)
+	if ! _ci_repair_write_state "${lease_dir}/state.json" "$repo_slug" "$pr_number" "$pr_head_sha" "$pr_head_ref" \
+		"$failure_fingerprint" "$worktree_path" "$worker_pid" "$process_start" "$attempt" "$dispatched_status" "$session_key"; then
+		return 1
+	fi
+	return 0
+}
+
+#######################################
+# Write the bounded repair prompt for the existing PR branch.
+#######################################
+_ci_repair_write_prompt() {
+	local prompt_file="$1"
+	local repo_slug="$2"
+	local pr_number="$3"
+	local linked_issue="$4"
+	local pr_head_sha="$5"
+	local pr_head_ref="$6"
+	local failure_fingerprint="$7"
+	local failing_checks="$8"
+
 	cat >"$prompt_file" <<-EOF
 		[effort:thinking] Repair terminal CI failures on the existing PR branch.
 
@@ -601,23 +1057,118 @@ _dispatch_ci_repair_session() {
 		Terminal failed checks:
 		${failing_checks}
 
-		Verify PR #${pr_number} still has head SHA ${pr_head_sha} before editing. If it changed,
-		stop without pushing. Check out the existing remote branch ${pr_head_ref} in a linked
-		worktree, diagnose the cited check logs, make only the CI repair, run focused checks,
-		commit, and push back to that same branch. Do not open or close a PR, do not create a
-		new implementation branch, do not merge, and do not bypass trust or required checks.
+		Your linked worktree was created from the expected PR head SHA and may contain preserved
+		changes from an interrupted repair attempt. Inspect and continue valuable existing work.
+		Verify PR #${pr_number} still has remote head SHA ${pr_head_sha} before editing; if it
+		changed, stop without pushing. Diagnose the cited logs, make only the CI repair, run focused
+		checks, commit, and push HEAD back to remote branch ${pr_head_ref}. Do not open or close a
+		PR, create another implementation branch, merge, or bypass trust or required checks.
 	EOF
+	return 0
+}
+
+#######################################
+# Launch one bounded repair session for a repository/PR/head/failure tuple.
+# The state directory is the cross-pulse dedup lease. A dead worker may be
+# retried once; repeated terminal attempts take the durable fallback.
+#######################################
+_dispatch_ci_repair_session() {
+	local pr_number="$1"
+	local repo_slug="$2"
+	local linked_issue="$3"
+	local pr_head_sha="$4"
+	local pr_head_ref="$5"
+	local failure_fingerprint="$6"
+	local failing_checks="$7"
+	local repo_path="" helper="" state_root="" state_key="" lease_dir="" prompt_file="" session_key="" transition_lock=""
+	local lease_action=""
+	local max_attempts="${AIDEVOPS_CI_REPAIR_MAX_ATTEMPTS:-2}"
+	local attempt=""
+	local worktree_path=""
+	local launch_payload=""
+	local active_result=""
+	local dispatched_status=""
+	_CI_REPAIR_DISPATCH_RESULT="failed"
+	active_result=$(_ci_repair_result_active)
+	dispatched_status=$(_ci_repair_status_dispatched)
+
+	repo_path=$(_pulse_merge_repo_path_for_slug "$repo_slug" 2>/dev/null) || repo_path=""
+	helper="${AIDEVOPS_HEADLESS_RUNTIME_HELPER:-${_PULSE_MERGE_DIR:-${BASH_SOURCE[0]%/*}}/headless-runtime-helper.sh}"
+	[[ -n "$repo_path" && -d "$repo_path" ]] || return 1
+	[[ -x "$helper" ]] || return 1
+
+	state_root="${AIDEVOPS_CI_REPAIR_STATE_DIR:-${HOME}/.aidevops/.agent-workspace/ci-pr-repair}"
+	state_key=$(printf '%s-%s-%s-%s' "$repo_slug" "$pr_number" "$pr_head_sha" "$failure_fingerprint" | tr '/:' '__')
+	lease_dir="${state_root}/${state_key}"
 	session_key="ci-repair-${pr_number}-${pr_head_sha:0:12}-${failure_fingerprint:0:12}"
-	WORKER_ISSUE_NUMBER="$linked_issue" WORKER_REPO_SLUG="$repo_slug" GITHUB_REPOSITORY="$repo_slug" \
-		AIDEVOPS_PR_REPAIR_NUMBER="$pr_number" AIDEVOPS_PR_REPAIR_HEAD_SHA="$pr_head_sha" \
-		AIDEVOPS_PR_REPAIR_HEAD_REF="$pr_head_ref" AIDEVOPS_PR_REPAIR_FINGERPRINT="$failure_fingerprint" \
-		"$helper" run --role worker --session-key "$session_key" --dir "$repo_path" \
-		--title "PR #${pr_number}: CI repair" --prompt-file "$prompt_file" \
-		</dev/null >>"$LOGFILE" 2>&1 &
-	local worker_pid=""
-	worker_pid=$!
-	printf '{"repo":"%s","pr":%s,"head":"%s","branch":"%s","fingerprint":"%s","pid":%s,"status":"dispatched"}\n' \
-		"$repo_slug" "$pr_number" "$pr_head_sha" "$pr_head_ref" "$failure_fingerprint" "$worker_pid" >"${lease_dir}/state.json"
+	transition_lock="${lease_dir}/transition.lock"
+	mkdir -p "$lease_dir" 2>/dev/null || return 1
+	if ! _ci_repair_acquire_lock "$transition_lock"; then
+		_CI_REPAIR_DISPATCH_RESULT="$active_result"
+		return 0
+	fi
+	lease_action=$(_ci_repair_claim_lease "$lease_dir" "$repo_slug" "$pr_number" "$pr_head_sha" \
+		"$failure_fingerprint" "$max_attempts" "$pr_head_ref" "$session_key") || {
+		_ci_repair_release_lock "$transition_lock" || true
+		return 1
+	}
+	case "$lease_action" in
+	"$active_result")
+		_CI_REPAIR_DISPATCH_RESULT="$active_result"
+		_ci_repair_release_lock "$transition_lock" || true
+		return 0
+		;;
+	exhausted)
+		_CI_REPAIR_DISPATCH_RESULT="exhausted"
+		_ci_repair_release_lock "$transition_lock" || true
+		return 1
+		;;
+	launch\|*)
+		launch_payload="${lease_action#launch|}"
+		attempt="${launch_payload%%|*}"
+		worktree_path="${launch_payload#*|}"
+		if [[ ! "$attempt" =~ ^[0-9]+$ ]]; then
+			_ci_repair_release_lock "$transition_lock" || true
+			return 1
+		fi
+		;;
+	*)
+		_ci_repair_release_lock "$transition_lock" || true
+		return 1
+		;;
+	esac
+
+	if [[ -n "$worktree_path" && -d "$worktree_path" ]]; then
+		echo "[pulse-wrapper] _dispatch_ci_repair_session: resuming stale repair worktree ${worktree_path} for ${repo_slug} PR #${pr_number} attempt ${attempt}/${max_attempts}" >>"$LOGFILE"
+	else
+		worktree_path=$(_ci_repair_create_worktree "$repo_path" "$linked_issue" "$pr_number" "$pr_head_sha" \
+			"$pr_head_ref" "$failure_fingerprint" "$attempt") || worktree_path=""
+	fi
+	if [[ -z "$worktree_path" || ! -d "$worktree_path" ]]; then
+		_ci_repair_write_state "${lease_dir}/state.json" "$repo_slug" "$pr_number" "$pr_head_sha" "$pr_head_ref" \
+			"$failure_fingerprint" "" "0" "" "$attempt" "worktree_failed" "$session_key" || true
+		_ci_repair_release_lock "$transition_lock" || true
+		return 1
+	fi
+	_ci_repair_prepare_attempt "${lease_dir}/state.json" "$repo_slug" "$pr_number" "$pr_head_sha" "$pr_head_ref" \
+		"$failure_fingerprint" "$worktree_path" "$attempt" "$session_key" || {
+		_ci_repair_release_lock "$transition_lock" || true
+		return 1
+	}
+
+	prompt_file="${lease_dir}/prompt.md"
+	_ci_repair_write_prompt "$prompt_file" "$repo_slug" "$pr_number" "$linked_issue" "$pr_head_sha" \
+		"$pr_head_ref" "$failure_fingerprint" "$failing_checks" || {
+		_ci_repair_release_lock "$transition_lock" || true
+		return 1
+	}
+	if ! _ci_repair_launch_worker "$lease_dir" "$helper" "$repo_slug" "$pr_number" "$linked_issue" \
+		"$pr_head_sha" "$pr_head_ref" "$failure_fingerprint" "$worktree_path" "$attempt" "$session_key" "$prompt_file"; then
+		_ci_repair_release_lock "$transition_lock" || true
+		return 1
+	fi
+	_ci_repair_release_lock "$transition_lock" || true
+	_CI_REPAIR_DISPATCH_RESULT="$dispatched_status"
 	return 0
 }
 

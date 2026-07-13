@@ -21,6 +21,7 @@ TESTS_RUN=0
 TESTS_FAILED=0
 TEST_ROOT=""
 GH_LOG=""
+TEST_PR_HEAD_SHA=""
 
 print_result() {
 	local test_name="$1"
@@ -47,15 +48,58 @@ setup_test_env() {
 	: >"$GH_LOG"
 	export TEST_ROOT GH_LOG
 	export TEST_CHECK_SCENARIO="terminal_failure"
+	export TEST_WORKER_SLEEP_SECONDS="2"
 	export AIDEVOPS_CI_REPAIR_STATE_DIR="${TEST_ROOT}/repair-state"
+	export AIDEVOPS_CI_REPAIR_WORKTREE_BASE_DIR="${TEST_ROOT}/worktrees"
+	export AIDEVOPS_HEADLESS_RUNTIME_DIR="${TEST_ROOT}/headless-runtime"
+	export AIDEVOPS_CI_REPAIR_SESSION_LOCK_WAIT_STEPS="0"
 	mkdir -p "${TEST_ROOT}/repo"
+	TEST_PR_HEAD_SHA="abcdef0123456789abcdef0123456789abcdef01"
+	export TEST_PR_HEAD_SHA
 	cat >"${TEST_ROOT}/bin/headless-runtime-helper.sh" <<'EOF'
 #!/usr/bin/env bash
-printf '%s|%s|%s|%s|%s\n' "${AIDEVOPS_PR_REPAIR_NUMBER:-}" "${AIDEVOPS_PR_REPAIR_HEAD_SHA:-}" "${AIDEVOPS_PR_REPAIR_HEAD_REF:-}" "${AIDEVOPS_PR_REPAIR_FINGERPRINT:-}" "$*" >>"${GH_LOG}"
-sleep 1
+printf '%s|%s|%s|%s|%s|%s|%s\n' "${AIDEVOPS_PR_REPAIR_NUMBER:-}" "${AIDEVOPS_PR_REPAIR_HEAD_SHA:-}" "${AIDEVOPS_PR_REPAIR_HEAD_REF:-}" "${AIDEVOPS_PR_REPAIR_FINGERPRINT:-}" "${WORKER_WORKTREE_PATH:-}" "${WORKER_NO_EXIT_PUSH:-}" "$*" >>"${GH_LOG}"
+if [[ "$*" == *"--detach"* ]]; then
+	sleep "${TEST_WORKER_SLEEP_SECONDS:-2}" >/dev/null 2>&1 &
+	printf 'Dispatched PID: %s\n' "$!"
+	exit 0
+fi
+sleep "${TEST_WORKER_SLEEP_SECONDS:-2}"
 EOF
 	chmod +x "${TEST_ROOT}/bin/headless-runtime-helper.sh"
 	export AIDEVOPS_HEADLESS_RUNTIME_HELPER="${TEST_ROOT}/bin/headless-runtime-helper.sh"
+	cat >"${TEST_ROOT}/bin/worktree-helper.sh" <<'EOF'
+#!/usr/bin/env bash
+action="${1:-}"
+shift || true
+case "$action" in
+add)
+	branch="${1:-}"
+	path="${2:-}"
+	shift 2
+	base=""
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+		--base)
+			base="${2:-}"
+			shift 2
+			;;
+		*) shift ;;
+		esac
+	done
+	printf 'worktree add %s %s %s\n' "$branch" "$path" "$base" >>"${GH_LOG}"
+	mkdir -p "$path"
+	;;
+remove)
+	path="${1:-}"
+	printf 'worktree remove %s\n' "$path" >>"${GH_LOG}"
+	rm -rf "$path"
+	;;
+*) exit 1 ;;
+esac
+EOF
+	chmod +x "${TEST_ROOT}/bin/worktree-helper.sh"
+	export AIDEVOPS_WORKTREE_HELPER="${TEST_ROOT}/bin/worktree-helper.sh"
 	printf 'Original issue body.\n' >"${TEST_ROOT}/issue-body.txt"
 	write_gh_mock
 	return 0
@@ -69,7 +113,7 @@ printf '%s\n' "gh $*" >>"${GH_LOG:-/dev/null}"
 
 if [[ "${1:-} ${2:-}" == "pr view" ]]; then
 	if [[ "$*" == *"headRefOid,headRefName,isCrossRepository,maintainerCanModify"* ]]; then
-		printf 'abc123\tfeature/repair\tfalse\ttrue\n'
+		printf '%s\tfeature/repair\tfalse\ttrue\n' "${TEST_PR_HEAD_SHA}"
 		exit 0
 	fi
 	if [[ "$*" == *"--json labels"* ]]; then
@@ -77,7 +121,7 @@ if [[ "${1:-} ${2:-}" == "pr view" ]]; then
 		exit 0
 	fi
 	if [[ "$*" == *"--json headRefOid"* ]]; then
-		printf 'abc123\n'
+		printf '%s\n' "${TEST_PR_HEAD_SHA}"
 		exit 0
 	fi
 	exit 0
@@ -87,6 +131,9 @@ if [[ "${1:-} ${2:-}" == "run view" ]]; then
 	case "${TEST_CHECK_SCENARIO:-terminal_failure}" in
 	infra_timeout)
 		printf '%s\n' 'Lint Run timed out after 10m'
+		;;
+	infra_registry_rate_limit)
+		printf '%s\n' 'Error response from daemon: toomanyrequests: Rate exceeded while pulling public.ecr.aws/docker/library/postgres:18'
 		;;
 	log_exit_143)
 		printf '%s\n' 'Lint Run ##[error]Process completed with exit code 143.'
@@ -107,7 +154,7 @@ fi
 		fi
 		if [[ "$*" == *"name,bucket,state,link"* ]]; then
 			case "${TEST_CHECK_SCENARIO:-terminal_failure}:${_is_required}" in
-				terminal_failure:1 | log_exit_143:1 | required_and_advisory:1)
+				terminal_failure:1 | log_exit_143:1 | required_and_advisory:1 | infra_registry_rate_limit:1)
 					printf '%s\n' '[{"name":"Lint","bucket":"fail","state":"FAILURE","link":"https://github.com/owner/repo/actions/runs/123/job/456"}]'
 					;;
 				required_and_advisory:0)
@@ -159,6 +206,16 @@ GHEOF
 
 teardown_test_env() {
 	if [[ -n "$TEST_ROOT" && -d "$TEST_ROOT" ]]; then
+		local state_file="" worker_pid="" worker_status=""
+		while IFS= read -r state_file; do
+			worker_pid=$(jq -r '.pid // empty' "$state_file" 2>/dev/null) || worker_pid=""
+			worker_status=$(jq -r '.status // empty' "$state_file" 2>/dev/null) || worker_status=""
+			if [[ "$worker_status" == "dispatched" && "$worker_pid" =~ ^[0-9]+$ && "$worker_pid" != "$$" ]] \
+				&& kill -0 "$worker_pid" 2>/dev/null; then
+				kill "$worker_pid" 2>/dev/null || true
+				wait "$worker_pid" 2>/dev/null || true
+			fi
+		done < <(find "${AIDEVOPS_CI_REPAIR_STATE_DIR:-$TEST_ROOT}" -name state.json -type f 2>/dev/null)
 		rm -rf "$TEST_ROOT"
 	fi
 	return 0
@@ -214,6 +271,14 @@ define_process_helper() {
 	_pulse_merge_changes_requested_thread_remediation_first_enabled() { return 1; }
 	_pulse_merge_preflight_snapshot_gate() { return 0; }
 	_attempt_pr_update_branch() { return 1; }
+	_attempt_existing_auto_merge_behind_update_branch() { return 1; }
+	_attempt_green_behind_update_branch() { return 1; }
+	approve_collaborator_pr() { return 0; }
+	_check_ruleset_required_reviews_passing() { return 0; }
+	_extract_merge_summary() { printf 'test summary'; return 0; }
+	_retarget_stacked_children() { return 0; }
+	_pulse_merge_admin_safety_check() { return 0; }
+	_set_native_auto_merge_or_skip() { return 0; }
 	_pulse_merge_changes_requested_thread_remediation_first_enabled() { return 1; }
 	_pulse_merge_preflight_snapshot_gate() { return 0; }
 	_close_conflicting_pr() { return 0; }
@@ -230,18 +295,48 @@ define_process_helper() {
 define_feedback_helpers() {
 	local fns=(
 		_build_ci_feedback_section
-		_ci_check_url_has_infra_timeout_log
+		_ci_check_url_has_infra_failure_log
 		_ci_actionable_failed_checks_markdown
 		_ci_terminal_failed_check_results
 		_ci_merge_check_sets
 		_append_feedback_to_issue
 		_transition_issue_for_redispatch
 		_close_and_label_feedback_pr
+		_ci_repair_write_state
+		_ci_repair_process_start
+		_ci_repair_pid_is_live
+		_ci_repair_publish_lock_owner
+		_ci_repair_lock_is_stale
+		_ci_repair_acquire_lock
+		_ci_repair_release_lock
+		_ci_repair_status_preparing
+		_ci_repair_status_dispatched
+		_ci_repair_result_active
+		_ci_repair_latest_archive
+		_ci_repair_prepare_attempt
+		_ci_repair_adopt_live_session
+		_ci_repair_claim_lease
+		_ci_repair_create_worktree
+		_ci_repair_session_identity
+		_ci_repair_launch_worker
+		_ci_repair_write_prompt
 		_dispatch_ci_repair_session
 		_route_ci_repair_fallback
 		_dispatch_ci_fix_worker
 	)
 	local fn fn_src
+	cat >"${TEST_ROOT}/bin/git" <<'EOF'
+#!/usr/bin/env bash
+if [[ "$*" == *"cat-file -e"* ]]; then
+	exit 0
+fi
+if [[ "$*" == *"rev-parse HEAD"* ]]; then
+	printf '%s\n' "${TEST_PR_HEAD_SHA}"
+	exit 0
+fi
+exit 0
+EOF
+	chmod +x "${TEST_ROOT}/bin/git"
 	gh_issue_edit_safe() { gh issue edit "$@"; return $?; }
 	_emit_ci_failure_guidance_blocks() { return 0; }
 	_classify_ci_failures_by_pattern() { local failing_names="$1"; printf '%s' "$failing_names" >"${TEST_ROOT}/classified-names.txt"; return 0; }
@@ -343,13 +438,13 @@ test_coderabbit_nits_ok_dismissed_once_before_late_gate() {
 	define_process_helper || { print_result "defines process helper for coderabbit review routing" 1 "could not extract _process_single_ready_pr or review gate"; teardown_test_env; return 0; }
 
 	local pr_object rc=0
-	DRY_RUN=1
+	DRY_RUN=0
 	PR_REQUIRED_CHECKS_RC=0
 	printf -v pr_object '%s' '{"number":555,"mergeable":"UNKNOWN","reviewDecision":"CHANGES_REQUESTED","author":{"login":"worker-bot"},"title":"GH#501: fix","updatedAt":"2026-06-21T00:00:00Z","headRefOid":"sha555","headRefName":"fix/nits","baseRefName":"main","labels":[{"name":"origin:worker"},{"name":"status:in-review"},{"name":"coderabbit-nits-ok"}],"isDraft":false}'
 	_process_single_ready_pr "owner/repo" "$pr_object" || rc=$?
 
-	if [[ "$rc" -ne 0 ]]; then
-		print_result "coderabbit-nits-ok dismissal is not reprocessed by late gate" 1 "Expected dry-run success return 0, got ${rc}"
+	if [[ "$rc" -ne 4 ]]; then
+		print_result "coderabbit-nits-ok dismissal is not reprocessed by late gate" 1 "Expected native-auto defer return 4, got ${rc}"
 	elif [[ "$DISMISS_CALLS" -ne 1 ]]; then
 		print_result "coderabbit-nits-ok dismissal is not reprocessed by late gate" 1 "dismiss_calls=${DISMISS_CALLS}"
 	elif [[ "$GATE_CALLS" -ne 1 || "$GATE_REVIEW_ARG" != "NONE" ]]; then
@@ -391,15 +486,20 @@ test_ci_repair_dedupes_by_repo_pr_head_and_fingerprint() {
 	_dispatch_ci_fix_worker "100" "owner/repo" "42"
 	_dispatch_ci_fix_worker "100" "owner/repo" "42"
 
-	local edit_count state_count
+	local edit_count state_count worktree_count dispatch_count active_count
 	edit_count=$(grep -c 'gh issue edit .*--body' "$GH_LOG" || true)
 	[[ "$edit_count" =~ ^[0-9]+$ ]] || edit_count=0
 	state_count=$(find "$AIDEVOPS_CI_REPAIR_STATE_DIR" -name state.json -type f | wc -l | tr -d ' ')
+	worktree_count=$(grep -c '^worktree add ' "$GH_LOG" || true)
+	dispatch_count=$(grep -c 'dispatched in-place CI repair' "$LOGFILE" || true)
+	active_count=$(grep -c 'in-place CI repair already active' "$LOGFILE" || true)
 
-	if [[ "$edit_count" -ne 0 || "$state_count" -ne 1 ]]; then
-		print_result "CI repair dedupes by repo/PR/head/fingerprint" 1 "issue_edits=${edit_count}, states=${state_count}"
+	if [[ "$edit_count" -ne 0 || "$state_count" -ne 1 || "$worktree_count" -ne 1 ]]; then
+		print_result "CI repair dedupes by repo/PR/head/fingerprint" 1 "issue_edits=${edit_count}, states=${state_count}, worktrees=${worktree_count}"
+	elif [[ "$dispatch_count" -ne 1 || "$active_count" -ne 1 ]]; then
+		print_result "CI repair distinguishes dispatch from a live lease" 1 "dispatches=${dispatch_count}, active=${active_count}"
 	else
-		print_result "CI repair dedupes by repo/PR/head/fingerprint" 0
+		print_result "CI repair dedupes and reports a live lease without false dispatch" 0
 	fi
 	teardown_test_env
 	return 0
@@ -451,6 +551,8 @@ test_ci_feedback_emits_terminal_failure_with_conclusion_and_url() {
 	prompt_file=$(find "$AIDEVOPS_CI_REPAIR_STATE_DIR" -name prompt.md -type f -print -quit)
 	if [[ -z "$prompt_file" ]] || ! grep -qF '**Lint**: failure — [check URL](https://github.com/owner/repo/actions/runs/123/job/456)' "$prompt_file"; then
 		print_result "terminal failure dispatch includes conclusion and check URL" 1 "Dispatch log: $(cat "$GH_LOG")"
+	elif ! grep -q "${TEST_ROOT}/worktrees/.*|1|run --role worker.*--dir ${TEST_ROOT}/worktrees/" "$GH_LOG"; then
+		print_result "terminal failure dispatch uses matching worker worktree env and directory" 1 "Dispatch log: $(cat "$GH_LOG")"
 	elif grep -qF 'gh pr close 100' "$GH_LOG"; then
 		print_result "terminal failure preserves existing PR" 1 "Unexpected close: $(cat "$GH_LOG")"
 	else
@@ -485,10 +587,88 @@ test_ci_feedback_skips_failed_check_with_exit_143_log() {
 
 	if grep -qF 'CI Repair Feedback' "${TEST_ROOT}/issue-body.txt"; then
 		print_result "failed check with exit 143 log does not emit CI repair feedback" 1 "Body: $(cat "${TEST_ROOT}/issue-body.txt")"
-	elif ! grep -qF 'classified as infra-timeout' "$LOGFILE"; then
-		print_result "failed check with exit 143 log records infra-timeout classification" 1 "Log: $(cat "$LOGFILE")"
+	elif ! grep -qF 'classified as infrastructure failure' "$LOGFILE"; then
+		print_result "failed check with exit 143 log records infrastructure classification" 1 "Log: $(cat "$LOGFILE")"
 	else
 		print_result "failed check with exit 143 log does not emit CI repair feedback" 0
+	fi
+	teardown_test_env
+	return 0
+}
+
+test_ci_feedback_skips_registry_rate_limit_failure() {
+	setup_test_env
+	TEST_CHECK_SCENARIO="infra_registry_rate_limit"
+	define_feedback_helpers || { print_result "defines feedback helpers for registry rate limit" 1 "could not extract feedback helpers"; teardown_test_env; return 0; }
+
+	_dispatch_ci_fix_worker "100" "owner/repo" "42"
+
+	if grep -qF 'PR #100: CI repair' "$GH_LOG"; then
+		print_result "registry rate limit does not dispatch a code repair" 1 "Dispatch log: $(cat "$GH_LOG")"
+	elif ! grep -qF 'classified as infrastructure failure' "$LOGFILE"; then
+		print_result "registry rate limit records infrastructure classification" 1 "Log: $(cat "$LOGFILE")"
+	else
+		print_result "registry rate limit is classified as infrastructure" 0
+	fi
+	teardown_test_env
+	return 0
+}
+
+test_ci_repair_recovers_one_stale_lease_then_exhausts() {
+	setup_test_env
+	export TEST_WORKER_SLEEP_SECONDS="0.2"
+	define_feedback_helpers || { print_result "defines feedback helpers for stale repair lease" 1 "could not extract feedback helpers"; teardown_test_env; return 0; }
+
+	_dispatch_ci_fix_worker "100" "owner/repo" "42"
+	sleep 1
+	_dispatch_ci_fix_worker "100" "owner/repo" "42"
+	sleep 1
+	_dispatch_ci_fix_worker "100" "owner/repo" "42"
+
+	local worktree_count=0 current_attempt=""
+	worktree_count=$(grep -c '^worktree add ' "$GH_LOG" || true)
+	current_attempt=$(find "$AIDEVOPS_CI_REPAIR_STATE_DIR" -name state.json -type f -exec jq -r '.attempt // empty' {} \;)
+	if [[ "$worktree_count" -ne 1 || "$current_attempt" != "2" ]]; then
+		print_result "stale CI repair lease resumes one worktree for a bounded retry" 1 "worktrees=${worktree_count}, attempt=${current_attempt}"
+	elif ! grep -qF 'recovering stale repair' "$LOGFILE"; then
+		print_result "stale CI repair retry is observable" 1 "Log: $(cat "$LOGFILE")"
+	elif ! grep -qF 'resuming stale repair worktree' "$LOGFILE"; then
+		print_result "stale CI repair preserves prior worktree evidence" 1 "Log: $(cat "$LOGFILE")"
+	elif ! grep -qF 'exhausted 2 attempts' "$LOGFILE"; then
+		print_result "exhausted CI repair lease is observable" 1 "Log: $(cat "$LOGFILE")"
+	elif ! grep -qF 'gh pr close 100' "$GH_LOG"; then
+		print_result "exhausted CI repair lease takes durable fallback" 1 "GH log: $(cat "$GH_LOG")"
+	else
+		print_result "stale CI repair lease retries once then takes durable fallback" 0
+	fi
+	teardown_test_env
+	return 0
+}
+
+test_ci_repair_recovers_incomplete_state_and_dead_lock() {
+	setup_test_env
+	export AIDEVOPS_CI_REPAIR_STATE_GRACE_SECONDS="0"
+	define_feedback_helpers || { print_result "defines feedback helpers for incomplete lease" 1 "could not extract feedback helpers"; teardown_test_env; return 0; }
+
+	local lease_dir="${AIDEVOPS_CI_REPAIR_STATE_DIR}/incomplete"
+	local action=""
+	mkdir -p "${lease_dir}/transition.lock"
+	printf '{"pid":999999,"pid_start":"stale"}\n' >"${lease_dir}/transition.lock/owner.json"
+	_ci_repair_acquire_lock "${lease_dir}/transition.lock" || {
+		print_result "dead CI repair transition lock is reclaimed" 1 "could not acquire stale lock"
+		teardown_test_env
+		return 0
+	}
+	action=$(_ci_repair_claim_lease "$lease_dir" "owner/repo" "100" "$TEST_PR_HEAD_SHA" \
+		"fingerprint" "2" "feature/repair" "ci-repair-test")
+	_ci_repair_release_lock "${lease_dir}/transition.lock" || true
+
+	if [[ "$action" != "launch|1|" ]]; then
+		print_result "incomplete CI repair lease is reclaimed" 1 "action=${action}"
+	elif ! jq -e '.status == "preparing" and .attempt == 1 and .session == "ci-repair-test"' "${lease_dir}/state.json" >/dev/null; then
+		print_result "reclaimed CI repair state is complete JSON" 1 "State: $(cat "${lease_dir}/state.json")"
+	else
+		print_result "incomplete CI repair state and dead lock are reclaimed atomically" 0
 	fi
 	teardown_test_env
 	return 0
@@ -540,6 +720,9 @@ main() {
 	test_ci_feedback_emits_terminal_failure_with_conclusion_and_url
 	test_ci_feedback_skips_infra_timeout_checks
 	test_ci_feedback_skips_failed_check_with_exit_143_log
+	test_ci_feedback_skips_registry_rate_limit_failure
+	test_ci_repair_recovers_one_stale_lease_then_exhausts
+	test_ci_repair_recovers_incomplete_state_and_dead_lock
 	test_ci_feedback_skips_advisory_failure_when_required_clean
 
 	printf '\nTests run: %d, failed: %d\n' "$TESTS_RUN" "$TESTS_FAILED"
