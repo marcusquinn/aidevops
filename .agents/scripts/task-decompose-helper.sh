@@ -39,6 +39,10 @@ set -euo pipefail
 readonly DEFAULT_MAX_DEPTH="${DECOMPOSE_MAX_DEPTH:-3}"
 readonly DEFAULT_MAX_SUBTASKS="${DECOMPOSE_MAX_SUBTASKS:-5}"
 readonly AI_HELPER="${SCRIPT_DIR}/ai-research-helper.sh"
+readonly DECOMPOSE_FALSE="false"
+readonly DECOMPOSE_BREADTH="breadth-first"
+readonly DECOMPOSE_STANDARD="standard"
+readonly DECOMPOSE_KIND_KEY="kind"
 # DECOMPOSE_NO_LLM or legacy DECOMPOSE_TEST_NO_LLM disables LLM calls (for testing)
 readonly NO_LLM="${DECOMPOSE_NO_LLM:-${DECOMPOSE_TEST_NO_LLM:-false}}"
 
@@ -69,7 +73,7 @@ check_existing_subtasks() {
 	local todo_file="$2"
 
 	if [[ -z "$task_id" || ! -f "$todo_file" ]]; then
-		echo "false"
+		echo "$DECOMPOSE_FALSE"
 		return 0
 	fi
 
@@ -86,7 +90,7 @@ check_existing_subtasks() {
 	if grep -qE "$parent_pattern" "$todo_file" && grep -qE "$child_pattern" "$todo_file"; then
 		echo "true"
 	else
-		echo "false"
+		echo "$DECOMPOSE_FALSE"
 	fi
 	return 0
 }
@@ -415,8 +419,8 @@ Respond with ONLY a JSON object (no markdown, no explanation outside the JSON):
   \"schema_version\": 1,
   \"max_parallel\": 2,
   \"subtasks\": [
-    {\"id\": \"unit-1\", \"kind\": \"discovery\", \"description\": \"subtask description\", \"effort\": \"simple\", \"owns\": {\"files\": [], \"questions\": [\"bounded question\"]}, \"blocked_by\": [], \"reuse_key\": \"unit-1-input\"},
-    {\"id\": \"unit-2\", \"kind\": \"implementation\", \"description\": \"subtask description\", \"effort\": \"standard\", \"owns\": {\"files\": [\"repo/relative/path\"], \"questions\": []}, \"blocked_by\": [0], \"reuse_key\": \"unit-2-input\"}
+    {\"id\": \"unit-1\", \"${DECOMPOSE_KIND_KEY}\": \"discovery\", \"description\": \"subtask description\", \"effort\": \"simple\", \"owns\": {\"files\": [], \"questions\": [\"bounded question\"]}, \"blocked_by\": [], \"reuse_key\": \"unit-1-input\"},
+    {\"id\": \"unit-2\", \"${DECOMPOSE_KIND_KEY}\": \"implementation\", \"description\": \"subtask description\", \"effort\": \"${DECOMPOSE_STANDARD}\", \"owns\": {\"files\": [\"repo/relative/path\"], \"questions\": []}, \"blocked_by\": [0], \"reuse_key\": \"unit-2-input\"}
   ],
   \"strategy\": \"depth-first\" or \"breadth-first\"
 }"
@@ -587,15 +591,15 @@ if match:
 	# bounded concurrency, stable ownership, dependency indexes, and effort tiers.
 	if [[ -n "$json_result" ]]; then
 		local normalized
-		normalized=$(printf '%s' "$json_result" | jq -c '
+		normalized=$(printf '%s' "$json_result" | jq -c --arg breadth "$DECOMPOSE_BREADTH" --arg standard "$DECOMPOSE_STANDARD" '
 			.schema_version = (.schema_version // 1)
 			| .max_parallel = ([2, (.max_parallel // 2)] | min)
-			| .strategy = (.strategy // "breadth-first")
+			| .strategy = (.strategy // $breadth)
 			| .subtasks = [.subtasks | to_entries[]
 				| .key as $index | .value
 				| .id = (.id // "unit-\($index + 1)")
 				| .kind = (.kind // "implementation")
-				| .effort = (.effort // "standard")
+				| .effort = (.effort // $standard)
 				| .blocked_by = (.blocked_by // [])
 				| .owns = (.owns // {})
 				| .owns.files = (.owns.files // [])
@@ -603,20 +607,20 @@ if match:
 				| .reuse_key = (.reuse_key // .id)]
 		' 2>/dev/null || echo "")
 		local valid
-		valid=$(printf '%s' "$normalized" | jq -r --argjson max "$max_subtasks" '
+		valid=$(printf '%s' "$normalized" | jq -r --argjson max "$max_subtasks" --arg breadth "$DECOMPOSE_BREADTH" --arg standard "$DECOMPOSE_STANDARD" '
 			. as $plan | (.subtasks | length) as $n
 			| ($n >= 2 and $n <= $max)
 			and (.max_parallel >= 1 and .max_parallel <= 2)
-			and (.strategy == "depth-first" or .strategy == "breadth-first")
+			and (.strategy == "depth-first" or .strategy == $breadth)
 			and (([.subtasks[].id] | unique | length) == $n)
-			and all(.subtasks[]; (.effort == "simple" or .effort == "standard" or .effort == "thinking"))
+			and all(.subtasks[]; (.effort == "simple" or .effort == $standard or .effort == "thinking"))
 			and ([.subtasks | to_entries[] | .key as $i | .value.blocked_by[] | select((type != "number") or . < 0 or . >= $n or . == $i)] | length) == 0
 			and all(.subtasks[]; ((.owns.files | length) + (.owns.questions | length)) > 0)
 			and ([range(0; $n) as $i | range($i + 1; $n) as $j
 				| select((([$plan.subtasks[$i].owns.files[]] - ([$plan.subtasks[$i].owns.files[]] - [$plan.subtasks[$j].owns.files[]])) | length) > 0)
 				| select(($plan.subtasks[$j].blocked_by | index($i)) == null)
 				| select(($plan.subtasks[$i].blocked_by | index($j)) == null)] | length) == 0
-		' 2>/dev/null || echo "false")
+		' 2>/dev/null || echo "$DECOMPOSE_FALSE")
 		if [[ "$valid" == "true" ]]; then
 			echo "$normalized"
 			return 0
@@ -667,22 +671,14 @@ heuristic_decompose() {
 	fi
 
 	# Build JSON output
-	local json_output='{"schema_version": 1, "max_parallel": 2, "subtasks": ['
-	local first=true
+	local json_output
+	json_output=$(jq -cn --arg strategy "$DECOMPOSE_BREADTH" '{schema_version:1,max_parallel:2,subtasks:[],strategy:$strategy}')
 	local unit_index=0
 	for st in "${subtasks[@]}"; do
 		unit_index=$((unit_index + 1))
-		if [[ "$first" == true ]]; then
-			first=false
-		else
-			json_output="${json_output},"
-		fi
-		# Escape description for JSON
-		local escaped_st
-		escaped_st=$(printf '%s' "$st" | sed 's/\\/\\\\/g; s/"/\\"/g')
-		json_output="${json_output}{\"id\": \"unit-${unit_index}\", \"kind\": \"implementation\", \"description\": \"${escaped_st}\", \"effort\": \"standard\", \"owns\": {\"files\": [], \"questions\": [\"${escaped_st}\"]}, \"blocked_by\": [], \"reuse_key\": \"unit-${unit_index}\"}"
+		json_output=$(printf '%s' "$json_output" | jq -c --arg id "unit-${unit_index}" --arg description "$st" --arg standard "$DECOMPOSE_STANDARD" \
+			'.subtasks += [{id:$id,kind:"implementation",description:$description,effort:$standard,owns:{files:[],questions:[$description]},blocked_by:[],reuse_key:$id}]')
 	done
-	json_output="${json_output}], \"strategy\": \"breadth-first\"}"
 
 	echo "$json_output"
 	return 0
