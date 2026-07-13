@@ -208,11 +208,28 @@ def _tag_is_read_only(args: list[str]) -> bool:
     )
 
 
+def _symbolic_ref_is_read_only(args: list[str]) -> bool:
+    read_flags = {"-q", "--quiet", "--short", "--recurse", "--no-recurse"}
+    refs: list[str] = []
+    parse_options = True
+    for arg in args:
+        if parse_options and arg == "--":
+            parse_options = False
+        elif parse_options and arg in read_flags:
+            continue
+        elif parse_options and arg.startswith("-"):
+            return False
+        else:
+            refs.append(arg)
+    return len(refs) == 1
+
+
 CANONICAL_CHECKS: dict[str, Callable[[list[str]], bool]] = {
     "branch": _branch_is_read_only,
     "config": _config_is_read_only,
     "clean": _clean_is_read_only,
     "remote": _remote_is_read_only,
+    "symbolic-ref": _symbolic_ref_is_read_only,
     "worktree": _worktree_is_allowed,
     "tag": _tag_is_read_only,
 }
