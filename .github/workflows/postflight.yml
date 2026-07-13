@@ -53,8 +53,12 @@ jobs:
         # Poll for completion, excluding this workflow to avoid circular dependency
         SELF_NAME="Verify Release Health"
         for i in {1..20}; do
-          PENDING=$(gh api "repos/${REPO}/commits/${COMMIT_SHA}/check-runs" \
-            --jq "[.check_runs[] | select(.status != \"completed\" and .name != \"$SELF_NAME\")] | length")
+          CHECK_RUNS_RESPONSE=$(gh api --paginate --slurp \
+            "repos/${REPO}/commits/${COMMIT_SHA}/check-runs?per_page=100" \
+            | jq -c -f .github/scripts/flatten-check-run-pages.jq)
+          PENDING=$(jq --arg self_name "$SELF_NAME" \
+            '[.check_runs[] | select(.status != "completed" and .name != $self_name)] | length' \
+            <<<"$CHECK_RUNS_RESPONSE")
           
           if [[ "$PENDING" == "0" ]]; then
             echo "All check runs completed (excluding self)"
@@ -63,13 +67,18 @@ jobs:
           
           # Show which workflows are still pending
           echo "Waiting for $PENDING check runs... (attempt $i/20)"
-          gh api "repos/${REPO}/commits/${COMMIT_SHA}/check-runs" \
-            --jq ".check_runs[] | select(.status != \"completed\" and .name != \"$SELF_NAME\") | \"  - \(.name): \(.status)\"" || true
+          jq -r --arg self_name "$SELF_NAME" \
+            '.check_runs[] | select(.status != "completed" and .name != $self_name) | "  - \(.name): \(.status)"' \
+            <<<"$CHECK_RUNS_RESPONSE" || true
           sleep 30
         done
 
-        REMAINING=$(gh api "repos/${REPO}/commits/${COMMIT_SHA}/check-runs" \
-          --jq "[.check_runs[] | select(.status != \"completed\" and .name != \"$SELF_NAME\")] | length")
+        CHECK_RUNS_RESPONSE=$(gh api --paginate --slurp \
+          "repos/${REPO}/commits/${COMMIT_SHA}/check-runs?per_page=100" \
+          | jq -c -f .github/scripts/flatten-check-run-pages.jq)
+        REMAINING=$(jq --arg self_name "$SELF_NAME" \
+          '[.check_runs[] | select(.status != "completed" and .name != $self_name)] | length' \
+          <<<"$CHECK_RUNS_RESPONSE")
         if [[ "$REMAINING" != "0" ]]; then
           echo "::error::$REMAINING check runs remained non-terminal after timeout"
           exit 1
@@ -89,7 +98,9 @@ jobs:
         # retains superseded runs on a commit, so counting every historical
         # cancellation can incorrectly fail an otherwise healthy release.
         SELF_NAME="Verify Release Health"
-        CHECK_RUNS_RESPONSE=$(gh api "repos/${REPO}/commits/${COMMIT_SHA}/check-runs?per_page=100")
+        CHECK_RUNS_RESPONSE=$(gh api --paginate --slurp \
+          "repos/${REPO}/commits/${COMMIT_SHA}/check-runs?per_page=100" \
+          | jq -c -f .github/scripts/flatten-check-run-pages.jq)
         EFFECTIVE_CHECK_RUNS=$(echo "$CHECK_RUNS_RESPONSE" \
           | jq -c --arg self_name "$SELF_NAME" -f .github/scripts/effective-check-runs.jq)
 
@@ -103,7 +114,9 @@ jobs:
         if [[ -n "$DEFAULT_SHA" && "$DEFAULT_SHA" != "$COMMIT_SHA" ]]; then
           COMPARE_STATUS=$(gh api "repos/${REPO}/compare/${COMMIT_SHA}...${DEFAULT_SHA}" --jq '.status // empty' 2>/dev/null || true)
           if [[ "$COMPARE_STATUS" == "ahead" || "$COMPARE_STATUS" == "identical" ]]; then
-            DESCENDANT_RESPONSE=$(gh api "repos/${REPO}/commits/${DEFAULT_SHA}/check-runs?per_page=100" 2>/dev/null || true)
+            DESCENDANT_RESPONSE=$(gh api --paginate --slurp \
+              "repos/${REPO}/commits/${DEFAULT_SHA}/check-runs?per_page=100" 2>/dev/null \
+              | jq -c -f .github/scripts/flatten-check-run-pages.jq || true)
             if [[ -n "$DESCENDANT_RESPONSE" ]]; then
               DESCENDANT_CHECK_RUNS=$(echo "$DESCENDANT_RESPONSE" \
                 | jq -c --arg self_name "$SELF_NAME" -f .github/scripts/effective-check-runs.jq)
