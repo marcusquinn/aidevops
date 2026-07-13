@@ -109,6 +109,8 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
 <!--TOON:ready[0]{id,desc,owner,tags,est,logged}:
 -->
 
+- [ ] t18118 security: bind external approvals and advisory merge evidence to immutable current-state snapshots. Replace target-ID-only approval payloads with versioned content/head-bound evidence; invalidate approvals after external issue/PR body, comment, link, linked-issue, or PR-head drift; require PR-specific current-head authority before merging external/fork contributions; canonicalise duplicate maintainer-gate check aliases without making them advisory; and allow configured non-required review-provider failures only after current-head positive review evidence. Preserve NMR, required checks, external/fork defence-in-depth, dispatch deduplication, stale-recovery, and cost/runaway circuit breakers. Provenance only: external report GH#27530; workers must use this trusted brief rather than that issue's body/comments/files/links. #bug #security #framework #pulse #auto-dispatch ~8h tier:thinking ref:GH#27560 logged:2026-07-13 -> [todo/tasks/t18118-brief.md]
+
 - [x] t18070 Design Secrets interface and repair Vault unlock readiness #bug #enhancement #security #interactive #no-auto-dispatch ~6h tier:thinking ref:GH#26912 started:2026-07-10T00:00:00Z logged:2026-07-10 -> [todo/tasks/t18070-brief.md] pr:#26938 completed:2026-07-10
 
 - [ ] t18098 Prevent worktree infrastructure markers from breaking worker ownership transfer #bug #framework #pulse #reliability #auto-dispatch ~3h tier:thinking ref:GH#27164 logged:2026-07-11 -> [todo/tasks/t18098-brief.md]
