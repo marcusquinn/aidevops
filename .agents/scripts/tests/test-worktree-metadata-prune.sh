@@ -13,6 +13,8 @@ FAILED_LINKED="${TEST_ROOT}/failed-linked"
 SHIM_BIN="${TEST_ROOT}/bin"
 FAILING_GIT="${TEST_ROOT}/failing-git"
 QUERY_FAILING_GIT="${TEST_ROOT}/query-failing-git"
+POST_PRUNE_QUERY_FAILING_GIT="${TEST_ROOT}/post-prune-query-failing-git"
+POST_PRUNE_QUERY_STATE="${TEST_ROOT}/post-prune-query-state"
 
 teardown() {
 	rm -rf "$TEST_ROOT"
@@ -99,3 +101,44 @@ if AIDEVOPS_REAL_GIT_BIN="$QUERY_FAILING_GIT" \
 	exit 1
 fi
 printf 'PASS metadata query failure cannot report cleanup success\n'
+
+if (
+	_worktree_cleanup_real_git() {
+		return 0
+	}
+	prune_missing_worktree_metadata "$REPO" "${TEST_ROOT}/missing-empty-git-target"
+); then
+	printf 'FAIL empty native Git path was treated as successful cleanup\n'
+	exit 1
+fi
+printf 'PASS empty native Git path cannot report cleanup success\n'
+
+cat >"$POST_PRUNE_QUERY_FAILING_GIT" <<'EOF'
+#!/usr/bin/env bash
+if [[ "$*" == *"worktree list --porcelain"* ]]; then
+	query_count=0
+	if [[ -f "${POST_PRUNE_QUERY_STATE_FOR_TEST:?}" ]]; then
+		read -r query_count <"$POST_PRUNE_QUERY_STATE_FOR_TEST"
+	fi
+	query_count=$((query_count + 1))
+	printf '%s\n' "$query_count" >"$POST_PRUNE_QUERY_STATE_FOR_TEST"
+	if [[ "$query_count" -eq 1 ]]; then
+		printf 'worktree %s\n\n' "${POST_PRUNE_TARGET_FOR_TEST:?}"
+		exit 0
+	fi
+	exit 1
+fi
+if [[ "$*" == *"worktree prune"* ]]; then
+	exit 0
+fi
+exec /usr/bin/git "$@"
+EOF
+chmod +x "$POST_PRUNE_QUERY_FAILING_GIT"
+if AIDEVOPS_REAL_GIT_BIN="$POST_PRUNE_QUERY_FAILING_GIT" \
+	POST_PRUNE_QUERY_STATE_FOR_TEST="$POST_PRUNE_QUERY_STATE" \
+	POST_PRUNE_TARGET_FOR_TEST="${TEST_ROOT}/missing-post-prune-query-target" \
+	prune_missing_worktree_metadata "$REPO" "${TEST_ROOT}/missing-post-prune-query-target"; then
+	printf 'FAIL post-prune metadata query failure was treated as successful cleanup\n'
+	exit 1
+fi
+printf 'PASS post-prune metadata query failure cannot report cleanup success\n'
