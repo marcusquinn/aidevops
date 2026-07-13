@@ -10,8 +10,8 @@ restore_state() {
 	local repository_id="$3"
 	local artifact_id="" archive=""
 	mkdir -p "$state_dir"
-	artifact_id=$(gh api --paginate --slurp "repos/${repository}/actions/artifacts?per_page=100" \
-		--jq "[.[].artifacts[] | select(.name | startswith(\"forge-coordinator-${repository_id}-\"))] | sort_by(.created_at) | last | .id // empty") || return 1
+	artifact_id=$(gh api --paginate --slurp "repos/${repository}/actions/artifacts?per_page=100" | \
+		jq -r "[.[].artifacts[] | select(.name | startswith(\"forge-coordinator-${repository_id}-\"))] | sort_by(.created_at, .id) | last | .id // empty") || return 1
 	[[ -n "$artifact_id" ]] || return 0
 	archive="${state_dir}/state.zip"
 	gh api "repos/${repository}/actions/artifacts/${artifact_id}/zip" >"$archive" || return 1

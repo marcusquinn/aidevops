@@ -67,7 +67,11 @@ cat >"${test_root}/bin/gh" <<'GH'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >>"$GH_CALL_LOG"
 if [[ "$*" == *"actions/artifacts?per_page=100"* ]]; then
-	if [[ "$*" == *"--paginate --slurp"* ]]; then printf '22\n'; else printf '11\n22\n'; fi
+	if [[ "$*" == *"--paginate --slurp"* && "$*" != *"--jq"* ]]; then
+		printf '%s\n' '[{"artifacts":[{"id":11,"name":"forge-coordinator-R_1-old","created_at":"2026-07-12T10:00:00Z"}]},{"artifacts":[{"id":22,"name":"forge-coordinator-R_1-new","created_at":"2026-07-12T11:00:00Z"},{"id":99,"name":"other-artifact","created_at":"2026-07-12T12:00:00Z"}]}]'
+	else
+		printf '11\n22\n'
+	fi
 	exit 0
 fi
 [[ "$*" != *$'\n'* ]] || exit 1
