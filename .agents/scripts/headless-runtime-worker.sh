@@ -935,6 +935,7 @@ _recover_worker_output_on_failure() {
 		if [[ "$pr_state" == "draft" ]]; then
 			# A draft proves durability, not completion. Stop automatic dispatch so
 			# the incomplete exact-head checkpoint cannot race another implementation.
+			# This runs only after the bounded runtime continuation loop is exhausted.
 			_handle_worker_draft_checkpoint "$session_key" "$issue_number" "$repo_slug" "$branch_name" "$pr_number"
 			_HRW_FAILURE_RECOVERY_CLASSIFICATION="$_HRW_REASON_DRAFT_CHECKPOINT"
 			return 0
