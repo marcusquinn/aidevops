@@ -1,0 +1,39 @@
+{
+  "workflow_runs": [
+    {
+      "id": 1001,
+      "name": "Code Quality Analysis",
+      "event": "push",
+      "head_sha": "release-sha",
+      "check_suite_id": 501
+    },
+    {
+      "id": 1002,
+      "name": "Publish Packages",
+      "event": "release",
+      "head_sha": "release-sha",
+      "check_suite_id": 502
+    },
+    {
+      "id": 1003,
+      "name": "Issue Triage Gate",
+      "event": "issues",
+      "head_sha": "release-sha",
+      "check_suite_id": 503
+    },
+    {
+      "id": 1004,
+      "name": "Review Bot Gate",
+      "event": "issue_comment",
+      "head_sha": "release-sha",
+      "check_suite_id": 504
+    },
+    {
+      "id": 1005,
+      "name": "Old Code Quality Analysis",
+      "event": "push",
+      "head_sha": "other-sha",
+      "check_suite_id": 505
+    }
+  ]
+}

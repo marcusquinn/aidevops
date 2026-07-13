@@ -46,8 +46,8 @@ jobs:
         REPO: ${{ github.repository }}
         COMMIT_SHA: ${{ steps.release_commit.outputs.sha }}
       run: |
-        echo "Waiting for all check runs to complete..."
-        echo "Note: Excluding this workflow (Verify Release Health) to avoid circular dependency"
+        echo "Waiting for release-owned check runs to complete..."
+        echo "Note: Excluding issue/comment workflows and this workflow to avoid unrelated waits"
         sleep 60  # Initial wait for workflows to start
         
         # Poll for completion, excluding this workflow to avoid circular dependency
@@ -56,31 +56,48 @@ jobs:
           CHECK_RUNS_RESPONSE=$(gh api --paginate --slurp \
             "repos/${REPO}/commits/${COMMIT_SHA}/check-runs?per_page=100" \
             | jq -c -f .github/scripts/flatten-check-run-pages.jq)
-          PENDING=$(jq --arg self_name "$SELF_NAME" \
-            '[.check_runs[] | select(.status != "completed" and .name != $self_name)] | length' \
+          RELEASE_RUNS_RESPONSE=$(gh api --paginate --slurp \
+            "repos/${REPO}/actions/runs?head_sha=${COMMIT_SHA}&per_page=100")
+          RELEASE_CHECK_RUNS=$(jq -c \
+            --arg release_sha "$COMMIT_SHA" \
+            --arg self_name "$SELF_NAME" \
+            --slurpfile release_run_documents <(printf '%s\n' "$RELEASE_RUNS_RESPONSE") \
+            -f .github/scripts/release-owned-check-runs.jq \
             <<<"$CHECK_RUNS_RESPONSE")
+          PENDING=$(jq --arg self_name "$SELF_NAME" \
+            '[.check_runs[] | select(.status != "completed")] | length' \
+            <<<"$RELEASE_CHECK_RUNS")
           
           if [[ "$PENDING" == "0" ]]; then
-            echo "All check runs completed (excluding self)"
+            echo "All release-owned check runs completed"
             break
           fi
           
           # Show which workflows are still pending
           echo "Waiting for $PENDING check runs... (attempt $i/20)"
           jq -r --arg self_name "$SELF_NAME" \
-            '.check_runs[] | select(.status != "completed" and .name != $self_name) | "  - \(.name): \(.status)"' \
-            <<<"$CHECK_RUNS_RESPONSE" || true
+            '.check_runs[] | select(.status != "completed") | "  - \(.name): \(.status)"' \
+            <<<"$RELEASE_CHECK_RUNS" || true
           sleep 30
         done
 
         CHECK_RUNS_RESPONSE=$(gh api --paginate --slurp \
           "repos/${REPO}/commits/${COMMIT_SHA}/check-runs?per_page=100" \
           | jq -c -f .github/scripts/flatten-check-run-pages.jq)
-        REMAINING=$(jq --arg self_name "$SELF_NAME" \
-          '[.check_runs[] | select(.status != "completed" and .name != $self_name)] | length' \
+        RELEASE_RUNS_RESPONSE=$(gh api --paginate --slurp \
+          "repos/${REPO}/actions/runs?head_sha=${COMMIT_SHA}&per_page=100")
+        RELEASE_CHECK_RUNS=$(jq -c \
+          --arg release_sha "$COMMIT_SHA" \
+          --arg self_name "$SELF_NAME" \
+          --slurpfile release_run_documents <(printf '%s\n' "$RELEASE_RUNS_RESPONSE") \
+          -f .github/scripts/release-owned-check-runs.jq \
           <<<"$CHECK_RUNS_RESPONSE")
+        REMAINING=$(jq '[.check_runs[] | select(.status != "completed")] | length' \
+          <<<"$RELEASE_CHECK_RUNS")
         if [[ "$REMAINING" != "0" ]]; then
-          echo "::error::$REMAINING check runs remained non-terminal after timeout"
+          echo "::error::$REMAINING release-owned check runs remained non-terminal after timeout"
+          jq -r '.check_runs[] | select(.status != "completed") | "  - \(.name): \(.status)"' \
+            <<<"$RELEASE_CHECK_RUNS" || true
           exit 1
         fi
     
@@ -101,7 +118,15 @@ jobs:
         CHECK_RUNS_RESPONSE=$(gh api --paginate --slurp \
           "repos/${REPO}/commits/${COMMIT_SHA}/check-runs?per_page=100" \
           | jq -c -f .github/scripts/flatten-check-run-pages.jq)
-        EFFECTIVE_CHECK_RUNS=$(echo "$CHECK_RUNS_RESPONSE" \
+        RELEASE_RUNS_RESPONSE=$(gh api --paginate --slurp \
+          "repos/${REPO}/actions/runs?head_sha=${COMMIT_SHA}&per_page=100")
+        RELEASE_CHECK_RUNS=$(jq -c \
+          --arg release_sha "$COMMIT_SHA" \
+          --arg self_name "$SELF_NAME" \
+          --slurpfile release_run_documents <(printf '%s\n' "$RELEASE_RUNS_RESPONSE") \
+          -f .github/scripts/release-owned-check-runs.jq \
+          <<<"$CHECK_RUNS_RESPONSE")
+        EFFECTIVE_CHECK_RUNS=$(echo "$RELEASE_CHECK_RUNS" \
           | jq -c --arg self_name "$SELF_NAME" -f .github/scripts/effective-check-runs.jq)
 
         # A later push to the default branch can cancel checks on the release
