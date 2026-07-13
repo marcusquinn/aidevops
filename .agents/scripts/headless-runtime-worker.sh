@@ -1373,6 +1373,16 @@ _hrw_record_terminal_outcome() {
 	return 0
 }
 
+_hrw_mark_failed_terminal_state() {
+	local status="$1"
+	local classification="$2"
+	_HRW_FINAL_RUNTIME_EVENT="$_HRW_EVENT_FAILED"
+	_HRW_FINAL_RUNTIME_STATUS="$status"
+	_HRW_FINAL_RUNTIME_CLASSIFICATION="$classification"
+	_HRW_TERMINAL_OUTCOME="$_HRW_TELEMETRY_FAILED"
+	return 0
+}
+
 _hrw_finish_success_run() {
 	local session_key="$1"
 	local work_dir="$2"
@@ -1403,10 +1413,7 @@ _hrw_finish_success_run() {
 			_release_dispatch_claim "$session_key" "worker_noop"
 			_report_failure_to_fast_fail "$session_key" "worker_noop_zero_output" "$_HRW_CRASH_NO_WORK"
 			release_needed=0
-			_HRW_FINAL_RUNTIME_EVENT="$_HRW_EVENT_FAILED"
-			_HRW_FINAL_RUNTIME_STATUS="$_HRW_STATUS_FAILED"
-			_HRW_FINAL_RUNTIME_CLASSIFICATION="$_HRW_CRASH_NO_WORK"
-			_HRW_TERMINAL_OUTCOME="$_HRW_TELEMETRY_FAILED"
+			_hrw_mark_failed_terminal_state "$_HRW_STATUS_FAILED" "$_HRW_CRASH_NO_WORK"
 			;;
 		branch_orphan)
 			_handle_worker_branch_orphan "$session_key" "$work_dir"
@@ -1423,36 +1430,27 @@ _hrw_finish_success_run() {
 		draft_checkpoint)
 			_escalate_worker_draft_checkpoint "$session_key" "${DISPATCH_REPO_SLUG:-}" "draft_checkpoint"
 			release_needed=0
-			_HRW_FINAL_RUNTIME_EVENT="$_HRW_EVENT_FAILED"
 			if [[ "$_HRW_RECOVERY_CLASSIFICATION" == "$_HRW_REASON_DRAFT_CHECKPOINT" ]]; then
-				_HRW_FINAL_RUNTIME_STATUS="$_HRW_STATUS_ESCALATED"
+				_hrw_mark_failed_terminal_state "$_HRW_STATUS_ESCALATED" "$_HRW_RECOVERY_CLASSIFICATION"
 			else
-				_HRW_FINAL_RUNTIME_STATUS="$_HRW_STATUS_FAILED"
+				_hrw_mark_failed_terminal_state "$_HRW_STATUS_FAILED" "$_HRW_RECOVERY_CLASSIFICATION"
 			fi
-			_HRW_FINAL_RUNTIME_CLASSIFICATION="$_HRW_RECOVERY_CLASSIFICATION"
-			_HRW_TERMINAL_OUTCOME="$_HRW_TELEMETRY_FAILED"
 			;;
 		closed_unmerged)
 			print_warning "[lifecycle] ${_HRW_REASON_CLOSED_UNMERGED} session=${session_key} — closed PR is not completion evidence"
 			_release_dispatch_claim "$session_key" "$_HRW_REASON_CLOSED_UNMERGED"
 			_report_failure_to_fast_fail "$session_key" "$_HRW_REASON_CLOSED_UNMERGED" "$_HRW_CRASH_OVERWHELMED"
 			release_needed=0
-			_HRW_FINAL_RUNTIME_EVENT="$_HRW_EVENT_FAILED"
-			_HRW_FINAL_RUNTIME_STATUS="$_HRW_STATUS_FAILED"
-			_HRW_FINAL_RUNTIME_CLASSIFICATION="$_HRW_REASON_CLOSED_UNMERGED"
-			_HRW_TERMINAL_OUTCOME="$_HRW_TELEMETRY_FAILED"
+			_hrw_mark_failed_terminal_state "$_HRW_STATUS_FAILED" "$_HRW_REASON_CLOSED_UNMERGED"
 			;;
 		ready_failed)
 			_escalate_worker_draft_checkpoint "$session_key" "${DISPATCH_REPO_SLUG:-}" "$output_class" "$_HRW_REASON_READY_FAILED"
 			release_needed=0
-			_HRW_FINAL_RUNTIME_EVENT="$_HRW_EVENT_FAILED"
 			if [[ "$_HRW_RECOVERY_CLASSIFICATION" == "$_HRW_REASON_READY_FAILED" ]]; then
-				_HRW_FINAL_RUNTIME_STATUS="$_HRW_STATUS_ESCALATED"
+				_hrw_mark_failed_terminal_state "$_HRW_STATUS_ESCALATED" "$_HRW_RECOVERY_CLASSIFICATION"
 			else
-				_HRW_FINAL_RUNTIME_STATUS="$_HRW_STATUS_FAILED"
+				_hrw_mark_failed_terminal_state "$_HRW_STATUS_FAILED" "$_HRW_RECOVERY_CLASSIFICATION"
 			fi
-			_HRW_FINAL_RUNTIME_CLASSIFICATION="$_HRW_RECOVERY_CLASSIFICATION"
-			_HRW_TERMINAL_OUTCOME="$_HRW_TELEMETRY_FAILED"
 			;;
 		protected_draft | unverified_open_pr)
 			local noncomplete_reason="worker_${output_class}"
@@ -1460,10 +1458,7 @@ _hrw_finish_success_run() {
 			_release_dispatch_claim "$session_key" "$noncomplete_reason"
 			_report_failure_to_fast_fail "$session_key" "$noncomplete_reason" "$_HRW_CRASH_OVERWHELMED"
 			release_needed=0
-			_HRW_FINAL_RUNTIME_EVENT="$_HRW_EVENT_FAILED"
-			_HRW_FINAL_RUNTIME_STATUS="$_HRW_STATUS_FAILED"
-			_HRW_FINAL_RUNTIME_CLASSIFICATION="$noncomplete_reason"
-			_HRW_TERMINAL_OUTCOME="$_HRW_TELEMETRY_FAILED"
+			_hrw_mark_failed_terminal_state "$_HRW_STATUS_FAILED" "$noncomplete_reason"
 			;;
 		esac
 	fi
