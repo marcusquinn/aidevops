@@ -137,10 +137,12 @@ main() {
 
 	if [[ -z "$source" ]]; then
 		source=$(resolve_history_source "$runtime") || return $?
-	elif [[ "$source_mode" == "input" && -z "$runtime" ]]; then
-		runtime="normalized"
 	elif [[ "$source_mode" == "db" && "$runtime" == "normalized" ]]; then
 		runtime="opencode"
+	fi
+	local source_format="transcript"
+	if [[ "$source_mode" == "db" || ( -z "$source_mode" && "$runtime" == "opencode" ) ]]; then
+		source_format="database"
 	fi
 
 	local analyzer="${SCRIPT_DIR}/session-output-efficiency.py"
@@ -148,7 +150,7 @@ main() {
 		printf '%s\n' "Error: output-efficiency analyzer is unavailable" >&2
 		return 2
 	fi
-	local -a command=("$analyzer" "--runtime" "$runtime" "--source" "$source")
+	local -a command=("$analyzer" "--runtime" "$runtime" "--source" "$source" "--source-format" "$source_format")
 	if [[ -n "$session_id" ]]; then
 		command+=("--session" "$session_id")
 	fi

@@ -54,7 +54,7 @@ assert_omits() {
 
 normalized_fixture="${TMPDIR_TEST}/normalized.jsonl"
 claude_fixture="${TMPDIR_TEST}/claude.jsonl"
-opencode_db="${TMPDIR_TEST}/opencode.db"
+opencode_db="${TMPDIR_TEST}/opencode-history"
 
 python3 - "$normalized_fixture" "$claude_fixture" "$opencode_db" <<'PY'
 import json

@@ -1145,7 +1145,7 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [ ] t18116 Fix quality-debt dispatch recovery state and pre-runtime telemetry #bug #priority:high ref:GH#27503
 
-- [ ] t18117 Add token-efficient output receipts and delta-aware waits #feat #framework ref:GH#27529
+- [>] t18117 Add token-efficient output receipts and delta-aware waits #feat #framework #interactive ref:GH#27529 started:2026-07-13
 
 ## In Progress
 

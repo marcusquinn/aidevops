@@ -97,6 +97,17 @@ Output: newly captured items with locations, already-captured items, unfinished 
 
 ### Step 6: Session Health Assessment
 
+Gather deterministic output-noise evidence for the exact current session when
+transcript history is available:
+
+```bash
+session-review-helper.sh output-efficiency --session <session-id> --json
+```
+
+Use exact-repeat and oversized-output findings as candidates to correlate with
+the conversation timeline. Keep raw transcript content private, and do not treat
+aggregate counts alone as proof that a required safeguard was wasteful.
+
 Before assessing whether to end, read and run
 `workflows/session-analysis.md` with focus `all`. Include its outcome baseline,
 shortest safe replay, model/reasoning fit, material harness and repository

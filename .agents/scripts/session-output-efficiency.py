@@ -7,6 +7,7 @@ import argparse
 import hashlib
 import json
 import math
+import re
 import sqlite3
 import sys
 from collections import defaultdict
@@ -31,6 +32,11 @@ def canonical(value: Any) -> str:
     return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
 
 
+def safe_tool_name(value: Any) -> str:
+    sanitized = re.sub(r"[^A-Za-z0-9_.-]+", "-", str(value or "unknown")).strip("-")
+    return sanitized[:48] or "unknown"
+
+
 def result_from_opencode_part(part: dict[str, Any]) -> ToolResult | None:
     if part.get("type") != "tool":
         return None
@@ -38,7 +44,7 @@ def result_from_opencode_part(part: dict[str, Any]) -> ToolResult | None:
     if not isinstance(state, dict) or state.get("status") != "completed":
         return None
     return ToolResult(
-        tool=str(part.get("tool") or "unknown"),
+        tool=safe_tool_name(part.get("tool")),
         input_value=canonical(state.get("input", {})),
         output=canonical(state.get("output", "")),
     )
@@ -81,7 +87,7 @@ def extract_jsonl(path: Path) -> tuple[list[ToolResult], int]:
             if "tool" in record and "output" in record:
                 results.append(
                     ToolResult(
-                        tool=str(record.get("tool") or "unknown"),
+                        tool=safe_tool_name(record.get("tool")),
                         input_value=canonical(record.get("input", {})),
                         output=canonical(record.get("output", "")),
                     )
@@ -103,7 +109,7 @@ def extract_jsonl(path: Path) -> tuple[list[ToolResult], int]:
                     call_id = str(item.get("id") or "")
                     if call_id:
                         tool_uses[call_id] = (
-                            str(item.get("name") or "unknown"),
+                            safe_tool_name(item.get("name")),
                             canonical(item.get("input", {})),
                         )
                 elif item_type == "tool_result":
@@ -320,6 +326,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--runtime", choices=("opencode", "claude-code", "normalized"), default="normalized")
     parser.add_argument("--source", required=True, help="SQLite database, JSONL file, or JSONL directory")
+    parser.add_argument("--source-format", choices=("auto", "database", "transcript"), default="auto")
     parser.add_argument("--session", default="")
     parser.add_argument("--json", action="store_true")
     parser.add_argument("--min-repeat-bytes", type=int, default=80)
@@ -335,7 +342,13 @@ def main() -> int:
     args = parse_args()
     source = Path(args.source).expanduser()
     try:
-        if args.runtime == "opencode" and source.is_file() and source.suffix == ".db":
+        use_database = args.source_format == "database" or (
+            args.source_format == "auto"
+            and args.runtime == "opencode"
+            and source.is_file()
+            and source.suffix == ".db"
+        )
+        if use_database:
             results, parse_errors = extract_opencode_db(source, args.session)
             source_kind = "database"
         else:
@@ -352,8 +365,11 @@ def main() -> int:
             oversized_bytes=args.oversized_bytes,
             max_findings=args.max_findings,
         )
-    except (OSError, sqlite3.Error, ValueError) as error:
+    except ValueError as error:
         print(f"Error: {error}", file=sys.stderr)
+        return 2
+    except (OSError, sqlite3.Error):
+        print("Error: transcript evidence could not be read", file=sys.stderr)
         return 2
 
     if args.json:
