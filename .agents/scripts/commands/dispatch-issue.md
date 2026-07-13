@@ -9,6 +9,10 @@ mode: subagent
 
 Args: `$ARGUMENTS` — `<issue_number> <owner/repo> [--model <id>] [--dry-run]`
 
+Use the issue's `tier:simple`, `tier:standard`, or `tier:thinking` label for
+normal routing. `--model` is an advanced compatibility override for operators
+who must pin an exact runtime model ID.
+
 ## What this does
 
 Bypasses the pulse loop and launches one worker against one issue. The same
@@ -43,17 +47,19 @@ helper deliberately does not.
      refuse to dispatch, exit 1.
    - Dry-run: surface all three states as info, still print the planned dispatch.
 4. Resolve tier/model (mirrors `pulse-model-routing.sh::resolve_dispatch_model_for_labels`):
-   - `--model <id>` wins (operator explicit intent, highest priority).
-   - Tier labels request workload complexity; runtime routing chooses the exact model and reasoning level.
-   - Else tier labels: `tier:thinking` → opus, `tier:standard` → sonnet,
-     `tier:simple` → haiku. Default = `standard` / sonnet.
-   - Other `model:*` labels (e.g. `model:sonnet-4-6`) map to the named model.
+   - Tier labels request workload complexity: `tier:simple`, `tier:standard`,
+     or `tier:thinking`. Default = `standard`.
+   - Runtime routing chooses the preferred available provider, model, and
+     reasoning level for that workload tier.
+   - `--model <id>` wins only when an operator intentionally uses the advanced
+     compatibility override to pin an exact runtime model ID.
    - **Known divergence from pulse (t2839):** the pulse applies a dispatch-path
      safety net (t2819) that auto-elevates issues touching self-hosting files
-     (pulse-wrapper.sh, headless-runtime-helper.sh, etc.) to `opus-4-7`. This
+     (pulse-wrapper.sh, headless-runtime-helper.sh, etc.) to `thinking`. This
      CLI does NOT apply that check — it would require parsing the issue body and
-     brief file scope. If you're manually dispatching a dispatch-path issue, pass
-     `--model anthropic/claude-opus-4-7` explicitly to match pulse behaviour.
+     brief file scope. If you're manually dispatching a dispatch-path issue,
+     apply the `tier:thinking` label before dispatch so runtime routing can
+     select the preferred available provider, model, and reasoning level.
 5. Dispatch (real path):
    - Pre-create worktree via `worktree-helper.sh add` (`auto-<ts>-gh<N>`),
      resolve actual path back from `git worktree list` (worktree-helper has
@@ -76,12 +82,11 @@ helper deliberately does not.
 # Smoke-test (preview only, no worker launched)
 dispatch-single-issue-helper.sh dispatch 20882 marcusquinn/aidevops --dry-run
 
-# Real dispatch — model inferred from labels
+# Real dispatch — tier inferred from the issue's tier:* label
 dispatch-single-issue-helper.sh dispatch 20882 marcusquinn/aidevops
 
-# Force a specific model (bypasses label inference)
-dispatch-single-issue-helper.sh dispatch 20882 marcusquinn/aidevops \
-    --model anthropic/claude-opus-4-7
+# Recommended for complex work: apply tier:thinking to the issue, then dispatch
+dispatch-single-issue-helper.sh dispatch 20882 marcusquinn/aidevops
 
 # Check active dispatch state
 dispatch-single-issue-helper.sh status 20882 marcusquinn/aidevops
