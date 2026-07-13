@@ -10,6 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.32.97] - 2026-07-13
+
+### Changed
+
+- Performance: reduce issue mapping jq processes (#27512)
+
 ## [3.32.96] - 2026-07-13
 
 ### Fixed
