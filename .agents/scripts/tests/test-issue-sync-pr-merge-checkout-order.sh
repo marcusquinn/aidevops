@@ -20,9 +20,10 @@
 #   (b) `clean: false` on the `Checkout repo for TODO.md update` step.
 #
 # Either invariant prevents the regression. The current canonical fix is (a).
-# GH#27119 additionally requires the PATH shims to live outside GITHUB_WORKSPACE:
-# actions/checkout may select `git` before cleaning, so restoring the framework
-# after checkout is too late when the selected executable itself was deleted.
+# GH#27119 additionally requires the PATH shims to live outside GITHUB_WORKSPACE
+# while keeping the canonical Git guard parked until trusted checkout completes.
+# Otherwise actions/checkout either loses its selected executable during cleanup
+# or routes its required init/config/remote/submodule commands through the guard.
 
 set -euo pipefail
 
@@ -110,7 +111,53 @@ else
 fi
 
 # ============================================================
-# Test 3: job has merged == true guard (defends against #22607
+# Test 3: trusted checkouts cannot select the canonical Git guard. The guard is
+# parked before the caller checkout and enabled only after framework restore.
+# ============================================================
+PARK_GUARD_REL_LINE=$(printf '%s\n' "${JOB_BODY}" | grep -nE 'mv[[:space:]]+"?\$\{SHIM_DIR\}/git"?[[:space:]]+"?\$\{SHIM_DIR\}/aidevops-git-guard"?' | cut -d: -f1 || true)
+CALLER_CHECKOUT_REL_LINE=$(printf '%s\n' "${JOB_BODY}" | grep -nE 'name:[[:space:]]+Checkout repo before closing-hygiene validation' | cut -d: -f1 || true)
+RESTORE_REL_LINE=$(printf '%s\n' "${JOB_BODY}" | grep -nE 'name:[[:space:]]+Restore framework scripts before task resolution' | cut -d: -f1 || true)
+ENABLE_GUARD_REL_LINE=$(printf '%s\n' "${JOB_BODY}" | grep -nE 'name:[[:space:]]+Enable canonical Git guard after trusted checkouts' | cut -d: -f1 || true)
+RESOLVE_REL_LINE=$(printf '%s\n' "${JOB_BODY}" | grep -nE 'name:[[:space:]]+Resolve task-backed closing issues' | cut -d: -f1 || true)
+
+if [[ -n "${PARK_GUARD_REL_LINE}" && -n "${CALLER_CHECKOUT_REL_LINE}" &&
+	"${PARK_GUARD_REL_LINE}" -lt "${CALLER_CHECKOUT_REL_LINE}" ]]; then
+	check 1 "canonical Git guard is parked before trusted checkout" ""
+else
+	check 0 "canonical Git guard is parked before trusted checkout" "actions/checkout could select the canonical guard"
+fi
+
+if [[ -n "${RESTORE_REL_LINE}" && -n "${ENABLE_GUARD_REL_LINE}" && -n "${RESOLVE_REL_LINE}" &&
+	"${RESTORE_REL_LINE}" -lt "${ENABLE_GUARD_REL_LINE}" &&
+	"${ENABLE_GUARD_REL_LINE}" -lt "${RESOLVE_REL_LINE}" ]]; then
+	check 1 "canonical Git guard is enabled after trusted checkouts" ""
+else
+	check 0 "canonical Git guard is enabled after trusted checkouts" "guard activation must follow framework restore and precede shell mutation steps"
+fi
+
+# Exercise the command sequence used by actions/checkout while the shim is
+# parked. This fixture catches any future change that republishes `git` early.
+FIXTURE_ROOT=$(mktemp -d)
+FIXTURE_SHIM_DIR="${FIXTURE_ROOT}/shim"
+FIXTURE_HOME="${FIXTURE_ROOT}/home"
+FIXTURE_REPO="${FIXTURE_ROOT}/repo"
+mkdir -p "${FIXTURE_SHIM_DIR}" "${FIXTURE_HOME}"
+cp "${REPO_ROOT}/.agents/scripts/git" "${FIXTURE_SHIM_DIR}/aidevops-git-guard"
+FIXTURE_GIT=$(PATH="${FIXTURE_SHIM_DIR}:/usr/bin:/bin" command -v git)
+if [[ "${FIXTURE_GIT}" != "${FIXTURE_SHIM_DIR}/git" ]] &&
+	HOME="${FIXTURE_HOME}" PATH="${FIXTURE_SHIM_DIR}:/usr/bin:/bin" git config --global --add safe.directory "${FIXTURE_REPO}" &&
+	HOME="${FIXTURE_HOME}" PATH="${FIXTURE_SHIM_DIR}:/usr/bin:/bin" git init "${FIXTURE_REPO}" >/dev/null &&
+	HOME="${FIXTURE_HOME}" PATH="${FIXTURE_SHIM_DIR}:/usr/bin:/bin" git -C "${FIXTURE_REPO}" remote add origin "${FIXTURE_ROOT}/upstream.git" &&
+	HOME="${FIXTURE_HOME}" PATH="${FIXTURE_SHIM_DIR}:/usr/bin:/bin" git -C "${FIXTURE_REPO}" config --local gc.auto 0 &&
+	HOME="${FIXTURE_HOME}" PATH="${FIXTURE_SHIM_DIR}:/usr/bin:/bin" git -C "${FIXTURE_REPO}" submodule foreach --recursive true; then
+	check 1 "trusted checkout init/config/remote/submodule fixture bypasses parked guard" ""
+else
+	check 0 "trusted checkout init/config/remote/submodule fixture bypasses parked guard" "trusted actions/checkout commands did not use the runner Git binary"
+fi
+rm -rf "${FIXTURE_ROOT}"
+
+# ============================================================
+# Test 4: job has merged == true guard (defends against #22607
 #         which falsely claimed the guard was missing)
 # ============================================================
 if printf '%s\n' "${JOB_BODY}" | grep -qE 'github\.event\.pull_request\.merged[[:space:]]*==[[:space:]]*true'; then
@@ -120,13 +167,10 @@ else
 fi
 
 # ============================================================
-# Test 4: a single caller checkout establishes the validated TODO snapshot,
+# Test 5: a single caller checkout establishes the validated TODO snapshot,
 # followed by framework restoration and resolution. No later caller checkout
 # may replace that snapshot before proof-log mutation.
 # ============================================================
-CALLER_CHECKOUT_REL_LINE=$(printf '%s\n' "${JOB_BODY}" | grep -nE 'name:[[:space:]]+Checkout repo before closing-hygiene validation' | cut -d: -f1 || true)
-RESTORE_REL_LINE=$(printf '%s\n' "${JOB_BODY}" | grep -nE 'name:[[:space:]]+Restore framework scripts before task resolution' | cut -d: -f1 || true)
-RESOLVE_REL_LINE=$(printf '%s\n' "${JOB_BODY}" | grep -nE 'name:[[:space:]]+Resolve task-backed closing issues' | cut -d: -f1 || true)
 PROOF_REL_LINE=$(printf '%s\n' "${JOB_BODY}" | grep -nE 'name:[[:space:]]+Update TODO\.md proof-log' | cut -d: -f1 || true)
 CALLER_CHECKOUT_COUNT=$(printf '%s\n' "${JOB_BODY}" | grep -cE 'name:[[:space:]]+Checkout repo (before closing-hygiene validation|for TODO\.md update)' || true)
 
@@ -152,7 +196,7 @@ else
 fi
 
 # ============================================================
-# Test 5: Update TODO.md proof-log step still references __aidevops/
+# Test 6: Update TODO.md proof-log step still references __aidevops/
 #         (sanity check — if this changes, the test premise needs updating)
 # ============================================================
 if printf '%s\n' "${JOB_BODY}" | grep -qE 'bash[[:space:]]+__aidevops/\.agents/scripts/issue-sync-git-push-helper\.sh'; then
