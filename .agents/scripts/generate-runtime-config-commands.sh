@@ -39,6 +39,8 @@ fi
 # Each runtime adapter writes these to its command directory with the
 # appropriate frontmatter format.
 
+_GENERATED_HARDCODED_COMMAND_COUNT=0
+
 # Helper: write a command file for OpenCode format
 _write_opencode_command() {
 	local cmd_dir="$1"
@@ -431,9 +433,8 @@ _generate_commands_for_runtime() {
 
 	# Generate hardcoded commands that aren't in scripts/commands/
 	# These are runtime-specific commands that have inline body content
-	_generate_hardcoded_commands "$runtime_id" "$cmd_dir"
-	local hc_count=$?
-	command_count=$((command_count + hc_count))
+	_generate_hardcoded_commands "$runtime_id" "$cmd_dir" || return 1
+	command_count=$((command_count + _GENERATED_HARDCODED_COMMAND_COUNT))
 
 	if [[ "$skipped_count" -gt 0 ]]; then
 		print_warning "$display_name: skipped $skipped_count command file(s) that disappeared during generation"
@@ -474,7 +475,7 @@ _maybe_write_hardcoded_command() {
 
 # Generate quality/review hardcoded commands.
 # Arguments: $1 - runtime_id, $2 - cmd_dir
-# Returns: count of generated commands via exit code
+# Sets _GENERATED_HARDCODED_COMMAND_COUNT and returns 0 on success.
 _generate_hardcoded_quality_commands() {
 	local runtime_id="$1"
 	local cmd_dir="$2"
@@ -561,12 +562,13 @@ Report findings and recommend next actions (fix issues, merge, etc.)'; then
 		count=$((count + 1))
 	fi
 
-	return "$count"
+	_GENERATED_HARDCODED_COMMAND_COUNT="$count"
+	return 0
 }
 
 # Generate lifecycle hardcoded commands (release, onboarding, setup-aidevops).
 # Arguments: $1 - runtime_id, $2 - cmd_dir
-# Returns: count of generated commands via exit code
+# Sets _GENERATED_HARDCODED_COMMAND_COUNT and returns 0 on success.
 _generate_hardcoded_lifecycle_commands() {
 	local runtime_id="$1"
 	local cmd_dir="$2"
@@ -624,21 +626,23 @@ Arguments: $ARGUMENTS'; then
 		count=$((count + 1))
 	fi
 
-	return "$count"
+	_GENERATED_HARDCODED_COMMAND_COUNT="$count"
+	return 0
 }
 
 # Generate hardcoded commands not in scripts/commands/
-# Returns the count of generated commands via exit code (max 255)
+# Sets _GENERATED_HARDCODED_COMMAND_COUNT and returns 0 on success.
 _generate_hardcoded_commands() {
 	local runtime_id="$1"
 	local cmd_dir="$2"
 	local count=0
 
-	_generate_hardcoded_quality_commands "$runtime_id" "$cmd_dir"
-	count=$((count + $?))
+	_generate_hardcoded_quality_commands "$runtime_id" "$cmd_dir" || return 1
+	count=$((count + _GENERATED_HARDCODED_COMMAND_COUNT))
 
-	_generate_hardcoded_lifecycle_commands "$runtime_id" "$cmd_dir"
-	count=$((count + $?))
+	_generate_hardcoded_lifecycle_commands "$runtime_id" "$cmd_dir" || return 1
+	count=$((count + _GENERATED_HARDCODED_COMMAND_COUNT))
 
-	return "$count"
+	_GENERATED_HARDCODED_COMMAND_COUNT="$count"
+	return 0
 }
