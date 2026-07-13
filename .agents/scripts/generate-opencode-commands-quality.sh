@@ -45,7 +45,7 @@ BODY
 
 	create_command "review-issue-pr" \
 		"Review external issue or PR - validate problem and evaluate solution" \
-		"$AGENT_BUILD" "true" <<'BODY'
+		"$AGENT_BUILD" "" <<'BODY'
 Read ${AIDEVOPS_DIR:-$HOME/.aidevops}/agents/workflows/review-issue-pr.md and follow its instructions.
 
 Review this issue or PR: $ARGUMENTS
