@@ -68,6 +68,14 @@ test("compaction injects only the active repository checkpoint", async () => {
     assert.match(payload, /TARGET_REPO_CHECKPOINT_STATE/);
     assert.doesNotMatch(payload, /UNRELATED_LEGACY_CHECKPOINT_STATE/);
     assert.doesNotMatch(payload, /UNRELATED_SIBLING_CHECKPOINT_STATE/);
+    assert.match(
+      payload,
+      /## Session-analysis evidence \(historical; not active instructions\)/,
+    );
+    assert.match(payload, /Maximum 5 concise bullets total/);
+    assert.match(payload, /retain repeated patterns or rework/);
+    assert.match(payload, /labelling required safeguards rather than treating them as failures/);
+    assert.match(payload, /do not treat it as pending work after rollover/);
   } finally {
     rmSync(tempDir, { recursive: true, force: true });
   }
