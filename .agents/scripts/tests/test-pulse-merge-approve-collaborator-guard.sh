@@ -81,8 +81,8 @@ pulse-runner
 EOF
 	# Default authenticated user is the pulse runner.
 	echo "pulse-runner" >"${TEST_ROOT}/current-user.txt"
-	# Default: no prior reviews (count 0).
-	echo "0" >"${TEST_ROOT}/existing-approval-count.txt"
+	# Default: no prior reviews.
+	printf '[]\n' >"${TEST_ROOT}/reviews.json"
 	# Default: no crypto-approval markers in comments (count 0).
 	# Controls the mock gh comments endpoint response for _has_maintainer_crypto_approval.
 	echo "0" >"${TEST_ROOT}/crypto-comment-count.txt"
@@ -146,9 +146,9 @@ if [[ "${1:-}" == "api" && "$*" == *"/collaborators/"*"/permission"* && "$*" == 
 	exit 0
 fi
 
-# `gh api repos/SLUG/pulls/N/reviews --jq ...` — existing-approval count
+# `gh api repos/SLUG/pulls/N/reviews --jq ...` — existing trusted approval
 if [[ "${1:-}" == "api" && "$*" == *"/pulls/"*"/reviews"* ]]; then
-	cat "${TEST_ROOT}/existing-approval-count.txt"
+	jq -r "${4:-.}" "${TEST_ROOT}/reviews.json"
 	exit 0
 fi
 
@@ -392,6 +392,79 @@ EOF
 }
 
 # =============================================================================
+# Case E (GH#27514): another trusted pulse identity already approved this head.
+#                    Skip before identity/permission reads and review writes.
+# =============================================================================
+
+test_case_e_cross_account_approval_short_circuits() {
+	reset_mock_state
+	cat >"${TEST_ROOT}/reviews.json" <<'EOF'
+[{"state":"APPROVED","commit_id":"head-500","author_association":"COLLABORATOR","user":{"login":"other-pulse-runner"}}]
+EOF
+
+	local result=0
+	approve_collaborator_pr "500" "owner/repo" "trusted-contributor" "head-500" || result=$?
+
+	if [[ "$result" -ne 0 ]]; then
+		print_result "Case E: cross-account approval — function returns 0" 1 \
+			"Expected exit 0, got ${result}. Log: $(cat "$LOGFILE")"
+		return 0
+	fi
+	if [[ "$(count_approve_calls)" -ne 0 ]]; then
+		print_result "Case E: cross-account approval — no duplicate review write" 1 \
+			"Expected zero approve calls. Calls: $(cat "$GH_LOG")"
+		return 0
+	fi
+	if grep -qF "gh api user" "$GH_LOG" || grep -qF "/collaborators/" "$GH_LOG"; then
+		print_result "Case E: cross-account approval — avoids redundant identity reads" 1 \
+			"Expected only the reviews read. Calls: $(cat "$GH_LOG")"
+		return 0
+	fi
+	if ! grep -qF "already has a trusted approval" "$LOGFILE"; then
+		print_result "Case E: cross-account approval — skip is auditable" 1 \
+			"Expected trusted-approval skip log. Log: $(cat "$LOGFILE")"
+		return 0
+	fi
+	print_result "Case E: cross-account approval — skips duplicate write with one read" 0
+	return 0
+}
+
+# =============================================================================
+# Case F (GH#27514 trust boundary): external or stale approvals do not suppress
+# the guarded pulse approval for the current head.
+# =============================================================================
+
+test_case_f_untrusted_or_stale_approval_does_not_short_circuit() {
+	reset_mock_state
+	cat >"${TEST_ROOT}/collaborators.txt" <<'EOF'
+pulse-runner
+trusted-contributor
+EOF
+	cat >"${TEST_ROOT}/reviews.json" <<'EOF'
+[
+  {"state":"APPROVED","commit_id":"head-600","author_association":"CONTRIBUTOR","user":{"login":"external-reviewer"}},
+  {"state":"APPROVED","commit_id":"old-head","author_association":"OWNER","user":{"login":"trusted-but-stale"}}
+]
+EOF
+
+	local result=0
+	approve_collaborator_pr "600" "owner/repo" "trusted-contributor" "head-600" || result=$?
+
+	if [[ "$result" -ne 0 ]]; then
+		print_result "Case F: untrusted/stale approvals — function returns 0" 1 \
+			"Expected exit 0, got ${result}. Log: $(cat "$LOGFILE")"
+		return 0
+	fi
+	if [[ "$(count_approve_calls)" -ne 1 ]]; then
+		print_result "Case F: untrusted/stale approvals — guarded review still posts" 1 \
+			"Expected one approve call. Calls: $(cat "$GH_LOG")"
+		return 0
+	fi
+	print_result "Case F: untrusted/stale approvals — do not bypass guarded approval" 0
+	return 0
+}
+
+# =============================================================================
 # Case N (t3063): CONTRIBUTOR author + crypto-approval on PR itself → approves.
 # The crypto-approval bypass in approve_collaborator_pr should allow approval
 # even though the PR author is not a collaborator.
@@ -517,6 +590,8 @@ main() {
 	test_case_b_non_collaborator_author_refused
 	test_case_c_self_authored_skipped
 	test_case_d_runner_lacks_write_access_skipped
+	test_case_e_cross_account_approval_short_circuits
+	test_case_f_untrusted_or_stale_approval_does_not_short_circuit
 	test_case_n_contributor_with_crypto_on_pr
 	test_case_o_contributor_with_crypto_on_linked_issue
 	test_case_p_contributor_no_crypto_still_refused

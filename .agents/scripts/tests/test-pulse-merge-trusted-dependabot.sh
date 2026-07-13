@@ -115,7 +115,7 @@ if [[ "${1:-}" == "api" && "$*" == *"/collaborators/"*"/permission"* && "$*" == 
 fi
 
 if [[ "${1:-}" == "api" && "$*" == *"/pulls/"*"/reviews"* ]]; then
-	printf '0\n'
+	printf '\n'
 	exit 0
 fi
 
