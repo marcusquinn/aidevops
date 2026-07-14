@@ -101,7 +101,8 @@ GH_STUB_DIR="${TEST_ROOT}/stubs"
 mkdir -p "$GH_STUB_DIR"
 cat >"${GH_STUB_DIR}/gh" <<'STUB'
 #!/usr/bin/env bash
-# Minimal stub: `gh pr list ... --jq 'length'` returns ${STUB_PR_COUNT:-0}.
+# Minimal stub: exact-head and issue-search PR list payloads are configured
+# through STUB_PR_JSON and STUB_SEARCH_JSON; other lists return STUB_PR_COUNT.
 # `_worker_external_terminal_complete` uses `gh issue view ... --jq state` and
 # `gh pr list ... --jq '.[].number'`; those are controlled by STUB_* env vars.
 # Other invocations exit 0 silently so source-time `gh api user` calls
