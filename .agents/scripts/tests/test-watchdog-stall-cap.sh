@@ -153,6 +153,60 @@ test_defaults_applied_when_args_omitted() {
 # This test stubs all external dependencies so no real processes are launched.
 # ──────────────────────────────────────────────────────────────────────────────
 
+test_cmd_run_finishes_confirmed_terminal_worker_before_continuation() {
+	local execute_calls=0
+	local external_checks=0
+	local released_reason=""
+	local fast_fail_calls=0
+	local recorded_outcome=""
+	local runtime_status=""
+
+	_execute_run_attempt() {
+		execute_calls=$((execute_calls + 1))
+		_run_result_label="signal_killed_continue"
+		_run_failure_reason="signal_killed_continue"
+		_run_activity_detected="1"
+		return 78
+	}
+	_worker_external_terminal_complete() {
+		external_checks=$((external_checks + 1))
+		return 0
+	}
+	_release_dispatch_claim() { released_reason="$2"; return 0; }
+	_recover_worker_output_on_failure() { return 1; }
+	_report_failure_to_fast_fail() { fast_fail_calls=$((fast_fail_calls + 1)); return 0; }
+	_hrw_record_terminal_outcome() { recorded_outcome="$2"; return 0; }
+	_emit_worker_runtime_event() { runtime_status="$2"; return 0; }
+	_update_dispatch_ledger() { return 0; }
+	_release_session_lock() { return 0; }
+	_hrw_release_worker_worktree() { return 0; }
+	_cleanup_headless_runtime_temp_paths() { return 0; }
+	_cmd_run_prepare() { return 0; }
+	choose_model() { printf '%s' "anthropic/claude-sonnet-4-6"; return 0; }
+	_enforce_opencode_version_pin() { return 0; }
+	_run_canary_test() { return 0; }
+	append_worker_headless_contract() { printf '%s' "$1"; return 0; }
+	resolve_headless_variant() { printf '%s' "default"; return 0; }
+	extract_provider() { printf '%s' "anthropic"; return 0; }
+
+	export AIDEVOPS_HEADLESS_APPEND_CONTRACT=0
+	local cmd_exit=0
+	cmd_run --role worker --session-key "test-terminal-recovery" \
+		--dir "/tmp" --title "test" --prompt "test prompt" 2>/dev/null || cmd_exit=$?
+
+	local passed=1
+	local msg=""
+	if [[ "$cmd_exit" -eq 0 && "$execute_calls" -eq 1 && "$external_checks" -eq 1 && \
+		"$released_reason" == "worker_complete" && "$fast_fail_calls" -eq 0 && \
+		"$recorded_outcome" == "success" && "$runtime_status" == "recovered" ]]; then
+		passed=0
+	else
+		msg="exit=${cmd_exit} execute=${execute_calls} checks=${external_checks} release=${released_reason:-<empty>} fast_fail=${fast_fail_calls} outcome=${recorded_outcome:-<empty>} status=${runtime_status:-<empty>}"
+	fi
+	print_result "exit 78 finishes externally terminal worker before continuation" "$passed" "$msg"
+	return 0
+}
+
 test_cmd_run_kills_after_stall_cap() {
 	# Stub heavy functions so cmd_run doesn't spin up real processes.
 	local _metric_result=""
@@ -169,6 +223,7 @@ test_cmd_run_kills_after_stall_cap() {
 		_run_should_retry=0
 		return 78
 	}
+	_worker_external_terminal_complete() { return 1; }
 
 	append_runtime_metric() {
 		# Capture the result field (argument $5)
@@ -210,7 +265,7 @@ test_cmd_run_kills_after_stall_cap() {
 	local msg=""
 
 	# The stall cap should have fired and recorded watchdog_stall_killed.
-	if [[ "$_metric_result" == "watchdog_stall_killed" ]]; then
+	if [[ "$_metric_result" == "watchdog_stall_killed" && "$_execute_calls" -eq 4 ]]; then
 		passed=0
 	else
 		msg="metric_result='${_metric_result}' expected 'watchdog_stall_killed'; execute_calls=${_execute_calls}"
@@ -236,6 +291,7 @@ test_cmd_run_does_not_duplicate_exit_79_metric() {
 			watchdog_stall_killed 79 watchdog_stall_killed 1 100
 		return 79
 	}
+	_worker_external_terminal_complete() { return 1; }
 	_cmd_run_finish() { finish_status="${2:-}"; return 0; }
 
 	local cmd_exit=0
@@ -266,6 +322,7 @@ main() {
 	test_defaults_applied_when_args_omitted
 
 	# cmd_run integration test
+	test_cmd_run_finishes_confirmed_terminal_worker_before_continuation
 	test_cmd_run_kills_after_stall_cap
 	test_cmd_run_does_not_duplicate_exit_79_metric
 
