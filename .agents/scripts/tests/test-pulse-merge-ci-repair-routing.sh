@@ -144,6 +144,9 @@ if [[ "${1:-} ${2:-}" == "run view" ]]; then
 	infra_dockerhub_rate_limit)
 		printf '%s\n' 'toomanyrequests: You have reached your unauthenticated pull rate limit.'
 		;;
+	infra_github_api_rate_limit)
+		printf '%s\n' 'gh: API rate limit exceeded for installation. (HTTP 403)'
+		;;
 	log_exit_143)
 		printf '%s\n' 'Lint Run ##[error]Process completed with exit code 143.'
 		;;
@@ -170,7 +173,7 @@ _append_gh_mock_routes() {
 		fi
 		if [[ "$*" == *"name,bucket,state,link"* ]]; then
 			case "${TEST_CHECK_SCENARIO:-terminal_failure}:${_is_required}" in
-				terminal_failure:1 | log_exit_143:1 | required_and_advisory:1 | infra_registry_rate_limit:1 | infra_dockerhub_rate_limit:1)
+				terminal_failure:1 | log_exit_143:1 | required_and_advisory:1 | infra_registry_rate_limit:1 | infra_dockerhub_rate_limit:1 | infra_github_api_rate_limit:1)
 					printf '%s\n' '[{"name":"Lint","bucket":"fail","state":"FAILURE","link":"https://github.com/owner/repo/actions/runs/123/job/456"}]'
 					;;
 				required_and_advisory:0)
@@ -821,6 +824,23 @@ test_ci_feedback_skips_dockerhub_pull_rate_limit_failure() {
 	return 0
 }
 
+test_ci_feedback_skips_github_api_rate_limit_failure() {
+	setup_test_env
+	TEST_CHECK_SCENARIO="infra_github_api_rate_limit"
+	define_feedback_helpers || { print_result "defines feedback helpers for GitHub API rate limit" 1 "could not extract feedback helpers"; teardown_test_env; return 0; }
+
+	_dispatch_ci_fix_worker "100" "owner/repo" "42"
+	if grep -qF 'PR #100: CI repair' "$GH_LOG"; then
+		print_result "GitHub API rate limit does not dispatch code repair" 1 "Dispatch log: $(cat "$GH_LOG")"
+	elif ! grep -qF 'classified as infrastructure failure' "$LOGFILE"; then
+		print_result "GitHub API rate limit records infrastructure classification" 1 "Log: $(cat "$LOGFILE")"
+	else
+		print_result "GitHub API installation limit is classified as infrastructure" 0
+	fi
+	teardown_test_env
+	return 0
+}
+
 test_ci_repair_recovers_one_stale_lease_then_exhausts() {
 	setup_test_env
 	export TEST_WORKER_SLEEP_SECONDS="0.2"
@@ -962,6 +982,7 @@ main() {
 	test_ci_feedback_skips_failed_check_with_exit_143_log
 	test_ci_feedback_skips_registry_rate_limit_failure
 	test_ci_feedback_skips_dockerhub_pull_rate_limit_failure
+	test_ci_feedback_skips_github_api_rate_limit_failure
 	test_ci_repair_recovers_one_stale_lease_then_exhausts
 	test_ci_repair_consumes_abandoned_append_only_claim
 	test_ci_repair_waits_for_prelock_startup_before_retry
