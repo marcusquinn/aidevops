@@ -193,6 +193,8 @@ main() {
 
 	reset_and_sign issue 41
 	assert_verify "unchanged issue V2 snapshot verifies" issue 41 VERIFIED 0
+	jq '.[0][-1].body = ("audit\tcontext\n" + .[0][-1].body)' "${FIXTURES}/comments-41.json" >"${FIXTURES}/comments.tmp" && mv "${FIXTURES}/comments.tmp" "${FIXTURES}/comments-41.json"
+	assert_verify "approval body preserves tabs and newlines" issue 41 VERIFIED 0
 	jq '.body = "changed issue body"' "${FIXTURES}/issue-41.json" >"${FIXTURES}/issue.tmp"
 	mv "${FIXTURES}/issue.tmp" "${FIXTURES}/issue-41.json"
 	assert_verify "issue body drift is stale" issue 41 STALE_APPROVAL 4
@@ -258,6 +260,10 @@ Auto-approved: cryptographic approval verified. Stale recovery tick reset."
 	reset_and_sign issue 41
 	jq '.[0][-1].body |= sub("aidevops-approval/v2"; "aidevops-approval/v3")' "${FIXTURES}/comments-41.json" >"${FIXTURES}/comments.tmp" && mv "${FIXTURES}/comments.tmp" "${FIXTURES}/comments-41.json"
 	assert_verify "tampered signed payload is malformed" issue 41 MALFORMED_APPROVAL 5
+
+	write_baseline_fixtures
+	jq -nc '[[{id:"invalid",body:"<!-- aidevops-signed-approval -->"}]]' >"${FIXTURES}/comments-41.json"
+	assert_verify "non-numeric approval comment ID is malformed" issue 41 MALFORMED_APPROVAL 5
 
 	reset_and_sign issue 41
 	local output="" rc=0

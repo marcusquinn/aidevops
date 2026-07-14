@@ -329,26 +329,22 @@ _cmd_check_stale_agent_redeploy() {
 }
 
 #######################################
-# Perform git fetch/pull/reset to bring INSTALL_DIR to origin/main.
-# Handles dirty working tree, detached HEAD, and ff-only failures.
+# Fetch and fast-forward INSTALL_DIR to the exact origin/main commit.
+# Fails closed on tracked work, local history, branch, or merge problems.
 # Args: $1 = remote version (for state updates on failure)
 # Returns: 0 on success, 1 on unrecoverable failure
 #######################################
 _cmd_check_git_update() {
 	local remote="$1"
 
-	# Clean up any working tree changes left by setup.sh or other processes
-	# (e.g., chmod on tracked scripts, scan results written to repo)
-	# This ensures git pull --ff-only won't be blocked by dirty files.
-	# See: https://github.com/marcusquinn/aidevops/issues/2286
+	# The install checkout may contain deliberate local fixes or diagnostics.
+	# Generated setup output belongs outside the source checkout, so unknown
+	# tracked changes are never safe for an unattended updater to discard.
 	if ! git -C "$INSTALL_DIR" diff --quiet 2>/dev/null || ! git -C "$INSTALL_DIR" diff --cached --quiet 2>/dev/null; then
-		log_info "Cleaning up stale working tree changes..."
-		if ! git -C "$INSTALL_DIR" reset HEAD -- . 2>>"$LOG_FILE"; then
-			log_warn "git reset HEAD failed during working tree cleanup"
-		fi
-		if ! git -C "$INSTALL_DIR" checkout -- . 2>>"$LOG_FILE"; then
-			log_warn "git checkout -- . failed during working tree cleanup"
-		fi
+		log_warn "Skipping update because tracked local changes exist in $INSTALL_DIR"
+		git -C "$INSTALL_DIR" status --short >>"$LOG_FILE" 2>&1 || true
+		update_state "update" "$remote" "local_changes"
+		return 1
 	fi
 
 	# Ensure we're on the main branch (detached HEAD or stale branch blocks pull)
@@ -366,32 +362,39 @@ _cmd_check_git_update() {
 		fi
 	fi
 
-	# Pull latest changes
+	# Fetch once, then merge the exact fetched commit. Refuse local-ahead
+	# history so unattended setup never executes unreviewed local commits.
 	if ! git -C "$INSTALL_DIR" fetch origin main --quiet 2>>"$LOG_FILE"; then
 		log_error "git fetch failed"
 		update_state "update" "$remote" "fetch_failed"
 		return 1
 	fi
+	local local_hash=""
+	local remote_hash=""
+	local_hash=$(git -C "$INSTALL_DIR" rev-parse HEAD 2>>"$LOG_FILE") || return 1
+	remote_hash=$(git -C "$INSTALL_DIR" rev-parse origin/main 2>>"$LOG_FILE") || return 1
+	if [[ "$local_hash" != "$remote_hash" ]] && git -C "$INSTALL_DIR" merge-base --is-ancestor "$remote_hash" "$local_hash" 2>/dev/null; then
+		log_error "Local commits exist on main; refusing unattended update"
+		update_state "update" "$remote" "local_commits"
+		return 1
+	fi
 
-	if ! git -C "$INSTALL_DIR" pull --ff-only origin main --quiet 2>>"$LOG_FILE"; then
-		# Fast-forward failed (diverged history or persistent dirty state).
-		# Since we just fetched origin/main, reset to it — the repo is managed
-		# by aidevops and should always track origin/main exactly.
-		# See: https://github.com/marcusquinn/aidevops/issues/2288
-		log_warn "git pull --ff-only failed — falling back to reset"
-		if git -C "$INSTALL_DIR" reset --hard origin/main --quiet 2>>"$LOG_FILE"; then
-			log_info "Reset to origin/main succeeded"
-		else
-			log_error "git reset --hard origin/main also failed"
-			update_state "update" "$remote" "pull_failed"
-			return 1
-		fi
+	if ! git -C "$INSTALL_DIR" merge --ff-only "$remote_hash" --quiet 2>>"$LOG_FILE"; then
+		log_error "git merge --ff-only failed; preserving local history"
+		update_state "update" "$remote" "pull_failed"
+		return 1
+	fi
+	local_hash=$(git -C "$INSTALL_DIR" rev-parse HEAD 2>>"$LOG_FILE") || return 1
+	if [[ "$local_hash" != "$remote_hash" ]]; then
+		log_error "Updated HEAD does not match fetched origin/main; refusing to run setup"
+		update_state "update" "$remote" "history_mismatch"
+		return 1
 	fi
 	return 0
 }
 
 #######################################
-# Perform the actual update: git pull, setup.sh deploy, verify, cleanup.
+# Perform the actual update: fast-forward, setup.sh deploy, verify, cleanup.
 # Args: $1 = current version, $2 = remote version
 # Returns: 0 on success, 1 on failure
 #######################################
@@ -480,11 +483,6 @@ _cmd_check_perform_update() {
 		update_state "update" "$new_version" "success"
 	fi
 
-	# Clean up any working tree changes setup.sh may have introduced
-	# See: https://github.com/marcusquinn/aidevops/issues/2286
-	if ! git -C "$INSTALL_DIR" checkout -- . 2>>"$LOG_FILE"; then
-		log_warn "Post-setup working tree cleanup failed — next update cycle may see dirty state"
-	fi
 	return 0
 }
 
