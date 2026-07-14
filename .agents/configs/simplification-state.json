@@ -2280,9 +2280,9 @@
       "pr": 18709
     },
     ".agents/scripts/generate-opencode-commands.sh": {
-      "at": "2026-05-10T22:09:25Z",
-      "hash": "805118f556d647519f2d09a37444c834c6bfef6f",
-      "passes": 4,
+      "at": "2026-07-14T05:12:47Z",
+      "hash": "fd8c30c38528209aa30c76e9d43442a1321fdb31",
+      "passes": 5,
       "pr": 17583
     },
     ".agents/scripts/generate-runtime-config.sh": {
@@ -2298,9 +2298,9 @@
       "pr": 13021
     },
     ".agents/scripts/headless-runtime-helper.sh": {
-      "at": "2026-07-13T22:54:05Z",
-      "hash": "1568e0622dc101f456af0f36ec2bef52151c47f3",
-      "passes": 67,
+      "at": "2026-07-14T05:12:48Z",
+      "hash": "2b4dfcd29d45ab673d2642e91e68f461d91fb88d",
+      "passes": 68,
       "pr": 15086
     },
     ".agents/scripts/headless-runtime-lib.sh": {
@@ -6306,9 +6306,9 @@
       "pr": 12752
     },
     ".agents/tools/mobile/app-store-connect.md": {
-      "at": "2026-07-11T03:18:23Z",
-      "hash": "818507cd03d329024bd9d5b6baa06fe1a4386792",
-      "passes": 18,
+      "at": "2026-07-14T05:13:37Z",
+      "hash": "0cad2dcaf6337cc84dcb6c67e9043b921aeff8f6",
+      "passes": 19,
       "pr": 12625
     },
     ".agents/tools/mobile/axe-cli.md": {
@@ -7480,21 +7480,21 @@
       "pr": 16415
     },
     "TODO.md": {
-      "at": "2026-07-13T22:55:04Z",
-      "hash": "86dee1ee4ccae9acf4b482d3b55368899c3a25ae",
-      "passes": 186,
+      "at": "2026-07-14T05:13:59Z",
+      "hash": "13d1edac9e931216d60a0f306f25d5668178f5f2",
+      "passes": 187,
       "pr": 15490
     },
     "aidevops.sh": {
-      "at": "2026-07-13T22:55:04Z",
-      "hash": "ece91c6bd7e8085cd6e2e29846336cd77ddae54a",
-      "passes": 275,
+      "at": "2026-07-14T05:13:59Z",
+      "hash": "89bf55edd4501982f5f95d0fc0f9a0322ffd6889",
+      "passes": 276,
       "pr": 19029
     },
     "setup.sh": {
-      "at": "2026-07-13T22:55:04Z",
-      "hash": "2f6165ff1d1d636d5c00ff4cc13b8db6a9e797f8",
-      "passes": 271,
+      "at": "2026-07-14T05:13:59Z",
+      "hash": "05a52fad1bb4c4d5c8c416bbeefabca6434ba179",
+      "passes": 272,
       "pr": 15470
     },
     "todo/tasks/GH#15363-brief.md": {
@@ -8050,10 +8050,10 @@
       "passes": 3
     },
     ".agents/scripts/headless-runtime-worker.sh": {
-      "hash": "65faa2e85c3f0a7e199884ed4d86b09c4c8a1011",
-      "at": "2026-07-13T22:54:05Z",
+      "hash": "f7b4c10d619efbc62716aa24f889041efb62bad9",
+      "at": "2026-07-14T05:12:48Z",
       "pr": 26521,
-      "passes": 5
+      "passes": 6
     },
     ".agents/scripts/install-hooks-helper.sh": {
       "hash": "0fa74195f7243ea22d952d156e4faccb1bbc2125",
@@ -8080,10 +8080,10 @@
       "passes": 2
     },
     ".agents/scripts/dispatch-dedup-stale.sh": {
-      "hash": "46e1dc56d80071964816948608a07fa5b5ca10e2",
-      "at": "2026-07-13T22:54:04Z",
+      "hash": "66dc7443387c85df9ebf26977672f7d10f0b01e3",
+      "at": "2026-07-14T05:12:46Z",
       "pr": 26555,
-      "passes": 4
+      "passes": 5
     },
     ".agents/scripts/headless-runtime-failure.sh": {
       "hash": "d47d223574e0b7c9ec259796b41728d3945b7fcd",
