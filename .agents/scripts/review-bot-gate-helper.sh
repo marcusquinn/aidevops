@@ -450,7 +450,7 @@ is_known_review_bot() {
 	local actor="$1"
 	local known_bot=""
 	actor=$(printf '%s' "$actor" | tr '[:upper:]' '[:lower:]')
-	actor="${actor%\[bot\]}"
+	actor="${actor%"[bot]"}"
 
 	for known_bot in "${KNOWN_BOTS[@]}"; do
 		[[ "$actor" == "$known_bot" ]] && return 0
