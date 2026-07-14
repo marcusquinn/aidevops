@@ -1087,6 +1087,8 @@ _approval_classify_marked_comments() {
 	local comment_count="$7"
 	local saw_api_error=0 saw_stale=0 saw_legacy=0 saw_malformed=0
 	local comment_rows=""
+	local base64_decode_flag="-d"
+	[[ "$(uname -s)" == "Darwin" ]] && base64_decode_flag="-D"
 
 	if [[ -z "$comments_json" || "$comment_count" -le 0 ]]; then
 		printf 'MALFORMED_APPROVAL\n'
@@ -1103,7 +1105,7 @@ _approval_classify_marked_comments() {
 
 	while IFS=$'\t' read -r comment_id encoded_body; do
 		local body="" classification
-		body=$(printf '%s' "$encoded_body" | base64 -d) || {
+		body=$(printf '%s' "$encoded_body" | base64 "$base64_decode_flag") || {
 			saw_malformed=1
 			continue
 		}
