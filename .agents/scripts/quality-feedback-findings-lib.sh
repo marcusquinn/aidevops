@@ -98,16 +98,10 @@ _build_inline_findings() {
 
 		select($sev_num >= $min_num) |
 
-		# GitHub keeps original_line/position on comments whose reviewed line was
-		# replaced by a later PR commit, but clears line. Those stale comments are
-		# evidence about an earlier revision, not unactioned debt in the merged PR.
-		# Preserve modern file-level comments and legacy payloads that predate the
-		# line field while requiring a current line for modern line comments.
-		select(
-			.subject_type == "file" or
-			.line != null or
-			((has("line") | not) and .position != null)
-		) |
+		# Replaced PR lines retain original_line/position but clear line; suppress
+		# that stale evidence while preserving file comments and legacy payloads.
+		select(.subject_type == "file" or .line != null or
+			((has("line") | not) and .position != null)) |
 
 		{
 			pr: ($pr | tonumber),
