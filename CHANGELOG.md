@@ -10,6 +10,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.32.118] - 2026-07-14
+
+### Changed
+
+- Maintenance: sync ref:GH#27688 to TODO.md [skip ci]
+
+### Fixed
+
+- fence task projection publication (#27691)
+- normalize authenticated forge event ingestion (#27690)
+
 ## [3.32.117] - 2026-07-14
 
 ### Fixed
