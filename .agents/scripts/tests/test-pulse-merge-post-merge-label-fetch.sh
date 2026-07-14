@@ -163,6 +163,9 @@ gh() {
 	done
 	if [[ "$1" == "api" && "$api_path" == *"/issues/comments/"* && "$*" == *"--method PATCH"* ]]; then
 		comment_id="${api_path##*/}"
+		if [[ ! "$comment_id" =~ ^[0-9]+$ ]]; then
+			return 1
+		fi
 		if [[ ",${TEST_FAIL_PATCH_IDS:-}," == *",${comment_id},"* ]]; then
 			return 1
 		fi
