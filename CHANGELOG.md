@@ -10,6 +10,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.32.113] - 2026-07-14
+
+### Changed
+
+- Tests: cover Linuxbrew in CLI convergence PATH (#27670)
+
+### Fixed
+
+- allow canonical ls-remote diagnostics (#27677)
+- propagate critical postflight failures (#27651)
+
 ## [3.32.112] - 2026-07-14
 
 ### Fixed
