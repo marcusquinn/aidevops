@@ -10,6 +10,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.32.109] - 2026-07-14
+
+### Changed
+
+- Maintenance: sync ref:GH#27585 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#27574 to TODO.md [skip ci]
+
+### Fixed
+
+- avoid false t18121 dependency (#27603)
+- harden draft checkpoint lifecycle (#27601)
+- resolve active OpenCode session output (#27598)
+
 ## [3.32.108] - 2026-07-14
 
 ### Fixed
