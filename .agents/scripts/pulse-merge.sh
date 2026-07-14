@@ -102,7 +102,9 @@ _pulse_merge_repo_path_for_slug() {
 	local repo_path=""
 	[[ -n "$repo_slug" && -f "$repos_json" ]] || return 1
 	repo_path=$(jq -r --arg slug "$repo_slug" '
-		.initialized_repos[]? | select(.slug == $slug) | .path // empty
+		.initialized_repos[]?
+		| select(((.slug // "") | ascii_downcase) == ($slug | ascii_downcase))
+		| .path // empty
 	' "$repos_json" 2>/dev/null | sed -n '1p') || repo_path=""
 	[[ -n "$repo_path" ]] || return 1
 	printf '%s\n' "${repo_path/#\~/$HOME}"
