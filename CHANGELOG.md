@@ -10,6 +10,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.32.119] - 2026-07-15
+
+### Added
+
+- add bounded worker blocker logging (#27733)
+
+### Changed
+
+- Maintenance: sync ref:GH#27732 to TODO.md [skip ci]
+- Tests: resolve planning publisher commands portably (#27709)
+
+### Fixed
+
+- harden pulse worker completion lifecycle (#27722)
+- protect managed workers from generic process guard (#27717)
+- stop exit-78 retries for completed workers (#27716)
+- match pulse repository slugs case-insensitively (#27715)
+- resolve DSPy helper from install directory (#27707)
+
 ## [3.32.118] - 2026-07-14
 
 ### Changed
