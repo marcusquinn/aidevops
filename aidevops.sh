@@ -30,7 +30,7 @@ _AIDEVOPS_REAL_HOME="$HOME"
 if [[ -n "${SUDO_USER:-}" && "$(id -u)" -eq 0 ]]; then
 	_tmp_real_home=""
 	if command -v getent &>/dev/null; then
-		_tmp_real_home=$(getent passwd "$SUDO_USER" | cut -d: -f6)
+		_tmp_real_home=$(getent passwd "$SUDO_USER" | cut -d: -f6 || true)
 	elif command -v dscl &>/dev/null; then
 		_tmp_real_home=$(dscl . -read "/Users/${SUDO_USER}" NFSHomeDirectory 2>/dev/null | awk '{print $2; exit}' || true)
 	elif [[ -d "/Users/${SUDO_USER}" ]]; then
