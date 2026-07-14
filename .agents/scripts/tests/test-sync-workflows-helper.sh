@@ -322,7 +322,7 @@ _assert_exit "GH#21897 → no-op exits 0" 0 "$EXIT_12"
 rm -rf "$TMPDIR_12"
 
 # ─── Test 12a: GH#27725 — review-bot dry-run names selected workflow ────────
-TMPDIR_12_REVIEW="$(mktemp -d)"
+TMPDIR_12_REVIEW="$(mktemp -d)" || exit 1
 _setup_fake_home "$TMPDIR_12_REVIEW"
 mkdir -p "$TMPDIR_12_REVIEW/repo-review/.github/workflows"
 sed 's/cancel-in-progress: false/cancel-in-progress: true/' \
@@ -339,7 +339,7 @@ _assert_contains "GH#27725 → review-bot dry-run names selected workflow" \
 rm -rf "$TMPDIR_12_REVIEW"
 
 # ─── Test 12b: GH#27725 — maintainer-gate dry-run names selected workflow ──
-TMPDIR_12_MAINTAINER="$(mktemp -d)"
+TMPDIR_12_MAINTAINER="$(mktemp -d)" || exit 1
 _setup_fake_home "$TMPDIR_12_MAINTAINER"
 mkdir -p "$TMPDIR_12_MAINTAINER/repo-maintainer/.github/workflows"
 sed 's/issues: write/issues: read/' \
