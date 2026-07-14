@@ -652,18 +652,14 @@ _cmd_check_stale_agent_redeploy() {
 _cmd_check_git_update() {
 	local remote="$1"
 
-	# Clean up any working tree changes left by setup.sh or other processes
-	# (e.g., chmod on tracked scripts, scan results written to repo)
-	# This ensures git pull --ff-only won't be blocked by dirty files.
-	# See: https://github.com/marcusquinn/aidevops/issues/2286
+	# The install checkout may contain deliberate local fixes or diagnostics.
+	# Generated setup output belongs outside the source checkout, so unknown
+	# tracked changes are never safe for an unattended updater to discard.
 	if ! git -C "$INSTALL_DIR" diff --quiet 2>/dev/null || ! git -C "$INSTALL_DIR" diff --cached --quiet 2>/dev/null; then
-		log_info "Cleaning up stale working tree changes..."
-		if ! git -C "$INSTALL_DIR" reset HEAD -- . 2>>"$LOG_FILE"; then
-			log_warn "git reset HEAD failed during working tree cleanup"
-		fi
-		if ! git -C "$INSTALL_DIR" checkout -- . 2>>"$LOG_FILE"; then
-			log_warn "git checkout -- . failed during working tree cleanup"
-		fi
+		log_warn "Skipping update because tracked local changes exist in $INSTALL_DIR"
+		git -C "$INSTALL_DIR" status --short >>"$LOG_FILE" 2>&1 || true
+		update_state "update" "$remote" "local_changes"
+		return 1
 	fi
 
 	# Ensure we're on the main branch (detached HEAD or stale branch blocks pull)
@@ -689,18 +685,9 @@ _cmd_check_git_update() {
 	fi
 
 	if ! git -C "$INSTALL_DIR" pull --ff-only origin main --quiet 2>>"$LOG_FILE"; then
-		# Fast-forward failed (diverged history or persistent dirty state).
-		# Since we just fetched origin/main, reset to it — the repo is managed
-		# by aidevops and should always track origin/main exactly.
-		# See: https://github.com/marcusquinn/aidevops/issues/2288
-		log_warn "git pull --ff-only failed — falling back to reset"
-		if git -C "$INSTALL_DIR" reset --hard origin/main --quiet 2>>"$LOG_FILE"; then
-			log_info "Reset to origin/main succeeded"
-		else
-			log_error "git reset --hard origin/main also failed"
-			update_state "update" "$remote" "pull_failed"
-			return 1
-		fi
+		log_error "git pull --ff-only failed; preserving local history"
+		update_state "update" "$remote" "pull_failed"
+		return 1
 	fi
 	return 0
 }
@@ -803,11 +790,6 @@ _cmd_check_perform_update() {
 		update_state "update" "$new_version" "success"
 	fi
 
-	# Clean up any working tree changes setup.sh may have introduced
-	# See: https://github.com/marcusquinn/aidevops/issues/2286
-	if ! git -C "$INSTALL_DIR" checkout -- . 2>>"$LOG_FILE"; then
-		log_warn "Post-setup working tree cleanup failed — next update cycle may see dirty state"
-	fi
 	return 0
 }
 

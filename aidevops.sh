@@ -269,17 +269,18 @@ cmd_update() {
 
 	if check_dir "$INSTALL_DIR/.git"; then
 		cd "$INSTALL_DIR" || exit 1
+		if ! git diff --quiet 2>/dev/null || ! git diff --cached --quiet 2>/dev/null; then
+			print_error "Refusing to update: tracked local changes exist in $INSTALL_DIR"
+			git status --short
+			print_info "Commit or stash these changes, then rerun aidevops update."
+			return 1
+		fi
 		local current_branch
 		current_branch=$(git branch --show-current 2>/dev/null || echo "")
 		[[ "$current_branch" != "main" ]] && {
 			print_info "Switching to main branch..."
 			git checkout main --quiet 2>/dev/null || git checkout -b main origin/main --quiet 2>/dev/null || true
 		}
-		if ! git diff --quiet 2>/dev/null || ! git diff --cached --quiet 2>/dev/null; then
-			print_info "Cleaning up stale working tree changes..."
-			git reset HEAD -- . 2>/dev/null || true
-			git checkout -- . 2>/dev/null || true
-		fi
 		git fetch origin main --tags --quiet
 		local local_hash
 		local_hash=$(git rev-parse HEAD)
@@ -328,7 +329,6 @@ cmd_update() {
 					fi
 				fi
 			fi
-			git checkout -- . 2>/dev/null || true
 		else
 			print_info "Pulling latest changes..."
 			local old_hash
@@ -336,12 +336,9 @@ cmd_update() {
 			if git pull --ff-only origin main --quiet; then
 				:
 			else
-				print_warning "Fast-forward pull failed — resetting to origin/main..."
-				git reset --hard origin/main --quiet 2>/dev/null || {
-					print_error "Failed to reset to origin/main"
-					print_info "Try: cd $INSTALL_DIR && git fetch origin && git reset --hard origin/main"
-					return 1
-				}
+				print_error "Fast-forward pull failed; preserving local history."
+				print_info "Review $INSTALL_DIR, resolve the divergence, then rerun aidevops update."
+				return 1
 			fi
 			local new_version new_hash
 			new_version=$(get_version)
@@ -367,7 +364,6 @@ cmd_update() {
 			print_info "Running incremental setup to apply changes (falls back to full setup if needed)..."
 			local setup_exit=0
 			_run_update_setup "$update_output_mode" || setup_exit=$?
-			git checkout -- . 2>/dev/null || true
 			local repo_version deployed_version
 			repo_version=$(cat "$INSTALL_DIR/VERSION" 2>/dev/null || echo "unknown")
 			deployed_version=$(cat "$HOME/.aidevops/agents/VERSION" 2>/dev/null || echo "none")
