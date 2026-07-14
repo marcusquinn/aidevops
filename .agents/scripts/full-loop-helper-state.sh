@@ -267,21 +267,31 @@ _full_loop_release_receipt_path() {
 	return 0
 }
 
+_full_loop_write_release_receipt() {
+	local repo="$1"
+	local pr_number="$2"
+	local status="$3"
+	[[ -n "$repo" && "$pr_number" =~ ^[0-9]+$ ]] || return 1
+	[[ "$status" == "$_FULL_LOOP_RELEASE_NOT_REQUESTED" || "$status" == "$_FULL_LOOP_RELEASE_PUBLISHED" || "$status" == "$_FULL_LOOP_PHASE_FAILED" ]] || return 1
+	local receipt_path=""
+	receipt_path=$(_full_loop_release_receipt_path "$repo" "$pr_number") || return 1
+	mkdir -p "${receipt_path%/*}" || return 1
+	printf '%s\n' "$status" >"${receipt_path}.tmp.$$" || return 1
+	mv "${receipt_path}.tmp.$$" "$receipt_path" || return 1
+	return 0
+}
+
 _full_loop_persist_release_status() {
 	local status="$1"
 	local repo=""
-	[[ "$status" == "not-requested" || "$status" == "$_FULL_LOOP_RELEASE_PUBLISHED" || "$status" == "$_FULL_LOOP_PHASE_FAILED" ]] || return 1
+	[[ "$status" == "$_FULL_LOOP_RELEASE_NOT_REQUESTED" || "$status" == "$_FULL_LOOP_RELEASE_PUBLISHED" || "$status" == "$_FULL_LOOP_PHASE_FAILED" ]] || return 1
 	if [[ -f "$STATE_FILE" ]]; then
 		save_state "${CURRENT_PHASE:-${PHASE:-postflight}}" "$SAVED_PROMPT" "${PR_NUMBER:-}" "${STARTED_AT:-$(date -u '+%Y-%m-%dT%H:%M:%SZ')}"
 	fi
 	[[ "${PR_NUMBER:-}" =~ ^[0-9]+$ ]] || return 0
 	repo=$(_full_loop_resolve_repo "${AIDEVOPS_FULL_LOOP_REPO:-}") || return 1
-	local receipt_path=""
-	receipt_path=$(_full_loop_release_receipt_path "$repo" "$PR_NUMBER") || return 1
-	mkdir -p "${receipt_path%/*}" || return 1
-	printf '%s\n' "$status" >"${receipt_path}.tmp.$$" || return 1
-	mv "${receipt_path}.tmp.$$" "$receipt_path" || return 1
-	return 0
+	_full_loop_write_release_receipt "$repo" "$PR_NUMBER" "$status"
+	return $?
 }
 
 _full_loop_invoke_authorized_release() {
@@ -574,7 +584,7 @@ _init_start_defaults() {
 	fi
 	RELEASE_TYPE="${RELEASE_TYPE:-${AIDEVOPS_RELEASE_TYPE:-patch}}"
 	DEPLOYMENT_SCOPE="${DEPLOYMENT_SCOPE:-${AIDEVOPS_RELEASE_DEPLOY_SCOPE:-incremental}}"
-	RELEASE_STATUS="${RELEASE_STATUS:-not-requested}"
+	RELEASE_STATUS="${RELEASE_STATUS:-$_FULL_LOOP_RELEASE_NOT_REQUESTED}"
 	DRY_RUN="${DRY_RUN:-false}"
 	_BACKGROUND=false
 	return 0

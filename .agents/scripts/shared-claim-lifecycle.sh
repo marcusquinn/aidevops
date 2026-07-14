@@ -170,7 +170,7 @@ _release_interactive_claim_on_merge() {
 #   $3 = repo_slug     (e.g. "owner/repo")
 #
 # Exact-head output states:
-#   ready | ready_failed | merged | closed_unmerged | draft_checkpoint |
+#   ready | merged | closed_unmerged | draft_checkpoint |
 #   protected_draft | head_mismatch | ready_missing_summary |
 #   merged_missing_summary
 # Issue-search matches are deliberately `unverified_open_pr`: search can return
@@ -190,11 +190,6 @@ _pr_handoff_state_from_json() {
 			. == "origin:interactive" or . == "hold-for-review" or
 			. == "no-auto-dispatch" or . == "needs-maintainer-review"
 		);
-		def terminal_failure:
-			[.statusCheckRollup[]? |
-				(.conclusion // .status // .state // empty) | ascii_upcase] |
-			any(. == "FAILURE" or . == "ERROR" or . == "CANCELLED" or
-				. == "TIMED_OUT" or . == "ACTION_REQUIRED" or . == "STALE");
 		def rank:
 			if .state == $open_state then 0
 			elif .state == $merged_state or ((.mergedAt // "") | length) > 0 then 1
@@ -208,7 +203,6 @@ _pr_handoff_state_from_json() {
 		elif .state != $open_state then "closed_unmerged|\(.number)"
 		elif (.isDraft // false) and worker_owned and (protected | not) then "draft_checkpoint|\(.number)"
 		elif (.isDraft // false) then "protected_draft|\(.number)"
-		elif terminal_failure then "ready_failed|\(.number)"
 		else "ready|\(.number)" end' 2>/dev/null || true
 	return 0
 }
@@ -250,7 +244,7 @@ _pr_handoff_state_for_branch_or_issue() {
 
 	if [[ -n "$branch_name" ]]; then
 		if pr_json=$(gh_pr_list --repo "$repo_slug" --head "$branch_name" --state all \
-			--limit 10 --json number,state,isDraft,mergedAt,headRefOid,labels,statusCheckRollup 2>/dev/null); then
+			--limit 10 --json number,state,isDraft,mergedAt,headRefOid,labels 2>/dev/null); then
 			queried=1
 			pr_state=$(_pr_handoff_state_from_json "$pr_json" "$expected_head")
 			if [[ -n "$pr_state" ]]; then

@@ -2935,28 +2935,35 @@ test_protected_draft_is_not_mutated_or_completed() {
 }
 
 test_checkpoint_terminal_telemetry_is_failed_escalated() {
-	local fixture_class result expected_reason
-	for fixture_class in draft_checkpoint ready_failed; do
-		if [[ "$fixture_class" == "draft_checkpoint" ]]; then
-			expected_reason="worker_draft_checkpoint"
-		else
-			expected_reason="worker_ready_failed"
-		fi
-		result=$(
-			(
-				_worker_produced_output() { printf '%s' "$fixture_class"; return 0; }
-				_escalate_worker_pr_checkpoint() { _HRW_RECOVERY_CLASSIFICATION="$expected_reason"; return 0; }
-				_hrw_finish_success_run "issue-99999" "${TEST_ROOT}"
-				printf '%s|%s|%s|%s' "$_HRW_TERMINAL_OUTCOME" "$_HRW_FINAL_RUNTIME_EVENT" \
-					"$_HRW_FINAL_RUNTIME_STATUS" "$_HRW_FINAL_RUNTIME_CLASSIFICATION"
-			)
+	local fixture_class="draft_checkpoint"
+	local expected_reason="worker_draft_checkpoint"
+	local result
+	result=$(
+		(
+			_worker_produced_output() { printf '%s' "$fixture_class"; return 0; }
+			_escalate_worker_pr_checkpoint() { _HRW_RECOVERY_CLASSIFICATION="$expected_reason"; return 0; }
+			_hrw_finish_success_run "issue-99999" "${TEST_ROOT}"
+			printf '%s|%s|%s|%s' "$_HRW_TERMINAL_OUTCOME" "$_HRW_FINAL_RUNTIME_EVENT" \
+				"$_HRW_FINAL_RUNTIME_STATUS" "$_HRW_FINAL_RUNTIME_CLASSIFICATION"
 		)
-		if [[ "$result" == "failed|worker.failed|escalated|${expected_reason}" ]]; then
-			print_result "${fixture_class} records failed/escalated terminal telemetry" 0
-		else
-			print_result "${fixture_class} records failed/escalated terminal telemetry" 1 "$result"
-		fi
-	done
+	)
+	if [[ "$result" == "failed|worker.failed|escalated|${expected_reason}" ]]; then
+		print_result "${fixture_class} records failed/escalated terminal telemetry" 0
+	else
+		print_result "${fixture_class} records failed/escalated terminal telemetry" 1 "$result"
+	fi
+	return 0
+}
+
+test_failed_ci_ready_pr_is_durable_handoff() {
+	local pr_json result
+	pr_json='[{"number":457,"state":"OPEN","isDraft":false,"mergedAt":null,"headRefOid":"abc123","labels":[{"name":"origin:worker"}],"statusCheckRollup":[{"name":"tests","conclusion":"FAILURE"},{"name":"tests","conclusion":"SUCCESS"}]}]'
+	result=$(_pr_handoff_state_from_json "$pr_json" "abc123")
+	if [[ "$result" == "ready|457" ]]; then
+		print_result "failed or historical CI does not invalidate a ready PR handoff" 0
+	else
+		print_result "failed or historical CI does not invalidate a ready PR handoff" 1 "$result"
+	fi
 	return 0
 }
 
@@ -3100,6 +3107,7 @@ test_pr_checkpoint_lifecycle_cases() {
 	test_failed_worker_draft_retains_claim_when_block_not_visible
 	test_protected_draft_is_not_mutated_or_completed
 	test_checkpoint_terminal_telemetry_is_failed_escalated
+	test_failed_ci_ready_pr_is_durable_handoff
 	test_closed_unmerged_pr_is_failed_not_completed
 	test_failed_worker_ready_pr_remains_completed_handoff
 	return 0

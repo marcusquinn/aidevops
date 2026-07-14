@@ -7,6 +7,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 REPO_ROOT="$(git rev-parse --show-toplevel)" || exit 1
 _FULL_LOOP_RELEASE_PATH=""
+source "${SCRIPT_DIR}/full-loop-helper-state.sh"
 
 cleanup_release_worktree() {
 	local release_path="${_FULL_LOOP_RELEASE_PATH:-}"
@@ -35,14 +36,19 @@ main() {
 	local version_manager="${AIDEVOPS_FULL_LOOP_VERSION_MANAGER:-$release_path/.agents/scripts/version-manager.sh}"
 	[[ "$version_manager" = /* ]] || version_manager="$PWD/$version_manager"
 	[[ -f "$version_manager" ]] || return 1
-	(
+	if ! (
 		trap - EXIT
 		cd "$release_path" || exit 1
 		AIDEVOPS_RELEASE_INTENT_TRUSTED=1 \
 			AIDEVOPS_TRUSTED_ISSUE_PRIORITY="${AIDEVOPS_TRUSTED_ISSUE_PRIORITY:-}" \
 			AIDEVOPS_RELEASE_DEPLOY_SCOPE="$deployment_scope" \
 			bash "$version_manager" release "$release_type" --source-pr "$source_pr"
-	)
+	); then
+		return 1
+	fi
+	local repo=""
+	repo=$(_full_loop_resolve_repo "${AIDEVOPS_FULL_LOOP_REPO:-}") || return 1
+	_full_loop_write_release_receipt "$repo" "$source_pr" "$_FULL_LOOP_RELEASE_PUBLISHED"
 	return $?
 }
 

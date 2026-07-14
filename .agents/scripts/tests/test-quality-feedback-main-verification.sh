@@ -201,11 +201,21 @@ source "${SCRIPT_DIR}/test-quality-feedback-main-verification-scan.sh"
 # --- Main ---
 
 run_positive_review_filter_regressions() {
+	test_skips_pr27659_exact_head_verification_review
+	test_keeps_exact_head_verification_with_remaining_concern
 	test_scan_single_pr_filters_issue4814_pr2166_exact_body
 	test_scan_single_pr_positive_body_with_inline_comments_not_summary_only
 	test_scan_single_pr_filters_positive_inline_acknowledgement_reply
 	test_scan_single_pr_filters_parent_of_resolution_reply
 	test_scan_single_pr_filters_resolved_review_threads
+	test_build_inline_findings_filters_outdated_pr_revision_comment
+	return 0
+}
+
+run_suggestion_fence_regressions() {
+	test_suggestion_fence_with_markdown_list_item_already_applied
+	test_suggestion_fence_with_markdown_list_item_not_yet_applied
+	test_cross_pr_dedup_rejects_older_superseded_feedback
 	return 0
 }
 
@@ -234,8 +244,7 @@ main() {
 
 	echo ""
 	echo "Running suggestion-fence false-positive regression tests (GH#4874)"
-	test_suggestion_fence_with_markdown_list_item_already_applied
-	test_suggestion_fence_with_markdown_list_item_not_yet_applied
+	run_suggestion_fence_regressions
 
 	echo ""
 	echo "Running approval/sentiment detection tests (GH#4604)"
