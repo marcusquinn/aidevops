@@ -1236,17 +1236,6 @@ _opencode_db_tables_with_column() {
 }
 
 #######################################
-# Quote a SQLite identifier discovered from sqlite_master.
-# Args: $1 = identifier.
-#######################################
-_sqlite_quote_identifier() {
-	local identifier="$1"
-	identifier="${identifier//\"/\"\"}"
-	printf '"%s"' "$identifier"
-	return 0
-}
-
-#######################################
 # Check whether a SQLite DB contains a table.
 # Args: $1 = DB path, $2 = table name.
 #######################################
@@ -1328,10 +1317,11 @@ _merge_worker_db() {
 		return 1
 	fi
 	_opencode_db_graph_schema_matches "$worker_db" "$shared_db" || return 1
-	session_tables=$(_opencode_db_tables_with_column "$shared_db" "session_id") || return 1
+	session_tables=$(_opencode_db_tables_with_column "$shared_db" session_id) || return 1
 	while IFS= read -r table_name; do
 		[[ -n "$table_name" && "$table_name" != "session" ]] || continue
-		table_identifier=$(_sqlite_quote_identifier "$table_name")
+		table_identifier="${table_name//\"/\"\"}"
+		printf -v table_identifier '"%s"' "$table_identifier"
 		delete_session_sql="${delete_session_sql}DELETE FROM main.${table_identifier} WHERE session_id IN (SELECT id FROM worker.session);"$'\n'
 		copy_session_sql="${copy_session_sql}INSERT OR REPLACE INTO main.${table_identifier} SELECT * FROM worker.${table_identifier} WHERE session_id IN (SELECT id FROM worker.session);"$'\n'
 	done <<-TABLES
@@ -1435,11 +1425,12 @@ _seed_worker_db_session_context() {
 		current_work_dir=$(cd "$current_work_dir" 2>/dev/null && pwd -P) || current_work_dir=""
 		current_work_dir_sql=$(sql_escape "$current_work_dir")
 	fi
-	session_tables=$(_opencode_db_tables_with_column "$shared_db" "session_id") || return 1
+	session_tables=$(_opencode_db_tables_with_column "$shared_db" session_id) || return 1
 	project_tables=$(_opencode_db_tables_with_column "$shared_db" "project_id") || return 1
 	while IFS= read -r table_name; do
 		[[ -n "$table_name" && "$table_name" != "session" ]] || continue
-		table_identifier=$(_sqlite_quote_identifier "$table_name")
+		table_identifier="${table_name//\"/\"\"}"
+		printf -v table_identifier '"%s"' "$table_identifier"
 		clear_session_sql="${clear_session_sql}DELETE FROM main.${table_identifier};"$'\n'
 		copy_session_sql="${copy_session_sql}INSERT OR REPLACE INTO main.${table_identifier} SELECT * FROM shared.${table_identifier} WHERE session_id = '${session_id_sql}';"$'\n'
 	done <<-TABLES
@@ -1449,7 +1440,8 @@ _seed_worker_db_session_context() {
 		case "$table_name" in
 		project | session | "") continue ;;
 		esac
-		table_identifier=$(_sqlite_quote_identifier "$table_name")
+		table_identifier="${table_name//\"/\"\"}"
+		printf -v table_identifier '"%s"' "$table_identifier"
 		clear_project_sql="${clear_project_sql}DELETE FROM main.${table_identifier};"$'\n'
 		copy_project_sql="${copy_project_sql}INSERT OR REPLACE INTO main.${table_identifier} SELECT * FROM shared.${table_identifier} WHERE project_id IN (SELECT project_id FROM shared.session WHERE id = '${session_id_sql}');"$'\n'
 	done <<-TABLES
