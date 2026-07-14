@@ -201,6 +201,12 @@ function currentWorkerBranch(options, repositoryDir) {
   }
 }
 
+function permissionGrantBranchMatches(grantBranch, currentBranch) {
+  if (typeof currentBranch !== "string" || currentBranch.length === 0) return false;
+  if (typeof grantBranch !== "string" || grantBranch.length === 0) return false;
+  return grantBranch === currentBranch;
+}
+
 function permissionGrantWorkerMatches(grant, options) {
   const pendingRequest = String(options.pendingRequest || process.env.AIDEVOPS_PERMISSION_REQUEST_ID || "");
   if (!pendingRequest || grant.request_id !== pendingRequest) return false;
@@ -211,9 +217,7 @@ function permissionGrantWorkerMatches(grant, options) {
   const currentSession = String(options.currentSession || process.env.WORKER_SESSION_KEY || "");
   if (!currentSession || grant.worker?.session !== currentSession) return false;
   const currentBranch = currentWorkerBranch(options, repositoryDir);
-  if (typeof currentBranch !== "string" || currentBranch.length === 0) return false;
-  if (typeof grant.worker?.branch !== "string" || grant.worker.branch.length === 0) return false;
-  return grant.worker.branch === currentBranch;
+  return permissionGrantBranchMatches(grant.worker?.branch, currentBranch);
 }
 
 function permissionGrantPatternSafe(pattern) {
