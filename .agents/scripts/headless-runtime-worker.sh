@@ -1402,6 +1402,33 @@ _hrw_finish_rate_limit_fast_run() {
 	return 0
 }
 
+_hrw_finish_permission_required_run() {
+	local session_key="$1"
+	local work_dir="$2"
+	local helper="${SCRIPT_DIR}/worker-permission-helper.sh"
+	local permission_status="permission_required"
+	if [[ ! -x "$helper" || -z "${_run_permission_request_file:-}" ]]; then
+		_hrw_mark_failed_terminal_state "$_HRW_STATUS_FAILED" "permission_request_persistence_failed"
+		return 1
+	fi
+	if ! "$helper" request \
+		--file "$_run_permission_request_file" \
+		--issue "${WORKER_ISSUE_NUMBER:-}" \
+		--repo "${DISPATCH_REPO_SLUG:-${WORKER_REPO_SLUG:-}}" \
+		--session "$session_key" \
+		--work-dir "$work_dir"; then
+		_hrw_mark_failed_terminal_state "$_HRW_STATUS_FAILED" "permission_request_persistence_failed"
+		return 1
+	fi
+	_release_dispatch_claim "$session_key" "$permission_status"
+	_HRW_FINAL_RUNTIME_EVENT="worker.deferred"
+	_HRW_FINAL_RUNTIME_STATUS="$permission_status"
+	_HRW_FINAL_RUNTIME_CLASSIFICATION="awaiting_maintainer_permission"
+	_HRW_TERMINAL_OUTCOME="$_HRW_TELEMETRY_DEFERRED"
+	rm -f "$_run_permission_request_file" 2>/dev/null || true
+	return 0
+}
+
 _hrw_record_terminal_outcome() {
 	local session_key="$1"
 	local outcome="$2"
@@ -1433,6 +1460,7 @@ _hrw_finish_success_run() {
 	local session_key="$1"
 	local work_dir="$2"
 	local release_needed=1
+	local permission_pending_file=""
 
 	# GH#20721 + GH#20819: Classify worker output quality.
 	# _worker_produced_output distinguishes exact-head completion from drafts,
@@ -1511,6 +1539,10 @@ _hrw_finish_success_run() {
 		_release_dispatch_claim "$session_key" "$_HRW_REASON_WORKER_COMPLETE"
 		_HRW_TERMINAL_OUTCOME="$_HRW_TELEMETRY_SUCCESS"
 	fi
+	if [[ "$_HRW_TERMINAL_OUTCOME" == "$_HRW_TELEMETRY_SUCCESS" ]]; then
+		permission_pending_file=$(_hrw_permission_pending_path "$work_dir" || true)
+		rm -f "${AIDEVOPS_PERMISSION_GRANT_FILE:-}" "$permission_pending_file" 2>/dev/null || true
+	fi
 
 	return 0
 }
@@ -1565,6 +1597,17 @@ _cmd_run_finish() {
 		_HRW_FINAL_RUNTIME_STATUS="rate_limit_fast"
 		_HRW_FINAL_RUNTIME_CLASSIFICATION="rate_limit"
 		_HRW_TERMINAL_OUTCOME="$_HRW_TELEMETRY_DEFERRED"
+	elif [[ "$ledger_status" == "permission_required" ]]; then
+		if ! _hrw_finish_permission_required_run "$session_key" "$work_dir"; then
+			_hrw_record_terminal_outcome "$session_key" "$_HRW_TERMINAL_OUTCOME" \
+				"$_HRW_FINAL_RUNTIME_CLASSIFICATION"
+			_emit_worker_runtime_event "$_HRW_FINAL_RUNTIME_EVENT" \
+				"$_HRW_FINAL_RUNTIME_STATUS" "$_HRW_FINAL_RUNTIME_CLASSIFICATION"
+			_update_dispatch_ledger "$session_key" "fail"
+			_release_session_lock "$session_key"
+			trap - EXIT
+			return 1
+		fi
 	else
 		_hrw_finish_success_run "$session_key" "$work_dir"
 	fi
@@ -1574,6 +1617,14 @@ _cmd_run_finish() {
 		"$_HRW_FINAL_RUNTIME_STATUS" "$_HRW_FINAL_RUNTIME_CLASSIFICATION"
 
 	_hrw_finish_cleanup "$session_key" "$ledger_status" "$work_dir"
+	return 0
+}
+
+_hrw_permission_pending_path() {
+	local work_dir="$1"
+	local git_dir=""
+	git_dir=$(git -C "$work_dir" rev-parse --absolute-git-dir 2>/dev/null) || return 1
+	printf '%s/aidevops-permission-pending\n' "$git_dir"
 	return 0
 }
 
@@ -1590,6 +1641,14 @@ _cmd_run_prepare() {
 		printf '[fatal] WORKER_WORKTREE_PATH unset — pre-creation skipped or failed silently; aborting per t2983 Fix C\n' >&2
 		return 1
 	fi
+	local permission_pending_file=""
+	permission_pending_file=$(_hrw_permission_pending_path "$work_dir" || true)
+	if [[ -f "$permission_pending_file" ]]; then
+		export AIDEVOPS_PERMISSION_REQUEST_ID
+		AIDEVOPS_PERMISSION_REQUEST_ID=$(jq -r '.request_id // ""' "$permission_pending_file" 2>/dev/null || true)
+	else
+		unset AIDEVOPS_PERMISSION_REQUEST_ID
+	fi
 
 	# GH#20542: Export DISPATCH_REPO_SLUG BEFORE arming the EXIT trap so
 	# _release_dispatch_claim always has a non-empty slug, even when the
@@ -1601,6 +1660,11 @@ _cmd_run_prepare() {
 		| sed -E 's|.*github\.com[:/]||; s|\.git$||' || true)
 	if [[ -n "$_prepare_repo_slug" ]]; then
 		export DISPATCH_REPO_SLUG="$_prepare_repo_slug"
+	fi
+	if [[ -n "${WORKER_ISSUE_NUMBER:-}" && -n "${DISPATCH_REPO_SLUG:-}" ]]; then
+		local permission_grant_slug=""
+		permission_grant_slug=$(printf '%s' "$DISPATCH_REPO_SLUG" | tr '/:' '__')
+		export AIDEVOPS_PERMISSION_GRANT_FILE="${HOME}/.aidevops/permission-grants/${permission_grant_slug}/${WORKER_ISSUE_NUMBER}.json"
 	fi
 
 	# GH#6538: Acquire a session-key lock to prevent duplicate workers.

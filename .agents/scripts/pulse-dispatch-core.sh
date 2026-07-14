@@ -29,6 +29,8 @@
 #   - _is_task_committed_to_main
 #   - _dispatch_target_is_pull_request
 #   - _is_renovate_dependency_dashboard_issue
+#   - _dispatch_waiting_for_maintainer_permission
+#   - _dispatch_permission_history_requires_grant
 #   - _dispatch_has_interactive_hold
 #   - _dispatch_dedup_check_layers  (t1999: extracted from dispatch_with_dedup)
 #   - dispatch_with_dedup           (t1999: thin orchestrator, <80 lines)
@@ -1064,6 +1066,38 @@ _is_bot_generated_cleanup_issue() {
 		jq -e '.labels | map(.name) | (index("review-followup") != null or index("source:review-scanner") != null or index("source:review-feedback") != null)' >/dev/null 2>&1
 }
 
+_dispatch_waiting_for_maintainer_permission() {
+	local issue_meta_json="$1"
+	printf '%s' "$issue_meta_json" \
+		| jq -e '.labels | map(.name) | index("needs-maintainer-permissions") != null' >/dev/null 2>&1
+	return $?
+}
+
+_dispatch_permission_history_requires_grant() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local events_json="" labeled_count="" verification=""
+	_DISPATCH_PERMISSION_VERIFY_RESULT=""
+	events_json=$(gh api "repos/${repo_slug}/issues/${issue_number}/events?per_page=100" --paginate --slurp 2>/dev/null) || {
+		_DISPATCH_PERMISSION_VERIFY_RESULT="API_ERROR"
+		return 0
+	}
+	labeled_count=$(jq '[.[][]? | select(.event == "labeled" and .label.name == "needs-maintainer-permissions")] | length' <<<"$events_json" 2>/dev/null) || {
+		_DISPATCH_PERMISSION_VERIFY_RESULT="API_ERROR"
+		return 0
+	}
+	[[ "$labeled_count" -gt 0 ]] || return 1
+	local approval_helper="${BASH_SOURCE[0]%/*}/approval-helper.sh"
+	[[ -x "$approval_helper" ]] || {
+		_DISPATCH_PERMISSION_VERIFY_RESULT="HELPER_MISSING"
+		return 0
+	}
+	verification=$($approval_helper verify-permissions issue "$issue_number" "$repo_slug" 2>/dev/null) || true
+	_DISPATCH_PERMISSION_VERIFY_RESULT="${verification:-NO_APPROVAL}"
+	[[ "$verification" == "VERIFIED" ]] && return 1
+	return 0
+}
+
 #######################################
 # GH#17574: Check if a task has already landed on main (via PR merge or direct commit).
 #
@@ -1666,6 +1700,19 @@ dispatch_with_dedup() {
 	if [[ "$issue_state" == "CLOSED" ]]; then
 		echo "[dispatch] Skipping #${issue_number}: state=CLOSED" >>"$LOGFILE"
 		pulse-batch-prefetch-helper.sh evict-issue "$repo_slug" "$issue_number" 2>/dev/null || true
+		return 1
+	fi
+
+	#aidevops:trust-boundary -- a worker permission request is dispatchable only
+	# after the request-specific signed grant flow removes its dedicated label.
+	if _dispatch_waiting_for_maintainer_permission "$issue_meta_json"; then
+		echo "[dispatch_with_dedup] Dispatch blocked for #${issue_number} in ${repo_slug}: waiting for a scoped signed maintainer permission grant" >>"$LOGFILE"
+		echo "[dispatch_with_dedup] DISPATCH_BLOCK_REASON reason=needs_maintainer_permissions signal=needs-maintainer-permissions issue=#${issue_number} repo=${repo_slug}" >>"$LOGFILE"
+		return 1
+	fi
+	if _dispatch_permission_history_requires_grant "$issue_number" "$repo_slug"; then
+		echo "[dispatch_with_dedup] Dispatch blocked for #${issue_number} in ${repo_slug}: permission-request history lacks a current matching signed grant (${_DISPATCH_PERMISSION_VERIFY_RESULT:-unknown})" >>"$LOGFILE"
+		echo "[dispatch_with_dedup] DISPATCH_BLOCK_REASON reason=permission_grant_unverified signal=${_DISPATCH_PERMISSION_VERIFY_RESULT:-unknown} issue=#${issue_number} repo=${repo_slug}" >>"$LOGFILE"
 		return 1
 	fi
 

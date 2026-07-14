@@ -393,6 +393,23 @@ _handle_run_result() {
 	_run_classification_source=""
 	_run_classification_pattern=""
 
+	# A headless OpenCode permission event is captured by the plugin and rejected
+	# immediately so no worker slot waits for an interactive answer. Preserve the
+	# session and route the attempt to the maintainer-permission lifecycle unless
+	# the worker subsequently proved the full objective completed without it.
+	if [[ "$role" == "worker" && -n "${_run_permission_request_file:-}" && \
+		-f "${_run_permission_request_file}" ]]; then
+		if [[ -n "$discovered_session" ]]; then
+			store_session_id "$provider" "$session_key" "$discovered_session" "$selected_model"
+		fi
+		_run_result_label="permission_required"
+		_run_failure_reason="$_run_result_label"
+		_run_classification_source="opencode_permission_event"
+		_run_classification_pattern="permission.asked"
+		print_warning "$selected_model requested a capability outside the worker permission boundary — pausing for maintainer approval"
+		return 84
+	fi
+
 	if [[ "${exit_code:-}" == "0" ]]; then
 		if [[ "$activity_detected" != "1" ]]; then
 			_run_result_label="no_activity"
@@ -1064,14 +1081,21 @@ _execute_run_attempt() {
 	# non-empty slug. The role+session_key guard here is no longer needed —
 	# _cmd_run_prepare sets the slug for all roles unconditionally.
 
-	local output_file exit_code_file exit_code
+	local output_file exit_code_file exit_code permission_request_file
 	local start_ms end_ms duration_ms
 	local resource_stop_file resource_result_file resource_sampler_pid
 	local _metric_kill_reason=""
 	start_ms=$(python3 -c 'import time; print(int(time.time() * 1000))' 2>/dev/null || printf '%s' "0")
 	output_file=$(_create_headless_runtime_temp_file) || return 1
-	exit_code_file=$(_create_headless_runtime_temp_file) || {
+	permission_request_file=$(_create_headless_runtime_temp_file) || {
 		rm -f "$output_file"
+		return 1
+	}
+	rm -f "$permission_request_file" 2>/dev/null || true
+	export AIDEVOPS_PERMISSION_REQUEST_FILE="$permission_request_file"
+	_run_permission_request_file="$permission_request_file"
+	exit_code_file=$(_create_headless_runtime_temp_file) || {
+		rm -f "$output_file" "$permission_request_file"
 		return 1
 	}
 	resource_stop_file=$(_create_headless_runtime_temp_file) || {
@@ -1281,7 +1305,9 @@ _execute_run_attempt() {
 			_rl_metric_session_id=$(extract_session_id_from_output "$output_file" 2>/dev/null || true)
 			_rl_metric_output_file=$(_metric_failure_excerpt_path "$output_file" "$session_key")
 		fi
-		rm -f "$_rl_fast_sentinel" "$output_file" 2>/dev/null || true
+		rm -f "$_rl_fast_sentinel" "$output_file" "$permission_request_file" 2>/dev/null || true
+		_run_permission_request_file=""
+		unset AIDEVOPS_PERMISSION_REQUEST_FILE
 		# One literal here; _cmd_run_finish elif is a second. Keeping total at 2
 		# avoids the repeated-string-literal ratchet gate (threshold: >=3).
 		_run_result_label="rate_limit_fast"
@@ -1352,6 +1378,11 @@ _execute_run_attempt() {
 		handle_exit=0
 	else
 		handle_exit=$?
+	fi
+	if [[ "$handle_exit" -ne 84 ]]; then
+		rm -f "$permission_request_file" 2>/dev/null || true
+		_run_permission_request_file=""
+		unset AIDEVOPS_PERMISSION_REQUEST_FILE
 	fi
 	_run_metric_output_file="$_metric_output_file"
 	_run_metric_session_id="$_metric_session_id"
@@ -1640,6 +1671,11 @@ cmd_run() {
 			# repeated-string-literal ratchet gate (threshold: >=3 distinct occurrences).
 			_cmd_run_finish "$session_key" "$_run_result_label"
 			return 0
+		fi
+
+		if [[ "$attempt_exit" -eq 84 ]]; then
+			_cmd_run_finish "$session_key" "$_run_result_label" "$work_dir"
+			return $?
 		fi
 
 		# GH#23037: Handle transient service interruptions separately from

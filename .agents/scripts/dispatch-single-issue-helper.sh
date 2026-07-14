@@ -65,8 +65,10 @@ _DSI_WORKTREE_HELPER="${_DSI_SCRIPT_DIR}/worktree-helper.sh"
 _DSI_DEDUP_HELPER="${_DSI_SCRIPT_DIR}/dispatch-dedup-helper.sh"
 _DSI_VALIDATOR_HELPER="${_DSI_SCRIPT_DIR}/pre-dispatch-validator-helper.sh"
 _DSI_BACKOFF_HELPER="${_DSI_SCRIPT_DIR}/dispatch-backoff-helper.sh"
+_DSI_APPROVAL_HELPER="${_DSI_SCRIPT_DIR}/approval-helper.sh"
 _DSI_DISPATCH_BASE_BRANCH=""
 _DSI_STATE_RECOVERING="recovering"
+_DSI_UNKNOWN_VALUE="<unknown>"
 _DSI_CLAIM_WON=0
 _DSI_CLAIM_COMMENT_ID=""
 
@@ -174,7 +176,8 @@ _dsi_target_is_pull_request() {
 #######################################
 _dsi_guard_no_interactive_hold() {
 	local labels_csv="$1"
-	local labels_with_commas=",${labels_csv},"
+	local labels_with_commas=""
+	labels_with_commas=$(printf ',%s,' "$labels_csv")
 	if [[ "$labels_with_commas" == *",status:in-review,"* && "$labels_with_commas" != *",auto-dispatch,"* ]]; then
 		_dsi_err "Target carries an interactive review hold label; refusing worker dispatch (GH#22948)"
 		return 1
@@ -206,6 +209,47 @@ _dsi_guard_no_maintainer_review_required() {
 	fi
 
 	return 0
+}
+
+_dsi_guard_no_maintainer_permission_required() {
+	local labels_csv="$1"
+	local issue_number="$2"
+	local repo_slug="$3"
+	local labels_with_commas=""
+	labels_with_commas=$(printf ',%s,' "$labels_csv")
+	if [[ "$labels_with_commas" == *",needs-maintainer-permissions,"* ]]; then
+		_dsi_err "Issue #${issue_number} in ${repo_slug} is waiting for a scoped maintainer permission grant; refusing manual worker dispatch"
+		_dsi_info "  Run the request-specific 'sudo aidevops approve permissions ... --request perm-...' command from the issue comment."
+		return 1
+	fi
+	return 0
+}
+
+_dsi_guard_permission_history_verified() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local events_json labeled_count verification
+	events_json=$(gh api "repos/${repo_slug}/issues/${issue_number}/events?per_page=100" --paginate --slurp 2>/dev/null) || {
+		_dsi_err "Unable to inspect permission-request history for issue #${issue_number} in ${repo_slug}; refusing manual worker dispatch"
+		return 1
+	}
+	labeled_count=$(jq '[.[][]? | select(.event == "labeled" and .label.name == "needs-maintainer-permissions")] | length' <<<"$events_json" 2>/dev/null) || {
+		_dsi_err "Permission-request history for issue #${issue_number} in ${repo_slug} is malformed; refusing manual worker dispatch"
+		return 1
+	}
+	[[ "$labeled_count" -gt 0 ]] || return 0
+	[[ -x "$_DSI_APPROVAL_HELPER" ]] || {
+		_dsi_err "Permission verification helper is unavailable; refusing manual worker dispatch"
+		return 1
+	}
+	verification=$("$_DSI_APPROVAL_HELPER" verify-permissions issue "$issue_number" "$repo_slug" 2>/dev/null) || true
+	if [[ "$verification" == "VERIFIED" ]]; then
+		_dsi_err "Issue #${issue_number} in ${repo_slug} has a signed grant bound to its original worker session and worktree; a new manual worker cannot consume it"
+		_dsi_info "  Resume through the original pulse/worker path so the bound pending request can be loaded safely."
+		return 1
+	fi
+	_dsi_err "Issue #${issue_number} in ${repo_slug} has permission-request history without a current matching signed grant (${verification:-NO_APPROVAL}); refusing manual worker dispatch"
+	return 1
 }
 
 #######################################
@@ -595,7 +639,7 @@ _dsi_find_log_for_pid() {
 			return 0
 		fi
 	done
-	printf '%s\n' "<unknown>"
+	printf '%s\n' "$_DSI_UNKNOWN_VALUE"
 	return 0
 }
 
@@ -625,7 +669,7 @@ _dsi_find_live_dispatch() {
 		if [[ -n "$target_worktree" && "$worktree_path" == "$target_worktree" ]]; then
 			log_path=$(_dsi_find_log_for_pid "$issue_number" "$pid")
 			session_key=$(printf '%s' "$cmd" | sed -n 's/.*--session-key[[:space:]]\([^[:space:]]*\).*/\1/p' | head -1)
-			printf 'process\t%s\t%s\t%s\t%s\n' "$pid" "$log_path" "$worktree_path" "${session_key:-<unknown>}"
+			printf 'process\t%s\t%s\t%s\t%s\n' "$pid" "$log_path" "$worktree_path" "${session_key:-$_DSI_UNKNOWN_VALUE}"
 			return 0
 		fi
 
@@ -634,7 +678,7 @@ _dsi_find_live_dispatch() {
 		[[ "$worker_repo" == "$repo_slug" ]] || continue
 		log_path=$(_dsi_find_log_for_pid "$issue_number" "$pid")
 		session_key=$(printf '%s' "$cmd" | sed -n 's/.*--session-key[[:space:]]\([^[:space:]]*\).*/\1/p' | head -1)
-		printf 'process\t%s\t%s\t%s\t%s\n' "$pid" "$log_path" "${worktree_path:-<unknown>}" "${session_key:-<unknown>}"
+		printf 'process\t%s\t%s\t%s\t%s\n' "$pid" "$log_path" "${worktree_path:-$_DSI_UNKNOWN_VALUE}" "${session_key:-$_DSI_UNKNOWN_VALUE}"
 		return 0
 	done < <(_dsi_ps_worker_lines)
 
@@ -654,9 +698,9 @@ _dsi_find_ledger_dispatch() {
 	entry=$("$_DSI_LEDGER_HELPER" check-issue --issue "$issue_number" --repo "$repo_slug" 2>/dev/null) || entry=""
 	[[ -n "$entry" ]] || return 1
 	pid=$(printf '%s' "$entry" | jq -r '.pid // "?"')
-	session_key=$(printf '%s' "$entry" | jq -r '.session_key // "<unknown>"')
+	session_key=$(printf '%s' "$entry" | jq -r --arg unknown "$_DSI_UNKNOWN_VALUE" '.session_key // $unknown')
 	worktree_path=$(printf '%s' "$entry" | jq -r '.worktree_path // ""')
-	[[ -n "$worktree_path" && "$worktree_path" != "null" ]] || worktree_path="<unknown>"
+	[[ -n "$worktree_path" && "$worktree_path" != "null" ]] || worktree_path="$_DSI_UNKNOWN_VALUE"
 	log_path=$(_dsi_find_log_for_pid "$issue_number" "$pid")
 	printf 'ledger\t%s\t%s\t%s\t%s\n' "$pid" "$log_path" "$worktree_path" "$session_key"
 	return 0
@@ -1259,6 +1303,8 @@ cmd_dispatch() {
 	fi
 	_dsi_guard_no_interactive_hold "$_DSI_ISSUE_LABELS" || return 1
 	_dsi_guard_no_maintainer_review_required "$_DSI_ISSUE_LABELS" "$issue_number" "$repo_slug" || return 1
+	_dsi_guard_no_maintainer_permission_required "$_DSI_ISSUE_LABELS" "$issue_number" "$repo_slug" || return 1
+	_dsi_guard_permission_history_verified "$issue_number" "$repo_slug" || return 1
 	_dsi_check_parent_task "$_DSI_ISSUE_LABELS" || return 1
 
 	# Step 3: dedup check (informational under --dry-run, blocking otherwise).
