@@ -35,6 +35,14 @@ def extract_opencode_db(path: Path, session_id: str) -> tuple[list[ToolResult], 
                 result = result_from_opencode_part(part)
                 if result is not None:
                     results.append(result)
-    if row_count == 0:
-        raise ValueError("session transcript was not found")
+        if row_count == 0:
+            try:
+                session_exists = connection.execute(
+                    "SELECT 1 FROM session WHERE id = ? LIMIT 1", (session_id,)
+                ).fetchone()
+            except sqlite3.OperationalError:
+                session_exists = None
+            if session_exists:
+                raise ValueError("session transcript is not ready")
+            raise ValueError("session transcript was not found")
     return results, parse_errors
