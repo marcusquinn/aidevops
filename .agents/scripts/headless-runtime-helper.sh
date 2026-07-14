@@ -159,7 +159,7 @@ _invoke_opencode() {
 		print_info "[lifecycle] db_isolated dir=$isolated_data_dir pid=$$"
 		_sync_worker_db_migration_metadata "$isolated_data_dir"
 		if [[ -n "${_invoke_persisted_session:-}" ]]; then
-			_seed_worker_db_session_context "$isolated_data_dir" "$_invoke_persisted_session"
+			_seed_worker_db_session_context "$isolated_data_dir" "$_invoke_persisted_session" "${_invoke_work_dir:-}"
 			print_info "[lifecycle] db_seeded session=$_invoke_persisted_session pid=$$"
 		fi
 
@@ -1090,6 +1090,10 @@ _execute_run_attempt() {
 	# GH#23958: expose the persisted OpenCode session to _invoke_opencode so
 	# isolated worker DBs can be seeded before --session <id> --continue runs.
 	_invoke_persisted_session="$persisted_session"
+	# GH#27560: persisted sessions retain their original worktree directory.
+	# Expose the current worker directory so isolated DB seeding can rebind the
+	# continuation without mutating the shared interactive session record.
+	_invoke_work_dir="$work_dir"
 
 	# t3077: expose session_key to the verbose lifecycle emitter via the
 	# convention WORKER_SESSION_KEY (read by _emit_verbose_checkpoint).

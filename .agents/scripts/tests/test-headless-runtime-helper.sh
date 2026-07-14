@@ -1322,6 +1322,41 @@ SQL
 	return 0
 }
 
+test_seed_worker_db_session_context_rebinds_replacement_worktree() {
+	local shared_dir="${HOME}/.local/share/opencode"
+	local isolated_dir="${TEST_ROOT}/isolated-opencode-rebound"
+	local replacement_dir="${TEST_ROOT}/replacement-worktree"
+	local shared_db="${shared_dir}/opencode.db"
+	local worker_db="${isolated_dir}/opencode/opencode.db"
+	local stale_dir="${TEST_ROOT}/removed-worktree"
+	mkdir -p "$shared_dir" "${isolated_dir}/opencode" "$replacement_dir"
+	rm -f "$shared_db" "$worker_db"
+
+	sqlite3 "$shared_db" <<SQL
+CREATE TABLE project (id TEXT PRIMARY KEY, name TEXT);
+CREATE TABLE session (id TEXT PRIMARY KEY, project_id TEXT NOT NULL, directory TEXT NOT NULL, title TEXT NOT NULL);
+CREATE TABLE message (id TEXT PRIMARY KEY, session_id TEXT NOT NULL, data TEXT NOT NULL);
+INSERT INTO project VALUES ('project-keep', 'Keep Project');
+INSERT INTO session VALUES ('session-keep', 'project-keep', '${stale_dir}', 'Keep');
+INSERT INTO message VALUES ('message-keep', 'session-keep', 'one');
+SQL
+
+	_seed_worker_db_session_context "$isolated_dir" "session-keep" "$replacement_dir"
+
+	local worker_directory="" shared_directory="" expected_replacement=""
+	expected_replacement=$(cd "$replacement_dir" && pwd -P)
+	worker_directory=$(sqlite3 "$worker_db" "SELECT directory FROM session WHERE id = 'session-keep';")
+	shared_directory=$(sqlite3 "$shared_db" "SELECT directory FROM session WHERE id = 'session-keep';")
+	if [[ "$worker_directory" == "$expected_replacement" && "$shared_directory" == "$stale_dir" ]]; then
+		print_result "seed worker DB rebinds stale session to replacement worktree only in isolation" 0
+		return 0
+	fi
+
+	print_result "seed worker DB rebinds stale session to replacement worktree only in isolation" 1 \
+		"worker_directory=$worker_directory shared_directory=$shared_directory"
+	return 0
+}
+
 test_seed_worker_db_session_context_copies_migration_metadata() {
 	local shared_dir="${HOME}/.local/share/opencode"
 	local isolated_dir="${TEST_ROOT}/isolated-opencode-metadata"
@@ -3037,6 +3072,7 @@ main() {
 	test_sandbox_passthrough_scopes_provider_env
 	test_copy_scoped_opencode_auth_keeps_selected_provider_only
 	test_seed_worker_db_session_context_copies_only_selected_session
+	test_seed_worker_db_session_context_rebinds_replacement_worktree
 	test_seed_worker_db_session_context_copies_migration_metadata
 	test_seed_worker_db_session_context_uses_backup_for_fresh_db
 	test_seed_worker_db_session_context_vacuums_pruned_backup
