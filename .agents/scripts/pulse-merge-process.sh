@@ -1724,6 +1724,27 @@ _auto_merge_stuck_seconds() {
 	return 0
 }
 
+# Disarm an already-deferred merge whose mutable approval state now requires a
+# synchronous final gate. Draft conversion is the independent server-side hold
+# when GitHub rejects disable-auto.
+_stop_external_native_auto_merge() {
+	local pr_number="$1"
+	local repo_slug="$2"
+	local disable_output=""
+	local draft_hold_output=""
+
+	if disable_output=$(gh pr merge "$pr_number" --repo "$repo_slug" --disable-auto 2>&1); then
+		echo "[pulse-merge] PR #${pr_number} in ${repo_slug}: disabled deferred native auto-merge because external approval state must be revalidated at the actual merge call" >>"$LOGFILE"
+		return 2
+	fi
+	if draft_hold_output=$(gh pr ready "$pr_number" --repo "$repo_slug" --undo 2>&1); then
+		echo "[pulse-merge] PR #${pr_number} in ${repo_slug}: disable-auto failed, so PR was returned to draft to stop deferred merge pending fresh approval: ${disable_output}" >>"$LOGFILE"
+		return 2
+	fi
+	echo "[pulse-merge] SECURITY HOLD FAILED for PR #${pr_number} in ${repo_slug}: could not disable external auto-merge or return PR to draft; manual intervention required. disable=${disable_output}; draft=${draft_hold_output}" >>"$LOGFILE"
+	return 3
+}
+
 #######################################
 # Conditionally hand a PR off to GitHub native auto-merge (t3070).
 #
@@ -1756,7 +1777,6 @@ _auto_merge_stuck_seconds() {
 # fallback (returns 1 path) — this trade-off is acceptable for owned-org
 # repos where allow_auto_merge=true is bulk-enabled and CI is fast.
 #
-# Args: $1=pr_number, $2=repo_slug
 # Args: $1=pr_number, $2=repo_slug, $3=require synchronous final gate (0|1)
 # Returns: 0=native-auto requested/deferred, 1=fall through,
 #          2=defer without native auto-merge so mutable approval state is
@@ -1780,21 +1800,8 @@ _set_native_auto_merge_or_skip() {
 
 	if [[ -n "$_existing_auto" ]]; then
 		if [[ "$require_synchronous_final_gate" == "1" ]]; then
-			local _disable_bound_auto_output=""
-			if _disable_bound_auto_output=$(gh pr merge "$pr_number" --repo "$repo_slug" --disable-auto 2>&1); then
-				echo "[pulse-merge] PR #${pr_number} in ${repo_slug}: disabled deferred native auto-merge because external approval state must be revalidated at the actual merge call" >>"$LOGFILE"
-				return 2
-			fi
-			# If GitHub refuses disable-auto, converting the PR back to draft is a
-			# second independent server-side merge stop. Never continue to another
-			# merge path while an external auto-merge may remain armed.
-			local _draft_hold_output=""
-			if _draft_hold_output=$(gh pr ready "$pr_number" --repo "$repo_slug" --undo 2>&1); then
-				echo "[pulse-merge] PR #${pr_number} in ${repo_slug}: disable-auto failed, so PR was returned to draft to stop deferred merge pending fresh approval: ${_disable_bound_auto_output}" >>"$LOGFILE"
-				return 2
-			fi
-			echo "[pulse-merge] SECURITY HOLD FAILED for PR #${pr_number} in ${repo_slug}: could not disable external auto-merge or return PR to draft; manual intervention required. disable=${_disable_bound_auto_output}; draft=${_draft_hold_output}" >>"$LOGFILE"
-			return 3
+			_stop_external_native_auto_merge "$pr_number" "$repo_slug"
+			return $?
 		fi
 		# Auto-merge already requested — check for the GitHub auto_merge wedge
 		# before unconditionally deferring (t3192).

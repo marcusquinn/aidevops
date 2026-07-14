@@ -69,6 +69,8 @@
 # Include guard — prevent double-sourcing.
 [[ -n "${_PULSE_MERGE_LOADED:-}" ]] && return 0
 _PULSE_MERGE_LOADED=1
+PULSE_REVIEW_EVIDENCE_SCHEMA="aidevops.review-gate-evidence/v1"
+PULSE_UNKNOWN_STATE="UNKNOWN"
 
 # t2863: Module-level variable defaults (set -u guards).
 # When this module is sourced standalone (e.g. pulse-merge-routine.sh, test
@@ -426,26 +428,26 @@ _check_pr_merge_gates() {
 	local rbg_helper="${AGENTS_DIR:-$HOME/.aidevops/agents}/scripts/review-bot-gate-helper.sh"
 	if [[ -f "$rbg_helper" ]]; then
 		if _is_trusted_dependabot_update_pr "$pr_number" "$repo_slug" "$pr_author"; then
-			_PULSE_REVIEW_GATE_EVIDENCE=$(jq -nc --arg repo "$repo_slug" --arg pr "$pr_number" --arg head "$expected_head_sha" --arg author "$pr_author" \
-				'{schema:"aidevops.review-gate-evidence/v1",repo:$repo,pr:$pr,head_sha:$head,status:"SKIP_TRUSTED_DEPENDABOT",author:{login:$author,association:"BOT",class:"trusted-bot"},permitted:true,reason:"trusted_dependabot_policy",state:"pass",merge_gate:"clear",exit_code:0}')
+			_PULSE_REVIEW_GATE_EVIDENCE=$(jq -nc --arg schema "$PULSE_REVIEW_EVIDENCE_SCHEMA" --arg repo "$repo_slug" --arg pr "$pr_number" --arg head "$expected_head_sha" --arg author "$pr_author" \
+				'{schema:$schema,repo:$repo,pr:$pr,head_sha:$head,status:"SKIP_TRUSTED_DEPENDABOT",author:{login:$author,association:"BOT",class:"trusted-bot"},permitted:true,reason:"trusted_dependabot_policy",state:"pass",merge_gate:"clear",exit_code:0}')
 			echo "[pulse-wrapper] Review bot gate: SKIP for trusted Dependabot dependency update PR #${pr_number} in ${repo_slug} (GH#24473)" >>"$LOGFILE"
 			return 0
 		fi
 		local rbg_result="" rbg_status=""
 		rbg_result=$(bash "$rbg_helper" status-json "$pr_number" "$repo_slug" 2>/dev/null) || rbg_result=""
-		rbg_status=$(jq -r '.status // "UNKNOWN"' <<<"$rbg_result" 2>/dev/null) || rbg_status="UNKNOWN"
+		rbg_status=$(jq -r --arg unknown "$PULSE_UNKNOWN_STATE" '.status // $unknown' <<<"$rbg_result" 2>/dev/null) || rbg_status="$PULSE_UNKNOWN_STATE"
 		# #aidevops:trust-boundary — persist only typed, permitted evidence for
 		# this exact repository, PR, and head. External SKIP/rate-limit outcomes
 		# and malformed helper output fail closed.
-		if jq -e --arg repo "$repo_slug" --arg pr "$pr_number" --arg head "$expected_head_sha" '
-			.schema == "aidevops.review-gate-evidence/v1"
+		if jq -e --arg schema "$PULSE_REVIEW_EVIDENCE_SCHEMA" --arg repo "$repo_slug" --arg pr "$pr_number" --arg head "$expected_head_sha" '
+			.schema == $schema
 			and .repo == $repo and (.pr | tostring) == $pr and .head_sha == $head
 			and .permitted == true and .state == "pass" and .merge_gate == "clear"
 		' <<<"$rbg_result" >/dev/null 2>&1; then
 			_PULSE_REVIEW_GATE_EVIDENCE=$(jq -cS . <<<"$rbg_result")
 			echo "[pulse-wrapper] Review bot gate: ${rbg_status} for PR #${pr_number} in ${repo_slug} (typed current-head evidence)" >>"$LOGFILE"
 		else
-			echo "[pulse-wrapper] Review bot gate: ${rbg_status:-UNKNOWN} for PR #${pr_number} in ${repo_slug} — missing or unpermitted current-head evidence; skipping merge" >>"$LOGFILE"
+			echo "[pulse-wrapper] Review bot gate: ${rbg_status:-${PULSE_UNKNOWN_STATE}} for PR #${pr_number} in ${repo_slug} — missing or unpermitted current-head evidence; skipping merge" >>"$LOGFILE"
 			return 1
 		fi
 	fi
@@ -471,8 +473,8 @@ _pulse_merge_refresh_review_gate_evidence() {
 	local rbg_helper="${AGENTS_DIR:-$HOME/.aidevops/agents}/scripts/review-bot-gate-helper.sh"
 	local refreshed_evidence="" evidence_status="" dependabot_author=""
 
-	if jq -e --arg repo "$repo_slug" --arg pr "$pr_number" --arg head "$expected_head_sha" '
-		.schema == "aidevops.review-gate-evidence/v1"
+	if jq -e --arg schema "$PULSE_REVIEW_EVIDENCE_SCHEMA" --arg repo "$repo_slug" --arg pr "$pr_number" --arg head "$expected_head_sha" '
+		.schema == $schema
 		and .repo == $repo and (.pr | tostring) == $pr and .head_sha == $head
 		and .status == "SKIP_TRUSTED_DEPENDABOT" and .permitted == true
 	' <<<"$current_evidence" >/dev/null 2>&1; then
@@ -490,8 +492,8 @@ _pulse_merge_refresh_review_gate_evidence() {
 	fi
 	refreshed_evidence=$(bash "$rbg_helper" status-json "$pr_number" "$repo_slug" 2>/dev/null) || refreshed_evidence=""
 	if ! _pmrc_review_evidence_permits_advisory "$refreshed_evidence" "$repo_slug" "$pr_number" "$expected_head_sha"; then
-		evidence_status=$(jq -r '.status // "UNKNOWN"' <<<"$refreshed_evidence" 2>/dev/null) || evidence_status="UNKNOWN"
-		echo "[pulse-merge] final trust gate: current-head review evidence is ${evidence_status:-UNKNOWN} or unpermitted for PR #${pr_number} in ${repo_slug} — merge blocked" >>"$LOGFILE"
+		evidence_status=$(jq -r --arg unknown "$PULSE_UNKNOWN_STATE" '.status // $unknown' <<<"$refreshed_evidence" 2>/dev/null) || evidence_status="$PULSE_UNKNOWN_STATE"
+		echo "[pulse-merge] final trust gate: current-head review evidence is ${evidence_status:-${PULSE_UNKNOWN_STATE}} or unpermitted for PR #${pr_number} in ${repo_slug} — merge blocked" >>"$LOGFILE"
 		return 1
 	fi
 	_PULSE_REVIEW_GATE_EVIDENCE=$(jq -cS . <<<"$refreshed_evidence") || {
@@ -1179,8 +1181,8 @@ _process_single_ready_pr() {
 	# check and blocking ALL merges across every repo (observed downstream).
 	local _RS=$'\x1e'
 	IFS="$_RS" read -r pr_number pr_mergeable pr_review pr_author pr_title pr_updated_at pr_head_ref_oid pr_head_ref_name pr_base_ref_name pr_labels pr_is_draft < <(
-		printf '%s' "$pr_obj" | jq -r \
-			'"\(.number // "")\u001e\(.mergeable // "UNKNOWN")\u001e\(if ((has("reviewDecision") | not) or .reviewDecision == null or (.reviewDecision | tostring | length) == 0) then "UNKNOWN" else .reviewDecision end)\u001e\(.author.login // "unknown")\u001e\(.title // "")\u001e\(.updatedAt // "")\u001e\(.headRefOid // "")\u001e\(.headRefName // "")\u001e\(.baseRefName // "")\u001e\([(.labels // [])[].name] | join(","))\u001e\(.isDraft // false | tostring)"'
+		printf '%s' "$pr_obj" | jq -r --arg unknown "$PULSE_UNKNOWN_STATE" \
+			'"\(.number // "")\u001e\(.mergeable // $unknown)\u001e\(if ((has("reviewDecision") | not) or .reviewDecision == null or (.reviewDecision | tostring | length) == 0) then $unknown else .reviewDecision end)\u001e\(.author.login // "unknown")\u001e\(.title // "")\u001e\(.updatedAt // "")\u001e\(.headRefOid // "")\u001e\(.headRefName // "")\u001e\(.baseRefName // "")\u001e\([(.labels // [])[].name] | join(","))\u001e\(.isDraft // false | tostring)"'
 	)
 	_pmp_normalize_mergeable_state_into pr_mergeable "$pr_mergeable"
 	_pmp_normalize_review_decision_into pr_review "$pr_review"
@@ -1248,7 +1250,7 @@ _process_single_ready_pr() {
 			# has a UNKNOWN-retry loop so we reuse it.
 			local _refetched_mergeable
 			_refetched_mergeable=$(gh_pr_view "$pr_number" --repo "$repo_slug" \
-				--json mergeable --jq '.mergeable // "UNKNOWN"' 2>/dev/null) || _refetched_mergeable="UNKNOWN"
+				--json mergeable --jq ".mergeable // \"${PULSE_UNKNOWN_STATE}\"" 2>/dev/null) || _refetched_mergeable="$PULSE_UNKNOWN_STATE"
 			pr_mergeable="$_refetched_mergeable"
 			_pmp_normalize_mergeable_state_into pr_mergeable "$pr_mergeable"
 			echo "[pulse-wrapper] Merge pass: PR #${pr_number} in ${repo_slug} — update-branch succeeded, refetched mergeable=${pr_mergeable} (t2116)" >>"$LOGFILE"

@@ -159,7 +159,7 @@ teardown_test_env() {
 # into the test shell. _set_native_auto_merge_or_skip calls
 # _auto_merge_stuck_seconds (t3192), so we extract that too.
 define_helpers_under_test() {
-	local src_stuck src_repo_allow src_extract_state src_existing_green_behind src_green_behind src_set_native
+	local src_stuck src_repo_allow src_extract_state src_existing_green_behind src_green_behind src_stop_external src_set_native
 	src_stuck=$(awk '
 		/^_auto_merge_stuck_seconds\(\)[[:space:]]*\{[[:space:]]*$/, /^\}[[:space:]]*$/ { print }
 	' "$PROCESS_SCRIPT")
@@ -178,7 +178,10 @@ define_helpers_under_test() {
 	src_set_native=$(awk '
 		/^_set_native_auto_merge_or_skip\(\)[[:space:]]*\{[[:space:]]*$/, /^\}[[:space:]]*$/ { print }
 	' "$PROCESS_SCRIPT")
-	if [[ -z "$src_stuck" || -z "$src_repo_allow" || -z "$src_extract_state" || -z "$src_existing_green_behind" || -z "$src_green_behind" || -z "$src_set_native" ]]; then
+	src_stop_external=$(awk '
+		/^_stop_external_native_auto_merge\(\)[[:space:]]*\{[[:space:]]*$/, /^\}[[:space:]]*$/ { print }
+	' "$PROCESS_SCRIPT")
+	if [[ -z "$src_stuck" || -z "$src_repo_allow" || -z "$src_extract_state" || -z "$src_existing_green_behind" || -z "$src_green_behind" || -z "$src_stop_external" || -z "$src_set_native" ]]; then
 		printf 'ERROR: could not extract helpers from %s\n' "$PROCESS_SCRIPT" >&2
 		return 1
 	fi
@@ -192,6 +195,8 @@ define_helpers_under_test() {
 	eval "$src_existing_green_behind"
 	# shellcheck disable=SC1090
 	eval "$src_green_behind"
+	# shellcheck disable=SC1090
+	eval "$src_stop_external"
 	# shellcheck disable=SC1090
 	eval "$src_set_native"
 	gh_pr_view() {

@@ -172,6 +172,7 @@ _pmp_review_decision_is_unknown() {
 	return $?
 }
 
+PULSE_UNKNOWN_STATE="UNKNOWN"
 _resolve_pr_mergeable_status() { return 0; }
 _extract_linked_issue() { printf '123'; return 0; }
 _check_pr_merge_gates() { return 0; }

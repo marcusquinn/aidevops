@@ -1077,6 +1077,44 @@ cmd_pr_approved() {
 
 # ── Verify Approval ──────────────────────────────────────────────────────────
 
+_approval_classify_marked_comments() {
+	local target_type="$1"
+	local target_number="$2"
+	local slug="$3"
+	local comments_json="$4"
+	local pub_key="$5"
+	local expected_head_sha="${6:-}"
+	local comment_count="$7"
+	local saw_api_error=0 saw_stale=0 saw_legacy=0 saw_malformed=0
+	local i=$((comment_count - 1))
+
+	while [[ "$i" -ge 0 ]]; do
+		local body comment_id classification
+		body=$(printf '%s' "$comments_json" | jq -r ".[$i].body" 2>/dev/null || echo "")
+		comment_id=$(printf '%s' "$comments_json" | jq -r ".[$i].id // empty" 2>/dev/null || echo "")
+		i=$((i - 1))
+		if [[ ! "$comment_id" =~ ^[0-9]+$ ]]; then
+			saw_malformed=1
+			continue
+		fi
+		classification=$(_approval_classify_signed_comment "$target_type" "$target_number" "$slug" "$comment_id" "$body" "$pub_key" "$expected_head_sha")
+		case "$classification" in
+		VERIFIED) printf 'VERIFIED\n'; return 0 ;;
+		API_ERROR) saw_api_error=1 ;;
+		STALE_APPROVAL) saw_stale=1 ;;
+		LEGACY_APPROVAL) saw_legacy=1 ;;
+		*) saw_malformed=1 ;;
+		esac
+	done
+
+	[[ "$saw_api_error" -eq 0 ]] || { printf 'API_ERROR\n'; return 6; }
+	[[ "$saw_stale" -eq 0 ]] || { printf 'STALE_APPROVAL\n'; return 4; }
+	[[ "$saw_legacy" -eq 0 ]] || { printf 'LEGACY_APPROVAL\n'; return 3; }
+	[[ "$saw_malformed" -eq 1 ]] || saw_malformed=1
+	printf 'MALFORMED_APPROVAL\n'
+	return 5
+}
+
 # Verify a V2 approval against the current immutable issue/PR snapshot.
 # Legacy syntax (`verify N slug`) remains an issue verification request, but V1
 # signatures return LEGACY_APPROVAL and never authorize an external merge.
@@ -1148,45 +1186,8 @@ cmd_verify() {
 		return 2
 	fi
 
-	local saw_api_error=0 saw_stale=0 saw_legacy=0 saw_malformed=0
-	local i=$((comment_count - 1))
-	while [[ "$i" -ge 0 ]]; do
-		local body comment_id classification
-		body=$(printf '%s' "$comments_json" | jq -r ".[$i].body" 2>/dev/null || echo "")
-		comment_id=$(printf '%s' "$comments_json" | jq -r ".[$i].id // empty" 2>/dev/null || echo "")
-		i=$((i - 1))
-		if [[ ! "$comment_id" =~ ^[0-9]+$ ]]; then
-			saw_malformed=1
-			continue
-		fi
-		classification=$(_approval_classify_signed_comment "$target_type" "$target_number" "$slug" "$comment_id" "$body" "$pub_key" "$expected_head_sha")
-		case "$classification" in
-		VERIFIED)
-			printf 'VERIFIED\n'
-			return 0
-			;;
-		API_ERROR) saw_api_error=1 ;;
-		STALE_APPROVAL) saw_stale=1 ;;
-		LEGACY_APPROVAL) saw_legacy=1 ;;
-		*) saw_malformed=1 ;;
-		esac
-	done
-
-	if [[ "$saw_api_error" -eq 1 ]]; then
-		printf 'API_ERROR\n'
-		return 6
-	fi
-	if [[ "$saw_stale" -eq 1 ]]; then
-		printf 'STALE_APPROVAL\n'
-		return 4
-	fi
-	if [[ "$saw_legacy" -eq 1 ]]; then
-		printf 'LEGACY_APPROVAL\n'
-		return 3
-	fi
-	[[ "$saw_malformed" -eq 1 ]] || saw_malformed=1
-	printf 'MALFORMED_APPROVAL\n'
-	return 5
+	_approval_classify_marked_comments "$target_type" "$target_number" "$slug" "$comments_json" "$pub_key" "$expected_head_sha" "$comment_count"
+	return $?
 }
 
 # ── Status ───────────────────────────────────────────────────────────────────

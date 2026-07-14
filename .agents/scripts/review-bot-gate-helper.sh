@@ -72,6 +72,7 @@ KNOWN_BOTS=(
 	"copilot"
 )
 REVIEW_GATE_STATUS_PASS="$(printf 'P%s' 'ASS')"
+RBG_FALSE="false"
 
 # Rate-limit / quota notice patterns — entries that indicate the bot tried to
 # review but was capacity-constrained. Used by grace-period logic
@@ -595,7 +596,7 @@ bot_has_real_review() {
 	local success_status_contexts="${4-}"
 	local success_status_contexts_prepared="${5:-false}"
 	local expected_head_sha="${REVIEW_GATE_EXPECTED_HEAD_SHA:-}"
-	local has_success_status_contexts="false"
+	local has_success_status_contexts="$RBG_FALSE"
 	[[ $# -ge 4 ]] && has_success_status_contexts="true"
 
 	local min_lag
@@ -770,7 +771,7 @@ bot_has_success_status() {
 
 	if [[ $# -lt 4 ]]; then
 		status_contexts=$(_get_success_status_contexts "$pr_number" "$repo") || return 1
-		contexts_are_prepared="false"
+		contexts_are_prepared="$RBG_FALSE"
 	fi
 	[[ -z "$status_contexts" ]] && return 1
 	_status_contexts_match_bot "$bot_login" "$status_contexts" "$contexts_are_prepared" && return 0
@@ -785,7 +786,7 @@ any_bot_has_success_status() {
 
 	if [[ $# -lt 3 ]]; then
 		status_contexts=$(_get_success_status_contexts "$pr_number" "$repo") || return 1
-		contexts_are_prepared="false"
+		contexts_are_prepared="$RBG_FALSE"
 	fi
 	[[ -z "$status_contexts" ]] && return 1
 
@@ -1017,14 +1018,16 @@ do_status_json() {
 	local merge_gate="${blocked_prefix}ked"
 	local status_pass
 	local pr_json_before="" pr_json="" head_sha_before="" head_sha="" author_login="" author_association="" author_class="external"
-	local head_stable="false"
-	local permitted="false" reason="outcome_not_permitted"
+	local head_stable="$RBG_FALSE"
+	local permitted="$RBG_FALSE" reason="outcome_not_permitted"
 	status_pass=$(printf 'P%s' 'ASS')
 
-	pr_json_before=$(gh api "repos/${repo}/pulls/${pr_number}" 2>/dev/null) || pr_json_before=""
+	local pr_api=""
+	pr_api=$(printf 'repos/%s/pulls/%s' "$repo" "$pr_number")
+	pr_json_before=$(gh api "$pr_api" 2>/dev/null) || pr_json_before=""
 	head_sha_before=$(jq -r '.head.sha // ""' <<<"$pr_json_before" 2>/dev/null) || head_sha_before=""
 	output=$(REVIEW_GATE_EXPECTED_HEAD_SHA="$head_sha_before" do_check "$pr_number" "$repo" 2>/dev/null) || rc=$?
-	pr_json=$(gh api "repos/${repo}/pulls/${pr_number}" 2>/dev/null) || pr_json=""
+	pr_json=$(gh api "$pr_api" 2>/dev/null) || pr_json=""
 	if [[ -n "$pr_json" ]]; then
 		head_sha=$(jq -r '.head.sha // ""' <<<"$pr_json" 2>/dev/null) || head_sha=""
 		author_login=$(jq -r '.user.login // ""' <<<"$pr_json" 2>/dev/null) || author_login=""

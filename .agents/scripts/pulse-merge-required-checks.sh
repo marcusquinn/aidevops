@@ -7,6 +7,10 @@
 _PULSE_MERGE_REQUIRED_CHECKS_LOADED=1
 PMRC_CHECK_COMPLETED="completed"
 PMRC_CHECK_SUCCESS="success"
+PMRC_CHECK_FAILURE="failure"
+PMRC_MAINTAINER_GATE="maintainer-gate"
+PMRC_MAINTAINER_GATE_DISPLAY="Maintainer Review & Assignee Gate"
+PMRC_MAINTAINER_GATE_WORKFLOW="gate / Maintainer Review & Assignee Gate"
 : "${_PULSE_MERGE_PREFLIGHT_BLOCKING_CHECKS_JSON:=[]}"
 
 _pmrc_gh_read() {
@@ -39,9 +43,10 @@ _pmrc_snapshot_checks_json() {
 		--paginate --slurp 2>/dev/null) || return 1
 	statuses_json=$(_pmrc_gh_read gh api "repos/${repo_slug}/commits/${head_sha}/status" 2>/dev/null) || return 1
 	checks_json=$(jq -n --argjson pages "$runs_pages" --argjson statuses "$statuses_json" \
-		--arg completed "$PMRC_CHECK_COMPLETED" --arg success "$PMRC_CHECK_SUCCESS" '
+		--arg completed "$PMRC_CHECK_COMPLETED" --arg success "$PMRC_CHECK_SUCCESS" --arg failure "$PMRC_CHECK_FAILURE" \
+		--arg maintainer "$PMRC_MAINTAINER_GATE" --arg maintainer_display "$PMRC_MAINTAINER_GATE_DISPLAY" --arg maintainer_workflow "$PMRC_MAINTAINER_GATE_WORKFLOW" '
 		"pending" as $pending | "in_progress" as $in_progress |
-		"failure" as $failure | "error" as $error |
+		"error" as $error |
 		[
 			$pages[]?.check_runs[]? | {
 				source: "check_run",
@@ -66,20 +71,20 @@ _pmrc_snapshot_checks_json() {
 		| group_by([.source, .name])
 		| map(last)
 		| map(. + {
-			family: (if (.name == "maintainer-gate" or .name == "Maintainer Review & Assignee Gate" or .name == "gate / Maintainer Review & Assignee Gate") then "maintainer-gate" else .name end),
-			family_key: (if (.name == "maintainer-gate" or .name == "Maintainer Review & Assignee Gate" or .name == "gate / Maintainer Review & Assignee Gate") then "maintainer-gate" else (.source + "\u0000" + .name) end)
+			family: (if (.name == $maintainer or .name == $maintainer_display or .name == $maintainer_workflow) then $maintainer else .name end),
+			family_key: (if (.name == $maintainer or .name == $maintainer_display or .name == $maintainer_workflow) then $maintainer else (.source + "\u0000" + .name) end)
 		})
 		| sort_by(.family_key, .name, .source)
 		| group_by(.family_key)
 		| map(
 			. as $members
-			| if .[0].family == "maintainer-gate" then {
-				name: "maintainer-gate",
-				family: "maintainer-gate",
+			| if .[0].family == $maintainer then {
+				name: $maintainer,
+				family: $maintainer,
 				source: "logical_family",
 				status: (if any($members[]; .status != $completed) then $in_progress else $completed end),
 				conclusion: (
-					if any($members[]; (.conclusion == "failure" or .conclusion == "cancelled" or .conclusion == "timed_out" or .conclusion == "action_required" or .conclusion == "startup_failure")) then $failure
+					if any($members[]; (.conclusion == $failure or .conclusion == "cancelled" or .conclusion == "timed_out" or .conclusion == "action_required" or .conclusion == "startup_failure")) then $failure
 					elif all($members[]; (.conclusion == $success or .conclusion == "neutral" or .conclusion == "skipped")) then $success
 					else "" end
 				),
@@ -251,7 +256,7 @@ _pmrc_snapshot_checks_acceptable() {
 	] | @tsv' <<<"$checks_json" 2>/dev/null) || return 1
 	while IFS=$'\t' read -r name family status conclusion required members link; do
 		[[ -n "$name" ]] || continue
-		if [[ "$family" == "maintainer-gate" && "$conclusion" == "failure" ]]; then
+		if [[ "$family" == "$PMRC_MAINTAINER_GATE" && "$conclusion" == "$PMRC_CHECK_FAILURE" ]]; then
 			echo "[pulse-merge] pre-merge snapshot: maintainer-gate family is terminal-failure for PR #${pr_number} in ${repo_slug}; aliases=${members}, required=${required}, active_alias_present=$([[ "$status" != "$PMRC_CHECK_COMPLETED" ]] && printf true || printf false) — merge blocked" >>"$LOGFILE"
 			blockers=$((blockers + 1))
 			continue
@@ -263,7 +268,7 @@ _pmrc_snapshot_checks_acceptable() {
 		case "$conclusion" in
 		success | neutral | skipped) continue ;;
 		esac
-		if [[ "$family" == "maintainer-gate" ]]; then
+		if [[ "$family" == "$PMRC_MAINTAINER_GATE" ]]; then
 			echo "[pulse-merge] pre-merge snapshot: maintainer-gate family is terminal-${conclusion} for PR #${pr_number} in ${repo_slug}; aliases=${members}, required=${required} — merge blocked" >>"$LOGFILE"
 			blockers=$((blockers + 1))
 		elif [[ "$required" == "true" ]]; then
@@ -419,10 +424,8 @@ _check_required_pr_checks_passing_fallback() {
 
 	if [[ "$nonpassing_count" -gt 0 ]]; then
 		local stale_gate_pending_count="" _sg_exit=0
-		stale_gate_pending_count=$(printf '%s' "$checks_json" | jq '
+		stale_gate_pending_count=$(printf '%s' "$checks_json" | jq --arg stable "$PMRC_MAINTAINER_GATE" --arg legacy "$PMRC_MAINTAINER_GATE_DISPLAY" '
 			"pass" as $pass | "PENDING" as $pending |
-			"maintainer-gate" as $stable |
-			"Maintainer Review & Assignee Gate" as $legacy |
 			[.[]?
 			| (.name // "") as $name
 			| select((.bucket // "") != $pass)
@@ -447,9 +450,7 @@ _check_required_pr_checks_passing_fallback() {
 				local status_json="" pending_gate_status_count="" _ps_exit=0
 				status_json=$(_pmrc_gh_read gh api "repos/${repo_slug}/commits/${pr_sha}/status" 2>/dev/null) || status_json=""
 				if [[ -n "$status_json" && "$status_json" != null ]]; then
-					pending_gate_status_count=$(jq '
-						"maintainer-gate" as $stable |
-						"Maintainer Review & Assignee Gate" as $legacy |
+					pending_gate_status_count=$(jq --arg stable "$PMRC_MAINTAINER_GATE" --arg legacy "$PMRC_MAINTAINER_GATE_DISPLAY" '
 						[.statuses[]?
 						| (.context // "") as $name
 						| select(($name == $stable or $name == $legacy)
