@@ -77,6 +77,41 @@ resolve_history_source() {
 	return $?
 }
 
+resolve_opencode_history_source() {
+	local session_id="$1"
+	local configured_source active_source
+	configured_source=$(resolve_history_source "opencode") || return $?
+	if [[ -z "$session_id" || -z "${XDG_DATA_HOME:-}" || "${AIDEVOPS_VAULT_MANAGED_SESSION_HISTORY:-}" == "1" || "${AIDEVOPS_VAULT_MANAGED_SESSION_HISTORY:-}" == "true" ]]; then
+		printf '%s\n' "$configured_source"
+		return 0
+	fi
+	active_source="${XDG_DATA_HOME}/opencode/opencode.db"
+	if [[ "$active_source" == "$configured_source" || ! -f "$active_source" ]]; then
+		printf '%s\n' "$configured_source"
+		return 0
+	fi
+	if python3 - "$active_source" "$session_id" <<'PY' >/dev/null 2>&1
+import sqlite3
+import sys
+from pathlib import Path
+
+database_path = Path(sys.argv[1]).absolute()
+session_id = sys.argv[2]
+uri = f"{database_path.as_uri()}?mode=ro"
+with sqlite3.connect(uri, uri=True) as connection:
+    row = connection.execute(
+        "SELECT 1 FROM session WHERE id = ? LIMIT 1", (session_id,)
+    ).fetchone()
+raise SystemExit(0 if row else 1)
+PY
+	then
+		printf '%s\n' "$active_source"
+		return 0
+	fi
+	printf '%s\n' "$configured_source"
+	return 0
+}
+
 main() {
 	local runtime="" session_id="" source="" source_mode=""
 	local -a analyzer_args=()
@@ -136,7 +171,11 @@ main() {
 	session_id=$(resolve_session "$runtime" "$session_id") || return $?
 
 	if [[ -z "$source" ]]; then
-		source=$(resolve_history_source "$runtime") || return $?
+		if [[ "$runtime" == "opencode" ]]; then
+			source=$(resolve_opencode_history_source "$session_id") || return $?
+		else
+			source=$(resolve_history_source "$runtime") || return $?
+		fi
 	elif [[ "$source_mode" == "db" && "$runtime" == "normalized" ]]; then
 		runtime="opencode"
 	fi
