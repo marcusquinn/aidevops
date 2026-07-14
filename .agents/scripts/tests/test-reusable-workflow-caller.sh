@@ -467,6 +467,12 @@ with open(sys.argv[1]) as reusable_file:
     reusable = yaml.safe_load(reusable_file)
 with open(sys.argv[2]) as caller_file:
     caller = yaml.safe_load(caller_file)
+if not isinstance(reusable, dict):
+    print("FAIL: reusable workflow root must be a mapping")
+    sys.exit(1)
+if not isinstance(caller, dict):
+    print("FAIL: caller workflow root must be a mapping")
+    sys.exit(1)
 
 levels = {"none": 0, "read": 1, "write": 2}
 required = {}
