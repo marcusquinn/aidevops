@@ -842,6 +842,9 @@ jobs:
     steps:
     - name: Checkout code
       uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      with:
+        # Match qlty-regression.yml so git-aware similar-code results are stable.
+        fetch-depth: 0
 
     - name: Install Qlty CLI
       uses: qltysh/qlty-action/install@a19242102d17e497f437d7466aa01b528537e899 # v2.2.0

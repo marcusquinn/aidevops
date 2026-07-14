@@ -113,6 +113,7 @@ STUB
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 HELPER="$SCRIPT_DIR/qlty-smell-threshold-helper.sh"
+WORKFLOW="$SCRIPT_DIR/../../.github/workflows/code-quality.yml"
 TMP_ROOT=$(mktemp -d "${TMPDIR:-/tmp}/qlty-threshold-test.XXXXXX")
 trap 'rm -rf "$TMP_ROOT"' EXIT
 
@@ -124,6 +125,13 @@ export PATH
 
 echo "${TEST_BLUE}=== GH#26017: qlty smell threshold helper tests ===${TEST_NC}"
 echo ""
+
+qlty_threshold_job=$(awk '
+	/^  qlty-smell-threshold:/ { in_job = 1 }
+	in_job { print }
+	/^  sonarcloud:/ { exit }
+' "$WORKFLOW")
+assert_contains "absolute threshold checkout preserves git history" "fetch-depth: 0" "$qlty_threshold_job"
 
 write_stub_qlty empty "$BIN_DIR"
 empty_output=$("$HELPER" "$CONF" 2>&1)
