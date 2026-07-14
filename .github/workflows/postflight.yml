@@ -94,6 +94,13 @@ jobs:
           <<<"$CHECK_RUNS_RESPONSE")
         REMAINING=$(jq '[.check_runs[] | select(.status != "completed")] | length' \
           <<<"$RELEASE_CHECK_RUNS")
+        ADVISORY_PENDING=$(jq '[.advisory_check_runs[]? | select(.status != "completed")] | length' \
+          <<<"$RELEASE_CHECK_RUNS")
+        if [[ "$ADVISORY_PENDING" != "0" ]]; then
+          echo "::warning::$ADVISORY_PENDING non-required advisory check(s) remain non-terminal"
+          jq -r '.advisory_check_runs[] | select(.status != "completed") | "  - Advisory: \(.name): \(.status)"' \
+            <<<"$RELEASE_CHECK_RUNS" || true
+        fi
         if [[ "$REMAINING" != "0" ]]; then
           echo "::error::$REMAINING release-owned check runs remained non-terminal after timeout"
           jq -r '.check_runs[] | select(.status != "completed") | "  - \(.name): \(.status)"' \

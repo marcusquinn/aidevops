@@ -1475,6 +1475,13 @@ cmd_run() {
 		local AIDEVOPS_HEADLESS
 		AIDEVOPS_HEADLESS="$_worker_headless_marker"
 		export AIDEVOPS_HEADLESS
+		print_info "[lifecycle] prelaunch_lease_renew_start session=$session_key pid=$$"
+		if ! _hrw_renew_dispatch_prelaunch_lease "$session_key"; then
+			print_warning "Dispatch prelaunch lease expired before worker startup — deferring session $session_key"
+			_hrw_record_terminal_outcome "$session_key" "deferred" "prelaunch_lease_renewal_failed"
+			return 1
+		fi
+		print_info "[lifecycle] prelaunch_lease_renew_done session=$session_key pid=$$"
 	fi
 
 	print_info "[lifecycle] pre_model_select session=$session_key role=$role tier=${tier_override:-auto} pid=$$"

@@ -1205,10 +1205,16 @@ cmd_claim() {
 
 cmd_transition() {
 	local phase="${1:-}" issue_number="${2:-}" repo_slug="${3:-}" lease_token="${4:-}" session_key="${5:-}"
-	local ttl="${6:-$DISPATCH_READY_LEASE_TTL}"
-	case "$phase" in ready | terminal) ;; *) echo "Error: transition phase must be ready or terminal" >&2; return 1 ;; esac
+	local ttl="${6:-}"
+	case "$phase" in prelaunch | ready | terminal) ;; *) echo "Error: transition phase must be prelaunch, ready, or terminal" >&2; return 1 ;; esac
 	[[ "$issue_number" =~ ^[0-9]+$ && -n "$repo_slug" && -n "$lease_token" ]] || return 1
-	[[ "$ttl" =~ ^[0-9]+$ ]] || ttl="$DISPATCH_READY_LEASE_TTL"
+	if [[ ! "$ttl" =~ ^[0-9]+$ ]]; then
+		if [[ "$phase" == "prelaunch" ]]; then
+			ttl="$DISPATCH_CLAIM_ORPHAN_GRACE"
+		else
+			ttl="$DISPATCH_READY_LEASE_TTL"
+		fi
+	fi
 	local active_claims="" current_phase="" claim_record="" claim_author="" claim_device="" claim_session="" current_login="" current_device=""
 	active_claims=$(_fetch_claims "$issue_number" "$repo_slug") || return 1
 	claim_record=$(printf '%s' "$active_claims" | jq -c --arg token "$lease_token" '[.[] | select(.lease_token == $token)] | last // empty' 2>/dev/null) || claim_record=""
@@ -1221,7 +1227,7 @@ cmd_transition() {
 	current_device=$(_resolve_device_id)
 	[[ -n "$claim_author" && "$current_login" == "$claim_author" ]] || return 1
 	[[ "$current_device" == "$claim_device" && "${session_key:-issue-${issue_number}}" == "$claim_session" ]] || return 1
-	if [[ "$phase" == "ready" && "$current_phase" != "prelaunch" ]]; then
+	if [[ ( "$phase" == "prelaunch" || "$phase" == "ready" ) && "$current_phase" != "prelaunch" ]]; then
 		return 1
 	fi
 	local expires_at="0" now_epoch="" body=""
