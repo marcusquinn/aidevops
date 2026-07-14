@@ -178,6 +178,14 @@ Verify it posted: `gh api "repos/${REPO}/issues/${PR_NUMBER}/comments" --jq '[.[
 full-loop-helper.sh merge "$PR_NUMBER" "$REPO"
 ```
 
+If the merge command reports that required checks are pending, do not run raw `gh pr checks --watch` or replay unchanged snapshots. Wait through the delta-aware exact-head path, then rerun `merge` only after terminal success:
+
+```bash
+full-loop-helper.sh wait-checks "$PR_NUMBER" --repo "$REPO"
+```
+
+Exit `8` remains pending and must resume through the same bounded wait path; exit `1` is terminal check failure and requires exact failed-check diagnostics; exit `2` is indeterminate API failure and must not be treated as success.
+
 Verifies the exact PR head is open, non-draft, free of changes-requested reviews, and has terminal-success required checks before running `review-bot-gate-helper.sh wait`. Historical cancelled optional jobs do not override the current required-check set. It then invokes `gh pr merge --squash` and requires GitHub to report `MERGED`, `mergedAt`, and a merge SHA before finalization. Gate failure or head drift blocks merge. Do NOT call `gh pr merge` directly. `--auto` records a queue request only; it does not claim merge, release, or cleanup completion until GitHub reports merged evidence. For self-modifying fixes, call the committed worktree helper: `"$PWD/.agents/scripts/full-loop-helper.sh" merge "$PR_NUMBER" "$REPO"`.
 
 Check gate without merging: `full-loop-helper.sh pre-merge-gate "$PR_NUMBER" "$REPO"`.
