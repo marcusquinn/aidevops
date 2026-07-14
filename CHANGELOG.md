@@ -10,6 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.32.112] - 2026-07-14
+
+### Fixed
+
+- preserve NMR labels on approval API errors (#27614)
+
 ## [3.32.111] - 2026-07-14
 
 ### Changed
