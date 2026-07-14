@@ -564,7 +564,7 @@ First-pass completion contract:
 1. Before editing, verify the issue is still open and not already satisfied by the default branch, an open/closed PR, or a pushed issue branch. Reuse salvageable commits instead of restarting.
 2. Treat prior structured CI/review feedback in the issue body as cumulative evidence. Address every terminal failing check, including advisory checks, not only the first required failure.
 3. Validate the stated target files and verification commands against the current dependency/runtime versions before implementation.
-4. After the first coherent commit, push and create a draft PR early so progress is durable and visible to every runner; continue on that PR through local and remote verification.
+4. After the first coherent commit, push and create a draft PR early so progress is durable and visible to every runner. Continue implementation and local verification on that PR; do not hand off while it is draft or has unpushed changes. Once the completed exact head is pushed, the PR is non-draft, its merge summary exists, and one immediate remote check shows no terminal failure, attempt merge once. If only asynchronous CI, bot review, human approval, or native auto-merge remains, exit and hand off to pulse. Never poll those gates or bypass approval, review, CI, branch-protection, or security controls.
 5. Do not post routine dispatch, stale, or progress comments. Prefer commits, the PR, check runs, and one final completion or blocker dossier.
 EOF
 	return 0

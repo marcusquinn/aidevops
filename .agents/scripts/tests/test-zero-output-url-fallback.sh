@@ -98,7 +98,10 @@ GH_COMMENT_ZERO_COUNT=0
 GH_COMMENT_METRICS=""
 normal_prompt=$(_dlw_prepare_prompt_for_launch 123 owner/repo "Test issue" "FULL EMBEDDED BRIEF")
 if [[ "$normal_prompt" == *"FULL EMBEDDED BRIEF"* ]] \
-	&& [[ "$normal_prompt" == *"First-pass completion contract"* ]]; then
+	&& [[ "$normal_prompt" == *"First-pass completion contract"* ]] \
+	&& [[ "$normal_prompt" == *"do not hand off while it is draft or has unpushed changes"* ]] \
+	&& [[ "$normal_prompt" == *"Never poll those gates or bypass approval, review, CI, branch-protection, or security controls"* ]] \
+	&& [[ "$normal_prompt" != *"continue on that PR through local and remote verification"* ]]; then
 	pass "below fallback threshold keeps embedded prompt"
 else
 	fail "below fallback threshold keeps embedded prompt" "$normal_prompt"

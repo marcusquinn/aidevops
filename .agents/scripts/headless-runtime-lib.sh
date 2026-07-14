@@ -771,7 +771,7 @@ _worker_headless_contract_execution_text() {
 Commit and PR shortcut:
 After implementing, use full-loop-helper.sh commit-and-pr to collapse commit+push+PR+merge-summary into one call:
   PR_NUMBER=$(full-loop-helper.sh commit-and-pr --issue $WORKER_ISSUE_NUMBER --message "feat: description" --summary "what was done" --testing "how verified")
-Then merge: full-loop-helper.sh merge "$PR_NUMBER"
+Then make one merge attempt: full-loop-helper.sh merge "$PR_NUMBER"
 Exception: if your changes modify full-loop-helper.sh or its sourced helper libraries, commit first and then merge with the committed worktree helper path:
   "$PWD/.agents/scripts/full-loop-helper.sh" merge "$PR_NUMBER" "${GITHUB_REPOSITORY:-marcusquinn/aidevops}"
 This verifies the code that will ship instead of the deployed helper copy from PATH.
@@ -780,18 +780,18 @@ Mandatory behavior:
 4. Never ask for user confirmation, approval, or next steps. No user will respond.
 5. Never emit user-directed language ("If you want...", "Let me know...", "Should I...").
 6. Reading the issue and reading docs are SETUP -- not completion. You MUST continue through implementation, commit, push, and PR creation after setup.
-7. Do not stop at "PR opened" or "in review" states. Continue through review polling, merge readiness checks, merge, and required closing comments.
-8. If merge/close cannot complete, exit only with a clear BLOCKED outcome and evidence (failing check, missing permission, unresolved conflict, or explicit policy gate).
+7. A draft PR is only a durable checkpoint, never completion. Continue until the implementation and required local verification are complete, every intended commit is pushed, the PR is non-draft, the PR head matches local HEAD, and the required MERGE_SUMMARY exists.
+8. Attempt the merge path once. If it merges, finish the required closing comments. If the exact-head non-draft PR has no terminal check failure and only asynchronous CI, review-bot, human approval, or native auto-merge remains, report a post-PR handoff and exit normally. Pulse/webhook automation owns subsequent monitoring. Do not sleep, wait, or poll for those gates, and never bypass, disable, or weaken branch protection, approval, review-bot, CI, or security gates.
 9. Model escalation before BLOCKED (GH#14964): BLOCKED is only valid after exhausting all autonomous solution paths. Before exiting BLOCKED, retry at the thinking tier and let runtime routing choose the available model and reasoning level. Review-policy metadata, nominal GitHub states, and lower-tier model limits are NOT valid blockers on their own.
 
 Activity watchdog constraint -- CRITICAL:
 A continuous watchdog monitors your output. If you produce no tool calls or text
 output for 300 seconds, you will be killed. Therefore:
   - NEVER use sleep/wait/poll longer than 240 seconds.
-  - For review-bot-gate polling, use the --timeout flag (max 240s per poll cycle).
-  - If a CI check or merge is slow, emit a status message between waits to keep
-    the watchdog alive. Any tool call or text output resets the 300s timer.
-  - Prefer short poll intervals (30-60s) with status output between iterations.
+  - Do not use worker-driven polling to wait for post-PR CI or reviews. Perform one
+    immediate state check, act on terminal failures, or hand off pending gates.
+  - Before PR handoff, any required bounded wait must have an actionable result
+    within this invocation and include status output before each wait.
 EOF
 	return 0
 }
@@ -815,9 +815,15 @@ Pre-exit self-check -- MANDATORY:
 Before ending your session, verify ALL of these:
   - At least one commit with implementation changes exists on your branch.
   - A PR exists for your branch: run gh pr list --head YOUR_BRANCH_NAME
+  - The PR is non-draft, local HEAD is pushed and equals the PR headRefOid, and
+    required local verification has passed. A draft or unpushed local commit is
+    an incomplete checkpoint, not a successful handoff.
   - A MERGE_SUMMARY comment exists on the PR (full-loop step 4.2.1). Verify: gh api "repos/${REPO}/issues/${PR_NUMBER}/comments" --jq '[.[] | select(.body | test("<!-- MERGE_SUMMARY -->"))] | length' returns 1. If 0, post it now -- the merge pass uses it for closing comments.
-  - If any check fails, you are NOT done -- continue working.
-  - The only valid exit states are FULL_LOOP_COMPLETE or BLOCKED with evidence.
+  - Check remote state once. Terminal failures are worker-actionable and must not
+    be reported as a successful handoff; pending CI/review alone is handed off.
+  - If any readiness check fails, you are NOT done -- continue working.
+  - Valid exit states are FULL_LOOP_COMPLETE, a verified post-PR handoff, or
+    BLOCKED with evidence. Runtime classification independently validates PR state.
 EOF
 	return 0
 }
