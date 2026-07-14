@@ -310,14 +310,14 @@ else
 fi
 
 # =============================================================================
-# Test 8 — Terminally failed ready PR escalates explicitly
+# Test 8 — Ready PR preserves durable progress for pulse CI repair
 # =============================================================================
 
-run_recover 0 "79|ready_failed" 1
-if echo "$output" | grep -q "STALE_READY_FAILED_ESCALATED"; then
-	print_result "Ready PR with terminal failed checks escalates explicitly" 0
+run_recover 0 "79|ready" 1
+if echo "$output" | grep -q "STALE_PROGRESS_PRESERVED" && ! grep -q "needs-maintainer-review" "$GH_CALLS_FILE"; then
+	print_result "Ready PR preserves durable progress without NMR escalation" 0
 else
-	print_result "Ready PR with terminal failed checks escalates explicitly" 1 "(got: '$output')"
+	print_result "Ready PR preserves durable progress without NMR escalation" 1 "(got: '$output')"
 fi
 
 # A later review-event workflow can exhaust its API quota after the exact-head

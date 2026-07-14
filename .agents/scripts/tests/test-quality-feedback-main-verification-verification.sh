@@ -456,3 +456,22 @@ test_suggestion_fence_with_markdown_list_item_not_yet_applied() {
 	fi
 	return 0
 }
+
+test_cross_pr_dedup_rejects_older_superseded_feedback() {
+	local findings existing result
+	findings='[{"file":".agents/scripts/example.sh","line":42,"body_full":"Older actionable finding","reviewer":"gemini","reviewer_login":"gemini-code-assist[bot]","severity":"medium","url":"https://example.test/comment"}]'
+	existing='[{"number":9001,"state":"OPEN","title":"quality-debt: .agents/scripts/example.sh — PR #27680 review feedback (medium)"}]'
+	result=$(
+		(
+			_append_findings_to_issue() { printf 'unexpected-append'; return 0; }
+			_create_or_append_file_issue "owner/repo" "27675" ".agents/scripts/example.sh" \
+				"$findings" "$existing" "$existing" "false"
+		)
+	)
+	if [[ "$result" == "0" ]]; then
+		print_result "cross-PR dedup rejects older feedback superseded by newer PR" 0
+	else
+		print_result "cross-PR dedup rejects older feedback superseded by newer PR" 1 "$result"
+	fi
+	return 0
+}

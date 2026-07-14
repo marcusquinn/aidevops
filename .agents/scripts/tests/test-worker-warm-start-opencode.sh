@@ -326,6 +326,19 @@ test_launch_script_has_prewarm() {
 		print_result "prewarm_env_var_in_launch_script" 0
 	fi
 
+	local renew_line prewarm_line
+	# shellcheck disable=SC2016 # Match literal runtime variables in helper source.
+	renew_line=$(grep -n '_dlw_renew_prelaunch_lease "\$issue_number"' "$launch_path" | tail -1 | cut -d: -f1)
+	# shellcheck disable=SC2016 # Match literal runtime variables in helper source.
+	prewarm_line=$(grep -n '_dlw_prewarm_opencode_db "\$worker_log"' "$launch_path" | tail -1 | cut -d: -f1)
+	if [[ -z "$renew_line" || -z "$prewarm_line" || "$renew_line" -ge "$prewarm_line" ]]; then
+		print_result "prelaunch_lease_renewed_before_prewarm" 1 \
+			"renew_line=${renew_line:-missing}, prewarm_line=${prewarm_line:-missing}"
+		rc=1
+	else
+		print_result "prelaunch_lease_renewed_before_prewarm" 0
+	fi
+
 	if [[ "$rc" -eq 0 ]]; then return 0; fi
 	return 1
 }

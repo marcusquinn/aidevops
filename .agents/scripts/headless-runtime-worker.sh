@@ -38,7 +38,6 @@ _HRW_TELEMETRY_FAILED="failed"
 _HRW_TELEMETRY_DEFERRED="deferred"
 _HRW_REASON_DRAFT_CHECKPOINT="worker_draft_checkpoint"
 _HRW_REASON_DRAFT_ESCALATION_FAILED="worker_draft_checkpoint_escalation_failed"
-_HRW_REASON_READY_FAILED="worker_ready_failed"
 _HRW_REASON_CLOSED_UNMERGED="worker_closed_unmerged_pr"
 _HRW_EVENT_FAILED="worker.failed"
 _HRW_NMR_LABEL="needs-maintainer-review"
@@ -484,7 +483,6 @@ _hrw_worker_base_commit_state() {
 #   "dirty_worktree"        — uncommitted/untracked edits exist after a crash
 #   "draft_checkpoint"      — exact-head worker draft (durable, incomplete)
 #   "protected_draft"       — interactive/held/NMR/non-worker draft
-#   "ready_failed"          — exact-head ready PR has terminal failed checks
 #   "closed_unmerged"       — exact-head PR closed without merge
 #   "unverified_open_pr"    — issue-search fallback cannot prove exact head
 #   "head_mismatch"         — local HEAD is not the open PR head
@@ -589,7 +587,7 @@ _worker_produced_output() {
 	pr_state="${pr_handoff%%|*}"
 	case "$pr_state" in
 		ready | merged) printf 'pr_exists'; return 0 ;;
-		draft_checkpoint | protected_draft | ready_failed | closed_unmerged | unverified_open_pr | head_mismatch | ready_missing_summary | merged_missing_summary)
+		draft_checkpoint | protected_draft | closed_unmerged | unverified_open_pr | head_mismatch | ready_missing_summary | merged_missing_summary)
 			printf '%s' "$pr_state"
 			return 0
 			;;
@@ -1001,10 +999,6 @@ _recover_worker_output_on_failure() {
 		fi
 		if [[ "$pr_state" == "draft_checkpoint" ]]; then
 			_escalate_worker_pr_checkpoint "$session_key" "$repo_slug" "$pr_state"
-			return 0
-		fi
-		if [[ "$pr_state" == "ready_failed" ]]; then
-			_escalate_worker_pr_checkpoint "$session_key" "$repo_slug" "$pr_state" "$_HRW_REASON_READY_FAILED"
 			return 0
 		fi
 		if [[ "$pr_state" == "protected_draft" || "$pr_state" == "unverified_open_pr" || \
@@ -1504,15 +1498,6 @@ _hrw_finish_success_run() {
 			_escalate_worker_pr_checkpoint "$session_key" "${DISPATCH_REPO_SLUG:-}" "$output_class"
 			release_needed=0
 			if [[ "$_HRW_RECOVERY_CLASSIFICATION" == "$_HRW_REASON_DRAFT_CHECKPOINT" ]]; then
-				_hrw_mark_failed_terminal_state "$_HRW_STATUS_ESCALATED" "$_HRW_RECOVERY_CLASSIFICATION"
-			else
-				_hrw_mark_failed_terminal_state "$_HRW_STATUS_FAILED" "$_HRW_RECOVERY_CLASSIFICATION"
-			fi
-			;;
-		ready_failed)
-			_escalate_worker_pr_checkpoint "$session_key" "${DISPATCH_REPO_SLUG:-}" "$output_class" "$_HRW_REASON_READY_FAILED"
-			release_needed=0
-			if [[ "$_HRW_RECOVERY_CLASSIFICATION" == "$_HRW_REASON_READY_FAILED" ]]; then
 				_hrw_mark_failed_terminal_state "$_HRW_STATUS_ESCALATED" "$_HRW_RECOVERY_CLASSIFICATION"
 			else
 				_hrw_mark_failed_terminal_state "$_HRW_STATUS_FAILED" "$_HRW_RECOVERY_CLASSIFICATION"
