@@ -10,7 +10,9 @@ source "${SCRIPT_DIR}/approval-helper.sh"
 
 request_file=$(mktemp)
 edit_log=$(mktemp)
-trap 'rm -f "$request_file" "${request_file}.unsafe" "$edit_log"' EXIT
+failure_home=$(mktemp -d)
+failure_sig=$(mktemp)
+trap 'rm -f "$request_file" "${request_file}.unsafe" "$edit_log" "$failure_sig"; rm -rf "$failure_home"' EXIT
 
 jq -cnS '{
   schema: "aidevops-permission-request/v1",
@@ -99,5 +101,30 @@ edit_args=$(<"$edit_log")
 [[ "$edit_args" != *"--remove-label status:blocked"* ]]
 [[ "$edit_args" != *"--add-label status:available"* ]]
 [[ "$edit_args" != *"--add-label auto-dispatch"* ]]
+
+original_approval_home="$_APPROVAL_HOME"
+_APPROVAL_HOME="$failure_home"
+printf '%s\n' 'fixture-signature' >"$failure_sig"
+install() {
+	return 1
+}
+if _write_local_permission_grant '{}' "$failure_sig" owner/repo 123; then
+	printf 'grant persistence unexpectedly succeeded after install failure\n' >&2
+	exit 1
+fi
+unset -f install
+[[ ! -e "$failure_home/.aidevops/permission-grants/owner_repo/123.json" ]]
+
+if (
+	_set_permission_grant_owner() {
+		return 1
+	}
+	_write_local_permission_grant '{}' "$failure_sig" owner/repo 123
+); then
+	printf 'grant persistence unexpectedly succeeded after ownership failure\n' >&2
+	exit 1
+fi
+[[ ! -e "$failure_home/.aidevops/permission-grants/owner_repo/123.json" ]]
+_APPROVAL_HOME="$original_approval_home"
 
 printf 'permission approval content-binding tests passed\n'

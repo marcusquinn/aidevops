@@ -5,6 +5,7 @@ import { createHash } from "crypto";
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "fs";
 import { dirname } from "path";
 import { homedir } from "os";
+import { appendWorkerBlockerEvent } from "../../scripts/worker-blocker-log.mjs";
 
 const REQUEST_SCHEMA = "aidevops-permission-capture/v1";
 const MAX_PATTERN_LENGTH = 500;
@@ -114,9 +115,28 @@ function recordPermissionToolCall(toolCalls, isHeadless, home, input, output) {
   while (toolCalls.size > 100) toolCalls.delete(toolCalls.keys().next().value);
 }
 
-function capturePermissionRequest(toolCalls, home, raw) {
+function recordPermissionBlocker(loggedEvents, home, blockerLogPath, request, event, reason, detail) {
+  const dedupeKey = `${event}:${request?.request_id || "unknown"}`;
+  if (loggedEvents.has(dedupeKey)) return;
+  loggedEvents.add(dedupeKey);
+  while (loggedEvents.size > 100) loggedEvents.delete(loggedEvents.values().next().value);
+  appendWorkerBlockerEvent({
+    event,
+    status: "blocked",
+    reason,
+    blocking: true,
+    source: "opencode-permission-broker",
+    request_id: request?.request_id || "",
+    permission: request?.permission || "",
+    tool: request?.tool || "",
+    risk_level: request?.risk?.level || "",
+    grantable: request?.risk?.grantable,
+    detail,
+  }, { home, logPath: blockerLogPath });
+}
+
+function capturePermissionRequest(toolCalls, loggedEvents, home, blockerLogPath, raw) {
   const requestFile = process.env.AIDEVOPS_PERMISSION_REQUEST_FILE || "";
-  if (!requestFile) return null;
   const callID = raw?.tool?.callID || raw?.callID || "";
   const toolContext = toolCalls.get(callID) || {};
   const options = { home, workDir: process.env.WORKER_WORKTREE_PATH || "" };
@@ -146,11 +166,26 @@ function capturePermissionRequest(toolCalls, home, raw) {
     requests: [],
   };
   request.request_id = stableRequestID({ ...request, issue: capture.issue, repo: capture.repo });
+  if (!requestFile) {
+    recordPermissionBlocker(loggedEvents, home, blockerLogPath, request,
+      "permission_capture_failed", "request_file_unset", "Headless permission request capture path was unavailable");
+    return request;
+  }
   const existingIndex = capture.requests.findIndex((item) => item.request_id === request.request_id);
   if (existingIndex >= 0) capture.requests[existingIndex] = request;
   else capture.requests.push(request);
   capture.requests = capture.requests.slice(-MAX_REQUESTS);
-  writeCaptureFile(requestFile, capture);
+  const written = writeCaptureFile(requestFile, capture);
+  if (!written) {
+    recordPermissionBlocker(loggedEvents, home, blockerLogPath, request,
+      "permission_capture_failed", "capture_file_write_failed", "Permission request could not be persisted");
+  } else if (request.risk.grantable) {
+    recordPermissionBlocker(loggedEvents, home, blockerLogPath, request,
+      "permission_request_captured", "permission_required", request.risk.reason);
+  } else {
+    recordPermissionBlocker(loggedEvents, home, blockerLogPath, request,
+      "permission_request_non_grantable", "permission_non_grantable", request.risk.reason);
+  }
   return request;
 }
 
@@ -166,25 +201,26 @@ async function rejectPermissionRequest(client, request) {
   }
 }
 
-async function handlePermissionEvent(client, isHeadless, toolCalls, home, input) {
+async function handlePermissionEvent(client, isHeadless, toolCalls, loggedEvents, home, blockerLogPath, input) {
   const event = input?.event;
   if (!isHeadless() || event?.type !== "permission.asked") return;
   const request = event.properties || {};
-  capturePermissionRequest(toolCalls, home, request);
+  capturePermissionRequest(toolCalls, loggedEvents, home, blockerLogPath, request);
   await rejectPermissionRequest(client, request);
 }
 
-function handlePermissionAsk(isHeadless, toolCalls, home, input, output) {
+function handlePermissionAsk(isHeadless, toolCalls, loggedEvents, home, blockerLogPath, input, output) {
   if (!isHeadless()) return;
-  capturePermissionRequest(toolCalls, home, input || {});
+  capturePermissionRequest(toolCalls, loggedEvents, home, blockerLogPath, input || {});
   output.status = "deny";
 }
 
-export function createPermissionBroker({ client, isHeadless, home = homedir() }) {
+export function createPermissionBroker({ client, isHeadless, home = homedir(), blockerLogPath = undefined }) {
   const toolCalls = new Map();
+  const loggedEvents = new Set();
   return {
     recordToolCall: (input, output) => recordPermissionToolCall(toolCalls, isHeadless, home, input, output),
-    handleEvent: (input) => handlePermissionEvent(client, isHeadless, toolCalls, home, input),
-    permissionAsk: (input, output) => handlePermissionAsk(isHeadless, toolCalls, home, input, output),
+    handleEvent: (input) => handlePermissionEvent(client, isHeadless, toolCalls, loggedEvents, home, blockerLogPath, input),
+    permissionAsk: (input, output) => handlePermissionAsk(isHeadless, toolCalls, loggedEvents, home, blockerLogPath, input, output),
   };
 }

@@ -82,6 +82,82 @@ readonly PERMISSION_SHA256_PATTERN='^[0-9a-f]{64}$'
 readonly PERMISSION_JSON_ARRAY_TYPE="array"
 readonly PERMISSION_JSON_STRING_TYPE="string"
 readonly _APPROVAL_AUTO_DISPATCH_LABEL="auto-dispatch"
+readonly _PERMISSION_BLOCKER_STATUS="blocked"
+readonly _PERMISSION_BLOCKER_TRUE="true"
+readonly _PERMISSION_APPROVAL_REJECTED_EVENT="permission_approval_rejected"
+readonly _PERMISSION_GRANT_PERSISTENCE_FAILED_EVENT="permission_grant_persistence_failed"
+
+_run_worker_blocker_logger() {
+	local logger="$1"
+	shift
+	local node_bin
+	node_bin=$(command -v node) || return 0
+	if [[ -n "${SUDO_USER:-}" && "$(id -u)" -eq 0 ]]; then
+		command -v sudo >/dev/null 2>&1 || return 0
+		sudo -u "$SUDO_USER" -H -- "$node_bin" "$logger" "$@" >/dev/null 2>&1 || true
+		return 0
+	fi
+	"$node_bin" "$logger" "$@" >/dev/null 2>&1 || true
+	return 0
+}
+
+_record_permission_blocker_event() {
+	local event="$1"
+	local status="$2"
+	local reason="$3"
+	local blocking="$4"
+	local target_number="$5"
+	local slug="$6"
+	local request_id="$7"
+	local session_key="${8:-}"
+	local detail="${9:-}"
+	local logger="${SCRIPT_DIR}/worker-blocker-log.mjs"
+	local log_file="${AIDEVOPS_WORKER_BLOCKER_LOG_FILE:-${_APPROVAL_HOME}/.aidevops/logs/worker-progress-blockers.jsonl}"
+	[[ -f "$logger" ]] || return 0
+	_run_worker_blocker_logger "$logger" append \
+		--event "$event" \
+		--status "$status" \
+		--reason "$reason" \
+		--blocking "$blocking" \
+		--source "approval-helper" \
+		--issue-number "$target_number" \
+		--repo-slug "$slug" \
+		--request-id "$request_id" \
+		--session-key "$session_key" \
+		--detail "$detail" \
+		--log-file "$log_file"
+	return 0
+}
+
+_record_permission_approval_rejection() {
+	local reason="$1"
+	local target_number="$2"
+	local slug="$3"
+	local request_id="$4"
+	local session_key="$5"
+	local detail="$6"
+	_record_permission_blocker_event "$_PERMISSION_APPROVAL_REJECTED_EVENT" "$_PERMISSION_BLOCKER_STATUS" \
+		"$reason" "$_PERMISSION_BLOCKER_TRUE" "$target_number" "$slug" "$request_id" "$session_key" "$detail"
+	return 0
+}
+
+_record_permission_grant_failure() {
+	local reason="$1"
+	local target_number="$2"
+	local slug="$3"
+	local request_id="$4"
+	local session_key="$5"
+	local detail="$6"
+	_record_permission_blocker_event "$_PERMISSION_GRANT_PERSISTENCE_FAILED_EVENT" "$_PERMISSION_BLOCKER_STATUS" \
+		"$reason" "$_PERMISSION_BLOCKER_TRUE" "$target_number" "$slug" "$request_id" "$session_key" "$detail"
+	return 0
+}
+
+_permission_request_session() {
+	local request_json="$1"
+	jq -r '.worker.session // empty' <<<"$request_json"
+	return $?
+}
 
 # shellcheck source=approval-snapshot-v2.sh
 source "${SCRIPT_DIR}/approval-snapshot-v2.sh"
@@ -1072,6 +1148,14 @@ _permission_grant_path() {
 	return 0
 }
 
+_set_permission_grant_owner() {
+	local real_user="$1"
+	local grant_path="$2"
+	[[ "$(id -u)" -eq 0 ]] || return 0
+	chown "$real_user" "$grant_path" 2>/dev/null || return 1
+	return 0
+}
+
 _write_local_permission_grant() {
 	local payload="$1"
 	local sig_file="$2"
@@ -1079,13 +1163,25 @@ _write_local_permission_grant() {
 	local target_number="$4"
 	local grant_path grant_tmp real_user
 	grant_path=$(_permission_grant_path "$slug" "$target_number")
-	grant_tmp=$(mktemp)
+	grant_tmp=$(mktemp) || return 1
 	real_user=$(_approval_real_user)
-	jq -n --arg payload "$payload" --rawfile signature "$sig_file" \
-		'{payload: $payload, signature: $signature}' >"$grant_tmp"
-	mkdir -p "$(dirname "$grant_path")"
-	install -m 600 "$grant_tmp" "$grant_path"
-	chown "$real_user" "$grant_path" 2>/dev/null || true
+	if ! jq -n --arg payload "$payload" --rawfile signature "$sig_file" \
+		'{payload: $payload, signature: $signature}' >"$grant_tmp"; then
+		rm -f "$grant_tmp"
+		return 1
+	fi
+	if ! mkdir -p "$(dirname "$grant_path")"; then
+		rm -f "$grant_tmp"
+		return 1
+	fi
+	if ! install -m 600 "$grant_tmp" "$grant_path"; then
+		rm -f "$grant_tmp"
+		return 1
+	fi
+	if ! _set_permission_grant_owner "$real_user" "$grant_path"; then
+		rm -f "$grant_tmp" "$grant_path" || true
+		return 1
+	fi
 	rm -f "$grant_tmp"
 	return 0
 }
@@ -1133,6 +1229,63 @@ _kick_pulse_after_permission_approval() {
 	return 0
 }
 
+_persist_signed_permission_grant() {
+	local target_type="$1"
+	local target_number="$2"
+	local slug="$3"
+	local request_id="$4"
+	local request_json="$5"
+	local payload="$6"
+	local sig_file="$7"
+	local expires_at="$8"
+	local worker_session="${9:-}"
+	local comment_body
+	comment_body=$(_build_permission_grant_comment "$payload" "$sig_file")
+
+	if [[ "$target_type" == "issue" ]]; then
+		if ! gh_issue_comment "$target_number" --repo "$slug" --body "$comment_body"; then
+			rm -f "$sig_file"
+			_record_permission_grant_failure "grant_comment_write_failed" "$target_number" "$slug" \
+				"$request_id" "$worker_session" "Signed grant comment could not be persisted"
+			return 1
+		fi
+	elif ! gh_pr_comment "$target_number" --repo "$slug" --body "$comment_body"; then
+		rm -f "$sig_file"
+		_record_permission_grant_failure "grant_comment_write_failed" "$target_number" "$slug" \
+			"$request_id" "$worker_session" "Signed grant comment could not be persisted"
+		return 1
+	fi
+
+	if ! _permission_request_is_latest "$request_json" "$target_number" "$slug"; then
+		rm -f "$sig_file"
+		_record_permission_approval_rejection "request_superseded_after_signing" "$target_number" "$slug" \
+			"$request_id" "$worker_session" "Permission request changed after the signed grant comment was posted"
+		_print_error "Permission grant was posted, but the request is no longer latest; dispatch remains blocked"
+		return 1
+	fi
+
+	if ! _write_local_permission_grant "$payload" "$sig_file" "$slug" "$target_number"; then
+		rm -f "$sig_file"
+		_record_permission_grant_failure "grant_file_write_failed" "$target_number" "$slug" \
+			"$request_id" "$worker_session" "Local signed grant file could not be persisted"
+		return 1
+	fi
+	rm -f "$sig_file"
+
+	if ! _apply_permission_approval_state "$target_type" "$target_number" "$slug" "$request_json"; then
+		_record_permission_grant_failure "approval_state_update_failed" "$target_number" "$slug" \
+			"$request_id" "$worker_session" "Permission grant exists but the blocking issue state could not be cleared"
+		return 1
+	fi
+
+	_record_permission_blocker_event "permission_grant_approved" "resuming" \
+		"scoped_permission_granted" "false" "$target_number" "$slug" "$request_id" \
+		"$worker_session" "Signed permission grant persisted and dispatch block cleared"
+	_kick_pulse_after_permission_approval
+	_print_ok "Scoped permissions ${request_id} approved for ${target_type} #${target_number} until ${expires_at}"
+	return 0
+}
+
 cmd_permissions() {
 	local target_type="${1:-}"
 	local target_number="${2:-}"
@@ -1160,21 +1313,27 @@ cmd_permissions() {
 	_require_gh_auth || return 1
 	slug=$(_resolve_slug_or_fail "$slug" "$usage") || return 1
 	_validate_approval_target_kind "$target_type" "$target_number" "$slug" || return 1
-	local request_json
+	local request_json worker_session
 	request_json=$(_fetch_permission_request_json "$target_number" "$slug" "$request_id") || {
 		_print_error "Could not find permission request ${request_id} on ${target_type} #${target_number}"
 		return 1
 	}
+	worker_session=$(_permission_request_session "$request_json")
 	_validate_permission_request_json "$request_json" "$target_type" "$target_number" "$slug" "$request_id" || {
+		_record_permission_approval_rejection "request_invalid_or_non_grantable" "$target_number" "$slug" "$request_id" "" \
+			"Permission request was malformed, changed, or contained non-grantable scope"
 		_print_error "Permission request is malformed, changed, or contains a non-grantable sensitive capability"
 		return 1
 	}
 	_confirm_permission_approval "$request_json" "$target_type" "$target_number" "$slug" || return 1
 	_permission_request_is_latest "$request_json" "$target_number" "$slug" || {
+		_record_permission_approval_rejection "request_superseded" "$target_number" "$slug" "$request_id" \
+			"$worker_session" \
+			"A newer permission request superseded the request under review"
 		_print_error "A newer permission request appeared while approval was pending; review and approve the latest request instead"
 		return 1
 	}
-	local issued_at expires_at payload sig_file comment_body
+	local issued_at expires_at payload sig_file
 	issued_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 	expires_at=$(_permission_grant_expiry)
 	payload=$(jq -cS --arg schema "$PERMISSION_GRANT_SCHEMA" --arg issued "$issued_at" --arg expires "$expires_at" '
@@ -1189,26 +1348,21 @@ cmd_permissions() {
 			issued_at: $issued,
 			expires_at: $expires
 		}
-	' <<<"$request_json") || return 1
-	sig_file=$(mktemp)
-	_sign_approval_payload "$payload" "$actual_key" "$sig_file" || { rm -f "$sig_file"; return 1; }
-	comment_body=$(_build_permission_grant_comment "$payload" "$sig_file")
-	if [[ "$target_type" == "issue" ]]; then
-		gh_issue_comment "$target_number" --repo "$slug" --body "$comment_body" || { rm -f "$sig_file"; return 1; }
-	else
-		gh_pr_comment "$target_number" --repo "$slug" --body "$comment_body" || { rm -f "$sig_file"; return 1; }
-	fi
-	_permission_request_is_latest "$request_json" "$target_number" "$slug" || {
-		rm -f "$sig_file"
-		_print_error "Permission grant was posted, but the request is no longer latest; dispatch remains blocked"
+	' <<<"$request_json") || {
+		_record_permission_grant_failure "grant_payload_build_failed" "$target_number" "$slug" "$request_id" \
+			"$worker_session" "Signed grant payload could not be built"
 		return 1
 	}
-	_write_local_permission_grant "$payload" "$sig_file" "$slug" "$target_number" || { rm -f "$sig_file"; return 1; }
-	rm -f "$sig_file"
-	_apply_permission_approval_state "$target_type" "$target_number" "$slug" "$request_json" || return 1
-	_kick_pulse_after_permission_approval
-	_print_ok "Scoped permissions ${request_id} approved for ${target_type} #${target_number} until ${expires_at}"
-	return 0
+	sig_file=$(mktemp)
+	if ! _sign_approval_payload "$payload" "$actual_key" "$sig_file"; then
+		rm -f "$sig_file"
+		_record_permission_grant_failure "grant_signing_failed" "$target_number" "$slug" "$request_id" \
+			"$worker_session" "Signed grant payload could not be signed"
+		return 1
+	fi
+	_persist_signed_permission_grant "$target_type" "$target_number" "$slug" "$request_id" \
+		"$request_json" "$payload" "$sig_file" "$expires_at" "$worker_session"
+	return $?
 }
 
 _create_allowed_signers_file() {

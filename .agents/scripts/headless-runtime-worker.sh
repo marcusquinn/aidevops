@@ -41,6 +41,7 @@ _HRW_REASON_DRAFT_ESCALATION_FAILED="worker_draft_checkpoint_escalation_failed"
 _HRW_REASON_CLOSED_UNMERGED="worker_closed_unmerged_pr"
 _HRW_EVENT_FAILED="worker.failed"
 _HRW_NMR_LABEL="needs-maintainer-review"
+_HRW_PERMISSION_PERSISTENCE_FAILED="permission_request_persistence_failed"
 _HRW_SPOTLIGHT_MARKER=".metadata_never_index"
 _HRW_RECOVERY_CLASSIFICATION=""
 
@@ -1398,13 +1399,31 @@ _hrw_finish_rate_limit_fast_run() {
 	return 0
 }
 
+_hrw_record_permission_blocker_failure() {
+	local session_key="$1"
+	local reason="$2"
+	local logger="${SCRIPT_DIR}/worker-blocker-log.mjs"
+	[[ -f "$logger" ]] || return 0
+	command -v node >/dev/null 2>&1 || return 0
+	node "$logger" append \
+		--event "$_HRW_PERMISSION_PERSISTENCE_FAILED" \
+		--status "blocked" \
+		--reason "$reason" \
+		--blocking "true" \
+		--source "headless-runtime-worker" \
+		--session-key "$session_key" \
+		--detail "Worker could not persist the maintainer permission handoff" >/dev/null 2>&1 || true
+	return 0
+}
+
 _hrw_finish_permission_required_run() {
 	local session_key="$1"
 	local work_dir="$2"
 	local helper="${SCRIPT_DIR}/worker-permission-helper.sh"
 	local permission_status="permission_required"
 	if [[ ! -x "$helper" || -z "${_run_permission_request_file:-}" ]]; then
-		_hrw_mark_failed_terminal_state "$_HRW_STATUS_FAILED" "permission_request_persistence_failed"
+		_hrw_record_permission_blocker_failure "$session_key" "permission_capture_or_helper_unavailable"
+		_hrw_mark_failed_terminal_state "$_HRW_STATUS_FAILED" "$_HRW_PERMISSION_PERSISTENCE_FAILED"
 		return 1
 	fi
 	if ! "$helper" request \
@@ -1413,7 +1432,8 @@ _hrw_finish_permission_required_run() {
 		--repo "${DISPATCH_REPO_SLUG:-${WORKER_REPO_SLUG:-}}" \
 		--session "$session_key" \
 		--work-dir "$work_dir"; then
-		_hrw_mark_failed_terminal_state "$_HRW_STATUS_FAILED" "permission_request_persistence_failed"
+		_hrw_record_permission_blocker_failure "$session_key" "permission_handoff_failed"
+		_hrw_mark_failed_terminal_state "$_HRW_STATUS_FAILED" "$_HRW_PERMISSION_PERSISTENCE_FAILED"
 		return 1
 	fi
 	_release_dispatch_claim "$session_key" "$permission_status"

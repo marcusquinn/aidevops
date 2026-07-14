@@ -15,6 +15,7 @@ import { getCursorProxyPort, registerCursorProvider } from "./cursor-proxy.mjs";
 import { getGoogleProxyPort, registerGoogleProvider } from "./google-proxy.mjs";
 import { getClaudeProxyPort, registerClaudeProvider } from "./claude-proxy.mjs";
 import { checkOpenCodeVersionDriftAsync } from "./version-tracking.mjs";
+import { appendWorkerBlockerEvent } from "../../scripts/worker-blocker-log.mjs";
 import {
   CLAUDE_MODEL_LIMITS,
   GPT56_CONTEXT_DEFAULT,
@@ -152,14 +153,21 @@ function verifyPermissionGrantSignature(grant, publicKey, tempBase) {
 }
 
 function verifyPermissionGrant(grantPath, options = {}) {
-  if (!grantPath || !existsSync(grantPath)) return null;
+  if (!grantPath) return { grant: null, reason: "grant_path_unset" };
+  if (!existsSync(grantPath)) return { grant: null, reason: "grant_file_missing" };
   const publicKey = options.publicKey || join(homedir(), ".aidevops", "approval-keys", "approval.pub");
-  if (!existsSync(publicKey)) return null;
+  if (!existsSync(publicKey)) return { grant: null, reason: "approval_public_key_missing" };
   const grant = readPermissionGrantFile(grantPath);
-  if (typeof grant?.payload !== "string" || typeof grant?.signature !== "string") return null;
+  if (typeof grant?.payload !== "string" || typeof grant?.signature !== "string") {
+    return { grant: null, reason: "grant_envelope_invalid" };
+  }
   const tempBase = options.tempBase || process.env.AIDEVOPS_TEMP_DIR || join(homedir(), ".aidevops", ".agent-workspace", "tmp");
-  if (!verifyPermissionGrantSignature(grant, publicKey, tempBase)) return null;
-  return parsePermissionGrantPayload(grant.payload);
+  if (!verifyPermissionGrantSignature(grant, publicKey, tempBase)) {
+    return { grant: null, reason: "grant_signature_invalid" };
+  }
+  const payload = parsePermissionGrantPayload(grant.payload);
+  if (!payload) return { grant: null, reason: "grant_payload_invalid" };
+  return { grant: payload, reason: "verified" };
 }
 
 function ensurePermissionMap(target) {
@@ -207,13 +215,16 @@ function permissionGrantTargetMatches(grant) {
   return String(grant.target?.repository || "").toLowerCase() === repo;
 }
 
-function permissionGrantTimeValid(grant) {
+function permissionGrantTimeReason(grant) {
   const issued = Date.parse(grant.issued_at || "");
   const expires = Date.parse(grant.expires_at || "");
   const now = Date.now();
-  if (!Number.isFinite(issued) || !Number.isFinite(expires)) return false;
-  if (issued > now + 5 * 60 * 1000 || expires <= now) return false;
-  return expires > issued && expires - issued <= MAX_PERMISSION_GRANT_MS;
+  if (!Number.isFinite(issued) || !Number.isFinite(expires)) return "grant_time_invalid";
+  if (expires <= now) return "grant_expired";
+  if (issued > now + 5 * 60 * 1000) return "grant_issued_in_future";
+  if (expires <= issued) return "grant_time_invalid";
+  if (expires - issued > MAX_PERMISSION_GRANT_MS) return "grant_duration_excessive";
+  return "";
 }
 
 function permissionGrantRequestValid(grant) {
@@ -236,17 +247,18 @@ function permissionGrantBranchMatches(grantBranch, currentBranch) {
   return grantBranch === currentBranch;
 }
 
-function permissionGrantWorkerMatches(grant, options) {
+function permissionGrantWorkerMismatchReason(grant, options) {
   const pendingRequest = String(options.pendingRequest || process.env.AIDEVOPS_PERMISSION_REQUEST_ID || "");
-  if (!pendingRequest || grant.request_id !== pendingRequest) return false;
+  if (!pendingRequest || grant.request_id !== pendingRequest) return "grant_request_mismatch";
   const repositoryDir = String(options.repositoryDir || "");
-  if (!repositoryDir) return false;
+  if (!repositoryDir) return "grant_worktree_unavailable";
   const expectedWorktree = createHash("sha256").update(repositoryDir).digest("hex");
-  if (grant.worker?.worktree_sha256 !== expectedWorktree) return false;
+  if (grant.worker?.worktree_sha256 !== expectedWorktree) return "grant_worktree_mismatch";
   const currentSession = String(options.currentSession || process.env.WORKER_SESSION_KEY || "");
-  if (!currentSession || grant.worker?.session !== currentSession) return false;
+  if (!currentSession || grant.worker?.session !== currentSession) return "grant_session_mismatch";
   const currentBranch = currentWorkerBranch(options, repositoryDir);
-  return permissionGrantBranchMatches(grant.worker?.branch, currentBranch);
+  if (!permissionGrantBranchMatches(grant.worker?.branch, currentBranch)) return "grant_branch_mismatch";
+  return "";
 }
 
 function permissionGrantPatternSafe(pattern) {
@@ -270,25 +282,55 @@ function permissionGrantCapabilitiesSafe(grant) {
   return grant.capabilities.every(permissionGrantCapabilitySafe);
 }
 
-function permissionGrantUsable(grant, options) {
-  const checks = [
-    permissionGrantTargetMatches(grant),
-    permissionGrantTimeValid(grant),
-    permissionGrantRequestValid(grant),
-    permissionGrantWorkerMatches(grant, options),
-    permissionGrantCapabilitiesSafe(grant),
-  ];
-  return checks.every(Boolean);
+function permissionGrantRejectionReason(grant, options) {
+  if (!permissionGrantTargetMatches(grant)) return "grant_target_mismatch";
+  const timeReason = permissionGrantTimeReason(grant);
+  if (timeReason) return timeReason;
+  if (!permissionGrantRequestValid(grant)) return "grant_request_invalid";
+  const workerReason = permissionGrantWorkerMismatchReason(grant, options);
+  if (workerReason) return workerReason;
+  if (!permissionGrantCapabilitiesSafe(grant)) return "grant_capabilities_unsafe";
+  return "";
+}
+
+function recordPermissionGrantEvent(options, grant, event, status, reason, blocking) {
+  appendWorkerBlockerEvent({
+    event,
+    status,
+    reason,
+    blocking,
+    source: "opencode-config-hook",
+    request_id: options.pendingRequest || process.env.AIDEVOPS_PERMISSION_REQUEST_ID || grant?.request_id || "",
+    session_key: options.currentSession || process.env.WORKER_SESSION_KEY || grant?.worker?.session || "",
+    detail: blocking ? "Worker permission grant was unavailable or rejected" : "Scoped worker permission grant applied",
+  }, { logPath: options.blockerLogPath });
 }
 
 export function registerApprovedWorkerPermissions(config, options = {}) {
   const grantPath = options.grantPath || process.env.AIDEVOPS_PERMISSION_GRANT_FILE || "";
-  const grant = verifyPermissionGrant(grantPath, options);
-  if (!grant || !permissionGrantUsable(grant, options)) return 0;
+  const pendingRequest = String(options.pendingRequest || process.env.AIDEVOPS_PERMISSION_REQUEST_ID || "");
+  if (!pendingRequest) return 0;
+  const verification = verifyPermissionGrant(grantPath, options);
+  if (!verification.grant) {
+    const event = verification.reason === "grant_file_missing"
+      ? "permission_awaiting_approval"
+      : "permission_grant_rejected";
+    recordPermissionGrantEvent({ ...options, pendingRequest }, null, event, "blocked", verification.reason, true);
+    return 0;
+  }
+  const grant = verification.grant;
+  const rejectionReason = permissionGrantRejectionReason(grant, { ...options, pendingRequest });
+  if (rejectionReason) {
+    recordPermissionGrantEvent({ ...options, pendingRequest }, grant,
+      "permission_grant_rejected", "blocked", rejectionReason, true);
+    return 0;
+  }
   let count = addApprovedCapabilityRules(config, grant.capabilities);
   for (const agent of Object.values(config.agent || {})) {
     count += addApprovedCapabilityRules(agent, grant.capabilities);
   }
+  recordPermissionGrantEvent({ ...options, pendingRequest }, grant,
+    "permission_grant_applied", "resuming", "scoped_permission_granted", false);
   return count;
 }
 

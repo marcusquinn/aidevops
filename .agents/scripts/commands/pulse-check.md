@@ -30,7 +30,14 @@ from canonical current-state evidence, not process snapshots or log mtimes.
    ~/.aidevops/agents/scripts/pulse-check-helper.sh json $ARGUMENTS
    ```
 
-3. If the user explicitly asks to file self-improvement work, or this is the
+3. If the report identifies a specific issue whose worker stopped progressing,
+   inspect its bounded blocker lifecycle before opening raw logs:
+
+   ```bash
+   ~/.aidevops/agents/scripts/pulse-diagnose-helper.sh issue <N> --repo <owner/repo>
+   ```
+
+4. If the user explicitly asks to file self-improvement work, or this is the
    scheduled daily routine, use deduplicated apply mode:
 
    ```bash

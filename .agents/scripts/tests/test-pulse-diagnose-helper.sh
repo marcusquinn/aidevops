@@ -85,6 +85,8 @@ FIXTURE_GH_API_LOG="${TMPDIR_TEST}/gh-api-calls.log"
 FIXTURE_TIMER="${TMPDIR_TEST}/aidevops-supervisor-pulse.timer"
 FIXTURE_GH_COOLDOWN="${TMPDIR_TEST}/gh-secondary-cooldown.json"
 FIXTURE_GH_COOLDOWN_EVENTS="${TMPDIR_TEST}/gh-cooldown-events.jsonl"
+FIXTURE_BLOCKERS="${TMPDIR_TEST}/worker-progress-blockers.jsonl"
+export PULSE_DIAGNOSE_BLOCKER_LOG="$FIXTURE_BLOCKERS"
 
 # Create fixture pulse.log with 3+ distinct rule outcomes:
 # 1. PR #20329: escalated by dirty-pr-sweep (notify), then admin-bypass merge
@@ -108,6 +110,13 @@ cat > "$FIXTURE_LOGFILE" <<'FIXTURE'
 2026-04-21T19:30:00Z [pulse-dirty-pr-sweep] sweep complete: rebased=1 closed=0 notified=2
 2026-04-21T20:00:00Z [pulse-wrapper] Deterministic merge pass complete: merged=3, closed_conflicting=0, failed=0
 FIXTURE
+
+cat >"$FIXTURE_BLOCKERS" <<'BLOCKERS'
+{"schema":"aidevops-worker-blocker/v1","ts":100,"timestamp":"2026-04-27T09:00:00Z","event":"permission_request_captured","status":"blocked","reason":"permission_required","blocking":true,"source":"opencode-permission-broker","issue_number":21860,"repo_slug":"marcusquinn/aidevops","session_key":"issue-21860","request_id":"perm-source"}
+{"schema":"aidevops-worker-blocker/v1","ts":110,"timestamp":"2026-04-27T09:01:00Z","event":"permission_grant_applied","status":"resuming","reason":"scoped_permission_granted","blocking":false,"source":"opencode-config-hook","issue_number":21860,"repo_slug":"marcusquinn/aidevops","session_key":"issue-21860","request_id":"perm-envelope"}
+{"schema":"aidevops-worker-blocker/v1","ts":120,"timestamp":"2026-04-27T09:02:00Z","event":"permission_request_non_grantable","status":"blocked","reason":"permission_non_grantable","blocking":true,"source":"opencode-permission-broker","issue_number":21860,"repo_slug":"marcusquinn/aidevops","session_key":"issue-21860-retry","request_id":"perm-sensitive"}
+malformed-row
+BLOCKERS
 
 cat > "$FIXTURE_TIMER" <<'TIMER'
 [Unit]
@@ -427,6 +436,9 @@ assert_contains "shows issue number" "Issue #21860" "$output"
 assert_contains "shows issue title" "worker re-dispatch" "$output"
 assert_contains "shows issue labels" "auto-dispatch" "$output"
 assert_contains "shows lifecycle comments section" "Lifecycle comments:" "$output"
+assert_contains "shows worker progress blockers section" "Worker progress blockers:" "$output"
+assert_contains "shows current blocker count" "Currently active: 1" "$output"
+assert_contains "shows non-grantable blocker reason" "permission_non_grantable" "$output"
 assert_contains "shows WORKER_BRANCH_ORPHAN comment" "WORKER_BRANCH_ORPHAN" "$output"
 assert_contains "shows repeated attempts section" "Repeated attempts / dispatch backoff:" "$output"
 assert_contains "shows metric attempt count" "Attempts in metrics: 3" "$output"
@@ -502,6 +514,10 @@ if command -v jq >/dev/null 2>&1; then
 		FAIL=$((FAIL + 1))
 		printf '  ✗ JSON repeated_attempts dispatch_log_events has ≥1 entry (got %s)\n' "$json_dispatch_events"
 	fi
+	json_blocker_events=$(echo "$output" | jq '.progress_blockers.event_total' 2>/dev/null || echo 0)
+	assert_eq "JSON progress_blockers event_total" "3" "$json_blocker_events"
+	json_active_blockers=$(echo "$output" | jq '.progress_blockers.active_total' 2>/dev/null || echo 0)
+	assert_eq "JSON progress_blockers active_total" "1" "$json_active_blockers"
 fi
 
 # --- Test 17: issue --verbose shows raw log lines ---
