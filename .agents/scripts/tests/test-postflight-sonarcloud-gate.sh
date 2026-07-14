@@ -16,6 +16,9 @@ trap cleanup EXIT
 cat >"${STUB_DIR}/gh" <<'EOF'
 #!/usr/bin/env bash
 if [[ "${1:-}" == "auth" && "${2:-}" == "status" ]]; then
+	if [[ "${GH_AUTH_STUB_RESULT:-authenticated}" == "failure" ]]; then
+		exit 1
+	fi
 	exit 0
 fi
 if [[ "${1:-}" == "run" && "${2:-}" == "list" ]]; then
@@ -111,6 +114,7 @@ run_case "--quick" "UNKNOWN" 0 "SonarCloud quality gate status: UNKNOWN" "POSTFL
 run_case "--quick" "UNAVAILABLE" 0 "SKIPPED Could not reach SonarCloud API" "POSTFLIGHT VERIFICATION FAILED"
 
 CI_STUB_CONCLUSION="failure" run_case "--ci-only" "OK" 1 "CI/CD pipeline failed: Stub CI" "POSTFLIGHT VERIFICATION PASSED"
+GH_AUTH_STUB_RESULT="failure" run_case "--ci-only" "OK" 1 "Failed:   1" "POSTFLIGHT VERIFICATION PASSED"
 SNYK_STUB_RESULT="vulnerable" run_case "--security-only" "OK" 1 "Snyk: 1 vulnerabilities found" "POSTFLIGHT VERIFICATION PASSED"
 SECRETLINT_STUB_RESULT="detected" run_case "--security-only" "OK" 1 "Secretlint: Potential secrets found" "POSTFLIGHT VERIFICATION PASSED"
 
