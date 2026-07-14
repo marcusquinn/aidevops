@@ -208,7 +208,7 @@ _linters_local_tool_version() {
 	bash32-compat)
 		bash --version 2>/dev/null | sed -n '1p' || true
 		;;
-	shell-portability | repo-layout | file-size | python-complexity)
+	shell-portability | repo-layout | function-complexity | nesting-depth | file-size | python-complexity)
 		git --version 2>/dev/null || true
 		;;
 	esac
@@ -291,7 +291,7 @@ _linters_local_required_diff_gate() {
 		print_error "${metric}: merge-base unavailable; required result is incomplete"
 		return 2
 	fi
-	bash "$helper" check --metric "$metric" --base "$base_ref" --working-tree
+	"${BASH:-bash}" "$helper" check --metric "$metric" --base "$base_ref" --working-tree
 	return $?
 }
 
