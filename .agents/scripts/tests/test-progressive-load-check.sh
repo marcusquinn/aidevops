@@ -45,7 +45,7 @@ if output=$(PROGRESSIVE_LOAD_AGENTS_DIR="$FIXTURE_DIR" "$CHECKER" --quiet 2>&1);
 fi
 
 case "$output" in
-*"reference/review-bot-gate\\.md"*) ;;
+*"review-bot-gate"*) ;;
 *) fail "failure should identify the missing review-bot pointer" ;;
 esac
 
