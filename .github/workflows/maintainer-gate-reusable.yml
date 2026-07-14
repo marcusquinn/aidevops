@@ -960,6 +960,8 @@ jobs:
           ACTOR: ${{ github.actor }}
           REPO: ${{ github.repository }}
           REPO_OWNER: ${{ github.repository_owner }}
+          ISSUE_AUTHOR: ${{ github.event.issue.user.login }}
+          ISSUE_AUTHOR_ASSOC: ${{ github.event.issue.author_association }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           echo "origin:worker label $ACTION on issue #$ISSUE_NUMBER by $ACTOR (repo owner: $REPO_OWNER)"
@@ -1014,35 +1016,57 @@ jobs:
           # t2691/GH#20311: Check if the actor is a collaborator with write
           # access. The /collaborators/{username}/permission endpoint returns
           # the user's effective permission level. Non-collaborators (external
-          # contributors) return permission=none or HTTP 404; both map to
-          # "none" via the fallback. write/admin/maintain = trusted runner.
-          ACTOR_PERM=$(gh api "repos/${REPO}/collaborators/${ACTOR}/permission" \
-            --jq '.permission // "none"' 2>/dev/null || echo "none")
-          if [[ "$ACTOR_PERM" == "write" || "$ACTOR_PERM" == "admin" || "$ACTOR_PERM" == "maintain" ]]; then
-            echo "ALLOWED: collaborator $ACTOR (permission=$ACTOR_PERM) — origin:worker label change accepted (t2691, GH#20311)"
-            exit 0
+          # contributors) return a successful response with permission=none.
+          #
+          # GH#27611: API failures are infrastructure uncertainty, not proof
+          # that an actor is external. The old `... || echo "none"` command
+          # substitution retained GitHub's rate-limit JSON on stdout, then
+          # fell through to destructive external-author remediation. That
+          # incorrectly converted trusted runner issues #27576/#27578 into
+          # permanent ever-NMR authority holds. Fail without mutating labels;
+          # a workflow rerun can re-evaluate once the API recovers.
+          #aidevops:trust-boundary GH#18197/GH#20311/GH#27611
+          ACTOR_PERM=""
+          if ! ACTOR_PERM=$(gh api "repos/${REPO}/collaborators/${ACTOR}/permission" \
+            --jq '.permission // "none"' 2>/dev/null); then
+            echo "::error::Unable to verify permission for actor $ACTOR — leaving origin:worker and dispatch labels unchanged"
+            exit 1
           fi
+          case "$ACTOR_PERM" in
+            write|admin|maintain)
+              echo "ALLOWED: collaborator $ACTOR (permission=$ACTOR_PERM) — origin:worker label change accepted (t2691, GH#20311)"
+              exit 0
+              ;;
+            none|read|triage)
+              ;;
+            *)
+              echo "::error::Unexpected collaborator permission value for actor $ACTOR — leaving labels unchanged"
+              exit 1
+              ;;
+          esac
 
           echo "DENIED: $ACTOR is not in the allowlist — reversing origin:worker label $ACTION"
 
           if [[ "$ACTION" == "labeled" ]]; then
-            # Non-allowlisted actor added the label. Fetch the issue author's
-            # association to decide the remediation (t2450). For external
+            # Non-allowlisted actor added the label. Use immutable webhook
+            # metadata for the issue author's association (t2450). For external
             # contributors, stripping `origin:worker` alone isn't enough —
             # the `tier:*` label the labelless-backfill applies alongside it
             # (pulse-issue-reconcile.sh::reconcile_labelless_aidevops_issues)
             # is what actually makes the issue dispatchable. We must also
             # strip `tier:*` and apply `needs-maintainer-review` to close
             # the full gating gap. Reference: #20180, #20184.
-            ISSUE_AUTHOR_ASSOC=$(gh api "repos/${REPO}/issues/${ISSUE_NUMBER}" \
-              --jq '.author_association // "NONE"' 2>/dev/null || echo "NONE")
-
             # External-contributor classes. Fail-closed: unknown values are
-            # treated as external. The cost of false-positive external is
-            # one NMR review; the cost of the opposite is the #20180 bug.
+            # infrastructure uncertainty, so preserve current labels and fail
+            # visibly instead of creating an irreversible ever-NMR record.
             EXTERNAL_AUTHOR="true"
             case "$ISSUE_AUTHOR_ASSOC" in
               OWNER|MEMBER|COLLABORATOR) EXTERNAL_AUTHOR="false" ;;
+              CONTRIBUTOR|FIRST_TIME_CONTRIBUTOR|FIRST_TIMER|MANNEQUIN|NONE) ;;
+              *)
+                echo "::error::Unexpected author association for issue #$ISSUE_NUMBER (author=$ISSUE_AUTHOR) — leaving labels unchanged"
+                exit 1
+                ;;
             esac
 
             if [[ "$EXTERNAL_AUTHOR" == "true" ]]; then
@@ -1067,8 +1091,8 @@ jobs:
           else
             # Non-allowlisted actor removed the label — re-apply it only if
             # the issue was authored by the bot OR the repo owner (both
-            # valid pulse authorship paths).
-            ISSUE_AUTHOR=$(gh api "repos/${REPO}/issues/${ISSUE_NUMBER}" --jq '.user.login' 2>/dev/null || echo "unknown")
+            # valid pulse authorship paths). Reuse webhook metadata rather than
+            # introducing another API-failure-to-identity fallback.
             if [[ "$ISSUE_AUTHOR" == "github-actions[bot]" ]] || [[ "$ISSUE_AUTHOR" == "$REPO_OWNER" ]]; then
               gh issue edit "$ISSUE_NUMBER" --repo "$REPO" --add-label "origin:worker"
               NOTICE="The \`origin:worker\` label was re-applied automatically. This issue was created by the automation pipeline and its provenance label cannot be removed by non-maintainer contributors."
