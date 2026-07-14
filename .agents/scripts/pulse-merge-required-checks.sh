@@ -150,16 +150,16 @@ _pmrc_snapshot_checks_acceptable() {
 	local pr_number="$2"
 	local checks_json="$3"
 	local required_contexts="$4"
-	local required_json="" rows="" name="" status="" conclusion="" required=""
+	local required_json="" rows="" name="" status="" conclusion="" required="" link=""
 	local blocking_names=""
 	local blockers=0 pending=0 advisory=0
 	_PULSE_MERGE_PREFLIGHT_BLOCKING_CHECKS_JSON="[]"
 
 	required_json=$(printf '%s' "$required_contexts" | jq -Rsc '[split("\n")[] | select(length > 0)]') || return 1
 	rows=$(jq -r --argjson required "$required_json" '.[] | .name as $name | [
-		$name, .status, .conclusion, (($required | index($name)) != null)
+		$name, .status, .conclusion, (($required | index($name)) != null), (.link // "")
 	] | @tsv' <<<"$checks_json" 2>/dev/null) || return 1
-	while IFS=$'\t' read -r name status conclusion required; do
+	while IFS=$'\t' read -r name status conclusion required link; do
 		[[ -n "$name" ]] || continue
 		if [[ "$status" != "$PMRC_CHECK_COMPLETED" || -z "$conclusion" ]]; then
 			pending=$((pending + 1))
@@ -172,6 +172,10 @@ _pmrc_snapshot_checks_acceptable() {
 			echo "[pulse-merge] pre-merge snapshot: required check '${name}' is terminal-${conclusion} for PR #${pr_number} in ${repo_slug} (GH#27137)" >>"$LOGFILE"
 			blocking_names="${blocking_names}${name}"$'\n'
 			blockers=$((blockers + 1))
+		elif declare -F _ci_check_url_has_infra_failure_log >/dev/null 2>&1 \
+			&& _ci_check_url_has_infra_failure_log "$repo_slug" "$link"; then
+			echo "[pulse-merge] pre-merge snapshot: IGNORED non-required infrastructure failure '${name}' for PR #${pr_number} in ${repo_slug} after failed-log classification (GH#27600)" >>"$LOGFILE"
+			advisory=$((advisory + 1))
 		elif _pmrc_is_explicit_advisory_failure "$name" "$checks_json"; then
 			echo "[pulse-merge] pre-merge snapshot: IGNORED non-required baseline advisory failure '${name}' because its regression companion passed for PR #${pr_number} in ${repo_slug} (GH#27137)" >>"$LOGFILE"
 			advisory=$((advisory + 1))

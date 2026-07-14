@@ -29,6 +29,14 @@ _required_contexts_for_default_branch() {
 	return 0
 }
 
+_ci_check_url_has_infra_failure_log() {
+	local repo_slug="$1"
+	local check_url="$2"
+	[[ -n "$repo_slug" ]] || return 1
+	[[ "$SNAPSHOT_MODE" == "infra_fail" && "$check_url" == "https://github.com/owner/repo/actions/runs/101/job/202" ]]
+	return $?
+}
+
 gh() {
 	local command="$1"
 	local endpoint="${2:-}"
@@ -62,6 +70,8 @@ gh() {
 		[[ "$SNAPSHOT_MODE" == "recent" ]] && broad_completed_at="2026-01-01T00:09:50Z"
 		if [[ "$SNAPSHOT_MODE" == "unclassified_fail" ]]; then
 			extra_check=',{"name":"CodeFactor","status":"completed","conclusion":"failure","details_url":"https://github.com/owner/repo/runs/99","completed_at":"2026-01-01T00:01:00Z"}'
+		elif [[ "$SNAPSHOT_MODE" == "infra_fail" ]]; then
+			extra_check=',{"name":"sync / Record ordered forge event","status":"completed","conclusion":"failure","details_url":"https://github.com/owner/repo/actions/runs/101/job/202","completed_at":"2026-01-01T00:01:00Z"}'
 		fi
 		printf '[{"check_runs":[{"name":"required-a","status":"completed","conclusion":"%s","completed_at":"2026-01-01T00:01:00Z"},{"name":"Framework Validation","status":"%s","conclusion":%s,"completed_at":"%s"},{"name":"Qlty Smell Regression","status":"completed","conclusion":"success","completed_at":"2026-01-01T00:01:00Z"},{"name":"Qlty Smell Threshold","status":"completed","conclusion":"failure","completed_at":"2026-01-01T00:01:00Z"}%s]}]\n' \
 			"$required_conclusion" "$broad_status" "$([[ "$broad_conclusion" == "null" ]] && printf 'null' || printf '"%s"' "$broad_conclusion")" "$broad_completed_at" "$extra_check"
@@ -131,6 +141,14 @@ main() {
 		printf 'PASS terminal blocker evidence is exported for CI repair\n'
 	else
 		printf 'FAIL terminal blocker evidence is exported for CI repair: %s\n' "$_PULSE_MERGE_PREFLIGHT_BLOCKING_CHECKS_JSON"
+		TESTS_FAILED=$((TESTS_FAILED + 1))
+	fi
+	TESTS_RUN=$((TESTS_RUN + 1))
+	assert_gate "classified non-required infrastructure failure does not block merge" infra_fail 0
+	if grep -q "IGNORED non-required infrastructure failure 'sync / Record ordered forge event'" "$LOGFILE"; then
+		printf 'PASS ignored infrastructure failure is audited\n'
+	else
+		printf 'FAIL ignored infrastructure failure is audited\n'
 		TESTS_FAILED=$((TESTS_FAILED + 1))
 	fi
 	TESTS_RUN=$((TESTS_RUN + 1))
