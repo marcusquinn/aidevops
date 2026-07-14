@@ -86,6 +86,7 @@ jobs:
         if: github.event_name != 'workflow_dispatch' || inputs.command == 'event'
         env:
           AIDEVOPS_TASK_COORDINATOR_DB: ${{ runner.temp }}/aidevops-coordinator/tasks.db
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           EVENT_NAME: ${{ github.event_name }}
           EVENT_ACTION: ${{ github.event.action || '' }}
           EVENT_MERGED: ${{ github.event.pull_request.merged || false }}

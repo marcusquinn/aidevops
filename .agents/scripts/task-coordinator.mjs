@@ -121,6 +121,24 @@ function validId(value, label) {
   if (typeof value !== "string" || !SAFE_ID.test(value)) throw new TypeError(`${label} is not a canonical opaque identifier`);
   return value;
 }
+function canonicalRfc3339(value, label) {
+  const match = typeof value === "string" ? /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d{3}))?(Z|([+-])(\d{2}):(\d{2}))$/.exec(value) : null;
+  if (!match) throw new TypeError(`${label} must be a valid RFC3339 timestamp`);
+  const [, year, month, day, hour, minute, second, , zone, sign, rawOffsetHours, rawOffsetMinutes] = match;
+  const offsetHours = zone === "Z" ? 0 : Number(rawOffsetHours);
+  const offsetMinutes = zone === "Z" ? 0 : Number(rawOffsetMinutes);
+  const epoch = Date.parse(value);
+  if (!Number.isFinite(epoch) || offsetHours > 23 || offsetMinutes > 59) {
+    throw new TypeError(`${label} must be a valid RFC3339 timestamp`);
+  }
+  const offsetDirection = sign === "-" ? -1 : 1;
+  const localEpoch = epoch + offsetDirection * (offsetHours * 60 + offsetMinutes) * 60_000;
+  const expectedLocal = `${year}-${month}-${day}T${hour}:${minute}:${second}`;
+  if (!new Date(localEpoch).toISOString().startsWith(expectedLocal)) {
+    throw new TypeError(`${label} must be a valid RFC3339 timestamp`);
+  }
+  return new Date(epoch).toISOString();
+}
 function originId() {
   let value = BigInt(`0x${randomBytes(16).toString("hex")}`);
   let encoded = "";
@@ -513,10 +531,7 @@ function issueMappingInput(input) {
   const displayNumber = Number(input.displayNumber);
   if (!Number.isSafeInteger(displayNumber) || displayNumber < 1) throw new TypeError("display_number must be a positive integer");
   const rawStateCursor = input.stateCursor || null;
-  if (rawStateCursor && (typeof rawStateCursor !== "string" || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/.test(rawStateCursor) || !Number.isFinite(Date.parse(rawStateCursor)))) {
-    throw new TypeError("state_cursor must be a canonical UTC RFC3339 timestamp");
-  }
-  const stateCursor = rawStateCursor ? new Date(rawStateCursor).toISOString() : null;
+  const stateCursor = rawStateCursor ? canonicalRfc3339(rawStateCursor, "state_cursor") : null;
   const syncMetadataText = jsonText(input.syncMetadata || {}, "sync_metadata");
   return { taskId, forge, repositoryId, repositorySlug, role, issueId, projectId, displayNumber, stateCursor, syncMetadataText };
 }
@@ -564,16 +579,13 @@ function forgeEventInput(input) {
   const subjectId = validId(input.subjectId, "subject_id");
   const deliveryId = validId(input.deliveryId, "delivery_id");
   const cursorTiebreaker = validId(input.cursorTiebreaker, "cursor_tiebreaker");
-  const cursor = input.cursor;
-  if (typeof cursor !== "string" || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/.test(cursor) || !Number.isFinite(Date.parse(cursor))) {
-    throw new TypeError("cursor must be a canonical UTC RFC3339 timestamp");
-  }
+  const cursor = canonicalRfc3339(input.cursor, "cursor");
   const repositoryPath = input.repositoryPath;
   if (repositoryPath && (typeof repositoryPath !== "string" || !repositoryPath.startsWith("/") || repositoryPath.includes("\0"))) throw new TypeError("repository_path must be absolute");
   const taskId = input.taskId || null;
   if (taskId && !TASK_ID.test(taskId)) throw new TypeError("task_id is not canonical");
   if (eventKind === "manual" && !taskId) throw new TypeError("manual events require an explicit trusted task mapping");
-  return { operationId, repositoryId, repositorySlug, eventKind, action, subjectId, deliveryId, cursorTiebreaker, repositoryPath, taskId, cursor: new Date(cursor).toISOString() };
+  return { operationId, repositoryId, repositorySlug, eventKind, action, subjectId, deliveryId, cursorTiebreaker, repositoryPath, taskId, cursor };
 }
 function transitionForEvent(eventKind, action) {
   if (eventKind === "push") return "repository.projection_changed";
