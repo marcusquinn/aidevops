@@ -57,6 +57,27 @@ print_section() {
 	return 0
 }
 
+count_success() {
+	local message="$1"
+	print_success "$message"
+	((++PASSED))
+	return 0
+}
+
+count_failure() {
+	local message="$1"
+	print_error "$message"
+	((++FAILED))
+	return 0
+}
+
+count_warning() {
+	local message="$1"
+	print_warning "$message"
+	((++WARNINGS))
+	return 0
+}
+
 # Check if gh CLI is available and authenticated
 check_gh_cli() {
 	if ! command -v gh &>/dev/null; then
@@ -121,8 +142,7 @@ check_cicd_status() {
 	local repo
 	repo=$(get_repo_info)
 	if [[ -z "$repo" ]]; then
-		print_error "Could not determine repository"
-		((++FAILED))
+		count_failure "Could not determine repository"
 		return 1
 	fi
 
@@ -137,8 +157,7 @@ check_cicd_status() {
 	fi
 
 	if [[ -z "$latest_run" || "$latest_run" == "[]" ]]; then
-		print_error "No workflow runs found for release evidence"
-		((++FAILED))
+		count_failure "No workflow runs found for release evidence"
 		return 1
 	fi
 
@@ -180,22 +199,18 @@ check_cicd_status() {
 
 	# Check final status
 	if [[ "$status" != "completed" ]]; then
-		print_error "Workflow did not complete within timeout"
-		((++FAILED))
+		count_failure "Workflow did not complete within timeout"
 		return 1
 	fi
 
 	if [[ "$conclusion" == "success" ]]; then
-		print_success "CI/CD pipeline: $name"
-		((++PASSED))
+		count_success "CI/CD pipeline: $name"
 	elif [[ "$conclusion" == "failure" ]]; then
-		print_error "CI/CD pipeline failed: $name"
+		count_failure "CI/CD pipeline failed: $name"
 		print_info "View logs: gh run view $run_id --repo $repo --log-failed"
-		((++FAILED))
 		return 1
 	else
-		print_warning "CI/CD pipeline conclusion: $conclusion"
-		((++WARNINGS))
+		count_warning "CI/CD pipeline conclusion: $conclusion"
 	fi
 
 	# Check all recent workflows
@@ -235,20 +250,16 @@ check_sonarcloud() {
 	qg_status=$(echo "$qg_response" | jq -r '.projectStatus.status // "UNKNOWN"')
 
 	if [[ "$qg_status" == "OK" ]]; then
-		print_success "SonarCloud quality gate: PASSED"
-		((++PASSED))
+		count_success "SonarCloud quality gate: PASSED"
 	elif [[ "$qg_status" == "ERROR" ]]; then
-		print_error "SonarCloud quality gate: FAILED"
-		((++FAILED))
+		count_failure "SonarCloud quality gate: FAILED"
 
 		# Get failing conditions
 		echo "$qg_response" | jq -r '.projectStatus.conditions[] | select(.status == "ERROR") | "  - \(.metricKey): \(.actualValue) (threshold: \(.errorThreshold))"'
 	elif [[ "$qg_status" == "WARN" ]]; then
-		print_warning "SonarCloud quality gate: WARNING"
-		((++WARNINGS))
+		count_warning "SonarCloud quality gate: WARNING"
 	else
-		print_warning "SonarCloud quality gate status: $qg_status"
-		((++WARNINGS))
+		count_warning "SonarCloud quality gate status: $qg_status"
 	fi
 
 	# Get current metrics
@@ -324,19 +335,16 @@ check_snyk() {
 	snyk_output=$(snyk test --severity-threshold=high --json 2>/dev/null) || snyk_exit=$?
 
 	if [[ $snyk_exit -eq 0 ]]; then
-		print_success "Snyk: No high/critical vulnerabilities"
-		((++PASSED))
+		count_success "Snyk: No high/critical vulnerabilities"
 	elif [[ $snyk_exit -eq 1 ]]; then
 		local vuln_count
 		vuln_count=$(echo "$snyk_output" | jq -r '.vulnerabilities | length // 0')
-		print_error "Snyk: $vuln_count vulnerabilities found"
-		((++FAILED))
+		count_failure "Snyk: $vuln_count vulnerabilities found"
 
 		# Show top vulnerabilities
 		echo "$snyk_output" | jq -r '.vulnerabilities[:5][] | "  - [\(.severity)] \(.title) in \(.packageName)"' 2>/dev/null || true
 	else
-		print_warning "Snyk scan completed with warnings"
-		((++WARNINGS))
+		count_warning "Snyk scan completed with warnings"
 	fi
 
 	return 0
@@ -350,22 +358,18 @@ check_secrets() {
 		print_info "Running Secretlint scan..."
 
 		if secretlint "**/*" --format compact 2>/dev/null; then
-			print_success "Secretlint: No secrets detected"
-			((++PASSED))
+			count_success "Secretlint: No secrets detected"
 		else
-			print_error "Secretlint: Potential secrets found"
-			((++FAILED))
+			count_failure "Secretlint: Potential secrets found"
 			return 1
 		fi
 	elif [[ -f "$REPO_ROOT/node_modules/.bin/secretlint" ]]; then
 		print_info "Running Secretlint (local)..."
 
 		if "$REPO_ROOT/node_modules/.bin/secretlint" "**/*" --format compact 2>/dev/null; then
-			print_success "Secretlint: No secrets detected"
-			((++PASSED))
+			count_success "Secretlint: No secrets detected"
 		else
-			print_error "Secretlint: Potential secrets found"
-			((++FAILED))
+			count_failure "Secretlint: Potential secrets found"
 			return 1
 		fi
 	else
