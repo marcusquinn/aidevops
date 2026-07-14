@@ -1990,8 +1990,9 @@ test_worker_produced_output_invalid_workdir_returns_pr_exists() {
 	return 0
 }
 
-test_worker_produced_output_pushed_branch_no_slug_returns_pr_exists() {
-	# Pushed branch but DISPATCH_REPO_SLUG unset → cannot check PR → fail-open (pr_exists)
+test_worker_produced_output_zero_diff_pushed_branch_returns_noop() {
+	# A successful zero-count comparison proves no PR can exist for this head,
+	# even when the feature ref was pushed and repo slug context is unavailable.
 	local work_dir="${TEST_ROOT}/repo-pushed-noslug"
 	_setup_test_git_repo "$work_dir" 0
 	unset DISPATCH_REPO_SLUG 2>/dev/null || true
@@ -1999,11 +2000,11 @@ test_worker_produced_output_pushed_branch_no_slug_returns_pr_exists() {
 
 	local classification
 	classification=$(_worker_produced_output "issue-99999" "$work_dir")
-	if [[ "$classification" == "pr_exists" ]]; then
-		print_result "_worker_produced_output returns 'pr_exists' for pushed branch (no slug, fail-open)" 0
+	if [[ "$classification" == "noop" ]]; then
+		print_result "_worker_produced_output returns 'noop' for a zero-diff pushed branch" 0
 	else
-		print_result "_worker_produced_output returns 'pr_exists' for pushed branch (no slug, fail-open)" 1 \
-			"Expected 'pr_exists' (fail-open, no DISPATCH_REPO_SLUG), got '${classification}'"
+		print_result "_worker_produced_output returns 'noop' for a zero-diff pushed branch" 1 \
+			"Expected 'noop' after a successful zero-count base comparison, got '${classification}'"
 	fi
 	return 0
 }
@@ -3051,7 +3052,7 @@ main() {
 	test_worker_produced_output_with_commits_returns_pr_exists_failopen
 	test_worker_produced_output_non_worker_session_returns_pr_exists
 	test_worker_produced_output_invalid_workdir_returns_pr_exists
-	test_worker_produced_output_pushed_branch_no_slug_returns_pr_exists
+	test_worker_produced_output_zero_diff_pushed_branch_returns_noop
 	test_worker_produced_output_branch_no_pr_returns_branch_orphan
 	test_worker_produced_output_local_branch_no_remote_returns_local_branch_unpushed
 	test_worker_produced_output_branch_with_pr_returns_pr_exists
