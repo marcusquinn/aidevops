@@ -36,6 +36,7 @@ import {
   enrichActiveSpan,
   runtimeEventOtelAttributes,
 } from "./otel-enrichment.mjs";
+import { toolOutcomeFailed } from "./session-continuation-guard.mjs";
 
 const HOME = homedir();
 const DEFAULT_OBS_DIR = join(HOME, ".aidevops", ".agent-workspace", "observability");
@@ -876,6 +877,10 @@ export function buildToolCallInsertSql({ sessionID, callID, toolName, intent, is
  * @param {string | undefined} intent - LLM-provided intent string (from agent__intent field)
  * @param {number | null | undefined} [durationMs] - Elapsed milliseconds from tool.execute.before (t2184)
  */
+export function toolCallSucceeded(output) {
+  return !toolOutcomeFailed(output);
+}
+
 export function recordToolCall(input, output, intent, durationMs) {
   if (!dbReady) return;
 
@@ -901,11 +906,7 @@ export function recordToolCall(input, output, intent, durationMs) {
     }
   }
 
-  // Determine success from output (heuristic: no error indicators)
-  const outputText = output.output || "";
-  const isSuccess = !outputText.includes("error") &&
-    !outputText.includes("FAILED") &&
-    !outputText.includes("Error:") ? 1 : 0;
+  const isSuccess = toolCallSucceeded(output) ? 1 : 0;
 
   const sql = buildToolCallInsertSql({
     sessionID,

@@ -22,7 +22,7 @@
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
 
-import { buildToolCallInsertSql } from "../observability.mjs";
+import { buildToolCallInsertSql, toolCallSucceeded } from "../observability.mjs";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -71,6 +71,39 @@ function extractValues(sql) {
   if (buf.trim()) values.push(buf.trim());
   return values;
 }
+
+describe("toolCallSucceeded", () => {
+  test("accepts ordinary output containing error vocabulary", () => {
+    assert.equal(toolCallSucceeded({
+      output: "The parser handles error values, Error: fixtures, and FAILED states.",
+      metadata: { status: "completed", exitCode: 0 },
+    }), true);
+  });
+
+  test("accepts empty and ordinary successful output", () => {
+    assert.equal(toolCallSucceeded({ output: "" }), true);
+    assert.equal(toolCallSucceeded({ output: "File read successfully" }), true);
+  });
+
+  test("rejects structured failure statuses", () => {
+    assert.equal(toolCallSucceeded({ output: "", metadata: { status: "failed" } }), false);
+    assert.equal(toolCallSucceeded({ output: "", status: "timeout" }), false);
+  });
+
+  test("rejects explicit error fields", () => {
+    assert.equal(toolCallSucceeded({ output: "", error: "read failed" }), false);
+    assert.equal(toolCallSucceeded({ output: "", metadata: { error: "read failed" } }), false);
+  });
+
+  test("rejects non-zero metadata exit codes", () => {
+    assert.equal(toolCallSucceeded({ output: "", metadata: { exitCode: 1 } }), false);
+  });
+
+  test("rejects leading terminal failure markers without structured status", () => {
+    assert.equal(toolCallSucceeded({ output: "Error: file not found" }), false);
+    assert.equal(toolCallSucceeded({ output: "FAILED to read file" }), false);
+  });
+});
 
 // ---------------------------------------------------------------------------
 // Schema alignment
