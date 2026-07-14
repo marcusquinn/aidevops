@@ -98,8 +98,10 @@ _build_inline_findings() {
 
 		select($sev_num >= $min_num) |
 
-		# Skip resolved/outdated comments
-		select(.position != null or .line != null or .original_line != null) |
+		# Replaced PR lines retain original_line/position but clear line; suppress
+		# that stale evidence while preserving file comments and legacy payloads.
+		select(.subject_type == "file" or .line != null or
+			((has("line") | not) and .position != null)) |
 
 		{
 			pr: ($pr | tonumber),
@@ -229,6 +231,9 @@ _apply_positive_filter() {
 			"\\bconsistent\\b|\\brobust(ness)?\\b|\\buser experience\\b|" +
 			"\\breduces? (external )?requirements?\\b|\\bwell-implemented\\b"; "i")) as $summary_praise_only |
 
+		# Exact-head fix/pass evidence is praise unless contrast or unresolved-work language remains.
+		(($body | test("\\breviewed exact head\\b"; "i")) and ($body | test("\\b(corrects?|keeps?|preserves?|verif(y|ies|ied)|pass(es|ed)?)\\b"; "i")) and ($body | test("\\b(tests?|checks?|suites?)\\b"; "i")) and (($body | test("\\b(but|however|although|yet|except|still|remaining|unresolved)\\b"; "i")) | not)) as $exact_head_verification |
+
 		# Review summaries often describe the bug the PR already fixed, e.g.
 		# "corrects a broken URL". Do not treat those historic defect words as
 		# new quality-debt findings when the same body is otherwise praise-only.
@@ -256,7 +261,7 @@ _apply_positive_filter() {
 			"\\bworkaround\\b|\\bhack\\b|" +
 			"```\\s*(suggestion|diff)"; "i")) as $strong_actionable |
 
-		(($actionable_raw or $strong_actionable) and ($no_actionable_recommendation | not) and ($no_actionable_suggestions | not) and ($strong_actionable or (($historic_fix_praise and $summary_praise_only) | not))) as $actionable |
+		(($actionable_raw or $strong_actionable) and ($no_actionable_recommendation | not) and ($no_actionable_suggestions | not) and ($strong_actionable or (($historic_fix_praise and $summary_praise_only) | not)) and ($strong_actionable or ($exact_head_verification | not))) as $actionable |
 
 		($body | test(
 			"\\bmerging\\.?$|\\bmerge (this|the) pr\\b|" +
@@ -265,7 +270,7 @@ _apply_positive_filter() {
 			"\\breview.bot.gate (pass|ok)\\b|" +
 			"\\bpulse supervisor\\b"; "i")) as $merge_status_only |
 
-		select($include_positive or (((($approval_only or $no_actionable_recommendation or $no_actionable_suggestions or $no_actionable_sentiment or $summary_praise_only or $merge_status_only) and ($actionable | not))) | not)) |
+		select($include_positive or (((($approval_only or $no_actionable_recommendation or $no_actionable_suggestions or $no_actionable_sentiment or $summary_praise_only or $exact_head_verification or $merge_status_only) and ($actionable | not))) | not)) |
 
 		. + {_actionable: $actionable}]
 	' || echo "[]"

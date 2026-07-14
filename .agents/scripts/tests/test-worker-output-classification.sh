@@ -121,7 +121,7 @@ case "${1:-}" in
 			list)
 				case " $* " in
 					*".[].number"*) printf '%s\n' "${STUB_PR_NUMBERS:-}" ;;
-					*"number,state,isDraft,mergedAt,labels,statusCheckRollup"*) printf '%s\n' "${STUB_PR_JSON:-[]}" ;;
+					*"number,state,isDraft,mergedAt,headRefOid,labels,statusCheckRollup"*) printf '%s\n' "${STUB_PR_JSON:-[]}" ;;
 					*"--json number "*) printf '%s\n' "${STUB_SEARCH_JSON:-[]}" ;;
 					*) printf '%s\n' "${STUB_PR_COUNT:-0}" ;;
 				esac
@@ -131,8 +131,13 @@ case "${1:-}" in
 		;;
 	api)
 		# `_gh_wrapper_auto_sig` and friends call `gh api user --jq .login`.
-		# Emit a JSON object so callers that consume stdout don't break.
-		printf '{}\n'
+		# Emit a merge summary for the ready-PR fixture and a JSON object for
+		# source-time identity probes.
+		if [[ "$*" == *"/issues/77/comments"* ]]; then
+			printf '%s\n' '[[{"body":"<!-- MERGE_SUMMARY -->"}]]'
+		else
+			printf '{}\n'
+		fi
 		;;
 	*) ;;
 esac
@@ -324,7 +329,10 @@ test_feature_branch_with_pr_returns_pr_exists() {
 		return 0
 	}
 	export STUB_PR_COUNT=1
-	export STUB_PR_JSON='[{"number":77,"state":"OPEN","isDraft":false,"mergedAt":null,"labels":[{"name":"origin:worker"}],"statusCheckRollup":[]}]' STUB_SEARCH_JSON='[]'
+	local expected_head
+	expected_head=$(git -C "$WORK_DIR" rev-parse HEAD)
+	STUB_PR_JSON=$(printf '[{"number":77,"state":"OPEN","isDraft":false,"mergedAt":null,"headRefOid":"%s","labels":[{"name":"origin:worker"}],"statusCheckRollup":[]}]' "$expected_head")
+	export STUB_PR_JSON STUB_SEARCH_JSON='[]'
 	local got
 	got=$(_worker_produced_output "issue-1004" "$WORK_DIR")
 	if [[ "$got" == "pr_exists" ]]; then

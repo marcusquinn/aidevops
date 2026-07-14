@@ -573,14 +573,28 @@ _create_or_append_file_issue() {
 	# Cross-PR file dedup (t1411): check if there's an existing open
 	# quality-debt issue for the same FILE from a different PR. If so,
 	# append findings as a comment instead of creating a new issue.
+	local existing_file_issue_json=""
 	local existing_file_issue=""
+	local existing_file_issue_pr=""
 	if [[ "$file" != "general" ]]; then
-		existing_file_issue=$(echo "$existing_open_issues_json" | jq -r --arg f "$file" \
-			'[.[] | select((.title // "") | startswith("quality-debt: \($f) —"))] | .[0].number // empty' ||
-			echo "")
+		existing_file_issue_json=$(echo "$existing_open_issues_json" | jq -c --arg f "$file" \
+			'[.[] | select((.title // "") | startswith("quality-debt: \($f) —"))] | .[0] // {}' ||
+			echo '{}')
+		existing_file_issue=$(echo "$existing_file_issue_json" | jq -r '.number // empty')
+		existing_file_issue_pr=$(echo "$existing_file_issue_json" | jq -r \
+			'(.title // "") | try capture("— PR #(?<number>[0-9]+) review feedback").number catch ""')
 	fi
 
 	if [[ -n "$existing_file_issue" ]]; then
+		# PR numbers are monotonically increasing within a repository. Never append
+		# older review feedback to debt opened from a newer PR: the newer change may
+		# already supersede the older finding (GH#27703).
+		if [[ "$pr_num" =~ ^[0-9]+$ && "$existing_file_issue_pr" =~ ^[0-9]+$ && \
+			"$pr_num" -lt "$existing_file_issue_pr" ]]; then
+			echo "  Skipping superseded PR #${pr_num} feedback; #${existing_file_issue} already tracks newer PR #${existing_file_issue_pr} for ${file}" >&2
+			echo "0"
+			return 0
+		fi
 		_append_findings_to_issue "$repo_slug" "$existing_file_issue" "$pr_num" "$file" \
 			"$reviewers" "$file_finding_count" "$max_severity" "$finding_details"
 		echo "0"

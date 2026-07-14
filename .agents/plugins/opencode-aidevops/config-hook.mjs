@@ -3,8 +3,8 @@
 // Extracted from index.mjs (t1914).
 // ---------------------------------------------------------------------------
 
-import { existsSync, readFileSync, appendFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "fs";
-import { homedir } from "os";
+import { existsSync, readFileSync, appendFileSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "fs";
+import { homedir, tmpdir } from "os";
 import { join } from "path";
 import { execFileSync } from "child_process";
 import { createHash } from "crypto";
@@ -23,6 +23,27 @@ import {
   GPT56_OUTPUT_DEFAULT,
 } from "./model-limits.mjs";
 
+const tempDirectories = new Set();
+function addTempDirectory(path) {
+  const normalized = path.replace(/\/+$/, "");
+  if (!normalized) return;
+  tempDirectories.add(normalized);
+  try {
+    tempDirectories.add(realpathSync(normalized));
+  } catch {
+    // The unresolved path remains a valid, least-privilege fallback.
+  }
+}
+addTempDirectory(tmpdir());
+if (process.platform === "darwin") {
+  try {
+    const darwinTemp = execFileSync("/usr/bin/getconf", ["DARWIN_USER_TEMP_DIR"], { encoding: "utf8" }).trim();
+    addTempDirectory(darwinTemp);
+  } catch {
+    // The configured tmpdir() remains available when getconf is unavailable.
+  }
+}
+
 const MANAGED_EXTERNAL_DIRECTORIES = [
   "~/.aidevops",
   "~/.aidevops/**",
@@ -32,6 +53,7 @@ const MANAGED_EXTERNAL_DIRECTORIES = [
   "~/.config/opencode/command/**",
   "~/Git/_worktrees",
   "~/Git/_worktrees/**",
+  ...[...tempDirectories].sort().flatMap((path) => [path, `${path}/**`]),
 ];
 
 const PATTERN_CAPABLE_PERMISSIONS = new Set(["bash", "external_directory"]);
