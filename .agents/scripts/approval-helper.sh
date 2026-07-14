@@ -75,6 +75,9 @@ readonly APPROVAL_PUB="$APPROVAL_DIR/approval.pub"
 readonly APPROVAL_NAMESPACE="aidevops-approve"
 readonly APPROVAL_MARKER="<!-- aidevops-signed-approval -->"
 
+# shellcheck source=approval-snapshot-v2.sh
+source "${SCRIPT_DIR}/approval-snapshot-v2.sh"
+
 # Detect repo slug from current directory or repos.json
 _detect_slug() {
 	local slug=""
@@ -635,9 +638,6 @@ _post_issue_approval_updates() {
 		# window that exists for issues. Without locking, non-collaborators can
 		# add comments to an approved PR between approval and merge, potentially
 		# influencing automated review or merge decisions.
-		gh_pr_comment "$target_number" --repo "$slug" \
-			--body "This PR has been approved by a maintainer and is now locked for review." \
-			>/dev/null 2>&1 || true
 		local lock_err=""
 		lock_err=$(_approval_lock_pr "$target_number" "$slug" 2>&1 >/dev/null) || {
 			_print_error "Approval advisory lock failure: PR #$target_number conversation could not be locked after approval state updates"
@@ -781,7 +781,10 @@ _approve_target() {
 
 	local timestamp payload sig_file comment_body
 	timestamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-	payload="APPROVE:${target_type}:${slug}:${target_number}:${timestamp}"
+	payload=$(approval_snapshot_v2_payload "$target_type" "$target_number" "$slug" "$timestamp") || {
+		_print_error "Could not build the immutable approval snapshot; approval was not posted"
+		return 1
+	}
 	sig_file=$(mktemp)
 
 	if ! _sign_approval_payload "$payload" "$actual_key" "$sig_file"; then
@@ -802,6 +805,15 @@ _approve_target() {
 			_print_error "Failed to post approval comment on PR #$target_number"
 			return 1
 		fi
+	fi
+
+	# #aidevops:trust-boundary — content can drift between the snapshot read and
+	# comment write. Re-fetch and verify V2 before lifecycle writes or Pulse kick.
+	local posted_verification=""
+	posted_verification=$(cmd_verify "$target_type" "$target_number" "$slug" 2>/dev/null) || posted_verification="${posted_verification:-API_ERROR}"
+	if [[ "$posted_verification" != "VERIFIED" ]]; then
+		_print_error "Approval comment posted but current-state verification returned ${posted_verification}; lifecycle changes were not applied. Re-run approval after reviewing the latest state."
+		return 1
 	fi
 
 	if ! _post_issue_approval_updates "$target_type" "$target_number" "$slug"; then
@@ -857,17 +869,12 @@ _create_allowed_signers_file() {
 }
 
 _verify_comment_signature() {
-	local issue_number="$1"
-	local body="$2"
-	local pub_key="$3"
+	local body="$1"
+	local pub_key="$2"
 	local payload signature payload_file sig_file allowed_signers_file
 
 	payload=$(_extract_fenced_block "$body" 1)
 	if [[ -z "$payload" ]]; then
-		return 1
-	fi
-
-	if [[ ! "$payload" =~ ^APPROVE:(issue|pr):.*:[0-9]+: ]]; then
 		return 1
 	fi
 
@@ -887,14 +894,94 @@ _verify_comment_signature() {
 		-f "$allowed_signers_file" \
 		-I "approval@aidevops.sh" \
 		-n "$APPROVAL_NAMESPACE" \
-		-s "$sig_file" <"$payload_file" >/dev/null 2>&1 &&
-		[[ "$payload" == *":${issue_number}:"* ]]; then
+		-s "$sig_file" <"$payload_file" >/dev/null 2>&1; then
 		rm -f "$payload_file" "$sig_file" "$allowed_signers_file"
 		return 0
 	fi
 
 	rm -f "$payload_file" "$sig_file" "$allowed_signers_file"
 	return 1
+}
+
+_approval_classify_signed_comment() {
+	local target_type="$1"
+	local target_number="$2"
+	local slug="$3"
+	local comment_id="$4"
+	local body="$5"
+	local pub_key="$6"
+	local expected_head_sha="${7:-}"
+	local payload="" snapshot_json="" current_digest="" signed_digest="" normalized_slug=""
+	normalized_slug=$(printf '%s' "$slug" | tr '[:upper:]' '[:lower:]')
+
+	payload=$(_extract_fenced_block "$body" 1)
+	if [[ -z "$payload" ]] || ! _verify_comment_signature "$body" "$pub_key"; then
+		printf 'MALFORMED_APPROVAL\n'
+		return 0
+	fi
+
+	if [[ "$payload" == APPROVE:* ]]; then
+		local legacy_payload_prefix=""
+		legacy_payload_prefix=$(printf 'APPROVE:%s:%s:%s:' "$target_type" "$slug" "$target_number" | tr '[:upper:]' '[:lower:]')
+		if [[ "$(printf '%s' "$payload" | tr '[:upper:]' '[:lower:]')" == "${legacy_payload_prefix}"* ]]; then
+			printf 'LEGACY_APPROVAL\n'
+		else
+			printf 'MALFORMED_APPROVAL\n'
+		fi
+		return 0
+	fi
+
+	if ! jq -e --arg type "$target_type" --arg repo "$normalized_slug" --arg number "$target_number" '
+		.schema == "aidevops-approval/v2"
+		and .target.kind == $type
+		and .target.repository == $repo
+		and (.target.number | tostring) == $number
+		and (.snapshot_sha256 | type == "string" and test("^[0-9a-f]{64}$"))
+		and (.issued_at | type == "string" and test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"))
+		and (if $type == "pr" then (.authority == "merge" and (.pr | type == "object")) else (.authority == "development" and .pr == null) end)
+	' <<<"$payload" >/dev/null 2>&1; then
+		printf 'MALFORMED_APPROVAL\n'
+		return 0
+	fi
+
+	if [[ "$target_type" == "pr" && -n "$expected_head_sha" ]]; then
+		local payload_head=""
+		payload_head=$(jq -r '.pr.head_sha // ""' <<<"$payload") || payload_head=""
+		if [[ "$payload_head" != "$expected_head_sha" ]]; then
+			printf 'STALE_APPROVAL\n'
+			return 0
+		fi
+	fi
+
+	snapshot_json=$(approval_snapshot_v2_build "$target_type" "$target_number" "$slug" "$comment_id") || {
+		printf 'API_ERROR\n'
+		return 0
+	}
+	current_digest=$(approval_snapshot_v2_digest "$snapshot_json") || {
+		printf 'API_ERROR\n'
+		return 0
+	}
+	signed_digest=$(jq -r '.snapshot_sha256' <<<"$payload") || signed_digest=""
+	if [[ "$current_digest" != "$signed_digest" ]]; then
+		printf 'STALE_APPROVAL\n'
+		return 0
+	fi
+
+	if [[ "$target_type" == "pr" ]]; then
+		if ! jq -e --argjson snapshot "$snapshot_json" '
+			.pr.head_sha == $snapshot.head.sha
+			and .pr.head_ref == $snapshot.head.ref
+			and .pr.head_repository == $snapshot.head.repository
+			and .pr.base_ref == $snapshot.base.ref
+			and .pr.base_repository == $snapshot.base.repository
+		' <<<"$payload" >/dev/null 2>&1; then
+			printf 'STALE_APPROVAL\n'
+			return 0
+		fi
+	fi
+
+	printf 'VERIFIED\n'
+	return 0
 }
 
 # ── Setup ────────────────────────────────────────────────────────────────────
@@ -990,26 +1077,65 @@ cmd_pr_approved() {
 
 # ── Verify Approval ──────────────────────────────────────────────────────────
 
-# Verify that an issue has a valid signed approval comment.
-# Returns 0 if valid approval found, 1 otherwise.
-# This is the function the pulse calls to check approvals.
+# Verify a V2 approval against the current immutable issue/PR snapshot.
+# Legacy syntax (`verify N slug`) remains an issue verification request, but V1
+# signatures return LEGACY_APPROVAL and never authorize an external merge.
 cmd_verify() {
-	local issue_number="${1:-}"
-	local slug="${2:-}"
+	local target_type="issue"
+	if [[ "${1:-}" == "issue" || "${1:-}" == "pr" ]]; then
+		target_type="$1"
+		shift
+	fi
+	local target_number="${1:-}"
+	local slug=""
+	shift 2>/dev/null || true
+	if [[ $# -gt 0 && "$1" != --* ]]; then
+		slug="$1"
+		shift
+	fi
+	local expected_head_sha=""
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+		--expect-head)
+			expected_head_sha="${2:-}"
+			shift 2
+			;;
+		*)
+			printf 'MALFORMED_APPROVAL\n'
+			return 5
+			;;
+		esac
+	done
+	if [[ -n "$expected_head_sha" && ! "$expected_head_sha" =~ ^[0-9A-Fa-f]{7,64}$ ]]; then
+		printf 'MALFORMED_APPROVAL\n'
+		return 5
+	fi
 
-	_require_number_arg "$issue_number" "Issue" "Usage: aidevops approve verify <number> [owner/repo]" || return 1
+	_require_number_arg "$target_number" "$target_type" "Usage: aidevops approve verify [issue|pr] <number> [owner/repo] [--expect-head SHA]" || return 5
 	slug=$(_resolve_slug_or_fail "$slug" "Could not detect repo slug") || return 1
 
-	# Fetch comments looking for approval marker
-	local comments_json
-	comments_json=$(gh api "repos/${slug}/issues/${issue_number}/comments" --paginate \
-		--jq "[.[] | select(.body | contains(\"$APPROVAL_MARKER\"))]" 2>/dev/null || echo "[]")
+	local comment_pages="" comments_json=""
+	comment_pages=$(gh api "repos/${slug}/issues/${target_number}/comments?per_page=100" --paginate --slurp 2>/dev/null) || {
+		printf 'API_ERROR\n'
+		return 6
+	}
+	comments_json=$(jq -c --arg marker "$APPROVAL_MARKER" '
+		(if type == "array" and all(.[]; type == "array") then [.[][]?] else [.[]?] end)
+		| [ .[] | select((.body // "") | contains($marker)) ]
+		| sort_by(.id)
+	' <<<"$comment_pages" 2>/dev/null) || {
+		printf 'API_ERROR\n'
+		return 6
+	}
 
 	local comment_count
-	comment_count=$(printf '%s' "$comments_json" | jq 'length' 2>/dev/null || echo "0")
+	comment_count=$(printf '%s' "$comments_json" | jq 'length' 2>/dev/null) || {
+		printf 'API_ERROR\n'
+		return 6
+	}
 
 	if [[ "$comment_count" -eq 0 ]]; then
-		echo "NO_APPROVAL"
+		printf 'NO_APPROVAL\n'
 		return 1
 	fi
 
@@ -1018,25 +1144,49 @@ cmd_verify() {
 	# worker cannot verify it" and avoids re-applying NMR over a signed approval.
 	local pub_key="${AIDEVOPS_APPROVAL_PUB:-$APPROVAL_PUB}"
 	if [[ ! -f "$pub_key" ]]; then
-		echo "NO_KEY"
-		return 1
+		printf 'NO_KEY\n'
+		return 2
 	fi
 
-	# Check each approval comment (most recent first)
+	local saw_api_error=0 saw_stale=0 saw_legacy=0 saw_malformed=0
 	local i=$((comment_count - 1))
 	while [[ "$i" -ge 0 ]]; do
-		local body
+		local body comment_id classification
 		body=$(printf '%s' "$comments_json" | jq -r ".[$i].body" 2>/dev/null || echo "")
+		comment_id=$(printf '%s' "$comments_json" | jq -r ".[$i].id // empty" 2>/dev/null || echo "")
 		i=$((i - 1))
-
-		if _verify_comment_signature "$issue_number" "$body" "$pub_key"; then
-			echo "VERIFIED"
-			return 0
+		if [[ ! "$comment_id" =~ ^[0-9]+$ ]]; then
+			saw_malformed=1
+			continue
 		fi
+		classification=$(_approval_classify_signed_comment "$target_type" "$target_number" "$slug" "$comment_id" "$body" "$pub_key" "$expected_head_sha")
+		case "$classification" in
+		VERIFIED)
+			printf 'VERIFIED\n'
+			return 0
+			;;
+		API_ERROR) saw_api_error=1 ;;
+		STALE_APPROVAL) saw_stale=1 ;;
+		LEGACY_APPROVAL) saw_legacy=1 ;;
+		*) saw_malformed=1 ;;
+		esac
 	done
 
-	echo "UNVERIFIED"
-	return 1
+	if [[ "$saw_api_error" -eq 1 ]]; then
+		printf 'API_ERROR\n'
+		return 6
+	fi
+	if [[ "$saw_stale" -eq 1 ]]; then
+		printf 'STALE_APPROVAL\n'
+		return 4
+	fi
+	if [[ "$saw_legacy" -eq 1 ]]; then
+		printf 'LEGACY_APPROVAL\n'
+		return 3
+	fi
+	[[ "$saw_malformed" -eq 1 ]] || saw_malformed=1
+	printf 'MALFORMED_APPROVAL\n'
+	return 5
 }
 
 # ── Status ───────────────────────────────────────────────────────────────────
@@ -1087,7 +1237,7 @@ cmd_help() {
 	echo "  pr <number> [slug]         Approve a PR"
 	echo ""
 	echo "Commands (no sudo needed):"
-	echo "  verify <number> [slug]     Verify approval signature on an issue"
+	echo "  verify [issue|pr] <number> [slug] [--expect-head SHA]"
 	echo "  status                     Show approval key setup status"
 	echo "  help                       Show this help"
 	echo ""
@@ -1095,6 +1245,7 @@ cmd_help() {
 	echo "  sudo aidevops approve setup"
 	echo "  sudo aidevops approve issue 17438 <owner/repo>"
 	echo "  aidevops approve verify 17438"
+	echo "  aidevops approve verify pr 17439 <owner/repo> --expect-head <sha>"
 	echo ""
 	echo "Security: The approval signing key is stored root-only. Workers run as your"
 	echo "user account and cannot access it, even with the same GitHub credentials."

@@ -44,6 +44,7 @@ _pmrc_snapshot_checks_json() {
 		"failure" as $failure | "error" as $error |
 		[
 			$pages[]?.check_runs[]? | {
+				source: "check_run",
 				name: (.name // ""),
 				status: ((.status // "") | ascii_downcase),
 				conclusion: ((.conclusion // "") | ascii_downcase),
@@ -52,6 +53,7 @@ _pmrc_snapshot_checks_json() {
 			}
 		] + [
 			$statuses.statuses[]? | ((.state // "") | ascii_downcase) as $state | {
+				source: "commit_status",
 				name: (.context // ""),
 				status: (if $state == $pending then $in_progress else $completed end),
 				conclusion: (if $state == $success then $success elif ($state == $failure or $state == $error) then $failure else "" end),
@@ -60,9 +62,35 @@ _pmrc_snapshot_checks_json() {
 			}
 		]
 		| map(select(.name != ""))
-		| sort_by(.name, .observed_at)
-		| group_by(.name)
+		| sort_by(.source, .name, .observed_at)
+		| group_by([.source, .name])
 		| map(last)
+		| map(. + {
+			family: (if (.name == "maintainer-gate" or .name == "Maintainer Review & Assignee Gate" or .name == "gate / Maintainer Review & Assignee Gate") then "maintainer-gate" else .name end),
+			family_key: (if (.name == "maintainer-gate" or .name == "Maintainer Review & Assignee Gate" or .name == "gate / Maintainer Review & Assignee Gate") then "maintainer-gate" else (.source + "\u0000" + .name) end)
+		})
+		| sort_by(.family_key, .name, .source)
+		| group_by(.family_key)
+		| map(
+			. as $members
+			| if .[0].family == "maintainer-gate" then {
+				name: "maintainer-gate",
+				family: "maintainer-gate",
+				source: "logical_family",
+				status: (if any($members[]; .status != $completed) then $in_progress else $completed end),
+				conclusion: (
+					if any($members[]; (.conclusion == "failure" or .conclusion == "cancelled" or .conclusion == "timed_out" or .conclusion == "action_required" or .conclusion == "startup_failure")) then $failure
+					elif all($members[]; (.conclusion == $success or .conclusion == "neutral" or .conclusion == "skipped")) then $success
+					else "" end
+				),
+				observed_at: ([$members[]?.observed_at | select(. != "")] | max // ""),
+				members: [$members[] | {name, source, status, conclusion, observed_at}]
+			} else
+				($members | sort_by(.observed_at) | last) as $latest
+				| ($latest | del(.family_key)) + {members: [$members[] | {name, source, status, conclusion, observed_at}]}
+			end
+		)
+		| sort_by(.name)
 	' 2>/dev/null) || return 1
 	printf '%s\n' "$checks_json"
 	return 0
@@ -145,21 +173,83 @@ _pmrc_is_explicit_advisory_failure() {
 	return $?
 }
 
+_pmrc_configured_advisory_contexts_json() {
+	local repo_slug="$1"
+	local repos_json="${AIDEVOPS_REPOS_JSON:-$HOME/.config/aidevops/repos.json}"
+	local contexts="[]"
+
+	if [[ ! -f "$repos_json" ]]; then
+		printf '[]\n'
+		return 0
+	fi
+	contexts=$(jq -c --arg slug "$repo_slug" '
+		(first(.initialized_repos[]? | select((.slug | ascii_downcase) == ($slug | ascii_downcase)))
+		| .review_gate.advisory_check_contexts // []) as $contexts
+		| if ($contexts | type) == "array" and all($contexts[]; type == "string" and length > 0)
+			then ($contexts | unique)
+			else error("invalid review_gate.advisory_check_contexts") end
+	' "$repos_json" 2>/dev/null) || return 1
+	printf '%s\n' "$contexts"
+	return 0
+}
+
+_pmrc_review_evidence_permits_advisory() {
+	local evidence_json="$1"
+	local repo_slug="$2"
+	local pr_number="$3"
+	local head_sha="$4"
+
+	jq -e --arg repo "$repo_slug" --arg pr "$pr_number" --arg head "$head_sha" '
+		.schema == "aidevops.review-gate-evidence/v1"
+		and .repo == $repo and (.pr | tostring) == $pr and .head_sha == $head
+		and .permitted == true and .state == "pass" and .merge_gate == "clear"
+		and (
+			.status == "PASS"
+			or (.status == "SKIP" and .author.class == "trusted")
+			or (.status == "PASS_RATE_LIMITED" and .author.class == "trusted")
+			or (.status == "SKIP_TRUSTED_DEPENDABOT" and .author.class == "trusted-bot")
+		)
+	' <<<"$evidence_json" >/dev/null 2>&1
+	return $?
+}
+
+_pmrc_is_configured_advisory_failure() {
+	local check_name="$1"
+	local configured_contexts_json="$2"
+	local evidence_json="$3"
+	local repo_slug="$4"
+	local pr_number="$5"
+	local head_sha="$6"
+
+	jq -e --arg name "$check_name" 'index($name) != null' <<<"$configured_contexts_json" >/dev/null 2>&1 || return 1
+	_pmrc_review_evidence_permits_advisory "$evidence_json" "$repo_slug" "$pr_number" "$head_sha"
+	return $?
+}
+
 _pmrc_snapshot_checks_acceptable() {
 	local repo_slug="$1"
 	local pr_number="$2"
 	local checks_json="$3"
 	local required_contexts="$4"
-	local required_json="" rows="" name="" status="" conclusion="" required="" link=""
+	local evidence_json="${5:-}"
+	local head_sha="${6:-}"
+	local required_json="" configured_contexts_json="" rows="" name="" family="" status="" conclusion="" required="" members="" link=""
 	local blocking_names=""
 	local blockers=0 pending=0 advisory=0
 	_PULSE_MERGE_PREFLIGHT_BLOCKING_CHECKS_JSON="[]"
 
 	required_json=$(printf '%s' "$required_contexts" | jq -Rsc '[split("\n")[] | select(length > 0)]') || return 1
-	rows=$(jq -r --argjson required "$required_json" '.[] | .name as $name | [
-		$name, .status, .conclusion, (($required | index($name)) != null), (.link // "")
+	configured_contexts_json=$(_pmrc_configured_advisory_contexts_json "$repo_slug") || return 1
+	rows=$(jq -r --argjson required "$required_json" '.[] | . as $check | ($check.members // [$check]) as $members | [
+		$check.name,
+		($check.family // $check.name),
+		$check.status,
+		$check.conclusion,
+		((($required | index($check.name)) != null) or any($members[]; .name as $member_name | ($required | index($member_name)) != null)),
+		($members | map("\(.name)@\(.source)") | join(",")),
+		($check.link // "")
 	] | @tsv' <<<"$checks_json" 2>/dev/null) || return 1
-	while IFS=$'\t' read -r name status conclusion required link; do
+	while IFS=$'\t' read -r name family status conclusion required members link; do
 		[[ -n "$name" ]] || continue
 		if [[ "$status" != "$PMRC_CHECK_COMPLETED" || -z "$conclusion" ]]; then
 			pending=$((pending + 1))
@@ -168,7 +258,10 @@ _pmrc_snapshot_checks_acceptable() {
 		case "$conclusion" in
 		success | neutral | skipped) continue ;;
 		esac
-		if [[ "$required" == "true" ]]; then
+		if [[ "$family" == "maintainer-gate" ]]; then
+			echo "[pulse-merge] pre-merge snapshot: maintainer-gate family is terminal-${conclusion} for PR #${pr_number} in ${repo_slug}; aliases=${members}, required=${required} — merge blocked" >>"$LOGFILE"
+			blockers=$((blockers + 1))
+		elif [[ "$required" == "true" ]]; then
 			echo "[pulse-merge] pre-merge snapshot: required check '${name}' is terminal-${conclusion} for PR #${pr_number} in ${repo_slug} (GH#27137)" >>"$LOGFILE"
 			blocking_names="${blocking_names}${name}"$'\n'
 			blockers=$((blockers + 1))
@@ -178,6 +271,9 @@ _pmrc_snapshot_checks_acceptable() {
 			advisory=$((advisory + 1))
 		elif _pmrc_is_explicit_advisory_failure "$name" "$checks_json"; then
 			echo "[pulse-merge] pre-merge snapshot: IGNORED non-required baseline advisory failure '${name}' because its regression companion passed for PR #${pr_number} in ${repo_slug} (GH#27137)" >>"$LOGFILE"
+			advisory=$((advisory + 1))
+		elif _pmrc_is_configured_advisory_failure "$name" "$configured_contexts_json" "$evidence_json" "$repo_slug" "$pr_number" "$head_sha"; then
+			echo "[pulse-merge] pre-merge snapshot: IGNORED configured non-required review-provider failure '${name}' with typed current-head review evidence for PR #${pr_number} in ${repo_slug}" >>"$LOGFILE"
 			advisory=$((advisory + 1))
 		else
 			echo "[pulse-merge] pre-merge snapshot: unclassified non-required check '${name}' is terminal-${conclusion} for PR #${pr_number} in ${repo_slug} — merge blocked (GH#27137)" >>"$LOGFILE"
@@ -257,7 +353,6 @@ _pulse_merge_preflight_snapshot_gate() {
 	local repo_slug="$1"
 	local pr_number="$2"
 	local expected_head_sha="$3"
-	local expected_gate_evidence="${repo_slug}#${pr_number}@${expected_head_sha}"
 	local live_gate_evidence="${_PULSE_REVIEW_GATE_EVIDENCE:-}"
 	local pr_json="" current_head_sha="" required_contexts="" checks_json="" activity_json=""
 	_PULSE_MERGE_PREFLIGHT_BLOCKING_CHECKS_JSON="[]"
@@ -271,10 +366,10 @@ _pulse_merge_preflight_snapshot_gate() {
 	required_contexts=$(_required_contexts_for_default_branch "$repo_slug") || return 1
 	checks_json=$(_pmrc_snapshot_checks_json "$repo_slug" "$current_head_sha") || return 1
 	activity_json=$(_pmrc_snapshot_bot_activity_json "$repo_slug" "$pr_number") || return 1
-	[[ "$live_gate_evidence" == "$expected_gate_evidence" ]] || live_gate_evidence=""
+	_pmrc_review_evidence_permits_advisory "$live_gate_evidence" "$repo_slug" "$pr_number" "$current_head_sha" || live_gate_evidence=""
 	_pmrc_snapshot_review_gate_fresh "$repo_slug" "$pr_number" "$checks_json" "$activity_json" "$live_gate_evidence" || return 1
 	_pmrc_snapshot_review_threads_clear "$repo_slug" "$pr_number" || return 1
-	_pmrc_snapshot_checks_acceptable "$repo_slug" "$pr_number" "$checks_json" "$required_contexts" || return 1
+	_pmrc_snapshot_checks_acceptable "$repo_slug" "$pr_number" "$checks_json" "$required_contexts" "$live_gate_evidence" "$current_head_sha" || return 1
 	_pmrc_snapshot_quiet_period_passes "$repo_slug" "$pr_number" "$checks_json" "$activity_json" || return 1
 	echo "[pulse-merge] pre-merge snapshot: current head ${current_head_sha:0:12}, fresh review gate, resolved bot threads, terminal checks, and quiet period verified for PR #${pr_number} in ${repo_slug} (GH#27137)" >>"$LOGFILE"
 	return 0

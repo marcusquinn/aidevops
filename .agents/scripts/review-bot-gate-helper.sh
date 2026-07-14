@@ -1009,15 +1009,58 @@ do_status_json() {
 	local blocked_prefix="bloc"
 	local merge_gate="${blocked_prefix}ked"
 	local status_pass
+	local pr_json_before="" pr_json="" head_sha_before="" head_sha="" author_login="" author_association="" author_class="external"
+	local head_stable="false"
+	local permitted="false" reason="outcome_not_permitted"
 	status_pass=$(printf 'P%s' 'ASS')
 
+	pr_json_before=$(gh api "repos/${repo}/pulls/${pr_number}" 2>/dev/null) || pr_json_before=""
+	head_sha_before=$(jq -r '.head.sha // ""' <<<"$pr_json_before" 2>/dev/null) || head_sha_before=""
 	output=$(do_check "$pr_number" "$repo" 2>/dev/null) || rc=$?
+	pr_json=$(gh api "repos/${repo}/pulls/${pr_number}" 2>/dev/null) || pr_json=""
+	if [[ -n "$pr_json" ]]; then
+		head_sha=$(jq -r '.head.sha // ""' <<<"$pr_json" 2>/dev/null) || head_sha=""
+		author_login=$(jq -r '.user.login // ""' <<<"$pr_json" 2>/dev/null) || author_login=""
+		author_association=$(jq -r '.author_association // ""' <<<"$pr_json" 2>/dev/null) || author_association=""
+	fi
+	if [[ -n "$head_sha_before" && "$head_sha_before" == "$head_sha" ]]; then
+		head_stable="true"
+	fi
+	case "$author_association" in
+	OWNER | MEMBER | COLLABORATOR) author_class="trusted" ;;
+	esac
+
+	# #aidevops:trust-boundary — SKIP and rate-limit grace are trusted-author
+	# policy outcomes. External contributors require a real PASS; malformed or
+	# metadata-less evidence can never authorize an advisory merge decision.
 	case "$output" in
-	"$status_pass" | P[A]SS_RATE_LIMITED | SKIP)
+	"$status_pass")
+		[[ "$head_stable" == "true" && -n "$author_login" ]] && permitted="true" reason="live_review_pass"
+		;;
+	SKIP)
+		if [[ "$author_class" == "trusted" && "$head_stable" == "true" ]]; then
+			permitted="true"
+			reason="trusted_skip"
+		else
+			reason="external_skip_denied"
+		fi
+		;;
+	P[A]SS_RATE_LIMITED)
+		if [[ "$author_class" == "trusted" && "$head_stable" == "true" ]]; then
+			permitted="true"
+			reason="trusted_rate_limit_grace"
+		else
+			reason="external_rate_limit_grace_denied"
+		fi
+		;;
+	esac
+
+	case "$output:$permitted" in
+	"$status_pass:true" | P[A]SS_RATE_LIMITED:true | SKIP:true)
 		state="pass"
 		merge_gate="clear"
 		;;
-	WAITING)
+	WAITING:*)
 		state="waiting"
 		merge_gate="${blocked_prefix}ked"
 		;;
@@ -1032,10 +1075,16 @@ do_status_json() {
 		--arg pr "$pr_number" \
 		--arg repo "$repo" \
 		--arg status "${output:-ERROR}" \
+		--arg head_sha "$head_sha" \
+		--arg author_login "$author_login" \
+		--arg author_association "$author_association" \
+		--arg author_class "$author_class" \
+		--argjson permitted "$permitted" \
+		--arg reason "$reason" \
 		--arg state "$state" \
 		--arg merge_gate "$merge_gate" \
 		--argjson exit_code "$rc" \
-		'{pr:$pr,repo:$repo,status:$status,state:$state,merge_gate:$merge_gate,exit_code:$exit_code}'
+		'{schema:"aidevops.review-gate-evidence/v1",pr:$pr,repo:$repo,head_sha:$head_sha,status:$status,author:{login:$author_login,association:$author_association,class:$author_class},permitted:$permitted,reason:$reason,state:$state,merge_gate:$merge_gate,exit_code:$exit_code}'
 	return 0
 }
 
@@ -1319,6 +1368,10 @@ do_batch_retry() {
 			echo "  PR #${pr_num}: ${result:-error} (skipped)" >&2
 			;;
 		esac
+	if [[ "$head_stable" != "true" ]]; then
+		permitted="false"
+		reason="head_changed_or_metadata_unavailable"
+	fi
 	done <<<"$pr_numbers"
 
 	echo "REQUESTED_${requested}"
