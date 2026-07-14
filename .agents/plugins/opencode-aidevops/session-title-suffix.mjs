@@ -21,15 +21,17 @@ function readIfExists(filepath) {
 }
 
 export function readAidevopsVersion(activeAgentsDir, runtimeAgentsDir = activeAgentsDir) {
-  const activeVersion = readIfExists(join(activeAgentsDir, "VERSION"));
+  const activeVersion = activeAgentsDir ? readIfExists(join(activeAgentsDir, "VERSION")) : "";
   if (activeVersion) return activeVersion;
   if (process.env.AIDEVOPS_VERSION?.trim()) return process.env.AIDEVOPS_VERSION.trim();
 
-  const candidates = [
-    join(runtimeAgentsDir, "VERSION"),
-    join(runtimeAgentsDir, "..", "VERSION"),
-    join(runtimeAgentsDir, "..", "version"),
-  ];
+  const candidates = runtimeAgentsDir
+    ? [
+        join(runtimeAgentsDir, "VERSION"),
+        join(runtimeAgentsDir, "..", "VERSION"),
+        join(runtimeAgentsDir, "..", "version"),
+      ]
+    : [];
 
   for (const candidate of candidates) {
     const version = readIfExists(candidate);
