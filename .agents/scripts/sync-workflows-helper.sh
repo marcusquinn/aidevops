@@ -487,8 +487,12 @@ _sync_dryrun_emit() {
 	local _status="$2"
 	local _effective_ref="$3"
 	local _workflow_relpath="${4:-.github/workflows/issue-sync.yml}"
-	local _action="install"
-	[[ "$_status" == "$_CLASS_DRIFTED" ]] && _action="refresh"
+	local _action
+	case "$_status" in
+	"$_CLASS_DRIFTED") _action="refresh" ;;
+	"$_CLASS_CURRENT_CALLER") _action="update runner" ;;
+	*) _action="install" ;;
+	esac
 	printf '%s\t%s\t%s\t%s → %s at ref %s\n' \
 		"$_slug" "$_status" "$_STATUS_PLANNED" "$_action" "$_workflow_relpath" "$_effective_ref"
 	return 0
@@ -634,7 +638,7 @@ _sync_one_repo() {
 	fi
 
 	if [[ "$_apply" -eq 0 ]]; then
-		_sync_dryrun_emit "$_slug" "$_status" "$_effective_ref"
+		_sync_dryrun_emit "$_slug" "$_status" "$_effective_ref" "$_workflow_relpath"
 		return 0
 	fi
 
