@@ -20,9 +20,9 @@ if [[ "${1:-}" == "auth" && "${2:-}" == "status" ]]; then
 fi
 if [[ "${1:-}" == "run" && "${2:-}" == "list" ]]; then
 	if [[ "$*" == *"--limit=1"* || "$*" == *"--limit 1"* ]]; then
-		printf '%s\n' '[{"databaseId":1,"status":"completed","conclusion":"success","name":"Stub CI"}]'
+		printf '[{"databaseId":1,"status":"completed","conclusion":"%s","name":"Stub CI"}]\n' "${CI_STUB_CONCLUSION:-success}"
 	else
-		printf '%s\n' '[{"name":"Stub CI","status":"completed","conclusion":"success"}]'
+		printf '[{"name":"Stub CI","status":"completed","conclusion":"%s"}]\n' "${CI_STUB_CONCLUSION:-success}"
 	fi
 	exit 0
 fi
@@ -50,18 +50,43 @@ case "$url" in
 esac
 EOF
 
-chmod +x "${STUB_DIR}/gh" "${STUB_DIR}/curl"
+cat >"${STUB_DIR}/snyk" <<'EOF'
+#!/usr/bin/env bash
+if [[ "${1:-}" == "auth" && "${2:-}" == "check" ]]; then
+	exit 0
+fi
+if [[ "${1:-}" == "test" ]]; then
+	if [[ "${SNYK_STUB_RESULT:-clean}" == "vulnerable" ]]; then
+		printf '%s\n' '{"vulnerabilities":[{"severity":"high","title":"Stub vulnerability","packageName":"stub-package"}]}'
+		exit 1
+	fi
+	printf '%s\n' '{"vulnerabilities":[]}'
+	exit 0
+fi
+exit 1
+EOF
+
+cat >"${STUB_DIR}/secretlint" <<'EOF'
+#!/usr/bin/env bash
+if [[ "${SECRETLINT_STUB_RESULT:-clean}" == "detected" ]]; then
+	exit 1
+fi
+exit 0
+EOF
+
+chmod +x "${STUB_DIR}/gh" "${STUB_DIR}/curl" "${STUB_DIR}/snyk" "${STUB_DIR}/secretlint"
 
 run_case() {
-	local status="$1"
-	local expected_exit="$2"
-	local expected_text="$3"
-	local forbidden_text="$4"
+	local mode="$1"
+	local status="$2"
+	local expected_exit="$3"
+	local expected_text="$4"
+	local forbidden_text="$5"
 	local output
 	local plain_output
 	local actual_exit=0
 
-	output=$(PATH="${STUB_DIR}:$PATH" SONAR_STUB_STATUS="$status" bash "$POSTFLIGHT_SCRIPT" --quick 2>&1) || actual_exit=$?
+	output=$(PATH="${STUB_DIR}:$PATH" SONAR_STUB_STATUS="$status" bash "$POSTFLIGHT_SCRIPT" "$mode" 2>&1) || actual_exit=$?
 	plain_output=$(printf '%s' "$output" | sed $'s/\033\[[0-9;]*m//g')
 
 	if [[ "$actual_exit" -ne "$expected_exit" ]]; then
@@ -79,10 +104,14 @@ run_case() {
 	return 0
 }
 
-run_case "ERROR" 1 "Failed:   1" "POSTFLIGHT VERIFICATION PASSED"
-run_case "OK" 0 "POSTFLIGHT VERIFICATION PASSED" "POSTFLIGHT VERIFICATION FAILED"
-run_case "WARN" 0 "POSTFLIGHT VERIFICATION PASSED WITH WARNINGS" "POSTFLIGHT VERIFICATION FAILED"
-run_case "UNKNOWN" 0 "SonarCloud quality gate status: UNKNOWN" "POSTFLIGHT VERIFICATION FAILED"
-run_case "UNAVAILABLE" 0 "SKIPPED Could not reach SonarCloud API" "POSTFLIGHT VERIFICATION FAILED"
+run_case "--quick" "ERROR" 1 "Failed:   1" "POSTFLIGHT VERIFICATION PASSED"
+run_case "--quick" "OK" 0 "POSTFLIGHT VERIFICATION PASSED" "POSTFLIGHT VERIFICATION FAILED"
+run_case "--quick" "WARN" 0 "POSTFLIGHT VERIFICATION PASSED WITH WARNINGS" "POSTFLIGHT VERIFICATION FAILED"
+run_case "--quick" "UNKNOWN" 0 "SonarCloud quality gate status: UNKNOWN" "POSTFLIGHT VERIFICATION FAILED"
+run_case "--quick" "UNAVAILABLE" 0 "SKIPPED Could not reach SonarCloud API" "POSTFLIGHT VERIFICATION FAILED"
 
-printf 'PASS: postflight propagates SonarCloud quality-gate results\n'
+CI_STUB_CONCLUSION="failure" run_case "--ci-only" "OK" 1 "CI/CD pipeline failed: Stub CI" "POSTFLIGHT VERIFICATION PASSED"
+SNYK_STUB_RESULT="vulnerable" run_case "--security-only" "OK" 1 "Snyk: 1 vulnerabilities found" "POSTFLIGHT VERIFICATION PASSED"
+SECRETLINT_STUB_RESULT="detected" run_case "--security-only" "OK" 1 "Secretlint: Potential secrets found" "POSTFLIGHT VERIFICATION PASSED"
+
+printf 'PASS: postflight propagates critical check results\n'
