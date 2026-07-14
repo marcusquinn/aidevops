@@ -644,8 +644,8 @@ _cmd_check_stale_agent_redeploy() {
 }
 
 #######################################
-# Perform git fetch/pull/reset to bring INSTALL_DIR to origin/main.
-# Handles dirty working tree, detached HEAD, and ff-only failures.
+# Fetch and fast-forward INSTALL_DIR to the exact origin/main commit.
+# Fails closed on tracked work, local history, branch, or merge problems.
 # Args: $1 = remote version (for state updates on failure)
 # Returns: 0 on success, 1 on unrecoverable failure
 #######################################
@@ -677,16 +677,32 @@ _cmd_check_git_update() {
 		fi
 	fi
 
-	# Pull latest changes
+	# Fetch once, then merge the exact fetched commit. Refuse local-ahead
+	# history so unattended setup never executes unreviewed local commits.
 	if ! git -C "$INSTALL_DIR" fetch origin main --quiet 2>>"$LOG_FILE"; then
 		log_error "git fetch failed"
 		update_state "update" "$remote" "fetch_failed"
 		return 1
 	fi
+	local local_hash=""
+	local remote_hash=""
+	local_hash=$(git -C "$INSTALL_DIR" rev-parse HEAD 2>>"$LOG_FILE") || return 1
+	remote_hash=$(git -C "$INSTALL_DIR" rev-parse origin/main 2>>"$LOG_FILE") || return 1
+	if [[ "$local_hash" != "$remote_hash" ]] && git -C "$INSTALL_DIR" merge-base --is-ancestor "$remote_hash" "$local_hash" 2>/dev/null; then
+		log_error "Local commits exist on main; refusing unattended update"
+		update_state "update" "$remote" "local_commits"
+		return 1
+	fi
 
-	if ! git -C "$INSTALL_DIR" pull --ff-only origin main --quiet 2>>"$LOG_FILE"; then
-		log_error "git pull --ff-only failed; preserving local history"
+	if ! git -C "$INSTALL_DIR" merge --ff-only "$remote_hash" --quiet 2>>"$LOG_FILE"; then
+		log_error "git merge --ff-only failed; preserving local history"
 		update_state "update" "$remote" "pull_failed"
+		return 1
+	fi
+	local_hash=$(git -C "$INSTALL_DIR" rev-parse HEAD 2>>"$LOG_FILE") || return 1
+	if [[ "$local_hash" != "$remote_hash" ]]; then
+		log_error "Updated HEAD does not match fetched origin/main; refusing to run setup"
+		update_state "update" "$remote" "history_mismatch"
 		return 1
 	fi
 	return 0

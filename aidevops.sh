@@ -277,15 +277,26 @@ cmd_update() {
 		fi
 		local current_branch
 		current_branch=$(git branch --show-current 2>/dev/null || echo "")
-		[[ "$current_branch" != "main" ]] && {
+		if [[ "$current_branch" != "main" ]]; then
 			print_info "Switching to main branch..."
-			git checkout main --quiet 2>/dev/null || git checkout -b main origin/main --quiet 2>/dev/null || true
-		}
-		git fetch origin main --tags --quiet
+			if ! git checkout main --quiet 2>/dev/null && ! git checkout -b main origin/main --quiet 2>/dev/null; then
+				print_error "Failed to switch to main; refusing to update the active '$current_branch' branch."
+				return 1
+			fi
+		fi
+		if ! git fetch origin main --tags --quiet; then
+			print_error "Failed to fetch origin/main; no update was applied."
+			return 1
+		fi
 		local local_hash
-		local_hash=$(git rev-parse HEAD)
+		local_hash=$(git rev-parse HEAD) || return 1
 		local remote_hash
-		remote_hash=$(git rev-parse origin/main)
+		remote_hash=$(git rev-parse origin/main) || return 1
+		if [[ "$local_hash" != "$remote_hash" ]] && git merge-base --is-ancestor "$remote_hash" "$local_hash" 2>/dev/null; then
+			print_error "Refusing to update: local commits exist on main."
+			print_info "Preserve or reconcile the local history in $INSTALL_DIR, then rerun aidevops update."
+			return 1
+		fi
 		if [[ "$local_hash" == "$remote_hash" ]]; then
 			print_success "Framework already up to date!"
 			local repo_version deployed_version
@@ -330,19 +341,23 @@ cmd_update() {
 				fi
 			fi
 		else
-			print_info "Pulling latest changes..."
+			print_info "Applying latest changes..."
 			local old_hash
 			old_hash=$(git rev-parse HEAD)
-			if git pull --ff-only origin main --quiet; then
+			if git merge --ff-only "$remote_hash" --quiet; then
 				:
 			else
-				print_error "Fast-forward pull failed; preserving local history."
+				print_error "Fast-forward update failed; preserving local history."
 				print_info "Review $INSTALL_DIR, resolve the divergence, then rerun aidevops update."
 				return 1
 			fi
 			local new_version new_hash
 			new_version=$(get_version)
 			new_hash=$(git rev-parse HEAD)
+			if [[ "$new_hash" != "$remote_hash" ]]; then
+				print_error "Updated HEAD does not match the fetched origin/main commit; refusing to run setup."
+				return 1
+			fi
 			if [[ "$old_hash" != "$new_hash" ]]; then
 				if _update_repo_verify_files_changed "$old_hash" "$new_hash"; then reconcile_repo_verify=true; fi
 				local total_commits

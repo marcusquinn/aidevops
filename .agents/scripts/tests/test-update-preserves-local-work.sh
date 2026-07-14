@@ -9,6 +9,10 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 TEST_ROOT="$(mktemp -d)"
 PASS_COUNT=0
 FAIL_COUNT=0
+export GIT_AUTHOR_NAME=Test
+export GIT_AUTHOR_EMAIL=test@example.invalid
+export GIT_COMMITTER_NAME=Test
+export GIT_COMMITTER_EMAIL=test@example.invalid
 trap 'rm -rf "$TEST_ROOT"' EXIT
 
 pass() {
@@ -45,15 +49,22 @@ extract_function() {
 
 setup_repo() {
 	local repo="$1"
-	mkdir -p "$repo"
-	git init -q "$repo"
-	git -C "$repo" checkout -qb main
-	git -C "$repo" config core.autocrlf false
-	git -C "$repo" config user.email test@example.invalid
-	git -C "$repo" config user.name Test
+	git init -q -b main "$repo"
 	printf 'upstream\n' >"$repo/VERSION"
 	git -C "$repo" add VERSION
 	git -C "$repo" commit -qm initial
+	return 0
+}
+
+setup_ahead_repo() {
+	local repo="$1"
+	local remote="$2"
+	git init -q --bare -b main "$remote"
+	setup_repo "$repo"
+	git -C "$repo" remote add origin "$remote"
+	git -C "$repo" push -qu origin main
+	printf 'local commit\n' >"$repo/VERSION"
+	git -C "$repo" commit -am local -q
 	return 0
 }
 
@@ -61,15 +72,11 @@ setup_diverged_repo() {
 	local repo="$1"
 	local remote="$2"
 	local peer="$3"
-	git init -q --bare "$remote"
+	git init -q --bare -b main "$remote"
 	setup_repo "$repo"
 	git -C "$repo" remote add origin "$remote"
 	git -C "$repo" push -qu origin main
-	git -C "$remote" symbolic-ref HEAD refs/heads/main
 	git clone -q "$remote" "$peer"
-	git -C "$peer" config core.autocrlf false
-	git -C "$peer" config user.email test@example.invalid
-	git -C "$peer" config user.name Test
 	printf 'remote\n' >"$peer/VERSION"
 	git -C "$peer" commit -am remote -q
 	git -C "$peer" push -q origin main
@@ -80,6 +87,7 @@ setup_diverged_repo() {
 
 extract_function "$REPO_ROOT/aidevops.sh" cmd_update "$TEST_ROOT/cmd-update.sh"
 extract_function "$REPO_ROOT/.agents/scripts/auto-update-helper.sh" _cmd_check_git_update "$TEST_ROOT/auto-update.sh"
+extract_function "$REPO_ROOT/.agents/scripts/auto-update-helper-check.sh" _cmd_check_git_update "$TEST_ROOT/auto-update-check-lib.sh"
 # shellcheck source=/dev/null
 source "$TEST_ROOT/cmd-update.sh"
 # shellcheck source=/dev/null
@@ -180,6 +188,80 @@ elif [[ "$(git -C "$auto_repo" rev-parse HEAD)" != "$auto_commit" ]]; then
 	fail 'auto update preserves divergent local commit' 'HEAD changed'
 else
 	pass 'auto update preserves divergent local commit'
+fi
+
+interactive_ahead_repo="$TEST_ROOT/cmd-update-ahead"
+interactive_ahead_remote="$TEST_ROOT/cmd-update-ahead.git"
+setup_ahead_repo "$interactive_ahead_repo" "$interactive_ahead_remote"
+interactive_ahead_commit="$(git -C "$interactive_ahead_repo" rev-parse HEAD)"
+INSTALL_DIR="$interactive_ahead_repo"
+if cmd_update --skip-project-sync --compact >/dev/null 2>&1; then
+	fail 'cmd_update local-ahead history returns nonzero' 'unexpected success'
+elif [[ "$(git -C "$interactive_ahead_repo" rev-parse HEAD)" != "$interactive_ahead_commit" ]]; then
+	fail 'cmd_update preserves local-ahead commit' 'HEAD changed'
+else
+	pass 'cmd_update preserves local-ahead commit'
+fi
+
+auto_ahead_repo="$TEST_ROOT/auto-update-ahead"
+auto_ahead_remote="$TEST_ROOT/auto-update-ahead.git"
+setup_ahead_repo "$auto_ahead_repo" "$auto_ahead_remote"
+auto_ahead_commit="$(git -C "$auto_ahead_repo" rev-parse HEAD)"
+INSTALL_DIR="$auto_ahead_repo"
+LOG_FILE="$TEST_ROOT/auto-update-ahead.log"
+if _cmd_check_git_update 1.0.1 >/dev/null 2>&1; then
+	fail 'auto update local-ahead history returns nonzero' 'unexpected success'
+elif [[ "$(git -C "$auto_ahead_repo" rev-parse HEAD)" != "$auto_ahead_commit" ]]; then
+	fail 'auto update preserves local-ahead commit' 'HEAD changed'
+else
+	pass 'auto update preserves local-ahead commit'
+fi
+
+# The extracted check sub-library is independently sourceable and must retain
+# the same fail-closed behavior as the monolithic scheduler entry point.
+# shellcheck source=/dev/null
+source "$TEST_ROOT/auto-update-check-lib.sh"
+for mode in staged unstaged; do
+	repo="$TEST_ROOT/check-lib-$mode"
+	setup_repo "$repo"
+	printf 'local change' >"$repo/VERSION"
+	[[ "$mode" == staged ]] && git -C "$repo" add VERSION
+	INSTALL_DIR="$repo"
+	LOG_FILE="$TEST_ROOT/check-lib-$mode.log"
+	if _cmd_check_git_update 1.0.1 >/dev/null 2>&1; then
+		fail "check library $mode changes return nonzero" "unexpected success"
+	else
+		assert_dirty_change_preserved "check library preserves $mode changes" "$repo"
+	fi
+done
+
+check_lib_diverged_repo="$TEST_ROOT/check-lib-diverged"
+check_lib_diverged_remote="$TEST_ROOT/check-lib-diverged.git"
+check_lib_diverged_peer="$TEST_ROOT/check-lib-peer"
+setup_diverged_repo "$check_lib_diverged_repo" "$check_lib_diverged_remote" "$check_lib_diverged_peer"
+check_lib_diverged_commit="$(git -C "$check_lib_diverged_repo" rev-parse HEAD)"
+INSTALL_DIR="$check_lib_diverged_repo"
+LOG_FILE="$TEST_ROOT/check-lib-diverged.log"
+if _cmd_check_git_update 1.0.1 >/dev/null 2>&1; then
+	fail 'check library divergence returns nonzero' 'unexpected success'
+elif [[ "$(git -C "$check_lib_diverged_repo" rev-parse HEAD)" != "$check_lib_diverged_commit" ]]; then
+	fail 'check library preserves divergent local commit' 'HEAD changed'
+else
+	pass 'check library preserves divergent local commit'
+fi
+
+check_lib_ahead_repo="$TEST_ROOT/check-lib-ahead"
+check_lib_ahead_remote="$TEST_ROOT/check-lib-ahead.git"
+setup_ahead_repo "$check_lib_ahead_repo" "$check_lib_ahead_remote"
+check_lib_ahead_commit="$(git -C "$check_lib_ahead_repo" rev-parse HEAD)"
+INSTALL_DIR="$check_lib_ahead_repo"
+LOG_FILE="$TEST_ROOT/check-lib-ahead.log"
+if _cmd_check_git_update 1.0.1 >/dev/null 2>&1; then
+	fail 'check library local-ahead history returns nonzero' 'unexpected success'
+elif [[ "$(git -C "$check_lib_ahead_repo" rev-parse HEAD)" != "$check_lib_ahead_commit" ]]; then
+	fail 'check library preserves local-ahead commit' 'HEAD changed'
+else
+	pass 'check library preserves local-ahead commit'
 fi
 
 printf '%s passed, %s failed\n' "$PASS_COUNT" "$FAIL_COUNT"
