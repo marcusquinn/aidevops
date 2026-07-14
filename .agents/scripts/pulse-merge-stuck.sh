@@ -1221,6 +1221,9 @@ _pms_pr_counts_for_zero_progress() {
 	# The shared PR-list snapshot can outlive a concurrent merge pass. Revalidate
 	# the remaining candidate through an uncached REST-compatible read so an
 	# already-merged PR cannot keep the denominator non-zero or overwrite recovery.
+	# If that read is unavailable, retain the cached candidate: API degradation is
+	# not evidence that the PR stopped being eligible, and hiding it would mask a
+	# real zero-progress incident.
 	local current_state=""
 	if declare -F gh_pr_view >/dev/null 2>&1; then
 		current_state=$(AIDEVOPS_GH_PR_VIEW_CACHE_DISABLE=1 gh_pr_view "$pr_number" --repo "$repo_slug" \
@@ -1229,8 +1232,12 @@ _pms_pr_counts_for_zero_progress() {
 		current_state=$(AIDEVOPS_GH_PR_VIEW_CACHE_DISABLE=1 gh pr view "$pr_number" --repo "$repo_slug" \
 			--json state --jq '.state // ""' 2>/dev/null) || current_state=""
 	fi
+	if [[ -z "$current_state" ]]; then
+		echo "[pulse-merge-stuck] _pms_count_eligible_unmerged_for_repo: retaining PR #${pr_number} in ${repo_slug} — current state is unavailable" >>"$LOGFILE"
+		return 0
+	fi
 	if [[ "$current_state" != "OPEN" ]]; then
-		echo "[pulse-merge-stuck] _pms_count_eligible_unmerged_for_repo: excluding PR #${pr_number} in ${repo_slug} — current state is ${current_state:-unavailable}" >>"$LOGFILE"
+		echo "[pulse-merge-stuck] _pms_count_eligible_unmerged_for_repo: excluding PR #${pr_number} in ${repo_slug} — current state is ${current_state}" >>"$LOGFILE"
 		return 1
 	fi
 
