@@ -564,7 +564,7 @@ First-pass completion contract:
 1. Before editing, verify the issue is still open and not already satisfied by the default branch, an open/closed PR, or a pushed issue branch. Reuse salvageable commits instead of restarting.
 2. Treat prior structured CI/review feedback in the issue body as cumulative evidence. Address every terminal failing check, including advisory checks, not only the first required failure.
 3. Validate the stated target files and verification commands against the current dependency/runtime versions before implementation.
-4. After the first coherent commit, push and create a draft PR early so progress is durable and visible to every runner; continue on that PR through local and remote verification.
+4. After the first coherent commit, push and create a draft PR early so progress is durable and visible to every runner. Continue implementation and local verification on that PR; do not hand off while it is draft or has unpushed changes. Once the completed exact head is pushed, the PR is non-draft, its merge summary exists, and one immediate remote check shows no terminal failure, attempt merge once. If only asynchronous CI, bot review, human approval, or native auto-merge remains, exit and hand off to pulse. Never poll those gates or bypass approval, review, CI, branch-protection, or security controls.
 5. Do not post routine dispatch, stale, or progress comments. Prefer commits, the PR, check runs, and one final completion or blocker dossier.
 EOF
 	return 0
@@ -1055,8 +1055,10 @@ _dlw_systemd_wait_stable() {
 	local attempts="${DLW_SYSTEMD_STABILITY_ATTEMPTS:-3}"
 	local wait_i=0 stable_count=0 snapshot="" main_pid="" active_state="" sub_state=""
 	local exec_main_code="" exec_main_status="" result="" key="" value=""
+	local poll_seconds="${DLW_SYSTEMD_STABILITY_POLL_SECONDS:-0.2}"
 
 	[[ "$attempts" =~ ^[1-9][0-9]*$ ]] || attempts=3
+	[[ "$poll_seconds" =~ ^[0-9]+([.][0-9]+)?$ ]] || poll_seconds="0.2"
 	while [[ "$wait_i" -lt "$attempts" ]]; do
 		snapshot=$(_dlw_systemd_snapshot "$unit_name" "$state_file")
 		main_pid=""
@@ -1090,7 +1092,7 @@ _dlw_systemd_wait_stable() {
 			printf 'LaunchState=worker_ready\n' >>"$state_file"
 			return 0
 		}
-		sleep "${DLW_SYSTEMD_STABILITY_POLL_SECONDS:-0.2}"
+		sleep "$poll_seconds"
 	done
 
 	printf 'LaunchState=pid_observed\n' >>"$state_file"
@@ -1227,9 +1229,7 @@ _dlw_handle_systemd_launch_failure() {
 			else
 				printf '[systemd-launch] classification=readiness_unconfirmed\n'
 			fi
-			while IFS= read -r state_line || [[ -n "$state_line" ]]; do
-				printf '%s\n' "$state_line"
-			done <"$systemd_state_file"
+			cat "$systemd_state_file"
 		} >>"$worker_log"
 	fi
 	echo "[dispatch_worker_launch] ERROR: systemd worker for #${issue_number} did not reach durable readiness (rc=${systemd_rc}); duplicate fallback suppressed" >>"$LOGFILE"

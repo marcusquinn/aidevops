@@ -18,9 +18,12 @@
 #   A — collaborator PR (no external-contributor label, not a fork)        → return 0
 #   B — external-contributor label, no closing keyword in PR body          → return 1
 #   C — external-contributor label, linked issue, no crypto approval       → return 1
-#   D — external-contributor label, linked issue, crypto approval present  → return 0
+#   D — external-contributor label, linked issue + current PR V2 approval → return 0
 #   E — unlabeled fork PR (isCrossRepository=true), no crypto approval     → return 1
 #   F — unlabeled fork PR (isCrossRepository=true), crypto approval        → return 0
+#   I — unlabeled non-collaborator, no current PR authority                 → return 1
+#   J — cached positive review evidence, live outcome no longer permitted  → return 1
+#   K — stale cached evidence, refreshed exact-head positive evidence      → return 0
 
 set -euo pipefail
 
@@ -31,6 +34,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 # GH#21595, t3030.
 MERGE_SCRIPT="${SCRIPT_DIR}/../pulse-merge.sh"
 GATES_SCRIPT="${SCRIPT_DIR}/../pulse-merge-gates.sh"
+# shellcheck source=../pulse-merge-required-checks.sh
+source "${SCRIPT_DIR}/../pulse-merge-required-checks.sh"
 
 readonly TEST_RED='\033[0;31m'
 readonly TEST_GREEN='\033[0;32m'
@@ -65,18 +70,32 @@ set_fixture() {
 	local labels_json="$1"
 	local is_cross_repo="$2"
 	local body="$3"
-	local approval_result="$4"
+	local issue_approval_result="$4"
+	local pr_approval_result="${5:-$issue_approval_result}"
+	local pr_author="${6:-}"
+	if [[ -z "$pr_author" ]]; then
+		if [[ "$labels_json" == *"external-contributor"* || "$is_cross_repo" == "true" ]]; then
+			pr_author="external-contributor"
+		else
+			pr_author="trusted-contributor"
+		fi
+	fi
 
 	cat >"${TEST_ROOT}/labels.json" <<EOF
-{"labels": ${labels_json}, "isCrossRepository": ${is_cross_repo}}
+{"author":{"login":"${pr_author}"},"labels": ${labels_json}, "isCrossRepository": ${is_cross_repo}, "headRefOid": "head-current"}
 EOF
 
 	# PR title / body fixtures used by _extract_linked_issue.
 	printf 'test-pr-title' >"${TEST_ROOT}/title.txt"
 	printf '%s' "$body" >"${TEST_ROOT}/body.txt"
 
-	# approval-helper.sh stub output.
-	printf '%s' "$approval_result" >"${TEST_ROOT}/approval-result.txt"
+	# approval-helper.sh stub outputs distinguish development from merge authority.
+	printf '%s' "$issue_approval_result" >"${TEST_ROOT}/issue-approval-result.txt"
+	printf '%s' "$pr_approval_result" >"${TEST_ROOT}/pr-approval-result.txt"
+	printf '%s' '' >"${TEST_ROOT}/linked-labels.txt"
+	cat >"${TEST_ROOT}/review-evidence.json" <<EOF
+{"schema":"aidevops.review-gate-evidence/v1","repo":"owner/repo","pr":"${body##*#}","head_sha":"head-current","status":"PASS","author":{"login":"${pr_author}","association":"MEMBER","class":"trusted"},"permitted":true,"reason":"test","state":"pass","merge_gate":"clear","exit_code":0}
+EOF
 	return 0
 }
 
@@ -97,9 +116,15 @@ setup_test_env() {
 #!/usr/bin/env bash
 printf '%s\n' "gh $*" >>"${GH_LOG:-/dev/null}"
 
-# gh pr view N --repo R --json labels,isCrossRepository
-if [[ "$*" == *"--json labels,isCrossRepository"* ]]; then
+# gh pr view N --repo R --json author,labels,isCrossRepository,headRefOid
+if [[ "$*" == *"--json author,labels,isCrossRepository,headRefOid"* ]]; then
 	cat "${TEST_ROOT}/labels.json"
+	exit 0
+fi
+
+# Linked issue label snapshot used by the final NMR gate.
+if [[ "${1:-}" == "api" && "$*" == *"repos/owner/repo/issues/"* && "$*" == *"--jq"* ]]; then
+	cat "${TEST_ROOT}/linked-labels.txt"
 	exit 0
 fi
 
@@ -119,13 +144,24 @@ exit 0
 GHEOF
 	chmod +x "${TEST_ROOT}/bin/gh"
 
-	# Mock approval-helper.sh — emits VERIFIED or NOT_VERIFIED based on fixture.
+# Mock approval-helper.sh — PR V2 authority is distinct from issue authority.
 	export AGENTS_DIR="${TEST_ROOT}/agents"
 	cat >"${TEST_ROOT}/agents/scripts/approval-helper.sh" <<'AHEOF'
 #!/usr/bin/env bash
-cat "${TEST_ROOT}/approval-result.txt"
+if [[ "$*" == *"verify pr"* ]]; then
+	cat "${TEST_ROOT}/pr-approval-result.txt"
+else
+	cat "${TEST_ROOT}/issue-approval-result.txt"
+fi
 AHEOF
 	chmod +x "${TEST_ROOT}/agents/scripts/approval-helper.sh"
+	cat >"${TEST_ROOT}/agents/scripts/review-bot-gate-helper.sh" <<'RBEOF'
+#!/usr/bin/env bash
+[[ "${1:-}" == "status-json" ]] || exit 1
+cat "${TEST_ROOT}/review-evidence.json"
+exit 0
+RBEOF
+	chmod +x "${TEST_ROOT}/agents/scripts/review-bot-gate-helper.sh"
 	return 0
 }
 
@@ -144,15 +180,24 @@ teardown_test_env() {
 #   - _pulse_merge_admin_safety_check            → pulse-merge-gates.sh ($GATES_SCRIPT)
 # All four are pure functions — no module-level state.
 define_helpers_under_test() {
-	local merge_src gates_src
+	local merge_src gates_src final_src
+	gh_pr_view() {
+		gh pr view "$@"
+		return $?
+	}
 	merge_src=$(awk '
 		/^_extract_linked_issue\(\) \{/,/^}$/ { print }
 	' "$MERGE_SCRIPT")
 	gates_src=$(awk '
 		/^_external_pr_has_linked_issue\(\) \{/,/^}$/ { print }
 		/^_external_pr_linked_issue_crypto_approved\(\) \{/,/^}$/ { print }
+		/^_external_pr_current_head_crypto_approved\(\) \{/,/^}$/ { print }
 		/^_pulse_merge_admin_safety_check\(\) \{/,/^}$/ { print }
 	' "$GATES_SCRIPT")
+	final_src=$(awk '
+		/^_pulse_merge_refresh_review_gate_evidence\(\) \{/,/^}$/ { print }
+		/^_pulse_merge_final_trust_gate\(\) \{/,/^}$/ { print }
+	' "$MERGE_SCRIPT")
 	if [[ -z "$merge_src" ]]; then
 		printf 'ERROR: could not extract _extract_linked_issue from %s\n' "$MERGE_SCRIPT" >&2
 		return 1
@@ -161,10 +206,35 @@ define_helpers_under_test() {
 		printf 'ERROR: could not extract gates helpers from %s\n' "$GATES_SCRIPT" >&2
 		return 1
 	fi
+	if [[ -z "$final_src" ]]; then
+		printf 'ERROR: could not extract final trust helpers from %s\n' "$MERGE_SCRIPT" >&2
+		return 1
+	fi
+	_is_collaborator_author() {
+		local author="$1"
+		local repo_slug="$2"
+		[[ -n "$repo_slug" ]] || return 2
+		[[ "$author" == "external-contributor" ]] && return 1
+		return 0
+	}
+	_is_trusted_dependabot_update_pr() {
+		return 1
+	}
 	# shellcheck disable=SC1090
 	eval "$merge_src"
 	# shellcheck disable=SC1090
 	eval "$gates_src"
+	# shellcheck disable=SC1090
+	eval "$final_src"
+	_PULSE_PREFLIGHT_CALLS=0
+	_pulse_merge_preflight_snapshot_gate() {
+		local repo_slug="$1"
+		local pr_number="$2"
+		local expected_head_sha="$3"
+		_PULSE_PREFLIGHT_CALLS=$((_PULSE_PREFLIGHT_CALLS + 1))
+		_pmrc_review_evidence_permits_advisory "${_PULSE_REVIEW_GATE_EVIDENCE:-}" "$repo_slug" "$pr_number" "$expected_head_sha"
+		return $?
+	}
 	return 0
 }
 
@@ -193,6 +263,22 @@ test_case_a_collaborator_pr_returns_0() {
 		return 0
 	fi
 	print_result "Case A: collaborator PR — returns 0, no log" 0
+	return 0
+}
+
+test_case_l_collaborator_linked_issue_nmr_blocks_final_gate() {
+	: >"$LOGFILE"
+	set_fixture '[{"name":"bug"}]' 'false' \
+		'## Summary\n\nResolves #930' 'VERIFIED' 'VERIFIED' 'trusted-contributor'
+	printf '%s' 'needs-maintainer-review' >"${TEST_ROOT}/linked-labels.txt"
+
+	local result=0
+	_pulse_merge_admin_safety_check "930" "owner/repo" "head-current" || result=$?
+	if [[ "$result" -eq 1 ]] && grep -qF "linked issue #930 is unavailable or carries needs-maintainer-review" "$LOGFILE"; then
+		print_result "Case L: collaborator linked-issue NMR blocks at final gate" 0
+		return 0
+	fi
+	print_result "Case L: collaborator linked-issue NMR blocks at final gate" 1 "rc=${result}; log=$(cat "$LOGFILE")"
 	return 0
 }
 
@@ -285,6 +371,87 @@ test_case_d_external_with_approval_returns_0() {
 	return 0
 }
 
+test_case_g_issue_approval_without_pr_v2_is_blocked() {
+	: >"$LOGFILE"
+	set_fixture '[{"name":"external-contributor"}]' 'false' \
+		'## Summary\n\nResolves #700' 'VERIFIED' 'LEGACY_APPROVAL'
+
+	local result=0
+	_pulse_merge_admin_safety_check "700" "owner/repo" "head-current" || result=$?
+	if [[ "$result" -eq 1 ]] && grep -qF "lacks V2 authority" "$LOGFILE"; then
+		print_result "Case G: issue approval alone cannot authorize external PR merge" 0
+		return 0
+	fi
+	print_result "Case G: issue approval alone is blocked" 1 \
+		"Expected current-head V2 refusal. rc=${result}; log=$(cat "$LOGFILE")"
+	return 0
+}
+
+test_case_h_live_nmr_blocks_even_with_v2_approval() {
+	: >"$LOGFILE"
+	set_fixture '[{"name":"external-contributor"},{"name":"needs-maintainer-review"}]' 'false' \
+		'## Summary\n\nResolves #800' 'VERIFIED' 'VERIFIED'
+
+	local result=0
+	_pulse_merge_admin_safety_check "800" "owner/repo" "head-current" || result=$?
+	if [[ "$result" -eq 1 ]] && grep -qF "PR carries needs-maintainer-review" "$LOGFILE"; then
+		print_result "Case H: live PR NMR blocks current V2 authority" 0
+		return 0
+	fi
+	print_result "Case H: live PR NMR is blocked" 1 "rc=${result}; log=$(cat "$LOGFILE")"
+	return 0
+}
+
+test_case_i_unlabeled_non_collaborator_is_external() {
+	: >"$LOGFILE"
+	set_fixture '[{"name":"bug"}]' 'false' \
+		'## Summary\n\nResolves #900' 'VERIFIED' 'NO_APPROVAL' 'external-contributor'
+
+	local result=0
+	_pulse_merge_admin_safety_check "900" "owner/repo" "head-current" || result=$?
+	if [[ "$result" -eq 1 ]] && grep -qF "non-collaborator PR missing external-contributor label" "$LOGFILE"; then
+		print_result "Case I: unlabeled non-collaborator is treated as external" 0
+		return 0
+	fi
+	print_result "Case I: unlabeled non-collaborator is blocked" 1 "rc=${result}; log=$(cat "$LOGFILE")"
+	return 0
+}
+
+test_case_j_final_gate_rejects_stale_cached_review_evidence() {
+	: >"$LOGFILE"
+	set_fixture '[{"name":"bug"}]' 'false' \
+		'## Summary\n\nResolves #910' 'VERIFIED' 'VERIFIED' 'trusted-contributor'
+	cat >"${TEST_ROOT}/review-evidence.json" <<'EOF'
+{"schema":"aidevops.review-gate-evidence/v1","repo":"owner/repo","pr":"910","head_sha":"head-current","status":"WAITING","author":{"login":"trusted-contributor","association":"MEMBER","class":"trusted"},"permitted":false,"reason":"waiting","state":"waiting","merge_gate":"blocked","exit_code":1}
+EOF
+	_PULSE_REVIEW_GATE_EVIDENCE='{"schema":"aidevops.review-gate-evidence/v1","repo":"owner/repo","pr":"910","head_sha":"head-current","status":"PASS","author":{"login":"trusted-contributor","association":"MEMBER","class":"trusted"},"permitted":true,"reason":"stale","state":"pass","merge_gate":"clear","exit_code":0}'
+	_PULSE_PREFLIGHT_CALLS=0
+	local result=0
+	_pulse_merge_final_trust_gate "910" "owner/repo" "head-current" || result=$?
+	if [[ "$result" -eq 1 && "$_PULSE_PREFLIGHT_CALLS" -eq 0 ]]; then
+		print_result "Case J: final gate rejects stale cached review evidence" 0
+		return 0
+	fi
+	print_result "Case J: stale cached review evidence is rejected" 1 "rc=${result}; preflight_calls=${_PULSE_PREFLIGHT_CALLS}"
+	return 0
+}
+
+test_case_k_final_gate_refreshes_current_review_evidence() {
+	: >"$LOGFILE"
+	set_fixture '[{"name":"bug"}]' 'false' \
+		'## Summary\n\nResolves #920' 'VERIFIED' 'VERIFIED' 'trusted-contributor'
+	_PULSE_REVIEW_GATE_EVIDENCE='{"schema":"aidevops.review-gate-evidence/v1","repo":"owner/repo","pr":"920","head_sha":"old-head","status":"PASS","author":{"login":"trusted-contributor","association":"MEMBER","class":"trusted"},"permitted":true,"reason":"stale","state":"pass","merge_gate":"clear","exit_code":0}'
+	_PULSE_PREFLIGHT_CALLS=0
+	local result=0
+	_pulse_merge_final_trust_gate "920" "owner/repo" "head-current" || result=$?
+	if [[ "$result" -eq 0 && "$_PULSE_PREFLIGHT_CALLS" -eq 1 ]]; then
+		print_result "Case K: final gate refreshes exact-head review evidence" 0
+		return 0
+	fi
+	print_result "Case K: current review evidence reaches preflight" 1 "rc=${result}; preflight_calls=${_PULSE_PREFLIGHT_CALLS}"
+	return 0
+}
+
 # =============================================================================
 # Case E: unlabeled fork PR (isCrossRepository=true, no external label),
 # no crypto approval. Tests the label-system-failure detection path.
@@ -370,6 +537,12 @@ main() {
 	test_case_d_external_with_approval_returns_0
 	test_case_e_unlabeled_fork_no_approval_returns_1
 	test_case_f_unlabeled_fork_with_approval_returns_0
+	test_case_g_issue_approval_without_pr_v2_is_blocked
+	test_case_h_live_nmr_blocks_even_with_v2_approval
+	test_case_i_unlabeled_non_collaborator_is_external
+	test_case_j_final_gate_rejects_stale_cached_review_evidence
+	test_case_k_final_gate_refreshes_current_review_evidence
+	test_case_l_collaborator_linked_issue_nmr_blocks_final_gate
 
 	printf '\nRan %s tests, %s failed.\n' "$TESTS_RUN" "$TESTS_FAILED"
 	if [[ "$TESTS_FAILED" -gt 0 ]]; then

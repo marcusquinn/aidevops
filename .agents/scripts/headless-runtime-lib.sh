@@ -771,7 +771,7 @@ _worker_headless_contract_execution_text() {
 Commit and PR shortcut:
 After implementing, use full-loop-helper.sh commit-and-pr to collapse commit+push+PR+merge-summary into one call:
   PR_NUMBER=$(full-loop-helper.sh commit-and-pr --issue $WORKER_ISSUE_NUMBER --message "feat: description" --summary "what was done" --testing "how verified")
-Then merge: full-loop-helper.sh merge "$PR_NUMBER"
+Then make one merge attempt: full-loop-helper.sh merge "$PR_NUMBER"
 Exception: if your changes modify full-loop-helper.sh or its sourced helper libraries, commit first and then merge with the committed worktree helper path:
   "$PWD/.agents/scripts/full-loop-helper.sh" merge "$PR_NUMBER" "${GITHUB_REPOSITORY:-marcusquinn/aidevops}"
 This verifies the code that will ship instead of the deployed helper copy from PATH.
@@ -780,18 +780,18 @@ Mandatory behavior:
 4. Never ask for user confirmation, approval, or next steps. No user will respond.
 5. Never emit user-directed language ("If you want...", "Let me know...", "Should I...").
 6. Reading the issue and reading docs are SETUP -- not completion. You MUST continue through implementation, commit, push, and PR creation after setup.
-7. Do not stop at "PR opened" or "in review" states. Continue through review polling, merge readiness checks, merge, and required closing comments.
-8. If merge/close cannot complete, exit only with a clear BLOCKED outcome and evidence (failing check, missing permission, unresolved conflict, or explicit policy gate).
-9. Model escalation before BLOCKED (GH#14964): BLOCKED is only valid after exhausting all autonomous solution paths. Before exiting BLOCKED, retry at the thinking tier and let runtime routing choose the available model and reasoning level. Review-policy metadata, nominal GitHub states, and lower-tier model limits are NOT valid blockers on their own.
+7. A draft PR is only a durable checkpoint, never completion. Continue until the implementation and required local verification are complete, every intended commit is pushed, the PR is non-draft, the PR head matches local HEAD, and the required MERGE_SUMMARY exists.
+8. Attempt the merge path once. If it merges, finish the required closing comments. If the exact-head non-draft PR has no terminal check failure and only asynchronous CI, review-bot, human approval, or native auto-merge remains, report a post-PR handoff and exit normally. Pulse/webhook automation owns subsequent monitoring. Do not sleep, wait, or poll for those gates, and never bypass, disable, or weaken branch protection, approval, review-bot, CI, or security gates.
+9. Model escalation before BLOCKED (GH#14964): BLOCKED is only valid after exhausting all autonomous solution paths. Before exiting BLOCKED, retry at the thinking tier and let runtime routing choose the available model and reasoning level. Review-policy metadata, nominal GitHub states, and lower-tier model limits are NOT valid blockers on their own. Genuine blockers require evidence: a failing check that cannot be repaired, missing permission, unresolved conflict, or explicit policy gate.
 
 Activity watchdog constraint -- CRITICAL:
 A continuous watchdog monitors your output. If you produce no tool calls or text
 output for 300 seconds, you will be killed. Therefore:
   - NEVER use sleep/wait/poll longer than 240 seconds.
-  - For review-bot-gate polling, use the --timeout flag (max 240s per poll cycle).
-  - If a CI check or merge is slow, emit a status message between waits to keep
-    the watchdog alive. Any tool call or text output resets the 300s timer.
-  - Prefer short poll intervals (30-60s) with status output between iterations.
+  - Do not use worker-driven polling to wait for post-PR CI or reviews. Perform one
+    immediate state check, act on terminal failures, or hand off pending gates.
+  - Before PR handoff, any required bounded wait must have an actionable result
+    within this invocation and include status output before each wait.
 EOF
 	return 0
 }
@@ -815,9 +815,15 @@ Pre-exit self-check -- MANDATORY:
 Before ending your session, verify ALL of these:
   - At least one commit with implementation changes exists on your branch.
   - A PR exists for your branch: run gh pr list --head YOUR_BRANCH_NAME
+  - The PR is non-draft, local HEAD is pushed and equals the PR headRefOid, and
+    required local verification has passed. A draft or unpushed local commit is
+    an incomplete checkpoint, not a successful handoff.
   - A MERGE_SUMMARY comment exists on the PR (full-loop step 4.2.1). Verify: gh api "repos/${REPO}/issues/${PR_NUMBER}/comments" --jq '[.[] | select(.body | test("<!-- MERGE_SUMMARY -->"))] | length' returns 1. If 0, post it now -- the merge pass uses it for closing comments.
-  - If any check fails, you are NOT done -- continue working.
-  - The only valid exit states are FULL_LOOP_COMPLETE or BLOCKED with evidence.
+  - Check remote state once. Terminal failures are worker-actionable and must not
+    be reported as a successful handoff; pending CI/review alone is handed off.
+  - If any readiness check fails, you are NOT done -- continue working.
+  - Valid exit states are FULL_LOOP_COMPLETE, a verified post-PR handoff, or
+    BLOCKED with evidence. Runtime classification independently validates PR state.
 EOF
 	return 0
 }
@@ -1248,12 +1254,15 @@ _merge_worker_db() {
 # Called before `opencode run --session <id> --continue` so retries launched
 # with a fresh XDG_DATA_HOME can resolve the persisted conversation locally.
 # Copies only the selected session and its messages (plus its project row for
-# schema/FK compatibility). Non-fatal: failures fall back to normal runtime
-# stale-session handling.
+# schema/FK compatibility). When a retry moved to a replacement worktree, the
+# isolated copy is rebound to that current directory; the shared session stays
+# unchanged. Non-fatal: failures fall back to normal runtime stale-session
+# handling.
 #######################################
 _seed_worker_db_session_context() {
 	local isolated_dir="$1"
 	local session_id="$2"
+	local current_work_dir="${3:-}"
 	local worker_db="${isolated_dir}/opencode/opencode.db"
 	local shared_db="${HOME}/.local/share/opencode/opencode.db"
 
@@ -1272,9 +1281,13 @@ _seed_worker_db_session_context() {
 
 	_sync_worker_db_migration_ledgers "$worker_db" "$shared_db"
 
-	local shared_db_sql session_id_sql
+	local shared_db_sql session_id_sql current_work_dir_sql=""
 	shared_db_sql=$(sql_escape "$shared_db")
 	session_id_sql=$(sql_escape "$session_id")
+	if [[ -n "$current_work_dir" && -d "$current_work_dir" ]]; then
+		current_work_dir=$(cd "$current_work_dir" 2>/dev/null && pwd -P) || current_work_dir=""
+		current_work_dir_sql=$(sql_escape "$current_work_dir")
+	fi
 	sqlite3 "$worker_db" <<-SQL >/dev/null 2>&1 || true
 		.bail on
 		.timeout 5000
@@ -1284,6 +1297,7 @@ _seed_worker_db_session_context() {
 			WHERE id IN (SELECT project_id FROM shared.session WHERE id = '${session_id_sql}');
 		INSERT OR IGNORE INTO session SELECT * FROM shared.session WHERE id = '${session_id_sql}';
 		INSERT OR IGNORE INTO message SELECT * FROM shared.message WHERE session_id = '${session_id_sql}';
+		$(if [[ -n "$current_work_dir_sql" ]]; then printf "UPDATE main.session SET directory = '%s' WHERE id = '%s';" "$current_work_dir_sql" "$session_id_sql"; fi)
 		DELETE FROM main.message WHERE session_id != '${session_id_sql}';
 		DELETE FROM main.session WHERE id != '${session_id_sql}';
 		DELETE FROM main.project WHERE id NOT IN (SELECT project_id FROM main.session);

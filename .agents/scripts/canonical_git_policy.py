@@ -23,6 +23,7 @@ READ_ONLY = {
     "for-each-ref",
     "cat-file",
     "ls-files",
+    "ls-remote",
     "ls-tree",
     "merge-base",
     "describe",

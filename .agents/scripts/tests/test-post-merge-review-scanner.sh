@@ -271,6 +271,7 @@ write_graphql_fixture() {
 				comments: {
 					nodes: [{
 						author: {login: $author},
+						pullRequestReview: {databaseId: 42},
 						path: $path,
 						line: $line,
 						url: "https://example/thread",
@@ -303,7 +304,7 @@ write_reviews_fixture() {
 			arr+=","
 		fi
 		arr+=$(jq -n --arg login "$login" --arg body "$body" \
-			'{user: {login: $login}, body: $body, html_url: "https://example/review"}')
+			'{id: 42, user: {login: $login}, body: $body, html_url: "https://example/review"}')
 	done
 	arr+="]"
 	printf '%s\n' "$arr" >"$out"
@@ -332,6 +333,19 @@ else
 	echo "    actual (first 200): ${out:0:200}"
 	FAIL=$((FAIL + 1))
 fi
+
+echo ""
+echo "Test: build_pr_followup_body — resolved inline findings suppress their recap summary"
+write_graphql_fixture "$FIX_GRAPHQL" \
+	true false "gemini-code-assist" "src/a.js" 10 "FIXED_INLINE_MARKER" "@@ -1,3 +1,3 @@"
+write_reviews_fixture "$FIX_REVIEWS" \
+	"gemini-code-assist" "## Code Review
+
+The PR should fix the FIXED_SUMMARY_MARKER issue."
+rc=0
+out=$(build_pr_followup_body "stub/repo" "42") || rc=$?
+assert_rc "resolved recap summary produces zero findings" "1" "$rc"
+assert_not_contains "resolved recap summary is omitted" "FIXED_SUMMARY_MARKER" "$out"
 
 echo ""
 echo "Test: build_pr_followup_body — all threads outdated → exit 1"

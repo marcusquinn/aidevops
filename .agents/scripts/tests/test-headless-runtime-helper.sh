@@ -91,7 +91,7 @@ test_appends_escalation_contract() {
 		[[ "$output" == *'Load only referenced workflow/reference docs'* ]] &&
 		[[ "$output" == *'Stop reading once target files, reference pattern, constraints, and verification are clear.'* ]] &&
 		[[ "$output" == *'Never ask for user confirmation, approval, or next steps. No user will respond.'* ]] &&
-		[[ "$output" == *'The only valid exit states are FULL_LOOP_COMPLETE or BLOCKED with evidence.'* ]]; then
+		[[ "$output" == *'Valid exit states are FULL_LOOP_COMPLETE, a verified post-PR handoff'* ]]; then
 		print_result "appends escalation-before-blocked contract to full-loop prompts" 0
 		return 0
 	fi
@@ -180,6 +180,25 @@ test_launch_helpers_tolerate_unset_state_under_nounset() {
 
 	print_result "launch argument validation reports missing caller state under nounset" 1 \
 		"status=$status output=${err_out:-<empty>}"
+	return 0
+}
+
+test_runtime_temp_files_use_managed_workspace() {
+	local AIDEVOPS_TEMP_DIR="${HOME}/.aidevops/.agent-workspace/tmp"
+	local temp_file=""
+	temp_file=$(_create_headless_runtime_temp_file) || {
+		print_result "runtime temp files use managed aidevops workspace" 1 "Could not create runtime temp file"
+		return 0
+	}
+
+	if [[ "$temp_file" == "${HOME}/.aidevops/.agent-workspace/tmp/"* && -f "$temp_file" ]]; then
+		rm -f "$temp_file"
+		print_result "runtime temp files use managed aidevops workspace" 0
+		return 0
+	fi
+
+	rm -f "$temp_file"
+	print_result "runtime temp files use managed aidevops workspace" 1 "Unexpected path: $temp_file"
 	return 0
 }
 
@@ -1322,6 +1341,41 @@ SQL
 	return 0
 }
 
+test_seed_worker_db_session_context_rebinds_replacement_worktree() {
+	local shared_dir="${HOME}/.local/share/opencode"
+	local isolated_dir="${TEST_ROOT}/isolated-opencode-rebound"
+	local replacement_dir="${TEST_ROOT}/replacement-worktree"
+	local shared_db="${shared_dir}/opencode.db"
+	local worker_db="${isolated_dir}/opencode/opencode.db"
+	local stale_dir="${TEST_ROOT}/removed-worktree"
+	mkdir -p "$shared_dir" "${isolated_dir}/opencode" "$replacement_dir"
+	rm -f "$shared_db" "$worker_db"
+
+	sqlite3 "$shared_db" <<SQL
+CREATE TABLE project (id TEXT PRIMARY KEY, name TEXT);
+CREATE TABLE session (id TEXT PRIMARY KEY, project_id TEXT NOT NULL, directory TEXT NOT NULL, title TEXT NOT NULL);
+CREATE TABLE message (id TEXT PRIMARY KEY, session_id TEXT NOT NULL, data TEXT NOT NULL);
+INSERT INTO project VALUES ('project-keep', 'Keep Project');
+INSERT INTO session VALUES ('session-keep', 'project-keep', '${stale_dir}', 'Keep');
+INSERT INTO message VALUES ('message-keep', 'session-keep', 'one');
+SQL
+
+	_seed_worker_db_session_context "$isolated_dir" "session-keep" "$replacement_dir"
+
+	local worker_directory="" shared_directory="" expected_replacement=""
+	expected_replacement=$(cd "$replacement_dir" && pwd -P)
+	worker_directory=$(sqlite3 "$worker_db" "SELECT directory FROM session WHERE id = 'session-keep';")
+	shared_directory=$(sqlite3 "$shared_db" "SELECT directory FROM session WHERE id = 'session-keep';")
+	if [[ "$worker_directory" == "$expected_replacement" && "$shared_directory" == "$stale_dir" ]]; then
+		print_result "seed worker DB rebinds stale session to replacement worktree only in isolation" 0
+		return 0
+	fi
+
+	print_result "seed worker DB rebinds stale session to replacement worktree only in isolation" 1 \
+		"worker_directory=$worker_directory shared_directory=$shared_directory"
+	return 0
+}
+
 test_seed_worker_db_session_context_copies_migration_metadata() {
 	local shared_dir="${HOME}/.local/share/opencode"
 	local isolated_dir="${TEST_ROOT}/isolated-opencode-metadata"
@@ -2063,9 +2117,13 @@ test_worker_produced_output_branch_with_pr_returns_pr_exists() {
 	_setup_test_git_repo "$work_dir" 1
 	git -C "$work_dir" push -q origin "feature/auto-test-issue-99999"
 	DISPATCH_REPO_SLUG="test-owner/test-repo"
+	local expected_head
+	expected_head=$(git -C "$work_dir" rev-parse HEAD)
 	gh() {
-		if [[ "${*}" == *"--head"* && "${*}" == *"statusCheckRollup"* ]]; then
-			printf '%s\n' '[{"number":123,"state":"OPEN","isDraft":false,"mergedAt":null,"labels":[{"name":"origin:worker"}],"statusCheckRollup":[]}]'
+		if [[ "${*}" == *"api --paginate"* && "${*}" == *"/issues/123/comments"* ]]; then
+			printf '%s\n' '[[{"body":"<!-- MERGE_SUMMARY -->"}]]'
+		elif [[ "${*}" == *"--head"* && "${*}" == *"statusCheckRollup"* ]]; then
+			printf '[{"number":123,"state":"OPEN","isDraft":false,"mergedAt":null,"headRefOid":"%s","labels":[{"name":"origin:worker"}],"statusCheckRollup":[]}]\n' "$expected_head"
 		else
 			printf '%s\n' '[]'
 		fi
@@ -2714,14 +2772,20 @@ test_post_pr_handoff_detects_open_pending_pr() {
 	init_git_worktree "$work_dir"
 	git -C "$work_dir" checkout -q -b "feature/auto-test-issue-99999"
 	DISPATCH_REPO_SLUG="test-owner/test-repo"
+	local expected_head
+	expected_head=$(git -C "$work_dir" rev-parse HEAD)
 
 	gh() {
 		local args="$*"
 		if [[ "$args" == *"pr list"* && "$args" == *"--state open"* && "$args" == *"--head feature/auto-test-issue-99999"* ]]; then
-			printf '1'
+			printf '[{"number":123,"isDraft":false,"headRefOid":"%s","statusCheckRollup":[]}]' "$expected_head"
 			return 0
 		fi
-		printf '0'
+		if [[ "$args" == *"api --paginate"* && "$args" == *"/issues/123/comments"* ]]; then
+			printf '%s' '[[{"body":"<!-- MERGE_SUMMARY -->"}]]'
+			return 0
+		fi
+		printf '[]'
 		return 0
 	}
 
@@ -2730,6 +2794,53 @@ test_post_pr_handoff_detects_open_pending_pr() {
 	else
 		print_result "post-PR watchdog handoff detects open pending PR" 1 \
 			"Expected open PR on worker branch to classify as handoff"
+	fi
+
+	unset DISPATCH_REPO_SLUG 2>/dev/null || true
+	unset -f gh 2>/dev/null || true
+	return 0
+}
+
+test_post_pr_handoff_rejects_mismatched_head_or_missing_summary() {
+	local work_dir="${TEST_ROOT}/repo-post-pr-incomplete"
+	mkdir -p "$work_dir"
+	init_git_worktree "$work_dir"
+	git -C "$work_dir" checkout -q -b "feature/auto-test-issue-99999"
+	DISPATCH_REPO_SLUG="test-owner/test-repo"
+	local expected_head
+	expected_head=$(git -C "$work_dir" rev-parse HEAD)
+	local remote_head="different-head"
+	local summary_count=1
+
+	gh() {
+		local args="$*"
+		if [[ "$args" == *"pr list"* ]]; then
+			printf '[{"number":125,"isDraft":false,"headRefOid":"%s","statusCheckRollup":[]}]' "$remote_head"
+			return 0
+		fi
+		if [[ "$args" == *"api --paginate"* ]]; then
+			if [[ "$summary_count" -gt 0 ]]; then
+				printf '%s' '[[{"body":"<!-- MERGE_SUMMARY -->"}]]'
+			else
+				printf '%s' '[[]]'
+			fi
+			return 0
+		fi
+		printf '[]'
+		return 0
+	}
+
+	if _worker_post_pr_handoff_confirmed "issue-99999" "$work_dir"; then
+		print_result "post-PR watchdog handoff rejects mismatched PR head" 1
+	else
+		print_result "post-PR watchdog handoff rejects mismatched PR head" 0
+	fi
+	remote_head="$expected_head"
+	summary_count=0
+	if _worker_post_pr_handoff_confirmed "issue-99999" "$work_dir"; then
+		print_result "post-PR watchdog handoff rejects missing MERGE_SUMMARY" 1
+	else
+		print_result "post-PR watchdog handoff rejects missing MERGE_SUMMARY" 0
 	fi
 
 	unset DISPATCH_REPO_SLUG 2>/dev/null || true
@@ -2902,7 +3013,7 @@ test_post_pr_handoff_rejects_pre_pr_stall() {
 	DISPATCH_REPO_SLUG="test-owner/test-repo"
 
 	gh() {
-		printf '0'
+		printf '[]'
 		return 0
 	}
 
@@ -2924,14 +3035,20 @@ test_post_pr_handoff_overrides_watchdog_next_action() {
 	init_git_worktree "$work_dir"
 	git -C "$work_dir" checkout -q -b "feature/auto-test-issue-99999"
 	DISPATCH_REPO_SLUG="test-owner/test-repo"
+	local expected_head
+	expected_head=$(git -C "$work_dir" rev-parse HEAD)
 
 	gh() {
 		local args="$*"
 		if [[ "$args" == *"pr list"* && "$args" == *"--state open"* ]]; then
-			printf '1'
+			printf '[{"number":124,"isDraft":false,"headRefOid":"%s","statusCheckRollup":[]}]' "$expected_head"
 			return 0
 		fi
-		printf '0'
+		if [[ "$args" == *"api --paginate"* && "$args" == *"/issues/124/comments"* ]]; then
+			printf '%s' '[[{"body":"<!-- MERGE_SUMMARY -->"}]]'
+			return 0
+		fi
+		printf '[]'
 		return 0
 	}
 
@@ -2978,6 +3095,7 @@ test_completion_infrastructure_resumes_without_implementation_penalty() {
 
 test_pr_checkpoint_lifecycle_cases() {
 	test_post_pr_handoff_detects_open_pending_pr
+	test_post_pr_handoff_rejects_mismatched_head_or_missing_summary
 	test_failed_worker_draft_checkpoint_escalates_without_completion
 	test_failed_worker_draft_retains_claim_when_block_not_visible
 	test_protected_draft_is_not_mutated_or_completed
@@ -2994,6 +3112,7 @@ main() {
 	test_headless_contract_uses_deployed_framework_paths
 	test_parse_initial_model_does_not_set_explicit_override
 	test_launch_helpers_tolerate_unset_state_under_nounset
+	test_runtime_temp_files_use_managed_workspace
 	test_startup_no_activity_timeout_returns_watchdog_continue
 	test_startup_no_activity_can_rotate_after_continuation_budget
 	test_sigkill_with_activity_attempts_continuation
@@ -3037,6 +3156,7 @@ main() {
 	test_sandbox_passthrough_scopes_provider_env
 	test_copy_scoped_opencode_auth_keeps_selected_provider_only
 	test_seed_worker_db_session_context_copies_only_selected_session
+	test_seed_worker_db_session_context_rebinds_replacement_worktree
 	test_seed_worker_db_session_context_copies_migration_metadata
 	test_seed_worker_db_session_context_uses_backup_for_fresh_db
 	test_seed_worker_db_session_context_vacuums_pruned_backup

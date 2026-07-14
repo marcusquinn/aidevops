@@ -159,7 +159,7 @@ _invoke_opencode() {
 		print_info "[lifecycle] db_isolated dir=$isolated_data_dir pid=$$"
 		_sync_worker_db_migration_metadata "$isolated_data_dir"
 		if [[ -n "${_invoke_persisted_session:-}" ]]; then
-			_seed_worker_db_session_context "$isolated_data_dir" "$_invoke_persisted_session"
+			_seed_worker_db_session_context "$isolated_data_dir" "$_invoke_persisted_session" "${_invoke_work_dir:-}"
 			print_info "[lifecycle] db_seeded session=$_invoke_persisted_session pid=$$"
 		fi
 
@@ -882,35 +882,35 @@ _worker_post_pr_handoff_confirmed() {
 	local session_key="$1"
 	local work_dir="$2"
 	local repo_slug="${DISPATCH_REPO_SLUG:-}"
-	local issue_number
 	local branch_name
+	local local_head
 
 	[[ "$session_key" == issue-* ]] || return 1
 	[[ -n "$repo_slug" ]] || return 1
 	command -v gh >/dev/null 2>&1 || return 1
-	if [[ "$session_key" =~ ([0-9]+)$ ]]; then
-		issue_number="${BASH_REMATCH[1]}"
-	fi
 	if [[ -n "$work_dir" && -d "$work_dir" ]]; then
 		branch_name=$(git -C "$work_dir" rev-parse --abbrev-ref HEAD 2>/dev/null || true)
+		local_head=$(git -C "$work_dir" rev-parse HEAD 2>/dev/null || true)
 		[[ "$branch_name" == "HEAD" ]] && branch_name=""
 	fi
 
-	local open_pr_safe_count
-	local safe_pr_jq='map(select((.isDraft // false | not) and ([.statusCheckRollup[]? | (.conclusion // .status // empty) | ascii_upcase] | any(. == "FAILURE" or . == "ERROR" or . == "CANCELLED" or . == "TIMED_OUT" or . == "ACTION_REQUIRED") | not))) | length'
-	if [[ -n "$branch_name" ]]; then
-		open_pr_safe_count=$(gh pr list --repo "$repo_slug" --head "$branch_name" --state open \
-			--json number,isDraft,statusCheckRollup --jq "$safe_pr_jq" 2>/dev/null || true)
-		[[ "$open_pr_safe_count" =~ ^[0-9]+$ ]] || open_pr_safe_count=0
-		[[ "$open_pr_safe_count" -gt 0 ]] && return 0
-	fi
+	[[ -n "$branch_name" && -n "$local_head" ]] || return 1
+	local pr_json=""
+	local pr_number=""
+	# shellcheck disable=SC2016 # $head is a jq variable supplied with --arg.
+	local safe_pr_jq='map(select((.isDraft // false | not) and .headRefOid == $head and ([.statusCheckRollup[]? | (.conclusion // .status // empty) | ascii_upcase] | any(. == "FAILURE" or . == "ERROR" or . == "CANCELLED" or . == "TIMED_OUT" or . == "ACTION_REQUIRED" or . == "STALE") | not))) | first | .number // empty'
+	pr_json=$(gh pr list --repo "$repo_slug" --head "$branch_name" --state open \
+		--json number,isDraft,headRefOid,statusCheckRollup 2>/dev/null || true)
+	pr_number=$(printf '%s' "$pr_json" | jq -r --arg head "$local_head" "$safe_pr_jq" 2>/dev/null || true)
+	[[ "$pr_number" =~ ^[0-9]+$ ]] || return 1
 
-	if [[ -n "$issue_number" ]]; then
-		open_pr_safe_count=$(gh pr list --repo "$repo_slug" --search "$issue_number" --state open \
-			--json number,isDraft,statusCheckRollup --jq "$safe_pr_jq" 2>/dev/null || true)
-		[[ "$open_pr_safe_count" =~ ^[0-9]+$ ]] || open_pr_safe_count=0
-		[[ "$open_pr_safe_count" -gt 0 ]] && return 0
-	fi
+	local comments_json=""
+	local summary_count=""
+	comments_json=$(gh api --paginate --slurp \
+		"repos/${repo_slug}/issues/${pr_number}/comments?per_page=100" 2>/dev/null || true)
+	summary_count=$(printf '%s' "$comments_json" | jq -r \
+		'[.[][] | select(.body | test("<!-- MERGE_SUMMARY -->"))] | length' 2>/dev/null || true)
+	[[ "$summary_count" =~ ^[0-9]+$ && "$summary_count" -gt 0 ]] && return 0
 
 	return 1
 }
@@ -1069,10 +1069,19 @@ _execute_run_attempt() {
 	local resource_stop_file resource_result_file resource_sampler_pid
 	local _metric_kill_reason=""
 	start_ms=$(python3 -c 'import time; print(int(time.time() * 1000))' 2>/dev/null || printf '%s' "0")
-	output_file=$(mktemp)
-	exit_code_file=$(mktemp)
-	resource_stop_file=$(mktemp)
-	resource_result_file=$(mktemp)
+	output_file=$(_create_headless_runtime_temp_file) || return 1
+	exit_code_file=$(_create_headless_runtime_temp_file) || {
+		rm -f "$output_file"
+		return 1
+	}
+	resource_stop_file=$(_create_headless_runtime_temp_file) || {
+		rm -f "$output_file" "$exit_code_file"
+		return 1
+	}
+	resource_result_file=$(_create_headless_runtime_temp_file) || {
+		rm -f "$output_file" "$exit_code_file" "$resource_stop_file"
+		return 1
+	}
 	rm -f "$resource_stop_file" 2>/dev/null || true
 	rm -f "$resource_result_file" 2>/dev/null || true
 	resource_sampler_pid=""
@@ -1090,6 +1099,10 @@ _execute_run_attempt() {
 	# GH#23958: expose the persisted OpenCode session to _invoke_opencode so
 	# isolated worker DBs can be seeded before --session <id> --continue runs.
 	_invoke_persisted_session="$persisted_session"
+	# GH#27560: persisted sessions retain their original worktree directory.
+	# Expose the current worker directory so isolated DB seeding can rebind the
+	# continuation without mutating the shared interactive session record.
+	_invoke_work_dir="$work_dir"
 
 	# t3077: expose session_key to the verbose lifecycle emitter via the
 	# convention WORKER_SESSION_KEY (read by _emit_verbose_checkpoint).
@@ -1197,8 +1210,11 @@ _execute_run_attempt() {
 		print_warning "OpenCode worker DB migration replay detected for ${session_key}; retrying once with fresh isolated DB (GH#25541)"
 		unset AIDEVOPS_WORKER_PREWARM_DIR
 		rm -f "$output_file" 2>/dev/null || true
-		output_file=$(mktemp)
-		exit_code_file=$(mktemp)
+		output_file=$(_create_headless_runtime_temp_file) || return 1
+		exit_code_file=$(_create_headless_runtime_temp_file) || {
+			rm -f "$output_file"
+			return 1
+		}
 		exit_code=0
 		_invoke_opencode "$output_file" "$exit_code_file" "${cmd[@]}"
 		if ! read -r exit_code <"$exit_code_file" 2>/dev/null; then
@@ -1228,8 +1244,11 @@ _execute_run_attempt() {
 			clear_session_id "$provider" "$session_key"
 			persisted_session=""
 			rm -f "$output_file"
-			output_file=$(mktemp)
-			exit_code_file=$(mktemp)
+			output_file=$(_create_headless_runtime_temp_file) || return 1
+			exit_code_file=$(_create_headless_runtime_temp_file) || {
+				rm -f "$output_file"
+				return 1
+			}
 			exit_code=0
 			# Rebuild command without the stale --session flag
 			cmd=()

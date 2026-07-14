@@ -66,12 +66,12 @@ if [[ "${1:-}" == "pr" && "${2:-}" == "view" ]]; then
 	esac
 fi
 
-if [[ "${1:-}" == "api" && "${2:-}" == */comments ]]; then
+if [[ "${1:-}" == "api" && "$*" == *"/comments"* ]]; then
 	case "${GH_SCENARIO:-}" in
 		issue-api-failure|pr-approval-failure) exit 1 ;;
 		issue-invalid|pr-invalid) printf '{"message":"rate limited"}\n'; exit 0 ;;
-		issue-signed|pr-signed) printf '1\n'; exit 0 ;;
-		issue-unsigned|pr-unsigned) printf '0\n'; exit 0 ;;
+		issue-signed|pr-signed) printf '[[{"body":"<!-- aidevops-signed-approval -->"}]]\n'; exit 0 ;;
+		issue-unsigned|pr-unsigned) printf '[[]]\n'; exit 0 ;;
 	esac
 fi
 
@@ -194,11 +194,30 @@ test_pr_approval_paths() {
 	return 0
 }
 
+test_slurp_and_jq_are_separate() {
+	if python3 - "$WORKFLOW_FILE" <<'PY'
+import re
+import sys
+from pathlib import Path
+
+text = Path(sys.argv[1]).read_text()
+combined = re.findall(r"gh api[^\n]*\\\n(?:[^\n]*\\\n)*?[^\n]*--slurp[^\n]*\\\n[^\n]*--jq", text)
+raise SystemExit(1 if combined else 0)
+PY
+	then
+		print_result "maintainer gate separates gh --slurp from jq" 0
+	else
+		print_result "maintainer gate separates gh --slurp from jq" 1 "unsupported gh flag combination remains"
+	fi
+	return 0
+}
+
 main() {
 	setup_test_env
 	trap teardown_test_env EXIT
 	test_issue_approval_paths
 	test_pr_approval_paths
+	test_slurp_and_jq_are_separate
 	printf '\nTests run: %d\nTests failed: %d\n' "$TESTS_RUN" "$TESTS_FAILED"
 	if [[ "$TESTS_FAILED" -gt 0 ]]; then
 		return 1

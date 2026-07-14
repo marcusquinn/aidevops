@@ -5,7 +5,7 @@
 
 **Date:** April 2025 (open) → April 2025 (remediation) → April 2026 (defense-in-depth, this doc) → April 2026 (t3063 crypto-approval bypass, preserving defence).
 **Severity:** Critical — would have shipped attacker-controlled GitHub Actions code into the default branch if the merge had completed.
-**Status:** Closed without merge. Live exploit gated by PR #17868 + #17877. Function-level regression guard added in t2933 (this doc). Crypto-approval bypass added in t3063 (see "t3063 Update" section).
+**Status:** Closed without merge. Live exploit gated by PR #17868 + #17877. Function-level regression guard added in t2933. The t3063 crypto bypass now requires immutable V2 PR authority for the exact current head.
 
 This is the canonical postmortem for the only known supply-chain attempt against this repo. Read it before touching `pulse-merge.sh`, `maintainer-gate.yml`, the review-bot gate, or anything else in the auto-merge cascade. The entire chain is the defense; removing any one layer reopens the hole.
 
@@ -80,24 +80,24 @@ PR #21733 (external contributor `superdav42`) demonstrated a gap: a maintainer c
 1. `_check_pr_merge_gates` in `pulse-merge.sh` — the upstream skip that skips non-collaborator PRs entirely.
 2. `approve_collaborator_pr` in `pulse-merge-gates.sh` — the function-level self-check.
 
-Both now call `_has_maintainer_crypto_approval "$pr_number" "$repo_slug"` before refusing. If the helper finds a `<!-- aidevops-signed-approval -->` marker (and cryptographically verifies it when `approval-helper.sh` is available), the PR is allowed to proceed. This is symmetric with t3052 (PR #21767), which extended the same signal to the worker-briefed auto-merge path.
+Both now call `_has_maintainer_crypto_approval "$pr_number" "$repo_slug" "$head_sha"` before refusing. The helper must cryptographically verify an immutable V2 PR snapshot for the exact current head. A linked-issue approval remains development authority for the worker-briefed path but cannot authorize external merge; marker-only and legacy V1 signatures fail closed.
 
 **The four-layer defence is preserved:**
 
 - A non-collaborator PR with NO crypto approval is still blocked at every layer — Case P (CONTRIBUTOR + no crypto = refuse) is pinned in `test-pulse-merge-approve-collaborator-guard.sh`.
-- The crypto marker (`<!-- aidevops-signed-approval -->`) can only be posted by a user with repository write access, and the underlying payload is SSH-signed with a root-private key workers cannot access.
+- The V2 payload is SSH-signed with a root-private key workers cannot access and binds current PR content/head; marker presence alone has no authority.
 - The bypass is additive (OR condition), not substitutive — it opens a path for explicitly-approved contributor work without weakening the existing collaborator-only path.
 
 ## Test pinning
 
-`.agents/scripts/tests/test-pulse-merge-approve-collaborator-guard.sh` pins the function-level contract with seven cases:
+`.agents/scripts/tests/test-pulse-merge-approve-collaborator-guard.sh` pins the function-level contract, including these security cases:
 
 - **Case A:** collaborator author + collaborator runner + runner ≠ author → approval fires with the t2933-corrected body.
 - **Case B (regression of GH#17671):** non-collaborator author + collaborator runner → guard refuses approval, logs the GH#17671/t2933 audit attribution. **This case fails immediately if the function-level guard is removed**, regardless of the state of upstream gates.
 - **Case C:** self-authored PR (runner == author) → skipped; `--admin` merge handles it.
 - **Case D:** runner lacks write access → skipped (predates t2933, still required).
 - **Case N (t3063):** CONTRIBUTOR author + crypto-approval on PR → approved via t3063 bypass.
-- **Case O (t3063):** CONTRIBUTOR author + crypto-approval on linked issue → approved via t3063 bypass.
+- **Case O (V2 hardening):** CONTRIBUTOR author + linked-issue approval only → refused; development authority cannot substitute for exact-head PR merge authority.
 - **Case P (t3063 regression):** CONTRIBUTOR author + NO crypto-approval → still refused; GH#17671 guard preserved.
 
 The test is registered in `.github/workflows/code-quality.yml` so a regression cannot land without a CI failure.

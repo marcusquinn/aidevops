@@ -5,7 +5,7 @@
 # AI DevOps Framework CLI
 # Usage: aidevops <command> [options]
 #
-# Version: 3.32.112
+# Version: 3.32.117
 
 set -euo pipefail
 
@@ -269,22 +269,34 @@ cmd_update() {
 
 	if check_dir "$INSTALL_DIR/.git"; then
 		cd "$INSTALL_DIR" || exit 1
+		if ! git diff --quiet 2>/dev/null || ! git diff --cached --quiet 2>/dev/null; then
+			print_error "Refusing to update: tracked local changes exist in $INSTALL_DIR"
+			git status --short
+			print_info "Commit or stash these changes, then rerun aidevops update."
+			return 1
+		fi
 		local current_branch
 		current_branch=$(git branch --show-current 2>/dev/null || echo "")
-		[[ "$current_branch" != "main" ]] && {
+		if [[ "$current_branch" != "main" ]]; then
 			print_info "Switching to main branch..."
-			git checkout main --quiet 2>/dev/null || git checkout -b main origin/main --quiet 2>/dev/null || true
-		}
-		if ! git diff --quiet 2>/dev/null || ! git diff --cached --quiet 2>/dev/null; then
-			print_info "Cleaning up stale working tree changes..."
-			git reset HEAD -- . 2>/dev/null || true
-			git checkout -- . 2>/dev/null || true
+			if ! git checkout main --quiet 2>/dev/null && ! git checkout -b main origin/main --quiet 2>/dev/null; then
+				print_error "Failed to switch to main; refusing to update the active '$current_branch' branch."
+				return 1
+			fi
 		fi
-		git fetch origin main --tags --quiet
+		if ! git fetch origin main --tags --quiet; then
+			print_error "Failed to fetch origin/main; no update was applied."
+			return 1
+		fi
 		local local_hash
-		local_hash=$(git rev-parse HEAD)
+		local_hash=$(git rev-parse HEAD) || return 1
 		local remote_hash
-		remote_hash=$(git rev-parse origin/main)
+		remote_hash=$(git rev-parse origin/main) || return 1
+		if [[ "$local_hash" != "$remote_hash" ]] && git merge-base --is-ancestor "$remote_hash" "$local_hash" 2>/dev/null; then
+			print_error "Refusing to update: local commits exist on main."
+			print_info "Preserve or reconcile the local history in $INSTALL_DIR, then rerun aidevops update."
+			return 1
+		fi
 		if [[ "$local_hash" == "$remote_hash" ]]; then
 			print_success "Framework already up to date!"
 			local repo_version deployed_version
@@ -328,24 +340,24 @@ cmd_update() {
 					fi
 				fi
 			fi
-			git checkout -- . 2>/dev/null || true
 		else
-			print_info "Pulling latest changes..."
+			print_info "Applying latest changes..."
 			local old_hash
 			old_hash=$(git rev-parse HEAD)
-			if git pull --ff-only origin main --quiet; then
+			if git merge --ff-only "$remote_hash" --quiet; then
 				:
 			else
-				print_warning "Fast-forward pull failed — resetting to origin/main..."
-				git reset --hard origin/main --quiet 2>/dev/null || {
-					print_error "Failed to reset to origin/main"
-					print_info "Try: cd $INSTALL_DIR && git fetch origin && git reset --hard origin/main"
-					return 1
-				}
+				print_error "Fast-forward update failed; preserving local history."
+				print_info "Review $INSTALL_DIR, resolve the divergence, then rerun aidevops update."
+				return 1
 			fi
 			local new_version new_hash
 			new_version=$(get_version)
 			new_hash=$(git rev-parse HEAD)
+			if [[ "$new_hash" != "$remote_hash" ]]; then
+				print_error "Updated HEAD does not match the fetched origin/main commit; refusing to run setup."
+				return 1
+			fi
 			if [[ "$old_hash" != "$new_hash" ]]; then
 				if _update_repo_verify_files_changed "$old_hash" "$new_hash"; then reconcile_repo_verify=true; fi
 				local total_commits
@@ -367,7 +379,6 @@ cmd_update() {
 			print_info "Running incremental setup to apply changes (falls back to full setup if needed)..."
 			local setup_exit=0
 			_run_update_setup "$update_output_mode" || setup_exit=$?
-			git checkout -- . 2>/dev/null || true
 			local repo_version deployed_version
 			repo_version=$(cat "$INSTALL_DIR/VERSION" 2>/dev/null || echo "unknown")
 			deployed_version=$(cat "$HOME/.aidevops/agents/VERSION" 2>/dev/null || echo "none")
