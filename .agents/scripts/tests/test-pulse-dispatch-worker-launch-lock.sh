@@ -108,6 +108,40 @@ if [[ "$resolved_pid" != "4242" ]]; then
 	fail "systemd PID resolver skipped final unterminated property"
 fi
 
+sleep() {
+	local duration="$1"
+	printf '%s\n' "$duration" >"${TEST_TMP}/sleep-duration"
+	return 0
+}
+
+stability_state="${TEST_TMP}/systemd-stability-state"
+stability_rc=0
+if PATH="${TEST_TMP}/bin:${PATH}" LOGFILE="${TEST_TMP}/pulse.log" \
+	DLW_SYSTEMD_STABILITY_ATTEMPTS=1 DLW_SYSTEMD_STABILITY_POLL_SECONDS=invalid \
+	_dlw_systemd_wait_stable "aidevops-test" "123" "$stability_state" "9999"; then
+	fail "systemd stability check unexpectedly accepted a mismatched PID"
+else
+	stability_rc=$?
+fi
+unset -f sleep
+
+if [[ "$stability_rc" -ne 3 ]]; then
+	fail "systemd stability check returned unexpected status ${stability_rc}"
+fi
+if [[ "$(<"${TEST_TMP}/sleep-duration")" != "0.2" ]]; then
+	fail "invalid systemd stability poll duration did not fall back to 0.2 seconds"
+fi
+
+printf 'Unit=aidevops-test\nLaunchState=startup_failed\n' >"$stability_state"
+worker_log="${TEST_TMP}/worker.log"
+if LOGFILE="${TEST_TMP}/pulse.log" _dlw_handle_systemd_launch_failure 2 "$stability_state" "$worker_log" 123; then
+	fail "classified systemd startup failure did not suppress fallback"
+fi
+expected_worker_log=$'[systemd-launch] classification=crash_during_startup\nUnit=aidevops-test\nLaunchState=startup_failed'
+if [[ "$(<"$worker_log")" != "$expected_worker_log" ]]; then
+	fail "systemd launch state file was not streamed intact to the worker log"
+fi
+
 is_blocked_by_unresolved() {
 	local issue_body="$1"
 	local repo_slug="$2"
@@ -205,6 +239,8 @@ printf 'PASS: root node_modules .bin tooling is linked by default\n'
 printf 'PASS: precomputed zero-output evidence count skips redundant lookups\n'
 printf 'PASS: pulse worker launch forwards dispatching GitHub login\n'
 printf 'PASS: systemd PID resolver handles final unterminated property\n'
+printf 'PASS: systemd stability poll duration rejects invalid configuration\n'
+printf 'PASS: systemd launch state streams intact to the worker log\n'
 printf 'PASS: worker launch hard-stops unresolved blocked-by dependencies\n'
 printf 'PASS: native blockedBy lookup failure remains fail-closed with classified reason\n'
 printf 'PASS: bundle defaults route unlabeled worker model selection\n'

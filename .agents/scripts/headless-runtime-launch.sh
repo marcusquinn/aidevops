@@ -43,6 +43,13 @@ _HEADLESS_RUN_PROMPT_ARG=""
 _HEADLESS_RUN_PROMPT_FILE=""
 _HEADLESS_CLAUDE_STDIN_FILE=""
 
+_create_headless_runtime_temp_file() {
+	local temp_root="${AIDEVOPS_TEMP_DIR:-${HOME:?}/.aidevops/.agent-workspace/tmp}"
+	mkdir -p "$temp_root" || return 1
+	mktemp "${temp_root}/aidevops-headless-runtime.XXXXXX" || return 1
+	return 0
+}
+
 _register_headless_runtime_temp_path() {
 	local path="$1"
 	[[ -n "$path" ]] || return 0
