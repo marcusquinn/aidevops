@@ -60,4 +60,9 @@ jobs:
         )
       )
     uses: ./.github/workflows/review-bot-gate-reusable.yml
+    # Self-modifying gate PRs must exercise their own helper revision. Without
+    # this, the reusable workflow fetches main and cannot validate a new helper
+    # command until after the PR that needs that command has merged.
+    with:
+      aidevops_ref: ${{ github.event.pull_request.head.sha || 'main' }}
     secrets: inherit

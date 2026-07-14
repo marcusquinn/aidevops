@@ -244,6 +244,16 @@ test_event_check_rejects_stale_head_evidence() {
 	return 0
 }
 
+test_self_caller_uses_pr_head_helper_ref() {
+	local caller="${SCRIPT_DIR}/../../../.github/workflows/review-bot-gate.yml"
+	if grep -Fq "aidevops_ref: \${{ github.event.pull_request.head.sha || 'main' }}" "$caller"; then
+		print_result "self-caller validates the PR-head helper revision" 0
+	else
+		print_result "self-caller validates the PR-head helper revision" 1 "caller=${caller}"
+	fi
+	return 0
+}
+
 # t2799: is_rate_limit_only_comment matches the narrow 6-entry rate-limit set
 # only — NOT the broader non-review patterns ("Review failed", "Review
 # skipped", etc.). Used by grace-period logic where the semantic distinction
@@ -1065,6 +1075,7 @@ main() {
 	test_event_check_rejects_human_inline_reply
 	test_event_check_rejects_bot_failure_notice
 	test_event_check_rejects_stale_head_evidence
+	test_self_caller_uses_pr_head_helper_ref
 	test_is_rate_limit_only_matches_rate_limit
 	test_is_rate_limit_only_rejects_review_failed
 	test_is_rate_limit_only_rejects_review_skipped
