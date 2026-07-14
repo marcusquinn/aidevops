@@ -74,7 +74,7 @@ result=$(PATH="$MOCK_BIN:$PATH" HOME="$TEST_HOME" SUDO_USER="missing-worker" bas
 # The launcher must remain nounset-safe when an environment omits HOME.
 # shellcheck disable=SC2016
 grep -q 'REAL_HOME="${HOME:-}"' "$REPO_DIR/bin/aidevops"
-if unset_home_output=$(env -u HOME bash "$REPO_DIR/bin/aidevops" --version 2>&1); then
+if unset_home_output=$(env -u HOME -u SUDO_USER bash "$REPO_DIR/bin/aidevops" --version 2>&1); then
 	printf 'FAIL: launcher accepted an empty HOME\n' >&2
 	exit 1
 fi
