@@ -134,7 +134,7 @@ v2_backup=$(ls "${TEST_ROOT}"/v2.db-backup-*-pre-migrate-v3.db)
 # one task to retain home, implementation, and upstream issue projections.
 mapping_task=$(node "$COORDINATOR" allocate --operation-id mapping-task --payload '{}' | jq -r '.tasks[0].taskId')
 node "$COORDINATOR" bind-issue --task-id "$mapping_task" --repository-id R_home --repository-slug owner/home \
-	--role home --issue-id I_home --project-id P_home --display-number 42 --state-cursor 2026-07-12T10:00:00Z \
+	--role home --issue-id I_home --project-id P_home --display-number 42 --state-cursor 2026-07-12T06:00:00-04:00 \
 	--sync-metadata '{"state":"OPEN","source":"backfill"}' >/dev/null
 node "$COORDINATOR" bind-issue --task-id "$mapping_task" --repository-id R_impl --repository-slug owner/implementation \
 	--role implementation --issue-id I_impl --display-number 42 --sync-metadata '{"state":"OPEN"}' >/dev/null
@@ -143,6 +143,7 @@ node "$COORDINATOR" bind-issue --task-id "$mapping_task" --repository-id R_upstr
 [[ "$(node "$COORDINATOR" resolve-issue --task-id "$mapping_task" --repository-id R_home | jq -r '.issueId')" == "I_home" ]]
 [[ "$(node "$COORDINATOR" resolve-issue --task-id "$mapping_task" --repository-id R_impl | jq -r '.issueId')" == "I_impl" ]]
 [[ "$(sqlite3 "$AIDEVOPS_TASK_COORDINATOR_DB" "SELECT COUNT(*) FROM issue_mappings WHERE task_id='${mapping_task}';")" == "3" ]]
+[[ "$(node "$COORDINATOR" resolve-issue --task-id "$mapping_task" --repository-id R_home | jq -r '.stateCursor')" == "2026-07-12T10:00:00.000Z" ]]
 
 # A renamed slug updates display metadata without changing repository identity;
 # conflicting issue identity or an unvalidated repository fails closed.
@@ -216,9 +217,29 @@ conflict_forge=$(node "$COORDINATOR" forge-event --operation-id delivery-conflic
 # Pushes use trusted repository semantics and never attempt SHA-to-issue mapping.
 push_forge=$(node "$COORDINATOR" forge-event --operation-id delivery-push --delivery-id delivery-push \
 	--cursor-tiebreaker run-30 --repository-id R_home --repository-slug renamed/home \
-	--event-kind push --action pushed --subject-id aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa --cursor 2026-07-12T14:00:00Z)
+	--event-kind push --action pushed --subject-id aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa --cursor 2026-07-12T10:00:00-04:00)
 [[ "$(printf '%s' "$push_forge" | jq -r '.mappingMode')" == "trusted-repository" ]]
 [[ "$(printf '%s' "$push_forge" | jq -r '.taskId')" == "null" ]]
+[[ "$(sqlite3 "$AIDEVOPS_TASK_COORDINATOR_DB" "SELECT cursor_timestamp FROM forge_event_cursors WHERE repository_id='R_home' AND subject_kind='push';")" == "2026-07-12T14:00:00.000Z" ]]
+[[ "$(node "$COORDINATOR" forge-event --operation-id delivery-push --delivery-id delivery-push --cursor-tiebreaker run-30 --repository-id R_home --repository-slug renamed/home --event-kind push --action pushed --subject-id aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa --cursor 2026-07-12T14:00:00Z)" == "$push_forge" ]]
+
+# Manual events share the same canonical cursor boundary, while malformed dates
+# fail before an operation or cursor can be persisted.
+manual_forge=$(node "$COORDINATOR" forge-event --operation-id delivery-manual --delivery-id delivery-manual \
+	--cursor-tiebreaker run-31 --repository-id R_home --repository-slug renamed/home --task-id "$mapping_task" \
+	--event-kind manual --action requested --subject-id I_home --cursor 2026-07-12T15:00:00+01:00)
+[[ "$(printf '%s' "$manual_forge" | jq -r '.mappingMode')" == "explicit-task" ]]
+[[ "$(sqlite3 "$AIDEVOPS_TASK_COORDINATOR_DB" "SELECT cursor_timestamp FROM forge_event_cursors WHERE repository_id='R_home' AND subject_kind='manual';")" == "2026-07-12T14:00:00.000Z" ]]
+invalid_cursor_error="${TEST_ROOT}/invalid-cursor-error"
+if node "$COORDINATOR" forge-event --operation-id delivery-invalid --delivery-id delivery-invalid \
+	--cursor-tiebreaker run-32 --repository-id R_home --repository-slug renamed/home \
+	--event-kind push --action pushed --subject-id bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb \
+	--cursor 2026-02-30T12:00:00Z >/dev/null 2>"$invalid_cursor_error"; then
+	printf 'FAIL invalid RFC3339 cursor was accepted\n' >&2
+	exit 1
+fi
+grep -q 'cursor must be a valid RFC3339 timestamp' "$invalid_cursor_error"
+[[ "$(sqlite3 "$AIDEVOPS_TASK_COORDINATOR_DB" "SELECT COUNT(*) FROM operations WHERE operation_id='delivery-invalid';")" == "0" ]]
 
 # Repository identity isolates otherwise identical subjects and cursors.
 other_repo=$(node "$COORDINATOR" forge-event --operation-id delivery-other-repo --delivery-id delivery-other-repo \
@@ -228,7 +249,7 @@ other_repo=$(node "$COORDINATOR" forge-event --operation-id delivery-other-repo 
 
 # A fresh process observes the same durable cursor and outbox after restart.
 node "$COORDINATOR" status >/dev/null
-[[ "$(sqlite3 "$AIDEVOPS_TASK_COORDINATOR_DB" "SELECT transition_kind FROM forge_event_cursors WHERE repository_id='R_home' AND subject_id='I_home';")" == "task.completed" ]]
+[[ "$(sqlite3 "$AIDEVOPS_TASK_COORDINATOR_DB" "SELECT transition_kind FROM forge_event_cursors WHERE repository_id='R_home' AND subject_kind='issue' AND subject_id='I_home';")" == "task.completed" ]]
 
 # Concurrent conflicting first binds are serialized in SQLite: exactly one
 # identity wins and every competing identity fails without overwriting it.

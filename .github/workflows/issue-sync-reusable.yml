@@ -86,6 +86,7 @@ jobs:
         if: github.event_name != 'workflow_dispatch' || inputs.command == 'event'
         env:
           AIDEVOPS_TASK_COORDINATOR_DB: ${{ runner.temp }}/aidevops-coordinator/tasks.db
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           EVENT_NAME: ${{ github.event_name }}
           EVENT_ACTION: ${{ github.event.action || '' }}
           EVENT_MERGED: ${{ github.event.pull_request.merged || false }}
@@ -723,6 +724,13 @@ jobs:
           # workspace deletion boundary, but park the canonical Git guard under
           # a non-command name. The trusted actions/checkout steps must select
           # the runner Git binary for their init/config/remote/submodule work.
+          RUNNER_GIT=$(command -v git)
+          if [[ ! -x "$RUNNER_GIT" ]]; then
+            echo "::error::Runner Git binary is unavailable before guard activation"
+            exit 1
+          fi
+          echo "AIDEVOPS_PLANNING_GIT_BIN=${RUNNER_GIT}" >> "$GITHUB_ENV"
+
           SHIM_DIR="${RUNNER_TEMP}/aidevops-issue-sync-shims"
           rm -rf "${SHIM_DIR}"
           mkdir -p "${SHIM_DIR}"
@@ -1172,10 +1180,11 @@ jobs:
           # evaluates to 'true' or 'false' at workflow-compile time and is
           # safe to log.
           SYNC_PAT_PRESENT: ${{ secrets.SYNC_PAT != '' && 'true' || '' }}
+          GIT_AUTHOR_NAME: GitHub Actions
+          GIT_AUTHOR_EMAIL: actions@github.com
+          GIT_COMMITTER_NAME: GitHub Actions
+          GIT_COMMITTER_EMAIL: actions@github.com
         run: |
-          git config user.name "GitHub Actions"
-          git config user.email "actions@github.com"
-
           # t2391 / GH#19825: Skip TODO.md proof-log for range-syntax titled PRs.
           # Titles like `t2259..t2264: plan …` or `t2259, t2260: plan …` signal
           # multi-task planning PRs. The auto-complete regex only captures the
@@ -1249,17 +1258,19 @@ jobs:
             exit 0
           fi
 
-          # Commit and push
-          git add TODO.md
-          git commit -m "chore: mark $UPDATED_TASK_IDS complete ($PROOF) [skip ci]"
-
           # t2029: track success explicitly so a silent branch-protection
           # rejection becomes a loud failure. Without this, GH006 rejections
           # are hidden inside the retry loop and the workflow reports overall
           # success even though TODO.md was never pushed — which is exactly
           # how this workflow broke silently for ~3 weeks before t2029.
           PUSH_SUCCEEDED=false
-          if bash __aidevops/.agents/scripts/issue-sync-git-push-helper.sh push-todo main 3; then
+          SCRIPT_DIR="$GITHUB_WORKSPACE/__aidevops/.agents/scripts"
+          # shellcheck source=/dev/null
+          source "$SCRIPT_DIR/planning-publisher.sh"
+          if planning_publish \
+            "$GITHUB_WORKSPACE" \
+            "chore: mark $UPDATED_TASK_IDS complete ($PROOF) [skip ci]" \
+            origin main TODO.md; then
             PUSH_SUCCEEDED=true
           fi
 
@@ -1326,6 +1337,10 @@ jobs:
         env:
           TASK_IDS: ${{ steps.resolve-tasks.outputs.task_ids }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
+          GIT_AUTHOR_NAME: GitHub Actions
+          GIT_AUTHOR_EMAIL: actions@github.com
+          GIT_COMMITTER_NAME: GitHub Actions
+          GIT_COMMITTER_EMAIL: actions@github.com
         run: |
           # When a task is marked complete in TODO.md, check if it belongs to
           # a plan in PLANS.md and update that plan's status if all its tasks
@@ -1438,20 +1453,15 @@ jobs:
           done
 
           if [[ "$PLANS_CHANGED" == "true" ]]; then
-            git add todo/PLANS.md
-            if git diff --cached --quiet todo/PLANS.md 2>/dev/null; then
-              echo "No PLANS.md changes to commit"
-            else
-              git commit -m "chore: sync PLANS.md status for $TASK_IDS (PR #${PR_NUMBER}) [skip ci]"
-              for i in 1 2 3; do
-                echo "Push attempt $i..."
-                git pull --rebase origin main || true
-                if git push; then
-                  echo "PLANS.md sync pushed on attempt $i"
-                  break
-                fi
-                sleep $((i * 3))
-              done
+            SCRIPT_DIR="$GITHUB_WORKSPACE/__aidevops/.agents/scripts"
+            # shellcheck source=/dev/null
+            source "$SCRIPT_DIR/planning-publisher.sh"
+            if ! planning_publish \
+              "$GITHUB_WORKSPACE" \
+              "chore: sync PLANS.md status for $TASK_IDS (PR #${PR_NUMBER}) [skip ci]" \
+              origin main todo/PLANS.md; then
+              echo "::error::Failed to publish PLANS.md status with a fenced planning update"
+              exit 1
             fi
           fi
 

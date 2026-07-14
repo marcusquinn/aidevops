@@ -28,9 +28,14 @@ if [[ -n "${SUDO_USER:-}" && "$(id -u)" -eq 0 ]]; then
 	fi
 fi
 
-REPO_DIR="${REAL_HOME:+$REAL_HOME/Git/aidevops}"
+if [[ -z "$REAL_HOME" ]]; then
+	printf 'Error: HOME is not set; unable to resolve aidevops installation paths.\n' >&2
+	exit 1
+fi
+
+REPO_DIR="$REAL_HOME/Git/aidevops"
 REPO_URL="https://github.com/marcusquinn/aidevops.git"
-DEPLOYED_CLI="${REAL_HOME:+$REAL_HOME/.aidevops/agents/aidevops.sh}"
+DEPLOYED_CLI="$REAL_HOME/.aidevops/agents/aidevops.sh"
 
 # 1. Prefer the setup-deployed copy. It is released atomically with its modules,
 # so a stale or dirty canonical checkout cannot split the CLI version from them.
