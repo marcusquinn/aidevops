@@ -291,8 +291,6 @@ define_process_helper() {
 	_attempt_pr_ci_rebase_retry() { local pr_number="$1" repo_slug="$2"; [[ -n "$pr_number$repo_slug" ]]; return "$REBASE_RETRY_RC"; }
 	_route_pr_to_fix_worker() { local pr_number="$1" repo_slug="$2" linked_issue="$3" mode="$4" pr_labels="${5:-}" checks_json="${9:-}"; ROUTE_CALLS=$((ROUTE_CALLS + 1)); ROUTE_ARGS="${pr_number}|${repo_slug}|${linked_issue}|${mode}"; ROUTE_LABELS="$pr_labels"; ROUTE_EVIDENCE="$checks_json"; return 0; }
 	_pulse_merge_dismiss_coderabbit_nits() { local pr_number="$1" repo_slug="$2"; [[ -n "$pr_number$repo_slug" ]]; DISMISS_CALLS=$((DISMISS_CALLS + 1)); if [[ "${DISMISS_NITS_RC:-0}" -eq 0 ]]; then return 0; fi; return 1; }
-	_pulse_merge_changes_requested_thread_remediation_first_enabled() { return 1; }
-	_pulse_merge_preflight_snapshot_gate() { _PULSE_MERGE_PREFLIGHT_BLOCKING_CHECKS_JSON="$PREFLIGHT_EVIDENCE"; return "$PREFLIGHT_RC"; }
 	_attempt_pr_update_branch() { return 1; }
 	_attempt_existing_auto_merge_behind_update_branch() { return 1; }
 	_attempt_green_behind_update_branch() { return 1; }
