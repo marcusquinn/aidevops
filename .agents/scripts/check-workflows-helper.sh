@@ -453,6 +453,63 @@ _iterate_repos() {
 	return 0
 }
 
+# _repo_freshness <repo-path>
+# Emits: source\tbranch\tupstream\tahead\tbehind\tstate
+# Uses only existing refs: check-workflows remains a read-only, no-network audit.
+_repo_freshness() {
+	local _path="$1"
+	if ! git -C "$_path" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+		printf 'local\tunknown\tunknown\tunknown\tunknown\tunknown\n'
+		return 0
+	fi
+
+	local _branch
+	_branch=$(git -C "$_path" symbolic-ref --short HEAD 2>/dev/null || printf 'DETACHED')
+	local _upstream
+	_upstream=$(git -C "$_path" rev-parse --abbrev-ref --symbolic-full-name '@{upstream}' 2>/dev/null || true)
+	if [[ -z "$_upstream" ]]; then
+		printf 'local\t%s\tunknown\tunknown\tunknown\tuntracked\n' "$_branch"
+		return 0
+	fi
+
+	local _ahead _behind
+	if ! read -r _ahead _behind < <(git -C "$_path" rev-list --left-right --count "HEAD...${_upstream}" 2>/dev/null); then
+		printf 'local\t%s\t%s\tunknown\tunknown\tunknown\n' "$_branch" "$_upstream"
+		return 0
+	fi
+
+	local _state="current"
+	if ((_ahead > 0 && _behind > 0)); then
+		_state="diverged"
+	elif ((_behind > 0)); then
+		_state="behind"
+	elif ((_ahead > 0)); then
+		_state="ahead"
+	fi
+	printf 'local\t%s\t%s\t%s\t%s\t%s\n' \
+		"$_branch" "$_upstream" "$_ahead" "$_behind" "$_state"
+	return 0
+}
+
+# _freshness_note <branch> <upstream> <ahead> <behind> <state>
+_freshness_note() {
+	local _branch="$1"
+	local _upstream="$2"
+	local _ahead="$3"
+	local _behind="$4"
+	local _state="$5"
+	case "$_state" in
+	behind)
+		printf 'local evidence; %s is %s commit(s) behind %s' "$_branch" "$_behind" "$_upstream"
+		;;
+	diverged)
+		printf 'local evidence; %s is %s ahead and %s behind %s' \
+			"$_branch" "$_ahead" "$_behind" "$_upstream"
+		;;
+	esac
+	return 0
+}
+
 # ─── Output formats ─────────────────────────────────────────────────────────
 
 # _render_row_human <slug> <path> <classification> <note> [<workflow>]
@@ -495,6 +552,12 @@ _render_row_json() {
 	local _class="$3"
 	local _note="${4:-}"
 	local _workflow="${5:-}"
+	local _evidence_source="${6:-local}"
+	local _branch="${7:-unknown}"
+	local _upstream="${8:-unknown}"
+	local _ahead="${9:-unknown}"
+	local _behind="${10:-unknown}"
+	local _freshness="${11:-unknown}"
 
 	jq -cn \
 		--arg slug "$_slug" \
@@ -502,7 +565,16 @@ _render_row_json() {
 		--arg class "$_class" \
 		--arg note "$_note" \
 		--arg workflow "$_workflow" \
-		'{slug: $slug, path: $path, workflow: $workflow, classification: $class, note: $note}'
+		--arg evidence_source "$_evidence_source" \
+		--arg branch "$_branch" \
+		--arg upstream "$_upstream" \
+		--arg ahead "$_ahead" \
+		--arg behind "$_behind" \
+		--arg freshness "$_freshness" \
+		'{slug: $slug, path: $path, workflow: $workflow, classification: $class, note: $note,
+		  evidence: {source: $evidence_source, branch: $branch, upstream: $upstream,
+		    ahead: (($ahead | tonumber?) // null), behind: (($behind | tonumber?) // null),
+		    freshness: $freshness}}'
 	return 0
 }
 
@@ -675,6 +747,44 @@ _resolve_wf_canonical() {
 	return 0
 }
 
+# _classify_row_with_freshness <slug> <path> <local-only> <canonical>
+#   <reusable-file> <workflow-file> <canon-norm>
+# Emits form-feed-delimited classification, note, and evidence fields.
+_classify_row_with_freshness() {
+	local _slug="$1"
+	local _path="$2"
+	local _local_only_flag="$3"
+	local _canonical="$4"
+	local _reusable_file="$5"
+	local _workflow_file="$6"
+	local _canon_norm="${7:-}"
+	local _class _note
+	IFS=$'\t' read -r _class _note < <(_classify_row \
+		"$_slug" "$_path" "$_local_only_flag" "$_canonical" \
+		"$_reusable_file" "$_workflow_file" "$_canon_norm")
+	local _source _branch _upstream _ahead _behind _freshness
+	IFS=$'\t' read -r _source _branch _upstream _ahead _behind _freshness \
+		< <(_repo_freshness "$_path")
+	local _freshness_note_text
+	_freshness_note_text=$(_freshness_note "$_branch" "$_upstream" "$_ahead" "$_behind" "$_freshness")
+	if [[ -n "$_freshness_note_text" ]]; then
+		[[ -n "$_note" ]] && _note="${_note}; "
+		_note="${_note}${_freshness_note_text}"
+	fi
+	printf '%s\034%s\034%s\034%s\034%s\034%s\034%s\034%s\n' \
+		"$_class" "$_note" "$_source" "$_branch" "$_upstream" "$_ahead" "$_behind" "$_freshness"
+	return 0
+}
+
+_render_rows_header() {
+	local _mode="$1"
+	if [[ "$_mode" == "$_MODE_HUMAN" ]]; then
+		printf '\n  %-50s %-16s %s\n' "REPO [WORKFLOW]" "STATUS" "NOTE"
+		printf '  %s\n' "$(printf '%.0s─' {1..88})"
+	fi
+	return 0
+}
+
 # Process all rows: for each known workflow, classify each repo, render output,
 # tally. Returns exit status (1 if any drifted/needs-migration, 0 otherwise).
 # _process_rows <mode> <verbose> <filter_slug> <filter_workflow>
@@ -687,10 +797,7 @@ _process_rows() {
 	local _any_failure=0
 	local _total=0 _current=0 _drifted=0 _needs_mig=0 _legacy=0 _no_wf=0 _local_only=0 _no_template=0
 
-	if [[ "$_mode" == "$_MODE_HUMAN" ]]; then
-		printf '\n  %-50s %-16s %s\n' "REPO [WORKFLOW]" "STATUS" "NOTE"
-		printf '  %s\n' "$(printf '%.0s─' {1..88})"
-	fi
+	_render_rows_header "$_mode"
 
 	local _rows
 	_rows=$(_iterate_repos) || exit $?
@@ -724,10 +831,10 @@ _process_rows() {
 			_total=$((_total + 1))
 			_path="${_path/#\~/$HOME}"
 
-			local _class _note
-			IFS=$'\t' read -r _class _note < <(_classify_row \
-				"$_slug" "$_path" "$_local_only_flag" "$_canonical" \
-				"$_reusable_file" "$_workflow_file" "$_canon_norm")
+			local _class _note _evidence_source _branch _upstream _ahead _behind _freshness
+			IFS=$'\034' read -r _class _note _evidence_source _branch _upstream _ahead _behind _freshness \
+				< <(_classify_row_with_freshness "$_slug" "$_path" "$_local_only_flag" \
+					"$_canonical" "$_reusable_file" "$_workflow_file" "$_canon_norm")
 
 			local _base_class="${_class% + LEGACY_ARTIFACTS}"
 			if [[ "$_class" == *" + LEGACY_ARTIFACTS" ]]; then
@@ -751,7 +858,8 @@ _process_rows() {
 			esac
 
 			if [[ "$_mode" == "$_MODE_JSON" ]]; then
-				_render_row_json "$_label" "$_path" "$_class" "$_note" "$_workflow_name"
+				_render_row_json "$_label" "$_path" "$_class" "$_note" "$_workflow_name" \
+					"$_evidence_source" "$_branch" "$_upstream" "$_ahead" "$_behind" "$_freshness"
 			else
 				_render_row_human "$_label" "$_path" "$_class" "$_note" "$_workflow_name"
 				if ((_verbose == 1)) && [[ "$_base_class" == "DRIFTED/CALLER" ]] && [[ -n "$_canonical" ]]; then
