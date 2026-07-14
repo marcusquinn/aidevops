@@ -61,7 +61,7 @@ gh() {
 		;;
 	*check-runs*)
 		local required_conclusion="success" broad_status="completed" broad_conclusion="success"
-		local broad_completed_at="2026-01-01T00:01:00Z" extra_check=""
+		local broad_completed_at="2026-01-01T00:01:00Z" extra_check="" payload_padding=""
 		[[ "$SNAPSHOT_MODE" == "required_fail" ]] && required_conclusion="failure"
 		if [[ "$SNAPSHOT_MODE" == "pending" ]]; then
 			broad_status="in_progress"
@@ -73,8 +73,11 @@ gh() {
 		elif [[ "$SNAPSHOT_MODE" == "infra_fail" ]]; then
 			extra_check=',{"name":"sync / Record ordered forge event","status":"completed","conclusion":"failure","details_url":"https://github.com/owner/repo/actions/runs/101/job/202","completed_at":"2026-01-01T00:01:00Z"}'
 		fi
-		printf '[{"check_runs":[{"name":"required-a","status":"completed","conclusion":"%s","completed_at":"2026-01-01T00:01:00Z"},{"name":"Framework Validation","status":"%s","conclusion":%s,"completed_at":"%s"},{"name":"Qlty Smell Regression","status":"completed","conclusion":"success","completed_at":"2026-01-01T00:01:00Z"},{"name":"Qlty Smell Threshold","status":"completed","conclusion":"failure","completed_at":"2026-01-01T00:01:00Z"}%s]}]\n' \
-			"$required_conclusion" "$broad_status" "$([[ "$broad_conclusion" == "null" ]] && printf 'null' || printf '"%s"' "$broad_conclusion")" "$broad_completed_at" "$extra_check"
+		if [[ "$SNAPSHOT_MODE" == "large_payload" ]]; then
+			payload_padding=$(dd if=/dev/zero bs=1024 count=140 2>/dev/null | tr '\0' x)
+		fi
+		printf '[{"check_runs":[{"name":"required-a","status":"completed","conclusion":"%s","completed_at":"2026-01-01T00:01:00Z","output":{"text":"%s"}},{"name":"Framework Validation","status":"%s","conclusion":%s,"completed_at":"%s"},{"name":"Qlty Smell Regression","status":"completed","conclusion":"success","completed_at":"2026-01-01T00:01:00Z"},{"name":"Qlty Smell Threshold","status":"completed","conclusion":"failure","completed_at":"2026-01-01T00:01:00Z"}%s]}]\n' \
+			"$required_conclusion" "$payload_padding" "$broad_status" "$([[ "$broad_conclusion" == "null" ]] && printf 'null' || printf '"%s"' "$broad_conclusion")" "$broad_completed_at" "$extra_check"
 		;;
 	*commits/sha-reviewed/status*)
 		local gate_at="2026-01-01T00:01:10Z"
@@ -126,6 +129,7 @@ assert_gate() {
 
 main() {
 	assert_gate "terminal checks with explicit baseline advisory pass" happy_advisory 0
+	assert_gate "large check-run payload is projected without argv overflow" large_payload 0
 	if grep -q "IGNORED non-required baseline advisory failure 'Qlty Smell Threshold'" "$LOGFILE"; then
 		printf 'PASS ignored advisory failure is audited\n'
 	else

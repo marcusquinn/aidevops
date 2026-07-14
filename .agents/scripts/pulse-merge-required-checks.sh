@@ -38,8 +38,12 @@ _pmrc_snapshot_checks_json() {
 	runs_pages=$(_pmrc_gh_read gh api "repos/${repo_slug}/commits/${head_sha}/check-runs?per_page=100" \
 		--paginate --slurp 2>/dev/null) || return 1
 	statuses_json=$(_pmrc_gh_read gh api "repos/${repo_slug}/commits/${head_sha}/status" 2>/dev/null) || return 1
-	checks_json=$(jq -n --argjson pages "$runs_pages" --argjson statuses "$statuses_json" \
+	# Feed API payloads over stdin instead of argv. Check-run responses include
+	# annotation and app metadata, so a healthy repository can exceed Linux's
+	# 128 KiB per-argument ceiling before jq gets a chance to project the fields.
+	checks_json=$(printf '%s\n%s\n' "$runs_pages" "$statuses_json" | jq -s \
 		--arg completed "$PMRC_CHECK_COMPLETED" --arg success "$PMRC_CHECK_SUCCESS" '
+		.[0] as $pages | .[1] as $statuses |
 		"pending" as $pending | "in_progress" as $in_progress |
 		"failure" as $failure | "error" as $error |
 		[
