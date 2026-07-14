@@ -144,6 +144,9 @@ if [[ "${1:-} ${2:-}" == "run view" ]]; then
 	infra_dockerhub_rate_limit)
 		printf '%s\n' 'toomanyrequests: You have reached your unauthenticated pull rate limit.'
 		;;
+	infra_github_api_rate_limit)
+		printf '%s\n' 'gh: API rate limit exceeded for installation. (HTTP 403)'
+		;;
 	log_exit_143)
 		printf '%s\n' 'Lint Run ##[error]Process completed with exit code 143.'
 		;;
@@ -170,7 +173,7 @@ _append_gh_mock_routes() {
 		fi
 		if [[ "$*" == *"name,bucket,state,link"* ]]; then
 			case "${TEST_CHECK_SCENARIO:-terminal_failure}:${_is_required}" in
-				terminal_failure:1 | log_exit_143:1 | required_and_advisory:1 | infra_registry_rate_limit:1 | infra_dockerhub_rate_limit:1)
+				terminal_failure:1 | log_exit_143:1 | required_and_advisory:1 | infra_registry_rate_limit:1 | infra_dockerhub_rate_limit:1 | infra_github_api_rate_limit:1)
 					printf '%s\n' '[{"name":"Lint","bucket":"fail","state":"FAILURE","link":"https://github.com/owner/repo/actions/runs/123/job/456"}]'
 					;;
 				required_and_advisory:0)
@@ -264,9 +267,12 @@ define_process_helper() {
 	ROUTE_CALLS=0
 	ROUTE_ARGS=""
 	ROUTE_LABELS=""
+	ROUTE_EVIDENCE=""
 	DISMISS_CALLS=0
 	PR_REQUIRED_CHECKS_RC=1
 	REBASE_RETRY_RC=1
+	PREFLIGHT_RC=0
+	PREFLIGHT_EVIDENCE="[]"
 	REFRESHED_MERGEABLE="UNKNOWN"
 	REFRESHED_REVIEW_DECISION="NONE"
 	REVIEW_REFRESH_CALLS=0
@@ -283,10 +289,8 @@ define_process_helper() {
 	_is_trusted_dependabot_update_pr() { local pr_number="$1" repo_slug="$2" pr_author="$3"; [[ -n "$pr_number$repo_slug$pr_author" ]]; return 1; }
 	_trusted_dependabot_non_review_checks_green() { local pr_number="$1" repo_slug="$2" pr_obj="$3"; [[ -n "$pr_number$repo_slug$pr_obj" ]]; return 1; }
 	_attempt_pr_ci_rebase_retry() { local pr_number="$1" repo_slug="$2"; [[ -n "$pr_number$repo_slug" ]]; return "$REBASE_RETRY_RC"; }
-	_route_pr_to_fix_worker() { local pr_number="$1" repo_slug="$2" linked_issue="$3" mode="$4" pr_labels="${5:-}"; ROUTE_CALLS=$((ROUTE_CALLS + 1)); ROUTE_ARGS="${pr_number}|${repo_slug}|${linked_issue}|${mode}"; ROUTE_LABELS="$pr_labels"; return 0; }
+	_route_pr_to_fix_worker() { local pr_number="$1" repo_slug="$2" linked_issue="$3" mode="$4" pr_labels="${5:-}" checks_json="${9:-}"; ROUTE_CALLS=$((ROUTE_CALLS + 1)); ROUTE_ARGS="${pr_number}|${repo_slug}|${linked_issue}|${mode}"; ROUTE_LABELS="$pr_labels"; ROUTE_EVIDENCE="$checks_json"; return 0; }
 	_pulse_merge_dismiss_coderabbit_nits() { local pr_number="$1" repo_slug="$2"; [[ -n "$pr_number$repo_slug" ]]; DISMISS_CALLS=$((DISMISS_CALLS + 1)); if [[ "${DISMISS_NITS_RC:-0}" -eq 0 ]]; then return 0; fi; return 1; }
-	_pulse_merge_changes_requested_thread_remediation_first_enabled() { return 1; }
-	_pulse_merge_preflight_snapshot_gate() { return 0; }
 	_attempt_pr_update_branch() { return 1; }
 	_attempt_existing_auto_merge_behind_update_branch() { return 1; }
 	_attempt_green_behind_update_branch() { return 1; }
@@ -297,7 +301,7 @@ define_process_helper() {
 	_pulse_merge_admin_safety_check() { return 0; }
 	_set_native_auto_merge_or_skip() { return 0; }
 	_pulse_merge_changes_requested_thread_remediation_first_enabled() { return 1; }
-	_pulse_merge_preflight_snapshot_gate() { return 0; }
+	_pulse_merge_preflight_snapshot_gate() { _PULSE_MERGE_PREFLIGHT_BLOCKING_CHECKS_JSON="$PREFLIGHT_EVIDENCE"; return "$PREFLIGHT_RC"; }
 	_close_conflicting_pr() { return 0; }
 	_pmp_normalize_mergeable_state_into() { return 0; }
 	printf -v PR_OBJECT '%s' '{"number":100,"mergeable":"MERGEABLE","reviewDecision":"","author":{"login":"worker-bot"},"title":"t1: fix"}'
@@ -406,6 +410,30 @@ test_rebase_success_defers_ci_repair_route() {
 		print_result "successful CI-drift rebase defers CI repair routing" 1 "route_calls=${ROUTE_CALLS}, route_args=${ROUTE_ARGS}"
 	else
 		print_result "successful CI-drift rebase defers CI repair routing" 0
+	fi
+	teardown_test_env
+	return 0
+}
+
+test_preflight_terminal_blocker_routes_supplied_evidence() {
+	setup_test_env
+	define_process_helper || { print_result "defines process helper for preflight blocker routing" 1 "could not extract _process_single_ready_pr"; teardown_test_env; return 0; }
+
+	local rc=0
+	local expected_evidence='[{"name":"CodeFactor","bucket":"fail","state":"FAILURE","conclusion":"failure","link":"https://github.com/owner/repo/runs/99"}]'
+	PR_REQUIRED_CHECKS_RC=0
+	PREFLIGHT_RC=1
+	PREFLIGHT_EVIDENCE="$expected_evidence"
+	_process_single_ready_pr "owner/repo" "$PR_OBJECT" || rc=$?
+
+	if [[ "$rc" -ne 1 ]]; then
+		print_result "preflight terminal blocker routes supplied evidence" 1 "Expected skip return 1, got ${rc}"
+	elif [[ "$ROUTE_CALLS" -ne 1 || "$ROUTE_ARGS" != "100|owner/repo|42|ci" ]]; then
+		print_result "preflight terminal blocker routes supplied evidence" 1 "route_calls=${ROUTE_CALLS}, route_args=${ROUTE_ARGS}"
+	elif [[ "$ROUTE_EVIDENCE" != "$expected_evidence" ]]; then
+		print_result "preflight terminal blocker routes supplied evidence" 1 "route_evidence=${ROUTE_EVIDENCE}"
+	else
+		print_result "head-bound preflight blocker reaches trusted CI repair route" 0
 	fi
 	teardown_test_env
 	return 0
@@ -672,6 +700,25 @@ test_ci_feedback_emits_terminal_failure_with_conclusion_and_url() {
 	return 0
 }
 
+test_ci_feedback_uses_supplied_non_required_blocker_evidence() {
+	setup_test_env
+	define_feedback_helpers || { print_result "defines feedback helpers for supplied preflight evidence" 1 "could not extract feedback helpers"; teardown_test_env; return 0; }
+
+	local supplied='[{"name":"CodeFactor","bucket":"fail","state":"FAILURE","conclusion":"failure","link":"https://github.com/owner/repo/actions/runs/125/job/791"}]'
+	_dispatch_ci_fix_worker "100" "owner/repo" "42" "$supplied"
+	sleep 1
+
+	local prompt_file=""
+	prompt_file=$(find "$AIDEVOPS_CI_REPAIR_STATE_DIR" -name prompt.md -type f -print -quit)
+	if [[ -z "$prompt_file" ]] || ! grep -qF '**CodeFactor**: failure — [check URL](https://github.com/owner/repo/actions/runs/125/job/791)' "$prompt_file"; then
+		print_result "supplied non-required blocker launches CI repair" 1 "Dispatch log: $(cat "$GH_LOG")"
+	else
+		print_result "supplied non-required preflight blocker launches bounded CI repair" 0
+	fi
+	teardown_test_env
+	return 0
+}
+
 test_ci_feedback_defers_when_head_changes_during_collection() {
 	setup_test_env
 	export TEST_INITIAL_PR_HEAD_SHA="1111111111111111111111111111111111111111"
@@ -770,6 +817,23 @@ test_ci_feedback_skips_dockerhub_pull_rate_limit_failure() {
 		print_result "Docker Hub pull rate limit records infrastructure classification" 1 "Log: $(cat "$LOGFILE")"
 	else
 		print_result "Docker Hub unauthenticated pull limit is classified as infrastructure" 0
+	fi
+	teardown_test_env
+	return 0
+}
+
+test_ci_feedback_skips_github_api_rate_limit_failure() {
+	setup_test_env
+	TEST_CHECK_SCENARIO="infra_github_api_rate_limit"
+	define_feedback_helpers || { print_result "defines feedback helpers for GitHub API rate limit" 1 "could not extract feedback helpers"; teardown_test_env; return 0; }
+
+	_dispatch_ci_fix_worker "100" "owner/repo" "42"
+	if grep -qF 'PR #100: CI repair' "$GH_LOG"; then
+		print_result "GitHub API rate limit does not dispatch code repair" 1 "Dispatch log: $(cat "$GH_LOG")"
+	elif ! grep -qF 'classified as infrastructure failure' "$LOGFILE"; then
+		print_result "GitHub API rate limit records infrastructure classification" 1 "Log: $(cat "$LOGFILE")"
+	else
+		print_result "GitHub API installation limit is classified as infrastructure" 0
 	fi
 	teardown_test_env
 	return 0
@@ -896,6 +960,7 @@ test_ci_feedback_includes_required_and_advisory_failures_together() {
 main() {
 	test_red_pr_passes_gates_before_repair_route
 	test_rebase_success_defers_ci_repair_route
+	test_preflight_terminal_blocker_routes_supplied_evidence
 	test_changes_requested_unknown_routes_before_mergeable_skip
 	test_rest_missing_review_decision_refreshes_before_ci_route
 	test_coderabbit_nits_ok_dismissed_once_before_late_gate
@@ -908,12 +973,14 @@ main() {
 	test_ci_feedback_skips_pending_only_checks
 	test_ci_feedback_skips_mixed_pending_pass_checks
 	test_ci_feedback_emits_terminal_failure_with_conclusion_and_url
+	test_ci_feedback_uses_supplied_non_required_blocker_evidence
 	test_ci_feedback_defers_when_head_changes_during_collection
 	test_ci_feedback_defers_without_initial_head_snapshot
 	test_ci_feedback_skips_infra_timeout_checks
 	test_ci_feedback_skips_failed_check_with_exit_143_log
 	test_ci_feedback_skips_registry_rate_limit_failure
 	test_ci_feedback_skips_dockerhub_pull_rate_limit_failure
+	test_ci_feedback_skips_github_api_rate_limit_failure
 	test_ci_repair_recovers_one_stale_lease_then_exhausts
 	test_ci_repair_consumes_abandoned_append_only_claim
 	test_ci_repair_waits_for_prelock_startup_before_retry

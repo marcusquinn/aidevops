@@ -895,6 +895,7 @@ _attempt_green_behind_update_branch() {
 #   $6 = pr_title      (optional — passed to conflict dispatch)
 #   $7 = updated_at    (optional — passed to staleness check)
 #   $8 = head_ref_oid  (optional — passed to staleness check)
+#   $9 = checks_json   (optional — head-bound terminal blocker evidence for CI repair)
 #
 # Returns: 0 if dispatched, 1 if not routable (no match or excluded)
 #
@@ -912,6 +913,7 @@ _route_pr_to_fix_worker() {
 	local pr_title="${6:-}"
 	local updated_at="${7:-}"
 	local head_ref_oid="${8:-}"
+	local checks_json="${9:-}"
 	local issue_labels=""
 	local issue_has_worker_origin=0
 
@@ -977,7 +979,7 @@ _route_pr_to_fix_worker() {
 		case "$kind" in
 			review)   _dispatch_pr_fix_worker "$pr_number" "$repo_slug" "$linked_issue" || true ;;
 			conflict) _dispatch_conflict_fix_worker "$pr_number" "$repo_slug" "$linked_issue" "$pr_title" || true ;;
-			ci)       _dispatch_ci_fix_worker "$pr_number" "$repo_slug" "$linked_issue" || true ;;
+			ci)       _dispatch_ci_fix_worker "$pr_number" "$repo_slug" "$linked_issue" "$checks_json" || true ;;
 		esac
 		return 0
 	fi
@@ -989,7 +991,7 @@ _route_pr_to_fix_worker() {
 		case "$kind" in
 			review)   _dispatch_pr_fix_worker "$pr_number" "$repo_slug" "$linked_issue" || true ;;
 			conflict) _dispatch_conflict_fix_worker "$pr_number" "$repo_slug" "$linked_issue" "$pr_title" || true ;;
-			ci)       _dispatch_ci_fix_worker "$pr_number" "$repo_slug" "$linked_issue" || true ;;
+			ci)       _dispatch_ci_fix_worker "$pr_number" "$repo_slug" "$linked_issue" "$checks_json" || true ;;
 		esac
 		return 0
 	fi
