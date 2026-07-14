@@ -1145,11 +1145,13 @@ _sync_worker_db_migration_ledgers() {
 	local worker_db="$1"
 	local shared_db="$2"
 	local ledger_table
+	local sync_failed=0
 
 	[[ -f "$worker_db" && -f "$shared_db" ]] || return 0
 	for ledger_table in __drizzle_migrations data_migration migration; do
-		_copy_worker_db_migration_ledger_table "$worker_db" "$shared_db" "$ledger_table" || true
+		_copy_worker_db_migration_ledger_table "$worker_db" "$shared_db" "$ledger_table" || sync_failed=1
 	done
+	[[ "$sync_failed" -eq 0 ]] || return 1
 	return 0
 }
 
@@ -1219,33 +1221,176 @@ _archive_partial_worker_db() {
 }
 
 #######################################
-# Merge worker's isolated SQLite DB back to the shared DB.
-# Called after worker exits -- no contention risk.
-# Uses ATTACH DATABASE to copy session and message rows.
-# Non-fatal: merge failure doesn't block cleanup.
+# List application tables containing a specific ownership column.
+# Args: $1 = DB path, $2 = column name.
+#######################################
+_opencode_db_tables_with_column() {
+	local db_path="$1"
+	local column_name="$2"
+	local column_name_sql
+
+	column_name_sql=$(sql_escape "$column_name")
+	sqlite3_with_timeout "$db_path" \
+		"SELECT DISTINCT m.name FROM sqlite_master AS m JOIN pragma_table_info(m.name) AS p WHERE m.type = 'table' AND m.name NOT LIKE 'sqlite_%' AND p.name = '${column_name_sql}' ORDER BY m.name;"
+	return $?
+}
+
+#######################################
+# Quote a SQLite identifier discovered from sqlite_master.
+# Args: $1 = identifier.
+#######################################
+_sqlite_quote_identifier() {
+	local identifier="$1"
+	identifier="${identifier//\"/\"\"}"
+	printf '"%s"' "$identifier"
+	return 0
+}
+
+#######################################
+# Check whether a SQLite DB contains a table.
+# Args: $1 = DB path, $2 = table name.
+#######################################
+_opencode_db_has_table() {
+	local db_path="$1"
+	local table_name="$2"
+	local table_name_sql result
+
+	table_name_sql=$(sql_escape "$table_name")
+	result=$(sqlite3_with_timeout "$db_path" "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = '${table_name_sql}' LIMIT 1;" 2>/dev/null || true)
+	[[ "$result" == "1" ]]
+}
+
+#######################################
+# Require source and destination to expose the same session/project graph.
+# Args: $1 = source DB, $2 = destination DB.
+#######################################
+_opencode_db_graph_schema_matches() {
+	local source_db="$1"
+	local destination_db="$2"
+	local column_name source_tables destination_tables table_name
+
+	for column_name in session_id project_id; do
+		source_tables=$(_opencode_db_tables_with_column "$source_db" "$column_name") || return 1
+		destination_tables=$(_opencode_db_tables_with_column "$destination_db" "$column_name") || return 1
+		[[ "$source_tables" == "$destination_tables" ]] || return 1
+	done
+	for table_name in event_sequence event; do
+		if _opencode_db_has_table "$source_db" "$table_name"; then
+			_opencode_db_has_table "$destination_db" "$table_name" || return 1
+		elif _opencode_db_has_table "$destination_db" "$table_name"; then
+			return 1
+		fi
+	done
+	return 0
+}
+
+#######################################
+# Initialise a data-empty worker DB from the current shared schema.
+# Args: $1 = worker DB path, $2 = shared DB path.
+#######################################
+_initialize_worker_db_from_shared_schema() {
+	local worker_db="$1"
+	local shared_db="$2"
+	local schema_sql user_version
+
+	schema_sql=$(sqlite3_with_timeout "$shared_db" ".schema" 2>/dev/null) || return 1
+	[[ -n "$schema_sql" ]] || return 1
+	rm -f "$worker_db" "${worker_db}-wal" "${worker_db}-shm" 2>/dev/null || return 1
+	if ! printf '%s\n' "$schema_sql" | sqlite3_with_timeout "$worker_db" >/dev/null 2>&1; then
+		rm -f "$worker_db" "${worker_db}-wal" "${worker_db}-shm" 2>/dev/null || true
+		return 1
+	fi
+	user_version=$(sqlite3_with_timeout "$shared_db" "PRAGMA user_version;" 2>/dev/null) || return 1
+	[[ "$user_version" =~ ^[0-9]+$ ]] || return 1
+	sqlite3_with_timeout "$worker_db" "PRAGMA user_version = ${user_version};" >/dev/null 2>&1 || return 1
+	_sync_worker_db_migration_ledgers "$worker_db" "$shared_db" || return 1
+	return 0
+}
+
+#######################################
+# Merge worker's complete isolated session graph back to the shared DB.
+# Called after worker exits. Any schema drift or SQL failure rolls back and is
+# returned to the caller so the isolated DB can be retained for recovery.
 #######################################
 _merge_worker_db() {
 	local isolated_dir="$1"
 	local worker_db="${isolated_dir}/opencode/opencode.db"
 	local shared_db="${HOME}/.local/share/opencode/opencode.db"
+	local worker_db_sql session_tables table_name table_identifier
+	local delete_session_sql="" copy_session_sql=""
+	local delete_event_sequence_sql="" copy_event_sequence_sql=""
+	local delete_event_sql="" copy_event_sql=""
 
 	if [[ ! -f "$worker_db" ]]; then
 		return 0
 	fi
 	if [[ ! -f "$shared_db" ]]; then
-		return 0
+		return 1
+	fi
+	_opencode_db_graph_schema_matches "$worker_db" "$shared_db" || return 1
+	session_tables=$(_opencode_db_tables_with_column "$shared_db" "session_id") || return 1
+	while IFS= read -r table_name; do
+		[[ -n "$table_name" && "$table_name" != "session" ]] || continue
+		table_identifier=$(_sqlite_quote_identifier "$table_name")
+		delete_session_sql="${delete_session_sql}DELETE FROM main.${table_identifier} WHERE session_id IN (SELECT id FROM worker.session);"$'\n'
+		copy_session_sql="${copy_session_sql}INSERT OR REPLACE INTO main.${table_identifier} SELECT * FROM worker.${table_identifier} WHERE session_id IN (SELECT id FROM worker.session);"$'\n'
+	done <<-TABLES
+		${session_tables}
+	TABLES
+	if _opencode_db_has_table "$shared_db" "event_sequence"; then
+		delete_event_sequence_sql="DELETE FROM main.event_sequence WHERE aggregate_id IN (SELECT id FROM worker.session);"
+		copy_event_sequence_sql="INSERT OR REPLACE INTO main.event_sequence SELECT * FROM worker.event_sequence WHERE aggregate_id IN (SELECT id FROM worker.session);"
+	fi
+	if _opencode_db_has_table "$shared_db" "event"; then
+		delete_event_sql="DELETE FROM main.event WHERE aggregate_id IN (SELECT id FROM worker.session);"
+		copy_event_sql="INSERT OR REPLACE INTO main.event SELECT * FROM worker.event WHERE aggregate_id IN (SELECT id FROM worker.session);"
 	fi
 
-	# Merge session and message tables. INSERT OR IGNORE avoids duplicates
-	# on the primary key (id). Timeout 5s -- if shared DB is locked by
-	# interactive session, skip rather than block cleanup.
-	sqlite3 "$shared_db" <<-SQL 2>/dev/null || true
+	worker_db_sql=$(sql_escape "$worker_db")
+	if ! sqlite3 "$shared_db" <<-SQL >/dev/null 2>&1; then
+		.bail on
 		.timeout 5000
-		ATTACH DATABASE '${worker_db}' AS worker;
-		INSERT OR IGNORE INTO session SELECT * FROM worker.session;
-		INSERT OR IGNORE INTO message SELECT * FROM worker.message;
+		ATTACH DATABASE '${worker_db_sql}' AS worker;
+		BEGIN IMMEDIATE;
+		${delete_session_sql}
+		${delete_event_sql}
+		${delete_event_sequence_sql}
+		INSERT OR IGNORE INTO main.project SELECT * FROM worker.project
+			WHERE id IN (SELECT project_id FROM worker.session);
+		INSERT OR REPLACE INTO main.session SELECT * FROM worker.session;
+		${copy_session_sql}
+		${copy_event_sequence_sql}
+		${copy_event_sql}
+		COMMIT;
 		DETACH DATABASE worker;
 	SQL
+		return 1
+	fi
+	return 0
+}
+
+#######################################
+# Preserve only DB artifacts after a failed merge; never retain worker auth.
+# Args: $1 = isolated data directory.
+#######################################
+_preserve_failed_worker_db() {
+	local isolated_dir="$1"
+	local worker_db="${isolated_dir}/opencode/opencode.db"
+	local recovery_root="${AIDEVOPS_WORKER_DB_RECOVERY_DIR:-${HOME}/.aidevops/.agent-workspace/work/worker-db-recovery}"
+	local recovery_dir
+	local suffix
+	recovery_dir="${recovery_root}/$(date -u +%Y%m%dT%H%M%SZ)-$$"
+
+	[[ -f "$worker_db" ]] || return 1
+	mkdir -p "$recovery_dir" 2>/dev/null || return 1
+	chmod 700 "$recovery_root" "$recovery_dir" 2>/dev/null || true
+	for suffix in "" -wal -shm; do
+		if [[ -f "${worker_db}${suffix}" ]]; then
+			mv "${worker_db}${suffix}" "${recovery_dir}/opencode.db${suffix}" 2>/dev/null || return 1
+			chmod 600 "${recovery_dir}/opencode.db${suffix}" 2>/dev/null || true
+		fi
+	done
+	print_warning "[lifecycle] db_merge_recovery_saved path=${recovery_dir}/opencode.db pid=$$"
 	return 0
 }
 
@@ -1253,11 +1398,9 @@ _merge_worker_db() {
 # Seed a continuation session into a worker's isolated OpenCode DB.
 # Called before `opencode run --session <id> --continue` so retries launched
 # with a fresh XDG_DATA_HOME can resolve the persisted conversation locally.
-# Copies only the selected session and its messages (plus its project row for
-# schema/FK compatibility). When a retry moved to a replacement worktree, the
-# isolated copy is rebound to that current directory; the shared session stays
-# unchanged. Non-fatal: failures fall back to normal runtime stale-session
-# handling.
+# Copies the selected session plus every current session/project-owned table and
+# event aggregate. When a retry moved to a replacement worktree, the isolated
+# copy is rebound to that directory; the shared session stays unchanged.
 #######################################
 _seed_worker_db_session_context() {
 	local isolated_dir="$1"
@@ -1265,46 +1408,86 @@ _seed_worker_db_session_context() {
 	local current_work_dir="${3:-}"
 	local worker_db="${isolated_dir}/opencode/opencode.db"
 	local shared_db="${HOME}/.local/share/opencode/opencode.db"
+	local shared_db_sql session_id_sql current_work_dir_sql="" session_exists
+	local session_tables project_tables table_name table_identifier
+	local clear_session_sql="" copy_session_sql=""
+	local clear_project_sql="" copy_project_sql=""
+	local clear_event_sequence_sql="" copy_event_sequence_sql=""
+	local clear_event_sql="" copy_event_sql=""
 
-	[[ -n "$isolated_dir" && -n "$session_id" ]] || return 0
-	[[ -f "$shared_db" ]] || return 0
-	mkdir -p "${isolated_dir}/opencode" 2>/dev/null || return 0
-
-	# Fresh isolated auth dirs may not have a migrated DB yet. Copy the shared DB
-	# with SQLite backup, then prune unrelated rows below. A schema-only copy can
-	# still miss SQLite/OpenCode migration state and make Drizzle replay CREATE
-	# TABLE migrations against existing user tables ("table project already
-	# exists") during continuation retries.
-	if [[ ! -f "$worker_db" ]]; then
-		sqlite3 -cmd ".timeout 5000" "$shared_db" ".backup '${worker_db}'" >/dev/null 2>&1 || return 0
-	fi
-
-	_sync_worker_db_migration_ledgers "$worker_db" "$shared_db"
-
-	local shared_db_sql session_id_sql current_work_dir_sql=""
-	shared_db_sql=$(sql_escape "$shared_db")
+	[[ -n "$isolated_dir" && -n "$session_id" ]] || return 1
+	[[ -f "$shared_db" ]] || return 1
+	mkdir -p "${isolated_dir}/opencode" 2>/dev/null || return 1
 	session_id_sql=$(sql_escape "$session_id")
+	session_exists=$(sqlite3_with_timeout "$shared_db" "SELECT COUNT(*) FROM session WHERE id = '${session_id_sql}';" 2>/dev/null) || return 1
+	[[ "$session_exists" == "1" ]] || return 1
+
+	# Build a schema-only DB, then synchronise migration ledgers. This avoids a
+	# multi-gigabyte full backup while preserving OpenCode migration state.
+	if [[ ! -f "$worker_db" ]]; then
+		_initialize_worker_db_from_shared_schema "$worker_db" "$shared_db" || return 1
+	fi
+	_sync_worker_db_migration_ledgers "$worker_db" "$shared_db" || return 1
+	_opencode_db_graph_schema_matches "$shared_db" "$worker_db" || return 1
+
+	shared_db_sql=$(sql_escape "$shared_db")
 	if [[ -n "$current_work_dir" && -d "$current_work_dir" ]]; then
 		current_work_dir=$(cd "$current_work_dir" 2>/dev/null && pwd -P) || current_work_dir=""
 		current_work_dir_sql=$(sql_escape "$current_work_dir")
 	fi
-	sqlite3 "$worker_db" <<-SQL >/dev/null 2>&1 || true
+	session_tables=$(_opencode_db_tables_with_column "$shared_db" "session_id") || return 1
+	project_tables=$(_opencode_db_tables_with_column "$shared_db" "project_id") || return 1
+	while IFS= read -r table_name; do
+		[[ -n "$table_name" && "$table_name" != "session" ]] || continue
+		table_identifier=$(_sqlite_quote_identifier "$table_name")
+		clear_session_sql="${clear_session_sql}DELETE FROM main.${table_identifier};"$'\n'
+		copy_session_sql="${copy_session_sql}INSERT OR REPLACE INTO main.${table_identifier} SELECT * FROM shared.${table_identifier} WHERE session_id = '${session_id_sql}';"$'\n'
+	done <<-TABLES
+		${session_tables}
+	TABLES
+	while IFS= read -r table_name; do
+		case "$table_name" in
+		project | session | "") continue ;;
+		esac
+		table_identifier=$(_sqlite_quote_identifier "$table_name")
+		clear_project_sql="${clear_project_sql}DELETE FROM main.${table_identifier};"$'\n'
+		copy_project_sql="${copy_project_sql}INSERT OR REPLACE INTO main.${table_identifier} SELECT * FROM shared.${table_identifier} WHERE project_id IN (SELECT project_id FROM shared.session WHERE id = '${session_id_sql}');"$'\n'
+	done <<-TABLES
+		${project_tables}
+	TABLES
+	if _opencode_db_has_table "$shared_db" "event_sequence"; then
+		clear_event_sequence_sql="DELETE FROM main.event_sequence;"
+		copy_event_sequence_sql="INSERT OR REPLACE INTO main.event_sequence SELECT * FROM shared.event_sequence WHERE aggregate_id = '${session_id_sql}';"
+	fi
+	if _opencode_db_has_table "$shared_db" "event"; then
+		clear_event_sql="DELETE FROM main.event;"
+		copy_event_sql="INSERT OR REPLACE INTO main.event SELECT * FROM shared.event WHERE aggregate_id = '${session_id_sql}';"
+	fi
+	if ! sqlite3 "$worker_db" <<-SQL >/dev/null 2>&1; then
 		.bail on
 		.timeout 5000
 		ATTACH DATABASE '${shared_db_sql}' AS shared;
 		BEGIN IMMEDIATE;
+		${clear_session_sql}
+		${clear_event_sql}
+		${clear_event_sequence_sql}
+		${clear_project_sql}
+		DELETE FROM main.session;
+		DELETE FROM main.project;
 		INSERT OR IGNORE INTO project SELECT * FROM shared.project
 			WHERE id IN (SELECT project_id FROM shared.session WHERE id = '${session_id_sql}');
-		INSERT OR IGNORE INTO session SELECT * FROM shared.session WHERE id = '${session_id_sql}';
-		INSERT OR IGNORE INTO message SELECT * FROM shared.message WHERE session_id = '${session_id_sql}';
+		${copy_project_sql}
+		INSERT OR REPLACE INTO session SELECT * FROM shared.session WHERE id = '${session_id_sql}';
+		${copy_session_sql}
+		${copy_event_sequence_sql}
+		${copy_event_sql}
 		$(if [[ -n "$current_work_dir_sql" ]]; then printf "UPDATE main.session SET directory = '%s' WHERE id = '%s';" "$current_work_dir_sql" "$session_id_sql"; fi)
-		DELETE FROM main.message WHERE session_id != '${session_id_sql}';
-		DELETE FROM main.session WHERE id != '${session_id_sql}';
-		DELETE FROM main.project WHERE id NOT IN (SELECT project_id FROM main.session);
 		COMMIT;
 		DETACH DATABASE shared;
 		VACUUM;
 	SQL
+		return 1
+	fi
 	return 0
 }
 
