@@ -68,6 +68,21 @@ setup_ahead_repo() {
 	return 0
 }
 
+setup_behind_repo() {
+	local repo="$1"
+	local remote="$2"
+	local peer="$3"
+	git init -q --bare -b main "$remote"
+	setup_repo "$repo"
+	git -C "$repo" remote add origin "$remote"
+	git -C "$repo" push -qu origin main
+	git clone -q "$remote" "$peer"
+	printf 'remote update\n' >"$peer/VERSION"
+	git -C "$peer" commit -am remote -q
+	git -C "$peer" push -q origin main
+	return 0
+}
+
 setup_diverged_repo() {
 	local repo="$1"
 	local remote="$2"
@@ -161,6 +176,21 @@ for mode in staged unstaged; do
 	fi
 done
 
+auto_behind_repo="$TEST_ROOT/auto-update-behind"
+auto_behind_remote="$TEST_ROOT/auto-update-behind.git"
+auto_behind_peer="$TEST_ROOT/auto-update-behind-peer"
+setup_behind_repo "$auto_behind_repo" "$auto_behind_remote" "$auto_behind_peer"
+auto_remote_commit="$(git -C "$auto_behind_peer" rev-parse HEAD)"
+INSTALL_DIR="$auto_behind_repo"
+LOG_FILE="$TEST_ROOT/auto-update-behind.log"
+if ! _cmd_check_git_update 1.0.1 >/dev/null 2>&1; then
+	fail 'auto update fast-forwards after fetch' 'update failed'
+elif [[ "$(git -C "$auto_behind_repo" rev-parse HEAD)" != "$auto_remote_commit" ]]; then
+	fail 'auto update fast-forwards after fetch' 'HEAD does not match fetched commit'
+else
+	pass 'auto update fast-forwards after fetch'
+fi
+
 interactive_repo="$TEST_ROOT/cmd-update-diverged"
 interactive_remote="$TEST_ROOT/cmd-update-diverged.git"
 interactive_peer="$TEST_ROOT/cmd-update-peer"
@@ -234,6 +264,21 @@ for mode in staged unstaged; do
 		assert_dirty_change_preserved "check library preserves $mode changes" "$repo"
 	fi
 done
+
+check_lib_behind_repo="$TEST_ROOT/check-lib-behind"
+check_lib_behind_remote="$TEST_ROOT/check-lib-behind.git"
+check_lib_behind_peer="$TEST_ROOT/check-lib-behind-peer"
+setup_behind_repo "$check_lib_behind_repo" "$check_lib_behind_remote" "$check_lib_behind_peer"
+check_lib_remote_commit="$(git -C "$check_lib_behind_peer" rev-parse HEAD)"
+INSTALL_DIR="$check_lib_behind_repo"
+LOG_FILE="$TEST_ROOT/check-lib-behind.log"
+if ! _cmd_check_git_update 1.0.1 >/dev/null 2>&1; then
+	fail 'check library fast-forwards after fetch' 'update failed'
+elif [[ "$(git -C "$check_lib_behind_repo" rev-parse HEAD)" != "$check_lib_remote_commit" ]]; then
+	fail 'check library fast-forwards after fetch' 'HEAD does not match fetched commit'
+else
+	pass 'check library fast-forwards after fetch'
+fi
 
 check_lib_diverged_repo="$TEST_ROOT/check-lib-diverged"
 check_lib_diverged_remote="$TEST_ROOT/check-lib-diverged.git"
