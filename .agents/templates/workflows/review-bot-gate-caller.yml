@@ -59,4 +59,7 @@ concurrency:
 jobs:
   gate:
     uses: marcusquinn/aidevops/.github/workflows/review-bot-gate-reusable.yml@main
+    with:
+      # Keep this equal to the ref on `uses:` so helper code is pinned with the reusable YAML.
+      aidevops_ref: main
     secrets: inherit

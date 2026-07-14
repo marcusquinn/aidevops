@@ -14,6 +14,7 @@
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 HELPER="$SCRIPT_DIR/../sync-workflows-helper.sh"
 CHECK_HELPER="$SCRIPT_DIR/../check-workflows-helper.sh"
 
@@ -328,6 +329,18 @@ rm -rf "$TMPDIR_12"
 # ─── Test 13: GH#24520 — apply renders configured reusable repo/ref ─────────
 TMPDIR_13="$(mktemp -d)"
 _setup_fake_home "$TMPDIR_13"
+MIRROR_13="$TMPDIR_13/org-dotgithub"
+mkdir -p "$MIRROR_13/.github/workflows"
+git -C "$MIRROR_13" init -q 2>/dev/null
+git -C "$MIRROR_13" config user.email test@example.com
+git -C "$MIRROR_13" config user.name Test
+git -C "$MIRROR_13" config commit.gpgsign false
+git -C "$MIRROR_13" symbolic-ref HEAD refs/heads/main 2>/dev/null
+cp "$REPO_ROOT/.github/workflows/issue-sync-reusable.yml" \
+	"$MIRROR_13/.github/workflows/issue-sync-reusable.yml"
+git -C "$MIRROR_13" add -A >/dev/null
+git -C "$MIRROR_13" commit -q -m "current mirror contract"
+MIRROR_REF_13=$(git -C "$MIRROR_13" rev-parse HEAD)
 BARE_13="$TMPDIR_13/bare.git"
 git init --bare -q "$BARE_13" 2>/dev/null
 REPO_13="$TMPDIR_13/repo-org-target"
@@ -344,18 +357,24 @@ git -C "$REPO_13" remote add origin "$BARE_13" 2>/dev/null
 git -C "$REPO_13" push -q origin main 2>/dev/null
 git -C "$REPO_13" fetch -q origin 2>/dev/null
 git -C "$REPO_13" remote set-head origin main 2>/dev/null
-_write_repos_json "$TMPDIR_13" "{\"workflow_reusable_repo\":\"ORG/.github\",\"workflow_reusable_ref\":\"1234567890abcdef1234567890abcdef12345678\",\"initialized_repos\":[{\"path\":\"$REPO_13\",\"slug\":\"owner/repo-org-target\",\"runner\":\"ubuntu-latest-arm64\"}]}"
+_write_repos_json "$TMPDIR_13" "{\"workflow_reusable_repo\":\"ORG/.github\",\"workflow_reusable_ref\":\"$MIRROR_REF_13\",\"initialized_repos\":[{\"path\":\"$REPO_13\",\"slug\":\"owner/repo-org-target\",\"runner\":\"ubuntu-latest-arm64\"},{\"path\":\"$MIRROR_13\",\"slug\":\"ORG/.github\"}]}"
 SYNC_BRANCH_13="chore/workflow-sync-$(date +%Y%m%d)"
 HOME="$TMPDIR_13" bash "$HELPER" --apply 2>/dev/null || true
 WF_USES_13=$(git -C "$REPO_13" show "${SYNC_BRANCH_13}:.github/workflows/issue-sync.yml" 2>/dev/null \
 	| grep -E "^[[:space:]]+uses:" | head -n 1 || true)
 WF_RUNNER_13=$(git -C "$REPO_13" show "${SYNC_BRANCH_13}:.github/workflows/issue-sync.yml" 2>/dev/null \
 	| grep -E "^[[:space:]]+runner:" | head -n 1 || true)
+WF_HELPER_REPO_13=$(git -C "$REPO_13" show "${SYNC_BRANCH_13}:.github/workflows/issue-sync.yml" 2>/dev/null \
+	| grep -E "^[[:space:]]+aidevops_repository:" | head -n 1 || true)
+WF_HELPER_REF_13=$(git -C "$REPO_13" show "${SYNC_BRANCH_13}:.github/workflows/issue-sync.yml" 2>/dev/null \
+	| grep -E "^[[:space:]]+aidevops_ref:" | head -n 1 || true)
+WF_HELPER_SECRET_13=$(git -C "$REPO_13" show "${SYNC_BRANCH_13}:.github/workflows/issue-sync.yml" 2>/dev/null \
+	| grep -E "^[[:space:]]+AIDEVOPS_READ_TOKEN:" | head -n 1 || true)
 git -C "$REPO_13" checkout -q "$SYNC_BRANCH_13" 2>/dev/null || true
 CHECK_CLASS_13=$(HOME="$TMPDIR_13" bash "$CHECK_HELPER" --json --repo "owner/repo-org-target" --workflow issue-sync 2>/dev/null \
 	| jq -r 'select(.slug == "owner/repo-org-target") | .classification' \
 	| head -n 1)
-if [[ "$WF_USES_13" == *"ORG/.github/.github/workflows/issue-sync-reusable.yml@1234567890abcdef1234567890abcdef12345678"* ]]; then
+if [[ "$WF_USES_13" == *"ORG/.github/.github/workflows/issue-sync-reusable.yml@${MIRROR_REF_13}"* ]]; then
 	printf '%sPASS%s GH#24520 apply writes configured org reusable target\n' "$GREEN" "$NC"
 	((_PASS++))
 else
@@ -369,6 +388,16 @@ if [[ "$WF_RUNNER_13" == *"ubuntu-latest-arm64"* ]]; then
 else
 	printf '%sFAIL%s GH#24520 runner injection survives configured org target\n' "$RED" "$NC"
 	printf '       got: %s\n' "$WF_RUNNER_13"
+	((_FAIL++))
+fi
+if [[ "$WF_HELPER_REPO_13" == *"ORG/.github"* && \
+	"$WF_HELPER_REF_13" == *"${MIRROR_REF_13}"* && \
+	"$WF_HELPER_SECRET_13" == *'secrets.AIDEVOPS_READ_TOKEN'* ]]; then
+	printf '%sPASS%s GH#27727 helper provenance matches configured reusable target\n' "$GREEN" "$NC"
+	((_PASS++))
+else
+	printf '%sFAIL%s GH#27727 helper provenance matches configured reusable target\n' "$RED" "$NC"
+	printf '       repo: %s ref: %s\n' "$WF_HELPER_REPO_13" "$WF_HELPER_REF_13"
 	((_FAIL++))
 fi
 if [[ "$CHECK_CLASS_13" == "CURRENT/CALLER" ]]; then
@@ -470,6 +499,29 @@ else
 fi
 _assert_exit "GH#27726 refreshed-drift apply exits 0" 0 "$EXIT_15"
 rm -rf "$TMPDIR_15"
+
+# ─── Test 16: GH#27727 — stale/unregistered mirror fails closed ─────────────
+TMPDIR_16="$(mktemp -d)"
+_setup_fake_home "$TMPDIR_16"
+mkdir -p "$TMPDIR_16/repo-stale-mirror/.github/workflows"
+printf '%s\n' "$LEGACY_CONTENT" >"$TMPDIR_16/repo-stale-mirror/.github/workflows/issue-sync.yml"
+mkdir -p "$TMPDIR_16/org-dotgithub/.github/workflows"
+git -C "$TMPDIR_16/org-dotgithub" init -q 2>/dev/null
+git -C "$TMPDIR_16/org-dotgithub" config user.email test@example.com
+git -C "$TMPDIR_16/org-dotgithub" config user.name Test
+git -C "$TMPDIR_16/org-dotgithub" config commit.gpgsign false
+git -C "$TMPDIR_16/org-dotgithub" symbolic-ref HEAD refs/heads/main 2>/dev/null
+printf '%s\n' 'name: stale reusable without provenance inputs' > \
+	"$TMPDIR_16/org-dotgithub/.github/workflows/issue-sync-reusable.yml"
+git -C "$TMPDIR_16/org-dotgithub" add -A >/dev/null
+git -C "$TMPDIR_16/org-dotgithub" commit -q -m "stale mirror contract"
+_write_repos_json "$TMPDIR_16" "{\"workflow_reusable_repo\":\"ORG/.github\",\"initialized_repos\":[{\"path\":\"$TMPDIR_16/repo-stale-mirror\",\"slug\":\"owner/repo-stale-mirror\"},{\"path\":\"$TMPDIR_16/org-dotgithub\",\"slug\":\"ORG/.github\"}]}"
+OUT_16=$(HOME="$TMPDIR_16" bash "$HELPER" --repo owner/repo-stale-mirror --workflow issue-sync 2>&1)
+EXIT_16=$?
+_assert_contains "GH#27727 stale mirror reports compatibility blocker" "$OUT_16" \
+	"configured mirror must be registered and updated at @main before caller sync"
+_assert_exit "GH#27727 stale mirror exits non-zero" 1 "$EXIT_16"
+rm -rf "$TMPDIR_16"
 
 # ─── Summary ────────────────────────────────────────────────────────────────
 printf '\n'

@@ -237,11 +237,56 @@ _render_template_with_target() {
 	# Template ships with `marcusquinn/aidevops@main` by default; rewrite the
 	# executable `uses:` target and any managed comment/reference path so
 	# sync-generated org-owned callers are byte-comparable by check-workflows.
-	sed -E \
+	local _rendered
+	_rendered=$(sed -E \
 		-e 's|(uses:[[:space:]]*)marcusquinn/aidevops(/\.github/workflows/[^@[:space:]]+)@[^[:space:]]+|\1'"$_repo_escaped"'\2@'"$_ref_escaped"'|' \
 		-e 's|marcusquinn/aidevops(/\.github/workflows/[^[:space:]]+)|'"$_repo_escaped"'\1|g' \
-		"$_template"
+		-e 's|^(      aidevops_ref:).*$|\1 '"$_ref_escaped"'|' \
+		"$_template")
+	# Existing pinned reusable versions already accept aidevops_ref. The new
+	# repository input is emitted only for configured mirrors, which must update
+	# their reusable workflow before callers are resynced.
+	if [[ "$_repo" != "$_DEFAULT_WORKFLOW_REUSABLE_REPO" ]] && \
+		printf '%s\n' "$_rendered" | grep -qE '^      aidevops_ref:'; then
+		_rendered=$(printf '%s\n' "$_rendered" | sed -E \
+			's|^(      aidevops_ref:.*)$|      aidevops_repository: '"$_repo_escaped"'\n\1|'
+		)
+		_rendered=$(_inject_mirror_read_secret "$_rendered")
+	fi
+	printf '%s\n' "$_rendered"
 	return 0
+}
+
+_inject_mirror_read_secret() {
+	local _content="$1"
+	if printf '%s\n' "$_content" | grep -qE '^    secrets: inherit$'; then
+		printf '%s\n' "$_content" | sed -E \
+			's|^    secrets: inherit$|    secrets:\
+      AIDEVOPS_READ_TOKEN: ${{ secrets.AIDEVOPS_READ_TOKEN }}|'
+	else
+		printf '%s\n' "$_content" | sed -E \
+			's|^    secrets:$|    secrets:\
+      AIDEVOPS_READ_TOKEN: ${{ secrets.AIDEVOPS_READ_TOKEN }}|'
+	fi
+	return 0
+}
+
+_mirror_supports_helper_provenance() {
+	local _repo="$1"
+	local _workflow_name="$2"
+	local _ref="$3"
+	local _path _reusable_path _reusable_content
+	_path=$(jq -r --arg s "$_repo" \
+		'.initialized_repos[]? | select(.slug == $s) | .path // empty' \
+		"$REPOS_JSON" 2>/dev/null | head -n 1)
+	_reusable_path=".github/workflows/${_workflow_name}-reusable.yml"
+	[[ -n "$_path" && -d "$_path/.git" ]] || return 1
+	_reusable_content=$(git -C "$_path" show "${_ref#@}:${_reusable_path}" 2>/dev/null) || return 1
+	if grep -qE '^      aidevops_repository:' <<<"$_reusable_content" && \
+		grep -qE '^      AIDEVOPS_READ_TOKEN:' <<<"$_reusable_content"; then
+		return 0
+	fi
+	return 1
 }
 
 # Rewrite `branches: [main]` → `branches: [<default_branch>]` in caller YAML content.
@@ -855,10 +900,21 @@ _process_rows() {
 			_target_ref=$(_workflow_reusable_ref_for_slug "$_slug")
 		fi
 
-		local _result
+		local _result _effective_ref _target_ref_arg
+		_target_ref_arg="@${_target_ref}"
+		_effective_ref=$(_resolve_effective_ref \
+			"$_status" "$_path/$_workflow_relpath" "$_target_ref_arg" "$_OPT_FORCE_REF")
+		if [[ "$_target_repo" != "$_DEFAULT_WORKFLOW_REUSABLE_REPO" ]] && \
+			grep -qE '^      aidevops_ref:' "$_template" && \
+			! _mirror_supports_helper_provenance "$_target_repo" "$_workflow_name" "$_effective_ref"; then
+			_result="${_slug}"$'\t'"${_status}"$'\t'"${_STATUS_FAILED}"$'\t'"configured mirror must be registered and updated at ${_effective_ref} before caller sync"
+			_any_failed=1
+			_print_result_row "$_OPT_JSON" "$_target_ref_arg" "$_OPT_BRANCH_NAME" "$_result"
+			continue
+		fi
 		if _result=$(_sync_one_repo \
 			"$_slug" "$_path" "$_status" "$_template" \
-			"$_target_repo" "@${_target_ref}" "$_OPT_FORCE_REF" "$_OPT_BRANCH_NAME" "$_OPT_APPLY" \
+			"$_target_repo" "$_target_ref_arg" "$_OPT_FORCE_REF" "$_OPT_BRANCH_NAME" "$_OPT_APPLY" \
 			"$_workflow_relpath"); then
 			:
 		else
@@ -870,7 +926,7 @@ _process_rows() {
 		"$_STATUS_PLANNED") ((_COUNT_PLANNED++)) ;;
 		"$_STATUS_SKIPPED") ((_COUNT_SKIPPED++)) ;;
 		esac
-		_print_result_row "$_OPT_JSON" "@${_target_ref}" "$_OPT_BRANCH_NAME" "$_result"
+		_print_result_row "$_OPT_JSON" "$_target_ref_arg" "$_OPT_BRANCH_NAME" "$_result"
 	done <<<"$_tsv"
 	return "$_any_failed"
 }

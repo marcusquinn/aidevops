@@ -83,7 +83,11 @@ By default, downstream callers delegate to `marcusquinn/aidevops`. Organizations
 }
 ```
 
-Per-repo values override the global default. The default remains `marcusquinn/aidevops@main`. `check-workflows` treats only the explicitly configured repo/ref as trusted; it does not accept arbitrary repositories that happen to use the same reusable workflow filename.
+Per-repo values override the global default. The default remains `marcusquinn/aidevops@main`. `check-workflows` treats only the explicitly configured repo/ref as trusted; it does not accept arbitrary repositories that happen to use the same reusable workflow filename. Helper-bearing callers pass the same ref through `aidevops_ref`; configured mirrors also pass `aidevops_repository`, so reusable YAML and executed helper code share one provenance tuple.
+
+Update and register a configured mirror's reusable workflow files before syncing its callers. `sync-workflows` fails closed when the registered mirror does not declare the provenance input and optional read-token secret. Older mirrored reusable files reject those undeclared values at startup. Canonical `marcusquinn/aidevops` callers remain backward-compatible with older pins because they pass only the long-supported `aidevops_ref` input.
+
+Private mirrors require a caller-repository secret named `AIDEVOPS_READ_TOKEN` with read access to the mirror. Sync injects that secret only for configured mirror callers; public mirrors fall back to the caller's `GITHUB_TOKEN` when the secret is unset. Store the token as a GitHub Actions secret, never in `repos.json` or workflow YAML.
 
 Pinned refs are allowed for caller classification, but they do not suppress reusable-content update visibility. If the configured reusable repo is also registered in `repos.json` and has local `*-reusable.yml` copies, `check-workflows` compares those files against the aidevops baseline and reports `DRIFTED/REUSABLE` when an update should be reviewed.
 
@@ -94,14 +98,14 @@ Pinned refs are allowed for caller classification, but they do not suppress reus
 3. GitHub fetches the reusable workflow from `marcusquinn/aidevops` at the specified ref.
 4. Each job in the reusable workflow runs with `github.event_name` reflecting the caller's event (so the `if: github.event_name == 'push'` guards work correctly across repos).
 5. First step in each job: `actions/checkout` of the caller's repo (so the sync helpers see the caller's `TODO.md`, `todo/`, etc.).
-6. Second step: `actions/checkout` of `marcusquinn/aidevops` into `__aidevops/` (so `bash __aidevops/.agents/scripts/...` finds the framework scripts).
+6. Second step: `actions/checkout` of the caller's coupled `aidevops_repository` / `aidevops_ref` provenance into `__aidevops/` (so `bash __aidevops/.agents/scripts/...` finds the framework scripts).
 7. Subsequent steps run the sync helpers against the caller's repo files.
 
 This pattern also works when aidevops calls its own reusable workflow (same-repo use), at the cost of a ~2s secondary checkout. The uniformity (one code path for all callers) is worth it.
 
 ## Pinning strategies
 
-The caller declares which version of aidevops to fetch via the `@ref` suffix on `uses:`:
+The caller declares which version of aidevops to fetch via the `@ref` suffix on `uses:` and repeats that value in `with.aidevops_ref`. `check-workflows` treats a missing or mismatched helper ref as drift, and `sync-workflows` repairs both values together.
 
 | Pin | Behaviour | When to use |
 |---|---|---|
@@ -119,6 +123,8 @@ jobs:
     #                                                                   change this
     secrets:
       SYNC_PAT: ${{ secrets.SYNC_PAT }}
+    with:
+      aidevops_ref: v3.9.0
 ```
 
 Keep pinned callers in sync with aidevops releases via:
@@ -207,7 +213,7 @@ The caller YAML becomes `with: runner: "[self-hosted, linux, x64]"` and GitHub A
 
   **Symptom of the cross-account bug**: `gh secret list` shows `SYNC_PAT` set and recent, but the workflow's `Check SYNC_PAT visibility` step logs `SYNC_PAT_PRESENT:` (empty). Fix: `aidevops sync-workflows --apply`.
 
-- **Referencing `@main` is a trust boundary.** You're trusting whoever controls aidevops's `main` branch. For higher-trust deployments, pin to a version tag (`@v3.9.0`) and update explicitly.
+- **Referencing `@main` is a trust boundary.** You're trusting whoever controls aidevops's `main` branch. For higher-trust deployments, pin both `jobs.<id>.uses` and `with.aidevops_ref` to the same version tag or SHA; `aidevops sync-workflows` keeps them coupled.
 - **`pull_request_target` vs `pull_request`.** The reusable workflow's job guards accept either event type. The caller picks based on its security model:
   - **Private repo with trusted contributors**: `pull_request` is simpler and has fewer footguns.
   - **Public repo accepting external PRs**: `pull_request_target` is required if the workflow needs write permissions or secrets (but bring standard `pull_request_target` hygiene — don't check out the PR's head code if you trust it to run with elevated privileges).

@@ -27,14 +27,16 @@ on:
 jobs:
   metrics:
     uses: marcusquinn/aidevops/.github/workflows/loc-badge-reusable.yml@main
+    with:
+      # Keep this equal to the ref on `uses:` so helper code is pinned with the reusable YAML.
+      aidevops_ref: main
+      # Optional input overrides — uncomment and edit as needed:
+      # top_n: 8
+      # skip_if_fresh_hours: 24
+      # extra_excludes: |
+      #   fixtures/
+      #   test-data/
     # GH#20976: `secrets: inherit` only works within the same GitHub account/org.
     # Cross-account consumers must pass secrets explicitly.
     secrets:
       SYNC_PAT: ${{ secrets.SYNC_PAT }}
-    # Optional input overrides — uncomment and edit as needed:
-    # with:
-    #   top_n: 8
-    #   skip_if_fresh_hours: 24
-    #   extra_excludes: |
-    #     fixtures/
-    #     test-data/
