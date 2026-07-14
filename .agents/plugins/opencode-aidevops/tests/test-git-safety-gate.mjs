@@ -102,7 +102,7 @@ test("allows the repository full-loop commit-and-pr wrapper only from a linked w
     );
     const activeWrapper = join(activeScriptsDir, "full-loop-helper.sh");
     assert.doesNotThrow(() => checkCanonicalGitSafetyGate(
-      `${activeWrapper} commit-and-pr --issue 123`,
+      `PR_NUMBER=$(${activeWrapper} commit-and-pr --issue 123 --message 'fix: example')`,
       scriptsDir,
       linked,
       { activeScriptsDir },
@@ -141,6 +141,14 @@ test("does not trust similarly named full-loop wrappers", () => {
   try {
     assert.throws(
       () => checkCanonicalGitSafetyGate("./tmp/full-loop-helper.sh commit-and-pr --testing 'git tests pass'", scriptsDir, linked),
+      /unclassified nested Git invocation/,
+    );
+    assert.throws(
+      () => checkCanonicalGitSafetyGate(
+        "$HOME/.aidevops/agents/scripts/full-loop-helper.sh commit-and-pr --issue 123",
+        scriptsDir,
+        linked,
+      ),
       /unclassified nested Git invocation/,
     );
     const unrelatedScripts = join(root, "unrelated", "scripts");
