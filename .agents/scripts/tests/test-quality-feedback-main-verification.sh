@@ -270,6 +270,8 @@ main() {
 	test_skips_pr26877_regression_test_verification_ack
 	test_skips_pr26892_nongreedy_quantifier_ack
 	test_skips_pr26938_resolved_timeout_thread
+	test_skips_pr27659_exact_head_verification_review
+	test_keeps_exact_head_verification_with_remaining_concern
 	test_keeps_actionable_approved_review
 	test_keeps_changes_requested_review
 	test_keeps_review_with_bug_report

@@ -76,6 +76,11 @@ _test_approval_filter() {
 			"\\bconsistent\\b|\\brobust(ness)?\\b|\\buser experience\\b|" +
 			"\\breduces? (external )?requirements?\\b|\\bwell-implemented\\b"; "i")) as $summary_praise_only |
 
+		(($body | test("\\breviewed exact head\\b"; "i")) and
+		 ($body | test("\\b(corrects?|keeps?|preserves?|verif(y|ies|ied)|pass(es|ed)?)\\b"; "i")) and
+		 ($body | test("\\b(tests?|checks?|suites?)\\b"; "i")) and
+		 (($body | test("\\b(but|however|although|yet|except|still|remaining|unresolved)\\b"; "i")) | not)) as $exact_head_verification |
+
 		($body | test(
 			"\\b(corrects?|fix(es|ed)?|replaces?|addresses?)\\b[^.\\n]*(\\bbroken\\b|\\bincorrect\\b|\\bwrong\\b|\\bbug\\b|\\berror\\b|\\bissue\\b)|" +
 			"\\b(change|fix) is correct\\b|\\bcorrect and improves?\\b"; "i")) as $historic_fix_praise |
@@ -100,7 +105,7 @@ _test_approval_filter() {
 			"\\bworkaround\\b|\\bhack\\b|" +
 			"```\\s*(suggestion|diff)"; "i")) as $strong_actionable |
 
-		(($actionable_raw or $strong_actionable) and ($no_actionable_recommendation | not) and ($no_actionable_suggestions | not) and ($strong_actionable or (($historic_fix_praise and $summary_praise_only) | not))) as $actionable |
+		(($actionable_raw or $strong_actionable) and ($no_actionable_recommendation | not) and ($no_actionable_suggestions | not) and ($strong_actionable or (($historic_fix_praise and $summary_praise_only) | not)) and ($strong_actionable or ($exact_head_verification | not))) as $actionable |
 
 		# GH#5668: merge/CI-status comments are not actionable review feedback
 		($body | test(
@@ -112,7 +117,7 @@ _test_approval_filter() {
 
 		# skip = approval-only/no-recommendation/no-suggestions/no-actionable sentiment
 		# or summary praise with no actionable critique, or merge/CI-status comment
-		if (($approval_only or $no_actionable_recommendation or $no_actionable_suggestions or $no_actionable_sentiment or $summary_praise_only or $merge_status_only) and ($actionable | not)) then "skip"
+		if (($approval_only or $no_actionable_recommendation or $no_actionable_suggestions or $no_actionable_sentiment or $summary_praise_only or $exact_head_verification or $merge_status_only) and ($actionable | not)) then "skip"
 		else "keep"
 		end
 	')
@@ -523,6 +528,39 @@ test_skips_pr26938_resolved_timeout_thread() {
 		print_result "skip PR #26938 resolved timeout thread" 0
 	else
 		print_result "skip PR #26938 resolved timeout thread" 1 "expected 0 findings, got ${result}"
+	fi
+	return 0
+}
+
+test_skips_pr27659_exact_head_verification_review() {
+	local result
+	# Exact source review from PR #27659: failure-related words describe the
+	# verified fix and must not become a new quality-debt finding.
+	# shellcheck disable=SC1112,SC2016  # exact review contains Unicode punctuation and Markdown code spans
+	result=$(_test_approval_filter 'Reviewed exact head `492b3aace`.
+
+- Corrects the maintainer gate’s unsupported `gh api --slurp --jq` combination.
+- Keeps API and JSON parse failures fail-closed.
+- Maintainer gate regression suites and the full local quality suite pass.' "APPROVED")
+	if [[ "$result" == "skip" ]]; then
+		print_result "skip PR #27659 exact-head verification review" 0
+	else
+		print_result "skip PR #27659 exact-head verification review" 1 "expected skip, got ${result}"
+	fi
+	return 0
+}
+
+test_keeps_exact_head_verification_with_remaining_concern() {
+	local result
+	# shellcheck disable=SC2016  # literal review body includes a Markdown code span
+	result=$(_test_approval_filter 'Reviewed exact head `abcdef123`.
+
+- The regression suites pass.
+- However, this still needs error handling for malformed API output.' "APPROVED")
+	if [[ "$result" == "keep" ]]; then
+		print_result "keep exact-head verification with remaining concern" 0
+	else
+		print_result "keep exact-head verification with remaining concern" 1 "expected keep, got ${result}"
 	fi
 	return 0
 }
