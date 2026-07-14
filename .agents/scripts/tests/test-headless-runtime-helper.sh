@@ -708,6 +708,7 @@ test_cmd_run_aborts_issue_worker_before_canary_when_env_missing() {
 
 test_cmd_run_preserves_worker_origin_overrides_before_canary() {
 	local worktree_dir="${TEST_ROOT}/origin-override-worktree"
+	local AIDEVOPS_DISPATCH_LEASE_TOKEN=""
 	mkdir -p "$worktree_dir"
 	init_git_worktree "$worktree_dir"
 	export WORKER_ISSUE_NUMBER=23558
