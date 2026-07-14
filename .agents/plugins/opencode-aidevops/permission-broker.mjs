@@ -10,7 +10,8 @@ const REQUEST_SCHEMA = "aidevops-permission-capture/v1";
 const MAX_PATTERN_LENGTH = 500;
 const MAX_INTENT_LENGTH = 500;
 const MAX_REQUESTS = 20;
-const FORBIDDEN_PATTERN = /(?:approval-keys\/private|\/(?:\.ssh|\.gnupg)(?:\/|$)|auth\.json(?:$|\*)|credentials?(?:\.|\/|$)|(?:^|\/)\.env(?:\.|$|\/))/i;
+const PATTERN_CAPABLE_PERMISSIONS = new Set(["bash", "external_directory"]);
+const FORBIDDEN_PATTERN = /(?:approval-keys\/private|\/(?:\.ssh|\.gnupg|\.aws|\.azure|\.kube)(?:\/|$)|\/(?:\.config\/(?:gh|gcloud|glab-cli|hub)|\.docker)(?:\/|$)|\/(?:\.netrc|\.npmrc|\.pypirc|\.git-credentials)(?:$|\*)|auth\.json(?:$|\*)|credentials?(?:\.|\/|$)|(?:^|\/)\.env(?:\.|$|\/))/i;
 const HIGH_RISK_PATTERN = /(?:\.config\/opencode|node_modules\/@opencode-ai\/plugin|(?:^|\/)\.git(?:\/|$))/i;
 
 function redactSecrets(value) {
@@ -25,6 +26,7 @@ export function sanitizePermissionText(value, options = {}) {
   const workDir = options.workDir || process.env.WORKER_WORKTREE_PATH || "";
   let sanitized = value.replace(/[\u0000-\u001f\u007f]/g, " ").trim();
   sanitized = redactSecrets(sanitized);
+  sanitized = sanitized.replace(/~~~/g, "~ ~ ~");
   if (home && sanitized.includes(home)) sanitized = sanitized.split(home).join("~");
   if (workDir && sanitized.includes(workDir)) sanitized = sanitized.split(workDir).join("$WORKTREE");
   return sanitized.slice(0, options.maxLength || MAX_PATTERN_LENGTH);
@@ -32,6 +34,12 @@ export function sanitizePermissionText(value, options = {}) {
 
 function classifyRisk(permission, patterns, tool) {
   const combined = patterns.join("\n");
+  if (!PATTERN_CAPABLE_PERMISSIONS.has(permission)) {
+    return { level: "critical", grantable: false, reason: "permission cannot be represented as an exact OpenCode pattern rule" };
+  }
+  if (patterns.length === 0) {
+    return { level: "critical", grantable: false, reason: "request omitted an exact permission pattern" };
+  }
   if (patterns.some((pattern) => FORBIDDEN_PATTERN.test(pattern))) {
     return { level: "critical", grantable: false, reason: "sensitive credential or signing-key location" };
   }

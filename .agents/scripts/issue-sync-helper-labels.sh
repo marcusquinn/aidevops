@@ -196,7 +196,7 @@ _is_protected_label() {
 	# signals set by explicit user/session action and must survive enrich.
 	# t2754: added hold-for-review and needs-credentials — canonical dispatch-blockers.
 	case "$lbl" in
-	persistent | needs-maintainer-review | not-planned | duplicate | wontfix | \
+	persistent | needs-maintainer-review | needs-maintainer-permissions | not-planned | duplicate | wontfix | \
 		already-fixed | "good first issue" | "help wanted" | \
 		parent-task | meta | auto-dispatch | no-auto-dispatch | no-takeover | \
 		hold-for-review | needs-credentials | \

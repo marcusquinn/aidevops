@@ -3,9 +3,11 @@
 // Extracted from index.mjs (t1914).
 // ---------------------------------------------------------------------------
 
-import { existsSync, readFileSync, appendFileSync } from "fs";
+import { existsSync, readFileSync, appendFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "fs";
 import { homedir } from "os";
 import { join } from "path";
+import { execFileSync } from "child_process";
+import { createHash } from "crypto";
 import { loadAgentIndex, applyAgentMcpTools } from "./agent-loader.mjs";
 import { registerMcpServers } from "./mcp-registry.mjs";
 import { registerPoolProvider, getAccounts, ensureValidToken } from "./oauth-pool.mjs";
@@ -31,6 +33,11 @@ const MANAGED_EXTERNAL_DIRECTORIES = [
   "~/Git/_worktrees",
   "~/Git/_worktrees/**",
 ];
+
+const PATTERN_CAPABLE_PERMISSIONS = new Set(["bash", "external_directory"]);
+const FORBIDDEN_GRANT_PATTERN = /(?:approval-keys\/private|\/(?:\.ssh|\.gnupg|\.aws|\.azure|\.kube)(?:\/|$)|\/(?:\.config\/(?:gh|gcloud|glab-cli|hub)|\.docker)(?:\/|$)|\/(?:\.netrc|\.npmrc|\.pypirc|\.git-credentials)(?:$|\*)|auth\.json(?:$|\*)|credentials?(?:\.|\/|$)|(?:^|\/)\.env(?:\.|$|\/))/i;
+const UNBOUNDED_GRANT_PATTERN = /^(?:\*|\*\*|\/\*\*|~\/\*\*|\$WORKTREE\/\*\*)$/;
+const MAX_PERMISSION_GRANT_MS = 4 * 60 * 60 * 1000;
 
 /**
  * Allow OpenCode to use aidevops-managed state and linked worktrees without
@@ -72,6 +79,111 @@ export function registerManagedDirectoryPermissions(config) {
   let count = addManagedDirectoryRules(config);
   for (const agent of Object.values(config.agent || {})) {
     count += addManagedDirectoryRules(agent);
+  }
+  return count;
+}
+
+function verifyPermissionGrant(grantPath, options = {}) {
+  if (!grantPath || !existsSync(grantPath)) return null;
+  const publicKey = options.publicKey || join(homedir(), ".aidevops", "approval-keys", "approval.pub");
+  if (!existsSync(publicKey)) return null;
+  let grant;
+  try {
+    grant = JSON.parse(readFileSync(grantPath, "utf8"));
+  } catch {
+    return null;
+  }
+  if (typeof grant?.payload !== "string" || typeof grant?.signature !== "string") return null;
+  const tempBase = options.tempBase || process.env.AIDEVOPS_TEMP_DIR || join(homedir(), ".aidevops", ".agent-workspace", "tmp");
+  mkdirSync(tempBase, { recursive: true });
+  const verifyDir = mkdtempSync(join(tempBase, "permission-grant-"));
+  const signaturePath = join(verifyDir, "signature");
+  const signersPath = join(verifyDir, "allowed-signers");
+  try {
+    writeFileSync(signaturePath, grant.signature, { mode: 0o600 });
+    const key = readFileSync(publicKey, "utf8").trim();
+    writeFileSync(signersPath, `approval@aidevops.sh namespaces="aidevops-approve" ${key}\n`, { mode: 0o600 });
+    execFileSync("ssh-keygen", [
+      "-Y", "verify", "-f", signersPath, "-I", "approval@aidevops.sh",
+      "-n", "aidevops-approve", "-s", signaturePath,
+    ], { input: grant.payload, stdio: ["pipe", "ignore", "ignore"] });
+  } catch {
+    rmSync(verifyDir, { recursive: true, force: true });
+    return null;
+  }
+  rmSync(verifyDir, { recursive: true, force: true });
+  try {
+    return JSON.parse(grant.payload);
+  } catch {
+    return null;
+  }
+}
+
+function addApprovedCapabilityRules(target, capabilities) {
+  if (typeof target.permission === "string") {
+    const fallback = target.permission;
+    target.permission = { "*": fallback, external_directory: { "*": fallback } };
+  } else if (!target.permission) {
+    target.permission = {};
+  }
+  let count = 0;
+  for (const capability of capabilities) {
+    const permission = capability.permission;
+    const patterns = Array.isArray(capability.patterns) ? capability.patterns : [];
+    if (!PATTERN_CAPABLE_PERMISSIONS.has(permission) || patterns.length === 0) continue;
+    const existing = target.permission[permission];
+    if (existing === "allow") continue;
+    const rules = typeof existing === "string" ? { "*": existing } : { ...existing };
+    for (const pattern of patterns) {
+      if (typeof pattern !== "string" || pattern.length === 0 || pattern.length > 500) continue;
+      delete rules[pattern];
+      rules[pattern] = "allow";
+      count++;
+    }
+    target.permission[permission] = rules;
+  }
+  return count;
+}
+
+export function registerApprovedWorkerPermissions(config, options = {}) {
+  const grantPath = options.grantPath || process.env.AIDEVOPS_PERMISSION_GRANT_FILE || "";
+  const grant = verifyPermissionGrant(grantPath, options);
+  if (!grant || grant.schema !== "aidevops-permission-grant/v1" || grant.authority !== "worker-permissions") return 0;
+  const issue = String(process.env.WORKER_ISSUE_NUMBER || "");
+  const repo = String(process.env.WORKER_REPO_SLUG || process.env.DISPATCH_REPO_SLUG || "").toLowerCase();
+  if (String(grant.target?.number || "") !== issue || String(grant.target?.repository || "").toLowerCase() !== repo) return 0;
+  const issued = Date.parse(grant.issued_at || "");
+  const expires = Date.parse(grant.expires_at || "");
+  const now = Date.now();
+  if (!Number.isFinite(issued) || !Number.isFinite(expires) || issued > now + 5 * 60 * 1000 || expires <= now) return 0;
+  if (expires <= issued || expires - issued > MAX_PERMISSION_GRANT_MS) return 0;
+  if (!Array.isArray(grant.capabilities) || grant.capabilities.length === 0 || grant.capabilities.length > 20) return 0;
+  if (!/^perm-[0-9a-f]{16}$/.test(grant.request_id || "") || !/^[0-9a-f]{64}$/.test(grant.request_sha256 || "")) return 0;
+  const pendingRequest = String(options.pendingRequest || process.env.AIDEVOPS_PERMISSION_REQUEST_ID || "");
+  if (!pendingRequest || grant.request_id !== pendingRequest) return 0;
+  const repositoryDir = String(options.repositoryDir || "");
+  const expectedWorktree = createHash("sha256").update(repositoryDir).digest("hex");
+  if (!repositoryDir || grant.worker?.worktree_sha256 !== expectedWorktree) return 0;
+  const currentSession = String(options.currentSession || process.env.WORKER_SESSION_KEY || "");
+  if (!currentSession || grant.worker?.session !== currentSession) return 0;
+  let currentBranch = options.currentBranch;
+  if (currentBranch === undefined) {
+    try {
+      currentBranch = execFileSync("git", ["-C", repositoryDir, "branch", "--show-current"], { encoding: "utf8" }).trim();
+    } catch {
+      return 0;
+    }
+  }
+  if (grant.worker?.branch !== currentBranch) return 0;
+  if (grant.capabilities.some((item) => {
+    if (item?.risk?.grantable !== true || !PATTERN_CAPABLE_PERMISSIONS.has(item?.permission || "")) return true;
+    if (!Array.isArray(item.patterns) || item.patterns.length === 0 || item.patterns.length > 20) return true;
+    return item.patterns.some((pattern) => typeof pattern !== "string" || pattern.length === 0 || pattern.length > 500
+      || FORBIDDEN_GRANT_PATTERN.test(pattern) || UNBOUNDED_GRANT_PATTERN.test(pattern));
+  })) return 0;
+  let count = addApprovedCapabilityRules(config, grant.capabilities);
+  for (const agent of Object.values(config.agent || {})) {
+    count += addApprovedCapabilityRules(agent, grant.capabilities);
   }
   return count;
 }
@@ -365,6 +477,7 @@ function logConfigSummary(counts) {
     [counts.mcps, "MCPs"],
     [counts.agentTools, "agent tool perms"],
     [counts.directories, "managed directory perms"],
+    [counts.permissionGrants, "signed worker permission grants"],
     [counts.poolCleaned, `cleaned ${counts.poolCleaned} stale pool provider${counts.poolCleaned === 1 ? "" : "s"}`],
     [counts.anthropic, "anthropic models"],
     [counts.openai, "OpenAI context limits"],
@@ -393,11 +506,11 @@ function logVersionDriftAsync(pluginDir) {
 
 /**
  * Create the config hook function.
- * @param {object} deps - { agentsDir, workspaceDir, pluginDir }
+ * @param {object} deps - { agentsDir, workspaceDir, pluginDir, repositoryDir }
  * @returns {Function} Config hook
  */
 export function createConfigHook(deps) {
-  const { agentsDir, workspaceDir, pluginDir } = deps;
+  const { agentsDir, workspaceDir, pluginDir, repositoryDir } = deps;
 
   /**
    * Modify OpenCode config to register aidevops subagents, MCP servers,
@@ -413,6 +526,7 @@ export function createConfigHook(deps) {
     const mcps = registerMcpServers(config);
     const agentTools = applyAgentMcpTools(config);
     const directories = registerManagedDirectoryPermissions(config);
+    const permissionGrants = registerApprovedWorkerPermissions(config, { repositoryDir });
     const poolCleaned = registerPoolProvider(config);
     const anthropic = registerAnthropicModels(config);
     const openai = registerGpt56ContextLimits(config);
@@ -450,7 +564,7 @@ export function createConfigHook(deps) {
     const claude = registerClaudeCliModels(config);
 
     logConfigSummary(
-      { agents, mcps, agentTools, directories, poolCleaned, anthropic, openai, cursor, google, claude },
+      { agents, mcps, agentTools, directories, permissionGrants, poolCleaned, anthropic, openai, cursor, google, claude },
     );
     logVersionDriftAsync(pluginDir);
   };

@@ -942,6 +942,16 @@ _is_assigned_check_no_auto_dispatch() {
 		"no-auto-dispatch" "NO_AUTO_DISPATCH_BLOCKED" "no-auto-dispatch-check"
 }
 
+_is_assigned_check_maintainer_permissions() {
+	local meta_json="$1"
+	local issue_number="${2:-unknown}"
+	local repo_slug="${3:-unknown}"
+	#aidevops:trust-boundary -- only the request-specific signed grant flow may
+	# clear this unconditional worker-dispatch hold.
+	_is_assigned_check_label_block "$meta_json" "$issue_number" "$repo_slug" \
+		"needs-maintainer-permissions" "MAINTAINER_PERMISSIONS_BLOCKED" "maintainer-permissions-check"
+}
+
 #######################################
 # is_assigned helper: check the infrastructure unconditional block.
 #
@@ -1797,6 +1807,9 @@ _is_assigned_pre_assignee_guard_blocks() {
 	if _is_assigned_check_no_auto_dispatch "$issue_meta_json" "$issue_number" "$repo_slug"; then
 		return 0
 	fi
+	if _is_assigned_check_maintainer_permissions "$issue_meta_json" "$issue_number" "$repo_slug"; then
+		return 0
+	fi
 
 	# Advisory/review/cooldown/cost/hydration gates short-circuit before assignees.
 	if _is_assigned_check_infrastructure "$issue_meta_json" "$issue_number" "$repo_slug"; then
@@ -1987,21 +2000,28 @@ enumerate_blockers() {
 		_found=true
 	fi
 
-	# Check 3: infrastructure advisory/operator block.
+	# Check 3: request-specific signed worker permission hold.
+	_blocker_out=$(_is_assigned_check_maintainer_permissions "$issue_meta_json" "$issue_number" "$repo_slug" 2>/dev/null) || true
+	if [[ -n "$_blocker_out" ]]; then
+		printf '%s\n' "$_blocker_out"
+		_found=true
+	fi
+
+	# Check 4: infrastructure advisory/operator block.
 	_blocker_out=$(_is_assigned_check_infrastructure "$issue_meta_json" "$issue_number" "$repo_slug" 2>/dev/null) || true
 	if [[ -n "$_blocker_out" ]]; then
 		printf '%s\n' "$_blocker_out"
 		_found=true
 	fi
 
-	# Check 4: hold-for-review unconditional maintainer hold.
+	# Check 5: hold-for-review unconditional maintainer hold.
 	_blocker_out=$(_is_assigned_check_hold_for_review "$issue_meta_json" "$issue_number" "$repo_slug" 2>/dev/null) || true
 	if [[ -n "$_blocker_out" ]]; then
 		printf '%s\n' "$_blocker_out"
 		_found=true
 	fi
 
-	# Check 5: t3197 dispatch cooldown after no_worker_process launch failure.
+	# Check 6: t3197 dispatch cooldown after no_worker_process launch failure.
 	_blocker_out=$(_is_assigned_check_dispatch_cooldown "$issue_number" "$repo_slug" 2>/dev/null) || true
 	if [[ -n "$_blocker_out" ]]; then
 		printf '%s\n' "$_blocker_out"

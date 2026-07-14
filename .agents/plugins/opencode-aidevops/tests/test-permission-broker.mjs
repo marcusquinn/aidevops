@@ -62,6 +62,33 @@ test("sensitive locations are non-grantable", async () => {
   delete process.env.AIDEVOPS_PERMISSION_REQUEST_FILE;
 });
 
+test("requests without an exact pattern are non-grantable", async () => {
+  const root = mkdtempSync(join(tmpdir(), "aidevops-permission-broker-"));
+  const requestFile = join(root, "request.json");
+  process.env.AIDEVOPS_PERMISSION_REQUEST_FILE = requestFile;
+  const broker = createPermissionBroker({ client: {}, isHeadless: () => true, home: "/Users/example" });
+  const output = { status: "ask" };
+  await broker.permissionAsk({ id: "permission-3", type: "bash", patterns: [] }, output);
+  const capture = JSON.parse(readFileSync(requestFile, "utf8"));
+  assert.equal(capture.requests[0].risk.grantable, false);
+  assert.match(capture.requests[0].risk.reason, /exact permission pattern/);
+  rmSync(root, { recursive: true, force: true });
+  delete process.env.AIDEVOPS_PERMISSION_REQUEST_FILE;
+});
+
+test("action-only permissions are non-grantable", async () => {
+  const root = mkdtempSync(join(tmpdir(), "aidevops-permission-broker-"));
+  const requestFile = join(root, "request.json");
+  process.env.AIDEVOPS_PERMISSION_REQUEST_FILE = requestFile;
+  const broker = createPermissionBroker({ client: {}, isHeadless: () => true, home: "/Users/example" });
+  await broker.permissionAsk({ id: "permission-4", type: "webfetch", patterns: ["example.invalid"] }, { status: "ask" });
+  const capture = JSON.parse(readFileSync(requestFile, "utf8"));
+  assert.equal(capture.requests[0].risk.grantable, false);
+  assert.match(capture.requests[0].risk.reason, /exact OpenCode pattern rule/);
+  rmSync(root, { recursive: true, force: true });
+  delete process.env.AIDEVOPS_PERMISSION_REQUEST_FILE;
+});
+
 test("sanitizer normalizes home and redacts credential-like values", () => {
   const value = sanitizePermissionText("/Users/example/file token=abc123", { home: "/Users/example" });
   assert.equal(value, "~/file token=[REDACTED]");

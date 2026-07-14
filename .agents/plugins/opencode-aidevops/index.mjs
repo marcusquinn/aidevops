@@ -226,6 +226,7 @@ export async function AidevopsPlugin({ directory, client }) {
     agentsDir: AGENTS_DIR,
     workspaceDir: WORKSPACE_DIR,
     pluginDir: PLUGIN_DIR,
+    repositoryDir: directory,
   });
 
   const continuationGuard = createSessionContinuationGuard({
