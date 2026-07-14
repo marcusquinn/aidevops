@@ -114,6 +114,7 @@ check_cicd_status() {
 	print_section "CI/CD Pipeline Status"
 
 	if ! check_gh_cli; then
+		((++FAILED))
 		return 1
 	fi
 
@@ -121,6 +122,7 @@ check_cicd_status() {
 	repo=$(get_repo_info)
 	if [[ -z "$repo" ]]; then
 		print_error "Could not determine repository"
+		((++FAILED))
 		return 1
 	fi
 
@@ -136,6 +138,7 @@ check_cicd_status() {
 
 	if [[ -z "$latest_run" || "$latest_run" == "[]" ]]; then
 		print_error "No workflow runs found for release evidence"
+		((++FAILED))
 		return 1
 	fi
 
@@ -178,17 +181,21 @@ check_cicd_status() {
 	# Check final status
 	if [[ "$status" != "completed" ]]; then
 		print_error "Workflow did not complete within timeout"
+		((++FAILED))
 		return 1
 	fi
 
 	if [[ "$conclusion" == "success" ]]; then
 		print_success "CI/CD pipeline: $name"
+		((++PASSED))
 	elif [[ "$conclusion" == "failure" ]]; then
 		print_error "CI/CD pipeline failed: $name"
 		print_info "View logs: gh run view $run_id --repo $repo --log-failed"
+		((++FAILED))
 		return 1
 	else
 		print_warning "CI/CD pipeline conclusion: $conclusion"
+		((++WARNINGS))
 	fi
 
 	# Check all recent workflows
@@ -318,15 +325,18 @@ check_snyk() {
 
 	if [[ $snyk_exit -eq 0 ]]; then
 		print_success "Snyk: No high/critical vulnerabilities"
+		((++PASSED))
 	elif [[ $snyk_exit -eq 1 ]]; then
 		local vuln_count
 		vuln_count=$(echo "$snyk_output" | jq -r '.vulnerabilities | length // 0')
 		print_error "Snyk: $vuln_count vulnerabilities found"
+		((++FAILED))
 
 		# Show top vulnerabilities
 		echo "$snyk_output" | jq -r '.vulnerabilities[:5][] | "  - [\(.severity)] \(.title) in \(.packageName)"' 2>/dev/null || true
 	else
 		print_warning "Snyk scan completed with warnings"
+		((++WARNINGS))
 	fi
 
 	return 0
@@ -341,8 +351,10 @@ check_secrets() {
 
 		if secretlint "**/*" --format compact 2>/dev/null; then
 			print_success "Secretlint: No secrets detected"
+			((++PASSED))
 		else
 			print_error "Secretlint: Potential secrets found"
+			((++FAILED))
 			return 1
 		fi
 	elif [[ -f "$REPO_ROOT/node_modules/.bin/secretlint" ]]; then
@@ -350,8 +362,10 @@ check_secrets() {
 
 		if "$REPO_ROOT/node_modules/.bin/secretlint" "**/*" --format compact 2>/dev/null; then
 			print_success "Secretlint: No secrets detected"
+			((++PASSED))
 		else
 			print_error "Secretlint: Potential secrets found"
+			((++FAILED))
 			return 1
 		fi
 	else
