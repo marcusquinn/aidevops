@@ -10,6 +10,36 @@ source "${SCRIPT_DIR}/shared-constants.sh"
 
 readonly PERMISSION_REQUEST_MARKER="<!-- aidevops-permission-request -->"
 readonly PERMISSION_REQUEST_SCHEMA="aidevops-permission-request/v1"
+readonly PERMISSION_BLOCKER_STATUS="blocked"
+readonly PERMISSION_BLOCKER_TRUE="true"
+readonly PERMISSION_PERSISTENCE_FAILED_EVENT="permission_request_persistence_failed"
+
+permission_record_blocker() {
+	local event="$1"
+	local status="$2"
+	local reason="$3"
+	local blocking="$4"
+	local issue_number="$5"
+	local repo_slug="$6"
+	local session_key="$7"
+	local request_id="${8:-}"
+	local detail="${9:-}"
+	local logger="${SCRIPT_DIR}/worker-blocker-log.mjs"
+	[[ -f "$logger" ]] || return 0
+	command -v node >/dev/null 2>&1 || return 0
+	node "$logger" append \
+		--event "$event" \
+		--status "$status" \
+		--reason "$reason" \
+		--blocking "$blocking" \
+		--source "worker-permission-helper" \
+		--issue-number "$issue_number" \
+		--repo-slug "$repo_slug" \
+		--session-key "$session_key" \
+		--request-id "$request_id" \
+		--detail "$detail" >/dev/null 2>&1 || true
+	return 0
+}
 
 permission_sha256() {
 	local source_file="$1"
@@ -246,16 +276,44 @@ cmd_request() {
 		esac
 	done
 	[[ -f "$capture_file" && "$issue_number" =~ ^[0-9]+$ && "$repo_slug" == */* ]] || return 1
-	permission_validate_capture "$capture_file" "$issue_number" "$repo_slug" || return 1
-	request_id=$(permission_post_request "$capture_file" "$issue_number" "$repo_slug" "$session_key" "$work_dir") || return 1
-	permission_apply_block "$issue_number" "$repo_slug" || return 1
+	if ! permission_validate_capture "$capture_file" "$issue_number" "$repo_slug"; then
+		permission_record_blocker "$PERMISSION_PERSISTENCE_FAILED_EVENT" "$PERMISSION_BLOCKER_STATUS" \
+			"capture_validation_failed" "$PERMISSION_BLOCKER_TRUE" "$issue_number" "$repo_slug" "$session_key" "" \
+			"Captured permission request failed validation"
+		return 1
+	fi
+	if ! request_id=$(permission_post_request "$capture_file" "$issue_number" "$repo_slug" "$session_key" "$work_dir"); then
+		permission_record_blocker "$PERMISSION_PERSISTENCE_FAILED_EVENT" "$PERMISSION_BLOCKER_STATUS" \
+			"github_request_comment_failed" "$PERMISSION_BLOCKER_TRUE" "$issue_number" "$repo_slug" "$session_key" "" \
+			"Maintainer permission request comment could not be persisted"
+		return 1
+	fi
+	if ! permission_apply_block "$issue_number" "$repo_slug"; then
+		permission_record_blocker "$PERMISSION_PERSISTENCE_FAILED_EVENT" "$PERMISSION_BLOCKER_STATUS" \
+			"github_block_label_failed" "$PERMISSION_BLOCKER_TRUE" "$issue_number" "$repo_slug" "$session_key" "$request_id" \
+			"Maintainer permission blocker label could not be persisted"
+		return 1
+	fi
 	if [[ -n "$work_dir" && -d "$work_dir" ]]; then
 		local git_dir="" pending_file=""
-		git_dir=$(git -C "$work_dir" rev-parse --absolute-git-dir 2>/dev/null) || return 1
+		if ! git_dir=$(git -C "$work_dir" rev-parse --absolute-git-dir 2>/dev/null); then
+			permission_record_blocker "$PERMISSION_PERSISTENCE_FAILED_EVENT" "$PERMISSION_BLOCKER_STATUS" \
+				"git_directory_lookup_failed" "$PERMISSION_BLOCKER_TRUE" "$issue_number" "$repo_slug" "$session_key" "$request_id" \
+				"Permission pending marker location could not be resolved"
+			return 1
+		fi
 		pending_file="${git_dir}/aidevops-permission-pending"
-		jq -cn --arg request "$request_id" --arg issue "$issue_number" \
-			'{request_id: $request, issue: ($issue | tonumber)}' >"$pending_file"
+		if ! jq -cn --arg request "$request_id" --arg issue "$issue_number" \
+			'{request_id: $request, issue: ($issue | tonumber)}' >"$pending_file"; then
+			permission_record_blocker "$PERMISSION_PERSISTENCE_FAILED_EVENT" "$PERMISSION_BLOCKER_STATUS" \
+				"pending_marker_write_failed" "$PERMISSION_BLOCKER_TRUE" "$issue_number" "$repo_slug" "$session_key" "$request_id" \
+				"Permission pending marker could not be persisted"
+			return 1
+		fi
 	fi
+	permission_record_blocker "permission_awaiting_approval" "$PERMISSION_BLOCKER_STATUS" \
+		"needs_maintainer_permissions" "$PERMISSION_BLOCKER_TRUE" "$issue_number" "$repo_slug" "$session_key" "$request_id" \
+		"Worker paused until the exact scoped permission request is approved"
 	return 0
 }
 
