@@ -650,7 +650,8 @@ copy_scoped_opencode_auth() {
 }
 
 run_without_opencode_session_env() {
-	env -u OPENCODE_SESSION_ID \
+	env -u AIDEVOPS_OPENCODE_SESSION_ID \
+		-u OPENCODE_SESSION_ID \
 		-u OPENCODE_PID \
 		-u OPENCODE_RUN_ID \
 		-u OPENCODE_PROCESS_ROLE \
@@ -670,7 +671,7 @@ build_sandbox_passthrough_csv() {
 		case "$name" in
 		# Session-bound OpenCode env makes isolated canary/worker runs attach to
 		# the parent TUI session and fail with "Session not found" (GH#23065).
-		OPENCODE_SESSION_ID | OPENCODE_PID | OPENCODE_RUN_ID | OPENCODE_PROCESS_ROLE | OPENCODE | OPENCODE_SERVER_PASSWORD) ;;
+		AIDEVOPS_OPENCODE_SESSION_ID | OPENCODE_SESSION_ID | OPENCODE_PID | OPENCODE_RUN_ID | OPENCODE_PROCESS_ROLE | OPENCODE | OPENCODE_SERVER_PASSWORD) ;;
 		OPENAI_* | ANTHROPIC_* | GOOGLE_* | CLAUDE_*)
 			if [[ -n "$provider" ]] && ! _headless_provider_env_allowed "$provider" "$name"; then
 				continue
