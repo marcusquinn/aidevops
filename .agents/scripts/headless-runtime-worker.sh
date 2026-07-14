@@ -1337,9 +1337,11 @@ _hrw_run_finish_crash_type() {
 _hrw_finish_failed_run() {
 	local session_key="$1"
 	local work_dir="$2"
+	local external_terminal_confirmed="${3:-0}"
 	local failure_recovered=0
 
-	if _worker_external_terminal_complete "$session_key" "$work_dir"; then
+	if [[ "$external_terminal_confirmed" -eq 1 ]] || \
+		_worker_external_terminal_complete "$session_key" "$work_dir"; then
 		_release_dispatch_claim "$session_key" "$_HRW_REASON_WORKER_COMPLETE"
 		failure_recovered=1
 	elif _recover_worker_output_on_failure "$session_key" "$work_dir"; then
@@ -1569,6 +1571,10 @@ _cmd_run_finish() {
 	# _worker_produced_output() classifies tangible output to distinguish
 	# worker_complete, worker_branch_orphan, and worker_noop (GH#20721, GH#20819).
 	local work_dir="${3:-${_WORKER_WORKTREE_PATH:-}}"
+	# Optional $4 carries a terminal-state proof already confirmed at a retry
+	# boundary. Reusing it avoids a second GitHub query that could fail after the
+	# first query already proved the issue and matching PR are terminal.
+	local external_terminal_confirmed="${4:-0}"
 	_HRW_FINAL_RUNTIME_EVENT="worker.completed"
 	_HRW_FINAL_RUNTIME_STATUS="${_run_result_label:-$ledger_status}"
 	_HRW_FINAL_RUNTIME_CLASSIFICATION="${_run_failure_reason:-}"
@@ -1590,7 +1596,7 @@ _cmd_run_finish() {
 	# create a PR with Closes, the PR-based dedup signal still wins and the
 	# CLAIM_RELEASED comment is redundant operational metadata.
 	if [[ "$ledger_status" == "$_HRW_STATUS_FAIL" ]]; then
-		_hrw_finish_failed_run "$session_key" "$work_dir"
+		_hrw_finish_failed_run "$session_key" "$work_dir" "$external_terminal_confirmed"
 	elif [[ "$ledger_status" == "rate_limit_fast" ]]; then
 		_hrw_finish_rate_limit_fast_run "$session_key"
 		_HRW_FINAL_RUNTIME_EVENT="worker.deferred"

@@ -1777,6 +1777,15 @@ cmd_run() {
 		# Track cumulative stall events per session and apply hard-kill caps
 		# before retrying — unbounded stall-continue burns tokens indefinitely.
 		if [[ "$attempt_exit" -eq 78 ]]; then
+			# GH#27694: A worker can be killed after its PR merged and issue
+			# closed. Confirm that external terminal state before any continuation
+			# can seed another isolated database or launch another runtime. Unknown
+			# or failed GitHub reads return non-zero and preserve normal recovery.
+			if _worker_external_terminal_complete "$session_key" "$work_dir"; then
+				print_info "[lifecycle] exit-78 continuation skipped — external terminal state already complete"
+				_cmd_run_finish "$session_key" "fail" "$work_dir" "1"
+				return 0
+			fi
 			if [[ "${_run_failure_reason:-}" == "startup_no_model_activity" ]]; then
 				record_startup_no_model_feedback "$selected_model"
 			fi
