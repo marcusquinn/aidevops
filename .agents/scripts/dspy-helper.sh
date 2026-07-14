@@ -12,6 +12,8 @@ set -euo pipefail
 # Load shared constants and functions
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/shared-constants.sh"
+# shellcheck source=dspy-cache-security.sh
+source "$SCRIPT_DIR/dspy-cache-security.sh"
 
 # Use shared print functions with fallback for compatibility
 # Configuration
@@ -55,7 +57,12 @@ activate_env() {
         print_error "Failed to activate Python virtual environment"
         exit 1
     fi
+	if ! aidevops_secure_dspy_cache; then
+		print_error "DSPy cache security validation failed"
+		exit 1
+	fi
     print_success "Python virtual environment activated"
+	print_info "DSPy cache restricted to: $DSPY_CACHEDIR"
     return 0
 }
 
