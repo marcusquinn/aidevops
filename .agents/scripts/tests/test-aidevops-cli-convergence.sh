@@ -42,9 +42,10 @@ EOF
 
 run_converge() {
 	local fixture="$1"
+	local user_linuxbrew_path="${HOME:+:$HOME/.linuxbrew/bin}"
 	shift
 	HOME="$fixture/home" \
-		PATH="${AIDEVOPS_TEST_CLI_PATH:-$fixture/global:$fixture/home/.local/bin}:$fixture/bin:/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin:/home/linuxbrew/.linuxbrew/bin" \
+		PATH="${AIDEVOPS_TEST_CLI_PATH:-$fixture/global:$fixture/home/.local/bin}:$fixture/bin:/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin:/home/linuxbrew/.linuxbrew/bin$user_linuxbrew_path" \
 		AIDEVOPS_CLI_GLOBAL_TARGET="$fixture/global/aidevops" \
 		AIDEVOPS_CLI_USER_TARGET="$fixture/home/.local/bin/aidevops" \
 		AIDEVOPS_CLI_LOCK_DIR="$fixture/home/.aidevops/locks/cli.lock" \
