@@ -4568,5 +4568,3 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [ ] t18119 Allow OpenCode access to generated global commands #bug ref:GH#27564
 
 - [ ] t18120 Fix exact current-session output-efficiency analysis #bug #framework ref:GH#27574
-
-- [ ] t18121 Route pending full-loop CI through delta-aware wait-checks #bug ref:GH#27585
