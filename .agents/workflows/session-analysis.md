@@ -53,12 +53,17 @@ dependencies; do not silently expand into a whole-repository audit.
 ## 2. Gather Minimum Sufficient Evidence
 
 Use the conversation and existing tool results first. Run only relevant,
-available diagnostics. Obtain the current runtime ID with
-`printenv OPENCODE_SESSION_ID || printenv CLAUDE_SESSION_ID || true`, then
-substitute the returned literal for `<session-id>`; this remains successful when
-neither variable is set and avoids expansion that command-policy parsing may
-reject. If the command returns no literal, mark session-specific diagnostics
-unavailable and skip every command requiring `<session-id>`.
+available diagnostics. For OpenCode, the authoritative conversation identity is
+`AIDEVOPS_OPENCODE_SESSION_ID`, stamped from each `shell.env` hook input; the
+legacy-compatible fallback is `OPENCODE_SESSION_ID`. `AIDEVOPS_SESSION_ID` may be
+a different framework identity, and the output-efficiency helper maps it only
+when the same shell explicitly provides `AIDEVOPS_OPENCODE_SESSION_ID`. Obtain
+the current runtime ID with `printenv AIDEVOPS_OPENCODE_SESSION_ID || printenv
+OPENCODE_SESSION_ID || printenv CLAUDE_SESSION_ID || true`, then substitute the
+returned literal for `<session-id>`. This remains successful when neither
+variable is set and avoids expansion that command-policy parsing may reject. If
+the command returns no literal, mark session-specific diagnostics unavailable
+and skip every command requiring `<session-id>`.
 
 | Evidence | Command or source | Run when |
 |---|---|---|
@@ -76,6 +81,12 @@ session has no record, mark the metric unavailable; never fall back to another
 recent session or a broad daily report. A missing data source is not a reason to
 add telemetry. Avoid broad logs, generated reports, remote lookups, or repeated
 reads unless a specific finding cannot otherwise be proved.
+
+For an active OpenCode conversation, output-efficiency analysis passes the
+Vault-managed history read gate, then reads the exact session from OpenCode's
+runtime XDG data store when that store contains the requested ID. Missing,
+mismatched, or unavailable session rows fail closed and never select a title-,
+timestamp-, or recency-based substitute.
 
 Treat output-efficiency fingerprints as aggregate leads. Correlate a repeated
 snapshot or oversized result with the chronological tool calls before proposing

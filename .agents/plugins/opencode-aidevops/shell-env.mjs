@@ -152,13 +152,16 @@ export function createShellEnvHook(deps) {
       output.env.AIDEVOPS_VERSION = version;
     }
 
-    // Signature helpers need the current OpenCode session, not a session guessed
-    // from the long-lived app process start time (GH#22003). OpenCode hook input
-    // has changed shape across releases, so accept the known variants and keep
-    // this best-effort: absence should not block shell startup.
+    // Shell helpers need the exact current OpenCode conversation, not an ID
+    // inherited from a previous plugin instance or long-lived app process
+    // (GH#22003, GH#27574). AIDEVOPS_SESSION_ID may intentionally name a
+    // framework session, so publish the OpenCode side of that mapping explicitly.
+    // OpenCode hook input has changed shape across releases, so accept the known
+    // variants and keep this best-effort: absence should not block shell startup.
     const sessionId = getSessionId(input);
-    if (sessionId && !output.env.OPENCODE_SESSION_ID) {
+    if (sessionId) {
       output.env.OPENCODE_SESSION_ID = sessionId;
+      output.env.AIDEVOPS_OPENCODE_SESSION_ID = sessionId;
     }
 
     const modelId = getModelId(input);

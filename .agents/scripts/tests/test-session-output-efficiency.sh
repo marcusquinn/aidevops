@@ -141,6 +141,15 @@ for index in range(2):
         "INSERT INTO part (id, session_id, time_created, data) VALUES (?, ?, ?, ?)",
         (f"active-part-{index}", "active-session", index, json.dumps(part)),
     )
+unrelated_part = {
+    "type": "tool",
+    "tool": "read",
+    "state": {"status": "completed", "input": {}, "output": "UNRELATED-RECENT-SESSION"},
+}
+connection.execute(
+    "INSERT INTO part (id, session_id, time_created, data) VALUES (?, ?, ?, ?)",
+    ("unrelated-part", "unrelated-recent-session", 1, json.dumps(unrelated_part)),
+)
 connection.commit()
 connection.close()
 PY
@@ -174,6 +183,36 @@ if python3 -c 'import json,sys; report=json.load(sys.stdin); assert report["sess
 else
 	fail "active OpenCode store resolves the exact current session"
 fi
+assert_omits "active aggregate report omits raw output" "SECRET-MARKER" "$active_output"
+assert_omits "active analysis does not substitute an unrelated recent session" "UNRELATED-RECENT-SESSION" "$active_output"
+
+mapped_output=$(
+	XDG_DATA_HOME="$active_data_home" \
+		AIDEVOPS_SESSION_ID="framework-session" \
+		OPENCODE_SESSION_ID="stale-opencode-session" \
+		AIDEVOPS_OPENCODE_SESSION_ID="active-session" \
+		"$HELPER" --runtime opencode --session framework-session --json
+)
+if python3 -c 'import json,sys; report=json.load(sys.stdin); assert report["session"] == "active-session"; assert report["stats"]["completed_tool_results"] == 2' <<<"$mapped_output"; then
+	pass "explicit framework-to-OpenCode identity mapping is honoured"
+else
+	fail "explicit framework-to-OpenCode identity mapping is honoured"
+fi
+
+set +e
+unmapped_output=$(
+	AIDEVOPS_SESSION_ID="framework-session" \
+		AIDEVOPS_OPENCODE_SESSION_ID='' \
+		OPENCODE_SESSION_ID="active-session" \
+		"$HELPER" --runtime opencode --db "$active_opencode_db" --session framework-session --json 2>&1
+)
+unmapped_rc=$?
+mismatched_output=$(OPENCODE_SESSION_ID='' AIDEVOPS_OPENCODE_SESSION_ID='' CLAUDE_SESSION_ID='' "$HELPER" --runtime opencode --db "$active_opencode_db" --session missing-active-session --json 2>&1)
+mismatched_rc=$?
+set -e
+[[ "$unmapped_rc" -eq 2 ]] && pass "framework identity requires an explicit OpenCode mapping" || fail "framework identity requires an explicit OpenCode mapping" "got ${unmapped_rc}"
+[[ "$mismatched_rc" -eq 2 ]] && pass "mismatched active identifier remains unavailable" || fail "mismatched active identifier remains unavailable" "got ${mismatched_rc}"
+assert_omits "mismatched identity does not expose unrelated recent sessions" "UNRELATED-RECENT-SESSION" "${unmapped_output}${mismatched_output}"
 
 set +e
 missing_session_output=$(OPENCODE_SESSION_ID='' CLAUDE_SESSION_ID='' "$HELPER" --runtime opencode --db "$opencode_db" --session absent-session 2>&1)
