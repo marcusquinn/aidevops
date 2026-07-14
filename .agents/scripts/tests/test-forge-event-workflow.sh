@@ -25,6 +25,8 @@ assert "forge-event-mapping-helper.sh" in normal
 assert "task-publication-worker-helper.sh" in normal
 assert "forge-coordinator-state-helper.sh" in normal
 assert "upload-artifact" in normal
+ingest = next(step for step in jobs["forge-event"]["steps"] if step.get("name") == "Ingest event and execute publication queue")
+assert ingest["env"]["GH_TOKEN"] == "${{ secrets.GITHUB_TOKEN }}"
 PY
 
 for caller in "$SELF_CALLER" "$CALLER_TEMPLATE"; do
