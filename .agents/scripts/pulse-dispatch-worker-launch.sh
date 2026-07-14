@@ -1055,8 +1055,10 @@ _dlw_systemd_wait_stable() {
 	local attempts="${DLW_SYSTEMD_STABILITY_ATTEMPTS:-3}"
 	local wait_i=0 stable_count=0 snapshot="" main_pid="" active_state="" sub_state=""
 	local exec_main_code="" exec_main_status="" result="" key="" value=""
+	local poll_seconds="${DLW_SYSTEMD_STABILITY_POLL_SECONDS:-0.2}"
 
 	[[ "$attempts" =~ ^[1-9][0-9]*$ ]] || attempts=3
+	[[ "$poll_seconds" =~ ^[0-9]+([.][0-9]+)?$ ]] || poll_seconds="0.2"
 	while [[ "$wait_i" -lt "$attempts" ]]; do
 		snapshot=$(_dlw_systemd_snapshot "$unit_name" "$state_file")
 		main_pid=""
@@ -1090,7 +1092,7 @@ _dlw_systemd_wait_stable() {
 			printf 'LaunchState=worker_ready\n' >>"$state_file"
 			return 0
 		}
-		sleep "${DLW_SYSTEMD_STABILITY_POLL_SECONDS:-0.2}"
+		sleep "$poll_seconds"
 	done
 
 	printf 'LaunchState=pid_observed\n' >>"$state_file"
@@ -1227,9 +1229,7 @@ _dlw_handle_systemd_launch_failure() {
 			else
 				printf '[systemd-launch] classification=readiness_unconfirmed\n'
 			fi
-			while IFS= read -r state_line || [[ -n "$state_line" ]]; do
-				printf '%s\n' "$state_line"
-			done <"$systemd_state_file"
+			cat "$systemd_state_file"
 		} >>"$worker_log"
 	fi
 	echo "[dispatch_worker_launch] ERROR: systemd worker for #${issue_number} did not reach durable readiness (rc=${systemd_rc}); duplicate fallback suppressed" >>"$LOGFILE"
