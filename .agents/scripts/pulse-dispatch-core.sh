@@ -1076,7 +1076,7 @@ _dispatch_waiting_for_maintainer_permission() {
 _dispatch_permission_history_requires_grant() {
 	local issue_number="$1"
 	local repo_slug="$2"
-	local events_json labeled_count verification
+	local events_json="" labeled_count="" verification=""
 	_DISPATCH_PERMISSION_VERIFY_RESULT=""
 	events_json=$(gh api "repos/${repo_slug}/issues/${issue_number}/events?per_page=100" --paginate --slurp 2>/dev/null) || {
 		_DISPATCH_PERMISSION_VERIFY_RESULT="API_ERROR"

@@ -83,22 +83,28 @@ export function registerManagedDirectoryPermissions(config) {
   return count;
 }
 
-function verifyPermissionGrant(grantPath, options = {}) {
-  if (!grantPath || !existsSync(grantPath)) return null;
-  const publicKey = options.publicKey || join(homedir(), ".aidevops", "approval-keys", "approval.pub");
-  if (!existsSync(publicKey)) return null;
-  let grant;
+function readPermissionGrantFile(grantPath) {
   try {
-    grant = JSON.parse(readFileSync(grantPath, "utf8"));
+    return JSON.parse(readFileSync(grantPath, "utf8"));
   } catch {
     return null;
   }
-  if (typeof grant?.payload !== "string" || typeof grant?.signature !== "string") return null;
-  const tempBase = options.tempBase || process.env.AIDEVOPS_TEMP_DIR || join(homedir(), ".aidevops", ".agent-workspace", "tmp");
+}
+
+function parsePermissionGrantPayload(payload) {
+  try {
+    return JSON.parse(payload);
+  } catch {
+    return null;
+  }
+}
+
+function verifyPermissionGrantSignature(grant, publicKey, tempBase) {
   mkdirSync(tempBase, { recursive: true });
   const verifyDir = mkdtempSync(join(tempBase, "permission-grant-"));
   const signaturePath = join(verifyDir, "signature");
   const signersPath = join(verifyDir, "allowed-signers");
+  let verified = false;
   try {
     writeFileSync(signaturePath, grant.signature, { mode: 0o600 });
     const key = readFileSync(publicKey, "utf8").trim();
@@ -107,80 +113,145 @@ function verifyPermissionGrant(grantPath, options = {}) {
       "-Y", "verify", "-f", signersPath, "-I", "approval@aidevops.sh",
       "-n", "aidevops-approve", "-s", signaturePath,
     ], { input: grant.payload, stdio: ["pipe", "ignore", "ignore"] });
+    verified = true;
   } catch {
+    verified = false;
+  } finally {
     rmSync(verifyDir, { recursive: true, force: true });
-    return null;
   }
-  rmSync(verifyDir, { recursive: true, force: true });
-  try {
-    return JSON.parse(grant.payload);
-  } catch {
-    return null;
-  }
+  return verified;
 }
 
-function addApprovedCapabilityRules(target, capabilities) {
+function verifyPermissionGrant(grantPath, options = {}) {
+  if (!grantPath || !existsSync(grantPath)) return null;
+  const publicKey = options.publicKey || join(homedir(), ".aidevops", "approval-keys", "approval.pub");
+  if (!existsSync(publicKey)) return null;
+  const grant = readPermissionGrantFile(grantPath);
+  if (typeof grant?.payload !== "string" || typeof grant?.signature !== "string") return null;
+  const tempBase = options.tempBase || process.env.AIDEVOPS_TEMP_DIR || join(homedir(), ".aidevops", ".agent-workspace", "tmp");
+  if (!verifyPermissionGrantSignature(grant, publicKey, tempBase)) return null;
+  return parsePermissionGrantPayload(grant.payload);
+}
+
+function ensurePermissionMap(target) {
   if (typeof target.permission === "string") {
     const fallback = target.permission;
     target.permission = { "*": fallback, external_directory: { "*": fallback } };
   } else if (!target.permission) {
     target.permission = {};
   }
+}
+
+function addApprovedCapabilityRule(target, capability) {
+  const permission = capability.permission;
+  const patterns = Array.isArray(capability.patterns) ? capability.patterns : [];
+  if (!PATTERN_CAPABLE_PERMISSIONS.has(permission) || patterns.length === 0) return 0;
+  const existing = target.permission[permission];
+  if (existing === "allow") return 0;
+  const rules = typeof existing === "string" ? { "*": existing } : { ...existing };
+  let count = 0;
+  for (const pattern of patterns) {
+    if (typeof pattern !== "string" || pattern.length === 0 || pattern.length > 500) continue;
+    delete rules[pattern];
+    rules[pattern] = "allow";
+    count++;
+  }
+  target.permission[permission] = rules;
+  return count;
+}
+
+function addApprovedCapabilityRules(target, capabilities) {
+  ensurePermissionMap(target);
   let count = 0;
   for (const capability of capabilities) {
-    const permission = capability.permission;
-    const patterns = Array.isArray(capability.patterns) ? capability.patterns : [];
-    if (!PATTERN_CAPABLE_PERMISSIONS.has(permission) || patterns.length === 0) continue;
-    const existing = target.permission[permission];
-    if (existing === "allow") continue;
-    const rules = typeof existing === "string" ? { "*": existing } : { ...existing };
-    for (const pattern of patterns) {
-      if (typeof pattern !== "string" || pattern.length === 0 || pattern.length > 500) continue;
-      delete rules[pattern];
-      rules[pattern] = "allow";
-      count++;
-    }
-    target.permission[permission] = rules;
+    count += addApprovedCapabilityRule(target, capability);
   }
   return count;
+}
+
+function permissionGrantTargetMatches(grant) {
+  if (grant?.schema !== "aidevops-permission-grant/v1") return false;
+  if (grant.authority !== "worker-permissions") return false;
+  const issue = String(process.env.WORKER_ISSUE_NUMBER || "");
+  const repo = String(process.env.WORKER_REPO_SLUG || process.env.DISPATCH_REPO_SLUG || "").toLowerCase();
+  if (String(grant.target?.number || "") !== issue) return false;
+  return String(grant.target?.repository || "").toLowerCase() === repo;
+}
+
+function permissionGrantTimeValid(grant) {
+  const issued = Date.parse(grant.issued_at || "");
+  const expires = Date.parse(grant.expires_at || "");
+  const now = Date.now();
+  if (!Number.isFinite(issued) || !Number.isFinite(expires)) return false;
+  if (issued > now + 5 * 60 * 1000 || expires <= now) return false;
+  return expires > issued && expires - issued <= MAX_PERMISSION_GRANT_MS;
+}
+
+function permissionGrantRequestValid(grant) {
+  if (!/^perm-[0-9a-f]{16}$/.test(grant.request_id || "")) return false;
+  return /^[0-9a-f]{64}$/.test(grant.request_sha256 || "");
+}
+
+function currentWorkerBranch(options, repositoryDir) {
+  if (options.currentBranch !== undefined) return options.currentBranch;
+  try {
+    return execFileSync("git", ["-C", repositoryDir, "branch", "--show-current"], { encoding: "utf8" }).trim();
+  } catch {
+    return null;
+  }
+}
+
+function permissionGrantWorkerMatches(grant, options) {
+  const pendingRequest = String(options.pendingRequest || process.env.AIDEVOPS_PERMISSION_REQUEST_ID || "");
+  if (!pendingRequest || grant.request_id !== pendingRequest) return false;
+  const repositoryDir = String(options.repositoryDir || "");
+  if (!repositoryDir) return false;
+  const expectedWorktree = createHash("sha256").update(repositoryDir).digest("hex");
+  if (grant.worker?.worktree_sha256 !== expectedWorktree) return false;
+  const currentSession = String(options.currentSession || process.env.WORKER_SESSION_KEY || "");
+  if (!currentSession || grant.worker?.session !== currentSession) return false;
+  const currentBranch = currentWorkerBranch(options, repositoryDir);
+  if (typeof currentBranch !== "string" || currentBranch.length === 0) return false;
+  if (typeof grant.worker?.branch !== "string" || grant.worker.branch.length === 0) return false;
+  return grant.worker.branch === currentBranch;
+}
+
+function permissionGrantPatternSafe(pattern) {
+  if (typeof pattern !== "string") return false;
+  if (pattern.length === 0 || pattern.length > 500) return false;
+  if (FORBIDDEN_GRANT_PATTERN.test(pattern)) return false;
+  return !UNBOUNDED_GRANT_PATTERN.test(pattern);
+}
+
+function permissionGrantCapabilitySafe(item) {
+  if (item?.risk?.grantable !== true) return false;
+  if (!PATTERN_CAPABLE_PERMISSIONS.has(item?.permission || "")) return false;
+  if (!Array.isArray(item.patterns)) return false;
+  if (item.patterns.length === 0 || item.patterns.length > 20) return false;
+  return item.patterns.every(permissionGrantPatternSafe);
+}
+
+function permissionGrantCapabilitiesSafe(grant) {
+  if (!Array.isArray(grant.capabilities)) return false;
+  if (grant.capabilities.length === 0 || grant.capabilities.length > 20) return false;
+  return grant.capabilities.every(permissionGrantCapabilitySafe);
+}
+
+function permissionGrantUsable(grant, options) {
+  const checks = [
+    permissionGrantTargetMatches(grant),
+    permissionGrantTimeValid(grant),
+    permissionGrantRequestValid(grant),
+    permissionGrantWorkerMatches(grant, options),
+    permissionGrantCapabilitiesSafe(grant),
+  ];
+  return checks.every(Boolean);
 }
 
 export function registerApprovedWorkerPermissions(config, options = {}) {
   const grantPath = options.grantPath || process.env.AIDEVOPS_PERMISSION_GRANT_FILE || "";
   const grant = verifyPermissionGrant(grantPath, options);
-  if (!grant || grant.schema !== "aidevops-permission-grant/v1" || grant.authority !== "worker-permissions") return 0;
-  const issue = String(process.env.WORKER_ISSUE_NUMBER || "");
-  const repo = String(process.env.WORKER_REPO_SLUG || process.env.DISPATCH_REPO_SLUG || "").toLowerCase();
-  if (String(grant.target?.number || "") !== issue || String(grant.target?.repository || "").toLowerCase() !== repo) return 0;
-  const issued = Date.parse(grant.issued_at || "");
-  const expires = Date.parse(grant.expires_at || "");
-  const now = Date.now();
-  if (!Number.isFinite(issued) || !Number.isFinite(expires) || issued > now + 5 * 60 * 1000 || expires <= now) return 0;
-  if (expires <= issued || expires - issued > MAX_PERMISSION_GRANT_MS) return 0;
-  if (!Array.isArray(grant.capabilities) || grant.capabilities.length === 0 || grant.capabilities.length > 20) return 0;
-  if (!/^perm-[0-9a-f]{16}$/.test(grant.request_id || "") || !/^[0-9a-f]{64}$/.test(grant.request_sha256 || "")) return 0;
-  const pendingRequest = String(options.pendingRequest || process.env.AIDEVOPS_PERMISSION_REQUEST_ID || "");
-  if (!pendingRequest || grant.request_id !== pendingRequest) return 0;
-  const repositoryDir = String(options.repositoryDir || "");
-  const expectedWorktree = createHash("sha256").update(repositoryDir).digest("hex");
-  if (!repositoryDir || grant.worker?.worktree_sha256 !== expectedWorktree) return 0;
-  const currentSession = String(options.currentSession || process.env.WORKER_SESSION_KEY || "");
-  if (!currentSession || grant.worker?.session !== currentSession) return 0;
-  let currentBranch = options.currentBranch;
-  if (currentBranch === undefined) {
-    try {
-      currentBranch = execFileSync("git", ["-C", repositoryDir, "branch", "--show-current"], { encoding: "utf8" }).trim();
-    } catch {
-      return 0;
-    }
-  }
-  if (grant.worker?.branch !== currentBranch) return 0;
-  if (grant.capabilities.some((item) => {
-    if (item?.risk?.grantable !== true || !PATTERN_CAPABLE_PERMISSIONS.has(item?.permission || "")) return true;
-    if (!Array.isArray(item.patterns) || item.patterns.length === 0 || item.patterns.length > 20) return true;
-    return item.patterns.some((pattern) => typeof pattern !== "string" || pattern.length === 0 || pattern.length > 500
-      || FORBIDDEN_GRANT_PATTERN.test(pattern) || UNBOUNDED_GRANT_PATTERN.test(pattern));
-  })) return 0;
+  if (!grant || !permissionGrantUsable(grant, options)) return 0;
   let count = addApprovedCapabilityRules(config, grant.capabilities);
   for (const agent of Object.values(config.agent || {})) {
     count += addApprovedCapabilityRules(agent, grant.capabilities);

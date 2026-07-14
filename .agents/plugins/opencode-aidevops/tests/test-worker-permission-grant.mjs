@@ -20,7 +20,11 @@ function signedGrant(root, options = {}) {
     target: { kind: "issue", repository: "owner/repo", number: 123 },
     request_id: "perm-0123456789abcdef",
     request_sha256: "a".repeat(64),
-    worker: { session: "issue-123", branch: "feature/auto-gh123", worktree_sha256: createHash("sha256").update(root).digest("hex") },
+    worker: {
+      session: "issue-123",
+      branch: options.branch === undefined ? "feature/auto-gh123" : options.branch,
+      worktree_sha256: createHash("sha256").update(root).digest("hex"),
+    },
     capabilities: [{
       permission: options.permission || "external_directory",
       patterns: [options.pattern || "~/.cache/opencode/node_modules/@opencode-ai/sdk/**"],
@@ -104,6 +108,24 @@ test("grant cannot be replayed from a different worktree", () => {
     pendingRequest: "perm-0123456789abcdef",
   }), 0);
   assert.equal(differentSessionConfig.permission, undefined);
+  rmSync(root, { recursive: true, force: true });
+});
+
+test("branch lookup failure cannot match a null grant branch", () => {
+  const root = mkdtempSync(join(tmpdir(), "aidevops-worker-grant-"));
+  const grant = signedGrant(root, { branch: null });
+  process.env.WORKER_ISSUE_NUMBER = "123";
+  process.env.WORKER_REPO_SLUG = "owner/repo";
+  const config = { agent: {} };
+  assert.equal(registerApprovedWorkerPermissions(config, {
+    grantPath: grant.grantPath,
+    publicKey: grant.publicKey,
+    tempBase: root,
+    repositoryDir: root,
+    currentSession: "issue-123",
+    pendingRequest: "perm-0123456789abcdef",
+  }), 0);
+  assert.equal(config.permission, undefined);
   rmSync(root, { recursive: true, force: true });
 });
 
