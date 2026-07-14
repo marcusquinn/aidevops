@@ -24,9 +24,19 @@ Options:
   --max-findings N                Limit aggregate findings (default: 5)
 
 Without --input or --db, the helper resolves the runtime history path through
-the Vault-managed session-history read gate. Raw tool inputs and outputs are
-never emitted.
+the Vault-managed session-history read gate. Active OpenCode conversations are
+resolved from the runtime data store by exact ID. Raw tool inputs and outputs
+are never emitted.
 EOF
+	return 0
+}
+
+active_opencode_session() {
+	if [[ -n "${AIDEVOPS_OPENCODE_SESSION_ID:-}" ]]; then
+		printf '%s\n' "$AIDEVOPS_OPENCODE_SESSION_ID"
+	else
+		printf '%s\n' "${OPENCODE_SESSION_ID:-}"
+	fi
 	return 0
 }
 
@@ -36,7 +46,7 @@ resolve_runtime() {
 		printf '%s\n' "$requested"
 		return 0
 	fi
-	if [[ -n "${OPENCODE_SESSION_ID:-}" ]]; then
+	if [[ -n "${AIDEVOPS_OPENCODE_SESSION_ID:-}${OPENCODE_SESSION_ID:-}" ]]; then
 		printf '%s\n' "$OPENCODE_RUNTIME"
 		return 0
 	fi
@@ -52,11 +62,15 @@ resolve_session() {
 	local runtime="$1"
 	local requested="$2"
 	if [[ -n "$requested" ]]; then
+		if [[ "$runtime" == "$OPENCODE_RUNTIME" && -n "${AIDEVOPS_OPENCODE_SESSION_ID:-}" && -n "${AIDEVOPS_SESSION_ID:-}" && "$requested" == "$AIDEVOPS_SESSION_ID" ]]; then
+			active_opencode_session
+			return $?
+		fi
 		printf '%s\n' "$requested"
 		return 0
 	fi
 	case "$runtime" in
-	opencode) printf '%s\n' "${OPENCODE_SESSION_ID:-}" ;;
+	"$OPENCODE_RUNTIME") active_opencode_session ;;
 	claude-code) printf '%s\n' "${CLAUDE_SESSION_ID:-}" ;;
 	*) printf '\n' ;;
 	esac

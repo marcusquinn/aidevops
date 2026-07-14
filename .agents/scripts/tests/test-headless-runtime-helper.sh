@@ -1100,7 +1100,7 @@ if [[ "${1:-}" == "--version" ]]; then
 	printf '1.14.31\n'
 	exit 0
 fi
-if [[ -n "${OPENCODE_SESSION_ID:-}${OPENCODE_PID:-}${OPENCODE_RUN_ID:-}${OPENCODE_PROCESS_ROLE:-}${OPENCODE:-}${OPENCODE_SERVER_PASSWORD:-}" ]]; then
+if [[ -n "${AIDEVOPS_OPENCODE_SESSION_ID:-}${OPENCODE_SESSION_ID:-}${OPENCODE_PID:-}${OPENCODE_RUN_ID:-}${OPENCODE_PROCESS_ROLE:-}${OPENCODE:-}${OPENCODE_SERVER_PASSWORD:-}" ]]; then
 	printf 'leaked session env\n' >"$AIDEVOPS_CANARY_ENV_FILE"
 	exit 42
 fi
@@ -1121,6 +1121,7 @@ EOF
 		HOME="${canary_root}/home" \
 		OPENCODE_BIN="${fake_bin_dir}/opencode" \
 		OPENCODE_DB="${canary_root}/opencode.db" \
+		AIDEVOPS_OPENCODE_SESSION_ID="ses_parent" \
 		OPENCODE_SESSION_ID="ses_parent" \
 		OPENCODE_PID="12345" \
 		OPENCODE_RUN_ID="run_parent" \
@@ -1163,6 +1164,7 @@ test_opencode_session_env_wrapper_strips_session_vars_only() {
 	local output
 	# shellcheck disable=SC2016 # Inner bash expands these after env stripping.
 	output=$(
+		AIDEVOPS_OPENCODE_SESSION_ID="ses_parent" \
 		OPENCODE_SESSION_ID="ses_parent" \
 		OPENCODE_PID="12345" \
 		OPENCODE_RUN_ID="run_parent" \
@@ -1172,14 +1174,14 @@ test_opencode_session_env_wrapper_strips_session_vars_only() {
 		OPENCODE_BIN="opencode" \
 		OPENCODE_DB="/tmp/opencode.db" \
 		run_without_opencode_session_env bash -c '
-			printf "%s|%s|%s|%s|%s|%s|%s|%s" \
-				"${OPENCODE_SESSION_ID:-}" "${OPENCODE_PID:-}" "${OPENCODE_RUN_ID:-}" \
+			printf "%s|%s|%s|%s|%s|%s|%s|%s|%s" \
+				"${AIDEVOPS_OPENCODE_SESSION_ID:-}" "${OPENCODE_SESSION_ID:-}" "${OPENCODE_PID:-}" "${OPENCODE_RUN_ID:-}" \
 				"${OPENCODE_PROCESS_ROLE:-}" "${OPENCODE:-}" "${OPENCODE_SERVER_PASSWORD:-}" \
 				"${OPENCODE_BIN:-}" "${OPENCODE_DB:-}"
 		'
 	)
 
-	if [[ "$output" == "||||||opencode|/tmp/opencode.db" ]]; then
+	if [[ "$output" == "|||||||opencode|/tmp/opencode.db" ]]; then
 		print_result "OpenCode session env wrapper strips only session-bound vars" 0
 		return 0
 	fi
@@ -1221,6 +1223,7 @@ test_sandbox_passthrough_scopes_provider_env() {
 		GOOGLE_API_KEY='google-test' \
 		OPENCODE_BIN='opencode' \
 		OPENCODE_DB='/tmp/opencode.db' \
+		AIDEVOPS_OPENCODE_SESSION_ID='ses_parent' \
 		OPENCODE_SESSION_ID='ses_parent' \
 		OPENCODE_PID='12345' \
 		OPENCODE_RUN_ID='run_parent' \
@@ -1235,6 +1238,7 @@ test_sandbox_passthrough_scopes_provider_env() {
 		[[ "$csv" != *"GOOGLE_API_KEY"* ]] &&
 		[[ "$csv" == *"OPENCODE_BIN"* ]] &&
 		[[ "$csv" == *"OPENCODE_DB"* ]] &&
+		[[ "$csv" != *"AIDEVOPS_OPENCODE_SESSION_ID"* ]] &&
 		[[ "$csv" != *"OPENCODE_SESSION_ID"* ]] &&
 		[[ "$csv" != *"OPENCODE_PID"* ]] &&
 		[[ "$csv" != *"OPENCODE_RUN_ID"* ]] &&
