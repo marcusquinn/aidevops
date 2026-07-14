@@ -1260,6 +1260,18 @@ _hrw_claim_worker_worktree() {
 	return 0
 }
 
+_hrw_renew_dispatch_prelaunch_lease() {
+	local session_key="$1"
+
+	if [[ -z "${AIDEVOPS_DISPATCH_LEASE_TOKEN:-}" || -z "${WORKER_ISSUE_NUMBER:-}" || -z "${WORKER_REPO_SLUG:-}" ]]; then
+		return 0
+	fi
+	"${SCRIPT_DIR}/dispatch-claim-helper.sh" transition prelaunch "$WORKER_ISSUE_NUMBER" \
+		"$WORKER_REPO_SLUG" "$AIDEVOPS_DISPATCH_LEASE_TOKEN" "$session_key" \
+		"${AIDEVOPS_DISPATCH_CLAIM_ORPHAN_GRACE:-120}" 2>/dev/null || return 1
+	return 0
+}
+
 _hrw_release_worker_worktree() {
 	local work_dir="$1"
 

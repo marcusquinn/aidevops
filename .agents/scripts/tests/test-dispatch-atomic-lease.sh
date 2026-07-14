@@ -196,6 +196,29 @@ PY
 	return 0
 }
 
+test_prelaunch_renewal_covers_slow_startup() {
+	local root="${TMP_DIR}/renewal" token="" renewal_call=""
+	create_mock_gh "$root"
+	PATH="$root/bin:$PATH" MOCK_GH_STATE="$root/state" AIDEVOPS_DEVICE_ID=device-a \
+		DISPATCH_CLAIM_WINDOW=0 DISPATCH_CLAIM_ORPHAN_GRACE=3 \
+		"$CLAIM" claim 47 owner/repo shared-login >"$root/renew.out" 2>&1
+	token=$(claim_token "$root/renew.out")
+	[[ -n "$token" ]] || fail "renewal claim token missing"
+	sleep 2
+	PATH="$root/bin:$PATH" MOCK_GH_STATE="$root/state" AIDEVOPS_DEVICE_ID=device-a \
+		"$CLAIM" transition prelaunch 47 owner/repo "$token" issue-47 3
+	sleep 2
+	PATH="$root/bin:$PATH" MOCK_GH_STATE="$root/state" AIDEVOPS_DEVICE_ID=device-a \
+		"$CLAIM" transition ready 47 owner/repo "$token" issue-47 30 ||
+		fail "renewed prelaunch lease did not survive slow startup"
+	# shellcheck disable=SC2016 # Match the literal runtime variable in the helper source.
+	renewal_call='_hrw_renew_dispatch_prelaunch_lease "$session_key"'
+	grep -Fq "$renewal_call" "${SCRIPTS_DIR}/headless-runtime-helper.sh" ||
+		fail "worker does not renew its prelaunch lease before canary"
+	pass "worker prelaunch renewal covers slow startup before ready transition"
+	return 0
+}
+
 test_takeover_recheck_precedes_mutation() {
 	local root="${TMP_DIR}/takeover"
 	create_mock_gh "$root"
@@ -225,6 +248,7 @@ test_invalid_device_not_public() {
 test_local_ledger_guards
 test_concurrent_same_login_devices
 test_launch_crash_ready_terminal_race
+test_prelaunch_renewal_covers_slow_startup
 test_invalid_device_not_public
 test_takeover_recheck_precedes_mutation
 printf '\nAtomic lease concurrency tests passed\n'

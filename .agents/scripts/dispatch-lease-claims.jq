@@ -30,6 +30,8 @@ map(. as $claim |
     (reduce $transitions[] as $event
       ({phase:"prelaunch", expires:$claim.lease_expires_at};
        if .phase == "terminal" or .expires < $event.transition_epoch then .
+       elif $event.transition_phase == "prelaunch" and .phase == "prelaunch" and $event.transition_expires >= $event.transition_epoch
+         then {phase:"prelaunch", expires:$event.transition_expires}
        elif $event.transition_phase == "ready" and .phase == "prelaunch" and $event.transition_expires >= $event.transition_epoch
          then {phase:"ready", expires:$event.transition_expires}
        elif $event.transition_phase == "terminal" and (.phase == "prelaunch" or .phase == "ready")

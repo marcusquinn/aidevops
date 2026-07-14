@@ -22,10 +22,15 @@ SCOPED=$(scope_checks <"$CHECK_FIXTURE")
 jq -e '
   (.check_runs | length) == 2 and
   all(.check_runs[]; .check_suite.id == 501 or .check_suite.id == 502) and
-  all(.check_runs[]; .status == "completed" and .conclusion == "success")
+  all(.check_runs[]; .status == "completed" and .conclusion == "success") and
+  (.advisory_check_runs | length) == 1 and
+  .advisory_check_runs[0].name == "Socket Security: Project Report" and
+  .advisory_check_runs[0].status == "in_progress" and
+  (all((.check_runs + .advisory_check_runs)[]; .name != "Verify Release Health"))
 ' <<<"$SCOPED" >/dev/null
 
-printf 'PASS: unrelated queued issue checks do not delay successful release checks\n'
+printf 'PASS: superseded, self, and unrelated checks do not delay successful release checks\n'
+printf 'PASS: pending external checks are classified as non-required advisories\n'
 
 PAGINATED_SCOPED=$(jq -c \
 	--arg release_sha "release-sha" \
@@ -52,5 +57,6 @@ printf 'PASS: terminal release-quality failures remain blocking\n'
 grep -Fq "actions/runs?head_sha=\${COMMIT_SHA}&per_page=100" "${REPO_ROOT}/.github/workflows/postflight.yml"
 grep -Fq 'release-owned-check-runs.jq' "${REPO_ROOT}/.github/workflows/postflight.yml"
 grep -Fq -- '--slurpfile release_run_documents' "${REPO_ROOT}/.github/workflows/postflight.yml"
+grep -Fq 'non-required advisory check(s) remain non-terminal' "${REPO_ROOT}/.github/workflows/postflight.yml"
 
-printf 'PASS: postflight keeps paginated exact-SHA release-run classification\n'
+printf 'PASS: postflight keeps paginated exact-SHA classification and advisory warnings\n'
