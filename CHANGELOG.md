@@ -10,6 +10,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.32.116] - 2026-07-14
+
+### Changed
+
+- Documentation: route pending full-loop checks through wait helper (#27681)
+- Refactor: streamline approval review helpers (#27680)
+
+### Fixed
+
+- parse paginated maintainer approvals safely (#27682)
+
 ## [3.32.115] - 2026-07-14
 
 ### Changed
