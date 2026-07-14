@@ -159,8 +159,11 @@ _invoke_opencode() {
 		print_info "[lifecycle] db_isolated dir=$isolated_data_dir pid=$$"
 		_sync_worker_db_migration_metadata "$isolated_data_dir"
 		if [[ -n "${_invoke_persisted_session:-}" ]]; then
-			_seed_worker_db_session_context "$isolated_data_dir" "$_invoke_persisted_session" "${_invoke_work_dir:-}"
-			print_info "[lifecycle] db_seeded session=$_invoke_persisted_session pid=$$"
+			if _seed_worker_db_session_context "$isolated_data_dir" "$_invoke_persisted_session" "${_invoke_work_dir:-}"; then
+				print_info "[lifecycle] db_seeded session=$_invoke_persisted_session pid=$$"
+			else
+				print_warning "[lifecycle] db_seed_failed session=$_invoke_persisted_session pid=$$"
+			fi
 		fi
 
 		# t2249: Pre-dispatch OAuth pool check. If the account copied into the
@@ -344,6 +347,9 @@ _invoke_opencode() {
 			print_info "[lifecycle] db_merged dir=$isolated_data_dir pid=$$"
 		else
 			print_warning "[lifecycle] db_merge_failed dir=$isolated_data_dir pid=$$"
+			if ! _preserve_failed_worker_db "$isolated_data_dir"; then
+				print_warning "[lifecycle] db_merge_recovery_failed dir=$isolated_data_dir pid=$$"
+			fi
 		fi
 		rm -rf "$isolated_data_dir" 2>/dev/null || true
 		unset XDG_DATA_HOME
