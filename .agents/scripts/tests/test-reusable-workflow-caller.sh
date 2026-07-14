@@ -475,20 +475,42 @@ if not isinstance(caller, dict):
     sys.exit(1)
 
 levels = {"none": 0, "read": 1, "write": 2}
-required = {}
-for job_name, job in (reusable.get("jobs", {}) or {}).items():
-    if not isinstance(job, dict):
-        continue
-    permissions = job.get("permissions", {}) or {}
-    if not isinstance(permissions, dict):
-        print(f"FAIL: job {job_name} permissions must be an explicit mapping")
+
+def permission_union(workflow):
+    top_permissions = workflow.get("permissions", {}) or {}
+    if not isinstance(top_permissions, dict):
+        print("FAIL: reusable top-level permissions must be an explicit mapping")
         sys.exit(1)
-    for permission, level in permissions.items():
-        if level not in levels:
-            print(f"FAIL: unsupported permission level {permission}={level}")
+    required = {}
+    for job_name, job in (workflow.get("jobs", {}) or {}).items():
+        if not isinstance(job, dict):
+            continue
+        permissions = job.get("permissions") if "permissions" in job else top_permissions
+        permissions = permissions or {}
+        if not isinstance(permissions, dict):
+            print(f"FAIL: job {job_name} permissions must be an explicit mapping")
             sys.exit(1)
-        if levels[level] > levels.get(required.get(permission, "none"), 0):
-            required[permission] = level
+        for permission, level in permissions.items():
+            if level not in levels:
+                print(f"FAIL: unsupported permission level {permission}={level}")
+                sys.exit(1)
+            # An omitted caller key already means none, so only granted access
+            # contributes to the required ceiling.
+            if levels[level] > levels.get(required.get(permission, "none"), 0):
+                required[permission] = level
+    return required
+
+fixtures = [
+    ({"permissions": {"actions": "read"}, "jobs": {"inherited": {}}}, {"actions": "read"}),
+    ({"jobs": {"disabled": {"permissions": {"actions": "none"}}}}, {}),
+]
+for fixture, expected in fixtures:
+    actual = permission_union(fixture)
+    if actual != expected:
+        print(f"FAIL: permission-union fixture={actual}; expected={expected}")
+        sys.exit(1)
+
+required = permission_union(reusable)
 
 granted = caller.get("permissions", {}) or {}
 if not isinstance(granted, dict):
