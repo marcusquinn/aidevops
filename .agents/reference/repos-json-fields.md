@@ -105,6 +105,7 @@ Global equivalent: `orchestration.interactive_pr_auto_merge` in `~/.config/aidev
 {
   "rate_limit_behavior": "pass",
   "min_edit_lag_seconds": 30,
+  "advisory_check_contexts": ["CodeRabbit"],
   "tools": {
     "coderabbitai": {
       "rate_limit_behavior": "wait",
@@ -118,11 +119,12 @@ Global equivalent: `orchestration.interactive_pr_auto_merge` in `~/.config/aidev
 |-------|---------|-------------|
 | `rate_limit_behavior` | `"pass"` | `"pass"` exits 0 on rate-limit; `"wait"` keeps polling |
 | `min_edit_lag_seconds` | 30 | Seconds a bot comment must be "settled" before it counts. Defeats CodeRabbit's two-phase placeholder (stub at ~14s, final edit at ~90-120s). |
+| `advisory_check_contexts` | `[]` | Exact non-required review-provider check names that may be advisory only when typed live evidence permits the outcome for the current PR head and review threads are resolved. Required, maintainer-gate, unknown, malformed-evidence, and external rate-limit failures always block. |
 | `tools` | — | Per-tool overrides keyed by bot login (`coderabbitai`, `gemini-code-assist`, `augment-code`, `augmentcode`, `copilot`) |
 
 Resolution order (per field independently): per-tool > per-repo > env var (`REVIEW_GATE_RATE_LIMIT_BEHAVIOR` / `REVIEW_BOT_MIN_EDIT_LAG_SECONDS`) > hard default.
 
-CLI: `aidevops review-gate --help` — configure `rate_limit_behavior` without hand-editing JSON.
+CLI: `aidevops review-gate --help` — configure rate-limit/completion policy and add or remove exact advisory check contexts without hand-editing JSON.
 
 ## Knowledge Plane
 

@@ -69,6 +69,8 @@
 # Include guard — prevent double-sourcing.
 [[ -n "${_PULSE_MERGE_LOADED:-}" ]] && return 0
 _PULSE_MERGE_LOADED=1
+PULSE_REVIEW_EVIDENCE_SCHEMA="aidevops.review-gate-evidence/v1"
+PULSE_UNKNOWN_STATE="UNKNOWN"
 
 # t2863: Module-level variable defaults (set -u guards).
 # When this module is sourced standalone (e.g. pulse-merge-routine.sh, test
@@ -337,7 +339,7 @@ _check_pr_merge_gates() {
 	if [[ "$_author_collab_rc" -ne 0 ]]; then
 		if _is_trusted_dependabot_update_pr "$pr_number" "$repo_slug" "$pr_author"; then
 			echo "[pulse-wrapper] Merge pass: PR #${pr_number} in ${repo_slug} — author ${pr_author} is trusted Dependabot with allowlisted dependency update, proceeding (GH#24473)" >>"$LOGFILE"
-		elif _has_maintainer_crypto_approval "$pr_number" "$repo_slug"; then
+		elif _has_maintainer_crypto_approval "$pr_number" "$repo_slug" "$expected_head_sha"; then
 			echo "[pulse-wrapper] Merge pass: PR #${pr_number} in ${repo_slug} — author ${pr_author} is not a collaborator but has maintainer crypto-approval, proceeding (t3063)" >>"$LOGFILE"
 		else
 			echo "[pulse-wrapper] Merge pass: skipping PR #${pr_number} in ${repo_slug} — author ${pr_author} is not a collaborator" >>"$LOGFILE"
@@ -353,13 +355,8 @@ _check_pr_merge_gates() {
 		fi
 	fi
 
-	# Maintainer-gate: skip if linked issue has needs-maintainer-review
-	# UNLESS the issue also has the approval marker comment
-	# (<!-- aidevops-signed-approval -->), which means the auto-approve
-	# already ran and the NMR label is transient — the CI workflow
-	# re-adds it within seconds of removal, creating a race with the
-	# merge pass. The approval marker is the source of truth; NMR label
-	# is the transient symptom of the CI workflow fighting the pulse.
+	# Maintainer-gate: a live NMR label is an explicit hold. Approval marker
+	# presence is not authority and never overrides the current label state.
 	if [[ -n "$linked_issue" ]]; then
 		local _li_api
 		_li_api=$(_pm_issue_api "$repo_slug" "$linked_issue")
@@ -367,17 +364,8 @@ _check_pr_merge_gates() {
 		issue_labels=$(gh api "${_li_api}" \
 			--jq '[.labels[].name] | join(",")' 2>/dev/null) || issue_labels=""
 		if [[ "$issue_labels" == *"needs-maintainer-review"* ]]; then
-			# Check if approval marker exists — if so, NMR is transient
-			local _has_approval_marker
-			_has_approval_marker=$(gh api "${_li_api}/comments" \
-				--jq '[.[].body | select(contains("aidevops-signed-approval"))] | length' \
-				2>/dev/null) || _has_approval_marker=0
-			if [[ "$_has_approval_marker" -gt 0 ]]; then
-				echo "[pulse-wrapper] Merge pass: PR #${pr_number} in ${repo_slug} — linked issue #${linked_issue} has NMR but also approval marker — proceeding (NMR is transient)" >>"$LOGFILE"
-			else
-				echo "[pulse-wrapper] Merge pass: skipping PR #${pr_number} in ${repo_slug} — linked issue #${linked_issue} has needs-maintainer-review (no approval marker)" >>"$LOGFILE"
-				return 1
-			fi
+			echo "[pulse-wrapper] Merge pass: skipping PR #${pr_number} in ${repo_slug} — linked issue #${linked_issue} has needs-maintainer-review" >>"$LOGFILE"
+			return 1
 		fi
 	fi
 
@@ -395,6 +383,10 @@ _check_pr_merge_gates() {
 			local ext_linked_for_log
 			ext_linked_for_log=$(_extract_linked_issue "$pr_number" "$repo_slug" 2>/dev/null) || ext_linked_for_log="unknown"
 			echo "[pulse-wrapper] Merge pass: skipping PR #${pr_number} in ${repo_slug} — external-contributor PR linked issue #${ext_linked_for_log} lacks crypto approval (t1958)" >>"$LOGFILE"
+			return 1
+		fi
+		if ! _external_pr_current_head_crypto_approved "$pr_number" "$repo_slug" "$expected_head_sha"; then
+			echo "[pulse-wrapper] Merge pass: skipping PR #${pr_number} in ${repo_slug} — external-contributor PR lacks V2 crypto approval for current head" >>"$LOGFILE"
 			return 1
 		fi
 	fi
@@ -436,25 +428,98 @@ _check_pr_merge_gates() {
 	local rbg_helper="${AGENTS_DIR:-$HOME/.aidevops/agents}/scripts/review-bot-gate-helper.sh"
 	if [[ -f "$rbg_helper" ]]; then
 		if _is_trusted_dependabot_update_pr "$pr_number" "$repo_slug" "$pr_author"; then
-			_PULSE_REVIEW_GATE_EVIDENCE="${repo_slug}#${pr_number}@${expected_head_sha}"
+			_PULSE_REVIEW_GATE_EVIDENCE=$(jq -nc --arg schema "$PULSE_REVIEW_EVIDENCE_SCHEMA" --arg repo "$repo_slug" --arg pr "$pr_number" --arg head "$expected_head_sha" --arg author "$pr_author" \
+				'{schema:$schema,repo:$repo,pr:$pr,head_sha:$head,status:"SKIP_TRUSTED_DEPENDABOT",author:{login:$author,association:"BOT",class:"trusted-bot"},permitted:true,reason:"trusted_dependabot_policy",state:"pass",merge_gate:"clear",exit_code:0}')
 			echo "[pulse-wrapper] Review bot gate: SKIP for trusted Dependabot dependency update PR #${pr_number} in ${repo_slug} (GH#24473)" >>"$LOGFILE"
 			return 0
 		fi
 		local rbg_result="" rbg_status=""
-		rbg_result=$(bash "$rbg_helper" check "$pr_number" "$repo_slug" 2>/dev/null) || rbg_result=""
-		rbg_status=$(printf '%s' "$rbg_result" | grep -oE '^(PASS|SKIP|WAITING|PASS_RATE_LIMITED)' | head -1)
-		case "$rbg_status" in
-		PASS | SKIP | PASS_RATE_LIMITED)
-			_PULSE_REVIEW_GATE_EVIDENCE="${repo_slug}#${pr_number}@${expected_head_sha}"
-			echo "[pulse-wrapper] Review bot gate: ${rbg_status} for PR #${pr_number} in ${repo_slug}" >>"$LOGFILE"
-			;;
-		*)
-			echo "[pulse-wrapper] Review bot gate: ${rbg_status:-UNKNOWN} for PR #${pr_number} in ${repo_slug} — skipping merge" >>"$LOGFILE"
+		rbg_result=$(bash "$rbg_helper" status-json "$pr_number" "$repo_slug" 2>/dev/null) || rbg_result=""
+		rbg_status=$(jq -r --arg unknown "$PULSE_UNKNOWN_STATE" '.status // $unknown' <<<"$rbg_result" 2>/dev/null) || rbg_status="$PULSE_UNKNOWN_STATE"
+		# #aidevops:trust-boundary — persist only typed, permitted evidence for
+		# this exact repository, PR, and head. External SKIP/rate-limit outcomes
+		# and malformed helper output fail closed.
+		if jq -e --arg schema "$PULSE_REVIEW_EVIDENCE_SCHEMA" --arg repo "$repo_slug" --arg pr "$pr_number" --arg head "$expected_head_sha" '
+			.schema == $schema
+			and .repo == $repo and (.pr | tostring) == $pr and .head_sha == $head
+			and .permitted == true and .state == "pass" and .merge_gate == "clear"
+		' <<<"$rbg_result" >/dev/null 2>&1; then
+			_PULSE_REVIEW_GATE_EVIDENCE=$(jq -cS . <<<"$rbg_result")
+			echo "[pulse-wrapper] Review bot gate: ${rbg_status} for PR #${pr_number} in ${repo_slug} (typed current-head evidence)" >>"$LOGFILE"
+		else
+			echo "[pulse-wrapper] Review bot gate: ${rbg_status:-${PULSE_UNKNOWN_STATE}} for PR #${pr_number} in ${repo_slug} — missing or unpermitted current-head evidence; skipping merge" >>"$LOGFILE"
 			return 1
-			;;
-		esac
+		fi
 	fi
 
+	return 0
+}
+
+#######################################
+# Refresh typed review evidence at the final merge boundary.
+#
+# #aidevops:trust-boundary — evidence captured by the upstream gate can become
+# stale while Pulse posts reviews, updates branches, or attempts another merge
+# path. Re-run the read-only helper for the exact current head before each merge
+# call. Trusted Dependabot uses its dedicated live policy verifier instead.
+# Args: $1=PR number, $2=repo slug, $3=expected head SHA
+# Returns: 0=current evidence refreshed (or status-only fallback), 1=blocked
+#######################################
+_pulse_merge_refresh_review_gate_evidence() {
+	local pr_number="$1"
+	local repo_slug="$2"
+	local expected_head_sha="$3"
+	local current_evidence="${_PULSE_REVIEW_GATE_EVIDENCE:-}"
+	local rbg_helper="${AGENTS_DIR:-$HOME/.aidevops/agents}/scripts/review-bot-gate-helper.sh"
+	local refreshed_evidence="" evidence_status="" dependabot_author=""
+
+	if jq -e --arg schema "$PULSE_REVIEW_EVIDENCE_SCHEMA" --arg repo "$repo_slug" --arg pr "$pr_number" --arg head "$expected_head_sha" '
+		.schema == $schema
+		and .repo == $repo and (.pr | tostring) == $pr and .head_sha == $head
+		and .status == "SKIP_TRUSTED_DEPENDABOT" and .permitted == true
+	' <<<"$current_evidence" >/dev/null 2>&1; then
+		dependabot_author=$(jq -r '.author.login // ""' <<<"$current_evidence" 2>/dev/null) || dependabot_author=""
+		if [[ -n "$dependabot_author" ]] && _is_trusted_dependabot_update_pr "$pr_number" "$repo_slug" "$dependabot_author"; then
+			return 0
+		fi
+		_PULSE_REVIEW_GATE_EVIDENCE=""
+		return 1
+	fi
+
+	_PULSE_REVIEW_GATE_EVIDENCE=""
+	if [[ ! -f "$rbg_helper" ]]; then
+		return 0
+	fi
+	refreshed_evidence=$(bash "$rbg_helper" status-json "$pr_number" "$repo_slug" 2>/dev/null) || refreshed_evidence=""
+	if ! _pmrc_review_evidence_permits_advisory "$refreshed_evidence" "$repo_slug" "$pr_number" "$expected_head_sha"; then
+		evidence_status=$(jq -r --arg unknown "$PULSE_UNKNOWN_STATE" '.status // $unknown' <<<"$refreshed_evidence" 2>/dev/null) || evidence_status="$PULSE_UNKNOWN_STATE"
+		echo "[pulse-merge] final trust gate: current-head review evidence is ${evidence_status:-${PULSE_UNKNOWN_STATE}} or unpermitted for PR #${pr_number} in ${repo_slug} — merge blocked" >>"$LOGFILE"
+		return 1
+	fi
+	_PULSE_REVIEW_GATE_EVIDENCE=$(jq -cS . <<<"$refreshed_evidence") || {
+		_PULSE_REVIEW_GATE_EVIDENCE=""
+		return 1
+	}
+	return 0
+}
+
+#######################################
+# Revalidate all final merge authority and current-head evidence.
+#
+# #aidevops:trust-boundary — invoke this immediately before every native,
+# admin, or direct merge call. Preparatory writes and failed merge attempts can
+# race with external content/head changes; cached gate state is not authority.
+# Args: $1=PR number, $2=repo slug, $3=expected head SHA
+# Returns: 0=final snapshot authorized, 1=blocked
+#######################################
+_pulse_merge_final_trust_gate() {
+	local pr_number="$1"
+	local repo_slug="$2"
+	local expected_head_sha="$3"
+
+	_pulse_merge_admin_safety_check "$pr_number" "$repo_slug" "$expected_head_sha" || return 1
+	_pulse_merge_refresh_review_gate_evidence "$pr_number" "$repo_slug" "$expected_head_sha" || return 1
+	_pulse_merge_preflight_snapshot_gate "$repo_slug" "$pr_number" "$expected_head_sha" || return 1
 	return 0
 }
 
@@ -1116,8 +1181,8 @@ _process_single_ready_pr() {
 	# check and blocking ALL merges across every repo (observed downstream).
 	local _RS=$'\x1e'
 	IFS="$_RS" read -r pr_number pr_mergeable pr_review pr_author pr_title pr_updated_at pr_head_ref_oid pr_head_ref_name pr_base_ref_name pr_labels pr_is_draft < <(
-		printf '%s' "$pr_obj" | jq -r \
-			'"\(.number // "")\u001e\(.mergeable // "UNKNOWN")\u001e\(if ((has("reviewDecision") | not) or .reviewDecision == null or (.reviewDecision | tostring | length) == 0) then "UNKNOWN" else .reviewDecision end)\u001e\(.author.login // "unknown")\u001e\(.title // "")\u001e\(.updatedAt // "")\u001e\(.headRefOid // "")\u001e\(.headRefName // "")\u001e\(.baseRefName // "")\u001e\([(.labels // [])[].name] | join(","))\u001e\(.isDraft // false | tostring)"'
+		printf '%s' "$pr_obj" | jq -r --arg unknown "$PULSE_UNKNOWN_STATE" \
+			'"\(.number // "")\u001e\(.mergeable // $unknown)\u001e\(if ((has("reviewDecision") | not) or .reviewDecision == null or (.reviewDecision | tostring | length) == 0) then $unknown else .reviewDecision end)\u001e\(.author.login // "unknown")\u001e\(.title // "")\u001e\(.updatedAt // "")\u001e\(.headRefOid // "")\u001e\(.headRefName // "")\u001e\(.baseRefName // "")\u001e\([(.labels // [])[].name] | join(","))\u001e\(.isDraft // false | tostring)"'
 	)
 	_pmp_normalize_mergeable_state_into pr_mergeable "$pr_mergeable"
 	_pmp_normalize_review_decision_into pr_review "$pr_review"
@@ -1185,7 +1250,7 @@ _process_single_ready_pr() {
 			# has a UNKNOWN-retry loop so we reuse it.
 			local _refetched_mergeable
 			_refetched_mergeable=$(gh_pr_view "$pr_number" --repo "$repo_slug" \
-				--json mergeable --jq '.mergeable // "UNKNOWN"' 2>/dev/null) || _refetched_mergeable="UNKNOWN"
+				--json mergeable --jq ".mergeable // \"${PULSE_UNKNOWN_STATE}\"" 2>/dev/null) || _refetched_mergeable="$PULSE_UNKNOWN_STATE"
 			pr_mergeable="$_refetched_mergeable"
 			_pmp_normalize_mergeable_state_into pr_mergeable "$pr_mergeable"
 			echo "[pulse-wrapper] Merge pass: PR #${pr_number} in ${repo_slug} — update-branch succeeded, refetched mergeable=${pr_mergeable} (t2116)" >>"$LOGFILE"
@@ -1377,14 +1442,9 @@ _process_single_ready_pr() {
 	# or new code paths cannot re-open the threat addressed by PR #17868
 	# (the 2026-04-07 incident: #17671, #17685, #3846 merged via Check 0
 	# bypass). Returns 1 (skipped) — same semantics as a gate failure above.
-	if ! _pulse_merge_admin_safety_check "$pr_number" "$repo_slug"; then
-		return 1
-	fi
-
-	# #aidevops:trust-boundary — bind the final merge decision to the exact
-	# reviewed head and a fresh, terminal, quiet snapshot. This must run after
-	# all preparatory writes and immediately before native/admin merge paths.
-	if ! _pulse_merge_preflight_snapshot_gate "$repo_slug" "$pr_number" "$pr_head_ref_oid"; then
+	# #aidevops:trust-boundary — the combined final gate revalidates external
+	# authority, typed review evidence, and the terminal current-head snapshot.
+	if ! _pulse_merge_final_trust_gate "$pr_number" "$repo_slug" "$pr_head_ref_oid"; then
 		if [[ "${_PULSE_MERGE_PREFLIGHT_BLOCKING_CHECKS_JSON:-[]}" != "[]" ]]; then
 			_route_pr_to_fix_worker "$pr_number" "$repo_slug" "$linked_issue" "ci" \
 				"$pr_labels" "" "$pr_updated_at" "$pr_head_ref_oid" \
@@ -1399,12 +1459,21 @@ _process_single_ready_pr() {
 	# pulse poll cycle (~120s). Falls through to --admin immediate merge
 	# when CI is already green, repo opts out, or the API call fails.
 	local _native_auto_rc=0
-	_set_native_auto_merge_or_skip "$pr_number" "$repo_slug" || _native_auto_rc=$?
+	_set_native_auto_merge_or_skip "$pr_number" "$repo_slug" "${_PULSE_FINAL_REQUIRES_SYNCHRONOUS_MERGE:-0}" || _native_auto_rc=$?
 	case "$_native_auto_rc" in
 		0)
 			return 4
 			;;
+		2)
+			return 1
+			;;
+		3)
+			return 1
+			;;
 	esac
+	if ! _pulse_merge_final_trust_gate "$pr_number" "$repo_slug" "$pr_head_ref_oid"; then
+		return 1
+	fi
 
 	# Merge. Prefer the historical admin path for owned repos, but fall back to
 	# protection-respecting merge paths when repository rulesets reject admin
@@ -1419,6 +1488,9 @@ _process_single_ready_pr() {
 	_merge_exit=$?
 	if [[ $_merge_exit -ne 0 ]] && gh_merge_remediate_stale_auth_cache "$merge_output" "pulse merge PR #${pr_number} in ${repo_slug}" "$LOGFILE"; then
 		local _merge_original_output="$merge_output"
+		if ! _pulse_merge_final_trust_gate "$pr_number" "$repo_slug" "$pr_head_ref_oid"; then
+			return 1
+		fi
 		merge_output=$(gh pr merge "$pr_number" --repo "$repo_slug" --squash --admin --match-head-commit "$pr_head_ref_oid" 2>&1)
 		_merge_exit=$?
 		if [[ $_merge_exit -ne 0 ]]; then
@@ -1449,8 +1521,16 @@ ${_missing_check_update_output}"
 	fi
 	if [[ $_merge_exit -ne 0 && "$merge_output" == *"Repository rule violations found"* ]]; then
 		echo "[pulse-wrapper] Deterministic merge: admin merge hit repository rulesets for PR #${pr_number} in ${repo_slug}; retrying with native auto-merge without --admin (GH#24438): ${merge_output}" >>"$LOGFILE"
-		_auto_merge_output=$(gh pr merge "$pr_number" --repo "$repo_slug" --auto --squash --match-head-commit "$pr_head_ref_oid" 2>&1)
-		_auto_merge_exit=$?
+		if [[ "${_PULSE_FINAL_REQUIRES_SYNCHRONOUS_MERGE:-0}" == "1" ]]; then
+			_auto_merge_output="native auto-merge skipped: mutable external approval state requires synchronous final revalidation"
+			_auto_merge_exit=1
+		else
+			if ! _pulse_merge_final_trust_gate "$pr_number" "$repo_slug" "$pr_head_ref_oid"; then
+				return 1
+			fi
+			_auto_merge_output=$(gh pr merge "$pr_number" --repo "$repo_slug" --auto --squash --match-head-commit "$pr_head_ref_oid" 2>&1)
+			_auto_merge_exit=$?
+		fi
 		if [[ $_auto_merge_exit -eq 0 ]]; then
 			echo "[pulse-wrapper] Deterministic merge: enabled native auto-merge for PR #${pr_number} in ${repo_slug} after ruleset blocked admin bypass (GH#24438)" >>"$LOGFILE"
 			return 0
@@ -1460,10 +1540,16 @@ ${_missing_check_update_output}"
 [native auto-merge fallback]
 ${_auto_merge_output}"
 		echo "[pulse-wrapper] Deterministic merge: native auto-merge fallback failed for PR #${pr_number} in ${repo_slug}; retrying direct merge without --admin (GH#23087): ${_auto_merge_output}" >>"$LOGFILE"
+		if ! _pulse_merge_final_trust_gate "$pr_number" "$repo_slug" "$pr_head_ref_oid"; then
+			return 1
+		fi
 		merge_output=$(gh pr merge "$pr_number" --repo "$repo_slug" --squash --match-head-commit "$pr_head_ref_oid" 2>&1)
 		_merge_exit=$?
 		if [[ $_merge_exit -ne 0 ]] && gh_merge_remediate_stale_auth_cache "$merge_output" "pulse direct merge PR #${pr_number} in ${repo_slug}" "$LOGFILE"; then
 			local _direct_merge_original_output="$merge_output"
+			if ! _pulse_merge_final_trust_gate "$pr_number" "$repo_slug" "$pr_head_ref_oid"; then
+				return 1
+			fi
 			merge_output=$(gh pr merge "$pr_number" --repo "$repo_slug" --squash --match-head-commit "$pr_head_ref_oid" 2>&1)
 			_merge_exit=$?
 			if [[ $_merge_exit -ne 0 ]]; then

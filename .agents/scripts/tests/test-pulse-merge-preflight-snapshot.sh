@@ -10,6 +10,11 @@ source "${SCRIPT_DIR}/../pulse-merge-required-checks.sh"
 
 TEST_ROOT="$(mktemp -d -t pulse-preflight-snapshot.XXXXXX)"
 LOGFILE="${TEST_ROOT}/pulse.log"
+AIDEVOPS_REPOS_JSON="${TEST_ROOT}/repos.json"
+export AIDEVOPS_REPOS_JSON
+cat >"$AIDEVOPS_REPOS_JSON" <<'EOF'
+{"initialized_repos":[{"slug":"owner/repo","review_gate":{"advisory_check_contexts":["CodeFactor"]}}]}
+EOF
 PULSE_MERGE_QUIET_PERIOD_SECONDS=30
 PULSE_MERGE_NOW_EPOCH="$(_pmrc_iso_to_epoch '2026-01-01T00:10:00Z')"
 SNAPSHOT_MODE="happy_advisory"
@@ -26,6 +31,7 @@ _required_contexts_for_default_branch() {
 	local repo_slug="$1"
 	[[ -n "$repo_slug" ]] || return 1
 	printf 'required-a\n'
+	[[ "$SNAPSHOT_MODE" == "maintainer_alias_fail" ]] && printf 'Maintainer Review & Assignee Gate\n'
 	return 0
 }
 
@@ -72,6 +78,12 @@ gh() {
 			extra_check=',{"name":"CodeFactor","status":"completed","conclusion":"failure","details_url":"https://github.com/owner/repo/runs/99","completed_at":"2026-01-01T00:01:00Z"}'
 		elif [[ "$SNAPSHOT_MODE" == "infra_fail" ]]; then
 			extra_check=',{"name":"sync / Record ordered forge event","status":"completed","conclusion":"failure","details_url":"https://github.com/owner/repo/actions/runs/101/job/202","completed_at":"2026-01-01T00:01:00Z"}'
+		elif [[ "$SNAPSHOT_MODE" == "configured_fail" ]]; then
+			extra_check=',{"name":"CodeFactor","status":"completed","conclusion":"failure","completed_at":"2026-01-01T00:01:00Z"}'
+		elif [[ "$SNAPSHOT_MODE" == "maintainer_alias_fail" ]]; then
+			extra_check=',{"name":"maintainer-gate","status":"completed","conclusion":"success","completed_at":"2026-01-01T00:01:00Z"},{"name":"Maintainer Review & Assignee Gate","status":"completed","conclusion":"failure","completed_at":"2026-01-01T00:01:01Z"},{"name":"gate / Maintainer Review & Assignee Gate","status":"completed","conclusion":"success","completed_at":"2026-01-01T00:01:02Z"}'
+		elif [[ "$SNAPSHOT_MODE" == "same_name_source_conflict" ]]; then
+			extra_check=',{"name":"ProviderMirror","status":"completed","conclusion":"success","completed_at":"2026-01-01T00:01:02Z"}'
 		fi
 		printf '[{"check_runs":[{"name":"required-a","status":"completed","conclusion":"%s","completed_at":"2026-01-01T00:01:00Z"},{"name":"Framework Validation","status":"%s","conclusion":%s,"completed_at":"%s"},{"name":"Qlty Smell Regression","status":"completed","conclusion":"success","completed_at":"2026-01-01T00:01:00Z"},{"name":"Qlty Smell Threshold","status":"completed","conclusion":"failure","completed_at":"2026-01-01T00:01:00Z"}%s]}]\n' \
 			"$required_conclusion" "$broad_status" "$([[ "$broad_conclusion" == "null" ]] && printf 'null' || printf '"%s"' "$broad_conclusion")" "$broad_completed_at" "$extra_check"
@@ -81,6 +93,8 @@ gh() {
 		[[ "$SNAPSHOT_MODE" == "stale_gate" ]] && gate_at="2026-01-01T00:00:20Z"
 		if [[ "$SNAPSHOT_MODE" == "no_status_gate" ]]; then
 			printf '%s\n' '{"statuses":[]}'
+		elif [[ "$SNAPSHOT_MODE" == "same_name_source_conflict" ]]; then
+			printf '{"statuses":[{"context":"review-bot-gate","state":"success","updated_at":"%s"},{"context":"ProviderMirror","state":"failure","updated_at":"2026-01-01T00:01:03Z"}]}\n' "$gate_at"
 		else
 			printf '{"statuses":[{"context":"review-bot-gate","state":"success","updated_at":"%s"}]}\n' "$gate_at"
 		fi
@@ -124,6 +138,17 @@ assert_gate() {
 	return 0
 }
 
+set_live_evidence() {
+	local status="$1"
+	local head_sha="${2:-sha-reviewed}"
+	local author_class="${3:-trusted}"
+	local permitted="${4:-true}"
+	_PULSE_REVIEW_GATE_EVIDENCE=$(jq -nc --arg status "$status" --arg head "$head_sha" --arg class "$author_class" --argjson permitted "$permitted" '
+		{schema:"aidevops.review-gate-evidence/v1",repo:"owner/repo",pr:"7",head_sha:$head,status:$status,author:{login:"reviewer",association:(if $class == "trusted" then "MEMBER" else "CONTRIBUTOR" end),class:$class},permitted:$permitted,reason:"test",state:(if $permitted then "pass" else "waiting" end),merge_gate:(if $permitted then "clear" else "blocked" end),exit_code:0}
+	')
+	return 0
+}
+
 main() {
 	assert_gate "terminal checks with explicit baseline advisory pass" happy_advisory 0
 	if grep -q "IGNORED non-required baseline advisory failure 'Qlty Smell Threshold'" "$LOGFILE"; then
@@ -160,13 +185,27 @@ main() {
 		TESTS_FAILED=$((TESTS_FAILED + 1))
 	fi
 	TESTS_RUN=$((TESTS_RUN + 1))
+	assert_gate "same-name check-run and status retain independent source failures" same_name_source_conflict 1
+	set_live_evidence PASS
+	assert_gate "configured non-required provider failure passes with typed current-head evidence" configured_fail 0
+	set_live_evidence PASS_RATE_LIMITED sha-reviewed external false
+	assert_gate "configured provider failure blocks external rate-limit evidence" configured_fail 1
+	_PULSE_REVIEW_GATE_EVIDENCE=""
+	assert_gate "duplicate maintainer-gate aliases remain one logical blocker" maintainer_alias_fail 1
+	if [[ "$(grep -c "maintainer-gate family is terminal-failure" "$LOGFILE" || true)" -eq 1 ]]; then
+		printf 'PASS maintainer-gate aliases emit one audited blocker\n'
+	else
+		printf 'FAIL maintainer-gate aliases did not emit exactly one blocker\n'
+		TESTS_FAILED=$((TESTS_FAILED + 1))
+	fi
+	TESTS_RUN=$((TESTS_RUN + 1))
 	assert_gate "unresolved late inline finding blocks merge" unresolved 1
 	assert_gate "late review activity invalidates stale gate success" stale_gate 1
 	_PULSE_REVIEW_GATE_EVIDENCE=""
 	assert_gate "missing status gate fails closed without live evidence" no_status_gate 1
-	_PULSE_REVIEW_GATE_EVIDENCE="owner/repo#7@sha-reviewed"
+	set_live_evidence PASS
 	assert_gate "live gate evidence permits repositories without a status context" no_status_gate 0
-	_PULSE_REVIEW_GATE_EVIDENCE="owner/repo#7@sha-other"
+	set_live_evidence PASS sha-other
 	assert_gate "live gate evidence for another head fails closed" no_status_gate 1
 	_PULSE_REVIEW_GATE_EVIDENCE=""
 	assert_gate "new commit invalidates reviewed head" new_head 1

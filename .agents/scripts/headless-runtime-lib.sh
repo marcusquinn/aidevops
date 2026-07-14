@@ -1248,12 +1248,15 @@ _merge_worker_db() {
 # Called before `opencode run --session <id> --continue` so retries launched
 # with a fresh XDG_DATA_HOME can resolve the persisted conversation locally.
 # Copies only the selected session and its messages (plus its project row for
-# schema/FK compatibility). Non-fatal: failures fall back to normal runtime
-# stale-session handling.
+# schema/FK compatibility). When a retry moved to a replacement worktree, the
+# isolated copy is rebound to that current directory; the shared session stays
+# unchanged. Non-fatal: failures fall back to normal runtime stale-session
+# handling.
 #######################################
 _seed_worker_db_session_context() {
 	local isolated_dir="$1"
 	local session_id="$2"
+	local current_work_dir="${3:-}"
 	local worker_db="${isolated_dir}/opencode/opencode.db"
 	local shared_db="${HOME}/.local/share/opencode/opencode.db"
 
@@ -1272,9 +1275,13 @@ _seed_worker_db_session_context() {
 
 	_sync_worker_db_migration_ledgers "$worker_db" "$shared_db"
 
-	local shared_db_sql session_id_sql
+	local shared_db_sql session_id_sql current_work_dir_sql=""
 	shared_db_sql=$(sql_escape "$shared_db")
 	session_id_sql=$(sql_escape "$session_id")
+	if [[ -n "$current_work_dir" && -d "$current_work_dir" ]]; then
+		current_work_dir=$(cd "$current_work_dir" 2>/dev/null && pwd -P) || current_work_dir=""
+		current_work_dir_sql=$(sql_escape "$current_work_dir")
+	fi
 	sqlite3 "$worker_db" <<-SQL >/dev/null 2>&1 || true
 		.bail on
 		.timeout 5000
@@ -1284,6 +1291,7 @@ _seed_worker_db_session_context() {
 			WHERE id IN (SELECT project_id FROM shared.session WHERE id = '${session_id_sql}');
 		INSERT OR IGNORE INTO session SELECT * FROM shared.session WHERE id = '${session_id_sql}';
 		INSERT OR IGNORE INTO message SELECT * FROM shared.message WHERE session_id = '${session_id_sql}';
+		$(if [[ -n "$current_work_dir_sql" ]]; then printf "UPDATE main.session SET directory = '%s' WHERE id = '%s';" "$current_work_dir_sql" "$session_id_sql"; fi)
 		DELETE FROM main.message WHERE session_id != '${session_id_sql}';
 		DELETE FROM main.session WHERE id != '${session_id_sql}';
 		DELETE FROM main.project WHERE id NOT IN (SELECT project_id FROM main.session);

@@ -125,6 +125,12 @@ fi
 
 # `gh pr merge <N> --repo <slug> --disable-auto`
 if [[ "$1" == "pr" && "$2" == "merge" && "$*" == *"--disable-auto"* ]]; then
+	[[ "${FAIL_DISABLE_AUTO:-0}" == "1" ]] && exit 1
+	exit 0
+fi
+
+if [[ "$1" == "pr" && "$2" == "ready" && "$*" == *"--undo"* ]]; then
+	[[ "${FAIL_DRAFT_HOLD:-0}" == "1" ]] && exit 1
 	exit 0
 fi
 
@@ -153,7 +159,7 @@ teardown_test_env() {
 # into the test shell. _set_native_auto_merge_or_skip calls
 # _auto_merge_stuck_seconds (t3192), so we extract that too.
 define_helpers_under_test() {
-	local src_stuck src_repo_allow src_extract_state src_existing_green_behind src_green_behind src_set_native
+	local src_stuck src_repo_allow src_extract_state src_existing_green_behind src_green_behind src_stop_external src_set_native
 	src_stuck=$(awk '
 		/^_auto_merge_stuck_seconds\(\)[[:space:]]*\{[[:space:]]*$/, /^\}[[:space:]]*$/ { print }
 	' "$PROCESS_SCRIPT")
@@ -172,7 +178,10 @@ define_helpers_under_test() {
 	src_set_native=$(awk '
 		/^_set_native_auto_merge_or_skip\(\)[[:space:]]*\{[[:space:]]*$/, /^\}[[:space:]]*$/ { print }
 	' "$PROCESS_SCRIPT")
-	if [[ -z "$src_stuck" || -z "$src_repo_allow" || -z "$src_extract_state" || -z "$src_existing_green_behind" || -z "$src_green_behind" || -z "$src_set_native" ]]; then
+	src_stop_external=$(awk '
+		/^_stop_external_native_auto_merge\(\)[[:space:]]*\{[[:space:]]*$/, /^\}[[:space:]]*$/ { print }
+	' "$PROCESS_SCRIPT")
+	if [[ -z "$src_stuck" || -z "$src_repo_allow" || -z "$src_extract_state" || -z "$src_existing_green_behind" || -z "$src_green_behind" || -z "$src_stop_external" || -z "$src_set_native" ]]; then
 		printf 'ERROR: could not extract helpers from %s\n' "$PROCESS_SCRIPT" >&2
 		return 1
 	fi
@@ -186,6 +195,8 @@ define_helpers_under_test() {
 	eval "$src_existing_green_behind"
 	# shellcheck disable=SC1090
 	eval "$src_green_behind"
+	# shellcheck disable=SC1090
+	eval "$src_stop_external"
 	# shellcheck disable=SC1090
 	eval "$src_set_native"
 	gh_pr_view() {
@@ -563,6 +574,59 @@ test_native_auto_defer_not_counted_as_completed_merge() {
 	return 0
 }
 
+test_external_pending_ci_never_sets_deferred_auto_merge() {
+	setup_test_env
+	define_helpers_under_test || { teardown_test_env; return 0; }
+
+	local result=0
+	_set_native_auto_merge_or_skip "900" "owner/repo" "1" || result=$?
+	if [[ "$result" -eq 2 ]] && ! grep -qE 'gh pr merge 900 .*--auto' "$GH_LOG"; then
+		print_result "External approval state with pending CI defers without native auto-merge" 0
+	else
+		print_result "External approval state with pending CI defers without native auto-merge" 1 \
+			"rc=${result}; gh log: $(cat "$GH_LOG")"
+	fi
+	teardown_test_env
+	return 0
+}
+
+test_external_existing_auto_merge_is_disabled() {
+	setup_test_env
+	define_helpers_under_test || { teardown_test_env; return 0; }
+	printf '%s' '{"autoMergeRequest":{"enabledAt":"2026-07-14T12:00:00Z"},"mergeStateStatus":"BLOCKED","mergeable":"MERGEABLE","reviewDecision":"APPROVED"}' \
+		>"${TEST_ROOT}/auto_merge_request.txt"
+
+	local result=0
+	_set_native_auto_merge_or_skip "901" "owner/repo" "1" || result=$?
+	if [[ "$result" -eq 2 ]] && grep -qE 'gh pr merge 901 --repo owner/repo --disable-auto' "$GH_LOG"; then
+		print_result "External approval state disables previously deferred auto-merge" 0
+	else
+		print_result "External approval state disables previously deferred auto-merge" 1 \
+			"rc=${result}; gh log: $(cat "$GH_LOG")"
+	fi
+	teardown_test_env
+	return 0
+}
+
+test_external_auto_merge_disable_failure_applies_draft_hold() {
+	setup_test_env
+	define_helpers_under_test || { teardown_test_env; return 0; }
+	printf '%s' '{"autoMergeRequest":{"enabledAt":"2026-07-14T12:00:00Z"},"mergeStateStatus":"BLOCKED","mergeable":"MERGEABLE","reviewDecision":"APPROVED"}' \
+		>"${TEST_ROOT}/auto_merge_request.txt"
+	export FAIL_DISABLE_AUTO=1
+	local result=0
+	_set_native_auto_merge_or_skip "902" "owner/repo" "1" || result=$?
+	unset FAIL_DISABLE_AUTO
+	if [[ "$result" -eq 2 ]] && grep -qE 'gh pr ready 902 --repo owner/repo --undo' "$GH_LOG"; then
+		print_result "External auto-merge disable failure applies a server-side draft hold" 0
+	else
+		print_result "External auto-merge disable failure applies a server-side draft hold" 1 \
+			"rc=${result}; gh log: $(cat "$GH_LOG")"
+	fi
+	teardown_test_env
+	return 0
+}
+
 main() {
 	test_case_a_pending_ci_sets_auto_merge
 	test_case_b_ci_green_falls_through
@@ -573,6 +637,9 @@ main() {
 	test_case_f_green_behind_updates_branch
 	test_case_g_green_behind_without_auto_merge_updates_branch
 	test_native_auto_defer_not_counted_as_completed_merge
+	test_external_pending_ci_never_sets_deferred_auto_merge
+	test_external_existing_auto_merge_is_disabled
+	test_external_auto_merge_disable_failure_applies_draft_hold
 
 	printf '\n=================================\n'
 	printf 'Tests run: %d, failed: %d\n' "$TESTS_RUN" "$TESTS_FAILED"

@@ -13,6 +13,7 @@
 #   aidevops review-gate <slug> --tool <bot> pass|wait|unset  Per-tool override
 #   aidevops review-gate <slug> --completion fast|strict|unset  Completion policy
 #   aidevops review-gate <slug> --tool <bot> --completion fast|strict|unset
+#   aidevops review-gate <slug> --advisory-context <check> add|remove
 #   aidevops review-gate --help                       Show this help
 #
 # Schema written to ~/.config/aidevops/repos.json under the matching
@@ -42,6 +43,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 readonly REPOS_JSON="${HOME}/.config/aidevops/repos.json"
 readonly RATE_LIMIT_BEHAVIOR_FIELD="rate_limit_behavior"
 readonly COMPLETION_BEHAVIOR_FIELD="completion_behavior"
+readonly ADVISORY_CONTEXTS_FIELD="advisory_check_contexts"
 
 # Known bot logins for --tool validation. New bots warn but are not rejected
 # (forward-compat: new bots should work without a helper update).
@@ -112,6 +114,15 @@ _validate_completion_behavior() {
 		return 1
 		;;
 	esac
+}
+
+_validate_advisory_context() {
+	local value="$1"
+	if [[ -z "$value" || ${#value} -gt 200 || "$value" == *$'\n'* || "$value" == *$'\r'* || "$value" == *$'\t'* ]]; then
+		_print_error "Invalid advisory check context. Use one non-empty check name of at most 200 characters."
+		return 1
+	fi
+	return 0
 }
 
 # Warn if a bot login is not in the known list (but don't reject it —
@@ -277,7 +288,7 @@ cmd_list() {
 	while IFS= read -r slug; do
 		[[ -z "$slug" ]] && continue
 
-		local rate_limit_val completion_val repo_values
+		local rate_limit_val completion_val advisory_contexts repo_values
 		repo_values=$(jq -r --arg slug "$slug" --arg rate_field "$RATE_LIMIT_BEHAVIOR_FIELD" --arg completion_field "$COMPLETION_BEHAVIOR_FIELD" \
 			'first(.initialized_repos[]? | select(.slug == $slug)) // {} | [(.review_gate[$rate_field] // ""), (.review_gate[$completion_field] // "")] | @tsv' \
 			"$REPOS_JSON" 2>/dev/null) || repo_values=$'\t'
@@ -302,6 +313,10 @@ cmd_list() {
 		else
 			printf "    completion per-repo: %-6s  effective: %s\n" "(unset)" "$completion_effective"
 		fi
+		advisory_contexts=$(jq -r --arg slug "$slug" --arg field "$ADVISORY_CONTEXTS_FIELD" \
+			'first(.initialized_repos[]? | select(.slug == $slug)) | .review_gate[$field] // [] | join(", ")' \
+			"$REPOS_JSON" 2>/dev/null) || advisory_contexts=""
+		printf "    advisory check contexts: %s\n" "${advisory_contexts:-(none; unknown failures block)}"
 
 		# List per-tool overrides if present
 		local tools_json
@@ -328,6 +343,48 @@ cmd_list() {
 		echo ""
 	done <<<"$slugs"
 
+	return 0
+}
+
+cmd_advisory_context() {
+	local slug="$1"
+	local context_name="$2"
+	local action="$3"
+
+	_require_jq || return 1
+	_require_repos_json || return 1
+	_validate_advisory_context "$context_name" || return 1
+	case "$action" in
+	add | remove) ;;
+	*)
+		_print_error "Invalid advisory-context action '${action}'. Must be: add or remove"
+		return 1
+		;;
+	esac
+
+	local resolved_slug=""
+	resolved_slug=$(_resolve_slug "$slug")
+	if [[ -z "$resolved_slug" ]]; then
+		_print_error "No registered repo found matching '${slug}'"
+		return 1
+	fi
+
+	local current_json="" new_json=""
+	current_json=$(<"$REPOS_JSON")
+	if [[ "$action" == "add" ]]; then
+		new_json=$(printf '%s' "$current_json" | jq --arg slug "$resolved_slug" --arg field "$ADVISORY_CONTEXTS_FIELD" --arg context "$context_name" '
+			(.initialized_repos[] | select(.slug == $slug) | .review_gate[$field]) |= ((. // []) + [$context] | unique)
+		' 2>/dev/null) || { _jq_mutation_failed; return 1; }
+	else
+		new_json=$(printf '%s' "$current_json" | jq --arg slug "$resolved_slug" --arg field "$ADVISORY_CONTEXTS_FIELD" --arg context "$context_name" '
+			(.initialized_repos[] | select(.slug == $slug) | .review_gate[$field]) |= ((. // []) | map(select(. != $context)))
+			| (.initialized_repos[] | select(.slug == $slug) | .review_gate) |= if (.[$field] // []) == [] then del(.[$field]) else . end
+		' 2>/dev/null) || { _jq_mutation_failed; return 1; }
+	fi
+
+	_safe_write_repos_json "$new_json" || return 1
+	_print_ok "${action} advisory check context '${context_name}' for ${resolved_slug}"
+	_print_info "Configured advisory contexts are exact names; required, maintainer-gate, unknown, and evidence-less failures still block."
 	return 0
 }
 
@@ -450,6 +507,7 @@ cmd_help() {
 	echo "  <slug> --tool <bot> pass|wait|unset    Set per-tool override"
 	echo "  <slug> --completion fast|strict|unset  Set completion default"
 	echo "  <slug> --tool <bot> --completion fast|strict|unset"
+	echo "  <slug> --advisory-context <check> add|remove"
 	echo "  help                                   Show this help"
 	echo ""
 	echo "Arguments:"
@@ -467,6 +525,7 @@ cmd_help() {
 	echo "  aidevops review-gate marcusquinn/myrepo --tool coderabbitai unset"
 	echo "  aidevops review-gate marcusquinn/myrepo --completion strict"
 	echo "  aidevops review-gate marcusquinn/myrepo --tool coderabbitai --completion strict"
+	echo "  aidevops review-gate marcusquinn/myrepo --advisory-context 'CodeRabbit' add"
 	echo ""
 	echo "Resolution order (per-tool wins):"
 	echo "  rate-limit: per-tool > per-repo > REVIEW_GATE_RATE_LIMIT_BEHAVIOR env > pass"
@@ -519,6 +578,18 @@ main() {
 				return 1
 			fi
 			cmd_set "$slug" "" "$value" "$COMPLETION_BEHAVIOR_FIELD"
+			return $?
+		fi
+
+		# slug --advisory-context <exact-check-name> add|remove
+		if [[ "$subcommand" == "--advisory-context" ]]; then
+			local context_name="${2:-}"
+			local context_action="${3:-}"
+			if [[ -z "$context_name" || -z "$context_action" ]]; then
+				_print_error "Usage: aidevops review-gate <slug> --advisory-context <exact-check-name> add|remove"
+				return 1
+			fi
+			cmd_advisory_context "$slug" "$context_name" "$context_action"
 			return $?
 		fi
 
