@@ -40,7 +40,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 [[ -z "${BLUE+x}" ]]   && BLUE='\033[0;34m'
 [[ -z "${NC+x}" ]]     && NC='\033[0m'
 
-readonly REPOS_JSON="${HOME}/.config/aidevops/repos.json"
+readonly REPOS_JSON="${AIDEVOPS_REPOS_JSON:-${HOME:+$HOME/.config/aidevops/repos.json}}"
 readonly RATE_LIMIT_BEHAVIOR_FIELD="rate_limit_behavior"
 readonly COMPLETION_BEHAVIOR_FIELD="completion_behavior"
 readonly ADVISORY_CONTEXTS_FIELD="advisory_check_contexts"
