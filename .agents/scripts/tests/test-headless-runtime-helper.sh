@@ -91,7 +91,7 @@ test_appends_escalation_contract() {
 		[[ "$output" == *'Load only referenced workflow/reference docs'* ]] &&
 		[[ "$output" == *'Stop reading once target files, reference pattern, constraints, and verification are clear.'* ]] &&
 		[[ "$output" == *'Never ask for user confirmation, approval, or next steps. No user will respond.'* ]] &&
-		[[ "$output" == *'The only valid exit states are FULL_LOOP_COMPLETE or BLOCKED with evidence.'* ]]; then
+		[[ "$output" == *'Valid exit states are FULL_LOOP_COMPLETE, a verified post-PR handoff'* ]]; then
 		print_result "appends escalation-before-blocked contract to full-loop prompts" 0
 		return 0
 	fi
@@ -2117,9 +2117,13 @@ test_worker_produced_output_branch_with_pr_returns_pr_exists() {
 	_setup_test_git_repo "$work_dir" 1
 	git -C "$work_dir" push -q origin "feature/auto-test-issue-99999"
 	DISPATCH_REPO_SLUG="test-owner/test-repo"
+	local expected_head
+	expected_head=$(git -C "$work_dir" rev-parse HEAD)
 	gh() {
-		if [[ "${*}" == *"--head"* && "${*}" == *"statusCheckRollup"* ]]; then
-			printf '%s\n' '[{"number":123,"state":"OPEN","isDraft":false,"mergedAt":null,"labels":[{"name":"origin:worker"}],"statusCheckRollup":[]}]'
+		if [[ "${*}" == *"api --paginate"* && "${*}" == *"/issues/123/comments"* ]]; then
+			printf '%s\n' '[[{"body":"<!-- MERGE_SUMMARY -->"}]]'
+		elif [[ "${*}" == *"--head"* && "${*}" == *"statusCheckRollup"* ]]; then
+			printf '[{"number":123,"state":"OPEN","isDraft":false,"mergedAt":null,"headRefOid":"%s","labels":[{"name":"origin:worker"}],"statusCheckRollup":[]}]\n' "$expected_head"
 		else
 			printf '%s\n' '[]'
 		fi
@@ -2768,14 +2772,20 @@ test_post_pr_handoff_detects_open_pending_pr() {
 	init_git_worktree "$work_dir"
 	git -C "$work_dir" checkout -q -b "feature/auto-test-issue-99999"
 	DISPATCH_REPO_SLUG="test-owner/test-repo"
+	local expected_head
+	expected_head=$(git -C "$work_dir" rev-parse HEAD)
 
 	gh() {
 		local args="$*"
 		if [[ "$args" == *"pr list"* && "$args" == *"--state open"* && "$args" == *"--head feature/auto-test-issue-99999"* ]]; then
-			printf '1'
+			printf '[{"number":123,"isDraft":false,"headRefOid":"%s","statusCheckRollup":[]}]' "$expected_head"
 			return 0
 		fi
-		printf '0'
+		if [[ "$args" == *"api --paginate"* && "$args" == *"/issues/123/comments"* ]]; then
+			printf '%s' '[[{"body":"<!-- MERGE_SUMMARY -->"}]]'
+			return 0
+		fi
+		printf '[]'
 		return 0
 	}
 
@@ -2784,6 +2794,53 @@ test_post_pr_handoff_detects_open_pending_pr() {
 	else
 		print_result "post-PR watchdog handoff detects open pending PR" 1 \
 			"Expected open PR on worker branch to classify as handoff"
+	fi
+
+	unset DISPATCH_REPO_SLUG 2>/dev/null || true
+	unset -f gh 2>/dev/null || true
+	return 0
+}
+
+test_post_pr_handoff_rejects_mismatched_head_or_missing_summary() {
+	local work_dir="${TEST_ROOT}/repo-post-pr-incomplete"
+	mkdir -p "$work_dir"
+	init_git_worktree "$work_dir"
+	git -C "$work_dir" checkout -q -b "feature/auto-test-issue-99999"
+	DISPATCH_REPO_SLUG="test-owner/test-repo"
+	local expected_head
+	expected_head=$(git -C "$work_dir" rev-parse HEAD)
+	local remote_head="different-head"
+	local summary_count=1
+
+	gh() {
+		local args="$*"
+		if [[ "$args" == *"pr list"* ]]; then
+			printf '[{"number":125,"isDraft":false,"headRefOid":"%s","statusCheckRollup":[]}]' "$remote_head"
+			return 0
+		fi
+		if [[ "$args" == *"api --paginate"* ]]; then
+			if [[ "$summary_count" -gt 0 ]]; then
+				printf '%s' '[[{"body":"<!-- MERGE_SUMMARY -->"}]]'
+			else
+				printf '%s' '[[]]'
+			fi
+			return 0
+		fi
+		printf '[]'
+		return 0
+	}
+
+	if _worker_post_pr_handoff_confirmed "issue-99999" "$work_dir"; then
+		print_result "post-PR watchdog handoff rejects mismatched PR head" 1
+	else
+		print_result "post-PR watchdog handoff rejects mismatched PR head" 0
+	fi
+	remote_head="$expected_head"
+	summary_count=0
+	if _worker_post_pr_handoff_confirmed "issue-99999" "$work_dir"; then
+		print_result "post-PR watchdog handoff rejects missing MERGE_SUMMARY" 1
+	else
+		print_result "post-PR watchdog handoff rejects missing MERGE_SUMMARY" 0
 	fi
 
 	unset DISPATCH_REPO_SLUG 2>/dev/null || true
@@ -2956,7 +3013,7 @@ test_post_pr_handoff_rejects_pre_pr_stall() {
 	DISPATCH_REPO_SLUG="test-owner/test-repo"
 
 	gh() {
-		printf '0'
+		printf '[]'
 		return 0
 	}
 
@@ -2978,14 +3035,20 @@ test_post_pr_handoff_overrides_watchdog_next_action() {
 	init_git_worktree "$work_dir"
 	git -C "$work_dir" checkout -q -b "feature/auto-test-issue-99999"
 	DISPATCH_REPO_SLUG="test-owner/test-repo"
+	local expected_head
+	expected_head=$(git -C "$work_dir" rev-parse HEAD)
 
 	gh() {
 		local args="$*"
 		if [[ "$args" == *"pr list"* && "$args" == *"--state open"* ]]; then
-			printf '1'
+			printf '[{"number":124,"isDraft":false,"headRefOid":"%s","statusCheckRollup":[]}]' "$expected_head"
 			return 0
 		fi
-		printf '0'
+		if [[ "$args" == *"api --paginate"* && "$args" == *"/issues/124/comments"* ]]; then
+			printf '%s' '[[{"body":"<!-- MERGE_SUMMARY -->"}]]'
+			return 0
+		fi
+		printf '[]'
 		return 0
 	}
 
@@ -3032,6 +3095,7 @@ test_completion_infrastructure_resumes_without_implementation_penalty() {
 
 test_pr_checkpoint_lifecycle_cases() {
 	test_post_pr_handoff_detects_open_pending_pr
+	test_post_pr_handoff_rejects_mismatched_head_or_missing_summary
 	test_failed_worker_draft_checkpoint_escalates_without_completion
 	test_failed_worker_draft_retains_claim_when_block_not_visible
 	test_protected_draft_is_not_mutated_or_completed

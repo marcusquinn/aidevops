@@ -125,7 +125,7 @@ case "${1:-}" in
 				if [[ "$mode" == "head" && "${STUB_HEAD_FAIL:-0}" == "1" ]]; then
 					exit 1
 				fi
-				if [[ "$json_fields" == "number,state,isDraft,mergedAt,labels,statusCheckRollup" ]]; then
+				if [[ "$json_fields" == "number,state,isDraft,mergedAt,headRefOid,labels,statusCheckRollup" ]]; then
 					if [[ "$mode" == "head" ]]; then
 						printf '%s\n' "${STUB_HEAD_JSON:-[]}"
 					else
@@ -166,7 +166,17 @@ case "${1:-}" in
 			*) ;;
 		esac
 		;;
-	api) printf '{}\n' ;;
+	api)
+		if [[ "$*" == *"/comments"* ]]; then
+			if [[ "${STUB_SUMMARY_COUNT:-0}" -gt 0 ]]; then
+				printf '%s\n' '[[{"body":"<!-- MERGE_SUMMARY -->"}]]'
+			else
+				printf '%s\n' '[[]]'
+			fi
+		else
+			printf '{}\n'
+		fi
+		;;
 	*) ;;
 esac
 exit 0
@@ -332,6 +342,65 @@ test_case_ready_and_terminal_states_are_preserved() {
 	return 0
 }
 
+test_case_ready_requires_exact_head_and_merge_summary() {
+	export STUB_HEAD_JSON='[{"number":331,"state":"OPEN","isDraft":false,"mergedAt":null,"headRefOid":"remote-head","labels":[],"statusCheckRollup":[]}]'
+	export STUB_SEARCH_JSON='[]'
+	export STUB_SUMMARY_COUNT=1
+	local got
+	got=$(_pr_handoff_state_for_branch_or_issue "feature/exact" "27501" "owner/repo" \
+		"head-only" "local-head" 1)
+	if [[ "$got" == "head_mismatch|331" ]]; then
+		print_result "ready handoff rejects local HEAD that differs from PR head" 0
+	else
+		print_result "ready handoff rejects local HEAD that differs from PR head" 1 "got: '$got'"
+	fi
+
+	export STUB_SUMMARY_COUNT=0
+	got=$(_pr_handoff_state_for_branch_or_issue "feature/exact" "27501" "owner/repo" \
+		"head-only" "remote-head" 1)
+	if [[ "$got" == "ready_missing_summary|331" ]]; then
+		print_result "ready handoff requires canonical MERGE_SUMMARY" 0
+	else
+		print_result "ready handoff requires canonical MERGE_SUMMARY" 1 "got: '$got'"
+	fi
+
+	export STUB_SUMMARY_COUNT=1
+	got=$(_pr_handoff_state_for_branch_or_issue "feature/exact" "27501" "owner/repo" \
+		"head-only" "remote-head" 1)
+	if [[ "$got" == "ready|331" ]]; then
+		print_result "ready handoff accepts exact head with MERGE_SUMMARY" 0
+	else
+		print_result "ready handoff accepts exact head with MERGE_SUMMARY" 1 "got: '$got'"
+	fi
+	unset STUB_SUMMARY_COUNT
+	return 0
+}
+
+test_case_merged_requires_exact_head_and_merge_summary() {
+	export STUB_HEAD_JSON='[{"number":332,"state":"MERGED","isDraft":false,"mergedAt":"2026-07-13T00:00:00Z","headRefOid":"merged-head","labels":[],"statusCheckRollup":[]}]'
+	export STUB_SEARCH_JSON='[]'
+	export STUB_SUMMARY_COUNT=1
+	local got
+	got=$(_pr_handoff_state_for_branch_or_issue "feature/merged" "27501" "owner/repo" \
+		"head-only" "newer-local-head" 1)
+	if [[ "$got" == "head_mismatch|332" ]]; then
+		print_result "merged handoff rejects unpushed local commits" 0
+	else
+		print_result "merged handoff rejects unpushed local commits" 1 "got: '$got'"
+	fi
+
+	export STUB_SUMMARY_COUNT=0
+	got=$(_pr_handoff_state_for_branch_or_issue "feature/merged" "27501" "owner/repo" \
+		"head-only" "merged-head" 1)
+	if [[ "$got" == "merged_missing_summary|332" ]]; then
+		print_result "merged handoff requires canonical MERGE_SUMMARY" 0
+	else
+		print_result "merged handoff requires canonical MERGE_SUMMARY" 1 "got: '$got'"
+	fi
+	unset STUB_SUMMARY_COUNT
+	return 0
+}
+
 test_case_head_only_does_not_capture_unrelated_issue_draft() {
 	export STUB_HEAD_JSON='[]'
 	export STUB_SEARCH_JSON='[{"number":325,"state":"OPEN","isDraft":true}]'
@@ -472,6 +541,8 @@ test_case_d2_empty_repo_unknown
 test_case_d3_failed_head_probe_is_unknown
 test_case_draft_state_is_preserved
 test_case_ready_and_terminal_states_are_preserved
+test_case_ready_requires_exact_head_and_merge_summary
+test_case_merged_requires_exact_head_and_merge_summary
 test_case_head_only_does_not_capture_unrelated_issue_draft
 test_case_active_pr_wins_over_historical_pr
 test_case_real_checkrun_and_statuscontext_failures
