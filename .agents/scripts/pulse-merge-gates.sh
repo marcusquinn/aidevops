@@ -381,6 +381,33 @@ _external_pr_linked_issue_crypto_approved() {
 }
 
 #######################################
+# Verify PR-specific V2 merge authority against the current head.
+#
+# #aidevops:trust-boundary — issue approval authorizes development only. An
+# external/fork merge requires a signed PR snapshot; helper absence, legacy
+# signatures, stale content/head state, and API errors all fail closed.
+#
+# Args: $1=PR number, $2=repo slug, $3=expected head SHA (optional)
+# Returns: 0=current PR snapshot verified, 1=not authorized
+#######################################
+_external_pr_current_head_crypto_approved() {
+	local pr_number="$1"
+	local repo_slug="$2"
+	local expected_head_sha="${3:-}"
+	local approval_helper="${AGENTS_DIR:-$HOME/.aidevops/agents}/scripts/approval-helper.sh"
+	local result=""
+
+	[[ -f "$approval_helper" ]] || return 1
+	if [[ -n "$expected_head_sha" ]]; then
+		result=$(bash "$approval_helper" verify pr "$pr_number" "$repo_slug" --expect-head "$expected_head_sha" 2>/dev/null) || result=""
+	else
+		result=$(bash "$approval_helper" verify pr "$pr_number" "$repo_slug" 2>/dev/null) || result=""
+	fi
+	[[ "$result" == "VERIFIED" ]]
+	return $?
+}
+
+#######################################
 # Check whether a PR or its linked issue has a maintainer crypto-approval
 # signature (t3063 — symmetric extension of t3052 to the deterministic merge
 # cascade and the approve_collaborator_pr gate).
@@ -389,11 +416,8 @@ _external_pr_linked_issue_crypto_approved() {
 # trust signal as author-association because it requires a root-owned SSH
 # private key that workers cannot forge.
 #
-# Checks PR-level comments first, then linked-issue comments. Uses
-# approval-helper.sh for cryptographic verification when available; falls back
-# to marker presence when the helper is absent (the marker can only be posted
-# by someone with write access, and full verification is provided by the
-# existing downstream gate in _external_pr_linked_issue_crypto_approved).
+# Requires PR-level V2 merge authority. Linked-issue approval remains valid for
+# worker development authority, but it cannot authorize a future or changed PR.
 #
 # #aidevops:trust-boundary — this function gates security-relevant approval
 # decisions. Changes here require preserving the four-layer defence-in-depth
@@ -407,59 +431,10 @@ _external_pr_linked_issue_crypto_approved() {
 _has_maintainer_crypto_approval() {
 	local pr_number="$1"
 	local repo_slug="$2"
-	local approval_helper="${AGENTS_DIR:-$HOME/.aidevops/agents}/scripts/approval-helper.sh"
+	local expected_head_sha="${3:-}"
 
-	# Marker string embedded in every signed approval comment by approval-helper.sh.
-	# Source of truth: approval-helper.sh line ~65 APPROVAL_MARKER constant.
-	local _approval_marker="aidevops-signed-approval"
-	# Use a named local for the approval-helper success status to keep the
-	# literal string count below the repeated-string-literal ratchet threshold.
-	local _approved_status="VERIFIED"
-
-	# Check PR-level comments for a crypto-approval signature.
-	local pr_marker_count
-	pr_marker_count=$(gh api "repos/${repo_slug}/issues/${pr_number}/comments" \
-		--jq "[.[].body | strings | select(contains(\"${_approval_marker}\"))] | length" \
-		2>/dev/null || true)
-	[[ "$pr_marker_count" =~ ^[0-9]+$ ]] || pr_marker_count=0
-	if [[ "$pr_marker_count" -gt 0 ]]; then
-		if [[ -f "$approval_helper" ]]; then
-			local _pr_verify
-			_pr_verify=$(bash "$approval_helper" verify "$pr_number" "$repo_slug" 2>/dev/null) || _pr_verify=""
-			if [[ "$_pr_verify" == "$_approved_status" ]]; then
-				return 0
-			fi
-		else
-			# Trust the marker when the helper is absent — full cryptographic
-			# verification is provided by _external_pr_linked_issue_crypto_approved
-			# in the downstream gate chain.
-			return 0
-		fi
-	fi
-
-	# Check linked-issue comments for a crypto-approval signature.
-	local linked
-	linked=$(_extract_linked_issue "$pr_number" "$repo_slug" 2>/dev/null) || linked=""
-	[[ -z "$linked" ]] && return 1
-
-	local issue_marker_count
-	issue_marker_count=$(gh api "repos/${repo_slug}/issues/${linked}/comments" \
-		--jq "[.[].body | strings | select(contains(\"${_approval_marker}\"))] | length" \
-		2>/dev/null || true)
-	[[ "$issue_marker_count" =~ ^[0-9]+$ ]] || issue_marker_count=0
-	if [[ "$issue_marker_count" -gt 0 ]]; then
-		if [[ -f "$approval_helper" ]]; then
-			local _issue_verify
-			_issue_verify=$(bash "$approval_helper" verify "$linked" "$repo_slug" 2>/dev/null) || _issue_verify=""
-			if [[ "$_issue_verify" == "$_approved_status" ]]; then
-				return 0
-			fi
-		else
-			return 0
-		fi
-	fi
-
-	return 1
+	_external_pr_current_head_crypto_approved "$pr_number" "$repo_slug" "$expected_head_sha"
+	return $?
 }
 
 #######################################
@@ -487,61 +462,108 @@ _has_maintainer_crypto_approval() {
 #   * any future code path that reaches the merge invocation without
 #     traversing the existing gate chain.
 #
-# Two complementary triggers treat a PR as "external" for this gate:
+# Three complementary triggers treat a PR as "external" for this gate:
 #
 #   1. `external-contributor` label present, OR
 #   2. `isCrossRepository=true` (the PR head is on a fork) — even if the
-#      label is absent. An unlabeled fork PR is a HIGHER-severity signal
-#      than a labeled one, because the labeling system itself failed.
+#      label is absent, OR
+#   3. the live collaborator-permission lookup says the PR author lacks write.
 #
-# When external: require linked issue + cryptographic approval (the same
-# evidence the upstream gate requires). When not external: pass — the
-# existing collaborator gates apply.
+# An unlabeled fork/non-collaborator PR is a HIGHER-severity signal than a
+# labeled one, because the labeling system itself failed.
+#
+# When external: require a current approved linked-issue snapshot plus
+# PR-specific V2 authority for the exact head/content snapshot. When not
+# external: pass — the existing collaborator gates apply.
 #
 # Args:
 #   $1 - PR number
 #   $2 - repo slug (owner/repo)
 #
 # Returns:
-#   0 - safe to invoke `--admin` merge (not external, OR external with
-#       linked issue + crypto approval)
+#   0 - safe to invoke a merge path (not external, OR external with current
+#       linked-issue development authority and PR-specific merge authority)
 #   1 - REFUSE: external/fork PR without crypto approval
 #######################################
 _pulse_merge_admin_safety_check() {
 	local pr_number="$1"
 	local repo_slug="$2"
+	local expected_head_sha="${3:-}"
 
 	# t2863: initialise multi-var locals at declaration time so set -u
 	# is safe even on a partial-failure path through the assignments.
-	local pr_meta_json="" labels_str="" is_fork="false"
+	local pr_meta_json="" labels_str="" is_fork="false" current_head_sha="" pr_author=""
 	pr_meta_json=$(gh pr view "$pr_number" --repo "$repo_slug" \
-		--json labels,isCrossRepository 2>/dev/null) || pr_meta_json=""
+		--json author,labels,isCrossRepository,headRefOid 2>/dev/null) || pr_meta_json=""
+	[[ -n "$pr_meta_json" ]] || return 1
 	labels_str=$(printf '%s' "$pr_meta_json" \
 		| jq -r '[.labels[].name] | join(",")' 2>/dev/null) || labels_str=""
 	is_fork=$(printf '%s' "$pr_meta_json" \
 		| jq -r '.isCrossRepository // false' 2>/dev/null) || is_fork="false"
+	current_head_sha=$(printf '%s' "$pr_meta_json" \
+		| jq -r '.headRefOid // ""' 2>/dev/null) || current_head_sha=""
+	pr_author=$(printf '%s' "$pr_meta_json" \
+		| jq -r '.author.login // ""' 2>/dev/null) || pr_author=""
+	[[ -n "$current_head_sha" && -n "$pr_author" ]] || return 1
+	if [[ -n "$expected_head_sha" && "$current_head_sha" != "$expected_head_sha" ]]; then
+		echo "[pulse-merge] DEFENSE-IN-DEPTH: REFUSING merge of PR #${pr_number} in ${repo_slug} — head changed before final authority check" >>"$LOGFILE"
+		return 1
+	fi
 
-	local treat_as_external=0
+	# #aidevops:trust-boundary — a live NMR label is an explicit hold. Signed
+	# marker presence never overrides it at the final merge call.
+	if [[ ",${labels_str}," == *",needs-maintainer-review,"* ]]; then
+		echo "[pulse-merge] DEFENSE-IN-DEPTH: REFUSING merge of PR #${pr_number} in ${repo_slug} — PR carries needs-maintainer-review" >>"$LOGFILE"
+		return 1
+	fi
+
+	local treat_as_external=0 author_collab_rc=0
+	# #aidevops:trust-boundary — labels and fork metadata are not authority.
+	# Re-check the author's live permission at the final merge boundary.
+	_is_collaborator_author "$pr_author" "$repo_slug" || author_collab_rc=$?
+	if [[ "$author_collab_rc" -eq 2 ]]; then
+		echo "[pulse-merge] DEFENSE-IN-DEPTH: REFUSING merge of PR #${pr_number} in ${repo_slug} — final collaborator permission lookup failed for ${pr_author}" >>"$LOGFILE"
+		return 1
+	fi
 	if [[ ",${labels_str}," == *",external-contributor,"* ]]; then
 		treat_as_external=1
 	elif [[ "$is_fork" == "true" ]]; then
 		treat_as_external=1
 		echo "[pulse-merge] DEFENSE-IN-DEPTH: PR #${pr_number} in ${repo_slug} — fork PR missing external-contributor label (label-system race or failure), treating as external (t2934)" >>"$LOGFILE"
+	elif [[ "$author_collab_rc" -ne 0 ]]; then
+		treat_as_external=1
+		echo "[pulse-merge] DEFENSE-IN-DEPTH: PR #${pr_number} in ${repo_slug} — non-collaborator PR missing external-contributor label, treating as external (GH#17671)" >>"$LOGFILE"
+	fi
+
+	# A linked issue's live NMR state is a final-call hold for every PR, not only
+	# external PRs. Fail closed if a linked issue was found but cannot be read.
+	local linked="" linked_labels=""
+	linked=$(_extract_linked_issue "$pr_number" "$repo_slug" 2>/dev/null) || return 1
+	if [[ -n "$linked" ]]; then
+		linked_labels=$(gh api "repos/${repo_slug}/issues/${linked}" --jq '[.labels[].name] | join(",")' 2>/dev/null) || linked_labels="__API_ERROR__"
+		if [[ "$linked_labels" == "__API_ERROR__" || ",${linked_labels}," == *",needs-maintainer-review,"* ]]; then
+			echo "[pulse-merge] DEFENSE-IN-DEPTH: REFUSING merge of PR #${pr_number} in ${repo_slug} — linked issue #${linked} is unavailable or carries needs-maintainer-review" >>"$LOGFILE"
+			return 1
+		fi
 	fi
 
 	if [[ "$treat_as_external" -eq 0 ]]; then
+		_PULSE_FINAL_REQUIRES_SYNCHRONOUS_MERGE=0
 		return 0
 	fi
+	_PULSE_FINAL_REQUIRES_SYNCHRONOUS_MERGE=1
 
 	# External / fork PR — require linked issue + crypto approval.
-	if ! _external_pr_has_linked_issue "$pr_number" "$repo_slug"; then
+	if [[ -z "$linked" ]]; then
 		echo "[pulse-merge] DEFENSE-IN-DEPTH: REFUSING --admin merge of PR #${pr_number} in ${repo_slug} — external/fork PR has no linked issue (t2934)" >>"$LOGFILE"
 		return 1
 	fi
 	if ! _external_pr_linked_issue_crypto_approved "$pr_number" "$repo_slug"; then
-		local linked
-		linked=$(_extract_linked_issue "$pr_number" "$repo_slug" 2>/dev/null) || linked="unknown"
 		echo "[pulse-merge] DEFENSE-IN-DEPTH: REFUSING --admin merge of PR #${pr_number} in ${repo_slug} — external/fork PR linked issue #${linked} lacks crypto approval (t2934)" >>"$LOGFILE"
+		return 1
+	fi
+	if ! _external_pr_current_head_crypto_approved "$pr_number" "$repo_slug" "$current_head_sha"; then
+		echo "[pulse-merge] DEFENSE-IN-DEPTH: REFUSING merge of PR #${pr_number} in ${repo_slug} — external/fork PR lacks V2 authority for current head ${current_head_sha:0:12}" >>"$LOGFILE"
 		return 1
 	fi
 	return 0
@@ -753,7 +775,7 @@ approve_collaborator_pr() {
 		if _is_trusted_dependabot_update_pr "$pr_number" "$repo_slug" "$pr_author"; then
 			approval_body="Auto-approved by pulse runner @${current_user:-unknown} — trusted Dependabot dependency update verified: GitHub bot identity, same-repo branch, dependabot-authored commits, dependency-file-only diff, maintainer allowlist, no security-scan failures, and pre-merge gates passed."
 			echo "[pulse-wrapper] approve_collaborator_pr: PR #$pr_number author (@$pr_author) is trusted Dependabot with allowlisted dependency update — proceeding (GH#24473)" >>"$LOGFILE"
-		elif _has_maintainer_crypto_approval "$pr_number" "$repo_slug"; then
+		elif _has_maintainer_crypto_approval "$pr_number" "$repo_slug" "$pr_head_sha"; then
 			echo "[pulse-wrapper] approve_collaborator_pr: PR #$pr_number author (@$pr_author) is not a collaborator on $repo_slug, but maintainer crypto-approval found — proceeding (t3063)" >>"$LOGFILE"
 			# fall through to the approval block below
 		else

@@ -67,7 +67,7 @@ count_success() {
 count_failure() {
 	local message="$1"
 	print_error "$message"
-	((++FAILED))
+	FAILED=$((FAILED + 1))
 	return 0
 }
 
@@ -135,7 +135,7 @@ check_cicd_status() {
 	print_section "CI/CD Pipeline Status"
 
 	if ! check_gh_cli; then
-		((++FAILED))
+		FAILED=$((FAILED + 1))
 		return 1
 	fi
 

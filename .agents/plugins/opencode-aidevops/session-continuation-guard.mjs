@@ -77,10 +77,11 @@ function capMap(map, maxEntries) {
 }
 
 function defaultCheckpointAdapter(checkpointHelper, repository, qualityLog) {
+  const helperPath = checkpointHelper ? resolve(checkpointHelper) : "";
+
   function run(args, capture = false) {
-    if (!checkpointHelper) return "";
+    if (!helperPath) return "";
     try {
-      const helperPath = resolve(repository, checkpointHelper);
       return execFileSync("bash", [helperPath, ...args], {
         cwd: repository,
         encoding: "utf8",

@@ -654,6 +654,59 @@ test_classify_bot_state_accepts_submitted_at_only_review() {
 	return 0
 }
 
+install_head_bound_review_gh_stub() {
+	local review_commit="$1"
+	local review_time="$2"
+	local gh_stub="${TEST_ROOT}/bin/gh"
+	cat >"$gh_stub" <<EOF
+#!/usr/bin/env bash
+set -euo pipefail
+endpoint="\${2:-}"
+jq_filter=""
+shift 2
+while [[ "\$#" -gt 0 ]]; do
+	if [[ "\${1:-}" == "--jq" ]]; then jq_filter="\${2:-}"; shift 2; else shift; fi
+done
+case "\$endpoint" in
+	repos/testorg/otherrepo/pulls/123/reviews)
+		jq -r "\$jq_filter" <<'JSON'
+[{"user":{"login":"reviewbot"},"commit_id":"${review_commit}","submitted_at":"${review_time}","body":"Looks good on this revision."}]
+JSON
+		;;
+	*) jq -r "\$jq_filter" <<'JSON'
+[]
+JSON
+		;;
+esac
+EOF
+	chmod +x "$gh_stub"
+	return 0
+}
+
+test_current_head_evidence_rejects_historical_review() {
+	install_head_bound_review_gh_stub "old-head" "2026-07-14T12:00:00Z"
+	export REVIEW_GATE_EXPECTED_HEAD_SHA="new-head"
+	if bot_has_real_review 123 'testorg/otherrepo' 'reviewbot' 2>/dev/null; then
+		print_result "current-head evidence rejects a review bound to an older head" 1
+	else
+		print_result "current-head evidence rejects a review bound to an older head" 0
+	fi
+	unset REVIEW_GATE_EXPECTED_HEAD_SHA
+	return 0
+}
+
+test_current_head_evidence_accepts_exact_head_review() {
+	install_head_bound_review_gh_stub "new-head" "2026-07-14T14:00:00Z"
+	export REVIEW_GATE_EXPECTED_HEAD_SHA="new-head"
+	if bot_has_real_review 123 'testorg/otherrepo' 'reviewbot' 2>/dev/null; then
+		print_result "current-head evidence accepts a review bound to the exact head" 0
+	else
+		print_result "current-head evidence accepts a review bound to the exact head" 1
+	fi
+	unset REVIEW_GATE_EXPECTED_HEAD_SHA
+	return 0
+}
+
 # ---------- Unit tests: notice category classification (GH#22855) ----------
 
 install_notice_category_gh_stub() {
@@ -881,6 +934,51 @@ test_do_check_fetches_success_status_contexts_once() {
 	return 0
 }
 
+test_status_json_denies_external_rate_limit_grace() {
+	do_check() { printf 'PASS_RATE_LIMITED\n'; return 0; }
+	gh() {
+		printf '%s\n' '{"head":{"sha":"head-123"},"user":{"login":"external"},"author_association":"CONTRIBUTOR"}'
+		return 0
+	}
+	local output=""
+	output=$(do_status_json 123 'testorg/otherrepo')
+	if jq -e '.schema == "aidevops.review-gate-evidence/v1" and .status == "PASS_RATE_LIMITED" and .author.class == "external" and .permitted == false and .merge_gate == "blocked"' <<<"$output" >/dev/null; then
+		print_result "status-json denies external rate-limit grace" 0
+	else
+		print_result "status-json denies external rate-limit grace" 1 "output=${output}"
+	fi
+	return 0
+}
+
+test_status_json_allows_trusted_skip() {
+	do_check() { printf 'SKIP\n'; return 0; }
+	gh() {
+		printf '%s\n' '{"head":{"sha":"head-123"},"user":{"login":"maintainer"},"author_association":"MEMBER"}'
+		return 0
+	}
+	local output=""
+	output=$(do_status_json 123 'testorg/otherrepo')
+	if jq -e '.status == "SKIP" and .head_sha == "head-123" and .author.class == "trusted" and .permitted == true and .merge_gate == "clear"' <<<"$output" >/dev/null; then
+		print_result "status-json permits trusted current-head skip" 0
+	else
+		print_result "status-json permits trusted current-head skip" 1 "output=${output}"
+	fi
+	return 0
+}
+
+test_status_json_fails_closed_without_pr_metadata() {
+	do_check() { printf 'PASS\n'; return 0; }
+	gh() { return 1; }
+	local output=""
+	output=$(do_status_json 123 'testorg/otherrepo')
+	if jq -e '.status == "PASS" and .head_sha == "" and .permitted == false and .merge_gate == "blocked"' <<<"$output" >/dev/null; then
+		print_result "status-json fails closed on missing PR metadata" 0
+	else
+		print_result "status-json fails closed on missing PR metadata" 1 "output=${output}"
+	fi
+	return 0
+}
+
 # ---------- Run ----------
 
 main() {
@@ -938,6 +1036,8 @@ main() {
 	echo "=== Reviews endpoint submitted_at fallback (GH#26473) ==="
 	test_bot_has_real_review_accepts_submitted_at_only_review
 	test_classify_bot_state_accepts_submitted_at_only_review
+	test_current_head_evidence_rejects_historical_review
+	test_current_head_evidence_accepts_exact_head_review
 
 	echo ""
 	echo "=== Notice category classification (GH#22855) ==="
@@ -951,6 +1051,12 @@ main() {
 	test_do_check_blocks_non_rate_limit_non_review_states
 	test_do_check_accepts_non_review_with_success_status
 	test_do_check_fetches_success_status_contexts_once
+
+	echo ""
+	echo "=== Typed current-head evidence ==="
+	test_status_json_denies_external_rate_limit_grace
+	test_status_json_allows_trusted_skip
+	test_status_json_fails_closed_without_pr_metadata
 
 	echo ""
 	echo "Tests run: ${TESTS_RUN}, failed: ${TESTS_FAILED}"

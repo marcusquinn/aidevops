@@ -55,13 +55,13 @@ Merge typically happens within one pulse cycle (4-10 minutes) after all checks g
 
 ### Interactive Admin Merge Authority
 
-Interactive sessions operate with the repo admin/owner account. When the trust source is maintainer-controlled — `OWNER`/`MEMBER` PR author, maintainer-authored linked issue, trusted issue author, or valid cryptographic maintainer approval — the admin account may merge with `gh pr merge <N> --repo <slug> --admin --squash --delete-branch` after verifying:
+Interactive sessions operate with the repo admin/owner account. When the trust source is maintainer-controlled — `OWNER`/`MEMBER` PR author, maintainer-authored linked issue, trusted issue author, or valid cryptographic maintainer approval — the admin account may merge through the guarded full-loop helper after verifying:
 
 1. Non-gate CI is green or skipped.
 2. No human `CHANGES_REQUESTED` review exists.
 3. The blocking condition is review-required branch protection, stale GitHub merge state, or a self-blocking framework gate.
 
-This is bypassing stale/redundant automation state, not bypassing maintainer policy. Keep the merge gated when the issue/PR originates from a non-maintainer and there is no valid cryptographic approval.
+This is bypassing stale/redundant automation state, not bypassing maintainer policy. Keep the merge gated when the issue/PR originates from a non-maintainer and there is no valid cryptographic approval. For external/fork PRs, issue approval is development authority only: final merge requires a V2 PR approval bound to the exact current head and content snapshot.
 
 `full-loop-helper.sh merge --auto` applies the same rule for interactive sessions: if native auto-merge is already blocked only by review-required branch policy or GitHub self-approval rules, the helper verifies the PR is non-draft, has no `CHANGES_REQUESTED`, has no pending/failing checks, and has no linked issue still carrying `needs-maintainer-review`; then it falls through to `--admin` automatically. Headless workers do not take this fallback.
 
@@ -132,14 +132,26 @@ Symmetric extension of t3052 to the **deterministic merge cascade** — the `_ch
 
 **Background:** t3052 (PR #21767) allowed cryptographic maintainer approval on a linked issue to satisfy the `OWNER`/`MEMBER` author-association gate in the worker-briefed auto-merge path. t3063 extends the same signal to:
 
-1. **`_check_pr_merge_gates`** (`pulse-merge.sh:185-196`) — the gate that short-circuits the merge pass for all non-collaborator PRs. With t3063, a verified crypto signature on the PR or its linked issue (checked by `_has_maintainer_crypto_approval` in `pulse-merge-gates.sh`) allows the PR to proceed through the gate instead of being skipped.
-2. **`approve_collaborator_pr`** (`pulse-merge-gates.sh`) — the function that posts the approval review before merge. With t3063, it accepts the same crypto signal as a bypass for the GH#17671 author guard before refusing to approve.
+1. **`_check_pr_merge_gates`** — the gate that short-circuits the merge pass for non-collaborator PRs. It requires current V2 PR authority before allowing the author-association bypass.
+2. **`approve_collaborator_pr`** — the function that posts the approval review before merge. Its GH#17671 self-check accepts only current V2 PR authority for a non-collaborator author.
 
 **Trust chain:** `sudo aidevops approve` requires a root-owned SSH private key that workers cannot forge. The signal is stronger than GitHub author-association, which is a proxy for maintainer trust. The four-layer GH#17671 defence-in-depth is preserved — Case P (CONTRIBUTOR + no crypto = refuse) is pinned by `test-pulse-merge-approve-collaborator-guard.sh`.
 
-**Helper:** `_has_maintainer_crypto_approval "$pr_number" "$repo_slug"` in `pulse-merge-gates.sh`. Checks PR-level comments first, then linked-issue comments, for `<!-- aidevops-signed-approval -->`. Falls back to marker-presence check when `approval-helper.sh` is unavailable (full crypto verification provided by `_external_pr_linked_issue_crypto_approved` downstream).
+**Helper:** `_has_maintainer_crypto_approval "$pr_number" "$repo_slug" "$head_sha"` in `pulse-merge-gates.sh`. It fails closed unless `approval-helper.sh` verifies a V2 PR payload whose canonical digest and head match current GitHub state. Marker-only and helper-absent fallbacks are prohibited.
 
 **Test coverage:** `.agents/scripts/tests/test-pulse-merge-approve-collaborator-guard.sh` cases N, O, P.
+
+### V2 immutable approval snapshots
+
+`sudo aidevops approve issue|pr N OWNER/REPO` signs `aidevops-approval/v2`, which contains a SHA-256 digest of a canonical read-only GitHub snapshot. The snapshot binds object IDs, title/body, non-bot human comments and reviews, linked-reference timeline events, and—for PRs—the head SHA/ref/repository and base ref/repository. Verification excludes the exact signed comment being checked and the trusted deterministic NMR lifecycle audit written after verification. Marker text in any other external human comment remains content-bound, so copied unsigned markers cannot hide drift. A repeated approval binds prior approval comments and leaves only the newest matching snapshot authoritative.
+
+- Issue V2 authority permits development of that exact issue snapshot. It never authorizes a future or changed external PR.
+- External/fork merge requires both the existing approved linked-issue chain and PR-specific V2 merge authority for the exact current head. The final trust gate re-fetches this immediately before every native, admin, direct, and retry merge call; it also checks live author permission so missing external labels cannot bypass the rule.
+- Body/comment/link/linked-reference/base/head drift returns `STALE_APPROVAL`; malformed payloads, API uncertainty, and missing keys fail closed.
+- V1 `APPROVE:<kind>:<repo>:<number>:<timestamp>` signatures return `LEGACY_APPROVAL`. They are preserved as audit history but do not authorize external dispatch/merge; run the approval command again after reviewing current state.
+- A live `needs-maintainer-review` label on the PR or linked issue always blocks. Marker presence does not override current NMR state.
+
+Configured review-provider failures use `review_gate.advisory_check_contexts`. An exact named non-required failure is advisory only after the final trust gate reruns the read-only review helper and obtains typed `aidevops.review-gate-evidence/v1` for the exact PR head, a permitted author-class outcome, and resolved review threads. Duplicate maintainer-gate aliases are one audited family and remain blocking; all other check-run and commit-status sources retain independent failure identity.
 
 ## NMR Automation Signatures (t2386, Split Semantics)
 

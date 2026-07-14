@@ -183,6 +183,25 @@ test_launch_helpers_tolerate_unset_state_under_nounset() {
 	return 0
 }
 
+test_runtime_temp_files_use_managed_workspace() {
+	local AIDEVOPS_TEMP_DIR="${HOME}/.aidevops/.agent-workspace/tmp"
+	local temp_file=""
+	temp_file=$(_create_headless_runtime_temp_file) || {
+		print_result "runtime temp files use managed aidevops workspace" 1 "Could not create runtime temp file"
+		return 0
+	}
+
+	if [[ "$temp_file" == "${HOME}/.aidevops/.agent-workspace/tmp/"* && -f "$temp_file" ]]; then
+		rm -f "$temp_file"
+		print_result "runtime temp files use managed aidevops workspace" 0
+		return 0
+	fi
+
+	rm -f "$temp_file"
+	print_result "runtime temp files use managed aidevops workspace" 1 "Unexpected path: $temp_file"
+	return 0
+}
+
 test_startup_no_activity_timeout_returns_watchdog_continue() {
 	local output_file="${TEST_ROOT}/startup-stall.log"
 	printf '%s\n' 'sqlite-migration:done' >"$output_file"
@@ -1319,6 +1338,41 @@ SQL
 
 	print_result "seed worker DB copies only selected continuation session" 1 \
 		"sessions=$sessions messages=$messages other_sessions=$other_sessions other_messages=$other_messages projects=$projects"
+	return 0
+}
+
+test_seed_worker_db_session_context_rebinds_replacement_worktree() {
+	local shared_dir="${HOME}/.local/share/opencode"
+	local isolated_dir="${TEST_ROOT}/isolated-opencode-rebound"
+	local replacement_dir="${TEST_ROOT}/replacement-worktree"
+	local shared_db="${shared_dir}/opencode.db"
+	local worker_db="${isolated_dir}/opencode/opencode.db"
+	local stale_dir="${TEST_ROOT}/removed-worktree"
+	mkdir -p "$shared_dir" "${isolated_dir}/opencode" "$replacement_dir"
+	rm -f "$shared_db" "$worker_db"
+
+	sqlite3 "$shared_db" <<SQL
+CREATE TABLE project (id TEXT PRIMARY KEY, name TEXT);
+CREATE TABLE session (id TEXT PRIMARY KEY, project_id TEXT NOT NULL, directory TEXT NOT NULL, title TEXT NOT NULL);
+CREATE TABLE message (id TEXT PRIMARY KEY, session_id TEXT NOT NULL, data TEXT NOT NULL);
+INSERT INTO project VALUES ('project-keep', 'Keep Project');
+INSERT INTO session VALUES ('session-keep', 'project-keep', '${stale_dir}', 'Keep');
+INSERT INTO message VALUES ('message-keep', 'session-keep', 'one');
+SQL
+
+	_seed_worker_db_session_context "$isolated_dir" "session-keep" "$replacement_dir"
+
+	local worker_directory="" shared_directory="" expected_replacement=""
+	expected_replacement=$(cd "$replacement_dir" && pwd -P)
+	worker_directory=$(sqlite3 "$worker_db" "SELECT directory FROM session WHERE id = 'session-keep';")
+	shared_directory=$(sqlite3 "$shared_db" "SELECT directory FROM session WHERE id = 'session-keep';")
+	if [[ "$worker_directory" == "$expected_replacement" && "$shared_directory" == "$stale_dir" ]]; then
+		print_result "seed worker DB rebinds stale session to replacement worktree only in isolation" 0
+		return 0
+	fi
+
+	print_result "seed worker DB rebinds stale session to replacement worktree only in isolation" 1 \
+		"worker_directory=$worker_directory shared_directory=$shared_directory"
 	return 0
 }
 
@@ -2994,6 +3048,7 @@ main() {
 	test_headless_contract_uses_deployed_framework_paths
 	test_parse_initial_model_does_not_set_explicit_override
 	test_launch_helpers_tolerate_unset_state_under_nounset
+	test_runtime_temp_files_use_managed_workspace
 	test_startup_no_activity_timeout_returns_watchdog_continue
 	test_startup_no_activity_can_rotate_after_continuation_budget
 	test_sigkill_with_activity_attempts_continuation
@@ -3037,6 +3092,7 @@ main() {
 	test_sandbox_passthrough_scopes_provider_env
 	test_copy_scoped_opencode_auth_keeps_selected_provider_only
 	test_seed_worker_db_session_context_copies_only_selected_session
+	test_seed_worker_db_session_context_rebinds_replacement_worktree
 	test_seed_worker_db_session_context_copies_migration_metadata
 	test_seed_worker_db_session_context_uses_backup_for_fresh_db
 	test_seed_worker_db_session_context_vacuums_pruned_backup
