@@ -140,6 +140,17 @@ if [[ -f "$_SHARED_CONSTANTS" ]]; then
 fi
 unset _SHARED_CONSTANTS
 
+# Secure the optional DSPy disk cache before setup installs or imports DSPy.
+_DSPY_CACHE_SECURITY="${BASH_SOURCE[0]%/*}/.agents/scripts/dspy-cache-security.sh"
+if [[ ! -f "$_DSPY_CACHE_SECURITY" ]]; then
+	_DSPY_CACHE_SECURITY="$HOME/.aidevops/agents/scripts/dspy-cache-security.sh"
+fi
+if [[ -f "$_DSPY_CACHE_SECURITY" ]]; then
+	# shellcheck disable=SC1090  # Dynamic path resolved at runtime
+	source "$_DSPY_CACHE_SECURITY"
+fi
+unset _DSPY_CACHE_SECURITY
+
 # Escape a string for safe embedding in XML (plist heredocs).
 # Prevents XML injection if paths contain &, <, >, ", or ' characters.
 _xml_escape() {
