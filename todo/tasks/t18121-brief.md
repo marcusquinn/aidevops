@@ -16,7 +16,7 @@
 - **Session:** `opencode:ses_0a27e6418ffe3GdgcFDjIf8u7z`
 - **Created by:** AI DevOps (ai-interactive)
 - **Parent task:** none; standalone leaf follow-up from #27529
-- **Blocked by:** none; PR #27535 is merged and the helper is available
+- **Blocked by:** none; the prerequisite helper is merged and available
 - **Conversation context:** Session analysis found that a raw required-check watch produced 151,357 bytes and 1,427 lines, including 1,317 duplicate non-empty line occurrences and 27 unchanged refresh snapshots, even though the delta-aware wait helper had already shipped.
 
 ## What
