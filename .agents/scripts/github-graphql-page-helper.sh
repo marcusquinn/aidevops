@@ -180,6 +180,17 @@ while [[ "$ITEM_COUNT" -lt "$TOTAL" ]]; do
 
 	if [[ "$PAGE_FETCHED" != "true" ]]; then
 		fail "GraphQL API failed after $((MAX_RETRIES + 1)) bounded attempts"
+		if [[ -s "$ERROR_FILE" ]]; then
+			fail "GraphQL API stderr from the final attempt:"
+			while IFS= read -r ERROR_LINE || [[ -n "$ERROR_LINE" ]]; do
+				printf '%s\n' "$ERROR_LINE" >&2
+			done <"$ERROR_FILE"
+		fi
+		if [[ -s "$RESPONSE_FILE" ]] \
+			&& jq -e 'type == "object" and (.errors | type == "array") and ((.errors | length) > 0)' "$RESPONSE_FILE" >/dev/null; then
+			fail "GraphQL errors from the final attempt:"
+			jq -c '.errors' "$RESPONSE_FILE" >&2
+		fi
 		emit_result false "api_error" "$LAST_HAS_NEXT" "$LAST_CURSOR"
 		exit 1
 	fi
