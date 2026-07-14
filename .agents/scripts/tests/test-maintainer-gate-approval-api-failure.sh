@@ -195,19 +195,13 @@ test_pr_approval_paths() {
 }
 
 test_slurp_and_jq_are_separate() {
-	if python3 - "$WORKFLOW_FILE" <<'PY'
-import re
-import sys
-from pathlib import Path
-
-text = Path(sys.argv[1]).read_text()
-combined = re.findall(r"gh api[^\n]*\\\n(?:[^\n]*\\\n)*?[^\n]*--slurp[^\n]*\\\n[^\n]*--jq", text)
-raise SystemExit(1 if combined else 0)
-PY
-	then
-		print_result "maintainer gate separates gh --slurp from jq" 0
-	else
+	if sed -e :a -e '/\\$/N; s/\\\n[[:space:]]*/ /; ta' "$WORKFLOW_FILE" |
+		grep 'gh[[:space:]][[:space:]]*api' |
+		grep -F -- '--slurp' |
+		grep -Fq -- '--jq'; then
 		print_result "maintainer gate separates gh --slurp from jq" 1 "unsupported gh flag combination remains"
+	else
+		print_result "maintainer gate separates gh --slurp from jq" 0
 	fi
 	return 0
 }
