@@ -41,6 +41,7 @@ import { createSessionTitleSuffixHandler } from "./session-title-suffix.mjs";
 import { installPluginConsoleRouter } from "./plugin-console.mjs";
 import { createSubagentEffortHooks, loadTierReasoningPolicies } from "./subagent-effort.mjs";
 import { createSessionContinuationGuard } from "./session-continuation-guard.mjs";
+import { createPermissionBroker } from "./permission-broker.mjs";
 
 // Existing modules
 import { createTools } from "./tools.mjs";
@@ -249,6 +250,7 @@ export async function AidevopsPlugin({ directory, client }) {
   ]);
   const subagentEffortHooks = createSubagentEffortHooks(client, { tierReasoning });
   const shouldInjectGreeting = createSessionStartGreetingGate(client, isHeadless);
+  const permissionBroker = createPermissionBroker({ client, isHeadless });
 
   // TTSR hooks
   const {
@@ -363,7 +365,10 @@ export async function AidevopsPlugin({ directory, client }) {
     "chat.params": subagentEffortHooks.chatParams,
 
     // Quality hooks
-    "tool.execute.before": toolExecuteBefore,
+    "tool.execute.before": async (input, output) => {
+      permissionBroker.recordToolCall(input, output);
+      return toolExecuteBefore(input, output);
+    },
     "tool.execute.after": toolExecuteAfter,
 
     // Shell environment
@@ -380,11 +385,16 @@ export async function AidevopsPlugin({ directory, client }) {
       // Fire both in parallel — neither depends on the other's result.
       await Promise.all([
         handleEvent(input),
+        permissionBroker.handleEvent(input).catch((err) => debugEventError("permission broker", err)),
         sessionTitleSuffixHandler(input).catch((err) => debugEventError("title suffix handler", err)),
         sessionTitleFallbackHandler(input).catch((err) => debugEventError("title fallback handler", err)),
         greetingHandler(input).catch((err) => debugEventError("greeting handler", err)),
       ]);
     },
+
+    // Legacy OpenCode compatibility. Current runtimes publish
+    // `permission.asked` through the event hook instead.
+    "permission.ask": permissionBroker.permissionAsk,
 
     // OAuth multi-account pool + provider auth
     auth: (() => {
