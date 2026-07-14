@@ -1415,7 +1415,10 @@ _seed_worker_db_session_context() {
 	# Build a schema-only DB, then synchronise migration ledgers. This avoids a
 	# multi-gigabyte full backup while preserving OpenCode migration state.
 	if [[ ! -f "$worker_db" ]]; then
-		_initialize_worker_db_from_shared_schema "$worker_db" "$shared_db" || return 1
+		if ! _initialize_worker_db_from_shared_schema "$worker_db" "$shared_db"; then
+			_archive_partial_worker_db "$worker_db" "schema-seed-failed"
+			return 1
+		fi
 	fi
 	_sync_worker_db_migration_ledgers "$worker_db" "$shared_db" || return 1
 	_opencode_db_graph_schema_matches "$shared_db" "$worker_db" || return 1
