@@ -3,6 +3,7 @@
 
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
+import { resolve } from "node:path";
 
 const DEFAULT_FAILURE_THRESHOLD = 3;
 const DEFAULT_MAX_SCOPES = 32;
@@ -79,7 +80,8 @@ function defaultCheckpointAdapter(checkpointHelper, repository, qualityLog) {
   function run(args, capture = false) {
     if (!checkpointHelper) return "";
     try {
-      return execFileSync(checkpointHelper, args, {
+      const helperPath = resolve(repository, checkpointHelper);
+      return execFileSync("bash", [helperPath, ...args], {
         cwd: repository,
         encoding: "utf8",
         stdio: capture ? ["ignore", "pipe", "ignore"] : "ignore",
