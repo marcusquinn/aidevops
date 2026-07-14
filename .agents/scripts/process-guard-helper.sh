@@ -22,7 +22,7 @@
 #
 # Configuration (environment variables):
 #   CHILD_RSS_LIMIT_KB     - Max RSS per child process (default: 2097152 = 2GB)
-#   CHILD_RUNTIME_LIMIT    - Max runtime in seconds (default: 600 = 10min)
+#   CHILD_RUNTIME_LIMIT    - Max unmanaged runtime in seconds (default: 7200 = 2h)
 #   SHELLCHECK_RSS_LIMIT_KB - ShellCheck-specific RSS limit (default: 1048576 = 1GB)
 #   SHELLCHECK_RUNTIME_LIMIT - ShellCheck-specific runtime (default: 300 = 5min)
 #   STALE_PLAYWRIGHT_LIST_AGE_LIMIT - Max aidevops Playwright --list age (default: 900 = 15min)
@@ -62,15 +62,18 @@ _validate_int() {
 
 # Configuration defaults
 CHILD_RSS_LIMIT_KB="${CHILD_RSS_LIMIT_KB:-2097152}"
-CHILD_RUNTIME_LIMIT="${CHILD_RUNTIME_LIMIT:-600}"
+CHILD_RUNTIME_LIMIT="${CHILD_RUNTIME_LIMIT:-7200}"
 SHELLCHECK_RSS_LIMIT_KB="${SHELLCHECK_RSS_LIMIT_KB:-1048576}"
 SHELLCHECK_RUNTIME_LIMIT="${SHELLCHECK_RUNTIME_LIMIT:-300}"
 STALE_PLAYWRIGHT_LIST_AGE_LIMIT="${STALE_PLAYWRIGHT_LIST_AGE_LIMIT:-900}"
 SESSION_COUNT_WARN="${SESSION_COUNT_WARN:-5}"
+readonly PROCESS_RUNTIME_OK="OK"
+readonly PROCESS_RUNTIME_MANAGED="MANAGED"
+readonly PROCESS_RUNTIME_OVER="OVER"
 
 # Validate all numeric config to prevent command injection via arithmetic expansion
 CHILD_RSS_LIMIT_KB=$(_validate_int CHILD_RSS_LIMIT_KB "$CHILD_RSS_LIMIT_KB" 2097152 1)
-CHILD_RUNTIME_LIMIT=$(_validate_int CHILD_RUNTIME_LIMIT "$CHILD_RUNTIME_LIMIT" 600 1)
+CHILD_RUNTIME_LIMIT=$(_validate_int CHILD_RUNTIME_LIMIT "$CHILD_RUNTIME_LIMIT" 7200 1)
 SHELLCHECK_RSS_LIMIT_KB=$(_validate_int SHELLCHECK_RSS_LIMIT_KB "$SHELLCHECK_RSS_LIMIT_KB" 1048576 1)
 SHELLCHECK_RUNTIME_LIMIT=$(_validate_int SHELLCHECK_RUNTIME_LIMIT "$SHELLCHECK_RUNTIME_LIMIT" 300 1)
 STALE_PLAYWRIGHT_LIST_AGE_LIMIT=$(_validate_int STALE_PLAYWRIGHT_LIST_AGE_LIMIT "$STALE_PLAYWRIGHT_LIST_AGE_LIMIT" 900 60)
@@ -114,6 +117,68 @@ _get_process_cwd() {
 		cwd_path=$(readlink "/proc/${pid}/cwd" 2>/dev/null || true)
 	fi
 	printf '%s' "$cwd_path"
+	return 0
+}
+
+#######################################
+# Return whether a process belongs to a systemd-managed aidevops worker.
+# All descendants of a transient worker service share its cgroup, so this
+# verifies lifecycle ownership without relying on mutable command strings.
+# Arguments:
+#   $1 - PID
+# Returns: 0 for managed worker lineage, 1 otherwise
+#######################################
+_is_managed_worker_process() {
+	local pid="$1"
+	local proc_root="${AIDEVOPS_PROCESS_GUARD_PROC_ROOT:-/proc}"
+	local cgroup_file="${proc_root%/}/${pid}/cgroup"
+	local cgroup_line=""
+	local cgroup_path=""
+	local worker_unit_regex='/aidevops-worker(-monitor|-observer)?-[0-9]+-[0-9]+-[0-9]+\.service(/|$)'
+
+	[[ "$pid" =~ ^[1-9][0-9]*$ ]] || return 1
+	[[ -r "$cgroup_file" ]] || return 1
+
+	while IFS= read -r cgroup_line || [[ -n "$cgroup_line" ]]; do
+		# cgroup v1: hierarchy:controllers:path; cgroup v2: 0::path.
+		cgroup_path="${cgroup_line#*:*:}"
+		if [[ "$cgroup_path" =~ $worker_unit_regex ]]; then
+			return 0
+		fi
+	done <"$cgroup_file"
+
+	return 1
+}
+
+#######################################
+# Classify a process against the generic runtime limit.
+# Managed worker services delegate runtime decisions to their lifecycle-aware
+# watchdog/sandbox controls. RSS limits remain independently enforced.
+# Arguments:
+#   $1 - PID
+#   $2 - process age in seconds
+#   $3 - generic runtime limit in seconds
+# Output: OK, MANAGED, or OVER
+#######################################
+_classify_runtime_limit() {
+	local pid="$1"
+	local age_seconds="$2"
+	local runtime_limit="$3"
+
+	if [[ ! "$age_seconds" =~ ^[0-9]+$ || ! "$runtime_limit" =~ ^[0-9]+$ ]]; then
+		printf '%s' "$PROCESS_RUNTIME_OK"
+		return 0
+	fi
+	if [[ "$age_seconds" -le "$runtime_limit" ]]; then
+		printf '%s' "$PROCESS_RUNTIME_OK"
+		return 0
+	fi
+	if _is_managed_worker_process "$pid"; then
+		printf '%s' "$PROCESS_RUNTIME_MANAGED"
+		return 0
+	fi
+
+	printf '%s' "$PROCESS_RUNTIME_OVER"
 	return 0
 }
 
@@ -279,6 +344,7 @@ cmd_scan() {
 
 		local age_seconds
 		age_seconds=$(_get_process_age "$pid")
+		local runtime_status
 		local cwd_path
 		cwd_path=$(_get_process_cwd "$pid")
 
@@ -288,6 +354,7 @@ cmd_scan() {
 			rss_limit="$SHELLCHECK_RSS_LIMIT_KB"
 			runtime_limit="$SHELLCHECK_RUNTIME_LIMIT"
 		fi
+		runtime_status=$(_classify_runtime_limit "$pid" "$age_seconds" "$runtime_limit")
 
 		local status="OK"
 		local detail=""
@@ -299,10 +366,13 @@ cmd_scan() {
 			status="OVER_RSS"
 			detail="RSS ${rss_mb}MB > $((rss_limit / 1024))MB"
 			violations=$((violations + 1))
-		elif [[ "$age_seconds" -gt "$runtime_limit" ]]; then
+		elif [[ "$runtime_status" == "$PROCESS_RUNTIME_OVER" ]]; then
 			status="OVER_TIME"
 			detail="runtime ${age_seconds}s > ${runtime_limit}s"
 			violations=$((violations + 1))
+		elif [[ "$runtime_status" == "$PROCESS_RUNTIME_MANAGED" ]]; then
+			status="MANAGED"
+			detail="runtime delegated to worker lifecycle controls"
 		elif [[ "$cmd_base" == "shellcheck" ]]; then
 			[[ "$ppid" =~ ^[0-9]+$ ]] || ppid=0
 			if [[ "$ppid" -eq 1 ]] && [[ "$age_seconds" -gt 120 ]]; then
@@ -369,6 +439,7 @@ cmd_kill_runaways() {
 
 		local age_seconds
 		age_seconds=$(_get_process_age "$pid")
+		local runtime_status
 		local cwd_path
 		cwd_path=$(_get_process_cwd "$pid")
 
@@ -378,13 +449,20 @@ cmd_kill_runaways() {
 			rss_limit="$SHELLCHECK_RSS_LIMIT_KB"
 			runtime_limit="$SHELLCHECK_RUNTIME_LIMIT"
 		fi
+		runtime_status=$(_classify_runtime_limit "$pid" "$age_seconds" "$runtime_limit")
 
 		local violation=""
 		if [[ "$rss" -gt "$rss_limit" ]]; then
 			local rss_mb=$((rss / 1024))
 			violation="RSS ${rss_mb}MB > $((rss_limit / 1024))MB"
-		elif [[ "$age_seconds" -gt "$runtime_limit" ]]; then
+		elif [[ "$runtime_status" == "$PROCESS_RUNTIME_OVER" ]]; then
 			violation="runtime ${age_seconds}s > ${runtime_limit}s"
+		fi
+
+		# Managed worker trees have dedicated activity, sandbox, service, and
+		# lease controls. Do not apply any generic age-based cleanup to them.
+		if [[ -z "$violation" && "$runtime_status" == "$PROCESS_RUNTIME_MANAGED" ]]; then
+			continue
 		fi
 
 		# Orphan shellcheck reaper: if parent is PID 1 (reparented because the
@@ -487,6 +565,7 @@ cmd_status() {
 		cmd_base="${cmd_base##*/}"
 		local age_seconds
 		age_seconds=$(_get_process_age "$pid")
+		local runtime_status
 		local cwd_path
 		cwd_path=$(_get_process_cwd "$pid")
 		local rss_limit="$CHILD_RSS_LIMIT_KB"
@@ -495,8 +574,11 @@ cmd_status() {
 			rss_limit="$SHELLCHECK_RSS_LIMIT_KB"
 			runtime_limit="$SHELLCHECK_RUNTIME_LIMIT"
 		fi
-		if [[ "$rss" -gt "$rss_limit" ]] || [[ "$age_seconds" -gt "$runtime_limit" ]]; then
+		runtime_status=$(_classify_runtime_limit "$pid" "$age_seconds" "$runtime_limit")
+		if [[ "$rss" -gt "$rss_limit" ]] || [[ "$runtime_status" == "$PROCESS_RUNTIME_OVER" ]]; then
 			violations=$((violations + 1))
+		elif [[ "$runtime_status" == "$PROCESS_RUNTIME_MANAGED" ]]; then
+			continue
 		elif [[ "$cmd_base" == "shellcheck" ]]; then
 			[[ "$ppid" =~ ^[0-9]+$ ]] || ppid=0
 			if [[ "$ppid" -eq 1 ]] && [[ "$age_seconds" -gt 120 ]]; then
@@ -598,7 +680,10 @@ main() {
 	case "$command" in
 	scan) cmd_scan ;;
 	kill-runaways) cmd_kill_runaways ;;
-	match-playwright-list) shift; cmd_match_playwright_list "$@" ;;
+	match-playwright-list)
+		shift
+		cmd_match_playwright_list "$@"
+		;;
 	sessions) cmd_sessions ;;
 	status) cmd_status ;;
 	help | --help | -h) cmd_help ;;
@@ -610,4 +695,6 @@ main() {
 	esac
 }
 
-main "$@"
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+	main "$@"
+fi
