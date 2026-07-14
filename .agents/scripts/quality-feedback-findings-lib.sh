@@ -229,14 +229,8 @@ _apply_positive_filter() {
 			"\\bconsistent\\b|\\brobust(ness)?\\b|\\buser experience\\b|" +
 			"\\breduces? (external )?requirements?\\b|\\bwell-implemented\\b"; "i")) as $summary_praise_only |
 
-		# Maintainer exact-head reviews commonly list verified fixes and passing
-		# suites. Historic terms such as "unsupported" and "failures" describe
-		# the fixed behaviour, not fresh findings. Keep reviews with contrast or
-		# unresolved-work language so real concerns are never hidden.
-		(($body | test("\\breviewed exact head\\b"; "i")) and
-		 ($body | test("\\b(corrects?|keeps?|preserves?|verif(y|ies|ied)|pass(es|ed)?)\\b"; "i")) and
-		 ($body | test("\\b(tests?|checks?|suites?)\\b"; "i")) and
-		 (($body | test("\\b(but|however|although|yet|except|still|remaining|unresolved)\\b"; "i")) | not)) as $exact_head_verification |
+		# Exact-head fix/pass evidence is praise unless contrast or unresolved-work language remains.
+		(($body | test("\\breviewed exact head\\b"; "i")) and ($body | test("\\b(corrects?|keeps?|preserves?|verif(y|ies|ied)|pass(es|ed)?)\\b"; "i")) and ($body | test("\\b(tests?|checks?|suites?)\\b"; "i")) and (($body | test("\\b(but|however|although|yet|except|still|remaining|unresolved)\\b"; "i")) | not)) as $exact_head_verification |
 
 		# Review summaries often describe the bug the PR already fixed, e.g.
 		# "corrects a broken URL". Do not treat those historic defect words as

@@ -76,10 +76,7 @@ _test_approval_filter() {
 			"\\bconsistent\\b|\\brobust(ness)?\\b|\\buser experience\\b|" +
 			"\\breduces? (external )?requirements?\\b|\\bwell-implemented\\b"; "i")) as $summary_praise_only |
 
-		(($body | test("\\breviewed exact head\\b"; "i")) and
-		 ($body | test("\\b(corrects?|keeps?|preserves?|verif(y|ies|ied)|pass(es|ed)?)\\b"; "i")) and
-		 ($body | test("\\b(tests?|checks?|suites?)\\b"; "i")) and
-		 (($body | test("\\b(but|however|although|yet|except|still|remaining|unresolved)\\b"; "i")) | not)) as $exact_head_verification |
+		(($body | test("\\breviewed exact head\\b"; "i")) and ($body | test("\\b(corrects?|keeps?|preserves?|verif(y|ies|ied)|pass(es|ed)?)\\b"; "i")) and ($body | test("\\b(tests?|checks?|suites?)\\b"; "i")) and (($body | test("\\b(but|however|although|yet|except|still|remaining|unresolved)\\b"; "i")) | not)) as $exact_head_verification |
 
 		($body | test(
 			"\\b(corrects?|fix(es|ed)?|replaces?|addresses?)\\b[^.\\n]*(\\bbroken\\b|\\bincorrect\\b|\\bwrong\\b|\\bbug\\b|\\berror\\b|\\bissue\\b)|" +
