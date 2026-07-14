@@ -42,6 +42,10 @@
 #      (The default-branch resolver must not fall back to the current checkout
 #      and mistake the feature branch for the default branch.)
 #
+#   10-13. default=develop, zero/real commits, local/pushed → expected lifecycle
+#      (Commit detection must compare against origin/develop. Comparing against
+#      origin/main invents output for zero-diff branches and starts an orphan loop.)
+#
 # `gh` is stubbed via PATH to return a controllable PR-list count without
 # touching the network. `git` is real — each case spins up its own
 # disposable origin+clone pair so the classifier sees authentic refs.
@@ -188,6 +192,33 @@ make_repo_pair() {
 	git -C "$WORK_DIR" config user.name "Test"
 	# Push origin/HEAD so symbolic-ref refs/remotes/origin/HEAD resolves.
 	git -C "$WORK_DIR" remote set-head origin main >/dev/null 2>&1 || true
+	return 0
+}
+
+# make_develop_repo_pair <label>
+# Creates a repository where develop is the remote default and is one commit
+# ahead of main. This reproduces the cross-base false positive from GH#27606.
+make_develop_repo_pair() {
+	local label="$1"
+	ORIGIN_DIR="${TEST_ROOT}/origin-${label}"
+	WORK_DIR="${TEST_ROOT}/work-${label}"
+	rm -rf "$ORIGIN_DIR" "$WORK_DIR"
+	mkdir -p "$ORIGIN_DIR"
+	(
+		cd "$ORIGIN_DIR" || exit 1
+		git init -q -b main
+		git config user.email "test@example.com"
+		git config user.name "Test"
+		git commit --allow-empty -q -m "main init"
+		git checkout -q -b develop
+		printf '%s\n' "develop base" >develop.txt
+		git add develop.txt
+		git commit -q -m "develop base"
+	) || return 1
+	git clone -q --branch develop "$ORIGIN_DIR" "$WORK_DIR" || return 1
+	git -C "$WORK_DIR" config user.email "test@example.com"
+	git -C "$WORK_DIR" config user.name "Test"
+	git -C "$WORK_DIR" remote set-head origin develop >/dev/null 2>&1 || return 1
 	return 0
 }
 
@@ -456,6 +487,103 @@ test_dirty_feature_worktree_preserved() {
 	return 0
 }
 
+test_develop_zero_diff_local_branch_returns_noop() {
+	make_develop_repo_pair "case10" || {
+		print_result "case 10: develop zero-diff local branch → noop" 1 "fixture setup failed"
+		return 0
+	}
+	git -C "$WORK_DIR" checkout -q -b feature/t1010-zero-local || {
+		print_result "case 10: develop zero-diff local branch → noop" 1 "branch setup failed"
+		return 0
+	}
+	export STUB_PR_JSON='[]' STUB_SEARCH_JSON='[]'
+	local got
+	got=$(_worker_produced_output "issue-1010" "$WORK_DIR")
+	if [[ "$got" == "noop" ]]; then
+		print_result "case 10: develop zero-diff local branch → noop" 0
+	else
+		print_result "case 10: develop zero-diff local branch → noop" 1 "got: $got"
+	fi
+	return 0
+}
+
+test_develop_zero_diff_pushed_branch_returns_noop() {
+	make_develop_repo_pair "case11" || {
+		print_result "case 11: develop zero-diff pushed branch → noop" 1 "fixture setup failed"
+		return 0
+	}
+	(
+		cd "$WORK_DIR" || exit 1
+		git checkout -q -b feature/t1011-zero-pushed
+		git push -q origin feature/t1011-zero-pushed
+	) || {
+		print_result "case 11: develop zero-diff pushed branch → noop" 1 "branch setup failed"
+		return 0
+	}
+	export STUB_PR_JSON='[]' STUB_SEARCH_JSON='[]'
+	local got
+	got=$(_worker_produced_output "issue-1011" "$WORK_DIR")
+	if [[ "$got" == "noop" ]]; then
+		print_result "case 11: develop zero-diff pushed branch → noop" 0
+	else
+		print_result "case 11: develop zero-diff pushed branch → noop" 1 "got: $got"
+	fi
+	return 0
+}
+
+test_develop_real_commit_local_branch_remains_unpushed() {
+	make_develop_repo_pair "case12" || {
+		print_result "case 12: develop real local commit → local_branch_unpushed" 1 "fixture setup failed"
+		return 0
+	}
+	(
+		cd "$WORK_DIR" || exit 1
+		git checkout -q -b feature/t1012-real-local
+		printf '%s\n' "worker output" >worker.txt
+		git add worker.txt
+		git commit -q -m "worker output"
+	) || {
+		print_result "case 12: develop real local commit → local_branch_unpushed" 1 "commit setup failed"
+		return 0
+	}
+	export STUB_PR_JSON='[]' STUB_SEARCH_JSON='[]'
+	local got
+	got=$(_worker_produced_output "issue-1012" "$WORK_DIR")
+	if [[ "$got" == "local_branch_unpushed" ]]; then
+		print_result "case 12: develop real local commit → local_branch_unpushed" 0
+	else
+		print_result "case 12: develop real local commit → local_branch_unpushed" 1 "got: $got"
+	fi
+	return 0
+}
+
+test_develop_real_commit_pushed_branch_remains_orphan() {
+	make_develop_repo_pair "case13" || {
+		print_result "case 13: develop real pushed commit → branch_orphan" 1 "fixture setup failed"
+		return 0
+	}
+	(
+		cd "$WORK_DIR" || exit 1
+		git checkout -q -b feature/t1013-real-pushed
+		printf '%s\n' "worker output" >worker.txt
+		git add worker.txt
+		git commit -q -m "worker output"
+		git push -q origin feature/t1013-real-pushed
+	) || {
+		print_result "case 13: develop real pushed commit → branch_orphan" 1 "commit setup failed"
+		return 0
+	}
+	export STUB_PR_JSON='[]' STUB_SEARCH_JSON='[]'
+	local got
+	got=$(_worker_produced_output "issue-1013" "$WORK_DIR")
+	if [[ "$got" == "branch_orphan" ]]; then
+		print_result "case 13: develop real pushed commit → branch_orphan" 0
+	else
+		print_result "case 13: develop real pushed commit → branch_orphan" 1 "got: $got"
+	fi
+	return 0
+}
+
 # -----------------------------------------------------------------------------
 # Run
 # -----------------------------------------------------------------------------
@@ -469,6 +597,10 @@ test_feature_branch_without_default_ref_returns_branch_orphan
 test_external_terminal_complete_uses_trailing_issue_digits
 test_external_terminal_complete_guards_before_github_calls
 test_dirty_feature_worktree_preserved
+test_develop_zero_diff_local_branch_returns_noop
+test_develop_zero_diff_pushed_branch_returns_noop
+test_develop_real_commit_local_branch_remains_unpushed
+test_develop_real_commit_pushed_branch_remains_orphan
 
 printf '\nRan %d test(s), %d failed\n' "$TESTS_RUN" "$TESTS_FAILED"
 
