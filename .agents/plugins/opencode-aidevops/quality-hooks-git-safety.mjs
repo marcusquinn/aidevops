@@ -2,11 +2,19 @@
 // SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 
 import { execFileSync } from "child_process";
-import { existsSync } from "fs";
+import { existsSync, realpathSync } from "fs";
 import { homedir } from "os";
 import { join, resolve } from "path";
 
-function isTrustedFullLoopCommitAndPr(command, scriptsDir, cwd) {
+function resolvesTo(candidatePath, expectedPath) {
+  try {
+    return realpathSync(candidatePath) === realpathSync(expectedPath);
+  } catch {
+    return false;
+  }
+}
+
+function isTrustedFullLoopCommitAndPr(command, scriptsDir, cwd, activeScriptsDir) {
   const wrapperMatch = command.match(
     /(?:^|[($;|&\s])(?<wrapper>[^\s'";$|&()]*full-loop-helper\.sh)\s+commit-and-pr(?:\s|$)/,
   );
@@ -14,13 +22,15 @@ function isTrustedFullLoopCommitAndPr(command, scriptsDir, cwd) {
 
   const wrapper = wrapperMatch.groups.wrapper;
   const deployedPath = resolve(scriptsDir, "full-loop-helper.sh");
+  const activeDeployedPath = resolve(activeScriptsDir, "full-loop-helper.sh");
   const repositoryPath = resolve(cwd, ".agents", "scripts", "full-loop-helper.sh");
   let candidatePath;
   if (wrapper === "full-loop-helper.sh") candidatePath = deployedPath;
   else if (wrapper.startsWith("~/")) candidatePath = resolve(homedir(), wrapper.slice(2));
   else if (wrapper.startsWith("$PWD/")) candidatePath = resolve(cwd, wrapper.slice(5));
   else candidatePath = resolve(cwd, wrapper);
-  return [deployedPath, repositoryPath].includes(candidatePath) && existsSync(candidatePath);
+  if ([deployedPath, repositoryPath].includes(candidatePath)) return existsSync(candidatePath);
+  return candidatePath === activeDeployedPath && resolvesTo(candidatePath, deployedPath);
 }
 
 function isWorkerContext(env = process.env) {
@@ -39,7 +49,14 @@ export function checkCommandSafetyGate(command, scriptsDir, cwd = process.cwd(),
     throw new Error("BLOCKED: required command policy helper is missing");
   }
   const namesFullLoopCommitAndPr = /full-loop-helper\.sh\s+commit-and-pr(?:\s|$)/.test(command);
-  const trustedFullLoopCommitAndPr = isTrustedFullLoopCommitAndPr(command, scriptsDir, cwd);
+  const activeScriptsDir = options.activeScriptsDir
+    ?? join(homedir(), ".aidevops", "agents", "scripts");
+  const trustedFullLoopCommitAndPr = isTrustedFullLoopCommitAndPr(
+    command,
+    scriptsDir,
+    cwd,
+    activeScriptsDir,
+  );
   if (namesFullLoopCommitAndPr && !trustedFullLoopCommitAndPr) {
     throw new Error("BLOCKED: unclassified nested Git invocation from an untrusted full-loop wrapper");
   }

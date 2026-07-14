@@ -3,7 +3,15 @@
 
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { copyFileSync, mkdtempSync, mkdirSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import {
+  copyFileSync,
+  mkdtempSync,
+  mkdirSync,
+  readdirSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -59,6 +67,7 @@ test("allows read-only canonical commands and linked-worktree mutation", () => {
 test("allows the repository full-loop commit-and-pr wrapper only from a linked worktree", () => {
   const { root, repo, linked } = setupRepo();
   const wrapperCommand = "PR_NUMBER=$(full-loop-helper.sh commit-and-pr --issue 123 --testing 'git tests pass')";
+  const activeScriptsDir = join(root, "active", "agents", "scripts");
   try {
     mkdirSync(join(repo, ".agents", "scripts"), { recursive: true });
     writeFileSync(join(repo, ".agents", "scripts", "full-loop-helper.sh"), "#!/bin/sh\n");
@@ -69,12 +78,44 @@ test("allows the repository full-loop commit-and-pr wrapper only from a linked w
 
     mkdirSync(join(linked, ".agents", "scripts"), { recursive: true });
     writeFileSync(join(linked, ".agents", "scripts", "full-loop-helper.sh"), "#!/bin/sh\n");
+    mkdirSync(dirname(activeScriptsDir), { recursive: true });
+    symlinkSync(scriptsDir, activeScriptsDir, "dir");
     assert.doesNotThrow(() => checkCanonicalGitSafetyGate(wrapperCommand, scriptsDir, linked));
     assert.doesNotThrow(() => checkCanonicalGitSafetyGate(
       "./.agents/scripts/full-loop-helper.sh commit-and-pr --issue 123 --testing 'git tests pass'",
       scriptsDir,
       linked,
     ));
+    const repositoryWrapper = join(linked, ".agents", "scripts", "full-loop-helper.sh");
+    assert.doesNotThrow(() => checkCanonicalGitSafetyGate(
+      `${repositoryWrapper} commit-and-pr --issue 123`,
+      scriptsDir,
+      linked,
+    ));
+    assert.throws(
+      () => checkCanonicalGitSafetyGate(
+        `${join(repo, ".agents", "scripts", "full-loop-helper.sh")} commit-and-pr --issue 123`,
+        scriptsDir,
+        repo,
+      ),
+      /canonical worktree mutation/,
+    );
+    const activeWrapper = join(activeScriptsDir, "full-loop-helper.sh");
+    assert.doesNotThrow(() => checkCanonicalGitSafetyGate(
+      `PR_NUMBER=$(${activeWrapper} commit-and-pr --issue 123 --message 'fix: example')`,
+      scriptsDir,
+      linked,
+      { activeScriptsDir },
+    ));
+    assert.throws(
+      () => checkCanonicalGitSafetyGate(
+        `${activeWrapper} commit-and-pr --issue 123`,
+        scriptsDir,
+        repo,
+        { activeScriptsDir },
+      ),
+      /canonical worktree mutation/,
+    );
     assert.doesNotThrow(() => checkCanonicalGitSafetyGate(
       `${join(scriptsDir, "full-loop-helper.sh")} commit-and-pr --issue 123 --testing 'git tests pass'`,
       scriptsDir,
@@ -100,6 +141,26 @@ test("does not trust similarly named full-loop wrappers", () => {
   try {
     assert.throws(
       () => checkCanonicalGitSafetyGate("./tmp/full-loop-helper.sh commit-and-pr --testing 'git tests pass'", scriptsDir, linked),
+      /unclassified nested Git invocation/,
+    );
+    assert.throws(
+      () => checkCanonicalGitSafetyGate(
+        "$HOME/.aidevops/agents/scripts/full-loop-helper.sh commit-and-pr --issue 123",
+        scriptsDir,
+        linked,
+      ),
+      /unclassified nested Git invocation/,
+    );
+    const unrelatedScripts = join(root, "unrelated", "scripts");
+    mkdirSync(unrelatedScripts, { recursive: true });
+    writeFileSync(join(unrelatedScripts, "full-loop-helper.sh"), "#!/bin/sh\n");
+    assert.throws(
+      () => checkCanonicalGitSafetyGate(
+        `${join(unrelatedScripts, "full-loop-helper.sh")} commit-and-pr --issue 123`,
+        scriptsDir,
+        linked,
+        { activeScriptsDir: unrelatedScripts },
+      ),
       /unclassified nested Git invocation/,
     );
   } finally {
