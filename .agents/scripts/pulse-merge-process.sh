@@ -1757,11 +1757,15 @@ _auto_merge_stuck_seconds() {
 # repos where allow_auto_merge=true is bulk-enabled and CI is fast.
 #
 # Args: $1=pr_number, $2=repo_slug
-# Returns: 0=native-auto requested/deferred, 1=fall through
+# Args: $1=pr_number, $2=repo_slug, $3=require synchronous final gate (0|1)
+# Returns: 0=native-auto requested/deferred, 1=fall through,
+#          2=defer without native auto-merge so mutable approval state is
+#            revalidated on a later synchronous merge cycle
 #######################################
 _set_native_auto_merge_or_skip() {
 	local pr_number="$1"
 	local repo_slug="$2"
+	local require_synchronous_final_gate="${3:-0}"
 
 	# Fetch auto_merge metadata + merge state in one call so the stuck-state
 	# check (t3192) does not require an extra round trip.
@@ -1775,6 +1779,23 @@ _set_native_auto_merge_or_skip() {
 	fi
 
 	if [[ -n "$_existing_auto" ]]; then
+		if [[ "$require_synchronous_final_gate" == "1" ]]; then
+			local _disable_bound_auto_output=""
+			if _disable_bound_auto_output=$(gh pr merge "$pr_number" --repo "$repo_slug" --disable-auto 2>&1); then
+				echo "[pulse-merge] PR #${pr_number} in ${repo_slug}: disabled deferred native auto-merge because external approval state must be revalidated at the actual merge call" >>"$LOGFILE"
+				return 2
+			fi
+			# If GitHub refuses disable-auto, converting the PR back to draft is a
+			# second independent server-side merge stop. Never continue to another
+			# merge path while an external auto-merge may remain armed.
+			local _draft_hold_output=""
+			if _draft_hold_output=$(gh pr ready "$pr_number" --repo "$repo_slug" --undo 2>&1); then
+				echo "[pulse-merge] PR #${pr_number} in ${repo_slug}: disable-auto failed, so PR was returned to draft to stop deferred merge pending fresh approval: ${_disable_bound_auto_output}" >>"$LOGFILE"
+				return 2
+			fi
+			echo "[pulse-merge] SECURITY HOLD FAILED for PR #${pr_number} in ${repo_slug}: could not disable external auto-merge or return PR to draft; manual intervention required. disable=${_disable_bound_auto_output}; draft=${_draft_hold_output}" >>"$LOGFILE"
+			return 3
+		fi
 		# Auto-merge already requested — check for the GitHub auto_merge wedge
 		# before unconditionally deferring (t3192).
 		local _stuck_seconds=""
@@ -1833,6 +1854,10 @@ _set_native_auto_merge_or_skip() {
 	if [[ "$pending_count" -eq 0 ]]; then
 		# No pending required checks — immediate --admin merge is faster.
 		return 1
+	fi
+	if [[ "$require_synchronous_final_gate" == "1" ]]; then
+		echo "[pulse-merge] PR #${pr_number} in ${repo_slug}: CI pending; external approval state requires synchronous final revalidation, so native auto-merge remains disabled" >>"$LOGFILE"
+		return 2
 	fi
 
 	# CI in flight — ask GitHub to merge on green.

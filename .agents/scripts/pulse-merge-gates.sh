@@ -535,21 +535,27 @@ _pulse_merge_admin_safety_check() {
 		echo "[pulse-merge] DEFENSE-IN-DEPTH: PR #${pr_number} in ${repo_slug} — non-collaborator PR missing external-contributor label, treating as external (GH#17671)" >>"$LOGFILE"
 	fi
 
-	if [[ "$treat_as_external" -eq 0 ]]; then
-		return 0
+	# A linked issue's live NMR state is a final-call hold for every PR, not only
+	# external PRs. Fail closed if a linked issue was found but cannot be read.
+	local linked="" linked_labels=""
+	linked=$(_extract_linked_issue "$pr_number" "$repo_slug" 2>/dev/null) || return 1
+	if [[ -n "$linked" ]]; then
+		linked_labels=$(gh api "repos/${repo_slug}/issues/${linked}" --jq '[.labels[].name] | join(",")' 2>/dev/null) || linked_labels="__API_ERROR__"
+		if [[ "$linked_labels" == "__API_ERROR__" || ",${linked_labels}," == *",needs-maintainer-review,"* ]]; then
+			echo "[pulse-merge] DEFENSE-IN-DEPTH: REFUSING merge of PR #${pr_number} in ${repo_slug} — linked issue #${linked} is unavailable or carries needs-maintainer-review" >>"$LOGFILE"
+			return 1
+		fi
 	fi
 
-	# External / fork PR — require linked issue + crypto approval.
-	if ! _external_pr_has_linked_issue "$pr_number" "$repo_slug"; then
-		echo "[pulse-merge] DEFENSE-IN-DEPTH: REFUSING --admin merge of PR #${pr_number} in ${repo_slug} — external/fork PR has no linked issue (t2934)" >>"$LOGFILE"
-		return 1
+	if [[ "$treat_as_external" -eq 0 ]]; then
+		_PULSE_FINAL_REQUIRES_SYNCHRONOUS_MERGE=0
+		return 0
 	fi
-	local linked="" linked_labels=""
-	linked=$(_extract_linked_issue "$pr_number" "$repo_slug" 2>/dev/null) || linked=""
-	[[ -n "$linked" ]] || return 1
-	linked_labels=$(gh api "repos/${repo_slug}/issues/${linked}" --jq '[.labels[].name] | join(",")' 2>/dev/null) || linked_labels="__API_ERROR__"
-	if [[ "$linked_labels" == "__API_ERROR__" || ",${linked_labels}," == *",needs-maintainer-review,"* ]]; then
-		echo "[pulse-merge] DEFENSE-IN-DEPTH: REFUSING merge of PR #${pr_number} in ${repo_slug} — linked issue #${linked} is unavailable or carries needs-maintainer-review" >>"$LOGFILE"
+	_PULSE_FINAL_REQUIRES_SYNCHRONOUS_MERGE=1
+
+	# External / fork PR — require linked issue + crypto approval.
+	if [[ -z "$linked" ]]; then
+		echo "[pulse-merge] DEFENSE-IN-DEPTH: REFUSING --admin merge of PR #${pr_number} in ${repo_slug} — external/fork PR has no linked issue (t2934)" >>"$LOGFILE"
 		return 1
 	fi
 	if ! _external_pr_linked_issue_crypto_approved "$pr_number" "$repo_slug"; then

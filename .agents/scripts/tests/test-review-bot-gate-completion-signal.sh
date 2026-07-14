@@ -654,6 +654,59 @@ test_classify_bot_state_accepts_submitted_at_only_review() {
 	return 0
 }
 
+install_head_bound_review_gh_stub() {
+	local review_commit="$1"
+	local review_time="$2"
+	local gh_stub="${TEST_ROOT}/bin/gh"
+	cat >"$gh_stub" <<EOF
+#!/usr/bin/env bash
+set -euo pipefail
+endpoint="\${2:-}"
+jq_filter=""
+shift 2
+while [[ "\$#" -gt 0 ]]; do
+	if [[ "\${1:-}" == "--jq" ]]; then jq_filter="\${2:-}"; shift 2; else shift; fi
+done
+case "\$endpoint" in
+	repos/testorg/otherrepo/pulls/123/reviews)
+		jq -r "\$jq_filter" <<'JSON'
+[{"user":{"login":"reviewbot"},"commit_id":"${review_commit}","submitted_at":"${review_time}","body":"Looks good on this revision."}]
+JSON
+		;;
+	*) jq -r "\$jq_filter" <<'JSON'
+[]
+JSON
+		;;
+esac
+EOF
+	chmod +x "$gh_stub"
+	return 0
+}
+
+test_current_head_evidence_rejects_historical_review() {
+	install_head_bound_review_gh_stub "old-head" "2026-07-14T12:00:00Z"
+	export REVIEW_GATE_EXPECTED_HEAD_SHA="new-head"
+	if bot_has_real_review 123 'testorg/otherrepo' 'reviewbot' 2>/dev/null; then
+		print_result "current-head evidence rejects a review bound to an older head" 1
+	else
+		print_result "current-head evidence rejects a review bound to an older head" 0
+	fi
+	unset REVIEW_GATE_EXPECTED_HEAD_SHA
+	return 0
+}
+
+test_current_head_evidence_accepts_exact_head_review() {
+	install_head_bound_review_gh_stub "new-head" "2026-07-14T14:00:00Z"
+	export REVIEW_GATE_EXPECTED_HEAD_SHA="new-head"
+	if bot_has_real_review 123 'testorg/otherrepo' 'reviewbot' 2>/dev/null; then
+		print_result "current-head evidence accepts a review bound to the exact head" 0
+	else
+		print_result "current-head evidence accepts a review bound to the exact head" 1
+	fi
+	unset REVIEW_GATE_EXPECTED_HEAD_SHA
+	return 0
+}
+
 # ---------- Unit tests: notice category classification (GH#22855) ----------
 
 install_notice_category_gh_stub() {
@@ -983,6 +1036,8 @@ main() {
 	echo "=== Reviews endpoint submitted_at fallback (GH#26473) ==="
 	test_bot_has_real_review_accepts_submitted_at_only_review
 	test_classify_bot_state_accepts_submitted_at_only_review
+	test_current_head_evidence_rejects_historical_review
+	test_current_head_evidence_accepts_exact_head_review
 
 	echo ""
 	echo "=== Notice category classification (GH#22855) ==="

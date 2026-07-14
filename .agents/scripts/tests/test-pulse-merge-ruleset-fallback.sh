@@ -181,6 +181,7 @@ _check_ruleset_required_reviews_passing() { return 0; }
 _extract_merge_summary() { printf 'summary'; return 0; }
 _retarget_stacked_children() { return 0; }
 _pulse_merge_admin_safety_check() { return 0; }
+_pulse_merge_final_trust_gate() { _PULSE_FINAL_REQUIRES_SYNCHRONOUS_MERGE=0; return 0; }
 _set_native_auto_merge_or_skip() { return 1; }
 _attempt_existing_auto_merge_behind_update_branch() { return 1; }
 _attempt_green_behind_update_branch() { return "${GREEN_BEHIND_UPDATE_RC:-1}"; }
@@ -214,7 +215,7 @@ test_ruleset_violation_enables_auto_merge_without_admin() {
 	setup_test_env
 	define_function_under_test || { teardown_test_env; return 0; }
 
-	local pr_obj='{"number":77,"mergeable":"MERGEABLE","reviewDecision":"APPROVED","author":{"login":"owner"},"title":"test"}'
+	local pr_obj='{"number":77,"mergeable":"MERGEABLE","reviewDecision":"APPROVED","author":{"login":"owner"},"title":"test","headRefOid":"head-current"}'
 	local result=0
 	_process_single_ready_pr "owner/repo" "$pr_obj" || result=$?
 
@@ -228,7 +229,7 @@ test_ruleset_violation_enables_auto_merge_without_admin() {
 		teardown_test_env
 		return 0
 	fi
-	if ! grep -qE 'gh pr merge 77 --repo owner/repo --auto --squash$' "$GH_LOG"; then
+	if ! grep -qE 'gh pr merge 77 --repo owner/repo --auto --squash --match-head-commit head-current$' "$GH_LOG"; then
 		print_result "ruleset violation fallback enables native auto-merge" 1 "gh log: $(cat "$GH_LOG")"
 		teardown_test_env
 		return 0

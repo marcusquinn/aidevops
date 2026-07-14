@@ -266,6 +266,22 @@ test_case_a_collaborator_pr_returns_0() {
 	return 0
 }
 
+test_case_l_collaborator_linked_issue_nmr_blocks_final_gate() {
+	: >"$LOGFILE"
+	set_fixture '[{"name":"bug"}]' 'false' \
+		'## Summary\n\nResolves #930' 'VERIFIED' 'VERIFIED' 'trusted-contributor'
+	printf '%s' 'needs-maintainer-review' >"${TEST_ROOT}/linked-labels.txt"
+
+	local result=0
+	_pulse_merge_admin_safety_check "930" "owner/repo" "head-current" || result=$?
+	if [[ "$result" -eq 1 ]] && grep -qF "linked issue #930 is unavailable or carries needs-maintainer-review" "$LOGFILE"; then
+		print_result "Case L: collaborator linked-issue NMR blocks at final gate" 0
+		return 0
+	fi
+	print_result "Case L: collaborator linked-issue NMR blocks at final gate" 1 "rc=${result}; log=$(cat "$LOGFILE")"
+	return 0
+}
+
 # =============================================================================
 # Case B: external-contributor labeled, no closing keyword in body.
 # Expected: returns 1 (refused — no linked issue).
@@ -526,6 +542,7 @@ main() {
 	test_case_i_unlabeled_non_collaborator_is_external
 	test_case_j_final_gate_rejects_stale_cached_review_evidence
 	test_case_k_final_gate_refreshes_current_review_evidence
+	test_case_l_collaborator_linked_issue_nmr_blocks_final_gate
 
 	printf '\nRan %s tests, %s failed.\n' "$TESTS_RUN" "$TESTS_FAILED"
 	if [[ "$TESTS_FAILED" -gt 0 ]]; then

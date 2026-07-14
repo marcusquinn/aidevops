@@ -251,6 +251,11 @@ _pmrc_snapshot_checks_acceptable() {
 	] | @tsv' <<<"$checks_json" 2>/dev/null) || return 1
 	while IFS=$'\t' read -r name family status conclusion required members link; do
 		[[ -n "$name" ]] || continue
+		if [[ "$family" == "maintainer-gate" && "$conclusion" == "failure" ]]; then
+			echo "[pulse-merge] pre-merge snapshot: maintainer-gate family is terminal-failure for PR #${pr_number} in ${repo_slug}; aliases=${members}, required=${required}, active_alias_present=$([[ "$status" != "$PMRC_CHECK_COMPLETED" ]] && printf true || printf false) — merge blocked" >>"$LOGFILE"
+			blockers=$((blockers + 1))
+			continue
+		fi
 		if [[ "$status" != "$PMRC_CHECK_COMPLETED" || -z "$conclusion" ]]; then
 			pending=$((pending + 1))
 			continue

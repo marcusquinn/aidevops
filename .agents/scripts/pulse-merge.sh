@@ -1457,10 +1457,16 @@ _process_single_ready_pr() {
 	# pulse poll cycle (~120s). Falls through to --admin immediate merge
 	# when CI is already green, repo opts out, or the API call fails.
 	local _native_auto_rc=0
-	_set_native_auto_merge_or_skip "$pr_number" "$repo_slug" || _native_auto_rc=$?
+	_set_native_auto_merge_or_skip "$pr_number" "$repo_slug" "${_PULSE_FINAL_REQUIRES_SYNCHRONOUS_MERGE:-0}" || _native_auto_rc=$?
 	case "$_native_auto_rc" in
 		0)
 			return 4
+			;;
+		2)
+			return 1
+			;;
+		3)
+			return 1
 			;;
 	esac
 	if ! _pulse_merge_final_trust_gate "$pr_number" "$repo_slug" "$pr_head_ref_oid"; then
@@ -1513,11 +1519,16 @@ ${_missing_check_update_output}"
 	fi
 	if [[ $_merge_exit -ne 0 && "$merge_output" == *"Repository rule violations found"* ]]; then
 		echo "[pulse-wrapper] Deterministic merge: admin merge hit repository rulesets for PR #${pr_number} in ${repo_slug}; retrying with native auto-merge without --admin (GH#24438): ${merge_output}" >>"$LOGFILE"
-		if ! _pulse_merge_final_trust_gate "$pr_number" "$repo_slug" "$pr_head_ref_oid"; then
-			return 1
+		if [[ "${_PULSE_FINAL_REQUIRES_SYNCHRONOUS_MERGE:-0}" == "1" ]]; then
+			_auto_merge_output="native auto-merge skipped: mutable external approval state requires synchronous final revalidation"
+			_auto_merge_exit=1
+		else
+			if ! _pulse_merge_final_trust_gate "$pr_number" "$repo_slug" "$pr_head_ref_oid"; then
+				return 1
+			fi
+			_auto_merge_output=$(gh pr merge "$pr_number" --repo "$repo_slug" --auto --squash --match-head-commit "$pr_head_ref_oid" 2>&1)
+			_auto_merge_exit=$?
 		fi
-		_auto_merge_output=$(gh pr merge "$pr_number" --repo "$repo_slug" --auto --squash --match-head-commit "$pr_head_ref_oid" 2>&1)
-		_auto_merge_exit=$?
 		if [[ $_auto_merge_exit -eq 0 ]]; then
 			echo "[pulse-wrapper] Deterministic merge: enabled native auto-merge for PR #${pr_number} in ${repo_slug} after ruleset blocked admin bypass (GH#24438)" >>"$LOGFILE"
 			return 0

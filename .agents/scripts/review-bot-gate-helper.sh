@@ -594,6 +594,7 @@ bot_has_real_review() {
 	local bot_login="$3"
 	local success_status_contexts="${4-}"
 	local success_status_contexts_prepared="${5:-false}"
+	local expected_head_sha="${REVIEW_GATE_EXPECTED_HEAD_SHA:-}"
 	local has_success_status_contexts="false"
 	[[ $# -ge 4 ]] && has_success_status_contexts="true"
 
@@ -605,7 +606,13 @@ bot_has_real_review() {
 	# and emits a TSV record of created_at \t updated_at \t base64(body).
 	# Reviews lack updated_at on some endpoints; default to created_at via //.
 	local jq_filter
-	jq_filter=".[] | select(.user.login | ascii_downcase | test(\"${bot_login}\")) | [(.created_at // .submitted_at // \"\"), (.updated_at // .submitted_at // .created_at // \"\"), (.body // \"\" | @base64)] | @tsv"
+	jq_filter=".[] | select(.user.login | ascii_downcase | test(\"${bot_login}\"))"
+	if [[ -n "$expected_head_sha" ]]; then
+		# Typed merge evidence must identify the reviewed commit. Conversation
+		# comments have no commit_id and therefore cannot prove current-head review.
+		jq_filter="${jq_filter} | select((.commit_id // .original_commit_id // \"\") == \"${expected_head_sha}\")"
+	fi
+	jq_filter="${jq_filter} | [(.created_at // .submitted_at // \"\"), (.updated_at // .submitted_at // .created_at // \"\"), (.body // \"\" | @base64)] | @tsv"
 
 	local api_endpoints=(
 		"repos/${repo}/pulls/${pr_number}/reviews"
@@ -1016,7 +1023,7 @@ do_status_json() {
 
 	pr_json_before=$(gh api "repos/${repo}/pulls/${pr_number}" 2>/dev/null) || pr_json_before=""
 	head_sha_before=$(jq -r '.head.sha // ""' <<<"$pr_json_before" 2>/dev/null) || head_sha_before=""
-	output=$(do_check "$pr_number" "$repo" 2>/dev/null) || rc=$?
+	output=$(REVIEW_GATE_EXPECTED_HEAD_SHA="$head_sha_before" do_check "$pr_number" "$repo" 2>/dev/null) || rc=$?
 	pr_json=$(gh api "repos/${repo}/pulls/${pr_number}" 2>/dev/null) || pr_json=""
 	if [[ -n "$pr_json" ]]; then
 		head_sha=$(jq -r '.head.sha // ""' <<<"$pr_json" 2>/dev/null) || head_sha=""
@@ -1368,10 +1375,6 @@ do_batch_retry() {
 			echo "  PR #${pr_num}: ${result:-error} (skipped)" >&2
 			;;
 		esac
-	if [[ "$head_stable" != "true" ]]; then
-		permitted="false"
-		reason="head_changed_or_metadata_unavailable"
-	fi
 	done <<<"$pr_numbers"
 
 	echo "REQUESTED_${requested}"
