@@ -278,6 +278,7 @@ fetch_review_threads_json() {
 								comments(first: 1) {
 									nodes {
 										author { login }
+										pullRequestReview { databaseId }
 										path
 										line
 										url
@@ -384,26 +385,52 @@ fetch_inline_comments_md() {
 #     is a LGTM. See webapp#2349 for the canonical false-positive.
 #   - Body must contain at least one ACT_RE keyword (cheap noise filter
 #     against "LGTM"/"Reviewed" acks).
+#   - Reviews whose associated inline bot threads are all resolved or outdated
+#     are omitted. Bot summaries commonly recap those same findings, so keeping
+#     the summary would recreate already-resolved feedback as a new issue.
 #
 # Exit codes:
 #   0  — success (stdout is markdown; empty string = no bot summaries)
 #   2  — fetch error (gh call failed or jq failure)
 fetch_review_summaries_md() {
 	local repo="$1" pr="$2"
-	local resp rc=0
+	local resp threads resolved_review_ids rc=0 threads_rc=0
 	resp=$(gh api "repos/${repo}/pulls/${pr}/reviews" --paginate) || rc=$?
 	if [[ $rc -ne 0 ]]; then
 		log "fetch_review_summaries_md: gh api failed for ${repo}#${pr} (rc=${rc})"
 		return 2
 	fi
+	threads=$(fetch_review_threads_json "$repo" "$pr") || threads_rc=$?
+	if [[ $threads_rc -ne 0 ]]; then
+		return 2
+	fi
+	resolved_review_ids=$(printf '%s' "$threads" | jq -c \
+		--arg bots "$BOT_RE" '
+			[.data.repository.pullRequest.reviewThreads.nodes[]?
+				| . as $thread
+				| .comments.nodes[0]?
+				| select(. != null)
+				| select(((.author.login // "")) | test($bots; "i"))
+				| select(.pullRequestReview.databaseId != null)
+				| {review_id: .pullRequestReview.databaseId, resolved: (($thread.isResolved // false) or ($thread.isOutdated // false))}
+			]
+			| group_by(.review_id)
+			| map(select(all(.[]; .resolved)) | .[0].review_id)
+		') || {
+		log "fetch_review_summaries_md: resolved review mapping failed on ${repo}#${pr}"
+		return 2
+	}
 	local out
 	out=$(printf '%s' "$resp" | jq -r \
 		--arg bots "$BOT_RE" \
 		--arg noop "$NOOP_RE" \
 		--arg acts "$ACT_RE" \
+		--argjson resolved_review_ids "$resolved_review_ids" \
 		--argjson cap "$SCANNER_MAX_COMMENTS" '
 			[.[]?
 				| select(((.user.login // "")) | test($bots; "i"))
+				| .id as $review_id
+				| select(($resolved_review_ids | index($review_id)) == null)
 				| select(((.body // "")) | length > 0)
 				# Drop CodeRabbit "Actionable comments posted: N" metadata
 				# summary reviews. These add no information beyond the
