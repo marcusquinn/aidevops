@@ -52,4 +52,30 @@ if permission_validate_capture "${capture_file}.unsafe" 123 owner/repo; then
 	exit 1
 fi
 
+repo_dir="${test_root}/repo"
+git init -q "$repo_dir"
+gh() {
+	printf '0\n'
+	return 0
+}
+gh_issue_view() {
+	printf '{"labels":[]}\n'
+	return 0
+}
+gh_issue_comment() {
+	return 0
+}
+gh_issue_edit_safe() {
+	return 0
+}
+(
+	cd "$test_root"
+	cmd_request --file "$capture_file" --issue 123 --repo owner/repo --session issue-123 --work-dir "$repo_dir"
+)
+git_dir=$(git -C "$repo_dir" rev-parse --absolute-git-dir)
+if [[ ! -f "${git_dir}/aidevops-permission-pending" ]]; then
+	printf 'permission pending marker was not written to the target repository git directory\n' >&2
+	exit 1
+fi
+
 printf 'worker permission helper tests passed\n'

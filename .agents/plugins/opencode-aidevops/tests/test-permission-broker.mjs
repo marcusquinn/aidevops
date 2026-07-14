@@ -3,7 +3,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, rmSync } from "fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { join } from "path";
 import { tmpdir } from "os";
 
@@ -85,6 +85,19 @@ test("action-only permissions are non-grantable", async () => {
   const capture = JSON.parse(readFileSync(requestFile, "utf8"));
   assert.equal(capture.requests[0].risk.grantable, false);
   assert.match(capture.requests[0].risk.reason, /exact OpenCode pattern rule/);
+  rmSync(root, { recursive: true, force: true });
+  delete process.env.AIDEVOPS_PERMISSION_REQUEST_FILE;
+});
+
+test("capture write failure still denies the permission without crashing", async () => {
+  const root = mkdtempSync(join(tmpdir(), "aidevops-permission-broker-"));
+  const blocker = join(root, "not-a-directory");
+  writeFileSync(blocker, "block");
+  process.env.AIDEVOPS_PERMISSION_REQUEST_FILE = join(blocker, "request.json");
+  const broker = createPermissionBroker({ client: {}, isHeadless: () => true, home: "/Users/example" });
+  const output = { status: "ask" };
+  await broker.permissionAsk({ id: "permission-5", type: "bash", patterns: ["git status"] }, output);
+  assert.equal(output.status, "deny");
   rmSync(root, { recursive: true, force: true });
   delete process.env.AIDEVOPS_PERMISSION_REQUEST_FILE;
 });

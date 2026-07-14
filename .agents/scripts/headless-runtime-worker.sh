@@ -1540,7 +1540,7 @@ _hrw_finish_success_run() {
 		_HRW_TERMINAL_OUTCOME="$_HRW_TELEMETRY_SUCCESS"
 	fi
 	if [[ "$_HRW_TERMINAL_OUTCOME" == "$_HRW_TELEMETRY_SUCCESS" ]]; then
-		permission_pending_file=$(git -C "$work_dir" rev-parse --git-path aidevops-permission-pending 2>/dev/null || true)
+		permission_pending_file=$(_hrw_permission_pending_path "$work_dir" || true)
 		rm -f "${AIDEVOPS_PERMISSION_GRANT_FILE:-}" "$permission_pending_file" 2>/dev/null || true
 	fi
 
@@ -1620,6 +1620,14 @@ _cmd_run_finish() {
 	return 0
 }
 
+_hrw_permission_pending_path() {
+	local work_dir="$1"
+	local git_dir=""
+	git_dir=$(git -C "$work_dir" rev-parse --absolute-git-dir 2>/dev/null) || return 1
+	printf '%s/aidevops-permission-pending\n' "$git_dir"
+	return 0
+}
+
 _cmd_run_prepare() {
 	local session_key="$1"
 	local work_dir="$2"
@@ -1634,7 +1642,7 @@ _cmd_run_prepare() {
 		return 1
 	fi
 	local permission_pending_file=""
-	permission_pending_file=$(git -C "$work_dir" rev-parse --git-path aidevops-permission-pending 2>/dev/null || true)
+	permission_pending_file=$(_hrw_permission_pending_path "$work_dir" || true)
 	if [[ -f "$permission_pending_file" ]]; then
 		export AIDEVOPS_PERMISSION_REQUEST_ID
 		AIDEVOPS_PERMISSION_REQUEST_ID=$(jq -r '.request_id // ""' "$permission_pending_file" 2>/dev/null || true)

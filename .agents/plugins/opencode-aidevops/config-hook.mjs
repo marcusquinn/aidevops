@@ -100,12 +100,13 @@ function parsePermissionGrantPayload(payload) {
 }
 
 function verifyPermissionGrantSignature(grant, publicKey, tempBase) {
-  mkdirSync(tempBase, { recursive: true });
-  const verifyDir = mkdtempSync(join(tempBase, "permission-grant-"));
-  const signaturePath = join(verifyDir, "signature");
-  const signersPath = join(verifyDir, "allowed-signers");
+  let verifyDir = "";
   let verified = false;
   try {
+    mkdirSync(tempBase, { recursive: true });
+    verifyDir = mkdtempSync(join(tempBase, "permission-grant-"));
+    const signaturePath = join(verifyDir, "signature");
+    const signersPath = join(verifyDir, "allowed-signers");
     writeFileSync(signaturePath, grant.signature, { mode: 0o600 });
     const key = readFileSync(publicKey, "utf8").trim();
     writeFileSync(signersPath, `approval@aidevops.sh namespaces="aidevops-approve" ${key}\n`, { mode: 0o600 });
@@ -117,7 +118,13 @@ function verifyPermissionGrantSignature(grant, publicKey, tempBase) {
   } catch {
     verified = false;
   } finally {
-    rmSync(verifyDir, { recursive: true, force: true });
+    if (verifyDir) {
+      try {
+        rmSync(verifyDir, { recursive: true, force: true });
+      } catch {
+        // Verification already completed; temporary cleanup remains best effort.
+      }
+    }
   }
   return verified;
 }

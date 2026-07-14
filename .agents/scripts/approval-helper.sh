@@ -917,7 +917,10 @@ _trusted_permission_comments_json() {
 	local pages="$1"
 	jq -c --arg array_type "$PERMISSION_JSON_ARRAY_TYPE" '
 		(if type == $array_type and all(.[]; type == $array_type) then [.[][]?] else [.[]?] end)
-		| [ .[] | select((.author_association // "") | IN("OWNER", "MEMBER", "COLLABORATOR")) ]
+		| [ .[] | select(
+			(.author_association // "") as $association
+			| ["OWNER", "MEMBER", "COLLABORATOR"] | index($association) != null
+		) ]
 	' <<<"$pages"
 	return $?
 }
@@ -976,7 +979,7 @@ _validate_permission_request_json() {
 		and (.worker.worktree_sha256 | type == $string_type and test($sha_pattern))
 		and (.capabilities | type == $array_type and length > 0 and length <= 20)
 		and all(.capabilities[];
-			(.permission | IN("bash", "external_directory"))
+			(.permission as $permission | ["bash", "external_directory"] | index($permission) != null)
 			and (.patterns | type == $array_type and length > 0 and length <= 20)
 			and all(.patterns[]; type == $string_type and length <= 500)
 			and .risk.grantable == true

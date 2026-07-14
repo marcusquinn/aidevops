@@ -44,7 +44,7 @@ permission_validate_capture() {
 			(.permission | type == "string" and length > 0 and length <= 100)
 			and (.patterns | type == "array" and length <= 20)
 			and all(.patterns[]; type == "string" and length <= 500)
-			and (.risk.level | IN("low", "medium", "high", "critical"))
+			and (.risk.level as $level | ["low", "medium", "high", "critical"] | index($level) != null)
 			and (.risk.grantable | type == "boolean")
 		)
 		and all(.requests[];
@@ -63,11 +63,13 @@ permission_changed_files_json() {
 		printf '[]\n'
 		return 0
 	fi
-	git -C "$work_dir" status --short 2>/dev/null \
-		| cut -c4- \
-		| awk 'NF { print }' \
-		| head -20 \
-		| jq -Rsc 'split("\n") | map(select(length > 0))'
+	local status_output=""
+	if ! status_output=$(git -C "$work_dir" status --short 2>/dev/null); then
+		printf '[]\n'
+		return 0
+	fi
+	printf '%s\n' "$status_output" \
+		| jq -Rsc 'split("\n") | map(select(length >= 4) | .[3:]) | map(select(length > 0)) | .[:20]'
 	return 0
 }
 
@@ -248,8 +250,9 @@ cmd_request() {
 	request_id=$(permission_post_request "$capture_file" "$issue_number" "$repo_slug" "$session_key" "$work_dir") || return 1
 	permission_apply_block "$issue_number" "$repo_slug" || return 1
 	if [[ -n "$work_dir" && -d "$work_dir" ]]; then
-		local pending_file=""
-		pending_file=$(git -C "$work_dir" rev-parse --git-path aidevops-permission-pending 2>/dev/null) || return 1
+		local git_dir="" pending_file=""
+		git_dir=$(git -C "$work_dir" rev-parse --absolute-git-dir 2>/dev/null) || return 1
+		pending_file="${git_dir}/aidevops-permission-pending"
 		jq -cn --arg request "$request_id" --arg issue "$issue_number" \
 			'{request_id: $request, issue: ($issue | tonumber)}' >"$pending_file"
 	fi

@@ -129,6 +129,27 @@ test("branch lookup failure cannot match a null grant branch", () => {
   rmSync(root, { recursive: true, force: true });
 });
 
+test("signature verification temp failure ignores the grant without crashing", () => {
+  const root = mkdtempSync(join(tmpdir(), "aidevops-worker-grant-"));
+  const grant = signedGrant(root);
+  const blocker = join(root, "not-a-directory");
+  writeFileSync(blocker, "block");
+  process.env.WORKER_ISSUE_NUMBER = "123";
+  process.env.WORKER_REPO_SLUG = "owner/repo";
+  const config = { agent: {} };
+  assert.equal(registerApprovedWorkerPermissions(config, {
+    grantPath: grant.grantPath,
+    publicKey: grant.publicKey,
+    tempBase: join(blocker, "verification"),
+    repositoryDir: root,
+    currentSession: "issue-123",
+    currentBranch: "feature/auto-gh123",
+    pendingRequest: "perm-0123456789abcdef",
+  }), 0);
+  assert.equal(config.permission, undefined);
+  rmSync(root, { recursive: true, force: true });
+});
+
 for (const [name, options] of [
   ["sensitive signed grant", { pattern: "~/.ssh/**" }],
   ["unbounded signed grant", { pattern: "**" }],

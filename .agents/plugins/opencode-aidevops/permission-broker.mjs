@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 
 import { createHash } from "crypto";
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "fs";
 import { dirname } from "path";
 import { homedir } from "os";
 
@@ -76,11 +76,23 @@ function readCaptureFile(path) {
 }
 
 function writeCaptureFile(path, capture) {
-  if (!path) return;
-  mkdirSync(dirname(path), { recursive: true });
-  const temporary = `${path}.${process.pid}.tmp`;
-  writeFileSync(temporary, `${JSON.stringify(capture, null, 2)}\n`, { mode: 0o600 });
-  renameSync(temporary, path);
+  let written = false;
+  if (path) {
+    const temporary = `${path}.${process.pid}.tmp`;
+    try {
+      mkdirSync(dirname(path), { recursive: true });
+      writeFileSync(temporary, `${JSON.stringify(capture, null, 2)}\n`, { mode: 0o600 });
+      renameSync(temporary, path);
+      written = true;
+    } catch {
+      try {
+        rmSync(temporary, { force: true });
+      } catch {
+        // Capturing is best effort and must not crash the runtime.
+      }
+    }
+  }
+  return written;
 }
 
 function normalizePatterns(input, options) {
