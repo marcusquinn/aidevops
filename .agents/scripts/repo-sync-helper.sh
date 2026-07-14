@@ -1079,6 +1079,10 @@ _status_systemd() {
 		echo -e "  Status:    ${YELLOW}systemctl unavailable${NC}"
 		return 0
 	fi
+	if ! systemctl --user show &>/dev/null; then
+		echo -e "  Status:    ${YELLOW}systemd user manager inaccessible${NC}"
+		return 0
+	fi
 
 	local timer_unit="${SYSTEMD_UNIT_NAME}.timer"
 	local service_unit="${SYSTEMD_UNIT_NAME}.service"

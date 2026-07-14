@@ -85,6 +85,10 @@ for arg in "$@"; do
 	esac
 done
 
+if [[ "$command_name" == "show" && -z "$unit_name" && "${FAKE_SYSTEMD_MANAGER_ACCESSIBLE:-true}" != "true" ]]; then
+	exit 1
+fi
+
 case "$command_name" in
 is-active)
 	printf '%s\n' "${FAKE_SYSTEMD_ACTIVE:-inactive}"
@@ -171,6 +175,11 @@ assert_not_contains "${LAST_CASE_DIR}/output.log" "Scheduler: cron" "systemd sta
 run_status_case disabled systemd FAKE_SYSTEMD_ENABLED=disabled FAKE_SYSTEMD_ACTIVE=inactive
 assert_rc 0 "$LAST_CASE_RC" "disabled systemd status exits cleanly"
 assert_contains "${LAST_CASE_DIR}/output.log" "disabled" "disabled timer is distinguished"
+
+run_status_case inaccessible systemd FAKE_SYSTEMD_MANAGER_ACCESSIBLE=false
+assert_rc 0 "$LAST_CASE_RC" "inaccessible systemd user manager exits cleanly"
+assert_contains "${LAST_CASE_DIR}/output.log" "systemd user manager inaccessible" "inaccessible user manager is distinguished"
+assert_not_contains "${LAST_CASE_DIR}/output.log" "Unit:" "inaccessible user manager stops before unit queries"
 
 run_status_case missing systemd FAKE_SYSTEMD_ENABLED=not-found FAKE_SYSTEMD_ACTIVE=inactive FAKE_SYSTEMD_LOAD=not-found
 assert_rc 0 "$LAST_CASE_RC" "missing systemd status exits cleanly"
