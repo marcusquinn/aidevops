@@ -215,13 +215,29 @@ _linters_local_tool_version() {
 	return 0
 }
 
+_linters_local_default_base_ref() {
+	local default_ref=""
+	local candidate=""
+	local base_ref=""
+	default_ref=$(git symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null || true)
+	for candidate in "$default_ref" origin/main main origin/master master HEAD; do
+		[[ -n "$candidate" ]] || continue
+		base_ref=$(git merge-base HEAD "$candidate" 2>/dev/null || true)
+		if [[ -n "$base_ref" ]]; then
+			printf '%s\n' "$base_ref"
+			return 0
+		fi
+	done
+	return 1
+}
+
 _linters_local_changed_files_key() {
 	if [[ "$LINT_CHANGED_FILES_READY" == "true" ]]; then
 		printf '%s\n' "$LINT_CHANGED_FILES"
 		return 0
 	fi
 	local base_ref=""
-	base_ref=$(git merge-base HEAD origin/main 2>/dev/null || git merge-base HEAD main 2>/dev/null || git merge-base HEAD master 2>/dev/null || true)
+	base_ref=$(_linters_local_default_base_ref || true)
 	lint_changed_files "$base_ref"
 	printf '%s\n' "$LINT_CHANGED_FILES"
 	return 0
@@ -247,7 +263,7 @@ _linters_local_gate_key() {
 		_linters_local_file_checksum ".markdownlint-cli2.jsonc"
 		_linters_local_file_checksum ".markdownlint.json"
 		_linters_local_file_checksum ".qlty/qlty.toml"
-		_linters_local_tool_version "$gate_name"
+		_linters_local_tool_version "${gate_name#required-}"
 	} | cksum | awk '{print $1}')
 	printf '%s\n' "$key_source"
 	return 0
@@ -266,16 +282,16 @@ _linters_local_required_diff_gate() {
 		print_info "${metric}: unaffected (no applicable changed files)"
 		return 0
 	fi
-	if [[ ! -x "$helper" ]]; then
+	if [[ ! -f "$helper" ]]; then
 		print_error "${metric}: canonical required gate unavailable at ${helper}"
 		return 2
 	fi
-	base_ref=$(git merge-base HEAD origin/main 2>/dev/null || git merge-base HEAD main 2>/dev/null || true)
+	base_ref=$(_linters_local_default_base_ref || true)
 	if [[ -z "$base_ref" ]]; then
 		print_error "${metric}: merge-base unavailable; required result is incomplete"
 		return 2
 	fi
-	"$helper" check --metric "$metric" --base "$base_ref" --working-tree
+	bash "$helper" check --metric "$metric" --base "$base_ref" --working-tree
 	return $?
 }
 

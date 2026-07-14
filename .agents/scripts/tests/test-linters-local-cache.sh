@@ -40,6 +40,13 @@ source_gate_helpers() {
 	return 0
 }
 
+make_test_tmp_dir() {
+	local base_tmp="${AIDEVOPS_TEMP_DIR:-${HOME}/.aidevops/.agent-workspace/tmp}"
+	mkdir -p "$base_tmp"
+	mktemp -d "${base_tmp}/linters-local-cache.XXXXXXXX"
+	return $?
+}
+
 cache_counter_gate() {
 	local counter_file="${LINTERS_LOCAL_TEST_COUNTER_FILE}"
 	local count=0
@@ -60,8 +67,8 @@ slow_cache_gate() {
 
 test_cache_hit_reuses_gate_output() {
 	source_gate_helpers
-	local tmp_dir counter_file out1 out2 ret=0
-	tmp_dir=$(mktemp -d)
+	local tmp_dir counter_file out1 out2 TMPDIR ret=0
+	tmp_dir=$(make_test_tmp_dir)
 	counter_file="${tmp_dir}/counter"
 	export LINTERS_LOCAL_TEST_COUNTER_FILE="$counter_file"
 	export LINTERS_LOCAL_CACHE_ENABLED="true"
@@ -83,8 +90,8 @@ test_cache_hit_reuses_gate_output() {
 
 test_no_cache_reruns_gate() {
 	source_gate_helpers
-	local tmp_dir counter_file ret=0
-	tmp_dir=$(mktemp -d)
+	local tmp_dir counter_file TMPDIR ret=0
+	tmp_dir=$(make_test_tmp_dir)
 	counter_file="${tmp_dir}/counter"
 	export LINTERS_LOCAL_TEST_COUNTER_FILE="$counter_file"
 	export LINTERS_LOCAL_CACHE_ENABLED="false"
@@ -106,8 +113,8 @@ test_no_cache_reruns_gate() {
 
 test_timeout_fails_closed_by_default() {
 	source_gate_helpers
-	local tmp_dir out ret=0
-	tmp_dir=$(mktemp -d)
+	local tmp_dir out TMPDIR ret=0
+	tmp_dir=$(make_test_tmp_dir)
 	export LINTERS_LOCAL_CACHE_ENABLED="true"
 	export LINTERS_LOCAL_CACHE_DIR_OVERRIDE="${tmp_dir}/cache"
 	export LINTERS_LOCAL_BROAD_GATE_TIMEOUT_SECONDS="1"
@@ -134,7 +141,7 @@ test_timeout_fails_closed_by_default() {
 test_cache_key_invalidates_on_untracked_content_change() {
 	source_gate_helpers
 	local tmp_dir original_dir first_key second_key
-	tmp_dir=$(mktemp -d)
+	tmp_dir=$(make_test_tmp_dir)
 	original_dir="$PWD"
 	git -C "$tmp_dir" init -q
 	printf 'first\n' >"${tmp_dir}/untracked.sh"
@@ -161,7 +168,7 @@ test_cache_key_invalidates_on_untracked_content_change() {
 test_changed_inventory_snapshot_avoids_repeat_git_scans() {
 	source_gate_helpers
 	local tmp_dir counter_file output count=0
-	tmp_dir=$(mktemp -d)
+	tmp_dir=$(make_test_tmp_dir)
 	counter_file="${tmp_dir}/git-calls"
 	LINT_CHANGED_FILES="untracked.sh"
 	LINT_CHANGED_FILES_FINGERPRINT="fixture"
@@ -201,8 +208,8 @@ test_common_git_dir_hosts_cross_worktree_cache() {
 
 test_concurrent_gate_reuses_first_result() {
 	source_gate_helpers
-	local tmp_dir counter_file first_output second_output first_pid second_pid ret=0
-	tmp_dir=$(mktemp -d)
+	local tmp_dir counter_file first_output second_output first_pid second_pid TMPDIR ret=0
+	tmp_dir=$(make_test_tmp_dir)
 	counter_file="${tmp_dir}/counter"
 	export LINTERS_LOCAL_TEST_COUNTER_FILE="$counter_file"
 	export LINTERS_LOCAL_CACHE_ENABLED="true"
@@ -233,7 +240,7 @@ test_concurrent_gate_reuses_first_result() {
 test_ownerless_lock_is_recovered() {
 	source_gate_helpers
 	local tmp_dir counter_file ret=0
-	tmp_dir=$(mktemp -d)
+	tmp_dir=$(make_test_tmp_dir)
 	counter_file="${tmp_dir}/counter"
 	export LINTERS_LOCAL_TEST_COUNTER_FILE="$counter_file"
 	export LINTERS_LOCAL_CACHE_ENABLED="false"
@@ -254,7 +261,7 @@ test_ownerless_lock_is_recovered() {
 test_malformed_lock_is_recovered() {
 	source_gate_helpers
 	local tmp_dir counter_file ret=0
-	tmp_dir=$(mktemp -d)
+	tmp_dir=$(make_test_tmp_dir)
 	counter_file="${tmp_dir}/counter"
 	export LINTERS_LOCAL_TEST_COUNTER_FILE="$counter_file"
 	export LINTERS_LOCAL_CACHE_ENABLED="false"
@@ -276,7 +283,7 @@ test_malformed_lock_is_recovered() {
 test_reused_pid_lock_is_recovered_by_age() {
 	source_gate_helpers
 	local tmp_dir counter_file ret=0
-	tmp_dir=$(mktemp -d)
+	tmp_dir=$(make_test_tmp_dir)
 	counter_file="${tmp_dir}/counter"
 	export LINTERS_LOCAL_TEST_COUNTER_FILE="$counter_file"
 	export LINTERS_LOCAL_CACHE_ENABLED="false"
@@ -299,7 +306,7 @@ test_reused_pid_lock_is_recovered_by_age() {
 test_file_checksum_ignores_worktree_path() {
 	source_gate_helpers
 	local tmp_dir first second
-	tmp_dir=$(mktemp -d)
+	tmp_dir=$(make_test_tmp_dir)
 	mkdir -p "${tmp_dir}/one" "${tmp_dir}/two"
 	printf 'same content\n' >"${tmp_dir}/one/input.sh"
 	printf 'same content\n' >"${tmp_dir}/two/input.sh"
@@ -309,6 +316,86 @@ test_file_checksum_ignores_worktree_path() {
 		print_result "linter cache: file checksums ignore absolute worktree paths" 0
 	else
 		print_result "linter cache: file checksums ignore absolute worktree paths" 1 "first=$first second=$second"
+	fi
+	rm -rf "$tmp_dir"
+	return 0
+}
+
+test_required_gate_tool_version_invalidates_cache_key() {
+	source_gate_helpers
+	local fake_version="one"
+	local first_key=""
+	local second_key=""
+	LINT_CHANGED_FILES="fixture.sh"
+	LINT_CHANGED_FILES_FINGERPRINT="fixture"
+	LINT_CHANGED_FILES_READY=true
+	bash() {
+		printf 'GNU bash %s\n' "$fake_version"
+		return 0
+	}
+	first_key=$(_linters_local_gate_key "required-bash32-compat")
+	fake_version="two"
+	second_key=$(_linters_local_gate_key "required-bash32-compat")
+	unset -f bash
+
+	if [[ -n "$first_key" && "$first_key" != "$second_key" ]]; then
+		print_result "linter cache: required gate tool versions invalidate cache keys" 0
+	else
+		print_result "linter cache: required gate tool versions invalidate cache keys" 1 \
+			"first=$first_key second=$second_key"
+	fi
+	return 0
+}
+
+test_required_gate_uses_default_remote_ref_and_non_executable_helper() {
+	source_gate_helpers
+	local tmp_dir=""
+	local original_script_dir="$SCRIPT_DIR"
+	local capture_file=""
+	local result=0
+	tmp_dir=$(make_test_tmp_dir)
+	capture_file="${tmp_dir}/helper-args"
+	# shellcheck disable=SC2016  # generated helper expands these variables at runtime
+	printf '%s\n' \
+		'printf '\''%s\n'\'' "$*" >"$LINTERS_LOCAL_TEST_HELPER_ARGS"' \
+		'exit 0' >"${tmp_dir}/complexity-regression-helper.sh"
+	chmod 600 "${tmp_dir}/complexity-regression-helper.sh"
+	export LINTERS_LOCAL_TEST_HELPER_ARGS="$capture_file"
+	SCRIPT_DIR="$tmp_dir"
+	linters_local_changed_files_matching() {
+		local pattern="$1"
+		: "$pattern"
+		printf 'fixture.sh\n'
+		return 0
+	}
+	git() {
+		local command_name="$1"
+		shift
+		case "$command_name" in
+		symbolic-ref)
+			printf 'origin/develop\n'
+			return 0
+			;;
+		merge-base)
+			if [[ "$*" == "HEAD origin/develop" ]]; then
+				printf 'fixture-base\n'
+				return 0
+			fi
+			return 1
+			;;
+		esac
+		return 1
+	}
+	_linters_local_required_diff_gate "function-complexity" || result=$?
+	unset -f git linters_local_changed_files_matching
+	SCRIPT_DIR="$original_script_dir"
+
+	if [[ "$result" -eq 0 && -f "$capture_file" ]] &&
+		[[ "$(cat "$capture_file")" == "check --metric function-complexity --base fixture-base --working-tree" ]]; then
+		print_result "required gate: non-executable helper uses the default remote baseline" 0
+	else
+		print_result "required gate: non-executable helper uses the default remote baseline" 1 \
+			"exit=$result args=$(cat "$capture_file" 2>/dev/null || printf missing)"
 	fi
 	rm -rf "$tmp_dir"
 	return 0
@@ -326,6 +413,8 @@ main() {
 	test_malformed_lock_is_recovered
 	test_reused_pid_lock_is_recovered_by_age
 	test_file_checksum_ignores_worktree_path
+	test_required_gate_tool_version_invalidates_cache_key
+	test_required_gate_uses_default_remote_ref_and_non_executable_helper
 
 	printf '\n'
 	if [ "$TESTS_FAILED" -eq 0 ]; then
