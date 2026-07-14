@@ -233,13 +233,18 @@ jobs:
             # evidence that a signed approval is absent. Fail the check rather
             # than silently converting infrastructure uncertainty into a trust
             # verdict.
+            APPROVAL_COMMENTS=""
             SIGNED_APPROVAL=""
-            if ! SIGNED_APPROVAL=$(gh api "repos/${REPO}/issues/${PR_NUMBER}/comments" \
-              --paginate --slurp \
-              --jq '[.[][] | select(.body | contains("<!-- aidevops-signed-approval -->"))] | length' \
-              2>/dev/null); then
+            if ! APPROVAL_COMMENTS=$(gh api --paginate --slurp \
+              "repos/${REPO}/issues/${PR_NUMBER}/comments?per_page=100" 2>/dev/null); then
               echo "::error::Unable to verify signed approvals for PR #$PR_NUMBER"
               post_maintainer_gate_status_with_retry failure "Unable to verify signed maintainer approval"
+              exit 1
+            fi
+            if ! SIGNED_APPROVAL=$(printf '%s' "$APPROVAL_COMMENTS" | jq -r \
+              '[.[][] | select(.body | contains("<!-- aidevops-signed-approval -->"))] | length' 2>/dev/null); then
+              echo "::error::Unable to parse signed approvals for PR #$PR_NUMBER"
+              post_maintainer_gate_status_with_retry failure "Unable to parse signed maintainer approval"
               exit 1
             fi
             if [[ ! "$SIGNED_APPROVAL" =~ ^[0-9]+$ ]]; then
@@ -594,12 +599,16 @@ jobs:
           # infrastructure uncertainty, not proof that approval is absent.
           # Never create/recreate an irreversible ever-NMR authority record from
           # a failed lookup.
+          APPROVAL_COMMENTS=""
           SIGNED_APPROVAL=""
-          if ! SIGNED_APPROVAL=$(gh api "repos/${REPO}/issues/${ISSUE_NUMBER}/comments" \
-            --paginate --slurp \
-            --jq '[.[][] | select(.body | contains("<!-- aidevops-signed-approval -->"))] | length' \
-            2>/dev/null); then
+          if ! APPROVAL_COMMENTS=$(gh api --paginate --slurp \
+            "repos/${REPO}/issues/${ISSUE_NUMBER}/comments?per_page=100" 2>/dev/null); then
             echo "::error::Unable to verify signed approvals for issue #$ISSUE_NUMBER — leaving labels unchanged"
+            exit 1
+          fi
+          if ! SIGNED_APPROVAL=$(printf '%s' "$APPROVAL_COMMENTS" | jq -r \
+            '[.[][] | select(.body | contains("<!-- aidevops-signed-approval -->"))] | length' 2>/dev/null); then
+            echo "::error::Unable to parse signed approvals for issue #$ISSUE_NUMBER — leaving labels unchanged"
             exit 1
           fi
           if [[ ! "$SIGNED_APPROVAL" =~ ^[0-9]+$ ]]; then
@@ -618,11 +627,16 @@ jobs:
           gh issue edit "$ISSUE_NUMBER" --repo "$REPO" --add-label "needs-maintainer-review"
 
           # Post a comment explaining why
+          NOTICE_COMMENTS=""
           EXISTING=""
-          if ! EXISTING=$(gh api "repos/${REPO}/issues/${ISSUE_NUMBER}/comments" \
-            --paginate --slurp \
-            --jq "[.[][] | select(.body | test(\"label-protection-notice\"))] | length" 2>/dev/null); then
+          if ! NOTICE_COMMENTS=$(gh api --paginate --slurp \
+            "repos/${REPO}/issues/${ISSUE_NUMBER}/comments?per_page=100" 2>/dev/null); then
             echo "::warning::Unable to check for an existing label-protection notice — skipping comment"
+            exit 0
+          fi
+          if ! EXISTING=$(printf '%s' "$NOTICE_COMMENTS" | jq -r \
+            '[.[][] | select(.body | test("label-protection-notice"))] | length' 2>/dev/null); then
+            echo "::warning::Unable to parse existing label-protection notices — skipping comment"
             exit 0
           fi
           [[ "$EXISTING" =~ ^[0-9]+$ ]] || exit 0
@@ -947,12 +961,16 @@ jobs:
 
           # Check for a cryptographic signed approval comment on the PR.
           # PRs use the same issues API endpoint for comments.
+          APPROVAL_COMMENTS=""
           SIGNED_APPROVAL=""
-          if ! SIGNED_APPROVAL=$(gh api "repos/${REPO}/issues/${PR_NUMBER}/comments" \
-            --paginate --slurp \
-            --jq '[.[][] | select(.body | contains("<!-- aidevops-signed-approval -->"))] | length' \
-            2>/dev/null); then
+          if ! APPROVAL_COMMENTS=$(gh api --paginate --slurp \
+            "repos/${REPO}/issues/${PR_NUMBER}/comments?per_page=100" 2>/dev/null); then
             echo "::error::Unable to verify signed approvals for PR #$PR_NUMBER — leaving labels unchanged"
+            exit 1
+          fi
+          if ! SIGNED_APPROVAL=$(printf '%s' "$APPROVAL_COMMENTS" | jq -r \
+            '[.[][] | select(.body | contains("<!-- aidevops-signed-approval -->"))] | length' 2>/dev/null); then
+            echo "::error::Unable to parse signed approvals for PR #$PR_NUMBER — leaving labels unchanged"
             exit 1
           fi
           if [[ ! "$SIGNED_APPROVAL" =~ ^[0-9]+$ ]]; then
@@ -971,11 +989,16 @@ jobs:
           gh pr edit "$PR_NUMBER" --repo "$REPO" --add-label "needs-maintainer-review"
 
           # Post a comment explaining why (only once)
+          NOTICE_COMMENTS=""
           EXISTING=""
-          if ! EXISTING=$(gh api "repos/${REPO}/issues/${PR_NUMBER}/comments" \
-            --paginate --slurp \
-            --jq "[.[][] | select(.body | test(\"pr-label-protection-notice\"))] | length" 2>/dev/null); then
+          if ! NOTICE_COMMENTS=$(gh api --paginate --slurp \
+            "repos/${REPO}/issues/${PR_NUMBER}/comments?per_page=100" 2>/dev/null); then
             echo "::warning::Unable to check for an existing PR label-protection notice — skipping comment"
+            exit 0
+          fi
+          if ! EXISTING=$(printf '%s' "$NOTICE_COMMENTS" | jq -r \
+            '[.[][] | select(.body | test("pr-label-protection-notice"))] | length' 2>/dev/null); then
+            echo "::warning::Unable to parse existing PR label-protection notices — skipping comment"
             exit 0
           fi
           [[ "$EXISTING" =~ ^[0-9]+$ ]] || exit 0
