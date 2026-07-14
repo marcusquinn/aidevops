@@ -10,6 +10,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.32.117] - 2026-07-14
+
+### Fixed
+
+- stop workers from staying alive polling after PR creation (GH#27658) (#27659)
+- secure DSPy disk cache (#27684)
+
 ## [3.32.116] - 2026-07-14
 
 ### Changed
