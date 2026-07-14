@@ -12,7 +12,7 @@
 # Follows the auto-update-helper.sh pattern for scheduler management.
 #
 # Usage:
-#   repo-sync-helper.sh enable           Install daily scheduler (launchd/cron)
+#   repo-sync-helper.sh enable           Install daily scheduler (launchd/systemd/cron)
 #   repo-sync-helper.sh disable          Remove scheduler
 #   repo-sync-helper.sh status           Show current state and last sync results
 #   repo-sync-helper.sh check            One-shot: sync all configured repos now
@@ -59,6 +59,7 @@ readonly LAUNCHD_DIR="$HOME/Library/LaunchAgents"
 readonly LAUNCHD_PLIST="${LAUNCHD_DIR}/${LAUNCHD_LABEL}.plist"
 readonly SYSTEMD_SERVICE_DIR="$HOME/.config/systemd/user"
 readonly SYSTEMD_UNIT_NAME="aidevops-repo-sync"
+readonly SYSTEMD_BACKEND="systemd"
 readonly INSTALL_DIR="$HOME/Git/aidevops"
 readonly DEFAULT_PARENT_DIRS=("$HOME/Git")
 
@@ -942,7 +943,7 @@ _enable_cron() {
 #######################################
 # Enable repo-sync scheduler (platform-aware)
 # On macOS: installs LaunchAgent plist (daily)
-# On Linux: installs crontab entry
+# On Linux: installs a systemd user timer, with cron fallback
 #######################################
 cmd_enable() {
 	ensure_dirs
@@ -966,7 +967,7 @@ cmd_enable() {
 	if [[ "$backend" == "launchd" ]]; then
 		_enable_launchd "$script_path" "$interval"
 		return $?
-	elif [[ "$backend" == "systemd" ]]; then
+	elif [[ "$backend" == "$SYSTEMD_BACKEND" ]]; then
 		_enable_systemd "$script_path" "$interval"
 		return $?
 	fi
@@ -1027,7 +1028,7 @@ cmd_disable() {
 			print_info "Repo sync was not enabled"
 		fi
 		return 0
-	elif [[ "$backend" == "systemd" ]]; then
+	elif [[ "$backend" == "$SYSTEMD_BACKEND" ]]; then
 		_disable_systemd
 		return $?
 	fi
@@ -1052,6 +1053,84 @@ cmd_disable() {
 	else
 		print_info "Repo sync was not enabled"
 	fi
+	return 0
+}
+
+#######################################
+# Read one systemd unit property without allowing a missing unit/property to
+# terminate status under set -euo pipefail.
+# Arguments:
+#   $1 - unit name
+#   $2 - property name
+#######################################
+_systemd_unit_property() {
+	local unit_name="$1"
+	local property_name="$2"
+	systemctl --user show "$unit_name" --property="$property_name" --value 2>/dev/null || true
+	return 0
+}
+
+#######################################
+# Show repo-sync systemd user timer status.
+#######################################
+_status_systemd() {
+	echo -e "  Scheduler: systemd (user timer)"
+	if ! command -v systemctl &>/dev/null; then
+		echo -e "  Status:    ${YELLOW}systemctl unavailable${NC}"
+		return 0
+	fi
+
+	local timer_unit="${SYSTEMD_UNIT_NAME}.timer"
+	local service_unit="${SYSTEMD_UNIT_NAME}.service"
+	local load_state active_state sub_state enabled_state
+	load_state=$(_systemd_unit_property "$timer_unit" "LoadState")
+	active_state=$(systemctl --user is-active "$timer_unit" 2>/dev/null || true)
+	sub_state=$(_systemd_unit_property "$timer_unit" "SubState")
+	enabled_state=$(systemctl --user is-enabled "$timer_unit" 2>/dev/null || true)
+
+	if [[ "$load_state" == "not-found" ]] || [[ -z "$load_state" && ! -f "${SYSTEMD_SERVICE_DIR}/${timer_unit}" ]]; then
+		echo -e "  Status:    ${YELLOW}not installed${NC}"
+	elif [[ "$active_state" == "failed" ]]; then
+		echo -e "  Status:    ${RED}failed${NC}"
+	elif [[ "$active_state" == "active" ]]; then
+		echo -e "  Status:    ${GREEN}active${NC} (${enabled_state:-unknown})"
+	elif [[ "$enabled_state" == "disabled" ]] || [[ "$enabled_state" == "masked" ]]; then
+		echo -e "  Status:    ${YELLOW}${enabled_state}${NC}"
+	elif [[ "$enabled_state" == "enabled" ]] || [[ "$enabled_state" == "enabled-runtime" ]]; then
+		echo -e "  Status:    ${YELLOW}enabled but ${active_state:-inactive}${NC}"
+	else
+		echo -e "  Status:    ${YELLOW}${active_state:-unknown}${NC} (${enabled_state:-unknown})"
+	fi
+
+	echo "  Unit:      $timer_unit"
+	[[ -n "$sub_state" ]] && echo "  Substate:  $sub_state"
+
+	local next_fire last_fire
+	next_fire=$(_systemd_unit_property "$timer_unit" "NextElapseUSecRealtime")
+	if [[ -z "$next_fire" ]] || [[ "$next_fire" == "0" ]] || [[ "$next_fire" == "n/a" ]]; then
+		next_fire=$(_systemd_unit_property "$timer_unit" "NextElapseUSecMonotonic")
+	fi
+	last_fire=$(_systemd_unit_property "$timer_unit" "LastTriggerUSec")
+	if [[ -n "$next_fire" && "$next_fire" != "0" && "$next_fire" != "n/a" ]]; then
+		echo "  Next fire: $next_fire"
+	fi
+	if [[ -n "$last_fire" && "$last_fire" != "0" && "$last_fire" != "n/a" ]]; then
+		echo "  Last fire: $last_fire"
+	fi
+
+	local service_result service_exit
+	service_result=$(_systemd_unit_property "$service_unit" "Result")
+	service_exit=$(_systemd_unit_property "$service_unit" "ExecMainStatus")
+	if [[ -n "$service_result" && "$service_result" != "n/a" ]]; then
+		if [[ "$service_result" == "success" ]]; then
+			echo -e "  Last result: ${GREEN}success${NC}"
+		else
+			echo -e "  Last result: ${RED}${service_result}${NC} (exit ${service_exit:-unknown})"
+		fi
+	fi
+
+	echo "  Timer:     ${SYSTEMD_SERVICE_DIR}/${timer_unit}"
+	echo "  Service:   ${SYSTEMD_SERVICE_DIR}/${service_unit}"
 	return 0
 }
 
@@ -1092,6 +1171,8 @@ cmd_status() {
 			echo -e "  Scheduler: launchd (macOS LaunchAgent)"
 			echo -e "  Status:    ${YELLOW}not loaded${NC}"
 		fi
+	elif [[ "$backend" == "$SYSTEMD_BACKEND" ]]; then
+		_status_systemd
 	else
 		if crontab -l 2>/dev/null | grep -q "$CRON_MARKER"; then
 			local cron_entry
@@ -1389,7 +1470,7 @@ USAGE:
     aidevops repo-sync <command> [options]
 
 COMMANDS:
-    enable              Install daily scheduler (launchd on macOS, cron on Linux)
+    enable              Install daily scheduler (launchd on macOS, systemd/cron on Linux)
     disable             Remove scheduler
     status              Show current state and last sync results
     check               One-shot: sync all configured repos now
@@ -1423,7 +1504,9 @@ SAFETY:
 SCHEDULER BACKENDS:
     macOS:  launchd LaunchAgent (~/Library/LaunchAgents/sh.aidevops.repo-sync.plist)
             - Runs daily (every 1440 minutes by default)
-    Linux:  cron (daily at 3am, crontab entry with # aidevops-repo-sync marker)
+    Linux:  systemd user timer preferred (~/.config/systemd/user/aidevops-repo-sync.timer)
+            - Falls back to cron when systemd user services are unavailable
+            - Cron runs daily at 3am with the # aidevops-repo-sync marker
 
 HOW IT WORKS:
     1. Scheduler runs 'repo-sync-helper.sh check' daily
