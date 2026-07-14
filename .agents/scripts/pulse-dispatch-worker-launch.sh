@@ -564,7 +564,7 @@ First-pass completion contract:
 1. Before editing, verify the issue is still open and not already satisfied by the default branch, an open/closed PR, or a pushed issue branch. Reuse salvageable commits instead of restarting.
 2. Treat prior structured CI/review feedback in the issue body as cumulative evidence. Address every terminal failing check, including advisory checks, not only the first required failure.
 3. Validate the stated target files and verification commands against the current dependency/runtime versions before implementation.
-4. After the first coherent commit, push and create a draft PR early so progress is durable and visible to every runner; continue on that PR through local and remote verification.
+4. After the first coherent commit, push and create a draft PR early so progress is durable and visible to every runner. Then exit and hand off to the PR completion / auto-merge pipeline. Do not stay alive polling for human reviews or CI results — the monitoring pipeline handles those.
 5. Do not post routine dispatch, stale, or progress comments. Prefer commits, the PR, check runs, and one final completion or blocker dossier.
 EOF
 	return 0
