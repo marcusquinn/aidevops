@@ -206,6 +206,7 @@ run_positive_review_filter_regressions() {
 	test_scan_single_pr_filters_positive_inline_acknowledgement_reply
 	test_scan_single_pr_filters_parent_of_resolution_reply
 	test_scan_single_pr_filters_resolved_review_threads
+	test_build_inline_findings_filters_outdated_pr_revision_comment
 	return 0
 }
 
