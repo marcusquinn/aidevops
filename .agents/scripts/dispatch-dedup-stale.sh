@@ -214,8 +214,19 @@ _stale_recovery_find_open_pr() {
 				. == "no-auto-dispatch" or . == "needs-maintainer-review"
 			);
 			def worker_owned: names | any(. == "origin:worker" or . == "origin:worker-takeover");
+			def successful_review_status:
+				[.statusCheckRollup[]? |
+					select((.__typename // "") == "StatusContext" and
+						((.context // "") | ascii_downcase) == "review-bot-gate") |
+					(.state // "" | ascii_upcase)] | any(. == "SUCCESS");
 			def terminal_failure:
-				[.statusCheckRollup[]? | (.conclusion // .status // .state // empty) | ascii_upcase] |
+				successful_review_status as $review_pass |
+				[.statusCheckRollup[]? |
+					select((
+						$review_pass and (.__typename // "") == "CheckRun" and
+						((.name // "") | ascii_downcase | contains("review-bot-gate"))
+					) | not) |
+					(.conclusion // .status // .state // empty) | ascii_upcase] |
 				any(. == "FAILURE" or . == "ERROR" or . == "CANCELLED" or
 					. == "TIMED_OUT" or . == "ACTION_REQUIRED" or . == "STALE");
 			def kind:

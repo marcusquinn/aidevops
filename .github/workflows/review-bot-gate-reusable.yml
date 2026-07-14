@@ -43,22 +43,31 @@ jobs:
   review-bot-gate:
     runs-on: ${{ inputs.runner }}
     # Only run on PRs (issue_comment fires for PR comments too).
-    # GH#27137: review submissions and inline review comments must re-evaluate
-    # the gate. Skipping bot-authored review events left a stale successful
-    # status after substantive findings arrived.
+    # GH#27137: bot review submissions and inline comments must re-evaluate the
+    # gate. Human replies cannot change AI-review evidence and must not replace
+    # a successful exact-head check with an API-quota failure.
     if: >
       (
         github.event_name == 'pull_request' ||
-        github.event_name == 'pull_request_review' ||
-        github.event_name == 'pull_request_review_comment' ||
         (
-          github.event_name == 'issue_comment' &&
-          github.event.issue.pull_request &&
+          (
+            github.event_name == 'pull_request_review' ||
+            (
+              github.event_name == 'pull_request_review_comment' &&
+              github.event.comment.in_reply_to_id == null
+            ) ||
+            (github.event_name == 'issue_comment' && github.event.issue.pull_request)
+          ) &&
           (
             github.actor == 'coderabbitai' ||
+            github.actor == 'coderabbitai[bot]' ||
+            github.actor == 'gemini-code-assist' ||
             github.actor == 'gemini-code-assist[bot]' ||
+            github.actor == 'augment-code' ||
             github.actor == 'augment-code[bot]' ||
+            github.actor == 'augmentcode' ||
             github.actor == 'augmentcode[bot]' ||
+            github.actor == 'copilot' ||
             github.actor == 'copilot[bot]' ||
             github.actor == 'github-actions[bot]'
           )
@@ -91,6 +100,13 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PR_NUMBER: ${{ github.event.pull_request.number || github.event.issue.number }}
           REPO: ${{ github.repository }}
+          REVIEW_GATE_EVENT_NAME: ${{ github.event_name }}
+          REVIEW_GATE_EVENT_ACTION: ${{ github.event.action }}
+          REVIEW_GATE_EVENT_ACTOR: ${{ github.actor }}
+          REVIEW_GATE_EVENT_BODY: ${{ github.event.review.body || github.event.comment.body || '' }}
+          REVIEW_GATE_REVIEW_STATE: ${{ github.event.review.state || '' }}
+          REVIEW_GATE_EVIDENCE_HEAD_SHA: ${{ github.event.review.commit_id || github.event.comment.commit_id || '' }}
+          REVIEW_GATE_EXPECTED_HEAD_SHA: ${{ github.event.pull_request.head.sha || '' }}
         run: |
           echo "Checking PR #${PR_NUMBER} for AI review bot activity..."
 
@@ -120,7 +136,13 @@ jobs:
           RESULT=""
           HELPER_EXIT=0
           HELPER_STDERR=$(mktemp)
-          RESULT=$(bash "${HELPER}" check "${PR_NUMBER}" "${REPO}" 2>"${HELPER_STDERR}") || HELPER_EXIT=$?
+          EVENT_RESULT=""
+          if EVENT_RESULT=$(bash "${HELPER}" event-check 2>"${HELPER_STDERR}"); then
+            RESULT="${EVENT_RESULT}"
+            echo "Accepted trusted review evidence from ${REVIEW_GATE_EVENT_NAME}:${REVIEW_GATE_EVENT_ACTION}."
+          else
+            RESULT=$(bash "${HELPER}" check "${PR_NUMBER}" "${REPO}" 2>"${HELPER_STDERR}") || HELPER_EXIT=$?
+          fi
           cat "${HELPER_STDERR}" >&2
 
           # API exhaustion is an infrastructure condition, not evidence that a

@@ -178,6 +178,72 @@ Recommended changes: add a null check before line 42."
 	return 0
 }
 
+test_event_check_accepts_trusted_inline_bot_review() {
+	local output=""
+	if output=$(REVIEW_GATE_EVENT_NAME=pull_request_review_comment \
+		REVIEW_GATE_EVENT_ACTION=created \
+		REVIEW_GATE_EVENT_ACTOR='gemini-code-assist[bot]' \
+		REVIEW_GATE_EVENT_BODY='Thank you. The finding is resolved.' \
+		REVIEW_GATE_EVIDENCE_HEAD_SHA='head-123' \
+		REVIEW_GATE_EXPECTED_HEAD_SHA='head-123' \
+		do_event_check); then
+		[[ "$output" == "PASS" ]] && print_result "event-check accepts trusted inline bot evidence" 0 && return 0
+	fi
+	print_result "event-check accepts trusted inline bot evidence" 1 "output=${output}"
+	return 0
+}
+
+test_event_check_rejects_human_inline_reply() {
+	local output="" status=0
+	output=$(REVIEW_GATE_EVENT_NAME=pull_request_review_comment \
+		REVIEW_GATE_EVENT_ACTION=created \
+		REVIEW_GATE_EVENT_ACTOR='maintainer' \
+		REVIEW_GATE_EVENT_BODY='Addressed in the latest commit.' \
+		REVIEW_GATE_EVIDENCE_HEAD_SHA='head-123' \
+		REVIEW_GATE_EXPECTED_HEAD_SHA='head-123' \
+		do_event_check) || status=$?
+	if [[ "$status" -eq 1 && "$output" == "NOT_APPLICABLE" ]]; then
+		print_result "event-check rejects human inline replies" 0
+	else
+		print_result "event-check rejects human inline replies" 1 "status=${status} output=${output}"
+	fi
+	return 0
+}
+
+test_event_check_rejects_bot_failure_notice() {
+	local output="" status=0
+	output=$(REVIEW_GATE_EVENT_NAME=pull_request_review_comment \
+		REVIEW_GATE_EVENT_ACTION=created \
+		REVIEW_GATE_EVENT_ACTOR='coderabbitai' \
+		REVIEW_GATE_EVENT_BODY='Review failed due to an internal error.' \
+		REVIEW_GATE_EVIDENCE_HEAD_SHA='head-123' \
+		REVIEW_GATE_EXPECTED_HEAD_SHA='head-123' \
+		do_event_check) || status=$?
+	if [[ "$status" -eq 1 && "$output" == "NOT_APPLICABLE" ]]; then
+		print_result "event-check rejects bot failure notices" 0
+	else
+		print_result "event-check rejects bot failure notices" 1 "status=${status} output=${output}"
+	fi
+	return 0
+}
+
+test_event_check_rejects_stale_head_evidence() {
+	local output="" status=0
+	output=$(REVIEW_GATE_EVENT_NAME=pull_request_review_comment \
+		REVIEW_GATE_EVENT_ACTION=created \
+		REVIEW_GATE_EVENT_ACTOR='gemini-code-assist[bot]' \
+		REVIEW_GATE_EVENT_BODY='A substantive inline finding.' \
+		REVIEW_GATE_EVIDENCE_HEAD_SHA='old-head' \
+		REVIEW_GATE_EXPECTED_HEAD_SHA='current-head' \
+		do_event_check) || status=$?
+	if [[ "$status" -eq 1 && "$output" == "NOT_APPLICABLE" ]]; then
+		print_result "event-check rejects stale-head bot evidence" 0
+	else
+		print_result "event-check rejects stale-head bot evidence" 1 "status=${status} output=${output}"
+	fi
+	return 0
+}
+
 # t2799: is_rate_limit_only_comment matches the narrow 6-entry rate-limit set
 # only — NOT the broader non-review patterns ("Review failed", "Review
 # skipped", etc.). Used by grace-period logic where the semantic distinction
@@ -995,6 +1061,10 @@ main() {
 	test_is_non_review_comment_matches_review_skipped
 	test_is_non_review_comment_matches_closed_during_review
 	test_is_non_review_comment_rejects_real_review
+	test_event_check_accepts_trusted_inline_bot_review
+	test_event_check_rejects_human_inline_reply
+	test_event_check_rejects_bot_failure_notice
+	test_event_check_rejects_stale_head_evidence
 	test_is_rate_limit_only_matches_rate_limit
 	test_is_rate_limit_only_rejects_review_failed
 	test_is_rate_limit_only_rejects_review_skipped

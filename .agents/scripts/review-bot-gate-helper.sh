@@ -5,6 +5,7 @@
 #
 # Usage:
 #   review-bot-gate-helper.sh check         <PR_NUMBER> [REPO]
+#   review-bot-gate-helper.sh event-check
 #   review-bot-gate-helper.sh wait          <PR_NUMBER> [REPO] [MAX_WAIT_SECONDS]
 #   review-bot-gate-helper.sh list          <PR_NUMBER> [REPO]
 #   review-bot-gate-helper.sh request-retry <PR_NUMBER> [REPO]
@@ -13,6 +14,7 @@
 #
 # Commands:
 #   check          — Check once, return PASS/PASS_RATE_LIMITED/WAITING/SKIP
+#   event-check    — Accept trusted bot review evidence from the Actions event
 #   wait           — Poll until a bot posts or timeout (default 600s)
 #   list           — List all bot comments found on the PR
 #   request-retry  — If bots were rate-limited and no real review exists,
@@ -148,10 +150,11 @@ REVIEW_BOT_MIN_EDIT_LAG_SECONDS="${REVIEW_BOT_MIN_EDIT_LAG_SECONDS:-30}"
 # --- Functions ---
 
 usage() {
-	echo "Usage: $(basename "$0") {check|wait|list|request-retry|status-json|batch-retry} <PR_NUMBER> [REPO] [MAX_WAIT]"
+	echo "Usage: $(basename "$0") {check|event-check|wait|list|request-retry|status-json|batch-retry} <PR_NUMBER> [REPO] [MAX_WAIT]"
 	echo ""
 	echo "Commands:"
 	echo "  check          Check once for bot reviews (returns PASS/PASS_RATE_LIMITED/WAITING/SKIP)"
+	echo "  event-check    Check trusted bot review evidence from REVIEW_GATE_EVENT_* variables"
 	echo "  wait           Poll until bot reviews appear or timeout"
 	echo "  list           List all bot comments found"
 	echo "  request-retry  Request review retry if bots were rate-limited (idempotent)"
@@ -440,6 +443,59 @@ is_non_review_comment() {
 			return 0
 		fi
 	done
+	return 1
+}
+
+is_known_review_bot() {
+	local actor="$1"
+	local known_bot=""
+	actor=$(printf '%s' "$actor" | tr '[:upper:]' '[:lower:]')
+	actor="${actor%\[bot\]}"
+
+	for known_bot in "${KNOWN_BOTS[@]}"; do
+		[[ "$actor" == "$known_bot" ]] && return 0
+	done
+	return 1
+}
+
+do_event_check() {
+	local event_name="${REVIEW_GATE_EVENT_NAME:-}"
+	local event_action="${REVIEW_GATE_EVENT_ACTION:-}"
+	local event_actor="${REVIEW_GATE_EVENT_ACTOR:-}"
+	local event_body="${REVIEW_GATE_EVENT_BODY:-}"
+	local review_state="${REVIEW_GATE_REVIEW_STATE:-}"
+	local evidence_head="${REVIEW_GATE_EVIDENCE_HEAD_SHA:-}"
+	local expected_head="${REVIEW_GATE_EXPECTED_HEAD_SHA:-}"
+
+	if ! is_known_review_bot "$event_actor"; then
+		printf 'NOT_APPLICABLE\n'
+		return 1
+	fi
+	if [[ -z "$evidence_head" || -z "$expected_head" || "$evidence_head" != "$expected_head" ]]; then
+		printf 'NOT_APPLICABLE\n'
+		return 1
+	fi
+
+	case "$event_name:$event_action" in
+	pull_request_review_comment:created | pull_request_review_comment:edited)
+		if [[ -n "$event_body" ]] && ! is_non_review_comment "$event_body"; then
+			printf 'PASS\n'
+			return 0
+		fi
+		;;
+	pull_request_review:submitted | pull_request_review:edited)
+		if [[ "$review_state" == "approved" || "$review_state" == "changes_requested" ]]; then
+			printf 'PASS\n'
+			return 0
+		fi
+		if [[ -n "$event_body" ]] && ! is_non_review_comment "$event_body"; then
+			printf 'PASS\n'
+			return 0
+		fi
+		;;
+	esac
+
+	printf 'NOT_APPLICABLE\n'
 	return 1
 }
 
@@ -1395,6 +1451,11 @@ main() {
 	local pr_number="${2:-}"
 	local repo="${3:-}"
 	local max_wait="${4:-}"
+
+	if [[ "$command" == "event-check" ]]; then
+		do_event_check
+		return $?
+	fi
 
 	# batch-retry only needs repo, not pr_number
 	if [[ "$command" == "batch-retry" ]]; then
