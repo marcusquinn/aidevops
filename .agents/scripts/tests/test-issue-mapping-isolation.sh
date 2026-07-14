@@ -81,6 +81,16 @@ fi
 [[ "$(node "${SCRIPT_DIR}/task-coordinator.mjs" resolve-issue --task-id t101 --repository-id R_one | jq -r '.issueId')" == "I_one_42" ]]
 [[ "$(node "${SCRIPT_DIR}/task-coordinator.mjs" resolve-issue --task-id t102 --repository-id R_two | jq -r '.issueId')" == "I_two_42" ]]
 require_task_issue_mapping t1873.1 "$TODO_FILE" owner/dotted 73
+
+# Existing coordinator mappings are decoded in one jq process even when
+# optional project and cursor fields are empty.
+: >"$JQ_CALL_LOG"
+[[ "$(resolve_task_gh_number t102 "$TODO_FILE" owner/two)" == "42" ]]
+if [[ "$(wc -l <"$JQ_CALL_LOG" | tr -d ' ')" != "1" ]]; then
+	printf 'FAIL coordinator mapping did not parse fields with one jq process\n' >&2
+	exit 1
+fi
+
 if require_task_issue_mapping t1873.1 "$TODO_FILE" owner/dotted 74; then
 	printf 'FAIL mismatched display number passed the issue write gate\n' >&2
 	exit 1
