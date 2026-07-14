@@ -29,6 +29,7 @@ setup_repo() {
 	local root="$1"
 	git init --bare --initial-branch=main "${root}/remote.git" >/dev/null 2>&1 || git init --bare "${root}/remote.git" >/dev/null 2>&1 || return 1
 	git clone "${root}/remote.git" "${root}/work" >/dev/null 2>&1 || return 1
+	git -C "${root}/work" config commit.gpgsign false || return 1
 	printf '# Tasks\n' >"${root}/work/TODO.md"
 	mkdir -p "${root}/work/todo/tasks" || return 1
 	printf 'base\n' >"${root}/work/README.md"
@@ -61,6 +62,23 @@ run_publish() {
 		AIDEVOPS_PLANNING_VALIDATOR="$validator" planning_publish "$repo" "plan: test publication" origin main
 	)
 	return $?
+}
+
+test_git_binary_availability_is_validated() {
+	local name="rejects an unavailable Git command with a controlled error"
+	local output="" rc=0
+	output=$({
+		SCRIPT_DIR="$(dirname "$PUBLISHER")"
+		# shellcheck source=../planning-publisher.sh
+		source "$PUBLISHER"
+		AIDEVOPS_PLANNING_GIT_BIN="aidevops-missing-git-command" _planning_git --version
+	} 2>&1) || rc=$?
+	if [[ "$rc" -eq 1 && "$output" == *"Planning Git binary is not available or executable: aidevops-missing-git-command"* ]]; then
+		pass "$name"
+	else
+		fail "$name" "unexpected result (rc=$rc output=$output)"
+	fi
+	return 0
 }
 
 test_state_allowlist_and_idempotence() {
@@ -132,7 +150,7 @@ tmp=$(mktemp -d)
 git clone -q "$(git -C "$repo" remote get-url "$remote")" "$tmp/work"
 printf 'upstream\n' >>"$tmp/work/README.md"
 git -C "$tmp/work" add README.md
-GIT_AUTHOR_NAME=Rival GIT_AUTHOR_EMAIL=rival@example.invalid GIT_COMMITTER_NAME=Rival GIT_COMMITTER_EMAIL=rival@example.invalid git -C "$tmp/work" commit -qm rival
+GIT_AUTHOR_NAME=Rival GIT_AUTHOR_EMAIL=rival@example.invalid GIT_COMMITTER_NAME=Rival GIT_COMMITTER_EMAIL=rival@example.invalid git -C "$tmp/work" -c commit.gpgsign=false commit -qm rival
 git -C "$tmp/work" push -q origin "$branch"
 rm -rf "$tmp"
 exit 0
@@ -205,7 +223,7 @@ tmp=$(mktemp -d)
 git clone -q "$(git -C "$repo" remote get-url "$remote")" "$tmp/work"
 printf '%s\n' '- [ ] t999 rival ref:GH#999' >>"$tmp/work/TODO.md"
 git -C "$tmp/work" add TODO.md
-GIT_AUTHOR_NAME=Rival GIT_AUTHOR_EMAIL=rival@example.invalid GIT_COMMITTER_NAME=Rival GIT_COMMITTER_EMAIL=rival@example.invalid git -C "$tmp/work" commit -qm rival
+GIT_AUTHOR_NAME=Rival GIT_AUTHOR_EMAIL=rival@example.invalid GIT_COMMITTER_NAME=Rival GIT_COMMITTER_EMAIL=rival@example.invalid git -C "$tmp/work" -c commit.gpgsign=false commit -qm rival
 git -C "$tmp/work" push -q origin "$branch"
 rm -rf "$tmp"
 exit 0
@@ -285,6 +303,7 @@ test_explicit_git_capability_preserves_guarded_checkout() {
 }
 
 main() {
+	test_git_binary_availability_is_validated
 	test_state_allowlist_and_idempotence
 	test_validation_failure_pushes_nothing
 	test_contention_replay_and_conflict

@@ -14,8 +14,8 @@ PLANNING_PUBLISHED_COMMIT=""
 
 _planning_git() {
 	local git_bin="${AIDEVOPS_PLANNING_GIT_BIN:-git}"
-	if [[ "$git_bin" == */* && ! -x "$git_bin" ]]; then
-		_planning_publish_log error "Planning Git binary is not executable: $git_bin"
+	if ! command -v "$git_bin" >/dev/null 2>&1; then
+		_planning_publish_log error "Planning Git binary is not available or executable: $git_bin"
 		return 1
 	fi
 	command "$git_bin" "$@"
