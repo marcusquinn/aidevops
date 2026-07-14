@@ -225,7 +225,13 @@ HOOK
 
 test_explicit_git_capability_preserves_guarded_checkout() {
 	local name="explicit Git capability publishes planning paths while canonical guard remains active"
-	local root="" repo="" shim_dir="" before="" after="" guard_rc=0 count=""
+	local root="" repo="" shim_dir="" before="" after="" guard_rc=0 count="" real_git="" real_true=""
+	real_git=$(command -v git || true)
+	real_true=$(command -v true || true)
+	if [[ -z "$real_git" || -z "$real_true" ]]; then
+		fail "$name" command-resolution
+		return 0
+	fi
 	root=$(mktemp -d) || return 0
 	setup_repo "$root" || {
 		fail "$name" setup
@@ -249,7 +255,7 @@ test_explicit_git_capability_preserves_guarded_checkout() {
 	printf '%s\n' '**Status:** Completed' '**TODO:** t006' '**PR:** #60' >"${repo}/todo/PLANS.md"
 	before=$(state_digest "$repo")
 	(
-		export PATH="${shim_dir}:/usr/bin:/bin"
+		export PATH="${shim_dir}:${PATH}"
 		export GIT_AUTHOR_NAME="GitHub Actions"
 		export GIT_AUTHOR_EMAIL="actions@github.com"
 		export GIT_COMMITTER_NAME="GitHub Actions"
@@ -257,8 +263,8 @@ test_explicit_git_capability_preserves_guarded_checkout() {
 		SCRIPT_DIR="$(dirname "$PUBLISHER")"
 		# shellcheck source=../planning-publisher.sh
 		source "$PUBLISHER"
-		AIDEVOPS_PLANNING_GIT_BIN=/usr/bin/git \
-			AIDEVOPS_PLANNING_VALIDATOR=/usr/bin/true \
+		AIDEVOPS_PLANNING_GIT_BIN="$real_git" \
+			AIDEVOPS_PLANNING_VALIDATOR="$real_true" \
 			planning_publish "$repo" "plan: guarded task projection" origin main $'TODO.md\ntodo/PLANS.md'
 	) || {
 		fail "$name" publish
@@ -266,7 +272,7 @@ test_explicit_git_capability_preserves_guarded_checkout() {
 		return 0
 	}
 	after=$(state_digest "$repo")
-	PATH="${shim_dir}:/usr/bin:/bin" git -C "$repo" config user.name blocked-test >/dev/null 2>&1 || guard_rc=$?
+	PATH="${shim_dir}:${PATH}" git -C "$repo" config user.name blocked-test >/dev/null 2>&1 || guard_rc=$?
 	count=$(git --git-dir="${root}/remote.git" show main:TODO.md | grep -c 'pr:#60 completed:2026-07-14' || true)
 	if [[ "$before" == "$after" && "$guard_rc" -eq 42 && "$count" -eq 1 ]] &&
 		git --git-dir="${root}/remote.git" show main:todo/PLANS.md | grep -q 'Status:\*\* Completed'; then
