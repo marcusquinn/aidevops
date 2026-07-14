@@ -432,6 +432,27 @@ _hrw_resolve_default_branch() {
 }
 
 #######################################
+# Resolve the comparison base and count commits beyond it.
+# Output: <default-branch>|<count|unknown>
+# Args: $1=work_dir
+#######################################
+_hrw_worker_base_commit_state() {
+	local work_dir="$1"
+	local default_branch=""
+	local commit_count=""
+
+	default_branch=$(_hrw_resolve_default_branch "$work_dir")
+	[[ -z "$default_branch" ]] && default_branch="${DISPATCH_REPO_DEFAULT_BRANCH:-main}"
+	if commit_count=$(git -C "$work_dir" rev-list --count "origin/${default_branch}..${_HRW_GIT_HEAD}" 2>/dev/null) && \
+		[[ "$commit_count" =~ ^[0-9]+$ ]]; then
+		printf '%s|%s' "$default_branch" "$commit_count"
+	else
+		printf '%s|unknown' "$default_branch"
+	fi
+	return 0
+}
+
+#######################################
 # Detect whether a worker produced any tangible output.
 #
 # Checks three independent signals. Returns 0 (true — has output) if ANY
@@ -442,8 +463,8 @@ _hrw_resolve_default_branch() {
 #   $2 - work_dir    (worktree root; must be a git repo)
 #
 # Signals checked (in order of cheapness):
-#   1. Commits on feature branch beyond remote default branch
-#      (git rev-list --count origin/main..HEAD > 0; falls back to origin/master)
+#   1. Commits on feature branch beyond the resolved remote default branch
+#      (git rev-list --count origin/<default>..HEAD > 0)
 #   2. Branch pushed to remote
 #      (git ls-remote origin refs/heads/<branch> is non-empty)
 #   3. PR linked to this issue via gh
@@ -495,44 +516,35 @@ _worker_produced_output() {
 		return 0
 	fi
 
-	# Signal 1: commits on feature branch beyond origin/main (fallback: master)
+	# Compare against the resolved default, not an assumed main/master base.
+	local base_commit_state=""
+	local default_branch=""
+	local commit_count=""
 	local has_commits=0
-	local commit_count=0
-	commit_count=$(git -C "$work_dir" rev-list --count "origin/main..HEAD" 2>/dev/null || true)
-	[[ "$commit_count" =~ ^[0-9]+$ ]] || commit_count=0
-	if [[ "$commit_count" -gt 0 ]]; then
-		has_commits=1
-	else
-		# Signal 1b: fallback for origin/master default branch
-		commit_count=$(git -C "$work_dir" rev-list --count "origin/master..HEAD" 2>/dev/null || true)
-		[[ "$commit_count" =~ ^[0-9]+$ ]] || commit_count=0
+	local commit_comparison_known=0
+	base_commit_state=$(_hrw_worker_base_commit_state "$work_dir")
+	default_branch="${base_commit_state%%|*}"
+	commit_count="${base_commit_state#*|}"
+	if [[ "$commit_count" =~ ^[0-9]+$ ]]; then
+		commit_comparison_known=1
 		[[ "$commit_count" -gt 0 ]] && has_commits=1
 	fi
 
-	# Signal 2: branch pushed to remote
-	# Default-branch guard (t2899): when HEAD ends on the repo's default branch
-	# (main/master), Signal 2 ALWAYS matches because the default branch exists
-	# on the remote — every worker that exits without checking out a feature
-	# branch was previously misclassified as branch_orphan. Resolve the default
-	# branch via origin/HEAD and common branch fallbacks, and skip
-	# Signal 2 entirely when branch_name matches it. The signal is meaningless
-	# on default branches: there is no orphan branch to recover.
+	# Signal 2: a remote feature ref is output evidence only off the resolved
+	# default branch (t2899).
 	local has_pushed_branch=0
 	local branch_name=""
-	local default_branch=""
 	branch_name=$(git -C "$work_dir" rev-parse --abbrev-ref HEAD 2>/dev/null || true)
-	default_branch=$(_hrw_resolve_default_branch "$work_dir")
-	[[ -z "$default_branch" ]] && default_branch="${DISPATCH_REPO_DEFAULT_BRANCH:-main}"
 	if [[ -n "$branch_name" && "$branch_name" != "$_HRW_GIT_HEAD" && "$branch_name" != "$default_branch" ]]; then
 		local remote_ref=""
 		remote_ref=$(git -C "$work_dir" ls-remote origin "refs/heads/$branch_name" 2>/dev/null || true)
 		[[ -n "$remote_ref" ]] && has_pushed_branch=1
 	fi
 
-	# Early exit: no commits, no pushed branch → definitely noop (no PR check needed)
-	# Also covers the t2899 default-branch case: HEAD on main with no/any commits
-	# but no feature branch pushed → noop, not branch_orphan.
-	if [[ "$has_commits" -eq 0 && "$has_pushed_branch" -eq 0 ]]; then
+	# A successful zero-count comparison proves the branch has no PR-able output,
+	# even when a same-SHA feature ref already exists remotely. Check for dirty
+	# edits first so crash recovery still preserves uncommitted work.
+	if [[ "$has_commits" -eq 0 ]]; then
 		local task_status=""
 		if ! task_status=$(_hrw_worktree_task_status "$work_dir"); then
 			printf 'pr_exists' # fail-open: cannot safely classify local state
@@ -542,8 +554,14 @@ _worker_produced_output() {
 			printf 'dirty_worktree'
 			return 0
 		fi
-		printf 'noop'
-		return 0
+		if [[ "$commit_comparison_known" -eq 1 ]]; then
+			printf 'noop'
+			return 0
+		fi
+		if [[ "$has_pushed_branch" -eq 0 ]]; then
+			printf 'pr_exists' # fail-open: resolved base ref could not be compared
+			return 0
+		fi
 	fi
 	# t2899: HEAD on default branch with commits ahead but no feature branch pushed.
 	# This is "worker landed on main with local commits" — not an orphan branch.
