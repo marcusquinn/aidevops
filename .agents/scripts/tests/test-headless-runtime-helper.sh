@@ -708,6 +708,7 @@ test_cmd_run_aborts_issue_worker_before_canary_when_env_missing() {
 
 test_cmd_run_preserves_worker_origin_overrides_before_canary() {
 	local worktree_dir="${TEST_ROOT}/origin-override-worktree"
+	local AIDEVOPS_DISPATCH_LEASE_TOKEN=""
 	mkdir -p "$worktree_dir"
 	init_git_worktree "$worktree_dir"
 	export WORKER_ISSUE_NUMBER=23558
@@ -1300,6 +1301,27 @@ EOF
 	return 0
 }
 
+create_complete_opencode_test_schema() {
+	local db_path="$1"
+	sqlite3 "$db_path" <<'SQL'
+CREATE TABLE project (id TEXT PRIMARY KEY, name TEXT NOT NULL);
+CREATE TABLE project_directory (project_id TEXT NOT NULL, directory TEXT NOT NULL, PRIMARY KEY(project_id, directory));
+CREATE TABLE permission (id TEXT PRIMARY KEY, project_id TEXT NOT NULL, data TEXT NOT NULL);
+CREATE TABLE workspace (id TEXT PRIMARY KEY, project_id TEXT NOT NULL, data TEXT NOT NULL);
+CREATE TABLE session (id TEXT PRIMARY KEY, project_id TEXT NOT NULL, directory TEXT NOT NULL, title TEXT NOT NULL);
+CREATE TABLE message (id TEXT PRIMARY KEY, session_id TEXT NOT NULL, data TEXT NOT NULL);
+CREATE TABLE part (id TEXT PRIMARY KEY, message_id TEXT NOT NULL, session_id TEXT NOT NULL, data TEXT NOT NULL);
+CREATE TABLE todo (session_id TEXT NOT NULL, position INTEGER NOT NULL, content TEXT NOT NULL, PRIMARY KEY(session_id, position));
+CREATE TABLE session_share (session_id TEXT PRIMARY KEY, data TEXT NOT NULL);
+CREATE TABLE session_context_epoch (session_id TEXT PRIMARY KEY, data TEXT NOT NULL);
+CREATE TABLE session_input (id TEXT PRIMARY KEY, session_id TEXT NOT NULL, data TEXT NOT NULL);
+CREATE TABLE session_message (id TEXT PRIMARY KEY, session_id TEXT NOT NULL, data TEXT NOT NULL);
+CREATE TABLE event_sequence (aggregate_id TEXT PRIMARY KEY, seq INTEGER NOT NULL);
+CREATE TABLE event (id TEXT PRIMARY KEY, aggregate_id TEXT NOT NULL, seq INTEGER NOT NULL, data TEXT NOT NULL);
+SQL
+	return 0
+}
+
 test_seed_worker_db_session_context_copies_only_selected_session() {
 	local shared_dir="${HOME}/.local/share/opencode"
 	local isolated_dir="${TEST_ROOT}/isolated-opencode-data"
@@ -1418,7 +1440,7 @@ SQL
 	return 0
 }
 
-test_seed_worker_db_session_context_uses_backup_for_fresh_db() {
+test_seed_worker_db_session_context_uses_schema_only_fresh_db() {
 	local shared_dir="${HOME}/.local/share/opencode"
 	local isolated_dir="${TEST_ROOT}/isolated-opencode-backup-seed"
 	local shared_db="${shared_dir}/opencode.db"
@@ -1448,6 +1470,7 @@ SQL
 	_seed_worker_db_session_context "$isolated_dir" "session-keep"
 
 	local user_version schema_migrations sessions other_sessions messages other_messages projects other_projects
+	local seed_definition initialize_definition
 	user_version=$(sqlite3 "$worker_db" "PRAGMA user_version;")
 	schema_migrations=$(sqlite3 "$worker_db" "SELECT COUNT(*) FROM __drizzle_migrations WHERE hash = 'schema-ready';")
 	sessions=$(sqlite3 "$worker_db" "SELECT COUNT(*) FROM session WHERE id = 'session-keep';")
@@ -1456,13 +1479,15 @@ SQL
 	other_messages=$(sqlite3 "$worker_db" "SELECT COUNT(*) FROM message WHERE session_id = 'session-other';")
 	projects=$(sqlite3 "$worker_db" "SELECT COUNT(*) FROM project WHERE id = 'project-keep';")
 	other_projects=$(sqlite3 "$worker_db" "SELECT COUNT(*) FROM project WHERE id = 'project-other';")
+	seed_definition=$(declare -f _seed_worker_db_session_context)
+	initialize_definition=$(declare -f _initialize_worker_db_from_shared_schema)
 
-	if [[ "$user_version" == "42" && "$schema_migrations" == "1" && "$sessions" == "1" && "$other_sessions" == "0" && "$messages" == "1" && "$other_messages" == "0" && "$projects" == "1" && "$other_projects" == "0" ]]; then
-		print_result "seed worker DB uses shared backup for fresh continuation DB" 0
+	if [[ "$user_version" == "42" && "$schema_migrations" == "1" && "$sessions" == "1" && "$other_sessions" == "0" && "$messages" == "1" && "$other_messages" == "0" && "$projects" == "1" && "$other_projects" == "0" && "$seed_definition" != *".backup"* && "$initialize_definition" == *'".schema"'* ]]; then
+		print_result "seed worker DB uses shared schema for fresh continuation DB" 0
 		return 0
 	fi
 
-	print_result "seed worker DB uses shared backup for fresh continuation DB" 1 \
+	print_result "seed worker DB uses shared schema for fresh continuation DB" 1 \
 		"user_version=$user_version schema_migrations=$schema_migrations sessions=$sessions other_sessions=$other_sessions messages=$messages other_messages=$other_messages projects=$projects other_projects=$other_projects"
 	return 0
 }
@@ -1500,6 +1525,136 @@ SQL
 
 	print_result "seed worker DB vacuums pruned backup pages" 1 \
 		"other_messages=$other_messages freelist_count=$freelist_count"
+	return 0
+}
+
+test_seed_worker_db_session_context_copies_complete_graph() {
+	local shared_dir="${HOME}/.local/share/opencode"
+	local isolated_dir="${TEST_ROOT}/isolated-opencode-complete-graph"
+	local shared_db="${shared_dir}/opencode.db"
+	local worker_db="${isolated_dir}/opencode/opencode.db"
+	mkdir -p "$shared_dir" "${isolated_dir}/opencode"
+	rm -f "$shared_db" "$worker_db"
+	create_complete_opencode_test_schema "$shared_db"
+
+	sqlite3 "$shared_db" <<'SQL'
+INSERT INTO project VALUES ('project-keep', 'Keep Project'), ('project-other', 'Other Project');
+INSERT INTO project_directory VALUES ('project-keep', '/keep'), ('project-other', '/other');
+INSERT INTO permission VALUES ('permission-keep', 'project-keep', 'keep'), ('permission-other', 'project-other', 'other');
+INSERT INTO workspace VALUES ('workspace-keep', 'project-keep', 'keep'), ('workspace-other', 'project-other', 'other');
+INSERT INTO session VALUES ('session-keep', 'project-keep', '/keep', 'Keep'), ('session-other', 'project-other', '/other', 'Other');
+INSERT INTO message VALUES ('message-keep', 'session-keep', 'keep'), ('message-other', 'session-other', 'other');
+INSERT INTO part VALUES ('part-keep', 'message-keep', 'session-keep', 'keep'), ('part-other', 'message-other', 'session-other', 'other');
+INSERT INTO todo VALUES ('session-keep', 0, 'keep'), ('session-other', 0, 'other');
+INSERT INTO session_share VALUES ('session-keep', 'keep'), ('session-other', 'other');
+INSERT INTO session_context_epoch VALUES ('session-keep', 'keep'), ('session-other', 'other');
+INSERT INTO session_input VALUES ('input-keep', 'session-keep', 'keep'), ('input-other', 'session-other', 'other');
+INSERT INTO session_message VALUES ('projection-keep', 'session-keep', 'keep'), ('projection-other', 'session-other', 'other');
+INSERT INTO event_sequence VALUES ('session-keep', 1), ('session-other', 1);
+INSERT INTO event VALUES ('event-keep', 'session-keep', 1, 'keep'), ('event-other', 'session-other', 1, zeroblob(1048576));
+SQL
+
+	_seed_worker_db_session_context "$isolated_dir" "session-keep"
+
+	local session_graph_count project_graph_count unrelated_count event_count
+	session_graph_count=$(sqlite3 "$worker_db" "SELECT (SELECT COUNT(*) FROM message) + (SELECT COUNT(*) FROM part) + (SELECT COUNT(*) FROM todo) + (SELECT COUNT(*) FROM session_share) + (SELECT COUNT(*) FROM session_context_epoch) + (SELECT COUNT(*) FROM session_input) + (SELECT COUNT(*) FROM session_message);")
+	project_graph_count=$(sqlite3 "$worker_db" "SELECT (SELECT COUNT(*) FROM project_directory) + (SELECT COUNT(*) FROM permission) + (SELECT COUNT(*) FROM workspace);")
+	unrelated_count=$(sqlite3 "$worker_db" "SELECT (SELECT COUNT(*) FROM session WHERE id = 'session-other') + (SELECT COUNT(*) FROM message WHERE session_id = 'session-other') + (SELECT COUNT(*) FROM part WHERE session_id = 'session-other') + (SELECT COUNT(*) FROM event WHERE aggregate_id = 'session-other');")
+	event_count=$(sqlite3 "$worker_db" "SELECT (SELECT COUNT(*) FROM event_sequence WHERE aggregate_id = 'session-keep') + (SELECT COUNT(*) FROM event WHERE aggregate_id = 'session-keep');")
+
+	if [[ "$session_graph_count" == "7" && "$project_graph_count" == "3" && "$unrelated_count" == "0" && "$event_count" == "2" ]]; then
+		print_result "seed worker DB copies complete selected session graph only" 0
+		return 0
+	fi
+
+	print_result "seed worker DB copies complete selected session graph only" 1 \
+		"session_graph=$session_graph_count project_graph=$project_graph_count unrelated=$unrelated_count events=$event_count"
+	return 0
+}
+
+test_merge_worker_db_replaces_complete_session_graph_atomically() {
+	local shared_dir="${HOME}/.local/share/opencode"
+	local isolated_dir="${TEST_ROOT}/merge-opencode-complete-graph"
+	local shared_db="${shared_dir}/opencode.db"
+	local worker_db="${isolated_dir}/opencode/opencode.db"
+	mkdir -p "$shared_dir" "${isolated_dir}/opencode"
+	rm -f "$shared_db" "$worker_db"
+	create_complete_opencode_test_schema "$shared_db"
+	create_complete_opencode_test_schema "$worker_db"
+
+	sqlite3 "$shared_db" <<'SQL'
+INSERT INTO project VALUES ('project-keep', 'Shared Project'), ('project-other', 'Other Project');
+INSERT INTO session VALUES ('session-keep', 'project-keep', '/old', 'Old'), ('session-other', 'project-other', '/other', 'Other');
+INSERT INTO message VALUES ('message-keep', 'session-keep', 'old'), ('message-other', 'session-other', 'other');
+INSERT INTO part VALUES ('part-keep', 'message-keep', 'session-keep', 'old'), ('part-other', 'message-other', 'session-other', 'other');
+INSERT INTO todo VALUES ('session-keep', 0, 'removed-by-worker');
+INSERT INTO event_sequence VALUES ('session-keep', 1), ('session-other', 1);
+INSERT INTO event VALUES ('event-keep', 'session-keep', 1, 'old'), ('event-other', 'session-other', 1, 'other');
+SQL
+	sqlite3 "$worker_db" <<'SQL'
+INSERT INTO project VALUES ('project-keep', 'Worker Project');
+INSERT INTO session VALUES ('session-keep', 'project-keep', '/new', 'New');
+INSERT INTO message VALUES ('message-keep', 'session-keep', 'new');
+INSERT INTO part VALUES ('part-keep', 'message-keep', 'session-keep', 'new');
+INSERT INTO session_context_epoch VALUES ('session-keep', 'new');
+INSERT INTO session_input VALUES ('input-keep', 'session-keep', 'new');
+INSERT INTO session_message VALUES ('projection-keep', 'session-keep', 'new');
+INSERT INTO event_sequence VALUES ('session-keep', 2);
+INSERT INTO event VALUES ('event-keep', 'session-keep', 2, 'new');
+SQL
+
+	local merge_status=0
+	_merge_worker_db "$isolated_dir" || merge_status=$?
+
+	local merged_values unrelated_values
+	merged_values=$(sqlite3 "$shared_db" "SELECT title || '|' || directory FROM session WHERE id = 'session-keep'; SELECT data FROM message WHERE id = 'message-keep'; SELECT data FROM part WHERE id = 'part-keep'; SELECT COUNT(*) FROM todo WHERE session_id = 'session-keep'; SELECT data FROM session_context_epoch WHERE session_id = 'session-keep'; SELECT seq || '|' || data FROM event WHERE id = 'event-keep';")
+	unrelated_values=$(sqlite3 "$shared_db" "SELECT data FROM message WHERE id = 'message-other'; SELECT data FROM part WHERE id = 'part-other'; SELECT data FROM event WHERE id = 'event-other';")
+
+	if [[ "$merge_status" -eq 0 && "$merged_values" == $'New|/new\nnew\nnew\n0\nnew\n2|new' && "$unrelated_values" == $'other\nother\nother' ]]; then
+		print_result "merge worker DB atomically replaces complete session graph" 0
+		return 0
+	fi
+
+	print_result "merge worker DB atomically replaces complete session graph" 1 \
+		"status=$merge_status merged=$merged_values unrelated=$unrelated_values"
+	return 0
+}
+
+test_merge_worker_db_failure_preserves_recovery_db_without_auth() {
+	local shared_dir="${HOME}/.local/share/opencode"
+	local isolated_dir="${TEST_ROOT}/merge-opencode-failure"
+	local recovery_root="${TEST_ROOT}/worker-db-recovery"
+	local shared_db="${shared_dir}/opencode.db"
+	local worker_db="${isolated_dir}/opencode/opencode.db"
+	mkdir -p "$shared_dir" "${isolated_dir}/opencode"
+	rm -f "$shared_db" "$worker_db"
+	create_complete_opencode_test_schema "$shared_db"
+	create_complete_opencode_test_schema "$worker_db"
+	sqlite3 "$shared_db" "INSERT INTO project VALUES ('project-keep', 'Shared'); INSERT INTO session VALUES ('session-keep', 'project-keep', '/old', 'Old');"
+	sqlite3 "$worker_db" "CREATE TABLE worker_only (id TEXT PRIMARY KEY, session_id TEXT NOT NULL); INSERT INTO project VALUES ('project-keep', 'Worker'); INSERT INTO session VALUES ('session-keep', 'project-keep', '/new', 'New');"
+	printf '%s' 'test-auth-must-not-be-preserved' >"${isolated_dir}/opencode/auth.json"
+
+	local merge_status=0
+	_merge_worker_db "$isolated_dir" || merge_status=$?
+	AIDEVOPS_WORKER_DB_RECOVERY_DIR="$recovery_root" _preserve_failed_worker_db "$isolated_dir"
+
+	local recovered_db="" recovery_auth_count=0 shared_title candidate
+	for candidate in "$recovery_root"/*/opencode.db; do
+		[[ -f "$candidate" ]] || continue
+		recovered_db="$candidate"
+		break
+	done
+	if compgen -G "${recovery_root}/*/auth.json" >/dev/null; then
+		recovery_auth_count=1
+	fi
+	shared_title=$(sqlite3 "$shared_db" "SELECT title FROM session WHERE id = 'session-keep';")
+	if [[ "$merge_status" -ne 0 && -f "$recovered_db" && "$recovery_auth_count" == "0" && -f "${isolated_dir}/opencode/auth.json" && "$shared_title" == "Old" ]]; then
+		print_result "failed merge rolls back and preserves DB without worker auth" 0
+		return 0
+	fi
+
+	print_result "failed merge rolls back and preserves DB without worker auth" 1 \
+		"status=$merge_status recovered=${recovered_db:-none} recovery_auth=$recovery_auth_count shared_title=$shared_title"
 	return 0
 }
 
@@ -3113,6 +3268,25 @@ test_pr_checkpoint_lifecycle_cases() {
 	return 0
 }
 
+run_worker_db_persistence_tests() {
+	test_seed_worker_db_session_context_copies_only_selected_session
+	test_seed_worker_db_session_context_rebinds_replacement_worktree
+	test_seed_worker_db_session_context_copies_migration_metadata
+	test_seed_worker_db_session_context_uses_schema_only_fresh_db
+	test_seed_worker_db_session_context_vacuums_pruned_backup
+	test_seed_worker_db_session_context_copies_complete_graph
+	test_merge_worker_db_replaces_complete_session_graph_atomically
+	test_merge_worker_db_failure_preserves_recovery_db_without_auth
+	test_sync_worker_db_migration_metadata_repairs_prewarmed_project_table
+	test_sync_worker_db_migration_metadata_replaces_stale_ledgers
+	test_copy_worker_db_migration_ledger_preserves_rows_when_attach_fails
+	test_copy_worker_db_migration_ledger_stops_when_schema_query_fails
+	test_sync_worker_db_migration_metadata_archives_unrepairable_project_table
+	test_sync_worker_db_migration_metadata_preserves_worker_db_when_shared_query_fails
+	test_sync_worker_db_migration_metadata_repeated_launch_reaches_seed
+	return 0
+}
+
 main() {
 	setup_test_env
 	test_appends_escalation_contract
@@ -3163,18 +3337,7 @@ main() {
 	test_worker_opencode_invocation_seeds_continuation_session
 	test_sandbox_passthrough_scopes_provider_env
 	test_copy_scoped_opencode_auth_keeps_selected_provider_only
-	test_seed_worker_db_session_context_copies_only_selected_session
-	test_seed_worker_db_session_context_rebinds_replacement_worktree
-	test_seed_worker_db_session_context_copies_migration_metadata
-	test_seed_worker_db_session_context_uses_backup_for_fresh_db
-	test_seed_worker_db_session_context_vacuums_pruned_backup
-	test_sync_worker_db_migration_metadata_repairs_prewarmed_project_table
-	test_sync_worker_db_migration_metadata_replaces_stale_ledgers
-	test_copy_worker_db_migration_ledger_preserves_rows_when_attach_fails
-	test_copy_worker_db_migration_ledger_stops_when_schema_query_fails
-	test_sync_worker_db_migration_metadata_archives_unrepairable_project_table
-	test_sync_worker_db_migration_metadata_preserves_worker_db_when_shared_query_fails
-	test_sync_worker_db_migration_metadata_repeated_launch_reaches_seed
+	run_worker_db_persistence_tests
 	test_opencode_project_table_migration_replay_detected
 	test_large_opencode_prompt_uses_file_attachment
 	test_large_claude_prompt_uses_stdin_file

@@ -11,6 +11,10 @@ import { tmpdir } from "os";
 
 import { registerApprovedWorkerPermissions } from "../config-hook.mjs";
 
+function blockerEvents(root) {
+  return readFileSync(join(root, "blockers.jsonl"), "utf8").trim().split("\n").map((line) => JSON.parse(line));
+}
+
 function signedGrant(root, options = {}) {
   const key = join(root, "approval.key");
   execFileSync("ssh-keygen", ["-t", "ed25519", "-N", "", "-q", "-f", key]);
@@ -56,10 +60,12 @@ test("verified unexpired grant adds exact rules globally and per agent", () => {
   assert.equal(registerApprovedWorkerPermissions(config, {
     grantPath: grant.grantPath, publicKey: grant.publicKey, tempBase: root, repositoryDir: root,
     currentSession: "issue-123", currentBranch: "feature/auto-gh123", pendingRequest: "perm-0123456789abcdef",
+    blockerLogPath: join(root, "blockers.jsonl"),
   }), 2);
   const pattern = "~/.cache/opencode/node_modules/@opencode-ai/sdk/**";
   assert.equal(config.permission.external_directory[pattern], "allow");
   assert.equal(config.agent.review.permission.external_directory[pattern], "allow");
+  assert.equal(blockerEvents(root).at(-1).blocking, false);
   for (const [key, value] of Object.entries({ WORKER_ISSUE_NUMBER: old.issue, WORKER_REPO_SLUG: old.repo })) {
     if (value === undefined) delete process.env[key];
     else process.env[key] = value;
@@ -76,8 +82,10 @@ test("expired grant is ignored even with a valid signature", () => {
   assert.equal(registerApprovedWorkerPermissions(config, {
     grantPath: grant.grantPath, publicKey: grant.publicKey, tempBase: root, repositoryDir: root,
     currentSession: "issue-123", currentBranch: "feature/auto-gh123", pendingRequest: "perm-0123456789abcdef",
+    blockerLogPath: join(root, "blockers.jsonl"),
   }), 0);
   assert.equal(config.permission, undefined);
+  assert.equal(blockerEvents(root).at(-1).reason, "grant_expired");
   rmSync(root, { recursive: true, force: true });
 });
 
@@ -95,8 +103,10 @@ test("grant cannot be replayed from a different worktree", () => {
     currentSession: "issue-123",
     currentBranch: "feature/auto-gh123",
     pendingRequest: "perm-0123456789abcdef",
+    blockerLogPath: join(root, "blockers.jsonl"),
   }), 0);
   assert.equal(config.permission, undefined);
+  assert.equal(blockerEvents(root).at(-1).reason, "grant_worktree_mismatch");
   const differentSessionConfig = { agent: {} };
   assert.equal(registerApprovedWorkerPermissions(differentSessionConfig, {
     grantPath: grant.grantPath,
@@ -106,8 +116,22 @@ test("grant cannot be replayed from a different worktree", () => {
     currentSession: "issue-999",
     currentBranch: "feature/auto-gh123",
     pendingRequest: "perm-0123456789abcdef",
+    blockerLogPath: join(root, "blockers.jsonl"),
   }), 0);
   assert.equal(differentSessionConfig.permission, undefined);
+  assert.equal(blockerEvents(root).at(-1).session_key, "issue-999");
+  const differentRequestConfig = { agent: {} };
+  assert.equal(registerApprovedWorkerPermissions(differentRequestConfig, {
+    grantPath: grant.grantPath,
+    publicKey: grant.publicKey,
+    tempBase: root,
+    repositoryDir: root,
+    currentSession: "issue-123",
+    currentBranch: "feature/auto-gh123",
+    pendingRequest: "perm-fedcba9876543210",
+    blockerLogPath: join(root, "blockers.jsonl"),
+  }), 0);
+  assert.equal(blockerEvents(root).at(-1).request_id, "perm-fedcba9876543210");
   rmSync(root, { recursive: true, force: true });
 });
 
@@ -124,6 +148,7 @@ test("branch lookup failure cannot match a null grant branch", () => {
     repositoryDir: root,
     currentSession: "issue-123",
     pendingRequest: "perm-0123456789abcdef",
+    blockerLogPath: join(root, "blockers.jsonl"),
   }), 0);
   assert.equal(config.permission, undefined);
   rmSync(root, { recursive: true, force: true });
@@ -145,6 +170,7 @@ test("signature verification temp failure ignores the grant without crashing", (
     currentSession: "issue-123",
     currentBranch: "feature/auto-gh123",
     pendingRequest: "perm-0123456789abcdef",
+    blockerLogPath: join(root, "blockers.jsonl"),
   }), 0);
   assert.equal(config.permission, undefined);
   rmSync(root, { recursive: true, force: true });
@@ -168,6 +194,7 @@ for (const [name, options] of [
     assert.equal(registerApprovedWorkerPermissions(config, {
       grantPath: grant.grantPath, publicKey: grant.publicKey, tempBase: root, repositoryDir: root,
       currentSession: "issue-123", currentBranch: "feature/auto-gh123", pendingRequest: "perm-0123456789abcdef",
+      blockerLogPath: join(root, "blockers.jsonl"),
     }), 0);
     assert.equal(config.permission, undefined);
     rmSync(root, { recursive: true, force: true });

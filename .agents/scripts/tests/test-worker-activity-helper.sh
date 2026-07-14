@@ -79,6 +79,7 @@ METRICS="$FIXTURE_DIR/headless-runtime-metrics.jsonl"
 STATS="$FIXTURE_DIR/pulse-stats.json"
 PR_CACHE="$FIXTURE_DIR/pr-cache.json"
 OAUTH_POOL="$FIXTURE_DIR/oauth-pool.json"
+BLOCKERS="$FIXTURE_DIR/worker-progress-blockers.jsonl"
 
 cleanup() {
 	rm -rf "$FIXTURE_DIR"
@@ -146,6 +147,15 @@ T_FUTURE_SENTINEL_MS=$((T_FUTURE_SENTINEL * 1000))
 	printf '{"ts":%d,"role":"worker","repo_slug":"example/repo-c","session_key":"issue-18","result":"provider_error","exit_code":2}\n' "$((T_2H_AGO + 1))"
 } >"$METRICS"
 
+{
+	printf '{"schema":"aidevops-worker-blocker/v1","ts":%d,"timestamp":"recent","event":"permission_request_captured","status":"blocked","reason":"permission_required","blocking":true,"source":"test","issue_number":20,"repo_slug":"marcusquinn/aidevops","session_key":"issue-20","request_id":"perm-source"}\n' "$T_2H_AGO"
+	printf '{"schema":"aidevops-worker-blocker/v1","ts":%d,"timestamp":"recent","event":"permission_grant_applied","status":"resuming","reason":"scoped_permission_granted","blocking":false,"source":"test","issue_number":20,"repo_slug":"marcusquinn/aidevops","session_key":"issue-20","request_id":"perm-envelope"}\n' "$T_5MIN_AGO"
+	printf '{"schema":"aidevops-worker-blocker/v1","ts":%d,"timestamp":"recent","event":"permission_request_non_grantable","status":"blocked","reason":"permission_non_grantable","blocking":true,"source":"test","issue_number":21,"repo_slug":"marcusquinn/aidevops","session_key":"issue-21","request_id":"perm-sensitive"}\n' "$T_5MIN_AGO"
+	printf '{"schema":"aidevops-worker-blocker/v1","ts":%d,"timestamp":"older","event":"permission_awaiting_approval","status":"blocked","reason":"needs_maintainer_permissions","blocking":true,"source":"test","issue_number":22,"repo_slug":"marcusquinn/aidevops","session_key":"issue-22","request_id":"perm-old"}\n' "$T_25H_AGO"
+	printf '{"schema":"aidevops-worker-blocker/v1","ts":%d,"timestamp":"future","event":"permission_request_captured","status":"blocked","reason":"permission_required","blocking":true,"source":"test","issue_number":23,"repo_slug":"marcusquinn/aidevops","session_key":"issue-23","request_id":"perm-future"}\n' "$T_FUTURE_SENTINEL"
+	printf 'malformed-jsonl-row\n'
+} >"$BLOCKERS"
+
 cat >"$OAUTH_POOL" <<EOF
 {
   "openai": [
@@ -179,6 +189,7 @@ RUN_ENV=(
 	"WAH_PULSE_STATS_FILE=$STATS"
 	"WAH_PR_CACHE_FILE=$PR_CACHE"
 	"WAH_OAUTH_POOL_FILE=$OAUTH_POOL"
+	"WAH_BLOCKER_LOG_FILE=$BLOCKERS"
 	"PULSE_PROVIDER_ACCOUNT_SLOT_MULTIPLIER=24"
 )
 
@@ -296,6 +307,14 @@ assert_eq "2m: pr count is null when skipped" "null" \
 	"$(printf '%s' "$JSON" | jq -r '.worker_solved_issues.count')"
 assert_eq "2n: pr check_state = skipped" "skipped" \
 	"$(printf '%s' "$JSON" | jq -r '.worker_solved_issues.check_state')"
+assert_eq "2o: blocker events obey the 24h window" "3" \
+	"$(printf '%s' "$JSON" | jq -r '.progress_blockers.event_total')"
+assert_eq "2p: unresolved old blocker remains active until cleared" "2" \
+	"$(printf '%s' "$JSON" | jq -r '.progress_blockers.active_total')"
+assert_eq "2q: grant event clears the earlier request for the same session" "0" \
+	"$(printf '%s' "$JSON" | jq -r '[.progress_blockers.active_blockers[] | select(.session_key == "issue-20")] | length')"
+assert_eq "2r: malformed blocker rows fail open" "1" \
+	"$(printf '%s' "$JSON" | jq -r '.progress_blockers.reason_counts.permission_non_grantable')"
 
 # ---------------------------------------------------------------------------
 # Section 3: 1h window narrows correctly.
@@ -315,6 +334,8 @@ assert_eq "3d: 1h watchdog_killed = 0" "0" \
 	"$(printf '%s' "$JSON" | jq -r '.metrics.watchdog_killed')"
 assert_eq "3e: 1h recent examples exclude future sentinel" "0" \
 	"$(printf '%s' "$JSON" | jq -r '[.metrics.recent_examples[] | select(.session_key == "issue-9")] | length')"
+assert_eq "3f: 1h blocker event total is bounded" "2" \
+	"$(printf '%s' "$JSON" | jq -r '.progress_blockers.event_total')"
 
 # ---------------------------------------------------------------------------
 # Section 4: missing files fail-open to zeros.
@@ -326,12 +347,15 @@ JSON=$(env \
 	"WAH_METRICS_FILE=/nonexistent/metrics.jsonl" \
 	"WAH_PULSE_STATS_FILE=/nonexistent/stats.json" \
 	"WAH_PR_CACHE_FILE=$PR_CACHE" \
+	"WAH_BLOCKER_LOG_FILE=/nonexistent/blockers.jsonl" \
 	"$HELPER" summary --since 24h --no-pr-check --json 2>&1)
 RC=$?
 assert_rc "4a: missing files exits 0 (fail-open)" 0 "$RC"
 assert_eq "4b: missing metrics → total=0" "0" "$(printf '%s' "$JSON" | jq -r '.metrics.total')"
 assert_eq "4c: missing stats → counter=0" "0" \
 	"$(printf '%s' "$JSON" | jq -r '.pulse_stats.pulse_dispatch_circuit_broken')"
+assert_eq "4d: missing blocker log → active=0" "0" \
+	"$(printf '%s' "$JSON" | jq -r '.progress_blockers.active_total')"
 
 # ---------------------------------------------------------------------------
 # Section 5: human-output legibility.
@@ -353,6 +377,8 @@ assert_contains "5f: human output shows timing summary" "Timing ms" "$OUT"
 assert_contains "5g: human output shows failure groups" "Failure groups" "$OUT"
 assert_contains "5h: human output shows diagnostic focus" "Diagnostic focus" "$OUT"
 assert_contains "5i: human output shows failure families" "Failure families" "$OUT"
+assert_contains "5j: human output shows bounded blocker evidence" "worker-progress-blockers.jsonl" "$OUT"
+assert_contains "5k: human output shows active blocker count" "Currently active:            2" "$OUT"
 
 # ---------------------------------------------------------------------------
 # Section 6: provider/account diagnostics expose redacted capacity slots.

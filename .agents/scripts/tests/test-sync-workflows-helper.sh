@@ -88,6 +88,22 @@ _init_fake_repo() {
 	return 0
 }
 
+_setup_mock_gh() {
+	local _tmpdir="$1"
+	mkdir -p "$_tmpdir/bin"
+	cat >"$_tmpdir/bin/gh" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"${GH_CALL_LOG:?}"
+if [[ "${1:-} ${2:-}" == "pr create" ]]; then
+	printf 'mock-pr\n'
+fi
+exit 0
+EOF
+	chmod +x "$_tmpdir/bin/gh"
+	: >"$_tmpdir/gh-calls.log"
+	return 0
+}
+
 CANONICAL_CALLER_CONTENT=$(cat "$SCRIPT_DIR/../../templates/workflows/issue-sync-caller.yml")
 
 # ─── Test 1: no work when all current ───────────────────────────────────────
@@ -410,6 +426,96 @@ else
 	((_FAIL++))
 fi
 rm -rf "$TMPDIR_13"
+
+# ─── Test 14: GH#27726 — stale local, canonical remote → successful no-op ──
+TMPDIR_14="$(mktemp -d)"
+_setup_fake_home "$TMPDIR_14"
+_setup_mock_gh "$TMPDIR_14"
+BARE_14="$TMPDIR_14/bare.git"
+REPO_14="$TMPDIR_14/repo-stale-current"
+git init --bare -q "$BARE_14"
+mkdir -p "$REPO_14/.github/workflows"
+git -C "$REPO_14" init -q
+git -C "$REPO_14" config user.email test@example.com
+git -C "$REPO_14" config user.name Test
+git -C "$REPO_14" config commit.gpgsign false
+git -C "$REPO_14" checkout -q -b main
+printf '%s\n# stale local drift\n' "$CANONICAL_CALLER_CONTENT" >"$REPO_14/.github/workflows/issue-sync.yml"
+git -C "$REPO_14" add -A
+git -C "$REPO_14" commit -q -m "stale workflow"
+STALE_SHA_14=$(git -C "$REPO_14" rev-parse HEAD)
+git -C "$REPO_14" remote add origin "$BARE_14"
+git -C "$REPO_14" push -q -u origin main
+git --git-dir="$BARE_14" symbolic-ref HEAD refs/heads/main
+printf '%s\n' "$CANONICAL_CALLER_CONTENT" >"$REPO_14/.github/workflows/issue-sync.yml"
+git -C "$REPO_14" add -A
+git -C "$REPO_14" commit -q -m "canonical remote workflow"
+git -C "$REPO_14" push -q origin main
+git -C "$REPO_14" reset -q --hard "$STALE_SHA_14"
+git -C "$REPO_14" remote set-head origin main
+_write_repos_json "$TMPDIR_14" \
+	"{\"initialized_repos\":[{\"path\":\"$REPO_14\",\"slug\":\"owner/repo-stale-current\"}]}"
+OUT_14=$(HOME="$TMPDIR_14" PATH="$TMPDIR_14/bin:$PATH" GH_CALL_LOG="$TMPDIR_14/gh-calls.log" \
+	bash "$HELPER" --apply --branch chore/test-stale-current 2>&1)
+EXIT_14=$?
+if [[ "$OUT_14" == *"refreshed checkout is CURRENT/CALLER; no changes"* ]] &&
+	[[ ! -s "$TMPDIR_14/gh-calls.log" ]] &&
+	! git --git-dir="$BARE_14" show-ref --verify --quiet refs/heads/chore/test-stale-current; then
+	printf '%sPASS%s GH#27726 stale local + canonical remote → no push or PR\n' "$GREEN" "$NC"
+	((_PASS++))
+else
+	printf '%sFAIL%s GH#27726 stale local + canonical remote → no push or PR\n' "$RED" "$NC"
+	printf '       output: %s\n' "$OUT_14"
+	((_FAIL++))
+fi
+_assert_exit "GH#27726 refreshed-current no-op exits 0" 0 "$EXIT_14"
+rm -rf "$TMPDIR_14"
+
+# ─── Test 15: GH#27726 — stale local, drifted remote → apply refreshed state ─
+TMPDIR_15="$(mktemp -d)"
+_setup_fake_home "$TMPDIR_15"
+_setup_mock_gh "$TMPDIR_15"
+BARE_15="$TMPDIR_15/bare.git"
+REPO_15="$TMPDIR_15/repo-stale-drifted"
+git init --bare -q "$BARE_15"
+mkdir -p "$REPO_15/.github/workflows"
+git -C "$REPO_15" init -q
+git -C "$REPO_15" config user.email test@example.com
+git -C "$REPO_15" config user.name Test
+git -C "$REPO_15" config commit.gpgsign false
+git -C "$REPO_15" checkout -q -b main
+printf '%s\n# old local drift\n' "$CANONICAL_CALLER_CONTENT" >"$REPO_15/.github/workflows/issue-sync.yml"
+git -C "$REPO_15" add -A
+git -C "$REPO_15" commit -q -m "old drift"
+STALE_SHA_15=$(git -C "$REPO_15" rev-parse HEAD)
+git -C "$REPO_15" remote add origin "$BARE_15"
+git -C "$REPO_15" push -q -u origin main
+git --git-dir="$BARE_15" symbolic-ref HEAD refs/heads/main
+printf '%s\n# newer remote drift\n' "$CANONICAL_CALLER_CONTENT" >"$REPO_15/.github/workflows/issue-sync.yml"
+git -C "$REPO_15" add -A
+git -C "$REPO_15" commit -q -m "newer remote drift"
+git -C "$REPO_15" push -q origin main
+git -C "$REPO_15" reset -q --hard "$STALE_SHA_15"
+git -C "$REPO_15" remote set-head origin main
+_write_repos_json "$TMPDIR_15" \
+	"{\"initialized_repos\":[{\"path\":\"$REPO_15\",\"slug\":\"owner/repo-stale-drifted\"}]}"
+OUT_15=$(HOME="$TMPDIR_15" PATH="$TMPDIR_15/bin:$PATH" GH_CALL_LOG="$TMPDIR_15/gh-calls.log" \
+	bash "$HELPER" --apply --branch chore/test-stale-drifted 2>&1)
+EXIT_15=$?
+APPLIED_15=$(git --git-dir="$BARE_15" show \
+	"refs/heads/chore/test-stale-drifted:.github/workflows/issue-sync.yml" 2>/dev/null || true)
+if [[ "$OUT_15" == *"APPLIED"* ]] &&
+	grep -qF "pr create" "$TMPDIR_15/gh-calls.log" &&
+	[[ "$APPLIED_15" == "$CANONICAL_CALLER_CONTENT" ]]; then
+	printf '%sPASS%s GH#27726 stale local + drifted remote → refreshed drift applied\n' "$GREEN" "$NC"
+	((_PASS++))
+else
+	printf '%sFAIL%s GH#27726 stale local + drifted remote → refreshed drift applied\n' "$RED" "$NC"
+	printf '       output: %s\n' "$OUT_15"
+	((_FAIL++))
+fi
+_assert_exit "GH#27726 refreshed-drift apply exits 0" 0 "$EXIT_15"
+rm -rf "$TMPDIR_15"
 
 # ─── Summary ────────────────────────────────────────────────────────────────
 printf '\n'

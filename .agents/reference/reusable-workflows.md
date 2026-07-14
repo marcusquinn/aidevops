@@ -132,6 +132,17 @@ These are the canonical drift tools for managed downstream repos. Use
 `check-workflows` when auditing, and `sync-workflows --apply` when you are ready
 to update caller YAMLs to the current framework template/pin.
 
+`check-workflows` is a read-only audit of each registered local checkout. JSON
+rows include an `evidence` object with the local branch, known upstream,
+ahead/behind counts, and freshness state. Human output warns when a checkout is
+behind or diverged, so local drift is not mistaken for current remote evidence.
+The command does not fetch implicitly.
+
+Apply mode validates a clean default-branch checkout, fast-forwards it, and
+reclassifies that refreshed snapshot before rendering or writing. If refresh
+makes the workflow current, or rendering produces no diff, the operation exits
+successfully without pushing a sync branch or opening a PR.
+
 See also [`auto-dispatch.md`](auto-dispatch.md) for the `SYNC_PAT` requirement (unchanged under the reusable pattern — still per-repo secret).
 
 ## Runner override (GH#21877)

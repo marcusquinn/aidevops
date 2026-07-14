@@ -30,6 +30,11 @@ Applied to GitHub issues. The pulse checks these before spawning a worker.
 
 Permission grants are limited to exact-pattern `bash` and `external_directory` requests, bound to the issue, request digest, worker session, branch, and worktree hash, and expire after four hours. Action-only permissions and credential-bearing or unbounded paths remain non-grantable.
 
+The permission broker, approval flow, and grant verifier append blocker-state
+transitions to `~/.aidevops/logs/worker-progress-blockers.jsonl`. Diagnose the
+label and its exact local reason with `pulse-diagnose-helper.sh issue <N> --repo
+<owner/repo>`; removing the label does not alter or bypass grant verification.
+
 ### Conditional Dispatch Blocks (require active claim state)
 
 These labels DO NOT block dispatch on their own. They become blockers only when combined with an active claim signal — see "Claim-State Blockers" below.

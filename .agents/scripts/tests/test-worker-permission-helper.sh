@@ -11,6 +11,7 @@ source "${SCRIPT_DIR}/worker-permission-helper.sh"
 test_root=$(mktemp -d)
 trap 'rm -rf "$test_root"' EXIT
 capture_file="${test_root}/capture.json"
+export AIDEVOPS_WORKER_BLOCKER_LOG_FILE="${test_root}/blockers.jsonl"
 
 cat >"$capture_file" <<'JSON'
 {
@@ -77,5 +78,7 @@ if [[ ! -f "${git_dir}/aidevops-permission-pending" ]]; then
 	printf 'permission pending marker was not written to the target repository git directory\n' >&2
 	exit 1
 fi
+jq -e 'select(.event == "permission_awaiting_approval" and .reason == "needs_maintainer_permissions" and .blocking == true)' \
+	"$AIDEVOPS_WORKER_BLOCKER_LOG_FILE" >/dev/null
 
 printf 'worker permission helper tests passed\n'
