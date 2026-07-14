@@ -133,7 +133,6 @@ test_opencode_config_persists_managed_directory_permissions() {
 	if HOME="$fake_home" python3 - "$config_path" <<'PY'; then
 import json
 import os
-import subprocess
 import sys
 import tempfile
 
@@ -155,9 +154,9 @@ assert all(rules.get(path) == "allow" for path in expected)
 configured_temp = tempfile.gettempdir().rstrip("/")
 temp_dirs = {configured_temp, os.path.realpath(configured_temp)}
 if sys.platform == "darwin":
-    darwin_temp = subprocess.check_output(
-        ["/usr/bin/getconf", "DARWIN_USER_TEMP_DIR"], text=True
-    ).strip().rstrip("/")
+    # _CS_DARWIN_USER_TEMP_DIR from Darwin's unistd.h; Python does not expose
+    # this symbolic name in os.confstr_names.
+    darwin_temp = os.confstr(65537).rstrip("/")
     temp_dirs.update((darwin_temp, os.path.realpath(darwin_temp)))
 assert all(rules.get(path) == "allow" for path in temp_dirs)
 assert all(rules.get(f"{path.rstrip('/')}/**") == "allow" for path in temp_dirs)

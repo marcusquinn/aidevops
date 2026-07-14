@@ -10,11 +10,15 @@ duplication and reduce file complexity.
 
 import glob
 import os
-import subprocess
 import sys
 import tempfile
 
 from discovery_utils import parse_frontmatter
+
+
+# Darwin's unistd.h exposes this confstr key, but Python omits its symbolic
+# name from os.confstr_names. Passing the native key avoids spawning getconf.
+_CS_DARWIN_USER_TEMP_DIR = 65537
 
 
 # =============================================================================
@@ -56,14 +60,10 @@ def managed_external_directories():
     temp_dirs = {configured_temp, os.path.realpath(configured_temp)}
     if sys.platform == "darwin":
         try:
-            darwin_temp = subprocess.check_output(
-                ["/usr/bin/getconf", "DARWIN_USER_TEMP_DIR"],
-                text=True,
-                timeout=2,
-            ).strip().rstrip("/")
+            darwin_temp = os.confstr(_CS_DARWIN_USER_TEMP_DIR).rstrip("/")
             if darwin_temp:
                 temp_dirs.update((darwin_temp, os.path.realpath(darwin_temp)))
-        except (OSError, subprocess.SubprocessError):
+        except (OSError, ValueError):
             pass
     for temp_dir in sorted(temp_dirs):
         if temp_dir:
