@@ -67,6 +67,7 @@ DISPATCH_CLAIM_SELF_RECLAIM_AGE="${DISPATCH_CLAIM_SELF_RECLAIM_AGE:-30}"
 CLAIM_MARKER="DISPATCH_CLAIM"
 LEGACY_DEVICE_MARKER="legacy"
 JSON_NULL_MARKER="null"
+LEASE_PHASE_PRELAUNCH="prelaunch"
 
 _issue_comments_endpoint() {
 	local repo_slug="$1"
@@ -1206,10 +1207,14 @@ cmd_claim() {
 cmd_transition() {
 	local phase="${1:-}" issue_number="${2:-}" repo_slug="${3:-}" lease_token="${4:-}" session_key="${5:-}"
 	local ttl="${6:-}"
-	case "$phase" in prelaunch | ready | terminal) ;; *) echo "Error: transition phase must be prelaunch, ready, or terminal" >&2; return 1 ;; esac
+	case "$phase" in "$LEASE_PHASE_PRELAUNCH" | ready | terminal) ;; *)
+		echo "Error: transition phase must be prelaunch, ready, or terminal" >&2
+		return 1
+		;;
+	esac
 	[[ "$issue_number" =~ ^[0-9]+$ && -n "$repo_slug" && -n "$lease_token" ]] || return 1
 	if [[ ! "$ttl" =~ ^[0-9]+$ ]]; then
-		if [[ "$phase" == "prelaunch" ]]; then
+		if [[ "$phase" == "$LEASE_PHASE_PRELAUNCH" ]]; then
 			ttl="$DISPATCH_CLAIM_ORPHAN_GRACE"
 		else
 			ttl="$DISPATCH_READY_LEASE_TTL"
@@ -1227,7 +1232,7 @@ cmd_transition() {
 	current_device=$(_resolve_device_id)
 	[[ -n "$claim_author" && "$current_login" == "$claim_author" ]] || return 1
 	[[ "$current_device" == "$claim_device" && "${session_key:-issue-${issue_number}}" == "$claim_session" ]] || return 1
-	if [[ ( "$phase" == "prelaunch" || "$phase" == "ready" ) && "$current_phase" != "prelaunch" ]]; then
+	if [[ ("$phase" == "$LEASE_PHASE_PRELAUNCH" || "$phase" == "ready") && "$current_phase" != "$LEASE_PHASE_PRELAUNCH" ]]; then
 		return 1
 	fi
 	local expires_at="0" now_epoch="" body=""

@@ -1478,7 +1478,7 @@ cmd_run() {
 		print_info "[lifecycle] prelaunch_lease_renew_start session=$session_key pid=$$"
 		if ! _hrw_renew_dispatch_prelaunch_lease "$session_key"; then
 			print_warning "Dispatch prelaunch lease expired before worker startup — deferring session $session_key"
-			_hrw_record_terminal_outcome "$session_key" "deferred" "prelaunch_lease_renewal_failed"
+			_hrw_record_terminal_outcome "$session_key" "$_HRW_TELEMETRY_DEFERRED" "prelaunch_lease_renewal_failed"
 			return 1
 		fi
 		print_info "[lifecycle] prelaunch_lease_renew_done session=$session_key pid=$$"
