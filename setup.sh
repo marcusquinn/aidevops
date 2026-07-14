@@ -141,7 +141,7 @@ fi
 unset _SHARED_CONSTANTS
 
 # Secure the optional DSPy disk cache before setup installs or imports DSPy.
-_DSPY_CACHE_SECURITY="${BASH_SOURCE[0]%/*}/.agents/scripts/dspy-cache-security.sh"
+_DSPY_CACHE_SECURITY="${INSTALL_DIR}/.agents/scripts/dspy-cache-security.sh"
 if [[ ! -f "$_DSPY_CACHE_SECURITY" ]]; then
 	_DSPY_CACHE_SECURITY="$HOME/.aidevops/agents/scripts/dspy-cache-security.sh"
 fi
