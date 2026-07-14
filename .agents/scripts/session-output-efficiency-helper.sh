@@ -7,6 +7,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit 1
 readonly SCRIPT_DIR
+readonly OPENCODE_RUNTIME="opencode"
 
 usage() {
 	cat <<'EOF'
@@ -36,7 +37,7 @@ resolve_runtime() {
 		return 0
 	fi
 	if [[ -n "${OPENCODE_SESSION_ID:-}" ]]; then
-		printf '%s\n' "opencode"
+		printf '%s\n' "$OPENCODE_RUNTIME"
 		return 0
 	fi
 	if [[ -n "${CLAUDE_SESSION_ID:-}" ]]; then
@@ -77,35 +78,84 @@ resolve_history_source() {
 	return $?
 }
 
+resolve_opencode_history_source() {
+	local session_id="$1"
+	local configured_source active_source
+	configured_source=$(resolve_history_source "$OPENCODE_RUNTIME") || return $?
+	if [[ -z "$session_id" || -z "${XDG_DATA_HOME:-}" || "${AIDEVOPS_VAULT_MANAGED_SESSION_HISTORY:-}" == "1" || "${AIDEVOPS_VAULT_MANAGED_SESSION_HISTORY:-}" == "true" ]]; then
+		printf '%s\n' "$configured_source"
+		return 0
+	fi
+	active_source="${XDG_DATA_HOME}/opencode/opencode.db"
+	if [[ "$active_source" == "$configured_source" || ! -f "$active_source" ]]; then
+		printf '%s\n' "$configured_source"
+		return 0
+	fi
+	if python3 - "$active_source" "$session_id" <<'PY' >/dev/null 2>&1; then
+import sqlite3
+import sys
+from pathlib import Path
+
+database_path = Path(sys.argv[1]).absolute()
+session_id = sys.argv[2]
+uri = f"{database_path.as_uri()}?mode=ro"
+with sqlite3.connect(uri, uri=True) as connection:
+    row = connection.execute(
+        "SELECT 1 FROM session WHERE id = ? LIMIT 1", (session_id,)
+    ).fetchone()
+raise SystemExit(0 if row else 1)
+PY
+		printf '%s\n' "$active_source"
+		return 0
+	fi
+	printf '%s\n' "$configured_source"
+	return 0
+}
+
 main() {
 	local runtime="" session_id="" source="" source_mode=""
 	local -a analyzer_args=()
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
 		--runtime)
-			[[ $# -gt 1 ]] || { printf '%s\n' "Error: --runtime requires a value" >&2; return 2; }
+			[[ $# -gt 1 ]] || {
+				printf '%s\n' "Error: --runtime requires a value" >&2
+				return 2
+			}
 			runtime="$2"
 			shift 2
 			;;
 		--session)
-			[[ $# -gt 1 ]] || { printf '%s\n' "Error: --session requires a value" >&2; return 2; }
+			[[ $# -gt 1 ]] || {
+				printf '%s\n' "Error: --session requires a value" >&2
+				return 2
+			}
 			session_id="$2"
 			shift 2
 			;;
 		--input)
-			[[ $# -gt 1 ]] || { printf '%s\n' "Error: --input requires a path" >&2; return 2; }
+			[[ $# -gt 1 ]] || {
+				printf '%s\n' "Error: --input requires a path" >&2
+				return 2
+			}
 			source="$2"
 			source_mode="input"
 			shift 2
 			;;
 		--db)
-			[[ $# -gt 1 ]] || { printf '%s\n' "Error: --db requires a path" >&2; return 2; }
+			[[ $# -gt 1 ]] || {
+				printf '%s\n' "Error: --db requires a path" >&2
+				return 2
+			}
 			source="$2"
 			source_mode="db"
 			shift 2
 			;;
 		--min-repeat-bytes | --oversized-bytes | --max-findings)
-			[[ $# -gt 1 ]] || { printf '%s\n' "Error: $1 requires a value" >&2; return 2; }
+			[[ $# -gt 1 ]] || {
+				printf '%s\n' "Error: $1 requires a value" >&2
+				return 2
+			}
 			analyzer_args+=("$1" "$2")
 			shift 2
 			;;
@@ -127,7 +177,7 @@ main() {
 
 	runtime=$(resolve_runtime "$runtime") || return $?
 	case "$runtime" in
-	opencode | claude-code | normalized) ;;
+	"$OPENCODE_RUNTIME" | claude-code | normalized) ;;
 	*)
 		printf '%s\n' "Error: unsupported runtime: $runtime" >&2
 		return 2
@@ -136,12 +186,16 @@ main() {
 	session_id=$(resolve_session "$runtime" "$session_id") || return $?
 
 	if [[ -z "$source" ]]; then
-		source=$(resolve_history_source "$runtime") || return $?
+		if [[ "$runtime" == "$OPENCODE_RUNTIME" ]]; then
+			source=$(resolve_opencode_history_source "$session_id") || return $?
+		else
+			source=$(resolve_history_source "$runtime") || return $?
+		fi
 	elif [[ "$source_mode" == "db" && "$runtime" == "normalized" ]]; then
-		runtime="opencode"
+		runtime="$OPENCODE_RUNTIME"
 	fi
 	local source_format="transcript"
-	if [[ "$source_mode" == "db" || ( -z "$source_mode" && "$runtime" == "opencode" ) ]]; then
+	if [[ "$source_mode" == "db" || (-z "$source_mode" && "$runtime" == "$OPENCODE_RUNTIME") ]]; then
 		source_format="database"
 	fi
 

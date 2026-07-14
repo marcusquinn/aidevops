@@ -55,13 +55,16 @@ assert_omits() {
 normalized_fixture="${TMPDIR_TEST}/normalized.jsonl"
 claude_fixture="${TMPDIR_TEST}/claude.jsonl"
 opencode_db="${TMPDIR_TEST}/opencode history?#.db"
+active_data_home="${TMPDIR_TEST}/active-data"
+active_opencode_db="${active_data_home}/opencode/opencode.db"
+mkdir -p "${active_data_home}/opencode"
 
-python3 - "$normalized_fixture" "$claude_fixture" "$opencode_db" <<'PY'
+python3 - "$normalized_fixture" "$claude_fixture" "$opencode_db" "$active_opencode_db" <<'PY'
 import json
 import sqlite3
 import sys
 
-normalized_path, claude_path, database_path = sys.argv[1:]
+normalized_path, claude_path, database_path, active_database_path = sys.argv[1:]
 repeated = "unchanged status snapshot SECRET-MARKER " + ("x" * 100)
 oversized = "large setup output " + ("y" * 9000)
 duplicate = "duplicate tool result " + ("d" * 100)
@@ -122,6 +125,24 @@ for index in range(2):
     )
 connection.commit()
 connection.close()
+
+connection = sqlite3.connect(active_database_path)
+connection.execute("CREATE TABLE session (id TEXT PRIMARY KEY)")
+connection.execute("CREATE TABLE part (id TEXT PRIMARY KEY, session_id TEXT, time_created INTEGER, data TEXT)")
+connection.execute("INSERT INTO session (id) VALUES ('active-session')")
+connection.execute("INSERT INTO session (id) VALUES ('not-ready-session')")
+for index in range(2):
+    part = {
+        "type": "tool",
+        "tool": "bash",
+        "state": {"status": "completed", "input": {"command": "poll"}, "output": repeated},
+    }
+    connection.execute(
+        "INSERT INTO part (id, session_id, time_created, data) VALUES (?, ?, ?, ?)",
+        (f"active-part-{index}", "active-session", index, json.dumps(part)),
+    )
+connection.commit()
+connection.close()
 PY
 
 text_output=$(OPENCODE_SESSION_ID='' CLAUDE_SESSION_ID='' "$HELPER" --input "$normalized_fixture")
@@ -147,14 +168,25 @@ assert_contains "Claude JSONL tool results are correlated" "Repeated unchanged s
 database_output=$(OPENCODE_SESSION_ID='' CLAUDE_SESSION_ID='' "$HELPER" --runtime opencode --db "$opencode_db" --session session-test)
 assert_contains "OpenCode database tool parts are analysed" "Repeated unchanged snapshots: 1 groups, 1 redundant results" "$database_output"
 
+active_output=$(XDG_DATA_HOME="$active_data_home" OPENCODE_SESSION_ID='' CLAUDE_SESSION_ID='' "$HELPER" --runtime opencode --session active-session --json)
+if python3 -c 'import json,sys; report=json.load(sys.stdin); assert report["session"] == "active-session"; assert report["stats"]["completed_tool_results"] == 2' <<<"$active_output"; then
+	pass "active OpenCode store resolves the exact current session"
+else
+	fail "active OpenCode store resolves the exact current session"
+fi
+
 set +e
 missing_session_output=$(OPENCODE_SESSION_ID='' CLAUDE_SESSION_ID='' "$HELPER" --runtime opencode --db "$opencode_db" --session absent-session 2>&1)
 missing_session_rc=$?
 invalid_session_output=$(OPENCODE_SESSION_ID='' CLAUDE_SESSION_ID='' "$HELPER" --runtime opencode --db "$opencode_db" --session '../*' 2>&1)
 invalid_session_rc=$?
+not_ready_output=$(XDG_DATA_HOME="$active_data_home" OPENCODE_SESSION_ID='' CLAUDE_SESSION_ID='' "$HELPER" --runtime opencode --session not-ready-session --json 2>&1)
+not_ready_rc=$?
 set -e
 [[ "$missing_session_rc" -eq 2 ]] && pass "missing database session is unavailable" || fail "missing database session is unavailable" "got ${missing_session_rc}"
 [[ "$invalid_session_rc" -eq 2 ]] && pass "unsafe session filter is rejected" || fail "unsafe session filter is rejected" "got ${invalid_session_rc}"
+[[ "$not_ready_rc" -eq 2 ]] && pass "active session without parts is not reported as zero activity" || fail "active session without parts is not reported as zero activity" "got ${not_ready_rc}"
+assert_contains "active session without parts reports not-ready state" "session transcript is not ready" "$not_ready_output"
 assert_omits "session errors do not expose database path" "$opencode_db" "${missing_session_output}${invalid_session_output}"
 
 review_output=$(OPENCODE_SESSION_ID='' CLAUDE_SESSION_ID='' "$REVIEW_HELPER" output-efficiency --input "$normalized_fixture" --json)
