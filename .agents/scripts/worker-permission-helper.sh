@@ -180,8 +180,10 @@ ${PERMISSION_REQUEST_MARKER}
 
 Background work paused instead of waiting indefinitely for an unavailable interactive permission response.
 
-**Request:** ${request_id}  
-**Worker stage:** tool execution  
+**Request:** ${request_id}
+
+**Worker stage:** tool execution
+
 **Branch:** ${branch:-not available}
 
 ### Requested capabilities
