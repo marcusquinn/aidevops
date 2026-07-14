@@ -10,6 +10,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.32.110] - 2026-07-14
+
+### Changed
+
+- Maintenance: update simplification state registry
+
+### Fixed
+
+- preserve labels on maintainer-gate API errors (#27612)
+
 ## [3.32.109] - 2026-07-14
 
 ### Changed
