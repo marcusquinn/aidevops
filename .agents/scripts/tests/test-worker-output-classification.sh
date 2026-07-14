@@ -94,9 +94,9 @@ ORIGINAL_HOME="$HOME"
 export HOME="${TEST_ROOT}/home"
 mkdir -p "${HOME}/.aidevops/logs"
 
-# Stub `gh`. The classifier's Signal 3 calls:
-#   gh pr list --repo <slug> --search <issue> --json number --jq 'length'
-# We control the returned count via STUB_PR_COUNT (default 0).
+# Stub `gh`. Signal 3 first reads the exact-head lifecycle fields, then falls
+# back to an issue search when no branch match exists. Fixture JSON is supplied
+# through STUB_PR_JSON and STUB_SEARCH_JSON respectively.
 GH_STUB_DIR="${TEST_ROOT}/stubs"
 mkdir -p "$GH_STUB_DIR"
 cat >"${GH_STUB_DIR}/gh" <<'STUB'
@@ -121,7 +121,7 @@ case "${1:-}" in
 			list)
 				case " $* " in
 					*".[].number"*) printf '%s\n' "${STUB_PR_NUMBERS:-}" ;;
-					*"number,state,isDraft,mergedAt,labels,statusCheckRollup"*) printf '%s\n' "${STUB_PR_JSON:-[]}" ;;
+					*"number,state,isDraft,mergedAt,headRefOid,labels,statusCheckRollup"*) printf '%s\n' "${STUB_PR_JSON:-[]}" ;;
 					*"--json number "*) printf '%s\n' "${STUB_SEARCH_JSON:-[]}" ;;
 					*) printf '%s\n' "${STUB_PR_COUNT:-0}" ;;
 				esac
@@ -130,9 +130,12 @@ case "${1:-}" in
 		esac
 		;;
 	api)
-		# `_gh_wrapper_auto_sig` and friends call `gh api user --jq .login`.
-		# Emit a JSON object so callers that consume stdout don't break.
-		printf '{}\n'
+		case " $* " in
+			*"/comments"*) printf '%s\n' "${STUB_PR_COMMENTS_JSON:-[[]]}" ;;
+			# `_gh_wrapper_auto_sig` and friends call `gh api user --jq .login`.
+			# Emit a JSON object so callers that consume stdout don't break.
+			*) printf '{}\n' ;;
+		esac
 		;;
 	*) ;;
 esac
@@ -323,8 +326,13 @@ test_feature_branch_with_pr_returns_pr_exists() {
 		print_result "case 4: branch=feature/tNNN-foo, ahead=N, PR exists → pr_exists" 1 "feature branch setup failed"
 		return 0
 	}
+	local worktree_head
+	worktree_head=$(git -C "$WORK_DIR" rev-parse HEAD) || {
+		print_result "case 4: branch=feature/tNNN-foo, ahead=N, PR exists → pr_exists" 1 "could not resolve fixture HEAD"
+		return 0
+	}
 	export STUB_PR_COUNT=1
-	export STUB_PR_JSON='[{"number":77,"state":"OPEN","isDraft":false,"mergedAt":null,"labels":[{"name":"origin:worker"}],"statusCheckRollup":[]}]' STUB_SEARCH_JSON='[]'
+	export STUB_PR_JSON="[{\"number\":77,\"state\":\"OPEN\",\"isDraft\":false,\"mergedAt\":null,\"headRefOid\":\"${worktree_head}\",\"labels\":[{\"name\":\"origin:worker\"}],\"statusCheckRollup\":[]}]" STUB_PR_COMMENTS_JSON='[[{"body":"<!-- MERGE_SUMMARY -->"}]]' STUB_SEARCH_JSON='[]'
 	local got
 	got=$(_worker_produced_output "issue-1004" "$WORK_DIR")
 	if [[ "$got" == "pr_exists" ]]; then
@@ -350,7 +358,7 @@ test_failure_recovery_ignores_default_branch_pr_match() {
 		return 0
 	}
 	export STUB_PR_COUNT=1
-	export STUB_PR_JSON='[{"number":77,"state":"OPEN","isDraft":false,"mergedAt":null,"labels":[{"name":"origin:worker"}],"statusCheckRollup":[]}]' STUB_SEARCH_JSON='[]'
+	export STUB_PR_JSON='[{"number":77,"isDraft":false,"headRefOid":"0000000000000000000000000000000000000000","statusCheckRollup":[]}]' STUB_SEARCH_JSON='[]'
 	local got="recovered"
 	if _recover_worker_output_on_failure "issue-1005" "$WORK_DIR" >/dev/null 2>&1; then
 		got="recovered"
