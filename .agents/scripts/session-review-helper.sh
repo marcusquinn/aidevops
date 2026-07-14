@@ -993,7 +993,7 @@ run_output_efficiency() {
 
 gather_output_efficiency() {
 	local session_filter="${1:-}"
-	if [[ -z "$session_filter" && -z "${OPENCODE_SESSION_ID:-}" && -z "${CLAUDE_SESSION_ID:-}" ]]; then
+	if [[ -z "$session_filter" && -z "${AIDEVOPS_OPENCODE_SESSION_ID:-}" && -z "${OPENCODE_SESSION_ID:-}" && -z "${CLAUDE_SESSION_ID:-}" ]]; then
 		return 0
 	fi
 	local -a args=()

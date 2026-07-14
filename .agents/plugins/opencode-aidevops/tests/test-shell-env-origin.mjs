@@ -118,6 +118,37 @@ test("headless OpenCode shell stamps worker origin", async () => {
   assert.equal(output.env.AIDEVOPS_SESSION_ORIGIN, "worker");
 });
 
+test("shell env replaces stale OpenCode identity after a plugin update", async () => {
+  const hook = makeHook();
+  const output = {
+    env: {
+      PATH: "/usr/bin:/bin",
+      OPENCODE_SESSION_ID: "stale-opencode-session",
+      AIDEVOPS_OPENCODE_SESSION_ID: "stale-opencode-session",
+    },
+  };
+
+  await hook({ sessionID: "current-opencode-session" }, output);
+
+  assert.equal(output.env.OPENCODE_SESSION_ID, "current-opencode-session");
+  assert.equal(output.env.AIDEVOPS_OPENCODE_SESSION_ID, "current-opencode-session");
+});
+
+test("shell env preserves framework identity and publishes its OpenCode mapping", async () => {
+  const hook = makeHook();
+  const output = {
+    env: {
+      PATH: "/usr/bin:/bin",
+      AIDEVOPS_SESSION_ID: "framework-session",
+    },
+  };
+
+  await hook({ sessionID: "opencode-session" }, output);
+
+  assert.equal(output.env.AIDEVOPS_SESSION_ID, "framework-session");
+  assert.equal(output.env.AIDEVOPS_OPENCODE_SESSION_ID, "opencode-session");
+});
+
 test("headless shell preserves explicit worker lineage", async () => {
   const keys = [
     "AIDEVOPS_WORKER_ID",

@@ -7,6 +7,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit 1
 readonly SCRIPT_DIR
+readonly RUNTIME_OPENCODE="opencode"
 
 usage() {
 	cat <<'EOF'
@@ -23,9 +24,19 @@ Options:
   --max-findings N                Limit aggregate findings (default: 5)
 
 Without --input or --db, the helper resolves the runtime history path through
-the Vault-managed session-history read gate. Raw tool inputs and outputs are
-never emitted.
+the Vault-managed session-history read gate. An active OpenCode conversation is
+read through an exact-ID export so its completed tool results are available
+before session close. Raw tool inputs and outputs are never emitted.
 EOF
+	return 0
+}
+
+active_opencode_session() {
+	if [[ -n "${AIDEVOPS_OPENCODE_SESSION_ID:-}" ]]; then
+		printf '%s\n' "$AIDEVOPS_OPENCODE_SESSION_ID"
+	else
+		printf '%s\n' "${OPENCODE_SESSION_ID:-}"
+	fi
 	return 0
 }
 
@@ -35,8 +46,8 @@ resolve_runtime() {
 		printf '%s\n' "$requested"
 		return 0
 	fi
-	if [[ -n "${OPENCODE_SESSION_ID:-}" ]]; then
-		printf '%s\n' "opencode"
+	if [[ -n "${AIDEVOPS_OPENCODE_SESSION_ID:-}${OPENCODE_SESSION_ID:-}" ]]; then
+		printf '%s\n' "$RUNTIME_OPENCODE"
 		return 0
 	fi
 	if [[ -n "${CLAUDE_SESSION_ID:-}" ]]; then
@@ -51,11 +62,15 @@ resolve_session() {
 	local runtime="$1"
 	local requested="$2"
 	if [[ -n "$requested" ]]; then
+		if [[ "$runtime" == "$RUNTIME_OPENCODE" && -n "${AIDEVOPS_SESSION_ID:-}" && "$requested" == "$AIDEVOPS_SESSION_ID" ]]; then
+			active_opencode_session
+			return $?
+		fi
 		printf '%s\n' "$requested"
 		return 0
 	fi
 	case "$runtime" in
-	opencode) printf '%s\n' "${OPENCODE_SESSION_ID:-}" ;;
+	"$RUNTIME_OPENCODE") active_opencode_session ;;
 	claude-code) printf '%s\n' "${CLAUDE_SESSION_ID:-}" ;;
 	*) printf '\n' ;;
 	esac
@@ -127,7 +142,7 @@ main() {
 
 	runtime=$(resolve_runtime "$runtime") || return $?
 	case "$runtime" in
-	opencode | claude-code | normalized) ;;
+	"$RUNTIME_OPENCODE" | claude-code | normalized) ;;
 	*)
 		printf '%s\n' "Error: unsupported runtime: $runtime" >&2
 		return 2
@@ -138,11 +153,18 @@ main() {
 	if [[ -z "$source" ]]; then
 		source=$(resolve_history_source "$runtime") || return $?
 	elif [[ "$source_mode" == "db" && "$runtime" == "normalized" ]]; then
-		runtime="opencode"
+		runtime="$RUNTIME_OPENCODE"
 	fi
 	local source_format="transcript"
-	if [[ "$source_mode" == "db" || ( -z "$source_mode" && "$runtime" == "opencode" ) ]]; then
+	if [[ "$source_mode" == "db" || ( -z "$source_mode" && "$runtime" == "$RUNTIME_OPENCODE" ) ]]; then
 		source_format="database"
+	fi
+	if [[ -z "$source_mode" && "$runtime" == "$RUNTIME_OPENCODE" ]]; then
+		local active_session=""
+		active_session=$(active_opencode_session) || return $?
+		if [[ -n "$active_session" && "$session_id" == "$active_session" ]]; then
+			source_format="opencode-export"
+		fi
 	fi
 
 	local analyzer="${SCRIPT_DIR}/session-output-efficiency.py"

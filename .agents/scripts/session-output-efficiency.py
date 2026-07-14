@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from session_output_metrics import AnalysisConfig, analyse
-from session_output_opencode import extract_opencode_db
+from session_output_opencode import extract_opencode_db, extract_opencode_export
 from session_output_transcript import extract_jsonl, resolve_jsonl
 
 
@@ -80,7 +80,11 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--runtime", choices=("opencode", "claude-code", "normalized"), default="normalized")
     parser.add_argument("--source", required=True, help="SQLite database, JSONL file, or JSONL directory")
-    parser.add_argument("--source-format", choices=("auto", "database", "transcript"), default="auto")
+    parser.add_argument(
+        "--source-format",
+        choices=("auto", "database", "opencode-export", "transcript"),
+        default="auto",
+    )
     parser.add_argument("--session", default="")
     parser.add_argument("--json", action="store_true")
     parser.add_argument("--min-repeat-bytes", type=int, default=80)
@@ -107,7 +111,10 @@ def use_database_source(args: argparse.Namespace, source: Path) -> bool:
 
 def build_report(args: argparse.Namespace) -> dict[str, Any]:
     source = Path(args.source).expanduser()
-    if use_database_source(args, source):
+    if args.source_format == "opencode-export":
+        results, parse_errors = extract_opencode_export(source, args.session)
+        source_kind = "opencode-export"
+    elif use_database_source(args, source):
         results, parse_errors = extract_opencode_db(source, args.session)
         source_kind = "database"
     else:
