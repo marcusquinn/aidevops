@@ -159,7 +159,7 @@ if (
 	export HOME="${FIXTURE_HOME}"
 	export PATH="${FIXTURE_SHIM_DIR}:/usr/bin:/bin"
 	FIXTURE_GIT=$(command -v git) &&
-	[[ "${FIXTURE_GIT}" != "${FIXTURE_SHIM_DIR}/git" ]] &&
+		[[ "${FIXTURE_GIT}" != "${FIXTURE_SHIM_DIR}/git" ]] &&
 		git config --global --add safe.directory "${FIXTURE_REPO}" &&
 		git init -q "${FIXTURE_REPO}" &&
 		git -C "${FIXTURE_REPO}" remote add origin "${FIXTURE_ROOT}/upstream.git" &&
@@ -222,14 +222,30 @@ else
 fi
 
 # ============================================================
-# Test 6: Update TODO.md proof-log step still references __aidevops/
-#         (sanity check — if this changes, the test premise needs updating)
+# Test 6: task-backed proof publication uses the path-allowlisted planning
+# publisher rather than direct canonical index/commit mutation.
 # ============================================================
-if printf '%s\n' "${JOB_BODY}" | grep -qE 'bash[[:space:]]+__aidevops/\.agents/scripts/issue-sync-git-push-helper\.sh'; then
-	check 1 "Update TODO.md proof-log invokes __aidevops/.agents/scripts/issue-sync-git-push-helper.sh" ""
+PROOF_BODY=$(printf '%s\n' "${JOB_BODY}" | awk '
+	/name:[[:space:]]+Update TODO\.md proof-log/ { capture=1 }
+	capture && /name:[[:space:]]+Sync PLANS\.md status from TODO\.md completions/ { exit }
+	capture { print }
+')
+PLANS_BODY=$(printf '%s\n' "${JOB_BODY}" | awk '
+	/name:[[:space:]]+Sync PLANS\.md status from TODO\.md completions/ { capture=1 }
+	capture && /name:[[:space:]]+Park canonical Git guard before action cleanup/ { exit }
+	capture { print }
+')
+# shellcheck disable=SC2016 # Assert the literal workflow variable reference.
+if printf '%s\n' "${JOB_BODY}" | grep -qE 'AIDEVOPS_PLANNING_GIT_BIN=.*RUNNER_GIT' &&
+	printf '%s\n' "${PROOF_BODY}" | grep -qE 'source[[:space:]]+"?\$SCRIPT_DIR/planning-publisher\.sh"?' &&
+	printf '%s\n' "${PROOF_BODY}" | grep -qE 'planning_publish[[:space:]]' &&
+	! printf '%s\n' "${PROOF_BODY}" | grep -qE '^[[:space:]]+git[[:space:]]+(config|add|commit|pull|push)' &&
+	printf '%s\n' "${PLANS_BODY}" | grep -qE 'planning_publish[[:space:]]' &&
+	! printf '%s\n' "${PLANS_BODY}" | grep -qE '^[[:space:]]+git[[:space:]]+(config|add|commit|pull|push)'; then
+	check 1 "task proof and plan status use capability-scoped planning publication" ""
 else
-	check 0 "Update TODO.md proof-log invokes __aidevops/.agents/scripts/issue-sync-git-push-helper.sh" \
-		"reference path changed — update this test to track the new invocation pattern"
+	check 0 "task proof and plan status use capability-scoped planning publication" \
+		"both projections must use the captured runner Git capability through planning-publisher.sh"
 fi
 
 # ============================================================
