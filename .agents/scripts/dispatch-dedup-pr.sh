@@ -58,9 +58,9 @@ _ddpr_superseded_issue_refs() {
 # Redispatch should not create another worker when an existing sibling PR for
 # the same issue is already approved or mergeable. This catches PRs that are
 # ready for the merge path but do not use a closing keyword in the body (for
-# example parent/phase work using `For #NNN`), while still allowing dispatch
-# when only draft, changes-requested, conflicting, or explicitly blocked
-# candidates exist.
+# example parent/phase work using `For #NNN`). Drafts are durable checkpoints:
+# worker drafts must be continued/escalated, while interactive/held/NMR drafts
+# must remain untouched. Both kinds block competing ordinary dispatch.
 #
 # Args: $1 = issue number, $2 = repo slug
 # Returns: exit 0 if a healthy sibling PR matches, exit 1 if none
@@ -69,7 +69,7 @@ _has_open_pr_check_healthy_sibling() {
 	local issue_number="$1"
 	local repo_slug="$2"
 
-	local pr_json match_pr
+	local pr_json match_pr draft_pr
 	pr_json=$(gh pr list --repo "$repo_slug" --state open \
 		--search "#${issue_number}" --limit 20 \
 		--json number,title,body,isDraft,reviewDecision,mergeStateStatus,mergeable 2>/dev/null) || pr_json="[]"
@@ -78,6 +78,19 @@ _has_open_pr_check_healthy_sibling() {
 	issue_ref_pattern="([^[:alnum:]_]|^)((close[sd]?|fix(e[sd])?|resolve[sd]?|for|refs?):?[[:space:]]+([a-zA-Z0-9._-]+/[a-zA-Z0-9._-]+)?#${issue_number}|GH#${issue_number}|#${issue_number})([^[:alnum:]_]|$)"
 	healthy_state_pattern="^(CLEAN|HAS_HOOKS|UNSTABLE|BEHIND)$"
 	blocked_state_pattern="^(DIRTY|BLOCKED|CONFLICTING)$"
+
+	draft_pr=$(printf '%s' "$pr_json" | jq -r \
+		--arg issue_pattern "$issue_ref_pattern" '
+		[
+			.[] | select(
+				(.isDraft == true) and
+				([.title?, .body?] | map(strings) | any(test($issue_pattern; "i")))
+			)
+		] | .[0].number // empty' 2>/dev/null) || draft_pr=""
+	if [[ -n "$draft_pr" ]]; then
+		printf 'draft PR #%s is a durable checkpoint for issue #%s; ordinary redispatch is blocked\n' "$draft_pr" "$issue_number"
+		return 0
+	fi
 
 	match_pr=$(printf '%s' "$pr_json" | jq -r \
 		--arg issue_pattern "$issue_ref_pattern" \

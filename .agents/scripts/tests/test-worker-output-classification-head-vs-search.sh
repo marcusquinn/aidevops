@@ -48,6 +48,13 @@
 
 set -uo pipefail
 
+# Bypass the aidevops git policy shim for disposable repositories created under
+# this test's isolated temporary HOME.
+git() {
+	command -p git "$@"
+	return $?
+}
+
 TEST_SCRIPTS_DIR="$(cd "$(dirname "$0")/.." && pwd)" || exit 1
 LIB_SCRIPT="${TEST_SCRIPTS_DIR}/shared-claim-lifecycle.sh"
 
@@ -83,8 +90,8 @@ ORIGINAL_HOME="$HOME"
 export HOME="${TEST_ROOT}/home"
 mkdir -p "${HOME}/.aidevops/logs"
 
-# `gh` stub: we partition counts by probe type using STUB_HEAD_COUNT and
-# STUB_SEARCH_COUNT. Any other gh invocation prints empty JSON {} and exits 0
+# `gh` stub: lifecycle probes return real gh JSON shapes from STUB_HEAD_JSON and
+# STUB_SEARCH_JSON. Any other gh invocation prints empty JSON {} and exits 0
 # so source-time `gh api user` calls in dependent helpers don't crash.
 GH_STUB_DIR="${TEST_ROOT}/stubs"
 mkdir -p "$GH_STUB_DIR"
@@ -115,12 +122,19 @@ case "${1:-}" in
 	pr)
 		case "${2:-}" in
 			list)
-				if [[ "$json_fields" == "number,state,isDraft" ]]; then
+				if [[ "$mode" == "head" && "${STUB_HEAD_FAIL:-0}" == "1" ]]; then
+					exit 1
+				fi
+				if [[ "$json_fields" == "number,state,isDraft,mergedAt,labels,statusCheckRollup" ]]; then
 					if [[ "$mode" == "head" ]]; then
 						printf '%s\n' "${STUB_HEAD_JSON:-[]}"
 					else
 						printf '%s\n' "${STUB_SEARCH_JSON:-[]}"
 					fi
+					exit 0
+				fi
+				if [[ "$json_fields" == "number" && "$mode" == "search" ]]; then
+					printf '%s\n' "${STUB_SEARCH_JSON:-[]}"
 					exit 0
 				fi
 				if [[ "$mode" == "head" ]]; then
@@ -195,8 +209,8 @@ gh_pr_list() {
 # Case A: search-lag survival. --head returns 1, --search returns 0.
 # This is the regression case from t3195 / GH#21889.
 test_case_a_head_wins_over_search_lag() {
-	export STUB_HEAD_COUNT=1
-	export STUB_SEARCH_COUNT=0
+	export STUB_HEAD_JSON='[{"number":21885,"state":"OPEN","isDraft":false,"mergedAt":null,"labels":[{"name":"origin:worker"}],"statusCheckRollup":[]}]'
+	export STUB_SEARCH_JSON='[]'
 	local got
 	got=$(_pr_exists_for_branch_or_issue "feature/auto-foo" "21870" "owner/repo")
 	if [[ "$got" == "found" ]]; then
@@ -210,8 +224,8 @@ test_case_a_head_wins_over_search_lag() {
 
 # Case B: definitive absence. Both probes return 0.
 test_case_b_definitive_absence() {
-	export STUB_HEAD_COUNT=0
-	export STUB_SEARCH_COUNT=0
+	export STUB_HEAD_JSON='[]'
+	export STUB_SEARCH_JSON='[]'
 	local got
 	got=$(_pr_exists_for_branch_or_issue "feature/real-orphan" "99999" "owner/repo")
 	if [[ "$got" == "absent" ]]; then
@@ -225,8 +239,8 @@ test_case_b_definitive_absence() {
 
 # Case C: search fallback when branch_name empty.
 test_case_c_search_fallback_empty_branch() {
-	export STUB_HEAD_COUNT=0  # never queried — branch is empty
-	export STUB_SEARCH_COUNT=1
+	export STUB_HEAD_JSON='[]'  # never queried — branch is empty
+	export STUB_SEARCH_JSON='[{"number":21885}]'
 	local got
 	got=$(_pr_exists_for_branch_or_issue "" "21870" "owner/repo")
 	if [[ "$got" == "found" ]]; then
@@ -240,8 +254,8 @@ test_case_c_search_fallback_empty_branch() {
 
 # Case D: no usable inputs → unknown.
 test_case_d_no_inputs_unknown() {
-	export STUB_HEAD_COUNT=0
-	export STUB_SEARCH_COUNT=0
+	export STUB_HEAD_JSON='[]'
+	export STUB_SEARCH_JSON='[]'
 	local got
 	got=$(_pr_exists_for_branch_or_issue "" "" "owner/repo")
 	if [[ "$got" == "unknown" ]]; then
@@ -255,8 +269,8 @@ test_case_d_no_inputs_unknown() {
 
 # Case D2: empty repo_slug → unknown regardless of probes.
 test_case_d2_empty_repo_unknown() {
-	export STUB_HEAD_COUNT=1
-	export STUB_SEARCH_COUNT=1
+	export STUB_HEAD_JSON='[{"number":1}]'
+	export STUB_SEARCH_JSON='[{"number":1}]'
 	local got
 	got=$(_pr_exists_for_branch_or_issue "feature/foo" "21870" "")
 	if [[ "$got" == "unknown" ]]; then
@@ -268,12 +282,27 @@ test_case_d2_empty_repo_unknown() {
 	return 0
 }
 
+test_case_d3_failed_head_probe_is_unknown() {
+	export STUB_HEAD_FAIL=1
+	export STUB_HEAD_JSON='[]'
+	export STUB_SEARCH_JSON='[]'
+	local got
+	got=$(_pr_handoff_state_for_branch_or_issue "feature/api-failure" "21870" "owner/repo")
+	unset STUB_HEAD_FAIL
+	if [[ "$got" == "unknown|" ]]; then
+		print_result "failed exact-head probe plus empty search remains unknown" 0
+	else
+		print_result "failed exact-head probe plus empty search remains unknown" 1 "got: '$got'"
+	fi
+	return 0
+}
+
 test_case_draft_state_is_preserved() {
-	export STUB_HEAD_JSON='[{"number":321,"state":"OPEN","isDraft":true}]'
+	export STUB_HEAD_JSON='[{"number":321,"state":"OPEN","isDraft":true,"mergedAt":null,"labels":[{"name":"origin:worker"}],"statusCheckRollup":[]}]'
 	export STUB_SEARCH_JSON='[]'
 	local got
 	got=$(_pr_handoff_state_for_branch_or_issue "feature/checkpoint" "27501" "owner/repo")
-	if [[ "$got" == "draft|321" ]]; then
+	if [[ "$got" == "draft_checkpoint|321" ]]; then
 		print_result "draft PR is classified as durable checkpoint, not completed handoff" 0
 	else
 		print_result "draft PR is classified as durable checkpoint, not completed handoff" 1 "got: '$got'"
@@ -284,13 +313,13 @@ test_case_draft_state_is_preserved() {
 test_case_ready_and_terminal_states_are_preserved() {
 	local fixture expected got
 	for fixture in \
-		'[{"number":322,"state":"OPEN","isDraft":false}]' \
-		'[{"number":323,"state":"MERGED","isDraft":false}]' \
-		'[{"number":324,"state":"CLOSED","isDraft":false}]'; do
+		'[{"number":322,"state":"OPEN","isDraft":false,"mergedAt":null,"labels":[],"statusCheckRollup":[]}]' \
+		'[{"number":323,"state":"MERGED","isDraft":false,"mergedAt":"2026-07-13T00:00:00Z","labels":[],"statusCheckRollup":[]}]' \
+		'[{"number":324,"state":"CLOSED","isDraft":false,"mergedAt":null,"labels":[],"statusCheckRollup":[]}]'; do
 		case "$fixture" in
 			*322*) expected="ready|322" ;;
 			*323*) expected="merged|323" ;;
-			*) expected="closed|324" ;;
+			*) expected="closed_unmerged|324" ;;
 		esac
 		export STUB_HEAD_JSON="$fixture"
 		got=$(_pr_handoff_state_for_branch_or_issue "feature/checkpoint" "27501" "owner/repo")
@@ -307,20 +336,20 @@ test_case_head_only_does_not_capture_unrelated_issue_draft() {
 	export STUB_HEAD_JSON='[]'
 	export STUB_SEARCH_JSON='[{"number":325,"state":"OPEN","isDraft":true}]'
 	local got
-	got=$(_pr_handoff_state_for_branch_or_issue "feature/worker" "27501" "owner/repo" "head-only")
-	if [[ "$got" == "absent|" ]]; then
-		print_result "head-only worker lookup ignores unrelated issue-search draft" 0
+	got=$(_pr_handoff_state_for_branch_or_issue "feature/worker" "27501" "owner/repo")
+	if [[ "$got" == "unverified_open_pr|325" ]]; then
+		print_result "issue-search fallback remains inconclusive, not complete" 0
 	else
-		print_result "head-only worker lookup ignores unrelated issue-search draft" 1 "got: '$got'"
+		print_result "issue-search fallback remains inconclusive, not complete" 1 "got: '$got'"
 	fi
 	return 0
 }
 
 test_case_active_pr_wins_over_historical_pr() {
-	export STUB_HEAD_JSON='[{"number":326,"state":"CLOSED","isDraft":false},{"number":327,"state":"OPEN","isDraft":true}]'
+	export STUB_HEAD_JSON='[{"number":326,"state":"CLOSED","isDraft":false,"mergedAt":null,"labels":[],"statusCheckRollup":[]},{"number":327,"state":"OPEN","isDraft":true,"mergedAt":null,"labels":[{"name":"origin:worker"}],"statusCheckRollup":[]}]'
 	local got
-	got=$(_pr_handoff_state_for_branch_or_issue "feature/reopened" "27501" "owner/repo" "head-only")
-	if [[ "$got" == "draft|327" ]]; then
+	got=$(_pr_handoff_state_for_branch_or_issue "feature/reopened" "27501" "owner/repo")
+	if [[ "$got" == "draft_checkpoint|327" ]]; then
 		print_result "active draft wins over historical closed PR on same head" 0
 	else
 		print_result "active draft wins over historical closed PR on same head" 1 "got: '$got'"
@@ -328,11 +357,47 @@ test_case_active_pr_wins_over_historical_pr() {
 	return 0
 }
 
+test_case_real_checkrun_and_statuscontext_failures() {
+	local fixture expected got
+	for fixture in \
+		'[{"number":328,"state":"OPEN","isDraft":false,"mergedAt":null,"labels":[{"name":"origin:worker"}],"statusCheckRollup":[{"__typename":"CheckRun","name":"tests","status":"COMPLETED","conclusion":"FAILURE"}]}]' \
+		'[{"number":329,"state":"OPEN","isDraft":false,"mergedAt":null,"labels":[{"name":"origin:worker"}],"statusCheckRollup":[{"__typename":"StatusContext","context":"ci/test","state":"ERROR"}]}]'; do
+		case "$fixture" in
+			*328*) expected="ready_failed|328" ;;
+			*) expected="ready_failed|329" ;;
+		esac
+		export STUB_HEAD_JSON="$fixture"
+		export STUB_SEARCH_JSON='[]'
+		got=$(_pr_handoff_state_for_branch_or_issue "feature/failed-checks" "27517" "owner/repo")
+		if [[ "$got" == "$expected" ]]; then
+			print_result "real CheckRun/StatusContext failure shape classifies ${expected}" 0
+		else
+			print_result "real CheckRun/StatusContext failure shape classifies ${expected}" 1 "got: '$got'"
+		fi
+	done
+	return 0
+}
+
+test_case_protected_draft_labels_are_preserved() {
+	local label got
+	for label in origin:interactive hold-for-review no-auto-dispatch needs-maintainer-review; do
+		export STUB_HEAD_JSON="[{\"number\":330,\"state\":\"OPEN\",\"isDraft\":true,\"mergedAt\":null,\"labels\":[{\"name\":\"origin:worker\"},{\"name\":\"${label}\"}],\"statusCheckRollup\":[]}]"
+		export STUB_SEARCH_JSON='[]'
+		got=$(_pr_handoff_state_for_branch_or_issue "feature/protected" "27517" "owner/repo")
+		if [[ "$got" == "protected_draft|330" ]]; then
+			print_result "draft carrying ${label} is protected" 0
+		else
+			print_result "draft carrying ${label} is protected" 1 "got: '$got'"
+		fi
+	done
+	return 0
+}
+
 # Case E: orphan recovery pre-check. When a PR exists for the branch
 # (--head=1), recovery returns 0 with NO `gh pr create` attempt.
 test_case_e_orphan_recovery_skips_when_pr_exists() {
-	export STUB_HEAD_COUNT=1
-	export STUB_SEARCH_COUNT=0
+	export STUB_HEAD_JSON='[{"number":21885,"state":"OPEN","isDraft":false,"mergedAt":null,"labels":[{"name":"origin:worker"}],"statusCheckRollup":[]}]'
+	export STUB_SEARCH_JSON='[]'
 	local pr_log="${TEST_ROOT}/pr-create.log"
 	: >"$pr_log"
 	export STUB_PR_CREATE_LOG="$pr_log"
@@ -359,8 +424,8 @@ test_case_e_orphan_recovery_skips_when_pr_exists() {
 # does NOT block legitimate recovery when the absence is real. We allow the
 # stub `gh pr create` to "succeed" so we can observe it being called.
 test_case_f_orphan_recovery_proceeds_when_no_pr() {
-	export STUB_HEAD_COUNT=0
-	export STUB_SEARCH_COUNT=0
+	export STUB_HEAD_JSON='[]'
+	export STUB_SEARCH_JSON='[]'
 	local pr_log="${TEST_ROOT}/pr-create-2.log"
 	: >"$pr_log"
 	export STUB_PR_CREATE_LOG="$pr_log"
@@ -404,10 +469,13 @@ test_case_b_definitive_absence
 test_case_c_search_fallback_empty_branch
 test_case_d_no_inputs_unknown
 test_case_d2_empty_repo_unknown
+test_case_d3_failed_head_probe_is_unknown
 test_case_draft_state_is_preserved
 test_case_ready_and_terminal_states_are_preserved
 test_case_head_only_does_not_capture_unrelated_issue_draft
 test_case_active_pr_wins_over_historical_pr
+test_case_real_checkrun_and_statuscontext_failures
+test_case_protected_draft_labels_are_preserved
 test_case_e_orphan_recovery_skips_when_pr_exists
 test_case_f_orphan_recovery_proceeds_when_no_pr
 

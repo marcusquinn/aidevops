@@ -12,6 +12,13 @@ readonly TEST_RED='\033[0;31m'
 readonly TEST_GREEN='\033[0;32m'
 readonly TEST_RESET='\033[0m'
 
+# Bypass the aidevops git policy shim for disposable repositories created under
+# this test's isolated temporary HOME.
+git() {
+	command -p git "$@"
+	return $?
+}
+
 TESTS_RUN=0
 TESTS_FAILED=0
 TEST_ROOT=""
@@ -2051,7 +2058,14 @@ test_worker_produced_output_branch_with_pr_returns_pr_exists() {
 	_setup_test_git_repo "$work_dir" 1
 	git -C "$work_dir" push -q origin "feature/auto-test-issue-99999"
 	DISPATCH_REPO_SLUG="test-owner/test-repo"
-	gh() { printf '1'; return 0; }  # Stub gh: 1 PR found
+	gh() {
+		if [[ "${*}" == *"--head"* && "${*}" == *"statusCheckRollup"* ]]; then
+			printf '%s\n' '[{"number":123,"state":"OPEN","isDraft":false,"mergedAt":null,"labels":[{"name":"origin:worker"}],"statusCheckRollup":[]}]'
+		else
+			printf '%s\n' '[]'
+		fi
+		return 0
+	}
 
 	local classification
 	classification=$(_worker_produced_output "issue-99999" "$work_dir")
@@ -2391,18 +2405,19 @@ test_cmd_run_finish_local_unpushed_pushes_and_recovers_pr() {
 	return 0
 }
 
-test_handle_worker_branch_orphan_empty_branch_existing_pr_releases_complete() {
+test_handle_worker_branch_orphan_empty_branch_issue_search_is_not_complete() {
 	local work_dir="${TEST_ROOT}/repo-finish-orphan-cleaned"
 	mkdir -p "$work_dir"
 	DISPATCH_REPO_SLUG="test-owner/test-repo"
 
-	# Stub gh: empty branch skips --head and falls back to issue search; existing PR found.
+	# Empty branch forces issue-search fallback, which is dedup evidence but cannot
+	# prove an exact-head completed handoff.
 	gh() {
-		if [[ "${*}" == *"pr list"* && "${*}" == *"--search 99999"* ]]; then
-			printf '1'
+		if [[ "${*}" == *"pr list"* && "${*}" == *"--search #99999 in:body"* ]]; then
+			printf '%s\n' '[{"number":123}]'
 			return 0
 		fi
-		printf '0'
+		printf '%s\n' '[]'
 		return 0
 	}
 
@@ -2415,11 +2430,11 @@ test_handle_worker_branch_orphan_empty_branch_existing_pr_releases_complete() {
 	unset DISPATCH_REPO_SLUG 2>/dev/null || true
 	unset -f gh 2>/dev/null || true
 
-	if [[ "$released_reason" == "worker_complete" ]]; then
-		print_result "_handle_worker_branch_orphan treats empty-branch existing PR as complete" 0
+	if [[ "$released_reason" == "worker_branch_orphan" ]]; then
+		print_result "_handle_worker_branch_orphan does not complete from issue-search fallback" 0
 	else
-		print_result "_handle_worker_branch_orphan treats empty-branch existing PR as complete" 1 \
-			"Expected worker_complete (existing PR found by issue search), got '${released_reason}'"
+		print_result "_handle_worker_branch_orphan does not complete from issue-search fallback" 1 \
+			"Expected worker_branch_orphan for inconclusive issue search, got '${released_reason}'"
 	fi
 	return 0
 }
@@ -2731,22 +2746,122 @@ test_failed_worker_draft_checkpoint_escalates_without_completion() {
 				return 0
 			}
 			_hrw_resolve_default_branch() { printf 'main'; return 0; }
-			_pr_handoff_state_for_branch_or_issue() { printf 'draft|456'; return 0; }
+			_pr_handoff_state_for_branch_or_issue() { printf 'draft_checkpoint|456'; return 0; }
 			_release_dispatch_claim() { printf 'release=%s\n' "$2"; return 0; }
+			set_issue_status() { : >"$escalation_marker"; return 0; }
 			gh() {
-				if [[ "${*}" == *"issue edit 99999"* && "${*}" == *"needs-maintainer-review"* ]]; then
-					: >"$escalation_marker"
+				if [[ "${*}" == *"issue view 99999"* ]]; then
+					printf '%s\n' '{"labels":[{"name":"needs-maintainer-review"}]}'
 				fi
 				return 0
 			}
 			_recover_worker_output_on_failure "issue-99999" "${TEST_ROOT}"
-			printf 'classification=%s\n' "${_HRW_FAILURE_RECOVERY_CLASSIFICATION:-}"
+			printf 'classification=%s\n' "${_HRW_RECOVERY_CLASSIFICATION:-}"
 		)
 	)
 	if [[ "$result" == *"release=worker_draft_checkpoint"* && -f "$escalation_marker" && "$result" == *"classification=worker_draft_checkpoint"* ]]; then
 		print_result "failed worker draft checkpoint escalates without worker_complete" 0
 	else
 		print_result "failed worker draft checkpoint escalates without worker_complete" 1 "$result"
+	fi
+	return 0
+}
+
+test_failed_worker_draft_retains_claim_when_block_not_visible() {
+	local result=""
+	result=$(
+		(
+			DISPATCH_REPO_SLUG="test-owner/test-repo"
+			git() {
+				[[ "${*}" == *"rev-parse --abbrev-ref HEAD"* ]] && printf 'feature/auto-test-issue-99999'
+				return 0
+			}
+			_hrw_resolve_default_branch() { printf 'main'; return 0; }
+			_pr_handoff_state_for_branch_or_issue() { printf 'draft_checkpoint|456'; return 0; }
+			set_issue_status() { return 0; }
+			gh() { printf '%s\n' '{"labels":[]}'; return 0; }
+			_release_dispatch_claim() { printf 'unexpected-release=%s\n' "$2"; return 0; }
+			_recover_worker_output_on_failure "issue-99999" "${TEST_ROOT}"
+			printf 'classification=%s\n' "${_HRW_RECOVERY_CLASSIFICATION:-}"
+		)
+	)
+	if [[ "$result" == *"classification=worker_draft_checkpoint_escalation_failed"* && "$result" != *"unexpected-release="* ]]; then
+		print_result "draft checkpoint retains claim when blocking label read-back fails" 0
+	else
+		print_result "draft checkpoint retains claim when blocking label read-back fails" 1 "$result"
+	fi
+	return 0
+}
+
+test_protected_draft_is_not_mutated_or_completed() {
+	local result=""
+	result=$(
+		(
+			DISPATCH_REPO_SLUG="test-owner/test-repo"
+			git() {
+				[[ "${*}" == *"rev-parse --abbrev-ref HEAD"* ]] && printf 'feature/auto-test-issue-99999'
+				return 0
+			}
+			_hrw_resolve_default_branch() { printf 'main'; return 0; }
+			_pr_handoff_state_for_branch_or_issue() { printf 'protected_draft|458'; return 0; }
+			set_issue_status() { printf 'unexpected-mutation\n'; return 0; }
+			_release_dispatch_claim() { printf 'unexpected-release=%s\n' "$2"; return 0; }
+			_recover_worker_output_on_failure "issue-99999" "${TEST_ROOT}"
+			printf 'classification=%s\n' "${_HRW_RECOVERY_CLASSIFICATION:-}"
+		)
+	)
+	if [[ "$result" == *"classification=worker_protected_draft"* && "$result" != *"unexpected-mutation"* && "$result" != *"unexpected-release="* ]]; then
+		print_result "protected draft is neither mutated nor reported complete" 0
+	else
+		print_result "protected draft is neither mutated nor reported complete" 1 "$result"
+	fi
+	return 0
+}
+
+test_checkpoint_terminal_telemetry_is_failed_escalated() {
+	local fixture_class result expected_reason
+	for fixture_class in draft_checkpoint ready_failed; do
+		if [[ "$fixture_class" == "draft_checkpoint" ]]; then
+			expected_reason="worker_draft_checkpoint"
+		else
+			expected_reason="worker_ready_failed"
+		fi
+		result=$(
+			(
+				_worker_produced_output() { printf '%s' "$fixture_class"; return 0; }
+				_escalate_worker_pr_checkpoint() { _HRW_RECOVERY_CLASSIFICATION="$expected_reason"; return 0; }
+				_hrw_finish_success_run "issue-99999" "${TEST_ROOT}"
+				printf '%s|%s|%s|%s' "$_HRW_TERMINAL_OUTCOME" "$_HRW_FINAL_RUNTIME_EVENT" \
+					"$_HRW_FINAL_RUNTIME_STATUS" "$_HRW_FINAL_RUNTIME_CLASSIFICATION"
+			)
+		)
+		if [[ "$result" == "failed|worker.failed|escalated|${expected_reason}" ]]; then
+			print_result "${fixture_class} records failed/escalated terminal telemetry" 0
+		else
+			print_result "${fixture_class} records failed/escalated terminal telemetry" 1 "$result"
+		fi
+	done
+	return 0
+}
+
+test_closed_unmerged_pr_is_failed_not_completed() {
+	local result=""
+	result=$(
+		(
+			_worker_produced_output() { printf 'closed_unmerged'; return 0; }
+			_release_dispatch_claim() { printf 'release=%s\n' "$2"; return 0; }
+			_report_failure_to_fast_fail() { return 0; }
+			_hrw_finish_success_run "issue-99999" "${TEST_ROOT}"
+			printf 'terminal=%s|%s|%s|%s\n' "$_HRW_TERMINAL_OUTCOME" "$_HRW_FINAL_RUNTIME_EVENT" \
+				"$_HRW_FINAL_RUNTIME_STATUS" "$_HRW_FINAL_RUNTIME_CLASSIFICATION"
+		)
+	)
+	if [[ "$result" == *"release=worker_closed_unmerged_pr"* && \
+		"$result" == *"terminal=failed|worker.failed|failed|worker_closed_unmerged_pr"* && \
+		"$result" != *"release=worker_complete"* ]]; then
+		print_result "closed-unmerged PR records failure and never worker_complete" 0
+	else
+		print_result "closed-unmerged PR records failure and never worker_complete" 1 "$result"
 	fi
 	return 0
 }
@@ -2856,6 +2971,17 @@ test_completion_infrastructure_resumes_without_implementation_penalty() {
 	return 0
 }
 
+test_pr_checkpoint_lifecycle_cases() {
+	test_post_pr_handoff_detects_open_pending_pr
+	test_failed_worker_draft_checkpoint_escalates_without_completion
+	test_failed_worker_draft_retains_claim_when_block_not_visible
+	test_protected_draft_is_not_mutated_or_completed
+	test_checkpoint_terminal_telemetry_is_failed_escalated
+	test_closed_unmerged_pr_is_failed_not_completed
+	test_failed_worker_ready_pr_remains_completed_handoff
+	return 0
+}
+
 main() {
 	setup_test_env
 	test_appends_escalation_contract
@@ -2895,9 +3021,7 @@ main() {
 	test_failure_classifier_distinguishes_anthropic_credit_exhaustion
 	test_service_interruption_candidate_uses_separate_path
 	test_service_interruption_exhausted_metric_preserves_context
-	test_post_pr_handoff_detects_open_pending_pr
-	test_failed_worker_draft_checkpoint_escalates_without_completion
-	test_failed_worker_ready_pr_remains_completed_handoff
+	test_pr_checkpoint_lifecycle_cases
 	test_post_pr_handoff_rejects_pre_pr_stall
 	test_post_pr_handoff_overrides_watchdog_next_action
 	test_completion_infrastructure_resumes_without_implementation_penalty
@@ -2940,7 +3064,7 @@ main() {
 	test_build_orphan_recovery_pr_body_tolerates_missing_publish_flag
 	test_cmd_run_finish_orphan_recovery_success_emits_worker_complete
 	test_cmd_run_finish_local_unpushed_pushes_and_recovers_pr
-	test_handle_worker_branch_orphan_empty_branch_existing_pr_releases_complete
+	test_handle_worker_branch_orphan_empty_branch_issue_search_is_not_complete
 	test_cmd_run_finish_orphan_recovery_failure_emits_branch_orphan
 	test_cmd_run_finish_local_unpushed_push_failure_emits_distinct_reason
 	test_cmd_run_finish_fail_recovers_branch_orphan_output

@@ -48,6 +48,13 @@
 
 set -uo pipefail
 
+# Bypass the aidevops git policy shim for disposable repositories created under
+# this test's isolated temporary HOME.
+git() {
+	command -p git "$@"
+	return $?
+}
+
 TEST_SCRIPTS_DIR="$(cd "$(dirname "$0")/.." && pwd)" || exit 1
 HELPER_SCRIPT="${TEST_SCRIPTS_DIR}/headless-runtime-helper.sh"
 
@@ -110,6 +117,8 @@ case "${1:-}" in
 			list)
 				case " $* " in
 					*".[].number"*) printf '%s\n' "${STUB_PR_NUMBERS:-}" ;;
+					*"number,state,isDraft,mergedAt,labels,statusCheckRollup"*) printf '%s\n' "${STUB_PR_JSON:-[]}" ;;
+					*"--json number "*) printf '%s\n' "${STUB_SEARCH_JSON:-[]}" ;;
 					*) printf '%s\n' "${STUB_PR_COUNT:-0}" ;;
 				esac
 				;;
@@ -196,6 +205,7 @@ test_main_no_commits_no_pr_returns_noop() {
 		return 0
 	}
 	export STUB_PR_COUNT=0
+	export STUB_PR_JSON='[]' STUB_SEARCH_JSON='[]'
 	local got
 	got=$(_worker_produced_output "issue-1001" "$WORK_DIR")
 	if [[ "$got" == "noop" ]]; then
@@ -226,6 +236,7 @@ test_main_with_local_commits_no_pr_returns_noop_t2899() {
 		return 0
 	}
 	export STUB_PR_COUNT=0
+	export STUB_PR_JSON='[]' STUB_SEARCH_JSON='[]'
 	local got
 	got=$(_worker_produced_output "issue-1002" "$WORK_DIR")
 	if [[ "$got" == "noop" ]]; then
@@ -254,6 +265,7 @@ test_feature_branch_pushed_no_pr_returns_branch_orphan() {
 		return 0
 	}
 	export STUB_PR_COUNT=0
+	export STUB_PR_JSON='[]' STUB_SEARCH_JSON='[]'
 	local got
 	got=$(_worker_produced_output "issue-1003" "$WORK_DIR")
 	if [[ "$got" == "branch_orphan" ]]; then
@@ -281,6 +293,7 @@ test_feature_branch_with_pr_returns_pr_exists() {
 		return 0
 	}
 	export STUB_PR_COUNT=1
+	export STUB_PR_JSON='[{"number":77,"state":"OPEN","isDraft":false,"mergedAt":null,"labels":[{"name":"origin:worker"}],"statusCheckRollup":[]}]' STUB_SEARCH_JSON='[]'
 	local got
 	got=$(_worker_produced_output "issue-1004" "$WORK_DIR")
 	if [[ "$got" == "pr_exists" ]]; then
@@ -306,6 +319,7 @@ test_failure_recovery_ignores_default_branch_pr_match() {
 		return 0
 	}
 	export STUB_PR_COUNT=1
+	export STUB_PR_JSON='[{"number":77,"state":"OPEN","isDraft":false,"mergedAt":null,"labels":[{"name":"origin:worker"}],"statusCheckRollup":[]}]' STUB_SEARCH_JSON='[]'
 	local got="recovered"
 	if _recover_worker_output_on_failure "issue-1005" "$WORK_DIR" >/dev/null 2>&1; then
 		got="recovered"
@@ -354,6 +368,7 @@ test_feature_branch_without_default_ref_returns_branch_orphan() {
 		return 0
 	}
 	export STUB_PR_COUNT=0
+	export STUB_PR_JSON='[]' STUB_SEARCH_JSON='[]'
 	local got
 	got=$(_worker_produced_output "issue-1006" "$WORK_DIR")
 	if [[ "$got" == "branch_orphan" ]]; then
@@ -430,6 +445,7 @@ test_dirty_feature_worktree_preserved() {
 		return 0
 	}
 	export STUB_PR_COUNT=0
+	export STUB_PR_JSON='[]' STUB_SEARCH_JSON='[]'
 	local got
 	got=$(_worker_produced_output "issue-1009" "$WORK_DIR")
 	if [[ "$got" == "dirty_worktree" ]]; then
