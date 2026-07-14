@@ -448,21 +448,58 @@ if [[ -f "$REUSABLE_WF" ]]; then
 fi
 
 # ---------------------------------------------------------------------------
-# Tests 18-19: GH#20967 — every caller template must declare permissions:
+# Tests 18-19: GH#20967/GH#27615 — caller permission ceilings
 # Repos with default_workflow_permissions: read cause startup_failure unless
-# the caller sets a permissions ceiling. Both templates must declare permissions.
+# callers grant every permission requested by their reusable workflow jobs.
 # ---------------------------------------------------------------------------
 
-# Test 18: issue-sync-caller.yml declares a permissions: block
-if [[ -f "$DOWNSTREAM_TEMPLATE" ]]; then
-	if grep -qE "^permissions:" "$DOWNSTREAM_TEMPLATE" 2>/dev/null; then
-		_pass "issue-sync-caller.yml declares top-level permissions: block (GH#20967)"
-	else
-		_fail "issue-sync-caller.yml declares top-level permissions: block (GH#20967)" \
-			"missing 'permissions:' in $DOWNSTREAM_TEMPLATE — repos with default_workflow_permissions: read will get startup_failure"
-	fi
+# Test 18: issue-sync caller ceiling equals the union of reusable job permissions
+if [[ ! -f "$DOWNSTREAM_TEMPLATE" || ! -f "$REUSABLE_WF" ]]; then
+	_skip "issue-sync caller permissions equal reusable job union" "workflow or template file missing"
+elif ! command -v python3 >/dev/null 2>&1 || ! python3 -c "import yaml" 2>/dev/null; then
+	_skip "issue-sync caller permissions equal reusable job union" "python3 or pyyaml unavailable"
 else
-	_skip "issue-sync-caller.yml permissions check" "template file missing"
+	permission_result="$(python3 - "$REUSABLE_WF" "$DOWNSTREAM_TEMPLATE" <<'PYEOF' 2>&1
+import sys
+import yaml
+
+with open(sys.argv[1]) as reusable_file:
+    reusable = yaml.safe_load(reusable_file)
+with open(sys.argv[2]) as caller_file:
+    caller = yaml.safe_load(caller_file)
+
+levels = {"none": 0, "read": 1, "write": 2}
+required = {}
+for job_name, job in (reusable.get("jobs", {}) or {}).items():
+    if not isinstance(job, dict):
+        continue
+    permissions = job.get("permissions", {}) or {}
+    if not isinstance(permissions, dict):
+        print(f"FAIL: job {job_name} permissions must be an explicit mapping")
+        sys.exit(1)
+    for permission, level in permissions.items():
+        if level not in levels:
+            print(f"FAIL: unsupported permission level {permission}={level}")
+            sys.exit(1)
+        if levels[level] > levels.get(required.get(permission, "none"), 0):
+            required[permission] = level
+
+granted = caller.get("permissions", {}) or {}
+if not isinstance(granted, dict):
+    print("FAIL: caller permissions must be an explicit mapping")
+    sys.exit(1)
+if granted != required:
+    print(f"FAIL: caller={granted}; required_union={required}")
+    sys.exit(1)
+print("OK")
+PYEOF
+)"
+	if [[ "$permission_result" == "OK" ]]; then
+		_pass "issue-sync caller permissions equal reusable job union (GH#27615)"
+	else
+		_fail "issue-sync caller permissions equal reusable job union (GH#27615)" \
+			"$permission_result"
+	fi
 fi
 
 # Test 19: review-bot-gate-caller.yml declares a permissions: block
