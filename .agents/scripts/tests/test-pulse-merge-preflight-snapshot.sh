@@ -61,7 +61,7 @@ gh() {
 		fi
 		[[ "$SNAPSHOT_MODE" == "recent" ]] && broad_completed_at="2026-01-01T00:09:50Z"
 		if [[ "$SNAPSHOT_MODE" == "unclassified_fail" ]]; then
-			extra_check=',{"name":"CodeFactor","status":"completed","conclusion":"failure","completed_at":"2026-01-01T00:01:00Z"}'
+			extra_check=',{"name":"CodeFactor","status":"completed","conclusion":"failure","details_url":"https://github.com/owner/repo/runs/99","completed_at":"2026-01-01T00:01:00Z"}'
 		fi
 		printf '[{"check_runs":[{"name":"required-a","status":"completed","conclusion":"%s","completed_at":"2026-01-01T00:01:00Z"},{"name":"Framework Validation","status":"%s","conclusion":%s,"completed_at":"%s"},{"name":"Qlty Smell Regression","status":"completed","conclusion":"success","completed_at":"2026-01-01T00:01:00Z"},{"name":"Qlty Smell Threshold","status":"completed","conclusion":"failure","completed_at":"2026-01-01T00:01:00Z"}%s]}]\n' \
 			"$required_conclusion" "$broad_status" "$([[ "$broad_conclusion" == "null" ]] && printf 'null' || printf '"%s"' "$broad_conclusion")" "$broad_completed_at" "$extra_check"
@@ -126,6 +126,22 @@ main() {
 	assert_gate "active broad check blocks merge" pending 1
 	assert_gate "terminal failed required check blocks merge" required_fail 1
 	assert_gate "unclassified non-required failure blocks merge" unclassified_fail 1
+	if jq -e 'length == 1 and .[0].name == "CodeFactor" and .[0].bucket == "fail" and .[0].conclusion == "failure" and .[0].link == "https://github.com/owner/repo/runs/99"' \
+		<<<"$_PULSE_MERGE_PREFLIGHT_BLOCKING_CHECKS_JSON" >/dev/null; then
+		printf 'PASS terminal blocker evidence is exported for CI repair\n'
+	else
+		printf 'FAIL terminal blocker evidence is exported for CI repair: %s\n' "$_PULSE_MERGE_PREFLIGHT_BLOCKING_CHECKS_JSON"
+		TESTS_FAILED=$((TESTS_FAILED + 1))
+	fi
+	TESTS_RUN=$((TESTS_RUN + 1))
+	assert_gate "later accepted snapshot resets prior blocker evidence" happy_advisory 0
+	if [[ "$_PULSE_MERGE_PREFLIGHT_BLOCKING_CHECKS_JSON" == "[]" ]]; then
+		printf 'PASS accepted snapshot clears prior blocker evidence\n'
+	else
+		printf 'FAIL accepted snapshot clears prior blocker evidence: %s\n' "$_PULSE_MERGE_PREFLIGHT_BLOCKING_CHECKS_JSON"
+		TESTS_FAILED=$((TESTS_FAILED + 1))
+	fi
+	TESTS_RUN=$((TESTS_RUN + 1))
 	assert_gate "unresolved late inline finding blocks merge" unresolved 1
 	assert_gate "late review activity invalidates stale gate success" stale_gate 1
 	_PULSE_REVIEW_GATE_EVIDENCE=""

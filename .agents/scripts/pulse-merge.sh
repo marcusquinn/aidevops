@@ -1385,6 +1385,11 @@ _process_single_ready_pr() {
 	# reviewed head and a fresh, terminal, quiet snapshot. This must run after
 	# all preparatory writes and immediately before native/admin merge paths.
 	if ! _pulse_merge_preflight_snapshot_gate "$repo_slug" "$pr_number" "$pr_head_ref_oid"; then
+		if [[ "${_PULSE_MERGE_PREFLIGHT_BLOCKING_CHECKS_JSON:-[]}" != "[]" ]]; then
+			_route_pr_to_fix_worker "$pr_number" "$repo_slug" "$linked_issue" "ci" \
+				"$pr_labels" "" "$pr_updated_at" "$pr_head_ref_oid" \
+				"$_PULSE_MERGE_PREFLIGHT_BLOCKING_CHECKS_JSON" || true
+		fi
 		return 1
 	fi
 

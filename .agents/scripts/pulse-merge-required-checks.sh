@@ -7,6 +7,7 @@
 _PULSE_MERGE_REQUIRED_CHECKS_LOADED=1
 PMRC_CHECK_COMPLETED="completed"
 PMRC_CHECK_SUCCESS="success"
+: "${_PULSE_MERGE_PREFLIGHT_BLOCKING_CHECKS_JSON:=[]}"
 
 _pmrc_gh_read() {
 	local rc=0
@@ -46,6 +47,7 @@ _pmrc_snapshot_checks_json() {
 				name: (.name // ""),
 				status: ((.status // "") | ascii_downcase),
 				conclusion: ((.conclusion // "") | ascii_downcase),
+				link: (.details_url // .html_url // ""),
 				observed_at: (.completed_at // .started_at // "")
 			}
 		] + [
@@ -53,6 +55,7 @@ _pmrc_snapshot_checks_json() {
 				name: (.context // ""),
 				status: (if $state == $pending then $in_progress else $completed end),
 				conclusion: (if $state == $success then $success elif ($state == $failure or $state == $error) then $failure else "" end),
+				link: (.target_url // ""),
 				observed_at: (.updated_at // .created_at // "")
 			}
 		]
@@ -148,7 +151,9 @@ _pmrc_snapshot_checks_acceptable() {
 	local checks_json="$3"
 	local required_contexts="$4"
 	local required_json="" rows="" name="" status="" conclusion="" required=""
+	local blocking_names=""
 	local blockers=0 pending=0 advisory=0
+	_PULSE_MERGE_PREFLIGHT_BLOCKING_CHECKS_JSON="[]"
 
 	required_json=$(printf '%s' "$required_contexts" | jq -Rsc '[split("\n")[] | select(length > 0)]') || return 1
 	rows=$(jq -r --argjson required "$required_json" '.[] | .name as $name | [
@@ -165,15 +170,24 @@ _pmrc_snapshot_checks_acceptable() {
 		esac
 		if [[ "$required" == "true" ]]; then
 			echo "[pulse-merge] pre-merge snapshot: required check '${name}' is terminal-${conclusion} for PR #${pr_number} in ${repo_slug} (GH#27137)" >>"$LOGFILE"
+			blocking_names="${blocking_names}${name}"$'\n'
 			blockers=$((blockers + 1))
 		elif _pmrc_is_explicit_advisory_failure "$name" "$checks_json"; then
 			echo "[pulse-merge] pre-merge snapshot: IGNORED non-required baseline advisory failure '${name}' because its regression companion passed for PR #${pr_number} in ${repo_slug} (GH#27137)" >>"$LOGFILE"
 			advisory=$((advisory + 1))
 		else
 			echo "[pulse-merge] pre-merge snapshot: unclassified non-required check '${name}' is terminal-${conclusion} for PR #${pr_number} in ${repo_slug} — merge blocked (GH#27137)" >>"$LOGFILE"
+			blocking_names="${blocking_names}${name}"$'\n'
 			blockers=$((blockers + 1))
 		fi
 	done <<<"$rows"
+	if [[ -n "$blocking_names" ]]; then
+		_PULSE_MERGE_PREFLIGHT_BLOCKING_CHECKS_JSON=$(jq -c --arg names "$blocking_names" '
+			($names | split("\n") | map(select(length > 0))) as $blocking_names
+			| [.[]? | select(.name as $name | $blocking_names | index($name))
+				| {name, bucket: "fail", state: (.conclusion | ascii_upcase), conclusion, link}]
+		' <<<"$checks_json" 2>/dev/null) || _PULSE_MERGE_PREFLIGHT_BLOCKING_CHECKS_JSON="[]"
+	fi
 	if [[ "$pending" -gt 0 || "$blockers" -gt 0 ]]; then
 		echo "[pulse-merge] pre-merge snapshot: PR #${pr_number} in ${repo_slug} not ready (active=${pending}, blocking_failures=${blockers}, advisory_failures=${advisory}) (GH#27137)" >>"$LOGFILE"
 		return 1
@@ -242,6 +256,7 @@ _pulse_merge_preflight_snapshot_gate() {
 	local expected_gate_evidence="${repo_slug}#${pr_number}@${expected_head_sha}"
 	local live_gate_evidence="${_PULSE_REVIEW_GATE_EVIDENCE:-}"
 	local pr_json="" current_head_sha="" required_contexts="" checks_json="" activity_json=""
+	_PULSE_MERGE_PREFLIGHT_BLOCKING_CHECKS_JSON="[]"
 
 	pr_json=$(_pmrc_gh_read gh api "repos/${repo_slug}/pulls/${pr_number}" 2>/dev/null) || return 1
 	current_head_sha=$(jq -r '.head.sha // ""' <<<"$pr_json" 2>/dev/null) || return 1
