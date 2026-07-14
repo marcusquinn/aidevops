@@ -113,9 +113,21 @@ run_case "--quick" "WARN" 0 "POSTFLIGHT VERIFICATION PASSED WITH WARNINGS" "POST
 run_case "--quick" "UNKNOWN" 0 "SonarCloud quality gate status: UNKNOWN" "POSTFLIGHT VERIFICATION FAILED"
 run_case "--quick" "UNAVAILABLE" 0 "SKIPPED Could not reach SonarCloud API" "POSTFLIGHT VERIFICATION FAILED"
 
-CI_STUB_CONCLUSION="failure" run_case "--ci-only" "OK" 1 "CI/CD pipeline failed: Stub CI" "POSTFLIGHT VERIFICATION PASSED"
-GH_AUTH_STUB_RESULT="failure" run_case "--ci-only" "OK" 1 "Failed:   1" "POSTFLIGHT VERIFICATION PASSED"
-SNYK_STUB_RESULT="vulnerable" run_case "--security-only" "OK" 1 "Snyk: 1 vulnerabilities found" "POSTFLIGHT VERIFICATION PASSED"
-SECRETLINT_STUB_RESULT="detected" run_case "--security-only" "OK" 1 "Secretlint: Potential secrets found" "POSTFLIGHT VERIFICATION PASSED"
+(
+	export CI_STUB_CONCLUSION="failure"
+	run_case "--ci-only" "OK" 1 "CI/CD pipeline failed: Stub CI" "POSTFLIGHT VERIFICATION PASSED"
+)
+(
+	export GH_AUTH_STUB_RESULT="failure"
+	run_case "--ci-only" "OK" 1 "Failed:   1" "POSTFLIGHT VERIFICATION PASSED"
+)
+(
+	export SNYK_STUB_RESULT="vulnerable"
+	run_case "--security-only" "OK" 1 "Snyk: 1 vulnerabilities found" "POSTFLIGHT VERIFICATION PASSED"
+)
+(
+	export SECRETLINT_STUB_RESULT="detected"
+	run_case "--security-only" "OK" 1 "Secretlint: Potential secrets found" "POSTFLIGHT VERIFICATION PASSED"
+)
 
 printf 'PASS: postflight propagates critical check results\n'

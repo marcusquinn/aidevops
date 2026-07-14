@@ -183,6 +183,25 @@ test_launch_helpers_tolerate_unset_state_under_nounset() {
 	return 0
 }
 
+test_runtime_temp_files_use_managed_workspace() {
+	local AIDEVOPS_TEMP_DIR="${HOME}/.aidevops/.agent-workspace/tmp"
+	local temp_file=""
+	temp_file=$(_create_headless_runtime_temp_file) || {
+		print_result "runtime temp files use managed aidevops workspace" 1 "Could not create runtime temp file"
+		return 0
+	}
+
+	if [[ "$temp_file" == "${HOME}/.aidevops/.agent-workspace/tmp/"* && -f "$temp_file" ]]; then
+		rm -f "$temp_file"
+		print_result "runtime temp files use managed aidevops workspace" 0
+		return 0
+	fi
+
+	rm -f "$temp_file"
+	print_result "runtime temp files use managed aidevops workspace" 1 "Unexpected path: $temp_file"
+	return 0
+}
+
 test_startup_no_activity_timeout_returns_watchdog_continue() {
 	local output_file="${TEST_ROOT}/startup-stall.log"
 	printf '%s\n' 'sqlite-migration:done' >"$output_file"
@@ -2994,6 +3013,7 @@ main() {
 	test_headless_contract_uses_deployed_framework_paths
 	test_parse_initial_model_does_not_set_explicit_override
 	test_launch_helpers_tolerate_unset_state_under_nounset
+	test_runtime_temp_files_use_managed_workspace
 	test_startup_no_activity_timeout_returns_watchdog_continue
 	test_startup_no_activity_can_rotate_after_continuation_budget
 	test_sigkill_with_activity_attempts_continuation

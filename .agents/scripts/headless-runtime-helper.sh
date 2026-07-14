@@ -1069,10 +1069,19 @@ _execute_run_attempt() {
 	local resource_stop_file resource_result_file resource_sampler_pid
 	local _metric_kill_reason=""
 	start_ms=$(python3 -c 'import time; print(int(time.time() * 1000))' 2>/dev/null || printf '%s' "0")
-	output_file=$(mktemp)
-	exit_code_file=$(mktemp)
-	resource_stop_file=$(mktemp)
-	resource_result_file=$(mktemp)
+	output_file=$(_create_headless_runtime_temp_file) || return 1
+	exit_code_file=$(_create_headless_runtime_temp_file) || {
+		rm -f "$output_file"
+		return 1
+	}
+	resource_stop_file=$(_create_headless_runtime_temp_file) || {
+		rm -f "$output_file" "$exit_code_file"
+		return 1
+	}
+	resource_result_file=$(_create_headless_runtime_temp_file) || {
+		rm -f "$output_file" "$exit_code_file" "$resource_stop_file"
+		return 1
+	}
 	rm -f "$resource_stop_file" 2>/dev/null || true
 	rm -f "$resource_result_file" 2>/dev/null || true
 	resource_sampler_pid=""
@@ -1197,8 +1206,11 @@ _execute_run_attempt() {
 		print_warning "OpenCode worker DB migration replay detected for ${session_key}; retrying once with fresh isolated DB (GH#25541)"
 		unset AIDEVOPS_WORKER_PREWARM_DIR
 		rm -f "$output_file" 2>/dev/null || true
-		output_file=$(mktemp)
-		exit_code_file=$(mktemp)
+		output_file=$(_create_headless_runtime_temp_file) || return 1
+		exit_code_file=$(_create_headless_runtime_temp_file) || {
+			rm -f "$output_file"
+			return 1
+		}
 		exit_code=0
 		_invoke_opencode "$output_file" "$exit_code_file" "${cmd[@]}"
 		if ! read -r exit_code <"$exit_code_file" 2>/dev/null; then
@@ -1228,8 +1240,11 @@ _execute_run_attempt() {
 			clear_session_id "$provider" "$session_key"
 			persisted_session=""
 			rm -f "$output_file"
-			output_file=$(mktemp)
-			exit_code_file=$(mktemp)
+			output_file=$(_create_headless_runtime_temp_file) || return 1
+			exit_code_file=$(_create_headless_runtime_temp_file) || {
+				rm -f "$output_file"
+				return 1
+			}
 			exit_code=0
 			# Rebuild command without the stale --session flag
 			cmd=()
