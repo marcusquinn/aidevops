@@ -375,14 +375,43 @@ _verify_deployed_core_plugin_freshness() {
 	return 0
 }
 
+# _verify_opencode_plugin_deps plugin_dir
+# Imports both runtime dependencies with a JavaScript runtime before a bundle is
+# eligible for activation. Prefer Bun because OpenCode embeds Bun; use Node when
+# the standalone Bun CLI is unavailable.
+_verify_opencode_plugin_deps() {
+	local plugin_dir="$1"
+	local js_runtime=""
+
+	if command -v bun >/dev/null 2>&1; then
+		js_runtime="bun"
+	elif command -v node >/dev/null 2>&1; then
+		js_runtime="node"
+	else
+		printf 'Neither bun nor node is available for plugin dependency verification\n' >&2
+		return 1
+	fi
+
+	if (
+		cd "$plugin_dir" || exit 1
+		"$js_runtime" -e 'Promise.all([import("@bufbuild/protobuf"), import("@opencode-ai/plugin")]).then(([, plugin]) => { if (!plugin.tool || !plugin.tool.schema) throw new Error("@opencode-ai/plugin does not export tool.schema"); }).catch((error) => { console.error(error.message); process.exit(1); })'
+	); then
+		return 0
+	fi
+	return 1
+}
+
 # _install_opencode_plugin_deps target_dir
-# Installs node_modules for the opencode-aidevops plugin.
+# Installs and verifies node_modules for the opencode-aidevops plugin.
 # GH#17829: @bufbuild/protobuf was missing; GH#17891: only symlink on first run.
 # Uses --omit=peer to skip the 630MB opencode-ai peer dep (the host app).
+# GH#27714: installation or import failure must block bundle activation.
 _install_opencode_plugin_deps() {
 	local target_dir="$1"
 	local oc_node_modules="$HOME/.config/opencode/node_modules"
 	local plugin_dir="$target_dir/plugins/opencode-aidevops"
+	local install_log=""
+	local verify_output=""
 
 	if [[ ! -d "$plugin_dir" ]]; then
 		return 0
@@ -395,14 +424,32 @@ _install_opencode_plugin_deps() {
 		fi
 	fi
 
-	# Verify critical dependency is available; npm install if not
-	if [[ ! -d "$plugin_dir/node_modules/@bufbuild/protobuf" ]]; then
-		if command -v npm &>/dev/null; then
-			# Remove symlink if present so npm creates a local node_modules
-			[[ -L "$plugin_dir/node_modules" ]] && rm "$plugin_dir/node_modules"
-			npm install --omit=dev --omit=peer --prefix "$plugin_dir" >/dev/null 2>&1 ||
-				print_warning "Failed to install plugin dependencies (non-blocking)"
-		fi
+	if verify_output=$(_verify_opencode_plugin_deps "$plugin_dir" 2>&1); then
+		return 0
+	fi
+
+	if ! command -v npm >/dev/null 2>&1; then
+		print_error "Plugin dependencies are unavailable and npm is not installed: ${verify_output:-import failed}"
+		return 1
+	fi
+
+	# Remove the shared symlink so npm installs the declared versions locally.
+	[[ -L "$plugin_dir/node_modules" ]] && rm "$plugin_dir/node_modules"
+	install_log=$(mktemp "${TMPDIR:-/tmp}/aidevops-plugin-install.XXXXXX") || {
+		print_error "Failed to create the plugin dependency install log"
+		return 1
+	}
+	if ! npm install --omit=dev --omit=peer --prefix "$plugin_dir" >"$install_log" 2>&1; then
+		print_error "Failed to install OpenCode plugin dependencies; runtime bundle activation blocked"
+		tail -n 12 "$install_log" >&2
+		rm -f "$install_log"
+		return 1
+	fi
+	rm -f "$install_log"
+
+	if ! verify_output=$(_verify_opencode_plugin_deps "$plugin_dir" 2>&1); then
+		print_error "OpenCode plugin dependency verification failed after install: ${verify_output:-import failed}"
+		return 1
 	fi
 	return 0
 }
@@ -881,7 +928,7 @@ _deploy_agents_post_copy() {
 	local plugins_file="$4"
 
 	_set_script_permissions_and_report "$target_dir"
-	_install_opencode_plugin_deps "$target_dir"
+	_install_opencode_plugin_deps "$target_dir" || return 1
 	_deploy_version_file "$target_dir" "$repo_dir"
 	_deploy_security_advisories_files "$source_dir"
 	_inject_plan_reminder "$target_dir"
