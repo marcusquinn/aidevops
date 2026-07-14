@@ -244,7 +244,7 @@ _pr_handoff_state_for_branch_or_issue() {
 
 	if [[ -n "$branch_name" ]]; then
 		if pr_json=$(gh_pr_list --repo "$repo_slug" --head "$branch_name" --state all \
-			--limit 10 --json number,state,isDraft,mergedAt,headRefOid,labels 2>/dev/null); then
+			--limit 10 --json number,state,isDraft,mergedAt,headRefOid,labels,statusCheckRollup 2>/dev/null); then
 			queried=1
 			pr_state=$(_pr_handoff_state_from_json "$pr_json" "$expected_head")
 			if [[ -n "$pr_state" ]]; then

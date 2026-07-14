@@ -426,22 +426,22 @@ test_case_active_pr_wins_over_historical_pr() {
 	return 0
 }
 
-test_case_real_checkrun_and_statuscontext_failures() {
+test_case_ci_failures_remain_ready_handoffs() {
 	local fixture expected got
 	for fixture in \
 		'[{"number":328,"state":"OPEN","isDraft":false,"mergedAt":null,"labels":[{"name":"origin:worker"}],"statusCheckRollup":[{"__typename":"CheckRun","name":"tests","status":"COMPLETED","conclusion":"FAILURE"}]}]' \
 		'[{"number":329,"state":"OPEN","isDraft":false,"mergedAt":null,"labels":[{"name":"origin:worker"}],"statusCheckRollup":[{"__typename":"StatusContext","context":"ci/test","state":"ERROR"}]}]'; do
 		case "$fixture" in
-			*328*) expected="ready_failed|328" ;;
-			*) expected="ready_failed|329" ;;
+			*328*) expected="ready|328" ;;
+			*) expected="ready|329" ;;
 		esac
 		export STUB_HEAD_JSON="$fixture"
 		export STUB_SEARCH_JSON='[]'
 		got=$(_pr_handoff_state_for_branch_or_issue "feature/failed-checks" "27517" "owner/repo")
 		if [[ "$got" == "$expected" ]]; then
-			print_result "real CheckRun/StatusContext failure shape classifies ${expected}" 0
+			print_result "real CheckRun/StatusContext failure remains durable ${expected}" 0
 		else
-			print_result "real CheckRun/StatusContext failure shape classifies ${expected}" 1 "got: '$got'"
+			print_result "real CheckRun/StatusContext failure remains durable ${expected}" 1 "got: '$got'"
 		fi
 	done
 	return 0
@@ -545,7 +545,7 @@ test_case_ready_requires_exact_head_and_merge_summary
 test_case_merged_requires_exact_head_and_merge_summary
 test_case_head_only_does_not_capture_unrelated_issue_draft
 test_case_active_pr_wins_over_historical_pr
-test_case_real_checkrun_and_statuscontext_failures
+test_case_ci_failures_remain_ready_handoffs
 test_case_protected_draft_labels_are_preserved
 test_case_e_orphan_recovery_skips_when_pr_exists
 test_case_f_orphan_recovery_proceeds_when_no_pr
