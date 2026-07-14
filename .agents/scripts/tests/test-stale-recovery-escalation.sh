@@ -71,6 +71,9 @@ GH_CALLS_FILE="${TEST_ROOT}/gh_calls.log"
 write_stub_gh() {
 	local tick_count="${1:-0}"
 	local open_pr="${2:-}"
+	local transition_visible="${3:-1}"
+	local open_pr_number="${open_pr%%|*}"
+	local open_pr_kind="${open_pr#*|}"
 	: >"$GH_CALLS_FILE"
 
 	cat >"${STUB_DIR}/gh" <<STUBEOF
@@ -103,7 +106,13 @@ fi
 # gh pr list --state open ...
 # Returns open PR number if configured, empty if not
 if [[ "\$1" == "pr" && "\$2" == "list" ]]; then
-	printf '%s\n' "${open_pr}"
+	case "${open_pr_kind}" in
+	ready) printf '%s\n' '[{"number":${open_pr_number},"isDraft":false,"labels":[{"name":"origin:worker"}],"statusCheckRollup":[]}]' ;;
+	ready_failed) printf '%s\n' '[{"number":${open_pr_number},"isDraft":false,"labels":[{"name":"origin:worker"}],"statusCheckRollup":[{"__typename":"CheckRun","status":"COMPLETED","conclusion":"FAILURE"}]}]' ;;
+	draft_checkpoint) printf '%s\n' '[{"number":${open_pr_number},"isDraft":true,"labels":[{"name":"origin:worker"}],"statusCheckRollup":[]}]' ;;
+	protected_draft) printf '%s\n' '[{"number":${open_pr_number},"isDraft":true,"labels":[{"name":"origin:interactive"}],"statusCheckRollup":[]}]' ;;
+	*) printf '%s\n' '[]' ;;
+	esac
 	exit 0
 fi
 
@@ -111,7 +120,15 @@ fi
 # remain silent successes.
 if [[ "\$1" == "issue" ]]; then
 	if [[ "\$2" == "view" && "\$*" == *"--json state,labels,assignees"* ]]; then
-		printf '%s\n' '{"state":"OPEN","labels":[{"name":"status:available"}],"assignees":[]}'
+		if [[ "${open_pr}" == *"draft_checkpoint"* || "${open_pr}" == *"ready_failed"* ]]; then
+			if [[ "${transition_visible}" == "1" ]]; then
+				printf '%s\n' '{"state":"OPEN","labels":[{"name":"needs-maintainer-review"}],"assignees":[]}'
+			else
+				printf '%s\n' '{"state":"OPEN","labels":[],"assignees":[{"login":"stale-runner"}]}'
+			fi
+		else
+			printf '%s\n' '{"state":"OPEN","labels":[{"name":"status:available"}],"assignees":[]}'
+		fi
 	fi
 	exit 0
 fi
@@ -136,7 +153,8 @@ rc=0
 run_recover() {
 	local tick_count="${1:-0}"
 	local open_pr="${2:-}"
-	write_stub_gh "$tick_count" "$open_pr"
+	local transition_visible="${3:-1}"
+	write_stub_gh "$tick_count" "$open_pr" "$transition_visible"
 	set +e
 	output=$(
 		STALE_ASSIGNMENT_THRESHOLD_SECONDS=0
@@ -228,7 +246,7 @@ fi
 # =============================================================================
 
 # 2 prior ticks, but open PR #42 is durable progress and must be preserved
-run_recover 2 "42"
+run_recover 2 "42|ready"
 
 if echo "$output" | grep -q "STALE_PROGRESS_PRESERVED"; then
 	print_result "Open PR path preserves durable progress without stale recovery" 0
@@ -259,6 +277,46 @@ if echo "$output" | grep -q "STALE_ESCALATED"; then
 	print_result "Above-threshold (3 prior ticks >= threshold 2): STALE_ESCALATED emitted" 0
 else
 	print_result "Above-threshold (3 prior ticks >= threshold 2): STALE_ESCALATED emitted" 1 "(got: '$output')"
+fi
+
+# =============================================================================
+# Test 6 — Worker draft escalates only after verified blocking transition
+# =============================================================================
+
+run_recover 0 "77|draft_checkpoint" 1
+if echo "$output" | grep -q "STALE_DRAFT_ESCALATED" && grep -q "needs-maintainer-review" "$GH_CALLS_FILE"; then
+	print_result "Worker draft checkpoint escalates after verified NMR read-back" 0
+else
+	print_result "Worker draft checkpoint escalates after verified NMR read-back" 1 "(got: '$output')"
+fi
+
+run_recover 0 "77|draft_checkpoint" 0
+if [[ "$rc" -ne 0 ]] && echo "$output" | grep -q "STALE_PR_ESCALATION_FAILED"; then
+	print_result "Worker draft retains ownership when NMR transition is invisible" 0
+else
+	print_result "Worker draft retains ownership when NMR transition is invisible" 1 "(rc=$rc got: '$output')"
+fi
+
+# =============================================================================
+# Test 7 — Protected drafts are never mutated
+# =============================================================================
+
+run_recover 0 "78|protected_draft"
+if echo "$output" | grep -q "STALE_DRAFT_PROTECTED" && ! grep -q "^issue edit" "$GH_CALLS_FILE"; then
+	print_result "Protected draft blocks recovery without automated mutation" 0
+else
+	print_result "Protected draft blocks recovery without automated mutation" 1 "(got: '$output')"
+fi
+
+# =============================================================================
+# Test 8 — Terminally failed ready PR escalates explicitly
+# =============================================================================
+
+run_recover 0 "79|ready_failed" 1
+if echo "$output" | grep -q "STALE_READY_FAILED_ESCALATED"; then
+	print_result "Ready PR with terminal failed checks escalates explicitly" 0
+else
+	print_result "Ready PR with terminal failed checks escalates explicitly" 1 "(got: '$output')"
 fi
 
 export PATH="$OLD_PATH"

@@ -288,16 +288,22 @@ test_has_open_pr_detects_open_body_closing_keyword() {
 	return 0
 }
 
-test_has_open_pr_ignores_draft_body_closing_keyword() {
-	set_gh_fixtures 'marcusquinn/aidevops|open|#18779 in:body|[{"number":18906,"body":"Resolves #18779. Incomplete worker checkpoint.","isDraft":true}]'
+test_has_open_pr_blocks_draft_body_closing_keyword() {
+	set_gh_fixtures 'marcusquinn/aidevops|open|#18779|[{"number":18906,"title":"Worker checkpoint for #18779","body":"Resolves #18779. Incomplete worker checkpoint.","isDraft":true,"reviewDecision":"REVIEW_REQUIRED","mergeStateStatus":"UNKNOWN"}]
+marcusquinn/aidevops|open|#18779 in:body|[{"number":18906,"body":"Resolves #18779. Incomplete worker checkpoint.","isDraft":true}]'
 
-	if "$HELPER_SCRIPT" has-open-pr 18779 marcusquinn/aidevops 't2071: incomplete checkpoint'; then
-		print_result "has-open-pr ignores draft checkpoint closing keyword" 1 \
-			"Expected draft checkpoint not to count as a completed handoff"
+	local output=""
+	if output=$("$HELPER_SCRIPT" has-open-pr 18779 marcusquinn/aidevops 't2071: incomplete checkpoint'); then
+		if [[ "$output" == *"draft PR #18906 is a durable checkpoint"* ]]; then
+			print_result "has-open-pr blocks competing dispatch for draft checkpoint" 0
+			return 0
+		fi
+		print_result "has-open-pr blocks competing dispatch for draft checkpoint" 1 "Unexpected output: ${output}"
 		return 0
 	fi
 
-	print_result "has-open-pr ignores draft checkpoint closing keyword" 0
+	print_result "has-open-pr blocks competing dispatch for draft checkpoint" 1 \
+		"Expected durable draft checkpoint to block ordinary redispatch"
 	return 0
 }
 
@@ -451,15 +457,13 @@ test_has_open_pr_blocks_behind_healthy_sibling() {
 }
 
 test_has_open_pr_allows_when_no_healthy_sibling() {
-	# Blocked siblings (draft, changes-requested, conflicting, or unknown without
-	# approval) must not hold the issue forever. They are not candidates the merge
-	# path can finish safely, so redispatch remains allowed when no other PR
-	# evidence exists.
-	set_gh_fixtures 'marcusquinn/aidevops|open|#23251|[{"number":23289,"title":"Draft sibling","body":"For #23251.","isDraft":true,"reviewDecision":"APPROVED","mergeStateStatus":"CLEAN"},{"number":23290,"title":"Needs changes","body":"For #23251.","isDraft":false,"reviewDecision":"CHANGES_REQUESTED","mergeStateStatus":"CLEAN"},{"number":23291,"title":"Conflicting sibling","body":"For #23251.","isDraft":false,"reviewDecision":"APPROVED","mergeStateStatus":"DIRTY"},{"number":23297,"title":"Unknown sibling","body":"For #23251.","isDraft":false,"reviewDecision":"REVIEW_REQUIRED","mergeStateStatus":"UNKNOWN"}]'
+	# Changes-requested, conflicting, or unknown ready siblings are not durable
+	# draft checkpoints and are not candidates the merge path can finish safely.
+	set_gh_fixtures 'marcusquinn/aidevops|open|#23251|[{"number":23290,"title":"Needs changes","body":"For #23251.","isDraft":false,"reviewDecision":"CHANGES_REQUESTED","mergeStateStatus":"CLEAN"},{"number":23291,"title":"Conflicting sibling","body":"For #23251.","isDraft":false,"reviewDecision":"APPROVED","mergeStateStatus":"DIRTY"},{"number":23297,"title":"Unknown sibling","body":"For #23251.","isDraft":false,"reviewDecision":"REVIEW_REQUIRED","mergeStateStatus":"UNKNOWN"}]'
 
 	if "$HELPER_SCRIPT" has-open-pr 23251 marcusquinn/aidevops 't3501: allow unhealthy sibling recovery'; then
 		print_result "has-open-pr allows dispatch when no healthy sibling exists" 1 \
-			"Expected exit 1: draft/changes-requested/conflicting/unknown siblings must not block redispatch"
+			"Expected exit 1: changes-requested/conflicting/unknown ready siblings must not block redispatch"
 		return 0
 	fi
 
@@ -567,7 +571,7 @@ main() {
 	test_has_open_pr_requires_close_keyword_for_our_issue
 	test_has_open_pr_allows_dispatch_on_task_id_collision
 	test_has_open_pr_detects_open_body_closing_keyword
-	test_has_open_pr_ignores_draft_body_closing_keyword
+	test_has_open_pr_blocks_draft_body_closing_keyword
 	test_has_open_pr_ignores_open_body_planning_for_reference
 	test_has_open_pr_requires_open_close_keyword_for_our_issue
 	test_has_open_pr_blocks_approved_mergeable_sibling

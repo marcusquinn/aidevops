@@ -26,17 +26,24 @@ _HEADLESS_RUNTIME_WORKER_LIB_LOADED=1
 
 # Module-local string constants (avoid ratchet repeated-literal violations)
 _HRW_STATUS_FAIL="fail"
+_HRW_STATUS_FAILED="failed"
+_HRW_STATUS_ESCALATED="escalated"
 _HRW_STATUS_UNKNOWN="unknown"
 _HRW_GIT_HEAD="HEAD"
 _HRW_CRASH_NO_WORK="no_work"
+_HRW_CRASH_OVERWHELMED="overwhelmed"
 _HRW_REASON_WORKER_COMPLETE="worker_complete"
 _HRW_TELEMETRY_SUCCESS="success"
 _HRW_TELEMETRY_FAILED="failed"
 _HRW_TELEMETRY_DEFERRED="deferred"
 _HRW_REASON_DRAFT_CHECKPOINT="worker_draft_checkpoint"
-_HRW_EVENT_DEFERRED="worker.deferred"
-_HRW_PR_SCOPE_HEAD_ONLY="head-only"
+_HRW_REASON_DRAFT_ESCALATION_FAILED="worker_draft_checkpoint_escalation_failed"
+_HRW_REASON_READY_FAILED="worker_ready_failed"
+_HRW_REASON_CLOSED_UNMERGED="worker_closed_unmerged_pr"
+_HRW_EVENT_FAILED="worker.failed"
+_HRW_NMR_LABEL="needs-maintainer-review"
 _HRW_SPOTLIGHT_MARKER=".metadata_never_index"
+_HRW_RECOVERY_CLASSIFICATION=""
 
 # Defensive SCRIPT_DIR fallback (test harnesses may not set it)
 if [[ -z "${SCRIPT_DIR:-}" ]]; then
@@ -448,12 +455,17 @@ _hrw_resolve_default_branch() {
 #######################################
 # _worker_produced_output — classify worker output quality (GH#20819)
 #
-# Returns one of four classification strings via stdout:
+# Returns a concrete lifecycle/output classification via stdout:
 #   "pr_exists"             — PR confirmed, or fail-open (cannot evaluate signals)
 #   "branch_orphan"         — branch pushed + commits exist BUT no PR found
 #                             (requires DISPATCH_REPO_SLUG + gh to confirm absence)
 #   "local_branch_unpushed" — local branch has commits but no remote branch or PR
 #   "dirty_worktree"        — uncommitted/untracked edits exist after a crash
+#   "draft_checkpoint"      — exact-head worker draft (durable, incomplete)
+#   "protected_draft"       — interactive/held/NMR/non-worker draft
+#   "ready_failed"          — exact-head ready PR has terminal failed checks
+#   "closed_unmerged"       — exact-head PR closed without merge
+#   "unverified_open_pr"    — issue-search fallback cannot prove exact head
 #   "noop"                  — no commits, no pushed branch, no PR
 #
 # Fail-open semantics are preserved: any condition that prevents confident
@@ -542,20 +554,20 @@ _worker_produced_output() {
 		return 0
 	fi
 
-	# Signal 3 (t3195 / GH#21889): PR linked to this branch/issue. Helper
-	# uses --head primary (no search-index lag), --search fallback. Full
-	# rationale: shared-claim-lifecycle.sh::_pr_exists_for_branch_or_issue.
+	# Signal 3: exact-head lifecycle first; issue search is inconclusive fallback.
 	local issue_number=""
 	issue_number=$(printf '%s' "$session_key" | grep -oE '[0-9]+$' || true)
 	local repo_slug="${DISPATCH_REPO_SLUG:-}"
-	local pr_existence=""
-	if _worker_pr_is_draft_checkpoint "$branch_name" "$issue_number" "$repo_slug"; then
-		printf 'draft_checkpoint'
-		return 0
-	fi
-	pr_existence=$(_pr_exists_for_branch_or_issue "$branch_name" "$issue_number" "$repo_slug")
-	case "$pr_existence" in
-		found) printf 'pr_exists'; return 0 ;;
+	local pr_handoff="unknown|"
+	local pr_state="unknown"
+	pr_handoff=$(_pr_handoff_state_for_branch_or_issue "$branch_name" "$issue_number" "$repo_slug")
+	pr_state="${pr_handoff%%|*}"
+	case "$pr_state" in
+		ready | merged) printf 'pr_exists'; return 0 ;;
+		draft_checkpoint | protected_draft | ready_failed | closed_unmerged | unverified_open_pr)
+			printf '%s' "$pr_state"
+			return 0
+			;;
 		absent)
 			if [[ "$has_pushed_branch" -eq 1 ]]; then
 				printf 'branch_orphan'
@@ -568,43 +580,61 @@ _worker_produced_output() {
 	esac
 }
 
-_worker_pr_is_draft_checkpoint() {
-	local branch_name="$1"
-	local issue_number="$2"
-	local repo_slug="$3"
-	local pr_handoff=""
+#######################################
+# Escalate an exhausted draft or terminally failed ready PR. The claim is only
+# released after the blocking NMR label is applied and read back. Failed or
+# invisible transitions retain ownership so ordinary dispatch cannot race.
+# Args: $1=session key, $2=repo slug, $3=lifecycle state, $4=release reason
+#######################################
+_escalate_worker_pr_checkpoint() {
+	local session_key="$1"
+	local repo_slug="$2"
+	local lifecycle_state="$3"
+	local release_reason="${4:-$_HRW_REASON_DRAFT_CHECKPOINT}"
+	local issue_number=""
+	local runner_login=""
+	local -a transition_args=(--add-label "$_HRW_NMR_LABEL" --remove-label "auto-dispatch")
 
-	declare -F _pr_handoff_state_for_branch_or_issue >/dev/null 2>&1 || return 1
-	pr_handoff=$(_pr_handoff_state_for_branch_or_issue "$branch_name" "$issue_number" "$repo_slug" "$_HRW_PR_SCOPE_HEAD_ONLY")
-	[[ "${pr_handoff%%|*}" == "draft" ]] || return 1
+	issue_number=$(printf '%s' "$session_key" | grep -oE '[0-9]+$' || true)
+	if [[ -z "$issue_number" || -z "$repo_slug" ]]; then
+		_HRW_RECOVERY_CLASSIFICATION="$_HRW_REASON_DRAFT_ESCALATION_FAILED"
+		print_warning "[lifecycle] ${_HRW_RECOVERY_CLASSIFICATION} session=${session_key} — issue/repo unavailable; retaining claim"
+		return 0
+	fi
+	if declare -F _hrff_resolve_release_runner_login >/dev/null 2>&1; then
+		runner_login=$(_hrff_resolve_release_runner_login)
+		[[ -n "$runner_login" ]] && transition_args+=(--remove-assignee "$runner_login")
+	fi
+	if declare -F set_issue_status >/dev/null 2>&1; then
+		if ! set_issue_status "$issue_number" "$repo_slug" "" "${transition_args[@]}"; then
+			_HRW_RECOVERY_CLASSIFICATION="$_HRW_REASON_DRAFT_ESCALATION_FAILED"
+			print_warning "[lifecycle] ${_HRW_RECOVERY_CLASSIFICATION} session=${session_key} — blocking transition failed; retaining claim"
+			return 0
+		fi
+	elif ! gh issue edit "$issue_number" --repo "$repo_slug" \
+		--add-label "$_HRW_NMR_LABEL" --remove-label "auto-dispatch" >/dev/null 2>&1; then
+		_HRW_RECOVERY_CLASSIFICATION="$_HRW_REASON_DRAFT_ESCALATION_FAILED"
+		print_warning "[lifecycle] ${_HRW_RECOVERY_CLASSIFICATION} session=${session_key} — blocking transition failed; retaining claim"
+		return 0
+	fi
+	if ! _worker_pr_checkpoint_block_visible "$issue_number" "$repo_slug"; then
+		_HRW_RECOVERY_CLASSIFICATION="$_HRW_REASON_DRAFT_ESCALATION_FAILED"
+		print_warning "[lifecycle] ${_HRW_RECOVERY_CLASSIFICATION} session=${session_key} — blocking label not visible; retaining claim"
+		return 0
+	fi
+
+	_release_dispatch_claim "$session_key" "$release_reason"
+	_HRW_RECOVERY_CLASSIFICATION="$release_reason"
+	print_warning "[lifecycle] worker_pr_checkpoint_escalated session=${session_key} state=${lifecycle_state} — maintainer review required"
 	return 0
 }
 
-#######################################
-# Preserve an incomplete draft checkpoint and move it to explicit escalation.
-# Args: $1=session key, $2=issue number, $3=repo slug, $4=branch, $5=PR number
-#######################################
-_handle_worker_draft_checkpoint() {
-	local session_key="$1"
-	local issue_number="$2"
-	local repo_slug="$3"
-	local branch_name="$4"
-	local pr_number="$5"
-
-	print_info "[lifecycle] ${_HRW_REASON_DRAFT_CHECKPOINT} session=${session_key} branch=${branch_name:-unknown} pr=${pr_number:-unknown}"
-	if [[ -n "$issue_number" && -n "$repo_slug" ]]; then
-		if gh issue edit "$issue_number" --repo "$repo_slug" \
-			--add-label "needs-maintainer-review" \
-			--remove-label "status:queued" \
-			--remove-label "status:in-progress" >/dev/null 2>&1; then
-			_release_dispatch_claim "$session_key" "$_HRW_REASON_DRAFT_CHECKPOINT"
-			return 0
-		fi
-		print_warning "[lifecycle] draft checkpoint escalation write failed; preserving claim session=${session_key}"
-		return 0
-	fi
-	print_warning "[lifecycle] draft checkpoint escalation lacks issue/repo context; preserving claim session=${session_key}"
-	return 0
+_worker_pr_checkpoint_block_visible() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	gh issue view "$issue_number" --repo "$repo_slug" --json labels 2>/dev/null \
+		| jq -e --arg nmr "$_HRW_NMR_LABEL" '([.labels[]?.name] | index($nmr)) != null' >/dev/null 2>&1
+	return $?
 }
 
 # =============================================================================
@@ -928,25 +958,29 @@ _recover_worker_output_on_failure() {
 	default_branch=$(_hrw_resolve_default_branch "$work_dir")
 	[[ -z "$default_branch" ]] && default_branch="${DISPATCH_REPO_DEFAULT_BRANCH:-main}"
 
+	_HRW_RECOVERY_CLASSIFICATION=""
 	if [[ -n "$repo_slug" && -n "$issue_number" && -n "$branch_name" && "$branch_name" != "$_HRW_GIT_HEAD" && "$branch_name" != "$default_branch" ]] && \
 		declare -F _pr_handoff_state_for_branch_or_issue >/dev/null 2>&1; then
 		local pr_handoff="unknown|"
-		if declare -F _pr_handoff_state_for_branch_or_issue >/dev/null 2>&1; then
-			pr_handoff=$(_pr_handoff_state_for_branch_or_issue "$branch_name" "$issue_number" "$repo_slug" "$_HRW_PR_SCOPE_HEAD_ONLY")
-		fi
+		pr_handoff=$(_pr_handoff_state_for_branch_or_issue "$branch_name" "$issue_number" "$repo_slug")
 		local pr_state="${pr_handoff%%|*}"
-		local pr_number="${pr_handoff#*|}"
 		if [[ "$pr_state" == "ready" || "$pr_state" == "merged" ]]; then
 			print_info "[lifecycle] worker_failure_recovered_existing_pr session=${session_key} branch=${branch_name}"
 			_release_dispatch_claim "$session_key" "$_HRW_REASON_WORKER_COMPLETE"
+			_HRW_RECOVERY_CLASSIFICATION="$_HRW_REASON_WORKER_COMPLETE"
 			return 0
 		fi
-		if [[ "$pr_state" == "draft" ]]; then
-			# A draft proves durability, not completion. Stop automatic dispatch so
-			# the incomplete exact-head checkpoint cannot race another implementation.
-			# This runs only after the bounded runtime continuation loop is exhausted.
-			_handle_worker_draft_checkpoint "$session_key" "$issue_number" "$repo_slug" "$branch_name" "$pr_number"
-			_HRW_FAILURE_RECOVERY_CLASSIFICATION="$_HRW_REASON_DRAFT_CHECKPOINT"
+		if [[ "$pr_state" == "draft_checkpoint" ]]; then
+			_escalate_worker_pr_checkpoint "$session_key" "$repo_slug" "$pr_state"
+			return 0
+		fi
+		if [[ "$pr_state" == "ready_failed" ]]; then
+			_escalate_worker_pr_checkpoint "$session_key" "$repo_slug" "$pr_state" "$_HRW_REASON_READY_FAILED"
+			return 0
+		fi
+		if [[ "$pr_state" == "protected_draft" || "$pr_state" == "unverified_open_pr" ]]; then
+			_HRW_RECOVERY_CLASSIFICATION="worker_${pr_state}"
+			print_warning "[lifecycle] ${_HRW_RECOVERY_CLASSIFICATION} session=${session_key} — not completion evidence; retaining claim"
 			return 0
 		fi
 	fi
@@ -1242,7 +1276,7 @@ _hrw_run_finish_crash_type() {
 		# Model attempted real work (read files, created worktree) but couldn't
 		# produce commits/PR. This is "overwhelmed" — the model tried and failed
 		# due to task complexity, not infra issues.
-		printf '%s\n' "overwhelmed"
+		printf '%s\n' "$_HRW_CRASH_OVERWHELMED"
 		;;
 	no_activity)
 		# No LLM output at all — infra/setup failure.
@@ -1270,22 +1304,24 @@ _hrw_finish_failed_run() {
 	else
 		_release_dispatch_claim "$session_key" "worker_failed"
 	fi
-	if [[ "$failure_recovered" -eq 1 ]]; then
-		if [[ "${_HRW_FAILURE_RECOVERY_CLASSIFICATION:-}" == "$_HRW_REASON_DRAFT_CHECKPOINT" ]]; then
-			_HRW_TERMINAL_OUTCOME="$_HRW_TELEMETRY_DEFERRED"
-			_HRW_FINAL_RUNTIME_EVENT="$_HRW_EVENT_DEFERRED"
-			_HRW_FINAL_RUNTIME_STATUS="escalated"
-			_HRW_FINAL_RUNTIME_CLASSIFICATION="$_HRW_REASON_DRAFT_CHECKPOINT"
-		else
-			_HRW_TERMINAL_OUTCOME="$_HRW_TELEMETRY_SUCCESS"
-			_HRW_FINAL_RUNTIME_EVENT="worker.completed"
-			_HRW_FINAL_RUNTIME_STATUS="recovered"
-			_HRW_FINAL_RUNTIME_CLASSIFICATION="$_HRW_REASON_WORKER_COMPLETE"
+	if [[ "$failure_recovered" -eq 1 && "${_HRW_RECOVERY_CLASSIFICATION:-$_HRW_REASON_WORKER_COMPLETE}" == "$_HRW_REASON_WORKER_COMPLETE" ]]; then
+		_HRW_TERMINAL_OUTCOME="$_HRW_TELEMETRY_SUCCESS"
+		_HRW_FINAL_RUNTIME_EVENT="worker.completed"
+		_HRW_FINAL_RUNTIME_STATUS="recovered"
+		_HRW_FINAL_RUNTIME_CLASSIFICATION="$_HRW_REASON_WORKER_COMPLETE"
+	elif [[ -n "${_HRW_RECOVERY_CLASSIFICATION:-}" ]]; then
+		_HRW_TERMINAL_OUTCOME="$_HRW_TELEMETRY_FAILED"
+		_HRW_FINAL_RUNTIME_EVENT="$_HRW_EVENT_FAILED"
+		_HRW_FINAL_RUNTIME_STATUS="$_HRW_STATUS_FAILED"
+		if [[ "$_HRW_RECOVERY_CLASSIFICATION" == "$_HRW_REASON_DRAFT_CHECKPOINT" || \
+			"$_HRW_RECOVERY_CLASSIFICATION" == "$_HRW_REASON_READY_FAILED" ]]; then
+			_HRW_FINAL_RUNTIME_STATUS="$_HRW_STATUS_ESCALATED"
 		fi
+		_HRW_FINAL_RUNTIME_CLASSIFICATION="$_HRW_RECOVERY_CLASSIFICATION"
 	else
 		_HRW_TERMINAL_OUTCOME="$_HRW_TELEMETRY_FAILED"
-		_HRW_FINAL_RUNTIME_EVENT="worker.failed"
-		_HRW_FINAL_RUNTIME_STATUS="$_HRW_TELEMETRY_FAILED"
+		_HRW_FINAL_RUNTIME_EVENT="$_HRW_EVENT_FAILED"
+		_HRW_FINAL_RUNTIME_STATUS="$_HRW_STATUS_FAILED"
 		_HRW_FINAL_RUNTIME_CLASSIFICATION="${_run_failure_reason:-worker_failed}"
 	fi
 
@@ -1340,13 +1376,24 @@ _hrw_record_terminal_outcome() {
 	return 0
 }
 
+_hrw_mark_failed_terminal_state() {
+	local status="$1"
+	local classification="$2"
+	_HRW_FINAL_RUNTIME_EVENT="$_HRW_EVENT_FAILED"
+	_HRW_FINAL_RUNTIME_STATUS="$status"
+	_HRW_FINAL_RUNTIME_CLASSIFICATION="$classification"
+	_HRW_TERMINAL_OUTCOME="$_HRW_TELEMETRY_FAILED"
+	return 0
+}
+
 _hrw_finish_success_run() {
 	local session_key="$1"
 	local work_dir="$2"
 	local release_needed=1
 
 	# GH#20721 + GH#20819: Classify worker output quality.
-	# _worker_produced_output echoes one of six classifications:
+	# _worker_produced_output distinguishes exact-head completion from drafts,
+	# failed checks, closed PRs, and inconclusive issue-search matches.
 	#   noop                  — no commits, no branch, no PR → fast-fail
 	#   branch_orphan         — branch pushed but no PR → auto-recover
 	#   local_branch_unpushed — local commits but no remote branch/PR → push+recover
@@ -1366,10 +1413,7 @@ _hrw_finish_success_run() {
 			_release_dispatch_claim "$session_key" "worker_noop"
 			_report_failure_to_fast_fail "$session_key" "worker_noop_zero_output" "$_HRW_CRASH_NO_WORK"
 			release_needed=0
-			_HRW_FINAL_RUNTIME_EVENT="worker.failed"
-			_HRW_FINAL_RUNTIME_STATUS="$_HRW_TELEMETRY_FAILED"
-			_HRW_FINAL_RUNTIME_CLASSIFICATION="$_HRW_CRASH_NO_WORK"
-			_HRW_TERMINAL_OUTCOME="$_HRW_TELEMETRY_FAILED"
+			_hrw_mark_failed_terminal_state "$_HRW_STATUS_FAILED" "$_HRW_CRASH_NO_WORK"
 			;;
 		branch_orphan)
 			_handle_worker_branch_orphan "$session_key" "$work_dir"
@@ -1384,17 +1428,35 @@ _hrw_finish_success_run() {
 			release_needed=0
 			;;
 		draft_checkpoint)
-			local draft_issue_number=""
-			local draft_branch_name=""
-			local draft_handoff="draft|"
-			draft_issue_number=$(printf '%s' "$session_key" | grep -oE '[0-9]+$' || true)
-			draft_branch_name=$(git -C "$work_dir" rev-parse --abbrev-ref HEAD 2>/dev/null || true)
-			draft_handoff=$(_pr_handoff_state_for_branch_or_issue "$draft_branch_name" "$draft_issue_number" "${DISPATCH_REPO_SLUG:-}" "$_HRW_PR_SCOPE_HEAD_ONLY")
-			_handle_worker_draft_checkpoint "$session_key" "$draft_issue_number" "${DISPATCH_REPO_SLUG:-}" "$draft_branch_name" "${draft_handoff#*|}"
+			_escalate_worker_pr_checkpoint "$session_key" "${DISPATCH_REPO_SLUG:-}" "$output_class"
 			release_needed=0
-			_HRW_FINAL_RUNTIME_EVENT="$_HRW_EVENT_DEFERRED"
-			_HRW_FINAL_RUNTIME_STATUS="escalated"
-			_HRW_FINAL_RUNTIME_CLASSIFICATION="$_HRW_REASON_DRAFT_CHECKPOINT"
+			if [[ "$_HRW_RECOVERY_CLASSIFICATION" == "$_HRW_REASON_DRAFT_CHECKPOINT" ]]; then
+				_hrw_mark_failed_terminal_state "$_HRW_STATUS_ESCALATED" "$_HRW_RECOVERY_CLASSIFICATION"
+			else
+				_hrw_mark_failed_terminal_state "$_HRW_STATUS_FAILED" "$_HRW_RECOVERY_CLASSIFICATION"
+			fi
+			;;
+		ready_failed)
+			_escalate_worker_pr_checkpoint "$session_key" "${DISPATCH_REPO_SLUG:-}" "$output_class" "$_HRW_REASON_READY_FAILED"
+			release_needed=0
+			if [[ "$_HRW_RECOVERY_CLASSIFICATION" == "$_HRW_REASON_READY_FAILED" ]]; then
+				_hrw_mark_failed_terminal_state "$_HRW_STATUS_ESCALATED" "$_HRW_RECOVERY_CLASSIFICATION"
+			else
+				_hrw_mark_failed_terminal_state "$_HRW_STATUS_FAILED" "$_HRW_RECOVERY_CLASSIFICATION"
+			fi
+			;;
+		closed_unmerged)
+			print_warning "[lifecycle] ${_HRW_REASON_CLOSED_UNMERGED} session=${session_key} — closed PR is not completion evidence"
+			_release_dispatch_claim "$session_key" "$_HRW_REASON_CLOSED_UNMERGED"
+			_report_failure_to_fast_fail "$session_key" "$_HRW_REASON_CLOSED_UNMERGED" "$_HRW_CRASH_OVERWHELMED"
+			release_needed=0
+			_hrw_mark_failed_terminal_state "$_HRW_STATUS_FAILED" "$_HRW_REASON_CLOSED_UNMERGED"
+			;;
+		protected_draft | unverified_open_pr)
+			local noncomplete_reason="worker_${output_class}"
+			print_warning "[lifecycle] ${noncomplete_reason} session=${session_key} — protected/inconclusive PR state is not completion evidence; retaining claim"
+			release_needed=0
+			_hrw_mark_failed_terminal_state "$_HRW_STATUS_FAILED" "$noncomplete_reason"
 			;;
 		esac
 	fi
@@ -1436,6 +1498,7 @@ _cmd_run_finish() {
 	_HRW_FINAL_RUNTIME_STATUS="${_run_result_label:-$ledger_status}"
 	_HRW_FINAL_RUNTIME_CLASSIFICATION="${_run_failure_reason:-}"
 	_HRW_TERMINAL_OUTCOME="$_HRW_TELEMETRY_SUCCESS"
+	_HRW_RECOVERY_CLASSIFICATION=""
 
 	# Release the dispatch claim so the issue is immediately available for
 	# re-dispatch (next 2-min pulse cycle) instead of waiting for the
@@ -1455,7 +1518,7 @@ _cmd_run_finish() {
 		_hrw_finish_failed_run "$session_key" "$work_dir"
 	elif [[ "$ledger_status" == "rate_limit_fast" ]]; then
 		_hrw_finish_rate_limit_fast_run "$session_key"
-		_HRW_FINAL_RUNTIME_EVENT="$_HRW_EVENT_DEFERRED"
+		_HRW_FINAL_RUNTIME_EVENT="worker.deferred"
 		_HRW_FINAL_RUNTIME_STATUS="rate_limit_fast"
 		_HRW_FINAL_RUNTIME_CLASSIFICATION="rate_limit"
 		_HRW_TERMINAL_OUTCOME="$_HRW_TELEMETRY_DEFERRED"

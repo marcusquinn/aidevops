@@ -102,6 +102,20 @@ _stale_recovery_escalate() {
 	return 0
 }
 
+_stale_recovery_escalate_pr_checkpoint() {
+	local _issue_number="$1"
+	local _repo_slug="$2"
+	local _stale_assignees="$3"
+	local _reason="$4"
+	local _pr_number="$5"
+	local _dispatch_ts="$6"
+	local _kind="$7"
+	: "$_issue_number" "$_repo_slug" "$_stale_assignees" "$_dispatch_ts"
+	ESCALATED=1
+	ESCALATION_REASON="${_kind}:${_pr_number}:${_reason}"
+	return 0
+}
+
 _stale_recovery_apply() {
 	local _issue_number="$1"
 	local _repo_slug="$2"
@@ -130,14 +144,14 @@ fi
 ESCALATED=0
 RECOVERED=0
 ESCALATION_REASON=""
-OPEN_PR_STATE="draft|456"
+OPEN_PR_STATE="456|draft_checkpoint"
 COMMENTS_JSON='[[
   {"created_at":"2026-05-04T12:43:16Z","body":"DISPATCH_CLAIM nonce=fresh runner=runner ts=2026-05-04T12:43:16Z"}
 ]]'
 
 _recover_stale_assignment 3978 owner/repo runner "worker lease expired"
 
-if [[ "$ESCALATED" -eq 1 && "$RECOVERED" -eq 0 && "$ESCALATION_REASON" == *"incomplete draft PR #456"* ]]; then
+if [[ "$ESCALATED" -eq 1 && "$RECOVERED" -eq 0 && "$ESCALATION_REASON" == "draft_checkpoint:456:worker lease expired" ]]; then
 	pass "stale draft checkpoint escalates without competing redispatch"
 else
 	fail "stale draft checkpoint escalates without competing redispatch" \

@@ -147,7 +147,7 @@ _release_interactive_claim_on_merge() {
 }
 
 #######################################
-# _pr_exists_for_branch_or_issue — Probe for an existing PR (t3195 / GH#21889)
+# Classify the lifecycle state of an exact-head PR or an issue-search fallback.
 #
 # Determines whether a PR exists for a given head branch and/or linked issue.
 # Uses `gh_pr_list --head <branch> --state all` as the PRIMARY signal because
@@ -169,89 +169,38 @@ _release_interactive_claim_on_merge() {
 #   $2 = issue_number  (may be empty)
 #   $3 = repo_slug     (e.g. "owner/repo")
 #
-# Echoes one of:
-#   "found"   — at least one PR exists for the head branch (or issue match)
-#   "absent"  — definitive zero matches (caller may classify as branch_orphan)
-#   "unknown" — cannot evaluate (no inputs / repo_slug missing) — fail-open
-#
-# Always returns 0. gh CLI failures on either probe are silently treated as
-# zero matches for that probe — the helper continues to the fallback or
-# returns "absent" (callers fail-open via "unknown" only when no probe ran).
-#######################################
-_pr_exists_for_branch_or_issue() {
-	local branch_name="$1"
-	local issue_number="$2"
-	local repo_slug="$3"
-
-	if [[ -z "$repo_slug" ]]; then
-		printf 'unknown'
-		return 0
-	fi
-
-	# Primary: --head match (no search-index lag, hits pulls API directly).
-	if [[ -n "$branch_name" ]]; then
-		local pr_count_head=0
-		pr_count_head=$(gh_pr_list --repo "$repo_slug" --head "$branch_name" \
-			--state all --json number --jq 'length' 2>/dev/null || true)
-		[[ "$pr_count_head" =~ ^[0-9]+$ ]] || pr_count_head=0
-		if [[ "$pr_count_head" -gt 0 ]]; then
-			printf 'found'
-			return 0
-		fi
-	fi
-
-	# Fallback: --search by issue_number when --head missed (or branch unknown).
-	# Search-index lag is acceptable here because the primary --head probe
-	# already returned zero — this is the second-chance covering cases where
-	# the actual pushed branch differs from the detected branch_name.
-	if [[ -n "$issue_number" ]]; then
-		local pr_count_search=0
-		pr_count_search=$(gh_pr_list --repo "$repo_slug" --search "$issue_number" \
-			--json number --jq 'length' 2>/dev/null || true)
-		[[ "$pr_count_search" =~ ^[0-9]+$ ]] || pr_count_search=0
-		if [[ "$pr_count_search" -gt 0 ]]; then
-			printf 'found'
-			return 0
-		fi
-	fi
-
-	# Both probes returned zero (or only one ran and returned zero) — definitive
-	# absence. Distinct from "unknown" because we DID actually query.
-	if [[ -n "$branch_name" || -n "$issue_number" ]]; then
-		printf 'absent'
-		return 0
-	fi
-
-	# No usable inputs — fail-open with "unknown".
-	printf 'unknown'
-	return 0
-}
-
-#######################################
-# Resolve the lifecycle state of the PR for a worker branch or issue.
-#
-# Unlike _pr_exists_for_branch_or_issue, this helper preserves the distinction
-# between a durable draft checkpoint and a completed handoff. The live head
-# query remains primary so newly-created PRs are not hidden by search lag.
-#
-# Args: $1=branch name, $2=issue number, $3=repo slug,
-#       $4=scope (optional: "head-only" disables issue-search fallback)
-# Output: "draft|N", "ready|N", "merged|N", "closed|N", "absent|", or
-#         "unknown|". Returns 0 always.
+# Exact-head output states:
+#   ready | ready_failed | merged | closed_unmerged | draft_checkpoint |
+#   protected_draft
+# Issue-search matches are deliberately `unverified_open_pr`: search can return
+# a sibling or stale index hit and therefore proves dedup, never completion.
+# Every state is emitted as "state|PR_NUMBER"; absent/unknown have no number.
 #######################################
 _pr_handoff_state_from_json() {
 	local pr_json="$1"
-	printf '%s' "$pr_json" | jq -r --arg closed "CLO""SED" '
+	printf '%s' "$pr_json" | jq -r '
+		def label_names: [.labels[]?.name];
+		def worker_owned: label_names | any(. == "origin:worker" or . == "origin:worker-takeover");
+		def protected: label_names | any(
+			. == "origin:interactive" or . == "hold-for-review" or
+			. == "no-auto-dispatch" or . == "needs-maintainer-review"
+		);
+		def terminal_failure:
+			[.statusCheckRollup[]? |
+				(.conclusion // .status // .state // empty) | ascii_upcase] |
+			any(. == "FAILURE" or . == "ERROR" or . == "CANCELLED" or
+				. == "TIMED_OUT" or . == "ACTION_REQUIRED" or . == "STALE");
 		def rank:
-			if .state == "OPEN" and (.isDraft // false | not) then 0
-			elif .state == "OPEN" then 1
-			elif .state == "MERGED" then 2
-			else 3 end;
+			if .state == "OPEN" then 0
+			elif .state == "MERGED" or ((.mergedAt // "") | length) > 0 then 1
+			else 2 end;
 		sort_by(rank) | .[0]
 		| if . == null then ""
-		elif .state == "MERGED" then "merged|\(.number)"
-		elif .state == $closed then "closed|\(.number)"
-		elif (.isDraft // false) then "draft|\(.number)"
+		elif .state == "MERGED" or ((.mergedAt // "") | length) > 0 then "merged|\(.number)"
+		elif .state != "OPEN" then "closed_unmerged|\(.number)"
+		elif (.isDraft // false) and worker_owned and (protected | not) then "draft_checkpoint|\(.number)"
+		elif (.isDraft // false) then "protected_draft|\(.number)"
+		elif terminal_failure then "ready_failed|\(.number)"
 		else "ready|\(.number)" end' 2>/dev/null || true
 	return 0
 }
@@ -264,6 +213,7 @@ _pr_handoff_state_for_branch_or_issue() {
 	local pr_json=""
 	local pr_state=""
 	local queried=0
+	local probe_failed=0
 
 	if [[ -z "$repo_slug" ]]; then
 		printf 'unknown|'
@@ -272,33 +222,57 @@ _pr_handoff_state_for_branch_or_issue() {
 
 	if [[ -n "$branch_name" ]]; then
 		if pr_json=$(gh_pr_list --repo "$repo_slug" --head "$branch_name" --state all \
-			--limit 10 --json number,state,isDraft 2>/dev/null); then
+			--limit 10 --json number,state,isDraft,mergedAt,labels,statusCheckRollup 2>/dev/null); then
 			queried=1
 			pr_state=$(_pr_handoff_state_from_json "$pr_json")
 			if [[ -n "$pr_state" ]]; then
 				printf '%s' "$pr_state"
 				return 0
 			fi
+		else
+			probe_failed=1
 		fi
 	fi
 
 	if [[ -n "$issue_number" && "$match_scope" != "head-only" ]]; then
-		if pr_json=$(gh_pr_list --repo "$repo_slug" --search "$issue_number" --state all \
-			--limit 10 --json number,state,isDraft 2>/dev/null); then
+		if pr_json=$(gh_pr_list --repo "$repo_slug" --search "#${issue_number} in:body" --state open \
+			--limit 10 --json number 2>/dev/null); then
 			queried=1
-			pr_state=$(_pr_handoff_state_from_json "$pr_json")
+			pr_state=$(printf '%s' "$pr_json" | jq -r '.[0].number // empty' 2>/dev/null || true)
 			if [[ -n "$pr_state" ]]; then
-				printf '%s' "$pr_state"
+				printf 'unverified_open_pr|%s' "$pr_state"
 				return 0
 			fi
+		else
+			probe_failed=1
 		fi
 	fi
 
-	if [[ "$queried" -eq 1 ]]; then
+	if [[ "$queried" -eq 1 && "$probe_failed" -eq 0 ]]; then
 		printf 'absent|'
 	else
 		printf 'unknown|'
 	fi
+	return 0
+}
+
+#######################################
+# Compatibility existence probe for dedup/orphan recovery callers.
+# Any lifecycle evidence blocks creation of a competing PR, but only an exact
+# ready/merged state may be interpreted as completion by richer callers.
+#######################################
+_pr_exists_for_branch_or_issue() {
+	local branch_name="$1"
+	local issue_number="$2"
+	local repo_slug="$3"
+	local handoff_state=""
+
+	handoff_state=$(_pr_handoff_state_for_branch_or_issue "$branch_name" "$issue_number" "$repo_slug")
+	case "${handoff_state%%|*}" in
+	absent) printf 'absent' ;;
+	unknown) printf 'unknown' ;;
+	*) printf 'found' ;;
+	esac
 	return 0
 }
 
@@ -381,11 +355,14 @@ _ensure_orphan_recovery_branch_remote() {
 		return 1
 	fi
 
-	local pr_existence=""
-	pr_existence=$(_pr_exists_for_branch_or_issue "$branch_name" "$issue_number" "$repo_slug")
-	if [[ "$pr_existence" == "found" ]]; then
+	local pr_handoff=""
+	pr_handoff=$(_pr_handoff_state_for_branch_or_issue "$branch_name" "$issue_number" "$repo_slug")
+	if [[ "${pr_handoff%%|*}" == "ready" || "${pr_handoff%%|*}" == "merged" ]]; then
 		printf 'pr_found'
 		return 0
+	fi
+	if [[ "${pr_handoff%%|*}" != "absent" ]]; then
+		return 1
 	fi
 	printf 'published'
 	return 0
@@ -503,10 +480,13 @@ _attempt_orphan_recovery_pr() {
 	#     path. Note: after PR #21902 fixed signal-3 to use --head primary, the
 	#     original search-index-lag motivation no longer applies; race-condition
 	#     defense is now the primary justification for this check.
-	local pr_existence=""
-	pr_existence=$(_pr_exists_for_branch_or_issue "$branch_name" "$issue_number" "$repo_slug")
-	if [[ "$pr_existence" == "found" ]]; then
+	local pr_handoff=""
+	pr_handoff=$(_pr_handoff_state_for_branch_or_issue "$branch_name" "$issue_number" "$repo_slug")
+	if [[ "${pr_handoff%%|*}" == "ready" || "${pr_handoff%%|*}" == "merged" ]]; then
 		return 0
+	fi
+	if [[ "${pr_handoff%%|*}" != "absent" ]]; then
+		return 1
 	fi
 
 	# Past this point recovery needs a branch to create a PR. Existing PRs were
