@@ -413,6 +413,21 @@ _list_actionable_repos() {
 	return 0
 }
 
+# _classify_after_refresh <slug> <workflow>
+# Reuses check-workflows as the single classifier after apply refreshes a repo.
+_classify_after_refresh() {
+	local _slug="$1"
+	local _workflow="$2"
+	local _json
+	_json=$("$CHECK_HELPER" --json --repo "$_slug" --workflow "$_workflow" 2>/dev/null || true)
+	if [[ -z "$_json" ]]; then
+		return 1
+	fi
+	printf '%s\n' "$_json" | jq -r --arg slug "$_slug" \
+		'select(.slug == $slug) | .classification' 2>/dev/null | head -n 1
+	return 0
+}
+
 # ─── Message Formatters ─────────────────────────────────────────────────────
 # Bash 3.2-safe multi-line body builders (no heredoc inside $()).
 
@@ -528,7 +543,24 @@ _sync_preflight() {
 	return 0
 }
 
+# _sync_refresh_checkout <slug> <path> <status> <default_branch>
+# Apply must classify and mutate the same refreshed snapshot. Fail closed when
+# refresh is unavailable rather than continuing with stale local evidence.
+_sync_refresh_checkout() {
+	local _slug="$1"
+	local _path="$2"
+	local _status="$3"
+	local _default_branch="$4"
+	if ! git -C "$_path" pull --ff-only origin "$_default_branch" >/dev/null 2>&1; then
+		printf '%s\t%s\t%s\tpull --ff-only failed; refusing stale classification\n' \
+			"$_slug" "$_status" "$_STATUS_FAILED"
+		return 1
+	fi
+	return 0
+}
+
 # _sync_write_commit_push <slug> <path> <status> <branch> <default_branch> <effective_ref> <content> [workflow_relpath]
+# Returns 2 for an explicit successful no-op; the caller must not open a PR.
 _sync_write_commit_push() {
 	local _slug="$1"
 	local _path="$2"
@@ -540,8 +572,12 @@ _sync_write_commit_push() {
 	local _workflow_relpath="${8:-.github/workflows/issue-sync.yml}"
 	local _workflow="$_path/$_workflow_relpath"
 
-	if ! git -C "$_path" pull --ff-only origin "$_default_branch" >/dev/null 2>&1; then
-		_warn "$_slug: pull --ff-only failed, attempting without"
+	# Avoid even creating a local sync branch when rendering is byte-identical to
+	# the refreshed default branch.
+	if [[ -f "$_workflow" ]] && diff -q <(printf '%s\n' "$_target_content") "$_workflow" >/dev/null 2>&1; then
+		printf '%s\t%s\t%s\trendered workflow already current after refresh\n' \
+			"$_slug" "$_status" "$_STATUS_SKIPPED"
+		return 2
 	fi
 	if ! git -C "$_path" checkout -q -B "$_branch_name" "$_default_branch"; then
 		printf '%s\t%s\t%s\tbranch create/reset failed\n' "$_slug" "$_status" "$_STATUS_FAILED"
@@ -553,13 +589,17 @@ _sync_write_commit_push() {
 	local _commit_subject="chore: resync framework workflow ($_status → CURRENT/CALLER)"
 	local _commit_body
 	_commit_body=$(_format_commit_body "$_status" "$_effective_ref" "$_workflow_relpath")
-	if ! git -C "$_path" diff --cached --quiet; then
-		if ! git -C "$_path" commit -q -m "$_commit_subject" -m "$_commit_body"; then
-			printf '%s\t%s\t%s\tgit commit failed\n' "$_slug" "$_status" "$_STATUS_FAILED"
-			# Return to default branch on failure so subsequent runs are clean.
-			git -C "$_path" checkout -q "$_default_branch" || true
-			return 1
-		fi
+	if git -C "$_path" diff --cached --quiet; then
+		git -C "$_path" checkout -q "$_default_branch" || true
+		printf '%s\t%s\t%s\tno staged diff after render; push and PR skipped\n' \
+			"$_slug" "$_status" "$_STATUS_SKIPPED"
+		return 2
+	fi
+	if ! git -C "$_path" commit -q -m "$_commit_subject" -m "$_commit_body"; then
+		printf '%s\t%s\t%s\tgit commit failed\n' "$_slug" "$_status" "$_STATUS_FAILED"
+		# Return to default branch on failure so subsequent runs are clean.
+		git -C "$_path" checkout -q "$_default_branch" || true
+		return 1
 	fi
 	if ! git -C "$_path" push -u origin "$_branch_name" >/dev/null 2>&1; then
 		printf '%s\t%s\t%s\tgit push failed\n' "$_slug" "$_status" "$_STATUS_FAILED"
@@ -601,6 +641,23 @@ _sync_open_pr() {
 	return 0
 }
 
+# _render_sync_target <template> <target-repo> <effective-ref> <slug>
+_render_sync_target() {
+	local _template="$1"
+	local _target_repo="$2"
+	local _effective_ref="$3"
+	local _slug="$4"
+	local _content
+	_content=$(_render_template_with_target "$_template" "$_target_repo" "$_effective_ref") || return 1
+	local _runner_override
+	_runner_override=$(_read_runner_field "$_slug")
+	if [[ -n "$_runner_override" ]]; then
+		_content=$(_inject_runner_in_content "$_content" "$_runner_override")
+	fi
+	printf '%s\n' "$_content"
+	return 0
+}
+
 # _sync_one_repo <slug> <path> <status> <template_path> <target_repo> <target_ref> <force_ref> <branch_name> <apply> <workflow_relpath>
 # Emits a single-line summary; returns 0 on success, 1 on failure.
 # workflow_relpath — path relative to repo root e.g. .github/workflows/review-bot-gate.yml
@@ -617,23 +674,9 @@ _sync_one_repo() {
 	local _workflow_relpath="${10:-.github/workflows/issue-sync.yml}"
 
 	local _workflow="$_path/$_workflow_relpath"
-	local _effective_ref
-	_effective_ref=$(_resolve_effective_ref "$_status" "$_workflow" "$_target_ref" "$_force_ref")
-
-	local _target_content
-	if ! _target_content=$(_render_template_with_target "$_template" "$_target_repo" "$_effective_ref"); then
-		printf '%s\t%s\t%s\ttemplate render failed\n' "$_slug" "$_status" "$_STATUS_FAILED"
-		return 1
-	fi
-
-	# Inject runner override when repos.json carries a "runner" field for this slug.
-	local _runner_override=""
-	_runner_override=$(_read_runner_field "$_slug")
-	if [[ -n "$_runner_override" ]]; then
-		_target_content=$(_inject_runner_in_content "$_target_content" "$_runner_override")
-	fi
-
 	if [[ "$_apply" -eq 0 ]]; then
+		local _effective_ref
+		_effective_ref=$(_resolve_effective_ref "$_status" "$_workflow" "$_target_ref" "$_force_ref")
 		_sync_dryrun_emit "$_slug" "$_status" "$_effective_ref"
 		return 0
 	fi
@@ -648,15 +691,69 @@ _sync_one_repo() {
 		return 1
 	fi
 	local _default_branch="$_PREFLIGHT_DEFAULT_BRANCH"
+	local _refresh_output
+	if ! _refresh_output=$(_sync_refresh_checkout "$_slug" "$_path" "$_status" "$_default_branch"); then
+		printf '%s\n' "$_refresh_output"
+		return 1
+	fi
+
+	local _workflow_name
+	_workflow_name=$(basename "$_workflow_relpath" .yml)
+	local _refreshed_status
+	if ! _refreshed_status=$(_classify_after_refresh "$_slug" "$_workflow_name"); then
+		printf '%s\t%s\t%s\tpost-refresh classification failed\n' \
+			"$_slug" "$_status" "$_STATUS_FAILED"
+		return 1
+	fi
+	if [[ -z "$_refreshed_status" ]]; then
+		printf '%s\t%s\t%s\tpost-refresh classification returned no row\n' \
+			"$_slug" "$_status" "$_STATUS_FAILED"
+		return 1
+	fi
+
+	case "$_refreshed_status" in
+	"$_CLASS_DRIFTED" | "$_CLASS_NEEDS_MIGRATION")
+		_status="$_refreshed_status"
+		;;
+	"$_CLASS_CURRENT_CALLER")
+		if ! _needs_runner_sync "$_slug" "$_workflow"; then
+			printf '%s\t%s\t%s\trefreshed checkout is CURRENT/CALLER; no changes\n' \
+				"$_slug" "$_status" "$_STATUS_SKIPPED"
+			return 0
+		fi
+		_status="$_refreshed_status"
+		;;
+	*)
+		printf '%s\t%s\t%s\tpost-refresh classification is %s; no workflow write attempted\n' \
+			"$_slug" "$_status" "$_STATUS_SKIPPED" "$_refreshed_status"
+		return 0
+		;;
+	esac
+
+	local _effective_ref
+	_effective_ref=$(_resolve_effective_ref "$_status" "$_workflow" "$_target_ref" "$_force_ref")
+	local _target_content
+	if ! _target_content=$(_render_sync_target "$_template" "$_target_repo" "$_effective_ref" "$_slug"); then
+		printf '%s\t%s\t%s\ttemplate render failed\n' "$_slug" "$_status" "$_STATUS_FAILED"
+		return 1
+	fi
 
 	# Rewrite branch filter to match downstream default branch (e.g. develop → develop).
 	if [[ "$_default_branch" != "$_BRANCH_DEFAULT_NAME" ]]; then
 		_target_content=$(_rewrite_content_branch_filter "$_target_content" "$_default_branch")
 	fi
 
-	if ! _sync_write_commit_push \
+	local _write_output _write_rc
+	_write_output=$(_sync_write_commit_push \
 		"$_slug" "$_path" "$_status" "$_branch_name" \
-		"$_default_branch" "$_effective_ref" "$_target_content" "$_workflow_relpath"; then
+		"$_default_branch" "$_effective_ref" "$_target_content" "$_workflow_relpath")
+	_write_rc=$?
+	if [[ "$_write_rc" -eq 2 ]]; then
+		printf '%s\n' "$_write_output"
+		return 0
+	fi
+	if [[ "$_write_rc" -ne 0 ]]; then
+		printf '%s\n' "$_write_output"
 		return 1
 	fi
 

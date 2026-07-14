@@ -20,6 +20,7 @@
 #  16. Current caller plus obsolete framework scripts → legacy-artifact warning
 #  17. Legacy-artifact manifest without a trailing newline processes its final row
 #  18. Unset HOME exits cleanly instead of raising an unbound-variable error
+#  19. Stale local checkout reports local evidence and upstream divergence
 #
 # Strategy: Each scenario writes a temporary repos.json + temporary repo trees
 # under a per-test TMPDIR, points HOME at it, and invokes the helper. No
@@ -439,6 +440,49 @@ if [[ "$unset_home_output" == *"repos.json not found"* ]] &&
 else
 	_fail "unset HOME → clean missing-config error" "got: $unset_home_output"
 fi
+
+# Test 19: A stale registered checkout must disclose that its classification is
+# local evidence and that the branch is behind its known upstream ref.
+TMPDIR_19="$(mktemp -d)"
+_setup_fake_home "$TMPDIR_19"
+BARE_19="$TMPDIR_19/remote.git"
+REPO_19="$TMPDIR_19/repos/stale-local"
+git init --bare -q "$BARE_19"
+mkdir -p "$REPO_19/.github/workflows"
+git -C "$REPO_19" init -q
+git -C "$REPO_19" config user.email test@example.com
+git -C "$REPO_19" config user.name Test
+git -C "$REPO_19" config commit.gpgsign false
+git -C "$REPO_19" checkout -q -b main
+{
+	cat "$CANONICAL_TEMPLATE"
+	printf '\n# stale local drift\n'
+} >"$REPO_19/.github/workflows/issue-sync.yml"
+git -C "$REPO_19" add -A
+git -C "$REPO_19" commit -q -m "stale workflow"
+STALE_SHA_19=$(git -C "$REPO_19" rev-parse HEAD)
+git -C "$REPO_19" remote add origin "$BARE_19"
+git -C "$REPO_19" push -q -u origin main
+git --git-dir="$BARE_19" symbolic-ref HEAD refs/heads/main
+cp "$CANONICAL_TEMPLATE" "$REPO_19/.github/workflows/issue-sync.yml"
+git -C "$REPO_19" add -A
+git -C "$REPO_19" commit -q -m "canonical remote workflow"
+git -C "$REPO_19" push -q origin main
+git -C "$REPO_19" reset -q --hard "$STALE_SHA_19"
+_write_repos_json "$TMPDIR_19" \
+	"$(jq -n --arg path "$REPO_19" '{initialized_repos: [{slug: "x/stale-local", path: $path, local_only: false}]}')"
+json_row=$(HOME="$TMPDIR_19" bash "$HELPER" --json --repo x/stale-local --workflow issue-sync 2>/dev/null || true)
+human_row=$(HOME="$TMPDIR_19" bash "$HELPER" --repo x/stale-local --workflow issue-sync 2>/dev/null || true)
+if [[ "$(printf '%s\n' "$json_row" | jq -r '.classification')" == "DRIFTED/CALLER" ]] &&
+	[[ "$(printf '%s\n' "$json_row" | jq -r '.evidence.source')" == "local" ]] &&
+	[[ "$(printf '%s\n' "$json_row" | jq -r '.evidence.behind')" == "1" ]] &&
+	[[ "$human_row" == *"local evidence; main is 1 commit(s) behind origin/main"* ]]; then
+	_pass "stale checkout → local evidence with upstream-behind warning"
+else
+	_fail "stale checkout → local evidence with upstream-behind warning" \
+		"json: $json_row; human: $human_row"
+fi
+rm -rf "$TMPDIR_19"
 
 # ─── Summary ────────────────────────────────────────────────────────────────
 
