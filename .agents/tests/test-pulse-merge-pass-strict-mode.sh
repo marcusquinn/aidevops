@@ -56,7 +56,7 @@ process_checkpoint="${tmp_dir}/process-checkpoint"
 _pmp_process_merge_repo_for_pass "owner/repo" "$process_checkpoint" "${tmp_dir}/process.log" \
 	"${tmp_dir}/stop" total_merged total_closed total_failed total_eligible completed_all
 [[ -f "$process_checkpoint" ]]
-IFS= read -r process_checkpoint_repo <"$process_checkpoint"
+process_checkpoint_repo=$(<"$process_checkpoint")
 [[ "$process_checkpoint_repo" == "owner/repo" ]]
 
 printf 'pulse merge-pass strict-mode regression checks passed\n'
