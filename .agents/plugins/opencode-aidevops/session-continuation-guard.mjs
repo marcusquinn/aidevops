@@ -79,7 +79,7 @@ function defaultCheckpointAdapter(checkpointHelper, repository, qualityLog) {
   function run(args, capture = false) {
     if (!checkpointHelper) return "";
     try {
-      return execFileSync(checkpointHelper, args, {
+      return execFileSync("bash", [checkpointHelper, ...args], {
         cwd: repository,
         encoding: "utf8",
         stdio: capture ? ["ignore", "pipe", "ignore"] : "ignore",

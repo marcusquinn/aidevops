@@ -490,8 +490,8 @@ _recovery_field() {
 	local checkpoint_file="$1"
 	local label="$2"
 	awk -v label="$label" '
-		index($0, "- **" label ":** ") == 1 {
-			sub("^- \\*\\*" label ":\\*\\* ", "")
+		index($0, "- **" label ":**") == 1 {
+			sub("^- \\*\\*" label ":\\*\\*[ ]?", "")
 			print
 			exit
 		}
