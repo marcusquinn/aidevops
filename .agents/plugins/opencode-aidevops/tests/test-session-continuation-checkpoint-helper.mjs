@@ -17,7 +17,7 @@ if [[ "$1" == "recovery-status" && "$2" == "--json" ]]; then
 fi
 `, { mode: 0o644 });
 
-  const guard = createSessionContinuationGuard({ repository: fixtureDir, checkpointHelper });
+  const guard = createSessionContinuationGuard({ repository: fixtureDir, checkpointHelper: "checkpoint-helper.sh" });
   const state = guard.getState({ sessionID: "non-executable-helper" });
 
   assert.equal(state.recovery?.status, "recovering");
