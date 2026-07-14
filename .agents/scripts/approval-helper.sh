@@ -1086,13 +1086,29 @@ _approval_classify_marked_comments() {
 	local expected_head_sha="${6:-}"
 	local comment_count="$7"
 	local saw_api_error=0 saw_stale=0 saw_legacy=0 saw_malformed=0
-	local i=$((comment_count - 1))
+	local comment_rows=""
+	local base64_decode_flag="-d"
+	[[ "$(uname -s)" == "Darwin" ]] && base64_decode_flag="-D"
 
-	while [[ "$i" -ge 0 ]]; do
-		local body comment_id classification
-		body=$(printf '%s' "$comments_json" | jq -r ".[$i].body" 2>/dev/null || echo "")
-		comment_id=$(printf '%s' "$comments_json" | jq -r ".[$i].id // empty" 2>/dev/null || echo "")
-		i=$((i - 1))
+	if [[ -z "$comments_json" || "$comment_count" -le 0 ]]; then
+		printf 'MALFORMED_APPROVAL\n'
+		return 5
+	fi
+	comment_rows=$(jq -r '
+		reverse[]
+		| [((.id // "") | tostring), ((.body // "") | @base64)]
+		| @tsv
+	' <<<"$comments_json") || {
+		printf 'MALFORMED_APPROVAL\n'
+		return 5
+	}
+
+	while IFS=$'\t' read -r comment_id encoded_body; do
+		local body="" classification
+		body=$(printf '%s' "$encoded_body" | base64 "$base64_decode_flag") || {
+			saw_malformed=1
+			continue
+		}
 		if [[ ! "$comment_id" =~ ^[0-9]+$ ]]; then
 			saw_malformed=1
 			continue
@@ -1105,7 +1121,7 @@ _approval_classify_marked_comments() {
 		LEGACY_APPROVAL) saw_legacy=1 ;;
 		*) saw_malformed=1 ;;
 		esac
-	done
+	done <<<"$comment_rows"
 
 	[[ "$saw_api_error" -eq 0 ]] || { printf 'API_ERROR\n'; return 6; }
 	[[ "$saw_stale" -eq 0 ]] || { printf 'STALE_APPROVAL\n'; return 4; }

@@ -1045,7 +1045,10 @@ do_status_json() {
 	# metadata-less evidence can never authorize an advisory merge decision.
 	case "$output" in
 	"$status_pass")
-		[[ "$head_stable" == "true" && -n "$author_login" ]] && permitted="true" reason="live_review_pass"
+		if [[ "$head_stable" == "true" && -n "$author_login" ]]; then
+			permitted="true"
+			reason="live_review_pass"
+		fi
 		;;
 	SKIP)
 		if [[ "$author_class" == "trusted" && "$head_stable" == "true" ]]; then
