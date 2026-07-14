@@ -882,35 +882,35 @@ _worker_post_pr_handoff_confirmed() {
 	local session_key="$1"
 	local work_dir="$2"
 	local repo_slug="${DISPATCH_REPO_SLUG:-}"
-	local issue_number
 	local branch_name
+	local local_head
 
 	[[ "$session_key" == issue-* ]] || return 1
 	[[ -n "$repo_slug" ]] || return 1
 	command -v gh >/dev/null 2>&1 || return 1
-	if [[ "$session_key" =~ ([0-9]+)$ ]]; then
-		issue_number="${BASH_REMATCH[1]}"
-	fi
 	if [[ -n "$work_dir" && -d "$work_dir" ]]; then
 		branch_name=$(git -C "$work_dir" rev-parse --abbrev-ref HEAD 2>/dev/null || true)
+		local_head=$(git -C "$work_dir" rev-parse HEAD 2>/dev/null || true)
 		[[ "$branch_name" == "HEAD" ]] && branch_name=""
 	fi
 
-	local open_pr_safe_count
-	local safe_pr_jq='map(select((.isDraft // false | not) and ([.statusCheckRollup[]? | (.conclusion // .status // empty) | ascii_upcase] | any(. == "FAILURE" or . == "ERROR" or . == "CANCELLED" or . == "TIMED_OUT" or . == "ACTION_REQUIRED") | not))) | length'
-	if [[ -n "$branch_name" ]]; then
-		open_pr_safe_count=$(gh pr list --repo "$repo_slug" --head "$branch_name" --state open \
-			--json number,isDraft,statusCheckRollup --jq "$safe_pr_jq" 2>/dev/null || true)
-		[[ "$open_pr_safe_count" =~ ^[0-9]+$ ]] || open_pr_safe_count=0
-		[[ "$open_pr_safe_count" -gt 0 ]] && return 0
-	fi
+	[[ -n "$branch_name" && -n "$local_head" ]] || return 1
+	local pr_json=""
+	local pr_number=""
+	# shellcheck disable=SC2016 # $head is a jq variable supplied with --arg.
+	local safe_pr_jq='map(select((.isDraft // false | not) and .headRefOid == $head and ([.statusCheckRollup[]? | (.conclusion // .status // empty) | ascii_upcase] | any(. == "FAILURE" or . == "ERROR" or . == "CANCELLED" or . == "TIMED_OUT" or . == "ACTION_REQUIRED" or . == "STALE") | not))) | first | .number // empty'
+	pr_json=$(gh pr list --repo "$repo_slug" --head "$branch_name" --state open \
+		--json number,isDraft,headRefOid,statusCheckRollup 2>/dev/null || true)
+	pr_number=$(printf '%s' "$pr_json" | jq -r --arg head "$local_head" "$safe_pr_jq" 2>/dev/null || true)
+	[[ "$pr_number" =~ ^[0-9]+$ ]] || return 1
 
-	if [[ -n "$issue_number" ]]; then
-		open_pr_safe_count=$(gh pr list --repo "$repo_slug" --search "$issue_number" --state open \
-			--json number,isDraft,statusCheckRollup --jq "$safe_pr_jq" 2>/dev/null || true)
-		[[ "$open_pr_safe_count" =~ ^[0-9]+$ ]] || open_pr_safe_count=0
-		[[ "$open_pr_safe_count" -gt 0 ]] && return 0
-	fi
+	local comments_json=""
+	local summary_count=""
+	comments_json=$(gh api --paginate --slurp \
+		"repos/${repo_slug}/issues/${pr_number}/comments?per_page=100" 2>/dev/null || true)
+	summary_count=$(printf '%s' "$comments_json" | jq -r \
+		'[.[][] | select(.body | test("<!-- MERGE_SUMMARY -->"))] | length' 2>/dev/null || true)
+	[[ "$summary_count" =~ ^[0-9]+$ && "$summary_count" -gt 0 ]] && return 0
 
 	return 1
 }

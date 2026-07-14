@@ -171,14 +171,19 @@ _release_interactive_claim_on_merge() {
 #
 # Exact-head output states:
 #   ready | ready_failed | merged | closed_unmerged | draft_checkpoint |
-#   protected_draft
+#   protected_draft | head_mismatch | ready_missing_summary |
+#   merged_missing_summary
 # Issue-search matches are deliberately `unverified_open_pr`: search can return
 # a sibling or stale index hit and therefore proves dedup, never completion.
 # Every state is emitted as "state|PR_NUMBER"; absent/unknown have no number.
 #######################################
 _pr_handoff_state_from_json() {
 	local pr_json="$1"
-	printf '%s' "$pr_json" | jq -r '
+	local expected_head="${2:-}"
+	local open_state="OP""EN"
+	local merged_state="MER""GED"
+	printf '%s' "$pr_json" | jq -r --arg expected_head "$expected_head" \
+		--arg open_state "$open_state" --arg merged_state "$merged_state" '
 		def label_names: [.labels[]?.name];
 		def worker_owned: label_names | any(. == "origin:worker" or . == "origin:worker-takeover");
 		def protected: label_names | any(
@@ -191,13 +196,16 @@ _pr_handoff_state_from_json() {
 			any(. == "FAILURE" or . == "ERROR" or . == "CANCELLED" or
 				. == "TIMED_OUT" or . == "ACTION_REQUIRED" or . == "STALE");
 		def rank:
-			if .state == "OPEN" then 0
-			elif .state == "MERGED" or ((.mergedAt // "") | length) > 0 then 1
+			if .state == $open_state then 0
+			elif .state == $merged_state or ((.mergedAt // "") | length) > 0 then 1
 			else 2 end;
 		sort_by(rank) | .[0]
 		| if . == null then ""
-		elif .state == "MERGED" or ((.mergedAt // "") | length) > 0 then "merged|\(.number)"
-		elif .state != "OPEN" then "closed_unmerged|\(.number)"
+		elif ($expected_head | length) > 0 and
+			(.state == $open_state or .state == $merged_state or ((.mergedAt // "") | length) > 0) and
+			(.headRefOid // "") != $expected_head then "head_mismatch|\(.number)"
+		elif .state == $merged_state or ((.mergedAt // "") | length) > 0 then "merged|\(.number)"
+		elif .state != $open_state then "closed_unmerged|\(.number)"
 		elif (.isDraft // false) and worker_owned and (protected | not) then "draft_checkpoint|\(.number)"
 		elif (.isDraft // false) then "protected_draft|\(.number)"
 		elif terminal_failure then "ready_failed|\(.number)"
@@ -205,11 +213,31 @@ _pr_handoff_state_from_json() {
 	return 0
 }
 
+_pr_handoff_state_is_completion_candidate() {
+	local pr_state="$1"
+	[[ "$pr_state" == "ready" || "$pr_state" == "merged" ]]
+}
+
+_pr_handoff_has_merge_summary() {
+	local repo_slug="$1"
+	local pr_number="$2"
+	local comments_json=""
+	local summary_count=""
+
+	comments_json=$(gh api --paginate --slurp \
+		"repos/${repo_slug}/issues/${pr_number}/comments?per_page=100" 2>/dev/null) || return 1
+	summary_count=$(printf '%s' "$comments_json" | jq -r \
+		'[.[][] | select(.body | test("<!-- MERGE_SUMMARY -->"))] | length' 2>/dev/null) || return 1
+	[[ "$summary_count" =~ ^[0-9]+$ && "$summary_count" -gt 0 ]]
+}
+
 _pr_handoff_state_for_branch_or_issue() {
 	local branch_name="$1"
 	local issue_number="$2"
 	local repo_slug="$3"
 	local match_scope="${4:-branch-or-issue}"
+	local expected_head="${5:-}"
+	local require_merge_summary="${6:-0}"
 	local pr_json=""
 	local pr_state=""
 	local queried=0
@@ -222,10 +250,18 @@ _pr_handoff_state_for_branch_or_issue() {
 
 	if [[ -n "$branch_name" ]]; then
 		if pr_json=$(gh_pr_list --repo "$repo_slug" --head "$branch_name" --state all \
-			--limit 10 --json number,state,isDraft,mergedAt,labels,statusCheckRollup 2>/dev/null); then
+			--limit 10 --json number,state,isDraft,mergedAt,headRefOid,labels,statusCheckRollup 2>/dev/null); then
 			queried=1
-			pr_state=$(_pr_handoff_state_from_json "$pr_json")
+			pr_state=$(_pr_handoff_state_from_json "$pr_json" "$expected_head")
 			if [[ -n "$pr_state" ]]; then
+				if [[ "$require_merge_summary" -eq 1 ]] && \
+					_pr_handoff_state_is_completion_candidate "${pr_state%%|*}"; then
+					local pr_number="${pr_state#*|}"
+					if ! _pr_handoff_has_merge_summary "$repo_slug" "$pr_number"; then
+						printf '%s_missing_summary|%s' "${pr_state%%|*}" "$pr_number"
+						return 0
+					fi
+				fi
 				printf '%s' "$pr_state"
 				return 0
 			fi
@@ -357,7 +393,7 @@ _ensure_orphan_recovery_branch_remote() {
 
 	local pr_handoff=""
 	pr_handoff=$(_pr_handoff_state_for_branch_or_issue "$branch_name" "$issue_number" "$repo_slug")
-	if [[ "${pr_handoff%%|*}" == "ready" || "${pr_handoff%%|*}" == "merged" ]]; then
+	if _pr_handoff_state_is_completion_candidate "${pr_handoff%%|*}"; then
 		printf 'pr_found'
 		return 0
 	fi
@@ -482,7 +518,7 @@ _attempt_orphan_recovery_pr() {
 	#     defense is now the primary justification for this check.
 	local pr_handoff=""
 	pr_handoff=$(_pr_handoff_state_for_branch_or_issue "$branch_name" "$issue_number" "$repo_slug")
-	if [[ "${pr_handoff%%|*}" == "ready" || "${pr_handoff%%|*}" == "merged" ]]; then
+	if _pr_handoff_state_is_completion_candidate "${pr_handoff%%|*}"; then
 		return 0
 	fi
 	if [[ "${pr_handoff%%|*}" != "absent" ]]; then

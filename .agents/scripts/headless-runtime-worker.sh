@@ -487,6 +487,9 @@ _hrw_worker_base_commit_state() {
 #   "ready_failed"          — exact-head ready PR has terminal failed checks
 #   "closed_unmerged"       — exact-head PR closed without merge
 #   "unverified_open_pr"    — issue-search fallback cannot prove exact head
+#   "head_mismatch"         — local HEAD is not the open PR head
+#   "ready_missing_summary" — exact-head ready PR lacks MERGE_SUMMARY
+#   "merged_missing_summary" — exact-head merged PR lacks MERGE_SUMMARY
 #   "noop"                  — no commits, no pushed branch, no PR
 #
 # Fail-open semantics are preserved: any condition that prevents confident
@@ -578,11 +581,15 @@ _worker_produced_output() {
 	local repo_slug="${DISPATCH_REPO_SLUG:-}"
 	local pr_handoff="unknown|"
 	local pr_state="unknown"
-	pr_handoff=$(_pr_handoff_state_for_branch_or_issue "$branch_name" "$issue_number" "$repo_slug")
+	local local_head=""
+	local_head=$(git -C "$work_dir" rev-parse HEAD 2>/dev/null || true)
+	[[ -n "$local_head" ]] || local_head="missing-local-head"
+	pr_handoff=$(_pr_handoff_state_for_branch_or_issue "$branch_name" "$issue_number" "$repo_slug" \
+		"branch-or-issue" "$local_head" 1)
 	pr_state="${pr_handoff%%|*}"
 	case "$pr_state" in
 		ready | merged) printf 'pr_exists'; return 0 ;;
-		draft_checkpoint | protected_draft | ready_failed | closed_unmerged | unverified_open_pr)
+		draft_checkpoint | protected_draft | ready_failed | closed_unmerged | unverified_open_pr | head_mismatch | ready_missing_summary | merged_missing_summary)
 			printf '%s' "$pr_state"
 			return 0
 			;;
@@ -980,7 +987,11 @@ _recover_worker_output_on_failure() {
 	if [[ -n "$repo_slug" && -n "$issue_number" && -n "$branch_name" && "$branch_name" != "$_HRW_GIT_HEAD" && "$branch_name" != "$default_branch" ]] && \
 		declare -F _pr_handoff_state_for_branch_or_issue >/dev/null 2>&1; then
 		local pr_handoff="unknown|"
-		pr_handoff=$(_pr_handoff_state_for_branch_or_issue "$branch_name" "$issue_number" "$repo_slug")
+		local local_head=""
+		local_head=$(git -C "$work_dir" rev-parse HEAD 2>/dev/null || true)
+		[[ -n "$local_head" ]] || local_head="missing-local-head"
+		pr_handoff=$(_pr_handoff_state_for_branch_or_issue "$branch_name" "$issue_number" "$repo_slug" \
+			"branch-or-issue" "$local_head" 1)
 		local pr_state="${pr_handoff%%|*}"
 		if [[ "$pr_state" == "ready" || "$pr_state" == "merged" ]]; then
 			print_info "[lifecycle] worker_failure_recovered_existing_pr session=${session_key} branch=${branch_name}"
@@ -996,7 +1007,9 @@ _recover_worker_output_on_failure() {
 			_escalate_worker_pr_checkpoint "$session_key" "$repo_slug" "$pr_state" "$_HRW_REASON_READY_FAILED"
 			return 0
 		fi
-		if [[ "$pr_state" == "protected_draft" || "$pr_state" == "unverified_open_pr" ]]; then
+		if [[ "$pr_state" == "protected_draft" || "$pr_state" == "unverified_open_pr" || \
+			"$pr_state" == "head_mismatch" || "$pr_state" == "ready_missing_summary" || \
+			"$pr_state" == "merged_missing_summary" ]]; then
 			_HRW_RECOVERY_CLASSIFICATION="worker_${pr_state}"
 			print_warning "[lifecycle] ${_HRW_RECOVERY_CLASSIFICATION} session=${session_key} — not completion evidence; retaining claim"
 			return 0
@@ -1482,7 +1495,7 @@ _hrw_finish_success_run() {
 			release_needed=0
 			_hrw_mark_failed_terminal_state "$_HRW_STATUS_FAILED" "$_HRW_REASON_CLOSED_UNMERGED"
 			;;
-		protected_draft | unverified_open_pr)
+		protected_draft | unverified_open_pr | head_mismatch | ready_missing_summary | merged_missing_summary)
 			local noncomplete_reason="worker_${output_class}"
 			print_warning "[lifecycle] ${noncomplete_reason} session=${session_key} — protected/inconclusive PR state is not completion evidence; retaining claim"
 			release_needed=0
