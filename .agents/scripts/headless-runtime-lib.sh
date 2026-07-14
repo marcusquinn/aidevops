@@ -1379,10 +1379,10 @@ _preserve_failed_worker_db() {
 	local recovery_root="${AIDEVOPS_WORKER_DB_RECOVERY_DIR:-${HOME}/.aidevops/.agent-workspace/work/worker-db-recovery}"
 	local recovery_dir
 	local suffix
-	recovery_dir="${recovery_root}/$(date -u +%Y%m%dT%H%M%SZ)-$$"
 
 	[[ -f "$worker_db" ]] || return 1
-	mkdir -p "$recovery_dir" 2>/dev/null || return 1
+	mkdir -p "$recovery_root" 2>/dev/null || return 1
+	recovery_dir=$(mktemp -d "${recovery_root}/$(date -u +%Y%m%dT%H%M%SZ)-$$-XXXXXX") || return 1
 	chmod 700 "$recovery_root" "$recovery_dir" 2>/dev/null || true
 	for suffix in "" -wal -shm; do
 		if [[ -f "${worker_db}${suffix}" ]]; then
@@ -1513,8 +1513,8 @@ _sync_worker_db_migration_metadata() {
 	has_project=$(sqlite3 "$worker_db" "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'project' LIMIT 1;" 2>/dev/null || true)
 	[[ -n "$has_project" ]] || return 0
 
-	_sync_worker_db_migration_ledgers "$worker_db" "$shared_db"
-	if ! _worker_db_migration_ledgers_match_shared "$worker_db" "$shared_db"; then
+	if ! _sync_worker_db_migration_ledgers "$worker_db" "$shared_db" ||
+		! _worker_db_migration_ledgers_match_shared "$worker_db" "$shared_db"; then
 		_archive_partial_worker_db "$worker_db" "incomplete-migration-ledgers"
 	fi
 	return 0
