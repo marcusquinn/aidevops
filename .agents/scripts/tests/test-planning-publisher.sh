@@ -46,6 +46,7 @@ state_digest() {
 		git -C "$repo" ls-files -s
 		git -C "$repo" diff --binary
 		git -C "$repo" diff --cached --binary
+		git -C "$repo" status --porcelain=v1 --untracked-files=all
 	} | git hash-object --stdin
 	return 0
 }
@@ -222,12 +223,68 @@ HOOK
 	return 0
 }
 
+test_explicit_git_capability_preserves_guarded_checkout() {
+	local name="explicit Git capability publishes planning paths while canonical guard remains active"
+	local root="" repo="" shim_dir="" before="" after="" guard_rc=0 count=""
+	root=$(mktemp -d) || return 0
+	setup_repo "$root" || {
+		fail "$name" setup
+		return 0
+	}
+	repo="${root}/work"
+	shim_dir="${root}/shim"
+	mkdir -p "$shim_dir" || {
+		fail "$name" shim
+		return 0
+	}
+	cp "${SCRIPT_DIR_TEST}/../git" \
+		"${SCRIPT_DIR_TEST}/../canonical-git-command-guard.py" \
+		"${SCRIPT_DIR_TEST}/../canonical_git_policy.py" \
+		"${SCRIPT_DIR_TEST}/../canonical_shell_parser.py" \
+		"$shim_dir/" || {
+		fail "$name" guard-copy
+		return 0
+	}
+	printf '%s\n' '- [x] t006 proof ref:GH#6 pr:#60 completed:2026-07-14' >>"${repo}/TODO.md"
+	printf '%s\n' '**Status:** Completed' '**TODO:** t006' '**PR:** #60' >"${repo}/todo/PLANS.md"
+	before=$(state_digest "$repo")
+	(
+		export PATH="${shim_dir}:/usr/bin:/bin"
+		export GIT_AUTHOR_NAME="GitHub Actions"
+		export GIT_AUTHOR_EMAIL="actions@github.com"
+		export GIT_COMMITTER_NAME="GitHub Actions"
+		export GIT_COMMITTER_EMAIL="actions@github.com"
+		SCRIPT_DIR="$(dirname "$PUBLISHER")"
+		# shellcheck source=../planning-publisher.sh
+		source "$PUBLISHER"
+		AIDEVOPS_PLANNING_GIT_BIN=/usr/bin/git \
+			AIDEVOPS_PLANNING_VALIDATOR=/usr/bin/true \
+			planning_publish "$repo" "plan: guarded task projection" origin main $'TODO.md\ntodo/PLANS.md'
+	) || {
+		fail "$name" publish
+		rm -rf "$root"
+		return 0
+	}
+	after=$(state_digest "$repo")
+	PATH="${shim_dir}:/usr/bin:/bin" git -C "$repo" config user.name blocked-test >/dev/null 2>&1 || guard_rc=$?
+	count=$(git --git-dir="${root}/remote.git" show main:TODO.md | grep -c 'pr:#60 completed:2026-07-14' || true)
+	if [[ "$before" == "$after" && "$guard_rc" -eq 42 && "$count" -eq 1 ]] &&
+		git --git-dir="${root}/remote.git" show main:todo/PLANS.md | grep -q 'Status:\*\* Completed'; then
+		pass "$name"
+	else
+		fail "$name" "state or guard invariant failed (guard_rc=$guard_rc count=$count)"
+	fi
+	rm -rf "$root"
+	return 0
+}
+
 main() {
 	test_state_allowlist_and_idempotence
 	test_validation_failure_pushes_nothing
 	test_contention_replay_and_conflict
 	test_crash_replay_is_single_publication
 	test_same_path_contention_is_retryable
+	test_explicit_git_capability_preserves_guarded_checkout
 	printf '%s passed, %s failed\n' "$PASS" "$FAIL"
 	[[ $FAIL -eq 0 ]] || return 1
 	return 0
