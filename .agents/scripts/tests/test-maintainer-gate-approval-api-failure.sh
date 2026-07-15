@@ -194,20 +194,34 @@ test_pr_approval_paths() {
 	return 0
 }
 
-test_slurp_and_jq_are_separate() {
-	if python3 - "$WORKFLOW_FILE" <<'PY'
-import re
-import sys
-from pathlib import Path
+has_combined_slurp_and_jq() {
+	local workflow_file="$1"
+	if sed -e :a -e '/\\$/N; s/\\\n[[:space:]]*/ /; ta' "$workflow_file" |
+		grep 'gh[[:space:]][[:space:]]*api' |
+		grep -F -- '--slurp' |
+		grep -Fq -- '--jq'; then
+		return 0
+	fi
+	return 1
+}
 
-text = Path(sys.argv[1]).read_text()
-combined = re.findall(r"gh api[^\n]*\\\n(?:[^\n]*\\\n)*?[^\n]*--slurp[^\n]*\\\n[^\n]*--jq", text)
-raise SystemExit(1 if combined else 0)
-PY
-	then
-		print_result "maintainer gate separates gh --slurp from jq" 0
+test_slurp_and_jq_are_separate() {
+	local combined_fixture="${TEST_ROOT}/combined-flags.sh"
+	cat >"$combined_fixture" <<'EOF'
+gh api --jq '.[]' \
+  --paginate \
+  --slurp repos/example/project/issues/1/comments
+EOF
+	if has_combined_slurp_and_jq "$combined_fixture"; then
+		print_result "slurp/jq detector handles reordered multiline flags" 0
 	else
+		print_result "slurp/jq detector handles reordered multiline flags" 1 "forbidden fixture was not detected"
+	fi
+
+	if has_combined_slurp_and_jq "$WORKFLOW_FILE"; then
 		print_result "maintainer gate separates gh --slurp from jq" 1 "unsupported gh flag combination remains"
+	else
+		print_result "maintainer gate separates gh --slurp from jq" 0
 	fi
 	return 0
 }
