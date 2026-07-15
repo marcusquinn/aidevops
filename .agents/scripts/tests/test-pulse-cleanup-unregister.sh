@@ -116,10 +116,15 @@ STUB
 #!/usr/bin/env bash
 cmd="${1:-}"
 if [[ "$cmd" == "check" ]]; then
-	printf '%s\n' '{"session_key":"issue-3964","issue_number":"3964","repo_slug":"exampleorg/examplerepo","pid":123,"status":"in-flight"}'
+	jq -cn --arg worktree "${LEDGER_WORKTREE:?}" --arg lease "${LEDGER_LEASE_TOKEN:?}" \
+		'{session_key:"issue-3964",issue_number:"3964",repo_slug:"exampleorg/examplerepo",pid:123,status:"in-flight",lease_phase:"ready",worktree_path:$worktree,lease_token:$lease}'
 	exit 0
 fi
-exit 1
+printf '%s\n' "$*" >>"${LEDGER_LOG:?}"
+if [[ "$cmd" == "complete" && "${LEDGER_COMPLETE_FAIL:-0}" == "1" ]]; then
+	exit 1
+fi
+exit 0
 STUB
 	fi
 	chmod +x "${scripts_dir}/dispatch-ledger-helper.sh"
@@ -134,6 +139,12 @@ ps() {
 	return 0
 }
 
+kill() {
+	local pid="$1"
+	printf '%s\n' "$pid" >>"${KILL_LOG:?}"
+	return 0
+}
+
 gh() {
 	local subcommand="${1:-}"
 	local action="${2:-}"
@@ -143,7 +154,16 @@ gh() {
 		return 0
 	fi
 	if [[ "$subcommand" == "pr" && "$action" == "list" ]]; then
-		printf '%s\n' "${GH_MERGED_PR:-3964}"
+		[[ "${GH_API_FAIL:-0}" == "0" ]] || return 1
+		jq -cn --argjson number "${GH_MERGED_PR:-3964}" --arg branch "${GH_PR_BRANCH:?}" --arg head "${GH_PR_HEAD:?}" \
+			'[{number:$number,headRefName:$branch,headRefOid:$head}]'
+		return 0
+	fi
+	if [[ "$subcommand" == "pr" && "$action" == "view" ]]; then
+		[[ "${GH_API_FAIL:-0}" == "0" ]] || return 1
+		jq -cn --argjson number "${GH_MERGED_PR:-3964}" --argjson issue "${GH_CLOSING_ISSUE:-3964}" \
+			--arg branch "${GH_PR_BRANCH:?}" --arg head "${GH_PR_HEAD:?}" \
+			'{number:$number,state:"MERGED",mergedAt:"2026-07-15T12:00:00Z",headRefName:$branch,headRefOid:$head,closingIssuesReferences:[{number:$issue}]}'
 		return 0
 	fi
 	return 1
@@ -243,25 +263,104 @@ test_zombie_reaper_uses_ledger_repo_and_pid() {
 	local bin_dir="${TEST_ROOT}/bin-with-ledger"
 	local kill_log="${TEST_ROOT}/kill-with-ledger.log"
 	local gh_log="${TEST_ROOT}/gh-with-ledger.log"
+	local ledger_log="${TEST_ROOT}/ledger-with-ledger.log"
+	local repo_path="${TEST_ROOT}/repo-with-ledger"
+	local worker_worktree="${TEST_ROOT}/wt-with-ledger"
 	local old_path="$PATH"
 
 	: >"$kill_log"
 	: >"$gh_log"
+	: >"$ledger_log"
 	LOGFILE="${TEST_ROOT}/pulse-with-ledger.log"
+	make_repo_with_worktree "$repo_path" "$worker_worktree" "feature/worker-3964"
 	write_ledger_stub "$scripts_dir" "present"
 	write_kill_stub "$bin_dir"
 
 	SCRIPT_DIR="$scripts_dir"
 	PATH="${bin_dir}:${PATH}"
-	export GH_LOG="$gh_log" KILL_LOG="$kill_log" GH_MERGED_PR="5000"
+	export GH_LOG="$gh_log" KILL_LOG="$kill_log" GH_MERGED_PR="5000" GH_API_FAIL=0 GH_CLOSING_ISSUE=3964
+	export GH_PR_BRANCH="feature/worker-3964" GH_PR_HEAD LEDGER_WORKTREE="$worker_worktree" LEDGER_LEASE_TOKEN="lease-3964" LEDGER_LOG="$ledger_log"
+	GH_PR_HEAD=$(git -C "$worker_worktree" rev-parse HEAD)
 	reap_zombie_workers
 	PATH="$old_path"
 	SCRIPT_DIR="$original_script_dir"
 
 	grep -Fxq '123' "$kill_log" || fail "zombie reaper did not kill the ledger PID"
 	grep -q -- '--repo exampleorg/examplerepo' "$gh_log" || fail "zombie reaper did not query the ledger repo"
+	grep -q -- '--head feature/worker-3964' "$gh_log" || fail "zombie reaper did not bind merged PR lookup to worker branch"
+	grep -q 'closingIssuesReferences' "$gh_log" || fail "zombie reaper did not verify structured closing references"
+	grep -q 'record-outcome.*--reason merged_pr_reap' "$ledger_log" || fail "zombie reaper did not record typed terminal telemetry"
+	grep -q 'complete.*--lease-token lease-3964.*--reason merged_pr_reap' "$ledger_log" || fail "zombie reaper did not complete the exact lease"
 	grep -q 'PR #5000 already merged in exampleorg/examplerepo' "$LOGFILE" || fail "missing ledger-repo reap audit log"
+	grep -q 'kill_reason=merged_pr_reap' "$LOGFILE" || fail "missing typed reap lifecycle log"
 	pass "zombie reaper uses ledger repo and PID"
+	return 0
+}
+
+test_zombie_reaper_rejects_unverified_completion() {
+	local original_script_dir="$SCRIPT_DIR"
+	local scripts_dir="${TEST_ROOT}/scripts-unverified"
+	local repo_path="${TEST_ROOT}/repo-unverified"
+	local worker_worktree="${TEST_ROOT}/wt-unverified"
+	local kill_log="${TEST_ROOT}/kill-unverified.log"
+	local gh_log="${TEST_ROOT}/gh-unverified.log"
+	local ledger_log="${TEST_ROOT}/ledger-unverified.log"
+
+	: >"$kill_log"
+	: >"$gh_log"
+	: >"$ledger_log"
+	LOGFILE="${TEST_ROOT}/pulse-unverified.log"
+	make_repo_with_worktree "$repo_path" "$worker_worktree" "feature/worker-3964-unverified"
+	write_ledger_stub "$scripts_dir" "present"
+	SCRIPT_DIR="$scripts_dir"
+	export GH_LOG="$gh_log" KILL_LOG="$kill_log" GH_MERGED_PR=5001 GH_API_FAIL=0 GH_CLOSING_ISSUE=9999
+	export GH_PR_BRANCH="feature/worker-3964-unverified" GH_PR_HEAD LEDGER_WORKTREE="$worker_worktree" LEDGER_LEASE_TOKEN="lease-3964-unverified" LEDGER_LOG="$ledger_log"
+	GH_PR_HEAD=$(git -C "$worker_worktree" rev-parse HEAD)
+	reap_zombie_workers
+	SCRIPT_DIR="$original_script_dir"
+
+	[[ ! -s "$kill_log" ]] || fail "planning PR without structured closure reaped the worker"
+	[[ ! -s "$ledger_log" ]] || fail "unverified completion emitted terminal ledger state"
+	pass "zombie reaper rejects planning PRs without structured closure"
+	return 0
+}
+
+test_zombie_reaper_fails_closed_on_stale_or_indeterminate_evidence() {
+	local original_script_dir="$SCRIPT_DIR"
+	local scripts_dir="${TEST_ROOT}/scripts-indeterminate"
+	local repo_path="${TEST_ROOT}/repo-indeterminate"
+	local worker_worktree="${TEST_ROOT}/wt-indeterminate"
+	local kill_log="${TEST_ROOT}/kill-indeterminate.log"
+	local gh_log="${TEST_ROOT}/gh-indeterminate.log"
+	local ledger_log="${TEST_ROOT}/ledger-indeterminate.log"
+
+	: >"$kill_log"
+	: >"$gh_log"
+	: >"$ledger_log"
+	LOGFILE="${TEST_ROOT}/pulse-indeterminate.log"
+	make_repo_with_worktree "$repo_path" "$worker_worktree" "feature/worker-3964-indeterminate"
+	write_ledger_stub "$scripts_dir" "present"
+	SCRIPT_DIR="$scripts_dir"
+	export GH_LOG="$gh_log" KILL_LOG="$kill_log" GH_MERGED_PR=5002 GH_API_FAIL=0 GH_CLOSING_ISSUE=3964
+	export GH_PR_BRANCH="feature/worker-3964-indeterminate" GH_PR_HEAD="0000000000000000000000000000000000000000"
+	export LEDGER_WORKTREE="$worker_worktree" LEDGER_LEASE_TOKEN="lease-3964-indeterminate" LEDGER_LOG="$ledger_log"
+	reap_zombie_workers
+	GH_API_FAIL=1
+	GH_PR_HEAD=$(git -C "$worker_worktree" rev-parse HEAD)
+	reap_zombie_workers
+	GH_API_FAIL=0
+	export LEDGER_COMPLETE_FAIL=1
+	reap_zombie_workers
+	unset LEDGER_COMPLETE_FAIL
+	SCRIPT_DIR="$original_script_dir"
+
+	[[ ! -s "$kill_log" ]] || fail "stale or API-indeterminate evidence reaped the worker"
+	if grep -q 'record-outcome' "$ledger_log"; then
+		fail "stale or API-indeterminate evidence emitted terminal telemetry"
+	fi
+	grep -q 'ambiguous or API-indeterminate' "$LOGFILE" || fail "API-indeterminate skip was not diagnosed"
+	grep -q 'active dispatch generation changed' "$LOGFILE" || fail "stale lease transition was not diagnosed"
+	pass "zombie reaper fails closed on stale dispatch and API-indeterminate evidence"
 	return 0
 }
 
@@ -271,5 +370,7 @@ test_orphan_crash_skips_closed_issue_comment
 test_orphan_crash_keeps_open_issue_recovery
 test_zombie_reaper_requires_ledger_repo
 test_zombie_reaper_uses_ledger_repo_and_pid
+test_zombie_reaper_rejects_unverified_completion
+test_zombie_reaper_fails_closed_on_stale_or_indeterminate_evidence
 
 exit 0

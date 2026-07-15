@@ -1817,7 +1817,7 @@ _dlw_nohup_launch() {
 # the retention message is logged so subsequent dispatches start fresh.
 #
 # Arguments: issue_number, repo_slug, self_login, worker_pid, session_key,
-#            dispatch_tier, selected_model
+#            dispatch_tier, selected_model, worker_worktree_path
 #######################################
 _dlw_post_launch_hooks() {
 	local issue_number="$1"
@@ -1827,6 +1827,7 @@ _dlw_post_launch_hooks() {
 	local session_key="$5"
 	local dispatch_tier="$6"
 	local selected_model="$7"
+	local worker_worktree_path="${8:-}"
 
 	# Record in dispatch ledger (with tier telemetry)
 	local ledger_helper="${SCRIPT_DIR}/dispatch-ledger-helper.sh"
@@ -1835,7 +1836,7 @@ _dlw_post_launch_hooks() {
 			--issue "$issue_number" --repo "$repo_slug" \
 			--pid "$worker_pid" --tier "$dispatch_tier" \
 			--model "$selected_model" --lease-token "${_claim_lease_token:-}" \
-			--device-id "${_claim_lease_device:-}" 2>/dev/null || true
+			--device-id "${_claim_lease_device:-}" --worktree "$worker_worktree_path" 2>/dev/null || true
 	fi
 
 	local dispatch_comment_body
@@ -2352,7 +2353,7 @@ _dispatch_launch_worker() {
 
 	_ds_t0=$(_ds_now_ns)
 	_dlw_post_launch_hooks "$issue_number" "$repo_slug" "$self_login" \
-		"$worker_pid" "$session_key" "$dispatch_tier" "$selected_model"
+		"$worker_pid" "$session_key" "$dispatch_tier" "$selected_model" "$worker_worktree_path"
 	_ds_record "$issue_number" "$repo_slug" "post_launch_hooks" "$_ds_t0"
 
 	echo "[dispatch_with_dedup] Dispatched worker PID ${worker_pid} for #${issue_number} in ${repo_slug}" >>"$LOGFILE"
