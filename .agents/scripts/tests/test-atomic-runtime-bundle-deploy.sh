@@ -66,6 +66,7 @@ assert_file_contains() {
 write_fake_revision() {
 	local version="$1"
 	local marker="$2"
+	rm -rf "$FAKE_REPO/.agents/plugins"
 	mkdir -p "$FAKE_REPO/.agents/scripts"
 	printf '%s\n' "$version" >"$FAKE_REPO/VERSION"
 	printf '#!/usr/bin/env bash\nprintf %s\\n "%s"\n' '%s' "$version" >"$FAKE_REPO/aidevops.sh"
@@ -73,6 +74,22 @@ write_fake_revision() {
 	printf '#!/usr/bin/env bash\nexec git "$@"\n' >"$FAKE_REPO/.agents/scripts/git"
 	printf '# test agents\n' >"$FAKE_REPO/.agents/AGENTS.md"
 	chmod +x "$FAKE_REPO/aidevops.sh" "$FAKE_REPO/.agents/scripts/helper.sh" "$FAKE_REPO/.agents/scripts/git"
+	return 0
+}
+
+write_fake_plugin_manifest() {
+	mkdir -p "$FAKE_REPO/.agents/plugins/opencode-aidevops"
+	printf '{"name":"opencode-aidevops","type":"module"}\n' >"$FAKE_REPO/.agents/plugins/opencode-aidevops/package.json"
+	return 0
+}
+
+write_fake_plugin_dependencies() {
+	local plugin_dir="$FAKE_REPO/.agents/plugins/opencode-aidevops"
+	mkdir -p "$plugin_dir/node_modules/@bufbuild/protobuf" "$plugin_dir/node_modules/@opencode-ai/plugin"
+	printf '{"name":"@bufbuild/protobuf","type":"module","exports":"./index.mjs"}\n' >"$plugin_dir/node_modules/@bufbuild/protobuf/package.json"
+	printf 'export const fixture = true;\n' >"$plugin_dir/node_modules/@bufbuild/protobuf/index.mjs"
+	printf '{"name":"@opencode-ai/plugin","type":"module","exports":"./index.mjs"}\n' >"$plugin_dir/node_modules/@opencode-ai/plugin/package.json"
+	printf 'export const tool = Object.assign((definition) => definition, { schema: {} });\n' >"$plugin_dir/node_modules/@opencode-ai/plugin/index.mjs"
 	return 0
 }
 
@@ -225,6 +242,90 @@ test_macos_and_linux_link_paths() {
 	return 0
 }
 
+test_plugin_dependency_smoke_check() {
+	local plugin_dir=""
+	write_fake_revision "7.1.0" "dependency-smoke-check"
+	write_fake_plugin_manifest
+	write_fake_plugin_dependencies
+	plugin_dir="$FAKE_REPO/.agents/plugins/opencode-aidevops"
+
+	_verify_opencode_plugin_deps "$plugin_dir" || fail "complete plugin dependencies pass the import smoke check"
+	pass "complete plugin dependencies pass the import smoke check"
+	rm -rf "$plugin_dir/node_modules/@opencode-ai/plugin"
+	if _verify_opencode_plugin_deps "$plugin_dir" >/dev/null 2>&1; then
+		fail "missing @opencode-ai/plugin unexpectedly passed the import smoke check"
+	fi
+	pass "missing @opencode-ai/plugin fails the import smoke check"
+	return 0
+}
+
+install_mock_plugin_dependency_hooks() {
+	_verify_opencode_plugin_deps() {
+		local plugin_dir="$1"
+		: "$plugin_dir"
+		case "$MOCK_PLUGIN_VERIFY_MODE" in
+		available)
+			return 0
+			;;
+		recover)
+			[[ -f "$TEST_ROOT/npm-install-complete" ]] && return 0
+			return 1
+			;;
+		failure)
+			return 1
+			;;
+		esac
+		return 1
+	}
+
+	npm() {
+		printf '%s\n' "$MOCK_PLUGIN_VERIFY_MODE" >"$TEST_ROOT/npm-called"
+		if [[ "$MOCK_PLUGIN_VERIFY_MODE" == "recover" ]]; then
+			printf 'installed\n' >"$TEST_ROOT/npm-install-complete"
+			return 0
+		fi
+		printf 'mock npm install failure\n' >&2
+		return 1
+	}
+	return 0
+}
+
+test_dependency_install_recovery_activates_candidate() {
+	local target_dir="$HOME/.aidevops/agents"
+	write_fake_revision "8.0.0" "dependency-recovery"
+	write_fake_plugin_manifest
+	MOCK_PLUGIN_VERIFY_MODE="recover"
+	rm -f "$TEST_ROOT/npm-called" "$TEST_ROOT/npm-install-complete"
+
+	stage_revision "$target_dir"
+	[[ -f "$TEST_ROOT/npm-called" ]] || fail "missing dependencies invoke npm install"
+	pass "missing dependencies invoke npm install"
+	_runtime_bundle_activate "$target_dir" "$_AIDEVOPS_STAGED_BUNDLE_DIR"
+	assert_eq "8.0.0" "$(tr -d '[:space:]' <"$target_dir/VERSION")" "dependency-complete candidate activates after install"
+	return 0
+}
+
+test_dependency_install_failure_preserves_active_bundle() {
+	local target_dir="$HOME/.aidevops/agents"
+	local active_before=""
+	local active_after=""
+	active_before=$(_runtime_bundle_resolve_root "$target_dir")
+	write_fake_revision "9.0.0" "dependency-failure"
+	write_fake_plugin_manifest
+	MOCK_PLUGIN_VERIFY_MODE="failure"
+	rm -f "$TEST_ROOT/npm-called" "$TEST_ROOT/npm-install-complete"
+
+	if stage_revision "$target_dir"; then
+		fail "plugin dependency install failure unexpectedly staged a bundle"
+	fi
+	[[ -f "$TEST_ROOT/npm-called" ]] || fail "failed dependency recovery invokes npm install"
+	pass "failed dependency recovery invokes npm install"
+	active_after=$(_runtime_bundle_resolve_root "$target_dir")
+	assert_eq "$active_before" "$active_after" "plugin dependency install failure preserves active bundle"
+	assert_eq "8.0.0" "$(tr -d '[:space:]' <"$target_dir/VERSION")" "failed candidate never becomes active"
+	return 0
+}
+
 main() {
 	TEST_ROOT=$(mktemp -d)
 	trap cleanup EXIT
@@ -245,6 +346,10 @@ main() {
 	test_live_bundle_lease_survives_three_updates
 	test_stale_lease_and_old_bundle_are_pruned
 	test_macos_and_linux_link_paths
+	test_plugin_dependency_smoke_check
+	install_mock_plugin_dependency_hooks
+	test_dependency_install_recovery_activates_candidate
+	test_dependency_install_failure_preserves_active_bundle
 
 	printf 'Results: %s checks passed\n' "$TESTS_RUN"
 	return 0

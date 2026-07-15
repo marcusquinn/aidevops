@@ -48,10 +48,12 @@ print_result() {
 
 setup_fake_tools() {
 	local gh_version_line="$1"
+	local remote_version="${2:-}"
 	TEST_ROOT=$(mktemp -d)
-	mkdir -p "${TEST_ROOT}/bin" "${TEST_ROOT}/home"
+	mkdir -p "${TEST_ROOT}/bin" "${TEST_ROOT}/home/.aidevops/agents"
 	HOME="${TEST_ROOT}/home"
 	PATH="${TEST_ROOT}/bin:${ORIGINAL_PATH}"
+	printf '1.0.0\n' >"${HOME}/.aidevops/agents/VERSION"
 
 	cat >"${TEST_ROOT}/bin/gh" <<EOF
 #!/usr/bin/env bash
@@ -60,8 +62,12 @@ exit 0
 EOF
 	chmod +x "${TEST_ROOT}/bin/gh"
 
-	cat >"${TEST_ROOT}/bin/curl" <<'EOF'
+	cat >"${TEST_ROOT}/bin/curl" <<EOF
 #!/usr/bin/env bash
+	if [[ -n "${remote_version}" ]]; then
+		printf '%s\n' '${remote_version}'
+		exit 0
+	fi
 exit 22
 EOF
 	chmod +x "${TEST_ROOT}/bin/curl"
@@ -89,6 +95,22 @@ test_supported_gh_has_no_warning() {
 		print_result "supported gh omits session-start prerequisite warning" 0
 	else
 		print_result "supported gh omits warning and writes complete cache" 1 "output='${output}', cache='${cache_file}'"
+	fi
+	return 0
+}
+
+test_update_available_preserves_full_session_status() {
+	setup_fake_tools "gh version 2.51.0 (2024-05-29)" "1.0.1"
+	local output=""
+	local cache_file="$HOME/.aidevops/cache/session-greeting.txt"
+	output=$(OPENCODE=1 bash "$UPDATE_CHECK" --interactive 2>/dev/null || true)
+	if [[ "$output" == *"UPDATE_AVAILABLE|1.0.0|1.0.1|OpenCode"* ]] &&
+		[[ "$output" == *"aidevops v1.0.0 running in OpenCode"* ]] &&
+		[[ -s "$cache_file" ]] &&
+		grep -qF "aidevops v1.0.0 running in OpenCode" "$cache_file"; then
+		print_result "update available preserves normal session status and cache" 0
+	else
+		print_result "update available preserves normal session status and cache" 1 "output='${output}', cache='${cache_file}'"
 	fi
 	return 0
 }
@@ -150,6 +172,7 @@ test_cache_write_propagates_move_failure() {
 
 test_old_gh_warns_in_update_check
 test_supported_gh_has_no_warning
+test_update_available_preserves_full_session_status
 test_cache_write_propagates_output_failure
 test_cache_write_propagates_move_failure
 

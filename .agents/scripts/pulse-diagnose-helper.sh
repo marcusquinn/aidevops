@@ -21,6 +21,7 @@
 #   PULSE_DIAGNOSE_METRICS_FILE — override headless-runtime-metrics.jsonl path
 #   PULSE_DIAGNOSE_STATS_FILE   — override pulse-stats.json path
 #   PULSE_DIAGNOSE_GH_API_LOG   — override gh-api-calls.log path
+#   PULSE_DIAGNOSE_BLOCKER_LOG  — override worker-progress-blockers.jsonl path
 #   PULSE_DIAGNOSE_SYSTEMD_TIMER_FILE — override systemd timer unit path
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
@@ -49,6 +50,7 @@ readonly DEFAULT_LOGDIR="${HOME}/.aidevops/logs"
 readonly DEFAULT_METRICS_FILE="${HOME}/.aidevops/logs/headless-runtime-metrics.jsonl"
 readonly DEFAULT_STATS_FILE="${HOME}/.aidevops/logs/pulse-stats.json"
 readonly DEFAULT_GH_API_LOG="${HOME}/.aidevops/logs/gh-api-calls.log"
+readonly DEFAULT_BLOCKER_LOG="${HOME}/.aidevops/logs/worker-progress-blockers.jsonl"
 readonly DEFAULT_SYSTEMD_TIMER_FILE="${HOME}/.config/systemd/user/aidevops-supervisor-pulse.timer"
 readonly _UNKNOWN="unknown"
 
@@ -197,6 +199,15 @@ _resolve_gh_api_log() {
 		return 0
 	fi
 	echo "$DEFAULT_GH_API_LOG"
+	return 0
+}
+
+_resolve_blocker_log() {
+	if [[ -n "${PULSE_DIAGNOSE_BLOCKER_LOG:-}" ]]; then
+		printf '%s\n' "$PULSE_DIAGNOSE_BLOCKER_LOG"
+		return 0
+	fi
+	printf '%s\n' "$DEFAULT_BLOCKER_LOG"
 	return 0
 }
 
@@ -353,6 +364,36 @@ _issue_attempt_summary_json() {
 		--argjson active "$active" \
 		'. + {cooldown_secs: $cooldown, next_eligible_epoch: $next, backoff_active: $active}' \
 		2>/dev/null || printf '%s\n' "$summary"
+	return 0
+}
+
+# Summarise all retained progress-blocker events for one issue and repository.
+# Args: issue_number repo_slug blocker_log
+_issue_blocker_summary_json() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local blocker_log="$3"
+	if [[ ! -f "$blocker_log" ]] || ! command -v jq >/dev/null 2>&1; then
+		printf '{"event_total":0,"active_total":0,"event_counts":{},"reason_counts":{},"active_blockers":[],"recent_events":[]}'
+		return 0
+	fi
+	jq -Rsc --arg issue "$issue_number" --arg repo "$repo_slug" '
+		def identity:
+			if ((.session_key // "") | length) > 0 then .session_key else (.request_id // "unknown") end;
+		[split("\n")[] | fromjson?
+			| select(.schema == "aidevops-worker-blocker/v1")
+			| select(((.issue_number // "") | tostring) == $issue)
+			| select(((.repo_slug // "") | ascii_downcase) == ($repo | ascii_downcase))] as $events
+		| ($events | group_by(identity) | map(sort_by(.ts // 0) | last) | map(select(.blocking == true))) as $active
+		| {
+			event_total: ($events | length),
+			active_total: ($active | length),
+			event_counts: (reduce $events[] as $row ({}; .[$row.event // "unknown"] += 1)),
+			reason_counts: (reduce $events[] as $row ({}; .[$row.reason // "unknown"] += 1)),
+			active_blockers: ($active | sort_by(.ts // 0) | reverse | .[0:10]),
+			recent_events: ($events | sort_by(.ts // 0) | reverse | .[0:10])
+		}' "$blocker_log" 2>/dev/null || \
+		printf '{"event_total":0,"active_total":0,"event_counts":{},"reason_counts":{},"active_blockers":[],"recent_events":[]}'
 	return 0
 }
 
@@ -1484,12 +1525,46 @@ _render_issue_attempts_text() {
 	return 0
 }
 
+# Render bounded progress-blocker evidence for one issue.
+# Args: blocker_summary_json
+_render_issue_blockers_text() {
+	local blocker_summary_json="$1"
+	printf 'Worker progress blockers:\n'
+	if ! command -v jq >/dev/null 2>&1; then
+		printf '  (jq not available — cannot parse blocker records)\n\n'
+		return 0
+	fi
+	local event_total="0" active_total="0"
+	event_total=$(printf '%s' "$blocker_summary_json" | jq -r '.event_total // 0' 2>/dev/null || printf '0')
+	active_total=$(printf '%s' "$blocker_summary_json" | jq -r '.active_total // 0' 2>/dev/null || printf '0')
+	printf '  Retained events: %s\n' "$event_total"
+	printf '  Currently active: %s\n' "$active_total"
+	printf '  Reasons: %s\n' "$(printf '%s' "$blocker_summary_json" | jq -c '.reason_counts // {}' 2>/dev/null || printf '{}')"
+	local recent_lines=""
+	recent_lines=$(printf '%s' "$blocker_summary_json" | jq -r '
+		.recent_events[]?
+		| "  " + (.timestamp // ((.ts // 0) | tostring))
+		+ "  " + (.event // "unknown")
+		+ "  reason=" + (.reason // "unknown")
+		+ "  blocking=" + ((.blocking // false) | tostring)
+		+ "  source=" + (.source // "unknown")' 2>/dev/null || true)
+	if [[ -n "$recent_lines" ]]; then
+		printf '  Recent blocker lifecycle:\n%s\n' "$recent_lines"
+	else
+		printf '  (no blocker records found for this issue)\n'
+	fi
+	printf '\n'
+	return 0
+}
+
 # Render the human-readable issue correlation report.
-# Args: issue_number repo_slug issue_json comments_json pr_numbers logfile logdir verbose attempt_summary_json issue_log_lines
+# Args: issue_number repo_slug issue_json comments_json pr_numbers logfile logdir verbose attempt_summary_json issue_log_lines blocker_summary_json
 _render_issue_text() {
 	local issue_number="$1" repo_slug="$2" issue_json="$3" comments_json="$4"
 	local pr_numbers="$5" logfile="$6" logdir="$7" verbose="$8"
 	local attempt_summary_json="$9" issue_log_lines="${10:-}"
+	local blocker_summary_json="${11:-}"
+	[[ -n "$blocker_summary_json" ]] || blocker_summary_json='{}'
 
 	local title="" state="" created_at="" closed_at="" labels="" assignees=""
 	title=$(_jq_field "$issue_json" "$_IQ_TITLE" "")
@@ -1508,16 +1583,19 @@ _render_issue_text() {
 	printf '  Created: %s\n\n' "${created_at:-(unknown)}"
 
 	_render_issue_lifecycle_comments "$comments_json"
+	_render_issue_blockers_text "$blocker_summary_json"
 	_render_issue_attempts_text "$attempt_summary_json" "$issue_log_lines" "$verbose"
 	_render_issue_linked_prs "$repo_slug" "$pr_numbers" "$logfile" "$logdir" "$verbose"
 	return 0
 }
 
 # Render JSON issue correlation report.
-# Args: issue_number repo_slug issue_json comments_json pr_numbers logfile logdir attempt_summary_json issue_log_lines
+# Args: issue_number repo_slug issue_json comments_json pr_numbers logfile logdir attempt_summary_json issue_log_lines blocker_summary_json
 _render_issue_json() {
 	local issue_number="$1" repo_slug="$2" issue_json="$3" comments_json="$4"
 	local pr_numbers="$5" logfile="$6" logdir="$7" attempt_summary_json="$8" issue_log_lines="${9:-}"
+	local blocker_summary_json="${10:-}"
+	[[ -n "$blocker_summary_json" ]] || blocker_summary_json='{}'
 
 	local title="" state="" created_at=""
 	title=$(_jq_field "$issue_json" "$_IQ_TITLE" "")
@@ -1567,6 +1645,9 @@ _render_issue_json() {
 	else
 		printf '{}'
 	fi
+	printf ',\n'
+	printf '  "progress_blockers": '
+	printf '%s' "$blocker_summary_json" | jq -c '.' 2>/dev/null || printf '{}'
 	printf ',\n'
 
 	printf '  "linked_prs": [\n'
@@ -2085,23 +2166,26 @@ cmd_issue() {
 	local metrics_file=""
 	metrics_file=$(_resolve_metrics_file)
 
-	local issue_json="" comments_json="" pr_numbers="" attempt_summary_json="" issue_log_lines=""
+	local issue_json="" comments_json="" pr_numbers="" attempt_summary_json="" issue_log_lines="" blocker_summary_json=""
+	local blocker_log=""
+	blocker_log=$(_resolve_blocker_log)
 	issue_json=$(_fetch_issue_metadata "$_CMD_ISSUE_NUMBER" "$_CMD_ISSUE_REPO_SLUG")
 	comments_json=$(_fetch_issue_comments "$_CMD_ISSUE_NUMBER" "$_CMD_ISSUE_REPO_SLUG")
 	pr_numbers=$(_fetch_issue_linked_prs "$_CMD_ISSUE_NUMBER" "$_CMD_ISSUE_REPO_SLUG")
 	attempt_summary_json=$(_issue_attempt_summary_json "$_CMD_ISSUE_NUMBER" "$metrics_file" "$_CMD_ISSUE_REPO_SLUG")
 	issue_log_lines=$(_collect_issue_log_lines "$_CMD_ISSUE_NUMBER" "$logfile" "$logdir")
+	blocker_summary_json=$(_issue_blocker_summary_json "$_CMD_ISSUE_NUMBER" "$_CMD_ISSUE_REPO_SLUG" "$blocker_log")
 
 	if [[ "$_CMD_ISSUE_JSON_OUTPUT" -eq 1 ]]; then
 		_render_issue_json "$_CMD_ISSUE_NUMBER" "$_CMD_ISSUE_REPO_SLUG" \
 			"$issue_json" "$comments_json" "$pr_numbers" "$logfile" "$logdir" \
-			"$attempt_summary_json" "$issue_log_lines"
+			"$attempt_summary_json" "$issue_log_lines" "$blocker_summary_json"
 		return 0
 	fi
 
 	_render_issue_text "$_CMD_ISSUE_NUMBER" "$_CMD_ISSUE_REPO_SLUG" \
 		"$issue_json" "$comments_json" "$pr_numbers" "$logfile" "$logdir" \
-		"$_CMD_ISSUE_VERBOSE" "$attempt_summary_json" "$issue_log_lines"
+		"$_CMD_ISSUE_VERBOSE" "$attempt_summary_json" "$issue_log_lines" "$blocker_summary_json"
 	return 0
 }
 
@@ -2142,6 +2226,7 @@ ENVIRONMENT:
   PULSE_DIAGNOSE_WRAPPER_LOG    Override pulse-wrapper.log path
   PULSE_DIAGNOSE_STATS_FILE     Override pulse-stats.json path
   PULSE_DIAGNOSE_GH_API_LOG     Override gh-api-calls.log path
+  PULSE_DIAGNOSE_BLOCKER_LOG    Override worker-progress-blockers.jsonl path
   PULSE_DIAGNOSE_SYSTEMD_TIMER_FILE Override systemd timer unit path
 
 EXAMPLES:

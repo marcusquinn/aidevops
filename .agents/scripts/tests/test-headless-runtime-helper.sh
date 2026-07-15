@@ -91,7 +91,7 @@ test_appends_escalation_contract() {
 		[[ "$output" == *'Load only referenced workflow/reference docs'* ]] &&
 		[[ "$output" == *'Stop reading once target files, reference pattern, constraints, and verification are clear.'* ]] &&
 		[[ "$output" == *'Never ask for user confirmation, approval, or next steps. No user will respond.'* ]] &&
-		[[ "$output" == *'The only valid exit states are FULL_LOOP_COMPLETE or BLOCKED with evidence.'* ]]; then
+		[[ "$output" == *'Valid exit states are FULL_LOOP_COMPLETE, a verified post-PR handoff'* ]]; then
 		print_result "appends escalation-before-blocked contract to full-loop prompts" 0
 		return 0
 	fi
@@ -180,6 +180,25 @@ test_launch_helpers_tolerate_unset_state_under_nounset() {
 
 	print_result "launch argument validation reports missing caller state under nounset" 1 \
 		"status=$status output=${err_out:-<empty>}"
+	return 0
+}
+
+test_runtime_temp_files_use_managed_workspace() {
+	local AIDEVOPS_TEMP_DIR="${HOME}/.aidevops/.agent-workspace/tmp"
+	local temp_file=""
+	temp_file=$(_create_headless_runtime_temp_file) || {
+		print_result "runtime temp files use managed aidevops workspace" 1 "Could not create runtime temp file"
+		return 0
+	}
+
+	if [[ "$temp_file" == "${HOME}/.aidevops/.agent-workspace/tmp/"* && -f "$temp_file" ]]; then
+		rm -f "$temp_file"
+		print_result "runtime temp files use managed aidevops workspace" 0
+		return 0
+	fi
+
+	rm -f "$temp_file"
+	print_result "runtime temp files use managed aidevops workspace" 1 "Unexpected path: $temp_file"
 	return 0
 }
 
@@ -689,6 +708,7 @@ test_cmd_run_aborts_issue_worker_before_canary_when_env_missing() {
 
 test_cmd_run_preserves_worker_origin_overrides_before_canary() {
 	local worktree_dir="${TEST_ROOT}/origin-override-worktree"
+	local AIDEVOPS_DISPATCH_LEASE_TOKEN=""
 	mkdir -p "$worktree_dir"
 	init_git_worktree "$worktree_dir"
 	export WORKER_ISSUE_NUMBER=23558
@@ -1100,7 +1120,7 @@ if [[ "${1:-}" == "--version" ]]; then
 	printf '1.14.31\n'
 	exit 0
 fi
-if [[ -n "${OPENCODE_SESSION_ID:-}${OPENCODE_PID:-}${OPENCODE_RUN_ID:-}${OPENCODE_PROCESS_ROLE:-}${OPENCODE:-}${OPENCODE_SERVER_PASSWORD:-}" ]]; then
+if [[ -n "${AIDEVOPS_OPENCODE_SESSION_ID:-}${OPENCODE_SESSION_ID:-}${OPENCODE_PID:-}${OPENCODE_RUN_ID:-}${OPENCODE_PROCESS_ROLE:-}${OPENCODE:-}${OPENCODE_SERVER_PASSWORD:-}" ]]; then
 	printf 'leaked session env\n' >"$AIDEVOPS_CANARY_ENV_FILE"
 	exit 42
 fi
@@ -1121,6 +1141,7 @@ EOF
 		HOME="${canary_root}/home" \
 		OPENCODE_BIN="${fake_bin_dir}/opencode" \
 		OPENCODE_DB="${canary_root}/opencode.db" \
+		AIDEVOPS_OPENCODE_SESSION_ID="ses_parent" \
 		OPENCODE_SESSION_ID="ses_parent" \
 		OPENCODE_PID="12345" \
 		OPENCODE_RUN_ID="run_parent" \
@@ -1163,6 +1184,7 @@ test_opencode_session_env_wrapper_strips_session_vars_only() {
 	local output
 	# shellcheck disable=SC2016 # Inner bash expands these after env stripping.
 	output=$(
+		AIDEVOPS_OPENCODE_SESSION_ID="ses_parent" \
 		OPENCODE_SESSION_ID="ses_parent" \
 		OPENCODE_PID="12345" \
 		OPENCODE_RUN_ID="run_parent" \
@@ -1172,14 +1194,14 @@ test_opencode_session_env_wrapper_strips_session_vars_only() {
 		OPENCODE_BIN="opencode" \
 		OPENCODE_DB="/tmp/opencode.db" \
 		run_without_opencode_session_env bash -c '
-			printf "%s|%s|%s|%s|%s|%s|%s|%s" \
-				"${OPENCODE_SESSION_ID:-}" "${OPENCODE_PID:-}" "${OPENCODE_RUN_ID:-}" \
+			printf "%s|%s|%s|%s|%s|%s|%s|%s|%s" \
+				"${AIDEVOPS_OPENCODE_SESSION_ID:-}" "${OPENCODE_SESSION_ID:-}" "${OPENCODE_PID:-}" "${OPENCODE_RUN_ID:-}" \
 				"${OPENCODE_PROCESS_ROLE:-}" "${OPENCODE:-}" "${OPENCODE_SERVER_PASSWORD:-}" \
 				"${OPENCODE_BIN:-}" "${OPENCODE_DB:-}"
 		'
 	)
 
-	if [[ "$output" == "||||||opencode|/tmp/opencode.db" ]]; then
+	if [[ "$output" == "|||||||opencode|/tmp/opencode.db" ]]; then
 		print_result "OpenCode session env wrapper strips only session-bound vars" 0
 		return 0
 	fi
@@ -1221,6 +1243,7 @@ test_sandbox_passthrough_scopes_provider_env() {
 		GOOGLE_API_KEY='google-test' \
 		OPENCODE_BIN='opencode' \
 		OPENCODE_DB='/tmp/opencode.db' \
+		AIDEVOPS_OPENCODE_SESSION_ID='ses_parent' \
 		OPENCODE_SESSION_ID='ses_parent' \
 		OPENCODE_PID='12345' \
 		OPENCODE_RUN_ID='run_parent' \
@@ -1235,6 +1258,7 @@ test_sandbox_passthrough_scopes_provider_env() {
 		[[ "$csv" != *"GOOGLE_API_KEY"* ]] &&
 		[[ "$csv" == *"OPENCODE_BIN"* ]] &&
 		[[ "$csv" == *"OPENCODE_DB"* ]] &&
+		[[ "$csv" != *"AIDEVOPS_OPENCODE_SESSION_ID"* ]] &&
 		[[ "$csv" != *"OPENCODE_SESSION_ID"* ]] &&
 		[[ "$csv" != *"OPENCODE_PID"* ]] &&
 		[[ "$csv" != *"OPENCODE_RUN_ID"* ]] &&
@@ -1277,6 +1301,27 @@ EOF
 	return 0
 }
 
+create_complete_opencode_test_schema() {
+	local db_path="$1"
+	sqlite3 "$db_path" <<'SQL'
+CREATE TABLE project (id TEXT PRIMARY KEY, name TEXT NOT NULL);
+CREATE TABLE project_directory (project_id TEXT NOT NULL, directory TEXT NOT NULL, PRIMARY KEY(project_id, directory));
+CREATE TABLE permission (id TEXT PRIMARY KEY, project_id TEXT NOT NULL, data TEXT NOT NULL);
+CREATE TABLE workspace (id TEXT PRIMARY KEY, project_id TEXT NOT NULL, data TEXT NOT NULL);
+CREATE TABLE session (id TEXT PRIMARY KEY, project_id TEXT NOT NULL, directory TEXT NOT NULL, title TEXT NOT NULL);
+CREATE TABLE message (id TEXT PRIMARY KEY, session_id TEXT NOT NULL, data TEXT NOT NULL);
+CREATE TABLE part (id TEXT PRIMARY KEY, message_id TEXT NOT NULL, session_id TEXT NOT NULL, data TEXT NOT NULL);
+CREATE TABLE todo (session_id TEXT NOT NULL, position INTEGER NOT NULL, content TEXT NOT NULL, PRIMARY KEY(session_id, position));
+CREATE TABLE session_share (session_id TEXT PRIMARY KEY, data TEXT NOT NULL);
+CREATE TABLE session_context_epoch (session_id TEXT PRIMARY KEY, data TEXT NOT NULL);
+CREATE TABLE session_input (id TEXT PRIMARY KEY, session_id TEXT NOT NULL, data TEXT NOT NULL);
+CREATE TABLE session_message (id TEXT PRIMARY KEY, session_id TEXT NOT NULL, data TEXT NOT NULL);
+CREATE TABLE event_sequence (aggregate_id TEXT PRIMARY KEY, seq INTEGER NOT NULL);
+CREATE TABLE event (id TEXT PRIMARY KEY, aggregate_id TEXT NOT NULL, seq INTEGER NOT NULL, data TEXT NOT NULL);
+SQL
+	return 0
+}
+
 test_seed_worker_db_session_context_copies_only_selected_session() {
 	local shared_dir="${HOME}/.local/share/opencode"
 	local isolated_dir="${TEST_ROOT}/isolated-opencode-data"
@@ -1315,6 +1360,41 @@ SQL
 
 	print_result "seed worker DB copies only selected continuation session" 1 \
 		"sessions=$sessions messages=$messages other_sessions=$other_sessions other_messages=$other_messages projects=$projects"
+	return 0
+}
+
+test_seed_worker_db_session_context_rebinds_replacement_worktree() {
+	local shared_dir="${HOME}/.local/share/opencode"
+	local isolated_dir="${TEST_ROOT}/isolated-opencode-rebound"
+	local replacement_dir="${TEST_ROOT}/replacement-worktree"
+	local shared_db="${shared_dir}/opencode.db"
+	local worker_db="${isolated_dir}/opencode/opencode.db"
+	local stale_dir="${TEST_ROOT}/removed-worktree"
+	mkdir -p "$shared_dir" "${isolated_dir}/opencode" "$replacement_dir"
+	rm -f "$shared_db" "$worker_db"
+
+	sqlite3 "$shared_db" <<SQL
+CREATE TABLE project (id TEXT PRIMARY KEY, name TEXT);
+CREATE TABLE session (id TEXT PRIMARY KEY, project_id TEXT NOT NULL, directory TEXT NOT NULL, title TEXT NOT NULL);
+CREATE TABLE message (id TEXT PRIMARY KEY, session_id TEXT NOT NULL, data TEXT NOT NULL);
+INSERT INTO project VALUES ('project-keep', 'Keep Project');
+INSERT INTO session VALUES ('session-keep', 'project-keep', '${stale_dir}', 'Keep');
+INSERT INTO message VALUES ('message-keep', 'session-keep', 'one');
+SQL
+
+	_seed_worker_db_session_context "$isolated_dir" "session-keep" "$replacement_dir"
+
+	local worker_directory="" shared_directory="" expected_replacement=""
+	expected_replacement=$(cd "$replacement_dir" && pwd -P)
+	worker_directory=$(sqlite3 "$worker_db" "SELECT directory FROM session WHERE id = 'session-keep';")
+	shared_directory=$(sqlite3 "$shared_db" "SELECT directory FROM session WHERE id = 'session-keep';")
+	if [[ "$worker_directory" == "$expected_replacement" && "$shared_directory" == "$stale_dir" ]]; then
+		print_result "seed worker DB rebinds stale session to replacement worktree only in isolation" 0
+		return 0
+	fi
+
+	print_result "seed worker DB rebinds stale session to replacement worktree only in isolation" 1 \
+		"worker_directory=$worker_directory shared_directory=$shared_directory"
 	return 0
 }
 
@@ -1360,7 +1440,7 @@ SQL
 	return 0
 }
 
-test_seed_worker_db_session_context_uses_backup_for_fresh_db() {
+test_seed_worker_db_session_context_uses_schema_only_fresh_db() {
 	local shared_dir="${HOME}/.local/share/opencode"
 	local isolated_dir="${TEST_ROOT}/isolated-opencode-backup-seed"
 	local shared_db="${shared_dir}/opencode.db"
@@ -1390,6 +1470,7 @@ SQL
 	_seed_worker_db_session_context "$isolated_dir" "session-keep"
 
 	local user_version schema_migrations sessions other_sessions messages other_messages projects other_projects
+	local seed_definition initialize_definition
 	user_version=$(sqlite3 "$worker_db" "PRAGMA user_version;")
 	schema_migrations=$(sqlite3 "$worker_db" "SELECT COUNT(*) FROM __drizzle_migrations WHERE hash = 'schema-ready';")
 	sessions=$(sqlite3 "$worker_db" "SELECT COUNT(*) FROM session WHERE id = 'session-keep';")
@@ -1398,13 +1479,15 @@ SQL
 	other_messages=$(sqlite3 "$worker_db" "SELECT COUNT(*) FROM message WHERE session_id = 'session-other';")
 	projects=$(sqlite3 "$worker_db" "SELECT COUNT(*) FROM project WHERE id = 'project-keep';")
 	other_projects=$(sqlite3 "$worker_db" "SELECT COUNT(*) FROM project WHERE id = 'project-other';")
+	seed_definition=$(declare -f _seed_worker_db_session_context)
+	initialize_definition=$(declare -f _initialize_worker_db_from_shared_schema)
 
-	if [[ "$user_version" == "42" && "$schema_migrations" == "1" && "$sessions" == "1" && "$other_sessions" == "0" && "$messages" == "1" && "$other_messages" == "0" && "$projects" == "1" && "$other_projects" == "0" ]]; then
-		print_result "seed worker DB uses shared backup for fresh continuation DB" 0
+	if [[ "$user_version" == "42" && "$schema_migrations" == "1" && "$sessions" == "1" && "$other_sessions" == "0" && "$messages" == "1" && "$other_messages" == "0" && "$projects" == "1" && "$other_projects" == "0" && "$seed_definition" != *".backup"* && "$initialize_definition" == *'".schema"'* ]]; then
+		print_result "seed worker DB uses shared schema for fresh continuation DB" 0
 		return 0
 	fi
 
-	print_result "seed worker DB uses shared backup for fresh continuation DB" 1 \
+	print_result "seed worker DB uses shared schema for fresh continuation DB" 1 \
 		"user_version=$user_version schema_migrations=$schema_migrations sessions=$sessions other_sessions=$other_sessions messages=$messages other_messages=$other_messages projects=$projects other_projects=$other_projects"
 	return 0
 }
@@ -1442,6 +1525,136 @@ SQL
 
 	print_result "seed worker DB vacuums pruned backup pages" 1 \
 		"other_messages=$other_messages freelist_count=$freelist_count"
+	return 0
+}
+
+test_seed_worker_db_session_context_copies_complete_graph() {
+	local shared_dir="${HOME}/.local/share/opencode"
+	local isolated_dir="${TEST_ROOT}/isolated-opencode-complete-graph"
+	local shared_db="${shared_dir}/opencode.db"
+	local worker_db="${isolated_dir}/opencode/opencode.db"
+	mkdir -p "$shared_dir" "${isolated_dir}/opencode"
+	rm -f "$shared_db" "$worker_db"
+	create_complete_opencode_test_schema "$shared_db"
+
+	sqlite3 "$shared_db" <<'SQL'
+INSERT INTO project VALUES ('project-keep', 'Keep Project'), ('project-other', 'Other Project');
+INSERT INTO project_directory VALUES ('project-keep', '/keep'), ('project-other', '/other');
+INSERT INTO permission VALUES ('permission-keep', 'project-keep', 'keep'), ('permission-other', 'project-other', 'other');
+INSERT INTO workspace VALUES ('workspace-keep', 'project-keep', 'keep'), ('workspace-other', 'project-other', 'other');
+INSERT INTO session VALUES ('session-keep', 'project-keep', '/keep', 'Keep'), ('session-other', 'project-other', '/other', 'Other');
+INSERT INTO message VALUES ('message-keep', 'session-keep', 'keep'), ('message-other', 'session-other', 'other');
+INSERT INTO part VALUES ('part-keep', 'message-keep', 'session-keep', 'keep'), ('part-other', 'message-other', 'session-other', 'other');
+INSERT INTO todo VALUES ('session-keep', 0, 'keep'), ('session-other', 0, 'other');
+INSERT INTO session_share VALUES ('session-keep', 'keep'), ('session-other', 'other');
+INSERT INTO session_context_epoch VALUES ('session-keep', 'keep'), ('session-other', 'other');
+INSERT INTO session_input VALUES ('input-keep', 'session-keep', 'keep'), ('input-other', 'session-other', 'other');
+INSERT INTO session_message VALUES ('projection-keep', 'session-keep', 'keep'), ('projection-other', 'session-other', 'other');
+INSERT INTO event_sequence VALUES ('session-keep', 1), ('session-other', 1);
+INSERT INTO event VALUES ('event-keep', 'session-keep', 1, 'keep'), ('event-other', 'session-other', 1, zeroblob(1048576));
+SQL
+
+	_seed_worker_db_session_context "$isolated_dir" "session-keep"
+
+	local session_graph_count project_graph_count unrelated_count event_count
+	session_graph_count=$(sqlite3 "$worker_db" "SELECT (SELECT COUNT(*) FROM message) + (SELECT COUNT(*) FROM part) + (SELECT COUNT(*) FROM todo) + (SELECT COUNT(*) FROM session_share) + (SELECT COUNT(*) FROM session_context_epoch) + (SELECT COUNT(*) FROM session_input) + (SELECT COUNT(*) FROM session_message);")
+	project_graph_count=$(sqlite3 "$worker_db" "SELECT (SELECT COUNT(*) FROM project_directory) + (SELECT COUNT(*) FROM permission) + (SELECT COUNT(*) FROM workspace);")
+	unrelated_count=$(sqlite3 "$worker_db" "SELECT (SELECT COUNT(*) FROM session WHERE id = 'session-other') + (SELECT COUNT(*) FROM message WHERE session_id = 'session-other') + (SELECT COUNT(*) FROM part WHERE session_id = 'session-other') + (SELECT COUNT(*) FROM event WHERE aggregate_id = 'session-other');")
+	event_count=$(sqlite3 "$worker_db" "SELECT (SELECT COUNT(*) FROM event_sequence WHERE aggregate_id = 'session-keep') + (SELECT COUNT(*) FROM event WHERE aggregate_id = 'session-keep');")
+
+	if [[ "$session_graph_count" == "7" && "$project_graph_count" == "3" && "$unrelated_count" == "0" && "$event_count" == "2" ]]; then
+		print_result "seed worker DB copies complete selected session graph only" 0
+		return 0
+	fi
+
+	print_result "seed worker DB copies complete selected session graph only" 1 \
+		"session_graph=$session_graph_count project_graph=$project_graph_count unrelated=$unrelated_count events=$event_count"
+	return 0
+}
+
+test_merge_worker_db_replaces_complete_session_graph_atomically() {
+	local shared_dir="${HOME}/.local/share/opencode"
+	local isolated_dir="${TEST_ROOT}/merge-opencode-complete-graph"
+	local shared_db="${shared_dir}/opencode.db"
+	local worker_db="${isolated_dir}/opencode/opencode.db"
+	mkdir -p "$shared_dir" "${isolated_dir}/opencode"
+	rm -f "$shared_db" "$worker_db"
+	create_complete_opencode_test_schema "$shared_db"
+	create_complete_opencode_test_schema "$worker_db"
+
+	sqlite3 "$shared_db" <<'SQL'
+INSERT INTO project VALUES ('project-keep', 'Shared Project'), ('project-other', 'Other Project');
+INSERT INTO session VALUES ('session-keep', 'project-keep', '/old', 'Old'), ('session-other', 'project-other', '/other', 'Other');
+INSERT INTO message VALUES ('message-keep', 'session-keep', 'old'), ('message-other', 'session-other', 'other');
+INSERT INTO part VALUES ('part-keep', 'message-keep', 'session-keep', 'old'), ('part-other', 'message-other', 'session-other', 'other');
+INSERT INTO todo VALUES ('session-keep', 0, 'removed-by-worker');
+INSERT INTO event_sequence VALUES ('session-keep', 1), ('session-other', 1);
+INSERT INTO event VALUES ('event-keep', 'session-keep', 1, 'old'), ('event-other', 'session-other', 1, 'other');
+SQL
+	sqlite3 "$worker_db" <<'SQL'
+INSERT INTO project VALUES ('project-keep', 'Worker Project');
+INSERT INTO session VALUES ('session-keep', 'project-keep', '/new', 'New');
+INSERT INTO message VALUES ('message-keep', 'session-keep', 'new');
+INSERT INTO part VALUES ('part-keep', 'message-keep', 'session-keep', 'new');
+INSERT INTO session_context_epoch VALUES ('session-keep', 'new');
+INSERT INTO session_input VALUES ('input-keep', 'session-keep', 'new');
+INSERT INTO session_message VALUES ('projection-keep', 'session-keep', 'new');
+INSERT INTO event_sequence VALUES ('session-keep', 2);
+INSERT INTO event VALUES ('event-keep', 'session-keep', 2, 'new');
+SQL
+
+	local merge_status=0
+	_merge_worker_db "$isolated_dir" || merge_status=$?
+
+	local merged_values unrelated_values
+	merged_values=$(sqlite3 "$shared_db" "SELECT title || '|' || directory FROM session WHERE id = 'session-keep'; SELECT data FROM message WHERE id = 'message-keep'; SELECT data FROM part WHERE id = 'part-keep'; SELECT COUNT(*) FROM todo WHERE session_id = 'session-keep'; SELECT data FROM session_context_epoch WHERE session_id = 'session-keep'; SELECT seq || '|' || data FROM event WHERE id = 'event-keep';")
+	unrelated_values=$(sqlite3 "$shared_db" "SELECT data FROM message WHERE id = 'message-other'; SELECT data FROM part WHERE id = 'part-other'; SELECT data FROM event WHERE id = 'event-other';")
+
+	if [[ "$merge_status" -eq 0 && "$merged_values" == $'New|/new\nnew\nnew\n0\nnew\n2|new' && "$unrelated_values" == $'other\nother\nother' ]]; then
+		print_result "merge worker DB atomically replaces complete session graph" 0
+		return 0
+	fi
+
+	print_result "merge worker DB atomically replaces complete session graph" 1 \
+		"status=$merge_status merged=$merged_values unrelated=$unrelated_values"
+	return 0
+}
+
+test_merge_worker_db_failure_preserves_recovery_db_without_auth() {
+	local shared_dir="${HOME}/.local/share/opencode"
+	local isolated_dir="${TEST_ROOT}/merge-opencode-failure"
+	local recovery_root="${TEST_ROOT}/worker-db-recovery"
+	local shared_db="${shared_dir}/opencode.db"
+	local worker_db="${isolated_dir}/opencode/opencode.db"
+	mkdir -p "$shared_dir" "${isolated_dir}/opencode"
+	rm -f "$shared_db" "$worker_db"
+	create_complete_opencode_test_schema "$shared_db"
+	create_complete_opencode_test_schema "$worker_db"
+	sqlite3 "$shared_db" "INSERT INTO project VALUES ('project-keep', 'Shared'); INSERT INTO session VALUES ('session-keep', 'project-keep', '/old', 'Old');"
+	sqlite3 "$worker_db" "CREATE TABLE worker_only (id TEXT PRIMARY KEY, session_id TEXT NOT NULL); INSERT INTO project VALUES ('project-keep', 'Worker'); INSERT INTO session VALUES ('session-keep', 'project-keep', '/new', 'New');"
+	printf '%s' 'test-auth-must-not-be-preserved' >"${isolated_dir}/opencode/auth.json"
+
+	local merge_status=0
+	_merge_worker_db "$isolated_dir" || merge_status=$?
+	AIDEVOPS_WORKER_DB_RECOVERY_DIR="$recovery_root" _preserve_failed_worker_db "$isolated_dir"
+
+	local recovered_db="" recovery_auth_count=0 shared_title candidate
+	for candidate in "$recovery_root"/*/opencode.db; do
+		[[ -f "$candidate" ]] || continue
+		recovered_db="$candidate"
+		break
+	done
+	if compgen -G "${recovery_root}/*/auth.json" >/dev/null; then
+		recovery_auth_count=1
+	fi
+	shared_title=$(sqlite3 "$shared_db" "SELECT title FROM session WHERE id = 'session-keep';")
+	if [[ "$merge_status" -ne 0 && -f "$recovered_db" && "$recovery_auth_count" == "0" && -f "${isolated_dir}/opencode/auth.json" && "$shared_title" == "Old" ]]; then
+		print_result "failed merge rolls back and preserves DB without worker auth" 0
+		return 0
+	fi
+
+	print_result "failed merge rolls back and preserves DB without worker auth" 1 \
+		"status=$merge_status recovered=${recovered_db:-none} recovery_auth=$recovery_auth_count shared_title=$shared_title"
 	return 0
 }
 
@@ -2059,9 +2272,13 @@ test_worker_produced_output_branch_with_pr_returns_pr_exists() {
 	_setup_test_git_repo "$work_dir" 1
 	git -C "$work_dir" push -q origin "feature/auto-test-issue-99999"
 	DISPATCH_REPO_SLUG="test-owner/test-repo"
+	local expected_head
+	expected_head=$(git -C "$work_dir" rev-parse HEAD)
 	gh() {
-		if [[ "${*}" == *"--head"* && "${*}" == *"statusCheckRollup"* ]]; then
-			printf '%s\n' '[{"number":123,"state":"OPEN","isDraft":false,"mergedAt":null,"labels":[{"name":"origin:worker"}],"statusCheckRollup":[]}]'
+		if [[ "${*}" == *"api --paginate"* && "${*}" == *"/issues/123/comments"* ]]; then
+			printf '%s\n' '[[{"body":"<!-- MERGE_SUMMARY -->"}]]'
+		elif [[ "${*}" == *"--head"* && "${*}" == *"statusCheckRollup"* ]]; then
+			printf '[{"number":123,"state":"OPEN","isDraft":false,"mergedAt":null,"headRefOid":"%s","labels":[{"name":"origin:worker"}],"statusCheckRollup":[]}]\n' "$expected_head"
 		else
 			printf '%s\n' '[]'
 		fi
@@ -2710,14 +2927,20 @@ test_post_pr_handoff_detects_open_pending_pr() {
 	init_git_worktree "$work_dir"
 	git -C "$work_dir" checkout -q -b "feature/auto-test-issue-99999"
 	DISPATCH_REPO_SLUG="test-owner/test-repo"
+	local expected_head
+	expected_head=$(git -C "$work_dir" rev-parse HEAD)
 
 	gh() {
 		local args="$*"
 		if [[ "$args" == *"pr list"* && "$args" == *"--state open"* && "$args" == *"--head feature/auto-test-issue-99999"* ]]; then
-			printf '1'
+			printf '[{"number":123,"isDraft":false,"headRefOid":"%s","statusCheckRollup":[]}]' "$expected_head"
 			return 0
 		fi
-		printf '0'
+		if [[ "$args" == *"api --paginate"* && "$args" == *"/issues/123/comments"* ]]; then
+			printf '%s' '[[{"body":"<!-- MERGE_SUMMARY -->"}]]'
+			return 0
+		fi
+		printf '[]'
 		return 0
 	}
 
@@ -2726,6 +2949,53 @@ test_post_pr_handoff_detects_open_pending_pr() {
 	else
 		print_result "post-PR watchdog handoff detects open pending PR" 1 \
 			"Expected open PR on worker branch to classify as handoff"
+	fi
+
+	unset DISPATCH_REPO_SLUG 2>/dev/null || true
+	unset -f gh 2>/dev/null || true
+	return 0
+}
+
+test_post_pr_handoff_rejects_mismatched_head_or_missing_summary() {
+	local work_dir="${TEST_ROOT}/repo-post-pr-incomplete"
+	mkdir -p "$work_dir"
+	init_git_worktree "$work_dir"
+	git -C "$work_dir" checkout -q -b "feature/auto-test-issue-99999"
+	DISPATCH_REPO_SLUG="test-owner/test-repo"
+	local expected_head
+	expected_head=$(git -C "$work_dir" rev-parse HEAD)
+	local remote_head="different-head"
+	local summary_count=1
+
+	gh() {
+		local args="$*"
+		if [[ "$args" == *"pr list"* ]]; then
+			printf '[{"number":125,"isDraft":false,"headRefOid":"%s","statusCheckRollup":[]}]' "$remote_head"
+			return 0
+		fi
+		if [[ "$args" == *"api --paginate"* ]]; then
+			if [[ "$summary_count" -gt 0 ]]; then
+				printf '%s' '[[{"body":"<!-- MERGE_SUMMARY -->"}]]'
+			else
+				printf '%s' '[[]]'
+			fi
+			return 0
+		fi
+		printf '[]'
+		return 0
+	}
+
+	if _worker_post_pr_handoff_confirmed "issue-99999" "$work_dir"; then
+		print_result "post-PR watchdog handoff rejects mismatched PR head" 1
+	else
+		print_result "post-PR watchdog handoff rejects mismatched PR head" 0
+	fi
+	remote_head="$expected_head"
+	summary_count=0
+	if _worker_post_pr_handoff_confirmed "issue-99999" "$work_dir"; then
+		print_result "post-PR watchdog handoff rejects missing MERGE_SUMMARY" 1
+	else
+		print_result "post-PR watchdog handoff rejects missing MERGE_SUMMARY" 0
 	fi
 
 	unset DISPATCH_REPO_SLUG 2>/dev/null || true
@@ -2820,28 +3090,35 @@ test_protected_draft_is_not_mutated_or_completed() {
 }
 
 test_checkpoint_terminal_telemetry_is_failed_escalated() {
-	local fixture_class result expected_reason
-	for fixture_class in draft_checkpoint ready_failed; do
-		if [[ "$fixture_class" == "draft_checkpoint" ]]; then
-			expected_reason="worker_draft_checkpoint"
-		else
-			expected_reason="worker_ready_failed"
-		fi
-		result=$(
-			(
-				_worker_produced_output() { printf '%s' "$fixture_class"; return 0; }
-				_escalate_worker_pr_checkpoint() { _HRW_RECOVERY_CLASSIFICATION="$expected_reason"; return 0; }
-				_hrw_finish_success_run "issue-99999" "${TEST_ROOT}"
-				printf '%s|%s|%s|%s' "$_HRW_TERMINAL_OUTCOME" "$_HRW_FINAL_RUNTIME_EVENT" \
-					"$_HRW_FINAL_RUNTIME_STATUS" "$_HRW_FINAL_RUNTIME_CLASSIFICATION"
-			)
+	local fixture_class="draft_checkpoint"
+	local expected_reason="worker_draft_checkpoint"
+	local result
+	result=$(
+		(
+			_worker_produced_output() { printf '%s' "$fixture_class"; return 0; }
+			_escalate_worker_pr_checkpoint() { _HRW_RECOVERY_CLASSIFICATION="$expected_reason"; return 0; }
+			_hrw_finish_success_run "issue-99999" "${TEST_ROOT}"
+			printf '%s|%s|%s|%s' "$_HRW_TERMINAL_OUTCOME" "$_HRW_FINAL_RUNTIME_EVENT" \
+				"$_HRW_FINAL_RUNTIME_STATUS" "$_HRW_FINAL_RUNTIME_CLASSIFICATION"
 		)
-		if [[ "$result" == "failed|worker.failed|escalated|${expected_reason}" ]]; then
-			print_result "${fixture_class} records failed/escalated terminal telemetry" 0
-		else
-			print_result "${fixture_class} records failed/escalated terminal telemetry" 1 "$result"
-		fi
-	done
+	)
+	if [[ "$result" == "failed|worker.failed|escalated|${expected_reason}" ]]; then
+		print_result "${fixture_class} records failed/escalated terminal telemetry" 0
+	else
+		print_result "${fixture_class} records failed/escalated terminal telemetry" 1 "$result"
+	fi
+	return 0
+}
+
+test_failed_ci_ready_pr_is_durable_handoff() {
+	local pr_json result
+	pr_json='[{"number":457,"state":"OPEN","isDraft":false,"mergedAt":null,"headRefOid":"abc123","labels":[{"name":"origin:worker"}],"statusCheckRollup":[{"name":"tests","conclusion":"FAILURE"},{"name":"tests","conclusion":"SUCCESS"}]}]'
+	result=$(_pr_handoff_state_from_json "$pr_json" "abc123")
+	if [[ "$result" == "ready|457" ]]; then
+		print_result "failed or historical CI does not invalidate a ready PR handoff" 0
+	else
+		print_result "failed or historical CI does not invalidate a ready PR handoff" 1 "$result"
+	fi
 	return 0
 }
 
@@ -2898,7 +3175,7 @@ test_post_pr_handoff_rejects_pre_pr_stall() {
 	DISPATCH_REPO_SLUG="test-owner/test-repo"
 
 	gh() {
-		printf '0'
+		printf '[]'
 		return 0
 	}
 
@@ -2920,14 +3197,20 @@ test_post_pr_handoff_overrides_watchdog_next_action() {
 	init_git_worktree "$work_dir"
 	git -C "$work_dir" checkout -q -b "feature/auto-test-issue-99999"
 	DISPATCH_REPO_SLUG="test-owner/test-repo"
+	local expected_head
+	expected_head=$(git -C "$work_dir" rev-parse HEAD)
 
 	gh() {
 		local args="$*"
 		if [[ "$args" == *"pr list"* && "$args" == *"--state open"* ]]; then
-			printf '1'
+			printf '[{"number":124,"isDraft":false,"headRefOid":"%s","statusCheckRollup":[]}]' "$expected_head"
 			return 0
 		fi
-		printf '0'
+		if [[ "$args" == *"api --paginate"* && "$args" == *"/issues/124/comments"* ]]; then
+			printf '%s' '[[{"body":"<!-- MERGE_SUMMARY -->"}]]'
+			return 0
+		fi
+		printf '[]'
 		return 0
 	}
 
@@ -2974,12 +3257,33 @@ test_completion_infrastructure_resumes_without_implementation_penalty() {
 
 test_pr_checkpoint_lifecycle_cases() {
 	test_post_pr_handoff_detects_open_pending_pr
+	test_post_pr_handoff_rejects_mismatched_head_or_missing_summary
 	test_failed_worker_draft_checkpoint_escalates_without_completion
 	test_failed_worker_draft_retains_claim_when_block_not_visible
 	test_protected_draft_is_not_mutated_or_completed
 	test_checkpoint_terminal_telemetry_is_failed_escalated
+	test_failed_ci_ready_pr_is_durable_handoff
 	test_closed_unmerged_pr_is_failed_not_completed
 	test_failed_worker_ready_pr_remains_completed_handoff
+	return 0
+}
+
+run_worker_db_persistence_tests() {
+	test_seed_worker_db_session_context_copies_only_selected_session
+	test_seed_worker_db_session_context_rebinds_replacement_worktree
+	test_seed_worker_db_session_context_copies_migration_metadata
+	test_seed_worker_db_session_context_uses_schema_only_fresh_db
+	test_seed_worker_db_session_context_vacuums_pruned_backup
+	test_seed_worker_db_session_context_copies_complete_graph
+	test_merge_worker_db_replaces_complete_session_graph_atomically
+	test_merge_worker_db_failure_preserves_recovery_db_without_auth
+	test_sync_worker_db_migration_metadata_repairs_prewarmed_project_table
+	test_sync_worker_db_migration_metadata_replaces_stale_ledgers
+	test_copy_worker_db_migration_ledger_preserves_rows_when_attach_fails
+	test_copy_worker_db_migration_ledger_stops_when_schema_query_fails
+	test_sync_worker_db_migration_metadata_archives_unrepairable_project_table
+	test_sync_worker_db_migration_metadata_preserves_worker_db_when_shared_query_fails
+	test_sync_worker_db_migration_metadata_repeated_launch_reaches_seed
 	return 0
 }
 
@@ -2990,6 +3294,7 @@ main() {
 	test_headless_contract_uses_deployed_framework_paths
 	test_parse_initial_model_does_not_set_explicit_override
 	test_launch_helpers_tolerate_unset_state_under_nounset
+	test_runtime_temp_files_use_managed_workspace
 	test_startup_no_activity_timeout_returns_watchdog_continue
 	test_startup_no_activity_can_rotate_after_continuation_budget
 	test_sigkill_with_activity_attempts_continuation
@@ -3032,17 +3337,7 @@ main() {
 	test_worker_opencode_invocation_seeds_continuation_session
 	test_sandbox_passthrough_scopes_provider_env
 	test_copy_scoped_opencode_auth_keeps_selected_provider_only
-	test_seed_worker_db_session_context_copies_only_selected_session
-	test_seed_worker_db_session_context_copies_migration_metadata
-	test_seed_worker_db_session_context_uses_backup_for_fresh_db
-	test_seed_worker_db_session_context_vacuums_pruned_backup
-	test_sync_worker_db_migration_metadata_repairs_prewarmed_project_table
-	test_sync_worker_db_migration_metadata_replaces_stale_ledgers
-	test_copy_worker_db_migration_ledger_preserves_rows_when_attach_fails
-	test_copy_worker_db_migration_ledger_stops_when_schema_query_fails
-	test_sync_worker_db_migration_metadata_archives_unrepairable_project_table
-	test_sync_worker_db_migration_metadata_preserves_worker_db_when_shared_query_fails
-	test_sync_worker_db_migration_metadata_repeated_launch_reaches_seed
+	run_worker_db_persistence_tests
 	test_opencode_project_table_migration_replay_detected
 	test_large_opencode_prompt_uses_file_attachment
 	test_large_claude_prompt_uses_stdin_file

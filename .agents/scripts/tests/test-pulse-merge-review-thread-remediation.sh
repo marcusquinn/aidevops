@@ -109,6 +109,27 @@ test_unresolved_conversation_dispatches_targeted_human_thread_remediation() {
 	return 0
 }
 
+test_repo_path_lookup_ignores_slug_case() {
+	setup_test_env
+	printf '{"initialized_repos":[{"slug":"Owner/Repo","path":"%s"}]}\n' "${TEST_ROOT}/repo" >"$AIDEVOPS_REPOS_JSON"
+	define_helpers_under_test || { teardown_test_env; return 0; }
+
+	local repo_path=""
+	repo_path=$(_pulse_merge_repo_path_for_slug owner/repo 2>/dev/null) || repo_path=""
+	_pulse_merge_maybe_dispatch_review_thread_remediation 77 owner/repo 'GraphQL: A conversation must be resolved before merging'
+
+	if [[ "$repo_path" == "${TEST_ROOT}/repo" ]] \
+		&& grep -q 'include_human=true args=dispatch-pr owner/repo' "$SCANNER_LOG" \
+		&& grep -q ' 77$' "$SCANNER_LOG"; then
+		print_result "repo path lookup ignores slug case" 0
+	else
+		print_result "repo path lookup ignores slug case" 1 \
+			"repo_path=${repo_path}, scanner=$(tr '\n' ';' <"$SCANNER_LOG"), log=$(tr '\n' ';' <"$LOGFILE")"
+	fi
+	teardown_test_env
+	return 0
+}
+
 test_other_merge_failures_do_not_dispatch_review_thread_remediation() {
 	setup_test_env
 	define_helpers_under_test || { teardown_test_env; return 0; }
@@ -266,6 +287,7 @@ test_changes_requested_empty_worker_label_pattern_does_not_match_every_label() {
 
 main() {
 	test_unresolved_conversation_dispatches_targeted_human_thread_remediation
+	test_repo_path_lookup_ignores_slug_case
 	test_other_merge_failures_do_not_dispatch_review_thread_remediation
 	test_changes_requested_routes_by_default
 	test_changes_requested_opt_in_dispatches_remediation_without_routing

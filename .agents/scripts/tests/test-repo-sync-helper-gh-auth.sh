@@ -63,6 +63,48 @@ run_case() {
 	return 0
 }
 
+run_canonical_guard_case() {
+	local tmp_dir
+	tmp_dir=$(mktemp -d)
+	TEMP_DIRS+=("$tmp_dir")
+	local repo="${tmp_dir}/parent/repo"
+	local remote="${tmp_dir}/remote.git"
+	mkdir -p "${tmp_dir}/bin" "${tmp_dir}/home/.config/aidevops" "${tmp_dir}/parent"
+	ln -s "${SCRIPT_DIR}/../git" "${tmp_dir}/bin/git"
+	ln -s "${SCRIPT_DIR}/fixtures/repo-sync-fake-gh.sh" "${tmp_dir}/bin/gh"
+
+	/usr/bin/git init -q --bare "$remote"
+	/usr/bin/git init -q -b main "$repo" 2>/dev/null || {
+		/usr/bin/git init -q "$repo"
+		/usr/bin/git -C "$repo" checkout -q -b main
+	}
+	/usr/bin/git -C "$repo" config user.name Test
+	/usr/bin/git -C "$repo" config user.email test@example.invalid
+	printf 'seed\n' >"${repo}/README.md"
+	/usr/bin/git -C "$repo" add README.md
+	/usr/bin/git -C "$repo" commit -q -m seed
+	/usr/bin/git -C "$repo" remote add origin "$remote"
+	/usr/bin/git -C "$repo" push -q -u origin main
+	printf '{"git_parent_dirs":["%s"]}\n' "${tmp_dir}/parent" >"${tmp_dir}/home/.config/aidevops/repos.json"
+
+	local before
+	before=$(/usr/bin/git -C "$repo" show-ref)
+	local rc=0
+	env \
+		HOME="${tmp_dir}/home" \
+		PATH="${tmp_dir}/bin:/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin" \
+		FAKE_GH_LOG="${tmp_dir}/gh.log" \
+		"$HELPER" check >"${tmp_dir}/stdout.log" 2>"${tmp_dir}/stderr.log" || rc=$?
+	local after
+	after=$(/usr/bin/git -C "$repo" show-ref)
+
+	LAST_CASE_DIR="$tmp_dir"
+	LAST_CASE_RC="$rc"
+	LAST_CANONICAL_REFS_UNCHANGED=0
+	[[ "$before" == "$after" ]] && LAST_CANONICAL_REFS_UNCHANGED=1
+	return 0
+}
+
 assert_file_contains() {
 	local file_path="$1"
 	local pattern="$2"
@@ -128,6 +170,12 @@ run_case github_fallback_failure_redacts FAKE_FETCH_MODE=auth_always_fail FAKE_R
 assert_rc 1 "$LAST_CASE_RC" "failed GitHub fallback exits with failure"
 assert_file_not_contains "${LAST_CASE_DIR}/home/.aidevops/logs/repo-sync.log" "SECRET_TOKEN_github_fallback_failure_redacts" "failed GitHub fallback log redacts token"
 assert_file_contains "${LAST_CASE_DIR}/home/.aidevops/logs/repo-sync.log" "[redacted-credential]" "failed GitHub fallback log includes redacted credential marker"
+
+run_canonical_guard_case
+assert_rc 0 "$LAST_CASE_RC" "repo-sync completes through the deployed canonical Git shim"
+assert_file_contains "${LAST_CASE_DIR}/home/.aidevops/logs/repo-sync.log" "already up to date" "canonical repo-sync reads the remote branch tip"
+assert_file_not_contains "${LAST_CASE_DIR}/stderr.log" "BLOCKED by canonical Git guard" "canonical repo-sync is not rejected as mutation"
+assert_rc 1 "$LAST_CANONICAL_REFS_UNCHANGED" "canonical repo-sync leaves local refs unchanged"
 
 if [[ $failures -gt 0 ]]; then
 	printf '\n%d repo-sync gh-auth test(s) failed\n' "$failures" >&2

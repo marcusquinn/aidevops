@@ -38,10 +38,10 @@ _HRW_TELEMETRY_FAILED="failed"
 _HRW_TELEMETRY_DEFERRED="deferred"
 _HRW_REASON_DRAFT_CHECKPOINT="worker_draft_checkpoint"
 _HRW_REASON_DRAFT_ESCALATION_FAILED="worker_draft_checkpoint_escalation_failed"
-_HRW_REASON_READY_FAILED="worker_ready_failed"
 _HRW_REASON_CLOSED_UNMERGED="worker_closed_unmerged_pr"
 _HRW_EVENT_FAILED="worker.failed"
 _HRW_NMR_LABEL="needs-maintainer-review"
+_HRW_PERMISSION_PERSISTENCE_FAILED="permission_request_persistence_failed"
 _HRW_SPOTLIGHT_MARKER=".metadata_never_index"
 _HRW_RECOVERY_CLASSIFICATION=""
 
@@ -484,9 +484,11 @@ _hrw_worker_base_commit_state() {
 #   "dirty_worktree"        — uncommitted/untracked edits exist after a crash
 #   "draft_checkpoint"      — exact-head worker draft (durable, incomplete)
 #   "protected_draft"       — interactive/held/NMR/non-worker draft
-#   "ready_failed"          — exact-head ready PR has terminal failed checks
 #   "closed_unmerged"       — exact-head PR closed without merge
 #   "unverified_open_pr"    — issue-search fallback cannot prove exact head
+#   "head_mismatch"         — local HEAD is not the open PR head
+#   "ready_missing_summary" — exact-head ready PR lacks MERGE_SUMMARY
+#   "merged_missing_summary" — exact-head merged PR lacks MERGE_SUMMARY
 #   "noop"                  — no commits, no pushed branch, no PR
 #
 # Fail-open semantics are preserved: any condition that prevents confident
@@ -578,11 +580,15 @@ _worker_produced_output() {
 	local repo_slug="${DISPATCH_REPO_SLUG:-}"
 	local pr_handoff="unknown|"
 	local pr_state="unknown"
-	pr_handoff=$(_pr_handoff_state_for_branch_or_issue "$branch_name" "$issue_number" "$repo_slug")
+	local local_head=""
+	local_head=$(git -C "$work_dir" rev-parse HEAD 2>/dev/null || true)
+	[[ -n "$local_head" ]] || local_head="missing-local-head"
+	pr_handoff=$(_pr_handoff_state_for_branch_or_issue "$branch_name" "$issue_number" "$repo_slug" \
+		"branch-or-issue" "$local_head" 1)
 	pr_state="${pr_handoff%%|*}"
 	case "$pr_state" in
 		ready | merged) printf 'pr_exists'; return 0 ;;
-		draft_checkpoint | protected_draft | ready_failed | closed_unmerged | unverified_open_pr)
+		draft_checkpoint | protected_draft | closed_unmerged | unverified_open_pr | head_mismatch | ready_missing_summary | merged_missing_summary)
 			printf '%s' "$pr_state"
 			return 0
 			;;
@@ -980,7 +986,11 @@ _recover_worker_output_on_failure() {
 	if [[ -n "$repo_slug" && -n "$issue_number" && -n "$branch_name" && "$branch_name" != "$_HRW_GIT_HEAD" && "$branch_name" != "$default_branch" ]] && \
 		declare -F _pr_handoff_state_for_branch_or_issue >/dev/null 2>&1; then
 		local pr_handoff="unknown|"
-		pr_handoff=$(_pr_handoff_state_for_branch_or_issue "$branch_name" "$issue_number" "$repo_slug")
+		local local_head=""
+		local_head=$(git -C "$work_dir" rev-parse HEAD 2>/dev/null || true)
+		[[ -n "$local_head" ]] || local_head="missing-local-head"
+		pr_handoff=$(_pr_handoff_state_for_branch_or_issue "$branch_name" "$issue_number" "$repo_slug" \
+			"branch-or-issue" "$local_head" 1)
 		local pr_state="${pr_handoff%%|*}"
 		if [[ "$pr_state" == "ready" || "$pr_state" == "merged" ]]; then
 			print_info "[lifecycle] worker_failure_recovered_existing_pr session=${session_key} branch=${branch_name}"
@@ -992,11 +1002,9 @@ _recover_worker_output_on_failure() {
 			_escalate_worker_pr_checkpoint "$session_key" "$repo_slug" "$pr_state"
 			return 0
 		fi
-		if [[ "$pr_state" == "ready_failed" ]]; then
-			_escalate_worker_pr_checkpoint "$session_key" "$repo_slug" "$pr_state" "$_HRW_REASON_READY_FAILED"
-			return 0
-		fi
-		if [[ "$pr_state" == "protected_draft" || "$pr_state" == "unverified_open_pr" ]]; then
+		if [[ "$pr_state" == "protected_draft" || "$pr_state" == "unverified_open_pr" || \
+			"$pr_state" == "head_mismatch" || "$pr_state" == "ready_missing_summary" || \
+			"$pr_state" == "merged_missing_summary" ]]; then
 			_HRW_RECOVERY_CLASSIFICATION="worker_${pr_state}"
 			print_warning "[lifecycle] ${_HRW_RECOVERY_CLASSIFICATION} session=${session_key} — not completion evidence; retaining claim"
 			return 0
@@ -1324,9 +1332,11 @@ _hrw_run_finish_crash_type() {
 _hrw_finish_failed_run() {
 	local session_key="$1"
 	local work_dir="$2"
+	local external_terminal_confirmed="${3:-0}"
 	local failure_recovered=0
 
-	if _worker_external_terminal_complete "$session_key" "$work_dir"; then
+	if [[ "$external_terminal_confirmed" -eq 1 ]] || \
+		_worker_external_terminal_complete "$session_key" "$work_dir"; then
 		_release_dispatch_claim "$session_key" "$_HRW_REASON_WORKER_COMPLETE"
 		failure_recovered=1
 	elif _recover_worker_output_on_failure "$session_key" "$work_dir"; then
@@ -1389,6 +1399,52 @@ _hrw_finish_rate_limit_fast_run() {
 	return 0
 }
 
+_hrw_record_permission_blocker_failure() {
+	local session_key="$1"
+	local reason="$2"
+	local logger="${SCRIPT_DIR}/worker-blocker-log.mjs"
+	[[ -f "$logger" ]] || return 0
+	command -v node >/dev/null 2>&1 || return 0
+	node "$logger" append \
+		--event "$_HRW_PERMISSION_PERSISTENCE_FAILED" \
+		--status "blocked" \
+		--reason "$reason" \
+		--blocking "true" \
+		--source "headless-runtime-worker" \
+		--session-key "$session_key" \
+		--detail "Worker could not persist the maintainer permission handoff" >/dev/null 2>&1 || true
+	return 0
+}
+
+_hrw_finish_permission_required_run() {
+	local session_key="$1"
+	local work_dir="$2"
+	local helper="${SCRIPT_DIR}/worker-permission-helper.sh"
+	local permission_status="permission_required"
+	if [[ ! -x "$helper" || -z "${_run_permission_request_file:-}" ]]; then
+		_hrw_record_permission_blocker_failure "$session_key" "permission_capture_or_helper_unavailable"
+		_hrw_mark_failed_terminal_state "$_HRW_STATUS_FAILED" "$_HRW_PERMISSION_PERSISTENCE_FAILED"
+		return 1
+	fi
+	if ! "$helper" request \
+		--file "$_run_permission_request_file" \
+		--issue "${WORKER_ISSUE_NUMBER:-}" \
+		--repo "${DISPATCH_REPO_SLUG:-${WORKER_REPO_SLUG:-}}" \
+		--session "$session_key" \
+		--work-dir "$work_dir"; then
+		_hrw_record_permission_blocker_failure "$session_key" "permission_handoff_failed"
+		_hrw_mark_failed_terminal_state "$_HRW_STATUS_FAILED" "$_HRW_PERMISSION_PERSISTENCE_FAILED"
+		return 1
+	fi
+	_release_dispatch_claim "$session_key" "$permission_status"
+	_HRW_FINAL_RUNTIME_EVENT="worker.deferred"
+	_HRW_FINAL_RUNTIME_STATUS="$permission_status"
+	_HRW_FINAL_RUNTIME_CLASSIFICATION="awaiting_maintainer_permission"
+	_HRW_TERMINAL_OUTCOME="$_HRW_TELEMETRY_DEFERRED"
+	rm -f "$_run_permission_request_file" 2>/dev/null || true
+	return 0
+}
+
 _hrw_record_terminal_outcome() {
 	local session_key="$1"
 	local outcome="$2"
@@ -1420,6 +1476,7 @@ _hrw_finish_success_run() {
 	local session_key="$1"
 	local work_dir="$2"
 	local release_needed=1
+	local permission_pending_file=""
 
 	# GH#20721 + GH#20819: Classify worker output quality.
 	# _worker_produced_output distinguishes exact-head completion from drafts,
@@ -1466,15 +1523,6 @@ _hrw_finish_success_run() {
 				_hrw_mark_failed_terminal_state "$_HRW_STATUS_FAILED" "$_HRW_RECOVERY_CLASSIFICATION"
 			fi
 			;;
-		ready_failed)
-			_escalate_worker_pr_checkpoint "$session_key" "${DISPATCH_REPO_SLUG:-}" "$output_class" "$_HRW_REASON_READY_FAILED"
-			release_needed=0
-			if [[ "$_HRW_RECOVERY_CLASSIFICATION" == "$_HRW_REASON_READY_FAILED" ]]; then
-				_hrw_mark_failed_terminal_state "$_HRW_STATUS_ESCALATED" "$_HRW_RECOVERY_CLASSIFICATION"
-			else
-				_hrw_mark_failed_terminal_state "$_HRW_STATUS_FAILED" "$_HRW_RECOVERY_CLASSIFICATION"
-			fi
-			;;
 		closed_unmerged)
 			print_warning "[lifecycle] ${_HRW_REASON_CLOSED_UNMERGED} session=${session_key} — closed PR is not completion evidence"
 			_release_dispatch_claim "$session_key" "$_HRW_REASON_CLOSED_UNMERGED"
@@ -1482,7 +1530,7 @@ _hrw_finish_success_run() {
 			release_needed=0
 			_hrw_mark_failed_terminal_state "$_HRW_STATUS_FAILED" "$_HRW_REASON_CLOSED_UNMERGED"
 			;;
-		protected_draft | unverified_open_pr)
+		protected_draft | unverified_open_pr | head_mismatch | ready_missing_summary | merged_missing_summary)
 			local noncomplete_reason="worker_${output_class}"
 			print_warning "[lifecycle] ${noncomplete_reason} session=${session_key} — protected/inconclusive PR state is not completion evidence; retaining claim"
 			release_needed=0
@@ -1497,6 +1545,10 @@ _hrw_finish_success_run() {
 		# when no PR was created.
 		_release_dispatch_claim "$session_key" "$_HRW_REASON_WORKER_COMPLETE"
 		_HRW_TERMINAL_OUTCOME="$_HRW_TELEMETRY_SUCCESS"
+	fi
+	if [[ "$_HRW_TERMINAL_OUTCOME" == "$_HRW_TELEMETRY_SUCCESS" ]]; then
+		permission_pending_file=$(_hrw_permission_pending_path "$work_dir" || true)
+		rm -f "${AIDEVOPS_PERMISSION_GRANT_FILE:-}" "$permission_pending_file" 2>/dev/null || true
 	fi
 
 	return 0
@@ -1524,6 +1576,10 @@ _cmd_run_finish() {
 	# _worker_produced_output() classifies tangible output to distinguish
 	# worker_complete, worker_branch_orphan, and worker_noop (GH#20721, GH#20819).
 	local work_dir="${3:-${_WORKER_WORKTREE_PATH:-}}"
+	# Optional $4 carries a terminal-state proof already confirmed at a retry
+	# boundary. Reusing it avoids a second GitHub query that could fail after the
+	# first query already proved the issue and matching PR are terminal.
+	local external_terminal_confirmed="${4:-0}"
 	_HRW_FINAL_RUNTIME_EVENT="worker.completed"
 	_HRW_FINAL_RUNTIME_STATUS="${_run_result_label:-$ledger_status}"
 	_HRW_FINAL_RUNTIME_CLASSIFICATION="${_run_failure_reason:-}"
@@ -1545,13 +1601,24 @@ _cmd_run_finish() {
 	# create a PR with Closes, the PR-based dedup signal still wins and the
 	# CLAIM_RELEASED comment is redundant operational metadata.
 	if [[ "$ledger_status" == "$_HRW_STATUS_FAIL" ]]; then
-		_hrw_finish_failed_run "$session_key" "$work_dir"
+		_hrw_finish_failed_run "$session_key" "$work_dir" "$external_terminal_confirmed"
 	elif [[ "$ledger_status" == "rate_limit_fast" ]]; then
 		_hrw_finish_rate_limit_fast_run "$session_key"
 		_HRW_FINAL_RUNTIME_EVENT="worker.deferred"
 		_HRW_FINAL_RUNTIME_STATUS="rate_limit_fast"
 		_HRW_FINAL_RUNTIME_CLASSIFICATION="rate_limit"
 		_HRW_TERMINAL_OUTCOME="$_HRW_TELEMETRY_DEFERRED"
+	elif [[ "$ledger_status" == "permission_required" ]]; then
+		if ! _hrw_finish_permission_required_run "$session_key" "$work_dir"; then
+			_hrw_record_terminal_outcome "$session_key" "$_HRW_TERMINAL_OUTCOME" \
+				"$_HRW_FINAL_RUNTIME_CLASSIFICATION"
+			_emit_worker_runtime_event "$_HRW_FINAL_RUNTIME_EVENT" \
+				"$_HRW_FINAL_RUNTIME_STATUS" "$_HRW_FINAL_RUNTIME_CLASSIFICATION"
+			_update_dispatch_ledger "$session_key" "fail"
+			_release_session_lock "$session_key"
+			trap - EXIT
+			return 1
+		fi
 	else
 		_hrw_finish_success_run "$session_key" "$work_dir"
 	fi
@@ -1561,6 +1628,14 @@ _cmd_run_finish() {
 		"$_HRW_FINAL_RUNTIME_STATUS" "$_HRW_FINAL_RUNTIME_CLASSIFICATION"
 
 	_hrw_finish_cleanup "$session_key" "$ledger_status" "$work_dir"
+	return 0
+}
+
+_hrw_permission_pending_path() {
+	local work_dir="$1"
+	local git_dir=""
+	git_dir=$(git -C "$work_dir" rev-parse --absolute-git-dir 2>/dev/null) || return 1
+	printf '%s/aidevops-permission-pending\n' "$git_dir"
 	return 0
 }
 
@@ -1577,6 +1652,14 @@ _cmd_run_prepare() {
 		printf '[fatal] WORKER_WORKTREE_PATH unset — pre-creation skipped or failed silently; aborting per t2983 Fix C\n' >&2
 		return 1
 	fi
+	local permission_pending_file=""
+	permission_pending_file=$(_hrw_permission_pending_path "$work_dir" || true)
+	if [[ -f "$permission_pending_file" ]]; then
+		export AIDEVOPS_PERMISSION_REQUEST_ID
+		AIDEVOPS_PERMISSION_REQUEST_ID=$(jq -r '.request_id // ""' "$permission_pending_file" 2>/dev/null || true)
+	else
+		unset AIDEVOPS_PERMISSION_REQUEST_ID
+	fi
 
 	# GH#20542: Export DISPATCH_REPO_SLUG BEFORE arming the EXIT trap so
 	# _release_dispatch_claim always has a non-empty slug, even when the
@@ -1588,6 +1671,11 @@ _cmd_run_prepare() {
 		| sed -E 's|.*github\.com[:/]||; s|\.git$||' || true)
 	if [[ -n "$_prepare_repo_slug" ]]; then
 		export DISPATCH_REPO_SLUG="$_prepare_repo_slug"
+	fi
+	if [[ -n "${WORKER_ISSUE_NUMBER:-}" && -n "${DISPATCH_REPO_SLUG:-}" ]]; then
+		local permission_grant_slug=""
+		permission_grant_slug=$(printf '%s' "$DISPATCH_REPO_SLUG" | tr '/:' '__')
+		export AIDEVOPS_PERMISSION_GRANT_FILE="${HOME}/.aidevops/permission-grants/${permission_grant_slug}/${WORKER_ISSUE_NUMBER}.json"
 	fi
 
 	# GH#6538: Acquire a session-key lock to prevent duplicate workers.

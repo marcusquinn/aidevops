@@ -303,6 +303,9 @@ test_no_change_corrupt_live_scripts_reserved_namespace_recovers() {
 
 	mkdir -p "$repo/.agents/scripts" "$target" "$(dirname "$plugins_file")" "${TEST_DIR}/.aidevops"
 	printf 'canonical script\n' >"$repo/.agents/scripts/hello.sh"
+	printf '#!/usr/bin/env bash\nexec git "$@"\n' >"$repo/.agents/scripts/git"
+	printf '#!/usr/bin/env bash\n' >"$repo/aidevops.sh"
+	chmod +x "$repo/.agents/scripts/git"
 	printf '%s\n' "$sha" >"${TEST_DIR}/.aidevops/.deployed-sha"
 	printf '{"plugins":[{"name":"bad","namespace":"scripts","repo":"unused"}]}\n' >"$plugins_file"
 

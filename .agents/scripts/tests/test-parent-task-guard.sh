@@ -88,7 +88,7 @@ else
 fi
 
 # Regression guards for the existing protected set (must not break)
-for existing in persistent needs-maintainer-review not-planned duplicate wontfix already-fixed; do
+for existing in persistent needs-maintainer-review needs-maintainer-permissions not-planned duplicate wontfix already-fixed; do
 	if _is_protected_label "$existing"; then
 		print_result "_is_protected_label still accepts $existing" 0
 	else
@@ -159,7 +159,7 @@ write_stub_gh() {
 	cat >"${STUB_DIR}/gh" <<STUB
 #!/usr/bin/env bash
 # Stub for test-parent-task-guard.sh
-if [[ "\$1" == "issue" && "\$2" == "view" ]]; then
+if [[ "\$1" == "issue" && "\$2" == "view" ]] || [[ "\$1" == "api" ]]; then
 	cat <<'JSON'
 ${payload}
 JSON

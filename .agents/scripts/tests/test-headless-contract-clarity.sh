@@ -233,6 +233,27 @@ test_graphql_rate_limit_fallback_guidance() {
 }
 
 # ---------------------------------------------------------------------------
+# Case 9: Post-PR handoff is bounded and preserves every security gate
+# ---------------------------------------------------------------------------
+test_post_pr_handoff_is_bounded_and_safe() {
+	local output
+	output=$(append_worker_headless_contract "/full-loop Implement GH#1")
+
+	if [[ "$output" == *"PR is non-draft"* ]] && \
+		[[ "$output" == *"equals the PR headRefOid"* ]] && \
+		[[ "$output" == *"immediate state check"* ]] && \
+		[[ "$output" == *"never bypass, disable, or weaken branch protection, approval, review-bot, CI, or security gates"* ]] && \
+		[[ "$output" != *"Continue through review polling"* ]] && \
+		[[ "$output" != *"Prefer short poll intervals"* ]]; then
+		_pass "post_pr_handoff_is_bounded_and_safe"
+	else
+		_fail "post_pr_handoff_is_bounded_and_safe" \
+			"Expected exact-head non-draft handoff with one check and no review polling"
+	fi
+	return 0
+}
+
+# ---------------------------------------------------------------------------
 # Run all tests
 # ---------------------------------------------------------------------------
 test_contract_version_is_v9
@@ -243,6 +264,7 @@ test_non_fullloop_passthrough
 test_no_double_injection
 test_opt_out_env_var
 test_graphql_rate_limit_fallback_guidance
+test_post_pr_handoff_is_bounded_and_safe
 
 # ---------------------------------------------------------------------------
 # Summary

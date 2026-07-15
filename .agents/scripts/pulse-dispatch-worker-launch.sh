@@ -14,7 +14,9 @@
 #   - _dlw_setup_worker_log
 #   - _dlw_resolve_tier_and_model
 #   - _dlw_precreate_worktree
+#   - _dlw_renew_prelaunch_lease
 #   - _dlw_prewarm_opencode_db
+#   - _dlw_prepare_opencode_db
 #   - _dlw_exec_detached
 #   - _dlw_exec_systemd_user_service
 #   - _dlw_spawn_early_exit_monitor
@@ -564,7 +566,7 @@ First-pass completion contract:
 1. Before editing, verify the issue is still open and not already satisfied by the default branch, an open/closed PR, or a pushed issue branch. Reuse salvageable commits instead of restarting.
 2. Treat prior structured CI/review feedback in the issue body as cumulative evidence. Address every terminal failing check, including advisory checks, not only the first required failure.
 3. Validate the stated target files and verification commands against the current dependency/runtime versions before implementation.
-4. After the first coherent commit, push and create a draft PR early so progress is durable and visible to every runner; continue on that PR through local and remote verification.
+4. After the first coherent commit, push and create a draft PR early so progress is durable and visible to every runner. Continue implementation and local verification on that PR; do not hand off while it is draft or has unpushed changes. Once the completed exact head is pushed, the PR is non-draft, its merge summary exists, and one immediate remote check shows no terminal failure, attempt merge once. If only asynchronous CI, bot review, human approval, or native auto-merge remains, exit and hand off to pulse. Never poll those gates or bypass approval, review, CI, branch-protection, or security controls.
 5. Do not post routine dispatch, stale, or progress comments. Prefer commits, the PR, check runs, and one final completion or blocker dossier.
 EOF
 	return 0
@@ -1011,6 +1013,52 @@ _dlw_prewarm_opencode_db() {
 }
 
 #######################################
+# Renew the dispatcher's prelaunch lease before the potentially slow OpenCode
+# database warm-up. The worker renews it again after process start; this renewal
+# closes the gap between worktree preparation and that worker-side transition.
+# Arguments: issue_number repo_slug session_key worker_log
+#######################################
+_dlw_renew_prelaunch_lease() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local session_key="$3"
+	local worker_log="$4"
+	local prewarm_timeout="${OPENCODE_PREWARM_TIMEOUT_SECONDS:-90}"
+	local lease_ttl="${AIDEVOPS_DISPATCH_PREWARM_LEASE_TTL:-}"
+
+	if [[ -z "${_claim_lease_token:-}" ]]; then
+		return 0
+	fi
+	[[ "$prewarm_timeout" =~ ^[0-9]+$ ]] || prewarm_timeout=90
+	[[ "$lease_ttl" =~ ^[0-9]+$ ]] || lease_ttl=$((prewarm_timeout + 60))
+
+	printf '[lifecycle] dispatcher_prelaunch_lease_renew_start session=%s pid=%s\n' \
+		"$session_key" "$$" >>"$worker_log"
+	if ! AIDEVOPS_DEVICE_ID="${_claim_lease_device:-${AIDEVOPS_DEVICE_ID:-}}" \
+		"${SCRIPT_DIR}/dispatch-claim-helper.sh" transition prelaunch "$issue_number" \
+		"$repo_slug" "$_claim_lease_token" "$session_key" "$lease_ttl" \
+		>/dev/null 2>&1; then
+		printf '[lifecycle] WARN dispatcher prelaunch lease renewal failed before OpenCode warm-up session=%s pid=%s\n' \
+			"$session_key" "$$" >>"$worker_log"
+		return 1
+	fi
+	printf '[lifecycle] dispatcher_prelaunch_lease_renew_done session=%s pid=%s\n' \
+		"$session_key" "$$" >>"$worker_log"
+	return 0
+}
+
+_dlw_prepare_opencode_db() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local session_key="$3"
+	local worker_log="$4"
+
+	_dlw_renew_prelaunch_lease "$issue_number" "$repo_slug" "$session_key" "$worker_log" || return 1
+	_dlw_prewarm_opencode_db "$worker_log"
+	return 0
+}
+
+#######################################
 # Return 0 when a Linux systemd user manager is available for transient
 # services. `setsid` detaches workers from the pulse process group, but it
 # does NOT move them out of the systemd service cgroup. On systemd pulse
@@ -1055,8 +1103,10 @@ _dlw_systemd_wait_stable() {
 	local attempts="${DLW_SYSTEMD_STABILITY_ATTEMPTS:-3}"
 	local wait_i=0 stable_count=0 snapshot="" main_pid="" active_state="" sub_state=""
 	local exec_main_code="" exec_main_status="" result="" key="" value=""
+	local poll_seconds="${DLW_SYSTEMD_STABILITY_POLL_SECONDS:-0.2}"
 
 	[[ "$attempts" =~ ^[1-9][0-9]*$ ]] || attempts=3
+	[[ "$poll_seconds" =~ ^[0-9]+([.][0-9]+)?$ ]] || poll_seconds="0.2"
 	while [[ "$wait_i" -lt "$attempts" ]]; do
 		snapshot=$(_dlw_systemd_snapshot "$unit_name" "$state_file")
 		main_pid=""
@@ -1090,7 +1140,7 @@ _dlw_systemd_wait_stable() {
 			printf 'LaunchState=worker_ready\n' >>"$state_file"
 			return 0
 		}
-		sleep "${DLW_SYSTEMD_STABILITY_POLL_SECONDS:-0.2}"
+		sleep "$poll_seconds"
 	done
 
 	printf 'LaunchState=pid_observed\n' >>"$state_file"
@@ -1227,9 +1277,7 @@ _dlw_handle_systemd_launch_failure() {
 			else
 				printf '[systemd-launch] classification=readiness_unconfirmed\n'
 			fi
-			while IFS= read -r state_line || [[ -n "$state_line" ]]; do
-				printf '%s\n' "$state_line"
-			done <"$systemd_state_file"
+			cat "$systemd_state_file"
 		} >>"$worker_log"
 	fi
 	echo "[dispatch_worker_launch] ERROR: systemd worker for #${issue_number} did not reach durable readiness (rc=${systemd_rc}); duplicate fallback suppressed" >>"$LOGFILE"
@@ -1668,8 +1716,8 @@ _dlw_nohup_launch() {
 	local worker_title
 	worker_title=$(_dlw_build_worker_title "$issue_number" "$issue_title" "$dispatch_title")
 
-	# t2758: Pre-warm OpenCode DB before launch (extracted to helper)
-	_dlw_prewarm_opencode_db "$worker_log"
+	# Renew the lease before pre-warm; the child renews again before canary.
+	_dlw_prepare_opencode_db "$issue_number" "$repo_slug" "$session_key" "$worker_log" || return 1
 	local worker_prewarm_dir="$_DLW_PREWARM_DIR"
 
 	# Launch worker — headless-runtime-helper.sh handles model selection
@@ -2292,10 +2340,14 @@ _dispatch_launch_worker() {
 	local worker_pid
 	local launch_prompt=""
 	launch_prompt=$(_dlw_prepare_prompt_for_launch "$issue_number" "$repo_slug" "$issue_title" "$prompt" "$zero_output_comment_metrics")
-	worker_pid=$(_dlw_nohup_launch "$issue_number" "$repo_slug" "$dispatch_title" "$issue_title" \
+	if ! worker_pid=$(_dlw_nohup_launch "$issue_number" "$repo_slug" "$dispatch_title" "$issue_title" \
 		"$session_key" "$worker_log" "$launch_prompt" "$repo_path" \
 		"$dispatch_model_tier" "$selected_model" \
-		"$worker_worktree_path" "$worker_worktree_branch")
+		"$worker_worktree_path" "$worker_worktree_branch"); then
+		_ds_record "$issue_number" "$repo_slug" "worker_spawn" "$_ds_t0"
+		_dlw_pre_runtime_failure "$issue_number" "$repo_slug" "worker_launch_failed" 2 || return $?
+		return 1
+	fi
 	_ds_record "$issue_number" "$repo_slug" "worker_spawn" "$_ds_t0"
 
 	_ds_t0=$(_ds_now_ns)

@@ -75,6 +75,32 @@ but those controls do not constitute bounded history or an age/count policy.
 
 Full-loop keeps authoritative resumable state in `.agents/loop-state/full-loop.local.state` and appends local transition evidence to `full-loop-events.jsonl`. Schema v2 records the run ID, state revision, phase status/start/end/attempt, terminal evidence, next safe action, observed executor status/PID/heartbeat, manual resumes, reused subagent units, and duplicate work avoided. Status must validate executor liveness instead of trusting a stale PID. These records drive lifecycle recovery; runtime events and plugin cost/tool data remain fail-open reporting evidence. Aggregate phase wall time, active compute, CI wait/repair, release/cleanup time, calls by tier, retries/outcomes, reuse, false-positive gates, and manual resumes when producing performance reports.
 
+### Worker progress-blocker log
+
+Headless permission and approval stops append redacted lifecycle records to
+`~/.aidevops/logs/worker-progress-blockers.jsonl`. Records use schema
+`aidevops-worker-blocker/v1` and correlate `issue_number`, `repo_slug`,
+`session_key`, and `request_id` with the event, reason, source, risk class, and
+whether the condition is still blocking. Exact permission patterns, model
+intent, credentials, and raw tool metadata are not stored in this log.
+
+The default cap is 5 MiB. Each append acquires a short-lived local lock and,
+when the incoming record would exceed the cap, atomically keeps only the newest
+complete JSONL records that fit before appending. Override the path with
+`AIDEVOPS_WORKER_BLOCKER_LOG_FILE` or the cap with
+`AIDEVOPS_WORKER_BLOCKER_LOG_MAX_BYTES`. The writer is fail-open: logging or
+trimming failures never grant a permission or change the worker action.
+
+Writers cover permission capture/non-grantable scope, handoff persistence,
+awaiting maintainer approval, approval persistence, expired or replay-rejected
+grants, and successful grant application. Query through bounded diagnostics
+instead of recursively searching worker logs:
+
+```bash
+worker-activity-helper.sh summary --since 24h
+pulse-diagnose-helper.sh issue <N> --repo <owner/repo>
+```
+
 Inspect recent events without exposing any other store:
 
 ```bash
@@ -335,7 +361,8 @@ If aidevops attributes are missing in a mode where they should work:
   context, GraphQL-budget counters, and top recent examples so “is work
   happening now?” can be answered from current evidence.
 - `worker-activity-helper.sh summary --since 1h [--json]` — historical worker
-  outcome summary. JSON output includes `metrics.result_counts`,
+  outcome and progress-blocker summary. JSON output includes
+  `metrics.result_counts`, `progress_blockers.active_blockers`,
   `metrics.timing_ms`, and `metrics.recent_examples` with load context from
   `headless-runtime-metrics.jsonl`.
 - `session-miner` routine — post-hoc mining of successful/failed sessions

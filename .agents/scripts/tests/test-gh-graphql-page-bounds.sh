@@ -61,6 +61,7 @@ page_size=$(jq -r '.variables.pageSize' "$input_file")
 cursor=$(jq -r '.variables.cursor // ""' "$input_file")
 printf 'page_size=%s cursor=%s\n' "$page_size" "$cursor" >>"$GH_CALL_LOG"
 if [[ "${MOCK_API_FAIL:-0}" == "1" ]]; then
+	printf 'mock transport failure\n' >&2
 	printf '{"errors":[{"message":"mock failure"}]}\n'
 	exit 1
 fi
@@ -168,10 +169,12 @@ attempts=$(grep -c '^api graphql --input ' "$GH_CALL_LOG" || true)
 if [[ "$rc" -ne 0 ]] \
 	&& [[ "$attempts" -eq 3 ]] \
 	&& [[ $(jq -r '.pageInfo.complete' <<<"$result") == "false" ]] \
-	&& [[ $(jq -r '.pageInfo.reason' <<<"$result") == "api_error" ]]; then
-	pass "API retries are bounded and incomplete"
+	&& [[ $(jq -r '.pageInfo.reason' <<<"$result") == "api_error" ]] \
+	&& grep -q '^mock transport failure$' "$TMP_ROOT/err" \
+	&& grep -q '^\[{"message":"mock failure"}\]$' "$TMP_ROOT/err"; then
+	pass "API retries expose final failure diagnostics"
 else
-	fail "API retries are bounded and incomplete" "expected 3 attempts and incomplete api_error result"
+	fail "API retries expose final failure diagnostics" "expected 3 attempts, incomplete api_error result, and final stderr/error details"
 fi
 
 printf '\nRan %s tests, %s failed.\n' "$((PASS + FAIL))" "$FAIL"

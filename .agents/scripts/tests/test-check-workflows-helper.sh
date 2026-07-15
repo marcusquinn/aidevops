@@ -20,6 +20,7 @@
 #  16. Current caller plus obsolete framework scripts → legacy-artifact warning
 #  17. Legacy-artifact manifest without a trailing newline processes its final row
 #  18. Unset HOME exits cleanly instead of raising an unbound-variable error
+#  19. Stale local checkout reports local evidence and upstream divergence
 #
 # Strategy: Each scenario writes a temporary repos.json + temporary repo trees
 # under a per-test TMPDIR, points HOME at it, and invokes the helper. No
@@ -165,7 +166,8 @@ rm -rf "$TMPDIR_3"
 TMPDIR_4="$(mktemp -d)"
 _setup_fake_home "$TMPDIR_4"
 _make_repo_with_workflow "$TMPDIR_4/repos/downstream-pinned"
-sed 's|issue-sync-reusable\.yml@main|issue-sync-reusable.yml@v3.9.0|g' \
+sed -e 's|issue-sync-reusable\.yml@main|issue-sync-reusable.yml@v3.9.0|g' \
+	-e 's|aidevops_ref: main|aidevops_ref: v3.9.0|g' \
 	"$CANONICAL_TEMPLATE" >"$TMPDIR_4/repos/downstream-pinned/.github/workflows/issue-sync.yml"
 _write_repos_json "$TMPDIR_4" \
 	"$(jq -n --arg path "$TMPDIR_4/repos/downstream-pinned" '{initialized_repos: [{slug: "x/pinned", path: $path, local_only: false}]}')"
@@ -176,6 +178,39 @@ else
 	_fail "pinned @v3.9.0 caller → CURRENT/CALLER (normalised @ref)" "got: $result"
 fi
 rm -rf "$TMPDIR_4"
+
+# Test 4b: A pinned reusable YAML with a mutable helper ref is drift.
+TMPDIR_4B="$(mktemp -d)"
+_setup_fake_home "$TMPDIR_4B"
+_make_repo_with_workflow "$TMPDIR_4B/repos/downstream-split-pin"
+sed 's|issue-sync-reusable\.yml@main|issue-sync-reusable.yml@v3.9.0|g' \
+	"$CANONICAL_TEMPLATE" >"$TMPDIR_4B/repos/downstream-split-pin/.github/workflows/issue-sync.yml"
+_write_repos_json "$TMPDIR_4B" \
+	"$(jq -n --arg path "$TMPDIR_4B/repos/downstream-split-pin" '{initialized_repos: [{slug: "x/split-pin", path: $path, local_only: false}]}')"
+result=$(_run_and_classify "$TMPDIR_4B")
+if [[ "$result" == "DRIFTED/CALLER" ]]; then
+	_pass "pinned reusable with helper on main → DRIFTED/CALLER"
+else
+	_fail "pinned reusable with helper on main → DRIFTED/CALLER" "got: $result"
+fi
+rm -rf "$TMPDIR_4B"
+
+# Test 4c: Valid punctuation in a coherently coupled ref remains current.
+TMPDIR_4C="$(mktemp -d)"
+_setup_fake_home "$TMPDIR_4C"
+_make_repo_with_workflow "$TMPDIR_4C/repos/downstream-punctuation-ref"
+sed -e 's|issue-sync-reusable\.yml@main|issue-sync-reusable.yml@release#candidate|g' \
+	-e 's|aidevops_ref: main|aidevops_ref: release#candidate|g' \
+	"$CANONICAL_TEMPLATE" >"$TMPDIR_4C/repos/downstream-punctuation-ref/.github/workflows/issue-sync.yml"
+_write_repos_json "$TMPDIR_4C" \
+	"$(jq -n --arg path "$TMPDIR_4C/repos/downstream-punctuation-ref" '{initialized_repos: [{slug: "x/punctuation-ref", path: $path, local_only: false}]}')"
+result=$(_run_and_classify "$TMPDIR_4C")
+if [[ "$result" == "CURRENT/CALLER" ]]; then
+	_pass "coupled release#candidate ref → CURRENT/CALLER"
+else
+	_fail "coupled release#candidate ref → CURRENT/CALLER" "got: $result"
+fi
+rm -rf "$TMPDIR_4C"
 
 # Test 5: Caller with extra triggers → DRIFTED/CALLER
 TMPDIR_5="$(mktemp -d)"
@@ -346,6 +381,10 @@ _make_repo_with_workflow "$TMPDIR_13/repos/org-current"
 sed \
 	-e 's|marcusquinn/aidevops/.github/workflows/issue-sync-reusable.yml@main|ORG/.github/.github/workflows/issue-sync-reusable.yml@1234567890abcdef1234567890abcdef12345678|g' \
 	-e 's|marcusquinn/aidevops/.github/workflows/issue-sync-reusable.yml|ORG/.github/.github/workflows/issue-sync-reusable.yml|g' \
+	-e 's|^      aidevops_ref: main|      aidevops_repository: ORG/.github\
+      aidevops_ref: 1234567890abcdef1234567890abcdef12345678|' \
+	-e 's|^    secrets:$|    secrets:\
+      AIDEVOPS_READ_TOKEN: ${{ secrets.AIDEVOPS_READ_TOKEN }}|' \
 	"$CANONICAL_TEMPLATE" >"$TMPDIR_13/repos/org-current/.github/workflows/issue-sync.yml"
 _write_repos_json "$TMPDIR_13" \
 	"$(jq -n --arg path "$TMPDIR_13/repos/org-current" '{workflow_reusable_repo: "ORG/.github", workflow_reusable_ref: "1234567890abcdef1234567890abcdef12345678", initialized_repos: [{slug: "x/org-current", path: $path, local_only: false}]}')"
@@ -439,6 +478,49 @@ if [[ "$unset_home_output" == *"repos.json not found"* ]] &&
 else
 	_fail "unset HOME → clean missing-config error" "got: $unset_home_output"
 fi
+
+# Test 19: A stale registered checkout must disclose that its classification is
+# local evidence and that the branch is behind its known upstream ref.
+TMPDIR_19="$(mktemp -d)"
+_setup_fake_home "$TMPDIR_19"
+BARE_19="$TMPDIR_19/remote.git"
+REPO_19="$TMPDIR_19/repos/stale-local"
+git init --bare -q "$BARE_19"
+mkdir -p "$REPO_19/.github/workflows"
+git -C "$REPO_19" init -q
+git -C "$REPO_19" config user.email test@example.com
+git -C "$REPO_19" config user.name Test
+git -C "$REPO_19" config commit.gpgsign false
+git -C "$REPO_19" checkout -q -b main
+{
+	cat "$CANONICAL_TEMPLATE"
+	printf '\n# stale local drift\n'
+} >"$REPO_19/.github/workflows/issue-sync.yml"
+git -C "$REPO_19" add -A
+git -C "$REPO_19" commit -q -m "stale workflow"
+STALE_SHA_19=$(git -C "$REPO_19" rev-parse HEAD)
+git -C "$REPO_19" remote add origin "$BARE_19"
+git -C "$REPO_19" push -q -u origin main
+git --git-dir="$BARE_19" symbolic-ref HEAD refs/heads/main
+cp "$CANONICAL_TEMPLATE" "$REPO_19/.github/workflows/issue-sync.yml"
+git -C "$REPO_19" add -A
+git -C "$REPO_19" commit -q -m "canonical remote workflow"
+git -C "$REPO_19" push -q origin main
+git -C "$REPO_19" reset -q --hard "$STALE_SHA_19"
+_write_repos_json "$TMPDIR_19" \
+	"$(jq -n --arg path "$REPO_19" '{initialized_repos: [{slug: "x/stale-local", path: $path, local_only: false}]}')"
+json_row=$(HOME="$TMPDIR_19" bash "$HELPER" --json --repo x/stale-local --workflow issue-sync 2>/dev/null || true)
+human_row=$(HOME="$TMPDIR_19" bash "$HELPER" --repo x/stale-local --workflow issue-sync 2>/dev/null || true)
+if [[ "$(printf '%s\n' "$json_row" | jq -r '.classification')" == "DRIFTED/CALLER" ]] &&
+	[[ "$(printf '%s\n' "$json_row" | jq -r '.evidence.source')" == "local" ]] &&
+	[[ "$(printf '%s\n' "$json_row" | jq -r '.evidence.behind')" == "1" ]] &&
+	[[ "$human_row" == *"local evidence; main is 1 commit(s) behind origin/main"* ]]; then
+	_pass "stale checkout → local evidence with upstream-behind warning"
+else
+	_fail "stale checkout → local evidence with upstream-behind warning" \
+		"json: $json_row; human: $human_row"
+fi
+rm -rf "$TMPDIR_19"
 
 # ─── Summary ────────────────────────────────────────────────────────────────
 

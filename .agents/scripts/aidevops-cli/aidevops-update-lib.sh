@@ -34,7 +34,7 @@ _update_fresh_install() {
 		return 1
 	}
 	trap 'rm -rf "${tmp_checkout:-}"' RETURN
-	if ! git clone --depth 1 --branch main "https://github.com/marcusquinn/aidevops.git" "$tmp_checkout" >/dev/null 2>&1; then
+	if ! git clone --depth 1 "${REPO_URL:-https://github.com/marcusquinn/aidevops.git}" "$tmp_checkout" >/dev/null 2>&1; then
 		print_error "Failed to create clean update checkout"
 		return 1
 	fi

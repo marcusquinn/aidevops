@@ -5,15 +5,14 @@
 #
 # Verifies that:
 # 1. The headless continuation contract injected by headless-runtime-helper.sh
-#    includes the model escalation requirement (rule 6).
+#    includes the model escalation requirement.
 # 2. The contract is NOT injected when AIDEVOPS_HEADLESS_APPEND_CONTRACT=0.
 # 3. The contract is NOT injected for non-/full-loop prompts.
 # 4. The contract is NOT injected when already present (idempotent).
 # 5. The escalation rule text is present and references GH#14964.
 #
-# Strategy: extract the append_worker_headless_contract function body from the
-# helper script and test it directly, avoiding the need to source the full
-# script (which has complex dependencies and runs main() at load time).
+# Strategy: source the side-effect-free headless runtime library in an isolated
+# subprocess and invoke its public contract functions directly.
 
 set -euo pipefail
 
@@ -47,72 +46,22 @@ print_result() {
 	return 0
 }
 
-# Extract the contract text directly from the heredoc in headless-runtime-helper.sh.
-# This is the source of truth — we test the actual contract content, not the
-# injection logic (which is already tested by the existing contract injection tests).
+# Render the complete split contract from its source library.
 extract_contract_text() {
-	python3 - "${HEADLESS_LIB}" <<'PY'
-import re
-import sys
-from pathlib import Path
-
-content = Path(sys.argv[1]).read_text()
-
-# Find the heredoc block for the contract
-match = re.search(
-    r"cat\s+<<'EOF'\s*\n(.*?)\nEOF",
-    content,
-    re.DOTALL,
-)
-if match:
-    print(match.group(1))
-else:
-    print("")
-PY
+	SCRIPT_DIR="${HEADLESS_LIB%/*}" AIDEVOPS_BASH_REEXECED=1 \
+		bash --norc --noprofile -c 'source "$1"; _worker_headless_contract_text' -- "$HEADLESS_LIB"
 	return 0
 }
 
-# Test the append_worker_headless_contract function by running it in a subprocess
-# that sources only the function (not main). We do this by extracting the function
-# body and running it standalone.
+# Test append_worker_headless_contract in the same isolated library context.
 _call_append_contract() {
 	local append_enabled="${1:-1}"
 	local prompt_text="$2"
 
-	# Extract just the append_worker_headless_contract function from the lib
-	local func_body
-	func_body=$(
-		python3 - "${HEADLESS_LIB}" <<'PY'
-import re
-import sys
-from pathlib import Path
-
-content = Path(sys.argv[1]).read_text()
-
-# Extract the append_worker_headless_contract function
-match = re.search(
-    r'(append_worker_headless_contract\(\)\s*\{.*?\n\})',
-    content,
-    re.DOTALL,
-)
-if match:
-    print(match.group(1))
-else:
-    print("")
-PY
-	)
-
-	if [[ -z "$func_body" ]]; then
-		printf '%s' "ERROR: could not extract function"
-		return 1
-	fi
-
-	AIDEVOPS_HEADLESS_APPEND_CONTRACT="$append_enabled" \
-		bash --norc --noprofile -c "
-			set -euo pipefail
-			${func_body}
-			append_worker_headless_contract \"\$1\"
-		" -- "$prompt_text" 2>/dev/null
+	SCRIPT_DIR="${HEADLESS_LIB%/*}" AIDEVOPS_BASH_REEXECED=1 \
+		AIDEVOPS_HEADLESS_APPEND_CONTRACT="$append_enabled" \
+		bash --norc --noprofile -c 'source "$1"; append_worker_headless_contract "$2"' \
+		-- "$HEADLESS_LIB" "$prompt_text" 2>/dev/null
 	return 0
 }
 
@@ -145,18 +94,17 @@ test_contract_includes_escalation_text() {
 	return 0
 }
 
-test_contract_includes_rule_6() {
+test_contract_includes_escalation_rule_number() {
 	local contract_text
 	contract_text=$(extract_contract_text)
 
-	# Rule 6 should be present (the new escalation rule)
-	if [[ "$contract_text" == *"6."* ]]; then
-		print_result "contract heredoc includes rule 6 (escalation)" 0
+	if [[ "$contract_text" == *"9. Model escalation before BLOCKED"* ]]; then
+		print_result "contract includes numbered escalation rule" 0
 		return 0
 	fi
 
-	print_result "contract heredoc includes rule 6 (escalation)" 1 \
-		"Expected rule 6 in contract heredoc; got: $(printf '%s' "$contract_text" | tail -10)"
+	print_result "contract includes numbered escalation rule" 1 \
+		"Expected numbered escalation rule in contract"
 	return 0
 }
 
@@ -214,10 +162,8 @@ test_genuine_blockers_distinguished() {
 	local contract_text
 	contract_text=$(extract_contract_text)
 
-	# The V6 contract distinguishes genuine blockers (missing permission,
-	# explicit policy gate) from invalid ones. Check for the actual V6 phrasing.
-	if [[ "$contract_text" == *"missing permission"* ]] &&
-		[[ "$contract_text" == *"explicit policy gate"* ]]; then
+	if [[ "$contract_text" == *"Genuine blockers require evidence"* ]] &&
+		[[ "$contract_text" == *"a failing check that cannot be repaired, missing permission, unresolved conflict, or explicit policy gate"* ]]; then
 		print_result "contract distinguishes genuine blockers from invalid ones" 0
 		return 0
 	fi
@@ -232,7 +178,7 @@ test_contract_injected_for_full_loop() {
 	local result
 	result=$(_call_append_contract "1" "$prompt")
 
-	if [[ "$result" == *"HEADLESS_CONTINUATION_CONTRACT_V6"* ]]; then
+	if [[ "$result" == *"HEADLESS_CONTINUATION_CONTRACT_V"* ]]; then
 		print_result "contract injected for /full-loop prompts" 0
 		return 0
 	fi
@@ -256,7 +202,7 @@ main() {
 
 	test_contract_includes_escalation_rule
 	test_contract_includes_escalation_text
-	test_contract_includes_rule_6
+	test_contract_includes_escalation_rule_number
 	test_contract_not_injected_when_disabled
 	test_contract_not_injected_for_non_full_loop
 	test_contract_idempotent

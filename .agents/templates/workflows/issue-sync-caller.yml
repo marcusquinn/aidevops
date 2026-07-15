@@ -22,6 +22,7 @@ name: Issue Sync - Bi-directional TODO.md ↔ GitHub Issues
 # Reusable workflow job-level permissions cannot exceed the caller's ceiling.
 # This block sets the union of all job-level permissions used by issue-sync-reusable.yml.
 permissions:
+  actions: read
   contents: write
   issues: write
   pull-requests: write
@@ -77,6 +78,8 @@ jobs:
     secrets:
       SYNC_PAT: ${{ secrets.SYNC_PAT }}
     with:
+      # Keep this equal to the ref on `uses:` so helper code is pinned with the reusable YAML.
+      aidevops_ref: main
       command: ${{ inputs.command || '' }}
       subject_id: ${{ inputs.subject_id || '' }}
       cursor: ${{ inputs.cursor || '' }}

@@ -44,6 +44,7 @@ WAH_METRICS_FILE="${WAH_METRICS_FILE:-${HOME}/.aidevops/logs/headless-runtime-me
 WAH_PULSE_STATS_FILE="${WAH_PULSE_STATS_FILE:-${HOME}/.aidevops/logs/pulse-stats.json}"
 WAH_PR_CACHE_FILE="${WAH_PR_CACHE_FILE:-${HOME}/.aidevops/cache/worker-activity-prs.json}"
 WAH_OAUTH_POOL_FILE="${WAH_OAUTH_POOL_FILE:-${HOME}/.aidevops/oauth-pool.json}"
+WAH_BLOCKER_LOG_FILE="${WAH_BLOCKER_LOG_FILE:-${HOME}/.aidevops/logs/worker-progress-blockers.jsonl}"
 WAH_PR_CACHE_TTL="${WAH_PR_CACHE_TTL:-60}" # seconds
 WAH_SERVICE_INTERRUPTION_RESULT="service_interruption_continue"
 WAH_RESULT_WATCHDOG_STALL_KILLED="watchdog_stall_killed"
@@ -272,6 +273,45 @@ _wah_metric_details_json() {
 }
 
 #######################################
+# Summarise bounded worker progress-blocker events and current blocker state.
+# Event counts obey the requested window; current blockers use the latest
+# retained event for each repo/issue/session identity so older unresolved holds
+# remain visible until a later non-blocking event clears them.
+# Args: cutoff_epoch now_epoch optional_repo_slug
+#######################################
+_wah_blocker_details_json() {
+	local cutoff_epoch="$1"
+	local now_epoch="$2"
+	local repo_slug="${3:-}"
+	local blocker_log="$WAH_BLOCKER_LOG_FILE"
+	if [[ ! -f "$blocker_log" ]]; then
+		printf '{"event_total":0,"active_total":0,"event_counts":{},"reason_counts":{},"active_blockers":[],"recent_blockers":[]}'
+		return 0
+	fi
+	jq -Rsc --argjson cutoff "$cutoff_epoch" --argjson now "$now_epoch" --arg repo "$repo_slug" '
+		def scoped:
+			select(.schema == "aidevops-worker-blocker/v1")
+			| select(($repo == "") or (((.repo_slug // "") | ascii_downcase) == ($repo | ascii_downcase)))
+			| select((.ts // 0) <= $now);
+		def identity:
+			(.repo_slug // "") + "|" + ((.issue_number // "") | tostring) + "|"
+			+ (if ((.session_key // "") | length) > 0 then .session_key else (.request_id // "unknown") end);
+		[split("\n")[] | fromjson? | scoped] as $all
+		| [$all[] | select((.ts // 0) >= $cutoff)] as $window
+		| ($all | group_by(identity) | map(sort_by(.ts // 0) | last) | map(select(.blocking == true))) as $active
+		| {
+			event_total: ($window | length),
+			active_total: ($active | length),
+			event_counts: (reduce $window[] as $row ({}; .[$row.event // "unknown"] += 1)),
+			reason_counts: (reduce $window[] as $row ({}; .[$row.reason // "unknown"] += 1)),
+			active_blockers: ($active | sort_by(.ts // 0) | reverse | .[0:10] | map({ts, timestamp, issue_number, repo_slug, session_key, request_id, event, reason, status, source, permission, tool, risk_level, grantable, detail})),
+			recent_blockers: ($window | sort_by(.ts // 0) | reverse | .[0:10] | map({ts, timestamp, issue_number, repo_slug, session_key, request_id, event, reason, status, blocking, source}))
+		}' "$blocker_log" 2>/dev/null || \
+		printf '{"event_total":0,"active_total":0,"event_counts":{},"reason_counts":{},"active_blockers":[],"recent_blockers":[]}'
+	return 0
+}
+
+#######################################
 # Emit bounded provider/model/account-pool usage from canonical metrics.
 # This is the narrow diagnostic path for recent worker provider questions; it
 # intentionally avoids recursive searches over logs or OpenCode storage.
@@ -439,6 +479,7 @@ _wah_emit_human() {
 	local cb="${11}" gqlow="${12}" db_skip="${13}" nwbreaker="${14}"
 	local solved_count="${15}" pr_check_state="${16}" repo_label="${17}"
 	local details_json="${18}"
+	local blocker_json="${19}"
 
 	local divider="==========================================================="
 
@@ -473,6 +514,12 @@ _wah_emit_human() {
 	printf '  Provider/model usage:        worker-activity-helper.sh providers --since %s\n' "$since_label"
 	printf '  Failure groups:             %s\n' "$(printf '%s' "$details_json" | jq -c '.failure_groups // []' 2>/dev/null || printf '[]')"
 	printf '  Failure families:           %s\n' "$(printf '%s' "$details_json" | jq -c '.failure_families // []' 2>/dev/null || printf '[]')"
+	printf '\n'
+	printf 'worker-progress-blockers.jsonl (bounded progress holds):\n'
+	printf '  Events in window:            %s\n' "$(printf '%s' "$blocker_json" | jq -r '.event_total // 0' 2>/dev/null || printf '0')"
+	printf '  Currently active:            %s\n' "$(printf '%s' "$blocker_json" | jq -r '.active_total // 0' 2>/dev/null || printf '0')"
+	printf '  Reasons:                     %s\n' "$(printf '%s' "$blocker_json" | jq -c '.reason_counts // {}' 2>/dev/null || printf '{}')"
+	printf '  Active blockers:             %s\n' "$(printf '%s' "$blocker_json" | jq -c '.active_blockers // []' 2>/dev/null || printf '[]')"
 	printf '\n'
 	printf 'pulse-stats.json (dispatch-side counters):\n'
 	printf '  pulse_dispatch_circuit_broken:           %d\n' "$cb"
@@ -534,6 +581,7 @@ _wah_emit_json() {
 	local cb="${12}" gqlow="${13}" db_skip="${14}" nwbreaker="${15}"
 	local solved_count="${16}" pr_check_state="${17}" repo_label="${18}"
 	local details_json="${19}"
+	local blocker_json="${20}"
 
 	# solved_count may be "?" on gh failure — coerce to null in JSON.
 	local solved_json="$solved_count"
@@ -557,6 +605,7 @@ _wah_emit_json() {
 		--argjson nwbreaker "$nwbreaker" \
 		--argjson solved_count "$solved_json" \
 		--argjson details "$details_json" \
+		--argjson blockers "$blocker_json" \
 		--arg pr_check_state "$pr_check_state" \
 		--arg repo "$repo_label" \
 		'{
@@ -587,6 +636,7 @@ _wah_emit_json() {
 				dispatch_backoff_skipped: $db_skip,
 				pulse_dispatch_no_work_breaker_tripped: $nwbreaker
 			},
+			progress_blockers: $blockers,
 			worker_solved_issues: { count: $solved_count, check_state: $pr_check_state },
 			worker_prs: { count: $solved_count, check_state: $pr_check_state, deprecated: true }
 		}'
@@ -647,10 +697,11 @@ cmd_summary() {
 		cutoff_iso="(unknown)"
 
 	# Aggregate metrics (single jq+awk pass).
-	local agg total terminal_total succ wk wc sic rl of details_json
+	local agg total terminal_total succ wk wc sic rl of details_json blocker_json
 	agg=$(_wah_aggregate_metrics "$cutoff_epoch" "$now_epoch")
 	read -r total terminal_total succ wk wc sic rl of <<<"$agg"
 	details_json=$(_wah_metric_details_json "$cutoff_epoch" "$now_epoch")
+	blocker_json=$(_wah_blocker_details_json "$cutoff_epoch" "$now_epoch" "$repo_label")
 
 	# Pulse-stats counters.
 	local cb gqlow db_skip nwbreaker
@@ -673,12 +724,12 @@ cmd_summary() {
 		_wah_emit_json "$since_label" "$cutoff_iso" "$cutoff_epoch" \
 			"$total" "$terminal_total" "$succ" "$wk" "$wc" "$sic" "$rl" "$of" \
 			"$cb" "$gqlow" "$db_skip" "$nwbreaker" \
-			"$pr_count" "$pr_check_state" "$repo_label" "$details_json"
+			"$pr_count" "$pr_check_state" "$repo_label" "$details_json" "$blocker_json"
 	else
 		_wah_emit_human "$since_label" "$cutoff_iso" \
 			"$total" "$terminal_total" "$succ" "$wk" "$wc" "$sic" "$rl" "$of" \
 			"$cb" "$gqlow" "$db_skip" "$nwbreaker" \
-			"$pr_count" "$pr_check_state" "$repo_label" "$details_json"
+			"$pr_count" "$pr_check_state" "$repo_label" "$details_json" "$blocker_json"
 	fi
 	return 0
 }
@@ -759,7 +810,8 @@ Options:
 Sources read (in canonical-precedence order):
   1. ~/.aidevops/logs/headless-runtime-metrics.jsonl  (worker outcomes)
   2. ~/.aidevops/logs/pulse-stats.json                (dispatch counters)
-  3. gh issue list label:solved:worker                (optional external truth)
+  3. ~/.aidevops/logs/worker-progress-blockers.jsonl  (bounded progress holds)
+  4. gh issue list label:solved:worker                (optional external truth)
 
 Examples:
   # Last 24 hours, human-readable.

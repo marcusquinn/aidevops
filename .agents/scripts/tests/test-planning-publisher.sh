@@ -29,6 +29,7 @@ setup_repo() {
 	local root="$1"
 	git init --bare --initial-branch=main "${root}/remote.git" >/dev/null 2>&1 || git init --bare "${root}/remote.git" >/dev/null 2>&1 || return 1
 	git clone "${root}/remote.git" "${root}/work" >/dev/null 2>&1 || return 1
+	git -C "${root}/work" config commit.gpgsign false || return 1
 	printf '# Tasks\n' >"${root}/work/TODO.md"
 	mkdir -p "${root}/work/todo/tasks" || return 1
 	printf 'base\n' >"${root}/work/README.md"
@@ -46,6 +47,7 @@ state_digest() {
 		git -C "$repo" ls-files -s
 		git -C "$repo" diff --binary
 		git -C "$repo" diff --cached --binary
+		git -C "$repo" status --porcelain=v1 --untracked-files=all
 	} | git hash-object --stdin
 	return 0
 }
@@ -60,6 +62,23 @@ run_publish() {
 		AIDEVOPS_PLANNING_VALIDATOR="$validator" planning_publish "$repo" "plan: test publication" origin main
 	)
 	return $?
+}
+
+test_git_binary_availability_is_validated() {
+	local name="rejects an unavailable Git command with a controlled error"
+	local output="" rc=0
+	output=$({
+		SCRIPT_DIR="$(dirname "$PUBLISHER")"
+		# shellcheck source=../planning-publisher.sh
+		source "$PUBLISHER"
+		AIDEVOPS_PLANNING_GIT_BIN="aidevops-missing-git-command" _planning_git --version
+	} 2>&1) || rc=$?
+	if [[ "$rc" -eq 1 && "$output" == *"Planning Git binary is not available or executable: aidevops-missing-git-command"* ]]; then
+		pass "$name"
+	else
+		fail "$name" "unexpected result (rc=$rc output=$output)"
+	fi
+	return 0
 }
 
 test_state_allowlist_and_idempotence() {
@@ -131,7 +150,7 @@ tmp=$(mktemp -d)
 git clone -q "$(git -C "$repo" remote get-url "$remote")" "$tmp/work"
 printf 'upstream\n' >>"$tmp/work/README.md"
 git -C "$tmp/work" add README.md
-GIT_AUTHOR_NAME=Rival GIT_AUTHOR_EMAIL=rival@example.invalid GIT_COMMITTER_NAME=Rival GIT_COMMITTER_EMAIL=rival@example.invalid git -C "$tmp/work" commit -qm rival
+GIT_AUTHOR_NAME=Rival GIT_AUTHOR_EMAIL=rival@example.invalid GIT_COMMITTER_NAME=Rival GIT_COMMITTER_EMAIL=rival@example.invalid git -C "$tmp/work" -c commit.gpgsign=false commit -qm rival
 git -C "$tmp/work" push -q origin "$branch"
 rm -rf "$tmp"
 exit 0
@@ -204,7 +223,7 @@ tmp=$(mktemp -d)
 git clone -q "$(git -C "$repo" remote get-url "$remote")" "$tmp/work"
 printf '%s\n' '- [ ] t999 rival ref:GH#999' >>"$tmp/work/TODO.md"
 git -C "$tmp/work" add TODO.md
-GIT_AUTHOR_NAME=Rival GIT_AUTHOR_EMAIL=rival@example.invalid GIT_COMMITTER_NAME=Rival GIT_COMMITTER_EMAIL=rival@example.invalid git -C "$tmp/work" commit -qm rival
+GIT_AUTHOR_NAME=Rival GIT_AUTHOR_EMAIL=rival@example.invalid GIT_COMMITTER_NAME=Rival GIT_COMMITTER_EMAIL=rival@example.invalid git -C "$tmp/work" -c commit.gpgsign=false commit -qm rival
 git -C "$tmp/work" push -q origin "$branch"
 rm -rf "$tmp"
 exit 0
@@ -222,12 +241,75 @@ HOOK
 	return 0
 }
 
+test_explicit_git_capability_preserves_guarded_checkout() {
+	local name="explicit Git capability publishes planning paths while canonical guard remains active"
+	local root="" repo="" shim_dir="" before="" after="" guard_rc=0 count="" real_git="" real_true=""
+	real_git=$(command -v git || true)
+	real_true=$(command -v true || true)
+	if [[ -z "$real_git" || -z "$real_true" ]]; then
+		fail "$name" command-resolution
+		return 0
+	fi
+	root=$(mktemp -d) || return 0
+	setup_repo "$root" || {
+		fail "$name" setup
+		return 0
+	}
+	repo="${root}/work"
+	shim_dir="${root}/shim"
+	mkdir -p "$shim_dir" || {
+		fail "$name" shim
+		return 0
+	}
+	cp "${SCRIPT_DIR_TEST}/../git" \
+		"${SCRIPT_DIR_TEST}/../canonical-git-command-guard.py" \
+		"${SCRIPT_DIR_TEST}/../canonical_git_policy.py" \
+		"${SCRIPT_DIR_TEST}/../canonical_shell_parser.py" \
+		"$shim_dir/" || {
+		fail "$name" guard-copy
+		return 0
+	}
+	printf '%s\n' '- [x] t006 proof ref:GH#6 pr:#60 completed:2026-07-14' >>"${repo}/TODO.md"
+	printf '%s\n' '**Status:** Completed' '**TODO:** t006' '**PR:** #60' >"${repo}/todo/PLANS.md"
+	before=$(state_digest "$repo")
+	(
+		export PATH="${shim_dir}:${PATH}"
+		export GIT_AUTHOR_NAME="GitHub Actions"
+		export GIT_AUTHOR_EMAIL="actions@github.com"
+		export GIT_COMMITTER_NAME="GitHub Actions"
+		export GIT_COMMITTER_EMAIL="actions@github.com"
+		SCRIPT_DIR="$(dirname "$PUBLISHER")"
+		# shellcheck source=../planning-publisher.sh
+		source "$PUBLISHER"
+		AIDEVOPS_PLANNING_GIT_BIN="$real_git" \
+			AIDEVOPS_PLANNING_VALIDATOR="$real_true" \
+			planning_publish "$repo" "plan: guarded task projection" origin main $'TODO.md\ntodo/PLANS.md'
+	) || {
+		fail "$name" publish
+		rm -rf "$root"
+		return 0
+	}
+	after=$(state_digest "$repo")
+	PATH="${shim_dir}:${PATH}" git -C "$repo" config user.name blocked-test >/dev/null 2>&1 || guard_rc=$?
+	count=$(git --git-dir="${root}/remote.git" show main:TODO.md | grep -c 'pr:#60 completed:2026-07-14' || true)
+	if [[ "$before" == "$after" && "$guard_rc" -eq 42 && "$count" -eq 1 ]] &&
+		git --git-dir="${root}/remote.git" show main:todo/PLANS.md | grep -q 'Status:\*\* Completed'; then
+		pass "$name"
+	else
+		fail "$name" "state or guard invariant failed (guard_rc=$guard_rc count=$count)"
+	fi
+	rm -rf "$root"
+	return 0
+}
+
 main() {
+	test_git_binary_availability_is_validated
 	test_state_allowlist_and_idempotence
 	test_validation_failure_pushes_nothing
 	test_contention_replay_and_conflict
 	test_crash_replay_is_single_publication
 	test_same_path_contention_is_retryable
+	test_explicit_git_capability_preserves_guarded_checkout
 	printf '%s passed, %s failed\n' "$PASS" "$FAIL"
 	[[ $FAIL -eq 0 ]] || return 1
 	return 0

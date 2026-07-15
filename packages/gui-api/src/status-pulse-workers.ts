@@ -259,7 +259,8 @@ function buildInsights(events: GuiPulseWorkerActivityEvent[], dayMetrics: Metric
   return findings.slice(0, 8);
 }
 
-function finding(id: string, kind: GuiPulseSystemicFinding["kind"], severity: GuiPulseSystemicFinding["severity"], title: string, detail: string, likelyCause: string, events: GuiPulseWorkerActivityEvent[], recommendation: string, metricLabel: string, sampleSize: number, confidence: GuiPulseSystemicFinding["confidence"], comparisonLabel = "selected period scoped to active filters"): GuiPulseSystemicFinding {
+function finding(...args: [string, GuiPulseSystemicFinding["kind"], GuiPulseSystemicFinding["severity"], string, string, string, GuiPulseWorkerActivityEvent[], string, string, number, GuiPulseSystemicFinding["confidence"], string?]): GuiPulseSystemicFinding {
+  const [id, kind, severity, title, detail, likelyCause, events, recommendation, metricLabel, sampleSize, confidence, comparisonLabel = "selected period scoped to active filters"] = args;
   return { id: `insight-${id.replace(/[^a-z0-9-]+/gi, "-").toLowerCase()}`, kind, severity, title, detail, likely_cause: likelyCause, evidence_refs: evidenceRefs(events), event_refs: events.map((event) => event.id).slice(0, 6), confidence, recommendation, metric_label: metricLabel, period_label: "Last 24h", scope_label: DEFAULT_SCOPE, comparison_label: comparisonLabel, sample_size: sampleSize, primary_action: "create_systemic_fix" };
 }
 

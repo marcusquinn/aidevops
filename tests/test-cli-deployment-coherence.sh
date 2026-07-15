@@ -6,11 +6,12 @@ TEST_HOME=$(mktemp -d)
 trap 'rm -rf "$TEST_HOME"' EXIT
 
 # shellcheck disable=SC2016
-grep -q 'DEPLOYED_CLI="${REAL_HOME:+$REAL_HOME/.aidevops/agents/aidevops.sh}"' "$REPO_DIR/bin/aidevops"
+grep -q 'DEPLOYED_CLI="$REAL_HOME/.aidevops/agents/aidevops.sh"' "$REPO_DIR/bin/aidevops"
 # shellcheck disable=SC2016
 grep -q '"$convergence_helper" converge "$cli_source" "$orchestrator_source" "$deployed_cli" "$deployed_version"' \
 	"$REPO_DIR/.agents/scripts/setup/modules/config.sh"
-grep -q 'git clone --depth 1 --branch main' \
+# shellcheck disable=SC2016
+grep -q 'git clone --depth 1 "${REPO_URL:-https://github.com/marcusquinn/aidevops.git}"' \
 	"$REPO_DIR/.agents/scripts/aidevops-cli/aidevops-update-lib.sh"
 
 mkdir -p "$TEST_HOME/.aidevops/agents/scripts" \
@@ -21,6 +22,11 @@ printf '#!/usr/bin/env bash\nprintf "canonical\\n"\n' >"$TEST_HOME/Git/aidevops/
 result=$(HOME="$TEST_HOME" bash "$REPO_DIR/bin/aidevops" version-check)
 [[ "$result" == "deployed:version-check" ]] || {
 	printf 'FAIL: launcher selected %s\n' "$result" >&2
+	exit 1
+}
+result=$(HOME="$TEST_HOME" AIDEVOPS_PREFER_LOCAL=1 bash "$REPO_DIR/bin/aidevops" version-check)
+[[ "$result" == "canonical" ]] || {
+	printf 'FAIL: local-development override selected %s\n' "$result" >&2
 	exit 1
 }
 
@@ -37,7 +43,7 @@ exit 42
 EOF
 printf '#!/usr/bin/env bash\nexit 1\n' >"$TEST_HOME/bin/curl"
 chmod +x "$TEST_HOME/bin/curl"
-result=$(cd "$TEST_HOME" && HOME="$TEST_HOME" PATH="$TEST_HOME/bin:/usr/bin:/bin" bash "$REPO_DIR/bin/aidevops" --version)
+result=$(cd "$TEST_HOME" && HOME="$TEST_HOME" PATH="$TEST_HOME/bin:$PATH" bash "$REPO_DIR/bin/aidevops" --version)
 [[ "$result" == "aidevops 9.8.7" ]] || {
 	printf 'FAIL: real deployed CLI selected %s\n' "$result" >&2
 	exit 1
@@ -63,6 +69,8 @@ result=$(PATH="$MOCK_BIN:$PATH" HOME="/root" SUDO_USER="worker" bash "$REPO_DIR/
 
 # A failed passwd lookup must preserve the HOME fallback under pipefail.
 printf '#!/usr/bin/env bash\nexit 2\n' >"$MOCK_BIN/getent"
+printf '#!/usr/bin/env bash\nexit 1\n' >"$MOCK_BIN/curl"
+chmod +x "$MOCK_BIN/curl"
 result=$(PATH="$MOCK_BIN:$PATH" HOME="$TEST_HOME" SUDO_USER="missing-worker" bash "$REPO_DIR/bin/aidevops" --version)
 [[ "$result" == "aidevops 9.8.7" ]] || {
 	printf 'FAIL: failed passwd lookup did not preserve HOME fallback: %s\n' "$result" >&2
@@ -72,6 +80,14 @@ result=$(PATH="$MOCK_BIN:$PATH" HOME="$TEST_HOME" SUDO_USER="missing-worker" bas
 # The launcher must remain nounset-safe when an environment omits HOME.
 # shellcheck disable=SC2016
 grep -q 'REAL_HOME="${HOME:-}"' "$REPO_DIR/bin/aidevops"
+if unset_home_output=$(env -u HOME -u SUDO_USER bash "$REPO_DIR/bin/aidevops" --version 2>&1); then
+	printf 'FAIL: launcher accepted an empty HOME\n' >&2
+	exit 1
+fi
+[[ "$unset_home_output" == "Error: HOME is not set; unable to resolve aidevops installation paths." ]] || {
+	printf 'FAIL: launcher returned an unexpected empty-HOME error: %s\n' "$unset_home_output" >&2
+	exit 1
+}
 
 grep -q 'After this, step 1 will always match and the deployed copy runs directly.' "$REPO_DIR/bin/aidevops"
 

@@ -413,16 +413,20 @@ _large_file_gate_find_existing_debt_issue() {
 	local _match _match_json _match_rc=0
 	_match_json=$(gh_issue_list --repo "$repo_slug" --state all \
 		--label "file-size-debt" --search "$_server_query" \
-		--json number,body,state --limit 100 2>/dev/null) || _match_rc=$?
-	_match=$(printf '%s' "$_match_json" | jq -r --arg marker "$_marker" \
-		'[.[] | select((.body // "") | contains($marker))] | sort_by(.number) | .[0] | if . then "\(.state | ascii_downcase):\(.number)" else empty end' 2>/dev/null) || _match_rc=$?
+		--json number,body,state --limit 100) || _match_rc=$?
+	if [[ $_match_rc -eq 0 ]]; then
+		_match=$(printf '%s' "$_match_json" | jq -r --arg marker "$_marker" \
+			'[.[] | select((.body // "") | contains($marker))] | sort_by(.number) | .[0] | if . then "\(.state | ascii_downcase):\(.number)" else empty end') || _match_rc=$?
+	fi
 	if [[ $_match_rc -eq 0 && -z "$_match" ]]; then
 		sleep 2
 		_match_json=$(gh_issue_list --repo "$repo_slug" --state all \
 			--label "file-size-debt" --search "$_server_query" \
-			--json number,body,state --limit 100 2>/dev/null) || _match_rc=$?
-		_match=$(printf '%s' "$_match_json" | jq -r --arg marker "$_marker" \
-			'[.[] | select((.body // "") | contains($marker))] | sort_by(.number) | .[0] | if . then "\(.state | ascii_downcase):\(.number)" else empty end' 2>/dev/null) || _match_rc=$?
+			--json number,body,state --limit 100) || _match_rc=$?
+		if [[ $_match_rc -eq 0 ]]; then
+			_match=$(printf '%s' "$_match_json" | jq -r --arg marker "$_marker" \
+				'[.[] | select((.body // "") | contains($marker))] | sort_by(.number) | .[0] | if . then "\(.state | ascii_downcase):\(.number)" else empty end') || _match_rc=$?
+		fi
 	fi
 	if [[ $_match_rc -ne 0 ]]; then
 		echo "[pulse-wrapper] WARN: file-size-debt dedup all-state search failed for ${lf_path} (rc=${_match_rc}); deferring (t2995)" >>"$LOGFILE"

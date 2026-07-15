@@ -252,8 +252,10 @@ run_case "post-approval protection failure blocks final success" '
 	_validate_approval_target_kind() { return 0; }
 	_fetch_target_title() { printf "Mock issue"; return 0; }
 	_confirm_approval() { return 0; }
+	approval_snapshot_v2_payload() { printf "%s" "{\"schema\":\"aidevops-approval/v2\"}"; return 0; }
 	_sign_approval_payload() { local payload="$1"; local actual_key="$2"; local sig_file="$3"; : "$payload" "$actual_key"; printf "mock-signature" >"$sig_file"; return 0; }
 	gh_issue_comment() { return 0; }
+	cmd_verify() { printf "VERIFIED"; return 0; }
 	_post_issue_approval_updates() { return 1; }
 	_kick_pulse_after_approval() { printf "SHOULD_NOT_KICK"; return 0; }
 	_approve_target issue 123 marcusquinn/aidevops

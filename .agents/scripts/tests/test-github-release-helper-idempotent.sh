@@ -70,6 +70,14 @@ if [[ "${1:-}" == "release" && "${2:-}" == "create" ]]; then
 	exit 0
 fi
 
+if [[ "${1:-}" == "release" && "${2:-}" == "edit" ]]; then
+	if [[ "${FAKE_EDIT_RATE_LIMIT:-0}" == "1" ]]; then
+		printf 'HTTP 403: API rate limit exceeded for installation\n' >&2
+		exit 1
+	fi
+	exit 0
+fi
+
 exit 1
 EOF
 chmod +x "${TEST_ROOT}/bin/gh"
@@ -80,6 +88,7 @@ export FAKE_GH_RELEASE_MARKER="${TEST_ROOT}/release-created.marker"
 rm -f "$FAKE_GH_LOG" "$FAKE_GH_RELEASE_MARKER"
 export FAKE_RELEASE_EXISTS=1
 export FAKE_CREATE_DUPLICATES=0
+export FAKE_EDIT_RATE_LIMIT=0
 rc=0
 output=$("${TEST_SCRIPTS_DIR}/github-release-helper.sh" create 1.2.4 --repo marcusquinn/aidevops --notes 'notes' 2>&1) || rc=$?
 if [[ "$rc" -eq 0 && "$output" == *"already exists"* ]]; then
@@ -109,6 +118,25 @@ if grep -q 'release view v1.2.4 --repo marcusquinn/aidevops' "$FAKE_GH_LOG" 2>/d
 	print_result 'duplicate create race verifies release after create failure' 0
 else
 	print_result 'duplicate create race verifies release after create failure' 1 'missing expected gh calls'
+fi
+
+rm -f "$FAKE_GH_LOG" "$FAKE_GH_RELEASE_MARKER"
+export FAKE_RELEASE_EXISTS=1
+export FAKE_CREATE_DUPLICATES=0
+export FAKE_EDIT_RATE_LIMIT=1
+rc=0
+output=$("${TEST_SCRIPTS_DIR}/github-release-helper.sh" create 1.2.4 --repo marcusquinn/aidevops --notes 'notes' --reconcile-existing 2>&1) || rc=$?
+if [[ "$rc" -eq 0 && "$output" == *"publication is verified"* && "$output" == *"metadata reconciliation is deferred"* ]]; then
+	print_result 'rate-limited metadata edit preserves verified publication' 0
+else
+	print_result 'rate-limited metadata edit preserves verified publication' 1 "rc=$rc output=$output"
+fi
+
+EDIT_COUNT=$(grep -c 'release edit' "$FAKE_GH_LOG" 2>/dev/null || true)
+if [[ "$EDIT_COUNT" -eq 1 ]]; then
+	print_result 'rate-limited metadata reconciliation stops without retry storm' 0
+else
+	print_result 'rate-limited metadata reconciliation stops without retry storm' 1 "edit_count=$EDIT_COUNT"
 fi
 
 printf '\nTests run: %s, Failures: %s\n' "$TESTS_RUN" "$TESTS_FAILED"

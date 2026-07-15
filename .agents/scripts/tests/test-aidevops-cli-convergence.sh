@@ -27,6 +27,16 @@ fail() {
 	return 0
 }
 
+file_mtime() {
+	local file_path="$1"
+	if [[ "$(uname)" == "Darwin" ]]; then
+		stat -f '%m' "$file_path" || return 1
+	else
+		stat -c '%Y' "$file_path" || return 1
+	fi
+	return 0
+}
+
 make_fixture() {
 	local fixture="$1"
 	mkdir -p "$fixture/home/.aidevops/agents" "$fixture/global" "$fixture/home/.local/bin" "$fixture/bin"
@@ -42,9 +52,10 @@ EOF
 
 run_converge() {
 	local fixture="$1"
+	local user_linuxbrew_path="${HOME:+:$HOME/.linuxbrew/bin}"
 	shift
 	HOME="$fixture/home" \
-		PATH="${AIDEVOPS_TEST_CLI_PATH:-$fixture/global:$fixture/home/.local/bin}:$fixture/bin:/usr/bin:/bin" \
+		PATH="${AIDEVOPS_TEST_CLI_PATH:-$fixture/global:$fixture/home/.local/bin}:$fixture/bin:/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin:/home/linuxbrew/.linuxbrew/bin$user_linuxbrew_path" \
 		AIDEVOPS_CLI_GLOBAL_TARGET="$fixture/global/aidevops" \
 		AIDEVOPS_CLI_USER_TARGET="$fixture/home/.local/bin/aidevops" \
 		AIDEVOPS_CLI_LOCK_DIR="$fixture/home/.aidevops/locks/cli.lock" \
@@ -173,11 +184,11 @@ test_already_current() {
 	cp "$fixture/launcher" "$fixture/global/aidevops"
 	chmod +x "$fixture/global/aidevops"
 	local before
-	before=$(stat -f '%m' "$fixture/global/aidevops" 2>/dev/null || stat -c '%Y' "$fixture/global/aidevops")
+	before=$(file_mtime "$fixture/global/aidevops")
 	sleep 1
 	if run_converge "$fixture" env >/dev/null 2>&1; then
 		local after
-		after=$(stat -f '%m' "$fixture/global/aidevops" 2>/dev/null || stat -c '%Y' "$fixture/global/aidevops")
+		after=$(file_mtime "$fixture/global/aidevops")
 		[[ "$before" == "$after" ]] && pass "already-current launcher is a no-op" || fail "already-current launcher is a no-op" "mtime changed"
 	else
 		fail "already-current launcher is a no-op" "convergence failed"

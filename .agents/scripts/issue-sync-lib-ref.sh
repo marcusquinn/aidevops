@@ -228,20 +228,19 @@ resolve_task_gh_number() {
 	local repo="${3:-}"
 	[[ "$repo" =~ ^[^/[:space:]]+/[^/[:space:]]+$ ]] || return 1
 	local repository_id="" mapping="" coordinator="${SCRIPT_DIR}/task-coordinator.mjs"
-	repository_id=$(_gh_with_timeout read gh api "repos/${repo}" --jq '.node_id' 2>/dev/null || true)
-	[[ -n "$repository_id" && "$repository_id" != "null" ]] || return 1
+	repository_id=$(_gh_with_timeout read gh api "repos/${repo}" --jq '.node_id // ""' 2>/dev/null || true)
+	[[ -n "$repository_id" ]] || return 1
 	if [[ -f "$coordinator" ]]; then
 		mapping=$(node "$coordinator" resolve-issue --task-id "$task_id" --forge github \
 			--repository-id "$repository_id" 2>/dev/null || true)
 		if [[ -n "$mapping" ]]; then
 			local mapped_slug="" mapped_role="" mapped_issue_id="" mapped_number="" mapped_project="" mapped_cursor="" mapped_metadata=""
-			mapped_slug=$(printf '%s' "$mapping" | jq -r '.repositorySlug')
-			mapped_role=$(printf '%s' "$mapping" | jq -r '.role')
-			mapped_issue_id=$(printf '%s' "$mapping" | jq -r '.issueId')
-			mapped_number=$(printf '%s' "$mapping" | jq -r '.displayNumber')
-			mapped_project=$(printf '%s' "$mapping" | jq -r '.projectId // empty')
-			mapped_cursor=$(printf '%s' "$mapping" | jq -r '.stateCursor // empty')
-			mapped_metadata=$(printf '%s' "$mapping" | jq -c '.syncMetadata')
+			if ! IFS=$'\034' read -r mapped_slug mapped_role mapped_issue_id mapped_number mapped_project mapped_cursor mapped_metadata < <(
+				printf '%s' "$mapping" | jq -r \
+					'[.repositorySlug // "", .role // "", .issueId // "", (.displayNumber // "" | tostring), .projectId // "", .stateCursor // "", (.syncMetadata | tojson)] | join("\u001c")'
+			); then
+				return 1
+			fi
 			if [[ "$mapped_slug" != "$repo" ]]; then
 				local refresh_args=()
 				[[ -n "$mapped_project" ]] && refresh_args+=(--project-id "$mapped_project")

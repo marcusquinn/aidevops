@@ -106,6 +106,20 @@ test("version reader prefers deployed agents VERSION", async () => {
   });
 });
 
+test("version reader handles missing agent directories", async () => {
+  const saved = process.env.AIDEVOPS_VERSION;
+  try {
+    process.env.AIDEVOPS_VERSION = " 3.20.104 ";
+    assert.equal(readAidevopsVersion(undefined), "3.20.104");
+
+    delete process.env.AIDEVOPS_VERSION;
+    assert.equal(readAidevopsVersion(null), "");
+  } finally {
+    if (saved === undefined) delete process.env.AIDEVOPS_VERSION;
+    else process.env.AIDEVOPS_VERSION = saved;
+  }
+});
+
 test("session.updated handler appends suffix through OpenCode session update API", async () => {
   await withoutEnvVersion(() =>
     withTempAgentsDir(async (agentsDir) => {

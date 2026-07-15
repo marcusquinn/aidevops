@@ -39,6 +39,7 @@ MOCK_GH_ISSUE_STATE="OPEN"
 MOCK_GH_LABELS_JSON="[]"
 MOCK_GH_FAIL="0"
 MOCK_GH_TARGET_IS_PR="0"
+MOCK_GH_PERMISSION_EVENTS_JSON='[[]]'
 MOCK_PS_LINES=""
 MOCK_LEDGER_RECORD=""
 MOCK_GIT_WORKTREE_LIST="0"
@@ -172,6 +173,10 @@ gh() {
 
 	if [[ "$gh_subcommand" == "api" && "$gh_resource" == "user" ]]; then
 		printf '%s\n' 'runner-self'
+		return 0
+	fi
+	if [[ "$gh_subcommand" == "api" && "$gh_resource" == */events\?* ]]; then
+		printf '%s\n' "$MOCK_GH_PERMISSION_EVENTS_JSON"
 		return 0
 	fi
 
@@ -635,6 +640,47 @@ test_maintainer_review_guard_blocks_manual_dispatch() {
 	local check=1
 	[[ "$rc" -eq 1 && "$out" == *"requires maintainer review"* && "$out" == *"sudo aidevops approve issue 24354 owner/repo"* ]] && check=0
 	print_result "maintainer-review guard blocks manual dispatch" "$check" "rc=$rc output=$out"
+	return 0
+}
+
+test_maintainer_permission_guard_blocks_manual_dispatch() {
+	local rc=0
+	local out=""
+	out=$(_dsi_guard_no_maintainer_permission_required "bug,needs-maintainer-permissions" 24354 owner/repo 2>&1) || rc=$?
+
+	local check=1
+	[[ "$rc" -eq 1 && "$out" == *"scoped maintainer permission grant"* && "$out" == *"--request perm-"* ]] && check=0
+	print_result "maintainer-permission guard blocks manual dispatch" "$check" "rc=$rc output=$out"
+	return 0
+}
+
+test_permission_history_guard_requires_current_grant() {
+	local helper_dir helper original_helper out rc=0
+	helper_dir=$(mktemp -d)
+	helper="${helper_dir}/approval-helper.sh"
+	printf '%s\n' '#!/usr/bin/env bash' 'printf "%s\n" "${MOCK_PERMISSION_VERIFICATION:-NO_APPROVAL}"' >"$helper"
+	chmod +x "$helper"
+	original_helper="$_DSI_APPROVAL_HELPER"
+	_DSI_APPROVAL_HELPER="$helper"
+	MOCK_GH_PERMISSION_EVENTS_JSON='[[{"event":"labeled","label":{"name":"needs-maintainer-permissions"}}]]'
+	export MOCK_PERMISSION_VERIFICATION="STALE_APPROVAL"
+	out=$(_dsi_guard_permission_history_verified 24354 owner/repo 2>&1) || rc=$?
+
+	local check=1
+	[[ "$rc" -eq 1 && "$out" == *"without a current matching signed grant (STALE_APPROVAL)"* ]] && check=0
+	print_result "permission history guard blocks stale grant" "$check" "rc=$rc output=$out"
+
+	rc=0
+	export MOCK_PERMISSION_VERIFICATION="VERIFIED"
+	out=$(_dsi_guard_permission_history_verified 24354 owner/repo 2>&1) || rc=$?
+	check=1
+	[[ "$rc" -eq 1 && "$out" == *"bound to its original worker session and worktree"* ]] && check=0
+	print_result "permission history guard rejects new worker for bound grant" "$check" "rc=$rc output=$out"
+
+	_DSI_APPROVAL_HELPER="$original_helper"
+	MOCK_GH_PERMISSION_EVENTS_JSON='[[]]'
+	unset MOCK_PERMISSION_VERIFICATION
+	rm -rf "$helper_dir"
 	return 0
 }
 
@@ -1175,6 +1221,8 @@ _run_tests() {
 	test_interactive_hold_guard_allows_auto_dispatch_handoff
 	test_interactive_hold_guard_allows_auto_dispatch_review_handoff
 	test_maintainer_review_guard_blocks_manual_dispatch
+	test_maintainer_permission_guard_blocks_manual_dispatch
+	test_permission_history_guard_requires_current_grant
 	test_cmd_dispatch_blocks_needs_maintainer_review_before_dedup
 	test_dedup_receives_prefetched_issue_metadata
 	test_transient_dedup_retries_are_bounded

@@ -21,9 +21,9 @@
 #      read-only merge gates (required checks, interactive PRs held for manual
 #      merge, worker PR with no linked issue, external-contributor PR without
 #      maintainer crypto-approval, non-collaborator author without maintainer
-#      crypto-approval, and unknown authors that must not bypass the collaborator
-#      check) and keeps processing when GitHub returns a null PR author for
-#      deleted users.
+#      crypto-approval, stale merged PR-list entries, and unknown authors that
+#      must not bypass the collaborator check) and keeps processing when GitHub
+#      returns a null PR author for deleted users.
 #   8. _detect_pattern_outage de-duplicates repeated PR observations.
 #   9. pulse-merge-stuck.sh and pulse-stats-helper.sh pass shellcheck.
 #
@@ -446,8 +446,28 @@ gh_pr_list() {
 {"number":111,"mergeable":"MERGEABLE","reviewDecision":"APPROVED","isDraft":false,"labels":[{"name":"origin:interactive"}],"author":{"login":"trusted"},"updatedAt":"2026-01-01T00:00:00Z"},
 {"number":112,"mergeable":"MERGEABLE","reviewDecision":"APPROVED","isDraft":false,"labels":[{"name":"origin:interactive"},{"name":"allow-auto-merge"}],"author":{"login":"trusted"},"updatedAt":"2026-01-01T00:00:00Z"},
 {"number":113,"mergeable":"MERGEABLE","reviewDecision":"APPROVED","isDraft":false,"labels":[{"name":"external-contributor"}],"author":{"login":"trusted"},"updatedAt":"2026-01-01T00:00:00Z"},
-{"number":114,"mergeable":"MERGEABLE","reviewDecision":"APPROVED","isDraft":false,"labels":[{"name":"external-contributor"}],"author":{"login":"trusted"},"updatedAt":"2026-01-01T00:00:00Z"}
+{"number":114,"mergeable":"MERGEABLE","reviewDecision":"APPROVED","isDraft":false,"labels":[{"name":"external-contributor"}],"author":{"login":"trusted"},"updatedAt":"2026-01-01T00:00:00Z"},
+{"number":115,"mergeable":"MERGEABLE","reviewDecision":"APPROVED","isDraft":false,"labels":[],"author":{"login":"trusted"},"updatedAt":"2026-01-01T00:00:00Z"}
 ]'
+	return 0
+}
+
+PMS_TEST_PR_VIEW_CALLS="$TEST_TMPDIR/pr-view-calls.log"
+: >"$PMS_TEST_PR_VIEW_CALLS"
+gh_pr_view() {
+	local pr_number="$1"
+	local repo_flag="$2"
+	local repo_slug="$3"
+	shift 3
+	[[ "$repo_flag" == "--repo" && -n "$repo_slug" ]] || return 1
+	printf '%s:%s:%s:%s\n' "$pr_number" "$repo_slug" "${AIDEVOPS_GH_PR_VIEW_CACHE_DISABLE:-0}" "$*" >>"$PMS_TEST_PR_VIEW_CALLS"
+	if [[ "$pr_number" == "108" ]]; then
+		printf 'CLOSED'
+	elif [[ "$pr_number" == "115" ]]; then
+		return 1
+	else
+		printf 'OPEN'
+	fi
 	return 0
 }
 
@@ -504,6 +524,10 @@ _interactive_pr_auto_merge_allowed() {
 
 got=$(_pms_count_eligible_unmerged_for_repo "example/repo")
 assert_eq "6a: zero-progress count excludes read-only merge-gate blockers" "4" "$got"
+closed_state_calls=$(grep -cF '108:example/repo:1:--json state --jq .state // ""' "$PMS_TEST_PR_VIEW_CALLS" 2>/dev/null || true)
+assert_eq "6a.1: stale merged candidates receive an uncached current-state check" "1" "$closed_state_calls"
+unavailable_state_calls=$(grep -cF '115:example/repo:1:--json state --jq .state // ""' "$PMS_TEST_PR_VIEW_CALLS" 2>/dev/null || true)
+assert_eq "6a.2: unavailable current-state reads retain the cached candidate" "1" "$unavailable_state_calls"
 
 _pms_compute_saturation_state() {
 	printf 'queued=0\nin_progress=0\nratio=0\nsaturated=0\n'
@@ -523,7 +547,7 @@ AIDEVOPS_MERGE_STUCK_AGE_MINUTES=1
 AIDEVOPS_MERGE_PATTERN_MIN_PRS=99
 pulse_merge_stuck_run_pass "example/repo" >/dev/null 2>&1
 shape_calls=$(grep -cF -- '--json number,mergeable,reviewDecision,isDraft,labels,author,updatedAt --limit 50' "$PMS_TEST_PR_LIST_CALLS" 2>/dev/null || true)
-assert_eq "6a.1: stuck scans share one provider-cache PR-list shape" "1" "$shape_calls"
+assert_eq "6a.2: stuck scans share one provider-cache PR-list shape" "1" "$shape_calls"
 AIDEVOPS_MERGE_PATTERN_MIN_PRS=3
 
 PMS_TEST_COUNT_AUTHORS_FILE="$TEST_TMPDIR/count-authors.log"

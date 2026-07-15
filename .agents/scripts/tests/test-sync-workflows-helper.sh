@@ -14,6 +14,7 @@
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 HELPER="$SCRIPT_DIR/../sync-workflows-helper.sh"
 CHECK_HELPER="$SCRIPT_DIR/../check-workflows-helper.sh"
 
@@ -85,6 +86,22 @@ _init_fake_repo() {
 	printf '%s\n' "$_workflow_content" >"$_repo_dir/.github/workflows/issue-sync.yml"
 	git -C "$_repo_dir" add -A
 	git -C "$_repo_dir" commit -q -m "initial" 2>/dev/null
+	return 0
+}
+
+_setup_mock_gh() {
+	local _tmpdir="$1"
+	mkdir -p "$_tmpdir/bin"
+	cat >"$_tmpdir/bin/gh" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"${GH_CALL_LOG:?}"
+if [[ "${1:-} ${2:-}" == "pr create" ]]; then
+	printf 'mock-pr\n'
+fi
+exit 0
+EOF
+	chmod +x "$_tmpdir/bin/gh"
+	: >"$_tmpdir/gh-calls.log"
 	return 0
 }
 
@@ -276,15 +293,27 @@ rm -rf "$TMPDIR_10"
 # PLANNED with classification CURRENT/CALLER preserved.
 TMPDIR_11="$(mktemp -d)"
 _setup_fake_home "$TMPDIR_11"
-mkdir -p "$TMPDIR_11/repo-runneradd/.github/workflows"
+mkdir -p \
+	"$TMPDIR_11/repo-runneradd/.github/workflows" \
+	"$TMPDIR_11/repo-runnerchange/.github/workflows" \
+	"$TMPDIR_11/repo-runnerremove/.github/workflows"
 # Canonical caller — no runner: line.
 printf '%s\n' "$CANONICAL_CALLER_CONTENT" >"$TMPDIR_11/repo-runneradd/.github/workflows/issue-sync.yml"
-# repos.json carries a runner field that has not been propagated to the file.
-_write_repos_json "$TMPDIR_11" "{\"initialized_repos\":[{\"path\":\"$TMPDIR_11/repo-runneradd\",\"slug\":\"owner/repo-runneradd\",\"runner\":\"ubuntu-latest-arm64\"}]}"
+# Canonical callers with stale runner values exercise change and removal.
+RUNNER_CONTENT_11=$(printf '%s\n' "$CANONICAL_CALLER_CONTENT" \
+	| sed -E 's|^(    with:)$|\1\n      runner: ubuntu-old|')
+printf '%s\n' "$RUNNER_CONTENT_11" >"$TMPDIR_11/repo-runnerchange/.github/workflows/issue-sync.yml"
+printf '%s\n' "$RUNNER_CONTENT_11" >"$TMPDIR_11/repo-runnerremove/.github/workflows/issue-sync.yml"
+# repos.json adds, changes, and removes runner overrides across the fixtures.
+_write_repos_json "$TMPDIR_11" \
+	"{\"initialized_repos\":[{\"path\":\"$TMPDIR_11/repo-runneradd\",\"slug\":\"owner/repo-runneradd\",\"runner\":\"ubuntu-latest-arm64\"},{\"path\":\"$TMPDIR_11/repo-runnerchange\",\"slug\":\"owner/repo-runnerchange\",\"runner\":\"ubuntu-new\"},{\"path\":\"$TMPDIR_11/repo-runnerremove\",\"slug\":\"owner/repo-runnerremove\"}]}"
 OUT_11=$(HOME="$TMPDIR_11" bash "$HELPER" --json 2>/dev/null)
 _assert_contains "GH#21897 → CURRENT/CALLER + repos.json runner is actionable" "$OUT_11" '"slug":"owner/repo-runneradd"'
 _assert_contains "GH#21897 → planned outcome on runner add" "$OUT_11" '"outcome":"PLANNED"'
 _assert_contains "GH#21897 → CURRENT/CALLER classification preserved" "$OUT_11" '"classification":"CURRENT/CALLER"'
+_assert_contains "GH#27725 → runner-add dry-run describes runner update" "$OUT_11" '"slug":"owner/repo-runneradd","classification":"CURRENT/CALLER","outcome":"PLANNED","detail":"update runner → .github/workflows/issue-sync.yml'
+_assert_contains "GH#27725 → runner-change dry-run describes runner update" "$OUT_11" '"slug":"owner/repo-runnerchange","classification":"CURRENT/CALLER","outcome":"PLANNED","detail":"update runner → .github/workflows/issue-sync.yml'
+_assert_contains "GH#27725 → runner-removal dry-run describes runner update" "$OUT_11" '"slug":"owner/repo-runnerremove","classification":"CURRENT/CALLER","outcome":"PLANNED","detail":"update runner → .github/workflows/issue-sync.yml'
 rm -rf "$TMPDIR_11"
 
 # ─── Test 12: GH#21897 — CURRENT/CALLER + matching runner already injected → no work ───
@@ -309,9 +338,55 @@ _assert_contains "GH#21897 → already-injected runner is no-op" "$OUT_12" "no a
 _assert_exit "GH#21897 → no-op exits 0" 0 "$EXIT_12"
 rm -rf "$TMPDIR_12"
 
+# ─── Test 12a: GH#27725 — review-bot dry-run names selected workflow ────────
+TMPDIR_12_REVIEW="$(mktemp -d)" || exit 1
+_setup_fake_home "$TMPDIR_12_REVIEW"
+mkdir -p "$TMPDIR_12_REVIEW/repo-review/.github/workflows"
+sed 's/cancel-in-progress: false/cancel-in-progress: true/' \
+	"$SCRIPT_DIR/../../templates/workflows/review-bot-gate-caller.yml" \
+	>"$TMPDIR_12_REVIEW/repo-review/.github/workflows/review-bot-gate.yml"
+_write_repos_json "$TMPDIR_12_REVIEW" \
+	"{\"initialized_repos\":[{\"path\":\"$TMPDIR_12_REVIEW/repo-review\",\"slug\":\"owner/repo-review\"}]}"
+OUT_12_REVIEW=$(HOME="$TMPDIR_12_REVIEW" bash "$HELPER" \
+	--repo owner/repo-review --workflow review-bot-gate --json 2>/dev/null)
+_assert_contains "GH#27725 → review-bot drift classification preserved" \
+	"$OUT_12_REVIEW" '"classification":"DRIFTED/CALLER"'
+_assert_contains "GH#27725 → review-bot dry-run names selected workflow" \
+	"$OUT_12_REVIEW" '"detail":"refresh → .github/workflows/review-bot-gate.yml'
+rm -rf "$TMPDIR_12_REVIEW"
+
+# ─── Test 12b: GH#27725 — maintainer-gate dry-run names selected workflow ──
+TMPDIR_12_MAINTAINER="$(mktemp -d)" || exit 1
+_setup_fake_home "$TMPDIR_12_MAINTAINER"
+mkdir -p "$TMPDIR_12_MAINTAINER/repo-maintainer/.github/workflows"
+sed 's/issues: write/issues: read/' \
+	"$SCRIPT_DIR/../../templates/workflows/maintainer-gate-caller.yml" \
+	>"$TMPDIR_12_MAINTAINER/repo-maintainer/.github/workflows/maintainer-gate.yml"
+_write_repos_json "$TMPDIR_12_MAINTAINER" \
+	"{\"initialized_repos\":[{\"path\":\"$TMPDIR_12_MAINTAINER/repo-maintainer\",\"slug\":\"owner/repo-maintainer\"}]}"
+OUT_12_MAINTAINER=$(HOME="$TMPDIR_12_MAINTAINER" bash "$HELPER" \
+	--repo owner/repo-maintainer --workflow maintainer-gate --json 2>/dev/null)
+_assert_contains "GH#27725 → maintainer-gate drift classification preserved" \
+	"$OUT_12_MAINTAINER" '"classification":"DRIFTED/CALLER"'
+_assert_contains "GH#27725 → maintainer-gate dry-run names selected workflow" \
+	"$OUT_12_MAINTAINER" '"detail":"refresh → .github/workflows/maintainer-gate.yml'
+rm -rf "$TMPDIR_12_MAINTAINER"
+
 # ─── Test 13: GH#24520 — apply renders configured reusable repo/ref ─────────
 TMPDIR_13="$(mktemp -d)"
 _setup_fake_home "$TMPDIR_13"
+MIRROR_13="$TMPDIR_13/org-dotgithub"
+mkdir -p "$MIRROR_13/.github/workflows"
+git -C "$MIRROR_13" init -q 2>/dev/null
+git -C "$MIRROR_13" config user.email test@example.com
+git -C "$MIRROR_13" config user.name Test
+git -C "$MIRROR_13" config commit.gpgsign false
+git -C "$MIRROR_13" symbolic-ref HEAD refs/heads/main 2>/dev/null
+cp "$REPO_ROOT/.github/workflows/issue-sync-reusable.yml" \
+	"$MIRROR_13/.github/workflows/issue-sync-reusable.yml"
+git -C "$MIRROR_13" add -A >/dev/null
+git -C "$MIRROR_13" commit -q -m "current mirror contract"
+MIRROR_REF_13=$(git -C "$MIRROR_13" rev-parse HEAD)
 BARE_13="$TMPDIR_13/bare.git"
 git init --bare -q "$BARE_13" 2>/dev/null
 REPO_13="$TMPDIR_13/repo-org-target"
@@ -328,18 +403,24 @@ git -C "$REPO_13" remote add origin "$BARE_13" 2>/dev/null
 git -C "$REPO_13" push -q origin main 2>/dev/null
 git -C "$REPO_13" fetch -q origin 2>/dev/null
 git -C "$REPO_13" remote set-head origin main 2>/dev/null
-_write_repos_json "$TMPDIR_13" "{\"workflow_reusable_repo\":\"ORG/.github\",\"workflow_reusable_ref\":\"1234567890abcdef1234567890abcdef12345678\",\"initialized_repos\":[{\"path\":\"$REPO_13\",\"slug\":\"owner/repo-org-target\",\"runner\":\"ubuntu-latest-arm64\"}]}"
+_write_repos_json "$TMPDIR_13" "{\"workflow_reusable_repo\":\"ORG/.github\",\"workflow_reusable_ref\":\"$MIRROR_REF_13\",\"initialized_repos\":[{\"path\":\"$REPO_13\",\"slug\":\"owner/repo-org-target\",\"runner\":\"ubuntu-latest-arm64\"},{\"path\":\"$MIRROR_13\",\"slug\":\"ORG/.github\"}]}"
 SYNC_BRANCH_13="chore/workflow-sync-$(date +%Y%m%d)"
 HOME="$TMPDIR_13" bash "$HELPER" --apply 2>/dev/null || true
 WF_USES_13=$(git -C "$REPO_13" show "${SYNC_BRANCH_13}:.github/workflows/issue-sync.yml" 2>/dev/null \
 	| grep -E "^[[:space:]]+uses:" | head -n 1 || true)
 WF_RUNNER_13=$(git -C "$REPO_13" show "${SYNC_BRANCH_13}:.github/workflows/issue-sync.yml" 2>/dev/null \
 	| grep -E "^[[:space:]]+runner:" | head -n 1 || true)
+WF_HELPER_REPO_13=$(git -C "$REPO_13" show "${SYNC_BRANCH_13}:.github/workflows/issue-sync.yml" 2>/dev/null \
+	| grep -E "^[[:space:]]+aidevops_repository:" | head -n 1 || true)
+WF_HELPER_REF_13=$(git -C "$REPO_13" show "${SYNC_BRANCH_13}:.github/workflows/issue-sync.yml" 2>/dev/null \
+	| grep -E "^[[:space:]]+aidevops_ref:" | head -n 1 || true)
+WF_HELPER_SECRET_13=$(git -C "$REPO_13" show "${SYNC_BRANCH_13}:.github/workflows/issue-sync.yml" 2>/dev/null \
+	| grep -E "^[[:space:]]+AIDEVOPS_READ_TOKEN:" | head -n 1 || true)
 git -C "$REPO_13" checkout -q "$SYNC_BRANCH_13" 2>/dev/null || true
 CHECK_CLASS_13=$(HOME="$TMPDIR_13" bash "$CHECK_HELPER" --json --repo "owner/repo-org-target" --workflow issue-sync 2>/dev/null \
 	| jq -r 'select(.slug == "owner/repo-org-target") | .classification' \
 	| head -n 1)
-if [[ "$WF_USES_13" == *"ORG/.github/.github/workflows/issue-sync-reusable.yml@1234567890abcdef1234567890abcdef12345678"* ]]; then
+if [[ "$WF_USES_13" == *"ORG/.github/.github/workflows/issue-sync-reusable.yml@${MIRROR_REF_13}"* ]]; then
 	printf '%sPASS%s GH#24520 apply writes configured org reusable target\n' "$GREEN" "$NC"
 	((_PASS++))
 else
@@ -355,6 +436,16 @@ else
 	printf '       got: %s\n' "$WF_RUNNER_13"
 	((_FAIL++))
 fi
+if [[ "$WF_HELPER_REPO_13" == *"ORG/.github"* && \
+	"$WF_HELPER_REF_13" == *"${MIRROR_REF_13}"* && \
+	"$WF_HELPER_SECRET_13" == *'secrets.AIDEVOPS_READ_TOKEN'* ]]; then
+	printf '%sPASS%s GH#27727 helper provenance matches configured reusable target\n' "$GREEN" "$NC"
+	((_PASS++))
+else
+	printf '%sFAIL%s GH#27727 helper provenance matches configured reusable target\n' "$RED" "$NC"
+	printf '       repo: %s ref: %s\n' "$WF_HELPER_REPO_13" "$WF_HELPER_REF_13"
+	((_FAIL++))
+fi
 if [[ "$CHECK_CLASS_13" == "CURRENT/CALLER" ]]; then
 	printf '%sPASS%s GH#25222 sync-generated org caller checks clean\n' "$GREEN" "$NC"
 	((_PASS++))
@@ -364,6 +455,119 @@ else
 	((_FAIL++))
 fi
 rm -rf "$TMPDIR_13"
+
+# ─── Test 14: GH#27726 — stale local, canonical remote → successful no-op ──
+TMPDIR_14="$(mktemp -d)"
+_setup_fake_home "$TMPDIR_14"
+_setup_mock_gh "$TMPDIR_14"
+BARE_14="$TMPDIR_14/bare.git"
+REPO_14="$TMPDIR_14/repo-stale-current"
+git init --bare -q "$BARE_14"
+mkdir -p "$REPO_14/.github/workflows"
+git -C "$REPO_14" init -q
+git -C "$REPO_14" config user.email test@example.com
+git -C "$REPO_14" config user.name Test
+git -C "$REPO_14" config commit.gpgsign false
+git -C "$REPO_14" checkout -q -b main
+printf '%s\n# stale local drift\n' "$CANONICAL_CALLER_CONTENT" >"$REPO_14/.github/workflows/issue-sync.yml"
+git -C "$REPO_14" add -A
+git -C "$REPO_14" commit -q -m "stale workflow"
+STALE_SHA_14=$(git -C "$REPO_14" rev-parse HEAD)
+git -C "$REPO_14" remote add origin "$BARE_14"
+git -C "$REPO_14" push -q -u origin main
+git --git-dir="$BARE_14" symbolic-ref HEAD refs/heads/main
+printf '%s\n' "$CANONICAL_CALLER_CONTENT" >"$REPO_14/.github/workflows/issue-sync.yml"
+git -C "$REPO_14" add -A
+git -C "$REPO_14" commit -q -m "canonical remote workflow"
+git -C "$REPO_14" push -q origin main
+git -C "$REPO_14" reset -q --hard "$STALE_SHA_14"
+git -C "$REPO_14" remote set-head origin main
+_write_repos_json "$TMPDIR_14" \
+	"{\"initialized_repos\":[{\"path\":\"$REPO_14\",\"slug\":\"owner/repo-stale-current\"}]}"
+OUT_14=$(HOME="$TMPDIR_14" PATH="$TMPDIR_14/bin:$PATH" GH_CALL_LOG="$TMPDIR_14/gh-calls.log" \
+	bash "$HELPER" --apply --branch chore/test-stale-current 2>&1)
+EXIT_14=$?
+if [[ "$OUT_14" == *"refreshed checkout is CURRENT/CALLER; no changes"* ]] &&
+	[[ ! -s "$TMPDIR_14/gh-calls.log" ]] &&
+	! git --git-dir="$BARE_14" show-ref --verify --quiet refs/heads/chore/test-stale-current; then
+	printf '%sPASS%s GH#27726 stale local + canonical remote → no push or PR\n' "$GREEN" "$NC"
+	((_PASS++))
+else
+	printf '%sFAIL%s GH#27726 stale local + canonical remote → no push or PR\n' "$RED" "$NC"
+	printf '       output: %s\n' "$OUT_14"
+	((_FAIL++))
+fi
+_assert_exit "GH#27726 refreshed-current no-op exits 0" 0 "$EXIT_14"
+rm -rf "$TMPDIR_14"
+
+# ─── Test 15: GH#27726 — stale local, drifted remote → apply refreshed state ─
+TMPDIR_15="$(mktemp -d)"
+_setup_fake_home "$TMPDIR_15"
+_setup_mock_gh "$TMPDIR_15"
+BARE_15="$TMPDIR_15/bare.git"
+REPO_15="$TMPDIR_15/repo-stale-drifted"
+git init --bare -q "$BARE_15"
+mkdir -p "$REPO_15/.github/workflows"
+git -C "$REPO_15" init -q
+git -C "$REPO_15" config user.email test@example.com
+git -C "$REPO_15" config user.name Test
+git -C "$REPO_15" config commit.gpgsign false
+git -C "$REPO_15" checkout -q -b main
+printf '%s\n# old local drift\n' "$CANONICAL_CALLER_CONTENT" >"$REPO_15/.github/workflows/issue-sync.yml"
+git -C "$REPO_15" add -A
+git -C "$REPO_15" commit -q -m "old drift"
+STALE_SHA_15=$(git -C "$REPO_15" rev-parse HEAD)
+git -C "$REPO_15" remote add origin "$BARE_15"
+git -C "$REPO_15" push -q -u origin main
+git --git-dir="$BARE_15" symbolic-ref HEAD refs/heads/main
+printf '%s\n# newer remote drift\n' "$CANONICAL_CALLER_CONTENT" >"$REPO_15/.github/workflows/issue-sync.yml"
+git -C "$REPO_15" add -A
+git -C "$REPO_15" commit -q -m "newer remote drift"
+git -C "$REPO_15" push -q origin main
+git -C "$REPO_15" reset -q --hard "$STALE_SHA_15"
+git -C "$REPO_15" remote set-head origin main
+_write_repos_json "$TMPDIR_15" \
+	"{\"initialized_repos\":[{\"path\":\"$REPO_15\",\"slug\":\"owner/repo-stale-drifted\"}]}"
+OUT_15=$(HOME="$TMPDIR_15" PATH="$TMPDIR_15/bin:$PATH" GH_CALL_LOG="$TMPDIR_15/gh-calls.log" \
+	bash "$HELPER" --apply --branch chore/test-stale-drifted 2>&1)
+EXIT_15=$?
+APPLIED_15=$(git --git-dir="$BARE_15" show \
+	"refs/heads/chore/test-stale-drifted:.github/workflows/issue-sync.yml" 2>/dev/null || true)
+if [[ "$OUT_15" == *"APPLIED"* ]] &&
+	grep -qF "pr create" "$TMPDIR_15/gh-calls.log" &&
+	[[ "$APPLIED_15" == "$CANONICAL_CALLER_CONTENT" ]]; then
+	printf '%sPASS%s GH#27726 stale local + drifted remote → refreshed drift applied\n' "$GREEN" "$NC"
+	((_PASS++))
+else
+	printf '%sFAIL%s GH#27726 stale local + drifted remote → refreshed drift applied\n' "$RED" "$NC"
+	printf '       output: %s\n' "$OUT_15"
+	((_FAIL++))
+fi
+_assert_exit "GH#27726 refreshed-drift apply exits 0" 0 "$EXIT_15"
+rm -rf "$TMPDIR_15"
+
+# ─── Test 16: GH#27727 — stale/unregistered mirror fails closed ─────────────
+TMPDIR_16="$(mktemp -d)"
+_setup_fake_home "$TMPDIR_16"
+mkdir -p "$TMPDIR_16/repo-stale-mirror/.github/workflows"
+printf '%s\n' "$LEGACY_CONTENT" >"$TMPDIR_16/repo-stale-mirror/.github/workflows/issue-sync.yml"
+mkdir -p "$TMPDIR_16/org-dotgithub/.github/workflows"
+git -C "$TMPDIR_16/org-dotgithub" init -q 2>/dev/null
+git -C "$TMPDIR_16/org-dotgithub" config user.email test@example.com
+git -C "$TMPDIR_16/org-dotgithub" config user.name Test
+git -C "$TMPDIR_16/org-dotgithub" config commit.gpgsign false
+git -C "$TMPDIR_16/org-dotgithub" symbolic-ref HEAD refs/heads/main 2>/dev/null
+printf '%s\n' 'name: stale reusable without provenance inputs' > \
+	"$TMPDIR_16/org-dotgithub/.github/workflows/issue-sync-reusable.yml"
+git -C "$TMPDIR_16/org-dotgithub" add -A >/dev/null
+git -C "$TMPDIR_16/org-dotgithub" commit -q -m "stale mirror contract"
+_write_repos_json "$TMPDIR_16" "{\"workflow_reusable_repo\":\"ORG/.github\",\"initialized_repos\":[{\"path\":\"$TMPDIR_16/repo-stale-mirror\",\"slug\":\"owner/repo-stale-mirror\"},{\"path\":\"$TMPDIR_16/org-dotgithub\",\"slug\":\"ORG/.github\"}]}"
+OUT_16=$(HOME="$TMPDIR_16" bash "$HELPER" --repo owner/repo-stale-mirror --workflow issue-sync 2>&1)
+EXIT_16=$?
+_assert_contains "GH#27727 stale mirror reports compatibility blocker" "$OUT_16" \
+	"configured mirror must be registered and updated at @main before caller sync"
+_assert_exit "GH#27727 stale mirror exits non-zero" 1 "$EXIT_16"
+rm -rf "$TMPDIR_16"
 
 # ─── Summary ────────────────────────────────────────────────────────────────
 printf '\n'

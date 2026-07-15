@@ -89,6 +89,8 @@ EOF
 	echo "0" >"${TEST_ROOT}/crypto-comment-count.txt"
 	# Default: linked issue number returned by the _extract_linked_issue stub.
 	echo "999" >"${TEST_ROOT}/linked-issue.txt"
+	# Default: no current-head V2 PR approval.
+	echo "NO_APPROVAL" >"${TEST_ROOT}/crypto-approval-result.txt"
 	return 0
 }
 
@@ -101,12 +103,16 @@ setup_test_env() {
 	GH_LOG="${TEST_ROOT}/gh-calls.log"
 	: >"$GH_LOG"
 	export TEST_ROOT GH_LOG
-	# Point AGENTS_DIR to a mock directory without approval-helper.sh so
-	# _has_maintainer_crypto_approval falls back to the marker-presence
-	# path (trusting the count returned by the mock gh endpoint) rather
-	# than invoking the real SSH-key-based approval-helper.sh.
+	# Point AGENTS_DIR to a mock directory whose approval-helper fixture emits
+	# explicit V2 verification states. Marker presence alone has no authority.
 	export AGENTS_DIR="${TEST_ROOT}/mock-agents"
 	mkdir -p "${AGENTS_DIR}/scripts"
+	cat >"${AGENTS_DIR}/scripts/approval-helper.sh" <<'AHEOF'
+#!/usr/bin/env bash
+cat "${TEST_ROOT}/crypto-approval-result.txt"
+return 0 2>/dev/null || exit 0
+AHEOF
+	chmod +x "${AGENTS_DIR}/scripts/approval-helper.sh"
 
 	# Mock gh: logs every call and answers the five endpoints that
 	# `approve_collaborator_pr`, `_is_collaborator_author`, and
@@ -157,8 +163,8 @@ if [[ "${1:-}" == "api" && "$*" == *"/pulls/"*"/reviews"* ]]; then
 	exit 0
 fi
 
-# `gh api repos/SLUG/issues/N/comments --jq ...` — crypto-approval marker count
-# Used by _has_maintainer_crypto_approval. Returns the fixture-controlled count.
+# Legacy marker-count endpoint fixture. It remains to prove Case O cannot make
+# linked-issue marker presence substitute for current PR-specific V2 authority.
 if [[ "${1:-}" == "api" && "$*" == *"/issues/"*"/comments"* && "$*" == *"--jq"* ]]; then
 	cat "${TEST_ROOT}/crypto-comment-count.txt" 2>/dev/null || printf '0\n'
 	exit 0
@@ -195,6 +201,7 @@ define_helpers_under_test() {
 	local approve_src
 	local runner_src
 	local crypto_src
+	local current_head_crypto_src
 	local trusted_approval_src
 	approve_src=$(awk '
 		/^approve_collaborator_pr\(\) \{/,/^}$/ { print }
@@ -205,6 +212,9 @@ define_helpers_under_test() {
 	# _has_maintainer_crypto_approval was added in t3063
 	crypto_src=$(awk '
 		/^_has_maintainer_crypto_approval\(\) \{/,/^}$/ { print }
+	' "$MERGE_SCRIPT")
+	current_head_crypto_src=$(awk '
+		/^_external_pr_current_head_crypto_approved\(\) \{/,/^}$/ { print }
 	' "$MERGE_SCRIPT")
 	trusted_approval_src=$(awk '
 		/^_trusted_existing_approver\(\) \{/,/^}$/ { print }
@@ -220,6 +230,10 @@ define_helpers_under_test() {
 	fi
 	if [[ -z "$crypto_src" ]]; then
 		printf 'ERROR: could not extract _has_maintainer_crypto_approval from %s\n' "$MERGE_SCRIPT" >&2
+		return 1
+	fi
+	if [[ -z "$current_head_crypto_src" ]]; then
+		printf 'ERROR: could not extract _external_pr_current_head_crypto_approved from %s\n' "$MERGE_SCRIPT" >&2
 		return 1
 	fi
 	if [[ -z "$trusted_approval_src" ]]; then
@@ -242,6 +256,8 @@ define_helpers_under_test() {
 	source "$AUTHOR_CHECKS_SCRIPT"
 	# shellcheck disable=SC1090
 	eval "$runner_src"
+	# shellcheck disable=SC1090
+	eval "$current_head_crypto_src"
 	# shellcheck disable=SC1090
 	eval "$crypto_src"
 	# shellcheck disable=SC1090
@@ -534,9 +550,8 @@ test_case_h_failed_reviews_request_skips_jq() {
 
 test_case_n_contributor_with_crypto_on_pr() {
 	reset_mock_state
-	# PR author is NOT a collaborator; crypto marker is present on the PR.
-	# The comments endpoint (used for both PR and linked-issue) returns count=1.
-	echo "1" >"${TEST_ROOT}/crypto-comment-count.txt"
+	# PR author is NOT a collaborator; exact-current-head V2 authority verifies.
+	echo "VERIFIED" >"${TEST_ROOT}/crypto-approval-result.txt"
 
 	local result=0
 	approve_collaborator_pr "910" "owner/repo" "external-contributor" || result=$?
@@ -563,18 +578,13 @@ test_case_n_contributor_with_crypto_on_pr() {
 }
 
 # =============================================================================
-# Case O (t3063): CONTRIBUTOR author + crypto-approval on linked issue → approves.
-# Same bypass applies when the crypto signature is on the linked issue rather
-# than on the PR itself. PR comments return 0 but linked-issue comments return 1.
+# Case O (V2 hardening): CONTRIBUTOR author + linked-issue approval only → blocks.
+# Development authority cannot authorize a future or changed external PR head.
 # =============================================================================
 
 test_case_o_contributor_with_crypto_on_linked_issue() {
 	reset_mock_state
-	# The mock comments endpoint returns the same count for both PR and
-	# linked-issue paths (fixture is shared). Setting it to 1 simulates
-	# "crypto found on linked issue" — _has_maintainer_crypto_approval
-	# would find it on the first (PR-level) check in this simplified mock,
-	# which still correctly exercises the bypass path through approve_collaborator_pr.
+	# A linked issue exists, but the PR-specific verifier returns no authority.
 	echo "1" >"${TEST_ROOT}/crypto-comment-count.txt"
 
 	local result=0
@@ -587,17 +597,17 @@ test_case_o_contributor_with_crypto_on_linked_issue() {
 	fi
 	local approve_count
 	approve_count=$(count_approve_calls)
-	if [[ "${approve_count:-0}" -lt 1 ]]; then
-		print_result "Case O: CONTRIBUTOR + crypto on linked issue — approve API called" 1 \
-			"Expected at least one 'gh pr review' call. Log: $(cat "$GH_LOG")"
+	if [[ "${approve_count:-0}" -gt 0 ]]; then
+		print_result "Case O: linked-issue approval alone — NO approve API call" 1 \
+			"Expected zero 'gh pr review' calls. Log: $(cat "$GH_LOG")"
 		return 0
 	fi
-	if ! grep -qF "t3063" "$LOGFILE"; then
-		print_result "Case O: CONTRIBUTOR + crypto on linked issue — t3063 bypass logged" 1 \
-			"Expected 't3063' in log. Log: $(cat "$LOGFILE")"
+	if ! grep -qF "GH#17671 defense-in-depth" "$LOGFILE"; then
+		print_result "Case O: linked-issue approval alone — refusal audited" 1 \
+			"Expected GH#17671 refusal in log. Log: $(cat "$LOGFILE")"
 		return 0
 	fi
-	print_result "Case O: CONTRIBUTOR + crypto-approval on linked issue — approved via t3063 bypass" 0
+	print_result "Case O: linked-issue approval alone cannot authorize external PR" 0
 	return 0
 }
 

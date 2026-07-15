@@ -3,6 +3,7 @@
 
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
+import { resolve } from "node:path";
 
 const DEFAULT_FAILURE_THRESHOLD = 3;
 const DEFAULT_MAX_SCOPES = 32;
@@ -20,19 +21,24 @@ function boundedText(value) {
 }
 
 function normalizedShape(value, key = "") {
-  if (/intent|password|secret|token|authorization|api.?key/i.test(key)) return "[redacted]";
-  if (Array.isArray(value)) return value.slice(0, 20).map((item) => normalizedShape(item));
-  if (value && typeof value === "object") {
-    return Object.fromEntries(
+  let normalized = null;
+  if (/intent|password|secret|token|authorization|api.?key/i.test(key)) {
+    normalized = "[redacted]";
+  } else if (Array.isArray(value)) {
+    normalized = value.slice(0, 20).map((item) => normalizedShape(item));
+  } else if (value && typeof value === "object") {
+    normalized = Object.fromEntries(
       Object.keys(value)
         .sort()
         .slice(0, 40)
         .map((childKey) => [childKey, normalizedShape(value[childKey], childKey)]),
     );
+  } else if (typeof value === "string") {
+    normalized = boundedText(value);
+  } else if (["number", "boolean"].includes(typeof value)) {
+    normalized = value;
   }
-  if (typeof value === "string") return boundedText(value);
-  if (["number", "boolean"].includes(typeof value)) return value;
-  return null;
+  return normalized;
 }
 
 export function operationFingerprint(toolName, args) {
@@ -76,10 +82,12 @@ function capMap(map, maxEntries) {
 }
 
 function defaultCheckpointAdapter(checkpointHelper, repository, qualityLog) {
+  const helperPath = checkpointHelper ? resolve(checkpointHelper) : "";
+
   function run(args, capture = false) {
-    if (!checkpointHelper) return "";
+    if (!helperPath) return "";
     try {
-      return execFileSync(checkpointHelper, args, {
+      return execFileSync("bash", [helperPath, ...args], {
         cwd: repository,
         encoding: "utf8",
         stdio: capture ? ["ignore", "pipe", "ignore"] : "ignore",

@@ -61,6 +61,9 @@ main() {
 	_assert_contains "uses repo metrics helper" "repo-metrics-helper.sh generate"
 	_assert_contains "writes JSON metrics" "docs/metrics"
 	_assert_contains "uses freshness skip" "skip_if_fresh_hours"
+	_assert_contains "declares helper repository input" "aidevops_repository:"
+	_assert_contains "declares private mirror read token" "AIDEVOPS_READ_TOKEN:"
+	_assert_contains "checks out configured helper repository" "repository: \${{ inputs.aidevops_repository || 'marcusquinn/aidevops' }}"
 	_assert_contains "keeps runtime bounded" "timeout-minutes: 5"
 	_assert_contains "detects untracked generated metrics" "git status --porcelain"
 	_assert_not_regex "does not apt-install tokei" 'apt(-get)? install.*tokei'

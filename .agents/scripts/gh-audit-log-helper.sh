@@ -71,6 +71,7 @@ readonly GH_AUDIT_PROTECTED_LABELS=(
 	"origin:interactive"
 	"no-auto-dispatch"
 	"needs-maintainer-review"
+	"needs-maintainer-permissions"
 )
 
 # Valid operation names

@@ -19,6 +19,7 @@ Applied to GitHub issues. The pulse checks these before spawning a worker.
 | `no-auto-dispatch` | `dispatch-dedup-helper.sh` `_is_assigned_check_no_auto_dispatch` (t2832), `issue-sync-lib.sh`, `interactive-session-helper.sh` lockdown | Canonical manual hold for issues. Blocks dispatch path (`NO_AUTO_DISPATCH_BLOCKED` signal), enrich path, and decomposer path. Applied by `interactive-session-helper.sh lockdown`. Pre-fix (before t2832) the label was honoured by enrichment/decomposition only — workers got dispatched anyway. |
 | `hold-for-review` | `dispatch-dedup-helper.sh` `_is_assigned_check_hold_for_review`, `issue-sync-lib.sh`; PR merge checks below | Manual review hold. On issues, same dispatch-block intent as `no-auto-dispatch` (`HOLD_FOR_REVIEW_BLOCKED` signal). On PRs, blocks auto-merge until a maintainer removes the label. |
 | `needs-maintainer-review` | `pulse-nmr-approval.sh` `auto_approve_maintainer_issues` | Requires maintainer cryptographic approval (`sudo aidevops approve issue <N>`) before dispatch. |
+| `needs-maintainer-permissions` | `worker-permission-helper.sh`, `dispatch-dedup-helper.sh`, `pulse-dispatch-core.sh`, candidate filters | Worker paused after requesting a capability outside its sandbox. Only the request-specific signed permission command clears this label; dispatch also verifies historical applications against the matching unexpired grant, so removing the label alone cannot bypass the hold. It is distinct from scope/trust approval. |
 | `needs-credentials` | `label-sync-helper.sh` SYSTEM_LABELS | Task requires credentials, API keys, or account access — cannot be completed by a headless worker autonomously. Add when the TODO entry has `#no-auto-dispatch` due to credential dependency. |
 | `persistent` | `pulse-issue-reconcile.sh` | Monitoring/tracking issue — must not be dispatched as a code task. |
 | `supervisor` | `pulse-issue-reconcile.sh` | Supervisor health dashboard — pulse-managed, not a dispatch target. |
@@ -26,6 +27,13 @@ Applied to GitHub issues. The pulse checks these before spawning a worker.
 | `quality-review` | `pulse-issue-reconcile.sh` | Daily quality review tracker — pulse-managed. |
 | `routine-tracking` | `pulse-issue-reconcile.sh` | Routine execution tracking — pulse skips these unconditionally. |
 | `status:blocked` | `dispatch-dedup-helper.sh` `_has_active_claim` | Blocked on incomplete dependent tasks (`blocked-by:` edges). |
+
+Permission grants are limited to exact-pattern `bash` and `external_directory` requests, bound to the issue, request digest, worker session, branch, and worktree hash, and expire after four hours. Action-only permissions and credential-bearing or unbounded paths remain non-grantable.
+
+The permission broker, approval flow, and grant verifier append blocker-state
+transitions to `~/.aidevops/logs/worker-progress-blockers.jsonl`. Diagnose the
+label and its exact local reason with `pulse-diagnose-helper.sh issue <N> --repo
+<owner/repo>`; removing the label does not alter or bypass grant verification.
 
 ### Conditional Dispatch Blocks (require active claim state)
 

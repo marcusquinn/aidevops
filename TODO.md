@@ -110,6 +110,14 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
 -->
 
 - [ ] t18132 Prevent cross-install upstream-watch duplicate issues #bug #framework #reliability #interactive #auto-dispatch ~4h tier:standard ref:GH#27821 logged:2026-07-15 -> [todo/tasks/t18132-brief.md]
+- [ ] t18124 Maximise GitHub API efficiency without freshness regressions — coordinate exact transport telemetry, canonical snapshots, immutable-head check caching, cross-process request coalescing, verified webhook invalidation, and comparative rollout evidence through seven sequential leaves. #parent-task #no-auto-dispatch #enhancement #framework #pulse #github-api #efficiency ~13h tier:thinking ref:GH#27768 logged:2026-07-15 -> [todo/tasks/t18124-brief.md]
+- [ ] t18125 Measure exact GitHub transport attempts and replayable budgets — distinguish logical operations, cache events, retries, pages, and real network attempts; report honest retained windows and privacy-safe quota/latency evidence before optimisation. #enhancement #framework #pulse #github-api #observability #efficiency #auto-dispatch ~2h tier:thinking parent:t18124 blocks:t18126 ref:GH#27769 logged:2026-07-15 -> [todo/tasks/t18125-brief.md]
+- [ ] t18126 Preserve empty snapshots and canonicalise cache semantics — accept successful fresh `[]` results as hits, distinguish stale/missing/malformed/failure states by status and metadata, and preserve live fallback only for true misses. #bug #enhancement #framework #pulse #github-api #efficiency #auto-dispatch ~1.5h tier:standard parent:t18124 blocked-by:t18125 blocks:t18127 ref:GH#27770 logged:2026-07-15 -> [todo/tasks/t18126-brief.md]
+- [ ] t18127 Reuse canonical snapshots and remove duplicate verification reads — derive fingerprints, cache-hit decisions, and prefetch output from one complete issue/PR snapshot while deleting dedicated fingerprint and verification list calls. #enhancement #framework #pulse #github-api #efficiency #auto-dispatch ~1.5h tier:standard parent:t18124 blocked-by:t18126 blocks:t18128 ref:GH#27771 logged:2026-07-15 -> [todo/tasks/t18127-brief.md]
+- [ ] t18128 Cache PR check status by head SHA and refresh actionable changes — reuse terminal aggregate state for immutable heads, refresh pending/unknown state on bounded policy, and keep final required-check/merge authority live. #enhancement #framework #pulse #github-api #efficiency #auto-dispatch ~2h tier:standard parent:t18124 blocked-by:t18127 blocks:t18129 ref:GH#27772 logged:2026-07-15 -> [todo/tasks/t18128-brief.md]
+- [ ] t18129 Add cross-process single-flight and shared rate-limit state — consolidate fallback/circuit state and coalesce exact cacheable reads with scoped keys, leases, fencing, bounded waits, and stale-leader recovery. #enhancement #framework #pulse #github-api #reliability #efficiency #auto-dispatch ~2h tier:thinking parent:t18124 blocked-by:t18128 blocks:t18130 ref:GH#27774 logged:2026-07-15 -> [todo/tasks/t18129-brief.md]
+- [ ] t18130 Invalidate canonical GitHub state from verified webhooks — deduplicate authenticated deliveries, map events to narrow snapshot/head-SHA invalidations before PR processing, and retain secure loopback plus polling fallback. #enhancement #security #framework #pulse #github-api #efficiency #auto-dispatch ~2h tier:thinking parent:t18124 blocked-by:t18129 blocks:t18131 ref:GH#27776 logged:2026-07-15 -> [todo/tasks/t18130-brief.md]
+- [ ] t18131 Benchmark API savings, tune rollout, and retire flags — compare equivalent baseline/canary windows, enforce correctness/freshness guardrails, tune bounded defaults, and clean up flags only after evidence. #enhancement #framework #pulse #github-api #observability #efficiency #auto-dispatch ~2h tier:standard parent:t18124 blocked-by:t18130 ref:GH#27777 logged:2026-07-15 -> [todo/tasks/t18131-brief.md]
 
 - [ ] t18118 security: bind external approvals and advisory merge evidence to immutable current-state snapshots. Replace target-ID-only approval payloads with versioned content/head-bound evidence; invalidate approvals after external issue/PR body, comment, link, linked-issue, or PR-head drift; require PR-specific current-head authority before merging external/fork contributions; canonicalise duplicate maintainer-gate check aliases without making them advisory; and allow configured non-required review-provider failures only after current-head positive review evidence. Preserve NMR, required checks, external/fork defence-in-depth, dispatch deduplication, stale-recovery, and cost/runaway circuit breakers. Provenance only: external report GH#27530; workers must use this trusted brief rather than that issue's body/comments/files/links. #bug #security #framework #pulse #auto-dispatch ~8h tier:thinking ref:GH#27560 logged:2026-07-13 -> [todo/tasks/t18118-brief.md]
 
@@ -1154,6 +1162,10 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 - [ ] t18119 Allow OpenCode access to generated global commands #bug ref:GH#27564
 
 - [ ] t18121 Route pending full-loop CI through delta-aware wait-checks #bug #framework #full-loop #efficiency #auto-dispatch ~30m tier:simple ref:GH#27585 logged:2026-07-14 -> [todo/tasks/t18121-brief.md]
+
+- [ ] t18122 Add cryptographically scoped worker permission grants ref:GH#27688
+
+- [ ] t18123 Add bounded worker progress blocker logging ref:GH#27732
 
 ## In Progress
 
@@ -4570,3 +4582,25 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [ ] t18119 Allow OpenCode access to generated global commands #bug ref:GH#27564
 
 - [ ] t18120 Fix exact current-session output-efficiency analysis #bug #framework ref:GH#27574
+
+- [ ] t18122 Add cryptographically scoped worker permission grants #bug ref:GH#27688
+
+- [ ] t18123 Add bounded worker progress blocker logging #bug ref:GH#27732
+
+- [ ] t18125 Measure exact GitHub transport attempts and replayable budgets #auto-dispatch #efficiency #enhancement #framework #github-api #observability #pulse ref:GH#27769
+
+- [ ] t18124 Maximise GitHub API efficiency without freshness regressions #efficiency #enhancement #framework #github-api #parent #pulse ref:GH#27768
+
+- [ ] t18126 Preserve empty snapshots and canonicalise cache semantics #auto-dispatch #bug #efficiency #enhancement #framework #github-api #pulse ref:GH#27770
+
+- [ ] t18127 Reuse canonical snapshots and remove duplicate verification reads #auto-dispatch #efficiency #enhancement #framework #github-api #pulse ref:GH#27771
+
+- [ ] t18128 Cache PR check status by head SHA and refresh actionable changes #auto-dispatch #efficiency #enhancement #framework #github-api #pulse ref:GH#27772
+
+- [ ] t18129 Add cross-process single-flight and shared rate-limit state #auto-dispatch #efficiency #enhancement #framework #github-api #pulse #reliability ref:GH#27774
+
+- [ ] t18130 Invalidate canonical GitHub state from verified webhooks #auto-dispatch #efficiency #enhancement #framework #github-api #pulse #security ref:GH#27776
+
+- [ ] t18131 Benchmark API savings, tune rollout, and retire flags #auto-dispatch #efficiency #enhancement #framework #github-api #observability #pulse ref:GH#27777
+
+- [ ] t18132 Prevent cross-install upstream-watch duplicate issues #auto-dispatch #bug #framework #reliability ref:GH#27821

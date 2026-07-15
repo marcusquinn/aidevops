@@ -100,4 +100,18 @@ assert_not_contains "repo three continuation" "$continuation_three" "LEGACY_UNRE
 assert_not_contains "repo three continuation" "$continuation_three" "TARGET_REPO_SCOPED_NOTE"
 assert_not_contains "repo three continuation" "$continuation_three" "SIBLING_REPO_SCOPED_NOTE"
 
+(cd "$repo_one" && "$HELPER" recovery-save --session "session-no-space" --owner "worker" --status "recovering" >/dev/null)
+checkpoint_files=("$HOME"/.aidevops/.agent-workspace/tmp/session-checkpoints/repo-*.md)
+checkpoint_file="${checkpoint_files[0]}"
+awk '{
+	if ($0 == "- **Session:** session-no-space") {
+		print "- **Session:**session-no-space"
+	} else {
+		print
+	}
+}' "$checkpoint_file" >"${checkpoint_file}.tmp"
+mv "${checkpoint_file}.tmp" "$checkpoint_file"
+recovery_status="$(cd "$repo_one" && "$HELPER" recovery-status --json)"
+assert_contains "recovery field without separator space" "$recovery_status" '"session":"session-no-space"'
+
 printf 'session-checkpoint repo scope test passed\n'

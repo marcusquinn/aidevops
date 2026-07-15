@@ -74,6 +74,100 @@ readonly APPROVAL_KEY="$APPROVAL_PRIVATE_DIR/approval.key"
 readonly APPROVAL_PUB="$APPROVAL_DIR/approval.pub"
 readonly APPROVAL_NAMESPACE="aidevops-approve"
 readonly APPROVAL_MARKER="<!-- aidevops-signed-approval -->"
+readonly PERMISSION_REQUEST_MARKER="<!-- aidevops-permission-request -->"
+readonly PERMISSION_GRANT_MARKER="<!-- aidevops-signed-permission-grant -->"
+readonly PERMISSION_REQUEST_SCHEMA="aidevops-permission-request/v1"
+readonly PERMISSION_GRANT_SCHEMA="aidevops-permission-grant/v1"
+readonly PERMISSION_SHA256_PATTERN='^[0-9a-f]{64}$'
+readonly PERMISSION_JSON_ARRAY_TYPE="array"
+readonly PERMISSION_JSON_STRING_TYPE="string"
+readonly _APPROVAL_AUTO_DISPATCH_LABEL="auto-dispatch"
+readonly _PERMISSION_BLOCKER_STATUS="blocked"
+readonly _PERMISSION_BLOCKER_TRUE="true"
+readonly _PERMISSION_APPROVAL_REJECTED_EVENT="permission_approval_rejected"
+readonly _PERMISSION_GRANT_PERSISTENCE_FAILED_EVENT="permission_grant_persistence_failed"
+
+_run_worker_blocker_logger() {
+	local logger="$1"
+	shift
+	local node_bin
+	node_bin=$(command -v node) || return 0
+	if [[ -n "${SUDO_USER:-}" && "$(id -u)" -eq 0 ]]; then
+		command -v sudo >/dev/null 2>&1 || return 0
+		sudo -u "$SUDO_USER" -H -- "$node_bin" "$logger" "$@" >/dev/null 2>&1 || true
+		return 0
+	fi
+	"$node_bin" "$logger" "$@" >/dev/null 2>&1 || true
+	return 0
+}
+
+_record_permission_blocker_event() {
+	local event="$1"
+	local status="$2"
+	local reason="$3"
+	local blocking="$4"
+	local target_number="$5"
+	local slug="$6"
+	local request_id="$7"
+	local session_key="${8:-}"
+	local detail="${9:-}"
+	local logger="${SCRIPT_DIR}/worker-blocker-log.mjs"
+	local log_file="${AIDEVOPS_WORKER_BLOCKER_LOG_FILE:-${_APPROVAL_HOME}/.aidevops/logs/worker-progress-blockers.jsonl}"
+	[[ -f "$logger" ]] || return 0
+	_run_worker_blocker_logger "$logger" append \
+		--event "$event" \
+		--status "$status" \
+		--reason "$reason" \
+		--blocking "$blocking" \
+		--source "approval-helper" \
+		--issue-number "$target_number" \
+		--repo-slug "$slug" \
+		--request-id "$request_id" \
+		--session-key "$session_key" \
+		--detail "$detail" \
+		--log-file "$log_file"
+	return 0
+}
+
+_record_permission_approval_rejection() {
+	local reason="$1"
+	local target_number="$2"
+	local slug="$3"
+	local request_id="$4"
+	local session_key="$5"
+	local detail="$6"
+	_record_permission_blocker_event "$_PERMISSION_APPROVAL_REJECTED_EVENT" "$_PERMISSION_BLOCKER_STATUS" \
+		"$reason" "$_PERMISSION_BLOCKER_TRUE" "$target_number" "$slug" "$request_id" "$session_key" "$detail"
+	return 0
+}
+
+_record_permission_grant_failure() {
+	local reason="$1"
+	local target_number="$2"
+	local slug="$3"
+	local request_id="$4"
+	local session_key="$5"
+	local detail="$6"
+	_record_permission_blocker_event "$_PERMISSION_GRANT_PERSISTENCE_FAILED_EVENT" "$_PERMISSION_BLOCKER_STATUS" \
+		"$reason" "$_PERMISSION_BLOCKER_TRUE" "$target_number" "$slug" "$request_id" "$session_key" "$detail"
+	return 0
+}
+
+_permission_request_session() {
+	local request_json="$1"
+	jq -r '.worker.session // empty' <<<"$request_json"
+	return $?
+}
+
+# shellcheck source=approval-snapshot-v2.sh
+source "${SCRIPT_DIR}/approval-snapshot-v2.sh"
+
+_permission_comments_endpoint() {
+	local slug="$1"
+	local target_number="$2"
+	printf 'repos/%s/issues/%s/comments?per_page=100' "$slug" "$target_number"
+	return 0
+}
 
 # Detect repo slug from current directory or repos.json
 _detect_slug() {
@@ -547,7 +641,7 @@ _approval_verify_issue_state() {
 		_print_error "Approval state verification failed: needs-maintainer-review is still present on #$target_number"
 		return 1
 	fi
-	if ! printf '%s' "$issue_json" | jq -e '(.labels // []) | any(.name == "auto-dispatch")' >/dev/null 2>&1; then
+	if ! printf '%s' "$issue_json" | jq -e --arg label "$_APPROVAL_AUTO_DISPATCH_LABEL" '(.labels // []) | any(.name == $label)' >/dev/null 2>&1; then
 		_print_error "Approval state verification failed: auto-dispatch is missing on #$target_number"
 		return 1
 	fi
@@ -578,7 +672,7 @@ _approval_apply_issue_lifecycle_updates() {
 
 	edit_err=$(gh_issue_edit_safe "$target_number" --repo "$slug" \
 		--remove-label "needs-maintainer-review" \
-		--add-label "auto-dispatch" \
+		--add-label "$_APPROVAL_AUTO_DISPATCH_LABEL" \
 		--add-assignee "$gh_user" 2>&1 >/dev/null) || {
 		_print_error "Failed to update approval labels/assignee on issue #$target_number"
 		[[ -n "$edit_err" ]] && _print_error "$edit_err"
@@ -635,9 +729,6 @@ _post_issue_approval_updates() {
 		# window that exists for issues. Without locking, non-collaborators can
 		# add comments to an approved PR between approval and merge, potentially
 		# influencing automated review or merge decisions.
-		gh_pr_comment "$target_number" --repo "$slug" \
-			--body "This PR has been approved by a maintainer and is now locked for review." \
-			>/dev/null 2>&1 || true
 		local lock_err=""
 		lock_err=$(_approval_lock_pr "$target_number" "$slug" 2>&1 >/dev/null) || {
 			_print_error "Approval advisory lock failure: PR #$target_number conversation could not be locked after approval state updates"
@@ -781,7 +872,10 @@ _approve_target() {
 
 	local timestamp payload sig_file comment_body
 	timestamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-	payload="APPROVE:${target_type}:${slug}:${target_number}:${timestamp}"
+	payload=$(approval_snapshot_v2_payload "$target_type" "$target_number" "$slug" "$timestamp") || {
+		_print_error "Could not build the immutable approval snapshot; approval was not posted"
+		return 1
+	}
 	sig_file=$(mktemp)
 
 	if ! _sign_approval_payload "$payload" "$actual_key" "$sig_file"; then
@@ -802,6 +896,15 @@ _approve_target() {
 			_print_error "Failed to post approval comment on PR #$target_number"
 			return 1
 		fi
+	fi
+
+	# #aidevops:trust-boundary — content can drift between the snapshot read and
+	# comment write. Re-fetch and verify V2 before lifecycle writes or Pulse kick.
+	local posted_verification=""
+	posted_verification=$(cmd_verify "$target_type" "$target_number" "$slug" 2>/dev/null) || posted_verification="${posted_verification:-API_ERROR}"
+	if [[ "$posted_verification" != "VERIFIED" ]]; then
+		_print_error "Approval comment posted but current-state verification returned ${posted_verification}; lifecycle changes were not applied. Re-run approval after reviewing the latest state."
+		return 1
 	fi
 
 	if ! _post_issue_approval_updates "$target_type" "$target_number" "$slug"; then
@@ -847,6 +950,421 @@ _extract_fenced_block() {
 	return 0
 }
 
+_extract_tilde_fenced_block() {
+	local body="$1"
+	printf '%s\n' "$body" | awk '
+		/^~~~/ {
+			if (inside) { exit }
+			inside = 1
+			next
+		}
+		inside { print }
+	'
+	return 0
+}
+
+_permission_request_digest() {
+	local request_json="$1"
+	local canonical_file
+	canonical_file=$(mktemp)
+	jq -cS 'del(.request_id, .request_sha256)' <<<"$request_json" >"$canonical_file" || {
+		rm -f "$canonical_file"
+		return 1
+	}
+	if command -v shasum >/dev/null 2>&1; then
+		shasum -a 256 "$canonical_file" | awk '{print $1}'
+	else
+		sha256sum "$canonical_file" | awk '{print $1}'
+	fi
+	rm -f "$canonical_file"
+	return 0
+}
+
+_permission_grant_expiry() {
+	if date -u -v+4H +%Y-%m-%dT%H:%M:%SZ >/dev/null 2>&1; then
+		date -u -v+4H +%Y-%m-%dT%H:%M:%SZ
+	else
+		date -u -d '+4 hours' +%Y-%m-%dT%H:%M:%SZ
+	fi
+	return 0
+}
+
+_trusted_permission_comments_json() {
+	local pages="$1"
+	jq -c --arg array_type "$PERMISSION_JSON_ARRAY_TYPE" '
+		(if type == $array_type and all(.[]; type == $array_type) then [.[][]?] else [.[]?] end)
+		| [ .[] | select(
+			(.author_association // "") as $association
+			| ["OWNER", "MEMBER", "COLLABORATOR"] | index($association) != null
+		) ]
+	' <<<"$pages"
+	return $?
+}
+
+_fetch_permission_request_json() {
+	local target_number="$1"
+	local slug="$2"
+	local request_id="$3"
+	local pages comments body endpoint
+	endpoint=$(_permission_comments_endpoint "$slug" "$target_number")
+	pages=$(gh api "$endpoint" --paginate --slurp 2>/dev/null) || return 1
+	comments=$(_trusted_permission_comments_json "$pages") || return 1
+	body=$(jq -r --arg marker "$PERMISSION_REQUEST_MARKER" --arg request "$request_id" '
+		[.[] | select((.body // "") | contains($marker) and contains($request))]
+		| sort_by(.id) | last | .body // ""
+	' <<<"$comments") || return 1
+	[[ -n "$body" ]] || return 1
+	_extract_tilde_fenced_block "$body"
+	return 0
+}
+
+_fetch_latest_permission_request_json() {
+	local target_number="$1"
+	local slug="$2"
+	local pages comments body endpoint
+	endpoint=$(_permission_comments_endpoint "$slug" "$target_number")
+	pages=$(gh api "$endpoint" --paginate --slurp 2>/dev/null) || return 1
+	comments=$(_trusted_permission_comments_json "$pages") || return 1
+	body=$(jq -r --arg marker "$PERMISSION_REQUEST_MARKER" '
+		[.[] | select((.body // "") | contains($marker))]
+		| sort_by(.id) | last | .body // ""
+	' <<<"$comments") || return 1
+	[[ -n "$body" ]] || return 1
+	_extract_tilde_fenced_block "$body"
+	return 0
+}
+
+_validate_permission_request_json() {
+	local request_json="$1"
+	local target_type="$2"
+	local target_number="$3"
+	local slug="$4"
+	local request_id="$5"
+	local normalized_slug digest expected_digest
+	normalized_slug=$(printf '%s' "$slug" | tr '[:upper:]' '[:lower:]')
+	jq -e --arg schema "$PERMISSION_REQUEST_SCHEMA" --arg type "$target_type" \
+		--arg number "$target_number" --arg repo "$normalized_slug" --arg request "$request_id" \
+		--arg sha_pattern "$PERMISSION_SHA256_PATTERN" --arg array_type "$PERMISSION_JSON_ARRAY_TYPE" \
+		--arg string_type "$PERMISSION_JSON_STRING_TYPE" '
+		.schema == $schema
+		and .target.kind == $type
+		and (.target.number | tostring) == $number
+		and .target.repository == $repo
+		and .request_id == $request
+		and (.request_sha256 | type == $string_type and test($sha_pattern))
+		and (.worker.worktree_sha256 | type == $string_type and test($sha_pattern))
+		and (.capabilities | type == $array_type and length > 0 and length <= 20)
+		and all(.capabilities[];
+			(.permission as $permission | ["bash", "external_directory"] | index($permission) != null)
+			and (.patterns | type == $array_type and length > 0 and length <= 20)
+			and all(.patterns[]; type == $string_type and length <= 500)
+			and .risk.grantable == true
+			and all(.patterns[]?;
+				(test("(?i)(approval-keys/private|/(\\.ssh|\\.gnupg|\\.aws|\\.azure|\\.kube)(/|$)|/(\\.config/(gh|gcloud|glab-cli|hub)|\\.docker)(/|$)|/(\\.netrc|\\.npmrc|\\.pypirc|\\.git-credentials)($|\\*)|auth\\.json($|\\*)|credentials?([./]|$)|(^|/)\\.env([./]|$))") | not)
+				and (test("^(\\*|\\*\\*|/\\*\\*|~/\\*\\*|\\$WORKTREE/\\*\\*)$") | not)
+			)
+		)
+	' <<<"$request_json" >/dev/null || return 1
+	digest=$(_permission_request_digest "$request_json") || return 1
+	expected_digest=$(jq -r '.request_sha256' <<<"$request_json")
+	[[ "$digest" == "$expected_digest" ]] || return 1
+	[[ "$request_id" == "perm-${digest:0:16}" ]] || return 1
+	return 0
+}
+
+_permission_request_is_latest() {
+	local request_json="$1"
+	local target_number="$2"
+	local slug="$3"
+	local latest_json latest_id latest_digest expected_id expected_digest
+	latest_json=$(_fetch_latest_permission_request_json "$target_number" "$slug") || return 1
+	latest_id=$(jq -r '.request_id // ""' \
+		<<<"$latest_json")
+	latest_digest=$(jq -r '.request_sha256 // ""' \
+		<<<"$latest_json")
+	expected_id=$(jq -r '.request_id // ""' \
+		<<<"$request_json")
+	expected_digest=$(jq -r '.request_sha256 // ""' \
+		<<<"$request_json")
+	[[ "$latest_id" == "$expected_id" && "$latest_digest" == "$expected_digest" ]]
+	return $?
+}
+
+_confirm_permission_approval() {
+	local request_json="$1"
+	local target_type="$2"
+	local target_number="$3"
+	local slug="$4"
+	echo ""
+	echo "Approving scoped worker permissions:"
+	echo "  Target:  ${target_type} #${target_number}"
+	echo "  Repo:    ${slug}"
+	echo "  Request: $(jq -r '.request_id' <<<"$request_json")"
+	echo "  Session: $(jq -r '.worker.session' <<<"$request_json")"
+	echo "  Branch:  $(jq -r '.worker.branch' <<<"$request_json")"
+	echo "  Worktree binding: $(jq -r '.worker.worktree_sha256[0:16]' <<<"$request_json")..."
+	echo "  Expires: 4 hours after signing"
+	echo ""
+	jq -r '.capabilities[] | "  - [" + (.risk.level | ascii_upcase) + "] " + .permission + " via " + .tool + ": " + (if (.patterns | length) == 0 then "(no pattern)" else (.patterns | join(", ")) end)' <<<"$request_json"
+	echo ""
+	printf "Type APPROVE to confirm these exact capabilities: "
+	local confirmation=""
+	read -r confirmation
+	[[ "$confirmation" == "APPROVE" ]] || {
+		_print_error "Permission approval cancelled"
+		return 1
+	}
+	return 0
+}
+
+_build_permission_grant_comment() {
+	local payload="$1"
+	local sig_file="$2"
+	local signature
+	signature=$(<"$sig_file")
+	cat <<EOF
+${PERMISSION_GRANT_MARKER}
+## Worker permission grant (cryptographically signed)
+
+\`\`\`
+${payload}
+\`\`\`
+
+\`\`\`
+${signature}
+\`\`\`
+
+This grant authorizes only the embedded capabilities, target, request digest, and expiry. It does not approve issue scope or merge/release.
+EOF
+	return 0
+}
+
+_permission_grant_path() {
+	local slug="$1"
+	local target_number="$2"
+	local safe_slug
+	safe_slug=$(printf '%s' "$slug" | tr '/:' '__')
+	printf '%s/.aidevops/permission-grants/%s/%s.json' "$_APPROVAL_HOME" "$safe_slug" "$target_number"
+	return 0
+}
+
+_set_permission_grant_owner() {
+	local real_user="$1"
+	local grant_path="$2"
+	[[ "$(id -u)" -eq 0 ]] || return 0
+	chown "$real_user" "$grant_path" 2>/dev/null || return 1
+	return 0
+}
+
+_write_local_permission_grant() {
+	local payload="$1"
+	local sig_file="$2"
+	local slug="$3"
+	local target_number="$4"
+	local grant_path grant_tmp real_user
+	grant_path=$(_permission_grant_path "$slug" "$target_number")
+	grant_tmp=$(mktemp) || return 1
+	real_user=$(_approval_real_user)
+	if ! jq -n --arg payload "$payload" --rawfile signature "$sig_file" \
+		'{payload: $payload, signature: $signature}' >"$grant_tmp"; then
+		rm -f "$grant_tmp"
+		return 1
+	fi
+	if ! mkdir -p "$(dirname "$grant_path")"; then
+		rm -f "$grant_tmp"
+		return 1
+	fi
+	if ! install -m 600 "$grant_tmp" "$grant_path"; then
+		rm -f "$grant_tmp"
+		return 1
+	fi
+	if ! _set_permission_grant_owner "$real_user" "$grant_path"; then
+		rm -f "$grant_tmp" "$grant_path" || true
+		return 1
+	fi
+	rm -f "$grant_tmp"
+	return 0
+}
+
+_apply_permission_approval_state() {
+	local target_type="$1"
+	local target_number="$2"
+	local slug="$3"
+	local request_json="$4"
+	if [[ "$target_type" == "issue" ]]; then
+		local issue_json labels_csv resume_auto
+		issue_json=$(gh_issue_view "$target_number" --repo "$slug" --json labels 2>/dev/null) || return 1
+		labels_csv=$(jq -r '(.labels // []) | map(.name) | join(",")' <<<"$issue_json") || return 1
+		resume_auto=$(jq -r '.context.resume_auto_dispatch == true' <<<"$request_json") || return 1
+		local -a edit_args=(--remove-label "needs-maintainer-permissions")
+		if [[ ",${labels_csv}," != *",status:blocked,"* ]]; then
+			edit_args+=(--add-label "status:available")
+		fi
+		if [[ "$resume_auto" == "true" ]]; then
+			edit_args+=(--add-label "$_APPROVAL_AUTO_DISPATCH_LABEL")
+		fi
+		gh_issue_edit_safe "$target_number" --repo "$slug" "${edit_args[@]}" >/dev/null || return 1
+	else
+		gh pr edit "$target_number" --repo "$slug" --remove-label "needs-maintainer-permissions" >/dev/null || return 1
+	fi
+	return 0
+}
+
+_kick_pulse_after_permission_approval() {
+	local pulse_wrapper="${_APPROVAL_HOME}/.aidevops/agents/scripts/pulse-wrapper.sh"
+	local kick_log="${_APPROVAL_HOME}/.aidevops/logs/pulse-approve-kick.log"
+	[[ -x "$pulse_wrapper" ]] || return 0
+	mkdir -p "$(dirname "$kick_log")" 2>/dev/null || true
+	if [[ -n "${SUDO_USER:-}" && "$(id -u)" -eq 0 ]] && command -v sudo >/dev/null 2>&1; then
+		(
+			nohup sudo -u "$SUDO_USER" -H -- "$pulse_wrapper" >>"$kick_log" 2>&1 </dev/null &
+			disown 2>/dev/null || true
+		) 2>/dev/null
+	else
+		(
+			nohup "$pulse_wrapper" >>"$kick_log" 2>&1 </dev/null &
+			disown 2>/dev/null || true
+		) 2>/dev/null
+	fi
+	return 0
+}
+
+_persist_signed_permission_grant() {
+	local target_type="$1"
+	local target_number="$2"
+	local slug="$3"
+	local request_id="$4"
+	local request_json="$5"
+	local payload="$6"
+	local sig_file="$7"
+	local expires_at="$8"
+	local worker_session="${9:-}"
+	local comment_body
+	comment_body=$(_build_permission_grant_comment "$payload" "$sig_file")
+
+	if [[ "$target_type" == "issue" ]]; then
+		if ! gh_issue_comment "$target_number" --repo "$slug" --body "$comment_body"; then
+			rm -f "$sig_file"
+			_record_permission_grant_failure "grant_comment_write_failed" "$target_number" "$slug" \
+				"$request_id" "$worker_session" "Signed grant comment could not be persisted"
+			return 1
+		fi
+	elif ! gh_pr_comment "$target_number" --repo "$slug" --body "$comment_body"; then
+		rm -f "$sig_file"
+		_record_permission_grant_failure "grant_comment_write_failed" "$target_number" "$slug" \
+			"$request_id" "$worker_session" "Signed grant comment could not be persisted"
+		return 1
+	fi
+
+	if ! _permission_request_is_latest "$request_json" "$target_number" "$slug"; then
+		rm -f "$sig_file"
+		_record_permission_approval_rejection "request_superseded_after_signing" "$target_number" "$slug" \
+			"$request_id" "$worker_session" "Permission request changed after the signed grant comment was posted"
+		_print_error "Permission grant was posted, but the request is no longer latest; dispatch remains blocked"
+		return 1
+	fi
+
+	if ! _write_local_permission_grant "$payload" "$sig_file" "$slug" "$target_number"; then
+		rm -f "$sig_file"
+		_record_permission_grant_failure "grant_file_write_failed" "$target_number" "$slug" \
+			"$request_id" "$worker_session" "Local signed grant file could not be persisted"
+		return 1
+	fi
+	rm -f "$sig_file"
+
+	if ! _apply_permission_approval_state "$target_type" "$target_number" "$slug" "$request_json"; then
+		_record_permission_grant_failure "approval_state_update_failed" "$target_number" "$slug" \
+			"$request_id" "$worker_session" "Permission grant exists but the blocking issue state could not be cleared"
+		return 1
+	fi
+
+	_record_permission_blocker_event "permission_grant_approved" "resuming" \
+		"scoped_permission_granted" "false" "$target_number" "$slug" "$request_id" \
+		"$worker_session" "Signed permission grant persisted and dispatch block cleared"
+	_kick_pulse_after_permission_approval
+	_print_ok "Scoped permissions ${request_id} approved for ${target_type} #${target_number} until ${expires_at}"
+	return 0
+}
+
+cmd_permissions() {
+	local target_type="${1:-}"
+	local target_number="${2:-}"
+	shift 2 2>/dev/null || true
+	local slug="" request_id=""
+	if [[ $# -gt 0 && "$1" != --* ]]; then
+		slug="$1"
+		shift
+	fi
+	while [[ $# -gt 0 ]]; do
+		local arg="$1"
+		case "$arg" in
+		--request) request_id="${2:-}"; shift 2 ;;
+		*) _print_error "Unknown permissions option: $arg"; return 1 ;;
+		esac
+	done
+	local usage="Usage: sudo aidevops approve permissions issue|pr <number> [owner/repo] --request perm-<id>"
+	[[ "$target_type" == "issue" || "$target_type" == "pr" ]] || { _print_error "$usage"; return 1; }
+	_require_number_arg "$target_number" "$target_type" "$usage" || return 1
+	[[ "$request_id" =~ ^perm-[0-9a-f]{16}$ ]] || { _print_error "$usage"; return 1; }
+	_require_interactive_root "$usage" || return 1
+	local actual_key
+	actual_key=$(_approval_private_key_path)
+	_require_approval_key "$actual_key" || return 1
+	_require_gh_auth || return 1
+	slug=$(_resolve_slug_or_fail "$slug" "$usage") || return 1
+	_validate_approval_target_kind "$target_type" "$target_number" "$slug" || return 1
+	local request_json worker_session
+	request_json=$(_fetch_permission_request_json "$target_number" "$slug" "$request_id") || {
+		_print_error "Could not find permission request ${request_id} on ${target_type} #${target_number}"
+		return 1
+	}
+	worker_session=$(_permission_request_session "$request_json")
+	_validate_permission_request_json "$request_json" "$target_type" "$target_number" "$slug" "$request_id" || {
+		_record_permission_approval_rejection "request_invalid_or_non_grantable" "$target_number" "$slug" "$request_id" "" \
+			"Permission request was malformed, changed, or contained non-grantable scope"
+		_print_error "Permission request is malformed, changed, or contains a non-grantable sensitive capability"
+		return 1
+	}
+	_confirm_permission_approval "$request_json" "$target_type" "$target_number" "$slug" || return 1
+	_permission_request_is_latest "$request_json" "$target_number" "$slug" || {
+		_record_permission_approval_rejection "request_superseded" "$target_number" "$slug" "$request_id" \
+			"$worker_session" \
+			"A newer permission request superseded the request under review"
+		_print_error "A newer permission request appeared while approval was pending; review and approve the latest request instead"
+		return 1
+	}
+	local issued_at expires_at payload sig_file
+	issued_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+	expires_at=$(_permission_grant_expiry)
+	payload=$(jq -cS --arg schema "$PERMISSION_GRANT_SCHEMA" --arg issued "$issued_at" --arg expires "$expires_at" '
+		{
+			schema: $schema,
+			authority: "worker-permissions",
+			target,
+			request_id,
+			request_sha256,
+			worker,
+			capabilities,
+			issued_at: $issued,
+			expires_at: $expires
+		}
+	' <<<"$request_json") || {
+		_record_permission_grant_failure "grant_payload_build_failed" "$target_number" "$slug" "$request_id" \
+			"$worker_session" "Signed grant payload could not be built"
+		return 1
+	}
+	sig_file=$(mktemp)
+	if ! _sign_approval_payload "$payload" "$actual_key" "$sig_file"; then
+		rm -f "$sig_file"
+		_record_permission_grant_failure "grant_signing_failed" "$target_number" "$slug" "$request_id" \
+			"$worker_session" "Signed grant payload could not be signed"
+		return 1
+	fi
+	_persist_signed_permission_grant "$target_type" "$target_number" "$slug" "$request_id" \
+		"$request_json" "$payload" "$sig_file" "$expires_at" "$worker_session"
+	return $?
+}
+
 _create_allowed_signers_file() {
 	local pub_key="$1"
 	local allowed_signers_file="$2"
@@ -857,17 +1375,12 @@ _create_allowed_signers_file() {
 }
 
 _verify_comment_signature() {
-	local issue_number="$1"
-	local body="$2"
-	local pub_key="$3"
+	local body="$1"
+	local pub_key="$2"
 	local payload signature payload_file sig_file allowed_signers_file
 
 	payload=$(_extract_fenced_block "$body" 1)
 	if [[ -z "$payload" ]]; then
-		return 1
-	fi
-
-	if [[ ! "$payload" =~ ^APPROVE:(issue|pr):.*:[0-9]+: ]]; then
 		return 1
 	fi
 
@@ -887,14 +1400,95 @@ _verify_comment_signature() {
 		-f "$allowed_signers_file" \
 		-I "approval@aidevops.sh" \
 		-n "$APPROVAL_NAMESPACE" \
-		-s "$sig_file" <"$payload_file" >/dev/null 2>&1 &&
-		[[ "$payload" == *":${issue_number}:"* ]]; then
+		-s "$sig_file" <"$payload_file" >/dev/null 2>&1; then
 		rm -f "$payload_file" "$sig_file" "$allowed_signers_file"
 		return 0
 	fi
 
 	rm -f "$payload_file" "$sig_file" "$allowed_signers_file"
 	return 1
+}
+
+_approval_classify_signed_comment() {
+	local target_type="$1"
+	local target_number="$2"
+	local slug="$3"
+	local comment_id="$4"
+	local body="$5"
+	local pub_key="$6"
+	local expected_head_sha="${7:-}"
+	local payload="" snapshot_json="" current_digest="" signed_digest="" normalized_slug=""
+	normalized_slug=$(printf '%s' "$slug" | tr '[:upper:]' '[:lower:]')
+
+	payload=$(_extract_fenced_block "$body" 1)
+	if [[ -z "$payload" ]] || ! _verify_comment_signature "$body" "$pub_key"; then
+		printf 'MALFORMED_APPROVAL\n'
+		return 0
+	fi
+
+	if [[ "$payload" == APPROVE:* ]]; then
+		local legacy_payload_prefix=""
+		legacy_payload_prefix=$(printf 'APPROVE:%s:%s:%s:' "$target_type" "$slug" "$target_number" | tr '[:upper:]' '[:lower:]')
+		if [[ "$(printf '%s' "$payload" | tr '[:upper:]' '[:lower:]')" == "${legacy_payload_prefix}"* ]]; then
+			printf 'LEGACY_APPROVAL\n'
+		else
+			printf 'MALFORMED_APPROVAL\n'
+		fi
+		return 0
+	fi
+
+	if ! jq -e --arg type "$target_type" --arg repo "$normalized_slug" --arg number "$target_number" \
+		--arg sha_pattern "$PERMISSION_SHA256_PATTERN" --arg string_type "$PERMISSION_JSON_STRING_TYPE" '
+		.schema == "aidevops-approval/v2"
+		and .target.kind == $type
+		and .target.repository == $repo
+		and (.target.number | tostring) == $number
+		and (.snapshot_sha256 | type == $string_type and test($sha_pattern))
+		and (.issued_at | type == $string_type and test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"))
+		and (if $type == "pr" then (.authority == "merge" and (.pr | type == "object")) else (.authority == "development" and .pr == null) end)
+	' <<<"$payload" >/dev/null 2>&1; then
+		printf 'MALFORMED_APPROVAL\n'
+		return 0
+	fi
+
+	if [[ "$target_type" == "pr" && -n "$expected_head_sha" ]]; then
+		local payload_head=""
+		payload_head=$(jq -r '.pr.head_sha // ""' <<<"$payload") || payload_head=""
+		if [[ "$payload_head" != "$expected_head_sha" ]]; then
+			printf 'STALE_APPROVAL\n'
+			return 0
+		fi
+	fi
+
+	snapshot_json=$(approval_snapshot_v2_build "$target_type" "$target_number" "$slug" "$comment_id") || {
+		printf 'API_ERROR\n'
+		return 0
+	}
+	current_digest=$(approval_snapshot_v2_digest "$snapshot_json") || {
+		printf 'API_ERROR\n'
+		return 0
+	}
+	signed_digest=$(jq -r '.snapshot_sha256' <<<"$payload") || signed_digest=""
+	if [[ "$current_digest" != "$signed_digest" ]]; then
+		printf 'STALE_APPROVAL\n'
+		return 0
+	fi
+
+	if [[ "$target_type" == "pr" ]]; then
+		if ! jq -e --argjson snapshot "$snapshot_json" '
+			.pr.head_sha == $snapshot.head.sha
+			and .pr.head_ref == $snapshot.head.ref
+			and .pr.head_repository == $snapshot.head.repository
+			and .pr.base_ref == $snapshot.base.ref
+			and .pr.base_repository == $snapshot.base.repository
+		' <<<"$payload" >/dev/null 2>&1; then
+			printf 'STALE_APPROVAL\n'
+			return 0
+		fi
+	fi
+
+	printf 'VERIFIED\n'
+	return 0
 }
 
 # ── Setup ────────────────────────────────────────────────────────────────────
@@ -990,26 +1584,198 @@ cmd_pr_approved() {
 
 # ── Verify Approval ──────────────────────────────────────────────────────────
 
-# Verify that an issue has a valid signed approval comment.
-# Returns 0 if valid approval found, 1 otherwise.
-# This is the function the pulse calls to check approvals.
-cmd_verify() {
-	local issue_number="${1:-}"
-	local slug="${2:-}"
+_approval_classify_marked_comments() {
+	local target_type="$1"
+	local target_number="$2"
+	local slug="$3"
+	local comments_json="$4"
+	local pub_key="$5"
+	local expected_head_sha="${6:-}"
+	local comment_count="$7"
+	local saw_api_error=0 saw_stale=0 saw_legacy=0 saw_malformed=0
+	local comment_rows=""
+	local base64_decode_flag="-d"
+	[[ "$(uname -s)" == "Darwin" ]] && base64_decode_flag="-D"
 
-	_require_number_arg "$issue_number" "Issue" "Usage: aidevops approve verify <number> [owner/repo]" || return 1
+	if [[ -z "$comments_json" || "$comment_count" -le 0 ]]; then
+		printf 'MALFORMED_APPROVAL\n'
+		return 5
+	fi
+	comment_rows=$(jq -r '
+		reverse[]
+		| [((.id // "") | tostring), ((.body // "") | @base64)]
+		| @tsv
+	' <<<"$comments_json") || {
+		printf 'MALFORMED_APPROVAL\n'
+		return 5
+	}
+
+	while IFS=$'\t' read -r comment_id encoded_body; do
+		local body="" classification
+		body=$(printf '%s' "$encoded_body" | base64 "$base64_decode_flag") || {
+			saw_malformed=1
+			continue
+		}
+		if [[ ! "$comment_id" =~ ^[0-9]+$ ]]; then
+			saw_malformed=1
+			continue
+		fi
+		classification=$(_approval_classify_signed_comment "$target_type" "$target_number" "$slug" "$comment_id" "$body" "$pub_key" "$expected_head_sha")
+		case "$classification" in
+		VERIFIED) printf 'VERIFIED\n'; return 0 ;;
+		API_ERROR) saw_api_error=1 ;;
+		STALE_APPROVAL) saw_stale=1 ;;
+		LEGACY_APPROVAL) saw_legacy=1 ;;
+		*) saw_malformed=1 ;;
+		esac
+	done <<<"$comment_rows"
+
+	[[ "$saw_api_error" -eq 0 ]] || { printf 'API_ERROR\n'; return 6; }
+	[[ "$saw_stale" -eq 0 ]] || { printf 'STALE_APPROVAL\n'; return 4; }
+	[[ "$saw_legacy" -eq 0 ]] || { printf 'LEGACY_APPROVAL\n'; return 3; }
+	[[ "$saw_malformed" -eq 1 ]] || saw_malformed=1
+	printf 'MALFORMED_APPROVAL\n'
+	return 5
+}
+
+_fetch_latest_permission_grant_body() {
+	local target_number="$1"
+	local slug="$2"
+	local request_id="$3"
+	local pages comments endpoint
+	endpoint=$(_permission_comments_endpoint "$slug" "$target_number")
+	pages=$(gh api "$endpoint" --paginate --slurp 2>/dev/null) || return 1
+	comments=$(_trusted_permission_comments_json "$pages") || return 1
+	jq -r --arg marker "$PERMISSION_GRANT_MARKER" --arg request "$request_id" '
+		[.[] | select((.body // "") | contains($marker) and contains($request))]
+		| sort_by(.id) | last | .body // ""
+	' <<<"$comments"
+	return $?
+}
+
+_permission_grant_time_valid() {
+	local payload="$1"
+	python3 - "$payload" <<'PY'
+import datetime as dt
+import json
+import sys
+
+try:
+    payload = json.loads(sys.argv[1])
+    issued = dt.datetime.fromisoformat(payload["issued_at"].replace("Z", "+00:00"))
+    expires = dt.datetime.fromisoformat(payload["expires_at"].replace("Z", "+00:00"))
+    now = dt.datetime.now(dt.timezone.utc)
+except (KeyError, TypeError, ValueError, json.JSONDecodeError):
+    raise SystemExit(1)
+valid = issued <= now + dt.timedelta(minutes=5) and expires > now and expires > issued
+valid = valid and expires - issued <= dt.timedelta(hours=4)
+raise SystemExit(0 if valid else 1)
+PY
+	return $?
+}
+
+_validate_permission_grant_payload() {
+	local payload="$1"
+	local request_json="$2"
+	jq -e --argjson request "$request_json" '
+		.schema == "aidevops-permission-grant/v1"
+		and .authority == "worker-permissions"
+		and .target == $request.target
+		and .request_id == $request.request_id
+		and .request_sha256 == $request.request_sha256
+		and .worker == $request.worker
+		and .capabilities == $request.capabilities
+	' <<<"$payload" >/dev/null || return 1
+	_permission_grant_time_valid "$payload"
+	return $?
+}
+
+cmd_verify_permissions() {
+	local target_type="${1:-}"
+	local target_number="${2:-}"
+	local slug="${3:-}"
+	local usage="Usage: aidevops approve verify-permissions issue|pr <number> [owner/repo]"
+	[[ "$target_type" == "issue" || "$target_type" == "pr" ]] || { printf 'MALFORMED_APPROVAL\n'; return 5; }
+	_require_number_arg "$target_number" "$target_type" "$usage" >/dev/null 2>&1 || { printf 'MALFORMED_APPROVAL\n'; return 5; }
+	slug=$(_resolve_slug_or_fail "$slug" "$usage") || { printf 'API_ERROR\n'; return 6; }
+	local request_json request_id grant_body payload
+	request_json=$(_fetch_latest_permission_request_json "$target_number" "$slug") || { printf 'NO_REQUEST\n'; return 1; }
+	request_id=$(jq -r '.request_id // ""' \
+		<<<"$request_json")
+	_validate_permission_request_json "$request_json" "$target_type" "$target_number" "$slug" "$request_id" || {
+		printf 'MALFORMED_REQUEST\n'
+		return 5
+	}
+	grant_body=$(_fetch_latest_permission_grant_body "$target_number" "$slug" "$request_id") || { printf 'API_ERROR\n'; return 6; }
+	[[ -n "$grant_body" ]] || { printf 'NO_APPROVAL\n'; return 1; }
+	[[ -f "$APPROVAL_PUB" ]] || { printf 'NO_KEY\n'; return 2; }
+	_verify_comment_signature "$grant_body" "$APPROVAL_PUB" || { printf 'MALFORMED_APPROVAL\n'; return 5; }
+	payload=$(_extract_fenced_block "$grant_body" 1)
+	_validate_permission_grant_payload "$payload" "$request_json" || { printf 'STALE_APPROVAL\n'; return 4; }
+	printf 'VERIFIED\n'
+	return 0
+}
+
+# Verify a V2 approval against the current immutable issue/PR snapshot.
+# Legacy syntax (`verify N slug`) remains an issue verification request, but V1
+# signatures return LEGACY_APPROVAL and never authorize an external merge.
+cmd_verify() {
+	local target_type="issue"
+	if [[ "${1:-}" == "issue" || "${1:-}" == "pr" ]]; then
+		target_type="$1"
+		shift
+	fi
+	local target_number="${1:-}"
+	local slug=""
+	shift 2>/dev/null || true
+	if [[ $# -gt 0 && "$1" != --* ]]; then
+		slug="$1"
+		shift
+	fi
+	local expected_head_sha=""
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+		--expect-head)
+			expected_head_sha="${2:-}"
+			shift 2
+			;;
+		*)
+			printf 'MALFORMED_APPROVAL\n'
+			return 5
+			;;
+		esac
+	done
+	if [[ -n "$expected_head_sha" && ! "$expected_head_sha" =~ ^[0-9A-Fa-f]{7,64}$ ]]; then
+		printf 'MALFORMED_APPROVAL\n'
+		return 5
+	fi
+
+	_require_number_arg "$target_number" "$target_type" "Usage: aidevops approve verify [issue|pr] <number> [owner/repo] [--expect-head SHA]" || return 5
 	slug=$(_resolve_slug_or_fail "$slug" "Could not detect repo slug") || return 1
 
-	# Fetch comments looking for approval marker
-	local comments_json
-	comments_json=$(gh api "repos/${slug}/issues/${issue_number}/comments" --paginate \
-		--jq "[.[] | select(.body | contains(\"$APPROVAL_MARKER\"))]" 2>/dev/null || echo "[]")
+	local comment_pages="" comments_json="" endpoint=""
+	endpoint=$(_permission_comments_endpoint "$slug" "$target_number")
+	comment_pages=$(gh api "$endpoint" --paginate --slurp 2>/dev/null) || {
+		printf 'API_ERROR\n'
+		return 6
+	}
+	comments_json=$(jq -c --arg marker "$APPROVAL_MARKER" --arg array_type "$PERMISSION_JSON_ARRAY_TYPE" '
+		(if type == $array_type and all(.[]; type == $array_type) then [.[][]?] else [.[]?] end)
+		| [ .[] | select((.body // "") | contains($marker)) ]
+		| sort_by(.id)
+	' <<<"$comment_pages" 2>/dev/null) || {
+		printf 'API_ERROR\n'
+		return 6
+	}
 
 	local comment_count
-	comment_count=$(printf '%s' "$comments_json" | jq 'length' 2>/dev/null || echo "0")
+	comment_count=$(printf '%s' "$comments_json" | jq 'length' 2>/dev/null) || {
+		printf 'API_ERROR\n'
+		return 6
+	}
 
 	if [[ "$comment_count" -eq 0 ]]; then
-		echo "NO_APPROVAL"
+		printf 'NO_APPROVAL\n'
 		return 1
 	fi
 
@@ -1018,25 +1784,12 @@ cmd_verify() {
 	# worker cannot verify it" and avoids re-applying NMR over a signed approval.
 	local pub_key="${AIDEVOPS_APPROVAL_PUB:-$APPROVAL_PUB}"
 	if [[ ! -f "$pub_key" ]]; then
-		echo "NO_KEY"
-		return 1
+		printf 'NO_KEY\n'
+		return 2
 	fi
 
-	# Check each approval comment (most recent first)
-	local i=$((comment_count - 1))
-	while [[ "$i" -ge 0 ]]; do
-		local body
-		body=$(printf '%s' "$comments_json" | jq -r ".[$i].body" 2>/dev/null || echo "")
-		i=$((i - 1))
-
-		if _verify_comment_signature "$issue_number" "$body" "$pub_key"; then
-			echo "VERIFIED"
-			return 0
-		fi
-	done
-
-	echo "UNVERIFIED"
-	return 1
+	_approval_classify_marked_comments "$target_type" "$target_number" "$slug" "$comments_json" "$pub_key" "$expected_head_sha" "$comment_count"
+	return $?
 }
 
 # ── Status ───────────────────────────────────────────────────────────────────
@@ -1085,16 +1838,20 @@ cmd_help() {
 	echo "  setup                      Generate root-protected approval key pair"
 	echo "  issue <number> [slug]      Approve an issue"
 	echo "  pr <number> [slug]         Approve a PR"
+	echo "  permissions issue|pr <number> [slug] --request perm-<id>"
 	echo ""
 	echo "Commands (no sudo needed):"
-	echo "  verify <number> [slug]     Verify approval signature on an issue"
+	echo "  verify [issue|pr] <number> [slug] [--expect-head SHA]"
+	echo "  verify-permissions issue|pr <number> [slug]"
 	echo "  status                     Show approval key setup status"
 	echo "  help                       Show this help"
 	echo ""
 	echo "Examples:"
 	echo "  sudo aidevops approve setup"
 	echo "  sudo aidevops approve issue 17438 <owner/repo>"
+	echo "  sudo aidevops approve permissions issue 17438 <owner/repo> --request perm-0123456789abcdef"
 	echo "  aidevops approve verify 17438"
+	echo "  aidevops approve verify pr 17439 <owner/repo> --expect-head <sha>"
 	echo ""
 	echo "Security: The approval signing key is stored root-only. Workers run as your"
 	echo "user account and cannot access it, even with the same GitHub credentials."
@@ -1111,6 +1868,8 @@ main() {
 	setup) cmd_setup "$@" ;;
 	issue | issue-approved) cmd_issue_approved "$@" ;;
 	pr | pr-approved) cmd_pr_approved "$@" ;;
+	permissions) cmd_permissions "$@" ;;
+	verify-permissions) cmd_verify_permissions "$@" ;;
 	verify) cmd_verify "$@" ;;
 	status) cmd_status "$@" ;;
 	help | --help | -h) cmd_help ;;
@@ -1122,4 +1881,6 @@ main() {
 	esac
 }
 
-main "$@"
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+	main "$@"
+fi

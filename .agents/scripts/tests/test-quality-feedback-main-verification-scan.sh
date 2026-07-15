@@ -974,6 +974,25 @@ test_scan_single_pr_filters_resolved_review_threads() {
 	return 0
 }
 
+test_build_inline_findings_filters_outdated_pr_revision_comment() {
+	local comments findings urls
+	comments='[
+		{"id":3579184014,"user":{"login":"gemini-code-assist[bot]"},"path":"aidevops.sh","subject_type":"line","line":null,"original_line":336,"position":1,"original_position":33,"body":"Since git fetch already ran, you should avoid a redundant pull.","html_url":"https://example.invalid/outdated","created_at":"2026-07-14T12:00:00Z"},
+		{"id":3579184015,"user":{"login":"gemini-code-assist[bot]"},"path":"aidevops.sh","subject_type":"line","line":347,"original_line":347,"position":2,"original_position":34,"body":"You should retain this current-line finding.","html_url":"https://example.invalid/current","created_at":"2026-07-14T12:01:00Z"},
+		{"id":3579184016,"user":{"login":"gemini-code-assist[bot]"},"path":"aidevops.sh","subject_type":"file","line":null,"position":null,"body":"You should retain this file-level finding.","html_url":"https://example.invalid/file","created_at":"2026-07-14T12:02:00Z"}
+	]'
+
+	findings=$(_build_inline_findings "$comments" "27662" "medium")
+	urls=$(printf '%s' "$findings" | jq -r '[.[].url] | sort | join(",")')
+	if [[ "$urls" == "https://example.invalid/current,https://example.invalid/file" ]]; then
+		print_result "outdated inline comments from replaced PR revisions are filtered" 0
+	else
+		print_result "outdated inline comments from replaced PR revisions are filtered" 1 \
+			"unexpected findings: ${findings}"
+	fi
+	return 0
+}
+
 test_scan_single_pr_filters_parent_of_resolution_reply() {
 	reset_mock_state
 

@@ -109,6 +109,7 @@ if [[ "\$1" == "pr" && "\$2" == "list" ]]; then
 	case "${open_pr_kind}" in
 	ready) printf '%s\n' '[{"number":${open_pr_number},"isDraft":false,"labels":[{"name":"origin:worker"}],"statusCheckRollup":[]}]' ;;
 	ready_failed) printf '%s\n' '[{"number":${open_pr_number},"isDraft":false,"labels":[{"name":"origin:worker"}],"statusCheckRollup":[{"__typename":"CheckRun","status":"COMPLETED","conclusion":"FAILURE"}]}]' ;;
+	ready_review_infra) printf '%s\n' '[{"number":${open_pr_number},"isDraft":false,"labels":[{"name":"origin:worker"}],"statusCheckRollup":[{"__typename":"CheckRun","name":"gate / review-bot-gate","status":"COMPLETED","conclusion":"FAILURE"},{"__typename":"StatusContext","context":"review-bot-gate","state":"SUCCESS"}]}]' ;;
 	draft_checkpoint) printf '%s\n' '[{"number":${open_pr_number},"isDraft":true,"labels":[{"name":"origin:worker"}],"statusCheckRollup":[]}]' ;;
 	protected_draft) printf '%s\n' '[{"number":${open_pr_number},"isDraft":true,"labels":[{"name":"origin:interactive"}],"statusCheckRollup":[]}]' ;;
 	*) printf '%s\n' '[]' ;;
@@ -309,14 +310,24 @@ else
 fi
 
 # =============================================================================
-# Test 8 — Terminally failed ready PR escalates explicitly
+# Test 8 — Ready PR preserves durable progress for pulse CI repair
 # =============================================================================
 
-run_recover 0 "79|ready_failed" 1
-if echo "$output" | grep -q "STALE_READY_FAILED_ESCALATED"; then
-	print_result "Ready PR with terminal failed checks escalates explicitly" 0
+run_recover 0 "79|ready" 1
+if echo "$output" | grep -q "STALE_PROGRESS_PRESERVED" && ! grep -q "needs-maintainer-review" "$GH_CALLS_FILE"; then
+	print_result "Ready PR preserves durable progress without NMR escalation" 0
 else
-	print_result "Ready PR with terminal failed checks escalates explicitly" 1 "(got: '$output')"
+	print_result "Ready PR preserves durable progress without NMR escalation" 1 "(got: '$output')"
+fi
+
+# A later review-event workflow can exhaust its API quota after the exact-head
+# commit status already passed. That infrastructure-only rerun is not a failed
+# implementation checkpoint and must not trigger maintainer escalation.
+run_recover 0 "80|ready_review_infra" 1
+if echo "$output" | grep -q "STALE_PROGRESS_PRESERVED" && ! grep -q "needs-maintainer-review" "$GH_CALLS_FILE"; then
+	print_result "Successful review status suppresses terminal infra rerun escalation" 0
+else
+	print_result "Successful review status suppresses terminal infra rerun escalation" 1 "(got: '$output')"
 fi
 
 export PATH="$OLD_PATH"

@@ -1784,6 +1784,19 @@ setup_python_env() {
 		print_info "Python virtual environment already exists"
 	fi
 
+	if ! declare -F aidevops_secure_dspy_cache >/dev/null 2>&1; then
+		print_warning "DSPy cache security helper unavailable - DSPy setup skipped"
+		return 0
+	fi
+	if ! aidevops_secure_dspy_cache; then
+		print_warning "DSPy cache could not be restricted to an owner-only directory - DSPy setup skipped"
+		return 0
+	fi
+	if ! aidevops_persist_dspy_cache_env "python-env/dspy-env/bin/activate"; then
+		print_warning "DSPy cache environment could not be persisted - DSPy setup skipped"
+		return 0
+	fi
+
 	# Install DSPy dependencies
 	print_info "Installing DSPy dependencies..."
 	# shellcheck source=/dev/null
@@ -1801,6 +1814,7 @@ setup_python_env() {
 		print_info "Check requirements.txt or run manually:"
 		print_info "  source python-env/dspy-env/bin/activate && pip install -r requirements.txt"
 	fi
+	return 0
 }
 
 setup_nodejs_env() {

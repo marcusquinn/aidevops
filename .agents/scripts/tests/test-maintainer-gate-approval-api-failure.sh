@@ -66,12 +66,12 @@ if [[ "${1:-}" == "pr" && "${2:-}" == "view" ]]; then
 	esac
 fi
 
-if [[ "${1:-}" == "api" && "${2:-}" == */comments ]]; then
+if [[ "${1:-}" == "api" && "$*" == *"/comments"* ]]; then
 	case "${GH_SCENARIO:-}" in
 		issue-api-failure|pr-approval-failure) exit 1 ;;
 		issue-invalid|pr-invalid) printf '{"message":"rate limited"}\n'; exit 0 ;;
-		issue-signed|pr-signed) printf '1\n'; exit 0 ;;
-		issue-unsigned|pr-unsigned) printf '0\n'; exit 0 ;;
+		issue-signed|pr-signed) printf '[[{"body":"<!-- aidevops-signed-approval -->"}]]\n'; exit 0 ;;
+		issue-unsigned|pr-unsigned) printf '[[]]\n'; exit 0 ;;
 	esac
 fi
 
@@ -194,11 +194,44 @@ test_pr_approval_paths() {
 	return 0
 }
 
+has_combined_slurp_and_jq() {
+	local workflow_file="$1"
+	if sed -e :a -e '/\\$/N; s/\\\n[[:space:]]*/ /; ta' "$workflow_file" |
+		grep 'gh[[:space:]][[:space:]]*api' |
+		grep -F -- '--slurp' |
+		grep -Fq -- '--jq'; then
+		return 0
+	fi
+	return 1
+}
+
+test_slurp_and_jq_are_separate() {
+	local combined_fixture="${TEST_ROOT}/combined-flags.sh"
+	cat >"$combined_fixture" <<'EOF'
+gh api --jq '.[]' \
+  --paginate \
+  --slurp repos/example/project/issues/1/comments
+EOF
+	if has_combined_slurp_and_jq "$combined_fixture"; then
+		print_result "slurp/jq detector handles reordered multiline flags" 0
+	else
+		print_result "slurp/jq detector handles reordered multiline flags" 1 "forbidden fixture was not detected"
+	fi
+
+	if has_combined_slurp_and_jq "$WORKFLOW_FILE"; then
+		print_result "maintainer gate separates gh --slurp from jq" 1 "unsupported gh flag combination remains"
+	else
+		print_result "maintainer gate separates gh --slurp from jq" 0
+	fi
+	return 0
+}
+
 main() {
 	setup_test_env
 	trap teardown_test_env EXIT
 	test_issue_approval_paths
 	test_pr_approval_paths
+	test_slurp_and_jq_are_separate
 	printf '\nTests run: %d\nTests failed: %d\n' "$TESTS_RUN" "$TESTS_FAILED"
 	if [[ "$TESTS_FAILED" -gt 0 ]]; then
 		return 1

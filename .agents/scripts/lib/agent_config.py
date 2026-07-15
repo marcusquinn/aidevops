@@ -11,8 +11,14 @@ duplication and reduce file complexity.
 import glob
 import os
 import sys
+import tempfile
 
 from discovery_utils import parse_frontmatter
+
+
+# Darwin's unistd.h exposes this confstr key, but Python omits its symbolic
+# name from os.confstr_names. Passing the native key avoids spawning getconf.
+_CS_DARWIN_USER_TEMP_DIR = 65537
 
 
 # =============================================================================
@@ -36,6 +42,33 @@ AGENT_ORDER = ["Build+", "Automate"]
 # plan-plus.md and aidevops.md are now subagents, not primary agents
 # browser-extension-dev.md and mobile-app-dev.md are specialist subagents under Build+
 SKIP_PRIMARY_AGENTS = {"plan-plus.md", "aidevops.md", "browser-extension-dev.md", "mobile-app-dev.md"}
+
+
+def managed_external_directories():
+    """Return stable framework paths plus this user's resolved OS temp path."""
+    paths = [
+        "~/.aidevops",
+        "~/.aidevops/**",
+        "~/.config/aidevops",
+        "~/.config/aidevops/**",
+        "~/.config/opencode/command",
+        "~/.config/opencode/command/**",
+        "~/Git/_worktrees",
+        "~/Git/_worktrees/**",
+    ]
+    configured_temp = tempfile.gettempdir().rstrip("/")
+    temp_dirs = {configured_temp, os.path.realpath(configured_temp)}
+    if sys.platform == "darwin":
+        try:
+            darwin_temp = os.confstr(_CS_DARWIN_USER_TEMP_DIR).rstrip("/")
+            if darwin_temp:
+                temp_dirs.update((darwin_temp, os.path.realpath(darwin_temp)))
+        except (OSError, ValueError):
+            pass
+    for temp_dir in sorted(temp_dirs):
+        if temp_dir:
+            paths.extend((temp_dir, f"{temp_dir.rstrip('/')}/**"))
+    return tuple(paths)
 
 # Special tool configurations per agent (by display name)
 # These are MCP tools that specific agents need access to
@@ -175,20 +208,16 @@ def get_agent_config(display_name, filename, subagents=None, model_tier=None):
     if effective_tier and effective_tier not in WORKLOAD_TIERS and "/" in effective_tier:
         config["model"] = effective_tier
 
-    # Grep is a read-only search tool. Explicitly allow it when enabled so
-    # OpenCode does not fall back to its interactive permission default.
+    # OpenCode applies the external-directory boundary to shell paths too.
+    # Permit only managed paths and this user's resolved OS temp directory so
+    # disposable test worktrees work without opening all of /tmp or /var/folders.
     config["permission"] = {
         "external_directory": {
-            "~/.aidevops": "allow",
-            "~/.aidevops/**": "allow",
-            "~/.config/aidevops": "allow",
-            "~/.config/aidevops/**": "allow",
-            "~/.config/opencode/command": "allow",
-            "~/.config/opencode/command/**": "allow",
-            "~/Git/_worktrees": "allow",
-            "~/Git/_worktrees/**": "allow",
+            path: "allow" for path in managed_external_directories()
         }
     }
+    # Grep is a read-only search tool. Explicitly allow it when enabled so
+    # OpenCode does not fall back to its interactive permission default.
     if tools.get("grep") is True:
         config["permission"]["grep"] = "allow"
 

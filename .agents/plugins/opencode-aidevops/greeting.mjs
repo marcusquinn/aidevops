@@ -106,9 +106,9 @@ const FALLBACK_WINDOW_MS = 30000;
  * it, including empty-output and failure paths.
  *
  * @param {{ scriptsDir: string, client: any, cacheFile: string, lockDir: string,
- *   execGreeting: Function, maintenanceNoticeFn: Function }} options
+ *   execGreeting: Function, maintenanceNoticeFn: Function, cachedFallback: object|null }} options
  */
-function runGreetingAsync({ scriptsDir, client, cacheFile, lockDir, lockToken, execGreeting, maintenanceNoticeFn }) {
+function runGreetingAsync({ scriptsDir, client, cacheFile, lockDir, lockToken, execGreeting, maintenanceNoticeFn, cachedFallback }) {
   const script = join(scriptsDir, "aidevops-update-check.sh");
   Promise.resolve()
     .then(() => execGreeting(`bash ${JSON.stringify(script)} --interactive`, {
@@ -118,8 +118,9 @@ function runGreetingAsync({ scriptsDir, client, cacheFile, lockDir, lockToken, e
       const output = stdout ? stdout.trim() : "";
       if (!output) {
         if (process.env.AIDEVOPS_PLUGIN_DEBUG) {
-          console.error("[aidevops] greeting: update-check returned empty, skipping toasts");
+          console.error("[aidevops] greeting: update-check returned empty, using cached fallback");
         }
+        emitCachedGreeting(client, cachedFallback);
         return;
       }
 
@@ -147,6 +148,7 @@ function runGreetingAsync({ scriptsDir, client, cacheFile, lockDir, lockToken, e
       if (process.env.AIDEVOPS_PLUGIN_DEBUG) {
         console.error(`[aidevops] greeting: update-check failed: ${err.message}`);
       }
+      emitCachedGreeting(client, cachedFallback);
     })
     .finally(() => {
       releaseRefreshLock(lockDir, lockToken);
@@ -274,28 +276,33 @@ function releaseRefreshLock(lockDir, lockToken) {
   }
 }
 
-function observeSharedRefresh({ cacheFile, lockDir, lockStaleMs, client, now }) {
+function observeSharedRefresh({ cacheFile, lockDir, lockStaleMs, client, now, minimumMtimeMs }) {
   const deadline = now() + lockStaleMs;
+  let missingLockRetries = 0;
   const poll = () => {
     const cached = readGreetingCache(cacheFile);
-    if (cached) {
+    if (cached && cached.mtimeMs > minimumMtimeMs) {
       emitCachedGreeting(client, cached);
       return;
     }
 
     try {
       if (now() >= deadline || now() - statSync(lockDir).mtimeMs > lockStaleMs) return;
+      missingLockRetries = 0;
     } catch {
       // The owner may publish the cache and remove its lock between our cache
       // read and lock stat. Re-check once so that handoff still emits it.
       const finalCached = readGreetingCache(cacheFile);
-      if (finalCached) {
+      if (finalCached && finalCached.mtimeMs > minimumMtimeMs) {
         emitCachedGreeting(client, finalCached);
         return;
       }
       // A stale-lock contender may have renamed the old lock but not created
-      // its replacement yet. Keep polling within the original safety bound.
+      // its replacement yet. Allow a short handoff window without polling for
+      // the full stale-lock lifetime when an owner exits without publishing.
       if (now() >= deadline) return;
+      if (missingLockRetries >= 4) return;
+      missingLockRetries += 1;
     }
 
     const timer = setTimeout(poll, 25);
@@ -436,13 +443,19 @@ function refreshGreetingIfStale({ cached, now, refreshTtlMs, lockDir, lockStaleM
       lockToken,
       execGreeting,
       maintenanceNoticeFn,
+      cachedFallback: cached,
     });
     return;
   }
 
-  if (!cached) {
-    observeSharedRefresh({ cacheFile, lockDir, lockStaleMs, client, now });
-  }
+  observeSharedRefresh({
+    cacheFile,
+    lockDir,
+    lockStaleMs,
+    client,
+    now,
+    minimumMtimeMs: cached?.mtimeMs ?? Number.NEGATIVE_INFINITY,
+  });
   if (process.env.AIDEVOPS_PLUGIN_DEBUG) {
     console.error("[aidevops] greeting: refresh already running in another process");
   }
@@ -505,10 +518,13 @@ export function createGreetingHandler({
       console.error(`[aidevops] greeting: triggered (mode=${mode}, type=${event.type})`);
     }
 
-    // Serve the last complete cache synchronously. This keeps the event hook
-    // independent of refresh latency even when this process becomes lock owner.
+    // Serve a fresh cache synchronously. A stale cache is retained only as a
+    // refresh-failure fallback; emitting it here and the refreshed value later
+    // would display two startup toasts for one session.
     const cached = readGreetingCache(cacheFile);
-    emitCachedGreeting(client, cached);
+    if (cached && now() - cached.mtimeMs <= refreshTtlMs) {
+      emitCachedGreeting(client, cached);
+    }
 
     refreshGreetingIfStale({
       cached,

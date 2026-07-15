@@ -17,7 +17,7 @@ fi
 # AI Assistant Server Access Framework Setup Script
 # Helps developers set up the framework for their infrastructure
 #
-# Version: 3.32.112
+# Version: 3.32.122
 #
 # Quick Install:
 #   npm install -g aidevops && aidevops update          (recommended)
@@ -139,6 +139,17 @@ if [[ -f "$_SHARED_CONSTANTS" ]]; then
 	source "$_SHARED_CONSTANTS"
 fi
 unset _SHARED_CONSTANTS
+
+# Secure the optional DSPy disk cache before setup installs or imports DSPy.
+_DSPY_CACHE_SECURITY="${INSTALL_DIR}/.agents/scripts/dspy-cache-security.sh"
+if [[ ! -f "$_DSPY_CACHE_SECURITY" ]]; then
+	_DSPY_CACHE_SECURITY="$HOME/.aidevops/agents/scripts/dspy-cache-security.sh"
+fi
+if [[ -f "$_DSPY_CACHE_SECURITY" ]]; then
+	# shellcheck disable=SC1090  # Dynamic path resolved at runtime
+	source "$_DSPY_CACHE_SECURITY"
+fi
+unset _DSPY_CACHE_SECURITY
 
 # Escape a string for safe embedding in XML (plist heredocs).
 # Prevents XML injection if paths contain &, <, >, ", or ' characters.

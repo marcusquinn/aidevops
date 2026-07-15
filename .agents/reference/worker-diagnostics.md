@@ -59,6 +59,30 @@ terminal marker. The first recovery emits one combined recovery/tick comment;
 the second applies `needs-maintainer-review`. An open PR is durable progress, so
 stale recovery preserves its ownership and emits no synthetic reset comment.
 
+## Progress-Blocker Evidence
+
+Before opening raw worker logs, inspect the bounded blocker lifecycle alongside
+canonical runtime outcomes:
+
+```bash
+worker-activity-helper.sh summary --since 24h
+pulse-diagnose-helper.sh issue <N> --repo <owner/repo>
+```
+
+Both commands read `~/.aidevops/logs/worker-progress-blockers.jsonl`.
+`worker-activity-helper.sh` reports events in the selected window plus current
+active blockers from the latest retained event per worker session.
+`pulse-diagnose-helper.sh issue` filters the same records by issue/repository and
+includes them in human output and JSON `progress_blockers`.
+
+Permission blocker reasons distinguish a normal `permission_required` or
+`needs_maintainer_permissions` pause from non-grantable sensitive scope,
+capture/comment/label/marker persistence failures, missing or invalid signed
+grants, expiry, target/request/worktree/session/branch replay mismatches, and a
+successful `scoped_permission_granted` resume. A non-blocking grant event clears
+the prior blocker for the same worker session even though the envelope request
+ID differs from the source OpenCode request ID.
+
 ## Manual Worker Launch
 
 Use `aidevops launch-worker` when an operator needs a controlled headless

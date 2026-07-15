@@ -97,6 +97,7 @@ export -f print_info print_warning print_error print_success log_verbose
 #   STUB_GH_LIST_CLOSED_OUT  — stdout for closed-state queries (--state closed)
 #   STUB_GH_LIST_RETRY_OUT   — stdout on the SECOND open-state call only
 #                              (set to simulate retry-after-empty, t2995 step 4)
+#   STUB_GH_LIST_RETRY_RC    — exit code on the SECOND all-state call only
 #
 # Counter is kept in a temp file so increments survive subshells (the helpers
 # under test invoke gh_issue_list inside `$(...)` command substitutions).
@@ -125,6 +126,9 @@ gh_issue_list() {
 			printf '[{"number":%s,"state":"CLOSED","body":"generator=large-file-simplification-gate cited_file=worktree-helper.sh threshold=1000 generator=large-file-simplification-gate cited_file=.agents/scripts/worktree-helper.sh threshold=1000"}]' "$STUB_GH_LIST_CLOSED_OUT"
 		else
 			printf '[]'
+		fi
+		if [[ "$_all_n" -ge 2 && -n "${STUB_GH_LIST_RETRY_RC:-}" ]]; then
+			return "$STUB_GH_LIST_RETRY_RC"
 		fi
 		return "${STUB_GH_LIST_RC:-0}"
 	fi
@@ -233,10 +237,12 @@ _reset_stubs() {
 	export STUB_GH_LIST_OPEN_OUT=""
 	export STUB_GH_LIST_CLOSED_OUT=""
 	export STUB_GH_LIST_RETRY_OUT=""
+	export STUB_GH_LIST_RETRY_RC=""
 	export STUB_VERIFY_REDUCED_RC=0
 	: >"$NEW_ISSUE_CALLS"
 	: >"$GH_ISSUE_LIST_CALLS"
 	: >"$LOGFILE"
+	return 0
 }
 
 # =============================================================================
@@ -289,6 +295,9 @@ fi
 # Test 4: lookup failure → rc=2, stdout="", logs WARN (THE t2995 fix)
 _reset_stubs
 export STUB_GH_LIST_RC=124
+# A failed fetch can leave partial output. Parsing it used to replace the
+# original timeout status with jq's parse-error status.
+export STUB_GH_LIST_OPEN_OUT="not-json"
 out=""
 rc=0
 out=$(_large_file_gate_find_existing_debt_issue "owner/repo" "worktree-helper.sh") || rc=$?
@@ -297,10 +306,10 @@ if [[ "$rc" == "2" && -z "$out" ]]; then
 else
 	fail "helper:lookup-failed" "rc=$rc out='$out'"
 fi
-if grep -q "file-size-debt dedup all-state search failed for worktree-helper.sh" "$LOGFILE"; then
-	pass "helper:lookup-failed logs WARN with basename"
+if grep -q "file-size-debt dedup all-state search failed for worktree-helper.sh (rc=124)" "$LOGFILE"; then
+	pass "helper:lookup-failed preserves fetch rc=124"
 else
-	fail "helper:lookup-failed logs WARN" "log contents: $(cat "$LOGFILE")"
+	fail "helper:lookup-failed preserves fetch rc" "log contents: $(cat "$LOGFILE")"
 fi
 
 # Test 7: retry on empty (search index lag, t2995 step 4). The `sleep`
@@ -316,6 +325,22 @@ if [[ "$rc" == "0" && "$out" == "open:9001" ]]; then
 	pass "helper:retry-on-empty catches search index lag (calls=$calls)"
 else
 	fail "helper:retry-on-empty" "rc=$rc out='$out' calls=$calls"
+fi
+
+# Test 8: retry fetch failure preserves that fetch's exit code and does not
+# parse its partial output.
+_reset_stubs
+export STUB_GH_LIST_RETRY_OUT="not-json"
+export STUB_GH_LIST_RETRY_RC=75
+out=""
+rc=0
+out=$(_large_file_gate_find_existing_debt_issue "owner/repo" "worktree-helper.sh") || rc=$?
+calls=$(cat "$OPEN_CALL_COUNTER" 2>/dev/null || echo "?")
+if [[ "$rc" == "2" && -z "$out" && "$calls" == "2" ]] &&
+	grep -q "file-size-debt dedup all-state search failed for worktree-helper.sh (rc=75)" "$LOGFILE"; then
+	pass "helper:retry-failed preserves fetch rc=75"
+else
+	fail "helper:retry-failed preserves fetch rc" "rc=$rc out='$out' calls=$calls log=$(cat "$LOGFILE")"
 fi
 
 # =============================================================================

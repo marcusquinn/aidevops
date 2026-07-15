@@ -11,6 +11,7 @@ from discovery_utils import atomic_json_write
 from agent_config import (
     discover_primary_agents, validate_subagent_refs,
     apply_disabled_agents, sort_key, display_to_filename,
+    managed_external_directories,
 )
 from mcp_config import (
     apply_mcp_loading_policy, remove_deprecated_mcps,
@@ -102,16 +103,7 @@ def _persist_managed_external_directories(config):
     if existing == 'allow':
         return
     rules = {'*': existing} if isinstance(existing, str) else dict(existing or {})
-    managed_paths = (
-        '~/.aidevops',
-        '~/.aidevops/**',
-        '~/.config/aidevops',
-        '~/.config/aidevops/**',
-        '~/.config/opencode/command',
-        '~/.config/opencode/command/**',
-        '~/Git/_worktrees',
-        '~/Git/_worktrees/**',
-    )
+    managed_paths = managed_external_directories()
     for path in managed_paths:
         rules.pop(path, None)
         rules[path] = 'allow'

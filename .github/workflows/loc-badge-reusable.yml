@@ -18,6 +18,11 @@ name: Repository Metrics (reusable) — generate local README data and badges
 on:
   workflow_call:
     inputs:
+      aidevops_repository:
+        description: 'Repository to fetch the metrics helper from (defaults to the canonical aidevops repository)'
+        required: false
+        type: string
+        default: 'marcusquinn/aidevops'
       aidevops_ref:
         description: 'aidevops ref to fetch the metrics helper from (main, vX.Y.Z, or sha)'
         required: false
@@ -64,6 +69,9 @@ on:
         default: 'ubuntu-latest'
         type: string
     secrets:
+      AIDEVOPS_READ_TOKEN:
+        required: false
+        description: 'Optional token with read access to a private configured helper repository'
       SYNC_PAT:
         required: false
         description: 'Fine-grained PAT with Contents:read/write, bypasses branch protection on default-branch push'
@@ -116,10 +124,11 @@ jobs:
         if: steps.check-author.outputs.skip != 'true'
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
-          repository: marcusquinn/aidevops
+          repository: ${{ inputs.aidevops_repository || 'marcusquinn/aidevops' }}
           path: __aidevops
           ref: ${{ inputs.aidevops_ref || 'main' }}
           fetch-depth: 1
+          token: ${{ secrets.AIDEVOPS_READ_TOKEN || secrets.GITHUB_TOKEN }}
 
       - name: Build extra-excludes args
         id: excludes

@@ -56,7 +56,7 @@ _pulse_available_auto_dispatch_work_exists() {
 		[[ -n "$_slug" ]] || continue
 		local _count=""
 		_count=$(gh api -X GET search/issues \
-			-f "q=repo:${_slug} is:issue is:open label:auto-dispatch label:status:available -label:needs-maintainer-review no:assignee" \
+			-f "q=repo:${_slug} is:issue is:open label:auto-dispatch label:status:available -label:needs-maintainer-review -label:needs-maintainer-permissions no:assignee" \
 			-f per_page=1 \
 			--jq '.total_count // 0' 2>/dev/null) || _count=""
 		[[ "$_count" =~ ^[0-9]+$ ]] || _count=0

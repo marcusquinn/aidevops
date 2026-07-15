@@ -16,6 +16,7 @@
 #   --generate-notes     Auto-generate notes from commits (default when no notes given)
 #   --draft              Create as draft (create only; draft command always sets this)
 #   --prerelease         Mark as pre-release
+#   --reconcile-existing Update metadata when publication already exists
 #   --title <text>       Override release title (default: <version>)
 #   --repo <slug>        Target repo (default: current repo from gh)
 #   --tag <tag>          Override tag name (default: v<version> or <version> if already prefixed)
@@ -162,6 +163,7 @@ _create_flag_notes_file=""
 _create_flag_generate_notes=false
 _create_flag_draft=false
 _create_flag_prerelease=false
+_create_flag_reconcile_existing=false
 _create_already_exists=false
 # Resolved values (set by _resolve_create_inputs)
 _create_repo=""
@@ -225,6 +227,10 @@ _parse_create_args() {
 			_create_flag_prerelease=true
 			shift
 			;;
+		--reconcile-existing)
+			_create_flag_reconcile_existing=true
+			shift
+			;;
 		-*)
 			print_error "Unknown option: $1"
 			return 1
@@ -270,10 +276,44 @@ _resolve_create_inputs() {
 	return 0
 }
 
+# Reconcile optional metadata without invalidating an already verified release.
+_reconcile_release_metadata() {
+	local gh_args=("$_create_tag" "--repo" "$_create_repo" "--title" "$_create_title")
+	local attempt=1 output=""
+	if [[ -n "$_create_flag_notes_file" ]]; then
+		gh_args+=("--notes-file" "$_create_flag_notes_file")
+	elif [[ -n "$_create_flag_notes" ]]; then
+		gh_args+=("--notes" "$_create_flag_notes")
+	fi
+
+	while [[ "$attempt" -le 3 ]]; do
+		if output=$(gh release edit "${gh_args[@]}" 2>&1); then
+			print_success "Release '$_create_tag' metadata reconciled"
+			return 0
+		fi
+		print_warning "Release metadata reconciliation attempt $attempt/3 failed: $output"
+		if [[ "$output" == *"rate limit"* || "$output" == *"HTTP 403"* ]]; then
+			break
+		fi
+		((attempt++))
+	done
+
+	if release_exists "$_create_repo" "$_create_tag"; then
+		print_warning "Release '$_create_tag' publication is verified; metadata reconciliation is deferred"
+		return 0
+	fi
+	print_error "Release '$_create_tag' could not be verified after metadata reconciliation failed"
+	return 1
+}
+
 # Build gh CLI arguments and execute the release creation.
 # Reads _create_* variables set by earlier phases.
 _execute_release_create() {
 	if [[ "$_create_already_exists" == true ]]; then
+		if [[ "$_create_flag_reconcile_existing" == true ]]; then
+			_reconcile_release_metadata
+			return $?
+		fi
 		return 0
 	fi
 
@@ -308,6 +348,10 @@ _execute_release_create() {
 	else
 		if release_exists "$_create_repo" "$_create_tag"; then
 			print_warning "Release '$_create_tag' now exists on $_create_repo — treating duplicate create as already complete"
+			if [[ "$_create_flag_reconcile_existing" == true ]]; then
+				_reconcile_release_metadata
+				return $?
+			fi
 			return 0
 		fi
 		print_error "Failed to create release '$_create_tag' on $_create_repo"
@@ -330,6 +374,7 @@ cmd_create() {
 	_create_flag_generate_notes=false
 	_create_flag_draft=false
 	_create_flag_prerelease=false
+	_create_flag_reconcile_existing=false
 	_create_already_exists=false
 
 	_parse_create_args "$@" || return 1
@@ -444,6 +489,7 @@ Options (create / draft):
   --generate-notes     Auto-generate notes from commits (default when no notes given)
   --draft              Create as draft (always set for 'draft' command)
   --prerelease         Mark as pre-release
+  --reconcile-existing Reconcile metadata without invalidating verified publication
 
 Options (list):
   --repo <slug>        Target repo

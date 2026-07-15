@@ -67,7 +67,7 @@ import subprocess
 import sys
 import time
 
-inputs = os.fdopen(3, "rb").read().decode("unicode_escape").splitlines()
+inputs = os.fdopen(3, "rb").read().decode("unicode_escape").encode("latin-1").decode("utf-8").splitlines()
 cmd = sys.argv[1:]
 master, slave = pty.openpty()
 proc = subprocess.Popen(cmd, stdin=slave, stdout=subprocess.PIPE, stderr=slave)
@@ -107,6 +107,13 @@ PY
 	fi
 	return 1
 }
+
+unicode_input="välut-input"
+set +e
+run_with_tty "${unicode_input}\n" python3 -c 'import sys; print("Input: ", end="", file=sys.stderr, flush=True); raise SystemExit(sys.stdin.readline().rstrip("\n") != sys.argv[1])' "$unicode_input" >/dev/null 2>"$TEST_ROOT/unicode.err"
+unicode_rc=$?
+set -e
+assert_eq "tty input preserves multi-byte UTF-8" "0" "$unicode_rc"
 
 export AIDEVOPS_VAULT_DIR="$TEST_ROOT/vault"
 export AIDEVOPS_VAULT_RUNTIME_DIR="$TEST_ROOT/run"

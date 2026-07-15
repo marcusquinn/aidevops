@@ -4,6 +4,7 @@
 #
 # Priority order (highest to lowest):
 #   1. ~/.aidevops/agents/aidevops.sh — coherent setup-deployed CLI and modules
+#      (skip with AIDEVOPS_PREFER_LOCAL=1 for checkout development)
 #   2. ~/Git/aidevops/aidevops.sh     — bootstrap/development checkout
 #   3. Auto-clone the git repo         — first-run bootstrap
 #   4. npm-bundled aidevops.sh         — snapshot at publish time
@@ -28,13 +29,18 @@ if [[ -n "${SUDO_USER:-}" && "$(id -u)" -eq 0 ]]; then
 	fi
 fi
 
-REPO_DIR="${REAL_HOME:+$REAL_HOME/Git/aidevops}"
+if [[ -z "$REAL_HOME" ]]; then
+	printf 'Error: HOME is not set; unable to resolve aidevops installation paths.\n' >&2
+	exit 1
+fi
+
+REPO_DIR="$REAL_HOME/Git/aidevops"
 REPO_URL="https://github.com/marcusquinn/aidevops.git"
-DEPLOYED_CLI="${REAL_HOME:+$REAL_HOME/.aidevops/agents/aidevops.sh}"
+DEPLOYED_CLI="$REAL_HOME/.aidevops/agents/aidevops.sh"
 
 # 1. Prefer the setup-deployed copy. It is released atomically with its modules,
 # so a stale or dirty canonical checkout cannot split the CLI version from them.
-if [[ -f "$DEPLOYED_CLI" ]]; then
+if [[ -z "${AIDEVOPS_PREFER_LOCAL:-}" && -f "$DEPLOYED_CLI" ]]; then
 	DEPLOYED_ROOT="$(cd "$(dirname "$DEPLOYED_CLI")" && pwd -P)"
 	export AIDEVOPS_AGENTS_DIR="$DEPLOYED_ROOT"
 	exec bash "$DEPLOYED_ROOT/aidevops.sh" "$@"

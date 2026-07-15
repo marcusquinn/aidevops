@@ -11,11 +11,8 @@
 # Introduced in PR #20809 (GH#20794). Fixed in GH#21477.
 #
 # Scenarios covered:
-#   1–3.  Byte-identical caller for each of the three managed workflow types
-#         (issue-sync, review-bot-gate, maintainer-gate) → CURRENT/CALLER
-#   4–6.  Version-pinned (@v3.9.0) variant of each → CURRENT/CALLER (normalised @ref)
-#   7–9.  Non-default-branch variant (branches: [develop]) for each → CURRENT/CALLER
-#  10–12. Actually-drifted caller for each → DRIFTED/CALLER (true positive preserved)
+# Covers byte-identical, coherently pinned, non-default-branch, and genuinely
+# drifted callers for every managed workflow tuple.
 #
 # Strategy: each scenario copies the canonical caller template byte-for-byte
 # (or with a single normalisation-allowed variant) into a temporary repo tree,
@@ -38,6 +35,7 @@ readonly -a _WORKFLOWS=(
 	"issue-sync.yml:issue-sync-reusable.yml:issue-sync-caller.yml"
 	"review-bot-gate.yml:review-bot-gate-reusable.yml:review-bot-gate-caller.yml"
 	"maintainer-gate.yml:maintainer-gate-reusable.yml:maintainer-gate-caller.yml"
+	"loc-badge.yml:loc-badge-reusable.yml:loc-badge-caller.yml"
 )
 
 readonly _T_GREEN='\033[0;32m'
@@ -137,7 +135,8 @@ for _wf_tuple in "${_WORKFLOWS[@]}"; do
 	_TD="$(mktemp -d)"
 	_setup_fake_home "$_TD"
 	mkdir -p "$_TD/repos/repo-b/.github/workflows"
-	sed "s|${_reusable_file}@main|${_reusable_file}@v3.9.0|g" \
+	sed -e "s|${_reusable_file}@main|${_reusable_file}@v3.9.0|g" \
+		-e 's|aidevops_ref: main|aidevops_ref: v3.9.0|g' \
 		"$_src_template" > "$_TD/repos/repo-b/.github/workflows/${_workflow_file}"
 	_write_repos_json "$_TD" \
 		"$(jq -n --arg p "$_TD/repos/repo-b" \

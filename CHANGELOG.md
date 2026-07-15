@@ -10,6 +10,118 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.32.122] - 2026-07-15
+
+### Fixed
+
+- parameterize worktree owner claims (#27819)
+- preserve startup status during updates (#27820)
+
+## [3.32.121] - 2026-07-15
+
+### Changed
+
+- Maintenance: ratchet QLTY_SMELL_THRESHOLD 64→61 (-3) [skip ci]
+- Maintenance: sync ref:GH#27777 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#27776 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#27774 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#27772 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#27771 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#27770 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#27769 to TODO.md [skip ci]
+
+### Fixed
+
+- respect declared dispatch footprint intent (#27795)
+- harden dependency normalization environment handling (#27783)
+
+## [3.32.120] - 2026-07-15
+
+### Changed
+
+- Documentation: standardize App Store Connect terminology and repair Qlty debt (#27747)
+
+### Fixed
+
+- require corroborated failure miner infrastructure evidence (#27748)
+- emit one startup toast per session (#27743)
+- couple reusable workflow helper provenance (#27741)
+- quote review bot suffix portably (#27735)
+- reclassify workflow sync after refresh (#27736)
+
+## [3.32.119] - 2026-07-15
+
+### Added
+
+- add bounded worker blocker logging (#27733)
+
+### Changed
+
+- Maintenance: sync ref:GH#27732 to TODO.md [skip ci]
+- Tests: resolve planning publisher commands portably (#27709)
+
+### Fixed
+
+- harden pulse worker completion lifecycle (#27722)
+- protect managed workers from generic process guard (#27717)
+- stop exit-78 retries for completed workers (#27716)
+- match pulse repository slugs case-insensitively (#27715)
+- resolve DSPy helper from install directory (#27707)
+
+## [3.32.118] - 2026-07-14
+
+### Changed
+
+- Maintenance: sync ref:GH#27688 to TODO.md [skip ci]
+
+### Fixed
+
+- fence task projection publication (#27691)
+- normalize authenticated forge event ingestion (#27690)
+
+## [3.32.117] - 2026-07-14
+
+### Fixed
+
+- stop workers from staying alive polling after PR creation (GH#27658) (#27659)
+- secure DSPy disk cache (#27684)
+
+## [3.32.116] - 2026-07-14
+
+### Changed
+
+- Documentation: route pending full-loop checks through wait helper (#27681)
+- Refactor: streamline approval review helpers (#27680)
+
+### Fixed
+
+- parse paginated maintainer approvals safely (#27682)
+
+## [3.32.115] - 2026-07-14
+
+### Changed
+
+- Version bump and maintenance updates
+
+
+## [3.32.114] - 2026-07-14
+
+### Changed
+
+- Version bump and maintenance updates
+
+
+## [3.32.113] - 2026-07-14
+
+### Changed
+
+- Tests: cover Linuxbrew in CLI convergence PATH (#27670)
+
+### Fixed
+
+- allow canonical ls-remote diagnostics (#27677)
+- propagate critical postflight failures (#27651)
+
 ## [3.32.112] - 2026-07-14
 
 ### Fixed

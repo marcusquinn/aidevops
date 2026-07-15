@@ -5,7 +5,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
 FILTER="${REPO_ROOT}/.github/scripts/effective-check-runs.jq"
-PAGINATION_FILTER="${REPO_ROOT}/.github/scripts/flatten-check-run-pages.jq"
+PAGINATION_FILTER="${REPO_ROOT}/.agents/scripts/jq/flatten-check-run-pages.jq"
 RECONCILE_FILTER="${REPO_ROOT}/.github/scripts/reconcile-superseded-cancellations.jq"
 FIXTURE="${SCRIPT_DIR}/fixtures/postflight-check-runs.json"
 
@@ -84,3 +84,46 @@ grep -Fq 'gh api --paginate --slurp' "${REPO_ROOT}/.github/workflows/postflight.
 grep -Fq 'flatten-check-run-pages.jq' "${REPO_ROOT}/.github/workflows/postflight.yml"
 
 printf 'PASS: postflight retains check-run evidence beyond the first API page\n'
+
+DEPLOYED_ROOT=$(mktemp -d)
+trap 'rm -rf "$DEPLOYED_ROOT"' EXIT
+DEPLOYED_SCRIPTS="${DEPLOYED_ROOT}/.aidevops/agents/scripts"
+MOCK_BIN="${DEPLOYED_ROOT}/bin"
+mkdir -p "$DEPLOYED_SCRIPTS" "$MOCK_BIN"
+cp -R "${REPO_ROOT}/.agents/scripts/." "$DEPLOYED_SCRIPTS/"
+
+cat >"${MOCK_BIN}/gh" <<'MOCK_GH'
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ "${1:-}" == "auth" && "${2:-}" == "status" ]]; then
+	exit 0
+fi
+
+for arg in "$@"; do
+	case "$arg" in
+	*/check-runs\?per_page=100)
+		printf '%s\n' '[{"check_runs":[{"id":1,"name":"Framework Validation","status":"completed","conclusion":"success","app":{"slug":"github-actions"},"check_suite":{"id":501}}]}]'
+		exit 0
+		;;
+	*/actions/runs\?head_sha=release-sha\&per_page=100)
+		printf '%s\n' '[{"workflow_runs":[{"id":10,"name":"Release","head_sha":"release-sha","event":"push","status":"completed","conclusion":"success","check_suite_id":501}]}]'
+		exit 0
+		;;
+	esac
+done
+
+exit 1
+MOCK_GH
+chmod +x "${MOCK_BIN}/gh"
+
+if [[ -e "${DEPLOYED_ROOT}/.github" ]]; then
+	printf 'FAIL: deployed-layout fixture unexpectedly contains repository .github files\n' >&2
+	exit 1
+fi
+
+DEPLOYED_OUTPUT=$(PATH="${MOCK_BIN}:$PATH" \
+	"${DEPLOYED_SCRIPTS}/postflight-check.sh" --ci-only --sha release-sha 2>&1)
+grep -Fq '1 required release-owned check(s) passed' <<<"$DEPLOYED_OUTPUT"
+
+printf 'PASS: deployed postflight loads colocated check-run filters without repository .github\n'
