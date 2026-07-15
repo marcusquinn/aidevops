@@ -40,6 +40,10 @@ TEMPLATE_FILE="${REPO_ROOT}/templates/opencode-config-agents.md"
 
 grep -q 'authoritative plugin-injected greeting block' "$GENERATED_FILE"
 grep -q 'plugin injection is unavailable' "$GENERATED_FILE"
+grep -q 'session-greeting-opencode.txt' "$GENERATED_FILE"
+if grep -q 'session-greeting.txt' "$GENERATED_FILE"; then
+	exit 1
+fi
 # shellcheck disable=SC2016
 grep -q 'if the cache file is missing, read `~/.aidevops/agents/VERSION`' "$GENERATED_FILE"
 grep -q 'Never emit both the injected greeting and the fallback greeting' "$GENERATED_FILE"
@@ -57,6 +61,10 @@ fi
 
 grep -q 'authoritative plugin-injected greeting block' "$TEMPLATE_FILE"
 grep -q 'plugin injection is unavailable' "$TEMPLATE_FILE"
+grep -q 'session-greeting-opencode.txt' "$TEMPLATE_FILE"
+if grep -q 'session-greeting.txt' "$TEMPLATE_FILE"; then
+	exit 1
+fi
 # shellcheck disable=SC2016
 grep -q 'if the cache file is missing, read `~/.aidevops/agents/VERSION`' "$TEMPLATE_FILE"
 grep -q 'Never emit both the injected greeting and the fallback greeting' "$TEMPLATE_FILE"

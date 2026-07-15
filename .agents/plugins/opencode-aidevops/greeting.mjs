@@ -15,7 +15,7 @@
 //     fires on the first session.updated event within 30s of plugin init.
 //
 // Caching: raw update-check output is written to
-//   ~/.aidevops/cache/session-greeting.txt
+//   ~/.aidevops/cache/session-greeting-opencode.txt
 // so non-Bash agents can read it without re-running the script (t2724 phase 2
 // template change points agents at this file).
 //
@@ -76,7 +76,7 @@ import { homedir } from "os";
 const execAsync = promisify(exec);
 
 const CACHE_DIR = join(homedir(), ".aidevops", "cache");
-const CACHE_BASENAME = "session-greeting.txt";
+const CACHE_BASENAME = "session-greeting-opencode.txt";
 const LOCK_BASENAME = "session-greeting-refresh.lock";
 const LOCK_OWNER_BASENAME = "owner";
 // Comprehensive checks run at most once per 15-minute window. The subprocess
@@ -113,6 +113,7 @@ function runGreetingAsync({ scriptsDir, client, cacheFile, lockDir, lockToken, e
   Promise.resolve()
     .then(() => execGreeting(`bash ${JSON.stringify(script)} --interactive`, {
       timeout: 15000,
+      env: { ...process.env, OPENCODE: "1" },
     }))
     .then(async ({ stdout }) => {
       const output = stdout ? stdout.trim() : "";
@@ -182,7 +183,7 @@ async function getOpenCodeMaintenanceNotice(scriptsDir) {
 }
 
 /**
- * Write raw update-check output to ~/.aidevops/cache/session-greeting.txt
+ * Write raw update-check output to ~/.aidevops/cache/session-greeting-opencode.txt
  * so non-Bash agents can consult it without re-running the script.
  * Failures are non-fatal — the toast path continues regardless.
  *

@@ -50,7 +50,7 @@ function advisoryMessages(output) {
 describe("token cost advisory threshold", () => {
   test("prepends session greeting order to system prompt", async () => {
     const { hooks } = createHooks({
-      readIfExists: (path) => path.endsWith("session-greeting.txt")
+      readIfExists: (path) => path.endsWith("session-greeting-opencode.txt")
         ? "aidevops v3.14.23 running in OpenCode v1.14.33 | aidevops/main"
         : "",
     });
@@ -91,7 +91,7 @@ describe("token cost advisory threshold", () => {
 
   test("keeps startup advisory messages out of chat instructions", async () => {
     const { hooks } = createHooks({
-      readIfExists: (path) => path.endsWith("session-greeting.txt")
+      readIfExists: (path) => path.endsWith("session-greeting-opencode.txt")
         ? [
             "aidevops v3.14.23 running in OpenCode v1.14.33 | aidevops/main",
             "Security: all protections active",
@@ -113,7 +113,7 @@ describe("token cost advisory threshold", () => {
 
   test("avoids duplicate greeting after salutation-only launch input", async () => {
     const { hooks } = createHooks({
-      readIfExists: (path) => path.endsWith("session-greeting.txt")
+      readIfExists: (path) => path.endsWith("session-greeting-opencode.txt")
         ? [
             "aidevops v3.14.23 running in OpenCode v1.14.33 | aidevops/main",
             "Security: all protections active",

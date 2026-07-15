@@ -191,7 +191,7 @@ function buildCorrectionMessage(violations, sessionID) {
 // ---------------------------------------------------------------------------
 
 export function buildSessionStartGreetingInstruction(agentsDir, readIfExists) {
-  const cachePath = join(agentsDir, "..", "cache", "session-greeting.txt");
+  const cachePath = join(agentsDir, "..", "cache", "session-greeting-opencode.txt");
   const cacheLines = readIfExists(cachePath).split("\n").map((line) => line.trim()).filter(Boolean);
   const cacheLine = cacheLines[0] || "";
   const cacheMatch = cacheLine.match(/^aidevops v(\S+) running in (.+?) v(\S+)(?:\s|$)/);
