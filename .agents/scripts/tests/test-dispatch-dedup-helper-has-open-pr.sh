@@ -559,6 +559,40 @@ test_has_open_pr_ignores_planning_only_superseded_reference() {
 	return 0
 }
 
+test_has_open_pr_ignores_consolidation_task_historical_reference() {
+	set_gh_fixtures 'marcusquinn/aidevops|merged|#18670|[{"number":18676,"title":"Fix origin labels","body":"For #18670. Implements the earlier fix."}]'
+	# shellcheck disable=SC2016 # Literal backticks are part of the issue-body fixture.
+	export ISSUE_META_JSON='{"labels":[{"name":"consolidation-task"}],"body":"## What to do\n\nStart the merged body with: `_Supersedes #27799 — this issue is the consolidated spec._`\n\n**Note (GH#18670):** consolidated issues require origin:worker."}'
+
+	if "$HELPER_SCRIPT" has-open-pr 27848 marcusquinn/aidevops 'consolidation-task: merge thread on #27799 into single spec'; then
+		unset ISSUE_META_JSON
+		print_result "has-open-pr ignores historical references in consolidation tasks" 1 \
+			"Expected operational consolidation-task metadata to bypass consolidated-spec PR dedup"
+		return 0
+	fi
+
+	unset ISSUE_META_JSON
+	print_result "has-open-pr ignores historical references in consolidation tasks" 0
+	return 0
+}
+
+test_has_open_pr_requires_canonical_supersedes_marker() {
+	set_gh_fixtures 'marcusquinn/aidevops|merged|#27799|[{"number":27824,"title":"For #27799: implement wrapper fix","body":"For #27799. Implements the fix."}]'
+	# shellcheck disable=SC2016 # Literal backticks are part of the issue-body fixture.
+	export ISSUE_META_JSON='{"body":"## What to do\n\nStart the merged body with: `_Supersedes #27799 — this issue is the consolidated spec._`"}'
+
+	if "$HELPER_SCRIPT" has-open-pr 27868 marcusquinn/aidevops 'consolidation-task: merge thread on #27802 into single spec'; then
+		unset ISSUE_META_JSON
+		print_result "has-open-pr requires canonical supersedes marker position" 1 \
+			"Expected an instructional inline marker to remain dispatchable"
+		return 0
+	fi
+
+	unset ISSUE_META_JSON
+	print_result "has-open-pr requires canonical supersedes marker position" 0
+	return 0
+}
+
 main() {
 	trap teardown_test_env EXIT
 	setup_test_env
@@ -584,6 +618,8 @@ main() {
 	test_has_open_pr_ignores_adjacent_issue_number_sibling_reference
 	test_has_open_pr_blocks_superseded_consolidated_issue
 	test_has_open_pr_ignores_planning_only_superseded_reference
+	test_has_open_pr_ignores_consolidation_task_historical_reference
+	test_has_open_pr_requires_canonical_supersedes_marker
 
 	printf '\nRan %s tests, %s failed.\n' "$TESTS_RUN" "$TESTS_FAILED"
 	if [[ "$TESTS_FAILED" -gt 0 ]]; then
