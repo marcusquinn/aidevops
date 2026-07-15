@@ -448,7 +448,7 @@ _isc_cmd_unlock() {
 #   [--unassign] = also remove self from assignees
 #
 # Behaviour:
-#   - Idempotent: no-op when the label is not set.
+#   - Idempotent: when the label is not set, only a requested unassignment runs.
 #   - Offline gh: warn and exit 0. The stamp is still deleted so local state
 #     matches the caller's intent.
 #
@@ -499,7 +499,15 @@ _isc_cmd_release() {
 		return 0
 	fi
 
-	# Idempotency: skip label work if not in-review. `_isc_has_in_review`
+	# Build extra_flags array before the label probe because --unassign remains
+	# actionable when another lifecycle path already moved the issue to
+	# status:available. Bash 3.2 empty-array guard — see reference/bash-compat.md.
+	local -a extra_flags=()
+	if [[ $unassign -eq 1 && -n "$user" ]]; then
+		extra_flags+=(--remove-assignee "$user")
+	fi
+
+	# Idempotency: skip only label work if not in-review. `_isc_has_in_review`
 	# has three return states (0 = present, 1 = absent, 2 = lookup failed),
 	# so we need the actual rc — but a bare call under `set -e` propagates
 	# non-zero returns before `rc=$?` can capture them. Use `|| rc=$?` which
@@ -508,21 +516,25 @@ _isc_cmd_release() {
 	local has_rc=0
 	_isc_has_in_review "$issue" "$slug" || has_rc=$?
 	if [[ $has_rc -eq 1 ]]; then
-		_isc_info "release: #$issue not in status:in-review — no-op"
+		if [[ $unassign -eq 0 || -z "$user" ]]; then
+			_isc_info "release: #$issue not in status:in-review — no-op"
+			return 0
+		fi
+
+		local _unassign_err
+		_unassign_err=$(gh issue edit "$issue" --repo "$slug" \
+			${extra_flags[@]+"${extra_flags[@]}"} 2>&1 >/dev/null)
+		local _unassign_rc=$?
+		if [[ $_unassign_rc -eq 0 ]]; then
+			_isc_info "release: #$issue already outside status:in-review — unassigned $user"
+			return 0
+		fi
+		_isc_warn "release: gh failed to unassign $user from #$issue (rc=$_unassign_rc): $_unassign_err"
 		return 0
 	fi
 	if [[ $has_rc -eq 2 ]]; then
 		_isc_warn "release: could not read labels for #$issue — skipping label transition"
 		return 0
-	fi
-
-	# Build extra_flags array. Bash 3.2 empty-array guard — see
-	# reference/bash-compat.md. Fourth latent bug found alongside GH#18786.
-	local -a extra_flags=()
-	if [[ $unassign -eq 1 ]]; then
-		if [[ -n "$user" ]]; then
-			extra_flags+=(--remove-assignee "$user")
-		fi
 	fi
 
 	# GH#21805: apply status:done for closed issues instead of
