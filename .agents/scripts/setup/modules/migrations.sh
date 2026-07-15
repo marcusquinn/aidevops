@@ -455,8 +455,8 @@ cleanup_worktree_entries_in_repos_json() {
 		git_dir=$(cd "$git_dir" 2>/dev/null && pwd -P) || git_dir=""
 		common_dir=$(cd "$common_dir" 2>/dev/null && pwd -P) || common_dir=""
 		if [[ -n "$git_dir" && -n "$common_dir" && "$git_dir" != "$common_dir" ]]; then
-			if [[ -n "$current_worktree" && -n "$resolved_path" && "$resolved_path" == "$current_worktree" ]] \
-				|| [[ -n "$resolved_path" && "$current_physical_dir" == "$resolved_path"/* ]]; then
+			if [[ -n "$current_worktree" && -n "$resolved_path" && "$resolved_path" == "$current_worktree" ]] ||
+				[[ -n "$resolved_path" && "$current_physical_dir" == "$resolved_path"/* ]]; then
 				skipped_current_paths+=("$path")
 				continue
 			fi
@@ -1598,7 +1598,7 @@ migrate_custom_model_routing_reasoning_defaults() {
 		date -u +%Y-%m-%dT%H:%M:%SZ >"$marker_file"
 		return 0
 	fi
-	if [[ -L "$custom_table" || ! -f "$custom_table" || ( ! -O "$custom_table" && "$effective_uid" -ne 0 ) ]]; then
+	if [[ -L "$custom_table" || ! -f "$custom_table" || (! -O "$custom_table" && "$effective_uid" -ne 0) ]]; then
 		print_warning "Skipping unsafe custom model routing table; t18137 migration will retry"
 		return 0
 	fi
