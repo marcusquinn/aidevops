@@ -27,7 +27,9 @@ def finding($id; $severity; $title; $evidence; $recommendation; $autofile): {
 ($recent_summary.metrics.total // 0 | number_or_zero) as $recent_total |
 ($summary.metrics.total // 0 | number_or_zero) as $hist_total |
 ($summary.metrics.terminal_session_total // $summary.metrics.total // 0 | number_or_zero) as $hist_terminal_total |
-($summary.metrics.succeeded // 0 | number_or_zero) as $hist_success |
+($summary.metrics.runtime_handoffs // $summary.metrics.succeeded // 0 | number_or_zero) as $hist_handoffs |
+($summary.delivery_stages // {}) as $hist_delivery |
+(if ($hist_delivery.delivered_successes // null) == null then null else ($hist_delivery.delivered_successes | number_or_zero) end) as $hist_delivered |
 ($summary.metrics.failure_families // []) as $failure_families |
 ($recent_summary.metrics.failure_families // []) as $recent_failure_families |
 ($api.graphql_circuit_breaker_trips // 0 | number_or_zero) as $graphql_trips |
@@ -47,8 +49,12 @@ def finding($id; $severity; $title; $evidence; $recommendation; $autofile): {
     worker_launch_validation_failures_in_window: $launch_validation_failed,
     recent_worker_events: $recent_total,
     historical_worker_events: $hist_total,
-    historical_worker_successes: $hist_success,
-    historical_success_rate: (if $hist_terminal_total > 0 then (($hist_success / $hist_terminal_total) * 100 | floor) else null end),
+    historical_worker_runtime_handoffs: $hist_handoffs,
+    historical_runtime_handoff_rate: (if $hist_terminal_total > 0 then (($hist_handoffs / $hist_terminal_total) * 100 | floor) else null end),
+    historical_worker_delivered_successes: $hist_delivered,
+    historical_delivery_success_rate: (if $hist_terminal_total > 0 and $hist_delivered != null then (($hist_delivered / $hist_terminal_total) * 100 | floor) else null end),
+    historical_worker_successes: $hist_delivered,
+    historical_success_rate: (if $hist_terminal_total > 0 and $hist_delivered != null then (($hist_delivered / $hist_terminal_total) * 100 | floor) else null end),
     auto_dispatch_open: ($queue.aggregate.auto_dispatch_open // 0),
     auto_dispatch_available_unassigned: $available_issues,
     auto_dispatch_available_old: $old_available,
@@ -75,12 +81,14 @@ def finding($id; $severity; $title; $evidence; $recommendation; $autofile): {
     historical: {
       window: ($summary.window // {}),
       metrics: (($summary.metrics // {}) | del(.recent_examples, .failure_groups, .failure_families)),
-      pulse_stats: ($summary.pulse_stats // {})
+      pulse_stats: ($summary.pulse_stats // {}),
+      delivery_stages: ($summary.delivery_stages // {check_state: "unavailable"})
     },
     recent: {
       window: ($recent_summary.window // {}),
       metrics: (($recent_summary.metrics // {}) | del(.recent_examples, .failure_groups, .failure_families)),
-      pulse_stats: ($recent_summary.pulse_stats // {})
+      pulse_stats: ($recent_summary.pulse_stats // {}),
+      delivery_stages: ($recent_summary.delivery_stages // {check_state: "unavailable"})
     },
     providers: ($providers.provider_diagnostics // {})
   },
@@ -186,13 +194,23 @@ def finding($id; $severity; $title; $evidence; $recommendation; $autofile): {
         true
       )
     else empty end,
-    if ($hist_terminal_total >= 10 and (($hist_success * 100) / $hist_terminal_total) < 70) then
+    if ($hist_terminal_total >= 10 and (($hist_handoffs * 100) / $hist_terminal_total) < 70) then
       finding(
-        "worker-success-rate-regression";
+        "worker-runtime-handoff-rate-regression";
         "medium";
-        "Historical worker success rate is below the productivity target";
-        [("success_rate_percent=" + (((($hist_success * 100) / $hist_terminal_total) | floor) | tostring)), ("terminal_session_outcomes=" + ($hist_terminal_total | tostring)), ("worker_events=" + ($hist_total | tostring))];
+        "Historical worker runtime handoff rate is below the productivity target";
+        [("runtime_handoff_rate_percent=" + (((($hist_handoffs * 100) / $hist_terminal_total) | floor) | tostring)), ("terminal_session_outcomes=" + ($hist_terminal_total | tostring)), ("worker_events=" + ($hist_total | tostring))];
         "Cluster failure families with worker-activity-helper summary --json, then file targeted fixes for the dominant cause instead of increasing concurrency.";
+        false
+      )
+    else empty end,
+    if ($hist_terminal_total >= 10 and $hist_delivered != null and (($hist_delivered * 100) / $hist_terminal_total) < 70) then
+      finding(
+        "worker-delivery-rate-regression";
+        "medium";
+        "Historical worker delivered-success rate is below the productivity target";
+        [("delivered_success_rate_percent=" + (((($hist_delivered * 100) / $hist_terminal_total) | floor) | tostring)), ("delivered_successes=" + ($hist_delivered | tostring)), ("terminal_session_outcomes=" + ($hist_terminal_total | tostring))];
+        "Compare runtime handoffs, opened PRs, merged PRs, and solved issues with worker-activity-helper summary --pr-check before changing dispatch capacity.";
         false
       )
     else empty end
