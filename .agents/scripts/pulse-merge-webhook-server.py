@@ -146,10 +146,9 @@ class WebhookHandler(BaseHTTPRequestHandler):
             self.wfile.write(msg)
 
     def do_POST(self):
-        try:
-            length = int(self.headers.get("Content-Length", "0") or "0")
-        except (TypeError, ValueError):
-            self._reply(400, b"bad content-length")
+        length, length_error = _content_length(self.headers)
+        if length_error:
+            self._reply(400, length_error)
             return
         if length <= 0 or length > MAX_BODY_BYTES:
             self._reply(413, b"payload too large or empty")
@@ -191,6 +190,13 @@ class WebhookHandler(BaseHTTPRequestHandler):
             self._reply(200, b"ok")
             return
         self._reply(404, b"not found")
+
+
+def _content_length(headers):
+    try:
+        return int(headers.get("Content-Length", "0") or "0"), b""
+    except (TypeError, ValueError):
+        return 0, b"bad content-length"
 
 
 def main():

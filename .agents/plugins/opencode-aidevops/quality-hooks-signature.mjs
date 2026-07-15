@@ -236,16 +236,16 @@ export function tryRepairSignature(cmd, scriptsDir, log, options = {}) {
     });
   }
 
-  if (!existsSync(helperPath)) {
-    log("WARN", `gh-signature-helper.sh not found at ${helperPath}; cannot repair`);
-    return { status: "fail", reason: FAIL_REASON.HELPER_MISSING, detail: helperPath };
-  }
-
   // --body VALUE form: command-side repair.
-  const parsed = _matchBodyArg(cmd);
-  if (!parsed) {
-    log("WARN", "Could not parse --body argument; refusing auto-repair");
-    return { status: "fail", reason: FAIL_REASON.BODY_ARG_NO_MATCH };
+  const helperAvailable = existsSync(helperPath);
+  const parsed = helperAvailable ? _matchBodyArg(cmd) : null;
+  if (!helperAvailable || !parsed) {
+    const reason = helperAvailable ? FAIL_REASON.BODY_ARG_NO_MATCH : FAIL_REASON.HELPER_MISSING;
+    const detail = helperAvailable ? undefined : helperPath;
+    log("WARN", helperAvailable
+      ? "Could not parse --body argument; refusing auto-repair"
+      : `gh-signature-helper.sh not found at ${helperPath}; cannot repair`);
+    return { status: "fail", reason, ...(detail ? { detail } : {}) };
   }
   return _repairBodyArg(cmd, parsed, helperPath, log);
 }

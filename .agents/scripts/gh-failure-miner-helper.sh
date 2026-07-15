@@ -20,6 +20,7 @@ readonly DEFAULT_ROUTINE_NAME="gh-failure-miner"
 readonly DEFAULT_ROUTINE_SCHEDULE="15 * * * *"
 readonly DEFAULT_ROUTINE_TITLE="GH failed notifications: systemic triage"
 readonly JQ_COUNT='length'
+readonly INFRA_REASON_ALL_CHECKS_FAILED='all_checks_failed'
 
 print_usage() {
 	cat <<'EOF'
@@ -173,6 +174,14 @@ filter_signature_noise_lines() {
 					payload = payload "\t" fields[i]
 				}
 			}
+			source_probe = payload
+			gsub(/^[[:space:]]+/, "", source_probe)
+			# GitHub Actions renders the generated shell source in cyan before
+			# printing command output. Never classify that source as evidence:
+			# guards often contain error text for branches that did not execute.
+			if (source_probe ~ /^(\033\[36;1m|\^\[\[36;1m)/) {
+				next
+			}
 			gsub(/\033\[[0-9;]*[A-Za-z]/, "", payload)
 			gsub(/\^\[\[[0-9;]*[A-Za-z]/, "", payload)
 			# gh may return raw log rows with the ISO timestamp still prefixed
@@ -253,7 +262,7 @@ classify_failed_job_signature() {
 
 	check_run_id=$(printf '%s\n' "$failed_job_json" | jq -r '(.check_run_url // "") | split("/") | last // empty')
 	if job_annotations_indicate_billing_outage "$repo_slug" "$check_run_id"; then
-		printf '%s' "billing_outage"
+		printf '%s' "infra:billing_annotation"
 		return 0
 	fi
 
@@ -295,16 +304,17 @@ extract_failure_signature() {
 	filtered_logs=$(filter_signature_noise_lines "$logs")
 
 	# Check for known infrastructure error patterns before extracting a generic signature.
-	# These patterns indicate billing/runner issues, not code defects. (GH#18093)
+	# Log text is weaker evidence than a structured annotation or all-checks-failed
+	# correlation, so preserve its provenance for the advisory corroboration gate.
 	local infra_line
 	infra_line=$(printf '%s\n' "$filtered_logs" | grep -iE "recent account payments have failed|spending limit needs to be increased" | head -1 || true)
 	if [[ -n "$infra_line" ]]; then
-		printf '%s' "infra:billing_exhausted"
+		printf '%s' "infra:billing_log"
 		return 0
 	fi
 	infra_line=$(printf '%s\n' "$filtered_logs" | grep -iE "Runner.*unavailable|no matching runner|runner.*not found" | head -1 || true)
 	if [[ -n "$infra_line" ]]; then
-		printf '%s' "infra:runner_unavailable"
+		printf '%s' "infra:runner_log"
 		return 0
 	fi
 
@@ -466,8 +476,9 @@ emit_event_json() {
 	local pr_number="$5" commit_sha="$6" check_name="$7" conclusion="$8"
 	local run_id="$9" html_url="${10}" details_url="${11}" completed_at="${12}"
 	local signature="${13}" notification_updated_at="${14}" is_infra="${15}"
-	local affected_paths_json="${16:-[]}"
-	local annotations_json="${17:-[]}"
+	local infra_reason="${16:-}"
+	local affected_paths_json="${17:-[]}"
+	local annotations_json="${18:-[]}"
 
 	local pr_url=""
 	if [[ -n "$pr_number" ]]; then
@@ -491,6 +502,7 @@ emit_event_json() {
 		--arg signature "$signature" \
 		--arg notification_updated_at "$notification_updated_at" \
 		--argjson is_infra "$is_infra" \
+		--arg infra_reason "$infra_reason" \
 		--argjson affected_paths "$affected_paths_json" \
 		--argjson annotations "$annotations_json" \
 		'{
@@ -510,6 +522,7 @@ emit_event_json() {
 			signature: $signature,
 			notification_updated_at: (if $notification_updated_at == "" then null else $notification_updated_at end),
 			is_infra: $is_infra,
+			infra_reason: (if $infra_reason == "" then null else $infra_reason end),
 			affected_paths: $affected_paths,
 			annotations: $annotations
 		}'
@@ -576,8 +589,10 @@ process_failed_runs() {
 	# Detect all-checks-failed correlation: if every completed check failed simultaneously,
 	# flag as likely infrastructure outage rather than a code defect. (GH#18093)
 	local is_infra="false"
+	local infra_reason=""
 	if is_all_checks_failed "$checks_json" "$failed_count"; then
 		is_infra="true"
+		infra_reason="$INFRA_REASON_ALL_CHECKS_FAILED"
 	fi
 
 	local failed_index=0
@@ -597,17 +612,21 @@ process_failed_runs() {
 		local signature
 		signature=$(resolve_check_signature "$run_json" "$run_id" "$repo_slug" "$include_logs" "$run_logs_checked" "$max_run_logs")
 		# Only charge the log-fetch budget when a real log fetch was attempted.
-		# job_not_started (0-step cancelled jobs) and billing_outage (annotation-detected,
+		# job_not_started (0-step cancelled jobs) and billing annotation detection (which makes
 		# no gh run view call) both short-circuit before fetching any logs — counting them
 		# exhausts the budget for genuine failures in other PRs. (GH#18978)
 		if [[ "$include_logs" == "true" ]] && [[ -n "$run_id" ]] && [[ "$run_logs_checked" -lt "$max_run_logs" ]] &&
-			[[ "$signature" != "job_not_started" ]] && [[ "$signature" != "billing_outage" ]]; then
+			[[ "$signature" != "job_not_started" ]] && [[ "$signature" != "infra:billing_annotation" ]]; then
 			run_logs_checked=$((run_logs_checked + 1))
 		fi
 
-		# Promote is_infra=true if signature matches a known infrastructure pattern
+		# Keep infrastructure state event-local. A weak match in one failed check must
+		# not promote every later check in the same batch.
+		local event_is_infra="$is_infra"
+		local event_infra_reason="$infra_reason"
 		if [[ "$signature" == infra:* ]]; then
-			is_infra="true"
+			event_is_infra="true"
+			event_infra_reason="${signature#infra:}"
 		fi
 
 		local run_affected_paths="[]"
@@ -628,7 +647,8 @@ process_failed_runs() {
 		emit_event_json "$repo_slug" "$source_kind" "$source_ref" "$source_url" \
 			"$pr_number" "$commit_sha" "$check_name" "$conclusion" \
 			"$run_id" "$html_url" "$details_url" "$completed_at" \
-			"$signature" "$notification_updated_at" "$is_infra" "$run_affected_paths" "$run_annotations" >>"$event_file"
+			"$signature" "$notification_updated_at" "$event_is_infra" "$event_infra_reason" \
+			"$run_affected_paths" "$run_annotations" >>"$event_file"
 
 		failed_index=$((failed_index + 1))
 	done
@@ -851,6 +871,7 @@ build_repo_clusters_json() {
 		signature: .[0].signature,
 		count: length,
 		is_infra: (any(.[]; .is_infra == true)),
+		infra_reasons: (map(.infra_reason // empty) | unique),
 		sources: (map(.source_kind + ":" + .source_ref) | unique),
 		examples: (.[0:5] | map({source_kind, source_ref, source_url, run_url, details_url, conclusion, affected_paths, annotations}))
 	}] | sort_by(-.count)'
@@ -862,9 +883,18 @@ build_repo_clusters_json() {
 build_infra_advisory_cluster() {
 	local events_json="$1"
 	local repo_slug="$2"
-	printf '%s\n' "$events_json" | jq --arg repo "$repo_slug" '
+	local systemic_threshold="${3:-2}"
+	printf '%s\n' "$events_json" | jq --arg repo "$repo_slug" \
+		--arg strong_all_checks "$INFRA_REASON_ALL_CHECKS_FAILED" \
+		--argjson min_count "$systemic_threshold" '
 		[.[] | select(.repo == $repo and .is_infra == true)] as $infra_events |
-		if ($infra_events | length) == 0 then null
+		($infra_events | map(.source_kind + ":" + .source_ref) | unique) as $sources |
+		($infra_events | map(.infra_reason // empty) | unique) as $reasons |
+		($reasons | any(. == "billing_annotation" or . == $strong_all_checks)) as $has_strong_evidence |
+		if ($infra_events | length) == 0 or
+			($has_strong_evidence | not) and
+			(($infra_events | length) < $min_count or ($sources | length) < 2)
+		then null
 		else {
 			repo: $repo,
 			check_name: "multiple-checks",
@@ -872,7 +902,8 @@ build_infra_advisory_cluster() {
 			signature: "infra:outage",
 			count: ($infra_events | length),
 			is_infra: true,
-			sources: ($infra_events | map(.source_kind + ":" + .source_ref) | unique),
+			infra_reasons: $reasons,
+			sources: $sources,
 			examples: ($infra_events[0:5] | map({source_kind, source_ref, source_url, run_url, details_url, conclusion}))
 		}
 		end
@@ -897,7 +928,7 @@ build_issue_title() {
 	local count="$2"
 	local is_infra="${3:-false}"
 	if [[ "$is_infra" == "true" ]]; then
-		printf 'Infrastructure outage: %s checks affected' "$count"
+		printf 'Infrastructure advisory: %s events observed' "$count"
 	else
 		printf 'Systemic CI failure: %s (%s events)' "$check_name" "$count"
 	fi
@@ -910,13 +941,25 @@ build_infra_issue_body() {
 	local threshold="$3"
 
 	printf '%s\n' "$cluster_json" | jq -r '
+		def infrastructure_reason_lines($threshold; $all_checks_reason):
+			(.infra_reasons // []) as $reasons |
+			(if ($reasons | index($all_checks_reason)) != null then
+				"- Every completed check failed in at least one source containing two or more checks.\n"
+			 else "" end) +
+			(if ($reasons | index("billing_annotation")) != null then
+				"- A structured check annotation reported billing or spending exhaustion.\n"
+			 else "" end) +
+			(if ($reasons | any(. == "billing_log" or . == "runner_log")) then
+				"- " + (.count | tostring) + " matching infrastructure log events across " +
+				(((.sources // []) | length) | tostring) + " sources met the systemic threshold of " +
+				($threshold | tostring) + ".\n"
+			 else "" end);
 		"## Summary\n" +
 		"- Affected checks: " + ((.check_names // [(.check_name // "multiple-checks")]) | join(", ")) + "\n" +
 		"- Events observed: " + (.count|tostring) + "\n" +
 		"- Sources affected: " + (((.sources // []) | length)|tostring) + "\n\n" +
-		"## Why this looks like an infrastructure outage\n" +
-		"- All checks failed simultaneously across multiple PRs/commits.\n" +
-		"- This pattern indicates a billing or runner infrastructure issue, not a code defect.\n\n" +
+		"## Why this looks like infrastructure\n" +
+		infrastructure_reason_lines($threshold; $all_checks_reason) + "\n" +
 		"## Evidence\n" +
 		((.examples // []) | map("- " + (.source_kind // "source") + ":" + (.source_ref // "unknown") + " (" + (.conclusion // "unknown") + ")" +
 		  (if .source_url != null then " - " + .source_url else "" end) +
@@ -928,7 +971,9 @@ build_infra_issue_body() {
 		"- Re-run failed workflows after the infrastructure issue is resolved.\n" +
 		"- Do NOT make code changes to fix this — the root cause is external.\n\n" +
 		"Signal tag: `gh-failure-miner:" + $pattern_id + "`\n"
-	' --arg pattern_id "$pattern_id" --argjson threshold "$threshold"
+	' --arg pattern_id "$pattern_id" \
+		--arg all_checks_reason "$INFRA_REASON_ALL_CHECKS_FAILED" \
+		--argjson threshold "$threshold"
 	return $?
 }
 
@@ -1193,12 +1238,10 @@ create_systemic_issues() {
 	while IFS= read -r infra_repo && [[ "$created" -lt "$max_issues" ]]; do
 		[[ -z "$infra_repo" ]] && continue
 		local advisory_cluster
-		advisory_cluster=$(build_infra_advisory_cluster "$events_json" "$infra_repo")
+		advisory_cluster=$(build_infra_advisory_cluster "$events_json" "$infra_repo" "$systemic_threshold")
 		if [[ -z "$advisory_cluster" ]] || [[ "$advisory_cluster" == "null" ]]; then
 			continue
 		fi
-		local infra_count
-		infra_count=$(printf '%s\n' "$advisory_cluster" | jq -r '.count')
 		local pattern_id
 		pattern_id=$(compute_pattern_id "${infra_repo}|infra:outage")
 		local signal_tag="gh-failure-miner:${pattern_id}"
@@ -1213,7 +1256,7 @@ create_systemic_issues() {
 
 	# --- Code-defect cluster pass ---
 	# Only process non-infra clusters. Exclude known sentinel / expected-behaviour signatures:
-	# - "billing_outage": GitHub Actions billing exhausted — infrastructure, not code defect.
+	# - "infra:*": infrastructure candidates are handled only by the corroborated advisory pass.
 	# - "job_not_started": job cancelled before any step ran (cancel-in-progress: true race).
 	# - "signature_not_fetched": log fetch budget exhausted — internal sentinel, not a real
 	#   error signature. Treating it as systemic creates false-positive issues (GH#18978).
