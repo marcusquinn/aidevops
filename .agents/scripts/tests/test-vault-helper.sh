@@ -66,9 +66,11 @@ import select
 import subprocess
 import sys
 import time
-import codecs
 
-inputs = codecs.escape_decode(os.fdopen(3, "rb").read())[0].decode("utf-8").splitlines()
+raw_input = os.fdopen(3, "rb").read().decode("utf-8")
+if raw_input.endswith("\n"):
+    raw_input = raw_input[:-1]
+inputs = raw_input.split("\\n") if raw_input else []
 cmd = sys.argv[1:]
 master, slave = pty.openpty()
 proc = subprocess.Popen(cmd, stdin=slave, stdout=subprocess.PIPE, stderr=slave)
@@ -116,7 +118,7 @@ unicode_rc=$?
 set -e
 assert_eq "tty input preserves multi-byte UTF-8" "0" "$unicode_rc"
 
-for escaped_input in 'C:\utility' '\u20ac'; do
+for escaped_input in 'C:\utility' '\u20ac' '\xZZ' "trailing\\"; do
 	set +e
 	run_with_tty "${escaped_input}\n" python3 -c 'import sys; print("Input: ", end="", file=sys.stderr, flush=True); raise SystemExit(sys.stdin.readline().rstrip("\n") != sys.argv[1])' "$escaped_input" >/dev/null 2>"$TEST_ROOT/backslash.err"
 	escaped_rc=$?
