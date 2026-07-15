@@ -4,8 +4,8 @@
 #
 # Tests for _has_consolidated_label() (GH#23187).
 #
-# Consolidated issues are archival records, not implementation tasks. A stale
-# lifecycle label such as status:queued must not make them dispatchable again.
+# Consolidated source issues are archival records, while marked successor specs
+# with an explicit auto-dispatch handoff are implementation tasks.
 
 set -euo pipefail
 
@@ -85,6 +85,62 @@ test_review_feedback_consolidated_is_dispatchable() {
 	return 0
 }
 
+test_ci_feedback_consolidated_is_dispatchable() {
+	local meta='{"number":4649,"labels":[{"name":"status:available"},{"name":"origin:worker"},{"name":"consolidated"},{"name":"source:ci-feedback"}]}'
+	if _has_consolidated_label "$meta"; then
+		print_result "CI-feedback consolidated issues are dispatchable" 1 \
+			"Expected exit 1 for consolidated CI-feedback implementation specs"
+		return 0
+	fi
+	print_result "CI-feedback consolidated issues are dispatchable" 0
+	return 0
+}
+
+test_marked_auto_dispatch_successor_is_dispatchable() {
+	local meta='{"number":27903,"body":"_Supersedes #27896 — this issue is the consolidated spec._\n\n## What\nImplement the fix.","labels":[{"name":"status:available"},{"name":"origin:worker"},{"name":"consolidated"},{"name":"auto-dispatch"}]}'
+	if _has_consolidated_label "$meta"; then
+		print_result "marked auto-dispatch successor is dispatchable" 1 \
+			"Expected exit 1 for a canonical consolidated successor spec"
+		return 0
+	fi
+	print_result "marked auto-dispatch successor is dispatchable" 0
+	return 0
+}
+
+test_auto_dispatch_parent_without_marker_remains_blocked() {
+	local meta='{"number":27896,"body":"Original issue body.","labels":[{"name":"status:available"},{"name":"origin:worker"},{"name":"consolidated"},{"name":"auto-dispatch"}]}'
+	if _has_consolidated_label "$meta"; then
+		print_result "auto-dispatch parent without marker remains blocked" 0
+		return 0
+	fi
+	print_result "auto-dispatch parent without marker remains blocked" 1 \
+		"Expected exit 0 when auto-dispatch lacks the successor marker"
+	return 0
+}
+
+test_marker_without_auto_dispatch_remains_blocked() {
+	local meta='{"number":27903,"body":"_Supersedes #27896 — this issue is the consolidated spec._","labels":[{"name":"status:available"},{"name":"origin:worker"},{"name":"consolidated"}]}'
+	if _has_consolidated_label "$meta"; then
+		print_result "marker without auto-dispatch remains blocked" 0
+		return 0
+	fi
+	print_result "marker without auto-dispatch remains blocked" 1 \
+		"Expected exit 0 when the successor lacks an explicit handoff"
+	return 0
+}
+
+test_instructional_marker_text_does_not_bypass() {
+	# shellcheck disable=SC2016 # Literal backticks are part of the body fixture.
+	local meta='{"number":27848,"body":"Start the body with: `_Supersedes #27799 — this issue is the consolidated spec._`","labels":[{"name":"status:available"},{"name":"origin:worker"},{"name":"consolidated"},{"name":"auto-dispatch"}]}'
+	if _has_consolidated_label "$meta"; then
+		print_result "instructional marker text does not bypass" 0
+		return 0
+	fi
+	print_result "instructional marker text does not bypass" 1 \
+		"Expected exit 0 for a marker embedded in instructional prose"
+	return 0
+}
+
 test_partial_label_name_does_not_match() {
 	local meta='{"number":23189,"labels":[{"name":"needs-consolidation"},{"name":"consolidation-task"}]}'
 	if _has_consolidated_label "$meta"; then
@@ -115,6 +171,11 @@ main() {
 	test_detects_consolidated_label
 	test_absent_label_returns_nonzero
 	test_review_feedback_consolidated_is_dispatchable
+	test_ci_feedback_consolidated_is_dispatchable
+	test_marked_auto_dispatch_successor_is_dispatchable
+	test_auto_dispatch_parent_without_marker_remains_blocked
+	test_marker_without_auto_dispatch_remains_blocked
+	test_instructional_marker_text_does_not_bypass
 	test_partial_label_name_does_not_match
 	test_empty_or_invalid_meta_returns_nonzero
 
