@@ -184,6 +184,7 @@ _retarget_stacked_children() { return 0; }
 _pulse_merge_admin_safety_check() { return 0; }
 _pulse_merge_final_trust_gate() { _PULSE_FINAL_REQUIRES_SYNCHRONOUS_MERGE=0; return 0; }
 _set_native_auto_merge_or_skip() { return 1; }
+_repo_allows_auto_merge() { return "${REPO_ALLOWS_AUTO_MERGE_RC:-0}"; }
 _attempt_existing_auto_merge_behind_update_branch() { return 1; }
 _attempt_green_behind_update_branch() { return "${GREEN_BEHIND_UPDATE_RC:-1}"; }
 _handle_post_merge_actions() { return 0; }
@@ -240,13 +241,40 @@ test_ruleset_violation_enables_auto_merge_without_admin() {
 		teardown_test_env
 		return 0
 	fi
-	if ! grep -qE 'retrying with native auto-merge without --admin.*GH#24438' "$LOGFILE"; then
+	if ! grep -qE 'evaluating protection-respecting fallbacks.*GH#24438' "$LOGFILE"; then
 		print_result "ruleset violation fallback writes audit log" 1 "pulse log: $(cat "$LOGFILE")"
 		teardown_test_env
 		return 0
 	fi
 	print_result "ruleset violation fallback enables native auto-merge and succeeds" 0
 	teardown_test_env
+	return 0
+}
+
+test_ruleset_violation_skips_native_auto_merge_when_disabled() {
+	REPO_ALLOWS_AUTO_MERGE_RC=1
+	setup_test_env
+	define_function_under_test || {
+		teardown_test_env
+		unset REPO_ALLOWS_AUTO_MERGE_RC
+		return 0
+	}
+
+	local pr_obj='{"number":77,"mergeable":"MERGEABLE","reviewDecision":"APPROVED","author":{"login":"owner"},"title":"test","headRefOid":"head-current"}'
+	local result=0
+	_process_single_ready_pr "owner/repo" "$pr_obj" || result=$?
+
+	if [[ "$result" -eq 3 ]] &&
+		! grep -qE 'gh pr merge 77 .*--auto' "$GH_LOG" &&
+		grep -qE 'gh pr merge 77 --repo owner/repo --squash --match-head-commit head-current$' "$GH_LOG" &&
+		grep -qF 'native auto-merge skipped: repository does not allow auto-merge' "$LOGFILE"; then
+		print_result "ruleset fallback skips native auto-merge when repository disables it" 0
+	else
+		print_result "ruleset fallback skips native auto-merge when repository disables it" 1 \
+			"result=${result}; gh log: $(tr '\n' ';' <"$GH_LOG"); pulse log: $(tr '\n' ';' <"$LOGFILE")"
+	fi
+	teardown_test_env
+	unset REPO_ALLOWS_AUTO_MERGE_RC
 	return 0
 }
 
@@ -478,6 +506,7 @@ test_ruleset_fallback_failure_preserves_admin_conversation_context() {
 
 main() {
 	test_ruleset_violation_enables_auto_merge_without_admin
+	test_ruleset_violation_skips_native_auto_merge_when_disabled
 	test_green_behind_update_defers_before_merge_attempts
 	test_draft_pr_without_origin_labels_skips_merge_write
 	test_expected_required_check_updates_branch_and_defers
