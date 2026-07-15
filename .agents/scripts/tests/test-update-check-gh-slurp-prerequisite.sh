@@ -49,6 +49,9 @@ print_result() {
 setup_fake_tools() {
 	local gh_version_line="$1"
 	local remote_version="${2:-}"
+	if [[ -n "$TEST_ROOT" && -d "$TEST_ROOT" ]]; then
+		rm -rf "$TEST_ROOT"
+	fi
 	TEST_ROOT=$(mktemp -d)
 	mkdir -p "${TEST_ROOT}/bin" "${TEST_ROOT}/home/.aidevops/agents"
 	HOME="${TEST_ROOT}/home"
@@ -71,6 +74,19 @@ EOF
 exit 22
 EOF
 	chmod +x "${TEST_ROOT}/bin/curl"
+	return 0
+}
+
+test_setup_fake_tools_removes_previous_root() {
+	local previous_root=""
+	setup_fake_tools "gh version 2.51.0 (2024-05-29)"
+	previous_root="$TEST_ROOT"
+	setup_fake_tools "gh version 2.51.0 (2024-05-29)"
+	if [[ ! -d "$previous_root" && -d "$TEST_ROOT" ]]; then
+		print_result "fake tool setup removes its previous temporary root" 0
+	else
+		print_result "fake tool setup removes its previous temporary root" 1 "previous='${previous_root}', current='${TEST_ROOT}'"
+	fi
 	return 0
 }
 
@@ -170,6 +186,7 @@ test_cache_write_propagates_move_failure() {
 	return 0
 }
 
+test_setup_fake_tools_removes_previous_root
 test_old_gh_warns_in_update_check
 test_supported_gh_has_no_warning
 test_update_available_preserves_full_session_status
