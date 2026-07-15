@@ -130,6 +130,32 @@ get_repo_info() {
 	return 1
 }
 
+# Return exact-SHA workflow runs split into release-owned and unrelated events.
+get_scoped_workflow_runs() {
+	local repo="$1"
+	local commit_sha="$2"
+	local runs
+
+	runs=$(gh run list --repo "$repo" --commit "$commit_sha" --limit 100 \
+		--json databaseId,status,conclusion,name,event,headSha,updatedAt,workflowName 2>/dev/null || echo "")
+	if [[ -z "$runs" || "$runs" == "[]" ]]; then
+		echo ""
+		return 1
+	fi
+
+	echo "$runs" | jq -c --arg release_sha "$commit_sha" '
+		def run_name: (.workflowName // .name // "unknown");
+		def latest_by_workflow:
+			sort_by(run_name)
+			| group_by(run_name)
+			| map(max_by([(.updatedAt // ""), (.databaseId // 0)]));
+		{
+			release_runs: ([.[] | select(.headSha == $release_sha) | select(.event == "push" or .event == "release" or .event == "workflow_dispatch")] | latest_by_workflow),
+			unrelated_runs: [.[] | select(.headSha == $release_sha) | select((.event == "push" or .event == "release" or .event == "workflow_dispatch") | not)]
+		}'
+	return 0
+}
+
 # Check GitHub Actions CI/CD status
 check_cicd_status() {
 	print_section "CI/CD Pipeline Status"
@@ -148,10 +174,11 @@ check_cicd_status() {
 
 	print_info "Repository: $repo"
 
-	# Get the latest workflow run for the exact release commit when supplied.
-	local latest_run
+	# Get release-owned workflow runs for the exact release commit when supplied.
+	local scoped_runs latest_run
 	if [[ -n "$POSTFLIGHT_COMMIT_SHA" ]]; then
-		latest_run=$(gh run list --repo "$repo" --commit "$POSTFLIGHT_COMMIT_SHA" --limit=1 --json databaseId,status,conclusion,name 2>/dev/null || echo "")
+		scoped_runs=$(get_scoped_workflow_runs "$repo" "$POSTFLIGHT_COMMIT_SHA" || echo "")
+		latest_run=$(echo "$scoped_runs" | jq -c '.release_runs // []' 2>/dev/null || echo "")
 	else
 		latest_run=$(gh run list --repo "$repo" --limit=1 --json databaseId,status,conclusion,name 2>/dev/null || echo "")
 	fi
@@ -159,6 +186,34 @@ check_cicd_status() {
 	if [[ -z "$latest_run" || "$latest_run" == "[]" ]]; then
 		count_failure "No workflow runs found for release evidence"
 		return 1
+	fi
+
+	if [[ -n "$POSTFLIGHT_COMMIT_SHA" ]]; then
+		local unrelated_count
+		unrelated_count=$(echo "$scoped_runs" | jq '.unrelated_runs | length')
+		if [[ "$unrelated_count" -gt 0 ]]; then
+			count_warning "$unrelated_count unrelated exact-SHA issue/comment workflow run(s) excluded from release evidence"
+			echo "$scoped_runs" | jq -r '.unrelated_runs[] | "  - Unrelated: \(.workflowName // .name) (event: \(.event), conclusion: \(.conclusion // "pending"))"'
+		fi
+
+		local release_runs pending_count failed_count
+		release_runs=$(echo "$scoped_runs" | jq -c '.release_runs')
+		pending_count=$(echo "$release_runs" | jq '[.[] | select(.status != "completed")] | length')
+		if [[ "$pending_count" -gt 0 ]]; then
+			count_failure "$pending_count required release-owned workflow(s) remain non-terminal"
+			echo "$release_runs" | jq -r '.[] | select(.status != "completed") | "  - Required release check pending: \(.workflowName // .name): \(.status)"'
+			return 1
+		fi
+
+		failed_count=$(echo "$release_runs" | jq '[.[] | select(.conclusion == "failure" or .conclusion == "cancelled" or .conclusion == "timed_out" or .conclusion == "action_required")] | length')
+		if [[ "$failed_count" -gt 0 ]]; then
+			count_failure "$failed_count required release-owned workflow(s) failed"
+			echo "$release_runs" | jq -r '.[] | select(.conclusion == "failure" or .conclusion == "cancelled" or .conclusion == "timed_out" or .conclusion == "action_required") | "  - Required release check failed: \(.workflowName // .name): \(.conclusion)"'
+			return 1
+		fi
+
+		count_success "All exact-SHA release-owned workflows passed"
+		return 0
 	fi
 
 	local run_id status conclusion name
@@ -213,11 +268,11 @@ check_cicd_status() {
 		count_warning "CI/CD pipeline conclusion: $conclusion"
 	fi
 
-	# Check all recent workflows
-	print_info "Checking all recent workflows..."
+	# Check every effective release-owned workflow, not just whichever run is newest.
+	print_info "Checking all release-owned workflows..."
 	local all_runs
 	if [[ -n "$POSTFLIGHT_COMMIT_SHA" ]]; then
-		all_runs=$(gh run list --repo "$repo" --commit "$POSTFLIGHT_COMMIT_SHA" --limit=5 --json name,conclusion,status 2>/dev/null || echo "[]")
+		all_runs=$(echo "$scoped_runs" | jq -c '.release_runs')
 	else
 		all_runs=$(gh run list --repo "$repo" --limit=5 --json name,conclusion,status 2>/dev/null || echo "[]")
 	fi
@@ -226,8 +281,9 @@ check_cicd_status() {
 	failed_count=$(echo "$all_runs" | jq '[.[] | select(.conclusion == "failure")] | length')
 
 	if [[ "$failed_count" -gt 0 ]]; then
-		print_warning "$failed_count workflow(s) failed recently"
-		echo "$all_runs" | jq -r '.[] | select(.conclusion == "failure") | "  - \(.name): \(.conclusion)"'
+		count_failure "$failed_count required release-owned workflow(s) failed"
+		echo "$all_runs" | jq -r '.[] | select(.conclusion == "failure" or .conclusion == "cancelled" or .conclusion == "timed_out" or .conclusion == "action_required") | "  - Required release check failed: \(.workflowName // .name): \(.conclusion)"'
+		return 1
 	fi
 
 	return 0

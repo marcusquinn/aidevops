@@ -25,32 +25,15 @@ jobs:
             EXTRA=$(git log --oneline "$PREV_TAG..v$VERSION" -- | grep -v 'chore: claim t' | head -10)
             BODY="$BODY"$'\n\n### Commits since CHANGELOG generation\n'"$EXTRA"
           fi
-          {
-            echo "body<<DELIM"
-            echo "$BODY"
-            echo "DELIM"
-          } >> "$GITHUB_OUTPUT"
+          NOTES_FILE="$RUNNER_TEMP/release-notes.md"
+          printf '%s\n' "$BODY" > "$NOTES_FILE"
+          echo "notes_file=$NOTES_FILE" >> "$GITHUB_OUTPUT"
 
       - name: Create release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
-            echo "Release $GITHUB_REF_NAME already exists; updating metadata"
-            gh release edit "$GITHUB_REF_NAME" \
-              --title "$GITHUB_REF_NAME" \
-              --notes "${{ steps.changelog.outputs.body }}"
-          else
-            if gh release create "$GITHUB_REF_NAME" \
-              --title "$GITHUB_REF_NAME" \
-              --notes "${{ steps.changelog.outputs.body }}"; then
-              echo "Release $GITHUB_REF_NAME created"
-            elif gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
-              echo "Release $GITHUB_REF_NAME appeared after create failed; updating metadata"
-              gh release edit "$GITHUB_REF_NAME" \
-                --title "$GITHUB_REF_NAME" \
-                --notes "${{ steps.changelog.outputs.body }}"
-            else
-              exit 1
-            fi
-          fi
+          .github/scripts/publish-github-release.sh \
+            "$GITHUB_REF_NAME" \
+            "$GITHUB_REF_NAME" \
+            "${{ steps.changelog.outputs.notes_file }}"
