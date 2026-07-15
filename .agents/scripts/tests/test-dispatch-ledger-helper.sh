@@ -328,6 +328,24 @@ test_complete_marks_entry() {
 	return 0
 }
 
+test_typed_terminal_reason_is_lease_bound() {
+	setup_test_env
+	run_helper "$LEDGER_HELPER" register --session-key "issue-27854" --issue 27854 --repo "owner/repo" \
+		--pid $$ --lease-token "lease-current"
+	run_helper "$LEDGER_HELPER" complete --session-key "issue-27854" --lease-token "lease-current" \
+		--reason merged_pr_reap
+
+	local result=0 reason=""
+	reason=$("$LEDGER_HELPER" terminal-reason --session-key "issue-27854" --lease-token "lease-current") || result=1
+	[[ "$reason" == "merged_pr_reap" ]] || result=1
+	if "$LEDGER_HELPER" terminal-reason --session-key "issue-27854" --lease-token "lease-stale" >/dev/null 2>&1; then
+		result=1
+	fi
+	print_result "typed terminal reason is bound to the exact dispatch lease" "$result" "reason=${reason}"
+	teardown_test_env
+	return 0
+}
+
 #######################################
 # Test: fail marks entry as failed
 #######################################
@@ -876,6 +894,7 @@ main() {
 	test_check_issue_positional_syntax
 	test_check_issue_different_repo
 	test_complete_marks_entry
+	test_typed_terminal_reason_is_lease_bound
 	test_terminal_state_immutability
 	test_fail_marks_entry
 	test_register_idempotent

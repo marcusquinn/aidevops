@@ -273,6 +273,17 @@ test_worker_exited_line_carries_kill_reason() {
 	return 0
 }
 
+test_exit_trap_prefers_dispatch_terminal_reason() {
+	assert_grep "exit trap reads lease-bound dispatch terminal reason" \
+		'terminal-reason --session-key' \
+		"${SCRIPT_DIR}/../headless-runtime-failure.sh"
+	# shellcheck disable=SC2016 # Match the literal variable reference in source.
+	assert_grep "dispatch terminal reason takes precedence over generic exit classification" \
+		'if \[\[ -n "\$ledger_terminal_reason" \]\]; then' \
+		"${SCRIPT_DIR}/../headless-runtime-failure.sh"
+	return 0
+}
+
 # t3063 acceptance: classify_worker_kill_reason is invoked at the exit point.
 test_invoke_opencode_calls_classifier() {
 	local helper="${AGENTS_SCRIPTS}/headless-runtime-helper.sh"
@@ -317,6 +328,7 @@ main() {
 
 	# Structural assertions on consumer site
 	test_worker_exited_line_carries_kill_reason
+	test_exit_trap_prefers_dispatch_terminal_reason
 	test_invoke_opencode_calls_classifier
 	test_classifier_function_defined
 
