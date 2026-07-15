@@ -8,7 +8,9 @@ import {
   collectDedupedViolations,
   recordFiredViolations,
 } from "./ttsr-rules.mjs";
-import { readGreetingCache, REFRESH_TTL_MS } from "./greeting.mjs";
+// Prompt injection and the startup toast intentionally share cache provenance
+// and freshness policy so they cannot present contradictory version pairs.
+import { isGreetingCacheUsable, readGreetingCache, REFRESH_TTL_MS } from "./greeting.mjs";
 
 // ---------------------------------------------------------------------------
 // Token Cost Advisory
@@ -195,10 +197,10 @@ export function buildSessionStartGreetingInstruction(agentsDir, readIfExists, op
   const now = options.now ?? Date.now;
   const readCache = options.readGreetingCache ?? readGreetingCache;
   const refreshTtlMs = options.refreshTtlMs ?? REFRESH_TTL_MS;
+  const initializedAtMs = options.initializedAtMs ?? Number.NEGATIVE_INFINITY;
   const cachePath = join(agentsDir, "..", "cache", "session-greeting-opencode.txt");
   const cached = readCache(cachePath);
-  const cacheIsFresh = cached && now() - cached.mtimeMs <= refreshTtlMs;
-  const cacheLines = cacheIsFresh
+  const cacheLines = isGreetingCacheUsable(cached, now(), refreshTtlMs, initializedAtMs)
     ? cached.output.split("\n").map((line) => line.trim()).filter(Boolean)
     : [];
   const cacheLine = cacheLines[0] || "";
@@ -391,6 +393,7 @@ async function ttsrTextComplete(input, output, state, execDeps, qualityLog) {
  * @param {(path: string) => { output: string, mtimeMs: number } | null} [deps.readGreetingCache]
  * @param {() => number} [deps.now]
  * @param {number} [deps.refreshTtlMs]
+ * @param {number} [deps.initializedAtMs]
  * @returns {{ loadTtsrRules: Function, systemTransformHook: Function, messagesTransformHook: Function, textCompleteHook: Function }}
  */
 export function createTtsrHooks(deps) {
@@ -404,6 +407,7 @@ export function createTtsrHooks(deps) {
     readGreetingCache: deps.readGreetingCache,
     now: deps.now,
     refreshTtlMs: deps.refreshTtlMs,
+    initializedAtMs: deps.initializedAtMs,
   };
   const systemTransformContext = { state, intentField, shouldInjectGreeting, agentsDir, readIfExists, greetingOptions };
 

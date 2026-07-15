@@ -217,6 +217,15 @@ export function readGreetingCache(cacheFile) {
   }
 }
 
+export function greetingCacheHasCurrentProvenance(cached, initializedAtMs) {
+  return Boolean(cached && cached.mtimeMs >= initializedAtMs);
+}
+
+export function isGreetingCacheUsable(cached, nowMs, refreshTtlMs, initializedAtMs) {
+  return greetingCacheHasCurrentProvenance(cached, initializedAtMs) &&
+    nowMs - cached.mtimeMs <= refreshTtlMs;
+}
+
 function greetingToast(output) {
   return buildToast(classifyLines(output));
 }
@@ -431,8 +440,10 @@ async function emitToast(client, body) {
 // The caller MUST NOT await runGreetingAsync — doing so would restore the
 // blocking behaviour this change is meant to fix.
 
-function refreshGreetingIfStale({ cached, now, refreshTtlMs, lockDir, lockStaleMs, scriptsDir, client, cacheFile, execGreeting, maintenanceNoticeFn }) {
-  if (cached && now() - cached.mtimeMs <= refreshTtlMs) return;
+function refreshGreetingIfStale({ cached, now, refreshTtlMs, initializedAtMs, lockDir, lockStaleMs, scriptsDir, client, cacheFile, execGreeting, maintenanceNoticeFn }) {
+  if (isGreetingCacheUsable(cached, now(), refreshTtlMs, initializedAtMs)) return;
+
+  const cachedFallback = greetingCacheHasCurrentProvenance(cached, initializedAtMs) ? cached : null;
 
   const lockToken = acquireRefreshLock(lockDir, lockStaleMs, now());
   if (lockToken) {
@@ -444,7 +455,7 @@ function refreshGreetingIfStale({ cached, now, refreshTtlMs, lockDir, lockStaleM
       lockToken,
       execGreeting,
       maintenanceNoticeFn,
-      cachedFallback: cached,
+      cachedFallback,
     });
     return;
   }
@@ -455,7 +466,7 @@ function refreshGreetingIfStale({ cached, now, refreshTtlMs, lockDir, lockStaleM
     lockStaleMs,
     client,
     now,
-    minimumMtimeMs: cached?.mtimeMs ?? Number.NEGATIVE_INFINITY,
+    minimumMtimeMs: Math.max(cached?.mtimeMs ?? Number.NEGATIVE_INFINITY, initializedAtMs),
   });
   if (process.env.AIDEVOPS_PLUGIN_DEBUG) {
     console.error("[aidevops] greeting: refresh already running in another process");
@@ -487,10 +498,10 @@ export function createGreetingHandler({
   execGreeting = execAsync,
   maintenanceNoticeFn = getOpenCodeMaintenanceNotice,
   now = Date.now,
+  initializedAtMs = now(),
   isHeadless = () => false,
 }) {
   let fired = false;
-  const initTime = now();
   const cacheFile = join(cacheDir, CACHE_BASENAME);
   const lockDir = join(cacheDir, LOCK_BASENAME);
 
@@ -508,7 +519,7 @@ export function createGreetingHandler({
     const isPrimary = event.type === "session.created";
     const isFallback =
       event.type === "session.updated" &&
-      now() - initTime < FALLBACK_WINDOW_MS;
+      now() - initializedAtMs < FALLBACK_WINDOW_MS;
 
     if (!isPrimary && !isFallback) return;
 
@@ -523,7 +534,7 @@ export function createGreetingHandler({
     // refresh-failure fallback; emitting it here and the refreshed value later
     // would display two startup toasts for one session.
     const cached = readGreetingCache(cacheFile);
-    if (cached && now() - cached.mtimeMs <= refreshTtlMs) {
+    if (isGreetingCacheUsable(cached, now(), refreshTtlMs, initializedAtMs)) {
       emitCachedGreeting(client, cached);
     }
 
@@ -531,6 +542,7 @@ export function createGreetingHandler({
       cached,
       now,
       refreshTtlMs,
+      initializedAtMs,
       lockDir,
       lockStaleMs,
       scriptsDir,

@@ -28,6 +28,7 @@ function createHooks(options = {}) {
     readGreetingCache: options.readGreetingCache,
     now: options.now,
     refreshTtlMs: options.refreshTtlMs,
+    initializedAtMs: options.initializedAtMs,
   });
   return { hooks, logs };
 }
@@ -60,6 +61,7 @@ describe("token cost advisory threshold", () => {
       }),
       now: () => 10_000,
       refreshTtlMs: 1_000,
+      initializedAtMs: 9_000,
     });
     const output = { system: ["base system prompt"] };
 

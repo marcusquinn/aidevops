@@ -38,6 +38,7 @@ assert.doesNotMatch(staleInstruction, /3\.32\.118|1\.17\.20/);
 const freshInstruction = buildSessionStartGreetingInstruction("/agents", readVersion, {
   now: () => 10_000,
   refreshTtlMs: 1_000,
+  initializedAtMs: 9_000,
   readGreetingCache: () => freshCache,
 });
 assert.match(freshInstruction, /We're running aidevops v3\.32\.122 in OpenCode v1\.18\.1\./);
@@ -49,5 +50,17 @@ const mismatchedInstruction = buildSessionStartGreetingInstruction("/agents", re
 });
 assert.match(mismatchedInstruction, /We're running aidevops v3\.32\.122\./);
 assert.doesNotMatch(mismatchedInstruction, /3\.32\.118|1\.17\.20/);
+
+const runtimeUpgradeInstruction = buildSessionStartGreetingInstruction("/agents", readVersion, {
+  now: () => 10_000,
+  refreshTtlMs: 1_000,
+  initializedAtMs: 9_750,
+  readGreetingCache: () => ({
+    output: "aidevops v3.32.122 running in OpenCode v1.17.20 | local",
+    mtimeMs: 9_500,
+  }),
+});
+assert.match(runtimeUpgradeInstruction, /We're running aidevops v3\.32\.122\./);
+assert.doesNotMatch(runtimeUpgradeInstruction, /1\.17\.20/);
 
 console.log("session-start task execution instruction tests passed");
