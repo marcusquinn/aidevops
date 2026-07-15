@@ -45,11 +45,12 @@ _FOOTPRINT_CACHE_TTL=30
 #######################################
 # Extract file paths from an issue body.
 #
-# Parses the same formats as the brief template's "Files to Modify" section:
+# Parses explicit edit declarations from the brief template's "Files to Modify" section:
 #   - `EDIT: path/to/file.sh:45-60` — existing file edit
 #   - `NEW: path/to/file.sh` — new file creation
-#   - Backtick-wrapped paths on list items: `- \`path/to/file.sh\``
 #   - Plain paths after "File:" prefix
+# Context-only list items and "Relevant files" references are intentionally
+# ignored because they do not declare implementation ownership.
 #
 # Strips line-number qualifiers (`:NNN` or `:START-END`) since we only care
 # about file-level overlap, not line-level.
@@ -63,32 +64,17 @@ _footprint_extract_paths() {
 	local issue_body="$1"
 	[[ -n "$issue_body" ]] || return 0
 
-	local paths=""
-
-	# Pattern 1: EDIT:/NEW:/File: prefixed paths (brief template format)
+	# EDIT:/NEW:/File: prefixed paths (brief template format). Keep this
+	# intent-aware: backticked paths on ordinary list items are often reference
+	# context and must not create false dispatch-overlap deferrals (GH#27787).
 	local prefixed
+	# shellcheck disable=SC2016 # `\s` is a grep regex escape, not shell expansion.
 	prefixed=$(printf '%s' "$issue_body" | grep -oE '(EDIT|NEW|File):?\s+[`"]?[^`"[:space:],]+' 2>/dev/null |
 		sed 's/^[A-Z]*:*[[:space:]]*//' | sed 's/^[`"]//' | sed 's/[`"]*$//' | sort -u) || prefixed=""
 
-	# Pattern 2: Backtick-wrapped paths on list items (common in issue bodies)
-	# Match files with common source extensions
-	local backtick_paths
-	backtick_paths=$(printf '%s' "$issue_body" | grep -E '^\s*[-*]\s' 2>/dev/null |
-		grep -oE '`[^`]*\.(sh|py|js|ts|json|yml|yaml|md|conf|toml)[^`]*`' 2>/dev/null |
-		tr -d '`' | grep -v '^#' | sort -u) || backtick_paths=""
-
-	# Pattern 3: "Relevant files:" section — plain paths
-	local relevant_section
-	relevant_section=$(printf '%s' "$issue_body" | sed -n '/[Rr]elevant [Ff]iles/,/^$/p' 2>/dev/null |
-		grep -oE '[-]?\s*[`]?\.?[a-zA-Z][a-zA-Z0-9_./-]+\.(sh|py|js|ts|json|yml|yaml|md|conf|toml)[^`]*' 2>/dev/null |
-		sed 's/^[-[:space:]]*//' | tr -d '`' | sort -u) || relevant_section=""
-
-	# Combine all sources
-	paths=$(printf '%s\n%s\n%s' "$prefixed" "$backtick_paths" "$relevant_section" | sort -u | grep -v '^$' || true)
-
 	# Strip line-number qualifiers — we only care about file-level overlap
 	# Handles: file.sh:45, file.sh:45-60, file.sh:1477
-	printf '%s' "$paths" | sed 's/:[0-9]*\(-[0-9]*\)*$//' | sort -u | grep -v '^$' || true
+	printf '%s' "$prefixed" | sed 's/:[0-9]*\(-[0-9]*\)*$//' | sort -u | grep -v '^$' || true
 	return 0
 }
 
