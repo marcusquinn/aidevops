@@ -17,6 +17,8 @@
 #   restart                 Force stop + start.
 #   restart-if-running      No-op if pulse not running, otherwise stop + start.
 #                           Used by setup.sh and aidevops update.
+#   reconcile-managed       Serialize with runtime activation, stop stale Pulse
+#                           instances, and start only when its supervisor is enabled.
 #
 # Env:
 #   AIDEVOPS_SKIP_PULSE_RESTART=1     Skip restart operations (for debug).
@@ -30,6 +32,11 @@
 #                                     --canary, GH#21903) are excluded from the
 #                                     count and reported separately. Set to 1
 #                                     for legacy strict-singleton check.
+#   AIDEVOPS_PULSE_MANAGED_ENABLED=true
+#                                     reconcile-managed may start Pulse.
+#   AIDEVOPS_ACTIVE_AGENTS_LINK=<path>
+#                                     activation link to resolve under the
+#                                     shared runtime transition lock.
 #
 # Exit codes:
 #   0  Success (includes no-op cases)
@@ -46,6 +53,7 @@ set -euo pipefail
 _PULSE_AGENTS_DIR="${AIDEVOPS_AGENTS_DIR:-${HOME}/.aidevops/agents}"
 _PULSE_SCRIPT="${_PULSE_AGENTS_DIR}/scripts/pulse-wrapper.sh"
 _PULSE_LOG="${HOME}/.aidevops/logs/pulse-wrapper.log"
+_PULSE_ACTIVE_AGENTS_LINK="${AIDEVOPS_ACTIVE_AGENTS_LINK:-${HOME}/.aidevops/agents}"
 
 # Process-match pattern for pgrep. The production default matches any
 # pulse-wrapper.sh script regardless of path. Tests may override this to
@@ -129,6 +137,31 @@ _pl_warn() {
 _pl_err() {
 	local _msg="$1"
 	printf '%b[ERROR]%b %s\n' "$_PL_RED" "$_PL_NC" "$_msg" >&2
+	return 0
+}
+
+_pulse_refresh_active_runtime() {
+	local active_root=""
+	active_root=$(resolve_aidevops_runtime_bundle_root "$_PULSE_ACTIVE_AGENTS_LINK") || return 1
+	[[ -x "$active_root/scripts/pulse-wrapper.sh" ]] || return 1
+	_PULSE_AGENTS_DIR="$active_root"
+	_PULSE_SCRIPT="${_PULSE_AGENTS_DIR}/scripts/pulse-wrapper.sh"
+	return 0
+}
+
+_pulse_runtime_bundle_id() {
+	local manifest_line=""
+	if [[ -r "$_PULSE_AGENTS_DIR/.bundle-manifest" ]]; then
+		while IFS= read -r manifest_line; do
+			case "$manifest_line" in
+			bundle_id=*)
+				printf '%s\n' "${manifest_line#bundle_id=}"
+				return 0
+				;;
+			esac
+		done <"$_PULSE_AGENTS_DIR/.bundle-manifest"
+	fi
+	printf '%s\n' "unknown"
 	return 0
 }
 
@@ -364,6 +397,52 @@ _restart_if_running() {
 	_start
 }
 
+# _reconcile_managed: setup-only lifecycle path. The shared transition lock
+# prevents a concurrent activation/restart interleave from leaving an older
+# Pulse revision running. Re-resolve after the restart delay in case a waiting
+# activation won the lock immediately before this process.
+_reconcile_managed() {
+	local runtime_module="${_PULSE_AGENTS_DIR}/scripts/setup/modules/agent-runtime.sh"
+	local reconcile_rc=0
+	local bundle_id=""
+
+	if [[ ! -r "$runtime_module" ]]; then
+		_pl_err "Runtime transition support is missing from the activated bundle"
+		return 2
+	fi
+	# shellcheck source=setup/modules/agent-runtime.sh
+	source "$runtime_module"
+	if ! aidevops_runtime_transition_lock_acquire; then
+		_pl_err "Unable to acquire the runtime transition lock"
+		return 1
+	fi
+
+	if ! _pulse_refresh_active_runtime; then
+		_pl_err "Unable to resolve the active runtime bundle"
+		reconcile_rc=1
+	elif [[ "${AIDEVOPS_PULSE_MANAGED_ENABLED:-false}" != "true" ]]; then
+		_stop_all || reconcile_rc=$?
+		[[ "$reconcile_rc" -eq 0 ]] && _pl_info "Pulse remains stopped because its supervisor is disabled"
+	else
+		_stop_all || reconcile_rc=$?
+		if [[ "$reconcile_rc" -eq 0 ]]; then
+			sleep "$_PULSE_RESTART_WAIT"
+			if ! _pulse_refresh_active_runtime; then
+				_pl_err "Unable to re-resolve the active runtime bundle before Pulse start"
+				reconcile_rc=1
+			else
+				bundle_id=$(_pulse_runtime_bundle_id)
+				_pl_info "Starting Pulse from activated runtime bundle ${bundle_id}"
+				_start || reconcile_rc=$?
+			fi
+		fi
+	fi
+
+	aidevops_runtime_transition_lock_release
+	[[ "$reconcile_rc" -eq 0 ]] || return "$reconcile_rc"
+	return 0
+}
+
 # _status: human-readable PID + age. Reports lock-holder PID and warns ONLY
 # when the alive-PID count exceeds AIDEVOPS_PULSE_EXPECTED_MAX_INSTANCES
 # (default 3 — see the constant block above for the t2774 design rationale).
@@ -473,6 +552,7 @@ Commands:
   stop                  Stop all pulse instances.
   restart               Force stop + start.
   restart-if-running    Restart only if running; no-op otherwise.
+  reconcile-managed     Reconcile with the active bundle and supervisor state.
 
 Env:
   AIDEVOPS_SKIP_PULSE_RESTART=1            Skip restart operations.
@@ -481,6 +561,8 @@ Env:
   AIDEVOPS_PULSE_EXPECTED_MAX_INSTANCES=3  Status warn threshold (MAIN only;
                                            sidecars excluded — GH#21903).
   AIDEVOPS_AGENTS_DIR=<path>               Override ~/.aidevops/agents.
+  AIDEVOPS_ACTIVE_AGENTS_LINK=<path>        Active runtime link for reconciliation.
+  AIDEVOPS_PULSE_MANAGED_ENABLED=true       Allow reconcile-managed to start Pulse.
 
 Exit codes:
   0  Success
@@ -511,6 +593,9 @@ main() {
 		;;
 	restart-if-running)
 		_restart_if_running
+		;;
+	reconcile-managed)
+		_reconcile_managed
 		;;
 	-h | --help | help | "")
 		_usage

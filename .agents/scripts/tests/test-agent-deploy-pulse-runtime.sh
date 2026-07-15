@@ -1,0 +1,202 @@
+#!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
+TEST_ROOT=""
+PULSE_PATTERN=""
+TESTS_RUN=0
+
+print_info() { local message="$1"; printf '%s\n' "$message"; return 0; }
+print_success() { local message="$1"; printf '%s\n' "$message"; return 0; }
+print_warning() { local message="$1"; printf 'WARN: %s\n' "$message" >&2; return 0; }
+print_error() { local message="$1"; printf 'ERROR: %s\n' "$message" >&2; return 0; }
+
+# shellcheck source=../setup/modules/agent-deploy.sh
+source "$REPO_ROOT/.agents/scripts/setup/modules/agent-deploy.sh"
+# shellcheck source=../setup/modules/agent-runtime.sh
+source "$REPO_ROOT/.agents/scripts/setup/modules/agent-runtime.sh"
+
+cleanup() {
+	if [[ -n "$PULSE_PATTERN" ]]; then
+		pkill -TERM -f "$PULSE_PATTERN" 2>/dev/null || true
+		sleep 1
+		pkill -KILL -f "$PULSE_PATTERN" 2>/dev/null || true
+	fi
+	[[ -n "$TEST_ROOT" && -d "$TEST_ROOT" ]] && rm -rf "$TEST_ROOT"
+	return 0
+}
+
+fail() {
+	local message="$1"
+	printf 'FAIL: %s\n' "$message" >&2
+	return 1
+}
+
+pass() {
+	local message="$1"
+	TESTS_RUN=$((TESTS_RUN + 1))
+	printf 'PASS: %s\n' "$message"
+	return 0
+}
+
+write_runtime_bundle() {
+	local bundle_root="$1"
+	local bundle_id="$2"
+	mkdir -p "$bundle_root/agents/scripts/setup/modules"
+	cp "$REPO_ROOT/.agents/scripts/pulse-lifecycle-helper.sh" \
+		"$bundle_root/agents/scripts/pulse-lifecycle-helper.sh"
+	cp "$REPO_ROOT/.agents/scripts/setup/modules/agent-runtime.sh" \
+		"$bundle_root/agents/scripts/setup/modules/agent-runtime.sh"
+	cat >"$bundle_root/agents/scripts/pulse-wrapper.sh" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' "$0" >>"${PULSE_START_LOG:?}"
+trap 'exit 0' TERM INT
+while :; do
+	sleep 1
+done
+SH
+	printf 'bundle_id=%s\nstatus=validated\n' "$bundle_id" >"$bundle_root/agents/.bundle-manifest"
+	chmod +x "$bundle_root/agents/scripts/pulse-lifecycle-helper.sh" \
+		"$bundle_root/agents/scripts/pulse-wrapper.sh"
+	return 0
+}
+
+assert_only_active_bundle_runs() {
+	local active_script="$1"
+	local stale_script="$2"
+	local running_commands=""
+	running_commands=$(pgrep -f "$PULSE_PATTERN" | while IFS= read -r pulse_pid; do
+		ps -p "$pulse_pid" -o command=
+	done)
+	[[ "$running_commands" == *"$active_script"* ]] || fail "active bundle Pulse is not running"
+	[[ "$running_commands" != *"$stale_script"* ]] || fail "stale bundle Pulse is running"
+	pass "Pulse command resolves to the active bundle, never the caller bundle"
+	return 0
+}
+
+test_stale_install_dir_uses_active_bundle() {
+	local stale_root="$1"
+	local active_root="$2"
+	local active_link="$3"
+	local output=""
+	local output_file="$TEST_ROOT/stale-restart.out"
+
+	INSTALL_DIR="$TEST_ROOT/caller-worktree"
+	export INSTALL_DIR
+	mkdir -p "$INSTALL_DIR/.agents/scripts"
+	cat >"$INSTALL_DIR/.agents/scripts/pulse-wrapper.sh" <<'SH'
+#!/usr/bin/env bash
+printf 'caller-worktree\n' >>"${PULSE_START_LOG:?}"
+SH
+	chmod +x "$INSTALL_DIR/.agents/scripts/pulse-wrapper.sh"
+
+	_restart_pulse_if_running "$stale_root/agents" true "$active_link" >"$output_file"
+	output=$(<"$output_file")
+	[[ "$output" == *"bundle-b"* ]] || fail "restart diagnostics omit the selected active bundle"
+	[[ "$output" != *"$TEST_ROOT"* ]] || fail "restart diagnostics expose a private local path"
+	grep -qF "$active_root/agents/scripts/pulse-wrapper.sh" "$PULSE_START_LOG" || \
+		fail "active bundle Pulse path was not launched"
+	if grep -qF "caller-worktree" "$PULSE_START_LOG"; then
+		fail "stale INSTALL_DIR Pulse path was launched"
+	fi
+	assert_only_active_bundle_runs \
+		"$active_root/agents/scripts/pulse-wrapper.sh" \
+		"$stale_root/agents/scripts/pulse-wrapper.sh"
+	pass "stale INSTALL_DIR cannot select the restarted Pulse revision"
+	return 0
+}
+
+test_disabled_supervisor_stays_stopped() {
+	local active_root="$1"
+	local active_link="$2"
+	local starts_before=""
+	local starts_after=""
+	starts_before=$(wc -l <"$PULSE_START_LOG" | tr -d ' ')
+	_restart_pulse_if_running "$active_root/agents" false "$active_link" >/dev/null
+	starts_after=$(wc -l <"$PULSE_START_LOG" | tr -d ' ')
+	[[ "$starts_after" == "$starts_before" ]] || fail "disabled reconciliation started a new Pulse"
+	if pgrep -f "$PULSE_PATTERN" >/dev/null 2>&1; then
+		fail "disabled supervisor reconciliation left Pulse running"
+	fi
+	pass "disabled supervisor remains stopped without a manual fallback"
+	return 0
+}
+
+test_concurrent_transition_converges_on_active_bundle() {
+	local stale_root="$1"
+	local active_root="$2"
+	local active_link="$3"
+	local transition_pid=""
+	local transition_ready="$TEST_ROOT/transition-ready"
+	local wait_attempts=20
+	local pulse_count=""
+
+	rm -f "$active_link"
+	ln -s "$stale_root/agents" "$active_link"
+	(
+		aidevops_runtime_transition_lock_acquire
+		: >"$transition_ready"
+		sleep 1
+		rm -f "$active_link"
+		ln -s "$active_root/agents" "$active_link"
+		aidevops_runtime_transition_lock_release
+	) &
+	transition_pid=$!
+	while [[ ! -f "$transition_ready" && "$wait_attempts" -gt 0 ]]; do
+		sleep 0.1
+		wait_attempts=$((wait_attempts - 1))
+	done
+	[[ -f "$transition_ready" ]] || fail "concurrent activation fixture did not acquire the transition lock"
+	_restart_pulse_if_running "$stale_root/agents" true "$active_link" >/dev/null
+	wait "$transition_pid"
+
+	pulse_count=$(pgrep -f "$PULSE_PATTERN" | wc -l | tr -d ' ')
+	[[ "$pulse_count" == "1" ]] || fail "concurrent transition left $pulse_count Pulse processes"
+	assert_only_active_bundle_runs \
+		"$active_root/agents/scripts/pulse-wrapper.sh" \
+		"$stale_root/agents/scripts/pulse-wrapper.sh"
+	pass "concurrent activation and restart converge on one active Pulse revision"
+	return 0
+}
+
+main() {
+	local stale_root=""
+	local active_root=""
+	local active_link=""
+	local escaped_root=""
+
+	TEST_ROOT=$(mktemp -d)
+	trap cleanup EXIT
+	HOME="$TEST_ROOT/home"
+	export HOME
+	mkdir -p "$HOME/.aidevops/logs" "$TEST_ROOT/runtime-bundles"
+	stale_root="$TEST_ROOT/runtime-bundles/bundle-a"
+	active_root="$TEST_ROOT/runtime-bundles/bundle-b"
+	write_runtime_bundle "$stale_root" "bundle-a"
+	write_runtime_bundle "$active_root" "bundle-b"
+	active_link="$HOME/.aidevops/agents"
+	ln -s "$active_root/agents" "$active_link"
+
+	escaped_root=$(printf '%s' "$TEST_ROOT" | sed 's/[][\\.^$*+?{}|()]/\\&/g')
+	PULSE_PATTERN="${escaped_root}/runtime-bundles/.*/agents/scripts/pulse-wrapper\\.sh"
+	PULSE_START_LOG="$TEST_ROOT/pulse-starts.log"
+	: >"$PULSE_START_LOG"
+	export PULSE_START_LOG
+	export AIDEVOPS_PULSE_PROCESS_PATTERN="$PULSE_PATTERN"
+	export AIDEVOPS_PULSE_RESTART_WAIT=0
+	export AIDEVOPS_PULSE_SIGTERM_WAIT=1
+	export AIDEVOPS_RUNTIME_TRANSITION_LOCK_WAIT_SECONDS=10
+
+	test_stale_install_dir_uses_active_bundle "$stale_root" "$active_root" "$active_link"
+	test_disabled_supervisor_stays_stopped "$active_root" "$active_link"
+	test_concurrent_transition_converges_on_active_bundle "$stale_root" "$active_root" "$active_link"
+
+	printf 'Results: %s checks passed\n' "$TESTS_RUN"
+	return 0
+}
+
+main "$@"

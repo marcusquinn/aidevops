@@ -118,6 +118,7 @@ test_initial_activation_and_manifest() {
 
 	[[ -L "$target_dir" ]] || fail "active agents path is an activation symlink"
 	pass "active agents path is an activation symlink"
+	assert_eq "$active_root" "$_AIDEVOPS_ACTIVE_BUNDLE_ROOT" "activation returns the validated physical bundle root"
 	_verify_deployed_agents_tree "$target_dir" || fail "post-activation verification follows the active bundle symlink"
 	pass "post-activation verification follows the active bundle symlink"
 	assert_eq "2.0.0" "$(tr -d '[:space:]' <"$active_root/VERSION")" "CLI and agents activate at one version"
@@ -158,6 +159,7 @@ test_failed_activation_rolls_back() {
 	fi
 	active_after=$(_runtime_bundle_resolve_root "$target_dir")
 	assert_eq "$active_before" "$active_after" "failed activation rolls back to previous validated bundle"
+	assert_eq "" "${_AIDEVOPS_ACTIVE_BUNDLE_ROOT:-}" "failed activation does not publish a candidate runtime root"
 	return 0
 }
 

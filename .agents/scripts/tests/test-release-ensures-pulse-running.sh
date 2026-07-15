@@ -59,31 +59,30 @@ load_setup_restart_helper() {
 	return 0
 }
 
-write_pulse_helper_stub() {
-	local helper_path="$1"
-	local log_path="$2"
-	mkdir -p "$(dirname "$helper_path")"
-	cat >"$helper_path" <<STUB
-#!/usr/bin/env bash
-printf '%s\n' "\$1" >>"${log_path}"
-exit 0
-STUB
-	chmod +x "$helper_path"
-	return 0
-}
-
 run_restart_helper_with_stub() {
 	local skip_value="$1"
-	local output_dir="$2"
+	local pulse_enabled="$2"
+	local output_dir="$3"
 	local log_path="${output_dir}/pulse-helper.log"
-	local helper_path="${output_dir}/.aidevops/agents/scripts/pulse-lifecycle-helper.sh"
-
-	write_pulse_helper_stub "$helper_path" "$log_path"
+	mkdir -p "${output_dir}/.aidevops/agents/scripts"
 
 	(
 		HOME="$output_dir"
 		AIDEVOPS_SKIP_PULSE_RESTART="$skip_value"
+		PULSE_ENABLED="$pulse_enabled"
 		print_warning() { printf 'warning: %s\n' "$*"; return 0; }
+		resolve_aidevops_runtime_bundle_root() {
+			local requested_root="$1"
+			printf '%s\n' "$requested_root"
+			return 0
+		}
+		_restart_pulse_if_running() {
+			local activated_root="$1"
+			local managed_enabled="$2"
+			local active_link="$3"
+			printf '%s|%s|%s\n' "$activated_root" "$managed_enabled" "$active_link" >>"$log_path"
+			return 0
+		}
 		load_setup_restart_helper
 		_setup_restart_pulse_if_running
 	)
@@ -96,20 +95,33 @@ run_restart_helper_with_stub() {
 
 test_release_path_starts_stopped_pulse() {
 	local output=""
-	output="$(run_restart_helper_with_stub "0" "${TEST_DIR}/start-stopped")"
+	output="$(run_restart_helper_with_stub "0" "true" "${TEST_DIR}/start-stopped")"
 
-	if [[ "$output" == *"restart-if-running start "* ]]; then
-		print_result "release deploy restarts if running then starts if stopped" 0
+	if [[ "$output" == *"|true|"* ]]; then
+		print_result "release deploy reconciles Pulse when its supervisor is enabled" 0
 		return 0
 	fi
 
-	print_result "release deploy restarts if running then starts if stopped" 1 "helper calls=${output}"
+	print_result "release deploy reconciles Pulse when its supervisor is enabled" 1 "helper calls=${output}"
+	return 0
+}
+
+test_disabled_supervisor_is_forwarded_to_reconcile() {
+	local output=""
+	output="$(run_restart_helper_with_stub "0" "false" "${TEST_DIR}/disabled")"
+
+	if [[ "$output" == *"|false|"* ]]; then
+		print_result "release deploy preserves disabled Pulse supervisor state" 0
+		return 0
+	fi
+
+	print_result "release deploy preserves disabled Pulse supervisor state" 1 "helper calls=${output}"
 	return 0
 }
 
 test_skip_flag_suppresses_restart_and_start() {
 	local output=""
-	output="$(run_restart_helper_with_stub "1" "${TEST_DIR}/skip-flag")"
+	output="$(run_restart_helper_with_stub "1" "true" "${TEST_DIR}/skip-flag")"
 
 	if [[ -z "$output" ]]; then
 		print_result "skip flag suppresses release pulse restart and start" 0
@@ -125,6 +137,7 @@ main() {
 	trap cleanup EXIT
 
 	test_release_path_starts_stopped_pulse
+	test_disabled_supervisor_is_forwarded_to_reconcile
 	test_skip_flag_suppresses_restart_and_start
 
 	printf '\nRan %s tests, %s failed\n' "$TESTS_RUN" "$TESTS_FAILED"
