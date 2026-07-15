@@ -10,6 +10,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.32.127] - 2026-07-15
+
+### Changed
+
+- Maintenance: mark t18135 complete (pr:#27876 completed:2026-07-15) [skip ci]
+- Maintenance: mark t18134 complete (pr:#27875 completed:2026-07-15) [skip ci]
+
+### Fixed
+
+- keep consolidation tasks dispatchable (#27883)
+- bypass gh shim during privacy probes (#27876)
+- recognize lowercase closed issue state (GH#27869) (#27872)
+- clean up replaced update-check test roots (#27842)
+
 ## [3.32.126] - 2026-07-15
 
 ### Fixed
