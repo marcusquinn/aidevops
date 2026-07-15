@@ -82,7 +82,7 @@ const LOCK_OWNER_BASENAME = "owner";
 // Comprehensive checks run at most once per 15-minute window. The subprocess
 // times out after 15 seconds, so a lock older than 30 seconds is safe to reap
 // after an abrupt plugin-process exit.
-const REFRESH_TTL_MS = 15 * 60 * 1000;
+export const REFRESH_TTL_MS = 15 * 60 * 1000;
 const LOCK_STALE_MS = 30 * 1000;
 const WARNING_LINE_PREFIXES = ["Pulse stalled", "[OPENCODE MAINTENANCE]", "[WARNING]", "[WARN]"];
 
@@ -203,7 +203,7 @@ function cacheGreeting(cacheFile, output) {
   }
 }
 
-function readGreetingCache(cacheFile) {
+export function readGreetingCache(cacheFile) {
   let fd;
   try {
     fd = openSync(cacheFile, "r");

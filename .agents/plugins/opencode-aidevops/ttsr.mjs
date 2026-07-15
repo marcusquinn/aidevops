@@ -8,6 +8,7 @@ import {
   collectDedupedViolations,
   recordFiredViolations,
 } from "./ttsr-rules.mjs";
+import { readGreetingCache, REFRESH_TTL_MS } from "./greeting.mjs";
 
 // ---------------------------------------------------------------------------
 // Token Cost Advisory
@@ -190,14 +191,23 @@ function buildCorrectionMessage(violations, sessionID) {
 // Hook implementations (module-level, accept state + deps as parameters)
 // ---------------------------------------------------------------------------
 
-export function buildSessionStartGreetingInstruction(agentsDir, readIfExists) {
+export function buildSessionStartGreetingInstruction(agentsDir, readIfExists, options = {}) {
+  const now = options.now ?? Date.now;
+  const readCache = options.readGreetingCache ?? readGreetingCache;
+  const refreshTtlMs = options.refreshTtlMs ?? REFRESH_TTL_MS;
   const cachePath = join(agentsDir, "..", "cache", "session-greeting-opencode.txt");
-  const cacheLines = readIfExists(cachePath).split("\n").map((line) => line.trim()).filter(Boolean);
+  const cached = readCache(cachePath);
+  const cacheIsFresh = cached && now() - cached.mtimeMs <= refreshTtlMs;
+  const cacheLines = cacheIsFresh
+    ? cached.output.split("\n").map((line) => line.trim()).filter(Boolean)
+    : [];
   const cacheLine = cacheLines[0] || "";
   const cacheMatch = cacheLine.match(/^aidevops v(\S+) running in (.+?) v(\S+)(?:\s|$)/);
-  const version = cacheMatch?.[1] || readIfExists(join(agentsDir, "VERSION")).trim().split("\n")[0] || "X";
+  const deployedVersion = readIfExists(join(agentsDir, "VERSION")).trim().split("\n")[0];
+  const version = deployedVersion || cacheMatch?.[1] || "X";
+  const cacheMatchesDeployedVersion = !deployedVersion || cacheMatch?.[1] === deployedVersion;
   const runtime = cacheMatch?.[2] || "OpenCode";
-  const runtimeVersion = cacheMatch?.[3];
+  const runtimeVersion = cacheMatchesDeployedVersion ? cacheMatch?.[3] : undefined;
   const versionLine = runtimeVersion
     ? `We're running aidevops v${version} in ${runtime} v${runtimeVersion}.`
     : `We're running aidevops v${version}.`;
@@ -260,7 +270,7 @@ export function createSessionStartGreetingGate(client, isHeadless = () => false)
  * and quality rules.
  */
 async function ttsrSystemTransform(input, output, context) {
-  const { state, intentField, shouldInjectGreeting, agentsDir, readIfExists } = context;
+  const { state, intentField, shouldInjectGreeting, agentsDir, readIfExists, greetingOptions } = context;
   if (input.model?.providerID === "anthropic") {
     const prefix = "You are Claude Code, Anthropic's official CLI for Claude.";
     output.system.unshift(prefix);
@@ -268,7 +278,7 @@ async function ttsrSystemTransform(input, output, context) {
   }
 
   if (await shouldInjectGreeting(input)) {
-    output.system.unshift(buildSessionStartGreetingInstruction(agentsDir, readIfExists));
+    output.system.unshift(buildSessionStartGreetingInstruction(agentsDir, readIfExists, greetingOptions));
   }
 
   const rules = loadTtsrRules(state);
@@ -378,6 +388,9 @@ async function ttsrTextComplete(input, output, state, execDeps, qualityLog) {
  * @param {(level: string, message: string) => void} deps.qualityLog
  * @param {(cmd: string, timeout?: number) => string} deps.run
  * @param {string} deps.intentField
+ * @param {(path: string) => { output: string, mtimeMs: number } | null} [deps.readGreetingCache]
+ * @param {() => number} [deps.now]
+ * @param {number} [deps.refreshTtlMs]
  * @returns {{ loadTtsrRules: Function, systemTransformHook: Function, messagesTransformHook: Function, textCompleteHook: Function }}
  */
 export function createTtsrHooks(deps) {
@@ -387,7 +400,12 @@ export function createTtsrHooks(deps) {
   const ttsrRulesPath = join(agentsDir, "configs", "ttsr-rules.json");
   const state = createTtsrState(ttsrRulesPath, readIfExists);
   const execDeps = { scriptsDir, run };
-  const systemTransformContext = { state, intentField, shouldInjectGreeting, agentsDir, readIfExists };
+  const greetingOptions = {
+    readGreetingCache: deps.readGreetingCache,
+    now: deps.now,
+    refreshTtlMs: deps.refreshTtlMs,
+  };
+  const systemTransformContext = { state, intentField, shouldInjectGreeting, agentsDir, readIfExists, greetingOptions };
 
   return {
     loadTtsrRules: () => loadTtsrRules(state),
