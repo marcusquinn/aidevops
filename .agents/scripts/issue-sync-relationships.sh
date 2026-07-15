@@ -57,6 +57,8 @@ _NODE_ID_RATE_LIMITED_FILE=""
 # survive those subshell boundaries while Bash variables do not.
 _RELATIONSHIP_EDGE_SEEN_FILE=""
 _RELATIONSHIP_RETRY_RESULT="RELS:0 RETRYABLE:1"
+_RELATIONSHIP_SYNC_SCOPE_ACTIVE=0
+_RELATIONSHIP_SYNC_DEADLINE_EPOCH=
 
 _init_relationship_sync_state() {
 	_init_node_id_cache
@@ -73,6 +75,44 @@ _cleanup_relationship_sync_state() {
 		_RELATIONSHIP_EDGE_SEEN_FILE=""
 	fi
 	return 0
+}
+
+_begin_relationship_sync_scope() {
+	[[ "$_RELATIONSHIP_SYNC_SCOPE_ACTIVE" -eq 1 ]] && return 0
+	_init_relationship_sync_state || return 1
+	_RELATIONSHIP_SYNC_DEADLINE_EPOCH=
+	_RELATIONSHIP_SYNC_SCOPE_ACTIVE=1
+	return 0
+}
+
+_ensure_relationship_sync_deadline() {
+	if [[ ! "$_RELATIONSHIP_SYNC_DEADLINE_EPOCH" =~ ^[1-9][0-9]*$ ]]; then
+		_RELATIONSHIP_SYNC_DEADLINE_EPOCH=$(_relationship_sync_deadline_epoch) || return 1
+	fi
+	return 0
+}
+
+_end_relationship_sync_scope() {
+	_cleanup_relationship_sync_state
+	_RELATIONSHIP_SYNC_SCOPE_ACTIVE=0
+	_RELATIONSHIP_SYNC_DEADLINE_EPOCH=
+	return 0
+}
+
+_register_relationship_sync_cleanup() {
+	push_cleanup "rm -f '${_RELATIONSHIP_EDGE_SEEN_FILE}'"
+	return 0
+}
+
+run_relationship_scoped_command() {
+	_save_cleanup_scope
+	trap '_run_cleanups' RETURN
+	_begin_relationship_sync_scope || return 1
+	_register_relationship_sync_cleanup
+	local rc=0
+	"$@" || rc=$?
+	_end_relationship_sync_scope
+	return "$rc"
 }
 
 _relationship_sync_deadline_epoch() {
@@ -732,15 +772,19 @@ _sync_subtask_hierarchy_for_task() {
 #   $3 - repo slug
 sync_relationships_for_task() {
 	local task_id="$1" todo_file="$2" repo="$3"
-	_save_cleanup_scope
-	trap '_run_cleanups' RETURN
-	_init_relationship_sync_state || return 1
-	push_cleanup "rm -f '${_RELATIONSHIP_EDGE_SEEN_FILE}'"
-	local AIDEVOPS_GH_DEADLINE_EPOCH=""
-	AIDEVOPS_GH_DEADLINE_EPOCH=$(_relationship_sync_deadline_epoch) || {
-		_cleanup_relationship_sync_state
+	local owns_scope=0
+	if [[ "$_RELATIONSHIP_SYNC_SCOPE_ACTIVE" -ne 1 ]]; then
+		_save_cleanup_scope
+		trap '_run_cleanups' RETURN
+		_begin_relationship_sync_scope || return 1
+		_register_relationship_sync_cleanup
+		owns_scope=1
+	fi
+	_ensure_relationship_sync_deadline || {
+		[[ "$owns_scope" -eq 0 ]] || _end_relationship_sync_scope
 		return 1
 	}
+	local AIDEVOPS_GH_DEADLINE_EPOCH="$_RELATIONSHIP_SYNC_DEADLINE_EPOCH"
 	local result="" retryable_total=0 count=""
 	result=$(_sync_blocked_by_for_task "$task_id" "$todo_file" "$repo" 2>/dev/null || echo "$_RELATIONSHIP_RETRY_RESULT")
 	count=$(echo "$result" | grep -oE 'RETRYABLE:[0-9]+' | head -1 | sed 's/RETRYABLE://' || echo "0")
@@ -754,10 +798,10 @@ sync_relationships_for_task() {
 	fi
 	if [[ "$retryable_total" -gt 0 ]] || _relationship_deadline_expired; then
 		print_warning "$task_id: relationship sync pending; retry with: .agents/scripts/issue-sync-helper.sh relationships $task_id"
-		_cleanup_relationship_sync_state
+		[[ "$owns_scope" -eq 0 ]] || _end_relationship_sync_scope
 		return 1
 	fi
-	_cleanup_relationship_sync_state
+	[[ "$owns_scope" -eq 0 ]] || _end_relationship_sync_scope
 	return 0
 }
 
@@ -792,15 +836,19 @@ cmd_relationships() {
 		print_info "No tasks with relationships to sync"
 		return 0
 	}
-	_save_cleanup_scope
-	trap '_run_cleanups' RETURN
-	_init_relationship_sync_state || return 1
-	push_cleanup "rm -f '${_RELATIONSHIP_EDGE_SEEN_FILE}'"
-	local AIDEVOPS_GH_DEADLINE_EPOCH=""
-	AIDEVOPS_GH_DEADLINE_EPOCH=$(_relationship_sync_deadline_epoch) || {
-		_cleanup_relationship_sync_state
+	local owns_scope=0
+	if [[ "$_RELATIONSHIP_SYNC_SCOPE_ACTIVE" -ne 1 ]]; then
+		_save_cleanup_scope
+		trap '_run_cleanups' RETURN
+		_begin_relationship_sync_scope || return 1
+		_register_relationship_sync_cleanup
+		owns_scope=1
+	fi
+	_ensure_relationship_sync_deadline || {
+		[[ "$owns_scope" -eq 0 ]] || _end_relationship_sync_scope
 		return 1
 	}
+	local AIDEVOPS_GH_DEADLINE_EPOCH="$_RELATIONSHIP_SYNC_DEADLINE_EPOCH"
 
 	# Deduplicate (bash 3.2 compatible — no associative arrays)
 	local seen_list=""
@@ -855,7 +903,7 @@ cmd_relationships() {
 
 	printf "\n=== Relationships Sync ===\nBlocked-by: %d | Sub-issues: %d | Tasks processed: %d/%d | Retryable: %d | Deadline exhausted: %s\n" \
 		"$blocked_set" "$sub_set" "$processed" "${#unique_tasks[@]}" "$retryable_total" "$deadline_exhausted"
-	_cleanup_relationship_sync_state
+	[[ "$owns_scope" -eq 0 ]] || _end_relationship_sync_scope
 	[[ "$retryable_total" -eq 0 ]] || return 1
 	return 0
 }

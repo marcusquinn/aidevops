@@ -164,6 +164,7 @@ fi
 {
 	extract_function _gh_with_timeout "$WRAPPERS_FILE"
 	printf '\n'
+	printf '%s\n' '_gh_cooldown_context_from_args(){ return 0; }'
 	# shellcheck disable=SC2016 # Intentional: emit zsh function definitions literally.
 	printf '%s\n' 'fake_gh(){ echo "fake-gh-called:$*"; return 0; }'
 	# shellcheck disable=SC2016 # If function detection regresses, this captures the timeout route.

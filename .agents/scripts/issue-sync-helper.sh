@@ -436,9 +436,11 @@ main() {
 	done
 	command="${positional_args[0]:-help}"
 	case "$command" in
-	push) cmd_push "${positional_args[1]:-}" ;; enrich) cmd_enrich "${positional_args[1]:-}" ;;
+	push) run_relationship_scoped_command cmd_push "${positional_args[1]:-}" ;;
+	enrich) run_relationship_scoped_command cmd_enrich "${positional_args[1]:-}" ;;
 	pull) cmd_pull ;; close) cmd_close "${positional_args[1]:-}" ;; reopen) cmd_reopen ;;
-	reconcile) cmd_reconcile ;; relationships) cmd_relationships "${positional_args[1]:-}" ;;
+	reconcile) cmd_reconcile ;;
+	relationships) run_relationship_scoped_command cmd_relationships "${positional_args[1]:-}" ;;
 	backfill-sub-issues)
 		if [[ ${#positional_args[@]} -gt 1 ]]; then
 			cmd_backfill_sub_issues "${positional_args[@]:1}"

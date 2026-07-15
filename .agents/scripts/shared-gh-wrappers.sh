@@ -357,6 +357,31 @@ _gh_run_bounded_command() {
 	return $?
 }
 
+_gh_run_bounded_function() {
+	local secs="$1"
+	shift
+	local monitor_was_enabled=false
+	[[ $- == *m* ]] && monitor_was_enabled=true
+	set -m
+	"$@" &
+	local cmd_pid=$!
+	$monitor_was_enabled && set -m || set +m
+	local half_secs_remaining=$((secs * 2))
+	while kill -0 "$cmd_pid" 2>/dev/null; do
+		if ((half_secs_remaining <= 0)); then
+			kill -TERM -- "-${cmd_pid}" 2>/dev/null || true
+			sleep 0.2
+			kill -KILL -- "-${cmd_pid}" 2>/dev/null || true
+			wait "$cmd_pid" 2>/dev/null || true
+			return 124
+		fi
+		sleep 0.5
+		((half_secs_remaining--)) || true
+	done
+	wait "$cmd_pid" 2>/dev/null
+	return $?
+}
+
 _gh_with_timeout() {
 	local op_class="${1:-read}"
 	shift
@@ -395,7 +420,11 @@ _gh_with_timeout() {
 			rm -f "$err_file"
 			return $rc
 		}
-		"$@" >"$out_file" 2>"$err_file"
+		if [[ "$deadline_epoch" =~ ^[0-9]+$ ]]; then
+			_gh_run_bounded_function "$secs" "$@" >"$out_file" 2>"$err_file"
+		else
+			"$@" >"$out_file" 2>"$err_file"
+		fi
 		rc=$?
 		cat "$out_file" 2>/dev/null || true
 		cat "$err_file" >&2 2>/dev/null || true

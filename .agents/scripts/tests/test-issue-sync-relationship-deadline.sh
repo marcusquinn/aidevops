@@ -52,6 +52,21 @@ elapsed=$(( $(date +%s) - started_at ))
 [[ "$elapsed" -le 3 ]] || fail "slow child exceeded aggregate deadline allowance (${elapsed}s)"
 pass "remaining aggregate budget caps an individual slow call"
 
+slow_function_probe() {
+	sleep 5
+	printf 'late\n'
+	return 0
+}
+
+AIDEVOPS_GH_DEADLINE_EPOCH=$(( $(date +%s) + 1 ))
+started_at=$(date +%s)
+slow_rc=0
+_gh_with_timeout write slow_function_probe >/dev/null 2>&1 || slow_rc=$?
+elapsed=$(( $(date +%s) - started_at ))
+[[ "$slow_rc" -eq 124 ]] || fail "remaining aggregate budget did not cap a slow shell function"
+[[ "$elapsed" -le 3 ]] || fail "slow shell function exceeded aggregate deadline allowance (${elapsed}s)"
+pass "remaining aggregate budget caps a slow shell function"
+
 unset AIDEVOPS_GH_DEADLINE_EPOCH
 _init_relationship_sync_state || fail "relationship invocation state did not initialize"
 AIDEVOPS_GH_DEADLINE_EPOCH=$(( $(date +%s) + 30 ))
@@ -99,6 +114,30 @@ AIDEVOPS_GH_DEADLINE_EPOCH=$(( $(date +%s) - 1 ))
 expired_result=$(_sync_declared_blocked_by_edges t1 "${TMP_DIR}/TODO.md" example/repo 101 NODE_101 t2,t3,t4)
 [[ "$expired_result" == "0:1" ]] || fail "expired edge loop did not stop with retryable state: $expired_result"
 pass "edge loop stops with retryable state after aggregate exhaustion"
+
+_sync_blocked_by_for_task() {
+	printf 'RELS:0 RETRYABLE:0\n'
+	return 0
+}
+_sync_subtask_hierarchy_for_task() {
+	printf 'RELS:0 RETRYABLE:0\n'
+	return 0
+}
+_cleanup_relationship_sync_state
+_RELATIONSHIP_SYNC_SCOPE_ACTIVE=0
+_begin_relationship_sync_scope || fail "command relationship scope did not initialize"
+_ensure_relationship_sync_deadline || fail "command relationship deadline did not initialize"
+scope_file="$_RELATIONSHIP_EDGE_SEEN_FILE"
+scope_deadline="$_RELATIONSHIP_SYNC_DEADLINE_EPOCH"
+_relationship_edge_should_attempt 201 202 || fail "command scope did not retain its first edge"
+sync_relationships_for_task t1 "${TMP_DIR}/TODO.md" example/repo || fail "nested task relationship sync failed"
+[[ "$_RELATIONSHIP_EDGE_SEEN_FILE" == "$scope_file" ]] || fail "nested task sync replaced the command edge set"
+[[ "$_RELATIONSHIP_SYNC_DEADLINE_EPOCH" == "$scope_deadline" ]] || fail "nested task sync reset the command deadline"
+if _relationship_edge_should_attempt 201 202; then
+	fail "nested task sync cleared command-level edge deduplication"
+fi
+_end_relationship_sync_scope
+pass "nested task sync reuses command deadline and edge set"
 
 MAPPING_LOG="${TMP_DIR}/mapping.log"
 : >"$MAPPING_LOG"
