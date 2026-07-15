@@ -45,8 +45,7 @@ if ! declare -F aidevops_launchd_sanitized_path >/dev/null 2>&1; then
 		local result=""
 		local seen=""
 		local dir=""
-		local old_ifs="$IFS"
-		IFS=':'
+		local IFS=':'
 		for dir in $default_path:$input_path; do
 			[[ -n "$dir" ]] || continue
 			case "$dir" in
@@ -59,7 +58,6 @@ if ! declare -F aidevops_launchd_sanitized_path >/dev/null 2>&1; then
 			seen="${seen:+${seen}:}${dir}"
 			result="${result:+${result}:}${dir}"
 		done
-		IFS="$old_ifs"
 		printf '%s' "$result"
 		return 0
 	}

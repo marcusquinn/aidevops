@@ -108,6 +108,29 @@ test_sanitized_path_filters_unsafe_entries() {
 	return 0
 }
 
+test_sanitized_path_preserves_unset_ifs() {
+	local test_home="$TEST_DIR/unset-ifs-home"
+	mkdir -p "$test_home/.aidevops/agents/scripts"
+
+	local ifs_state=""
+	ifs_state=$(
+		unset IFS
+		HOME="$test_home" aidevops_launchd_sanitized_path "/usr/bin:/bin" >/dev/null
+		if [[ -z "${IFS+x}" ]]; then
+			printf 'unset'
+		else
+			printf 'set'
+		fi
+	)
+
+	if [[ "$ifs_state" == "unset" ]]; then
+		pass "test_sanitized_path_preserves_unset_ifs"
+	else
+		fail "test_sanitized_path_preserves_unset_ifs" "IFS became set after sanitization"
+	fi
+	return 0
+}
+
 test_auto_update_plist_filters_polluted_env_path() {
 	local existing_dir="$TEST_DIR/existing-tool-bin"
 	local missing_dir="$TEST_DIR/missing-tool-bin"
@@ -143,6 +166,7 @@ test_auto_update_plist_filters_polluted_env_path() {
 main() {
 	setup
 	test_sanitized_path_filters_unsafe_entries
+	test_sanitized_path_preserves_unset_ifs
 	test_auto_update_plist_filters_polluted_env_path
 
 	printf 'Ran %d tests, %d failed\n' "$TESTS_RUN" "$TESTS_FAILED"

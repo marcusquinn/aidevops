@@ -370,16 +370,14 @@ aidevops_launchd_sanitized_path() {
 	local _aidevops_launchd_path_result=""
 	local _aidevops_launchd_path_seen=""
 	local dir=""
-	local old_ifs="$IFS"
+	local IFS=':'
 
-	IFS=':'
 	for dir in $default_path; do
 		_aidevops_append_launchd_path_dir "$dir"
 	done
 	for dir in $input_path; do
 		_aidevops_append_launchd_path_dir "$dir"
 	done
-	IFS="$old_ifs"
 
 	printf '%s' "$_aidevops_launchd_path_result"
 	return 0
