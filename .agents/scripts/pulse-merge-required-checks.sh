@@ -27,8 +27,8 @@ _pmrc_iso_to_epoch() {
 	local iso="$1"
 	local epoch=""
 	[[ -n "$iso" ]] || return 1
-	epoch=$(date -u -d "$iso" +%s 2>/dev/null \
-		|| TZ=UTC date -j -f "%Y-%m-%dT%H:%M:%SZ" "$iso" +%s 2>/dev/null) || epoch=""
+	epoch=$(date -u -d "$iso" +%s 2>/dev/null ||
+		TZ=UTC date -j -f "%Y-%m-%dT%H:%M:%SZ" "$iso" +%s 2>/dev/null) || epoch=""
 	[[ "$epoch" =~ ^[0-9]+$ ]] || return 1
 	printf '%s\n' "$epoch"
 	return 0
@@ -102,10 +102,10 @@ _pmrc_snapshot_checks_json() {
 						else "" end
 					),
 					observed_at: ([$effective[]?.observed_at | select(. != "")] | max // ""),
-					members: [$members[] | {name, source, status, conclusion, observed_at}]
+					members: [$members[] | {name, source, status, conclusion, link, observed_at}]
 				} else
 				($members | sort_by(.observed_at) | last) as $latest
-				| ($latest | del(.family_key)) + {members: [$members[] | {name, source, status, conclusion, observed_at}]}
+				| ($latest | del(.family_key)) + {members: [$members[] | {name, source, status, conclusion, link, observed_at}]}
 			end
 		)
 		| sort_by(.name)
@@ -191,6 +191,59 @@ _pmrc_is_explicit_advisory_failure() {
 	return $?
 }
 
+#######################################
+# Request a bounded rerun for a GitHub Actions job whose failed log proves an
+# infrastructure failure. The merge remains blocked until a later snapshot
+# observes a successful replacement run.
+#
+# Args: $1=repo_slug, $2=pr_number, $3=check_name, $4=check_url
+# Returns: 0=rerun requested or within cooldown, 1=invalid/unavailable
+#######################################
+_pmrc_rerun_infrastructure_check() {
+	local repo_slug="$1"
+	local pr_number="$2"
+	local check_name="$3"
+	local check_url="$4"
+	local run_id="" cooldown_seconds="${PULSE_MERGE_INFRA_RERUN_COOLDOWN_SECONDS:-900}"
+	local state_dir="${PULSE_MERGE_INFRA_RERUN_STATE_DIR:-${AIDEVOPS_TEMP_DIR:-$HOME/.aidevops/.agent-workspace/tmp}/pulse-infra-check-reruns}"
+	local state_file="" now_epoch="${PULSE_MERGE_NOW_EPOCH:-$(date +%s)}" last_attempt="0"
+
+	[[ -n "$repo_slug" && "$pr_number" =~ ^[0-9]+$ ]] || return 1
+	[[ "$check_url" == "https://github.com/${repo_slug}/actions/runs/"*"/job/"* ]] || return 1
+	run_id="${check_url#*/actions/runs/}"
+	run_id="${run_id%%/*}"
+	[[ "$run_id" =~ ^[0-9]+$ ]] || return 1
+	[[ "$cooldown_seconds" =~ ^[0-9]+$ ]] || cooldown_seconds=900
+	[[ "$now_epoch" =~ ^[0-9]+$ ]] || return 1
+
+	if declare -F repo_allows_pulse_write_actions >/dev/null 2>&1 &&
+		! repo_allows_pulse_write_actions "$repo_slug"; then
+		echo "[pulse-merge] infrastructure rerun deferred for PR #${pr_number} check '${check_name}' in ${repo_slug} — repository writes are disabled" >>"$LOGFILE"
+		return 1
+	fi
+
+	mkdir -p "$state_dir" 2>/dev/null || return 1
+	state_file="${state_dir}/${repo_slug//\//-}-${run_id}.last-attempt"
+	if [[ -f "$state_file" ]]; then
+		IFS= read -r last_attempt <"$state_file" || last_attempt="0"
+	fi
+	[[ "$last_attempt" =~ ^[0-9]+$ ]] || last_attempt=0
+	if [[ $((now_epoch - last_attempt)) -lt "$cooldown_seconds" ]]; then
+		echo "[pulse-merge] infrastructure rerun cooldown active for PR #${pr_number} check '${check_name}' in ${repo_slug} (run=${run_id}, cooldown=${cooldown_seconds}s) — merge remains blocked" >>"$LOGFILE"
+		return 0
+	fi
+
+	printf '%s\n' "$now_epoch" >"$state_file" || return 1
+	#aidevops:trust-boundary — the run ID comes from the current-head check-run
+	# URL returned by GitHub, and the repository already passed pulse write policy.
+	if gh run rerun "$run_id" --repo "$repo_slug" --failed >/dev/null 2>&1; then
+		echo "[pulse-merge] requested infrastructure rerun for PR #${pr_number} check '${check_name}' in ${repo_slug} (run=${run_id}) — merge remains blocked pending fresh success (GH#27825)" >>"$LOGFILE"
+		return 0
+	fi
+	echo "[pulse-merge] infrastructure rerun request failed for PR #${pr_number} check '${check_name}' in ${repo_slug} (run=${run_id}); cooldown recorded — merge remains blocked (GH#27825)" >>"$LOGFILE"
+	return 0
+}
+
 _pmrc_configured_advisory_contexts_json() {
 	local repo_slug="$1"
 	local repos_json="${AIDEVOPS_REPOS_JSON:-$HOME/.config/aidevops/repos.json}"
@@ -258,18 +311,25 @@ _pmrc_snapshot_checks_acceptable() {
 
 	required_json=$(printf '%s' "$required_contexts" | jq -Rsc '[split("\n")[] | select(length > 0)]') || return 1
 	configured_contexts_json=$(_pmrc_configured_advisory_contexts_json "$repo_slug") || return 1
-	rows=$(jq -r --argjson required "$required_json" '.[] | . as $check | ($check.members // [$check]) as $members | [
+	rows=$(jq -r --argjson required "$required_json" --arg failure "$PMRC_CHECK_FAILURE" '.[] | . as $check | ($check.members // [$check]) as $members | [
 		$check.name,
 		($check.family // $check.name),
 		$check.status,
 		$check.conclusion,
 		((($required | index($check.name)) != null) or any($members[]; .name as $member_name | ($required | index($member_name)) != null)),
 		($members | map("\(.name)@\(.source)") | join(",")),
-		($check.link // "")
+		($check.link // ([$members[] | select(.conclusion == $failure and (.link // "") != "") | .link] | last) // "")
 	] | @tsv' <<<"$checks_json" 2>/dev/null) || return 1
 	while IFS=$'\t' read -r name family status conclusion required members link; do
 		[[ -n "$name" ]] || continue
 		if [[ "$family" == "$PMRC_MAINTAINER_GATE" && "$conclusion" == "$PMRC_CHECK_FAILURE" ]]; then
+			if declare -F _ci_check_url_has_infra_failure_log >/dev/null 2>&1 &&
+				_ci_check_url_has_infra_failure_log "$repo_slug" "$link"; then
+				_pmrc_rerun_infrastructure_check "$repo_slug" "$pr_number" "$name" "$link" || true
+				echo "[pulse-merge] pre-merge snapshot: maintainer-gate family has a proven infrastructure failure for PR #${pr_number} in ${repo_slug} — code repair suppressed; merge blocked pending rerun" >>"$LOGFILE"
+				blockers=$((blockers + 1))
+				continue
+			fi
 			echo "[pulse-merge] pre-merge snapshot: maintainer-gate family is terminal-failure for PR #${pr_number} in ${repo_slug}; aliases=${members}, required=${required}, active_alias_present=$([[ "$status" != "$PMRC_CHECK_COMPLETED" ]] && printf true || printf false) — merge blocked" >>"$LOGFILE"
 			blockers=$((blockers + 1))
 			continue
@@ -284,12 +344,18 @@ _pmrc_snapshot_checks_acceptable() {
 		if [[ "$family" == "$PMRC_MAINTAINER_GATE" ]]; then
 			echo "[pulse-merge] pre-merge snapshot: maintainer-gate family is terminal-${conclusion} for PR #${pr_number} in ${repo_slug}; aliases=${members}, required=${required} — merge blocked" >>"$LOGFILE"
 			blockers=$((blockers + 1))
+		elif [[ "$required" == "true" ]] &&
+			declare -F _ci_check_url_has_infra_failure_log >/dev/null 2>&1 &&
+			_ci_check_url_has_infra_failure_log "$repo_slug" "$link"; then
+			_pmrc_rerun_infrastructure_check "$repo_slug" "$pr_number" "$name" "$link" || true
+			echo "[pulse-merge] pre-merge snapshot: required check '${name}' has a proven infrastructure failure for PR #${pr_number} in ${repo_slug} — code repair suppressed; merge blocked pending rerun" >>"$LOGFILE"
+			blockers=$((blockers + 1))
 		elif [[ "$required" == "true" ]]; then
 			echo "[pulse-merge] pre-merge snapshot: required check '${name}' is terminal-${conclusion} for PR #${pr_number} in ${repo_slug} (GH#27137)" >>"$LOGFILE"
 			blocking_names="${blocking_names}${name}"$'\n'
 			blockers=$((blockers + 1))
-		elif declare -F _ci_check_url_has_infra_failure_log >/dev/null 2>&1 \
-			&& _ci_check_url_has_infra_failure_log "$repo_slug" "$link"; then
+		elif declare -F _ci_check_url_has_infra_failure_log >/dev/null 2>&1 &&
+			_ci_check_url_has_infra_failure_log "$repo_slug" "$link"; then
 			echo "[pulse-merge] pre-merge snapshot: IGNORED non-required infrastructure failure '${name}' for PR #${pr_number} in ${repo_slug} after failed-log classification (GH#27600)" >>"$LOGFILE"
 			advisory=$((advisory + 1))
 		elif _pmrc_is_explicit_advisory_failure "$name" "$checks_json"; then
@@ -428,8 +494,8 @@ _check_required_pr_checks_passing_fallback() {
 	fi
 
 	local nonpassing_count="" _pc_exit=0
-	nonpassing_count=$(printf '%s' "$checks_json" \
-		| jq '[.[]? | select((.bucket // "") != "pass")] | length' 2>/dev/null)
+	nonpassing_count=$(printf '%s' "$checks_json" |
+		jq '[.[]? | select((.bucket // "") != "pass")] | length' 2>/dev/null)
 	_pc_exit=$?
 	if [[ $_pc_exit -ne 0 || -z "$nonpassing_count" ]]; then
 		return 2
@@ -492,8 +558,8 @@ _check_required_pr_checks_passing_fallback() {
 							or $conclusion == $skipped)
 					] | length' <<<"$rollup_json" 2>/dev/null)
 					_gp_exit=$?
-					if [[ $_gp_exit -eq 0 && "$gate_pass_count" =~ ^[0-9]+$ \
-						&& "$gate_pass_count" -gt 0 ]]; then
+					if [[ $_gp_exit -eq 0 && "$gate_pass_count" =~ ^[0-9]+$ &&
+						"$gate_pass_count" -gt 0 ]]; then
 						return 0
 					fi
 				fi
@@ -663,8 +729,8 @@ _check_required_checks_has_terminal_failure() {
 	fi
 
 	local req_json
-	req_json=$(printf '%s' "$required_contexts" \
-		| jq -Rsc '[split("\n")[] | select(length > 0)]' 2>/dev/null) || req_json="[]"
+	req_json=$(printf '%s' "$required_contexts" |
+		jq -Rsc '[split("\n")[] | select(length > 0)]' 2>/dev/null) || req_json="[]"
 
 	local failing_count="" _fc_exit=0
 	failing_count=$(jq -n \
@@ -732,8 +798,8 @@ _check_required_checks_have_pending_or_in_progress() {
 	fi
 
 	local req_json
-	req_json=$(printf '%s' "$required_contexts" \
-		| jq -Rsc '[split("\n")[] | select(length > 0)]' 2>/dev/null) || req_json="[]"
+	req_json=$(printf '%s' "$required_contexts" |
+		jq -Rsc '[split("\n")[] | select(length > 0)]' 2>/dev/null) || req_json="[]"
 
 	local pending_count="" _pc_exit=0
 	pending_count=$(jq -n \

@@ -17,7 +17,9 @@ cat >"$AIDEVOPS_REPOS_JSON" <<'EOF'
 EOF
 PULSE_MERGE_QUIET_PERIOD_SECONDS=30
 PULSE_MERGE_NOW_EPOCH="$(_pmrc_iso_to_epoch '2026-01-01T00:10:00Z')"
+PULSE_MERGE_INFRA_RERUN_STATE_DIR="${TEST_ROOT}/infra-reruns"
 SNAPSHOT_MODE="happy_advisory"
+RERUN_CALLS=0
 TESTS_RUN=0
 TESTS_FAILED=0
 
@@ -31,7 +33,7 @@ _required_contexts_for_default_branch() {
 	local repo_slug="$1"
 	[[ -n "$repo_slug" ]] || return 1
 	printf 'required-a\n'
-	[[ "$SNAPSHOT_MODE" == "maintainer_alias_fail" ]] && printf 'Maintainer Review & Assignee Gate\n'
+	[[ "$SNAPSHOT_MODE" == "maintainer_alias_fail" || "$SNAPSHOT_MODE" == "maintainer_infra_fail" ]] && printf 'Maintainer Review & Assignee Gate\n'
 	return 0
 }
 
@@ -39,13 +41,19 @@ _ci_check_url_has_infra_failure_log() {
 	local repo_slug="$1"
 	local check_url="$2"
 	[[ -n "$repo_slug" ]] || return 1
-	[[ "$SNAPSHOT_MODE" == "infra_fail" && "$check_url" == "https://github.com/owner/repo/actions/runs/101/job/202" ]]
+	[[ "$SNAPSHOT_MODE" == "infra_fail" && "$check_url" == "https://github.com/owner/repo/actions/runs/101/job/202" ||
+		"$SNAPSHOT_MODE" == "required_infra_fail" && "$check_url" == "https://github.com/owner/repo/actions/runs/303/job/404" ||
+		"$SNAPSHOT_MODE" == "maintainer_infra_fail" && "$check_url" == "https://github.com/owner/repo/actions/runs/505/job/606" ]]
 	return $?
 }
 
 gh() {
 	local command="$1"
 	local endpoint="${2:-}"
+	if [[ "$command" == "run" && "$endpoint" == "rerun" ]]; then
+		RERUN_CALLS=$((RERUN_CALLS + 1))
+		return 0
+	fi
 	[[ "$command" == "api" ]] || return 1
 
 	if [[ "$endpoint" == "graphql" ]]; then
@@ -66,9 +74,13 @@ gh() {
 		fi
 		;;
 	*check-runs*)
-		local required_conclusion="success" broad_status="completed" broad_conclusion="success"
+		local required_conclusion="success" required_url="" broad_status="completed" broad_conclusion="success"
 		local broad_completed_at="2026-01-01T00:01:00Z" extra_check=""
 		[[ "$SNAPSHOT_MODE" == "required_fail" ]] && required_conclusion="failure"
+		if [[ "$SNAPSHOT_MODE" == "required_infra_fail" ]]; then
+			required_conclusion="failure"
+			required_url=',"details_url":"https://github.com/owner/repo/actions/runs/303/job/404"'
+		fi
 		if [[ "$SNAPSHOT_MODE" == "pending" ]]; then
 			broad_status="in_progress"
 			broad_conclusion="null"
@@ -82,6 +94,8 @@ gh() {
 			extra_check=',{"name":"CodeFactor","status":"completed","conclusion":"failure","completed_at":"2026-01-01T00:01:00Z"}'
 		elif [[ "$SNAPSHOT_MODE" == "maintainer_alias_fail" ]]; then
 			extra_check=',{"name":"maintainer-gate","status":"completed","conclusion":"success","completed_at":"2026-01-01T00:01:00Z"},{"name":"Maintainer Review & Assignee Gate","status":"completed","conclusion":"failure","completed_at":"2026-01-01T00:01:01Z"},{"name":"gate / Maintainer Review & Assignee Gate","status":"completed","conclusion":"success","completed_at":"2026-01-01T00:01:02Z"}'
+		elif [[ "$SNAPSHOT_MODE" == "maintainer_infra_fail" ]]; then
+			extra_check=',{"name":"gate / Maintainer Review & Assignee Gate","status":"completed","conclusion":"failure","details_url":"https://github.com/owner/repo/actions/runs/505/job/606","completed_at":"2026-01-01T00:01:02Z"}'
 		elif [[ "$SNAPSHOT_MODE" == "maintainer_stable_fail" ]]; then
 			extra_check=',{"name":"maintainer-gate","status":"completed","conclusion":"failure","completed_at":"2026-01-01T00:01:02Z"},{"name":"gate / Maintainer Review & Assignee Gate","status":"completed","conclusion":"success","completed_at":"2026-01-01T00:01:01Z"}'
 		elif [[ "$SNAPSHOT_MODE" == "maintainer_legacy_fail" ]]; then
@@ -91,8 +105,8 @@ gh() {
 		elif [[ "$SNAPSHOT_MODE" == "same_name_source_conflict" ]]; then
 			extra_check=',{"name":"ProviderMirror","status":"completed","conclusion":"success","completed_at":"2026-01-01T00:01:02Z"}'
 		fi
-		printf '[{"check_runs":[{"name":"required-a","status":"completed","conclusion":"%s","completed_at":"2026-01-01T00:01:00Z"},{"name":"Framework Validation","status":"%s","conclusion":%s,"completed_at":"%s"},{"name":"Qlty Smell Regression","status":"completed","conclusion":"success","completed_at":"2026-01-01T00:01:00Z"},{"name":"Qlty Smell Threshold","status":"completed","conclusion":"failure","completed_at":"2026-01-01T00:01:00Z"}%s]}]\n' \
-			"$required_conclusion" "$broad_status" "$([[ "$broad_conclusion" == "null" ]] && printf 'null' || printf '"%s"' "$broad_conclusion")" "$broad_completed_at" "$extra_check"
+		printf '[{"check_runs":[{"name":"required-a","status":"completed","conclusion":"%s"%s,"completed_at":"2026-01-01T00:01:00Z"},{"name":"Framework Validation","status":"%s","conclusion":%s,"completed_at":"%s"},{"name":"Qlty Smell Regression","status":"completed","conclusion":"success","completed_at":"2026-01-01T00:01:00Z"},{"name":"Qlty Smell Threshold","status":"completed","conclusion":"failure","completed_at":"2026-01-01T00:01:00Z"}%s]}]\n' \
+			"$required_conclusion" "$required_url" "$broad_status" "$([[ "$broad_conclusion" == "null" ]] && printf 'null' || printf '"%s"' "$broad_conclusion")" "$broad_completed_at" "$extra_check"
 		;;
 	*commits/sha-reviewed/status*)
 		local gate_at="2026-01-01T00:01:10Z"
@@ -167,6 +181,22 @@ main() {
 	assert_gate "skipped rerun preserves successful baseline companion" skipped_companion_rerun 0
 	assert_gate "active broad check blocks merge" pending 1
 	assert_gate "terminal failed required check blocks merge" required_fail 1
+	assert_gate "infrastructure-failed required check requests rerun and stays blocked" required_infra_fail 1
+	if [[ "$RERUN_CALLS" -eq 1 ]] && grep -q "requested infrastructure rerun.*run=303" "$LOGFILE"; then
+		printf 'PASS infrastructure-failed required check requests one audited rerun\n'
+	else
+		printf 'FAIL infrastructure-failed required check rerun was not requested once\n'
+		TESTS_FAILED=$((TESTS_FAILED + 1))
+	fi
+	TESTS_RUN=$((TESTS_RUN + 1))
+	assert_gate "infrastructure rerun cooldown keeps merge blocked without duplicate write" required_infra_fail 1
+	if [[ "$RERUN_CALLS" -eq 1 ]] && grep -q "infrastructure rerun cooldown active.*run=303" "$LOGFILE"; then
+		printf 'PASS infrastructure rerun cooldown suppresses duplicate write\n'
+	else
+		printf 'FAIL infrastructure rerun cooldown did not suppress duplicate write\n'
+		TESTS_FAILED=$((TESTS_FAILED + 1))
+	fi
+	TESTS_RUN=$((TESTS_RUN + 1))
 	assert_gate "unclassified non-required failure blocks merge" unclassified_fail 1
 	if jq -e 'length == 1 and .[0].name == "CodeFactor" and .[0].bucket == "fail" and .[0].conclusion == "failure" and .[0].link == "https://github.com/owner/repo/runs/99"' \
 		<<<"$_PULSE_MERGE_PREFLIGHT_BLOCKING_CHECKS_JSON" >/dev/null; then
@@ -208,6 +238,14 @@ main() {
 	fi
 	TESTS_RUN=$((TESTS_RUN + 1))
 	assert_gate "legacy maintainer aliases fail closed without stable context" maintainer_legacy_fail 1
+	assert_gate "infrastructure-failed maintainer gate requests rerun and stays blocked" maintainer_infra_fail 1
+	if [[ "$RERUN_CALLS" -eq 2 ]] && grep -q "maintainer-gate family has a proven infrastructure failure" "$LOGFILE"; then
+		printf 'PASS infrastructure-failed maintainer gate requests audited rerun\n'
+	else
+		printf 'FAIL infrastructure-failed maintainer gate rerun was not requested\n'
+		TESTS_FAILED=$((TESTS_FAILED + 1))
+	fi
+	TESTS_RUN=$((TESTS_RUN + 1))
 	assert_gate "unresolved late inline finding blocks merge" unresolved 1
 	assert_gate "late review activity invalidates stale gate success" stale_gate 1
 	_PULSE_REVIEW_GATE_EVIDENCE=""
