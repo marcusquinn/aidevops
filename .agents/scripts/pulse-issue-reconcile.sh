@@ -1381,8 +1381,10 @@ reconcile_issues_single_pass() {
 			if [[ -r "$objective_cache_file" ]]; then
 				objective_prs=$(jq -c --arg slug "$slug" '.[$slug].prs // []' "$objective_cache_file" 2>/dev/null) || objective_prs="[]"
 			fi
-			objective_input=$(jq -nc --argjson issues "$issues_json" --argjson prs "$objective_prs" \
-				--arg merged "$oimp_lookup" '{issues:$issues, prs:$prs, merged_lookup:$merged}') || objective_input=""
+			# GH#27803: issue and PR caches can exceed Linux MAX_ARG_STRLEN.
+			# Stream both JSON documents to jq instead of passing either via argv.
+			objective_input=$(printf '%s\n%s\n' "$issues_json" "$objective_prs" | jq -sc \
+				--arg merged "$oimp_lookup" '{issues: .[0], prs: .[1], merged_lookup: $merged}') || objective_input=""
 			if [[ -n "$objective_input" ]]; then
 				printf '%s' "$objective_input" | "$objective_helper" reconcile --repo "$slug" \
 					--max-repairs "${AIDEVOPS_OBJECTIVE_MAX_REPAIRS:-25}" >/dev/null 2>&1 || true
