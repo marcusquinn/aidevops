@@ -43,6 +43,16 @@ on:
         required: false
         default: 'ubuntu-latest'
         type: string
+      rate_limit_behavior:
+        description: 'API/bot rate-limit policy: pass (default) or wait'
+        required: false
+        default: 'pass'
+        type: string
+      completion_behavior:
+        description: 'Review completion policy: fast (default) or strict'
+        required: false
+        default: 'fast'
+        type: string
     secrets:
       AIDEVOPS_READ_TOKEN:
         required: false
@@ -117,21 +127,28 @@ jobs:
           REVIEW_GATE_REVIEW_STATE: ${{ github.event.review.state || '' }}
           REVIEW_GATE_EVIDENCE_HEAD_SHA: ${{ github.event.review.commit_id || github.event.comment.commit_id || '' }}
           REVIEW_GATE_EXPECTED_HEAD_SHA: ${{ github.event.pull_request.head.sha || '' }}
+          REVIEW_GATE_AUTHOR_ASSOCIATION: ${{ github.event.pull_request.author_association || github.event.issue.author_association || '' }}
+          REVIEW_GATE_RATE_LIMIT_BEHAVIOR: ${{ inputs.rate_limit_behavior }}
+          REVIEW_GATE_COMPLETION_BEHAVIOR: ${{ inputs.completion_behavior }}
         run: |
           echo "Checking PR #${PR_NUMBER} for AI review bot activity..."
 
-          # Check if this is an external contributor PR.
+          # Check if this is an external contributor PR using immutable event
+          # evidence, so API exhaustion cannot accidentally grant trust.
           # GH#17671: external-contributor PRs require real bot reviews;
           # rate-limit grace is disabled — they cannot merge on rate-limit-only.
-          IS_EXTERNAL_PR=false
-          PR_LABELS=$(gh pr view "${PR_NUMBER}" --repo "${REPO}" \
-            --json labels --jq '.labels[].name' 2>/dev/null || true)
-          if echo "${PR_LABELS}" | grep -q 'external-contributor'; then
+          #aidevops:trust-boundary
+          case "${REVIEW_GATE_AUTHOR_ASSOCIATION}" in
+          OWNER|MEMBER|COLLABORATOR)
+            IS_EXTERNAL_PR=false
+            ;;
+          *)
             IS_EXTERNAL_PR=true
             echo "External contributor PR detected — rate-limit grace DISABLED"
             # Override to 'wait': prevents the default PASS_RATE_LIMITED shortcut.
             export REVIEW_GATE_RATE_LIMIT_BEHAVIOR=wait
-          fi
+            ;;
+          esac
           echo "is_external_pr=${IS_EXTERNAL_PR}" >> "${GITHUB_OUTPUT}"
 
           # Invoke the framework helper (runtime-fetched via __aidevops/).
@@ -155,12 +172,21 @@ jobs:
           fi
           cat "${HELPER_STDERR}" >&2
 
+          INFRA_DEFERRED=false
           # API exhaustion is an infrastructure condition, not evidence that a
-          # bot failed to review. Preserve fail-closed behavior while reporting
-          # the truthful reason and avoiding more API calls in this run.
+          # bot failed to review. Trusted default-pass PRs defer late feedback to
+          # the post-merge scanner; external or explicit wait/strict policies
+          # remain fail-closed. The classifier uses event/config evidence only.
           if grep -qiE 'API rate limit exceeded|x-ratelimit-remaining[^0-9]*0' "${HELPER_STDERR}"; then
-            RESULT="INFRA_RATE_LIMITED"
-            HELPER_EXIT=2
+            RESULT=$(bash "${HELPER}" classify-infra-rate-limit \
+              "${REVIEW_GATE_AUTHOR_ASSOCIATION}" "${REPO}")
+            if [[ "${RESULT}" == "PASS_RATE_LIMITED" ]]; then
+              HELPER_EXIT=0
+              INFRA_DEFERRED=true
+              echo "GitHub API quota exhausted; trusted default-pass policy delegates late feedback to the post-merge review scanner."
+            else
+              HELPER_EXIT=2
+            fi
           fi
           rm -f "${HELPER_STDERR}"
 
@@ -182,6 +208,7 @@ jobs:
             echo "gate_passed=false" >> "${GITHUB_OUTPUT}"
           fi
           echo "result=${RESULT}" >> "${GITHUB_OUTPUT}"
+          echo "infra_deferred=${INFRA_DEFERRED}" >> "${GITHUB_OUTPUT}"
 
       - name: Check for skip label
         id: skip
@@ -212,6 +239,7 @@ jobs:
         if: steps.check.outputs.gate_passed != 'true' && steps.skip.outputs.skip != 'true'
         env:
           RESULT: ${{ steps.check.outputs.result }}
+          INFRA_DEFERRED: ${{ steps.check.outputs.infra_deferred }}
         run: |
           if [[ "${RESULT}" == "INFRA_RATE_LIMITED" ]]; then
             echo "::error::Review state could not be evaluated because GitHub API quota is exhausted."
@@ -265,7 +293,11 @@ jobs:
 
           if [[ "${GATE_PASSED}" == "true" ]] || [[ "${SKIP_GATE}" == "true" ]]; then
             STATE=success
-            DESC="Review bot gate passed (${RESULT:-SKIP})"
+            if [[ "${INFRA_DEFERRED}" == "true" ]]; then
+              DESC="Review API unavailable — late feedback deferred post-merge"
+            else
+              DESC="Review bot gate passed (${RESULT:-SKIP})"
+            fi
           elif [[ "${RESULT}" == "INFRA_RATE_LIMITED" ]]; then
             STATE=failure
             DESC="Review bot gate infrastructure wait — GitHub API quota exhausted"
@@ -307,11 +339,18 @@ jobs:
           GATE_PASSED: ${{ steps.check.outputs.gate_passed }}
           RESULT: ${{ steps.check.outputs.result }}
           SKIP_GATE: ${{ steps.skip.outputs.skip }}
+          INFRA_DEFERRED: ${{ steps.check.outputs.infra_deferred }}
         run: |
           {
             echo "## Review Bot Gate"
             echo ""
-            if [[ "${GATE_PASSED}" == "true" && "${RESULT}" == "PASS_RATE_LIMITED" ]]; then
+            if [[ "${GATE_PASSED}" == "true" && "${INFRA_DEFERRED}" == "true" ]]; then
+              echo "**Status**: PASSED (GitHub API unavailable; deferred review)"
+              echo ""
+              echo "The PR author is trusted and rate_limit_behavior=pass with"
+              echo "non-strict completion. No API retry was attempted; late bot"
+              echo "feedback is delegated to the post-merge review scanner."
+            elif [[ "${GATE_PASSED}" == "true" && "${RESULT}" == "PASS_RATE_LIMITED" ]]; then
               echo "**Status**: PASSED (rate-limit grace)"
               echo ""
               echo "Bots are rate-limited (tried but capacity-constrained). Passing"

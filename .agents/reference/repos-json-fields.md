@@ -117,12 +117,14 @@ Global equivalent: `orchestration.interactive_pr_auto_merge` in `~/.config/aidev
 
 | Field | Default | Description |
 |-------|---------|-------------|
-| `rate_limit_behavior` | `"pass"` | `"pass"` exits 0 on rate-limit; `"wait"` keeps polling |
+| `rate_limit_behavior` | `"pass"` | `"pass"` exits 0 for bot rate limits and trusted internal API exhaustion, delegating late feedback to the post-merge scanner; `"wait"` blocks when evidence cannot be evaluated. External/unknown authors always block. |
 | `min_edit_lag_seconds` | 30 | Seconds a bot comment must be "settled" before it counts. Defeats CodeRabbit's two-phase placeholder (stub at ~14s, final edit at ~90-120s). |
 | `advisory_check_contexts` | `[]` | Exact non-required review-provider check names that may be advisory only when typed live evidence permits the outcome for the current PR head and review threads are resolved. Required, maintainer-gate, unknown, malformed-evidence, and external rate-limit failures always block. |
 | `tools` | — | Per-tool overrides keyed by bot login (`coderabbitai`, `gemini-code-assist`, `augment-code`, `augmentcode`, `copilot`) |
 
 Resolution order (per field independently): per-tool > per-repo > env var (`REVIEW_GATE_RATE_LIMIT_BEHAVIOR` / `REVIEW_BOT_MIN_EDIT_LAG_SECONDS`) > hard default.
+
+The reusable workflow exposes matching `rate_limit_behavior` and `completion_behavior` inputs for CI callers. Their defaults are `pass` and `fast`; set either `rate_limit_behavior: wait` or `completion_behavior: strict` to keep GitHub API exhaustion fail-closed. Per-tool `wait`/`strict` overrides also fail closed when the unavailable API prevents identifying which provider supplied evidence.
 
 CLI: `aidevops review-gate --help` — configure rate-limit/completion policy and add or remove exact advisory check contexts without hand-editing JSON.
 
