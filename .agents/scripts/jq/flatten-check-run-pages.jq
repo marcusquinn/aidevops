@@ -1,3 +1,6 @@
 {
-  check_runs: [.[] | .check_runs[]?]
+  check_runs: [
+    (if type == "array" then . else [] end)[]?
+    | .check_runs[]?
+  ]
 }

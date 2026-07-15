@@ -80,8 +80,20 @@ jq -e '
   any(.check_runs[]; .id == 101 and .name == "Framework Validation")
 ' <<<"$FLATTENED" >/dev/null
 
-grep -Fq 'gh api --paginate --slurp' "${REPO_ROOT}/.github/workflows/postflight.yml"
-grep -Fq 'flatten-check-run-pages.jq' "${REPO_ROOT}/.github/workflows/postflight.yml"
+for INVALID_RESPONSE in 'null' '{"message":"API unavailable"}'; do
+	jq -e -f "$PAGINATION_FILTER" <<<"$INVALID_RESPONSE" |
+		jq -e '.check_runs == []' >/dev/null
+done
+
+if ! grep -Fq 'gh api --paginate --slurp' "${REPO_ROOT}/.github/workflows/postflight.yml"; then
+	printf 'FAIL: postflight does not request all check-run pages\n' >&2
+	exit 1
+fi
+
+if ! grep -Fq 'flatten-check-run-pages.jq' "${REPO_ROOT}/.github/workflows/postflight.yml"; then
+	printf 'FAIL: postflight does not flatten paginated check-run responses\n' >&2
+	exit 1
+fi
 
 printf 'PASS: postflight retains check-run evidence beyond the first API page\n'
 
