@@ -184,12 +184,20 @@ _push_finalize_task_creation() {
 		return 1
 	fi
 	[[ -n "$tier_label" ]] && _apply_tier_label_replace "$repo" "$_PUSH_CREATED_NUM" "$tier_label"
-	sync_relationships_for_task "$task_id" "$todo_file" "$repo"
+	local relationships_pending=false
+	if ! sync_relationships_for_task "$task_id" "$todo_file" "$repo"; then
+		relationships_pending=true
+		print_warning "Created #${_PUSH_CREATED_NUM}; durable mapping preserved, but relationship sync is pending"
+	fi
 	if [[ ",${labels}," == *",parent-task,"* ]] &&
 		! _parent_body_has_phase_markers "$body"; then
 		_post_parent_task_no_markers_warning "$repo" "$_PUSH_CREATED_NUM" || true
 	fi
-	echo "CREATED"
+	if [[ "$relationships_pending" == "true" ]]; then
+		echo "CREATED RELATIONSHIPS_PENDING"
+	else
+		echo "CREATED"
+	fi
 	return 0
 }
 
@@ -372,8 +380,12 @@ _enrich_process_task() {
 	if _enrich_update_issue "$repo" "$num" "$task_id" "$title" "$body" "$current_title" "$current_body"; then
 		print_success "Enriched #$num ($task_id)"
 		# Sync relationships (blocked-by, sub-issues) after enrichment (t1889)
-		sync_relationships_for_task "$task_id" "$todo_file" "$repo"
-		echo "ENRICHED"
+		if sync_relationships_for_task "$task_id" "$todo_file" "$repo"; then
+			echo "ENRICHED"
+		else
+			print_warning "Enriched #$num; issue update preserved, but relationship sync is pending"
+			echo "ENRICHED RELATIONSHIPS_PENDING"
+		fi
 	fi
 	return 0
 }

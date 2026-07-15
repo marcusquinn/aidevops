@@ -324,14 +324,16 @@ _gh_cooldown_context_from_args() {
 }
 
 # _gh_with_timeout — invoke a command (typically `gh ...`) with a wall-clock
-# cap classified by operation type. Falls through to direct invocation when
-# coreutils `timeout` is not on PATH (rare; macOS users have it via Homebrew
-# coreutils, Linux distros ship it by default).
+# cap classified by operation type. Uses timeout_sec when shared constants are
+# loaded, covering GNU timeout, macOS gtimeout, and the bare-macOS fallback.
 #
 # Usage:
 #   _gh_with_timeout read  gh issue list --repo owner/repo --state open
 #   _gh_with_timeout write gh issue edit 123 --repo owner/repo --add-label foo
 #   _gh_with_timeout read  gh api /repos/owner/repo/issues
+#
+# Set AIDEVOPS_GH_DEADLINE_EPOCH to an absolute Unix timestamp to cap each
+# invocation to the remaining aggregate operation budget.
 #
 # Exit codes:
 #   124 = timeout fired (per coreutils convention)
@@ -349,6 +351,14 @@ _gh_with_timeout() {
 	write) secs="${AIDEVOPS_GH_WRITE_TIMEOUT:-45}" ;;
 	*) secs=30 ;;
 	esac
+	local deadline_epoch="${AIDEVOPS_GH_DEADLINE_EPOCH:-}"
+	local now_epoch="" remaining_secs=""
+	if [[ "$deadline_epoch" =~ ^[0-9]+$ ]]; then
+		now_epoch=$(date +%s 2>/dev/null) || return 124
+		remaining_secs=$((deadline_epoch - now_epoch))
+		[[ "$remaining_secs" -gt 0 ]] || return 124
+		[[ "$remaining_secs" -ge "$secs" ]] || secs="$remaining_secs"
+	fi
 	local cmd="${1:-}"
 	local err_file=""
 	local out_file=""
@@ -386,12 +396,28 @@ $(cat "$err_file" 2>/dev/null || true)"
 			err_file=""
 		}
 	fi
-	if command -v timeout >/dev/null 2>&1; then
+	if command -v timeout_sec >/dev/null 2>&1; then
+		if [[ -n "$err_file" && -n "$out_file" ]]; then
+			timeout_sec "$secs" "$@" >"$out_file" 2>"$err_file"
+			rc=$?
+		else
+			timeout_sec "$secs" "$@"
+			rc=$?
+		fi
+	elif command -v timeout >/dev/null 2>&1; then
 		if [[ -n "$err_file" && -n "$out_file" ]]; then
 			timeout "$secs" "$@" >"$out_file" 2>"$err_file"
 			rc=$?
 		else
 			timeout "$secs" "$@"
+			rc=$?
+		fi
+	elif command -v gtimeout >/dev/null 2>&1; then
+		if [[ -n "$err_file" && -n "$out_file" ]]; then
+			gtimeout "$secs" "$@" >"$out_file" 2>"$err_file"
+			rc=$?
+		else
+			gtimeout "$secs" "$@"
 			rc=$?
 		fi
 	else
