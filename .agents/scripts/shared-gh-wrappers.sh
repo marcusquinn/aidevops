@@ -338,6 +338,25 @@ _gh_cooldown_context_from_args() {
 # Exit codes:
 #   124 = timeout fired (per coreutils convention)
 #   *   = passthrough from the wrapped command
+_gh_run_bounded_command() {
+	local secs="$1"
+	shift
+	if command -v timeout_sec >/dev/null 2>&1; then
+		timeout_sec "$secs" "$@"
+		return $?
+	fi
+	if command -v timeout >/dev/null 2>&1; then
+		timeout "$secs" "$@"
+		return $?
+	fi
+	if command -v gtimeout >/dev/null 2>&1; then
+		gtimeout "$secs" "$@"
+		return $?
+	fi
+	"$@"
+	return $?
+}
+
 _gh_with_timeout() {
 	local op_class="${1:-read}"
 	shift
@@ -396,38 +415,12 @@ $(cat "$err_file" 2>/dev/null || true)"
 			err_file=""
 		}
 	fi
-	if command -v timeout_sec >/dev/null 2>&1; then
-		if [[ -n "$err_file" && -n "$out_file" ]]; then
-			timeout_sec "$secs" "$@" >"$out_file" 2>"$err_file"
-			rc=$?
-		else
-			timeout_sec "$secs" "$@"
-			rc=$?
-		fi
-	elif command -v timeout >/dev/null 2>&1; then
-		if [[ -n "$err_file" && -n "$out_file" ]]; then
-			timeout "$secs" "$@" >"$out_file" 2>"$err_file"
-			rc=$?
-		else
-			timeout "$secs" "$@"
-			rc=$?
-		fi
-	elif command -v gtimeout >/dev/null 2>&1; then
-		if [[ -n "$err_file" && -n "$out_file" ]]; then
-			gtimeout "$secs" "$@" >"$out_file" 2>"$err_file"
-			rc=$?
-		else
-			gtimeout "$secs" "$@"
-			rc=$?
-		fi
+	if [[ -n "$err_file" && -n "$out_file" ]]; then
+		_gh_run_bounded_command "$secs" "$@" >"$out_file" 2>"$err_file"
+		rc=$?
 	else
-		if [[ -n "$err_file" && -n "$out_file" ]]; then
-			"$@" >"$out_file" 2>"$err_file"
-			rc=$?
-		else
-			"$@"
-			rc=$?
-		fi
+		_gh_run_bounded_command "$secs" "$@"
+		rc=$?
 	fi
 	if [[ -n "$err_file" && -n "$out_file" ]]; then
 		cat "$out_file" 2>/dev/null || true

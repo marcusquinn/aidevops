@@ -56,6 +56,7 @@ _NODE_ID_RATE_LIMITED_FILE=""
 # helpers are commonly called through command substitutions; file writes
 # survive those subshell boundaries while Bash variables do not.
 _RELATIONSHIP_EDGE_SEEN_FILE=""
+_RELATIONSHIP_RETRY_RESULT="RELS:0 RETRYABLE:1"
 
 _init_relationship_sync_state() {
 	_init_node_id_cache
@@ -738,11 +739,11 @@ sync_relationships_for_task() {
 		return 1
 	}
 	local result="" retryable_total=0 count=""
-	result=$(_sync_blocked_by_for_task "$task_id" "$todo_file" "$repo" 2>/dev/null || echo "RELS:0 RETRYABLE:1")
+	result=$(_sync_blocked_by_for_task "$task_id" "$todo_file" "$repo" 2>/dev/null || echo "$_RELATIONSHIP_RETRY_RESULT")
 	count=$(echo "$result" | grep -oE 'RETRYABLE:[0-9]+' | head -1 | sed 's/RETRYABLE://' || echo "0")
 	retryable_total=$((retryable_total + count))
 	if ! _relationship_deadline_expired; then
-		result=$(_sync_subtask_hierarchy_for_task "$task_id" "$todo_file" "$repo" 2>/dev/null || echo "RELS:0 RETRYABLE:1")
+		result=$(_sync_subtask_hierarchy_for_task "$task_id" "$todo_file" "$repo" 2>/dev/null || echo "$_RELATIONSHIP_RETRY_RESULT")
 		count=$(echo "$result" | grep -oE 'RETRYABLE:[0-9]+' | head -1 | sed 's/RETRYABLE://' || echo "0")
 		retryable_total=$((retryable_total + count))
 	else
@@ -837,7 +838,7 @@ cmd_relationships() {
 			deadline_exhausted=true
 			retryable_total=$((retryable_total + 1))
 		else
-			result=$(_sync_subtask_hierarchy_for_task "$task_id" "$todo_file" "$repo" 2>/dev/null || echo "RELS:0 RETRYABLE:1")
+			result=$(_sync_subtask_hierarchy_for_task "$task_id" "$todo_file" "$repo" 2>/dev/null || echo "$_RELATIONSHIP_RETRY_RESULT")
 			n=$(echo "$result" | grep -oE 'RELS:[0-9]+' | head -1 | sed 's/RELS://' || echo "0")
 			sub_set=$((sub_set + n))
 			n=$(echo "$result" | grep -oE 'RETRYABLE:[0-9]+' | head -1 | sed 's/RETRYABLE://' || echo "0")
@@ -1028,8 +1029,9 @@ _detect_parent_from_gh_state() {
 # Echoes one of: "LINKED <child>:<parent>", "SKIPPED <child>", "DRY <child>:<parent>"
 _backfill_one_issue() {
 	local num="$1" repo="$2" prefetched_title="${3:-}" prefetched_body="${4:-}"
+	local backfill_skipped="SKIPPED"
 	[[ -z "$num" || -z "$repo" ]] && {
-		echo "SKIPPED $num"
+		echo "$backfill_skipped $num"
 		return 0
 	}
 
@@ -1046,14 +1048,14 @@ _backfill_one_issue() {
 		body=$(printf '%s' "$meta" | jq -r '.body // ""' 2>/dev/null)
 	fi
 	if [[ -z "$title" ]]; then
-		echo "SKIPPED $num"
+		echo "$backfill_skipped $num"
 		return 0
 	fi
 
 	local parent_num
 	parent_num=$(_detect_parent_from_gh_state "$title" "$body" "$repo")
 	if [[ -z "$parent_num" || "$parent_num" == "$num" ]]; then
-		echo "SKIPPED $num"
+		echo "$backfill_skipped $num"
 		return 0
 	fi
 
@@ -1073,7 +1075,7 @@ _backfill_one_issue() {
 		if [[ "$_rate_limited" == "1" ]]; then
 			echo "RATE_LIMITED $num"
 		else
-			echo "SKIPPED $num"
+			echo "$backfill_skipped $num"
 		fi
 		return 0
 	fi
@@ -1083,7 +1085,7 @@ _backfill_one_issue() {
 		echo "LINKED $num:$parent_num"
 		return 0
 	fi
-	echo "SKIPPED $num"
+	echo "$backfill_skipped $num"
 	return 0
 }
 
