@@ -82,6 +82,24 @@ setup_test_env() {
       }
     },
     {
+      "path": "/tmp/waitrepo",
+      "slug": "testorg/waitrepo",
+      "pulse": true,
+      "review_gate": {
+        "rate_limit_behavior": "wait"
+      }
+    },
+    {
+      "path": "/tmp/toolstrictrepo",
+      "slug": "testorg/toolstrictrepo",
+      "pulse": true,
+      "review_gate": {
+        "tools": {
+          "coderabbitai": { "completion_behavior": "strict" }
+        }
+      }
+    },
+    {
       "path": "/tmp/otherrepo",
       "slug": "testorg/otherrepo",
       "pulse": true
@@ -250,6 +268,42 @@ test_self_caller_uses_pr_head_helper_ref() {
 		print_result "self-caller validates the PR-head helper revision" 0
 	else
 		print_result "self-caller validates the PR-head helper revision" 1 "caller=${caller}"
+	fi
+	return 0
+}
+
+test_infra_rate_limit_passes_trusted_default_policy() {
+	local output
+	output=$(classify_infra_rate_limit "MEMBER" "testorg/otherrepo")
+	if [[ "$output" == "PASS_RATE_LIMITED" ]]; then
+		print_result "API exhaustion passes for trusted default policy" 0
+	else
+		print_result "API exhaustion passes for trusted default policy" 1 "output=${output}"
+	fi
+	return 0
+}
+
+test_infra_rate_limit_blocks_external_author() {
+	local output
+	output=$(classify_infra_rate_limit "CONTRIBUTOR" "testorg/otherrepo")
+	if [[ "$output" == "INFRA_RATE_LIMITED" ]]; then
+		print_result "API exhaustion fails closed for external authors" 0
+	else
+		print_result "API exhaustion fails closed for external authors" 1 "output=${output}"
+	fi
+	return 0
+}
+
+test_infra_rate_limit_blocks_explicit_wait_or_strict_policy() {
+	local wait_output strict_output tool_strict_output
+	wait_output=$(classify_infra_rate_limit "OWNER" "testorg/waitrepo")
+	strict_output=$(classify_infra_rate_limit "OWNER" "testorg/strictrepo")
+	tool_strict_output=$(classify_infra_rate_limit "OWNER" "testorg/toolstrictrepo")
+	if [[ "$wait_output" == "INFRA_RATE_LIMITED" && "$strict_output" == "INFRA_RATE_LIMITED" && "$tool_strict_output" == "INFRA_RATE_LIMITED" ]]; then
+		print_result "API exhaustion honors explicit wait and strict policies" 0
+	else
+		print_result "API exhaustion honors explicit wait and strict policies" 1 \
+			"wait=${wait_output} strict=${strict_output} tool_strict=${tool_strict_output}"
 	fi
 	return 0
 }
@@ -1076,6 +1130,9 @@ main() {
 	test_event_check_rejects_bot_failure_notice
 	test_event_check_rejects_stale_head_evidence
 	test_self_caller_uses_pr_head_helper_ref
+	test_infra_rate_limit_passes_trusted_default_policy
+	test_infra_rate_limit_blocks_external_author
+	test_infra_rate_limit_blocks_explicit_wait_or_strict_policy
 	test_is_rate_limit_only_matches_rate_limit
 	test_is_rate_limit_only_rejects_review_failed
 	test_is_rate_limit_only_rejects_review_skipped

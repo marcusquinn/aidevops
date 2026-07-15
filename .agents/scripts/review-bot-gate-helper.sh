@@ -6,6 +6,7 @@
 # Usage:
 #   review-bot-gate-helper.sh check         <PR_NUMBER> [REPO]
 #   review-bot-gate-helper.sh event-check
+#   review-bot-gate-helper.sh classify-infra-rate-limit <AUTHOR_ASSOCIATION> [REPO]
 #   review-bot-gate-helper.sh wait          <PR_NUMBER> [REPO] [MAX_WAIT_SECONDS]
 #   review-bot-gate-helper.sh list          <PR_NUMBER> [REPO]
 #   review-bot-gate-helper.sh request-retry <PR_NUMBER> [REPO]
@@ -15,6 +16,7 @@
 # Commands:
 #   check          — Check once, return PASS/PASS_RATE_LIMITED/WAITING/SKIP
 #   event-check    — Accept trusted bot review evidence from the Actions event
+#   classify-infra-rate-limit — Classify API exhaustion from immutable event trust
 #   wait           — Poll until a bot posts or timeout (default 600s)
 #   list           — List all bot comments found on the PR
 #   request-retry  — If bots were rate-limited and no real review exists,
@@ -150,16 +152,51 @@ REVIEW_BOT_MIN_EDIT_LAG_SECONDS="${REVIEW_BOT_MIN_EDIT_LAG_SECONDS:-30}"
 # --- Functions ---
 
 usage() {
-	echo "Usage: $(basename "$0") {check|event-check|wait|list|request-retry|status-json|batch-retry} <PR_NUMBER> [REPO] [MAX_WAIT]"
+	echo "Usage: $(basename "$0") {check|event-check|classify-infra-rate-limit|wait|list|request-retry|status-json|batch-retry} <PR_NUMBER> [REPO] [MAX_WAIT]"
 	echo ""
 	echo "Commands:"
 	echo "  check          Check once for bot reviews (returns PASS/PASS_RATE_LIMITED/WAITING/SKIP)"
 	echo "  event-check    Check trusted bot review evidence from REVIEW_GATE_EVENT_* variables"
+	echo "  classify-infra-rate-limit  Resolve trusted/default-pass API exhaustion without another API call"
 	echo "  wait           Poll until bot reviews appear or timeout"
 	echo "  list           List all bot comments found"
 	echo "  request-retry  Request review retry if bots were rate-limited (idempotent)"
 	echo "  status-json    Print machine-readable gate status"
 	echo "  batch-retry    Process all open PRs with 0 reviews, request retries (GH#3932)"
+	return 0
+}
+
+classify_infra_rate_limit() {
+	local author_association="$1"
+	local repo_slug="$2"
+	local rate_limit_behavior completion_behavior repos_json strict_tool_override="false"
+
+	#aidevops:trust-boundary
+	case "$author_association" in
+	OWNER | MEMBER | COLLABORATOR) ;;
+	*)
+		printf '%s\n' "INFRA_RATE_LIMITED"
+		return 0
+		;;
+	esac
+
+	rate_limit_behavior=$(_get_rate_limit_behavior "$repo_slug" "")
+	completion_behavior=$(_get_completion_behavior "$repo_slug" "")
+	repos_json="${HOME}/.config/aidevops/repos.json"
+	if [[ -f "$repos_json" ]] && command -v jq >/dev/null 2>&1; then
+		strict_tool_override=$(jq -r --arg slug "$repo_slug" '
+			[first(.initialized_repos[]? | select(.slug == $slug)).review_gate.tools[]?
+			| select(.rate_limit_behavior == "wait" or .completion_behavior == "strict")]
+			| if length > 0 then "true" else "false" end
+		' "$repos_json" 2>/dev/null) || strict_tool_override="true"
+	fi
+
+	if [[ "$rate_limit_behavior" == "pass" && "$completion_behavior" == "fast" && "$strict_tool_override" != "true" ]]; then
+		printf '%s\n' "PASS_RATE_LIMITED"
+		return 0
+	fi
+
+	printf '%s\n' "INFRA_RATE_LIMITED"
 	return 0
 }
 
@@ -1454,6 +1491,17 @@ main() {
 
 	if [[ "$command" == "event-check" ]]; then
 		do_event_check
+		return $?
+	fi
+
+	if [[ "$command" == "classify-infra-rate-limit" ]]; then
+		local author_association="${2:-}"
+		local infra_repo="${3:-}"
+		if [[ -z "$author_association" || -z "$infra_repo" ]]; then
+			echo "ERROR: classify-infra-rate-limit requires AUTHOR_ASSOCIATION and REPO." >&2
+			return 2
+		fi
+		classify_infra_rate_limit "$author_association" "$infra_repo"
 		return $?
 	fi
 
