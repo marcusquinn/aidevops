@@ -37,7 +37,7 @@ exit 42
 EOF
 printf '#!/usr/bin/env bash\nexit 1\n' >"$TEST_HOME/bin/curl"
 chmod +x "$TEST_HOME/bin/curl"
-result=$(cd "$TEST_HOME" && HOME="$TEST_HOME" PATH="$TEST_HOME/bin:/usr/bin:/bin" bash "$REPO_DIR/bin/aidevops" --version)
+result=$(cd "$TEST_HOME" && HOME="$TEST_HOME" PATH="$TEST_HOME/bin:$PATH" bash "$REPO_DIR/bin/aidevops" --version)
 [[ "$result" == "aidevops 9.8.7" ]] || {
 	printf 'FAIL: real deployed CLI selected %s\n' "$result" >&2
 	exit 1
