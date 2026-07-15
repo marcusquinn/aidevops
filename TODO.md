@@ -4607,3 +4607,5 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [ ] t18131 Benchmark API savings, tune rollout, and retire flags #auto-dispatch #efficiency #enhancement #framework #github-api #observability #pulse ref:GH#27777
 
 - [ ] t18132 Prevent cross-install upstream-watch duplicate issues #auto-dispatch #bug #framework #reliability ref:GH#27821
+
+- [ ] t18136 Prevent LaunchAgents from pinning stale runtime-bundle PATH entries #bug #framework #pulse #reliability ref:GH#27851
