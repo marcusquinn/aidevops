@@ -173,6 +173,48 @@ test_malformed_json_logs_warn_and_emits_nothing() {
 	return 0
 }
 
+test_default_path_prefers_stable_config_with_legacy_fallback() {
+	local original_home="$HOME"
+	local label="com.aidevops.aidevops-supervisor-pulse"
+	local legacy_file="$TEST_DIR/home/.aidevops/agents/configs/plist-env-overrides.json"
+	local stable_file="$TEST_DIR/home/.config/aidevops/plist-env-overrides.json"
+	local output=""
+	local ok=0
+	HOME="$TEST_DIR/home"
+	mkdir -p "${legacy_file%/*}" "${stable_file%/*}"
+	printf '{"%s":{"LEGACY_KEY":"legacy-value"}}\n' "$label" >"$legacy_file"
+
+	output=$(_build_plist_env_overrides_xml "$label")
+	[[ "$output" == *"LEGACY_KEY"* && "$output" == *"legacy-value"* ]] || ok=1
+	printf '{"%s":{"STABLE_KEY":"stable-value"}}\n' "$label" >"$stable_file"
+	output=$(_build_plist_env_overrides_xml "$label")
+	[[ "$output" == *"STABLE_KEY"* && "$output" == *"stable-value"* ]] || ok=1
+	[[ "$output" != *"LEGACY_KEY"* && "$output" != *"legacy-value"* ]] || ok=1
+
+	HOME="$original_home"
+	print_result "default_path: stable config wins with legacy fallback" "$ok" "output was: $output"
+	return 0
+}
+
+test_logging_contains_keys_not_values() {
+	local override_file="$TEST_DIR/logging-plist-env-overrides.json"
+	local output=""
+	local ok=0
+	cat >"$override_file" <<'EOF'
+{
+  "com.aidevops.aidevops-supervisor-pulse": {
+    "VISIBLE_KEY_NAME": "value-must-not-be-logged"
+  }
+}
+EOF
+	print_info() { printf '%s\n' "$*"; return 0; }
+	output=$(_log_plist_env_overrides "com.aidevops.aidevops-supervisor-pulse" "$override_file")
+	[[ "$output" == *"VISIBLE_KEY_NAME"* ]] || ok=1
+	[[ "$output" != *"value-must-not-be-logged"* ]] || ok=1
+	print_result "logging: reports override keys without values" "$ok" "output was: $output"
+	return 0
+}
+
 test_xml_structure_valid() {
 	# Check that the output is parseable XML when embedded in a minimal plist.
 	# Only runs if xmllint is available.
@@ -229,6 +271,8 @@ main() {
 	test_underscore_keys_skipped
 	test_no_label_match_emits_nothing
 	test_malformed_json_logs_warn_and_emits_nothing
+	test_default_path_prefers_stable_config_with_legacy_fallback
+	test_logging_contains_keys_not_values
 	test_xml_structure_valid
 
 	echo ""
