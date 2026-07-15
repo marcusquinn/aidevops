@@ -165,6 +165,23 @@ _pulse_runtime_bundle_id() {
 	return 0
 }
 
+_pulse_launchd_supervisor_disabled() {
+	local os_name="${AIDEVOPS_PULSE_OS_NAME:-}"
+	local pulse_label="${AIDEVOPS_PULSE_LAUNCHD_LABEL:-com.aidevops.aidevops-supervisor-pulse}"
+	local disabled_state=""
+	local disabled_line=""
+	[[ -n "$os_name" ]] || os_name=$(uname -s 2>/dev/null || printf 'unknown')
+	[[ "$os_name" == "Darwin" ]] || return 1
+	command -v launchctl >/dev/null 2>&1 || return 1
+	disabled_state=$(launchctl print-disabled "gui/$(id -u)" 2>/dev/null) || return 1
+	while IFS= read -r disabled_line; do
+		if [[ "$disabled_line" == *"$pulse_label"* && "$disabled_line" == *"=> true"* ]]; then
+			return 0
+		fi
+	done <<<"$disabled_state"
+	return 1
+}
+
 # _pulse_pids_raw: print ALL matching pulse PIDs including subshells of the
 # pulse cycle (one per line). Used by _stop_all which must SIGTERM every
 # pulse process — not just the top-level one (GH#21549).
@@ -405,6 +422,7 @@ _reconcile_managed() {
 	local runtime_module="${_PULSE_AGENTS_DIR}/scripts/setup/modules/agent-runtime.sh"
 	local reconcile_rc=0
 	local bundle_id=""
+	local supervisor_disabled=false
 
 	if [[ ! -r "$runtime_module" ]]; then
 		_pl_err "Runtime transition support is missing from the activated bundle"
@@ -417,10 +435,16 @@ _reconcile_managed() {
 		return 1
 	fi
 
+	if [[ "${AIDEVOPS_PULSE_MANAGED_ENABLED:-false}" != "true" ]]; then
+		supervisor_disabled=true
+	elif _pulse_launchd_supervisor_disabled; then
+		supervisor_disabled=true
+	fi
+
 	if ! _pulse_refresh_active_runtime; then
 		_pl_err "Unable to resolve the active runtime bundle"
 		reconcile_rc=1
-	elif [[ "${AIDEVOPS_PULSE_MANAGED_ENABLED:-false}" != "true" ]]; then
+	elif [[ "$supervisor_disabled" == "true" ]]; then
 		_stop_all || reconcile_rc=$?
 		[[ "$reconcile_rc" -eq 0 ]] && _pl_info "Pulse remains stopped because its supervisor is disabled"
 	else

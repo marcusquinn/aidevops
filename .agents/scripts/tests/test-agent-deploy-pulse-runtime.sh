@@ -163,6 +163,38 @@ test_concurrent_transition_converges_on_active_bundle() {
 	return 0
 }
 
+test_launchd_disabled_service_stays_stopped() {
+	local active_root="$1"
+	local active_link="$2"
+	local fake_bin="$TEST_ROOT/fake-bin"
+	local starts_before=""
+	local starts_after=""
+	mkdir -p "$fake_bin"
+	cat >"$fake_bin/launchctl" <<'SH'
+#!/usr/bin/env bash
+command_name="${1:-}"
+if [[ "$command_name" == "print-disabled" ]]; then
+	printf '%s\n' '    "com.aidevops.aidevops-supervisor-pulse" => true'
+	exit 0
+fi
+exit 1
+SH
+	chmod +x "$fake_bin/launchctl"
+	starts_before=$(wc -l <"$PULSE_START_LOG" | tr -d ' ')
+	(
+		export PATH="$fake_bin:$PATH"
+		export AIDEVOPS_PULSE_OS_NAME=Darwin
+		_restart_pulse_if_running "$active_root/agents" true "$active_link" >/dev/null
+	)
+	starts_after=$(wc -l <"$PULSE_START_LOG" | tr -d ' ')
+	[[ "$starts_after" == "$starts_before" ]] || fail "disabled launchd reconciliation started a new Pulse"
+	if pgrep -f "$PULSE_PATTERN" >/dev/null 2>&1; then
+		fail "disabled launchd service reconciliation left Pulse running"
+	fi
+	pass "disabled launchd service remains authoritative without a manual fallback"
+	return 0
+}
+
 main() {
 	local stale_root=""
 	local active_root=""
@@ -189,11 +221,13 @@ main() {
 	export AIDEVOPS_PULSE_PROCESS_PATTERN="$PULSE_PATTERN"
 	export AIDEVOPS_PULSE_RESTART_WAIT=0
 	export AIDEVOPS_PULSE_SIGTERM_WAIT=1
+	export AIDEVOPS_PULSE_OS_NAME=Linux
 	export AIDEVOPS_RUNTIME_TRANSITION_LOCK_WAIT_SECONDS=10
 
 	test_stale_install_dir_uses_active_bundle "$stale_root" "$active_root" "$active_link"
 	test_disabled_supervisor_stays_stopped "$active_root" "$active_link"
 	test_concurrent_transition_converges_on_active_bundle "$stale_root" "$active_root" "$active_link"
+	test_launchd_disabled_service_stays_stopped "$active_root" "$active_link"
 
 	printf 'Results: %s checks passed\n' "$TESTS_RUN"
 	return 0
