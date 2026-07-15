@@ -434,6 +434,8 @@ if [[ "${NATIVE_PAGINATED_RESPONSE:-0}" == "1" ]]; then
 			printf 'Link: <https://ghe.example/api/v3/repos/fixture/items?per_page=100&page=2>; rel="next"\r\n'
 		elif [[ "${NATIVE_COMMA_LINK:-0}" == "1" ]]; then
 			printf 'Link: <https://api.github.com/repos/fixture/items?labels=bug,help-wanted&page=2>; rel="next"\r\n'
+		elif [[ "${NATIVE_QUERY_REL_ONLY:-0}" == "1" ]]; then
+			printf 'Link: <https://api.github.com/repos/fixture/items?per_page=100&page=2&rel=next>; rel="prev"\r\n'
 		else
 			printf 'Link: <repos/fixture/items?per_page=100&page=2>; rel="next"\r\n'
 		fi
@@ -552,6 +554,16 @@ comma_link_output=$(PATH="$NATIVE_FIXTURE:/usr/bin:/bin" AIDEVOPS_GH_SHIM_NO_RES
 	'/repos/private-owner/private-repo/issues?per_page=100' --jq '.[].page')
 assert_eq "comma-bearing Link pagination preserves output" $'1\n2' "$comma_link_output"
 assert_eq "comma-bearing next endpoint remains intact" "1" "$(grep -c '^repos/fixture/items?labels=bug,help-wanted&page=2$' "$NATIVE_ATTEMPT_LOG")"
+
+# A URL query parameter named rel must not override the Link relation declared
+# after the closing angle bracket.
+rm -f "$AIDEVOPS_GH_API_LOG" "$NATIVE_ATTEMPT_LOG"
+query_rel_output=$(PATH="$NATIVE_FIXTURE:/usr/bin:/bin" AIDEVOPS_GH_SHIM_NO_REST_REWRITE=1 \
+	NATIVE_PAGINATED_RESPONSE=1 NATIVE_QUERY_REL_ONLY=1 \
+	"$SHIM_FIXTURE/gh" api --paginate \
+	'/repos/private-owner/private-repo/issues?per_page=100' --jq '.[].page')
+assert_eq "URL query rel does not impersonate the Link relation" "1" "$query_rel_output"
+assert_eq "non-next Link relation stops after the first page" "1" "$(grep -c '^api$' "$NATIVE_ATTEMPT_LOG")"
 
 # Raw bodies remain byte-for-byte intact, including a missing final newline.
 raw_actual="$TMPDIR/raw-pagination.actual"

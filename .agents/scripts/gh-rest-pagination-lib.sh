@@ -262,7 +262,7 @@ _ghrp_split_included_response() {
 		END { if (!found) exit 1 }
 	' "$response_file") || return 1
 	[[ "$body_offset" =~ ^[0-9]+$ && "$body_offset" -gt 0 ]] || return 1
-	command dd if="$response_file" of="$header_file" bs=1 count="$body_offset" 2>/dev/null || return 1
+	command dd if="$response_file" of="$header_file" bs="$body_offset" count=1 2>/dev/null || return 1
 	command dd if="$response_file" of="$body_file" bs="$body_offset" skip=1 2>/dev/null || return 1
 	return 0
 }
@@ -272,9 +272,7 @@ _ghrp_next_endpoint() {
 	local target=""
 	local authority=""
 	target=$(LC_ALL=C awk -v invalid="$_GHRP_INVALID_NEXT_SENTINEL" '
-		function emit_next(segment, lower, start_at, remainder, end_at) {
-			lower = tolower(segment)
-			if (lower !~ /rel[[:space:]]*=[[:space:]]*"?next"?/) return 0
+		function emit_next(segment, start_at, remainder, end_at, params) {
 			start_at = index(segment, "<")
 			if (start_at == 0) {
 				print invalid
@@ -286,6 +284,9 @@ _ghrp_next_endpoint() {
 				print invalid
 				return 1
 			}
+			params = tolower(substr(remainder, end_at + 1))
+			if (params !~ /(^|[;[:space:]])rel[[:space:]]*=[[:space:]]*"next"([;[:space:]]|$)/ &&
+				params !~ /(^|[;[:space:]])rel[[:space:]]*=[[:space:]]*next([;[:space:]]|$)/) return 0
 			print substr(remainder, 1, end_at - 1)
 			return 1
 		}

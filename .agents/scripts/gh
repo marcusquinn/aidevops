@@ -385,8 +385,8 @@ _shim_run_single_transport() {
 _GHRP_LOADED=0
 for _cand in \
 	"$_SHIM_DIR/gh-rest-pagination-lib.sh" \
-	"$HOME/.aidevops/agents/scripts/gh-rest-pagination-lib.sh"; do
-	if [[ -f "$_cand" ]]; then
+	"${HOME:+${HOME}/.aidevops/agents/scripts/gh-rest-pagination-lib.sh}"; do
+	if [[ -n "$_cand" && -f "$_cand" ]]; then
 		# shellcheck source=/dev/null
 		source "$_cand" 2>/dev/null && _GHRP_LOADED=1
 		break
