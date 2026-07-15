@@ -267,14 +267,16 @@ test_dispatch_launches_worker_and_writes_state() {
 	return 0
 }
 
-test_dispatch_prompt_uses_framework_script_path() {
+test_dispatch_prompt_includes_full_thread_command_signatures() {
 	setup_test_env
 	$SCANNER dispatch owner/repo "${TEST_ROOT}/repo"
 	wait_for_headless_log || true
-	if grep -q "${SCANNER} reply" "$HEADLESS_PROMPT_CAPTURE" 2>/dev/null && grep -q "${SCANNER} resolve" "$HEADLESS_PROMPT_CAPTURE" 2>/dev/null; then
-		print_result "dispatch prompt uses framework scanner path" 0
+	if grep -Fq "${SCANNER} reply owner/repo <thread_id> <body_file>" "$HEADLESS_PROMPT_CAPTURE" 2>/dev/null &&
+		grep -Fq "${SCANNER} resolve owner/repo <thread_id>" "$HEADLESS_PROMPT_CAPTURE" 2>/dev/null &&
+		grep -Fq 'Write each reply to a local temporary file and pass that path as <body_file>' "$HEADLESS_PROMPT_CAPTURE" 2>/dev/null; then
+		print_result "dispatch prompt includes full reply and resolve signatures" 0
 	else
-		print_result "dispatch prompt uses framework scanner path" 1 "prompt=$(tr '\n' ' ' <"$HEADLESS_PROMPT_CAPTURE" 2>/dev/null || printf '')"
+		print_result "dispatch prompt includes full reply and resolve signatures" 1 "prompt=$(tr '\n' ' ' <"$HEADLESS_PROMPT_CAPTURE" 2>/dev/null || printf '')"
 	fi
 	teardown_test_env
 	return 0
@@ -740,7 +742,7 @@ main() {
 	test_scan_pr_excludes_human_threads_by_default
 	test_scan_pr_can_include_human_threads_with_opt_in
 	test_dispatch_launches_worker_and_writes_state
-	test_dispatch_prompt_uses_framework_script_path
+	test_dispatch_prompt_includes_full_thread_command_signatures
 	test_dispatch_prompt_mentions_graphql_only_thread_operations
 	test_dispatch_prompt_requires_machine_readable_completion_state
 	test_dispatch_prompt_marks_dynamic_metadata_untrusted

@@ -957,9 +957,11 @@ Thread preview: ${safe_preview}
    PR, do not mark a draft PR ready, and do not bypass review-bot-gate.
 3. Do not use blanket auto-resolution scripts. For active review threads, respond
    in the same GitHub review thread with
-   '${scanner_path} reply'; resolve with
-   '${scanner_path} resolve' only after
+   '${scanner_path} reply ${repo_slug} <thread_id> <body_file>'; resolve with
+   '${scanner_path} resolve ${repo_slug} <thread_id>' only after
    you have verified the finding is addressed or no longer applies.
+   Write each reply to a local temporary file and pass that path as <body_file>.
+   Select <thread_id> from the unresolved thread IDs listed above.
    Review-thread read/reply/resolve operations are GraphQL-only in this helper;
    use the scanner commands above or 'gh api graphql'. The resolveReviewThread
    mutation has no REST endpoint, so do not try 'gh api repos/...' for resolve.
@@ -989,7 +991,7 @@ Verification context:
 - Preserve existing PR scope and provenance labels.
 - Keep comments concise and cite files/commands as evidence.
 - Completion requires each verified-addressed thread to be resolved with
-  resolveReviewThread via '${scanner_path} resolve'.
+  resolveReviewThread via '${scanner_path} resolve ${repo_slug} <thread_id>'.
 PROMPT_EOF
 	printf '%s\n' "$prompt_file"
 	return 0
