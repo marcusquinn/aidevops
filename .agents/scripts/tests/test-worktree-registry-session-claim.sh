@@ -75,6 +75,39 @@ test_same_opencode_session_rolls_owner_pid() {
 	return 0
 }
 
+test_parameterized_claim_preserves_metacharacters() {
+	reset_registry
+	local wt_path="${TEST_ROOT}/quote-'|worktree"
+	local session_id="ses_quote_'|session"
+	mkdir -p "$wt_path"
+	export OPENCODE_SESSION_ID="$session_id"
+	register_worktree "$wt_path" "feature/original" --owner-pid "$OWNER_PID" --session "$session_id"
+
+	local rc=0
+	claim_worktree_ownership "$wt_path" "feature/quote-'branch" --owner-pid "$CLAIM_PID" \
+		--session "$session_id" --batch "batch-'value" --task "task-'value" || rc=1
+	local registry_path=""
+	registry_path=$(_wt_registry_lookup_path "$wt_path")
+	local stored_metadata=""
+	stored_metadata=$(
+		python3 - "$WORKTREE_REGISTRY_DB" "$registry_path" <<'PY'
+import sqlite3
+import sys
+
+with sqlite3.connect(sys.argv[1]) as connection:
+    row = connection.execute(
+        """SELECT branch, owner_session, owner_batch, task_id
+           FROM worktree_owners WHERE worktree_path = ?""",
+        (sys.argv[2],),
+    ).fetchone()
+print("|".join(row) if row else "")
+PY
+	) || rc=1
+	[[ "$stored_metadata" == "feature/quote-'branch|${session_id}|batch-'value|task-'value" ]] || rc=1
+	print_result "parameterized claim preserves SQL metacharacters" "$rc"
+	return 0
+}
+
 test_different_session_stays_blocked() {
 	reset_registry
 	local wt_path="${TEST_ROOT}/different-session"
@@ -126,6 +159,7 @@ test_untrusted_session_cannot_roll_owner_pid() {
 main() {
 	start_live_pids
 	test_same_opencode_session_rolls_owner_pid
+	test_parameterized_claim_preserves_metacharacters
 	test_different_session_stays_blocked
 	test_empty_session_cannot_roll_owner_pid
 	test_untrusted_session_cannot_roll_owner_pid

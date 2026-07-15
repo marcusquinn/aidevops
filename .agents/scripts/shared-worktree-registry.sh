@@ -398,25 +398,101 @@ _wt_is_trusted_opencode_session() {
 	return 0
 }
 
-_wt_existing_owner_claim_state() {
+_wt_claim_owner_record() {
 	local wt_path="$1"
-	local owner_pid="$2"
-	local existing_owner_info=""
-	existing_owner_info=$(sqlite3 -separator '|' "$WORKTREE_REGISTRY_DB" "
-		SELECT owner_pid, COALESCE(owner_session, '') FROM worktree_owners
-		WHERE worktree_path = '$(_wt_sql_escape "$wt_path")';
-	" 2>/dev/null || echo "")
-	local existing_owner_pid=""
-	local existing_owner_session=""
-	IFS='|' read -r existing_owner_pid existing_owner_session <<<"$existing_owner_info"
-	local existing_owner_pid_sql=0
-	[[ "$existing_owner_pid" =~ ^[0-9]+$ ]] && existing_owner_pid_sql="$existing_owner_pid"
-	local existing_owner_dead=0
-	if [[ -n "$existing_owner_pid" ]] && [[ "$existing_owner_pid" != "$owner_pid" ]] && \
-		! kill -0 "$existing_owner_pid" 2>/dev/null; then
-		existing_owner_dead=1
-	fi
-	printf '%s|%s|%s|%s' "$existing_owner_pid" "$existing_owner_session" "$existing_owner_pid_sql" "$existing_owner_dead"
+	local branch="$2"
+	local owner_pid="$3"
+	local session_id="$4"
+	local batch_id="$5"
+	local task_id="$6"
+	local owner_comm="$7"
+	local trusted_opencode_session="$8"
+
+	python3 - "$WORKTREE_REGISTRY_DB" "$wt_path" "$branch" "$owner_pid" "$session_id" \
+		"$batch_id" "$task_id" "$owner_comm" "$trusted_opencode_session" <<'PY' || return 1
+import os
+import sqlite3
+import sys
+
+(
+    db_path,
+    worktree_path,
+    branch,
+    owner_pid_text,
+    session_id,
+    batch_id,
+    task_id,
+    owner_comm,
+    trusted_session_text,
+) = sys.argv[1:]
+owner_pid = int(owner_pid_text)
+trusted_session = trusted_session_text == "1"
+
+connection = sqlite3.connect(db_path, isolation_level=None)
+try:
+    connection.execute("BEGIN IMMEDIATE")
+    existing_owner = connection.execute(
+        """SELECT owner_pid, COALESCE(owner_session, '')
+           FROM worktree_owners WHERE worktree_path = ?""",
+        (worktree_path,),
+    ).fetchone()
+    if (
+        existing_owner
+        and isinstance(existing_owner[0], int)
+        and existing_owner[0] != owner_pid
+    ):
+        try:
+            os.kill(existing_owner[0], 0)
+        except OSError:
+            connection.execute(
+                """DELETE FROM worktree_owners
+                   WHERE worktree_path = ? AND owner_pid = ?
+                     AND COALESCE(owner_session, '') = ?""",
+                (worktree_path, existing_owner[0], existing_owner[1]),
+            )
+
+    connection.execute(
+        """UPDATE worktree_owners
+           SET branch = ?, owner_pid = ?, owner_session = ?, owner_batch = ?,
+               task_id = ?, owner_comm = ?, owner_dead_seen_at = ''
+           WHERE worktree_path = ?
+             AND (owner_pid = ? OR (? AND owner_session = ?))""",
+        (
+            branch,
+            owner_pid,
+            session_id,
+            batch_id,
+            task_id,
+            owner_comm,
+            worktree_path,
+            owner_pid,
+            trusted_session,
+            session_id,
+        ),
+    )
+    connection.execute(
+        """INSERT OR IGNORE INTO worktree_owners
+           (worktree_path, branch, owner_pid, owner_session, owner_batch,
+            task_id, owner_comm, owner_dead_seen_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, '')""",
+        (worktree_path, branch, owner_pid, session_id, batch_id, task_id, owner_comm),
+    )
+    final_owner = connection.execute(
+        """SELECT owner_pid, COALESCE(owner_session, '')
+           FROM worktree_owners WHERE worktree_path = ?""",
+        (worktree_path,),
+    ).fetchone()
+    connection.execute("COMMIT")
+except Exception:
+    if connection.in_transaction:
+        connection.execute("ROLLBACK")
+    raise
+finally:
+    connection.close()
+
+if final_owner:
+    print(f"{final_owner[0]}|{final_owner[1]}")
+PY
 	return 0
 }
 
@@ -470,57 +546,9 @@ claim_worktree_ownership() {
 	_init_registry_db
 	wt_path=$(_wt_registry_lookup_path "$wt_path")
 
-	local existing_owner_pid=""
-	local existing_owner_session=""
-	local existing_owner_pid_sql=0
-	local existing_owner_dead=0
-	local existing_owner_state=""
-	existing_owner_state=$(_wt_existing_owner_claim_state "$wt_path" "$owner_pid")
-	IFS='|' read -r existing_owner_pid existing_owner_session existing_owner_pid_sql existing_owner_dead <<<"$existing_owner_state"
-
 	local final_owner_info=""
-	final_owner_info=$({
-		_wt_sqlite_set_owner_pid_param "$owner_pid"
-		printf '%s\n' "
-		BEGIN IMMEDIATE;
-		DELETE FROM worktree_owners
-		WHERE worktree_path = '$(_wt_sql_escape "$wt_path")'
-		  AND owner_pid = ${existing_owner_pid_sql}
-		  AND COALESCE(owner_session, '') = '$(_wt_sql_escape "$existing_owner_session")'
-		  AND ${existing_owner_dead} = 1;
-
-		UPDATE worktree_owners
-		SET branch = '$(_wt_sql_escape "$branch")',
-			owner_pid = :owner_pid,
-			owner_session = '$(_wt_sql_escape "$session_id")',
-			owner_batch = '$(_wt_sql_escape "$batch_id")',
-			task_id = '$(_wt_sql_escape "$task_id")',
-			owner_comm = '$(_wt_sql_escape "$owner_comm")',
-			owner_dead_seen_at = ''
-		WHERE worktree_path = '$(_wt_sql_escape "$wt_path")'
-		  AND (
-			owner_pid = :owner_pid
-			OR (${trusted_opencode_session} = 1
-				AND owner_session = '$(_wt_sql_escape "$session_id")')
-		  );
-
-		INSERT OR IGNORE INTO worktree_owners
-			(worktree_path, branch, owner_pid, owner_session, owner_batch, task_id, owner_comm, owner_dead_seen_at)
-        VALUES
-            ('$(_wt_sql_escape "$wt_path")',
-             '$(_wt_sql_escape "$branch")',
-             :owner_pid,
-             '$(_wt_sql_escape "$session_id")',
-             '$(_wt_sql_escape "$batch_id")',
-             '$(_wt_sql_escape "$task_id")',
-			 '$(_wt_sql_escape "$owner_comm")',
-			 '');
-		COMMIT;
-		SELECT owner_pid || '|' || COALESCE(owner_session, '')
-		FROM worktree_owners
-		WHERE worktree_path = '$(_wt_sql_escape "$wt_path")';
-	"
-	} | sqlite3 "$WORKTREE_REGISTRY_DB" 2>/dev/null) || return 1
+	final_owner_info=$(_wt_claim_owner_record "$wt_path" "$branch" "$owner_pid" "$session_id" \
+		"$batch_id" "$task_id" "$owner_comm" "$trusted_opencode_session") || return 1
 
 	if [[ "${final_owner_info%%|*}" == "$owner_pid" ]]; then
 		return 0
