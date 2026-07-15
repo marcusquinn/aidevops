@@ -89,7 +89,8 @@ test_parameterized_claim_preserves_metacharacters() {
 	local registry_path=""
 	registry_path=$(_wt_registry_lookup_path "$wt_path")
 	local stored_metadata=""
-	stored_metadata=$(python3 - "$WORKTREE_REGISTRY_DB" "$registry_path" <<'PY'
+	stored_metadata=$(
+		python3 - "$WORKTREE_REGISTRY_DB" "$registry_path" <<'PY'
 import sqlite3
 import sys
 
