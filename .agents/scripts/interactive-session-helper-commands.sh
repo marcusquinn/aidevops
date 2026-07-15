@@ -445,8 +445,7 @@ _isc_unassign_released_issue() {
 	local unassign_rc=0
 
 	unassign_err=$(gh issue edit "$issue" --repo "$slug" \
-		--remove-assignee "$user" 2>&1 >/dev/null)
-	unassign_rc=$?
+		--remove-assignee "$user" 2>&1 >/dev/null) || unassign_rc=$?
 	if [[ $unassign_rc -eq 0 ]]; then
 		_isc_info "release: #$issue already outside status:in-review — unassigned $user"
 		return 0

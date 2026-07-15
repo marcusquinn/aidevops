@@ -155,7 +155,11 @@ issue)
 		exit 0
 		;;
 	edit)
-		# Log the edit flags (already captured in STUB_LOG above). Success.
+		# Log the edit flags (already captured in STUB_LOG above).
+		if [[ "${STUB_GH_EDIT_FAILS:-0}" == "1" ]]; then
+			printf 'simulated issue edit failure\n' >&2
+			exit 1
+		fi
 		exit 0
 		;;
 	list)
@@ -932,6 +936,21 @@ if [[ $release_available_repeat_rc -eq 0 ]] &&
 else
 	print_result "GH#27834: already-available release --unassign is idempotent" 1 \
 		"(rc=$release_available_repeat_rc, log=${release_available_repeat_log:0:300})"
+fi
+
+# A failed unassignment is captured under `set -e` so the documented warning-
+# only release contract is preserved instead of aborting the caller.
+release_unassign_fail_out=$(
+	set -e
+	STUB_GH_EDIT_FAILS=1 _isc_unassign_released_issue 70003 testuser/testrepo testuser 2>&1
+)
+release_unassign_fail_rc=$?
+if [[ $release_unassign_fail_rc -eq 0 ]] &&
+	printf '%s' "$release_unassign_fail_out" | grep -q "(rc=1): simulated issue edit failure"; then
+	print_result "GH#27834: failed standalone unassignment remains warning-only under set -e" 0
+else
+	print_result "GH#27834: failed standalone unassignment remains warning-only under set -e" 1 \
+		"(rc=$release_unassign_fail_rc, out=${release_unassign_fail_out:0:300})"
 fi
 
 # Without --unassign, already-available remains a complete no-op.
