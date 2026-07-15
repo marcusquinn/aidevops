@@ -73,53 +73,60 @@ def _normalize_items(kind: str, body: str) -> list[dict[str, Any]]:
 
 
 def main(argv: list[str]) -> int:
+    result = 0
     if len(argv) != 5:
         print("usage: pulse-batch-conditional-cache.py KIND SLUG RESPONSE_FILE CACHE_FILE", file=sys.stderr)
-        return 2
-    kind, _slug, response_file, cache_file = argv[1:5]
-    status, etag, body = _split_response(response_file)
-    now = _now_iso()
-    if status == 304:
-        if not os.path.exists(cache_file):
-            return 1
-        with open(cache_file, encoding="utf-8") as handle:
-            payload = json.load(handle)
-        if kind == "issues":
-            items = payload.get("items") or []
-            if any("state" not in item for item in items):
-                return 1
-            payload["items"] = [
-                item
-                for item in items
-                if str(item.get("state") or "open").lower() == "open"
-            ]
-        payload.update(
-            {
-                "timestamp": now,
-                "last_success": now,
-                "conditional_status": 304,
-                "conditional_cache_hit": True,
-            }
-        )
-        if etag:
-            payload["etag"] = etag
-        _write_cache(cache_file, payload)
-        print("304")
-        return 0
-    if status < 200 or status >= 300:
+        result = 2
+    else:
+        kind, _slug, response_file, cache_file = argv[1:5]
+        status, etag, body = _split_response(response_file)
+        now = _now_iso()
+        if status == 304:
+            result = _refresh_cached_response(kind, cache_file, etag, now)
+        elif status < 200 or status >= 300:
+            result = 1
+        else:
+            _write_cache(
+                cache_file,
+                {
+                    "timestamp": now,
+                    "last_success": now,
+                    "etag": etag,
+                    "conditional_status": status,
+                    "conditional_cache_hit": False,
+                    "items": _normalize_items(kind, body),
+                },
+            )
+            print(str(status))
+    return result
+
+
+def _refresh_cached_response(kind: str, cache_file: str, etag: str, now: str) -> int:
+    if not os.path.exists(cache_file):
         return 1
-    _write_cache(
-        cache_file,
+    with open(cache_file, encoding="utf-8") as handle:
+        payload = json.load(handle)
+    if kind == "issues":
+        items = payload.get("items") or []
+        if any("state" not in item for item in items):
+            return 1
+        payload["items"] = [
+            item
+            for item in items
+            if str(item.get("state") or "open").lower() == "open"
+        ]
+    payload.update(
         {
             "timestamp": now,
             "last_success": now,
-            "etag": etag,
-            "conditional_status": status,
-            "conditional_cache_hit": False,
-            "items": _normalize_items(kind, body),
-        },
+            "conditional_status": 304,
+            "conditional_cache_hit": True,
+        }
     )
-    print(str(status))
+    if etag:
+        payload["etag"] = etag
+    _write_cache(cache_file, payload)
+    print("304")
     return 0
 
 
