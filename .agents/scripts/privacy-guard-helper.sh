@@ -45,7 +45,9 @@ PRIVACY_SCAN_GLOBS=(
 	"."
 )
 PRIVACY_SCAN_GLOBS_TEXT="${PRIVACY_SCAN_GLOBS_TEXT:-}"
-PRIVACY_CREDENTIAL_PREFIX_ERE='(sk-|ghp_|gho_|ghs_|ghu_|github_pat_|glpat-|xoxb-|xoxp-)[A-Za-z0-9_-]{10,}'
+# Require a left token boundary so credential-looking substrings inside words or
+# filenames (for example, task-coordinator.sh) are not treated as secrets.
+PRIVACY_CREDENTIAL_PREFIX_ERE='(^|[^A-Za-z0-9_-])(sk-|ghp_|gho_|ghs_|ghu_|github_pat_|glpat-|xoxb-|xoxp-)[A-Za-z0-9_-]{10,}'
 
 # =============================================================================
 # Logging
