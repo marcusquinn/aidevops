@@ -76,6 +76,7 @@ KNOWN_BOTS=(
 	"copilot"
 )
 REVIEW_GATE_STATUS_PASS="$(printf 'P%s' 'ASS')"
+RBG_PASS_RATE_LIMITED="PASS_RATE_LIMITED"
 RBG_FALSE="false"
 
 # Rate-limit / quota notice patterns — entries that indicate the bot tried to
@@ -169,7 +170,7 @@ usage() {
 classify_infra_rate_limit() {
 	local author_association="$1"
 	local repo_slug="$2"
-	local rate_limit_behavior completion_behavior repos_json strict_tool_override="false"
+	local rate_limit_behavior completion_behavior repos_json strict_tool_override="$RBG_FALSE"
 
 	#aidevops:trust-boundary
 	case "$author_association" in
@@ -192,7 +193,7 @@ classify_infra_rate_limit() {
 	fi
 
 	if [[ "$rate_limit_behavior" == "pass" && "$completion_behavior" == "fast" && "$strict_tool_override" != "true" ]]; then
-		printf '%s\n' "PASS_RATE_LIMITED"
+		printf '%s\n' "$RBG_PASS_RATE_LIMITED"
 		return 0
 	fi
 
@@ -954,14 +955,14 @@ _collect_review_gate_bot_states() {
 					return "$notice_rc"
 				fi
 				case "$notice_category" in
-					rate-limit)
-						REVIEW_GATE_RATE_LIMITED_BOTS="${REVIEW_GATE_RATE_LIMITED_BOTS}${bot} "
-						echo "rate-limit notice (not a real review): ${bot}" >&2
-						;;
-					non-rate-limit | none | *)
-						REVIEW_GATE_NON_REVIEW_BOTS="${REVIEW_GATE_NON_REVIEW_BOTS}${bot} "
-						echo "non-review state (not rate-limited, not a real review): ${bot}" >&2
-						;;
+				rate-limit)
+					REVIEW_GATE_RATE_LIMITED_BOTS="${REVIEW_GATE_RATE_LIMITED_BOTS}${bot} "
+					echo "rate-limit notice (not a real review): ${bot}" >&2
+					;;
+				non-rate-limit | none | *)
+					REVIEW_GATE_NON_REVIEW_BOTS="${REVIEW_GATE_NON_REVIEW_BOTS}${bot} "
+					echo "non-review state (not rate-limited, not a real review): ${bot}" >&2
+					;;
 				esac
 			fi
 		fi
@@ -1012,7 +1013,7 @@ _emit_review_gate_check_result() {
 		# Configure per-tool or per-repo via repos.json review_gate, or globally
 		# via REVIEW_GATE_RATE_LIMIT_BEHAVIOR env var.
 		if _should_pass_rate_limited "$repo" "$REVIEW_GATE_RATE_LIMITED_BOTS"; then
-			echo "PASS_RATE_LIMITED"
+			echo "$RBG_PASS_RATE_LIMITED"
 			echo "Bots are rate-limited (tried but capacity-constrained): ${REVIEW_GATE_RATE_LIMITED_BOTS}" >&2
 			echo "Passing gate — configured to pass on rate limit (review_gate.rate_limit_behavior=pass)." >&2
 			return 0
@@ -1086,7 +1087,7 @@ do_wait() {
 		local result
 		result=$(do_check "$pr_number" "$repo") || true
 
-		if [[ "$result" == "$REVIEW_GATE_STATUS_PASS" || "$result" == "PASS_RATE_LIMITED" || "$result" == "SKIP" ]]; then
+		if [[ "$result" == "$REVIEW_GATE_STATUS_PASS" || "$result" == "$RBG_PASS_RATE_LIMITED" || "$result" == "SKIP" ]]; then
 			echo "$result"
 			return 0
 		fi

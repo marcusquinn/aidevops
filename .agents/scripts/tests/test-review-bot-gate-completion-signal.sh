@@ -673,7 +673,7 @@ test_any_bot_success_status_reuses_provided_contexts() {
 
 	local contexts
 	contexts=$'abc123def456\nCodeRabbit'
-	if any_bot_has_success_status 123 'testorg/strictrepo' "$contexts" 2>/dev/null && \
+	if any_bot_has_success_status 123 'testorg/strictrepo' "$contexts" 2>/dev/null &&
 		[[ "$TEST_STATUS_FETCHES" -eq 0 ]]; then
 		print_result "status fallback reuses provided success contexts" 0
 	else
@@ -692,7 +692,7 @@ test_any_bot_success_status_reuses_prepared_contexts() {
 
 	local contexts
 	contexts=$'abc123def456\ncoderabbit'
-	if any_bot_has_success_status 123 'testorg/strictrepo' "$contexts" true 2>/dev/null && \
+	if any_bot_has_success_status 123 'testorg/strictrepo' "$contexts" true 2>/dev/null &&
 		[[ "$prepare_calls" -eq 0 ]]; then
 		print_result "status fallback reuses prepared success contexts" 0
 	else
@@ -958,10 +958,16 @@ test_notice_category_propagates_api_failure() {
 
 test_do_check_passes_true_rate_limit_only() {
 	check_for_skip_label() { return 1; }
-	get_all_bot_commenters() { printf '%s\n' 'coderabbitai'; return 0; }
+	get_all_bot_commenters() {
+		printf '%s\n' 'coderabbitai'
+		return 0
+	}
 	_get_success_status_contexts() { return 1; }
 	bot_has_real_review() { return 1; }
-	bot_get_notice_category() { echo "rate-limit"; return 0; }
+	bot_get_notice_category() {
+		echo "rate-limit"
+		return 0
+	}
 	any_bot_has_success_status() { return 1; }
 
 	local output status
@@ -982,10 +988,16 @@ test_do_check_passes_true_rate_limit_only() {
 
 test_do_check_blocks_non_rate_limit_non_review_states() {
 	check_for_skip_label() { return 1; }
-	get_all_bot_commenters() { printf '%s\n' 'coderabbitai'; return 0; }
+	get_all_bot_commenters() {
+		printf '%s\n' 'coderabbitai'
+		return 0
+	}
 	_get_success_status_contexts() { return 1; }
 	bot_has_real_review() { return 1; }
-	bot_get_notice_category() { echo "non-rate-limit"; return 0; }
+	bot_get_notice_category() {
+		echo "non-rate-limit"
+		return 0
+	}
 	any_bot_has_success_status() { return 1; }
 
 	local output status
@@ -1006,10 +1018,19 @@ test_do_check_blocks_non_rate_limit_non_review_states() {
 
 test_do_check_accepts_non_review_with_success_status() {
 	check_for_skip_label() { return 1; }
-	get_all_bot_commenters() { printf '%s\n' 'coderabbitai'; return 0; }
-	_get_success_status_contexts() { printf '%s\n' 'abc123def456' 'CodeRabbit'; return 0; }
+	get_all_bot_commenters() {
+		printf '%s\n' 'coderabbitai'
+		return 0
+	}
+	_get_success_status_contexts() {
+		printf '%s\n' 'abc123def456' 'CodeRabbit'
+		return 0
+	}
 	bot_has_real_review() { return 1; }
-	bot_get_notice_category() { echo "non-rate-limit"; return 0; }
+	bot_get_notice_category() {
+		echo "non-rate-limit"
+		return 0
+	}
 	any_bot_has_success_status() { return 0; }
 
 	local output status
@@ -1030,9 +1051,15 @@ test_do_check_accepts_non_review_with_success_status() {
 
 test_do_check_fetches_success_status_contexts_once() {
 	check_for_skip_label() { return 1; }
-	get_all_bot_commenters() { printf '%s\n' 'coderabbitai gemini-code-assist'; return 0; }
+	get_all_bot_commenters() {
+		printf '%s\n' 'coderabbitai gemini-code-assist'
+		return 0
+	}
 	bot_has_real_review() { return 1; }
-	bot_get_notice_category() { echo "non-rate-limit"; return 0; }
+	bot_get_notice_category() {
+		echo "non-rate-limit"
+		return 0
+	}
 	_get_success_status_contexts() {
 		local pr_number="$1"
 		local repo="$2"
@@ -1065,7 +1092,10 @@ test_do_check_fetches_success_status_contexts_once() {
 }
 
 test_status_json_denies_external_rate_limit_grace() {
-	do_check() { printf 'PASS_RATE_LIMITED\n'; return 0; }
+	do_check() {
+		printf 'PASS_RATE_LIMITED\n'
+		return 0
+	}
 	gh() {
 		printf '%s\n' '{"head":{"sha":"head-123"},"user":{"login":"external"},"author_association":"CONTRIBUTOR"}'
 		return 0
@@ -1081,7 +1111,10 @@ test_status_json_denies_external_rate_limit_grace() {
 }
 
 test_status_json_allows_trusted_skip() {
-	do_check() { printf 'SKIP\n'; return 0; }
+	do_check() {
+		printf 'SKIP\n'
+		return 0
+	}
 	gh() {
 		printf '%s\n' '{"head":{"sha":"head-123"},"user":{"login":"maintainer"},"author_association":"MEMBER"}'
 		return 0
@@ -1097,7 +1130,10 @@ test_status_json_allows_trusted_skip() {
 }
 
 test_status_json_fails_closed_without_pr_metadata() {
-	do_check() { printf 'PASS\n'; return 0; }
+	do_check() {
+		printf 'PASS\n'
+		return 0
+	}
 	gh() { return 1; }
 	local output=""
 	output=$(do_status_json 123 'testorg/otherrepo')
