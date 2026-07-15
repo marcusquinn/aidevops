@@ -38,6 +38,7 @@
 # ------
 #   AIDEVOPS_GH_SHIM_DISABLE=1 gh …          # skip entire shim
 #   AIDEVOPS_GH_SHIM_NO_REST_REWRITE=1 gh …  # skip read-rewrite only (t3037)
+#   AIDEVOPS_GH_EXPLICIT_PAGINATION_DISABLE=1 # retain native opaque pagination
 #
 # Ops/audit comments
 # ------------------
@@ -346,6 +347,10 @@ _shim_transport_caller_label() {
 _shim_transport_page() {
 	local arg=""
 	local page=1
+	if [[ "${AIDEVOPS_GH_PAGE_NUMBER:-}" =~ ^[0-9]+$ && "${AIDEVOPS_GH_PAGE_NUMBER}" -gt 0 ]]; then
+		printf '%s' "$AIDEVOPS_GH_PAGE_NUMBER"
+		return 0
+	fi
 	for arg in "$@"; do
 		if [[ "$arg" == "--paginate" ]]; then
 			# Native gh owns the internal page loop, so one process is not proof of
@@ -361,7 +366,7 @@ _shim_transport_page() {
 	return 0
 }
 
-_shim_run_transport() {
+_shim_run_single_transport() {
 	local executable="$1"; shift
 	local path="$1"; shift
 	local caller="$1"; shift
@@ -374,6 +379,38 @@ _shim_run_transport() {
 	fi
 	AIDEVOPS_GH_ROUTE_DECISION="$decision" gh_run_transport_attempt \
 		"$path" "$caller" "$AIDEVOPS_GH_LOGICAL_ID" "$page" "$retry" -- "$executable" "$@"
+	return $?
+}
+
+_GHRP_LOADED=0
+for _cand in \
+	"$_SHIM_DIR/gh-rest-pagination-lib.sh" \
+	"$HOME/.aidevops/agents/scripts/gh-rest-pagination-lib.sh"; do
+	if [[ -f "$_cand" ]]; then
+		# shellcheck source=/dev/null
+		source "$_cand" 2>/dev/null && _GHRP_LOADED=1
+		break
+	fi
+done
+unset _cand
+
+_shim_run_transport() {
+	local executable="$1"; shift
+	local path="$1"; shift
+	local caller="$1"; shift
+	local retry="$1"; shift
+	local rc=0
+	local -a transport_args=("$@")
+	if [[ "$_GHRP_LOADED" -eq 1 ]] && _ghrp_prepare "$path" "${transport_args[@]}"; then
+		_ghrp_run "$executable" "$path" "$caller" "$retry" "${transport_args[@]}"
+		rc=$?
+		if [[ "$rc" -eq 125 && "${_GHRP_FALLBACK_SAFE:-0}" -eq 1 ]]; then
+			_shim_run_single_transport "$executable" "$path" "$caller" "$retry" "${transport_args[@]}"
+			return $?
+		fi
+		return "$rc"
+	fi
+	_shim_run_single_transport "$executable" "$path" "$caller" "$retry" "${transport_args[@]}"
 	return $?
 }
 
