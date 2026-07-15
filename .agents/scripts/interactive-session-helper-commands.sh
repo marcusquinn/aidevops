@@ -170,6 +170,14 @@ _isc_cmd_claim() {
 		return 0
 	fi
 
+	# GH#27871: terminal issues must remain terminal. Check before the
+	# idempotent in-review branch because that path still refreshes a local
+	# claim stamp. Lookup failures preserve the existing fail-open contract.
+	if _isc_issue_is_closed "$issue" "$slug"; then
+		_isc_info "claim: #$issue is closed — skipping interactive claim lifecycle"
+		return 0
+	fi
+
 	# Idempotency: if already in-review, refresh stamp and exit. The `if`
 	# conditional consumes any non-zero return so set -e doesn't propagate
 	# rc=2 (lookup failed) up the call stack — see _isc_has_in_review header
