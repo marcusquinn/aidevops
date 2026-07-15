@@ -207,9 +207,20 @@ chmod +x "$PATH_DIR/gh-signature-helper.sh"
 REAL_GH_DIR="${TMP}/real-gh-dir"
 mkdir -p "$REAL_GH_DIR"
 RECORD_FILE="${TMP}/gh-invocation.log"
+AUTH_RECORD_FILE="${TMP}/gh-auth-invocation.log"
+API_RECORD_FILE="${TMP}/gh-api-invocation.log"
 cat >"$REAL_GH_DIR/gh" <<STUB
 #!/usr/bin/env bash
-echo "REAL_GH_INVOKED" > '$RECORD_FILE'
+if [[ "\${1:-}" == "auth" && "\${2:-}" == "status" ]]; then
+	printf '%s\n' "REAL_GH_AUTH_INVOKED" > '$AUTH_RECORD_FILE'
+	exit 0
+fi
+if [[ "\${1:-}" == "api" && "\${2:-}" == repos/* ]]; then
+	printf '%s\n' "REAL_GH_API_INVOKED" > '$API_RECORD_FILE'
+	printf '%s\n' false
+	exit 0
+fi
+printf '%s\n' "REAL_GH_INVOKED" > '$RECORD_FILE'
 printf '%s\n' "\$@" >> '$RECORD_FILE'
 exit 0
 STUB
@@ -251,6 +262,8 @@ run_shim() {
 	HOME="$PRIV_HOME" \
 		PRIVACY_REPOS_CONFIG="$PRIV_HOME/.config/aidevops/repos.json" \
 		PRIVACY_CACHE_FILE="$PRIV_HOME/.aidevops/cache/repo-privacy.json" \
+		HEADLESS='' FULL_LOOP_HEADLESS='' AIDEVOPS_HEADLESS='' OPENCODE_HEADLESS='' \
+		GITHUB_ACTIONS='' AIDEVOPS_SESSION_ORIGIN='' \
 		PATH="$_path_dir:$REAL_GH_DIR:$PATH" \
 		"$_path_dir/gh" "$@" || _rc=$?
 	if [[ "$_rc" -ne 0 ]]; then
@@ -258,6 +271,26 @@ run_shim() {
 	fi
 	return 0
 }
+
+# -- Test 2.0: cold privacy probes bypass the active shim and use native gh
+rm -f "$PRIV_HOME/.aidevops/cache/repo-privacy.json" \
+	"$RECORD_FILE" "$AUTH_RECORD_FILE" "$API_RECORD_FILE"
+out=$(run_shim "$PATH_DIR" issue create --repo marcusquinn/aidevops --title "test" --body "Clean cold-cache content" 2>&1)
+rc=$?
+if [[ "$rc" -eq 0 ]] && [[ -f "$RECORD_FILE" && -f "$AUTH_RECORD_FILE" && -f "$API_RECORD_FILE" ]] && \
+	[[ "$out" != *"gh not authenticated"* ]]; then
+	pass "cold privacy probes use native gh without shim recursion"
+else
+	fail "expected native auth/API/final invocations without auth warning. rc=$rc out='$out'"
+fi
+
+# Restore the warm cache used by the remaining integration cases.
+cat >"$PRIV_HOME/.aidevops/cache/repo-privacy.json" <<EOF
+{
+  "marcusquinn/aidevops": { "private": false, "checked_at": $(date +%s) },
+  "acme/longprivate":    { "private": true,  "checked_at": $(date +%s) }
+}
+EOF
 
 # -- Test 2.1: public target + private slug body → BLOCKED
 rm -f "$RECORD_FILE"
