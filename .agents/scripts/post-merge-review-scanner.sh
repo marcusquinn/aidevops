@@ -321,11 +321,13 @@ fetch_review_threads_json() {
 #   0  — success (stdout is markdown; empty string = no unresolved findings)
 #   2  — fetch error (propagated from fetch_review_threads_json or jq failure)
 fetch_inline_comments_md() {
-	local repo="$1" pr="$2"
-	local json rc=0
-	json=$(fetch_review_threads_json "$repo" "$pr") || rc=$?
-	if [[ $rc -ne 0 ]]; then
-		return 2
+	local repo="$1" pr="$2" threads_json="${3:-}"
+	local json="$threads_json" rc=0
+	if [[ $# -lt 3 ]]; then
+		json=$(fetch_review_threads_json "$repo" "$pr") || rc=$?
+		if [[ $rc -ne 0 ]]; then
+			return 2
+		fi
 	fi
 	local out
 	out=$(printf '%s' "$json" | jq -r \
@@ -393,16 +395,18 @@ fetch_inline_comments_md() {
 #   0  — success (stdout is markdown; empty string = no bot summaries)
 #   2  — fetch error (gh call failed or jq failure)
 fetch_review_summaries_md() {
-	local repo="$1" pr="$2"
-	local resp threads resolved_review_ids rc=0 threads_rc=0
+	local repo="$1" pr="$2" threads_json="${3:-}"
+	local resp threads="$threads_json" resolved_review_ids rc=0 threads_rc=0
 	resp=$(gh api "repos/${repo}/pulls/${pr}/reviews" --paginate) || rc=$?
 	if [[ $rc -ne 0 ]]; then
 		log "fetch_review_summaries_md: gh api failed for ${repo}#${pr} (rc=${rc})"
 		return 2
 	fi
-	threads=$(fetch_review_threads_json "$repo" "$pr") || threads_rc=$?
-	if [[ $threads_rc -ne 0 ]]; then
-		return 2
+	if [[ $# -lt 3 ]]; then
+		threads=$(fetch_review_threads_json "$repo" "$pr") || threads_rc=$?
+		if [[ $threads_rc -ne 0 ]]; then
+			return 2
+		fi
 	fi
 	resolved_review_ids=$(printf '%s' "$threads" | jq -c \
 		--arg bots "$BOT_RE" '
@@ -473,11 +477,13 @@ fetch_review_summaries_md() {
 #   0  — success (stdout is markdown; empty string = no file refs)
 #   2  — fetch error (propagated from fetch_review_threads_json or jq failure)
 fetch_file_refs_md() {
-	local repo="$1" pr="$2"
-	local json rc=0
-	json=$(fetch_review_threads_json "$repo" "$pr") || rc=$?
-	if [[ $rc -ne 0 ]]; then
-		return 2
+	local repo="$1" pr="$2" threads_json="${3:-}"
+	local json="$threads_json" rc=0
+	if [[ $# -lt 3 ]]; then
+		json=$(fetch_review_threads_json "$repo" "$pr") || rc=$?
+		if [[ $rc -ne 0 ]]; then
+			return 2
+		fi
 	fi
 	local out
 	out=$(printf '%s' "$json" | jq -r --arg bots "$BOT_RE" '
@@ -655,11 +661,16 @@ MD
 # Arguments: repo, pr
 build_pr_followup_body() {
 	local repo="$1" pr="$2"
-	local inline review file_refs refs_section
-	local inline_rc=0 review_rc=0 refs_rc=0
-	inline=$(fetch_inline_comments_md "$repo" "$pr") || inline_rc=$?
-	review=$(fetch_review_summaries_md "$repo" "$pr") || review_rc=$?
-	file_refs=$(fetch_file_refs_md "$repo" "$pr") || refs_rc=$?
+	local threads inline review file_refs refs_section
+	local threads_rc=0 inline_rc=0 review_rc=0 refs_rc=0
+	threads=$(fetch_review_threads_json "$repo" "$pr") || threads_rc=$?
+	if [[ $threads_rc -ne 0 ]]; then
+		log "build_pr_followup_body: fetch error for ${repo}#${pr} (threads=${threads_rc})"
+		return 2
+	fi
+	inline=$(fetch_inline_comments_md "$repo" "$pr" "$threads") || inline_rc=$?
+	review=$(fetch_review_summaries_md "$repo" "$pr" "$threads") || review_rc=$?
+	file_refs=$(fetch_file_refs_md "$repo" "$pr" "$threads") || refs_rc=$?
 
 	# Any fetch error → refuse to produce a body. Callers get rc=2 and
 	# must log + skip (not close). This prevents closing valid issues on

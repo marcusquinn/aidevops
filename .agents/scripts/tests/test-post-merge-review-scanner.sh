@@ -103,7 +103,8 @@ FIX_GRAPHQL="${TMP_DIR}/fix-graphql.json"
 FIX_REVIEWS="${TMP_DIR}/fix-reviews.json"
 FIX_COMMENTS="${TMP_DIR}/fix-comments.json"
 FIX_ISSUE_LIST="${TMP_DIR}/fix-issue-list.json"
-export FIX_GRAPHQL FIX_REVIEWS FIX_COMMENTS FIX_ISSUE_LIST
+FIX_GRAPHQL_CALLS="${TMP_DIR}/graphql-calls"
+export FIX_GRAPHQL FIX_REVIEWS FIX_COMMENTS FIX_ISSUE_LIST FIX_GRAPHQL_CALLS
 
 # Mock gh binary. It dispatches based on its first two positional args.
 # - `api graphql` → cat $FIX_GRAPHQL
@@ -124,6 +125,7 @@ case "$cmd" in
 api)
 	case "$sub" in
 	graphql)
+		printf 'call\n' >>"$FIX_GRAPHQL_CALLS"
 		if [[ -n "${FIX_GRAPHQL:-}" && -f "$FIX_GRAPHQL" ]]; then
 			cat "$FIX_GRAPHQL"
 		else
@@ -366,11 +368,14 @@ write_graphql_fixture "$FIX_GRAPHQL" \
 	true false "coderabbitai" "src/done.js" 10 "MARKER_ALPHA_DONE" "@@ -1,3 +1,3 @@" \
 	false false "coderabbitai" "src/live.js" 20 "MARKER_BRAVO_LIVE" "@@ -5,3 +5,3 @@\n context line 1\n context line 2\n+new line"
 write_reviews_fixture "$FIX_REVIEWS"
+: >"$FIX_GRAPHQL_CALLS"
 out=$(build_pr_followup_body "stub/repo" "42")
 assert_contains "unresolved comment body is rendered" "MARKER_BRAVO_LIVE" "$out"
 assert_not_contains "resolved comment body is NOT rendered" "MARKER_ALPHA_DONE" "$out"
 assert_contains "unresolved file:line appears in file refs" "src/live.js:20" "$out"
 assert_not_contains "resolved file:line does NOT appear in file refs" "src/done.js:10" "$out"
+graphql_calls=$(wc -l <"$FIX_GRAPHQL_CALLS" | tr -d ' ')
+assert_equals "follow-up body reuses one GraphQL thread response" "1" "$graphql_calls"
 
 echo ""
 echo "Test: build_pr_followup_body — diffHunk tail rendered as \`\`\`diff fence"
