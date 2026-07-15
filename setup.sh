@@ -1494,7 +1494,7 @@ _setup_run_non_interactive() {
 	_time_step "$SETUP_STAGE_HOTFIX_CONFIG" _deploy_hotfix_config
 	_time_step "setup_opencode_desktop_launcher" setup_opencode_desktop_launcher
 	_time_step "sync_agent_sources" sync_agent_sources
-	_time_step "install_aidevops_cli" install_aidevops_cli
+	_time_step "install_aidevops_cli" install_aidevops_cli || print_warning "aidevops CLI installation encountered issues; continuing configuration reconciliation"
 	_time_step "setup_shellcheck_wrapper" setup_shellcheck_wrapper
 	if is_feature_enabled safety_hooks 2>/dev/null; then
 		_time_step "$SETUP_STAGE_HOOKS" setup_safety_hooks
