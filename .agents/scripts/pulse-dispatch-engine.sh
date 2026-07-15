@@ -93,6 +93,8 @@ fi
 : "${PULSE_LLM_STALL_THRESHOLD:=3600}"
 : "${PULSE_RATE_LIMIT_FLAG:=${HOME}/.aidevops/logs/pulse-graphql-rate-limited.flag}"
 : "${PULSE_RUNNABLE_ISSUE_LIMIT:=1000}"
+: "${PULSE_DISPATCH_AGE_BONUS_PER_DAY:=25}"
+: "${PULSE_DISPATCH_AGE_BONUS_CAP:=900}"
 : "${AIDEVOPS_PULSE_ASYNC_POST_DISPATCH_HOUSEKEEPING:=1}"
 
 # t2690: Source rate-limit circuit breaker (proactive dispatch pause on GraphQL exhaustion).
@@ -276,11 +278,18 @@ check_worker_launch() {
 # Build ranked deterministic dispatch candidates across all pulse repos.
 # Arguments:
 #   $1 - max issues to fetch per repo (optional)
-# Returns: JSON array sorted by score desc, updatedAt asc
+# Returns: JSON array sorted by score desc, createdAt asc, updatedAt asc
 #######################################
 build_ranked_dispatch_candidates_json() {
 	local per_repo_limit="${1:-$PULSE_RUNNABLE_ISSUE_LIMIT}"
 	[[ "$per_repo_limit" =~ ^[0-9]+$ ]] || per_repo_limit="$PULSE_RUNNABLE_ISSUE_LIMIT"
+	local age_bonus_per_day="${PULSE_DISPATCH_AGE_BONUS_PER_DAY:-25}"
+	local age_bonus_cap="${PULSE_DISPATCH_AGE_BONUS_CAP:-900}"
+	local current_epoch
+	[[ "$age_bonus_per_day" =~ ^[0-9]+$ ]] || age_bonus_per_day=25
+	[[ "$age_bonus_cap" =~ ^[0-9]+$ ]] || age_bonus_cap=900
+	current_epoch=$(date +%s)
+	[[ "$current_epoch" =~ ^[0-9]+$ ]] || current_epoch=0
 
 	if [[ ! -f "$REPOS_JSON" ]]; then
 		printf '[]\n'
@@ -309,37 +318,45 @@ build_ranked_dispatch_candidates_json() {
 			continue
 		fi
 
-		printf '%s' "$repo_candidates_json" | jq -c --arg slug "$repo_slug" --arg path "$repo_path" --arg priority "$repo_priority" --arg debt_label "${QUALITY_DEBT_LABEL:-quality-debt}" '
+		printf '%s' "$repo_candidates_json" | jq -c --arg slug "$repo_slug" --arg path "$repo_path" --arg priority "$repo_priority" --arg debt_label "${QUALITY_DEBT_LABEL:-quality-debt}" --argjson age_bonus_per_day "$age_bonus_per_day" --argjson age_bonus_cap "$age_bonus_cap" --argjson current_epoch "$current_epoch" '
 			.[] |
+			(try ((.createdAt // "") | fromdateiso8601) catch $current_epoch) as $created_epoch |
+			((($current_epoch - $created_epoch) / 86400) | floor | if . < 0 then 0 else . end) as $age_days |
+			($age_days * $age_bonus_per_day) as $uncapped_age_bonus |
+			(if $uncapped_age_bonus > $age_bonus_cap then $age_bonus_cap else $uncapped_age_bonus end) as $age_bonus |
+			((.labels // []) | map(.name? // .)) as $labels |
+			(
+				(if $priority == "tooling" then 2000 elif $priority == "product" then 1000 else 0 end) +
+				# Mission m-20260504-1e325d feature 3.4: when capacity is
+				# constrained, rank worker-ready/low-complexity issues above
+				# broad raw backlog so pulse fills slots with solvable work first.
+				(if (($labels | index("tier:simple")) != null or ($labels | index("low-complexity")) != null) then 2500
+				 elif ($labels | index("tier:standard")) != null then 1200
+				 else 0 end) +
+				(if (($labels | index("worker-ready")) != null or ($labels | index("status:available")) != null) then 1000 else 0 end) +
+				(if (($labels | index("good first issue")) != null or ($labels | index("quick-win")) != null) then 800 else 0 end) +
+				(if ($labels | index("auto-dispatch")) != null then 300 else 0 end) -
+				(if ($labels | index("tier:thinking")) != null then 1200 else 0 end) -
+				(if (($labels | index("research")) != null or ($labels | index("needs-design")) != null) then 800 else 0 end) +
+				(if (($labels | index($debt_label)) != null and ($labels | index("security")) != null) then 500 else 0 end) +
+				(if ($labels | index("priority:critical")) != null then 10000
+				 elif ($labels | index("priority:high")) != null then 9000
+				 elif ($labels | index("priority:medium")) != null then 8000
+				 elif ($labels | index("bug")) != null then 7000
+				 elif ($labels | index("enhancement")) != null then 6000
+				 elif ($labels | index($debt_label)) != null then 5000
+				 elif (($labels | index("file-size-debt")) != null or ($labels | index("function-complexity-debt")) != null) then 4000
+				 elif ($labels | index("priority:low")) != null then 3500
+				 else 3000 end)
+			) as $base_score |
 			. + {
 				repo_slug: $slug,
 				repo_path: $path,
 				repo_priority: $priority,
-				score: (
-					((.labels // []) | map(.name? // .)) as $labels |
-					(if $priority == "tooling" then 2000 elif $priority == "product" then 1000 else 0 end) +
-					# Mission m-20260504-1e325d feature 3.4: when capacity is
-					# constrained, rank worker-ready/low-complexity issues above
-					# broad raw backlog so pulse fills slots with solvable work first.
-					(if (($labels | index("tier:simple")) != null or ($labels | index("low-complexity")) != null) then 2500
-					 elif ($labels | index("tier:standard")) != null then 1200
-					 else 0 end) +
-					(if (($labels | index("worker-ready")) != null or ($labels | index("status:available")) != null) then 1000 else 0 end) +
-					(if (($labels | index("good first issue")) != null or ($labels | index("quick-win")) != null) then 800 else 0 end) +
-					(if ($labels | index("auto-dispatch")) != null then 300 else 0 end) -
-					(if ($labels | index("tier:thinking")) != null then 1200 else 0 end) -
-					(if (($labels | index("research")) != null or ($labels | index("needs-design")) != null) then 800 else 0 end) +
-					(if (($labels | index($debt_label)) != null and ($labels | index("security")) != null) then 500 else 0 end) +
-					(if ($labels | index("priority:critical")) != null then 10000
-					 elif ($labels | index("priority:high")) != null then 9000
-					 elif ($labels | index("priority:medium")) != null then 8000
-					 elif ($labels | index("bug")) != null then 7000
-					 elif ($labels | index("enhancement")) != null then 6000
-					 elif ($labels | index($debt_label)) != null then 5000
-					 elif (($labels | index("file-size-debt")) != null or ($labels | index("function-complexity-debt")) != null) then 4000
-					 elif ($labels | index("priority:low")) != null then 3500
-					 else 3000 end)
-				)
+				base_score: $base_score,
+				age_days: $age_days,
+				age_bonus: $age_bonus,
+				score: ($base_score + $age_bonus)
 			}
 		' >>"$tmp_candidates" 2>/dev/null || true
 	done < <(jq -r '
@@ -370,7 +387,13 @@ build_ranked_dispatch_candidates_json() {
 		return 0
 	fi
 
-	jq -cs 'sort_by([-.score, (.updatedAt // "")])' "$tmp_candidates" 2>/dev/null || printf '[]\n'
+	jq -cs 'sort_by([
+		-.score,
+		(if (.createdAt // "") == "" then "9999-12-31T23:59:59Z" else .createdAt end),
+		(if (.updatedAt // "") == "" then "9999-12-31T23:59:59Z" else .updatedAt end),
+		(.repo_slug // ""),
+		(.number // 0)
+	])' "$tmp_candidates" 2>/dev/null || printf '[]\n'
 	rm -f "$tmp_candidates"
 	return 0
 }
