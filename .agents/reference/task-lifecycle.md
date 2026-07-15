@@ -17,6 +17,11 @@ For prompt-economy reasons these rules live here rather than in always-on AGENTS
 
 ## Task Creation
 
+The proposed atomicity contract between issue dispatchability and protected-
+branch planning publication is documented in
+`reference/planning-publication-lifecycle.md`. Follow that decision record when
+implementing the pending-publication state and its reconciliation phases.
+
 1. Define the task: `/define` (interactive interview) or `/new-task` (quick creation)
 2. Brief file at `todo/tasks/{task_id}-brief.md` is MANDATORY (see `templates/brief-template.md`)
 3. Brief must include: session origin, what, why, how, acceptance criteria, context
