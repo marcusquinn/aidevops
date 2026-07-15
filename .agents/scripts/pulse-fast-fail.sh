@@ -245,7 +245,10 @@ _ff_mark_terminal_consolidation_routed_locked() {
 	local issue_number="$1"
 	local repo_slug="$2"
 	local breaker_source="$3"
-	local key state now updated_state
+	local key
+	local state
+	local now
+	local updated_state
 
 	key=$(_ff_key "$issue_number" "$repo_slug")
 	state=$(_ff_load)
@@ -832,7 +835,14 @@ fast_fail_is_skipped() {
 	[[ "$issue_number" =~ ^[0-9]+$ ]] || return 1
 	[[ -n "$repo_slug" ]] || return 1
 
-	local key now state existing_ts existing_count existing_retry_after existing_reason consolidation_routed
+	local key
+	local now
+	local state
+	local existing_ts
+	local existing_count
+	local existing_retry_after
+	local existing_reason
+	local consolidation_routed
 	key=$(_ff_key "$issue_number" "$repo_slug")
 	now=$(date +%s)
 	state=$(_ff_load)
