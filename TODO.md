@@ -4576,3 +4576,7 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [ ] t18122 Add cryptographically scoped worker permission grants #bug ref:GH#27688
 
 - [ ] t18123 Add bounded worker progress blocker logging #bug ref:GH#27732
+
+- [ ] t18125 Measure exact GitHub transport attempts and replayable budgets #auto-dispatch #efficiency #enhancement #framework #github-api #observability #pulse ref:GH#27769
+
+- [ ] t18124 Maximise GitHub API efficiency without freshness regressions #efficiency #enhancement #framework #github-api #parent #pulse ref:GH#27768
