@@ -48,14 +48,14 @@ fi
 #
 # Idempotent within a process: uses _PULSE_REFRESHED_THIS_CYCLE (associative
 # array declared in pulse-wrapper-config.sh) as a cycle-scoped sentinel
-# keyed by repo_path. The first call for a given path fetches +
-# fast-forwards; subsequent calls in the same process are no-ops. The
+# keyed by repo_path. The first call for a given path diagnoses remote drift;
+# subsequent calls in the same process are no-ops. The
 # array is inherited empty by every subshell (dispatch subshell,
 # run_stage_with_timeout fork) so each independent context starts fresh
-# — this is intentional: each context needs at most one pull per repo.
+# — this is intentional: each context needs at most one diagnostic per repo.
 #
-# Uses --ff-only to avoid catastrophic rebase conflicts in the pulse checkout.
-# Uses git fetch before pull so the local is always in sync with origin/HEAD.
+# Canonical automation remains read-only: ls-remote compares the remote tip
+# without mutating the checkout, and the audited recovery helper owns repairs.
 #
 # GH#17584 context preserved: the original motivation for pulling before
 # worker dispatch (workers close issues as "Invalid — file does not exist"
@@ -67,6 +67,22 @@ fi
 # Returns: always 0 (failures are logged but never fatal — callers proceed
 #   with current checkout, same as the previous git pull || { warn; } pattern)
 #######################################
+_pulse_refresh_default_branch() {
+	local repo_path="$1"
+	local default_branch=""
+
+	if declare -F _get_default_branch_for_repo >/dev/null 2>&1; then
+		default_branch=$(_get_default_branch_for_repo "$repo_path" 2>/dev/null) || default_branch=""
+	else
+		default_branch=$(git -C "$repo_path" symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null) || default_branch=""
+		default_branch="${default_branch#origin/}"
+	fi
+
+	[[ -n "$default_branch" ]] || return 1
+	printf '%s\n' "$default_branch"
+	return 0
+}
+
 _pulse_refresh_should_skip_repo() {
 	local repo_path="$1"
 	local default_branch=""
@@ -75,12 +91,7 @@ _pulse_refresh_should_skip_repo() {
 	local upstream_remote=""
 	local upstream_branch=""
 
-	if declare -F _get_default_branch_for_repo >/dev/null 2>&1; then
-		default_branch=$(_get_default_branch_for_repo "$repo_path" 2>/dev/null) || default_branch=""
-	else
-		default_branch=$(git -C "$repo_path" symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null) || default_branch=""
-		default_branch="${default_branch#origin/}"
-	fi
+	default_branch=$(_pulse_refresh_default_branch "$repo_path") || default_branch=""
 
 	if [[ -z "$default_branch" ]]; then
 		echo "[pulse-wrapper] _pulse_refresh_repo: refresh skipped: noncanonical or missing upstream for ${repo_path} — no origin/HEAD set" >>"$LOGFILE"
@@ -144,8 +155,11 @@ _pulse_refresh_repo() {
 		return 0
 	fi
 
-	local remote_sha="" local_sha=""
-	remote_sha=$(git -C "$repo_path" ls-remote origin "refs/heads/${default_branch}" 2>/dev/null | awk 'NR == 1 {print $1}') || remote_sha=""
+	local default_branch="" remote_sha="" local_sha=""
+	default_branch=$(_pulse_refresh_default_branch "$repo_path") || default_branch=""
+	if [[ -n "$default_branch" ]]; then
+		remote_sha=$(git -C "$repo_path" ls-remote origin "refs/heads/${default_branch}" 2>/dev/null | awk 'NR == 1 {print $1}') || remote_sha=""
+	fi
 	local_sha=$(git -C "$repo_path" rev-parse HEAD 2>/dev/null || true)
 	if [[ -z "$remote_sha" ]]; then
 		echo "[pulse-wrapper] _pulse_refresh_repo: remote diagnostic failed for ${repo_path} — canonical checkout unchanged" >>"$LOGFILE"
