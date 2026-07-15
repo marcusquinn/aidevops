@@ -4601,3 +4601,5 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [ ] t18130 Invalidate canonical GitHub state from verified webhooks #auto-dispatch #efficiency #enhancement #framework #github-api #pulse #security ref:GH#27776
 
 - [ ] t18131 Benchmark API savings, tune rollout, and retire flags #auto-dispatch #efficiency #enhancement #framework #github-api #observability #pulse ref:GH#27777
+
+- [ ] t18132 Prevent cross-install upstream-watch duplicate issues #auto-dispatch #bug #framework #reliability ref:GH#27821
