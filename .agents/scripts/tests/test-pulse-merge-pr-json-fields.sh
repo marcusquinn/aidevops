@@ -33,6 +33,28 @@ file_contains() {
 	return $?
 }
 
+PROCESS_PR_TEST_CALL_LOG=""
+PROCESS_PR_TEST_PAYLOAD_LOG=""
+PROCESS_PR_TEST_STATE="OPEN"
+
+# shellcheck disable=SC2317 # Called by the dynamically extracted process_pr.
+gh_pr_view() {
+	local pr_number="$1"
+	[[ -n "$PROCESS_PR_TEST_CALL_LOG" ]] || return 1
+	printf '%s\n' "$pr_number" >>"$PROCESS_PR_TEST_CALL_LOG"
+	printf '{"number":%s,"state":"%s"}\n' "$pr_number" "$PROCESS_PR_TEST_STATE"
+	return 0
+}
+
+# shellcheck disable=SC2317 # Called by the dynamically extracted process_pr.
+_process_single_ready_pr() {
+	local repo_slug="$1"
+	local pr_obj="$2"
+	[[ -n "$PROCESS_PR_TEST_PAYLOAD_LOG" ]] || return 1
+	printf '%s|%s\n' "$repo_slug" "$pr_obj" >>"$PROCESS_PR_TEST_PAYLOAD_LOG"
+	return 0
+}
+
 test_ready_pr_fields_include_process_metadata() {
 	local helper_src fields
 	helper_src=$(awk '
@@ -47,7 +69,7 @@ test_ready_pr_fields_include_process_metadata() {
 	fields="$(_pulse_merge_ready_pr_json_fields)"
 
 	local required missing=""
-	for required in number mergeable reviewDecision author title isDraft labels updatedAt headRefOid headRefName baseRefName createdAt; do
+	for required in number state mergeable reviewDecision author title isDraft labels updatedAt headRefOid headRefName baseRefName createdAt; do
 		if [[ ",${fields}," != *",${required},"* ]]; then
 			missing="${missing:+${missing},}${required}"
 		fi
@@ -74,6 +96,61 @@ test_callers_use_shared_field_helper() {
 	return 0
 }
 
+test_process_pr_runtime_reuses_one_view() {
+	local helper_src process_src call_log payload_log log_file call_count payload failure=""
+	helper_src=$(awk '
+		/^_pulse_merge_ready_pr_json_fields\(\) \{/,/^}$/ { print }
+	' "$MERGE_SCRIPT")
+	process_src=$(awk '
+		/^process_pr\(\) \{/,/^}$/ { print }
+	' "$MERGE_SCRIPT")
+	if [[ -z "$helper_src" || -z "$process_src" ]]; then
+		print_result "process_pr runtime source exists" 1 "could not extract helper functions"
+		return 0
+	fi
+	# shellcheck disable=SC1090 # Test intentionally evaluates extracted functions.
+	eval "$helper_src"
+	eval "$process_src"
+
+	call_log=$(mktemp)
+	payload_log=$(mktemp)
+	log_file=$(mktemp)
+	PROCESS_PR_TEST_CALL_LOG="$call_log"
+	PROCESS_PR_TEST_PAYLOAD_LOG="$payload_log"
+	PROCESS_PR_TEST_STATE="OPEN"
+	LOGFILE="$log_file"
+
+	if ! process_pr "owner/repo" "42"; then
+		failure="process_pr rejected an OPEN prefetched state"
+	else
+		call_count=$(wc -l <"$call_log" | tr -d ' ')
+		payload=$(<"$payload_log")
+		[[ "$call_count" == "1" ]] || failure="gh_pr_view calls=${call_count}"
+		[[ "$payload" == *'"state":"OPEN"'* ]] || failure="prefetched state was not forwarded"
+	fi
+	if [[ -z "$failure" ]]; then
+		: >"$call_log"
+		: >"$payload_log"
+		PROCESS_PR_TEST_STATE="MERGED"
+		if process_pr "owner/repo" "42"; then
+			failure="process_pr accepted a MERGED prefetched state"
+		else
+			call_count=$(wc -l <"$call_log" | tr -d ' ')
+			payload=$(<"$payload_log")
+			[[ "$call_count" == "1" ]] || failure="closed-state gh_pr_view calls=${call_count}"
+			[[ -z "$payload" ]] || failure="closed-state PR reached merge processing"
+		fi
+	fi
+	rm -f "$call_log" "$payload_log" "$log_file"
+
+	if [[ -n "$failure" ]]; then
+		print_result "process_pr runtime reuses one PR view and state gate" 1 "$failure"
+		return 0
+	fi
+	print_result "process_pr runtime reuses one PR view and state gate" 0
+	return 0
+}
+
 test_merge_ready_pr_list_failure_logs_error() {
 	if ! file_contains "$MERGE_PROCESS" '|| pr_json=""'; then
 		print_result "merge-ready list failure leaves empty output for error guard" 1 "gh_pr_list failure fallback must be empty so the existing -z guard logs the error"
@@ -88,6 +165,7 @@ test_merge_ready_pr_list_failure_logs_error() {
 }
 
 test_merge_ready_pr_list_uses_provider_cache() {
+	# shellcheck disable=SC2016 # The assertion checks literal shell source.
 	if ! file_contains "$MERGE_PROCESS" 'pulse_pr_list_get --repo "$repo_slug" --state open'; then
 		print_result "merge-ready PR list uses provider cache" 1 "_merge_ready_prs_for_repo must route through pulse_pr_list_get for per-cycle coalescing"
 		return 0
@@ -99,6 +177,7 @@ test_merge_ready_pr_list_uses_provider_cache() {
 main() {
 	test_ready_pr_fields_include_process_metadata
 	test_callers_use_shared_field_helper
+	test_process_pr_runtime_reuses_one_view
 	test_merge_ready_pr_list_failure_logs_error
 	test_merge_ready_pr_list_uses_provider_cache
 
