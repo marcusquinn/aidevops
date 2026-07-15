@@ -9,12 +9,15 @@ MIGRATIONS_MODULE="${SCRIPT_DIR}/../setup/modules/migrations.sh"
 SETUP_SCRIPT="${SCRIPT_DIR}/../../../setup.sh"
 TEST_ROOT=$(mktemp -d)
 trap 'rm -rf "$TEST_ROOT"' EXIT
+WARNING_LOG="$TEST_ROOT/warnings.log"
 
 print_info() {
 	return 0
 }
 
 print_warning() {
+	local message="$1"
+	printf '%s\n' "$message" >>"$WARNING_LOG"
 	return 0
 }
 
@@ -36,7 +39,32 @@ assert_eq() {
 	return 0
 }
 
+assert_file_contains() {
+	local expected="$1"
+	local file="$2"
+	local message="$3"
+	if ! grep -Fq "$expected" "$file"; then
+		printf 'FAIL: %s (missing=%s)\n' "$message" "$expected" >&2
+		failures=$((failures + 1))
+		return 1
+	fi
+	printf 'PASS: %s\n' "$message"
+	return 0
+}
+
 assert_eq "2" "$(grep -c 'migrate_custom_model_routing_reasoning_defaults' "$SETUP_SCRIPT")" "setup runs the migration in interactive and non-interactive paths" || true
+
+unset HOME
+migrate_custom_model_routing_reasoning_defaults
+assert_file_contains "HOME unavailable; t18137 custom model routing migration will retry" "$WARNING_LOG" "unset HOME defers migration without an unbound-variable failure" || true
+HOME=""
+migrate_custom_model_routing_reasoning_defaults
+assert_eq "2" "$(grep -c 'HOME unavailable; t18137 custom model routing migration will retry' "$WARNING_LOG")" "empty HOME also defers migration without resolving a root-level path" || true
+
+assert_file_contains "Failed to create backup of custom model routing table at \$backup_file" "$MIGRATIONS_MODULE" "backup failure reports its destination path" || true
+assert_file_contains "Failed to create temporary file for migration of \$custom_table" "$MIGRATIONS_MODULE" "temporary-file failure reports the custom table path" || true
+assert_file_contains "Failed to update custom model routing table structure in \$custom_table" "$MIGRATIONS_MODULE" "jq update failure reports the custom table path" || true
+assert_file_contains "Failed to replace custom model routing table at \$custom_table" "$MIGRATIONS_MODULE" "replacement failure reports the custom table path" || true
 
 HOME="$TEST_ROOT/no-custom"
 mkdir -p "$HOME"
