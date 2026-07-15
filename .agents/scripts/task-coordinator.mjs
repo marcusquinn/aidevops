@@ -9,7 +9,7 @@ import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { canonicalizeSqliteDbPath, sqlEscape } from "./sqlite-process.mjs";
 
-const SCHEMA_VERSION = 5;
+const SCHEMA_VERSION = 6;
 const PAYLOAD_MAX_BYTES = 64 * 1024;
 const EVIDENCE_MAX_BYTES = 64 * 1024;
 const CROCKFORD = "0123456789abcdefghjkmnpqrstvwxyz";
@@ -44,7 +44,7 @@ CREATE TABLE IF NOT EXISTS tasks (
 CREATE TABLE IF NOT EXISTS operations (
   operation_id TEXT PRIMARY KEY, kind TEXT NOT NULL, task_id TEXT,
   payload_hash TEXT NOT NULL, payload_json TEXT NOT NULL CHECK(json_valid(payload_json)), status TEXT NOT NULL,
-  result_json TEXT NOT NULL CHECK(json_valid(result_json)), result_hash TEXT NOT NULL,
+  result_json TEXT NOT NULL CHECK(json_valid(result_json)),
   created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
   CHECK(status IN ('published','retryable','indeterminate','terminal','conflict'))
 );
@@ -179,9 +179,8 @@ function backup(path, reason) {
 function migrateV1ToV2(path) {
   const copy = backup(path, "pre-migrate-v2");
   sqlite(path, `BEGIN IMMEDIATE;
-ALTER TABLE operations ADD COLUMN result_hash TEXT NOT NULL DEFAULT 'sha256:unavailable';
+ALTER TABLE operations ADD COLUMN result_hash TEXT NOT NULL DEFAULT 'unchecked';
 ALTER TABLE restore_controls ADD COLUMN backup_high_water INTEGER NOT NULL DEFAULT 0;
-UPDATE operations SET result_hash='sha3-256:'||lower(hex(sha3(result_json,256)));
 UPDATE coordinator_meta SET value='2' WHERE key='schema_version';
 INSERT INTO migration_history(version,applied_at,backup_path,integrity_result) VALUES (2,${sqlEscape(now())},${sqlEscape(copy)},'ok');
 COMMIT;`);
@@ -215,20 +214,35 @@ INSERT INTO migration_history(version,applied_at,backup_path,integrity_result) V
 COMMIT;`);
   if (sqlite(path, "PRAGMA integrity_check;\n") !== "ok") throw new Error("migration integrity verification failed");
 }
+function migrateV5ToV6(path) {
+  const copy = backup(path, "pre-migrate-v6");
+  sqlite(path, `BEGIN IMMEDIATE;
+ALTER TABLE operations DROP COLUMN result_hash;
+UPDATE coordinator_meta SET value='6' WHERE key='schema_version';
+INSERT INTO migration_history(version,applied_at,backup_path,integrity_result) VALUES (6,${sqlEscape(now())},${sqlEscape(copy)},'ok');
+COMMIT;`);
+  if (sqlite(path, "PRAGMA integrity_check;\n") !== "ok") throw new Error("migration integrity verification failed");
+}
 function migrate(path, version) {
   if (version === 1) {
     migrateV1ToV2(path);
     migrateV2ToV3(path);
     migrateV3ToV4(path);
     migrateV4ToV5(path);
+    migrateV5ToV6(path);
   } else if (version === 2) {
     migrateV2ToV3(path);
     migrateV3ToV4(path);
     migrateV4ToV5(path);
+    migrateV5ToV6(path);
   } else if (version === 3) {
     migrateV3ToV4(path);
     migrateV4ToV5(path);
-  } else if (version === 4) migrateV4ToV5(path);
+    migrateV5ToV6(path);
+  } else if (version === 4) {
+    migrateV4ToV5(path);
+    migrateV5ToV6(path);
+  } else if (version === 5) migrateV5ToV6(path);
   else if (version !== SCHEMA_VERSION) throw new Error(`unsupported coordinator schema ${version}`);
 }
 function bootstrap(path) {
@@ -332,10 +346,10 @@ function activeOrigin(path) {
   return found;
 }
 function operationResult(path, operationId, payloadHash) {
-  const existing = rows(path, `SELECT payload_hash,result_json,result_hash,'sha3-256:'||lower(hex(sha3(result_json,256))) AS computed_result_hash FROM operations WHERE operation_id=${sqlEscape(operationId)};`)[0];
+  const existing = rows(path, `SELECT payload_hash,result_json FROM operations WHERE operation_id=${sqlEscape(operationId)};`)[0];
   if (!existing) return null;
   if (existing.payload_hash !== payloadHash) throw new Error("operation_id payload conflict");
-  if (!existing.result_json || existing.result_json === "{}" || existing.result_json === "null" || existing.computed_result_hash !== existing.result_hash) {
+  if (!existing.result_json || existing.result_json === "{}" || existing.result_json === "null") {
     throw new Error("operation result is incomplete or failed integrity verification");
   }
   return JSON.parse(existing.result_json);
@@ -357,8 +371,8 @@ function allocate({ operationId = randomUUID(), payload = {}, count = 1, legacyI
   maybeCrash("before-commit");
   try {
     sqlite(path, `PRAGMA foreign_keys=ON; BEGIN IMMEDIATE;
-INSERT INTO operations(operation_id,kind,task_id,payload_hash,payload_json,status,result_json,result_hash,created_at,updated_at)
-VALUES (${sqlEscape(operationId)},'task.create',NULL,${sqlEscape(payloadHash)},${sqlEscape(payloadText)},'terminal','null','pending',${sqlEscape(timestamp)},${sqlEscape(timestamp)});
+INSERT INTO operations(operation_id,kind,task_id,payload_hash,payload_json,status,result_json,created_at,updated_at)
+VALUES (${sqlEscape(operationId)},'task.create',NULL,${sqlEscape(payloadHash)},${sqlEscape(payloadText)},'terminal','null',${sqlEscape(timestamp)},${sqlEscape(timestamp)});
 UPDATE origins SET sequence=sequence+${count} WHERE origin_id=(SELECT origin_id FROM origins WHERE state='active' ORDER BY created_at DESC LIMIT 1);
 WITH RECURSIVE offsets(n) AS (SELECT 0 UNION ALL SELECT n+1 FROM offsets WHERE n+1<${count})
 INSERT INTO tasks(task_id,origin_id,sequence,parent_task_id,created_operation_id,payload_hash,payload_json,created_at)
@@ -368,7 +382,6 @@ FROM origins o,offsets WHERE o.state='active';
 UPDATE operations SET task_id=(SELECT task_id FROM tasks WHERE created_operation_id=${sqlEscape(operationId)} ORDER BY sequence LIMIT 1),
 result_json=(SELECT json_object('operationId',${sqlEscape(operationId)},'tasks',json_group_array(json_object('taskId',task_id,'originId',origin_id,'sequence',sequence))) FROM (SELECT * FROM tasks WHERE created_operation_id=${sqlEscape(operationId)} ORDER BY sequence))
 WHERE operation_id=${sqlEscape(operationId)};
-UPDATE operations SET result_hash='sha3-256:'||lower(hex(sha3(result_json,256))) WHERE operation_id=${sqlEscape(operationId)};
 UPDATE coordinator_meta SET value='1' WHERE key='namespaced_emitted' AND ${legacyStart}=0;
 INSERT INTO terminal_evidence(operation_id,result_state,evidence_json,occurred_at) VALUES (${sqlEscape(operationId)},'terminal','{"allocation":"committed"}',${sqlEscape(timestamp)}); COMMIT;`);
   } catch (error) {
@@ -400,7 +413,7 @@ function publication({ operationId, taskId, repositoryId, repositoryPath, remote
 SELECT ${sqlEscape(intentId)},${sqlEscape(repositoryId)},${sqlEscape(repositoryPath)},${sqlEscape(remoteName)},${sqlEscape(branchName)},${sqlEscape(coalesceKey)},COALESCE(MAX(sequence),0)+1,unixepoch(),${maxAttempts} FROM publication_queue;` : "";
   try {
     sqlite(path, `PRAGMA foreign_keys=ON; BEGIN IMMEDIATE;
-INSERT INTO operations VALUES (${sqlEscape(operationId)},'publication.intent',${sqlEscape(taskId)},${sqlEscape(payloadHash)},${sqlEscape(payloadText)},'retryable',${sqlEscape(resultText)},'sha3-256:'||lower(hex(sha3(${sqlEscape(resultText)},256))),${sqlEscape(timestamp)},${sqlEscape(timestamp)});
+INSERT INTO operations VALUES (${sqlEscape(operationId)},'publication.intent',${sqlEscape(taskId)},${sqlEscape(payloadHash)},${sqlEscape(payloadText)},'retryable',${sqlEscape(resultText)},${sqlEscape(timestamp)},${sqlEscape(timestamp)});
 INSERT INTO publication_intents VALUES (${sqlEscape(intentId)},${sqlEscape(operationId)},${sqlEscape(taskId)},${sqlEscape(payloadHash)},${sqlEscape(payloadText)},'retryable',${sqlEscape(timestamp)});
 ${queueInsert} COMMIT;`);
   } catch (error) {
@@ -474,7 +487,6 @@ UPDATE publication_intents SET status=(SELECT final_status FROM finishing f WHER
 UPDATE operations SET status=(SELECT final_status FROM finishing f WHERE f.operation_id=operations.operation_id),updated_at=${sqlEscape(timestamp)},
 result_json=(SELECT json_object('intentId',f.intent_id,'operationId',f.operation_id,'status',f.final_status,'taskId',f.task_id,'evidence',json(${sqlEscape(durableEvidence)})) FROM finishing f WHERE f.operation_id=operations.operation_id)
 WHERE operation_id IN (SELECT operation_id FROM finishing);
-UPDATE operations SET result_hash='sha3-256:'||lower(hex(sha3(result_json,256))) WHERE operation_id IN (SELECT operation_id FROM finishing);
 INSERT INTO terminal_evidence(operation_id,result_state,evidence_json,occurred_at)
 SELECT operation_id,final_status,${sqlEscape(durableEvidence)},${sqlEscape(timestamp)} FROM finishing WHERE final_status IN ('published','terminal','conflict');
 UPDATE publication_queue SET available_at=${retryAt},lease_token=NULL WHERE intent_id IN (SELECT intent_id FROM finishing WHERE final_status='retryable');
@@ -499,7 +511,6 @@ UPDATE publication_intents SET status=${sqlEscape(status)} WHERE intent_id=${sql
 UPDATE operations SET status=${sqlEscape(status)},updated_at=${sqlEscape(timestamp)},
 result_json=json_object('intentId',${sqlEscape(intentId)},'operationId',operation_id,'status',${sqlEscape(status)},'taskId',task_id,'evidence',json(${sqlEscape(evidenceText)}))
 WHERE operation_id=(SELECT operation_id FROM publication_intents WHERE intent_id=${sqlEscape(intentId)});
-UPDATE operations SET result_hash='sha3-256:'||lower(hex(sha3(result_json,256))) WHERE operation_id=(SELECT operation_id FROM publication_intents WHERE intent_id=${sqlEscape(intentId)});
 INSERT INTO terminal_evidence(operation_id,result_state,evidence_json,occurred_at)
 SELECT operation_id,${sqlEscape(status)},${sqlEscape(evidenceText)},${sqlEscape(timestamp)} FROM publication_intents WHERE intent_id=${sqlEscape(intentId)} AND ${sqlEscape(status)} IN ('published','terminal','conflict'); COMMIT;`);
   return { intentId, status };
@@ -633,8 +644,8 @@ ON CONFLICT(forge,repository_id,subject_kind,subject_id) DO UPDATE SET cursor_ti
 INSERT INTO publication_queue(intent_id,repository_id,repository_path,remote_name,branch_name,coalesce_key,sequence,available_at,max_attempts) SELECT ${sqlEscape(intentId)},${sqlEscape(value.repositoryId)},${sqlEscape(value.repositoryPath)},'origin','main','forge-event',COALESCE(MAX(sequence),0)+1,unixepoch(),5 FROM publication_queue;` : "";
   const terminalState = conflict ? "conflict" : "terminal";
   return `PRAGMA foreign_keys=ON; BEGIN IMMEDIATE;
-INSERT INTO operations(operation_id,kind,task_id,payload_hash,payload_json,status,result_json,result_hash,created_at,updated_at)
-VALUES (${sqlEscape(value.operationId)},'forge.event',${sqlEscape(mapping?.taskId || null)},${sqlEscape(payloadHash)},${sqlEscape(payloadText)},${sqlEscape(terminalState)},${sqlEscape(resultText)},'sha3-256:'||lower(hex(sha3(${sqlEscape(resultText)},256))),${sqlEscape(timestamp)},${sqlEscape(timestamp)});
+INSERT INTO operations(operation_id,kind,task_id,payload_hash,payload_json,status,result_json,created_at,updated_at)
+VALUES (${sqlEscape(value.operationId)},'forge.event',${sqlEscape(mapping?.taskId || null)},${sqlEscape(payloadHash)},${sqlEscape(payloadText)},${sqlEscape(terminalState)},${sqlEscape(resultText)},${sqlEscape(timestamp)},${sqlEscape(timestamp)});
 ${cursorSql}
 ${publicationSql}
 INSERT INTO terminal_evidence(operation_id,result_state,evidence_json,occurred_at) VALUES (${sqlEscape(value.operationId)},${sqlEscape(terminalState)},${sqlEscape(JSON.stringify({ status, transitionKind }))},${sqlEscape(timestamp)}); COMMIT;`;
@@ -687,10 +698,8 @@ CREATE TEMP TABLE assert_change(value INTEGER CHECK(value=1)); INSERT INTO asser
 INSERT INTO restore_controls(origin_id,prior_epoch,new_epoch,fencing_token,registry_evidence_json,backup_integrity,backup_high_water,published_high_water,restored_at) VALUES (${sqlEscape(restoredOrigin.origin_id)},${priorEpoch},${newEpoch},${sqlEscape(fencingToken)},${sqlEscape(evidenceText)},'ok',${localHighWater},${publishedHighWater},${sqlEscape(timestamp)});
 INSERT INTO origin_transitions(origin_id,from_state,to_state,ownership_epoch,fencing_token,evidence_json,occurred_at) VALUES (${sqlEscape(restoredOrigin.origin_id)},${sqlEscape(restoredOrigin.state)},'active',${newEpoch},${sqlEscape(fencingToken)},${sqlEscape(evidenceText)},${sqlEscape(timestamp)}); COMMIT;`);
   if (sqlite(staged, "PRAGMA integrity_check;\n") !== "ok") throw new Error("staged restore failed integrity verification");
-  sqlite(target, "PRAGMA wal_checkpoint(TRUNCATE);\n");
-  rmSync(`${target}-wal`, { force: true });
-  rmSync(`${target}-shm`, { force: true });
-  renameSync(staged, target);
+  sqlite(target, `.restore ${sqlEscape(staged)}\n`);
+  rmSync(staged, { force: true });
   secureFile(target);
   return { originId: restoredOrigin.origin_id, sequence: highWater, ownershipEpoch: newEpoch };
 }
@@ -698,7 +707,7 @@ function verify(path = initialise()) {
   const quickCheck = sqlite(path, "PRAGMA quick_check;\n");
   const foreignKeys = rows(path, "PRAGMA foreign_key_check;");
   const duplicateTasks = Number(sqlite(path, "SELECT COUNT(*) FROM (SELECT origin_id,sequence FROM tasks GROUP BY origin_id,sequence HAVING COUNT(*)>1);\n"));
-  const incompleteOperations = Number(sqlite(path, "SELECT COUNT(*) FROM operations WHERE result_json IN ('{}','null') OR result_hash != 'sha3-256:'||lower(hex(sha3(result_json,256)));\n"));
+  const incompleteOperations = Number(sqlite(path, "SELECT COUNT(*) FROM operations WHERE result_json IN ('{}','null');\n"));
   const result = { duplicateTasks, foreignKeyErrors: foreignKeys.length, incompleteOperations, quickCheck, schemaVersion: SCHEMA_VERSION };
   return { ...result, ok: quickCheck === "ok" && foreignKeys.length === 0 && duplicateTasks === 0 && incompleteOperations === 0 };
 }
