@@ -32,8 +32,8 @@ main() {
 	local merge_first_line early_dispatch_line
 	mkdir -p "$stub_dir" "${TEST_DIR}/home/.aidevops/logs"
 
-	merge_first_line=$(grep -n '^[[:space:]]*_preflight_start_merge_first' "$DISPATCH_ENGINE" | cut -d: -f1)
-	early_dispatch_line=$(grep -n '^[[:space:]]*_preflight_early_dispatch' "$DISPATCH_ENGINE" | cut -d: -f1)
+	merge_first_line=$(grep -n '^[[:space:]]*_preflight_start_merge_first' "$DISPATCH_ENGINE" | cut -d: -f1 || printf '')
+	early_dispatch_line=$(grep -n '^[[:space:]]*_preflight_early_dispatch' "$DISPATCH_ENGINE" | cut -d: -f1 || printf '')
 	[[ -n "$merge_first_line" ]] || fail "dispatch engine does not call merge-first"
 	[[ -n "$early_dispatch_line" ]] || fail "dispatch engine does not call early dispatch"
 	if [[ "$merge_first_line" -ge "$early_dispatch_line" ]]; then

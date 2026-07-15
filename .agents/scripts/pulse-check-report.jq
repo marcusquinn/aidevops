@@ -29,7 +29,7 @@ def finding($id; $severity; $title; $evidence; $recommendation; $autofile): {
 ($summary.metrics.terminal_session_total // $summary.metrics.total // 0 | number_or_zero) as $hist_terminal_total |
 ($summary.metrics.runtime_handoffs // $summary.metrics.succeeded // 0 | number_or_zero) as $hist_handoffs |
 ($summary.delivery_stages // {}) as $hist_delivery |
-(if ($hist_delivery.delivered_successes // null) == null then null else ($hist_delivery.delivered_successes | number_or_zero) end) as $hist_delivered |
+(if $hist_delivery.delivered_successes == null then null else ($hist_delivery.delivered_successes | number_or_zero) end) as $hist_delivered |
 ($summary.metrics.failure_families // []) as $failure_families |
 ($recent_summary.metrics.failure_families // []) as $recent_failure_families |
 ($api.graphql_circuit_breaker_trips // 0 | number_or_zero) as $graphql_trips |
