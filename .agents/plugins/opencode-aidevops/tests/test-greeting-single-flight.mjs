@@ -56,6 +56,7 @@ function handlerOptions(f, client, execGreeting) {
     cacheDir: f.cacheDir,
     refreshTtlMs: 1000,
     lockStaleMs: 2000,
+    initializedAtMs: 0,
     execGreeting,
     maintenanceNoticeFn: async () => "",
   };
@@ -107,6 +108,30 @@ test("fresh cache emits immediately without spawning a refresh", async (t) => {
 
   assert.equal(spawnCount, 0);
   assert.equal(f.clients[0].length, 1);
+});
+
+test("fresh pre-init cache is withheld until a current-process refresh", async (t) => {
+  const f = fixture();
+  t.after(() => f.cleanup());
+  writeFileSync(f.cacheFile, `${OLD_GREETING}\n`);
+  utimesSync(f.cacheFile, new Date(1_000), new Date(1_000));
+  let spawnCount = 0;
+  const handler = createGreetingHandler({
+    ...handlerOptions(f, f.client(), async () => {
+      spawnCount += 1;
+      return { stdout: NEW_GREETING };
+    }),
+    now: () => 2_000,
+    initializedAtMs: 1_500,
+    refreshTtlMs: 1_500,
+  });
+
+  await handler({ event: { type: "session.created" } });
+  await waitFor(() => cacheEquals(f, NEW_GREETING) && f.clients[0].length === 1);
+
+  assert.equal(spawnCount, 1);
+  assert.match(f.clients[0][0].message, /aidevops v1\.0\.1/);
+  assert.doesNotMatch(f.clients[0][0].message, /aidevops v1\.0\.0/);
 });
 
 test("shared Claude cache cannot leak into OpenCode and refresh receives runtime identity", async (t) => {
@@ -222,7 +247,7 @@ test("cold-cache follower emits a cache published while its owner lock disappear
   let nowCalls = 0;
   const now = () => {
     nowCalls += 1;
-    if (nowCalls === 5) {
+    if (nowCalls === 6) {
       writeFileSync(f.cacheFile, `${NEW_GREETING}\n`);
       rmSync(lockDir, { recursive: true, force: true });
     }
@@ -239,7 +264,7 @@ test("cold-cache follower emits a cache published while its owner lock disappear
   await handler({ event: { type: "session.created" } });
   await waitFor(() => f.clients[0].length === 1);
 
-  assert.equal(nowCalls, 5);
+  assert.equal(nowCalls, 6);
   assert.equal(f.clients[0][0].message.includes(NEW_GREETING), true);
 });
 
