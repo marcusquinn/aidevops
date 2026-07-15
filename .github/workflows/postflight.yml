@@ -55,14 +55,14 @@ jobs:
         for i in {1..20}; do
           CHECK_RUNS_RESPONSE=$(gh api --paginate --slurp \
             "repos/${REPO}/commits/${COMMIT_SHA}/check-runs?per_page=100" \
-            | jq -c -f .github/scripts/flatten-check-run-pages.jq)
+            | jq -c -f .agents/scripts/jq/flatten-check-run-pages.jq)
           RELEASE_RUNS_RESPONSE=$(gh api --paginate --slurp \
             "repos/${REPO}/actions/runs?head_sha=${COMMIT_SHA}&per_page=100")
           RELEASE_CHECK_RUNS=$(jq -c \
             --arg release_sha "$COMMIT_SHA" \
             --arg self_name "$SELF_NAME" \
             --slurpfile release_run_documents <(printf '%s\n' "$RELEASE_RUNS_RESPONSE") \
-            -f .github/scripts/release-owned-check-runs.jq \
+            -f .agents/scripts/jq/release-owned-check-runs.jq \
             <<<"$CHECK_RUNS_RESPONSE")
           PENDING=$(jq --arg self_name "$SELF_NAME" \
             '[.check_runs[] | select(.status != "completed")] | length' \
@@ -83,14 +83,14 @@ jobs:
 
         CHECK_RUNS_RESPONSE=$(gh api --paginate --slurp \
           "repos/${REPO}/commits/${COMMIT_SHA}/check-runs?per_page=100" \
-          | jq -c -f .github/scripts/flatten-check-run-pages.jq)
+          | jq -c -f .agents/scripts/jq/flatten-check-run-pages.jq)
         RELEASE_RUNS_RESPONSE=$(gh api --paginate --slurp \
           "repos/${REPO}/actions/runs?head_sha=${COMMIT_SHA}&per_page=100")
         RELEASE_CHECK_RUNS=$(jq -c \
           --arg release_sha "$COMMIT_SHA" \
           --arg self_name "$SELF_NAME" \
           --slurpfile release_run_documents <(printf '%s\n' "$RELEASE_RUNS_RESPONSE") \
-          -f .github/scripts/release-owned-check-runs.jq \
+          -f .agents/scripts/jq/release-owned-check-runs.jq \
           <<<"$CHECK_RUNS_RESPONSE")
         REMAINING=$(jq '[.check_runs[] | select(.status != "completed")] | length' \
           <<<"$RELEASE_CHECK_RUNS")
@@ -124,14 +124,14 @@ jobs:
         SELF_NAME="Verify Release Health"
         CHECK_RUNS_RESPONSE=$(gh api --paginate --slurp \
           "repos/${REPO}/commits/${COMMIT_SHA}/check-runs?per_page=100" \
-          | jq -c -f .github/scripts/flatten-check-run-pages.jq)
+          | jq -c -f .agents/scripts/jq/flatten-check-run-pages.jq)
         RELEASE_RUNS_RESPONSE=$(gh api --paginate --slurp \
           "repos/${REPO}/actions/runs?head_sha=${COMMIT_SHA}&per_page=100")
         RELEASE_CHECK_RUNS=$(jq -c \
           --arg release_sha "$COMMIT_SHA" \
           --arg self_name "$SELF_NAME" \
           --slurpfile release_run_documents <(printf '%s\n' "$RELEASE_RUNS_RESPONSE") \
-          -f .github/scripts/release-owned-check-runs.jq \
+          -f .agents/scripts/jq/release-owned-check-runs.jq \
           <<<"$CHECK_RUNS_RESPONSE")
         EFFECTIVE_CHECK_RUNS=$(echo "$RELEASE_CHECK_RUNS" \
           | jq -c --arg self_name "$SELF_NAME" -f .github/scripts/effective-check-runs.jq)
@@ -148,7 +148,7 @@ jobs:
           if [[ "$COMPARE_STATUS" == "ahead" || "$COMPARE_STATUS" == "identical" ]]; then
             DESCENDANT_RESPONSE=$(gh api --paginate --slurp \
               "repos/${REPO}/commits/${DEFAULT_SHA}/check-runs?per_page=100" 2>/dev/null \
-              | jq -c -f .github/scripts/flatten-check-run-pages.jq || true)
+              | jq -c -f .agents/scripts/jq/flatten-check-run-pages.jq || true)
             if [[ -n "$DESCENDANT_RESPONSE" ]]; then
               DESCENDANT_CHECK_RUNS=$(echo "$DESCENDANT_RESPONSE" \
                 | jq -c --arg self_name "$SELF_NAME" -f .github/scripts/effective-check-runs.jq)
