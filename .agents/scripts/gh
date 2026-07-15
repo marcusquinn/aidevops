@@ -1140,8 +1140,10 @@ _shim_privacy_scan() {
 		target_url="https://github.com/${target_url}"
 	fi
 
-	# Public-target check — fail-open on private (rc=1) or unknown (rc=2).
-	privacy_is_target_public "$target_url"
+	# Public-target check — bind the already-resolved native binary so helper
+	# probes cannot re-enter this PATH shim while its recursion guard is active.
+	# This covers both the auth status probe and the subsequent repo API query.
+	PRIVACY_GH_BIN="$REAL_GH" privacy_is_target_public "$target_url"
 	local _pub_rc=$?
 	if [[ $_pub_rc -ne 0 ]]; then
 		return 0
