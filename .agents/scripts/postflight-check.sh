@@ -185,6 +185,21 @@ evaluate_scoped_workflow_runs() {
 	return 0
 }
 
+evaluate_recent_workflow_runs() {
+	local repo="$1"
+	local all_runs failed_count
+
+	print_info "Checking all recent workflows..."
+	all_runs=$(gh run list --repo "$repo" --limit=5 --json name,conclusion,status 2>/dev/null || echo "[]")
+	failed_count=$(echo "$all_runs" | jq '[.[] | select(.conclusion == "failure")] | length')
+	if [[ "$failed_count" -gt 0 ]]; then
+		count_failure "$failed_count workflow(s) failed recently"
+		echo "$all_runs" | jq -r '.[] | select(.conclusion == "failure") | "  - \(.name): \(.conclusion)"'
+		return 1
+	fi
+	return 0
+}
+
 # Check GitHub Actions CI/CD status
 check_cicd_status() {
 	print_section "CI/CD Pipeline Status"
@@ -274,25 +289,8 @@ check_cicd_status() {
 		count_warning "CI/CD pipeline conclusion: $conclusion"
 	fi
 
-	# Check every effective release-owned workflow, not just whichever run is newest.
-	print_info "Checking all release-owned workflows..."
-	local all_runs
-	if [[ -n "$POSTFLIGHT_COMMIT_SHA" ]]; then
-		all_runs=$(echo "$scoped_runs" | jq -c '.release_runs')
-	else
-		all_runs=$(gh run list --repo "$repo" --limit=5 --json name,conclusion,status 2>/dev/null || echo "[]")
-	fi
-
-	local failed_count
-	failed_count=$(echo "$all_runs" | jq '[.[] | select(.conclusion == "failure")] | length')
-
-	if [[ "$failed_count" -gt 0 ]]; then
-		count_failure "$failed_count required release-owned workflow(s) failed"
-		echo "$all_runs" | jq -r '.[] | select(.conclusion == "failure" or .conclusion == "cancelled" or .conclusion == "timed_out" or .conclusion == "action_required") | "  - Required release check failed: \(.workflowName // .name): \(.conclusion)"'
-		return 1
-	fi
-
-	return 0
+	evaluate_recent_workflow_runs "$repo"
+	return $?
 }
 
 # Check SonarCloud quality gate
