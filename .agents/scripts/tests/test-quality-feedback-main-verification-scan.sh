@@ -887,7 +887,7 @@ test_scan_single_pr_filters_positive_inline_acknowledgement_reply() {
 				repos/*/pulls/*/comments)
 					jq -n '[
 						{"id":3556392009,"in_reply_to_id":null,"user":{"login":"gemini-code-assist[bot]"},"path":".agents/scripts/lint-resource-benchmark.sh","line":407,"original_line":407,"position":37,"body":"If --profile is passed without a value, shift 2 will fail. Consider validating that an argument is present before shifting.","html_url":"https://github.com/example/repo/pull/1#discussion_r3556392009","created_at":"2026-07-10T04:37:18Z"},
-						{"id":3556456770,"in_reply_to_id":3556392009,"user":{"login":"maintainer"},"path":".agents/scripts/lint-resource-benchmark.sh","line":407,"original_line":407,"position":37,"body":"Addressed in `4e5dfb69f`. All value-taking profiler options now use a shared presence check and return an explicit diagnostic with status 1.","html_url":"https://github.com/example/repo/pull/1#discussion_r3556456770","created_at":"2026-07-10T04:56:24Z"}
+						{"id":3556456770,"in_reply_to_id":3556392009,"user":{"login":"maintainer"},"path":".agents/scripts/lint-resource-benchmark.sh","line":407,"original_line":407,"position":37,"body":"Addressed in `4e5dfb69f279c19c1311bcecf19521c9fa78c7c8f768fae2b449c9da6769c51f`. All value-taking profiler options now use a shared presence check and return an explicit diagnostic with status 1.","html_url":"https://github.com/example/repo/pull/1#discussion_r3556456770","created_at":"2026-07-10T04:56:24Z"}
 					]'
 					return 0
 					;;
@@ -914,7 +914,7 @@ test_scan_single_pr_filters_positive_inline_acknowledgement_reply() {
 	}
 
 	_assert_scan_single_pr_has_no_findings "26918" \
-		"issue #26971 addressed reply filters its parent finding"
+		"issue #27809 SHA-256 addressed reply filters its parent finding"
 
 	_restore_mock_gh
 	return 0
