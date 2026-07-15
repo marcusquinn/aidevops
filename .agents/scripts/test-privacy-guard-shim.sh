@@ -277,7 +277,7 @@ rm -f "$PRIV_HOME/.aidevops/cache/repo-privacy.json" \
 	"$RECORD_FILE" "$AUTH_RECORD_FILE" "$API_RECORD_FILE"
 out=$(run_shim "$PATH_DIR" issue create --repo marcusquinn/aidevops --title "test" --body "Clean cold-cache content" 2>&1)
 rc=$?
-if [[ "$rc" -eq 0 ]] && [[ -f "$RECORD_FILE" && -f "$AUTH_RECORD_FILE" && -f "$API_RECORD_FILE" ]] && \
+if [[ "$rc" -eq 0 ]] && [[ -f "$RECORD_FILE" && -f "$AUTH_RECORD_FILE" && -f "$API_RECORD_FILE" ]] &&
 	[[ "$out" != *"gh not authenticated"* ]]; then
 	pass "cold privacy probes use native gh without shim recursion"
 else
