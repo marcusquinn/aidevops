@@ -67,6 +67,14 @@ _isc_resolve_manageable_user() {
 # -----------------------------------------------------------------------------
 # Subcommand: claim
 # -----------------------------------------------------------------------------
+_isc_claim_closed_issue_guard() {
+	local issue="$1"
+	local slug="$2"
+	_isc_issue_is_closed "$issue" "$slug" || return 1
+	_isc_info "claim: #$issue is closed — skipping interactive claim lifecycle"
+	return 0
+}
+
 # Apply status:in-review, self-assign, and write a stamp in repos where the
 # authenticated account has maintainer-equivalent issue-management access.
 #
@@ -170,13 +178,9 @@ _isc_cmd_claim() {
 		return 0
 	fi
 
-	# GH#27871: terminal issues must remain terminal. Check before the
-	# idempotent in-review branch because that path still refreshes a local
-	# claim stamp. Lookup failures preserve the existing fail-open contract.
-	if _isc_issue_is_closed "$issue" "$slug"; then
-		_isc_info "claim: #$issue is closed — skipping interactive claim lifecycle"
-		return 0
-	fi
+	# GH#27871: check before idempotency because that path refreshes a stamp.
+	# Lookup failures preserve the existing fail-open contract.
+	_isc_claim_closed_issue_guard "$issue" "$slug" && return 0
 
 	# Idempotency: if already in-review, refresh stamp and exit. The `if`
 	# conditional consumes any non-zero return so set -e doesn't propagate

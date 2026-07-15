@@ -1025,10 +1025,10 @@ for closed_state in CLOSED closed; do
 	closed_rc=$?
 	closed_log=$(cat "$STUB_LOG")
 
-	if [[ $closed_rc -eq 0 && ! -f "$closed_stamp" ]] &&
-		printf '%s' "$closed_out" | grep -q 'is closed' &&
-		! printf '%s' "$closed_log" | grep -q 'issue edit 70007' &&
-		! printf '%s' "$closed_log" | grep -q 'issue comment 70007'; then
+	if [[ $closed_rc -eq 0 && ! -f "$closed_stamp" &&
+		"$closed_out" == *"is closed"* &&
+		"$closed_log" != *"issue edit 70007"* &&
+		"$closed_log" != *"issue comment 70007"* ]]; then
 		print_result "GH#27871: claim on ${closed_state} issue skips lifecycle writes" 0
 	else
 		print_result "GH#27871: claim on ${closed_state} issue skips lifecycle writes" 1 \
