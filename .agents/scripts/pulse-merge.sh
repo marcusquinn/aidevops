@@ -152,7 +152,7 @@ _pulse_merge_changes_requested_thread_remediation_first_enabled() {
 # caller that builds a PR object on this helper so draft/label/staleness
 # metadata cannot drift between list-based and webhook-triggered merge paths.
 _pulse_merge_ready_pr_json_fields() {
-	printf '%s' 'number,mergeable,reviewDecision,author,title,isDraft,labels,updatedAt,headRefOid,headRefName,baseRefName,createdAt,statusCheckRollup'
+	printf '%s' 'number,state,mergeable,reviewDecision,author,title,isDraft,labels,updatedAt,headRefOid,headRefName,baseRefName,createdAt,statusCheckRollup'
 	return 0
 }
 
@@ -1655,8 +1655,7 @@ process_pr() {
 
 	# Verify state is OPEN — closed/merged PRs should not be re-processed.
 	local pr_state
-	pr_state=$(gh_pr_view "$pr_number" --repo "$repo_slug" \
-		--json state --jq '.state // ""' 2>/dev/null) || pr_state=""
+	pr_state=$(printf '%s' "$pr_obj" | jq -r '.state // ""' 2>/dev/null) || pr_state=""
 	if [[ "$pr_state" != "OPEN" ]]; then
 		echo "[pulse-merge] process_pr: PR ${repo_slug}#${pr_number} is not OPEN (state=${pr_state}) — skipping" >>"$LOGFILE"
 		return 1
