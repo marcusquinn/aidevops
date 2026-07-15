@@ -428,7 +428,7 @@ import sys
 owner_pid = int(owner_pid_text)
 trusted_session = trusted_session_text == "1"
 
-connection = sqlite3.connect(db_path)
+connection = sqlite3.connect(db_path, isolation_level=None)
 try:
     connection.execute("BEGIN IMMEDIATE")
     existing_owner = connection.execute(
@@ -482,7 +482,11 @@ try:
            FROM worktree_owners WHERE worktree_path = ?""",
         (worktree_path,),
     ).fetchone()
-    connection.commit()
+    connection.execute("COMMIT")
+except Exception:
+    if connection.in_transaction:
+        connection.execute("ROLLBACK")
+    raise
 finally:
     connection.close()
 
