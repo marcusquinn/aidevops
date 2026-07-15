@@ -10,6 +10,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.32.120] - 2026-07-15
+
+### Changed
+
+- Documentation: standardize App Store Connect terminology and repair Qlty debt (#27747)
+
+### Fixed
+
+- require corroborated failure miner infrastructure evidence (#27748)
+- emit one startup toast per session (#27743)
+- couple reusable workflow helper provenance (#27741)
+- quote review bot suffix portably (#27735)
+- reclassify workflow sync after refresh (#27736)
+
 ## [3.32.119] - 2026-07-15
 
 ### Added
