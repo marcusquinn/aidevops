@@ -20,6 +20,18 @@ def latest_by_key:
  | map(select(. != null))
  | unique) as $release_suite_ids
 |
+($release_run_documents
+ | flatten
+ | map(.workflow_runs // [])
+ | add
+ | map(
+     select(.head_sha == $release_sha)
+     | select((.event == "push" or .event == "release" or .event == "workflow_dispatch") | not)
+     | {id, name, event, status, conclusion, check_suite_id}
+   )
+ | sort_by([(.created_at // .run_started_at // ""), (.id // 0)])
+) as $unrelated_workflow_runs
+|
 {
   check_runs: (
     [
@@ -37,5 +49,6 @@ def latest_by_key:
       | select((.app.slug // "") != "github-actions")
     ]
     | latest_by_key
-  )
+  ),
+  unrelated_workflow_runs: $unrelated_workflow_runs
 }
