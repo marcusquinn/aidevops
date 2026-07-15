@@ -53,7 +53,11 @@ fi
 
 if [[ "${1:-}" == "release" && "${2:-}" == "view" ]]; then
 	if [[ "${FAKE_RELEASE_EXISTS:-0}" == "1" || -f "$marker_file" ]]; then
-		printf '%s\n' "${3:-}"
+		if [[ "$*" == *"--json tagName,isDraft"* ]]; then
+			printf '{"tagName":"%s","isDraft":false}\n' "${3:-}"
+		else
+			printf '%s\n' "${3:-}"
+		fi
 		exit 0
 	fi
 	exit 1

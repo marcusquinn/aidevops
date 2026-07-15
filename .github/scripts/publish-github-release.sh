@@ -10,8 +10,9 @@ notes_file="${3:?release notes file is required}"
 
 verify_publication() {
 	local published_tag
-	published_tag=$(gh release view "$tag" --json tagName,isDraft \
-		--jq 'select(.tagName == "'"$tag"'" and .isDraft == false) | .tagName' 2>/dev/null || true)
+	published_tag=$(gh release view "$tag" --json tagName,isDraft 2>/dev/null \
+		| jq -r --arg expected_tag "$tag" 'select(.tagName == $expected_tag and .isDraft == false) | .tagName' \
+		|| true)
 	if [[ "$published_tag" == "$tag" ]]; then
 		return 0
 	fi
