@@ -42,8 +42,25 @@ cat >"$TEST_DIR/repo/.agents/scripts/deploy-agents-on-merge.sh" <<'EOF'
 set -euo pipefail
 printf 'AIDEVOPS_AGENTS_DIR=%s\n' "${AIDEVOPS_AGENTS_DIR-unset}" >>"${SYNC_ENV_LOG_PATH:?SYNC_ENV_LOG_PATH must be set}"
 printf 'AGENTS_DIR=%s\n' "${AGENTS_DIR-unset}" >>"$SYNC_ENV_LOG_PATH"
+printf 'EXPECTED=%s\n' "${AIDEVOPS_EXPECTED_DEPLOY_VERSION-unset}" >>"$SYNC_ENV_LOG_PATH"
 printf '%s\n' "$*" >>"${SYNC_LOG_PATH:?SYNC_LOG_PATH must be set}"
-exit "${MOCK_DEPLOY_EXIT_CODE:-0}"
+if [[ "${MOCK_DEPLOY_EXIT_CODE:-0}" -ne 0 ]]; then
+	exit "$MOCK_DEPLOY_EXIT_CODE"
+fi
+[[ -n "${AIDEVOPS_EXPECTED_DEPLOY_VERSION:-}" ]] || exit 0
+deployed_version="${AIDEVOPS_EXPECTED_DEPLOY_VERSION:?}"
+[[ "${MOCK_DEPLOY_STATE:-current}" == "stale" ]] && deployed_version="9.8.6"
+bundle_dir="$HOME/.aidevops/runtime-bundles/${deployed_version}-fixture"
+mkdir -p "$bundle_dir/agents" "$HOME/bin"
+printf '%s\n' "$deployed_version" >"$bundle_dir/agents/VERSION"
+printf 'status=validated\nframework_version=%s\n' "$deployed_version" >"$bundle_dir/manifest"
+ln -sfn "$bundle_dir/agents" "$HOME/.aidevops/agents"
+cat >"$HOME/bin/aidevops" <<CLI
+#!/usr/bin/env bash
+printf 'aidevops %s\\n' '$deployed_version'
+CLI
+chmod +x "$HOME/bin/aidevops"
+exit 0
 EOF
 	chmod +x "$TEST_DIR/repo/.agents/scripts/deploy-agents-on-merge.sh"
 	: >"$TEST_DIR/sync.log"
@@ -72,12 +89,17 @@ invoke_github_sync() {
 invoke_release_sync() {
 	local repo_root="$1"
 	local deployment_scope="${2:-incremental}"
-	AIDEVOPS_SYNC_REPO_ROOT="$repo_root" \
+	HOME="$TEST_DIR/home" \
+		PATH="$TEST_DIR/home/bin:/usr/bin:/bin" \
+		AIDEVOPS_RELEASE_DEPLOY_STABLE_S=0 \
+		AIDEVOPS_RELEASE_DEPLOY_SETTLE_TIMEOUT_S=2 \
+		AIDEVOPS_SYNC_REPO_ROOT="$repo_root" \
 		AIDEVOPS_RELEASE_DEPLOY_SCOPE="$deployment_scope" \
 		AIDEVOPS_SYNC_DEPLOY_SCRIPT="$TEST_DIR/repo/.agents/scripts/deploy-agents-on-merge.sh" \
 		SYNC_LOG_PATH="$TEST_DIR/sync.log" \
 		SYNC_ENV_LOG_PATH="$TEST_DIR/sync-env.log" \
 		MOCK_DEPLOY_EXIT_CODE="${MOCK_DEPLOY_EXIT_CODE:-0}" \
+		MOCK_DEPLOY_STATE="${MOCK_DEPLOY_STATE:-current}" \
 		bash -c 'source "$1" && run_post_release_agent_sync' _ "$VERSION_HELPER"
 	return $?
 }
@@ -91,6 +113,7 @@ create_fake_repo() {
 	PATH=/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin git init -q "$repo_path"
 	PATH=/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin git -C "$repo_path" remote add origin "$remote_url"
 	printf '#!/usr/bin/env bash\nexit 0\n' >"$repo_path/setup.sh"
+	printf '9.8.7\n' >"$repo_path/VERSION"
 	printf '%s\n' "$repo_path"
 	return 0
 }
@@ -125,8 +148,8 @@ test_release_sync_triggers_for_aidevops_remote() {
 	repo_path=$(create_fake_repo "release-aidevops" "https://github.com/marcusquinn/aidevops.git")
 	invoke_release_sync "$repo_path"
 
-	if grep -q -- "--repo $repo_path --quiet" "$TEST_DIR/sync.log" && ! grep -q -- "--full" "$TEST_DIR/sync.log"; then
-		print_result "release sync defaults to incremental for aidevops remote" 0
+	if grep -q -- "--repo $repo_path --full --quiet" "$TEST_DIR/sync.log"; then
+		print_result "release sync uses atomic full deployment for release convergence" 0
 	else
 		print_result "release sync triggers for aidevops remote" 1 "Release sync command was not recorded"
 	fi
@@ -138,7 +161,7 @@ test_release_sync_explicit_full() {
 	local repo_path
 	repo_path=$(create_fake_repo "release-full" "https://github.com/marcusquinn/aidevops.git")
 	invoke_release_sync "$repo_path" full
-	if grep -q -- "--repo $repo_path --quiet --full" "$TEST_DIR/sync.log"; then
+	if grep -q -- "--repo $repo_path --full --quiet" "$TEST_DIR/sync.log"; then
 		print_result "release sync supports explicit full deployment" 0
 	else
 		print_result "release sync supports explicit full deployment" 1 "Full sync command was not recorded"
@@ -181,10 +204,22 @@ test_release_sync_unsets_session_pins() {
 		invoke_release_sync "$repo_path"
 
 	if grep -q '^AIDEVOPS_AGENTS_DIR=unset$' "$TEST_DIR/sync-env.log" && \
-		grep -q '^AGENTS_DIR=unset$' "$TEST_DIR/sync-env.log"; then
+		grep -q '^AGENTS_DIR=unset$' "$TEST_DIR/sync-env.log" && \
+		grep -q '^EXPECTED=9.8.7$' "$TEST_DIR/sync-env.log"; then
 		print_result "release sync isolates inherited runtime pins" 0
 	else
 		print_result "release sync isolates inherited runtime pins" 1 "Deployment child inherited a session pin"
+	fi
+	return 0
+}
+
+test_release_sync_rejects_stale_final_bundle() {
+	local repo_path
+	repo_path=$(create_fake_repo "release-stale" "https://github.com/marcusquinn/aidevops.git")
+	if MOCK_DEPLOY_STATE=stale invoke_release_sync "$repo_path" >/dev/null 2>&1; then
+		print_result "release sync rejects stale final runtime bundle" 1 "Stale convergence was reported as success"
+	else
+		print_result "release sync rejects stale final runtime bundle" 0
 	fi
 	return 0
 }
@@ -200,6 +235,7 @@ main() {
 	test_release_sync_skips_other_remotes
 	test_release_sync_propagates_deploy_failure
 	test_release_sync_unsets_session_pins
+	test_release_sync_rejects_stale_final_bundle
 
 	teardown
 	trap - EXIT

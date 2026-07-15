@@ -23,8 +23,8 @@ main() {
 	local deploy_line=""
 	local converge_line=""
 	local exit_trap_line=""
-	# shellcheck disable=SC2016 # Match the literal release-library command.
-	local full_deploy_pattern='bash "$deploy_script" --repo "$sync_repo_root" --full --quiet'
+	# shellcheck disable=SC2016 # Match the literal release-library argument contract.
+	local full_deploy_pattern='local -a deploy_args=(--repo "$sync_repo_root" --full --quiet)'
 
 	acquire_line=$(line_for '_setup_acquire_noninteractive_setup_lock "$@"' "$SETUP_SCRIPT")
 	dispatch_line=$(line_for '^[[:space:]]*_setup_run_non_interactive$' "$SETUP_SCRIPT" | while IFS= read -r line_number; do

@@ -745,6 +745,26 @@ _runtime_bundle_switch_link() {
 	return 0
 }
 
+_runtime_bundle_version_is_older() {
+	local candidate="$1"
+	local active="$2"
+	local candidate_major="" candidate_minor="" candidate_patch=""
+	local active_major="" active_minor="" active_patch=""
+
+	IFS=. read -r candidate_major candidate_minor candidate_patch <<<"$candidate"
+	IFS=. read -r active_major active_minor active_patch <<<"$active"
+	case "${candidate_major}.${candidate_minor}.${candidate_patch}.${active_major}.${active_minor}.${active_patch}" in
+	*[!0-9.]*) return 1 ;;
+	esac
+
+	if [[ "$candidate_major" -lt "$active_major" ]] ||
+		[[ "$candidate_major" -eq "$active_major" && "$candidate_minor" -lt "$active_minor" ]] ||
+		[[ "$candidate_major" -eq "$active_major" && "$candidate_minor" -eq "$active_minor" && "$candidate_patch" -lt "$active_patch" ]]; then
+		return 0
+	fi
+	return 1
+}
+
 _runtime_bundle_prune() {
 	local bundles_dir="$1"
 	local active_root="$2"
@@ -805,11 +825,19 @@ _runtime_bundle_activate() {
 	local previous_link="$parent_dir/previous-runtime-bundle"
 	local previous_root=""
 	local legacy_dir=""
+	local candidate_version=""
+	local active_version=""
 	agents_root=$(_runtime_bundle_resolve_root "$bundle_dir/agents") || return 1
 	bundles_dir=$(cd "${bundle_dir%/*}" && pwd -P) || return 1
+	[[ -r "$agents_root/VERSION" ]] && IFS= read -r candidate_version <"$agents_root/VERSION"
 
 	if previous_root=$(_runtime_bundle_resolve_root "$target_dir" 2>/dev/null); then
 		_AIDEVOPS_PREVIOUS_BUNDLE_ROOT="$previous_root"
+		[[ -r "$previous_root/VERSION" ]] && IFS= read -r active_version <"$previous_root/VERSION"
+		if _runtime_bundle_version_is_older "$candidate_version" "$active_version"; then
+			print_error "Refusing to replace active aidevops v${active_version} runtime bundle with older v${candidate_version}"
+			return 1
+		fi
 	fi
 	if [[ -d "$target_dir" && ! -L "$target_dir" ]]; then
 		legacy_dir="${bundle_dir%/*}/legacy-$(date +%s)-$$"

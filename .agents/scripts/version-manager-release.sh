@@ -355,7 +355,68 @@ validate_release_deployment_readiness() {
 	return 0
 }
 
+verify_release_deployment_convergence() {
+	local expected_version="$1"
+	local target_dir="$HOME/.aidevops/agents"
+	local active_root=""
+	local deployed_version=""
+	local active_version=""
+	local manifest_version=""
+	local cli_version=""
+
+	[[ -n "$expected_version" ]] || return 1
+	if [[ ! -L "$target_dir" ]]; then
+		print_error "Release deployment convergence failed: active agents target is not a runtime-bundle symlink"
+		return 1
+	fi
+	active_root=$(cd "$target_dir" 2>/dev/null && pwd -P) || active_root=""
+	case "$active_root" in
+	"$HOME/.aidevops/runtime-bundles/"*/agents) ;;
+	*)
+		print_error "Release deployment convergence failed: active agents target does not resolve inside runtime-bundles"
+		return 1
+		;;
+	esac
+	[[ -r "$target_dir/VERSION" ]] && IFS= read -r deployed_version <"$target_dir/VERSION"
+	[[ -r "$active_root/VERSION" ]] && IFS= read -r active_version <"$active_root/VERSION"
+	if [[ -r "${active_root%/agents}/manifest" ]]; then
+		manifest_version=$(awk -F= '$1=="framework_version" { print $2; exit }' "${active_root%/agents}/manifest")
+	fi
+	cli_version=$(aidevops --version 2>/dev/null | awk 'NR==1 && $1=="aidevops" { print $2; exit }') || cli_version=""
+
+	if [[ "$deployed_version" != "$expected_version" || "$active_version" != "$expected_version" ||
+		"$manifest_version" != "$expected_version" || "$cli_version" != "$expected_version" ]]; then
+		print_error "Release deployment convergence failed: expected v${expected_version}, CLI=${cli_version:-missing}, agents=${deployed_version:-missing}, active-bundle=${active_version:-missing}, manifest=${manifest_version:-missing}"
+		return 1
+	fi
+	return 0
+}
+
+wait_for_release_deployment_settle() {
+	local lock_dir="${AIDEVOPS_SETUP_LOCK_DIR:-$HOME/.aidevops/locks/setup-noninteractive.lock.d}"
+	local timeout_s="${AIDEVOPS_RELEASE_DEPLOY_SETTLE_TIMEOUT_S:-900}"
+	local stable_s="${AIDEVOPS_RELEASE_DEPLOY_STABLE_S:-3}"
+	local waited=0
+	local stable=0
+
+	[[ "$timeout_s" =~ ^[0-9]+$ ]] || timeout_s=900
+	[[ "$stable_s" =~ ^[0-9]+$ ]] || stable_s=3
+	while [[ "$waited" -lt "$timeout_s" ]]; do
+		if [[ -d "$lock_dir" ]]; then
+			stable=0
+		else
+			stable=$((stable + 1))
+			[[ "$stable" -gt "$stable_s" ]] && return 0
+		fi
+		sleep 1
+		waited=$((waited + 1))
+	done
+	print_error "Timed out waiting for competing setup processes to settle after release deployment"
+	return 1
+}
+
 run_post_release_agent_sync() {
+	local expected_version="${1:-}"
 	local sync_repo_root="${AIDEVOPS_SYNC_REPO_ROOT:-$REPO_ROOT}"
 	local remote_url
 	remote_url=$(git -C "$sync_repo_root" remote get-url origin 2>/dev/null || echo "")
@@ -366,10 +427,9 @@ run_post_release_agent_sync() {
 
 	local deploy_script="${AIDEVOPS_SYNC_DEPLOY_SCRIPT:-$sync_repo_root/.agents/scripts/deploy-agents-on-merge.sh}"
 	local deployment_scope="${AIDEVOPS_RELEASE_DEPLOY_SCOPE:-incremental}"
-	local -a deploy_args=(--repo "$sync_repo_root" --quiet)
+	local -a deploy_args=(--repo "$sync_repo_root" --full --quiet)
 	case "$deployment_scope" in
-	incremental) ;;
-	full) deploy_args+=(--full) ;;
+	incremental | full) ;;
 	*)
 		print_error "Invalid release deployment scope: $deployment_scope (expected incremental or full)"
 		return 1
@@ -380,20 +440,34 @@ run_post_release_agent_sync() {
 		return 1
 	fi
 	validate_release_deployment_readiness || return 1
+	if [[ -z "$expected_version" && -r "$sync_repo_root/VERSION" ]]; then
+		IFS= read -r expected_version <"$sync_repo_root/VERSION"
+	fi
+	if [[ -z "$expected_version" ]]; then
+		print_error "Post-release deployment gate cannot resolve the requested release version"
+		return 1
+	fi
 
 	print_info "Running post-release aidevops agent sync..."
 	local sync_output=""
 	local sync_exit=0
-	sync_output=$(env -u AIDEVOPS_AGENTS_DIR -u AGENTS_DIR \
-		AIDEVOPS_DEPLOY_TARGET="$HOME/.aidevops/agents" \
-		bash "$deploy_script" "${deploy_args[@]}" 2>&1) || sync_exit=$?
+	local attempt=1
+	while [[ "$attempt" -le 2 ]]; do
+		sync_exit=0
+		sync_output=$(env -u AIDEVOPS_AGENTS_DIR -u AGENTS_DIR \
+			AIDEVOPS_DEPLOY_TARGET="$HOME/.aidevops/agents" \
+			AIDEVOPS_EXPECTED_DEPLOY_VERSION="$expected_version" \
+			bash "$deploy_script" "${deploy_args[@]}" 2>&1) || sync_exit=$?
+		if [[ "$sync_exit" -eq 0 ]] && wait_for_release_deployment_settle &&
+			verify_release_deployment_convergence "$expected_version"; then
+			print_success "Post-release aidevops deployment and CLI convergence completed for v${expected_version}"
+			return 0
+		fi
+		print_warning "Release deployment convergence attempt ${attempt} did not remain at v${expected_version}; retrying after competing setup activity"
+		attempt=$((attempt + 1))
+	done
 
-	if [[ "$sync_exit" -eq 0 ]]; then
-		print_success "Post-release aidevops deployment and CLI convergence completed"
-		return 0
-	fi
-
-	print_error "Post-release aidevops deployment or CLI convergence failed: $sync_output"
+	print_error "Post-release aidevops deployment or CLI convergence failed for v${expected_version}: $sync_output"
 	return 1
 }
 
@@ -409,7 +483,7 @@ run_post_publication_gates() {
 	if [[ "$hotfix_flag" -eq 1 ]]; then
 		_create_hotfix_tag "$version" || hotfix_exit=$?
 	fi
-	run_post_release_agent_sync || deployment_exit=$?
+	run_post_release_agent_sync "$version" || deployment_exit=$?
 
 	if [[ "$hotfix_exit" -ne 0 || "$deployment_exit" -ne 0 ]]; then
 		print_error "PARTIAL RELEASE SUCCESS: GitHub release v$version remains published; post-publication gates failed"
