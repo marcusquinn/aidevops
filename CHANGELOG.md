@@ -10,9 +10,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.32.125] - 2026-07-15
+
 ### Changed
 
-- Route OpenAI simple-tier work at medium reasoning and thinking-tier work at max reasoning, including a one-time migration for existing custom routing tables (#27863)
+- Maintenance: sync ref:GH#27863 to TODO.md [skip ci]
+- Maintenance: mark t18136 complete (pr:#27852 completed:2026-07-15) [skip ci]
+- Maintenance: sync ref:GH#27851 to TODO.md [skip ci]
+
+### Fixed
+
+- prevent cross-install upstream-watch duplicates (#27857)
 
 ## [3.32.124] - 2026-07-15
 
