@@ -642,16 +642,32 @@ _build_pulse_headless_env_xml() {
 # (used as comments in the JSON template).
 #
 # Args: $1=plist_label (e.g. "com.aidevops.aidevops-supervisor-pulse")
-#       $2=override_file (absolute path; default ~/.agents/configs/plist-env-overrides.json)
+#       $2=override_file (absolute path; default ~/.config/aidevops/plist-env-overrides.json)
 #       $3=indent (string to prepend each line; default "\t\t")
 #
 # Returns 0 on success (including empty result when label not found).
 # Prints WARN to stderr and returns 0 when file is present but malformed.
 # Emits nothing when file is absent.
+_plist_env_overrides_file() {
+	local stable_file="$HOME/.config/aidevops/plist-env-overrides.json"
+	local legacy_file="$HOME/.aidevops/agents/configs/plist-env-overrides.json"
+
+	if [[ -f "$stable_file" ]]; then
+		printf '%s' "$stable_file"
+	elif [[ -f "$legacy_file" ]]; then
+		# Compatibility fallback for installs that have not run bundle migration yet.
+		printf '%s' "$legacy_file"
+	else
+		printf '%s' "$stable_file"
+	fi
+	return 0
+}
+
 _build_plist_env_overrides_xml() {
 	local _label="$1"
-	local _override_file="${2:-$HOME/.aidevops/agents/configs/plist-env-overrides.json}"
+	local _override_file="${2:-}"
 	local _indent="${3:-		}"
+	[[ -n "$_override_file" ]] || _override_file=$(_plist_env_overrides_file)
 
 	# Missing file is the normal case (user has not created the override file yet)
 	[[ -f "$_override_file" ]] || return 0
@@ -698,7 +714,8 @@ _build_plist_env_overrides_xml() {
 # Args: $1=plist_label, $2=override_file (optional)
 _log_plist_env_overrides() {
 	local _label="$1"
-	local _override_file="${2:-$HOME/.aidevops/agents/configs/plist-env-overrides.json}"
+	local _override_file="${2:-}"
+	[[ -n "$_override_file" ]] || _override_file=$(_plist_env_overrides_file)
 
 	[[ -f "$_override_file" ]] || return 0
 	command -v jq >/dev/null 2>&1 || return 0
@@ -761,7 +778,8 @@ _generate_pulse_plist_content() {
 	_pulse_interval_sec=$(_read_pulse_interval_seconds)
 
 	# Inject user-owned plist env overrides (GH#20563 / t2759).
-	# Reads ~/.aidevops/agents/configs/plist-env-overrides.json when present.
+	# Reads ~/.config/aidevops/plist-env-overrides.json when present.
+	# A legacy bundle-local file remains readable until setup migrates it.
 	# Missing file or label not found → emits nothing (no-op, safe default).
 	local _env_overrides_xml
 	_env_overrides_xml=$(_build_plist_env_overrides_xml "$pulse_label")
