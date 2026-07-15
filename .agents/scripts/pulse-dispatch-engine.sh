@@ -1351,6 +1351,10 @@ _run_preflight_stages() {
 	# so one slow scanner cannot starve downstream scanners.
 	local _pflt_timeout="${PREFLIGHT_GROUP_TIMEOUT:-${PRE_RUN_STAGE_TIMEOUT:-600}}"
 
+	# GH#27853: start the existing lock-safe merge routine before any new
+	# dispatch. It runs asynchronously while cleanup/capacity stages proceed;
+	# dispatch never waits for merge, CI, review, or GitHub latency.
+	_preflight_start_merge_first || true
 	run_stage_with_timeout "preflight_cleanup_and_ledger" "$_pflt_timeout" \
 		_preflight_cleanup_and_ledger || true
 	run_stage_with_timeout "preflight_capacity_and_labels" "$_pflt_timeout" \

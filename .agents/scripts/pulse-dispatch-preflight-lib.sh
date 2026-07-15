@@ -10,9 +10,9 @@
 # (which remains in the orchestrator because its 108-line body would
 # re-register as a new function-complexity violation if moved).
 #
-# Each helper groups one phase of preflight work: cleanup/reap, capacity/labels,
-# early dispatch, ownership reconcile, prefetch+scope. Behavior is byte-for-byte
-# identical to the pre-split monolithic structure -- no logic changes.
+# Each helper groups one phase of preflight work: asynchronous merge-first,
+# cleanup/reap, capacity/labels, early dispatch, ownership reconcile, and
+# prefetch+scope.
 #
 # Usage: source "${SCRIPT_DIR}/pulse-dispatch-preflight-lib.sh"
 #
@@ -36,10 +36,39 @@ _PULSE_DISPATCH_PREFLIGHT_LIB_LOADED=1
 # Helpers for _run_preflight_stages (GH#18656)
 # -----------------------------------------------------------------------------
 # The helpers below group related preflight work so _run_preflight_stages
-# stays under 100 lines and each group (cleanup/reap, capacity/labels, early
-# dispatch, daily scans, ownership reconcile, prefetch+scope) can be read
-# independently. Behavior is byte-for-byte equivalent to the pre-split
-# monolithic function — see git log for the refactor commit.
+# stays under 100 lines and each group (merge-first, cleanup/reap,
+# capacity/labels, early dispatch, daily scans, ownership reconcile, and
+# prefetch/scope) can be read independently.
+
+#######################################
+# Give the existing standalone merge routine a non-blocking head start before
+# cleanup, capacity calculation, and early dispatch. The routine owns its own
+# cross-process lock and timeout, so concurrent launchd/pulse kicks collapse to
+# one runner without making dispatch wait for CI, review, or GitHub latency.
+#######################################
+_preflight_start_merge_first() {
+	if [[ "${AIDEVOPS_PULSE_ASYNC_MERGE_FIRST:-1}" != "1" ]]; then
+		echo "[pulse-wrapper] merge-first kick disabled by AIDEVOPS_PULSE_ASYNC_MERGE_FIRST" >>"$LOGFILE"
+		return 0
+	fi
+
+	local merge_routine="${PULSE_MERGE_ROUTINE_HELPER:-${SCRIPT_DIR}/pulse-merge-routine.sh}"
+	if [[ ! -x "$merge_routine" ]]; then
+		echo "[pulse-wrapper] merge-first kick skipped: routine unavailable at ${merge_routine}" >>"$LOGFILE"
+		return 0
+	fi
+
+	local kick_log="${PULSE_MERGE_FIRST_KICK_LOG:-${HOME}/.aidevops/logs/pulse-merge-routine-kick.log}"
+	mkdir -p "$(dirname "$kick_log")" 2>/dev/null || true
+	nohup "$merge_routine" run </dev/null >>"$kick_log" 2>&1 &
+	local kick_pid=$!
+	disown "$kick_pid" 2>/dev/null || true
+	echo "[pulse-wrapper] merge-first kick started asynchronously (pid=${kick_pid})" >>"$LOGFILE"
+	if declare -F pulse_stats_increment >/dev/null 2>&1; then
+		pulse_stats_increment "pulse_merge_first_kick_started" 2>/dev/null || true
+	fi
+	return 0
+}
 
 #######################################
 # Cleanup + zombie reap + ledger maintenance. Runs before worker counting
