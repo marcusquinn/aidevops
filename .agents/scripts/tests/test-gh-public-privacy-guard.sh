@@ -53,8 +53,8 @@ printf '=== gh public privacy guard tests ===\n\n'
 out=$(privacy_scan_secret_material_text "Worker guidance: edit .agents/scripts/$ALLOWED_BASENAME" 2>"$TMP/allow-path.err")
 rc=$?
 err=$(<"$TMP/allow-path.err")
-if [[ "$rc" -eq 0 && -z "$out" && "$err" == *'[privacy-scan][ALLOW] aidevops script file reference'* ]]; then
-	pass "aidevops script path reference is allowed with allowlist output"
+if [[ "$rc" -eq 0 && -z "$out" && -z "$err" ]]; then
+	pass "aidevops script path reference is allowed without bypass output"
 else
 	fail "aidevops script path reference" "rc=$rc out=$out err=$err"
 fi
@@ -62,8 +62,8 @@ fi
 out=$(privacy_scan_secret_material_text "Worker guidance: edit .agents/scripts/$ALLOWED_NODE_BASENAME" 2>"$TMP/allow-node-path.err")
 rc=$?
 err=$(<"$TMP/allow-node-path.err")
-if [[ "$rc" -eq 0 && -z "$out" && "$err" == *'[privacy-scan][ALLOW] aidevops script file reference'* ]]; then
-	pass "aidevops Node script path reference is allowed with allowlist output"
+if [[ "$rc" -eq 0 && -z "$out" && -z "$err" ]]; then
+	pass "aidevops Node script path reference is allowed without bypass output"
 else
 	fail "aidevops Node script path reference" "rc=$rc out=$out err=$err"
 fi
@@ -86,8 +86,8 @@ fi
 out=$(privacy_scan_secret_material_text "Reference basename \`$ALLOWED_BASENAME\` in the issue body" 2>"$TMP/allow-basename.err")
 rc=$?
 err=$(<"$TMP/allow-basename.err")
-if [[ "$rc" -eq 0 && -z "$out" && "$err" == *'[privacy-scan][ALLOW] aidevops script file reference'* ]]; then
-	pass "backticked aidevops script basename is allowed with allowlist output"
+if [[ "$rc" -eq 0 && -z "$out" && -z "$err" ]]; then
+	pass "backticked aidevops script basename is allowed without bypass output"
 else
 	fail "backticked aidevops script basename" "rc=$rc out=$out err=$err"
 fi
@@ -108,6 +108,38 @@ if [[ "$rc" -eq 1 && "$out" == *'credential token prefix'* ]]; then
 else
 	fail "undocumented filename-like credential token" "rc=$rc out=$out"
 fi
+
+# Credential prefixes are only secret-like at a token boundary. Keep the
+# canonical task-coordinator filename split so this regression fixture cannot
+# itself be mistaken for a credential by source scanners using the old regex.
+TASK_COORDINATOR_BASENAME="$ALLOWED_BASENAME"
+while IFS='|' read -r label input; do
+	out=$(privacy_scan_secret_material_text "$input" 2>"$TMP/allow-boundary.err")
+	rc=$?
+	if [[ "$rc" -eq 0 && -z "$out" ]]; then
+		pass "$label is allowed as an embedded-word prefix"
+	else
+		fail "$label embedded-word prefix" "rc=$rc out=$out"
+	fi
+done <<EOF
+task-coordinator path|Worker guidance: edit .agents/scripts/tests/$TASK_COORDINATOR_BASENAME
+underscore boundary|Identifier prefix_${synthetic_token}
+hyphen boundary|Identifier prefix-${synthetic_token}
+EOF
+
+while IFS='|' read -r label input; do
+	out=$(privacy_scan_secret_material_text "$input" 2>"$TMP/block-boundary.err")
+	rc=$?
+	if [[ "$rc" -eq 1 && "$out" == *'credential token prefix'* ]]; then
+		pass "$label credential-like token remains blocked"
+	else
+		fail "$label credential-like token" "rc=$rc out=$out"
+	fi
+done <<EOF
+start-of-string|$synthetic_token
+whitespace boundary|Fixture $synthetic_token
+punctuation boundary|Fixture ($synthetic_token)
+EOF
 
 printf '\n'
 if [[ "$FAIL" -eq 0 ]]; then
