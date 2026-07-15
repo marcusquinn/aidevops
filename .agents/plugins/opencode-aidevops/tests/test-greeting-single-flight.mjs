@@ -249,6 +249,33 @@ test("cold-cache follower survives a transient lock gap before publication", asy
   assert.equal(f.clients[0][0].message.includes(NEW_GREETING), true);
 });
 
+test("cold-cache follower stops polling after an owner exits without publishing", async (t) => {
+  const f = fixture();
+  t.after(() => f.cleanup());
+  const lockDir = join(f.cacheDir, "session-greeting-refresh.lock");
+  mkdirSync(lockDir);
+  let nowCalls = 0;
+  const now = () => {
+    nowCalls += 1;
+    return 1000;
+  };
+  const handler = createGreetingHandler({
+    ...handlerOptions(f, f.client(), async () => {
+      throw new Error("follower must not start a refresh");
+    }),
+    now,
+  });
+
+  await handler({ event: { type: "session.created" } });
+  rmSync(lockDir, { recursive: true, force: true });
+  await new Promise((resolve) => setTimeout(resolve, 200));
+  const settledNowCalls = nowCalls;
+  await new Promise((resolve) => setTimeout(resolve, 100));
+
+  assert.equal(f.clients[0].length, 0);
+  assert.equal(nowCalls, settledNowCalls);
+});
+
 test("an expired owner cannot release a replacement owner's lock", async (t) => {
   const f = fixture();
   t.after(() => f.cleanup());

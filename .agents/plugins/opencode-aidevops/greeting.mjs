@@ -278,6 +278,7 @@ function releaseRefreshLock(lockDir, lockToken) {
 
 function observeSharedRefresh({ cacheFile, lockDir, lockStaleMs, client, now, minimumMtimeMs }) {
   const deadline = now() + lockStaleMs;
+  let missingLockRetries = 0;
   const poll = () => {
     const cached = readGreetingCache(cacheFile);
     if (cached && cached.mtimeMs > minimumMtimeMs) {
@@ -287,6 +288,7 @@ function observeSharedRefresh({ cacheFile, lockDir, lockStaleMs, client, now, mi
 
     try {
       if (now() >= deadline || now() - statSync(lockDir).mtimeMs > lockStaleMs) return;
+      missingLockRetries = 0;
     } catch {
       // The owner may publish the cache and remove its lock between our cache
       // read and lock stat. Re-check once so that handoff still emits it.
@@ -296,8 +298,11 @@ function observeSharedRefresh({ cacheFile, lockDir, lockStaleMs, client, now, mi
         return;
       }
       // A stale-lock contender may have renamed the old lock but not created
-      // its replacement yet. Keep polling within the original safety bound.
+      // its replacement yet. Allow a short handoff window without polling for
+      // the full stale-lock lifetime when an owner exits without publishing.
       if (now() >= deadline) return;
+      if (missingLockRetries >= 4) return;
+      missingLockRetries += 1;
     }
 
     const timer = setTimeout(poll, 25);
