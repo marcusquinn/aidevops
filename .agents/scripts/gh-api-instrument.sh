@@ -4,9 +4,10 @@
 # =============================================================================
 # gh-api-instrument.sh -- Lightweight gh API call instrumentation (t2902)
 # =============================================================================
-# Records every routed gh CLI / gh api call partitioned by path (graphql, rest,
-# search-graphql, search-rest, other), auth mode, API pool, route decision, and
-# caller script. Aggregation produces
+# Records logical routing/cache events separately from native gh transport
+# attempts. Attempts include stable logical/attempt identities, retry/page
+# metadata, outcome, elapsed time, and known quota cost without recording argv,
+# request bodies, headers, tokens, or query values. Aggregation produces
 # a JSON report at ~/.aidevops/logs/gh-api-calls-by-stage.json so heavy
 # GraphQL consumers can be identified and routed through the separate REST
 # core pool (t2574, t2689) or the Search API bucket where applicable.
@@ -16,7 +17,7 @@
 #   covers writes (t2574) and reads (t2689). Something is still draining
 #   GraphQL between resets. Without per-call-site visibility, the heavy
 #   consumer is invisible. This file is a minimum-overhead recorder; it
-#   adds one append to a tab-separated log per gh call.
+#   adds one bounded append to a tab-separated log per event or attempt.
 #
 # Usage from a sourced shell script:
 #
@@ -42,8 +43,10 @@
 #   search-rest    — REST per-repo iteration replacing a search call
 #   other          — anything not covered above (counted but not partitioned)
 #
-# Log format (TSV, append-only):
+# Legacy log format (TSV, still readable):
 #   <unix_ts>\t<caller_basename>\t<path>\t<auth_mode>\t<api_pool>\t<route_decision>\t<budget_remaining>
+# Version 2 appends these privacy-safe fields after the legacy prefix:
+#   v2\t<event_kind>\t<logical_id>\t<attempt_id>\t<page>\t<retry>\t<outcome>\t<http_status>\t<elapsed_ms>\t<quota_cost>
 #
 # Override env vars:
 #   AIDEVOPS_GH_API_LOG          — path to the log file (default
@@ -51,7 +54,9 @@
 #   AIDEVOPS_GH_API_REPORT       — path to the JSON report (default
 #                                   ~/.aidevops/logs/gh-api-calls-by-stage.json)
 #   AIDEVOPS_GH_API_LOG_MAX_LINES — when set and exceeded, trim() retains
-#                                   the most-recent half (default 50000)
+#                                   the newest bounded records (default 50000)
+#   AIDEVOPS_GH_API_LOG_MAX_BYTES — maximum retained log bytes (default 16 MiB)
+#   AIDEVOPS_GH_API_RETENTION_SECONDS — maximum record age (default 172800)
 #   AIDEVOPS_GH_API_INSTRUMENT_DISABLE=1 — make all calls no-ops
 #
 # Part of aidevops framework: https://aidevops.sh
@@ -98,9 +103,211 @@ esac
 GH_API_LOG="${AIDEVOPS_GH_API_LOG:-${_GH_API_HOME}/.aidevops/logs/gh-api-calls.log}"
 GH_API_REPORT="${AIDEVOPS_GH_API_REPORT:-${_GH_API_HOME}/.aidevops/logs/gh-api-calls-by-stage.json}"
 GH_API_LOG_MAX_LINES="${AIDEVOPS_GH_API_LOG_MAX_LINES:-50000}"
+GH_API_LOG_MAX_BYTES="${AIDEVOPS_GH_API_LOG_MAX_BYTES:-16777216}"
+GH_API_RETENTION_SECONDS="${AIDEVOPS_GH_API_RETENTION_SECONDS:-172800}"
 
-# --- gh_record_call <path> [caller] [auth] [pool] [decision] [budget] ------
-# Append a record to the log. Cheapest possible: one open+append.
+_gh_now_seconds() {
+	local now=""
+	printf -v now '%(%s)T' -1 2>/dev/null || now=$(date +%s 2>/dev/null) || return 1
+	printf '%s\n' "$now"
+	return 0
+}
+
+_gh_now_ms() {
+	local now=""
+	if command -v perl >/dev/null 2>&1; then
+		now=$(perl -MTime::HiRes=time -e 'printf "%.0f\n", time * 1000' 2>/dev/null || true)
+	elif command -v python3 >/dev/null 2>&1; then
+		now=$(python3 -c 'import time; print(round(time.time() * 1000))' 2>/dev/null || true)
+	fi
+	if [[ ! "$now" =~ ^[0-9]+$ ]]; then
+		now=$(_gh_now_seconds) || return 1
+		now=$((now * 1000))
+	fi
+	printf '%s\n' "$now"
+	return 0
+}
+
+_gh_safe_text() {
+	local value="$1"
+	local fallback="$2"
+	value="${value##*/}"
+	if [[ "$value" =~ ^[A-Za-z0-9_.:+-]+$ ]]; then
+		printf '%s' "$value"
+	else
+		printf '%s' "$fallback"
+	fi
+	return 0
+}
+
+_gh_safe_number() {
+	local value="$1"
+	[[ "$value" =~ ^[0-9]+$ ]] && printf '%s' "$value"
+	return 0
+}
+
+_gh_default_pool() {
+	local path="$1"
+	case "$path" in
+	graphql | search-graphql) printf 'graphql' ;;
+	rest) printf 'rest-core' ;;
+	search-rest) printf 'rest-search' ;;
+	*) printf 'other' ;;
+	esac
+	return 0
+}
+
+_gh_default_auth() {
+	local api_pool="$1"
+	case "$api_pool" in
+	rest-core | rest-search)
+		if command -v github_app_is_configured >/dev/null 2>&1 && github_app_is_configured; then
+			printf 'github-app'
+		else
+			printf 'gh-pat'
+		fi
+		;;
+	*) printf 'gh-pat' ;;
+	esac
+	return 0
+}
+
+_gh_resolve_caller() {
+	local caller="$1"
+	local i=1
+	local src=""
+	if [[ -z "$caller" ]]; then
+		while [[ $i -lt ${#BASH_SOURCE[@]} ]]; do
+			src="${BASH_SOURCE[$i]}"
+			if [[ -n "$src" && "${src##*/}" != "gh-api-instrument.sh" ]]; then
+				caller="${src##*/}"
+				break
+			fi
+			i=$((i + 1))
+		done
+		[[ -z "$caller" ]] && caller="${0##*/}"
+	fi
+	case "$caller" in
+	"" | -bash | bash) caller="unknown" ;;
+	esac
+	_gh_safe_text "$caller" unknown
+	return 0
+}
+
+_gh_log_lock_acquire() {
+	local lock_dir="${GH_API_LOG}.lock"
+	local tries=0
+	local owner=""
+	local owner_pid="${BASHPID:-$$}"
+	while ! mkdir "$lock_dir" 2>/dev/null; do
+		if [[ -f "$lock_dir/pid" && ! -L "$lock_dir" ]]; then
+			if ! IFS= read -r owner 2>/dev/null <"$lock_dir/pid"; then
+				owner=""
+			fi
+			if [[ "$owner" =~ ^[0-9]+$ ]] && ! kill -0 "$owner" 2>/dev/null; then
+				rm -f "$lock_dir/pid" 2>/dev/null || true
+				rmdir "$lock_dir" 2>/dev/null || true
+				continue
+			fi
+		fi
+		tries=$((tries + 1))
+		[[ $tries -ge 200 ]] && return 1
+		sleep 0.01
+	done
+	if ! printf '%s\n' "$owner_pid" >"$lock_dir/pid" 2>/dev/null; then
+		rmdir "$lock_dir" 2>/dev/null || true
+		return 1
+	fi
+	return 0
+}
+
+_gh_log_lock_release() {
+	local lock_dir="${GH_API_LOG}.lock"
+	rm -f "$lock_dir/pid" 2>/dev/null || true
+	rmdir "$lock_dir" 2>/dev/null || true
+	return 0
+}
+
+_gh_append_record() {
+	local record="$1"
+	[[ ${#record} -le 4000 ]] || return 0
+	[[ "$GH_API_LOG" == */* ]] && mkdir -p "${GH_API_LOG%/*}" 2>/dev/null || true
+	_gh_log_lock_acquire || return 0
+	printf '%s\n' "$record" >>"$GH_API_LOG" 2>/dev/null || true
+	_gh_log_lock_release
+	return 0
+}
+
+gh_new_logical_id() {
+	local ts=""
+	ts=$(_gh_now_seconds) || ts=0
+	printf 'l%s-%s-%s\n' "$ts" "${BASHPID:-$$}" "${RANDOM:-0}"
+	return 0
+}
+
+gh_new_attempt_id() {
+	local logical_id="$1"
+	_GH_API_ATTEMPT_SEQUENCE=$((${_GH_API_ATTEMPT_SEQUENCE:-0} + 1))
+	printf '%s-a%s-%s-%s\n' "$logical_id" "${BASHPID:-$$}" "$_GH_API_ATTEMPT_SEQUENCE" "${RANDOM:-0}"
+	return 0
+}
+
+gh_attempt_count_for_logical() {
+	local logical_id="$1"
+	[[ -f "$GH_API_LOG" ]] || {
+		printf '0\n'
+		return 0
+	}
+	awk -F'\t' -v logical_id="$logical_id" \
+		'$8 == "v2" && $9 == "attempt" && $10 == logical_id { count++ } END { print count + 0 }' \
+		"$GH_API_LOG" 2>/dev/null || printf '0\n'
+	return 0
+}
+
+_gh_append_v2() {
+	local event_kind="$1"; shift
+	local caller="$1"; shift
+	local path="$1"; shift
+	local auth_mode="$1"; shift
+	local api_pool="$1"; shift
+	local route_decision="$1"; shift
+	local budget_remaining="$1"; shift
+	local logical_id="$1"; shift
+	local attempt_id="$1"; shift
+	local page="$1"; shift
+	local retry="$1"; shift
+	local outcome="$1"; shift
+	local http_status="$1"; shift
+	local elapsed_ms="$1"; shift
+	local quota_cost="$1"
+	local ts=""
+	local record=""
+	ts=$(_gh_now_seconds) || return 0
+	caller=$(_gh_resolve_caller "$caller")
+	path=$(_gh_safe_text "$path" other)
+	auth_mode=$(_gh_safe_text "$auth_mode" unknown)
+	api_pool=$(_gh_safe_text "$api_pool" other)
+	route_decision=$(_gh_safe_text "$route_decision" unspecified)
+	event_kind=$(_gh_safe_text "$event_kind" logical)
+	logical_id=$(_gh_safe_text "$logical_id" unknown)
+	attempt_id=$(_gh_safe_text "$attempt_id" unknown)
+	outcome=$(_gh_safe_text "$outcome" unknown)
+	budget_remaining=$(_gh_safe_number "$budget_remaining")
+	page=$(_gh_safe_number "$page")
+	retry=$(_gh_safe_number "$retry")
+	http_status=$(_gh_safe_number "$http_status")
+	elapsed_ms=$(_gh_safe_number "$elapsed_ms")
+	quota_cost=$(_gh_safe_number "$quota_cost")
+	printf -v record '%s\t%s\t%s\t%s\t%s\t%s\t%s\tv2\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s' \
+		"$ts" "$caller" "$path" "$auth_mode" "$api_pool" "$route_decision" "$budget_remaining" \
+		"$event_kind" "$logical_id" "$attempt_id" "$page" "$retry" "$outcome" "$http_status" "$elapsed_ms" "$quota_cost"
+	_gh_append_record "$record"
+	return 0
+}
+
+# --- gh_record_call <path> [caller] [auth] [pool] [decision] [budget] [kind]
+# Append a logical routing or cache event. Existing six-argument callers remain
+# compatible; known cache decisions are classified automatically.
 # Failure is silent — instrumentation must never break the host script.
 #
 # Args:
@@ -121,58 +328,88 @@ gh_record_call() {
 	local api_pool="${4:-${AIDEVOPS_GH_API_POOL:-}}"
 	local route_decision="${5:-${AIDEVOPS_GH_ROUTE_DECISION:-}}"
 	local budget_remaining="${6:-${AIDEVOPS_GH_BUDGET_REMAINING:-${_GH_LAST_GRAPHQL_REMAINING:-}}}"
-	if [[ -z "$caller" ]]; then
-		# Default: name of the script that called us. Walk up until we find
-		# a frame outside this file (tests sometimes source us; we want the
-		# real caller, not gh-api-instrument.sh itself).
-		local i=1 src
-		while [[ $i -lt ${#BASH_SOURCE[@]} ]]; do
-			src="${BASH_SOURCE[$i]}"
-			if [[ -n "$src" && "${src##*/}" != "gh-api-instrument.sh" ]]; then
-				caller="${src##*/}"
-				break
-			fi
-			i=$((i + 1))
-		done
-		[[ -z "$caller" ]] && caller="${0##*/}"
-		[[ -z "$caller" || "$caller" == "-bash" || "$caller" == "bash" ]] && caller="unknown"
-	fi
+	local event_kind="${7:-logical}"
+	local logical_id="${AIDEVOPS_GH_LOGICAL_ID:-}"
+	caller=$(_gh_resolve_caller "$caller")
 	if [[ -z "$api_pool" ]]; then
-		case "$path" in
-		graphql | search-graphql) api_pool="graphql" ;;
-		rest) api_pool="rest-core" ;;
-		search-rest) api_pool="rest-search" ;;
-		*) api_pool="other" ;;
-		esac
+		api_pool=$(_gh_default_pool "$path")
 	fi
 	if [[ -z "$auth_mode" ]]; then
-		case "$api_pool" in
-		rest-core | rest-search)
-			if command -v github_app_is_configured >/dev/null 2>&1 && github_app_is_configured; then
-				auth_mode="github-app"
-			else
-				auth_mode="gh-pat"
-			fi
-			;;
-		*) auth_mode="gh-pat" ;;
-		esac
+		auth_mode=$(_gh_default_auth "$api_pool")
 	fi
 	[[ -z "$route_decision" ]] && route_decision="${api_pool}-selected"
-	[[ "$budget_remaining" =~ ^[0-9]+$ ]] || budget_remaining=""
-	local ts
-	# Use bash builtin printf for timestamp when available (bash 4.2+) to avoid
-	# forking a date subprocess on every call in this high-frequency path.
-	# Falls back to date(1) for bash < 4.2; fails safe by returning 0.
-	printf -v ts '%(%s)T' -1 || ts=$(date +%s) || return 0
-	# Only create the parent dir when the path contains a slash — avoids
-	# creating a directory named like the log file on relative paths (e.g.
-	# AIDEVOPS_GH_API_LOG="gh.log" would expand ${GH_API_LOG%/*} to "gh.log").
-	[[ "$GH_API_LOG" == */* ]] && mkdir -p "${GH_API_LOG%/*}" 2>/dev/null || true
-	# Tab-separated; printf is atomic for short lines on POSIX file systems.
-	printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
-		"$ts" "$caller" "$path" "$auth_mode" "$api_pool" "$route_decision" "$budget_remaining" \
-		>>"$GH_API_LOG" 2>/dev/null || true
+	case "$route_decision" in
+	hit | miss | store | stale | invalid-json | bypass | bypass-disabled) event_kind="cache" ;;
+	esac
+	[[ -n "$logical_id" ]] || logical_id=$(gh_new_logical_id)
+	_gh_append_v2 "$event_kind" "$caller" "$path" "$auth_mode" "$api_pool" "$route_decision" \
+		"$budget_remaining" "$logical_id" "" "" "" "" "" "" ""
 	return 0
+}
+
+# --- gh_record_attempt ---------------------------------------------------
+# Record one completed native transport try/page. Arguments are metadata only;
+# command argv never enters the record.
+gh_record_attempt() {
+	[[ "${AIDEVOPS_GH_API_INSTRUMENT_DISABLE:-0}" == "1" ]] && return 0
+	local path="$1"; shift
+	local caller="$1"; shift
+	local logical_id="$1"; shift
+	local attempt_id="$1"; shift
+	local page="$1"; shift
+	local retry="$1"; shift
+	local outcome="$1"; shift
+	local http_status="$1"; shift
+	local elapsed_ms="$1"; shift
+	local quota_cost="$1"; shift
+	local auth_mode="$1"; shift
+	local api_pool="$1"; shift
+	local route_decision="$1"; shift
+	local budget_remaining="$1"
+	[[ -n "$logical_id" ]] || logical_id=$(gh_new_logical_id)
+	[[ -n "$attempt_id" ]] || attempt_id=$(gh_new_attempt_id "$logical_id")
+	[[ -n "$page" ]] || page=1
+	[[ -n "$retry" ]] || retry=0
+	[[ -n "$api_pool" ]] || api_pool=$(_gh_default_pool "$path")
+	[[ -n "$auth_mode" ]] || auth_mode="${AIDEVOPS_GH_AUTH_MODE:-$(_gh_default_auth "$api_pool")}"
+	[[ -n "$route_decision" ]] || route_decision="${AIDEVOPS_GH_ROUTE_DECISION:-${api_pool}-selected}"
+	_gh_append_v2 attempt "$caller" "$path" "$auth_mode" "$api_pool" "$route_decision" \
+		"$budget_remaining" "$logical_id" "$attempt_id" "$page" "$retry" "$outcome" \
+		"$http_status" "$elapsed_ms" "$quota_cost"
+	return 0
+}
+
+# --- gh_run_transport_attempt <path> <caller> <logical> <page> <retry> -- cmd
+# Execute one native transport command with unmodified stdio and status, then
+# append exactly one attempt record. Telemetry failures remain fail-open.
+gh_run_transport_attempt() {
+	local path="$1"; shift
+	local caller="$1"; shift
+	local logical_id="$1"; shift
+	local page="$1"; shift
+	local retry="$1"; shift
+	[[ "${1:-}" == "--" ]] && shift
+	local start_ms=""
+	local end_ms=""
+	local elapsed_ms=""
+	local rc=0
+	local outcome="success"
+	start_ms=$(_gh_now_ms) || start_ms=""
+	if "$@"; then
+		rc=0
+	else
+		rc=$?
+		outcome="error"
+	fi
+	end_ms=$(_gh_now_ms) || end_ms=""
+	if [[ "$start_ms" =~ ^[0-9]+$ && "$end_ms" =~ ^[0-9]+$ && "$end_ms" -ge "$start_ms" ]]; then
+		elapsed_ms=$((end_ms - start_ms))
+	fi
+	gh_record_attempt "$path" "$caller" "$logical_id" "" "$page" "$retry" "$outcome" \
+		"${AIDEVOPS_GH_HTTP_STATUS:-}" "$elapsed_ms" "${AIDEVOPS_GH_QUOTA_COST:-}" \
+		"${AIDEVOPS_GH_AUTH_MODE:-}" "${AIDEVOPS_GH_API_POOL:-}" "${AIDEVOPS_GH_ROUTE_DECISION:-}" \
+		"${AIDEVOPS_GH_BUDGET_REMAINING:-${_GH_LAST_GRAPHQL_REMAINING:-}}"
+	return "$rc"
 }
 
 # --- gh_aggregate_calls [out_path] [window_secs] -------------------------
@@ -215,7 +452,8 @@ gh_aggregate_calls() {
 	cutoff=$((now - window))
 	mkdir -p "${out%/*}" 2>/dev/null || true
 	if [[ ! -f "$GH_API_LOG" ]]; then
-		printf '{"_meta":{"error":"no-log","window_seconds":%d},"by_caller":{}}\n' \
+		printf '{"_meta":{"error":"no-log","schema_version":2,"requested_window_seconds":%d,"window_seconds":%d},"by_caller":{}}\n' \
+			"$window" \
 			"$window" >"$out" 2>/dev/null || true
 		return 1
 	fi
@@ -236,19 +474,48 @@ gh_aggregate_calls() {
 }
 
 # --- gh_trim_log ----------------------------------------------------------
-# Rotate the log if it exceeds GH_API_LOG_MAX_LINES, retaining the most
-# recent half. Cheap: one wc, one tail. Safe to call frequently.
+# Atomically retain only valid records within the configured age, line, and byte
+# bounds. Appenders share the same short-lived lock so replacement cannot lose
+# a concurrent record. The original remains untouched if filtering fails.
 gh_trim_log() {
 	[[ -f "$GH_API_LOG" ]] || return 0
-	local lines
-	lines=$(wc -l <"$GH_API_LOG" 2>/dev/null | tr -d ' ')
-	[[ "$lines" =~ ^[0-9]+$ ]] || return 0
-	if [[ "$lines" -gt "$GH_API_LOG_MAX_LINES" ]]; then
-		local keep=$((GH_API_LOG_MAX_LINES / 2))
-		local tmp
-		tmp=$(mktemp "${GH_API_LOG}.XXXXXX") || return 0
-		tail -n "$keep" "$GH_API_LOG" >"$tmp" 2>/dev/null && mv "$tmp" "$GH_API_LOG"
+	local now=""
+	local cutoff=0
+	local tmp=""
+	[[ "$GH_API_LOG_MAX_LINES" =~ ^[0-9]+$ && "$GH_API_LOG_MAX_LINES" -gt 0 ]] || GH_API_LOG_MAX_LINES=50000
+	[[ "$GH_API_LOG_MAX_BYTES" =~ ^[0-9]+$ && "$GH_API_LOG_MAX_BYTES" -gt 0 ]] || GH_API_LOG_MAX_BYTES=16777216
+	[[ "$GH_API_RETENTION_SECONDS" =~ ^[0-9]+$ && "$GH_API_RETENTION_SECONDS" -gt 0 ]] || GH_API_RETENTION_SECONDS=172800
+	now=$(_gh_now_seconds) || return 0
+	cutoff=$((now - GH_API_RETENTION_SECONDS))
+	_gh_log_lock_acquire || return 0
+	tmp=$(mktemp "${GH_API_LOG}.trim.XXXXXX") || {
+		_gh_log_lock_release
+		return 0
+	}
+	if LC_ALL=C awk -F'\t' -v cutoff="$cutoff" -v max_lines="$GH_API_LOG_MAX_LINES" -v max_bytes="$GH_API_LOG_MAX_BYTES" '
+		$1 ~ /^[0-9]+$/ && $1 >= cutoff {
+			last++
+			rows[last] = $0
+			row_bytes[last] = length($0) + 1
+			bytes += row_bytes[last]
+			while (first < last && ((last - first) > max_lines || bytes > max_bytes)) {
+				first++
+				bytes -= row_bytes[first]
+				delete rows[first]
+				delete row_bytes[first]
+			}
+		}
+		END {
+			for (i = first + 1; i <= last; i++) {
+				if (i in rows) print rows[i]
+			}
+		}
+	' "$GH_API_LOG" >"$tmp" 2>/dev/null && mv "$tmp" "$GH_API_LOG" 2>/dev/null; then
+		:
+	else
+		rm -f "$tmp" 2>/dev/null || true
 	fi
+	_gh_log_lock_release
 	return 0
 }
 
@@ -286,7 +553,7 @@ Subcommands:
   record <path> [caller] [auth] [pool] [decision] [budget]
                           Append one record to ${GH_API_LOG##*/}
   report [out] [window_s]  Aggregate to JSON (default ${GH_API_REPORT##*/}, 24h)
-  trim                     Rotate log if larger than \$AIDEVOPS_GH_API_LOG_MAX_LINES
+  trim                     Atomically apply age, line, and byte retention bounds
   clear                    Remove log + report
 
 Path values:
