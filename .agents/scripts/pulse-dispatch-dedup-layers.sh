@@ -269,6 +269,22 @@ _dedup_layer6_assignee_and_stale() {
 			printf '%s\n' "$assigned_output"
 			return 0
 		fi
+		# GH#27853: exhausted stale-recovery paths are terminal outcomes. Route
+		# them through the same idempotent consolidation dispatcher used by
+		# substantive-thread triage, then block this cycle so a stale candidate
+		# snapshot cannot launch a competing worker after NMR was applied.
+		if [[ "$assigned_output" == *STALE_ESCALATED* || "$assigned_output" == *STALE_PR_ESCALATED* ]]; then
+			local _stale_breaker_source="stale-recovery-threshold"
+			[[ "$assigned_output" == *STALE_PR_ESCALATED* ]] && _stale_breaker_source="stale-pr-checkpoint"
+			if declare -F _route_terminal_breaker_to_consolidation >/dev/null 2>&1; then
+				_route_terminal_breaker_to_consolidation "$issue_number" "$repo_slug" \
+					"$_stale_breaker_source" "$assigned_output" || true
+			else
+				echo "[pulse-wrapper] Dedup: terminal stale breaker for #${issue_number} in ${repo_slug} could not route to consolidation because bridge is unavailable" >>"$LOGFILE"
+			fi
+			echo "[pulse-wrapper] Dedup: terminal stale breaker blocked redispatch for #${issue_number} in ${repo_slug}" >>"$LOGFILE"
+			return 0
+		fi
 		# t1927: Stale recovery must record fast-fail. When _is_stale_assignment()
 		# recovers a stale assignment (silent worker timeout), the dedup helper
 		# outputs STALE_RECOVERED on stdout. Without recording this as a failure,

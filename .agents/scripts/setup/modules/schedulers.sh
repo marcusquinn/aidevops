@@ -37,21 +37,27 @@ CRON_EVERY_MINUTE="* * * * *"
 if ! declare -F aidevops_launchd_sanitized_path >/dev/null 2>&1; then
 	aidevops_launchd_sanitized_path() {
 		local input_path="${1:-${PATH:-}}"
-		local default_path="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+		local stable_path=""
+		if [[ -n "${HOME:-}" ]]; then
+			stable_path="${HOME}/.local/bin:${HOME}/.aidevops/agents/scripts:${HOME}/.aidevops/bin"
+		fi
+		local default_path="${stable_path:+${stable_path}:}/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 		local result=""
 		local seen=""
 		local dir=""
-		local old_ifs="$IFS"
-		IFS=':'
+		local IFS=':'
 		for dir in $default_path:$input_path; do
-			[[ -n "$dir" && -d "$dir" ]] || continue
+			[[ -n "$dir" ]] || continue
+			case "$dir" in
+			*/.aidevops/runtime-bundles/*) continue ;;
+			esac
+			[[ -d "$dir" ]] || continue
 			case ":$seen:" in
 			*":${dir}:"*) continue ;;
 			esac
 			seen="${seen:+${seen}:}${dir}"
 			result="${result:+${result}:}${dir}"
 		done
-		IFS="$old_ifs"
 		printf '%s' "$result"
 		return 0
 	}

@@ -231,7 +231,7 @@ repo_allows_pulse_write_actions() {
 # Arguments:
 #   $1 - repo slug (owner/repo)
 #   $2 - max issues to fetch (optional, default 100)
-# Returns: JSON array of issue objects (number, title, url, updatedAt, labels, assignees)
+# Returns: JSON array of issue objects (number, title, url, createdAt, updatedAt, labels, assignees)
 #######################################
 list_dispatchable_issue_candidates_json() {
 	local repo_slug="$1"
@@ -246,7 +246,7 @@ list_dispatchable_issue_candidates_json() {
 	local issue_json issue_dispatch_err gh_exit_code
 	issue_dispatch_err=$(mktemp)
 	gh_exit_code=0
-	issue_json=$(gh_issue_list --repo "$repo_slug" --state open --json number,title,url,assignees,labels,updatedAt --limit "$limit" 2>"$issue_dispatch_err") || gh_exit_code=$?
+	issue_json=$(gh_issue_list --repo "$repo_slug" --state open --json number,title,url,assignees,labels,createdAt,updatedAt --limit "$limit" 2>"$issue_dispatch_err") || gh_exit_code=$?
 	if [[ "$gh_exit_code" -ne 0 ]] || [[ -z "$issue_json" || "$issue_json" == "null" ]]; then
 		local _issue_dispatch_err_msg
 		_issue_dispatch_err_msg=$(<"$issue_dispatch_err") || _issue_dispatch_err_msg="unknown error"
@@ -271,7 +271,7 @@ list_dispatchable_issue_candidates_json() {
 	if printf '%s' "$issue_json" | jq -e 'any(.[]; any(.labels[]?; .name == "status:blocked"))' >/dev/null 2>&1 &&
 		declare -F normalize_repo_dependency_readiness_if_due >/dev/null 2>&1; then
 		normalize_repo_dependency_readiness_if_due "$repo_slug" >/dev/null 2>&1 || true
-		issue_json=$(gh_issue_list --repo "$repo_slug" --state open --json number,title,url,assignees,labels,updatedAt --limit "$limit" 2>/dev/null) || issue_json='[]'
+		issue_json=$(gh_issue_list --repo "$repo_slug" --state open --json number,title,url,assignees,labels,createdAt,updatedAt --limit "$limit" 2>/dev/null) || issue_json='[]'
 		candidates_json=$(_filter_dispatchable_issue_candidates_json "$issue_json")
 	fi
 
@@ -318,6 +318,7 @@ _filter_dispatchable_issue_candidates_json() {
 				number,
 				title,
 				url,
+				createdAt,
 				updatedAt,
 				labels: $labels,
 				assignees: $assignees

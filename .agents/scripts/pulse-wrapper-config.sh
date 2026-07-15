@@ -173,6 +173,8 @@ NO_WORK_WINDOW_MAX="${AIDEVOPS_NO_WORK_WINDOW_MAX:-${NO_WORK_WINDOW_MAX:-10}}"  
 PULSE_PREFETCH_FULL_SWEEP_INTERVAL="${PULSE_PREFETCH_FULL_SWEEP_INTERVAL:-14400}"                          # Full sweep interval in seconds (default 4h) (GH#15286, GH#18979: reduced from 24h to prevent stale-cache drift on active repos)
 PULSE_RUNNABLE_PR_LIMIT="${PULSE_RUNNABLE_PR_LIMIT:-200}"                                                  # Open PR sample size for runnable-candidate counting
 PULSE_RUNNABLE_ISSUE_LIMIT="${PULSE_RUNNABLE_ISSUE_LIMIT:-1000}"                                           # Open issue sample size for runnable-candidate counting
+PULSE_DISPATCH_AGE_BONUS_PER_DAY="${PULSE_DISPATCH_AGE_BONUS_PER_DAY:-25}"                                 # Fairness boost per full day an eligible issue has waited
+PULSE_DISPATCH_AGE_BONUS_CAP="${PULSE_DISPATCH_AGE_BONUS_CAP:-900}"                                        # Keep age below the 1000-point major priority step
 PULSE_QUEUED_SCAN_LIMIT="${PULSE_QUEUED_SCAN_LIMIT:-1000}"                                                 # Queued/in-progress scan window per repo
 UNDERFILL_RECYCLE_DEFICIT_MIN_PCT="${UNDERFILL_RECYCLE_DEFICIT_MIN_PCT:-25}"                               # Run worker recycler when underfill reaches this threshold
 UNDERFILL_RECYCLE_THROTTLE_SECS="${UNDERFILL_RECYCLE_THROTTLE_SECS:-300}"                                  # Min seconds between recycler runs when candidates are scarce (t1885)
@@ -287,6 +289,8 @@ PULSE_PREFETCH_PR_LIMIT=$(_validate_int PULSE_PREFETCH_PR_LIMIT "$PULSE_PREFETCH
 PULSE_PREFETCH_ISSUE_LIMIT=$(_validate_int PULSE_PREFETCH_ISSUE_LIMIT "$PULSE_PREFETCH_ISSUE_LIMIT" 200 1)
 PULSE_RUNNABLE_PR_LIMIT=$(_validate_int PULSE_RUNNABLE_PR_LIMIT "$PULSE_RUNNABLE_PR_LIMIT" 200 1)
 PULSE_RUNNABLE_ISSUE_LIMIT=$(_validate_int PULSE_RUNNABLE_ISSUE_LIMIT "$PULSE_RUNNABLE_ISSUE_LIMIT" 1000 1)
+PULSE_DISPATCH_AGE_BONUS_PER_DAY=$(_validate_int PULSE_DISPATCH_AGE_BONUS_PER_DAY "$PULSE_DISPATCH_AGE_BONUS_PER_DAY" 25 0)
+PULSE_DISPATCH_AGE_BONUS_CAP=$(_validate_int PULSE_DISPATCH_AGE_BONUS_CAP "$PULSE_DISPATCH_AGE_BONUS_CAP" 900 0)
 PULSE_QUEUED_SCAN_LIMIT=$(_validate_int PULSE_QUEUED_SCAN_LIMIT "$PULSE_QUEUED_SCAN_LIMIT" 1000 1)
 UNDERFILL_RECYCLE_DEFICIT_MIN_PCT=$(_validate_int UNDERFILL_RECYCLE_DEFICIT_MIN_PCT "$UNDERFILL_RECYCLE_DEFICIT_MIN_PCT" 25 1)
 if [[ "$UNDERFILL_RECYCLE_DEFICIT_MIN_PCT" -gt 100 ]]; then

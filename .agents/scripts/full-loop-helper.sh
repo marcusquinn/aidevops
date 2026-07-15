@@ -222,12 +222,13 @@ Commands:
   pre-merge-gate <PR> [REPO]    Check review bot gate before merge (GH#17541)
   wait-checks <PR> [options]     Wait with transition-only required-check output
   merge <PR> [REPO] [--squash|--merge|--rebase] [--admin] [--auto]
-                                Gate-enforced merge (runs pre-merge-gate first).
-                                --admin / --auto pass through to gh pr merge
-                                for branch-protected personal-account repos (GH#18731).
-                                --admin and --auto are mutually exclusive at the
-                                gh CLI level; if both are given, --admin wins and
-                                 --auto is dropped (GH#19310).
+                                 Gate-enforced merge (runs pre-merge-gate first).
+                                 --admin / --auto pass through to gh pr merge
+                                 for branch-protected personal-account repos (GH#18731).
+                                 --admin and --auto are mutually exclusive at the
+                                 gh CLI level; if both are given, --admin wins and
+                                  --auto is dropped (GH#19310).
+  record-no-release <PR> [REPO]  Verify merged evidence and record release:not-requested.
   complete-after-cleanup <PR> <removed-worktree-path> [REPO]
                                  Verify merged, released/deployed, and cleaned evidence.
   help                          Show this help
@@ -260,6 +261,7 @@ main() {
 	pre-merge-gate) cmd_pre_merge_gate "$@" ;;
 	wait-checks) cmd_wait_checks "$@" ;;
 	merge) cmd_merge "$@" ;;
+	record-no-release) cmd_record_no_release "$@" ;;
 	complete-after-cleanup) cmd_complete_after_cleanup "$@" ;;
 	help | --help | -h) show_help ;;
 	*)

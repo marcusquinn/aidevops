@@ -187,7 +187,7 @@ _render_text_report() {
 		"- Auto-dispatch queue: " + (.summary.auto_dispatch_available_unassigned | tostring) + " available / " + (.summary.auto_dispatch_open | tostring) + " open across " + (.queue.repos | tostring) + " pulse repos",
 		"- Queue scan state: " + (.summary.auto_dispatch_scan_state // "scanned"),
 		"- Current window launches: " + (.summary.worker_launches_in_window | tostring) + "; terminal worker events: " + (.summary.worker_terminal_events_in_window | tostring),
-		"- Recent worker metric events: " + (.summary.recent_worker_events | tostring) + "; " + .inputs.historical_window + " success rate: " + (.summary.historical_success_rate | percent_text),
+		"- Recent worker metric events: " + (.summary.recent_worker_events | tostring) + "; " + .inputs.historical_window + " runtime handoff rate: " + (.summary.historical_runtime_handoff_rate | percent_text) + "; delivered success rate: " + (.summary.historical_delivery_success_rate | percent_text),
 		"- GraphQL/API: " + (.summary.graphql_budget_status // "unknown"),
 		"- Runner health: " + (.summary.runner_health // "unknown"),
 		"",
