@@ -293,15 +293,27 @@ rm -rf "$TMPDIR_10"
 # PLANNED with classification CURRENT/CALLER preserved.
 TMPDIR_11="$(mktemp -d)"
 _setup_fake_home "$TMPDIR_11"
-mkdir -p "$TMPDIR_11/repo-runneradd/.github/workflows"
+mkdir -p \
+	"$TMPDIR_11/repo-runneradd/.github/workflows" \
+	"$TMPDIR_11/repo-runnerchange/.github/workflows" \
+	"$TMPDIR_11/repo-runnerremove/.github/workflows"
 # Canonical caller — no runner: line.
 printf '%s\n' "$CANONICAL_CALLER_CONTENT" >"$TMPDIR_11/repo-runneradd/.github/workflows/issue-sync.yml"
-# repos.json carries a runner field that has not been propagated to the file.
-_write_repos_json "$TMPDIR_11" "{\"initialized_repos\":[{\"path\":\"$TMPDIR_11/repo-runneradd\",\"slug\":\"owner/repo-runneradd\",\"runner\":\"ubuntu-latest-arm64\"}]}"
+# Canonical callers with stale runner values exercise change and removal.
+RUNNER_CONTENT_11=$(printf '%s\n' "$CANONICAL_CALLER_CONTENT" \
+	| sed -E 's|^(    with:)$|\1\n      runner: ubuntu-old|')
+printf '%s\n' "$RUNNER_CONTENT_11" >"$TMPDIR_11/repo-runnerchange/.github/workflows/issue-sync.yml"
+printf '%s\n' "$RUNNER_CONTENT_11" >"$TMPDIR_11/repo-runnerremove/.github/workflows/issue-sync.yml"
+# repos.json adds, changes, and removes runner overrides across the fixtures.
+_write_repos_json "$TMPDIR_11" \
+	"{\"initialized_repos\":[{\"path\":\"$TMPDIR_11/repo-runneradd\",\"slug\":\"owner/repo-runneradd\",\"runner\":\"ubuntu-latest-arm64\"},{\"path\":\"$TMPDIR_11/repo-runnerchange\",\"slug\":\"owner/repo-runnerchange\",\"runner\":\"ubuntu-new\"},{\"path\":\"$TMPDIR_11/repo-runnerremove\",\"slug\":\"owner/repo-runnerremove\"}]}"
 OUT_11=$(HOME="$TMPDIR_11" bash "$HELPER" --json 2>/dev/null)
 _assert_contains "GH#21897 → CURRENT/CALLER + repos.json runner is actionable" "$OUT_11" '"slug":"owner/repo-runneradd"'
 _assert_contains "GH#21897 → planned outcome on runner add" "$OUT_11" '"outcome":"PLANNED"'
 _assert_contains "GH#21897 → CURRENT/CALLER classification preserved" "$OUT_11" '"classification":"CURRENT/CALLER"'
+_assert_contains "GH#27725 → runner-add dry-run describes runner update" "$OUT_11" '"slug":"owner/repo-runneradd","classification":"CURRENT/CALLER","outcome":"PLANNED","detail":"update runner → .github/workflows/issue-sync.yml'
+_assert_contains "GH#27725 → runner-change dry-run describes runner update" "$OUT_11" '"slug":"owner/repo-runnerchange","classification":"CURRENT/CALLER","outcome":"PLANNED","detail":"update runner → .github/workflows/issue-sync.yml'
+_assert_contains "GH#27725 → runner-removal dry-run describes runner update" "$OUT_11" '"slug":"owner/repo-runnerremove","classification":"CURRENT/CALLER","outcome":"PLANNED","detail":"update runner → .github/workflows/issue-sync.yml'
 rm -rf "$TMPDIR_11"
 
 # ─── Test 12: GH#21897 — CURRENT/CALLER + matching runner already injected → no work ───
@@ -325,6 +337,40 @@ EXIT_12=$?
 _assert_contains "GH#21897 → already-injected runner is no-op" "$OUT_12" "no actionable repos"
 _assert_exit "GH#21897 → no-op exits 0" 0 "$EXIT_12"
 rm -rf "$TMPDIR_12"
+
+# ─── Test 12a: GH#27725 — review-bot dry-run names selected workflow ────────
+TMPDIR_12_REVIEW="$(mktemp -d)" || exit 1
+_setup_fake_home "$TMPDIR_12_REVIEW"
+mkdir -p "$TMPDIR_12_REVIEW/repo-review/.github/workflows"
+sed 's/cancel-in-progress: false/cancel-in-progress: true/' \
+	"$SCRIPT_DIR/../../templates/workflows/review-bot-gate-caller.yml" \
+	>"$TMPDIR_12_REVIEW/repo-review/.github/workflows/review-bot-gate.yml"
+_write_repos_json "$TMPDIR_12_REVIEW" \
+	"{\"initialized_repos\":[{\"path\":\"$TMPDIR_12_REVIEW/repo-review\",\"slug\":\"owner/repo-review\"}]}"
+OUT_12_REVIEW=$(HOME="$TMPDIR_12_REVIEW" bash "$HELPER" \
+	--repo owner/repo-review --workflow review-bot-gate --json 2>/dev/null)
+_assert_contains "GH#27725 → review-bot drift classification preserved" \
+	"$OUT_12_REVIEW" '"classification":"DRIFTED/CALLER"'
+_assert_contains "GH#27725 → review-bot dry-run names selected workflow" \
+	"$OUT_12_REVIEW" '"detail":"refresh → .github/workflows/review-bot-gate.yml'
+rm -rf "$TMPDIR_12_REVIEW"
+
+# ─── Test 12b: GH#27725 — maintainer-gate dry-run names selected workflow ──
+TMPDIR_12_MAINTAINER="$(mktemp -d)" || exit 1
+_setup_fake_home "$TMPDIR_12_MAINTAINER"
+mkdir -p "$TMPDIR_12_MAINTAINER/repo-maintainer/.github/workflows"
+sed 's/issues: write/issues: read/' \
+	"$SCRIPT_DIR/../../templates/workflows/maintainer-gate-caller.yml" \
+	>"$TMPDIR_12_MAINTAINER/repo-maintainer/.github/workflows/maintainer-gate.yml"
+_write_repos_json "$TMPDIR_12_MAINTAINER" \
+	"{\"initialized_repos\":[{\"path\":\"$TMPDIR_12_MAINTAINER/repo-maintainer\",\"slug\":\"owner/repo-maintainer\"}]}"
+OUT_12_MAINTAINER=$(HOME="$TMPDIR_12_MAINTAINER" bash "$HELPER" \
+	--repo owner/repo-maintainer --workflow maintainer-gate --json 2>/dev/null)
+_assert_contains "GH#27725 → maintainer-gate drift classification preserved" \
+	"$OUT_12_MAINTAINER" '"classification":"DRIFTED/CALLER"'
+_assert_contains "GH#27725 → maintainer-gate dry-run names selected workflow" \
+	"$OUT_12_MAINTAINER" '"detail":"refresh → .github/workflows/maintainer-gate.yml'
+rm -rf "$TMPDIR_12_MAINTAINER"
 
 # ─── Test 13: GH#24520 — apply renders configured reusable repo/ref ─────────
 TMPDIR_13="$(mktemp -d)"
