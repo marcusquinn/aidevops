@@ -75,6 +75,16 @@ write_fixture "$empty_dir" 1 '[]'
 empty_output=$(run_fixture_wait "$empty_dir")
 assert_contains "no required checks is terminal success" "PASS: required checks completed" "$empty_output"
 
+mixed_skipping_dir="${TMPDIR_TEST}/mixed-skipping"
+write_fixture "$mixed_skipping_dir" 1 '[{"name":"Required","workflow":"CI","state":"SUCCESS","bucket":"pass","link":""},{"name":"Optional","workflow":"CI","state":"SKIPPED","bucket":"skipping","link":""}]'
+mixed_skipping_output=$(run_fixture_wait "$mixed_skipping_dir")
+assert_contains "pass plus skipping is terminal success" "PASS: required checks completed" "$mixed_skipping_output"
+
+skipping_only_dir="${TMPDIR_TEST}/skipping-only"
+write_fixture "$skipping_only_dir" 1 '[{"name":"Optional","workflow":"CI","state":"SKIPPED","bucket":"skipping","link":""}]'
+skipping_only_output=$(run_fixture_wait "$skipping_only_dir")
+assert_contains "skipping-only checks are terminal success" "PASS: required checks completed" "$skipping_only_output"
+
 set +e
 head_unavailable_output=$(AIDEVOPS_GH_CHECKS_TEST_HEAD_OVERRIDE='' run_fixture_wait "$empty_dir" 2>&1)
 head_unavailable_rc=$?
@@ -92,6 +102,18 @@ set -e
 assert_contains "terminal failure names failed check" "ShellCheck: fail" "$failure_output"
 failure_link_count=$(printf '%s\n' "$failure_output" | grep -c 'https://example.invalid/failure' || true)
 [[ "$failure_link_count" -eq 1 ]] && pass "failure link is emitted once" || fail "failure link is emitted once" "count ${failure_link_count}"
+
+other_failure_dir="${TMPDIR_TEST}/other-failures"
+write_fixture "$other_failure_dir" 1 '[{"name":"Cancelled","workflow":"CI","state":"CANCELLED","bucket":"cancel","link":""},{"name":"Unexpected","workflow":"CI","state":"UNKNOWN","bucket":"mystery","link":""},{"name":"Optional","workflow":"CI","state":"SKIPPED","bucket":"skipping","link":""}]'
+set +e
+other_failure_output=$(run_fixture_wait "$other_failure_dir" 2>&1)
+other_failure_rc=$?
+set -e
+[[ "$other_failure_rc" -eq 1 ]] && pass "cancel and unknown buckets return one" || fail "cancel and unknown buckets return one" "got ${other_failure_rc}"
+assert_contains "cancelled check is reported" "Cancelled: cancel" "$other_failure_output"
+assert_contains "unknown bucket is reported" "Unexpected: mystery" "$other_failure_output"
+skipping_detail_count=$(printf '%s\n' "$other_failure_output" | grep -c '^  Optional: skipping$' || true)
+[[ "$skipping_detail_count" -eq 1 ]] && pass "skipped check is omitted from failure details" || fail "skipped check is omitted from failure details" "count ${skipping_detail_count}"
 
 recovery_dir="${TMPDIR_TEST}/recovery"
 write_fixture "$recovery_dir" 1 'not-json'
