@@ -343,6 +343,25 @@ test_older_candidate_cannot_replace_active_bundle() {
 	return 0
 }
 
+test_malformed_candidate_version_cannot_replace_active_bundle() {
+	local target_dir="$HOME/.aidevops/agents"
+	local active_before=""
+	local active_after=""
+	local malformed_version=""
+	active_before=$(_runtime_bundle_resolve_root "$target_dir")
+	for malformed_version in 08.0.0 1.2.3.4; do
+		write_fake_revision "$malformed_version" "malformed-version"
+		stage_revision "$target_dir"
+		if _runtime_bundle_activate "$target_dir" "$_AIDEVOPS_STAGED_BUNDLE_DIR" >/dev/null 2>&1; then
+			fail "malformed version $malformed_version unexpectedly replaced the active bundle"
+		fi
+		active_after=$(_runtime_bundle_resolve_root "$target_dir")
+		assert_eq "$active_before" "$active_after" "malformed version $malformed_version preserves the active bundle"
+	done
+	assert_eq "8.0.0" "$(tr -d '[:space:]' <"$target_dir/VERSION")" "valid active version survives malformed setup candidates"
+	return 0
+}
+
 main() {
 	TEST_ROOT=$(mktemp -d)
 	trap cleanup EXIT
@@ -367,6 +386,7 @@ main() {
 	install_mock_plugin_dependency_hooks
 	test_dependency_install_recovery_activates_candidate
 	test_older_candidate_cannot_replace_active_bundle
+	test_malformed_candidate_version_cannot_replace_active_bundle
 	test_dependency_install_failure_preserves_active_bundle
 
 	printf 'Results: %s checks passed\n' "$TESTS_RUN"

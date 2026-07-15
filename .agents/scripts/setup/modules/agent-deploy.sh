@@ -753,16 +753,18 @@ _runtime_bundle_version_is_older() {
 
 	IFS=. read -r candidate_major candidate_minor candidate_patch <<<"$candidate"
 	IFS=. read -r active_major active_minor active_patch <<<"$active"
-	case "${candidate_major}.${candidate_minor}.${candidate_patch}.${active_major}.${active_minor}.${active_patch}" in
-	*[!0-9.]*) return 1 ;;
-	esac
-
 	if [[ "$candidate_major" -lt "$active_major" ]] ||
 		[[ "$candidate_major" -eq "$active_major" && "$candidate_minor" -lt "$active_minor" ]] ||
 		[[ "$candidate_major" -eq "$active_major" && "$candidate_minor" -eq "$active_minor" && "$candidate_patch" -lt "$active_patch" ]]; then
 		return 0
 	fi
 	return 1
+}
+
+_runtime_bundle_version_is_valid() {
+	local version="$1"
+	[[ "$version" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] || return 1
+	return 0
 }
 
 _runtime_bundle_prune() {
@@ -834,6 +836,11 @@ _runtime_bundle_activate() {
 	if previous_root=$(_runtime_bundle_resolve_root "$target_dir" 2>/dev/null); then
 		_AIDEVOPS_PREVIOUS_BUNDLE_ROOT="$previous_root"
 		[[ -r "$previous_root/VERSION" ]] && IFS= read -r active_version <"$previous_root/VERSION"
+		if ! _runtime_bundle_version_is_valid "$candidate_version" ||
+			! _runtime_bundle_version_is_valid "$active_version"; then
+			print_error "Refusing runtime bundle activation with malformed version: active=${active_version:-missing}, candidate=${candidate_version:-missing}"
+			return 1
+		fi
 		if _runtime_bundle_version_is_older "$candidate_version" "$active_version"; then
 			print_error "Refusing to replace active aidevops v${active_version} runtime bundle with older v${candidate_version}"
 			return 1
