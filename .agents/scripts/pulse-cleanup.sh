@@ -2124,28 +2124,25 @@ _verified_worker_closing_pr() {
 	local head_oid="$4"
 	local candidates=""
 	candidates=$(gh pr list --repo "$repo_slug" --state merged --head "$branch_name" --limit 100 \
-		--json number,headRefName,headRefOid 2>/dev/null) || return 2
-	local candidate_count=""
-	candidate_count=$(printf '%s' "$candidates" | jq -r 'length' 2>/dev/null) || return 2
-	[[ "$candidate_count" =~ ^[0-9]+$ ]] || return 2
-	[[ "$candidate_count" -lt 100 ]] || return 2
-
-	local pr_number="" details="" verified=""
-	while IFS= read -r pr_number; do
-		[[ -n "$pr_number" ]] || continue
-		details=$(gh pr view "$pr_number" --repo "$repo_slug" \
-			--json number,state,mergedAt,headRefName,headRefOid,closingIssuesReferences 2>/dev/null) || return 2
-		if printf '%s' "$details" | jq -e --arg issue "$issue_number" --arg branch "$branch_name" --arg head "$head_oid" '
-			.state == "MERGED" and (.mergedAt // "") != "" and .headRefName == $branch and .headRefOid == $head and
-			([.closingIssuesReferences[]?.number | tostring] | index($issue)) != null
-		' >/dev/null 2>&1; then
-			[[ -z "$verified" ]] || return 2
-			verified="$pr_number"
-		fi
-	done < <(printf '%s' "$candidates" | jq -r --arg branch "$branch_name" --arg head "$head_oid" \
-		'.[] | select(.headRefName == $branch and .headRefOid == $head) | .number' 2>/dev/null)
-	[[ -n "$verified" ]] || return 1
-	printf '%s\n' "$verified"
+		--json number,state,mergedAt,headRefName,headRefOid,closingIssuesReferences 2>/dev/null) || return 2
+	local verification="" verified_count="" verified_pr=""
+	verification=$(printf '%s' "$candidates" | jq -r --arg issue "$issue_number" --arg branch "$branch_name" --arg head "$head_oid" '
+		if length >= 100 then "limit"
+		else
+			[.[] | select(
+				.state == "MERGED" and (.mergedAt // "") != "" and
+				.headRefName == $branch and .headRefOid == $head and
+				([.closingIssuesReferences[]?.number | tostring] | index($issue)) != null
+			)] as $verified |
+			[($verified | length | tostring), ($verified[0].number // "" | tostring)] | @tsv
+		end
+	' 2>/dev/null) || return 2
+	[[ "$verification" != "limit" ]] || return 2
+	IFS=$'\t' read -r verified_count verified_pr <<<"$verification"
+	[[ "$verified_count" =~ ^[0-9]+$ ]] || return 2
+	[[ "$verified_count" -le 1 ]] || return 2
+	[[ "$verified_count" -eq 1 && -n "$verified_pr" ]] || return 1
+	printf '%s\n' "$verified_pr"
 	return 0
 }
 
@@ -2205,7 +2202,7 @@ reap_zombie_workers() {
 		local branch_name="" head_oid=""
 		branch_name=$(git -C "$ledger_worktree" branch --show-current 2>/dev/null) || branch_name=""
 		head_oid=$(git -C "$ledger_worktree" rev-parse HEAD 2>/dev/null) || head_oid=""
-		if [[ -z "$branch_name" || ! "$head_oid" =~ ^[0-9a-f]{40}$ ]]; then
+		if [[ -z "$branch_name" || ! "$head_oid" =~ ^([0-9a-f]{40}|[0-9a-f]{64})$ ]]; then
 			echo "[pulse-wrapper] Zombie reap skipped for ${worker_key}: worker branch/head could not be verified" >>"$LOGFILE"
 			continue
 		fi

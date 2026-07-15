@@ -155,15 +155,9 @@ gh() {
 	fi
 	if [[ "$subcommand" == "pr" && "$action" == "list" ]]; then
 		[[ "${GH_API_FAIL:-0}" == "0" ]] || return 1
-		jq -cn --argjson number "${GH_MERGED_PR:-3964}" --arg branch "${GH_PR_BRANCH:?}" --arg head "${GH_PR_HEAD:?}" \
-			'[{number:$number,headRefName:$branch,headRefOid:$head}]'
-		return 0
-	fi
-	if [[ "$subcommand" == "pr" && "$action" == "view" ]]; then
-		[[ "${GH_API_FAIL:-0}" == "0" ]] || return 1
 		jq -cn --argjson number "${GH_MERGED_PR:-3964}" --argjson issue "${GH_CLOSING_ISSUE:-3964}" \
 			--arg branch "${GH_PR_BRANCH:?}" --arg head "${GH_PR_HEAD:?}" \
-			'{number:$number,state:"MERGED",mergedAt:"2026-07-15T12:00:00Z",headRefName:$branch,headRefOid:$head,closingIssuesReferences:[{number:$issue}]}'
+			'[{number:$number,state:"MERGED",mergedAt:"2026-07-15T12:00:00Z",headRefName:$branch,headRefOid:$head,closingIssuesReferences:[{number:$issue}]}]'
 		return 0
 	fi
 	return 1
