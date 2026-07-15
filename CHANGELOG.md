@@ -10,6 +10,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.32.126] - 2026-07-15
+
+### Fixed
+
+- reject orphan issue mappings during forge events (#27867)
+- allow independent general path verification (#27860)
+- bind zombie reaping to verified merged PR (#27864)
+
 ## [3.32.125] - 2026-07-15
 
 ### Changed
