@@ -112,6 +112,51 @@ fi
 grep -qx 'failed' "${receipt_dir}/marcusquinn_aidevops-42.status"
 printf 'PASS failed publication persists failed status and stops transition\n'
 
+record_runner="${ROOT}/record-runner.sh"
+cat >"$record_runner" <<RUNNER
+#!/usr/bin/env bash
+set -euo pipefail
+SCRIPT_DIR='${SCRIPTS_DIR}'
+STATE_DIR='${ROOT}/state'
+STATE_FILE='${ROOT}/state/full-loop.state'
+DEFAULT_MAX_TASK_ITERATIONS=50
+DEFAULT_MAX_PREFLIGHT_ITERATIONS=5
+DEFAULT_MAX_PR_ITERATIONS=20
+HEADLESS=false
+source '${SCRIPTS_DIR}/shared-constants.sh'
+source '${SCRIPTS_DIR}/full-loop-helper-state.sh'
+cmd_record_no_release "\$@"
+RUNNER
+chmod +x "$record_runner"
+
+rm -f "${receipt_dir}/marcusquinn_aidevops-42.status"
+AIDEVOPS_FULL_LOOP_RECEIPT_DIR="$receipt_dir" PATH="${ROOT}/bin:/opt/homebrew/bin:/usr/bin:/bin" bash "$record_runner" 42 marcusquinn/aidevops >/dev/null
+grep -qx 'not-requested' "${receipt_dir}/marcusquinn_aidevops-42.status"
+AIDEVOPS_FULL_LOOP_RECEIPT_DIR="$receipt_dir" PATH="${ROOT}/bin:/opt/homebrew/bin:/usr/bin:/bin" bash "$record_runner" 42 marcusquinn/aidevops >/dev/null
+printf 'PASS direct merge-only lifecycle records idempotent no-release evidence\n'
+
+rm -f "${receipt_dir}/marcusquinn_aidevops-42.status"
+if COMPLETION_PR_STATE=OPEN AIDEVOPS_FULL_LOOP_RECEIPT_DIR="$receipt_dir" PATH="${ROOT}/bin:/opt/homebrew/bin:/usr/bin:/bin" bash "$record_runner" 42 marcusquinn/aidevops >/dev/null 2>&1; then
+	printf 'FAIL open PR created no-release evidence\n'
+	exit 1
+fi
+[[ ! -e "${receipt_dir}/marcusquinn_aidevops-42.status" ]]
+printf 'PASS open PR cannot create no-release evidence\n'
+
+printf '%s\n' published >"${receipt_dir}/marcusquinn_aidevops-42.status"
+if AIDEVOPS_FULL_LOOP_RECEIPT_DIR="$receipt_dir" PATH="${ROOT}/bin:/opt/homebrew/bin:/usr/bin:/bin" bash "$record_runner" 42 marcusquinn/aidevops >/dev/null 2>&1; then
+	printf 'FAIL published evidence was downgraded to no-release\n'
+	exit 1
+fi
+grep -qx 'published' "${receipt_dir}/marcusquinn_aidevops-42.status"
+printf 'PASS published evidence cannot be downgraded\n'
+
+if AIDEVOPS_FULL_LOOP_RECEIPT_DIR="$receipt_dir" PATH="${ROOT}/bin:/opt/homebrew/bin:/usr/bin:/bin" bash "$record_runner" 42 published marcusquinn/aidevops >/dev/null 2>&1; then
+	printf 'FAIL record-no-release accepted a forged status argument\n'
+	exit 1
+fi
+printf 'PASS record-no-release rejects status injection\n'
+
 complete_runner="${ROOT}/complete-runner.sh"
 cat >"$complete_runner" <<RUNNER
 #!/usr/bin/env bash
@@ -140,7 +185,8 @@ AIDEVOPS_CLEANUP_LOG="$cleanup_log" PATH="${ROOT}/bin:/opt/homebrew/bin:/usr/bin
 }
 printf 'PASS merged and cleaned evidence completes lifecycle\n'
 
-printf '%s\n' not-requested >"${receipt_dir}/marcusquinn_aidevops-42.status"
+rm -f "${receipt_dir}/marcusquinn_aidevops-42.status"
+AIDEVOPS_FULL_LOOP_RECEIPT_DIR="$receipt_dir" PATH="${ROOT}/bin:/opt/homebrew/bin:/usr/bin:/bin" bash "$record_runner" 42 marcusquinn/aidevops >/dev/null
 AIDEVOPS_FULL_LOOP_RECEIPT_DIR="$receipt_dir" AIDEVOPS_CLEANUP_LOG="$cleanup_log" PATH="${ROOT}/bin:/opt/homebrew/bin:/usr/bin:/bin" bash "$runner" 42 "$removed_path" marcusquinn/aidevops >/dev/null || {
 	printf 'FAIL merge-only aidevops lifecycle did not complete with release:not-requested\n'
 	exit 1
