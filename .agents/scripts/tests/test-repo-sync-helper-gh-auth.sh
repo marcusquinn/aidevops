@@ -92,7 +92,7 @@ run_canonical_guard_case() {
 	local rc=0
 	env \
 		HOME="${tmp_dir}/home" \
-		PATH="${tmp_dir}/bin:/usr/bin:/bin:/opt/homebrew/bin" \
+		PATH="${tmp_dir}/bin:/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin" \
 		FAKE_GH_LOG="${tmp_dir}/gh.log" \
 		"$HELPER" check >"${tmp_dir}/stdout.log" 2>"${tmp_dir}/stderr.log" || rc=$?
 	local after
