@@ -82,6 +82,12 @@ gh() {
 			extra_check=',{"name":"CodeFactor","status":"completed","conclusion":"failure","completed_at":"2026-01-01T00:01:00Z"}'
 		elif [[ "$SNAPSHOT_MODE" == "maintainer_alias_fail" ]]; then
 			extra_check=',{"name":"maintainer-gate","status":"completed","conclusion":"success","completed_at":"2026-01-01T00:01:00Z"},{"name":"Maintainer Review & Assignee Gate","status":"completed","conclusion":"failure","completed_at":"2026-01-01T00:01:01Z"},{"name":"gate / Maintainer Review & Assignee Gate","status":"completed","conclusion":"success","completed_at":"2026-01-01T00:01:02Z"}'
+		elif [[ "$SNAPSHOT_MODE" == "maintainer_stable_fail" ]]; then
+			extra_check=',{"name":"maintainer-gate","status":"completed","conclusion":"failure","completed_at":"2026-01-01T00:01:02Z"},{"name":"gate / Maintainer Review & Assignee Gate","status":"completed","conclusion":"success","completed_at":"2026-01-01T00:01:01Z"}'
+		elif [[ "$SNAPSHOT_MODE" == "maintainer_legacy_fail" ]]; then
+			extra_check=',{"name":"Maintainer Review & Assignee Gate","status":"completed","conclusion":"failure","completed_at":"2026-01-01T00:01:01Z"},{"name":"gate / Maintainer Review & Assignee Gate","status":"completed","conclusion":"failure","completed_at":"2026-01-01T00:01:02Z"}'
+		elif [[ "$SNAPSHOT_MODE" == "skipped_companion_rerun" ]]; then
+			extra_check=',{"name":"Qlty Smell Regression","status":"completed","conclusion":"skipped","completed_at":"2026-01-01T00:02:00Z"}'
 		elif [[ "$SNAPSHOT_MODE" == "same_name_source_conflict" ]]; then
 			extra_check=',{"name":"ProviderMirror","status":"completed","conclusion":"success","completed_at":"2026-01-01T00:01:02Z"}'
 		fi
@@ -158,6 +164,7 @@ main() {
 		TESTS_FAILED=$((TESTS_FAILED + 1))
 	fi
 	TESTS_RUN=$((TESTS_RUN + 1))
+	assert_gate "skipped rerun preserves successful baseline companion" skipped_companion_rerun 0
 	assert_gate "active broad check blocks merge" pending 1
 	assert_gate "terminal failed required check blocks merge" required_fail 1
 	assert_gate "unclassified non-required failure blocks merge" unclassified_fail 1
@@ -191,7 +198,8 @@ main() {
 	set_live_evidence PASS_RATE_LIMITED sha-reviewed external false
 	assert_gate "configured provider failure blocks external rate-limit evidence" configured_fail 1
 	_PULSE_REVIEW_GATE_EVIDENCE=""
-	assert_gate "duplicate maintainer-gate aliases remain one logical blocker" maintainer_alias_fail 1
+	assert_gate "stable maintainer-gate success supersedes stale alias failures" maintainer_alias_fail 0
+	assert_gate "stable maintainer-gate failure remains one logical blocker" maintainer_stable_fail 1
 	if [[ "$(grep -c "maintainer-gate family is terminal-failure" "$LOGFILE" || true)" -eq 1 ]]; then
 		printf 'PASS maintainer-gate aliases emit one audited blocker\n'
 	else
@@ -199,6 +207,7 @@ main() {
 		TESTS_FAILED=$((TESTS_FAILED + 1))
 	fi
 	TESTS_RUN=$((TESTS_RUN + 1))
+	assert_gate "legacy maintainer aliases fail closed without stable context" maintainer_legacy_fail 1
 	assert_gate "unresolved late inline finding blocks merge" unresolved 1
 	assert_gate "late review activity invalidates stale gate success" stale_gate 1
 	_PULSE_REVIEW_GATE_EVIDENCE=""
