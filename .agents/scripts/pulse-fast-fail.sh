@@ -53,6 +53,7 @@
 # Include guard — prevent double-sourcing.
 [[ -n "${_PULSE_FAST_FAIL_LOADED:-}" ]] && return 0
 _PULSE_FAST_FAIL_LOADED=1
+_FF_BOOL_FALSE="false"
 
 #######################################
 # Return the fast-fail state key for an issue.
@@ -296,7 +297,7 @@ _ff_terminal_threshold_crossed() {
 	local terminal_threshold="${FAST_FAIL_SKIP_THRESHOLD:-5}"
 
 	[[ "$terminal_threshold" =~ ^[0-9]+$ ]] || terminal_threshold=5
-	if [[ "$is_rate_limit" == "false" \
+	if [[ "$is_rate_limit" == "$_FF_BOOL_FALSE" \
 		&& "$existing_count" -lt "$terminal_threshold" \
 		&& "$new_count" -ge "$terminal_threshold" ]]; then
 		return 0
@@ -633,7 +634,7 @@ _fast_fail_record_locked() {
 	# Flag for enrichment on first non-rate-limit failure: a thinking-tier worker
 	# will analyze the issue and add implementation guidance before re-dispatch.
 	# Only set once — cleared after enrichment runs.
-	if [[ "$is_rate_limit" == "false" && "$new_count" -eq 1 ]]; then
+	if [[ "$is_rate_limit" == "$_FF_BOOL_FALSE" && "$new_count" -eq 1 ]]; then
 		updated_state=$(printf '%s' "$updated_state" | jq \
 			--arg k "$key" \
 			'.[$k].enrichment_needed = true' 2>/dev/null) || true
@@ -647,7 +648,7 @@ _fast_fail_record_locked() {
 	# the problem, it's provider capacity. Escalating would waste a higher tier.
 	# Pass crash_type to escalate_issue_tier for crash-type-aware thresholds:
 	# "overwhelmed" escalates immediately, others use default threshold.
-	if [[ "$is_rate_limit" == "false" && "$new_count" -gt "$existing_count" ]]; then
+	if [[ "$is_rate_limit" == "$_FF_BOOL_FALSE" && "$new_count" -gt "$existing_count" ]]; then
 		escalate_issue_tier "$issue_number" "$repo_slug" "$new_count" "$reason" "$crash_type" || true
 	fi
 
