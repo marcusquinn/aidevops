@@ -2,9 +2,9 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # =============================================================================
-# Smoke test for t2902 / GH#21043: gh-api-instrument.sh records gh API call
-# partitioning and aggregates to JSON correctly. Also verifies the wrapper
-# integration: sourcing shared-gh-wrappers.sh defines gh_record_call.
+# Regression test for t2902 / GH#21043 / GH#27769: logical gh events and real
+# transport attempts remain separately replayable, bounded, privacy-safe, and
+# backward-compatible with legacy records.
 # =============================================================================
 #
 # Background: t2902 added per-call-site instrumentation to identify the
@@ -128,8 +128,8 @@ unset _GH_API_INSTRUMENT_LOADED
 source "${PARENT_DIR}/gh-api-instrument.sh"
 gh_trim_log
 trimmed_count=$(wc -l <"$AIDEVOPS_GH_API_LOG" | tr -d ' ')
-# After trim, should retain max/2 = 2 lines.
-assert_eq "trim retained max/2 lines" "2" "$trimmed_count"
+# Bounded retention keeps at most the configured maximum.
+assert_eq "trim retained max lines" "4" "$trimmed_count"
 
 # --- Test 4: clear wipes both log and report --------------------------
 gh_clear_log
@@ -241,6 +241,164 @@ assert_eq "HOME-less temp fallback rejects symlink" "0" "$symlink_status"
 # Restore per-test overrides for summary diagnostics if future tests append.
 export AIDEVOPS_GH_API_LOG="$TMPDIR/gh-api-calls.log"
 export AIDEVOPS_GH_API_REPORT="$TMPDIR/report.json"
+
+# --- Test 10: exact replay separates events, attempts, pages, and retries --
+unset _GH_API_INSTRUMENT_LOADED
+# shellcheck source=../gh-api-instrument.sh
+source "${PARENT_DIR}/gh-api-instrument.sh"
+gh_clear_log
+
+AIDEVOPS_GH_LOGICAL_ID=logical-replay gh_record_call rest replay-caller github-app rest-core rest-selected 4998
+gh_record_attempt rest replay-caller logical-replay attempt-rest-1 1 0 success 200 120 1 github-app rest-core rest-selected 4998
+gh_record_attempt rest replay-caller logical-replay attempt-rest-2 2 0 success 200 80 1 github-app rest-core rest-selected 4997
+gh_record_attempt graphql replay-caller logical-replay attempt-graphql-1 1 1 error 403 40 1 gh-pat graphql rest-fallback-graphql 0
+AIDEVOPS_GH_LOGICAL_ID=logical-cache gh_record_call other replay-cache unknown other hit ""
+now=$(date +%s)
+printf '%s\tlegacy-caller\trest\tgh-pat\trest-core\tlegacy-route\t4996\n' "$now" >>"$AIDEVOPS_GH_API_LOG"
+# Duplicate IDs are rejected from replay totals and surfaced in metadata.
+gh_record_attempt rest replay-caller logical-replay attempt-rest-2 2 0 success 200 80 1 github-app rest-core rest-selected 4997
+printf 'malformed legacy row\n' >>"$AIDEVOPS_GH_API_LOG"
+gh_aggregate_calls
+
+assert_eq "schema version = 2" "2" "$(jq -r '._meta.schema_version' "$AIDEVOPS_GH_API_REPORT")"
+assert_eq "attempt replay excludes duplicate ID" "3" "$(jq -r '._meta.attempted_requests' "$AIDEVOPS_GH_API_REPORT")"
+assert_eq "logical routing events remain separate" "1" "$(jq -r '._meta.logical_events' "$AIDEVOPS_GH_API_REPORT")"
+assert_eq "cache-only decision has zero attempts" "0" "$(jq -r '.by_caller["replay-cache"].attempted_requests' "$AIDEVOPS_GH_API_REPORT")"
+assert_eq "cache event counted separately" "1" "$(jq -r '._meta.cache_events' "$AIDEVOPS_GH_API_REPORT")"
+assert_eq "legacy row remains a logical observation" "1" "$(jq -r '._meta.legacy_events' "$AIDEVOPS_GH_API_REPORT")"
+assert_eq "one retry linked to logical operation" "1" "$(jq -r '._meta.retries' "$AIDEVOPS_GH_API_REPORT")"
+assert_eq "three explicit request pages" "3" "$(jq -r '._meta.pages' "$AIDEVOPS_GH_API_REPORT")"
+assert_eq "one additional page" "1" "$(jq -r '._meta.additional_pages' "$AIDEVOPS_GH_API_REPORT")"
+assert_eq "quota replay sum" "3" "$(jq -r '._meta.known_quota_cost' "$AIDEVOPS_GH_API_REPORT")"
+assert_eq "elapsed replay sum" "240" "$(jq -r '._meta.elapsed_ms' "$AIDEVOPS_GH_API_REPORT")"
+assert_eq "REST attempts grouped by path" "2" "$(jq -r '.by_path.rest.attempted_requests' "$AIDEVOPS_GH_API_REPORT")"
+assert_eq "attempts grouped by auth pool" "2" "$(jq -r '.by_api_pool["rest-core"].attempted_requests' "$AIDEVOPS_GH_API_REPORT")"
+assert_eq "duplicate attempt ID surfaced" "1" "$(jq -r '._meta.duplicate_attempt_ids' "$AIDEVOPS_GH_API_REPORT")"
+assert_eq "duplicate makes exactness false" "false" "$(jq -r '._meta.attempts_exact' "$AIDEVOPS_GH_API_REPORT")"
+assert_eq "malformed row surfaced" "1" "$(jq -r '._meta.malformed_records' "$AIDEVOPS_GH_API_REPORT")"
+
+# --- Test 11: command arguments remain private and exit status is preserved --
+gh_clear_log
+gh_run_transport_attempt rest privacy-caller logical-private 1 0 -- true \
+	'endpoint-private?token=do-not-log' 'Authorization: bearer do-not-log' '--body=private-payload'
+set +e
+gh_run_transport_attempt graphql privacy-caller logical-private 1 1 -- false
+transport_status=$?
+set -e
+assert_eq "transport failure status preserved" "1" "$transport_status"
+if grep -Eq 'do-not-log|private-payload|Authorization|endpoint-private' "$AIDEVOPS_GH_API_LOG"; then
+	echo "  FAIL: transport telemetry exposed command arguments"
+	FAIL=$((FAIL + 1))
+else
+	echo "  PASS: transport telemetry excludes command arguments"
+	PASS=$((PASS + 1))
+fi
+gh_aggregate_calls
+assert_eq "success and failure attempts recorded" "2" "$(jq -r '._meta.attempted_requests' "$AIDEVOPS_GH_API_REPORT")"
+assert_eq "failed outcome recorded" "1" "$(jq -r '._meta.failed_attempts' "$AIDEVOPS_GH_API_REPORT")"
+
+# --- Test 12: effective window comes from retained attempt timestamps -----
+gh_clear_log
+first_ts=$((now - 30))
+last_ts=$((now - 10))
+printf '%s\twindow-caller\trest\tgh-pat\trest-core\trest-selected\t4999\tv2\tattempt\tlogical-window\tattempt-window-1\t1\t0\tsuccess\t200\t10\t1\n' "$first_ts" >>"$AIDEVOPS_GH_API_LOG"
+printf '%s\twindow-caller\trest\tgh-pat\trest-core\trest-selected\t4998\tv2\tattempt\tlogical-window\tattempt-window-2\t2\t0\tsuccess\t200\t20\t1\n' "$last_ts" >>"$AIDEVOPS_GH_API_LOG"
+gh_aggregate_calls "$AIDEVOPS_GH_API_REPORT" 3600
+assert_eq "requested window retained separately" "3600" "$(jq -r '._meta.requested_window_seconds' "$AIDEVOPS_GH_API_REPORT")"
+assert_eq "first retained attempt timestamp" "$first_ts" "$(jq -r '._meta.first_retained_ts' "$AIDEVOPS_GH_API_REPORT")"
+assert_eq "last retained attempt timestamp" "$last_ts" "$(jq -r '._meta.last_retained_ts' "$AIDEVOPS_GH_API_REPORT")"
+assert_eq "effective window uses observed range" "20" "$(jq -r '._meta.effective_window_seconds' "$AIDEVOPS_GH_API_REPORT")"
+
+# --- Test 13: time/line/byte retention is atomic and bounded -------------
+export AIDEVOPS_GH_API_LOG_MAX_LINES=3
+export AIDEVOPS_GH_API_LOG_MAX_BYTES=10000
+export AIDEVOPS_GH_API_RETENTION_SECONDS=100
+unset _GH_API_INSTRUMENT_LOADED
+# shellcheck source=../gh-api-instrument.sh
+source "${PARENT_DIR}/gh-api-instrument.sh"
+gh_clear_log
+printf '1\told-caller\trest\n' >>"$AIDEVOPS_GH_API_LOG"
+for fixture_index in 1 2 3 4; do
+	fixture_ts=$((now - 5 + fixture_index))
+	printf '%s\tretained-%s\trest\tgh-pat\trest-core\trest-selected\t\tv2\tlogical\tlogical-retained-%s\t\t\t\t\t\t\t\n' \
+		"$fixture_ts" "$fixture_index" "$fixture_index" >>"$AIDEVOPS_GH_API_LOG"
+done
+gh_trim_log
+assert_eq "retention applies maximum line count" "3" "$(wc -l <"$AIDEVOPS_GH_API_LOG" | tr -d ' ')"
+if grep -q 'old-caller' "$AIDEVOPS_GH_API_LOG"; then
+	echo "  FAIL: time retention kept expired record"
+	FAIL=$((FAIL + 1))
+else
+	echo "  PASS: time retention removed expired record"
+	PASS=$((PASS + 1))
+fi
+
+export AIDEVOPS_GH_API_LOG_MAX_LINES=100
+export AIDEVOPS_GH_API_LOG_MAX_BYTES=220
+unset _GH_API_INSTRUMENT_LOADED
+# shellcheck source=../gh-api-instrument.sh
+source "${PARENT_DIR}/gh-api-instrument.sh"
+gh_clear_log
+for fixture_index in 1 2 3 4 5; do
+	gh_record_call rest "byte-retention-${fixture_index}"
+done
+gh_trim_log
+retained_bytes=$(wc -c <"$AIDEVOPS_GH_API_LOG" | tr -d ' ')
+if [[ "$retained_bytes" -le 220 ]]; then
+	echo "  PASS: byte retention stayed within bound"
+	PASS=$((PASS + 1))
+else
+	echo "  FAIL: byte retention exceeded bound ($retained_bytes > 220)"
+	FAIL=$((FAIL + 1))
+fi
+
+# --- Test 14: concurrent append keeps one complete record per writer ------
+export AIDEVOPS_GH_API_LOG_MAX_BYTES=10000
+unset _GH_API_INSTRUMENT_LOADED
+# shellcheck source=../gh-api-instrument.sh
+source "${PARENT_DIR}/gh-api-instrument.sh"
+gh_clear_log
+for fixture_index in 1 2 3 4 5 6 7 8 9 10 11 12; do
+	(
+		unset _GH_API_INSTRUMENT_LOADED
+		# shellcheck source=../gh-api-instrument.sh
+		source "${PARENT_DIR}/gh-api-instrument.sh"
+		gh_record_attempt rest concurrent-caller "logical-${fixture_index}" "attempt-${fixture_index}" 1 0 success 200 1 1 gh-pat rest-core rest-selected 4999
+	) &
+done
+wait
+assert_eq "concurrent append retained all complete records" "12" "$(wc -l <"$AIDEVOPS_GH_API_LOG" | tr -d ' ')"
+assert_eq "concurrent attempt IDs remain unique" "12" "$(cut -f11 "$AIDEVOPS_GH_API_LOG" | sort -u | wc -l | tr -d ' ')"
+
+# --- Test 15: the shim records exactly one native transport attempt -------
+SHIM_FIXTURE="$TMPDIR/shim-fixture"
+NATIVE_FIXTURE="$TMPDIR/native-fixture"
+mkdir -p "$SHIM_FIXTURE" "$NATIVE_FIXTURE"
+cp "${PARENT_DIR}/gh" "$SHIM_FIXTURE/gh"
+cp "${PARENT_DIR}/gh-api-instrument.sh" "$SHIM_FIXTURE/gh-api-instrument.sh"
+chmod +x "$SHIM_FIXTURE/gh"
+cat >"$NATIVE_FIXTURE/gh" <<'EOF_NATIVE_GH'
+#!/usr/bin/env bash
+printf '%s\n' "$@" >>"$NATIVE_ATTEMPT_LOG"
+exit "${NATIVE_ATTEMPT_STATUS:-0}"
+EOF_NATIVE_GH
+chmod +x "$NATIVE_FIXTURE/gh"
+export AIDEVOPS_GH_API_LOG="$TMPDIR/shim-attempts.log"
+export NATIVE_ATTEMPT_LOG="$TMPDIR/native-attempts.log"
+rm -f "$AIDEVOPS_GH_API_LOG" "$NATIVE_ATTEMPT_LOG"
+PATH="$NATIVE_FIXTURE:/usr/bin:/bin" AIDEVOPS_GH_SHIM_NO_REST_REWRITE=1 \
+	"$SHIM_FIXTURE/gh" api '/repos/private-owner/private-repo/issues?page=2&token=private-value' >/dev/null
+assert_eq "shim invokes native gh exactly once" "1" "$(grep -c '^api$' "$NATIVE_ATTEMPT_LOG")"
+assert_eq "shim emits one logical event" "1" "$(awk -F'\t' '$9 == "logical" { count++ } END { print count + 0 }' "$AIDEVOPS_GH_API_LOG")"
+assert_eq "shim emits one transport attempt" "1" "$(awk -F'\t' '$9 == "attempt" { count++ } END { print count + 0 }' "$AIDEVOPS_GH_API_LOG")"
+assert_eq "shim records explicit page number" "2" "$(awk -F'\t' '$9 == "attempt" { print $12 }' "$AIDEVOPS_GH_API_LOG")"
+if grep -Eq 'private-owner|private-repo|private-value|token=' "$AIDEVOPS_GH_API_LOG"; then
+	echo "  FAIL: shim telemetry exposed path/query arguments"
+	FAIL=$((FAIL + 1))
+else
+	echo "  PASS: shim telemetry keeps path/query arguments private"
+	PASS=$((PASS + 1))
+fi
 
 # --- Summary ----------------------------------------------------------
 echo ""

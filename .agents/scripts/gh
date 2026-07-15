@@ -189,7 +189,39 @@ done
 if [[ $_INST_LOADED -eq 0 ]]; then
 	gh_record_call() { return 0; }
 fi
+if ! type gh_new_logical_id >/dev/null 2>&1; then
+	gh_new_logical_id() {
+		printf 'shim-%s-%s\n' "${BASHPID:-$$}" "${RANDOM:-0}"
+		return 0
+	}
+fi
+if ! type gh_attempt_count_for_logical >/dev/null 2>&1; then
+	gh_attempt_count_for_logical() {
+		local ignored_logical_id="$1"
+		: "$ignored_logical_id"
+		printf '0\n'
+		return 0
+	}
+fi
+if ! type gh_run_transport_attempt >/dev/null 2>&1; then
+	gh_run_transport_attempt() {
+		local ignored_path="$1"; shift
+		local ignored_caller="$1"; shift
+		local ignored_logical_id="$1"; shift
+		local ignored_page="$1"; shift
+		local ignored_retry="$1"; shift
+		: "$ignored_path" "$ignored_caller" "$ignored_logical_id" "$ignored_page" "$ignored_retry"
+		[[ "${1:-}" == "--" ]] && shift
+		"$@"
+		return $?
+	}
+fi
 unset _cand _INST_LOADED
+
+# One ID follows the complete wrapper invocation, including REST translation,
+# each explicit page, and any GraphQL fallback retry.
+AIDEVOPS_GH_LOGICAL_ID="${AIDEVOPS_GH_LOGICAL_ID:-$(gh_new_logical_id)}"
+export AIDEVOPS_GH_LOGICAL_ID
 
 # _shim_classify_endpoint <sub1> [<sub2>]
 # Classify a gh invocation for instrumentation. Returns one of:
@@ -246,6 +278,40 @@ _shim_caller_label() {
 	*) printf 'gh_%s%s' "${sub1:-unknown}" "${sub2:+_${sub2}}" ;;
 	esac
 	return 0
+}
+
+_shim_transport_page() {
+	local arg=""
+	local page=1
+	for arg in "$@"; do
+		if [[ "$arg" == "--paginate" ]]; then
+			# Native gh owns the internal page loop, so one process is not proof of
+			# one request. Mark this attempt as opaque rather than overclaiming.
+			printf '0'
+			return 0
+		fi
+		if [[ "$arg" =~ (^|[?\&])page=([0-9]+)($|\&) ]]; then
+			page="${BASH_REMATCH[2]}"
+		fi
+	done
+	printf '%s' "$page"
+	return 0
+}
+
+_shim_run_transport() {
+	local executable="$1"; shift
+	local path="$1"; shift
+	local caller="$1"; shift
+	local retry="$1"; shift
+	local page=1
+	local decision="${AIDEVOPS_GH_ROUTE_DECISION:-}"
+	page=$(_shim_transport_page "$@")
+	if [[ "$page" == "0" ]]; then
+		decision="native-pagination-opaque"
+	fi
+	AIDEVOPS_GH_ROUTE_DECISION="$decision" gh_run_transport_attempt \
+		"$path" "$caller" "$AIDEVOPS_GH_LOGICAL_ID" "$page" "$retry" -- "$executable" "$@"
+	return $?
 }
 
 # -----------------------------------------------------------------------------
@@ -369,7 +435,7 @@ _shim_repo_role() {
 	# fail-closed to contributor.
 	if [[ -n "$repo_slug" && "$repo_slug" == */* && -n "${REAL_GH:-}" ]]; then
 		slug_owner="${repo_slug%%/*}"
-		current_user=$("$REAL_GH" api user --jq '.login' 2>/dev/null || true)
+		current_user=$(_shim_run_transport "$REAL_GH" rest gh_api_user 0 api user --jq '.login' 2>/dev/null || true)
 		if [[ -n "$current_user" && ( "$configured_maintainer" == "$current_user" || "$slug_owner" == "$current_user" ) ]]; then
 			printf 'maintainer\n'
 			return 0
@@ -446,21 +512,36 @@ api:*)
 	;;
 *)
 	_real_gh="$(_find_real_gh)" || {
-		echo "[aidevops] gh shim: real gh binary not found on PATH" >&2
+		printf '[aidevops] gh shim: real gh binary not found on PATH\n' >&2
 		exit 127
 	}
 	# GH#21857/t3448: instrument every passthrough gh call (pr merge, pr checks,
 	# run list, repo clone, etc.) that previously bypassed all recording.
-	gh_record_call "$(_shim_classify_endpoint "${1:-}" "${2:-}")" "$(_shim_caller_label "${1:-}" "${2:-}")" 2>/dev/null || true
-	exec "$_real_gh" "$@"
+	_transport_path=$(_shim_classify_endpoint "${1:-}" "${2:-}")
+	_transport_caller=$(_shim_caller_label "${1:-}" "${2:-}")
+	gh_record_call "$_transport_path" "$_transport_caller" 2>/dev/null || true
+	_shim_run_transport "$_real_gh" "$_transport_path" "$_transport_caller" 0 "$@"
+	exit $?
 	;;
 esac
 
 export _AIDEVOPS_GH_SHIM_ACTIVE=1
 
 REAL_GH="$(_find_real_gh)" || {
-	echo "[aidevops] gh shim: real gh binary not found; aborting" >&2
+	printf '[aidevops] gh shim: real gh binary not found; aborting\n' >&2
 	exit 127
+}
+
+# REST translators are sourced into this process and invoke `gh api` by name.
+# Keep those calls at the same logical ID while bypassing PATH recursion and
+# recording each native page/try at the actual execution boundary.
+gh() {
+	local path=""
+	local caller=""
+	path=$(_shim_classify_endpoint "${1:-}" "${2:-}")
+	caller=$(_shim_caller_label "${1:-}" "${2:-}")
+	_shim_run_transport "$REAL_GH" "$path" "$caller" "${AIDEVOPS_GH_RETRY_INDEX:-0}" "$@"
+	return $?
 }
 
 # -----------------------------------------------------------------------------
@@ -548,7 +629,11 @@ fi
 if [[ -n "$_SHIM_READ_REWRITE" ]]; then
 	# Bypass — explicit override.
 	if [[ "${AIDEVOPS_GH_SHIM_NO_REST_REWRITE:-0}" == "1" ]]; then
-		exec "$REAL_GH" "$@"
+		_transport_path=$(_shim_classify_endpoint "${1:-}" "${2:-}")
+		_transport_caller=$(_shim_caller_label "${1:-}" "${2:-}")
+		gh_record_call "$_transport_path" "$_transport_caller" 2>/dev/null || true
+		_shim_run_transport "$REAL_GH" "$_transport_path" "$_transport_caller" 0 "$@"
+		exit $?
 	fi
 
 	# _shim_extract_repo_and_args: Parse --repo/-R from args and build the
@@ -685,8 +770,13 @@ if [[ -n "$_SHIM_READ_REWRITE" ]]; then
 		# are already printed to stderr by the _rest_* functions.
 		# Conservative: always fall through to real gh.
 		# GH#21857/t3448: record the graphql call — the real gh will use GraphQL.
-		gh_record_call graphql "$(_shim_caller_label "${1:-}" "${2:-}")" 2>/dev/null || true
-		exec "$REAL_GH" "$@"
+		_transport_caller=$(_shim_caller_label "${1:-}" "${2:-}")
+		_transport_retry=$(gh_attempt_count_for_logical "$AIDEVOPS_GH_LOGICAL_ID")
+		[[ "$_transport_retry" =~ ^[0-9]+$ ]] || _transport_retry=0
+		gh_record_call graphql "$_transport_caller" "" "" rest-fallback-graphql 2>/dev/null || true
+		AIDEVOPS_GH_ROUTE_DECISION=rest-fallback-graphql \
+			_shim_run_transport "$REAL_GH" graphql "$_transport_caller" "$_transport_retry" "$@"
+		exit $?
 	fi
 fi
 
@@ -705,7 +795,11 @@ done
 
 if [[ -z "$SIG_HELPER" ]]; then
 	# No helper available — fail-open: exec real gh unchanged.
-	exec "$REAL_GH" "$@"
+	_transport_path=$(_shim_classify_endpoint "${1:-}" "${2:-}")
+	_transport_caller=$(_shim_caller_label "${1:-}" "${2:-}")
+	gh_record_call "$_transport_path" "$_transport_caller" 2>/dev/null || true
+	_shim_run_transport "$REAL_GH" "$_transport_path" "$_transport_caller" 0 "$@"
+	exit $?
 fi
 
 # -----------------------------------------------------------------------------
@@ -1450,8 +1544,10 @@ if [[ "${1:-}" == "api" ]]; then
 		fi
 	fi
 	# GH#21857: instrument gh api calls — rest or graphql depending on path.
-	gh_record_call "$(_shim_classify_endpoint "${1:-}" "${2:-}")" gh-shim 2>/dev/null || true
-	exec "$REAL_GH" "${_modified_args[@]}"
+	_transport_path=$(_shim_classify_endpoint "${1:-}" "${2:-}")
+	gh_record_call "$_transport_path" gh-shim 2>/dev/null || true
+	_shim_run_transport "$REAL_GH" "$_transport_path" gh-shim 0 "${_modified_args[@]}"
+	exit $?
 fi
 
 # -----------------------------------------------------------------------------
@@ -1511,8 +1607,8 @@ fi
 # --- --body-file case --------------------------------------------------------
 # t2861: write the augmented content to a fresh temp file rather than appending
 # to the user's source. The user's brief on disk stays byte-identical after the
-# gh call. The temp file is cleaned up by a background reaper (the shim ends
-# with exec, which replaces the process and clears traps).
+# gh call. The temp file is cleaned up by a background reaper because the native
+# transport may outlive setup-time shell traps.
 if [[ $_body_file_idx -ge 0 && -n "$_body_file_val" && -f "$_body_file_val" ]]; then
 	if ! grep -q "<!-- aidevops:sig -->" "$_body_file_val" 2>/dev/null; then
 		_file_content=$(<"$_body_file_val") || _file_content=""
@@ -1528,9 +1624,8 @@ if [[ $_body_file_idx -ge 0 && -n "$_body_file_val" && -f "$_body_file_val" ]]; 
 					else
 						_modified_args[_body_file_idx + 1]="$_tmp_body_file"
 					fi
-					# Background reaper: exec replaces this process so EXIT traps
-					# never fire. Fork a sleep-then-rm to clean up the temp file
-					# after gh has had time to read it (30s >> typical gh runtime).
+					# Fork a sleep-then-rm reaper so the temp survives long enough
+					# for native gh to read it (30s >> typical gh runtime).
 					( sleep 30 && rm -f "$_tmp_body_file" ) &
 					disown
 				else
@@ -1570,5 +1665,7 @@ fi
 
 # GH#21857: instrument write commands (issue comment/create/edit, pr create/
 # comment/edit) — these all use the GraphQL endpoint.
-gh_record_call graphql "$(_shim_caller_label "${1:-}" "${2:-}")" 2>/dev/null || true
-exec "$REAL_GH" "${_modified_args[@]}"
+_transport_caller=$(_shim_caller_label "${1:-}" "${2:-}")
+gh_record_call graphql "$_transport_caller" 2>/dev/null || true
+_shim_run_transport "$REAL_GH" graphql "$_transport_caller" 0 "${_modified_args[@]}"
+exit $?

@@ -73,7 +73,10 @@ run_case() {
 	if NATIVE_GH_LOG="$TMP/native.log" PATH="$TMP/runtime-bundles/old/agents/scripts:$TMP/home/.aidevops/agents/scripts:$TMP/repo/.agents/scripts:$TMP/home/.aidevops/bin:$TMP/native-linux:/usr/bin:/bin" \
 		"$entry" "$command_one" ${command_two:+"$command_two"}; then
 		count=$(wc -l <"$TMP/native.log" | tr -d ' ')
-		if [[ $count -ge 1 ]] && [[ "$(sed -n '1p' "$TMP/native.log")" == "$expected_one" ]]; then
+		# Intercepted reads may make instrumented REST preflight attempts before
+		# forwarding the original command. Native resolution is correct when the
+		# requested command reaches the native binary at least once.
+		if [[ $count -ge 1 ]] && grep -Fxq -- "$expected_one" "$TMP/native.log"; then
 			pass "$name reaches native gh without selecting another shim"
 		else
 			fail "$name expected native invocation, log=$(tr '\n' ';' <"$TMP/native.log")"

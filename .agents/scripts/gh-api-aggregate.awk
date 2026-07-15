@@ -1,130 +1,299 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # =============================================================================
-# gh-api-aggregate.awk -- Aggregate gh API call records into JSON (t2902)
+# gh-api-aggregate.awk -- Aggregate logical gh events and transport attempts
 # =============================================================================
-# Reads tab-separated log lines `<unix_ts>\t<caller>\t<path>` (legacy) or
-# `<unix_ts>\t<caller>\t<path>\t<auth>\t<pool>\t<decision>\t<budget>` and writes a
-# JSON report keyed by caller. Designed for BSD awk (macOS default) — does
-# not use systime() or other gawk extensions; receives `now` from the caller.
+# Reads legacy three/seven-column records and versioned v2 records emitted by
+# gh-api-instrument.sh. Legacy rows remain logical observations; they are never
+# represented as proven network attempts. Designed for BSD awk (macOS default).
 #
-# Required -v variables:
-#   now    — current unix timestamp (passed from bash; BSD awk lacks systime)
-#   cutoff — entries older than this unix ts are ignored
-#   window — window seconds (echoed in _meta.window_seconds)
-#
-# Path enum:
-#   graphql | rest | search-graphql | search-rest | other
-#
-# Output: one JSON document on stdout.
-#
-# Used by: gh-api-instrument.sh (gh_aggregate_calls)
+# Required -v variables: now, cutoff, window
+# Output: one deterministic JSON document on stdout.
 # =============================================================================
 
-BEGIN { total = 0 }
+BEGIN {
+	total_calls = 0
+	logical_events = 0
+	cache_events = 0
+	legacy_events = 0
+	attempted_requests = 0
+}
 
-function emit_count_section(title, keys, counts,    n, i, j, tmp, key, swap) {
-	printf "  \"%s\": {\n", title
-	n = 0
-	for (key in keys) tmp[++n] = key
+function metric_add(group, value, metric, amount,    key) {
+	if (value == "") value = "unknown"
+	key = group SUBSEP value
+	group_keys[key] = 1
+	metrics[key SUBSEP metric] += amount
+}
+
+function metric_get(group, value, metric) {
+	return metrics[group SUBSEP value SUBSEP metric] + 0
+}
+
+function metric_add_dimensions(caller, path, auth, pool, decision, metric, amount) {
+	metric_add("caller", caller, metric, amount)
+	metric_add("path", path, metric, amount)
+	metric_add("auth", auth, metric, amount)
+	metric_add("pool", pool, metric, amount)
+	metric_add("decision", decision, metric, amount)
+}
+
+function sort_values(values, n,    i, j, swap) {
 	for (i = 2; i <= n; i++) {
-		for (j = i; j > 1 && tmp[j-1] > tmp[j]; j--) {
-			swap = tmp[j]; tmp[j] = tmp[j-1]; tmp[j-1] = swap
+		for (j = i; j > 1 && values[j - 1] > values[j]; j--) {
+			swap = values[j]
+			values[j] = values[j - 1]
+			values[j - 1] = swap
 		}
 	}
+}
+
+function emit_group(title, group,    pair, parts, values, n, i, value) {
+	printf "  \"%s\": {\n", title
+	n = 0
+	for (pair in group_keys) {
+		split(pair, parts, SUBSEP)
+		if (parts[1] == group) values[++n] = parts[2]
+	}
+	sort_values(values, n)
 	for (i = 1; i <= n; i++) {
-		key = tmp[i]
+		value = values[i]
 		if (i > 1) print ","
-		printf "    \"%s\": {\"total\": %d}", key, counts[key] + 0
+		printf "    \"%s\": {\n", value
+		printf "      \"graphql_calls\": %d,\n", metric_get(group, value, "graphql_calls")
+		printf "      \"rest_calls\": %d,\n", metric_get(group, value, "rest_calls")
+		printf "      \"search_graphql_calls\": %d,\n", metric_get(group, value, "search_graphql_calls")
+		printf "      \"search_rest_calls\": %d,\n", metric_get(group, value, "search_rest_calls")
+		printf "      \"other_calls\": %d,\n", metric_get(group, value, "other_calls")
+		printf "      \"total\": %d,\n", metric_get(group, value, "total")
+		printf "      \"logical_events\": %d,\n", metric_get(group, value, "logical_events")
+		printf "      \"cache_events\": %d,\n", metric_get(group, value, "cache_events")
+		printf "      \"legacy_events\": %d,\n", metric_get(group, value, "legacy_events")
+		printf "      \"attempted_requests\": %d,\n", metric_get(group, value, "attempted_requests")
+		printf "      \"retries\": %d,\n", metric_get(group, value, "retries")
+		printf "      \"pages\": %d,\n", metric_get(group, value, "pages")
+		printf "      \"additional_pages\": %d,\n", metric_get(group, value, "additional_pages")
+		printf "      \"successful_attempts\": %d,\n", metric_get(group, value, "successful_attempts")
+		printf "      \"failed_attempts\": %d,\n", metric_get(group, value, "failed_attempts")
+		printf "      \"elapsed_ms\": %d,\n", metric_get(group, value, "elapsed_ms")
+		printf "      \"known_quota_cost\": %d,\n", metric_get(group, value, "known_quota_cost")
+		printf "      \"unknown_quota_cost_attempts\": %d\n", metric_get(group, value, "unknown_quota_cost_attempts")
+		printf "    }"
 	}
 	if (n > 0) print ""
 	print "  }"
 }
 
-# Sanity: skip lines that do not parse as <int>\t<caller>\t<path>
-$1 ~ /^[0-9]+$/ && NF >= 3 && $1 >= cutoff {
-	caller = $2
-	path = $3
+function record_budget(pool, budget, ts) {
+	if (budget !~ /^[0-9]+$/) return
+	budget_keys[pool] = 1
+	if (!(pool in budget_min) || budget + 0 < budget_min[pool] + 0) budget_min[pool] = budget
+	if (!(pool in budget_last_ts) || ts >= budget_last_ts[pool]) {
+		budget_last_ts[pool] = ts
+		budget_last[pool] = budget
+	}
+}
+
+function emit_budgets(    pool, values, n, i) {
+	print "  \"budget_by_pool\": {"
+	n = 0
+	for (pool in budget_keys) values[++n] = pool
+	sort_values(values, n)
+	for (i = 1; i <= n; i++) {
+		pool = values[i]
+		if (i > 1) print ","
+		printf "    \"%s\": {\"min_remaining\": %d, \"last_remaining\": %d}", pool, budget_min[pool] + 0, budget_last[pool] + 0
+	}
+	if (n > 0) print ""
+	print "  }"
+}
+
+# Reject records without a numeric timestamp or the legacy prefix.
+$1 !~ /^[0-9]+$/ || NF < 3 {
+	malformed_records++
+	next
+}
+
+{
+	ts = $1 + 0
+	caller = ($2 != "") ? $2 : "unknown"
+	path = ($3 != "") ? $3 : "other"
 	auth = (NF >= 4 && $4 != "") ? $4 : "unknown"
 	pool = (NF >= 5 && $5 != "") ? $5 : path
 	decision = (NF >= 6 && $6 != "") ? $6 : "unspecified"
 	budget = (NF >= 7) ? $7 : ""
-	callers[caller] = 1
-	auth_keys[auth] = 1
-	pool_keys[pool] = 1
-	decision_keys[decision] = 1
-	if      (path == "graphql")        graphql[caller]++
-	else if (path == "rest")           rest[caller]++
-	else if (path == "search-graphql") sg[caller]++
-	else if (path == "search-rest")    sr[caller]++
-	else                                other[caller]++
-	auth_counts[auth]++
-	pool_counts[pool]++
-	decision_counts[decision]++
-	if (budget ~ /^[0-9]+$/) {
-		budget_keys[pool] = 1
-		budget_last[pool] = budget
-		if (!(pool in budget_min) || budget + 0 < budget_min[pool] + 0) budget_min[pool] = budget
+	version = (NF >= 8) ? $8 : ""
+
+	if (version == "v2" && NF < 17) {
+		malformed_records++
+		malformed_v2_records++
+		next
 	}
-	total++
+
+	if (version == "v2") {
+		kind = ($9 != "") ? $9 : "logical"
+		logical_id = $10
+		attempt_id = $11
+		page = $12
+		retry = $13
+		outcome = ($14 != "") ? $14 : "unknown"
+		http_status = $15
+		elapsed_ms = $16
+		quota_cost = $17
+	} else {
+		kind = "legacy"
+		logical_id = ""
+		attempt_id = ""
+		page = ""
+		retry = ""
+		outcome = "unknown"
+		http_status = ""
+		elapsed_ms = ""
+		quota_cost = ""
+		retained_legacy_records++
+	}
+
+	retained_records++
+	if (first_retained_record_ts == 0 || ts < first_retained_record_ts) first_retained_record_ts = ts
+	if (ts > last_retained_record_ts) last_retained_record_ts = ts
+
+	if (kind == "attempt") {
+		if (attempt_id == "" || attempt_id == "unknown") {
+			unidentified_attempts++
+		} else if (attempt_id in seen_attempt_id) {
+			duplicate_attempt_ids++
+			next
+		} else {
+			seen_attempt_id[attempt_id] = 1
+		}
+		if (page !~ /^[0-9]+$/ || page + 0 < 1) unknown_page_attempts++
+		if (first_retained_attempt_ts == 0 || ts < first_retained_attempt_ts) first_retained_attempt_ts = ts
+		if (ts > last_retained_attempt_ts) last_retained_attempt_ts = ts
+	}
+
+	if (ts < cutoff) next
+	window_records++
+	record_budget(pool, budget, ts)
+	if (logical_id != "" && logical_id != "unknown" && !(logical_id in seen_window_logical_id)) {
+		seen_window_logical_id[logical_id] = 1
+		logical_operations++
+	}
+
+	if (kind != "attempt") {
+		total_calls++
+		metric_add_dimensions(caller, path, auth, pool, decision, "total", 1)
+		if (path == "graphql") call_metric = "graphql_calls"
+		else if (path == "rest") call_metric = "rest_calls"
+		else if (path == "search-graphql") call_metric = "search_graphql_calls"
+		else if (path == "search-rest") call_metric = "search_rest_calls"
+		else call_metric = "other_calls"
+		metric_add_dimensions(caller, path, auth, pool, decision, call_metric, 1)
+		if (kind == "cache") {
+			cache_events++
+			metric_add_dimensions(caller, path, auth, pool, decision, "cache_events", 1)
+		} else if (kind == "legacy") {
+			legacy_events++
+			metric_add_dimensions(caller, path, auth, pool, decision, "legacy_events", 1)
+		} else {
+			logical_events++
+			metric_add_dimensions(caller, path, auth, pool, decision, "logical_events", 1)
+		}
+		next
+	}
+
+	attempted_requests++
+	metric_add_dimensions(caller, path, auth, pool, decision, "attempted_requests", 1)
+	metric_add("outcome", outcome, "attempted_requests", 1)
+	if (retry ~ /^[0-9]+$/ && retry + 0 > 0) {
+		retries++
+		metric_add_dimensions(caller, path, auth, pool, decision, "retries", 1)
+		metric_add("outcome", outcome, "retries", 1)
+	}
+	if (page ~ /^[0-9]+$/ && page + 0 > 0) {
+		pages++
+		metric_add_dimensions(caller, path, auth, pool, decision, "pages", 1)
+		if (page + 0 > 1) {
+			additional_pages++
+			metric_add_dimensions(caller, path, auth, pool, decision, "additional_pages", 1)
+		}
+	}
+	if (outcome == "success") {
+		successful_attempts++
+		metric_add_dimensions(caller, path, auth, pool, decision, "successful_attempts", 1)
+	} else {
+		failed_attempts++
+		metric_add_dimensions(caller, path, auth, pool, decision, "failed_attempts", 1)
+	}
+	if (elapsed_ms ~ /^[0-9]+$/) {
+		elapsed_ms_total += elapsed_ms
+		metric_add_dimensions(caller, path, auth, pool, decision, "elapsed_ms", elapsed_ms)
+	}
+	if (quota_cost ~ /^[0-9]+$/) {
+		known_quota_cost += quota_cost
+		metric_add_dimensions(caller, path, auth, pool, decision, "known_quota_cost", quota_cost)
+	} else {
+		unknown_quota_cost_attempts++
+		metric_add_dimensions(caller, path, auth, pool, decision, "unknown_quota_cost_attempts", 1)
+	}
+	if (http_status ~ /^[0-9]+$/) metric_add("http_status", http_status, "attempted_requests", 1)
 }
 
 END {
+	effective_window_seconds = 0
+	if (first_retained_attempt_ts > 0 && last_retained_attempt_ts >= first_retained_attempt_ts) {
+		effective_window_seconds = last_retained_attempt_ts - first_retained_attempt_ts
+	}
+	attempts_exact = (duplicate_attempt_ids == 0 && unidentified_attempts == 0 && unknown_page_attempts == 0 && malformed_v2_records == 0) ? "true" : "false"
+
 	print "{"
 	print "  \"_meta\": {"
+	print "    \"schema_version\": 2,"
 	printf "    \"generated_at_ts\": %d,\n", now
-	printf "    \"since_ts\":        %d,\n", cutoff
-	printf "    \"window_seconds\":  %d,\n", window
-	printf "    \"total_calls\":     %d\n",  total
+	printf "    \"since_ts\": %d,\n", cutoff
+	printf "    \"requested_window_seconds\": %d,\n", window
+	printf "    \"window_seconds\": %d,\n", window
+	printf "    \"first_retained_ts\": %d,\n", first_retained_attempt_ts + 0
+	printf "    \"last_retained_ts\": %d,\n", last_retained_attempt_ts + 0
+	printf "    \"effective_window_seconds\": %d,\n", effective_window_seconds
+	printf "    \"first_retained_record_ts\": %d,\n", first_retained_record_ts + 0
+	printf "    \"last_retained_record_ts\": %d,\n", last_retained_record_ts + 0
+	printf "    \"retained_records\": %d,\n", retained_records + 0
+	printf "    \"window_records\": %d,\n", window_records + 0
+	printf "    \"total_calls\": %d,\n", total_calls
+	printf "    \"logical_operations\": %d,\n", logical_operations + 0
+	printf "    \"logical_events\": %d,\n", logical_events
+	printf "    \"cache_events\": %d,\n", cache_events
+	printf "    \"legacy_events\": %d,\n", legacy_events
+	printf "    \"attempted_requests\": %d,\n", attempted_requests
+	printf "    \"retries\": %d,\n", retries + 0
+	printf "    \"pages\": %d,\n", pages + 0
+	printf "    \"additional_pages\": %d,\n", additional_pages + 0
+	printf "    \"successful_attempts\": %d,\n", successful_attempts + 0
+	printf "    \"failed_attempts\": %d,\n", failed_attempts + 0
+	printf "    \"elapsed_ms\": %d,\n", elapsed_ms_total + 0
+	printf "    \"known_quota_cost\": %d,\n", known_quota_cost + 0
+	printf "    \"unknown_quota_cost_attempts\": %d,\n", unknown_quota_cost_attempts + 0
+	printf "    \"duplicate_attempt_ids\": %d,\n", duplicate_attempt_ids + 0
+	printf "    \"unidentified_attempts\": %d,\n", unidentified_attempts + 0
+	printf "    \"unknown_page_attempts\": %d,\n", unknown_page_attempts + 0
+	printf "    \"legacy_retained_records\": %d,\n", retained_legacy_records + 0
+	printf "    \"malformed_records\": %d,\n", malformed_records + 0
+	printf "    \"attempts_exact\": %s\n", attempts_exact
 	print "  },"
-	print "  \"by_caller\": {"
-	# Sort caller keys for deterministic output.
-	n = 0
-	for (c in callers) keys[++n] = c
-	for (i = 2; i <= n; i++) {
-		for (j = i; j > 1 && keys[j-1] > keys[j]; j--) {
-			t = keys[j]; keys[j] = keys[j-1]; keys[j-1] = t
-		}
-	}
-	for (i = 1; i <= n; i++) {
-		c = keys[i]
-		g   = graphql[c] + 0
-		r   = rest[c]    + 0
-		s_g = sg[c]      + 0
-		s_r = sr[c]      + 0
-		o   = other[c]   + 0
-		if (i > 1) print ","
-		printf "    \"%s\": {\n", c
-		printf "      \"graphql_calls\":        %d,\n", g
-		printf "      \"rest_calls\":           %d,\n", r
-		printf "      \"search_graphql_calls\": %d,\n", s_g
-		printf "      \"search_rest_calls\":    %d,\n", s_r
-		printf "      \"other_calls\":          %d,\n", o
-		printf "      \"total\":                %d\n",  g + r + s_g + s_r + o
-		printf "    }"
-	}
-	if (n > 0) print ""
-	print "  },"
-	emit_count_section("by_auth_mode", auth_keys, auth_counts)
+	emit_group("by_caller", "caller")
 	print ","
-	emit_count_section("by_api_pool", pool_keys, pool_counts)
+	emit_group("by_path", "path")
 	print ","
-	emit_count_section("by_route_decision", decision_keys, decision_counts)
+	emit_group("by_auth_mode", "auth")
 	print ","
-	print "  \"budget_by_pool\": {"
-	nb = 0
-	for (b in budget_keys) bkeys[++nb] = b
-	for (i = 2; i <= nb; i++) {
-		for (j = i; j > 1 && bkeys[j-1] > bkeys[j]; j--) {
-			t = bkeys[j]; bkeys[j] = bkeys[j-1]; bkeys[j-1] = t
-		}
-	}
-	for (i = 1; i <= nb; i++) {
-		b = bkeys[i]
-		if (i > 1) print ","
-		printf "    \"%s\": {\"min_remaining\": %d, \"last_remaining\": %d}", b, budget_min[b] + 0, budget_last[b] + 0
-	}
-	if (nb > 0) print ""
-	print "  }"
+	emit_group("by_api_pool", "pool")
+	print ","
+	emit_group("by_route_decision", "decision")
+	print ","
+	emit_group("by_outcome", "outcome")
+	print ","
+	emit_group("attempts_by_http_status", "http_status")
+	print ","
+	emit_budgets()
 	print "}"
 }
