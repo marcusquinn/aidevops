@@ -105,6 +105,7 @@ GH_API_REPORT="${AIDEVOPS_GH_API_REPORT:-${_GH_API_HOME}/.aidevops/logs/gh-api-c
 GH_API_LOG_MAX_LINES="${AIDEVOPS_GH_API_LOG_MAX_LINES:-50000}"
 GH_API_LOG_MAX_BYTES="${AIDEVOPS_GH_API_LOG_MAX_BYTES:-16777216}"
 GH_API_RETENTION_SECONDS="${AIDEVOPS_GH_API_RETENTION_SECONDS:-172800}"
+GH_API_ERROR_KEY="error"
 
 _gh_now_seconds() {
 	local now=""
@@ -265,20 +266,34 @@ gh_attempt_count_for_logical() {
 }
 
 _gh_append_v2() {
-	local event_kind="$1"; shift
-	local caller="$1"; shift
-	local path="$1"; shift
-	local auth_mode="$1"; shift
-	local api_pool="$1"; shift
-	local route_decision="$1"; shift
-	local budget_remaining="$1"; shift
-	local logical_id="$1"; shift
-	local attempt_id="$1"; shift
-	local page="$1"; shift
-	local retry="$1"; shift
-	local outcome="$1"; shift
-	local http_status="$1"; shift
-	local elapsed_ms="$1"; shift
+	local event_kind="$1"
+	shift
+	local caller="$1"
+	shift
+	local path="$1"
+	shift
+	local auth_mode="$1"
+	shift
+	local api_pool="$1"
+	shift
+	local route_decision="$1"
+	shift
+	local budget_remaining="$1"
+	shift
+	local logical_id="$1"
+	shift
+	local attempt_id="$1"
+	shift
+	local page="$1"
+	shift
+	local retry="$1"
+	shift
+	local outcome="$1"
+	shift
+	local http_status="$1"
+	shift
+	local elapsed_ms="$1"
+	shift
 	local quota_cost="$1"
 	local ts=""
 	local record=""
@@ -352,19 +367,32 @@ gh_record_call() {
 # command argv never enters the record.
 gh_record_attempt() {
 	[[ "${AIDEVOPS_GH_API_INSTRUMENT_DISABLE:-0}" == "1" ]] && return 0
-	local path="$1"; shift
-	local caller="$1"; shift
-	local logical_id="$1"; shift
-	local attempt_id="$1"; shift
-	local page="$1"; shift
-	local retry="$1"; shift
-	local outcome="$1"; shift
-	local http_status="$1"; shift
-	local elapsed_ms="$1"; shift
-	local quota_cost="$1"; shift
-	local auth_mode="$1"; shift
-	local api_pool="$1"; shift
-	local route_decision="$1"; shift
+	local path="$1"
+	shift
+	local caller="$1"
+	shift
+	local logical_id="$1"
+	shift
+	local attempt_id="$1"
+	shift
+	local page="$1"
+	shift
+	local retry="$1"
+	shift
+	local outcome="$1"
+	shift
+	local http_status="$1"
+	shift
+	local elapsed_ms="$1"
+	shift
+	local quota_cost="$1"
+	shift
+	local auth_mode="$1"
+	shift
+	local api_pool="$1"
+	shift
+	local route_decision="$1"
+	shift
 	local budget_remaining="$1"
 	[[ -n "$logical_id" ]] || logical_id=$(gh_new_logical_id)
 	[[ -n "$attempt_id" ]] || attempt_id=$(gh_new_attempt_id "$logical_id")
@@ -383,11 +411,16 @@ gh_record_attempt() {
 # Execute one native transport command with unmodified stdio and status, then
 # append exactly one attempt record. Telemetry failures remain fail-open.
 gh_run_transport_attempt() {
-	local path="$1"; shift
-	local caller="$1"; shift
-	local logical_id="$1"; shift
-	local page="$1"; shift
-	local retry="$1"; shift
+	local path="$1"
+	shift
+	local caller="$1"
+	shift
+	local logical_id="$1"
+	shift
+	local page="$1"
+	shift
+	local retry="$1"
+	shift
 	[[ "${1:-}" == "--" ]] && shift
 	local start_ms=""
 	local end_ms=""
@@ -399,7 +432,7 @@ gh_run_transport_attempt() {
 		rc=0
 	else
 		rc=$?
-		outcome="error"
+		outcome="$GH_API_ERROR_KEY"
 	fi
 	end_ms=$(_gh_now_ms) || end_ms=""
 	if [[ "$start_ms" =~ ^[0-9]+$ && "$end_ms" =~ ^[0-9]+$ && "$end_ms" -ge "$start_ms" ]]; then
@@ -452,7 +485,8 @@ gh_aggregate_calls() {
 	cutoff=$((now - window))
 	mkdir -p "${out%/*}" 2>/dev/null || true
 	if [[ ! -f "$GH_API_LOG" ]]; then
-		printf '{"_meta":{"error":"no-log","schema_version":2,"requested_window_seconds":%d,"window_seconds":%d},"by_caller":{}}\n' \
+		printf '{"_meta":{"%s":"no-log","schema_version":2,"requested_window_seconds":%d,"window_seconds":%d},"by_caller":{}}\n' \
+			"$GH_API_ERROR_KEY" \
 			"$window" \
 			"$window" >"$out" 2>/dev/null || true
 		return 1
@@ -464,8 +498,8 @@ gh_aggregate_calls() {
 	local awk_script
 	awk_script="$(dirname "${BASH_SOURCE[0]}")/gh-api-aggregate.awk"
 	if [[ ! -f "$awk_script" ]]; then
-		printf '{"_meta":{"error":"missing-awk-script","path":"%s"},"by_caller":{}}\n' \
-			"$awk_script" >"$out" 2>/dev/null || true
+		printf '{"_meta":{"%s":"missing-awk-script","path":"%s"},"by_caller":{}}\n' \
+			"$GH_API_ERROR_KEY" "$awk_script" >"$out" 2>/dev/null || true
 		return 1
 	fi
 	awk -F'\t' -v now="$now" -v cutoff="$cutoff" -v window="$window" \
