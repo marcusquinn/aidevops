@@ -99,8 +99,8 @@ _relationship_edge_should_attempt() {
 	local blocked_num="$1"
 	local blocker_num="$2"
 	local edge_key="${blocked_num}|${blocker_num}"
-	[[ -n "$_RELATIONSHIP_EDGE_SEEN_FILE" ]] || return 1
-	if grep -Fxq -- "$edge_key" "$_RELATIONSHIP_EDGE_SEEN_FILE" 2>/dev/null; then
+	[[ -f "${_RELATIONSHIP_EDGE_SEEN_FILE:-}" ]] || return 1
+	if grep -Fxq -- "$edge_key" "$_RELATIONSHIP_EDGE_SEEN_FILE"; then
 		return 1
 	fi
 	printf '%s\n' "$edge_key" >>"$_RELATIONSHIP_EDGE_SEEN_FILE"
@@ -732,7 +732,10 @@ _sync_subtask_hierarchy_for_task() {
 #   $3 - repo slug
 sync_relationships_for_task() {
 	local task_id="$1" todo_file="$2" repo="$3"
+	_save_cleanup_scope
+	trap '_run_cleanups' RETURN
 	_init_relationship_sync_state || return 1
+	push_cleanup "rm -f '${_RELATIONSHIP_EDGE_SEEN_FILE}'"
 	local AIDEVOPS_GH_DEADLINE_EPOCH=""
 	AIDEVOPS_GH_DEADLINE_EPOCH=$(_relationship_sync_deadline_epoch) || {
 		_cleanup_relationship_sync_state
@@ -789,7 +792,10 @@ cmd_relationships() {
 		print_info "No tasks with relationships to sync"
 		return 0
 	}
+	_save_cleanup_scope
+	trap '_run_cleanups' RETURN
 	_init_relationship_sync_state || return 1
+	push_cleanup "rm -f '${_RELATIONSHIP_EDGE_SEEN_FILE}'"
 	local AIDEVOPS_GH_DEADLINE_EPOCH=""
 	AIDEVOPS_GH_DEADLINE_EPOCH=$(_relationship_sync_deadline_epoch) || {
 		_cleanup_relationship_sync_state
