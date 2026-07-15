@@ -130,7 +130,26 @@ get_repo_info() {
 	return 1
 }
 
-# Check GitHub Actions CI/CD status
+# Load check runs whose suites belong to release-triggered workflows on one SHA.
+load_release_owned_checks() {
+	local repo="$1"
+	local release_sha="$2"
+	local check_runs_response release_runs_response
+	check_runs_response=$(gh api --paginate --slurp \
+		"repos/${repo}/commits/${release_sha}/check-runs?per_page=100" 2>/dev/null |
+		jq -c -f "$REPO_ROOT/.github/scripts/flatten-check-run-pages.jq") || return 1
+	release_runs_response=$(gh api --paginate --slurp \
+		"repos/${repo}/actions/runs?head_sha=${release_sha}&per_page=100" 2>/dev/null) || return 1
+	jq -c \
+		--arg release_sha "$release_sha" \
+		--arg self_name "Verify Release Health" \
+		--slurpfile release_run_documents <(printf '%s\n' "$release_runs_response") \
+		-f "$REPO_ROOT/.github/scripts/release-owned-check-runs.jq" \
+		<<<"$check_runs_response"
+	return $?
+}
+
+# Check GitHub Actions CI/CD status using release-owned exact-SHA evidence.
 check_cicd_status() {
 	print_section "CI/CD Pipeline Status"
 
@@ -139,97 +158,66 @@ check_cicd_status() {
 		return 1
 	fi
 
-	local repo
+	local repo release_sha release_checks
 	repo=$(get_repo_info)
 	if [[ -z "$repo" ]]; then
 		count_failure "Could not determine repository"
 		return 1
 	fi
-
 	print_info "Repository: $repo"
+	release_sha="${POSTFLIGHT_COMMIT_SHA:-$(git -C "$ORIGINAL_PWD" rev-parse HEAD 2>/dev/null || true)}"
+	if [[ -z "$release_sha" ]]; then
+		count_failure "Could not determine exact release commit"
+		return 1
+	fi
+	print_info "Release commit: $release_sha"
+	release_checks=$(load_release_owned_checks "$repo" "$release_sha") || {
+		count_failure "Could not load release-owned workflow evidence"
+		return 1
+	}
 
-	# Get the latest workflow run for the exact release commit when supplied.
-	local latest_run
-	if [[ -n "$POSTFLIGHT_COMMIT_SHA" ]]; then
-		latest_run=$(gh run list --repo "$repo" --commit "$POSTFLIGHT_COMMIT_SHA" --limit=1 --json databaseId,status,conclusion,name 2>/dev/null || echo "")
-	else
-		latest_run=$(gh run list --repo "$repo" --limit=1 --json databaseId,status,conclusion,name 2>/dev/null || echo "")
+	local unrelated_count
+	unrelated_count=$(jq '.unrelated_workflow_runs | length' <<<"$release_checks")
+	if [[ "$unrelated_count" -gt 0 ]]; then
+		count_warning "$unrelated_count unrelated issue/comment workflow run(s) excluded from release evidence"
+		jq -r '.unrelated_workflow_runs[] | "  - \(.name) [event=\(.event), id=\(.id)]"' <<<"$release_checks"
 	fi
 
-	if [[ -z "$latest_run" || "$latest_run" == "[]" ]]; then
-		count_failure "No workflow runs found for release evidence"
+	local attempt=0 pending_count
+	pending_count=$(jq '[.check_runs[] | select(.status != "completed")] | length' <<<"$release_checks")
+	while [[ "$pending_count" -gt 0 && "$attempt" -lt "$MAX_ATTEMPTS" ]]; do
+		((++attempt))
+		print_info "Waiting for $pending_count release-owned check(s) (attempt $attempt/$MAX_ATTEMPTS)"
+		sleep "$POLL_INTERVAL"
+		release_checks=$(load_release_owned_checks "$repo" "$release_sha") || continue
+		pending_count=$(jq '[.check_runs[] | select(.status != "completed")] | length' <<<"$release_checks")
+	done
+
+	local required_count failed_count
+	required_count=$(jq '.check_runs | length' <<<"$release_checks")
+	if [[ "$required_count" -eq 0 ]]; then
+		count_failure "No release-owned check-run evidence exists for $release_sha"
+		return 1
+	fi
+	if [[ "$pending_count" -gt 0 ]]; then
+		count_failure "$pending_count release-owned check(s) remained non-terminal after timeout"
+		jq -r '.check_runs[] | select(.status != "completed") | "  - \(.name): \(.status)"' <<<"$release_checks"
 		return 1
 	fi
 
-	local run_id status conclusion name
-	run_id=$(echo "$latest_run" | jq -r '.[0].databaseId')
-	status=$(echo "$latest_run" | jq -r '.[0].status')
-	conclusion=$(echo "$latest_run" | jq -r '.[0].conclusion')
-	name=$(echo "$latest_run" | jq -r '.[0].name')
-
-	print_info "Latest run: $name (#$run_id)"
-	print_info "Status: $status, Conclusion: $conclusion"
-
-	# If still running, wait for completion
-	if [[ "$status" == "in_progress" || "$status" == "queued" ]]; then
-		print_info "Waiting for workflow to complete (timeout: ${TIMEOUT_CI}s)..."
-
-		local attempt=0
-		while [[ $attempt -lt $MAX_ATTEMPTS ]]; do
-			sleep "$POLL_INTERVAL"
-			((++attempt))
-
-			local current_status
-			current_status=$(gh run view "$run_id" --repo "$repo" --json status,conclusion 2>/dev/null || echo "")
-
-			if [[ -z "$current_status" ]]; then
-				continue
-			fi
-
-			status=$(echo "$current_status" | jq -r '.status')
-			conclusion=$(echo "$current_status" | jq -r '.conclusion')
-
-			if [[ "$status" == "completed" ]]; then
-				break
-			fi
-
-			print_info "Still waiting... (attempt $attempt/$MAX_ATTEMPTS)"
-		done
-	fi
-
-	# Check final status
-	if [[ "$status" != "completed" ]]; then
-		count_failure "Workflow did not complete within timeout"
-		return 1
-	fi
-
-	if [[ "$conclusion" == "success" ]]; then
-		count_success "CI/CD pipeline: $name"
-	elif [[ "$conclusion" == "failure" ]]; then
-		count_failure "CI/CD pipeline failed: $name"
-		print_info "View logs: gh run view $run_id --repo $repo --log-failed"
-		return 1
-	else
-		count_warning "CI/CD pipeline conclusion: $conclusion"
-	fi
-
-	# Check all recent workflows
-	print_info "Checking all recent workflows..."
-	local all_runs
-	if [[ -n "$POSTFLIGHT_COMMIT_SHA" ]]; then
-		all_runs=$(gh run list --repo "$repo" --commit "$POSTFLIGHT_COMMIT_SHA" --limit=5 --json name,conclusion,status 2>/dev/null || echo "[]")
-	else
-		all_runs=$(gh run list --repo "$repo" --limit=5 --json name,conclusion,status 2>/dev/null || echo "[]")
-	fi
-
-	local failed_count
-	failed_count=$(echo "$all_runs" | jq '[.[] | select(.conclusion == "failure")] | length')
-
+	failed_count=$(jq '[.check_runs[] | select(.conclusion == "failure" or .conclusion == "cancelled" or .conclusion == "timed_out" or .conclusion == "action_required")] | length' <<<"$release_checks")
 	if [[ "$failed_count" -gt 0 ]]; then
-		print_warning "$failed_count workflow(s) failed recently"
-		echo "$all_runs" | jq -r '.[] | select(.conclusion == "failure") | "  - \(.name): \(.conclusion)"'
+		count_failure "$failed_count required release-owned check(s) failed"
+		jq -r '.check_runs[] | select(.conclusion == "failure" or .conclusion == "cancelled" or .conclusion == "timed_out" or .conclusion == "action_required") | "  - \(.name): \(.conclusion)"' <<<"$release_checks"
+		return 1
 	fi
 
+	count_success "$required_count required release-owned check(s) passed"
+	local advisory_pending
+	advisory_pending=$(jq '[.advisory_check_runs[] | select(.status != "completed")] | length' <<<"$release_checks")
+	if [[ "$advisory_pending" -gt 0 ]]; then
+		count_warning "$advisory_pending non-required advisory check(s) remain non-terminal"
+	fi
 	return 0
 }
 
