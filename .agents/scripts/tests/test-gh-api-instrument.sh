@@ -402,10 +402,55 @@ NATIVE_FIXTURE="$TMPDIR/native-fixture"
 mkdir -p "$SHIM_FIXTURE" "$NATIVE_FIXTURE"
 cp "${PARENT_DIR}/gh" "$SHIM_FIXTURE/gh"
 cp "${PARENT_DIR}/gh-api-instrument.sh" "$SHIM_FIXTURE/gh-api-instrument.sh"
+cp "${PARENT_DIR}/gh-rest-pagination-lib.sh" "$SHIM_FIXTURE/gh-rest-pagination-lib.sh"
 chmod +x "$SHIM_FIXTURE/gh"
 cat >"$NATIVE_FIXTURE/gh" <<'EOF_NATIVE_GH'
 #!/usr/bin/env bash
 printf '%s\n' "$@" >>"$NATIVE_ATTEMPT_LOG"
+page=1
+jq_requested=0
+expect_jq=0
+for arg in "$@"; do
+	if [[ "$expect_jq" -eq 1 ]]; then
+		expect_jq=0
+		continue
+	fi
+	case "$arg" in
+	--jq | -q)
+		jq_requested=1
+		expect_jq=1
+		;;
+	*)
+		if [[ "$arg" =~ (^|[?\&])page=([0-9]+)($|\&) ]]; then
+			page="${BASH_REMATCH[2]}"
+		fi
+		;;
+	esac
+done
+if [[ "${NATIVE_PAGINATED_RESPONSE:-0}" == "1" ]]; then
+	printf 'HTTP/2.0 200 OK\r\n'
+	if [[ "$page" -eq 1 ]]; then
+		if [[ "${NATIVE_ENTERPRISE_LINK:-0}" == "1" ]]; then
+			printf 'Link: <https://ghe.example/api/v3/repos/fixture/items?per_page=100&page=2>; rel="next"\r\n'
+		elif [[ "${NATIVE_COMMA_LINK:-0}" == "1" ]]; then
+			printf 'Link: <https://api.github.com/repos/fixture/items?labels=bug,help-wanted&page=2>; rel="next"\r\n'
+		elif [[ "${NATIVE_QUERY_REL_ONLY:-0}" == "1" ]]; then
+			printf 'Link: <https://api.github.com/repos/fixture/items?per_page=100&page=2&rel=next>; rel="prev"\r\n'
+		else
+			printf 'Link: <repos/fixture/items?per_page=100&page=2>; rel="next"\r\n'
+		fi
+	elif [[ "$page" -eq 2 && "${NATIVE_CYCLIC_LINK:-0}" == "1" ]]; then
+		printf 'Link: <repos/fixture/items?per_page=100&page=2>; rel="next"\r\n'
+	fi
+	printf '\r\n'
+	if [[ "$jq_requested" -eq 1 ]]; then
+		printf '%s\n' "$page"
+	elif [[ "${NATIVE_NO_FINAL_NEWLINE:-0}" == "1" ]]; then
+		printf '[{"page":%s}]' "$page"
+	else
+		printf '[{"page":%s}]\n' "$page"
+	fi
+fi
 exit "${NATIVE_ATTEMPT_STATUS:-0}"
 EOF_NATIVE_GH
 chmod +x "$NATIVE_FIXTURE/gh"
@@ -426,18 +471,176 @@ else
 	PASS=$((PASS + 1))
 fi
 
-# Native gh owns --paginate's hidden request loop. Keep that process visible as
-# opaque instead of falsely claiming it represents one HTTP page, and preserve
-# only framework-owned caller labels for migration prioritisation.
+# REST pagination is expanded into one observable native command per page while
+# preserving one logical operation and framework-owned caller attribution.
 rm -f "$AIDEVOPS_GH_API_LOG" "$NATIVE_ATTEMPT_LOG"
 PATH="$NATIVE_FIXTURE:/usr/bin:/bin" AIDEVOPS_GH_SHIM_NO_REST_REWRITE=1 \
+	NATIVE_PAGINATED_RESPONSE=1 \
 	AIDEVOPS_GH_CALLER=gh-api-instrument.sh \
 	"$SHIM_FIXTURE/gh" api '/repos/private-owner/private-repo/issues?per_page=100' --paginate >/dev/null
 "${PARENT_DIR}/gh-api-instrument.sh" report "$AIDEVOPS_GH_API_REPORT" >/dev/null 2>&1
-assert_eq "native pagination remains explicitly opaque" "0" "$(awk -F'\t' '$9 == "attempt" { print $12 }' "$AIDEVOPS_GH_API_LOG")"
-assert_eq "opaque pagination uses a framework-owned caller" "gh-api-instrument.sh" "$(awk -F'\t' '$9 == "attempt" { print $2 }' "$AIDEVOPS_GH_API_LOG")"
-assert_eq "opaque pagination is counted separately" "1" "$(jq -r '._meta.opaque_paginated_attempts' "$AIDEVOPS_GH_API_REPORT")"
-assert_eq "opaque pagination prevents exactness claims" "false" "$(jq -r '._meta.attempts_exact' "$AIDEVOPS_GH_API_REPORT")"
+assert_eq "explicit pagination invokes native gh once per page" "2" "$(grep -c '^api$' "$NATIVE_ATTEMPT_LOG")"
+assert_eq "explicit pagination records page sequence" "1 2" "$(awk -F'\t' '$9 == "attempt" { printf "%s%s", separator, $12; separator=" " } END { print "" }' "$AIDEVOPS_GH_API_LOG")"
+assert_eq "explicit pagination uses a framework-owned caller" "2" "$(awk -F'\t' '$9 == "attempt" && $2 == "gh-api-instrument.sh" { count++ } END { print count + 0 }' "$AIDEVOPS_GH_API_LOG")"
+assert_eq "explicit pagination has no opaque attempts" "0" "$(jq -r '._meta.opaque_paginated_attempts' "$AIDEVOPS_GH_API_REPORT")"
+assert_eq "explicit pagination supports exactness claims" "true" "$(jq -r '._meta.attempts_exact' "$AIDEVOPS_GH_API_REPORT")"
+if grep -q -- '--paginate' "$NATIVE_ATTEMPT_LOG"; then
+	echo "  FAIL: native gh retained hidden pagination"
+	FAIL=$((FAIL + 1))
+else
+	echo "  PASS: native gh receives only explicit pages"
+	PASS=$((PASS + 1))
+fi
+
+# The rollback switch preserves native pagination and its honest opaque marker.
+rm -f "$AIDEVOPS_GH_API_LOG" "$NATIVE_ATTEMPT_LOG"
+PATH="$NATIVE_FIXTURE:/usr/bin:/bin" AIDEVOPS_GH_SHIM_NO_REST_REWRITE=1 \
+	AIDEVOPS_GH_EXPLICIT_PAGINATION_DISABLE=1 \
+	"$SHIM_FIXTURE/gh" api '/repos/private-owner/private-repo/issues?per_page=100' --paginate >/dev/null
+"${PARENT_DIR}/gh-api-instrument.sh" report "$AIDEVOPS_GH_API_REPORT" >/dev/null 2>&1
+assert_eq "pagination rollback retains native flag" "1" "$(grep -c -- '^--paginate$' "$NATIVE_ATTEMPT_LOG")"
+assert_eq "pagination rollback remains honestly opaque" "1" "$(jq -r '._meta.opaque_paginated_attempts' "$AIDEVOPS_GH_API_REPORT")"
+
+# Streaming jq remains page-local, matching native gh pagination semantics.
+rm -f "$AIDEVOPS_GH_API_LOG" "$NATIVE_ATTEMPT_LOG"
+jq_output=$(PATH="$NATIVE_FIXTURE:/usr/bin:/bin" AIDEVOPS_GH_SHIM_NO_REST_REWRITE=1 \
+	NATIVE_PAGINATED_RESPONSE=1 \
+	"$SHIM_FIXTURE/gh" api --paginate '/repos/private-owner/private-repo/issues?per_page=100' --jq '.[].page')
+assert_eq "explicit pagination preserves per-page jq output" $'1\n2' "$jq_output"
+
+# Option values that resemble pagination flags remain values rather than being
+# consumed as shim controls.
+rm -f "$AIDEVOPS_GH_API_LOG" "$NATIVE_ATTEMPT_LOG"
+option_value_output=$(PATH="$NATIVE_FIXTURE:/usr/bin:/bin" AIDEVOPS_GH_SHIM_NO_REST_REWRITE=1 \
+	NATIVE_PAGINATED_RESPONSE=1 \
+	"$SHIM_FIXTURE/gh" api -H '--slurp' --paginate \
+	'/repos/private-owner/private-repo/issues?per_page=100' --jq '.[].page')
+assert_eq "pagination-like option values preserve output" $'1\n2' "$option_value_output"
+assert_eq "pagination-like option values reach every page" "2" "$(grep -c -- '^--slurp$' "$NATIVE_ATTEMPT_LOG")"
+
+# Explicit GET fields are query parameters, so their page loop remains
+# observable. Fields without an explicit method retain native POST semantics.
+rm -f "$AIDEVOPS_GH_API_LOG" "$NATIVE_ATTEMPT_LOG"
+get_field_output=$(PATH="$NATIVE_FIXTURE:/usr/bin:/bin" AIDEVOPS_GH_SHIM_NO_REST_REWRITE=1 \
+	NATIVE_PAGINATED_RESPONSE=1 \
+	"$SHIM_FIXTURE/gh" api --method GET --paginate \
+	'/repos/private-owner/private-repo/issues?per_page=100' -f since=2026-07-01T00:00:00Z --jq '.[].page')
+assert_eq "explicit pagination supports explicit GET query fields" $'1\n2' "$get_field_output"
+assert_eq "explicit GET query fields invoke one native command per page" "2" "$(grep -c '^api$' "$NATIVE_ATTEMPT_LOG")"
+assert_eq "explicit GET query fields remove native pagination" "0" "$(grep -c -- '^--paginate$' "$NATIVE_ATTEMPT_LOG" || true)"
+assert_eq "next-page links do not replay explicit GET fields" "1" "$(grep -c '^since=2026-07-01T00:00:00Z$' "$NATIVE_ATTEMPT_LOG")"
+
+rm -f "$AIDEVOPS_GH_API_LOG" "$NATIVE_ATTEMPT_LOG"
+PATH="$NATIVE_FIXTURE:/usr/bin:/bin" AIDEVOPS_GH_SHIM_NO_REST_REWRITE=1 \
+	"$SHIM_FIXTURE/gh" api '/repos/private-owner/private-repo/issues?per_page=100' --paginate -f state=open >/dev/null
+assert_eq "implicit field method retains native pagination semantics" "1" "$(grep -c -- '^--paginate$' "$NATIVE_ATTEMPT_LOG")"
+
+# Enterprise Link URLs are host-checked and normalized back to gh endpoint
+# paths without replaying the /api/v3 prefix.
+rm -f "$AIDEVOPS_GH_API_LOG" "$NATIVE_ATTEMPT_LOG"
+enterprise_output=$(PATH="$NATIVE_FIXTURE:/usr/bin:/bin" AIDEVOPS_GH_SHIM_NO_REST_REWRITE=1 \
+	NATIVE_PAGINATED_RESPONSE=1 NATIVE_ENTERPRISE_LINK=1 \
+	"$SHIM_FIXTURE/gh" api --hostname ghe.example --paginate \
+	'/repos/private-owner/private-repo/issues?per_page=100' --jq '.[].page')
+assert_eq "enterprise Link pagination preserves output" $'1\n2' "$enterprise_output"
+assert_eq "enterprise Link pagination strips API prefix" "1" "$(grep -c '^repos/fixture/items?per_page=100&page=2$' "$NATIVE_ATTEMPT_LOG")"
+assert_eq "enterprise Link pagination avoids duplicated API prefix" "0" "$(grep -c '^api/v3/' "$NATIVE_ATTEMPT_LOG" || true)"
+
+# Commas inside a Link target are data, not page-link separators.
+rm -f "$AIDEVOPS_GH_API_LOG" "$NATIVE_ATTEMPT_LOG"
+comma_link_output=$(PATH="$NATIVE_FIXTURE:/usr/bin:/bin" AIDEVOPS_GH_SHIM_NO_REST_REWRITE=1 \
+	NATIVE_PAGINATED_RESPONSE=1 NATIVE_COMMA_LINK=1 \
+	"$SHIM_FIXTURE/gh" api --paginate \
+	'/repos/private-owner/private-repo/issues?per_page=100' --jq '.[].page')
+assert_eq "comma-bearing Link pagination preserves output" $'1\n2' "$comma_link_output"
+assert_eq "comma-bearing next endpoint remains intact" "1" "$(grep -c '^repos/fixture/items?labels=bug,help-wanted&page=2$' "$NATIVE_ATTEMPT_LOG")"
+
+# A URL query parameter named rel must not override the Link relation declared
+# after the closing angle bracket.
+rm -f "$AIDEVOPS_GH_API_LOG" "$NATIVE_ATTEMPT_LOG"
+query_rel_output=$(PATH="$NATIVE_FIXTURE:/usr/bin:/bin" AIDEVOPS_GH_SHIM_NO_REST_REWRITE=1 \
+	NATIVE_PAGINATED_RESPONSE=1 NATIVE_QUERY_REL_ONLY=1 \
+	"$SHIM_FIXTURE/gh" api --paginate \
+	'/repos/private-owner/private-repo/issues?per_page=100' --jq '.[].page')
+assert_eq "URL query rel does not impersonate the Link relation" "1" "$query_rel_output"
+assert_eq "non-next Link relation stops after the first page" "1" "$(grep -c '^api$' "$NATIVE_ATTEMPT_LOG")"
+
+# Raw bodies remain byte-for-byte intact, including a missing final newline.
+raw_actual="$TMPDIR/raw-pagination.actual"
+raw_expected="$TMPDIR/raw-pagination.expected"
+rm -f "$AIDEVOPS_GH_API_LOG" "$NATIVE_ATTEMPT_LOG" "$raw_actual" "$raw_expected"
+PATH="$NATIVE_FIXTURE:/usr/bin:/bin" AIDEVOPS_GH_SHIM_NO_REST_REWRITE=1 \
+	NATIVE_PAGINATED_RESPONSE=1 NATIVE_NO_FINAL_NEWLINE=1 \
+	"$SHIM_FIXTURE/gh" api --paginate \
+	'/repos/private-owner/private-repo/issues?per_page=100' >"$raw_actual"
+printf '[{"page":1}][{"page":2}]' >"$raw_expected"
+if cmp -s "$raw_expected" "$raw_actual"; then
+	echo "  PASS: explicit pagination preserves raw response bytes"
+	PASS=$((PASS + 1))
+else
+	echo "  FAIL: explicit pagination changed raw response bytes"
+	FAIL=$((FAIL + 1))
+fi
+
+# Repeated next links stop before a duplicate request and remove private temp
+# responses on the error path.
+cycle_temp="$TMPDIR/cycle-temp"
+mkdir -p "$cycle_temp"
+rm -f "$AIDEVOPS_GH_API_LOG" "$NATIVE_ATTEMPT_LOG"
+if PATH="$NATIVE_FIXTURE:/usr/bin:/bin" AIDEVOPS_GH_SHIM_NO_REST_REWRITE=1 \
+	AIDEVOPS_TEMP_DIR="$cycle_temp" NATIVE_PAGINATED_RESPONSE=1 NATIVE_CYCLIC_LINK=1 \
+	"$SHIM_FIXTURE/gh" api --paginate \
+	'/repos/private-owner/private-repo/issues?per_page=100' >/dev/null 2>/dev/null; then
+	echo "  FAIL: cyclic next link unexpectedly succeeded"
+	FAIL=$((FAIL + 1))
+else
+	echo "  PASS: cyclic next link fails closed"
+	PASS=$((PASS + 1))
+fi
+assert_eq "cyclic next link stops before duplicate request" "2" "$(grep -c '^api$' "$NATIVE_ATTEMPT_LOG")"
+shopt -s nullglob
+cycle_leftovers=("$cycle_temp"/gh-rest-pages.*)
+shopt -u nullglob
+assert_eq "pagination error removes private temp responses" "0" "${#cycle_leftovers[@]}"
+
+# Pre-transport temp setup failures fall back to native pagination; once the
+# first page starts, page-budget failures remain explicit errors.
+blocked_temp="$TMPDIR/not-a-directory"
+printf 'blocked' >"$blocked_temp"
+rm -f "$AIDEVOPS_GH_API_LOG" "$NATIVE_ATTEMPT_LOG"
+PATH="$NATIVE_FIXTURE:/usr/bin:/bin" AIDEVOPS_GH_SHIM_NO_REST_REWRITE=1 \
+	AIDEVOPS_TEMP_DIR="$blocked_temp" \
+	"$SHIM_FIXTURE/gh" api --paginate \
+	'/repos/private-owner/private-repo/issues?per_page=100' >/dev/null
+assert_eq "temp setup failure falls back to native pagination" "1" "$(grep -c -- '^--paginate$' "$NATIVE_ATTEMPT_LOG")"
+
+rm -f "$AIDEVOPS_GH_API_LOG" "$NATIVE_ATTEMPT_LOG"
+if PATH="$NATIVE_FIXTURE:/usr/bin:/bin" AIDEVOPS_GH_SHIM_NO_REST_REWRITE=1 \
+	AIDEVOPS_GH_REST_MAX_PAGES=1 NATIVE_PAGINATED_RESPONSE=1 \
+	"$SHIM_FIXTURE/gh" api --paginate \
+	'/repos/private-owner/private-repo/issues?per_page=100' >/dev/null 2>/dev/null; then
+	echo "  FAIL: page-budget exhaustion unexpectedly succeeded"
+	FAIL=$((FAIL + 1))
+else
+	echo "  PASS: page-budget exhaustion fails closed"
+	PASS=$((PASS + 1))
+fi
+assert_eq "page budget prevents an excess request" "1" "$(grep -c '^api$' "$NATIVE_ATTEMPT_LOG")"
+
+# Silent output remains on native pagination because explicit header parsing
+# requires response bytes that --silent intentionally suppresses.
+rm -f "$AIDEVOPS_GH_API_LOG" "$NATIVE_ATTEMPT_LOG"
+PATH="$NATIVE_FIXTURE:/usr/bin:/bin" AIDEVOPS_GH_SHIM_NO_REST_REWRITE=1 \
+	"$SHIM_FIXTURE/gh" api --paginate --silent \
+	'/repos/private-owner/private-repo/issues?per_page=100'
+assert_eq "silent pagination retains native semantics" "1" "$(grep -c -- '^--paginate$' "$NATIVE_ATTEMPT_LOG")"
+
+# Slurp buffers raw page objects into the same outer-array contract as gh.
+rm -f "$AIDEVOPS_GH_API_LOG" "$NATIVE_ATTEMPT_LOG"
+slurp_output=$(PATH="$NATIVE_FIXTURE:/usr/bin:/bin" AIDEVOPS_GH_SHIM_NO_REST_REWRITE=1 \
+	NATIVE_PAGINATED_RESPONSE=1 \
+	"$SHIM_FIXTURE/gh" api --paginate '/repos/private-owner/private-repo/issues?per_page=100' --slurp | jq -c '.')
+assert_eq "explicit pagination preserves slurp output" '[[{"page":1}],[{"page":2}]]' "$slurp_output"
 
 # Parent attribution tolerates shell interpreter flags without scanning
 # arbitrary non-interpreter command arguments for coincidental basenames.
@@ -448,9 +651,10 @@ EOF_PARENT_CALLER
 chmod +x "$SHIM_FIXTURE/parent-caller.sh"
 rm -f "$AIDEVOPS_GH_API_LOG" "$NATIVE_ATTEMPT_LOG"
 PATH="$NATIVE_FIXTURE:/usr/bin:/bin" AIDEVOPS_GH_SHIM_NO_REST_REWRITE=1 \
+	NATIVE_PAGINATED_RESPONSE=1 \
 	GH_SHIM_FIXTURE="$SHIM_FIXTURE/gh" \
 	bash -euo pipefail "$SHIM_FIXTURE/parent-caller.sh"
-assert_eq "interpreter flags preserve framework caller attribution" "parent-caller.sh" "$(awk -F'\t' '$9 == "attempt" { print $2 }' "$AIDEVOPS_GH_API_LOG")"
+assert_eq "interpreter flags preserve framework caller attribution" "2" "$(awk -F'\t' '$9 == "attempt" && $2 == "parent-caller.sh" { count++ } END { print count + 0 }' "$AIDEVOPS_GH_API_LOG")"
 
 # --- Summary ----------------------------------------------------------
 echo ""

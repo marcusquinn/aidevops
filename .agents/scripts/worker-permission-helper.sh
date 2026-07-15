@@ -168,8 +168,8 @@ permission_request_already_posted() {
 	local issue_number="$1"
 	local repo_slug="$2"
 	local request_id="$3"
-	gh api "repos/${repo_slug}/issues/${issue_number}/comments?per_page=100" --paginate --slurp \
-		--jq "[.[][]? | select((.body // \"\") | contains(\"${PERMISSION_REQUEST_MARKER}\") and contains(\"${request_id}\"))] | length" \
+	gh api "repos/${repo_slug}/issues/${issue_number}/comments?per_page=100" --paginate \
+		--jq "[.[] | select((.body // \"\") | contains(\"${PERMISSION_REQUEST_MARKER}\") and contains(\"${request_id}\"))] | length" \
 		2>/dev/null | awk '$1 > 0 { found=1 } END { exit(found ? 0 : 1) }'
 	return $?
 }
