@@ -82,6 +82,10 @@ cmd_commit_and_pr() {
 	_validate_commit_and_pr_inputs "$issue_number" "$commit_message" || return 1
 
 	_stage_and_commit "$commit_message" || return 1
+	# GH#27902: WIP commits are durable checkpoints, not publishable history.
+	# If any exist on the branch, replace the branch range with one final commit
+	# before validators inspect HEAD and before rebase/push can publish it.
+	_finalize_wip_history "$commit_message" || return 1
 	# t2842: project-aware validators (auto-fix format/lint, fail-closed typecheck).
 	# Inserted between commit and push so amends apply to the same commit
 	# the worker just made, and so failures abort BEFORE we push broken code.
