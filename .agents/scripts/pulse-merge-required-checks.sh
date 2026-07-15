@@ -44,7 +44,8 @@ _pmrc_snapshot_checks_json() {
 	statuses_json=$(_pmrc_gh_read gh api "repos/${repo_slug}/commits/${head_sha}/status" 2>/dev/null) || return 1
 	checks_json=$(jq -n --argjson pages "$runs_pages" --argjson statuses "$statuses_json" \
 		--arg completed "$PMRC_CHECK_COMPLETED" --arg success "$PMRC_CHECK_SUCCESS" --arg failure "$PMRC_CHECK_FAILURE" \
-		--arg maintainer "$PMRC_MAINTAINER_GATE" --arg maintainer_display "$PMRC_MAINTAINER_GATE_DISPLAY" --arg maintainer_workflow "$PMRC_MAINTAINER_GATE_WORKFLOW" '
+		--arg skipped "skipped" --arg maintainer "$PMRC_MAINTAINER_GATE" --arg maintainer_display "$PMRC_MAINTAINER_GATE_DISPLAY" \
+		--arg maintainer_workflow "$PMRC_MAINTAINER_GATE_WORKFLOW" '
 		"pending" as $pending | "in_progress" as $in_progress |
 		"error" as $error |
 		[
@@ -69,7 +70,13 @@ _pmrc_snapshot_checks_json() {
 		| map(select(.name != ""))
 		| sort_by(.source, .name, .observed_at)
 		| group_by([.source, .name])
-		| map(last)
+		| map(
+			# A conditional/skipped rerun is not newer execution evidence. Preserve
+			# the latest executed result so advisory companions cannot disappear.
+			. as $runs
+			| ([$runs[] | select(.conclusion != $skipped)] | last) as $executed
+			| $executed // last
+		)
 		| map(. + {
 			family: (if (.name == $maintainer or .name == $maintainer_display or .name == $maintainer_workflow) then $maintainer else .name end),
 			family_key: (if (.name == $maintainer or .name == $maintainer_display or .name == $maintainer_workflow) then $maintainer else (.source + "\u0000" + .name) end)
@@ -78,19 +85,25 @@ _pmrc_snapshot_checks_json() {
 		| group_by(.family_key)
 		| map(
 			. as $members
-			| if .[0].family == $maintainer then {
-				name: $maintainer,
-				family: $maintainer,
-				source: "logical_family",
-				status: (if any($members[]; .status != $completed) then $in_progress else $completed end),
-				conclusion: (
-					if any($members[]; (.conclusion == $failure or .conclusion == "cancelled" or .conclusion == "timed_out" or .conclusion == "action_required" or .conclusion == "startup_failure")) then $failure
-					elif all($members[]; (.conclusion == $success or .conclusion == "neutral" or .conclusion == "skipped")) then $success
-					else "" end
-				),
-				observed_at: ([$members[]?.observed_at | select(. != "")] | max // ""),
-				members: [$members[] | {name, source, status, conclusion, observed_at}]
-			} else
+			| if .[0].family == $maintainer then
+				# The stable branch-protection context is authoritative when present.
+				# Legacy workflow aliases remain fallback evidence only; otherwise a
+				# stale failed alias can override a newer successful stable status.
+				([$members[] | select(.name == $maintainer)] | sort_by(.observed_at)) as $stable
+				| (if ($stable | length) > 0 then $stable else ($members | sort_by(.observed_at)) end) as $effective
+				| {
+					name: $maintainer,
+					family: $maintainer,
+					source: "logical_family",
+					status: (if any($effective[]; .status != $completed) then $in_progress else $completed end),
+					conclusion: (
+						if any($effective[]; (.conclusion == $failure or .conclusion == "cancelled" or .conclusion == "timed_out" or .conclusion == "action_required" or .conclusion == "startup_failure")) then $failure
+						elif all($effective[]; (.conclusion == $success or .conclusion == "neutral" or .conclusion == $skipped)) then $success
+						else "" end
+					),
+					observed_at: ([$effective[]?.observed_at | select(. != "")] | max // ""),
+					members: [$members[] | {name, source, status, conclusion, observed_at}]
+				} else
 				($members | sort_by(.observed_at) | last) as $latest
 				| ($latest | del(.family_key)) + {members: [$members[] | {name, source, status, conclusion, observed_at}]}
 			end
