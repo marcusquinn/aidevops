@@ -266,7 +266,10 @@ _isc_issue_is_closed() {
 	local slug="$2"
 	local _state
 	_state=$(gh issue view "$issue" --repo "$slug" --json state --jq .state 2>/dev/null) || return 1
-	[[ "$_state" == "CLOSED" ]]
+	if [[ "$_state" == "CLOSED" || "$_state" == "closed" ]]; then
+		return 0
+	fi
+	return 1
 }
 
 # -----------------------------------------------------------------------------
