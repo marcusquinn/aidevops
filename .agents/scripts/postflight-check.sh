@@ -156,6 +156,35 @@ get_scoped_workflow_runs() {
 	return 0
 }
 
+evaluate_scoped_workflow_runs() {
+	local scoped_runs="$1"
+	local unrelated_count release_runs pending_count failed_count
+
+	unrelated_count=$(echo "$scoped_runs" | jq '.unrelated_runs | length')
+	if [[ "$unrelated_count" -gt 0 ]]; then
+		count_warning "$unrelated_count unrelated exact-SHA issue/comment workflow run(s) excluded from release evidence"
+		echo "$scoped_runs" | jq -r '.unrelated_runs[] | "  - Unrelated: \(.workflowName // .name) (event: \(.event), conclusion: \(.conclusion // "pending"))"'
+	fi
+
+	release_runs=$(echo "$scoped_runs" | jq -c '.release_runs')
+	pending_count=$(echo "$release_runs" | jq '[.[] | select(.status != "completed")] | length')
+	if [[ "$pending_count" -gt 0 ]]; then
+		count_failure "$pending_count required release-owned workflow(s) remain non-terminal"
+		echo "$release_runs" | jq -r '.[] | select(.status != "completed") | "  - Required release check pending: \(.workflowName // .name): \(.status)"'
+		return 1
+	fi
+
+	failed_count=$(echo "$release_runs" | jq '[.[] | select(.conclusion == "failure" or .conclusion == "cancelled" or .conclusion == "timed_out" or .conclusion == "action_required")] | length')
+	if [[ "$failed_count" -gt 0 ]]; then
+		count_failure "$failed_count required release-owned workflow(s) failed"
+		echo "$release_runs" | jq -r '.[] | select(.conclusion == "failure" or .conclusion == "cancelled" or .conclusion == "timed_out" or .conclusion == "action_required") | "  - Required release check failed: \(.workflowName // .name): \(.conclusion)"'
+		return 1
+	fi
+
+	count_success "All exact-SHA release-owned workflows passed"
+	return 0
+}
+
 # Check GitHub Actions CI/CD status
 check_cicd_status() {
 	print_section "CI/CD Pipeline Status"
@@ -189,31 +218,8 @@ check_cicd_status() {
 	fi
 
 	if [[ -n "$POSTFLIGHT_COMMIT_SHA" ]]; then
-		local unrelated_count
-		unrelated_count=$(echo "$scoped_runs" | jq '.unrelated_runs | length')
-		if [[ "$unrelated_count" -gt 0 ]]; then
-			count_warning "$unrelated_count unrelated exact-SHA issue/comment workflow run(s) excluded from release evidence"
-			echo "$scoped_runs" | jq -r '.unrelated_runs[] | "  - Unrelated: \(.workflowName // .name) (event: \(.event), conclusion: \(.conclusion // "pending"))"'
-		fi
-
-		local release_runs pending_count failed_count
-		release_runs=$(echo "$scoped_runs" | jq -c '.release_runs')
-		pending_count=$(echo "$release_runs" | jq '[.[] | select(.status != "completed")] | length')
-		if [[ "$pending_count" -gt 0 ]]; then
-			count_failure "$pending_count required release-owned workflow(s) remain non-terminal"
-			echo "$release_runs" | jq -r '.[] | select(.status != "completed") | "  - Required release check pending: \(.workflowName // .name): \(.status)"'
-			return 1
-		fi
-
-		failed_count=$(echo "$release_runs" | jq '[.[] | select(.conclusion == "failure" or .conclusion == "cancelled" or .conclusion == "timed_out" or .conclusion == "action_required")] | length')
-		if [[ "$failed_count" -gt 0 ]]; then
-			count_failure "$failed_count required release-owned workflow(s) failed"
-			echo "$release_runs" | jq -r '.[] | select(.conclusion == "failure" or .conclusion == "cancelled" or .conclusion == "timed_out" or .conclusion == "action_required") | "  - Required release check failed: \(.workflowName // .name): \(.conclusion)"'
-			return 1
-		fi
-
-		count_success "All exact-SHA release-owned workflows passed"
-		return 0
+		evaluate_scoped_workflow_runs "$scoped_runs"
+		return $?
 	fi
 
 	local run_id status conclusion name
