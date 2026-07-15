@@ -60,3 +60,31 @@ grep -Fq -- '--slurpfile release_run_documents' "${REPO_ROOT}/.github/workflows/
 grep -Fq 'non-required advisory check(s) remain non-terminal' "${REPO_ROOT}/.github/workflows/postflight.yml"
 
 printf 'PASS: postflight keeps paginated exact-SHA classification and advisory warnings\n'
+
+STUB_DIR=$(mktemp -d)
+trap 'rm -rf "$STUB_DIR"' EXIT
+cat >"${STUB_DIR}/gh" <<'EOF'
+#!/usr/bin/env bash
+if [[ "${1:-}" == "auth" && "${2:-}" == "status" ]]; then
+	exit 0
+fi
+if [[ "${1:-}" == "run" && "${2:-}" == "list" ]]; then
+	printf '%s\n' "${POSTFLIGHT_RUNS_JSON:?}"
+	exit 0
+fi
+exit 1
+EOF
+chmod +x "${STUB_DIR}/gh"
+
+SUCCESS_RUNS='[{"databaseId":3001,"name":"Issue Sync","workflowName":"Issue Sync","event":"issues","headSha":"release-sha","status":"completed","conclusion":"failure","updatedAt":"2026-07-15T00:10:00Z"},{"databaseId":3002,"name":"Framework Validation","workflowName":"Framework Validation","event":"push","headSha":"release-sha","status":"completed","conclusion":"success","updatedAt":"2026-07-15T00:09:00Z"}]'
+SUCCESS_OUTPUT=$(PATH="${STUB_DIR}:$PATH" POSTFLIGHT_RUNS_JSON="$SUCCESS_RUNS" bash "${REPO_ROOT}/.agents/scripts/postflight-check.sh" --ci-only --sha release-sha 2>&1)
+grep -Fq 'Unrelated: Issue Sync (event: issues, conclusion: failure)' <<<"$SUCCESS_OUTPUT"
+grep -Fq 'POSTFLIGHT VERIFICATION PASSED WITH WARNINGS' <<<"$SUCCESS_OUTPUT"
+printf 'PASS: newer unrelated issues event is reported without replacing release evidence\n'
+
+FAILED_RUNS='[{"databaseId":3003,"name":"Qlty Code Quality","workflowName":"Qlty Code Quality","event":"push","headSha":"release-sha","status":"completed","conclusion":"failure","updatedAt":"2026-07-15T00:11:00Z"}]'
+FAILED_STATUS=0
+FAILED_OUTPUT=$(PATH="${STUB_DIR}:$PATH" POSTFLIGHT_RUNS_JSON="$FAILED_RUNS" bash "${REPO_ROOT}/.agents/scripts/postflight-check.sh" --ci-only --sha release-sha 2>&1) || FAILED_STATUS=$?
+[[ "$FAILED_STATUS" -eq 1 ]]
+grep -Fq 'Required release check failed: Qlty Code Quality: failure' <<<"$FAILED_OUTPUT"
+printf 'PASS: genuine failed Qlty release check remains explicitly blocking\n'

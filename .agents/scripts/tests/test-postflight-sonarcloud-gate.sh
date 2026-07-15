@@ -25,7 +25,7 @@ if [[ "${1:-}" == "run" && "${2:-}" == "list" ]]; then
 	if [[ "$*" == *"--limit=1"* || "$*" == *"--limit 1"* ]]; then
 		printf '[{"databaseId":1,"status":"completed","conclusion":"%s","name":"Stub CI"}]\n' "${CI_STUB_CONCLUSION:-success}"
 	else
-		printf '[{"name":"Stub CI","status":"completed","conclusion":"%s"}]\n' "${CI_STUB_CONCLUSION:-success}"
+		printf '[{"databaseId":1,"name":"Stub CI","workflowName":"Stub CI","event":"push","headSha":"release-sha","updatedAt":"2026-07-15T00:00:00Z","status":"completed","conclusion":"%s"}]\n' "${CI_STUB_CONCLUSION:-success}"
 	fi
 	exit 0
 fi

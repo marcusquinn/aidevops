@@ -53,10 +53,22 @@ fi
 
 if [[ "${1:-}" == "release" && "${2:-}" == "view" ]]; then
 	if [[ "${FAKE_RELEASE_EXISTS:-0}" == "1" || -f "$marker_file" ]]; then
-		printf 'release %s exists\n' "${3:-}"
+		printf '%s\n' "${3:-}"
 		exit 0
 	fi
 	exit 1
+fi
+
+if [[ "${1:-}" == "release" && "${2:-}" == "edit" ]]; then
+	if [[ "${FAKE_EDIT_RATE_LIMIT:-0}" == "1" ]]; then
+		printf 'HTTP 403: API rate limit exceeded\n' >&2
+		exit 1
+	fi
+	if [[ "${FAKE_EDIT_FAILURE:-0}" == "1" ]]; then
+		printf 'HTTP 500: metadata update failed\n' >&2
+		exit 1
+	fi
+	exit 0
 fi
 
 if [[ "${1:-}" == "release" && "${2:-}" == "create" ]]; then
@@ -109,6 +121,32 @@ if grep -q 'release view v1.2.4 --repo marcusquinn/aidevops' "$FAKE_GH_LOG" 2>/d
 	print_result 'duplicate create race verifies release after create failure' 0
 else
 	print_result 'duplicate create race verifies release after create failure' 1 'missing expected gh calls'
+fi
+
+NOTES_FILE="${TEST_ROOT}/notes.md"
+printf 'release notes\n' >"$NOTES_FILE"
+PUBLISH_SCRIPT="${TEST_SCRIPTS_DIR}/../../.github/scripts/publish-github-release.sh"
+
+rm -f "$FAKE_GH_LOG" "$FAKE_GH_RELEASE_MARKER"
+export FAKE_RELEASE_EXISTS=1
+export FAKE_EDIT_RATE_LIMIT=1
+rc=0
+output=$("$PUBLISH_SCRIPT" v1.2.4 v1.2.4 "$NOTES_FILE" 2>&1) || rc=$?
+if [[ "$rc" -eq 0 && "$output" == *"publication receipt verified"* && "$output" == *"metadata reconciliation deferred after API rate limit"* ]]; then
+	print_result 'rate-limited metadata edit preserves verified publication' 0
+else
+	print_result 'rate-limited metadata edit preserves verified publication' 1 "rc=$rc output=$output"
+fi
+
+rm -f "$FAKE_GH_LOG" "$FAKE_GH_RELEASE_MARKER"
+export FAKE_EDIT_RATE_LIMIT=0
+export FAKE_EDIT_FAILURE=1
+rc=0
+output=$("$PUBLISH_SCRIPT" v1.2.4 v1.2.4 "$NOTES_FILE" 2>&1) || rc=$?
+if [[ "$rc" -eq 1 && "$output" == *"metadata reconciliation failed"* ]]; then
+	print_result 'non-rate-limit metadata failure remains blocking' 0
+else
+	print_result 'non-rate-limit metadata failure remains blocking' 1 "rc=$rc output=$output"
 fi
 
 printf '\nTests run: %s, Failures: %s\n' "$TESTS_RUN" "$TESTS_FAILED"
