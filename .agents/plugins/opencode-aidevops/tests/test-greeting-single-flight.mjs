@@ -14,11 +14,13 @@ const NEW_GREETING = "aidevops v1.0.1 running in OpenCode v1.0.1";
 
 function fixture() {
   const cacheDir = mkdtempSync(join(tmpdir(), "aidevops-greeting-test-"));
-  const cacheFile = join(cacheDir, "session-greeting.txt");
+  const cacheFile = join(cacheDir, "session-greeting-opencode.txt");
+  const sharedCacheFile = join(cacheDir, "session-greeting.txt");
   const clients = [];
   return {
     cacheDir,
     cacheFile,
+    sharedCacheFile,
     clients,
     client() {
       const toasts = [];
@@ -54,6 +56,7 @@ function handlerOptions(f, client, execGreeting) {
     cacheDir: f.cacheDir,
     refreshTtlMs: 1000,
     lockStaleMs: 2000,
+    initializedAtMs: 0,
     execGreeting,
     maintenanceNoticeFn: async () => "",
   };
@@ -105,6 +108,50 @@ test("fresh cache emits immediately without spawning a refresh", async (t) => {
 
   assert.equal(spawnCount, 0);
   assert.equal(f.clients[0].length, 1);
+});
+
+test("fresh pre-init cache is withheld until a current-process refresh", async (t) => {
+  const f = fixture();
+  t.after(() => f.cleanup());
+  writeFileSync(f.cacheFile, `${OLD_GREETING}\n`);
+  utimesSync(f.cacheFile, new Date(1_000), new Date(1_000));
+  let spawnCount = 0;
+  const handler = createGreetingHandler({
+    ...handlerOptions(f, f.client(), async () => {
+      spawnCount += 1;
+      return { stdout: NEW_GREETING };
+    }),
+    now: () => 2_000,
+    initializedAtMs: 1_500,
+    refreshTtlMs: 1_500,
+  });
+
+  await handler({ event: { type: "session.created" } });
+  await waitFor(() => cacheEquals(f, NEW_GREETING) && f.clients[0].length === 1);
+
+  assert.equal(spawnCount, 1);
+  assert.match(f.clients[0][0].message, /aidevops v1\.0\.1/);
+  assert.doesNotMatch(f.clients[0][0].message, /aidevops v1\.0\.0/);
+});
+
+test("shared Claude cache cannot leak into OpenCode and refresh receives runtime identity", async (t) => {
+  const f = fixture();
+  t.after(() => f.cleanup());
+  const claudeGreeting = "aidevops v1.0.0 running in Claude Code v2.1.209";
+  writeFileSync(f.sharedCacheFile, `${claudeGreeting}\n`);
+  let execOptions;
+  const handler = createGreetingHandler(handlerOptions(f, f.client(), async (_command, options) => {
+    execOptions = options;
+    return { stdout: NEW_GREETING };
+  }));
+
+  await handler({ event: { type: "session.created" } });
+  await waitFor(() => cacheEquals(f, NEW_GREETING) && f.clients[0].length === 1);
+
+  assert.equal(execOptions.env.OPENCODE, "1");
+  assert.equal(readFileSync(f.sharedCacheFile, "utf8").trim(), claudeGreeting);
+  assert.match(f.clients[0][0].message, /running in OpenCode/);
+  assert.doesNotMatch(f.clients[0][0].message, /Claude Code/);
 });
 
 test("headless sessions never emit or refresh a greeting", async (t) => {
@@ -200,7 +247,7 @@ test("cold-cache follower emits a cache published while its owner lock disappear
   let nowCalls = 0;
   const now = () => {
     nowCalls += 1;
-    if (nowCalls === 5) {
+    if (nowCalls === 6) {
       writeFileSync(f.cacheFile, `${NEW_GREETING}\n`);
       rmSync(lockDir, { recursive: true, force: true });
     }
@@ -217,7 +264,7 @@ test("cold-cache follower emits a cache published while its owner lock disappear
   await handler({ event: { type: "session.created" } });
   await waitFor(() => f.clients[0].length === 1);
 
-  assert.equal(nowCalls, 5);
+  assert.equal(nowCalls, 6);
   assert.equal(f.clients[0][0].message.includes(NEW_GREETING), true);
 });
 
@@ -247,6 +294,33 @@ test("cold-cache follower survives a transient lock gap before publication", asy
   await waitFor(() => f.clients[0].length === 1);
 
   assert.equal(f.clients[0][0].message.includes(NEW_GREETING), true);
+});
+
+test("cold-cache follower stops polling after an owner exits without publishing", async (t) => {
+  const f = fixture();
+  t.after(() => f.cleanup());
+  const lockDir = join(f.cacheDir, "session-greeting-refresh.lock");
+  mkdirSync(lockDir);
+  let nowCalls = 0;
+  const now = () => {
+    nowCalls += 1;
+    return 1000;
+  };
+  const handler = createGreetingHandler({
+    ...handlerOptions(f, f.client(), async () => {
+      throw new Error("follower must not start a refresh");
+    }),
+    now,
+  });
+
+  await handler({ event: { type: "session.created" } });
+  rmSync(lockDir, { recursive: true, force: true });
+  await new Promise((resolve) => setTimeout(resolve, 200));
+  const settledNowCalls = nowCalls;
+  await new Promise((resolve) => setTimeout(resolve, 100));
+
+  assert.equal(f.clients[0].length, 0);
+  assert.equal(nowCalls, settledNowCalls);
 });
 
 test("an expired owner cannot release a replacement owner's lock", async (t) => {
@@ -316,8 +390,8 @@ test("successful refresh atomically replaces the cache without temp files", asyn
   const handler = createGreetingHandler(handlerOptions(f, f.client(), async () => ({ stdout: NEW_GREETING })));
 
   await handler({ event: { type: "session.created" } });
-  await waitFor(() => readdirSync(f.cacheDir).includes("session-greeting.txt"));
+  await waitFor(() => readdirSync(f.cacheDir).includes("session-greeting-opencode.txt"));
 
   assert.equal(readFileSync(f.cacheFile, "utf8").trim(), NEW_GREETING);
-  assert.deepEqual(readdirSync(f.cacheDir), ["session-greeting.txt"]);
+  assert.deepEqual(readdirSync(f.cacheDir), ["session-greeting-opencode.txt"]);
 });

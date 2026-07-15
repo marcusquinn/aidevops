@@ -25,6 +25,10 @@ function createHooks(options = {}) {
     intentField: "agent__intent",
     isHeadless: options.isHeadless || (() => false),
     shouldInjectGreeting: options.shouldInjectGreeting,
+    readGreetingCache: options.readGreetingCache,
+    now: options.now,
+    refreshTtlMs: options.refreshTtlMs,
+    initializedAtMs: options.initializedAtMs,
   });
   return { hooks, logs };
 }
@@ -50,9 +54,14 @@ function advisoryMessages(output) {
 describe("token cost advisory threshold", () => {
   test("prepends session greeting order to system prompt", async () => {
     const { hooks } = createHooks({
-      readIfExists: (path) => path.endsWith("session-greeting.txt")
-        ? "aidevops v3.14.23 running in OpenCode v1.14.33 | aidevops/main"
-        : "",
+      readIfExists: (path) => path.endsWith("VERSION") ? "3.14.23\n" : "",
+      readGreetingCache: () => ({
+        output: "aidevops v3.14.23 running in OpenCode v1.14.33 | aidevops/main",
+        mtimeMs: 9_500,
+      }),
+      now: () => 10_000,
+      refreshTtlMs: 1_000,
+      initializedAtMs: 9_000,
     });
     const output = { system: ["base system prompt"] };
 
@@ -91,7 +100,7 @@ describe("token cost advisory threshold", () => {
 
   test("keeps startup advisory messages out of chat instructions", async () => {
     const { hooks } = createHooks({
-      readIfExists: (path) => path.endsWith("session-greeting.txt")
+      readIfExists: (path) => path.endsWith("session-greeting-opencode.txt")
         ? [
             "aidevops v3.14.23 running in OpenCode v1.14.33 | aidevops/main",
             "Security: all protections active",
@@ -113,7 +122,7 @@ describe("token cost advisory threshold", () => {
 
   test("avoids duplicate greeting after salutation-only launch input", async () => {
     const { hooks } = createHooks({
-      readIfExists: (path) => path.endsWith("session-greeting.txt")
+      readIfExists: (path) => path.endsWith("session-greeting-opencode.txt")
         ? [
             "aidevops v3.14.23 running in OpenCode v1.14.33 | aidevops/main",
             "Security: all protections active",

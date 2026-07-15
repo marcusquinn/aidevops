@@ -7,37 +7,30 @@ import {
   constants,
   existsSync,
   fchmodSync,
-  linkSync,
   lstatSync,
   mkdirSync,
   openSync,
   readFileSync,
-  readdirSync,
   renameSync,
   statSync,
-  unlinkSync,
   writeFileSync,
 } from "node:fs";
-import { randomUUID } from "node:crypto";
 import { homedir } from "node:os";
-import { basename, dirname, join, resolve } from "node:path";
+import { dirname, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
+
+import {
+  acquireWorkerBlockerLock as acquireLock,
+  releaseWorkerBlockerLock as releaseLock,
+} from "./worker-blocker-lock.mjs";
 
 export const WORKER_BLOCKER_SCHEMA = "aidevops-worker-blocker/v1";
 export const DEFAULT_WORKER_BLOCKER_LOG_MAX_BYTES = 5 * 1024 * 1024;
 
 const MIN_LOG_MAX_BYTES = 512;
-const LOCK_STALE_MS = 30_000;
-const LOCK_RETRIES = 25;
-const LOCK_RETRY_MS = 4;
-const LOCK_RESTORE_RETRIES = 250;
 const MAX_DETAIL_LENGTH = 500;
 const MAX_FIELD_LENGTH = 200;
 const CREDENTIAL_PATTERN = /(^|[^A-Za-z0-9_-])(sk-|ghp_|gho_|ghs_|ghu_|github_pat_|glpat-|xoxb-|xoxp-)[A-Za-z0-9_-]{10,}/g;
-
-function sleepSync(milliseconds) {
-  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, milliseconds);
-}
 
 function cleanText(value, maxLength, options = {}) {
   if (value === null || value === undefined) return "";
@@ -99,173 +92,6 @@ export function normalizeWorkerBlockerEvent(input = {}, options = {}) {
     grantable,
     detail: cleanText(input.detail || "", MAX_DETAIL_LENGTH, options),
   };
-}
-
-function tryCreateOwnedLock(lockPath, token) {
-  let descriptor;
-  try {
-    descriptor = openSync(lockPath, "wx", 0o600);
-    writeFileSync(descriptor, token);
-    return "acquired";
-  } catch (error) {
-    if (descriptor !== undefined) {
-      try {
-        unlinkSync(lockPath);
-      } catch {
-        // The incomplete lock remains stale and can be reclaimed.
-      }
-    }
-    return error?.code === "EEXIST" ? "exists" : "failed";
-  } finally {
-    if (descriptor !== undefined) closeSync(descriptor);
-  }
-}
-
-function releaseLock(lockPath, token) {
-  try {
-    if (readFileSync(lockPath, "utf8") !== token) return;
-    unlinkSync(lockPath);
-  } catch (error) {
-    if (error?.code !== "ENOENT") throw error;
-  }
-}
-
-function removeStalePrimaryLock(lockPath) {
-  try {
-    const lockStat = lstatSync(lockPath);
-    if (lockStat.isSymbolicLink() || Date.now() - lockStat.mtimeMs <= LOCK_STALE_MS) return false;
-    unlinkSync(lockPath);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-function recoveryMarkersActive(lockPath) {
-  const directory = dirname(lockPath);
-  const prefix = `${basename(lockPath)}.quarantine-`;
-  let active = false;
-  try {
-    for (const name of readdirSync(directory)) {
-      if (!name.startsWith(prefix)) continue;
-      const markerPath = join(directory, name);
-      try {
-        const markerStat = lstatSync(markerPath);
-        if (markerStat.isSymbolicLink() || Date.now() - markerStat.mtimeMs > LOCK_STALE_MS) {
-          unlinkSync(markerPath);
-        } else {
-          active = true;
-        }
-      } catch {
-        // Another contender completed recovery first.
-      }
-    }
-  } catch {
-    return false;
-  }
-  return active;
-}
-
-function quarantineStaleLock(lockPath) {
-  let observedStat;
-  let observedToken;
-  try {
-    observedStat = lstatSync(lockPath);
-    if (observedStat.isSymbolicLink() || Date.now() - observedStat.mtimeMs <= LOCK_STALE_MS) return false;
-    observedToken = readFileSync(lockPath, "utf8");
-  } catch {
-    return false;
-  }
-
-  const quarantinePath = `${lockPath}.quarantine-${randomUUID()}`;
-  try {
-    renameSync(lockPath, quarantinePath);
-    const movedStat = lstatSync(quarantinePath);
-    const movedToken = readFileSync(quarantinePath, "utf8");
-    const exactStaleLock = !movedStat.isSymbolicLink()
-      && movedStat.dev === observedStat.dev
-      && movedStat.ino === observedStat.ino
-      && movedStat.mtimeMs === observedStat.mtimeMs
-      && movedToken === observedToken
-      && Date.now() - movedStat.mtimeMs > LOCK_STALE_MS;
-    if (exactStaleLock) {
-      unlinkSync(quarantinePath);
-      return true;
-    }
-    if (movedStat.isSymbolicLink()) {
-      unlinkSync(quarantinePath);
-      return false;
-    }
-    for (let attempt = 0; attempt < LOCK_RESTORE_RETRIES; attempt++) {
-      try {
-        linkSync(quarantinePath, lockPath);
-        unlinkSync(quarantinePath);
-        return false;
-      } catch (error) {
-        if (error?.code !== "EEXIST") return false;
-        sleepSync(LOCK_RETRY_MS);
-      }
-    }
-  } catch {
-    return false;
-  }
-  return false;
-}
-
-function acquireLock(lockPath) {
-  const token = randomUUID();
-  const reclaimPath = `${lockPath}.reclaim`;
-  for (let attempt = 0; attempt < LOCK_RETRIES; attempt++) {
-    try {
-      if (recoveryMarkersActive(reclaimPath)) {
-        sleepSync(LOCK_RETRY_MS);
-        continue;
-      }
-      if (existsSync(reclaimPath)) {
-        quarantineStaleLock(reclaimPath);
-        sleepSync(LOCK_RETRY_MS);
-        continue;
-      }
-      const lockResult = tryCreateOwnedLock(lockPath, token);
-      if (lockResult === "acquired") {
-        if (existsSync(reclaimPath) || recoveryMarkersActive(reclaimPath)) {
-          releaseLock(lockPath, token);
-          sleepSync(LOCK_RETRY_MS);
-          continue;
-        }
-        return token;
-      }
-      if (lockResult === "failed") return "";
-
-      const lockStat = lstatSync(lockPath);
-      if (lockStat.isSymbolicLink()) return "";
-      if (Date.now() - lockStat.mtimeMs <= LOCK_STALE_MS) {
-        sleepSync(LOCK_RETRY_MS);
-        continue;
-      }
-
-      const reclaimToken = randomUUID();
-      if (tryCreateOwnedLock(reclaimPath, reclaimToken) !== "acquired") {
-        sleepSync(LOCK_RETRY_MS);
-        continue;
-      }
-      if (recoveryMarkersActive(reclaimPath)) {
-        releaseLock(reclaimPath, reclaimToken);
-        sleepSync(LOCK_RETRY_MS);
-        continue;
-      }
-      try {
-        removeStalePrimaryLock(lockPath);
-        if (tryCreateOwnedLock(lockPath, token) === "acquired") return token;
-      } finally {
-        releaseLock(reclaimPath, reclaimToken);
-      }
-    } catch (error) {
-      if (error?.code !== "ENOENT") return "";
-      sleepSync(LOCK_RETRY_MS);
-    }
-  }
-  return "";
 }
 
 function newestCompleteLinesWithinBudget(content, budget) {

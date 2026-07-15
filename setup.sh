@@ -17,7 +17,7 @@ fi
 # AI Assistant Server Access Framework Setup Script
 # Helps developers set up the framework for their infrastructure
 #
-# Version: 3.32.120
+# Version: 3.32.125
 #
 # Quick Install:
 #   npm install -g aidevops && aidevops update          (recommended)
@@ -1473,6 +1473,7 @@ _setup_run_non_interactive() {
 	_time_step "migrate_pulse_repos_to_repos_json" migrate_pulse_repos_to_repos_json
 	_time_step "cleanup_deprecated_paths" cleanup_deprecated_paths
 	_time_step "migrate_orphaned_supervisor" migrate_orphaned_supervisor
+	_time_step "migrate_custom_model_routing_reasoning_defaults" migrate_custom_model_routing_reasoning_defaults
 	_time_step "backfill_issue_relationships" backfill_issue_relationships
 	_time_step "cleanup_deprecated_mcps" cleanup_deprecated_mcps
 	_time_step "cleanup_stale_bun_opencode" cleanup_stale_bun_opencode
@@ -1494,7 +1495,7 @@ _setup_run_non_interactive() {
 	_time_step "$SETUP_STAGE_HOTFIX_CONFIG" _deploy_hotfix_config
 	_time_step "setup_opencode_desktop_launcher" setup_opencode_desktop_launcher
 	_time_step "sync_agent_sources" sync_agent_sources
-	_time_step "install_aidevops_cli" install_aidevops_cli
+	_time_step "install_aidevops_cli" install_aidevops_cli || print_warning "aidevops CLI installation encountered issues; continuing configuration reconciliation"
 	_time_step "setup_shellcheck_wrapper" setup_shellcheck_wrapper
 	if is_feature_enabled safety_hooks 2>/dev/null; then
 		_time_step "$SETUP_STAGE_HOOKS" setup_safety_hooks
@@ -1647,6 +1648,7 @@ _setup_run_interactive() {
 	confirm_step "Migrate pulse-repos.json into repos.json" && migrate_pulse_repos_to_repos_json
 	confirm_step "Cleanup deprecated agent paths" && cleanup_deprecated_paths
 	confirm_step "Migrate orphaned supervisor to pulse-wrapper" && migrate_orphaned_supervisor
+	migrate_custom_model_routing_reasoning_defaults
 	confirm_step "Backfill GitHub issue relationships (blocked-by, sub-issues)" && backfill_issue_relationships
 	confirm_step "Cleanup deprecated MCP entries (hetzner, serper, etc.)" && cleanup_deprecated_mcps
 	confirm_step "Cleanup stale bun opencode install" && cleanup_stale_bun_opencode

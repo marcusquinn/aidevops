@@ -35,7 +35,7 @@ Workers MUST use `full-loop-helper.sh merge` — direct `gh pr merge` bypasses t
 - If the PR has `skip-review-gate` label, bypass the gate (for docs-only PRs or repos without bots).
 - In headless mode: if still WAITING after timeout, proceed but log a warning. The CI required check is the hard gate.
 - ALWAYS read bot reviews before merging. Address critical/security findings; note non-critical suggestions for follow-up.
-- PASS_RATE_LIMITED means bots are rate-limited and `rate_limit_behavior=pass` (default). Safe to merge — bot reviews will arrive later and can be addressed in follow-up PRs. Use `request-retry` to trigger a re-review once rate limits clear. External-contributor PRs are exempt: rate-limit grace is always disabled for them.
+- PASS_RATE_LIMITED means either bots are rate-limited or the GitHub API is unavailable while immutable event evidence identifies a trusted internal PR and `rate_limit_behavior=pass` (default) with non-strict completion. Safe to merge — late feedback is handled by the post-merge review scanner. API-exhausted runs do not retry immediately. External/unknown authors and explicit `wait` or `strict` policies always fail closed.
 - When many PRs are rate-limited simultaneously, use `request-retry` on the highest-priority PRs first. Stagger retries to avoid re-triggering rate limits.
 
 ## Additive suggestion decision tree

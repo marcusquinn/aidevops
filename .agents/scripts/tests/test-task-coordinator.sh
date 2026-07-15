@@ -97,6 +97,7 @@ node "$COORDINATOR" attempt --intent-id "$intent" --status published --evidence 
 # Backups are integrity-checked; restore requires a newer fenced ownership epoch.
 backup="${TEST_ROOT}/verified-backup.db"
 sqlite3 "$AIDEVOPS_TASK_COORDINATOR_DB" ".backup '$backup'"
+inode_before=$(stat -f '%i' "$AIDEVOPS_TASK_COORDINATOR_DB" 2>/dev/null || stat -c '%i' "$AIDEVOPS_TASK_COORDINATOR_DB")
 fence=$(node "$COORDINATOR" status | jq -r '.fencing_token')
 node "$COORDINATOR" transition --state read-only --fencing-token "$fence" --evidence '{"reason":"restore-test"}' >/dev/null
 if node "$COORDINATOR" restore --backup "$backup" --registry-evidence '{}' --prior-epoch 1 --new-epoch 1 --fencing-token stale >/dev/null 2>&1; then
@@ -109,26 +110,28 @@ if node "$COORDINATOR" restore --backup "$backup" --registry-evidence '{"cas":"w
 fi
 node "$COORDINATOR" restore --backup "$backup" --registry-evidence '{"cas":"winner","prior_revoked":true,"fencing_token":"restore-fence","transfer_record_id":"transfer-1"}' --prior-epoch 1 --new-epoch 2 --fencing-token restore-fence --published-high-water 100 >/dev/null
 [[ "$(node "$COORDINATOR" status | jq -r '.sequence')" == "100" ]]
+inode_after=$(stat -f '%i' "$AIDEVOPS_TASK_COORDINATOR_DB" 2>/dev/null || stat -c '%i' "$AIDEVOPS_TASK_COORDINATOR_DB")
+[[ "$inode_after" == "$inode_before" ]]
 [[ -n "$(ls "${TEST_ROOT}"/coordinator.db-backup-*-pre-restore.db)" ]]
 
 # A real v1 schema migrates through every version only after verified backups.
 migration_db="${TEST_ROOT}/migration.db"
 AIDEVOPS_TASK_COORDINATOR_DB="$migration_db" node "$COORDINATOR" status >/dev/null
-sqlite3 "$migration_db" "DROP TABLE issue_mappings; DROP TABLE forge_event_cursors; ALTER TABLE operations DROP COLUMN result_hash; ALTER TABLE restore_controls DROP COLUMN backup_high_water; UPDATE coordinator_meta SET value='1' WHERE key='schema_version'; DELETE FROM migration_history; INSERT INTO migration_history VALUES(1,'2026-01-01T00:00:00Z',NULL,'ok');"
+sqlite3 "$migration_db" "DROP TABLE issue_mappings; DROP TABLE forge_event_cursors; ALTER TABLE restore_controls DROP COLUMN backup_high_water; UPDATE coordinator_meta SET value='1' WHERE key='schema_version'; DELETE FROM migration_history; INSERT INTO migration_history VALUES(1,'2026-01-01T00:00:00Z',NULL,'ok');"
 AIDEVOPS_TASK_COORDINATOR_DB="$migration_db" node "$COORDINATOR" status >/dev/null
-[[ "$(sqlite3 "$migration_db" "SELECT value FROM coordinator_meta WHERE key='schema_version';")" == "5" ]]
-[[ "$(sqlite3 "$migration_db" "SELECT COUNT(*) FROM pragma_table_info('operations') WHERE name='result_hash';")" == "1" ]]
+[[ "$(sqlite3 "$migration_db" "SELECT value FROM coordinator_meta WHERE key='schema_version';")" == "6" ]]
+[[ "$(sqlite3 "$migration_db" "SELECT COUNT(*) FROM pragma_table_info('operations') WHERE name='result_hash';")" == "0" ]]
 [[ -n "$(ls "${TEST_ROOT}"/migration.db-backup-*-pre-migrate-v2.db)" ]]
 [[ -n "$(ls "${TEST_ROOT}"/migration.db-backup-*-pre-migrate-v3.db)" ]]
 
 # An untouched v2 database is backed up before any v3 table is applied.
 v2_db="${TEST_ROOT}/v2.db"
 AIDEVOPS_TASK_COORDINATOR_DB="$v2_db" node "$COORDINATOR" status >/dev/null
-sqlite3 "$v2_db" "DROP TABLE issue_mappings; DROP TABLE forge_event_cursors; UPDATE coordinator_meta SET value='2' WHERE key='schema_version'; DELETE FROM migration_history WHERE version=5; INSERT OR IGNORE INTO migration_history VALUES(2,'2026-01-01T00:00:00Z',NULL,'ok');"
+sqlite3 "$v2_db" "DROP TABLE issue_mappings; DROP TABLE forge_event_cursors; ALTER TABLE operations ADD COLUMN result_hash TEXT NOT NULL DEFAULT 'unchecked'; UPDATE coordinator_meta SET value='2' WHERE key='schema_version'; DELETE FROM migration_history WHERE version>2; INSERT OR IGNORE INTO migration_history VALUES(2,'2026-01-01T00:00:00Z',NULL,'ok');"
 AIDEVOPS_TASK_COORDINATOR_DB="$v2_db" node "$COORDINATOR" status >/dev/null
 v2_backup=$(ls "${TEST_ROOT}"/v2.db-backup-*-pre-migrate-v3.db)
 [[ "$(sqlite3 "$v2_backup" "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='issue_mappings';")" == "0" ]]
-[[ "$(sqlite3 "$v2_db" "SELECT value FROM coordinator_meta WHERE key='schema_version';")" == "5" ]]
+[[ "$(sqlite3 "$v2_db" "SELECT value FROM coordinator_meta WHERE key='schema_version';")" == "6" ]]
 
 # Immutable task/repository identities isolate equal display numbers and allow
 # one task to retain home, implementation, and upstream issue projections.

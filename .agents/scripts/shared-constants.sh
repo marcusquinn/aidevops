@@ -341,12 +341,16 @@ readonly TEMP_PREFIX="tmp_"
 # Build a PATH value safe to embed in macOS LaunchAgent EnvironmentVariables.
 # launchd jobs inherit no useful interactive shell setup, but serialising the
 # caller's raw PATH bakes stale manager-specific entries into long-lived plists.
-# Keep known system/tool roots first, then preserve only inherited entries that
-# actually exist on this host.
+# Keep stable user and known system/tool roots first, then preserve inherited
+# entries that exist on this host. Never persist immutable runtime-bundle paths:
+# long-lived sessions intentionally retain old bundles after stable activation.
 
 _aidevops_append_launchd_path_dir() {
 	local dir="$1"
 	[[ -n "$dir" ]] || return 0
+	case "$dir" in
+	*/.aidevops/runtime-bundles/*) return 0 ;;
+	esac
 	[[ -d "$dir" ]] || return 0
 	case ":${_aidevops_launchd_path_seen:-}:" in
 	*":${dir}:"*) return 0 ;;
@@ -358,20 +362,22 @@ _aidevops_append_launchd_path_dir() {
 
 aidevops_launchd_sanitized_path() {
 	local input_path="${1:-${PATH:-}}"
-	local default_path="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+	local stable_path=""
+	if [[ -n "${HOME:-}" ]]; then
+		stable_path="${HOME}/.local/bin:${HOME}/.aidevops/agents/scripts:${HOME}/.aidevops/bin"
+	fi
+	local default_path="${stable_path:+${stable_path}:}/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 	local _aidevops_launchd_path_result=""
 	local _aidevops_launchd_path_seen=""
 	local dir=""
-	local old_ifs="$IFS"
+	local IFS=':'
 
-	IFS=':'
 	for dir in $default_path; do
 		_aidevops_append_launchd_path_dir "$dir"
 	done
 	for dir in $input_path; do
 		_aidevops_append_launchd_path_dir "$dir"
 	done
-	IFS="$old_ifs"
 
 	printf '%s' "$_aidevops_launchd_path_result"
 	return 0

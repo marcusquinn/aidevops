@@ -1098,6 +1098,48 @@ _full_loop_verify_merged_pr() {
 	return $?
 }
 
+cmd_record_no_release() {
+	local pr_number="${1:-}"
+	local repo_arg="${2:-}"
+	local repo=""
+	local receipt_path=""
+	local release_status=""
+	if [[ $# -lt 1 || $# -gt 2 ]] || [[ ! "$pr_number" =~ ^[0-9]+$ ]]; then
+		print_error "Usage: full-loop-helper.sh record-no-release <PR> [REPO]"
+		return 1
+	fi
+	repo=$(_full_loop_resolve_repo "$repo_arg") || {
+		print_error "Cannot resolve repository for release evidence"
+		return 1
+	}
+	_full_loop_verify_merged_pr "$pr_number" "$repo" || {
+		print_error "Cannot record release:not-requested: PR #${pr_number} lacks merged evidence"
+		return 1
+	}
+	receipt_path=$(_full_loop_release_receipt_path "$repo" "$pr_number") || return 1
+	if [[ -f "$receipt_path" ]]; then
+		IFS= read -r release_status <"$receipt_path" || true
+	fi
+	case "$release_status" in
+	"$_FULL_LOOP_RELEASE_NOT_REQUESTED")
+		print_info "release:not-requested already recorded for PR #${pr_number}"
+		return 0
+		;;
+	"$_FULL_LOOP_RELEASE_PUBLISHED" | "$_FULL_LOOP_PHASE_FAILED")
+		print_error "Cannot replace terminal release:${release_status} evidence for PR #${pr_number}"
+		return 1
+		;;
+	"") ;;
+	*)
+		print_error "Cannot replace unknown release:${release_status} evidence for PR #${pr_number}"
+		return 1
+		;;
+	esac
+	_full_loop_write_release_receipt "$repo" "$pr_number" "$_FULL_LOOP_RELEASE_NOT_REQUESTED" || return 1
+	print_success "release:not-requested recorded for merged PR #${pr_number}"
+	return 0
+}
+
 _full_loop_verify_aidevops_release_deploy() {
 	local repo="$1"
 	local pr_number="$2"

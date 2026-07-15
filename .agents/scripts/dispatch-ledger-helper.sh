@@ -58,6 +58,7 @@ DEFAULT_TTL="${AIDEVOPS_DISPATCH_LEDGER_TTL:-3600}" # 60 minutes
 PRELAUNCH_TTL="${AIDEVOPS_DISPATCH_PRELAUNCH_LEASE_TTL:-120}"
 READY_TTL="${AIDEVOPS_DISPATCH_READY_LEASE_TTL:-7200}"
 LEDGER_STATUS_ACTIVE="in-flight"
+LEDGER_STATUS_COMPLETED="completed"
 LEDGER_STATUS_FAILED="failed"
 
 _lease_device_id() {
@@ -475,6 +476,7 @@ _lease_append_transition() {
 	local lease_phase="$3"
 	local status="$4"
 	local lease_ttl="$5"
+	local terminal_reason="${6:-}"
 	_ensure_ledger
 	_acquire_lock || return 1
 	local current=""
@@ -500,8 +502,8 @@ _lease_append_transition() {
 	local now="" expires=""
 	now=$(_now_utc)
 	expires=$(_lease_expiry "$lease_ttl")
-	printf '%s' "$current" | jq -c --arg phase "$lease_phase" --arg status "$status" --arg ts "$now" --argjson expires "$expires" \
-		'.lease_phase=$phase | .status=$status | .updated_at=$ts | .lease_expires_at=$expires' >>"$LEDGER_FILE"
+	printf '%s' "$current" | jq -c --arg phase "$lease_phase" --arg status "$status" --arg ts "$now" --arg reason "$terminal_reason" --argjson expires "$expires" \
+		'.lease_phase=$phase | .status=$status | .updated_at=$ts | .lease_expires_at=$expires | if $reason != "" then .terminal_reason=$reason else . end' >>"$LEDGER_FILE"
 	_release_lock
 	return 0
 }
@@ -738,6 +740,7 @@ cmd_check_issue() {
 cmd_complete() {
 	local session_key=""
 	local lease_token=""
+	local reason=""
 
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
@@ -747,6 +750,10 @@ cmd_complete() {
 			;;
 		--lease-token)
 			lease_token="${2:-}"
+			shift 2
+			;;
+		--reason)
+			reason="${2:-}"
 			shift 2
 			;;
 		*)
@@ -761,7 +768,41 @@ cmd_complete() {
 		return 1
 	fi
 
-	_update_status "$session_key" "completed" "$lease_token"
+	if [[ -n "$lease_token" ]]; then
+		_lease_append_transition "$session_key" "$lease_token" "terminal" "$LEDGER_STATUS_COMPLETED" "0" "$reason"
+		return $?
+	else
+		_update_status "$session_key" "$LEDGER_STATUS_COMPLETED"
+	fi
+	return 0
+}
+
+#######################################
+# Read the typed terminal reason for an exact dispatch lease.
+# Args: --session-key KEY --lease-token TOKEN
+# Returns: 0 with a non-empty reason, 1 when absent or mismatched.
+#######################################
+cmd_terminal_reason() {
+	local session_key=""
+	local lease_token=""
+
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+		--session-key) session_key="${2:-}"; shift 2 ;;
+		--lease-token) lease_token="${2:-}"; shift 2 ;;
+		*) echo "Error: Unknown option for terminal-reason: $1" >&2; return 1 ;;
+		esac
+	done
+	[[ -n "$session_key" && -n "$lease_token" ]] || return 1
+	_ensure_ledger
+	local entry=""
+	entry=$(_lease_latest_entry "$session_key") || entry=""
+	[[ -n "$entry" ]] || return 1
+	[[ "$(printf '%s' "$entry" | jq -r '.lease_token // ""')" == "$lease_token" ]] || return 1
+	local reason=""
+	reason=$(printf '%s' "$entry" | jq -r 'select(.lease_phase == "terminal") | .terminal_reason // ""') || reason=""
+	[[ -n "$reason" ]] || return 1
+	printf '%s\n' "$reason"
 	return 0
 }
 
@@ -1424,8 +1465,11 @@ Usage:
   dispatch-ledger-helper.sh check-issue --issue NUM [--repo SLUG]
     Check if issue has an in-flight entry. Exit 0=in-flight, 1=safe.
 
-  dispatch-ledger-helper.sh complete --session-key KEY
+  dispatch-ledger-helper.sh complete --session-key KEY [--lease-token TOKEN] [--reason REASON]
     Mark dispatch as completed (worker finished successfully).
+
+  dispatch-ledger-helper.sh terminal-reason --session-key KEY --lease-token TOKEN
+    Read the typed terminal reason for an exact dispatch generation.
 
   dispatch-ledger-helper.sh fail --session-key KEY
     Mark dispatch as failed (worker errored or timed out).
@@ -1496,6 +1540,9 @@ main() {
 		;;
 	complete)
 		cmd_complete "$@"
+		;;
+	terminal-reason)
+		cmd_terminal_reason "$@"
 		;;
 	fail)
 		cmd_fail "$@"

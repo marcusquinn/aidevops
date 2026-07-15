@@ -12,9 +12,10 @@
 #   2. ~/.aidevops/logs/pulse-stats.json
 #      Pulse-level dispatch counters (each value is an array of unix-second
 #      timestamps; query with `jq '.counters[<name>] // []'`).
-#   3. Optional `gh issue list label:solved:worker --state closed`
-#      External truth: did headless workers actually solve tasks? Disabled by
-#      default because gh issue search uses the GraphQL search path.
+#   3. Optional GitHub delivery-stage queries for worker PRs and solved issues.
+#      External truth: did a runtime handoff become an opened PR, merged PR,
+#      and closed solved task? Disabled by default because GitHub search uses
+#      the GraphQL search path.
 #
 # Replaces the misdiagnosis-prone habit of reading worker-NNN.log mtimes,
 # which was the exact mistake that triggered this task. mtime tells you when
@@ -49,6 +50,9 @@ WAH_PR_CACHE_TTL="${WAH_PR_CACHE_TTL:-60}" # seconds
 WAH_SERVICE_INTERRUPTION_RESULT="service_interruption_continue"
 WAH_RESULT_WATCHDOG_STALL_KILLED="watchdog_stall_killed"
 WAH_RESULT_LOCAL_KILL="local_kill"
+WAH_RESULT_RATE_LIMIT="rate_limit"
+WAH_DELIVERY_FAILED="failed"
+WAH_JSON_NULL="null"
 WAH_FAILURE_FAMILY_FILTER="${SCRIPT_DIR}/worker-activity-failure-families.jq"
 
 # Shared jq definitions keep terminal-session semantics identical in the scalar
@@ -134,7 +138,7 @@ _wah_aggregate_metrics() {
 	now_epoch="${2:-$(date +%s)}"
 
 	# Bucket semantics (must match the original awk fallthrough chain):
-	#   succ — result=="success" AND exit_code==0
+#   succ — result=="success" AND exit_code==0 (runtime handoff, not delivery)
 	#   wk   — result=="watchdog_stall_killed"   (terminal)
 	#   wc   — result=="watchdog_stall_continue" (heartbeat, NOT terminal)
 	#   sic  — result=="service_interruption_continue" (heartbeat, NOT terminal)
@@ -145,9 +149,10 @@ _wah_aggregate_metrics() {
 	#          heartbeats even when their exit_code
 	#          is nonzero)
 	# Fail-open to zeros if jq fails (stale/corrupt jsonl).
-	local result service_result watchdog_killed_result
+	local result service_result watchdog_killed_result rate_limit_result
 	service_result="$WAH_SERVICE_INTERRUPTION_RESULT"
 	watchdog_killed_result="$WAH_RESULT_WATCHDOG_STALL_KILLED"
+	rate_limit_result="$WAH_RESULT_RATE_LIMIT"
 	local jq_program
 	# shellcheck disable=SC2016 # jq variables are evaluated by jq, not the shell
 	jq_program=$WAH_SESSION_OUTCOME_JQ'
@@ -159,17 +164,17 @@ _wah_aggregate_metrics() {
 			wk:     ([$w[] | select(.result == $watchdog_killed_result)] | length),
 			wc:     ([$events[] | select(.result == "watchdog_stall_continue")] | length),
 			sic:    ([$events[] | select(.result == $service_result)] | length),
-			rl:     ([$w[] | select(.result == "rate_limit")] | length),
+			rl:     ([$w[] | select(.result == $rate_limit_result)] | length),
 			of:     ([$w[] | select(
 				(.result != "success" or .exit_code != 0)
 				and .result != $watchdog_killed_result
 				and .result != "watchdog_stall_continue"
 				and .result != $service_result
-				and .result != "rate_limit"
+				and .result != $rate_limit_result
 			)] | length)
 		} | "\(.total) \(.terminal) \(.succ) \(.wk) \(.wc) \(.sic) \(.rl) \(.of)"
 	'
-	result=$(jq -rn --argjson cutoff "$cutoff_epoch" --argjson now "$now_epoch" --arg service_result "$service_result" --arg watchdog_killed_result "$watchdog_killed_result" "$jq_program" <"$metrics" 2>/dev/null) || result="0 0 0 0 0 0 0 0"
+	result=$(jq -rn --argjson cutoff "$cutoff_epoch" --argjson now "$now_epoch" --arg service_result "$service_result" --arg watchdog_killed_result "$watchdog_killed_result" --arg rate_limit_result "$rate_limit_result" "$jq_program" <"$metrics" 2>/dev/null) || result="0 0 0 0 0 0 0 0"
 
 	[[ -n "$result" ]] || result="0 0 0 0 0 0 0 0"
 	printf '%s\n' "$result"
@@ -339,7 +344,7 @@ _wah_provider_usage_json() {
 	((account_multiplier < 1)) && account_multiplier=1
 
 	if [[ -f "$pool" ]]; then
-		jq -rn --slurpfile pool "$pool" --argjson cutoff "$cutoff_epoch" --argjson now "$now_epoch" --argjson account_multiplier "$account_multiplier" --arg status_empty '' --arg status_auth_error 'auth-error' --arg status_rate_limited 'rate-limited' --arg status_active 'active' --arg status_idle 'idle' '
+		jq -rn --slurpfile pool "$pool" --argjson cutoff "$cutoff_epoch" --argjson now "$now_epoch" --argjson account_multiplier "$account_multiplier" --arg rate_limit_result "$WAH_RESULT_RATE_LIMIT" --arg status_empty '' --arg status_auth_error 'auth-error' --arg status_rate_limited 'rate-limited' --arg status_active 'active' --arg status_idle 'idle' '
 			def account_status: .status // $status_empty;
 			def available_account:
 				(account_status) as $status
@@ -358,9 +363,9 @@ _wah_provider_usage_json() {
 						provider: (.[0].provider // "unknown"),
 						model: (.[0].model // "unknown"),
 						count: length,
-						success: (map(select(.result == "success" and (.exit_code // 1) == 0)) | length),
-						rate_limited: (map(select(.result == "rate_limit" or .provider_error_type == "rate_limit" or .provider_status == "429")) | length),
-						other_failure: (map(select((.result != "success" or (.exit_code // 1) != 0) and .result != "rate_limit" and .provider_error_type != "rate_limit" and .provider_status != "429")) | length),
+						runtime_handoffs: (map(select(.result == "success" and (.exit_code // 1) == 0)) | length),
+						rate_limited: (map(select(.result == $rate_limit_result or .provider_error_type == $rate_limit_result or .provider_status == "429")) | length),
+						other_failure: (map(select((.result != "success" or (.exit_code // 1) != 0) and .result != $rate_limit_result and .provider_error_type != $rate_limit_result and .provider_status != "429")) | length),
 						latest_ts: (map(.ts // 0) | max)
 					})
 					| sort_by(.count, .latest_ts) | reverse | .[0:12]
@@ -387,10 +392,10 @@ _wah_provider_usage_json() {
 				)
 			}' <"$input_file" 2>/dev/null || printf '{"provider_model_usage":[],"recent_events":[],"account_pool":[]}'
 	else
-		jq -rn --argjson cutoff "$cutoff_epoch" --argjson now "$now_epoch" '
+		jq -rn --argjson cutoff "$cutoff_epoch" --argjson now "$now_epoch" --arg rate_limit_result "$WAH_RESULT_RATE_LIMIT" '
 			[inputs | select((.ts // 0) >= $cutoff and (.ts // 0) <= $now)] as $w
 			| {
-				provider_model_usage: ($w | group_by([.provider // "unknown", .model // "unknown"]) | map({provider: (.[0].provider // "unknown"), model: (.[0].model // "unknown"), count: length, success: (map(select(.result == "success" and (.exit_code // 1) == 0)) | length), rate_limited: (map(select(.result == "rate_limit" or .provider_error_type == "rate_limit" or .provider_status == "429")) | length), other_failure: (map(select((.result != "success" or (.exit_code // 1) != 0) and .result != "rate_limit" and .provider_error_type != "rate_limit" and .provider_status != "429")) | length), latest_ts: (map(.ts // 0) | max)}) | sort_by(.count, .latest_ts) | reverse | .[0:12]),
+				provider_model_usage: ($w | group_by([.provider // "unknown", .model // "unknown"]) | map({provider: (.[0].provider // "unknown"), model: (.[0].model // "unknown"), count: length, runtime_handoffs: (map(select(.result == "success" and (.exit_code // 1) == 0)) | length), rate_limited: (map(select(.result == $rate_limit_result or .provider_error_type == $rate_limit_result or .provider_status == "429")) | length), other_failure: (map(select((.result != "success" or (.exit_code // 1) != 0) and .result != $rate_limit_result and .provider_error_type != $rate_limit_result and .provider_status != "429")) | length), latest_ts: (map(.ts // 0) | max)}) | sort_by(.count, .latest_ts) | reverse | .[0:12]),
 				recent_events: ($w | sort_by(.ts // 0) | reverse | .[0:10] | map({ts, provider, model, result, exit_code, issue_number, session_key})),
 				account_pool: []
 			}' <"$input_file" 2>/dev/null || printf '{"provider_model_usage":[],"recent_events":[],"account_pool":[]}'
@@ -422,50 +427,104 @@ _wah_count_stats_counter() {
 }
 
 #######################################
-# Get issue count for `solved:worker` issues closed since `since_iso`.
-# Caches result for $WAH_PR_CACHE_TTL seconds to avoid hammering gh.
+# Count one bounded GitHub list query.
+#
+# $1 — resource (`pr` or `issue`)
+# $2 — state (`all`, `merged`, or `closed`)
+# $3 — GitHub search expression
+# $4 — repo_slug (optional; empty = current repo)
+# stdout — integer count, or `null` on query/parse failure.
+#######################################
+_wah_gh_list_count() {
+	local resource="$1"
+	local state="$2"
+	local search_query="$3"
+	local repo_slug="${4:-}"
+	local -a gh_args=("$resource" list --search "$search_query" --state "$state" --limit 1000 --json number)
+	[[ -n "$repo_slug" ]] && gh_args+=(--repo "$repo_slug")
+
+	local payload count
+	if ! payload=$(gh "${gh_args[@]}" 2>/dev/null); then
+		printf 'null\n'
+		return 1
+	fi
+	count=$(printf '%s' "$payload" | jq -r 'if type == "array" then length else empty end' 2>/dev/null) || count=""
+	if [[ ! "$count" =~ ^[0-9]+$ ]]; then
+		printf 'null\n'
+		return 1
+	fi
+	printf '%s\n' "$count"
+	return 0
+}
+
+#######################################
+# Get worker delivery-stage counts since `since_iso`.
+# Caches the combined result for $WAH_PR_CACHE_TTL seconds so one summary run
+# does not turn into repeated GitHub search traffic.
+#
+# `delivered_successes` uses closed `solved:worker` issues as the authoritative
+# task-delivery signal. That label is applied by merge completion paths only
+# after a worker-owned PR has been merged and its linked issue is closed.
 #
 # $1 — since_iso (YYYY-MM-DDTHH:MM:SSZ)
 # $2 — repo_slug (optional; empty = current repo)
-# stdout — integer issue count, or "?" on gh failure.
+# $3 — stable window label for the cache key (optional; defaults to since_iso)
+# stdout — JSON object with nullable stage counts and check_state.
 #######################################
-_wah_solved_worker_count() {
-	local since_iso="$1" repo_slug="${2:-}"
+_wah_delivery_stages_json() {
+	local since_iso="$1"
+	local repo_slug="${2:-}"
+	local cache_window="${3:-$since_iso}"
 	local cache="$WAH_PR_CACHE_FILE"
-	local cache_key="solved-worker|${repo_slug:-current}|${since_iso}"
+	local cache_key="delivery-stages|${repo_slug:-current}|${cache_window}"
 
 	# Check cache freshness (portable mtime via shared-constants).
 	if [[ -f "$cache" ]]; then
-		local mtime now age cached_key cached_count
+		local mtime now age cached_key cached_delivery
 		mtime=$(_file_mtime_epoch "$cache" 2>/dev/null) || mtime=0
 		now=$(date +%s)
 		age=$((now - mtime))
 		if [[ $age -lt $WAH_PR_CACHE_TTL ]]; then
 			cached_key=$(jq -r '.key // ""' "$cache" 2>/dev/null) || cached_key=""
 			if [[ "$cached_key" == "$cache_key" ]]; then
-				cached_count=$(jq -r '.count // "?"' "$cache" 2>/dev/null) || cached_count="?"
-				printf '%s\n' "$cached_count"
-				return 0
+				cached_delivery=$(jq -c '.delivery // empty' "$cache" 2>/dev/null) || cached_delivery=""
+				if [[ -n "$cached_delivery" ]]; then
+					printf '%s\n' "$cached_delivery"
+					return 0
+				fi
 			fi
 		fi
 	fi
 
-	# Cache miss — query gh (5s timeout via gh's own client). solved:worker is
-	# the completion-attribution signal; origin:worker alone only says who
-	# created the PR and can over-credit interactive fixes.
-	local count gh_args=(issue list --search "closed:>=${since_iso} label:solved:worker" --state closed --limit 1000 --json number)
-	[[ -n "$repo_slug" ]] && gh_args+=(--repo "$repo_slug")
-	count=$(gh "${gh_args[@]}" 2>/dev/null | jq 'length' 2>/dev/null) || count="?"
+	local pr_opened="$WAH_JSON_NULL" pr_merged="$WAH_JSON_NULL" issue_solved="$WAH_JSON_NULL" check_state="ok"
+	pr_opened=$(_wah_gh_list_count "pr" "all" "created:>=${since_iso} label:origin:worker" "$repo_slug") || check_state="$WAH_DELIVERY_FAILED"
+	pr_merged=$(_wah_gh_list_count "pr" "merged" "merged:>=${since_iso} label:origin:worker" "$repo_slug") || check_state="$WAH_DELIVERY_FAILED"
+	issue_solved=$(_wah_gh_list_count "issue" "closed" "closed:>=${since_iso} label:solved:worker" "$repo_slug") || check_state="$WAH_DELIVERY_FAILED"
+
+	local delivery_json
+	delivery_json=$(jq -n \
+		--argjson pr_opened "$pr_opened" \
+		--argjson pr_merged "$pr_merged" \
+		--argjson issue_solved "$issue_solved" \
+		--arg check_state "$check_state" \
+		'{
+			pr_opened: $pr_opened,
+			pr_merged: $pr_merged,
+			issue_solved: $issue_solved,
+			delivered_successes: (if $check_state == "ok" then $issue_solved else null end),
+			check_state: $check_state,
+			success_basis: "closed issue labelled solved:worker after merged worker PR"
+		}')
 
 	# Best-effort cache write.
 	mkdir -p "$(dirname "$cache")" 2>/dev/null || true
-	if [[ "$count" != "?" ]]; then
+	if [[ "$check_state" == "ok" ]]; then
 		local cache_ts
 		cache_ts=$(date +%s)
-		jq -n --arg key "$cache_key" --argjson count "$count" --argjson ts "$cache_ts" \
-			'{key: $key, count: $count, ts: $ts}' >"$cache" 2>/dev/null || true
+		jq -n --arg key "$cache_key" --argjson delivery "$delivery_json" --argjson ts "$cache_ts" \
+			'{key: $key, delivery: $delivery, ts: $ts}' >"$cache" 2>/dev/null || true
 	fi
-	printf '%s\n' "$count"
+	printf '%s\n' "$delivery_json"
 	return 0
 }
 
@@ -477,19 +536,25 @@ _wah_emit_human() {
 	local since_label="$1" cutoff_iso="$2"
 	local total="$3" terminal_total="$4" succ="$5" wk="$6" wc="$7" sic="$8" rl="$9" of="${10}"
 	local cb="${11}" gqlow="${12}" db_skip="${13}" nwbreaker="${14}"
-	local solved_count="${15}" pr_check_state="${16}" repo_label="${17}"
-	local details_json="${18}"
-	local blocker_json="${19}"
+	local delivery_json="${15}" repo_label="${16}"
+	local details_json="${17}"
+	local blocker_json="${18}"
 
 	local divider="==========================================================="
 
-	# Compute success rate (terminal events only — exclude watchdog_continue
-	# which is a heartbeat sample, not a terminal outcome).
+	# Runtime handoff rate excludes continuation heartbeats. It is intentionally
+	# not called success: external delivery requires a merged PR and closed issue.
 	local terminal=$((succ + wk + rl + of))
-	local rate_pct="n/a"
+	local handoff_rate_pct="n/a"
 	if [[ $terminal -gt 0 ]]; then
-		rate_pct=$(awk -v s="$succ" -v t="$terminal" 'BEGIN{printf "%.0f%%", (s/t)*100}')
+		handoff_rate_pct=$(awk -v s="$succ" -v t="$terminal" 'BEGIN{printf "%.0f%%", (s/t)*100}')
 	fi
+	local delivery_state pr_opened pr_merged issue_solved delivered_successes
+	delivery_state=$(printf '%s' "$delivery_json" | jq -r --arg failed "$WAH_DELIVERY_FAILED" '.check_state // $failed' 2>/dev/null || printf '%s' "$WAH_DELIVERY_FAILED")
+	pr_opened=$(printf '%s' "$delivery_json" | jq -r '.pr_opened // "?"' 2>/dev/null || printf '?')
+	pr_merged=$(printf '%s' "$delivery_json" | jq -r '.pr_merged // "?"' 2>/dev/null || printf '?')
+	issue_solved=$(printf '%s' "$delivery_json" | jq -r '.issue_solved // "?"' 2>/dev/null || printf '?')
+	delivered_successes=$(printf '%s' "$delivery_json" | jq -r '.delivered_successes // "?"' 2>/dev/null || printf '?')
 
 	printf '%s\n' "$divider"
 	printf 'Worker activity since %s (cutoff: %s)\n' "$since_label" "$cutoff_iso"
@@ -499,7 +564,7 @@ _wah_emit_human() {
 	printf 'headless-runtime-metrics.jsonl (canonical worker outcomes):\n'
 	printf '  Raw attempt/events:          %d\n' "$total"
 	printf '  Terminal session outcomes:   %d\n' "$terminal_total"
-	printf '  Succeeded:                   %d  (%s of terminal)\n' "$succ" "$rate_pct"
+	printf '  Runtime handoffs:            %d  (%s of terminal)\n' "$succ" "$handoff_rate_pct"
 	printf '  Watchdog stall-killed:       %d\n' "$wk"
 	printf '  Watchdog stall-continued:    %d  (heartbeat, not terminal)\n' "$wc"
 	printf '  Service interruption resumed:%d  (heartbeat, not terminal)\n' "$sic"
@@ -527,10 +592,14 @@ _wah_emit_human() {
 	printf '  dispatch_backoff_skipped:                %d\n' "$db_skip"
 	printf '  pulse_dispatch_no_work_breaker_tripped:  %d\n' "$nwbreaker"
 	printf '\n'
-	printf 'solved:worker issues closed in window:\n'
-	printf '  %s' "$solved_count"
-	[[ "$pr_check_state" == "skipped" ]] && printf '  (skipped; use --pr-check)'
-	[[ "$pr_check_state" == "failed" ]] && printf '  (gh query failed)'
+	printf 'GitHub delivery stages (external truth):\n'
+	printf '  PRs opened:                  %s\n' "$pr_opened"
+	printf '  PRs merged:                  %s\n' "$pr_merged"
+	printf '  Issues solved and closed:    %s\n' "$issue_solved"
+	printf '  Delivered successes:         %s\n' "$delivered_successes"
+	printf '  Check state:                 %s' "$delivery_state"
+	[[ "$delivery_state" == "skipped" ]] && printf '  (use --pr-check)'
+	[[ "$delivery_state" == "$WAH_DELIVERY_FAILED" ]] && printf '  (one or more gh queries failed)'
 	printf '\n'
 	printf '%s\n' "$divider"
 	return 0
@@ -552,7 +621,7 @@ _wah_emit_providers_human() {
 	printf '%s' "$usage_json" | jq -r '
 		(.provider_model_usage // []) as $rows
 		| if ($rows | length) == 0 then "  (no worker metric events in window)"
-		else $rows[] | "  \(.provider)/\(.model): count=\(.count) success=\(.success) rate_limited=\(.rate_limited) other_failure=\(.other_failure) latest_ts=\(.latest_ts)"
+		else $rows[] | "  \(.provider)/\(.model): count=\(.count) runtime_handoffs=\(.runtime_handoffs) rate_limited=\(.rate_limited) other_failure=\(.other_failure) latest_ts=\(.latest_ts)"
 		end' 2>/dev/null || printf '  (provider/model usage unavailable)\n'
 	printf '\n'
 	printf 'OAuth account pool aggregate (redacted; no emails/tokens):\n'
@@ -579,13 +648,9 @@ _wah_emit_json() {
 	local since_label="$1" cutoff_iso="$2" cutoff_epoch="$3"
 	local total="$4" terminal_total="$5" succ="$6" wk="$7" wc="$8" sic="$9" rl="${10}" of="${11}"
 	local cb="${12}" gqlow="${13}" db_skip="${14}" nwbreaker="${15}"
-	local solved_count="${16}" pr_check_state="${17}" repo_label="${18}"
-	local details_json="${19}"
-	local blocker_json="${20}"
-
-	# solved_count may be "?" on gh failure — coerce to null in JSON.
-	local solved_json="$solved_count"
-	[[ "$solved_count" == "?" ]] && solved_json="null"
+	local delivery_json="${16}" repo_label="${17}"
+	local details_json="${18}"
+	local blocker_json="${19}"
 
 	jq -n \
 		--arg since "$since_label" \
@@ -603,10 +668,9 @@ _wah_emit_json() {
 		--argjson gqlow "$gqlow" \
 		--argjson db_skip "$db_skip" \
 		--argjson nwbreaker "$nwbreaker" \
-		--argjson solved_count "$solved_json" \
+		--argjson delivery "$delivery_json" \
 		--argjson details "$details_json" \
 		--argjson blockers "$blocker_json" \
-		--arg pr_check_state "$pr_check_state" \
 		--arg repo "$repo_label" \
 		'{
 			window: { since: $since, cutoff_iso: $cutoff_iso, cutoff_epoch: $cutoff_epoch },
@@ -616,7 +680,9 @@ _wah_emit_json() {
 				terminal_session_total: $terminal_total,
 				event_total: ($details.event_total // $total),
 				continuation_events: ($details.continuation_events // 0),
-				succeeded: $succ,
+				runtime_handoffs: $succ,
+				succeeded: ($delivery.delivered_successes // null),
+				success_basis: $delivery.success_basis,
 				watchdog_killed: $wk,
 				watchdog_continued: $wc,
 				service_interrupted: $sic,
@@ -637,8 +703,9 @@ _wah_emit_json() {
 				pulse_dispatch_no_work_breaker_tripped: $nwbreaker
 			},
 			progress_blockers: $blockers,
-			worker_solved_issues: { count: $solved_count, check_state: $pr_check_state },
-			worker_prs: { count: $solved_count, check_state: $pr_check_state, deprecated: true }
+			delivery_stages: $delivery,
+			worker_solved_issues: { count: $delivery.issue_solved, check_state: $delivery.check_state, deprecated: true },
+			worker_prs: { count: $delivery.pr_opened, merged_count: $delivery.pr_merged, check_state: $delivery.check_state, deprecated: true }
 		}'
 	return 0
 }
@@ -710,26 +777,24 @@ cmd_summary() {
 	db_skip=$(_wah_count_stats_counter "dispatch_backoff_skipped" "$cutoff_epoch")
 	nwbreaker=$(_wah_count_stats_counter "pulse_dispatch_no_work_breaker_tripped" "$cutoff_epoch")
 
-	# Solved issue count (optional, network-dependent).
-	local pr_count="?" pr_check_state="ok"
+	# Delivery-stage counts (optional, network-dependent).
+	local delivery_json
 	if [[ $do_pr_check -eq 1 ]]; then
-		pr_count=$(_wah_solved_worker_count "$cutoff_iso" "$repo_label")
-		[[ "$pr_count" == "?" ]] && pr_check_state="failed"
+		delivery_json=$(_wah_delivery_stages_json "$cutoff_iso" "$repo_label" "$since_label")
 	else
-		pr_count="?"
-		pr_check_state="skipped"
+		delivery_json='{"pr_opened":null,"pr_merged":null,"issue_solved":null,"delivered_successes":null,"check_state":"skipped","success_basis":"closed issue labelled solved:worker after merged worker PR"}'
 	fi
 
 	if [[ $emit_json -eq 1 ]]; then
 		_wah_emit_json "$since_label" "$cutoff_iso" "$cutoff_epoch" \
 			"$total" "$terminal_total" "$succ" "$wk" "$wc" "$sic" "$rl" "$of" \
 			"$cb" "$gqlow" "$db_skip" "$nwbreaker" \
-			"$pr_count" "$pr_check_state" "$repo_label" "$details_json" "$blocker_json"
+			"$delivery_json" "$repo_label" "$details_json" "$blocker_json"
 	else
 		_wah_emit_human "$since_label" "$cutoff_iso" \
 			"$total" "$terminal_total" "$succ" "$wk" "$wc" "$sic" "$rl" "$of" \
 			"$cb" "$gqlow" "$db_skip" "$nwbreaker" \
-			"$pr_count" "$pr_check_state" "$repo_label" "$details_json" "$blocker_json"
+			"$delivery_json" "$repo_label" "$details_json" "$blocker_json"
 	fi
 	return 0
 }
@@ -803,15 +868,16 @@ Usage:
 Options:
   --since 1h|6h|24h|48h|7d   Lookback window (default: 24h)
   --json                     Emit machine-readable JSON
-  --pr-check                 Run the gh solved-issue query (GraphQL search path)
-  --no-pr-check              Explicitly keep the gh solved-issue query skipped (default)
-  --repo OWNER/REPO          Constrain solved-issue query to a single repo
+  --pr-check                 Query opened/merged worker PRs and solved issues
+                             (three GitHub search calls; disabled by default)
+  --no-pr-check              Explicitly keep delivery-stage queries skipped (default)
+  --repo OWNER/REPO          Constrain delivery-stage queries to a single repo
 
 Sources read (in canonical-precedence order):
   1. ~/.aidevops/logs/headless-runtime-metrics.jsonl  (worker outcomes)
   2. ~/.aidevops/logs/pulse-stats.json                (dispatch counters)
   3. ~/.aidevops/logs/worker-progress-blockers.jsonl  (bounded progress holds)
-  4. gh issue list label:solved:worker                (optional external truth)
+  4. gh pr/issue list worker delivery stages          (optional external truth)
 
 Examples:
   # Last 24 hours, human-readable.
@@ -826,7 +892,7 @@ Examples:
   # Last 7 days, single repo, no network call.
   worker-activity-helper.sh summary --since 7d --repo marcusquinn/aidevops --no-pr-check
 
-  # Include solved:worker issue search when GraphQL budget is healthy.
+  # Include PR-opened, PR-merged, and solved-issue stages when API budget is healthy.
   worker-activity-helper.sh summary --since 24h --pr-check
 
 NOT a substitute for:

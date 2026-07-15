@@ -139,11 +139,20 @@ assert_true "post-read removes blocked after concurrent queue transition" \
 log_verbose() {
 	return 0
 }
+_gh_with_timeout() {
+	local mode="$1"
+	shift
+	[[ "$mode" == "read" || "$mode" == "write" ]] || return 1
+	if "$@"; then
+		return 0
+	fi
+	return 1
+}
 gh() {
 	printf 'GraphQL: Validation failed: already been taken\n'
 	return 1
 }
-export -f gh log_verbose
+export -f gh log_verbose _gh_with_timeout
 # shellcheck disable=SC1090
 source "${SCRIPTS_DIR}/issue-sync-lib-parse.sh"
 # shellcheck disable=SC1090
@@ -189,6 +198,32 @@ export -f gh_issue_list
 built_graph=$(_dep_graph_build_repo_data "owner/repo")
 assert_eq "repo graph build prunes circular dependency" '[]' \
 	"$(printf '%s' "$built_graph" | jq -c '.blocked_by["10"].issue_nums')"
+
+if (
+	unset DEP_GRAPH_CACHE_FILE
+	_dep_graph_build_repo_data() {
+		printf '%s\n' '{"open_issues":[],"task_to_issue":{},"blocked_by":{},"defer_flags":{}}'
+		return 0
+	}
+	refresh_blocked_status_from_graph() {
+		return 0
+	}
+	normalize_repo_dependency_readiness "owner/repo"
+); then
+	assert_eq "repo normalization tolerates unset cache path" "safe" "safe"
+else
+	assert_eq "repo normalization tolerates unset cache path" "safe" "failed"
+fi
+
+home_result=$(
+	unset HOME
+	if normalize_repo_dependency_readiness_if_due "owner/repo"; then
+		printf '0'
+	else
+		printf '%s' "$?"
+	fi
+)
+assert_eq "repo normalization fails safely without HOME" "1" "$home_result"
 
 # The shared candidate selector must recover an all-blocked roadmap even when
 # called directly by a workers sweep without the full pulse preflight.

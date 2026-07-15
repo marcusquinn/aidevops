@@ -68,6 +68,14 @@ if [[ "$cmd" == "is-assigned" ]]; then
 		printf '%s\n' 'STALE_BLOCKED_BY_DEPENDENCY: issue #2905 in exampleorg/examplerepo - unassigned runner but kept status:blocked due to unresolved blocked-by (no_work)'
 		exit 1
 		;;
+	terminal)
+		printf '%s\n' 'STALE_ESCALATED: issue #2905 in exampleorg/examplerepo — unassigned runner, applied needs-maintainer-review'
+		exit 1
+		;;
+	terminal_pr)
+		printf '%s\n' 'STALE_PR_ESCALATED: issue #2905 in exampleorg/examplerepo — PR #456 preserved, applied needs-maintainer-review'
+		exit 1
+		;;
 	*)
 		printf '%s\n' 'ASSIGNED: issue #2905 in exampleorg/examplerepo is assigned to runner'
 		exit 0
@@ -90,12 +98,26 @@ source "${SCRIPTS_DIR}/pulse-dispatch-dedup-layers.sh"
 FAST_FAIL_CALLS=0
 LAST_FAST_FAIL=""
 CLASSIFY_LOG="${TMP_DIR}/classify.log"
+CONSOLIDATION_CALLS=0
+LAST_CONSOLIDATION=""
 
 reset_observations() {
 	FAST_FAIL_CALLS=0
 	LAST_FAST_FAIL=""
+	CONSOLIDATION_CALLS=0
+	LAST_CONSOLIDATION=""
 	: >"$LOGFILE"
 	: >"$CLASSIFY_LOG"
+	return 0
+}
+
+_route_terminal_breaker_to_consolidation() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local breaker_source="$3"
+	local breaker_detail="${4:-}"
+	CONSOLIDATION_CALLS=$((CONSOLIDATION_CALLS + 1))
+	LAST_CONSOLIDATION="${issue_number}|${repo_slug}|${breaker_source}|${breaker_detail}"
 	return 0
 }
 
@@ -219,10 +241,50 @@ test_stale_recovery_blocked_by_dependency_blocks_redispatch() {
 	return 0
 }
 
+test_terminal_stale_recovery_routes_consolidation_and_blocks() {
+	export TEST_STALE_MODE="terminal"
+	reset_observations
+	local rc=0
+	_dedup_layer6_assignee_and_stale "2905" "exampleorg/examplerepo" "runner" || rc=$?
+
+	if [[ "$rc" -ne 0 ]]; then
+		fail "terminal stale recovery blocks redispatch" "expected rc=0, got rc=${rc}"
+		return 0
+	fi
+	if [[ "$CONSOLIDATION_CALLS" -ne 1 || "$LAST_CONSOLIDATION" != 2905\|exampleorg/examplerepo\|stale-recovery-threshold\|STALE_ESCALATED:* ]]; then
+		fail "terminal stale recovery routes consolidation once" \
+			"calls=${CONSOLIDATION_CALLS} payload=${LAST_CONSOLIDATION}"
+		return 0
+	fi
+	pass "terminal stale recovery routes consolidation once and blocks redispatch"
+	return 0
+}
+
+test_terminal_pr_checkpoint_routes_existing_consolidation_guard() {
+	export TEST_STALE_MODE="terminal_pr"
+	reset_observations
+	local rc=0
+	_dedup_layer6_assignee_and_stale "2905" "exampleorg/examplerepo" "runner" || rc=$?
+
+	if [[ "$rc" -ne 0 ]]; then
+		fail "terminal PR checkpoint blocks redispatch" "expected rc=0, got rc=${rc}"
+		return 0
+	fi
+	if [[ "$CONSOLIDATION_CALLS" -ne 1 || "$LAST_CONSOLIDATION" != 2905\|exampleorg/examplerepo\|stale-pr-checkpoint\|STALE_PR_ESCALATED:* ]]; then
+		fail "terminal PR checkpoint routes existing consolidation guard" \
+			"calls=${CONSOLIDATION_CALLS} payload=${LAST_CONSOLIDATION}"
+		return 0
+	fi
+	pass "terminal PR checkpoint routes consolidation guard and blocks redispatch"
+	return 0
+}
+
 test_stale_recovery_without_claim_skips_fast_fail
 test_prelaunch_canary_stale_recovery_skips_fast_fail
 test_stale_recovery_with_dispatch_claim_records_fast_fail
 test_stale_recovery_blocked_by_dependency_blocks_redispatch
+test_terminal_stale_recovery_routes_consolidation_and_blocks
+test_terminal_pr_checkpoint_routes_existing_consolidation_guard
 
 printf '\nTests run: %s failed: %s\n' "$TESTS_RUN" "$TESTS_FAILED"
 [[ "$TESTS_FAILED" -eq 0 ]] || exit 1

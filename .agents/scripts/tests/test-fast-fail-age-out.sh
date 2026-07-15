@@ -14,15 +14,20 @@
 #   CI flakes). Manual recovery required touching the counter file — operators
 #   rarely do this, leaving issues permanently stuck.
 #
-# Tests (8):
+# Assertions (13):
 #   1. HARD STOP + age > 24h → counter reset to 0
 #   2. HARD STOP + age < 24h → NOT reset (quiet-period guard)
 #   3. count < HARD STOP (below threshold) → NOT affected
 #   4. After reset, fast_fail_is_skipped returns 1 (safe to dispatch)
 #   5. reset_count increments on each age-out
-#   6. After FAST_FAIL_AGE_OUT_MAX_RESETS resets, NMR label applied (not reset again)
-#   7. Issue comment posted once per age-out event
-#   8. Infra/no_work hard stops use FAST_FAIL_INFRA_AGE_OUT_SECONDS
+#   6. After FAST_FAIL_AGE_OUT_MAX_RESETS, the counter is not reset
+#   7. After FAST_FAIL_AGE_OUT_MAX_RESETS, NMR is applied
+#   8. Exhausted age-out retries route to consolidation
+#   9. Issue comment posted once per age-out event
+#  10. Infra/no_work hard stops use FAST_FAIL_INFRA_AGE_OUT_SECONDS
+#  11. Non-rate-limit threshold crossing routes consolidation exactly once
+#  12. Hard-stop checks reuse the persisted consolidation handoff marker
+#  13. Rate-limit hard stops do not consolidate issue scope
 #
 # Stub strategy:
 #   - Set FAST_FAIL_STATE_FILE to a tmpdir path so tests are hermetic.
@@ -115,6 +120,18 @@ escalate_issue_tier() {
 	return 0
 }
 export -f escalate_issue_tier
+
+CONSOLIDATION_CALLS=0
+LAST_CONSOLIDATION=""
+_route_terminal_breaker_to_consolidation() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local breaker_source="$3"
+	local breaker_detail="${4:-}"
+	CONSOLIDATION_CALLS=$((CONSOLIDATION_CALLS + 1))
+	LAST_CONSOLIDATION="${issue_number}|${repo_slug}|${breaker_source}|${breaker_detail}"
+	return 0
+}
 
 # Source fast-fail module (include guard prevents double-source)
 # shellcheck source=../pulse-fast-fail.sh
@@ -228,6 +245,8 @@ fi
 : >"$GH_CALLS"
 # reset_count=3 means this would be the 4th reset (> max=3), so NMR fires.
 _write_ff_entry "105" "6" "20" "3"
+CONSOLIDATION_CALLS=0
+LAST_CONSOLIDATION=""
 
 fast_fail_age_out "105" "test/repo" 2>/dev/null || true
 
@@ -247,6 +266,13 @@ if printf '%s' "$gh_calls_content" | grep -q "needs-maintainer-review"; then
 else
 	fail "after MAX_RESETS exceeded → needs-maintainer-review label applied" \
 		"expected 'needs-maintainer-review' in gh calls: ${gh_calls_content}"
+fi
+
+if [[ "$CONSOLIDATION_CALLS" -eq 1 && "$LAST_CONSOLIDATION" == "105|test/repo|fast-fail-age-out-ceiling|maximum automatic resets exhausted" ]]; then
+	pass "after MAX_RESETS exceeded → terminal outcome routes to consolidation"
+else
+	fail "after MAX_RESETS exceeded → terminal outcome routes to consolidation" \
+		"calls=${CONSOLIDATION_CALLS} payload=${LAST_CONSOLIDATION}"
 fi
 
 # =============================================================================
@@ -280,6 +306,54 @@ if [[ "$result_count" == "0" ]]; then
 else
 	fail "infra/no_work HARD STOP uses shorter age-out threshold" \
 		"expected count=0, got count=${result_count}"
+fi
+
+# =============================================================================
+# Assertions 11-13 — terminal fast-fail consolidation routing and dedup
+# =============================================================================
+export FAST_FAIL_SKIP_THRESHOLD=2
+export FAST_FAIL_AGE_OUT_MIN_COUNT=2
+CONSOLIDATION_CALLS=0
+LAST_CONSOLIDATION=""
+printf '{}\n' >"$FAST_FAIL_STATE_FILE"
+
+fast_fail_record "108" "test/repo" "runtime" 2>/dev/null || true
+fast_fail_record "108" "test/repo" "runtime" 2>/dev/null || true
+
+route_marker=$(jq -r '."test/repo/108".terminal_consolidation_routed // false' "$FAST_FAIL_STATE_FILE" 2>/dev/null) || route_marker=false
+if [[ "$CONSOLIDATION_CALLS" -eq 1 && "$LAST_CONSOLIDATION" == "108|test/repo|fast-fail-hard-stop|reason=runtime" && "$route_marker" == "true" ]]; then
+	pass "non-rate-limit threshold crossing routes consolidation exactly once"
+else
+	fail "non-rate-limit threshold crossing routes consolidation exactly once" \
+		"calls=${CONSOLIDATION_CALLS} payload=${LAST_CONSOLIDATION} marker=${route_marker}"
+fi
+
+skip_rc=0
+fast_fail_is_skipped "108" "test/repo" 2>/dev/null || skip_rc=$?
+if [[ "$skip_rc" -eq 0 && "$CONSOLIDATION_CALLS" -eq 1 ]]; then
+	pass "hard-stop check reuses persisted consolidation handoff marker"
+else
+	fail "hard-stop check reuses persisted consolidation handoff marker" \
+		"skip_rc=${skip_rc} calls=${CONSOLIDATION_CALLS}"
+fi
+
+CONSOLIDATION_CALLS=0
+LAST_CONSOLIDATION=""
+printf '{}\n' >"$FAST_FAIL_STATE_FILE"
+_ff_query_pool_retry_seconds() {
+	local provider="$1"
+	: "$provider"
+	printf '%s' '-1'
+	return 0
+}
+fast_fail_record "109" "test/repo" "rate_limit" 2>/dev/null || true
+fast_fail_record "109" "test/repo" "rate_limit" 2>/dev/null || true
+fast_fail_is_skipped "109" "test/repo" 2>/dev/null || true
+if [[ "$CONSOLIDATION_CALLS" -eq 0 ]]; then
+	pass "rate-limit hard stop does not consolidate issue scope"
+else
+	fail "rate-limit hard stop does not consolidate issue scope" \
+		"calls=${CONSOLIDATION_CALLS} payload=${LAST_CONSOLIDATION}"
 fi
 
 # =============================================================================

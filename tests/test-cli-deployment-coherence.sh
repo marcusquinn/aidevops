@@ -10,7 +10,8 @@ grep -q 'DEPLOYED_CLI="$REAL_HOME/.aidevops/agents/aidevops.sh"' "$REPO_DIR/bin/
 # shellcheck disable=SC2016
 grep -q '"$convergence_helper" converge "$cli_source" "$orchestrator_source" "$deployed_cli" "$deployed_version"' \
 	"$REPO_DIR/.agents/scripts/setup/modules/config.sh"
-grep -q 'git clone --depth 1 --branch main' \
+# shellcheck disable=SC2016
+grep -q 'git clone --depth 1 "${REPO_URL:-https://github.com/marcusquinn/aidevops.git}"' \
 	"$REPO_DIR/.agents/scripts/aidevops-cli/aidevops-update-lib.sh"
 
 mkdir -p "$TEST_HOME/.aidevops/agents/scripts" \
@@ -21,6 +22,11 @@ printf '#!/usr/bin/env bash\nprintf "canonical\\n"\n' >"$TEST_HOME/Git/aidevops/
 result=$(HOME="$TEST_HOME" bash "$REPO_DIR/bin/aidevops" version-check)
 [[ "$result" == "deployed:version-check" ]] || {
 	printf 'FAIL: launcher selected %s\n' "$result" >&2
+	exit 1
+}
+result=$(HOME="$TEST_HOME" AIDEVOPS_PREFER_LOCAL=1 bash "$REPO_DIR/bin/aidevops" version-check)
+[[ "$result" == "canonical" ]] || {
+	printf 'FAIL: local-development override selected %s\n' "$result" >&2
 	exit 1
 }
 
@@ -37,7 +43,7 @@ exit 42
 EOF
 printf '#!/usr/bin/env bash\nexit 1\n' >"$TEST_HOME/bin/curl"
 chmod +x "$TEST_HOME/bin/curl"
-result=$(cd "$TEST_HOME" && HOME="$TEST_HOME" PATH="$TEST_HOME/bin:/usr/bin:/bin" bash "$REPO_DIR/bin/aidevops" --version)
+result=$(cd "$TEST_HOME" && HOME="$TEST_HOME" PATH="$TEST_HOME/bin:$PATH" bash "$REPO_DIR/bin/aidevops" --version)
 [[ "$result" == "aidevops 9.8.7" ]] || {
 	printf 'FAIL: real deployed CLI selected %s\n' "$result" >&2
 	exit 1

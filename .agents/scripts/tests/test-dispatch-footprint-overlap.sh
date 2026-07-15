@@ -6,8 +6,8 @@
 #
 # Asserts the file-footprint overlap throttle works correctly:
 #
-#   1. _footprint_extract_paths correctly parses EDIT:/NEW:/backtick paths
-#      from issue bodies and strips line qualifiers.
+#   1. _footprint_extract_paths parses explicit EDIT:/NEW:/File: declarations
+#      from issue bodies, ignores context references, and strips line qualifiers.
 #   2. _footprint_check_overlap detects overlap between a candidate and
 #      in-flight issues (via mock data).
 #   3. _footprint_check_overlap allows dispatch when file sets are disjoint.
@@ -50,27 +50,31 @@ mkdir -p "${HOME}/.aidevops/logs" "${HOME}/.aidevops/.agent-workspace/supervisor
 source "${TEST_SCRIPTS_DIR}/dispatch-dedup-footprint.sh"
 
 # =============================================================================
-# Test 1 — _footprint_extract_paths parses EDIT/NEW prefix paths
+# Test 1 — _footprint_extract_paths parses EDIT/NEW/File prefix paths
 # =============================================================================
+# shellcheck disable=SC2016 # Markdown backticks are literal fixture content.
 body_with_edits='## Files to Modify
 
 - `EDIT: .agents/scripts/pulse-wrapper.sh:45-60` — add throttle
 - `NEW: .agents/scripts/dispatch-dedup-footprint.sh` — new module
-- `EDIT: .agents/configs/complexity-thresholds.conf` — update threshold'
+- `EDIT: .agents/configs/complexity-thresholds.conf` — update threshold
+- File: `docs/dispatch.md` — update behavior documentation'
 
 result=$(_footprint_extract_paths "$body_with_edits")
-# Should contain all three files, stripped of line qualifiers
+# Should contain all four files, stripped of line qualifiers
 if printf '%s' "$result" | grep -q "pulse-wrapper.sh" &&
 	printf '%s' "$result" | grep -q "dispatch-dedup-footprint.sh" &&
-	printf '%s' "$result" | grep -q "complexity-thresholds.conf"; then
-	print_result "extract_paths: parses EDIT/NEW prefixed paths" 0
+	printf '%s' "$result" | grep -q "complexity-thresholds.conf" &&
+	printf '%s' "$result" | grep -q "docs/dispatch.md"; then
+	print_result "extract_paths: parses EDIT/NEW/File prefixed paths" 0
 else
-	print_result "extract_paths: parses EDIT/NEW prefixed paths" 1 "(got: ${result})"
+	print_result "extract_paths: parses EDIT/NEW/File prefixed paths" 1 "(got: ${result})"
 fi
 
 # =============================================================================
 # Test 2 — _footprint_extract_paths strips line qualifiers
 # =============================================================================
+# shellcheck disable=SC2016 # Markdown backticks are literal fixture content.
 body_with_lines='- `EDIT: scripts/helper.sh:1477` — fix bug
 - `EDIT: scripts/other.sh:221-253` — refactor section'
 
@@ -83,26 +87,48 @@ else
 fi
 
 # =============================================================================
-# Test 3 ��� _footprint_extract_paths parses backtick paths on list items
+# Test 3 — _footprint_extract_paths ignores context-only paths
 # =============================================================================
-body_backticks='## Context
+# shellcheck disable=SC2016 # Markdown backticks are literal fixture content.
+body_context_only='## Context
 
 Root-cause data and prior fix: GH#19106 / PR #19107. Relevant files:
 - `.agents/scripts/dispatch-dedup-helper.sh` (the dedup ledger)
 - `.agents/scripts/pulse-wrapper.sh` (dispatch caller)
 - `.agents/templates/brief-template.md` (Files to modify section format)'
 
-result=$(_footprint_extract_paths "$body_backticks")
-if printf '%s' "$result" | grep -q "dispatch-dedup-helper.sh" &&
-	printf '%s' "$result" | grep -q "pulse-wrapper.sh" &&
-	printf '%s' "$result" | grep -q "brief-template.md"; then
-	print_result "extract_paths: parses backtick paths on list items" 0
+result=$(_footprint_extract_paths "$body_context_only")
+if [[ -z "$result" ]]; then
+	print_result "extract_paths: ignores context-only paths" 0
 else
-	print_result "extract_paths: parses backtick paths on list items" 1 "(got: ${result})"
+	print_result "extract_paths: ignores context-only paths" 1 "(got: ${result})"
 fi
 
 # =============================================================================
-# Test 4 — _footprint_extract_paths returns empty for no-path body
+# Test 4 — _footprint_extract_paths returns only declared paths in mixed briefs
+# =============================================================================
+# shellcheck disable=SC2016 # Markdown backticks are literal fixture content.
+body_mixed='## Files to Modify
+
+- EDIT: `.agents/scripts/dispatch-dedup-footprint.sh:60-90` — intent-aware parser
+- NEW: `.agents/scripts/tests/test-footprint-intent.sh` — regression coverage
+
+## Reference Pattern
+
+- `.agents/scripts/pulse-dispatch-large-file-gate.sh` — context only
+- `.agents/scripts/tests/test-large-file-gate-extract-edit-only.sh` — context only'
+
+result=$(_footprint_extract_paths "$body_mixed")
+expected='.agents/scripts/dispatch-dedup-footprint.sh
+.agents/scripts/tests/test-footprint-intent.sh'
+if [[ "$result" == "$expected" ]]; then
+	print_result "extract_paths: mixed brief returns only declared targets" 0
+else
+	print_result "extract_paths: mixed brief returns only declared targets" 1 "(got: ${result})"
+fi
+
+# =============================================================================
+# Test 5 — _footprint_extract_paths returns empty for no-path body
 # =============================================================================
 body_no_paths='This issue is about improving performance.
 No specific files mentioned here, just a general discussion.'
@@ -115,7 +141,7 @@ else
 fi
 
 # =============================================================================
-# Test 5 — _footprint_check_overlap detects overlap via mock cache
+# Test 6 — _footprint_check_overlap detects overlap via mock cache
 # =============================================================================
 # Simulate an in-flight issue #100 modifying pulse-wrapper.sh
 _FOOTPRINT_CACHE_REPO="test/repo"
@@ -123,6 +149,7 @@ _FOOTPRINT_CACHE_DATA="scripts/pulse-wrapper.sh|100\nscripts/shared-constants.sh
 _FOOTPRINT_CACHE_EPOCH=$(date +%s)
 
 # Candidate issue #200 also targets pulse-wrapper.sh
+# shellcheck disable=SC2016 # Markdown backticks are literal fixture content.
 candidate_body='## Files to Modify
 - `EDIT: scripts/pulse-wrapper.sh:100-120` — add new feature'
 
@@ -136,13 +163,14 @@ else
 fi
 
 # =============================================================================
-# Test 6 �� _footprint_check_overlap allows disjoint file sets
+# Test 7 — _footprint_check_overlap allows disjoint file sets
 # =============================================================================
 # In-flight #100 modifies pulse-wrapper.sh, candidate #201 modifies a different file
 _FOOTPRINT_CACHE_REPO="test/repo"
 _FOOTPRINT_CACHE_DATA="scripts/pulse-wrapper.sh|100\n"
 _FOOTPRINT_CACHE_EPOCH=$(date +%s)
 
+# shellcheck disable=SC2016 # Markdown backticks are literal fixture content.
 disjoint_body='## Files to Modify
 - `EDIT: scripts/dispatch-claim-helper.sh:50-70` — different file entirely'
 
@@ -156,7 +184,7 @@ else
 fi
 
 # =============================================================================
-# Test 7 — _footprint_check_overlap handles .agents/ prefix normalisation
+# Test 8 — _footprint_check_overlap handles .agents/ prefix normalisation
 # =============================================================================
 # In-flight #100 has path without .agents/ prefix
 _FOOTPRINT_CACHE_REPO="test/repo"
@@ -164,6 +192,7 @@ _FOOTPRINT_CACHE_DATA="scripts/pulse-wrapper.sh|100\n"
 _FOOTPRINT_CACHE_EPOCH=$(date +%s)
 
 # Candidate references same file WITH .agents/ prefix
+# shellcheck disable=SC2016 # Markdown backticks are literal fixture content.
 normalise_body='## Files to Modify
 - `EDIT: .agents/scripts/pulse-wrapper.sh:200-220` — same file, different prefix'
 
@@ -177,13 +206,14 @@ else
 fi
 
 # =============================================================================
-# Test 8 — _footprint_check_overlap excludes self from in-flight check
+# Test 9 — _footprint_check_overlap excludes self from in-flight check
 # =============================================================================
 # In-flight includes issue #300 itself
 _FOOTPRINT_CACHE_REPO="test/repo"
 _FOOTPRINT_CACHE_DATA="scripts/pulse-wrapper.sh|300\n"
 _FOOTPRINT_CACHE_EPOCH=$(date +%s)
 
+# shellcheck disable=SC2016 # Markdown backticks are literal fixture content.
 self_body='## Files to Modify
 - `EDIT: scripts/pulse-wrapper.sh:50-60` — same file as self'
 
@@ -197,7 +227,7 @@ else
 fi
 
 # =============================================================================
-# Test 9 — _footprint_get_inflight excludes parent-task coordination footprints
+# Test 10 — _footprint_get_inflight excludes parent-task coordination footprints
 # =============================================================================
 TEST_BIN="${TEST_ROOT}/bin"
 mkdir -p "$TEST_BIN"

@@ -10,6 +10,59 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.32.125] - 2026-07-15
+
+### Changed
+
+- Maintenance: sync ref:GH#27863 to TODO.md [skip ci]
+- Maintenance: mark t18136 complete (pr:#27852 completed:2026-07-15) [skip ci]
+- Maintenance: sync ref:GH#27851 to TODO.md [skip ci]
+
+### Fixed
+
+- prevent cross-install upstream-watch duplicates (#27857)
+
+## [3.32.124] - 2026-07-15
+
+### Changed
+
+- Version bump and maintenance updates
+
+## [3.32.123] - 2026-07-15
+
+### Added
+
+- measure exact GitHub transport attempts (#27798)
+
+### Changed
+
+- Maintenance: sync ref:GH#27821 to TODO.md [skip ci]
+
+## [3.32.122] - 2026-07-15
+
+### Fixed
+
+- parameterize worktree owner claims (#27819)
+- preserve startup status during updates (#27820)
+
+## [3.32.121] - 2026-07-15
+
+### Changed
+
+- Maintenance: ratchet QLTY_SMELL_THRESHOLD 64→61 (-3) [skip ci]
+- Maintenance: sync ref:GH#27777 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#27776 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#27774 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#27772 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#27771 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#27770 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#27769 to TODO.md [skip ci]
+
+### Fixed
+
+- respect declared dispatch footprint intent (#27795)
+- harden dependency normalization environment handling (#27783)
+
 ## [3.32.120] - 2026-07-15
 
 ### Changed
@@ -78,13 +131,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Version bump and maintenance updates
 
-
 ## [3.32.114] - 2026-07-14
 
 ### Changed
 
 - Version bump and maintenance updates
-
 
 ## [3.32.113] - 2026-07-14
 
@@ -108,7 +159,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - Version bump and maintenance updates
-
 
 ## [3.32.110] - 2026-07-14
 
@@ -161,7 +211,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Version bump and maintenance updates
 
-
 ## [3.32.104] - 2026-07-13
 
 ### Fixed
@@ -173,7 +222,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - Version bump and maintenance updates
-
 
 ## [3.32.102] - 2026-07-13
 
@@ -211,7 +259,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Version bump and maintenance updates
 
-
 ## [3.32.97] - 2026-07-13
 
 ### Changed
@@ -229,7 +276,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - Version bump and maintenance updates
-
 
 ## [3.32.94] - 2026-07-13
 
@@ -270,7 +316,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Version bump and maintenance updates
 
-
 ## [3.32.89] - 2026-07-13
 
 ### Changed
@@ -296,7 +341,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - Version bump and maintenance updates
-
 
 ## [3.32.85] - 2026-07-13
 
@@ -326,13 +370,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Version bump and maintenance updates
 
-
 ## [3.32.81] - 2026-07-13
 
 ### Changed
 
 - Version bump and maintenance updates
-
 
 ## [3.32.80] - 2026-07-13
 
@@ -340,13 +382,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Version bump and maintenance updates
 
-
 ## [3.32.79] - 2026-07-13
 
 ### Changed
 
 - Version bump and maintenance updates
-
 
 ## [3.32.78] - 2026-07-12
 
@@ -376,13 +416,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Version bump and maintenance updates
 
-
 ## [3.32.74] - 2026-07-12
 
 ### Changed
 
 - Version bump and maintenance updates
-
 
 ## [3.32.73] - 2026-07-12
 
@@ -397,13 +435,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Version bump and maintenance updates
 
-
 ## [3.32.71] - 2026-07-12
 
 ### Changed
 
 - Version bump and maintenance updates
-
 
 ## [3.32.70] - 2026-07-12
 
@@ -411,13 +447,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Version bump and maintenance updates
 
-
 ## [3.32.69] - 2026-07-12
 
 ### Changed
 
 - Version bump and maintenance updates
-
 
 ## [3.32.68] - 2026-07-12
 
@@ -430,7 +464,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - Version bump and maintenance updates
-
 
 ## [3.32.66] - 2026-07-12
 

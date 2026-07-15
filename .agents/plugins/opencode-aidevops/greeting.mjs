@@ -15,7 +15,7 @@
 //     fires on the first session.updated event within 30s of plugin init.
 //
 // Caching: raw update-check output is written to
-//   ~/.aidevops/cache/session-greeting.txt
+//   ~/.aidevops/cache/session-greeting-opencode.txt
 // so non-Bash agents can read it without re-running the script (t2724 phase 2
 // template change points agents at this file).
 //
@@ -76,13 +76,13 @@ import { homedir } from "os";
 const execAsync = promisify(exec);
 
 const CACHE_DIR = join(homedir(), ".aidevops", "cache");
-const CACHE_BASENAME = "session-greeting.txt";
+const CACHE_BASENAME = "session-greeting-opencode.txt";
 const LOCK_BASENAME = "session-greeting-refresh.lock";
 const LOCK_OWNER_BASENAME = "owner";
 // Comprehensive checks run at most once per 15-minute window. The subprocess
 // times out after 15 seconds, so a lock older than 30 seconds is safe to reap
 // after an abrupt plugin-process exit.
-const REFRESH_TTL_MS = 15 * 60 * 1000;
+export const REFRESH_TTL_MS = 15 * 60 * 1000;
 const LOCK_STALE_MS = 30 * 1000;
 const WARNING_LINE_PREFIXES = ["Pulse stalled", "[OPENCODE MAINTENANCE]", "[WARNING]", "[WARN]"];
 
@@ -113,6 +113,7 @@ function runGreetingAsync({ scriptsDir, client, cacheFile, lockDir, lockToken, e
   Promise.resolve()
     .then(() => execGreeting(`bash ${JSON.stringify(script)} --interactive`, {
       timeout: 15000,
+      env: { ...process.env, OPENCODE: "1" },
     }))
     .then(async ({ stdout }) => {
       const output = stdout ? stdout.trim() : "";
@@ -182,7 +183,7 @@ async function getOpenCodeMaintenanceNotice(scriptsDir) {
 }
 
 /**
- * Write raw update-check output to ~/.aidevops/cache/session-greeting.txt
+ * Write raw update-check output to ~/.aidevops/cache/session-greeting-opencode.txt
  * so non-Bash agents can consult it without re-running the script.
  * Failures are non-fatal — the toast path continues regardless.
  *
@@ -202,7 +203,7 @@ function cacheGreeting(cacheFile, output) {
   }
 }
 
-function readGreetingCache(cacheFile) {
+export function readGreetingCache(cacheFile) {
   let fd;
   try {
     fd = openSync(cacheFile, "r");
@@ -214,6 +215,15 @@ function readGreetingCache(cacheFile) {
   } finally {
     if (fd !== undefined) closeSync(fd);
   }
+}
+
+export function greetingCacheHasCurrentProvenance(cached, initializedAtMs) {
+  return Boolean(cached && cached.mtimeMs >= initializedAtMs);
+}
+
+export function isGreetingCacheUsable(cached, nowMs, refreshTtlMs, initializedAtMs) {
+  return greetingCacheHasCurrentProvenance(cached, initializedAtMs) &&
+    nowMs - cached.mtimeMs <= refreshTtlMs;
 }
 
 function greetingToast(output) {
@@ -278,6 +288,7 @@ function releaseRefreshLock(lockDir, lockToken) {
 
 function observeSharedRefresh({ cacheFile, lockDir, lockStaleMs, client, now, minimumMtimeMs }) {
   const deadline = now() + lockStaleMs;
+  let missingLockRetries = 0;
   const poll = () => {
     const cached = readGreetingCache(cacheFile);
     if (cached && cached.mtimeMs > minimumMtimeMs) {
@@ -287,6 +298,7 @@ function observeSharedRefresh({ cacheFile, lockDir, lockStaleMs, client, now, mi
 
     try {
       if (now() >= deadline || now() - statSync(lockDir).mtimeMs > lockStaleMs) return;
+      missingLockRetries = 0;
     } catch {
       // The owner may publish the cache and remove its lock between our cache
       // read and lock stat. Re-check once so that handoff still emits it.
@@ -296,8 +308,11 @@ function observeSharedRefresh({ cacheFile, lockDir, lockStaleMs, client, now, mi
         return;
       }
       // A stale-lock contender may have renamed the old lock but not created
-      // its replacement yet. Keep polling within the original safety bound.
+      // its replacement yet. Allow a short handoff window without polling for
+      // the full stale-lock lifetime when an owner exits without publishing.
       if (now() >= deadline) return;
+      if (missingLockRetries >= 4) return;
+      missingLockRetries += 1;
     }
 
     const timer = setTimeout(poll, 25);
@@ -425,8 +440,10 @@ async function emitToast(client, body) {
 // The caller MUST NOT await runGreetingAsync — doing so would restore the
 // blocking behaviour this change is meant to fix.
 
-function refreshGreetingIfStale({ cached, now, refreshTtlMs, lockDir, lockStaleMs, scriptsDir, client, cacheFile, execGreeting, maintenanceNoticeFn }) {
-  if (cached && now() - cached.mtimeMs <= refreshTtlMs) return;
+function refreshGreetingIfStale({ cached, now, refreshTtlMs, initializedAtMs, lockDir, lockStaleMs, scriptsDir, client, cacheFile, execGreeting, maintenanceNoticeFn }) {
+  if (isGreetingCacheUsable(cached, now(), refreshTtlMs, initializedAtMs)) return;
+
+  const cachedFallback = greetingCacheHasCurrentProvenance(cached, initializedAtMs) ? cached : null;
 
   const lockToken = acquireRefreshLock(lockDir, lockStaleMs, now());
   if (lockToken) {
@@ -438,7 +455,7 @@ function refreshGreetingIfStale({ cached, now, refreshTtlMs, lockDir, lockStaleM
       lockToken,
       execGreeting,
       maintenanceNoticeFn,
-      cachedFallback: cached,
+      cachedFallback,
     });
     return;
   }
@@ -449,7 +466,7 @@ function refreshGreetingIfStale({ cached, now, refreshTtlMs, lockDir, lockStaleM
     lockStaleMs,
     client,
     now,
-    minimumMtimeMs: cached?.mtimeMs ?? Number.NEGATIVE_INFINITY,
+    minimumMtimeMs: Math.max(cached?.mtimeMs ?? Number.NEGATIVE_INFINITY, initializedAtMs),
   });
   if (process.env.AIDEVOPS_PLUGIN_DEBUG) {
     console.error("[aidevops] greeting: refresh already running in another process");
@@ -481,10 +498,10 @@ export function createGreetingHandler({
   execGreeting = execAsync,
   maintenanceNoticeFn = getOpenCodeMaintenanceNotice,
   now = Date.now,
+  initializedAtMs = now(),
   isHeadless = () => false,
 }) {
   let fired = false;
-  const initTime = now();
   const cacheFile = join(cacheDir, CACHE_BASENAME);
   const lockDir = join(cacheDir, LOCK_BASENAME);
 
@@ -502,7 +519,7 @@ export function createGreetingHandler({
     const isPrimary = event.type === "session.created";
     const isFallback =
       event.type === "session.updated" &&
-      now() - initTime < FALLBACK_WINDOW_MS;
+      now() - initializedAtMs < FALLBACK_WINDOW_MS;
 
     if (!isPrimary && !isFallback) return;
 
@@ -517,7 +534,7 @@ export function createGreetingHandler({
     // refresh-failure fallback; emitting it here and the refreshed value later
     // would display two startup toasts for one session.
     const cached = readGreetingCache(cacheFile);
-    if (cached && now() - cached.mtimeMs <= refreshTtlMs) {
+    if (isGreetingCacheUsable(cached, now(), refreshTtlMs, initializedAtMs)) {
       emitCachedGreeting(client, cached);
     }
 
@@ -525,6 +542,7 @@ export function createGreetingHandler({
       cached,
       now,
       refreshTtlMs,
+      initializedAtMs,
       lockDir,
       lockStaleMs,
       scriptsDir,

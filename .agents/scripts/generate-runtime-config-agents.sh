@@ -81,7 +81,7 @@ _generate_greeting_agents_md() {
 	case "$runtime_id" in
 	opencode)
 		# shellcheck disable=SC2088
-		cache_path="~/.aidevops/cache/session-greeting.txt"
+		cache_path="~/.aidevops/cache/session-greeting-opencode.txt"
 		plugin_name="opencode-aidevops plugin"
 		# shellcheck disable=SC2088
 		global_config_path="~/.config/opencode/opencode.json"
