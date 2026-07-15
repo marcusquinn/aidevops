@@ -439,6 +439,19 @@ assert_eq "opaque pagination uses a framework-owned caller" "gh-api-instrument.s
 assert_eq "opaque pagination is counted separately" "1" "$(jq -r '._meta.opaque_paginated_attempts' "$AIDEVOPS_GH_API_REPORT")"
 assert_eq "opaque pagination prevents exactness claims" "false" "$(jq -r '._meta.attempts_exact' "$AIDEVOPS_GH_API_REPORT")"
 
+# Parent attribution tolerates shell interpreter flags without scanning
+# arbitrary non-interpreter command arguments for coincidental basenames.
+cat >"$SHIM_FIXTURE/parent-caller.sh" <<'EOF_PARENT_CALLER'
+#!/usr/bin/env bash
+"$GH_SHIM_FIXTURE" api '/repos/private-owner/private-repo/issues?per_page=100' --paginate >/dev/null
+EOF_PARENT_CALLER
+chmod +x "$SHIM_FIXTURE/parent-caller.sh"
+rm -f "$AIDEVOPS_GH_API_LOG" "$NATIVE_ATTEMPT_LOG"
+PATH="$NATIVE_FIXTURE:/usr/bin:/bin" AIDEVOPS_GH_SHIM_NO_REST_REWRITE=1 \
+	GH_SHIM_FIXTURE="$SHIM_FIXTURE/gh" \
+	bash -euo pipefail "$SHIM_FIXTURE/parent-caller.sh"
+assert_eq "interpreter flags preserve framework caller attribution" "parent-caller.sh" "$(awk -F'\t' '$9 == "attempt" { print $2 }' "$AIDEVOPS_GH_API_LOG")"
+
 # --- Summary ----------------------------------------------------------
 echo ""
 echo "===================================================="

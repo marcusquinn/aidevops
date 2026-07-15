@@ -286,6 +286,7 @@ _shim_caller_label() {
 _shim_framework_caller_label() {
 	local candidate="${1:-}"
 	candidate="${candidate##*/}"
+	[[ -n "${_SHIM_DIR:-}" ]] || return 1
 	[[ "$candidate" =~ ^[A-Za-z0-9_.+-]+$ ]] || return 1
 	[[ -f "${_SHIM_DIR}/${candidate}" ]] || return 1
 	printf '%s' "$candidate"
@@ -294,21 +295,35 @@ _shim_framework_caller_label() {
 
 _shim_parent_framework_caller() {
 	local parent_command=""
-	local parent_executable=""
-	local parent_script=""
-	local ignored_args=""
+	local word=""
+	local executable_name=""
 	local caller=""
+	local -a parent_words=()
 	parent_command=$(ps -p "$PPID" -o command= 2>/dev/null) || parent_command=""
 	[[ -n "$parent_command" ]] || return 1
-	read -r parent_executable parent_script ignored_args <<<"$parent_command"
-	if caller=$(_shim_framework_caller_label "$parent_script"); then
+	read -r -a parent_words <<<"$parent_command"
+	[[ ${#parent_words[@]} -gt 0 ]] || return 1
+	if caller=$(_shim_framework_caller_label "${parent_words[0]}"); then
 		printf '%s' "$caller"
 		return 0
 	fi
-	if caller=$(_shim_framework_caller_label "$parent_executable"); then
-		printf '%s' "$caller"
-		return 0
-	fi
+	executable_name="${parent_words[0]##*/}"
+	case "$executable_name" in
+	env | bash | dash | ksh | sh | zsh) ;;
+	*) return 1 ;;
+	esac
+	for word in "${parent_words[@]:1}"; do
+		case "$word" in
+		-* | *=*) continue ;;
+		esac
+		case "${word##*/}" in
+		env | bash | dash | ksh | sh | zsh) continue ;;
+		esac
+		if caller=$(_shim_framework_caller_label "$word"); then
+			printf '%s' "$caller"
+			return 0
+		fi
+	done
 	return 1
 }
 
