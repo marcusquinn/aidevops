@@ -251,13 +251,13 @@ for jname, jdef in jobs.items():
             path = (with_.get('path') or '').strip()
             co_steps.append((i, repo, path))
     # Jobs that do any work with framework scripts must have at least one
-    # framework checkout (repository: marcusquinn/aidevops, path: __aidevops)
+    # framework checkout (configured aidevops repository, path: __aidevops)
     job_yaml = yaml.safe_dump(jdef)
     needs_framework = '__aidevops/.agents/scripts/' in job_yaml
     if not needs_framework:
         continue
     has_framework_checkout = any(
-        (r == 'marcusquinn/aidevops' and p == '__aidevops')
+        (('aidevops_repository' in r or r == 'marcusquinn/aidevops') and p == '__aidevops')
         for (_, r, p) in co_steps
     )
     if not has_framework_checkout:
@@ -319,13 +319,14 @@ if 'workflow_call' not in on:
     print(f"FAIL: `on:` missing `workflow_call`. Keys: {list(on.keys())}"); sys.exit(1)
 wc = on['workflow_call'] or {}
 inputs = wc.get('inputs', {}) or {}
-if 'aidevops_ref' not in inputs:
-    print(f"FAIL: workflow_call.inputs missing `aidevops_ref`. Keys: {list(inputs.keys())}"); sys.exit(1)
+for required_input in ('aidevops_repository', 'aidevops_ref'):
+    if required_input not in inputs:
+        print(f"FAIL: workflow_call.inputs missing `{required_input}`. Keys: {list(inputs.keys())}"); sys.exit(1)
 print("OK")
 PYEOF
 )"
 		if [[ "$parse_result" == "OK" ]]; then
-			_pass "review-bot-gate reusable workflow declares workflow_call with aidevops_ref input"
+			_pass "review-bot-gate reusable workflow declares coupled repository/ref inputs"
 		else
 			_fail "review-bot-gate reusable workflow declares workflow_call with aidevops_ref input" "$parse_result"
 		fi
@@ -398,6 +399,13 @@ if [[ -f "$RBG_REUSABLE_WF" ]]; then
 	else
 		_fail "review-bot-gate reusable workflow uses inputs.aidevops_ref" \
 			"expected 'ref: \${{ inputs.aidevops_ref ... }}' — SHA pin not eliminated"
+	fi
+
+	if grep -qF "repository: \${{ inputs.aidevops_repository || 'marcusquinn/aidevops' }}" "$RBG_REUSABLE_WF"; then
+		_pass "review-bot-gate reusable workflow uses inputs.aidevops_repository"
+	else
+		_fail "review-bot-gate reusable workflow uses inputs.aidevops_repository" \
+			"expected helper checkout repository to use the provenance input"
 	fi
 
 	# Helper path must not reference .aidevops-helper/ in functional (non-comment) lines.

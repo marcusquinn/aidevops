@@ -166,7 +166,8 @@ rm -rf "$TMPDIR_3"
 TMPDIR_4="$(mktemp -d)"
 _setup_fake_home "$TMPDIR_4"
 _make_repo_with_workflow "$TMPDIR_4/repos/downstream-pinned"
-sed 's|issue-sync-reusable\.yml@main|issue-sync-reusable.yml@v3.9.0|g' \
+sed -e 's|issue-sync-reusable\.yml@main|issue-sync-reusable.yml@v3.9.0|g' \
+	-e 's|aidevops_ref: main|aidevops_ref: v3.9.0|g' \
 	"$CANONICAL_TEMPLATE" >"$TMPDIR_4/repos/downstream-pinned/.github/workflows/issue-sync.yml"
 _write_repos_json "$TMPDIR_4" \
 	"$(jq -n --arg path "$TMPDIR_4/repos/downstream-pinned" '{initialized_repos: [{slug: "x/pinned", path: $path, local_only: false}]}')"
@@ -177,6 +178,39 @@ else
 	_fail "pinned @v3.9.0 caller → CURRENT/CALLER (normalised @ref)" "got: $result"
 fi
 rm -rf "$TMPDIR_4"
+
+# Test 4b: A pinned reusable YAML with a mutable helper ref is drift.
+TMPDIR_4B="$(mktemp -d)"
+_setup_fake_home "$TMPDIR_4B"
+_make_repo_with_workflow "$TMPDIR_4B/repos/downstream-split-pin"
+sed 's|issue-sync-reusable\.yml@main|issue-sync-reusable.yml@v3.9.0|g' \
+	"$CANONICAL_TEMPLATE" >"$TMPDIR_4B/repos/downstream-split-pin/.github/workflows/issue-sync.yml"
+_write_repos_json "$TMPDIR_4B" \
+	"$(jq -n --arg path "$TMPDIR_4B/repos/downstream-split-pin" '{initialized_repos: [{slug: "x/split-pin", path: $path, local_only: false}]}')"
+result=$(_run_and_classify "$TMPDIR_4B")
+if [[ "$result" == "DRIFTED/CALLER" ]]; then
+	_pass "pinned reusable with helper on main → DRIFTED/CALLER"
+else
+	_fail "pinned reusable with helper on main → DRIFTED/CALLER" "got: $result"
+fi
+rm -rf "$TMPDIR_4B"
+
+# Test 4c: Valid punctuation in a coherently coupled ref remains current.
+TMPDIR_4C="$(mktemp -d)"
+_setup_fake_home "$TMPDIR_4C"
+_make_repo_with_workflow "$TMPDIR_4C/repos/downstream-punctuation-ref"
+sed -e 's|issue-sync-reusable\.yml@main|issue-sync-reusable.yml@release#candidate|g' \
+	-e 's|aidevops_ref: main|aidevops_ref: release#candidate|g' \
+	"$CANONICAL_TEMPLATE" >"$TMPDIR_4C/repos/downstream-punctuation-ref/.github/workflows/issue-sync.yml"
+_write_repos_json "$TMPDIR_4C" \
+	"$(jq -n --arg path "$TMPDIR_4C/repos/downstream-punctuation-ref" '{initialized_repos: [{slug: "x/punctuation-ref", path: $path, local_only: false}]}')"
+result=$(_run_and_classify "$TMPDIR_4C")
+if [[ "$result" == "CURRENT/CALLER" ]]; then
+	_pass "coupled release#candidate ref → CURRENT/CALLER"
+else
+	_fail "coupled release#candidate ref → CURRENT/CALLER" "got: $result"
+fi
+rm -rf "$TMPDIR_4C"
 
 # Test 5: Caller with extra triggers → DRIFTED/CALLER
 TMPDIR_5="$(mktemp -d)"
@@ -347,6 +381,10 @@ _make_repo_with_workflow "$TMPDIR_13/repos/org-current"
 sed \
 	-e 's|marcusquinn/aidevops/.github/workflows/issue-sync-reusable.yml@main|ORG/.github/.github/workflows/issue-sync-reusable.yml@1234567890abcdef1234567890abcdef12345678|g' \
 	-e 's|marcusquinn/aidevops/.github/workflows/issue-sync-reusable.yml|ORG/.github/.github/workflows/issue-sync-reusable.yml|g' \
+	-e 's|^      aidevops_ref: main|      aidevops_repository: ORG/.github\
+      aidevops_ref: 1234567890abcdef1234567890abcdef12345678|' \
+	-e 's|^    secrets:$|    secrets:\
+      AIDEVOPS_READ_TOKEN: ${{ secrets.AIDEVOPS_READ_TOKEN }}|' \
 	"$CANONICAL_TEMPLATE" >"$TMPDIR_13/repos/org-current/.github/workflows/issue-sync.yml"
 _write_repos_json "$TMPDIR_13" \
 	"$(jq -n --arg path "$TMPDIR_13/repos/org-current" '{workflow_reusable_repo: "ORG/.github", workflow_reusable_ref: "1234567890abcdef1234567890abcdef12345678", initialized_repos: [{slug: "x/org-current", path: $path, local_only: false}]}')"

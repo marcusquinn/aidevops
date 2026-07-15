@@ -78,6 +78,8 @@ jobs:
     secrets:
       SYNC_PAT: ${{ secrets.SYNC_PAT }}
     with:
+      # Keep this equal to the ref on `uses:` so helper code is pinned with the reusable YAML.
+      aidevops_ref: main
       command: ${{ inputs.command || '' }}
       subject_id: ${{ inputs.subject_id || '' }}
       cursor: ${{ inputs.cursor || '' }}

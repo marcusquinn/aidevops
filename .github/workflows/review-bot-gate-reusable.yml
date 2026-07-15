@@ -6,7 +6,7 @@ name: Review Bot Gate (reusable)
 #
 # The caller declares the triggers (pull_request / pull_request_review / issue_comment)
 # and the concurrency group. All gate logic lives here; the framework helper
-# is fetched at runtime from marcusquinn/aidevops via inputs.aidevops_ref.
+# is fetched at runtime via the coupled aidevops_repository/aidevops_ref inputs.
 #
 # GH#20727: migrated from vendored full-copy (SHA-pinned checkout) to
 # reusable-workflow pattern. Helper is now fetched from marcusquinn/aidevops
@@ -28,6 +28,11 @@ name: Review Bot Gate (reusable)
 on:
   workflow_call:
     inputs:
+      aidevops_repository:
+        description: 'Repository to fetch framework scripts from (defaults to the canonical aidevops repository)'
+        required: false
+        type: string
+        default: 'marcusquinn/aidevops'
       aidevops_ref:
         description: 'aidevops ref to fetch framework scripts from (main, or a version tag like v3.9.0)'
         required: false
@@ -38,6 +43,10 @@ on:
         required: false
         default: 'ubuntu-latest'
         type: string
+    secrets:
+      AIDEVOPS_READ_TOKEN:
+        required: false
+        description: 'Optional token with read access to a private configured helper repository'
 
 jobs:
   review-bot-gate:
@@ -85,14 +94,15 @@ jobs:
         # GH#20727: replaces the SHA-pinned checkout (path: .aidevops-helper) that
         # silently drifted after helper changes (e.g. the Option A' settlement fix
         # in PR #20572 never propagated to downstream repos pinned to 73b664a).
-        # The ref is controlled by the caller via inputs.aidevops_ref (default: main).
+        # Repository and ref are controlled by the caller provenance inputs.
         # Pin to @v3.x.y for stability; see .agents/reference/reusable-workflows.md.
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
-          repository: marcusquinn/aidevops
+          repository: ${{ inputs.aidevops_repository || 'marcusquinn/aidevops' }}
           ref: ${{ inputs.aidevops_ref || 'main' }}
           path: __aidevops
           fetch-depth: 1
+          token: ${{ secrets.AIDEVOPS_READ_TOKEN || secrets.GITHUB_TOKEN }}
 
       - name: Check for AI review bot activity
         id: check

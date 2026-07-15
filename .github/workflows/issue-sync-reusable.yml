@@ -12,6 +12,11 @@ name: Issue Sync (reusable) - Bi-directional TODO.md ↔ GitHub Issues
 on:
   workflow_call:
     inputs:
+      aidevops_repository:
+        description: 'Repository to fetch framework scripts from (defaults to the canonical aidevops repository)'
+        required: false
+        type: string
+        default: 'marcusquinn/aidevops'
       command:
         description: 'Sync command (pass-through from workflow_dispatch inputs)'
         required: false
@@ -43,6 +48,9 @@ on:
         type: string
         default: ''
     secrets:
+      AIDEVOPS_READ_TOKEN:
+        required: false
+        description: 'Optional token with read access to a private configured helper repository'
       SYNC_PAT:
         required: false
         description: 'Fine-grained PAT with Contents:read/write, bypasses branch protection on TODO.md push'
@@ -71,10 +79,11 @@ jobs:
       - name: Checkout coordinator scripts
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
-          repository: marcusquinn/aidevops
+          repository: ${{ inputs.aidevops_repository || 'marcusquinn/aidevops' }}
           path: __aidevops
           ref: ${{ inputs.aidevops_ref || 'main' }}
           fetch-depth: 1
+          token: ${{ secrets.AIDEVOPS_READ_TOKEN || secrets.GITHUB_TOKEN }}
 
       - name: Restore durable coordinator state
         env:
@@ -202,10 +211,11 @@ jobs:
       - name: Checkout aidevops framework scripts
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
-          repository: marcusquinn/aidevops
+          repository: ${{ inputs.aidevops_repository || 'marcusquinn/aidevops' }}
           path: __aidevops
           ref: ${{ inputs.aidevops_ref || 'main' }}
           fetch-depth: 1
+          token: ${{ secrets.AIDEVOPS_READ_TOKEN || secrets.GITHUB_TOKEN }}
 
       - name: Configure Git
         if: steps.check-author.outputs.skip != 'true'
@@ -340,10 +350,11 @@ jobs:
       - name: Checkout aidevops framework scripts
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
-          repository: marcusquinn/aidevops
+          repository: ${{ inputs.aidevops_repository || 'marcusquinn/aidevops' }}
           path: __aidevops
           ref: ${{ inputs.aidevops_ref || 'main' }}
           fetch-depth: 1
+          token: ${{ secrets.AIDEVOPS_READ_TOKEN || secrets.GITHUB_TOKEN }}
 
       - name: Configure Git
         if: steps.check-issue.outputs.sync == 'true'
@@ -409,10 +420,11 @@ jobs:
       - name: Checkout aidevops framework scripts
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
-          repository: marcusquinn/aidevops
+          repository: ${{ inputs.aidevops_repository || 'marcusquinn/aidevops' }}
           path: __aidevops
           ref: ${{ inputs.aidevops_ref || 'main' }}
           fetch-depth: 1
+          token: ${{ secrets.AIDEVOPS_READ_TOKEN || secrets.GITHUB_TOKEN }}
 
       # t3204: prepend the framework scripts dir to PATH so subsequent gh
       # commands hit the `gh` PATH shim, which auto-injects the signature
@@ -622,10 +634,11 @@ jobs:
       - name: Checkout aidevops framework scripts
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
-          repository: marcusquinn/aidevops
+          repository: ${{ inputs.aidevops_repository || 'marcusquinn/aidevops' }}
           path: __aidevops
           ref: ${{ inputs.aidevops_ref || 'main' }}
           fetch-depth: 1
+          token: ${{ secrets.AIDEVOPS_READ_TOKEN || secrets.GITHUB_TOKEN }}
 
       - name: Configure Git
         run: |
@@ -713,10 +726,11 @@ jobs:
       - name: Checkout aidevops framework scripts (early — for gh shim)
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
-          repository: marcusquinn/aidevops
+          repository: ${{ inputs.aidevops_repository || 'marcusquinn/aidevops' }}
           path: __aidevops
           ref: ${{ inputs.aidevops_ref || 'main' }}
           fetch-depth: 1
+          token: ${{ secrets.AIDEVOPS_READ_TOKEN || secrets.GITHUB_TOKEN }}
 
       - name: Setup gh shim (auto-inject signature footer on writes)
         run: |
@@ -807,10 +821,11 @@ jobs:
         if: steps.extract.outputs.linked_issues != ''
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
-          repository: marcusquinn/aidevops
+          repository: ${{ inputs.aidevops_repository || 'marcusquinn/aidevops' }}
           path: __aidevops
           ref: ${{ inputs.aidevops_ref || 'main' }}
           fetch-depth: 1
+          token: ${{ secrets.AIDEVOPS_READ_TOKEN || secrets.GITHUB_TOKEN }}
 
       - name: Enable canonical Git guard after trusted checkouts
         run: |
