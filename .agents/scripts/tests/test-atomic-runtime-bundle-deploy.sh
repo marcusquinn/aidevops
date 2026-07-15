@@ -26,6 +26,10 @@ source "$REPO_ROOT/.agents/scripts/setup/modules/plugins.sh"
 source "$REPO_ROOT/.agents/scripts/setup/modules/agent-deploy.sh"
 # shellcheck source=../setup/modules/agent-runtime.sh
 source "$REPO_ROOT/.agents/scripts/setup/modules/agent-runtime.sh"
+# shellcheck source=../setup/modules/schedulers-pulse.sh
+source "$REPO_ROOT/.agents/scripts/setup/modules/schedulers-pulse.sh"
+
+_xml_escape() { local value="$1"; printf '%s' "$value"; return 0; }
 
 cleanup() {
 	[[ -n "$TEST_ROOT" && -d "$TEST_ROOT" ]] && rm -rf "$TEST_ROOT"
@@ -326,6 +330,34 @@ test_dependency_install_failure_preserves_active_bundle() {
 	return 0
 }
 
+test_plist_override_survives_two_bundle_activations() {
+	local target_dir="$HOME/.aidevops/agents"
+	local label="com.aidevops.aidevops-supervisor-pulse"
+	local legacy_file="$target_dir/configs/plist-env-overrides.json"
+	local stable_file="$HOME/.config/aidevops/plist-env-overrides.json"
+	local active_root=""
+	local output=""
+	local version=""
+	mkdir -p "${legacy_file%/*}"
+	printf '{"%s":{"TEST_OVERRIDE":"survives-two-activations"}}\n' "$label" >"$legacy_file"
+
+	for version in 10.0.0 11.0.0; do
+		write_fake_revision "$version" "plist-override-$version"
+		write_fake_plugin_manifest
+		MOCK_PLUGIN_VERIFY_MODE="available"
+		stage_revision "$target_dir"
+		_runtime_bundle_activate "$target_dir" "$_AIDEVOPS_STAGED_BUNDLE_DIR"
+		active_root=$(_runtime_bundle_resolve_root "$target_dir")
+		[[ ! -f "$active_root/configs/plist-env-overrides.json" ]] || fail "active $version bundle contains user-owned plist overrides"
+		output=$(_build_plist_env_overrides_xml "$label")
+		[[ "$output" == *"TEST_OVERRIDE"* && "$output" == *"survives-two-activations"* ]] || fail "override missing after $version activation"
+		pass "stable plist override applies after $version activation"
+	done
+	[[ -f "$stable_file" ]] || fail "legacy plist override was not migrated to stable config"
+	pass "legacy plist override migrates outside runtime bundles"
+	return 0
+}
+
 main() {
 	TEST_ROOT=$(mktemp -d)
 	trap cleanup EXIT
@@ -350,6 +382,7 @@ main() {
 	install_mock_plugin_dependency_hooks
 	test_dependency_install_recovery_activates_candidate
 	test_dependency_install_failure_preserves_active_bundle
+	test_plist_override_survives_two_bundle_activations
 
 	printf 'Results: %s checks passed\n' "$TESTS_RUN"
 	return 0

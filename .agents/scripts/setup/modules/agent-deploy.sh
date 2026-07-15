@@ -587,6 +587,32 @@ _runtime_bundle_copy_preserved_dirs() {
 	return 0
 }
 
+# Move the user-owned plist override out of the replaceable runtime bundle.
+# The no-clobber hard link makes concurrent setup runs converge without
+# overwriting an existing stable config. No file contents are logged.
+_runtime_bundle_migrate_plist_env_overrides() {
+	local current_root="$1"
+	local legacy_file="$current_root/configs/plist-env-overrides.json"
+	local config_dir="$HOME/.config/aidevops"
+	local stable_file="$config_dir/plist-env-overrides.json"
+	local migration_tmp=""
+
+	[[ -f "$stable_file" || ! -f "$legacy_file" ]] && return 0
+	mkdir -p "$config_dir" || return 1
+	migration_tmp=$(mktemp "$config_dir/.plist-env-overrides.json.XXXXXX") || return 1
+	if ! cp "$legacy_file" "$migration_tmp" || ! chmod 600 "$migration_tmp"; then
+		rm -f "$migration_tmp"
+		return 1
+	fi
+	if ! ln "$migration_tmp" "$stable_file" 2>/dev/null && [[ ! -f "$stable_file" ]]; then
+		rm -f "$migration_tmp"
+		return 1
+	fi
+	rm -f "$migration_tmp"
+	print_info "  Migrated plist environment overrides to ~/.config/aidevops/plist-env-overrides.json"
+	return 0
+}
+
 _runtime_bundle_write_manifest() {
 	local bundle_dir="$1"
 	local repo_dir="$2"
@@ -668,12 +694,18 @@ _runtime_bundle_stage() {
 	bundle_id="${version//[^A-Za-z0-9._-]/_}-${git_sha}-$(date +%s)-$$"
 	bundle_dir=$(mktemp -d "$bundles_dir/.staging.${bundle_id}.XXXXXX") || return 1
 	mkdir -p "$bundle_dir/agents" || return 1
+	if current_root=$(_runtime_bundle_resolve_root "$target_dir" 2>/dev/null); then
+		_runtime_bundle_migrate_plist_env_overrides "$current_root" || {
+			rm -rf "$bundle_dir"
+			return 1
+		}
+	fi
 
 	if ! _deploy_agents_copy "$source_dir" "$bundle_dir/agents" "$@"; then
 		rm -rf "$bundle_dir"
 		return 1
 	fi
-	if current_root=$(_runtime_bundle_resolve_root "$target_dir" 2>/dev/null); then
+	if [[ -n "$current_root" ]]; then
 		_runtime_bundle_copy_preserved_dirs "$current_root" "$bundle_dir/agents" "$@" || {
 			rm -rf "$bundle_dir"
 			return 1
