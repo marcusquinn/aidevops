@@ -2097,10 +2097,11 @@ test_registered_prompt_temp_cleanup_removes_dir() {
 }
 
 test_launch_helpers_tolerate_unset_state() {
-	unset _HEADLESS_RUNTIME_TEMP_PATHS session_key work_dir title prompt prompt_file
-
-	if _cleanup_headless_runtime_temp_paths &&
-		! _validate_run_args >/dev/null 2>&1; then
+	if (
+		unset _HEADLESS_RUNTIME_TEMP_PATHS session_key work_dir title prompt prompt_file
+		_cleanup_headless_runtime_temp_paths &&
+			! _validate_run_args >/dev/null 2>&1
+	); then
 		print_result "launch helpers tolerate unset state under nounset" 0
 		return 0
 	fi
