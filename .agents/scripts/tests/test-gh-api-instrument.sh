@@ -238,11 +238,25 @@ symlink_status="$?"
 set -e
 assert_eq "HOME-less temp fallback rejects symlink" "0" "$symlink_status"
 
+# --- Test 10: missing lock tools fail open without stderr noise --------
+saved_path="$PATH"
+mkdir -p "$TMPDIR/no-lock-tools"
+set +e
+# shellcheck disable=SC2123 # Intentional empty-tool fixture for fail-open coverage.
+PATH="$TMPDIR/no-lock-tools"
+_gh_log_lock_acquire 2>"$TMPDIR/no-lock-tools.stderr"
+lock_status=$?
+PATH="$saved_path"
+set -e
+assert_eq "missing lock tools fail open" "1" "$lock_status"
+lock_stderr_bytes=$(wc -c <"$TMPDIR/no-lock-tools.stderr" | tr -d ' ')
+assert_eq "missing lock tools stay silent" "0" "$lock_stderr_bytes"
+
 # Restore per-test overrides for summary diagnostics if future tests append.
 export AIDEVOPS_GH_API_LOG="$TMPDIR/gh-api-calls.log"
 export AIDEVOPS_GH_API_REPORT="$TMPDIR/report.json"
 
-# --- Test 10: exact replay separates events, attempts, pages, and retries --
+# --- Test 11: exact replay separates events, attempts, pages, and retries --
 unset _GH_API_INSTRUMENT_LOADED
 # shellcheck source=../gh-api-instrument.sh
 source "${PARENT_DIR}/gh-api-instrument.sh"
@@ -308,6 +322,18 @@ assert_eq "requested window retained separately" "3600" "$(jq -r '._meta.request
 assert_eq "first retained attempt timestamp" "$first_ts" "$(jq -r '._meta.first_retained_ts' "$AIDEVOPS_GH_API_REPORT")"
 assert_eq "last retained attempt timestamp" "$last_ts" "$(jq -r '._meta.last_retained_ts' "$AIDEVOPS_GH_API_REPORT")"
 assert_eq "effective window uses observed range" "20" "$(jq -r '._meta.effective_window_seconds' "$AIDEVOPS_GH_API_REPORT")"
+
+# --- Test 12b: retained opaque history does not poison a fresh window -------
+gh_clear_log
+outside_ts=$((now - 120))
+inside_ts=$((now - 10))
+printf '%s\topaque-caller\trest\tgh-pat\trest-core\tnative-pagination-opaque\t\tv2\tattempt\tlogical-old\tattempt-old\t0\t0\tsuccess\t200\t10\t\n' "$outside_ts" >>"$AIDEVOPS_GH_API_LOG"
+printf '%s\texact-caller\trest\tgh-pat\trest-core\trest-selected\t\tv2\tattempt\tlogical-new\tattempt-new\t1\t0\tsuccess\t200\t10\t\n' "$inside_ts" >>"$AIDEVOPS_GH_API_LOG"
+gh_aggregate_calls "$AIDEVOPS_GH_API_REPORT" 60
+assert_eq "fresh window excludes retained unknown pages" "0" "$(jq -r '._meta.unknown_page_attempts' "$AIDEVOPS_GH_API_REPORT")"
+assert_eq "retained unknown page remains auditable" "1" "$(jq -r '._meta.retained_unknown_page_attempts' "$AIDEVOPS_GH_API_REPORT")"
+assert_eq "fresh exact window ignores old opaque call" "0" "$(jq -r '._meta.opaque_paginated_attempts' "$AIDEVOPS_GH_API_REPORT")"
+assert_eq "fresh window exactness is true" "true" "$(jq -r '._meta.attempts_exact' "$AIDEVOPS_GH_API_REPORT")"
 
 # --- Test 13: time/line/byte retention is atomic and bounded -------------
 export AIDEVOPS_GH_API_LOG_MAX_LINES=3
@@ -399,6 +425,19 @@ else
 	echo "  PASS: shim telemetry keeps path/query arguments private"
 	PASS=$((PASS + 1))
 fi
+
+# Native gh owns --paginate's hidden request loop. Keep that process visible as
+# opaque instead of falsely claiming it represents one HTTP page, and preserve
+# only framework-owned caller labels for migration prioritisation.
+rm -f "$AIDEVOPS_GH_API_LOG" "$NATIVE_ATTEMPT_LOG"
+PATH="$NATIVE_FIXTURE:/usr/bin:/bin" AIDEVOPS_GH_SHIM_NO_REST_REWRITE=1 \
+	AIDEVOPS_GH_CALLER=gh-api-instrument.sh \
+	"$SHIM_FIXTURE/gh" api '/repos/private-owner/private-repo/issues?per_page=100' --paginate >/dev/null
+"${PARENT_DIR}/gh-api-instrument.sh" report "$AIDEVOPS_GH_API_REPORT" >/dev/null 2>&1
+assert_eq "native pagination remains explicitly opaque" "0" "$(awk -F'\t' '$9 == "attempt" { print $12 }' "$AIDEVOPS_GH_API_LOG")"
+assert_eq "opaque pagination uses a framework-owned caller" "gh-api-instrument.sh" "$(awk -F'\t' '$9 == "attempt" { print $2 }' "$AIDEVOPS_GH_API_LOG")"
+assert_eq "opaque pagination is counted separately" "1" "$(jq -r '._meta.opaque_paginated_attempts' "$AIDEVOPS_GH_API_REPORT")"
+assert_eq "opaque pagination prevents exactness claims" "false" "$(jq -r '._meta.attempts_exact' "$AIDEVOPS_GH_API_REPORT")"
 
 # --- Summary ----------------------------------------------------------
 echo ""

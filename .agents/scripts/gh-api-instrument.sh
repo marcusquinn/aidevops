@@ -200,6 +200,7 @@ _gh_log_lock_acquire() {
 	local tries=0
 	local owner=""
 	local owner_pid="${BASHPID:-$$}"
+	command -v mkdir >/dev/null 2>&1 || return 1
 	while ! mkdir "$lock_dir" 2>/dev/null; do
 		if [[ -f "$lock_dir/pid" && ! -L "$lock_dir" ]]; then
 			if ! IFS= read -r owner 2>/dev/null <"$lock_dir/pid"; then
@@ -213,6 +214,7 @@ _gh_log_lock_acquire() {
 		fi
 		tries=$((tries + 1))
 		[[ $tries -ge 200 ]] && return 1
+		command -v sleep >/dev/null 2>&1 || return 1
 		sleep 0.01
 	done
 	if ! printf '%s\n' "$owner_pid" >"$lock_dir/pid" 2>/dev/null; then

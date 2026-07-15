@@ -280,6 +280,54 @@ _shim_caller_label() {
 	return 0
 }
 
+# Resolve only framework-owned script basenames. Never persist an arbitrary
+# parent command or private script name in telemetry that may later be attached
+# to a public issue.
+_shim_framework_caller_label() {
+	local candidate="${1:-}"
+	candidate="${candidate##*/}"
+	[[ "$candidate" =~ ^[A-Za-z0-9_.+-]+$ ]] || return 1
+	[[ -f "${_SHIM_DIR}/${candidate}" ]] || return 1
+	printf '%s' "$candidate"
+	return 0
+}
+
+_shim_parent_framework_caller() {
+	local parent_command=""
+	local parent_executable=""
+	local parent_script=""
+	local ignored_args=""
+	local caller=""
+	parent_command=$(ps -p "$PPID" -o command= 2>/dev/null) || parent_command=""
+	[[ -n "$parent_command" ]] || return 1
+	read -r parent_executable parent_script ignored_args <<<"$parent_command"
+	if caller=$(_shim_framework_caller_label "$parent_script"); then
+		printf '%s' "$caller"
+		return 0
+	fi
+	if caller=$(_shim_framework_caller_label "$parent_executable"); then
+		printf '%s' "$caller"
+		return 0
+	fi
+	return 1
+}
+
+_shim_transport_caller_label() {
+	local sub1="${1:-}"
+	local sub2="${2:-}"
+	local caller=""
+	if caller=$(_shim_framework_caller_label "${AIDEVOPS_GH_CALLER:-}"); then
+		printf '%s' "$caller"
+		return 0
+	fi
+	if caller=$(_shim_parent_framework_caller); then
+		printf '%s' "$caller"
+		return 0
+	fi
+	_shim_caller_label "$sub1" "$sub2"
+	return 0
+}
+
 _shim_transport_page() {
 	local arg=""
 	local page=1
@@ -1545,8 +1593,9 @@ if [[ "${1:-}" == "api" ]]; then
 	fi
 	# GH#21857: instrument gh api calls — rest or graphql depending on path.
 	_transport_path=$(_shim_classify_endpoint "${1:-}" "${2:-}")
-	gh_record_call "$_transport_path" gh-shim 2>/dev/null || true
-	_shim_run_transport "$REAL_GH" "$_transport_path" gh-shim 0 "${_modified_args[@]}"
+	_transport_caller=$(_shim_transport_caller_label "${1:-}" "${2:-}")
+	gh_record_call "$_transport_path" "$_transport_caller" 2>/dev/null || true
+	_shim_run_transport "$REAL_GH" "$_transport_path" "$_transport_caller" 0 "${_modified_args[@]}"
 	exit $?
 fi
 
