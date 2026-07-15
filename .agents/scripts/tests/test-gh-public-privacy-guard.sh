@@ -112,7 +112,7 @@ fi
 # Credential prefixes are only secret-like at a token boundary. Keep the
 # canonical task-coordinator filename split so this regression fixture cannot
 # itself be mistaken for a credential by source scanners using the old regex.
-TASK_COORDINATOR_BASENAME="ta""sk-coordinator.sh"
+TASK_COORDINATOR_BASENAME="$ALLOWED_BASENAME"
 while IFS='|' read -r label input; do
 	out=$(privacy_scan_secret_material_text "$input" 2>"$TMP/allow-boundary.err")
 	rc=$?
