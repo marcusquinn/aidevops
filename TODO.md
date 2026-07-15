@@ -4608,4 +4608,4 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [ ] t18132 Prevent cross-install upstream-watch duplicate issues #auto-dispatch #bug #framework #reliability ref:GH#27821
 
-- [ ] t18136 Prevent LaunchAgents from pinning stale runtime-bundle PATH entries #bug #framework #pulse #reliability #interactive #no-auto-dispatch ~1.5h tier:standard -> [todo/tasks/t18136-brief.md] ref:GH#27851
+- [x] t18136 Prevent LaunchAgents from pinning stale runtime-bundle PATH entries #bug #framework #pulse #reliability #interactive #no-auto-dispatch ~1.5h tier:standard -> [todo/tasks/t18136-brief.md] ref:GH#27851 pr:#27852 completed:2026-07-15
