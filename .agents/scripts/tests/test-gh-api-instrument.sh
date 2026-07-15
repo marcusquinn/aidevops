@@ -280,13 +280,13 @@ assert_eq "malformed row surfaced" "1" "$(jq -r '._meta.malformed_records' "$AID
 # --- Test 11: command arguments remain private and exit status is preserved --
 gh_clear_log
 gh_run_transport_attempt rest privacy-caller logical-private 1 0 -- true \
-	'https://example.invalid/private?token=do-not-log' 'Authorization: bearer do-not-log' '--body=private-payload'
+	'endpoint-private?token=do-not-log' 'Authorization: bearer do-not-log' '--body=private-payload'
 set +e
 gh_run_transport_attempt graphql privacy-caller logical-private 1 1 -- false
 transport_status=$?
 set -e
 assert_eq "transport failure status preserved" "1" "$transport_status"
-if grep -Eq 'do-not-log|private-payload|Authorization|example\.invalid' "$AIDEVOPS_GH_API_LOG"; then
+if grep -Eq 'do-not-log|private-payload|Authorization|endpoint-private' "$AIDEVOPS_GH_API_LOG"; then
 	echo "  FAIL: transport telemetry exposed command arguments"
 	FAIL=$((FAIL + 1))
 else
