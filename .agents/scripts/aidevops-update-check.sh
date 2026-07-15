@@ -180,11 +180,11 @@ is_headless() {
 # -----------------------------------------------------------------------------
 # _build_version_str: resolve version string from current/remote versions.
 # Sets $1 (nameref not available in bash 3.2) — caller reads stdout.
-# Prints the version string, or "UPDATE_AVAILABLE|..." and returns 1 to signal
-# early exit.
+# Prints the version string, or "UPDATE_AVAILABLE|..." and returns 1 so the
+# caller can add update metadata without skipping the normal session status.
 # -----------------------------------------------------------------------------
 _build_version_str() {
-	local current="$1" remote="$2" app_name="$3" cache_dir="$4"
+	local current="$1" remote="$2" app_name="$3"
 	if [[ "$current" == "unknown" ]]; then
 		echo "aidevops not installed"
 		return 0
@@ -193,9 +193,6 @@ _build_version_str() {
 		return 0
 	elif [[ "$current" != "$remote" ]]; then
 		# Special format for update available - parsed by AGENTS.md
-		# Cache the update-available string so no-Bash agents can display it too
-		_write_cache "$cache_dir" "UPDATE_AVAILABLE|$current|$remote|$app_name" \
-			"" "" "" "" "" "" "" || true
 		echo "UPDATE_AVAILABLE|$current|$remote|$app_name"
 		return 1
 	else
@@ -1038,9 +1035,10 @@ main() {
 
 	local cache_dir="$HOME/.aidevops/cache"
 
-	# Build version string — returns 1 and prints UPDATE_AVAILABLE if update found
+	# Build version string. Update metadata is additive: continue through the
+	# normal status/advisory path so the toast and fallback cache remain useful.
 	local version_str
-	if ! version_str=$(_build_version_str "$current" "$remote" "$app_name" "$cache_dir"); then
+	if ! version_str=$(_build_version_str "$current" "$remote" "$app_name"); then
 		# Output the UPDATE_AVAILABLE line so the AI sees it via stdout
 		echo "$version_str"
 		# Append auto-update status so the AI can reassure the user
@@ -1050,7 +1048,7 @@ main() {
 		local gh_slurp_notice
 		gh_slurp_notice=$(_check_gh_slurp_prerequisite)
 		[[ -n "$gh_slurp_notice" ]] && echo "$gh_slurp_notice"
-		return 0
+		version_str="aidevops v$current"
 	fi
 
 	local app_str git_context_val output
