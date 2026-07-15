@@ -81,8 +81,11 @@ jq -e '
 ' <<<"$FLATTENED" >/dev/null
 
 for INVALID_RESPONSE in 'null' '{"message":"API unavailable"}'; do
-	jq -e -f "$PAGINATION_FILTER" <<<"$INVALID_RESPONSE" |
-		jq -e '.check_runs == []' >/dev/null
+	if ! jq -e -f "$PAGINATION_FILTER" <<<"$INVALID_RESPONSE" |
+		jq -e '.check_runs == []' >/dev/null; then
+		printf 'FAIL: pagination filter did not return empty check_runs for: %s\n' "$INVALID_RESPONSE" >&2
+		exit 1
+	fi
 done
 
 if ! grep -Fq 'gh api --paginate --slurp' "${REPO_ROOT}/.github/workflows/postflight.yml"; then
