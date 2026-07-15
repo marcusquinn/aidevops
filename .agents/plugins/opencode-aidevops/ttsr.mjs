@@ -259,7 +259,8 @@ export function createSessionStartGreetingGate(client, isHeadless = () => false)
  * system.transform hook: prepend session-start greeting order, identity prefix,
  * and quality rules.
  */
-async function ttsrSystemTransform(input, output, state, intentField, shouldInjectGreeting, agentsDir, readIfExists) {
+async function ttsrSystemTransform(input, output, context) {
+  const { state, intentField, shouldInjectGreeting, agentsDir, readIfExists } = context;
   if (input.model?.providerID === "anthropic") {
     const prefix = "You are Claude Code, Anthropic's official CLI for Claude.";
     output.system.unshift(prefix);
@@ -386,10 +387,11 @@ export function createTtsrHooks(deps) {
   const ttsrRulesPath = join(agentsDir, "configs", "ttsr-rules.json");
   const state = createTtsrState(ttsrRulesPath, readIfExists);
   const execDeps = { scriptsDir, run };
+  const systemTransformContext = { state, intentField, shouldInjectGreeting, agentsDir, readIfExists };
 
   return {
     loadTtsrRules: () => loadTtsrRules(state),
-    systemTransformHook: (input, output) => ttsrSystemTransform(input, output, state, intentField, shouldInjectGreeting, agentsDir, readIfExists),
+    systemTransformHook: (input, output) => ttsrSystemTransform(input, output, systemTransformContext),
     messagesTransformHook: (_input, output) => ttsrMessagesTransform(_input, output, state, qualityLog, isHeadless),
     textCompleteHook: (input, output) => ttsrTextComplete(input, output, state, execDeps, qualityLog),
   };

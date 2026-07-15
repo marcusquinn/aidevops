@@ -115,7 +115,7 @@ function recordPermissionToolCall(toolCalls, isHeadless, home, input, output) {
   while (toolCalls.size > 100) toolCalls.delete(toolCalls.keys().next().value);
 }
 
-function recordPermissionBlocker(loggedEvents, home, blockerLogPath, request, event, reason, detail) {
+function recordPermissionBlocker({ loggedEvents, home, blockerLogPath, request, event, reason, detail }) {
   const dedupeKey = `${event}:${request?.request_id || "unknown"}`;
   if (loggedEvents.has(dedupeKey)) return;
   loggedEvents.add(dedupeKey);
@@ -167,8 +167,10 @@ function capturePermissionRequest(toolCalls, loggedEvents, home, blockerLogPath,
   };
   request.request_id = stableRequestID({ ...request, issue: capture.issue, repo: capture.repo });
   if (!requestFile) {
-    recordPermissionBlocker(loggedEvents, home, blockerLogPath, request,
-      "permission_capture_failed", "request_file_unset", "Headless permission request capture path was unavailable");
+    recordPermissionBlocker({
+      loggedEvents, home, blockerLogPath, request, event: "permission_capture_failed",
+      reason: "request_file_unset", detail: "Headless permission request capture path was unavailable",
+    });
     return request;
   }
   const existingIndex = capture.requests.findIndex((item) => item.request_id === request.request_id);
@@ -177,14 +179,20 @@ function capturePermissionRequest(toolCalls, loggedEvents, home, blockerLogPath,
   capture.requests = capture.requests.slice(-MAX_REQUESTS);
   const written = writeCaptureFile(requestFile, capture);
   if (!written) {
-    recordPermissionBlocker(loggedEvents, home, blockerLogPath, request,
-      "permission_capture_failed", "capture_file_write_failed", "Permission request could not be persisted");
+    recordPermissionBlocker({
+      loggedEvents, home, blockerLogPath, request, event: "permission_capture_failed",
+      reason: "capture_file_write_failed", detail: "Permission request could not be persisted",
+    });
   } else if (request.risk.grantable) {
-    recordPermissionBlocker(loggedEvents, home, blockerLogPath, request,
-      "permission_request_captured", "permission_required", request.risk.reason);
+    recordPermissionBlocker({
+      loggedEvents, home, blockerLogPath, request, event: "permission_request_captured",
+      reason: "permission_required", detail: request.risk.reason,
+    });
   } else {
-    recordPermissionBlocker(loggedEvents, home, blockerLogPath, request,
-      "permission_request_non_grantable", "permission_non_grantable", request.risk.reason);
+    recordPermissionBlocker({
+      loggedEvents, home, blockerLogPath, request, event: "permission_request_non_grantable",
+      reason: "permission_non_grantable", detail: request.risk.reason,
+    });
   }
   return request;
 }
@@ -201,7 +209,8 @@ async function rejectPermissionRequest(client, request) {
   }
 }
 
-async function handlePermissionEvent(client, isHeadless, toolCalls, loggedEvents, home, blockerLogPath, input) {
+async function handlePermissionEvent(context, input) {
+  const { client, isHeadless, toolCalls, loggedEvents, home, blockerLogPath } = context;
   const event = input?.event;
   if (!isHeadless() || event?.type !== "permission.asked") return;
   const request = event.properties || {};
@@ -209,7 +218,8 @@ async function handlePermissionEvent(client, isHeadless, toolCalls, loggedEvents
   await rejectPermissionRequest(client, request);
 }
 
-function handlePermissionAsk(isHeadless, toolCalls, loggedEvents, home, blockerLogPath, input, output) {
+function handlePermissionAsk(context, input, output) {
+  const { isHeadless, toolCalls, loggedEvents, home, blockerLogPath } = context;
   if (!isHeadless()) return;
   capturePermissionRequest(toolCalls, loggedEvents, home, blockerLogPath, input || {});
   output.status = "deny";
@@ -218,9 +228,10 @@ function handlePermissionAsk(isHeadless, toolCalls, loggedEvents, home, blockerL
 export function createPermissionBroker({ client, isHeadless, home = homedir(), blockerLogPath = undefined }) {
   const toolCalls = new Map();
   const loggedEvents = new Set();
+  const context = { client, isHeadless, toolCalls, loggedEvents, home, blockerLogPath };
   return {
     recordToolCall: (input, output) => recordPermissionToolCall(toolCalls, isHeadless, home, input, output),
-    handleEvent: (input) => handlePermissionEvent(client, isHeadless, toolCalls, loggedEvents, home, blockerLogPath, input),
-    permissionAsk: (input, output) => handlePermissionAsk(isHeadless, toolCalls, loggedEvents, home, blockerLogPath, input, output),
+    handleEvent: (input) => handlePermissionEvent(context, input),
+    permissionAsk: (input, output) => handlePermissionAsk(context, input, output),
   };
 }
