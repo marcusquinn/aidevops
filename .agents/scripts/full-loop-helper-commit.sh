@@ -308,6 +308,16 @@ _ensure_no_in_progress_integration() {
 
 # --- Input Validation ---
 
+# Return 0 when a commit subject is an intermediate WIP message.
+# Args: $1=commit subject
+_is_wip_commit_message() {
+	local message="$1"
+	if [[ "$message" =~ ^wip[[:space:]:\(] ]]; then
+		return 0
+	fi
+	return 1
+}
+
 # Validate commit-and-pr inputs: required fields and branch safety.
 # Sets caller-scoped $repo and $branch on success.
 # Returns 1 on validation failure.
@@ -316,6 +326,11 @@ _validate_commit_and_pr_inputs() {
 
 	if [[ -z "$issue_number" || -z "$commit_message" ]]; then
 		print_error "Usage: full-loop-helper.sh commit-and-pr|create-pr --issue <N> --message <msg>"
+		return 1
+	fi
+	if _is_wip_commit_message "$commit_message"; then
+		print_error "Refusing WIP final commit message: ${commit_message}"
+		print_error "Use a conventional final subject such as 'fix: describe the completed change'."
 		return 1
 	fi
 
@@ -378,6 +393,81 @@ _stage_and_commit() {
 	return 0
 }
 
+# Replace branch history with one final commit when any branch commit is WIP.
+# The caller-supplied final message is authoritative. On commit-hook failure,
+# restore the original branch tip and preserve any hook-produced working changes.
+# Args: $1=final commit message
+_finalize_wip_history() {
+	local commit_message="$1"
+	if _is_wip_commit_message "$commit_message"; then
+		print_error "Cannot finalize WIP history with another WIP message: ${commit_message}"
+		return 1
+	fi
+
+	local base_branch="" branch_range="" branch_subjects=""
+	local base_ref=""
+	base_branch=$(_resolve_remote_default_branch origin) || return 1
+	printf -v base_ref 'origin/%s' "$base_branch"
+	printf -v branch_range '%s..HEAD' "$base_ref"
+	if ! branch_subjects=$(git log --format=%s "$branch_range" 2>/dev/null); then
+		print_error "Cannot inspect branch commit subjects relative to ${base_ref}."
+		return 1
+	fi
+
+	local subject="" has_wip=0
+	while IFS= read -r subject; do
+		if _is_wip_commit_message "$subject"; then
+			has_wip=1
+			break
+		fi
+	done <<<"$branch_subjects"
+	if [[ "$has_wip" == "0" ]]; then
+		return 0
+	fi
+
+	local worktree_status=""
+	if ! worktree_status=$(git status --porcelain 2>/dev/null); then
+		print_error "Cannot verify a clean worktree before WIP history finalization."
+		return 1
+	fi
+	if [[ -n "$worktree_status" ]]; then
+		print_error "Refusing to rewrite WIP history with uncommitted changes present."
+		return 1
+	fi
+
+	local original_head=""
+	original_head=$(git rev-parse HEAD 2>/dev/null) || {
+		print_error "Cannot record the original branch tip before WIP finalization."
+		return 1
+	}
+	print_info "Finalizing WIP history into one commit relative to ${base_ref}..."
+	if ! git reset --soft "$base_ref"; then
+		print_error "Failed to prepare WIP history for finalization."
+		return 1
+	fi
+	if git diff --cached --quiet 2>/dev/null; then
+		print_error "WIP branch has no net changes relative to ${base_ref}."
+		git reset --mixed "$original_head" >/dev/null 2>&1 || true
+		return 1
+	fi
+	if ! git commit -m "$commit_message"; then
+		print_error "Final WIP squash commit failed; restoring original branch tip."
+		if ! git reset --mixed "$original_head" >/dev/null 2>&1; then
+			print_error "Failed to restore original branch tip ${original_head}; recover it manually."
+		fi
+		return 1
+	fi
+	local final_subject=""
+	final_subject=$(git log -1 --format=%s 2>/dev/null || echo "")
+	if _is_wip_commit_message "$final_subject"; then
+		print_error "Final commit hook produced another WIP subject; restoring original branch tip."
+		git reset --mixed "$original_head" >/dev/null 2>&1 || true
+		return 1
+	fi
+	print_info "WIP history finalized as: ${final_subject}"
+	return 0
+}
+
 # --- Project Validators (t2842) ---
 # Closes the worker-CI-failure gap where workers ship code that fails
 # project CI checks (Format/Lint/Typecheck) because no pre-push
@@ -399,12 +489,6 @@ _validators_should_run() {
 	fi
 	if [[ "${AIDEVOPS_SKIP_PROJECT_VALIDATORS:-0}" == "1" ]]; then
 		print_info "[validators] AIDEVOPS_SKIP_PROJECT_VALIDATORS=1, skipping"
-		return 1
-	fi
-	local last_msg
-	last_msg=$(git log -1 --format=%s 2>/dev/null || echo "")
-	if [[ "$last_msg" =~ ^wip[[:space:]:\(] ]]; then
-		print_info "[validators] wip commit (\"${last_msg}\"), skipping"
 		return 1
 	fi
 	local non_docs_count
