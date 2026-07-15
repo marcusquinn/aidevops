@@ -7,14 +7,14 @@
 
 The opencode-aidevops plugin renders session-start framework status (versions,
 security posture, advisories, update hints) as a TUI toast before the first
-turn. Raw output is cached at `~/.aidevops/cache/session-greeting.txt`. The
+turn. Raw output is cached at `~/.aidevops/cache/session-greeting-opencode.txt`. The
 user has already seen it — do NOT re-run `aidevops-update-check.sh` and do
 NOT repeat toast content in the chat.
 
 **On interactive conversation start** (skip only when the runtime is actually headless; a slash-command name such as `/full-loop` does not make an interactive session headless):
 
 1. If an earlier system instruction declares itself the authoritative plugin-injected greeting block and supplies exact version values, follow it. Its first-visible-text requirement does not prevent task tool calls from running first. Do not read the cache or VERSION first.
-2. Otherwise, the plugin injection is unavailable. Read line 1 of `~/.aidevops/cache/session-greeting.txt`. Format: `aidevops v{X} running in OpenCode v{Y} | ...`. Extract `{X}` and `{Y}`, then make the first visible text in your first assistant response exactly this template — no extra prose or status dump:
+2. Otherwise, the plugin injection is unavailable. Read line 1 of `~/.aidevops/cache/session-greeting-opencode.txt`. Format: `aidevops v{X} running in OpenCode v{Y} | ...`. Extract `{X}` and `{Y}`, then make the first visible text in your first assistant response exactly this template — no extra prose or status dump:
 
    ```text
    Hi!

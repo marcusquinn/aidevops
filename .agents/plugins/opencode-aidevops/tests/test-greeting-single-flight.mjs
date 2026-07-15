@@ -14,11 +14,13 @@ const NEW_GREETING = "aidevops v1.0.1 running in OpenCode v1.0.1";
 
 function fixture() {
   const cacheDir = mkdtempSync(join(tmpdir(), "aidevops-greeting-test-"));
-  const cacheFile = join(cacheDir, "session-greeting.txt");
+  const cacheFile = join(cacheDir, "session-greeting-opencode.txt");
+  const sharedCacheFile = join(cacheDir, "session-greeting.txt");
   const clients = [];
   return {
     cacheDir,
     cacheFile,
+    sharedCacheFile,
     clients,
     client() {
       const toasts = [];
@@ -105,6 +107,26 @@ test("fresh cache emits immediately without spawning a refresh", async (t) => {
 
   assert.equal(spawnCount, 0);
   assert.equal(f.clients[0].length, 1);
+});
+
+test("shared Claude cache cannot leak into OpenCode and refresh receives runtime identity", async (t) => {
+  const f = fixture();
+  t.after(() => f.cleanup());
+  const claudeGreeting = "aidevops v1.0.0 running in Claude Code v2.1.209";
+  writeFileSync(f.sharedCacheFile, `${claudeGreeting}\n`);
+  let execOptions;
+  const handler = createGreetingHandler(handlerOptions(f, f.client(), async (_command, options) => {
+    execOptions = options;
+    return { stdout: NEW_GREETING };
+  }));
+
+  await handler({ event: { type: "session.created" } });
+  await waitFor(() => cacheEquals(f, NEW_GREETING) && f.clients[0].length === 1);
+
+  assert.equal(execOptions.env.OPENCODE, "1");
+  assert.equal(readFileSync(f.sharedCacheFile, "utf8").trim(), claudeGreeting);
+  assert.match(f.clients[0][0].message, /running in OpenCode/);
+  assert.doesNotMatch(f.clients[0][0].message, /Claude Code/);
 });
 
 test("headless sessions never emit or refresh a greeting", async (t) => {
@@ -343,8 +365,8 @@ test("successful refresh atomically replaces the cache without temp files", asyn
   const handler = createGreetingHandler(handlerOptions(f, f.client(), async () => ({ stdout: NEW_GREETING })));
 
   await handler({ event: { type: "session.created" } });
-  await waitFor(() => readdirSync(f.cacheDir).includes("session-greeting.txt"));
+  await waitFor(() => readdirSync(f.cacheDir).includes("session-greeting-opencode.txt"));
 
   assert.equal(readFileSync(f.cacheFile, "utf8").trim(), NEW_GREETING);
-  assert.deepEqual(readdirSync(f.cacheDir), ["session-greeting.txt"]);
+  assert.deepEqual(readdirSync(f.cacheDir), ["session-greeting-opencode.txt"]);
 });
