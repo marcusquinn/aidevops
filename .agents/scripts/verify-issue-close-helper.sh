@@ -199,24 +199,18 @@ _classify_issue_paths() {
 #######################################
 # Tier 1: Match specific paths (paths containing /) from the issue against PR files.
 #
-# Requires at least MIN_FILE_OVERLAP specific-path matches (not just basename).
-# Basename-only matches are counted but insufficient on their own — GH#17372.
+# Requires exact specific-path overlap; basename-only matches do not count —
+# GH#17372.
 #
 # Args:
 #   $1 = specific_paths (newline-separated paths with /)
 #   $2 = pr_files (newline-separated)
-#   $3 = pr_basenames (newline-separated)
-#   $4 = issue_number (for output messages)
-#   $5 = pr_number (for output messages)
 # Outputs: overlap_count and overlapping_files via stdout (eval-safe assignments)
-# Returns: 0 = tier1 passed or skipped, 1 = tier1 rejected
+# Returns: 0 always; the final verdict considers safe Tier 2 matches
 #######################################
 _check_tier1_specific_paths() {
 	local specific_paths="$1"
 	local pr_files="$2"
-	local pr_basenames="$3"
-	local issue_number="$4"
-	local pr_number="$5"
 
 	local overlap_count=0
 	local overlapping_files=""
@@ -231,9 +225,6 @@ _check_tier1_specific_paths() {
 
 	while IFS= read -r issue_file; do
 		[[ -z "$issue_file" ]] && continue
-		local issue_basename
-		issue_basename=$(basename "$issue_file")
-
 		# Full path substring match (issue says ".agents/scripts/setup/modules/schedulers.sh",
 		# PR has ".agents/.agents/scripts/setup/modules/schedulers.sh" or exact match)
 		if printf '%s\n' "$pr_files" | grep -qF "$issue_file"; then
@@ -242,30 +233,7 @@ _check_tier1_specific_paths() {
 			overlapping_files="${overlapping_files}  ${issue_file} (specific path match)"$'\n'
 			continue
 		fi
-
-		# Basename match for specific paths (weaker — PR touches same filename
-		# but possibly in a different directory)
-		if printf '%s\n' "$pr_basenames" | grep -qxF "$issue_basename"; then
-			overlap_count=$((overlap_count + 1))
-			overlapping_files="${overlapping_files}  ${issue_file} (basename match only — weaker signal)"$'\n'
-			continue
-		fi
 	done <<<"$specific_paths"
-
-	# When specific paths exist, require at least one specific match.
-	# Basename-only matches on contextual files (like pulse-wrapper.sh
-	# appearing as environment info) create false positives — GH#17372.
-	if [[ "$specific_overlap" -lt "$MIN_FILE_OVERLAP" ]]; then
-		printf 'REJECTED: PR #%s does NOT touch any specific file paths from issue #%s\n' \
-			"$pr_number" "$issue_number"
-		printf 'Issue specifies: %s\n' "$(printf '%s' "$specific_paths" | tr '\n' ', ' | sed 's/,$//')"
-		printf 'PR changes: %s\n' "$(printf '%s' "$pr_files" | tr '\n' ', ' | sed 's/,$//')"
-		if [[ "$overlap_count" -gt 0 ]]; then
-			printf 'Note: %d basename-only match(es) found but insufficient — specific path overlap required\n' "$overlap_count"
-		fi
-		log_warn "Rejected: PR #${pr_number} has 0 specific-path overlap with issue #${issue_number} (${overlap_count} basename matches)"
-		return 1
-	fi
 
 	printf 'tier1_overlap_count=%d\n' "$overlap_count"
 	printf 'tier1_specific_overlap=%d\n' "$specific_overlap"
@@ -276,25 +244,41 @@ _check_tier1_specific_paths() {
 #######################################
 # Tier 2: Match general paths (bare filenames, no /) against PR basenames.
 #
-# Only applied when no specific paths exist (specific_overlap == 0).
+# General names that duplicate a specific path's basename are excluded. The
+# extractor also emits basenames found inside full paths, and accepting those
+# would let an unrelated same-basename file bypass GH#17372's strict check.
 #
 # Args:
 #   $1 = general_paths (newline-separated bare filenames)
-#   $2 = pr_basenames (newline-separated)
-#   $3 = initial overlap_count (from tier 1)
-#   $4 = initial overlapping_files (from tier 1)
+#   $2 = specific_paths (newline-separated paths with /)
+#   $3 = pr_basenames (newline-separated)
+#   $4 = initial overlap_count (from tier 1)
+#   $5 = initial overlapping_files (from tier 1)
 # Outputs: updated overlap_count and overlapping_files via stdout (eval-safe)
 # Returns: 0 always
 #######################################
 _check_tier2_general_paths() {
 	local general_paths="$1"
-	local pr_basenames="$2"
-	local overlap_count="$3"
-	local overlapping_files="$4"
+	local specific_paths="$2"
+	local pr_basenames="$3"
+	local overlap_count="$4"
+	local overlapping_files="$5"
 
 	if [[ -n "$general_paths" ]]; then
 		while IFS= read -r issue_file; do
 			[[ -z "$issue_file" ]] && continue
+			local duplicates_specific_basename=0
+			local specific_file
+			while IFS= read -r specific_file; do
+				[[ -z "$specific_file" ]] && continue
+				if [[ "${specific_file##*/}" == "$issue_file" ]]; then
+					duplicates_specific_basename=1
+					break
+				fi
+			done <<<"$specific_paths"
+			if [[ "$duplicates_specific_basename" -eq 1 ]]; then
+				continue
+			fi
 			if printf '%s\n' "$pr_basenames" | grep -qxF "$issue_file"; then
 				overlap_count=$((overlap_count + 1))
 				overlapping_files="${overlapping_files}  ${issue_file} (basename match)"$'\n'
@@ -354,8 +338,9 @@ _emit_overlap_verdict() {
 #   buggy file (.agents/scripts/setup/modules/schedulers.sh), and the PR only touches
 #   the contextual file.
 #
-# Tier 2 (relaxed): If no specific paths are found (only bare filenames),
-#   fall back to basename matching.
+# Tier 2 (relaxed): Bare filenames that are independent of every specific
+#   path may match PR basenames. A bare name duplicated by a specific path is
+#   ignored so same-basename files elsewhere cannot satisfy the strict target.
 #
 # Args: $1 = issue_number, $2 = pr_number, $3 = repo_slug
 # Outputs: verification result (human-readable)
@@ -406,17 +391,15 @@ check_pr_fixes_issue() {
 	local tier1_overlap_count tier1_specific_overlap tier1_overlapping_files
 	local tier1_output
 	tier1_output=$(_check_tier1_specific_paths \
-		"$specific_paths" "$pr_files" "$pr_basenames" "$issue_number" "$pr_number") || {
-		printf '%s\n' "$tier1_output" >&2
-		return 1
-	}
+		"$specific_paths" "$pr_files")
 	eval "$tier1_output"
 
-	# Tier 2: general basename matching (only when no specific overlap found)
+	# Tier 2: independent general basename matching when no specific path matched
 	local tier2_overlap_count tier2_overlapping_files
 	if [[ "$tier1_specific_overlap" -eq 0 ]]; then
 		eval "$(_check_tier2_general_paths \
-			"$general_paths" "$pr_basenames" "$tier1_overlap_count" "$tier1_overlapping_files")"
+			"$general_paths" "$specific_paths" "$pr_basenames" \
+			"$tier1_overlap_count" "$tier1_overlapping_files")"
 	else
 		tier2_overlap_count="$tier1_overlap_count"
 		tier2_overlapping_files="$tier1_overlapping_files"
