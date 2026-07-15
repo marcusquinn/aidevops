@@ -10,6 +10,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.32.121] - 2026-07-15
+
+### Changed
+
+- Maintenance: ratchet QLTY_SMELL_THRESHOLD 64→61 (-3) [skip ci]
+- Maintenance: sync ref:GH#27777 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#27776 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#27774 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#27772 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#27771 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#27770 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#27769 to TODO.md [skip ci]
+
+### Fixed
+
+- respect declared dispatch footprint intent (#27795)
+- harden dependency normalization environment handling (#27783)
+
 ## [3.32.120] - 2026-07-15
 
 ### Changed
