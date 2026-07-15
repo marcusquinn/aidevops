@@ -50,6 +50,10 @@ fi
 [[ -n "${AIDEVOPS_EXPECTED_DEPLOY_VERSION:-}" ]] || exit 0
 deployed_version="${AIDEVOPS_EXPECTED_DEPLOY_VERSION:?}"
 [[ "${MOCK_DEPLOY_STATE:-current}" == "stale" ]] && deployed_version="9.8.6"
+if [[ "${MOCK_DEPLOY_STATE:-current}" == "stale-once" && ! -f "${MOCK_DEPLOY_ATTEMPT_FILE:?}" ]]; then
+	printf 'stale deployment observed\n' >"$MOCK_DEPLOY_ATTEMPT_FILE"
+	deployed_version="9.8.6"
+fi
 bundle_dir="$HOME/.aidevops/runtime-bundles/${deployed_version}-fixture"
 mkdir -p "$bundle_dir/agents" "$HOME/bin"
 printf '%s\n' "$deployed_version" >"$bundle_dir/agents/VERSION"
@@ -100,6 +104,7 @@ invoke_release_sync() {
 		SYNC_ENV_LOG_PATH="$TEST_DIR/sync-env.log" \
 		MOCK_DEPLOY_EXIT_CODE="${MOCK_DEPLOY_EXIT_CODE:-0}" \
 		MOCK_DEPLOY_STATE="${MOCK_DEPLOY_STATE:-current}" \
+		MOCK_DEPLOY_ATTEMPT_FILE="$TEST_DIR/deploy-attempt" \
 		bash -c 'source "$1" && run_post_release_agent_sync' _ "$VERSION_HELPER"
 	return $?
 }
@@ -224,6 +229,23 @@ test_release_sync_rejects_stale_final_bundle() {
 	return 0
 }
 
+test_release_sync_recovers_after_competing_stale_setup() {
+	local repo_path
+	local deploy_count=""
+	: >"$TEST_DIR/sync.log"
+	rm -f "$TEST_DIR/deploy-attempt"
+	repo_path=$(create_fake_repo "release-recovery" "https://github.com/marcusquinn/aidevops.git")
+	if MOCK_DEPLOY_STATE=stale-once invoke_release_sync "$repo_path" >/dev/null 2>&1; then
+		deploy_count=$(grep -c -- "--repo $repo_path --full --quiet" "$TEST_DIR/sync.log")
+		if [[ "$deploy_count" -eq 2 && "$(tr -d '[:space:]' <"$TEST_DIR/home/.aidevops/agents/VERSION")" == "9.8.7" ]]; then
+			print_result "release sync recovers after a competing stale setup" 0
+			return 0
+		fi
+	fi
+	print_result "release sync recovers after a competing stale setup" 1 "Expected one retry ending at v9.8.7"
+	return 0
+}
+
 main() {
 	echo "Running agent auto-sync regression tests"
 	setup
@@ -236,6 +258,7 @@ main() {
 	test_release_sync_propagates_deploy_failure
 	test_release_sync_unsets_session_pins
 	test_release_sync_rejects_stale_final_bundle
+	test_release_sync_recovers_after_competing_stale_setup
 
 	teardown
 	trap - EXIT
