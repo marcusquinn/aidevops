@@ -575,7 +575,7 @@ function resolveIssue({ taskId, forge = "github", repositoryId }, path = initial
 function reconciliationTargets({ repositoryId, limit = 100 }, path = initialise()) {
   validId(repositoryId, "repository_id");
   if (!Number.isSafeInteger(limit) || limit < 1 || limit > 500) throw new TypeError("limit must be 1..500");
-  const targets = rows(path, `SELECT task_id AS taskId,issue_id AS subjectId,display_number AS displayNumber,state_cursor AS stateCursor FROM issue_mappings WHERE forge='github' AND repository_id=${sqlEscape(repositoryId)} ORDER BY COALESCE(state_cursor,'') ASC,display_number ASC LIMIT ${limit};`);
+  const targets = rows(path, `SELECT m.task_id AS taskId,m.issue_id AS subjectId,m.display_number AS displayNumber,m.state_cursor AS stateCursor FROM issue_mappings m JOIN tasks t ON t.task_id=m.task_id WHERE m.forge='github' AND m.repository_id=${sqlEscape(repositoryId)} ORDER BY COALESCE(m.state_cursor,'') ASC,m.display_number ASC LIMIT ${limit};`);
   return { bounded: true, repositoryId, targets };
 }
 function forgeEventInput(input) {
@@ -613,8 +613,8 @@ function transitionForEvent(eventKind, action) {
 }
 function forgeEventMapping(path, value) {
   if (value.eventKind === "push") return null;
-  const selector = value.taskId ? `task_id=${sqlEscape(value.taskId)}` : `issue_id=${sqlEscape(value.subjectId)}`;
-  return rows(path, `SELECT task_id AS taskId FROM issue_mappings WHERE forge='github' AND repository_id=${sqlEscape(value.repositoryId)} AND ${selector};`)[0];
+  const selector = value.taskId ? `m.task_id=${sqlEscape(value.taskId)}` : `m.issue_id=${sqlEscape(value.subjectId)}`;
+  return rows(path, `SELECT m.task_id AS taskId FROM issue_mappings m JOIN tasks t ON t.task_id=m.task_id WHERE m.forge='github' AND m.repository_id=${sqlEscape(value.repositoryId)} AND ${selector};`)[0];
 }
 function forgeEventCursor(path, value) {
   return rows(path, `SELECT cursor_timestamp AS cursorTimestamp,cursor_tiebreaker AS cursorTiebreaker,payload_hash AS payloadHash FROM forge_event_cursors WHERE forge='github' AND repository_id=${sqlEscape(value.repositoryId)} AND subject_kind=${sqlEscape(value.eventKind)} AND subject_id=${sqlEscape(value.subjectId)};`)[0];
