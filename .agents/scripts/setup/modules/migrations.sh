@@ -1584,6 +1584,7 @@ migrate_custom_model_routing_reasoning_defaults() {
 	local backup_dir="$HOME/.aidevops/config-backups/migrations"
 	local backup_file="$backup_dir/t18137-model-routing-table.json"
 	local temp_file=""
+	local jq_object_type="object"
 
 	[[ -f "$marker_file" ]] && return 0
 	if [[ ! -e "$custom_table" ]]; then
@@ -1599,13 +1600,13 @@ migrate_custom_model_routing_reasoning_defaults() {
 		print_warning "jq unavailable; t18137 custom model routing migration will retry"
 		return 0
 	fi
-	if ! jq -e '
-		type == "object" and
-		((.tiers // {}) | type == "object") and
-		((.tiers.simple // {}) | type == "object") and
-		((.tiers.simple.reasoning // {}) | type == "object") and
-		((.tiers.thinking // {}) | type == "object") and
-		((.tiers.thinking.reasoning // {}) | type == "object")
+	if ! jq -e --arg object_type "$jq_object_type" '
+		type == $object_type and
+		((.tiers // {}) | type == $object_type) and
+		((.tiers.simple // {}) | type == $object_type) and
+		((.tiers.simple.reasoning // {}) | type == $object_type) and
+		((.tiers.thinking // {}) | type == $object_type) and
+		((.tiers.thinking.reasoning // {}) | type == $object_type)
 	' "$custom_table" >/dev/null 2>&1; then
 		print_warning "Invalid custom model routing structure; t18137 migration will retry"
 		return 0
