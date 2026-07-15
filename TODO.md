@@ -4586,3 +4586,5 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [ ] t18127 Reuse canonical snapshots and remove duplicate verification reads #auto-dispatch #efficiency #enhancement #framework #github-api #pulse ref:GH#27771
 
 - [ ] t18128 Cache PR check status by head SHA and refresh actionable changes #auto-dispatch #efficiency #enhancement #framework #github-api #pulse ref:GH#27772
+
+- [ ] t18129 Add cross-process single-flight and shared rate-limit state #auto-dispatch #efficiency #enhancement #framework #github-api #pulse #reliability ref:GH#27774
