@@ -901,6 +901,24 @@ else
 		"(rc=$release_closed_rc, log=${release_closed_log:0:300})"
 fi
 
+# REST fallback reads return the GitHub issue state in lowercase. Preserve the
+# same closed-issue invariant when that path supplies `closed` (GH#27869).
+_isc_cmd_claim 70004 testowner/testrepo --worktree /tmp/wt-fake >/dev/null 2>&1
+: >"$STUB_LOG"
+export STUB_ISSUE_HAS_IN_REVIEW=1
+export STUB_ISSUE_STATE=closed
+_isc_cmd_release 70004 testowner/testrepo >/dev/null 2>&1
+release_rest_closed_rc=$?
+release_rest_closed_log=$(cat "$STUB_LOG")
+export STUB_ISSUE_STATE=
+
+if [[ $release_rest_closed_rc -eq 0 ]] && printf '%s' "$release_rest_closed_log" | grep -q "add-label status:done" && ! printf '%s' "$release_rest_closed_log" | grep -q "add-label status:available"; then
+	print_result "GH#27869: release on lowercase closed issue → status:done, not status:available" 0
+else
+	print_result "GH#27869: release on lowercase closed issue → status:done, not status:available" 1 \
+		"(rc=$release_rest_closed_rc, log=${release_rest_closed_log:0:300})"
+fi
+
 # Reset stub state
 export STUB_ISSUE_HAS_IN_REVIEW=0
 
