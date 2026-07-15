@@ -817,7 +817,7 @@ normalize_repo_dependency_readiness() {
 	graph_json=$(jq -cn --arg slug "$slug" --argjson data "$repo_data" \
 		'{repos:{($slug):$data}}' 2>/dev/null) || return 1
 
-	local previous_cache_file="${DEP_GRAPH_CACHE_FILE}"
+	local previous_cache_file="${DEP_GRAPH_CACHE_FILE:-}"
 	local scoped_cache_file=""
 	scoped_cache_file=$(mktemp 2>/dev/null || true)
 	[[ -n "$scoped_cache_file" ]] || return 1
@@ -835,10 +835,11 @@ normalize_repo_dependency_readiness() {
 normalize_repo_dependency_readiness_if_due() {
 	local slug="$1"
 	local ttl_secs="${PULSE_DEP_NORMALIZE_TTL_SECS:-60}"
-	local marker_dir="${HOME}/.aidevops/cache/dependency-normalization"
+	local marker_dir="${HOME:+$HOME/.aidevops/cache/dependency-normalization}"
 	local marker_file=""
 	local marker_age=0
 	[[ -n "$slug" ]] || return 1
+	[[ -n "$marker_dir" ]] || return 1
 	[[ "$ttl_secs" =~ ^[0-9]+$ ]] || ttl_secs=60
 	marker_file="${marker_dir}/${slug//\//_}"
 
