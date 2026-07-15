@@ -137,14 +137,14 @@ load_release_owned_checks() {
 	local check_runs_response release_runs_response
 	check_runs_response=$(gh api --paginate --slurp \
 		"repos/${repo}/commits/${release_sha}/check-runs?per_page=100" 2>/dev/null |
-		jq -c -f "$REPO_ROOT/.github/scripts/flatten-check-run-pages.jq") || return 1
+		jq -c -f "$SCRIPT_DIR/jq/flatten-check-run-pages.jq") || return 1
 	release_runs_response=$(gh api --paginate --slurp \
 		"repos/${repo}/actions/runs?head_sha=${release_sha}&per_page=100" 2>/dev/null) || return 1
 	jq -c \
 		--arg release_sha "$release_sha" \
 		--arg self_name "Verify Release Health" \
 		--slurpfile release_run_documents <(printf '%s\n' "$release_runs_response") \
-		-f "$REPO_ROOT/.github/scripts/release-owned-check-runs.jq" \
+		-f "$SCRIPT_DIR/jq/release-owned-check-runs.jq" \
 		<<<"$check_runs_response"
 	return $?
 }
