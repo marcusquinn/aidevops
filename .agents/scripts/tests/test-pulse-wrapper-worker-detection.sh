@@ -1010,6 +1010,60 @@ JSON
 	return 0
 }
 
+test_build_ranked_dispatch_candidates_json_applies_capped_age_bonus() {
+	local original_repos_json="$REPOS_JSON"
+	local original_age_bonus_per_day="$PULSE_DISPATCH_AGE_BONUS_PER_DAY"
+	local original_age_bonus_cap="$PULSE_DISPATCH_AGE_BONUS_CAP"
+	cat >"${REPOS_JSON}" <<'JSON'
+{
+  "initialized_repos": [
+    {
+      "slug": "marcusquinn/aidevops",
+      "path": "/tmp/aidevops",
+      "pulse": true,
+      "priority": "tooling",
+      "maintainer": "marcusquinn"
+    }
+  ]
+}
+JSON
+
+	gh_issue_list() {
+		if [[ "${1:-}" == "--repo" && "${2:-}" == "marcusquinn/aidevops" ]]; then
+			printf '%s\n' '[
+			  {"number":9303,"title":"old later update","url":"#9303","createdAt":"2020-01-01T00:00:00Z","updatedAt":"2026-03-31T00:02:00Z","assignees":[],"labels":[{"name":"bug"}]},
+			  {"number":9304,"title":"future issue","url":"#9304","createdAt":"2099-01-01T00:00:00Z","updatedAt":"2026-03-31T00:00:00Z","assignees":[],"labels":[{"name":"bug"}]},
+			  {"number":9305,"title":"old earlier update","url":"#9305","createdAt":"2020-01-01T00:00:00Z","updatedAt":"2026-03-31T00:01:00Z","assignees":[],"labels":[{"name":"bug"}]},
+			  {"number":9306,"title":"slightly newer capped issue","url":"#9306","createdAt":"2021-01-01T00:00:00Z","updatedAt":"2026-03-31T00:00:00Z","assignees":[],"labels":[{"name":"bug"}]}
+			]'
+			return 0
+		fi
+		return 1
+	}
+	export -f gh_issue_list
+	PULSE_DISPATCH_AGE_BONUS_PER_DAY=10
+	PULSE_DISPATCH_AGE_BONUS_CAP=100
+
+	local ranked_json ordered_numbers age_bonuses
+	ranked_json=$(build_ranked_dispatch_candidates_json 20)
+	ordered_numbers=$(printf '%s' "$ranked_json" | jq -r '.[].number' 2>/dev/null || true)
+	age_bonuses=$(printf '%s' "$ranked_json" | jq -r '[.[] | {key: (.number | tostring), value: .age_bonus}] | from_entries | [."9303", ."9304", ."9305", ."9306"] | join(",")' 2>/dev/null || true)
+
+	unset -f gh_issue_list
+	REPOS_JSON="$original_repos_json"
+	PULSE_DISPATCH_AGE_BONUS_PER_DAY="$original_age_bonus_per_day"
+	PULSE_DISPATCH_AGE_BONUS_CAP="$original_age_bonus_cap"
+
+	if [[ "$ordered_numbers" == $'9305\n9303\n9306\n9304' && "$age_bonuses" == "100,0,100,100" ]]; then
+		print_result "build_ranked_dispatch_candidates_json caps age bonus and uses creation/update tie-breaks" 0
+		return 0
+	fi
+
+	print_result "build_ranked_dispatch_candidates_json caps age bonus and uses creation/update tie-breaks" 1 \
+		"Unexpected order/bonuses: order=${ordered_numbers//$'\n'/,} bonuses=${age_bonuses}"
+	return 0
+}
+
 test_dispatch_max_dispatches_up_to_capacity() {
 	local dispatch_log="${TEST_ROOT}/deterministic-dispatch.log"
 	: >"$dispatch_log"
@@ -1413,6 +1467,7 @@ main() {
 	test_build_ranked_dispatch_candidates_json_respects_priority_labels
 	test_build_ranked_dispatch_candidates_json_prioritizes_security_quality_debt
 	test_build_ranked_dispatch_candidates_json_excludes_pull_requests
+	test_build_ranked_dispatch_candidates_json_applies_capped_age_bonus
 	test_build_ranked_dispatch_candidates_json_respects_schedule_gate
 	test_build_ranked_dispatch_candidates_json_accepts_array_pulse_hours
 	test_dispatch_max_dispatches_up_to_capacity

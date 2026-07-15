@@ -247,7 +247,9 @@ assert_eq "2c: raw event total remains backward compatible" "18" "$(printf '%s' 
 assert_eq "2c2: terminal session outcomes = 13" "13" "$(printf '%s' "$JSON" | jq -r '.metrics.terminal_session_total')"
 assert_eq "2c2b: event_total aliases raw total" "18" "$(printf '%s' "$JSON" | jq -r '.metrics.event_total')"
 assert_eq "2c3: continuation events = 4" "4" "$(printf '%s' "$JSON" | jq -r '.metrics.continuation_events')"
-assert_eq "2d: succeeded = 5" "5" "$(printf '%s' "$JSON" | jq -r '.metrics.succeeded')"
+assert_eq "2d: runtime handoffs = 5" "5" "$(printf '%s' "$JSON" | jq -r '.metrics.runtime_handoffs')"
+assert_eq "2d2: delivered success is unknown when GitHub check is skipped" "null" \
+	"$(printf '%s' "$JSON" | jq -r '.metrics.succeeded')"
 assert_eq "2e: watchdog_killed = 1" "1" "$(printf '%s' "$JSON" | jq -r '.metrics.watchdog_killed')"
 assert_eq "2f: watchdog_continued = 2 (incl. nonzero-exit heartbeat)" "2" \
 	"$(printf '%s' "$JSON" | jq -r '.metrics.watchdog_continued')"
@@ -307,6 +309,8 @@ assert_eq "2m: pr count is null when skipped" "null" \
 	"$(printf '%s' "$JSON" | jq -r '.worker_solved_issues.count')"
 assert_eq "2n: pr check_state = skipped" "skipped" \
 	"$(printf '%s' "$JSON" | jq -r '.worker_solved_issues.check_state')"
+assert_eq "2n2: delivery stages are explicitly skipped" "skipped" \
+	"$(printf '%s' "$JSON" | jq -r '.delivery_stages.check_state')"
 assert_eq "2o: blocker events obey the 24h window" "3" \
 	"$(printf '%s' "$JSON" | jq -r '.progress_blockers.event_total')"
 assert_eq "2p: unresolved old blocker remains active until cleared" "2" \
@@ -327,7 +331,7 @@ JSON=$(env "${RUN_ENV[@]}" "$HELPER" summary --since 1h --no-pr-check --json 2>&
 # continuation-only and therefore excluded from the outcome denominator.
 assert_eq "3a: 1h raw total = 4" "4" "$(printf '%s' "$JSON" | jq -r '.metrics.total')"
 assert_eq "3a2: 1h terminal total = 2" "2" "$(printf '%s' "$JSON" | jq -r '.metrics.terminal_session_total')"
-assert_eq "3b: 1h succeeded = 2" "2" "$(printf '%s' "$JSON" | jq -r '.metrics.succeeded')"
+assert_eq "3b: 1h runtime handoffs = 2" "2" "$(printf '%s' "$JSON" | jq -r '.metrics.runtime_handoffs')"
 assert_eq "3c: 1h watchdog_continued = 1" "1" \
 	"$(printf '%s' "$JSON" | jq -r '.metrics.watchdog_continued')"
 assert_eq "3d: 1h watchdog_killed = 0" "0" \
@@ -367,7 +371,7 @@ OUT=$(env "${RUN_ENV[@]}" "$HELPER" summary --since 24h --no-pr-check 2>&1)
 assert_contains "5a: human output names canonical jsonl source" \
 	"headless-runtime-metrics.jsonl" "$OUT"
 assert_contains "5b: human output names pulse-stats" "pulse-stats.json" "$OUT"
-assert_contains "5c: human output shows succeeded count" "Succeeded:                   5" "$OUT"
+assert_contains "5c: human output shows runtime handoff count" "Runtime handoffs:            5" "$OUT"
 assert_contains "5d: human output shows watchdog continued is heartbeat" \
 	"heartbeat" "$OUT"
 assert_contains "5d2: human output shows service interruption resumes" \
@@ -397,6 +401,8 @@ assert_eq "6c: openai capacity_slots uses redacted multiplier" "48" \
 	"$(printf '%s' "$JSON" | jq -r '.provider_diagnostics.account_pool[] | select(.provider == "openai") | .capacity_slots')"
 assert_eq "6c2: provider diagnostics retain raw duplicate/attempt evidence" "7" \
 	"$(printf '%s' "$JSON" | jq -r '.provider_diagnostics.provider_model_usage[] | select(.provider == "openai" and .model == "openai/gpt-5.5") | .other_failure')"
+assert_eq "6c2b: provider diagnostics name runtime handoffs without calling them success" "0" \
+	"$(printf '%s' "$JSON" | jq -r '.provider_diagnostics.provider_model_usage[] | select(.provider == "openai" and .model == "openai/gpt-5.5") | .runtime_handoffs')"
 
 JSONC_DEFAULTS="$FIXTURE_DIR/aidevops.defaults.jsonc"
 JSONC_USER="$FIXTURE_DIR/config.jsonc"
@@ -418,12 +424,13 @@ assert_eq "6c4: config multiplier overrides defaults" "14" \
 
 OUT=$(env "${RUN_ENV[@]}" "$HELPER" providers --since 24h 2>&1)
 assert_contains "6d: human provider output shows capacity slots" "capacity_slots=48" "$OUT"
+assert_contains "6e: human provider output names runtime handoffs" "runtime_handoffs=" "$OUT"
 
 # ---------------------------------------------------------------------------
-# Section 7: solved:worker attribution query excludes origin-only PR counts.
+# Section 7: runtime handoff and GitHub delivery stages remain distinct.
 # ---------------------------------------------------------------------------
 echo
-echo "--- Section 7: solved-by attribution query ---"
+echo "--- Section 7: delivery-stage attribution queries ---"
 
 GH_STUB_DIR="$FIXTURE_DIR/bin"
 mkdir -p "$GH_STUB_DIR"
@@ -431,6 +438,14 @@ GH_CALL_LOG="$FIXTURE_DIR/gh-calls.log"
 cat >"$GH_STUB_DIR/gh" <<'EOF'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >>"${GH_CALL_LOG}"
+if [[ "$1" == "pr" && "$2" == "list" && " $* " == *" --state merged "* ]]; then
+	printf '[{"number":201},{"number":202}]\n'
+	exit 0
+fi
+if [[ "$1" == "pr" && "$2" == "list" ]]; then
+	printf '[{"number":201},{"number":202},{"number":203}]\n'
+	exit 0
+fi
 if [[ "$1" == "issue" && "$2" == "list" ]]; then
 	printf '[{"number":101},{"number":102}]\n'
 	exit 0
@@ -443,18 +458,31 @@ JSON=$(env "${RUN_ENV[@]}" "GH_CALL_LOG=$GH_CALL_LOG" "PATH=$GH_STUB_DIR:$PATH" 
 	"$HELPER" summary --since 24h --repo marcusquinn/aidevops --pr-check --json 2>&1)
 RC=$?
 assert_rc "7a: solved attribution query exits 0" 0 "$RC"
-assert_eq "7b: solved worker issue count = 2" "2" \
-	"$(printf '%s' "$JSON" | jq -r '.worker_solved_issues.count')"
-assert_contains "7c: gh query uses solved:worker label" "label:solved:worker" \
+assert_eq "7b: worker PR opened count = 3" "3" \
+	"$(printf '%s' "$JSON" | jq -r '.delivery_stages.pr_opened')"
+assert_eq "7c: worker PR merged count = 2" "2" \
+	"$(printf '%s' "$JSON" | jq -r '.delivery_stages.pr_merged')"
+assert_eq "7d: solved worker issue count = 2" "2" \
+	"$(printf '%s' "$JSON" | jq -r '.delivery_stages.issue_solved')"
+assert_eq "7e: delivered success uses solved closed issues" "2" \
+	"$(printf '%s' "$JSON" | jq -r '.delivery_stages.delivered_successes')"
+assert_eq "7f: metrics succeeded means delivered success" "2" \
+	"$(printf '%s' "$JSON" | jq -r '.metrics.succeeded')"
+assert_eq "7g: runtime handoffs remain distinct from delivery" "5" \
+	"$(printf '%s' "$JSON" | jq -r '.metrics.runtime_handoffs')"
+assert_contains "7h: issue query uses solved:worker label" "label:solved:worker" \
 	"$(<"$GH_CALL_LOG")"
-if grep -q "label:origin:worker" "$GH_CALL_LOG" 2>/dev/null; then
-	TESTS_RUN=$((TESTS_RUN + 1))
-	TESTS_FAILED=$((TESTS_FAILED + 1))
-	echo "${TEST_RED}FAIL${TEST_NC}: 7d: query must not use origin:worker"
-else
-	TESTS_RUN=$((TESTS_RUN + 1))
-	echo "${TEST_GREEN}PASS${TEST_NC}: 7d: query does not use origin:worker"
-fi
+assert_contains "7i: PR queries use origin:worker attribution" "label:origin:worker" \
+	"$(<"$GH_CALL_LOG")"
+assert_eq "7j: delivery check performs three stage queries" "3" \
+	"$(wc -l <"$GH_CALL_LOG" | tr -d ' ')"
+
+JSON=$(env "${RUN_ENV[@]}" "GH_CALL_LOG=$GH_CALL_LOG" "PATH=$GH_STUB_DIR:$PATH" \
+	"$HELPER" summary --since 24h --repo marcusquinn/aidevops --pr-check --json 2>&1)
+assert_eq "7k: combined delivery-stage cache prevents repeated GitHub queries" "3" \
+	"$(wc -l <"$GH_CALL_LOG" | tr -d ' ')"
+assert_eq "7l: cached delivery stages preserve delivered success" "2" \
+	"$(printf '%s' "$JSON" | jq -r '.delivery_stages.delivered_successes')"
 
 # ---------------------------------------------------------------------------
 # Summary.

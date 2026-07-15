@@ -14,6 +14,7 @@
 #
 # This orchestrator retains:
 #   - Module-level defaults
+#   - _route_terminal_breaker_to_consolidation
 #   - _issue_needs_consolidation (>100 lines — identity key preserved)
 #   - _dispatch_issue_consolidation (>100 lines — identity key preserved)
 #   - Source calls to the three sub-libraries
@@ -75,6 +76,33 @@ source "${SCRIPT_DIR}/pulse-triage-evaluation.sh"
 # shellcheck source=./pulse-triage-dispatch.sh
 # shellcheck disable=SC1091  # sub-library resolved at runtime via $SCRIPT_DIR
 source "${SCRIPT_DIR}/pulse-triage-dispatch.sh"
+
+# Route exhausted retry breakers through the existing idempotent consolidation
+# workflow. This bridge deliberately adds no labels, comments, or child issues
+# itself: _dispatch_issue_consolidation owns resolution checks, child dedup,
+# cross-runner locking, request creation, and parent notification.
+# Args: issue number, repo slug, breaker source, optional diagnostic detail.
+_route_terminal_breaker_to_consolidation() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local breaker_source="$3"
+	local breaker_detail="${4:-}"
+
+	[[ "$issue_number" =~ ^[0-9]+$ ]] || return 1
+	[[ -n "$repo_slug" && -n "$breaker_source" ]] || return 1
+	if ! declare -F _dispatch_issue_consolidation >/dev/null 2>&1; then
+		echo "[pulse-wrapper] Terminal breaker consolidation deferred for #${issue_number} in ${repo_slug}: dispatcher unavailable" >>"$LOGFILE"
+		return 1
+	fi
+
+	echo "[pulse-wrapper] Routing terminal breaker to consolidation: #${issue_number} in ${repo_slug} source=${breaker_source} detail=${breaker_detail:-none}" >>"$LOGFILE"
+	if ! _dispatch_issue_consolidation "$issue_number" "$repo_slug" ""; then
+		echo "[pulse-wrapper] Terminal breaker consolidation failed for #${issue_number} in ${repo_slug} source=${breaker_source}" >>"$LOGFILE"
+		return 1
+	fi
+	echo "[pulse-wrapper] Terminal breaker consolidation created or reused for #${issue_number} in ${repo_slug} source=${breaker_source}" >>"$LOGFILE"
+	return 0
+}
 
 # --- Functions retained in orchestrator (>100 lines, identity key preserved) ---
 

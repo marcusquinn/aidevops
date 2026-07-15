@@ -841,6 +841,38 @@ test_single_bot_comment_does_not_trigger_consolidation() {
 	return 0
 }
 
+# GH#27853: terminal retry breakers must delegate to the existing dispatcher
+# rather than creating labels, comments, or child issues through a parallel
+# path. Existing child/lock tests above provide the idempotency coverage.
+test_terminal_breaker_bridge_delegates_to_dispatcher() {
+	setup_gh_stub
+	GH_ISSUE_VIEW_TITLE="test: terminal breaker parent"
+	GH_ISSUE_VIEW_BODY="Original terminal breaker parent body."
+	GH_ISSUE_VIEW_LABELS="bug,tier:standard,needs-maintainer-review"
+	GH_API_COMMENTS_JSON="[]"
+	GH_ISSUE_LIST_CHILD_JSON="[]"
+	GH_ISSUE_LIST_CHILD_CLOSED_JSON="[]"
+	GH_PR_LIST_RESOLVING_JSON="[]"
+	GH_ISSUE_CREATE_URL="https://github.com/owner/repo/issues/9002"
+	export GH_ISSUE_VIEW_TITLE GH_ISSUE_VIEW_BODY GH_ISSUE_VIEW_LABELS
+	export GH_API_COMMENTS_JSON GH_ISSUE_LIST_CHILD_JSON GH_ISSUE_LIST_CHILD_CLOSED_JSON
+	export GH_PR_LIST_RESOLVING_JSON GH_ISSUE_CREATE_URL
+
+	local rc=0
+	_route_terminal_breaker_to_consolidation \
+		123 "owner/repo" "fast-fail-hard-stop" "reason=runtime" || rc=$?
+
+	if [[ "$rc" -eq 0 ]] && grep -q 'issue create' "$GH_LOG" 2>/dev/null; then
+		print_result "GH#27853: terminal breaker bridge delegates to idempotent dispatcher" 0
+	else
+		print_result "GH#27853: terminal breaker bridge delegates to idempotent dispatcher" 1 \
+			"rc=${rc}; expected gh issue create through _dispatch_issue_consolidation"
+	fi
+
+	teardown_gh_stub
+	return 0
+}
+
 # t2161 A2 regression: _dispatch_issue_consolidation must short-circuit
 # when an in-flight PR resolves the parent — even when no consolidation
 # child exists yet. Covers the path where _backfill_stale_consolidation_labels
@@ -893,6 +925,7 @@ main() {
 
 	# t2152 regression (GH#19415): single bot comment must not trigger
 	test_single_bot_comment_does_not_trigger_consolidation
+	test_terminal_breaker_bridge_delegates_to_dispatcher
 
 	# t2161 regression suite
 	test_resolving_pr_helper_detects_closing_keyword
