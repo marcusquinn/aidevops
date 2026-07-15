@@ -67,6 +67,16 @@ _isc_resolve_manageable_user() {
 # -----------------------------------------------------------------------------
 # Subcommand: claim
 # -----------------------------------------------------------------------------
+# GH#27871: terminal issues skip before claim idempotency, which can refresh a
+# stamp. Lookup failures return 1 and preserve the existing fail-open contract.
+_isc_claim_closed_issue_guard() {
+	local issue="$1"
+	local slug="$2"
+	_isc_issue_is_closed "$issue" "$slug" || return 1
+	_isc_info "claim: #$issue is closed — skipping interactive claim lifecycle"
+	return 0
+}
+
 # Apply status:in-review, self-assign, and write a stamp in repos where the
 # authenticated account has maintainer-equivalent issue-management access.
 #
@@ -169,6 +179,8 @@ _isc_cmd_claim() {
 		"external repos should receive a PR when possible plus at most one concise explanatory issue comment, not aidevops dispatch claims"); then
 		return 0
 	fi
+
+	_isc_claim_closed_issue_guard "$issue" "$slug" && return 0
 
 	# Idempotency: if already in-review, refresh stamp and exit. The `if`
 	# conditional consumes any non-zero return so set -e doesn't propagate

@@ -1014,6 +1014,29 @@ else
 fi
 
 # =============================================================================
+# Test 27 — GH#27871: closed issues skip every interactive claim write
+# =============================================================================
+for closed_state in CLOSED closed; do
+	closed_stamp=$(_isc_stamp_path 70007 closed/test)
+	rm -f "$closed_stamp" >/dev/null 2>&1 || true
+	: >"$STUB_LOG"
+	closed_out=$(STUB_ISSUE_STATE="$closed_state" STUB_ISSUE_HAS_IN_REVIEW=1 \
+		_isc_cmd_claim 70007 closed/test --worktree /tmp/closed-wt --implementing 2>&1)
+	closed_rc=$?
+	closed_log=$(cat "$STUB_LOG")
+
+	if [[ $closed_rc -eq 0 && ! -f "$closed_stamp" &&
+		"$closed_out" == *"is closed"* &&
+		"$closed_log" != *"issue edit 70007"* &&
+		"$closed_log" != *"issue comment 70007"* ]]; then
+		print_result "GH#27871: claim on ${closed_state} issue skips lifecycle writes" 0
+	else
+		print_result "GH#27871: claim on ${closed_state} issue skips lifecycle writes" 1 \
+			"(rc=$closed_rc, stamp=$([[ -f "$closed_stamp" ]] && echo yes || echo no), log=${closed_log:0:300}, out=${closed_out:0:200})"
+	fi
+done
+
+# =============================================================================
 # Summary
 # =============================================================================
 printf '\n'
