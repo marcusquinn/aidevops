@@ -67,6 +67,8 @@ _isc_resolve_manageable_user() {
 # -----------------------------------------------------------------------------
 # Subcommand: claim
 # -----------------------------------------------------------------------------
+# GH#27871: terminal issues skip before claim idempotency, which can refresh a
+# stamp. Lookup failures return 1 and preserve the existing fail-open contract.
 _isc_claim_closed_issue_guard() {
 	local issue="$1"
 	local slug="$2"
@@ -178,8 +180,6 @@ _isc_cmd_claim() {
 		return 0
 	fi
 
-	# GH#27871: check before idempotency because that path refreshes a stamp.
-	# Lookup failures preserve the existing fail-open contract.
 	_isc_claim_closed_issue_guard "$issue" "$slug" && return 0
 
 	# Idempotency: if already in-review, refresh stamp and exit. The `if`
