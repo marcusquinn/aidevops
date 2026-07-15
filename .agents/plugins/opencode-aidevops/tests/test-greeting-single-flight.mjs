@@ -84,11 +84,11 @@ test("eight concurrent plugin handlers share one stale-cache refresh", async (t)
   await Promise.all(handlers.map((handler) => handler({ event: { type: "session.created" } })));
 
   assert.equal(spawnCount, 1);
-  assert.ok(f.clients.every((toasts) => toasts.length === 1));
-  assert.ok(f.clients.every((toasts) => toasts[0].message.includes(OLD_GREETING)));
+  assert.ok(f.clients.every((toasts) => toasts.length === 0));
 
   resolveRefresh({ stdout: NEW_GREETING });
-  await waitFor(() => cacheEquals(f, NEW_GREETING));
+  await waitFor(() => cacheEquals(f, NEW_GREETING) && f.clients.every((toasts) => toasts.length === 1));
+  assert.ok(f.clients.every((toasts) => toasts[0].message.includes(NEW_GREETING)));
 });
 
 test("fresh cache emits immediately without spawning a refresh", async (t) => {
@@ -292,6 +292,22 @@ test("failed refresh preserves the last valid cache and releases its lock", asyn
   await waitFor(() => !readdirSync(f.cacheDir).includes("session-greeting-refresh.lock"));
 
   assert.equal(readFileSync(f.cacheFile, "utf8").trim(), OLD_GREETING);
+  assert.equal(f.clients[0].length, 1);
+  assert.match(f.clients[0][0].message, /aidevops v1\.0\.0/);
+});
+
+test("empty refresh output falls back to one cached greeting", async (t) => {
+  const f = fixture();
+  t.after(() => f.cleanup());
+  writeFileSync(f.cacheFile, `${OLD_GREETING}\n`);
+  utimesSync(f.cacheFile, new Date(0), new Date(0));
+  const handler = createGreetingHandler(handlerOptions(f, f.client(), async () => ({ stdout: "" })));
+
+  await handler({ event: { type: "session.created" } });
+  await waitFor(() => !readdirSync(f.cacheDir).includes("session-greeting-refresh.lock"));
+
+  assert.equal(f.clients[0].length, 1);
+  assert.match(f.clients[0][0].message, /aidevops v1\.0\.0/);
 });
 
 test("successful refresh atomically replaces the cache without temp files", async (t) => {
