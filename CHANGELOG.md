@@ -10,6 +10,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Route OpenAI simple-tier work at medium reasoning and thinking-tier work at max reasoning, including a one-time migration for existing custom routing tables (#27863)
+
 ## [3.32.124] - 2026-07-15
 
 ### Changed
