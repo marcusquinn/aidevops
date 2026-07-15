@@ -41,9 +41,9 @@ _ci_check_url_has_infra_failure_log() {
 	local repo_slug="$1"
 	local check_url="$2"
 	[[ -n "$repo_slug" ]] || return 1
-	[[ "$SNAPSHOT_MODE" == "infra_fail" && "$check_url" == "https://github.com/owner/repo/actions/runs/101/job/202" \
-		|| "$SNAPSHOT_MODE" == "required_infra_fail" && "$check_url" == "https://github.com/owner/repo/actions/runs/303/job/404" \
-		|| "$SNAPSHOT_MODE" == "maintainer_infra_fail" && "$check_url" == "https://github.com/owner/repo/actions/runs/505/job/606" ]]
+	[[ "$SNAPSHOT_MODE" == "infra_fail" && "$check_url" == "https://github.com/owner/repo/actions/runs/101/job/202" ||
+		"$SNAPSHOT_MODE" == "required_infra_fail" && "$check_url" == "https://github.com/owner/repo/actions/runs/303/job/404" ||
+		"$SNAPSHOT_MODE" == "maintainer_infra_fail" && "$check_url" == "https://github.com/owner/repo/actions/runs/505/job/606" ]]
 	return $?
 }
 
