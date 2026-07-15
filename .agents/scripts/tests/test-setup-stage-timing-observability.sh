@@ -114,6 +114,7 @@ test_noninteractive_cli_failure_continues_config_reconciliation() {
 			return 0
 		}
 		_setup_run_non_interactive
+		printf 'critical_failure=%s\n' "${_SETUP_DEPLOYMENT_CRITICAL_FAILURE:-0}"
 	) >"$output_file" 2>&1
 	status=$?
 
@@ -122,7 +123,9 @@ test_noninteractive_cli_failure_continues_config_reconciliation() {
 	if [[ "$status" -eq 0 ]] &&
 		grep -qx "install_aidevops_cli" "$trace_file" &&
 		grep -qx "update_opencode_config" "$trace_file" &&
-		[[ "$output" == *"continuing configuration reconciliation"* ]]; then
+		[[ "$output" == *"continuing configuration reconciliation"* ]] &&
+		[[ "$output" == *"critical_failure=1"* ]] &&
+		grep -q 'Setup configuration reconciliation finished, but CLI convergence failed' "$SETUP_SH"; then
 		print_result "non-interactive setup continues config reconciliation after CLI failure" 0
 		rm -rf "$tmp_home"
 		return 0

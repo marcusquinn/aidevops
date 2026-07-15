@@ -326,6 +326,23 @@ test_dependency_install_failure_preserves_active_bundle() {
 	return 0
 }
 
+test_older_candidate_cannot_replace_active_bundle() {
+	local target_dir="$HOME/.aidevops/agents"
+	local active_before=""
+	local active_after=""
+	active_before=$(_runtime_bundle_resolve_root "$target_dir")
+	write_fake_revision "7.9.0" "stale-setup"
+	rm -rf "$FAKE_REPO/.agents/plugins"
+	stage_revision "$target_dir"
+	if _runtime_bundle_activate "$target_dir" "$_AIDEVOPS_STAGED_BUNDLE_DIR" >/dev/null 2>&1; then
+		fail "older setup candidate unexpectedly replaced the active bundle"
+	fi
+	active_after=$(_runtime_bundle_resolve_root "$target_dir")
+	assert_eq "$active_before" "$active_after" "older setup candidate cannot replace a newer active bundle"
+	assert_eq "8.0.0" "$(tr -d '[:space:]' <"$target_dir/VERSION")" "newer active version survives stale setup activation"
+	return 0
+}
+
 main() {
 	TEST_ROOT=$(mktemp -d)
 	trap cleanup EXIT
@@ -349,6 +366,7 @@ main() {
 	test_plugin_dependency_smoke_check
 	install_mock_plugin_dependency_hooks
 	test_dependency_install_recovery_activates_candidate
+	test_older_candidate_cannot_replace_active_bundle
 	test_dependency_install_failure_preserves_active_bundle
 
 	printf 'Results: %s checks passed\n' "$TESTS_RUN"

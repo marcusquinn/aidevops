@@ -1452,6 +1452,7 @@ _setup_run_scoped_stage() {
 
 _setup_run_non_interactive() {
 	print_info "Non-interactive mode: deploying agents and running safe migrations only"
+	_SETUP_DEPLOYMENT_CRITICAL_FAILURE=0
 
 	_setup_init_stage_timing_log
 
@@ -1495,7 +1496,10 @@ _setup_run_non_interactive() {
 	_time_step "$SETUP_STAGE_HOTFIX_CONFIG" _deploy_hotfix_config
 	_time_step "setup_opencode_desktop_launcher" setup_opencode_desktop_launcher
 	_time_step "sync_agent_sources" sync_agent_sources
-	_time_step "install_aidevops_cli" install_aidevops_cli || print_warning "aidevops CLI installation encountered issues; continuing configuration reconciliation"
+	if ! _time_step "install_aidevops_cli" install_aidevops_cli; then
+		print_warning "aidevops CLI installation encountered issues; continuing configuration reconciliation"
+		_SETUP_DEPLOYMENT_CRITICAL_FAILURE=1
+	fi
 	_time_step "setup_shellcheck_wrapper" setup_shellcheck_wrapper
 	if is_feature_enabled safety_hooks 2>/dev/null; then
 		_time_step "$SETUP_STAGE_HOOKS" setup_safety_hooks
@@ -1953,6 +1957,10 @@ main() {
 	_setup_restart_pulse_if_running
 
 	if [[ "$NON_INTERACTIVE" == "true" ]]; then
+		if [[ "${_SETUP_DEPLOYMENT_CRITICAL_FAILURE:-0}" -ne 0 ]]; then
+			print_error "Setup configuration reconciliation finished, but CLI convergence failed"
+			return 1
+		fi
 		_setup_print_noninteractive_success
 	fi
 
