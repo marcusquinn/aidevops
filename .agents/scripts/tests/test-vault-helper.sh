@@ -66,8 +66,9 @@ import select
 import subprocess
 import sys
 import time
+import codecs
 
-inputs = os.fdopen(3, "rb").read().decode("unicode_escape").encode("latin-1").decode("utf-8").splitlines()
+inputs = codecs.escape_decode(os.fdopen(3, "rb").read())[0].decode("utf-8").splitlines()
 cmd = sys.argv[1:]
 master, slave = pty.openpty()
 proc = subprocess.Popen(cmd, stdin=slave, stdout=subprocess.PIPE, stderr=slave)
@@ -114,6 +115,14 @@ run_with_tty "${unicode_input}\n" python3 -c 'import sys; print("Input: ", end="
 unicode_rc=$?
 set -e
 assert_eq "tty input preserves multi-byte UTF-8" "0" "$unicode_rc"
+
+for escaped_input in 'C:\utility' '\u20ac'; do
+	set +e
+	run_with_tty "${escaped_input}\n" python3 -c 'import sys; print("Input: ", end="", file=sys.stderr, flush=True); raise SystemExit(sys.stdin.readline().rstrip("\n") != sys.argv[1])' "$escaped_input" >/dev/null 2>"$TEST_ROOT/backslash.err"
+	escaped_rc=$?
+	set -e
+	assert_eq "tty input preserves ${escaped_input}" "0" "$escaped_rc"
+done
 
 export AIDEVOPS_VAULT_DIR="$TEST_ROOT/vault"
 export AIDEVOPS_VAULT_RUNTIME_DIR="$TEST_ROOT/run"
