@@ -8,7 +8,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 MIGRATIONS_MODULE="${SCRIPT_DIR}/../setup/modules/migrations.sh"
 SETUP_SCRIPT="${SCRIPT_DIR}/../../../setup.sh"
 TEST_ROOT=$(mktemp -d)
-trap 'rm -rf "$TEST_ROOT"' EXIT
+trap '[[ -z "${TEST_ROOT:-}" ]] || rm -rf "$TEST_ROOT"' EXIT
 
 print_info() {
 	return 0
