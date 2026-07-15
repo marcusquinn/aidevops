@@ -184,12 +184,20 @@ _push_finalize_task_creation() {
 		return 1
 	fi
 	[[ -n "$tier_label" ]] && _apply_tier_label_replace "$repo" "$_PUSH_CREATED_NUM" "$tier_label"
-	sync_relationships_for_task "$task_id" "$todo_file" "$repo"
+	local relationships_pending=false
+	if ! sync_relationships_for_task "$task_id" "$todo_file" "$repo"; then
+		relationships_pending=true
+		print_warning "Created #${_PUSH_CREATED_NUM}; durable mapping preserved, but relationship sync is pending"
+	fi
 	if [[ ",${labels}," == *",parent-task,"* ]] &&
 		! _parent_body_has_phase_markers "$body"; then
 		_post_parent_task_no_markers_warning "$repo" "$_PUSH_CREATED_NUM" || true
 	fi
-	echo "CREATED"
+	if [[ "$relationships_pending" == "true" ]]; then
+		echo "CREATED RELATIONSHIPS_PENDING"
+	else
+		echo "CREATED"
+	fi
 	return 0
 }
 
@@ -372,8 +380,12 @@ _enrich_process_task() {
 	if _enrich_update_issue "$repo" "$num" "$task_id" "$title" "$body" "$current_title" "$current_body"; then
 		print_success "Enriched #$num ($task_id)"
 		# Sync relationships (blocked-by, sub-issues) after enrichment (t1889)
-		sync_relationships_for_task "$task_id" "$todo_file" "$repo"
-		echo "ENRICHED"
+		if sync_relationships_for_task "$task_id" "$todo_file" "$repo"; then
+			echo "ENRICHED"
+		else
+			print_warning "Enriched #$num; issue update preserved, but relationship sync is pending"
+			echo "ENRICHED RELATIONSHIPS_PENDING"
+		fi
 	fi
 	return 0
 }
@@ -424,9 +436,11 @@ main() {
 	done
 	command="${positional_args[0]:-help}"
 	case "$command" in
-	push) cmd_push "${positional_args[1]:-}" ;; enrich) cmd_enrich "${positional_args[1]:-}" ;;
+	push) run_relationship_scoped_command cmd_push "${positional_args[1]:-}" ;;
+	enrich) run_relationship_scoped_command cmd_enrich "${positional_args[1]:-}" ;;
 	pull) cmd_pull ;; close) cmd_close "${positional_args[1]:-}" ;; reopen) cmd_reopen ;;
-	reconcile) cmd_reconcile ;; relationships) cmd_relationships "${positional_args[1]:-}" ;;
+	reconcile) cmd_reconcile ;;
+	relationships) run_relationship_scoped_command cmd_relationships "${positional_args[1]:-}" ;;
 	backfill-sub-issues)
 		if [[ ${#positional_args[@]} -gt 1 ]]; then
 			cmd_backfill_sub_issues "${positional_args[@]:1}"
