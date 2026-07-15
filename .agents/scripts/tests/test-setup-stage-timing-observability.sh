@@ -75,8 +75,68 @@ test_time_step_logs_running_before_command() {
 	return 0
 }
 
+test_noninteractive_cli_failure_continues_config_reconciliation() {
+	local snippet=""
+	snippet=$(perl -0ne 'print $1 if /(_setup_run_non_interactive\(\) \{.*?^\})/ms' "$SETUP_SH")
+	if [[ -z "$snippet" ]]; then
+		print_result "non-interactive setup extraction succeeds" 1 "setup function block not found"
+		return 0
+	fi
+
+	local tmp_home=""
+	tmp_home=$(mktemp -d 2>/dev/null || mktemp -d -t setup-cli-continuation)
+	local trace_file="${tmp_home}/stages.log"
+	local output_file="${tmp_home}/output.log"
+	local status=0
+
+	(
+		set -e
+		eval "$snippet"
+		SETUP_STAGE_OPENCODE="opencode"
+		SETUP_STAGE_AGENTS="agents"
+		SETUP_STAGE_OPENCODE_PLUGINS="opencode_plugins"
+		SETUP_STAGE_HOTFIX_CONFIG="hotfix_config"
+		SETUP_STAGE_HOOKS="hooks"
+		_setup_init_stage_timing_log() { return 0; }
+		_setup_register_child_pid() { return 0; }
+		is_feature_enabled() { return 1; }
+		print_info() { return 0; }
+		print_warning() {
+			printf 'warning=%s\n' "$*"
+			return 0
+		}
+		_time_step() {
+			local stage_name="$1"
+			printf '%s\n' "$stage_name" >>"$trace_file"
+			if [[ "$stage_name" == "install_aidevops_cli" ]]; then
+				return 23
+			fi
+			return 0
+		}
+		_setup_run_non_interactive
+	) >"$output_file" 2>&1
+	status=$?
+
+	local output=""
+	output=$(<"$output_file")
+	if [[ "$status" -eq 0 ]] &&
+		grep -qx "install_aidevops_cli" "$trace_file" &&
+		grep -qx "update_opencode_config" "$trace_file" &&
+		[[ "$output" == *"continuing configuration reconciliation"* ]]; then
+		print_result "non-interactive setup continues config reconciliation after CLI failure" 0
+		rm -rf "$tmp_home"
+		return 0
+	fi
+
+	print_result "non-interactive setup continues config reconciliation after CLI failure" 1 \
+		"status=${status}, output=${output}"
+	rm -rf "$tmp_home"
+	return 0
+}
+
 main() {
 	test_time_step_logs_running_before_command
+	test_noninteractive_cli_failure_continues_config_reconciliation
 
 	printf '\nRan %s tests, %s failed\n' "$TESTS_RUN" "$TESTS_FAILED"
 	if [[ "$TESTS_FAILED" -ne 0 ]]; then

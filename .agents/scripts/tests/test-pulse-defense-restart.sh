@@ -65,7 +65,9 @@ setup() {
 # _build_plist_env_overrides_xml.
 _render_pulse_plist() {
 	local out_file="$1"
-	bash -c '
+	local render_home="${2:-$HOME}"
+	local render_path="${3:-$PATH}"
+	HOME="$render_home" PATH="$render_path" bash -c '
 		set -uo pipefail
 		export PULSE_STALE_THRESHOLD_SECONDS=1800
 		_xml_escape() {
@@ -91,6 +93,7 @@ _render_pulse_plist() {
 		_build_plist_env_overrides_xml() { return 0; }
 		_generate_pulse_plist_content "com.test.pulse" "/path/to/pulse.sh" "/opt/homebrew/bin/opencode"
 	' >"$out_file"
+	return 0
 }
 
 _render_watchdog_plist() {
@@ -111,6 +114,7 @@ _render_watchdog_plist() {
 		source "'"$SCHEDULERS_SH"'" 2>/dev/null || true
 		_generate_pulse_watchdog_plist_content "sh.aidevops.pulse-watchdog" "/path/to/tick.sh" "/opt/homebrew/bin/bash"
 	' >"$out_file"
+	return 0
 }
 
 # ---------------------------------------------------------------------------
@@ -140,6 +144,26 @@ test_pulse_plist_throttle_interval() {
 	fi
 	print_result "test_pulse_plist_throttle_interval" "$rc" \
 		"ThrottleInterval prevents rapid-restart loops (t2939 layer 1)"
+	return 0
+}
+
+test_pulse_plist_filters_runtime_bundle_path() {
+	local render_home="$TEST_DIR/pulse-path-home"
+	local stable_scripts="$render_home/.aidevops/agents/scripts"
+	local stale_bundle="$render_home/.aidevops/runtime-bundles/old/agents/scripts"
+	local plist="$TEST_DIR/pulse-path.plist"
+	mkdir -p "$render_home/.local/bin" "$stable_scripts" \
+		"$render_home/.aidevops/bin" "$stale_bundle"
+
+	_render_pulse_plist "$plist" "$render_home" "${stale_bundle}:/usr/bin:/bin"
+
+	local rc=0
+	grep -Fq "$stable_scripts" "$plist" || rc=1
+	if grep -Fq "/.aidevops/runtime-bundles/" "$plist"; then
+		rc=1
+	fi
+	print_result "test_pulse_plist_filters_runtime_bundle_path" "$rc" \
+		"Pulse plist must replace inherited immutable bundle paths with the stable agents path"
 	return 0
 }
 
@@ -386,6 +410,7 @@ main() {
 	# we only skip the plutil-lint validation).
 	test_pulse_plist_keepalive_dict
 	test_pulse_plist_throttle_interval
+	test_pulse_plist_filters_runtime_bundle_path
 	test_watchdog_plist_label
 	test_watchdog_plist_start_interval
 	test_watchdog_plist_valid_xml

@@ -169,6 +169,8 @@ installPluginConsoleRouter({
  * @type {import('@opencode-ai/plugin').Plugin}
  */
 export async function AidevopsPlugin({ directory, client }) {
+  const initializedAtMs = Date.now();
+
   // Initialise LLM observability
   initObservability();
 
@@ -267,6 +269,7 @@ export async function AidevopsPlugin({ directory, client }) {
     intentField: INTENT_FIELD,
     isHeadless,
     shouldInjectGreeting,
+    initializedAtMs,
   });
 
   // Lazy-start dispatch table for local proxies. Keys are OpenCode
@@ -331,6 +334,7 @@ export async function AidevopsPlugin({ directory, client }) {
     scriptsDir: SCRIPTS_DIR,
     client,
     isHeadless,
+    initializedAtMs,
   });
   const sessionTitleSuffixHandler = createSessionTitleSuffixHandler({
     activeAgentsDir: ACTIVE_AGENTS_DIR,

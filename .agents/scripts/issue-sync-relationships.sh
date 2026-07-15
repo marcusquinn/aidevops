@@ -52,6 +52,101 @@ _NODE_ID_CACHE_FILE=""
 # Callers check via _node_id_was_rate_limited. Reset to empty at each call.
 _NODE_ID_RATE_LIMITED_FILE=""
 
+# Invocation-scoped native-edge set. A file is required because relationship
+# helpers are commonly called through command substitutions; file writes
+# survive those subshell boundaries while Bash variables do not.
+_RELATIONSHIP_EDGE_SEEN_FILE=""
+_RELATIONSHIP_RETRY_RESULT="RELS:0 RETRYABLE:1"
+_RELATIONSHIP_SYNC_SCOPE_ACTIVE=0
+_RELATIONSHIP_SYNC_DEADLINE_EPOCH=
+
+_init_relationship_sync_state() {
+	_init_node_id_cache
+	if [[ -z "$_RELATIONSHIP_EDGE_SEEN_FILE" ]]; then
+		_RELATIONSHIP_EDGE_SEEN_FILE=$(mktemp "${TMPDIR:-/tmp}/aidevops-relationship-edges.XXXXXX") || return 1
+	fi
+	: >"$_RELATIONSHIP_EDGE_SEEN_FILE"
+	return 0
+}
+
+_cleanup_relationship_sync_state() {
+	if [[ -n "$_RELATIONSHIP_EDGE_SEEN_FILE" ]]; then
+		rm -f "$_RELATIONSHIP_EDGE_SEEN_FILE"
+		_RELATIONSHIP_EDGE_SEEN_FILE=""
+	fi
+	return 0
+}
+
+_begin_relationship_sync_scope() {
+	[[ "$_RELATIONSHIP_SYNC_SCOPE_ACTIVE" -eq 1 ]] && return 0
+	_init_relationship_sync_state || return 1
+	_RELATIONSHIP_SYNC_DEADLINE_EPOCH=
+	_RELATIONSHIP_SYNC_SCOPE_ACTIVE=1
+	return 0
+}
+
+_ensure_relationship_sync_deadline() {
+	if [[ ! "$_RELATIONSHIP_SYNC_DEADLINE_EPOCH" =~ ^[1-9][0-9]*$ ]]; then
+		_RELATIONSHIP_SYNC_DEADLINE_EPOCH=$(_relationship_sync_deadline_epoch) || return 1
+	fi
+	return 0
+}
+
+_end_relationship_sync_scope() {
+	_cleanup_relationship_sync_state
+	_RELATIONSHIP_SYNC_SCOPE_ACTIVE=0
+	_RELATIONSHIP_SYNC_DEADLINE_EPOCH=
+	return 0
+}
+
+_register_relationship_sync_cleanup() {
+	push_cleanup "rm -f '${_RELATIONSHIP_EDGE_SEEN_FILE}'"
+	return 0
+}
+
+run_relationship_scoped_command() {
+	_save_cleanup_scope
+	trap '_run_cleanups' RETURN
+	_begin_relationship_sync_scope || return 1
+	_register_relationship_sync_cleanup
+	local rc=0
+	"$@" || rc=$?
+	_end_relationship_sync_scope
+	return "$rc"
+}
+
+_relationship_sync_deadline_epoch() {
+	# Keep automatic post-create work below common 120-second outer worker
+	# ceilings. Callers may override this documented aggregate budget.
+	local budget="${AIDEVOPS_RELATIONSHIP_SYNC_TIMEOUT:-90}"
+	local now_epoch=""
+	[[ "$budget" =~ ^[1-9][0-9]*$ ]] || budget=90
+	now_epoch=$(date +%s 2>/dev/null) || return 1
+	printf '%s\n' "$((now_epoch + budget))"
+	return 0
+}
+
+_relationship_deadline_expired() {
+	local deadline_epoch="${AIDEVOPS_GH_DEADLINE_EPOCH:-0}"
+	local now_epoch=""
+	[[ "$deadline_epoch" =~ ^[1-9][0-9]*$ ]] || return 1
+	now_epoch=$(date +%s 2>/dev/null) || return 0
+	[[ "$now_epoch" -ge "$deadline_epoch" ]]
+	return $?
+}
+
+_relationship_edge_should_attempt() {
+	local blocked_num="$1"
+	local blocker_num="$2"
+	local edge_key="${blocked_num}|${blocker_num}"
+	[[ -f "${_RELATIONSHIP_EDGE_SEEN_FILE:-}" ]] || return 1
+	if grep -Fxq -- "$edge_key" "$_RELATIONSHIP_EDGE_SEEN_FILE"; then
+		return 1
+	fi
+	printf '%s\n' "$edge_key" >>"$_RELATIONSHIP_EDGE_SEEN_FILE"
+	return 0
+}
+
 _init_node_id_cache() {
 	if [[ -z "$_NODE_ID_CACHE_FILE" ]]; then
 		_NODE_ID_CACHE_FILE=$(mktemp "${TMPDIR:-/tmp}/aidevops-node-cache.XXXXXX")
@@ -379,6 +474,10 @@ _sync_declared_blocked_by_edges() {
 	local saved_ifs="$IFS"
 	IFS=','
 	for dep_task_id in $blocked_by; do
+			if _relationship_deadline_expired; then
+				retryable_errors=$((retryable_errors + 1))
+				break
+			fi
 			dep_task_id="${dep_task_id// /}"
 			[[ -z "$dep_task_id" ]] && continue
 			if [[ "$dep_task_id" == "$task_id" ]]; then
@@ -394,6 +493,10 @@ _sync_declared_blocked_by_edges() {
 			}
 			if [[ "$dep_gh_num" == "$this_gh_num" ]]; then
 				log_verbose "$task_id: ignoring blocked-by edge that resolves back to #$this_gh_num"
+				continue
+			fi
+			if ! _relationship_edge_should_attempt "$this_gh_num" "$dep_gh_num"; then
+				log_verbose "$task_id: skipping duplicate native edge #$this_gh_num blocked-by #$dep_gh_num"
 				continue
 			fi
 			local dep_node_id
@@ -433,6 +536,10 @@ _sync_declared_blocks_edges() {
 	local saved_ifs="$IFS"
 	IFS=','
 	for dep_task_id in $blocks; do
+			if _relationship_deadline_expired; then
+				retryable_errors=$((retryable_errors + 1))
+				break
+			fi
 			dep_task_id="${dep_task_id// /}"
 			[[ -z "$dep_task_id" ]] && continue
 			if [[ "$dep_task_id" == "$task_id" ]]; then
@@ -447,6 +554,10 @@ _sync_declared_blocks_edges() {
 				continue
 			}
 			[[ "$dep_gh_num" == "$this_gh_num" ]] && continue
+			if ! _relationship_edge_should_attempt "$dep_gh_num" "$this_gh_num"; then
+				log_verbose "$task_id: skipping duplicate native edge #$dep_gh_num blocked-by #$this_gh_num"
+				continue
+			fi
 			local dep_node_id
 			dep_node_id=$(_cached_node_id "$dep_gh_num" "$repo")
 			if [[ -z "$dep_node_id" ]]; then
@@ -597,13 +708,20 @@ _is_parent_tagged_task() {
 # Returns: "RELS:N" with count of relationships set
 _sync_subtask_hierarchy_for_task() {
 	local task_id="$1" todo_file="$2" repo="$3"
-	local rels_set=0
+	local rels_set=0 retryable_errors=0
+	local key="" value="" dep_task_id=""
 
 	# Method 1: Dot-notation (t1873.2 → parent t1873)
 	local dot_parent
 	dot_parent=$(detect_parent_task_id "$task_id")
 	if [[ -n "$dot_parent" ]]; then
-		_link_sub_issue_pair "$task_id" "$dot_parent" "$todo_file" "$repo" && rels_set=$((rels_set + 1))
+		if _relationship_deadline_expired; then
+			retryable_errors=$((retryable_errors + 1))
+		elif _link_sub_issue_pair "$task_id" "$dot_parent" "$todo_file" "$repo"; then
+			rels_set=$((rels_set + 1))
+		else
+			retryable_errors=$((retryable_errors + 1))
+		fi
 	fi
 
 	# Method 2: blocked-by a #parent-tagged task
@@ -621,20 +739,28 @@ _sync_subtask_hierarchy_for_task() {
 			local _saved_ifs="$IFS"
 			IFS=','
 			for dep_task_id in $blocked_by; do
+				if _relationship_deadline_expired; then
+					retryable_errors=$((retryable_errors + 1))
+					break
+				fi
 				dep_task_id="${dep_task_id// /}"
 				[[ -z "$dep_task_id" ]] && continue
 				# Skip if this is already the dot-notation parent (avoid duplicate)
 				[[ "$dep_task_id" == "$dot_parent" ]] && continue
 				# Only create sub-issue if the dependency is a parent-tagged task
 				if _is_parent_tagged_task "$dep_task_id" "$todo_file"; then
-					_link_sub_issue_pair "$task_id" "$dep_task_id" "$todo_file" "$repo" && rels_set=$((rels_set + 1))
+					if _link_sub_issue_pair "$task_id" "$dep_task_id" "$todo_file" "$repo"; then
+						rels_set=$((rels_set + 1))
+					else
+						retryable_errors=$((retryable_errors + 1))
+					fi
 				fi
 			done
 			IFS="$_saved_ifs"
 		fi
 	fi
 
-	echo "RELS:$rels_set"
+	echo "RELS:$rels_set RETRYABLE:$retryable_errors"
 	return 0
 }
 
@@ -646,8 +772,36 @@ _sync_subtask_hierarchy_for_task() {
 #   $3 - repo slug
 sync_relationships_for_task() {
 	local task_id="$1" todo_file="$2" repo="$3"
-	_sync_blocked_by_for_task "$task_id" "$todo_file" "$repo" >/dev/null 2>&1 || true
-	_sync_subtask_hierarchy_for_task "$task_id" "$todo_file" "$repo" >/dev/null 2>&1 || true
+	local owns_scope=0
+	if [[ "$_RELATIONSHIP_SYNC_SCOPE_ACTIVE" -ne 1 ]]; then
+		_save_cleanup_scope
+		trap '_run_cleanups' RETURN
+		_begin_relationship_sync_scope || return 1
+		_register_relationship_sync_cleanup
+		owns_scope=1
+	fi
+	_ensure_relationship_sync_deadline || {
+		[[ "$owns_scope" -eq 0 ]] || _end_relationship_sync_scope
+		return 1
+	}
+	local AIDEVOPS_GH_DEADLINE_EPOCH="$_RELATIONSHIP_SYNC_DEADLINE_EPOCH"
+	local result="" retryable_total=0 count=""
+	result=$(_sync_blocked_by_for_task "$task_id" "$todo_file" "$repo" 2>/dev/null || echo "$_RELATIONSHIP_RETRY_RESULT")
+	count=$(echo "$result" | grep -oE 'RETRYABLE:[0-9]+' | head -1 | sed 's/RETRYABLE://' || echo "0")
+	retryable_total=$((retryable_total + count))
+	if ! _relationship_deadline_expired; then
+		result=$(_sync_subtask_hierarchy_for_task "$task_id" "$todo_file" "$repo" 2>/dev/null || echo "$_RELATIONSHIP_RETRY_RESULT")
+		count=$(echo "$result" | grep -oE 'RETRYABLE:[0-9]+' | head -1 | sed 's/RETRYABLE://' || echo "0")
+		retryable_total=$((retryable_total + count))
+	else
+		retryable_total=$((retryable_total + 1))
+	fi
+	if [[ "$retryable_total" -gt 0 ]] || _relationship_deadline_expired; then
+		print_warning "$task_id: relationship sync pending; retry with: .agents/scripts/issue-sync-helper.sh relationships $task_id"
+		[[ "$owns_scope" -eq 0 ]] || _end_relationship_sync_scope
+		return 1
+	fi
+	[[ "$owns_scope" -eq 0 ]] || _end_relationship_sync_scope
 	return 0
 }
 
@@ -682,6 +836,19 @@ cmd_relationships() {
 		print_info "No tasks with relationships to sync"
 		return 0
 	}
+	local owns_scope=0
+	if [[ "$_RELATIONSHIP_SYNC_SCOPE_ACTIVE" -ne 1 ]]; then
+		_save_cleanup_scope
+		trap '_run_cleanups' RETURN
+		_begin_relationship_sync_scope || return 1
+		_register_relationship_sync_cleanup
+		owns_scope=1
+	fi
+	_ensure_relationship_sync_deadline || {
+		[[ "$owns_scope" -eq 0 ]] || _end_relationship_sync_scope
+		return 1
+	}
+	local AIDEVOPS_GH_DEADLINE_EPOCH="$_RELATIONSHIP_SYNC_DEADLINE_EPOCH"
 
 	# Deduplicate (bash 3.2 compatible — no associative arrays)
 	local seen_list=""
@@ -697,8 +864,13 @@ cmd_relationships() {
 	local total="${#unique_tasks[@]}"
 	print_info "Syncing relationships for $total task(s) in $repo"
 
-	local blocked_set=0 sub_set=0 processed=0 retryable_total=0
+	local blocked_set=0 sub_set=0 processed=0 retryable_total=0 deadline_exhausted=false
 	for task_id in "${unique_tasks[@]}"; do
+		if _relationship_deadline_expired; then
+			deadline_exhausted=true
+			retryable_total=$((retryable_total + 1))
+			break
+		fi
 		processed=$((processed + 1))
 		# Progress indicator every 25 tasks
 		if [[ $((processed % 25)) -eq 0 || $processed -eq $total ]]; then
@@ -716,14 +888,22 @@ cmd_relationships() {
 		retryable_total=$((retryable_total + n))
 
 		# Sub-issue hierarchy
-		result=$(_sync_subtask_hierarchy_for_task "$task_id" "$todo_file" "$repo" 2>/dev/null || echo "RELS:0")
-		n=$(echo "$result" | grep -oE 'RELS:[0-9]+' | head -1 | sed 's/RELS://' || echo "0")
-		sub_set=$((sub_set + n))
+		if _relationship_deadline_expired; then
+			deadline_exhausted=true
+			retryable_total=$((retryable_total + 1))
+		else
+			result=$(_sync_subtask_hierarchy_for_task "$task_id" "$todo_file" "$repo" 2>/dev/null || echo "$_RELATIONSHIP_RETRY_RESULT")
+			n=$(echo "$result" | grep -oE 'RELS:[0-9]+' | head -1 | sed 's/RELS://' || echo "0")
+			sub_set=$((sub_set + n))
+			n=$(echo "$result" | grep -oE 'RETRYABLE:[0-9]+' | head -1 | sed 's/RETRYABLE://' || echo "0")
+			retryable_total=$((retryable_total + n))
+		fi
 	done
 	[[ $total -gt 25 ]] && printf "\n" >&2
 
-	printf "\n=== Relationships Sync ===\nBlocked-by: %d | Sub-issues: %d | Tasks processed: %d | Retryable: %d\n" \
-		"$blocked_set" "$sub_set" "${#unique_tasks[@]}" "$retryable_total"
+	printf "\n=== Relationships Sync ===\nBlocked-by: %d | Sub-issues: %d | Tasks processed: %d/%d | Retryable: %d | Deadline exhausted: %s\n" \
+		"$blocked_set" "$sub_set" "$processed" "${#unique_tasks[@]}" "$retryable_total" "$deadline_exhausted"
+	[[ "$owns_scope" -eq 0 ]] || _end_relationship_sync_scope
 	[[ "$retryable_total" -eq 0 ]] || return 1
 	return 0
 }
@@ -903,8 +1083,9 @@ _detect_parent_from_gh_state() {
 # Echoes one of: "LINKED <child>:<parent>", "SKIPPED <child>", "DRY <child>:<parent>"
 _backfill_one_issue() {
 	local num="$1" repo="$2" prefetched_title="${3:-}" prefetched_body="${4:-}"
+	local backfill_skipped="SKIPPED"
 	[[ -z "$num" || -z "$repo" ]] && {
-		echo "SKIPPED $num"
+		echo "$backfill_skipped $num"
 		return 0
 	}
 
@@ -921,14 +1102,14 @@ _backfill_one_issue() {
 		body=$(printf '%s' "$meta" | jq -r '.body // ""' 2>/dev/null)
 	fi
 	if [[ -z "$title" ]]; then
-		echo "SKIPPED $num"
+		echo "$backfill_skipped $num"
 		return 0
 	fi
 
 	local parent_num
 	parent_num=$(_detect_parent_from_gh_state "$title" "$body" "$repo")
 	if [[ -z "$parent_num" || "$parent_num" == "$num" ]]; then
-		echo "SKIPPED $num"
+		echo "$backfill_skipped $num"
 		return 0
 	fi
 
@@ -948,7 +1129,7 @@ _backfill_one_issue() {
 		if [[ "$_rate_limited" == "1" ]]; then
 			echo "RATE_LIMITED $num"
 		else
-			echo "SKIPPED $num"
+			echo "$backfill_skipped $num"
 		fi
 		return 0
 	fi
@@ -958,7 +1139,7 @@ _backfill_one_issue() {
 		echo "LINKED $num:$parent_num"
 		return 0
 	fi
-	echo "SKIPPED $num"
+	echo "$backfill_skipped $num"
 	return 0
 }
 
