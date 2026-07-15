@@ -40,8 +40,8 @@ TEMPLATE_FILE="${REPO_ROOT}/templates/opencode-config-agents.md"
 
 grep -q 'authoritative plugin-injected greeting block' "$GENERATED_FILE"
 grep -q 'plugin injection is unavailable' "$GENERATED_FILE"
-grep -q 'session-greeting-opencode.txt' "$GENERATED_FILE"
-if grep -q 'session-greeting.txt' "$GENERATED_FILE"; then
+grep -Fq 'session-greeting-opencode.txt' "$GENERATED_FILE"
+if grep -Fq 'session-greeting.txt' "$GENERATED_FILE"; then
 	exit 1
 fi
 # shellcheck disable=SC2016
@@ -61,8 +61,8 @@ fi
 
 grep -q 'authoritative plugin-injected greeting block' "$TEMPLATE_FILE"
 grep -q 'plugin injection is unavailable' "$TEMPLATE_FILE"
-grep -q 'session-greeting-opencode.txt' "$TEMPLATE_FILE"
-if grep -q 'session-greeting.txt' "$TEMPLATE_FILE"; then
+grep -Fq 'session-greeting-opencode.txt' "$TEMPLATE_FILE"
+if grep -Fq 'session-greeting.txt' "$TEMPLATE_FILE"; then
 	exit 1
 fi
 # shellcheck disable=SC2016
