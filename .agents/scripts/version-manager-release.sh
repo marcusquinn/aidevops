@@ -427,6 +427,8 @@ run_post_release_agent_sync() {
 
 	local deploy_script="${AIDEVOPS_SYNC_DEPLOY_SCRIPT:-$sync_repo_root/.agents/scripts/deploy-agents-on-merge.sh}"
 	local deployment_scope="${AIDEVOPS_RELEASE_DEPLOY_SCOPE:-incremental}"
+	# Every version publication requires atomic bundle and CLI convergence, so
+	# both accepted scopes intentionally use a serialized full deployment.
 	local -a deploy_args=(--repo "$sync_repo_root" --full --quiet)
 	case "$deployment_scope" in
 	incremental | full) ;;
@@ -462,6 +464,9 @@ run_post_release_agent_sync() {
 			verify_release_deployment_convergence "$expected_version"; then
 			print_success "Post-release aidevops deployment and CLI convergence completed for v${expected_version}"
 			return 0
+		fi
+		if [[ "$sync_exit" -ne 0 ]]; then
+			wait_for_release_deployment_settle || true
 		fi
 		print_warning "Release deployment convergence attempt ${attempt} did not remain at v${expected_version}; retrying after competing setup activity"
 		attempt=$((attempt + 1))
