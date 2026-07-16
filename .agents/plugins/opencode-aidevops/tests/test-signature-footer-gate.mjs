@@ -354,6 +354,48 @@ describe("tryRepairSignature", () => {
     assert.ok(readFileSync(bodyFile, "utf-8").includes(SIG_MARKER));
   });
 
+  test("allows --body-file under configured AIDEVOPS_TEMP_DIR", () => {
+    const dir = setupStubHelper();
+    const customRoot = mkdtempSync(join(homedir(), ".t27910-custom-temp-"));
+    const bodyFile = join(customRoot, "body.md");
+    const priorTempDir = process.env.AIDEVOPS_TEMP_DIR;
+    try {
+      process.env.AIDEVOPS_TEMP_DIR = customRoot;
+      writeFileSync(bodyFile, "configured temp content\n");
+      const { log } = makeLogger();
+      const cmd = `gh issue comment 1 --repo o/r --body-file ${bodyFile}`;
+      const out = tryRepairSignature(cmd, dir, log);
+      assert.equal(out.status, "ok");
+      assert.ok(readFileSync(bodyFile, "utf-8").includes(SIG_MARKER));
+    } finally {
+      if (priorTempDir === undefined) delete process.env.AIDEVOPS_TEMP_DIR;
+      else process.env.AIDEVOPS_TEMP_DIR = priorTempDir;
+      rmSync(customRoot, { recursive: true, force: true });
+    }
+  });
+
+  test("allows --body-file under the default aidevops temp root", () => {
+    const dir = setupStubHelper();
+    const defaultRoot = join(homedir(), ".aidevops", ".agent-workspace", "tmp");
+    mkdirSync(defaultRoot, { recursive: true });
+    const fixtureRoot = mkdtempSync(join(defaultRoot, "t27910-default-temp-"));
+    const bodyFile = join(fixtureRoot, "body.md");
+    const priorTempDir = process.env.AIDEVOPS_TEMP_DIR;
+    try {
+      delete process.env.AIDEVOPS_TEMP_DIR;
+      writeFileSync(bodyFile, "default temp content\n");
+      const { log } = makeLogger();
+      const cmd = `gh issue comment 1 --repo o/r --body-file ${bodyFile}`;
+      const out = tryRepairSignature(cmd, dir, log);
+      assert.equal(out.status, "ok");
+      assert.ok(readFileSync(bodyFile, "utf-8").includes(SIG_MARKER));
+    } finally {
+      if (priorTempDir === undefined) delete process.env.AIDEVOPS_TEMP_DIR;
+      else process.env.AIDEVOPS_TEMP_DIR = priorTempDir;
+      rmSync(fixtureRoot, { recursive: true, force: true });
+    }
+  });
+
   test("uses cheap no-session helper path when repairing body-file", () => {
     const dir = mkdtempSync(join(tmpdir(), "t24374-fast-helper-"));
     const helper = join(dir, "gh-signature-helper.sh");
