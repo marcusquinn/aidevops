@@ -39,6 +39,8 @@
 #   AUDIT_LOG_DIR    Override log directory (default: ~/.aidevops/.agent-workspace/observability)
 #   AUDIT_LOG_FILE   Override log file path (default: $AUDIT_LOG_DIR/audit.jsonl)
 #   AUDIT_QUIET      Suppress informational stderr output when "true"
+#   AUDIT_LOCK_TIMEOUT_SECONDS     Lock wait before failing closed (default: 10)
+#   AUDIT_LOCK_ORPHAN_AGE_SECONDS  Ownerless-lock reclaim age (default: 60)
 
 set -euo pipefail
 
@@ -58,6 +60,13 @@ readonly AUDIT_GENESIS_HASH="000000000000000000000000000000000000000000000000000
 readonly AUDIT_MAX_MESSAGE_LEN=4096
 readonly AUDIT_MAX_DETAIL_LEN=8192
 readonly AUDIT_DEFAULT_ROTATE_MB=50
+readonly AUDIT_DEFAULT_LOCK_TIMEOUT_SECONDS=10
+readonly AUDIT_DEFAULT_LOCK_ORPHAN_AGE_SECONDS=60
+
+# Mutable state for the process-local lock owner and the most recent append.
+_AUDIT_HELD_LOCK_DIR=""
+_AUDIT_HELD_LOCK_OWNER=""
+_AUDIT_LAST_SEQ=""
 
 # Valid event types (prefix-based hierarchy)
 readonly -a AUDIT_EVENT_TYPES=(
@@ -101,12 +110,20 @@ _audit_ensure_log() {
 	log_dir="$(dirname "$log_file")"
 
 	if [[ ! -d "$log_dir" ]]; then
-		mkdir -p "$log_dir" || true
+		if ! mkdir -p "$log_dir"; then
+			_audit_error "Could not create audit log directory: $log_dir"
+			return 1
+		fi
 		chmod 700 "$log_dir" || _audit_warn "Could not set log directory permissions to 700: $log_dir"
 	fi
 
 	if [[ ! -f "$log_file" ]]; then
-		: >"$log_file"
+		# Append-open creates the file without truncating an entry another process
+		# may have written after this process checked for its existence.
+		if ! (umask 077 && : >>"$log_file"); then
+			_audit_error "Could not create audit log file: $log_file"
+			return 1
+		fi
 		chmod 600 "$log_file" || _audit_warn "Could not set log file permissions to 600: $log_file"
 	fi
 
@@ -132,10 +149,10 @@ _audit_sha256() {
 }
 
 # Get the hash of the last entry in the audit log.
+# Arguments: $1 — audit log file path
 # Output: hash on stdout (genesis hash if log is empty)
 _audit_last_hash() {
-	local log_file
-	log_file="$(_audit_log_path)"
+	local log_file="$1"
 
 	if [[ ! -f "$log_file" ]] || [[ ! -s "$log_file" ]]; then
 		echo "$AUDIT_GENESIS_HASH"
@@ -238,6 +255,205 @@ _audit_error() {
 	return 0
 }
 
+# Read a path's modification time as epoch seconds on macOS or Linux.
+# Arguments: $1 — path
+# Output: epoch seconds on stdout
+_audit_path_mtime_epoch() {
+	local path="$1"
+	local mtime=""
+
+	mtime="$(stat -f '%m' "$path" 2>/dev/null || true)"
+	if [[ "$mtime" =~ ^[0-9]+$ ]]; then
+		echo "$mtime"
+		return 0
+	fi
+
+	mtime="$(stat -c '%Y' "$path" 2>/dev/null || true)"
+	if [[ "$mtime" =~ ^[0-9]+$ ]]; then
+		echo "$mtime"
+		return 0
+	fi
+
+	return 1
+}
+
+# Remove only the files owned by the audit lock protocol, then the directory.
+# Arguments: $1 — lock directory
+_audit_remove_lock_dir() {
+	local lock_dir="$1"
+
+	rm -f "${lock_dir}/owner" || return 1
+	rmdir "${lock_dir}/.reclaim" 2>/dev/null || true
+	if ! rmdir "$lock_dir" 2>/dev/null; then
+		_audit_error "Could not remove audit log lock directory: $lock_dir"
+		return 1
+	fi
+
+	return 0
+}
+
+# Reclaim a dead-owner lock, or an old ownerless lock. A .reclaim directory
+# atomically elects one reclaimer while the parent lock still blocks writers.
+# Arguments: $1 — lock directory, $2 — ownerless-lock minimum age in seconds
+# Returns: 0 only when the stale lock was removed
+_audit_reclaim_stale_lock() {
+	local lock_dir="$1"
+	local orphan_age="$2"
+
+	if [[ ! -d "$lock_dir" ]]; then
+		return 1
+	fi
+
+	local owner_record=""
+	local owner_pid=""
+	local stale_reason=""
+	if [[ -f "${lock_dir}/owner" ]]; then
+		IFS= read -r owner_record <"${lock_dir}/owner" || owner_record=""
+		owner_pid="${owner_record%% *}"
+		if [[ "$owner_pid" =~ ^[0-9]+$ ]]; then
+			if kill -0 "$owner_pid" 2>/dev/null; then
+				return 1
+			fi
+			stale_reason="dead owner PID ${owner_pid}"
+		fi
+	fi
+
+	if [[ -z "$stale_reason" ]]; then
+		local lock_mtime=""
+		lock_mtime="$(_audit_path_mtime_epoch "$lock_dir")" || return 1
+		local now=""
+		now="$(date '+%s')" || return 1
+		local lock_age=$((now - lock_mtime))
+		if [[ $lock_age -lt 0 ]]; then
+			lock_age=0
+		fi
+		if [[ $lock_age -lt $orphan_age ]]; then
+			return 1
+		fi
+		stale_reason="missing or invalid owner metadata for ${lock_age}s"
+	fi
+
+	if ! mkdir "${lock_dir}/.reclaim" 2>/dev/null; then
+		return 1
+	fi
+
+	_audit_warn "Reclaiming stale audit log lock (${stale_reason})"
+	if ! _audit_remove_lock_dir "$lock_dir"; then
+		return 1
+	fi
+
+	return 0
+}
+
+# Acquire a portable process lock using atomic mkdir.
+# Arguments: $1 — lock directory
+_audit_acquire_lock() {
+	local lock_dir="$1"
+	local timeout="${AUDIT_LOCK_TIMEOUT_SECONDS:-${AUDIT_DEFAULT_LOCK_TIMEOUT_SECONDS}}"
+	local orphan_age="${AUDIT_LOCK_ORPHAN_AGE_SECONDS:-${AUDIT_DEFAULT_LOCK_ORPHAN_AGE_SECONDS}}"
+
+	if [[ ! "$timeout" =~ ^[0-9]+$ ]]; then
+		_audit_error "Invalid AUDIT_LOCK_TIMEOUT_SECONDS: $timeout (must be a non-negative integer)"
+		return 1
+	fi
+	if [[ ! "$orphan_age" =~ ^[0-9]+$ ]]; then
+		_audit_error "Invalid AUDIT_LOCK_ORPHAN_AGE_SECONDS: $orphan_age (must be a non-negative integer)"
+		return 1
+	fi
+
+	local started_at=""
+	started_at="$(date '+%s')" || return 1
+	while ! (umask 077 && mkdir "$lock_dir") 2>/dev/null; do
+		if _audit_reclaim_stale_lock "$lock_dir" "$orphan_age"; then
+			continue
+		fi
+
+		local now=""
+		now="$(date '+%s')" || return 1
+		if [[ $((now - started_at)) -ge $timeout ]]; then
+			_audit_error "Could not acquire audit log lock after ${timeout}s"
+			return 1
+		fi
+		sleep 0.1
+	done
+
+	local owner_pid="${BASHPID:-$$}"
+	local created_at=""
+	created_at="$(date '+%s')" || {
+		_audit_remove_lock_dir "$lock_dir" || true
+		return 1
+	}
+	local owner_token="${owner_pid}-${created_at}-${RANDOM}"
+	local owner_record="${owner_pid} ${owner_token}"
+	if ! printf '%s\n' "$owner_record" >"${lock_dir}/owner"; then
+		_audit_remove_lock_dir "$lock_dir" || true
+		_audit_error "Could not write audit log lock owner metadata"
+		return 1
+	fi
+	chmod 600 "${lock_dir}/owner" || _audit_warn "Could not set audit lock owner permissions to 600"
+
+	_AUDIT_HELD_LOCK_DIR="$lock_dir"
+	_AUDIT_HELD_LOCK_OWNER="$owner_record"
+	return 0
+}
+
+# Release the lock only when its owner metadata still matches this process.
+_audit_release_current_lock() {
+	local lock_dir="$_AUDIT_HELD_LOCK_DIR"
+	local expected_owner="$_AUDIT_HELD_LOCK_OWNER"
+
+	if [[ -z "$lock_dir" ]]; then
+		return 0
+	fi
+	if [[ ! -d "$lock_dir" ]]; then
+		_AUDIT_HELD_LOCK_DIR=""
+		_AUDIT_HELD_LOCK_OWNER=""
+		return 0
+	fi
+
+	local actual_owner=""
+	if [[ -f "${lock_dir}/owner" ]]; then
+		IFS= read -r actual_owner <"${lock_dir}/owner" || actual_owner=""
+	fi
+	if [[ "$actual_owner" != "$expected_owner" ]]; then
+		_audit_error "Refusing to release audit log lock owned by another process"
+		_AUDIT_HELD_LOCK_DIR=""
+		_AUDIT_HELD_LOCK_OWNER=""
+		return 1
+	fi
+
+	if ! _audit_remove_lock_dir "$lock_dir"; then
+		_AUDIT_HELD_LOCK_DIR=""
+		_AUDIT_HELD_LOCK_OWNER=""
+		return 1
+	fi
+	_AUDIT_HELD_LOCK_DIR=""
+	_AUDIT_HELD_LOCK_OWNER=""
+	return 0
+}
+
+# Ensure normal exit and termination signals release a held lock.
+_audit_arm_lock_cleanup() {
+	trap '_audit_release_current_lock || true' EXIT
+	trap 'exit 129' HUP
+	trap 'exit 130' INT
+	trap 'exit 143' TERM
+	return 0
+}
+
+# Release a held lock and disarm its process traps.
+_audit_finish_lock() {
+	local release_failed="false"
+	if ! _audit_release_current_lock; then
+		release_failed="true"
+	fi
+	trap - EXIT HUP INT TERM
+	if [[ "$release_failed" == "true" ]]; then
+		return 1
+	fi
+	return 0
+}
+
 # =============================================================================
 # Commands
 # =============================================================================
@@ -319,28 +535,18 @@ _audit_build_entry_no_hash() {
 	return 0
 }
 
-# Append a single audit entry to the log under an flock-serialised lock.
+# Append one entry while the caller holds this log's lock.
 # Handles: seq allocation, prev_hash lookup, entry construction, hash, append.
 # Arguments: $1=log_file $2=event_type $3=message $4=detail_json $5=ts $6=actor $7=host
-# Returns: 0 on success, 1 on lock failure
-_audit_locked_append() {
+_audit_append_entry() {
 	local log_file="$1" event_type="$2" message="$3" detail_json="$4"
 	local ts="$5" actor="$6" host="$7"
 
-	local lock_file="${log_file}.lock"
-	# Serialize the read-modify-write path with flock to prevent concurrent
-	# writers from duplicating sequence numbers or breaking the hash chain.
-	# Uses fd 200 for the lock file; released automatically when fd is closed.
-	if command -v flock &>/dev/null; then
-		exec 200>"$lock_file"
-		if ! flock -w 10 200; then
-			_audit_error "Could not acquire audit log lock after 10s"
-			exec 200>&-
-			return 1
-		fi
+	if [[ "$_AUDIT_HELD_LOCK_DIR" != "${log_file}.lock.d" ]]; then
+		_audit_error "Refusing to append without the matching audit log lock"
+		return 1
 	fi
-	# Note: if flock is unavailable (e.g., macOS without util-linux), we proceed
-	# without locking — single-writer scenarios are still safe.
+	_AUDIT_LAST_SEQ=""
 
 	local seq
 	if [[ -s "$log_file" ]]; then
@@ -351,31 +557,47 @@ _audit_locked_append() {
 	fi
 
 	local prev_hash
-	prev_hash="$(_audit_last_hash)"
+	prev_hash="$(_audit_last_hash "$log_file")" || return 1
 
 	local entry_no_hash
 	entry_no_hash="$(_audit_build_entry_no_hash \
-		"$seq" "$ts" "$event_type" "$message" "$detail_json" "$actor" "$host" "$prev_hash")"
+		"$seq" "$ts" "$event_type" "$message" "$detail_json" "$actor" "$host" "$prev_hash")" || return 1
 
 	local entry_hash
-	entry_hash="$(_audit_sha256 "$entry_no_hash")"
+	entry_hash="$(_audit_sha256 "$entry_no_hash")" || return 1
 
 	local entry
 	if command -v jq &>/dev/null; then
-		entry=$(echo "$entry_no_hash" | jq -c --arg hash "$entry_hash" '. + {hash: $hash}')
+		entry="$(echo "$entry_no_hash" | jq -c --arg hash "$entry_hash" '. + {hash: $hash}')" || return 1
 	else
 		# Reconstruct with hash appended (fallback — jq strongly preferred)
 		# Strip trailing } and append hash field
 		entry="${entry_no_hash%\}},\"hash\":\"${entry_hash}\"}"
 	fi
 
-	echo "$entry" >>"$log_file"
-
-	if command -v flock &>/dev/null; then
-		exec 200>&-
+	if ! printf '%s\n' "$entry" >>"$log_file"; then
+		_audit_error "Could not append to audit log: $log_file"
+		return 1
 	fi
 
-	echo "$seq"
+	_AUDIT_LAST_SEQ="$seq"
+	return 0
+}
+
+# Serialize the full sequence/hash/append transaction with an atomic mkdir lock.
+# Arguments: $1=log_file $2=event_type $3=message $4=detail_json $5=ts $6=actor $7=host
+_audit_locked_append() {
+	local log_file="$1" event_type="$2" message="$3" detail_json="$4"
+	local ts="$5" actor="$6" host="$7"
+	local lock_dir="${log_file}.lock.d"
+
+	_audit_acquire_lock "$lock_dir" || return 1
+	_audit_arm_lock_cleanup
+	if ! _audit_append_entry "$log_file" "$event_type" "$message" "$detail_json" "$ts" "$actor" "$host"; then
+		_audit_finish_lock || true
+		return 1
+	fi
+	_audit_finish_lock || return 1
 	return 0
 }
 
@@ -433,7 +655,7 @@ cmd_log() {
 	local detail_json
 	detail_json="$(_audit_parse_details "$@")" || return 1
 
-	_audit_ensure_log
+	_audit_ensure_log || return 1
 
 	local log_file
 	log_file="$(_audit_log_path)"
@@ -443,9 +665,9 @@ cmd_log() {
 	actor="${AIDEVOPS_SESSION_ID:-${USER:-unknown}}"
 	host="$(hostname -s 2>/dev/null || echo "unknown")"
 
-	local seq
-	seq="$(_audit_locked_append \
-		"$log_file" "$event_type" "$message" "$detail_json" "$ts" "$actor" "$host")" || return 1
+	_audit_locked_append \
+		"$log_file" "$event_type" "$message" "$detail_json" "$ts" "$actor" "$host" || return 1
+	local seq="$_AUDIT_LAST_SEQ"
 
 	_audit_info "Logged ${event_type} (seq=${seq})"
 
@@ -675,6 +897,94 @@ cmd_status() {
 	return 0
 }
 
+# Rotate a qualifying log while excluding appenders with the same lock.
+# Arguments: $1=log_file $2=max_size_bytes $3=max_size_mb
+_audit_rotate_locked() {
+	local log_file="$1"
+	local max_size_bytes="$2"
+	local max_size_mb="$3"
+	local size_bytes=""
+	local lock_dir="${log_file}.lock.d"
+
+	_audit_acquire_lock "$lock_dir" || return 1
+	_audit_arm_lock_cleanup
+	if [[ ! -f "$log_file" ]]; then
+		_audit_finish_lock || true
+		_audit_info "No audit log to rotate"
+		return 0
+	fi
+	size_bytes="$(wc -c <"$log_file" | tr -d ' ')"
+	if [[ $size_bytes -lt $max_size_bytes ]]; then
+		_audit_finish_lock || return 1
+		local size_mb=$((size_bytes / 1048576))
+		_audit_info "Log size (${size_mb}MB) below threshold (${max_size_mb}MB) — no rotation needed"
+		return 0
+	fi
+
+	# Verify the exact segment being rotated while writers are excluded.
+	if ! cmd_verify --quiet 2>/dev/null; then
+		_audit_warn "Chain verification failed before rotation — rotating anyway but chain is already broken"
+	fi
+
+	# Rotate: rename with timestamp
+	local rotate_ts
+	rotate_ts="$(date -u '+%Y%m%dT%H%M%SZ' 2>/dev/null || date '+%Y%m%dT%H%M%SZ')"
+	local rotated_prefix="${log_file%.jsonl}.${rotate_ts}"
+	local rotated_file="${rotated_prefix}.jsonl"
+	local collision=0
+	while [[ -e "$rotated_file" ]]; do
+		collision=$((collision + 1))
+		rotated_file="${rotated_prefix}.${BASHPID:-$$}.${collision}.jsonl"
+	done
+
+	# Capture the last entry's hash before moving — this creates a cryptographic
+	# link from the new log segment back to the rotated one. Without this, an
+	# attacker could swap or delete rotated segments undetectably.
+	local prev_segment_hash
+	if ! prev_segment_hash="$(_audit_last_hash "$log_file")"; then
+		_audit_finish_lock || true
+		return 1
+	fi
+	local rotated_entries
+	rotated_entries="$(wc -l <"$log_file" | tr -d ' ')"
+
+	if ! mv "$log_file" "$rotated_file"; then
+		_audit_finish_lock || true
+		_audit_error "Could not rotate audit log"
+		return 1
+	fi
+	chmod 400 "$rotated_file" || _audit_warn "Could not set rotated log permissions to 400: $rotated_file"
+	if ! (umask 077 && : >>"$log_file"); then
+		_audit_finish_lock || true
+		_audit_error "Could not create new audit log segment"
+		return 1
+	fi
+	chmod 600 "$log_file" || _audit_warn "Could not set log file permissions to 600: $log_file"
+
+	local detail_json
+	detail_json="$(_audit_parse_details \
+		--detail "rotated_file=${rotated_file}" \
+		--detail "entries=${rotated_entries}" \
+		--detail "size_bytes=${size_bytes}" \
+		--detail "prev_segment_hash=${prev_segment_hash}")" || {
+		_audit_finish_lock || true
+		return 1
+	}
+	local ts actor host
+	ts="$(date -u '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || date '+%Y-%m-%dT%H:%M:%SZ')"
+	actor="${AIDEVOPS_SESSION_ID:-${USER:-unknown}}"
+	host="$(hostname -s 2>/dev/null || echo "unknown")"
+	if ! _audit_append_entry "$log_file" "system.rotate" "Audit log rotated" "$detail_json" "$ts" "$actor" "$host"; then
+		_audit_finish_lock || true
+		return 1
+	fi
+	local rotation_seq="$_AUDIT_LAST_SEQ"
+	_audit_finish_lock || return 1
+	_audit_info "Rotated to ${rotated_file}; logged system.rotate (seq=${rotation_seq})"
+
+	return 0
+}
+
 # Rotate the audit log when it exceeds a size threshold.
 # The rotated file is renamed with a timestamp suffix.
 # A rotation event is logged in the new log file.
@@ -707,7 +1017,6 @@ cmd_rotate() {
 
 	local log_file
 	log_file="$(_audit_log_path)"
-
 	if [[ ! -f "$log_file" ]]; then
 		_audit_info "No audit log to rotate"
 		return 0
@@ -716,43 +1025,13 @@ cmd_rotate() {
 	local size_bytes
 	size_bytes="$(wc -c <"$log_file" | tr -d ' ')"
 	local max_size_bytes=$((max_size_mb * 1048576))
-
 	if [[ $size_bytes -lt $max_size_bytes ]]; then
 		local size_mb=$((size_bytes / 1048576))
 		_audit_info "Log size (${size_mb}MB) below threshold (${max_size_mb}MB) — no rotation needed"
 		return 0
 	fi
 
-	# Verify chain before rotation
-	if ! cmd_verify --quiet 2>/dev/null; then
-		_audit_warn "Chain verification failed before rotation — rotating anyway but chain is already broken"
-	fi
-
-	# Rotate: rename with timestamp
-	local rotate_ts
-	rotate_ts="$(date -u '+%Y%m%dT%H%M%SZ' 2>/dev/null || date '+%Y%m%dT%H%M%SZ')"
-	local rotated_file="${log_file%.jsonl}.${rotate_ts}.jsonl"
-
-	# Capture the last entry's hash before moving — this creates a cryptographic
-	# link from the new log segment back to the rotated one. Without this, an
-	# attacker could swap or delete rotated segments undetectably.
-	local prev_segment_hash
-	prev_segment_hash="$(_audit_last_hash)"
-
-	mv "$log_file" "$rotated_file"
-	chmod 400 "$rotated_file" || _audit_warn "Could not set rotated log permissions to 400: $rotated_file"
-
-	_audit_info "Rotated to ${rotated_file}"
-
-	# Log rotation event in the new (empty) log file with cryptographic handoff
-	local rotated_entries
-	rotated_entries="$(wc -l <"$rotated_file" | tr -d ' ')"
-	cmd_log "system.rotate" "Audit log rotated" \
-		--detail "rotated_file=${rotated_file}" \
-		--detail "entries=${rotated_entries}" \
-		--detail "size_bytes=${size_bytes}" \
-		--detail "prev_segment_hash=${prev_segment_hash}"
-
+	_audit_rotate_locked "$log_file" "$max_size_bytes" "$max_size_mb" || return 1
 	return 0
 }
 
@@ -813,6 +1092,8 @@ Environment:
   AUDIT_LOG_DIR    Override log directory
   AUDIT_LOG_FILE   Override log file path
   AUDIT_QUIET      Suppress informational output ("true")
+  AUDIT_LOCK_TIMEOUT_SECONDS      Lock wait before failing closed (default: 10)
+  AUDIT_LOCK_ORPHAN_AGE_SECONDS   Ownerless-lock reclaim age (default: 60)
 HELP
 	return 0
 }
@@ -853,6 +1134,9 @@ main() {
 		return 1
 		;;
 	esac
+	return 0
 }
 
-main "$@"
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+	main "$@"
+fi
