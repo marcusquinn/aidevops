@@ -176,6 +176,10 @@ describe('local server runtime security', () => {
     })
     expect(allowedOriginResponse.status).toBe(200)
     expect(allowedOriginResponse.headers.get('access-control-allow-origin')).toBe('https://example.com')
+    expect(await allowedOriginResponse.json()).toMatchObject({
+      status: 'healthy',
+      service: 'api-gateway',
+    })
 
     const untrustedOriginResponse = await fetch(healthUrl, {
       headers: { Authorization: `Bearer ${TEST_TOKEN}`, Origin: 'http://localhost:9999' },
@@ -204,6 +208,11 @@ describe('local server runtime security', () => {
     await waitForServer(`${baseUrl}/health`)
     await expectLoopbackOnly(port, '/health')
 
+    const dashboardHtml = await fetch(baseUrl).then(response => response.text())
+    expect(dashboardHtml).toContain("window.location.protocol === 'https:' ? 'wss:' : 'ws:'")
+    expect(dashboardHtml).toContain("window.location.host + '/ws'")
+    expect(dashboardHtml).not.toContain('ws://localhost:')
+
     expect((await fetch(`${baseUrl}/api/servers`)).status).toBe(401)
     expect((await fetch(`${baseUrl}/api/servers/memory/start`, { method: 'POST' })).status).toBe(401)
     expect((await fetch(`${baseUrl}/api/servers/memory/stop`, { method: 'POST' })).status).toBe(401)
@@ -222,6 +231,9 @@ describe('local server runtime security', () => {
 
     const authStatus = await fetch(`${baseUrl}/api/auth/status`).then(response => response.json())
     expect(authStatus).toEqual({ required: true, configured: true })
+
+    const health = await fetch(`${baseUrl}/health`).then(response => response.json())
+    expect(health).toMatchObject({ status: 'healthy', service: 'mcp-dashboard' })
 
     const dashboardSource = await Bun.file(`${REPOSITORY_ROOT}.opencode/server/mcp-dashboard.ts`).text()
     expect(dashboardSource).not.toContain("Bun.spawn(['pkill'")

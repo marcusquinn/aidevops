@@ -169,7 +169,45 @@ set_live_evidence() {
 	return 0
 }
 
+assert_infrastructure_rerun_unset_defaults_safe() {
+	local output="" rc=0
+	output=$(
+		unset LOGFILE HOME AIDEVOPS_TEMP_DIR PULSE_MERGE_INFRA_RERUN_STATE_DIR
+		_pmrc_rerun_infrastructure_check owner/repo 7 required-a \
+			"https://github.com/owner/repo/actions/runs/707/job/808"
+	) 2>&1 || rc=$?
+	TESTS_RUN=$((TESTS_RUN + 1))
+	if [[ "$rc" -eq 1 && -z "$output" ]]; then
+		printf 'PASS unset HOME fails closed without resolving a root-level state directory\n'
+		return 0
+	fi
+	printf 'FAIL unset HOME was not handled safely (rc=%s, output=%s)\n' "$rc" "$output"
+	TESTS_FAILED=$((TESTS_FAILED + 1))
+	return 0
+}
+
+assert_infrastructure_rerun_unset_logfile_safe() {
+	local output="" rc=0 stderr_file="${TEST_ROOT}/unset-log-stderr"
+	(
+		unset LOGFILE HOME AIDEVOPS_TEMP_DIR
+		PULSE_MERGE_INFRA_RERUN_STATE_DIR="${TEST_ROOT}/unset-log-reruns"
+		_pmrc_rerun_infrastructure_check owner/repo 7 required-a \
+			"https://github.com/owner/repo/actions/runs/909/job/1001"
+	) 2>"$stderr_file" || rc=$?
+	output=$(<"$stderr_file")
+	TESTS_RUN=$((TESTS_RUN + 1))
+	if [[ "$rc" -eq 0 && "$output" == *"requested infrastructure rerun"* ]]; then
+		printf 'PASS unset LOGFILE falls back to stderr under set -u\n'
+		return 0
+	fi
+	printf 'FAIL unset LOGFILE was not handled safely (rc=%s, output=%s)\n' "$rc" "$output"
+	TESTS_FAILED=$((TESTS_FAILED + 1))
+	return 0
+}
+
 main() {
+	assert_infrastructure_rerun_unset_defaults_safe
+	assert_infrastructure_rerun_unset_logfile_safe
 	assert_gate "terminal checks with explicit baseline advisory pass" happy_advisory 0
 	if grep -q "IGNORED non-required baseline advisory failure 'Qlty Smell Threshold'" "$LOGFILE"; then
 		printf 'PASS ignored advisory failure is audited\n'

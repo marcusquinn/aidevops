@@ -1,0 +1,116 @@
+#!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SOURCE_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
+TEST_ROOT_BASE="${AIDEVOPS_TEMP_DIR:-${HOME}/.aidevops/.agent-workspace/tmp}"
+mkdir -p "$TEST_ROOT_BASE"
+TEST_ROOT=$(mktemp -d "${TEST_ROOT_BASE}/pulse-campaign-shadow-test.XXXXXX")
+trap 'rm -rf "$TEST_ROOT"' EXIT
+
+export HOME="${TEST_ROOT}/home"
+export AIDEVOPS_TEMP_DIR="${TEST_ROOT}/tmp"
+export LOGFILE="${TEST_ROOT}/pulse.log"
+export REPOS_JSON="${TEST_ROOT}/repos.json"
+mkdir -p "$HOME" "$AIDEVOPS_TEMP_DIR"
+printf '{"initialized_repos":[]}\n' >"$REPOS_JSON"
+
+# shellcheck source=../pulse-campaign-shadow.sh
+source "${SOURCE_DIR}/pulse-campaign-shadow.sh"
+
+FETCH_LOG="${TEST_ROOT}/fetch.log"
+CAPTURE_RAW="${TEST_ROOT}/captured-raw.json"
+CAPTURE_READY="${TEST_ROOT}/captured-ready.json"
+CAPTURE_SUCCEEDED="${TEST_ROOT}/captured-succeeded.txt"
+LEGACY_JSON='[{"number":2,"createdAt":"2026-01-02T00:00:00Z"},{"number":1,"createdAt":"2026-01-01T00:00:00Z"}]'
+FILTERED_JSON='[{"number":1,"createdAt":"2026-01-01T00:00:00Z"}]'
+
+list_dispatchable_issue_candidates_json() {
+	local repo_slug="$1"
+	local source_limit="$2"
+	local raw_snapshot_file="${3:-}"
+	local snapshot_status_file="${4:-}"
+	printf '%s|%s\n' "$repo_slug" "$source_limit" >>"$FETCH_LOG"
+	if [[ -n "$raw_snapshot_file" ]]; then
+		printf '%s\n' "$LEGACY_JSON" >"$raw_snapshot_file"
+	fi
+	if [[ -n "$snapshot_status_file" ]]; then
+		printf '1\n' >"$snapshot_status_file"
+	fi
+	printf '%s\n' "$LEGACY_JSON"
+	return 0
+}
+
+_dispatch_filter_repo_pr_backlog_candidates() {
+	local repo_slug="$1"
+	local candidates_json="$2"
+	: "$repo_slug" "$candidates_json"
+	printf '%s\n' "$FILTERED_JSON"
+	return 0
+}
+
+_pulse_campaign_run_coordinator() {
+	local timeout_seconds="$1"
+	shift
+	: "$timeout_seconds"
+	local previous=""
+	local argument=""
+	for argument in "$@"; do
+		if [[ "$previous" == "--issues-file" ]]; then
+			cp "$argument" "$CAPTURE_RAW"
+		elif [[ "$previous" == "--ready-file" ]]; then
+			cp "$argument" "$CAPTURE_READY"
+		elif [[ "$previous" == "--source-succeeded" ]]; then
+			printf '%s\n' "$argument" >"$CAPTURE_SUCCEEDED"
+		fi
+		previous="$argument"
+	done
+	printf '{"repository":{"slug":"example/repository"},"generation":1,"frontier":[{"issueNumber":1}],"lanes":[],"source":{"complete":true}}\n'
+	return 0
+}
+
+assert_equal() {
+	local expected="$1"
+	local actual="$2"
+	local message="$3"
+	if [[ "$expected" != "$actual" ]]; then
+		printf 'FAIL: %s\nexpected: %s\nactual:   %s\n' "$message" "$expected" "$actual" >&2
+		return 1
+	fi
+	return 0
+}
+
+export AIDEVOPS_PULSE_CAMPAIGN_SHADOW_ENABLED=0
+disabled_output=$(pulse_campaign_shadow_candidates_json "example/repository" "$TEST_ROOT" 100)
+assert_equal "$FILTERED_JSON" "$disabled_output" "disabled shadow preserves legacy output"
+assert_equal "1" "$(wc -l <"$FETCH_LOG" | tr -d ' ')" "disabled shadow performs one issue fetch"
+if [[ -e "$CAPTURE_RAW" || -e "$CAPTURE_READY" || -e "$CAPTURE_SUCCEEDED" ]]; then
+	printf 'FAIL: disabled shadow invoked the campaign planner\n' >&2
+	exit 1
+fi
+
+: >"$FETCH_LOG"
+export AIDEVOPS_PULSE_CAMPAIGN_SHADOW_ENABLED=1
+enabled_output=$(pulse_campaign_shadow_candidates_json "example/repository" "$TEST_ROOT" 100)
+assert_equal "$FILTERED_JSON" "$enabled_output" "enabled shadow preserves legacy output"
+assert_equal "1" "$(wc -l <"$FETCH_LOG" | tr -d ' ')" "enabled shadow reuses one issue fetch"
+assert_equal "$LEGACY_JSON" "$(<"$CAPTURE_RAW")" "planner receives the exact raw snapshot"
+assert_equal "$FILTERED_JSON" "$(<"$CAPTURE_READY")" "planner receives the exact filtered-ready set"
+assert_equal "1" "$(<"$CAPTURE_SUCCEEDED")" "planner receives successful snapshot provenance"
+
+_pulse_campaign_run_coordinator() {
+	local timeout_seconds="$1"
+	shift
+	: "$timeout_seconds" "$*"
+	return 124
+}
+
+: >"$FETCH_LOG"
+failed_output=$(pulse_campaign_shadow_candidates_json "example/repository" "$TEST_ROOT" 100)
+assert_equal "$FILTERED_JSON" "$failed_output" "planner timeout falls back to legacy output"
+assert_equal "1" "$(wc -l <"$FETCH_LOG" | tr -d ' ')" "planner failure does not repeat the issue fetch"
+
+printf 'PASS: pulse campaign shadow compatibility\n'

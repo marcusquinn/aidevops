@@ -10,6 +10,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.32.132] - 2026-07-16
+
+### Changed
+
+- Maintenance: mark t18142 complete (pr:#27969 completed:2026-07-16) [skip ci]
+- Maintenance: mark t18141 complete (pr:#27968 completed:2026-07-16) [skip ci]
+- Maintenance: sync ref:GH#27967 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#27966 to TODO.md [skip ci]
+
+### Fixed
+
+- validate MCP health service identity (#27969)
+- preserve objective input indices (#27958)
+- derive dashboard websocket URL from page (#27956)
+- preserve API gateway curl failures (#27954)
+
+## [3.32.131] - 2026-07-16
+
+### Changed
+
+- Maintenance: mark t18139 complete (pr:#27951 completed:2026-07-16) [skip ci]
+
 ## [3.32.130] - 2026-07-16
 
 ### Changed

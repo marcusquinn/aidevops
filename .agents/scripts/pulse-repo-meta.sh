@@ -231,11 +231,35 @@ repo_allows_pulse_write_actions() {
 # Arguments:
 #   $1 - repo slug (owner/repo)
 #   $2 - max issues to fetch (optional, default 100)
+#   $3 - optional private file for the exact raw open-issue snapshot
+#   $4 - optional private file receiving 1 when the snapshot fetch succeeded
 # Returns: JSON array of issue objects (number, title, url, createdAt, updatedAt, labels, assignees)
 #######################################
+_pulse_issue_snapshot_is_valid() {
+	local issue_json="$1"
+	[[ -n "$issue_json" && "$issue_json" != "null" ]] || return 1
+	printf '%s' "$issue_json" | jq -e --arg array_type array --arg object_type object --arg string_type string '
+		type == $array_type and all(.[];
+			type == $object_type and
+			((.number // .issueNumber // null) as $number |
+				if ($number | type) == "number" then
+					$number >= 1 and $number <= 9007199254740991 and ($number | floor) == $number
+				else false end) and
+			(.labels | type) == $array_type and all(.labels[];
+				type == $string_type or (type == $object_type and (.name | type) == $string_type and (.name | length) > 0 and (.name | length) <= 100)) and
+			(.assignees | type) == $array_type and all(.assignees[];
+				type == $string_type or (type == $object_type and (.login | type) == $string_type and (.login | test("^[A-Za-z0-9][A-Za-z0-9-]{0,38}$"))))
+		)
+	' >/dev/null 2>&1 || return 1
+	return 0
+}
+
 list_dispatchable_issue_candidates_json() {
 	local repo_slug="$1"
 	local limit="${2:-100}"
+	local raw_snapshot_file="${3:-}"
+	local snapshot_status_file="${4:-}"
+	local snapshot_succeeded=1
 
 	if [[ -z "$repo_slug" ]]; then
 		printf '[]\n'
@@ -247,7 +271,8 @@ list_dispatchable_issue_candidates_json() {
 	issue_dispatch_err=$(mktemp)
 	gh_exit_code=0
 	issue_json=$(gh_issue_list --repo "$repo_slug" --state open --json number,title,url,assignees,labels,createdAt,updatedAt --limit "$limit" 2>"$issue_dispatch_err") || gh_exit_code=$?
-	if [[ "$gh_exit_code" -ne 0 ]] || [[ -z "$issue_json" || "$issue_json" == "null" ]]; then
+	if [[ "$gh_exit_code" -ne 0 ]] || ! _pulse_issue_snapshot_is_valid "$issue_json"; then
+		snapshot_succeeded=0
 		local _issue_dispatch_err_msg
 		_issue_dispatch_err_msg=$(<"$issue_dispatch_err") || _issue_dispatch_err_msg="unknown error"
 		if [[ "$gh_exit_code" -eq 75 || "$_issue_dispatch_err_msg" == *"secondary-rate-limit active=true skip=read"* ]]; then
@@ -271,8 +296,31 @@ list_dispatchable_issue_candidates_json() {
 	if printf '%s' "$issue_json" | jq -e 'any(.[]; any(.labels[]?; .name == "status:blocked"))' >/dev/null 2>&1 &&
 		declare -F normalize_repo_dependency_readiness_if_due >/dev/null 2>&1; then
 		normalize_repo_dependency_readiness_if_due "$repo_slug" >/dev/null 2>&1 || true
-		issue_json=$(gh_issue_list --repo "$repo_slug" --state open --json number,title,url,assignees,labels,createdAt,updatedAt --limit "$limit" 2>/dev/null) || issue_json='[]'
+		local refreshed_issue_json=""
+		if ! refreshed_issue_json=$(gh_issue_list --repo "$repo_slug" --state open --json number,title,url,assignees,labels,createdAt,updatedAt --limit "$limit" 2>/dev/null) ||
+			! _pulse_issue_snapshot_is_valid "$refreshed_issue_json"; then
+			issue_json='[]'
+			snapshot_succeeded=0
+		else
+			issue_json="$refreshed_issue_json"
+		fi
 		candidates_json=$(_filter_dispatchable_issue_candidates_json "$issue_json")
+	fi
+
+	if [[ -n "$raw_snapshot_file" ]]; then
+		(
+			umask 077
+			printf '%s\n' "$issue_json" >"$raw_snapshot_file"
+		) || {
+			printf '[pulse-wrapper] list_dispatchable_issue_candidates: unable to persist campaign snapshot for %s\n' \
+				"$repo_slug" >>"$LOGFILE"
+		}
+	fi
+	if [[ -n "$snapshot_status_file" ]]; then
+		(
+			umask 077
+			printf '%s\n' "$snapshot_succeeded" >"$snapshot_status_file"
+		) || true
 	fi
 
 	printf '%s\n' "$candidates_json"
@@ -284,8 +332,8 @@ _filter_dispatchable_issue_candidates_json() {
 	printf '%s' "$issue_json" | jq -c --arg auto_dispatch_label 'auto-dispatch' '
 		[
 			.[] |
-			(.labels | map(.name)) as $labels |
-			(.assignees | map(.login)) as $assignees |
+			(.labels | map(.name? // .)) as $labels |
+			(.assignees | map(.login? // .)) as $assignees |
 			# GH#23442: REST /repos/{owner}/{repo}/issues can include pull
 			# requests. Keep dispatch candidate enumeration issue-only when
 			# gh_issue_list falls back to REST or a wrapper returns mixed results.

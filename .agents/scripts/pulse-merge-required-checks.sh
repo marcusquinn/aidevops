@@ -205,8 +205,10 @@ _pmrc_rerun_infrastructure_check() {
 	local check_name="$3"
 	local check_url="$4"
 	local run_id="" cooldown_seconds="${PULSE_MERGE_INFRA_RERUN_COOLDOWN_SECONDS:-900}"
-	local state_dir="${PULSE_MERGE_INFRA_RERUN_STATE_DIR:-${AIDEVOPS_TEMP_DIR:-$HOME/.aidevops/.agent-workspace/tmp}/pulse-infra-check-reruns}"
+	local state_root="${AIDEVOPS_TEMP_DIR:-${HOME:+$HOME/.aidevops/.agent-workspace/tmp}}"
+	local state_dir="${PULSE_MERGE_INFRA_RERUN_STATE_DIR:-${state_root:+$state_root/pulse-infra-check-reruns}}"
 	local state_file="" now_epoch="${PULSE_MERGE_NOW_EPOCH:-$(date +%s)}" last_attempt="0"
+	local log_target="${LOGFILE:-/dev/stderr}"
 
 	[[ -n "$repo_slug" && "$pr_number" =~ ^[0-9]+$ ]] || return 1
 	[[ "$check_url" == "https://github.com/${repo_slug}/actions/runs/"*"/job/"* ]] || return 1
@@ -215,10 +217,11 @@ _pmrc_rerun_infrastructure_check() {
 	[[ "$run_id" =~ ^[0-9]+$ ]] || return 1
 	[[ "$cooldown_seconds" =~ ^[0-9]+$ ]] || cooldown_seconds=900
 	[[ "$now_epoch" =~ ^[0-9]+$ ]] || return 1
+	[[ -n "$state_dir" ]] || return 1
 
 	if declare -F repo_allows_pulse_write_actions >/dev/null 2>&1 &&
 		! repo_allows_pulse_write_actions "$repo_slug"; then
-		echo "[pulse-merge] infrastructure rerun deferred for PR #${pr_number} check '${check_name}' in ${repo_slug} — repository writes are disabled" >>"$LOGFILE"
+		echo "[pulse-merge] infrastructure rerun deferred for PR #${pr_number} check '${check_name}' in ${repo_slug} — repository writes are disabled" >>"$log_target"
 		return 1
 	fi
 
@@ -229,7 +232,7 @@ _pmrc_rerun_infrastructure_check() {
 	fi
 	[[ "$last_attempt" =~ ^[0-9]+$ ]] || last_attempt=0
 	if [[ $((now_epoch - last_attempt)) -lt "$cooldown_seconds" ]]; then
-		echo "[pulse-merge] infrastructure rerun cooldown active for PR #${pr_number} check '${check_name}' in ${repo_slug} (run=${run_id}, cooldown=${cooldown_seconds}s) — merge remains blocked" >>"$LOGFILE"
+		echo "[pulse-merge] infrastructure rerun cooldown active for PR #${pr_number} check '${check_name}' in ${repo_slug} (run=${run_id}, cooldown=${cooldown_seconds}s) — merge remains blocked" >>"$log_target"
 		return 0
 	fi
 
@@ -237,10 +240,10 @@ _pmrc_rerun_infrastructure_check() {
 	#aidevops:trust-boundary — the run ID comes from the current-head check-run
 	# URL returned by GitHub, and the repository already passed pulse write policy.
 	if gh run rerun "$run_id" --repo "$repo_slug" --failed >/dev/null 2>&1; then
-		echo "[pulse-merge] requested infrastructure rerun for PR #${pr_number} check '${check_name}' in ${repo_slug} (run=${run_id}) — merge remains blocked pending fresh success (GH#27825)" >>"$LOGFILE"
+		echo "[pulse-merge] requested infrastructure rerun for PR #${pr_number} check '${check_name}' in ${repo_slug} (run=${run_id}) — merge remains blocked pending fresh success (GH#27825)" >>"$log_target"
 		return 0
 	fi
-	echo "[pulse-merge] infrastructure rerun request failed for PR #${pr_number} check '${check_name}' in ${repo_slug} (run=${run_id}); cooldown recorded — merge remains blocked (GH#27825)" >>"$LOGFILE"
+	echo "[pulse-merge] infrastructure rerun request failed for PR #${pr_number} check '${check_name}' in ${repo_slug} (run=${run_id}); cooldown recorded — merge remains blocked (GH#27825)" >>"$log_target"
 	return 0
 }
 
