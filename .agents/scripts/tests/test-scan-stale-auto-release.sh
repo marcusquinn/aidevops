@@ -2,18 +2,16 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 #
-# test-scan-stale-auto-release.sh — t2414 + t3205 + GH#22112 regression guard.
+# test-scan-stale-auto-release.sh — stale interactive claim regression guard.
 #
-# Asserts that `_isc_cmd_scan_stale` Phase 1 auto-releases stamps when the
-# command-aware PID liveness check says the owner is dead. Existing worktree
-# paths are informational only; a live matching PID must preserve the stamp.
+# Asserts that `_isc_cmd_scan_stale` Phase 1 auto-releases only verifiably dead
+# claims without a surviving worktree or no-auto-dispatch lockdown.
 #
 # Background (GH#20012, t2414):
 #   scan-stale Phase 1 previously ONLY reported dead stamps, requiring N manual
 #   `interactive-session-helper.sh release` calls per crashed session. Dead
-#   owner PID is safe to auto-release — t2421 command-aware liveness rejects
-#   recycled PIDs via argv-hash mismatch, so a surviving worktree path no
-#   longer adds safety.
+#   owner PID is safe to auto-release only when no surviving worktree or
+#   explicit lockdown provides contrary ownership evidence.
 #
 # t3205 (GH#21913): the bare TTY check `[[ -t 0 && -t 1 ]]` collapsed two
 #   distinct concepts (truly-headless vs AI-agent-interactive). OpenCode TUI
@@ -29,17 +27,19 @@
 # Tests:
 #   1. dead PID + missing worktree → stamp auto-released (file removed)
 #   2. live PID + missing worktree → stamp preserved
-#   3. dead PID + existing worktree → stamp auto-released
+#   3. dead PID + existing worktree → stamp preserved
 #   4. live PID + existing worktree → stamp preserved
-#   5. recycled PID / argv-hash mismatch + existing worktree → stamp auto-released
+#   5. recycled PID / argv-hash mismatch + existing worktree → stamp preserved
 #   6. --no-auto-release flag → dead+missing stamp NOT released (report only)
 #   7. AIDEVOPS_SCAN_STALE_AUTO_RELEASE=0 env → dead+missing stamp NOT released
 #   8. AIDEVOPS_SCAN_STALE_AUTO_RELEASE=1 env + non-TTY → dead+missing released
 #   9. OPENCODE_SESSION_ID set, no TTY, no headless → dead+missing released (t3205)
 #   10. AIDEVOPS_HEADLESS + OPENCODE_SESSION_ID → stamp preserved (headless wins, t3205)
-#   11. report-only stale output includes worktree path (GH#22210)
+#   11. report-only scan preserves claims with a surviving worktree.
 #   12. release-if-dead releases one same-host dead claim.
 #   13. release-if-dead preserves live, cross-host, and lockdown claims.
+#   14. scan-stale preserves lockdown and unverifiable claims.
+#   15. claim stamps record the durable runtime owner rather than the helper PID.
 #
 # Stub strategy: override `_isc_release_claim_by_stamp_path` as a shell function
 # after sourcing the helper to capture auto-release calls without real gh ops.
@@ -143,6 +143,21 @@ source "${SCRIPTS_DIR}/interactive-session-helper.sh" >/dev/null 2>&1 || true
 
 # Post-source stubs — override to keep tests hermetic.
 
+ISC_LABEL_MODE="absent"
+export ISC_LABEL_MODE
+_isc_has_label() {
+	local issue="$1"
+	local slug="$2"
+	local label="$3"
+	: "$issue" "$slug" "$label"
+	case "$ISC_LABEL_MODE" in
+	present) return 0 ;;
+	unknown) return 2 ;;
+	esac
+	return 1
+}
+export -f _isc_has_label
+
 # Record auto-release calls and simulate stamp deletion.
 _isc_release_claim_by_stamp_path() {
 	local stamp_path="$1"
@@ -198,17 +213,17 @@ fi
 rm -f "${STAMP_DIR}/owner-repo-102.json"
 
 # =============================================================================
-# Test 3 — dead PID + existing worktree → stamp auto-released
+# Test 3 — dead PID + existing worktree → stamp preserved
 # =============================================================================
 write_stamp "owner-repo-103.json" "99999" "$EXISTING_WORKTREE" "103" "owner/repo"
 
 _isc_cmd_scan_stale --auto-release >/dev/null 2>/dev/null || true
 
-if [[ ! -f "${STAMP_DIR}/owner-repo-103.json" ]]; then
-	pass "dead PID + existing worktree → stamp auto-released"
+if [[ -f "${STAMP_DIR}/owner-repo-103.json" ]]; then
+	pass "dead PID + existing worktree → stamp preserved"
 else
-	fail "dead PID + existing worktree → stamp auto-released" \
-		"stamp still exists despite dead PID — existing worktree must not block release"
+	fail "dead PID + existing worktree → stamp preserved" \
+		"stamp was deleted despite a surviving worktree"
 fi
 # Cleanup
 rm -f "${STAMP_DIR}/owner-repo-103.json"
@@ -230,17 +245,17 @@ fi
 rm -f "${STAMP_DIR}/owner-repo-104.json"
 
 # =============================================================================
-# Test 5 — recycled PID / argv-hash mismatch + existing worktree → stamp released
+# Test 5 — recycled PID / argv-hash mismatch + existing worktree → stamp preserved
 # =============================================================================
 write_stamp "owner-repo-105.json" "$LIVE_PID" "$EXISTING_WORKTREE" "105" "owner/repo" "not-the-live-process-hash"
 
 _isc_cmd_scan_stale --auto-release >/dev/null 2>/dev/null || true
 
-if [[ ! -f "${STAMP_DIR}/owner-repo-105.json" ]]; then
-	pass "recycled PID + existing worktree → stamp auto-released"
+if [[ -f "${STAMP_DIR}/owner-repo-105.json" ]]; then
+	pass "recycled PID + existing worktree → stamp preserved"
 else
-	fail "recycled PID + existing worktree → stamp auto-released" \
-		"stamp still exists despite argv-hash mismatch — t2421 liveness path did not fire"
+	fail "recycled PID + existing worktree → stamp preserved" \
+		"stamp was deleted despite a surviving worktree"
 fi
 # Cleanup
 rm -f "${STAMP_DIR}/owner-repo-105.json"
@@ -316,6 +331,7 @@ env -u FULL_LOOP_HEADLESS -u AIDEVOPS_HEADLESS -u OPENCODE_HEADLESS \
 			rm -f \"\$1\" 2>/dev/null || true
 			return 0
 		}
+		_isc_has_label() { return 1; }
 		_isc_scan_stampless_phase() { :; return 0; }
 		_isc_scan_closed_pr_orphans() { printf '0'; return 0; }
 		CLAIM_STAMP_DIR='$STAMP_DIR'
@@ -369,7 +385,7 @@ fi
 # =============================================================================
 # Tests 12-13 — bounded pulse command releases only a safe dead claim
 # =============================================================================
-_isc_has_label() { return 1; }
+ISC_LABEL_MODE="absent"
 write_stamp "owner-repo-112.json" "99999" "$EXISTING_WORKTREE" "112" "owner/repo"
 if _isc_cmd_release_if_dead "112" "owner/repo" >/dev/null 2>&1 && [[ ! -f "${STAMP_DIR}/owner-repo-112.json" ]]; then
 	pass "release-if-dead releases a same-host dead claim"
@@ -395,7 +411,7 @@ else
 fi
 rm -f "${STAMP_DIR}/owner-repo-114.json"
 
-_isc_has_label() { return 0; }
+ISC_LABEL_MODE="present"
 write_stamp "owner-repo-115.json" "99999" "$EXISTING_WORKTREE" "115" "owner/repo"
 if ! _isc_cmd_release_if_dead "115" "owner/repo" >/dev/null 2>&1 && [[ -f "${STAMP_DIR}/owner-repo-115.json" ]]; then
 	pass "release-if-dead preserves a no-auto-dispatch lockdown"
@@ -403,24 +419,80 @@ else
 	fail "release-if-dead preserves a no-auto-dispatch lockdown"
 fi
 rm -f "${STAMP_DIR}/owner-repo-115.json"
+ISC_LABEL_MODE="absent"
 # Cleanup
 rm -f "${STAMP_DIR}/owner-repo-110.json"
 
 # =============================================================================
-# Test 11 — report-only stale output includes worktree path (GH#22210)
+# Test 11 — report-only scan ignores claims with a surviving worktree
 # =============================================================================
 write_stamp "owner-repo-111.json" "99999" "$EXISTING_WORKTREE" "111" "owner/repo"
 
 REPORT_OUTPUT=$(_isc_cmd_scan_stale --no-auto-release 2>/dev/null || true)
 
-if [[ "$REPORT_OUTPUT" == *"worktree: $EXISTING_WORKTREE"* ]]; then
-	pass "report-only stale output includes worktree path"
+if [[ -f "${STAMP_DIR}/owner-repo-111.json" ]] && \
+	[[ "$REPORT_OUTPUT" != *"#111 in owner/repo"* ]]; then
+	pass "report-only scan preserves and ignores an existing worktree"
 else
-	fail "report-only stale output includes worktree path" \
-		"expected report to include worktree: $EXISTING_WORKTREE"
+	fail "report-only scan preserves and ignores an existing worktree"
 fi
 # Cleanup
 rm -f "${STAMP_DIR}/owner-repo-111.json"
+
+# =============================================================================
+# Test 14 — scan-stale lockdown and label lookup failures fail closed
+# =============================================================================
+ISC_LABEL_MODE="present"
+write_stamp "owner-repo-116.json" "99999" "/nonexistent/path/116" "116" "owner/repo"
+_isc_cmd_scan_stale --auto-release >/dev/null 2>/dev/null || true
+if [[ -f "${STAMP_DIR}/owner-repo-116.json" ]]; then
+	pass "scan-stale preserves a no-auto-dispatch lockdown"
+else
+	fail "scan-stale preserves a no-auto-dispatch lockdown"
+fi
+rm -f "${STAMP_DIR}/owner-repo-116.json"
+
+ISC_LABEL_MODE="unknown"
+write_stamp "owner-repo-117.json" "99999" "/nonexistent/path/117" "117" "owner/repo"
+_isc_cmd_scan_stale --auto-release >/dev/null 2>/dev/null || true
+if [[ -f "${STAMP_DIR}/owner-repo-117.json" ]]; then
+	pass "scan-stale preserves a claim when labels are unverifiable"
+else
+	fail "scan-stale preserves a claim when labels are unverifiable"
+fi
+rm -f "${STAMP_DIR}/owner-repo-117.json"
+ISC_LABEL_MODE="absent"
+
+write_stamp "owner-repo-119.json" "99999" "/nonexistent/path/119" "119" "owner/repo"
+jq 'del(.pid)' "${STAMP_DIR}/owner-repo-119.json" >"${STAMP_DIR}/owner-repo-119.tmp"
+mv "${STAMP_DIR}/owner-repo-119.tmp" "${STAMP_DIR}/owner-repo-119.json"
+_isc_cmd_scan_stale --auto-release >/dev/null 2>/dev/null || true
+if [[ -f "${STAMP_DIR}/owner-repo-119.json" ]]; then
+	pass "scan-stale preserves a claim with unverifiable owner metadata"
+else
+	fail "scan-stale preserves a claim with unverifiable owner metadata"
+fi
+rm -f "${STAMP_DIR}/owner-repo-119.json"
+
+# =============================================================================
+# Test 15 — stamps bind to the durable runtime owner, not the helper shell
+# =============================================================================
+_resolve_worktree_owner_pid() { printf '4242'; return 0; }
+_compute_argv_hash() {
+	local pid="$1"
+	printf 'hash-%s' "$pid"
+	return 0
+}
+CLAIM_STAMP_DIR="$STAMP_DIR"
+_isc_write_stamp "118" "owner/repo" "/nonexistent/path/118" "owner"
+DURABLE_STAMP="${STAMP_DIR}/owner-repo-118.json"
+if [[ "$(jq -r '.pid' "$DURABLE_STAMP")" == "4242" ]] && \
+	[[ "$(jq -r '.owner_argv_hash' "$DURABLE_STAMP")" == "hash-4242" ]]; then
+	pass "claim stamp records the durable runtime owner"
+else
+	fail "claim stamp records the durable runtime owner"
+fi
+rm -f "$DURABLE_STAMP"
 
 # =============================================================================
 # Summary

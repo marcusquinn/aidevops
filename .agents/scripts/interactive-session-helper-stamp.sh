@@ -59,10 +59,13 @@ _isc_write_stamp() {
 	timestamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 	hostname=$(_isc_hostname_or_fallback)
 
-	# t2421: compute argv hash for PID-reuse-resistant liveness checks.
-	# Stored in the stamp so scan-stale can verify PID identity later.
-	local argv_hash=""
-	argv_hash=$(_compute_argv_hash "$$" 2>/dev/null || echo "")
+	# Record the long-lived runtime/shell owner rather than this short-lived
+	# helper CLI. Interactive runtimes spawn a fresh shell for each tool call, so
+	# stamping $$ makes a new lockdown look abandoned as soon as the call exits.
+	local owner_pid argv_hash=""
+	owner_pid=$(_resolve_worktree_owner_pid "" 2>/dev/null || echo "")
+	[[ "$owner_pid" =~ ^[0-9]+$ ]] || owner_pid="$$"
+	argv_hash=$(_compute_argv_hash "$owner_pid" 2>/dev/null || echo "")
 
 	# Escape user-supplied fields via jq's string literals to avoid JSON injection
 	jq -n \
@@ -70,7 +73,7 @@ _isc_write_stamp() {
 		--arg slug "$slug" \
 		--arg worktree "$worktree_path" \
 		--arg claimed_at "$timestamp" \
-		--arg pid "$$" \
+		--arg pid "$owner_pid" \
 		--arg hostname "$hostname" \
 		--arg user "$user" \
 		--arg argv_hash "$argv_hash" \
