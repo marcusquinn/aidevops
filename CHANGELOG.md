@@ -10,9 +10,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.32.136] - 2026-07-16
+
+### Added
+
+- use compact emoji tab status indicators (#28006)
+
 ### Changed
 
-- replace OpenCode terminal tab status text with compact running and waiting emoji indicators (#28005)
+- Maintenance: mark t18150 complete (pr:#28006 completed:2026-07-16) [skip ci]
+- Maintenance: sync ref:GH#28005 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#27989 to TODO.md [skip ci]
+- Maintenance: mark t18145 complete (pr:#27990 completed:2026-07-16) [skip ci]
+
+### Fixed
+
+- use active Bash for issue sync (#28004)
 
 ## [3.32.135] - 2026-07-16
 
