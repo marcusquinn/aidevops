@@ -454,6 +454,60 @@ cmd_close() {
 #   NOT_PLANNED         -> skip (deliberately declined)
 #   COMPLETED + has PR  -> skip (work done, TODO needs marking [x] separately)
 #   COMPLETED + no PR   -> reopen (premature closure from commit keyword)
+_reopen_incomplete_task_line() {
+	local repo="$1"
+	local todo_file="$2"
+	local open_numbers="$3"
+	local line="$4"
+	local ref_num=""
+	local issue_json=""
+	local tid=""
+	local reason=""
+	local reopen_comment_body=""
+
+	ref_num=$(echo "$line" | grep -oE 'ref:GH#[0-9]+' | head -1 | sed 's/ref:GH#//' || echo "")
+	[[ -n "$ref_num" ]] || return 0
+	if echo "$open_numbers" | grep -qx "$ref_num"; then
+		return 0
+	fi
+
+	issue_json=$(gh api "repos/${repo}/issues/${ref_num}" 2>/dev/null || printf '{}')
+	if _reopen_ref_is_pull_request "$repo" "$ref_num" "$issue_json"; then
+		log_verbose "#$ref_num is a pull request — skipping TODO reopen guard"
+		return 14
+	fi
+
+	tid=$(echo "$line" | grep -oE 't[0-9]+(\.[0-9]+)*' | head -1 || echo "")
+	reason=$(printf '%s\n' "$issue_json" | jq -r 'select(type == "object") | .state_reason // .stateReason // ""' 2>/dev/null || printf '')
+	if _is_not_planned_state_reason "$reason"; then
+		log_verbose "#$ref_num ($tid) closed as not_planned — skipping"
+		return 12
+	fi
+	if _reopen_mark_if_completed "$repo" "$tid" "$ref_num" "$todo_file"; then
+		return 13
+	fi
+	if [[ "$DRY_RUN" == "true" ]]; then
+		print_info "[DRY-RUN] Would reopen #$ref_num ($tid)"
+		return 10
+	fi
+	if _has_prior_reopen_comment "$repo" "$ref_num"; then
+		log_verbose "#$ref_num ($tid) already has a TODO-source reopen comment — suppressing duplicate notification"
+		return 15
+	fi
+
+	reopen_comment_body=$(_reopen_comment "$repo" "$ref_num")
+	if ! require_task_issue_mapping "$tid" "$todo_file" "$repo" "$ref_num"; then
+		return 11
+	fi
+	if gh issue reopen "$ref_num" --repo "$repo" \
+		--comment "$reopen_comment_body" 2>/dev/null; then
+		print_success "Reopened #$ref_num ($tid)"
+		return 10
+	fi
+	print_warning "Failed to reopen #$ref_num ($tid)"
+	return 11
+}
+
 cmd_reopen() {
 	_init_cmd || return 1
 	local repo="$_CMD_REPO" todo_file="$_CMD_TODO"
@@ -472,86 +526,22 @@ cmd_reopen() {
 	local reopened=0 skipped=0 not_planned=0 has_pr=0 pr_refs=0 duplicate_comments=0
 	local incomplete_ref_re='^[[:space:]]*-[[:space:]]+\[[[:space:]>]\][[:space:]]+t[0-9]+.*ref:GH#[0-9]+'
 
+	local line_status=0
 	while IFS= read -r line; do
 		[[ "$line" =~ $incomplete_ref_re ]] || continue
-		local ref_num
-		ref_num=$(echo "$line" | grep -oE 'ref:GH#[0-9]+' | head -1 | sed 's/ref:GH#//' || echo "")
-		[[ -z "$ref_num" ]] && continue
-
-		# Skip if already open
-		echo "$open_numbers" | grep -qx "$ref_num" && continue
-
-		local issue_json
-		issue_json=$(gh api "repos/${repo}/issues/${ref_num}" 2>/dev/null || printf '{}')
-
-		# GH#2888: GitHub shares the issue-number namespace with pull requests.
-		# TODO refs occasionally point at PRs (or stale historical lines once did),
-		# and `gh issue reopen --comment` can still append the reopen comment to a
-		# merged PR even though it cannot turn that PR back into an open issue. That
-		# produced repeated notification churn on closed/merged PR threads. Treat PR
-		# refs as terminal artifacts, never reopen targets.
-		if _reopen_ref_is_pull_request "$repo" "$ref_num" "$issue_json"; then
-			log_verbose "#$ref_num is a pull request — skipping TODO reopen guard"
-			pr_refs=$((pr_refs + 1))
-			continue
+		if _reopen_incomplete_task_line "$repo" "$todo_file" "$open_numbers" "$line"; then
+			line_status=0
+		else
+			line_status=$?
 		fi
-
-		local tid
-		tid=$(echo "$line" | grep -oE 't[0-9]+(\.[0-9]+)*' | head -1 || echo "")
-
-		# Check closure reason — skip not_planned (deliberately declined).
-		# GitHub GraphQL returns NOT_PLANNED while REST returns not_planned;
-		# normalize before comparing so consolidated/not-planned tasks are not
-		# accidentally reopened by the TODO source-of-truth guard.
-		local reason
-		reason=$(printf '%s\n' "$issue_json" | jq -r 'select(type == "object") | .state_reason // .stateReason // ""' 2>/dev/null || printf '')
-		if _is_not_planned_state_reason "$reason"; then
-			log_verbose "#$ref_num ($tid) closed as not_planned — skipping"
-			not_planned=$((not_planned + 1))
-			continue
-		fi
-
-		# If closure evidence exists, mark TODO done instead of reopening.
-		if _reopen_mark_if_completed "$repo" "$tid" "$ref_num" "$todo_file"; then
-			has_pr=$((has_pr + 1))
-			continue
-		fi
-
-		if [[ "$DRY_RUN" == "true" ]]; then
-			print_info "[DRY-RUN] Would reopen #$ref_num ($tid)"
-			reopened=$((reopened + 1))
-			continue
-		fi
-
-		# If a previous run already emitted the canonical reopen explanation, do
-		# not post another identical notification. Valid issues are open after the
-		# first successful run; still-closed refs are anomalous and should be quiet.
-		if _has_prior_reopen_comment "$repo" "$ref_num"; then
-			log_verbose "#$ref_num ($tid) already has a TODO-source reopen comment — suppressing duplicate notification"
-			duplicate_comments=$((duplicate_comments + 1))
-			continue
-		fi
-
-		# t3204: compose the reopen comment via _reopen_comment so the body
-		# carries a signature footer like every other agent-authored comment.
-		# `gh issue reopen --comment` is NOT intercepted by the gh PATH shim
-		# (only issue:comment / issue:create / issue:edit / pr:* are), so the
-		# footer must be injected here in the helper rather than relying on
-		# the shim layer.
-		local reopen_comment_body
-		reopen_comment_body=$(_reopen_comment "$repo" "$ref_num")
-		if ! require_task_issue_mapping "$tid" "$todo_file" "$repo" "$ref_num"; then
-			skipped=$((skipped + 1))
-			continue
-		fi
-		gh issue reopen "$ref_num" --repo "$repo" \
-			--comment "$reopen_comment_body" 2>/dev/null && {
-			reopened=$((reopened + 1))
-			print_success "Reopened #$ref_num ($tid)"
-		} || {
-			skipped=$((skipped + 1))
-			print_warning "Failed to reopen #$ref_num ($tid)"
-		}
+		case "$line_status" in
+		10) reopened=$((reopened + 1)) ;;
+		11) skipped=$((skipped + 1)) ;;
+		12) not_planned=$((not_planned + 1)) ;;
+		13) has_pr=$((has_pr + 1)) ;;
+		14) pr_refs=$((pr_refs + 1)) ;;
+		15) duplicate_comments=$((duplicate_comments + 1)) ;;
+		esac
 	done <<<"$unique_lines"
 
 	print_info "Reopen: $reopened reopened, $skipped failed, $not_planned not-planned, $has_pr have-merged-pr, $pr_refs pr-refs-skipped, $duplicate_comments duplicate-comments-skipped"
