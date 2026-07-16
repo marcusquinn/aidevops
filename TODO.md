@@ -4629,3 +4629,5 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [ ] t18145 Show OpenCode run and wait state in Tabby tab titles #enhancement ref:GH#27989
 
 - [ ] t18146 Enforce a no-write research subagent capability profile #auto-dispatch #security ref:GH#27991
+
+- [ ] t18147 Block compaction auto-continue for completed child sessions #auto-dispatch #security ref:GH#27992
