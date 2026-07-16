@@ -205,7 +205,7 @@ export function buildSessionStartGreetingInstruction(agentsDir, readIfExists, op
     : [];
   const cacheLine = cacheLines[0] || "";
   const cacheMatch = cacheLine.match(/^aidevops v(\S+) running in (.+?) v(\S+)(?:\s|$)/);
-  const deployedVersion = readIfExists(join(agentsDir, "VERSION")).trim().split("\n")[0];
+  const deployedVersion = (readIfExists(join(agentsDir, "VERSION")) ?? "").trim().split("\n")[0];
   const version = deployedVersion || cacheMatch?.[1] || "X";
   const cacheMatchesDeployedVersion = !deployedVersion || cacheMatch?.[1] === deployedVersion;
   const runtime = cacheMatch?.[2] || "OpenCode";
