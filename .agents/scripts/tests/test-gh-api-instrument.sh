@@ -255,12 +255,19 @@ assert_eq "missing lock tools stay silent" "0" "$lock_stderr_bytes"
 # --- Test 10b: abandoned empty locks recover instead of wedging telemetry --
 export AIDEVOPS_GH_API_LOG="$TMPDIR/stale-lock-calls.log"
 export AIDEVOPS_GH_API_REPORT="$TMPDIR/stale-lock-report.json"
+export AIDEVOPS_GH_API_EMPTY_LOCK_GRACE_TRIES=0
 unset _GH_API_INSTRUMENT_LOADED
 # shellcheck source=../gh-api-instrument.sh
 source "${PARENT_DIR}/gh-api-instrument.sh"
+assert_eq "empty lock grace accepts an environment override" "0" "$_GH_API_EMPTY_LOCK_GRACE_TRIES"
+invalid_grace=$(AIDEVOPS_GH_API_EMPTY_LOCK_GRACE_TRIES=invalid bash -c '
+	# shellcheck source=/dev/null
+	source "$1"
+	printf "%s\n" "$_GH_API_EMPTY_LOCK_GRACE_TRIES"
+' _ "${PARENT_DIR}/gh-api-instrument.sh")
+assert_eq "invalid empty lock grace uses the default" "100" "$invalid_grace"
 gh_clear_log
 mkdir "${GH_API_LOG}.lock"
-_GH_API_EMPTY_LOCK_GRACE_TRIES=0
 gh_record_call rest stale-empty-lock-test
 assert_eq "stale empty lock permits the next record" "1" "$(wc -l <"$GH_API_LOG" | tr -d ' ')"
 if [[ -d "${GH_API_LOG}.lock" ]]; then
@@ -273,6 +280,10 @@ fi
 
 mkdir "${GH_API_LOG}.lock"
 printf '%s\n' 'not-a-pid' >"${GH_API_LOG}.lock/pid"
+_GH_API_EMPTY_LOCK_GRACE_TRIES=100
+malformed_lock_status=0
+_gh_log_lock_reclaim "${GH_API_LOG}.lock" 0 || malformed_lock_status=$?
+assert_eq "malformed PID lock is reclaimed without the empty-lock grace" "0" "$malformed_lock_status"
 gh_record_call rest stale-malformed-lock-test
 assert_eq "stale malformed lock permits the next record" "2" "$(wc -l <"$GH_API_LOG" | tr -d ' ')"
 
@@ -307,6 +318,7 @@ assert_eq "issue sync preserves framework gh shim precedence" "$issue_sync_scrip
 # Restore per-test overrides for summary diagnostics if future tests append.
 export AIDEVOPS_GH_API_LOG="$TMPDIR/gh-api-calls.log"
 export AIDEVOPS_GH_API_REPORT="$TMPDIR/report.json"
+unset AIDEVOPS_GH_API_EMPTY_LOCK_GRACE_TRIES
 
 # --- Test 11: exact replay separates events, attempts, pages, and retries --
 unset _GH_API_INSTRUMENT_LOADED
