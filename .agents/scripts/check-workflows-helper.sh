@@ -481,6 +481,8 @@ _classify_workflow() {
 
 _expand_home_path() {
 	local _path="$1"
+	# Preserve ~/ when HOME is unavailable; stripping the tilde would turn the
+	# configured repository into an unrelated root-relative path.
 	if [[ "${_path#\~/}" != "$_path" && -n "${HOME:-}" ]]; then
 		_path="${HOME}${_path#\~}"
 	fi
