@@ -82,6 +82,25 @@ missing_learnings="$workspace/sessions/missing-provenance/extracted-learnings.js
 jq -e '.commit_attribution == "unavailable" and .recent_commits == []' "$missing_analysis" >/dev/null || fail 'missing provenance did not fail closed'
 jq -e 'length == 0' "$missing_learnings" >/dev/null || fail 'missing provenance guessed current-branch learnings'
 
+pipeline_workspace="$tmp_dir/pipeline-workspace"
+pipeline_session_dir="$pipeline_workspace/sessions/pipeline-session"
+mkdir -p "$pipeline_session_dir"
+jq -n '{
+	branch:"bugfix/pipeline",
+	commits_today:10,
+	error_fixes:4,
+	recent_commits:[
+		"fix: one", "fix: two", "fix: three", "fix: four",
+		"refactor: one", "restructure: two", "reorganize: three",
+		"docs: one", "readme: two", "comment: three"
+	]
+}' >"$pipeline_session_dir/session-analysis.json"
+AIDEVOPS_WORKSPACE="$pipeline_workspace" AIDEVOPS_SESSION_ID='pipeline-session' "$HELPER" extract >/dev/null
+pipeline_learnings="$pipeline_session_dir/extracted-learnings.json"
+jq -e '[.[] | select(.type == "ERROR_FIX")] | length == 3' "$pipeline_learnings" >/dev/null || fail 'fix learning limit failed under pipefail'
+jq -e '[.[] | select(.type == "CODEBASE_PATTERN")] | length == 2' "$pipeline_learnings" >/dev/null || fail 'refactor learning limit failed under pipefail'
+jq -e '[.[] | select(.type == "CONTEXT")] | length == 2' "$pipeline_learnings" >/dev/null || fail 'documentation learning limit failed under pipefail'
+
 (
 	merge_scripts="$tmp_dir/merge-scripts"
 	mkdir -p "$merge_scripts"

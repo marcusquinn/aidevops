@@ -34,6 +34,20 @@ readonly SESSION_DIR="$WORKSPACE_DIR/sessions"
 # shellcheck disable=SC2034  # Reserved for future use
 readonly DISTILL_OUTPUT="$SESSION_DIR/distill-output.json"
 
+_distill_sha256_stdin() {
+	if command -v shasum >/dev/null 2>&1; then
+		shasum -a 256 | cut -d' ' -f1 || return 1
+	elif command -v sha256sum >/dev/null 2>&1; then
+		sha256sum | cut -d' ' -f1 || return 1
+	elif command -v python3 >/dev/null 2>&1; then
+		python3 -c 'import hashlib, sys; print(hashlib.sha256(sys.stdin.buffer.read()).hexdigest())' || return 1
+	else
+		log_error "No SHA-256 implementation is available"
+		return 1
+	fi
+	return 0
+}
+
 # Build a private, deterministic local identifier when the runtime provides no
 # session ID. This is collision isolation, not authentication; SHA-256 prevents
 # the repository path from being exposed while avoiding weak-hash scanners.
@@ -45,13 +59,8 @@ _distill_fallback_session_id() {
 	branch=$(git branch --show-current 2>/dev/null) || branch=""
 	[[ -n "$branch" ]] || branch="unknown"
 
-	if command -v shasum >/dev/null 2>&1; then
-		root_hash=$(printf '%s' "$repository_root" | shasum -a 256 | cut -c1-12)
-	elif command -v sha256sum >/dev/null 2>&1; then
-		root_hash=$(printf '%s' "$repository_root" | sha256sum | cut -c1-12)
-	else
-		root_hash=$(ROOT_PATH="$repository_root" python3 -c 'import hashlib, os; print(hashlib.sha256(os.environ["ROOT_PATH"].encode()).hexdigest()[:12])')
-	fi
+	root_hash=$(printf '%s' "$repository_root" | _distill_sha256_stdin) || return 1
+	root_hash="${root_hash:0:12}"
 
 	printf '%s-%s' "$root_hash" "$branch"
 	return 0
@@ -154,7 +163,7 @@ capture_git_provenance() {
 	local existing='[]'
 	[[ -f "$PROVENANCE_FILE" ]] && existing=$(jq -c '.items // []' "$PROVENANCE_FILE" 2>/dev/null || printf '[]')
 	local key=""
-	key=$(printf '%s\0%s\0%s\0%s' "$SESSION_ID" "$repository" "$pr_number" "$head_commit" | shasum -a 256 | cut -d' ' -f1)
+	key=$(printf '%s\0%s\0%s\0%s' "$SESSION_ID" "$repository" "$pr_number" "$head_commit" | _distill_sha256_stdin) || return 1
 	if printf '%s' "$existing" | jq -e --arg key "$key" 'any(.[]; .idempotency_key == $key)' >/dev/null; then
 		local enriched=""
 		enriched=$(printf '%s' "$existing" | jq -c --arg key "$key" --arg merge_commit "$merge_commit" \
@@ -223,12 +232,9 @@ session_provenance_items() {
 	current_repository=$(repository_slug_for_path ".")
 	local item=""
 	local resolved_items=""
-	while IFS= read -r item; do
+	resolved_items=$(while IFS= read -r item; do
 		resolve_provenance_item "$item" "$current_repository" || true
-	done < <(jq -c '.items[]?' "$PROVENANCE_FILE" 2>/dev/null) |
-		jq -sc '.' >"${PROVENANCE_FILE}.resolved.$$"
-	resolved_items=$(<"${PROVENANCE_FILE}.resolved.$$")
-	rm -f "${PROVENANCE_FILE}.resolved.$$"
+	done < <(jq -c '.items[]?' "$PROVENANCE_FILE" 2>/dev/null) | jq -sc '.')
 	printf '%s\n' "$resolved_items"
 	return 0
 }
@@ -349,7 +355,7 @@ extract_learnings() {
 	if [[ "$error_fixes" -gt 0 ]]; then
 		# Get the fix commit messages
 		local fix_commits
-		fix_commits=$(jq -r '.recent_commits[]?' "$analysis_file" | grep -i "fix\|error\|bug" | head -3 || echo "")
+		fix_commits=$(jq -r '[.recent_commits[]? | select(test("fix|error|bug"; "i"))] | .[:3][]' "$analysis_file" || echo "")
 
 		if [[ -n "$fix_commits" ]]; then
 			while IFS= read -r commit_msg; do
@@ -375,7 +381,7 @@ extract_learnings() {
 
 	# Pattern 3: Refactor patterns → CODEBASE_PATTERN
 	local refactor_commits
-	refactor_commits=$(jq -r '.recent_commits[]?' "$analysis_file" | grep -i "refactor\|restructure\|reorganize" | head -2 || echo "")
+	refactor_commits=$(jq -r '[.recent_commits[]? | select(test("refactor|restructure|reorganize"; "i"))] | .[:2][]' "$analysis_file" || echo "")
 	if [[ -n "$refactor_commits" ]]; then
 		while IFS= read -r commit_msg; do
 			if [[ -n "$commit_msg" ]]; then
@@ -389,7 +395,7 @@ extract_learnings() {
 
 	# Pattern 4: Documentation updates → CONTEXT
 	local doc_commits
-	doc_commits=$(jq -r '.recent_commits[]?' "$analysis_file" | grep -i "doc\|readme\|comment" | head -2 || echo "")
+	doc_commits=$(jq -r '[.recent_commits[]? | select(test("doc|readme|comment"; "i"))] | .[:2][]' "$analysis_file" || echo "")
 	if [[ -n "$doc_commits" ]]; then
 		while IFS= read -r commit_msg; do
 			if [[ -n "$commit_msg" ]]; then
