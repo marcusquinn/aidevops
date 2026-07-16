@@ -56,6 +56,31 @@ gateway_curl() {
     return $?
 }
 
+# Fetch a service health response, authenticating the API gateway when needed.
+fetch_health_response() {
+    local service="$1"
+    local url="$2"
+
+    if [[ "$service" == "api-gateway" ]]; then
+        gateway_curl "$url"
+        return $?
+    fi
+
+    curl --fail --silent --show-error "$url"
+    return $?
+}
+
+# Accept only the expected aidevops service's explicit healthy response.
+health_response_matches_service() {
+    local response="$1"
+    local expected_service="$2"
+
+    printf '%s' "$response" | jq -e --arg expected_service "$expected_service" \
+        'type == "object" and .status == "healthy" and .service == $expected_service' \
+        >/dev/null 2>&1
+    return $?
+}
+
 # Launch MCP Inspector Web UI
 launch_ui() {
     local server="${1:-}"
@@ -176,17 +201,18 @@ health_check() {
     for port in 3100 3101; do
         total=$((total + 1))
         local name="localhost:$port"
+        local expected_service="mcp-dashboard"
         local response
         if [[ "$port" == "3100" ]]; then
-            response=$(gateway_curl "http://localhost:$port/health" 2>/dev/null) || response=""
-        else
-            response=$(curl --fail --silent --show-error "http://localhost:$port/health" 2>/dev/null) || response=""
+            expected_service="api-gateway"
         fi
-        if [[ -n "$response" ]]; then
-            local status
-            status=$(echo "$response" | jq -r '.status // "ok"' 2>/dev/null || echo "healthy")
-            print_success "$name - $status"
+        response=$(fetch_health_response "$expected_service" "http://localhost:$port/health" 2>/dev/null) || response=""
+        if health_response_matches_service "$response" "$expected_service"; then
+            print_success "$name - healthy"
             healthy=$((healthy + 1))
+        elif [[ -n "$response" ]]; then
+            print_error "$name - unexpected service health response"
+            failed=$((failed + 1))
         else
             print_error "$name - not running"
             failed=$((failed + 1))
@@ -204,18 +230,15 @@ health_check() {
         
         if [[ "$server_type" == "streamable-http" || "$server_type" == "sse" ]]; then
             local url
-            local reachable=0
+            local response
             url=$(jq -r ".mcpServers[\"$srv\"].url" "$CONFIG_FILE")
-            if [[ "$srv" == "api-gateway" ]]; then
-                if gateway_curl "$url/health" > /dev/null 2>&1; then
-                    reachable=1
-                fi
-            elif curl --fail --silent --show-error "$url/health" > /dev/null 2>&1; then
-                reachable=1
-            fi
-            if [[ "$reachable" -eq 1 ]]; then
+            response=$(fetch_health_response "$srv" "$url/health" 2>/dev/null) || response=""
+            if health_response_matches_service "$response" "$srv"; then
                 print_success "$srv ($server_type) - healthy"
                 healthy=$((healthy + 1))
+            elif [[ -n "$response" ]]; then
+                print_error "$srv ($server_type) - unexpected service health response"
+                failed=$((failed + 1))
             else
                 print_warning "$srv ($server_type) - not reachable"
                 failed=$((failed + 1))

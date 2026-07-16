@@ -242,6 +242,7 @@ function getClientIP(request: Request): string {
 function handleHealth() {
   return {
     status: 'healthy',
+    service: 'api-gateway',
     uptime: Math.floor((Date.now() - startTime) / 1000),
     requests: requestCount,
     cache: { size: cache.size, maxSize: CONFIG.cache.maxSize },
