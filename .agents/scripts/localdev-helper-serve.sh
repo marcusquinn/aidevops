@@ -278,11 +278,7 @@ _serve_remove_stale_launch_lock() {
 		return 1
 	fi
 	# Do not reclaim a just-created directory before its owner writes the PID.
-	if [[ "$(uname -s)" == "Darwin" ]]; then
-		modified_at="$(stat -f '%m' "$lock_dir" 2>/dev/null)" || return 1
-	else
-		modified_at="$(stat -c '%Y' "$lock_dir" 2>/dev/null)" || return 1
-	fi
+	modified_at="$(_file_mtime_epoch "$lock_dir")" || return 1
 	now="$(date +%s)"
 	[[ "$modified_at" =~ ^[0-9]+$ ]] || return 1
 	age=$((now - modified_at))
