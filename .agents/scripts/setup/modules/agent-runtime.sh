@@ -17,7 +17,8 @@ shopt -s inherit_errexit 2>/dev/null || true
 # root. Child commands inherit this pin and cannot cross into a newer bundle in
 # the middle of a pulse, worker, CLI command, or interactive session.
 resolve_aidevops_runtime_bundle_root() {
-	local configured_root="${AIDEVOPS_AGENTS_DIR:-${HOME:+$HOME/.aidevops/agents}}"
+	local requested_root="${1:-}"
+	local configured_root="${requested_root:-${AIDEVOPS_AGENTS_DIR:-${HOME:+$HOME/.aidevops/agents}}}"
 	[[ -n "$configured_root" && -d "$configured_root/scripts" ]] || return 1
 	(cd "$configured_root" && pwd -P) || return 1
 	return 0
@@ -29,6 +30,66 @@ pin_aidevops_runtime_bundle_root() {
 	AIDEVOPS_AGENTS_DIR="$resolved_root"
 	AGENTS_DIR="$resolved_root"
 	export AIDEVOPS_AGENTS_DIR AGENTS_DIR
+	return 0
+}
+
+# Serialize activation-link changes with Pulse restart/start operations. A
+# lifecycle process always re-resolves the active link after taking this lock,
+# so concurrent setup callers cannot leave Pulse running an older bundle.
+aidevops_runtime_transition_lock_acquire() {
+	local lock_dir="${AIDEVOPS_RUNTIME_TRANSITION_LOCK_DIR:-${HOME}/.aidevops/locks/runtime-transition.lock.d}"
+	local wait_seconds="${AIDEVOPS_RUNTIME_TRANSITION_LOCK_WAIT_SECONDS:-30}"
+	local waited=0
+	local owner_pid=""
+	local owner_missing_observations=0
+
+	[[ "$wait_seconds" =~ ^[0-9]+$ ]] || wait_seconds=30
+	mkdir -p "${lock_dir%/*}" || return 1
+	while ! mkdir "$lock_dir" 2>/dev/null; do
+		owner_pid=""
+		if [[ -r "$lock_dir/pid" ]]; then
+			IFS= read -r owner_pid <"$lock_dir/pid" || owner_pid=""
+		fi
+		if [[ "$owner_pid" =~ ^[0-9]+$ ]] && ! kill -0 "$owner_pid" 2>/dev/null; then
+			rm -f "$lock_dir/pid"
+			rmdir "$lock_dir" 2>/dev/null || true
+			owner_missing_observations=0
+			continue
+		fi
+		if [[ -z "$owner_pid" ]]; then
+			owner_missing_observations=$((owner_missing_observations + 1))
+			if [[ "$owner_missing_observations" -ge 2 ]]; then
+				rmdir "$lock_dir" 2>/dev/null || true
+				owner_missing_observations=0
+				continue
+			fi
+		else
+			owner_missing_observations=0
+		fi
+		[[ "$waited" -lt "$wait_seconds" ]] || return 1
+		sleep 1
+		waited=$((waited + 1))
+	done
+	printf '%s\n' "$$" >"$lock_dir/pid" || {
+		rmdir "$lock_dir" 2>/dev/null || true
+		return 1
+	}
+	_AIDEVOPS_RUNTIME_TRANSITION_LOCK_HELD="$lock_dir"
+	return 0
+}
+
+aidevops_runtime_transition_lock_release() {
+	local lock_dir="${_AIDEVOPS_RUNTIME_TRANSITION_LOCK_HELD:-}"
+	local owner_pid=""
+	[[ -n "$lock_dir" ]] || return 0
+	if [[ -r "$lock_dir/pid" ]]; then
+		IFS= read -r owner_pid <"$lock_dir/pid" || owner_pid=""
+	fi
+	if [[ "$owner_pid" == "$$" ]]; then
+		rm -f "$lock_dir/pid"
+		rmdir "$lock_dir" 2>/dev/null || true
+	fi
+	_AIDEVOPS_RUNTIME_TRANSITION_LOCK_HELD=""
 	return 0
 }
 
