@@ -742,18 +742,6 @@ fi
 #   set_origin_label 19638 owner/repo worker \
 #       --add-assignee "$worker_login"
 #######################################
-_set_origin_label_should_rest_fallback() {
-	local err_file="$1"
-	if [[ -f "$err_file" ]] && grep -qiE 'GraphQL: API rate limit( already)? exceeded|rateLimitExceeded' "$err_file" 2>/dev/null; then
-		return 0
-	fi
-	if command -v _rest_should_fallback >/dev/null 2>&1 && _rest_should_fallback; then
-		return 0
-	fi
-	return 1
-}
-
-#######################################
 # Apply origin label mutual exclusion via REST labels endpoints.
 # Args: $1=issue/pr num, $2=repo slug, $3=new origin, $4..=extra edit flags
 #######################################
@@ -853,8 +841,12 @@ set_origin_label() {
 	else
 		_gh_rc=$?
 	fi
-	if _set_origin_label_should_rest_fallback "$_err_file" && \
-		_set_origin_label_rest "$issue_num" "$repo_slug" "$new_origin" "${extra_flags[@]}"; then
+	# GH#28029: a GraphQL edit can create or expose the PR successfully but fail
+	# while applying labels. Always attempt the equivalent REST label mutation
+	# before returning failure; this is idempotent and preserves the origin mutex.
+	# The previous rate-limit-only fallback left durable PRs without provenance
+	# after non-rate-limit GraphQL failures.
+	if _set_origin_label_rest "$issue_num" "$repo_slug" "$new_origin" "${extra_flags[@]}"; then
 		rm -f "$_err_file"
 		return 0
 	fi
