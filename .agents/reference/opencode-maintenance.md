@@ -248,6 +248,15 @@ under `~/.aidevops/.agent-workspace/work/opencode-desktop/` before execing
 rows out of `~/.local/share/opencode/opencode.db` while preserving the normal
 Electron app support directory for window state and preferences.
 
+Desktop and TUI shards intentionally do not reuse each other's
+`XDG_DATA_HOME`. Older launcher versions wrote an
+`opencode-launcher/last-data-dir` marker; current launchers ignore that marker
+because directing independent Desktop and TUI processes to one SQLite WAL
+reintroduces the write contention that isolation prevents. Cross-client history
+continuity requires one `opencode serve` process to own the shard while each UI
+attaches as a client. Until aidevops supports that server-backed flow, history
+remains isolated per Desktop or TUI shard.
+
 CLI entry points:
 
 ```bash

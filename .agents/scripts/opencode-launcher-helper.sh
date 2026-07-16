@@ -155,43 +155,6 @@ build_desktop_data_dir() {
     return 0
 }
 
-launcher_state_dir() {
-    printf '%s/opencode-launcher' "${AIDEVOPS_WORK_DIR:-${HOME}/.aidevops/.agent-workspace/work}"
-    return 0
-}
-
-last_data_dir_file() {
-    local state_dir
-    state_dir=$(launcher_state_dir)
-    printf '%s/last-data-dir' "${state_dir}"
-    return 0
-}
-
-remember_data_dir() {
-    local data_dir="$1"
-    local state_dir marker tmp_marker
-
-    [[ -n "${data_dir}" ]] || return 0
-    state_dir=$(launcher_state_dir)
-    marker=$(last_data_dir_file)
-    tmp_marker="${marker}.$$"
-    mkdir -p "${state_dir}" 2>/dev/null || return 0
-    printf '%s\n' "${data_dir}" >"${tmp_marker}" 2>/dev/null || return 0
-    mv "${tmp_marker}" "${marker}" 2>/dev/null || return 0
-    return 0
-}
-
-read_last_data_dir() {
-    local marker data_dir
-
-    marker=$(last_data_dir_file)
-    [[ -r "${marker}" ]] || return 1
-    IFS= read -r data_dir <"${marker}" || return 1
-    [[ -n "${data_dir}" && -d "${data_dir}/opencode" ]] || return 1
-    printf '%s' "${data_dir}"
-    return 0
-}
-
 xml_escape() {
     local value="$1"
     value=${value//&/\&amp;}
@@ -504,9 +467,6 @@ cmd_desktop_launch() {
     fi
     [[ -d "${launch_dir}" ]] || { print_error "Directory not found: ${launch_dir}"; return 1; }
 
-    if [[ -z "${data_dir}" && ${from_app} -eq 1 && ${launch_dir_set} -eq 0 && -z "${session_id}" ]]; then
-        data_dir=$(read_last_data_dir || true)
-    fi
     if [[ -z "${data_dir}" ]]; then
         if ((launch_dir_set == 1)); then
             data_dir=$(build_desktop_data_dir "${session_id}" "${launch_dir}")
@@ -514,10 +474,6 @@ cmd_desktop_launch() {
             data_dir=$(build_desktop_data_dir "${session_id}" "")
         fi
     fi
-    mkdir -p "${data_dir}/opencode" || return 1
-    copy_auth_json "${data_dir}" || true
-    prewarm_opencode_data_dir "${data_dir}"
-    remember_data_dir "${data_dir}"
 
     if ((dry_run == 1)); then
         printf 'cd %q && TMPDIR=%q TMP=%q TEMP=%q XDG_DATA_HOME=%q AIDEVOPS_OPENCODE_ISOLATED_DB=1 %q' "${launch_dir}" "${TMPDIR}" "${TMP}" "${TEMP}" "${data_dir}" "${desktop_binary}"
@@ -525,6 +481,10 @@ cmd_desktop_launch() {
         printf '\n'
         return 0
     fi
+
+    mkdir -p "${data_dir}/opencode" || return 1
+    copy_auth_json "${data_dir}" || true
+    prewarm_opencode_data_dir "${data_dir}"
 
     cd "${launch_dir}" || return 1
     export XDG_DATA_HOME="${data_dir}"
@@ -632,12 +592,6 @@ main() {
 
     local data_dir
     data_dir=$(build_session_data_dir "${session_id}")
-    mkdir -p "${data_dir}/opencode" || return 1
-    # Keep stdout/stderr clean before exec: OpenCode's TUI is sensitive to any
-    # pre-launch terminal output and can leave visible redraw artifacts.
-    copy_auth_json "${data_dir}" || true
-    prewarm_opencode_data_dir "${data_dir}"
-    remember_data_dir "${data_dir}"
 
     if ((dry_run == 1)); then
         printf 'cd %q && TMPDIR=%q TMP=%q TEMP=%q XDG_DATA_HOME=%q AIDEVOPS_OPENCODE_ISOLATED_DB=1 opencode' "${launch_dir}" "${TMPDIR}" "${TMP}" "${TEMP}" "${data_dir}"
@@ -645,6 +599,12 @@ main() {
         printf '\n'
         return 0
     fi
+
+    mkdir -p "${data_dir}/opencode" || return 1
+    # Keep stdout/stderr clean before exec: OpenCode's TUI is sensitive to any
+    # pre-launch terminal output and can leave visible redraw artifacts.
+    copy_auth_json "${data_dir}" || true
+    prewarm_opencode_data_dir "${data_dir}"
 
     cd "${launch_dir}" || return 1
     export XDG_DATA_HOME="${data_dir}"
