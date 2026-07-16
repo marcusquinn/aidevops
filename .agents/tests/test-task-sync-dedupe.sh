@@ -154,6 +154,64 @@ EOF
 	return 0
 }
 
+test_unique_snapshot_selects_richest_terminal_row() {
+	local output
+	output=$(cat <<'EOF' | _unique_todo_task_lines
+- [ ] t18002 stale task ref:GH#1
+- [x] t18002 canonical task tier:standard ref:GH#2 pr:#3 completed:2026-06-27 -> [todo/tasks/t18002-brief.md]
+EOF
+	)
+	[[ "$output" == '- [x] t18002 canonical task tier:standard ref:GH#2 pr:#3 completed:2026-06-27 -> [todo/tasks/t18002-brief.md]' ]] || fail "expected richest terminal duplicate row"
+	pass "unique snapshot selects richest terminal row"
+	return 0
+}
+
+test_reopen_processes_in_progress_duplicate_once() {
+	local tmpdir todo_file output
+	tmpdir=$(mktemp -d)
+	todo_file="${tmpdir}/TODO.md"
+	cat >"$todo_file" <<'EOF'
+- [>] t18002 canonical active task tier:standard ref:GH#25539 -> [todo/tasks/t18002-brief.md]
+- [ ] t18002 stale duplicate ref:GH#25539
+EOF
+	TEST_TODO_FILE="$todo_file"
+	gh() {
+		local command="$1"
+		local target="$2"
+		: "$command" "$target"
+		printf '{"number":25539,"state_reason":"COMPLETED"}\n'
+		return 0
+	}
+	_reopen_ref_is_pull_request() {
+		return 1
+	}
+	_reopen_mark_if_completed() {
+		return 0
+	}
+	output=$(cmd_reopen 2>&1)
+	[[ "$output" == *'1 have-merged-pr'* ]] || fail "expected one completed in-progress task, got: $output"
+	rm -rf "$tmpdir"
+	pass "reopen processes in-progress duplicate once"
+	return 0
+}
+
+test_snapshot_failure_stops_commands() {
+	_unique_todo_task_snapshot() {
+		return 1
+	}
+	if cmd_status >/dev/null 2>&1; then
+		fail "expected status to fail on snapshot error"
+	fi
+	if cmd_reconcile >/dev/null 2>&1; then
+		fail "expected reconcile to fail on snapshot error"
+	fi
+	if cmd_reopen >/dev/null 2>&1; then
+		fail "expected reopen to fail on snapshot error"
+	fi
+	pass "snapshot failure stops issue-sync commands"
+	return 0
+}
+
 main() {
 	test_dedupe_preserves_canonical_brief_line
 	test_mark_done_dedupes_and_adds_verified_proof
@@ -161,6 +219,9 @@ main() {
 	test_dedupe_ignores_markdown_fences
 	test_dedupe_scores_metadata_individually
 	test_status_counts_duplicate_task_rows_once
+	test_unique_snapshot_selects_richest_terminal_row
+	test_reopen_processes_in_progress_duplicate_once
+	test_snapshot_failure_stops_commands
 	return 0
 }
 

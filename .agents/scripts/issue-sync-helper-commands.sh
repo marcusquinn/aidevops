@@ -143,8 +143,11 @@ cmd_pull() {
 cmd_status() {
 	_init_cmd || return 1
 	local repo="$_CMD_REPO" todo_file="$_CMD_TODO"
-	local stripped
-	stripped=$(strip_code_fences <"$todo_file")
+	local unique_lines
+	if ! unique_lines=$(_unique_todo_task_snapshot "$todo_file"); then
+		print_error "Failed to parse unique TODO task snapshot"
+		return 1
+	fi
 	local total_open=0 total_done=0 with_ref=0 status_line="" status_tid=""
 	local incomplete_line_re='^[[:space:]]*-[[:space:]]+\[[[:space:]>]\]'
 	while IFS= read -r status_line; do
@@ -156,7 +159,7 @@ cmd_status() {
 		elif [[ "$status_line" =~ ^[[:space:]]*-[[:space:]]+\[x\] ]]; then
 			total_done=$((total_done + 1))
 		fi
-	done < <(printf '%s\n' "$stripped" | _unique_todo_task_lines)
+	done <<<"$unique_lines"
 	local without_ref=$((total_open - with_ref))
 
 	local open_json
@@ -186,6 +189,7 @@ cmd_status() {
 	open_numbers=$(echo "$open_json" | jq -r '.[].number' 2>/dev/null | sort -n)
 	local reverse_drift=0
 	while IFS= read -r line; do
+		[[ "$line" =~ $incomplete_line_re ]] || continue
 		local rtid
 		rtid=$(_task_id_from_todo_line "$line" || true)
 		[[ -n "$rtid" ]] || continue
@@ -197,7 +201,7 @@ cmd_status() {
 			reverse_drift=$((reverse_drift + 1))
 			print_warning "REVERSE-DRIFT: $rtid ref:GH#$ref_num — TODO open but issue closed"
 		fi
-	done < <(printf '%s\n' "$stripped" | grep -E '^[[:space:]]*- \[[ >]\] .*ref:GH#[0-9]+' | _unique_todo_task_lines || true)
+	done <<<"$unique_lines"
 
 	printf "\n=== Sync Status (%s) ===\nTODO open: %d (%d ref, %d no ref) | done: %d\nGitHub open: %s closed: %s | drift: %d | reverse-drift: %d\n" \
 		"$repo" "$total_open" "$with_ref" "$without_ref" "$total_done" "$gh_open" "$gh_closed" "$drift" "$reverse_drift"
@@ -218,6 +222,11 @@ cmd_reconcile() {
 	_init_cmd || return 1
 	local repo="$_CMD_REPO" todo_file="$_CMD_TODO"
 	print_info "Reconciling ref:GH# values in $repo..."
+	local unique_lines
+	if ! unique_lines=$(_unique_todo_task_snapshot "$todo_file"); then
+		print_error "Failed to parse unique TODO task snapshot"
+		return 1
+	fi
 
 	local ref_fixed=0 ref_ok=0 stale=0 orphans=0
 	while IFS= read -r line; do
@@ -247,7 +256,7 @@ cmd_reconcile() {
 			fi
 			ref_fixed=$((ref_fixed + 1))
 		fi
-	done < <(strip_code_fences <"$todo_file" | grep -E '^[[:space:]]*- \[.\] .*ref:GH#[0-9]+' | _unique_todo_task_lines || true)
+	done <<<"$unique_lines"
 
 	# Forward drift: open GH issue but TODO marked [x]
 	local open_json
@@ -271,9 +280,9 @@ cmd_reconcile() {
 	local open_numbers
 	open_numbers=$(echo "$open_json" | jq -r '.[].number' 2>/dev/null | sort -n)
 	local reverse_drift=0
-	local stripped
-	stripped=$(strip_code_fences <"$todo_file")
+	local incomplete_line_re='^[[:space:]]*-[[:space:]]+\[[[:space:]>]\]'
 	while IFS= read -r line; do
+		[[ "$line" =~ $incomplete_line_re ]] || continue
 		local rtid
 		rtid=$(_task_id_from_todo_line "$line" || true)
 		[[ -n "$rtid" ]] || continue
@@ -284,7 +293,7 @@ cmd_reconcile() {
 			reverse_drift=$((reverse_drift + 1))
 			print_warning "REVERSE-DRIFT: $rtid ref:GH#$ref_num — TODO open but issue closed"
 		fi
-	done < <(printf '%s\n' "$stripped" | grep -E '^[[:space:]]*- \[[ >]\] .*ref:GH#[0-9]+' | _unique_todo_task_lines || true)
+	done <<<"$unique_lines"
 
 	printf "\n=== Reconciliation ===\nRefs OK: %d | fixed: %d | stale: %d | orphans: %d | reverse-drift: %d\n" \
 		"$ref_ok" "$ref_fixed" "$stale" "$orphans" "$reverse_drift"
@@ -314,7 +323,7 @@ Drift detection:
   status    — reports forward drift (open issue, done TODO) and reverse drift
               (open TODO, closed issue) without making changes.
   reconcile — same detection plus ref mismatches, with actionable guidance.
-  reopen    — reopens closed issues whose TODO entry is still [ ] (open).
+  reopen    — reopens closed issues whose TODO entry is [ ] or [>] (incomplete).
               Only reopens issues closed as COMPLETED, not NOT_PLANNED.
               Safe for automated use in the pulse.
 

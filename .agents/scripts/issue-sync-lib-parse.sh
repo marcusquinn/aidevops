@@ -112,20 +112,53 @@ _task_id_from_todo_line() {
 	return 0
 }
 
-# Emit at most one canonical TODO line per task ID. Callers that take a
-# snapshot before mutating TODO.md must not process stale duplicate rows after
-# the first row has already deduplicated the file.
+# Emit the richest canonical TODO line per task ID. Keep this scoring aligned
+# with _dedupe_todo_task_lines so diagnostic snapshots and file mutation choose
+# the same row when stale duplicates have conflicting markers or refs.
 _unique_todo_task_lines() {
 	awk '
 		match($0, /^[[:space:]]*-[[:space:]]+\[[ x>-]\][[:space:]]+/) {
 			remaining = substr($0, RLENGTH + 1)
 			split(remaining, fields, /[[:space:]]+/)
 			task_id = fields[1]
-			if (task_id ~ /^t[0-9]+(\.[0-9]+)*$/ && !seen[task_id]++) {
-				print
+			if (task_id !~ /^t[0-9]+(\.[0-9]+)*$/) { next }
+			if (!(task_id in task_order)) {
+				task_order[task_id] = ++task_count
+				ordered_tasks[task_count] = task_id
+			}
+			score = 0
+			if ($0 ~ /^[[:space:]]*- \[x\] / || $0 ~ /^[[:space:]]*- \[-\] /) { score += 1000 }
+			if ($0 ~ /^[[:space:]]*- \[>\] /) { score += 500 }
+			if ($0 ~ / -> \[/) { score += 100 }
+			if ($0 ~ / blocked-by:/) { score += 25 }
+			if ($0 ~ / tier:/) { score += 25 }
+			if ($0 ~ / logged:/) { score += 25 }
+			if ($0 ~ / pr:#[0-9]+/) { score += 10 }
+			if ($0 ~ / verified:[0-9]{4}-[0-9]{2}-[0-9]{2}/) { score += 10 }
+			if ($0 ~ / completed:[0-9]{4}-[0-9]{2}-[0-9]{2}/) { score += 10 }
+			if (!(task_id in best_score) || score > best_score[task_id]) {
+				best_score[task_id] = score
+				best_line[task_id] = $0
+			}
+		}
+		END {
+			for (i = 1; i <= task_count; i += 1) {
+				print best_line[ordered_tasks[i]]
 			}
 		}
 	'
+	return 0
+}
+
+_unique_todo_task_snapshot() {
+	local todo_file="$1"
+	local stripped
+	if ! stripped=$(strip_code_fences <"$todo_file"); then
+		return 1
+	fi
+	if ! printf '%s\n' "$stripped" | _unique_todo_task_lines; then
+		return 1
+	fi
 	return 0
 }
 

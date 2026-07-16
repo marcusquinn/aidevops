@@ -145,7 +145,7 @@ _close_comment() {
 # below; the helper output replaces the previous inline --comment string.
 _reopen_comment() {
 	local repo="${1:-}" ref_num="${2:-}"
-	local body="Reopened: TODO.md still has this as \`[ ]\` (open) and no merged PR was found. The issue was prematurely closed by a commit keyword. TODO.md is the source of truth for task state."
+	local body="Reopened: TODO.md still has this as incomplete (\`[ ]\` or \`[>]\`) and no merged PR was found. The issue was prematurely closed by a commit keyword. TODO.md is the source of truth for task state."
 	local footer=""
 	if [[ -n "$repo" && -n "$ref_num" ]]; then
 		footer=$(gh-signature-helper.sh footer --issue "${repo}#${ref_num}" 2>/dev/null || true)
@@ -172,7 +172,7 @@ _has_prior_reopen_comment() {
 	local repo="$1" ref_num="$2"
 	local comments_json found
 	comments_json=$(gh api "repos/${repo}/issues/${ref_num}/comments" 2>/dev/null || printf '[]')
-	found=$(printf '%s\n' "$comments_json" | jq -r 'if type == "array" then [.[] | select(.body? | strings | contains("Reopened: TODO.md still has this as `[ ]`"))] | length else 0 end' 2>/dev/null || printf '0')
+	found=$(printf '%s\n' "$comments_json" | jq -r 'if type == "array" then [.[] | select(.body? | strings | contains("Reopened: TODO.md still has this as"))] | length else 0 end' 2>/dev/null || printf '0')
 	[[ "$found" =~ ^[0-9]+$ ]] || found=0
 	if [[ "$found" -gt 0 ]]; then
 		return 0
@@ -464,11 +464,16 @@ cmd_reopen() {
 	local open_numbers
 	open_numbers=$(echo "$open_json" | jq -r '.[].number' 2>/dev/null | sort -n)
 
-	local stripped
-	stripped=$(strip_code_fences <"$todo_file")
+	local unique_lines
+	if ! unique_lines=$(_unique_todo_task_snapshot "$todo_file"); then
+		print_error "Failed to parse unique TODO task snapshot"
+		return 1
+	fi
 	local reopened=0 skipped=0 not_planned=0 has_pr=0 pr_refs=0 duplicate_comments=0
+	local incomplete_ref_re='^[[:space:]]*-[[:space:]]+\[[[:space:]>]\][[:space:]]+t[0-9]+.*ref:GH#[0-9]+'
 
 	while IFS= read -r line; do
+		[[ "$line" =~ $incomplete_ref_re ]] || continue
 		local ref_num
 		ref_num=$(echo "$line" | grep -oE 'ref:GH#[0-9]+' | head -1 | sed 's/ref:GH#//' || echo "")
 		[[ -z "$ref_num" ]] && continue
@@ -547,7 +552,7 @@ cmd_reopen() {
 			skipped=$((skipped + 1))
 			print_warning "Failed to reopen #$ref_num ($tid)"
 		}
-	done < <(printf '%s\n' "$stripped" | grep -E '^\s*- \[[ >]\] t[0-9]+.*ref:GH#[0-9]+' | _unique_todo_task_lines || true)
+	done <<<"$unique_lines"
 
 	print_info "Reopen: $reopened reopened, $skipped failed, $not_planned not-planned, $has_pr have-merged-pr, $pr_refs pr-refs-skipped, $duplicate_comments duplicate-comments-skipped"
 	return 0
