@@ -127,7 +127,13 @@ readonly SCHEDULER_LOG_DIR="${HOME}/.aidevops/.agent-workspace/logs"
 readonly SCHEDULER_LOG_FILE="${SCHEDULER_LOG_DIR}/opencode-db-maintenance.log"
 
 # Helper paths are overrideable for tests. Empty values mean "auto-detect".
-: "${PULSE_LIFECYCLE_HELPER:=pulse-lifecycle-helper.sh}"
+if [[ -z "${PULSE_LIFECYCLE_HELPER:-}" ]]; then
+	if [[ -x "${SCRIPT_DIR}/pulse-lifecycle-helper.sh" ]]; then
+		PULSE_LIFECYCLE_HELPER="${SCRIPT_DIR}/pulse-lifecycle-helper.sh"
+	else
+		PULSE_LIFECYCLE_HELPER="pulse-lifecycle-helper.sh"
+	fi
+fi
 : "${OPENCODE_DB_ARCHIVE_HELPER:=${SCRIPT_DIR}/opencode-db-archive.sh}"
 : "${SQLITE3_BIN:=sqlite3}"
 
