@@ -36,24 +36,15 @@ export function createSessionTitleStatusHandler({
     if (event.type === "session.created" && isRootSessionInfo(info) && sessionID) {
       activeRootSessionID = sessionID;
       resetTerminalTitleState();
-      return;
-    }
-
-    if (event.type === "session.updated" && !activeRootSessionID && isRootSessionInfo(info) && sessionID) {
+    } else if (event.type === "session.updated" && !activeRootSessionID && isRootSessionInfo(info) && sessionID) {
       activeRootSessionID = sessionID;
       resetTerminalTitleState();
-      return;
-    }
-
-    if (event.type === "session.deleted" && sessionID === activeRootSessionID) {
+    } else if (event.type === "session.deleted" && sessionID === activeRootSessionID) {
       activeRootSessionID = "";
       resetTerminalTitleState();
-      return;
+    } else if (event.type === "session.status" && sessionID === activeRootSessionID) {
+      const status = event.properties?.status?.type;
+      if (status === "busy" || status === "retry" || status === "idle") setTerminalTitleStatus(status);
     }
-
-    if (event.type !== "session.status" || sessionID !== activeRootSessionID) return;
-    const status = event.properties?.status?.type;
-    if (status !== "busy" && status !== "retry" && status !== "idle") return;
-    setTerminalTitleStatus(status);
   };
 }
