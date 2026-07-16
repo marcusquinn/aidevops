@@ -23,6 +23,7 @@
 #   - _record_orphan_crash_classification   (crash type + dedup clearing for orphaned workers)
 #   - _cleanup_single_worktree              (per-worktree orchestrator)
 #   Public interface (called by pulse-wrapper.sh):
+#   - cleanup_stale_temp_worktrees
 #   - cleanup_worktrees
 #   - cleanup_stashes
 #   - reap_zombie_workers
@@ -79,6 +80,10 @@ fi
 if [[ -n "$_PULSE_CLEANUP_SCRIPT_DIR" && -f "$_PULSE_CLEANUP_SCRIPT_DIR/worktree-paths.sh" ]]; then
 	# shellcheck source=worktree-paths.sh
 	source "$_PULSE_CLEANUP_SCRIPT_DIR/worktree-paths.sh"
+fi
+if [[ -n "$_PULSE_CLEANUP_SCRIPT_DIR" && -f "$_PULSE_CLEANUP_SCRIPT_DIR/pulse-temp-worktree-cleanup.sh" ]]; then
+	# shellcheck source=pulse-temp-worktree-cleanup.sh
+	source "$_PULSE_CLEANUP_SCRIPT_DIR/pulse-temp-worktree-cleanup.sh"
 fi
 # GH#23677 / t3700: Do NOT `unset _PULSE_CLEANUP_SCRIPT_DIR`. The previous
 # version unset this immediately after sourcing the four sibling helpers,
@@ -1505,10 +1510,9 @@ _cleanup_single_worktree() {
 	local wt_age_secs=$((now_epoch - wt_created))
 
 	local commits_ahead=0
-	commits_ahead=$(git -C "$wt_path_age" rev-list --count "HEAD" "^${main_branch}" 2>/dev/null) || commits_ahead=0
+	commits_ahead=$(_pc_commits_ahead_from_default "$rp_age" "$wt_path_age" "$main_branch") || return 1
 	local dirty_count=0
-	dirty_count=$(git -C "$wt_path_age" status --porcelain 2>/dev/null | wc -l | tr -d ' ') || dirty_count=0
-
+	dirty_count=$(git -C "$wt_path_age" status --porcelain 2>/dev/null | wc -l | tr -d ' ') || return 1
 	if ! worktree_removal_guard "$wt_path_age" "$_WTAR_PC_CALLER" "$_PC_REASON_AGE_ELIGIBLE"; then
 		return 1
 	fi
@@ -1945,7 +1949,9 @@ _pc_relocate_registered_worktrees() {
 # Clean up worktrees for merged/closed PRs and orphaned workers
 # across ALL managed repos.
 #
-# Two-pass approach:
+# Multi-pass approach:
+#   Pass 0 (cleanup_stale_temp_worktrees): remove abandoned detached
+#           regression-helper fixtures without GitHub API calls.
 #   Pass 1 (_cleanup_merged_prs_for_all_repos): remove worktrees whose
 #           PR has merged. Uses worktree-helper.sh.
 #   Pass 2 (_cleanup_single_worktree): age-based orphan cleanup for
@@ -1956,6 +1962,16 @@ _pc_relocate_registered_worktrees() {
 #######################################
 cleanup_worktrees() {
 	CLEANUP_WORKTREES_SKIPPED=0
+	local total_removed=0
+	# Fast, API-free pass for detached regression-helper fixtures. Run before
+	# the GraphQL gate and merged-PR scan so a stale long-running cleanup cannot
+	# leave the dispatch worktree cap permanently saturated.
+	if declare -F cleanup_stale_temp_worktrees >/dev/null 2>&1; then
+		local temp_removed=0
+		temp_removed=$(cleanup_stale_temp_worktrees) || temp_removed=0
+		[[ "$temp_removed" =~ ^[0-9]+$ ]] || temp_removed=0
+		total_removed=$((total_removed + temp_removed))
+	fi
 	# GH#18979: Skip cleanup when API rate limit is low — both passes call
 	# `gh pr list` per repo/worktree, and blocking rate-limit waits cause
 	# the cleanup stage to hang for 10+ minutes, stalling the entire pulse
@@ -1968,8 +1984,6 @@ cleanup_worktrees() {
 		CLEANUP_WORKTREES_SKIPPED=1
 		return 0
 	fi
-
-	local total_removed=0
 
 	# Pass 1: remove worktrees for merged PRs
 	local merged_removed

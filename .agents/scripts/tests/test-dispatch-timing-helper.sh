@@ -206,6 +206,21 @@ test_probe_mode_escalation() {
 	result=$(_recommend_timeout)
 	# Last timeout used 60000 → probe = 60000 × 2 = 120000
 	_assert_eq "60s timeout → probe = 120000" "$result" "120000"
+
+	# Regression: the dispatch ceremony enforces a 600s floor. The helper's
+	# default ceiling must allow the next probe to double that budget; the old
+	# 300s ceiling clamped the recommendation below the floor, so Pulse retried
+	# forever at the same 600s timeout.
+	_reset_state
+	_record success 5000
+	_record success 5000
+	_record success 5000
+	_record timeout 600000 600000
+	local configured_max="$DISPATCH_TIMING_MAX_TIMEOUT_MS"
+	unset DISPATCH_TIMING_MAX_TIMEOUT_MS
+	result=$(_recommend_timeout)
+	export DISPATCH_TIMING_MAX_TIMEOUT_MS="$configured_max"
+	_assert_eq "600s floor timeout → default probe = 1200000" "$result" "1200000"
 	return 0
 }
 
@@ -370,10 +385,12 @@ test_probe_flag_roundtrip() {
 	# Recommend should output two lines: timeout_ms and probe_bool
 	local recommend_output
 	recommend_output=$("$HELPER" recommend)
-	local timeout_ms probe_bool
-	mapfile -t -n 2 < <(printf '%s\n' "$recommend_output")
-	timeout_ms="${MAPFILE[0]:-}"
-	probe_bool="${MAPFILE[1]:-}"
+	local timeout_ms=""
+	local probe_bool=""
+	{
+		IFS= read -r timeout_ms || true
+		IFS= read -r probe_bool || true
+	} <<<"$recommend_output"
 	_assert_eq "probe-flag line 1: timeout_ms" "$timeout_ms" "60000"
 	_assert_eq "probe-flag line 2: probe_bool" "$probe_bool" "true"
 	# Now record with the probe flag and verify it's stored

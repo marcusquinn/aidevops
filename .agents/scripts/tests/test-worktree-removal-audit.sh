@@ -398,6 +398,33 @@ test_process_cwd_guard_refuses_empty_paths() {
 }
 
 # =============================================================================
+# Test 12: snapshot collection failures block removal, while an explicitly
+# supplied empty successful snapshot avoids a second platform scan.
+# =============================================================================
+test_process_cwd_snapshot_failure_is_fail_closed() {
+	local log_file="${TEST_DIR}/t12-cleanup.log"
+	local wt_path="${TEST_DIR}/snapshot-failure-wt"
+	local rc=0
+	export AIDEVOPS_CLEANUP_LOG="$log_file"
+	mkdir -p "$wt_path"
+
+	unset _AUDIT_WORKTREE_REMOVAL_HELPER_LOADED 2>/dev/null || true
+	# shellcheck source=../audit-worktree-removal-helper.sh
+	source "$AUDIT_HELPER"
+	capture_worktree_process_cwds() { return 1; }
+	if worktree_removal_guard "$wt_path" "test.sh" "manual"; then
+		rc=1
+	fi
+	assert_file_contains "$log_file" "worktree-skipped.*active-cwd" || rc=1
+	if ! worktree_removal_guard "$wt_path" "test.sh" "manual" ""; then
+		rc=1
+	fi
+	print_result "process_cwd_snapshot_failure_is_fail_closed" "$rc" \
+		"Expected collection failure to block and explicit empty snapshot to pass"
+	return 0
+}
+
+# =============================================================================
 # Main
 # =============================================================================
 
@@ -416,6 +443,7 @@ test_guard_refuses_other_process_cwd
 test_permanent_helper_removes_and_logs
 test_optional_guard_context_logged
 test_process_cwd_guard_refuses_empty_paths
+test_process_cwd_snapshot_failure_is_fail_closed
 
 echo ""
 echo "Results: ${TESTS_PASSED}/${TESTS_RUN} passed, ${TESTS_FAILED} failed."
