@@ -1383,7 +1383,7 @@ reconcile_issues_single_pass() {
 			fi
 			# GH#27803: issue and PR caches can exceed Linux MAX_ARG_STRLEN.
 			# Stream both JSON documents to jq instead of passing either via argv.
-			objective_input=$(printf '%s\n%s\n' "$issues_json" "$objective_prs" | jq -sc \
+			objective_input=$(printf '%s\n%s\n' "${issues_json:-[]}" "${objective_prs:-[]}" | jq -sc \
 				--arg merged "$oimp_lookup" '{issues: .[0], prs: .[1], merged_lookup: $merged}') || objective_input=""
 			if [[ -n "$objective_input" ]]; then
 				printf '%s' "$objective_input" | "$objective_helper" reconcile --repo "$slug" \
