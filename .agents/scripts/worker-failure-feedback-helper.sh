@@ -13,14 +13,15 @@ DEFAULT_SINCE_HOURS=24
 DEFAULT_THRESHOLD=3
 DEFAULT_LIMIT=5
 DEFAULT_METRICS_FILE="${HOME}/.aidevops/logs/headless-runtime-metrics.jsonl"
+DEFAULT_EVIDENCE_FILE="${HOME}/.aidevops/state/objective-evidence.jsonl"
 
 print_usage() {
 	cat <<'EOF'
 worker-failure-feedback-helper.sh - Mine non-success worker metrics into feedback tasks
 
 Usage:
-  worker-failure-feedback-helper.sh report [--since-hours N] [--threshold N] [--metrics-file PATH]
-  worker-failure-feedback-helper.sh create-issues [--since-hours N] [--threshold N] [--limit N] [--dry-run]
+  worker-failure-feedback-helper.sh report [--since-hours N] [--threshold N] [--metrics-file PATH] [--evidence-file PATH]
+  worker-failure-feedback-helper.sh create-issues [--since-hours N] [--threshold N] [--limit N] [--evidence-file PATH] [--dry-run]
 
 The miner groups recent non-success headless-runtime-metrics.jsonl rows by
 result, failure_reason, session_key, issue_number, and repo_slug. Repeated
@@ -50,6 +51,7 @@ parse_common_args() {
 	THRESHOLD="$DEFAULT_THRESHOLD"
 	LIMIT="$DEFAULT_LIMIT"
 	METRICS_FILE="$DEFAULT_METRICS_FILE"
+	EVIDENCE_FILE="$DEFAULT_EVIDENCE_FILE"
 	DRY_RUN=0
 	while [[ $# -gt 0 ]]; do
 		local arg="$1"
@@ -58,6 +60,7 @@ parse_common_args() {
 		--threshold) THRESHOLD="${2:-}"; require_positive_integer "$arg" "$THRESHOLD" || return 2; shift 2 ;;
 		--limit) LIMIT="${2:-}"; require_positive_integer "$arg" "$LIMIT" || return 2; shift 2 ;;
 		--metrics-file) METRICS_FILE="${2:-}"; [[ -n "$METRICS_FILE" ]] || return 2; shift 2 ;;
+		--evidence-file) EVIDENCE_FILE="${2:-}"; [[ -n "$EVIDENCE_FILE" ]] || return 2; shift 2 ;;
 		--dry-run) DRY_RUN=1; shift ;;
 		-h | --help) print_usage; return 64 ;;
 		*) die "unknown flag: $arg"; return 2 ;;
@@ -70,15 +73,36 @@ mine_failure_groups_json() {
 	local since_hours="$1"
 	local threshold="$2"
 	local metrics_file="$3"
+	local evidence_file="${4:-$DEFAULT_EVIDENCE_FILE}"
 	if [[ ! -f "$metrics_file" ]]; then
 		printf '[]\n'
 		return 0
 	fi
 	local cutoff_epoch
 	cutoff_epoch=$(( $(date +%s) - (since_hours * 3600) ))
-	jq -s --argjson cutoff "$cutoff_epoch" --argjson threshold "$threshold" '
+	local dispositions='[]'
+	local evidence_limit="${AIDEVOPS_OBJECTIVE_EVIDENCE_LIMIT:-2000}"
+	[[ "$evidence_limit" =~ ^[1-9][0-9]*$ ]] || evidence_limit=2000
+	if [[ -s "$evidence_file" ]]; then
+		dispositions=$(tail -n "$evidence_limit" "$evidence_file" 2>/dev/null | \
+			jq -sc '[.[] | select(.record_type == "attempt_outcome")]') || dispositions='[]'
+	fi
+	jq -s --argjson cutoff "$cutoff_epoch" --argjson threshold "$threshold" --argjson dispositions "$dispositions" '
+	def evidence_timestamp: (.evidence_timestamp // .timestamp // .ts // 0) | tonumber? // 0;
+    def reconciled_nonfailure:
+      . as $row |
+	  ([$dispositions[] | select(
+		(($row.attempt_id // "") != "") and
+		(.attempt_id // "") == ($row.attempt_id // "") and
+		(($row.repo_slug // "") == "" or (.repo // "") == ($row.repo_slug // "")) and
+		(($row.issue_number // null) == null or ((.issue_number // 0) | tostring) == (($row.issue_number // "") | tostring))
+	  )] | sort_by(evidence_timestamp) | last // null) as $outcome |
+	  if $outcome == null then false
+	  else ["success", "deferred", "escalated"] | index($outcome.effective_outcome // "") != null
+	  end;
     map(select((.ts // 0) >= $cutoff))
     | map(select((.result // "") != "success" or (.exit_code // 1) != 0))
+    | map(select(reconciled_nonfailure | not))
     | group_by([.result // "unknown", .failure_reason // "", .session_key // "", (.issue_number // "" | tostring), .repo_slug // ""])
     | map({
         result: (.[0].result // "unknown"),
@@ -89,7 +113,7 @@ mine_failure_groups_json() {
         count: length,
         first_ts: (map(.ts // 0) | min),
         last_ts: (map(.ts // 0) | max),
-        examples: (sort_by(.ts // 0) | reverse | .[0:5] | map({ts, model, provider, exit_code, duration_ms, session_id, work_dir, output_file}))
+        examples: (sort_by(.ts // 0) | reverse | .[0:5] | map({ts, model, provider, exit_code, duration_ms, session_id, attempt_id, run_id, work_dir, output_file}))
       })
     | map(select(.count >= $threshold))
     | sort_by(.count) | reverse
@@ -102,7 +126,7 @@ cmd_report() {
 	local parse_rc=$?
 	[[ "$parse_rc" -eq 64 ]] && return 0
 	[[ "$parse_rc" -eq 0 ]] || return "$parse_rc"
-	mine_failure_groups_json "$SINCE_HOURS" "$THRESHOLD" "$METRICS_FILE"
+	mine_failure_groups_json "$SINCE_HOURS" "$THRESHOLD" "$METRICS_FILE" "$EVIDENCE_FILE"
 	return 0
 }
 
@@ -131,7 +155,7 @@ cmd_create_issues() {
 	[[ "$parse_rc" -eq 64 ]] && return 0
 	[[ "$parse_rc" -eq 0 ]] || return "$parse_rc"
 	local groups_json
-	groups_json=$(mine_failure_groups_json "$SINCE_HOURS" "$THRESHOLD" "$METRICS_FILE")
+	groups_json=$(mine_failure_groups_json "$SINCE_HOURS" "$THRESHOLD" "$METRICS_FILE" "$EVIDENCE_FILE")
 	local created=0
 	while IFS= read -r group; do
 		[[ -n "$group" ]] || continue

@@ -103,6 +103,45 @@ test_register_creates_entry() {
 	return 0
 }
 
+test_register_separates_attempt_identity_from_lease() {
+	setup_test_env
+	run_helper "$LEDGER_HELPER" register --session-key "issue-42" --issue 42 \
+		--repo "owner/repo" --pid $$ --lease-token "private-lease-token" \
+		--attempt-id "attempt-public-id"
+
+	local result=0 attempt_id="" lease_token=""
+	attempt_id=$(jq -r '.attempt_id' "${AIDEVOPS_DISPATCH_LEDGER_DIR}/dispatch-ledger.jsonl")
+	lease_token=$(jq -r '.lease_token' "${AIDEVOPS_DISPATCH_LEDGER_DIR}/dispatch-ledger.jsonl")
+	[[ "$attempt_id" == "attempt-public-id" ]] || result=1
+	[[ "$lease_token" == "private-lease-token" && "$attempt_id" != "$lease_token" ]] || result=1
+	print_result "register keeps public attempt identity separate from the dispatch lease" "$result" \
+		"attempt=${attempt_id}, lease=${lease_token}"
+	teardown_test_env
+	return 0
+}
+
+test_terminal_updates_target_exact_attempt() {
+	setup_test_env
+	run_helper "$LEDGER_HELPER" register --session-key "issue-42" --issue 42 \
+		--repo "owner/repo" --pid $$ --attempt-id "attempt-a"
+	run_helper "$LEDGER_HELPER" fail --session-key "issue-42" --attempt-id "attempt-a"
+	run_helper "$LEDGER_HELPER" register --session-key "issue-42" --issue 42 \
+		--repo "owner/repo" --pid $$ --attempt-id "attempt-b"
+	# A late completion from attempt A must not close active attempt B.
+	run_helper "$LEDGER_HELPER" complete --session-key "issue-42" --attempt-id "attempt-a"
+
+	local result=0 first_status="" second_status=""
+	first_status=$(jq -rs 'map(select(.attempt_id == "attempt-a")) | last | .status' \
+		"${AIDEVOPS_DISPATCH_LEDGER_DIR}/dispatch-ledger.jsonl")
+	second_status=$(jq -rs 'map(select(.attempt_id == "attempt-b")) | last | .status' \
+		"${AIDEVOPS_DISPATCH_LEDGER_DIR}/dispatch-ledger.jsonl")
+	[[ "$first_status" == "failed" && "$second_status" == "in-flight" ]] || result=1
+	print_result "terminal updates target one dispatch attempt instead of every session generation" "$result" \
+		"attempt-a=${first_status}, attempt-b=${second_status}"
+	teardown_test_env
+	return 0
+}
+
 test_record_recovery_is_idempotent() {
 	setup_test_env
 	run_helper "$LEDGER_HELPER" register --session-key "issue-27138" --issue 27138 --repo "owner/repo" --pid $$ --worktree "/private/worker/path"
@@ -142,21 +181,24 @@ test_record_recovery_rejects_missing_option_values() {
 test_tier_telemetry_correlates_terminal_outcomes() {
 	setup_test_env
 	run_helper "$LEDGER_HELPER" register --session-key "issue-42" --issue 42 \
-		--repo "owner/repo" --pid $$ --tier simple --model model-a --lease-token attempt-42
+		--repo "owner/repo" --pid $$ --tier simple --model model-a \
+		--attempt-id attempt-42 --lease-token private-lease-42
 	run_helper "$LEDGER_HELPER" register --session-key "issue-43" --issue 43 \
-		--repo "owner/repo" --pid $$ --tier standard --model model-b --lease-token attempt-43
+		--repo "owner/repo" --pid $$ --tier standard --model model-b \
+		--attempt-id attempt-43 --lease-token private-lease-43
 	run_helper "$LEDGER_HELPER" record-outcome --session-key "issue-42" \
-		--lease-token attempt-42 --issue 42 --repo "owner/repo" --outcome success
+		--lease-token private-lease-42 --issue 42 --repo "owner/repo" --outcome success
 	# Aggregate the streamed records so a later unrelated row cannot hide an
 	# existing terminal outcome for this attempt.
 	run_helper "$LEDGER_HELPER" register --session-key "issue-44" --issue 44 \
-		--repo "owner/repo" --pid $$ --tier standard --model model-c --lease-token attempt-44
+		--repo "owner/repo" --pid $$ --tier standard --model model-c \
+		--attempt-id attempt-44 --lease-token private-lease-44
 	# Repeated cleanup and a conflicting late event must not create or replace the
 	# first terminal result for this attempt.
 	run_helper "$LEDGER_HELPER" record-outcome --session-key "issue-42" \
-		--lease-token attempt-42 --issue 42 --repo "owner/repo" --outcome success
+		--lease-token private-lease-42 --issue 42 --repo "owner/repo" --outcome success
 	run_helper "$LEDGER_HELPER" record-outcome --session-key "issue-42" \
-		--lease-token attempt-42 --issue 42 --repo "owner/repo" --outcome failed
+		--lease-token private-lease-42 --issue 42 --repo "owner/repo" --outcome failed
 	# Raw duplicate and unmatched rows model pre-v2 data or manual corruption.
 	# The report must normalize the known attempt and keep unmatched data separate.
 	printf '%s\n' '{"schema":2,"attempt_id":"attempt-42","issue":"42","repo":"owner/repo","tier":"simple","outcome":"success","completed_at":"2026-01-01T00:00:00Z"}' >>"${AIDEVOPS_DISPATCH_LEDGER_DIR}/tier-telemetry.jsonl"
@@ -884,6 +926,8 @@ main() {
 	fi
 
 	test_register_creates_entry
+	test_register_separates_attempt_identity_from_lease
+	test_terminal_updates_target_exact_attempt
 	test_record_recovery_is_idempotent
 	test_record_recovery_rejects_missing_option_values
 	test_tier_telemetry_correlates_terminal_outcomes

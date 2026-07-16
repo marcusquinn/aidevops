@@ -21,6 +21,9 @@
 
 [[ -n "${_PULSE_QUALITY_DEBT_LOADED:-}" ]] && return 0
 _PULSE_QUALITY_DEBT_LOADED=1
+_PQD_PRIOR_SOURCE_NONE="none"
+_PQD_PRIOR_OUTCOME_UNKNOWN="unknown"
+_PQD_DEFAULT_PRIOR_ATTEMPT='{"source":"none","effective_outcome":"unknown"}'
 
 #######################################
 # Create a pre-isolated worktree for a quality-debt worker
@@ -45,7 +48,7 @@ create_quality_debt_worktree() {
 	local issue_number="$2"
 	local issue_title="$3"
 
-	local qd_branch_slug qd_branch qd_wt_path
+	local qd_branch_slug="" qd_branch="" qd_wt_path=""
 	qd_branch_slug=$(printf '%s' "$issue_title" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]/-/g' | cut -c1-30)
 	qd_branch="bugfix/qd-${issue_number}-${qd_branch_slug}"
 
@@ -55,7 +58,7 @@ create_quality_debt_worktree() {
 		grep "^worktree " | cut -d' ' -f2- 2>/dev/null || true)
 
 	if [[ -z "$qd_wt_path" ]]; then
-		local repo_name parent_dir qd_wt_slug
+		local repo_name="" parent_dir="" qd_wt_slug=""
 		repo_name=$(basename "$repo_path")
 		parent_dir=$(dirname "$repo_path")
 		qd_wt_slug=$(printf '%s' "$qd_branch" | tr '/' '-' | tr '[:upper:]' '[:lower:]')
@@ -100,7 +103,7 @@ close_stale_quality_debt_prs() {
 
 	local i
 	for i in $(seq 0 $((pr_count - 1))); do
-		local pr_num pr_updated_at pr_epoch
+		local pr_num="" pr_updated_at="" pr_epoch=""
 		pr_num=$(printf '%s' "$pr_json" | jq -r ".[$i].number" 2>/dev/null) || continue
 		pr_updated_at=$(printf '%s' "$pr_json" | jq -r ".[$i].updatedAt" 2>/dev/null) || continue
 		# GH#17699: TZ=UTC required — macOS date interprets input as local time
@@ -176,13 +179,49 @@ _enrichment_resolve_repo_path() {
 }
 
 #######################################
-# Fetch issue body, title, and relevant failure-context comments
+# Check whether reconciled objective state makes enrichment unnecessary.
+# Returns 0 when enrichment should be skipped, 1 when it remains actionable.
+_enrichment_should_skip_for_objective() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	if declare -F _objective_disposition_suppresses >/dev/null 2>&1 && \
+		_objective_disposition_suppresses suppress_enrichment "$issue_number" "$repo_slug"; then
+		return 0
+	fi
+	return 1
+}
+
+_enrichment_parse_fast_fail_key() {
+	local ff_key="$1"
+	local issue_number=""
+	local repo_slug=""
+
+	case "$ff_key" in
+	*:* )
+		# Legacy format retained for existing state files.
+		issue_number="${ff_key%%:*}"
+		repo_slug="${ff_key#*:}"
+		;;
+	*/* )
+		# Canonical _ff_key format: owner/repo/issue_number.
+		issue_number="${ff_key##*/}"
+		repo_slug="${ff_key%/*}"
+		;;
+	*) return 1 ;;
+	esac
+	[[ "$issue_number" =~ ^[1-9][0-9]*$ && "$repo_slug" == */* ]] || return 1
+	printf '%s\t%s' "$issue_number" "$repo_slug"
+	return 0
+}
+
+#######################################
+# Fetch issue body, title, and validated prior-attempt state.
 #
 # Arguments:
 #   $1 - issue number
 #   $2 - repo slug (owner/repo)
 #
-# Outputs: JSON object {title, body, comments} (stdout)
+# Outputs: JSON object {title, body, prior_attempt} (stdout)
 # Exit codes:
 #   0 - data fetched (partial data is acceptable; fields may be empty strings)
 #######################################
@@ -190,22 +229,32 @@ _enrichment_fetch_issue_data() {
 	local issue_number="$1"
 	local repo_slug="$2"
 
-	local issue_json issue_body issue_title issue_comments
+	local issue_json="" issue_body="" issue_title="" prior_attempt=""
 	issue_json=$(gh issue view "$issue_number" --repo "$repo_slug" \
 		--json title,body 2>/dev/null) || issue_json="{}"
 	issue_title=$(printf '%s' "$issue_json" | jq -r '.title // ""')
 	issue_body=$(printf '%s' "$issue_json" | jq -r '.body // ""')
 
-	# Get kill/dispatch comments for failure context
-	issue_comments=$(gh api "repos/${repo_slug}/issues/${issue_number}/comments" \
-		--jq '[.[] | select(.body | test("CLAIM|kill|premature|BLOCKED|worker_failed|Dispatching")) | {author: .user.login, body: .body, created: .created_at}] | last(3) // []' \
-		2>/dev/null) || issue_comments="[]"
+	prior_attempt="$_PQD_DEFAULT_PRIOR_ATTEMPT"
+	if declare -F _objective_disposition_json >/dev/null 2>&1; then
+		prior_attempt=$(_objective_disposition_json "$issue_number" "$repo_slug" 2>/dev/null) || prior_attempt="$_PQD_DEFAULT_PRIOR_ATTEMPT"
+	fi
 
 	jq -n \
 		--arg title "$issue_title" \
 		--arg body "$issue_body" \
-		--argjson comments "$issue_comments" \
-		'{title: $title, body: $body, comments: $comments}'
+		--arg source_none "$_PQD_PRIOR_SOURCE_NONE" \
+		--arg outcome_unknown "$_PQD_PRIOR_OUTCOME_UNKNOWN" \
+		--argjson prior_attempt "$prior_attempt" \
+		'{title: $title, body: $body, prior_attempt: {
+			source: ($prior_attempt.source // $source_none),
+			attempt_id: ($prior_attempt.attempt_id // ""),
+			effective_outcome: ($prior_attempt.effective_outcome // $outcome_unknown),
+			raw_result: ($prior_attempt.raw_result // ""),
+			status: ($prior_attempt.status // ""),
+			classification: ($prior_attempt.classification // ""),
+			next_action: ($prior_attempt.next_action // "")
+		}}'
 	return 0
 }
 
@@ -216,7 +265,7 @@ _enrichment_fetch_issue_data() {
 #   $1 - issue number
 #   $2 - issue title
 #   $3 - issue body
-#   $4 - issue comments (JSON array string)
+#   $4 - validated prior-attempt state (JSON object string)
 #   $5 - repo slug (owner/repo)
 #
 # Outputs: path to the temporary prompt file (stdout)
@@ -228,7 +277,7 @@ _enrichment_build_prompt() {
 	local issue_number="$1"
 	local issue_title="$2"
 	local issue_body="$3"
-	local issue_comments="$4"
+	local prior_attempt="$4"
 	local repo_slug="$5"
 
 	local prompt_file
@@ -244,8 +293,8 @@ ${issue_title}
 ## Current Issue Body
 ${issue_body}
 
-## Recent Comments (failure context)
-${issue_comments}
+## Validated Prior-Attempt State
+${prior_attempt}
 
 ## Instructions
 
@@ -271,8 +320,9 @@ ${issue_comments}
 
 **Verification:** command to verify completion
 
-5. Keep analysis focused — spend at most 5 minutes. If the task is genuinely ambiguous, say so in the guidance rather than guessing.
-6. Do NOT implement the solution. Only analyze and document guidance.
+5. Do not read or reuse prior model prose, issue comments, dispatch comments, or watchdog comments as retry context. The validated state above is the only prior-attempt context.
+6. Keep analysis focused — spend at most 5 minutes. If the task is genuinely ambiguous, say so in the guidance rather than guessing.
+7. Do NOT implement the solution. Only analyze and document guidance.
 ENRICHMENT_PROMPT_EOF
 
 	printf '%s\n' "$prompt_file"
@@ -368,13 +418,6 @@ dispatch_enrichment_workers() {
 		return 0
 	}
 
-	# Resolve thinking-tier model (opus preferred, sonnet fallback)
-	local resolved_model
-	resolved_model=$(_enrichment_resolve_model) || {
-		printf '%d\n' "$available"
-		return 0
-	}
-
 	# Extract keys with enrichment_needed=true
 	local enrichment_keys
 	enrichment_keys=$(printf '%s' "$state" | jq -r 'to_entries[] | select(.value.enrichment_needed == true) | .key' 2>/dev/null) || enrichment_keys=""
@@ -386,6 +429,7 @@ dispatch_enrichment_workers() {
 
 	local repos_json="${REPOS_JSON:-$HOME/.config/aidevops/repos.json}"
 	local enriched_total=0
+	local resolved_model=""
 
 	while IFS= read -r ff_key; do
 		[[ -n "$ff_key" ]] || continue
@@ -393,12 +437,18 @@ dispatch_enrichment_workers() {
 		[[ "$available" -gt 0 ]] || break
 		[[ -f "$STOP_FLAG" ]] && break
 
-		# Parse key format: "issue_number:repo_slug"
-		local issue_number repo_slug
-		issue_number="${ff_key%%:*}"
-		repo_slug="${ff_key#*:}"
-		[[ "$issue_number" =~ ^[0-9]+$ ]] || continue
-		[[ -n "$repo_slug" ]] || continue
+		# Parse canonical owner/repo/issue keys plus the legacy issue:owner/repo form.
+		local parsed_key="" issue_number="" repo_slug=""
+		parsed_key=$(_enrichment_parse_fast_fail_key "$ff_key") || continue
+		IFS=$'\t' read -r issue_number repo_slug <<<"$parsed_key"
+		if _enrichment_should_skip_for_objective "$issue_number" "$repo_slug"; then
+			echo "[pulse-wrapper] Enrichment: skipping #${issue_number} in ${repo_slug}; reconciled outcome is non-failure" >>"$LOGFILE"
+			_ff_with_lock _ff_mark_enrichment_done "$issue_number" "$repo_slug" || true
+			continue
+		fi
+		if [[ -z "$resolved_model" ]]; then
+			resolved_model=$(_enrichment_resolve_model) || break
+		fi
 
 		# Resolve repo path
 		local repo_path
@@ -406,17 +456,19 @@ dispatch_enrichment_workers() {
 
 		echo "[pulse-wrapper] Enrichment: analyzing #${issue_number} in ${repo_slug} after worker failure" >>"$LOGFILE"
 
-		# Fetch issue data (body, title, failure-context comments) as JSON
-		local issue_data issue_title issue_body issue_comments
+		# Fetch issue data and bounded machine-generated prior-attempt state.
+		local issue_data="" issue_title="" issue_body="" prior_attempt=""
 		issue_data=$(_enrichment_fetch_issue_data "$issue_number" "$repo_slug")
 		issue_title=$(printf '%s' "$issue_data" | jq -r '.title // ""')
 		issue_body=$(printf '%s' "$issue_data" | jq -r '.body // ""')
-		issue_comments=$(printf '%s' "$issue_data" | jq -r '.comments // []')
+		prior_attempt=$(printf '%s' "$issue_data" | jq -c \
+			--arg source_none "$_PQD_PRIOR_SOURCE_NONE" --arg outcome_unknown "$_PQD_PRIOR_OUTCOME_UNKNOWN" \
+			'.prior_attempt // {source:$source_none,effective_outcome:$outcome_unknown}')
 
 		# Build enrichment prompt file
 		local prompt_file
 		prompt_file=$(_enrichment_build_prompt \
-			"$issue_number" "$issue_title" "$issue_body" "$issue_comments" "$repo_slug") || continue
+			"$issue_number" "$issue_title" "$issue_body" "$prior_attempt" "$repo_slug") || continue
 
 		# Run enrichment worker; prompt_file is deleted inside helper
 		if _enrichment_run_worker \

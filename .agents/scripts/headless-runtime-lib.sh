@@ -461,6 +461,7 @@ append_runtime_metric() {
 		LAUNCH_FAILURE_CAUSE="$launch_failure_cause" KILL_REASON="$kill_reason" NEXT_ACTION="$next_action" \
 		WORKER_ID="${AIDEVOPS_WORKER_ID:-}" PARENT_WORKER_ID="${AIDEVOPS_PARENT_WORKER_ID:-}" \
 		ROOT_WORKER_ID="${AIDEVOPS_ROOT_WORKER_ID:-}" CORRELATION_ID="${AIDEVOPS_CORRELATION_ID:-}" \
+		ATTEMPT_ID="${AIDEVOPS_ATTEMPT_ID:-}" RUN_ID="${AIDEVOPS_RUN_ID:-}" \
 		METRICS_PATH="$METRICS_FILE" python3 - <<'PY' >/dev/null 2>&1 || true
 import json
 import os
@@ -496,6 +497,8 @@ optional_fields = {
     "parent_worker_id": os.environ.get("PARENT_WORKER_ID", ""),
     "root_worker_id": os.environ.get("ROOT_WORKER_ID", ""),
     "correlation_id": os.environ.get("CORRELATION_ID", ""),
+    "attempt_id": os.environ.get("ATTEMPT_ID", ""),
+    "run_id": os.environ.get("RUN_ID", ""),
 }
 for key, value in optional_fields.items():
     if value:
@@ -781,7 +784,7 @@ Mandatory behavior:
 5. Never emit user-directed language ("If you want...", "Let me know...", "Should I...").
 6. Reading the issue and reading docs are SETUP -- not completion. You MUST continue through implementation, commit, push, and PR creation after setup.
 7. A draft PR is only a durable checkpoint, never completion. Continue until the implementation and required local verification are complete, every intended commit is pushed, the PR is non-draft, the PR head matches local HEAD, and the required MERGE_SUMMARY exists.
-8. Attempt the merge path once. If it merges, finish the required closing comments. If the exact-head non-draft PR has no terminal check failure and only asynchronous CI, review-bot, human approval, or native auto-merge remains, report a post-PR handoff and exit normally. Pulse/webhook automation owns subsequent monitoring. Do not sleep, wait, or poll for those gates, and never bypass, disable, or weaken branch protection, approval, review-bot, CI, or security gates.
+8. Attempt the merge path once. If it merges, finish the required closing comments. If the exact-head non-draft PR has no terminal check failure and only asynchronous CI, review-bot, human approval, or native auto-merge remains, emit POST_PR_HANDOFF on its own line and exit normally. Pulse/webhook automation owns subsequent monitoring. Do not sleep, wait, or poll for those gates, and never bypass, disable, or weaken branch protection, approval, review-bot, CI, or security gates.
 9. Model escalation before BLOCKED (GH#14964): BLOCKED is only valid after exhausting all autonomous solution paths. Before exiting BLOCKED, retry at the thinking tier and let runtime routing choose the available model and reasoning level. Review-policy metadata, nominal GitHub states, and lower-tier model limits are NOT valid blockers on their own. Genuine blockers require evidence: a failing check that cannot be repaired, missing permission, unresolved conflict, or explicit policy gate.
 
 Activity watchdog constraint -- CRITICAL:
@@ -822,7 +825,7 @@ Before ending your session, verify ALL of these:
   - Check remote state once. Terminal failures are worker-actionable and must not
     be reported as a successful handoff; pending CI/review alone is handed off.
   - If any readiness check fails, you are NOT done -- continue working.
-  - Valid exit states are FULL_LOOP_COMPLETE, a verified post-PR handoff, or
+  - Valid exit states are FULL_LOOP_COMPLETE, POST_PR_HANDOFF, or
     BLOCKED with evidence. Runtime classification independently validates PR state.
 EOF
 	return 0
@@ -1550,6 +1553,7 @@ _register_dispatch_ledger() {
 	[[ -n "$ledger_work_dir" ]] && ledger_args+=(--worktree "$ledger_work_dir")
 	[[ -n "${AIDEVOPS_DISPATCH_TIER:-}" ]] && ledger_args+=(--tier "$AIDEVOPS_DISPATCH_TIER")
 	[[ -n "${AIDEVOPS_DISPATCH_MODEL:-}" ]] && ledger_args+=(--model "$AIDEVOPS_DISPATCH_MODEL")
+	[[ -n "${AIDEVOPS_ATTEMPT_ID:-}" ]] && ledger_args+=(--attempt-id "$AIDEVOPS_ATTEMPT_ID")
 
 	"$DISPATCH_LEDGER_HELPER" "${ledger_args[@]}" 2>/dev/null || true
 	return 0
@@ -1565,6 +1569,7 @@ _update_dispatch_ledger() {
 
 	local -a ledger_args=("$ledger_status" --session-key "$ledger_session_key")
 	[[ -n "${AIDEVOPS_DISPATCH_LEASE_TOKEN:-}" ]] && ledger_args+=(--lease-token "$AIDEVOPS_DISPATCH_LEASE_TOKEN")
+	[[ -n "${AIDEVOPS_ATTEMPT_ID:-}" ]] && ledger_args+=(--attempt-id "$AIDEVOPS_ATTEMPT_ID")
 	"$DISPATCH_LEDGER_HELPER" "${ledger_args[@]}" 2>/dev/null || true
 	return 0
 }

@@ -101,6 +101,24 @@ if [[ "${BASH_VERSINFO[0]:-0}" -ge 4 ]]; then
 	unset AIDEVOPS_BASH_REEXECED
 fi
 
+# Generate a non-authority execution identifier for telemetry correlation.
+# Lease/claim tokens are fencing credentials and must never double as public IDs.
+aidevops_generate_execution_id() {
+	local prefix="$1"
+	local identifier=""
+	[[ -n "$prefix" ]] || prefix="execution"
+	if command -v uuidgen >/dev/null 2>&1; then
+		identifier=$(uuidgen 2>/dev/null | tr '[:upper:]' '[:lower:]') || identifier=""
+	elif command -v python3 >/dev/null 2>&1; then
+		identifier=$(python3 -c 'import uuid; print(uuid.uuid4())' 2>/dev/null) || identifier=""
+	fi
+	if [[ -z "$identifier" ]]; then
+		identifier="$(date +%s 2>/dev/null || printf '0')-$$-${RANDOM:-0}"
+	fi
+	printf '%s:%s' "$prefix" "$identifier"
+	return 0
+}
+
 # Ensure standalone pulse-adjacent runners have the elapsed-time baseline that
 # pulse-wrapper.sh normally exports. Helpers that create GitHub comments/issues
 # use PULSE_START_EPOCH for signature footers; launchd/cron runners that source

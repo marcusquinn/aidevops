@@ -463,6 +463,11 @@ _handle_run_result() {
 				print_warning "$selected_model worker exited with activity but no completion signal (premature exit — will attempt continuation)"
 				return 77
 			fi
+			if output_has_post_pr_handoff_signal "$output_file"; then
+				_run_result_label="post_pr_handoff"
+				rm -f "$output_file"
+				return 0
+			fi
 			if output_has_missing_context_blocked_signal "$output_file"; then
 				_run_result_label="brief_recovery"
 				_run_failure_reason="missing_implementation_context"
@@ -1024,6 +1029,7 @@ _execute_run_attempt() {
 	local agent_name="$8"
 	shift 8
 	local -a extra_args=("$@")
+	_begin_worker_runtime_run
 
 	_recover_deleted_cwd_before_launch "$work_dir" "execute_run_attempt" || return 1
 
@@ -1246,6 +1252,7 @@ _execute_run_attempt() {
 			return 1
 		}
 		exit_code=0
+		_begin_worker_runtime_run
 		_invoke_opencode "$output_file" "$exit_code_file" "${cmd[@]}"
 		if ! read -r exit_code <"$exit_code_file" 2>/dev/null; then
 			exit_code=1
@@ -1286,6 +1293,7 @@ _execute_run_attempt() {
 				cmd+=("$arg")
 			done < <(_build_run_cmd "$selected_model" "$work_dir" "$prompt_arg" "$title" \
 				"$variant_override" "$agent_name" "$persisted_session" "${extra_args[@]+"${extra_args[@]}"}")
+			_begin_worker_runtime_run
 			_invoke_opencode "$output_file" "$exit_code_file" "${cmd[@]}"
 			exit_code=$(cat "$exit_code_file" 2>/dev/null) || exit_code=1
 			_normalized_exit_info=$(_normalize_worker_exit_code_and_kill_reason "$exit_code_file" "$exit_code")
@@ -1516,6 +1524,7 @@ cmd_run() {
 
 	if [[ "$role" == "worker" ]]; then
 		_ensure_worker_lineage "$session_key"
+		_ensure_worker_attempt_identity
 		# GH#23520: publish canonical worker-origin markers before canary,
 		# sandbox passthrough, and downstream GitHub/signature helpers run.
 		# The sandbox allowlist already forwards AIDEVOPS_*; legacy generic
@@ -1658,7 +1667,7 @@ cmd_run() {
 			clear_startup_no_model_feedback "$selected_model"
 			# GH#20721: Pass work_dir so _cmd_run_finish can detect no-op exits.
 			_cmd_run_finish "$session_key" "complete" "$work_dir"
-			return 0
+			return $?
 		fi
 
 		# GH#21578 / t3021: Rate-limit fast-exit (exit 80).

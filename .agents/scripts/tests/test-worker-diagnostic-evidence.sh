@@ -56,6 +56,8 @@ test_runtime_metric_accepts_structured_evidence() {
 	export AIDEVOPS_PARENT_WORKER_ID="worker:parent"
 	export AIDEVOPS_ROOT_WORKER_ID="worker:root"
 	export AIDEVOPS_CORRELATION_ID="correlation:root"
+	export AIDEVOPS_ATTEMPT_ID="attempt:test"
+	export AIDEVOPS_RUN_ID="run:test"
 	# shellcheck source=../headless-runtime-lib.sh
 	source "${AGENTS_SCRIPTS}/headless-runtime-lib.sh"
 
@@ -66,7 +68,7 @@ test_runtime_metric_accepts_structured_evidence() {
 		"" "" "" "worker_exit_diagnostics" "hard_kill_sentinel" \
 		"stall_hard_killed" "hard_kill_stall" "redispatch_worker"
 
-	if jq -e 'select(.session_key == "issue-123" and .launch_failure_cause == "stall_hard_killed" and .kill_reason == "hard_kill_stall" and .next_action == "redispatch_worker" and .worker_id == "worker:child" and .parent_worker_id == "worker:parent" and .root_worker_id == "worker:root" and .correlation_id == "correlation:root")' \
+	if jq -e 'select(.session_key == "issue-123" and .launch_failure_cause == "stall_hard_killed" and .kill_reason == "hard_kill_stall" and .next_action == "redispatch_worker" and .worker_id == "worker:child" and .parent_worker_id == "worker:parent" and .root_worker_id == "worker:root" and .correlation_id == "correlation:root" and .attempt_id == "attempt:test" and .run_id == "run:test")' \
 		"$metrics_file" >/dev/null 2>&1; then
 		print_result "append_runtime_metric records structured evidence and lineage projection" 0
 	else

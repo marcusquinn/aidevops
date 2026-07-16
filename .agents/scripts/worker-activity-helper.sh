@@ -46,6 +46,7 @@ WAH_PULSE_STATS_FILE="${WAH_PULSE_STATS_FILE:-${HOME}/.aidevops/logs/pulse-stats
 WAH_PR_CACHE_FILE="${WAH_PR_CACHE_FILE:-${HOME}/.aidevops/cache/worker-activity-prs.json}"
 WAH_OAUTH_POOL_FILE="${WAH_OAUTH_POOL_FILE:-${HOME}/.aidevops/oauth-pool.json}"
 WAH_BLOCKER_LOG_FILE="${WAH_BLOCKER_LOG_FILE:-${HOME}/.aidevops/logs/worker-progress-blockers.jsonl}"
+WAH_OBJECTIVE_EVIDENCE_FILE="${WAH_OBJECTIVE_EVIDENCE_FILE:-${HOME}/.aidevops/state/objective-evidence.jsonl}"
 WAH_PR_CACHE_TTL="${WAH_PR_CACHE_TTL:-60}" # seconds
 WAH_SERVICE_INTERRUPTION_RESULT="service_interruption_continue"
 WAH_RESULT_WATCHDOG_STALL_KILLED="watchdog_stall_killed"
@@ -61,8 +62,29 @@ WAH_FAILURE_FAMILY_FILTER="${SCRIPT_DIR}/worker-activity-failure-families.jq"
 WAH_SESSION_OUTCOME_JQ='
 	def _wah_nonterminal:
 		((.result // "") | endswith("_continue")) or (.result == "brief_recovery");
+	def _wah_known_effective_outcome:
+		. == "success" or . == $outcome_failed or . == "deferred" or . == "escalated";
+	def _wah_nonempty_string:
+		type == "string" and length > 0;
+	def _wah_reconcile_outcome:
+		. as $row
+		| ([$objective_outcomes[] | select(
+			(.attempt_id | _wah_nonempty_string) and .attempt_id == ($row.attempt_id // null) and
+			((($row.repo_slug // null) | _wah_nonempty_string | not) or (.repo // null) == $row.repo_slug) and
+			(($row.issue_number // null) == null or ((.issue_number // 0) | tostring) == (($row.issue_number // "") | tostring))
+		)] | sort_by(.evidence_timestamp // 0) | last // null) as $outcome
+		| ($outcome.effective_outcome // "") as $effective
+		| if $outcome == null or (($effective | _wah_known_effective_outcome) | not) then . else
+			. + {raw_result:(.result // "unknown"), effective_outcome:$effective, outcome_source:"attempt_outcome"}
+			| if .effective_outcome == "success" then .result = "success" | .exit_code = 0 else . end
+		end;
+	def _wah_effective_failure:
+		(.effective_outcome // "") as $effective
+		| if ($effective | _wah_known_effective_outcome) then $effective == $outcome_failed
+		else ((.result // "") != "success" or (.exit_code // 1) != 0) end;
 	def _wah_session_outcomes:
-		. as $all
+		map(_wah_reconcile_outcome) as $all
+		| $all
 		| to_entries
 		| map(. as $entry | select(
 			(($entry.value.repo_slug // "") | length) > 0
@@ -114,6 +136,18 @@ _wah_parse_since() {
 	return 0
 }
 
+_wah_objective_outcomes_json() {
+	local evidence_limit="${AIDEVOPS_OBJECTIVE_EVIDENCE_LIMIT:-2000}"
+	[[ "$evidence_limit" =~ ^[1-9][0-9]*$ ]] || evidence_limit=2000
+	if [[ ! -s "$WAH_OBJECTIVE_EVIDENCE_FILE" ]]; then
+		printf '[]'
+		return 0
+	fi
+	tail -n "$evidence_limit" "$WAH_OBJECTIVE_EVIDENCE_FILE" 2>/dev/null | \
+		jq -sc '[.[] | select(.record_type == "attempt_outcome")]' 2>/dev/null || printf '[]'
+	return 0
+}
+
 #######################################
 # Aggregate worker outcomes from headless-runtime-metrics.jsonl.
 # Single jq streaming pass: filter by ts cutoff, bucket by result + exit_code.
@@ -149,10 +183,11 @@ _wah_aggregate_metrics() {
 	#          heartbeats even when their exit_code
 	#          is nonzero)
 	# Fail-open to zeros if jq fails (stale/corrupt jsonl).
-	local result service_result watchdog_killed_result rate_limit_result
+	local result service_result watchdog_killed_result rate_limit_result objective_outcomes
 	service_result="$WAH_SERVICE_INTERRUPTION_RESULT"
 	watchdog_killed_result="$WAH_RESULT_WATCHDOG_STALL_KILLED"
 	rate_limit_result="$WAH_RESULT_RATE_LIMIT"
+	objective_outcomes=$(_wah_objective_outcomes_json)
 	local jq_program
 	# shellcheck disable=SC2016 # jq variables are evaluated by jq, not the shell
 	jq_program=$WAH_SESSION_OUTCOME_JQ'
@@ -161,12 +196,12 @@ _wah_aggregate_metrics() {
 			total:  ($events | length),
 			terminal: ($w | length),
 			succ:   ([$w[] | select(.result == "success" and .exit_code == 0)] | length),
-			wk:     ([$w[] | select(.result == $watchdog_killed_result)] | length),
+			wk:     ([$w[] | select(.result == $watchdog_killed_result and _wah_effective_failure)] | length),
 			wc:     ([$events[] | select(.result == "watchdog_stall_continue")] | length),
 			sic:    ([$events[] | select(.result == $service_result)] | length),
-			rl:     ([$w[] | select(.result == $rate_limit_result)] | length),
+			rl:     ([$w[] | select(.result == $rate_limit_result and _wah_effective_failure)] | length),
 			of:     ([$w[] | select(
-				(.result != "success" or .exit_code != 0)
+				_wah_effective_failure
 				and .result != $watchdog_killed_result
 				and .result != "watchdog_stall_continue"
 				and .result != $service_result
@@ -174,7 +209,7 @@ _wah_aggregate_metrics() {
 			)] | length)
 		} | "\(.total) \(.terminal) \(.succ) \(.wk) \(.wc) \(.sic) \(.rl) \(.of)"
 	'
-	result=$(jq -rn --argjson cutoff "$cutoff_epoch" --argjson now "$now_epoch" --arg service_result "$service_result" --arg watchdog_killed_result "$watchdog_killed_result" --arg rate_limit_result "$rate_limit_result" "$jq_program" <"$metrics" 2>/dev/null) || result="0 0 0 0 0 0 0 0"
+	result=$(jq -rn --argjson cutoff "$cutoff_epoch" --argjson now "$now_epoch" --argjson objective_outcomes "$objective_outcomes" --arg outcome_failed "$WAH_DELIVERY_FAILED" --arg service_result "$service_result" --arg watchdog_killed_result "$watchdog_killed_result" --arg rate_limit_result "$rate_limit_result" "$jq_program" <"$metrics" 2>/dev/null) || result="0 0 0 0 0 0 0 0"
 
 	[[ -n "$result" ]] || result="0 0 0 0 0 0 0 0"
 	printf '%s\n' "$result"
@@ -199,13 +234,14 @@ _wah_metric_details_json() {
 	fi
 	now_epoch="${2:-$(date +%s)}"
 
-	local jq_program
+	local jq_program objective_outcomes
+	objective_outcomes=$(_wah_objective_outcomes_json)
 	# shellcheck disable=SC2016 # jq variables are evaluated by jq, not the shell
 	jq_program=$WAH_SESSION_OUTCOME_JQ$WAH_FAILURE_FAMILY_JQ'
 		[inputs | select((.ts // 0) >= $cutoff and (.ts // 0) <= $now)] as $events
 		| ($events | _wah_session_outcomes) as $w
 		| ($w | map(.duration_ms // 0)) as $durations
-		| ($w | map(select((.result // "") != "success" or (.exit_code // 1) != 0))) as $failures
+		| ($w | map(select(_wah_effective_failure))) as $failures
 		| {
 			event_total: ($events | length),
 			continuation_events: ($events | map(select(_wah_nonterminal)) | length),
@@ -241,6 +277,11 @@ _wah_metric_details_json() {
 				launch_failure_cause,
 				kill_reason,
 				next_action,
+				attempt_id,
+				run_id,
+				raw_result,
+				effective_outcome,
+				outcome_source,
 				duration_ms,
 				work_dir,
 				output_file,
@@ -272,7 +313,7 @@ _wah_metric_details_json() {
 				| sort_by(.count) | reverse | .[0:10]),
 			failure_families: ($failures | _wah_failure_family_summary)
 		}'
-	jq -rn --argjson cutoff "$cutoff_epoch" --argjson now "$now_epoch" --arg watchdog_killed_result "$WAH_RESULT_WATCHDOG_STALL_KILLED" --arg local_kill_result "$WAH_RESULT_LOCAL_KILL" "$jq_program" <"$metrics" 2>/dev/null || \
+	jq -rn --argjson cutoff "$cutoff_epoch" --argjson now "$now_epoch" --argjson objective_outcomes "$objective_outcomes" --arg outcome_failed "$WAH_DELIVERY_FAILED" --arg watchdog_killed_result "$WAH_RESULT_WATCHDOG_STALL_KILLED" --arg local_kill_result "$WAH_RESULT_LOCAL_KILL" "$jq_program" <"$metrics" 2>/dev/null || \
 		printf '{"result_counts":{},"diagnostic_focus":{},"timing_ms":{"avg":0,"max":0,"samples":0},"recent_examples":[],"failure_groups":[],"failure_families":[]}'
 	return 0
 }

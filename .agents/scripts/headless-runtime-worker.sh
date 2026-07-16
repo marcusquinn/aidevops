@@ -29,6 +29,7 @@ _HRW_STATUS_FAIL="fail"
 _HRW_STATUS_FAILED="failed"
 _HRW_STATUS_ESCALATED="escalated"
 _HRW_STATUS_UNKNOWN="unknown"
+_HRW_STATUS_PERMISSION_REQUIRED="permission_required"
 _HRW_GIT_HEAD="HEAD"
 _HRW_CRASH_NO_WORK="no_work"
 _HRW_CRASH_OVERWHELMED="overwhelmed"
@@ -39,6 +40,7 @@ _HRW_TELEMETRY_DEFERRED="deferred"
 _HRW_REASON_DRAFT_CHECKPOINT="worker_draft_checkpoint"
 _HRW_REASON_DRAFT_ESCALATION_FAILED="worker_draft_checkpoint_escalation_failed"
 _HRW_REASON_CLOSED_UNMERGED="worker_closed_unmerged_pr"
+_HRW_REASON_UNVERIFIED_HANDOFF="worker_post_pr_handoff_unverified"
 _HRW_EVENT_FAILED="worker.failed"
 _HRW_NMR_LABEL="needs-maintainer-review"
 _HRW_PERMISSION_PERSISTENCE_FAILED="permission_request_persistence_failed"
@@ -1420,7 +1422,7 @@ _hrw_finish_permission_required_run() {
 	local session_key="$1"
 	local work_dir="$2"
 	local helper="${SCRIPT_DIR}/worker-permission-helper.sh"
-	local permission_status="permission_required"
+	local permission_status="$_HRW_STATUS_PERMISSION_REQUIRED"
 	if [[ ! -x "$helper" || -z "${_run_permission_request_file:-}" ]]; then
 		_hrw_record_permission_blocker_failure "$session_key" "permission_capture_or_helper_unavailable"
 		_hrw_mark_failed_terminal_state "$_HRW_STATUS_FAILED" "$_HRW_PERMISSION_PERSISTENCE_FAILED"
@@ -1455,10 +1457,55 @@ _hrw_record_terminal_outcome() {
 	"$ledger_helper" record-outcome \
 		--session-key "$session_key" \
 		--lease-token "${AIDEVOPS_DISPATCH_LEASE_TOKEN:-}" \
+		--attempt-id "${AIDEVOPS_ATTEMPT_ID:-}" \
 		--issue "${WORKER_ISSUE_NUMBER:-}" \
 		--repo "${DISPATCH_REPO_SLUG:-${WORKER_REPO_SLUG:-}}" \
 		--outcome "$outcome" \
 		--reason "$reason" 2>/dev/null || true
+	return 0
+}
+
+_hrw_record_reconciled_outcome() {
+	local session_key="$1"
+	local raw_result="$2"
+	local outcome="$3"
+	local status="$4"
+	local classification="$5"
+	local helper="${OBJECTIVE_RECONCILIATION_HELPER:-${SCRIPT_DIR}/objective-reconciliation-helper.sh}"
+	local issue_number="${WORKER_ISSUE_NUMBER:-}"
+	local repo_slug="${DISPATCH_REPO_SLUG:-${WORKER_REPO_SLUG:-}}"
+	local next_action="narrow_redispatch"
+	local write_attempt=1
+	local max_write_attempts="${AIDEVOPS_OBJECTIVE_OUTCOME_WRITE_ATTEMPTS:-3}"
+	[[ "$max_write_attempts" =~ ^[1-5]$ ]] || max_write_attempts=3
+
+	if [[ -z "$issue_number" && "$session_key" =~ ([0-9]+)$ ]]; then
+		issue_number="${BASH_REMATCH[1]}"
+	fi
+	case "$outcome" in
+	success) next_action="monitor_pr" ;;
+	deferred)
+		if [[ "$status" == "$_HRW_STATUS_PERMISSION_REQUIRED" ]]; then
+			next_action="await_maintainer_permission"
+		else
+			next_action="retry_infrastructure"
+		fi
+		;;
+	escalated) next_action="decision_ready_human_packet" ;;
+	esac
+	[[ -x "$helper" && "$issue_number" =~ ^[1-9][0-9]*$ && -n "$repo_slug" && -n "${AIDEVOPS_ATTEMPT_ID:-}" ]] || return 0
+	while [[ "$write_attempt" -le "$max_write_attempts" ]]; do
+		if "$helper" record-outcome --repo "$repo_slug" --issue "$issue_number" \
+			--attempt-id "$AIDEVOPS_ATTEMPT_ID" --run-id "${AIDEVOPS_RUN_ID:-}" \
+			--attempt-started-at "${AIDEVOPS_ATTEMPT_STARTED_AT:-}" \
+			--raw-result "$raw_result" --outcome "$outcome" --status "$status" \
+			--classification "$classification" --next-action "$next_action" >/dev/null 2>&1; then
+			return 0
+		fi
+		write_attempt=$((write_attempt + 1))
+		[[ "$write_attempt" -le "$max_write_attempts" ]] && sleep 0.1
+	done
+	print_warning "[lifecycle] reconciled outcome persistence failed after ${max_write_attempts} attempts session=${session_key} attempt=${AIDEVOPS_ATTEMPT_ID}"
 	return 0
 }
 
@@ -1476,7 +1523,18 @@ _hrw_finish_success_run() {
 	local session_key="$1"
 	local work_dir="$2"
 	local release_needed=1
+	local finish_status=0
 	local permission_pending_file=""
+	if [[ "${_run_result_label:-}" == "post_pr_handoff" ]] &&
+		(! declare -F _worker_post_pr_handoff_confirmed >/dev/null 2>&1 ||
+			! _worker_post_pr_handoff_confirmed "$session_key" "$work_dir"); then
+		print_warning "[lifecycle] ${_HRW_REASON_UNVERIFIED_HANDOFF} session=${session_key} — exact-head non-draft PR handoff could not be verified; routing as failure"
+		_release_dispatch_claim "$session_key" "$_HRW_REASON_UNVERIFIED_HANDOFF"
+		_report_failure_to_fast_fail "$session_key" "$_HRW_REASON_UNVERIFIED_HANDOFF" "$_HRW_CRASH_OVERWHELMED"
+		release_needed=0
+		finish_status=1
+		_hrw_mark_failed_terminal_state "$_HRW_STATUS_FAILED" "$_HRW_REASON_UNVERIFIED_HANDOFF"
+	fi
 
 	# GH#20721 + GH#20819: Classify worker output quality.
 	# _worker_produced_output distinguishes exact-head completion from drafts,
@@ -1491,7 +1549,7 @@ _hrw_finish_success_run() {
 	# Fail-open semantics are preserved: when signals cannot be evaluated (no git
 	# repo, no gh, no remote) the classification is "pr_exists", so false-negatives
 	# (legit work misclassified) are impossible.
-	if [[ -n "$work_dir" ]]; then
+	if [[ "$release_needed" -eq 1 && -n "$work_dir" ]]; then
 		local output_class="pr_exists"
 		output_class=$(_worker_produced_output "$session_key" "$work_dir")
 		case "$output_class" in
@@ -1551,7 +1609,7 @@ _hrw_finish_success_run() {
 		rm -f "${AIDEVOPS_PERMISSION_GRANT_FILE:-}" "$permission_pending_file" 2>/dev/null || true
 	fi
 
-	return 0
+	return "$finish_status"
 }
 
 _hrw_finish_cleanup() {
@@ -1580,6 +1638,7 @@ _cmd_run_finish() {
 	# boundary. Reusing it avoids a second GitHub query that could fail after the
 	# first query already proved the issue and matching PR are terminal.
 	local external_terminal_confirmed="${4:-0}"
+	local finish_status=0
 	_HRW_FINAL_RUNTIME_EVENT="worker.completed"
 	_HRW_FINAL_RUNTIME_STATUS="${_run_result_label:-$ledger_status}"
 	_HRW_FINAL_RUNTIME_CLASSIFICATION="${_run_failure_reason:-}"
@@ -1608,27 +1667,34 @@ _cmd_run_finish() {
 		_HRW_FINAL_RUNTIME_STATUS="rate_limit_fast"
 		_HRW_FINAL_RUNTIME_CLASSIFICATION="rate_limit"
 		_HRW_TERMINAL_OUTCOME="$_HRW_TELEMETRY_DEFERRED"
-	elif [[ "$ledger_status" == "permission_required" ]]; then
+	elif [[ "$ledger_status" == "$_HRW_STATUS_PERMISSION_REQUIRED" ]]; then
 		if ! _hrw_finish_permission_required_run "$session_key" "$work_dir"; then
 			_hrw_record_terminal_outcome "$session_key" "$_HRW_TERMINAL_OUTCOME" \
 				"$_HRW_FINAL_RUNTIME_CLASSIFICATION"
 			_emit_worker_runtime_event "$_HRW_FINAL_RUNTIME_EVENT" \
 				"$_HRW_FINAL_RUNTIME_STATUS" "$_HRW_FINAL_RUNTIME_CLASSIFICATION"
-			_update_dispatch_ledger "$session_key" "fail"
+			_hrw_record_reconciled_outcome "$session_key" "${_run_result_label:-$ledger_status}" \
+				"$_HRW_TERMINAL_OUTCOME" "$_HRW_FINAL_RUNTIME_STATUS" "$_HRW_FINAL_RUNTIME_CLASSIFICATION"
+			_update_dispatch_ledger "$session_key" "$_HRW_STATUS_FAIL"
 			_release_session_lock "$session_key"
 			trap - EXIT
 			return 1
 		fi
 	else
-		_hrw_finish_success_run "$session_key" "$work_dir"
+		if ! _hrw_finish_success_run "$session_key" "$work_dir"; then
+			finish_status=1
+			ledger_status="$_HRW_STATUS_FAIL"
+		fi
 	fi
 	_hrw_record_terminal_outcome "$session_key" "$_HRW_TERMINAL_OUTCOME" \
 		"$_HRW_FINAL_RUNTIME_CLASSIFICATION"
 	_emit_worker_runtime_event "$_HRW_FINAL_RUNTIME_EVENT" \
 		"$_HRW_FINAL_RUNTIME_STATUS" "$_HRW_FINAL_RUNTIME_CLASSIFICATION"
+	_hrw_record_reconciled_outcome "$session_key" "${_run_result_label:-$ledger_status}" \
+		"$_HRW_TERMINAL_OUTCOME" "$_HRW_FINAL_RUNTIME_STATUS" "$_HRW_FINAL_RUNTIME_CLASSIFICATION"
 
 	_hrw_finish_cleanup "$session_key" "$ledger_status" "$work_dir"
-	return 0
+	return "$finish_status"
 }
 
 _hrw_permission_pending_path() {

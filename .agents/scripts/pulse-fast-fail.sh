@@ -551,12 +551,23 @@ _ff_release_retry_reset_if_newer_locked() {
 #                no_worker_process, cli_usage_output, local_error, etc.)
 #   $4 - provider (optional, for rate-limit pool queries; default: anthropic)
 #   $5 - crash_type (optional: "overwhelmed" | "no_work" | "partial" | "")
+#   $6 - attempt_id (optional exact objective correlation; resolved from ledger when omitted)
 #######################################
 fast_fail_record() {
 	local issue_number="$1"
 	local repo_slug="$2"
 	local reason="${3:-launch_failure}"
+	local attempt_id="${6:-}"
 	local record_rc=0
+
+	if declare -F _worker_attempt_id_for_issue >/dev/null 2>&1; then
+		attempt_id=$(_worker_attempt_id_for_issue "$issue_number" "$repo_slug" "$attempt_id") || attempt_id=""
+	fi
+	if [[ -n "$attempt_id" ]] && declare -F _objective_disposition_suppresses >/dev/null 2>&1 && \
+		_objective_disposition_suppresses suppress_fast_fail "$issue_number" "$repo_slug" "$attempt_id"; then
+		echo "[pulse-wrapper] fast_fail_record: #${issue_number} (${repo_slug}) suppressed by reconciled objective outcome" >>"$LOGFILE"
+		return 0
+	fi
 
 	_ff_with_lock _fast_fail_record_locked "$@" || record_rc=$?
 	if [[ "$record_rc" -eq 2 ]]; then

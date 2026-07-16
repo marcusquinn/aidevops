@@ -19,6 +19,7 @@
 #   _sanitize_log_field()     Strip control characters from log fields
 #   _sanitize_markdown()      Strip @ mentions and backticks from markdown
 #   _validate_int()           Validate and sanitize integer config values
+#   _worker_attempt_id_for_issue() Resolve the latest public attempt identity
 #   _count_issue_comments_containing_marker() Pagination-safe comment marker count
 #   _count_worker_commits()   Count commits in a worktree since elapsed seconds ago
 #   _count_worker_messages()  Count session DB messages for a worker
@@ -64,6 +65,84 @@ _ensure_worker_lineage() {
 	return 0
 }
 
+_ensure_worker_attempt_identity() {
+	if [[ -z "${AIDEVOPS_ATTEMPT_ID:-}" ]]; then
+		AIDEVOPS_ATTEMPT_ID=$(aidevops_generate_execution_id "attempt")
+	fi
+	if [[ ! "${AIDEVOPS_ATTEMPT_STARTED_AT:-}" =~ ^[0-9]+$ ]]; then
+		AIDEVOPS_ATTEMPT_STARTED_AT=$(_worker_attempt_start_marker)
+	fi
+	export AIDEVOPS_ATTEMPT_ID AIDEVOPS_ATTEMPT_STARTED_AT
+	return 0
+}
+
+# Return a high-resolution epoch marker so attempts dispatched within the same
+# second retain deterministic chronology. Python is already a framework runtime
+# dependency; the seconds fallback preserves a comparable 19-digit shape.
+_worker_attempt_start_marker() {
+	local marker=""
+	marker=$(python3 -c 'import time; print(time.time_ns())' 2>/dev/null || true)
+	if [[ ! "$marker" =~ ^[0-9]{19}$ ]]; then
+		marker="$(date +%s 2>/dev/null || printf '0')000000000"
+	fi
+	printf '%s' "$marker"
+	return 0
+}
+
+_begin_worker_runtime_run() {
+	AIDEVOPS_RUN_ID=$(aidevops_generate_execution_id "run")
+	export AIDEVOPS_RUN_ID
+	return 0
+}
+
+_worker_attempt_id_for_issue() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local attempt_id="${3:-${AIDEVOPS_ATTEMPT_ID:-}}"
+	local ledger_dir="${AIDEVOPS_DISPATCH_LEDGER_DIR:-${HOME}/.aidevops/.agent-workspace/tmp}"
+	local ledger_file="${ledger_dir}/dispatch-ledger.jsonl"
+
+	[[ "$issue_number" =~ ^[1-9][0-9]*$ && -n "$repo_slug" ]] || return 1
+	if [[ -z "$attempt_id" && -s "$ledger_file" ]]; then
+		attempt_id=$(jq -sr --arg issue "$issue_number" --arg repo "$repo_slug" '
+			[.[] | select((.issue_number // "") == $issue and (.repo_slug // "") == $repo and (.attempt_id // "") != "")]
+			| last | .attempt_id // empty
+		' "$ledger_file" 2>/dev/null) || attempt_id=""
+	fi
+	[[ "$attempt_id" =~ ^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$ ]] || return 1
+	printf '%s' "$attempt_id"
+	return 0
+}
+
+_objective_disposition_json() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local attempt_id="${3:-}"
+	local helper="${BASH_SOURCE[0]%/*}/objective-reconciliation-helper.sh"
+	local -a disposition_args=(disposition --repo "$repo_slug" --issue "$issue_number")
+
+	[[ -x "$helper" && "$issue_number" =~ ^[1-9][0-9]*$ && -n "$repo_slug" ]] || return 1
+	[[ -n "$attempt_id" ]] && disposition_args+=(--attempt-id "$attempt_id")
+	"$helper" "${disposition_args[@]}" 2>/dev/null
+	return $?
+}
+
+_objective_disposition_suppresses() {
+	local suppression_field="$1"
+	local issue_number="$2"
+	local repo_slug="$3"
+	local attempt_id="${4:-}"
+	local disposition=""
+
+	case "$suppression_field" in
+	suppress_fast_fail | suppress_retry | suppress_enrichment | suppress_failure_mining) ;;
+	*) return 1 ;;
+	esac
+	disposition=$(_objective_disposition_json "$issue_number" "$repo_slug" "$attempt_id") || return 1
+	printf '%s' "$disposition" | jq -e --arg field "$suppression_field" '.[$field] == true' >/dev/null 2>&1
+	return $?
+}
+
 _emit_objective_recovery_evidence() {
 	local event_type="$1"
 	local status="$2"
@@ -81,11 +160,13 @@ _emit_objective_recovery_evidence() {
 	local next_action="monitor_worker"
 	local execution_path_state="running"
 	local recovery_attempt="${AIDEVOPS_RECOVERY_ATTEMPT:-0}"
+	local attempt_started_at="${AIDEVOPS_ATTEMPT_STARTED_AT:-0}"
 	local repair_pr_number="${AIDEVOPS_PR_REPAIR_NUMBER:-}"
 	local repair_head_sha="${AIDEVOPS_PR_REPAIR_HEAD_SHA:-}"
 	local repair_head_ref="${AIDEVOPS_PR_REPAIR_HEAD_REF:-}"
 	local repair_fingerprint="${AIDEVOPS_PR_REPAIR_FINGERPRINT:-}"
 	[[ "$recovery_attempt" =~ ^[0-9]+$ ]] || recovery_attempt=0
+	[[ "$attempt_started_at" =~ ^[0-9]+$ ]] || attempt_started_at=0
 	evidence_dir=$(dirname "$evidence_file")
 	mkdir -p "$evidence_dir" 2>/dev/null || return 0
 	evidence_timestamp=$(date +%s 2>/dev/null) || evidence_timestamp=0
@@ -106,6 +187,9 @@ _emit_objective_recovery_evidence() {
 		--argjson issue_number "$issue_number" \
 		--argjson evidence_timestamp "$evidence_timestamp" \
 		--arg worker_id "${AIDEVOPS_WORKER_ID:-}" \
+		--arg attempt_id "${AIDEVOPS_ATTEMPT_ID:-}" \
+		--arg run_id "${AIDEVOPS_RUN_ID:-}" \
+		--argjson attempt_started_at "$attempt_started_at" \
 		--arg branch "$branch_name" \
 		--arg worktree "$worktree_name" \
 		--arg commit "$commit_sha" \
@@ -120,6 +204,7 @@ _emit_objective_recovery_evidence() {
 		--argjson verification_preserved "$([[ -n "${AIDEVOPS_VERIFICATION_EVIDENCE:-}" ]] && printf true || printf false)" \
 		'{event_type:$event_type,status:$status,classification:$classification,repo:$repo,
 		issue_number:$issue_number,evidence_timestamp:$evidence_timestamp,worker_id:$worker_id,
+		attempt_id:$attempt_id,run_id:$run_id,attempt_started_at:$attempt_started_at,
 		branch:$branch,worktree:$worktree,commit:$commit,next_action:$next_action,
 		execution_path_state:$execution_path_state,recovery_attempt:$recovery_attempt,
 		branch_preserved:($branch != ""),worktree_preserved:($worktree != ""),

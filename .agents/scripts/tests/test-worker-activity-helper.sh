@@ -80,6 +80,7 @@ STATS="$FIXTURE_DIR/pulse-stats.json"
 PR_CACHE="$FIXTURE_DIR/pr-cache.json"
 OAUTH_POOL="$FIXTURE_DIR/oauth-pool.json"
 BLOCKERS="$FIXTURE_DIR/worker-progress-blockers.jsonl"
+OBJECTIVE_EVIDENCE="$FIXTURE_DIR/objective-evidence.jsonl"
 
 cleanup() {
 	rm -rf "$FIXTURE_DIR"
@@ -190,6 +191,7 @@ RUN_ENV=(
 	"WAH_PR_CACHE_FILE=$PR_CACHE"
 	"WAH_OAUTH_POOL_FILE=$OAUTH_POOL"
 	"WAH_BLOCKER_LOG_FILE=$BLOCKERS"
+	"WAH_OBJECTIVE_EVIDENCE_FILE=$OBJECTIVE_EVIDENCE"
 	"PULSE_PROVIDER_ACCOUNT_SLOT_MULTIPLIER=24"
 )
 
@@ -483,6 +485,57 @@ assert_eq "7k: combined delivery-stage cache prevents repeated GitHub queries" "
 	"$(wc -l <"$GH_CALL_LOG" | tr -d ' ')"
 assert_eq "7l: cached delivery stages preserve delivered success" "2" \
 	"$(printf '%s' "$JSON" | jq -r '.delivery_stages.delivered_successes')"
+
+# ---------------------------------------------------------------------------
+# Section 8: reconciled outcomes override routing summaries, not raw evidence.
+# ---------------------------------------------------------------------------
+echo
+echo "--- Section 8: objective outcome reconciliation ---"
+
+RECON_METRICS="$FIXTURE_DIR/reconciled-metrics.jsonl"
+cat >"$RECON_METRICS" <<EOF
+{"ts":$T_5MIN_AGO,"role":"worker","session_key":"issue-601","issue_number":601,"repo_slug":"owner/repo","attempt_id":"attempt-success","run_id":"run-a","result":"premature_exit","failure_reason":"premature_exit","exit_code":77}
+{"ts":$T_5MIN_AGO,"role":"worker","session_key":"issue-602","issue_number":602,"repo_slug":"owner/repo","attempt_id":"attempt-failed","run_id":"run-b","result":"premature_exit","failure_reason":"premature_exit","exit_code":77}
+{"ts":$T_5MIN_AGO,"role":"worker","session_key":"issue-603","issue_number":603,"repo_slug":"owner/repo","attempt_id":"attempt-unknown","run_id":"run-c","result":"premature_exit","failure_reason":"premature_exit","exit_code":77}
+{"ts":$T_5MIN_AGO,"role":"worker","session_key":"issue-604","issue_number":604,"repo_slug":"owner/repo","attempt_id":"attempt-latest-failed","run_id":"run-d","result":"premature_exit","failure_reason":"premature_exit","exit_code":77}
+{"ts":$T_5MIN_AGO,"role":"worker","session_key":"issue-605","issue_number":605,"repo_slug":"owner/repo","result":"premature_exit","failure_reason":"premature_exit","exit_code":77}
+{"ts":$((T_5MIN_AGO - 20)),"role":"worker","session_key":"issue-606","issue_number":606,"repo_slug":"","attempt_id":"attempt-unscoped","run_id":"run-e","result":"premature_exit","failure_reason":"premature_exit","exit_code":77}
+{"ts":$((T_5MIN_AGO - 20)),"role":"worker","session_key":"issue-607","issue_number":607,"repo_slug":"owner/repo","attempt_id":"","run_id":"run-f","result":"premature_exit","failure_reason":"premature_exit","exit_code":77}
+EOF
+cat >"$OBJECTIVE_EVIDENCE" <<EOF
+{"record_type":"attempt_outcome","repo":"owner/repo","issue_number":601,"attempt_id":"attempt-success","run_id":"run-a","effective_outcome":"success","evidence_timestamp":$T_5MIN_AGO}
+{"record_type":"attempt_outcome","repo":"owner/repo","issue_number":602,"attempt_id":"attempt-failed","run_id":"run-b","effective_outcome":"failed","evidence_timestamp":$T_5MIN_AGO}
+{"record_type":"attempt_outcome","repo":"owner/repo","issue_number":603,"attempt_id":"attempt-unknown","run_id":"run-c","effective_outcome":"unknown","evidence_timestamp":$T_5MIN_AGO}
+{"record_type":"attempt_outcome","repo":"owner/repo","issue_number":604,"attempt_id":"attempt-latest-failed","run_id":"run-d","effective_outcome":"success","evidence_timestamp":$((T_5MIN_AGO - 10))}
+{"record_type":"attempt_outcome","repo":"owner/repo","issue_number":604,"attempt_id":"attempt-latest-failed","run_id":"run-d","effective_outcome":"failed","evidence_timestamp":$T_5MIN_AGO}
+{"record_type":"attempt_outcome","repo":"owner/repo","issue_number":606,"attempt_id":"attempt-unscoped","run_id":"run-e","effective_outcome":"success","evidence_timestamp":$((T_5MIN_AGO - 20))}
+{"record_type":"attempt_outcome","repo":"owner/repo","issue_number":607,"attempt_id":"","run_id":"run-f","effective_outcome":"success","evidence_timestamp":$((T_5MIN_AGO - 20))}
+EOF
+
+JSON=$(env "${RUN_ENV[@]}" "WAH_METRICS_FILE=$RECON_METRICS" \
+	"$HELPER" summary --since 1h --no-pr-check --json 2>&1)
+assert_eq "8a: raw events remain queryable" "7" \
+	"$(printf '%s' "$JSON" | jq -r '.metrics.event_result_counts.premature_exit')"
+assert_eq "8b: reconciled success becomes an effective runtime handoff" "2" \
+	"$(printf '%s' "$JSON" | jq -r '.metrics.runtime_handoffs')"
+assert_eq "8c: validated failures and raw fallbacks remain in failure totals" "5" \
+	"$(printf '%s' "$JSON" | jq -r '.metrics.other_failure')"
+assert_eq "8d: successful attempt is absent from failure groups" "0" \
+	"$(printf '%s' "$JSON" | jq -r '[.metrics.failure_groups[] | select(.issue_number == 601)] | length')"
+assert_eq "8e: failed attempt remains in failure groups" "1" \
+	"$(printf '%s' "$JSON" | jq -r '[.metrics.failure_groups[] | select(.issue_number == 602)] | length')"
+assert_eq "8f: effective examples retain the raw parser result" "premature_exit" \
+	"$(printf '%s' "$JSON" | jq -r '.metrics.recent_examples[] | select(.issue_number == 601) | .raw_result')"
+assert_eq "8g: unknown reconciled outcomes fall back to raw failure" "1" \
+	"$(printf '%s' "$JSON" | jq -r '[.metrics.failure_groups[] | select(.issue_number == 603)] | length')"
+assert_eq "8h: latest terminal evidence wins for duplicate attempt records" "1" \
+	"$(printf '%s' "$JSON" | jq -r '[.metrics.failure_groups[] | select(.issue_number == 604)] | length')"
+assert_eq "8i: legacy rows without attempt identity remain readable" "1" \
+	"$(printf '%s' "$JSON" | jq -r '[.metrics.failure_groups[] | select(.issue_number == 605)] | length')"
+assert_eq "8j: empty repo slug remains an unscoped attempt match" "0" \
+	"$(printf '%s' "$JSON" | jq -r '[.metrics.failure_groups[] | select(.issue_number == 606)] | length')"
+assert_eq "8k: empty attempt identities never reconcile with each other" "1" \
+	"$(printf '%s' "$JSON" | jq -r '[.metrics.failure_groups[] | select(.issue_number == 607)] | length')"
 
 # ---------------------------------------------------------------------------
 # Summary.
