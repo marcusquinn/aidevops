@@ -14,6 +14,11 @@ assert.match(instruction, /Call the appropriate tools immediately, before visibl
 assert.match(instruction, /Do not claim that tool access is unavailable without first attempting/);
 assert.doesNotMatch(instruction, /before tool calls, status updates/);
 
+for (const missingVersion of [null, undefined]) {
+  const missingVersionInstruction = buildSessionStartGreetingInstruction("/missing", () => missingVersion);
+  assert.match(missingVersionInstruction, /We're running aidevops vX\./);
+}
+
 const paths = {
   version: "/agents/VERSION",
 };
