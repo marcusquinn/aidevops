@@ -4,15 +4,15 @@
 import { closeSync, openSync, writeSync } from "node:fs";
 
 const CONTROL_CHAR_RE = /[\u0000-\u001F\u007F]/g;
-const STATUS_PREFIX_RE = /^\[(?:RUN|WAIT)\]\s+/;
+const STATUS_PREFIX_RE = /^(?:\[(?:RUN|WAIT)\]|🟡|🟢)\s+/u;
 
 export function sanitizeTerminalTitle(title) {
   return String(title || "").replace(CONTROL_CHAR_RE, " ").trim();
 }
 
 export function terminalTitleStatusLabel(status) {
-  if (status === "busy" || status === "retry") return "RUN";
-  if (status === "idle") return "WAIT";
+  if (status === "busy" || status === "retry") return "🟡";
+  if (status === "idle") return "🟢";
   return "";
 }
 
@@ -20,7 +20,7 @@ export function withTerminalTitleStatus(title, status) {
   const baseTitle = sanitizeTerminalTitle(title).replace(STATUS_PREFIX_RE, "").trim();
   const label = terminalTitleStatusLabel(status);
   if (!baseTitle || !label) return baseTitle;
-  return `[${label}] ${baseTitle}`;
+  return `${label} ${baseTitle}`;
 }
 
 export function terminalTitleSequence(title) {

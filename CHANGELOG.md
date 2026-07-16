@@ -10,6 +10,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- replace OpenCode terminal tab status text with compact running and waiting emoji indicators (#28005)
+
 ## [3.32.135] - 2026-07-16
 
 ### Changed

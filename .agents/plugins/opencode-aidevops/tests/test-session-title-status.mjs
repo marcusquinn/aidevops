@@ -14,10 +14,11 @@ function event(type, properties = {}) {
   return { event: { type, properties } };
 }
 
-test("terminal titles map OpenCode status to idempotent RUN and WAIT prefixes", () => {
-  assert.equal(withTerminalTitleStatus("Issue #123: improve tabs", "busy"), "[RUN] Issue #123: improve tabs");
-  assert.equal(withTerminalTitleStatus("[WAIT] Issue #123: improve tabs", "retry"), "[RUN] Issue #123: improve tabs");
-  assert.equal(withTerminalTitleStatus("[RUN] Issue #123: improve tabs", "idle"), "[WAIT] Issue #123: improve tabs");
+test("terminal titles map OpenCode status to compact idempotent emoji prefixes", () => {
+  assert.equal(withTerminalTitleStatus("Issue #123: improve tabs", "busy"), "🟡 Issue #123: improve tabs");
+  assert.equal(withTerminalTitleStatus("🟢 Issue #123: improve tabs", "retry"), "🟡 Issue #123: improve tabs");
+  assert.equal(withTerminalTitleStatus("🟡 Issue #123: improve tabs", "idle"), "🟢 Issue #123: improve tabs");
+  assert.equal(withTerminalTitleStatus("[RUN] Issue #123: improve tabs", "idle"), "🟢 Issue #123: improve tabs");
   assert.equal(withTerminalTitleStatus("Issue #123: improve tabs", "unknown"), "Issue #123: improve tabs");
 });
 
@@ -39,9 +40,9 @@ test("terminal title controller preserves status across later session title upda
 
   assert.deepEqual(writes, [
     "Issue #123: initial title",
-    "[RUN] Issue #123: initial title",
-    "[RUN] Issue #123: renamed title",
-    "[WAIT] Issue #123: renamed title",
+    "🟡 Issue #123: initial title",
+    "🟡 Issue #123: renamed title",
+    "🟢 Issue #123: renamed title",
     "Issue #123: renamed title",
   ]);
 });
