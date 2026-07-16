@@ -79,6 +79,7 @@ const CACHE_DIR = join(homedir(), ".aidevops", "cache");
 const CACHE_BASENAME = "session-greeting-opencode.txt";
 const LOCK_BASENAME = "session-greeting-refresh.lock";
 const LOCK_OWNER_BASENAME = "owner";
+const MAX_MISSING_LOCK_RETRIES = 4;
 // Comprehensive checks run at most once per 15-minute window. The subprocess
 // times out after 15 seconds, so a lock older than 30 seconds is safe to reap
 // after an abrupt plugin-process exit.
@@ -311,7 +312,7 @@ function observeSharedRefresh({ cacheFile, lockDir, lockStaleMs, client, now, mi
       // its replacement yet. Allow a short handoff window without polling for
       // the full stale-lock lifetime when an owner exits without publishing.
       if (now() >= deadline) return;
-      if (missingLockRetries >= 4) return;
+      if (missingLockRetries >= MAX_MISSING_LOCK_RETRIES) return;
       missingLockRetries += 1;
     }
 

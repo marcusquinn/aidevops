@@ -212,6 +212,7 @@ test("cold-cache plugin processes share one refresh and all receive its greeting
   const spawnFile = join(f.cacheDir, "spawns");
   const toastFile = join(f.cacheDir, "toasts");
   const greetingUrl = new URL("../greeting.mjs", import.meta.url).href;
+  const initializedAtMs = Date.now();
   writeFileSync(workerFile, `
     import { appendFileSync } from "node:fs";
     import { createGreetingHandler } from ${JSON.stringify(greetingUrl)};
@@ -219,7 +220,10 @@ test("cold-cache plugin processes share one refresh and all receive its greeting
     const handler = createGreetingHandler({
       scriptsDir: "/unused",
       cacheDir: ${JSON.stringify(f.cacheDir)},
-      lockStaleMs: 1000,
+      // This case verifies single-flight coordination, not stale-lock recovery.
+      // Leave enough headroom for child-process scheduling under full-suite load.
+      lockStaleMs: 5000,
+      initializedAtMs: ${initializedAtMs},
       client: { tui: { showToast: async () => appendFileSync(${JSON.stringify(toastFile)}, "1\\n") } },
       execGreeting: async () => {
         appendFileSync(${JSON.stringify(spawnFile)}, "1\\n");
