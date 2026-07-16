@@ -4644,4 +4644,4 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [ ] t18149 Require trusted authorization for account-level GitHub CLI mutations #auto-dispatch #security ~2h tier:thinking ref:GH#27994 logged:2026-07-16 -> [todo/tasks/t18149-brief.md]
 
-- [ ] t18150 Use compact emoji indicators in OpenCode terminal tab titles #enhancement ref:GH#28005
+- [x] t18150 Use compact emoji indicators in OpenCode terminal tab titles #enhancement ref:GH#28005 pr:#28006 completed:2026-07-16
