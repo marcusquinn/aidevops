@@ -24,11 +24,10 @@ _ptwc_is_temp_fixture_path() {
 _ptwc_file_mtime_epoch() {
 	local file_path="$1"
 	local mtime=""
-	mtime=$(stat -f %m "$file_path" 2>/dev/null) || mtime=""
-	if [[ ! "$mtime" =~ ^[0-9]+$ ]]; then
-		mtime=$(stat -c %Y "$file_path" 2>/dev/null) || mtime=""
-	fi
+	[[ -e "$file_path" || -L "$file_path" ]] || return 1
+	mtime=$(_file_mtime_epoch "$file_path") || return 1
 	[[ "$mtime" =~ ^[0-9]+$ ]] || return 1
+	[[ "$mtime" -gt 0 ]] || return 1
 	printf '%s\n' "$mtime"
 	return 0
 }
