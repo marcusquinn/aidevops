@@ -252,6 +252,58 @@ assert_eq "missing lock tools fail open" "1" "$lock_status"
 lock_stderr_bytes=$(wc -c <"$TMPDIR/no-lock-tools.stderr" | tr -d ' ')
 assert_eq "missing lock tools stay silent" "0" "$lock_stderr_bytes"
 
+# --- Test 10b: abandoned empty locks recover instead of wedging telemetry --
+export AIDEVOPS_GH_API_LOG="$TMPDIR/stale-lock-calls.log"
+export AIDEVOPS_GH_API_REPORT="$TMPDIR/stale-lock-report.json"
+unset _GH_API_INSTRUMENT_LOADED
+# shellcheck source=../gh-api-instrument.sh
+source "${PARENT_DIR}/gh-api-instrument.sh"
+gh_clear_log
+mkdir "${GH_API_LOG}.lock"
+_GH_API_EMPTY_LOCK_GRACE_TRIES=0
+gh_record_call rest stale-empty-lock-test
+assert_eq "stale empty lock permits the next record" "1" "$(wc -l <"$GH_API_LOG" | tr -d ' ')"
+if [[ -d "${GH_API_LOG}.lock" ]]; then
+	echo "  FAIL: stale empty telemetry lock survived recovery"
+	FAIL=$((FAIL + 1))
+else
+	echo "  PASS: stale empty telemetry lock was removed"
+	PASS=$((PASS + 1))
+fi
+
+mkdir "${GH_API_LOG}.lock"
+printf '%s\n' 'not-a-pid' >"${GH_API_LOG}.lock/pid"
+gh_record_call rest stale-malformed-lock-test
+assert_eq "stale malformed lock permits the next record" "2" "$(wc -l <"$GH_API_LOG" | tr -d ' ')"
+
+mkdir "${GH_API_LOG}.lock"
+printf '%s\n' '999999999' >"${GH_API_LOG}.lock/pid"
+_GH_API_EMPTY_LOCK_GRACE_TRIES=100
+dead_lock_status=0
+_gh_log_lock_reclaim "${GH_API_LOG}.lock" 0 || dead_lock_status=$?
+assert_eq "dead PID lock is reclaimed without the empty-lock grace" "0" "$dead_lock_status"
+
+mkdir "${GH_API_LOG}.lock"
+printf '%s\n' "${BASHPID:-$$}" >"${GH_API_LOG}.lock/pid"
+live_lock_status=0
+_gh_log_lock_reclaim "${GH_API_LOG}.lock" 100 || live_lock_status=$?
+assert_eq "live PID lock is not reclaimed" "1" "$live_lock_status"
+rm -f "${GH_API_LOG}.lock/pid"
+rmdir "${GH_API_LOG}.lock"
+
+# --- Test 10c: issue sync keeps the framework gh shim first on PATH -------
+issue_sync_scripts_dir="$(cd "$PARENT_DIR" && pwd)"
+issue_sync_probe="$TMPDIR/issue-sync-path-probe.sh"
+cat >"$issue_sync_probe" <<'EOF_ISSUE_SYNC_PROBE'
+#!/usr/bin/env bash
+set -euo pipefail
+# shellcheck source=../issue-sync-helper.sh
+source "$ISSUE_SYNC_HELPER" >/dev/null
+printf '%s\n' "${PATH%%:*}"
+EOF_ISSUE_SYNC_PROBE
+issue_sync_path_head=$(ISSUE_SYNC_HELPER="${PARENT_DIR}/issue-sync-helper.sh" PATH="$FAKE_BIN:$saved_path" "$BASH" "$issue_sync_probe")
+assert_eq "issue sync preserves framework gh shim precedence" "$issue_sync_scripts_dir" "$issue_sync_path_head"
+
 # Restore per-test overrides for summary diagnostics if future tests append.
 export AIDEVOPS_GH_API_LOG="$TMPDIR/gh-api-calls.log"
 export AIDEVOPS_GH_API_REPORT="$TMPDIR/report.json"
