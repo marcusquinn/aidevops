@@ -88,6 +88,7 @@ def _validate_policy_guards(guards: Any) -> None:
         raise PolicyError("command policy requires exactly one canonical Git guard")
     if not _has_required_guard(guards, "worker_network", "network-tier-helper.sh"):
         raise PolicyError("command policy requires exactly one worker network guard")
+    _validate_account_mutation_guard(guards)
 
 
 def _has_required_guard(guards: Any, kind: str, helper: str) -> bool:
@@ -101,6 +102,39 @@ def _has_required_guard(guards: Any, kind: str, helper: str) -> bool:
         and matches[0].get("helper") == helper
         and matches[0].get("decision") == "forbid"
     )
+
+
+def _validate_account_mutation_guard(guards: Any) -> None:
+    matches = [
+        guard
+        for guard in guards or []
+        if isinstance(guard, dict)
+        and guard.get("kind") == "trusted_account_mutation"
+    ]
+    if len(matches) != 1:
+        raise PolicyError(
+            "command policy requires exactly one trusted account-mutation guard"
+        )
+    guard = matches[0]
+    command_paths = guard.get("command_paths")
+    valid_paths = (
+        isinstance(command_paths, list)
+        and bool(command_paths)
+        and all(
+            isinstance(path, list)
+            and len(path) == 2
+            and all(isinstance(part, str) and part for part in path)
+            for path in command_paths
+        )
+    )
+    if (
+        guard.get("decision") != "forbid"
+        or guard.get("authorization_env")
+        != "AIDEVOPS_ACCOUNT_MUTATION_AUTHORIZATION"
+        or not valid_paths
+        or ["repo", "fork"] not in command_paths
+    ):
+        raise PolicyError("trusted account-mutation guard is malformed")
 
 
 def _validate_policy_rules(rules: Any) -> None:

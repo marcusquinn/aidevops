@@ -21,8 +21,11 @@ from command_policy_config import (
 )
 from command_policy_evaluation import (
     _evaluate_static,
+    _account_mutation_guard,
+    account_mutation_authorization,
     evaluate_invocations,
 )
+from command_policy_matchers import _matches_gh_command_path
 from command_policy_dispatch import (
     CommandParseError,
     _validate_argv,
@@ -105,7 +108,19 @@ def _parse_invocations(args: argparse.Namespace) -> list[list[str]]:
     return []
 
 
-def _policy_action(args: argparse.Namespace, invocations: list[list[str]]) -> int:
+def _authorization_source(args: argparse.Namespace) -> dict[str, Any] | None:
+    if args.command:
+        return {"kind": "command", "value": args.command}
+    if args.argv_json:
+        return {"kind": "argv", "value": _validate_argv(json.loads(args.argv_json))}
+    return None
+
+
+def _policy_action(
+    args: argparse.Namespace,
+    invocations: list[list[str]],
+    authorization_source: dict[str, Any] | None,
+) -> int:
     policy_path = Path(args.policy) if args.policy else _default_policy_path()
     try:
         policy = _load_policy(policy_path)
@@ -114,6 +129,26 @@ def _policy_action(args: argparse.Namespace, invocations: list[list[str]]) -> in
         return _report_policy_error(args.action, exc)
     if args.action == "validate":
         print(f"Command policy valid: {policy_path}")
+        return 0
+    if args.action == "authorization-digest":
+        guard = _account_mutation_guard(policy)
+        if len(invocations) != 1 or not _matches_gh_command_path(
+            invocations[0], guard["command_paths"]
+        ):
+            print(
+                json.dumps(
+                    _parse_error(
+                        "authorization digest requires one protected account mutation"
+                    ),
+                    sort_keys=True,
+                )
+            )
+            return FORBID_EXIT
+        print(
+            account_mutation_authorization(
+                invocations[0], args.cwd, authorization_source
+            )
+        )
         return 0
     if not invocations:
         print(json.dumps(_parse_error("command or argv input is required"), sort_keys=True))
@@ -126,6 +161,8 @@ def _policy_action(args: argparse.Namespace, invocations: list[list[str]]) -> in
         args.worker or _worker_from_environment(),
         args.worker_id,
         args.network_helper,
+        args.account_mutation_authorization,
+        authorization_source,
     )
     print(json.dumps(result, sort_keys=True))
     return 0 if result["decision"] == "allow" else FORBID_EXIT
@@ -136,12 +173,13 @@ def main() -> int:
 
     try:
         invocations = _parse_invocations(args)
+        authorization_source = _authorization_source(args)
     except (json.JSONDecodeError, CommandParseError) as exc:
         print(json.dumps(_parse_error(str(exc)), sort_keys=True))
         return FORBID_EXIT
     if args.action == "network-destinations":
         return _network_action(invocations, args.cwd)
-    return _policy_action(args, invocations)
+    return _policy_action(args, invocations, authorization_source)
 
 
 if __name__ == "__main__":

@@ -34,7 +34,13 @@ def _worker_from_environment() -> bool:
 def _argument_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser()
     parser.add_argument(
-        "action", choices=("check-command", "validate", "network-destinations")
+        "action",
+        choices=(
+            "authorization-digest",
+            "check-command",
+            "validate",
+            "network-destinations",
+        ),
     )
     source = parser.add_mutually_exclusive_group()
     source.add_argument("--command", default="")
@@ -46,6 +52,12 @@ def _argument_parser() -> argparse.ArgumentParser:
     parser.add_argument("--worker", action="store_true")
     parser.add_argument(
         "--worker-id", default=os.environ.get("AIDEVOPS_WORKER_ID", "unknown")
+    )
+    # #aidevops:trust-boundary — this value comes from the policy process'
+    # inherited environment, never from an assignment inside the checked command.
+    parser.add_argument(
+        "--account-mutation-authorization",
+        default=os.environ.get("AIDEVOPS_ACCOUNT_MUTATION_AUTHORIZATION", ""),
     )
     return parser
 

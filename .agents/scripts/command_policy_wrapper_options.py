@@ -116,10 +116,12 @@ def _unwrap_time(argv: list[str]) -> list[str]:
 def _is_safety_sensitive_assignment(name: str) -> bool:
     upper = name.upper()
     return upper.endswith("_PROXY") or upper.startswith("GIT_CONFIG_") or upper in {
+        "AIDEVOPS_ACCOUNT_MUTATION_AUTHORIZATION",
         "ALL_PROXY", "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_COMMON_DIR",
         "GIT_CONFIG_PARAMETERS", "GIT_DIR", "GIT_EXEC_PATH", "GIT_OBJECT_DIRECTORY",
         "GIT_PROXY_COMMAND", "GIT_SSH", "GIT_SSH_COMMAND", "GIT_WORK_TREE",
-        "CURL_HOME", "WGETRC", "BASH_ENV", "ENV", "ZDOTDIR",
+        "CURL_HOME", "WGETRC", "BASH_ENV", "ENV", "ZDOTDIR", "GH_CONFIG_DIR",
+        "GH_ENTERPRISE_TOKEN", "GH_HOST", "GH_REPO", "GH_TOKEN", "GITHUB_TOKEN",
     }
 
 

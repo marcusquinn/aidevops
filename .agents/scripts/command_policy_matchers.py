@@ -22,11 +22,18 @@ __all__ = [
     "_is_root_or_home_operand",
     "_is_temp_operand",
     "_matches",
+    "_matches_gh_command_path",
     "_matches_git",
     "_matches_rm",
     "_rm_operands",
     "_short_flags",
 ]
+
+
+def _matches_gh_command_path(argv: list[str], command_paths: list[list[str]]) -> bool:
+    if len(argv) < 3 or os.path.basename(argv[0]) != "gh":
+        return False
+    return argv[1:3] in command_paths
 
 
 def _rm_operands(args: list[str]) -> list[str]:

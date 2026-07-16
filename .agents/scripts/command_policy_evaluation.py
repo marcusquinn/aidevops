@@ -5,8 +5,10 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
+import secrets
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -14,7 +16,7 @@ from pathlib import Path
 from typing import Any
 
 from command_policy_config import _decision
-from command_policy_matchers import _matches
+from command_policy_matchers import _matches, _matches_gh_command_path
 
 DECISION_RANK = {"allow": 0, "forbid": 1}
 
@@ -25,6 +27,8 @@ class _EvaluationOptions:
     worker: bool = False
     worker_id: str = "unknown"
     network_helper: str = ""
+    account_mutation_authorization: str = ""
+    account_mutation_source: dict[str, Any] | None = None
 
 
 def _evaluate_static(
@@ -180,6 +184,70 @@ def _evaluate_worker_network(
     )
 
 
+def _account_mutation_guard(policy: dict[str, Any]) -> dict[str, Any]:
+    return next(
+        guard
+        for guard in policy["dynamic_guards"]
+        if guard["kind"] == "trusted_account_mutation"
+    )
+
+
+def account_mutation_authorization(
+    argv: list[str], cwd: str, source: dict[str, Any] | None = None
+) -> str:
+    payload = {
+        "argv": argv,
+        "cwd": os.path.realpath(cwd),
+        "schema": "aidevops-command-authorization/v1",
+        "source": source or {"kind": "invocations", "value": [argv]},
+    }
+    canonical = json.dumps(
+        payload, ensure_ascii=False, separators=(",", ":"), sort_keys=True
+    ).encode("utf-8")
+    return f"sha256:{hashlib.sha256(canonical).hexdigest()}"
+
+
+def _evaluate_account_mutation(
+    invocations: list[list[str]],
+    cwd: str,
+    policy: dict[str, Any],
+    authorization: str,
+    source: dict[str, Any] | None,
+) -> dict[str, Any]:
+    guard = _account_mutation_guard(policy)
+    mutations = [
+        argv
+        for argv in invocations
+        if _matches_gh_command_path(argv, guard["command_paths"])
+    ]
+    if not mutations:
+        return _decision(
+            "allow",
+            "github.no-account-mutation",
+            "No protected GitHub account mutation detected",
+        )
+    if len(invocations) != 1 or len(mutations) != 1:
+        return _decision(
+            "forbid",
+            guard["id"],
+            "Protected GitHub account mutations must be authorized as one exact command",
+        )
+    expected = account_mutation_authorization(mutations[0], cwd, source)
+    # #aidevops:trust-boundary — only an authorization inherited by the policy
+    # process can cross this gate; command-local attempts are rejected while parsing.
+    if authorization and secrets.compare_digest(authorization, expected):
+        return _decision(
+            "allow",
+            "github.account-mutation-authorized",
+            "Exact GitHub account mutation matches trusted authorization",
+        )
+    return _decision(
+        "forbid",
+        guard["id"],
+        "GitHub account mutation requires exact trusted authorization",
+    )
+
+
 def evaluate_invocations(
     invocations: list[list[str]],
     cwd: str,
@@ -195,6 +263,13 @@ def evaluate_invocations(
             invocations,
             cwd,
             _canonical_guard_path(policy, options.guard_path, script_dir),
+        ),
+        _evaluate_account_mutation(
+            invocations,
+            cwd,
+            policy,
+            options.account_mutation_authorization,
+            options.account_mutation_source,
         ),
     ]
     if options.worker:
@@ -212,10 +287,17 @@ def evaluate_invocations(
 def _evaluation_options(
     legacy_options: tuple[Any, ...], named_options: dict[str, Any]
 ) -> _EvaluationOptions:
-    names = ("guard_path", "worker", "worker_id", "network_helper")
+    names = (
+        "guard_path",
+        "worker",
+        "worker_id",
+        "network_helper",
+        "account_mutation_authorization",
+        "account_mutation_source",
+    )
     if len(legacy_options) > len(names):
         raise TypeError(
-            f"evaluate_invocations() takes from 3 to 7 positional arguments "
+            f"evaluate_invocations() takes from 3 to 9 positional arguments "
             f"but {len(legacy_options) + 3} were given"
         )
     values: dict[str, Any] = dict(zip(names, legacy_options))
