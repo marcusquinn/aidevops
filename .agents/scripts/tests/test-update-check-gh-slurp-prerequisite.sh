@@ -131,6 +131,20 @@ test_update_available_preserves_full_session_status() {
 	return 0
 }
 
+test_update_available_warns_once_for_old_gh() {
+	setup_fake_tools "gh version 2.45.0 (2025-07-18 Ubuntu 2.45.0-1ubuntu0.3)" "1.0.1"
+	local output=""
+	local warning_count=0
+	output=$(OPENCODE=1 bash "$UPDATE_CHECK" --interactive 2>/dev/null || true)
+	warning_count=$(printf '%s\n' "$output" | grep -cF "[WARN] GitHub CLI prerequisite:" || true)
+	if [[ "$warning_count" -eq 1 ]]; then
+		print_result "update available emits the old gh warning once" 0
+	else
+		print_result "update available emits the old gh warning once" 1 "count=${warning_count}, output='${output}'"
+	fi
+	return 0
+}
+
 test_cache_write_propagates_output_failure() {
 	local cache_dir=""
 	local status=0
@@ -190,6 +204,7 @@ test_setup_fake_tools_removes_previous_root
 test_old_gh_warns_in_update_check
 test_supported_gh_has_no_warning
 test_update_available_preserves_full_session_status
+test_update_available_warns_once_for_old_gh
 test_cache_write_propagates_output_failure
 test_cache_write_propagates_move_failure
 
