@@ -381,10 +381,13 @@ test("derives the same scope from paths in one Git common directory", () => {
   assert.match(rootScope.scopeKey, /^[0-9a-f]{16}$/);
 });
 
-test("CLI creates and renews exactly one checkpoint for one repository scope", () => {
+test("CLI creates and renews one checkpoint through a symlinked deployed entrypoint", () => {
   const directory = testTempRoot();
   try {
     const repositoryRoot = resolve(import.meta.dirname, "../../..");
+    const deployedAgents = join(directory, "deployed-agents");
+    symlinkSync(resolve(import.meta.dirname, "../.."), deployedAgents, "dir");
+    const deployedCoordinator = join(deployedAgents, "scripts", "pulse-campaign-coordinator.mjs");
     const checkpointRoot = join(directory, "checkpoints");
     const issuesFile = join(directory, "issues.json");
     const readyFile = join(directory, "ready.json");
@@ -404,7 +407,7 @@ test("CLI creates and renews exactly one checkpoint for one repository scope", (
     writeFileSync(peerFile, JSON.stringify({}));
 
     const baseArgs = [
-      COORDINATOR_PATH,
+      deployedCoordinator,
       "plan",
       "--repo", "example/repository",
       "--repo-path", repositoryRoot,

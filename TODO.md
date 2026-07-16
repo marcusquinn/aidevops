@@ -4619,3 +4619,9 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [x] t18139 Pulse 2: add repository campaigns and swarm-aware execution #architecture #enhancement #orchestration #pulse #release ref:GH#27939 pr:#27951 completed:2026-07-16
 
 - [x] t18140 Harden local OpenCode server defaults #security ref:GH#27942 pr:#27943 completed:2026-07-16
+
+- [x] t18141 Fix Pulse campaign coordinator execution through deployed symlink #bug #pulse ref:GH#27966 pr:#27968 completed:2026-07-16
+
+- [x] t18142 MCP inspector health check accepts unrelated HTTP services #bug #mcp ref:GH#27967 pr:#27969 completed:2026-07-16
+
+- [ ] t18143 Honor configurable ports in MCP inspector health and gateway checks #bug #localhost #mcp #shell ref:GH#27972
