@@ -14,12 +14,15 @@
  * 
  * Environment Variables:
  *   API_GATEWAY_PORT - Port to listen on (default: 3100)
- *   CORS_ORIGINS - Comma-separated allowed origins (default: *)
+ *   API_GATEWAY_HOST - Host to listen on (default: 127.0.0.1)
+ *   API_GATEWAY_TOKEN - Required bearer token for every endpoint
+ *   CORS_ORIGINS - Comma-separated trusted HTTP(S) origins (default: none)
  *   RATE_LIMIT_MAX - Max requests per window (default: 100)
  *   RATE_LIMIT_WINDOW - Window in ms (default: 60000)
  */
 
 import { Elysia, t } from 'elysia'
+import { getListenHost, hasValidBearerToken, parseAllowedOrigins, requireServerToken } from './security'
 
 // Types
 interface CacheEntry<T> {
@@ -59,6 +62,8 @@ interface RateLimitEntry {
 // Configuration
 const CONFIG = {
   port: Number(process.env.API_GATEWAY_PORT) || 3100,
+  host: getListenHost(process.env.API_GATEWAY_HOST),
+  authToken: requireServerToken('API_GATEWAY_TOKEN', process.env.API_GATEWAY_TOKEN),
   sonarcloud: {
     baseUrl: 'https://sonarcloud.io/api',
     projectKey: process.env.SONAR_PROJECT_KEY || 'marcusquinn_aidevops',
@@ -77,7 +82,7 @@ const CONFIG = {
     window: Number(process.env.RATE_LIMIT_WINDOW) || 60000,
   },
   cors: {
-    origins: (process.env.CORS_ORIGINS || '*').split(','),
+    origins: parseAllowedOrigins(process.env.CORS_ORIGINS),
   },
 }
 
@@ -371,17 +376,32 @@ function handleCacheStats() {
 // Middleware
 // ============================================
 
-function applyCorsHeaders(request: Request, set: { headers: Record<string, string> }): Response | undefined {
+function applyCorsHeaders(request: Request, set: { headers: Record<string, string | number> }): Response | undefined {
   const origin = request.headers.get('origin')
-  if (CONFIG.cors.origins.includes('*') || (origin && CONFIG.cors.origins.includes(origin))) {
-    set.headers['Access-Control-Allow-Origin'] = origin || '*'
-    set.headers['Access-Control-Allow-Methods'] = 'GET, POST, PUT, DELETE, OPTIONS'
+  if (origin && CONFIG.cors.origins.includes(origin)) {
+    set.headers['Access-Control-Allow-Origin'] = origin
+    set.headers['Access-Control-Allow-Methods'] = 'GET, POST, DELETE, OPTIONS'
     set.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization'
+    set.headers['Vary'] = 'Origin'
   }
   if (request.method === 'OPTIONS') {
     return new Response(null, { status: 204 })
   }
   return undefined
+}
+
+function applyAuthentication(
+  request: Request,
+  set: { headers: Record<string, string | number>; status: number }
+): { error: string; message: string } | undefined {
+  if (hasValidBearerToken(request.headers.get('authorization'), CONFIG.authToken)) return undefined
+
+  set.status = 401
+  set.headers['WWW-Authenticate'] = 'Bearer realm="aidevops-api-gateway"'
+  return {
+    error: 'Unauthorized',
+    message: 'Set the Authorization header to Bearer <API_GATEWAY_TOKEN>',
+  }
 }
 
 function applyRateLimit(
@@ -412,6 +432,7 @@ function applyRateLimit(
 // Create the Elysia app
 const app = new Elysia()
   .onBeforeHandle(({ request, set }) => applyCorsHeaders(request, set))
+  .onBeforeHandle(({ request, set }) => applyAuthentication(request, set as Parameters<typeof applyAuthentication>[1]))
   .onBeforeHandle(({ request, set }) => applyRateLimit(request, set as Parameters<typeof applyRateLimit>[1]))
 
   .get('/health', () => handleHealth())
@@ -450,7 +471,7 @@ const app = new Elysia()
           })),
         }),
       })
-      .post('/extract', ({ body }) => handleCrawl4aiExtract(body), {
+      .post('/extract', ({ body }) => handleCrawl4aiExtract(body as { urls: string[]; schema: Record<string, string> }), {
         body: t.Object({
           urls: t.Array(t.String()),
           schema: t.Record(t.String(), t.String()),
@@ -475,18 +496,20 @@ const app = new Elysia()
 
   // Error handling
   .onError(({ code, error }) => {
-    console.error(`[API Gateway Error] ${code}:`, error.message)
-    return { error: true, code, message: error.message }
+    const message = error instanceof Error ? error.message : 'Request failed'
+    console.error(`[API Gateway Error] ${code}:`, message)
+    return { error: true, code, message }
   })
 
-  .listen(CONFIG.port)
+  .listen({ port: CONFIG.port, hostname: CONFIG.host })
 
-console.log(`🦊 API Gateway running at http://localhost:${CONFIG.port}`)
+console.log(`🦊 API Gateway running at http://${CONFIG.host}:${CONFIG.port}`)
 console.log(`
 Configuration:
+  Authentication: required
   Cache: ${CONFIG.cache.maxSize} max entries, ${CONFIG.cache.qualityTtl/1000}s TTL
   Rate Limit: ${CONFIG.rateLimit.max} requests per ${CONFIG.rateLimit.window/1000}s
-  CORS: ${CONFIG.cors.origins.join(', ')}
+  CORS: ${CONFIG.cors.origins.join(', ') || 'same-origin only'}
 
 Available endpoints:
   GET  /health                    - Gateway health check

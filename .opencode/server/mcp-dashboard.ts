@@ -8,11 +8,13 @@
  * Usage: bun run .opencode/server/mcp-dashboard.ts
  * 
  * Environment Variables:
- *   DASHBOARD_TOKEN - Bearer token for authenticated endpoints (required for start/stop)
+ *   DASHBOARD_TOKEN - Required bearer token for server status and control endpoints
  *   MCP_DASHBOARD_PORT - Port to listen on (default: 3101)
+ *   MCP_DASHBOARD_HOST - Host to listen on (default: 127.0.0.1)
  */
 
 import { Elysia, t } from 'elysia'
+import { getListenHost, hasValidBearerToken, requireServerToken } from './security'
 
 // Types
 interface McpServer {
@@ -27,8 +29,8 @@ interface McpServer {
 // Configuration
 const CONFIG = {
   port: Number(process.env.MCP_DASHBOARD_PORT) || 3101,
-  authToken: process.env.DASHBOARD_TOKEN || '',
-  requireAuth: !!process.env.DASHBOARD_TOKEN,
+  host: getListenHost(process.env.MCP_DASHBOARD_HOST),
+  authToken: requireServerToken('DASHBOARD_TOKEN', process.env.DASHBOARD_TOKEN),
 }
 
 // MCP Server definitions
@@ -42,16 +44,21 @@ const MCP_SERVERS: Array<{ name: string; command: string; port?: number; healthC
   { name: 'memory', command: 'npx @anthropic/mcp-server-memory', port: 3012 },
 ]
 
-// Authentication helper
-function validateAuth(authHeader: string | null): boolean {
-  if (!CONFIG.requireAuth) {
-    return true
+function applyAuthentication(
+  request: Request,
+  set: { headers: Record<string, string | number>; status: number }
+): { error: string; message: string } | undefined {
+  const pathname = new URL(request.url).pathname
+  const protectedRoute = pathname === '/api/servers' || pathname.startsWith('/api/servers/')
+  if (!protectedRoute) return undefined
+  if (hasValidBearerToken(request.headers.get('authorization'), CONFIG.authToken)) return undefined
+
+  set.status = 401
+  set.headers['WWW-Authenticate'] = 'Bearer realm="aidevops-mcp-dashboard"'
+  return {
+    error: 'Unauthorized',
+    message: 'Set the Authorization header to Bearer <DASHBOARD_TOKEN>',
   }
-  if (!authHeader) {
-    return false
-  }
-  const token = authHeader.replace('Bearer ', '')
-  return token === CONFIG.authToken
 }
 
 // Check if a server is running
@@ -95,9 +102,12 @@ async function checkServerHealth(server: typeof MCP_SERVERS[0]): Promise<McpServ
 
 // Server state
 const serverState = new Map<string, McpServer>()
+const managedProcesses = new Map<string, Bun.Subprocess>()
 
 // Create the dashboard app
 const app = new Elysia()
+  .onBeforeHandle(({ request, set }) => applyAuthentication(request, set as Parameters<typeof applyAuthentication>[1]))
+
   // Serve dashboard HTML
   .get('/', () => {
     return new Response(DASHBOARD_HTML, {
@@ -105,7 +115,7 @@ const app = new Elysia()
     })
   })
 
-  // Get all server statuses (public)
+  // Get all server statuses (authenticated)
   .get('/api/servers', async () => {
     // Refresh all server statuses
     const checks = await Promise.all(
@@ -122,7 +132,7 @@ const app = new Elysia()
     }
   })
 
-  // Get single server status (public)
+  // Get single server status (authenticated)
   .get('/api/servers/:name', async ({ params }) => {
     const serverDef = MCP_SERVERS.find(s => s.name === params.name)
     if (!serverDef) {
@@ -135,31 +145,32 @@ const app = new Elysia()
   })
 
   // Start a server (authenticated)
-  .post('/api/servers/:name/start', async ({ params, headers, set }) => {
-    // Check authentication
-    const authHeader = headers.authorization || null
-    if (!validateAuth(authHeader)) {
-      set.status = 401
-      return { 
-        error: 'Unauthorized', 
-        message: CONFIG.requireAuth 
-          ? 'Set Authorization: Bearer <DASHBOARD_TOKEN> header' 
-          : 'Authentication not configured'
-      }
-    }
-
+  .post('/api/servers/:name/start', async ({ params, set }) => {
     const serverDef = MCP_SERVERS.find(s => s.name === params.name)
     if (!serverDef) {
       set.status = 404
       return { error: 'Server not found' }
     }
 
+    const existingProcess = managedProcesses.get(params.name)
+    if (existingProcess?.exitCode === null) {
+      set.status = 409
+      return { error: 'Server was already started by this dashboard instance' }
+    }
+    managedProcesses.delete(params.name)
+
     try {
       // Start the server in background using safe spawn with array args
       const [cmd, ...args] = serverDef.command.split(' ')
-      Bun.spawn([cmd, ...args], {
+      const process = Bun.spawn([cmd, ...args], {
         stdout: 'ignore',
         stderr: 'ignore',
+      })
+      managedProcesses.set(params.name, process)
+      void process.exited.then(() => {
+        if (managedProcesses.get(params.name)?.pid === process.pid) {
+          managedProcesses.delete(params.name)
+        }
       })
 
       return { 
@@ -176,37 +187,26 @@ const app = new Elysia()
   })
 
   // Stop a server (authenticated)
-  .post('/api/servers/:name/stop', async ({ params, headers, set }) => {
-    // Check authentication
-    const authHeader = headers.authorization || null
-    if (!validateAuth(authHeader)) {
-      set.status = 401
-      return { 
-        error: 'Unauthorized',
-        message: CONFIG.requireAuth 
-          ? 'Set Authorization: Bearer <DASHBOARD_TOKEN> header' 
-          : 'Authentication not configured'
-      }
-    }
-
+  .post('/api/servers/:name/stop', async ({ params, set }) => {
     const serverDef = MCP_SERVERS.find(s => s.name === params.name)
     if (!serverDef) {
       set.status = 404
       return { error: 'Server not found' }
     }
 
-    try {
-      // Use safe spawn with array args - escape the server name for pkill pattern
-      const safeName = params.name.replace(/[^a-zA-Z0-9-_]/g, '')
-      const proc = Bun.spawn(['pkill', '-f', safeName], {
-        stdout: 'pipe',
-        stderr: 'pipe',
-      })
-      await proc.exited
-      return { success: true, message: `Stopped ${params.name}` }
-    } catch {
-      return { success: true, message: `${params.name} was not running` }
+    const process = managedProcesses.get(params.name)
+    if (!process || process.exitCode !== null) {
+      managedProcesses.delete(params.name)
+      set.status = 409
+      return { error: 'Only processes started by this dashboard instance can be stopped' }
     }
+
+    process.kill()
+    await process.exited
+    if (managedProcesses.get(params.name)?.pid === process.pid) {
+      managedProcesses.delete(params.name)
+    }
+    return { success: true, message: `Stopped ${params.name}` }
   })
 
   // WebSocket for real-time updates
@@ -217,7 +217,7 @@ const app = new Elysia()
       ws.send(JSON.stringify({
         type: 'connected',
         servers: MCP_SERVERS.map(s => s.name),
-        authRequired: CONFIG.requireAuth,
+        authRequired: true,
       }))
     },
     message(ws, message) {
@@ -241,25 +241,21 @@ const app = new Elysia()
   .get('/health', () => ({
     status: 'healthy',
     service: 'mcp-dashboard',
-    authRequired: CONFIG.requireAuth,
+    authRequired: true,
     timestamp: Date.now(),
   }))
 
   // Auth status (public - shows if auth is required, not the token)
   .get('/api/auth/status', () => ({
-    required: CONFIG.requireAuth,
-    configured: !!CONFIG.authToken,
+    required: true,
+    configured: true,
   }))
 
-  .listen(CONFIG.port)
+  .listen({ port: CONFIG.port, hostname: CONFIG.host })
 
-console.log(`🎛️  MCP Dashboard running at http://localhost:${CONFIG.port}`)
-console.log(`   WebSocket available at ws://localhost:${CONFIG.port}/ws`)
-if (CONFIG.requireAuth) {
-  console.log(`   🔐 Authentication ENABLED for control endpoints`)
-} else {
-  console.log(`   ⚠️  Authentication DISABLED - set DASHBOARD_TOKEN to enable`)
-}
+console.log(`🎛️  MCP Dashboard running at http://${CONFIG.host}:${CONFIG.port}`)
+console.log(`   WebSocket available at ws://${CONFIG.host}:${CONFIG.port}/ws`)
+console.log(`   🔐 Authentication ENABLED for server status and control endpoints`)
 
 // Dashboard HTML with auth support
 const DASHBOARD_HTML = `<!DOCTYPE html>
@@ -326,7 +322,7 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
   <h1>🎛️ MCP Server Dashboard</h1>
   
   <div class="auth-bar">
-    <input type="password" id="authToken" placeholder="Enter DASHBOARD_TOKEN for control access" onkeydown="if(event.key==='Enter')setToken()">
+    <input type="password" id="authToken" placeholder="Enter DASHBOARD_TOKEN for server access" onkeydown="if(event.key==='Enter')setToken()">
     <button onclick="setToken()">Set Token</button>
     <button id="clearTokenBtn" onclick="clearToken()" style="display:none;background:#da3633;border-color:#da3633;">Clear Token</button>
     <span class="auth-status" id="authStatus">Not authenticated</span>
@@ -340,7 +336,11 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
   <script>
     let ws;
     let authToken = sessionStorage.getItem('dashboardToken') || '';
-    let authRequired = false;
+    let authRequired = true;
+
+    function authHeaders() {
+      return authToken ? { 'Authorization': 'Bearer ' + authToken } : {};
+    }
     
     function setToken() {
       const input = document.getElementById('authToken');
@@ -375,7 +375,7 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
     
     async function fetchServers() {
       try {
-        const res = await fetch('/api/servers');
+        const res = await fetch('/api/servers', { headers: authHeaders() });
         const data = await res.json();
         renderServers(data.servers);
         document.getElementById('lastUpdate').textContent = 
@@ -423,7 +423,7 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
       try {
         const res = await fetch('/api/servers/' + name + '/start', { 
           method: 'POST',
-          headers: authToken ? { 'Authorization': 'Bearer ' + authToken } : {}
+          headers: authHeaders()
         });
         const data = await res.json();
         if (data.error) {
@@ -441,7 +441,7 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
       try {
         const res = await fetch('/api/servers/' + name + '/stop', { 
           method: 'POST',
-          headers: authToken ? { 'Authorization': 'Bearer ' + authToken } : {}
+          headers: authHeaders()
         });
         const data = await res.json();
         if (data.error) {
@@ -456,7 +456,7 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
     }
 
     async function checkServer(name) {
-      const res = await fetch('/api/servers/' + name);
+      const res = await fetch('/api/servers/' + name, { headers: authHeaders() });
       const data = await res.json();
       alert(name + ': ' + data.status);
       fetchServers();

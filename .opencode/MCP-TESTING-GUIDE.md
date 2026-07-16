@@ -9,12 +9,33 @@ This guide covers testing MCP servers and the Elysia API Gateway using the MCP I
 
 ### 1. Start Local Servers
 
+Generate local bearer tokens in trusted shells. Do not commit the values:
+
 ```bash
 # Terminal 1: Start API Gateway (port 3100)
+export API_GATEWAY_TOKEN="$(openssl rand -hex 32)"
 bun run dev
 
-# Terminal 2: Start MCP Dashboard (port 3101)  
+# Terminal 2: Start MCP Dashboard (port 3101)
+export DASHBOARD_TOKEN="$(openssl rand -hex 32)"
 bun run dashboard
+```
+
+Both servers bind to `127.0.0.1` by default and refuse to start without their token.
+Keep `API_GATEWAY_TOKEN` available in shells that run gateway checks. Enter
+`DASHBOARD_TOKEN` in the dashboard when prompted; it is retained only in session storage.
+
+For direct gateway requests, define this Bash helper so the token is passed through an
+anonymous configuration stream instead of appearing in process arguments:
+
+```bash
+gateway_curl() {
+  local url="$1"
+  shift
+  curl --fail --silent --show-error \
+    --config <(printf 'header = "Authorization: Bearer %s"\n' "$API_GATEWAY_TOKEN") \
+    "$@" "$url"
+}
 ```
 
 ### 2. Run Health Check
@@ -98,16 +119,9 @@ npx @modelcontextprotocol/inspector --config .opencode/server/mcp-test-config.js
 
 ### HTTP/SSE Servers
 
-```bash
-# Connect to HTTP server
-npx @modelcontextprotocol/inspector --cli http://localhost:3100 --transport http --method tools/list
-
-# With custom headers
-npx @modelcontextprotocol/inspector --cli http://localhost:3100 \
-  --transport http \
-  --method tools/list \
-  --header "Authorization: Bearer token"
-```
+Do not pass bearer tokens through the Inspector's `--header` option: command-line
+arguments can be visible to other local processes. Use a protected Inspector
+configuration mechanism or the `gateway_curl` helper for gateway HTTP endpoints.
 
 ## API Gateway Endpoints
 
@@ -115,45 +129,44 @@ npx @modelcontextprotocol/inspector --cli http://localhost:3100 \
 
 ```bash
 # Health check
-curl http://localhost:3100/health
+gateway_curl http://localhost:3100/health
 
 # Cache statistics
-curl http://localhost:3100/api/cache/stats
+gateway_curl http://localhost:3100/api/cache/stats
 
 # Clear cache
-curl -X DELETE http://localhost:3100/api/cache
+gateway_curl http://localhost:3100/api/cache -X DELETE
 ```
 
 ### SonarCloud Integration
 
 ```bash
 # Get issues
-curl http://localhost:3100/api/sonarcloud/issues
+gateway_curl http://localhost:3100/api/sonarcloud/issues
 
 # Get quality gate status
-curl http://localhost:3100/api/sonarcloud/status
+gateway_curl http://localhost:3100/api/sonarcloud/status
 
 # Get metrics
-curl http://localhost:3100/api/sonarcloud/metrics
+gateway_curl http://localhost:3100/api/sonarcloud/metrics
 ```
 
 ### Quality Summary
 
 ```bash
 # Unified quality summary (cached)
-curl http://localhost:3100/api/quality/summary
+gateway_curl http://localhost:3100/api/quality/summary
 ```
 
 ### Crawl4AI Proxy
 
 ```bash
 # Check Crawl4AI health
-curl http://localhost:3100/api/crawl4ai/health
+gateway_curl http://localhost:3100/api/crawl4ai/health
 
 # Crawl a URL (requires Crawl4AI running)
-curl -X POST http://localhost:3100/api/crawl4ai/crawl \
-  -H "Content-Type: application/json" \
-  -d '{"urls": ["https://example.com"]}'
+gateway_curl http://localhost:3100/api/crawl4ai/crawl \
+  -X POST -H "Content-Type: application/json" -d '{"urls": ["https://example.com"]}'
 ```
 
 ## MCP Dashboard
@@ -161,7 +174,7 @@ curl -X POST http://localhost:3100/api/crawl4ai/crawl \
 Access at `http://localhost:3101` for:
 
 - Real-time server status monitoring
-- Start/stop MCP servers
+- Authenticated status and start/stop controls
 - WebSocket-based live updates
 - Server health checks
 
@@ -173,6 +186,19 @@ ws.onmessage = (e) => console.log(JSON.parse(e.data))
 ```
 
 ## Configuration
+
+### Local Server Security
+
+| Variable | Required | Default | Purpose |
+|----------|----------|---------|---------|
+| `API_GATEWAY_TOKEN` | Yes | None | Bearer token required by every gateway endpoint |
+| `DASHBOARD_TOKEN` | Yes | None | Bearer token required by dashboard status and control endpoints |
+| `API_GATEWAY_HOST` | No | `127.0.0.1` | Gateway listen host |
+| `MCP_DASHBOARD_HOST` | No | `127.0.0.1` | Dashboard listen host |
+| `CORS_ORIGINS` | No | None | Comma-separated explicit HTTP(S) origins; wildcard values are rejected |
+
+Setting either host to `0.0.0.0` is an explicit network-exposure opt-in. Authentication
+remains mandatory; use TLS plus additional firewall and network controls.
 
 ### Config File Location
 
@@ -225,7 +251,7 @@ ws.onmessage = (e) => console.log(JSON.parse(e.data))
 3. Test direct connection:
 
    ```bash
-   curl -v http://localhost:3100/health
+   gateway_curl http://localhost:3100/health --verbose
    ```
 
 ### Inspector Connection Failed
@@ -259,16 +285,9 @@ ws.onmessage = (e) => console.log(JSON.parse(e.data))
 
 ### Benchmark API Gateway
 
-```bash
-# Install hey (HTTP load generator)
-brew install hey
-
-# Benchmark health endpoint
-hey -n 1000 -c 10 http://localhost:3100/health
-
-# Benchmark quality summary (with caching)
-hey -n 100 -c 5 http://localhost:3100/api/quality/summary
-```
+Avoid benchmark clients that accept authorization headers only through command-line
+arguments, because they expose the token through process inspection. Use an isolated,
+disposable gateway token and a client that accepts headers through protected standard input.
 
 ### Expected Performance
 
@@ -284,7 +303,9 @@ The API Gateway integrates with OpenCode tools:
 
 ```typescript
 // In .opencode/tool/quality-check.ts
-const response = await fetch('http://localhost:3100/api/quality/summary')
+const response = await fetch('http://localhost:3100/api/quality/summary', {
+  headers: { Authorization: `Bearer ${process.env.API_GATEWAY_TOKEN}` },
+})
 const data = await response.json()
 ```
 
