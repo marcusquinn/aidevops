@@ -116,6 +116,15 @@ capture_git_provenance() {
 		log_error "--pr must be numeric"
 		return 1
 	fi
+	repository=$(printf '%s' "$repository" | tr '[:upper:]' '[:lower:]')
+	repository="${repository%.git}"
+	if [[ -z "$repository" && -n "$worktree" && -d "$worktree" ]]; then
+		repository=$(repository_slug_for_path "$worktree")
+	fi
+	if [[ -z "$repository" ]]; then
+		log_warn "Authoritative repository attribution is unavailable; provenance was not recorded"
+		return 1
+	fi
 	if [[ -z "$head_commit" && -n "$worktree" && -d "$worktree" ]]; then
 		head_commit=$(git -C "$worktree" rev-parse HEAD 2>/dev/null || true)
 	fi
@@ -145,8 +154,15 @@ capture_git_provenance() {
 	local existing='[]'
 	[[ -f "$PROVENANCE_FILE" ]] && existing=$(jq -c '.items // []' "$PROVENANCE_FILE" 2>/dev/null || printf '[]')
 	local key=""
-	key=$(printf '%s\0%s\0%s\0%s\0%s' "$SESSION_ID" "$repository" "$pr_number" "$head_commit" "$merge_commit" | shasum -a 256 | cut -d' ' -f1)
+	key=$(printf '%s\0%s\0%s\0%s' "$SESSION_ID" "$repository" "$pr_number" "$head_commit" | shasum -a 256 | cut -d' ' -f1)
 	if printf '%s' "$existing" | jq -e --arg key "$key" 'any(.[]; .idempotency_key == $key)' >/dev/null; then
+		local enriched=""
+		enriched=$(printf '%s' "$existing" | jq -c --arg key "$key" --arg merge_commit "$merge_commit" \
+			'map(if .idempotency_key == $key and $merge_commit != "" then .merge_commit = $merge_commit else . end)')
+		local enriched_ledger=""
+		enriched_ledger=$(printf '%s' "$enriched" | jq -c --arg session "$SESSION_ID" \
+			'{schema_version:1,session_boundary:$session,items:.}')
+		atomic_write_json "$PROVENANCE_FILE" "$enriched_ledger"
 		return 0
 	fi
 	local item=""
@@ -162,13 +178,20 @@ capture_git_provenance() {
 	return 0
 }
 
-current_repository_slug() {
+repository_slug_for_path() {
+	local repository_path="$1"
 	local remote_url=""
-	remote_url=$(git remote get-url origin 2>/dev/null || true)
-	remote_url="${remote_url#*github.com:}"
-	remote_url="${remote_url#*github.com/}"
+	remote_url=$(git -C "$repository_path" remote get-url origin 2>/dev/null || true)
+	case "$remote_url" in
+	git@*:*/*) remote_url="${remote_url#*:}" ;;
+	ssh://*/*/* | http://*/*/* | https://*/*/*)
+		remote_url="${remote_url#*://}"
+		remote_url="${remote_url#*/}"
+		;;
+	*) remote_url="" ;;
+	esac
 	remote_url="${remote_url%.git}"
-	printf '%s\n' "$remote_url"
+	printf '%s\n' "$remote_url" | tr '[:upper:]' '[:lower:]'
 	return 0
 }
 
@@ -177,7 +200,7 @@ resolve_provenance_item() {
 	local current_repository="$2"
 	local item_repository=""
 	item_repository=$(printf '%s' "$item" | jq -r '.repository // empty')
-	if [[ -n "$current_repository" && -n "$item_repository" && "$item_repository" != "$current_repository" ]]; then
+	if [[ -z "$current_repository" || -z "$item_repository" || "$item_repository" != "$current_repository" ]]; then
 		return 1
 	fi
 	local candidate=""
@@ -197,7 +220,7 @@ session_provenance_items() {
 		return 0
 	}
 	local current_repository=""
-	current_repository=$(current_repository_slug)
+	current_repository=$(repository_slug_for_path ".")
 	local item=""
 	local resolved_items=""
 	while IFS= read -r item; do

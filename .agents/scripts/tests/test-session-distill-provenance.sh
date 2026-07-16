@@ -18,6 +18,13 @@ trap 'rm -rf "$tmp_dir"' EXIT
 workspace="$tmp_dir/workspace"
 repository="$tmp_dir/repository"
 worktree="$tmp_dir/session-worktree"
+mkdir -p "$tmp_dir/bin"
+cat >"$tmp_dir/bin/gh" <<'EOF'
+#!/usr/bin/env bash
+[[ "${GH_PROVENANCE_MODE:-fail}" == success ]] || exit 1
+printf '{"mergeCommit":{"oid":"%s"},"headRefOid":"%s","headRefName":"bugfix/session-owned"}\n' "${GH_MERGE_COMMIT:?}" "${GH_HEAD_COMMIT:?}"
+EOF
+chmod +x "$tmp_dir/bin/gh"
 
 /usr/bin/git init -q -b main "$repository"
 /usr/bin/git -C "$repository" remote add origin https://github.com/example/repository.git
@@ -31,10 +38,11 @@ GIT_AUTHOR_NAME=Test GIT_AUTHOR_EMAIL=test@example.invalid GIT_COMMITTER_NAME=Te
 	/usr/bin/git -C "$worktree" -c commit.gpgsign=false commit -q -am 'fix: session-owned provenance'
 session_commit=$(/usr/bin/git -C "$worktree" rev-parse HEAD)
 
-AIDEVOPS_WORKSPACE="$workspace" AIDEVOPS_SESSION_ID='provenance-session' \
+PATH="$tmp_dir/bin:$PATH" GH_PROVENANCE_MODE=fail AIDEVOPS_WORKSPACE="$workspace" AIDEVOPS_SESSION_ID='provenance-session' \
 	"$HELPER" provenance --commit "$session_commit" --branch bugfix/session-owned \
 	--worktree "$worktree" --repo example/repository --pr 101 >/dev/null
-AIDEVOPS_WORKSPACE="$workspace" AIDEVOPS_SESSION_ID='provenance-session' \
+PATH="$tmp_dir/bin:$PATH" GH_PROVENANCE_MODE=success GH_MERGE_COMMIT="$session_commit" GH_HEAD_COMMIT="$session_commit" \
+	AIDEVOPS_WORKSPACE="$workspace" AIDEVOPS_SESSION_ID='provenance-session' \
 	"$HELPER" provenance --commit "$session_commit" --branch bugfix/session-owned \
 	--worktree "$worktree" --repo example/repository --pr 101 >/dev/null
 
@@ -61,6 +69,7 @@ jq -e '.commit_attribution == "authoritative"' "$analysis" >/dev/null || fail 'c
 jq -e '.recent_commits == ["fix: session-owned provenance"]' "$analysis" >/dev/null || fail 'analysis used commits outside captured provenance'
 jq -e 'all(.[]; .content != "fix: unrelated current main")' "$learnings" >/dev/null || fail 'unrelated current-main commit was distilled'
 [[ "$(jq '[.items[] | select(.idempotency_key != "cross-repo")] | length' "$ledger")" == 1 ]] || fail 'provenance capture was not idempotent'
+jq -e --arg commit "$session_commit" '.items[0].merge_commit == $commit' "$ledger" >/dev/null || fail 'idempotent retry did not enrich merge provenance'
 jq -e '.items[0].worktree == "[local-path]"' "$ledger" >/dev/null || fail 'worktree path was not privacy-redacted'
 
 (
