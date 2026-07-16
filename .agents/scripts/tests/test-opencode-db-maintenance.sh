@@ -12,6 +12,8 @@ set -Eeuo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 HELPER="${SCRIPT_DIR}/../opencode-db-maintenance-helper.sh"
+# shellcheck source=lib/test-helpers.sh
+source "${SCRIPT_DIR}/lib/test-helpers.sh"
 
 if [[ ! -x "$HELPER" ]]; then
 	echo "FAIL: helper not executable at $HELPER"
@@ -419,6 +421,7 @@ chmod +x "$mock_bin/opencode-db-archive.sh"
 
 set +e
 out=$(PATH="$mock_bin:$PATH" MOCK_PULSE_LOG="$mock_pulse_log" MOCK_ARCHIVE_LOG="$mock_archive_log" \
+	PULSE_LIFECYCLE_HELPER="$mock_bin/pulse-lifecycle-helper.sh" \
 	OPENCODE_DB_ARCHIVE_HELPER="$mock_bin/opencode-db-archive.sh" \
 	VACUUM_FREELIST_THRESHOLD=0.01 FORCE_VACUUM_SIZE_MB=0 \
 	_run_helper maintenance-window --force-opencode --keep-sessions 123 2>&1)
@@ -445,6 +448,7 @@ chmod +x "$mock_bin/pgrep"
 
 set +e
 out=$(PATH="$mock_bin:$PATH" MOCK_PULSE_LOG="$mock_pulse_log" MOCK_ARCHIVE_LOG="$mock_archive_log" \
+	PULSE_LIFECYCLE_HELPER="$mock_bin/pulse-lifecycle-helper.sh" \
 	OPENCODE_DB_ARCHIVE_HELPER="$mock_bin/opencode-db-archive.sh" \
 	_run_helper maintenance-window --keep-sessions 123 2>&1)
 rc=$?
@@ -454,6 +458,79 @@ if [[ "$rc" -eq 2 ]] && grep -q '^stop$' "$mock_pulse_log" && grep -q '^start$' 
 	_pass "maintenance-window restarts pulse after active-holder early return"
 else
 	_fail "maintenance-window early-return cleanup failed (rc=$rc) — output: $out"
+fi
+
+# -----------------------------------------------------------------------------
+# Test 14b: deployed sibling lifecycle helper is preferred over PATH
+# -----------------------------------------------------------------------------
+
+deployed_scripts="$SANDBOX/deployed-scripts"
+mkdir -p "$deployed_scripts"
+cp "$HELPER" "$deployed_scripts/opencode-db-maintenance-helper.sh"
+_test_copy_shared_deps "${SCRIPT_DIR}/.." "$deployed_scripts"
+sibling_pulse_log="$SANDBOX/sibling-pulse-lifecycle.log"
+cat >"$deployed_scripts/pulse-lifecycle-helper.sh" <<'MOCK_SIBLING_PULSE'
+#!/usr/bin/env bash
+printf '%s\n' "$1" >>"$SIBLING_PULSE_LOG"
+exit 0
+MOCK_SIBLING_PULSE
+chmod +x "$deployed_scripts/opencode-db-maintenance-helper.sh" "$deployed_scripts/pulse-lifecycle-helper.sh"
+: >"$mock_pulse_log"
+: >"$sibling_pulse_log"
+
+set +e
+out=$(env -u PULSE_LIFECYCLE_HELPER PATH="$mock_bin:$PATH" HOME="$SANDBOX/fakehome" \
+	SIBLING_PULSE_LOG="$sibling_pulse_log" MOCK_PULSE_LOG="$mock_pulse_log" \
+	OPENCODE_DB_ARCHIVE_HELPER="$mock_bin/opencode-db-archive.sh" \
+	"$deployed_scripts/opencode-db-maintenance-helper.sh" maintenance-window --force-opencode --skip-archive 2>&1)
+rc=$?
+set -e
+if [[ "$rc" -eq 0 ]] && grep -q '^stop$' "$sibling_pulse_log" && grep -q '^start$' "$sibling_pulse_log" && [[ ! -s "$mock_pulse_log" ]]; then
+	_pass "maintenance-window prefers deployed sibling lifecycle helper over PATH"
+else
+	_fail "maintenance-window did not prefer sibling lifecycle helper (rc=$rc) — output: $out"
+fi
+
+# -----------------------------------------------------------------------------
+# Test 14c: explicit lifecycle helper override takes precedence over sibling
+# -----------------------------------------------------------------------------
+
+: >"$mock_pulse_log"
+: >"$sibling_pulse_log"
+set +e
+out=$(PATH="$mock_bin:$PATH" HOME="$SANDBOX/fakehome" \
+	PULSE_LIFECYCLE_HELPER="$mock_bin/pulse-lifecycle-helper.sh" \
+	SIBLING_PULSE_LOG="$sibling_pulse_log" MOCK_PULSE_LOG="$mock_pulse_log" \
+	OPENCODE_DB_ARCHIVE_HELPER="$mock_bin/opencode-db-archive.sh" \
+	"$deployed_scripts/opencode-db-maintenance-helper.sh" maintenance-window --force-opencode --skip-archive 2>&1)
+rc=$?
+set -e
+if [[ "$rc" -eq 0 ]] && grep -q '^stop$' "$mock_pulse_log" && grep -q '^start$' "$mock_pulse_log" && [[ ! -s "$sibling_pulse_log" ]]; then
+	_pass "explicit lifecycle helper override takes precedence over sibling"
+else
+	_fail "explicit lifecycle helper override was not preserved (rc=$rc) — output: $out"
+fi
+
+# -----------------------------------------------------------------------------
+# Test 14d: genuinely missing lifecycle helper retains safe warning fallback
+# -----------------------------------------------------------------------------
+
+missing_scripts="$SANDBOX/missing-scripts"
+mkdir -p "$missing_scripts"
+cp "$HELPER" "$missing_scripts/opencode-db-maintenance-helper.sh"
+_test_copy_shared_deps "${SCRIPT_DIR}/.." "$missing_scripts"
+chmod +x "$missing_scripts/opencode-db-maintenance-helper.sh"
+sqlite_dir=$(dirname "$(command -v sqlite3)")
+set +e
+out=$(env -u PULSE_LIFECYCLE_HELPER PATH="$sqlite_dir:/usr/bin:/bin" HOME="$SANDBOX/fakehome" \
+	OPENCODE_DB_ARCHIVE_HELPER="$mock_bin/opencode-db-archive.sh" \
+	"$missing_scripts/opencode-db-maintenance-helper.sh" maintenance-window --force-opencode --skip-archive 2>&1)
+rc=$?
+set -e
+if [[ "$rc" -eq 0 ]] && grep -q "pulse lifecycle helper not found; skipping pulse stop/start" <<<"$out"; then
+	_pass "missing lifecycle helper retains warning and safe fallback"
+else
+	_fail "missing lifecycle helper fallback changed (rc=$rc) — output: $out"
 fi
 
 # -----------------------------------------------------------------------------
