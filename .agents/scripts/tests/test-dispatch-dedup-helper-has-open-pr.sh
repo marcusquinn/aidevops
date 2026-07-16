@@ -371,6 +371,34 @@ test_has_open_pr_blocks_approved_mergeable_sibling() {
 	return 0
 }
 
+test_has_open_pr_allows_healthy_planning_only_sibling() {
+	set_gh_fixtures 'marcusquinn/aidevops|open|#23257|[{"number":23299,"title":"Publish planning brief","body":"For #23257. Planning only.","isDraft":false,"reviewDecision":"APPROVED","mergeStateStatus":"CLEAN","changedFiles":2,"files":[{"path":"TODO.md"},{"path":"todo/tasks/t23257-brief.md"}]}]'
+
+	if "$HELPER_SCRIPT" has-open-pr 23257 marcusquinn/aidevops 't3507: implement planned work'; then
+		print_result "has-open-pr allows dispatch past healthy planning-only sibling" 1 \
+			"Expected complete TODO.md/todo/** file scope to remain non-owning"
+		return 0
+	fi
+
+	print_result "has-open-pr allows dispatch past healthy planning-only sibling" 0
+	return 0
+}
+
+test_has_open_pr_blocks_mixed_or_incomplete_sibling_scope() {
+	set_gh_fixtures 'marcusquinn/aidevops|open|#23258|[{"number":23300,"title":"Mixed implementation","body":"For #23258.","isDraft":false,"reviewDecision":"APPROVED","mergeStateStatus":"CLEAN","changedFiles":2,"files":[{"path":"TODO.md"},{"path":".agents/scripts/fix.sh"}]},{"number":23301,"title":"Incomplete metadata","body":"For #23258.","isDraft":false,"reviewDecision":"APPROVED","mergeStateStatus":"CLEAN","changedFiles":2,"files":[{"path":"TODO.md"}]}]'
+
+	local output=""
+	if output=$("$HELPER_SCRIPT" has-open-pr 23258 marcusquinn/aidevops 't3508: preserve implementation ownership'); then
+		if [[ "$output" == *"open PR #23300 is approved or mergeable"* ]]; then
+			print_result "has-open-pr blocks mixed implementation and incomplete scope" 0
+			return 0
+		fi
+	fi
+
+	print_result "has-open-pr blocks mixed implementation and incomplete scope" 1 "Unexpected output: ${output}"
+	return 0
+}
+
 test_has_open_pr_blocks_approved_sibling_without_merge_state() {
 	# Approved siblings can briefly have UNKNOWN merge state while GitHub computes
 	# mergeability. They should still suppress redispatch unless explicitly
@@ -609,6 +637,8 @@ main() {
 	test_has_open_pr_ignores_open_body_planning_for_reference
 	test_has_open_pr_requires_open_close_keyword_for_our_issue
 	test_has_open_pr_blocks_approved_mergeable_sibling
+	test_has_open_pr_allows_healthy_planning_only_sibling
+	test_has_open_pr_blocks_mixed_or_incomplete_sibling_scope
 	test_has_open_pr_blocks_approved_sibling_without_merge_state
 	test_has_open_pr_blocks_mergeable_sibling_without_approval
 	test_has_open_pr_blocks_refs_colon_healthy_sibling

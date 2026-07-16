@@ -91,7 +91,7 @@ _has_open_pr_check_healthy_sibling() {
 	local pr_json match_pr draft_pr
 	pr_json=$(gh pr list --repo "$repo_slug" --state open \
 		--search "#${issue_number}" --limit 20 \
-		--json number,title,body,isDraft,reviewDecision,mergeStateStatus,mergeable 2>/dev/null) || pr_json="[]"
+		--json number,title,body,isDraft,reviewDecision,mergeStateStatus,mergeable,changedFiles,files 2>/dev/null) || pr_json="[]"
 
 	local issue_ref_pattern healthy_state_pattern blocked_state_pattern
 	issue_ref_pattern="([^[:alnum:]_]|^)((close[sd]?|fix(e[sd])?|resolve[sd]?|for|refs?):?[[:space:]]+([a-zA-Z0-9._-]+/[a-zA-Z0-9._-]+)?#${issue_number}|GH#${issue_number}|#${issue_number})([^[:alnum:]_]|$)"
@@ -115,7 +115,12 @@ _has_open_pr_check_healthy_sibling() {
 		--arg issue_pattern "$issue_ref_pattern" \
 		--arg healthy_pattern "$healthy_state_pattern" \
 		--arg blocked_pattern "$blocked_state_pattern" \
-		'[
+		'def complete_planning_only_scope:
+			(.changedFiles // 0) as $changed |
+			([.files[]?.path] | length) as $returned |
+			($changed > 0) and ($returned == $changed) and
+			([.files[]?.path] | all(.[]; test("^(TODO\\.md$|todo/)")));
+		[
 			.[] | select(
 				(.isDraft // false | not) and
 				((.reviewDecision // "") != "CHANGES_REQUESTED") and
@@ -125,7 +130,8 @@ _has_open_pr_check_healthy_sibling() {
 					((.mergeStateStatus // "") | test($healthy_pattern)) or
 					((.mergeable // "") == "MERGEABLE")
 				) and
-				(((.title // "") | test($issue_pattern; "i")) or ((.body // "") | test($issue_pattern; "i")))
+				(((.title // "") | test($issue_pattern; "i")) or ((.body // "") | test($issue_pattern; "i"))) and
+				(complete_planning_only_scope | not)
 			)
 		] | .[0].number // empty' 2>/dev/null) || match_pr=""
 

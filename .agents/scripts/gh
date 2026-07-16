@@ -1452,6 +1452,21 @@ _shim_normalize_interactive_tracking_issue_create() {
 
 _shim_normalize_interactive_tracking_issue_create
 
+_shim_normalize_pr_create_origin() {
+	[[ "${_modified_args[0]:-}:${_modified_args[1]:-}" == "pr:create" ]] || return 0
+	# Respect an explicit immutable origin. Raw gh callers otherwise receive the
+	# same session provenance as gh_create_pr so worker drafts are recoverable.
+	_shim_issue_create_has_label_prefix "origin:" && return 0
+	local origin_label="origin:interactive"
+	if _shim_is_headless_automation; then
+		origin_label="origin:worker"
+	fi
+	_modified_args+=(--label "$origin_label")
+	return 0
+}
+
+_shim_normalize_pr_create_origin
+
 _shim_pr_create_get_title() {
 	local idx=0
 	local arg=""

@@ -405,10 +405,23 @@ _finalize_wip_history() {
 	fi
 
 	local base_branch="" branch_range="" branch_subjects=""
-	local base_ref=""
+	local base_ref="" base_oid=""
 	base_branch=$(_resolve_remote_default_branch origin) || return 1
 	printf -v base_ref 'origin/%s' "$base_branch"
-	printf -v branch_range '%s..HEAD' "$base_ref"
+	if ! git fetch origin "$base_branch" --quiet 2>/dev/null; then
+		print_error "Cannot refresh ${base_ref} before WIP history finalization."
+		return 1
+	fi
+	base_oid=$(git rev-parse "$base_ref" 2>/dev/null) || {
+		print_error "Cannot snapshot ${base_ref} before WIP history finalization."
+		return 1
+	}
+	if ! git merge-base --is-ancestor "$base_oid" HEAD 2>/dev/null; then
+		print_error "Refusing WIP finalization: current ${base_ref} is not an ancestor of HEAD."
+		print_error "Rebase onto ${base_ref}, resolve any conflicts, then retry commit-and-pr."
+		return 1
+	fi
+	printf -v branch_range '%s..HEAD' "$base_oid"
 	if ! branch_subjects=$(git log --format=%s "$branch_range" 2>/dev/null); then
 		print_error "Cannot inspect branch commit subjects relative to ${base_ref}."
 		return 1
@@ -440,8 +453,8 @@ _finalize_wip_history() {
 		print_error "Cannot record the original branch tip before WIP finalization."
 		return 1
 	}
-	print_info "Finalizing WIP history into one commit relative to ${base_ref}..."
-	if ! git reset --soft "$base_ref"; then
+	print_info "Finalizing WIP history into one commit relative to ${base_ref} at ${base_oid}..."
+	if ! git reset --soft "$base_oid"; then
 		print_error "Failed to prepare WIP history for finalization."
 		return 1
 	fi

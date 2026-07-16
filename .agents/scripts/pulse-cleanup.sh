@@ -1517,12 +1517,13 @@ _cleanup_single_worktree() {
 	repo_name_age=$(basename "$rp_age")
 	local orphan_issue_num=""
 	orphan_issue_num=$(_pc_issue_from_branch "$wt_branch_age" 2>/dev/null || true)
-	if _pc_handle_terminal_worktree_archive "$rp_age" "$wt_path_age" "$wt_branch_age" "$orphan_issue_num" "$commits_ahead" "$dirty_count" "$wt_age_secs" "$repo_name_age" "$repo_slug_age"; then
-		return 0
-	fi
-
+	# Live ownership is an unconditional destructive-operation guard. Terminal
+	# state must not bypass it and archive/stash/remove a still-owned worktree.
 	if _worktree_owner_alive "$wt_path_age" "$wt_branch_age"; then
 		return 1
+	fi
+	if _pc_handle_terminal_worktree_archive "$rp_age" "$wt_path_age" "$wt_branch_age" "$orphan_issue_num" "$commits_ahead" "$dirty_count" "$wt_age_secs" "$repo_name_age" "$repo_slug_age"; then
+		return 0
 	fi
 
 	local audit_context

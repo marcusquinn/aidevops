@@ -21,10 +21,13 @@ Always assign to a variable first — never interpolate directly (shell injectio
 
 ```bash
 TASK_TITLE="<sanitized title from user input>"
+# For a child task, resolve the parent's durable `ref:GH#NNN` first. Fail
+# closed if the parent has no numeric GitHub ref; do not file an orphan child.
+PARENT_ISSUE_ARGS=() # or: PARENT_ISSUE_ARGS=(--parent-issue "$PARENT_ISSUE")
 # Via planning-commit-helper.sh wrapper (preferred)
-output=$(~/.aidevops/agents/scripts/planning-commit-helper.sh next-id --title "$TASK_TITLE")
+output=$(~/.aidevops/agents/scripts/planning-commit-helper.sh next-id --title "$TASK_TITLE" "${PARENT_ISSUE_ARGS[@]}")
 # Or directly
-output=$(~/.aidevops/agents/scripts/claim-task-id.sh --title "$TASK_TITLE" --repo-path "$(git rev-parse --show-toplevel)")
+output=$(~/.aidevops/agents/scripts/claim-task-id.sh --title "$TASK_TITLE" --repo-path "$(git rev-parse --show-toplevel)" "${PARENT_ISSUE_ARGS[@]}")
 ```
 
 ```bash
@@ -99,6 +102,9 @@ Fill in the `### Complexity Impact` subsection in the brief (see `templates/brie
 **Session ID:** `$OPENCODE_SESSION_ID` / `$CLAUDE_SESSION_ID`, or `{app}:unknown-{ISO-date}` if unavailable.
 
 **Subtasks:** MUST reference parent: `**Parent task:** {parent_id} — see [todo/tasks/{parent_id}-brief.md]`. Inherit context; add only subtask-specific details.
+Resolve the parent task's durable `ref:GH#NNN` before Step 1 and pass its numeric
+issue number through `--parent-issue N`. If the ref is absent, offline, or
+ambiguous, stop with actionable diagnostics rather than allocating an orphan.
 
 ### Step 3.2: Decide Whether to Seed a Draft PR
 

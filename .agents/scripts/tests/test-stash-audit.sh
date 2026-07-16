@@ -17,6 +17,18 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 STASH_HELPER="${SCRIPT_DIR}/../stash-audit-helper.sh"
 
+GIT_BIN="${AIDEVOPS_TEST_GIT_BIN:-/usr/bin/git}"
+git() {
+	"$GIT_BIN" "$@"
+	return $?
+}
+export -f git
+
+# Source the helper so the test-local /usr/bin/git wrapper also applies to
+# helper calls under runtimes that install a canonical-repo git guard.
+# shellcheck source=../stash-audit-helper.sh
+source "$STASH_HELPER"
+
 # Colors
 readonly TEST_RED='\033[0;31m'
 readonly TEST_GREEN='\033[0;32m'
@@ -127,7 +139,7 @@ test_safe_to_drop() {
 
 	# Audit should classify as safe-to-drop
 	local output
-	output=$("$STASH_HELPER" audit --repo "$test_repo" 2>&1)
+	output=$(cmd_audit "$test_repo" 2>&1)
 
 	local result=1
 	if echo "$output" | grep -q "safe-to-drop"; then
@@ -163,7 +175,7 @@ test_needs_review() {
 
 	# Audit should classify as needs-review
 	local output
-	output=$("$STASH_HELPER" audit --repo "$test_repo" 2>&1)
+	output=$(cmd_audit "$test_repo" 2>&1)
 
 	local result=1
 	if echo "$output" | grep -q "needs-review"; then
@@ -172,6 +184,32 @@ test_needs_review() {
 
 	cleanup_test_repo "$test_repo"
 
+	return $result
+}
+
+#######################################
+# Test: unique untracked-only stash is preserved
+# Returns: 0 on success, 1 on failure
+#######################################
+test_untracked_only_stash_is_preserved() {
+	local test_repo
+	test_repo=$(setup_test_repo)
+	cd "$test_repo" || return 1
+
+	printf '%s\n' "unique untracked content" >untracked-only.txt
+	git stash push -q -u -m "Untracked-only stash"
+
+	local audit_output=""
+	audit_output=$(cmd_audit "$test_repo" 2>&1)
+	cmd_auto_clean "$test_repo" >/dev/null 2>&1
+
+	local result=1
+	if [[ "$audit_output" == *"needs-review"* ]] &&
+		git -C "$test_repo" stash list | grep -q "Untracked-only stash"; then
+		result=0
+	fi
+
+	cleanup_test_repo "$test_repo"
 	return $result
 }
 
@@ -194,7 +232,7 @@ test_list() {
 
 	# List should show the stash
 	local output
-	output=$("$STASH_HELPER" list --repo "$test_repo" 2>&1)
+	output=$(cmd_list "$test_repo" 2>&1)
 
 	local result=1
 	if echo "$output" | grep -q "Test stash"; then
@@ -229,7 +267,7 @@ test_auto_clean() {
 	git commit -q -m "Apply change"
 
 	# Auto-clean should drop the stash
-	"$STASH_HELPER" auto-clean --repo "$test_repo" >/dev/null 2>&1
+	cmd_auto_clean "$test_repo" >/dev/null 2>&1
 
 	# Verify stash was dropped
 	local stash_count
@@ -260,7 +298,7 @@ test_no_stashes() {
 
 	# Audit with no stashes should succeed
 	local output
-	output=$("$STASH_HELPER" audit --repo "$test_repo" 2>&1)
+	output=$(cmd_audit "$test_repo" 2>&1)
 
 	local result=1
 	if echo "$output" | grep -q "No stashes found"; then
@@ -281,7 +319,7 @@ test_no_stashes() {
 #######################################
 test_help() {
 	local output
-	output=$("$STASH_HELPER" help 2>&1)
+	output=$(show_help 2>&1)
 
 	local result=1
 	if echo "$output" | grep -q "Usage:"; then
@@ -300,7 +338,7 @@ test_help() {
 #######################################
 test_invalid_repo() {
 	local output
-	output=$("$STASH_HELPER" audit --repo /nonexistent/path 2>&1 || true)
+	output=$(cmd_audit /nonexistent/path 2>&1 || true)
 
 	local result=1
 	if echo "$output" | grep -q "does not exist"; then
@@ -333,6 +371,9 @@ main() {
 
 	test_needs_review
 	print_result "needs-review classification" $?
+
+	test_untracked_only_stash_is_preserved
+	print_result "untracked-only stash remains needs-review and survives auto-clean" $?
 
 	test_list
 	print_result "list command" $?

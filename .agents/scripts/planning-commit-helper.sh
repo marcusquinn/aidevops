@@ -321,7 +321,7 @@ complete_task() {
 # Parse arguments for next_task_id.
 # Prints assignments to stdout for eval.
 _next_task_id_parse_args() {
-	local _title="" _labels="" _description="" _offline_flag="" _dry_run_flag=""
+	local _title="" _labels="" _description="" _parent_issue="" _offline_flag="" _dry_run_flag=""
 
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
@@ -335,6 +335,14 @@ _next_task_id_parse_args() {
 			;;
 		--description)
 			_description="$2"
+			shift 2
+			;;
+		--parent-issue)
+			_parent_issue="${2:-}"
+			if [[ ! "$_parent_issue" =~ ^[1-9][0-9]*$ ]]; then
+				log_error "next_task_id: --parent-issue requires a positive issue number"
+				return 1
+			fi
 			shift 2
 			;;
 		--offline)
@@ -355,13 +363,14 @@ _next_task_id_parse_args() {
 	printf 'title=%q\n' "$_title"
 	printf 'labels=%q\n' "$_labels"
 	printf 'description=%q\n' "$_description"
+	printf 'parent_issue=%q\n' "$_parent_issue"
 	printf 'offline_flag=%q\n' "$_offline_flag"
 	printf 'dry_run_flag=%q\n' "$_dry_run_flag"
 	return 0
 }
 
 # Invoke claim-task-id.sh and capture its output + exit code.
-# Usage: _next_task_id_run_claim <claim_script> <repo_path> <title> <labels> <description> <offline_flag> <dry_run_flag>
+# Usage: _next_task_id_run_claim <claim_script> <repo_path> <title> <labels> <description> <parent_issue> <offline_flag> <dry_run_flag>
 # Prints: claim_output on stdout; sets global claim_rc via caller convention (prints "claim_rc=N")
 _next_task_id_run_claim() {
 	local claim_script="$1"
@@ -369,12 +378,14 @@ _next_task_id_run_claim() {
 	local title="$3"
 	local labels="$4"
 	local description="$5"
-	local offline_flag="$6"
-	local dry_run_flag="$7"
+	local parent_issue="$6"
+	local offline_flag="$7"
+	local dry_run_flag="$8"
 
 	local -a claim_args=(--title "$title" --repo-path "$repo_path")
 	[[ -n "$labels" ]] && claim_args+=(--labels "$labels")
 	[[ -n "$description" ]] && claim_args+=(--description "$description")
+	[[ -n "$parent_issue" ]] && claim_args+=(--parent-issue "$parent_issue")
 	[[ -n "$offline_flag" ]] && claim_args+=("$offline_flag")
 	[[ -n "$dry_run_flag" ]] && claim_args+=("$dry_run_flag")
 
@@ -451,6 +462,7 @@ _next_task_id_parse_output() {
 # Usage:
 #   next_task_id --title "Task description"
 #   next_task_id --title "Task description" --labels "bug,priority"
+#   next_task_id --title "Child task" --parent-issue 123
 #   next_task_id --title "Task description" --offline
 #   next_task_id --title "Task description" --dry-run
 #
@@ -465,7 +477,7 @@ _next_task_id_parse_output() {
 #   2 - Success with offline fallback
 #   1 - Error
 next_task_id() {
-	local title="" labels="" description="" offline_flag="" dry_run_flag=""
+	local title="" labels="" description="" parent_issue="" offline_flag="" dry_run_flag=""
 
 	# Parse arguments
 	local parsed_args
@@ -474,7 +486,7 @@ next_task_id() {
 
 	if [[ -z "$title" ]]; then
 		log_error "next_task_id: --title is required"
-		echo "Usage: next_task_id --title \"Task description\" [--labels \"l1,l2\"] [--offline] [--dry-run]"
+		echo "Usage: next_task_id --title \"Task description\" [--labels \"l1,l2\"] [--parent-issue N] [--offline] [--dry-run]"
 		return 1
 	fi
 
@@ -494,7 +506,7 @@ next_task_id() {
 	local claim_meta
 	claim_meta=$(_next_task_id_run_claim \
 		"$claim_script" "$repo_path" "$title" "$labels" "$description" \
-		"$offline_flag" "$dry_run_flag") || {
+		"$parent_issue" "$offline_flag" "$dry_run_flag") || {
 		claim_rc=$?
 		return "$claim_rc"
 	}
