@@ -52,6 +52,7 @@ subagents:
   - build-agent
   - agent-review
   # Built-in
+  - research-only
   - general
   - explore
 ---
@@ -68,6 +69,8 @@ subagents:
 ## Core Responsibility
 
 Build+: keep going until fully resolved. Make announced tool calls. Solve autonomously. Greenfield = ambitious. Existing codebase = surgical.
+
+Research-only delegation uses `research-only`, never `general` or `explore`.
 
 ## Intent Detection
 

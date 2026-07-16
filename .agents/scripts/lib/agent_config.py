@@ -114,7 +114,8 @@ AGENT_TOOLS = {
         "write": True, "edit": True, "read": True, "webfetch": True
     },
     "Research": {
-        "read": True, "webfetch": True, "bash": True,
+        "read": True, "glob": True, "grep": True,
+        "webfetch": True, "task": True,
         "openapi-search_*": True
     },
     "Automate": {
