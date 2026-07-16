@@ -10,6 +10,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.32.128] - 2026-07-16
+
+### Changed
+
+- Maintenance: sync ref:GH#27907 to TODO.md [skip ci]
+
+### Fixed
+
+- reconcile worker attempt outcomes before retry routing (#27924)
+- publish planning files to new branches (#27923)
+- recognize issue references exactly (#27921)
+- target pre-edit checks to worktrees (#27919)
+- allow aidevops temp body files (#27918)
+- finalize WIP history before PR creation (#27917)
+- treat skipped checks as neutral (#27916)
+- harden model routing migration diagnostics (#27900)
+- preserve plist overrides across runtime bundles (#27899)
+- gate ruleset auto merge fallback (#27891)
+- resolve pulse diagnostic default branch (#27889)
+- include complete review thread commands (#27887)
+
 ## [3.32.127] - 2026-07-15
 
 ### Changed
