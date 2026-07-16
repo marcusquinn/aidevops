@@ -44,6 +44,7 @@ SETUP_STAGE_TABBY="setup_tabby"
 SETUP_STAGE_PULSE="setup_supervisor_pulse"
 SETUP_STAGE_GUI_DESKTOP="setup_gui_desktop_app"
 SETUP_STAGE_AI_SESSION="setup_ai_session_incremental"
+SETUP_STAGE_RUNTIME_CONFIG="reconcile_runtime_config"
 SETUP_STAGE_OPENCODE_PLUGINS="setup_opencode_plugins"
 SETUP_STAGE_HOTFIX_CONFIG="_deploy_hotfix_config"
 SETUP_GUI_APP_NAME="aidevops.app"
@@ -414,8 +415,8 @@ parse_args() {
 			echo "Use --clean after removing or renaming agents to sync deletions."
 			echo "Use --interactive to control each step individually."
 			echo "Use --non-interactive for CI/CD or AI agent shells (no stdin required)."
-			echo "Use --stage for targeted updates: opencode, agents, hooks, tabby, pulse, gui-desktop, ai-session, full."
-			echo "Stage aliases: ${SETUP_STAGE_OPENCODE}, ${SETUP_STAGE_AGENTS}, ${SETUP_STAGE_HOOKS}, ${SETUP_STAGE_TABBY}, ${SETUP_STAGE_PULSE}, ${SETUP_STAGE_GUI_DESKTOP}, ${SETUP_STAGE_AI_SESSION}."
+			echo "Use --stage for targeted updates: opencode, agents, runtime-config, hooks, tabby, pulse, gui-desktop, ai-session, full."
+			echo "Stage aliases: ${SETUP_STAGE_OPENCODE}, ${SETUP_STAGE_AGENTS}, ${SETUP_STAGE_RUNTIME_CONFIG}, ${SETUP_STAGE_HOOKS}, ${SETUP_STAGE_TABBY}, ${SETUP_STAGE_PULSE}, ${SETUP_STAGE_GUI_DESKTOP}, ${SETUP_STAGE_AI_SESSION}."
 			echo "Install ${SETUP_GUI_APP_NAME} explicitly with --stage gui-desktop or AIDEVOPS_GUI_DESKTOP_INSTALL=true."
 			echo "Use --update to check for tool updates after setup completes."
 			exit 0
@@ -437,6 +438,7 @@ _setup_print_stage_help() {
 	printf '%s\n' "Supported setup stages/scopes:"
 	printf '  opencode | %s          Repair/install OpenCode CLI only\n' "$SETUP_STAGE_OPENCODE"
 	printf '  agents   | %s     Deploy .agents scripts/prompts only\n' "$SETUP_STAGE_AGENTS"
+	printf '  runtime-config | %s  Reconcile generated runtime commands/configuration\n' "$SETUP_STAGE_RUNTIME_CONFIG"
 	printf '  hooks    | %s          Install safety hooks only\n' "$SETUP_STAGE_HOOKS"
 	printf '  tabby    | %s                 Sync Tabby profiles only\n' "$SETUP_STAGE_TABBY"
 	printf '  pulse    | %s      Install/refresh pulse scheduler only\n' "$SETUP_STAGE_PULSE"
@@ -451,6 +453,7 @@ _setup_canonical_stage() {
 	case "$stage" in
 	opencode | "$SETUP_STAGE_OPENCODE") printf '%s' "$SETUP_STAGE_OPENCODE" ;;
 	agents | "$SETUP_STAGE_AGENTS") printf '%s' "$SETUP_STAGE_AGENTS" ;;
+	runtime-config | runtime | "$SETUP_STAGE_RUNTIME_CONFIG") printf '%s' "$SETUP_STAGE_RUNTIME_CONFIG" ;;
 	hooks | "$SETUP_STAGE_HOOKS") printf '%s' "$SETUP_STAGE_HOOKS" ;;
 	tabby | "$SETUP_STAGE_TABBY") printf '%s' "$SETUP_STAGE_TABBY" ;;
 	pulse | "$SETUP_STAGE_PULSE") printf '%s' "$SETUP_STAGE_PULSE" ;;
@@ -1309,6 +1312,12 @@ _setup_ai_session_build_plan() {
 	return 0
 }
 
+_setup_reconcile_runtime_config() {
+	update_runtime_configs || return $?
+	deploy_commands_to_all_runtimes || return $?
+	return 0
+}
+
 _setup_ai_session_verify_deploy() {
 	local expected_sha="$1"
 	local repo_version=""
@@ -1378,6 +1387,7 @@ _setup_run_ai_session_incremental() {
 		_time_step "$SETUP_STAGE_AGENTS" deploy_aidevops_agents || return $?
 		_time_step "$SETUP_STAGE_OPENCODE_PLUGINS" setup_opencode_plugins || return $?
 		_time_step "$SETUP_STAGE_HOTFIX_CONFIG" _deploy_hotfix_config || return $?
+		_time_step "$SETUP_STAGE_RUNTIME_CONFIG" _setup_reconcile_runtime_config || return $?
 	fi
 	if [[ "$_SETUP_AI_SESSION_NEEDS_CLI" -eq 1 ]]; then
 		_time_step "install_aidevops_cli" install_aidevops_cli || return $?
@@ -1422,6 +1432,9 @@ _setup_run_scoped_stage() {
 		_time_step "$SETUP_STAGE_AGENTS" deploy_aidevops_agents
 		_time_step "$SETUP_STAGE_OPENCODE_PLUGINS" setup_opencode_plugins
 		_time_step "$SETUP_STAGE_HOTFIX_CONFIG" _deploy_hotfix_config
+		;;
+	"$SETUP_STAGE_RUNTIME_CONFIG")
+		_time_step "$SETUP_STAGE_RUNTIME_CONFIG" _setup_reconcile_runtime_config
 		;;
 	"$SETUP_STAGE_HOOKS")
 		_time_step "$SETUP_STAGE_HOOKS" setup_safety_hooks

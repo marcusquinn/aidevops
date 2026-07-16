@@ -163,17 +163,87 @@ PY
 	return $?
 }
 
+_opencode_command_output_matches_source() {
+	local command_dir="$HOME/.config/opencode/command"
+	local source_file=""
+	local command_name=""
+	local deployed_file=""
+	local expected_file=""
+
+	[[ -d "$command_dir" ]] || return 1
+	expected_file=$(mktemp) || return 1
+	for source_file in "$AGENTS_DIR/commands"/*.md; do
+		[[ -e "$source_file" ]] || continue
+		command_name=$(basename "$source_file")
+		deployed_file="$command_dir/$command_name"
+		if [[ ! -f "$deployed_file" ]] || ! _copy_cmd_for_opencode "$source_file" "$expected_file" || ! cmp -s "$expected_file" "$deployed_file"; then
+			rm -f "$expected_file"
+			return 1
+		fi
+	done
+	for source_file in "$AGENTS_DIR/scripts/commands"/*.md; do
+		[[ -f "$source_file" ]] || continue
+		command_name=$(basename "$source_file" .md)
+		[[ "$command_name" == "SKILL" ]] && continue
+		deployed_file="$command_dir/aidevops-$command_name.md"
+		if [[ ! -f "$deployed_file" ]] || ! _copy_cmd_for_opencode "$source_file" "$expected_file" || ! cmp -s "$expected_file" "$deployed_file"; then
+			rm -f "$expected_file"
+			return 1
+		fi
+	done
+	rm -f "$expected_file"
+	return 0
+}
+
 _runtime_output_matches_source() {
 	local runtime_id="$1"
 	case "$runtime_id" in
 	opencode)
-		_opencode_agent_output_matches_source
-		return $?
+		if [[ "$(rt_feature_agents "$runtime_id" 2>/dev/null || echo yes)" == "yes" ]]; then
+			_opencode_agent_output_matches_source || return 1
+		fi
+		if [[ "$(rt_feature_commands "$runtime_id" 2>/dev/null || echo yes)" == "yes" ]]; then
+			_opencode_command_output_matches_source || return 1
+		fi
+		return 0
 		;;
 	*)
 		return 0
 		;;
 	esac
+}
+
+_verify_runtime_output() {
+	local runtime_id="$1"
+	local display_name=""
+	display_name=$(rt_display_name "$runtime_id") || display_name="$runtime_id"
+	if _runtime_output_matches_source "$runtime_id"; then
+		print_success "$display_name runtime configuration matches installed sources"
+		return 0
+	fi
+	print_warning "$display_name runtime configuration is stale or incomplete"
+	print_info "Run: aidevops setup --scope runtime-config"
+	return 1
+}
+
+_run_verify_subcommand() {
+	local target_runtime="$1"
+	local verify_runtime=""
+	local verify_failed=0
+
+	if [[ -n "$target_runtime" ]]; then
+		if ! rt_binary "$target_runtime" >/dev/null 2>&1; then
+			print_error "Unknown runtime: $target_runtime"
+			return 1
+		fi
+		_verify_runtime_output "$target_runtime"
+		return $?
+	fi
+	while IFS= read -r verify_runtime; do
+		[[ -z "$verify_runtime" ]] && continue
+		_verify_runtime_output "$verify_runtime" || verify_failed=1
+	done < <(rt_detect_installed)
+	return "$verify_failed"
 }
 
 # =============================================================================
@@ -201,6 +271,33 @@ _get_pkg_runner() {
 # =============================================================================
 # Main Orchestrator
 # =============================================================================
+
+_verify_generated_runtime_output() {
+	local runtime_id="$1"
+	local subcommand="$2"
+	local display_name="$3"
+
+	case "$subcommand" in
+	all)
+		_runtime_output_matches_source "$runtime_id" || {
+			print_error "$display_name runtime output failed post-generation parity verification"
+			return 1
+		}
+		;;
+	commands)
+		if [[ "$runtime_id" == "opencode" && "$(rt_feature_commands "$runtime_id" 2>/dev/null || echo yes)" == "yes" ]]; then
+			_opencode_command_output_matches_source || {
+				print_error "$display_name command output failed post-generation parity verification"
+				return 1
+			}
+		fi
+		;;
+	esac
+	if [[ "$runtime_id" == "opencode" && ( "$subcommand" == "all" || "$subcommand" == "commands" ) ]]; then
+		print_info "Restart OpenCode to load updated runtime commands"
+	fi
+	return 0
+}
 
 _generate_for_runtime() {
 	local runtime_id="$1"
@@ -283,6 +380,8 @@ _generate_for_runtime() {
 		;;
 	esac
 
+	_verify_generated_runtime_output "$runtime_id" "$subcommand" "$display_name" || return 1
+
 	# Write the source hash after successful generation so the next invocation
 	# can skip regeneration when inputs are unchanged.
 	# Reuse current_hash computed at the top of this function -- avoids a
@@ -308,6 +407,7 @@ Subcommands:
   commands         Generate slash commands only
   mcp              Register MCP servers only
   prompts          Deploy system prompts only
+  verify           Verify generated runtime output matches installed sources
 
 Options:
   --runtime <id>   Generate for a specific runtime only
@@ -322,6 +422,7 @@ Examples:
   ${script_name}                          # Generate all for all installed runtimes
   ${script_name} agents                   # Generate agent configs only
   ${script_name} commands --runtime opencode  # Generate OpenCode commands only
+  ${script_name} verify --runtime opencode    # Check OpenCode runtime parity
   ${script_name} --verify-parity          # Run regression test
 EOF
 	return 0
@@ -336,7 +437,7 @@ main() {
 	# Parse arguments
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
-		all | agents | commands | mcp | prompts)
+		all | agents | commands | mcp | prompts | verify)
 			subcommand="$1"
 			;;
 		--runtime)
@@ -383,6 +484,11 @@ main() {
 			fi
 		fi
 		return 0
+	fi
+
+	if [[ "$subcommand" == "verify" ]]; then
+		_run_verify_subcommand "$target_runtime"
+		return $?
 	fi
 
 	# Generate for target runtime(s)
