@@ -24,6 +24,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit 1
 AGENT_DEPLOY="${SCRIPT_DIR}/../../../.agents/scripts/setup/modules/agent-deploy.sh"
+AGENT_RUNTIME="${SCRIPT_DIR}/../../../.agents/scripts/setup/modules/agent-runtime.sh"
 
 readonly TEST_RED='\033[0;31m'
 readonly TEST_GREEN='\033[0;32m'
@@ -91,6 +92,8 @@ _make_live_target() {
 
 # shellcheck source=/dev/null
 source "$AGENT_DEPLOY"
+# shellcheck source=/dev/null
+source "$AGENT_RUNTIME"
 
 # ─── tests ──────────────────────────────────────────────────────────────────
 
