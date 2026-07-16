@@ -10,9 +10,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.32.130] - 2026-07-16
+
+### Changed
+
+- Maintenance: mark t18140 complete (pr:#27943 completed:2026-07-16) [skip ci]
+- Maintenance: sync ref:GH#27942 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#27939 to TODO.md [skip ci]
+
 ### Fixed
 
-- preserve tracked project configuration during framework updates (#27935)
+- harden local OpenCode server access (#27943)
+- preserve tracked project configs during updates (#27937)
 
 ## [3.32.129] - 2026-07-16
 
