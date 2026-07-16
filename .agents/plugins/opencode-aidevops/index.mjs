@@ -44,10 +44,15 @@ import { installPluginConsoleRouter } from "./plugin-console.mjs";
 import { createSubagentEffortHooks, loadTierReasoningPolicies } from "./subagent-effort.mjs";
 import { createSessionContinuationGuard } from "./session-continuation-guard.mjs";
 import { createPermissionBroker } from "./permission-broker.mjs";
+import { createSubagentCancellationReceipt } from "./subagent-cancellation-receipt.mjs";
 
 // Existing modules
 import { createTools } from "./tools.mjs";
-import { initObservability, handleEvent } from "./observability.mjs";
+import {
+  initObservability,
+  handleEvent,
+  recordSubagentCancellationReceipt,
+} from "./observability.mjs";
 import { createSessionStartGreetingGate, createTtsrHooks } from "./ttsr.mjs";
 import { createPoolAuthHook, createPoolTool, initPoolAuth, getAccounts } from "./oauth-pool.mjs";
 import { createProviderAuthHook } from "./provider-auth.mjs";
@@ -257,6 +262,10 @@ export async function AidevopsPlugin({ directory, client }) {
   const shouldInjectGreeting = createSessionStartGreetingGate(client, isHeadless);
   const permissionBroker = createPermissionBroker({ client, isHeadless });
   const compactionContinuation = createCompactionAutoContinueGuard(client, { qualityLog });
+  const cancellationReceipt = createSubagentCancellationReceipt(client, {
+    qualityLog,
+    recordReceipt: recordSubagentCancellationReceipt,
+  });
 
   // TTSR hooks
   const {
@@ -376,9 +385,13 @@ export async function AidevopsPlugin({ directory, client }) {
     // Quality hooks
     "tool.execute.before": async (input, output) => {
       permissionBroker.recordToolCall(input, output);
+      cancellationReceipt.beforeTool(input, output);
       return toolExecuteBefore(input, output);
     },
-    "tool.execute.after": toolExecuteAfter,
+    "tool.execute.after": async (input, output) => {
+      await cancellationReceipt.afterTool(input, output);
+      return toolExecuteAfter(input, output);
+    },
 
     // Shell environment
     "shell.env": shellEnvHook,
@@ -395,6 +408,7 @@ export async function AidevopsPlugin({ directory, client }) {
       await Promise.all([
         handleEvent(input),
         Promise.resolve(compactionContinuation.handleEvent(input)),
+        Promise.resolve(cancellationReceipt.handleEvent(input)),
         permissionBroker.handleEvent(input).catch((err) => debugEventError("permission broker", err)),
         sessionTitleStatusHandler(input).catch((err) => debugEventError("title status handler", err)),
         sessionTitleSuffixHandler(input).catch((err) => debugEventError("title suffix handler", err)),

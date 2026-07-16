@@ -479,6 +479,14 @@ test("OpenCode observability emits runtime evidence without changing legacy tabl
       "reading a fixture",
       5,
     );
+    if (!observability.recordSubagentCancellationReceipt({
+      complete: true,
+      incomplete_reasons: [],
+      ledger: [{ kind: "git", operation: "push", status: "completed", tool: "bash" }],
+      reaped: true,
+      termination: "confirmed",
+      truncated: false,
+    }, { childSessionID: "session:child", parentSessionID: "session:1" })) process.exit(3);
     await new Promise((resolve) => setTimeout(resolve, 500));
     process.exit(0);
   `;
@@ -498,7 +506,7 @@ test("OpenCode observability emits runtime evidence without changing legacy tabl
           SELECT event_type FROM runtime_events ORDER BY id
         ));
     `], { encoding: "utf8" }).trim();
-    assert.equal(counts, "1|1|3|session.created,message.completed,tool.completed");
+    assert.equal(counts, "1|1|4|session.created,message.completed,tool.completed,subagent.cancellation.receipt");
   } finally {
     rmSync(tempDir, { force: true, recursive: true });
   }
