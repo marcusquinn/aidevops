@@ -33,6 +33,7 @@ test("terminal title controller preserves status across later session title upda
   controller.emit("Issue #123: renamed title");
   controller.setStatus("retry");
   controller.setStatus("idle");
+  controller.setStatus("");
   controller.reset();
   controller.setStatus("busy");
 
@@ -41,6 +42,7 @@ test("terminal title controller preserves status across later session title upda
     "[RUN] Issue #123: initial title",
     "[RUN] Issue #123: renamed title",
     "[WAIT] Issue #123: renamed title",
+    "Issue #123: renamed title",
   ]);
 });
 

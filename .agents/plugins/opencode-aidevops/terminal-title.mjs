@@ -41,7 +41,13 @@ function writeTerminalTitle(title) {
     // Terminal title synchronization is best-effort and must not affect sessions.
     return false;
   } finally {
-    if (ttyFd !== undefined) closeSync(ttyFd);
+    if (ttyFd !== undefined) {
+      try {
+        closeSync(ttyFd);
+      } catch {
+        // Terminal title synchronization is best-effort and must not affect sessions.
+      }
+    }
   }
 }
 
@@ -65,7 +71,7 @@ export function createTerminalTitleController({
     },
     setStatus(nextStatus) {
       const nextLabel = terminalTitleStatusLabel(nextStatus);
-      if (!nextLabel || nextLabel === terminalTitleStatusLabel(status)) return false;
+      if (nextLabel === terminalTitleStatusLabel(status)) return false;
       status = nextStatus;
       return render();
     },
