@@ -30,7 +30,12 @@ _ddpr_issue_body_from_meta() {
 }
 
 #######################################
-# Extract related issue refs from consolidation/supersession lines.
+# Extract the related issue ref from the canonical consolidated-spec marker.
+#
+# Operational consolidation-task bodies inline instructions, parent threads,
+# and historical references that may contain words such as "superseded" or
+# "consolidated". Only a marker at the start of a line establishes the
+# current issue's supersession relationship.
 #
 # Args: $1 = issue body
 # Outputs: one issue number per line
@@ -38,18 +43,32 @@ _ddpr_issue_body_from_meta() {
 #######################################
 _ddpr_superseded_issue_refs() {
 	local issue_body="$1"
-	local line="" lower_line="" refs=""
+	local line="" ref=""
 	while IFS= read -r line; do
-		lower_line=$(printf '%s' "$line" | tr '[:upper:]' '[:lower:]')
-		case "$lower_line" in
-		*supersedes* | *superseded* | *consolidated*)
-			refs=$(printf '%s\n' "$line" | grep -oE '#[0-9]+' | tr -d '#' || true)
-			[[ -n "$refs" ]] && printf '%s\n' "$refs"
-			;;
-		*) ;;
-		esac
+		if ! printf '%s\n' "$line" | grep -qE '^_Supersedes #[0-9]+ (—|-) this issue is the consolidated spec\._$'; then
+			continue
+		fi
+		ref=$(printf '%s\n' "$line" | grep -oE '^_Supersedes #[0-9]+' | grep -oE '[0-9]+' || true)
+		[[ -n "$ref" ]] && printf '%s\n' "$ref"
 	done <<<"$issue_body"
 	return 0
+}
+
+#######################################
+# Check whether dispatch metadata identifies an operational consolidation task.
+#
+# Args: none
+# Returns: 0 for consolidation-task metadata, 1 otherwise
+#######################################
+_ddpr_is_consolidation_task() {
+	[[ -n "${ISSUE_META_JSON:-}" ]] || return 1
+	if printf '%s' "$ISSUE_META_JSON" | jq -e '
+		[.labels[]? | if type == "object" then (.name // "") else . end]
+		| any(. == "consolidation-task")
+	' >/dev/null 2>&1; then
+		return 0
+	fi
+	return 1
 }
 
 #######################################
@@ -72,7 +91,7 @@ _has_open_pr_check_healthy_sibling() {
 	local pr_json match_pr draft_pr
 	pr_json=$(gh pr list --repo "$repo_slug" --state open \
 		--search "#${issue_number}" --limit 20 \
-		--json number,title,body,isDraft,reviewDecision,mergeStateStatus,mergeable 2>/dev/null) || pr_json="[]"
+		--json number,title,body,isDraft,reviewDecision,mergeStateStatus,mergeable,changedFiles,files 2>/dev/null) || pr_json="[]"
 
 	local issue_ref_pattern healthy_state_pattern blocked_state_pattern
 	issue_ref_pattern="([^[:alnum:]_]|^)((close[sd]?|fix(e[sd])?|resolve[sd]?|for|refs?):?[[:space:]]+([a-zA-Z0-9._-]+/[a-zA-Z0-9._-]+)?#${issue_number}|GH#${issue_number}|#${issue_number})([^[:alnum:]_]|$)"
@@ -96,7 +115,12 @@ _has_open_pr_check_healthy_sibling() {
 		--arg issue_pattern "$issue_ref_pattern" \
 		--arg healthy_pattern "$healthy_state_pattern" \
 		--arg blocked_pattern "$blocked_state_pattern" \
-		'[
+		'def complete_planning_only_scope:
+			(.changedFiles // 0) as $changed |
+			([.files[]?.path] | length) as $returned |
+			($changed > 0) and ($returned == $changed) and
+			([.files[]?.path] | all(.[]; test("^(TODO\\.md$|todo/)")));
+		[
 			.[] | select(
 				(.isDraft // false | not) and
 				((.reviewDecision // "") != "CHANGES_REQUESTED") and
@@ -106,7 +130,8 @@ _has_open_pr_check_healthy_sibling() {
 					((.mergeStateStatus // "") | test($healthy_pattern)) or
 					((.mergeable // "") == "MERGEABLE")
 				) and
-				(((.title // "") | test($issue_pattern; "i")) or ((.body // "") | test($issue_pattern; "i")))
+				(((.title // "") | test($issue_pattern; "i")) or ((.body // "") | test($issue_pattern; "i"))) and
+				(complete_planning_only_scope | not)
 			)
 		] | .[0].number // empty' 2>/dev/null) || match_pr=""
 
@@ -343,6 +368,9 @@ _has_open_pr_check_superseded_issue_pr() {
 	local issue_number="$1"
 	local repo_slug="$2"
 	local issue_body=""
+	# Operational children describe how to create a consolidated spec and inline
+	# arbitrary historical text; they are not consolidated specs themselves.
+	_ddpr_is_consolidation_task && return 1
 	issue_body=$(_ddpr_issue_body_from_meta)
 	[[ -n "$issue_body" ]] || return 1
 

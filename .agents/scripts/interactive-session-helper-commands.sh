@@ -67,6 +67,16 @@ _isc_resolve_manageable_user() {
 # -----------------------------------------------------------------------------
 # Subcommand: claim
 # -----------------------------------------------------------------------------
+# GH#27871: terminal issues skip before claim idempotency, which can refresh a
+# stamp. Lookup failures return 1 and preserve the existing fail-open contract.
+_isc_claim_closed_issue_guard() {
+	local issue="$1"
+	local slug="$2"
+	_isc_issue_is_closed "$issue" "$slug" || return 1
+	_isc_info "claim: #$issue is closed — skipping interactive claim lifecycle"
+	return 0
+}
+
 # Apply status:in-review, self-assign, and write a stamp in repos where the
 # authenticated account has maintainer-equivalent issue-management access.
 #
@@ -169,6 +179,8 @@ _isc_cmd_claim() {
 		"external repos should receive a PR when possible plus at most one concise explanatory issue comment, not aidevops dispatch claims"); then
 		return 0
 	fi
+
+	_isc_claim_closed_issue_guard "$issue" "$slug" && return 0
 
 	# Idempotency: if already in-review, refresh stamp and exit. The `if`
 	# conditional consumes any non-zero return so set -e doesn't propagate
@@ -437,6 +449,23 @@ _isc_cmd_unlock() {
 	return 0
 }
 
+_isc_unassign_released_issue() {
+	local issue="$1"
+	local slug="$2"
+	local user="$3"
+	local unassign_err=""
+	local unassign_rc=0
+
+	unassign_err=$(gh issue edit "$issue" --repo "$slug" \
+		--remove-assignee "$user" 2>&1 >/dev/null) || unassign_rc=$?
+	if [[ $unassign_rc -eq 0 ]]; then
+		_isc_info "release: #$issue already outside status:in-review — unassigned $user"
+		return 0
+	fi
+	_isc_warn "release: gh failed to unassign $user from #$issue (rc=$unassign_rc): $unassign_err"
+	return 0
+}
+
 # -----------------------------------------------------------------------------
 # Subcommand: release
 # -----------------------------------------------------------------------------
@@ -448,7 +477,7 @@ _isc_cmd_unlock() {
 #   [--unassign] = also remove self from assignees
 #
 # Behaviour:
-#   - Idempotent: no-op when the label is not set.
+#   - Idempotent: when the label is not set, only a requested unassignment runs.
 #   - Offline gh: warn and exit 0. The stamp is still deleted so local state
 #     matches the caller's intent.
 #
@@ -499,7 +528,7 @@ _isc_cmd_release() {
 		return 0
 	fi
 
-	# Idempotency: skip label work if not in-review. `_isc_has_in_review`
+	# Idempotency: skip only label work if not in-review. `_isc_has_in_review`
 	# has three return states (0 = present, 1 = absent, 2 = lookup failed),
 	# so we need the actual rc — but a bare call under `set -e` propagates
 	# non-zero returns before `rc=$?` can capture them. Use `|| rc=$?` which
@@ -508,7 +537,11 @@ _isc_cmd_release() {
 	local has_rc=0
 	_isc_has_in_review "$issue" "$slug" || has_rc=$?
 	if [[ $has_rc -eq 1 ]]; then
-		_isc_info "release: #$issue not in status:in-review — no-op"
+		if [[ $unassign -eq 0 ]]; then
+			_isc_info "release: #$issue not in status:in-review — no-op"
+			return 0
+		fi
+		_isc_unassign_released_issue "$issue" "$slug" "$user"
 		return 0
 	fi
 	if [[ $has_rc -eq 2 ]]; then
@@ -516,13 +549,10 @@ _isc_cmd_release() {
 		return 0
 	fi
 
-	# Build extra_flags array. Bash 3.2 empty-array guard — see
-	# reference/bash-compat.md. Fourth latent bug found alongside GH#18786.
+	# Bash 3.2 empty-array guard — see reference/bash-compat.md.
 	local -a extra_flags=()
-	if [[ $unassign -eq 1 ]]; then
-		if [[ -n "$user" ]]; then
-			extra_flags+=(--remove-assignee "$user")
-		fi
+	if [[ $unassign -eq 1 && -n "$user" ]]; then
+		extra_flags+=(--remove-assignee "$user")
 	fi
 
 	# GH#21805: apply status:done for closed issues instead of

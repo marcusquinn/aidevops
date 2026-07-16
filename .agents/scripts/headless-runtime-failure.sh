@@ -904,7 +904,15 @@ _exit_trap_handler() {
 
 	local reason="$_HRFF_FALLBACK_EXIT"
 	local session_count=0
-	if [[ -n "${_WORKER_PRELAUNCH_FAILURE_REASON:-}" ]]; then
+	local ledger_terminal_reason=""
+	if [[ -x "${DISPATCH_LEDGER_HELPER:-}" && -n "${AIDEVOPS_DISPATCH_LEASE_TOKEN:-}" ]]; then
+		ledger_terminal_reason=$("$DISPATCH_LEDGER_HELPER" terminal-reason --session-key "$session_key" \
+			--lease-token "$AIDEVOPS_DISPATCH_LEASE_TOKEN" 2>/dev/null) || ledger_terminal_reason=""
+	fi
+	if [[ -n "$ledger_terminal_reason" ]]; then
+		reason="$ledger_terminal_reason"
+		print_info "[exit-trap] using dispatch ledger terminal reason: $reason"
+	elif [[ -n "${_WORKER_PRELAUNCH_FAILURE_REASON:-}" ]]; then
 		reason="$_WORKER_PRELAUNCH_FAILURE_REASON"
 		print_info "[exit-trap] using prelaunch failure reason: $reason"
 	else
@@ -1145,6 +1153,11 @@ _report_failure_to_fast_fail() {
 
 	# Only report for worker role (not pulse/triage sessions)
 	if [[ "$session_key" != issue-* ]]; then
+		return 0
+	fi
+	if declare -F _objective_disposition_suppresses >/dev/null 2>&1 && \
+		_objective_disposition_suppresses suppress_fast_fail "$issue_number" "$repo_slug" "${AIDEVOPS_ATTEMPT_ID:-}"; then
+		print_info "[fast-fail] suppressed reconciled non-failure #${issue_number} (${repo_slug})"
 		return 0
 	fi
 

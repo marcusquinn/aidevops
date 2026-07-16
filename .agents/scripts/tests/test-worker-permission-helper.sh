@@ -12,6 +12,7 @@ test_root=$(mktemp -d)
 trap 'rm -rf "$test_root"' EXIT
 capture_file="${test_root}/capture.json"
 export AIDEVOPS_WORKER_BLOCKER_LOG_FILE="${test_root}/blockers.jsonl"
+gh_call_log="${test_root}/gh-calls.log"
 
 cat >"$capture_file" <<'JSON'
 {
@@ -56,6 +57,7 @@ fi
 repo_dir="${test_root}/repo"
 git init -q "$repo_dir"
 gh() {
+	printf '%s\n' "$*" >>"$gh_call_log"
 	printf '0\n'
 	return 0
 }
@@ -73,6 +75,18 @@ gh_issue_edit_safe() {
 	cd "$test_root"
 	cmd_request --file "$capture_file" --issue 123 --repo owner/repo --session issue-123 --work-dir "$repo_dir"
 )
+if grep -q -- '--slurp' "$gh_call_log"; then
+	printf 'permission comment lookup combined unsupported --slurp with --jq\n' >&2
+	exit 1
+fi
+if ! grep -q -- '--paginate' "$gh_call_log"; then
+	printf 'permission comment lookup did not request all pages\n' >&2
+	exit 1
+fi
+if ! grep -Fq -- '[.[] | select' "$gh_call_log"; then
+	printf 'permission comment lookup did not use page-local jq input\n' >&2
+	exit 1
+fi
 git_dir=$(git -C "$repo_dir" rev-parse --absolute-git-dir)
 if [[ ! -f "${git_dir}/aidevops-permission-pending" ]]; then
 	printf 'permission pending marker was not written to the target repository git directory\n' >&2

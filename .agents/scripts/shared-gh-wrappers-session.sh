@@ -311,7 +311,7 @@ _gh_wrapper_args_have_origin_label() {
 	return 1
 }
 
-# t2028: Internal — determine the auto-assignee for a newly-created issue.
+# t2028/GH#27929: determine the auto-assignee for a newly-created issue.
 # Returns empty string when the session is worker-origin, when the user
 # lookup fails, or when there is otherwise nothing to assign. Callers must
 # treat empty as "skip assignment". Non-fatal: all failure modes echo empty.
@@ -320,6 +320,7 @@ _gh_wrapper_args_have_origin_label() {
 # the direct gh_create_issue path reaches assignee-gate parity with the
 # claim-task-id.sh path.
 _gh_wrapper_auto_assignee() {
+	local repo_slug="$1"
 	local origin
 	origin=$(detect_session_origin)
 	if [[ "$origin" != "interactive" ]]; then
@@ -329,16 +330,28 @@ _gh_wrapper_auto_assignee() {
 	# to github.actor when the commit author is human. Prefer that explicit
 	# signal over `gh api user`, which would return github-actions[bot]
 	# inside a workflow run.
+	local current_user=""
 	if [[ -n "${AIDEVOPS_SESSION_USER:-}" ]]; then
-		printf '%s' "$AIDEVOPS_SESSION_USER"
-		return 0
+		current_user="$AIDEVOPS_SESSION_USER"
+	else
+		current_user=$(gh api user --jq '.login' 2>/dev/null || true)
 	fi
-	local current_user
-	current_user=$(gh api user --jq '.login' 2>/dev/null || true)
 	if [[ -z "$current_user" ]] || [[ "$current_user" == "null" ]]; then
 		return 0
 	fi
-	printf '%s' "$current_user"
+
+	# #aidevops:trust-boundary — assignment is valid only for a confirmed
+	# collaborator. Public issue creation may succeed for contributors, while
+	# assigning that contributor fails with ReplaceActorsForAssignable.
+	local permission=""
+	if [[ -z "$repo_slug" ]] || ! declare -F _gh_collaborator_permission_lookup >/dev/null; then
+		return 0
+	fi
+	_gh_collaborator_permission_lookup "$repo_slug" "$current_user" permission >/dev/null 2>&1 || return 0
+	case "$permission" in
+	admin | maintain | write | triage) printf '%s' "$current_user" ;;
+	*) return 0 ;;
+	esac
 	return 0
 }
 

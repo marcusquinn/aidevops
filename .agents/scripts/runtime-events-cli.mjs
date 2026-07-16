@@ -30,7 +30,9 @@ function emitPayload(args) {
   const payloadText = optionValue(args, "--payload");
   const payload = payloadText ? JSON.parse(payloadText) : {};
   const additions = {
+    attempt_id: process.env.AIDEVOPS_ATTEMPT_ID || "",
     classification: optionValue(args, "--classification"),
+    run_id: process.env.AIDEVOPS_RUN_ID || "",
     source: optionValue(args, "--source"),
     status: optionValue(args, "--status"),
   };

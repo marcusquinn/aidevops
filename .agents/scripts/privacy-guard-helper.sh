@@ -45,7 +45,9 @@ PRIVACY_SCAN_GLOBS=(
 	"."
 )
 PRIVACY_SCAN_GLOBS_TEXT="${PRIVACY_SCAN_GLOBS_TEXT:-}"
-PRIVACY_CREDENTIAL_PREFIX_ERE='(sk-|ghp_|gho_|ghs_|ghu_|github_pat_|glpat-|xoxb-|xoxp-)[A-Za-z0-9_-]{10,}'
+# Require a left token boundary so credential-looking substrings inside words or
+# filenames (for example, task-coordinator.sh) are not treated as secrets.
+PRIVACY_CREDENTIAL_PREFIX_ERE='(^|[^A-Za-z0-9_-])(sk-|ghp_|gho_|ghs_|ghu_|github_pat_|glpat-|xoxb-|xoxp-)[A-Za-z0-9_-]{10,}'
 
 # =============================================================================
 # Logging
@@ -80,6 +82,7 @@ privacy_log() {
 privacy_is_target_public() {
 	local url="$1"
 	local slug=""
+	local gh_bin="${PRIVACY_GH_BIN:-gh}"
 
 	# Extract owner/repo from either SSH or HTTPS form, strip optional .git
 	if [[ "$url" =~ github\.com[:/]([^/]+/[^/]+) ]]; then
@@ -113,11 +116,11 @@ privacy_is_target_public() {
 	fi
 
 	# Cold probe via gh
-	if ! command -v gh >/dev/null 2>&1; then
+	if ! command -v "$gh_bin" >/dev/null 2>&1; then
 		privacy_log WARN "gh CLI not installed — fail-open, allowing push to $slug"
 		return 2
 	fi
-	if ! gh auth status >/dev/null 2>&1; then
+	if ! "$gh_bin" auth status >/dev/null 2>&1; then
 		privacy_log WARN "gh not authenticated — fail-open, allowing push to $slug"
 		return 2
 	fi
@@ -126,7 +129,7 @@ privacy_is_target_public() {
 	# treats `false` as null-ish, so `.private // "unknown"` returns "unknown"
 	# for every public repo. `tostring` returns "true", "false", or "null".
 	local is_private
-	is_private=$(gh api "repos/${slug}" --jq '.private | tostring' 2>/dev/null) || {
+	is_private=$("$gh_bin" api "repos/${slug}" --jq '.private | tostring' 2>/dev/null) || {
 		privacy_log WARN "gh api repos/${slug} failed — fail-open"
 		return 2
 	}

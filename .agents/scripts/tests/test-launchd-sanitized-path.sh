@@ -70,30 +70,63 @@ assert_not_contains() {
 	return 0
 }
 
-test_sanitized_path_filters_missing_entries() {
+test_sanitized_path_filters_unsafe_entries() {
+	local test_home="$TEST_DIR/home"
+	local stable_local_bin="$test_home/.local/bin"
+	local stable_scripts="$test_home/.aidevops/agents/scripts"
+	local stable_bin="$test_home/.aidevops/bin"
+	local stale_bundle="$test_home/.aidevops/runtime-bundles/old/agents/scripts"
 	local existing_dir="$TEST_DIR/existing-bin"
 	local missing_dir="$TEST_DIR/missing-bin"
-	mkdir -p "$existing_dir"
+	mkdir -p "$stable_local_bin" "$stable_scripts" "$stable_bin" \
+		"$stale_bundle" "$existing_dir"
 
 	local polluted_path result
-	polluted_path="${missing_dir}:${existing_dir}:/usr/bin:${existing_dir}:/opt/pkg/env/active/bin:/opt/pmk/env/global/bin"
-	result=$(aidevops_launchd_sanitized_path "$polluted_path")
+	polluted_path="${stale_bundle}:${missing_dir}:${existing_dir}:/usr/bin:${stable_scripts}:${existing_dir}:/opt/pkg/env/active/bin:/opt/pmk/env/global/bin"
+	result=$(HOME="$test_home" aidevops_launchd_sanitized_path "$polluted_path")
 
-	local ok=0
+	local ok=0 stable_scripts_count=0
+	[[ "$result" == "${stable_local_bin}:${stable_scripts}:${stable_bin}:"* ]] || ok=1
 	[[ "$result" == *"$existing_dir"* ]] || ok=1
 	[[ "$result" == *"/usr/bin"* ]] || ok=1
-	assert_not_contains "test_sanitized_path_filters_missing_entries" "$result" "$missing_dir" || ok=1
+	stable_scripts_count=$(printf '%s' "$result" | tr ':' '\n' | grep -Fxc "$stable_scripts" || true)
+	[[ "$stable_scripts_count" -eq 1 ]] || ok=1
+	assert_not_contains "test_sanitized_path_filters_unsafe_entries" "$result" "$stale_bundle" || ok=1
+	assert_not_contains "test_sanitized_path_filters_unsafe_entries" "$result" "$missing_dir" || ok=1
 	if [[ ! -d /opt/pkg/env/active/bin ]]; then
-		assert_not_contains "test_sanitized_path_filters_missing_entries" "$result" "/opt/pkg/env/active/bin" || ok=1
+		assert_not_contains "test_sanitized_path_filters_unsafe_entries" "$result" "/opt/pkg/env/active/bin" || ok=1
 	fi
 	if [[ ! -d /opt/pmk/env/global/bin ]]; then
-		assert_not_contains "test_sanitized_path_filters_missing_entries" "$result" "/opt/pmk/env/global/bin" || ok=1
+		assert_not_contains "test_sanitized_path_filters_unsafe_entries" "$result" "/opt/pmk/env/global/bin" || ok=1
 	fi
 
 	if [[ "$ok" -eq 0 ]]; then
-		pass "test_sanitized_path_filters_missing_entries"
+		pass "test_sanitized_path_filters_unsafe_entries"
 	else
-		fail "test_sanitized_path_filters_missing_entries" "sanitized PATH was: $result"
+		fail "test_sanitized_path_filters_unsafe_entries" "sanitized PATH was: $result"
+	fi
+	return 0
+}
+
+test_sanitized_path_preserves_unset_ifs() {
+	local test_home="$TEST_DIR/unset-ifs-home"
+	mkdir -p "$test_home/.aidevops/agents/scripts"
+
+	local ifs_state=""
+	ifs_state=$(
+		unset IFS
+		HOME="$test_home" aidevops_launchd_sanitized_path "/usr/bin:/bin" >/dev/null
+		if [[ -z "${IFS+x}" ]]; then
+			printf 'unset'
+		else
+			printf 'set'
+		fi
+	)
+
+	if [[ "$ifs_state" == "unset" ]]; then
+		pass "test_sanitized_path_preserves_unset_ifs"
+	else
+		fail "test_sanitized_path_preserves_unset_ifs" "IFS became set after sanitization"
 	fi
 	return 0
 }
@@ -132,7 +165,8 @@ test_auto_update_plist_filters_polluted_env_path() {
 
 main() {
 	setup
-	test_sanitized_path_filters_missing_entries
+	test_sanitized_path_filters_unsafe_entries
+	test_sanitized_path_preserves_unset_ifs
 	test_auto_update_plist_filters_polluted_env_path
 
 	printf 'Ran %d tests, %d failed\n' "$TESTS_RUN" "$TESTS_FAILED"

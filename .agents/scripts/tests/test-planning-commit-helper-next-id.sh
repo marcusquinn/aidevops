@@ -20,11 +20,23 @@ output=$("$PLANNING_HELPER" next-id \
 	--title "Run Phase 3 kickoff adjustment for post-t394 roadmap" \
 	--labels "bug,auto-dispatch" \
 	--description "Multi word description value" \
+	--parent-issue 123 \
 	--dry-run 2>&1)
 rc=$?
 
 if [[ $rc -ne 0 ]]; then
 	printf 'FAIL: expected next-id dry-run to succeed, rc=%s\n%s\n' "$rc" "$output" >&2
+	exit 1
+fi
+
+trace=$(bash -x "$PLANNING_HELPER" next-id --title "Child task" --parent-issue 123 --dry-run 2>&1)
+if [[ "$trace" != *"--parent-issue 123"* ]]; then
+	printf 'FAIL: expected --parent-issue to reach claim-task-id.sh\n%s\n' "$trace" >&2
+	exit 1
+fi
+
+if "$PLANNING_HELPER" next-id --title "Invalid child" --parent-issue 0 --dry-run >/dev/null 2>&1; then
+	printf 'FAIL: expected non-positive --parent-issue to fail before allocation\n' >&2
 	exit 1
 fi
 

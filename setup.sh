@@ -17,7 +17,7 @@ fi
 # AI Assistant Server Access Framework Setup Script
 # Helps developers set up the framework for their infrastructure
 #
-# Version: 3.32.123
+# Version: 3.32.128
 #
 # Quick Install:
 #   npm install -g aidevops && aidevops update          (recommended)
@@ -1473,6 +1473,7 @@ _setup_run_non_interactive() {
 	_time_step "migrate_pulse_repos_to_repos_json" migrate_pulse_repos_to_repos_json
 	_time_step "cleanup_deprecated_paths" cleanup_deprecated_paths
 	_time_step "migrate_orphaned_supervisor" migrate_orphaned_supervisor
+	_time_step "migrate_custom_model_routing_reasoning_defaults" migrate_custom_model_routing_reasoning_defaults
 	_time_step "backfill_issue_relationships" backfill_issue_relationships
 	_time_step "cleanup_deprecated_mcps" cleanup_deprecated_mcps
 	_time_step "cleanup_stale_bun_opencode" cleanup_stale_bun_opencode
@@ -1647,6 +1648,7 @@ _setup_run_interactive() {
 	confirm_step "Migrate pulse-repos.json into repos.json" && migrate_pulse_repos_to_repos_json
 	confirm_step "Cleanup deprecated agent paths" && cleanup_deprecated_paths
 	confirm_step "Migrate orphaned supervisor to pulse-wrapper" && migrate_orphaned_supervisor
+	migrate_custom_model_routing_reasoning_defaults
 	confirm_step "Backfill GitHub issue relationships (blocked-by, sub-issues)" && backfill_issue_relationships
 	confirm_step "Cleanup deprecated MCP entries (hetzner, serper, etc.)" && cleanup_deprecated_mcps
 	confirm_step "Cleanup stale bun opencode install" && cleanup_stale_bun_opencode
@@ -1838,30 +1840,39 @@ _setup_post_setup_steps() {
 }
 
 _setup_restart_pulse_if_running() {
-	# t2579: restart pulse if running, so newly-deployed scripts take effect.
-	# t3491/GH#22418: then call idempotent start so a release deploy also
-	# recovers a stopped pulse instead of leaving dispatch dead until manual
-	# intervention. Honour AIDEVOPS_SKIP_PULSE_RESTART=1 for both operations.
-	# Uses the deployed helper (not the repo-local one) so the restart runs
-	# against the agents directory setup.sh just populated.
-	# GH#22012: bounded 120 s timeout prevents setup.sh hanging here when the
-	# pulse helper takes unusually long to stop a stalled instance. Falls back
-	# to an unbounded call on platforms without timeout(1) (old macOS w/o
-	# coreutils, embedded shells).
+	# Reconcile only after scheduler setup has established the effective consent
+	# state. The activated helper serializes with deployment, resolves the active
+	# immutable bundle under that lock, and never starts behind a disabled
+	# supervisor. This also prevents a stale setup caller's INSTALL_DIR from
+	# selecting the Pulse revision.
 	if [[ "${AIDEVOPS_SKIP_PULSE_RESTART:-0}" == "1" ]]; then
 		return 0
 	fi
 
-	local _pulse_helper="${HOME}/.aidevops/agents/scripts/pulse-lifecycle-helper.sh"
-	if [[ -x "$_pulse_helper" ]]; then
-		if command -v timeout >/dev/null 2>&1; then
-			timeout 120 "$_pulse_helper" restart-if-running || print_warning "Pulse restart failed (non-fatal)"
-			timeout 120 "$_pulse_helper" start || print_warning "Pulse start failed (non-fatal)"
-		else
-			"$_pulse_helper" restart-if-running || print_warning "Pulse restart failed (non-fatal)"
-			"$_pulse_helper" start || print_warning "Pulse start failed (non-fatal)"
+	local activated_root="${_AIDEVOPS_ACTIVE_BUNDLE_ROOT:-}"
+	local current_root=""
+	local managed_enabled="${PULSE_ENABLED:-}"
+	local configured_pulse_consent=""
+	if [[ "$managed_enabled" != "true" && "$managed_enabled" != "false" ]]; then
+		if type _resolve_pulse_consent >/dev/null 2>&1; then
+			configured_pulse_consent=$(_resolve_pulse_consent)
 		fi
+		case "$(printf '%s' "$configured_pulse_consent" | tr '[:upper:]' '[:lower:]')" in
+		true) managed_enabled=true ;;
+		*) managed_enabled=false ;;
+		esac
 	fi
+	if current_root=$(resolve_aidevops_runtime_bundle_root "${HOME}/.aidevops/agents"); then
+		activated_root="$current_root"
+	fi
+	if [[ -z "$activated_root" ]]; then
+		print_warning "Pulse restart skipped because the activated runtime bundle could not be resolved"
+		return 0
+	fi
+	_restart_pulse_if_running \
+		"$activated_root" \
+		"$managed_enabled" \
+		"${HOME}/.aidevops/agents" || print_warning "Pulse reconciliation failed (non-fatal)"
 	return 0
 }
 

@@ -30,8 +30,8 @@
 
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit 1
-REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)" || exit 1
+TEST_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit 1
+REPO_ROOT="$(cd "${TEST_SCRIPT_DIR}/../../.." && pwd)" || exit 1
 
 readonly TEST_RED='\033[0;31m'
 readonly TEST_GREEN='\033[0;32m'
@@ -121,14 +121,19 @@ setup_test_env() {
 	# Prevent loading the rate-limit circuit breaker (it has its own deps).
 	export _PULSE_RATE_LIMIT_CB_LOADED=1
 
-	# Clear the engine load guard so the module re-evaluates on source.
-	unset _PULSE_DISPATCH_ENGINE_LOADED
+	# Source once per harness process. Re-sourcing dependency modules that own
+	# readonly arrays is invalid; their functions use the per-test HOME/LOGFILE.
 
 	# shellcheck disable=SC1091
 	source "${REPO_ROOT}/.agents/scripts/pulse-dispatch-engine.sh" || {
 		printf 'ERROR: failed to source pulse-dispatch-engine.sh\n' >&2
 		return 1
 	}
+	if ! declare -F _dispatch_begin_benign_blocks_cycle >/dev/null ||
+		[[ ! -f "${_PULSE_DISPATCH_ENGINE_SCRIPT_DIR}/pulse-dispatch-lib.sh" ]]; then
+		printf 'ERROR: dispatch engine dependencies did not load from %s\n' "$_PULSE_DISPATCH_ENGINE_SCRIPT_DIR" >&2
+		return 1
+	fi
 
 	# Re-declare stubs AFTER source to override the module's definitions.
 	dispatch_max() {
@@ -140,6 +145,7 @@ setup_test_env() {
 	count_active_workers() { printf '%s\n' "${_STUB_ACTIVE_WORKERS:-0}"; return 0; }
 	get_max_workers_target() { printf '%s\n' "${_STUB_MAX_WORKERS:-3}"; return 0; }
 	_adaptive_launch_settle_wait() { return 0; }
+	_dispatch_min_worker_floor_refill() { return 0; }
 
 	_STUB_ACTIVE_WORKERS=0
 	_STUB_MAX_WORKERS=3
@@ -154,7 +160,6 @@ teardown_test_env() {
 	TEST_ROOT=""
 	LOGFILE=""
 	_DISPATCH_COUNT_FILE=""
-	unset _PULSE_DISPATCH_ENGINE_LOADED _PULSE_RATE_LIMIT_CB_LOADED
 	unset _STUB_ACTIVE_WORKERS _STUB_MAX_WORKERS
 	return 0
 }
@@ -198,7 +203,7 @@ test_phase2_fires_when_sentinel_and_slots_available() {
 	fi
 
 	# Phase 2 log line must appear.
-	if ! grep -q "fill floor Phase 2.*re-enumerating" "$LOGFILE" 2>/dev/null; then
+	if ! grep -q "Dispatch_max Phase 2.*re-enumerating" "$LOGFILE" 2>/dev/null; then
 		failures=$((failures + 1))
 		failmsg="${failmsg} | Phase 2 log line not found"
 	fi
@@ -236,7 +241,7 @@ test_phase2_skipped_when_no_sentinel() {
 	fi
 
 	# No Phase 2 log line.
-	if grep -q "fill floor Phase 2" "$LOGFILE" 2>/dev/null; then
+	if grep -q "Dispatch_max Phase 2" "$LOGFILE" 2>/dev/null; then
 		failures=$((failures + 1))
 		failmsg="${failmsg} | unexpected Phase 2 log line found"
 	fi

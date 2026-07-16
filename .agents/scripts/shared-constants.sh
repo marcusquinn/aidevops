@@ -101,6 +101,24 @@ if [[ "${BASH_VERSINFO[0]:-0}" -ge 4 ]]; then
 	unset AIDEVOPS_BASH_REEXECED
 fi
 
+# Generate a non-authority execution identifier for telemetry correlation.
+# Lease/claim tokens are fencing credentials and must never double as public IDs.
+aidevops_generate_execution_id() {
+	local prefix="$1"
+	local identifier=""
+	[[ -n "$prefix" ]] || prefix="execution"
+	if command -v uuidgen >/dev/null 2>&1; then
+		identifier=$(uuidgen 2>/dev/null | tr '[:upper:]' '[:lower:]') || identifier=""
+	elif command -v python3 >/dev/null 2>&1; then
+		identifier=$(python3 -c 'import uuid; print(uuid.uuid4())' 2>/dev/null) || identifier=""
+	fi
+	if [[ -z "$identifier" ]]; then
+		identifier="$(date +%s 2>/dev/null || printf '0')-$$-${RANDOM:-0}"
+	fi
+	printf '%s:%s' "$prefix" "$identifier"
+	return 0
+}
+
 # Ensure standalone pulse-adjacent runners have the elapsed-time baseline that
 # pulse-wrapper.sh normally exports. Helpers that create GitHub comments/issues
 # use PULSE_START_EPOCH for signature footers; launchd/cron runners that source
@@ -341,12 +359,16 @@ readonly TEMP_PREFIX="tmp_"
 # Build a PATH value safe to embed in macOS LaunchAgent EnvironmentVariables.
 # launchd jobs inherit no useful interactive shell setup, but serialising the
 # caller's raw PATH bakes stale manager-specific entries into long-lived plists.
-# Keep known system/tool roots first, then preserve only inherited entries that
-# actually exist on this host.
+# Keep stable user and known system/tool roots first, then preserve inherited
+# entries that exist on this host. Never persist immutable runtime-bundle paths:
+# long-lived sessions intentionally retain old bundles after stable activation.
 
 _aidevops_append_launchd_path_dir() {
 	local dir="$1"
 	[[ -n "$dir" ]] || return 0
+	case "$dir" in
+	*/.aidevops/runtime-bundles/*) return 0 ;;
+	esac
 	[[ -d "$dir" ]] || return 0
 	case ":${_aidevops_launchd_path_seen:-}:" in
 	*":${dir}:"*) return 0 ;;
@@ -358,20 +380,22 @@ _aidevops_append_launchd_path_dir() {
 
 aidevops_launchd_sanitized_path() {
 	local input_path="${1:-${PATH:-}}"
-	local default_path="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+	local stable_path=""
+	if [[ -n "${HOME:-}" ]]; then
+		stable_path="${HOME}/.local/bin:${HOME}/.aidevops/agents/scripts:${HOME}/.aidevops/bin"
+	fi
+	local default_path="${stable_path:+${stable_path}:}/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 	local _aidevops_launchd_path_result=""
 	local _aidevops_launchd_path_seen=""
 	local dir=""
-	local old_ifs="$IFS"
+	local IFS=':'
 
-	IFS=':'
 	for dir in $default_path; do
 		_aidevops_append_launchd_path_dir "$dir"
 	done
 	for dir in $input_path; do
 		_aidevops_append_launchd_path_dir "$dir"
 	done
-	IFS="$old_ifs"
 
 	printf '%s' "$_aidevops_launchd_path_result"
 	return 0

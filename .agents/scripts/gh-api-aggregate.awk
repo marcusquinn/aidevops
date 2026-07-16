@@ -17,6 +17,7 @@ BEGIN {
 	cache_events = 0
 	legacy_events = 0
 	attempted_requests = 0
+	opaque_paginated_attempts = 0
 }
 
 function metric_add(group, value, metric, amount,    key) {
@@ -70,6 +71,7 @@ function emit_group(title, group,    pair, parts, values, n, i, value) {
 		printf "      \"cache_events\": %d,\n", metric_get(group, value, "cache_events")
 		printf "      \"legacy_events\": %d,\n", metric_get(group, value, "legacy_events")
 		printf "      \"attempted_requests\": %d,\n", metric_get(group, value, "attempted_requests")
+		printf "      \"opaque_paginated_attempts\": %d,\n", metric_get(group, value, "opaque_paginated_attempts")
 		printf "      \"retries\": %d,\n", metric_get(group, value, "retries")
 		printf "      \"pages\": %d,\n", metric_get(group, value, "pages")
 		printf "      \"additional_pages\": %d,\n", metric_get(group, value, "additional_pages")
@@ -123,10 +125,14 @@ $1 !~ /^[0-9]+$/ || NF < 3 {
 	decision = (NF >= 6 && $6 != "") ? $6 : "unspecified"
 	budget = (NF >= 7) ? $7 : ""
 	version = (NF >= 8) ? $8 : ""
+	attempt_unidentified = 0
+	attempt_duplicate = 0
+	attempt_page_unknown = 0
 
 	if (version == "v2" && NF < 17) {
 		malformed_records++
 		malformed_v2_records++
+		if (ts >= cutoff) window_malformed_v2_records++
 		next
 	}
 
@@ -159,14 +165,18 @@ $1 !~ /^[0-9]+$/ || NF < 3 {
 
 	if (kind == "attempt") {
 		if (attempt_id == "" || attempt_id == "unknown") {
-			unidentified_attempts++
+			retained_unidentified_attempts++
+			attempt_unidentified = 1
 		} else if (attempt_id in seen_attempt_id) {
-			duplicate_attempt_ids++
-			next
+			retained_duplicate_attempt_ids++
+			attempt_duplicate = 1
 		} else {
 			seen_attempt_id[attempt_id] = 1
 		}
-		if (page !~ /^[0-9]+$/ || page + 0 < 1) unknown_page_attempts++
+		if (page !~ /^[0-9]+$/ || page + 0 < 1) {
+			retained_unknown_page_attempts++
+			attempt_page_unknown = 1
+		}
 		if (first_retained_attempt_ts == 0 || ts < first_retained_attempt_ts) first_retained_attempt_ts = ts
 		if (ts > last_retained_attempt_ts) last_retained_attempt_ts = ts
 	}
@@ -200,10 +210,20 @@ $1 !~ /^[0-9]+$/ || NF < 3 {
 		}
 		next
 	}
+	if (attempt_unidentified) unidentified_attempts++
+	if (attempt_duplicate) {
+		duplicate_attempt_ids++
+		next
+	}
+	if (attempt_page_unknown) unknown_page_attempts++
 
 	attempted_requests++
 	metric_add_dimensions(caller, path, auth, pool, decision, "attempted_requests", 1)
 	metric_add("outcome", outcome, "attempted_requests", 1)
+	if (decision == "native-pagination-opaque") {
+		opaque_paginated_attempts++
+		metric_add_dimensions(caller, path, auth, pool, decision, "opaque_paginated_attempts", 1)
+	}
 	if (retry ~ /^[0-9]+$/ && retry + 0 > 0) {
 		retries++
 		metric_add_dimensions(caller, path, auth, pool, decision, "retries", 1)
@@ -243,7 +263,7 @@ END {
 	if (first_retained_attempt_ts > 0 && last_retained_attempt_ts >= first_retained_attempt_ts) {
 		effective_window_seconds = last_retained_attempt_ts - first_retained_attempt_ts
 	}
-	attempts_exact = (duplicate_attempt_ids == 0 && unidentified_attempts == 0 && unknown_page_attempts == 0 && malformed_v2_records == 0) ? "true" : "false"
+	attempts_exact = (duplicate_attempt_ids == 0 && unidentified_attempts == 0 && unknown_page_attempts == 0 && window_malformed_v2_records == 0) ? "true" : "false"
 
 	print "{"
 	print "  \"_meta\": {"
@@ -265,6 +285,7 @@ END {
 	printf "    \"cache_events\": %d,\n", cache_events
 	printf "    \"legacy_events\": %d,\n", legacy_events
 	printf "    \"attempted_requests\": %d,\n", attempted_requests
+	printf "    \"opaque_paginated_attempts\": %d,\n", opaque_paginated_attempts + 0
 	printf "    \"retries\": %d,\n", retries + 0
 	printf "    \"pages\": %d,\n", pages + 0
 	printf "    \"additional_pages\": %d,\n", additional_pages + 0
@@ -276,6 +297,10 @@ END {
 	printf "    \"duplicate_attempt_ids\": %d,\n", duplicate_attempt_ids + 0
 	printf "    \"unidentified_attempts\": %d,\n", unidentified_attempts + 0
 	printf "    \"unknown_page_attempts\": %d,\n", unknown_page_attempts + 0
+	printf "    \"retained_duplicate_attempt_ids\": %d,\n", retained_duplicate_attempt_ids + 0
+	printf "    \"retained_unidentified_attempts\": %d,\n", retained_unidentified_attempts + 0
+	printf "    \"retained_unknown_page_attempts\": %d,\n", retained_unknown_page_attempts + 0
+	printf "    \"window_malformed_v2_records\": %d,\n", window_malformed_v2_records + 0
 	printf "    \"legacy_retained_records\": %d,\n", retained_legacy_records + 0
 	printf "    \"malformed_records\": %d,\n", malformed_records + 0
 	printf "    \"attempts_exact\": %s\n", attempts_exact

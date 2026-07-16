@@ -15,6 +15,13 @@ TEST_ROOT=""
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PULSE_CLEANUP="${SCRIPT_DIR}/../pulse-cleanup.sh"
 
+GIT_BIN="${AIDEVOPS_TEST_GIT_BIN:-/usr/bin/git}"
+git() {
+	"$GIT_BIN" "$@"
+	return $?
+}
+export -f git
+
 print_result() {
 	local name="$1"
 	local rc="$2"
@@ -271,7 +278,7 @@ test_closed_issue_dirty_worktree_stashes_and_preserves_branch() {
 	return 0
 }
 
-test_terminal_worktree_bypasses_stale_owner_signal() {
+test_terminal_worktree_respects_live_owner_signal() {
 	local repo_dir="${TEST_ROOT}/repo-terminal-owner"
 	local wt_path="${TEST_ROOT}/worker-wt-terminal-owner"
 	local branch_name="feature/auto-20260507-190808-gh23083"
@@ -298,11 +305,10 @@ test_terminal_worktree_bypasses_stale_owner_signal() {
 	local cleanup_rc=$?
 
 	local rc=0
-	[[ "$cleanup_rc" -eq 0 ]] || rc=1
-	[[ ! -d "$wt_path" ]] || rc=1
-	grep -q 'worktree-removed.*local-commits-branch-preserved.*mode=branch-preserved' "$AIDEVOPS_CLEANUP_LOG" 2>/dev/null || rc=1
-	grep -q 'recovery_path=branch-preserved-closed-issue' "$AIDEVOPS_CLEANUP_LOG" 2>/dev/null || rc=1
-	print_result "terminal worktree bypasses stale owner signal" "$rc" \
+	[[ "$cleanup_rc" -ne 0 ]] || rc=1
+	[[ -d "$wt_path" ]] || rc=1
+	grep -q "worktree-skipped: ${wt_path} — owned-skip" "$AIDEVOPS_CLEANUP_LOG" 2>/dev/null || rc=1
+	print_result "terminal worktree respects live owner signal" "$rc" \
 		"cleanup_rc=$cleanup_rc log=$(cat "$AIDEVOPS_CLEANUP_LOG" 2>/dev/null)"
 	return 0
 }
@@ -677,7 +683,7 @@ test_closed_issue_local_commit_no_pr_removes_before_age_threshold
 test_closed_pr_reference_local_commit_no_pr_removes_before_age_threshold
 test_merged_branch_pr_removes_before_age_threshold
 test_closed_issue_dirty_worktree_stashes_and_preserves_branch
-test_terminal_worktree_bypasses_stale_owner_signal
+test_terminal_worktree_respects_live_owner_signal
 test_fix_numeric_closed_issue_worktree_archives
 test_stale_local_commit_no_pr_removes_worktree_preserves_branch
 test_stale_detached_review_cruft_removes_without_branch

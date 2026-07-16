@@ -17,6 +17,7 @@ readonly TEST_RESET='\033[0m'
 TESTS_RUN=0
 TESTS_FAILED=0
 MOCK_GH_TARGET_IS_PR="0"
+_PULSE_DISPATCH_FALSE="false"
 
 print_result() {
 	local test_name="$1"

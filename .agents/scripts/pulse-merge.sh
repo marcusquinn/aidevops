@@ -152,7 +152,7 @@ _pulse_merge_changes_requested_thread_remediation_first_enabled() {
 # caller that builds a PR object on this helper so draft/label/staleness
 # metadata cannot drift between list-based and webhook-triggered merge paths.
 _pulse_merge_ready_pr_json_fields() {
-	printf '%s' 'number,mergeable,reviewDecision,author,title,isDraft,labels,updatedAt,headRefOid,headRefName,baseRefName,createdAt,statusCheckRollup'
+	printf '%s' 'number,state,mergeable,reviewDecision,author,title,isDraft,labels,updatedAt,headRefOid,headRefName,baseRefName,createdAt,statusCheckRollup'
 	return 0
 }
 
@@ -1522,9 +1522,12 @@ ${merge_output}"
 ${_missing_check_update_output}"
 	fi
 	if [[ $_merge_exit -ne 0 && "$merge_output" == *"Repository rule violations found"* ]]; then
-		echo "[pulse-wrapper] Deterministic merge: admin merge hit repository rulesets for PR #${pr_number} in ${repo_slug}; retrying with native auto-merge without --admin (GH#24438): ${merge_output}" >>"$LOGFILE"
+		echo "[pulse-wrapper] Deterministic merge: admin merge hit repository rulesets for PR #${pr_number} in ${repo_slug}; evaluating protection-respecting fallbacks (GH#24438): ${merge_output}" >>"$LOGFILE"
 		if [[ "${_PULSE_FINAL_REQUIRES_SYNCHRONOUS_MERGE:-0}" == "1" ]]; then
 			_auto_merge_output="native auto-merge skipped: mutable external approval state requires synchronous final revalidation"
+			_auto_merge_exit=1
+		elif ! _repo_allows_auto_merge "$repo_slug"; then
+			_auto_merge_output="native auto-merge skipped: repository does not allow auto-merge (GH#27879)"
 			_auto_merge_exit=1
 		else
 			if ! _pulse_merge_final_trust_gate "$pr_number" "$repo_slug" "$pr_head_ref_oid"; then
@@ -1541,7 +1544,7 @@ ${_missing_check_update_output}"
 
 [native auto-merge fallback]
 ${_auto_merge_output}"
-		echo "[pulse-wrapper] Deterministic merge: native auto-merge fallback failed for PR #${pr_number} in ${repo_slug}; retrying direct merge without --admin (GH#23087): ${_auto_merge_output}" >>"$LOGFILE"
+		echo "[pulse-wrapper] Deterministic merge: native auto-merge fallback unavailable or failed for PR #${pr_number} in ${repo_slug}; retrying direct merge without --admin (GH#23087): ${_auto_merge_output}" >>"$LOGFILE"
 		if ! _pulse_merge_final_trust_gate "$pr_number" "$repo_slug" "$pr_head_ref_oid"; then
 			return 1
 		fi
@@ -1652,8 +1655,7 @@ process_pr() {
 
 	# Verify state is OPEN — closed/merged PRs should not be re-processed.
 	local pr_state
-	pr_state=$(gh_pr_view "$pr_number" --repo "$repo_slug" \
-		--json state --jq '.state // ""' 2>/dev/null) || pr_state=""
+	pr_state=$(printf '%s' "$pr_obj" | jq -r '.state // ""' 2>/dev/null) || pr_state=""
 	if [[ "$pr_state" != "OPEN" ]]; then
 		echo "[pulse-merge] process_pr: PR ${repo_slug}#${pr_number} is not OPEN (state=${pr_state}) — skipping" >>"$LOGFILE"
 		return 1

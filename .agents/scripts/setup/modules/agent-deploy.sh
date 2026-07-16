@@ -10,65 +10,26 @@ set -Eeuo pipefail
 IFS=$'\n\t'
 
 #######################################
-# Restart the pulse process if it's running, so it picks up newly deployed
-# scripts. Bash processes source files at startup only — file changes on
-# disk don't affect a running process. The pulse is long-lived (hours/days)
-# so it would run stale code indefinitely without a restart.
-#
-# The pulse auto-restarts via launchd/cron, so killing it is safe. If no
-# auto-restart mechanism exists, we start it manually.
+# Reconcile Pulse only through the validated runtime bundle. The lifecycle
+# helper serializes this operation with activation, re-resolves the active link
+# under that lock, and honours the effective supervisor-enabled state.
 #######################################
 _restart_pulse_if_running() {
-	# Anchor the pattern so it only matches the running script, not editors or
-	# grep commands that happen to contain "pulse-wrapper.sh" in their argv.
-	local pattern="(^|/)pulse-wrapper\\.sh( |$)"
+	local activated_root="$1"
+	local managed_enabled="${2:-false}"
+	local active_link="${3:-${HOME}/.aidevops/agents}"
+	local pulse_helper="${activated_root}/scripts/pulse-lifecycle-helper.sh"
 
-	if ! pgrep -f "$pattern" >/dev/null; then
-		# Not running, nothing to do
-		return 0
+	if [[ ! -x "$pulse_helper" ]]; then
+		print_warning "Pulse lifecycle helper is missing from the activated runtime bundle"
+		return 1
 	fi
-
-	local old_pid
-	old_pid=$(pgrep -f "$pattern" | tail -1)
-	if [[ -z "$old_pid" ]]; then
-		return 0
-	fi
-	print_info "Restarting pulse (PID $old_pid) to load updated scripts..."
-	pkill -f "$pattern" || true
-
-	# Wait for it to die
-	local wait_count=0
-	while pgrep -f "$pattern" >/dev/null && [[ "$wait_count" -lt 10 ]]; do
-		sleep 1
-		wait_count=$((wait_count + 1))
-	done
-
-	# Give launchd/cron a moment to restart it
-	sleep 5
-
-	# Check if it auto-restarted with a different PID (guards against false
-	# success if the old process failed to terminate).
-	if pgrep -f "$pattern" >/dev/null; then
-		local new_pid
-		new_pid=$(pgrep -f "$pattern" | tail -1)
-		if [[ -n "$new_pid" ]] && [[ "$new_pid" != "$old_pid" ]]; then
-			print_success "Pulse restarted (new PID $new_pid)"
-			return 0
-		fi
-	fi
-
-	# No auto-restart — start it manually. Prefer the canonical repo source so a
-	# background launch never depends on a path inside ~/.aidevops/agents/scripts/
-	# that may be in the middle of a future deploy swap (must-not-be-wiped-during-deploy).
-	local pulse_script="${INSTALL_DIR:-.}/.agents/scripts/pulse-wrapper.sh"
-	if [[ ! -x "$pulse_script" ]]; then
-		pulse_script="${HOME}/.aidevops/agents/scripts/pulse-wrapper.sh"
-	fi
-	if [[ -x "$pulse_script" ]]; then
-		nohup "$pulse_script" >>"${HOME}/.aidevops/logs/pulse-wrapper.log" 2>&1 &
-		print_success "Pulse started manually (PID $!)"
-	else
-		print_warning "Pulse not restarted — $pulse_script not found"
+	print_info "Reconciling Pulse with the activated runtime bundle"
+	if ! AIDEVOPS_AGENTS_DIR="$activated_root" \
+		AIDEVOPS_ACTIVE_AGENTS_LINK="$active_link" \
+		AIDEVOPS_PULSE_MANAGED_ENABLED="$managed_enabled" \
+		"$pulse_helper" reconcile-managed; then
+		return 1
 	fi
 	return 0
 }
@@ -587,6 +548,32 @@ _runtime_bundle_copy_preserved_dirs() {
 	return 0
 }
 
+# Move the user-owned plist override out of the replaceable runtime bundle.
+# The no-clobber hard link makes concurrent setup runs converge without
+# overwriting an existing stable config. No file contents are logged.
+_runtime_bundle_migrate_plist_env_overrides() {
+	local current_root="$1"
+	local legacy_file="$current_root/configs/plist-env-overrides.json"
+	local config_dir="$HOME/.config/aidevops"
+	local stable_file="$config_dir/plist-env-overrides.json"
+	local migration_tmp=""
+
+	[[ -f "$stable_file" || ! -f "$legacy_file" ]] && return 0
+	mkdir -p "$config_dir" || return 1
+	migration_tmp=$(mktemp "$config_dir/.plist-env-overrides.json.XXXXXX") || return 1
+	if ! cp "$legacy_file" "$migration_tmp" || ! chmod 600 "$migration_tmp"; then
+		rm -f "$migration_tmp"
+		return 1
+	fi
+	if ! ln "$migration_tmp" "$stable_file" 2>/dev/null && [[ ! -f "$stable_file" ]]; then
+		rm -f "$migration_tmp"
+		return 1
+	fi
+	rm -f "$migration_tmp"
+	print_info "  Migrated plist environment overrides to ~/.config/aidevops/plist-env-overrides.json"
+	return 0
+}
+
 _runtime_bundle_write_manifest() {
 	local bundle_dir="$1"
 	local repo_dir="$2"
@@ -668,12 +655,18 @@ _runtime_bundle_stage() {
 	bundle_id="${version//[^A-Za-z0-9._-]/_}-${git_sha}-$(date +%s)-$$"
 	bundle_dir=$(mktemp -d "$bundles_dir/.staging.${bundle_id}.XXXXXX") || return 1
 	mkdir -p "$bundle_dir/agents" || return 1
+	if current_root=$(_runtime_bundle_resolve_root "$target_dir" 2>/dev/null); then
+		_runtime_bundle_migrate_plist_env_overrides "$current_root" || {
+			rm -rf "$bundle_dir"
+			return 1
+		}
+	fi
 
 	if ! _deploy_agents_copy "$source_dir" "$bundle_dir/agents" "$@"; then
 		rm -rf "$bundle_dir"
 		return 1
 	fi
-	if current_root=$(_runtime_bundle_resolve_root "$target_dir" 2>/dev/null); then
+	if [[ -n "$current_root" ]]; then
 		_runtime_bundle_copy_preserved_dirs "$current_root" "$bundle_dir/agents" "$@" || {
 			rm -rf "$bundle_dir"
 			return 1
@@ -796,7 +789,7 @@ _runtime_bundle_prune() {
 	return 0
 }
 
-_runtime_bundle_activate() {
+_runtime_bundle_activate_locked() {
 	local target_dir="$1"
 	local bundle_dir="$2"
 	local agents_root=""
@@ -841,7 +834,24 @@ _runtime_bundle_activate() {
 		return 1
 	fi
 
+	_AIDEVOPS_ACTIVE_BUNDLE_ROOT="$agents_root"
 	_runtime_bundle_prune "$bundles_dir" "$agents_root" "$previous_root"
+	return 0
+}
+
+_runtime_bundle_activate() {
+	local target_dir="$1"
+	local bundle_dir="$2"
+	local activate_rc=0
+	_AIDEVOPS_ACTIVE_BUNDLE_ROOT=""
+
+	if ! aidevops_runtime_transition_lock_acquire; then
+		print_error "Unable to acquire the runtime activation lock"
+		return 1
+	fi
+	_runtime_bundle_activate_locked "$target_dir" "$bundle_dir" || activate_rc=$?
+	aidevops_runtime_transition_lock_release
+	[[ "$activate_rc" -eq 0 ]] || return "$activate_rc"
 	return 0
 }
 
@@ -1137,23 +1147,6 @@ _write_deployed_agents_sha() {
 	return 0
 }
 
-_restart_pulse_after_agents_deploy() {
-	# Restart pulse in the background — bash processes load source files at
-	# startup and don't re-read them when files change on disk. Without a
-	# restart, fixes to pulse-*.sh, dispatch-dedup-*.sh, and other sourced
-	# scripts don't take effect until the next manual restart.
-	#
-	# t3221: running this asynchronously saves the 10-15s blocking wait
-	# (pkill + up to 10s die-wait + sleep 5 launchd grace period). The
-	# deploy is already complete on disk; the pulse picks up the new scripts
-	# once it restarts regardless of when that happens relative to setup.sh
-	# finishing. disown prevents SIGHUP propagation if setup.sh is sourced
-	# interactively; in script mode the orphan survives the exit anyway.
-	_restart_pulse_if_running &
-	disown
-	return 0
-}
-
 _install_canonical_git_guard_shim() {
 	local target_dir="$1"
 	local guard_shim="${target_dir}/scripts/git"
@@ -1194,7 +1187,6 @@ deploy_aidevops_agents() {
 	_install_canonical_git_guard_shim "$target_dir" || return 1
 
 	_write_deployed_agents_sha "$repo_dir"
-	_restart_pulse_after_agents_deploy
 
 	return 0
 }

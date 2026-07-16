@@ -37,6 +37,11 @@
 [[ -n "${_PULSE_DISPATCH_ENGINE_LOADED:-}" ]] && return 0
 _PULSE_DISPATCH_ENGINE_LOADED=1
 
+# Resolve this module's dependencies relative to itself, not a caller-owned
+# SCRIPT_DIR. Test harnesses and other sourced callers legitimately use that
+# generic variable for their own directory (GH#27888).
+_PULSE_DISPATCH_ENGINE_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
 # t2863: Module-level variable defaults (set -u guards).
 # These vars are normally set by pulse-wrapper.sh bootstrap and pulse-wrapper-config.sh.
 # Guard them here so dispatch engine functions survive standalone sourcing (test
@@ -93,20 +98,22 @@ fi
 : "${PULSE_LLM_STALL_THRESHOLD:=3600}"
 : "${PULSE_RATE_LIMIT_FLAG:=${HOME}/.aidevops/logs/pulse-graphql-rate-limited.flag}"
 : "${PULSE_RUNNABLE_ISSUE_LIMIT:=1000}"
+: "${PULSE_DISPATCH_AGE_BONUS_PER_DAY:=25}"
+: "${PULSE_DISPATCH_AGE_BONUS_CAP:=900}"
 : "${AIDEVOPS_PULSE_ASYNC_POST_DISPATCH_HOUSEKEEPING:=1}"
 
 # t2690: Source rate-limit circuit breaker (proactive dispatch pause on GraphQL exhaustion).
 # shellcheck source=pulse-rate-limit-circuit-breaker.sh
-if [[ -f "${SCRIPT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}/pulse-rate-limit-circuit-breaker.sh" ]]; then
+if [[ -f "${_PULSE_DISPATCH_ENGINE_SCRIPT_DIR}/pulse-rate-limit-circuit-breaker.sh" ]]; then
 	# shellcheck disable=SC1091
-	source "${SCRIPT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}/pulse-rate-limit-circuit-breaker.sh"
+	source "${_PULSE_DISPATCH_ENGINE_SCRIPT_DIR}/pulse-rate-limit-circuit-breaker.sh"
 fi
 
 # t2781: Source per-issue rate_limit backoff helper (graduated cooldown by failure count).
 # shellcheck source=dispatch-backoff-helper.sh
-if [[ -f "${SCRIPT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}/dispatch-backoff-helper.sh" ]]; then
+if [[ -f "${_PULSE_DISPATCH_ENGINE_SCRIPT_DIR}/dispatch-backoff-helper.sh" ]]; then
 	# shellcheck disable=SC1091
-	source "${SCRIPT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}/dispatch-backoff-helper.sh"
+	source "${_PULSE_DISPATCH_ENGINE_SCRIPT_DIR}/dispatch-backoff-helper.sh"
 fi
 
 # GH#21738: Source extracted helper sub-libraries (orchestrator + sub-library
@@ -118,14 +125,14 @@ fi
 # re-register them as new function-complexity violations under their new
 # (file, fname) identity keys).
 # shellcheck source=./pulse-dispatch-lib.sh
-# shellcheck disable=SC1091  # sub-library resolved at runtime via $SCRIPT_DIR
-source "${SCRIPT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}/pulse-dispatch-lib.sh"
+# shellcheck disable=SC1091  # sub-library resolved from this module's path
+source "${_PULSE_DISPATCH_ENGINE_SCRIPT_DIR}/pulse-dispatch-lib.sh"
 # shellcheck source=./pulse-dispatch-current-state-guardrails.sh
-# shellcheck disable=SC1091  # sub-library resolved at runtime via $SCRIPT_DIR
-source "${SCRIPT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}/pulse-dispatch-current-state-guardrails.sh"
+# shellcheck disable=SC1091  # sub-library resolved from this module's path
+source "${_PULSE_DISPATCH_ENGINE_SCRIPT_DIR}/pulse-dispatch-current-state-guardrails.sh"
 # shellcheck source=./pulse-dispatch-preflight-lib.sh
-# shellcheck disable=SC1091  # sub-library resolved at runtime via $SCRIPT_DIR
-source "${SCRIPT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}/pulse-dispatch-preflight-lib.sh"
+# shellcheck disable=SC1091  # sub-library resolved from this module's path
+source "${_PULSE_DISPATCH_ENGINE_SCRIPT_DIR}/pulse-dispatch-preflight-lib.sh"
 
 
 # t1959: Module-level variable to communicate launch failure reason to callers.
@@ -273,14 +280,82 @@ check_worker_launch() {
 }
 
 #######################################
+# Score one repository's dispatch candidates and append JSONL records to the
+# shared candidate file. Extracted so the cross-repository orchestrator stays
+# below the function-complexity threshold.
+# Arguments: candidates JSON, slug, path, priority, bonus/day, bonus cap,
+#            current epoch, destination JSONL file
+#######################################
+_append_ranked_repo_candidates() {
+	local repo_candidates_json="$1"
+	local repo_slug="$2"
+	local repo_path="$3"
+	local repo_priority="$4"
+	local age_bonus_per_day="$5"
+	local age_bonus_cap="$6"
+	local current_epoch="$7"
+	local tmp_candidates="$8"
+
+	printf '%s' "$repo_candidates_json" | jq -c --arg slug "$repo_slug" --arg path "$repo_path" --arg priority "$repo_priority" --arg debt_label "${QUALITY_DEBT_LABEL:-quality-debt}" --argjson age_bonus_per_day "$age_bonus_per_day" --argjson age_bonus_cap "$age_bonus_cap" --argjson current_epoch "$current_epoch" '
+		.[] |
+		(try ((.createdAt // "") | fromdateiso8601) catch $current_epoch) as $created_epoch |
+		((($current_epoch - $created_epoch) / 86400) | floor | if . < 0 then 0 else . end) as $age_days |
+		($age_days * $age_bonus_per_day) as $uncapped_age_bonus |
+		(if $uncapped_age_bonus > $age_bonus_cap then $age_bonus_cap else $uncapped_age_bonus end) as $age_bonus |
+		((.labels // []) | map(.name? // .)) as $labels |
+		(
+			(if $priority == "tooling" then 2000 elif $priority == "product" then 1000 else 0 end) +
+			# Mission m-20260504-1e325d feature 3.4: when capacity is
+			# constrained, rank worker-ready/low-complexity issues above
+			# broad raw backlog so pulse fills slots with solvable work first.
+			(if (($labels | index("tier:simple")) != null or ($labels | index("low-complexity")) != null) then 2500
+			 elif ($labels | index("tier:standard")) != null then 1200
+			 else 0 end) +
+			(if (($labels | index("worker-ready")) != null or ($labels | index("status:available")) != null) then 1000 else 0 end) +
+			(if (($labels | index("good first issue")) != null or ($labels | index("quick-win")) != null) then 800 else 0 end) +
+			(if ($labels | index("auto-dispatch")) != null then 300 else 0 end) -
+			(if ($labels | index("tier:thinking")) != null then 1200 else 0 end) -
+			(if (($labels | index("research")) != null or ($labels | index("needs-design")) != null) then 800 else 0 end) +
+			(if (($labels | index($debt_label)) != null and ($labels | index("security")) != null) then 500 else 0 end) +
+			(if ($labels | index("priority:critical")) != null then 10000
+			 elif ($labels | index("priority:high")) != null then 9000
+			 elif ($labels | index("priority:medium")) != null then 8000
+			 elif ($labels | index("bug")) != null then 7000
+			 elif ($labels | index("enhancement")) != null then 6000
+			 elif ($labels | index($debt_label)) != null then 5000
+			 elif (($labels | index("file-size-debt")) != null or ($labels | index("function-complexity-debt")) != null) then 4000
+			 elif ($labels | index("priority:low")) != null then 3500
+			 else 3000 end)
+		) as $base_score |
+		. + {
+			repo_slug: $slug,
+			repo_path: $path,
+			repo_priority: $priority,
+			base_score: $base_score,
+			age_days: $age_days,
+			age_bonus: $age_bonus,
+			score: ($base_score + $age_bonus)
+		}
+	' >>"$tmp_candidates" 2>/dev/null || true
+	return 0
+}
+
+#######################################
 # Build ranked deterministic dispatch candidates across all pulse repos.
 # Arguments:
 #   $1 - max issues to fetch per repo (optional)
-# Returns: JSON array sorted by score desc, updatedAt asc
+# Returns: JSON array sorted by score desc, createdAt asc, updatedAt asc
 #######################################
 build_ranked_dispatch_candidates_json() {
 	local per_repo_limit="${1:-$PULSE_RUNNABLE_ISSUE_LIMIT}"
 	[[ "$per_repo_limit" =~ ^[0-9]+$ ]] || per_repo_limit="$PULSE_RUNNABLE_ISSUE_LIMIT"
+	local age_bonus_per_day="${PULSE_DISPATCH_AGE_BONUS_PER_DAY:-25}"
+	local age_bonus_cap="${PULSE_DISPATCH_AGE_BONUS_CAP:-900}"
+	local current_epoch
+	[[ "$age_bonus_per_day" =~ ^[0-9]+$ ]] || age_bonus_per_day=25
+	[[ "$age_bonus_cap" =~ ^[0-9]+$ ]] || age_bonus_cap=900
+	current_epoch=$(date +%s)
+	[[ "$current_epoch" =~ ^[0-9]+$ ]] || current_epoch=0
 
 	if [[ ! -f "$REPOS_JSON" ]]; then
 		printf '[]\n'
@@ -309,39 +384,8 @@ build_ranked_dispatch_candidates_json() {
 			continue
 		fi
 
-		printf '%s' "$repo_candidates_json" | jq -c --arg slug "$repo_slug" --arg path "$repo_path" --arg priority "$repo_priority" --arg debt_label "${QUALITY_DEBT_LABEL:-quality-debt}" '
-			.[] |
-			. + {
-				repo_slug: $slug,
-				repo_path: $path,
-				repo_priority: $priority,
-				score: (
-					((.labels // []) | map(.name? // .)) as $labels |
-					(if $priority == "tooling" then 2000 elif $priority == "product" then 1000 else 0 end) +
-					# Mission m-20260504-1e325d feature 3.4: when capacity is
-					# constrained, rank worker-ready/low-complexity issues above
-					# broad raw backlog so pulse fills slots with solvable work first.
-					(if (($labels | index("tier:simple")) != null or ($labels | index("low-complexity")) != null) then 2500
-					 elif ($labels | index("tier:standard")) != null then 1200
-					 else 0 end) +
-					(if (($labels | index("worker-ready")) != null or ($labels | index("status:available")) != null) then 1000 else 0 end) +
-					(if (($labels | index("good first issue")) != null or ($labels | index("quick-win")) != null) then 800 else 0 end) +
-					(if ($labels | index("auto-dispatch")) != null then 300 else 0 end) -
-					(if ($labels | index("tier:thinking")) != null then 1200 else 0 end) -
-					(if (($labels | index("research")) != null or ($labels | index("needs-design")) != null) then 800 else 0 end) +
-					(if (($labels | index($debt_label)) != null and ($labels | index("security")) != null) then 500 else 0 end) +
-					(if ($labels | index("priority:critical")) != null then 10000
-					 elif ($labels | index("priority:high")) != null then 9000
-					 elif ($labels | index("priority:medium")) != null then 8000
-					 elif ($labels | index("bug")) != null then 7000
-					 elif ($labels | index("enhancement")) != null then 6000
-					 elif ($labels | index($debt_label)) != null then 5000
-					 elif (($labels | index("file-size-debt")) != null or ($labels | index("function-complexity-debt")) != null) then 4000
-					 elif ($labels | index("priority:low")) != null then 3500
-					 else 3000 end)
-				)
-			}
-		' >>"$tmp_candidates" 2>/dev/null || true
+		_append_ranked_repo_candidates "$repo_candidates_json" "$repo_slug" "$repo_path" \
+			"$repo_priority" "$age_bonus_per_day" "$age_bonus_cap" "$current_epoch" "$tmp_candidates"
 	done < <(jq -r '
 		def pulse_hour_start:
 			if (.pulse_hours | type) == "array" then .pulse_hours[0]
@@ -370,7 +414,13 @@ build_ranked_dispatch_candidates_json() {
 		return 0
 	fi
 
-	jq -cs 'sort_by([-.score, (.updatedAt // "")])' "$tmp_candidates" 2>/dev/null || printf '[]\n'
+	jq -cs 'sort_by([
+		-.score,
+		(if (.createdAt // "") == "" then "9999-12-31T23:59:59Z" else .createdAt end),
+		(if (.updatedAt // "") == "" then "9999-12-31T23:59:59Z" else .updatedAt end),
+		(.repo_slug // ""),
+		(.number // 0)
+	])' "$tmp_candidates" 2>/dev/null || printf '[]\n'
 	rm -f "$tmp_candidates"
 	return 0
 }
@@ -1328,6 +1378,10 @@ _run_preflight_stages() {
 	# so one slow scanner cannot starve downstream scanners.
 	local _pflt_timeout="${PREFLIGHT_GROUP_TIMEOUT:-${PRE_RUN_STAGE_TIMEOUT:-600}}"
 
+	# GH#27853: start the existing lock-safe merge routine before any new
+	# dispatch. It runs asynchronously while cleanup/capacity stages proceed;
+	# dispatch never waits for merge, CI, review, or GitHub latency.
+	_preflight_start_merge_first || true
 	run_stage_with_timeout "preflight_cleanup_and_ledger" "$_pflt_timeout" \
 		_preflight_cleanup_and_ledger || true
 	run_stage_with_timeout "preflight_capacity_and_labels" "$_pflt_timeout" \

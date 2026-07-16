@@ -23,8 +23,13 @@ main() {
 	local deploy_line=""
 	local converge_line=""
 	local exit_trap_line=""
-	# shellcheck disable=SC2016 # Match the literal release-library command.
-	local full_deploy_pattern='bash "$deploy_script" --repo "$sync_repo_root" --full --quiet'
+	# shellcheck disable=SC2016 # Match literal release-library expressions.
+	local deploy_args_pattern='local -a deploy_args=(--repo "$sync_repo_root" --quiet)'
+	# shellcheck disable=SC2016 # Match literal release-library expressions.
+	local deploy_scope_pattern='local deployment_scope="${AIDEVOPS_RELEASE_DEPLOY_SCOPE:-incremental}"'
+	local full_deploy_pattern='full) deploy_args+=(--full) ;;'
+	# shellcheck disable=SC2016 # Match literal release-library expressions.
+	local deploy_invocation_pattern='bash "$deploy_script" "${deploy_args[@]}"'
 
 	acquire_line=$(line_for '_setup_acquire_noninteractive_setup_lock "$@"' "$SETUP_SCRIPT")
 	dispatch_line=$(line_for '^[[:space:]]*_setup_run_non_interactive$' "$SETUP_SCRIPT" | while IFS= read -r line_number; do
@@ -42,7 +47,10 @@ main() {
 
 	if [[ -n "$exit_trap_line" && "$exit_trap_line" -lt "$acquire_line" &&
 		"$acquire_line" -lt "$dispatch_line" && "$deploy_line" -lt "$converge_line" ]] &&
-		grep -q "$full_deploy_pattern" "$RELEASE_LIB"; then
+		grep -Fq "$deploy_scope_pattern" "$RELEASE_LIB" &&
+		grep -Fq "$deploy_args_pattern" "$RELEASE_LIB" &&
+		grep -Fq "$full_deploy_pattern" "$RELEASE_LIB" &&
+		grep -Fq "$deploy_invocation_pattern" "$RELEASE_LIB"; then
 		printf 'PASS full-loop setup mutex covers agent deployment through CLI convergence\n'
 		return 0
 	fi

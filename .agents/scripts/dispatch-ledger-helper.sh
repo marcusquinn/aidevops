@@ -58,6 +58,7 @@ DEFAULT_TTL="${AIDEVOPS_DISPATCH_LEDGER_TTL:-3600}" # 60 minutes
 PRELAUNCH_TTL="${AIDEVOPS_DISPATCH_PRELAUNCH_LEASE_TTL:-120}"
 READY_TTL="${AIDEVOPS_DISPATCH_READY_LEASE_TTL:-7200}"
 LEDGER_STATUS_ACTIVE="in-flight"
+LEDGER_STATUS_COMPLETED="completed"
 LEDGER_STATUS_FAILED="failed"
 
 _lease_device_id() {
@@ -361,7 +362,7 @@ cmd_register() {
 	local dispatch_tier=""
 	local dispatch_model=""
 	local worktree_path=""
-	local lease_token=""
+	local lease_token="" attempt_id=""
 	local runner_device=""
 	local lease_ttl="$PRELAUNCH_TTL"
 
@@ -399,6 +400,7 @@ cmd_register() {
 			lease_token="${2:-}"
 			shift 2
 			;;
+		--attempt-id) attempt_id="${2:-}"; shift 2 ;;
 		--device-id)
 			runner_device="${2:-}"
 			shift 2
@@ -431,7 +433,7 @@ cmd_register() {
 	[[ "$lease_ttl" =~ ^[0-9]+$ ]] || lease_ttl="$PRELAUNCH_TTL"
 	local lease_expires_at=""
 	lease_expires_at=$(_lease_expiry "$lease_ttl")
-	local attempt_id="${lease_token:-${session_key}:${now}:${dispatch_pid}}"
+	[[ -n "$attempt_id" ]] || attempt_id=$(aidevops_generate_execution_id "attempt")
 
 	jq -cn \
 		--arg sk "$session_key" \
@@ -475,6 +477,7 @@ _lease_append_transition() {
 	local lease_phase="$3"
 	local status="$4"
 	local lease_ttl="$5"
+	local terminal_reason="${6:-}"
 	_ensure_ledger
 	_acquire_lock || return 1
 	local current=""
@@ -500,8 +503,8 @@ _lease_append_transition() {
 	local now="" expires=""
 	now=$(_now_utc)
 	expires=$(_lease_expiry "$lease_ttl")
-	printf '%s' "$current" | jq -c --arg phase "$lease_phase" --arg status "$status" --arg ts "$now" --argjson expires "$expires" \
-		'.lease_phase=$phase | .status=$status | .updated_at=$ts | .lease_expires_at=$expires' >>"$LEDGER_FILE"
+	printf '%s' "$current" | jq -c --arg phase "$lease_phase" --arg status "$status" --arg ts "$now" --arg reason "$terminal_reason" --argjson expires "$expires" \
+		'.lease_phase=$phase | .status=$status | .updated_at=$ts | .lease_expires_at=$expires | if $reason != "" then .terminal_reason=$reason else . end' >>"$LEDGER_FILE"
 	_release_lock
 	return 0
 }
@@ -738,6 +741,8 @@ cmd_check_issue() {
 cmd_complete() {
 	local session_key=""
 	local lease_token=""
+	local attempt_id=""
+	local reason=""
 
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
@@ -747,6 +752,14 @@ cmd_complete() {
 			;;
 		--lease-token)
 			lease_token="${2:-}"
+			shift 2
+			;;
+		--attempt-id)
+			attempt_id="${2:-}"
+			shift 2
+			;;
+		--reason)
+			reason="${2:-}"
 			shift 2
 			;;
 		*)
@@ -761,7 +774,41 @@ cmd_complete() {
 		return 1
 	fi
 
-	_update_status "$session_key" "completed" "$lease_token"
+	if [[ -n "$lease_token" ]]; then
+		_lease_append_transition "$session_key" "$lease_token" "terminal" "$LEDGER_STATUS_COMPLETED" "0" "$reason"
+		return $?
+	else
+		_update_status "$session_key" "$LEDGER_STATUS_COMPLETED" "" "$attempt_id"
+	fi
+	return 0
+}
+
+#######################################
+# Read the typed terminal reason for an exact dispatch lease.
+# Args: --session-key KEY --lease-token TOKEN
+# Returns: 0 with a non-empty reason, 1 when absent or mismatched.
+#######################################
+cmd_terminal_reason() {
+	local session_key=""
+	local lease_token=""
+
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+		--session-key) session_key="${2:-}"; shift 2 ;;
+		--lease-token) lease_token="${2:-}"; shift 2 ;;
+		*) echo "Error: Unknown option for terminal-reason: $1" >&2; return 1 ;;
+		esac
+	done
+	[[ -n "$session_key" && -n "$lease_token" ]] || return 1
+	_ensure_ledger
+	local entry=""
+	entry=$(_lease_latest_entry "$session_key") || entry=""
+	[[ -n "$entry" ]] || return 1
+	[[ "$(printf '%s' "$entry" | jq -r '.lease_token // ""')" == "$lease_token" ]] || return 1
+	local reason=""
+	reason=$(printf '%s' "$entry" | jq -r 'select(.lease_phase == "terminal") | .terminal_reason // ""') || reason=""
+	[[ -n "$reason" ]] || return 1
+	printf '%s\n' "$reason"
 	return 0
 }
 
@@ -777,6 +824,7 @@ cmd_complete() {
 cmd_fail() {
 	local session_key=""
 	local lease_token=""
+	local attempt_id=""
 
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
@@ -786,6 +834,10 @@ cmd_fail() {
 			;;
 		--lease-token)
 			lease_token="${2:-}"
+			shift 2
+			;;
+		--attempt-id)
+			attempt_id="${2:-}"
 			shift 2
 			;;
 		*)
@@ -800,7 +852,7 @@ cmd_fail() {
 		return 1
 	fi
 
-	_update_status "$session_key" "$LEDGER_STATUS_FAILED" "$lease_token"
+	_update_status "$session_key" "$LEDGER_STATUS_FAILED" "$lease_token" "$attempt_id"
 	return 0
 }
 
@@ -833,6 +885,24 @@ _find_pending_telemetry_attempt() {
 	jq -sc -f "$TIER_TELEMETRY_FILTER" --arg operation find \
 		--arg aid "$attempt_id" --arg sk "$session_key" \
 		--arg inum "$issue_number" --arg slug "$repo_slug" "$telemetry_file" 2>/dev/null
+	return 0
+}
+
+_resolve_attempt_id_from_lease() {
+	local lease_token="$1"
+	local session_key="$2"
+	local issue_number="$3"
+	local repo_slug="$4"
+
+	[[ -n "$lease_token" && -s "$LEDGER_FILE" ]] || return 0
+	jq -rs --arg token "$lease_token" --arg sk "$session_key" \
+		--arg inum "$issue_number" --arg slug "$repo_slug" \
+		'[.[] | select(
+			(.lease_token // "") == $token and
+			($sk == "" or (.session_key // "") == $sk) and
+			($inum == "" or (.issue_number // "") == $inum) and
+			($slug == "" or (.repo_slug // "") == $slug)
+		)] | last | .attempt_id // empty' "$LEDGER_FILE" 2>/dev/null
 	return 0
 }
 
@@ -922,7 +992,10 @@ cmd_record_outcome() {
 		return 0
 	fi
 
-	[[ -n "$attempt_id" ]] || attempt_id="$lease_token"
+	if [[ -z "$attempt_id" && -n "$lease_token" ]]; then
+		attempt_id=$(_resolve_attempt_id_from_lease "$lease_token" "$session_key" \
+			"$issue_number" "$repo_slug" || true)
+	fi
 	local pending=""
 	pending=$(_find_pending_telemetry_attempt "$telemetry_file" "$attempt_id" \
 		"$session_key" "$issue_number" "$repo_slug" || true)
@@ -1021,6 +1094,7 @@ _update_status() {
 	local session_key="$1"
 	local new_status="$2"
 	local lease_token="${3:-}"
+	local attempt_id="${4:-}"
 	if [[ -n "$lease_token" ]]; then
 		_lease_append_transition "$session_key" "$lease_token" "terminal" "$new_status" "0"
 		return $?
@@ -1045,8 +1119,8 @@ _update_status() {
 	# Only transition entries that are still "in-flight" — terminal statuses
 	# ("completed", "failed") are immutable. A late fail from dead-PID cleanup
 	# must not overwrite a genuinely completed dispatch.
-	jq -c --arg sk "$session_key" --arg st "$new_status" --arg ts "$now" --arg active "$LEDGER_STATUS_ACTIVE" \
-		'if .session_key == $sk and .status == $active
+	jq -c --arg sk "$session_key" --arg aid "$attempt_id" --arg st "$new_status" --arg ts "$now" --arg active "$LEDGER_STATUS_ACTIVE" \
+		'if .session_key == $sk and .status == $active and ($aid == "" or (.attempt_id // "") == $aid)
 			then .status = $st | .updated_at = $ts
 			else .
 		end' \
@@ -1424,8 +1498,11 @@ Usage:
   dispatch-ledger-helper.sh check-issue --issue NUM [--repo SLUG]
     Check if issue has an in-flight entry. Exit 0=in-flight, 1=safe.
 
-  dispatch-ledger-helper.sh complete --session-key KEY
+  dispatch-ledger-helper.sh complete --session-key KEY [--lease-token TOKEN] [--reason REASON]
     Mark dispatch as completed (worker finished successfully).
+
+  dispatch-ledger-helper.sh terminal-reason --session-key KEY --lease-token TOKEN
+    Read the typed terminal reason for an exact dispatch generation.
 
   dispatch-ledger-helper.sh fail --session-key KEY
     Mark dispatch as failed (worker errored or timed out).
@@ -1496,6 +1573,9 @@ main() {
 		;;
 	complete)
 		cmd_complete "$@"
+		;;
+	terminal-reason)
+		cmd_terminal_reason "$@"
 		;;
 	fail)
 		cmd_fail "$@"

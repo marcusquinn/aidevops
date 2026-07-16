@@ -128,11 +128,11 @@ while [[ $# -gt 0 ]]; do
 done
 if [[ "$since" == "1h" ]]; then
   cat <<'JSON'
-{"window":{"since":"1h"},"metrics":{"total":0,"succeeded":0,"result_counts":{},"diagnostic_focus":{},"timing_ms":{"samples":0,"avg":0,"max":0},"recent_examples":[{"repo_slug":"private/repo-one"}],"failure_groups":[],"failure_families":[]},"pulse_stats":{}}
+{"window":{"since":"1h"},"metrics":{"total":0,"runtime_handoffs":0,"succeeded":null,"result_counts":{},"diagnostic_focus":{},"timing_ms":{"samples":0,"avg":0,"max":0},"recent_examples":[{"repo_slug":"private/repo-one"}],"failure_groups":[],"failure_families":[]},"pulse_stats":{},"delivery_stages":{"pr_opened":null,"pr_merged":null,"issue_solved":null,"delivered_successes":null,"check_state":"skipped"}}
 JSON
 else
   cat <<'JSON'
-{"window":{"since":"24h"},"metrics":{"total":20,"terminal_session_total":10,"succeeded":9,"result_counts":{"success":9,"blocked":1},"diagnostic_focus":{},"timing_ms":{"samples":10,"avg":1000,"max":2000},"recent_examples":[{"repo_slug":"private/repo-one"}],"failure_groups":[],"failure_families":[]},"pulse_stats":{}}
+{"window":{"since":"24h"},"metrics":{"total":20,"terminal_session_total":10,"runtime_handoffs":9,"succeeded":null,"result_counts":{"success":9,"blocked":1},"diagnostic_focus":{},"timing_ms":{"samples":10,"avg":1000,"max":2000},"recent_examples":[{"repo_slug":"private/repo-one"}],"failure_groups":[],"failure_families":[]},"pulse_stats":{},"delivery_stages":{"pr_opened":null,"pr_merged":null,"issue_solved":null,"delivered_successes":null,"check_state":"skipped"}}
 JSON
 fi
 SH
@@ -240,8 +240,10 @@ JSON_PRIVATE_COUNT=$(printf '%s' "$JSON_OUT" | grep -c "private/repo-one" 2>/dev
 assert_eq "json output removes raw worker examples" "0" "$JSON_PRIVATE_COUNT"
 ACTIVE_SOURCE=$(printf '%s' "$JSON_OUT" | jq -r '.summary.active_workers_source')
 assert_eq "json uses process scan when available" "process_scan" "$ACTIVE_SOURCE"
+HANDOFF_RATE=$(printf '%s' "$JSON_OUT" | jq -r '.summary.historical_runtime_handoff_rate')
+assert_eq "json runtime handoff rate uses terminal session denominator" "90" "$HANDOFF_RATE"
 SUCCESS_RATE=$(printf '%s' "$JSON_OUT" | jq -r '.summary.historical_success_rate')
-assert_eq "json success rate uses terminal session denominator" "90" "$SUCCESS_RATE"
+assert_eq "json delivered success rate is unknown without GitHub delivery check" "null" "$SUCCESS_RATE"
 
 cat >"${TEST_ROOT}/current-state-active.sh" <<'SH'
 #!/usr/bin/env bash

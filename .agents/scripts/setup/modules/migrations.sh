@@ -455,8 +455,8 @@ cleanup_worktree_entries_in_repos_json() {
 		git_dir=$(cd "$git_dir" 2>/dev/null && pwd -P) || git_dir=""
 		common_dir=$(cd "$common_dir" 2>/dev/null && pwd -P) || common_dir=""
 		if [[ -n "$git_dir" && -n "$common_dir" && "$git_dir" != "$common_dir" ]]; then
-			if [[ -n "$current_worktree" && -n "$resolved_path" && "$resolved_path" == "$current_worktree" ]] \
-				|| [[ -n "$resolved_path" && "$current_physical_dir" == "$resolved_path"/* ]]; then
+			if [[ -n "$current_worktree" && -n "$resolved_path" && "$resolved_path" == "$current_worktree" ]] ||
+				[[ -n "$resolved_path" && "$current_physical_dir" == "$resolved_path"/* ]]; then
 				skipped_current_paths+=("$path")
 				continue
 			fi
@@ -1570,6 +1570,86 @@ migrate_orphaned_supervisor() {
 		print_success "Cleaned up $cleaned orphaned supervisor artifact(s) — pulse-wrapper.sh is the active system"
 	fi
 
+	return 0
+}
+
+# Apply the t18137 reasoning defaults to an existing user-local routing table
+# exactly once. Installs without a custom table already receive the canonical
+# defaults through agent deployment, so this migration must not create a custom
+# table that would freeze future framework routing updates.
+migrate_custom_model_routing_reasoning_defaults() {
+	local marker_dir="${HOME:+$HOME/.aidevops/cache/migrations}"
+	local marker_file="${marker_dir:+$marker_dir/t18137-model-routing-reasoning-defaults}"
+	local custom_table="${HOME:+$HOME/.aidevops/agents/custom/configs/model-routing-table.json}"
+	local backup_dir="${HOME:+$HOME/.aidevops/config-backups/migrations}"
+	local backup_file="${backup_dir:+$backup_dir/t18137-model-routing-table.json}"
+	local temp_file=""
+	local jq_object_type="object"
+	local effective_uid="${EUID:-$(id -u)}"
+
+	if [[ -z "$custom_table" ]]; then
+		print_warning "HOME unavailable; t18137 custom model routing migration will retry"
+		return 0
+	fi
+
+	[[ -f "$marker_file" ]] && return 0
+	if [[ ! -e "$custom_table" ]]; then
+		mkdir -p "$marker_dir"
+		date -u +%Y-%m-%dT%H:%M:%SZ >"$marker_file"
+		return 0
+	fi
+	if [[ -L "$custom_table" || ! -f "$custom_table" || (! -O "$custom_table" && "$effective_uid" -ne 0) ]]; then
+		print_warning "Skipping unsafe custom model routing table; t18137 migration will retry"
+		return 0
+	fi
+	if ! command -v jq >/dev/null 2>&1; then
+		print_warning "jq unavailable; t18137 custom model routing migration will retry"
+		return 0
+	fi
+	if ! jq -e --arg object_type "$jq_object_type" '
+		type == $object_type and
+		((.tiers // {}) | type == $object_type) and
+		((.tiers.simple // {}) | type == $object_type) and
+		((.tiers.simple.reasoning // {}) | type == $object_type) and
+		((.tiers.thinking // {}) | type == $object_type) and
+		((.tiers.thinking.reasoning // {}) | type == $object_type)
+	' "$custom_table" >/dev/null 2>&1; then
+		print_warning "Invalid custom model routing structure; t18137 migration will retry"
+		return 0
+	fi
+
+	mkdir -p "$marker_dir" "$backup_dir"
+	if [[ ! -f "$backup_file" ]]; then
+		cp -p "$custom_table" "$backup_file" || {
+			print_warning "Failed to create backup of custom model routing table at $backup_file; t18137 migration will retry"
+			return 0
+		}
+	fi
+	temp_file=$(mktemp "${custom_table}.t18137.XXXXXX") || {
+		print_warning "Failed to create temporary file for migration of $custom_table; t18137 migration will retry"
+		return 0
+	}
+	if ! jq '
+		.tiers = (.tiers // {}) |
+		.tiers.simple = (.tiers.simple // {}) |
+		.tiers.simple.reasoning = (.tiers.simple.reasoning // {}) |
+		.tiers.simple.reasoning.openai = "medium" |
+		.tiers.thinking = (.tiers.thinking // {}) |
+		.tiers.thinking.reasoning = (.tiers.thinking.reasoning // {}) |
+		.tiers.thinking.reasoning.openai = "max"
+	' "$custom_table" >"$temp_file"; then
+		print_warning "Failed to update custom model routing table structure in $custom_table; t18137 migration will retry"
+		rm -f "$temp_file"
+		return 0
+	fi
+	chmod 600 "$temp_file"
+	if ! mv "$temp_file" "$custom_table"; then
+		print_warning "Failed to replace custom model routing table at $custom_table; t18137 migration will retry"
+		rm -f "$temp_file"
+		return 0
+	fi
+	date -u +%Y-%m-%dT%H:%M:%SZ >"$marker_file"
+	print_info "Updated custom model routing reasoning defaults (t18137)"
 	return 0
 }
 

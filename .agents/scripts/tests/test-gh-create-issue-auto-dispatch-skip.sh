@@ -95,6 +95,14 @@ export AIDEVOPS_SESSION_USER=testuser
 # shellcheck source=../shared-constants.sh
 source "${SCRIPTS_DIR}/shared-constants.sh" >/dev/null 2>&1 || true
 
+_gh_collaborator_permission_lookup() {
+	local _repo_slug="$1"
+	local _username="$2"
+	local out_var="$3"
+	printf -v "$out_var" '%s' "write"
+	return 0
+}
+
 # =============================================================================
 # Post-source stubs.
 #
@@ -115,6 +123,9 @@ gh() {
 	if [[ "$1" == "issue" && "$2" == "create" ]]; then
 		printf 'https://github.com/owner/repo/issues/9991\n'
 		return 0
+	fi
+	if [[ "$1" == "issue" && "$2" == "edit" && "${GH_EDIT_FAIL:-0}" == "1" ]]; then
+		return 1
 	fi
 	return 0
 }
@@ -147,7 +158,7 @@ else
 fi
 
 # =============================================================================
-# Test 2 — auto-dispatch absent → --assignee IS passed (regression guard)
+# Test 2 — auto-dispatch absent → post-create assignment is attempted
 # =============================================================================
 : >"$GH_CALLS"
 gh_create_issue \
@@ -157,11 +168,12 @@ gh_create_issue \
 	--label "bug,tier:standard" >/dev/null 2>&1 || true
 
 # Check whole file: --assignee may appear on a continuation line due to sig footer newlines
-if grep -q -- "--assignee" "$GH_CALLS" 2>/dev/null; then
-	pass "no auto-dispatch → --assignee IS passed"
+if grep -q -- "issue edit 9991 --repo owner/repo --add-assignee testuser" "$GH_CALLS" 2>/dev/null &&
+	! grep -q -- "issue create.*--assignee" "$GH_CALLS" 2>/dev/null; then
+	pass "no auto-dispatch → durable create then best-effort assignment"
 else
-	fail "no auto-dispatch → --assignee IS passed" \
-		"expected --assignee in gh call for interactive non-auto-dispatch issue"
+	fail "no auto-dispatch → durable create then best-effort assignment" \
+		"expected issue edit --add-assignee after an unassigned create"
 fi
 
 # =============================================================================
@@ -216,6 +228,50 @@ if grep -q -- "--assignee explicit-user" "$GH_CALLS" 2>/dev/null; then
 else
 	fail "explicit --assignee with auto-dispatch → caller assignee forwarded" \
 		"expected --assignee explicit-user in gh call"
+fi
+
+# =============================================================================
+# Test 6 — failed best-effort assignment preserves durable creation success
+# =============================================================================
+: >"$GH_CALLS"
+issue_output=""
+issue_rc=0
+issue_output=$(GH_EDIT_FAIL=1 gh_create_issue \
+	--repo "owner/repo" \
+	--title "t9996: durable issue" \
+	--body "test body" \
+	--label "bug") || issue_rc=$?
+
+if [[ "$issue_rc" -eq 0 && "$issue_output" == *"/issues/9991"* ]] &&
+	grep -q -- "issue edit 9991 --repo owner/repo --add-assignee testuser" "$GH_CALLS" 2>/dev/null; then
+	pass "assignment failure preserves created issue URL and success status"
+else
+	fail "assignment failure preserves created issue URL and success status" \
+		"rc=${issue_rc}, output=${issue_output}"
+fi
+
+# =============================================================================
+# Test 7 — confirmed non-collaborator creates without assignment mutation
+# =============================================================================
+_gh_collaborator_permission_lookup() {
+	local _repo_slug="$1"
+	local _username="$2"
+	local out_var="$3"
+	printf -v "$out_var" '%s' "none"
+	return 0
+}
+: >"$GH_CALLS"
+gh_create_issue \
+	--repo "owner/repo" \
+	--title "t9997: contributor issue" \
+	--body "test body" \
+	--label "bug" >/dev/null 2>&1 || true
+
+if ! grep -q -- "issue edit .*--add-assignee" "$GH_CALLS" 2>/dev/null; then
+	pass "non-collaborator creates durable issue without assignment"
+else
+	fail "non-collaborator creates durable issue without assignment" \
+		"unexpected assignment call: $(<"$GH_CALLS")"
 fi
 
 # =============================================================================

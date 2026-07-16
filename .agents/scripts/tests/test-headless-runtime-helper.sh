@@ -91,7 +91,8 @@ test_appends_escalation_contract() {
 		[[ "$output" == *'Load only referenced workflow/reference docs'* ]] &&
 		[[ "$output" == *'Stop reading once target files, reference pattern, constraints, and verification are clear.'* ]] &&
 		[[ "$output" == *'Never ask for user confirmation, approval, or next steps. No user will respond.'* ]] &&
-		[[ "$output" == *'Valid exit states are FULL_LOOP_COMPLETE, a verified post-PR handoff'* ]]; then
+		[[ "$output" == *'emit POST_PR_HANDOFF on its own line'* ]] &&
+		[[ "$output" == *'Valid exit states are FULL_LOOP_COMPLETE, POST_PR_HANDOFF'* ]]; then
 		print_result "appends escalation-before-blocked contract to full-loop prompts" 0
 		return 0
 	fi
@@ -872,6 +873,37 @@ test_blocked_completion_records_blocked_label() {
 		"rc=$rc label=${_run_result_label:-<unset>} reason=${_run_failure_reason:-<unset>} source=${_run_classification_source:-<unset>}"
 	return 0
 }
+
+test_post_pr_handoff_completion_signal_is_exact() {
+	local exact_file="${TEST_ROOT}/post-pr-handoff-exact.jsonl"
+	local prose_file="${TEST_ROOT}/post-pr-handoff-prose.jsonl"
+	printf '%s\n' '{"type":"text","text":"POST_PR_HANDOFF"}' >"$exact_file"
+	printf '%s\n' '{"type":"text","text":"I will mention POST_PR_HANDOFF after more work."}' >"$prose_file"
+
+	local result=0
+	output_has_post_pr_handoff_signal "$exact_file" || result=1
+	output_has_completion_signal "$exact_file" || result=1
+	if output_has_post_pr_handoff_signal "$prose_file" || output_has_completion_signal "$prose_file"; then
+		result=1
+	fi
+	print_result "POST_PR_HANDOFF is accepted only as an exact model-text line" "$result"
+	return 0
+}
+
+test_post_pr_handoff_records_distinct_result_label() {
+	local output_file="${TEST_ROOT}/post-pr-handoff-result.jsonl"
+	printf '%s\n' '{"type":"text","sessionID":"ses_handoff","text":"POST_PR_HANDOFF"}' >"$output_file"
+	local rc=0
+	_handle_run_result 0 "$output_file" "worker" "openai" "issue-456" "openai/gpt-5.5" || rc=$?
+	if [[ "$rc" -eq 0 && "${_run_result_label:-}" == "post_pr_handoff" ]]; then
+		print_result "POST_PR_HANDOFF remains distinct from raw process success" 0
+		return 0
+	fi
+	print_result "POST_PR_HANDOFF remains distinct from raw process success" 1 \
+		"rc=${rc} label=${_run_result_label:-<unset>}"
+	return 0
+}
+
 test_missing_context_blocked_requests_brief_recovery() {
 	local output_file="${TEST_ROOT}/missing-context-blocked-output.jsonl"
 	printf '%s\n' '{"type":"text","sessionID":"ses_blocked","text":"BLOCKED: missing implementation context"}' >"$output_file"
@@ -2402,6 +2434,176 @@ test_cmd_run_finish_emits_complete_for_real_output() {
 	return 0
 }
 
+test_cmd_run_finish_appends_reconciled_attempt_outcome() {
+	local work_dir="${TEST_ROOT}/repo-finish-reconciled"
+	local capture_file="${TEST_ROOT}/reconciled-outcome.capture"
+	_setup_test_git_repo "$work_dir" 1
+
+	(
+		_run_result_label="premature_exit"
+		_run_failure_reason="model_stopped_before_completion"
+		_release_dispatch_claim() { return 0; }
+		_report_failure_to_fast_fail() { return 0; }
+		_update_dispatch_ledger() { return 0; }
+		_release_session_lock() { return 0; }
+		_hrw_record_terminal_outcome() { return 0; }
+		_emit_worker_runtime_event() { return 0; }
+		_hrw_record_reconciled_outcome() {
+			local session_key="$1"
+			local raw_result="$2"
+			local outcome="$3"
+			local status="$4"
+			local classification="$5"
+			printf '%s|%s|%s|%s|%s\n' "$session_key" "$raw_result" "$outcome" "$status" "$classification" >"$capture_file"
+			return 0
+		}
+		_cmd_run_finish "issue-99999" "complete" "$work_dir"
+	)
+
+	local captured=""
+	[[ -s "$capture_file" ]] && captured=$(<"$capture_file")
+	if [[ "$captured" == "issue-99999|premature_exit|success|premature_exit|model_stopped_before_completion" ]]; then
+		print_result "_cmd_run_finish appends the reconciled attempt outcome after final classification" 0
+	else
+		print_result "_cmd_run_finish appends the reconciled attempt outcome after final classification" 1 \
+			"captured=${captured:-<empty>}"
+	fi
+	return 0
+}
+
+test_cmd_run_finish_rejects_unverified_post_pr_handoff() {
+	local work_dir="${TEST_ROOT}/repo-finish-unverified-handoff"
+	local capture_file="${TEST_ROOT}/unverified-handoff.capture"
+	local release_file="${TEST_ROOT}/unverified-handoff.release"
+	local ledger_file="${TEST_ROOT}/unverified-handoff.ledger"
+	local result_file="${TEST_ROOT}/unverified-handoff.result"
+	_setup_test_git_repo "$work_dir" 1
+
+	(
+		_run_result_label="post_pr_handoff"
+		_run_failure_reason=""
+		_release_dispatch_claim() { printf '%s' "$2" >"$release_file"; return 0; }
+		_report_failure_to_fast_fail() { return 0; }
+		_update_dispatch_ledger() { printf '%s' "$2" >"$ledger_file"; return 0; }
+		_release_session_lock() { return 0; }
+		_hrw_record_terminal_outcome() { return 0; }
+		_emit_worker_runtime_event() { return 0; }
+		_worker_post_pr_handoff_confirmed() { return 1; }
+		_hrw_record_reconciled_outcome() {
+			local session_key="$1"
+			local raw_result="$2"
+			local outcome="$3"
+			local status="$4"
+			local classification="$5"
+			printf '%s|%s|%s|%s|%s\n' "$session_key" "$raw_result" "$outcome" "$status" "$classification" >"$capture_file"
+			return 0
+		}
+		set +e
+		_cmd_run_finish "issue-99999" "complete" "$work_dir"
+		printf '%s' "$?" >"$result_file"
+		set -e
+	)
+
+	local captured="" release_reason="" ledger_status="" finish_result=""
+	[[ -s "$capture_file" ]] && captured=$(<"$capture_file")
+	[[ -s "$release_file" ]] && release_reason=$(<"$release_file")
+	[[ -s "$ledger_file" ]] && ledger_status=$(<"$ledger_file")
+	[[ -s "$result_file" ]] && finish_result=$(<"$result_file")
+	if [[ "$captured" == "issue-99999|post_pr_handoff|failed|failed|worker_post_pr_handoff_unverified" ]] &&
+		[[ "$release_reason" == "worker_post_pr_handoff_unverified" && "$ledger_status" == "fail" && "$finish_result" == "1" ]]; then
+		print_result "unverified POST_PR_HANDOFF cannot suppress failure routing" 0
+	else
+		print_result "unverified POST_PR_HANDOFF cannot suppress failure routing" 1 \
+			"captured=${captured:-<empty>} release=${release_reason:-<empty>} ledger=${ledger_status:-<empty>} result=${finish_result:-<empty>}"
+	fi
+	return 0
+}
+
+test_begin_worker_runtime_run_refreshes_run_id() {
+	local first_run_id="" second_run_id=""
+	AIDEVOPS_RUN_ID="run:stale"
+	_begin_worker_runtime_run
+	first_run_id="$AIDEVOPS_RUN_ID"
+	_begin_worker_runtime_run
+	second_run_id="$AIDEVOPS_RUN_ID"
+
+	if [[ "$first_run_id" == run:* && "$second_run_id" == run:* ]] &&
+		[[ "$first_run_id" != "run:stale" && "$second_run_id" != "$first_run_id" ]]; then
+		print_result "each runtime process invocation receives a fresh run ID" 0
+	else
+		print_result "each runtime process invocation receives a fresh run ID" 1 \
+			"first=${first_run_id:-<empty>} second=${second_run_id:-<empty>}"
+	fi
+	return 0
+}
+
+test_internal_opencode_retries_refresh_run_id() {
+	local refresh_count=""
+	refresh_count=$(python3 - "$HELPER_SCRIPT" <<'PY'
+import pathlib
+import re
+import sys
+
+source = pathlib.Path(sys.argv[1]).read_text()
+start = source.index("_execute_run_attempt() {")
+end = source.index("\n#######################################\n# _discover_actual_worktree_dir", start)
+body = source[start:end]
+print(len(re.findall(r"_begin_worker_runtime_run\s*\n\s*_invoke_opencode", body)))
+PY
+	)
+
+	if [[ "$refresh_count" == "2" ]]; then
+		print_result "internal OpenCode retries refresh run identity before invocation" 0
+	else
+		print_result "internal OpenCode retries refresh run identity before invocation" 1 \
+			"Expected two guarded internal retries, got ${refresh_count:-<empty>}"
+	fi
+	return 0
+}
+
+test_reconciled_outcome_persistence_retries() {
+	local fake_helper="${TEST_ROOT}/fake-objective-helper.sh"
+	local count_file="${TEST_ROOT}/fake-objective-helper.count"
+	local args_file="${TEST_ROOT}/fake-objective-helper.args"
+	cat >"$fake_helper" <<'SH'
+#!/usr/bin/env bash
+set -u
+count=0
+[[ -f "$AIDEVOPS_FAKE_OBJECTIVE_COUNT_FILE" ]] && read -r count <"$AIDEVOPS_FAKE_OBJECTIVE_COUNT_FILE"
+count=$((count + 1))
+printf '%s\n' "$count" >"$AIDEVOPS_FAKE_OBJECTIVE_COUNT_FILE"
+printf '%s\n' "$*" >"$AIDEVOPS_FAKE_OBJECTIVE_ARGS_FILE"
+[[ "$count" -ge 3 ]]
+SH
+	chmod +x "$fake_helper"
+
+	(
+		export OBJECTIVE_RECONCILIATION_HELPER="$fake_helper"
+		export AIDEVOPS_FAKE_OBJECTIVE_COUNT_FILE="$count_file"
+		export AIDEVOPS_FAKE_OBJECTIVE_ARGS_FILE="$args_file"
+		export AIDEVOPS_OBJECTIVE_OUTCOME_WRITE_ATTEMPTS=3
+		export AIDEVOPS_ATTEMPT_ID="attempt:retry-test"
+		export AIDEVOPS_ATTEMPT_STARTED_AT=700
+		export AIDEVOPS_RUN_ID="run:retry-test"
+		export WORKER_ISSUE_NUMBER=99999
+		export DISPATCH_REPO_SLUG="owner/repo"
+		_hrw_record_reconciled_outcome "issue-99999" "premature_exit" \
+			"success" "recovered" "worker_complete"
+	)
+
+	local call_count="" captured_args=""
+	[[ -f "$count_file" ]] && read -r call_count <"$count_file"
+	[[ -f "$args_file" ]] && read -r captured_args <"$args_file"
+	if [[ "$call_count" == "3" && "$captured_args" == *"--attempt-id attempt:retry-test"* ]] &&
+		[[ "$captured_args" == *"--run-id run:retry-test"* ]]; then
+		print_result "reconciled outcome persistence retries bounded transient failures" 0
+	else
+		print_result "reconciled outcome persistence retries bounded transient failures" 1 \
+			"calls=${call_count:-<empty>} args=${captured_args:-<empty>}"
+	fi
+	return 0
+}
+
 test_cmd_run_finish_emits_complete_when_no_workdir() {
 	# When work_dir is absent (fail paths), behaviour is unchanged: worker_complete
 	local released_reason="" fast_fail_called=0
@@ -3320,6 +3522,8 @@ main() {
 	test_provider_sessions_scope_issue_keys_by_repo_slug
 	test_provider_sessions_keep_pulse_unscoped
 	test_blocked_completion_records_blocked_label
+	test_post_pr_handoff_completion_signal_is_exact
+	test_post_pr_handoff_records_distinct_result_label
 	test_missing_context_blocked_requests_brief_recovery
 	test_headless_activity_timeout_default_matches_watchdog
 	test_activity_watchdog_classifiers_detect_rate_limit_and_ci_wait
@@ -3355,6 +3559,11 @@ main() {
 	test_release_dispatch_claim_ignores_non_issue_session_key_digits
 	test_cmd_run_finish_emits_noop_for_zero_output
 	test_cmd_run_finish_emits_complete_for_real_output
+	test_cmd_run_finish_appends_reconciled_attempt_outcome
+	test_cmd_run_finish_rejects_unverified_post_pr_handoff
+	test_begin_worker_runtime_run_refreshes_run_id
+	test_internal_opencode_retries_refresh_run_id
+	test_reconciled_outcome_persistence_retries
 	test_cmd_run_finish_emits_complete_when_no_workdir
 	test_attempt_orphan_recovery_pr_calls_gh_create
 	test_ensure_orphan_recovery_rejects_empty_branch

@@ -1517,12 +1517,13 @@ _cleanup_single_worktree() {
 	repo_name_age=$(basename "$rp_age")
 	local orphan_issue_num=""
 	orphan_issue_num=$(_pc_issue_from_branch "$wt_branch_age" 2>/dev/null || true)
-	if _pc_handle_terminal_worktree_archive "$rp_age" "$wt_path_age" "$wt_branch_age" "$orphan_issue_num" "$commits_ahead" "$dirty_count" "$wt_age_secs" "$repo_name_age" "$repo_slug_age"; then
-		return 0
-	fi
-
+	# Live ownership is an unconditional destructive-operation guard. Terminal
+	# state must not bypass it and archive/stash/remove a still-owned worktree.
 	if _worktree_owner_alive "$wt_path_age" "$wt_branch_age"; then
 		return 1
+	fi
+	if _pc_handle_terminal_worktree_archive "$rp_age" "$wt_path_age" "$wt_branch_age" "$orphan_issue_num" "$commits_ahead" "$dirty_count" "$wt_age_secs" "$repo_name_age" "$repo_slug_age"; then
+		return 0
 	fi
 
 	local audit_context
@@ -2112,6 +2113,41 @@ cleanup_stashes() {
 }
 
 #######################################
+# Find the one merged PR that both closes an issue structurally and matches
+# the exact active worker branch/head. Search text is never lifecycle proof.
+# Args: repo slug, issue number, branch name, head SHA
+# Returns: 0 + PR number, 1 no match, 2 API/ambiguity failure.
+#######################################
+_verified_worker_closing_pr() {
+	local repo_slug="$1"
+	local issue_number="$2"
+	local branch_name="$3"
+	local head_oid="$4"
+	local candidates=""
+	candidates=$(gh pr list --repo "$repo_slug" --state merged --head "$branch_name" --limit 100 \
+		--json number,state,mergedAt,headRefName,headRefOid,closingIssuesReferences 2>/dev/null) || return 2
+	local verification="" verified_count="" verified_pr=""
+	verification=$(printf '%s' "$candidates" | jq -r --arg issue "$issue_number" --arg branch "$branch_name" --arg head "$head_oid" '
+		if length >= 100 then "limit"
+		else
+			[.[] | select(
+				.state == "MERGED" and (.mergedAt // "") != "" and
+				.headRefName == $branch and .headRefOid == $head and
+				([.closingIssuesReferences[]?.number | tostring] | index($issue)) != null
+			)] as $verified |
+			[($verified | length | tostring), ($verified[0].number // "" | tostring)] | @tsv
+		end
+	' 2>/dev/null) || return 2
+	[[ "$verification" != "limit" ]] || return 2
+	IFS=$'\t' read -r verified_count verified_pr <<<"$verification"
+	[[ "$verified_count" =~ ^[0-9]+$ ]] || return 2
+	[[ "$verified_count" -le 1 ]] || return 2
+	[[ "$verified_count" -eq 1 && -n "$verified_pr" ]] || return 1
+	printf '%s\n' "$verified_pr"
+	return 0
+}
+
+#######################################
 # Reap zombie workers whose PRs have already been merged (t1751/GH#15489)
 #
 # Workers don't detect when the deterministic merge pass merges their PR.
@@ -2138,14 +2174,14 @@ reap_zombie_workers() {
 
 		# Session keys are issue-number only, so require the live ledger's repo
 		# and PID to avoid same-number cross-repo PR/issue collisions.
-		local repo_slug="" ledger_entry="" ledger_issue="" ledger_pid=""
+		local repo_slug="" ledger_entry="" ledger_issue="" ledger_pid="" ledger_worktree="" lease_token=""
 		local _ledger_helper="${SCRIPT_DIR}/dispatch-ledger-helper.sh"
 		if [[ -x "$_ledger_helper" ]]; then
 			ledger_entry=$("$_ledger_helper" check --session-key "$worker_key" 2>/dev/null) || ledger_entry=""
 			if [[ -n "$ledger_entry" ]]; then
 				local ledger_fields
-				ledger_fields=$(printf '%s' "$ledger_entry" | jq -r '[.repo_slug // "", (.issue_number // "" | tostring), (.pid // "" | tostring)] | @tsv' 2>/dev/null) || ledger_fields=$'\t\t'
-				IFS=$'\t' read -r repo_slug ledger_issue ledger_pid <<<"$ledger_fields"
+				ledger_fields=$(printf '%s' "$ledger_entry" | jq -r '[.repo_slug // "", (.issue_number // "" | tostring), (.pid // "" | tostring), .worktree_path // "", .lease_token // ""] | @tsv' 2>/dev/null) || ledger_fields=$'\t\t\t\t'
+				IFS=$'\t' read -r repo_slug ledger_issue ledger_pid ledger_worktree lease_token <<<"$ledger_fields"
 			fi
 		fi
 		if [[ -z "$repo_slug" ]]; then
@@ -2160,14 +2196,37 @@ reap_zombie_workers() {
 			echo "[pulse-wrapper] Zombie reap skipped for ${worker_key}: no ledger PID; refusing session-key-wide kill" >>"$LOGFILE"
 			continue
 		fi
-		local merged_pr
-		merged_pr=$(gh pr list --repo "$repo_slug" --state merged --search "closes #${issue_number} OR Closes #${issue_number} OR Resolves #${issue_number} OR resolves #${issue_number}" \
-			--limit 1 --json number --jq '.[0].number // ""' 2>/dev/null) || merged_pr=""
+		if [[ -z "$lease_token" || -z "$ledger_worktree" || ! -d "$ledger_worktree" ]]; then
+			echo "[pulse-wrapper] Zombie reap skipped for ${worker_key}: active dispatch generation/worktree is unavailable" >>"$LOGFILE"
+			continue
+		fi
+		local branch_name="" head_oid=""
+		branch_name=$(git -C "$ledger_worktree" branch --show-current 2>/dev/null) || branch_name=""
+		head_oid=$(git -C "$ledger_worktree" rev-parse HEAD 2>/dev/null) || head_oid=""
+		if [[ -z "$branch_name" || ! "$head_oid" =~ ^([0-9a-f]{40}|[0-9a-f]{64})$ ]]; then
+			echo "[pulse-wrapper] Zombie reap skipped for ${worker_key}: worker branch/head could not be verified" >>"$LOGFILE"
+			continue
+		fi
+		local merged_pr="" verification_rc=0
+		merged_pr=$(_verified_worker_closing_pr "$repo_slug" "$issue_number" "$branch_name" "$head_oid") || verification_rc=$?
+		if [[ "$verification_rc" -eq 2 ]]; then
+			echo "[pulse-wrapper] Zombie reap skipped for ${worker_key}: merged PR evidence is ambiguous or API-indeterminate" >>"$LOGFILE"
+			continue
+		fi
 
-		if [[ -n "$merged_pr" ]]; then
-			# Kill the worker process tree
+		if [[ "$verification_rc" -eq 0 && -n "$merged_pr" ]]; then
+			if ! "$_ledger_helper" complete --session-key "$worker_key" --lease-token "$lease_token" \
+				--reason merged_pr_reap 2>/dev/null; then
+				echo "[pulse-wrapper] Zombie reap skipped for ${worker_key}: active dispatch generation changed before termination" >>"$LOGFILE"
+				continue
+			fi
+			# The lease transition is the compare-and-set gate. Only the exact active
+			# generation can reach process termination and terminal telemetry.
 			echo "[pulse-wrapper] Reaping zombie worker ${worker_key}: PR #${merged_pr} already merged in ${repo_slug}" >>"$LOGFILE"
-			printf '%s\n' "$ledger_pid" | xargs kill 2>/dev/null || true
+			echo "[INFO] [lifecycle] worker_reap pid=${ledger_pid} kill_reason=merged_pr_reap issue=${issue_number} pr=${merged_pr}" >>"$LOGFILE"
+			"$_ledger_helper" record-outcome --issue "$issue_number" --repo "$repo_slug" --outcome success \
+				--reason merged_pr_reap --session-key "$worker_key" --lease-token "$lease_token" 2>/dev/null || true
+			kill "$ledger_pid" 2>/dev/null || true
 			reaped=$((reaped + 1))
 		fi
 	done <<<"$session_keys"

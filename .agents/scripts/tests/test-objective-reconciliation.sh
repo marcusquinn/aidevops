@@ -99,4 +99,94 @@ AIDEVOPS_OBJECTIVE_EVIDENCE_FILE="$evidence_file" AIDEVOPS_OBJECTIVE_EVIDENCE_LI
 	"$HELPER" derive --repo owner/repo --input "$fixture" --now 10000 --ttl 3600 >"$derived"
 jq -e '.[] | select(.number == 1 and .execution_path_state == "idle" and .preservation.commits == false)' "$derived" >/dev/null || fail "durable evidence read must honour the bounded tail"
 
+outcome_file="$TMP_DIR/outcomes.jsonl"
+AIDEVOPS_OBJECTIVE_EVIDENCE_FILE="$outcome_file" \
+	"$HELPER" record-outcome --repo owner/repo --issue 41 \
+	--attempt-id attempt-a --run-id run-a --raw-result premature_exit \
+	--outcome success --status recovered --classification worker_complete \
+	--next-action monitor_pr --timestamp 10100
+printf '%s\n' '{"issue_number":"bad"}' >>"$outcome_file"
+# First terminal outcome wins for an attempt, even if delayed raw cleanup tries
+# to append a conflicting failure later.
+AIDEVOPS_OBJECTIVE_EVIDENCE_FILE="$outcome_file" \
+	"$HELPER" record-outcome --repo owner/repo --issue 41 \
+	--attempt-id attempt-a --run-id run-late --raw-result watchdog_stall_killed \
+	--outcome failed --status failed --classification stale_cleanup \
+	--next-action narrow_redispatch --timestamp 10200
+jq -se '[.[] | select(.record_type == "attempt_outcome" and .attempt_id == "attempt-a")] | length == 1' \
+	"$outcome_file" >/dev/null || fail "one reconciled terminal outcome per attempt"
+
+disposition="$TMP_DIR/disposition.json"
+AIDEVOPS_OBJECTIVE_EVIDENCE_FILE="$outcome_file" \
+	"$HELPER" disposition --repo owner/repo --issue 41 --attempt-id attempt-a \
+	--state-file "$state_file" >"$disposition"
+jq -e '.source == "attempt_outcome" and .effective_outcome == "success" and
+	.raw_result == "premature_exit" and .suppress_retry == true and
+	.suppress_enrichment == true and .suppress_failure_mining == true' \
+	"$disposition" >/dev/null || fail "successful reconciled disposition suppresses false failure routing"
+
+AIDEVOPS_OBJECTIVE_EVIDENCE_FILE="$outcome_file" \
+	"$HELPER" record-outcome --repo owner/repo --issue 41 \
+	--attempt-id attempt-b --run-id run-b --raw-result premature_exit \
+	--outcome failed --status failed --classification worker_failed \
+	--next-action narrow_redispatch --timestamp 10300
+AIDEVOPS_OBJECTIVE_EVIDENCE_FILE="$outcome_file" \
+	"$HELPER" disposition --repo owner/repo --issue 41 --attempt-id attempt-b \
+	--state-file "$state_file" >"$disposition"
+jq -e '.effective_outcome == "failed" and .suppress_retry == false and
+	.suppress_enrichment == false and .suppress_failure_mining == false' \
+	"$disposition" >/dev/null || fail "failed reconciled disposition remains actionable"
+AIDEVOPS_OBJECTIVE_EVIDENCE_FILE="$outcome_file" \
+	"$HELPER" disposition --repo owner/repo --issue 41 --attempt-id attempt-c \
+	--state-file "$state_file" >"$disposition"
+jq -e '.source == "none" and .effective_outcome == "unknown" and .suppress_retry == false' \
+	"$disposition" >/dev/null || fail "another attempt outcome must not contaminate a new attempt"
+
+# Issue-level consumers must prefer the newest logical attempt, not a delayed
+# cleanup record with a later evidence timestamp from an older attempt.
+chronology_file="$TMP_DIR/chronology.jsonl"
+AIDEVOPS_OBJECTIVE_EVIDENCE_FILE="$chronology_file" \
+	"$HELPER" record-outcome --repo owner/repo --issue 42 \
+	--attempt-id attempt-new --run-id run-new --attempt-started-at 2000000000000000001 \
+	--raw-result premature_exit --outcome failed --status failed \
+	--classification worker_failed --next-action narrow_redispatch --timestamp 300
+AIDEVOPS_OBJECTIVE_EVIDENCE_FILE="$chronology_file" \
+	"$HELPER" record-outcome --repo owner/repo --issue 42 \
+	--attempt-id attempt-old --run-id run-old --attempt-started-at 2000000000000000000 \
+	--raw-result recovered --outcome success --status recovered \
+	--classification stale_cleanup --next-action monitor_pr --timestamp 400
+AIDEVOPS_OBJECTIVE_EVIDENCE_FILE="$chronology_file" \
+	"$HELPER" disposition --repo owner/repo --issue 42 \
+	--state-file "$state_file" >"$disposition"
+jq -e '.attempt_id == "attempt-new" and .effective_outcome == "failed" and
+	.suppress_retry == false' "$disposition" >/dev/null ||
+	fail "issue-level disposition must sort by logical attempt chronology"
+
+# Concurrent terminal writers for one attempt must produce one valid record.
+concurrent_file="$TMP_DIR/concurrent.jsonl"
+concurrent_pids=()
+for concurrent_index in 1 2 3 4 5 6 7 8; do
+	AIDEVOPS_OBJECTIVE_EVIDENCE_FILE="$concurrent_file" \
+		"$HELPER" record-outcome --repo owner/repo --issue 43 \
+		--attempt-id attempt-concurrent --run-id "run-${concurrent_index}" \
+		--attempt-started-at 500 --raw-result premature_exit --outcome success \
+		--status recovered --classification worker_complete \
+		--next-action monitor_pr --timestamp "$((500 + concurrent_index))" &
+	concurrent_pids+=("$!")
+done
+for concurrent_pid in "${concurrent_pids[@]}"; do
+	wait "$concurrent_pid" || fail "concurrent outcome writer failed"
+done
+jq -se 'length == 1 and .[0].attempt_id == "attempt-concurrent"' \
+	"$concurrent_file" >/dev/null || fail "concurrent writes must remain valid and idempotent"
+
+legacy_state="$TMP_DIR/legacy-state.json"
+printf '%s\n' '{"objectives":[{"repo":"owner/repo","number":77,"objective_state":"completed","next_action":"none"}]}' >"$legacy_state"
+AIDEVOPS_OBJECTIVE_EVIDENCE_FILE="$TMP_DIR/missing-legacy-evidence.jsonl" \
+	"$HELPER" disposition --repo owner/repo --issue 77 --attempt-id attempt-new \
+	--state-file "$legacy_state" >"$disposition"
+jq -e '.source == "objective_state" and .effective_outcome == "success" and
+	.suppress_retry == true and .suppress_failure_mining == true' \
+	"$disposition" >/dev/null || fail "legacy objective state remains readable"
+
 printf 'PASS objective-reconciliation\n'

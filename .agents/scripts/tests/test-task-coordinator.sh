@@ -206,6 +206,23 @@ unmapped_forge=$(node "$COORDINATOR" forge-event --operation-id delivery-unmappe
 [[ "$(printf '%s' "$unmapped_forge" | jq -r '.status')" == "unmapped" ]]
 [[ "$(sqlite3 "$AIDEVOPS_TASK_COORDINATOR_DB" "SELECT COUNT(*) FROM publication_intents WHERE operation_id IN ('delivery-stale','delivery-unmapped');")" == "0" ]]
 
+# Legacy/restored state can contain an issue mapping whose task projection is
+# absent. Such mappings are deterministically unmapped, never published, and
+# excluded from reconciliation without aborting the forge-event transaction.
+sqlite3 "$AIDEVOPS_TASK_COORDINATOR_DB" "INSERT INTO issue_mappings(task_id,forge,repository_id,repository_slug,role,issue_id,display_number,created_at,updated_at) VALUES ('t27856','github','R_home','renamed/home','home','I_orphan',56,'2026-07-12T12:30:00.000Z','2026-07-12T12:30:00.000Z');"
+orphan_targets=$(node "$COORDINATOR" reconciliation-targets --repository-id R_home)
+[[ "$(printf '%s' "$orphan_targets" | jq '[.targets[] | select(.taskId == "t27856")] | length')" == "0" ]]
+orphan_forge=$(node "$COORDINATOR" forge-event --operation-id delivery-orphan --repository-id R_home \
+	--delivery-id delivery-orphan --cursor-tiebreaker run-13 --repository-slug renamed/home --repository-path "$TEST_ROOT" \
+	--event-kind issue --action closed --subject-id I_orphan --cursor 2026-07-12T13:30:00Z)
+[[ "$(printf '%s' "$orphan_forge" | jq -r '.status')" == "unmapped" ]]
+[[ "$(printf '%s' "$orphan_forge" | jq -r '.taskId')" == "null" ]]
+[[ "$(sqlite3 "$AIDEVOPS_TASK_COORDINATOR_DB" "SELECT COUNT(*) FROM publication_intents WHERE operation_id='delivery-orphan';")" == "0" ]]
+[[ "$(sqlite3 "$AIDEVOPS_TASK_COORDINATOR_DB" "SELECT COUNT(*) FROM forge_event_cursors WHERE subject_id='I_orphan';")" == "0" ]]
+[[ "$(sqlite3 "$AIDEVOPS_TASK_COORDINATOR_DB" "SELECT COUNT(*) FROM terminal_evidence WHERE operation_id='delivery-orphan' AND result_state='terminal';")" == "1" ]]
+[[ "$(node "$COORDINATOR" forge-event --operation-id delivery-orphan --repository-id R_home --delivery-id delivery-orphan --cursor-tiebreaker run-13 --repository-slug renamed/home --repository-path "$TEST_ROOT" --event-kind issue --action closed --subject-id I_orphan --cursor 2026-07-12T13:30:00Z)" == "$orphan_forge" ]]
+[[ "$(sqlite3 "$AIDEVOPS_TASK_COORDINATOR_DB" "SELECT COUNT(*) FROM operations WHERE operation_id='delivery-orphan'; SELECT COUNT(*) FROM terminal_evidence WHERE operation_id='delivery-orphan';")" == $'1\n1' ]]
+
 # Equal timestamps are ordered by delivery/run identity rather than silently lost.
 equal_forge=$(node "$COORDINATOR" forge-event --operation-id delivery-equal --delivery-id delivery-equal \
 	--cursor-tiebreaker run-20 --repository-id R_home --repository-slug renamed/home --repository-path "$TEST_ROOT" \

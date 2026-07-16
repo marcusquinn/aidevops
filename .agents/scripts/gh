@@ -38,6 +38,7 @@
 # ------
 #   AIDEVOPS_GH_SHIM_DISABLE=1 gh …          # skip entire shim
 #   AIDEVOPS_GH_SHIM_NO_REST_REWRITE=1 gh …  # skip read-rewrite only (t3037)
+#   AIDEVOPS_GH_EXPLICIT_PAGINATION_DISABLE=1 # retain native opaque pagination
 #
 # Ops/audit comments
 # ------------------
@@ -280,9 +281,76 @@ _shim_caller_label() {
 	return 0
 }
 
+# Resolve only framework-owned script basenames. Never persist an arbitrary
+# parent command or private script name in telemetry that may later be attached
+# to a public issue.
+_shim_framework_caller_label() {
+	local candidate="${1:-}"
+	candidate="${candidate##*/}"
+	[[ -n "${_SHIM_DIR:-}" ]] || return 1
+	[[ "$candidate" =~ ^[A-Za-z0-9_.+-]+$ ]] || return 1
+	[[ -f "${_SHIM_DIR}/${candidate}" ]] || return 1
+	printf '%s' "$candidate"
+	return 0
+}
+
+_shim_parent_framework_caller() {
+	local parent_command=""
+	local word=""
+	local executable_name=""
+	local caller=""
+	local -a parent_words=()
+	parent_command=$(ps -p "$PPID" -o command= 2>/dev/null) || parent_command=""
+	[[ -n "$parent_command" ]] || return 1
+	read -r -a parent_words <<<"$parent_command"
+	[[ ${#parent_words[@]} -gt 0 ]] || return 1
+	if caller=$(_shim_framework_caller_label "${parent_words[0]}"); then
+		printf '%s' "$caller"
+		return 0
+	fi
+	executable_name="${parent_words[0]##*/}"
+	case "$executable_name" in
+	env | bash | dash | ksh | sh | zsh) ;;
+	*) return 1 ;;
+	esac
+	for word in "${parent_words[@]:1}"; do
+		case "$word" in
+		-* | *=*) continue ;;
+		esac
+		case "${word##*/}" in
+		env | bash | dash | ksh | sh | zsh) continue ;;
+		esac
+		if caller=$(_shim_framework_caller_label "$word"); then
+			printf '%s' "$caller"
+			return 0
+		fi
+	done
+	return 1
+}
+
+_shim_transport_caller_label() {
+	local sub1="${1:-}"
+	local sub2="${2:-}"
+	local caller=""
+	if caller=$(_shim_framework_caller_label "${AIDEVOPS_GH_CALLER:-}"); then
+		printf '%s' "$caller"
+		return 0
+	fi
+	if caller=$(_shim_parent_framework_caller); then
+		printf '%s' "$caller"
+		return 0
+	fi
+	_shim_caller_label "$sub1" "$sub2"
+	return 0
+}
+
 _shim_transport_page() {
 	local arg=""
 	local page=1
+	if [[ "${AIDEVOPS_GH_PAGE_NUMBER:-}" =~ ^[0-9]+$ && "${AIDEVOPS_GH_PAGE_NUMBER}" -gt 0 ]]; then
+		printf '%s' "$AIDEVOPS_GH_PAGE_NUMBER"
+		return 0
+	fi
 	for arg in "$@"; do
 		if [[ "$arg" == "--paginate" ]]; then
 			# Native gh owns the internal page loop, so one process is not proof of
@@ -298,7 +366,7 @@ _shim_transport_page() {
 	return 0
 }
 
-_shim_run_transport() {
+_shim_run_single_transport() {
 	local executable="$1"; shift
 	local path="$1"; shift
 	local caller="$1"; shift
@@ -311,6 +379,38 @@ _shim_run_transport() {
 	fi
 	AIDEVOPS_GH_ROUTE_DECISION="$decision" gh_run_transport_attempt \
 		"$path" "$caller" "$AIDEVOPS_GH_LOGICAL_ID" "$page" "$retry" -- "$executable" "$@"
+	return $?
+}
+
+_GHRP_LOADED=0
+for _cand in \
+	"$_SHIM_DIR/gh-rest-pagination-lib.sh" \
+	"${HOME:+${HOME}/.aidevops/agents/scripts/gh-rest-pagination-lib.sh}"; do
+	if [[ -n "$_cand" && -f "$_cand" ]]; then
+		# shellcheck source=/dev/null
+		source "$_cand" 2>/dev/null && _GHRP_LOADED=1
+		break
+	fi
+done
+unset _cand
+
+_shim_run_transport() {
+	local executable="$1"; shift
+	local path="$1"; shift
+	local caller="$1"; shift
+	local retry="$1"; shift
+	local rc=0
+	local -a transport_args=("$@")
+	if [[ "$_GHRP_LOADED" -eq 1 ]] && _ghrp_prepare "$path" "${transport_args[@]}"; then
+		_ghrp_run "$executable" "$path" "$caller" "$retry" "${transport_args[@]}"
+		rc=$?
+		if [[ "$rc" -eq 125 && "${_GHRP_FALLBACK_SAFE:-0}" -eq 1 ]]; then
+			_shim_run_single_transport "$executable" "$path" "$caller" "$retry" "${transport_args[@]}"
+			return $?
+		fi
+		return "$rc"
+	fi
+	_shim_run_single_transport "$executable" "$path" "$caller" "$retry" "${transport_args[@]}"
 	return $?
 }
 
@@ -1040,8 +1140,10 @@ _shim_privacy_scan() {
 		target_url="https://github.com/${target_url}"
 	fi
 
-	# Public-target check — fail-open on private (rc=1) or unknown (rc=2).
-	privacy_is_target_public "$target_url"
+	# Public-target check — bind the already-resolved native binary so helper
+	# probes cannot re-enter this PATH shim while its recursion guard is active.
+	# This covers both the auth status probe and the subsequent repo API query.
+	PRIVACY_GH_BIN="$REAL_GH" privacy_is_target_public "$target_url"
 	local _pub_rc=$?
 	if [[ $_pub_rc -ne 0 ]]; then
 		return 0
@@ -1350,6 +1452,21 @@ _shim_normalize_interactive_tracking_issue_create() {
 
 _shim_normalize_interactive_tracking_issue_create
 
+_shim_normalize_pr_create_origin() {
+	[[ "${_modified_args[0]:-}:${_modified_args[1]:-}" == "pr:create" ]] || return 0
+	# Respect an explicit immutable origin. Raw gh callers otherwise receive the
+	# same session provenance as gh_create_pr so worker drafts are recoverable.
+	_shim_issue_create_has_label_prefix "origin:" && return 0
+	local origin_label="origin:interactive"
+	if _shim_is_headless_automation; then
+		origin_label="origin:worker"
+	fi
+	_modified_args+=(--label "$origin_label")
+	return 0
+}
+
+_shim_normalize_pr_create_origin
+
 _shim_pr_create_get_title() {
 	local idx=0
 	local arg=""
@@ -1545,8 +1662,9 @@ if [[ "${1:-}" == "api" ]]; then
 	fi
 	# GH#21857: instrument gh api calls — rest or graphql depending on path.
 	_transport_path=$(_shim_classify_endpoint "${1:-}" "${2:-}")
-	gh_record_call "$_transport_path" gh-shim 2>/dev/null || true
-	_shim_run_transport "$REAL_GH" "$_transport_path" gh-shim 0 "${_modified_args[@]}"
+	_transport_caller=$(_shim_transport_caller_label "${1:-}" "${2:-}")
+	gh_record_call "$_transport_path" "$_transport_caller" 2>/dev/null || true
+	_shim_run_transport "$REAL_GH" "$_transport_path" "$_transport_caller" 0 "${_modified_args[@]}"
 	exit $?
 fi
 

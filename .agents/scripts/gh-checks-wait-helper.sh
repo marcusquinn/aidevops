@@ -14,7 +14,7 @@ _GCW_DEFAULT_TIMEOUT="${AIDEVOPS_GH_CHECKS_TIMEOUT_SECONDS:-1800}"
 _GCW_DEFAULT_INITIAL_INTERVAL="${AIDEVOPS_GH_CHECKS_INITIAL_INTERVAL_SECONDS:-15}"
 _GCW_DEFAULT_MAX_INTERVAL="${AIDEVOPS_GH_CHECKS_MAX_INTERVAL_SECONDS:-120}"
 _GCW_DEFAULT_HEARTBEAT_INTERVAL="${AIDEVOPS_GH_CHECKS_HEARTBEAT_SECONDS:-120}"
-readonly _GCW_BUCKET_PASS="pass" _GCW_BUCKET_PENDING="pending"
+readonly _GCW_BUCKET_PASS="pass" _GCW_BUCKET_PENDING="pending" _GCW_BUCKET_SKIPPING="skipping"
 
 usage() {
 	cat <<'EOF'
@@ -161,12 +161,13 @@ classify_state() {
 		printf 'success\n'
 		return 0
 	fi
-	if printf '%s' "$checks" | jq -e --arg pass "$_GCW_BUCKET_PASS" --arg pending "$_GCW_BUCKET_PENDING" \
-		'any(.[]; .bucket == "fail" or .bucket == "cancel" or .bucket == "skipping" or (.bucket != $pass and .bucket != $pending))' >/dev/null; then
+	if printf '%s' "$checks" | jq -e --arg pass "$_GCW_BUCKET_PASS" --arg pending "$_GCW_BUCKET_PENDING" --arg skipping "$_GCW_BUCKET_SKIPPING" \
+		'any(.[]; .bucket != $pass and .bucket != $pending and .bucket != $skipping)' >/dev/null; then
 		printf 'failure\n'
 		return 0
 	fi
-	if printf '%s' "$checks" | jq -e --arg pass "$_GCW_BUCKET_PASS" 'all(.[]; .bucket == $pass)' >/dev/null; then
+	if printf '%s' "$checks" | jq -e --arg pass "$_GCW_BUCKET_PASS" --arg skipping "$_GCW_BUCKET_SKIPPING" \
+		'all(.[]; .bucket == $pass or .bucket == $skipping)' >/dev/null; then
 		printf 'success\n'
 		return 0
 	fi
@@ -177,8 +178,8 @@ classify_state() {
 emit_failure_details() {
 	local checks="$1"
 	printf 'FAIL: required checks reached a terminal failure\n'
-	printf '%s' "$checks" | jq -r --arg pass "$_GCW_BUCKET_PASS" --arg pending "$_GCW_BUCKET_PENDING" \
-		'.[] | select(.bucket != $pass and .bucket != $pending) | "  \(.name): \(.bucket)\(if .link == "" then "" else " " + .link end)"'
+	printf '%s' "$checks" | jq -r --arg pass "$_GCW_BUCKET_PASS" --arg pending "$_GCW_BUCKET_PENDING" --arg skipping "$_GCW_BUCKET_SKIPPING" \
+		'.[] | select(.bucket != $pass and .bucket != $pending and .bucket != $skipping) | "  \(.name): \(.bucket)\(if .link == "" then "" else " " + .link end)"'
 	return 0
 }
 

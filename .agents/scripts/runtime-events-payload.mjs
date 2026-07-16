@@ -23,9 +23,9 @@ const FILE_URL_PATTERN = /\bfile:\/\/\/[^\s"',)}\]]+/gi;
 const ABSOLUTE_PATH_PATTERN = /(^|[\s("'=])(?:\/[^\s"',)}\]]+|[A-Za-z]:[\\/][^\s"',)}\]]+)/gm;
 const REPOSITORY_LIKE_PATTERN = /\b[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\b/g;
 const ORDINARY_PAYLOAD_KEYS = new Set([
-  "call_id", "classification", "duration_ms", "error_type", "exit_code",
+  "attempt_id", "call_id", "classification", "duration_ms", "error_type", "exit_code",
   "finish_reason", "model_id", "observation", "provider_id", "reason", "result",
-  "role", "source", "status", "success", "tool_name",
+  "role", "run_id", "source", "status", "success", "tool_name",
 ]);
 const NOT_SCALAR = Symbol("not-scalar");
 

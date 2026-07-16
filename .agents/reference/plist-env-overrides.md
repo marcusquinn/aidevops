@@ -10,19 +10,20 @@ losing them on every `aidevops update` or `setup.sh` run.
 `~/Library/LaunchAgents/com.aidevops.aidevops-supervisor-pulse.plist`
 are silently wiped.
 
-The override file survives framework updates because it lives outside the
-deployed agent scripts tree and is gitignored.
+The override file survives framework updates because it lives in the stable
+user config root, outside replaceable runtime bundles.
 
 ## Setup
 
 ```bash
 # 1. Copy the committed template to the working file
+mkdir -p ~/.config/aidevops
 cp ~/.aidevops/agents/configs/plist-env-overrides.json.txt \
-   ~/.aidevops/agents/configs/plist-env-overrides.json
+   ~/.config/aidevops/plist-env-overrides.json
 
 # 2. Edit the working file — add the env vars you want
 #    Keys prefixed with _ are ignored (template examples)
-nano ~/.aidevops/agents/configs/plist-env-overrides.json
+nano ~/.config/aidevops/plist-env-overrides.json
 
 # 3. Run setup.sh to regenerate the plist with your overrides
 ~/.aidevops/agents/../setup.sh --non-interactive
@@ -102,11 +103,19 @@ override file for aidevops-specific tuning variables only.
 | File present, malformed JSON | `WARN` logged; plist generated without overrides. |
 | `jq` not installed | `WARN` logged; plist generated without overrides. |
 
+## Legacy File Migration
+
+During runtime-bundle deployment, setup copies an existing legacy working file
+from `~/.aidevops/agents/configs/plist-env-overrides.json` to the stable config
+root once. An existing stable file is never overwritten. Until that migration
+runs, the scheduler still reads the legacy file when no stable file exists.
+The stable file always takes precedence when both are present. Migration and
+setup diagnostics never print override values; injection logs key names only.
+
 ## Template Location
 
 The committed template (with example keys, all `_`-prefixed) lives at:
 `.agents/configs/plist-env-overrides.json.txt`
 
-The working file (gitignored) lives at:
-`.agents/configs/plist-env-overrides.json`
-(deployed to `~/.aidevops/agents/configs/plist-env-overrides.json`)
+The user-owned working file lives at:
+`~/.config/aidevops/plist-env-overrides.json`

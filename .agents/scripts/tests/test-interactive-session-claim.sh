@@ -23,6 +23,10 @@
 
 set -uo pipefail
 
+# This suite asserts the helper's primary `gh issue edit` command shapes.
+# Isolate it from pulse/runtime routing overrides inherited by worker shells.
+unset AIDEVOPS_GH_FORCE_REST_READS AIDEVOPS_GH_REST_FIRST_READS _GH_SHOULD_FALLBACK_OVERRIDE
+
 TEST_SCRIPTS_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 HELPER_PATH="${TEST_SCRIPTS_DIR}/interactive-session-helper.sh"
 
@@ -84,6 +88,13 @@ auth)
 	exit 0
 	;;
 	api)
+		# Keep status transitions on their primary `gh issue edit` path. An empty
+		# rate-limit response now triggers REST fallback, which this focused stub
+		# does not model and would make label assertions environment-dependent.
+		if [[ "$2" == "rate_limit" ]]; then
+			printf '5000\n'
+			exit 0
+		fi
 		# gh api user --jq '.login'
 		if [[ "$2" == "user" ]]; then
 			printf 'testuser\n'
@@ -144,7 +155,11 @@ issue)
 		exit 0
 		;;
 	edit)
-		# Log the edit flags (already captured in STUB_LOG above). Success.
+		# Log the edit flags (already captured in STUB_LOG above).
+		if [[ "${STUB_GH_EDIT_FAILS:-0}" == "1" ]]; then
+			printf 'simulated issue edit failure\n' >&2
+			exit 1
+		fi
 		exit 0
 		;;
 	list)
@@ -183,6 +198,12 @@ fi
 source "$HELPER_PATH" >/dev/null 2>&1
 # Helper sets `set -euo pipefail` — drop -e for negative assertions
 set +e
+
+# Persisted runtime cooldowns must not suppress the stubbed write calls this
+# isolated command-shape suite asserts.
+_gh_secondary_cooldown_preflight() {
+	return 0
+}
 
 # Sanity check — did sourcing expose the functions we need?
 if ! declare -f _isc_cmd_claim >/dev/null; then
@@ -880,14 +901,109 @@ else
 		"(rc=$release_closed_rc, log=${release_closed_log:0:300})"
 fi
 
+# REST fallback reads return the GitHub issue state in lowercase. Preserve the
+# same closed-issue invariant when that path supplies `closed` (GH#27869).
+_isc_cmd_claim 70004 testowner/testrepo --worktree /tmp/wt-fake >/dev/null 2>&1
+: >"$STUB_LOG"
+export STUB_ISSUE_HAS_IN_REVIEW=1
+export STUB_ISSUE_STATE=closed
+_isc_cmd_release 70004 testowner/testrepo >/dev/null 2>&1
+release_rest_closed_rc=$?
+release_rest_closed_log=$(cat "$STUB_LOG")
+export STUB_ISSUE_STATE=
+
+if [[ $release_rest_closed_rc -eq 0 ]] && printf '%s' "$release_rest_closed_log" | grep -q "add-label status:done" && ! printf '%s' "$release_rest_closed_log" | grep -q "add-label status:available"; then
+	print_result "GH#27869: release on lowercase closed issue → status:done, not status:available" 0
+else
+	print_result "GH#27869: release on lowercase closed issue → status:done, not status:available" 1 \
+		"(rc=$release_rest_closed_rc, log=${release_rest_closed_log:0:300})"
+fi
+
 # Reset stub state
 export STUB_ISSUE_HAS_IN_REVIEW=0
 
 # =============================================================================
-# Test 25 — issue-start marker fails closed without explicit takeover
+# Test 25 — GH#27834: release --unassign remains actionable after another
+# lifecycle path has already moved the issue to status:available.
+# =============================================================================
+export STUB_ISSUE_HAS_IN_REVIEW=0
+export STUB_GH_VIEW_FAILS=0
+: >"$STUB_LOG"
+_isc_cmd_release 70003 testuser/testrepo --unassign >/dev/null 2>&1
+release_available_rc=$?
+release_available_log=$(cat "$STUB_LOG")
+
+if [[ $release_available_rc -eq 0 ]] &&
+	printf '%s' "$release_available_log" | grep -q "issue edit 70003 --repo testuser/testrepo --remove-assignee testuser" &&
+	! printf '%s' "$release_available_log" | grep -q "remove-label status:in-review" &&
+	! printf '%s' "$release_available_log" | grep -q "add-label status:available"; then
+	print_result "GH#27834: already-available release --unassign removes self-assignment only" 0
+else
+	print_result "GH#27834: already-available release --unassign removes self-assignment only" 1 \
+		"(rc=$release_available_rc, log=${release_available_log:0:300})"
+fi
+
+# A repeated call is harmless and still requests the idempotent removal.
+: >"$STUB_LOG"
+_isc_cmd_release 70003 testuser/testrepo --unassign >/dev/null 2>&1
+release_available_repeat_rc=$?
+release_available_repeat_log=$(cat "$STUB_LOG")
+if [[ $release_available_repeat_rc -eq 0 ]] &&
+	printf '%s' "$release_available_repeat_log" | grep -q -- "--remove-assignee testuser"; then
+	print_result "GH#27834: already-available release --unassign is idempotent" 0
+else
+	print_result "GH#27834: already-available release --unassign is idempotent" 1 \
+		"(rc=$release_available_repeat_rc, log=${release_available_repeat_log:0:300})"
+fi
+
+# A failed unassignment is captured under `set -e` so the documented warning-
+# only release contract is preserved instead of aborting the caller.
+release_unassign_fail_out=$(
+	set -e
+	STUB_GH_EDIT_FAILS=1 _isc_unassign_released_issue 70003 testuser/testrepo testuser 2>&1
+)
+release_unassign_fail_rc=$?
+if [[ $release_unassign_fail_rc -eq 0 ]] &&
+	printf '%s' "$release_unassign_fail_out" | grep -q "(rc=1): simulated issue edit failure"; then
+	print_result "GH#27834: failed standalone unassignment remains warning-only under set -e" 0
+else
+	print_result "GH#27834: failed standalone unassignment remains warning-only under set -e" 1 \
+		"(rc=$release_unassign_fail_rc, out=${release_unassign_fail_out:0:300})"
+fi
+
+# Without --unassign, already-available remains a complete no-op.
+: >"$STUB_LOG"
+_isc_cmd_release 70004 testuser/testrepo >/dev/null 2>&1
+release_available_noop_rc=$?
+release_available_noop_log=$(cat "$STUB_LOG")
+if [[ $release_available_noop_rc -eq 0 ]] &&
+	! printf '%s' "$release_available_noop_log" | grep -q "issue edit 70004"; then
+	print_result "GH#27834: already-available release without --unassign stays unchanged" 0
+else
+	print_result "GH#27834: already-available release without --unassign stays unchanged" 1 \
+		"(rc=$release_available_noop_rc, log=${release_available_noop_log:0:300})"
+fi
+
+# A failed three-state label lookup preserves the warning/fail-open path and
+# does not guess whether a standalone unassignment is safe.
+: >"$STUB_LOG"
+release_lookup_out=$(STUB_GH_VIEW_FAILS=1 _isc_cmd_release 70005 testuser/testrepo --unassign 2>&1)
+release_lookup_rc=$?
+release_lookup_log=$(cat "$STUB_LOG")
+if [[ $release_lookup_rc -eq 0 ]] &&
+	printf '%s' "$release_lookup_out" | grep -q "could not read labels" &&
+	! printf '%s' "$release_lookup_log" | grep -q "issue edit 70005"; then
+	print_result "GH#27834: release label lookup failure remains warning-only" 0
+else
+	print_result "GH#27834: release label lookup failure remains warning-only" 1 \
+		"(rc=$release_lookup_rc, log=${release_lookup_log:0:300}, out=${release_lookup_out:0:200})"
+fi
+
+# =============================================================================
+# Test 26 — issue-start marker fails closed without explicit takeover
 # =============================================================================
 marker_out=$(AIDEVOPS_INTERACTIVE_ISSUE_IMPLEMENTATION=1 \
-	_isc_cmd_claim 70003 testowner/testrepo --worktree /tmp/wt-fake 2>&1)
+	_isc_cmd_claim 70006 testowner/testrepo --worktree /tmp/wt-fake 2>&1)
 marker_rc=$?
 
 if [[ $marker_rc -eq 2 ]] && printf '%s' "$marker_out" | grep -q 'requires --implementing'; then
@@ -896,6 +1012,29 @@ else
 	print_result "issue-start marker rejects worker-style claim routing" 1 \
 		"(rc=$marker_rc, out=${marker_out:0:200})"
 fi
+
+# =============================================================================
+# Test 27 — GH#27871: closed issues skip every interactive claim write
+# =============================================================================
+for closed_state in CLOSED closed; do
+	closed_stamp=$(_isc_stamp_path 70007 closed/test)
+	rm -f "$closed_stamp" >/dev/null 2>&1 || true
+	: >"$STUB_LOG"
+	closed_out=$(STUB_ISSUE_STATE="$closed_state" STUB_ISSUE_HAS_IN_REVIEW=1 \
+		_isc_cmd_claim 70007 closed/test --worktree /tmp/closed-wt --implementing 2>&1)
+	closed_rc=$?
+	closed_log=$(cat "$STUB_LOG")
+
+	if [[ $closed_rc -eq 0 && ! -f "$closed_stamp" &&
+		"$closed_out" == *"is closed"* &&
+		"$closed_log" != *"issue edit 70007"* &&
+		"$closed_log" != *"issue comment 70007"* ]]; then
+		print_result "GH#27871: claim on ${closed_state} issue skips lifecycle writes" 0
+	else
+		print_result "GH#27871: claim on ${closed_state} issue skips lifecycle writes" 1 \
+			"(rc=$closed_rc, stamp=$([[ -f "$closed_stamp" ]] && echo yes || echo no), log=${closed_log:0:300}, out=${closed_out:0:200})"
+	fi
+done
 
 # =============================================================================
 # Summary

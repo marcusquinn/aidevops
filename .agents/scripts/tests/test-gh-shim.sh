@@ -288,6 +288,31 @@ if [[ "$argv" == *"<!-- aidevops:sig -->"* ]]; then
 else
 	_fail "gh pr create injection" "argv: $argv"
 fi
+if [[ "$argv" == *$'--label\norigin:interactive'* ]]; then
+	_pass "interactive raw pr create gets one origin label"
+else
+	_fail "interactive raw pr create origin normalization" "argv: $argv"
+fi
+
+_reset_log
+AIDEVOPS_HEADLESS=1 AIDEVOPS_USER_INSTIGATED_EXTERNAL_GH_WRITE=owner/repo \
+	"$SHIM_RUN" pr create --repo owner/repo --title "worker" --body "For #25901" 2>/dev/null
+argv=$(_read_argv)
+if [[ "$argv" == *$'--label\norigin:worker'* ]] && [[ "$argv" != *"origin:interactive"* ]]; then
+	_pass "headless raw pr create gets worker origin label"
+else
+	_fail "headless raw pr create origin normalization" "argv: $argv"
+fi
+
+_reset_log
+"$SHIM_RUN" pr create --repo owner/repo --title "explicit" --label "origin:worker" --body "For #25901" 2>/dev/null
+argv=$(_read_argv)
+origin_count=$(printf '%s\n' "$argv" | grep -c '^origin:' || true)
+if [[ "$origin_count" -eq 1 ]] && [[ "$argv" == *"origin:worker"* ]]; then
+	_pass "explicit raw pr origin remains immutable and singular"
+else
+	_fail "explicit raw pr origin normalization" "count=${origin_count} argv: $argv"
+fi
 
 echo ""
 echo "Test 6a: issue-first repos block PR creation without linked issue"

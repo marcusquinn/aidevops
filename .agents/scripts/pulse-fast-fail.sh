@@ -22,6 +22,9 @@
 #   - _ff_query_pool_retry_seconds
 #   - _ff_with_lock
 #   - _ff_save
+#   - _ff_mark_terminal_consolidation_routed
+#   - _ff_route_terminal_consolidation
+#   - _ff_terminal_threshold_crossed
 #   - _ff_parse_entry
 #   - _ff_compute_rate_limit_strategy
 #   - _ff_compute_failure_strategy
@@ -50,6 +53,7 @@
 # Include guard — prevent double-sourcing.
 [[ -n "${_PULSE_FAST_FAIL_LOADED:-}" ]] && return 0
 _PULSE_FAST_FAIL_LOADED=1
+_FF_BOOL_FALSE="false"
 
 #######################################
 # Return the fast-fail state key for an issue.
@@ -224,6 +228,84 @@ _ff_save() {
 		echo "[pulse-wrapper] _ff_save: failed to write fast-fail state" >>"$LOGFILE"
 	fi
 	return 0
+}
+
+#######################################
+# Persist that the terminal fast-fail outcome has already passed through the
+# idempotent consolidation dispatcher. This avoids repeated GitHub reads and
+# label writes on every pulse cycle while the issue remains hard-stopped.
+# Arguments: issue number, repo slug, breaker source
+#######################################
+_ff_mark_terminal_consolidation_routed() {
+	_ff_with_lock _ff_mark_terminal_consolidation_routed_locked "$@" || return 1
+	return 0
+}
+
+_ff_mark_terminal_consolidation_routed_locked() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local breaker_source="$3"
+	local key
+	local state
+	local now
+	local updated_state
+
+	key=$(_ff_key "$issue_number" "$repo_slug")
+	state=$(_ff_load)
+	now=$(date +%s)
+	updated_state=$(printf '%s' "$state" | jq \
+		--arg k "$key" \
+		--arg source "$breaker_source" \
+		--argjson ts "$now" \
+		'if .[$k] then .[$k].terminal_consolidation_routed = true | .[$k].terminal_consolidation_source = $source | .[$k].terminal_consolidation_ts = $ts else . end' \
+		2>/dev/null) || return 1
+	_ff_save "$updated_state"
+	return 0
+}
+
+#######################################
+# Hand a terminal fast-fail outcome to the shared consolidation bridge after
+# releasing the fast-fail state lock. Missing bridge functions are fail-open:
+# fast_fail_is_skipped retries the handoff on the next main pulse cycle.
+# Arguments: issue number, repo slug, breaker source, optional detail
+#######################################
+_ff_route_terminal_consolidation() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local breaker_source="$3"
+	local breaker_detail="${4:-}"
+
+	if ! declare -F _route_terminal_breaker_to_consolidation >/dev/null 2>&1; then
+		echo "[pulse-wrapper] fast-fail consolidation deferred for #${issue_number} in ${repo_slug}: bridge unavailable" >>"$LOGFILE"
+		return 1
+	fi
+	if ! _route_terminal_breaker_to_consolidation \
+		"$issue_number" "$repo_slug" "$breaker_source" "$breaker_detail"; then
+		return 1
+	fi
+	_ff_mark_terminal_consolidation_routed "$issue_number" "$repo_slug" "$breaker_source" || true
+	return 0
+}
+
+#######################################
+# Check whether a non-rate-limit failure has just crossed the hard-stop
+# threshold. Kept separate so _fast_fail_record_locked stays below the
+# function-size complexity gate.
+# Arguments: existing count, new count, rate-limit boolean
+#######################################
+_ff_terminal_threshold_crossed() {
+	local existing_count="$1"
+	local new_count="$2"
+	local is_rate_limit="$3"
+	local terminal_threshold="${FAST_FAIL_SKIP_THRESHOLD:-5}"
+
+	[[ "$terminal_threshold" =~ ^[0-9]+$ ]] || terminal_threshold=5
+	if [[ "$is_rate_limit" == "$_FF_BOOL_FALSE" \
+		&& "$existing_count" -lt "$terminal_threshold" \
+		&& "$new_count" -ge "$terminal_threshold" ]]; then
+		return 0
+	fi
+	return 1
 }
 
 #######################################
@@ -469,9 +551,29 @@ _ff_release_retry_reset_if_newer_locked() {
 #                no_worker_process, cli_usage_output, local_error, etc.)
 #   $4 - provider (optional, for rate-limit pool queries; default: anthropic)
 #   $5 - crash_type (optional: "overwhelmed" | "no_work" | "partial" | "")
+#   $6 - attempt_id (optional exact objective correlation; resolved from ledger when omitted)
 #######################################
 fast_fail_record() {
-	_ff_with_lock _fast_fail_record_locked "$@" || return 0
+	local issue_number="$1"
+	local repo_slug="$2"
+	local reason="${3:-launch_failure}"
+	local attempt_id="${6:-}"
+	local record_rc=0
+
+	if declare -F _worker_attempt_id_for_issue >/dev/null 2>&1; then
+		attempt_id=$(_worker_attempt_id_for_issue "$issue_number" "$repo_slug" "$attempt_id") || attempt_id=""
+	fi
+	if [[ -n "$attempt_id" ]] && declare -F _objective_disposition_suppresses >/dev/null 2>&1 && \
+		_objective_disposition_suppresses suppress_fast_fail "$issue_number" "$repo_slug" "$attempt_id"; then
+		echo "[pulse-wrapper] fast_fail_record: #${issue_number} (${repo_slug}) suppressed by reconciled objective outcome" >>"$LOGFILE"
+		return 0
+	fi
+
+	_ff_with_lock _fast_fail_record_locked "$@" || record_rc=$?
+	if [[ "$record_rc" -eq 2 ]]; then
+		_ff_route_terminal_consolidation "$issue_number" "$repo_slug" \
+			"fast-fail-hard-stop" "reason=${reason}" || true
+	fi
 	return 0
 }
 
@@ -546,7 +648,7 @@ _fast_fail_record_locked() {
 	# Flag for enrichment on first non-rate-limit failure: a thinking-tier worker
 	# will analyze the issue and add implementation guidance before re-dispatch.
 	# Only set once — cleared after enrichment runs.
-	if [[ "$is_rate_limit" == "false" && "$new_count" -eq 1 ]]; then
+	if [[ "$is_rate_limit" == "$_FF_BOOL_FALSE" && "$new_count" -eq 1 ]]; then
 		updated_state=$(printf '%s' "$updated_state" | jq \
 			--arg k "$key" \
 			'.[$k].enrichment_needed = true' 2>/dev/null) || true
@@ -560,8 +662,15 @@ _fast_fail_record_locked() {
 	# the problem, it's provider capacity. Escalating would waste a higher tier.
 	# Pass crash_type to escalate_issue_tier for crash-type-aware thresholds:
 	# "overwhelmed" escalates immediately, others use default threshold.
-	if [[ "$is_rate_limit" == "false" && "$new_count" -gt "$existing_count" ]]; then
+	if [[ "$is_rate_limit" == "$_FF_BOOL_FALSE" && "$new_count" -gt "$existing_count" ]]; then
 		escalate_issue_tier "$issue_number" "$repo_slug" "$new_count" "$reason" "$crash_type" || true
+	fi
+
+	# Return an internal sentinel when a non-rate-limit failure first crosses
+	# the hard-stop threshold. The public wrapper releases the state lock before
+	# invoking GitHub-backed consolidation machinery.
+	if _ff_terminal_threshold_crossed "$existing_count" "$new_count" "$is_rate_limit"; then
+		return 2
 	fi
 
 	return 0
@@ -623,7 +732,15 @@ _fast_fail_reset_locked() {
 # Arguments: $1 issue_number, $2 repo_slug
 #######################################
 fast_fail_age_out() {
-	_ff_with_lock _fast_fail_age_out_locked "$@" || return 0
+	local issue_number="$1"
+	local repo_slug="$2"
+	local age_out_rc=0
+
+	_ff_with_lock _fast_fail_age_out_locked "$@" || age_out_rc=$?
+	if [[ "$age_out_rc" -eq 2 ]]; then
+		_ff_route_terminal_consolidation "$issue_number" "$repo_slug" \
+			"fast-fail-age-out-ceiling" "maximum automatic resets exhausted" || true
+	fi
 	return 0
 }
 
@@ -681,7 +798,10 @@ _fast_fail_age_out_locked() {
 	if [[ "$new_reset_count" -gt "$max_resets" ]]; then
 		echo "[pulse-wrapper] fast_fail_age_out: #${issue_number} (${repo_slug}) exceeded ${max_resets} auto-resets without success — applying needs-maintainer-review" >>"$LOGFILE"
 		gh issue edit "$issue_number" --repo "$repo_slug" --add-label "needs-maintainer-review" >>"$LOGFILE" 2>&1 || true
-		return 0
+		case "$existing_reason" in
+		rate_limit* | backoff) return 0 ;;
+		*) return 2 ;;
+		esac
 	fi
 
 	# Reset counter: count=0, retry_after=0, record reset metadata for audit.
@@ -726,7 +846,14 @@ fast_fail_is_skipped() {
 	[[ "$issue_number" =~ ^[0-9]+$ ]] || return 1
 	[[ -n "$repo_slug" ]] || return 1
 
-	local key now state existing_ts existing_count existing_retry_after
+	local key
+	local now
+	local state
+	local existing_ts
+	local existing_count
+	local existing_retry_after
+	local existing_reason
+	local consolidation_routed
 	key=$(_ff_key "$issue_number" "$repo_slug")
 	now=$(date +%s)
 	state=$(_ff_load)
@@ -740,6 +867,8 @@ fast_fail_is_skipped() {
 	existing_ts=$(printf '%s' "$state" | jq -r --arg k "$key" '.[$k].ts // 0' 2>/dev/null) || existing_ts=0
 	existing_count=$(printf '%s' "$state" | jq -r --arg k "$key" '.[$k].count // 0' 2>/dev/null) || existing_count=0
 	existing_retry_after=$(printf '%s' "$state" | jq -r --arg k "$key" '.[$k].retry_after // 0' 2>/dev/null) || existing_retry_after=0
+	existing_reason=$(printf '%s' "$state" | jq -r --arg k "$key" '.[$k].reason // ""' 2>/dev/null) || existing_reason=""
+	consolidation_routed=$(printf '%s' "$state" | jq -r --arg k "$key" '.[$k].terminal_consolidation_routed // false' 2>/dev/null) || consolidation_routed=false
 	[[ "$existing_ts" =~ ^[0-9]+$ ]] || existing_ts=0
 	[[ "$existing_count" =~ ^[0-9]+$ ]] || existing_count=0
 	[[ "$existing_retry_after" =~ ^[0-9]+$ ]] || existing_retry_after=0
@@ -756,6 +885,15 @@ fast_fail_is_skipped() {
 	# Hard stop: too many non-rate-limit failures
 	if [[ "$existing_count" -ge "$FAST_FAIL_SKIP_THRESHOLD" ]]; then
 		echo "[pulse-wrapper] fast_fail_is_skipped: #${issue_number} (${repo_slug}) HARD STOP count=${existing_count}>=${FAST_FAIL_SKIP_THRESHOLD}" >>"$LOGFILE"
+		case "$existing_reason" in
+		rate_limit* | backoff) ;;
+		*)
+			if [[ "$consolidation_routed" != "true" ]]; then
+				_ff_route_terminal_consolidation "$issue_number" "$repo_slug" \
+					"fast-fail-hard-stop" "reason=${existing_reason:-unknown} count=${existing_count}" || true
+			fi
+			;;
+		esac
 		return 0 # Skipped
 	fi
 

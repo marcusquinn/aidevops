@@ -922,9 +922,10 @@ _has_committed_to_main_cache_label() {
 #######################################
 # Detect terminal consolidated issues before worker dispatch.
 #
-# Consolidated issues are archival handoff/spec records when they only carry
-# the provenance label. Review-feedback consolidation issues are dispatchable
-# implementation specs and carry quality/source labels; do not block those.
+# Consolidated source issues are archival records and must not be dispatched
+# again. Consolidated successor specs are dispatchable only when they carry
+# both the explicit auto-dispatch handoff and the canonical body marker.
+# Review/CI feedback specs remain dispatchable through their source labels.
 #
 # Args:
 #   $1 - issue_meta_json (pre-fetched JSON with a .labels array)
@@ -938,10 +939,15 @@ _has_consolidated_label() {
 	[[ -n "$issue_meta_json" ]] || return 1
 	if printf '%s' "$issue_meta_json" | jq -e '
 		(.labels | map(.name)) as $labels
+		| (
+			(($labels | index("auto-dispatch")) != null)
+			and ((.body // "") | test("(^|\\n)_Supersedes #[0-9]+ (—|-) this issue is the consolidated spec\\._(\\n|$)"))
+		) as $dispatchable_spec
 		| (($labels | index("consolidated")) != null)
 		and (($labels | index("quality-debt")) == null)
 		and (($labels | index("source:review-feedback")) == null)
 		and (($labels | index("source:ci-feedback")) == null)
+		and ($dispatchable_spec | not)
 	' >/dev/null 2>&1; then
 		return 0
 	fi

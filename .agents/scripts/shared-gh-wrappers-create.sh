@@ -334,27 +334,16 @@ gh_create_issue() {
 		_rest_args+=("${_origin_label_args[@]}")
 	fi
 
-	# t2028/t2406: auto-assign interactive issues unless auto-dispatch is present.
-	local issue_output rc
+	# t2028/t2406/GH#27929: choose an eligible auto-assignee before creation,
+	# but keep durable creation independent from the best-effort assignment.
+	local issue_output rc auto_assignee="" target_repo=""
+	target_repo=$(_gh_extract_repo_from_args "$@" 2>/dev/null || true)
 	if ! _gh_wrapper_args_have_assignee "$@"; then
 		if _gh_wrapper_args_have_label "auto-dispatch" "$@"; then
 			# t2157/t2406: auto-dispatch means worker-owned; skip self-assignment.
 			print_info "[INFO] auto-dispatch label present — skipping self-assignment per t2157"
 		else
-			local auto_assignee
-			auto_assignee=$(_gh_wrapper_auto_assignee)
-			if [[ -n "$auto_assignee" ]]; then
-				issue_output=$("${_issue_cmd[@]}" --assignee "$auto_assignee") # aidevops-allow: raw-gh-wrapper
-				rc=$?
-				if [[ $rc -ne 0 ]] && _rest_should_fallback; then
-					print_info "[INFO] gh-wrapper: GraphQL exhausted, falling back to REST for issue create"
-					issue_output=$(_rest_issue_create "${_rest_args[@]}" --assignee "$auto_assignee")
-					rc=$?
-				fi
-				echo "$issue_output"
-				[[ $rc -eq 0 ]] && _gh_auto_link_sub_issue "$issue_output" "$@"
-				return $rc
-			fi
+			auto_assignee=$(_gh_wrapper_auto_assignee "$target_repo")
 		fi
 	fi
 
@@ -366,7 +355,17 @@ gh_create_issue() {
 		rc=$?
 	fi
 	echo "$issue_output"
-	[[ $rc -eq 0 ]] && _gh_auto_link_sub_issue "$issue_output" "$@"
+	if [[ $rc -eq 0 ]]; then
+		if [[ -n "$auto_assignee" ]]; then
+			local issue_number="${issue_output##*/}"
+			issue_number="${issue_number%%[[:space:]]*}"
+			if [[ "$issue_number" =~ ^[0-9]+$ ]] &&
+				! gh issue edit "$issue_number" --repo "$target_repo" --add-assignee "$auto_assignee" >/dev/null 2>&1; then # aidevops-allow: raw-gh-wrapper
+				print_warning "Issue #${issue_number} was created, but automatic assignment to ${auto_assignee} failed; continuing with the durable issue."
+			fi
+		fi
+		_gh_auto_link_sub_issue "$issue_output" "$@"
+	fi
 	return $rc
 }
 

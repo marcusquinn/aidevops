@@ -80,6 +80,7 @@ STATS="$FIXTURE_DIR/pulse-stats.json"
 PR_CACHE="$FIXTURE_DIR/pr-cache.json"
 OAUTH_POOL="$FIXTURE_DIR/oauth-pool.json"
 BLOCKERS="$FIXTURE_DIR/worker-progress-blockers.jsonl"
+OBJECTIVE_EVIDENCE="$FIXTURE_DIR/objective-evidence.jsonl"
 
 cleanup() {
 	rm -rf "$FIXTURE_DIR"
@@ -190,6 +191,7 @@ RUN_ENV=(
 	"WAH_PR_CACHE_FILE=$PR_CACHE"
 	"WAH_OAUTH_POOL_FILE=$OAUTH_POOL"
 	"WAH_BLOCKER_LOG_FILE=$BLOCKERS"
+	"WAH_OBJECTIVE_EVIDENCE_FILE=$OBJECTIVE_EVIDENCE"
 	"PULSE_PROVIDER_ACCOUNT_SLOT_MULTIPLIER=24"
 )
 
@@ -247,7 +249,9 @@ assert_eq "2c: raw event total remains backward compatible" "18" "$(printf '%s' 
 assert_eq "2c2: terminal session outcomes = 13" "13" "$(printf '%s' "$JSON" | jq -r '.metrics.terminal_session_total')"
 assert_eq "2c2b: event_total aliases raw total" "18" "$(printf '%s' "$JSON" | jq -r '.metrics.event_total')"
 assert_eq "2c3: continuation events = 4" "4" "$(printf '%s' "$JSON" | jq -r '.metrics.continuation_events')"
-assert_eq "2d: succeeded = 5" "5" "$(printf '%s' "$JSON" | jq -r '.metrics.succeeded')"
+assert_eq "2d: runtime handoffs = 5" "5" "$(printf '%s' "$JSON" | jq -r '.metrics.runtime_handoffs')"
+assert_eq "2d2: delivered success is unknown when GitHub check is skipped" "null" \
+	"$(printf '%s' "$JSON" | jq -r '.metrics.succeeded')"
 assert_eq "2e: watchdog_killed = 1" "1" "$(printf '%s' "$JSON" | jq -r '.metrics.watchdog_killed')"
 assert_eq "2f: watchdog_continued = 2 (incl. nonzero-exit heartbeat)" "2" \
 	"$(printf '%s' "$JSON" | jq -r '.metrics.watchdog_continued')"
@@ -307,6 +311,8 @@ assert_eq "2m: pr count is null when skipped" "null" \
 	"$(printf '%s' "$JSON" | jq -r '.worker_solved_issues.count')"
 assert_eq "2n: pr check_state = skipped" "skipped" \
 	"$(printf '%s' "$JSON" | jq -r '.worker_solved_issues.check_state')"
+assert_eq "2n2: delivery stages are explicitly skipped" "skipped" \
+	"$(printf '%s' "$JSON" | jq -r '.delivery_stages.check_state')"
 assert_eq "2o: blocker events obey the 24h window" "3" \
 	"$(printf '%s' "$JSON" | jq -r '.progress_blockers.event_total')"
 assert_eq "2p: unresolved old blocker remains active until cleared" "2" \
@@ -327,7 +333,7 @@ JSON=$(env "${RUN_ENV[@]}" "$HELPER" summary --since 1h --no-pr-check --json 2>&
 # continuation-only and therefore excluded from the outcome denominator.
 assert_eq "3a: 1h raw total = 4" "4" "$(printf '%s' "$JSON" | jq -r '.metrics.total')"
 assert_eq "3a2: 1h terminal total = 2" "2" "$(printf '%s' "$JSON" | jq -r '.metrics.terminal_session_total')"
-assert_eq "3b: 1h succeeded = 2" "2" "$(printf '%s' "$JSON" | jq -r '.metrics.succeeded')"
+assert_eq "3b: 1h runtime handoffs = 2" "2" "$(printf '%s' "$JSON" | jq -r '.metrics.runtime_handoffs')"
 assert_eq "3c: 1h watchdog_continued = 1" "1" \
 	"$(printf '%s' "$JSON" | jq -r '.metrics.watchdog_continued')"
 assert_eq "3d: 1h watchdog_killed = 0" "0" \
@@ -367,7 +373,7 @@ OUT=$(env "${RUN_ENV[@]}" "$HELPER" summary --since 24h --no-pr-check 2>&1)
 assert_contains "5a: human output names canonical jsonl source" \
 	"headless-runtime-metrics.jsonl" "$OUT"
 assert_contains "5b: human output names pulse-stats" "pulse-stats.json" "$OUT"
-assert_contains "5c: human output shows succeeded count" "Succeeded:                   5" "$OUT"
+assert_contains "5c: human output shows runtime handoff count" "Runtime handoffs:            5" "$OUT"
 assert_contains "5d: human output shows watchdog continued is heartbeat" \
 	"heartbeat" "$OUT"
 assert_contains "5d2: human output shows service interruption resumes" \
@@ -397,6 +403,8 @@ assert_eq "6c: openai capacity_slots uses redacted multiplier" "48" \
 	"$(printf '%s' "$JSON" | jq -r '.provider_diagnostics.account_pool[] | select(.provider == "openai") | .capacity_slots')"
 assert_eq "6c2: provider diagnostics retain raw duplicate/attempt evidence" "7" \
 	"$(printf '%s' "$JSON" | jq -r '.provider_diagnostics.provider_model_usage[] | select(.provider == "openai" and .model == "openai/gpt-5.5") | .other_failure')"
+assert_eq "6c2b: provider diagnostics name runtime handoffs without calling them success" "0" \
+	"$(printf '%s' "$JSON" | jq -r '.provider_diagnostics.provider_model_usage[] | select(.provider == "openai" and .model == "openai/gpt-5.5") | .runtime_handoffs')"
 
 JSONC_DEFAULTS="$FIXTURE_DIR/aidevops.defaults.jsonc"
 JSONC_USER="$FIXTURE_DIR/config.jsonc"
@@ -418,12 +426,13 @@ assert_eq "6c4: config multiplier overrides defaults" "14" \
 
 OUT=$(env "${RUN_ENV[@]}" "$HELPER" providers --since 24h 2>&1)
 assert_contains "6d: human provider output shows capacity slots" "capacity_slots=48" "$OUT"
+assert_contains "6e: human provider output names runtime handoffs" "runtime_handoffs=" "$OUT"
 
 # ---------------------------------------------------------------------------
-# Section 7: solved:worker attribution query excludes origin-only PR counts.
+# Section 7: runtime handoff and GitHub delivery stages remain distinct.
 # ---------------------------------------------------------------------------
 echo
-echo "--- Section 7: solved-by attribution query ---"
+echo "--- Section 7: delivery-stage attribution queries ---"
 
 GH_STUB_DIR="$FIXTURE_DIR/bin"
 mkdir -p "$GH_STUB_DIR"
@@ -431,6 +440,14 @@ GH_CALL_LOG="$FIXTURE_DIR/gh-calls.log"
 cat >"$GH_STUB_DIR/gh" <<'EOF'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >>"${GH_CALL_LOG}"
+if [[ "$1" == "pr" && "$2" == "list" && " $* " == *" --state merged "* ]]; then
+	printf '[{"number":201},{"number":202}]\n'
+	exit 0
+fi
+if [[ "$1" == "pr" && "$2" == "list" ]]; then
+	printf '[{"number":201},{"number":202},{"number":203}]\n'
+	exit 0
+fi
 if [[ "$1" == "issue" && "$2" == "list" ]]; then
 	printf '[{"number":101},{"number":102}]\n'
 	exit 0
@@ -443,18 +460,82 @@ JSON=$(env "${RUN_ENV[@]}" "GH_CALL_LOG=$GH_CALL_LOG" "PATH=$GH_STUB_DIR:$PATH" 
 	"$HELPER" summary --since 24h --repo marcusquinn/aidevops --pr-check --json 2>&1)
 RC=$?
 assert_rc "7a: solved attribution query exits 0" 0 "$RC"
-assert_eq "7b: solved worker issue count = 2" "2" \
-	"$(printf '%s' "$JSON" | jq -r '.worker_solved_issues.count')"
-assert_contains "7c: gh query uses solved:worker label" "label:solved:worker" \
+assert_eq "7b: worker PR opened count = 3" "3" \
+	"$(printf '%s' "$JSON" | jq -r '.delivery_stages.pr_opened')"
+assert_eq "7c: worker PR merged count = 2" "2" \
+	"$(printf '%s' "$JSON" | jq -r '.delivery_stages.pr_merged')"
+assert_eq "7d: solved worker issue count = 2" "2" \
+	"$(printf '%s' "$JSON" | jq -r '.delivery_stages.issue_solved')"
+assert_eq "7e: delivered success uses solved closed issues" "2" \
+	"$(printf '%s' "$JSON" | jq -r '.delivery_stages.delivered_successes')"
+assert_eq "7f: metrics succeeded means delivered success" "2" \
+	"$(printf '%s' "$JSON" | jq -r '.metrics.succeeded')"
+assert_eq "7g: runtime handoffs remain distinct from delivery" "5" \
+	"$(printf '%s' "$JSON" | jq -r '.metrics.runtime_handoffs')"
+assert_contains "7h: issue query uses solved:worker label" "label:solved:worker" \
 	"$(<"$GH_CALL_LOG")"
-if grep -q "label:origin:worker" "$GH_CALL_LOG" 2>/dev/null; then
-	TESTS_RUN=$((TESTS_RUN + 1))
-	TESTS_FAILED=$((TESTS_FAILED + 1))
-	echo "${TEST_RED}FAIL${TEST_NC}: 7d: query must not use origin:worker"
-else
-	TESTS_RUN=$((TESTS_RUN + 1))
-	echo "${TEST_GREEN}PASS${TEST_NC}: 7d: query does not use origin:worker"
-fi
+assert_contains "7i: PR queries use origin:worker attribution" "label:origin:worker" \
+	"$(<"$GH_CALL_LOG")"
+assert_eq "7j: delivery check performs three stage queries" "3" \
+	"$(wc -l <"$GH_CALL_LOG" | tr -d ' ')"
+
+JSON=$(env "${RUN_ENV[@]}" "GH_CALL_LOG=$GH_CALL_LOG" "PATH=$GH_STUB_DIR:$PATH" \
+	"$HELPER" summary --since 24h --repo marcusquinn/aidevops --pr-check --json 2>&1)
+assert_eq "7k: combined delivery-stage cache prevents repeated GitHub queries" "3" \
+	"$(wc -l <"$GH_CALL_LOG" | tr -d ' ')"
+assert_eq "7l: cached delivery stages preserve delivered success" "2" \
+	"$(printf '%s' "$JSON" | jq -r '.delivery_stages.delivered_successes')"
+
+# ---------------------------------------------------------------------------
+# Section 8: reconciled outcomes override routing summaries, not raw evidence.
+# ---------------------------------------------------------------------------
+echo
+echo "--- Section 8: objective outcome reconciliation ---"
+
+RECON_METRICS="$FIXTURE_DIR/reconciled-metrics.jsonl"
+cat >"$RECON_METRICS" <<EOF
+{"ts":$T_5MIN_AGO,"role":"worker","session_key":"issue-601","issue_number":601,"repo_slug":"owner/repo","attempt_id":"attempt-success","run_id":"run-a","result":"premature_exit","failure_reason":"premature_exit","exit_code":77}
+{"ts":$T_5MIN_AGO,"role":"worker","session_key":"issue-602","issue_number":602,"repo_slug":"owner/repo","attempt_id":"attempt-failed","run_id":"run-b","result":"premature_exit","failure_reason":"premature_exit","exit_code":77}
+{"ts":$T_5MIN_AGO,"role":"worker","session_key":"issue-603","issue_number":603,"repo_slug":"owner/repo","attempt_id":"attempt-unknown","run_id":"run-c","result":"premature_exit","failure_reason":"premature_exit","exit_code":77}
+{"ts":$T_5MIN_AGO,"role":"worker","session_key":"issue-604","issue_number":604,"repo_slug":"owner/repo","attempt_id":"attempt-latest-failed","run_id":"run-d","result":"premature_exit","failure_reason":"premature_exit","exit_code":77}
+{"ts":$T_5MIN_AGO,"role":"worker","session_key":"issue-605","issue_number":605,"repo_slug":"owner/repo","result":"premature_exit","failure_reason":"premature_exit","exit_code":77}
+{"ts":$((T_5MIN_AGO - 20)),"role":"worker","session_key":"issue-606","issue_number":606,"repo_slug":"","attempt_id":"attempt-unscoped","run_id":"run-e","result":"premature_exit","failure_reason":"premature_exit","exit_code":77}
+{"ts":$((T_5MIN_AGO - 20)),"role":"worker","session_key":"issue-607","issue_number":607,"repo_slug":"owner/repo","attempt_id":"","run_id":"run-f","result":"premature_exit","failure_reason":"premature_exit","exit_code":77}
+EOF
+cat >"$OBJECTIVE_EVIDENCE" <<EOF
+{"record_type":"attempt_outcome","repo":"owner/repo","issue_number":601,"attempt_id":"attempt-success","run_id":"run-a","effective_outcome":"success","evidence_timestamp":$T_5MIN_AGO}
+{"record_type":"attempt_outcome","repo":"owner/repo","issue_number":602,"attempt_id":"attempt-failed","run_id":"run-b","effective_outcome":"failed","evidence_timestamp":$T_5MIN_AGO}
+{"record_type":"attempt_outcome","repo":"owner/repo","issue_number":603,"attempt_id":"attempt-unknown","run_id":"run-c","effective_outcome":"unknown","evidence_timestamp":$T_5MIN_AGO}
+{"record_type":"attempt_outcome","repo":"owner/repo","issue_number":604,"attempt_id":"attempt-latest-failed","run_id":"run-d","effective_outcome":"success","evidence_timestamp":$((T_5MIN_AGO - 10))}
+{"record_type":"attempt_outcome","repo":"owner/repo","issue_number":604,"attempt_id":"attempt-latest-failed","run_id":"run-d","effective_outcome":"failed","evidence_timestamp":$T_5MIN_AGO}
+{"record_type":"attempt_outcome","repo":"owner/repo","issue_number":606,"attempt_id":"attempt-unscoped","run_id":"run-e","effective_outcome":"success","evidence_timestamp":$((T_5MIN_AGO - 20))}
+{"record_type":"attempt_outcome","repo":"owner/repo","issue_number":607,"attempt_id":"","run_id":"run-f","effective_outcome":"success","evidence_timestamp":$((T_5MIN_AGO - 20))}
+EOF
+
+JSON=$(env "${RUN_ENV[@]}" "WAH_METRICS_FILE=$RECON_METRICS" \
+	"$HELPER" summary --since 1h --no-pr-check --json 2>&1)
+assert_eq "8a: raw events remain queryable" "7" \
+	"$(printf '%s' "$JSON" | jq -r '.metrics.event_result_counts.premature_exit')"
+assert_eq "8b: reconciled success becomes an effective runtime handoff" "2" \
+	"$(printf '%s' "$JSON" | jq -r '.metrics.runtime_handoffs')"
+assert_eq "8c: validated failures and raw fallbacks remain in failure totals" "5" \
+	"$(printf '%s' "$JSON" | jq -r '.metrics.other_failure')"
+assert_eq "8d: successful attempt is absent from failure groups" "0" \
+	"$(printf '%s' "$JSON" | jq -r '[.metrics.failure_groups[] | select(.issue_number == 601)] | length')"
+assert_eq "8e: failed attempt remains in failure groups" "1" \
+	"$(printf '%s' "$JSON" | jq -r '[.metrics.failure_groups[] | select(.issue_number == 602)] | length')"
+assert_eq "8f: effective examples retain the raw parser result" "premature_exit" \
+	"$(printf '%s' "$JSON" | jq -r '.metrics.recent_examples[] | select(.issue_number == 601) | .raw_result')"
+assert_eq "8g: unknown reconciled outcomes fall back to raw failure" "1" \
+	"$(printf '%s' "$JSON" | jq -r '[.metrics.failure_groups[] | select(.issue_number == 603)] | length')"
+assert_eq "8h: latest terminal evidence wins for duplicate attempt records" "1" \
+	"$(printf '%s' "$JSON" | jq -r '[.metrics.failure_groups[] | select(.issue_number == 604)] | length')"
+assert_eq "8i: legacy rows without attempt identity remain readable" "1" \
+	"$(printf '%s' "$JSON" | jq -r '[.metrics.failure_groups[] | select(.issue_number == 605)] | length')"
+assert_eq "8j: empty repo slug remains an unscoped attempt match" "0" \
+	"$(printf '%s' "$JSON" | jq -r '[.metrics.failure_groups[] | select(.issue_number == 606)] | length')"
+assert_eq "8k: empty attempt identities never reconcile with each other" "1" \
+	"$(printf '%s' "$JSON" | jq -r '[.metrics.failure_groups[] | select(.issue_number == 607)] | length')"
 
 # ---------------------------------------------------------------------------
 # Summary.

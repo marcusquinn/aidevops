@@ -94,6 +94,29 @@ setup_missing_default_upstream_repo() {
 	return 0
 }
 
+setup_drifted_canonical_repo() {
+	local bare_dir="${TEST_ROOT}/canonical-origin.git"
+	local clone_dir="${TEST_ROOT}/canonical-repo"
+	git init --bare "$bare_dir" >/dev/null 2>&1
+	git clone "$bare_dir" "$clone_dir" >/dev/null 2>&1
+	(
+		cd "$clone_dir" || exit 1
+		git checkout -b main >/dev/null 2>&1
+		printf 'initial\n' >file.txt
+		git add file.txt
+		git commit -m "initial" >/dev/null 2>&1
+		printf 'remote update\n' >>file.txt
+		git add file.txt
+		git commit -m "remote update" >/dev/null 2>&1
+		git push -u origin main >/dev/null 2>&1
+		git remote set-head origin main >/dev/null 2>&1
+		git reset --hard HEAD^ >/dev/null 2>&1
+	)
+	git --git-dir="$bare_dir" symbolic-ref HEAD refs/heads/main >/dev/null 2>&1
+	printf '%s\n' "$clone_dir"
+	return 0
+}
+
 test_refresh_skips_deleted_noncanonical_upstream() {
 	local clone_dir=""
 	clone_dir=$(setup_deleted_upstream_repo)
@@ -150,6 +173,22 @@ test_refresh_logs_missing_upstream_only_for_exit_two() {
 	return 0
 }
 
+test_refresh_uses_explicit_default_branch_for_drift_diagnostic() {
+	local clone_dir=""
+	clone_dir=$(setup_drifted_canonical_repo)
+	_PULSE_REFRESHED_THIS_CYCLE=()
+	true >"$LOGFILE"
+	_pulse_refresh_repo "$clone_dir"
+
+	if grep -Fq "differs from origin/main" "$LOGFILE" &&
+		! grep -Fq "remote diagnostic failed" "$LOGFILE"; then
+		print_result "canonical drift diagnostic uses the explicit default branch" 0
+		return 0
+	fi
+	print_result "canonical drift diagnostic uses the explicit default branch" 1 "$(tr '\n' ' ' <"$LOGFILE")"
+	return 0
+}
+
 main() {
 	setup_sandbox
 	trap teardown_sandbox EXIT
@@ -161,6 +200,7 @@ main() {
 	test_refresh_skips_deleted_noncanonical_upstream
 	test_refresh_distinguishes_unverifiable_upstream
 	test_refresh_logs_missing_upstream_only_for_exit_two
+	test_refresh_uses_explicit_default_branch_for_drift_diagnostic
 	printf 'Tests run: %d\nTests failed: %d\n' "$TESTS_RUN" "$TESTS_FAILED"
 	if [[ "$TESTS_FAILED" -gt 0 ]]; then
 		return 1
