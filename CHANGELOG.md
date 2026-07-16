@@ -10,6 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.32.131] - 2026-07-16
+
+### Changed
+
+- Maintenance: mark t18139 complete (pr:#27951 completed:2026-07-16) [skip ci]
+
 ## [3.32.130] - 2026-07-16
 
 ### Changed
