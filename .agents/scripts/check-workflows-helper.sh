@@ -270,10 +270,11 @@ _render_template_for_target() {
 		-e "s|${_default_repo_escaped}(/\.github/workflows/${_reusable_escaped})|${_repo_repl}\1|g" \
 		-e "s|^(      aidevops_ref:).*$|\1 ${_ref_repl}|" \
 		"$_template")
-	if [[ "$_repo" != "$_DEFAULT_WORKFLOW_REUSABLE_REPO" ]] && \
+	if [[ "$_repo" != "$_DEFAULT_WORKFLOW_REUSABLE_REPO" ]] &&
 		printf '%s\n' "$_rendered" | grep -qE '^      aidevops_ref:'; then
-		_rendered=$(printf '%s\n' "$_rendered" | sed -E \
-			"s|^(      aidevops_ref:.*)$|      aidevops_repository: ${_repo_repl}\n\1|"
+		_rendered=$(
+			printf '%s\n' "$_rendered" | sed -E \
+				"s|^(      aidevops_ref:.*)$|      aidevops_repository: ${_repo_repl}\n\1|"
 		)
 		_rendered=$(_inject_mirror_read_secret "$_rendered")
 	fi
@@ -435,7 +436,7 @@ _classify_workflow() {
 		# Helper-bearing callers must bind runtime helper provenance to the same
 		# repository/ref tuple as the reusable YAML. Missing or mismatched values
 		# are drift so sync-workflows can repair legacy callers safely.
-		if grep -qE '^      aidevops_ref:' "$_canon" && \
+		if grep -qE '^      aidevops_ref:' "$_canon" &&
 			! _caller_helper_provenance_matches "$_wf" "$_target_repo" "$_target_escaped"; then
 			printf 'DRIFTED/CALLER\n'
 			return 0
@@ -897,7 +898,7 @@ _resolve_row_checkout() {
 	local _filter_slug="$4"
 	local _source="local"
 	_path=$(_expand_home_path "$_path")
-	if [[ -n "${_CALLER_WORKTREE_ROOT:-}" && "$_slug" == "$_filter_slug" && \
+	if [[ -n "${_CALLER_WORKTREE_ROOT:-}" && "$_slug" == "$_filter_slug" &&
 		"$_local_only_flag" != "true" ]]; then
 		_path="$_CALLER_WORKTREE_ROOT"
 		_source="caller-worktree"
