@@ -363,9 +363,10 @@ _isc_scan_stampless_phase() {
 
 # scan-stale Phase 1 helper (t2414) — stamp-based stale claim detection.
 # -----------------------------------------------------------------------------
-# Iterates $CLAIM_STAMP_DIR. For each local-hostname stamp with dead PID AND
-# missing worktree: either auto-releases (when auto_release_flag==1) or prints
-# a report advisory. Skips stamps with a live PID or existing worktree.
+# Iterates $CLAIM_STAMP_DIR. For each local-hostname stamp with a verifiably
+# dead PID and missing worktree: either auto-releases (when
+# auto_release_flag==1) or prints a report advisory. Live owners, existing
+# worktrees, lockdown labels, and unverifiable metadata fail closed.
 # Extracted from _isc_cmd_scan_stale to keep the coordinator under the
 # 100-line function cap (Complexity Analysis CI gate).
 #
@@ -394,6 +395,11 @@ _isc_scan_dead_stamps_phase() {
 			# Only consider current-hostname stamps — cross-machine stamps
 			# can't have their PID verified and must not be surfaced as stale.
 			[[ "$hostname" == "$local_host" ]] || continue
+			# A surviving worktree may contain in-progress work even when the
+			# recorded process has exited. Preserve it for explicit recovery.
+			[[ -n "$worktree" && -d "$worktree" ]] && continue
+			# Missing owner metadata cannot prove that a claim is abandoned.
+			[[ "$pid" =~ ^[0-9]+$ ]] || continue
 
 			local pid_alive=0
 			# t2421: command-aware liveness — bare kill -0 lies on macOS PID reuse.
@@ -406,6 +412,10 @@ _isc_scan_dead_stamps_phase() {
 
 			if [[ $pid_alive -eq 0 ]]; then
 				if [[ "$auto_release_flag" == "1" ]]; then
+					local label_rc=0
+					_isc_has_label "$issue" "$slug" "no-auto-dispatch" || label_rc=$?
+					# Lockdowns and GitHub lookup failures both fail closed.
+					[[ $label_rc -eq 0 || $label_rc -eq 2 ]] && continue
 					_isc_info "[scan-stale] auto-releasing dead stamp: $(basename "$stamp")"
 					_isc_release_claim_by_stamp_path "$stamp" >/dev/null 2>&1 || true
 					auto_released=$((auto_released + 1))
