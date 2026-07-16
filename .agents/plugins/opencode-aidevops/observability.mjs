@@ -935,6 +935,31 @@ export function recordToolCall(input, output, intent, durationMs) {
   projectRuntimeEvent(runtimeEnvelope);
 }
 
+/** Persist a bounded cancellation receipt without making termination depend on telemetry. */
+export function recordSubagentCancellationReceipt(receipt, context = {}) {
+  const envelope = appendRuntimeEvent({
+    eventType: "subagent.cancellation.receipt",
+    subjectId: context.childSessionID || receipt?.child || "unknown-child",
+    sessionId: context.parentSessionID || null,
+    correlationId: context.parentSessionID || context.childSessionID || "subagent-cancellation",
+    payload: {
+      classification: "subagent_cancellation",
+      observation: JSON.stringify({
+        complete: Boolean(receipt?.complete),
+        ledger: receipt?.ledger || [],
+        reaped: Boolean(receipt?.reaped),
+        termination: receipt?.termination || "unconfirmed",
+        truncated: Boolean(receipt?.truncated),
+      }),
+      reason: (receipt?.incomplete_reasons || []).join(",") || "confirmed",
+      status: receipt?.termination || "unconfirmed",
+      success: Boolean(receipt?.complete),
+    },
+  });
+  if (envelope) projectRuntimeEvent(envelope);
+  return envelope;
+}
+
 /**
  * Get the database path for external tools (e.g., observability-helper.sh).
  * @returns {string}
