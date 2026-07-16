@@ -10,9 +10,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Added
+## [3.32.135] - 2026-07-16
 
-- show `[RUN]` and `[WAIT]` state in terminal titles for interactive OpenCode sessions
+### Changed
+
+- Maintenance: sync ref:GH#27993 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#27992 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#27991 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#27989 to TODO.md [skip ci]
 
 ## [3.32.134] - 2026-07-16
 
