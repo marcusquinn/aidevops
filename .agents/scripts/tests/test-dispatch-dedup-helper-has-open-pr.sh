@@ -588,7 +588,7 @@ test_has_open_pr_ignores_planning_only_superseded_reference() {
 }
 
 test_has_open_pr_ignores_dependency_bump_superseded_references() {
-	set_gh_fixtures 'marcusquinn/aidevops|merged|#26241|[{"number":26261,"title":"chore(ci): bump actions/download-artifact from 4.3.0 to 8.0.1","body":"Upstream changes include #26241."},{"number":26262,"title":"chore(deps): bump the production-dependencies group","body":"Dependabot release notes mention #26241."}]'
+	set_gh_fixtures 'marcusquinn/aidevops|merged|#26241|[{"number":26261,"title":"chore(ci): bump actions/download-artifact from 4.3.0 to 8.0.1","body":"Upstream changes include #26241.","author":{"login":"renovate[bot]"}},{"number":26262,"title":"chore(deps): bump the production-dependencies group with 4 updates","body":"Dependabot release notes mention #26241.","author":{"login":"dependabot[bot]"}}]'
 	export ISSUE_META_JSON='{"body":"_Supersedes #26241 — this issue is the consolidated spec._"}'
 
 	if "$HELPER_SCRIPT" has-open-pr 26274 marcusquinn/aidevops 'consolidated: split mixed gh_pr_view REST/GQL fields'; then
@@ -600,6 +600,44 @@ test_has_open_pr_ignores_dependency_bump_superseded_references() {
 
 	unset ISSUE_META_JSON
 	print_result "has-open-pr ignores dependency-bump superseded references" 0
+	return 0
+}
+
+test_has_open_pr_preserves_non_bot_bump_implementation() {
+	set_gh_fixtures 'marcusquinn/aidevops|merged|#26241|[{"number":26263,"title":"chore(deps): bump parser from 1.0.0 to 2.0.0","body":"Implements the parser migration for #26241.","author":{"login":"maintainer"}}]'
+	export ISSUE_META_JSON='{"body":"_Supersedes #26241 — this issue is the consolidated spec._"}'
+
+	local output=""
+	if output=$("$HELPER_SCRIPT" has-open-pr 26274 marcusquinn/aidevops 'consolidated: parser migration'); then
+		unset ISSUE_META_JSON
+		case "$output" in
+		*'merged PR #26263 references superseded issue #26241 for consolidated issue #26274'*)
+			print_result "has-open-pr preserves non-bot dependency-title implementation evidence" 0
+			return 0
+			;;
+		esac
+	fi
+	unset ISSUE_META_JSON
+	print_result "has-open-pr preserves non-bot dependency-title implementation evidence" 1 "Unexpected output: ${output}"
+	return 0
+}
+
+test_has_open_pr_preserves_bump_wording_in_implementation_body() {
+	set_gh_fixtures 'marcusquinn/aidevops|merged|#26241|[{"number":26264,"title":"fix: migrate parser safely","body":"Implements #26241 and can bump parser from 1.0.0 to 2.0.0 without data loss.","author":{"login":"dependabot[bot]"}}]'
+	export ISSUE_META_JSON='{"body":"_Supersedes #26241 — this issue is the consolidated spec._"}'
+
+	local output=""
+	if output=$("$HELPER_SCRIPT" has-open-pr 26274 marcusquinn/aidevops 'consolidated: parser migration'); then
+		unset ISSUE_META_JSON
+		case "$output" in
+		*'merged PR #26264 references superseded issue #26241 for consolidated issue #26274'*)
+			print_result "has-open-pr preserves implementation bodies containing bump wording" 0
+			return 0
+			;;
+		esac
+	fi
+	unset ISSUE_META_JSON
+	print_result "has-open-pr preserves implementation bodies containing bump wording" 1 "Unexpected output: ${output}"
 	return 0
 }
 
@@ -665,6 +703,8 @@ main() {
 	test_has_open_pr_blocks_superseded_consolidated_issue
 	test_has_open_pr_ignores_planning_only_superseded_reference
 	test_has_open_pr_ignores_dependency_bump_superseded_references
+	test_has_open_pr_preserves_non_bot_bump_implementation
+	test_has_open_pr_preserves_bump_wording_in_implementation_body
 	test_has_open_pr_ignores_consolidation_task_historical_reference
 	test_has_open_pr_requires_canonical_supersedes_marker
 
