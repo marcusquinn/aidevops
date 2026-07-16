@@ -385,13 +385,15 @@ _has_open_pr_check_superseded_issue_pr() {
 
 		local ref_pattern="(^|[^0-9])#${related_issue}([^0-9]|$)|GH#${related_issue}([^0-9]|$)"
 		local planning_pattern="planning-only|pure planning|brief-only|brief for|files the brief|no code changes"
+		local bump_pattern="bump[[:space:]]+.+[[:space:]]+from[[:space:]]+.+[[:space:]]+to[[:space:]]+|bump[[:space:]]+the[[:space:]]+.+[[:space:]]+group"
+		local deny_pattern="${planning_pattern}|${bump_pattern}"
 		match_pr=$(printf '%s' "$pr_json" | jq -r \
 			--arg ref_pattern "$ref_pattern" \
-			--arg planning_pattern "$planning_pattern" '
+			--arg deny_pattern "$deny_pattern" '
 			[
 				.[] | select(
 					(((.title // "") | test($ref_pattern; "i")) or ((.body // "") | test($ref_pattern; "i"))) and
-					((((.title // "") + "\n" + (.body // "")) | test($planning_pattern; "i")) | not)
+					((((.title // "") + "\n" + (.body // "")) | test($deny_pattern; "i")) | not)
 				)
 			] | .[0].number // empty' 2>/dev/null) || match_pr=""
 

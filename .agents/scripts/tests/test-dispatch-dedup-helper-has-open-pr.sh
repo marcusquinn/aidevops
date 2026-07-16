@@ -587,6 +587,22 @@ test_has_open_pr_ignores_planning_only_superseded_reference() {
 	return 0
 }
 
+test_has_open_pr_ignores_dependency_bump_superseded_references() {
+	set_gh_fixtures 'marcusquinn/aidevops|merged|#26241|[{"number":26261,"title":"chore(ci): bump actions/download-artifact from 4.3.0 to 8.0.1","body":"Upstream changes include #26241."},{"number":26262,"title":"chore(deps): bump the production-dependencies group","body":"Dependabot release notes mention #26241."}]'
+	export ISSUE_META_JSON='{"body":"_Supersedes #26241 — this issue is the consolidated spec._"}'
+
+	if "$HELPER_SCRIPT" has-open-pr 26274 marcusquinn/aidevops 'consolidated: split mixed gh_pr_view REST/GQL fields'; then
+		unset ISSUE_META_JSON
+		print_result "has-open-pr ignores dependency-bump superseded references" 1 \
+			"Expected Renovate and Dependabot changelog references to allow dispatch"
+		return 0
+	fi
+
+	unset ISSUE_META_JSON
+	print_result "has-open-pr ignores dependency-bump superseded references" 0
+	return 0
+}
+
 test_has_open_pr_ignores_consolidation_task_historical_reference() {
 	set_gh_fixtures 'marcusquinn/aidevops|merged|#18670|[{"number":18676,"title":"Fix origin labels","body":"For #18670. Implements the earlier fix."}]'
 	# shellcheck disable=SC2016 # Literal backticks are part of the issue-body fixture.
@@ -648,6 +664,7 @@ main() {
 	test_has_open_pr_ignores_adjacent_issue_number_sibling_reference
 	test_has_open_pr_blocks_superseded_consolidated_issue
 	test_has_open_pr_ignores_planning_only_superseded_reference
+	test_has_open_pr_ignores_dependency_bump_superseded_references
 	test_has_open_pr_ignores_consolidation_task_historical_reference
 	test_has_open_pr_requires_canonical_supersedes_marker
 
