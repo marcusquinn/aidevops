@@ -4646,4 +4646,4 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [x] t18150 Use compact emoji indicators in OpenCode terminal tab titles #enhancement ref:GH#28005 pr:#28006 completed:2026-07-16
 
-- [ ] t18151 Add audited canonical branch fast-forward workflow #bug ref:GH#28032
+- [x] t18151 Add audited canonical branch fast-forward workflow #bug ref:GH#28032 pr:#28037 completed:2026-07-16
