@@ -393,6 +393,32 @@ _stage_and_commit() {
 	return 0
 }
 
+# Integrate the immutable base selected for WIP finalization before resetting.
+# A mutable remote-tracking ref may advance after staging; rebasing first keeps
+# those upstream changes in the branch tree instead of staging their reversal.
+# Args: $1=base OID $2=display base ref
+_integrate_wip_finalization_base() {
+	local base_oid="$1"
+	local base_ref="$2"
+	if git merge-base --is-ancestor "$base_oid" HEAD 2>/dev/null; then
+		return 0
+	fi
+
+	print_info "${base_ref} advanced before WIP finalization; integrating ${base_oid} first..."
+	_check_and_handle_shallow_clone || return 1
+	if ! git rebase "$base_oid" 2>/dev/null; then
+		git rebase --abort 2>/dev/null || true
+		print_error "Base drift could not be integrated safely before WIP finalization."
+		print_error "Resolve the rebase onto ${base_ref}, then rerun commit-and-pr."
+		return 1
+	fi
+	if ! git merge-base --is-ancestor "$base_oid" HEAD 2>/dev/null; then
+		print_error "Refusing WIP finalization: integrated tip does not contain ${base_oid}."
+		return 1
+	fi
+	return 0
+}
+
 # Replace branch history with one final commit when any branch commit is WIP.
 # The caller-supplied final message is authoritative. On commit-hook failure,
 # restore the original branch tip and preserve any hook-produced working changes.
@@ -405,10 +431,14 @@ _finalize_wip_history() {
 	fi
 
 	local base_branch="" branch_range="" branch_subjects=""
-	local base_ref=""
+	local base_ref="" base_oid=""
 	base_branch=$(_resolve_remote_default_branch origin) || return 1
 	printf -v base_ref 'origin/%s' "$base_branch"
-	printf -v branch_range '%s..HEAD' "$base_ref"
+	base_oid=$(git rev-parse --verify "${base_ref}^{commit}" 2>/dev/null) || {
+		print_error "Cannot snapshot ${base_ref} before WIP finalization."
+		return 1
+	}
+	printf -v branch_range '%s..HEAD' "$base_oid"
 	if ! branch_subjects=$(git log --format=%s "$branch_range" 2>/dev/null); then
 		print_error "Cannot inspect branch commit subjects relative to ${base_ref}."
 		return 1
@@ -440,8 +470,9 @@ _finalize_wip_history() {
 		print_error "Cannot record the original branch tip before WIP finalization."
 		return 1
 	}
-	print_info "Finalizing WIP history into one commit relative to ${base_ref}..."
-	if ! git reset --soft "$base_ref"; then
+	_integrate_wip_finalization_base "$base_oid" "$base_ref" || return 1
+	print_info "Finalizing WIP history into one commit relative to ${base_ref} (${base_oid})..."
+	if ! git reset --soft "$base_oid"; then
 		print_error "Failed to prepare WIP history for finalization."
 		return 1
 	fi

@@ -2,8 +2,8 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 #
-# Regression coverage for GH#27902: commit-and-pr must replace temporary WIP
-# history with one conventional final commit before validation and publication.
+# Regression coverage for GH#27902 and GH#27925: commit-and-pr must replace
+# temporary WIP history without reverting concurrent default-branch updates.
 
 set -uo pipefail
 
@@ -68,11 +68,29 @@ make_repo() {
 		git config user.email 'test@example.invalid'
 		git config commit.gpgsign false
 		printf 'base\n' >tracked.txt
-		git add tracked.txt
+		printf 'upstream base\n' >upstream-edit.txt
+		git add tracked.txt upstream-edit.txt
 		git commit -qm 'chore: initial fixture'
 		git branch -M develop
 		git update-ref refs/remotes/origin/develop HEAD
 		git symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/develop
+	) || return 1
+	return 0
+}
+
+advance_remote_base() {
+	local repo_dir="$1"
+	(
+		cd "$repo_dir" || exit 1
+		git switch -qc simulated-upstream origin/develop
+		printf 'upstream changed\n' >>upstream-edit.txt
+		printf 'new upstream file\n' >upstream-new.txt
+		git add upstream-edit.txt upstream-new.txt
+		git commit -qm 'fix: concurrent upstream update'
+		local upstream_oid=""
+		upstream_oid=$(git rev-parse HEAD)
+		git switch -q develop
+		git update-ref refs/remotes/origin/develop "$upstream_oid"
 	) || return 1
 	return 0
 }
@@ -207,6 +225,31 @@ test_wip_final_message_is_rejected() {
 	return 0
 }
 
+test_concurrent_base_advance_is_integrated() {
+	local repo_dir="${TEST_ROOT}/concurrent-base"
+	make_repo "$repo_dir" || return 1
+	commit_change "$repo_dir" 'feature' 'wip: preserve feature before base drift' || return 1
+	advance_remote_base "$repo_dir" || return 1
+	(
+		cd "$repo_dir" || exit 1
+		_finalize_wip_history 'fix: preserve concurrent base update'
+	) >/dev/null 2>&1
+	local rc=$?
+	local count="" feature_content="" upstream_edit="" upstream_new=""
+	count=$(git -C "$repo_dir" rev-list --count origin/develop..HEAD)
+	feature_content=$(git -C "$repo_dir" show HEAD:tracked.txt)
+	upstream_edit=$(git -C "$repo_dir" show HEAD:upstream-edit.txt)
+	upstream_new=$(git -C "$repo_dir" show HEAD:upstream-new.txt)
+	if [[ "$rc" -eq 0 && "$count" == '1' && "$feature_content" == $'base\nfeature' &&
+		"$upstream_edit" == $'upstream base\nupstream changed' && "$upstream_new" == 'new upstream file' ]]; then
+		print_result 'concurrent base advance is integrated before WIP finalization' 0
+	else
+		print_result 'concurrent base advance is integrated before WIP finalization' 1 \
+			"rc=${rc}, count=${count}, feature=${feature_content}, upstream=${upstream_edit}"
+	fi
+	return 0
+}
+
 test_orchestrator_finalizes_before_validation() {
 	local orchestrator="${SCRIPT_DIR}/full-loop-helper.sh"
 	local stage_line="" finalize_line="" validators_line=""
@@ -232,11 +275,12 @@ test_buried_wip_squashes_branch_range
 test_no_wip_preserves_history
 test_commit_hook_failure_restores_tip
 test_wip_final_message_is_rejected
+test_concurrent_base_advance_is_integrated
 test_orchestrator_finalizes_before_validation
 
 printf '\n%d tests run, %d failed\n' "$TESTS_RUN" "$TESTS_FAILED"
-if [[ "$TESTS_RUN" -ne 6 ]]; then
-	printf '%sFAIL%s expected 6 tests to execute\n' "$TEST_RED" "$TEST_RESET"
+if [[ "$TESTS_RUN" -ne 7 ]]; then
+	printf '%sFAIL%s expected 7 tests to execute\n' "$TEST_RED" "$TEST_RESET"
 	exit 1
 fi
 [[ "$TESTS_FAILED" -eq 0 ]] || exit 1
