@@ -153,10 +153,10 @@ shellcheck .agents/scripts/pulse-campaign-shadow.sh .agents/scripts/pulse-repo-m
 - **Original objective:** Ship the first production-ready Pulse 2 repository campaign, semantic compaction, and swarm-aware execution slice.
 - **Preserved user directions:** complete full-loop through merge, patch release, incremental deployment, and cleanup.
 - **Trigger and evidence:** not triggered.
-- **Completed and verified:** discovery, linked-worktree safety, implementation, focused tests, independent review, Qlty gates, changed-file gates, and broad repository gates through commit `7ecdbf068`.
-- **Remaining acceptance criteria:** PR, merge, release, deployment, and cleanup.
+- **Completed and verified:** discovery, linked-worktree safety, implementation, focused tests, independent review, Qlty gates, changed-file gates, broad repository gates, PR #27951, and CodeFactor complex-method remediation through commit `d0236b1a8`.
+- **Remaining acceptance criteria:** terminal PR CI and review, merge, release, deployment, and cleanup.
 - **Unsafe route not to repeat:** none.
-- **Next safe route:** open the linked pull request and monitor required review/CI gates.
+- **Next safe route:** monitor PR #27951 required review/CI gates, then continue the authorized merge and release lifecycle.
 - **Resume condition:** continue from the latest verified branch commit and full-loop lifecycle state.
 - **Owner and status:** primary interactive session; not-triggered.
 
