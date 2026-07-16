@@ -33,6 +33,7 @@ import { createConfigHook } from "./config-hook.mjs";
 import { createQualityHooks } from "./quality-hooks.mjs";
 import { createShellEnvHook } from "./shell-env.mjs";
 import { compactingHook } from "./compaction.mjs";
+import { createCompactionAutoContinueGuard } from "./compaction-lifecycle.mjs";
 import { INTENT_FIELD } from "./intent-tracing.mjs";
 import { createGreetingHandler } from "./greeting.mjs";
 import { applyImageSizeGuard } from "./quality-hooks-image.mjs";
@@ -255,6 +256,7 @@ export async function AidevopsPlugin({ directory, client }) {
   const subagentEffortHooks = createSubagentEffortHooks(client, { tierReasoning });
   const shouldInjectGreeting = createSessionStartGreetingGate(client, isHeadless);
   const permissionBroker = createPermissionBroker({ client, isHeadless });
+  const compactionContinuation = createCompactionAutoContinueGuard(client, { qualityLog });
 
   // TTSR hooks
   const {
@@ -392,6 +394,7 @@ export async function AidevopsPlugin({ directory, client }) {
       // Fire both in parallel — neither depends on the other's result.
       await Promise.all([
         handleEvent(input),
+        Promise.resolve(compactionContinuation.handleEvent(input)),
         permissionBroker.handleEvent(input).catch((err) => debugEventError("permission broker", err)),
         sessionTitleStatusHandler(input).catch((err) => debugEventError("title status handler", err)),
         sessionTitleSuffixHandler(input).catch((err) => debugEventError("title suffix handler", err)),
@@ -424,5 +427,6 @@ export async function AidevopsPlugin({ directory, client }) {
         output,
         directory,
       ),
+    "experimental.compaction.autocontinue": compactionContinuation.autoContinue,
   };
 }
