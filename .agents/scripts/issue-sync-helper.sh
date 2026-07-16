@@ -33,13 +33,16 @@ set -euo pipefail
 
 # Use pure-bash parameter expansion instead of dirname (external binary) to avoid
 # "dirname: command not found" in headless/MCP environments where PATH is restricted.
-# Defensive PATH export ensures downstream tools (gh, git, jq, sed, awk) are findable.
-export PATH="/usr/local/bin:/usr/bin:/bin:${PATH:-}"
+# Preserve caller-provided shims before adding fallback system tool locations.
+export PATH="${PATH:+${PATH}:}/usr/local/bin:/usr/bin:/bin"
 
 _script_path="${BASH_SOURCE[0]%/*}"
 [[ "$_script_path" == "${BASH_SOURCE[0]}" ]] && _script_path="."
 SCRIPT_DIR="$(cd "$_script_path" && pwd)" || exit
 unset _script_path
+# Keep the framework gh shim ahead of native gh so issue-sync transport attempts
+# retain policy enforcement and exact telemetry when called from Pulse or directly.
+export PATH="${SCRIPT_DIR}:${PATH}"
 source "${SCRIPT_DIR}/shared-constants.sh"
 # shellcheck source=issue-sync-lib.sh
 source "${SCRIPT_DIR}/issue-sync-lib.sh"

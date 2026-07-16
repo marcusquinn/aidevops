@@ -106,6 +106,7 @@ GH_API_LOG_MAX_LINES="${AIDEVOPS_GH_API_LOG_MAX_LINES:-50000}"
 GH_API_LOG_MAX_BYTES="${AIDEVOPS_GH_API_LOG_MAX_BYTES:-16777216}"
 GH_API_RETENTION_SECONDS="${AIDEVOPS_GH_API_RETENTION_SECONDS:-172800}"
 GH_API_ERROR_KEY="error"
+_GH_API_EMPTY_LOCK_GRACE_TRIES=100
 
 _gh_now_seconds() {
 	local now=""
@@ -195,22 +196,42 @@ _gh_resolve_caller() {
 	return 0
 }
 
+_gh_log_lock_reclaim() {
+	local lock_dir="$1"
+	local tries="$2"
+	local pid_path="${lock_dir}/pid"
+	local owner=""
+	[[ -d "$lock_dir" && ! -L "$lock_dir" ]] || return 1
+	if [[ -f "$pid_path" && ! -L "$pid_path" ]]; then
+		if ! IFS= read -r owner 2>/dev/null <"$pid_path"; then
+			owner=""
+		fi
+		if [[ "$owner" =~ ^[0-9]+$ ]]; then
+			kill -0 "$owner" 2>/dev/null && return 1
+			rm -f "$pid_path" 2>/dev/null || return 1
+			rmdir "$lock_dir" 2>/dev/null || return 1
+			return 0
+		fi
+	fi
+	# mkdir and PID publication are separate operations. Give a live owner one
+	# second to publish, then reclaim a missing/malformed PID left by a process
+	# killed inside that gap. rmdir still fails closed if unexpected files exist.
+	[[ "$tries" -ge "${_GH_API_EMPTY_LOCK_GRACE_TRIES:-100}" ]] || return 1
+	[[ ! -L "$pid_path" ]] || return 1
+	rm -f "$pid_path" 2>/dev/null || return 1
+	rmdir "$lock_dir" 2>/dev/null || return 1
+	return 0
+}
+
 _gh_log_lock_acquire() {
 	local lock_dir="${GH_API_LOG}.lock"
 	local tries=0
-	local owner=""
 	local owner_pid="${BASHPID:-$$}"
 	command -v mkdir >/dev/null 2>&1 || return 1
 	while ! mkdir "$lock_dir" 2>/dev/null; do
-		if [[ -f "$lock_dir/pid" && ! -L "$lock_dir" ]]; then
-			if ! IFS= read -r owner 2>/dev/null <"$lock_dir/pid"; then
-				owner=""
-			fi
-			if [[ "$owner" =~ ^[0-9]+$ ]] && ! kill -0 "$owner" 2>/dev/null; then
-				rm -f "$lock_dir/pid" 2>/dev/null || true
-				rmdir "$lock_dir" 2>/dev/null || true
-				continue
-			fi
+		if _gh_log_lock_reclaim "$lock_dir" "$tries"; then
+			tries=0
+			continue
 		fi
 		tries=$((tries + 1))
 		[[ $tries -ge 200 ]] && return 1
