@@ -255,28 +255,6 @@ _audit_error() {
 	return 0
 }
 
-# Read a path's modification time as epoch seconds on macOS or Linux.
-# Arguments: $1 — path
-# Output: epoch seconds on stdout
-_audit_path_mtime_epoch() {
-	local path="$1"
-	local mtime=""
-
-	mtime="$(stat -f '%m' "$path" 2>/dev/null || true)"
-	if [[ "$mtime" =~ ^[0-9]+$ ]]; then
-		echo "$mtime"
-		return 0
-	fi
-
-	mtime="$(stat -c '%Y' "$path" 2>/dev/null || true)"
-	if [[ "$mtime" =~ ^[0-9]+$ ]]; then
-		echo "$mtime"
-		return 0
-	fi
-
-	return 1
-}
-
 # Remove only the files owned by the audit lock protocol, then the directory.
 # Arguments: $1 — lock directory
 _audit_remove_lock_dir() {
@@ -320,7 +298,12 @@ _audit_reclaim_stale_lock() {
 
 	if [[ -z "$stale_reason" ]]; then
 		local lock_mtime=""
-		lock_mtime="$(_audit_path_mtime_epoch "$lock_dir")" || return 1
+		lock_mtime="$(_file_mtime_epoch "$lock_dir")" || return 1
+		# The shared helper returns 0 when a path vanishes between the directory
+		# check and stat. Treat that race as non-stale and retry acquisition.
+		if [[ ! "$lock_mtime" =~ ^[0-9]+$ || "$lock_mtime" -eq 0 ]]; then
+			return 1
+		fi
 		local now=""
 		now="$(date '+%s')" || return 1
 		local lock_age=$((now - lock_mtime))

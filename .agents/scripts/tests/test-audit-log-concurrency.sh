@@ -134,7 +134,9 @@ SIGNAL_READY="${TEST_ROOT}/signal.ready"
 	_audit_acquire_lock "$SIGNAL_LOCK_DIR"
 	_audit_arm_lock_cleanup
 	: >"$SIGNAL_READY"
-	sleep 30
+	while true; do
+		sleep 0.1
+	done
 ) &
 signal_pid=$!
 for attempt in $(seq 1 50); do
