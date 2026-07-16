@@ -620,11 +620,11 @@ The agent contains the full recovery flow and symptom table. Free models work fi
 
 ### Terminal Tab Title Sync
 
-Your terminal tab/window title automatically shows `repo/branch` context when working in git repositories. Interactive OpenCode tabs add 🟡 while the root session is busy or retrying and 🟢 when it has finished and is awaiting input. This helps identify both the work context and session state across multiple terminal sessions.
+Your terminal tab/window title automatically shows `repo/branch` context when working in git repositories. Interactive OpenCode tabs add ⚪ while the root session is busy or retrying, 🟡 while it is awaiting permission, and 🟢 when it has finished and is awaiting input. This helps identify both the work context and session state across multiple terminal sessions.
 
 **Supported terminals:** [Tabby](https://tabby.sh/), [cmux](https://cmux.dev/), [iTerm2](https://iterm2.com/), [Kitty](https://sw.kovidgoyal.net/kitty/), [Alacritty](https://alacritty.org/), [WezTerm](https://wezfurlong.org/wezterm/), [Hyper](https://hyper.is/), and most xterm-compatible terminals.
 
-**How it works:** The `pre-edit-check.sh` script's primary role is enforcing git workflow protection (blocking edits on main/master branches). As a secondary, non-blocking action, it updates the terminal title via escape sequences. The OpenCode plugin listens for root-session `busy`, `retry`, and `idle` events and updates the same title without changing the stored OpenCode session name. No configuration is needed when dynamic terminal titles are enabled.
+**How it works:** The `pre-edit-check.sh` script's primary role is enforcing git workflow protection (blocking edits on main/master branches). As a secondary, non-blocking action, it updates the terminal title via escape sequences. The OpenCode plugin listens for root-session status and permission events and updates the same title without changing the stored OpenCode session name. No configuration is needed when dynamic terminal titles are enabled.
 
 **Example format:** `{repo}/{branch-type}/{description}`
 

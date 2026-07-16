@@ -10,6 +10,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- use grey for running OpenCode tabs and yellow for permission waits
+
 ## [3.32.136] - 2026-07-16
 
 ### Added

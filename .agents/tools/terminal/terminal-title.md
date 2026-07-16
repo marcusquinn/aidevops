@@ -24,7 +24,7 @@ tools:
 - **Script**: `~/.aidevops/agents/scripts/terminal-title-helper.sh`
 - **Auto-sync**: Runs via `pre-edit-check.sh` on task refs in linked worktrees
 - **Session sync**: For issue/PR work, OpenCode session titles should begin with `Issue #123:` or `PR #456:` plus a succinct description; branch auto-sync is only the fallback when no issue/PR context exists. Force branch sync via `session-rename_sync_branch`.
-- **Session status**: Interactive OpenCode root sessions prefix the terminal-only title with 🟡 for `busy`/`retry` and 🟢 for `idle`. Stored OpenCode session titles remain unchanged.
+- **Session status**: Interactive OpenCode root sessions prefix the terminal-only title with ⚪ for `busy`/`retry`, 🟡 while awaiting permission, and 🟢 for `idle`. Stored OpenCode session titles remain unchanged.
 
 **Commands**:
 
@@ -58,7 +58,7 @@ terminal-title-helper.sh detect            # Check terminal compatibility
 
 Uses OSC escape sequences (`printf '\033]0;%s\007' "title"`). **Full support**: Tabby, iTerm2, Windows Terminal, Kitty, Alacritty, WezTerm, Hyper, GNOME Terminal, Konsole, VS Code Terminal, xterm. **Partial**: Apple Terminal (basic), tmux/screen (requires config).
 
-The OpenCode plugin consumes `session.status` events only for the active interactive root session. Subagent and headless-worker events are ignored, and status remains applied when OpenCode later renames the session.
+The OpenCode plugin consumes `session.status`, `permission.asked`, and `permission.replied` events only for the active interactive root session. Subagent and headless-worker events are ignored, and status remains applied when OpenCode later renames the session.
 
 ## Shell Integration
 
