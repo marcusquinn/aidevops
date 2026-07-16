@@ -61,6 +61,7 @@ Additional labels can be supported by extending
 ## Worked Example: Tune Per-Runner Thresholds
 
 Runner A (aggressive nudging, wants decomposer every 24h):
+
 ```json
 {
   "com.aidevops.aidevops-supervisor-pulse": {
@@ -71,6 +72,7 @@ Runner A (aggressive nudging, wants decomposer every 24h):
 ```
 
 Runner B (conservative, disable worker-briefed auto-merge for soak):
+
 ```json
 {
   "com.aidevops.aidevops-supervisor-pulse": {

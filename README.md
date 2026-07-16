@@ -882,6 +882,7 @@ The pulse is the heartbeat of aidevops — an autonomous AI supervisor that runs
 - **Worker failure families** — headless runtime errors, local runtime diagnostics, blocked-by lookup gaps, provider quota/credit exhaustion, and review-thread remediation issues are classified for targeted redispatch
 - **Stale assignment recovery** — tasks assigned to workers that died (no active process, no PR, 3+ hours stale) are automatically unassigned and made available for re-dispatch
 - **Priority ordering** — green PRs (free merge) > failing PRs (closer to done) > high-priority/bug issues > active mission features > product repos > smaller tasks > oldest
+- **Repository campaign shadow** — an opt-in, default-off projection preserves an oldest-ready frontier, semantic work state, and device-aware runner lanes without changing legacy dispatch or GitHub authority. See `.agents/reference/repository-campaigns.md`
 
 **The pulse is an LLM, not a script.** It reads issue bodies, assesses context, and uses judgment. When it encounters something unexpected — an issue body that says "completed", a task with no clear description, a label that doesn't match reality — it handles it the way a competent human manager would.
 

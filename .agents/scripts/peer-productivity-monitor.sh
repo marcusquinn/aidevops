@@ -209,6 +209,65 @@ _observe_peer() {
 	return 0
 }
 
+# Convert one repository observation into a bounded 0-100 lane fitness input.
+# Existing honour/ignore hysteresis remains authoritative; this score is only
+# an additive planning signal for the default-off campaign projection.
+_repository_fitness() {
+	local active_claims="$1"
+	local worker_prs="$2"
+	[[ "$active_claims" =~ ^[0-9]+$ ]] || active_claims=0
+	[[ "$worker_prs" =~ ^[0-9]+$ ]] || worker_prs=0
+	if [[ "$worker_prs" -gt 0 ]]; then
+		local score=$((60 + worker_prs * 10))
+		[[ "$score" -gt 100 ]] && score=100
+		printf '%s' "$score"
+	elif [[ "$active_claims" -ge 2 ]]; then
+		printf '15'
+	else
+		printf '50'
+	fi
+	return 0
+}
+
+# Aggregate line-delimited per-repository observations by peer while retaining
+# a bounded repository map for campaign fitness. Reads JSONL from stdin.
+_aggregate_peer_observations() {
+	jq -s '
+		def fitness:
+			if .worker_prs > 0 then ([100, (60 + (.worker_prs * 10))] | min)
+			elif .active_claims >= 2 then 15
+			else 50
+			end;
+		group_by(.login) | map(
+			. as $observations |
+			{
+				login: .[0].login,
+				active_claims: (map(.active_claims) | add),
+				worker_prs: (map(.worker_prs) | add),
+				interactive_prs: (map(.interactive_prs) | add),
+				repos: (map(.repo) | unique | sort),
+				repositories: (reduce $observations[] as $observation ({};
+					.[$observation.repo] = {
+						active_claims: $observation.active_claims,
+						worker_prs: $observation.worker_prs,
+						interactive_prs: $observation.interactive_prs,
+						fitness: ($observation | fitness)
+					}
+				) | to_entries | sort_by(.key) | .[0:100] | from_entries)
+			}
+		)'
+	return 0
+}
+
+_attach_repository_observations() {
+	local peer_state="$1"
+	local login="$2"
+	local repositories="$3"
+	printf '%s' "$peer_state" | jq --arg l "$login" --argjson repositories "$repositories" \
+		'.[$l].repositories = $repositories | .[$l].repos = ($repositories | keys)'
+	return 0
+}
+
 # Discover all peers across all pulse-enabled repos.
 # Outputs JSON array: [{"login": ..., "active_claims": N, ...}, ...]
 # Aggregated across repos (sums active_claims, worker_prs, interactive_prs).
@@ -282,14 +341,7 @@ discover_and_observe() {
 		return 0
 	fi
 
-	printf '%s\n' "${observations[@]}" | jq -s '
-		group_by(.login) | map({
-			login: .[0].login,
-			active_claims: (map(.active_claims) | add),
-			worker_prs: (map(.worker_prs) | add),
-			interactive_prs: (map(.interactive_prs) | add),
-			repos: (map(.repo))
-		})'
+	printf '%s\n' "${observations[@]}" | _aggregate_peer_observations
 	return 0
 }
 
@@ -513,11 +565,12 @@ cmd_observe() {
 	local updated_state="$state_json"
 	while IFS= read -r obs; do
 		[[ -z "$obs" ]] && continue
-		local login active_claims worker_prs interactive_prs
+		local login active_claims worker_prs interactive_prs repositories
 		login=$(printf '%s' "$obs" | jq -r '.login')
 		active_claims=$(printf '%s' "$obs" | jq -r '.active_claims')
 		worker_prs=$(printf '%s' "$obs" | jq -r '.worker_prs')
 		interactive_prs=$(printf '%s' "$obs" | jq -r '.interactive_prs')
+		repositories=$(printf '%s' "$obs" | jq -c '.repositories // {}')
 
 		local vote
 		vote=$(_vote_for_peer "$active_claims" "$worker_prs")
@@ -525,6 +578,7 @@ cmd_observe() {
 
 		local peer_state
 		peer_state=$(_apply_hysteresis "$updated_state" "$login" "$vote")
+		peer_state=$(_attach_repository_observations "$peer_state" "$login" "$repositories")
 		# Merge peer_state into updated_state
 		updated_state=$(printf '%s\n%s' "$updated_state" "$peer_state" |
 			jq -s '.[0] * .[1]')
