@@ -167,19 +167,31 @@ _opencode_command_output_matches_source() {
 	local command_dir="$HOME/.config/opencode/command"
 	local source_file=""
 	local command_name=""
+	local deployed_file=""
+	local expected_file=""
 
 	[[ -d "$command_dir" ]] || return 1
+	expected_file=$(mktemp) || return 1
 	for source_file in "$AGENTS_DIR/commands"/*.md; do
 		[[ -e "$source_file" ]] || continue
 		command_name=$(basename "$source_file")
-		[[ -f "$command_dir/$command_name" ]] || return 1
+		deployed_file="$command_dir/$command_name"
+		if [[ ! -f "$deployed_file" ]] || ! _copy_cmd_for_opencode "$source_file" "$expected_file" || ! cmp -s "$expected_file" "$deployed_file"; then
+			rm -f "$expected_file"
+			return 1
+		fi
 	done
 	for source_file in "$AGENTS_DIR/scripts/commands"/*.md; do
 		[[ -f "$source_file" ]] || continue
 		command_name=$(basename "$source_file" .md)
 		[[ "$command_name" == "SKILL" ]] && continue
-		[[ -f "$command_dir/aidevops-$command_name.md" ]] || return 1
+		deployed_file="$command_dir/aidevops-$command_name.md"
+		if [[ ! -f "$deployed_file" ]] || ! _copy_cmd_for_opencode "$source_file" "$expected_file" || ! cmp -s "$expected_file" "$deployed_file"; then
+			rm -f "$expected_file"
+			return 1
+		fi
 	done
+	rm -f "$expected_file"
 	return 0
 }
 
@@ -187,8 +199,12 @@ _runtime_output_matches_source() {
 	local runtime_id="$1"
 	case "$runtime_id" in
 	opencode)
-		_opencode_agent_output_matches_source || return 1
-		_opencode_command_output_matches_source || return 1
+		if [[ "$(rt_feature_agents "$runtime_id" 2>/dev/null || echo yes)" == "yes" ]]; then
+			_opencode_agent_output_matches_source || return 1
+		fi
+		if [[ "$(rt_feature_commands "$runtime_id" 2>/dev/null || echo yes)" == "yes" ]]; then
+			_opencode_command_output_matches_source || return 1
+		fi
 		return 0
 		;;
 	*)
@@ -255,6 +271,33 @@ _get_pkg_runner() {
 # =============================================================================
 # Main Orchestrator
 # =============================================================================
+
+_verify_generated_runtime_output() {
+	local runtime_id="$1"
+	local subcommand="$2"
+	local display_name="$3"
+
+	case "$subcommand" in
+	all)
+		_runtime_output_matches_source "$runtime_id" || {
+			print_error "$display_name runtime output failed post-generation parity verification"
+			return 1
+		}
+		;;
+	commands)
+		if [[ "$runtime_id" == "opencode" && "$(rt_feature_commands "$runtime_id" 2>/dev/null || echo yes)" == "yes" ]]; then
+			_opencode_command_output_matches_source || {
+				print_error "$display_name command output failed post-generation parity verification"
+				return 1
+			}
+		fi
+		;;
+	esac
+	if [[ "$runtime_id" == "opencode" && ( "$subcommand" == "all" || "$subcommand" == "commands" ) ]]; then
+		print_info "Restart OpenCode to load updated runtime commands"
+	fi
+	return 0
+}
 
 _generate_for_runtime() {
 	local runtime_id="$1"
@@ -336,6 +379,8 @@ _generate_for_runtime() {
 		_generate_prompts_for_runtime "$runtime_id"
 		;;
 	esac
+
+	_verify_generated_runtime_output "$runtime_id" "$subcommand" "$display_name" || return 1
 
 	# Write the source hash after successful generation so the next invocation
 	# can skip regeneration when inputs are unchanged.

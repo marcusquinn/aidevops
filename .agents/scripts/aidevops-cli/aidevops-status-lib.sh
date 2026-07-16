@@ -74,10 +74,10 @@ _status_ai_configs() {
 }
 
 _status_runtime_config_parity() {
-	local generator="$AGENTS_DIR/scripts/generate-runtime-config.sh"
+	local generator="${AGENTS_DIR:-${HOME:-}/.aidevops/agents}/scripts/generate-runtime-config.sh"
 
 	print_header "Runtime Configuration"
-	if [[ ! -x "$generator" ]]; then
+	if [[ ! -f "$generator" ]]; then
 		print_info "Runtime configuration verifier unavailable"
 		echo ""
 		return 0
@@ -87,7 +87,7 @@ _status_runtime_config_parity() {
 		echo ""
 		return 0
 	fi
-	if "$generator" verify --runtime opencode >/dev/null 2>&1; then
+	if bash "$generator" verify --runtime opencode >/dev/null 2>&1; then
 		print_success "OpenCode runtime configuration matches installed aidevops sources"
 	else
 		print_warning "OpenCode runtime configuration is stale or incomplete"

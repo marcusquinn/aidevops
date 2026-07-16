@@ -31,10 +31,15 @@ if _opencode_command_output_matches_source; then
 	exit 1
 fi
 
-printf '%s\n' '# generated build command' >"$TEST_HOME/.config/opencode/command/aidevops-build-plus.md"
-printf '%s\n' '# generated session command' >"$TEST_HOME/.config/opencode/command/aidevops-session-analysis.md"
+_generate_commands_for_runtime opencode >/dev/null
 if ! _opencode_command_output_matches_source; then
 	printf '%s\n' 'FAIL: complete generated command set failed parity verification' >&2
+	exit 1
+fi
+
+printf '%s\n' '# stale generated session command' >"$TEST_HOME/.config/opencode/command/aidevops-session-analysis.md"
+if _opencode_command_output_matches_source; then
+	printf '%s\n' 'FAIL: stale generated command content passed parity verification' >&2
 	exit 1
 fi
 
@@ -44,5 +49,24 @@ if _opencode_command_output_matches_source; then
 	exit 1
 fi
 
-printf '%s\n' 'PASS: OpenCode command parity detects and clears runtime drift'
+_generate_for_runtime opencode commands >/dev/null
+if ! _opencode_command_output_matches_source; then
+	printf '%s\n' 'FAIL: normal runtime generation did not repair deleted command output' >&2
+	exit 1
+fi
+
+FAIL_GENERATOR="$TEST_ROOT/fail-generator.sh"
+printf '%s\n' '#!/usr/bin/env bash' 'exit 9' >"$FAIL_GENERATOR"
+if bash -c '
+	source "$1"
+	print_info() { return 0; }
+	print_success() { return 0; }
+	print_warning() { return 0; }
+	_run_generator "$2" "start" "success" "failure"
+' _ "$REPO_ROOT/.agents/scripts/setup/modules/config.sh" "$FAIL_GENERATOR" 2>/dev/null; then
+	printf '%s\n' 'FAIL: setup generator wrapper normalized runtime reconciliation failure' >&2
+	exit 1
+fi
+
+printf '%s\n' 'PASS: runtime reconciliation detects drift, repairs output, and propagates failures'
 exit 0

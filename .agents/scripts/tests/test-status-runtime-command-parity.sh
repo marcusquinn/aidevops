@@ -49,7 +49,6 @@ source "$STATUS_LIB"
 mkdir -p "$(dirname "$GENERATOR")"
 
 printf '%s\n' '#!/usr/bin/env bash' 'exit 1' >"$GENERATOR"
-chmod +x "$GENERATOR"
 output=$(_status_runtime_config_parity)
 if [[ "$output" != *"OpenCode runtime configuration is stale or incomplete"* ]] ||
 	[[ "$output" != *"aidevops setup --scope runtime-config"* ]]; then

@@ -102,11 +102,10 @@ _run_generator() {
 	# Use ${arr[@]+"${arr[@]}"} pattern for safe expansion under set -u when array may be empty
 	if bash "$script_path" ${script_args[@]+"${script_args[@]}"}; then
 		print_success "$success_msg"
-	else
-		print_warning "$failure_msg"
+		return 0
 	fi
-
-	return 0
+	print_warning "$failure_msg"
+	return 1
 }
 
 update_opencode_config() {
@@ -191,8 +190,9 @@ update_claude_config() {
 # Respects per-runtime opt-outs (manage_opencode_config, manage_claude_config).
 update_runtime_configs() {
 	print_info "Updating runtime configurations..."
+	local generator_script="${INSTALL_DIR:-.}/.agents/scripts/generate-runtime-config.sh"
 
-	if [[ ! -f ".agents/scripts/generate-runtime-config.sh" ]]; then
+	if [[ ! -f "$generator_script" ]]; then
 		# Legacy fallback — use per-runtime update functions
 		print_info "Unified generator not found — falling back to per-runtime updates"
 		update_opencode_config
@@ -218,11 +218,11 @@ update_runtime_configs() {
 	# Generate for each enabled runtime
 	local runtime
 	for runtime in "${runtimes_to_generate[@]}"; do
-		_run_generator ".agents/scripts/generate-runtime-config.sh" \
+		_run_generator "$generator_script" \
 			"Generating configuration for $runtime..." \
 			"$runtime configuration updated" \
 			"$runtime configuration encountered issues" \
-			all --runtime "$runtime"
+			all --runtime "$runtime" || return $?
 	done
 
 	return 0
@@ -423,12 +423,12 @@ deploy_commands_to_all_runtimes() {
 	local generator_script="${INSTALL_DIR:-.}/.agents/scripts/generate-runtime-config.sh"
 
 	if [[ ! -f "$registry_script" ]]; then
-		print_info "Runtime registry not found — skipping unified command deployment"
-		return 0
+		print_warning "Runtime registry not found — runtime command reconciliation failed"
+		return 1
 	fi
-	if [[ ! -x "$generator_script" ]]; then
-		print_info "Runtime config generator not executable — skipping unified command deployment"
-		return 0
+	if [[ ! -f "$generator_script" ]]; then
+		print_warning "Runtime config generator not found — runtime command reconciliation failed"
+		return 1
 	fi
 
 	# Source registry if not already loaded
@@ -438,7 +438,7 @@ deploy_commands_to_all_runtimes() {
 	fi
 
 	local runtime_id cmd_dir feature_flag display_name
-	local deployed_count=0 skipped_count=0
+	local deployed_count=0 skipped_count=0 failed_count=0
 
 	while IFS= read -r runtime_id; do
 		# OpenCode and Claude Code are already handled by their dedicated
@@ -467,13 +467,18 @@ deploy_commands_to_all_runtimes() {
 		# Redirect stdin from /dev/null so the generator cannot accidentally
 		# read from the `while read` loop's process-substitution pipe and
 		# steal the remaining runtime IDs — a classic bash pitfall.
-		if "$generator_script" commands --runtime "$runtime_id" </dev/null; then
+		if bash "$generator_script" commands --runtime "$runtime_id" </dev/null; then
 			deployed_count=$((deployed_count + 1))
 		else
 			display_name=$(rt_display_name "$runtime_id" 2>/dev/null || echo "$runtime_id")
 			print_warning "Failed to deploy commands for $display_name"
+			failed_count=$((failed_count + 1))
 		fi
 	done < <(rt_detect_installed 2>/dev/null)
+	if [[ "$failed_count" -gt 0 ]]; then
+		print_warning "Runtime command reconciliation failed for $failed_count runtime(s)"
+		return 1
+	fi
 
 	if [[ $deployed_count -gt 0 ]]; then
 		print_success "Deployed slash commands to $deployed_count additional runtime(s)"
