@@ -174,6 +174,18 @@ test_objective_reconciliation_accepts_large_lists() {
 	return 0
 }
 
+test_objective_reconciliation_defaults_empty_lists() {
+	local issues_json="" objective_prs='[{"number":7}]' output
+	output=$(printf '%s\n%s\n' "${issues_json:-[]}" "${objective_prs:-[]}" | jq -sc \
+		'{issues: .[0], prs: .[1]}')
+	if printf '%s' "$output" | jq -e '.issues == [] and .prs == [{"number":7}]' >/dev/null; then
+		print_result "objective reconciliation preserves indices for empty lists" 0
+	else
+		print_result "objective reconciliation preserves indices for empty lists" 1
+	fi
+	return 0
+}
+
 test_known_large_argjson_patterns_absent() {
 	local failed=0
 	if grep -nE -- '--argjson (prs|issues) "\$\{PREFETCH_UPDATED_(PRS|ISSUES)' "$SCRIPTS_DIR/pulse-prefetch-fetch.sh" >/dev/null 2>&1; then
@@ -202,6 +214,7 @@ main() {
 	test_prefetch_cache_set_accepts_large_entry
 	test_quality_feedback_summary_accepts_large_details
 	test_objective_reconciliation_accepts_large_lists
+	test_objective_reconciliation_defaults_empty_lists
 	test_known_large_argjson_patterns_absent
 	printf '\nTests run: %d\n' "$TESTS_RUN"
 	if [[ "$TESTS_FAILED" -ne 0 ]]; then
