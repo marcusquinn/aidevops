@@ -10,6 +10,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.32.139] - 2026-07-16
+
+### Changed
+
+- Maintenance: mark t18151 complete (pr:#28037 completed:2026-07-16) [skip ci]
+- Maintenance: sync ref:GH#28032 to TODO.md [skip ci]
+
+### Fixed
+
+- resolve maintenance pulse helper from script directory (#28039)
+- add audited canonical fast-forward (#28037)
+- make dry-run observational and restore Desktop DB isolation (#28036)
+- recover durable PR origin labels (#28035)
+
 ## [3.32.138] - 2026-07-16
 
 ### Added
