@@ -28,11 +28,10 @@ function compareAscii(left, right) {
 }
 
 function validIdentifier(value, maximumLength, allowedCharacters) {
-  return typeof value === "string"
-    && value.length >= 1
-    && value.length <= maximumLength
-    && ASCII_ALPHANUMERIC_CHARACTERS.has(value[0])
-    && [...value].every((character) => allowedCharacters.has(character));
+  if (typeof value !== "string") return false;
+  if (value.length < 1 || value.length > maximumLength) return false;
+  if (!ASCII_ALPHANUMERIC_CHARACTERS.has(value[0])) return false;
+  return [...value].every((character) => allowedCharacters.has(character));
 }
 
 export function validRunnerLogin(value) {
