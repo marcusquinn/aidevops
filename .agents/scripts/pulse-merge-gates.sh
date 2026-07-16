@@ -493,9 +493,19 @@ _pulse_merge_admin_safety_check() {
 	# t2863: initialise multi-var locals at declaration time so set -u
 	# is safe even on a partial-failure path through the assignments.
 	local pr_meta_json="" labels_str="" is_fork="false" current_head_sha="" pr_author=""
-	pr_meta_json=$(gh pr view "$pr_number" --repo "$repo_slug" \
-		--json author,labels,isCrossRepository,headRefOid 2>/dev/null) || pr_meta_json=""
-	[[ -n "$pr_meta_json" ]] || return 1
+	if ! pr_meta_json=$(gh pr view "$pr_number" --repo "$repo_slug" \
+		--json author,labels,isCrossRepository,headRefOid 2>/dev/null); then
+		echo "[pulse-merge] _pulse_merge_admin_safety_check: gh pr view failed for PR #${pr_number} in ${repo_slug} — failing closed" >>"$LOGFILE"
+		return 1
+	fi
+	if [[ -z "$pr_meta_json" ]]; then
+		echo "[pulse-merge] _pulse_merge_admin_safety_check: gh pr view returned empty metadata for PR #${pr_number} in ${repo_slug} — failing closed" >>"$LOGFILE"
+		return 1
+	fi
+	if ! printf '%s' "$pr_meta_json" | jq -e 'type == "object"' >/dev/null 2>&1; then
+		echo "[pulse-merge] _pulse_merge_admin_safety_check: gh pr view returned malformed metadata for PR #${pr_number} in ${repo_slug} — failing closed" >>"$LOGFILE"
+		return 1
+	fi
 	labels_str=$(printf '%s' "$pr_meta_json" \
 		| jq -r '[.labels[].name] | join(",")' 2>/dev/null) || labels_str=""
 	is_fork=$(printf '%s' "$pr_meta_json" \
@@ -504,7 +514,10 @@ _pulse_merge_admin_safety_check() {
 		| jq -r '.headRefOid // ""' 2>/dev/null) || current_head_sha=""
 	pr_author=$(printf '%s' "$pr_meta_json" \
 		| jq -r '.author.login // ""' 2>/dev/null) || pr_author=""
-	[[ -n "$current_head_sha" && -n "$pr_author" ]] || return 1
+	if [[ -z "$current_head_sha" || -z "$pr_author" ]]; then
+		echo "[pulse-merge] _pulse_merge_admin_safety_check: missing head SHA or author for PR #${pr_number} in ${repo_slug} — failing closed" >>"$LOGFILE"
+		return 1
+	fi
 	if [[ -n "$expected_head_sha" && "$current_head_sha" != "$expected_head_sha" ]]; then
 		echo "[pulse-merge] DEFENSE-IN-DEPTH: REFUSING merge of PR #${pr_number} in ${repo_slug} — head changed before final authority check" >>"$LOGFILE"
 		return 1
@@ -538,7 +551,10 @@ _pulse_merge_admin_safety_check() {
 	# A linked issue's live NMR state is a final-call hold for every PR, not only
 	# external PRs. Fail closed if a linked issue was found but cannot be read.
 	local linked="" linked_labels=""
-	linked=$(_extract_linked_issue "$pr_number" "$repo_slug" 2>/dev/null) || return 1
+	if ! linked=$(_extract_linked_issue "$pr_number" "$repo_slug" 2>/dev/null); then
+		echo "[pulse-merge] _pulse_merge_admin_safety_check: linked issue extraction failed for PR #${pr_number} in ${repo_slug} — failing closed" >>"$LOGFILE"
+		return 1
+	fi
 	if [[ -n "$linked" ]]; then
 		linked_labels=$(gh api "repos/${repo_slug}/issues/${linked}" --jq '[.labels[].name] | join(",")' 2>/dev/null) || linked_labels="__API_ERROR__"
 		if [[ "$linked_labels" == "__API_ERROR__" || ",${linked_labels}," == *",needs-maintainer-review,"* ]]; then

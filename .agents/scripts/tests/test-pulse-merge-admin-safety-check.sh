@@ -24,6 +24,7 @@
 #   I — unlabeled non-collaborator, no current PR authority                 → return 1
 #   J — cached positive review evidence, live outcome no longer permitted  → return 1
 #   K — stale cached evidence, refreshed exact-head positive evidence      → return 0
+#   M-Q — metadata and linked-issue lookup failures are logged              → return 1
 
 set -euo pipefail
 
@@ -118,6 +119,12 @@ printf '%s\n' "gh $*" >>"${GH_LOG:-/dev/null}"
 
 # gh pr view N --repo R --json author,labels,isCrossRepository,headRefOid
 if [[ "$*" == *"--json author,labels,isCrossRepository,headRefOid"* ]]; then
+	if [[ -f "${TEST_ROOT}/pr-meta-fail" ]]; then
+		exit 1
+	fi
+	if [[ -f "${TEST_ROOT}/pr-meta-empty" ]]; then
+		exit 0
+	fi
 	cat "${TEST_ROOT}/labels.json"
 	exit 0
 fi
@@ -226,6 +233,8 @@ define_helpers_under_test() {
 	eval "$gates_src"
 	# shellcheck disable=SC1090
 	eval "$final_src"
+	PULSE_REVIEW_EVIDENCE_SCHEMA="aidevops.review-gate-evidence/v1"
+	PULSE_UNKNOWN_STATE="UNKNOWN"
 	_PULSE_PREFLIGHT_CALLS=0
 	_pulse_merge_preflight_snapshot_gate() {
 		local repo_slug="$1"
@@ -279,6 +288,78 @@ test_case_l_collaborator_linked_issue_nmr_blocks_final_gate() {
 		return 0
 	fi
 	print_result "Case L: collaborator linked-issue NMR blocks at final gate" 1 "rc=${result}; log=$(cat "$LOGFILE")"
+	return 0
+}
+
+test_case_m_pr_metadata_command_failure_is_logged() {
+	: >"$LOGFILE"
+	touch "${TEST_ROOT}/pr-meta-fail"
+	local result=0
+	_pulse_merge_admin_safety_check "940" "owner/repo" "head-current" || result=$?
+	rm -f "${TEST_ROOT}/pr-meta-fail"
+	if [[ "$result" -eq 1 ]] && grep -qF "gh pr view failed for PR #940 in owner/repo — failing closed" "$LOGFILE"; then
+		print_result "Case M: PR metadata command failure is logged" 0
+		return 0
+	fi
+	print_result "Case M: PR metadata command failure is logged" 1 "rc=${result}; log=$(cat "$LOGFILE")"
+	return 0
+}
+
+test_case_n_empty_pr_metadata_is_logged() {
+	: >"$LOGFILE"
+	touch "${TEST_ROOT}/pr-meta-empty"
+	local result=0
+	_pulse_merge_admin_safety_check "941" "owner/repo" "head-current" || result=$?
+	rm -f "${TEST_ROOT}/pr-meta-empty"
+	if [[ "$result" -eq 1 ]] && grep -qF "gh pr view returned empty metadata for PR #941 in owner/repo — failing closed" "$LOGFILE"; then
+		print_result "Case N: empty PR metadata is logged" 0
+		return 0
+	fi
+	print_result "Case N: empty PR metadata is logged" 1 "rc=${result}; log=$(cat "$LOGFILE")"
+	return 0
+}
+
+test_case_o_malformed_pr_metadata_is_logged() {
+	: >"$LOGFILE"
+	printf '%s' '{not-json' >"${TEST_ROOT}/labels.json"
+	local result=0
+	_pulse_merge_admin_safety_check "942" "owner/repo" "head-current" || result=$?
+	set_fixture '[{"name":"bug"}]' 'false' '## Summary\n\nResolves #942' 'VERIFIED'
+	if [[ "$result" -eq 1 ]] && grep -qF "gh pr view returned malformed metadata for PR #942 in owner/repo — failing closed" "$LOGFILE"; then
+		print_result "Case O: malformed PR metadata is logged" 0
+		return 0
+	fi
+	print_result "Case O: malformed PR metadata is logged" 1 "rc=${result}; log=$(cat "$LOGFILE")"
+	return 0
+}
+
+test_case_p_missing_pr_identity_is_logged() {
+	: >"$LOGFILE"
+	printf '%s' '{"author":null,"labels":[],"isCrossRepository":false,"headRefOid":""}' >"${TEST_ROOT}/labels.json"
+	local result=0
+	_pulse_merge_admin_safety_check "943" "owner/repo" "head-current" || result=$?
+	set_fixture '[{"name":"bug"}]' 'false' '## Summary\n\nResolves #943' 'VERIFIED'
+	if [[ "$result" -eq 1 ]] && grep -qF "missing head SHA or author for PR #943 in owner/repo — failing closed" "$LOGFILE"; then
+		print_result "Case P: missing PR identity is logged" 0
+		return 0
+	fi
+	print_result "Case P: missing PR identity is logged" 1 "rc=${result}; log=$(cat "$LOGFILE")"
+	return 0
+}
+
+test_case_q_linked_issue_extraction_failure_is_logged() {
+	: >"$LOGFILE"
+	set_fixture '[{"name":"bug"}]' 'false' '## Summary\n\nResolves #944' 'VERIFIED'
+	_extract_linked_issue() {
+		return 1
+	}
+	local result=0
+	_pulse_merge_admin_safety_check "944" "owner/repo" "head-current" || result=$?
+	if [[ "$result" -eq 1 ]] && grep -qF "linked issue extraction failed for PR #944 in owner/repo — failing closed" "$LOGFILE"; then
+		print_result "Case Q: linked issue extraction failure is logged" 0
+		return 0
+	fi
+	print_result "Case Q: linked issue extraction failure is logged" 1 "rc=${result}; log=$(cat "$LOGFILE")"
 	return 0
 }
 
@@ -543,6 +624,11 @@ main() {
 	test_case_j_final_gate_rejects_stale_cached_review_evidence
 	test_case_k_final_gate_refreshes_current_review_evidence
 	test_case_l_collaborator_linked_issue_nmr_blocks_final_gate
+	test_case_m_pr_metadata_command_failure_is_logged
+	test_case_n_empty_pr_metadata_is_logged
+	test_case_o_malformed_pr_metadata_is_logged
+	test_case_p_missing_pr_identity_is_logged
+	test_case_q_linked_issue_extraction_failure_is_logged
 
 	printf '\nRan %s tests, %s failed.\n' "$TESTS_RUN" "$TESTS_FAILED"
 	if [[ "$TESTS_FAILED" -gt 0 ]]; then
