@@ -10,6 +10,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.32.140] - 2026-07-16
+
+### Added
+
+- add owner-safe saved-profile server reuse (#28043)
+
+### Changed
+
+- Maintenance: sync ref:GH#28044 to TODO.md [skip ci]
+
+### Fixed
+
+- support older Git in workflow sync (#28041)
+
 ## [3.32.139] - 2026-07-16
 
 ### Changed
