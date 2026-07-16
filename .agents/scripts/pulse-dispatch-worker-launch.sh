@@ -572,6 +572,62 @@ EOF
 	return 0
 }
 
+_dlw_validated_context_token() {
+	local value="$1"
+	if [[ "$value" =~ ^[A-Za-z0-9._:/-]{1,128}$ ]]; then
+		printf '%s' "$value"
+	else
+		printf 'unknown'
+	fi
+	return 0
+}
+
+_dlw_prior_attempt_context() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local helper="${OBJECTIVE_RECONCILIATION_HELPER:-${BASH_SOURCE[0]%/*}/objective-reconciliation-helper.sh}"
+	local disposition=""
+	local fields=""
+	local empty_field="__AIDEVOPS_EMPTY_FIELD__"
+	local source="" prior_attempt_id="" effective_outcome="" raw_result=""
+	local status="" classification="" next_action=""
+	local context=""
+	local max_chars="${AIDEVOPS_RETRY_CONTEXT_MAX_CHARS:-1024}"
+
+	[[ -x "$helper" ]] || return 0
+	disposition=$("$helper" disposition --repo "$repo_slug" --issue "$issue_number" 2>/dev/null) || return 0
+	fields=$(printf '%s' "$disposition" | jq -r --arg empty "$empty_field" \
+		'[.source // "", .attempt_id // "", .effective_outcome // "", .raw_result // "", .status // "", .classification // "", .next_action // ""]
+		| map(if . == "" then $empty else . end) | @tsv' 2>/dev/null) || return 0
+	IFS=$'\t' read -r source prior_attempt_id effective_outcome raw_result status classification next_action <<<"$fields"
+	[[ "$source" == "$empty_field" ]] && source=""
+	[[ "$prior_attempt_id" == "$empty_field" ]] && prior_attempt_id=""
+	[[ "$effective_outcome" == "$empty_field" ]] && effective_outcome=""
+	[[ "$raw_result" == "$empty_field" ]] && raw_result=""
+	[[ "$status" == "$empty_field" ]] && status=""
+	[[ "$classification" == "$empty_field" ]] && classification=""
+	[[ "$next_action" == "$empty_field" ]] && next_action=""
+	case "$effective_outcome" in
+	failed | deferred | escalated) ;;
+	*) return 0 ;;
+	esac
+	source=$(_dlw_validated_context_token "$source")
+	prior_attempt_id=$(_dlw_validated_context_token "$prior_attempt_id")
+	effective_outcome=$(_dlw_validated_context_token "$effective_outcome")
+	raw_result=$(_dlw_validated_context_token "$raw_result")
+	status=$(_dlw_validated_context_token "$status")
+	classification=$(_dlw_validated_context_token "$classification")
+	next_action=$(_dlw_validated_context_token "$next_action")
+	printf -v context '\nValidated prior-attempt state (machine-generated; prior model prose and issue comments are excluded):\n- source: %s\n- attempt_id: %s\n- effective_outcome: %s\n- raw_result: %s\n- status: %s\n- classification: %s\n- next_action: %s\nContinue from validated repository and PR state; do not repeat completed setup.' \
+		"$source" "$prior_attempt_id" "$effective_outcome" "$raw_result" "$status" "$classification" "$next_action"
+	[[ "$max_chars" =~ ^[0-9]+$ && "$max_chars" -ge 256 && "$max_chars" -le 4096 ]] || max_chars=1024
+	if [[ "${#context}" -gt "$max_chars" ]]; then
+		context="${context:0:max_chars}"
+	fi
+	printf '%s\n' "$context"
+	return 0
+}
+
 _dlw_prepare_prompt_for_launch() {
 	local issue_number="$1"
 	local repo_slug="$2"
@@ -584,6 +640,9 @@ _dlw_prepare_prompt_for_launch() {
 	local metrics_zero_count=""
 	local chars=""
 	local precomputed_zero_count=""
+	local prior_attempt_context=""
+
+	prior_attempt_context=$(_dlw_prior_attempt_context "$issue_number" "$repo_slug" || true)
 
 	comment_metrics="$precomputed_comment_metrics"
 	[[ -n "$comment_metrics" ]] || comment_metrics=$(_dlw_comment_bloat_metrics "$issue_number" "$repo_slug")
@@ -600,6 +659,7 @@ _dlw_prepare_prompt_for_launch() {
 			return 0
 		fi
 		_dlw_clean_room_prompt "$issue_number" "$repo_slug" "$issue_title" "$issue_body"
+		printf '%s' "$prior_attempt_context"
 		_dlw_first_pass_completion_contract
 		return 0
 	fi
@@ -618,11 +678,13 @@ _dlw_prepare_prompt_for_launch() {
 		fi
 		echo "[dispatch_with_dedup] #${issue_number} in ${repo_slug}: using URL-only bootstrap prompt after ${zero_count} zero-output launches" >>"$LOGFILE"
 		_dlw_zero_output_fallback_prompt "$issue_number" "$repo_slug" "$issue_title" "$snapshot_ready"
+		printf '%s' "$prior_attempt_context"
 		_dlw_first_pass_completion_contract
 		return 0
 	fi
 
 	printf '%s' "$original_prompt"
+	printf '%s' "$prior_attempt_context"
 	_dlw_first_pass_completion_contract
 	return 0
 }
@@ -1697,14 +1759,10 @@ _dlw_nohup_launch() {
 	local repo_path="$8"
 	local dispatch_model_tier="$9"
 	local selected_model="${10}"
-	local worker_worktree_path="${11}"
-	local worker_worktree_branch="${12}"
-	local parent_worker_id=""
-	local root_worker_id=""
-	local correlation_id=""
-	local worker_id=""
-	local dispatch_event_id=""
-	local root_event_id=""
+	local worker_worktree_path="${11}" worker_worktree_branch="${12}" attempt_id="${13:-}" attempt_started_at="${14:-}"
+	[[ -n "$attempt_id" ]] || attempt_id=$(aidevops_generate_execution_id "attempt")
+	[[ "$attempt_started_at" =~ ^[0-9]+$ ]] || attempt_started_at=$(_worker_attempt_start_marker)
+	local parent_worker_id="" root_worker_id="" correlation_id="" worker_id="" dispatch_event_id="" root_event_id=""
 	_dlw_prepare_worker_lineage "$session_key"
 
 	_dlw_validate_worktree_for_launch "$issue_number" "$worker_worktree_path" || return 1
@@ -1733,6 +1791,8 @@ _dlw_nohup_launch() {
 		AIDEVOPS_PARENT_WORKER_ID="$parent_worker_id"
 		AIDEVOPS_ROOT_WORKER_ID="$root_worker_id"
 		AIDEVOPS_CORRELATION_ID="$correlation_id"
+		AIDEVOPS_ATTEMPT_ID="$attempt_id"
+		AIDEVOPS_ATTEMPT_STARTED_AT="$attempt_started_at"
 		AIDEVOPS_ROOT_EVENT_ID="$root_event_id"
 		AIDEVOPS_PARENT_EVENT_ID="$dispatch_event_id"
 		AIDEVOPS_CAUSATION_ID="$dispatch_event_id"
@@ -1828,6 +1888,7 @@ _dlw_post_launch_hooks() {
 	local dispatch_tier="$6"
 	local selected_model="$7"
 	local worker_worktree_path="${8:-}"
+	local attempt_id="${9:-}"
 
 	# Record in dispatch ledger (with tier telemetry)
 	local ledger_helper="${SCRIPT_DIR}/dispatch-ledger-helper.sh"
@@ -1836,6 +1897,7 @@ _dlw_post_launch_hooks() {
 			--issue "$issue_number" --repo "$repo_slug" \
 			--pid "$worker_pid" --tier "$dispatch_tier" \
 			--model "$selected_model" --lease-token "${_claim_lease_token:-}" \
+			--attempt-id "$attempt_id" \
 			--device-id "${_claim_lease_device:-}" --worktree "$worker_worktree_path" 2>/dev/null || true
 	fi
 
@@ -2330,21 +2392,21 @@ _dispatch_launch_worker() {
 		_dlw_pre_runtime_failure "$issue_number" "$repo_slug" "worktree_precreation_failed" 2 || return $?
 	fi
 	_ds_record "$issue_number" "$repo_slug" "precreate_worktree" "$_ds_t0"
-	local worker_worktree_path="$_DLW_WORKTREE_PATH"
-	local worker_worktree_branch="$_DLW_WORKTREE_BRANCH"
-	local worker_worktree_reused="${_DLW_WORKTREE_REUSED:-0}"
+	local worker_worktree_path="$_DLW_WORKTREE_PATH" worker_worktree_branch="$_DLW_WORKTREE_BRANCH" worker_worktree_reused="${_DLW_WORKTREE_REUSED:-0}"
 	if _dlw_check_worker_branch_orphan_loop "$issue_number" "$repo_slug" "$worker_worktree_branch" "$worker_worktree_reused" "${repo_path}/TODO.md" "$worker_worktree_path"; then
 		_dlw_pre_runtime_failure "$issue_number" "$repo_slug" "worker_branch_orphan_hold" 2 || return $?
 	fi
 
 	_ds_t0=$(_ds_now_ns)
-	local worker_pid
+	local worker_pid attempt_id="" attempt_started_at=""
+	attempt_id=$(aidevops_generate_execution_id "attempt")
+	attempt_started_at=$(_worker_attempt_start_marker)
 	local launch_prompt=""
 	launch_prompt=$(_dlw_prepare_prompt_for_launch "$issue_number" "$repo_slug" "$issue_title" "$prompt" "$zero_output_comment_metrics")
 	if ! worker_pid=$(_dlw_nohup_launch "$issue_number" "$repo_slug" "$dispatch_title" "$issue_title" \
 		"$session_key" "$worker_log" "$launch_prompt" "$repo_path" \
 		"$dispatch_model_tier" "$selected_model" \
-		"$worker_worktree_path" "$worker_worktree_branch"); then
+		"$worker_worktree_path" "$worker_worktree_branch" "$attempt_id" "$attempt_started_at"); then
 		_ds_record "$issue_number" "$repo_slug" "worker_spawn" "$_ds_t0"
 		_dlw_pre_runtime_failure "$issue_number" "$repo_slug" "worker_launch_failed" 2 || return $?
 		return 1
@@ -2353,7 +2415,7 @@ _dispatch_launch_worker() {
 
 	_ds_t0=$(_ds_now_ns)
 	_dlw_post_launch_hooks "$issue_number" "$repo_slug" "$self_login" \
-		"$worker_pid" "$session_key" "$dispatch_tier" "$selected_model" "$worker_worktree_path"
+		"$worker_pid" "$session_key" "$dispatch_tier" "$selected_model" "$worker_worktree_path" "$attempt_id"
 	_ds_record "$issue_number" "$repo_slug" "post_launch_hooks" "$_ds_t0"
 
 	echo "[dispatch_with_dedup] Dispatched worker PID ${worker_pid} for #${issue_number} in ${repo_slug}" >>"$LOGFILE"

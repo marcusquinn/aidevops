@@ -1155,6 +1155,11 @@ _report_failure_to_fast_fail() {
 	if [[ "$session_key" != issue-* ]]; then
 		return 0
 	fi
+	if declare -F _objective_disposition_suppresses >/dev/null 2>&1 && \
+		_objective_disposition_suppresses suppress_fast_fail "$issue_number" "$repo_slug" "${AIDEVOPS_ATTEMPT_ID:-}"; then
+		print_info "[fast-fail] suppressed reconciled non-failure #${issue_number} (${repo_slug})"
+		return 0
+	fi
 
 	# Launch/preflight aborts happen before a worker reaches the brief. They are
 	# useful launch diagnostics, but they must not accrue as per-issue fast-fail

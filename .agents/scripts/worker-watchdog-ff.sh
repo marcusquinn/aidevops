@@ -239,6 +239,7 @@ _ff_write_state_entry() {
 #   $3 - kill reason (idle, stall, thrash, runtime, backoff, etc.)
 #   $4 - provider (anthropic, openai, cursor, google; default: anthropic)
 #   $5 - crash_type (no_work|overwhelmed|""; for tier escalation)
+#   $6 - attempt_id (optional exact objective correlation)
 #######################################
 _watchdog_record_failure_and_escalate() {
 	local issue_number="$1"
@@ -246,9 +247,18 @@ _watchdog_record_failure_and_escalate() {
 	local reason="$3"
 	local provider="${4:-anthropic}"
 	local crash_type="${5:-}"
+	local attempt_id="${6:-}"
 
 	[[ "$issue_number" =~ ^[0-9]+$ ]] || return 0
 	[[ -n "$repo_slug" ]] || return 0
+	if declare -F _worker_attempt_id_for_issue >/dev/null 2>&1; then
+		attempt_id=$(_worker_attempt_id_for_issue "$issue_number" "$repo_slug" "$attempt_id") || attempt_id=""
+	fi
+	if [[ -n "$attempt_id" ]] && declare -F _objective_disposition_suppresses >/dev/null 2>&1 && \
+		_objective_disposition_suppresses suppress_fast_fail "$issue_number" "$repo_slug" "$attempt_id"; then
+		log_msg "Fast-fail suppressed for #${issue_number} (${repo_slug}) by reconciled objective outcome"
+		return 0
+	fi
 
 	local state_file="${HOME}/.aidevops/.agent-workspace/supervisor/fast-fail-counter.json"
 	local state_dir

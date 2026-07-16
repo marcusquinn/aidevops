@@ -52,6 +52,19 @@ esac
 EOF
 chmod +x "${FAKE_BIN}/gh" || fail "failed to make fake gh executable"
 
+OBJECTIVE_HELPER="${FAKE_BIN}/objective-reconciliation-helper.sh"
+cat >"$OBJECTIVE_HELPER" <<'EOF'
+#!/usr/bin/env bash
+if [[ "${RETRY_DISPOSITION:-failed}" == "success" ]]; then
+	printf '%s\n' '{"source":"attempt_outcome","attempt_id":"attempt-success","effective_outcome":"success","raw_result":"post_pr_handoff","status":"recovered","classification":"worker_complete","next_action":"monitor_pr"}'
+elif [[ "${RETRY_DISPOSITION:-failed}" == "sparse" ]]; then
+	printf '%s\n' '{"source":"attempt_outcome","attempt_id":"attempt-sparse","effective_outcome":"failed","raw_result":"","status":"","classification":"","next_action":"narrow_redispatch"}'
+else
+	printf '%s\n' '{"source":"attempt_outcome","attempt_id":"attempt-prior","effective_outcome":"failed","raw_result":"premature_exit","status":"failed","classification":"unsafe prior model prose","next_action":"narrow_redispatch"}'
+fi
+EOF
+chmod +x "$OBJECTIVE_HELPER" || fail "failed to make objective helper executable"
+
 PATH="${FAKE_BIN}:${PATH}"
 export GH_CALLS_FILE
 
@@ -89,7 +102,33 @@ if [[ "$(<"${TEST_TMP}/blocked-prompt")" == *"original composed prompt"* ]]; the
 	fail "clean-room blocker leaked the original composed prompt"
 fi
 
+retry_context=$(OBJECTIVE_RECONCILIATION_HELPER="$OBJECTIVE_HELPER" \
+	AIDEVOPS_RETRY_CONTEXT_MAX_CHARS=512 _dlw_prior_attempt_context 123 owner/repo)
+if [[ "$retry_context" != *"Validated prior-attempt state"* || "$retry_context" != *"attempt-prior"* ]]; then
+	fail "failed prior attempt did not produce deterministic retry context"
+fi
+if [[ "$retry_context" == *"unsafe prior model prose"* || "$retry_context" != *"classification: unknown"* ]]; then
+	fail "retry context admitted non-machine prior prose"
+fi
+if [[ "${#retry_context}" -gt 512 ]]; then
+	fail "retry context exceeded configured bound: ${#retry_context}"
+fi
+success_context=$(OBJECTIVE_RECONCILIATION_HELPER="$OBJECTIVE_HELPER" RETRY_DISPOSITION=success \
+	_dlw_prior_attempt_context 123 owner/repo)
+if [[ -n "$success_context" ]]; then
+	fail "successful prior outcome produced unnecessary retry context"
+fi
+sparse_context=$(OBJECTIVE_RECONCILIATION_HELPER="$OBJECTIVE_HELPER" RETRY_DISPOSITION=sparse \
+	_dlw_prior_attempt_context 123 owner/repo)
+if [[ "$sparse_context" != *"attempt_id: attempt-sparse"* || \
+	"$sparse_context" != *"raw_result: unknown"* || \
+	"$sparse_context" != *"status: unknown"* || \
+	"$sparse_context" != *"next_action: narrow_redispatch"* ]]; then
+	fail "sparse retry disposition shifted empty machine fields: ${sparse_context}"
+fi
+
 printf 'PASS: dispatch prompt reuses comment metrics for zero-output fallback\n'
 printf 'PASS: zero-output evidence detection uses one shared pattern\n'
 printf 'PASS: invalid clean-room snapshots cannot authorize implementation\n'
+printf 'PASS: retry context is bounded, deterministic, and excludes prior prose\n'
 exit 0

@@ -617,7 +617,7 @@ _build_claude_cmd() {
 }
 
 # output_has_completion_signal: check if a worker run produced a meaningful
-# completion signal (FULL_LOOP_COMPLETE, BLOCKED, or PR creation).
+# completion signal (FULL_LOOP_COMPLETE, exact POST_PR_HANDOFF, BLOCKED, or PR creation).
 # Workers that produce tool calls but exit without these signals stopped
 # prematurely -- typically after investigation/setup but before implementation.
 #
@@ -684,8 +684,13 @@ for line in raw.splitlines():
 
 model_text = "\n".join(model_text_parts)
 
+def has_post_pr_handoff(text):
+    return any(line.strip() == "POST_PR_HANDOFF" for line in text.splitlines())
+
 # If we extracted model text, use it exclusively
 if model_text.strip():
+    if has_post_pr_handoff(model_text):
+        sys.exit(0)
     for marker in ("FULL_LOOP_COMPLETE", blocked_marker, "TASK_COMPLETE"):
         if marker in model_text:
             sys.exit(0)
@@ -702,6 +707,8 @@ if model_text.strip():
     sys.exit(1)
 
 # Fallback for non-JSON output (claude CLI, plain text)
+if has_post_pr_handoff(raw):
+    sys.exit(0)
 for marker in ("FULL_LOOP_COMPLETE", blocked_marker, "TASK_COMPLETE"):
     if marker in raw:
         sys.exit(0)
@@ -713,6 +720,38 @@ if "git push" in raw and ("-> " in raw or "branch " in raw):
     sys.exit(0)
 
 sys.exit(1)
+PY
+	return $?
+}
+
+output_has_post_pr_handoff_signal() {
+	local file_path="$1"
+	[[ -f "$file_path" ]] || return 1
+	python3 - "$file_path" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+raw = Path(sys.argv[1]).read_text(errors='ignore')
+model_text_parts = []
+for line in raw.splitlines():
+    line = line.strip()
+    if not line.startswith('{'):
+        continue
+    try:
+        obj = json.loads(line)
+    except (json.JSONDecodeError, ValueError):
+        continue
+    if obj.get('type', '') != 'text':
+        continue
+    part = obj.get('part', {})
+    text = obj.get('text') or part.get('text') or ''
+    if text:
+        model_text_parts.append(text)
+
+model_text = '\n'.join(model_text_parts)
+candidate = model_text if model_text.strip() else raw
+sys.exit(0 if any(line.strip() == 'POST_PR_HANDOFF' for line in candidate.splitlines()) else 1)
 PY
 	return $?
 }
