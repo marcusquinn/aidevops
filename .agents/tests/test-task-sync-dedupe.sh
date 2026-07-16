@@ -10,6 +10,7 @@ SCRIPT_DIR="${REPO_ROOT}/.agents/scripts"
 
 source "${REPO_ROOT}/.agents/scripts/issue-sync-lib.sh"
 source "${REPO_ROOT}/.agents/scripts/issue-sync-helper-close.sh"
+source "${REPO_ROOT}/.agents/scripts/issue-sync-helper-commands.sh"
 
 log_verbose() {
 	return 0
@@ -67,6 +68,20 @@ EOF
 	return 0
 }
 
+test_mark_done_completes_in_progress_entry() {
+	local tmpdir todo_file line
+	tmpdir=$(mktemp -d)
+	todo_file="${tmpdir}/TODO.md"
+	printf '%s\n' '- [>] t18002 active task ref:GH#25539 started:2026-06-26' >"$todo_file"
+	_mark_todo_done "t18002" "$todo_file" "pr:#25540"
+	line=$(grep -E '^[[:space:]]*- \[x\] t18002 ' "$todo_file")
+	[[ "$line" == *'pr:#25540'* ]] || fail "expected proof on completed in-progress line"
+	[[ "$line" == *'completed:'* ]] || fail "expected completion date on in-progress line"
+	rm -rf "$tmpdir"
+	pass "mark done completes in-progress entry"
+	return 0
+}
+
 test_dedupe_ignores_markdown_fences() {
 	local tmpdir todo_file count fenced_count canonical_count
 	tmpdir=$(mktemp -d)
@@ -107,11 +122,45 @@ EOF
 	return 0
 }
 
+test_status_counts_duplicate_task_rows_once() {
+	local tmpdir todo_file output reverse_count
+	tmpdir=$(mktemp -d)
+	todo_file="${tmpdir}/TODO.md"
+	cat >"$todo_file" <<'EOF'
+- [ ] t18002 canonical task ref:GH#25539 -> [todo/tasks/t18002-brief.md]
+- [ ] t18002 stale duplicate ref:GH#25539
+- [ ] t18003 another task ref:GH#25540
+EOF
+	TEST_TODO_FILE="$todo_file"
+	_init_cmd() {
+		_CMD_REPO="owner/repo"
+		_CMD_TODO="$TEST_TODO_FILE"
+		return 0
+	}
+	gh_list_issues() {
+		local repo="$1"
+		local state="$2"
+		: "$repo" "$state"
+		printf '[]\n'
+		return 0
+	}
+	output=$(cmd_status 2>&1)
+	[[ "$output" == *'TODO open: 2 (2 ref, 0 no ref)'* ]] || fail "expected duplicate open rows to count once"
+	[[ "$output" == *'reverse-drift: 2'* ]] || fail "expected duplicate reverse drift to count once"
+	reverse_count=$(printf '%s\n' "$output" | grep -c 'REVERSE-DRIFT: t18002' || true)
+	[[ "$reverse_count" == "1" ]] || fail "expected one reverse-drift warning for duplicate t18002, got $reverse_count"
+	rm -rf "$tmpdir"
+	pass "status counts duplicate task rows once"
+	return 0
+}
+
 main() {
 	test_dedupe_preserves_canonical_brief_line
 	test_mark_done_dedupes_and_adds_verified_proof
+	test_mark_done_completes_in_progress_entry
 	test_dedupe_ignores_markdown_fences
 	test_dedupe_scores_metadata_individually
+	test_status_counts_duplicate_task_rows_once
 	return 0
 }
 

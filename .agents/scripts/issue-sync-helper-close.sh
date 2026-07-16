@@ -188,7 +188,7 @@ _is_not_planned_state_reason() {
 	return 1
 }
 
-# Mark a TODO entry as done: [ ] -> [x] with completed: date.
+# Mark a TODO entry as done: [ ]/[>] -> [x] with completed: date.
 # Also handles [-] (cancelled/declined) entries — leaves marker as [-].
 _mark_todo_done() {
 	local task_id="$1" todo_file="$2" proof_log="${3:-}"
@@ -198,11 +198,11 @@ _mark_todo_done() {
 	today=$(date -u +%Y-%m-%d)
 	[[ -n "$proof_log" && "$proof_log" != " "* ]] && proof_log=" $proof_log"
 
-	# Only flip [ ] -> [x]; skip if already [x] or [-]
+	# Only flip incomplete [ ]/[>] entries; skip if already [x] or [-].
 	# Use [[:space:]] not \s for macOS sed compatibility (bash 3.2)
-	if grep -qE "^[[:space:]]*- \[ \] ${task_id_ere} " "$todo_file" 2>/dev/null; then
+	if grep -qE "^[[:space:]]*- \[[ >]\] ${task_id_ere} " "$todo_file" 2>/dev/null; then
 		# Flip checkbox and append completed: date
-		sed -i.bak -E "s/^([[:space:]]*- )\[ \] (${task_id_ere} .*)/\1[x] \2${proof_log} completed:${today}/" "$todo_file"
+		sed -i.bak -E "s/^([[:space:]]*- )\[[ >]\] (${task_id_ere} .*)/\1[x] \2${proof_log} completed:${today}/" "$todo_file"
 		rm -f "${todo_file}.bak"
 		_dedupe_todo_task_lines "$task_id" "$todo_file" || true
 		log_verbose "Marked $task_id as [x] in TODO.md"
@@ -446,8 +446,8 @@ cmd_close() {
 # cmd_reopen
 # =============================================================================
 
-# Reopen closed GitHub issues whose TODO entries are still open [ ].
-# TODO.md is the source of truth: if a task is [ ], the work is not done,
+# Reopen closed GitHub issues whose TODO entries are incomplete [ ]/[>].
+# TODO.md is the source of truth: if a task is [ ] or [>], the work is not done,
 # regardless of whether a commit message prematurely closed the issue.
 #
 # Decision tree per closed issue:
@@ -547,7 +547,7 @@ cmd_reopen() {
 			skipped=$((skipped + 1))
 			print_warning "Failed to reopen #$ref_num ($tid)"
 		}
-	done < <(echo "$stripped" | grep -E '^\s*- \[ \] t[0-9]+.*ref:GH#[0-9]+' || true)
+	done < <(printf '%s\n' "$stripped" | grep -E '^\s*- \[[ >]\] t[0-9]+.*ref:GH#[0-9]+' | _unique_todo_task_lines || true)
 
 	print_info "Reopen: $reopened reopened, $skipped failed, $not_planned not-planned, $has_pr have-merged-pr, $pr_refs pr-refs-skipped, $duplicate_comments duplicate-comments-skipped"
 	return 0

@@ -146,16 +146,17 @@ cmd_status() {
 	local stripped
 	stripped=$(strip_code_fences <"$todo_file")
 	local total_open=0 total_done=0 with_ref=0 status_line="" status_tid=""
+	local incomplete_line_re='^[[:space:]]*-[[:space:]]+\[[[:space:]>]\]'
 	while IFS= read -r status_line; do
 		status_tid=$(_task_id_from_todo_line "$status_line" || true)
 		[[ -n "$status_tid" ]] || continue
-		if [[ "$status_line" =~ ^[[:space:]]*-[[:space:]]+\[[[:space:]]\] ]]; then
+		if [[ "$status_line" =~ $incomplete_line_re ]]; then
 			total_open=$((total_open + 1))
 			[[ "$status_line" =~ ref:GH#[0-9]+ ]] && with_ref=$((with_ref + 1))
 		elif [[ "$status_line" =~ ^[[:space:]]*-[[:space:]]+\[x\] ]]; then
 			total_done=$((total_done + 1))
 		fi
-	done <<<"$stripped"
+	done < <(printf '%s\n' "$stripped" | _unique_todo_task_lines)
 	local without_ref=$((total_open - with_ref))
 
 	local open_json
@@ -196,7 +197,7 @@ cmd_status() {
 			reverse_drift=$((reverse_drift + 1))
 			print_warning "REVERSE-DRIFT: $rtid ref:GH#$ref_num — TODO open but issue closed"
 		fi
-	done < <(echo "$stripped" | grep -E '^[[:space:]]*- \[ \] .*ref:GH#[0-9]+' || true)
+	done < <(printf '%s\n' "$stripped" | grep -E '^[[:space:]]*- \[[ >]\] .*ref:GH#[0-9]+' | _unique_todo_task_lines || true)
 
 	printf "\n=== Sync Status (%s) ===\nTODO open: %d (%d ref, %d no ref) | done: %d\nGitHub open: %s closed: %s | drift: %d | reverse-drift: %d\n" \
 		"$repo" "$total_open" "$with_ref" "$without_ref" "$total_done" "$gh_open" "$gh_closed" "$drift" "$reverse_drift"
@@ -246,7 +247,7 @@ cmd_reconcile() {
 			fi
 			ref_fixed=$((ref_fixed + 1))
 		fi
-	done < <(strip_code_fences <"$todo_file" | grep -E '^[[:space:]]*- \[.\] .*ref:GH#[0-9]+' || true)
+	done < <(strip_code_fences <"$todo_file" | grep -E '^[[:space:]]*- \[.\] .*ref:GH#[0-9]+' | _unique_todo_task_lines || true)
 
 	# Forward drift: open GH issue but TODO marked [x]
 	local open_json
@@ -283,7 +284,7 @@ cmd_reconcile() {
 			reverse_drift=$((reverse_drift + 1))
 			print_warning "REVERSE-DRIFT: $rtid ref:GH#$ref_num — TODO open but issue closed"
 		fi
-	done < <(echo "$stripped" | grep -E '^[[:space:]]*- \[ \] .*ref:GH#[0-9]+' || true)
+	done < <(printf '%s\n' "$stripped" | grep -E '^[[:space:]]*- \[[ >]\] .*ref:GH#[0-9]+' | _unique_todo_task_lines || true)
 
 	printf "\n=== Reconciliation ===\nRefs OK: %d | fixed: %d | stale: %d | orphans: %d | reverse-drift: %d\n" \
 		"$ref_ok" "$ref_fixed" "$stale" "$orphans" "$reverse_drift"

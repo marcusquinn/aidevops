@@ -103,11 +103,29 @@ _escape_ere() {
 _task_id_from_todo_line() {
 	local line="$1"
 	local candidate=""
-	if [[ "$line" =~ ^[[:space:]]*-[[:space:]]+\[[[:space:]x-]\][[:space:]]+([^[:space:]]+) ]]; then
+	local todo_line_re='^[[:space:]]*-[[:space:]]+\[[[:space:]x>-]\][[:space:]]+([^[:space:]]+)'
+	if [[ "$line" =~ $todo_line_re ]]; then
 		candidate="${BASH_REMATCH[1]}"
 	fi
 	task_identity_validate "$candidate" || return 1
 	printf '%s\n' "$candidate"
+	return 0
+}
+
+# Emit at most one canonical TODO line per task ID. Callers that take a
+# snapshot before mutating TODO.md must not process stale duplicate rows after
+# the first row has already deduplicated the file.
+_unique_todo_task_lines() {
+	awk '
+		match($0, /^[[:space:]]*-[[:space:]]+\[[ x>-]\][[:space:]]+/) {
+			remaining = substr($0, RLENGTH + 1)
+			split(remaining, fields, /[[:space:]]+/)
+			task_id = fields[1]
+			if (task_id ~ /^t[0-9]+(\.[0-9]+)*$/ && !seen[task_id]++) {
+				print
+			}
+		}
+	'
 	return 0
 }
 
