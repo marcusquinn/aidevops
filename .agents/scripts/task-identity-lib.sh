@@ -192,9 +192,20 @@ task_identity_has_malformed_candidate() {
 	# Spell out the uppercase set: locale collation can make A-Z match lowercase
 	# letters, falsely classifying ordinary words such as "throughput" as IDs.
 	local candidate_ere='(^|[^[:alnum:].])([tT][0123456789][[:alnum:].-]*|t[ABCDEFGHIJKLMNOPQRSTUVWXYZ][[:alnum:].-]*|[tT][oO][[:alnum:]]{26}-[[:alnum:].-]+)($|[^[:alnum:].])'
+	local brief_path_ere="(^|[^[:alnum:]./])todo/tasks/(${TASK_IDENTITY_TOKEN_ERE})-brief\\.md($|[^[:alnum:].])"
 	local candidate=""
 	local remaining="$text"
 	local matched=""
+
+	# Canonical task-brief paths contain a valid ID followed by a filename suffix,
+	# not a malformed task identity. Remove only this repository path grammar;
+	# arbitrary <task-id>-suffix tokens must continue to fail closed below.
+	while [[ "$remaining" =~ $brief_path_ere ]]; do
+		matched="${BASH_REMATCH[0]}"
+		candidate="${BASH_REMATCH[2]}"
+		task_identity_validate "$candidate" || return 0
+		remaining="${remaining/"$matched"/ }"
+	done
 
 	while [[ "$remaining" =~ $candidate_ere ]]; do
 		matched="${BASH_REMATCH[0]}"
