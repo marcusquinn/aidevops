@@ -55,11 +55,12 @@ state_digest() {
 run_publish() {
 	local repo="$1"
 	local validator="${2:-/usr/bin/true}"
+	local branch="${3:-main}"
 	(
 		SCRIPT_DIR="$(dirname "$PUBLISHER")"
 		# shellcheck source=../planning-publisher.sh
 		source "$PUBLISHER"
-		AIDEVOPS_PLANNING_VALIDATOR="$validator" planning_publish "$repo" "plan: test publication" origin main
+		AIDEVOPS_PLANNING_VALIDATOR="$validator" planning_publish "$repo" "plan: test publication" origin "$branch"
 	)
 	return $?
 }
@@ -241,6 +242,106 @@ HOOK
 	return 0
 }
 
+test_absent_remote_branch_uses_safe_parent() {
+	local name="creates an absent remote branch from a safe parent without local state leakage"
+	local root="" repo="" branch="plan/new-branch" before="" after="" remote_sha="" replay_sha="" count=""
+	root=$(mktemp -d) || return 0
+	setup_repo "$root" || {
+		fail "$name" setup
+		return 0
+	}
+	repo="${root}/work"
+	git -C "$repo" switch -c "$branch" >/dev/null 2>&1 || {
+		fail "$name" branch
+		return 0
+	}
+	printf 'unrelated local commit\n' >>"${repo}/README.md"
+	git -C "$repo" add README.md
+	GIT_AUTHOR_NAME=Local GIT_AUTHOR_EMAIL=local@example.invalid GIT_COMMITTER_NAME=Local GIT_COMMITTER_EMAIL=local@example.invalid \
+		git -C "$repo" -c commit.gpgsign=false commit -qm local-only || {
+		fail "$name" local-commit
+		return 0
+	}
+	printf '%s\n' '- [ ] t007 first publication ref:GH#7' >>"${repo}/TODO.md"
+	before=$(state_digest "$repo")
+	run_publish "$repo" /usr/bin/true "$branch" || {
+		fail "$name" publish
+		return 0
+	}
+	after=$(state_digest "$repo")
+	remote_sha=$(git --git-dir="${root}/remote.git" rev-parse "$branch")
+	run_publish "$repo" /usr/bin/true "$branch" || {
+		fail "$name" replay
+		return 0
+	}
+	replay_sha=$(git --git-dir="${root}/remote.git" rev-parse "$branch")
+	count=$(git --git-dir="${root}/remote.git" log --format=%B "$branch" | grep -c 'Planning-Publication-ID:' || true)
+	if [[ "$before" == "$after" && "$remote_sha" == "$replay_sha" && "$count" -eq 1 ]] &&
+		[[ "$(git --git-dir="${root}/remote.git" rev-parse "${branch}^")" == "$(git --git-dir="${root}/remote.git" rev-parse main)" ]] &&
+		git --git-dir="${root}/remote.git" show "${branch}:TODO.md" | grep -q t007 &&
+		[[ "$(git --git-dir="${root}/remote.git" show "${branch}:README.md")" == "base" ]]; then
+		pass "$name"
+	else
+		fail "$name" invariant
+	fi
+	rm -rf "$root"
+	return 0
+}
+
+test_absent_remote_branch_creation_contention() {
+	local name="replays safely when a competitor creates the absent remote branch"
+	local root="" repo="" branch="plan/raced-branch" hook="" before="" after="" rival_sha="" remote_sha="" rc=0
+	root=$(mktemp -d) || return 0
+	setup_repo "$root" || {
+		fail "$name" setup
+		return 0
+	}
+	repo="${root}/work"
+	git -C "$repo" switch -c "$branch" >/dev/null 2>&1 || {
+		fail "$name" branch
+		return 0
+	}
+	printf '%s\n' '- [ ] t008 creation race ref:GH#8' >>"${repo}/TODO.md"
+	hook="${root}/create-rival.sh"
+	cat >"$hook" <<'HOOK'
+#!/usr/bin/env bash
+repo="$1"; remote="$2"; branch="$3"; attempt="$6"
+[[ "$attempt" == "1" ]] || exit 0
+tmp=$(mktemp -d)
+git clone -q "$(git -C "$repo" remote get-url "$remote")" "$tmp/work"
+git -C "$tmp/work" switch -c "$branch" >/dev/null 2>&1
+printf 'rival branch creator\n' >>"$tmp/work/README.md"
+git -C "$tmp/work" add README.md
+GIT_AUTHOR_NAME=Rival GIT_AUTHOR_EMAIL=rival@example.invalid GIT_COMMITTER_NAME=Rival GIT_COMMITTER_EMAIL=rival@example.invalid git -C "$tmp/work" -c commit.gpgsign=false commit -qm rival
+git -C "$tmp/work" push -q origin "$branch"
+git -C "$tmp/work" rev-parse HEAD >"$(dirname "$repo")/rival-sha"
+rm -rf "$tmp"
+exit 0
+HOOK
+	chmod +x "$hook"
+	before=$(state_digest "$repo")
+	(
+		SCRIPT_DIR="$(dirname "$PUBLISHER")"
+		# shellcheck source=../planning-publisher.sh
+		source "$PUBLISHER"
+		AIDEVOPS_PLANNING_VALIDATOR=/usr/bin/true AIDEVOPS_PLANNING_BEFORE_PUSH_HOOK="$hook" \
+			planning_publish "$repo" "plan: creation contention" origin "$branch"
+	) || rc=$?
+	after=$(state_digest "$repo")
+	rival_sha=$(<"${root}/rival-sha")
+	remote_sha=$(git --git-dir="${root}/remote.git" rev-parse "$branch")
+	if [[ "$rc" -eq 0 && "$before" == "$after" ]] &&
+		git --git-dir="${root}/remote.git" merge-base --is-ancestor "$rival_sha" "$remote_sha" &&
+		git --git-dir="${root}/remote.git" show "${branch}:README.md" | grep -q 'rival branch creator' &&
+		git --git-dir="${root}/remote.git" show "${branch}:TODO.md" | grep -q t008; then
+		pass "$name"
+	else
+		fail "$name" "contention rc=$rc"
+	fi
+	rm -rf "$root"
+	return 0
+}
+
 test_explicit_git_capability_preserves_guarded_checkout() {
 	local name="explicit Git capability publishes planning paths while canonical guard remains active"
 	local root="" repo="" shim_dir="" before="" after="" guard_rc=0 count="" real_git="" real_true=""
@@ -309,6 +410,8 @@ main() {
 	test_contention_replay_and_conflict
 	test_crash_replay_is_single_publication
 	test_same_path_contention_is_retryable
+	test_absent_remote_branch_uses_safe_parent
+	test_absent_remote_branch_creation_contention
 	test_explicit_git_capability_preserves_guarded_checkout
 	printf '%s passed, %s failed\n' "$PASS" "$FAIL"
 	[[ $FAIL -eq 0 ]] || return 1
