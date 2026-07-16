@@ -24,9 +24,25 @@ source "${SCRIPT_DIR}/shared-constants.sh"
 
 readonly SCRIPT_DIR
 readonly CONFIG_FILE="${SCRIPT_DIR}/../../.opencode/server/mcp-test-config.json"
+readonly API_GATEWAY_PORT_DEFAULT=3100
+readonly MCP_DASHBOARD_PORT_DEFAULT=3101
+readonly API_GATEWAY_SERVICE="api-gateway"
+readonly MCP_DASHBOARD_SERVICE="mcp-dashboard"
 
 print_header() { 
     echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    return 0
+}
+
+# Validate a local TCP port before interpolating it into a URL.
+validate_local_port() {
+    local variable_name="$1"
+    local port="$2"
+
+    if [[ ! "$port" =~ ^[0-9]{1,5}$ ]] || ((10#$port < 1 || 10#$port > 65535)); then
+        print_error "${variable_name} must be an integer between 1 and 65535"
+        return 1
+    fi
     return 0
 }
 
@@ -61,7 +77,7 @@ fetch_health_response() {
     local service="$1"
     local url="$2"
 
-    if [[ "$service" == "api-gateway" ]]; then
+    if [[ "$service" == "$API_GATEWAY_SERVICE" ]]; then
         gateway_curl "$url"
         return $?
     fi
@@ -186,6 +202,14 @@ list_resources() {
 
 # Health check all servers
 health_check() {
+    local gateway_port="${API_GATEWAY_PORT:-$API_GATEWAY_PORT_DEFAULT}"
+    local dashboard_port="${MCP_DASHBOARD_PORT:-$MCP_DASHBOARD_PORT_DEFAULT}"
+
+    validate_local_port "API_GATEWAY_PORT" "$gateway_port" || return 1
+    validate_local_port "MCP_DASHBOARD_PORT" "$dashboard_port" || return 1
+    gateway_port=$((10#$gateway_port))
+    dashboard_port=$((10#$dashboard_port))
+
     print_header
     echo -e "${CYAN}🏥 MCP Server Health Check${NC}"
     print_header
@@ -197,15 +221,17 @@ health_check() {
     # Check local Elysia servers first
     echo -e "\n${BLUE}Local Elysia Servers:${NC}"
     
-    local port
-    for port in 3100 3101; do
+    local service
+    for service in "$API_GATEWAY_SERVICE" "$MCP_DASHBOARD_SERVICE"; do
         total=$((total + 1))
-        local name="localhost:$port"
-        local expected_service="mcp-dashboard"
-        local response
-        if [[ "$port" == "3100" ]]; then
-            expected_service="api-gateway"
+        local port="$dashboard_port"
+        local expected_service="$MCP_DASHBOARD_SERVICE"
+        if [[ "$service" == "$API_GATEWAY_SERVICE" ]]; then
+            port="$gateway_port"
+            expected_service="$API_GATEWAY_SERVICE"
         fi
+        local name="localhost:$port"
+        local response
         response=$(fetch_health_response "$expected_service" "http://localhost:$port/health" 2>/dev/null) || response=""
         if health_response_matches_service "$response" "$expected_service"; then
             print_success "$name - healthy"
@@ -232,6 +258,18 @@ health_check() {
             local url
             local response
             url=$(jq -r ".mcpServers[\"$srv\"].url" "$CONFIG_FILE")
+            case "$srv" in
+                "$API_GATEWAY_SERVICE")
+                    if [[ -n "${API_GATEWAY_PORT:-}" ]]; then
+                        url="http://localhost:${gateway_port}"
+                    fi
+                    ;;
+                "$MCP_DASHBOARD_SERVICE")
+                    if [[ -n "${MCP_DASHBOARD_PORT:-}" ]]; then
+                        url="http://localhost:${dashboard_port}"
+                    fi
+                    ;;
+            esac
             response=$(fetch_health_response "$srv" "$url/health" 2>/dev/null) || response=""
             if health_response_matches_service "$response" "$srv"; then
                 print_success "$srv ($server_type) - healthy"
@@ -274,11 +312,16 @@ show_config() {
 
 # Test API Gateway endpoints
 test_api_gateway() {
+    local gateway_port="${API_GATEWAY_PORT:-$API_GATEWAY_PORT_DEFAULT}"
+
+    validate_local_port "API_GATEWAY_PORT" "$gateway_port" || return 1
+    gateway_port=$((10#$gateway_port))
+
     print_header
     echo -e "${CYAN}🧪 API Gateway Test Suite${NC}"
     print_header
     
-    local base_url="http://localhost:3100"
+    local base_url="http://localhost:${gateway_port}"
     local passed=0
     local failed=0
 
@@ -429,6 +472,12 @@ Starting Local Servers:
   
   # Start MCP Dashboard (port 3101)
   bun run .opencode/server/mcp-dashboard.ts
+
+  # Use alternate ports when defaults are occupied
+  API_GATEWAY_PORT=3102 bun run .opencode/server/api-gateway.ts
+  API_GATEWAY_PORT=3102 ./mcp-inspector-helper.sh health
+  API_GATEWAY_PORT=3102 ./mcp-inspector-helper.sh test-gateway
+  MCP_DASHBOARD_PORT=3103 bun run .opencode/server/mcp-dashboard.ts
   
   # Or use npm scripts
   bun run dev        # API Gateway

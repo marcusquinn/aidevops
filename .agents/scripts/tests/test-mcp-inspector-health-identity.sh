@@ -2,8 +2,8 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 #
-# Regression coverage for GH#27967: MCP health checks must reject unrelated
-# HTTP responses and accept only explicit aidevops service identities.
+# Regression coverage for GH#27967 and GH#27972: MCP health checks must reject
+# unrelated responses, validate service identities, and honor configured ports.
 
 set -euo pipefail
 
@@ -57,11 +57,16 @@ assert_not_contains() {
 
 run_health_fixture() {
 	local fixture="$1"
+	local gateway_port="${2:-}"
+	local dashboard_port="${3:-}"
 
+	: >"${SANDBOX}/curl-args.log"
 	OUTPUT=$(PATH="${SANDBOX}/bin:${PATH}" \
 		MCP_HEALTH_FIXTURE="$fixture" \
 		FAKE_CURL_ARGS_LOG="${SANDBOX}/curl-args.log" \
 		API_GATEWAY_TOKEN="$TEST_TOKEN" \
+		API_GATEWAY_PORT="$gateway_port" \
+		MCP_DASHBOARD_PORT="$dashboard_port" \
 		bash "$HELPER" health 2>&1)
 	return 0
 }
@@ -79,6 +84,8 @@ cat >"${SANDBOX}/bin/curl" <<'EOF_CURL'
 set -euo pipefail
 
 url=""
+gateway_port="${API_GATEWAY_PORT:-3100}"
+dashboard_port="${MCP_DASHBOARD_PORT:-3101}"
 for argument in "$@"; do
 	if [[ "$argument" == http://* || "$argument" == https://* ]]; then
 		url="$argument"
@@ -87,29 +94,35 @@ done
 printf '%s\n' "$*" >>"$FAKE_CURL_ARGS_LOG"
 
 case "${MCP_HEALTH_FIXTURE}:${url}" in
-valid:*:3100/health)
+"valid:http://localhost:${gateway_port}/health")
 	printf '%s\n' '{"status":"healthy","service":"api-gateway"}'
 	;;
-valid:*:3101/health)
+"valid:http://localhost:${dashboard_port}/health")
 	printf '%s\n' '{"status":"healthy","service":"mcp-dashboard"}'
 	;;
-unrelated:*:3100/health)
+"unrelated:http://localhost:${gateway_port}/health")
 	printf '%s\n' '<html>redirect</html>'
 	;;
-unrelated:*:3101/health)
+"unrelated:http://localhost:${dashboard_port}/health")
 	printf '%s\n' '{"status":"healthy","service":"mcp-dashboard"}'
 	;;
-wrong-service:*:3100/health)
+"wrong-service:http://localhost:${gateway_port}/health")
 	printf '%s\n' '{"status":"healthy","service":"mcp-dashboard"}'
 	;;
-wrong-service:*:3101/health)
+"wrong-service:http://localhost:${dashboard_port}/health")
 	printf '%s\n' '{"status":"healthy","service":"mcp-dashboard"}'
 	;;
-unhealthy:*:3100/health)
+"unhealthy:http://localhost:${gateway_port}/health")
 	printf '%s\n' '{"status":"unhealthy","service":"api-gateway"}'
 	;;
-unhealthy:*:3101/health)
+"unhealthy:http://localhost:${dashboard_port}/health")
 	printf '%s\n' '{"status":"healthy","service":"mcp-dashboard"}'
+	;;
+gateway-test:*)
+	if [[ "$url" != "http://localhost:${gateway_port}/"* ]]; then
+		exit 22
+	fi
+	printf '%s\n' '{}'
 	;;
 *)
 	exit 22
@@ -137,11 +150,58 @@ assert_contains "wrong service identity is rejected" "localhost:3100 - unexpecte
 run_health_fixture unhealthy
 assert_contains "unhealthy status is rejected" "localhost:3100 - unexpected service health response"
 
+run_health_fixture valid 3200 3201
+assert_contains "configured gateway port is used locally" "localhost:3200 - healthy"
+assert_contains "configured dashboard port is used locally" "localhost:3201 - healthy"
+assert_contains "configured gateway URL honors its port" "api-gateway (streamable-http) - healthy"
+assert_contains "configured dashboard URL honors its port" "mcp-dashboard (streamable-http) - healthy"
+if grep -Eq 'localhost:3100|localhost:3101' "${SANDBOX}/curl-args.log"; then
+	fail "configured health checks fell back to default ports"
+	exit 1
+fi
+pass "configured health checks avoid default ports"
+
+: >"${SANDBOX}/curl-args.log"
+OUTPUT=$(PATH="${SANDBOX}/bin:${PATH}" \
+	MCP_HEALTH_FIXTURE="gateway-test" \
+	FAKE_CURL_ARGS_LOG="${SANDBOX}/curl-args.log" \
+	API_GATEWAY_TOKEN="$TEST_TOKEN" \
+	API_GATEWAY_PORT=3200 \
+	bash "$HELPER" test-gateway 2>&1)
+assert_contains "gateway test runs on configured port" "GET /health"
+if grep -Fq 'localhost:3100' "${SANDBOX}/curl-args.log"; then
+	fail "gateway test fell back to default port"
+	exit 1
+fi
+if ! grep -Fq 'localhost:3200' "${SANDBOX}/curl-args.log"; then
+	fail "gateway test did not call configured port"
+	exit 1
+fi
+pass "gateway test uses configured port"
 if grep -Fq "$TEST_TOKEN" "${SANDBOX}/curl-args.log"; then
 	fail "gateway token leaked into curl argv"
 	exit 1
 fi
 pass "gateway token stays out of curl argv"
+
+: >"${SANDBOX}/curl-args.log"
+invalid_rc=0
+OUTPUT=$(PATH="${SANDBOX}/bin:${PATH}" \
+	MCP_HEALTH_FIXTURE="valid" \
+	FAKE_CURL_ARGS_LOG="${SANDBOX}/curl-args.log" \
+	API_GATEWAY_TOKEN="$TEST_TOKEN" \
+	API_GATEWAY_PORT="not-a-port" \
+	bash "$HELPER" health 2>&1) || invalid_rc=$?
+if [[ "$invalid_rc" -eq 0 ]]; then
+	fail "invalid gateway port was accepted"
+	exit 1
+fi
+assert_contains "invalid gateway port reports validation error" "API_GATEWAY_PORT must be an integer between 1 and 65535"
+if [[ -s "${SANDBOX}/curl-args.log" ]]; then
+	fail "invalid gateway port reached curl"
+	exit 1
+fi
+pass "invalid gateway port fails before curl"
 
 printf 'All MCP inspector health identity tests passed.\n'
 exit 0
