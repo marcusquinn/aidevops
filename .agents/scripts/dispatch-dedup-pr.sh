@@ -381,18 +381,27 @@ _has_open_pr_check_superseded_issue_pr() {
 
 		pr_json=$(gh pr list --repo "$repo_slug" --state merged \
 			--search "#${related_issue}" --limit 20 \
-			--json number,title,body 2>/dev/null) || pr_json="[]"
+			--json number,title,body,author 2>/dev/null) || pr_json="[]"
 
 		local ref_pattern="(^|[^0-9])#${related_issue}([^0-9]|$)|GH#${related_issue}([^0-9]|$)"
 		local planning_pattern="planning-only|pure planning|brief-only|brief for|files the brief|no code changes"
+		local bump_title_pattern="^(chore(\\([^)]*\\))?:[[:space:]]+)?bump[[:space:]]+(.+[[:space:]]+from[[:space:]]+.+[[:space:]]+to[[:space:]]+.+|the[[:space:]]+.+[[:space:]]+group([[:space:]]+.*)?)$"
 		match_pr=$(printf '%s' "$pr_json" | jq -r \
 			--arg ref_pattern "$ref_pattern" \
-			--arg planning_pattern "$planning_pattern" '
+			--arg planning_pattern "$planning_pattern" \
+			--arg bump_title_pattern "$bump_title_pattern" '
 			[
-				.[] | select(
-					(((.title // "") | test($ref_pattern; "i")) or ((.body // "") | test($ref_pattern; "i"))) and
-					((((.title // "") + "\n" + (.body // "")) | test($planning_pattern; "i")) | not)
-				)
+				.[] |
+				(.title // "") as $title |
+				(.body // "") as $body |
+				(.author.login // "") as $author |
+				select(
+					(($title | test($ref_pattern; "i")) or ($body | test($ref_pattern; "i"))) and
+					((($title + "\n" + $body) | test($planning_pattern; "i")) | not) and
+					((
+						(($author == "dependabot[bot]") or ($author == "renovate[bot]")) and
+						($title | test($bump_title_pattern; "i"))
+					) | not))
 			] | .[0].number // empty' 2>/dev/null) || match_pr=""
 
 		if [[ -n "$match_pr" ]]; then
