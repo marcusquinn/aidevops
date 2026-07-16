@@ -56,7 +56,12 @@ unset _issue_sync_parse_dir
 # (GH#17804 issue-sync helper) from being parsed as real tasks.
 # Usage: strip_code_fences < file  OR  grep ... | strip_code_fences
 strip_code_fences() {
+	local pipeline_status=()
 	awk '/^[[:space:]]*```/ { in_fence = !in_fence; next } !in_fence { print }' | strip_html_comments
+	pipeline_status=("${PIPESTATUS[@]}")
+	if [[ "${pipeline_status[0]}" -ne 0 || "${pipeline_status[1]}" -ne 0 ]]; then
+		return 1
+	fi
 	return 0
 }
 
@@ -65,7 +70,7 @@ strip_code_fences() {
 # Useful for callers that need comment stripping without fence removal.
 # Usage: strip_html_comments < file  OR  grep ... | strip_html_comments
 strip_html_comments() {
-	awk '
+	if ! awk '
 		{
 			line = $0
 			out = ""
@@ -85,7 +90,9 @@ strip_html_comments() {
 			}
 			print out
 		}
-	'
+	'; then
+		return 1
+	fi
 	return 0
 }
 
@@ -112,11 +119,11 @@ _task_id_from_todo_line() {
 	return 0
 }
 
-# Emit the richest canonical TODO line per task ID. Keep this scoring aligned
-# with _dedupe_todo_task_lines so diagnostic snapshots and file mutation choose
-# the same row when stale duplicates have conflicting markers or refs.
+# Emit the richest canonical TODO line per task ID. File mutation consumes this
+# selection so diagnostics and repairs choose the same row when stale duplicates
+# have conflicting markers or refs.
 _unique_todo_task_lines() {
-	awk '
+	if ! awk '
 		match($0, /^[[:space:]]*-[[:space:]]+\[[ x>-]\][[:space:]]+/) {
 			remaining = substr($0, RLENGTH + 1)
 			split(remaining, fields, /[[:space:]]+/)
@@ -146,7 +153,9 @@ _unique_todo_task_lines() {
 				print best_line[ordered_tasks[i]]
 			}
 		}
-	'
+	'; then
+		return 1
+	fi
 	return 0
 }
 
@@ -160,6 +169,28 @@ _unique_todo_task_snapshot() {
 		return 1
 	fi
 	return 0
+}
+
+# Select the canonical row for one task from the shared unique snapshot. File
+# mutation calls this helper so it cannot drift from diagnostic snapshot
+# scoring when lifecycle markers or metadata weights change.
+_canonical_todo_task_line() {
+	local task_id="$1"
+	local todo_file="$2"
+	local snapshot=""
+	local line=""
+	local candidate_id=""
+	if ! snapshot=$(_unique_todo_task_snapshot "$todo_file"); then
+		return 1
+	fi
+	while IFS= read -r line; do
+		candidate_id=$(_task_id_from_todo_line "$line" 2>/dev/null || true)
+		if [[ "$candidate_id" == "$task_id" ]]; then
+			printf '%s\n' "$line"
+			return 0
+		fi
+	done <<<"$snapshot"
+	return 1
 }
 
 _task_id_from_issue_title() {
