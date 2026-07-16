@@ -142,13 +142,30 @@ branch_exists() {
 # Check if worktree exists for branch
 worktree_exists_for_branch() {
 	local branch="$1"
-	git worktree list --porcelain | grep -q "branch refs/heads/$branch$"
+	get_worktree_path_for_branch "$branch" >/dev/null || return 1
+	return 0
 }
 
 # Get worktree path for branch
 get_worktree_path_for_branch() {
 	local branch="$1"
-	git worktree list --porcelain | grep -B2 "branch refs/heads/$branch$" | grep "^worktree " | cut -d' ' -f2-
+	local porcelain line worktree_path=""
+	porcelain=$(git worktree list --porcelain) || return 1
+
+	while IFS= read -r line || [[ -n "$line" ]]; do
+		case "$line" in
+		"worktree "*) worktree_path="${line#worktree }" ;;
+		"branch refs/heads/"*)
+			if [[ "$line" == "branch refs/heads/$branch" && -n "$worktree_path" ]]; then
+				printf '%s\n' "$worktree_path"
+				return 0
+			fi
+			;;
+		"") worktree_path="" ;;
+		esac
+	done <<<"$porcelain"
+
+	return 1
 }
 
 # --- Remove Helpers ---
@@ -157,14 +174,15 @@ get_worktree_path_for_branch() {
 # Prints the resolved path on success. Returns 1 with an error message on failure.
 _remove_resolve_path() {
 	local target="$1"
+	local resolved_path
 
 	if [[ -d "$target" ]]; then
 		echo "$target"
 		return 0
 	fi
 
-	if worktree_exists_for_branch "$target"; then
-		get_worktree_path_for_branch "$target"
+	if resolved_path=$(get_worktree_path_for_branch "$target"); then
+		printf '%s\n' "$resolved_path"
 		return 0
 	fi
 
@@ -850,9 +868,8 @@ cmd_add() {
 	fi
 
 	# Check if worktree already exists for this branch
-	if worktree_exists_for_branch "$branch"; then
-		local existing_path
-		existing_path=$(get_worktree_path_for_branch "$branch")
+	local existing_path
+	if existing_path=$(get_worktree_path_for_branch "$branch"); then
 		echo -e "${YELLOW}Worktree already exists for branch '$branch'${NC}"
 		echo -e "Path: ${BOLD}$existing_path${NC}"
 		echo ""
