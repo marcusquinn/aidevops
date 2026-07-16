@@ -20,7 +20,7 @@ tools:
 
 ## Quick Reference
 
-- **Primary CLI**: `localdev-helper.sh [run|init|add|rm|branch|db|list|status|help]`
+- **Primary CLI**: `localdev-helper.sh [run|serve|init|add|rm|branch|db|list|status|help]`
 - **Legacy CLI**: `localhost-helper.sh [check-port|find-port|list-ports|kill-port|generate-cert|setup-dns|setup-proxy|create-app|start-mcp]`
 - **Port registry**: `~/.local-dev-proxy/ports.json` (range: 3100-3999)
 - **Certs**: `~/.local-ssl-certs/` | **Routes**: `~/.local-dev-proxy/conf.d/`
@@ -32,6 +32,8 @@ localdev-helper.sh init          # One-time: dnsmasq, resolver, Traefik conf.d (
 cd ~/Git/myapp
 localdev-helper.sh run npm run dev
 # → Auto-registers myapp (cert, route, /etc/hosts, port 3100) → https://myapp.local
+localdev-helper.sh serve --port 3100 --health-url http://127.0.0.1:3100/ -- npm run dev
+# → Reuses a healthy myapp listener or safely starts exactly one
 localdev-helper.sh add myapp    # Manual: cert + route + /etc/hosts + port
 ```
 
@@ -88,6 +90,22 @@ localdev-helper.sh run [--name <name>] [--port <port>] [--no-host] <command...>
 # Name inference: --name → package.json name → git repo basename → dir basename
 # In worktree → auto-creates branch subdomain (e.g. https://bugfix-fix.myapp.local)
 ```
+
+**serve** — Opt-in saved-profile wrapper: reuses a healthy project-owned listener or serializes a new launch. It never terminates a pre-existing process.
+
+```bash
+localdev-helper.sh serve --port 3100 \
+  --root "$PWD" \
+  --lock apps/web/.next/dev/lock \
+  --health-url http://127.0.0.1:3100/ \
+  -- pnpm dev:web
+```
+
+- Every listener PID must have a working directory equal to or below `--root`; foreign or uninspectable owners fail closed.
+- `--health-url` is optional, must use the selected port on localhost, and requires a successful HTTP response.
+- Concurrent invocations serialize on the port. Followers reuse the first healthy launch rather than starting duplicates.
+- `--lock` is optional and must resolve inside `--root`. It is removed only after the port is confirmed unused and the launch lock is held.
+- An owned but unhealthy listener is not restarted implicitly. Stop it explicitly, diagnose it, then retry.
 
 **add / rm**
 
@@ -152,8 +170,7 @@ localhost-helper.sh start-mcp | stop-mcp | test-mcp | mcp-query "<sql>"
 | **Laravel** | `php artisan serve --port=3100` |
 | **Bun** | `PORT=3100 bun run dev` |
 
-**Next.js stale lock (16+):** `rm -f .next/dev/lock && PORT=3100 npm run dev`
-Or: `"dev": "rm -f .next/dev/lock && next dev --port ${PORT:-3000}"`
+**Next.js stale lock (16+):** use `serve --lock .next/dev/lock`; never remove the lock before confirming that the configured port is unused.
 
 **Turborepo quirks:**
 
@@ -161,7 +178,7 @@ Or: `"dev": "rm -f .next/dev/lock && next dev --port ${PORT:-3000}"`
 2. `allowedDevOrigins: ["myapp.local"]` required in `next.config.ts` (Next.js 15+)
 3. `with-env` loads `.env.local` from monorepo root — place `URL`/`DATABASE_URL` there
 4. Skip `localdev db start` if project has own `docker-compose.yml` on port 5432
-5. Stale lock: `rm -f apps/web/.next/dev/lock && pnpm dev:web`
+5. Stale lock: `localdev-helper.sh serve --port 3100 --lock apps/web/.next/dev/lock -- pnpm dev:web`
 
 **Docker Compose projects:** Map to localdev port (`"3100:3000"`) and join `local-dev` network.
 

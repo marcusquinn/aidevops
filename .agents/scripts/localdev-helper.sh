@@ -14,7 +14,7 @@ set -euo pipefail
 # take precedence; localdev entries use a different marker (# localdev:).
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-source "$SCRIPT_DIR/shared-constants.sh" 2>/dev/null || true
+source "$SCRIPT_DIR/shared-constants.sh" || true
 
 # Error message constants (fallback if shared-constants.sh unavailable)
 if [[ -z "${ERROR_UNKNOWN_COMMAND:-}" ]]; then
@@ -71,6 +71,10 @@ source "${SCRIPT_DIR}/localdev-helper-branch.sh"
 # shellcheck source=./localdev-helper-run.sh
 # shellcheck disable=SC1091  # sub-library resolved at runtime via $SCRIPT_DIR
 source "${SCRIPT_DIR}/localdev-helper-run.sh"
+
+# shellcheck source=./localdev-helper-serve.sh
+# shellcheck disable=SC1091  # sub-library resolved at runtime via $SCRIPT_DIR
+source "${SCRIPT_DIR}/localdev-helper-serve.sh"
 
 # shellcheck source=./localdev-helper-db.sh
 # shellcheck disable=SC1091  # sub-library resolved at runtime via $SCRIPT_DIR
@@ -289,6 +293,7 @@ cmd_help() {
 	echo ""
 	echo "Commands:"
 	echo "  run <command...>   Zero-config: auto-register + inject PORT + exec command"
+	echo "  serve [opts] -- <command...>  Reuse or safely launch a saved-profile server"
 	echo "  init               One-time setup: dnsmasq, resolver, Traefik conf.d migration"
 	echo "  add <name> [port]  Register app: cert + Traefik route + port registry"
 	echo "  rm <name>          Remove app: reverses all add operations (incl. branches)"
@@ -306,6 +311,13 @@ cmd_help() {
 	echo "  3. Detect worktree/branch and create branch subdomain if needed"
 	echo "  4. Set PORT and HOST=0.0.0.0 environment variables"
 	echo "  5. Exec the command (signals pass through directly)"
+	echo ""
+	echo "Serve performs (opt-in for saved profiles):"
+	echo "  1. Reuse a healthy listener only when every owner runs under --root"
+	echo "  2. Reject foreign or unhealthy listeners without killing them"
+	echo "  3. Serialize launches by port and remove --lock only while the port is unused"
+	echo "  Usage: serve --port <port> [--root <dir>] [--lock <path>]"
+	echo "         [--health-url <local-url>] [--startup-timeout <seconds>] -- <command...>"
 	echo ""
 	echo "Add performs:"
 	echo "  1. Collision detection (LocalWP, registry, port)"
@@ -356,6 +368,10 @@ main() {
 	run)
 		shift
 		cmd_run "$@"
+		;;
+	serve)
+		shift
+		cmd_serve "$@"
 		;;
 	add)
 		shift
