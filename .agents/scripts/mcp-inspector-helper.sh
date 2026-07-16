@@ -53,7 +53,7 @@ gateway_curl() {
     curl --fail --silent --show-error \
         --config <(printf 'header = "Authorization: Bearer %s"\n' "$API_GATEWAY_TOKEN") \
         "${curl_args[@]}" "$url"
-    return 0
+    return $?
 }
 
 # Launch MCP Inspector Web UI
