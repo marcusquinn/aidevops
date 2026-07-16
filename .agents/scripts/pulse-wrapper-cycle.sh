@@ -479,33 +479,117 @@ _pulse_reconcile_stale_blocked_if_due() {
 }
 
 #######################################
+# _pulse_create_todo_sync_workspace
+#
+# Clone the current remote default branch into an isolated automation
+# workspace. The registered human checkout is used only to resolve origin.
+#######################################
+_pulse_create_todo_sync_workspace() {
+	local repo_path="$1"
+	local remote_url=""
+	local temp_base="${AIDEVOPS_TEMP_DIR:-${HOME}/.aidevops/.agent-workspace/tmp}"
+	local workspace=""
+	remote_url=$(git -C "$repo_path" remote get-url origin 2>/dev/null) || return 1
+	[[ -n "$remote_url" ]] || return 1
+	mkdir -p "$temp_base" || return 1
+	workspace=$(mktemp -d "${temp_base}/pulse-todo-sync.XXXXXX") || return 1
+	if ! git clone --quiet --no-tags "$remote_url" "${workspace}/repo" >/dev/null 2>&1; then
+		rm -rf "$workspace"
+		return 1
+	fi
+	printf '%s\n' "${workspace}/repo"
+	return 0
+}
+
+_pulse_run_issue_sync_stage() {
+	local script_dir="$1"
+	local stage="$2"
+	local repo_slug="$3"
+	local workspace="$4"
+	/bin/bash "${script_dir}/issue-sync-helper.sh" "$stage" \
+		--repo "$repo_slug" --project-root "$workspace" 2>&1
+	return $?
+}
+
+#######################################
 # sync_todo_refs_for_repo
 #
 # Pull issue→TODO refs, close completed entries, and reopen entries whose
-# linked issue reopened. If TODO.md changed, commit and push. All steps
-# are best-effort (errors swallowed) so a single repo failure can't abort
-# the cycle's other repos.
+# linked issue reopened. Reconciliation runs from a fresh remote clone and
+# publishes allowlisted planning paths through the fenced publisher. Failures
+# are logged and returned so the caller can continue other repositories while
+# preserving retryable evidence.
 #######################################
 sync_todo_refs_for_repo() {
 	local repo_slug="$1"
 	local repo_path="$2"
 	local script_dir="${SCRIPT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)}"
+	local workspace="" workspace_root="" base_sha="" branch_name="" changed_paths=""
+	local stage="" sync_failed=0 publication_rc=0
 
-	printf '[pulse-wrapper] Syncing TODO refs: repo=%s root=validated\n' "$repo_slug" >>"$WRAPPER_LOGFILE"
-	/bin/bash "${script_dir}/issue-sync-helper.sh" pull --repo "$repo_slug" --project-root "$repo_path" 2>&1 || true
-	/bin/bash "${script_dir}/issue-sync-helper.sh" close --repo "$repo_slug" --project-root "$repo_path" 2>&1 || true
-	/bin/bash "${script_dir}/issue-sync-helper.sh" reopen --repo "$repo_slug" --project-root "$repo_path" 2>&1 || true
+	workspace=$(_pulse_create_todo_sync_workspace "$repo_path") || {
+		printf '[pulse-wrapper] TODO ref sync status=retryable_failure stage=workspace repo=%s\n' \
+			"$repo_slug" >>"$WRAPPER_LOGFILE"
+		return 1
+	}
+	workspace_root="${workspace%/repo}"
+	base_sha=$(git -C "$workspace" rev-parse HEAD 2>/dev/null) || {
+		rm -rf "$workspace_root"
+		return 1
+	}
+	branch_name=$(git -C "$workspace" symbolic-ref --short HEAD 2>/dev/null) || {
+		rm -rf "$workspace_root"
+		return 1
+	}
+
+	printf '[pulse-wrapper] Syncing TODO refs: repo=%s root=automation base=%s\n' \
+		"$repo_slug" "${base_sha:0:12}" >>"$WRAPPER_LOGFILE"
+	for stage in pull close reopen; do
+		if ! _pulse_run_issue_sync_stage "$script_dir" "$stage" "$repo_slug" "$workspace"; then
+			printf '[pulse-wrapper] TODO ref sync status=retryable_failure stage=%s repo=%s\n' \
+				"$stage" "$repo_slug" >>"$WRAPPER_LOGFILE"
+			sync_failed=1
+		fi
+	done
 	# Materialize TODO dependency edges before the graph and dispatch stages.
 	# Failures remain retryable and the relationship helper moves affected
 	# available issues to blocked rather than exposing an unverified ordering.
-	local relationships_rc=0
-	/bin/bash "${script_dir}/issue-sync-helper.sh" relationships --repo "$repo_slug" --project-root "$repo_path" 2>&1 || relationships_rc=$?
-	git -C "$repo_path" diff --quiet TODO.md 2>/dev/null || {
-		git -C "$repo_path" add TODO.md &&
-			git -C "$repo_path" commit -m "chore: sync GitHub issue refs to TODO.md [skip ci]" &&
-			git -C "$repo_path" push
-	} 2>/dev/null || true
-	return "$relationships_rc"
+	if ! _pulse_run_issue_sync_stage "$script_dir" relationships "$repo_slug" "$workspace"; then
+		printf '[pulse-wrapper] TODO ref sync status=retryable_failure stage=relationships repo=%s\n' \
+			"$repo_slug" >>"$WRAPPER_LOGFILE"
+		sync_failed=1
+	fi
+	if [[ "$sync_failed" -ne 0 ]]; then
+		rm -rf "$workspace_root"
+		return 1
+	fi
+
+	if ! declare -F planning_publish >/dev/null 2>&1; then
+		[[ -f "${script_dir}/planning-publisher.sh" ]] || {
+			rm -rf "$workspace_root"
+			return 1
+		}
+		# shellcheck source=planning-publisher.sh
+		source "${script_dir}/planning-publisher.sh"
+	fi
+	changed_paths=$(_planning_publish_changed_paths "$workspace")
+	PLANNING_PUBLISH_RESULT=""
+	PLANNING_PUBLICATION_ID=""
+	PLANNING_PUBLISHED_COMMIT=""
+	TMPDIR="${AIDEVOPS_TEMP_DIR:-${HOME}/.aidevops/.agent-workspace/tmp}" \
+		AIDEVOPS_PLANNING_BASE_SHA="$base_sha" \
+		planning_publish "$workspace" "chore: sync GitHub issue refs to TODO.md [skip ci]" \
+			origin "$branch_name" "$changed_paths" || publication_rc=$?
+	case "$publication_rc" in
+	0) printf '[pulse-wrapper] TODO ref sync status=%s repo=%s commit=%s\n' \
+		"${PLANNING_PUBLISH_RESULT:-noop}" "$repo_slug" "${PLANNING_PUBLISHED_COMMIT:0:12}" >>"$WRAPPER_LOGFILE" ;;
+	2) printf '[pulse-wrapper] TODO ref sync status=retryable_conflict repo=%s base=%s\n' \
+		"$repo_slug" "${base_sha:0:12}" >>"$WRAPPER_LOGFILE" ;;
+	*) printf '[pulse-wrapper] TODO ref sync status=retryable_failure stage=publication repo=%s rc=%s\n' \
+		"$repo_slug" "$publication_rc" >>"$WRAPPER_LOGFILE" ;;
+	esac
+	rm -rf "$workspace_root"
+	return "$publication_rc"
 }
 
 #######################################
@@ -524,7 +608,6 @@ sync_todo_refs_all_repos() {
 		[[ -n "$repo_slug" && -n "$repo_path" ]] || continue
 		repo_path="${repo_path/#\~/$HOME}"
 		[[ -d "$repo_path" ]] || continue
-		[[ -f "${repo_path}/TODO.md" ]] || continue
 		_pulse_refresh_repo "$repo_path" || true
 		sync_todo_refs_for_repo "$repo_slug" "$repo_path" || sync_failed=1
 	done < <(jq -r '.initialized_repos[] | select(.pulse == true and (.local_only // false) == false and .slug != "" and .path != "") | [.slug, .path] | join("|")' "$repos_json" 2>/dev/null || true)

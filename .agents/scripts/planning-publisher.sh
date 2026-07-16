@@ -33,6 +33,13 @@ _planning_publish_log() {
 	return 0
 }
 
+_planning_publish_log_retryable_conflict() {
+	local publication_id="$1"
+	_planning_publish_log warning \
+		"AIDEVOPS_PLANNING_PUBLISH_STATUS=retryable_conflict publication_id=${publication_id}"
+	return 0
+}
+
 _planning_publish_path_allowed() {
 	local path="$1"
 	case "$path" in
@@ -244,7 +251,7 @@ planning_publish() {
 	local branch_name="${4:-}"
 	local paths="${5:-}"
 	local temp_dir="" snapshot_file="" index_file="" parent_sha="" tree_sha="" candidate_sha=""
-	local publication_id="" attempt=0 push_rc=0 latest_sha="" expected_sha="" parent_resolution=""
+	local publication_id="" attempt=0 push_rc=0 latest_sha="" expected_sha="" parent_resolution="" base_sha="${AIDEVOPS_PLANNING_BASE_SHA:-}"
 
 	[[ -n "$branch_name" ]] || branch_name=$(_planning_git -C "$repo_path" symbolic-ref --short HEAD 2>/dev/null) || return 1
 	[[ -n "$paths" ]] || paths=$(_planning_publish_changed_paths "$repo_path")
@@ -273,8 +280,14 @@ planning_publish() {
 		}
 		latest_sha="${parent_resolution%%|*}"
 		expected_sha="${parent_resolution#*|}"
+		if [[ -z "$parent_sha" && -n "$base_sha" && "$base_sha" != "$latest_sha" ]] && \
+			_planning_publish_parent_conflicts "$repo_path" "$base_sha" "$latest_sha" "$snapshot_file"; then
+			_planning_publish_log_retryable_conflict "$publication_id"
+			rm -rf "$temp_dir"
+			return 2
+		fi
 		if [[ -n "$parent_sha" ]] && _planning_publish_parent_conflicts "$repo_path" "$parent_sha" "$latest_sha" "$snapshot_file"; then
-			_planning_publish_log warning "AIDEVOPS_PLANNING_PUBLISH_STATUS=retryable_conflict publication_id=${publication_id}"
+			_planning_publish_log_retryable_conflict "$publication_id"
 			rm -rf "$temp_dir"
 			return 2
 		fi
@@ -328,7 +341,7 @@ planning_publish() {
 			return 0
 		fi
 	done
-	_planning_publish_log warning "AIDEVOPS_PLANNING_PUBLISH_STATUS=retryable_conflict publication_id=${publication_id}"
+	_planning_publish_log_retryable_conflict "$publication_id"
 	rm -rf "$temp_dir"
 	return 2
 }

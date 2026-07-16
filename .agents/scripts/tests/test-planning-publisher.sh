@@ -242,6 +242,41 @@ HOOK
 	return 0
 }
 
+test_stale_base_same_path_is_retryable() {
+	local name="stale pinned base rejects an upstream planning overwrite"
+	local root="" repo="" rival="" base_sha="" rc=0 remote_todo=""
+	root=$(mktemp -d) || return 0
+	setup_repo "$root" || {
+		fail "$name" setup
+		return 0
+	}
+	repo="${root}/work"
+	base_sha=$(git -C "$repo" rev-parse HEAD)
+	printf '%s\n' '- [ ] t009 local ref:GH#9' >>"${repo}/TODO.md"
+	rival="${root}/rival"
+	git clone -q "${root}/remote.git" "$rival"
+	printf '%s\n' '- [ ] t999 upstream ref:GH#999' >>"${rival}/TODO.md"
+	git -C "$rival" add TODO.md
+	GIT_AUTHOR_NAME=Rival GIT_AUTHOR_EMAIL=rival@example.invalid GIT_COMMITTER_NAME=Rival GIT_COMMITTER_EMAIL=rival@example.invalid \
+		git -C "$rival" -c commit.gpgsign=false commit -qm rival
+	git -C "$rival" push -q origin main
+	(
+		SCRIPT_DIR="$(dirname "$PUBLISHER")"
+		# shellcheck source=../planning-publisher.sh
+		source "$PUBLISHER"
+		AIDEVOPS_PLANNING_BASE_SHA="$base_sha" AIDEVOPS_PLANNING_VALIDATOR=/usr/bin/true \
+			planning_publish "$repo" "plan: stale base" origin main
+	) || rc=$?
+	remote_todo=$(git --git-dir="${root}/remote.git" show main:TODO.md)
+	if [[ "$rc" -eq 2 && "$remote_todo" == *"t999"* && "$remote_todo" != *"t009"* ]]; then
+		pass "$name"
+	else
+		fail "$name" "rc=$rc"
+	fi
+	rm -rf "$root"
+	return 0
+}
+
 test_absent_remote_branch_uses_safe_parent() {
 	local name="creates an absent remote branch from a safe parent without local state leakage"
 	local root="" repo="" branch="plan/new-branch" before="" after="" remote_sha="" replay_sha="" count=""
@@ -410,6 +445,7 @@ main() {
 	test_contention_replay_and_conflict
 	test_crash_replay_is_single_publication
 	test_same_path_contention_is_retryable
+	test_stale_base_same_path_is_retryable
 	test_absent_remote_branch_uses_safe_parent
 	test_absent_remote_branch_creation_contention
 	test_explicit_git_capability_preserves_guarded_checkout
