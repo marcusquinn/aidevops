@@ -136,10 +136,14 @@ capture_worktree_process_cwds() {
 			case "$lsof_line" in
 			n*)
 				cwd_target="${lsof_line#n}"
-				[[ -n "$cwd_target" ]] && printf '%s\n' "$cwd_target"
+				if [[ -n "$cwd_target" ]]; then
+					printf '%s\n' "$cwd_target"
+					captured_count=$((captured_count + 1))
+				fi
 				;;
 			esac
 		done <<<"$lsof_output"
+		[[ "$captured_count" -gt 0 ]] || return 1
 		return 0
 	fi
 
