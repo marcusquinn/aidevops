@@ -4633,3 +4633,5 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [ ] t18147 Block compaction auto-continue for completed child sessions #auto-dispatch #security ref:GH#27992
 
 - [ ] t18148 Terminate cancelled subagents and report bounded side-effect receipts #auto-dispatch #security ref:GH#27993
+
+- [ ] t18149 Require trusted authorization for account-level GitHub CLI mutations #auto-dispatch #security ref:GH#27994
