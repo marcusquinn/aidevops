@@ -7,6 +7,7 @@
 _PULSE_TEMP_WORKTREE_CLEANUP_LOADED=1
 
 _PTWC_REASON="stale-temp-fixture"
+_PTWC_GUARD_CLEAR="clear"
 _PTWC_LOCK_DIR=""
 _PTWC_LOCK_OWNER_PID=""
 
@@ -190,7 +191,7 @@ _ptwc_remove_candidate() {
 	[[ "$(git -C "$wt_path" rev-parse --verify HEAD 2>/dev/null)" == "$current_head" ]] || return 1
 	if declare -F _pc_worktree_audit_context >/dev/null 2>&1; then
 		audit_context=$(_pc_worktree_audit_context "" "" "0" "0" "$age_secs" \
-			"remote-ref" "clear" "clear" "clear" "remote-ref")
+			"remote-ref" "$_PTWC_GUARD_CLEAR" "$_PTWC_GUARD_CLEAR" "$_PTWC_GUARD_CLEAR" "remote-ref")
 	fi
 	# Use the linked candidate as Git context. The canonical Git guard permits
 	# linked-worktree mutation but correctly rejects `worktree remove` when -C
