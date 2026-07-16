@@ -25,8 +25,9 @@
 #   - Preserve intentional @ref pinning: if the repo's current caller pins a
 #     specific ref and the new template's ref would change it, keep the repo's
 #     choice unless --force-ref is set.
-#   - Skip repos with uncommitted changes. Skip repos that aren't on their
-#     default branch. Report both as warnings.
+#   - Never mutate registered canonical checkouts. Reuse a matching caller-owned
+#     linked worktree or create a fresh framework-owned linked worktree.
+#   - Skip linked worktrees with uncommitted changes.
 #
 # Exit codes:
 #   0  all targeted repos processed successfully (or no work needed)
@@ -144,6 +145,86 @@ _warn() {
 _info() {
 	local _msg="$1"
 	printf '[%s] %s\n' "$SCRIPT_NAME" "$_msg" >&2
+	return 0
+}
+
+_is_linked_worktree() {
+	local _path="$1"
+	local _git_dir _common_dir
+	_git_dir=$(git -C "$_path" rev-parse --path-format=absolute --git-dir 2>/dev/null) || return 1
+	_common_dir=$(git -C "$_path" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || return 1
+	[[ "$_git_dir" != "$_common_dir" ]]
+}
+
+_remote_default_ref() {
+	local _default_branch="$1"
+	printf 'origin/%s\n' "$_default_branch"
+	return 0
+}
+
+_worktree_for_branch() {
+	local _repo_path="$1"
+	local _branch="$2"
+	local _line _candidate=""
+	while IFS= read -r _line; do
+		case "$_line" in
+		worktree\ *) _candidate="${_line#worktree }" ;;
+		"branch refs/heads/${_branch}")
+			printf '%s\n' "$_candidate"
+			return 0
+			;;
+		esac
+	done < <(git -C "$_repo_path" worktree list --porcelain 2>/dev/null)
+	return 1
+}
+
+# _prepare_apply_worktree <slug> <classified-path> <branch>
+# Emits the safe linked worktree path used for mutation.
+_prepare_apply_worktree() {
+	local _slug="$1"
+	local _classified_path="$2"
+	local _branch="$3"
+	if _is_linked_worktree "$_classified_path"; then
+		if command -v is_worktree_owned_by_others >/dev/null 2>&1 && \
+			is_worktree_owned_by_others "$_classified_path"; then
+			return 1
+		fi
+		printf '%s\n' "$_classified_path"
+		return 0
+	fi
+	git -C "$_classified_path" rev-parse --is-inside-work-tree >/dev/null 2>&1 || return 1
+
+	local _default_branch
+	_default_branch=$(git -C "$_classified_path" symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null | sed 's|^origin/||')
+	[[ -z "$_default_branch" ]] && _default_branch="$_BRANCH_DEFAULT_NAME"
+	git -C "$_classified_path" fetch -q origin "$_default_branch" >/dev/null 2>&1 || return 1
+
+	local _existing
+	_existing=$(_worktree_for_branch "$_classified_path" "$_branch") || _existing=""
+	if [[ -n "$_existing" ]]; then
+		_is_linked_worktree "$_existing" || return 1
+		if command -v is_worktree_owned_by_others >/dev/null 2>&1 && \
+			is_worktree_owned_by_others "$_existing"; then
+			return 1
+		fi
+		printf '%s\n' "$_existing"
+		return 0
+	fi
+
+	local _base_dir="${AIDEVOPS_WORKTREE_BASE_DIR:-${HOME}/Git/_worktrees}"
+	local _safe_name
+	_safe_name=$(printf '%s-%s' "$_slug" "$_branch" | sed 's|[^A-Za-z0-9._-]|-|g')
+	local _worktree_path="${_base_dir}/${_safe_name}"
+	local _default_ref
+	_default_ref=$(_remote_default_ref "$_default_branch")
+	mkdir -p "$_base_dir" || return 1
+	[[ ! -e "$_worktree_path" ]] || return 1
+	git -C "$_classified_path" worktree add -q -B "$_branch" \
+		"$_worktree_path" "$_default_ref" >/dev/null 2>&1 || return 1
+	if command -v register_worktree >/dev/null 2>&1; then
+		register_worktree "$_worktree_path" "$_branch" --task workflow-sync || true
+	fi
+	printf '%s\n' "$_worktree_path"
 	return 0
 }
 
@@ -280,7 +361,8 @@ _mirror_supports_helper_provenance() {
 		'.initialized_repos[]? | select(.slug == $s) | .path // empty' \
 		"$REPOS_JSON" 2>/dev/null | head -n 1)
 	_reusable_path=".github/workflows/${_workflow_name}-reusable.yml"
-	[[ -n "$_path" && -d "$_path/.git" ]] || return 1
+	[[ -n "$_path" ]] || return 1
+	git -C "$_path" rev-parse --git-dir >/dev/null 2>&1 || return 1
 	_reusable_content=$(git -C "$_path" show "${_ref#@}:${_reusable_path}" 2>/dev/null) || return 1
 	if grep -qE '^      aidevops_repository:' <<<"$_reusable_content" && \
 		grep -qE '^      AIDEVOPS_READ_TOKEN:' <<<"$_reusable_content"; then
@@ -458,13 +540,15 @@ _list_actionable_repos() {
 	return 0
 }
 
-# _classify_after_refresh <slug> <workflow>
+# _classify_after_refresh <slug> <workflow> <worktree-path>
 # Reuses check-workflows as the single classifier after apply refreshes a repo.
 _classify_after_refresh() {
 	local _slug="$1"
 	local _workflow="$2"
+	local _path="$3"
 	local _json
-	_json=$("$CHECK_HELPER" --json --repo "$_slug" --workflow "$_workflow" 2>/dev/null || true)
+	_json=$(AIDEVOPS_WORKFLOW_REPO_ROOT="$_path" \
+		"$CHECK_HELPER" --json --repo "$_slug" --workflow "$_workflow" 2>/dev/null || true)
 	if [[ -z "$_json" ]]; then
 		return 1
 	fi
@@ -559,7 +643,7 @@ _sync_dryrun_emit() {
 }
 
 # _sync_preflight <slug> <path> <status> <default_branch_out>
-# Validates repo precondition and clean-tree/branch state.
+# Validates linked-worktree identity and clean state.
 # Returns 0 proceed; 1 fail; 2 skip. Sets _PREFLIGHT_DEFAULT_BRANCH on proceed.
 _sync_preflight() {
 	local _slug="$1"
@@ -570,29 +654,27 @@ _sync_preflight() {
 		printf '%s\t%s\t%s\trepo directory missing: %s\n' "$_slug" "$_status" "$_STATUS_FAILED" "$_path"
 		return 1
 	fi
-	if [[ ! -d "$_path/.git" ]]; then
+	if ! git -C "$_path" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
 		printf '%s\t%s\t%s\tnot a git repo: %s\n' "$_slug" "$_status" "$_STATUS_FAILED" "$_path"
+		return 1
+	fi
+	if ! _is_linked_worktree "$_path"; then
+		printf '%s\t%s\t%s\trefusing canonical checkout mutation: %s\n' \
+			"$_slug" "$_status" "$_STATUS_FAILED" "$_path"
 		return 1
 	fi
 	local _default_branch
 	_default_branch=$(git -C "$_path" symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null | sed 's|^origin/||')
 	[[ -z "$_default_branch" ]] && _default_branch="$_BRANCH_DEFAULT_NAME"
-	if ! git -C "$_path" diff-index --quiet HEAD -- 2>/dev/null; then
+	if [[ -n "$(git -C "$_path" status --porcelain 2>/dev/null)" ]]; then
 		printf '%s\t%s\t%s\tworking tree not clean; skipping\n' "$_slug" "$_status" "$_STATUS_SKIPPED"
-		return 2
-	fi
-	local _current_branch
-	_current_branch=$(git -C "$_path" symbolic-ref --short HEAD 2>/dev/null || echo "DETACHED")
-	if [[ "$_current_branch" != "$_default_branch" ]]; then
-		printf '%s\t%s\t%s\ton %s, expected %s; skipping\n' \
-			"$_slug" "$_status" "$_STATUS_SKIPPED" "$_current_branch" "$_default_branch"
 		return 2
 	fi
 	_PREFLIGHT_DEFAULT_BRANCH="$_default_branch"
 	return 0
 }
 
-# _sync_refresh_checkout <slug> <path> <status> <default_branch>
+# _sync_refresh_checkout <slug> <path> <status> <default_branch> <sync-branch>
 # Apply must classify and mutate the same refreshed snapshot. Fail closed when
 # refresh is unavailable rather than continuing with stale local evidence.
 _sync_refresh_checkout() {
@@ -600,8 +682,19 @@ _sync_refresh_checkout() {
 	local _path="$2"
 	local _status="$3"
 	local _default_branch="$4"
-	if ! git -C "$_path" pull --ff-only origin "$_default_branch" >/dev/null 2>&1; then
-		printf '%s\t%s\t%s\tpull --ff-only failed; refusing stale classification\n' \
+	local _branch_name="$5"
+	if ! git -C "$_path" fetch -q origin "$_default_branch" >/dev/null 2>&1; then
+		printf '%s\t%s\t%s\tfetch failed; refusing stale classification\n' \
+			"$_slug" "$_status" "$_STATUS_FAILED"
+		return 1
+	fi
+	local _current_branch
+	local _default_ref
+	_current_branch=$(git -C "$_path" symbolic-ref --short HEAD 2>/dev/null || printf 'DETACHED')
+	_default_ref=$(_remote_default_ref "$_default_branch")
+	if [[ "$_current_branch" != "$_branch_name" ]] && \
+		! git -C "$_path" checkout -q -B "$_branch_name" "$_default_ref"; then
+		printf '%s\t%s\t%s\tfailed to prepare sync branch\n' \
 			"$_slug" "$_status" "$_STATUS_FAILED"
 		return 1
 	fi
@@ -628,7 +721,12 @@ _sync_write_commit_push() {
 			"$_slug" "$_status" "$_STATUS_SKIPPED"
 		return 2
 	fi
-	if ! git -C "$_path" checkout -q -B "$_branch_name" "$_default_branch"; then
+	local _current_branch
+	local _default_ref
+	_current_branch=$(git -C "$_path" symbolic-ref --short HEAD 2>/dev/null || printf 'DETACHED')
+	_default_ref=$(_remote_default_ref "$_default_branch")
+	if [[ "$_current_branch" != "$_branch_name" ]] && \
+		! git -C "$_path" checkout -q -B "$_branch_name" "$_default_ref"; then
 		printf '%s\t%s\t%s\tbranch create/reset failed\n' "$_slug" "$_status" "$_STATUS_FAILED"
 		return 1
 	fi
@@ -741,7 +839,7 @@ _sync_one_repo() {
 	fi
 	local _default_branch="$_PREFLIGHT_DEFAULT_BRANCH"
 	local _refresh_output
-	if ! _refresh_output=$(_sync_refresh_checkout "$_slug" "$_path" "$_status" "$_default_branch"); then
+	if ! _refresh_output=$(_sync_refresh_checkout "$_slug" "$_path" "$_status" "$_default_branch" "$_branch_name"); then
 		printf '%s\n' "$_refresh_output"
 		return 1
 	fi
@@ -749,7 +847,7 @@ _sync_one_repo() {
 	local _workflow_name
 	_workflow_name=$(basename "$_workflow_relpath" .yml)
 	local _refreshed_status
-	if ! _refreshed_status=$(_classify_after_refresh "$_slug" "$_workflow_name"); then
+	if ! _refreshed_status=$(_classify_after_refresh "$_slug" "$_workflow_name" "$_path"); then
 		printf '%s\t%s\t%s\tpost-refresh classification failed\n' \
 			"$_slug" "$_status" "$_STATUS_FAILED"
 		return 1
@@ -884,6 +982,17 @@ _process_rows() {
 		# Never touch aidevops itself (defence in depth; Phase 1 also emits
 		# CURRENT/SELF-CALLER).
 		[[ "$_slug" == "marcusquinn/aidevops" ]] && continue
+		if [[ "$_OPT_APPLY" -eq 1 ]]; then
+			local _safe_path
+			if ! _safe_path=$(_prepare_apply_worktree "$_slug" "$_path" "$_OPT_BRANCH_NAME"); then
+				local _prepare_result="${_slug}"$'\t'"${_status}"$'\t'"${_STATUS_FAILED}"$'\t'"safe linked worktree preparation failed"
+				_any_failed=1
+				_print_result_row "$_OPT_JSON" "${_OPT_TARGET_REF:-@${_DEFAULT_WORKFLOW_REUSABLE_REF}}" \
+					"$_OPT_BRANCH_NAME" "$_prepare_result"
+				continue
+			fi
+			_path="$_safe_path"
+		fi
 
 		# Resolve the template for this workflow.
 		# _workflow_name is the short name (e.g. "issue-sync" or "review-bot-gate").

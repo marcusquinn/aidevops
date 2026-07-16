@@ -416,8 +416,11 @@ WF_HELPER_REF_13=$(git -C "$REPO_13" show "${SYNC_BRANCH_13}:.github/workflows/i
 	| grep -E "^[[:space:]]+aidevops_ref:" | head -n 1 || true)
 WF_HELPER_SECRET_13=$(git -C "$REPO_13" show "${SYNC_BRANCH_13}:.github/workflows/issue-sync.yml" 2>/dev/null \
 	| grep -E "^[[:space:]]+AIDEVOPS_READ_TOKEN:" | head -n 1 || true)
-git -C "$REPO_13" checkout -q "$SYNC_BRANCH_13" 2>/dev/null || true
-CHECK_CLASS_13=$(HOME="$TMPDIR_13" bash "$CHECK_HELPER" --json --repo "owner/repo-org-target" --workflow issue-sync 2>/dev/null \
+SYNC_WORKTREE_13=$(git -C "$REPO_13" worktree list --porcelain | awk \
+	-v branch="refs/heads/${SYNC_BRANCH_13}" \
+	'/^worktree / { path = substr($0, 10) } /^branch / { if (substr($0, 8) == branch) { print path; exit } }')
+CHECK_CLASS_13=$(HOME="$TMPDIR_13" AIDEVOPS_WORKFLOW_REPO_ROOT="$SYNC_WORKTREE_13" \
+	bash "$CHECK_HELPER" --json --repo "owner/repo-org-target" --workflow issue-sync 2>/dev/null \
 	| jq -r 'select(.slug == "owner/repo-org-target") | .classification' \
 	| head -n 1)
 if [[ "$WF_USES_13" == *"ORG/.github/.github/workflows/issue-sync-reusable.yml@${MIRROR_REF_13}"* ]]; then
@@ -568,6 +571,57 @@ _assert_contains "GH#27727 stale mirror reports compatibility blocker" "$OUT_16"
 	"configured mirror must be registered and updated at @main before caller sync"
 _assert_exit "GH#27727 stale mirror exits non-zero" 1 "$EXIT_16"
 rm -rf "$TMPDIR_16"
+
+# ─── Test 17: GH#27980 — caller-owned linked worktree protects canonical ────
+TMPDIR_17="$(mktemp -d)"
+_setup_fake_home "$TMPDIR_17"
+_setup_mock_gh "$TMPDIR_17"
+BARE_17="$TMPDIR_17/bare.git"
+REPO_17="$TMPDIR_17/repos/canonical"
+LINKED_17="$TMPDIR_17/worktrees/caller-owned"
+git init --bare -q "$BARE_17"
+mkdir -p "$REPO_17/.github/workflows" "$(dirname "$LINKED_17")"
+git -C "$REPO_17" init -q
+git -C "$REPO_17" config user.email test@example.com
+git -C "$REPO_17" config user.name Test
+git -C "$REPO_17" config commit.gpgsign false
+git -C "$REPO_17" checkout -q -b main
+printf '%s\n' "$LEGACY_CONTENT" >"$REPO_17/.github/workflows/issue-sync.yml"
+git -C "$REPO_17" add -A
+git -C "$REPO_17" commit -q -m "legacy workflow"
+git -C "$REPO_17" remote add origin "$BARE_17"
+git -C "$REPO_17" push -q -u origin main
+git --git-dir="$BARE_17" symbolic-ref HEAD refs/heads/main
+git -C "$REPO_17" remote set-head origin main
+git -C "$REPO_17" worktree add -q -b caller-owned "$LINKED_17" main
+printf 'preserve canonical dirt\n' >"$REPO_17/unrelated.txt"
+CANONICAL_STATUS_17=$(git -C "$REPO_17" status --porcelain)
+_write_repos_json "$TMPDIR_17" \
+	"{\"initialized_repos\":[{\"path\":\"$REPO_17\",\"slug\":\"owner/repo-caller-owned\"}]}"
+SYNC_BRANCH_17="chore/test-caller-owned"
+OUT_17=$(cd "$LINKED_17" && \
+	HOME="$TMPDIR_17" PATH="$TMPDIR_17/bin:$PATH" GH_CALL_LOG="$TMPDIR_17/gh-calls.log" \
+	AIDEVOPS_WORKTREE_BASE_DIR="$TMPDIR_17/framework-worktrees" \
+	bash "$HELPER" --apply --repo owner/repo-caller-owned --workflow issue-sync \
+		--branch "$SYNC_BRANCH_17" 2>&1)
+EXIT_17=$?
+APPLIED_17=$(git --git-dir="$BARE_17" show \
+	"refs/heads/${SYNC_BRANCH_17}:.github/workflows/issue-sync.yml" 2>/dev/null || true)
+CANONICAL_STATUS_AFTER_17=$(git -C "$REPO_17" status --porcelain)
+if [[ "$OUT_17" == *"APPLIED"* ]] &&
+	[[ "$APPLIED_17" == "$CANONICAL_CALLER_CONTENT" ]] &&
+	[[ "$(git -C "$REPO_17" symbolic-ref --short HEAD)" == "main" ]] &&
+	[[ "$CANONICAL_STATUS_AFTER_17" == "$CANONICAL_STATUS_17" ]] &&
+	[[ -f "$REPO_17/unrelated.txt" ]]; then
+	printf '%sPASS%s GH#27980 linked-worktree apply preserves dirty canonical checkout\n' "$GREEN" "$NC"
+	((_PASS++))
+else
+	printf '%sFAIL%s GH#27980 linked-worktree apply preserves dirty canonical checkout\n' "$RED" "$NC"
+	printf '       output: %s\n' "$OUT_17"
+	((_FAIL++))
+fi
+_assert_exit "GH#27980 linked-worktree apply exits 0" 0 "$EXIT_17"
+rm -rf "$TMPDIR_17"
 
 # ─── Summary ────────────────────────────────────────────────────────────────
 printf '\n'

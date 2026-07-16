@@ -478,6 +478,36 @@ _classify_workflow() {
 
 # ─── Repo iteration ─────────────────────────────────────────────────────────
 
+# _resolve_caller_worktree_root <slug>
+# Prefer an explicitly supplied or current caller-owned linked worktree when it
+# belongs to the registered repository. The common-dir comparison binds the
+# candidate to repos.json without relying on remote URL string parsing.
+_resolve_caller_worktree_root() {
+	local _slug="$1"
+	local _candidate="${AIDEVOPS_WORKFLOW_REPO_ROOT:-}"
+	if [[ -z "$_candidate" ]]; then
+		_candidate=$(git -C "$PWD" rev-parse --show-toplevel 2>/dev/null) || return 1
+	fi
+	_candidate=$(git -C "$_candidate" rev-parse --show-toplevel 2>/dev/null) || return 1
+
+	local _registered
+	_registered=$(jq -r --arg s "$_slug" \
+		'.initialized_repos[]? | select(.slug == $s) | .path // empty' \
+		"$REPOS_JSON" 2>/dev/null | head -n 1)
+	[[ -n "$_registered" ]] || return 1
+	_registered="${_registered/#\~/$HOME}"
+
+	local _candidate_git_dir _candidate_common_dir _registered_common_dir
+	_candidate_git_dir=$(git -C "$_candidate" rev-parse --path-format=absolute --git-dir 2>/dev/null) || return 1
+	_candidate_common_dir=$(git -C "$_candidate" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || return 1
+	_registered_common_dir=$(git -C "$_registered" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || return 1
+	[[ "$_candidate_git_dir" != "$_candidate_common_dir" ]] || return 1
+	[[ "$_candidate_common_dir" == "$_registered_common_dir" ]] || return 1
+
+	printf '%s\n' "$_candidate"
+	return 0
+}
+
 # _iterate_repos — emit one "slug|path|local_only" line per registered repo
 _iterate_repos() {
 	if [[ ! -f "$REPOS_JSON" ]]; then
@@ -504,13 +534,14 @@ _iterate_repos() {
 	return 0
 }
 
-# _repo_freshness <repo-path>
+# _repo_freshness <repo-path> [evidence-source]
 # Emits: source\tbranch\tupstream\tahead\tbehind\tstate
 # Uses only existing refs: check-workflows remains a read-only, no-network audit.
 _repo_freshness() {
 	local _path="$1"
+	local _source="${2:-local}"
 	if ! git -C "$_path" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-		printf 'local\tunknown\tunknown\tunknown\tunknown\tunknown\n'
+		printf '%s\tunknown\tunknown\tunknown\tunknown\tunknown\n' "$_source"
 		return 0
 	fi
 
@@ -519,13 +550,13 @@ _repo_freshness() {
 	local _upstream
 	_upstream=$(git -C "$_path" rev-parse --abbrev-ref --symbolic-full-name '@{upstream}' 2>/dev/null || true)
 	if [[ -z "$_upstream" ]]; then
-		printf 'local\t%s\tunknown\tunknown\tunknown\tuntracked\n' "$_branch"
+		printf '%s\t%s\tunknown\tunknown\tunknown\tuntracked\n' "$_source" "$_branch"
 		return 0
 	fi
 
 	local _ahead _behind
 	if ! read -r _ahead _behind < <(git -C "$_path" rev-list --left-right --count "HEAD...${_upstream}" 2>/dev/null); then
-		printf 'local\t%s\t%s\tunknown\tunknown\tunknown\n' "$_branch" "$_upstream"
+		printf '%s\t%s\t%s\tunknown\tunknown\tunknown\n' "$_source" "$_branch" "$_upstream"
 		return 0
 	fi
 
@@ -537,25 +568,26 @@ _repo_freshness() {
 	elif ((_ahead > 0)); then
 		_state="ahead"
 	fi
-	printf 'local\t%s\t%s\t%s\t%s\t%s\n' \
-		"$_branch" "$_upstream" "$_ahead" "$_behind" "$_state"
+	printf '%s\t%s\t%s\t%s\t%s\t%s\n' \
+		"$_source" "$_branch" "$_upstream" "$_ahead" "$_behind" "$_state"
 	return 0
 }
 
-# _freshness_note <branch> <upstream> <ahead> <behind> <state>
+# _freshness_note <branch> <upstream> <ahead> <behind> <state> [evidence-source]
 _freshness_note() {
 	local _branch="$1"
 	local _upstream="$2"
 	local _ahead="$3"
 	local _behind="$4"
 	local _state="$5"
+	local _source="${6:-local}"
 	case "$_state" in
 	behind)
-		printf 'local evidence; %s is %s commit(s) behind %s' "$_branch" "$_behind" "$_upstream"
+		printf '%s evidence; %s is %s commit(s) behind %s' "$_source" "$_branch" "$_behind" "$_upstream"
 		;;
 	diverged)
-		printf 'local evidence; %s is %s ahead and %s behind %s' \
-			"$_branch" "$_ahead" "$_behind" "$_upstream"
+		printf '%s evidence; %s is %s ahead and %s behind %s' \
+			"$_source" "$_branch" "$_ahead" "$_behind" "$_upstream"
 		;;
 	esac
 	return 0
@@ -799,7 +831,7 @@ _resolve_wf_canonical() {
 }
 
 # _classify_row_with_freshness <slug> <path> <local-only> <canonical>
-#   <reusable-file> <workflow-file> <canon-norm>
+#   <reusable-file> <workflow-file> <canon-norm> [evidence-source]
 # Emits form-feed-delimited classification, note, and evidence fields.
 _classify_row_with_freshness() {
 	local _slug="$1"
@@ -809,15 +841,17 @@ _classify_row_with_freshness() {
 	local _reusable_file="$5"
 	local _workflow_file="$6"
 	local _canon_norm="${7:-}"
+	local _evidence_source="${8:-local}"
 	local _class _note
 	IFS=$'\t' read -r _class _note < <(_classify_row \
 		"$_slug" "$_path" "$_local_only_flag" "$_canonical" \
 		"$_reusable_file" "$_workflow_file" "$_canon_norm")
 	local _source _branch _upstream _ahead _behind _freshness
 	IFS=$'\t' read -r _source _branch _upstream _ahead _behind _freshness \
-		< <(_repo_freshness "$_path")
+		< <(_repo_freshness "$_path" "$_evidence_source")
 	local _freshness_note_text
-	_freshness_note_text=$(_freshness_note "$_branch" "$_upstream" "$_ahead" "$_behind" "$_freshness")
+	_freshness_note_text=$(_freshness_note \
+		"$_branch" "$_upstream" "$_ahead" "$_behind" "$_freshness" "$_source")
 	if [[ -n "$_freshness_note_text" ]]; then
 		[[ -n "$_note" ]] && _note="${_note}; "
 		_note="${_note}${_freshness_note_text}"
@@ -833,6 +867,22 @@ _render_rows_header() {
 		printf '\n  %-50s %-16s %s\n' "REPO [WORKFLOW]" "STATUS" "NOTE"
 		printf '  %s\n' "$(printf '%.0s─' {1..88})"
 	fi
+	return 0
+}
+
+_resolve_row_checkout() {
+	local _path="$1"
+	local _local_only_flag="$2"
+	local _slug="$3"
+	local _filter_slug="$4"
+	local _source="local"
+	_path="${_path/#\~/$HOME}"
+	if [[ -n "${_CALLER_WORKTREE_ROOT:-}" && "$_slug" == "$_filter_slug" && \
+		"$_local_only_flag" != "true" ]]; then
+		_path="$_CALLER_WORKTREE_ROOT"
+		_source="caller-worktree"
+	fi
+	printf '%s\034%s\n' "$_path" "$_source"
 	return 0
 }
 
@@ -880,12 +930,14 @@ _process_rows() {
 			[[ -n "$_filter_slug" && "$_slug" != "$_filter_slug" ]] && continue
 
 			_total=$((_total + 1))
-			_path="${_path/#\~/$HOME}"
+			local _row_evidence_source
+			IFS=$'\034' read -r _path _row_evidence_source < <(_resolve_row_checkout "$_path" "$_local_only_flag" "$_slug" "$_filter_slug")
 
 			local _class _note _evidence_source _branch _upstream _ahead _behind _freshness
 			IFS=$'\034' read -r _class _note _evidence_source _branch _upstream _ahead _behind _freshness \
 				< <(_classify_row_with_freshness "$_slug" "$_path" "$_local_only_flag" \
-					"$_canonical" "$_reusable_file" "$_workflow_file" "$_canon_norm")
+					"$_canonical" "$_reusable_file" "$_workflow_file" "$_canon_norm" \
+					"$_row_evidence_source")
 
 			local _base_class="${_class% + LEGACY_ARTIFACTS}"
 			if [[ "$_class" == *" + LEGACY_ARTIFACTS" ]]; then
@@ -951,6 +1003,10 @@ main() {
 
 	local _mode _verbose _filter_slug _filter_workflow
 	IFS=$'\t' read -r _mode _verbose _filter_slug _filter_workflow < <(_parse_args "$@")
+	_CALLER_WORKTREE_ROOT=""
+	if [[ -n "$_filter_slug" ]]; then
+		_CALLER_WORKTREE_ROOT=$(_resolve_caller_worktree_root "$_filter_slug") || _CALLER_WORKTREE_ROOT=""
+	fi
 
 	if _process_rows "$_mode" "$_verbose" "$_filter_slug" "$_filter_workflow"; then
 		exit 0

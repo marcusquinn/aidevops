@@ -21,6 +21,7 @@
 #  17. Legacy-artifact manifest without a trailing newline processes its final row
 #  18. Unset HOME exits cleanly instead of raising an unbound-variable error
 #  19. Stale local checkout reports local evidence and upstream divergence
+#  20. Repository-scoped checks prefer a matching caller-owned linked worktree
 #
 # Strategy: Each scenario writes a temporary repos.json + temporary repo trees
 # under a per-test TMPDIR, points HOME at it, and invokes the helper. No
@@ -521,6 +522,46 @@ else
 		"json: $json_row; human: $human_row"
 fi
 rm -rf "$TMPDIR_19"
+
+# Test 20: A repository-scoped check launched from a matching linked worktree
+# must classify that worktree rather than the registered canonical checkout.
+TMPDIR_20="$(mktemp -d)"
+_setup_fake_home "$TMPDIR_20"
+BARE_20="$TMPDIR_20/remote.git"
+REPO_20="$TMPDIR_20/repos/canonical"
+LINKED_20="$TMPDIR_20/worktrees/caller-owned"
+git init --bare -q "$BARE_20"
+mkdir -p "$REPO_20/.github/workflows" "$(dirname "$LINKED_20")"
+git -C "$REPO_20" init -q
+git -C "$REPO_20" config user.email test@example.com
+git -C "$REPO_20" config user.name Test
+git -C "$REPO_20" config commit.gpgsign false
+git -C "$REPO_20" checkout -q -b main
+cp "$CANONICAL_TEMPLATE" "$REPO_20/.github/workflows/issue-sync.yml"
+git -C "$REPO_20" add -A
+git -C "$REPO_20" commit -q -m "canonical workflow"
+git -C "$REPO_20" remote add origin "$BARE_20"
+git -C "$REPO_20" push -q -u origin main
+git --git-dir="$BARE_20" symbolic-ref HEAD refs/heads/main
+git -C "$REPO_20" worktree add -q -b caller-owned "$LINKED_20" main
+printf '\n# caller-owned worktree drift\n' >>"$LINKED_20/.github/workflows/issue-sync.yml"
+git -C "$LINKED_20" add -A
+git -C "$LINKED_20" commit -q -m "linked worktree drift"
+printf 'unrelated canonical dirt\n' >"$REPO_20/unrelated.txt"
+_write_repos_json "$TMPDIR_20" \
+	"$(jq -n --arg path "$REPO_20" '{initialized_repos: [{slug: "x/caller-owned", path: $path, local_only: false}]}')"
+json_row=$(cd "$LINKED_20" && HOME="$TMPDIR_20" bash "$HELPER" \
+	--json --repo x/caller-owned --workflow issue-sync 2>/dev/null || true)
+LINKED_ROOT_20=$(git -C "$LINKED_20" rev-parse --show-toplevel)
+if [[ "$(printf '%s\n' "$json_row" | jq -r '.classification')" == "DRIFTED/CALLER" ]] &&
+	[[ "$(printf '%s\n' "$json_row" | jq -r '.path')" == "$LINKED_ROOT_20" ]] &&
+	[[ "$(printf '%s\n' "$json_row" | jq -r '.evidence.source')" == "caller-worktree" ]] &&
+	[[ -f "$REPO_20/unrelated.txt" ]]; then
+	_pass "repository-scoped check → caller-owned linked-worktree evidence"
+else
+	_fail "repository-scoped check → caller-owned linked-worktree evidence" "json: $json_row"
+fi
+rm -rf "$TMPDIR_20"
 
 # ─── Summary ────────────────────────────────────────────────────────────────
 
