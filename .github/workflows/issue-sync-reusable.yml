@@ -1602,9 +1602,9 @@ jobs:
             exit 0
           fi
 
-          # Check for GitHub closing keywords or ref:GH# pattern
-          if echo "$PR_BODY" | grep -qiE '(closes|fixes|resolves)[[:space:]]+#[0-9]+'; then
-            echo "PR body contains issue closing keyword"
+          # Check for GitHub closing keywords, non-closing references, or ref:GH# pattern
+          if echo "$PR_BODY" | grep -qiE '(closes|fixes|resolves|for|ref)[[:space:]]+#[0-9]+'; then
+            echo "PR body contains a recognized issue reference"
             exit 0
           fi
 
@@ -1620,7 +1620,12 @@ jobs:
             # GH#NNNN: prefix directly references the issue number
             ISSUE_NUM="$GH_REF"
           elif [[ -n "$TASK_ID" ]]; then
-            ISSUE_NUM=$(gh issue list --repo "$REPO" --state open --search "${TASK_ID}:" --json number --jq '.[0].number' 2>/dev/null || true)
+            # Search narrows the result set; the exact title prefix and unique-match
+            # filter prevent fuzzy or ambiguous search results from guiding the PR.
+            ISSUE_NUM=$(gh issue list --repo "$REPO" --state open \
+              --search "\"${TASK_ID}:\" in:title" --limit 100 --json number,title \
+              --jq "[.[] | select(.title | startswith(\"${TASK_ID}:\"))] | if length == 1 then .[0].number else empty end" \
+              2>/dev/null || true)
           else
             ISSUE_NUM=""
           fi
