@@ -134,7 +134,7 @@ class SubagentCancellationReceipt {
   appendReceipt(output, receipt) {
     const bounded = boundedReceipt(receipt);
     output.output = `${String(output.output || "").trim()}\n\n[AIDevOps cancellation receipt]\n${bounded.json}`.trim();
-    output.metadata = { ...(output.metadata || {}), aidevopsCancellationReceipt: bounded.receipt };
+    output.metadata = { ...output.metadata, aidevopsCancellationReceipt: bounded.receipt };
     this.ledger.safeLog(
       bounded.receipt.complete ? "INFO" : "WARN",
       `[subagent-cancellation] child ${bounded.receipt.child} termination=${bounded.receipt.termination} receipt=${bounded.receipt.complete ? "complete" : "incomplete"}`,
