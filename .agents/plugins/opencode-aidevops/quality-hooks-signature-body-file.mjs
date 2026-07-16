@@ -8,7 +8,7 @@
 import { existsSync, readFileSync, appendFileSync, realpathSync, statSync } from "fs";
 import { execFileSync } from "child_process";
 import { dirname, isAbsolute, resolve, sep } from "path";
-import { tmpdir } from "os";
+import { homedir, tmpdir } from "os";
 
 import { FAIL_REASON } from "./quality-hooks-signature-failures.mjs";
 
@@ -76,11 +76,18 @@ function sameGitRepository(pathA, pathB) {
   return Boolean(commonA && commonB && commonA === commonB);
 }
 
+function aidevopsTempDir() {
+  return (
+    process.env.AIDEVOPS_TEMP_DIR ||
+    resolve(homedir(), ".aidevops", ".agent-workspace", "tmp")
+  );
+}
+
 function resolveAllowedBodyFilePath(filePath, commandWorkdir = process.cwd()) {
   const realCommandWorkdir = safeRealpath(commandWorkdir) || process.cwd();
   const candidatePath = isAbsolute(filePath) ? filePath : resolve(realCommandWorkdir, filePath);
   const realFilePath = realpathSync(candidatePath);
-  const allowedRoots = [realCommandWorkdir, process.cwd(), tmpdir()]
+  const allowedRoots = [realCommandWorkdir, process.cwd(), tmpdir(), aidevopsTempDir()]
     .filter((root) => existsSync(root))
     .map((root) => realpathSync(root));
   if (allowedRoots.some((root) => isPathWithin(realFilePath, root))) {
