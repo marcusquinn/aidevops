@@ -10,6 +10,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.32.134] - 2026-07-16
+
+### Fixed
+
+- isolate pulse TODO reconciliation (#27977) (#27988)
+- isolate workflow sync mutations (#27980) (#27987)
+
 ## [3.32.133] - 2026-07-16
 
 ### Changed
