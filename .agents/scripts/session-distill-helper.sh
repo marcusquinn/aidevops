@@ -98,7 +98,8 @@ capture_git_provenance() {
 	local pr_number=""
 	local worktree=""
 	local branch=""
-	local commit=""
+	local head_commit=""
+	local merge_commit=""
 	while [[ $# -gt 0 ]]; do
 		local option="$1"
 		case "$option" in
@@ -106,7 +107,7 @@ capture_git_provenance() {
 		--pr) pr_number="${2:-}"; shift 2 ;;
 		--worktree) worktree="${2:-}"; shift 2 ;;
 		--branch) branch="${2:-}"; shift 2 ;;
-		--commit) commit="${2:-}"; shift 2 ;;
+		--commit) head_commit="${2:-}"; shift 2 ;;
 		*) log_error "Unknown provenance option: $option"; return 1 ;;
 		esac
 	done
@@ -115,21 +116,24 @@ capture_git_provenance() {
 		log_error "--pr must be numeric"
 		return 1
 	fi
-	if [[ -n "$pr_number" && -n "$repository" ]] && command -v gh >/dev/null 2>&1; then
-		local pr_json=""
-		pr_json=$(gh pr view "$pr_number" --repo "$repository" --json mergeCommit,headRefOid,headRefName 2>/dev/null || true)
-		if [[ -n "$pr_json" ]]; then
-			commit=$(printf '%s' "$pr_json" | jq -r '.mergeCommit.oid // .headRefOid // empty')
-			[[ -n "$branch" ]] || branch=$(printf '%s' "$pr_json" | jq -r '.headRefName // empty')
-		fi
-	fi
-
-	if [[ -z "$commit" && -n "$worktree" && -d "$worktree" ]]; then
-		commit=$(git -C "$worktree" rev-parse HEAD 2>/dev/null || true)
+	if [[ -z "$head_commit" && -n "$worktree" && -d "$worktree" ]]; then
+		head_commit=$(git -C "$worktree" rev-parse HEAD 2>/dev/null || true)
 	fi
 	if [[ -z "$branch" && -n "$worktree" && -d "$worktree" ]]; then
 		branch=$(git -C "$worktree" branch --show-current 2>/dev/null || true)
 	fi
+	if [[ -n "$pr_number" && -n "$repository" ]] && command -v gh >/dev/null 2>&1; then
+		local pr_json=""
+		pr_json=$(gh pr view "$pr_number" --repo "$repository" --json mergeCommit,headRefOid,headRefName 2>/dev/null || true)
+		if printf '%s' "$pr_json" | jq -e 'type == "object"' >/dev/null 2>&1; then
+			merge_commit=$(printf '%s' "$pr_json" | jq -r '.mergeCommit.oid // empty')
+			[[ -n "$head_commit" ]] || head_commit=$(printf '%s' "$pr_json" | jq -r '.headRefOid // empty')
+			[[ -n "$branch" ]] || branch=$(printf '%s' "$pr_json" | jq -r '.headRefName // empty')
+		fi
+	fi
+
+	local commit="$head_commit"
+	[[ "$commit" =~ ^[0-9a-fA-F]{40}$ ]] || commit="$merge_commit"
 	if [[ ! "$commit" =~ ^[0-9a-fA-F]{40}$ ]]; then
 		log_warn "Authoritative commit attribution is unavailable; provenance was not recorded"
 		return 1
@@ -141,14 +145,15 @@ capture_git_provenance() {
 	local existing='[]'
 	[[ -f "$PROVENANCE_FILE" ]] && existing=$(jq -c '.items // []' "$PROVENANCE_FILE" 2>/dev/null || printf '[]')
 	local key=""
-	key=$(printf '%s\0%s\0%s\0%s' "$SESSION_ID" "$repository" "$pr_number" "$commit" | shasum -a 256 | cut -d' ' -f1)
+	key=$(printf '%s\0%s\0%s\0%s\0%s' "$SESSION_ID" "$repository" "$pr_number" "$head_commit" "$merge_commit" | shasum -a 256 | cut -d' ' -f1)
 	if printf '%s' "$existing" | jq -e --arg key "$key" 'any(.[]; .idempotency_key == $key)' >/dev/null; then
 		return 0
 	fi
 	local item=""
 	item=$(jq -n --arg key "$key" --arg repo "$repository" --arg pr "$pr_number" --arg commit "$commit" \
+		--arg head_commit "$head_commit" --arg merge_commit "$merge_commit" \
 		--arg branch "$branch" --arg worktree "$safe_worktree" --arg captured_at "$(date -u +"%Y-%m-%dT%H:%M:%SZ")" \
-		'{idempotency_key:$key,repository:$repo,pr_number:$pr,commit:$commit,branch:$branch,worktree:$worktree,captured_at:$captured_at}')
+		'{idempotency_key:$key,repository:$repo,pr_number:$pr,commit:$commit,head_commit:$head_commit,merge_commit:$merge_commit,branch:$branch,worktree:$worktree,captured_at:$captured_at}')
 	local ledger=""
 	ledger=$(printf '%s' "$existing" | jq -c --arg session "$SESSION_ID" --argjson item "$item" \
 		'{schema_version:1,session_boundary:$session,items:(. + [$item])}')
@@ -157,12 +162,51 @@ capture_git_provenance() {
 	return 0
 }
 
-session_provenance_items() {
-	if [[ -f "$PROVENANCE_FILE" ]]; then
-		jq -c '[.items[]? | select(.commit | test("^[0-9a-fA-F]{40}$"))]' "$PROVENANCE_FILE" 2>/dev/null || printf '[]\n'
-	else
-		printf '[]\n'
+current_repository_slug() {
+	local remote_url=""
+	remote_url=$(git remote get-url origin 2>/dev/null || true)
+	remote_url="${remote_url#*github.com:}"
+	remote_url="${remote_url#*github.com/}"
+	remote_url="${remote_url%.git}"
+	printf '%s\n' "$remote_url"
+	return 0
+}
+
+resolve_provenance_item() {
+	local item="$1"
+	local current_repository="$2"
+	local item_repository=""
+	item_repository=$(printf '%s' "$item" | jq -r '.repository // empty')
+	if [[ -n "$current_repository" && -n "$item_repository" && "$item_repository" != "$current_repository" ]]; then
+		return 1
 	fi
+	local candidate=""
+	while IFS= read -r candidate; do
+		[[ "$candidate" =~ ^[0-9a-fA-F]{40}$ ]] || continue
+		if git cat-file -e "${candidate}^{commit}" 2>/dev/null; then
+			printf '%s' "$item" | jq -c --arg commit "$candidate" '.commit = $commit'
+			return 0
+		fi
+	done < <(printf '%s' "$item" | jq -r '.head_commit // .commit // empty, .merge_commit // empty')
+	return 1
+}
+
+session_provenance_items() {
+	[[ -f "$PROVENANCE_FILE" ]] || {
+		printf '[]\n'
+		return 0
+	}
+	local current_repository=""
+	current_repository=$(current_repository_slug)
+	local item=""
+	local resolved_items=""
+	while IFS= read -r item; do
+		resolve_provenance_item "$item" "$current_repository" || true
+	done < <(jq -c '.items[]?' "$PROVENANCE_FILE" 2>/dev/null) |
+		jq -sc '.' >"${PROVENANCE_FILE}.resolved.$$"
+	resolved_items=$(<"${PROVENANCE_FILE}.resolved.$$")
+	rm -f "${PROVENANCE_FILE}.resolved.$$"
+	printf '%s\n' "$resolved_items"
 	return 0
 }
 
