@@ -4,9 +4,13 @@
 
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit 1
+FAST_FORWARD_CMD="fast-forward-current"
 
 usage() {
-	printf 'Usage: canonical-recovery-helper.sh restore-default --repo PATH --issue N --confirm RESTORE_CANONICAL_DEFAULT\n'
+	printf '%s\n' \
+		'Usage:' \
+		'  canonical-recovery-helper.sh restore-default --repo PATH --issue N --confirm RESTORE_CANONICAL_DEFAULT' \
+		"  canonical-recovery-helper.sh ${FAST_FORWARD_CMD} --repo PATH --branch BRANCH --issue N --confirm FAST_FORWARD_CANONICAL_BRANCH"
 	return 0
 }
 
@@ -15,18 +19,58 @@ shift || true
 repo_path=""
 issue_number=""
 confirmation=""
+expected_branch=""
 while [[ $# -gt 0 ]]; do
 	case "$1" in
-	--repo) repo_path="${2:-}"; shift 2 ;;
-	--issue) issue_number="${2:-}"; shift 2 ;;
-	--confirm) confirmation="${2:-}"; shift 2 ;;
-	*) usage; exit 2 ;;
+	--repo)
+		repo_path="${2:-}"
+		shift 2
+		;;
+	--issue)
+		issue_number="${2:-}"
+		shift 2
+		;;
+	--confirm)
+		confirmation="${2:-}"
+		shift 2
+		;;
+	--branch)
+		expected_branch="${2:-}"
+		shift 2
+		;;
+	*)
+		usage
+		exit 2
+		;;
 	esac
 done
 
-[[ "$cmd" == "restore-default" ]] || { usage; exit 2; }
-[[ -d "$repo_path" && "$issue_number" =~ ^[0-9]+$ ]] || { usage; exit 2; }
-[[ "$confirmation" == "RESTORE_CANONICAL_DEFAULT" ]] || {
+case "$cmd" in
+restore-default)
+	expected_confirmation="RESTORE_CANONICAL_DEFAULT"
+	[[ -z "$expected_branch" ]] || {
+		usage
+		exit 2
+	}
+	;;
+"$FAST_FORWARD_CMD")
+	expected_confirmation="FAST_FORWARD_CANONICAL_BRANCH"
+	[[ -n "$expected_branch" ]] || {
+		usage
+		exit 2
+	}
+	;;
+*)
+	usage
+	exit 2
+	;;
+esac
+[[ -d "$repo_path" && "$issue_number" =~ ^[0-9]+$ ]] || {
+	usage
+	exit 2
+}
+repo_path=$(cd "$repo_path" && pwd -P) || exit 2
+[[ "$confirmation" == "$expected_confirmation" ]] || {
 	printf 'BLOCKED: exact recovery confirmation is required\n' >&2
 	exit 1
 }
@@ -43,20 +87,37 @@ common_dir=$("$REAL_GIT" -C "$repo_path" rev-parse --path-format=absolute --git-
 	exit 1
 }
 
-default_branch=$("$REAL_GIT" -C "$repo_path" symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null || true)
-default_branch="${default_branch#origin/}"
-[[ -n "$default_branch" ]] || {
-	printf 'BLOCKED: origin default branch cannot be resolved\n' >&2
-	exit 1
-}
+if [[ "$cmd" == "restore-default" ]]; then
+	target_branch=$("$REAL_GIT" -C "$repo_path" symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null || true)
+	target_branch="${target_branch#origin/}"
+	[[ -n "$target_branch" ]] || {
+		printf 'BLOCKED: origin default branch cannot be resolved\n' >&2
+		exit 1
+	}
+else
+	target_branch="$expected_branch"
+	"$REAL_GIT" check-ref-format --branch "$target_branch" >/dev/null 2>&1 || {
+		printf 'BLOCKED: expected canonical branch is invalid\n' >&2
+		exit 1
+	}
+	current_branch=$("$REAL_GIT" -C "$repo_path" symbolic-ref --quiet --short HEAD 2>/dev/null || true)
+	[[ -n "$current_branch" ]] || {
+		printf 'BLOCKED: canonical worktree is detached\n' >&2
+		exit 1
+	}
+	[[ "$current_branch" == "$target_branch" ]] || {
+		printf 'BLOCKED: canonical worktree is on %s, expected %s\n' "$current_branch" "$target_branch" >&2
+		exit 1
+	}
+fi
 
 occupied_path=""
 while IFS= read -r line; do
 	case "$line" in
 	worktree\ *) occupied_path="${line#worktree }" ;;
-	branch\ refs/heads/"$default_branch")
+	branch\ refs/heads/"$target_branch")
 		if [[ "$occupied_path" != "$repo_path" ]]; then
-			printf 'BLOCKED: default branch is active in another worktree: %s\n' "$occupied_path" >&2
+			printf 'BLOCKED: target branch is active in another worktree: %s\n' "$occupied_path" >&2
 			exit 1
 		fi
 		;;
@@ -70,25 +131,29 @@ mkdir "$lock_dir" 2>/dev/null || {
 }
 trap 'rmdir "$lock_dir" 2>/dev/null || true' EXIT
 
-local_ref="refs/heads/${default_branch}"
-remote_ref="refs/remotes/origin/${default_branch}"
+local_ref="refs/heads/${target_branch}"
+remote_ref="refs/remotes/origin/${target_branch}"
 "$REAL_GIT" -C "$repo_path" fetch --no-tags origin \
-	"+refs/heads/${default_branch}:${remote_ref}" >/dev/null 2>&1 || {
-	printf 'BLOCKED: origin default branch tip could not be fetched\n' >&2
+	"+refs/heads/${target_branch}:${remote_ref}" >/dev/null 2>&1 || {
+	printf 'BLOCKED: origin/%s tip could not be fetched\n' "$target_branch" >&2
 	exit 1
 }
 target_sha=$("$REAL_GIT" -C "$repo_path" rev-parse --verify "${remote_ref}^{commit}" 2>/dev/null || true)
 [[ -n "$target_sha" ]] || {
-	printf 'BLOCKED: origin default branch tip cannot be resolved\n' >&2
+	printf 'BLOCKED: origin/%s tip cannot be resolved\n' "$target_branch" >&2
 	exit 1
 }
 local_sha=$("$REAL_GIT" -C "$repo_path" rev-parse --verify "${local_ref}^{commit}" 2>/dev/null || true)
 [[ -n "$local_sha" ]] || {
-	printf 'BLOCKED: local default branch tip cannot be resolved\n' >&2
+	printf 'BLOCKED: local %s tip cannot be resolved\n' "$target_branch" >&2
 	exit 1
 }
 preservation_ref=""
-if ! "$REAL_GIT" -C "$repo_path" merge-base --is-ancestor "$local_ref" "$target_sha"; then
+if [[ "$cmd" == "$FAST_FORWARD_CMD" ]] && ! "$REAL_GIT" -C "$repo_path" merge-base --is-ancestor "$local_ref" "$target_sha"; then
+	printf 'BLOCKED: local %s has diverged from origin/%s\n' "$target_branch" "$target_branch" >&2
+	exit 1
+fi
+if [[ "$cmd" == "restore-default" ]] && ! "$REAL_GIT" -C "$repo_path" merge-base --is-ancestor "$local_ref" "$target_sha"; then
 	preservation_ref="refs/aidevops/canonical-recovery/issue-${issue_number}/${local_sha}"
 	"$REAL_GIT" check-ref-format "$preservation_ref" >/dev/null || {
 		printf 'BLOCKED: canonical preservation ref is invalid\n' >&2
@@ -106,22 +171,122 @@ AUDIT_LOG_FILE="$recovery_audit_file" "$audit_helper" verify --quiet || {
 	printf 'BLOCKED: audit chain verification failed\n' >&2
 	exit 1
 }
-AUDIT_LOG_FILE="$recovery_audit_file" AUDIT_QUIET=true "$audit_helper" log operation.verify "Canonical default-branch recovery authorized" \
+audit_message="Canonical default-branch recovery authorized"
+[[ "$cmd" == "$FAST_FORWARD_CMD" ]] && audit_message="Canonical current-branch fast-forward authorized"
+AUDIT_LOG_FILE="$recovery_audit_file" AUDIT_QUIET=true "$audit_helper" log operation.verify "$audit_message" \
 	--detail "issue=${issue_number}" --detail "repo=${repo_path}" \
-	--detail "target=${default_branch}" --detail "target_sha=${target_sha}" \
+	--detail "operation=${cmd}" --detail "target=${target_branch}" --detail "target_sha=${target_sha}" \
 	--detail "local_sha=${local_sha}" --detail "preservation_ref=${preservation_ref:-none}" >/dev/null || {
 	printf 'BLOCKED: recovery audit record could not be written\n' >&2
 	exit 1
 }
 
 [[ "$("$REAL_GIT" -C "$repo_path" rev-parse --verify "${remote_ref}^{commit}")" == "$target_sha" ]] || {
-	printf 'BLOCKED: origin default branch tip changed during recovery\n' >&2
+	printf 'BLOCKED: origin/%s tip changed during recovery\n' "$target_branch" >&2
 	exit 1
 }
 [[ "$("$REAL_GIT" -C "$repo_path" rev-parse --verify "${local_ref}^{commit}")" == "$local_sha" ]] || {
-	printf 'BLOCKED: local default branch tip changed during recovery\n' >&2
+	printf 'BLOCKED: local %s tip changed during recovery\n' "$target_branch" >&2
 	exit 1
 }
+if [[ "$cmd" == "$FAST_FORWARD_CMD" ]]; then
+	fast_forward_reflog="aidevops canonical fast-forward"
+	[[ "$("$REAL_GIT" -C "$repo_path" symbolic-ref --quiet --short HEAD 2>/dev/null || true)" == "$target_branch" ]] || {
+		printf 'BLOCKED: canonical branch changed during fast-forward\n' >&2
+		exit 1
+	}
+	[[ -z "$("$REAL_GIT" -C "$repo_path" status --porcelain)" ]] || {
+		printf 'BLOCKED: canonical worktree changed during fast-forward\n' >&2
+		exit 1
+	}
+	"$REAL_GIT" -C "$repo_path" read-tree --dry-run -u -m "$local_sha" "$target_sha" || {
+		printf 'BLOCKED: canonical worktree cannot be updated without overwriting local changes\n' >&2
+		exit 1
+	}
+	if [[ -n "${AIDEVOPS_CANONICAL_BEFORE_REF_UPDATE_HOOK:-}" ]]; then
+		"$AIDEVOPS_CANONICAL_BEFORE_REF_UPDATE_HOOK" "$repo_path" "$target_branch" "$local_sha" "$target_sha" || {
+			printf 'BLOCKED: canonical pre-update hook failed\n' >&2
+			exit 1
+		}
+	fi
+	if ! printf '%s\n' \
+		'start' \
+		"verify ${remote_ref} ${target_sha}" \
+		"update ${local_ref} ${target_sha} ${local_sha}" \
+		'prepare' \
+		'commit' | "$REAL_GIT" -C "$repo_path" update-ref \
+		-m "${fast_forward_reflog} for issue ${issue_number}" --stdin >/dev/null; then
+		printf 'BLOCKED: canonical local or origin ref changed during fast-forward\n' >&2
+		exit 1
+	fi
+	if [[ "$("$REAL_GIT" -C "$repo_path" symbolic-ref --quiet --short HEAD 2>/dev/null || true)" != "$target_branch" ]] ||
+		[[ "$("$REAL_GIT" -C "$repo_path" rev-parse --verify "${remote_ref}^{commit}" 2>/dev/null || true)" != "$target_sha" ]]; then
+		if ! "$REAL_GIT" -C "$repo_path" update-ref \
+			-m "${fast_forward_reflog} rollback for issue ${issue_number}" \
+			"$local_ref" "$local_sha" "$target_sha"; then
+			printf 'CRITICAL: canonical branch changed after compare-and-swap and the local ref rollback failed\n' >&2
+			exit 1
+		fi
+		printf 'BLOCKED: canonical branch or origin ref changed during fast-forward; local ref rolled back\n' >&2
+		exit 1
+	fi
+	if [[ -n "${AIDEVOPS_CANONICAL_BEFORE_WORKTREE_UPDATE_HOOK:-}" ]]; then
+		if ! "$AIDEVOPS_CANONICAL_BEFORE_WORKTREE_UPDATE_HOOK" "$repo_path" "$target_branch" "$local_sha" "$target_sha"; then
+			if ! "$REAL_GIT" -C "$repo_path" update-ref \
+				-m "${fast_forward_reflog} rollback for issue ${issue_number}" \
+				"$local_ref" "$local_sha" "$target_sha"; then
+				printf 'CRITICAL: canonical pre-worktree-update hook failed and the local ref rollback also failed\n' >&2
+				exit 1
+			fi
+			printf 'BLOCKED: canonical pre-worktree-update hook failed\n' >&2
+			exit 1
+		fi
+	fi
+	if ! "$REAL_GIT" -C "$repo_path" read-tree -u -m "$local_sha" "$target_sha"; then
+		if ! "$REAL_GIT" -C "$repo_path" update-ref \
+			-m "${fast_forward_reflog} rollback for issue ${issue_number}" \
+			"$local_ref" "$local_sha" "$target_sha"; then
+			printf 'CRITICAL: canonical worktree update failed and the local ref rollback also failed\n' >&2
+			exit 1
+		fi
+		printf 'BLOCKED: canonical worktree update failed; local ref rolled back\n' >&2
+		exit 1
+	fi
+	post_update_branch=$("$REAL_GIT" -C "$repo_path" symbolic-ref --quiet --short HEAD 2>/dev/null || true)
+	post_update_remote_sha=$("$REAL_GIT" -C "$repo_path" rev-parse --verify "${remote_ref}^{commit}" 2>/dev/null || true)
+	if [[ "$post_update_branch" != "$target_branch" || "$post_update_remote_sha" != "$target_sha" ]]; then
+		if [[ "$post_update_branch" == "$target_branch" ]]; then
+			restore_worktree_sha="$local_sha"
+		else
+			restore_worktree_sha=$("$REAL_GIT" -C "$repo_path" rev-parse --verify "HEAD^{commit}" 2>/dev/null || true)
+		fi
+		if ! "$REAL_GIT" -C "$repo_path" update-ref \
+			-m "${fast_forward_reflog} rollback for issue ${issue_number}" \
+			"$local_ref" "$local_sha" "$target_sha"; then
+			printf 'CRITICAL: canonical state changed after the worktree update and the local ref rollback failed\n' >&2
+			exit 1
+		fi
+		[[ -n "$restore_worktree_sha" ]] || restore_worktree_sha="$local_sha"
+		if ! "$REAL_GIT" -C "$repo_path" read-tree --dry-run -u -m "$target_sha" "$restore_worktree_sha" ||
+			! "$REAL_GIT" -C "$repo_path" read-tree -u -m "$target_sha" "$restore_worktree_sha"; then
+			printf 'CRITICAL: canonical ref was rolled back but the concurrent branch worktree could not be restored\n' >&2
+			exit 1
+		fi
+		if [[ "$("$REAL_GIT" -C "$repo_path" rev-parse --verify "HEAD^{commit}" 2>/dev/null || true)" != "$restore_worktree_sha" ]] ||
+			[[ -n "$("$REAL_GIT" -C "$repo_path" status --porcelain)" ]]; then
+			printf 'CRITICAL: canonical ref was rolled back but the concurrent branch remains inconsistent\n' >&2
+			exit 1
+		fi
+		printf 'BLOCKED: canonical branch or origin ref changed during worktree update; ref and worktree restored\n' >&2
+		exit 1
+	fi
+	[[ "$("$REAL_GIT" -C "$repo_path" rev-parse HEAD)" == "$target_sha" ]] || exit 1
+	[[ "$("$REAL_GIT" -C "$repo_path" rev-parse --verify "${local_ref}^{commit}")" == "$target_sha" ]] || exit 1
+	[[ "$("$REAL_GIT" -C "$repo_path" rev-parse --verify "${remote_ref}^{commit}")" == "$target_sha" ]] || exit 1
+	[[ -z "$("$REAL_GIT" -C "$repo_path" status --porcelain)" ]] || exit 1
+	printf 'Fast-forwarded canonical %s to origin/%s\n' "$target_branch" "$target_branch"
+	exit 0
+fi
 if [[ -n "$preservation_ref" ]]; then
 	existing_preservation_sha=$("$REAL_GIT" -C "$repo_path" rev-parse --verify "${preservation_ref}^{commit}" 2>/dev/null || true)
 	if [[ -n "$existing_preservation_sha" && "$existing_preservation_sha" != "$local_sha" ]]; then
@@ -137,12 +302,12 @@ if [[ -n "$preservation_ref" ]]; then
 	}
 	"$REAL_GIT" -C "$repo_path" update-ref "$local_ref" "$target_sha" "$local_sha"
 fi
-"$REAL_GIT" -C "$repo_path" switch "$default_branch"
-[[ "$("$REAL_GIT" -C "$repo_path" branch --show-current)" == "$default_branch" ]] || exit 1
+"$REAL_GIT" -C "$repo_path" switch "$target_branch"
+[[ "$("$REAL_GIT" -C "$repo_path" branch --show-current)" == "$target_branch" ]] || exit 1
 "$REAL_GIT" -C "$repo_path" merge --ff-only "$target_sha"
 [[ "$("$REAL_GIT" -C "$repo_path" rev-parse HEAD)" == "$target_sha" ]] || exit 1
 [[ "$("$REAL_GIT" -C "$repo_path" rev-parse --verify "${remote_ref}^{commit}")" == "$target_sha" ]] || exit 1
 if [[ -n "$preservation_ref" ]]; then
 	printf 'Preserved divergent canonical tip %s at %s\n' "$local_sha" "$preservation_ref"
 fi
-printf 'Restored canonical repository to %s\n' "$default_branch"
+printf 'Restored canonical repository to %s\n' "$target_branch"

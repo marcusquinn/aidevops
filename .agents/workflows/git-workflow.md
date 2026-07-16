@@ -41,6 +41,16 @@ git log --oneline HEAD..origin/$(git branch --show-current) 2>/dev/null
 
 Inside an existing linked worktree, refresh and rebase before editing. From the canonical checkout, let `worktree-helper.sh add` refresh `origin/<default>` while creating the linked worktree. Preserve unrelated uncommitted work; never stash/reset/clean another session's changes.
 
+**Canonical fast-forward after a merge (explicit user request only):** direct `git pull`, `fetch`, and `merge` remain blocked in canonical checkouts. When the user asks to update a local canonical checkout—including a project-designated non-default branch—use the audited helper instead:
+
+```bash
+${AIDEVOPS_DIR:-$HOME/.aidevops}/agents/scripts/canonical-recovery-helper.sh fast-forward-current \
+  --repo /path/to/canonical-checkout --branch develop --issue 123 \
+  --confirm FAST_FORWARD_CANONICAL_BRANCH
+```
+
+Use the branch currently checked out and the issue linked to the merged PR. The helper refuses linked worktrees, dirty or detached checkouts, branch mismatches, divergence, concurrent recovery, stale local/remote refs, and audit failures. It never switches branches, compare-and-swaps the named local ref against its verified old commit, and verifies the exact `origin/<branch>` tip after updating the worktree. Use `restore-default` only to recover a canonical checkout that is on the wrong branch; routine synchronization must use `fast-forward-current`.
+
 **Worktrees** (DEFAULT for all feature work):
 
 Main repo (`~/Git/{repo}/` or grouped `~/Git/{ecosystem}/{repo}/`) ALWAYS stays on `main`. Create linked worktrees under `${AIDEVOPS_WORKTREE_BASE_DIR:-~/Git/_worktrees}` using flat `<repo>-<branch-slug>` names; do not create durable implementation worktrees in runtime temp paths such as macOS `/var/folders/.../T/opencode/`.
@@ -143,7 +153,7 @@ git remote prune origin
 
 ## Override Handling
 
-Canonical branch/ref mutation has no conversational override. A user request to work directly there is redirected to a linked worktree because switching canonical state can corrupt parallel sessions. Only the audited canonical recovery helper may restore the default branch after cross-session checks.
+Canonical editing and branch switching have no conversational override. Redirect implementation to a linked worktree because changing canonical branch state can corrupt parallel sessions. An explicit request to synchronize a clean canonical checkout authorizes only the audited `fast-forward-current` helper path described above; it never permits direct Git mutation or divergence recovery. Use the separate audited `restore-default` path when the canonical checkout is on the wrong branch.
 
 ## Database Schema Changes
 
