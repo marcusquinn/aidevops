@@ -31,6 +31,12 @@
 [[ -n "${_AIDEVOPS_INIT_LIB_LOADED:-}" ]] && return 0
 _AIDEVOPS_INIT_LIB_LOADED=1
 
+_init_lib_dir="${BASH_SOURCE[0]%/*}"
+[[ "$_init_lib_dir" == "${BASH_SOURCE[0]}" ]] && _init_lib_dir="."
+# shellcheck source=aidevops-project-config-lib.sh
+source "${_init_lib_dir}/aidevops-project-config-lib.sh"
+unset _init_lib_dir
+
 _AGENT_SOURCE_TEMPLATE_VERSION="1"
 
 _init_load_repo_verify_lib() {
@@ -958,6 +964,26 @@ _init_run_workflow() {
 	return 0
 }
 
+_init_prepare_project_config() {
+	local config_file="$1"
+	local aidevops_version="$2"
+	if _project_config_is_tracked "$project_root"; then
+		config_migration_deferred=true
+		if ! _project_config_migrate_linked_worktree "$project_root"; then
+			_project_config_write_migration_plan "$project_root" || print_warning "Could not write tracked config repair plan"
+		fi
+		print_info "Preserved tracked .aidevops.json byte-for-byte during migration"
+		return 0
+	fi
+	_init_write_project_config "$config_file" "$aidevops_version" "$init_scope" "$has_interface" "$is_agent_source" \
+		"$enable_planning" "$enable_git_workflow" "$enable_code_quality" "$enable_time_tracking" \
+		"$enable_database" "$enable_beads" "$enable_sops" "$enable_security" || {
+		print_error "Failed to write .aidevops.json"
+		return 1
+	}
+	return 0
+}
+
 _init_config_and_agents() {
 
 	# Create .aidevops.json config
@@ -966,12 +992,8 @@ _init_config_and_agents() {
 	aidevops_version=$(get_version)
 
 	print_info "Creating or refreshing .aidevops.json..."
-	_init_write_project_config "$config_file" "$aidevops_version" "$init_scope" "$has_interface" "$is_agent_source" \
-		"$enable_planning" "$enable_git_workflow" "$enable_code_quality" "$enable_time_tracking" \
-		"$enable_database" "$enable_beads" "$enable_sops" "$enable_security" || {
-		print_error "Failed to write .aidevops.json"
-		return 1
-	}
+	local config_migration_deferred=false
+	_init_prepare_project_config "$config_file" "$aidevops_version" || return 1
 	# Note: plugins array is always present but empty by default.
 	# Users add plugins via: aidevops plugin add <repo-url> [--namespace <name>]
 	# Schema per plugin entry:
@@ -983,7 +1005,11 @@ _init_config_and_agents() {
 	#   "enabled": true
 	# }
 	# Plugins deploy to ~/.aidevops/agents/<namespace>/ (namespaced, no collisions)
-	print_success "Created .aidevops.json"
+	if [[ "$config_migration_deferred" == "true" ]]; then
+		print_success "Preserved .aidevops.json pending index migration"
+	else
+		print_success "Created .aidevops.json"
+	fi
 	_init_configure_repo_verify "$project_root"
 
 	# Derive repo name for scaffolding
@@ -1417,14 +1443,9 @@ GITATTRSEOF
 		fi
 
 		# Add .aidevops.json to gitignore (local config, not committed).
-		# If .aidevops.json is already tracked by git (committed by older framework
-		# versions), untrack it first — adding a tracked file to .gitignore is a
-		# no-op and the file keeps showing in git diff on every re-init (#2570 bug 3).
+		# Tracked legacy configs are migrated earlier only in linked worktrees.
+		# Canonical checkouts receive a worker-ready repair plan and remain untouched.
 		if ! grep -q "^\.aidevops\.json$" "$gitignore" 2>/dev/null; then
-			if git -C "$project_root" ls-files --error-unmatch .aidevops.json &>/dev/null; then
-				git -C "$project_root" rm --cached .aidevops.json &>/dev/null || true
-				print_info "Untracked .aidevops.json from git (was committed by older version)"
-			fi
 			# Ensure trailing newline before appending
 			ensure_trailing_newline "$gitignore"
 			echo ".aidevops.json" >>"$gitignore"
@@ -1540,7 +1561,7 @@ _init_optional_scaffolding() {
 _init_security_and_registration() {
 
 	# Run security posture assessment if enabled (t1412.11)
-	if [[ "$enable_security" == "true" ]]; then
+	if [[ "$enable_security" == "true" && "${config_migration_deferred:-false}" != "true" ]]; then
 		local security_posture_script="$AGENTS_DIR/scripts/security-posture-helper.sh"
 		if [[ -f "$security_posture_script" ]]; then
 			print_info "Running security posture assessment..."
@@ -1552,6 +1573,8 @@ _init_security_and_registration() {
 		else
 			print_info "Security posture check skipped (security-posture-helper.sh not available)"
 		fi
+	elif [[ "$enable_security" == "true" ]]; then
+		print_info "Security posture storage deferred until .aidevops.json migration is committed"
 	fi
 
 	# Build features string for registration

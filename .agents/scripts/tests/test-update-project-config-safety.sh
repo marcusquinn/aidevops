@@ -49,7 +49,9 @@ make_repo() {
 	/usr/bin/git -C "$repo" config commit.gpgsign false
 	printf '%s\n' '{"version":"0.0.1","features":{"planning":true}}' >"$repo/.aidevops.json"
 	if [[ "$tracked" == "true" ]]; then
-		/usr/bin/git -C "$repo" add .aidevops.json
+		printf '%s\n' '.aidevops.json' >"$repo/.gitignore"
+		/usr/bin/git -C "$repo" add -f .aidevops.json
+		/usr/bin/git -C "$repo" add .gitignore
 	else
 		printf '%s\n' '.aidevops.json' >"$repo/.gitignore"
 		/usr/bin/git -C "$repo" add .gitignore
@@ -87,10 +89,12 @@ seed_agent_source_repo_templates() { return 0; }
 
 tracked_repo="${TEST_ROOT}/tracked"
 local_repo="${TEST_ROOT}/local"
+linked_repo="${TEST_ROOT}/tracked-linked"
 make_repo "$tracked_repo" true
 make_repo "$local_repo" false
 tracked_repo="$(cd "$tracked_repo" && pwd -P)"
 local_repo="$(cd "$local_repo" && pwd -P)"
+/usr/bin/git -C "$tracked_repo" worktree add -q -b config-migration "$linked_repo"
 
 jq -n --arg tracked "$tracked_repo" --arg local "$local_repo" '{
 	initialized_repos: [
@@ -108,15 +112,26 @@ get_agent_source_repos() {
 tracked_before=$(cksum <"$tracked_repo/.aidevops.json")
 _update_sync_projects false 9.9.9
 tracked_after=$(cksum <"$tracked_repo/.aidevops.json")
+plans=("${HOME}/.aidevops/.agent-workspace/work"/project-config-migration-*.json)
+plan_count=${#plans[@]}
 
 assert_equal "tracked config remains byte-identical" "$tracked_before" "$tracked_after"
 assert_equal "tracked repository remains clean" "" "$(/usr/bin/git -C "$tracked_repo" status --porcelain)"
+assert_equal "tracked-and-ignored config emits one migration plan" "1" "$plan_count"
 assert_equal "tracked config does not gain agent-source metadata" "false" "$(jq -r 'has("agent_source")' "$tracked_repo/.aidevops.json")"
 assert_equal "tracked registration advances" "9.9.9" "$(jq -r --arg path "$tracked_repo" '.initialized_repos[] | select(.path == $path) | .version' "$REPOS_FILE")"
 assert_equal "tracked registration preserves features" "planning" "$(jq -r --arg path "$tracked_repo" '.initialized_repos[] | select(.path == $path) | .features | join(",")' "$REPOS_FILE")"
 assert_equal "local config version advances" "9.9.9" "$(jq -r '.version' "$local_repo/.aidevops.json")"
 assert_equal "local registration advances" "9.9.9" "$(jq -r --arg path "$local_repo" '.initialized_repos[] | select(.path == $path) | .version' "$REPOS_FILE")"
 assert_equal "local repository remains clean" "" "$(/usr/bin/git -C "$local_repo" status --porcelain)"
+
+linked_before=$(cksum <"$linked_repo/.aidevops.json")
+_project_config_migrate_linked_worktree "$linked_repo"
+linked_after=$(cksum <"$linked_repo/.aidevops.json")
+assert_equal "linked-worktree migration preserves config bytes" "$linked_before" "$linked_after"
+assert_equal "linked-worktree migration removes config from index" "" "$(/usr/bin/git -C "$linked_repo" ls-files -- .aidevops.json)"
+assert_equal "linked-worktree migration stages only the config deletion" "D  .aidevops.json" "$(/usr/bin/git -C "$linked_repo" status --porcelain)"
+assert_equal "linked-worktree migration leaves canonical checkout clean" "" "$(/usr/bin/git -C "$tracked_repo" status --porcelain)"
 
 printf '\nRan %d tests, %d failed.\n' "$((passed + failed))" "$failed"
 [[ "$failed" -eq 0 ]]
