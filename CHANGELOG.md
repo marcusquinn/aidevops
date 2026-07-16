@@ -10,6 +10,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- show red OpenCode tab status while retrying errors
+
 ## [3.32.137] - 2026-07-16
 
 ### Added
