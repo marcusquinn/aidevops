@@ -166,21 +166,74 @@ _planning_publish_parent_conflicts() {
 	return 1
 }
 
+_planning_publish_remote_default_branch() {
+	local repo_path="$1"
+	local remote_name="$2"
+	local remote_head=""
+	local default_branch=""
+	remote_head=$(_planning_git -C "$repo_path" ls-remote --symref "$remote_name" HEAD 2>/dev/null) || return 1
+	default_branch=$(printf '%s\n' "$remote_head" | sed -n 's@^ref: refs/heads/\([^[:space:]]*\)[[:space:]]*HEAD$@\1@p')
+	if [[ -z "$default_branch" || "$default_branch" == *$'\n'* ]]; then
+		_planning_publish_log error "Cannot determine one remote default branch for first planning publication"
+		return 1
+	fi
+	printf '%s\n' "$default_branch"
+	return 0
+}
+
+_planning_publish_resolve_parent() {
+	local repo_path="$1"
+	local remote_name="$2"
+	local branch_name="$3"
+	local target_check_rc=0
+	local default_branch=""
+	local parent_sha=""
+
+	if _planning_git -C "$repo_path" fetch -q "$remote_name" "$branch_name" 2>/dev/null; then
+		parent_sha=$(_planning_git -C "$repo_path" rev-parse FETCH_HEAD) || return 1
+		printf '%s|%s\n' "$parent_sha" "$parent_sha"
+		return 0
+	fi
+
+	if _planning_git -C "$repo_path" ls-remote --exit-code --heads "$remote_name" "refs/heads/${branch_name}" >/dev/null 2>&1; then
+		# The branch appeared after the failed fetch. Refetch it and use the
+		# normal update lease rather than misclassifying it as absent.
+		_planning_git -C "$repo_path" fetch -q "$remote_name" "$branch_name" || return 1
+		parent_sha=$(_planning_git -C "$repo_path" rev-parse FETCH_HEAD) || return 1
+		printf '%s|%s\n' "$parent_sha" "$parent_sha"
+		return 0
+	else
+		target_check_rc=$?
+	fi
+	if [[ "$target_check_rc" -ne 2 ]]; then
+		_planning_publish_log error "Unable to verify whether remote branch ${branch_name} exists"
+		return 1
+	fi
+
+	default_branch=$(_planning_publish_remote_default_branch "$repo_path" "$remote_name") || return 1
+	_planning_git -C "$repo_path" fetch -q "$remote_name" "$default_branch" || return 1
+	parent_sha=$(_planning_git -C "$repo_path" rev-parse FETCH_HEAD) || return 1
+	# An empty expected value is Git's creation-safe lease: the push succeeds
+	# only while the target ref remains absent.
+	printf '%s|\n' "$parent_sha"
+	return 0
+}
+
 _planning_publish_push() {
 	local repo_path="$1"
 	local remote_name="$2"
 	local branch_name="$3"
-	local parent_sha="$4"
+	local expected_sha="$4"
 	local candidate_sha="$5"
 	if [[ -n "${AIDEVOPS_PLANNING_FENCE_REF:-}" && -n "${AIDEVOPS_PLANNING_FENCE_SHA:-}" ]]; then
 		_planning_git -C "$repo_path" push -q --atomic \
-			--force-with-lease="refs/heads/${branch_name}:${parent_sha}" \
+			--force-with-lease="refs/heads/${branch_name}:${expected_sha}" \
 			--force-with-lease="${AIDEVOPS_PLANNING_FENCE_REF}:${AIDEVOPS_PLANNING_FENCE_SHA}" \
 			"$remote_name" "${candidate_sha}:refs/heads/${branch_name}" \
 			"${AIDEVOPS_PLANNING_FENCE_SHA}:${AIDEVOPS_PLANNING_FENCE_REF}"
 		return $?
 	fi
-	_planning_git -C "$repo_path" push -q --force-with-lease="refs/heads/${branch_name}:${parent_sha}" "$remote_name" "${candidate_sha}:refs/heads/${branch_name}"
+	_planning_git -C "$repo_path" push -q --force-with-lease="refs/heads/${branch_name}:${expected_sha}" "$remote_name" "${candidate_sha}:refs/heads/${branch_name}"
 	return $?
 }
 
@@ -191,7 +244,7 @@ planning_publish() {
 	local branch_name="${4:-}"
 	local paths="${5:-}"
 	local temp_dir="" snapshot_file="" index_file="" parent_sha="" tree_sha="" candidate_sha=""
-	local publication_id="" attempt=0 push_rc=0 latest_sha=""
+	local publication_id="" attempt=0 push_rc=0 latest_sha="" expected_sha="" parent_resolution=""
 
 	[[ -n "$branch_name" ]] || branch_name=$(_planning_git -C "$repo_path" symbolic-ref --short HEAD 2>/dev/null) || return 1
 	[[ -n "$paths" ]] || paths=$(_planning_publish_changed_paths "$repo_path")
@@ -214,14 +267,12 @@ planning_publish() {
 
 	while [[ $attempt -lt $PLANNING_PUBLISH_MAX_RETRIES ]]; do
 		attempt=$((attempt + 1))
-		_planning_git -C "$repo_path" fetch -q "$remote_name" "$branch_name" || {
+		parent_resolution=$(_planning_publish_resolve_parent "$repo_path" "$remote_name" "$branch_name") || {
 			rm -rf "$temp_dir"
 			return 1
 		}
-		latest_sha=$(_planning_git -C "$repo_path" rev-parse FETCH_HEAD) || {
-			rm -rf "$temp_dir"
-			return 1
-		}
+		latest_sha="${parent_resolution%%|*}"
+		expected_sha="${parent_resolution#*|}"
 		if [[ -n "$parent_sha" ]] && _planning_publish_parent_conflicts "$repo_path" "$parent_sha" "$latest_sha" "$snapshot_file"; then
 			_planning_publish_log warning "AIDEVOPS_PLANNING_PUBLISH_STATUS=retryable_conflict publication_id=${publication_id}"
 			rm -rf "$temp_dir"
@@ -268,7 +319,7 @@ planning_publish() {
 			}
 		fi
 		push_rc=0
-		_planning_publish_push "$repo_path" "$remote_name" "$branch_name" "$parent_sha" "$candidate_sha" || push_rc=$?
+		_planning_publish_push "$repo_path" "$remote_name" "$branch_name" "$expected_sha" "$candidate_sha" || push_rc=$?
 		if [[ $push_rc -eq 0 ]]; then
 			PLANNING_PUBLISH_RESULT="published"
 			PLANNING_PUBLISHED_COMMIT="$candidate_sha"
