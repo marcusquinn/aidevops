@@ -4624,6 +4624,4 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [x] t18142 MCP inspector health check accepts unrelated HTTP services #bug #mcp ref:GH#27967 pr:#27969 completed:2026-07-16
 
-- [ ] t18143 Honor configurable ports in MCP inspector health and gateway checks #bug #localhost #mcp #shell ref:GH#27972
-
-- [ ] t18144 Serialize audit hash-chain writes on macOS without flock #audit #bash-compat #bug #security #shell ref:GH#27973
+- [x] t18143 Honor configurable ports in MCP inspector health and gateway checks #bug #localhost #mcp #shell ref:GH#27972 pr:#27974 completed:2026-07-16
