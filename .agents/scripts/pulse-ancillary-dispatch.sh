@@ -1081,6 +1081,10 @@ _run_triage_review_worker() {
 		printf '%s\n' '[fatal] triage worker output file missing; aborting before model launch' >&2
 		return 0
 	fi
+	if [[ -z "$prefetch_file" || ! -s "$prefetch_file" ]]; then
+		printf '%s\n' '[fatal] triage worker env contract missing prefetch file; aborting before model launch' >"$review_output_file"
+		return 0
+	fi
 
 	# shellcheck disable=SC2086
 	env HEADLESS=1 WORKER_ISSUE_NUMBER="$triage_issue_num" WORKER_REPO_SLUG="$triage_repo_slug" WORKER_WORKTREE_PATH="$triage_repo_path" \

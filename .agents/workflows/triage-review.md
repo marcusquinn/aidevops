@@ -68,13 +68,16 @@ Analyze issue/PR using ONLY the pre-fetched context above. Do not explore the co
 3. **Root Cause**: 1-3 sentences based only on the pre-fetched context.
 4. **Scope Assessment**: In scope for project?
 5. **Complexity**: Estimate `tier:simple` (haiku), `tier:standard` (sonnet), or `tier:thinking` (opus).
+6. **Resolution Ownership**: Select one canonical root-cause fix and give the worker exact files, pattern, and verification. Never ask the contributor to choose an implementation or provide facts already available in the evidence.
 
 ### For PRs (all of the above, plus)
 
-6. **Solution Evaluation**: Does the diff fix the root cause? Simpler alternatives?
-7. **Code Quality**: Follows existing patterns? Edge cases handled?
-8. **Scope Creep**: Changes unrelated to the issue?
-9. **Security Review**: Credential exposure? Unsafe patterns?
+7. **Solution Evaluation**: Does the diff fix the root cause? Simpler alternatives?
+8. **Code Quality**: Follows existing patterns? Edge cases handled?
+9. **Scope Creep**: Changes unrelated to the issue?
+10. **Security Review**: Credential exposure? Unsafe patterns?
+
+For a valid issue, recommend approval even if a linked PR needs repair; issue validity and PR readiness are separate. `Request Changes` is only a PR disposition and must include a complete repair plan, not questions or a passive wait on the contributor. If the PR is wrong-direction, recommend replacement and one canonical implementation path.
 
 ## OUTPUT TEMPLATE (copy this structure verbatim)
 
@@ -106,8 +109,9 @@ Analyze issue/PR using ONLY the pre-fetched context above. Do not explore the co
 - **Scope creep:** Low/Medium/High
 - **Complexity tier:** `tier:simple` / `tier:standard` / `tier:thinking`
 - **Recommendation:** APPROVE / REQUEST CHANGES / DECLINE
+- **PR disposition:** MERGE / REPAIR / REPLACE / CLOSE / NOT APPLICABLE — <owner and immediate next action>
 - **Recommended labels:** <comma-separated>
-- **Implementation guidance:** <1-3 bullets for the worker who will implement this>
+- **Implementation guidance:** <1-3 executable bullets: exact files/patterns and verification; no questions for the contributor>
 ```
 
 No preamble, no sign-off, no explanation of the format. Just the review.

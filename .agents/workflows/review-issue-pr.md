@@ -26,6 +26,7 @@ tools:
 - **When**: Before approving/merging contributions, or automatically by the pulse for `needs-maintainer-review` items
 - **Session title**: For interactive reviews, rename the session with the target first: `Issue #123: review <short topic>` or `PR #456: review <short topic>`.
 - **Brief readiness**: When promoting reviewed work to auto-dispatch, use the single `workflows/brief.md` "Dispatch Readiness Contract (brief schema v2)" checklist and `verify-brief-helper.sh check-readiness`; do not restate the checklist here.
+- **Outcome ownership**: Resolve the root cause and choose the next executable action; do not turn discoverable implementation decisions into questions for the contributor.
 
 **Core Questions**:
 1. **Is the issue real?** — Reproducible? Bug or expected behavior?
@@ -114,6 +115,18 @@ If the framing doesn't match reality, the review documents the mismatch before p
 - Why wasn't this caught earlier? (Missing tests or docs?)
 - Related issues? (Batch fixes may be more efficient)
 
+### 2.1 Decision and execution ownership (MANDATORY)
+
+The reviewer owns the technical decision. Trace the root cause far enough to select one canonical fix, then state the exact files, pattern, tests, and disposition. Do not use contributor questions as a substitute for code/history inspection, reproduction, or architectural judgment.
+
+- **Correct and actionable issue**: recommend issue approval even when its linked PR needs repair. Issue validity and PR readiness are separate decisions.
+- **Salvageable PR in a managed repo**: choose the exact repair and route it to the active maintainer/worker path; when the interactive session is authorised to implement, repair and verify it in the same session instead of waiting on the contributor.
+- **Wrong-direction or high-churn PR**: recommend a replacement implementation against the root cause and close the old PR as superseded after the replacement lands. Do not keep both paths open.
+- **External repo or unwritable branch**: provide a complete patch plan in one review. Request changes only when repository authority prevents direct repair, and never end with “would you” or an open design question.
+- **Questions are exceptional**: ask only for decision-critical facts unavailable from code, tests, history, logs, or documented behaviour. Taste, scope preference, and implementation choice belong to the reviewer/maintainer.
+
+`Request Changes` is a PR state, not an issue-triage holding pattern. Never leave a valid issue in `needs-maintainer-review` merely because its current PR needs corrections.
+
 ## PR Review Checklist
 
 ### 3. Solution Evaluation
@@ -187,11 +200,11 @@ A fix that makes broken behaviour cheaper is not the same as a fix that makes th
 
 | Signal | Indicates | Reviewer Action |
 |--------|-----------|-----------------|
-| Fix reduces cost without eliminating the failure | Symptom patch on broken behaviour | Flag: "is this a fix, or a cost reduction on broken behaviour?" — propose fixing the root cause instead, or in addition |
-| Fix works around an error instead of preventing it | Defensive code masking a real bug | Flag: "what's the underlying bug? Should we fix that instead?" |
-| Fix reduces a retry/backoff counter | Possibly papering over broken retries | Ask: "why are retries failing? Do they succeed after N attempts, or are they all failing identically?" |
-| Fix adds a cache to something that re-runs every cycle | Possibly defeating an intentional re-check | Ask: "why does this re-run every cycle? What invariant does the re-check maintain?" |
-| Fix raises a timeout or retry budget | Possibly masking a hang or an infinite loop | Ask: "what's timing out? Is the timeout the real problem, or is something stuck?" |
+| Fix reduces cost without eliminating the failure | Symptom patch on broken behaviour | Identify and recommend the root-cause fix; classify the cost reduction separately |
+| Fix works around an error instead of preventing it | Defensive code masking a real bug | Trace the producer and choose the prevention point |
+| Fix reduces a retry/backoff counter | Possibly papering over broken retries | Determine whether attempts differ and whether any succeed; fix the repeated failure first |
+| Fix adds a cache to something that re-runs every cycle | Possibly defeating an intentional re-check | Recover the re-check invariant and design invalidation that preserves it |
+| Fix raises a timeout or retry budget | Possibly masking a hang or an infinite loop | Locate the stalled operation and fix or bound it before changing the budget |
 
 It is often correct to ship both: the cheaper symptom patch AND a separate issue for the root cause. The review should make the root cause visible even when endorsing the symptom fix.
 
@@ -206,7 +219,7 @@ For every non-trivial change, enumerate the downstream code paths that will beha
 - Rollback path — can we revert this cleanly if it goes wrong?
 - Related features that share state or configuration with the changed code — will they be affected?
 
-**Red flag**: if the reviewer can't enumerate any ripple effects, the review isn't ready. Invite the author to do it before merging.
+**Red flag**: if the reviewer cannot enumerate ripple effects, continue bounded discovery. If evidence is genuinely inaccessible, identify the exact missing source and route a focused investigation; do not hand the analysis back to the author as an open question.
 
 ## Review Output Format
 
@@ -224,6 +237,8 @@ For interactive maintainer review, complete the full checklist and post the stru
 Do not expose an approval command as the next action merely because a dispatch helper reports `needs-maintainer-review`; that gate identifies missing authority, not review quality. If review evidence is incomplete, recommend investigation rather than approval.
 
 Assessment language describes a recommendation, not an exercised authority action. Use `Recommendation: Approve`, never `Approved`, until a trusted maintainer actually performs the approval step. Apply the same distinction in the task-tool result and user-facing summary.
+
+For an issue with an imperfect linked PR, recommend issue approval when the problem and root-cause direction are valid, then record a separate PR disposition: `merge`, `repair`, `replace`, or `close`. Do not downgrade the issue to `Request Changes` because implementation needs work.
 
 ```markdown
 ## Review: Recommendation: Approve / Request Changes / Decline
@@ -260,6 +275,8 @@ Assessment language describes a recommendation, not an exercised authority actio
 
 **Alternatives**: [Recommended approach] - [why]
 
+**Resolution plan**: [one canonical root-cause fix with files, pattern, and verification]
+
 ### Second-Order Effects
 
 | Dimension | Finding |
@@ -275,6 +292,7 @@ Assessment language describes a recommendation, not an exercised authority actio
 - Scope creep: Low/Medium/High
 - Complexity: Low (`tier:simple`) / Medium (`tier:standard`) / High (`tier:thinking`)
 - **Recommendation**: APPROVE / REQUEST CHANGES / DECLINE
+- **PR disposition**: MERGE / REPAIR / REPLACE / CLOSE / NOT APPLICABLE — [owner and immediate next action]
 - **Labels**: [e.g., `tier:simple`, `bug`, `status:available`]
 - **Implementation guidance**: [key steps, test cases to add]
 
@@ -301,7 +319,7 @@ After a verdict is reached, the reporter must always be informed — regardless 
 |---------|--------|
 | Recommend APPROVE → internal task created | Comment on source issue: thank reporter, link to internal task/PR, set expectation on timeline |
 | Recommend APPROVE → PR merged same session | Comment on source issue: thank reporter, link to merged PR, close issue |
-| Recommend REQUEST CHANGES | Comment explaining what needs to change before the fix can proceed |
+| Recommend REQUEST CHANGES | Post the exact repair plan and route it to the responsible maintainer/worker; ask no discoverable questions and do not wait passively on the contributor |
 | Recommend DECLINE | Comment explaining why (out of scope, by design, duplicate) and close issue |
 
 **Template — issue converted to internal task:**
@@ -361,7 +379,7 @@ The fix works for the reported case, but the root cause should be addressed:
 - **Root cause**: [underlying issue]
 - **Suggested approach**: [better solution]
 
-Would you be open to updating? Happy to discuss.
+**Disposition: REPAIR** — the maintainer/worker should replace the symptom patch with the suggested root-cause change and run [verification].
 ```
 
 ### PR Has Scope Creep
@@ -371,7 +389,7 @@ Core fix looks good, but some changes should be separate PRs:
 - **In scope** (keep): [change 1], [change 2]
 - **Out of scope** (separate PR): [change 3] — [reason]
 
-Could you split this into focused PRs?
+**Disposition: REPAIR** — retain the in-scope diff and remove [change 3]. File a follow-up only if [change 3] remains independently necessary.
 ```
 
 ### Better Alternative Exists
@@ -381,7 +399,7 @@ There's a simpler approach:
 - **Your approach**: [summary]
 - **Alternative**: [simpler solution] — preferable because [reason]
 
-Would you be open to updating? Or I can make the change.
+**Disposition: REPAIR** — implement the alternative in [files], preserve [invariant], and verify with [commands].
 ```
 
 ### Issue Already Superseded by Recent Work
@@ -397,11 +415,7 @@ Closing as superseded. If you still see this on {latest_version}, please reopen 
 ```markdown
 The proposed fix works for the reported symptom, but the root cause is {root_cause_description}, which would still produce failures in {other_affected_paths} even after this lands.
 
-Two options:
-1. Fix the root cause in {correct_location} — reference pattern at {file:line}. The proposed change becomes unnecessary.
-2. Ship this as a cost-reduction for the symptom AND file a separate issue for the root cause. Both endorsed, but the root-cause issue must exist before merging this one.
-
-I'd prefer (1) unless {reason (1) is infeasible}. Happy to file the root-cause issue either way.
+**Disposition: REPLACE** — fix the root cause in {correct_location}, following {file:line}; the proposed symptom change then becomes unnecessary. Ship both only when verified constraints make the root-cause fix infeasible, and record that evidence in the review.
 ```
 
 ### Fix Defeats a Recent Architectural Decision
@@ -409,11 +423,7 @@ I'd prefer (1) unless {reason (1) is infeasible}. Happy to file the root-cause i
 ```markdown
 The proposed change conflicts with #{recent_decision_pr} ({title}), which intentionally {what_it_added}. The fix proposed here would defeat that invariant because {mechanism}.
 
-If the original decision needs revisiting, that's a separate discussion — we shouldn't regress it through a symptom-patch here. Options:
-1. Find a fix that preserves the invariant from #{recent_decision_pr}.
-2. Reopen the design question in a new issue with evidence that the original decision was wrong.
-
-Requesting changes until one of those is answered.
+**Disposition: REPLACE** — close this implementation path and produce a fix that preserves the invariant from #{recent_decision_pr}. Reopen the design decision separately only when current evidence falsifies its rationale.
 ```
 
 ## CLI Commands
