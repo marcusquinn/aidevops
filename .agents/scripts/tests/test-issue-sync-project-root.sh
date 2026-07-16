@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
-# Regression coverage for GH#27146: pulse issue sync must bind every mutation
-# and commit check to the repository root paired with the requested slug.
+# Regression coverage for GH#27146 and GH#27977: pulse issue sync must bind
+# mutations to the requested slug without changing human canonical checkouts.
 
 set -euo pipefail
 
@@ -45,11 +45,34 @@ fi
 [[ $(shasum "$repo_a/TODO.md") == "$before_a" ]] || fail "repo A changed after rejected roots"
 [[ $(shasum "$repo_b/TODO.md") == "$before_b" ]] || fail "repo B changed after rejected roots"
 
-# Exercise the real pulse function with a fixture helper. The helper records
-# the contract and mutates only the explicitly supplied root on pull.
+# Exercise the real pulse function with a fixture helper. Rebuild the fixtures
+# as clones of local remotes so Pulse can create fresh automation workspaces.
+rm -rf "$repo_a" "$repo_b"
+setup_sync_repo() {
+	local root="$1"
+	local remote="$2"
+	git init --bare --quiet --initial-branch=main "$remote" 2>/dev/null || git init --bare --quiet "$remote"
+	git clone --quiet "$remote" "$root"
+	git -C "$root" config user.email test@example.com
+	git -C "$root" config user.name Test
+	git -C "$root" config commit.gpgsign false
+	printf '%s\n' '- [ ] t1 fixture' >"${root}/TODO.md"
+	git -C "$root" add TODO.md
+	git -C "$root" commit --quiet -m seed
+	git -C "$root" push --quiet origin main
+	git --git-dir="$remote" symbolic-ref HEAD refs/heads/main
+	return 0
+}
+
+remote_a="${TMP}/remote-a.git"
+remote_b="${TMP}/remote-b.git"
+setup_sync_repo "$repo_a" "$remote_a"
+setup_sync_repo "$repo_b" "$remote_b"
+
 fixture_scripts="${TMP}/scripts"
 mkdir -p "$fixture_scripts"
 cp "$SCRIPTS_DIR/pulse-wrapper-cycle.sh" "$fixture_scripts/pulse-wrapper-cycle.sh"
+cp "$SCRIPTS_DIR/planning-publisher.sh" "$fixture_scripts/planning-publisher.sh"
 cat >"${fixture_scripts}/issue-sync-helper.sh" <<'FIXTURE'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -72,35 +95,67 @@ fi
 FIXTURE
 chmod +x "${fixture_scripts}/issue-sync-helper.sh"
 
-function_src=$(awk '/^sync_todo_refs_for_repo\(\) \{/,/^}$/ { print }' "$fixture_scripts/pulse-wrapper-cycle.sh")
-[[ -n "$function_src" ]] || fail "could not extract pulse sync function"
-eval "$function_src"
 export CALL_LOG="${TMP}/calls.log"
 export WRAPPER_LOGFILE="${TMP}/pulse.log"
 export SCRIPT_DIR="$fixture_scripts"
+export AIDEVOPS_TEMP_DIR="${TMP}/automation"
+export AIDEVOPS_PLANNING_VALIDATOR=/usr/bin/true
+export GIT_AUTHOR_NAME=Test
+export GIT_AUTHOR_EMAIL=test@example.com
+export GIT_COMMITTER_NAME=Test
+export GIT_COMMITTER_EMAIL=test@example.com
+# shellcheck source=/dev/null
+source "$fixture_scripts/pulse-wrapper-cycle.sh"
 
-# Commit mechanics are not under test here. Stub git after the real helper's
-# remote validation so pulse cannot attempt to push fixture repositories.
-git() {
+canonical_snapshot() {
+	local root="$1"
+	{
+		git -C "$root" rev-parse HEAD
+		cksum <"${root}/.git/index"
+		cksum <"${root}/TODO.md"
+		git -C "$root" status --porcelain=v1 --untracked-files=all
+	}
 	return 0
 }
 
-snapshot_b=$(shasum "$repo_b/TODO.md")
+printf '%s\n' 'human canonical dirt A' >>"$repo_a/TODO.md"
+printf '%s\n' 'human canonical dirt B' >>"$repo_b/TODO.md"
+snapshot_a=$(canonical_snapshot "$repo_a")
+snapshot_b=$(canonical_snapshot "$repo_b")
 sync_todo_refs_for_repo owner/repo-a "$repo_a"
-[[ $(shasum "$repo_b/TODO.md") == "$snapshot_b" ]] || fail "repo A invocation changed repo B"
-grep -q '^synced:owner/repo-a$' "$repo_a/TODO.md" || fail "repo A was not synced"
+[[ $(canonical_snapshot "$repo_a") == "$snapshot_a" ]] || fail "repo A canonical checkout changed"
+[[ $(canonical_snapshot "$repo_b") == "$snapshot_b" ]] || fail "repo A invocation changed repo B"
+git --git-dir="$remote_a" show main:TODO.md | grep -q '^synced:owner/repo-a$' || fail "repo A remote was not synced"
 
-snapshot_a=$(shasum "$repo_a/TODO.md")
 sync_todo_refs_for_repo owner/repo-b "$repo_b"
-[[ $(shasum "$repo_a/TODO.md") == "$snapshot_a" ]] || fail "repo B invocation changed repo A"
-grep -q '^synced:owner/repo-b$' "$repo_b/TODO.md" || fail "repo B was not synced"
+[[ $(canonical_snapshot "$repo_a") == "$snapshot_a" ]] || fail "repo B invocation changed repo A"
+[[ $(canonical_snapshot "$repo_b") == "$snapshot_b" ]] || fail "repo B canonical checkout changed"
+git --git-dir="$remote_b" show main:TODO.md | grep -q '^synced:owner/repo-b$' || fail "repo B remote was not synced"
 
-[[ $(wc -l <"$CALL_LOG" | tr -d ' ') -eq 6 ]] || fail "pulse did not make three bound calls per repository"
-grep -q "pull|owner/repo-a|${repo_a}" "$CALL_LOG" || fail "repo A root was not passed explicitly"
-grep -q "pull|owner/repo-b|${repo_b}" "$CALL_LOG" || fail "repo B root was not passed explicitly"
-grep -q 'repo=owner/repo-a root=validated' "$WRAPPER_LOGFILE" || fail "resolved slug/root status was not logged"
+[[ $(wc -l <"$CALL_LOG" | tr -d ' ') -eq 8 ]] || fail "pulse did not make four bound calls per repository"
+if grep -Fq "|${repo_a}" "$CALL_LOG" || grep -Fq "|${repo_b}" "$CALL_LOG"; then
+	fail "registered canonical root was passed to a mutating issue-sync command"
+fi
+grep -q 'repo=owner/repo-a root=automation' "$WRAPPER_LOGFILE" || fail "automation-root status was not logged"
 if grep -q "$TMP" "$WRAPPER_LOGFILE"; then
 	fail "pulse log disclosed a private project path"
 fi
 
-printf 'PASS: issue sync project-root contract\n'
+# Publication failure must be observable, retryable, and leave both remote and
+# canonical state unchanged.
+repo_c="${TMP}/repo-c"
+remote_c="${TMP}/remote-c.git"
+setup_sync_repo "$repo_c" "$remote_c"
+printf '%s\n' 'human canonical dirt C' >>"$repo_c/TODO.md"
+snapshot_c=$(canonical_snapshot "$repo_c")
+remote_c_before=$(git --git-dir="$remote_c" rev-parse main)
+publication_rc=0
+AIDEVOPS_PLANNING_BEFORE_PUSH_HOOK=/usr/bin/false \
+	sync_todo_refs_for_repo owner/repo-c "$repo_c" || publication_rc=$?
+[[ "$publication_rc" -eq 1 ]] || fail "publication failure was swallowed"
+[[ $(canonical_snapshot "$repo_c") == "$snapshot_c" ]] || fail "failed publication changed canonical checkout"
+[[ $(git --git-dir="$remote_c" rev-parse main) == "$remote_c_before" ]] || fail "failed publication changed remote"
+grep -q 'status=retryable_failure stage=publication repo=owner/repo-c rc=1' "$WRAPPER_LOGFILE" || \
+	fail "publication failure evidence was not logged"
+
+printf 'PASS: issue sync automation-workspace contract\n'
