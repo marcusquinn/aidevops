@@ -1276,6 +1276,32 @@ _dsi_write_recovery_checkpoint() {
 }
 
 #######################################
+# Resolve the authenticated GitHub login without accepting caller-supplied
+# identity. REST remains preferred; authenticated GraphQL viewer identity is
+# the bounded fallback when REST is unavailable. Both transports use the same
+# gh credential context, and malformed output fails closed.
+#######################################
+_dsi_resolve_runner_login() {
+	local runner_login=""
+
+	runner_login=$(gh api user --jq '.login // ""' 2>/dev/null || true)
+	if [[ "$runner_login" =~ ^[A-Za-z0-9]([A-Za-z0-9-]{0,37}[A-Za-z0-9])?$ ]]; then
+		printf '%s\n' "$runner_login"
+		return 0
+	fi
+
+	runner_login=$(gh api graphql \
+		-f 'query=query { viewer { login } }' \
+		--jq '.data.viewer.login // ""' 2>/dev/null || true)
+	if [[ "$runner_login" =~ ^[A-Za-z0-9]([A-Za-z0-9-]{0,37}[A-Za-z0-9])?$ ]]; then
+		printf '%s\n' "$runner_login"
+		return 0
+	fi
+
+	return 1
+}
+
+#######################################
 # Subcommand: dispatch <issue> <slug> [--model M] [--dry-run]
 #######################################
 cmd_dispatch() {
@@ -1315,7 +1341,7 @@ cmd_dispatch() {
 	# Treat anything other than 0 or 1 as "fail closed" — refuse to dispatch
 	# when we can't be sure of the state. The pulse has its own retry layers.
 	local self_login
-	self_login=$(gh api user --jq .login 2>/dev/null || echo "")
+	self_login=$(_dsi_resolve_runner_login 2>/dev/null) || self_login=""
 	_dsi_run_dedup_check "$issue_number" "$repo_slug" "$self_login"
 	local dedup_result="$_DSI_DEDUP_RESULT"
 	local dedup_rc="$_DSI_DEDUP_RC"
