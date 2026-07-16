@@ -506,7 +506,7 @@ _pulse_run_issue_sync_stage() {
 	local stage="$2"
 	local repo_slug="$3"
 	local workspace="$4"
-	/bin/bash "${script_dir}/issue-sync-helper.sh" "$stage" \
+	"$BASH" "${script_dir}/issue-sync-helper.sh" "$stage" \
 		--repo "$repo_slug" --project-root "$workspace" 2>&1
 	return $?
 }
