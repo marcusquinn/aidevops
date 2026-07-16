@@ -2,9 +2,9 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 #
-# Launch OpenCode with an aidevops-managed per-session data directory.
-# This keeps interactive sessions off the shared ~/.local/share/opencode/opencode.db
-# hot spot while preserving the user's normal config and copied auth tokens.
+# Launch OpenCode with aidevops-managed direct-client or server-owned data.
+# Direct clients stay off the shared ~/.local/share/opencode/opencode.db hot spot;
+# opt-in server clients share history through one loopback owner instead of SQLite.
 
 set -Eeuo pipefail
 
@@ -25,10 +25,16 @@ print_success() { printf '%b[OK]%b %s\n' "${GREEN}" "${NC}" "$*"; return 0; }
 print_error() { printf '%b[ERROR]%b %s\n' "${RED}" "${NC}" "$*" >&2; return 0; }
 
 OPT_DESKTOP_SOURCE_BINARY="--source-binary"
+ERR_DIR_REQUIRES_PATH="--dir requires a path"
+ERR_SESSION_ID_REQUIRES_VALUE="--session-id requires a value"
+SERVER_CHILD_PID=""
+SERVER_LOCK_DIR=""
 
 usage() {
     cat <<'EOF'
 Usage: aidevops opencode [options] [--] [opencode args...]
+       aidevops opencode server --dir PATH --port PORT [options]
+       aidevops opencode attach URL --dir PATH [options]
        aidevops opencode-desktop [launch options]
        aidevops opencode-desktop install-shortcut [options]
        aidevops opencode-desktop status [options]
@@ -42,10 +48,23 @@ Options:
   --dry-run            Print the environment/command without executing
   -h, --help           Show this help
 
+Server options:
+  --dir PATH           Project directory (default: current dir)
+  --port PORT          Required loopback port (1-65535)
+  --session-id ID      Explicit server shard name (default: stable per-project shard)
+  --dry-run            Print without creating the shard or checking the listener
+
+Attach options:
+  --dir PATH           Project directory (default: current dir)
+  --session ID         Resume a specific server-owned session
+  --dry-run            Print without checking health or starting the TUI
+
 Examples:
   aidevops opencode
   aidevops opencode --dir ~/Git/aidevops
   aidevops opencode -- --version
+  aidevops opencode server --dir ~/Git/aidevops --port 49036
+  aidevops opencode attach http://127.0.0.1:49036 --dir ~/Git/aidevops
   aidevops opencode-desktop
   aidevops opencode-desktop install-shortcut
 EOF
@@ -124,6 +143,15 @@ build_session_data_dir() {
     return 0
 }
 
+build_server_data_dir() {
+    local session_id="$1"
+    local safe_id=""
+
+    safe_id=$(sql_escape_label "${session_id}")
+    printf '%s/opencode-server/%s' "${AIDEVOPS_WORK_DIR:-${HOME}/.aidevops/.agent-workspace/work}" "${safe_id}"
+    return 0
+}
+
 build_project_session_id() {
     local launch_dir="$1"
     local resolved_dir=""
@@ -152,6 +180,160 @@ build_desktop_data_dir() {
     fi
     safe_id=$(sql_escape_label "${session_id}")
     printf '%s/opencode-desktop/%s' "${AIDEVOPS_WORK_DIR:-${HOME}/.aidevops/.agent-workspace/work}" "${safe_id}"
+    return 0
+}
+
+validate_launch_directory() {
+    local launch_dir="$1"
+
+    if [[ ! -d "${launch_dir}" ]]; then
+        print_error "Directory not found: ${launch_dir}"
+        return 1
+    fi
+    return 0
+}
+
+require_opencode_cli() {
+    if ! command -v opencode >/dev/null 2>&1; then
+        print_error "opencode not found in PATH"
+        return 1
+    fi
+    return 0
+}
+
+validate_server_port() {
+    local port="$1"
+    local port_pattern='^[1-9][0-9]{0,4}$'
+
+    if [[ ! "${port}" =~ ${port_pattern} ]] || ((port > 65535)); then
+        print_error "Port must be an integer from 1 to 65535: ${port:-<empty>}"
+        return 1
+    fi
+    return 0
+}
+
+validate_loopback_url() {
+    local server_url="$1"
+    local url_pattern='^http://127[.]0[.]0[.]1:([1-9][0-9]{0,4})/?$'
+    local port=""
+
+    if [[ ! "${server_url}" =~ ${url_pattern} ]]; then
+        print_error "Server URL must be an explicit loopback endpoint such as http://127.0.0.1:49036"
+        return 1
+    fi
+    port="${BASH_REMATCH[1]}"
+    validate_server_port "${port}" || return 1
+    printf 'http://127.0.0.1:%s' "${port}"
+    return 0
+}
+
+server_port_is_occupied() {
+    local port="$1"
+    local probe_available=0
+
+    if command -v lsof >/dev/null 2>&1; then
+        probe_available=1
+        if lsof -iTCP:"${port}" -sTCP:LISTEN -P -n >/dev/null 2>&1; then
+            return 0
+        fi
+    fi
+    if command -v nc >/dev/null 2>&1; then
+        probe_available=1
+        if nc -z 127.0.0.1 "${port}" >/dev/null 2>&1; then
+            return 0
+        fi
+    fi
+    ((probe_available == 1)) && return 1
+    print_error "Cannot verify port ${port}; install lsof or nc before starting server mode"
+    return 2
+}
+
+server_shard_has_holders() {
+    local data_dir="$1"
+    local db_path="${data_dir}/opencode/opencode.db"
+    local candidate=""
+    local -a db_files=()
+
+    for candidate in "${db_path}" "${db_path}-wal" "${db_path}-shm"; do
+        [[ -e "${candidate}" ]] && db_files+=("${candidate}")
+    done
+    ((${#db_files[@]} > 0)) || return 1
+    if ! command -v lsof >/dev/null 2>&1; then
+        print_error "Cannot verify existing server shard holders because lsof is unavailable: ${data_dir}"
+        return 2
+    fi
+    lsof "${db_files[@]}" >/dev/null 2>&1
+    return $?
+}
+
+release_server_lock() {
+    if [[ -n "${SERVER_LOCK_DIR}" ]]; then
+        rm -f "${SERVER_LOCK_DIR}/pid" 2>/dev/null || true
+        rmdir "${SERVER_LOCK_DIR}" 2>/dev/null || true
+        SERVER_LOCK_DIR=""
+    fi
+    return 0
+}
+
+forward_server_signal() {
+    local signal="$1"
+
+    if [[ "${SERVER_CHILD_PID}" =~ ^[0-9]+$ ]] && kill -0 "${SERVER_CHILD_PID}" 2>/dev/null; then
+        kill -s "${signal}" "${SERVER_CHILD_PID}" 2>/dev/null || true
+    fi
+    return 0
+}
+
+acquire_server_lock() {
+    local data_dir="$1"
+    local lock_dir="${data_dir}/.aidevops-server-owner"
+    local owner_pid=""
+
+    if ! mkdir "${lock_dir}" 2>/dev/null; then
+        if [[ -r "${lock_dir}/pid" ]]; then
+            read -r owner_pid <"${lock_dir}/pid" || owner_pid=""
+        fi
+        if [[ "${owner_pid}" =~ ^[0-9]+$ ]] && kill -0 "${owner_pid}" 2>/dev/null; then
+            print_error "Server shard already has an owner (PID ${owner_pid}): ${data_dir}"
+        else
+            print_error "Server shard has a stale owner lock: ${lock_dir}. Verify no DB holders, then remove the lock."
+        fi
+        return 1
+    fi
+    if ! printf '%s\n' "$$" >"${lock_dir}/pid"; then
+        rmdir "${lock_dir}" 2>/dev/null || true
+        return 1
+    fi
+    SERVER_LOCK_DIR="${lock_dir}"
+    return 0
+}
+
+validate_server_health() {
+    local server_url="$1"
+    local health_json=""
+    local server_version=""
+    local cli_version=""
+
+    command -v curl >/dev/null 2>&1 || { print_error "curl is required to validate the OpenCode server"; return 1; }
+    command -v jq >/dev/null 2>&1 || { print_error "jq is required to validate the OpenCode server"; return 1; }
+    if ! health_json=$(curl --fail --silent --show-error --max-time 3 --noproxy '*' "${server_url}/global/health" 2>/dev/null); then
+        print_error "OpenCode server health check failed: ${server_url}/global/health"
+        return 1
+    fi
+    if ! server_version=$(printf '%s' "${health_json}" | jq -er 'select(.healthy == true) | .version | select(type == "string" and length > 0)' 2>/dev/null); then
+        print_error "OpenCode server returned an invalid health response: ${server_url}/global/health"
+        return 1
+    fi
+    if ! cli_version=$(opencode --version 2>/dev/null); then
+        print_error "Could not determine the installed OpenCode CLI version"
+        return 1
+    fi
+    cli_version=${cli_version#v}
+    server_version=${server_version#v}
+    if [[ "${server_version}" != "${cli_version}" ]]; then
+        print_error "OpenCode server version ${server_version} does not match installed CLI version ${cli_version}"
+        return 1
+    fi
     return 0
 }
 
@@ -407,13 +589,13 @@ cmd_desktop_launch() {
     while (($# > 0)); do
         case "$1" in
         --dir)
-            [[ $# -ge 2 ]] || { print_error "--dir requires a path"; return 1; }
+            [[ $# -ge 2 ]] || { print_error "${ERR_DIR_REQUIRES_PATH}"; return 1; }
             launch_dir="$2"
             launch_dir_set=1
             shift 2
             ;;
         --session-id)
-            [[ $# -ge 2 ]] || { print_error "--session-id requires a value"; return 1; }
+            [[ $# -ge 2 ]] || { print_error "${ERR_SESSION_ID_REQUIRES_VALUE}"; return 1; }
             session_id="$2"
             shift 2
             ;;
@@ -465,7 +647,7 @@ cmd_desktop_launch() {
     if ((from_app == 1 && launch_dir_set == 0)); then
         launch_dir="${HOME}"
     fi
-    [[ -d "${launch_dir}" ]] || { print_error "Directory not found: ${launch_dir}"; return 1; }
+    validate_launch_directory "${launch_dir}" || return 1
 
     if [[ -z "${data_dir}" ]]; then
         if ((launch_dir_set == 1)); then
@@ -518,14 +700,194 @@ cmd_desktop() {
     return $?
 }
 
-main() {
-    aidevops_init_temp_workspace || { print_error "Could not initialize aidevops temporary workspace"; return 1; }
-    if [[ "${1:-}" == "desktop" ]]; then
-        shift || true
-        cmd_desktop "$@"
-        return $?
+run_server_owner() {
+    local launch_dir="$1"
+    local data_dir="$2"
+    local port="$3"
+    local holder_status=0
+    local port_status=0
+    local server_status=0
+    local server_url="http://127.0.0.1:${port}"
+    local -a serve_args=(serve --pure --hostname 127.0.0.1 --port "${port}" --cors oc://renderer)
+
+    if server_port_is_occupied "${port}"; then
+        print_error "Port ${port} is already in use; refusing to start an unknown or duplicate owner"
+        return 1
+    else
+        port_status=$?
+        ((port_status != 2)) || return 1
+    fi
+    if server_shard_has_holders "${data_dir}"; then
+        print_error "Server shard already has database holders: ${data_dir}"
+        return 1
+    else
+        holder_status=$?
+        ((holder_status != 2)) || return 1
     fi
 
+    mkdir -p "${data_dir}/opencode" || return 1
+    acquire_server_lock "${data_dir}" || return 1
+    trap release_server_lock EXIT
+    if ! copy_auth_json "${data_dir}"; then
+        release_server_lock
+        trap - EXIT
+        return 1
+    fi
+    prewarm_opencode_data_dir "${data_dir}"
+    if ! cd "${launch_dir}"; then
+        release_server_lock
+        trap - EXIT
+        return 1
+    fi
+
+    print_info "Starting foreground OpenCode owner on ${server_url}"
+    print_info "Server shard: ${data_dir}"
+    export XDG_DATA_HOME="${data_dir}"
+    export AIDEVOPS_OPENCODE_ISOLATED_DB=1
+    export AIDEVOPS_OPENCODE_SERVER_OWNER=1
+    trap 'forward_server_signal INT' INT
+    trap 'forward_server_signal TERM' TERM
+    trap 'forward_server_signal HUP' HUP
+    opencode "${serve_args[@]}" &
+    SERVER_CHILD_PID=$!
+    wait "${SERVER_CHILD_PID}" || server_status=$?
+    if kill -0 "${SERVER_CHILD_PID}" 2>/dev/null; then
+        wait "${SERVER_CHILD_PID}" 2>/dev/null || true
+    fi
+    SERVER_CHILD_PID=""
+    release_server_lock
+    trap - EXIT INT TERM HUP
+    return "${server_status}"
+}
+
+cmd_server() {
+    local dry_run=0
+    local launch_dir="$PWD"
+    local port=""
+    local session_id=""
+    local data_dir=""
+    local -a serve_args=()
+
+    while (($# > 0)); do
+        case "$1" in
+        --dir)
+            [[ $# -ge 2 ]] || { print_error "${ERR_DIR_REQUIRES_PATH}"; return 1; }
+            launch_dir="$2"
+            shift 2
+            ;;
+        --port)
+            [[ $# -ge 2 ]] || { print_error "--port requires a value"; return 1; }
+            port="$2"
+            shift 2
+            ;;
+        --session-id)
+            [[ $# -ge 2 ]] || { print_error "${ERR_SESSION_ID_REQUIRES_VALUE}"; return 1; }
+            session_id="$2"
+            shift 2
+            ;;
+        --dry-run)
+            dry_run=1
+            shift
+            ;;
+        -h | --help | help)
+            usage
+            return 0
+            ;;
+        *)
+            print_error "Unknown server option: $1"
+            return 1
+            ;;
+        esac
+    done
+
+    validate_launch_directory "${launch_dir}" || return 1
+    require_opencode_cli || return 1
+    [[ -n "${port}" ]] || { print_error "Server mode requires --port PORT"; return 1; }
+    validate_server_port "${port}" || return 1
+    if [[ -z "${session_id}" ]]; then
+        session_id=$(build_project_session_id "${launch_dir}")
+    fi
+    data_dir=$(build_server_data_dir "${session_id}")
+    serve_args=(serve --pure --hostname 127.0.0.1 --port "${port}" --cors oc://renderer)
+
+    if ((dry_run == 1)); then
+        printf 'cd %q && TMPDIR=%q TMP=%q TEMP=%q XDG_DATA_HOME=%q AIDEVOPS_OPENCODE_ISOLATED_DB=1 AIDEVOPS_OPENCODE_SERVER_OWNER=1 opencode' "${launch_dir}" "${TMPDIR}" "${TMP}" "${TEMP}" "${data_dir}"
+        printf ' %q' "${serve_args[@]}"
+        printf '\n'
+        return 0
+    fi
+
+    run_server_owner "${launch_dir}" "${data_dir}" "${port}"
+    return $?
+}
+
+cmd_attach() {
+    local server_url="${1:-}"
+    local normalized_url=""
+    local launch_dir="$PWD"
+    local session_id=""
+    local dry_run=0
+    local -a attach_args=()
+
+    if [[ "${server_url}" == "-h" || "${server_url}" == "--help" || "${server_url}" == "help" ]]; then
+        usage
+        return 0
+    fi
+    [[ -n "${server_url}" ]] || { print_error "Attach mode requires a loopback server URL"; return 1; }
+    shift
+
+    while (($# > 0)); do
+        case "$1" in
+        --dir)
+            [[ $# -ge 2 ]] || { print_error "${ERR_DIR_REQUIRES_PATH}"; return 1; }
+            launch_dir="$2"
+            shift 2
+            ;;
+        --session)
+            [[ $# -ge 2 ]] || { print_error "--session requires an ID"; return 1; }
+            session_id="$2"
+            shift 2
+            ;;
+        --dry-run)
+            dry_run=1
+            shift
+            ;;
+        -h | --help | help)
+            usage
+            return 0
+            ;;
+        *)
+            print_error "Unknown attach option: $1"
+            return 1
+            ;;
+        esac
+    done
+
+    if ! normalized_url=$(validate_loopback_url "${server_url}"); then
+        return 1
+    fi
+    validate_launch_directory "${launch_dir}" || return 1
+    require_opencode_cli || return 1
+    attach_args=(attach "${normalized_url}" --dir "${launch_dir}")
+    if [[ -n "${session_id}" ]]; then
+        attach_args+=(--session "${session_id}")
+    fi
+
+    if ((dry_run == 1)); then
+        printf 'unset XDG_DATA_HOME AIDEVOPS_OPENCODE_ISOLATED_DB AIDEVOPS_OPENCODE_SERVER_OWNER; cd %q && TMPDIR=%q TMP=%q TEMP=%q opencode' "${launch_dir}" "${TMPDIR}" "${TMP}" "${TEMP}"
+        printf ' %q' "${attach_args[@]}"
+        printf '\n'
+        return 0
+    fi
+
+    validate_server_health "${normalized_url}" || return 1
+    cd "${launch_dir}" || return 1
+    unset XDG_DATA_HOME AIDEVOPS_OPENCODE_ISOLATED_DB AIDEVOPS_OPENCODE_SERVER_OWNER
+    exec opencode "${attach_args[@]}"
+    return 1
+}
+
+cmd_tui_launch() {
     local use_shared_db=0
     local dry_run=0
     local launch_dir="$PWD"
@@ -539,12 +901,12 @@ main() {
             shift
             ;;
         --dir)
-            [[ $# -ge 2 ]] || { print_error "--dir requires a path"; return 1; }
+            [[ $# -ge 2 ]] || { print_error "${ERR_DIR_REQUIRES_PATH}"; return 1; }
             launch_dir="$2"
             shift 2
             ;;
         --session-id)
-            [[ $# -ge 2 ]] || { print_error "--session-id requires a value"; return 1; }
+            [[ $# -ge 2 ]] || { print_error "${ERR_SESSION_ID_REQUIRES_VALUE}"; return 1; }
             session_id="$2"
             shift 2
             ;;
@@ -568,8 +930,8 @@ main() {
         esac
     done
 
-    [[ -d "${launch_dir}" ]] || { print_error "Directory not found: ${launch_dir}"; return 1; }
-    command -v opencode >/dev/null 2>&1 || { print_error "opencode not found in PATH"; return 1; }
+    validate_launch_directory "${launch_dir}" || return 1
+    require_opencode_cli || return 1
     if [[ -z "${session_id}" ]]; then
         session_id=$(build_project_session_id "${launch_dir}")
     fi
@@ -611,6 +973,31 @@ main() {
     export AIDEVOPS_OPENCODE_ISOLATED_DB=1
     exec opencode "${opencode_args[@]}"
     return 1
+}
+
+main() {
+    aidevops_init_temp_workspace || { print_error "Could not initialize aidevops temporary workspace"; return 1; }
+    case "${1:-}" in
+    desktop)
+        shift || true
+        cmd_desktop "$@"
+        return $?
+        ;;
+    server)
+        shift || true
+        cmd_server "$@"
+        return $?
+        ;;
+    attach)
+        shift || true
+        cmd_attach "$@"
+        return $?
+        ;;
+    *)
+        cmd_tui_launch "$@"
+        return $?
+        ;;
+    esac
 }
 
 main "$@"

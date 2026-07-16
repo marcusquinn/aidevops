@@ -252,10 +252,8 @@ Desktop and TUI shards intentionally do not reuse each other's
 `XDG_DATA_HOME`. Older launcher versions wrote an
 `opencode-launcher/last-data-dir` marker; current launchers ignore that marker
 because directing independent Desktop and TUI processes to one SQLite WAL
-reintroduces the write contention that isolation prevents. Cross-client history
-continuity requires one `opencode serve` process to own the shard while each UI
-attaches as a client. Until aidevops supports that server-backed flow, history
-remains isolated per Desktop or TUI shard.
+reintroduces the write contention that isolation prevents. Direct launch modes
+therefore keep separate Desktop and TUI history by design.
 
 CLI entry points:
 
@@ -264,6 +262,69 @@ aidevops opencode-desktop                 # launch Desktop with isolated DB
 aidevops opencode-desktop --dir ~/Git/repo # per-project Desktop shard
 aidevops opencode-desktop status          # show wrapper/source status
 ```
+
+### Opt-in server-backed continuity prototype
+
+Shared Desktop/TUI history uses one foreground server as the only SQLite owner.
+This is an explicit disposable-shard prototype; it does not replace direct
+launches or migrate an existing database.
+
+Start the owner in its own terminal with an explicit free loopback port:
+
+```bash
+aidevops opencode server --dir ~/Git/repo --port 49036
+```
+
+The command creates a stable project shard under
+`~/.aidevops/.agent-workspace/work/opencode-server/`, copies only `auth.json`,
+binds `127.0.0.1`, and enables the Desktop renderer origin. Use
+`--session-id disposable-test-name` when each experiment needs a distinct
+shard. Dry-run is observational:
+
+```bash
+aidevops opencode server --dir ~/Git/repo --port 49036 --dry-run
+```
+
+Keep that terminal open. In a second terminal, attach the TUI:
+
+```bash
+aidevops opencode attach http://127.0.0.1:49036 --dir ~/Git/repo
+```
+
+Attach accepts only an explicit `http://127.0.0.1:<port>` endpoint, requires a
+healthy `/global/health` response, and rejects a server version different from
+the installed CLI. It clears direct database ownership variables before
+starting `opencode attach`, so the TUI never receives the server shard path.
+Use `--session ses_...` to resume a specific server-owned session.
+
+To connect Desktop without editing Electron state files:
+
+1. Open OpenCode Desktop and its **Servers** dialog.
+2. Choose **Add server** and enter `http://127.0.0.1:49036`.
+3. Select that endpoint as the **Default server**.
+4. Confirm the same `ses_...` ID is visible through the API, attached TUI, and
+   Desktop before treating the prototype as successful.
+
+Keep Desktop and CLI versions aligned. The launcher validates CLI/server
+compatibility, while Desktop reports its own connection incompatibility through
+the supported UI.
+
+Safety boundaries:
+
+- The explicit port must be free; unknown listeners fail closed.
+- An owner lock and DB-holder check prevent a second managed owner from opening
+  the same server shard.
+- Never point direct Desktop/TUI launchers at the server shard or copy a live DB
+  into it.
+- Stop the owner with `Ctrl-C`. A clean stop releases the listener, SQLite
+  handles, and owner lock; no replacement owner starts automatically.
+- Rollback is to stop the server, switch Desktop back to its local server, and
+  use the unchanged direct launch commands. Disposable server data is retained
+  for inspection and is never deleted automatically.
+
+Background service management, automatic port allocation, and live-shard
+migration remain out of scope until this prototype passes cross-client UI
+verification.
 
 ## Hidden session lookup — child, archive, and project ID drift
 
