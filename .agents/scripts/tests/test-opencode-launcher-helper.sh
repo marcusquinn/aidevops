@@ -48,9 +48,10 @@ SH
 }
 
 directory_is_empty() {
-    local directory="$1"
+    local directory="${1:-}"
     local candidate=""
 
+    [[ -n "${directory}" && -d "${directory}" ]] || return 1
     for candidate in "${directory}"/* "${directory}"/.[!.]* "${directory}"/..?*; do
         if [[ -e "${candidate}" || -L "${candidate}" ]]; then
             return 1
