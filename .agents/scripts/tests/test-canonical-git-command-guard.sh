@@ -70,6 +70,12 @@ assert_allowed() {
 }
 
 assert_blocked "blocks canonical detached switch" "git switch --detach main"
+GUIDANCE_OUTPUT=$(python3 "$GUARD" --cwd "$REPO" --command "git pull --ff-only origin main" 2>&1)
+if [[ "$GUIDANCE_OUTPUT" == *"canonical-recovery-helper.sh fast-forward-current"* ]]; then
+	pass "blocked canonical pull points to the audited fast-forward workflow"
+else
+	fail "blocked canonical pull omits audited fast-forward guidance"
+fi
 assert_blocked "blocks canonical branch rename" "git branch -m main safety/example"
 assert_blocked "blocks canonical branch creation with reflog flag" "git branch -l feature/new"
 assert_blocked "blocks canonical non-default switch" "git switch safety/example"
