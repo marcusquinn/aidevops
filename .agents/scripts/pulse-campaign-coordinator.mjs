@@ -7,10 +7,12 @@ import {
   existsSync,
   lstatSync,
   readFileSync,
+  realpathSync,
   statSync,
 } from "node:fs";
 import { homedir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
 import {
   campaignCheckpointPath,
@@ -189,7 +191,16 @@ export function run(args = process.argv.slice(2)) {
   return 0;
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+function invokedAsScript(moduleUrl, argvPath) {
+  if (!argvPath) return false;
+  try {
+    return realpathSync(fileURLToPath(moduleUrl)) === realpathSync(argvPath);
+  } catch {
+    return false;
+  }
+}
+
+if (invokedAsScript(import.meta.url, process.argv[1])) {
   try {
     process.exitCode = run();
   } catch (error) {
