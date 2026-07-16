@@ -1045,9 +1045,6 @@ main() {
 		if _is_auto_update_active; then
 			echo "AUTO_UPDATE_ENABLED"
 		fi
-		local gh_slurp_notice
-		gh_slurp_notice=$(_check_gh_slurp_prerequisite)
-		[[ -n "$gh_slurp_notice" ]] && echo "$gh_slurp_notice"
 		version_str="aidevops v$current"
 	fi
 

@@ -116,17 +116,20 @@ test_supported_gh_has_no_warning() {
 }
 
 test_update_available_preserves_full_session_status() {
-	setup_fake_tools "gh version 2.51.0 (2024-05-29)" "1.0.1"
+	setup_fake_tools "gh version 2.45.0 (2025-07-18 Ubuntu 2.45.0-1ubuntu0.3)" "1.0.1"
 	local output=""
 	local cache_file="$HOME/.aidevops/cache/session-greeting.txt"
+	local warning_count=0
 	output=$(OPENCODE=1 bash "$UPDATE_CHECK" --interactive 2>/dev/null || true)
+	warning_count=$(printf '%s\n' "$output" | grep -cF "[WARN] GitHub CLI prerequisite:" || true)
 	if [[ "$output" == *"UPDATE_AVAILABLE|1.0.0|1.0.1|OpenCode"* ]] &&
 		[[ "$output" == *"aidevops v1.0.0 running in OpenCode"* ]] &&
+		[[ "$warning_count" -eq 1 ]] &&
 		[[ -s "$cache_file" ]] &&
 		grep -qF "aidevops v1.0.0 running in OpenCode" "$cache_file"; then
-		print_result "update available preserves normal session status and cache" 0
+		print_result "update available preserves session status and warns once" 0
 	else
-		print_result "update available preserves normal session status and cache" 1 "output='${output}', cache='${cache_file}'"
+		print_result "update available preserves session status and warns once" 1 "count=${warning_count}, output='${output}', cache='${cache_file}'"
 	fi
 	return 0
 }
