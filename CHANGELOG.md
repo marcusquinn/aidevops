@@ -10,9 +10,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Changed
+## [3.32.137] - 2026-07-16
 
-- use grey for running OpenCode tabs and yellow for permission waits
+### Added
+
+- show permission waits in OpenCode tab status (#28023)
+
+### Fixed
+
+- align sandboxed triage prompt fields (#28020)
+
+### Security
+
+- require authorization for GitHub account mutations (#28021)
+- stop completed child compaction resumes (#28017)
 
 ## [3.32.136] - 2026-07-16
 
