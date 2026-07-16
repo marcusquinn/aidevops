@@ -270,10 +270,11 @@ _render_template_for_target() {
 		-e "s|${_default_repo_escaped}(/\.github/workflows/${_reusable_escaped})|${_repo_repl}\1|g" \
 		-e "s|^(      aidevops_ref:).*$|\1 ${_ref_repl}|" \
 		"$_template")
-	if [[ "$_repo" != "$_DEFAULT_WORKFLOW_REUSABLE_REPO" ]] && \
+	if [[ "$_repo" != "$_DEFAULT_WORKFLOW_REUSABLE_REPO" ]] &&
 		printf '%s\n' "$_rendered" | grep -qE '^      aidevops_ref:'; then
-		_rendered=$(printf '%s\n' "$_rendered" | sed -E \
-			"s|^(      aidevops_ref:.*)$|      aidevops_repository: ${_repo_repl}\n\1|"
+		_rendered=$(
+			printf '%s\n' "$_rendered" | sed -E \
+				"s|^(      aidevops_ref:.*)$|      aidevops_repository: ${_repo_repl}\n\1|"
 		)
 		_rendered=$(_inject_mirror_read_secret "$_rendered")
 	fi
@@ -435,7 +436,7 @@ _classify_workflow() {
 		# Helper-bearing callers must bind runtime helper provenance to the same
 		# repository/ref tuple as the reusable YAML. Missing or mismatched values
 		# are drift so sync-workflows can repair legacy callers safely.
-		if grep -qE '^      aidevops_ref:' "$_canon" && \
+		if grep -qE '^      aidevops_ref:' "$_canon" &&
 			! _caller_helper_provenance_matches "$_wf" "$_target_repo" "$_target_escaped"; then
 			printf 'DRIFTED/CALLER\n'
 			return 0
@@ -478,6 +479,28 @@ _classify_workflow() {
 
 # ─── Repo iteration ─────────────────────────────────────────────────────────
 
+_expand_home_path() {
+	local _path="$1"
+	# Preserve ~/ when HOME is unavailable; stripping the tilde would turn the
+	# configured repository into an unrelated root-relative path.
+	if [[ "${_path#\~/}" != "$_path" && -n "${HOME:-}" ]]; then
+		_path="${HOME}${_path#\~}"
+	fi
+	printf '%s\n' "$_path"
+	return 0
+}
+
+_absolute_git_common_dir() {
+	local _repo="$1"
+	local _common_dir
+	_common_dir=$(git -C "$_repo" rev-parse --git-common-dir 2>/dev/null) || return 1
+	if [[ "$_common_dir" != /* ]]; then
+		_common_dir=$(cd "$_repo/$_common_dir" 2>/dev/null && pwd -P) || return 1
+	fi
+	printf '%s\n' "$_common_dir"
+	return 0
+}
+
 # _resolve_caller_worktree_root <slug>
 # Prefer an explicitly supplied or current caller-owned linked worktree when it
 # belongs to the registered repository. The common-dir comparison binds the
@@ -495,12 +518,12 @@ _resolve_caller_worktree_root() {
 		'.initialized_repos[]? | select(.slug == $s) | .path // empty' \
 		"$REPOS_JSON" 2>/dev/null | head -n 1)
 	[[ -n "$_registered" ]] || return 1
-	_registered="${_registered/#\~/$HOME}"
+	_registered=$(_expand_home_path "$_registered")
 
 	local _candidate_git_dir _candidate_common_dir _registered_common_dir
-	_candidate_git_dir=$(git -C "$_candidate" rev-parse --path-format=absolute --git-dir 2>/dev/null) || return 1
-	_candidate_common_dir=$(git -C "$_candidate" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || return 1
-	_registered_common_dir=$(git -C "$_registered" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || return 1
+	_candidate_git_dir=$(git -C "$_candidate" rev-parse --absolute-git-dir 2>/dev/null) || return 1
+	_candidate_common_dir=$(_absolute_git_common_dir "$_candidate") || return 1
+	_registered_common_dir=$(_absolute_git_common_dir "$_registered") || return 1
 	[[ "$_candidate_git_dir" != "$_candidate_common_dir" ]] || return 1
 	[[ "$_candidate_common_dir" == "$_registered_common_dir" ]] || return 1
 
@@ -876,8 +899,8 @@ _resolve_row_checkout() {
 	local _slug="$3"
 	local _filter_slug="$4"
 	local _source="local"
-	_path="${_path/#\~/$HOME}"
-	if [[ -n "${_CALLER_WORKTREE_ROOT:-}" && "$_slug" == "$_filter_slug" && \
+	_path=$(_expand_home_path "$_path")
+	if [[ -n "${_CALLER_WORKTREE_ROOT:-}" && "$_slug" == "$_filter_slug" &&
 		"$_local_only_flag" != "true" ]]; then
 		_path="$_CALLER_WORKTREE_ROOT"
 		_source="caller-worktree"

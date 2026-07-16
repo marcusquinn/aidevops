@@ -22,6 +22,7 @@
 #  18. Unset HOME exits cleanly instead of raising an unbound-variable error
 #  19. Stale local checkout reports local evidence and upstream divergence
 #  20. Repository-scoped checks prefer a matching caller-owned linked worktree
+#      without relying on Git 2.31's --path-format option
 #
 # Strategy: Each scenario writes a temporary repos.json + temporary repo trees
 # under a per-test TMPDIR, points HOME at it, and invokes the helper. No
@@ -527,6 +528,7 @@ rm -rf "$TMPDIR_19"
 # must classify that worktree rather than the registered canonical checkout.
 TMPDIR_20="$(mktemp -d)"
 _setup_fake_home "$TMPDIR_20"
+REAL_GIT_20=$(command -v git)
 BARE_20="$TMPDIR_20/remote.git"
 REPO_20="$TMPDIR_20/repos/canonical"
 LINKED_20="$TMPDIR_20/worktrees/caller-owned"
@@ -550,14 +552,23 @@ git -C "$LINKED_20" commit -q -m "linked worktree drift"
 printf 'unrelated canonical dirt\n' >"$REPO_20/unrelated.txt"
 _write_repos_json "$TMPDIR_20" \
 	"$(jq -n --arg path "$REPO_20" '{initialized_repos: [{slug: "x/caller-owned", path: $path, local_only: false}]}')"
-json_row=$(cd "$LINKED_20" && HOME="$TMPDIR_20" bash "$HELPER" \
+mkdir -p "$TMPDIR_20/bin"
+cat >"$TMPDIR_20/bin/git" <<EOF
+#!/usr/bin/env bash
+for arg in "\$@"; do
+	[[ "\$arg" == --path-format=* ]] && exit 129
+done
+exec "$REAL_GIT_20" "\$@"
+EOF
+chmod +x "$TMPDIR_20/bin/git"
+json_row=$(cd "$LINKED_20" && HOME="$TMPDIR_20" PATH="$TMPDIR_20/bin:$PATH" bash "$HELPER" \
 	--json --repo x/caller-owned --workflow issue-sync 2>/dev/null || true)
 LINKED_ROOT_20=$(git -C "$LINKED_20" rev-parse --show-toplevel)
 if [[ "$(printf '%s\n' "$json_row" | jq -r '.classification')" == "DRIFTED/CALLER" ]] &&
 	[[ "$(printf '%s\n' "$json_row" | jq -r '.path')" == "$LINKED_ROOT_20" ]] &&
 	[[ "$(printf '%s\n' "$json_row" | jq -r '.evidence.source')" == "caller-worktree" ]] &&
 	[[ -f "$REPO_20/unrelated.txt" ]]; then
-	_pass "repository-scoped check → caller-owned linked-worktree evidence"
+	_pass "repository-scoped check → Git 2.25-compatible linked-worktree evidence"
 else
 	_fail "repository-scoped check → caller-owned linked-worktree evidence" "json: $json_row"
 fi
