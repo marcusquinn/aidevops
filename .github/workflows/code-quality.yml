@@ -338,6 +338,12 @@ jobs:
         echo ""
         echo "All shell scripts passed ShellCheck"
 
+    - name: MCP Inspector Health Identity Regression (GH#27967)
+      run: |
+        echo "Running MCP inspector health identity regression test..."
+        bash .agents/scripts/tests/test-mcp-inspector-health-identity.sh
+        echo "MCP inspector health identity regression test passed"
+
     - name: Secret Safety Policy Check
       run: |
         echo "Running secret safety policy checks..."
