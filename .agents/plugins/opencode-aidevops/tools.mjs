@@ -1,5 +1,5 @@
-import { execSync } from "child_process";
-import { existsSync } from "fs";
+import { execFileSync, execSync } from "child_process";
+import { existsSync, realpathSync, statSync } from "fs";
 import { join } from "path";
 
 let tool;
@@ -179,9 +179,10 @@ function createPreEditCheckTool(scriptsDir) {
 
   return tool({
     description:
-      'Run the pre-edit git safety check before modifying files. Returns exit code and guidance. Args: task (optional string for loop mode)',
+      'Run the pre-edit git safety check before modifying files. Returns exit code and guidance. Args: task (optional string for loop mode), workdir (optional target Git worktree)',
     args: {
       task: z.string().optional().describe('Optional task description for loop-mode worktree guidance'),
+      workdir: z.string().optional().describe('Optional target Git worktree to validate'),
     },
     async execute(args) {
       args = args && typeof args === "object" ? args : {};
@@ -189,11 +190,29 @@ function createPreEditCheckTool(scriptsDir) {
       if (!existsSync(script)) {
         return "pre-edit-check.sh not found — cannot verify git safety";
       }
-      const taskFlag = args.task
-        ? ` --loop-mode --task ${shellEscape(args.task)}`
-        : "";
+      const requestedWorkdir = args.workdir || process.cwd();
+      let targetWorkdir = "";
       try {
-        const result = execSync(`bash "${script}"${taskFlag}`, {
+        targetWorkdir = realpathSync(requestedWorkdir);
+        if (!statSync(targetWorkdir).isDirectory()) targetWorkdir = "";
+        const insideWorktree = targetWorkdir
+          ? execFileSync("git", ["-C", targetWorkdir, "rev-parse", "--is-inside-work-tree"], {
+              encoding: "utf-8",
+              timeout: 5000,
+              stdio: ["ignore", "pipe", "ignore"],
+            }).trim()
+          : "";
+        if (insideWorktree !== "true") targetWorkdir = "";
+      } catch {
+        targetWorkdir = "";
+      }
+      if (!targetWorkdir) {
+        return `Pre-edit check exit 1: target workdir must resolve to an existing Git worktree\n${requestedWorkdir}`;
+      }
+      const taskArgs = args.task ? ["--loop-mode", "--task", args.task] : [];
+      try {
+        const result = execFileSync("bash", [script, ...taskArgs], {
+          cwd: targetWorkdir,
           encoding: "utf-8",
           timeout: 10000,
           stdio: ["pipe", "pipe", "pipe"],
