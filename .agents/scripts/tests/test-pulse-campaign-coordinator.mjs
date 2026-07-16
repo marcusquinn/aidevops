@@ -386,7 +386,7 @@ test("CLI creates and renews one checkpoint through a symlinked deployed entrypo
   try {
     const repositoryRoot = resolve(import.meta.dirname, "../../..");
     const deployedAgents = join(directory, "deployed-agents");
-    symlinkSync(resolve(import.meta.dirname, "../.."), deployedAgents);
+    symlinkSync(resolve(import.meta.dirname, "../.."), deployedAgents, "dir");
     const deployedCoordinator = join(deployedAgents, "scripts", "pulse-campaign-coordinator.mjs");
     const checkpointRoot = join(directory, "checkpoints");
     const issuesFile = join(directory, "issues.json");
