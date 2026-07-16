@@ -467,7 +467,8 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
     }
 
     function connectWebSocket() {
-      ws = new WebSocket('ws://localhost:${CONFIG.port}/ws');
+      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      ws = new WebSocket(protocol + '//' + window.location.host + '/ws');
       ws.onmessage = (e) => {
         const data = JSON.parse(e.data);
         if (data.type === 'update') {

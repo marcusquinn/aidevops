@@ -204,6 +204,11 @@ describe('local server runtime security', () => {
     await waitForServer(`${baseUrl}/health`)
     await expectLoopbackOnly(port, '/health')
 
+    const dashboardHtml = await fetch(baseUrl).then(response => response.text())
+    expect(dashboardHtml).toContain("window.location.protocol === 'https:' ? 'wss:' : 'ws:'")
+    expect(dashboardHtml).toContain("window.location.host + '/ws'")
+    expect(dashboardHtml).not.toContain('ws://localhost:')
+
     expect((await fetch(`${baseUrl}/api/servers`)).status).toBe(401)
     expect((await fetch(`${baseUrl}/api/servers/memory/start`, { method: 'POST' })).status).toBe(401)
     expect((await fetch(`${baseUrl}/api/servers/memory/stop`, { method: 'POST' })).status).toBe(401)
