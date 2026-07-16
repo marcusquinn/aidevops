@@ -10,6 +10,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- show `[RUN]` and `[WAIT]` state in terminal titles for interactive OpenCode sessions
+
 ## [3.32.134] - 2026-07-16
 
 ### Fixed

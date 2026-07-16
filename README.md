@@ -556,7 +556,7 @@ See `.agents/tools/git/opencode-github-security.md` for the full security docume
 - **[OpenCode Zen](https://opencode.ai/)** - Free tier of OpenCode with included models. Start working with AI straight away at no cost -- no API keys or subscriptions required.
 - **OpenAI GPT-5.5 / GPT-5.4 mini** - Recommended model pair for aidevops today. Use GPT-5.5 for complex reasoning and high-impact agent tiers; use GPT-5.4 mini for triage, routine implementation, and cost-efficient parallel workers.
 - **[Claude](https://claude.ai/)** (Anthropic) - Fully supported alternative provider. Claude models remain useful for fallback, cross-provider verification, and users with Claude Pro/Max OAuth access.
-- **[Tabby](https://tabby.sh/)** - Recommended terminal. Colour-coded Profiles per project/repo, **auto-syncs tab title with git repo/branch.**
+- **[Tabby](https://tabby.sh/)** - Recommended terminal. Colour-coded Profiles per project/repo, **auto-syncs tab titles with git/session context and marks OpenCode turns as `[RUN]` or `[WAIT]`.**
 - **[Zed](https://zed.dev/)** - Recommended editor. High-performance with AI integration (use with the OpenCode Agent Extension).
 
 ### Troubleshooting Auth
@@ -620,11 +620,11 @@ The agent contains the full recovery flow and symptom table. Free models work fi
 
 ### Terminal Tab Title Sync
 
-Your terminal tab/window title automatically shows `repo/branch` context when working in git repositories. This helps identify which codebase and branch you're working on across multiple terminal sessions.
+Your terminal tab/window title automatically shows `repo/branch` context when working in git repositories. Interactive OpenCode tabs add `[RUN]` while the root session is busy or retrying and `[WAIT]` when it has finished and is awaiting input. This helps identify both the work context and session state across multiple terminal sessions.
 
 **Supported terminals:** [Tabby](https://tabby.sh/), [cmux](https://cmux.dev/), [iTerm2](https://iterm2.com/), [Kitty](https://sw.kovidgoyal.net/kitty/), [Alacritty](https://alacritty.org/), [WezTerm](https://wezfurlong.org/wezterm/), [Hyper](https://hyper.is/), and most xterm-compatible terminals.
 
-**How it works:** The `pre-edit-check.sh` script's primary role is enforcing git workflow protection (blocking edits on main/master branches). As a secondary, non-blocking action, it updates the terminal title via escape sequences. No configuration needed - it's automatic.
+**How it works:** The `pre-edit-check.sh` script's primary role is enforcing git workflow protection (blocking edits on main/master branches). As a secondary, non-blocking action, it updates the terminal title via escape sequences. The OpenCode plugin listens for root-session `busy`, `retry`, and `idle` events and updates the same title without changing the stored OpenCode session name. No configuration is needed when dynamic terminal titles are enabled.
 
 **Example format:** `{repo}/{branch-type}/{description}`
 
