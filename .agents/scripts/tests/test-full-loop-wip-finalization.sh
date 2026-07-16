@@ -71,8 +71,10 @@ make_repo() {
 		git add tracked.txt
 		git commit -qm 'chore: initial fixture'
 		git branch -M develop
+		git remote add origin .
 		git update-ref refs/remotes/origin/develop HEAD
 		git symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/develop
+		git switch -qc feature/test
 	) || return 1
 	return 0
 }
@@ -207,6 +209,36 @@ test_wip_final_message_is_rejected() {
 	return 0
 }
 
+test_base_drift_fails_closed_without_reverting_upstream() {
+	local repo_dir="${TEST_ROOT}/base-drift"
+	make_repo "$repo_dir" || return 1
+	commit_change "$repo_dir" 'checkpoint' 'wip: preserve checkpoint' || return 1
+	local original_head=""
+	original_head=$(git -C "$repo_dir" rev-parse HEAD)
+
+	(
+		cd "$repo_dir" || exit 1
+		git switch -q --detach origin/develop
+		printf 'upstream\n' >upstream.txt
+		git add upstream.txt
+		git commit -qm 'fix: concurrent upstream change'
+		git branch -f develop HEAD
+		git switch -q --detach "$original_head"
+		_finalize_wip_history 'fix: preserve concurrent upstream change'
+	) >/dev/null 2>&1
+	local rc=$?
+	local final_head=""
+	final_head=$(git -C "$repo_dir" rev-parse HEAD)
+	if [[ "$rc" -ne 0 && "$final_head" == "$original_head" ]] &&
+		git -C "$repo_dir" show origin/develop:upstream.txt >/dev/null 2>&1; then
+		print_result 'concurrent base drift aborts without staging upstream reversions' 0
+	else
+		print_result 'concurrent base drift aborts without staging upstream reversions' 1 \
+			"rc=${rc}, final_head=${final_head}, original_head=${original_head}"
+	fi
+	return 0
+}
+
 test_orchestrator_finalizes_before_validation() {
 	local orchestrator="${SCRIPT_DIR}/full-loop-helper.sh"
 	local stage_line="" finalize_line="" validators_line=""
@@ -232,11 +264,12 @@ test_buried_wip_squashes_branch_range
 test_no_wip_preserves_history
 test_commit_hook_failure_restores_tip
 test_wip_final_message_is_rejected
+test_base_drift_fails_closed_without_reverting_upstream
 test_orchestrator_finalizes_before_validation
 
 printf '\n%d tests run, %d failed\n' "$TESTS_RUN" "$TESTS_FAILED"
-if [[ "$TESTS_RUN" -ne 6 ]]; then
-	printf '%sFAIL%s expected 6 tests to execute\n' "$TEST_RED" "$TEST_RESET"
+if [[ "$TESTS_RUN" -ne 7 ]]; then
+	printf '%sFAIL%s expected 7 tests to execute\n' "$TEST_RED" "$TEST_RESET"
 	exit 1
 fi
 [[ "$TESTS_FAILED" -eq 0 ]] || exit 1

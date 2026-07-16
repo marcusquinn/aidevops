@@ -153,9 +153,11 @@ get_stash_age() {
 stash_changes_in_head() {
 	local stash_ref="$1"
 
-	# Get files changed in the stash
+	# Include the third-parent tree created by `git stash push -u`. The default
+	# inventory omits untracked-only files and can misclassify unique data as an
+	# empty, safe-to-drop stash (GH#27794).
 	local stash_files
-	stash_files=$(git stash show --name-only "$stash_ref" 2>/dev/null || echo "")
+	stash_files=$(git stash show --name-only --include-untracked "$stash_ref" 2>/dev/null || echo "")
 
 	if [[ -z "$stash_files" ]]; then
 		# Empty stash, safe to drop
@@ -166,15 +168,18 @@ stash_changes_in_head() {
 	while IFS= read -r file; do
 		[[ -z "$file" ]] && continue
 
-		# Get file content from stash and HEAD
-		local stash_content
-		local head_content
+		# Compare blob identities so binary content is safe. Untracked files live
+		# only under stash^3; tracked files remain in the stash commit tree.
+		local stash_blob=""
+		local head_blob=""
+		stash_blob=$(git rev-parse "${stash_ref}:${file}" 2>/dev/null || true)
+		if [[ -z "$stash_blob" ]]; then
+			stash_blob=$(git rev-parse "${stash_ref}^3:${file}" 2>/dev/null || true)
+		fi
+		head_blob=$(git rev-parse "HEAD:${file}" 2>/dev/null || true)
 
-		stash_content=$(git show "$stash_ref:$file" 2>/dev/null || echo "__STASH_FILE_NOT_FOUND__")
-		head_content=$(git show "HEAD:$file" 2>/dev/null || echo "__HEAD_FILE_NOT_FOUND__")
-
-		# If content differs, stash has unique changes
-		if [[ "$stash_content" != "$head_content" ]]; then
+		# Missing or different HEAD content means the stash contains unique data.
+		if [[ -z "$stash_blob" || "$stash_blob" != "$head_blob" ]]; then
 			return 1
 		fi
 	done <<<"$stash_files"

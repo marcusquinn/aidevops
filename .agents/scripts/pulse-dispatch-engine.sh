@@ -37,6 +37,11 @@
 [[ -n "${_PULSE_DISPATCH_ENGINE_LOADED:-}" ]] && return 0
 _PULSE_DISPATCH_ENGINE_LOADED=1
 
+# Resolve this module's dependencies relative to itself, not a caller-owned
+# SCRIPT_DIR. Test harnesses and other sourced callers legitimately use that
+# generic variable for their own directory (GH#27888).
+_PULSE_DISPATCH_ENGINE_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
 # t2863: Module-level variable defaults (set -u guards).
 # These vars are normally set by pulse-wrapper.sh bootstrap and pulse-wrapper-config.sh.
 # Guard them here so dispatch engine functions survive standalone sourcing (test
@@ -99,16 +104,16 @@ fi
 
 # t2690: Source rate-limit circuit breaker (proactive dispatch pause on GraphQL exhaustion).
 # shellcheck source=pulse-rate-limit-circuit-breaker.sh
-if [[ -f "${SCRIPT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}/pulse-rate-limit-circuit-breaker.sh" ]]; then
+if [[ -f "${_PULSE_DISPATCH_ENGINE_SCRIPT_DIR}/pulse-rate-limit-circuit-breaker.sh" ]]; then
 	# shellcheck disable=SC1091
-	source "${SCRIPT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}/pulse-rate-limit-circuit-breaker.sh"
+	source "${_PULSE_DISPATCH_ENGINE_SCRIPT_DIR}/pulse-rate-limit-circuit-breaker.sh"
 fi
 
 # t2781: Source per-issue rate_limit backoff helper (graduated cooldown by failure count).
 # shellcheck source=dispatch-backoff-helper.sh
-if [[ -f "${SCRIPT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}/dispatch-backoff-helper.sh" ]]; then
+if [[ -f "${_PULSE_DISPATCH_ENGINE_SCRIPT_DIR}/dispatch-backoff-helper.sh" ]]; then
 	# shellcheck disable=SC1091
-	source "${SCRIPT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}/dispatch-backoff-helper.sh"
+	source "${_PULSE_DISPATCH_ENGINE_SCRIPT_DIR}/dispatch-backoff-helper.sh"
 fi
 
 # GH#21738: Source extracted helper sub-libraries (orchestrator + sub-library
@@ -120,14 +125,14 @@ fi
 # re-register them as new function-complexity violations under their new
 # (file, fname) identity keys).
 # shellcheck source=./pulse-dispatch-lib.sh
-# shellcheck disable=SC1091  # sub-library resolved at runtime via $SCRIPT_DIR
-source "${SCRIPT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}/pulse-dispatch-lib.sh"
+# shellcheck disable=SC1091  # sub-library resolved from this module's path
+source "${_PULSE_DISPATCH_ENGINE_SCRIPT_DIR}/pulse-dispatch-lib.sh"
 # shellcheck source=./pulse-dispatch-current-state-guardrails.sh
-# shellcheck disable=SC1091  # sub-library resolved at runtime via $SCRIPT_DIR
-source "${SCRIPT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}/pulse-dispatch-current-state-guardrails.sh"
+# shellcheck disable=SC1091  # sub-library resolved from this module's path
+source "${_PULSE_DISPATCH_ENGINE_SCRIPT_DIR}/pulse-dispatch-current-state-guardrails.sh"
 # shellcheck source=./pulse-dispatch-preflight-lib.sh
-# shellcheck disable=SC1091  # sub-library resolved at runtime via $SCRIPT_DIR
-source "${SCRIPT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}/pulse-dispatch-preflight-lib.sh"
+# shellcheck disable=SC1091  # sub-library resolved from this module's path
+source "${_PULSE_DISPATCH_ENGINE_SCRIPT_DIR}/pulse-dispatch-preflight-lib.sh"
 
 
 # t1959: Module-level variable to communicate launch failure reason to callers.
