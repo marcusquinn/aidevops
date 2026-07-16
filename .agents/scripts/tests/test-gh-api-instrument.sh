@@ -211,7 +211,7 @@ PATH="$FAKE_BIN:$PATH" HOME='' TMPDIR="$FALLBACK_TMP" USER="ghapitest" bash -c '
 	# shellcheck source=../gh-api-instrument.sh
 	source "$1"
 	gh_record_call rest fallback-test
-	mode=$(stat -f %Lp "$TMPDIR/aidevops-$USER" 2>/dev/null || stat -c %a "$TMPDIR/aidevops-$USER")
+	mode=$(stat -c '%a' "$TMPDIR/aidevops-$USER" 2>/dev/null || stat -f '%Lp' "$TMPDIR/aidevops-$USER")
 	[[ "$mode" == "700" ]]
 	[[ -f "$TMPDIR/aidevops-$USER/.aidevops/logs/gh-api-calls.log" ]]
 ' _ "${PARENT_DIR}/gh-api-instrument.sh"
