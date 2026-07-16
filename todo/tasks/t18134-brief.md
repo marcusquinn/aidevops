@@ -69,7 +69,7 @@ Leaf task: title the implementation PR `t18134: ...` and use `Resolves #27803`.
 
 ```bash
 # Safe selected shape: two JSON documents enter jq through stdin.
-objective_input=$(printf '%s\n%s\n' "$issues_json" "$objective_prs" |
+objective_input=$(printf '%s\n%s\n' "${issues_json:-[]}" "${objective_prs:-[]}" |
 	jq -sc --arg merged "$oimp_lookup" \
 	'{issues: .[0], prs: .[1], merged_lookup: $merged}') || objective_input=""
 ```
