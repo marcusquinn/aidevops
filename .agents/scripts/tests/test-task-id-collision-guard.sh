@@ -987,6 +987,50 @@ test_no_false_positive_multiple_subagent_names() {
 }
 
 # ---------------------------------------------------------------------------
+# Case 20: Allow — canonical task-brief paths do not make valid PR IDs malformed
+# ---------------------------------------------------------------------------
+test_check_pr_allows_canonical_task_brief_path() {
+	local name="case-20: check-pr allows a canonical task-brief path in the PR body"
+	local rc
+	_run_check_pr_with_pr_title \
+		"9999" \
+		"20000" \
+		"t18139: implement repository campaigns" \
+		$'Implementation: todo/tasks/t18139-brief.md\n\nResolves #42' \
+		"42" \
+		"t18139: implement repository campaigns"
+	rc=$?
+	if [[ "$rc" -eq 0 ]]; then
+		pass "$name"
+	else
+		fail "$name" "expected exit 0 (canonical task-brief path accepted), got $rc"
+	fi
+	return 0
+}
+
+# ---------------------------------------------------------------------------
+# Case 21: Reject — malformed IDs remain blocked inside task-like brief paths
+# ---------------------------------------------------------------------------
+test_check_pr_rejects_malformed_task_brief_path() {
+	local name="case-21: check-pr rejects a malformed task ID in a brief path"
+	local rc
+	_run_check_pr_with_pr_title \
+		"9999" \
+		"20000" \
+		"chore: document implementation" \
+		"Implementation: todo/tasks/t018139-brief.md" \
+		"" \
+		""
+	rc=$?
+	if [[ "$rc" -eq 1 ]]; then
+		pass "$name"
+	else
+		fail "$name" "expected exit 1 (malformed task ID blocked), got $rc"
+	fi
+	return 0
+}
+
+# ---------------------------------------------------------------------------
 # Run all tests
 # ---------------------------------------------------------------------------
 main() {
@@ -1011,6 +1055,8 @@ main() {
 	test_check_pr_cached_branch_subjects_read_final_range_claim
 	test_no_false_positive_subagent_name
 	test_no_false_positive_multiple_subagent_names
+	test_check_pr_allows_canonical_task_brief_path
+	test_check_pr_rejects_malformed_task_brief_path
 
 	printf '\n'
 	printf 'Results: %s passed, %s failed\n' "$PASS" "$FAIL"

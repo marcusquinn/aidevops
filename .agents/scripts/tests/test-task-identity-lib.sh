@@ -296,6 +296,19 @@ test_structured_helpers() {
 		return 1
 	fi
 	pass "malformed detector accepts a valid task-prefixed title"
+	if task_identity_has_malformed_candidate "See todo/tasks/t18139-brief.md for implementation context" ||
+		task_identity_has_malformed_candidate "See todo/tasks/${namespaced}-brief.md for implementation context"; then
+		fail "malformed detector rejected a canonical task-brief path"
+		return 1
+	fi
+	pass "malformed detector accepts canonical task-brief paths"
+	if ! task_identity_has_malformed_candidate "See todo/tasks/t018139-brief.md" ||
+		! task_identity_has_malformed_candidate "See notes/t18139-brief.md" ||
+		! task_identity_has_malformed_candidate "See todo/tasks/t18139-draft.md"; then
+		fail "malformed detector weakened non-canonical task-like path checks"
+		return 1
+	fi
+	pass "malformed detector rejects malformed and non-canonical task-like paths"
 	if task_identity_has_malformed_candidate "TODO.md and Testing evidence"; then
 		fail "malformed detector treated ordinary uppercase T-words as task IDs"
 		return 1
