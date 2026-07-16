@@ -48,6 +48,8 @@ Append-only JSONL file. Each entry contains:
 
 Modifying or deleting any entry breaks the `prev_hash` link in the next entry. `audit-log-helper.sh verify` walks the chain and reports breaks.
 
+Every sequence/hash/append transaction is serialized with an atomic `mkdir` lock. This works without `flock` on macOS and Linux. Lock acquisition is bounded and fails closed rather than writing without serialization; dead-owner locks are reclaimed safely.
+
 ## Event Types
 
 | Type | When to log |
@@ -109,6 +111,8 @@ audit-log-helper.sh log operation.verify "Force push verified by cross-provider 
 
 Run `audit-log-helper.sh verify` before log rotation, during security audits, or when investigating suspicious activity. Exit: 0 = intact, 1 = broken (tampered/corrupted).
 
+If verification reports a historical break, preserve the affected file as forensic evidence. Do not rewrite or truncate it. After investigation and explicit operator approval, rotate/archive the broken segment and begin a new chain; the rotation event records the prior segment hash.
+
 ## Log Rotation
 
 Threshold: 50 MB (default). Rotated files get a timestamp suffix and `0400` permissions. A rotation event is logged in the new file to maintain chain continuity.
@@ -122,7 +126,7 @@ audit-log-helper.sh rotate --max-size 50
 - **Tamper-evident, not tamper-proof.** Write access to the log allows modification; the hash chain makes this detectable. Future: remote syslog forwarding.
 - **Single-machine scope.** Local-only; compromised host can destroy logs. Remote forwarding addresses this.
 - **No encryption.** Plaintext JSON. Never log credential values -- only key names and access metadata.
-- **Sequential writes.** Concurrent writers may race. In practice, aidevops serializes operations (one pulse at a time).
+- **Bounded local serialization.** Concurrent local writers are serialized. A writer exits non-zero when it cannot acquire the lock within `AUDIT_LOCK_TIMEOUT_SECONDS` (default 10) rather than risking a forked chain.
 
 ## File Permissions
 
