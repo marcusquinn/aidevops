@@ -12,6 +12,7 @@
 #   session-distill-helper.sh extract           # Extract and format learnings
 #   session-distill-helper.sh propose [file]    # Persist privacy-scanned proposals
 #   session-distill-helper.sh finalize          # Resume eligible proposal finalization
+#   session-distill-helper.sh provenance [...]  # Capture authoritative git provenance
 #   session-distill-helper.sh auto              # Checkpoint, then best-effort proposal pipeline
 #
 # Integration:
@@ -33,6 +34,20 @@ readonly SESSION_DIR="$WORKSPACE_DIR/sessions"
 # shellcheck disable=SC2034  # Reserved for future use
 readonly DISTILL_OUTPUT="$SESSION_DIR/distill-output.json"
 
+_distill_sha256_stdin() {
+	if command -v shasum >/dev/null 2>&1; then
+		shasum -a 256 | cut -d' ' -f1 || return 1
+	elif command -v sha256sum >/dev/null 2>&1; then
+		sha256sum | cut -d' ' -f1 || return 1
+	elif command -v python3 >/dev/null 2>&1; then
+		python3 -c 'import hashlib, sys; print(hashlib.sha256(sys.stdin.buffer.read()).hexdigest())' || return 1
+	else
+		log_error "No SHA-256 implementation is available"
+		return 1
+	fi
+	return 0
+}
+
 # Build a private, deterministic local identifier when the runtime provides no
 # session ID. This is collision isolation, not authentication; SHA-256 prevents
 # the repository path from being exposed while avoiding weak-hash scanners.
@@ -44,13 +59,8 @@ _distill_fallback_session_id() {
 	branch=$(git branch --show-current 2>/dev/null) || branch=""
 	[[ -n "$branch" ]] || branch="unknown"
 
-	if command -v shasum >/dev/null 2>&1; then
-		root_hash=$(printf '%s' "$repository_root" | shasum -a 256 | cut -c1-12)
-	elif command -v sha256sum >/dev/null 2>&1; then
-		root_hash=$(printf '%s' "$repository_root" | sha256sum | cut -c1-12)
-	else
-		root_hash=$(ROOT_PATH="$repository_root" python3 -c 'import hashlib, os; print(hashlib.sha256(os.environ["ROOT_PATH"].encode()).hexdigest()[:12])')
-	fi
+	root_hash=$(printf '%s' "$repository_root" | _distill_sha256_stdin) || return 1
+	root_hash="${root_hash:0:12}"
 
 	printf '%s-%s' "$root_hash" "$branch"
 	return 0
@@ -60,6 +70,7 @@ readonly SESSION_ID="${AIDEVOPS_SESSION_ID:-${OPENCODE_SESSION_ID:-${CLAUDE_SESS
 readonly SAFE_SESSION_ID="${SESSION_ID//[^a-zA-Z0-9_.-]/_}"
 readonly SESSION_STATE_DIR="$SESSION_DIR/$SAFE_SESSION_ID"
 readonly PROPOSALS_FILE="$SESSION_STATE_DIR/observation-proposals.json"
+readonly PROVENANCE_FILE="$SESSION_STATE_DIR/git-provenance.json"
 
 # shellcheck disable=SC2034  # Available for future use
 
@@ -75,7 +86,7 @@ init_session_dir() {
 
 privacy_redact() {
 	local text="$1"
-	text=$(printf '%s' "$text" | sed -E 's|/Users/[^ ]*|[local-path]|g; s|/home/[^ ]*|[local-path]|g; s|~/Git/[^ ]*|[local-path]|g')
+	text=$(printf '%s' "$text" | sed -E 's|/Users/[^ ]*|[local-path]|g; s|/home/[^ ]*|[local-path]|g; s|/private/var/[^ ]*|[local-path]|g; s|/var/folders/[^ ]*|[local-path]|g; s|~/Git/[^ ]*|[local-path]|g')
 	text=$(printf '%s' "$text" | sed -E 's/(^|[^A-Za-z0-9_-])(sk-|ghp_|gho_|ghs_|ghu_|github_pat_|glpat-|xoxb-|xoxp-)[A-Za-z0-9_-]{10,}/\1[redacted-credential]/g')
 	text=$(printf '%s' "$text" | sed -E 's/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/[email]/g')
 	printf '%s' "$text"
@@ -91,6 +102,153 @@ atomic_write_json() {
 	return 0
 }
 
+capture_git_provenance() {
+	local repository=""
+	local pr_number=""
+	local worktree=""
+	local branch=""
+	local head_commit=""
+	local merge_commit=""
+	while [[ $# -gt 0 ]]; do
+		local option="$1"
+		case "$option" in
+		--repo) repository="${2:-}"; shift 2 ;;
+		--pr) pr_number="${2:-}"; shift 2 ;;
+		--worktree) worktree="${2:-}"; shift 2 ;;
+		--branch) branch="${2:-}"; shift 2 ;;
+		--commit) head_commit="${2:-}"; shift 2 ;;
+		*) log_error "Unknown provenance option: $option"; return 1 ;;
+		esac
+	done
+
+	if [[ -n "$pr_number" && ! "$pr_number" =~ ^[0-9]+$ ]]; then
+		log_error "--pr must be numeric"
+		return 1
+	fi
+	repository=$(printf '%s' "$repository" | tr '[:upper:]' '[:lower:]')
+	repository="${repository%.git}"
+	if [[ -z "$repository" && -n "$worktree" && -d "$worktree" ]]; then
+		repository=$(repository_slug_for_path "$worktree")
+	fi
+	if [[ -z "$repository" ]]; then
+		log_warn "Authoritative repository attribution is unavailable; provenance was not recorded"
+		return 1
+	fi
+	if [[ -z "$head_commit" && -n "$worktree" && -d "$worktree" ]]; then
+		head_commit=$(git -C "$worktree" rev-parse HEAD 2>/dev/null || true)
+	fi
+	if [[ -z "$branch" && -n "$worktree" && -d "$worktree" ]]; then
+		branch=$(git -C "$worktree" branch --show-current 2>/dev/null || true)
+	fi
+	if [[ -n "$pr_number" && -n "$repository" ]] && command -v gh >/dev/null 2>&1; then
+		local pr_json=""
+		pr_json=$(gh pr view "$pr_number" --repo "$repository" --json mergeCommit,headRefOid,headRefName 2>/dev/null || true)
+		if printf '%s' "$pr_json" | jq -e 'type == "object"' >/dev/null 2>&1; then
+			merge_commit=$(printf '%s' "$pr_json" | jq -r '.mergeCommit.oid // empty')
+			[[ -n "$head_commit" ]] || head_commit=$(printf '%s' "$pr_json" | jq -r '.headRefOid // empty')
+			[[ -n "$branch" ]] || branch=$(printf '%s' "$pr_json" | jq -r '.headRefName // empty')
+		fi
+	fi
+
+	local commit="$head_commit"
+	[[ "$commit" =~ ^[0-9a-fA-F]{40}$ ]] || commit="$merge_commit"
+	if [[ ! "$commit" =~ ^[0-9a-fA-F]{40}$ ]]; then
+		log_warn "Authoritative commit attribution is unavailable; provenance was not recorded"
+		return 1
+	fi
+
+	init_session_dir
+	local safe_worktree=""
+	safe_worktree=$(privacy_redact "$worktree")
+	local existing='[]'
+	[[ -f "$PROVENANCE_FILE" ]] && existing=$(jq -c '.items // []' "$PROVENANCE_FILE" 2>/dev/null || printf '[]')
+	local key=""
+	key=$(printf '%s\0%s\0%s\0%s' "$SESSION_ID" "$repository" "$pr_number" "$head_commit" | _distill_sha256_stdin) || return 1
+	if printf '%s' "$existing" | jq -e --arg key "$key" 'any(.[]; .idempotency_key == $key)' >/dev/null; then
+		local enriched=""
+		enriched=$(printf '%s' "$existing" | jq -c --arg key "$key" --arg merge_commit "$merge_commit" \
+			'map(if .idempotency_key == $key and $merge_commit != "" then .merge_commit = $merge_commit else . end)')
+		local enriched_ledger=""
+		enriched_ledger=$(printf '%s' "$enriched" | jq -c --arg session "$SESSION_ID" \
+			'{schema_version:1,session_boundary:$session,items:.}')
+		atomic_write_json "$PROVENANCE_FILE" "$enriched_ledger"
+		return 0
+	fi
+	local item=""
+	item=$(jq -n --arg key "$key" --arg repo "$repository" --arg pr "$pr_number" --arg commit "$commit" \
+		--arg head_commit "$head_commit" --arg merge_commit "$merge_commit" \
+		--arg branch "$branch" --arg worktree "$safe_worktree" --arg captured_at "$(date -u +"%Y-%m-%dT%H:%M:%SZ")" \
+		'{idempotency_key:$key,repository:$repo,pr_number:$pr,commit:$commit,head_commit:$head_commit,merge_commit:$merge_commit,branch:$branch,worktree:$worktree,captured_at:$captured_at}')
+	local ledger=""
+	ledger=$(printf '%s' "$existing" | jq -c --arg session "$SESSION_ID" --argjson item "$item" \
+		'{schema_version:1,session_boundary:$session,items:(. + [$item])}')
+	atomic_write_json "$PROVENANCE_FILE" "$ledger"
+	log_success "Session git provenance captured"
+	return 0
+}
+
+repository_slug_for_path() {
+	local repository_path="$1"
+	local remote_url=""
+	remote_url=$(git -C "$repository_path" remote get-url origin 2>/dev/null || true)
+	case "$remote_url" in
+	git@*:*/*) remote_url="${remote_url#*:}" ;;
+	ssh://*/*/* | http://*/*/* | https://*/*/*)
+		remote_url="${remote_url#*://}"
+		remote_url="${remote_url#*/}"
+		;;
+	*) remote_url="" ;;
+	esac
+	remote_url="${remote_url%.git}"
+	printf '%s\n' "$remote_url" | tr '[:upper:]' '[:lower:]'
+	return 0
+}
+
+resolve_provenance_item() {
+	local item="$1"
+	local current_repository="$2"
+	local item_repository=""
+	item_repository=$(printf '%s' "$item" | jq -r '.repository // empty')
+	if [[ -z "$current_repository" || -z "$item_repository" || "$item_repository" != "$current_repository" ]]; then
+		return 1
+	fi
+	local candidate=""
+	while IFS= read -r candidate; do
+		[[ "$candidate" =~ ^[0-9a-fA-F]{40}$ ]] || continue
+		if git cat-file -e "${candidate}^{commit}" 2>/dev/null; then
+			printf '%s' "$item" | jq -c --arg commit "$candidate" '.commit = $commit'
+			return 0
+		fi
+	done < <(printf '%s' "$item" | jq -r '.head_commit // .commit // empty, .merge_commit // empty')
+	return 1
+}
+
+session_provenance_items() {
+	[[ -f "$PROVENANCE_FILE" ]] || {
+		printf '[]\n'
+		return 0
+	}
+	local current_repository=""
+	current_repository=$(repository_slug_for_path ".")
+	local item=""
+	local resolved_items=""
+	resolved_items=$(while IFS= read -r item; do
+		resolve_provenance_item "$item" "$current_repository" || true
+	done < <(jq -c '.items[]?' "$PROVENANCE_FILE" 2>/dev/null) | jq -sc '.')
+	printf '%s\n' "$resolved_items"
+	return 0
+}
+
+provenance_commit_messages() {
+	local items="$1"
+	local commit=""
+	while IFS= read -r commit; do
+		[[ -n "$commit" ]] || continue
+		git show -s --format='%s' "$commit" 2>/dev/null || true
+	done < <(printf '%s' "$items" | jq -r '.[].commit')
+	return 0
+}
+
 #######################################
 # Analyze current session context
 # Gathers data from git, TODO.md, and recent activity
@@ -102,15 +260,28 @@ analyze_session() {
 
 	local analysis_file="$SESSION_STATE_DIR/session-analysis.json"
 
-	# Gather git context
-	local branch commits_today files_changed
-	branch=$(git branch --show-current 2>/dev/null || echo "unknown")
-	commits_today=$(git log --oneline --since="midnight" 2>/dev/null | wc -l | tr -d ' ')
-	files_changed=$(git diff --name-only HEAD~5 2>/dev/null | wc -l | tr -d ' ' || echo "0")
+	# Gather only session-bound git context. The current checkout is not evidence:
+	# after worktree cleanup it may be canonical main at unrelated later commits.
+	local provenance_items branch commits_today files_changed attribution_status
+	provenance_items=$(session_provenance_items)
+	commits_today=$(printf '%s' "$provenance_items" | jq 'length')
+	branch=$(printf '%s' "$provenance_items" | jq -r 'last.branch // "unavailable"')
+	attribution_status="authoritative"
+	[[ "$commits_today" -gt 0 ]] || attribution_status="unavailable"
+	files_changed=0
+	local provenance_commit=""
+	while IFS= read -r provenance_commit; do
+		[[ -n "$provenance_commit" ]] || continue
+		local changed_count=0
+		changed_count=$(git diff-tree --no-commit-id --name-only -r "$provenance_commit" 2>/dev/null | wc -l | tr -d ' ') || changed_count=0
+		files_changed=$((files_changed + changed_count))
+	done < <(printf '%s' "$provenance_items" | jq -r '.[].commit')
 
-	# Get recent commit messages for pattern extraction
 	local recent_commits
-	recent_commits=$(git log --oneline -10 --format="%s" 2>/dev/null | head -10 || echo "")
+	recent_commits=$(provenance_commit_messages "$provenance_items")
+	if [[ "$attribution_status" == "unavailable" ]]; then
+		log_warn "Authoritative session commit attribution is unavailable; current-branch commits were excluded"
+	fi
 
 	# Check for error patterns in recent commits
 	local error_fixes
@@ -130,14 +301,18 @@ analyze_session() {
 	jq -n \
 		--arg timestamp "$(date -u +"%Y-%m-%dT%H:%M:%SZ")" \
 		--arg branch "$branch" \
+		--arg attribution_status "$attribution_status" \
 		--argjson commits_today "$commits_today" \
 		--argjson files_changed "$files_changed" \
 		--argjson error_fixes "$error_fixes" \
 		--argjson completed_tasks "$completed_tasks" \
 		--arg recent_commits "$recent_commits" \
+		--argjson provenance "$provenance_items" \
 		'{
             timestamp: $timestamp,
             branch: $branch,
+			commit_attribution: $attribution_status,
+			provenance: $provenance,
             commits_today: $commits_today,
             files_changed: $files_changed,
             error_fixes: $error_fixes,
@@ -180,7 +355,7 @@ extract_learnings() {
 	if [[ "$error_fixes" -gt 0 ]]; then
 		# Get the fix commit messages
 		local fix_commits
-		fix_commits=$(git log --oneline -10 --format="%s" 2>/dev/null | grep -i "fix\|error\|bug" | head -3 || echo "")
+		fix_commits=$(jq -r '[.recent_commits[]? | select(test("fix|error|bug"; "i"))] | .[:3][]' "$analysis_file" || echo "")
 
 		if [[ -n "$fix_commits" ]]; then
 			while IFS= read -r commit_msg; do
@@ -206,7 +381,7 @@ extract_learnings() {
 
 	# Pattern 3: Refactor patterns → CODEBASE_PATTERN
 	local refactor_commits
-	refactor_commits=$(git log --oneline -10 --format="%s" 2>/dev/null | grep -i "refactor\|restructure\|reorganize" | head -2 || echo "")
+	refactor_commits=$(jq -r '[.recent_commits[]? | select(test("refactor|restructure|reorganize"; "i"))] | .[:2][]' "$analysis_file" || echo "")
 	if [[ -n "$refactor_commits" ]]; then
 		while IFS= read -r commit_msg; do
 			if [[ -n "$commit_msg" ]]; then
@@ -220,7 +395,7 @@ extract_learnings() {
 
 	# Pattern 4: Documentation updates → CONTEXT
 	local doc_commits
-	doc_commits=$(git log --oneline -10 --format="%s" 2>/dev/null | grep -i "doc\|readme\|comment" | head -2 || echo "")
+	doc_commits=$(jq -r '[.recent_commits[]? | select(test("doc|readme|comment"; "i"))] | .[:2][]' "$analysis_file" || echo "")
 	if [[ -n "$doc_commits" ]]; then
 		while IFS= read -r commit_msg; do
 			if [[ -n "$commit_msg" ]]; then
@@ -373,10 +548,13 @@ FALLBACK_EOF
 generate_prompt() {
 	init_session_dir
 
-	# Gather context
-	local branch commits_today
-	branch=$(git branch --show-current 2>/dev/null || echo "unknown")
-	commits_today=$(git log --oneline --since="midnight" 2>/dev/null || echo "")
+	# Reuse the same authoritative provenance boundary as automatic extraction.
+	local analysis_file="$SESSION_STATE_DIR/session-analysis.json"
+	[[ -f "$analysis_file" ]] || analyze_session >/dev/null
+	local branch commits_today attribution_status
+	branch=$(jq -r '.branch // "unavailable"' "$analysis_file")
+	commits_today=$(jq -r '.recent_commits[]?' "$analysis_file")
+	attribution_status=$(jq -r '.commit_attribution // "unavailable"' "$analysis_file")
 
 	cat <<EOF
 ## Session Reflection Prompt
@@ -384,6 +562,7 @@ generate_prompt() {
 Review this session and identify learnings worth remembering:
 
 **Branch**: $branch
+**Commit attribution**: $attribution_status
 
 **Today's commits**:
 $commits_today
@@ -420,6 +599,7 @@ Usage:
   session-distill-helper.sh extract     Extract and format learnings
   session-distill-helper.sh propose [file] Persist privacy-scanned observation proposals
   session-distill-helper.sh finalize    Finalize only low-risk explicit preferences
+  session-distill-helper.sh provenance Capture authoritative session git provenance
   session-distill-helper.sh checkpoint  Capture operational state (tasks, PRs, git)
   session-distill-helper.sh auto        Checkpoint, then best-effort propose → finalize
   session-distill-helper.sh prompt      Generate reflection prompt for AI
@@ -430,7 +610,8 @@ The distillation process:
   2. extract    - Identifies valuable learnings from patterns
   3. propose    - Privacy-redacts and persists resumable observations
   4. finalize   - Stores only low-risk explicit preferences
-  5. checkpoint - Captures operational state independently
+  5. provenance - Captures session-bound commit, branch, worktree, and PR evidence
+  6. checkpoint - Captures operational state independently
 
 Learning types detected:
   - ERROR_FIX: Bug fixes and error resolutions
@@ -481,6 +662,9 @@ main() {
 		;;
 	finalize)
 		finalize_proposals
+		;;
+	provenance)
+		capture_git_provenance "$@"
 		;;
 	checkpoint)
 		emit_checkpoint

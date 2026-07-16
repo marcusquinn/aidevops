@@ -718,7 +718,7 @@ _merge_cleanup_linked_worktree() {
 	local repo="$2"
 	[[ -n "$cleanup_plan" ]] || return 0
 
-	local worktree_path="" branch_name="" canonical_dir=""
+	local worktree_path branch_name canonical_dir
 	IFS=$'\t' read -r worktree_path branch_name canonical_dir <<<"$cleanup_plan"
 	[[ -n "$worktree_path" && -n "$branch_name" && -n "$canonical_dir" ]] || return 0
 	[[ -d "$canonical_dir" ]] || return 0
@@ -772,11 +772,29 @@ _merge_record_deferred_cleanup_owner() {
 	return 0
 }
 
+_merge_capture_session_distill_provenance() {
+	local pr_number="$1"
+	local repo="$2"
+	local cleanup_plan="$3"
+	local worktree_path branch_name canonical_dir
+	IFS=$'\t' read -r worktree_path branch_name canonical_dir <<<"$cleanup_plan"
+	: "$canonical_dir"
+	local distill_helper="${SCRIPT_DIR}/session-distill-helper.sh"
+	[[ -x "$distill_helper" ]] || return 0
+	local session_id="${AIDEVOPS_SESSION_ID:-${OPENCODE_SESSION_ID:-${CLAUDE_SESSION_ID:-}}}"
+	[[ -n "$session_id" ]] || return 0
+	AIDEVOPS_SESSION_ID="$session_id" \
+		"$distill_helper" provenance --pr "$pr_number" --repo "$repo" \
+		--worktree "$worktree_path" --branch "$branch_name" >/dev/null 2>&1 || true
+	return 0
+}
+
 _merge_finalize_post_merge() {
 	local pr_number="$1"
 	local repo="$2"
 	local has_auto="$3"
 	local cleanup_plan="$4"
+	_merge_capture_session_distill_provenance "$pr_number" "$repo" "$cleanup_plan"
 	local linked_issue=""
 	linked_issue=$(gh pr view "$pr_number" --repo "$repo" --json body \
 		--jq '.body' 2>/dev/null |
