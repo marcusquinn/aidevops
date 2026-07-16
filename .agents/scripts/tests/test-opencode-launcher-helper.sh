@@ -47,21 +47,39 @@ SH
     return 0
 }
 
+directory_is_empty() {
+    local directory="$1"
+    local candidate=""
+
+    for candidate in "${directory}"/* "${directory}"/.[!.]* "${directory}"/..?*; do
+        if [[ -e "${candidate}" || -L "${candidate}" ]]; then
+            return 1
+        fi
+    done
+    return 0
+}
+
 tmp_root="$(mktemp -d)"
 trap 'rm -rf "${tmp_root}"' EXIT
 fake_bin="${tmp_root}/bin"
 work_dir="${tmp_root}/work"
+tui_dry_run_work_dir="${tmp_root}/tui-dry-run-work"
+desktop_dry_run_work_dir="${tmp_root}/desktop-dry-run-work"
 launch_dir="${tmp_root}/repo"
 home_dir="${tmp_root}/home"
 fake_log="${tmp_root}/fake-opencode.log"
-mkdir -p "${work_dir}" "${launch_dir}" "${home_dir}/.local/share/opencode"
+mkdir -p "${work_dir}" "${tui_dry_run_work_dir}" "${desktop_dry_run_work_dir}" \
+    "${launch_dir}" "${home_dir}/.local/share/opencode"
 make_fake_opencode "${fake_bin}"
 printf '{"anthropic":{}}\n' >"${home_dir}/.local/share/opencode/auth.json"
 desktop_source="${tmp_root}/OpenCode.app/Contents/MacOS/OpenCode"
 mkdir -p "$(dirname "${desktop_source}")"
 cat >"${desktop_source}" <<'SH'
 #!/usr/bin/env bash
-printf 'desktop source launched\n'
+printf 'XDG_DATA_HOME=%s\n' "${XDG_DATA_HOME:-}"
+printf 'AIDEVOPS_OPENCODE_ISOLATED_DB=%s\n' "${AIDEVOPS_OPENCODE_ISOLATED_DB:-}"
+printf 'PWD=%s\n' "$PWD"
+printf 'ARGS=%s\n' "$*"
 SH
 chmod +x "${desktop_source}"
 
@@ -86,6 +104,7 @@ if [[ "${output}" == *"AIDEVOPS_OPENCODE_ISOLATED_DB=1"* ]] \
     && [[ "${project_auth_count}" == "1" ]] \
     && [[ "${line_count}" == "2" ]] \
     && [[ "${prewarm_line}" == *"|db path" ]] \
+    && [[ ! -e "${work_dir}/opencode-launcher/last-data-dir" ]] \
     && [[ "${output}" != *"sqlite-migration"* ]]; then
     _pass "isolated launcher sets per-session data dir and copies auth"
 else
@@ -101,13 +120,26 @@ else
     _fail "explicit session-id output unexpected: ${output}"
 fi
 
-output=$(PATH="${fake_bin}:$PATH" HOME="${home_dir}" AIDEVOPS_WORK_DIR="${work_dir}" XDG_DATA_HOME="${work_dir}/opencode-interactive/test-session" \
-    "${HELPER}" --dir "${launch_dir}" --session-id test-session --dry-run 2>&1)
+output=$(PATH="${fake_bin}:$PATH" HOME="${home_dir}" AIDEVOPS_WORK_DIR="${work_dir}" \
+    XDG_DATA_HOME="${work_dir}/opencode-interactive/test-session" \
+    "${HELPER}" --dir "${launch_dir}" --session-id test-session -- --version 2>&1)
 if [[ "${output}" == *"XDG_DATA_HOME=${work_dir}/opencode-interactive/test-session"* ]] \
     && [[ "${output}" != *"identical"* ]]; then
     _pass "launcher skips auth copy when source and target match"
 else
     _fail "same auth copy guard output unexpected: ${output}"
+fi
+
+tui_dry_run_log="${tmp_root}/tui-dry-run-opencode.log"
+output=$(PATH="${fake_bin}:$PATH" HOME="${home_dir}" AIDEVOPS_WORK_DIR="${tui_dry_run_work_dir}" \
+    FAKE_OPENCODE_LOG="${tui_dry_run_log}" \
+    "${HELPER}" --dir "${launch_dir}" --session-id dry-run-only --dry-run 2>&1)
+if [[ "${output}" == *"XDG_DATA_HOME=${tui_dry_run_work_dir}/opencode-interactive/dry-run-only"* ]] \
+    && directory_is_empty "${tui_dry_run_work_dir}" \
+    && [[ ! -e "${tui_dry_run_log}" ]]; then
+    _pass "TUI dry-run prints the command without writing launcher state"
+else
+    _fail "TUI dry-run mutated state or output an unexpected command: ${output}"
 fi
 
 output=$(PATH="${fake_bin}:$PATH" HOME="${home_dir}" AIDEVOPS_WORK_DIR="${work_dir}" \
@@ -135,23 +167,66 @@ else
     _fail "desktop app wrapper install unexpected: ${output}"
 fi
 
-output=$(PATH="${fake_bin}:$PATH" HOME="${home_dir}" AIDEVOPS_WORK_DIR="${work_dir}" \
-    "${HELPER}" desktop launch --from-app --source-binary "${desktop_source}" --dry-run 2>&1)
-if [[ "${output}" == *"XDG_DATA_HOME=${work_dir}/opencode-interactive/test-session"* ]] \
-    && [[ "${output}" == *"AIDEVOPS_OPENCODE_ISOLATED_DB=1"* ]]; then
-    _pass "desktop app launch resumes last isolated data dir"
-else
-    _fail "desktop app launch did not reuse last data dir: ${output}"
-fi
+mkdir -p "${work_dir}/opencode-launcher"
+obsolete_marker="${work_dir}/opencode-launcher/last-data-dir"
+obsolete_data_dir="${work_dir}/opencode-interactive/test-session"
+printf '%s\n' "${obsolete_data_dir}" >"${obsolete_marker}"
 
 output=$(PATH="${fake_bin}:$PATH" HOME="${home_dir}" AIDEVOPS_WORK_DIR="${work_dir}" \
+    "${HELPER}" desktop launch --from-app --source-binary "${desktop_source}" --dry-run 2>&1)
+obsolete_marker_value=$(<"${obsolete_marker}")
+if [[ "${output}" == *"XDG_DATA_HOME=${work_dir}/opencode-desktop/desktop-default"* ]] \
+    && [[ "${output}" == *"AIDEVOPS_OPENCODE_ISOLATED_DB=1"* ]] \
+    && [[ "${obsolete_marker_value}" == "${obsolete_data_dir}" ]] \
+    && [[ ! -d "${work_dir}/opencode-desktop/desktop-default" ]]; then
+    _pass "desktop app ignores the obsolete cross-mode data-dir marker"
+else
+    _fail "desktop app launch reused or mutated obsolete cross-mode state: ${output}"
+fi
+
+desktop_dry_run_log="${tmp_root}/desktop-dry-run-opencode.log"
+output=$(PATH="${fake_bin}:$PATH" HOME="${home_dir}" AIDEVOPS_WORK_DIR="${desktop_dry_run_work_dir}" \
+    FAKE_OPENCODE_LOG="${desktop_dry_run_log}" \
     "${HELPER}" desktop launch --source-binary "${desktop_source}" --dir "${launch_dir}" --dry-run 2>&1)
+if [[ "${output}" == *"XDG_DATA_HOME=${desktop_dry_run_work_dir}/opencode-desktop/desktop-project-repo-"* ]] \
+    && [[ "${output}" == *"AIDEVOPS_OPENCODE_ISOLATED_DB=1"* ]] \
+    && [[ "${output}" == *"${desktop_source}"* ]] \
+    && directory_is_empty "${desktop_dry_run_work_dir}" \
+    && [[ ! -e "${desktop_dry_run_log}" ]]; then
+    _pass "desktop dry-run prints an isolated command without writing state"
+else
+    _fail "desktop dry-run mutated state or output an unexpected command: ${output}"
+fi
+
+rm -f "${fake_log}"
+output=$(PATH="${fake_bin}:$PATH" HOME="${home_dir}" AIDEVOPS_WORK_DIR="${work_dir}" \
+    FAKE_OPENCODE_LOG="${fake_log}" \
+    "${HELPER}" desktop launch --source-binary "${desktop_source}" --dir "${launch_dir}" -- --version 2>&1)
+line_count=0
+prewarm_line=""
+desktop_auth_count=0
+while IFS= read -r line; do
+    line_count=$((line_count + 1))
+    if [[ ${line_count} -eq 1 ]]; then
+        prewarm_line="${line}"
+    fi
+done <"${fake_log}"
+for auth_file in "${work_dir}"/opencode-desktop/desktop-project-repo-*/opencode/auth.json; do
+    [[ -f "${auth_file}" ]] || continue
+    desktop_auth_count=$((desktop_auth_count + 1))
+done
+obsolete_marker_value=$(<"${obsolete_marker}")
 if [[ "${output}" == *"XDG_DATA_HOME=${work_dir}/opencode-desktop/desktop-project-repo-"* ]] \
     && [[ "${output}" == *"AIDEVOPS_OPENCODE_ISOLATED_DB=1"* ]] \
-    && [[ "${output}" == *"${desktop_source}"* ]]; then
-    _pass "desktop launch dry-run uses isolated per-project data dir"
+    && [[ "${output}" == *"PWD=${launch_dir}"* ]] \
+    && [[ "${output}" == *"ARGS=--version"* ]] \
+    && [[ "${desktop_auth_count}" == "1" ]] \
+    && [[ "${line_count}" == "1" ]] \
+    && [[ "${prewarm_line}" == *"|db path" ]] \
+    && [[ "${obsolete_marker_value}" == "${obsolete_data_dir}" ]]; then
+    _pass "desktop real launch prewarms its isolated shard without updating cross-mode state"
 else
-    _fail "desktop launch dry-run output unexpected: ${output}"
+    _fail "desktop real launch output or state unexpected: ${output}"
 fi
 
 if ((fail_count > 0)); then
