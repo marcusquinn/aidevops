@@ -15,7 +15,7 @@
 # divergent values — full-loop-helper.sh's hand-rolled headless-env check
 # disagreed with detect_session_origin() in shared-gh-wrappers-session.sh).
 #
-# Three layers tested:
+# Four layers tested:
 #
 #   A. _gh_wrapper_args_have_origin_label — argv inspection helper used by
 #      the wrapper's defence-in-depth guard (Fix 3).
@@ -25,6 +25,8 @@
 #      longer passes its own --label "$origin_label" (Fix 2), and the upstream
 #      origin_label computation now uses canonical session_origin_label() so
 #      env-var divergence with detect_session_origin() is impossible (Fix 1).
+#   D. set_origin_label — any failed GraphQL edit attempts the equivalent REST
+#      mutex mutation before returning failure (GH#28029).
 
 set -uo pipefail
 
@@ -591,6 +593,32 @@ if [[ -f "$LOOP_HELPER" ]]; then
 		print_result "C3: full-loop-helper.sh has no legacy HEADLESS=1 hand-rolled check" 1 \
 			"legacy hand-rolled check still present"
 	fi
+fi
+
+# ---------------------------------------------------------------------------
+# Layer D: set_origin_label REST recovery after any GraphQL edit failure
+# ---------------------------------------------------------------------------
+
+ensure_origin_labels_exist() { return 0; }
+_rest_should_fallback() { return 1; }
+_gh_with_timeout() {
+	local operation="$1"
+	shift
+	printf '%s %s\n' "$operation" "$*" >>"$GH_RECORD_FILE"
+	if [[ "$*" == "gh pr edit "* ]]; then
+		printf 'GraphQL: Something went wrong while executing your query\n' >&2
+		return 1
+	fi
+	return 0
+}
+
+reset_recorder
+if set_origin_label 28029 owner/repo worker --pr >/dev/null 2>&1 &&
+	grep -q 'gh api -X POST /repos/owner/repo/issues/28029/labels' "$GH_RECORD_FILE"; then
+	print_result "D1: set_origin_label uses REST after non-rate-limit GraphQL failure" 0
+else
+	print_result "D1: set_origin_label uses REST after non-rate-limit GraphQL failure" 1 \
+		"calls: $(tr '\n' ' ' <"$GH_RECORD_FILE")"
 fi
 
 # ---------------------------------------------------------------------------

@@ -1123,6 +1123,64 @@ _compose_pr_title() {
 
 # --- PR Creation ---
 
+# Verify that a PR has exactly one origin label and that it is the expected
+# immutable session origin. REST readback is deliberate: a successful mutation
+# exit code is not proof that GitHub reached the required postcondition.
+# Arguments: PR number, repository slug, expected origin name (without prefix).
+# Returns: 0=verified, 1=read failure, 2=missing/wrong/dual origin labels.
+_verify_pr_origin_label() {
+	local pr_number="$1"
+	local repo="$2"
+	local origin_name="$3"
+	local origin_labels=""
+	origin_labels=$(gh api "repos/${repo}/issues/${pr_number}" \
+		--jq '[.labels[].name | select(startswith("origin:"))]' 2>/dev/null) || return 1
+	if printf '%s' "$origin_labels" |
+		jq -e --arg expected "origin:${origin_name}" \
+			'length == 1 and .[0] == $expected' >/dev/null 2>&1; then
+		return 0
+	fi
+	return 2
+}
+
+# Reconcile and verify the immutable origin postcondition while retaining a
+# bounded, non-secret failure classification for operators. The caller keeps
+# authority over origin_name; gh_create_pr remains the sole creation injector.
+# Arguments: PR number, repository slug, expected origin name (without prefix).
+_reconcile_pr_origin_label() {
+	local pr_number="$1"
+	local repo="$2"
+	local origin_name="$3"
+	local origin_error=""
+	origin_error=$(mktemp -t aidevops-pr-origin-error.XXXXXX) || return 1
+	if ! set_origin_label "$pr_number" "$repo" "$origin_name" --pr 2>"$origin_error"; then
+		local failure_kind="GitHub label write failed"
+		if grep -qiE 'permission|forbidden|Resource not accessible|HTTP 403' "$origin_error" 2>/dev/null; then
+			failure_kind="credential lacks PR label permission"
+		elif grep -qiE 'rate limit|rateLimitExceeded|HTTP 429' "$origin_error" 2>/dev/null; then
+			failure_kind="GitHub API rate limited the label write"
+		fi
+		rm -f "$origin_error"
+		print_error "Could not apply origin:${origin_name} to PR #${pr_number}: ${failure_kind}; retry commit-and-pr after GitHub writes recover"
+		return 1
+	fi
+	rm -f "$origin_error"
+
+	local verify_rc=0
+	_verify_pr_origin_label "$pr_number" "$repo" "$origin_name" || verify_rc=$?
+	case "$verify_rc" in
+	0) return 0 ;;
+	1)
+		print_error "Could not read back origin labels on PR #${pr_number}; retry commit-and-pr after GitHub reads recover"
+		return 1
+		;;
+	*)
+		print_error "PR #${pr_number} did not reach the exact origin:${origin_name} postcondition; retry commit-and-pr to reconcile missing, wrong, or dual origin labels"
+		return 1
+		;;
+	esac
+}
+
 # Create the PR and print the PR number to stdout.
 # Arguments: repo, pr_title, pr_body, origin_label; extra_labels passed as remaining args.
 # Returns 1 on failure.
@@ -1199,10 +1257,7 @@ _create_pr() {
 		return 1
 		;;
 	esac
-	if ! set_origin_label "$pr_number" "$repo" "$origin_name" --pr >/dev/null 2>&1; then
-		print_error "Could not verify origin:${origin_name} on PR #${pr_number}; retry commit-and-pr after GitHub writes recover"
-		return 1
-	fi
+	_reconcile_pr_origin_label "$pr_number" "$repo" "$origin_name" || return 1
 
 	print_success "PR #${pr_number} created: ${pr_url}"
 	printf '%s\n' "$pr_number"

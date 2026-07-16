@@ -111,6 +111,13 @@ _SOURCING_FOR_TEST=1
 # shellcheck disable=SC2312
 eval "$(sed -n '/^_create_pr() {/,/^}/p' "${SCRIPTS_DIR}/full-loop-helper-commit.sh")"
 
+# Extract origin reconciliation helpers used by _create_pr
+# shellcheck disable=SC2312
+eval "$(sed -n '/^_verify_pr_origin_label() {/,/^}/p' "${SCRIPTS_DIR}/full-loop-helper-commit.sh")"
+
+# shellcheck disable=SC2312
+eval "$(sed -n '/^_reconcile_pr_origin_label() {/,/^}/p' "${SCRIPTS_DIR}/full-loop-helper-commit.sh")"
+
 # Extract _post_merge_summary
 # shellcheck disable=SC2312
 eval "$(sed -n '/^_post_merge_summary() {/,/^}/p' "${SCRIPTS_DIR}/full-loop-helper-commit.sh")"
@@ -252,6 +259,9 @@ export -f gh_pr_comment
 
 # Control variable: set to 1 to simulate post-create origin reconciliation failure.
 SET_ORIGIN_LABEL_FAIL=0
+# Control variables for the required readback postcondition.
+ORIGIN_READBACK_FAIL=0
+ORIGIN_READBACK_LABELS='["origin:worker"]'
 
 set_origin_label() {
 	local issue_num="${1:-}"
@@ -261,11 +271,28 @@ set_origin_label() {
 	printf 'set_origin_label num=%s repo=%s origin=%s flags=%s\n' \
 		"$issue_num" "$repo_slug" "$new_origin" "$*" >>"$STUB_LOG"
 	if [[ "$SET_ORIGIN_LABEL_FAIL" -eq 1 ]]; then
+		printf 'GraphQL: Resource not accessible by integration\n' >&2
 		return 1
 	fi
 	return 0
 }
 export -f set_origin_label
+
+_verify_pr_origin_label() {
+	local pr_number="${1:-}"
+	local repo_slug="${2:-}"
+	local expected_origin="${3:-}"
+	printf '_verify_pr_origin_label num=%s repo=%s origin=%s labels=%s\n' \
+		"$pr_number" "$repo_slug" "$expected_origin" "$ORIGIN_READBACK_LABELS" >>"$STUB_LOG"
+	[[ "$ORIGIN_READBACK_FAIL" -eq 0 ]] || return 1
+	if printf '%s' "$ORIGIN_READBACK_LABELS" |
+		jq -e --arg expected "origin:${expected_origin}" \
+			'length == 1 and .[0] == $expected' >/dev/null 2>&1; then
+		return 0
+	fi
+	return 2
+}
+export -f _verify_pr_origin_label
 
 # =============================================================================
 # Test 1: _create_pr partial-success recovery
@@ -390,14 +417,45 @@ else
 		"expected non-zero exit; stub log: $(cat "$STUB_LOG" 2>/dev/null)"
 fi
 
-if grep -q "Could not verify origin:worker on PR #889" "$STUB_LOG" 2>/dev/null; then
-	pass "origin reconciliation failure: error message emitted"
+if grep -q "credential lacks PR label permission" "$STUB_LOG" 2>/dev/null; then
+	pass "origin reconciliation failure: classified diagnostic emitted"
 else
-	fail "origin reconciliation failure: error message emitted" \
-		"expected verification failure in log; got: $(cat "$STUB_LOG" 2>/dev/null)"
+	fail "origin reconciliation failure: classified diagnostic emitted" \
+		"expected permission classification in log; got: $(cat "$STUB_LOG" 2>/dev/null)"
 fi
 
 SET_ORIGIN_LABEL_FAIL=0
+
+# =============================================================================
+# Test 3a.1: mutation success is not enough when readback lacks exact origin.
+# Expected: _create_pr fails closed for missing, wrong, or dual origin labels.
+# =============================================================================
+for readback_labels in '[]' '["origin:interactive"]' '["origin:worker","origin:interactive"]'; do
+	: >"$STUB_LOG"
+	ORIGIN_READBACK_LABELS="$readback_labels"
+	readback_rc=0
+	_create_pr "owner/repo" "t2767: test" "body text" "origin:worker" >/dev/null 2>&1 || readback_rc=$?
+	if [[ "$readback_rc" -ne 0 ]] && grep -q "did not reach the exact origin:worker postcondition" "$STUB_LOG" 2>/dev/null; then
+		pass "origin readback rejects non-exact postcondition: ${readback_labels}"
+	else
+		fail "origin readback rejects non-exact postcondition: ${readback_labels}" \
+			"rc=${readback_rc}; stub log: $(cat "$STUB_LOG" 2>/dev/null)"
+	fi
+done
+ORIGIN_READBACK_LABELS='["origin:worker"]'
+
+# Readback API failure must remain distinct from a label mismatch.
+: >"$STUB_LOG"
+ORIGIN_READBACK_FAIL=1
+readback_api_rc=0
+_create_pr "owner/repo" "t2767: test" "body text" "origin:worker" >/dev/null 2>&1 || readback_api_rc=$?
+if [[ "$readback_api_rc" -ne 0 ]] && grep -q "Could not read back origin labels" "$STUB_LOG" 2>/dev/null; then
+	pass "origin readback API failure: classified diagnostic emitted"
+else
+	fail "origin readback API failure: classified diagnostic emitted" \
+		"rc=${readback_api_rc}; stub log: $(cat "$STUB_LOG" 2>/dev/null)"
+fi
+ORIGIN_READBACK_FAIL=0
 
 # =============================================================================
 # Test 3b: _create_pr REST fallback logs do not pollute machine stdout
