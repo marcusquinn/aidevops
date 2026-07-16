@@ -100,6 +100,10 @@ fi
 : "${PULSE_RUNNABLE_ISSUE_LIMIT:=1000}"
 : "${PULSE_DISPATCH_AGE_BONUS_PER_DAY:=25}"
 : "${PULSE_DISPATCH_AGE_BONUS_CAP:=900}"
+: "${AIDEVOPS_PULSE_CAMPAIGN_SHADOW_ENABLED:=0}"
+: "${PULSE_CAMPAIGN_HORIZON:=10}"
+: "${PULSE_CAMPAIGN_CHECKPOINT_TTL_SECONDS:=3600}"
+: "${PULSE_CAMPAIGN_TIMEOUT_SECONDS:=5}"
 : "${AIDEVOPS_PULSE_ASYNC_POST_DISPATCH_HOUSEKEEPING:=1}"
 
 # t2690: Source rate-limit circuit breaker (proactive dispatch pause on GraphQL exhaustion).
@@ -133,7 +137,24 @@ source "${_PULSE_DISPATCH_ENGINE_SCRIPT_DIR}/pulse-dispatch-current-state-guardr
 # shellcheck source=./pulse-dispatch-preflight-lib.sh
 # shellcheck disable=SC1091  # sub-library resolved from this module's path
 source "${_PULSE_DISPATCH_ENGINE_SCRIPT_DIR}/pulse-dispatch-preflight-lib.sh"
-
+# shellcheck source=./pulse-campaign-shadow.sh
+# shellcheck disable=SC1091  # adapter resolved from this module's path
+if [[ -f "${_PULSE_DISPATCH_ENGINE_SCRIPT_DIR}/pulse-campaign-shadow.sh" ]]; then
+	source "${_PULSE_DISPATCH_ENGINE_SCRIPT_DIR}/pulse-campaign-shadow.sh"
+else
+	# Mixed-version deployment fallback: preserve the pre-campaign candidate path
+	# if the new adapter has not reached this runner yet.
+	pulse_campaign_shadow_candidates_json() {
+		local repo_slug="$1"
+		local repo_path="$2"
+		local source_limit="${3:-1000}"
+		local candidates_json="[]"
+		: "$repo_path"
+		candidates_json=$(list_dispatchable_issue_candidates_json "$repo_slug" "$source_limit") || candidates_json='[]'
+		_dispatch_filter_repo_pr_backlog_candidates "$repo_slug" "$candidates_json"
+		return 0
+	}
+fi
 
 # t1959: Module-level variable to communicate launch failure reason to callers.
 # Set by check_worker_launch before each return 1; read by dispatch loop for
@@ -378,8 +399,7 @@ build_ranked_dispatch_candidates_json() {
 		# Record that we are polling this repo now (atomic write, non-fatal)
 		update_repo_pulse_timestamp "$repo_slug"
 		local repo_candidates_json
-		repo_candidates_json=$(list_dispatchable_issue_candidates_json "$repo_slug" "$per_repo_limit") || repo_candidates_json='[]'
-		repo_candidates_json=$(_dispatch_filter_repo_pr_backlog_candidates "$repo_slug" "$repo_candidates_json")
+		repo_candidates_json=$(pulse_campaign_shadow_candidates_json "$repo_slug" "$repo_path" "$per_repo_limit") || repo_candidates_json='[]'
 		if [[ -z "$repo_candidates_json" || "$repo_candidates_json" == "[]" ]]; then
 			continue
 		fi
@@ -456,7 +476,6 @@ _dispatch_order_idle_borrowing_candidates() {
 	' 2>/dev/null || printf '%s\n' "$candidates_json"
 	return 0
 }
-
 
 #######################################
 # Dispatch_max for obvious backlog.

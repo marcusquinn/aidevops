@@ -175,6 +175,10 @@ PULSE_RUNNABLE_PR_LIMIT="${PULSE_RUNNABLE_PR_LIMIT:-200}"                       
 PULSE_RUNNABLE_ISSUE_LIMIT="${PULSE_RUNNABLE_ISSUE_LIMIT:-1000}"                                           # Open issue sample size for runnable-candidate counting
 PULSE_DISPATCH_AGE_BONUS_PER_DAY="${PULSE_DISPATCH_AGE_BONUS_PER_DAY:-25}"                                 # Fairness boost per full day an eligible issue has waited
 PULSE_DISPATCH_AGE_BONUS_CAP="${PULSE_DISPATCH_AGE_BONUS_CAP:-900}"                                        # Keep age below the 1000-point major priority step
+AIDEVOPS_PULSE_CAMPAIGN_SHADOW_ENABLED="${AIDEVOPS_PULSE_CAMPAIGN_SHADOW_ENABLED:-0}"                      # GH#27939: default-off repository campaign projection; legacy dispatch remains authoritative
+PULSE_CAMPAIGN_HORIZON="${AIDEVOPS_PULSE_CAMPAIGN_HORIZON:-10}"                                           # Oldest-ready issues retained in the campaign frontier
+PULSE_CAMPAIGN_CHECKPOINT_TTL_SECONDS="${AIDEVOPS_PULSE_CAMPAIGN_CHECKPOINT_TTL_SECONDS:-3600}"             # Renewable local projection lifetime
+PULSE_CAMPAIGN_TIMEOUT_SECONDS="${AIDEVOPS_PULSE_CAMPAIGN_TIMEOUT_SECONDS:-5}"                              # Diagnostic planner timeout; failure falls back to legacy JSON
 PULSE_QUEUED_SCAN_LIMIT="${PULSE_QUEUED_SCAN_LIMIT:-1000}"                                                 # Queued/in-progress scan window per repo
 UNDERFILL_RECYCLE_DEFICIT_MIN_PCT="${UNDERFILL_RECYCLE_DEFICIT_MIN_PCT:-25}"                               # Run worker recycler when underfill reaches this threshold
 UNDERFILL_RECYCLE_THROTTLE_SECS="${UNDERFILL_RECYCLE_THROTTLE_SECS:-300}"                                  # Min seconds between recycler runs when candidates are scarce (t1885)
@@ -291,6 +295,16 @@ PULSE_RUNNABLE_PR_LIMIT=$(_validate_int PULSE_RUNNABLE_PR_LIMIT "$PULSE_RUNNABLE
 PULSE_RUNNABLE_ISSUE_LIMIT=$(_validate_int PULSE_RUNNABLE_ISSUE_LIMIT "$PULSE_RUNNABLE_ISSUE_LIMIT" 1000 1)
 PULSE_DISPATCH_AGE_BONUS_PER_DAY=$(_validate_int PULSE_DISPATCH_AGE_BONUS_PER_DAY "$PULSE_DISPATCH_AGE_BONUS_PER_DAY" 25 0)
 PULSE_DISPATCH_AGE_BONUS_CAP=$(_validate_int PULSE_DISPATCH_AGE_BONUS_CAP "$PULSE_DISPATCH_AGE_BONUS_CAP" 900 0)
+case "$AIDEVOPS_PULSE_CAMPAIGN_SHADOW_ENABLED" in
+1 | true | TRUE | yes | YES | on | ON) AIDEVOPS_PULSE_CAMPAIGN_SHADOW_ENABLED=1 ;;
+*) AIDEVOPS_PULSE_CAMPAIGN_SHADOW_ENABLED=0 ;;
+esac
+PULSE_CAMPAIGN_HORIZON=$(_validate_int PULSE_CAMPAIGN_HORIZON "$PULSE_CAMPAIGN_HORIZON" 10 1)
+if [[ "$PULSE_CAMPAIGN_HORIZON" -gt 100 ]]; then
+	PULSE_CAMPAIGN_HORIZON=100
+fi
+PULSE_CAMPAIGN_CHECKPOINT_TTL_SECONDS=$(_validate_int PULSE_CAMPAIGN_CHECKPOINT_TTL_SECONDS "$PULSE_CAMPAIGN_CHECKPOINT_TTL_SECONDS" 3600 60)
+PULSE_CAMPAIGN_TIMEOUT_SECONDS=$(_validate_int PULSE_CAMPAIGN_TIMEOUT_SECONDS "$PULSE_CAMPAIGN_TIMEOUT_SECONDS" 5 1)
 PULSE_QUEUED_SCAN_LIMIT=$(_validate_int PULSE_QUEUED_SCAN_LIMIT "$PULSE_QUEUED_SCAN_LIMIT" 1000 1)
 UNDERFILL_RECYCLE_DEFICIT_MIN_PCT=$(_validate_int UNDERFILL_RECYCLE_DEFICIT_MIN_PCT "$UNDERFILL_RECYCLE_DEFICIT_MIN_PCT" 25 1)
 if [[ "$UNDERFILL_RECYCLE_DEFICIT_MIN_PCT" -gt 100 ]]; then

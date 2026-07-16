@@ -259,6 +259,61 @@ assert_eq "all-blocked roadmap triggers dependency normalization" "1" "$(<"$norm
 assert_eq "next dependency-ready child reaches shared candidate stream" "20" \
 	"$(printf '%s' "$recovered_candidates" | jq -r 'map(select(.number == 20))[0].number')"
 
+# A successful command that returns null after dependency normalization is not
+# a complete empty snapshot. Preserve failure provenance so campaign renewal
+# cannot infer that every previously open issue completed.
+printf '0\n' >"$candidate_fetch_file"
+null_refresh_raw="${TMP_ROOT}/null-refresh-raw.json"
+null_refresh_status="${TMP_ROOT}/null-refresh-status.txt"
+gh_issue_list() {
+	local candidate_fetch_count=""
+	candidate_fetch_count=$(<"$candidate_fetch_file")
+	candidate_fetch_count=$((candidate_fetch_count + 1))
+	printf '%s\n' "$candidate_fetch_count" >"$candidate_fetch_file"
+	if [[ "$candidate_fetch_count" -eq 1 ]]; then
+		printf '%s\n' '[{"number":20,"title":"next child","url":"","updatedAt":"2026-07-11T00:00:00Z","assignees":[],"labels":[{"name":"status:blocked"}]}]'
+	else
+		printf 'null\n'
+	fi
+	return 0
+}
+null_refresh_candidates=$(list_dispatchable_issue_candidates_json \
+	"owner/repo" 100 "$null_refresh_raw" "$null_refresh_status")
+assert_eq "null refresh records failed snapshot provenance" "0" "$(<"$null_refresh_status")"
+assert_eq "null refresh persists a safe empty raw snapshot" "[]" "$(<"$null_refresh_raw")"
+assert_eq "null refresh returns no dispatch candidates" "[]" "$null_refresh_candidates"
+
+malformed_raw="${TMP_ROOT}/malformed-raw.json"
+malformed_status="${TMP_ROOT}/malformed-status.txt"
+gh_issue_list() {
+	printf '%s\n' '[{"number":"invalid","labels":[],"assignees":[]}]'
+	return 0
+}
+malformed_candidates=$(list_dispatchable_issue_candidates_json \
+	"owner/repo" 100 "$malformed_raw" "$malformed_status")
+assert_eq "malformed snapshot records failed provenance" "0" "$(<"$malformed_status")"
+assert_eq "malformed snapshot persists a safe empty raw snapshot" "[]" "$(<"$malformed_raw")"
+assert_eq "malformed snapshot returns no dispatch candidates" "[]" "$malformed_candidates"
+
+gh_issue_list() {
+	printf '%s\n' '[{"number":20,"labels":"status:available","assignees":[]}]'
+	return 0
+}
+malformed_candidates=$(list_dispatchable_issue_candidates_json \
+	"owner/repo" 100 "$malformed_raw" "$malformed_status")
+assert_eq "malformed labels record failed provenance" "0" "$(<"$malformed_status")"
+assert_eq "malformed labels return no dispatch candidates" "[]" "$malformed_candidates"
+
+gh_issue_list() {
+	printf '%s\n' '[{"number":20,"title":"normalized fields","url":"","createdAt":"2026-07-11T00:00:00Z","updatedAt":"2026-07-11T00:00:00Z","labels":["status:available"],"assignees":["example-runner"]}]'
+	return 0
+}
+normalized_candidates=$(list_dispatchable_issue_candidates_json \
+	"owner/repo" 100 "$malformed_raw" "$malformed_status")
+assert_eq "normalized string fields retain successful provenance" "1" "$(<"$malformed_status")"
+assert_eq "normalized string fields remain dispatchable" "20" \
+	"$(printf '%s' "$normalized_candidates" | jq -r '.[0].number')"
+
 status_write=""
 view_counter_file="${TMP_ROOT}/unblock-view-count"
 printf '0\n' >"$view_counter_file"

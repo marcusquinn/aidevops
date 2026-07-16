@@ -201,6 +201,67 @@ test_vote_for_peer() {
 test_vote_for_peer
 
 # ============================================================================
+section "Per-repository campaign fitness"
+# ============================================================================
+
+test_repository_fitness() {
+	local healthy broken idle saturated
+	healthy=$(_repository_fitness 1 2)
+	broken=$(_repository_fitness 3 0)
+	idle=$(_repository_fitness 1 0)
+	saturated=$(_repository_fitness 0 9)
+	if [[ "$healthy" == "80" && "$broken" == "15" && "$idle" == "50" && "$saturated" == "100" ]]; then
+		pass "repository fitness is bounded and productivity-aware"
+	else
+		fail "repository fitness mismatch" "healthy=$healthy broken=$broken idle=$idle saturated=$saturated"
+	fi
+	return 0
+}
+test_repository_fitness
+
+test_repository_observation_aggregation() {
+	local observations aggregated
+	observations='{"login":"alice","repo":"example/alpha","active_claims":3,"worker_prs":0,"interactive_prs":1}
+{"login":"alice","repo":"example/beta","active_claims":0,"worker_prs":1,"interactive_prs":0}
+{"login":"bob","repo":"example/alpha","active_claims":1,"worker_prs":0,"interactive_prs":0}'
+	aggregated=$(printf '%s\n' "$observations" | _aggregate_peer_observations)
+	if printf '%s' "$aggregated" | jq -e '
+		(length == 2) and
+		(.[0].login == "alice") and
+		(.[0].active_claims == 3) and
+		(.[0].worker_prs == 1) and
+		(.[0].repositories["example/alpha"].fitness == 15) and
+		(.[0].repositories["example/beta"].fitness == 70) and
+		(.[1].repositories["example/alpha"].fitness == 50)
+	' >/dev/null; then
+		pass "aggregation retains bounded per-repository fitness"
+	else
+		fail "aggregation lost per-repository fitness" "$aggregated"
+	fi
+	return 0
+}
+test_repository_observation_aggregation
+
+test_repository_observation_state_attachment() {
+	local peer_state repositories enriched
+	peer_state='{"alice":{"current_action":"honour","vote_history":["keep"],"last_observed":"2026-01-01T00:00:00Z"}}'
+	repositories='{"example/alpha":{"active_claims":1,"worker_prs":0,"interactive_prs":0,"fitness":50}}'
+	enriched=$(_attach_repository_observations "$peer_state" "alice" "$repositories")
+	if printf '%s' "$enriched" | jq -e '
+		(.alice.current_action == "honour") and
+		(.alice.vote_history == ["keep"]) and
+		(.alice.repos == ["example/alpha"]) and
+		(.alice.repositories["example/alpha"].fitness == 50)
+	' >/dev/null; then
+		pass "per-repository fitness persists additively beside hysteresis state"
+	else
+		fail "per-repository fitness overwrote hysteresis state" "$enriched"
+	fi
+	return 0
+}
+test_repository_observation_state_attachment
+
+# ============================================================================
 section "Hysteresis (_apply_hysteresis)"
 # ============================================================================
 
