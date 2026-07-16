@@ -150,10 +150,15 @@ _info() {
 
 _is_linked_worktree() {
 	local _path="$1"
-	local _git_dir _common_dir
-	_git_dir=$(git -C "$_path" rev-parse --path-format=absolute --git-dir 2>/dev/null) || return 1
-	_common_dir=$(git -C "$_path" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || return 1
-	[[ "$_git_dir" != "$_common_dir" ]]
+	local _git_dir _common_dir _path_abs
+	_git_dir=$(git -C "$_path" rev-parse --absolute-git-dir 2>/dev/null) || return 1
+	_common_dir=$(git -C "$_path" rev-parse --git-common-dir 2>/dev/null) || return 1
+	if [[ "$_common_dir" != /* ]]; then
+		_path_abs=$(cd "$_path" && pwd -P) || return 1
+		_common_dir="${_path_abs}/${_common_dir}"
+	fi
+	[[ "$_git_dir" != "$_common_dir" ]] || return 1
+	return 0
 }
 
 _remote_default_ref() {
@@ -211,7 +216,8 @@ _prepare_apply_worktree() {
 		return 0
 	fi
 
-	local _base_dir="${AIDEVOPS_WORKTREE_BASE_DIR:-${HOME}/Git/_worktrees}"
+	local _base_dir="${AIDEVOPS_WORKTREE_BASE_DIR:-${HOME:+$HOME/Git/_worktrees}}"
+	[[ -n "$_base_dir" ]] || return 1
 	local _safe_name
 	_safe_name=$(printf '%s-%s' "$_slug" "$_branch" | sed 's|[^A-Za-z0-9._-]|-|g')
 	local _worktree_path="${_base_dir}/${_safe_name}"

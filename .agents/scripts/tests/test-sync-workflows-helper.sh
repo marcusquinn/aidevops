@@ -576,6 +576,18 @@ rm -rf "$TMPDIR_16"
 TMPDIR_17="$(mktemp -d)"
 _setup_fake_home "$TMPDIR_17"
 _setup_mock_gh "$TMPDIR_17"
+REAL_GIT_17=$(command -v git)
+cat >"$TMPDIR_17/bin/git" <<'EOF'
+#!/usr/bin/env bash
+for _arg in "$@"; do
+	if [[ "$_arg" == --path-format=* ]]; then
+		printf 'unsupported git option: %s\n' "$_arg" >&2
+		exit 129
+	fi
+done
+exec "${REAL_GIT:?}" "$@"
+EOF
+chmod +x "$TMPDIR_17/bin/git"
 BARE_17="$TMPDIR_17/bare.git"
 REPO_17="$TMPDIR_17/repos/canonical"
 LINKED_17="$TMPDIR_17/worktrees/caller-owned"
@@ -600,7 +612,8 @@ _write_repos_json "$TMPDIR_17" \
 	"{\"initialized_repos\":[{\"path\":\"$REPO_17\",\"slug\":\"owner/repo-caller-owned\"}]}"
 SYNC_BRANCH_17="chore/test-caller-owned"
 OUT_17=$(cd "$LINKED_17" && \
-	HOME="$TMPDIR_17" PATH="$TMPDIR_17/bin:$PATH" GH_CALL_LOG="$TMPDIR_17/gh-calls.log" \
+	HOME="$TMPDIR_17" PATH="$TMPDIR_17/bin:$PATH" REAL_GIT="$REAL_GIT_17" \
+	GH_CALL_LOG="$TMPDIR_17/gh-calls.log" \
 	AIDEVOPS_WORKTREE_BASE_DIR="$TMPDIR_17/framework-worktrees" \
 	bash "$HELPER" --apply --repo owner/repo-caller-owned --workflow issue-sync \
 		--branch "$SYNC_BRANCH_17" 2>&1)
@@ -622,6 +635,17 @@ else
 fi
 _assert_exit "GH#27980 linked-worktree apply exits 0" 0 "$EXIT_17"
 rm -rf "$TMPDIR_17"
+
+# ─── Test 18: GH#28011 — HOME fallback is nounset-safe and never root-based ─
+# shellcheck disable=SC2016 # These are intentional literal source-code assertions.
+if grep -qF '${AIDEVOPS_WORKTREE_BASE_DIR:-${HOME:+$HOME/Git/_worktrees}}' "$HELPER" &&
+	grep -qF '[[ -n "$_base_dir" ]] || return 1' "$HELPER"; then
+	printf '%sPASS%s GH#28011 unset HOME cannot select a root-level worktree base\n' "$GREEN" "$NC"
+	((_PASS++))
+else
+	printf '%sFAIL%s GH#28011 HOME fallback is not nounset-safe\n' "$RED" "$NC"
+	((_FAIL++))
+fi
 
 # ─── Summary ────────────────────────────────────────────────────────────────
 printf '\n'
