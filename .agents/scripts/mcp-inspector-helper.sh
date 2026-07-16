@@ -39,6 +39,23 @@ check_inspector() {
     return 0
 }
 
+# Call the authenticated API gateway without exposing its bearer token in argv.
+gateway_curl() {
+    local url="$1"
+    shift || true
+    local -a curl_args=("$@")
+
+    if [[ ! "${API_GATEWAY_TOKEN:-}" =~ ^[A-Za-z0-9._~-]{32,}$ ]]; then
+        print_error "API_GATEWAY_TOKEN must be at least 32 URL-safe characters"
+        return 1
+    fi
+
+    curl --fail --silent --show-error \
+        --config <(printf 'header = "Authorization: Bearer %s"\n' "$API_GATEWAY_TOKEN") \
+        "${curl_args[@]}" "$url"
+    return 0
+}
+
 # Launch MCP Inspector Web UI
 launch_ui() {
     local server="${1:-}"
@@ -160,7 +177,12 @@ health_check() {
         total=$((total + 1))
         local name="localhost:$port"
         local response
-        if response=$(curl -s "http://localhost:$port/health" 2>/dev/null); then
+        if [[ "$port" == "3100" ]]; then
+            response=$(gateway_curl "http://localhost:$port/health" 2>/dev/null) || response=""
+        else
+            response=$(curl --fail --silent --show-error "http://localhost:$port/health" 2>/dev/null) || response=""
+        fi
+        if [[ -n "$response" ]]; then
             local status
             status=$(echo "$response" | jq -r '.status // "ok"' 2>/dev/null || echo "healthy")
             print_success "$name - $status"
@@ -182,8 +204,16 @@ health_check() {
         
         if [[ "$server_type" == "streamable-http" || "$server_type" == "sse" ]]; then
             local url
+            local reachable=0
             url=$(jq -r ".mcpServers[\"$srv\"].url" "$CONFIG_FILE")
-            if curl -s "$url/health" > /dev/null 2>&1; then
+            if [[ "$srv" == "api-gateway" ]]; then
+                if gateway_curl "$url/health" > /dev/null 2>&1; then
+                    reachable=1
+                fi
+            elif curl --fail --silent --show-error "$url/health" > /dev/null 2>&1; then
+                reachable=1
+            fi
+            if [[ "$reachable" -eq 1 ]]; then
                 print_success "$srv ($server_type) - healthy"
                 healthy=$((healthy + 1))
             else
@@ -228,6 +258,11 @@ test_api_gateway() {
     local base_url="http://localhost:3100"
     local passed=0
     local failed=0
+
+    if [[ -z "${API_GATEWAY_TOKEN:-}" ]]; then
+        print_error "Set API_GATEWAY_TOKEN to the same value used to start the gateway"
+        return 1
+    fi
     
     # Test health endpoint
     echo -e "\n${BLUE}Testing endpoints:${NC}"
@@ -235,7 +270,7 @@ test_api_gateway() {
     local response
     
     # Health check
-    if response=$(curl -s "$base_url/health" 2>/dev/null); then
+    if response=$(gateway_curl "$base_url/health" 2>/dev/null); then
         print_success "GET /health"
         echo "  Response: $response"
         passed=$((passed + 1))
@@ -245,7 +280,7 @@ test_api_gateway() {
     fi
     
     # Quality summary
-    if response=$(curl -s "$base_url/api/quality/summary" 2>/dev/null); then
+    if response=$(gateway_curl "$base_url/api/quality/summary" 2>/dev/null); then
         print_success "GET /api/quality/summary"
         local issues
         local gate
@@ -260,7 +295,7 @@ test_api_gateway() {
     fi
     
     # SonarCloud status
-    if curl -s "$base_url/api/sonarcloud/status" > /dev/null 2>&1; then
+    if gateway_curl "$base_url/api/sonarcloud/status" > /dev/null 2>&1; then
         print_success "GET /api/sonarcloud/status"
         passed=$((passed + 1))
     else
@@ -269,7 +304,7 @@ test_api_gateway() {
     fi
     
     # Cache stats
-    if response=$(curl -s "$base_url/api/cache/stats" 2>/dev/null); then
+    if response=$(gateway_curl "$base_url/api/cache/stats" 2>/dev/null); then
         print_success "GET /api/cache/stats"
         local size
         size=$(echo "$response" | jq -r '.size // 0' 2>/dev/null || echo "0")
@@ -281,7 +316,7 @@ test_api_gateway() {
     fi
     
     # Crawl4AI health
-    if response=$(curl -s "$base_url/api/crawl4ai/health" 2>/dev/null); then
+    if response=$(gateway_curl "$base_url/api/crawl4ai/health" 2>/dev/null); then
         local status
         status=$(echo "$response" | jq -r '.status // "unknown"' 2>/dev/null || echo "unknown")
         if [[ "$status" == "healthy" ]]; then
@@ -362,6 +397,10 @@ Configuration:
     - github           (stdio) - GitHub API
 
 Starting Local Servers:
+  # Generate tokens in a trusted shell; never commit them
+  export API_GATEWAY_TOKEN="$(openssl rand -hex 32)"
+  export DASHBOARD_TOKEN="$(openssl rand -hex 32)"
+
   # Start API Gateway (port 3100)
   bun run .opencode/server/api-gateway.ts
   

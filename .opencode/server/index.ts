@@ -7,6 +7,7 @@
  */
 
 import { Elysia } from 'elysia'
+import { getListenHost } from './security'
 
 // Read version from VERSION file
 async function getVersion(): Promise<string> {
@@ -29,6 +30,7 @@ async function getVersion(): Promise<string> {
 }
 
 const PORT = Number(process.env.PORT) || 3100
+const HOST = getListenHost(process.env.OPENCODE_SERVER_HOST)
 const VERSION = await getVersion()
 
 const app = new Elysia()
@@ -49,13 +51,13 @@ const app = new Elysia()
     uptime: process.uptime(),
   }))
 
-  .listen(PORT)
+  .listen({ port: PORT, hostname: HOST })
 
 console.log(`
 🚀 AI DevOps Framework Server v${VERSION}
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-Main server:     http://localhost:${PORT}
+Main server:     http://${HOST}:${PORT}
 
 To start individual services:
   bun run .opencode/server/api-gateway.ts    # API Gateway (port 3100)

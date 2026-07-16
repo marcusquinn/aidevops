@@ -15,6 +15,9 @@
   "scripts": {
     "dev": "bun run .opencode/server/api-gateway.ts",
     "dashboard": "bun run .opencode/server/mcp-dashboard.ts",
+    "server:test": "bun test ./.opencode/server/security.test.ts",
+    "server:typecheck": "tsc --noEmit --skipLibCheck --target ES2022 --module ESNext --moduleResolution Bundler --types bun .opencode/server/api-gateway.ts .opencode/server/mcp-dashboard.ts .opencode/server/index.ts .opencode/server/security.ts .opencode/server/security.test.ts",
+    "server:check": "bun run server:typecheck && bun run server:test",
     "quality": "bun run .opencode/tool/parallel-quality.ts",
     "dspy:init": "dspyground init",
     "dspy:dev": "dspyground dev",
