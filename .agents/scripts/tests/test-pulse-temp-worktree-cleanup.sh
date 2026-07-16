@@ -233,6 +233,7 @@ test_cleanup_lock_race_guards() {
 	setup_subject || return 1
 	local lock_dir="${AIDEVOPS_LOG_DIR}/cleanup_temp_worktrees.lock"
 	local reclaim_guard="${lock_dir}.reclaim.lock"
+	local live_start=""
 	local rc=0
 
 	# A freshly-created lock without its PID is an owner publication window, not
@@ -244,10 +245,27 @@ test_cleanup_lock_race_guards() {
 	[[ -d "$lock_dir" ]] || rc=1
 	rm -rf "$lock_dir"
 
+	# PID liveness alone is not ownership: the stored process-start fingerprint
+	# must match so a recycled PID cannot preserve an abandoned lock.
+	live_start=$(_ptwc_process_start_fingerprint "$$") || return 1
+	mkdir "$lock_dir" || return 1
+	printf '%s\n' "$$" >"${lock_dir}/pid" || return 1
+	printf '%s\n' "$live_start" >"${lock_dir}/start" || return 1
+	if _ptwc_lock_acquire; then
+		rc=1
+	fi
+	[[ -d "$lock_dir" ]] || rc=1
+	printf 'recycled-process-start\n' >"${lock_dir}/start" || return 1
+	_ptwc_lock_acquire || rc=1
+	[[ -n "$_PTWC_LOCK_OWNER_PID" && -n "$_PTWC_LOCK_OWNER_START" ]] || rc=1
+	_ptwc_lock_release "$lock_dir"
+	[[ ! -e "$lock_dir" ]] || rc=1
+
 	# A single reclaim guard serialises dead-owner recovery. The blocked
 	# contender must not move or delete the lock it inspected.
 	mkdir "$lock_dir" "$reclaim_guard" || return 1
 	printf '99999999\n' >"${lock_dir}/pid" || return 1
+	printf 'dead-process-start\n' >"${lock_dir}/start" || return 1
 	if _ptwc_lock_acquire; then
 		rc=1
 	fi
@@ -256,12 +274,14 @@ test_cleanup_lock_race_guards() {
 	_ptwc_lock_acquire || rc=1
 	[[ -n "$_PTWC_LOCK_OWNER_PID" ]] || rc=1
 
-	# Release must not delete a successor lock whose PID no longer matches this
-	# caller's ownership token.
-	printf '99999999\n' >"${lock_dir}/pid" || return 1
+	# Release must not delete a successor lock whose process identity no longer
+	# matches this caller's ownership token, even if the PID is unchanged.
+	printf '%s\n' "$_PTWC_LOCK_OWNER_PID" >"${lock_dir}/pid" || return 1
+	printf 'successor-process-start\n' >"${lock_dir}/start" || return 1
 	_ptwc_lock_release "$lock_dir"
 	[[ -d "$lock_dir" ]] || rc=1
-	[[ -z "$_PTWC_LOCK_DIR" && -z "$_PTWC_LOCK_OWNER_PID" ]] || rc=1
+	[[ -z "$_PTWC_LOCK_DIR" && -z "$_PTWC_LOCK_OWNER_PID" && \
+		-z "$_PTWC_LOCK_OWNER_START" ]] || rc=1
 	rm -rf "$lock_dir"
 	print_result "cleanup lock preserves publication windows and successor owners" "$rc"
 	return 0
@@ -305,12 +325,27 @@ test_path_classifier_rejects_normal_linked_worktree() {
 	return 0
 }
 
-test_fast_temp_cleanup_guards
-test_local_only_repo_is_excluded
-test_cleanup_bounds_fresh_snapshots
-test_cleanup_lock_race_guards
-test_stale_local_main_uses_remote_default
-test_path_classifier_rejects_normal_linked_worktree
+run_test() {
+	local test_function="$1"
+	local tests_before="$TESTS_RUN"
+	local test_rc=0
+	if "$test_function"; then
+		test_rc=0
+	else
+		test_rc=$?
+	fi
+	if [[ "$TESTS_RUN" -eq "$tests_before" ]]; then
+		print_result "$test_function" 1 "aborted before reporting a result (rc=$test_rc)"
+	fi
+	return 0
+}
+
+run_test test_fast_temp_cleanup_guards
+run_test test_local_only_repo_is_excluded
+run_test test_cleanup_bounds_fresh_snapshots
+run_test test_cleanup_lock_race_guards
+run_test test_stale_local_main_uses_remote_default
+run_test test_path_classifier_rejects_normal_linked_worktree
 
 printf '\nResults: %s/%s passed, %s failed.\n' \
 	"$((TESTS_RUN - TESTS_FAILED))" "$TESTS_RUN" "$TESTS_FAILED"

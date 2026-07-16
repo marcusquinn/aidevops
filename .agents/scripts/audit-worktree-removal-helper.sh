@@ -111,6 +111,7 @@ log_worktree_removal_event() {
 capture_worktree_process_cwds() {
 	local cwd_link=""
 	local cwd_target=""
+	local captured_count=0
 	local lsof_line=""
 	local lsof_output=""
 
@@ -118,8 +119,12 @@ capture_worktree_process_cwds() {
 		for cwd_link in /proc/[0-9]*/cwd; do
 			[[ -e "$cwd_link" ]] || continue
 			cwd_target=$(readlink "$cwd_link" 2>/dev/null || true)
-			[[ -n "$cwd_target" ]] && printf '%s\n' "$cwd_target"
+			if [[ -n "$cwd_target" ]]; then
+				printf '%s\n' "$cwd_target"
+				captured_count=$((captured_count + 1))
+			fi
 		done
+		[[ "$captured_count" -gt 0 ]] || return 1
 		return 0
 	fi
 

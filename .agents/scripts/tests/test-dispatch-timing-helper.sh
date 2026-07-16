@@ -216,10 +216,7 @@ test_probe_mode_escalation() {
 	_record success 5000
 	_record success 5000
 	_record timeout 600000 600000
-	local configured_max="$DISPATCH_TIMING_MAX_TIMEOUT_MS"
-	unset DISPATCH_TIMING_MAX_TIMEOUT_MS
-	result=$(_recommend_timeout)
-	export DISPATCH_TIMING_MAX_TIMEOUT_MS="$configured_max"
+	result=$(unset DISPATCH_TIMING_MAX_TIMEOUT_MS; _recommend_timeout)
 	_assert_eq "600s floor timeout → default probe = 1200000" "$result" "1200000"
 	return 0
 }

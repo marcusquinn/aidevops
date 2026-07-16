@@ -10,6 +10,7 @@ _PTWC_REASON="stale-temp-fixture"
 _PTWC_GUARD_CLEAR="clear"
 _PTWC_LOCK_DIR=""
 _PTWC_LOCK_OWNER_PID=""
+_PTWC_LOCK_OWNER_START=""
 
 _ptwc_is_temp_fixture_path() {
 	local wt_path="$1"
@@ -29,6 +30,37 @@ _ptwc_file_mtime_epoch() {
 	[[ "$mtime" =~ ^[0-9]+$ ]] || return 1
 	[[ "$mtime" -gt 0 ]] || return 1
 	printf '%s\n' "$mtime"
+	return 0
+}
+
+_ptwc_process_start_fingerprint() {
+	local process_pid="$1"
+	local process_start=""
+	[[ "$process_pid" =~ ^[0-9]+$ ]] || return 1
+	process_start=$(ps -p "$process_pid" -o lstart= 2>/dev/null) || return 1
+	process_start="${process_start#"${process_start%%[![:space:]]*}"}"
+	process_start="${process_start%"${process_start##*[![:space:]]}"}"
+	[[ -n "$process_start" ]] || return 1
+	printf '%s\n' "$process_start"
+	return 0
+}
+
+_ptwc_publish_lock_owner() {
+	local lock_dir="$1"
+	local owner_pid="$2"
+	local owner_start="$3"
+	local pid_file="${lock_dir}/pid"
+	local start_file="${lock_dir}/start"
+	local start_tmp="${start_file}.tmp.${owner_pid}"
+	printf '%s\n' "$owner_pid" >"$pid_file" 2>/dev/null || return 1
+	if ! printf '%s\n' "$owner_start" >"$start_tmp" 2>/dev/null; then
+		rm -f "$start_tmp" 2>/dev/null || true
+		return 1
+	fi
+	if ! mv "$start_tmp" "$start_file" 2>/dev/null; then
+		rm -f "$start_tmp" 2>/dev/null || true
+		return 1
+	fi
 	return 0
 }
 
@@ -57,26 +89,33 @@ _ptwc_lock_acquire() {
 	local log_dir="${AIDEVOPS_LOG_DIR:-${HOME:-}/.aidevops/logs}"
 	local lock_dir="${log_dir}/cleanup_temp_worktrees.lock"
 	local pid_file="${lock_dir}/pid"
+	local start_file="${lock_dir}/start"
 	local lock_pid=""
+	local lock_start=""
 	local owner_pid=""
+	local owner_start=""
+	local current_start=""
 	local lock_mtime=0
 	local lock_age=0
+	local needs_age_guard=0
 	local stale_secs="${TEMP_WORKTREE_LOCK_STALE_SECS:-300}"
 	local reclaim_dir=""
 	local reclaim_guard="${lock_dir}.reclaim.lock"
 
 	[[ -n "$log_dir" ]] || return 1
 	[[ "$stale_secs" =~ ^[1-9][0-9]*$ ]] || stale_secs=300
-	owner_pid=$(/bin/sh -c 'printf "%s\n" "$PPID"' 2>/dev/null) || owner_pid="$$"
-	[[ "$owner_pid" =~ ^[0-9]+$ ]] || owner_pid="$$"
+	owner_pid="${BASHPID:-$$}"
+	[[ "$owner_pid" =~ ^[0-9]+$ ]] || return 1
+	owner_start=$(_ptwc_process_start_fingerprint "$owner_pid") || return 1
 	mkdir -p "$log_dir" 2>/dev/null || return 1
 	if mkdir "$lock_dir" 2>/dev/null; then
-		if ! printf '%s\n' "$owner_pid" >"$pid_file" 2>/dev/null; then
+		if ! _ptwc_publish_lock_owner "$lock_dir" "$owner_pid" "$owner_start"; then
 			rm -rf "$lock_dir" 2>/dev/null || true
 			return 1
 		fi
 		_PTWC_LOCK_DIR="$lock_dir"
 		_PTWC_LOCK_OWNER_PID="$owner_pid"
+		_PTWC_LOCK_OWNER_START="$owner_start"
 		return 0
 	fi
 	# Only one contender may inspect and reclaim an existing lock. Without this
@@ -88,11 +127,24 @@ _ptwc_lock_acquire() {
 	if [[ -f "$pid_file" ]]; then
 		IFS= read -r lock_pid <"$pid_file" || lock_pid=""
 	fi
-	if [[ "$lock_pid" =~ ^[0-9]+$ ]] && kill -0 "$lock_pid" 2>/dev/null; then
-		rmdir "$reclaim_guard" 2>/dev/null || true
-		return 1
+	if [[ -f "$start_file" ]]; then
+		IFS= read -r lock_start <"$start_file" || lock_start=""
 	fi
-	if [[ -z "$lock_pid" || ! "$lock_pid" =~ ^[0-9]+$ ]]; then
+	if [[ "$lock_pid" =~ ^[0-9]+$ ]] && kill -0 "$lock_pid" 2>/dev/null; then
+		if [[ -n "$lock_start" ]]; then
+			current_start=$(_ptwc_process_start_fingerprint "$lock_pid") || current_start=""
+			if [[ -n "$current_start" && "$current_start" == "$lock_start" ]]; then
+				rmdir "$reclaim_guard" 2>/dev/null || true
+				return 1
+			fi
+			[[ -n "$current_start" ]] || needs_age_guard=1
+		else
+			needs_age_guard=1
+		fi
+	elif [[ -z "$lock_pid" || ! "$lock_pid" =~ ^[0-9]+$ ]]; then
+		needs_age_guard=1
+	fi
+	if [[ "$needs_age_guard" -eq 1 ]]; then
 		lock_mtime=$(_ptwc_file_mtime_epoch "$lock_dir") || lock_mtime=0
 		if [[ "$lock_mtime" -le 0 ]]; then
 			rmdir "$reclaim_guard" 2>/dev/null || true
@@ -119,13 +171,14 @@ _ptwc_lock_acquire() {
 		rmdir "$reclaim_guard" 2>/dev/null || true
 		return 1
 	fi
-	if ! printf '%s\n' "$owner_pid" >"$pid_file" 2>/dev/null; then
+	if ! _ptwc_publish_lock_owner "$lock_dir" "$owner_pid" "$owner_start"; then
 		rm -rf "$lock_dir" 2>/dev/null || true
 		rmdir "$reclaim_guard" 2>/dev/null || true
 		return 1
 	fi
 	_PTWC_LOCK_DIR="$lock_dir"
 	_PTWC_LOCK_OWNER_PID="$owner_pid"
+	_PTWC_LOCK_OWNER_START="$owner_start"
 	rmdir "$reclaim_guard" 2>/dev/null || true
 	return 0
 }
@@ -133,19 +186,27 @@ _ptwc_lock_acquire() {
 _ptwc_lock_release() {
 	local lock_dir="$1"
 	local pid_file="${lock_dir}/pid"
+	local start_file="${lock_dir}/start"
 	local lock_pid=""
+	local lock_start=""
 	[[ -n "$lock_dir" ]] || return 0
 	if [[ -f "$pid_file" ]]; then
 		IFS= read -r lock_pid <"$pid_file" || lock_pid=""
 	fi
-	if [[ -z "$_PTWC_LOCK_OWNER_PID" || "$lock_pid" != "$_PTWC_LOCK_OWNER_PID" ]]; then
+	if [[ -f "$start_file" ]]; then
+		IFS= read -r lock_start <"$start_file" || lock_start=""
+	fi
+	if [[ -z "$_PTWC_LOCK_OWNER_PID" || -z "$_PTWC_LOCK_OWNER_START" || \
+		"$lock_pid" != "$_PTWC_LOCK_OWNER_PID" || "$lock_start" != "$_PTWC_LOCK_OWNER_START" ]]; then
 		_PTWC_LOCK_DIR=""
 		_PTWC_LOCK_OWNER_PID=""
+		_PTWC_LOCK_OWNER_START=""
 		return 0
 	fi
 	rm -rf "$lock_dir" 2>/dev/null || true
 	_PTWC_LOCK_DIR=""
 	_PTWC_LOCK_OWNER_PID=""
+	_PTWC_LOCK_OWNER_START=""
 	return 0
 }
 

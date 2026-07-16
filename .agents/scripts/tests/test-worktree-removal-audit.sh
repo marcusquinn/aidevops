@@ -425,6 +425,29 @@ test_process_cwd_snapshot_failure_is_fail_closed() {
 }
 
 # =============================================================================
+# Test 13: Linux /proc collection fails closed when every cwd target is
+# unreadable instead of publishing an empty successful snapshot.
+# =============================================================================
+test_proc_snapshot_requires_visible_target() {
+	local rc=0
+	unset _AUDIT_WORKTREE_REMOVAL_HELPER_LOADED 2>/dev/null || true
+	# shellcheck source=../audit-worktree-removal-helper.sh
+	source "$AUDIT_HELPER"
+
+	if [[ -d /proc ]]; then
+		if (
+			readlink() { return 1; }
+			capture_worktree_process_cwds >/dev/null
+		); then
+			rc=1
+		fi
+	fi
+	print_result "proc_snapshot_requires_visible_target" "$rc" \
+		"Expected an unreadable /proc cwd scan to fail closed"
+	return 0
+}
+
+# =============================================================================
 # Main
 # =============================================================================
 
@@ -444,6 +467,7 @@ test_permanent_helper_removes_and_logs
 test_optional_guard_context_logged
 test_process_cwd_guard_refuses_empty_paths
 test_process_cwd_snapshot_failure_is_fail_closed
+test_proc_snapshot_requires_visible_target
 
 echo ""
 echo "Results: ${TESTS_PASSED}/${TESTS_RUN} passed, ${TESTS_FAILED} failed."
