@@ -964,6 +964,26 @@ _init_run_workflow() {
 	return 0
 }
 
+_init_prepare_project_config() {
+	local config_file="$1"
+	local aidevops_version="$2"
+	if _project_config_is_tracked "$project_root"; then
+		config_migration_deferred=true
+		if ! _project_config_migrate_linked_worktree "$project_root"; then
+			_project_config_write_migration_plan "$project_root" || print_warning "Could not write tracked config repair plan"
+		fi
+		print_info "Preserved tracked .aidevops.json byte-for-byte during migration"
+		return 0
+	fi
+	_init_write_project_config "$config_file" "$aidevops_version" "$init_scope" "$has_interface" "$is_agent_source" \
+		"$enable_planning" "$enable_git_workflow" "$enable_code_quality" "$enable_time_tracking" \
+		"$enable_database" "$enable_beads" "$enable_sops" "$enable_security" || {
+		print_error "Failed to write .aidevops.json"
+		return 1
+	}
+	return 0
+}
+
 _init_config_and_agents() {
 
 	# Create .aidevops.json config
@@ -973,20 +993,7 @@ _init_config_and_agents() {
 
 	print_info "Creating or refreshing .aidevops.json..."
 	local config_migration_deferred=false
-	if _project_config_is_tracked "$project_root"; then
-		config_migration_deferred=true
-		if ! _project_config_migrate_linked_worktree "$project_root"; then
-			_project_config_write_migration_plan "$project_root" || print_warning "Could not write tracked config repair plan"
-		fi
-		print_info "Preserved tracked .aidevops.json byte-for-byte during migration"
-	else
-		_init_write_project_config "$config_file" "$aidevops_version" "$init_scope" "$has_interface" "$is_agent_source" \
-			"$enable_planning" "$enable_git_workflow" "$enable_code_quality" "$enable_time_tracking" \
-			"$enable_database" "$enable_beads" "$enable_sops" "$enable_security" || {
-			print_error "Failed to write .aidevops.json"
-			return 1
-		}
-	fi
+	_init_prepare_project_config "$config_file" "$aidevops_version" || return 1
 	# Note: plugins array is always present but empty by default.
 	# Users add plugins via: aidevops plugin add <repo-url> [--namespace <name>]
 	# Schema per plugin entry:
