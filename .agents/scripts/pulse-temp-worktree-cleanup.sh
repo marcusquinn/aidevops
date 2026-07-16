@@ -11,6 +11,7 @@ _PTWC_GUARD_CLEAR="clear"
 _PTWC_LOCK_DIR=""
 _PTWC_LOCK_OWNER_PID=""
 _PTWC_LOCK_OWNER_START=""
+_PTWC_RECLAIM_GUARD_TOKEN=""
 
 _ptwc_is_temp_fixture_path() {
 	local wt_path="$1"
@@ -64,6 +65,161 @@ _ptwc_publish_lock_owner() {
 	return 0
 }
 
+_ptwc_inode_compare_unlink() {
+	local guard_path="$1"
+	local snapshot_path="$2"
+	local compare_rc=0
+	command -v python3 >/dev/null 2>&1 || return 1
+	python3 - "$guard_path" "$snapshot_path" <<'PY' || compare_rc=$?
+import os
+import sys
+
+guard_path, snapshot_path = sys.argv[1:3]
+try:
+    with open(snapshot_path, "rb") as snapshot:
+        snapshot_stat = os.fstat(snapshot.fileno())
+        try:
+            guard_stat = os.stat(guard_path, follow_symlinks=False)
+        except FileNotFoundError:
+            raise SystemExit(0)
+        if (guard_stat.st_dev, guard_stat.st_ino) != (
+            snapshot_stat.st_dev,
+            snapshot_stat.st_ino,
+        ):
+            raise SystemExit(1)
+        try:
+            os.unlink(guard_path)
+        except FileNotFoundError:
+            pass
+except OSError:
+    raise SystemExit(1)
+PY
+	return "$compare_rc"
+}
+
+_ptwc_guard_compare_unlink() {
+	local guard_path="$1"
+	local expected_record="$2"
+	local snapshot_tag="$3"
+	local snapshot_path="${guard_path}.snapshot.${snapshot_tag}"
+	local snapshot_record=""
+	local compare_rc=0
+	[[ -e "$guard_path" || -L "$guard_path" ]] || return 0
+	[[ ! -e "$snapshot_path" && ! -L "$snapshot_path" ]] || return 1
+	ln "$guard_path" "$snapshot_path" 2>/dev/null || return 1
+	IFS= read -r snapshot_record <"$snapshot_path" || snapshot_record=""
+	if [[ "$snapshot_record" != "$expected_record" ]]; then
+		rm -f "$snapshot_path" 2>/dev/null || true
+		return 1
+	fi
+	_ptwc_inode_compare_unlink "$guard_path" "$snapshot_path" || compare_rc=$?
+	rm -f "$snapshot_path" 2>/dev/null || true
+	return "$compare_rc"
+}
+
+_ptwc_reclaim_guard_acquire() {
+	local guard_path="$1"
+	local owner_pid="$2"
+	local owner_start="$3"
+	local stale_secs="$4"
+	local token_epoch=""
+	local owner_token=""
+	local owner_record=""
+	local candidate_path=""
+	local guard_record=""
+	local guard_token=""
+	local guard_pid=""
+	local guard_start=""
+	local current_start=""
+	local guard_mtime=0
+	local guard_age=0
+	local now_epoch=0
+	local needs_age_guard=0
+
+	_PTWC_RECLAIM_GUARD_TOKEN=""
+	token_epoch=$(date +%s) || return 1
+	[[ "$token_epoch" =~ ^[0-9]+$ ]] || return 1
+	owner_token="${owner_pid}_${token_epoch}_${RANDOM}_${RANDOM}"
+	printf -v owner_record '%s\t%s\t%s' "$owner_token" "$owner_pid" "$owner_start"
+	candidate_path="${guard_path}.candidate.${owner_token}"
+	[[ ! -e "$candidate_path" && ! -L "$candidate_path" ]] || return 1
+	printf '%s\n' "$owner_record" >"$candidate_path" 2>/dev/null || return 1
+	if ln "$candidate_path" "$guard_path" 2>/dev/null; then
+		rm -f "$candidate_path" 2>/dev/null || true
+		_PTWC_RECLAIM_GUARD_TOKEN="$owner_token"
+		return 0
+	fi
+	[[ -f "$guard_path" ]] || {
+		rm -f "$candidate_path" 2>/dev/null || true
+		return 1
+	}
+	IFS= read -r guard_record <"$guard_path" || guard_record=""
+	IFS=$'\t' read -r guard_token guard_pid guard_start <<<"$guard_record"
+	[[ "$guard_token" =~ ^[A-Za-z0-9_]+$ ]] || needs_age_guard=1
+	if [[ "$guard_pid" =~ ^[0-9]+$ ]] && kill -0 "$guard_pid" 2>/dev/null; then
+		if [[ -n "$guard_start" ]]; then
+			current_start=$(_ptwc_process_start_fingerprint "$guard_pid") || current_start=""
+			if [[ -n "$current_start" && "$current_start" == "$guard_start" ]]; then
+				rm -f "$candidate_path" 2>/dev/null || true
+				return 1
+			fi
+			[[ -n "$current_start" ]] || needs_age_guard=1
+		else
+			needs_age_guard=1
+		fi
+	elif [[ -z "$guard_pid" || ! "$guard_pid" =~ ^[0-9]+$ ]]; then
+		needs_age_guard=1
+	fi
+	if [[ "$needs_age_guard" -eq 1 ]]; then
+		guard_mtime=$(_ptwc_file_mtime_epoch "$guard_path") || guard_mtime=0
+		now_epoch=$(date +%s) || now_epoch=0
+		if [[ "$guard_mtime" -le 0 || "$now_epoch" -le 0 ]]; then
+			rm -f "$candidate_path" 2>/dev/null || true
+			return 1
+		fi
+		guard_age=$((now_epoch - guard_mtime))
+		if [[ "$guard_age" -lt "$stale_secs" ]]; then
+			rm -f "$candidate_path" 2>/dev/null || true
+			return 1
+		fi
+	fi
+	if ! _ptwc_guard_compare_unlink "$guard_path" "$guard_record" "$owner_token"; then
+		rm -f "$candidate_path" 2>/dev/null || true
+		return 1
+	fi
+	if ! ln "$candidate_path" "$guard_path" 2>/dev/null; then
+		rm -f "$candidate_path" 2>/dev/null || true
+		return 1
+	fi
+	rm -f "$candidate_path" 2>/dev/null || true
+	_PTWC_RECLAIM_GUARD_TOKEN="$owner_token"
+	return 0
+}
+
+_ptwc_reclaim_guard_release() {
+	local guard_path="$1"
+	local owner_token="$2"
+	local owner_pid="$3"
+	local owner_start="$4"
+	local expected_record=""
+	local guard_record=""
+	local release_rc=0
+	[[ -n "$owner_token" ]] || return 0
+	printf -v expected_record '%s\t%s\t%s' "$owner_token" "$owner_pid" "$owner_start"
+	if [[ ! -e "$guard_path" && ! -L "$guard_path" ]]; then
+		_PTWC_RECLAIM_GUARD_TOKEN=""
+		return 0
+	fi
+	IFS= read -r guard_record <"$guard_path" || guard_record=""
+	if [[ "$guard_record" != "$expected_record" ]]; then
+		_PTWC_RECLAIM_GUARD_TOKEN=""
+		return 0
+	fi
+	_ptwc_guard_compare_unlink "$guard_path" "$expected_record" "${owner_token}_release" || release_rc=$?
+	_PTWC_RECLAIM_GUARD_TOKEN=""
+	return "$release_rc"
+}
+
 _ptwc_head_reachable_from_remote() {
 	local repo_path="$1"
 	local head_sha="$2"
@@ -100,7 +256,8 @@ _ptwc_lock_acquire() {
 	local needs_age_guard=0
 	local stale_secs="${TEMP_WORKTREE_LOCK_STALE_SECS:-300}"
 	local reclaim_dir=""
-	local reclaim_guard="${lock_dir}.reclaim.lock"
+	local reclaim_guard="${lock_dir}.reclaim.v2.lock"
+	local reclaim_token=""
 
 	[[ -n "$log_dir" ]] || return 1
 	[[ "$stale_secs" =~ ^[1-9][0-9]*$ ]] || stale_secs=300
@@ -118,11 +275,11 @@ _ptwc_lock_acquire() {
 		_PTWC_LOCK_OWNER_START="$owner_start"
 		return 0
 	fi
-	# Only one contender may inspect and reclaim an existing lock. Without this
-	# atomic guard, two contenders can both classify the old owner as dead; the
-	# loser may then remove the winner's newly created lock before its PID is
-	# published. A stranded reclaim guard fails closed rather than risking that.
-	mkdir "$reclaim_guard" 2>/dev/null || return 1
+	# Serialize stale-owner inspection with an atomically published file guard.
+	# Stale guard removal uses a hard-link snapshot plus inode-checked unlink so a
+	# delayed contender cannot remove a successor's freshly published guard.
+	_ptwc_reclaim_guard_acquire "$reclaim_guard" "$owner_pid" "$owner_start" "$stale_secs" || return 1
+	reclaim_token="$_PTWC_RECLAIM_GUARD_TOKEN"
 	lock_pid=""
 	if [[ -f "$pid_file" ]]; then
 		IFS= read -r lock_pid <"$pid_file" || lock_pid=""
@@ -134,7 +291,7 @@ _ptwc_lock_acquire() {
 		if [[ -n "$lock_start" ]]; then
 			current_start=$(_ptwc_process_start_fingerprint "$lock_pid") || current_start=""
 			if [[ -n "$current_start" && "$current_start" == "$lock_start" ]]; then
-				rmdir "$reclaim_guard" 2>/dev/null || true
+				_ptwc_reclaim_guard_release "$reclaim_guard" "$reclaim_token" "$owner_pid" "$owner_start" || true
 				return 1
 			fi
 			[[ -n "$current_start" ]] || needs_age_guard=1
@@ -147,39 +304,42 @@ _ptwc_lock_acquire() {
 	if [[ "$needs_age_guard" -eq 1 ]]; then
 		lock_mtime=$(_ptwc_file_mtime_epoch "$lock_dir") || lock_mtime=0
 		if [[ "$lock_mtime" -le 0 ]]; then
-			rmdir "$reclaim_guard" 2>/dev/null || true
+			_ptwc_reclaim_guard_release "$reclaim_guard" "$reclaim_token" "$owner_pid" "$owner_start" || true
 			return 1
 		fi
 		lock_age=$(($(date +%s) - lock_mtime))
 		if [[ "$lock_age" -lt "$stale_secs" ]]; then
-			rmdir "$reclaim_guard" 2>/dev/null || true
+			_ptwc_reclaim_guard_release "$reclaim_guard" "$reclaim_token" "$owner_pid" "$owner_start" || true
 			return 1
 		fi
 	fi
 	# Rename-before-delete makes stale-lock reclamation atomic. A second caller
 	# racing here cannot delete a newly acquired lock owned by the winner.
-	reclaim_dir="${lock_dir}.reclaim.${owner_pid}"
+	reclaim_dir="${lock_dir}.reclaim.${reclaim_token}"
 	if ! mv "$lock_dir" "$reclaim_dir" 2>/dev/null; then
-		rmdir "$reclaim_guard" 2>/dev/null || true
+		_ptwc_reclaim_guard_release "$reclaim_guard" "$reclaim_token" "$owner_pid" "$owner_start" || true
 		return 1
 	fi
 	if ! rm -rf "$reclaim_dir" 2>/dev/null; then
-		rmdir "$reclaim_guard" 2>/dev/null || true
+		_ptwc_reclaim_guard_release "$reclaim_guard" "$reclaim_token" "$owner_pid" "$owner_start" || true
 		return 1
 	fi
 	if ! mkdir "$lock_dir" 2>/dev/null; then
-		rmdir "$reclaim_guard" 2>/dev/null || true
+		_ptwc_reclaim_guard_release "$reclaim_guard" "$reclaim_token" "$owner_pid" "$owner_start" || true
 		return 1
 	fi
 	if ! _ptwc_publish_lock_owner "$lock_dir" "$owner_pid" "$owner_start"; then
 		rm -rf "$lock_dir" 2>/dev/null || true
-		rmdir "$reclaim_guard" 2>/dev/null || true
+		_ptwc_reclaim_guard_release "$reclaim_guard" "$reclaim_token" "$owner_pid" "$owner_start" || true
 		return 1
 	fi
 	_PTWC_LOCK_DIR="$lock_dir"
 	_PTWC_LOCK_OWNER_PID="$owner_pid"
 	_PTWC_LOCK_OWNER_START="$owner_start"
-	rmdir "$reclaim_guard" 2>/dev/null || true
+	if ! _ptwc_reclaim_guard_release "$reclaim_guard" "$reclaim_token" "$owner_pid" "$owner_start"; then
+		_ptwc_lock_release "$lock_dir"
+		return 1
+	fi
 	return 0
 }
 

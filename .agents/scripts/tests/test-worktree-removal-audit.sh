@@ -455,6 +455,36 @@ test_snapshot_backend_requires_visible_target() {
 }
 
 # =============================================================================
+# Test 14: a partially visible /proc snapshot is incomplete and fails closed.
+# =============================================================================
+test_proc_snapshot_rejects_partial_visibility() {
+	local proc_root="${TEST_DIR}/fake-proc"
+	local rc=0
+	mkdir -p "${proc_root}/1" "${proc_root}/2"
+	ln -s /visible-cwd "${proc_root}/1/cwd"
+	ln -s /hidden-cwd "${proc_root}/2/cwd"
+
+	if (
+		readlink() {
+			local link_path="$1"
+			case "$link_path" in
+			*/1/cwd)
+				printf '/visible-cwd\n'
+				return 0
+				;;
+			esac
+			return 1
+		}
+		_capture_worktree_proc_cwds "$proc_root" >/dev/null
+	); then
+		rc=1
+	fi
+	print_result "proc_snapshot_rejects_partial_visibility" "$rc" \
+		"Expected one unreadable persistent cwd link to invalidate the snapshot"
+	return 0
+}
+
+# =============================================================================
 # Main
 # =============================================================================
 
@@ -475,6 +505,7 @@ test_optional_guard_context_logged
 test_process_cwd_guard_refuses_empty_paths
 test_process_cwd_snapshot_failure_is_fail_closed
 test_snapshot_backend_requires_visible_target
+test_proc_snapshot_rejects_partial_visibility
 
 echo ""
 echo "Results: ${TESTS_PASSED}/${TESTS_RUN} passed, ${TESTS_FAILED} failed."

@@ -106,26 +106,40 @@ log_worktree_removal_event() {
 	return 0
 }
 
+_capture_worktree_proc_cwds() {
+	local proc_root="$1"
+	local cwd_link=""
+	local cwd_target=""
+	local captured_count=0
+
+	for cwd_link in "$proc_root"/[0-9]*/cwd; do
+		[[ -L "$cwd_link" || -e "$cwd_link" ]] || continue
+		if ! cwd_target=$(readlink "$cwd_link" 2>/dev/null); then
+			# Vanished processes are harmless; persistent unreadability means the
+			# snapshot is incomplete and must fail closed.
+			[[ -L "$cwd_link" || -e "$cwd_link" ]] && return 1
+			continue
+		fi
+		if [[ -n "$cwd_target" ]]; then
+			printf '%s\n' "$cwd_target"
+			captured_count=$((captured_count + 1))
+		fi
+	done
+	[[ "$captured_count" -gt 0 ]] || return 1
+	return 0
+}
+
 # Capture every visible live-process cwd. Callers may supply the resulting
 # snapshot to the guard so one safety check performs only one platform scan.
 capture_worktree_process_cwds() {
-	local cwd_link=""
 	local cwd_target=""
 	local captured_count=0
 	local lsof_line=""
 	local lsof_output=""
 
 	if [[ -d /proc ]]; then
-		for cwd_link in /proc/[0-9]*/cwd; do
-			[[ -e "$cwd_link" ]] || continue
-			cwd_target=$(readlink "$cwd_link" 2>/dev/null || true)
-			if [[ -n "$cwd_target" ]]; then
-				printf '%s\n' "$cwd_target"
-				captured_count=$((captured_count + 1))
-			fi
-		done
-		[[ "$captured_count" -gt 0 ]] || return 1
-		return 0
+		_capture_worktree_proc_cwds /proc
+		return $?
 	fi
 
 	if command -v lsof >/dev/null 2>&1; then

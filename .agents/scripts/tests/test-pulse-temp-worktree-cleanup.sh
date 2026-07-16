@@ -232,7 +232,11 @@ test_cleanup_lock_race_guards() {
 	teardown
 	setup_subject || return 1
 	local lock_dir="${AIDEVOPS_LOG_DIR}/cleanup_temp_worktrees.lock"
-	local reclaim_guard="${lock_dir}.reclaim.lock"
+	local reclaim_guard="${lock_dir}.reclaim.v2.lock"
+	local guard_snapshot="${reclaim_guard}.snapshot.manual"
+	local guard_record=""
+	local fresh_record=""
+	local guard_token=""
 	local live_start=""
 	local rc=0
 
@@ -261,18 +265,36 @@ test_cleanup_lock_race_guards() {
 	_ptwc_lock_release "$lock_dir"
 	[[ ! -e "$lock_dir" ]] || rc=1
 
-	# A single reclaim guard serialises dead-owner recovery. The blocked
-	# contender must not move or delete the lock it inspected.
-	mkdir "$lock_dir" "$reclaim_guard" || return 1
+	# Inode comparison prevents a delayed stale-guard reclaimer from unlinking a
+	# newly published successor at the same path.
+	guard_record=$'stale_guard\t99999999\tdead-process-start'
+	printf -v fresh_record '%s\t%s\t%s' "fresh_guard" "$$" "$live_start"
+	printf '%s\n' "$guard_record" >"$reclaim_guard" || return 1
+	ln "$reclaim_guard" "$guard_snapshot" || return 1
+	rm -f "$reclaim_guard" || return 1
+	printf '%s\n' "$fresh_record" >"$reclaim_guard" || return 1
+	if _ptwc_inode_compare_unlink "$reclaim_guard" "$guard_snapshot"; then
+		rc=1
+	fi
+	[[ -f "$reclaim_guard" ]] || rc=1
+	rm -f "$guard_snapshot" "$reclaim_guard"
+
+	# A live reclaim owner serialises dead-main-lock inspection. Once that owner
+	# is gone, a stranded guard is recovered through the inode-checked protocol.
+	mkdir "$lock_dir" || return 1
 	printf '99999999\n' >"${lock_dir}/pid" || return 1
 	printf 'dead-process-start\n' >"${lock_dir}/start" || return 1
+	_ptwc_reclaim_guard_acquire "$reclaim_guard" "$$" "$live_start" 300 || return 1
+	guard_token="$_PTWC_RECLAIM_GUARD_TOKEN"
 	if _ptwc_lock_acquire; then
 		rc=1
 	fi
 	[[ -f "${lock_dir}/pid" ]] || rc=1
-	rmdir "$reclaim_guard" || return 1
+	_ptwc_reclaim_guard_release "$reclaim_guard" "$guard_token" "$$" "$live_start" || rc=1
+	guard_record=$'stranded_guard\t99999999\tdead-process-start'
+	printf '%s\n' "$guard_record" >"$reclaim_guard" || return 1
 	_ptwc_lock_acquire || rc=1
-	[[ -n "$_PTWC_LOCK_OWNER_PID" ]] || rc=1
+	[[ -n "$_PTWC_LOCK_OWNER_PID" && ! -e "$reclaim_guard" ]] || rc=1
 
 	# Release must not delete a successor lock whose process identity no longer
 	# matches this caller's ownership token, even if the PID is unchanged.
@@ -281,9 +303,9 @@ test_cleanup_lock_race_guards() {
 	_ptwc_lock_release "$lock_dir"
 	[[ -d "$lock_dir" ]] || rc=1
 	[[ -z "$_PTWC_LOCK_DIR" && -z "$_PTWC_LOCK_OWNER_PID" && \
-		-z "$_PTWC_LOCK_OWNER_START" ]] || rc=1
+		-z "$_PTWC_LOCK_OWNER_START" && -z "$_PTWC_RECLAIM_GUARD_TOKEN" ]] || rc=1
 	rm -rf "$lock_dir"
-	print_result "cleanup lock preserves publication windows and successor owners" "$rc"
+	print_result "cleanup locks recover stranded guards without deleting successors" "$rc"
 	return 0
 }
 
