@@ -3,19 +3,7 @@ name: research
 description: Research and analysis - data gathering, competitive analysis, market research
 mode: subagent
 subagents:
-  # Context/docs
-  - context7
-  # Web research
-  - crawl4ai
-  - serper
-  - outscraper
-  # Summarization
-  - summarize
-  # Domain-specific corpus research
-  - legal-research
-  # Built-in
-  - general
-  - explore
+  - research-only
 ---
 
 <!-- SPDX-License-Identifier: MIT -->
@@ -35,7 +23,8 @@ Stay in analyst mode. Answer with findings, evidence, and recommendations; do no
 
 - **Purpose**: research and analysis
 - **Mode**: gather evidence, not implement changes
-- **Primary tools**: Context7 for official docs, Crawl4AI/browser tools for web content, webfetch for supplied URLs
+- **Delegation**: dispatch research work only to `research-only`; never use mutation-capable `general` or `explore` agents for a research-only request
+- **Primary tools**: repository read/search plus webfetch for supplied URLs
 - **Common tasks**: technical documentation, competitor analysis, market research, best-practice discovery, tool evaluation
 - **Output**: structured findings, not code changes
 
@@ -73,3 +62,12 @@ Stay in analyst mode. Answer with findings, evidence, and recommendations; do no
 - Next steps
 
 Research informs implementation; it does not perform it.
+
+## Capability envelope
+
+The `research-only` OpenCode profile is the canonical non-mutating research
+boundary. It permits repository reads, grep/glob search, and read-only web
+retrieval. It denies edits, writes, patches, Bash, nested tasks, external
+directories, credential/account tools, and all unlisted tools. Permission
+prompts must fail closed rather than widening this profile after resume or
+compaction.

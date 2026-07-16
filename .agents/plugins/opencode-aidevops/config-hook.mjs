@@ -572,6 +572,71 @@ function registerAgents(config, agentsDir) {
   return injected;
 }
 
+const RESEARCH_ONLY_AGENT_NAME = "research-only";
+const RESEARCH_ONLY_FALLBACK_PROMPT = `# Research-only subagent
+
+Gather evidence from the assigned repository and read-only web sources. Return
+findings, citations, uncertainty, and recommendations. Never modify local or
+external state, invoke another agent, access credentials, or perform Git,
+account, network-write, or worktree operations.`;
+
+function researchOnlyPrompt(agentsDir) {
+  const source = readIfExists(join(agentsDir, "tools", "ai-assistants", "research-only.md"));
+  if (!source) return RESEARCH_ONLY_FALLBACK_PROMPT;
+  return source.replace(/^---\n[\s\S]*?\n---\n?/, "").trim();
+}
+
+/**
+ * Register a fail-closed research profile after all broad/global permission
+ * transforms so managed-directory grants and MCP defaults cannot widen it.
+ * @param {object} config - OpenCode Config object (mutable)
+ * @param {string} agentsDir
+ * @returns {number} Number of enforced profiles
+ */
+export function registerResearchOnlyAgent(config, agentsDir) {
+  if (!config.agent) config.agent = {};
+  config.agent[RESEARCH_ONLY_AGENT_NAME] = {
+    description: "Non-mutating repository and web research with a fail-closed capability envelope",
+    mode: "subagent",
+    prompt: researchOnlyPrompt(agentsDir),
+    tools: {
+      "*": false,
+      read: true,
+      grep: true,
+      glob: true,
+      webfetch: true,
+      websearch: true,
+      write: false,
+      edit: false,
+      apply_patch: false,
+      bash: false,
+      task: false,
+      todowrite: false,
+      skill: false,
+    },
+    permission: {
+      "*": "deny",
+      read: {
+        "*": "allow",
+        "*.env": "deny",
+        "*.env.*": "deny",
+        "*.env.example": "allow",
+      },
+      grep: "allow",
+      glob: "allow",
+      webfetch: "allow",
+      websearch: "allow",
+      write: "deny",
+      edit: "deny",
+      apply_patch: "deny",
+      bash: "deny",
+      task: "deny",
+      external_directory: "deny",
+    },
+  };
+  return 1;
+}
+
 /**
  * Ensure at least one agent is enabled (prevents OpenCode crash).
  * @param {object} config - OpenCode Config object (mutable)
@@ -689,13 +754,14 @@ export function createConfigHook(deps) {
   return async function configHook(config) {
     if (!config.agent) config.agent = {};
 
-    const agents = registerAgents(config, agentsDir);
+    let agents = registerAgents(config, agentsDir);
     ensureAgentGuard(config, workspaceDir);
 
     const mcps = registerMcpServers(config);
     const agentTools = applyAgentMcpTools(config);
     const directories = registerManagedDirectoryPermissions(config);
     const permissionGrants = registerApprovedWorkerPermissions(config, { repositoryDir });
+    agents += registerResearchOnlyAgent(config, agentsDir);
     const poolCleaned = registerPoolProvider(config);
     const anthropic = registerAnthropicModels(config);
     const openai = registerGpt56ContextLimits(config);

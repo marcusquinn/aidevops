@@ -33,6 +33,38 @@ tools:
 # Bounded review
 EOF_AGENT
 
+cat >"$AGENTS_DIR/tools/code-review/research-only.md" <<'EOF_AGENT'
+---
+description: Research-only agent
+mode: subagent
+tools:
+  "*": false
+  read: true
+  grep: true
+  glob: true
+  webfetch: true
+  write: false
+  edit: false
+  apply_patch: false
+  bash: false
+  task: false
+permission:
+  "*": deny
+  read: allow
+  grep: allow
+  glob: allow
+  webfetch: allow
+  write: deny
+  edit: deny
+  apply_patch: deny
+  bash: deny
+  task: deny
+  external_directory: deny
+---
+
+# Research-only
+EOF_AGENT
+
 cat >"$AGENTS_DIR/tools/code-review/sandboxed-review.md" <<'EOF_AGENT'
 ---
 description: Sandboxed review agent
@@ -76,6 +108,21 @@ if grep -q '^model: thinking$' "$sandboxed_generated"; then
 	printf '%s\n' 'FAIL: workload tier leaked into OpenCode model field' >&2
 	exit 1
 fi
+
+if ! _write_subagent_stub "$AGENTS_DIR/tools/code-review/research-only.md" >/dev/null; then
+	printf '%s\n' 'FAIL: could not generate research-only OpenCode subagent' >&2
+	exit 1
+fi
+
+research_generated="$agent_dir/research-only.md"
+grep -q '^  "\*": false$' "$research_generated"
+grep -q '^  read: true$' "$research_generated"
+grep -q '^  write: false$' "$research_generated"
+grep -q '^  edit: false$' "$research_generated"
+grep -q '^  apply_patch: false$' "$research_generated"
+grep -q '^  bash: false$' "$research_generated"
+grep -q '^  task: false$' "$research_generated"
+grep -q '^  external_directory: deny$' "$research_generated"
 
 printf '%s\n' 'PASS: generated OpenCode subagents preserve guards without treating workload tiers as model IDs'
 exit 0

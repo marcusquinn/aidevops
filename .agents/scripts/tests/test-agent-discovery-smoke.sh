@@ -254,8 +254,12 @@ assert build["permission"]["grep"] == "allow"
 assert build["permission"]["task"] == {"*": "deny", "research": "allow"}
 
 research = get_agent_config("Research", "research.md")
-assert "grep" not in research["tools"]
-assert "grep" not in research["permission"]
+assert research["tools"]["grep"] is True
+assert research["tools"]["task"] is True
+assert "bash" not in research["tools"]
+assert "write" not in research["tools"]
+assert "edit" not in research["tools"]
+assert research["permission"]["grep"] == "allow"
 
 print("OK")
 PYEOF
