@@ -26,14 +26,27 @@ export function validPreviousCheckpoint(previous, campaignId, scopeKey) {
   return previous.repository?.scopeKey === scopeKey;
 }
 
+function validatedRepositorySlug(value) {
+  if (typeof value !== "string" || !REPOSITORY_SLUG.test(value)) throw new TypeError("repository slug is invalid");
+  return value;
+}
+
+function validatedScopeKey(value) {
+  if (typeof value !== "string" || !/^[0-9a-f]{16}$/.test(value)) throw new TypeError("repository scope key is invalid");
+  return value;
+}
+
+function validatedCampaignTimestamp(value) {
+  const timestamp = canonicalTimestamp(value ?? new Date().toISOString());
+  if (!timestamp) throw new TypeError("campaign timestamp is invalid");
+  return timestamp;
+}
+
 function campaignContext(input) {
   if (!isObject(input)) throw new TypeError("campaign input must be an object");
-  const repositorySlug = input.repositorySlug;
-  const scopeKey = input.scopeKey;
-  if (typeof repositorySlug !== "string" || !REPOSITORY_SLUG.test(repositorySlug)) throw new TypeError("repository slug is invalid");
-  if (typeof scopeKey !== "string" || !/^[0-9a-f]{16}$/.test(scopeKey)) throw new TypeError("repository scope key is invalid");
-  const now = canonicalTimestamp(input.now ?? new Date().toISOString());
-  if (!now) throw new TypeError("campaign timestamp is invalid");
+  const repositorySlug = validatedRepositorySlug(input.repositorySlug);
+  const scopeKey = validatedScopeKey(input.scopeKey);
+  const now = validatedCampaignTimestamp(input.now);
   return {
     campaignId: `campaign-${hash(scopeKey, 20)}`,
     horizon: clampInteger(input.horizon, 1, 100, DEFAULT_HORIZON),

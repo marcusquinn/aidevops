@@ -29,6 +29,7 @@ import {
   runnerIdentity,
   writeCampaignCheckpoint,
 } from "../pulse-campaign-coordinator.mjs";
+import { hash } from "../pulse-campaign-values.mjs";
 
 const NOW = "2026-07-16T12:00:00.000Z";
 const SCOPE_KEY = "0123456789abcdef";
@@ -88,6 +89,12 @@ test("builds a deterministic oldest-ready frontier with semantic categories", ()
   assert.equal(first.generation, 1);
   assert.equal(first.renewAfter, "2026-07-16T12:30:00.000Z");
   assert.equal(first.expiresAt, "2026-07-16T13:00:00.000Z");
+});
+
+test("hashes nested objects with canonical key ordering", () => {
+  const first = { z: 3, nested: { b: true, a: [1, "two"] } };
+  const second = { nested: { a: [1, "two"], b: true }, z: 3 };
+  assert.equal(hash(first), hash(second));
 });
 
 test("keeps same-login devices distinct and lane assignments non-overlapping", () => {
@@ -499,6 +506,9 @@ test("serializes concurrent CLI renewals into consecutive generations", async ()
 test("validates public identity and repository inputs", () => {
   assert.equal(runnerIdentity("Example-User", "device.1"), "example-user:device.1");
   assert.throws(() => runnerIdentity("invalid user", "device.1"), /login is invalid/);
+  assert.throws(() => runnerIdentity("-invalid", "device.1"), /login is invalid/);
+  assert.throws(() => runnerIdentity("valid-user", "invalid device"), /device_id is invalid/);
+  assert.throws(() => runnerIdentity("valid-user", `d${"x".repeat(64)}`), /device_id is invalid/);
   assert.throws(() => planCampaign(input({ repositorySlug: "invalid" })), /repository slug is invalid/);
   assert.throws(() => campaignCheckpointPath("relative", SCOPE_KEY), /root must be absolute/);
 });

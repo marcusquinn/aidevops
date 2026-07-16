@@ -4,23 +4,35 @@
 import { canonicalTimestamp, isObject } from "./pulse-campaign-values.mjs";
 
 const MAX_HISTORY_ITEMS = 100;
+const EVIDENCE_KIND_CHARACTERS = new Set("abcdefghijklmnopqrstuvwxyz0123456789._-");
+
+function validEvidenceKind(value) {
+  return typeof value === "string"
+    && value.length >= 1
+    && value.length <= 64
+    && [...value].every((character) => EVIDENCE_KIND_CHARACTERS.has(character));
+}
+
+function normalizedCompletedItem(item) {
+  if (!isObject(item)) return null;
+  const issueNumber = Number(item.issueNumber);
+  if (!Number.isSafeInteger(issueNumber) || issueNumber < 1) return null;
+  const kind = validEvidenceKind(item.kind) ? item.kind : "verified-terminal-evidence";
+  const observedAt = canonicalTimestamp(item.observedAt, "");
+  return { issueNumber, kind, ...(observedAt ? { observedAt } : {}) };
+}
 
 export function normalizeCompletedEvidence(value) {
   if (!Array.isArray(value)) return [];
   const seen = new Set();
   const result = [];
   for (const item of value) {
-    if (!isObject(item)) continue;
-    const issueNumber = Number(item.issueNumber);
-    if (!Number.isSafeInteger(issueNumber) || issueNumber < 1) continue;
-    const kind = typeof item.kind === "string" && /^[a-z0-9._-]{1,64}$/.test(item.kind)
-      ? item.kind
-      : "verified-terminal-evidence";
-    const observedAt = canonicalTimestamp(item.observedAt, "");
-    const key = `${issueNumber}:${kind}`;
+    const normalized = normalizedCompletedItem(item);
+    if (!normalized) continue;
+    const key = `${normalized.issueNumber}:${normalized.kind}`;
     if (seen.has(key)) continue;
     seen.add(key);
-    result.push({ issueNumber, kind, ...(observedAt ? { observedAt } : {}) });
+    result.push(normalized);
   }
   return result.slice(-MAX_HISTORY_ITEMS);
 }

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 // SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 
-import { LOGIN } from "./pulse-campaign-runners.mjs";
+import { validRunnerLogin } from "./pulse-campaign-runners.mjs";
 import { canonicalTimestamp, compareAscii, isObject } from "./pulse-campaign-values.mjs";
 
 function normalizedLabels(issue) {
@@ -16,7 +16,7 @@ function normalizedAssignees(issue) {
   if (!Array.isArray(issue?.assignees)) return [];
   return [...new Set(issue.assignees
     .map((assignee) => typeof assignee === "string" ? assignee : assignee?.login)
-    .filter((login) => typeof login === "string" && LOGIN.test(login)))]
+    .filter(validRunnerLogin))]
     .sort(compareAscii);
 }
 
@@ -40,7 +40,7 @@ function validLabel(label) {
 
 function validAssignee(assignee) {
   const login = typeof assignee === "string" ? assignee : assignee?.login;
-  return typeof login === "string" && LOGIN.test(login);
+  return validRunnerLogin(login);
 }
 
 function issueInputIsLossless(issue) {

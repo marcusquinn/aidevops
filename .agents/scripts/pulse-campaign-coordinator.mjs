@@ -20,10 +20,10 @@ import {
 } from "./pulse-campaign-checkpoint.mjs";
 import {
   configuredRunners,
-  DEVICE_ID,
   localRunner,
   peerRunners,
   runnerIdentity,
+  validDeviceId,
 } from "./pulse-campaign-runners.mjs";
 import {
   CAMPAIGN_SCHEMA_VERSION,
@@ -106,7 +106,7 @@ function incomingSourcePrecedes(previous, incoming) {
 function readDeviceId(filepath) {
   if (!filepath || !existsSync(filepath)) return "";
   const value = readFileSync(filepath, "utf8").trim();
-  return DEVICE_ID.test(value) ? value : "";
+  return validDeviceId(value) ? value : "";
 }
 
 function fileObservedAt(filepath) {
@@ -129,7 +129,7 @@ function parseOptions(args) {
       continue;
     }
     if (!valueOptions.has(argument) || index + 1 >= args.length) throw new TypeError(`unknown or incomplete option: ${argument}`);
-    options[argument.slice(2).replaceAll("-", "_")] = args[index + 1];
+    options[argument.slice(2).split("-").join("_")] = args[index + 1];
     index += 1;
   }
   return options;
