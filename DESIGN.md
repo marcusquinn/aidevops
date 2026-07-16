@@ -163,6 +163,7 @@ AI DevOps is a developer-operations framework and OpenCode plugin. Its interface
 Design goals:
 
 - Keep operational state obvious: running, stopped, error, authenticated, last update, and command actions should scan quickly.
+- Use concise, text-first terminal status prefixes: `[RUN]` for active OpenCode turns and `[WAIT]` when the root session is awaiting input. Keep these terminal-only so issue/PR prefixes remain first in stored session titles and search results.
 - Preserve developer trust with native system typography, code-friendly contrast, visible borders, and restrained motion.
 - Use compact density for dashboards and sidebars, but keep controls at least 44px high when touch use is plausible.
 - Prefer semantic tokens over one-off values so generated reports, OpenCode UI surfaces, and dashboard screens stay consistent.

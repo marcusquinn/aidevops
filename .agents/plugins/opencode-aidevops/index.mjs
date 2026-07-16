@@ -37,6 +37,7 @@ import { INTENT_FIELD } from "./intent-tracing.mjs";
 import { createGreetingHandler } from "./greeting.mjs";
 import { applyImageSizeGuard } from "./quality-hooks-image.mjs";
 import { createSessionTitleFallbackHandler } from "./session-title-fallback.mjs";
+import { createSessionTitleStatusHandler } from "./session-title-status.mjs";
 import { createSessionTitleSuffixHandler } from "./session-title-suffix.mjs";
 import { installPluginConsoleRouter } from "./plugin-console.mjs";
 import { createSubagentEffortHooks, loadTierReasoningPolicies } from "./subagent-effort.mjs";
@@ -341,6 +342,7 @@ export async function AidevopsPlugin({ directory, client }) {
     agentsDir: AGENTS_DIR,
     client,
   });
+  const sessionTitleStatusHandler = createSessionTitleStatusHandler({ isHeadless });
   const sessionTitleFallbackHandler = createSessionTitleFallbackHandler({
     agentsDir: ACTIVE_AGENTS_DIR,
     client,
@@ -391,6 +393,7 @@ export async function AidevopsPlugin({ directory, client }) {
       await Promise.all([
         handleEvent(input),
         permissionBroker.handleEvent(input).catch((err) => debugEventError("permission broker", err)),
+        sessionTitleStatusHandler(input).catch((err) => debugEventError("title status handler", err)),
         sessionTitleSuffixHandler(input).catch((err) => debugEventError("title suffix handler", err)),
         sessionTitleFallbackHandler(input).catch((err) => debugEventError("title fallback handler", err)),
         greetingHandler(input).catch((err) => debugEventError("greeting handler", err)),
