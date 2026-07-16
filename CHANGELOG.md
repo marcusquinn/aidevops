@@ -10,6 +10,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.32.129] - 2026-07-16
+
+### Fixed
+
+- preserve interactive lockdown claims (#27934)
+- harden dispatch and recovery workflows (#27933)
+
 ## [3.32.128] - 2026-07-16
 
 ### Changed
