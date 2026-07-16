@@ -131,25 +131,45 @@ def _policy_action(
         print(f"Command policy valid: {policy_path}")
         return 0
     if args.action == "authorization-digest":
-        guard = _account_mutation_guard(policy)
-        if len(invocations) != 1 or not _matches_gh_command_path(
-            invocations[0], guard["command_paths"]
-        ):
-            print(
-                json.dumps(
-                    _parse_error(
-                        "authorization digest requires one protected account mutation"
-                    ),
-                    sort_keys=True,
-                )
-            )
-            return FORBID_EXIT
+        return _authorization_action(
+            args, invocations, policy, authorization_source
+        )
+    return _check_action(args, invocations, policy, authorization_source)
+
+
+def _authorization_action(
+    args: argparse.Namespace,
+    invocations: list[list[str]],
+    policy: dict[str, Any],
+    authorization_source: dict[str, Any] | None,
+) -> int:
+    guard = _account_mutation_guard(policy)
+    if len(invocations) != 1 or not _matches_gh_command_path(
+        invocations[0], guard["command_paths"]
+    ):
         print(
-            account_mutation_authorization(
-                invocations[0], args.cwd, authorization_source
+            json.dumps(
+                _parse_error(
+                    "authorization digest requires one protected account mutation"
+                ),
+                sort_keys=True,
             )
         )
-        return 0
+        return FORBID_EXIT
+    print(
+        account_mutation_authorization(
+            invocations[0], args.cwd, authorization_source
+        )
+    )
+    return 0
+
+
+def _check_action(
+    args: argparse.Namespace,
+    invocations: list[list[str]],
+    policy: dict[str, Any],
+    authorization_source: dict[str, Any] | None,
+) -> int:
     if not invocations:
         print(json.dumps(_parse_error("command or argv input is required"), sort_keys=True))
         return FORBID_EXIT
