@@ -182,6 +182,59 @@ test("blocks generic destructive commands through shared policy", () => {
   );
 });
 
+test("blocks account mutations unless inherited authorization matches exactly", () => {
+  const cwd = process.cwd();
+  const helper = join(scriptsDir, "command-policy-helper.py");
+  const command = "gh repo fork owner/source --clone=false";
+  const previousAuthorization = process.env.AIDEVOPS_ACCOUNT_MUTATION_AUTHORIZATION;
+  const authorization = execFileSync(
+    "python3",
+    [helper, "authorization-digest", "--cwd", cwd, "--command", command],
+    { encoding: "utf8" },
+  ).trim();
+  try {
+    delete process.env.AIDEVOPS_ACCOUNT_MUTATION_AUTHORIZATION;
+    assert.throws(
+      () => checkCommandSafetyGate(command, scriptsDir, cwd),
+      /github\.account-mutation/,
+    );
+    assert.throws(
+      () => checkCommandSafetyGate(
+        "bash -lc 'gh repo fork owner/source --clone=false'",
+        scriptsDir,
+        cwd,
+      ),
+      /github\.account-mutation/,
+    );
+    assert.doesNotThrow(() => checkCommandSafetyGate("gh repo view owner/source", scriptsDir, cwd));
+
+    process.env.AIDEVOPS_ACCOUNT_MUTATION_AUTHORIZATION = authorization;
+    assert.doesNotThrow(() => checkCommandSafetyGate(command, scriptsDir, cwd));
+    assert.throws(
+      () => checkCommandSafetyGate(
+        "sudo -n gh repo fork owner/source --clone=false",
+        scriptsDir,
+        cwd,
+      ),
+      /github\.account-mutation/,
+    );
+    assert.throws(
+      () => checkCommandSafetyGate("gh repo fork owner/different --clone=false", scriptsDir, cwd),
+      /github\.account-mutation/,
+    );
+    assert.throws(
+      () => checkCommandSafetyGate("gh repo create owner/new-repo --public", scriptsDir, cwd),
+      /github\.account-mutation/,
+    );
+  } finally {
+    if (previousAuthorization === undefined) {
+      delete process.env.AIDEVOPS_ACCOUNT_MUTATION_AUTHORIZATION;
+    } else {
+      process.env.AIDEVOPS_ACCOUNT_MUTATION_AUTHORIZATION = previousAuthorization;
+    }
+  }
+});
+
 test("rejects ambiguous shell syntax before execution", () => {
   assert.throws(
     () => checkCommandSafetyGate("printf one\nprintf two", scriptsDir, process.cwd()),

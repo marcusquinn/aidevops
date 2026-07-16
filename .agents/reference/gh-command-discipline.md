@@ -14,6 +14,27 @@ When to load:
 
 For prompt-economy reasons these rules live here rather than in always-on AGENTS.md context. The pointer in AGENTS.md keeps `t2685`, `t2893`, `8a-8e`, and `#20978` searchable while moving the full walkthrough out of startup context.
 
+## Account-level mutation authorization
+
+Generic Bash permission does not authorize GitHub account or repository resource
+creation. The shared command policy denies protected commands such as `gh repo
+fork` and `gh repo create` before execution unless the runtime process inherits an
+authorization digest for that exact parsed argv and working directory.
+
+Generate the digest without executing the command:
+
+```bash
+python3 ~/.aidevops/agents/scripts/command-policy-helper.py \
+  authorization-digest --cwd "$PWD" --command 'gh repo fork <owner>/<repo> --clone=false'
+```
+
+The trusted operator or dispatcher may then set the returned value as
+`AIDEVOPS_ACCOUNT_MUTATION_AUTHORIZATION` when launching the runtime. Never add
+that assignment to the Bash command being authorized: command-local attempts are
+rejected as a parse error. Any argv, quoting result, command chain, or working
+directory change requires a new authorization. Read-only `gh` commands and the
+normal issue/PR implementation workflow retain their existing behavior.
+
 ## Signature footer hallucination (t2685)
 
 (Observed: model composes inline, gets runtime/version wrong.)

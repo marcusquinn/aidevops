@@ -146,6 +146,91 @@ PY
 	return 0
 }
 
+test_account_mutation_authorization() {
+	local command_text="gh repo fork owner/source --clone=false"
+	local authorization=""
+	local output=""
+	local status=0
+
+	assert_decision "blocks direct repository fork" "$command_text" forbid github.account-mutation 20 "/work"
+	assert_decision "blocks quoted repository fork" "gh repo fork 'owner/source' --clone=false" forbid github.account-mutation 20 "/work"
+	assert_decision "blocks wrapped repository fork" "sudo -n env -i command gh repo fork owner/source --clone=false" forbid github.account-mutation 20 "/work"
+	assert_decision "blocks shell-launched repository fork" "bash -lc 'gh repo fork owner/source --clone=false'" forbid github.account-mutation 20 "/work"
+	assert_argv_decision "blocks path-qualified repository fork" forbid github.account-mutation 20 "/work" /usr/local/bin/gh repo fork owner/source --clone=false
+	assert_decision "blocks equivalent repository creation" "gh repo create owner/new-repo --public" forbid github.account-mutation 20 "/work"
+	assert_decision "allows read-only repository view" "gh repo view owner/source" allow command.default-allow 0 "/work"
+	assert_decision "allows read-only issue view" "gh issue view 123" allow command.default-allow 0 "/work"
+	assert_decision "allows read-only pull request view" "gh pr view 456" allow command.default-allow 0 "/work"
+	assert_decision "fails closed on malformed repository fork" "gh repo fork 'owner/source" forbid command.parse-error 20 "/work"
+	assert_decision "rejects inline authorization injection" "AIDEVOPS_ACCOUNT_MUTATION_AUTHORIZATION=sha256:fake gh repo fork owner/source" forbid command.parse-error 20 "/work"
+	assert_decision "rejects wrapped authorization injection" "env AIDEVOPS_ACCOUNT_MUTATION_AUTHORIZATION=sha256:fake gh repo fork owner/source" forbid command.parse-error 20 "/work"
+	assert_decision "rejects GitHub target environment override" "GH_REPO=other/target gh repo fork owner/source" forbid command.parse-error 20 "/work"
+
+	authorization="$(python3 "$HELPER" authorization-digest --cwd /work --command "$command_text")" || status=$?
+	if [[ "$status" -eq 0 && "$authorization" =~ ^sha256:[a-f0-9]{64}$ ]]; then
+		pass "generates a content-bound account-mutation authorization"
+	else
+		fail "generates a content-bound account-mutation authorization" "status=${status} authorization=${authorization}"
+	fi
+
+	status=0
+	output="$(AIDEVOPS_ACCOUNT_MUTATION_AUTHORIZATION="$authorization" python3 "$HELPER" check-command --cwd /work --command "$command_text")" || status=$?
+	if [[ "$status" -eq 0 && "$output" == *'"decision": "allow"'* ]]; then
+		pass "exact inherited authorization permits the approved fork"
+	else
+		fail "exact inherited authorization permits the approved fork" "status=${status} output=${output}"
+	fi
+
+	status=0
+	output="$(AIDEVOPS_ACCOUNT_MUTATION_AUTHORIZATION="$authorization" python3 "$HELPER" check-command --cwd /work --command "sudo -n gh repo fork owner/source --clone=false")" || status=$?
+	if [[ "$status" -eq 20 && "$output" == *github.account-mutation* ]]; then
+		pass "direct authorization does not permit a privileged wrapper"
+	else
+		fail "direct authorization does not permit a privileged wrapper" "status=${status} output=${output}"
+	fi
+
+	status=0
+	output="$(AIDEVOPS_ACCOUNT_MUTATION_AUTHORIZATION="$authorization" python3 "$HELPER" check-command --cwd /work --command "gh repo fork 'owner/source' --clone=false")" || status=$?
+	if [[ "$status" -eq 20 && "$output" == *github.account-mutation* ]]; then
+		pass "authorization remains bound to exact command quoting"
+	else
+		fail "authorization remains bound to exact command quoting" "status=${status} output=${output}"
+	fi
+
+	status=0
+	output="$(AIDEVOPS_ACCOUNT_MUTATION_AUTHORIZATION="$authorization" python3 "$HELPER" check-command --cwd /work --command "gh repo fork owner/different --clone=false")" || status=$?
+	if [[ "$status" -eq 20 && "$output" == *github.account-mutation* ]]; then
+		pass "authorization does not permit a different fork target"
+	else
+		fail "authorization does not permit a different fork target" "status=${status} output=${output}"
+	fi
+
+	status=0
+	output="$(AIDEVOPS_ACCOUNT_MUTATION_AUTHORIZATION="$authorization" python3 "$HELPER" check-command --cwd /different --command "$command_text")" || status=$?
+	if [[ "$status" -eq 20 && "$output" == *github.account-mutation* ]]; then
+		pass "authorization remains bound to the approved working directory"
+	else
+		fail "authorization remains bound to the approved working directory" "status=${status} output=${output}"
+	fi
+
+	status=0
+	output="$(AIDEVOPS_ACCOUNT_MUTATION_AUTHORIZATION="$authorization" python3 "$HELPER" check-command --cwd /work --command "gh repo create owner/new-repo --public")" || status=$?
+	if [[ "$status" -eq 20 && "$output" == *github.account-mutation* ]]; then
+		pass "fork authorization does not grant another account write"
+	else
+		fail "fork authorization does not grant another account write" "status=${status} output=${output}"
+	fi
+
+	status=0
+	output="$(AIDEVOPS_ACCOUNT_MUTATION_AUTHORIZATION="$authorization" python3 "$HELPER" check-command --cwd /work --command "$command_text && printf done")" || status=$?
+	if [[ "$status" -eq 20 && "$output" == *github.account-mutation* ]]; then
+		pass "authorization cannot widen a compound command"
+	else
+		fail "authorization cannot widen a compound command" "status=${status} output=${output}"
+	fi
+	return 0
+}
+
 test_static_decisions() {
 	assert_decision "allows unmatched command" "printf safe" allow command.default-allow 0
 	assert_decision "forbids recursive forced removal" "rm -rf ./build-output" forbid filesystem.rm-recursive-force 20 "/work"
@@ -344,6 +429,7 @@ PY
 test_policy_fail_closed() {
 	local output=""
 	local status=0
+	local missing_account_guard="${TEST_ROOT}/missing-account-guard.json"
 	output="$(python3 "$HELPER" check-command --policy "${TEST_ROOT}/missing.json" --command "printf safe")" || status=$?
 	if [[ "$status" -eq 21 && "$output" == *'"decision": "forbid"'* && "$output" == *'"rule_id": "policy.invalid"'* ]]; then
 		pass "missing required policy fails closed"
@@ -359,6 +445,29 @@ test_policy_fail_closed() {
 		pass "malformed required policy fails closed"
 	else
 		fail "malformed required policy fails closed" "status=${status} output=${output}"
+	fi
+
+	python3 - "$POLICY" "$missing_account_guard" <<'PY'
+import json
+import sys
+
+source, target = sys.argv[1:]
+with open(source, encoding="utf-8") as handle:
+    policy = json.load(handle)
+policy["dynamic_guards"] = [
+    guard
+    for guard in policy["dynamic_guards"]
+    if guard.get("kind") != "trusted_account_mutation"
+]
+with open(target, "w", encoding="utf-8") as handle:
+    json.dump(policy, handle)
+PY
+	status=0
+	output="$(python3 "$HELPER" check-command --policy "$missing_account_guard" --command "printf safe")" || status=$?
+	if [[ "$status" -eq 21 && "$output" == *policy.invalid* && "$output" == *account-mutation* ]]; then
+		pass "missing account-mutation guard fails closed"
+	else
+		fail "missing account-mutation guard fails closed" "status=${status} output=${output}"
 	fi
 
 	status=0
@@ -385,6 +494,7 @@ main() {
 	test_validation
 	test_evaluate_invocations_compatibility
 	test_static_decisions
+	test_account_mutation_authorization
 	test_canonical_delegation
 	test_worker_network_policy
 	test_policy_fail_closed

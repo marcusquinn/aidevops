@@ -21,6 +21,16 @@
       "kind": "worker_network",
       "helper": "network-tier-helper.sh",
       "decision": "forbid"
+    },
+    {
+      "id": "github.account-mutation",
+      "kind": "trusted_account_mutation",
+      "authorization_env": "AIDEVOPS_ACCOUNT_MUTATION_AUTHORIZATION",
+      "command_paths": [
+        ["repo", "create"],
+        ["repo", "fork"]
+      ],
+      "decision": "forbid"
     }
   ],
   "rules": [
