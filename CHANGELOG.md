@@ -10,6 +10,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- preserve tracked project configuration during framework updates (#27935)
+
 ## [3.32.129] - 2026-07-16
 
 ### Fixed

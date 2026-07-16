@@ -26,6 +26,15 @@ fi
 
 _AIDEVOPS_UPDATE_TRUE=true
 
+# Tracked project config is repository-owned policy. Framework updates may read
+# it to refresh local registration metadata, but must not create working-tree
+# changes that block the repository's normal git workflow.
+_update_project_config_is_tracked() {
+	local repo="$1"
+	git -C "$repo" ls-files --error-unmatch -- .aidevops.json >/dev/null 2>&1
+	return $?
+}
+
 _update_fresh_install() {
 	print_warning "Repository not found at the active CLI tree, updating from a clean temporary checkout..."
 	local tmp_checkout
@@ -60,7 +69,7 @@ _update_sync_projects() {
 		print_success "All registered projects are up to date"
 		return 0
 	fi
-	local synced=0 skipped=0 failed=0
+	local synced=0 skipped=0 failed=0 preserved=0
 	for repo in "${repos_needing_upgrade[@]}"; do
 		[[ ! -f "$repo/.aidevops.json" ]] && {
 			skipped=$((skipped + 1))
@@ -68,21 +77,29 @@ _update_sync_projects() {
 		}
 		local did_sync=false
 		if command -v jq &>/dev/null; then
-			local temp_file="${repo}/.aidevops.json.tmp"
-			if jq --arg version "$current_ver" '.version = $version' "$repo/.aidevops.json" >"$temp_file" 2>/dev/null && [[ -s "$temp_file" ]]; then
-				mv "$temp_file" "$repo/.aidevops.json"
-				local features
-				features=$(jq -r '[.features | to_entries[] | select(.value == true) | .key] | join(",")' "$repo/.aidevops.json" 2>/dev/null || echo "")
-				register_repo "$repo" "$current_ver" "$features"
-				did_sync=true
-			else rm -f "$temp_file"; fi
+			local features
+			features=$(jq -r '[.features | to_entries[] | select(.value == true) | .key] | join(",")' "$repo/.aidevops.json" 2>/dev/null || echo "")
+			if _update_project_config_is_tracked "$repo"; then
+				if register_repo "$repo" "$current_ver" "$features"; then
+					did_sync=true
+					preserved=$((preserved + 1))
+				fi
+			else
+				local temp_file="${repo}/.aidevops.json.tmp"
+				if jq --arg version "$current_ver" '.version = $version' "$repo/.aidevops.json" >"$temp_file" 2>/dev/null && [[ -s "$temp_file" ]]; then
+					mv "$temp_file" "$repo/.aidevops.json"
+					register_repo "$repo" "$current_ver" "$features"
+					did_sync=true
+				else rm -f "$temp_file"; fi
+			fi
 		fi
-		if [[ "$did_sync" != "$_AIDEVOPS_UPDATE_TRUE" ]]; then
+		if [[ "$did_sync" != "$_AIDEVOPS_UPDATE_TRUE" ]] && ! _update_project_config_is_tracked "$repo"; then
 			sed -i '' "s/\"version\": *\"[^\"]*\"/\"version\": \"$current_ver\"/" "$repo/.aidevops.json" 2>/dev/null && did_sync=true
 		fi
 		[[ "$did_sync" == "$_AIDEVOPS_UPDATE_TRUE" ]] && synced=$((synced + 1)) || failed=$((failed + 1))
 	done
 	[[ $synced -gt 0 ]] && print_success "Synced $synced project(s) to v$current_ver"
+	[[ $preserved -gt 0 ]] && print_info "Preserved $preserved tracked project config(s); updated registration metadata only"
 	[[ $skipped -gt 0 ]] && print_info "Skipped $skipped uninitialized project(s) (run 'aidevops init' in each to enable)"
 	[[ $failed -gt 0 ]] && print_warning "$failed project(s) failed to sync (jq missing or write error)"
 	return 0
@@ -131,7 +148,7 @@ _update_sync_agent_source_repos() {
 		fi
 		if seed_agent_source_repo_templates "$repo"; then
 			synced=$((synced + 1))
-			if [[ -f "$repo/.aidevops.json" ]] && command -v jq &>/dev/null; then
+			if [[ -f "$repo/.aidevops.json" ]] && command -v jq &>/dev/null && ! _update_project_config_is_tracked "$repo"; then
 				local temp_file="${repo}/.aidevops.json.tmp"
 				jq --arg version "$current_ver" '.version = $version | .agent_source = true' "$repo/.aidevops.json" >"$temp_file" 2>/dev/null && mv "$temp_file" "$repo/.aidevops.json" || rm -f "$temp_file"
 			fi
