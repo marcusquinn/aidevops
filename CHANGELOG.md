@@ -10,6 +10,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.32.133] - 2026-07-16
+
+### Changed
+
+- Maintenance: mark t18143 complete (pr:#27974 completed:2026-07-16) [skip ci]
+- Maintenance: sync ref:GH#27972 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#27972 to TODO.md [skip ci]
+
+### Fixed
+
+- ignore dependency-bump changelog references (#27950)
+- recover exact telemetry after abandoned locks (#27979)
+- log pulse merge safety failures (#27975)
+- make issue reviews root-cause-first (#27971)
+- honor configurable MCP inspector ports (#27974)
+
 ## [3.32.132] - 2026-07-16
 
 ### Changed
