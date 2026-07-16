@@ -10,9 +10,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.32.138] - 2026-07-16
+
 ### Added
 
-- show red OpenCode tab status while retrying errors
+- show retrying OpenCode tabs in red (#28030)
+
+### Changed
+
+- Documentation: default empty objective arrays in brief (#28024)
+
+### Security
+
+- reap cancelled subagents before returning (#28027)
 
 ## [3.32.137] - 2026-07-16
 
