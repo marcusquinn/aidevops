@@ -120,6 +120,7 @@ collision_work_dir="${tmp_root}/collision-work"
 invalid_work_dir="${tmp_root}/invalid-work"
 holder_work_dir="${tmp_root}/holder-work"
 signal_work_dir="${tmp_root}/signal-work"
+auth_work_dir="${tmp_root}/auth-work"
 opencode_log="${tmp_root}/opencode.log"
 lsof_log="${tmp_root}/lsof.log"
 curl_log="${tmp_root}/curl.log"
@@ -128,9 +129,10 @@ signal_output="${tmp_root}/signal-output.log"
 
 mkdir -p "${launch_dir}" "${home_dir}/.local/share/opencode" "${server_work_dir}" \
     "${dry_run_work_dir}" "${collision_work_dir}" "${invalid_work_dir}" "${holder_work_dir}" \
-    "${signal_work_dir}"
+    "${signal_work_dir}" "${auth_work_dir}"
 make_fake_tools "${fake_bin}"
 printf '{"test":{}}\n' >"${home_dir}/.local/share/opencode/auth.json"
+unset OPENCODE_SERVER_PASSWORD OPENCODE_SERVER_USERNAME
 
 output=$(PATH="${fake_bin}:$PATH" HOME="${home_dir}" AIDEVOPS_WORK_DIR="${dry_run_work_dir}" \
     FAKE_OPENCODE_LOG="${opencode_log}" FAKE_LSOF_LOG="${lsof_log}" FAKE_CURL_LOG="${curl_log}" \
@@ -142,6 +144,22 @@ if [[ "${output}" == *"XDG_DATA_HOME=${dry_run_work_dir}/opencode-server/project
     pass "server dry-run is complete and observational"
 else
     fail "server dry-run output or state was unexpected: ${output}"
+fi
+
+set +e
+output=$(PATH="${fake_bin}:$PATH" HOME="${home_dir}" AIDEVOPS_WORK_DIR="${auth_work_dir}" \
+    OPENCODE_SERVER_PASSWORD='test-only-password' FAKE_OPENCODE_LOG="${opencode_log}" \
+    "${HELPER}" server --dir "${launch_dir}" --port 49036 --session-id auth --dry-run 2>&1)
+status=$?
+set -e
+if ((status != 0)) \
+    && [[ "${output}" == *"Authenticated server mode is not supported by this loopback prototype"* ]] \
+    && [[ "${output}" != *"test-only-password"* ]] \
+    && directory_is_empty "${auth_work_dir}" \
+    && [[ ! -e "${opencode_log}" ]]; then
+    pass "server mode rejects inherited authentication without exposing it"
+else
+    fail "authenticated server environment handling was unexpected: ${output}"
 fi
 
 output=$(PATH="${fake_bin}:$PATH" HOME="${home_dir}" AIDEVOPS_WORK_DIR="${server_work_dir}" \
@@ -253,6 +271,23 @@ if [[ "${output}" == *"unset XDG_DATA_HOME AIDEVOPS_OPENCODE_ISOLATED_DB AIDEVOP
     pass "attach dry-run avoids health checks and direct shard access"
 else
     fail "attach dry-run output or activity was unexpected: ${output}"
+fi
+
+rm -f "${opencode_log}" "${curl_log}"
+set +e
+output=$(PATH="${fake_bin}:$PATH" HOME="${home_dir}" \
+    OPENCODE_SERVER_USERNAME='test-only-user' FAKE_OPENCODE_LOG="${opencode_log}" \
+    FAKE_CURL_LOG="${curl_log}" \
+    "${HELPER}" attach http://127.0.0.1:49036 --dir "${launch_dir}" 2>&1)
+status=$?
+set -e
+if ((status != 0)) \
+    && [[ "${output}" == *"Authenticated server mode is not supported by this loopback prototype"* ]] \
+    && [[ "${output}" != *"test-only-user"* ]] \
+    && [[ ! -e "${opencode_log}" && ! -e "${curl_log}" ]]; then
+    pass "attach rejects unsupported authentication before health checks"
+else
+    fail "authenticated attach environment handling was unexpected: ${output}"
 fi
 
 rm -f "${opencode_log}" "${curl_log}"

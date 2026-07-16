@@ -297,6 +297,12 @@ the installed CLI. It clears direct database ownership variables before
 starting `opencode attach`, so the TUI never receives the server shard path.
 Use `--session ses_...` to resume a specific server-owned session.
 
+This loopback prototype does not support authenticated server environment
+variables. If `OPENCODE_SERVER_PASSWORD` or `OPENCODE_SERVER_USERNAME` is
+inherited, server and attach modes fail before writing or connecting. Unset both
+for this local-only flow; authenticated or non-loopback operation requires a
+separate security-reviewed mode.
+
 To connect Desktop without editing Electron state files:
 
 1. Open OpenCode Desktop and its **Servers** dialog.
@@ -312,6 +318,7 @@ the supported UI.
 Safety boundaries:
 
 - The explicit port must be free; unknown listeners fail closed.
+- Authentication variables fail closed rather than being ignored or exposed.
 - An owner lock and DB-holder check prevent a second managed owner from opening
   the same server shard.
 - Never point direct Desktop/TUI launchers at the server shard or copy a live DB

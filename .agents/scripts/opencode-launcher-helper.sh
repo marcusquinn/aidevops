@@ -53,6 +53,7 @@ Server options:
   --port PORT          Required loopback port (1-65535)
   --session-id ID      Explicit server shard name (default: stable per-project shard)
   --dry-run            Print without creating the shard or checking the listener
+  Authentication environment variables are unsupported in this loopback prototype.
 
 Attach options:
   --dir PATH           Project directory (default: current dir)
@@ -196,6 +197,14 @@ validate_launch_directory() {
 require_opencode_cli() {
     if ! command -v opencode >/dev/null 2>&1; then
         print_error "opencode not found in PATH"
+        return 1
+    fi
+    return 0
+}
+
+reject_server_auth_environment() {
+    if [[ -n "${OPENCODE_SERVER_PASSWORD:-}" || -n "${OPENCODE_SERVER_USERNAME:-}" ]]; then
+        print_error "Authenticated server mode is not supported by this loopback prototype. Unset OPENCODE_SERVER_PASSWORD and OPENCODE_SERVER_USERNAME."
         return 1
     fi
     return 0
@@ -802,6 +811,7 @@ cmd_server() {
 
     validate_launch_directory "${launch_dir}" || return 1
     require_opencode_cli || return 1
+    reject_server_auth_environment || return 1
     [[ -n "${port}" ]] || { print_error "Server mode requires --port PORT"; return 1; }
     validate_server_port "${port}" || return 1
     if [[ -z "${session_id}" ]]; then
@@ -868,6 +878,7 @@ cmd_attach() {
     fi
     validate_launch_directory "${launch_dir}" || return 1
     require_opencode_cli || return 1
+    reject_server_auth_environment || return 1
     attach_args=(attach "${normalized_url}" --dir "${launch_dir}")
     if [[ -n "${session_id}" ]]; then
         attach_args+=(--session "${session_id}")
