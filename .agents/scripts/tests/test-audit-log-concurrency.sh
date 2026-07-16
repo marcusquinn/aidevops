@@ -129,6 +129,9 @@ SIGNAL_READY="${TEST_ROOT}/signal.ready"
 (
 	# Keep shared-constants from replacing this Bash 3.2 fixture process.
 	export AIDEVOPS_BASH_REEXECED=1
+	# Bash 3.2 does not define BASHPID; force that compatibility path even
+	# when this regression test runs under a newer Bash.
+	unset BASHPID
 	# shellcheck disable=SC1090
 	source "$HELPER"
 	_audit_acquire_lock "$SIGNAL_LOCK_DIR"
@@ -147,6 +150,12 @@ for attempt in $(seq 1 50); do
 	sleep 0.1
 done
 if [[ -f "$SIGNAL_READY" && -d "$SIGNAL_LOCK_DIR" ]]; then
+	IFS=' ' read -r signal_owner_pid _ <"${SIGNAL_LOCK_DIR}/owner"
+	if [[ "$signal_owner_pid" == "$signal_pid" ]]; then
+		pass "Bash 3.2 fallback records the lock-holding subshell PID"
+	else
+		fail "Bash 3.2 fallback recorded PID ${signal_owner_pid}, expected ${signal_pid}"
+	fi
 	kill -TERM "$signal_pid"
 	signal_rc=0
 	wait "$signal_pid" || signal_rc=$?

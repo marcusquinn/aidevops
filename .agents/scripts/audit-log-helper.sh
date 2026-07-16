@@ -360,7 +360,15 @@ _audit_acquire_lock() {
 		sleep 0.1
 	done
 
-	local owner_pid="${BASHPID:-$$}"
+	local owner_pid="${BASHPID:-}"
+	if [[ -z "$owner_pid" ]]; then
+		# Bash 3.2 has no BASHPID. The child shell reports this lock-holding
+		# shell as its parent, unlike $$ which remains the top-level shell PID.
+		owner_pid="$(sh -c 'printf "%s" "$PPID"')" || {
+			_audit_remove_lock_dir "$lock_dir" || true
+			return 1
+		}
+	fi
 	local created_at=""
 	created_at="$(date '+%s')" || {
 		_audit_remove_lock_dir "$lock_dir" || true
