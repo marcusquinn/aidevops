@@ -10,6 +10,7 @@ SCRIPT_DIR="${REPO_ROOT}/.agents/scripts"
 
 source "${REPO_ROOT}/.agents/scripts/issue-sync-lib.sh"
 source "${REPO_ROOT}/.agents/scripts/issue-sync-helper-close.sh"
+source "${REPO_ROOT}/.agents/scripts/issue-sync-helper-commands.sh"
 
 log_verbose() {
 	return 0
@@ -67,6 +68,20 @@ EOF
 	return 0
 }
 
+test_mark_done_completes_in_progress_entry() {
+	local tmpdir todo_file line
+	tmpdir=$(mktemp -d)
+	todo_file="${tmpdir}/TODO.md"
+	printf '%s\n' '- [>] t18002 active task ref:GH#25539 started:2026-06-26' >"$todo_file"
+	_mark_todo_done "t18002" "$todo_file" "pr:#25540"
+	line=$(grep -E '^[[:space:]]*- \[x\] t18002 ' "$todo_file")
+	[[ "$line" == *'pr:#25540'* ]] || fail "expected proof on completed in-progress line"
+	[[ "$line" == *'completed:'* ]] || fail "expected completion date on in-progress line"
+	rm -rf "$tmpdir"
+	pass "mark done completes in-progress entry"
+	return 0
+}
+
 test_dedupe_ignores_markdown_fences() {
 	local tmpdir todo_file count fenced_count canonical_count
 	tmpdir=$(mktemp -d)
@@ -107,11 +122,197 @@ EOF
 	return 0
 }
 
+test_status_counts_duplicate_task_rows_once() {
+	local tmpdir todo_file output reverse_count
+	tmpdir=$(mktemp -d)
+	todo_file="${tmpdir}/TODO.md"
+	cat >"$todo_file" <<'EOF'
+- [ ] t18002 canonical task ref:GH#25539 -> [todo/tasks/t18002-brief.md]
+- [ ] t18002 stale duplicate ref:GH#25539
+- [ ] t18003 another task ref:GH#25540
+EOF
+	TEST_TODO_FILE="$todo_file"
+	_init_cmd() {
+		_CMD_REPO="owner/repo"
+		_CMD_TODO="$TEST_TODO_FILE"
+		return 0
+	}
+	gh_list_issues() {
+		local repo="$1"
+		local state="$2"
+		: "$repo" "$state"
+		printf '[]\n'
+		return 0
+	}
+	output=$(cmd_status 2>&1)
+	[[ "$output" == *'TODO open: 2 (2 ref, 0 no ref)'* ]] || fail "expected duplicate open rows to count once"
+	[[ "$output" == *'reverse-drift: 2'* ]] || fail "expected duplicate reverse drift to count once"
+	reverse_count=$(printf '%s\n' "$output" | grep -c 'REVERSE-DRIFT: t18002' || true)
+	[[ "$reverse_count" == "1" ]] || fail "expected one reverse-drift warning for duplicate t18002, got $reverse_count"
+	rm -rf "$tmpdir"
+	pass "status counts duplicate task rows once"
+	return 0
+}
+
+test_unique_snapshot_selects_richest_terminal_row() {
+	local input output
+	input='- [ ] t18002 stale task ref:GH#1
+- [x] t18002 canonical task tier:standard ref:GH#2 pr:#3 completed:2026-06-27 -> [todo/tasks/t18002-brief.md]'
+	output=$(printf '%s\n' "$input" | _unique_todo_task_lines)
+	[[ "$output" == '- [x] t18002 canonical task tier:standard ref:GH#2 pr:#3 completed:2026-06-27 -> [todo/tasks/t18002-brief.md]' ]] || fail "expected richest terminal duplicate row"
+	pass "unique snapshot selects richest terminal row"
+	return 0
+}
+
+test_snapshot_and_dedupe_share_terminal_scoring() {
+	local tmpdir todo_file snapshot declined_line active_line completed_line
+	tmpdir=$(mktemp -d)
+	todo_file="${tmpdir}/TODO.md"
+	cat >"$todo_file" <<'EOF'
+- [ ] t18002 rich stale open task tier:thinking blocked-by:t1 pr:#1 verified:2026-06-26 completed:2026-06-27 -> [todo/tasks/t18002-brief.md]
+- [-] t18002 canonical declined task ref:GH#2
+- [ ] t18003 rich stale open task tier:thinking blocked-by:t1 pr:#1 verified:2026-06-26 completed:2026-06-27 -> [todo/tasks/t18003-brief.md]
+- [>] t18003 canonical active task ref:GH#3
+- [ ] t18004 rich stale open task tier:thinking blocked-by:t1 pr:#1 verified:2026-06-26 completed:2026-06-27 -> [todo/tasks/t18004-brief.md]
+- [x] t18004 canonical completed task ref:GH#4
+EOF
+	snapshot=$(_unique_todo_task_snapshot "$todo_file")
+	declined_line=$(printf '%s\n' "$snapshot" | grep -E '^[[:space:]]*- \[.\] t18002 ')
+	active_line=$(printf '%s\n' "$snapshot" | grep -E '^[[:space:]]*- \[.\] t18003 ')
+	completed_line=$(printf '%s\n' "$snapshot" | grep -E '^[[:space:]]*- \[.\] t18004 ')
+	[[ "$declined_line" == '- [-] t18002 canonical declined task ref:GH#2' ]] || fail "expected declined snapshot row to win"
+	[[ "$active_line" == '- [>] t18003 canonical active task ref:GH#3' ]] || fail "expected in-progress snapshot row to win"
+	[[ "$completed_line" == '- [x] t18004 canonical completed task ref:GH#4' ]] || fail "expected completed snapshot row to win"
+	_dedupe_todo_task_lines "t18002" "$todo_file" >/dev/null
+	_dedupe_todo_task_lines "t18003" "$todo_file" >/dev/null
+	_dedupe_todo_task_lines "t18004" "$todo_file" >/dev/null
+	grep -Fxq -- "$declined_line" "$todo_file" || fail "expected dedupe to preserve declined snapshot row"
+	grep -Fxq -- "$active_line" "$todo_file" || fail "expected dedupe to preserve in-progress snapshot row"
+	grep -Fxq -- "$completed_line" "$todo_file" || fail "expected dedupe to preserve completed snapshot row"
+	rm -rf "$tmpdir"
+	pass "snapshot and dedupe share terminal scoring"
+	return 0
+}
+
+test_dedupe_preserves_commented_canonical_source_row() {
+	local tmpdir todo_file raw_count
+	tmpdir=$(mktemp -d)
+	todo_file="${tmpdir}/TODO.md"
+	cat >"$todo_file" <<'EOF'
+- [ ] t18002 rich stale open task tier:thinking blocked-by:t1 pr:#1 verified:2026-06-26 completed:2026-06-27 -> [todo/tasks/t18002-brief.md]
+- [-] t18002 canonical <!-- retained audit note --> declined task ref:GH#2
+<!--
+- [ ] t18002 commented example task
+-->
+EOF
+	_dedupe_todo_task_lines "t18002" "$todo_file" >/dev/null
+	raw_count=$(grep -Ec '^[[:space:]]*- \[.\] t18002 ' "$todo_file" || true)
+	[[ "$raw_count" == "2" ]] || fail "expected one live and one commented task row after dedupe, got $raw_count"
+	grep -Fq -- '<!-- retained audit note -->' "$todo_file" || fail "expected original commented canonical row to survive"
+	grep -Fq -- 'commented example task' "$todo_file" || fail "expected task-like HTML comment content to survive"
+	if grep -Fq -- 'rich stale open task' "$todo_file"; then
+		fail "expected stale live duplicate to be removed"
+	fi
+	rm -rf "$tmpdir"
+	pass "dedupe preserves commented canonical source row"
+	return 0
+}
+
+test_leaf_parsers_propagate_awk_failures() {
+	if (awk() { return 1; }; strip_html_comments <<<'text'); then
+		fail "expected HTML comment parser to propagate awk failure"
+	fi
+	if (awk() { return 1; }; strip_code_fences <<<'text'); then
+		fail "expected code fence parser to propagate awk failure"
+	fi
+	if (awk() { return 1; }; _unique_todo_task_lines <<<'- [ ] t18002 task'); then
+		fail "expected unique task parser to propagate awk failure"
+	fi
+	if (strip_html_comments() { return 1; }; strip_code_fences <<<'text'); then
+		fail "expected code fence parser to propagate comment parser failure"
+	fi
+	pass "leaf parsers propagate awk failures"
+	return 0
+}
+
+test_dedupe_propagates_parser_failure_without_mutation() {
+	local tmpdir todo_file before after rc
+	tmpdir=$(mktemp -d)
+	todo_file="${tmpdir}/TODO.md"
+	printf '%s\n' '- [ ] t18002 first task' '- [x] t18002 second task' >"$todo_file"
+	before=$(<"$todo_file")
+	set +e
+	(strip_code_fences() { return 1; }; _dedupe_todo_task_lines "t18002" "$todo_file" >/dev/null 2>&1)
+	rc=$?
+	set -e
+	after=$(<"$todo_file")
+	[[ "$rc" == "2" ]] || fail "expected dedupe parser failure rc 2, got $rc"
+	[[ "$after" == "$before" ]] || fail "expected parser failure to leave TODO unchanged"
+	rm -rf "$tmpdir"
+	pass "dedupe propagates parser failure without mutation"
+	return 0
+}
+
+test_reopen_processes_in_progress_duplicate_once() {
+	local tmpdir todo_file output
+	tmpdir=$(mktemp -d)
+	todo_file="${tmpdir}/TODO.md"
+	cat >"$todo_file" <<'EOF'
+- [>] t18002 canonical active task tier:standard ref:GH#25539 -> [todo/tasks/t18002-brief.md]
+- [ ] t18002 stale duplicate ref:GH#25539
+EOF
+	TEST_TODO_FILE="$todo_file"
+	gh() {
+		local command="$1"
+		local target="$2"
+		: "$command" "$target"
+		printf '{"number":25539,"state_reason":"COMPLETED"}\n'
+		return 0
+	}
+	_reopen_ref_is_pull_request() {
+		return 1
+	}
+	_reopen_mark_if_completed() {
+		return 0
+	}
+	output=$(cmd_reopen 2>&1)
+	[[ "$output" == *'1 have-merged-pr'* ]] || fail "expected one completed in-progress task, got: $output"
+	rm -rf "$tmpdir"
+	pass "reopen processes in-progress duplicate once"
+	return 0
+}
+
+test_snapshot_failure_stops_commands() {
+	_unique_todo_task_snapshot() {
+		return 1
+	}
+	if cmd_status >/dev/null 2>&1; then
+		fail "expected status to fail on snapshot error"
+	fi
+	if cmd_reconcile >/dev/null 2>&1; then
+		fail "expected reconcile to fail on snapshot error"
+	fi
+	if cmd_reopen >/dev/null 2>&1; then
+		fail "expected reopen to fail on snapshot error"
+	fi
+	pass "snapshot failure stops issue-sync commands"
+	return 0
+}
+
 main() {
 	test_dedupe_preserves_canonical_brief_line
 	test_mark_done_dedupes_and_adds_verified_proof
+	test_mark_done_completes_in_progress_entry
 	test_dedupe_ignores_markdown_fences
 	test_dedupe_scores_metadata_individually
+	test_status_counts_duplicate_task_rows_once
+	test_unique_snapshot_selects_richest_terminal_row
+	test_snapshot_and_dedupe_share_terminal_scoring
+	test_dedupe_preserves_commented_canonical_source_row
+	test_leaf_parsers_propagate_awk_failures
+	test_dedupe_propagates_parser_failure_without_mutation
+	test_reopen_processes_in_progress_duplicate_once
+	test_snapshot_failure_stops_commands
 	return 0
 }
 

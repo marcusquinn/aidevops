@@ -538,36 +538,80 @@ _seed_orphan_todo_line() {
 # Preference order: completed lines, linked brief lines, detailed metadata, then
 # the first occurrence. This repairs historical simplified orphan duplicates
 # without discarding useful task metadata from the canonical upper section.
+_todo_task_source_line_selection() {
+	local task_id="$1"
+	local todo_file="$2"
+	local task_id_ere=""
+	local canonical_line=""
+	task_id_ere=$(_escape_ere "$task_id") || return 1
+	canonical_line=$(_canonical_todo_task_line "$task_id" "$todo_file") || return 1
+	CANONICAL_TODO_LINE="$canonical_line" awk -v task_pattern="$task_id_ere" '
+		BEGIN { pattern = "^[[:space:]]*- \\[.\\] " task_pattern " " }
+		function without_comments(raw, line, out, pos) {
+			line = raw
+			out = ""
+			while (length(line) > 0) {
+				if (in_comment) {
+					pos = index(line, "-->")
+					if (pos == 0) { line = ""; break }
+					line = substr(line, pos + 3)
+					in_comment = 0
+				} else {
+					pos = index(line, "<!--")
+					if (pos == 0) { out = out line; line = ""; break }
+					out = out substr(line, 1, pos - 1)
+					line = substr(line, pos + 4)
+					in_comment = 1
+				}
+			}
+			return out
+		}
+		/^[[:space:]]*```/ { in_fence = !in_fence; next }
+		in_fence { next }
+		{
+			normalized = without_comments($0)
+			if (normalized ~ pattern) {
+				live_lines = live_lines (live_lines == "" ? "" : ",") NR
+				if (canonical_line == 0 && normalized == ENVIRON["CANONICAL_TODO_LINE"]) {
+					canonical_line = NR
+				}
+			}
+		}
+		END {
+			if (canonical_line == 0) { exit 1 }
+			print canonical_line "|" live_lines
+		}
+	' "$todo_file"
+	return $?
+}
+
 _dedupe_todo_task_lines() {
 	local task_id="$1"
 	local todo_file="$2"
-	local task_id_ere duplicate_count tmp_file
+	local task_id_ere duplicate_count tmp_file selection canonical_line_num live_line_nums stripped
 
 	task_id_ere=$(_escape_ere "$task_id")
-	duplicate_count=$(strip_code_fences <"$todo_file" | grep -Ec "^[[:space:]]*- \[.\] ${task_id_ere} " || true)
+	stripped=$(strip_code_fences <"$todo_file") || return 2
+	duplicate_count=$(printf '%s\n' "$stripped" | grep -Ec "^[[:space:]]*- \[.\] ${task_id_ere} " || true)
 	if [[ "$duplicate_count" -le 1 ]]; then
 		return 1
 	fi
+	selection=$(_todo_task_source_line_selection "$task_id" "$todo_file") || return 2
+	canonical_line_num="${selection%%|*}"
+	live_line_nums="${selection#*|}"
+	[[ "$canonical_line_num" =~ ^[1-9][0-9]*$ ]] || return 2
+	[[ "$live_line_nums" =~ ^[1-9][0-9]*(,[1-9][0-9]*)+$ ]] || return 2
 
 	tmp_file=$(mktemp "${todo_file}.dedupe.XXXXXX") || return 2
-	if ! awk -v task_pattern="$task_id_ere" '
-		BEGIN { pattern = "^[[:space:]]*- \\[.\\] " task_pattern " " }
-		/^[[:space:]]*```/ { in_fence = !in_fence; lines[NR] = $0; next }
-		in_fence { lines[NR] = $0; next }
-		$0 ~ pattern {
+	if ! awk -v canonical_line_num="$canonical_line_num" -v live_line_nums="$live_line_nums" '
+		BEGIN {
+			live_count = split(live_line_nums, live_lines, ",")
+			for (i = 1; i <= live_count; i += 1) { is_live_line[live_lines[i]] = 1 }
+		}
+		NR in is_live_line {
 			is_task[NR] = 1
-			score = 0
-			if ($0 ~ /^[[:space:]]*- \\[x\\] /) { score += 1000 }
-			if ($0 ~ / -> \[/) { score += 100 }
-			if ($0 ~ / blocked-by:/) { score += 25 }
-			if ($0 ~ / tier:/) { score += 25 }
-			if ($0 ~ / logged:/) { score += 25 }
-			if ($0 ~ / pr:#[0-9]+/) { score += 10 }
-			if ($0 ~ / verified:[0-9]{4}-[0-9]{2}-[0-9]{2}/) { score += 10 }
-			if ($0 ~ / completed:[0-9]{4}-[0-9]{2}-[0-9]{2}/) { score += 10 }
-			if (best_line == 0 || score > best_score) {
+			if (NR == canonical_line_num) {
 				best_line = NR
-				best_score = score
 			}
 		}
 		{ lines[NR] = $0 }
