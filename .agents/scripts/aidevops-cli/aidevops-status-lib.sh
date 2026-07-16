@@ -73,6 +73,30 @@ _status_ai_configs() {
 	return 0
 }
 
+_status_runtime_config_parity() {
+	local generator="$AGENTS_DIR/scripts/generate-runtime-config.sh"
+
+	print_header "Runtime Configuration"
+	if [[ ! -x "$generator" ]]; then
+		print_info "Runtime configuration verifier unavailable"
+		echo ""
+		return 0
+	fi
+	if ! check_cmd opencode; then
+		print_info "OpenCode is not installed; runtime command parity not checked"
+		echo ""
+		return 0
+	fi
+	if "$generator" verify --runtime opencode >/dev/null 2>&1; then
+		print_success "OpenCode runtime configuration matches installed aidevops sources"
+	else
+		print_warning "OpenCode runtime configuration is stale or incomplete"
+		print_info "Run: aidevops setup --scope runtime-config"
+	fi
+	echo ""
+	return 0
+}
+
 _status_headless_runtime_config() {
 	print_header "Headless Runtime Configuration"
 	local allowlist_set=false
@@ -166,6 +190,7 @@ cmd_status() {
 	_status_ai_tools
 	_status_dev_envs
 	_status_ai_configs
+	_status_runtime_config_parity
 	_status_headless_runtime_config
 	_status_capability_readiness
 	print_header "SSH Configuration"

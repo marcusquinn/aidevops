@@ -100,6 +100,7 @@ test_setup_stage_contract() {
 	assert_contains "setup.sh accepts --stage" "$text" "--stage <name>"
 	assert_contains "opencode scope maps to setup_opencode_cli" "$text" "opencode | \"\$SETUP_STAGE_OPENCODE\") printf '%s' \"\$SETUP_STAGE_OPENCODE\""
 	assert_contains "agents scope maps to deploy_aidevops_agents" "$text" "agents | \"\$SETUP_STAGE_AGENTS\") printf '%s' \"\$SETUP_STAGE_AGENTS\""
+	assert_contains "runtime-config scope maps to reconciliation" "$text" "runtime-config | runtime | \"\$SETUP_STAGE_RUNTIME_CONFIG\") printf '%s' \"\$SETUP_STAGE_RUNTIME_CONFIG\""
 	assert_contains "hooks scope maps to setup_safety_hooks" "$text" "hooks | \"\$SETUP_STAGE_HOOKS\") printf '%s' \"\$SETUP_STAGE_HOOKS\""
 	assert_contains "tabby scope maps to setup_tabby" "$text" "tabby | \"\$SETUP_STAGE_TABBY\") printf '%s' \"\$SETUP_STAGE_TABBY\""
 	assert_contains "pulse scope maps to setup_supervisor_pulse" "$text" "pulse | \"\$SETUP_STAGE_PULSE\") printf '%s' \"\$SETUP_STAGE_PULSE\""
@@ -107,6 +108,9 @@ test_setup_stage_contract() {
 	assert_contains "ai-session scope maps to incremental setup" "$text" "ai-session | ai | \"\$SETUP_STAGE_AI_SESSION\") printf '%s' \"\$SETUP_STAGE_AI_SESSION\""
 	assert_contains "ai-session scoped stage falls back to full setup" "$text" "AI-session incremental setup unavailable or failed; falling back to full setup"
 	assert_contains "ai-session verifies deployed sha" "$text" "_setup_ai_session_verify_deploy \"\$current_sha\""
+	assert_contains "ai-session reconciles generated runtime config" "$text" "_time_step \"\$SETUP_STAGE_RUNTIME_CONFIG\" _setup_reconcile_runtime_config"
+	assert_contains "runtime reconciliation updates enabled primary runtimes" "$text" "update_runtime_configs || return \$?"
+	assert_contains "runtime reconciliation deploys commands to remaining runtimes" "$text" "deploy_commands_to_all_runtimes || return \$?"
 	assert_contains "ai-session classifies lint provisioning changes" "$text" ".agents/scripts/repo-verify-config-lib.sh"
 	assert_contains "ai-session reruns repo verify rollout" "$text" "_time_step \"setup_repo_verify_guard\" setup_repo_verify_guard"
 	assert_contains "ai-session version prefix is split for release safety" "$text" 'version_prefix="# ""Version:"'
@@ -163,6 +167,7 @@ test_cli_scope_contract() {
 	assert_contains "aidevops setup requires scope" "$text" "Usage: aidevops setup --scope <scope>"
 	assert_contains "aidevops setup lists gui-desktop scope" "$text" "gui-desktop  Install native macOS aidevops.app only"
 	assert_contains "aidevops setup lists ai-session scope" "$text" "ai-session  Apply changed deploy stages; fall back to full setup if needed"
+	assert_contains "aidevops setup lists runtime-config scope" "$text" "runtime-config  Reconcile generated runtime commands/configuration"
 	assert_contains "aidevops setup passes scope to setup.sh" "$text" "bash \"\$setup_script\" --stage \"\$scope\""
 	assert_contains "aidevops setup full preserves full setup" "$text" "bash \"\$setup_script\" --non-interactive"
 	return 0

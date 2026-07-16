@@ -831,6 +831,7 @@ _cmd_setup_help() {
 	printf '%s\n' "Scopes:"
 	printf '%s\n' "  opencode  Repair/install the OpenCode CLI only"
 	printf '%s\n' "  agents    Deploy aidevops agents/scripts only"
+	printf '%s\n' "  runtime-config  Reconcile generated runtime commands/configuration"
 	printf '%s\n' "  hooks     Install safety hooks only"
 	printf '%s\n' "  tabby     Sync Tabby terminal profiles only"
 	printf '%s\n' "  pulse     Install/refresh the pulse scheduler only"
