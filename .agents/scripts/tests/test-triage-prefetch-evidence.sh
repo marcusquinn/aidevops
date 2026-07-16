@@ -13,8 +13,8 @@
 #     from mocked git log output.
 #   - _triage_fetch_evidence_sections populates file-contents variable
 #     from a fixture file at the cited line (±5-line window).
-#   - _triage_write_prompt_file includes all three
-#     <!-- prefetch:section=NAME --> markers in the output file.
+#   - _triage_write_prompt_file includes the canonical review fields and all
+#     three <!-- prefetch:section=NAME --> markers in the output file.
 #   - Empty repo_path is handled gracefully (fallback messages used).
 #
 # Harness style: mocked gh/git, isolated HOME, fixture files.
@@ -250,6 +250,12 @@ test_prompt_file_contains_prefetch_markers() {
 	local issue_json
 	issue_json='{"title":"test markers","createdAt":"2026-04-01T00:00:00Z","number":1}'
 	local issue_body="Test issue body with no file refs."
+	local canonical_review_file
+	canonical_review_file="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../../workflows/triage-review.md"
+	local canonical_pr_disposition
+	canonical_pr_disposition=$(grep '^- \*\*PR disposition:\*\*' "$canonical_review_file")
+	local canonical_guidance
+	canonical_guidance=$(grep '^- \*\*Implementation guidance:\*\*' "$canonical_review_file")
 
 	local prompt_file
 	prompt_file=$(_triage_write_prompt_file \
@@ -262,16 +268,18 @@ test_prompt_file_contains_prefetch_markers() {
 		"$prompt_file" || ok=1
 	grep -q '<!-- prefetch:section=cited-file-contents -->' \
 		"$prompt_file" || ok=1
+	grep -qF -- "$canonical_pr_disposition" "$prompt_file" || ok=1
+	grep -qF -- "$canonical_guidance" "$prompt_file" || ok=1
 
 	rm -f "$prompt_file"
 
 	if [[ "$ok" -eq 0 ]]; then
 		print_result \
-			"_triage_write_prompt_file includes all three prefetch section markers" 0
+			"_triage_write_prompt_file includes canonical fields and prefetch markers" 0
 	else
 		print_result \
-			"_triage_write_prompt_file includes all three prefetch section markers" 1 \
-			"one or more <!-- prefetch:section=NAME --> markers missing from prompt file"
+			"_triage_write_prompt_file includes canonical fields and prefetch markers" 1 \
+			"one or more canonical fields or prefetch markers missing from prompt file"
 	fi
 	teardown_test_env
 }
