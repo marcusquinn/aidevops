@@ -2057,7 +2057,7 @@ These are examples of subagents that have supporting MCPs enabled. See `.agents/
 | `@code-standards` | Quality standards reference, compliance checking | context7 |
 | `@browser-automation` | Testing, scraping, DevTools | chrome-devtools, context7 |
 | `@performance` | Core Web Vitals, network analysis, accessibility | chrome-devtools |
-| `@git-platforms` | GitHub, GitLab, Gitea | gh_grep, context7 |
+| `@git-platforms` | GitHub, GitLab, Gitea | context7 |
 | `@sentry` | Error monitoring, Next.js SDK setup | sentry |
 | `@socket` | Dependency security scanning | socket |
 | `@security-analysis` | AI-powered vulnerability detection (OSV, Ferret, git history) | osv-scanner, gemini-cli-security |

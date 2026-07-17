@@ -1157,8 +1157,8 @@ validate_opencode_config() {
 	fi
 
 	# Check 2: tools entries must be booleans, not objects
-	# Invalid: {"tools": {"gh_grep": {}}}
-	# Valid:   {"tools": {"gh_grep": true}}
+	# Invalid: {"tools": {"example_tool": {}}}
+	# Valid:   {"tools": {"example_tool": true}}
 	local tools_as_objects
 	tools_as_objects=$(jq -r '.tools // {} | to_entries[] | select(.value | type == "object") | .key' "$opencode_config" 2>/dev/null | head -5)
 	if [[ -n "$tools_as_objects" ]]; then
