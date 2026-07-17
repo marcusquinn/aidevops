@@ -212,6 +212,10 @@ if [[ "\$_gh_cmd" == "api" ]]; then
 		exit 0
 	fi
 	if [[ "\$*" == *"repos/testorg/testrepo/pulls/42"* ]]; then
+		if [[ "$mode" == "head-fetch-failure" ]]; then
+			echo 'transient pull lookup failure' >&2
+			exit 1
+		fi
 		echo 'abc123headsha'
 		exit 0
 	fi
@@ -294,6 +298,7 @@ RUNNER_EOF
 	env PATH="${TEST_ROOT}/bin:${scripts_dir}:${PATH}" \
 		HOME="${TEST_ROOT}/home" \
 		FULL_LOOP_HEADLESS="${FULL_LOOP_HEADLESS:-}" \
+		FULL_LOOP_VERIFIED_PR_HEAD_SHA="${FULL_LOOP_VERIFIED_PR_HEAD_SHA:-}" \
 		AIDEVOPS_HEADLESS= \
 		Claude_HEADLESS= \
 		GITHUB_ACTIONS= \
@@ -733,6 +738,27 @@ RUNNER_EOF
 	return 0
 }
 
+# Test 12: A failed head lookup is reported as unavailable evidence, not drift.
+test_verified_head_lookup_failure_is_not_reported_as_drift() {
+	rm -f "${TEST_ROOT}/logs/"*.txt
+	create_gh_stub "head-fetch-failure"
+
+	local output=""
+	local rc=0
+	output=$(FULL_LOOP_VERIFIED_PR_HEAD_SHA="verified123" run_merge_execute \
+		"42" "testorg/testrepo" "--squash" "0" "0") || rc=$?
+	print_result "verified head lookup failure: merge remains blocked" "$((rc == 0 ? 1 : 0))"
+
+	local reports_retrieval_failure=0
+	[[ "$output" == *"Could not retrieve PR #42 head SHA for verification"* ]] && reports_retrieval_failure=1
+	print_result "verified head lookup failure: retrieval error is explicit" "$((1 - reports_retrieval_failure))"
+
+	local reports_false_drift=0
+	[[ "$output" == *"head changed after remote verification"* ]] && reports_false_drift=1
+	print_result "verified head lookup failure: no false drift diagnosis" "$reports_false_drift"
+	return 0
+}
+
 main() {
 	trap teardown_test_env EXIT
 	setup_test_env
@@ -754,6 +780,7 @@ main() {
 	test_auth_401_detection_avoids_numeric_false_positives
 	test_pr_ready_accepts_prefetched_json
 	test_pr_ready_blocks_nonpassing_rollup
+	test_verified_head_lookup_failure_is_not_reported_as_drift
 
 	printf '\nRan %s tests, %s failed.\n' "$TESTS_RUN" "$TESTS_FAILED"
 	if [[ "$TESTS_FAILED" -gt 0 ]]; then

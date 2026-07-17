@@ -62,7 +62,8 @@ printf 'PASS unreachable merge SHA is rejected\n'
 
 git -C "$REPO" switch -q -c safety/release-test
 printf 'canonical human work\n' >>"${REPO}/README.md"
-git -C "$REPO" commit -q -am 'local canonical divergence'
+git -C "$REPO" add README.md
+git -C "$REPO" commit -q -m 'local canonical divergence'
 printf 'uncommitted human work\n' >>"${REPO}/README.md"
 if verify_remote_sync main >/dev/null 2>&1 &&
 	PATH="${BIN}:/opt/homebrew/bin:/usr/bin:/bin" verify_release_source_pr 42 main testorg/aidevops; then
