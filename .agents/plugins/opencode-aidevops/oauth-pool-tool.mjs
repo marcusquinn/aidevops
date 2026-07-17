@@ -9,41 +9,12 @@
 
 import { getAccounts } from "./oauth-pool-storage.mjs";
 import { resolveInjectFn } from "./oauth-pool.mjs";
+import { tool } from "./tools.mjs";
 import {
   poolActionList, poolActionRemove, poolActionStatus,
   poolActionResetCooldowns, poolActionRotate, poolActionAssignPending,
   poolActionCheck, poolActionSetPriority,
 } from "./oauth-pool-display.mjs";
-
-let tool;
-try {
-  ({ tool } = await import("@opencode-ai/plugin"));
-} catch {
-  const schemaNode = {
-    _zod: {},
-    optional() {
-      return this;
-    },
-    describe() {
-      return this;
-    },
-  };
-  tool = (definition) => definition;
-  tool.schema = {
-    enum() {
-      return schemaNode;
-    },
-    string() {
-      return schemaNode;
-    },
-    number() {
-      return schemaNode;
-    },
-    union() {
-      return schemaNode;
-    },
-  };
-}
 
 const z = tool.schema;
 
