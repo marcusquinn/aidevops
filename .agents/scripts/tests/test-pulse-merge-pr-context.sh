@@ -48,6 +48,8 @@ define_functions_under_test() {
 	local fn_src=""
 	fn_src=$(awk '
 		/^_attempt_pr_ci_rebase_retry\(\) \{/,/^}$/ { print }
+		/^_dispatch_pr_repair_by_kind\(\) \{/,/^}$/ { print }
+		/^_route_issue_origin_is_trusted\(\) \{/,/^}$/ { print }
 		/^_route_pr_to_fix_worker\(\) \{/,/^}$/ { print }
 	' "$PROCESS_SCRIPT")
 	if [[ -z "$fn_src" ]]; then
@@ -195,6 +197,63 @@ test_issue_origin_fallback_requires_collaborator_pr_author() {
 	return 0
 }
 
+test_fresh_interactive_pr_is_not_routed() {
+	install_stubs
+	: >"$GH_CALL_LOG"
+	_route_pr_to_fix_worker "9001" "owner/repo" "456" "review" "origin:interactive" || true
+	if grep -q "dispatch-" "$GH_CALL_LOG"; then
+		fail "fresh interactive PR is not routed" "Unexpected dispatch: $(cat "$GH_CALL_LOG")"
+		return 0
+	fi
+	pass "fresh interactive PR is not routed"
+	return 0
+}
+
+test_interactive_route_requires_confirmed_handover() {
+	install_stubs
+	_interactive_pr_is_stale() { return 0; }
+	_interactive_pr_trigger_handover() { return 1; }
+	: >"$GH_CALL_LOG"
+	_route_pr_to_fix_worker "9002" "owner/repo" "456" "review" "origin:interactive" || true
+	if grep -q "dispatch-" "$GH_CALL_LOG"; then
+		fail "interactive route requires confirmed handover" "Unexpected dispatch: $(cat "$GH_CALL_LOG")"
+		return 0
+	fi
+	pass "interactive route requires confirmed handover"
+	return 0
+}
+
+test_interactive_route_dispatches_after_confirmed_takeover() {
+	install_stubs
+	_interactive_pr_is_stale() { return 0; }
+	_interactive_pr_trigger_handover() { return 0; }
+	gh_pr_view() {
+		printf 'origin:interactive,origin:worker-takeover\n'
+		return 0
+	}
+	: >"$GH_CALL_LOG"
+	_route_pr_to_fix_worker "9003" "owner/repo" "456" "review" "origin:interactive" || true
+	if ! grep -q "dispatch-review 9003 owner/repo 456" "$GH_CALL_LOG"; then
+		fail "interactive route dispatches after confirmed takeover" "Expected dispatch: $(cat "$GH_CALL_LOG")"
+		return 0
+	fi
+	pass "interactive route dispatches after confirmed takeover"
+	return 0
+}
+
+test_missing_pr_label_metadata_fails_closed() {
+	install_stubs
+	gh_pr_view() { return 1; }
+	: >"$GH_CALL_LOG"
+	_route_pr_to_fix_worker "9004" "owner/repo" "456" "review" "" || true
+	if grep -q "dispatch-" "$GH_CALL_LOG"; then
+		fail "missing PR label metadata fails closed" "Unexpected dispatch: $(cat "$GH_CALL_LOG")"
+		return 0
+	fi
+	pass "missing PR label metadata fails closed"
+	return 0
+}
+
 main() {
 	trap teardown_test_env EXIT
 	setup_test_env
@@ -206,6 +265,10 @@ main() {
 	test_route_falls_back_to_linked_worker_issue_for_ci
 	test_route_falls_back_to_linked_worker_issue_for_conflict
 	test_issue_origin_fallback_requires_collaborator_pr_author
+	test_fresh_interactive_pr_is_not_routed
+	test_interactive_route_requires_confirmed_handover
+	test_interactive_route_dispatches_after_confirmed_takeover
+	test_missing_pr_label_metadata_fails_closed
 	printf '\nRan %s tests, %s failed.\n' "$TESTS_RUN" "$TESTS_FAILED"
 	[[ "$TESTS_FAILED" -eq 0 ]]
 	return $?

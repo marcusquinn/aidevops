@@ -879,6 +879,39 @@ _attempt_green_behind_update_branch() {
 	return 1
 }
 
+_dispatch_pr_repair_by_kind() {
+	local kind="$1"
+	local pr_number="$2"
+	local repo_slug="$3"
+	local linked_issue="$4"
+	local pr_title="$5"
+	local checks_json="$6"
+	case "$kind" in
+		review) _dispatch_pr_fix_worker "$pr_number" "$repo_slug" "$linked_issue" || true ;;
+		conflict) _dispatch_conflict_fix_worker "$pr_number" "$repo_slug" "$linked_issue" "$pr_title" || true ;;
+		ci) _dispatch_ci_fix_worker "$pr_number" "$repo_slug" "$linked_issue" "$checks_json" || true ;;
+	esac
+	return 0
+}
+
+_route_issue_origin_is_trusted() {
+	local pr_number="$1"
+	local repo_slug="$2"
+	local linked_issue="$3"
+	local fallback_pr_author=""
+	fallback_pr_author=$(gh_pr_view "$pr_number" --repo "$repo_slug" \
+		--json author --jq '.author.login // ""' 2>/dev/null) || fallback_pr_author=""
+	#aidevops:trust-boundary — issue-origin fallback is only for same-repo collaborator PRs whose PR labels lost origin metadata.
+	if [[ -z "$fallback_pr_author" ]] \
+		|| ! declare -F _is_collaborator_author >/dev/null 2>&1 \
+		|| ! _is_collaborator_author "$fallback_pr_author" "$repo_slug"; then
+		echo "[pulse-wrapper] _route_pr_to_fix_worker: PR #${pr_number} in ${repo_slug} linked issue #${linked_issue} has origin:worker but PR author trust could not be confirmed" >>"$LOGFILE"
+		return 1
+	fi
+	echo "[pulse-wrapper] _route_pr_to_fix_worker: PR #${pr_number} in ${repo_slug} using linked issue #${linked_issue} origin:worker fallback" >>"$LOGFILE"
+	return 0
+}
+
 #######################################
 # Route a PR to the appropriate fix worker based on origin label and kind.
 #
@@ -916,15 +949,21 @@ _route_pr_to_fix_worker() {
 	local checks_json="${9:-}"
 	local issue_labels=""
 	local issue_has_worker_origin=0
+	local label_list=""
+	local takeover_pattern=",origin:worker-takeover,"
 
 	# No linked issue → nothing to route to
 	[[ -z "$linked_issue" ]] && return 1
 
 	# Fetch labels if not provided by caller
 	if [[ -z "$pr_labels" ]]; then
-		pr_labels=$(gh_pr_view "$pr_number" --repo "$repo_slug" \
-			--json labels --jq '[.labels[].name] | join(",")' 2>/dev/null) || pr_labels=""
+		if ! pr_labels=$(gh_pr_view "$pr_number" --repo "$repo_slug" \
+			--json labels --jq '[.labels[].name] | join(",")' 2>/dev/null); then
+			echo "[pulse-wrapper] _route_pr_to_fix_worker: current labels unavailable for PR #${pr_number} in ${repo_slug} — refusing destructive routing" >>"$LOGFILE"
+			return 1
+		fi
 	fi
+	label_list=",${pr_labels},"
 
 	# Kind-specific "already routed" exclusion label
 	local routed_label
@@ -939,60 +978,54 @@ _route_pr_to_fix_worker() {
 	esac
 
 	# Check exclusion labels — already routed or no-takeover
-	if [[ ",${pr_labels}," == *",${routed_label},"* ]] \
-		|| [[ ",${pr_labels}," == *",no-takeover,"* ]]; then
+	if [[ "$label_list" == *",${routed_label},"* ]] \
+		|| [[ "$label_list" == *",no-takeover,"* ]]; then
 		return 1
 	fi
 
 	# Review gate has an additional exclusion for external contributors
-	if [[ "$kind" == "review" ]] && [[ ",${pr_labels}," == *",external-contributor,"* ]]; then
+	if [[ "$kind" == "review" ]] && [[ "$label_list" == *",external-contributor,"* ]]; then
 		return 1
 	fi
 
-	if [[ ",${pr_labels}," != *",origin:worker,"* \
-		&& ",${pr_labels}," != *",origin:worker-takeover,"* \
-		&& ",${pr_labels}," != *",origin:interactive,"* ]]; then
-		issue_labels=$(gh api "repos/${repo_slug}/issues/${linked_issue}" \
-			--jq '[.labels[].name] | join(",")' 2>/dev/null) || issue_labels=""
+	if [[ "$label_list" != *",origin:worker,"* \
+		&& "$label_list" != *"$takeover_pattern"* \
+		&& "$label_list" != *",origin:interactive,"* ]]; then
+		if ! issue_labels=$(gh api "repos/${repo_slug}/issues/${linked_issue}" \
+			--jq '[.labels[].name] | join(",")' 2>/dev/null); then
+			echo "[pulse-wrapper] _route_pr_to_fix_worker: linked issue #${linked_issue} metadata unavailable for PR #${pr_number} in ${repo_slug} — refusing destructive routing" >>"$LOGFILE"
+			return 1
+		fi
 		if [[ ",${issue_labels}," == *",origin:worker,"* ]]; then
 			issue_has_worker_origin=1
 		fi
 	fi
 
 	# Worker-origin PRs: dispatch directly
-	if [[ ( -n "${_OW_LABEL_PAT:-}" && ",${pr_labels}," == *"${_OW_LABEL_PAT:-}"* ) ]] \
-		|| [[ ",${pr_labels}," == *",origin:worker-takeover,"* ]] \
+	if [[ ( -n "${_OW_LABEL_PAT:-}" && "$label_list" == *"${_OW_LABEL_PAT:-}"* ) ]] \
+		|| [[ "$label_list" == *"$takeover_pattern"* ]] \
 		|| [[ "$issue_has_worker_origin" -eq 1 ]]; then
-		if [[ "$issue_has_worker_origin" -eq 1 ]]; then
-			local fallback_pr_author=""
-			fallback_pr_author=$(gh_pr_view "$pr_number" --repo "$repo_slug" \
-				--json author --jq '.author.login // ""' 2>/dev/null) || fallback_pr_author=""
-			#aidevops:trust-boundary — issue-origin fallback is only for same-repo collaborator PRs whose PR labels lost origin metadata.
-			if [[ -z "$fallback_pr_author" ]] \
-				|| ! declare -F _is_collaborator_author >/dev/null 2>&1 \
-				|| ! _is_collaborator_author "$fallback_pr_author" "$repo_slug"; then
-				echo "[pulse-wrapper] _route_pr_to_fix_worker: PR #${pr_number} in ${repo_slug} linked issue #${linked_issue} has origin:worker but PR author trust could not be confirmed" >>"$LOGFILE"
-				return 1
-			fi
-			echo "[pulse-wrapper] _route_pr_to_fix_worker: PR #${pr_number} in ${repo_slug} using linked issue #${linked_issue} origin:worker fallback" >>"$LOGFILE"
-		fi
-		case "$kind" in
-			review)   _dispatch_pr_fix_worker "$pr_number" "$repo_slug" "$linked_issue" || true ;;
-			conflict) _dispatch_conflict_fix_worker "$pr_number" "$repo_slug" "$linked_issue" "$pr_title" || true ;;
-			ci)       _dispatch_ci_fix_worker "$pr_number" "$repo_slug" "$linked_issue" "$checks_json" || true ;;
-		esac
+		[[ "$issue_has_worker_origin" -eq 0 ]] \
+			|| _route_issue_origin_is_trusted "$pr_number" "$repo_slug" "$linked_issue" \
+			|| return 1
+		_dispatch_pr_repair_by_kind "$kind" "$pr_number" "$repo_slug" "$linked_issue" "$pr_title" "$checks_json"
 		return 0
 	fi
 
 	# Stale interactive PRs: handover first, then dispatch
-	if [[ ",${pr_labels}," == *",origin:interactive,"* ]] \
+	if [[ "$label_list" == *",origin:interactive,"* ]] \
 		&& _interactive_pr_is_stale "$pr_number" "$repo_slug" "$updated_at" "$head_ref_oid"; then
-		_interactive_pr_trigger_handover "$pr_number" "$repo_slug" || true
-		case "$kind" in
-			review)   _dispatch_pr_fix_worker "$pr_number" "$repo_slug" "$linked_issue" || true ;;
-			conflict) _dispatch_conflict_fix_worker "$pr_number" "$repo_slug" "$linked_issue" "$pr_title" || true ;;
-			ci)       _dispatch_ci_fix_worker "$pr_number" "$repo_slug" "$linked_issue" "$checks_json" || true ;;
-		esac
+		if ! _interactive_pr_trigger_handover "$pr_number" "$repo_slug"; then
+			echo "[pulse-wrapper] _route_pr_to_fix_worker: interactive handover was not confirmed for PR #${pr_number} in ${repo_slug} — refusing destructive routing" >>"$LOGFILE"
+			return 1
+		fi
+		if ! pr_labels=$(gh_pr_view "$pr_number" --repo "$repo_slug" \
+			--json labels --jq '[.labels[].name] | join(",")' 2>/dev/null) \
+			|| [[ ",${pr_labels}," != *"$takeover_pattern"* ]]; then
+			echo "[pulse-wrapper] _route_pr_to_fix_worker: origin:worker-takeover not confirmed for PR #${pr_number} in ${repo_slug} — refusing destructive routing" >>"$LOGFILE"
+			return 1
+		fi
+		_dispatch_pr_repair_by_kind "$kind" "$pr_number" "$repo_slug" "$linked_issue" "$pr_title" "$checks_json"
 		return 0
 	fi
 
