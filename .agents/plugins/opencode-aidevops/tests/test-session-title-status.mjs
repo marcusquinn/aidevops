@@ -87,7 +87,7 @@ test("session status handler follows only the active interactive root session", 
   await handler(event("session.status", { sessionID: "root-2", status: { type: "idle" } }));
 
   assert.equal(resets, 2);
-  assert.deepEqual(statuses, ["busy", "permission", "busy", "retry", "idle", "idle"]);
+  assert.deepEqual(statuses, ["idle", "busy", "permission", "busy", "retry", "idle", "idle", "idle"]);
 });
 
 test("first root user message marks the session busy before native status", async () => {
@@ -119,7 +119,93 @@ test("first root user message marks the session busy before native status", asyn
     info: { id: "message-user-2", sessionID: "root-1", role: "user" },
   }));
 
-  assert.deepEqual(statuses, ["busy", "permission"]);
+  assert.deepEqual(statuses, ["idle", "busy", "permission"]);
+});
+
+test("legacy idle and permission events retain lifecycle status compatibility", async () => {
+  const statuses = [];
+  const handler = createSessionTitleStatusHandler({
+    isHeadless: () => false,
+    isEnabled: () => true,
+    setTerminalTitleStatus: (status) => statuses.push(status),
+  });
+
+  await handler(event("session.created", { info: { id: "root-legacy", title: "Legacy" } }));
+  await handler(event("session.idle", { sessionID: "root-legacy" }));
+  await handler(event("permission.updated", { id: "permission-legacy", sessionID: "root-legacy" }));
+  await handler(event("session.idle", { sessionID: "root-legacy" }));
+  await handler(event("permission.replied", {
+    permissionID: "permission-legacy",
+    response: "once",
+    sessionID: "root-legacy",
+  }));
+  await handler(event("session.idle", { sessionID: "root-legacy" }));
+
+  assert.deepEqual(statuses, ["idle", "idle", "permission", "busy", "idle"]);
+});
+
+test("permission status persists until current and legacy requests both reply", async () => {
+  const statuses = [];
+  const handler = createSessionTitleStatusHandler({
+    isHeadless: () => false,
+    isEnabled: () => true,
+    setTerminalTitleStatus: (status) => statuses.push(status),
+  });
+
+  await handler(event("session.created", { info: { id: "root-pending", title: "Pending" } }));
+  await handler(event("permission.asked", { id: "permission-current", sessionID: "root-pending" }));
+  await handler(event("permission.updated", { id: "permission-legacy", sessionID: "root-pending" }));
+  await handler(event("permission.replied", {
+    requestID: "permission-current",
+    reply: "once",
+    sessionID: "root-pending",
+  }));
+  await handler(event("session.status", { sessionID: "root-pending", status: { type: "idle" } }));
+  await handler(event("permission.replied", {
+    permissionID: "permission-legacy",
+    response: "once",
+    sessionID: "root-pending",
+  }));
+  await handler(event("session.idle", { sessionID: "root-pending" }));
+
+  assert.deepEqual(statuses, ["idle", "permission", "permission", "busy", "idle"]);
+});
+
+test("event lifecycle renders idle, busy, permission, and waiting titles end to end", async () => {
+  const writes = [];
+  const controller = createTerminalTitleController({
+    isEnabled: () => true,
+    writeTitle: (title) => writes.push(title),
+  });
+  const handler = createSessionTitleStatusHandler({
+    isHeadless: () => false,
+    isEnabled: () => true,
+    resetTerminalTitleState: () => controller.reset(),
+    setTerminalTitleStatus: (status) => controller.setStatus(status),
+  });
+
+  await handler(event("session.created", { info: { id: "root-e2e", title: "Lifecycle" } }));
+  controller.emit("Issue #123: lifecycle status");
+  await handler(event("message.updated", {
+    sessionID: "root-e2e",
+    info: { id: "message-user", sessionID: "root-e2e", role: "user" },
+  }));
+  await handler(event("permission.asked", { id: "permission-current", sessionID: "root-e2e" }));
+  await handler(event("session.status", { sessionID: "root-e2e", status: { type: "idle" } }));
+  await handler(event("permission.replied", {
+    requestID: "permission-current",
+    reply: "once",
+    sessionID: "root-e2e",
+  }));
+  await handler(event("session.status", { sessionID: "root-e2e", status: { type: "idle" } }));
+
+  assert.deepEqual(writes, [
+    "🟢 Issue #123: lifecycle status",
+    "⚪ Issue #123: lifecycle status",
+    "🟡 Issue #123: lifecycle status",
+    "⚪ Issue #123: lifecycle status",
+    "🟢 Issue #123: lifecycle status",
+  ]);
 });
 
 test("session status handler supports hot-loaded root sessions and ignores headless sessions", async () => {
@@ -150,5 +236,5 @@ test("session status handler supports hot-loaded root sessions and ignores headl
   await headlessHandler(event("session.status", { sessionID: "headless-root", status: { type: "idle" } }));
 
   assert.equal(resets, 1);
-  assert.deepEqual(statuses, ["busy"]);
+  assert.deepEqual(statuses, ["idle", "busy"]);
 });
