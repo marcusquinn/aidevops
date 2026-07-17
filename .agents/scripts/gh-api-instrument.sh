@@ -57,6 +57,8 @@
 #                                   the newest bounded records (default 50000)
 #   AIDEVOPS_GH_API_LOG_MAX_BYTES — maximum retained log bytes (default 16 MiB)
 #   AIDEVOPS_GH_API_RETENTION_SECONDS — maximum record age (default 172800)
+#   AIDEVOPS_GH_API_EMPTY_LOCK_GRACE_TRIES — 10ms waits before reclaiming an
+#                                   empty lock directory (default 100)
 #   AIDEVOPS_GH_API_INSTRUMENT_DISABLE=1 — make all calls no-ops
 #
 # Part of aidevops framework: https://aidevops.sh
@@ -106,7 +108,8 @@ GH_API_LOG_MAX_LINES="${AIDEVOPS_GH_API_LOG_MAX_LINES:-50000}"
 GH_API_LOG_MAX_BYTES="${AIDEVOPS_GH_API_LOG_MAX_BYTES:-16777216}"
 GH_API_RETENTION_SECONDS="${AIDEVOPS_GH_API_RETENTION_SECONDS:-172800}"
 GH_API_ERROR_KEY="error"
-_GH_API_EMPTY_LOCK_GRACE_TRIES=100
+_GH_API_EMPTY_LOCK_GRACE_TRIES="${AIDEVOPS_GH_API_EMPTY_LOCK_GRACE_TRIES:-100}"
+[[ "$_GH_API_EMPTY_LOCK_GRACE_TRIES" =~ ^[0-9]+$ ]] || _GH_API_EMPTY_LOCK_GRACE_TRIES=100
 
 _gh_now_seconds() {
 	local now=""
@@ -206,16 +209,19 @@ _gh_log_lock_reclaim() {
 		if ! IFS= read -r owner 2>/dev/null <"$pid_path"; then
 			owner=""
 		fi
-		if [[ "$owner" =~ ^[0-9]+$ ]]; then
-			kill -0 "$owner" 2>/dev/null && return 1
+		if [[ -n "$owner" ]]; then
+			if [[ "$owner" =~ ^[0-9]+$ ]] && kill -0 "$owner" 2>/dev/null; then
+				return 1
+			fi
 			rm -f "$pid_path" 2>/dev/null || return 1
 			rmdir "$lock_dir" 2>/dev/null || return 1
 			return 0
 		fi
 	fi
 	# mkdir and PID publication are separate operations. Give a live owner one
-	# second to publish, then reclaim a missing/malformed PID left by a process
-	# killed inside that gap. rmdir still fails closed if unexpected files exist.
+	# second to publish an empty PID, then reclaim it if its owner was killed
+	# inside that gap. Malformed and dead PIDs are reclaimed immediately.
+	# rmdir still fails closed if unexpected files exist.
 	[[ "$tries" -ge "${_GH_API_EMPTY_LOCK_GRACE_TRIES:-100}" ]] || return 1
 	[[ ! -L "$pid_path" ]] || return 1
 	rm -f "$pid_path" 2>/dev/null || return 1
