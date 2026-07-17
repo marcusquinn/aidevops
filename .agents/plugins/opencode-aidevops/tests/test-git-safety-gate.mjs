@@ -18,7 +18,9 @@ import { fileURLToPath } from "node:url";
 import test from "node:test";
 import {
   checkCanonicalGitSafetyGate,
+  checkCanonicalWriteSafetyGate,
   checkCommandSafetyGate,
+  isDirectFileMutationTool,
 } from "../quality-hooks-git-safety.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -40,6 +42,41 @@ function setupRepo() {
   execFileSync(realGit, ["worktree", "add", "-q", "-b", "feature/test", linked], { cwd: repo });
   return { root, repo, linked };
 }
+
+test("classifies built-in and namespaced direct file mutation tools", () => {
+  for (const tool of ["Write", "edit", "write", "functions.apply_patch", "namespace/Edit", "tools::apply-patch"]) {
+    assert.equal(isDirectFileMutationTool(tool), true, tool);
+  }
+  for (const tool of ["Bash", "read", "functions.read", "glob"]) {
+    assert.equal(isDirectFileMutationTool(tool), false, tool);
+  }
+});
+
+test("blocks every canonical direct write and preserves linked-worktree writes", () => {
+  const { root, repo, linked } = setupRepo();
+  try {
+    assert.throws(
+      () => checkCanonicalWriteSafetyGate(join(repo, "README.md"), scriptsDir, repo),
+      /canonical write policy.*read-only session mirrors/,
+    );
+    assert.throws(
+      () => checkCanonicalWriteSafetyGate("", scriptsDir, repo),
+      /canonical write policy/,
+    );
+    assert.throws(
+      () => checkCanonicalWriteSafetyGate(join(repo, "new-file.md"), scriptsDir, linked),
+      /canonical write policy/,
+    );
+    assert.doesNotThrow(
+      () => checkCanonicalWriteSafetyGate(join(linked, "README.md"), scriptsDir, linked),
+    );
+    assert.doesNotThrow(
+      () => checkCanonicalWriteSafetyGate("new-file.md", scriptsDir, linked),
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
 
 test("blocks canonical branch mutation before execution", () => {
   const { root, repo } = setupRepo();

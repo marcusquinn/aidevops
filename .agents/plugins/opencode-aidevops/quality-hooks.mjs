@@ -13,7 +13,11 @@ import { recordToolStart, consumeToolDuration } from "./timing-tracing.mjs";
 import { qualityLog, runFileQualityGate } from "./quality-logging.mjs";
 import { enrichActiveSpan, detectTaskId, detectSessionOrigin } from "./otel-enrichment.mjs";
 import { checkSecretReadGate, isReadTool } from "./quality-hooks-secret-read.mjs";
-import { checkCanonicalGitSafetyGate } from "./quality-hooks-git-safety.mjs";
+import {
+  checkCanonicalGitSafetyGate,
+  checkCanonicalWriteSafetyGate,
+  isDirectFileMutationTool,
+} from "./quality-hooks-git-safety.mjs";
 
 // Re-export for consumers that import from this module
 export { scanForSecrets } from "./quality-logging.mjs";
@@ -113,7 +117,7 @@ function scrubToolOutput(output) {
  * @returns {boolean}
  */
 function isWriteOrEditTool(tool) {
-  return tool === "Write" || tool === "Edit" || tool === "write" || tool === "edit";
+  return isDirectFileMutationTool(tool);
 }
 
 /**
@@ -243,6 +247,12 @@ function recordChildSubagent(taskId, scriptsDir, log) {
  */
 function handleToolBefore(ctx, log, input, output) {
   ctx.continuationGuard?.beforeTool(input, output);
+
+  if (isDirectFileMutationTool(input.tool)) {
+    const writeCwd = output.args?.workdir || output.args?.cwd || process.cwd();
+    const filePath = output.args?.filePath || output.args?.file_path || output.args?.path || "";
+    checkCanonicalWriteSafetyGate(filePath, ctx.scriptsDir, writeCwd);
+  }
 
   if (isBashTool(input.tool)) {
     const bashCwd = output.args?.workdir || output.args?.cwd || process.cwd();
