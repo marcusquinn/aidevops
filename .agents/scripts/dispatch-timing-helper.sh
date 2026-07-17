@@ -58,8 +58,10 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 : "${DISPATCH_TIMING_MIN_TIMEOUT_MS:=30000}"
 
 # Hard ceiling: never recommend above this (prevents one runaway latency from
-# locking the entire pulse cycle).
-: "${DISPATCH_TIMING_MAX_TIMEOUT_MS:=300000}"
+# locking the entire pulse cycle). Keep the default at least twice the dispatch
+# ceremony floor (600s) so probe mode can escape a floor-level timeout instead
+# of being clamped below the floor and retried forever at the same budget.
+: "${DISPATCH_TIMING_MAX_TIMEOUT_MS:=1200000}"
 
 # Bootstrap default when we have <3 success measurements.
 : "${DISPATCH_TIMING_BOOTSTRAP_MS:=90000}"
@@ -567,7 +569,7 @@ USAGE:
 
 ENVIRONMENT:
   DISPATCH_TIMING_MIN_TIMEOUT_MS        Floor (default 30000)
-  DISPATCH_TIMING_MAX_TIMEOUT_MS        Ceiling (default 300000)
+  DISPATCH_TIMING_MAX_TIMEOUT_MS        Ceiling (default 1200000)
   DISPATCH_TIMING_BOOTSTRAP_MS          Default when <3 successes (90000)
   DISPATCH_TIMING_WINDOW                Rolling window size (default 20)
   DISPATCH_TIMING_EWMA_ALPHA_PCT        EWMA alpha ×100 (default 30 = 0.3)

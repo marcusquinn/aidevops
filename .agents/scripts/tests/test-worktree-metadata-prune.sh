@@ -11,6 +11,7 @@ REPO="${TEST_ROOT}/repo"
 LINKED="${TEST_ROOT}/linked"
 FAILED_LINKED="${TEST_ROOT}/failed-linked"
 SHIM_BIN="${TEST_ROOT}/bin"
+TEST_PATH="${SHIM_BIN}:/usr/bin:/bin:/usr/sbin:/sbin"
 FAILING_GIT="${TEST_ROOT}/failing-git"
 QUERY_FAILING_GIT="${TEST_ROOT}/query-failing-git"
 POST_PRUNE_QUERY_FAILING_GIT="${TEST_ROOT}/post-prune-query-failing-git"
@@ -34,7 +35,7 @@ printf 'seed\n' >"${REPO}/README.md"
 /usr/bin/git -C "$REPO" worktree add -q -b feature/prune-failure "$FAILED_LINKED"
 ln -s "$GIT_SHIM" "${SHIM_BIN}/git"
 
-if PATH="${SHIM_BIN}:/usr/bin:/bin" git -C "$REPO" worktree prune >/dev/null 2>&1; then
+if PATH="$TEST_PATH" git -C "$REPO" worktree prune >/dev/null 2>&1; then
 	printf 'FAIL canonical Git shim unexpectedly allowed direct metadata prune\n'
 	exit 1
 fi
@@ -42,7 +43,7 @@ fi
 mkdir -p "${TEST_ROOT}/home"
 if ! output=$(
 	cd "$REPO" || exit 1
-	HOME="${TEST_ROOT}/home" PATH="${SHIM_BIN}:/usr/bin:/bin" \
+	HOME="${TEST_ROOT}/home" PATH="$TEST_PATH" \
 		bash "${SCRIPT_DIR}/worktree-helper.sh" remove "$LINKED" 2>&1
 ); then
 	printf 'FAIL worktree-helper removal failed with canonical Git shim active: %s\n' "$output"
@@ -72,7 +73,7 @@ chmod +x "$FAILING_GIT"
 
 if output=$(
 	cd "$REPO" || exit 1
-	HOME="${TEST_ROOT}/home" PATH="${SHIM_BIN}:/usr/bin:/bin" AIDEVOPS_REAL_GIT_BIN="$FAILING_GIT" \
+	HOME="${TEST_ROOT}/home" PATH="$TEST_PATH" AIDEVOPS_REAL_GIT_BIN="$FAILING_GIT" \
 		FAILED_LINKED_FOR_TEST="$FAILED_LINKED" \
 		bash "${SCRIPT_DIR}/worktree-helper.sh" remove "$FAILED_LINKED" 2>&1
 ); then

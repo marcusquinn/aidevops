@@ -106,6 +106,84 @@ log_worktree_removal_event() {
 	return 0
 }
 
+_capture_worktree_proc_cwds() {
+	local proc_root="$1"
+	local cwd_link=""
+	local cwd_target=""
+	local captured_count=0
+
+	for cwd_link in "$proc_root"/[0-9]*/cwd; do
+		[[ -L "$cwd_link" || -e "$cwd_link" ]] || continue
+		if ! cwd_target=$(readlink "$cwd_link" 2>/dev/null); then
+			# Vanished processes are harmless; persistent unreadability means the
+			# snapshot is incomplete and must fail closed.
+			[[ -L "$cwd_link" || -e "$cwd_link" ]] && return 1
+			continue
+		fi
+		if [[ -n "$cwd_target" ]]; then
+			printf '%s\n' "$cwd_target"
+			captured_count=$((captured_count + 1))
+		fi
+	done
+	[[ "$captured_count" -gt 0 ]] || return 1
+	return 0
+}
+
+# Capture every visible live-process cwd. Callers may supply the resulting
+# snapshot to the guard so one safety check performs only one platform scan.
+capture_worktree_process_cwds() {
+	local cwd_target=""
+	local captured_count=0
+	local lsof_line=""
+	local lsof_output=""
+
+	if [[ -d /proc ]]; then
+		_capture_worktree_proc_cwds /proc
+		return $?
+	fi
+
+	if command -v lsof >/dev/null 2>&1; then
+		# macOS lacks /proc, but `lsof +D <worktree>` recursively walks the
+		# whole tree (including node_modules). Query only cwd descriptors once.
+		lsof_output=$(lsof -n -F n -d cwd 2>/dev/null) || return 1
+		while IFS= read -r lsof_line; do
+			case "$lsof_line" in
+			n*)
+				cwd_target="${lsof_line#n}"
+				if [[ -n "$cwd_target" ]]; then
+					printf '%s\n' "$cwd_target"
+					captured_count=$((captured_count + 1))
+				fi
+				;;
+			esac
+		done <<<"$lsof_output"
+		[[ "$captured_count" -gt 0 ]] || return 1
+		return 0
+	fi
+
+	return 1
+}
+
+# Return 0 when a captured cwd is inside the candidate worktree.
+_worktree_cwd_snapshot_contains_path() {
+	local wt_path="$1"
+	local wt_path_real="$2"
+	local cwd_snapshot="$3"
+	local cwd_target=""
+
+	if [[ -z "$wt_path" || -z "$wt_path_real" || -z "$cwd_snapshot" ]]; then
+		return 1
+	fi
+	while IFS= read -r cwd_target; do
+		case "$cwd_target" in
+		"$wt_path" | "$wt_path"/* | "$wt_path_real" | "$wt_path_real"/*)
+			return 0
+			;;
+		esac
+	done <<<"$cwd_snapshot"
+	return 1
+}
+
 # Return 0 when any live process has its current working directory inside the
 # candidate worktree. `pgrep -f "$path"` only sees argv; commands such as
 # linters often run with cwd inside the worktree while their argv contains no
@@ -113,49 +191,16 @@ log_worktree_removal_event() {
 _worktree_has_process_cwd() {
 	local wt_path="$1"
 	local wt_path_real="$2"
+	local cwd_snapshot=""
 
 	if [[ -z "$wt_path" || -z "$wt_path_real" ]]; then
 		return 1
 	fi
-
-	if [[ -d /proc ]]; then
-		local cwd_link=""
-		local cwd_target=""
-		for cwd_link in /proc/[0-9]*/cwd; do
-			[[ -e "$cwd_link" ]] || continue
-			cwd_target=$(readlink "$cwd_link" 2>/dev/null || true)
-			[[ -n "$cwd_target" ]] || continue
-			case "$cwd_target" in
-			"$wt_path" | "$wt_path"/* | "$wt_path_real" | "$wt_path_real"/*)
-				return 0
-				;;
-			esac
-		done
-	fi
-
-	if command -v lsof >/dev/null 2>&1; then
-		local lsof_line=""
-		local lsof_cwd_target=""
-
-		# macOS lacks /proc, but `lsof +D <worktree>` recursively walks the
-		# whole tree (including node_modules) for every removal candidate. Query
-		# only process cwd descriptors instead; this preserves the safety gate
-		# without filesystem-wide scans.
-		while IFS= read -r lsof_line; do
-			case "$lsof_line" in
-			n*)
-				lsof_cwd_target="${lsof_line#n}"
-				case "$lsof_cwd_target" in
-				"$wt_path" | "$wt_path"/* | "$wt_path_real" | "$wt_path_real"/*)
-					return 0
-					;;
-				esac
-				;;
-			esac
-		done < <(lsof -n -F n -d cwd 2>/dev/null || true)
-	fi
-
-	return 1
+	# Fail closed when the platform cannot provide a process-CWD snapshot.
+	# Returning 0 means "unsafe to remove" to this predicate's callers.
+	cwd_snapshot=$(capture_worktree_process_cwds) || return 0
+	_worktree_cwd_snapshot_contains_path "$wt_path" "$wt_path_real" "$cwd_snapshot"
+	return $?
 }
 
 # =============================================================================
@@ -165,6 +210,7 @@ _worktree_has_process_cwd() {
 #   $1  wt_path  — absolute path candidate
 #   $2  caller   — audit caller constant
 #   $3  reason   — reason to log on skip
+#   $4  cwd_snapshot — optional newline-separated live-process cwd snapshot
 #
 # Refuses registered canonical repos, the caller's current working directory,
 # and worktrees that still have any live process cwd inside them.
@@ -174,6 +220,9 @@ worktree_removal_guard() {
 	local wt_path="$1"
 	local caller="$2"
 	local reason="$3"
+	local cwd_snapshot="${4:-}"
+	local cwd_snapshot_provided=0
+	[[ "$#" -ge 4 ]] && cwd_snapshot_provided=1
 
 	if [[ -z "$wt_path" ]]; then
 		log_worktree_removal_event "$_WTAR_SKIPPED" "$caller" "$wt_path" "empty-path" "skipped"
@@ -203,7 +252,9 @@ worktree_removal_guard() {
 		esac
 	fi
 
-	if _worktree_has_process_cwd "$wt_path" "$wt_path_real"; then
+	if { [[ "$cwd_snapshot_provided" -eq 1 ]] && \
+		_worktree_cwd_snapshot_contains_path "$wt_path" "$wt_path_real" "$cwd_snapshot"; } || \
+		{ [[ "$cwd_snapshot_provided" -eq 0 ]] && _worktree_has_process_cwd "$wt_path" "$wt_path_real"; }; then
 		log_worktree_removal_event "$_WTAR_SKIPPED" "$caller" "$wt_path" "active-cwd" "skipped"
 		return 1
 	fi

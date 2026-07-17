@@ -40,6 +40,9 @@ MOCK_GH_LABELS_JSON="[]"
 MOCK_GH_FAIL="0"
 MOCK_GH_TARGET_IS_PR="0"
 MOCK_GH_PERMISSION_EVENTS_JSON='[[]]'
+MOCK_GH_REST_LOGIN_MODE="success"
+MOCK_GH_GRAPHQL_LOGIN_MODE="success"
+MOCK_GH_CALL_LOG=""
 MOCK_PS_LINES=""
 MOCK_LEDGER_RECORD=""
 MOCK_GIT_WORKTREE_LIST="0"
@@ -161,6 +164,9 @@ git() {
 gh() {
 	local gh_subcommand="${1:-}"
 	local gh_resource="${2:-}"
+	if [[ -n "$MOCK_GH_CALL_LOG" ]]; then
+		printf '%s\n' "$*" >>"$MOCK_GH_CALL_LOG"
+	fi
 	if [[ "$MOCK_GH_FAIL" == "1" ]]; then
 		return 1
 	fi
@@ -172,8 +178,31 @@ gh() {
 	fi
 
 	if [[ "$gh_subcommand" == "api" && "$gh_resource" == "user" ]]; then
-		printf '%s\n' 'runner-self'
-		return 0
+		case "$MOCK_GH_REST_LOGIN_MODE" in
+		success)
+			printf '%s\n' 'runner-self'
+			return 0
+			;;
+		invalid)
+			printf '%s\n' 'invalid login!'
+			return 0
+			;;
+		*) return 1 ;;
+		esac
+	fi
+
+	if [[ "$gh_subcommand" == "api" && "$gh_resource" == "graphql" ]]; then
+		case "$MOCK_GH_GRAPHQL_LOGIN_MODE" in
+		success)
+			printf '%s\n' 'fallback-runner'
+			return 0
+			;;
+		invalid)
+			printf '%s\n' 'fallback;injection'
+			return 0
+			;;
+		*) return 1 ;;
+		esac
 	fi
 	if [[ "$gh_subcommand" == "api" && "$gh_resource" == */events\?* ]]; then
 		printf '%s\n' "$MOCK_GH_PERMISSION_EVENTS_JSON"
@@ -704,6 +733,56 @@ test_cmd_dispatch_blocks_needs_maintainer_review_before_dedup() {
 	return 0
 }
 
+test_runner_login_transport_security() {
+	local test_dir=""
+	test_dir=$(mktemp -d)
+	MOCK_GH_CALL_LOG="${test_dir}/gh-calls"
+	MOCK_GH_REST_LOGIN_MODE="success"
+	MOCK_GH_GRAPHQL_LOGIN_MODE="fail"
+
+	local login="" rc=0 check=1
+	login=$(_dsi_resolve_runner_login) || rc=$?
+	if [[ "$rc" -eq 0 && "$login" == "runner-self" ]] &&
+		! grep -Fq 'api graphql' "$MOCK_GH_CALL_LOG"; then
+		check=0
+	fi
+	print_result "runner identity prefers authenticated REST" "$check" "rc=$rc login=$login"
+
+	: >"$MOCK_GH_CALL_LOG"
+	MOCK_GH_REST_LOGIN_MODE="fail"
+	MOCK_GH_GRAPHQL_LOGIN_MODE="success"
+	login=""
+	rc=0
+	login=$(_dsi_resolve_runner_login) || rc=$?
+	check=1
+	[[ "$rc" -eq 0 && "$login" == "fallback-runner" ]] && check=0
+	print_result "runner identity falls back to authenticated GraphQL" "$check" "rc=$rc login=$login"
+
+	MOCK_GH_REST_LOGIN_MODE="invalid"
+	MOCK_GH_GRAPHQL_LOGIN_MODE="invalid"
+	login=""
+	rc=0
+	login=$(_dsi_resolve_runner_login) || rc=$?
+	check=1
+	[[ "$rc" -eq 1 && -z "$login" ]] && check=0
+	print_result "runner identity rejects malformed transport output" "$check" "rc=$rc login=$login"
+
+	MOCK_GH_REST_LOGIN_MODE="fail"
+	MOCK_GH_GRAPHQL_LOGIN_MODE="fail"
+	login=""
+	rc=0
+	login=$(_dsi_resolve_runner_login) || rc=$?
+	check=1
+	[[ "$rc" -eq 1 && -z "$login" ]] && check=0
+	print_result "runner identity fails closed when both transports fail" "$check" "rc=$rc login=$login"
+
+	MOCK_GH_REST_LOGIN_MODE="success"
+	MOCK_GH_GRAPHQL_LOGIN_MODE="success"
+	MOCK_GH_CALL_LOG=""
+	rm -rf "$test_dir"
+	return 0
+}
+
 test_dedup_receives_prefetched_issue_metadata() {
 	local test_dir=""
 	test_dir=$(mktemp -d)
@@ -1224,6 +1303,7 @@ _run_tests() {
 	test_maintainer_permission_guard_blocks_manual_dispatch
 	test_permission_history_guard_requires_current_grant
 	test_cmd_dispatch_blocks_needs_maintainer_review_before_dedup
+	test_runner_login_transport_security
 	test_dedup_receives_prefetched_issue_metadata
 	test_transient_dedup_retries_are_bounded
 	test_persistent_uncertainty_does_not_retry_and_checkpoints_dryrun

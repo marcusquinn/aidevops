@@ -398,6 +398,93 @@ test_process_cwd_guard_refuses_empty_paths() {
 }
 
 # =============================================================================
+# Test 12: snapshot collection failures block removal, while an explicitly
+# supplied empty successful snapshot avoids a second platform scan.
+# =============================================================================
+test_process_cwd_snapshot_failure_is_fail_closed() {
+	local log_file="${TEST_DIR}/t12-cleanup.log"
+	local wt_path="${TEST_DIR}/snapshot-failure-wt"
+	local rc=0
+	export AIDEVOPS_CLEANUP_LOG="$log_file"
+	mkdir -p "$wt_path"
+
+	unset _AUDIT_WORKTREE_REMOVAL_HELPER_LOADED 2>/dev/null || true
+	# shellcheck source=../audit-worktree-removal-helper.sh
+	source "$AUDIT_HELPER"
+	capture_worktree_process_cwds() { return 1; }
+	if worktree_removal_guard "$wt_path" "test.sh" "manual"; then
+		rc=1
+	fi
+	assert_file_contains "$log_file" "worktree-skipped.*active-cwd" || rc=1
+	if ! worktree_removal_guard "$wt_path" "test.sh" "manual" ""; then
+		rc=1
+	fi
+	print_result "process_cwd_snapshot_failure_is_fail_closed" "$rc" \
+		"Expected collection failure to block and explicit empty snapshot to pass"
+	return 0
+}
+
+# =============================================================================
+# Test 13: each platform backend fails closed when it cannot publish any cwd
+# target instead of treating an empty snapshot as authoritative.
+# =============================================================================
+test_snapshot_backend_requires_visible_target() {
+	local rc=0
+	unset _AUDIT_WORKTREE_REMOVAL_HELPER_LOADED 2>/dev/null || true
+	# shellcheck source=../audit-worktree-removal-helper.sh
+	source "$AUDIT_HELPER"
+
+	if [[ -d /proc ]]; then
+		if (
+			readlink() { return 1; }
+			capture_worktree_process_cwds >/dev/null
+		); then
+			rc=1
+		fi
+	else
+		if (
+			lsof() { return 0; }
+			capture_worktree_process_cwds >/dev/null
+		); then
+			rc=1
+		fi
+	fi
+	print_result "snapshot_backend_requires_visible_target" "$rc" \
+		"Expected an empty process-cwd backend result to fail closed"
+	return 0
+}
+
+# =============================================================================
+# Test 14: a partially visible /proc snapshot is incomplete and fails closed.
+# =============================================================================
+test_proc_snapshot_rejects_partial_visibility() {
+	local proc_root="${TEST_DIR}/fake-proc"
+	local rc=0
+	mkdir -p "${proc_root}/1" "${proc_root}/2"
+	ln -s /visible-cwd "${proc_root}/1/cwd"
+	ln -s /hidden-cwd "${proc_root}/2/cwd"
+
+	if (
+		readlink() {
+			local link_path="$1"
+			case "$link_path" in
+			*/1/cwd)
+				printf '/visible-cwd\n'
+				return 0
+				;;
+			esac
+			return 1
+		}
+		_capture_worktree_proc_cwds "$proc_root" >/dev/null
+	); then
+		rc=1
+	fi
+	print_result "proc_snapshot_rejects_partial_visibility" "$rc" \
+		"Expected one unreadable persistent cwd link to invalidate the snapshot"
+	return 0
+}
+
+# =============================================================================
 # Main
 # =============================================================================
 
@@ -416,6 +503,9 @@ test_guard_refuses_other_process_cwd
 test_permanent_helper_removes_and_logs
 test_optional_guard_context_logged
 test_process_cwd_guard_refuses_empty_paths
+test_process_cwd_snapshot_failure_is_fail_closed
+test_snapshot_backend_requires_visible_target
+test_proc_snapshot_rejects_partial_visibility
 
 echo ""
 echo "Results: ${TESTS_PASSED}/${TESTS_RUN} passed, ${TESTS_FAILED} failed."
