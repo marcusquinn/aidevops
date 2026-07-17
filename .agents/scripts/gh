@@ -410,6 +410,10 @@ _shim_run_transport() {
 		fi
 		return "$rc"
 	fi
+	if [[ "${_GHRP_PREFLIGHT_ONLY:-0}" -eq 1 ]]; then
+		"$executable" "${transport_args[@]}"
+		return $?
+	fi
 	_shim_run_single_transport "$executable" "$path" "$caller" "$retry" "${transport_args[@]}"
 	return $?
 }

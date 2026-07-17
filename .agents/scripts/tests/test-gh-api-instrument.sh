@@ -474,9 +474,16 @@ printf '%s\n' "$@" >>"$NATIVE_ATTEMPT_LOG"
 page=1
 jq_requested=0
 expect_jq=0
+slurp_requested=0
+template_requested=0
+expect_template=0
 for arg in "$@"; do
 	if [[ "$expect_jq" -eq 1 ]]; then
 		expect_jq=0
+		continue
+	fi
+	if [[ "$expect_template" -eq 1 ]]; then
+		expect_template=0
 		continue
 	fi
 	case "$arg" in
@@ -484,6 +491,13 @@ for arg in "$@"; do
 		jq_requested=1
 		expect_jq=1
 		;;
+	--jq=* | -q*) jq_requested=1 ;;
+	--slurp) slurp_requested=1 ;;
+	--template | -t)
+		template_requested=1
+		expect_template=1
+		;;
+	--template=* | -t*) template_requested=1 ;;
 	*)
 		if [[ "$arg" =~ (^|[?\&])page=([0-9]+)($|\&) ]]; then
 			page="${BASH_REMATCH[2]}"
@@ -491,6 +505,11 @@ for arg in "$@"; do
 		;;
 	esac
 done
+if [[ "${NATIVE_REJECT_SLURP_FILTERS:-0}" == "1" && "$slurp_requested" -eq 1 \
+	&& ("$jq_requested" -eq 1 || "$template_requested" -eq 1) ]]; then
+	printf 'the --slurp option is not supported with --jq or --template\n' >&2
+	exit "${NATIVE_PREFLIGHT_STATUS:-1}"
+fi
 if [[ "${NATIVE_PAGINATED_RESPONSE:-0}" == "1" ]]; then
 	printf 'HTTP/2.0 200 OK\r\n'
 	if [[ "$page" -eq 1 ]]; then
@@ -564,6 +583,38 @@ PATH="$NATIVE_FIXTURE:/usr/bin:/bin" AIDEVOPS_GH_SHIM_NO_REST_REWRITE=1 \
 "${PARENT_DIR}/gh-api-instrument.sh" report "$AIDEVOPS_GH_API_REPORT" >/dev/null 2>&1
 assert_eq "pagination rollback retains native flag" "1" "$(grep -c -- '^--paginate$' "$NATIVE_ATTEMPT_LOG")"
 assert_eq "pagination rollback remains honestly opaque" "1" "$(jq -r '._meta.opaque_paginated_attempts' "$AIDEVOPS_GH_API_REPORT")"
+
+# Native gh rejects --slurp combined with --jq or --template before issuing an
+# HTTP request. Preserve that CLI validation result without misclassifying the
+# native process invocation as an opaque transport attempt.
+rm -f "$AIDEVOPS_GH_API_LOG" "$NATIVE_ATTEMPT_LOG"
+preflight_jq_rc=0
+preflight_jq_output=$(PATH="$NATIVE_FIXTURE:/usr/bin:/bin" AIDEVOPS_GH_SHIM_NO_REST_REWRITE=1 \
+	NATIVE_REJECT_SLURP_FILTERS=1 \
+	"$SHIM_FIXTURE/gh" api --method GET --paginate \
+	'/repos/private-owner/private-repo/issues?per_page=100' -f state=open \
+	--slurp --jq '.' 2>&1) || preflight_jq_rc=$?
+preflight_template_rc=0
+preflight_template_output=$(PATH="$NATIVE_FIXTURE:/usr/bin:/bin" AIDEVOPS_GH_SHIM_NO_REST_REWRITE=1 \
+	NATIVE_REJECT_SLURP_FILTERS=1 \
+	"$SHIM_FIXTURE/gh" api --paginate \
+	'/repos/private-owner/private-repo/issues?per_page=100' --slurp --template '{{.}}' 2>&1) || preflight_template_rc=$?
+"${PARENT_DIR}/gh-api-instrument.sh" report "$AIDEVOPS_GH_API_REPORT" >/dev/null 2>&1
+assert_eq "slurp/jq native preflight exit is preserved" "1" "$preflight_jq_rc"
+assert_eq "slurp/template native preflight exit is preserved" "1" "$preflight_template_rc"
+assert_eq "native CLI still validates both invalid invocations" "2" "$(grep -c '^api$' "$NATIVE_ATTEMPT_LOG")"
+assert_eq "invalid pagination combinations retain logical events" "2" "$(awk -F'\t' '$9 == "logical" { count++ } END { print count + 0 }' "$AIDEVOPS_GH_API_LOG")"
+assert_eq "invalid pagination combinations record zero transport attempts" "0" "$(jq -r '._meta.attempted_requests' "$AIDEVOPS_GH_API_REPORT")"
+assert_eq "invalid pagination combinations create no opaque attempts" "0" "$(jq -r '._meta.opaque_paginated_attempts' "$AIDEVOPS_GH_API_REPORT")"
+assert_eq "invalid pagination combinations preserve exactness" "true" "$(jq -r '._meta.attempts_exact' "$AIDEVOPS_GH_API_REPORT")"
+if [[ "$preflight_jq_output" == *"not supported with --jq or --template"* &&
+	"$preflight_template_output" == *"not supported with --jq or --template"* ]]; then
+	echo "  PASS: native preflight diagnostics are preserved"
+	PASS=$((PASS + 1))
+else
+	echo "  FAIL: native preflight diagnostics changed"
+	FAIL=$((FAIL + 1))
+fi
 
 # Streaming jq remains page-local, matching native gh pagination semantics.
 rm -f "$AIDEVOPS_GH_API_LOG" "$NATIVE_ATTEMPT_LOG"
