@@ -9,8 +9,9 @@ name: Review Bot Gate
 # fetched at runtime from marcusquinn/aidevops@main rather than being pinned
 # to a hard-coded SHA that silently drifts after helper changes.
 #
-# To enforce: add "review-bot-gate" as a required status check in
-# GitHub branch protection settings for each repo.
+# The status may remain required for compatibility, but missing/late add-on
+# review passes under the permanent fast/advisory default. Strict blocking is
+# an explicit completion_behavior opt-in.
 #
 # Rate-limit behaviour: controlled by `review_gate.rate_limit_behavior` in
 # ~/.config/aidevops/repos.json. Default: "pass". See:
@@ -65,4 +66,6 @@ jobs:
     # command until after the PR that needs that command has merged.
     with:
       aidevops_ref: ${{ github.event.pull_request.head.sha || 'main' }}
+      # Explicit CI opt-in: set this Actions variable to strict when required.
+      completion_behavior: ${{ vars.AIDEVOPS_REVIEW_GATE_COMPLETION_BEHAVIOR || 'fast' }}
     secrets: inherit

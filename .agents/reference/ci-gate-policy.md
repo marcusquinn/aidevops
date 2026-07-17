@@ -56,6 +56,12 @@ feedback loops when they find defects.
 12. Repositories that require testing the exact merge result should use merge
    queue or platform-native queued merge behaviour instead of repeatedly mutating
    PR branches while CI is active.
+13. Code-quality add-on apps are advisory by default. Missing, pending,
+    unavailable, rate-limited, or late add-on results never delay a trusted PR
+    after required project CI passes. Sweep late findings into worker-ready
+    follow-up issues. Repositories with exceptional sensitivity may explicitly
+    opt into `review_gate.completion_behavior: strict`; never make that the
+    framework default.
 
 ## Ruleset checklist
 

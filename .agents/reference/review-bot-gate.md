@@ -1,41 +1,59 @@
 <!-- SPDX-License-Identifier: MIT -->
 <!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
 
-# Review Bot Gate (t1382, GH#3827, GH#17541)
+# Review Bot Add-on Policy (t1382, GH#3827, GH#17541)
 
-Before merging any PR, wait for AI code review bots (CodeRabbit, Gemini Code Assist,
-etc.) to post their reviews. PRs merged before bots post lose security findings.
+**Permanent default:** required project CI controls merge readiness. Code-quality
+add-ons such as CodeRabbit and Gemini are advisory: absent, pending, unavailable,
+rate-limited, or late results never delay a trusted maintainer-controlled PR.
+Late feedback is swept after merge and filed as worker-ready follow-up issues.
+
+Repositories with an exceptional sensitivity requirement may explicitly opt into
+review-before-merge with `review_gate.completion_behavior: strict`. Strict is
+never the framework default. Mirror strict CI intent with the repository Actions
+variable `AIDEVOPS_REVIEW_GATE_COMPLETION_BEHAVIOR=strict`. The GH#17671
+external-contributor trust boundary remains fail-closed independently.
 
 ## Enforcement Layers
 
-1. **CI**: `.github/workflows/review-bot-gate.yml` — required status check. Delegates
-   to `review-bot-gate-helper.sh check` (vendored from marcusquinn/aidevops). Applies
-   the t2139 settlement check, which defeats CodeRabbit's two-phase placeholder pattern.
-   Re-triggers on `issue_comment:edited` so Phase 2 edits clear the gate automatically.
-2. **Pulse merge path**: `pulse-wrapper.sh` line 8243 — `review-bot-gate-helper.sh check` before merge (code-enforced since GH#17490)
-3. **Worker merge path**: `full-loop-helper.sh merge` — `review-bot-gate-helper.sh wait` before merge (code-enforced since GH#17541)
-4. **Branch protection**: add `review-bot-gate` as required check per repo
+1. **CI**: `.github/workflows/review-bot-gate.yml` may remain a required compatibility
+   status, but default missing/late review emits `PASS_ADVISORY` and succeeds. It
+   blocks for missing completion only under explicit strict policy or the external
+   trust boundary.
+2. **Pulse merge path**: `review-bot-gate-helper.sh status-json` supplies typed,
+   exact-head evidence. `PASS_ADVISORY` is valid only for trusted authors.
+3. **Worker merge path**: `full-loop-helper.sh merge` accepts the same default
+   advisory outcome after required CI succeeds.
+4. **Branch protection**: a required `review-bot-gate` context is compatible with
+   this policy because it reports success for advisory outcomes.
 
 All layers share the same `review-bot-gate-helper.sh` implementation — the settlement
-check and rate-limit behaviour are consistent across CI and in-agent merge paths (GH#20493).
+check and completion behaviour are consistent across CI and in-agent merge paths (GH#20493).
 
 ## Merge Commands
 
 | Context | Command | Gate |
 |---------|---------|------|
-| Worker (full-loop) | `full-loop-helper.sh merge <PR> [REPO]` | Code-enforced `wait` |
-| Pulse (deterministic) | Internal `_merge_ready_prs_for_repo` | Code-enforced `check` |
-| Manual (interactive) | `review-bot-gate-helper.sh wait <PR> [REPO]` then `gh pr merge` | Prompt-level |
+| Worker (full-loop) | `full-loop-helper.sh merge <PR> [REPO]` | Advisory by default; strict opt-in blocks |
+| Pulse (deterministic) | Internal `_merge_ready_prs_for_repo` | Typed advisory/strict evidence |
+| Manual (interactive) | `review-bot-gate-helper.sh check <PR> [REPO]` | Read available feedback without default delay |
 
 Workers MUST use `full-loop-helper.sh merge` — direct `gh pr merge` bypasses the gate (GH#17541).
 
 ## Workflow
 
-- Before merging: run `review-bot-gate-helper.sh check <PR_NUMBER>`. If WAITING, poll up to 10 minutes. Most bots post within 2-5 minutes.
-- If the PR has `skip-review-gate` label, bypass the gate (for docs-only PRs or repos without bots).
-- In headless mode: if still WAITING after timeout, proceed but log a warning. The CI required check is the hard gate.
-- ALWAYS read bot reviews before merging. Address critical/security findings; note non-critical suggestions for follow-up.
-- PASS_RATE_LIMITED means either bots are rate-limited or the GitHub API is unavailable while immutable event evidence identifies a trusted internal PR and `rate_limit_behavior=pass` (default) with non-strict completion. Safe to merge — late feedback is handled by the post-merge review scanner. API-exhausted runs do not retry immediately. External/unknown authors and explicit `wait` or `strict` policies always fail closed.
+- Before merging, run `review-bot-gate-helper.sh check <PR_NUMBER>` to collect
+  available feedback. Default no-response output is `PASS_ADVISORY`, not `WAITING`.
+- `WAITING` means the repository explicitly selected strict/wait behavior or the
+  external-contributor trust boundary applies.
+- `skip-review-gate` remains an auditable internal exception for strict setups;
+  default advisory repositories do not need it.
+- ALWAYS read bot reviews that are available before merging. Address critical/security findings; note non-critical suggestions for follow-up.
+- `PASS_ADVISORY` means no completed add-on review was required under the permanent
+  default. `PASS_RATE_LIMITED` is the narrower true-rate-limit outcome. Both
+  delegate late feedback to the post-merge scanner for trusted exact-head PRs.
+  API-exhausted runs do not retry immediately. External/unknown authors and
+  explicit `wait` or `strict` policies remain fail-closed.
 - When many PRs are rate-limited simultaneously, use `request-retry` on the highest-priority PRs first. Stagger retries to avoid re-triggering rate limits.
 
 ## Additive suggestion decision tree
@@ -68,10 +86,17 @@ See `ci-gate-policy.md`.
 
 ## Composition with auto-merge paths
 
-The review bot gate runs as the FINAL gate in `_check_pr_merge_gates` — after both the `origin:interactive` (t2411) and `origin:worker` worker-briefed (t2449) gates. This means:
+The review add-on check runs after the `origin:interactive` (t2411) and
+`origin:worker` worker-briefed (t2449) gates. This means:
 
-- **`origin:interactive` PRs**: must pass draft/hold-for-review checks AND the review bot gate before auto-merge.
-- **`origin:worker` PRs (maintainer-briefed, t2449)**: must pass the worker-briefed gates (issue-author-association, NMR crypto-vs-auto, draft, hold-for-review, no worker-takeover) AND the review bot gate before auto-merge. The `min_edit_lag_seconds` mechanism (t2139) ensures bot comments have settled before the merge fires — this prevents merging during CodeRabbit's two-phase placeholder window.
-- **All other PRs**: the review bot gate is still the last check before merge.
+- **Default trusted PRs**: `PASS_ADVISORY` clears the add-on check once required
+  project CI and independent trust gates pass; bot response time is irrelevant.
+- **Strict repositories**: `completion_behavior: strict` requires settled review
+  evidence. `min_edit_lag_seconds` still protects CodeRabbit's two-phase pattern.
+- **External contributors**: advisory, rate-limit, and skip outcomes remain
+  fail-closed; completed review evidence is required in addition to independent
+  maintainer/cryptographic authority.
 
-The bot gate is NOT bypassed by either auto-merge path — it composes with them as a mandatory final check. The `hold-for-review` label blocks both auto-merge paths independently of the bot gate.
+The helper is still evaluated and audited on every merge path; advisory is an
+explicit successful policy outcome, not a bypass. Draft, `hold-for-review`, human
+`CHANGES_REQUESTED`, required CI, exact-head, and maintainer gates remain independent.

@@ -232,10 +232,10 @@ cmd_pre_merge_gate() {
 	rbg_result=$(bash "$rbg_helper" check "$pr_number" "$repo" 2>&1) || true
 
 	local rbg_status=""
-	rbg_status=$(printf '%s' "$rbg_result" | grep -oE '(PASS|SKIP|WAITING|PASS_RATE_LIMITED)' | tail -1)
+	rbg_status=$(printf '%s' "$rbg_result" | grep -oE '(PASS_RATE_LIMITED|PASS_ADVISORY|PASS|SKIP|WAITING)' | tail -1)
 
 	case "$rbg_status" in
-	PASS | SKIP | PASS_RATE_LIMITED)
+	PASS | PASS_ADVISORY | SKIP | PASS_RATE_LIMITED)
 		print_success "Review bot gate: ${rbg_status} — safe to merge PR #${pr_number}"
 		return 0
 		;;
