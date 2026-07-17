@@ -24,10 +24,65 @@ _legacy_temp_artifact_is_active() {
 	return $?
 }
 
+_legacy_opencode_native_is_attributable() {
+	local path="$1"
+	local symbols=""
+	command -v nm >/dev/null 2>&1 || return 1
+	symbols=$(nm -D -g "$path" 2>/dev/null) || return 1
+	grep -Eq '(^|[[:space:]])fff_create_instance2?$' <<<"$symbols" || return 1
+	grep -Eq '(^|[[:space:]])fff_destroy$' <<<"$symbols" || return 1
+	grep -Eq '(^|[[:space:]])fff_search$' <<<"$symbols" || return 1
+	return 0
+}
+
+_legacy_opencode_native_has_no_holder() {
+	local path="$1"
+	local lsof_status=0
+	command -v lsof >/dev/null 2>&1 || return 1
+	lsof "$path" >/dev/null 2>&1 || lsof_status=$?
+	[[ "$lsof_status" -eq 1 ]] || return 1
+	return 0
+}
+
+_cleanup_legacy_opencode_native_artifacts() {
+	local workspace_root="${AIDEVOPS_WORKSPACE_DIR:-${HOME:?}/.aidevops/.agent-workspace}"
+	local root="${AIDEVOPS_TEMP_DIR:-${workspace_root}/tmp}"
+	[[ -d "$root" ]] || return 0
+	root=$(cd "$root" && pwd -P) || return 0
+
+	local now=""
+	now=$(date +%s)
+	local max_age="${AIDEVOPS_TEMP_MAX_AGE_SECONDS:-604800}"
+	[[ "$max_age" =~ ^[0-9]+$ ]] || max_age=604800
+	local uid=""
+	uid=$(id -u)
+	local cleaned=0
+	local candidate=""
+	for candidate in "$root"/.*-00000000.so; do
+		[[ -f "$candidate" && ! -L "$candidate" ]] || continue
+		local owner=""
+		owner=$(stat -f '%u' "$candidate" 2>/dev/null) || owner=$(stat -c '%u' "$candidate" 2>/dev/null) || continue
+		[[ "$owner" == "$uid" ]] || continue
+		local mtime=""
+		mtime=$(_file_mtime_epoch "$candidate") || continue
+		((now - mtime > max_age)) || continue
+		_legacy_opencode_native_is_attributable "$candidate" || continue
+		_legacy_opencode_native_has_no_holder "$candidate" || continue
+		rm -f -- "$candidate" || continue
+		((++cleaned))
+	done
+
+	if ((cleaned > 0)); then
+		print_info "Cleaned $cleaned stale OpenCode FFF native temporary artifact(s)"
+	fi
+	return 0
+}
+
 # Remove only directly attributable aidevops artifacts from the macOS per-user
 # temporary root. Generic tmp.* entries are intentionally excluded because
 # their ownership cannot be proven after creation.
 cleanup_legacy_aidevops_temp_artifacts() {
+	_cleanup_legacy_opencode_native_artifacts
 	local root="${AIDEVOPS_LEGACY_TEMP_ROOT:-}"
 	if [[ -z "$root" ]]; then
 		[[ "$(uname -s 2>/dev/null || true)" == "$MIGRATION_PLATFORM_DARWIN" ]] || return 0
