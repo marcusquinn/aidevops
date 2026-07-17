@@ -90,6 +90,36 @@ test("session status handler follows only the active interactive root session", 
   assert.deepEqual(statuses, ["busy", "permission", "busy", "retry", "idle", "idle"]);
 });
 
+test("first root user message marks the session busy before native status", async () => {
+  const statuses = [];
+  const handler = createSessionTitleStatusHandler({
+    isHeadless: () => false,
+    isEnabled: () => true,
+    setTerminalTitleStatus: (status) => statuses.push(status),
+  });
+
+  await handler(event("session.created", { info: { id: "root-1", title: "Root" } }));
+  await handler(event("message.updated", {
+    sessionID: "child-1",
+    info: { id: "message-child", sessionID: "child-1", role: "user" },
+  }));
+  await handler(event("message.updated", {
+    sessionID: "root-1",
+    info: { id: "message-assistant", sessionID: "root-1", role: "assistant" },
+  }));
+  await handler(event("message.updated", {
+    sessionID: "root-1",
+    info: { id: "message-user", sessionID: "root-1", role: "user" },
+  }));
+  await handler(event("permission.asked", { id: "permission-root", sessionID: "root-1" }));
+  await handler(event("message.updated", {
+    sessionID: "root-1",
+    info: { id: "message-user-2", sessionID: "root-1", role: "user" },
+  }));
+
+  assert.deepEqual(statuses, ["busy", "permission"]);
+});
+
 test("session status handler supports hot-loaded root sessions and ignores headless sessions", async () => {
   const statuses = [];
   let resets = 0;
@@ -111,6 +141,10 @@ test("session status handler supports hot-loaded root sessions and ignores headl
     setTerminalTitleStatus: (status) => statuses.push(status),
   });
   await headlessHandler(event("session.created", { info: { id: "headless-root" } }));
+  await headlessHandler(event("message.updated", {
+    sessionID: "headless-root",
+    info: { id: "message-user", sessionID: "headless-root", role: "user" },
+  }));
   await headlessHandler(event("session.status", { sessionID: "headless-root", status: { type: "idle" } }));
 
   assert.equal(resets, 1);

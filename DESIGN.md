@@ -163,7 +163,7 @@ AI DevOps is a developer-operations framework and OpenCode plugin. Its interface
 Design goals:
 
 - Keep operational state obvious: running, stopped, error, authenticated, last update, and command actions should scan quickly.
-- Use compact terminal-only status glyphs: ⚪ for active OpenCode turns, 🔴 while retrying after errors, 🟡 when a permission decision is required, and 🟢 when the root session is awaiting input. Retain the descriptive title and opt-out so colour is never the only essential status affordance; keep glyphs out of stored session titles so issue/PR prefixes remain first in search results.
+- Use compact terminal-only status glyphs: show ⚪ from the first submitted root-session message and preserve it through descriptive title generation, 🔴 while retrying after errors, 🟡 when a permission decision is required, and 🟢 when the root session is awaiting input. Retain the descriptive title and opt-out so colour is never the only essential status affordance; keep glyphs out of stored session titles so issue/PR prefixes remain first in search results.
 - Preserve developer trust with native system typography, code-friendly contrast, visible borders, and restrained motion.
 - Use compact density for dashboards and sidebars, but keep controls at least 44px high when touch use is plausible.
 - Prefer semantic tokens over one-off values so generated reports, OpenCode UI surfaces, and dashboard screens stay consistent.

@@ -48,6 +48,13 @@ export function createSessionTitleStatusHandler({
     } else if (event.type === "session.deleted" && sessionID === activeRootSessionID) {
       activeRootSessionID = "";
       resetState();
+    } else if (
+      event.type === "message.updated" &&
+      sessionID === activeRootSessionID &&
+      info?.role === "user" &&
+      pendingPermissionIDs.size === 0
+    ) {
+      setTerminalTitleStatus("busy");
     } else if (event.type === "session.status" && sessionID === activeRootSessionID) {
       const status = event.properties?.status?.type;
       if (pendingPermissionIDs.size === 0 && (status === "busy" || status === "retry" || status === "idle")) {
