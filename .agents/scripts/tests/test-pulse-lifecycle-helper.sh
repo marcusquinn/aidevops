@@ -542,6 +542,142 @@ SH
 	return 0
 }
 
+test_launchd_disabled_query_failure_fails_closed() {
+	local fake_bin="${TEST_ROOT}/fake-bin-disabled-query-failure"
+	local output=""
+	mkdir -p "$fake_bin"
+	cat >"$fake_bin/launchctl" <<'SH'
+#!/usr/bin/env bash
+command_name="${1:-}"
+if [[ "$command_name" == "print-disabled" ]]; then
+	exit 1
+fi
+if [[ "$command_name" == "print" ]]; then
+	exit 0
+fi
+exit 1
+SH
+	chmod +x "$fake_bin/launchctl"
+	output=$(PATH="$fake_bin:$PATH" \
+		AIDEVOPS_ACTIVE_AGENTS_LINK="$TEST_ROOT" \
+		AIDEVOPS_PULSE_MANAGED_ENABLED=true \
+		AIDEVOPS_PULSE_OS_NAME=Darwin \
+		AIDEVOPS_RUNTIME_TRANSITION_LOCK_DIR="${TEST_ROOT}/locks/disabled-query.lock.d" \
+		"$HELPER" reconcile-managed 2>&1)
+	if [[ "$output" == *"canonical supervisor is absent or disabled"* ]]; then
+		_print_result "reconcile-managed fails closed when launchd disabled-state query fails" 1
+	else
+		_print_result "launchd disabled-state query failure did not fail closed (out=$output)" 0
+	fi
+	return 0
+}
+
+test_cron_supervisor_requires_active_canonical_entry() {
+	local fake_bin="${TEST_ROOT}/fake-bin-cron-state"
+	local fake_home="${TEST_ROOT}/home-cron-state"
+	local output=""
+	local rc=0
+	mkdir -p "$fake_bin" "$fake_home"
+	cat >"$fake_bin/crontab" <<'SH'
+#!/usr/bin/env bash
+[[ "${1:-}" == "-l" ]] || exit 1
+printf '%s\n' "${CRON_FIXTURE:-}"
+SH
+	chmod +x "$fake_bin/crontab"
+	output=$(PATH="$fake_bin:$PATH" \
+		HOME="$fake_home" \
+		CRON_FIXTURE='# */2 * * * * /bin/bash pulse-wrapper.sh # aidevops: supervisor-pulse' \
+		AIDEVOPS_PULSE_OS_NAME=Linux \
+		bash -c 'source "$1"; _pulse_managed_supervisor_kind' _ "$HELPER" 2>&1) || rc=$?
+	_assert_eq "commented canonical cron entry is disabled" "1" "$rc"
+	_assert_eq "commented canonical cron entry emits no supervisor kind" "" "$output"
+
+	rc=0
+	output=$(PATH="$fake_bin:$PATH" \
+		HOME="$fake_home" \
+		CRON_FIXTURE='*/2 * * * * /bin/bash -lc pulse-wrapper.sh >> pulse.log 2>&1 # aidevops: supervisor-pulse' \
+		AIDEVOPS_PULSE_OS_NAME=Linux \
+		bash -c 'source "$1"; _pulse_managed_supervisor_kind' _ "$HELPER" 2>&1) || rc=$?
+	_assert_eq "active canonical cron entry is enabled" "0" "$rc"
+	_assert_eq "active canonical cron entry reports cron" "cron" "$output"
+	return 0
+}
+
+test_managed_stop_rejects_observer_argv() {
+	local managed_pid=""
+	local observer_pid=""
+	"${TEST_ROOT}/scripts/pulse-wrapper.sh" >/dev/null 2>&1 &
+	managed_pid=$!
+	bash -c 'while :; do sleep 1; done' pulse-observer "${TEST_ROOT}/scripts/pulse-wrapper.sh" &
+	observer_pid=$!
+	MOCK_PIDS+=("$managed_pid" "$observer_pid")
+	sleep 0.2
+	AIDEVOPS_AGENTS_DIR="$TEST_ROOT" \
+		AIDEVOPS_ACTIVE_AGENTS_LINK="$TEST_ROOT" \
+		AIDEVOPS_PULSE_SIGTERM_WAIT=0 \
+		bash -c 'source "$1"; _stop_managed' _ "$HELPER" >/dev/null 2>&1 || true
+	if kill -0 "$managed_pid" 2>/dev/null; then
+		_print_result "managed stop terminates the actual Pulse process" 0
+	else
+		_print_result "managed stop terminates the actual Pulse process" 1
+	fi
+	if kill -0 "$observer_pid" 2>/dev/null; then
+		_print_result "managed stop preserves an observer that only mentions pulse-wrapper.sh" 1
+	else
+		_print_result "managed stop killed an observer that only mentioned pulse-wrapper.sh" 0
+	fi
+	kill -KILL "$observer_pid" 2>/dev/null || true
+	wait "$observer_pid" 2>/dev/null || true
+	return 0
+}
+
+test_managed_stop_revalidates_identity_before_kill() {
+	local validation_count_file="${TEST_ROOT}/identity-validation-count"
+	local signal_log="${TEST_ROOT}/identity-signals.log"
+	local signal_state=""
+	printf '0\n' >"$validation_count_file"
+	: >"$signal_log"
+	bash -c '
+		source "$1"
+		validation_count_file="$2"
+		signal_log="$3"
+		_pulse_managed_identities() {
+			printf "4242\tstart-a\n"
+			return 0
+		}
+		_pulse_pid_identity_is_managed() {
+			local candidate_pid="$1"
+			local expected_start="$2"
+			local validation_count=""
+			: "$candidate_pid" "$expected_start"
+			validation_count=$(<"$validation_count_file")
+			validation_count=$((validation_count + 1))
+			printf "%s\n" "$validation_count" >"$validation_count_file"
+			[[ "$validation_count" -le 2 ]] || return 1
+			return 0
+		}
+		kill() {
+			local signal_name="$1"
+			local target_pid="$2"
+			printf "%s %s\n" "$signal_name" "$target_pid" >>"$signal_log"
+			return 0
+		}
+		sleep() {
+			local duration="$1"
+			: "$duration"
+			return 0
+		}
+		_stop_managed
+	' _ "$HELPER" "$validation_count_file" "$signal_log" >/dev/null 2>&1
+	signal_state=$(<"$signal_log")
+	if [[ "$signal_state" == *"-TERM 4242"* && "$signal_state" != *"-KILL 4242"* ]]; then
+		_print_result "managed stop revalidates stable identity before SIGKILL" 1
+	else
+		_print_result "managed stop signalled a changed identity (signals=$signal_state)" 0
+	fi
+	return 0
+}
+
 test_pulse_pids_suppresses_broken_pipe_when_consumer_exits_early() {
 	local rc=0 err=""
 	err=$(
@@ -964,6 +1100,10 @@ main() {
 	test_skip_env_honoured_in_restart
 	test_missing_pulse_script_exit_2
 	test_reconcile_managed_preserves_custom_scheduler_without_canonical_supervisor
+	test_launchd_disabled_query_failure_fails_closed
+	test_cron_supervisor_requires_active_canonical_entry
+	test_managed_stop_rejects_observer_argv
+	test_managed_stop_revalidates_identity_before_kill
 	test_pulse_pids_suppresses_broken_pipe_when_consumer_exits_early
 	test_pipe_trap_restore_avoids_eval
 	test_pipe_trap_restore_ignored_sigpipe

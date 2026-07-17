@@ -166,19 +166,26 @@ _pulse_runtime_bundle_id() {
 	return 0
 }
 
-_pulse_launchd_supervisor_disabled() {
+_pulse_launchd_supervisor_enabled() {
 	local os_name="${AIDEVOPS_PULSE_OS_NAME:-}"
 	local pulse_label="${AIDEVOPS_PULSE_LAUNCHD_LABEL:-com.aidevops.aidevops-supervisor-pulse}"
 	local disabled_state=""
 	local disabled_line=""
+	local trimmed_line=""
 	[[ -n "$os_name" ]] || os_name=$(uname -s 2>/dev/null || printf 'unknown')
 	[[ "$os_name" == "$_PULSE_OS_DARWIN" ]] || return 1
 	command -v launchctl >/dev/null 2>&1 || return 1
 	disabled_state=$(launchctl print-disabled "gui/$(id -u)" 2>/dev/null) || return 1
 	while IFS= read -r disabled_line; do
-		if [[ "$disabled_line" == *"$pulse_label"* && "$disabled_line" == *"=> true"* ]]; then
+		trimmed_line="${disabled_line#"${disabled_line%%[![:space:]]*}"}"
+		case "$trimmed_line" in
+		\"${pulse_label}\"\ =\>\ false*)
 			return 0
-		fi
+			;;
+		\"${pulse_label}\"\ =\>\ true*)
+			return 1
+			;;
+		esac
 	done <<<"$disabled_state"
 	return 1
 }
@@ -196,9 +203,11 @@ _pulse_launchd_supervisor_present() {
 _pulse_managed_supervisor_kind() {
 	local os_name="${AIDEVOPS_PULSE_OS_NAME:-}"
 	local cron_state=""
+	local cron_line=""
+	local trimmed_line=""
 	[[ -n "$os_name" ]] || os_name=$(uname -s 2>/dev/null || printf 'unknown')
 	if [[ "$os_name" == "$_PULSE_OS_DARWIN" ]]; then
-		_pulse_launchd_supervisor_disabled && return 1
+		_pulse_launchd_supervisor_enabled || return 1
 		_pulse_launchd_supervisor_present || return 1
 		printf '%s\n' "launchd"
 		return 0
@@ -211,66 +220,175 @@ _pulse_managed_supervisor_kind() {
 	fi
 	if command -v crontab >/dev/null 2>&1; then
 		cron_state=$(crontab -l 2>/dev/null) || cron_state=""
-		if [[ "$cron_state" == *"aidevops: supervisor-pulse"* ]]; then
-			printf '%s\n' "cron"
-			return 0
-		fi
+		while IFS= read -r cron_line; do
+			trimmed_line="${cron_line#"${cron_line%%[![:space:]]*}"}"
+			case "$trimmed_line" in
+			"" | \#*) continue ;;
+			esac
+			if [[ "$trimmed_line" =~ [[:space:]]#[[:space:]]aidevops:[[:space:]]supervisor-pulse[[:space:]]*$ ]]; then
+				printf '%s\n' "cron"
+				return 0
+			fi
+		done <<<"$cron_state"
 	fi
 	return 1
 }
 
-_pulse_command_uses_script() {
-	local command_line="$1"
+_pulse_pid_invokes_script() {
+	local candidate_pid="$1"
 	local script_path="$2"
+	local command_line=""
+	local command_arg=""
+	local command_name=""
+	local arg_index=0
+	local options_done=false
+	[[ "$candidate_pid" =~ ^[0-9]+$ && -n "$script_path" ]] || return 1
+
+	if [[ -r "/proc/${candidate_pid}/cmdline" ]]; then
+		while IFS= read -r -d '' command_arg; do
+			if [[ "$arg_index" -eq 0 ]]; then
+				[[ "$command_arg" == "$script_path" ]] && return 0
+				command_name="${command_arg##*/}"
+				case "$command_name" in
+				bash | dash | ksh | sh | zsh) ;;
+				*) return 1 ;;
+				esac
+				arg_index=1
+				continue
+			fi
+			if [[ "$options_done" == "false" ]]; then
+				case "$command_arg" in
+				--)
+					options_done=true
+					continue
+					;;
+				-*c*) return 1 ;;
+				-*) continue ;;
+				esac
+			fi
+			[[ "$command_arg" == "$script_path" ]] && return 0
+			return 1
+		done <"/proc/${candidate_pid}/cmdline"
+		return 1
+	fi
+
+	command_line=$(ps -p "$candidate_pid" -o command= 2>/dev/null) || command_line=""
 	case "$command_line" in
-	"$script_path" | "$script_path "* | *" $script_path" | *" $script_path "*) return 0 ;;
+	"$script_path" | "$script_path "*) return 0 ;;
 	esac
+	for command_name in bash dash ksh sh zsh; do
+		case "$command_line" in
+		"${command_name} ${script_path}" | "${command_name} ${script_path} "* | */"${command_name} ${script_path}" | */"${command_name} ${script_path} "*)
+			return 0
+			;;
+		esac
+	done
 	return 1
 }
 
-_pulse_command_is_managed() {
-	local command_line="$1"
+_pulse_pid_invokes_managed_script() {
+	local candidate_pid="$1"
 	local active_link_script="${_PULSE_ACTIVE_AGENTS_LINK}/scripts/pulse-wrapper.sh"
 	local bundles_dir=""
-	_pulse_command_uses_script "$command_line" "$active_link_script" && return 0
-	_pulse_command_uses_script "$command_line" "$_PULSE_SCRIPT" && return 0
+	local bundle_script=""
+	_pulse_pid_invokes_script "$candidate_pid" "$active_link_script" && return 0
+	_pulse_pid_invokes_script "$candidate_pid" "$_PULSE_SCRIPT" && return 0
 	case "$_PULSE_AGENTS_DIR" in
 	*/runtime-bundles/*/agents) bundles_dir="${_PULSE_AGENTS_DIR%/*/*}" ;;
 	esac
-	if [[ -n "$bundles_dir" &&
-		"$command_line" == *"${bundles_dir}/"*"/agents/scripts/pulse-wrapper.sh"* ]]; then
-		return 0
-	fi
+	[[ -n "$bundles_dir" ]] || return 1
+	for bundle_script in "$bundles_dir"/*/agents/scripts/pulse-wrapper.sh; do
+		[[ -f "$bundle_script" ]] || continue
+		_pulse_pid_invokes_script "$candidate_pid" "$bundle_script" && return 0
+	done
 	return 1
 }
 
-_pulse_managed_pids() {
+_pulse_pid_is_managed() {
+	local candidate_pid="$1"
+	local parent_pid=""
+	_pulse_pid_invokes_managed_script "$candidate_pid" || return 1
+	parent_pid=$(ps -p "$candidate_pid" -o ppid= 2>/dev/null | tr -d '[:space:]') || parent_pid=""
+	if [[ "$parent_pid" =~ ^[0-9]+$ ]] && _pulse_pid_invokes_managed_script "$parent_pid"; then
+		return 1
+	fi
+	return 0
+}
+
+_pulse_process_start_token() {
+	local candidate_pid="$1"
+	local stat_content=""
+	local stat_after_comm=""
+	local start_token=""
+	[[ "$candidate_pid" =~ ^[0-9]+$ ]] || return 1
+	if [[ -r "/proc/${candidate_pid}/stat" ]]; then
+		stat_content=$(<"/proc/${candidate_pid}/stat") || stat_content=""
+		[[ -n "$stat_content" ]] || return 1
+		stat_after_comm="${stat_content##*) }"
+		start_token=$(printf '%s\n' "$stat_after_comm" | awk '{print $20}') || start_token=""
+	else
+		start_token=$(LC_ALL=C ps -p "$candidate_pid" -o lstart= 2>/dev/null | tr -s ' ') || start_token=""
+		start_token="${start_token#"${start_token%%[![:space:]]*}"}"
+		start_token="${start_token%"${start_token##*[![:space:]]}"}"
+	fi
+	[[ -n "$start_token" ]] || return 1
+	printf '%s\n' "$start_token"
+	return 0
+}
+
+_pulse_pid_identity_is_managed() {
+	local candidate_pid="$1"
+	local expected_start="$2"
+	local current_start=""
+	[[ "$candidate_pid" =~ ^[0-9]+$ && -n "$expected_start" ]] || return 1
+	kill -0 "$candidate_pid" 2>/dev/null || return 1
+	current_start=$(_pulse_process_start_token "$candidate_pid") || return 1
+	[[ "$current_start" == "$expected_start" ]] || return 1
+	_pulse_pid_is_managed "$candidate_pid" || return 1
+	return 0
+}
+
+_pulse_managed_identities() {
 	local candidate_pids=""
 	local candidate_pid=""
-	local command_line=""
+	local start_token=""
 	candidate_pids=$(_pulse_pids_raw)
 	[[ -n "$candidate_pids" ]] || return 0
 	while IFS= read -r candidate_pid; do
 		[[ "$candidate_pid" =~ ^[0-9]+$ ]] || continue
-		command_line=$(ps -p "$candidate_pid" -o command= 2>/dev/null) || command_line=""
-		if _pulse_command_is_managed "$command_line"; then
-			printf '%s\n' "$candidate_pid"
+		_pulse_pid_is_managed "$candidate_pid" || continue
+		start_token=$(_pulse_process_start_token "$candidate_pid") || start_token=""
+		if [[ -z "$start_token" ]]; then
+			_pl_warn "Skipping managed Pulse PID ${candidate_pid}: stable process identity unavailable"
+			continue
 		fi
+		printf '%s\t%s\n' "$candidate_pid" "$start_token"
 	done <<<"$candidate_pids"
+	return 0
+}
+
+_pulse_managed_pids() {
+	local managed_identities=""
+	local managed_pid=""
+	local start_token=""
+	managed_identities=$(_pulse_managed_identities)
+	[[ -n "$managed_identities" ]] || return 0
+	while IFS=$'\t' read -r managed_pid start_token; do
+		[[ -n "$managed_pid" && -n "$start_token" ]] || continue
+		printf '%s\n' "$managed_pid"
+	done <<<"$managed_identities"
 	return 0
 }
 
 _pulse_active_runtime_pids() {
 	local managed_pids=""
 	local managed_pid=""
-	local command_line=""
 	local active_link_script="${_PULSE_ACTIVE_AGENTS_LINK}/scripts/pulse-wrapper.sh"
 	managed_pids=$(_pulse_managed_pids)
 	[[ -n "$managed_pids" ]] || return 0
 	while IFS= read -r managed_pid; do
-		command_line=$(ps -p "$managed_pid" -o command= 2>/dev/null) || command_line=""
-		if _pulse_command_uses_script "$command_line" "$_PULSE_SCRIPT" ||
-			_pulse_command_uses_script "$command_line" "$active_link_script"; then
+		if _pulse_pid_invokes_script "$managed_pid" "$_PULSE_SCRIPT" ||
+			_pulse_pid_invokes_script "$managed_pid" "$active_link_script"; then
 			printf '%s\n' "$managed_pid"
 		fi
 	done <<<"$managed_pids"
@@ -287,38 +405,47 @@ _pulse_pid_is_live() {
 }
 
 _stop_managed() {
-	local managed_pids=""
+	local managed_identities=""
 	local managed_pid=""
+	local start_token=""
 	local survivors=""
 	local residual=""
 	local display_pids=""
-	managed_pids=$(_pulse_managed_pids)
-	[[ -n "$managed_pids" ]] || return 0
-	display_pids=$(printf '%s\n' "$managed_pids" | tr '\n' ' ')
+	managed_identities=$(_pulse_managed_identities)
+	[[ -n "$managed_identities" ]] || return 0
+	while IFS=$'\t' read -r managed_pid start_token; do
+		[[ -n "$managed_pid" && -n "$start_token" ]] || continue
+		display_pids+="${managed_pid} "
+	done <<<"$managed_identities"
 	_pl_info "Stopping managed Pulse instance(s): ${display_pids}"
-	while IFS= read -r managed_pid; do
+	while IFS=$'\t' read -r managed_pid start_token; do
+		_pulse_pid_identity_is_managed "$managed_pid" "$start_token" || continue
 		kill -TERM "$managed_pid" 2>/dev/null || true
-	done <<<"$managed_pids"
+	done <<<"$managed_identities"
 	sleep "$_PULSE_SIGTERM_WAIT"
-	while IFS= read -r managed_pid; do
-		if _pulse_pid_is_live "$managed_pid"; then
-			survivors+="${managed_pid}"$'\n'
+	while IFS=$'\t' read -r managed_pid start_token; do
+		if _pulse_pid_identity_is_managed "$managed_pid" "$start_token"; then
+			survivors+="${managed_pid}"$'\t'"${start_token}"$'\n'
 		fi
-	done <<<"$managed_pids"
+	done <<<"$managed_identities"
 	if [[ -n "$survivors" ]]; then
-		display_pids=$(printf '%s' "$survivors" | tr '\n' ' ')
+		display_pids=""
+		while IFS=$'\t' read -r managed_pid start_token; do
+			[[ -n "$managed_pid" && -n "$start_token" ]] || continue
+			display_pids+="${managed_pid} "
+		done <<<"$survivors"
 		_pl_warn "SIGTERM timeout, escalating managed Pulse to SIGKILL: ${display_pids}"
-		while IFS= read -r managed_pid; do
-			[[ -n "$managed_pid" ]] || continue
+		while IFS=$'\t' read -r managed_pid start_token; do
+			_pulse_pid_identity_is_managed "$managed_pid" "$start_token" || continue
 			kill -KILL "$managed_pid" 2>/dev/null || true
 		done <<<"$survivors"
 		sleep 1
 	fi
-	while IFS= read -r managed_pid; do
-		if _pulse_pid_is_live "$managed_pid"; then
+	while IFS=$'\t' read -r managed_pid start_token; do
+		if _pulse_pid_identity_is_managed "$managed_pid" "$start_token"; then
 			residual+="${managed_pid}"$'\n'
 		fi
-	done <<<"$managed_pids"
+	done <<<"$managed_identities"
 	if [[ -n "$residual" ]]; then
 		display_pids=$(printf '%s' "$residual" | tr '\n' ' ')
 		_pl_err "Failed to stop managed Pulse PIDs: ${display_pids}"
