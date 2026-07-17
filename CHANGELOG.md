@@ -10,6 +10,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- reduce OpenCode shell environment hook complexity (#28074)
+
 ## [3.32.144] - 2026-07-17
 
 ### Changed
