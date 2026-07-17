@@ -10,6 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.32.147] - 2026-07-17
+
+### Fixed
+
+- reject temporary OpenCode shim targets (#28115)
+
 ## [3.32.146] - 2026-07-17
 
 ### Changed
