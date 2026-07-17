@@ -203,6 +203,31 @@ test_runtime_temp_files_use_managed_workspace() {
 	return 0
 }
 
+test_headless_temp_initialization_preserves_process_scratch() {
+	local TMPDIR="/host/tmpdir"
+	local TMP="/host/tmp"
+	local TEMP="/host/temp"
+	local AIDEVOPS_WORKSPACE_DIR="${HOME}/.aidevops/.agent-workspace"
+	local expected=""
+
+	aidevops_init_temp_workspace || {
+		print_result "headless initialization preserves process scratch" 1 "Could not initialize managed temp workspace"
+		return 0
+	}
+	expected=$(cd "$AIDEVOPS_WORKSPACE_DIR/tmp" && pwd -P)
+
+	if [[ "$TMPDIR" == "/host/tmpdir" && "$TMP" == "/host/tmp" && "$TEMP" == "/host/temp" ]] &&
+		[[ "$AIDEVOPS_TEMP_DIR" == "$expected" ]] &&
+		grep -q 'aidevops_init_temp_workspace' "$HELPER_SCRIPT"; then
+		print_result "headless initialization preserves process scratch" 0
+		return 0
+	fi
+
+	print_result "headless initialization preserves process scratch" 1 \
+		"TMPDIR=$TMPDIR TMP=$TMP TEMP=$TEMP AIDEVOPS_TEMP_DIR=${AIDEVOPS_TEMP_DIR:-<unset>}"
+	return 0
+}
+
 test_startup_no_activity_timeout_returns_watchdog_continue() {
 	local output_file="${TEST_ROOT}/startup-stall.log"
 	printf '%s\n' 'sqlite-migration:done' >"$output_file"
@@ -3554,6 +3579,7 @@ main() {
 	test_parse_initial_model_does_not_set_explicit_override
 	test_launch_helpers_tolerate_unset_state_under_nounset
 	test_runtime_temp_files_use_managed_workspace
+	test_headless_temp_initialization_preserves_process_scratch
 	test_startup_no_activity_timeout_returns_watchdog_continue
 	test_startup_no_activity_can_rotate_after_continuation_budget
 	test_sigkill_with_activity_attempts_continuation

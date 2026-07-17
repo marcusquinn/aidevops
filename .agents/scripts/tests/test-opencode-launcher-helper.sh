@@ -40,6 +40,10 @@ if [[ -n "${FAKE_OPENCODE_LOG:-}" ]]; then
 fi
 printf 'XDG_DATA_HOME=%s\n' "${XDG_DATA_HOME:-}"
 printf 'AIDEVOPS_OPENCODE_ISOLATED_DB=%s\n' "${AIDEVOPS_OPENCODE_ISOLATED_DB:-}"
+printf 'AIDEVOPS_TEMP_DIR=%s\n' "${AIDEVOPS_TEMP_DIR:-}"
+printf 'TMPDIR=%s\n' "${TMPDIR:-}"
+printf 'TMP=%s\n' "${TMP:-}"
+printf 'TEMP=%s\n' "${TEMP:-}"
 printf 'PWD=%s\n' "$PWD"
 printf 'ARGS=%s\n' "$*"
 SH
@@ -84,8 +88,11 @@ printf 'ARGS=%s\n' "$*"
 SH
 chmod +x "${desktop_source}"
 
-output=$(PATH="${fake_bin}:$PATH" HOME="${home_dir}" AIDEVOPS_WORK_DIR="${work_dir}" FAKE_OPENCODE_LOG="${fake_log}" \
+output=$(PATH="${fake_bin}:$PATH" HOME="${home_dir}" AIDEVOPS_WORK_DIR="${work_dir}" \
+    AIDEVOPS_WORKSPACE_DIR="${home_dir}/.aidevops/.agent-workspace" FAKE_OPENCODE_LOG="${fake_log}" \
+    TMPDIR="/host/tmpdir" TMP="/host/tmp" TEMP="/host/temp" \
     "${HELPER}" --dir "${launch_dir}" -- --version 2>&1)
+expected_temp=$(cd "${home_dir}/.aidevops/.agent-workspace/tmp" && pwd -P)
 line_count=0
 prewarm_line=""
 project_auth_count=0
@@ -101,6 +108,10 @@ for auth_file in "${work_dir}"/opencode-interactive/project-repo-*/opencode/auth
 done
 if [[ "${output}" == *"AIDEVOPS_OPENCODE_ISOLATED_DB=1"* ]] \
     && [[ "${output}" == *"XDG_DATA_HOME=${work_dir}/opencode-interactive/project-repo-"* ]] \
+    && [[ "${output}" == *"AIDEVOPS_TEMP_DIR=${expected_temp}"* ]] \
+    && [[ "${output}" == *"TMPDIR=/host/tmpdir"* ]] \
+    && [[ "${output}" == *"TMP=/host/tmp"* ]] \
+    && [[ "${output}" == *"TEMP=/host/temp"* ]] \
     && [[ "${output}" == *"PWD=${launch_dir}"* ]] \
     && [[ "${project_auth_count}" == "1" ]] \
     && [[ "${line_count}" == "2" ]] \
