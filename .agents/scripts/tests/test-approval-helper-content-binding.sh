@@ -209,20 +209,28 @@ test_snapshot_temp_permissions() {
 	return 0
 }
 
+write_large_fixture_body() {
+	local path="$1"
+	local fill_character="$2"
+	python3 - "$path" "$fill_character" <<'PY'
+import json
+import sys
+
+path, fill_character = sys.argv[1:]
+with open(path, encoding="utf-8") as handle:
+    payload = json.load(handle)
+payload[0][0]["body"] = fill_character * 2200000
+with open(path, "w", encoding="utf-8") as handle:
+    json.dump(payload, handle)
+PY
+	return $?
+}
+
 test_large_snapshots_avoid_argv_limits() {
 	local AIDEVOPS_TEMP_DIR="${TEST_ROOT}/managed-temp-large"
 	local payload="" issue_digest="" pr_head=""
 	write_baseline_fixtures
-	python3 - "$FIXTURES/comments-41.json" <<'PY'
-import json
-import sys
-path = sys.argv[1]
-with open(path, encoding="utf-8") as handle:
-    payload = json.load(handle)
-payload[0][0]["body"] = "i" * 2200000
-with open(path, "w", encoding="utf-8") as handle:
-    json.dump(payload, handle)
-PY
+	write_large_fixture_body "$FIXTURES/comments-41.json" i
 	payload=$(AIDEVOPS_TEMP_DIR="$AIDEVOPS_TEMP_DIR" PATH="${TEST_ROOT}/bin:$PATH" FIXTURES="$FIXTURES" approval_snapshot_v2_payload issue 41 owner/repo "2026-01-01T00:05:00Z") || true
 	issue_digest=$(printf '%s' "$payload" | jq -r 'select(.target.kind == "issue") | .snapshot_sha256' 2>/dev/null || true)
 	if [[ "$issue_digest" =~ ^[0-9a-f]{64}$ ]] && directory_is_empty "$AIDEVOPS_TEMP_DIR"; then
@@ -232,16 +240,7 @@ PY
 	fi
 
 	write_baseline_fixtures
-	python3 - "$FIXTURES/review-comments-42.json" <<'PY'
-import json
-import sys
-path = sys.argv[1]
-with open(path, encoding="utf-8") as handle:
-    payload = json.load(handle)
-payload[0][0]["body"] = "p" * 2200000
-with open(path, "w", encoding="utf-8") as handle:
-    json.dump(payload, handle)
-PY
+	write_large_fixture_body "$FIXTURES/review-comments-42.json" p
 	payload=$(AIDEVOPS_TEMP_DIR="$AIDEVOPS_TEMP_DIR" PATH="${TEST_ROOT}/bin:$PATH" FIXTURES="$FIXTURES" approval_snapshot_v2_payload pr 42 owner/repo "2026-01-01T00:05:00Z") || true
 	pr_head=$(printf '%s' "$payload" | jq -r '.pr.head_sha' 2>/dev/null || true)
 	if [[ "$pr_head" == "$PR_HEAD" ]] && directory_is_empty "$AIDEVOPS_TEMP_DIR"; then
