@@ -998,7 +998,6 @@ cleanup_deprecated_mcps() {
 # Disable MCPs globally that should only be enabled on-demand via subagents
 # This reduces session startup context by disabling rarely-used MCPs
 # - playwriter: ~3K tokens - enable via @playwriter subagent
-# - gh_grep: ~600 tokens - replaced by @github-search subagent (uses rg/bash)
 # - google-analytics-mcp: ~800 tokens - enable via @google-analytics subagent
 # - context7: ~800 tokens - enable via @context7 subagent (for library docs lookup)
 disable_ondemand_mcps() {
@@ -1019,7 +1018,6 @@ disable_ondemand_mcps() {
 	local -a ondemand_mcps=(
 		"cloudflare-api"
 		"context7"
-		"gh_grep"
 		"google-analytics-mcp"
 		"grep_app"
 		"playwright"

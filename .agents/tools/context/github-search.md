@@ -81,8 +81,8 @@ rg '"scripts"' package.json -A 10
 
 ## vs GitHub Search MCPs
 
-| Feature | github-search (this) | grep_app / gh_grep MCP |
-|---------|---------------------|------------------------|
+| Feature | github-search (this) | grep_app MCP |
+|---------|---------------------|--------------|
 | Token cost | 0 (no MCP) | ~600 tokens |
 | Speed | Fast (local rg) | Network dependent |
 | Scope | Local + gh CLI | GitHub API |

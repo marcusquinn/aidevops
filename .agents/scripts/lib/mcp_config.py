@@ -23,14 +23,14 @@ EAGER_MCPS = set()
 # Lazy-loaded (enabled: False): Subagent-only, start on-demand
 LAZY_MCPS = {
     'MCP_DOCKER', 'ahrefs', 'amazon-order-history',
-    'chrome-devtools', 'claude-code-mcp', 'context7', 'dataforseo', 'gh_grep',
+    'chrome-devtools', 'claude-code-mcp', 'context7', 'dataforseo',
     'google-analytics-mcp', 'grep_app', 'gsc', 'ios-simulator', 'localwp',
     'macos-automator', 'openapi-search', 'outscraper', 'playwriter', 'quickfile',
     'sentry', 'shadcn', 'socket', 'websearch',
 }
 
 # Oh-My-OpenCode tool patterns to disable globally
-OMO_TOOL_PATTERNS = ['grep_app_*', 'websearch_*', 'gh_grep_*']
+OMO_TOOL_PATTERNS = ['grep_app_*', 'websearch_*']
 
 
 def apply_mcp_loading_policy(config):
