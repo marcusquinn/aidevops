@@ -598,8 +598,8 @@ test_diff_scoped_timing() {
 # ---------------------------------------------------------------------------
 # Test 15: diff-scoped skip — non-source diff exits 0 (t2827)
 #
-# When the diff between base and head contains no .sh, .py, or .md files, the
-# check subcommand should exit 0 immediately and report the applicable types.
+# When the diff contains no applicable source or Markdown files, the check
+# subcommand should exit 0 immediately and report the applicable types.
 # ---------------------------------------------------------------------------
 test_diff_scoped_skip_no_sh_changes() {
 	setup
@@ -618,7 +618,7 @@ test_diff_scoped_skip_no_sh_changes() {
 	local _base_sha
 	_base_sha=$(git -C "$_repo" rev-parse HEAD)
 
-	# Head commit: only a non-source file changed (no .sh/.py/.md)
+	# Head commit: only a non-source file changed
 	printf 'hello\n' >"$_repo/fixture.txt"
 	git -C "$_repo" add fixture.txt
 	git -C "$_repo" commit -q -m "head: fixture only"
@@ -630,11 +630,42 @@ test_diff_scoped_skip_no_sh_changes() {
 
 	# Literal Markdown backticks are intentional.
 	# shellcheck disable=SC2016
-	if [ "$_rc" -eq 0 ] && grep -Fq 'no `.sh`/`.py`/`.md` files changed' "$_report"; then
+	if [ "$_rc" -eq 0 ] && grep -Fq 'no `.sh`/`.py`/`.rb`/`.md` files changed' "$_report"; then
 		print_result "diff-scoped skip: non-source diff reports all applicable types" 0
 	else
 		print_result "diff-scoped skip: non-source diff reports all applicable types" 1 \
-			"expected exit 0 and .sh/.py/.md report text, got exit $_rc"
+			"expected exit 0 and complete applicable-extension report text, got exit $_rc"
+	fi
+	teardown
+	return 0
+}
+
+test_diff_scoped_ruby_change_is_applicable() {
+	setup
+	local _repo="$TEST_ROOT/repo"
+	local _base_sha=""
+	local _rc=0
+	local _report="$_repo/report.md"
+	mkdir -p "$_repo"
+	git -C "$_repo" init -q
+	printf 'base\n' >"$_repo/README.md"
+	git -C "$_repo" add README.md
+	git -C "$_repo" -c user.email=test@test.local -c user.name=Test \
+		-c commit.gpgsign=false commit -q -m "base"
+	_base_sha=$(git -C "$_repo" rev-parse HEAD)
+	printf 'puts "hello"\n' >"$_repo/app.rb"
+	git -C "$_repo" add app.rb
+	git -C "$_repo" -c user.email=test@test.local -c user.name=Test \
+		-c commit.gpgsign=false commit -q -m "head: Ruby source"
+
+	(cd "$_repo" && "$HELPER" check --base "$_base_sha" --metric function-complexity \
+		--output-md "$_report") >/dev/null 2>&1 || _rc=$?
+	if [ "$_rc" -eq 0 ] && grep -Fq 'No regression' "$_report" &&
+		! grep -Fq 'No applicable changes' "$_report"; then
+		print_result "diff-scoped classifier: Ruby-only change is applicable" 0
+	else
+		print_result "diff-scoped classifier: Ruby-only change is applicable" 1 \
+			"expected Ruby source to run the regression comparison, got exit $_rc"
 	fi
 	teardown
 	return 0
@@ -691,6 +722,7 @@ test_bash32_clean_to_new
 test_bash32_stable
 test_diff_scoped_timing
 test_diff_scoped_skip_no_sh_changes
+test_diff_scoped_ruby_change_is_applicable
 test_working_tree_101_line_function_blocks
 
 printf '\n'
