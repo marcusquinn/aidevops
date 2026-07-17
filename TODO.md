@@ -1186,8 +1186,6 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t18154 Repair stale test source paths after helper module splits #bug #framework #reliability #auto-dispatch ~45m tier:standard ref:GH#28133 logged:2026-07-17 -> [todo/tasks/t18154-brief.md] pr:#28137 completed:2026-07-17
 
-- [ ] t18155 fix: harden autoagent experiment reliability #enhancement #research #self-improvement ref:GH#28139
-
 ## In Progress
 
 - [x] t2744 raise GraphQL throttle defaults and reduce pulse/stats cycle pressure — circuit breaker default `0.05`→`0.30` (trips at 1500 remaining instead of 250), REST fallback default `10`→`1000` (REST takes over earlier, GraphQL kept in reserve), pulse interval default `120s`→`180s`, stats-wrapper interval `900s`→`3600s`. Also fixes macOS launchd path that ignored `supervisor.pulse_interval_seconds` from settings. Evidence: GraphQL=0/5000 vs REST=4044/5000 with 21 EXHAUSTED events in current pulse log; per-cycle cost (~400-700 pts) × 30 cycles/hr × 14 repos exceeds 5000/hr ceiling by 2-4×. All env-overridable, fully backwards-compatible. See `todo/tasks/t2744-brief.md`. #framework #pulse #interactive ~1h ref:GH#20482 started:2026-04-22 pr:#20483 completed:2026-04-22
@@ -4657,6 +4655,8 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [x] t18152 Restore Pulse temporary-worktree capacity and adaptive timeout recovery #bug ref:GH#28044 pr:#28045 completed:2026-07-17
 
 - [ ] t18153 Clarify authority-aware full-loop lifecycle #bug ref:GH#28112
+
+- [ ] t18155 fix: harden autoagent experiment reliability #enhancement #research #self-improvement ref:GH#28139
 
 - [x] t18156 Fix OpenCode Tabby status lifecycle across idle and permission waits #bug ref:GH#28140 pr:#28144 completed:2026-07-17
 
