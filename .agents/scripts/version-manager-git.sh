@@ -153,7 +153,7 @@ verify_release_source_pr() {
 		and (.mergedAt | present)
 		and (.baseRefName == $branch)
 		and (.headRefOid | present)
-		and (.mergeCommit.oid | present)
+		and (.mergeCommit | type == "object" and (.oid | present))
 	' >/dev/null; then
 		print_error "Source PR #${source_pr} lacks verified MERGED provenance for ${branch}"
 		return 1

@@ -1093,7 +1093,7 @@ _full_loop_verify_merged_pr() {
 	printf '%s' "$pr_json" | jq -e '
 		(.state == "MERGED")
 		and ((.mergedAt // "") != "")
-		and ((.mergeCommit.oid // "") != "")
+		and (.mergeCommit | type == "object" and ((.oid // "") != ""))
 	' >/dev/null
 	return $?
 }
@@ -1166,7 +1166,7 @@ _full_loop_verify_aidevops_release_deploy() {
 	[[ -f "${HOME}/.aidevops/agents/VERSION" ]] && IFS= read -r deployed_version <"${HOME}/.aidevops/agents/VERSION"
 	[[ "$deployed_version" == "$version" ]] || return 1
 	local postflight="${SCRIPT_DIR}/postflight-check.sh"
-	[[ -x "$postflight" ]] || return 1
+	[[ -f "$postflight" ]] || return 1
 	bash "$postflight" --quick --sha "$release_sha" >/dev/null 2>&1 || return 1
 	return 0
 }

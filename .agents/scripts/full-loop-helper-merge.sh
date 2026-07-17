@@ -413,9 +413,15 @@ _merge_resolve_match_head() {
 	local repo="$2"
 	local pre_merge_head_sha=""
 	pre_merge_head_sha=$(_merge_fetch_head_sha_rest "$pr_number" "$repo" || true)
-	if [[ -n "${FULL_LOOP_VERIFIED_PR_HEAD_SHA:-}" && "$pre_merge_head_sha" != "$FULL_LOOP_VERIFIED_PR_HEAD_SHA" ]]; then
-		print_error "PR #${pr_number} head changed after remote verification; refusing merge"
-		return 1
+	if [[ -n "${FULL_LOOP_VERIFIED_PR_HEAD_SHA:-}" ]]; then
+		if [[ -z "$pre_merge_head_sha" ]]; then
+			print_error "Could not retrieve PR #${pr_number} head SHA for verification; refusing merge"
+			return 1
+		fi
+		if [[ "$pre_merge_head_sha" != "$FULL_LOOP_VERIFIED_PR_HEAD_SHA" ]]; then
+			print_error "PR #${pr_number} head changed after remote verification; refusing merge"
+			return 1
+		fi
 	fi
 	local match_head_sha="${FULL_LOOP_VERIFIED_PR_HEAD_SHA:-$pre_merge_head_sha}"
 	[[ -n "$match_head_sha" ]] || return 1
@@ -531,7 +537,7 @@ _merge_verify_completed_state() {
 		def present: ((. // "") | length > 0);
 		(.state == "MERGED")
 		and (.mergedAt | present)
-		and (.mergeCommit.oid | present)
+		and (.mergeCommit | type == "object" and (.oid | present))
 	' >/dev/null; then
 		return 1
 	fi
