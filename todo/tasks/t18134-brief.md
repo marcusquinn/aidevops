@@ -134,6 +134,7 @@ shellcheck .agents/scripts/pulse-issue-reconcile.sh .agents/scripts/tests/test-j
 - The issue's proposed `jq -n '{issues:.}'` form is explicitly rejected because `.` is `null` under `-n` without `input`.
 - Both potentially large arrays move off argv, not only the array that first triggered E2BIG.
 - Extend the existing deterministic regression suite rather than creating another one-off test.
+- Retain `${parameter:-[]}` because Bash applies the default to both unset and empty values; `test_objective_reconciliation_defaults_empty_lists` verifies the latter case.
 
 ## Relevant Files
 
