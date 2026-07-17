@@ -1127,14 +1127,14 @@ _compose_pr_title() {
 # immutable session origin. REST readback is deliberate: a successful mutation
 # exit code is not proof that GitHub reached the required postcondition.
 # Arguments: PR number, repository slug, expected origin name (without prefix).
-# Returns: 0=verified, 1=read failure, 2=missing/wrong/dual origin labels.
+# Returns: 0=verified, 2=missing/wrong/dual/unavailable origin labels.
 _verify_pr_origin_label() {
 	local pr_number="$1"
 	local repo="$2"
 	local origin_name="$3"
 	local origin_labels=""
-	origin_labels=$(gh api "repos/${repo}/issues/${pr_number}" \
-		--jq '[.labels[].name | select(startswith("origin:"))]' 2>/dev/null) || return 1
+	origin_labels=$(_gh_with_timeout read gh api "repos/${repo}/issues/${pr_number}" \
+		--jq '[.labels[].name | select(startswith("origin:"))]' 2>/dev/null) || origin_labels="[]"
 	if printf '%s' "$origin_labels" |
 		jq -e --arg expected "origin:${origin_name}" \
 			'length == 1 and .[0] == $expected' >/dev/null 2>&1; then
@@ -1152,7 +1152,7 @@ _reconcile_pr_origin_label() {
 	local repo="$2"
 	local origin_name="$3"
 	local origin_error=""
-	origin_error=$(mktemp -t aidevops-pr-origin-error.XXXXXX) || return 1
+	origin_error=$(mktemp) || return 1
 	if ! set_origin_label "$pr_number" "$repo" "$origin_name" --pr 2>"$origin_error"; then
 		local failure_kind="GitHub label write failed"
 		if grep -qiE 'permission|forbidden|Resource not accessible|HTTP 403' "$origin_error" 2>/dev/null; then
@@ -1170,12 +1170,8 @@ _reconcile_pr_origin_label() {
 	_verify_pr_origin_label "$pr_number" "$repo" "$origin_name" || verify_rc=$?
 	case "$verify_rc" in
 	0) return 0 ;;
-	1)
-		print_error "Could not read back origin labels on PR #${pr_number}; retry commit-and-pr after GitHub reads recover"
-		return 1
-		;;
 	*)
-		print_error "PR #${pr_number} did not reach the exact origin:${origin_name} postcondition; retry commit-and-pr to reconcile missing, wrong, or dual origin labels"
+		print_error "PR #${pr_number} did not reach the exact origin:${origin_name} postcondition; retry commit-and-pr to reconcile unavailable, missing, wrong, or dual origin labels"
 		return 1
 		;;
 	esac

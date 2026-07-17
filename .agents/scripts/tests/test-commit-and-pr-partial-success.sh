@@ -228,12 +228,20 @@ export -f _gh_recover_pr_if_exists
 GH_EXISTING_MERGE_SUMMARY_COUNT=0
 # Control variable: set to 1 to simulate only malformed plain-text MERGE_SUMMARY existing
 GH_MALFORMED_MERGE_SUMMARY_ONLY=0
+# Control variables for direct origin-label readback tests.
+ORIGIN_API_FAIL=0
+ORIGIN_API_LABELS='["origin:worker"]'
 
 # Stub: gh — handles the gh api call for MERGE_SUMMARY check, plus pr comment
 gh() {
 	printf 'gh %s\n' "$*" >>"$STUB_LOG"
 	# Handle: gh api repos/.../issues/.../comments --jq '...'
 	if [[ "${1:-}" == "api" ]]; then
+		if [[ "$*" == *'startswith("origin:")'* ]]; then
+			[[ "$ORIGIN_API_FAIL" -eq 0 ]] || return 1
+			printf '%s\n' "$ORIGIN_API_LABELS"
+			return 0
+		fi
 		if [[ "$*" == *'<!-- MERGE_SUMMARY -->'* ]]; then
 			printf '%s\n' "$GH_EXISTING_MERGE_SUMMARY_COUNT"
 			return 0
@@ -249,6 +257,38 @@ gh() {
 	return 0
 }
 export -f gh
+
+_gh_with_timeout() {
+	local op_class="$1"
+	shift
+	printf '_gh_with_timeout class=%s command=%s\n' "$op_class" "$*" >>"$STUB_LOG"
+	"$@"
+	return $?
+}
+export -f _gh_with_timeout
+
+# The production readback must use the bounded GitHub wrapper and normalize a
+# transient read failure to an empty result before enforcing the postcondition.
+: >"$STUB_LOG"
+ORIGIN_API_FAIL=0
+if _verify_pr_origin_label 999 "owner/repo" worker &&
+	grep -q '_gh_with_timeout class=read command=gh api repos/owner/repo/issues/999' "$STUB_LOG"; then
+	pass "origin readback: uses bounded GitHub wrapper"
+else
+	fail "origin readback: uses bounded GitHub wrapper" "stub log: $(cat "$STUB_LOG" 2>/dev/null)"
+fi
+
+: >"$STUB_LOG"
+ORIGIN_API_FAIL=1
+origin_readback_rc=0
+_verify_pr_origin_label 999 "owner/repo" worker || origin_readback_rc=$?
+if [[ "$origin_readback_rc" -eq 2 ]]; then
+	pass "origin readback: transient API failure becomes unavailable postcondition"
+else
+	fail "origin readback: transient API failure becomes unavailable postcondition" \
+		"expected exit 2, got ${origin_readback_rc}"
+fi
+ORIGIN_API_FAIL=0
 
 # Stub: gh_pr_comment — records call, returns 0
 gh_pr_comment() {
@@ -444,15 +484,15 @@ for readback_labels in '[]' '["origin:interactive"]' '["origin:worker","origin:i
 done
 ORIGIN_READBACK_LABELS='["origin:worker"]'
 
-# Readback API failure must remain distinct from a label mismatch.
+# Readback API failure is normalized to an unavailable postcondition.
 : >"$STUB_LOG"
 ORIGIN_READBACK_FAIL=1
 readback_api_rc=0
 _create_pr "owner/repo" "t2767: test" "body text" "origin:worker" >/dev/null 2>&1 || readback_api_rc=$?
-if [[ "$readback_api_rc" -ne 0 ]] && grep -q "Could not read back origin labels" "$STUB_LOG" 2>/dev/null; then
-	pass "origin readback API failure: classified diagnostic emitted"
+if [[ "$readback_api_rc" -ne 0 ]] && grep -q "reconcile unavailable, missing, wrong, or dual origin labels" "$STUB_LOG" 2>/dev/null; then
+	pass "origin readback API failure: unavailable postcondition diagnostic emitted"
 else
-	fail "origin readback API failure: classified diagnostic emitted" \
+	fail "origin readback API failure: unavailable postcondition diagnostic emitted" \
 		"rc=${readback_api_rc}; stub log: $(cat "$STUB_LOG" 2>/dev/null)"
 fi
 ORIGIN_READBACK_FAIL=0
