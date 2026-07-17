@@ -1313,33 +1313,84 @@ _setup_ai_session_build_plan() {
 }
 
 _setup_reconcile_runtime_config() {
+	pin_aidevops_active_runtime_bundle_root || {
+		print_warning "Runtime configuration reconciliation could not resolve the active agents bundle"
+		return 1
+	}
 	update_runtime_configs || return $?
 	deploy_commands_to_all_runtimes || return $?
 	return 0
 }
 
+_setup_git_checkout_available() {
+	local checkout_root="$1"
+	local git_dir=""
+	local git_common_dir=""
+
+	git_dir=$(git -C "$checkout_root" rev-parse --git-dir 2>/dev/null) || return 1
+	git_common_dir=$(git -C "$checkout_root" rev-parse --git-common-dir 2>/dev/null) || return 1
+	[[ -n "$git_dir" && -n "$git_common_dir" ]] || return 1
+	return 0
+}
+
+_setup_bundle_manifest_value() {
+	local manifest_file="$1"
+	local key="$2"
+	local value=""
+	value=$(grep -m 1 "^${key}=" "$manifest_file" 2>/dev/null) || return 1
+	printf '%s' "${value#*=}"
+	return 0
+}
+
 _setup_ai_session_verify_deploy() {
 	local expected_sha="$1"
+	local active_link="$HOME/.aidevops/agents"
+	local active_root=""
+	local manifest_file=""
+	local manifest_status=""
+	local manifest_version=""
+	local manifest_sha=""
 	local repo_version=""
 	local deployed_version=""
 	local deployed_sha=""
 
+	if [[ ! -L "$active_link" ]]; then
+		print_warning "AI-session incremental verification failed: active agents path is not an activation symlink"
+		return 1
+	fi
+	active_root=$(resolve_aidevops_runtime_bundle_root "$active_link") || {
+		print_warning "AI-session incremental verification failed: active agents symlink cannot be resolved"
+		return 1
+	}
+	manifest_file="$active_root/.bundle-manifest"
+	if [[ ! -r "$manifest_file" ]]; then
+		print_warning "AI-session incremental verification failed: active bundle manifest is missing"
+		return 1
+	fi
+	manifest_status=$(_setup_bundle_manifest_value "$manifest_file" status) || manifest_status=""
+	manifest_version=$(_setup_bundle_manifest_value "$manifest_file" framework_version) || manifest_version=""
+	manifest_sha=$(_setup_bundle_manifest_value "$manifest_file" git_sha) || manifest_sha=""
+
 	if [[ -f "$INSTALL_DIR/VERSION" ]]; then
 		repo_version=$(tr -d '[:space:]' <"$INSTALL_DIR/VERSION" 2>/dev/null) || repo_version=""
 	fi
-	if [[ -f "$HOME/.aidevops/agents/VERSION" ]]; then
-		deployed_version=$(tr -d '[:space:]' <"$HOME/.aidevops/agents/VERSION" 2>/dev/null) || deployed_version=""
+	if [[ -f "$active_root/VERSION" ]]; then
+		deployed_version=$(tr -d '[:space:]' <"$active_root/VERSION" 2>/dev/null) || deployed_version=""
 	fi
 	if [[ -f "$HOME/.aidevops/.deployed-sha" ]]; then
 		deployed_sha=$(tr -d '[:space:]' <"$HOME/.aidevops/.deployed-sha" 2>/dev/null) || deployed_sha=""
 	fi
 
-	if [[ -z "$repo_version" || "$repo_version" != "$deployed_version" ]]; then
-		print_warning "AI-session incremental verification failed: repo version=${repo_version:-unknown}, deployed=${deployed_version:-none}"
+	if [[ "$manifest_status" != "validated" ]]; then
+		print_warning "AI-session incremental verification failed: active bundle manifest status=${manifest_status:-missing}"
 		return 1
 	fi
-	if [[ -z "$deployed_sha" || "$deployed_sha" != "$expected_sha" ]]; then
-		print_warning "AI-session incremental verification failed: deployed SHA=${deployed_sha:-none}, expected=${expected_sha:0:12}"
+	if [[ -z "$repo_version" || "$repo_version" != "$deployed_version" || "$repo_version" != "$manifest_version" ]]; then
+		print_warning "AI-session incremental verification failed: repo version=${repo_version:-unknown}, active=${deployed_version:-none}, manifest=${manifest_version:-none}"
+		return 1
+	fi
+	if [[ -z "$deployed_sha" || "$deployed_sha" != "$expected_sha" || "$manifest_sha" != "$expected_sha" ]]; then
+		print_warning "AI-session incremental verification failed: stamp SHA=${deployed_sha:-none}, manifest SHA=${manifest_sha:-none}, expected=${expected_sha:0:12}"
 		return 1
 	fi
 
@@ -1354,7 +1405,7 @@ _setup_run_ai_session_incremental() {
 	local changed_files=""
 
 	print_info "AI-session setup mode: applying changed deploy stages only"
-	if [[ ! -d "$INSTALL_DIR/.git" || ! -f "$stamp_file" ]]; then
+	if ! _setup_git_checkout_available "$INSTALL_DIR" || [[ ! -f "$stamp_file" ]]; then
 		print_warning "AI-session incremental setup needs a git checkout and deployed SHA stamp"
 		return 1
 	fi
@@ -1413,6 +1464,7 @@ _setup_run_ai_session_incremental() {
 _setup_run_scoped_stage() {
 	local os="$1"
 	local stage
+	local current_sha=""
 	stage="$(_setup_canonical_stage "$SETUP_STAGE")" || return 1
 
 	if [[ "$stage" == "full" ]]; then
@@ -1453,6 +1505,9 @@ _setup_run_scoped_stage() {
 			print_warning "AI-session incremental setup unavailable or failed; falling back to full setup"
 			_setup_run_non_interactive || return $?
 			_setup_post_setup_steps "$os" || return $?
+			current_sha=$(git -C "$INSTALL_DIR" rev-parse HEAD 2>/dev/null) || current_sha=""
+			[[ -n "$current_sha" ]] || return 1
+			_setup_ai_session_verify_deploy "$current_sha" || return $?
 		fi
 		;;
 	*)

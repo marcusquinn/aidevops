@@ -33,6 +33,19 @@ pin_aidevops_runtime_bundle_root() {
 	return 0
 }
 
+# Setup and deployment are global reconciliation operations, not long-lived
+# runtime processes. Always bind them to the current activation link instead of
+# an inherited process pin that may name an older immutable bundle.
+pin_aidevops_active_runtime_bundle_root() {
+	local active_link="${HOME:?HOME must be set}/.aidevops/agents"
+	local resolved_root=""
+	resolved_root=$(resolve_aidevops_runtime_bundle_root "$active_link") || return 1
+	AIDEVOPS_AGENTS_DIR="$resolved_root"
+	AGENTS_DIR="$resolved_root"
+	export AIDEVOPS_AGENTS_DIR AGENTS_DIR
+	return 0
+}
+
 # Serialize activation-link changes with Pulse restart/start operations. A
 # lifecycle process always re-resolves the active link after taking this lock,
 # so concurrent setup callers cannot leave Pulse running an older bundle.

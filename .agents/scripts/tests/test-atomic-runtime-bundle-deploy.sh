@@ -177,6 +177,18 @@ test_process_pin_survives_activation() {
 	return 0
 }
 
+test_setup_rebinds_stale_process_pin_to_active_bundle() {
+	local target_dir="$HOME/.aidevops/agents"
+	local stale_root="$AIDEVOPS_AGENTS_DIR"
+	local active_root=""
+	active_root=$(_runtime_bundle_resolve_root "$target_dir")
+	[[ "$stale_root" != "$active_root" ]] || fail "fixture process pin is not stale"
+	pin_aidevops_active_runtime_bundle_root || fail "setup could not resolve active bundle"
+	assert_eq "$active_root" "$AIDEVOPS_AGENTS_DIR" "setup re-resolves a stale inherited AIDEVOPS_AGENTS_DIR"
+	assert_eq "$active_root" "$AGENTS_DIR" "setup re-resolves a stale inherited AGENTS_DIR"
+	return 0
+}
+
 test_live_bundle_lease_survives_three_updates() {
 	local target_dir="$HOME/.aidevops/agents"
 	local leased_root=""
@@ -377,6 +389,7 @@ main() {
 	test_interrupted_staging_preserves_active
 	test_failed_activation_rolls_back
 	test_process_pin_survives_activation
+	test_setup_rebinds_stale_process_pin_to_active_bundle
 	test_live_bundle_lease_survives_three_updates
 	test_stale_lease_and_old_bundle_are_pruned
 	test_macos_and_linux_link_paths

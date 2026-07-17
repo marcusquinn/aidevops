@@ -143,13 +143,66 @@ _status_capability_readiness() {
 	return 0
 }
 
+_status_bundle_manifest_value() {
+	local manifest_file="$1"
+	local key="$2"
+	local value=""
+	value=$(grep -m 1 "^${key}=" "$manifest_file" 2>/dev/null) || return 1
+	printf '%s' "${value#*=}"
+	return 0
+}
+
+_status_active_bundle_version() {
+	local active_version="${HOME:-}/.aidevops/agents/VERSION"
+	if [[ -r "$active_version" ]]; then
+		tr -d '[:space:]' <"$active_version"
+		return 0
+	fi
+	get_version
+	return 0
+}
+
+_status_runtime_bundle_integrity() {
+	local active_link="${HOME:-}/.aidevops/agents"
+	local active_root=""
+	local bundles_root=""
+	local manifest_file=""
+	local active_version=""
+	local manifest_status=""
+	local manifest_version=""
+	local manifest_sha=""
+	local deployed_sha=""
+
+	if [[ ! -L "$active_link" ]]; then
+		print_warning "Active runtime bundle mismatch: agents path is not an activation symlink"
+		return 0
+	fi
+	active_root=$(cd "$active_link" 2>/dev/null && pwd -P) || active_root=""
+	bundles_root=$(cd "${HOME:-}/.aidevops/runtime-bundles" 2>/dev/null && pwd -P) || bundles_root=""
+	manifest_file="$active_root/.bundle-manifest"
+	[[ -r "$active_root/VERSION" ]] && active_version=$(tr -d '[:space:]' <"$active_root/VERSION" 2>/dev/null) || active_version=""
+	[[ -r "$manifest_file" ]] && manifest_status=$(_status_bundle_manifest_value "$manifest_file" status) || manifest_status=""
+	[[ -r "$manifest_file" ]] && manifest_version=$(_status_bundle_manifest_value "$manifest_file" framework_version) || manifest_version=""
+	[[ -r "$manifest_file" ]] && manifest_sha=$(_status_bundle_manifest_value "$manifest_file" git_sha) || manifest_sha=""
+	[[ -r "${HOME:-}/.aidevops/.deployed-sha" ]] && deployed_sha=$(tr -d '[:space:]' <"${HOME}/.aidevops/.deployed-sha" 2>/dev/null) || deployed_sha=""
+
+	if [[ -z "$bundles_root" || "$active_root" != "$bundles_root/"*/agents || "$manifest_status" != "validated" ||
+		-z "$active_version" || -z "$manifest_version" || -z "$manifest_sha" || -z "$deployed_sha" ||
+		"$active_version" != "$manifest_version" || "$manifest_sha" != "$deployed_sha" ]]; then
+		print_warning "Active runtime bundle mismatch: target=${active_root:-missing}, status=${manifest_status:-missing}, VERSION=${active_version:-missing}, manifest version=${manifest_version:-missing}, manifest SHA=${manifest_sha:-missing}, deployed SHA=${deployed_sha:-missing}"
+		return 0
+	fi
+	print_success "Active runtime bundle metadata is coherent"
+	return 0
+}
+
 # Status command
 cmd_status() {
 	print_header "AI DevOps Framework Status"
 	echo "=========================="
 	echo ""
 	local current_version
-	current_version=$(get_version)
+	current_version=$(_status_active_bundle_version)
 	local remote_version
 	remote_version=$(get_remote_version)
 	print_header "Version"
@@ -158,6 +211,7 @@ cmd_status() {
 	if [[ "$current_version" != "$remote_version" && "$remote_version" != "unknown" ]]; then
 		print_warning "Update available! Run: aidevops update"
 	elif [[ "$current_version" == "$remote_version" ]]; then print_success "Up to date"; fi
+	_status_runtime_bundle_integrity
 	echo ""
 	print_header "Installation"
 	check_dir "$INSTALL_DIR" && print_success "Repository: $INSTALL_DIR" || print_error "Repository: Not found at $INSTALL_DIR"
