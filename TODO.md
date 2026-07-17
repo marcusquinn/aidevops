@@ -4658,6 +4658,6 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [ ] t18155 fix: harden autoagent experiment reliability #enhancement #research #self-improvement ref:GH#28139
 
-- [ ] t18156 Fix OpenCode Tabby status lifecycle across idle and permission waits #bug ref:GH#28140
+- [x] t18156 Fix OpenCode Tabby status lifecycle across idle and permission waits #bug ref:GH#28140 pr:#28144 completed:2026-07-17
 
 - [ ] t18157 Block reads of credential-bearing runtime configuration #security ref:GH#28141
