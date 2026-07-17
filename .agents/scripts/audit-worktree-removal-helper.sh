@@ -258,8 +258,8 @@ worktree_removal_guard() {
 		esac
 	fi
 
-	if { [[ "$cwd_snapshot_provided" -eq 1 ]] && \
-		_worktree_cwd_snapshot_contains_path "$wt_path" "$wt_path_real" "$cwd_snapshot"; } || \
+	if { [[ "$cwd_snapshot_provided" -eq 1 ]] &&
+		_worktree_cwd_snapshot_contains_path "$wt_path" "$wt_path_real" "$cwd_snapshot"; } ||
 		{ [[ "$cwd_snapshot_provided" -eq 0 ]] && _worktree_has_process_cwd "$wt_path" "$wt_path_real"; }; then
 		WORKTREE_REMOVAL_GUARD_REASON="active-cwd"
 		log_worktree_removal_event "$_WTAR_SKIPPED" "$caller" "$wt_path" "active-cwd" "skipped"

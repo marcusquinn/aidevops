@@ -193,11 +193,17 @@ test_should_skip_cleanup_owned_skip_logs() {
 	(
 		RED='' NC=''
 		is_worktree_owned_by_others() { return 0; }
-		check_worktree_owner()         { echo "99999|session-stub"; return 0; }
-		worktree_is_in_grace_period()  { return 1; }
-		get_validated_grace_hours()    { echo "4"; return 0; }
-		worktree_has_changes()         { return 1; }
-		branch_has_zero_commits_ahead(){ return 1; }
+		check_worktree_owner() {
+			echo "99999|session-stub"
+			return 0
+		}
+		worktree_is_in_grace_period() { return 1; }
+		get_validated_grace_hours() {
+			echo "4"
+			return 0
+		}
+		worktree_has_changes() { return 1; }
+		branch_has_zero_commits_ahead() { return 1; }
 
 		export AIDEVOPS_CLEANUP_LOG="$log_file"
 		unset _AUDIT_WORKTREE_REMOVAL_HELPER_LOADED 2>/dev/null || true
@@ -248,7 +254,7 @@ test_idempotent_sourcing() {
 	# shellcheck source=../audit-worktree-removal-helper.sh
 	source "$AUDIT_HELPER"
 	# shellcheck source=../audit-worktree-removal-helper.sh
-	source "$AUDIT_HELPER"  # second source — guard makes this a no-op
+	source "$AUDIT_HELPER" # second source — guard makes this a no-op
 
 	log_worktree_removal_event "$_WTAR_REMOVED" "test.sh" "/wt" "manual" "trash"
 
