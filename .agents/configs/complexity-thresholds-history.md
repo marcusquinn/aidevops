@@ -188,3 +188,4 @@ and monotonically decreases".
 | 64 | ratchet-post-merge | auto-ratchet after ff60dd5 ("t18107: scope startup greeting to interactive root sessions (#27329)"): count 62 + 2 buffer = 64 (previously 65, reduction 1) |
 | 61 | ratchet-post-merge | auto-ratchet after 645ce1c ("wip: simplify worker blocker locking (#27785)"): count 59 + 2 buffer = 61 (previously 64, reduction 3) |
 | 59 | ratchet-post-merge | auto-ratchet after 3a90365 ("GH#28051: source research profile from frontmatter (#28071)"): count 57 + 2 buffer = 59 (previously 61, reduction 2) |
+| 57 | ratchet-post-merge | auto-ratchet after ddd5e5e ("refactor: simplify shell environment projection (#28077)"): count 55 + 2 buffer = 57 (previously 59, reduction 2) |
