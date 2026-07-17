@@ -14,6 +14,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - start active OpenCode tab status on the first user message (#28066)
 
+## [3.32.142] - 2026-07-17
+
+### Changed
+
+- Tests: deduplicate authorization assertions (#28058)
+
+### Fixed
+
+- harden PR origin label readback (#28053)
+
 ## [3.32.141] - 2026-07-17
 
 ### Changed

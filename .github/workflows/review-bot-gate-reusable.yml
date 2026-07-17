@@ -14,8 +14,9 @@ name: Review Bot Gate (reusable)
 # downstream regression observed on 2026-04-24 (Option A' settlement fix from
 # PR #20572 never reached downstream repos pinned to SHA 73b664a).
 #
-# To enforce: add "review-bot-gate" as a required status check in
-# GitHub branch protection settings for each repo.
+# The compatibility status may remain required in branch protection, but the
+# default fast policy reports success when add-on review is missing or late.
+# Only explicit completion_behavior=strict turns review completion into a gate.
 #
 # Rate-limit behaviour: controlled by `review_gate.rate_limit_behavior` in
 # ~/.config/aidevops/repos.json. Default: "pass". See:
@@ -49,7 +50,7 @@ on:
         default: 'pass'
         type: string
       completion_behavior:
-        description: 'Review completion policy: fast (default) or strict'
+        description: 'Review completion policy: fast/advisory (default) or strict/required'
         required: false
         default: 'fast'
         type: string
@@ -135,8 +136,8 @@ jobs:
 
           # Check if this is an external contributor PR using immutable event
           # evidence, so API exhaustion cannot accidentally grant trust.
-          # GH#17671: external-contributor PRs require real bot reviews;
-          # rate-limit grace is disabled — they cannot merge on rate-limit-only.
+          # GH#17671: external-contributor PRs retain defence-in-depth review;
+          # advisory completion and rate-limit grace are both disabled.
           #aidevops:trust-boundary
           case "${REVIEW_GATE_AUTHOR_ASSOCIATION}" in
           OWNER|MEMBER|COLLABORATOR)
@@ -144,9 +145,10 @@ jobs:
             ;;
           *)
             IS_EXTERNAL_PR=true
-            echo "External contributor PR detected — rate-limit grace DISABLED"
-            # Override to 'wait': prevents the default PASS_RATE_LIMITED shortcut.
+            echo "External contributor PR detected — advisory review bypass DISABLED"
+            #aidevops:trust-boundary
             export REVIEW_GATE_RATE_LIMIT_BEHAVIOR=wait
+            export REVIEW_GATE_COMPLETION_BEHAVIOR=strict
             ;;
           esac
           echo "is_external_pr=${IS_EXTERNAL_PR}" >> "${GITHUB_OUTPUT}"
@@ -157,8 +159,8 @@ jobs:
           #   - KNOWN_BOTS and NON_REVIEW_PATTERNS (including "Review failed/skipped")
           #   - any_bot_has_success_status (status check fallback, GH#3005)
           #   - rate-limit behaviour (configurable via repos.json or env var)
-          # Output values: PASS / PASS_RATE_LIMITED / WAITING / SKIP
-          # Exit codes:    0 = PASS/PASS_RATE_LIMITED/SKIP  1 = WAITING  2 = error
+          # Output values: PASS / PASS_ADVISORY / PASS_RATE_LIMITED / WAITING / SKIP
+          # Exit codes:    0 = PASS/PASS_ADVISORY/PASS_RATE_LIMITED/SKIP  1 = WAITING  2 = error
           HELPER="${GITHUB_WORKSPACE}/__aidevops/.agents/scripts/review-bot-gate-helper.sh"
           RESULT=""
           HELPER_EXIT=0
@@ -174,16 +176,16 @@ jobs:
 
           INFRA_DEFERRED=false
           # API exhaustion is an infrastructure condition, not evidence that a
-          # bot failed to review. Trusted default-pass PRs defer late feedback to
+          # bot failed to review. Trusted default-advisory PRs defer late feedback to
           # the post-merge scanner; external or explicit wait/strict policies
           # remain fail-closed. The classifier uses event/config evidence only.
           if grep -qiE 'API rate limit exceeded|x-ratelimit-remaining[^0-9]*0' "${HELPER_STDERR}"; then
             RESULT=$(bash "${HELPER}" classify-infra-rate-limit \
               "${REVIEW_GATE_AUTHOR_ASSOCIATION}" "${REPO}")
-            if [[ "${RESULT}" == "PASS_RATE_LIMITED" ]]; then
+            if [[ "${RESULT}" == "PASS_ADVISORY" ]]; then
               HELPER_EXIT=0
               INFRA_DEFERRED=true
-              echo "GitHub API quota exhausted; trusted default-pass policy delegates late feedback to the post-merge review scanner."
+              echo "GitHub API quota exhausted; trusted advisory-default policy delegates late feedback to the post-merge review scanner."
             else
               HELPER_EXIT=2
             fi
@@ -193,14 +195,36 @@ jobs:
           echo ""
           echo "Helper result: ${RESULT:-<empty>} (exit: ${HELPER_EXIT})"
 
-          # GH#17671 post-mortem: external-contributor PRs cannot use the
-          # skip-review-gate label. The helper honours SKIP without knowing
-          # about external-contributor — override here at the workflow layer.
-          if [[ "${RESULT}" == "SKIP" && "${IS_EXTERNAL_PR}" == "true" ]]; then
-            echo "SKIP overridden: external-contributor PRs cannot use skip-review-gate."
-            RESULT="WAITING"
-            HELPER_EXIT=1
+          # GH#17671 post-mortem: external-contributor PRs cannot use advisory,
+          # rate-limit, or skip outcomes. The helper also enforces this; retain
+          # the workflow override as defence in depth around vendored drift.
+          if [[ "${IS_EXTERNAL_PR}" == "true" ]]; then
+            #aidevops:trust-boundary
+            case "${RESULT}" in
+            SKIP|PASS_ADVISORY|PASS_RATE_LIMITED)
+              echo "${RESULT} overridden: external-contributor PRs require completed review evidence."
+              RESULT="WAITING"
+              HELPER_EXIT=1
+              ;;
+            esac
           fi
+
+          # Fail closed on empty, malformed, or exit-code-inconsistent helper
+          # output. Exit 0 alone is not sufficient merge evidence.
+          case "${RESULT}" in
+          PASS|PASS_ADVISORY|PASS_RATE_LIMITED|SKIP)
+            ;;
+          WAITING)
+            [[ "${HELPER_EXIT}" -ne 0 ]] || HELPER_EXIT=1
+            ;;
+          INFRA_RATE_LIMITED)
+            [[ "${HELPER_EXIT}" -ne 0 ]] || HELPER_EXIT=2
+            ;;
+          *)
+            echo "::error::Unexpected review helper result: ${RESULT:-<empty>}"
+            HELPER_EXIT=2
+            ;;
+          esac
 
           if [[ "${HELPER_EXIT}" -eq 0 ]]; then
             echo "gate_passed=true" >> "${GITHUB_OUTPUT}"
@@ -254,13 +278,13 @@ jobs:
             echo "Re-run after the GitHub API reset; do not retry-loop before then."
             exit 1
           fi
-          echo "This PR cannot be merged until at least one AI code review bot"
-          echo "(CodeRabbit, Gemini Code Assist, etc.) has posted a real review."
+          echo "Explicit strict review policy requires at least one AI code review bot"
+          echo "(CodeRabbit, Gemini Code Assist, etc.) to post a real review before merge."
           echo ""
           echo "What to do:"
           echo "  1. Wait a few minutes for bots to complete their analysis"
           echo "  2. This check re-runs automatically when a bot posts or edits a comment"
-          echo "  3. If no bots are configured, add 'skip-review-gate' label"
+          echo "  3. To restore the permanent advisory default, set completion_behavior to fast"
           exit 1
 
       - name: Post review-bot-gate commit status
@@ -277,6 +301,7 @@ jobs:
           GATE_PASSED: ${{ steps.check.outputs.gate_passed }}
           SKIP_GATE: ${{ steps.skip.outputs.skip }}
           RESULT: ${{ steps.check.outputs.result }}
+          INFRA_DEFERRED: ${{ steps.check.outputs.infra_deferred }}
         run: |
           # Resolve HEAD SHA. pull_request / pull_request_review expose it via
           # github.event.pull_request.head.sha. issue_comment does not — the event
@@ -295,6 +320,8 @@ jobs:
             STATE=success
             if [[ "${INFRA_DEFERRED}" == "true" ]]; then
               DESC="Review API unavailable — late feedback deferred post-merge"
+            elif [[ "${RESULT}" == "PASS_ADVISORY" ]]; then
+              DESC="Review add-on advisory — required CI controls merge"
             else
               DESC="Review bot gate passed (${RESULT:-SKIP})"
             fi
@@ -350,6 +377,13 @@ jobs:
               echo "The PR author is trusted and rate_limit_behavior=pass with"
               echo "non-strict completion. No API retry was attempted; late bot"
               echo "feedback is delegated to the post-merge review scanner."
+            elif [[ "${GATE_PASSED}" == "true" && "${RESULT}" == "PASS_ADVISORY" ]]; then
+              echo "**Status**: PASSED (add-on review advisory)"
+              echo ""
+              echo "Required project CI controls merge readiness by default. No"
+              echo "completed add-on review is required; late feedback is delegated"
+              echo "to the post-merge review scanner. Set completion_behavior=strict"
+              echo "only when this repository explicitly requires review-before-merge."
             elif [[ "${GATE_PASSED}" == "true" && "${RESULT}" == "PASS_RATE_LIMITED" ]]; then
               echo "**Status**: PASSED (rate-limit grace)"
               echo ""
@@ -373,9 +407,9 @@ jobs:
             else
               echo "**Status**: WAITING"
               echo ""
-              echo "No real AI review bot feedback yet. This check will re-run"
+              echo "Strict mode is waiting for real AI review bot feedback. This check will re-run"
               echo "automatically when a bot posts or edits a review or comment."
               echo ""
-              echo "If no bots are configured, add 'skip-review-gate' label to bypass."
+              echo "Set completion_behavior=fast to restore advisory-default merging."
             fi
           } >> "${GITHUB_STEP_SUMMARY}"

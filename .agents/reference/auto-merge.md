@@ -79,7 +79,7 @@ Recommended loop:
 Admin-merge safety checklist for PR drains:
 
 - PR is same-repo and non-draft.
-- Review-bot gate is `PASS`, `PASS_RATE_LIMITED`, or `SKIP`; `WAITING` remains blocked.
+- Review-bot result is `PASS`, `PASS_ADVISORY`, `PASS_RATE_LIMITED`, or `SKIP`; `WAITING` occurs only under explicit strict/wait policy or the external-contributor trust boundary.
 - No human `CHANGES_REQUESTED` review exists.
 - Any failing check is known baseline/unrelated and matched by `PR_DRAIN_BASELINE_CHECK_REGEX`; unknown failures block.
 - The scoped diff matches the linked issue/task and conflict fixes do not broaden scope.
@@ -99,7 +99,7 @@ ALL criteria must hold:
 5. No `CHANGES_REQUESTED` review from any reviewer with non-bot association.
 6. PR is **not a draft**.
 7. PR does **not** carry the `hold-for-review` label.
-8. PR passes `review-bot-gate` (bots settled beyond `min_edit_lag_seconds`).
+8. PR passes `review-bot-gate`; under the default this may be `PASS_ADVISORY`, while explicit `completion_behavior: strict` requires bots to settle beyond `min_edit_lag_seconds`.
 9. PR does **not** carry `origin:worker-takeover` (takeover PRs follow normal review flow).
 
 Feature flag: `AIDEVOPS_WORKER_BRIEFED_AUTO_MERGE` (default `1`=on). Set to `0` to fall back to manual-merge-only for `origin:worker` PRs.
