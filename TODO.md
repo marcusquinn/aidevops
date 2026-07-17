@@ -4653,3 +4653,5 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [x] t18152 Restore Pulse temporary-worktree capacity and adaptive timeout recovery #bug ref:GH#28044 pr:#28045 completed:2026-07-17
 
 - [ ] t18153 Clarify authority-aware full-loop lifecycle #bug ref:GH#28112
+
+- [ ] t18154 Repair stale test source paths after helper module splits #bug #framework ref:GH#28133
