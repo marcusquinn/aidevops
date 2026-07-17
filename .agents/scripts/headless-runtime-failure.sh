@@ -50,6 +50,7 @@ unset _HRFF_SCRIPT_DIR
 # Recognised by dispatch-dedup-helper.sh: any CLAIM_RELEASED is treated as
 # authoritative regardless of reason value.
 readonly _HRFF_FALLBACK_EXIT="process_exit"
+readonly _HRFF_PRELAUNCH_NOT_INVOKED="worker_runtime_not_invoked"
 
 # Per-issue transient rate-limit release circuit breaker (t3570 / GH#23102).
 # These defaults intentionally keep the first transient failures visible while
@@ -858,22 +859,59 @@ _worker_archive_dirty_worktree_patch() {
 }
 
 #######################################
-# EXIT trap handler — classify worker termination and post CLAIM_RELEASED.
-# Replaces the inline 'process_exit' reason in the EXIT trap with a
-# classified reason from classify_worker_exit. Falls back to process_exit
-# if classification fails, preserving backward compatibility.
-#
-# Args:
-#   $1 = session_key (baked in at trap-set time via SC2064-disabled trap)
-#
-# Globals consumed:
-#   _WORKER_START_EPOCH_MS   — ms epoch set by _cmd_run_prepare
-#   _WORKER_ISOLATED_DB_PATH — isolated DB path set by _invoke_opencode
-#   _WORKER_WORKTREE_PATH    — worktree path set by _cmd_run_prepare (t2923)
-#   _WORKER_EXIT_CODE_FILE   — exit_code_file path set by _invoke_opencode
-#                              (t3050); .wait_status sentinel persisted
-#                              alongside it preserves the worker subshell
-#                              wait_status across the EXIT trap boundary.
+# Finalize an EXIT-trap classification: preserve work, emit terminal evidence,
+# release the claim/lock, and force a non-zero process exit when preparation
+# ended cleanly before runtime invocation.
+# Args: $1=session, $2=reason, $3=exit status, $4=session count, $5=force nonzero
+#######################################
+_hrff_finalize_exit_trap() {
+	local session_key="$1"
+	local reason="$2"
+	local exit_status="$3"
+	local session_count="$4"
+	local force_nonzero_exit="$5"
+
+	print_info "[exit-trap] session=$session_key exit=$exit_status reason=$reason session_count=$session_count"
+	_push_wip_commits_on_exit
+	if [[ "${_WORKER_DIRTY_WORK_PRESERVED:-0}" == "1" ]]; then
+		if _recover_dirty_worker_pr "$session_key"; then
+			reason="worker_complete"
+		else
+			reason="worker_dirty_work_preserved"
+		fi
+	fi
+	if declare -F _emit_worker_runtime_event >/dev/null 2>&1; then
+		if [[ "$reason" == "worker_complete" ]]; then
+			_emit_worker_runtime_event "worker.completed" "recovered" "$reason"
+		else
+			_emit_worker_runtime_event "worker.failed" "failed" "$reason"
+		fi
+	fi
+	if declare -F _hrw_record_terminal_outcome >/dev/null 2>&1; then
+		local terminal_outcome="failed"
+		local complete_reason="${_HRW_REASON_WORKER_COMPLETE:-worker_complete}"
+		[[ "$reason" == "$complete_reason" ]] && terminal_outcome="success"
+		_hrw_record_terminal_outcome "$session_key" "$terminal_outcome" "$reason"
+	fi
+	if declare -F _cleanup_headless_runtime_temp_paths >/dev/null 2>&1; then
+		_cleanup_headless_runtime_temp_paths
+	fi
+	_release_dispatch_claim "$session_key" "$reason" "$exit_status" "$session_count"
+	_release_session_lock "$session_key"
+	_update_dispatch_ledger "$session_key" "fail"
+	if [[ "$force_nonzero_exit" -eq 1 ]]; then
+		trap - EXIT
+		exit "$exit_status"
+	fi
+	return 0
+}
+
+#######################################
+# Classify worker termination and post CLAIM_RELEASED. Falls back to
+# process_exit when runtime/session evidence cannot identify the cause.
+# Args: $1=session_key (baked into the EXIT trap at registration time)
+# Globals: _WORKER_START_EPOCH_MS, _WORKER_ISOLATED_DB_PATH,
+# _WORKER_WORKTREE_PATH, _WORKER_EXIT_CODE_FILE, _WORKER_RUNTIME_LAUNCH_STARTED
 #######################################
 _exit_trap_handler() {
 	local session_key="$1"
@@ -905,11 +943,19 @@ _exit_trap_handler() {
 	local reason="$_HRFF_FALLBACK_EXIT"
 	local session_count=0
 	local ledger_terminal_reason=""
+	local force_nonzero_exit=0
 	if [[ -x "${DISPATCH_LEDGER_HELPER:-}" && -n "${AIDEVOPS_DISPATCH_LEASE_TOKEN:-}" ]]; then
 		ledger_terminal_reason=$("$DISPATCH_LEDGER_HELPER" terminal-reason --session-key "$session_key" \
 			--lease-token "$AIDEVOPS_DISPATCH_LEASE_TOKEN" 2>/dev/null) || ledger_terminal_reason=""
 	fi
-	if [[ -n "$ledger_terminal_reason" ]]; then
+	if [[ "${_WORKER_RUNTIME_LAUNCH_STARTED:-0}" != "1" ]]; then
+		reason="${_WORKER_PRELAUNCH_FAILURE_REASON:-$_HRFF_PRELAUNCH_NOT_INVOKED}"
+		print_warning "[exit-trap] runtime invocation never started after worker preparation; reason=${reason}"
+		if [[ ! "$exit_status" =~ ^[1-9][0-9]*$ ]]; then
+			exit_status=1
+			force_nonzero_exit=1
+		fi
+	elif [[ -n "$ledger_terminal_reason" ]]; then
 		reason="$ledger_terminal_reason"
 		print_info "[exit-trap] using dispatch ledger terminal reason: $reason"
 	elif [[ -n "${_WORKER_PRELAUNCH_FAILURE_REASON:-}" ]]; then
@@ -942,37 +988,10 @@ _exit_trap_handler() {
 		fi
 	fi
 
-	print_info "[exit-trap] session=$session_key exit=$exit_status reason=$reason session_count=$session_count"
 	# t2923/GH#22965: Preserve WIP before releasing the claim so re-dispatch can
 	# continue from the pushed branch instead of starting over. Dirty preserved
 	# work is reported distinctly to avoid zero-output brief-rewrite holds.
-	_push_wip_commits_on_exit
-	if [[ "${_WORKER_DIRTY_WORK_PRESERVED:-0}" == "1" ]]; then
-		if _recover_dirty_worker_pr "$session_key"; then
-			reason="worker_complete"
-		else
-			reason="worker_dirty_work_preserved"
-		fi
-	fi
-	if declare -F _emit_worker_runtime_event >/dev/null 2>&1; then
-		if [[ "$reason" == "worker_complete" ]]; then
-			_emit_worker_runtime_event "worker.completed" "recovered" "$reason"
-		else
-			_emit_worker_runtime_event "worker.failed" "failed" "$reason"
-		fi
-	fi
-	if declare -F _hrw_record_terminal_outcome >/dev/null 2>&1; then
-		local terminal_outcome="failed"
-		local complete_reason="${_HRW_REASON_WORKER_COMPLETE:-worker_complete}"
-		[[ "$reason" == "$complete_reason" ]] && terminal_outcome="success"
-		_hrw_record_terminal_outcome "$session_key" "$terminal_outcome" "$reason"
-	fi
-	if declare -F _cleanup_headless_runtime_temp_paths >/dev/null 2>&1; then
-		_cleanup_headless_runtime_temp_paths
-	fi
-	_release_dispatch_claim "$session_key" "$reason" "$exit_status" "$session_count"
-	_release_session_lock "$session_key"
-	_update_dispatch_ledger "$session_key" "fail"
+	_hrff_finalize_exit_trap "$session_key" "$reason" "$exit_status" "$session_count" "$force_nonzero_exit"
 	return 0
 }
 

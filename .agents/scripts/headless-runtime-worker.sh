@@ -1705,9 +1705,19 @@ _hrw_permission_pending_path() {
 	return 0
 }
 
+_hrw_mark_runtime_launch_started() {
+	local session_key="$1"
+	local runtime="$2"
+	_WORKER_RUNTIME_LAUNCH_STARTED=1
+	print_info "[lifecycle] pre_runtime_launch session=${session_key} runtime=${runtime} pid=$$"
+	return 0
+}
+
 _cmd_run_prepare() {
 	local session_key="$1"
 	local work_dir="$2"
+	_WORKER_RUNTIME_LAUNCH_STARTED=0
+	unset _WORKER_PRELAUNCH_FAILURE_REASON 2>/dev/null || true
 
 	# t2983 Fix C: Worker-role guard — WORKER_WORKTREE_PATH must be set.
 	# After GH#21353 (Fix A), the dispatcher never launches a worker when
@@ -1780,11 +1790,17 @@ _cmd_run_prepare() {
 	# the 10-15 minute gap between dispatch and PR creation.
 	_register_dispatch_ledger "$session_key" "$work_dir"
 	if [[ -n "${AIDEVOPS_DISPATCH_LEASE_TOKEN:-}" && -n "${WORKER_ISSUE_NUMBER:-}" && -n "${DISPATCH_REPO_SLUG:-}" ]]; then
-		"${SCRIPT_DIR}/dispatch-ledger-helper.sh" ready --session-key "$session_key" \
-			--lease-token "$AIDEVOPS_DISPATCH_LEASE_TOKEN" 2>/dev/null || return 1
-		"${SCRIPT_DIR}/dispatch-claim-helper.sh" transition ready "$WORKER_ISSUE_NUMBER" \
+		if ! "${SCRIPT_DIR}/dispatch-ledger-helper.sh" ready --session-key "$session_key" \
+			--lease-token "$AIDEVOPS_DISPATCH_LEASE_TOKEN" 2>/dev/null; then
+			_WORKER_PRELAUNCH_FAILURE_REASON="worker_ledger_ready_failed"
+			return 1
+		fi
+		if ! "${SCRIPT_DIR}/dispatch-claim-helper.sh" transition ready "$WORKER_ISSUE_NUMBER" \
 			"$DISPATCH_REPO_SLUG" "$AIDEVOPS_DISPATCH_LEASE_TOKEN" "$session_key" \
-			"${AIDEVOPS_DISPATCH_READY_LEASE_TTL:-7200}" 2>/dev/null || return 1
+			"${AIDEVOPS_DISPATCH_READY_LEASE_TTL:-7200}" 2>/dev/null; then
+			_WORKER_PRELAUNCH_FAILURE_REASON="worker_claim_ready_transition_failed"
+			return 1
+		fi
 	fi
 	return 0
 }

@@ -1253,6 +1253,9 @@ _worker_failure_reason_is_launch_preflight() {
 	case "$reason" in
 	worker_launch_rc_2 | \
 	worker_worktree_live_owner | \
+	worker_runtime_not_invoked | \
+	worker_ledger_ready_failed | \
+	worker_claim_ready_transition_failed | \
 	dispatch_aborted:worker_launch_rc_2 | \
 	canary_preflight | \
 	*"canary preflight failed"* | \

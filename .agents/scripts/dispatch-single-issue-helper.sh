@@ -606,6 +606,18 @@ _dsi_ps_worker_lines() {
 }
 
 #######################################
+# Check whether a PID is currently signalable by this runner.
+# Tests override this function with deterministic process fixtures.
+# Args: $1 - PID
+# Returns: 0 live, 1 dead/inaccessible
+#######################################
+_dsi_pid_is_live() {
+	local pid="$1"
+	kill -0 "$pid" 2>/dev/null
+	return $?
+}
+
+#######################################
 # Check if a command line belongs to a worker for an issue number.
 # Args: $1 - issue number, $2 - command line
 # Returns: 0 match, 1 no match
@@ -720,6 +732,51 @@ _dsi_print_dispatch_details() {
 	_dsi_info "  Existing worktree:${worktree_path}"
 	_dsi_info "  Existing session: ${session_key}"
 	return 0
+}
+
+#######################################
+# Verify that a ledger record still names the same live worker process.
+# A lease can intentionally outlive its local PID for cross-runner dedup, so
+# launch-worker status must independently validate PID liveness plus the
+# session, worktree, issue, and repository encoded in the process command.
+# Args: $1 - issue number, $2 - repo slug, $3 - ledger TSV record
+# Returns: 0 verified live worker, 1 stale/dead/reused PID evidence
+#######################################
+_dsi_ledger_record_has_live_identity() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local record="$3"
+	local source="" pid="" log_path="" worktree_path="" session_key=""
+	IFS=$'\t' read -r source pid log_path worktree_path session_key <<<"$record"
+
+	[[ "$source" == "ledger" && "$pid" =~ ^[0-9]+$ ]] || return 1
+	[[ -n "$session_key" && "$session_key" != "$_DSI_UNKNOWN_VALUE" ]] || return 1
+	[[ -n "$worktree_path" && "$worktree_path" != "$_DSI_UNKNOWN_VALUE" ]] || return 1
+	_dsi_pid_is_live "$pid" || return 1
+
+	local line="" process_pid="" stat="" cmd=""
+	local process_session="" process_worktree="" process_repo=""
+	while IFS= read -r line; do
+		[[ -n "$line" ]] || continue
+		process_pid="${line%%[[:space:]]*}"
+		[[ "$process_pid" == "$pid" ]] || continue
+		line="${line#*[[:space:]]}"
+		stat="${line%%[[:space:]]*}"
+		cmd="${line#*[[:space:]]}"
+		[[ "$stat" != *Z* && "$stat" != *T* ]] || return 1
+		[[ "$cmd" == *"headless-runtime-helper.sh"* ]] || return 1
+
+		process_session=$(printf '%s' "$cmd" | sed -n 's/.*--session-key[[:space:]]\([^[:space:]]*\).*/\1/p')
+		[[ "$process_session" == "$session_key" ]] || return 1
+		process_worktree=$(_dsi_extract_worktree_from_cmd "$cmd")
+		[[ "$process_worktree" == "$worktree_path" ]] || return 1
+		_dsi_cmd_matches_issue "$issue_number" "$cmd" || return 1
+		process_repo=$(_dsi_repo_slug_for_worktree "$process_worktree")
+		[[ "$process_repo" == "$repo_slug" ]] || return 1
+		return 0
+	done < <(_dsi_ps_worker_lines)
+
+	return 1
 }
 
 #######################################
@@ -1531,7 +1588,8 @@ cmd_status() {
 	fi
 
 	local record=""
-	if record=$(_dsi_find_ledger_dispatch "$issue_number" "$repo_slug"); then
+	if record=$(_dsi_find_ledger_dispatch "$issue_number" "$repo_slug") &&
+		_dsi_ledger_record_has_live_identity "$issue_number" "$repo_slug" "$record"; then
 		_dsi_ok "Active dispatch for #${issue_number} (${repo_slug}):"
 		_dsi_print_dispatch_details "$record"
 		return 0

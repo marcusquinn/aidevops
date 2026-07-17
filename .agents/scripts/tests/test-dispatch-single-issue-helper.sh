@@ -44,6 +44,7 @@ MOCK_GH_REST_LOGIN_MODE="success"
 MOCK_GH_GRAPHQL_LOGIN_MODE="success"
 MOCK_GH_CALL_LOG=""
 MOCK_PS_LINES=""
+MOCK_LIVE_PIDS=""
 MOCK_LEDGER_RECORD=""
 MOCK_GIT_WORKTREE_LIST="0"
 MOCK_REPO_PATH=""
@@ -227,6 +228,16 @@ gh() {
 _dsi_ps_worker_lines() {
 	printf '%s\n' "$MOCK_PS_LINES"
 	return 0
+}
+
+# shellcheck disable=SC2317
+_dsi_pid_is_live() {
+	local pid="$1"
+	local live_pid=""
+	for live_pid in $MOCK_LIVE_PIDS; do
+		[[ "$pid" == "$live_pid" ]] && return 0
+	done
+	return 1
 }
 
 # shellcheck disable=SC2317
@@ -1269,6 +1280,48 @@ test_status_reports_live_process_without_ledger() {
 	return 0
 }
 
+test_status_rejects_dead_or_reused_ledger_pid() {
+	MOCK_LEDGER_RECORD=$'ledger\t888\t/tmp/manual.log\t/tmp/aidevops-existing\tmanual-cli-12345-1'
+	MOCK_LIVE_PIDS=""
+	MOCK_PS_LINES=""
+
+	local out="" rc=0
+	out=$(cmd_status 12345 owner/repo 2>&1) || rc=$?
+	local dead_rejected=1
+	[[ "$rc" -eq 0 && "$out" == *"No active dispatch"* && "$out" != *"Active dispatch"* ]] && dead_rejected=0
+	print_result "status rejects a dead ledger PID despite active lease evidence" "$dead_rejected" "rc=$rc output=$out"
+
+	MOCK_LIVE_PIDS="888"
+	MOCK_PS_LINES='888 S bash /tmp/unrelated-process --session-key unrelated --dir /tmp/aidevops-existing'
+	rc=0
+	out=$(cmd_status 12345 owner/repo 2>&1) || rc=$?
+	local reused_rejected=1
+	[[ "$rc" -eq 0 && "$out" == *"No active dispatch"* && "$out" != *"Active dispatch"* ]] && reused_rejected=0
+	print_result "status rejects a reused PID with mismatched worker identity" "$reused_rejected" "rc=$rc output=$out"
+
+	MOCK_LEDGER_RECORD=""
+	MOCK_LIVE_PIDS=""
+	MOCK_PS_LINES=""
+	return 0
+}
+
+test_status_accepts_live_identity_matched_ledger_pid() {
+	MOCK_LEDGER_RECORD=$'ledger\t888\t/tmp/manual.log\t/tmp/aidevops-existing\tmanual-cli-12345-1'
+	MOCK_LIVE_PIDS="888"
+	MOCK_PS_LINES='888 S bash /Users/test/.aidevops/agents/scripts/headless-runtime-helper.sh run --role worker --session-key manual-cli-12345-1 --dir /tmp/aidevops-existing --title Issue #12345'
+
+	local out="" rc=0
+	out=$(cmd_status 12345 owner/repo 2>&1) || rc=$?
+	local active=1
+	[[ "$rc" -eq 0 && "$out" == *"Active dispatch"* && "$out" == *"Existing session: manual-cli-12345-1"* ]] && active=0
+	print_result "status accepts a live identity-matched ledger PID" "$active" "rc=$rc output=$out"
+
+	MOCK_LEDGER_RECORD=""
+	MOCK_LIVE_PIDS=""
+	MOCK_PS_LINES=""
+	return 0
+}
+
 # -----------------------------------------------------------------------------
 # Runner
 # -----------------------------------------------------------------------------
@@ -1327,6 +1380,8 @@ _run_tests() {
 	test_guard_blocks_ledger_duplicate
 	test_guard_blocks_live_worktree_duplicate
 	test_status_reports_live_process_without_ledger
+	test_status_rejects_dead_or_reused_ledger_pid
+	test_status_accepts_live_identity_matched_ledger_pid
 
 	echo
 	echo "======================================"
