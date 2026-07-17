@@ -109,11 +109,12 @@ _prrts_escalation_threshold() {
 _prrts_should_escalate_attempt() {
 	local attempt_count="$1"
 	local repeated_same_fingerprint="$2"
+	local same_head_sha="$3"
 	local threshold=""
 	[[ "$attempt_count" =~ ^[0-9]+$ ]] || attempt_count=0
 	threshold="$(_prrts_escalation_threshold)"
 	[[ "$threshold" =~ ^[0-9]+$ ]] || threshold=3
-	[[ "$threshold" -gt 0 && "$repeated_same_fingerprint" == "$PRRTS_BOOL_TRUE" && "$attempt_count" -ge "$threshold" ]]
+	[[ "$threshold" -gt 0 && "$repeated_same_fingerprint" == "$PRRTS_BOOL_TRUE" && "$same_head_sha" == "$PRRTS_BOOL_TRUE" && "$attempt_count" -ge "$threshold" ]]
 	return $?
 }
 
@@ -337,8 +338,8 @@ _prrts_list_open_prs() {
 	local limit=""
 	limit="$(_prrts_normalise_int "$PR_REVIEW_THREAD_RESPONSE_PR_LIMIT" "50" "1")"
 	gh pr list --repo "$repo_slug" --state open --limit "$limit" \
-		--json number,title,isDraft,labels,headRefName,author \
-		--jq '.[] | [.number, (.title // "" | gsub("[\t\r\n]"; " ")), (.isDraft | tostring), ([.labels[].name] | join(",")), (.headRefName // ""), (.author.login // "")] | @tsv'
+		--json number,title,isDraft,labels,headRefName,headRefOid,author \
+		--jq '.[] | [.number, (.title // "" | gsub("[\t\r\n]"; " ")), (.isDraft | tostring), ([.labels[].name] | join(",")), (.headRefName // ""), (.headRefOid // ""), (.author.login // "")] | @tsv'
 	return $?
 }
 
@@ -425,11 +426,13 @@ _prrts_review_thread_summary() {
 cmd_scan_pr() {
 	local repo_slug="$1"
 	local pr_number="$2"
-	local title head_ref author summary rc
+	local title head_ref head_oid author metadata summary rc
 	local thread_count fingerprint preview
 	title="PR #${pr_number}"
 	head_ref=""
+	head_oid=""
 	author=""
+	metadata=""
 	summary=""
 	rc=0
 	thread_count=""
@@ -440,6 +443,13 @@ cmd_scan_pr() {
 		_prrts_usage >&2
 		return 2
 	}
+	metadata=$(gh pr view "$pr_number" --repo "$repo_slug" \
+		--json title,headRefName,headRefOid,author \
+		--jq '[(.title // "" | gsub("[\t\r\n]"; " ")), (.headRefName // ""), (.headRefOid // ""), (.author.login // "")] | @tsv' \
+		2>/dev/null || true)
+	if [[ -n "$metadata" ]]; then
+		IFS=$'\t' read -r title head_ref head_oid author <<<"$metadata"
+	fi
 	summary="$(_prrts_review_thread_summary "$repo_slug" "$pr_number")" || rc=$?
 	if [[ "$rc" -ne 0 ]]; then
 		_prrts_log "scan-pr: ${repo_slug}#${pr_number} skipped — review-thread fetch failed"
@@ -448,8 +458,8 @@ cmd_scan_pr() {
 	IFS=$'\t' read -r thread_count fingerprint preview <<<"$summary"
 	[[ "$thread_count" =~ ^[0-9]+$ ]] || thread_count=0
 	if [[ "$thread_count" -gt 0 ]]; then
-		printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
-			"$pr_number" "$thread_count" "$fingerprint" "$title" "$head_ref" "$author" "$preview"
+		printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+			"$pr_number" "$thread_count" "$fingerprint" "$title" "$head_ref" "$head_oid" "$author" "$preview"
 	fi
 	return 0
 }
@@ -472,7 +482,7 @@ _prrts_scan_repo_to_files() {
 	local candidates_file="$2"
 	local status_file="$3"
 	local pr_rows="" summary="" rc=0
-	local pr_number="" title="" is_draft="" labels="" head_ref="" author=""
+	local pr_number="" title="" is_draft="" labels="" head_ref="" head_oid="" author=""
 	local thread_count="" fingerprint="" preview=""
 	local checked_count=0 fetch_error_count=0 graphql_exhausted_count=0
 
@@ -487,7 +497,7 @@ _prrts_scan_repo_to_files() {
 		return 0
 	}
 
-	while IFS=$'\t' read -r pr_number title is_draft labels head_ref author; do
+	while IFS=$'\t' read -r pr_number title is_draft labels head_ref head_oid author; do
 		[[ -n "$pr_number" ]] || continue
 		if [[ "$is_draft" == "$PRRTS_BOOL_TRUE" ]]; then
 			_prrts_log "scan: ${repo_slug}#${pr_number} skipped — draft PR"
@@ -514,8 +524,8 @@ _prrts_scan_repo_to_files() {
 		IFS=$'\t' read -r thread_count fingerprint preview <<<"$summary"
 		[[ "$thread_count" =~ ^[0-9]+$ ]] || thread_count=0
 		if [[ "$thread_count" -gt 0 ]]; then
-			printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
-				"$pr_number" "$thread_count" "$fingerprint" "$title" "$head_ref" "$author" "$preview"
+			printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+				"$pr_number" "$thread_count" "$fingerprint" "$title" "$head_ref" "$head_oid" "$author" "$preview"
 		fi >>"$candidates_file"
 	done <<<"$pr_rows"
 	{
@@ -724,9 +734,11 @@ _prrts_read_state() {
 	local analysis_complete_var="${5:-}"
 	local blocked_by_var="${6:-}"
 	local maintainer_attention_var="${7:-}"
+	local head_sha_var="${8:-}"
 	local key="" value=""
 	local state_fingerprint="" state_dispatched_at="0"
 	local state_attempt_count="0"
+	local state_last_head_sha=""
 	local state_analysis_complete="$PRRTS_BOOL_FALSE" state_blocked_by="" state_maintainer_attention="$PRRTS_BOOL_FALSE"
 	if [[ -f "$state_file" ]]; then
 		while IFS='=' read -r key value; do
@@ -734,6 +746,7 @@ _prrts_read_state() {
 			fingerprint) state_fingerprint="$value" ;;
 			dispatched_at) state_dispatched_at="$value" ;;
 			attempt_count) state_attempt_count="$value" ;;
+			last_head_sha) state_last_head_sha="$value" ;;
 			analysis_complete) state_analysis_complete="$value" ;;
 			blocked_by) state_blocked_by="$value" ;;
 			maintainer_attention) state_maintainer_attention="$value" ;;
@@ -758,6 +771,9 @@ _prrts_read_state() {
 	if [[ -n "$maintainer_attention_var" ]]; then
 		printf -v "$maintainer_attention_var" '%s' "$state_maintainer_attention"
 	fi
+	if [[ -n "$head_sha_var" ]]; then
+		printf -v "$head_sha_var" '%s' "$state_last_head_sha"
+	fi
 	return 0
 }
 
@@ -766,24 +782,35 @@ _prrts_should_dispatch() {
 	local pr_number="$2"
 	local fingerprint="$3"
 	local now_epoch="$4"
-	local attempt_var="${5:-}"
-	local repeated_var="${6:-}"
+	local current_head_sha="$5"
+	local attempt_var="${6:-}"
+	local repeated_var="${7:-}"
+	local same_head_var="${8:-}"
 	local state_file="" last_fingerprint="" dispatched_at="0" cooldown="" inflight_ttl="" age_seconds="0"
 	local last_attempt_count="0" next_attempt_count="1" state_repeated_same_fingerprint="$PRRTS_BOOL_FALSE"
+	local last_head_sha="" state_same_head_sha="$PRRTS_BOOL_FALSE"
 	local analysis_complete="$PRRTS_BOOL_FALSE" blocked_by="" maintainer_attention="$PRRTS_BOOL_FALSE"
 	state_file="$(_prrts_state_file "$repo_slug" "$pr_number")"
 	cooldown="$(_prrts_normalise_int "$PR_REVIEW_THREAD_RESPONSE_COOLDOWN" "3600" "60")"
 	inflight_ttl="$(_prrts_normalise_int "$PR_REVIEW_THREAD_RESPONSE_INFLIGHT_TTL" "300" "1")"
-	_prrts_read_state "$state_file" last_fingerprint dispatched_at last_attempt_count analysis_complete blocked_by maintainer_attention
+	_prrts_read_state "$state_file" last_fingerprint dispatched_at last_attempt_count analysis_complete blocked_by maintainer_attention last_head_sha
 	if [[ -n "$last_fingerprint" && "$fingerprint" == "$last_fingerprint" ]]; then
-		state_repeated_same_fingerprint="$PRRTS_BOOL_TRUE"
-		next_attempt_count=$((last_attempt_count + 1))
+		state_same_head_sha="$PRRTS_BOOL_TRUE"
+		if [[ -n "$last_head_sha" && -n "$current_head_sha" && "$current_head_sha" != "$last_head_sha" ]]; then
+			state_same_head_sha="$PRRTS_BOOL_FALSE"
+		else
+			state_repeated_same_fingerprint="$PRRTS_BOOL_TRUE"
+			next_attempt_count=$((last_attempt_count + 1))
+		fi
 	fi
 	if [[ -n "$attempt_var" ]]; then
 		printf -v "$attempt_var" '%s' "$next_attempt_count"
 	fi
 	if [[ -n "$repeated_var" ]]; then
 		printf -v "$repeated_var" '%s' "$state_repeated_same_fingerprint"
+	fi
+	if [[ -n "$same_head_var" ]]; then
+		printf -v "$same_head_var" '%s' "$state_same_head_sha"
 	fi
 
 	if _prrts_worker_active "$repo_slug" "$pr_number"; then
@@ -799,7 +826,7 @@ _prrts_should_dispatch() {
 		_prrts_log "dispatch: ${repo_slug}#${pr_number} skipped — dispatch state active ${age_seconds}s ago"
 		return 1
 	fi
-	if [[ "$fingerprint" == "$last_fingerprint" && "$age_seconds" -lt "$cooldown" ]]; then
+	if [[ "$state_repeated_same_fingerprint" == "$PRRTS_BOOL_TRUE" && "$state_same_head_sha" == "$PRRTS_BOOL_TRUE" && "$age_seconds" -lt "$cooldown" ]]; then
 		_prrts_log "dispatch: ${repo_slug}#${pr_number} skipped — same thread fingerprint dispatched ${age_seconds}s ago"
 		return 1
 	fi
@@ -814,6 +841,7 @@ _prrts_write_state() {
 	local now_epoch="$5"
 	local attempt_count="${6:-1}"
 	local maintainer_attention="${7:-false}"
+	local head_sha="${8:-}"
 	local state_file=""
 	_prrts_ensure_dirs
 	[[ "$attempt_count" =~ ^[0-9]+$ ]] || attempt_count=1
@@ -823,6 +851,7 @@ _prrts_write_state() {
 		printf 'dispatched_at=%s\n' "$now_epoch"
 		printf 'thread_count=%s\n' "$thread_count"
 		printf 'attempt_count=%s\n' "$attempt_count"
+		printf 'last_head_sha=%s\n' "$head_sha"
 		if [[ "$maintainer_attention" == "$PRRTS_BOOL_TRUE" ]]; then
 			printf 'maintainer_attention=true\n'
 			printf 'attention_reason=same_unresolved_thread_fingerprint\n'
@@ -845,7 +874,7 @@ _prrts_write_analysis_state() {
 	local value=""
 	local now_epoch=""
 	local details=""
-	local fingerprint="" dispatched_at="0" thread_count="0" attempt_count="0"
+	local fingerprint="" dispatched_at="0" thread_count="0" attempt_count="0" last_head_sha=""
 	_prrts_ensure_dirs
 	state_file="$(_prrts_state_file "$repo_slug" "$pr_number")"
 	if [[ -f "$state_file" ]]; then
@@ -855,6 +884,7 @@ _prrts_write_analysis_state() {
 			dispatched_at) dispatched_at="$value" ;;
 			thread_count) thread_count="$value" ;;
 			attempt_count) attempt_count="$value" ;;
+			last_head_sha) last_head_sha="$value" ;;
 			esac
 		done <"$state_file"
 	fi
@@ -875,6 +905,7 @@ _prrts_write_analysis_state() {
 		printf 'dispatched_at=%s\n' "$dispatched_at"
 		printf 'thread_count=%s\n' "$thread_count"
 		printf 'attempt_count=%s\n' "$attempt_count"
+		printf 'last_head_sha=%s\n' "$last_head_sha"
 		printf 'analysis_complete=%s\n' "$analysis_complete"
 		printf 'blocked_by=%s\n' "$blocked_by"
 		printf 'maintainer_attention=%s\n' "$maintainer_attention"
@@ -1041,22 +1072,23 @@ _prrts_dispatch_guarded() {
 	local dry_run="$9"
 	local dispatch_mode="${10}"
 	local head_ref="${11:-}"
-	local author="${12:-}"
+	local head_oid="${12:-}"
+	local author="${13:-}"
 	local lock_dir=""
-	local attempt_count="1" repeated_same_fingerprint="$PRRTS_BOOL_FALSE" maintainer_attention="$PRRTS_BOOL_FALSE"
+	local attempt_count="1" repeated_same_fingerprint="$PRRTS_BOOL_FALSE" same_head_sha="$PRRTS_BOOL_FALSE" maintainer_attention="$PRRTS_BOOL_FALSE"
 	if ! _prrts_acquire_dispatch_lock "$repo_slug" "$pr_number" lock_dir; then
 		return 1
 	fi
-	if ! _prrts_should_dispatch "$repo_slug" "$pr_number" "$fingerprint" "$now_epoch" attempt_count repeated_same_fingerprint; then
+	if ! _prrts_should_dispatch "$repo_slug" "$pr_number" "$fingerprint" "$now_epoch" "$head_oid" attempt_count repeated_same_fingerprint same_head_sha; then
 		_prrts_remove_lock_dir "$lock_dir"
 		return 1
 	fi
-	if _prrts_should_escalate_attempt "$attempt_count" "$repeated_same_fingerprint"; then
+	if _prrts_should_escalate_attempt "$attempt_count" "$repeated_same_fingerprint" "$same_head_sha"; then
 		maintainer_attention="$PRRTS_BOOL_TRUE"
 		if [[ "$dry_run" == "$PRRTS_BOOL_TRUE" ]]; then
 			printf 'DRY-RUN would escalate %s#%s after %s repeated unresolved thread attempt(s)\n' "$repo_slug" "$pr_number" "$attempt_count"
 		else
-			_prrts_write_state "$repo_slug" "$pr_number" "$fingerprint" "$thread_count" "$now_epoch" "$attempt_count" "$maintainer_attention"
+			_prrts_write_state "$repo_slug" "$pr_number" "$fingerprint" "$thread_count" "$now_epoch" "$attempt_count" "$maintainer_attention" "$head_oid"
 			_prrts_log "dispatch: ${repo_slug}#${pr_number} not launching response worker — same unresolved thread fingerprint reached attempt ${attempt_count}; maintainer attention recommended (local state/log only, no GitHub write)"
 		fi
 		_prrts_remove_lock_dir "$lock_dir"
@@ -1076,7 +1108,7 @@ _prrts_dispatch_guarded() {
 		_prrts_remove_lock_dir "$lock_dir"
 		return 1
 	fi
-	_prrts_write_state "$repo_slug" "$pr_number" "$fingerprint" "$thread_count" "$now_epoch" "$attempt_count" "$maintainer_attention"
+	_prrts_write_state "$repo_slug" "$pr_number" "$fingerprint" "$thread_count" "$now_epoch" "$attempt_count" "$maintainer_attention" "$head_oid"
 	_prrts_remove_lock_dir "$lock_dir"
 	return 0
 }
@@ -1086,7 +1118,7 @@ _prrts_dispatch_repo() {
 	local repo_path="$2"
 	local dry_run="$3"
 	local candidates="" candidates_file="" status_file="" now_epoch="" max_per_repo="" dispatched=0
-	local pr_number="" thread_count="" fingerprint="" title="" head_ref="" author="" preview=""
+	local pr_number="" thread_count="" fingerprint="" title="" head_ref="" head_oid="" author="" preview=""
 	local checked_count=0 fetch_error_count=0 graphql_exhausted_count=0 list_failed=0
 	local status_key="" status_value=""
 	local cursor="" last_considered=""
@@ -1136,10 +1168,10 @@ _prrts_dispatch_repo() {
 	if [[ -n "$cursor" ]]; then
 		_prrts_log "dispatch: ${repo_slug} rotated candidates after cursor PR #${cursor}"
 	fi
-	while IFS=$'\t' read -r pr_number thread_count fingerprint title head_ref author preview; do
+	while IFS=$'\t' read -r pr_number thread_count fingerprint title head_ref head_oid author preview; do
 		[[ -n "$pr_number" ]] || continue
 		last_considered="$pr_number"
-		if _prrts_dispatch_guarded "$repo_slug" "$repo_path" "$pr_number" "$title" "$thread_count" "$fingerprint" "$preview" "$now_epoch" "$dry_run" "dispatch" "$head_ref" "$author"; then
+		if _prrts_dispatch_guarded "$repo_slug" "$repo_path" "$pr_number" "$title" "$thread_count" "$fingerprint" "$preview" "$now_epoch" "$dry_run" "dispatch" "$head_ref" "$head_oid" "$author"; then
 			dispatched=$((dispatched + 1))
 		fi
 		[[ "$dispatched" -lt "$max_per_repo" ]] || break
@@ -1161,13 +1193,14 @@ _prrts_dispatch_pr() {
 	local repo_path="$2"
 	local pr_number="$3"
 	local dry_run="$4"
-	local candidate now_epoch thread_count fingerprint title head_ref author preview
+	local candidate now_epoch thread_count fingerprint title head_ref head_oid author preview
 	candidate=""
 	now_epoch=""
 	thread_count=""
 	fingerprint=""
 	title=""
 	head_ref=""
+	head_oid=""
 	author=""
 	preview=""
 
@@ -1182,8 +1215,8 @@ _prrts_dispatch_pr() {
 		return 0
 	}
 	now_epoch="$(date +%s)"
-	IFS=$'\t' read -r pr_number thread_count fingerprint title head_ref author preview <<<"$candidate"
-	if _prrts_dispatch_guarded "$repo_slug" "$repo_path" "$pr_number" "$title" "$thread_count" "$fingerprint" "$preview" "$now_epoch" "$dry_run" "dispatch-pr" "$head_ref" "$author"; then
+	IFS=$'\t' read -r pr_number thread_count fingerprint title head_ref head_oid author preview <<<"$candidate"
+	if _prrts_dispatch_guarded "$repo_slug" "$repo_path" "$pr_number" "$title" "$thread_count" "$fingerprint" "$preview" "$now_epoch" "$dry_run" "dispatch-pr" "$head_ref" "$head_oid" "$author"; then
 		if [[ "$dry_run" != "$PRRTS_BOOL_TRUE" ]]; then
 			_prrts_log "dispatch-pr: ${repo_slug}#${pr_number} completed, dispatched=1, include_human=${PR_REVIEW_THREAD_RESPONSE_INCLUDE_HUMAN}"
 		fi

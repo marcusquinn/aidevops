@@ -35,7 +35,11 @@ if [[ "$1" == "api" && "${2:-}" == "rate_limit" ]]; then
 	exit 0
 fi
 if [[ "$1" == "pr" && "${2:-}" == "list" ]]; then
-	printf '%s\n' "${STUB_PR_LIST:-1	Fix active PR	false	origin:worker	feature/review	worker-bot}"
+	printf '%s\n' "${STUB_PR_LIST:-1	Fix active PR	false	origin:worker	feature/review	HEAD1	worker-bot}"
+	exit 0
+fi
+if [[ "$1" == "pr" && "${2:-}" == "view" ]]; then
+	printf '%s\n' "${STUB_PR_VIEW:-Fix active PR	feature/review	HEAD1	worker-bot}"
 	exit 0
 fi
 if [[ "$1" == "api" && "${2:-}" == "graphql" ]]; then
@@ -107,7 +111,7 @@ GH_STUB
 }
 
 setup_test_env() {
-	unset STUB_PR_LIST STUB_THREADS_MODE PR_REVIEW_THREAD_RESPONSE_ESCALATE_AFTER
+	unset STUB_PR_LIST STUB_PR_VIEW STUB_THREADS_MODE PR_REVIEW_THREAD_RESPONSE_ESCALATE_AFTER
 	TEST_ROOT="$(mktemp -d -t prrts.XXXXXX)"
 	export HOME="${TEST_ROOT}/home"
 	export LOGFILE="${TEST_ROOT}/scanner.log"
@@ -397,6 +401,36 @@ test_dispatch_escalates_repeated_same_fingerprint_without_worker_loop() {
 		print_result "dispatch escalates repeated same fingerprint without worker loop" 0
 	else
 		print_result "dispatch escalates repeated same fingerprint without worker loop" 1 "headless=$(wc -c <"$HEADLESS_LOG" 2>/dev/null || printf 0), state=$(tr '\n' ';' <"$state_file" 2>/dev/null || printf ''), log=$(tr '\n' ';' <"$LOGFILE" 2>/dev/null || printf '')"
+	fi
+	teardown_test_env
+	return 0
+}
+
+test_new_head_sha_resets_repeated_fingerprint_attempts() {
+	setup_test_env
+	$SCANNER dispatch owner/repo "${TEST_ROOT}/repo"
+	wait_for_headless_log || true
+	local state_file="${AIDEVOPS_PR_REVIEW_THREAD_RESPONSE_STATE_DIR}/owner-repo-1.state"
+	local old_epoch=""
+	old_epoch="$(($(date +%s) - 4000))"
+	expire_state_dispatch_time "$state_file" "$old_epoch"
+	: >"$HEADLESS_LOG"
+	$SCANNER dispatch owner/repo "${TEST_ROOT}/repo"
+	wait_for_headless_log || true
+	old_epoch="$(($(date +%s) - 4000))"
+	expire_state_dispatch_time "$state_file" "$old_epoch"
+	export STUB_PR_LIST=$'1\tFix active PR\tfalse\torigin:worker\tfeature/review\tHEAD2\tworker-bot'
+	: >"$HEADLESS_LOG"
+	$SCANNER dispatch owner/repo "${TEST_ROOT}/repo"
+	wait_for_headless_log || true
+	if [[ -s "$HEADLESS_LOG" ]] && \
+		grep -q '^attempt_count=1$' "$state_file" 2>/dev/null && \
+		grep -q '^last_head_sha=HEAD2$' "$state_file" 2>/dev/null && \
+		! grep -q '^maintainer_attention=true$' "$state_file" 2>/dev/null; then
+		print_result "new head SHA resets repeated-fingerprint escalation attempts" 0
+	else
+		print_result "new head SHA resets repeated-fingerprint escalation attempts" 1 \
+			"headless=$(wc -c <"$HEADLESS_LOG" 2>/dev/null || printf 0), state=$(tr '\n' ';' <"$state_file" 2>/dev/null || printf '')"
 	fi
 	teardown_test_env
 	return 0
@@ -750,6 +784,7 @@ main() {
 	test_dispatch_is_idempotent_for_same_fingerprint
 	test_dispatch_skips_mixed_fingerprint_during_inflight_window
 	test_dispatch_escalates_repeated_same_fingerprint_without_worker_loop
+	test_new_head_sha_resets_repeated_fingerprint_attempts
 	test_mark_blocked_skips_same_fingerprint_without_retry
 	test_no_marker_retry_behavior_is_preserved
 	test_old_state_file_without_completion_fields_still_retries
