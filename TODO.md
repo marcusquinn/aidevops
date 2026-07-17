@@ -4657,3 +4657,5 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [ ] t18153 Clarify authority-aware full-loop lifecycle #bug ref:GH#28112
 
 - [ ] t18155 fix: harden autoagent experiment reliability #enhancement #research #self-improvement ref:GH#28139
+
+- [ ] t18156 Fix OpenCode Tabby status lifecycle across idle and permission waits #bug ref:GH#28140
