@@ -10,6 +10,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.32.146] - 2026-07-17
+
+### Changed
+
+- Maintenance: sync ref:GH#28112 to TODO.md [skip ci]
+- Documentation: clarify empty JSON parameter defaults (#28106)
+
+### Fixed
+
+- enforce active runtime bundle convergence (#28103)
+- bound Pulse idle available-work queries (#28083)
+- harden localdev proxy generation (#28078)
+
 ## [3.32.145] - 2026-07-17
 
 ### Changed
