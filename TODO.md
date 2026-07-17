@@ -4648,4 +4648,4 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [x] t18151 Add audited canonical branch fast-forward workflow #bug ref:GH#28032 pr:#28037 completed:2026-07-16
 
-- [ ] t18152 Restore Pulse temporary-worktree capacity and adaptive timeout recovery #bug ref:GH#28044
+- [x] t18152 Restore Pulse temporary-worktree capacity and adaptive timeout recovery #bug ref:GH#28044 pr:#28045 completed:2026-07-17
