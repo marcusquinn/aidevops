@@ -68,5 +68,27 @@ if [[ "$output" != *"Active runtime bundle mismatch"* || "$output" != *"manifest
 	exit 1
 fi
 
+unset HOME
+if [[ "$(_status_active_bundle_version)" != "stale-process-version" ]]; then
+	printf 'FAIL: unset HOME did not fall back to the process version\n' >&2
+	exit 1
+fi
+output=$(_status_runtime_bundle_integrity)
+if [[ "$output" != *"HOME is not set"* ]]; then
+	printf 'FAIL: unset HOME did not produce a safe integrity warning: %s\n' "$output" >&2
+	exit 1
+fi
+
+HOME=""
+if [[ "$(_status_active_bundle_version)" != "stale-process-version" ]]; then
+	printf 'FAIL: empty HOME did not fall back to the process version\n' >&2
+	exit 1
+fi
+output=$(_status_runtime_bundle_integrity)
+if [[ "$output" != *"HOME is not set"* ]]; then
+	printf 'FAIL: empty HOME did not produce a safe integrity warning: %s\n' "$output" >&2
+	exit 1
+fi
+
 printf '%s\n' 'PASS: status resolves the active bundle and exposes metadata mismatch'
 exit 0

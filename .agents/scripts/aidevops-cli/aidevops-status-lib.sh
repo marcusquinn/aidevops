@@ -153,8 +153,8 @@ _status_bundle_manifest_value() {
 }
 
 _status_active_bundle_version() {
-	local active_version="${HOME:-}/.aidevops/agents/VERSION"
-	if [[ -r "$active_version" ]]; then
+	local active_version="${HOME:+$HOME/.aidevops/agents/VERSION}"
+	if [[ -n "$active_version" && -r "$active_version" ]]; then
 		tr -d '[:space:]' <"$active_version"
 		return 0
 	fi
@@ -163,28 +163,35 @@ _status_active_bundle_version() {
 }
 
 _status_runtime_bundle_integrity() {
-	local active_link="${HOME:-}/.aidevops/agents"
+	local active_link="${HOME:+$HOME/.aidevops/agents}"
 	local active_root=""
+	local bundles_dir="${HOME:+$HOME/.aidevops/runtime-bundles}"
 	local bundles_root=""
 	local manifest_file=""
 	local active_version=""
 	local manifest_status=""
 	local manifest_version=""
 	local manifest_sha=""
+	local deployed_sha_file="${HOME:+$HOME/.aidevops/.deployed-sha}"
 	local deployed_sha=""
+
+	if [[ -z "$active_link" ]]; then
+		print_warning "Active runtime bundle mismatch: HOME is not set"
+		return 0
+	fi
 
 	if [[ ! -L "$active_link" ]]; then
 		print_warning "Active runtime bundle mismatch: agents path is not an activation symlink"
 		return 0
 	fi
 	active_root=$(cd "$active_link" 2>/dev/null && pwd -P) || active_root=""
-	bundles_root=$(cd "${HOME:-}/.aidevops/runtime-bundles" 2>/dev/null && pwd -P) || bundles_root=""
+	bundles_root=$(cd "$bundles_dir" 2>/dev/null && pwd -P) || bundles_root=""
 	manifest_file="$active_root/.bundle-manifest"
 	[[ -r "$active_root/VERSION" ]] && active_version=$(tr -d '[:space:]' <"$active_root/VERSION" 2>/dev/null) || active_version=""
 	[[ -r "$manifest_file" ]] && manifest_status=$(_status_bundle_manifest_value "$manifest_file" status) || manifest_status=""
 	[[ -r "$manifest_file" ]] && manifest_version=$(_status_bundle_manifest_value "$manifest_file" framework_version) || manifest_version=""
 	[[ -r "$manifest_file" ]] && manifest_sha=$(_status_bundle_manifest_value "$manifest_file" git_sha) || manifest_sha=""
-	[[ -r "${HOME:-}/.aidevops/.deployed-sha" ]] && deployed_sha=$(tr -d '[:space:]' <"${HOME}/.aidevops/.deployed-sha" 2>/dev/null) || deployed_sha=""
+	[[ -n "$deployed_sha_file" && -r "$deployed_sha_file" ]] && deployed_sha=$(tr -d '[:space:]' <"$deployed_sha_file" 2>/dev/null) || deployed_sha=""
 
 	if [[ -z "$bundles_root" || "$active_root" != "$bundles_root/"*/agents || "$manifest_status" != "validated" ||
 		-z "$active_version" || -z "$manifest_version" || -z "$manifest_sha" || -z "$deployed_sha" ||
