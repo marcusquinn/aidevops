@@ -16,9 +16,14 @@ GIT_WORKFLOW_DOC="${REPO_ROOT}/.agents/workflows/git-workflow.md"
 PR_LOOP_DOC="${REPO_ROOT}/.agents/workflows/pr-loop.md"
 
 require_text() {
-	local file="$1"
-	local text="$2"
-	local description="$3"
+	local file="${1:-}"
+	local text="${2:-}"
+	local description="${3:-required text missing}"
+
+	if [[ ! -f "$file" ]]; then
+		printf 'FAIL: %s (file missing: %s)\n' "$description" "$file" >&2
+		return 1
+	fi
 
 	if ! grep -Fq "$text" "$file"; then
 		printf 'FAIL: %s\n' "$description" >&2
