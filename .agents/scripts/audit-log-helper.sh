@@ -360,7 +360,21 @@ _audit_acquire_lock() {
 		sleep 0.1
 	done
 
-	local owner_pid="${BASHPID:-$$}"
+	local owner_pid="${BASHPID:-}"
+	if [[ -z "$owner_pid" ]]; then
+		# Bash 3.2 has no BASHPID. Run the fallback as the command-substitution
+		# process itself so the child shell sees this lock holder as its PPID;
+		# without exec it can report an intermediate command-substitution PID.
+		owner_pid="$(exec sh -c 'printf "%s" "$PPID"')" || {
+			_audit_remove_lock_dir "$lock_dir" || true
+			return 1
+		}
+	fi
+	if [[ ! "$owner_pid" =~ ^[0-9]+$ ]]; then
+		_audit_remove_lock_dir "$lock_dir" || true
+		_audit_error "Could not determine audit log lock owner PID"
+		return 1
+	fi
 	local created_at=""
 	created_at="$(date '+%s')" || {
 		_audit_remove_lock_dir "$lock_dir" || true
