@@ -2163,6 +2163,21 @@ _setup_opencode_node_path_for_binary() {
 	return 0
 }
 
+_setup_opencode_binary_is_ephemeral() {
+	local bin="$1"
+	local temp_root="${TMPDIR:-}"
+
+	if [[ -n "$temp_root" && "$bin" == "$temp_root"/* ]]; then
+		return 0
+	fi
+
+	case "$bin" in
+	/tmp/* | /private/tmp/* | /var/tmp/* | /var/folders/*/*/T/* | /private/var/folders/*/*/T/*) return 0 ;;
+	esac
+
+	return 1
+}
+
 _setup_clear_canary_negative_cache() {
 	local state_dir="${AIDEVOPS_HEADLESS_RUNTIME_DIR:-${HOME}/.aidevops/.agent-workspace/headless-runtime}"
 	rm -f "${state_dir}/canary-last-fail" "${state_dir}/canary-last-fail.reason" 2>/dev/null || true
@@ -2208,6 +2223,7 @@ EOF
 _setup_find_valid_opencode_binary() {
 	local preferred_bin="${1:-}"
 	local candidate=""
+	local candidate_path=""
 	local shim_path="${HOME}/.local/bin/opencode"
 
 	for candidate in \
@@ -2220,8 +2236,10 @@ _setup_find_valid_opencode_binary() {
 		opencode; do
 		[[ -n "$candidate" ]] || continue
 		[[ "$candidate" == "$shim_path" ]] && continue
-		if _setup_validate_opencode_binary "$candidate"; then
-			command -v "$candidate" 2>/dev/null || printf '%s\n' "$candidate"
+		candidate_path=$(command -v "$candidate" 2>/dev/null || printf '%s' "$candidate")
+		_setup_opencode_binary_is_ephemeral "$candidate_path" && continue
+		if _setup_validate_opencode_binary "$candidate_path"; then
+			printf '%s\n' "$candidate_path"
 			return 0
 		fi
 	done
