@@ -321,7 +321,6 @@ test_case_n_empty_pr_metadata_is_logged() {
 
 test_case_o_malformed_pr_metadata_is_logged() {
 	: >"$LOGFILE"
-	set_fixture '[{"name":"bug"}]' 'false' '## Summary\n\nResolves #942' 'VERIFIED'
 	printf '%s' '{not-json' >"${TEST_ROOT}/labels.json"
 	local result=0
 	_pulse_merge_admin_safety_check "942" "owner/repo" "head-current" || result=$?
@@ -335,7 +334,6 @@ test_case_o_malformed_pr_metadata_is_logged() {
 
 test_case_p_missing_pr_identity_is_logged() {
 	: >"$LOGFILE"
-	set_fixture '[{"name":"bug"}]' 'false' '## Summary\n\nResolves #943' 'VERIFIED'
 	printf '%s' '{"author":null,"labels":[],"isCrossRepository":false,"headRefOid":""}' >"${TEST_ROOT}/labels.json"
 	local result=0
 	_pulse_merge_admin_safety_check "943" "owner/repo" "head-current" || result=$?
