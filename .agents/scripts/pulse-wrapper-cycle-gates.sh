@@ -13,7 +13,7 @@
 # Dependencies:
 #   - pulse-wrapper-config.sh globals (LOGFILE, WRAPPER_LOGFILE, SCOPE_FILE,
 #     REPOS_JSON, _PULSE_HEALTH_* counters, _file_mtime_epoch)
-#   - gh, jq, tr, date, mkdir, touch, rm
+#   - timeout_sec (shared-constants.sh), gh, jq, tr, date, mkdir, touch, rm
 #
 # Part of aidevops framework: https://aidevops.sh
 
@@ -51,14 +51,35 @@ _pulse_scope_repos_for_available_work_gate() {
 
 _pulse_available_auto_dispatch_work_exists() {
 	[[ "${AIDEVOPS_SKIP_PULSE_IDLE_AVAILABLE_WORK_CHECK:-0}" == "1" ]] && return 1
-	local _slug=""
+	local _timeout_secs="${AIDEVOPS_PULSE_IDLE_AVAILABLE_WORK_TIMEOUT:-30}"
+	[[ "$_timeout_secs" =~ ^[1-9][0-9]*$ ]] || _timeout_secs=30
+	if ! declare -F timeout_sec >/dev/null 2>&1; then
+		printf '[pulse-wrapper] Idle available-work check has no timeout helper; proceeding without idle backoff (GH#27769)\n' \
+			>>"${WRAPPER_LOGFILE:-/dev/null}"
+		return 124
+	fi
+
+	local _deadline=$((SECONDS + _timeout_secs))
+	local _slug="" _count="" _query_rc=0 _remaining=0
 	while IFS= read -r _slug; do
 		[[ -n "$_slug" ]] || continue
-		local _count=""
-		_count=$(gh api -X GET search/issues \
+		_remaining=$((_deadline - SECONDS))
+		if [[ "$_remaining" -lt 1 ]]; then
+			printf '[pulse-wrapper] Idle available-work check timed out after %ss; proceeding without idle backoff (GH#27769)\n' \
+				"$_timeout_secs" >>"${WRAPPER_LOGFILE:-/dev/null}"
+			return 124
+		fi
+		_count=""
+		_query_rc=0
+		_count=$(timeout_sec "$_remaining" gh api -X GET search/issues \
 			-f "q=repo:${_slug} is:issue is:open label:auto-dispatch label:status:available -label:needs-maintainer-review -label:needs-maintainer-permissions no:assignee" \
 			-f per_page=1 \
-			--jq '.total_count // 0' 2>/dev/null) || _count=""
+			--jq '.total_count // 0' 2>/dev/null) || _query_rc=$?
+		if [[ "$_query_rc" -eq 124 ]]; then
+			printf '[pulse-wrapper] Idle available-work check timed out after %ss; proceeding without idle backoff (GH#27769)\n' \
+				"$_timeout_secs" >>"${WRAPPER_LOGFILE:-/dev/null}"
+			return 124
+		fi
 		[[ "$_count" =~ ^[0-9]+$ ]] || _count=0
 		if [[ "$_count" -gt 0 ]]; then
 			echo "[pulse-wrapper] Idle backoff bypass: eligible auto-dispatch work is visible in ${_slug} (GH#22631)" >>"$WRAPPER_LOGFILE"
@@ -72,8 +93,13 @@ _pulse_check_idle_backoff_gate() {
 	local _ib_helper="${SCRIPT_DIR}/pulse-idle-backoff-helper.sh"
 	[[ -x "$_ib_helper" ]] || return 0
 	local _ib_available_work=0
+	local _ib_available_work_rc=0
 	if _pulse_available_auto_dispatch_work_exists; then
 		_ib_available_work=1
+	else
+		_ib_available_work_rc=$?
+		# Unknown work state must not suppress the watchdog-protected cycle.
+		[[ "$_ib_available_work_rc" -eq 124 ]] && return 0
 	fi
 	local _ib_ts_file="${HOME}/.aidevops/logs/pulse-wrapper-last-run.ts"
 	local _ib_last=0
