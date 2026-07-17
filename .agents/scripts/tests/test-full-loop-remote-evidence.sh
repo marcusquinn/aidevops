@@ -20,11 +20,39 @@ chmod +x "${ROOT}/helpers/review-bot-gate-helper.sh"
 cat >"${ROOT}/bin/gh" <<'STUB'
 #!/usr/bin/env bash
 if [[ "${1:-}" == "pr" && "${2:-}" == "checks" ]]; then
-	if [[ "${GH_TEST_MODE:-pass}" == "pending" ]]; then
-		printf '%s\n' '[{"name":"required-ci","state":"IN_PROGRESS","bucket":"pending"}]'
-		exit 1
-	fi
-	printf '%s\n' '[{"name":"required-ci","state":"SUCCESS","bucket":"pass"}]'
+	case "${GH_TEST_MODE:-pass}" in
+		pending)
+			printf '%s\n' '[{"name":"required-ci","state":"IN_PROGRESS","bucket":"pending"}]'
+			exit 8
+			;;
+		no-required)
+			printf "%s\n" "no required checks reported on the 'remote-branch' branch" >&2
+			exit 1
+			;;
+		api-error)
+			printf '%s\n' 'HTTP 503: service unavailable' >&2
+			exit 1
+			;;
+		changed-wording)
+			printf "%s\n" "no required checks configured for the 'remote-branch' branch" >&2
+			exit 1
+			;;
+		malformed)
+			printf '%s\n' 'not-json'
+			exit 0
+			;;
+		empty-array)
+			printf '%s\n' '[]'
+			exit 0
+			;;
+		*)
+			printf '%s\n' '[{"name":"required-ci","state":"SUCCESS","bucket":"pass"}]'
+			exit 0
+			;;
+	esac
+fi
+if [[ "${1:-}" == "pr" && "${2:-}" == "view" && " $* " == *" --jq "* ]]; then
+	printf '%s\n' 'abc123'
 	exit 0
 fi
 case "${GH_TEST_MODE:-pass}" in
@@ -57,13 +85,25 @@ RUNNER
 	return $?
 }
 
-run_gate pass || { printf 'FAIL terminal remote evidence was rejected\n'; exit 1; }
+run_gate pass || {
+	printf 'FAIL terminal remote evidence was rejected\n'
+	exit 1
+}
 printf 'PASS terminal remote evidence is accepted\n'
 
-run_gate optional-cancelled || { printf 'FAIL cancelled optional history blocked passing required checks\n'; exit 1; }
+run_gate optional-cancelled || {
+	printf 'FAIL cancelled optional history blocked passing required checks\n'
+	exit 1
+}
 printf 'PASS cancelled optional history does not override passing required checks\n'
 
-for mode in draft pending changes closed; do
+run_gate no-required || {
+	printf 'FAIL explicit no-required-checks evidence was rejected\n'
+	exit 1
+}
+printf 'PASS explicit no-required-checks evidence reaches the review-bot gate\n'
+
+for mode in draft pending changes closed api-error changed-wording malformed empty-array; do
 	if run_gate "$mode"; then
 		printf 'FAIL unsafe remote state was accepted: %s\n' "$mode"
 		exit 1
