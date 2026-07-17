@@ -67,6 +67,11 @@ Leaf task: title the implementation PR `t18134: ...` and use `Resolves #27803`.
 
 1. Use a two-document stdin stream that consumes both arrays explicitly. Do not pass either array through `--argjson`; the temp-file plus `--slurpfile` pattern at `.agents/scripts/pulse-prefetch-infra.sh:261-284` remains fallback reference only if a verified platform incompatibility blocks streaming.
 
+   Bash's `${parameter:-word}` form substitutes `word` when `parameter` is
+   either unset or set to an empty string. The `[]` defaults below therefore
+   preserve both document positions in either case; the focused regression
+   test covers the empty-string path explicitly.
+
 ```bash
 # Safe selected shape: two JSON documents enter jq through stdin.
 objective_input=$(printf '%s\n%s\n' "${issues_json:-[]}" "${objective_prs:-[]}" |
@@ -129,6 +134,7 @@ shellcheck .agents/scripts/pulse-issue-reconcile.sh .agents/scripts/tests/test-j
 - The issue's proposed `jq -n '{issues:.}'` form is explicitly rejected because `.` is `null` under `-n` without `input`.
 - Both potentially large arrays move off argv, not only the array that first triggered E2BIG.
 - Extend the existing deterministic regression suite rather than creating another one-off test.
+- Retain `${parameter:-[]}` because Bash applies the default to both unset and empty values; `test_objective_reconciliation_defaults_empty_lists` verifies the latter case.
 
 ## Relevant Files
 
