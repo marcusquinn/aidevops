@@ -9,6 +9,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)" || exit
 # shellcheck source=shared-constants.sh
 # shellcheck disable=SC1091
 source "${SCRIPT_DIR}/shared-constants.sh"
+# shellcheck source=setup/modules/schedulers-linux.sh
+source "${SCRIPT_DIR}/setup/modules/schedulers-linux.sh"
 
 readonly DEFAULT_AGENT="Build+"
 readonly DEFAULT_TITLE="Scheduled routine"
@@ -435,7 +437,7 @@ After=network.target
 [Service]
 Type=oneshot
 KillMode=process
-ExecStart=/bin/bash -lc $(printf '%q' "$command")
+ExecStart=/bin/bash -lc $(_systemd_escape "$command")
 Environment=HOME=${HOME}
 Environment=PATH=${PATH}
 StandardOutput=append:${log_file}
