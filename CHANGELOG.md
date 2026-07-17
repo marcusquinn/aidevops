@@ -10,6 +10,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.32.141] - 2026-07-17
+
+### Changed
+
+- Maintenance: mark t18152 complete (pr:#28045 completed:2026-07-17) [skip ci]
+
+### Fixed
+
+- preserve dispatch identity during REST outages (#28057)
+
 ## [3.32.140] - 2026-07-16
 
 ### Added
