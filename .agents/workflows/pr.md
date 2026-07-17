@@ -128,7 +128,7 @@ Report structure: `## PR Review: #NNN - Title` with sections: **Quality Checks**
 1. Add `pr:NNN` to task line, move to `## In Review`; on merge mark `[x]`, add `completed:` timestamp, move to `## Done`
 2. Sync: `~/.aidevops/agents/scripts/beads-sync-helper.sh push`
 3. Delete branch: `git branch -d feature/xyz && git push origin --delete feature/xyz`
-4. Leave the human canonical checkout unchanged; create the next linked worktree from freshly fetched `origin/main`.
+4. Leave the human canonical checkout unchanged by default. Authority-aware full-loop is the exception: after merging a maintained non-aidevops PR, use the audited canonical fast-forward in `workflows/git-workflow.md` for the PR's verified base branch; never pull directly or switch the canonical checkout.
 5. Create release if applicable: see `workflows/release.md`
 
 ## Fork Workflow (Non-Owner Repositories)

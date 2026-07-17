@@ -41,7 +41,7 @@ git log --oneline HEAD..origin/$(git branch --show-current) 2>/dev/null
 
 Inside an existing linked worktree, refresh and rebase before editing. From the canonical checkout, let `worktree-helper.sh add` refresh `origin/<default>` while creating the linked worktree. Preserve unrelated uncommitted work; never stash/reset/clean another session's changes.
 
-**Canonical fast-forward after a merge (explicit user request only):** direct `git pull`, `fetch`, and `merge` remain blocked in canonical checkouts. When the user asks to update a local canonical checkout—including a project-designated non-default branch—use the audited helper instead:
+**Canonical fast-forward after a merge (explicit user request only):** direct `git pull`, `fetch`, and `merge` remain blocked in canonical checkouts. A full-loop request for a maintained non-aidevops repository explicitly requests synchronization of the merged PR base branch; a standalone request to update a local canonical checkout—including a project-designated non-default branch—has the same scope. Use the audited helper instead:
 
 ```bash
 ${AIDEVOPS_DIR:-$HOME/.aidevops}/agents/scripts/canonical-recovery-helper.sh fast-forward-current \
