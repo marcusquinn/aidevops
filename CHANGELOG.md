@@ -10,9 +10,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.32.143] - 2026-07-17
+
 ### Added
 
-- start active OpenCode tab status on the first user message (#28066)
+- start active tab status on first message (#28069)
 
 ## [3.32.142] - 2026-07-17
 
