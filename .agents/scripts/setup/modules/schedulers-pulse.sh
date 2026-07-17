@@ -370,6 +370,16 @@ _resolve_pulse_runtime_binary() {
 		opencode_bin=$(_pulse_validate_opencode_candidate "$(command -v opencode)" "$_have_validator" || true)
 	fi
 
+	# setup_opencode_cli can refresh the NVM installation after this module was
+	# sourced. Ask a login shell once before filesystem sweeps so the resolver
+	# sees the same OpenCode binary as an interactive user even under systemd's
+	# minimal PATH.
+	if [[ -z "$opencode_bin" ]]; then
+		local _login_shell_bin=""
+		_login_shell_bin=$(/bin/bash -lc 'command -v opencode 2>/dev/null' 2>/dev/null || true)
+		opencode_bin=$(_pulse_validate_opencode_candidate "$_login_shell_bin" "$_have_validator" || true)
+	fi
+
 	# 4a. Node version manager sweep (nvm, volta, fnm). Linux-friendly.
 	[[ -z "$opencode_bin" ]] && opencode_bin=$(_sweep_nvm_volta_fnm_for_opencode "$_have_validator" || true)
 
