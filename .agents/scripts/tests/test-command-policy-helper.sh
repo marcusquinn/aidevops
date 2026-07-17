@@ -103,6 +103,25 @@ PY
 	return 0
 }
 
+assert_authorized_decision() {
+	local name="$1"
+	local authorization="$2"
+	local command_text="$3"
+	local expected_status="$4"
+	local expected_pattern="$5"
+	local cwd="${6:-/work}"
+	local output=""
+	local status=0
+
+	output="$(AIDEVOPS_ACCOUNT_MUTATION_AUTHORIZATION="$authorization" python3 "$HELPER" check-command --cwd "$cwd" --command "$command_text")" || status=$?
+	if [[ "$status" -eq "$expected_status" && "$output" == *"$expected_pattern"* ]]; then
+		pass "$name"
+	else
+		fail "$name" "status=${status} output=${output}"
+	fi
+	return 0
+}
+
 test_validation() {
 	if python3 "$HELPER" validate --policy "$POLICY" >/dev/null; then
 		pass "validates declarative policy and fixtures"
@@ -149,7 +168,6 @@ PY
 test_account_mutation_authorization() {
 	local command_text="gh repo fork owner/source --clone=false"
 	local authorization=""
-	local output=""
 	local status=0
 
 	assert_decision "blocks direct repository fork" "$command_text" forbid github.account-mutation 20 "/work"
@@ -173,61 +191,13 @@ test_account_mutation_authorization() {
 		fail "generates a content-bound account-mutation authorization" "status=${status} authorization=${authorization}"
 	fi
 
-	status=0
-	output="$(AIDEVOPS_ACCOUNT_MUTATION_AUTHORIZATION="$authorization" python3 "$HELPER" check-command --cwd /work --command "$command_text")" || status=$?
-	if [[ "$status" -eq 0 && "$output" == *'"decision": "allow"'* ]]; then
-		pass "exact inherited authorization permits the approved fork"
-	else
-		fail "exact inherited authorization permits the approved fork" "status=${status} output=${output}"
-	fi
-
-	status=0
-	output="$(AIDEVOPS_ACCOUNT_MUTATION_AUTHORIZATION="$authorization" python3 "$HELPER" check-command --cwd /work --command "sudo -n gh repo fork owner/source --clone=false")" || status=$?
-	if [[ "$status" -eq 20 && "$output" == *github.account-mutation* ]]; then
-		pass "direct authorization does not permit a privileged wrapper"
-	else
-		fail "direct authorization does not permit a privileged wrapper" "status=${status} output=${output}"
-	fi
-
-	status=0
-	output="$(AIDEVOPS_ACCOUNT_MUTATION_AUTHORIZATION="$authorization" python3 "$HELPER" check-command --cwd /work --command "gh repo fork 'owner/source' --clone=false")" || status=$?
-	if [[ "$status" -eq 20 && "$output" == *github.account-mutation* ]]; then
-		pass "authorization remains bound to exact command quoting"
-	else
-		fail "authorization remains bound to exact command quoting" "status=${status} output=${output}"
-	fi
-
-	status=0
-	output="$(AIDEVOPS_ACCOUNT_MUTATION_AUTHORIZATION="$authorization" python3 "$HELPER" check-command --cwd /work --command "gh repo fork owner/different --clone=false")" || status=$?
-	if [[ "$status" -eq 20 && "$output" == *github.account-mutation* ]]; then
-		pass "authorization does not permit a different fork target"
-	else
-		fail "authorization does not permit a different fork target" "status=${status} output=${output}"
-	fi
-
-	status=0
-	output="$(AIDEVOPS_ACCOUNT_MUTATION_AUTHORIZATION="$authorization" python3 "$HELPER" check-command --cwd /different --command "$command_text")" || status=$?
-	if [[ "$status" -eq 20 && "$output" == *github.account-mutation* ]]; then
-		pass "authorization remains bound to the approved working directory"
-	else
-		fail "authorization remains bound to the approved working directory" "status=${status} output=${output}"
-	fi
-
-	status=0
-	output="$(AIDEVOPS_ACCOUNT_MUTATION_AUTHORIZATION="$authorization" python3 "$HELPER" check-command --cwd /work --command "gh repo create owner/new-repo --public")" || status=$?
-	if [[ "$status" -eq 20 && "$output" == *github.account-mutation* ]]; then
-		pass "fork authorization does not grant another account write"
-	else
-		fail "fork authorization does not grant another account write" "status=${status} output=${output}"
-	fi
-
-	status=0
-	output="$(AIDEVOPS_ACCOUNT_MUTATION_AUTHORIZATION="$authorization" python3 "$HELPER" check-command --cwd /work --command "$command_text && printf done")" || status=$?
-	if [[ "$status" -eq 20 && "$output" == *github.account-mutation* ]]; then
-		pass "authorization cannot widen a compound command"
-	else
-		fail "authorization cannot widen a compound command" "status=${status} output=${output}"
-	fi
+	assert_authorized_decision "exact inherited authorization permits the approved fork" "$authorization" "$command_text" 0 '"decision": "allow"'
+	assert_authorized_decision "direct authorization does not permit a privileged wrapper" "$authorization" "sudo -n gh repo fork owner/source --clone=false" 20 "github.account-mutation"
+	assert_authorized_decision "authorization remains bound to exact command quoting" "$authorization" "gh repo fork 'owner/source' --clone=false" 20 "github.account-mutation"
+	assert_authorized_decision "authorization does not permit a different fork target" "$authorization" "gh repo fork owner/different --clone=false" 20 "github.account-mutation"
+	assert_authorized_decision "authorization remains bound to the approved working directory" "$authorization" "$command_text" 20 "github.account-mutation" "/different"
+	assert_authorized_decision "fork authorization does not grant another account write" "$authorization" "gh repo create owner/new-repo --public" 20 "github.account-mutation"
+	assert_authorized_decision "authorization cannot widen a compound command" "$authorization" "$command_text && printf done" 20 "github.account-mutation"
 	return 0
 }
 
