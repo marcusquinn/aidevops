@@ -348,6 +348,8 @@ const DEPRECATED_MCPS = [
   { name: "auggie-mcp", toolPattern: "auggie-mcp_*" },
   // augment-context-engine relied on the Auggie MCP; local code search is preferred.
   { name: "augment-context-engine", toolPattern: "augment-context-engine_*" },
+  // gh_grep MCP (mcp.grep.app) removed — github-search subagent uses rg/bash instead
+  { name: "gh_grep", toolPattern: "gh_grep_*" },
 ];
 
 /**
