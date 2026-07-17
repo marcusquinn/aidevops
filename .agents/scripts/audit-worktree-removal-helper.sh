@@ -213,7 +213,9 @@ _worktree_has_process_cwd() {
 #   $4  cwd_snapshot — optional newline-separated live-process cwd snapshot
 #
 # Refuses registered canonical repos, the caller's current working directory,
-# and worktrees that still have any live process cwd inside them.
+# and worktrees that still have any live process cwd inside them. On refusal,
+# WORKTREE_REMOVAL_GUARD_REASON contains the short audit reason for callers that
+# opt into a user-facing diagnostic. The guard itself remains silent.
 # Returns 0 when callers may continue, 1 when removal must be skipped.
 # =============================================================================
 worktree_removal_guard() {
@@ -222,15 +224,18 @@ worktree_removal_guard() {
 	local reason="$3"
 	local cwd_snapshot="${4:-}"
 	local cwd_snapshot_provided=0
+	WORKTREE_REMOVAL_GUARD_REASON=""
 	[[ "$#" -ge 4 ]] && cwd_snapshot_provided=1
 
 	if [[ -z "$wt_path" ]]; then
+		WORKTREE_REMOVAL_GUARD_REASON="empty-path"
 		log_worktree_removal_event "$_WTAR_SKIPPED" "$caller" "$wt_path" "empty-path" "skipped"
 		return 1
 	fi
 
 	if command -v is_registered_canonical >/dev/null 2>&1; then
 		if is_registered_canonical "$wt_path"; then
+			WORKTREE_REMOVAL_GUARD_REASON="canonical-skip"
 			log_worktree_removal_event "$_WTAR_SKIPPED" "$caller" "$wt_path" "canonical-skip" "skipped"
 			return 1
 		fi
@@ -246,6 +251,7 @@ worktree_removal_guard() {
 	if [[ -n "$current_dir" ]]; then
 		case "$current_dir" in
 		"$wt_path" | "$wt_path"/* | "$wt_path_real" | "$wt_path_real"/*)
+			WORKTREE_REMOVAL_GUARD_REASON="current-worktree"
 			log_worktree_removal_event "$_WTAR_SKIPPED" "$caller" "$wt_path" "current-worktree" "skipped"
 			return 1
 			;;
@@ -255,6 +261,7 @@ worktree_removal_guard() {
 	if { [[ "$cwd_snapshot_provided" -eq 1 ]] && \
 		_worktree_cwd_snapshot_contains_path "$wt_path" "$wt_path_real" "$cwd_snapshot"; } || \
 		{ [[ "$cwd_snapshot_provided" -eq 0 ]] && _worktree_has_process_cwd "$wt_path" "$wt_path_real"; }; then
+		WORKTREE_REMOVAL_GUARD_REASON="active-cwd"
 		log_worktree_removal_event "$_WTAR_SKIPPED" "$caller" "$wt_path" "active-cwd" "skipped"
 		return 1
 	fi

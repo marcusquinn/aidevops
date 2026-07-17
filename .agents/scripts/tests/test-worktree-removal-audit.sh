@@ -31,6 +31,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 AUDIT_HELPER="${SCRIPT_DIR}/../audit-worktree-removal-helper.sh"
+COMMANDS_HELPER="${SCRIPT_DIR}/../worktree-helper-cmds.sh"
 
 TESTS_RUN=0
 TESTS_PASSED=0
@@ -345,7 +346,13 @@ test_permanent_helper_removes_and_logs() {
 	source "$AUDIT_HELPER"
 
 	local rc=0
-	remove_worktree_path_permanently "$wt_path" "test.sh" "age-eligible" || rc=$?
+	(
+		capture_worktree_process_cwds() {
+			printf '/\n'
+			return 0
+		}
+		remove_worktree_path_permanently "$wt_path" "test.sh" "age-eligible"
+	) || rc=$?
 	[[ ! -e "$wt_path" ]] || rc=1
 	assert_file_contains "$log_file" "worktree-removed.*age-eligible.*mode=permanent" || rc=1
 	print_result "permanent_helper_removes_and_logs" "$rc" \
@@ -485,6 +492,73 @@ test_proc_snapshot_rejects_partial_visibility() {
 }
 
 # =============================================================================
+# Test 15: guard refusals expose a machine-readable reason without changing the
+# exactly-once audit contract.
+# =============================================================================
+test_guard_reason_is_machine_readable() {
+	local log_file="${TEST_DIR}/t15-cleanup.log"
+	local wt_path="${TEST_DIR}/reason-wt"
+	local rc=0
+	export AIDEVOPS_CLEANUP_LOG="$log_file"
+	mkdir -p "$wt_path"
+
+	unset _AUDIT_WORKTREE_REMOVAL_HELPER_LOADED 2>/dev/null || true
+	# shellcheck source=../audit-worktree-removal-helper.sh
+	source "$AUDIT_HELPER"
+	if worktree_removal_guard "$wt_path" "test.sh" "manual" "$wt_path"; then
+		rc=1
+	fi
+	[[ "${WORKTREE_REMOVAL_GUARD_REASON:-}" == "active-cwd" ]] || rc=1
+	assert_line_count "$log_file" 1 || rc=1
+	print_result "guard_reason_is_machine_readable" "$rc" \
+		"Expected active-cwd reason and exactly one audit row"
+	return 0
+}
+
+# =============================================================================
+# Test 16: manual removal renders safe actionable diagnostics for each shared
+# guard reason. The guard remains the sole audit writer.
+# =============================================================================
+test_manual_guard_refusal_diagnostics() {
+	local output_file="${TEST_DIR}/t16-output.log"
+	local log_file="${TEST_DIR}/t16-cleanup.log"
+	local rc=0
+	local reason=""
+	local guard_reason_to_test=""
+	export AIDEVOPS_CLEANUP_LOG="$log_file"
+
+	unset _WORKTREE_CMDS_LIB_LOADED 2>/dev/null || true
+	RED=""
+	NC=""
+	# shellcheck source=../worktree-helper-cmds.sh
+	source "$COMMANDS_HELPER"
+	worktree_removal_guard() {
+		local path_to_remove="$1"
+		local caller="$2"
+		local removal_mode="$3"
+		WORKTREE_REMOVAL_GUARD_REASON="$guard_reason_to_test"
+		log_worktree_removal_event "$_WTAR_SKIPPED" "$caller" "$path_to_remove" \
+			"$guard_reason_to_test" "skipped"
+		: "$removal_mode"
+		return 1
+	}
+	for reason in active-cwd current-worktree canonical-skip; do
+		guard_reason_to_test="$reason"
+		if _remove_validate_path "/safe/example-worktree" 2>>"$output_file"; then
+			rc=1
+		fi
+	done
+	assert_file_contains "$output_file" "Reason: active-cwd.*live process" || rc=1
+	assert_file_contains "$output_file" "Reason: current-worktree.*inside the target" || rc=1
+	assert_file_contains "$output_file" "Reason: canonical-skip.*canonical checkout" || rc=1
+	assert_file_contains "$output_file" "cannot bypass this protection" || rc=1
+	assert_line_count "$log_file" 3 || rc=1
+	print_result "manual_guard_refusal_diagnostics" "$rc" \
+		"Expected safe diagnostics and exactly one audit row per refusal"
+	return 0
+}
+
+# =============================================================================
 # Main
 # =============================================================================
 
@@ -506,6 +580,8 @@ test_process_cwd_guard_refuses_empty_paths
 test_process_cwd_snapshot_failure_is_fail_closed
 test_snapshot_backend_requires_visible_target
 test_proc_snapshot_rejects_partial_visibility
+test_guard_reason_is_machine_readable
+test_manual_guard_refusal_diagnostics
 
 echo ""
 echo "Results: ${TESTS_PASSED}/${TESTS_RUN} passed, ${TESTS_FAILED} failed."
