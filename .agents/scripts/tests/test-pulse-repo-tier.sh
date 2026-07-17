@@ -12,7 +12,7 @@
 #     - Cold entry → "cold"
 #     - Unknown tier value → "warm"
 #     - No slug argument → "warm"
-#   check_repo_tier_skip (from pulse-prefetch-fetch.sh):
+#   check_repo_tier_skip (from pulse-prefetch-orchestration.sh):
 #     - PULSE_TIER_CLASSIFICATION_ENABLED=0 → always proceed (returns 0)
 #     - Tier=hot → always proceed (returns 0)
 #     - Tier=warm, elapsed < warm_interval → skip (returns 1)
@@ -28,7 +28,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit 1
 TIER_SCRIPT="${SCRIPT_DIR}/../pulse-repo-tier.sh"
-PREFETCH_FETCH_SCRIPT="${SCRIPT_DIR}/../pulse-prefetch-fetch.sh"
+PREFETCH_ORCHESTRATION_SCRIPT="${SCRIPT_DIR}/../pulse-prefetch-orchestration.sh"
 
 readonly TEST_RED='\033[0;31m'
 readonly TEST_GREEN='\033[0;32m'
@@ -217,25 +217,25 @@ test_tier_of_missing_slug_in_cache() {
 }
 
 # =============================================================================
-# check_repo_tier_skip tests (sourced from pulse-prefetch-fetch.sh)
+# check_repo_tier_skip tests (sourced from pulse-prefetch-orchestration.sh)
 # Requires sourcing the lib rather than calling the script.
 # =============================================================================
 
-_source_prefetch_fetch() {
-	# Source the minimum environment needed for pulse-prefetch-fetch.sh
+_source_prefetch_orchestration() {
+	# Source the minimum environment needed for pulse-prefetch-orchestration.sh
 	# We only need check_repo_tier_skip and update_repo_tier_check_timestamp.
 	# Stub out LOGFILE and functions that may not be available in test context.
 	export LOGFILE="${HOME}/.aidevops/logs/pulse.log"
 	export PULSE_TIER_SCRIPT="$TIER_SCRIPT"
 	# shellcheck source=/dev/null
-	source "$PREFETCH_FETCH_SCRIPT" 2>/dev/null || true
+	source "$PREFETCH_ORCHESTRATION_SCRIPT" 2>/dev/null || true
 	return 0
 }
 
 test_tier_skip_disabled() {
 	# PULSE_TIER_CLASSIFICATION_ENABLED=0 → always proceed
 	setup_test_env
-	_source_prefetch_fetch
+	_source_prefetch_orchestration
 
 	local state_file="${HOME}/.aidevops/logs/pulse-tier-last-check.json"
 	if PULSE_TIER_CLASSIFICATION_ENABLED=0 check_repo_tier_skip "owner/repo" "$state_file"; then
@@ -250,7 +250,7 @@ test_tier_skip_disabled() {
 test_tier_skip_hot_no_skip() {
 	# Hot repos always proceed regardless of last check time
 	setup_test_env
-	_source_prefetch_fetch
+	_source_prefetch_orchestration
 
 	local cache_file="${HOME}/.aidevops/cache/pulse-repo-tiers.json"
 	local now
@@ -273,7 +273,7 @@ test_tier_skip_hot_no_skip() {
 test_tier_skip_warm_recent() {
 	# Warm repo, last check 30s ago, interval=180s → skip
 	setup_test_env
-	_source_prefetch_fetch
+	_source_prefetch_orchestration
 
 	local cache_file="${HOME}/.aidevops/cache/pulse-repo-tiers.json"
 	local now
@@ -299,7 +299,7 @@ test_tier_skip_warm_recent() {
 test_tier_skip_warm_elapsed() {
 	# Warm repo, last check 300s ago, interval=180s → proceed
 	setup_test_env
-	_source_prefetch_fetch
+	_source_prefetch_orchestration
 
 	local cache_file="${HOME}/.aidevops/cache/pulse-repo-tiers.json"
 	local now
@@ -325,7 +325,7 @@ test_tier_skip_warm_elapsed() {
 test_tier_skip_cold_recent() {
 	# Cold repo, last check 60s ago, interval=600s → skip
 	setup_test_env
-	_source_prefetch_fetch
+	_source_prefetch_orchestration
 
 	local cache_file="${HOME}/.aidevops/cache/pulse-repo-tiers.json"
 	local now
@@ -351,7 +351,7 @@ test_tier_skip_cold_recent() {
 test_tier_skip_cold_elapsed() {
 	# Cold repo, last check 1200s ago, interval=600s → proceed
 	setup_test_env
-	_source_prefetch_fetch
+	_source_prefetch_orchestration
 
 	local cache_file="${HOME}/.aidevops/cache/pulse-repo-tiers.json"
 	local now
@@ -377,7 +377,7 @@ test_tier_skip_cold_elapsed() {
 test_tier_skip_no_state_file() {
 	# No state file → last_check=0 → elapsed is huge → always proceed
 	setup_test_env
-	_source_prefetch_fetch
+	_source_prefetch_orchestration
 
 	local cache_file="${HOME}/.aidevops/cache/pulse-repo-tiers.json"
 	local now
@@ -404,7 +404,7 @@ test_tier_skip_no_state_file() {
 
 test_update_tier_timestamp_writes_epoch() {
 	setup_test_env
-	_source_prefetch_fetch
+	_source_prefetch_orchestration
 
 	local state_file="${HOME}/.aidevops/logs/pulse-tier-ts-test.json"
 	local before after written_ts
@@ -429,7 +429,7 @@ test_update_tier_timestamp_writes_epoch() {
 
 test_update_tier_timestamp_creates_file() {
 	setup_test_env
-	_source_prefetch_fetch
+	_source_prefetch_orchestration
 
 	local state_file="${HOME}/.aidevops/logs/tier-create-test.json"
 	rm -f "$state_file"
@@ -448,7 +448,7 @@ test_update_tier_timestamp_creates_file() {
 
 test_update_tier_timestamp_independent_per_repo() {
 	setup_test_env
-	_source_prefetch_fetch
+	_source_prefetch_orchestration
 
 	local state_file="${HOME}/.aidevops/logs/tier-indep-test.json"
 	local old_ts=$(( $(date +%s) - 100 ))
@@ -507,8 +507,8 @@ main() {
 	test_tier_of_missing_slug_in_cache
 
 	# check_repo_tier_skip and update_repo_tier_check_timestamp tests
-	# Only run if prefetch-fetch script can be sourced
-	if [[ -f "$PREFETCH_FETCH_SCRIPT" ]]; then
+	# Only run if prefetch-orchestration script can be sourced
+	if [[ -f "$PREFETCH_ORCHESTRATION_SCRIPT" ]]; then
 		test_tier_skip_disabled
 		test_tier_skip_hot_no_skip
 		test_tier_skip_warm_recent
@@ -520,7 +520,7 @@ main() {
 		test_update_tier_timestamp_creates_file
 		test_update_tier_timestamp_independent_per_repo
 	else
-		echo "SKIP pulse-prefetch-fetch.sh tests (script not found at: ${PREFETCH_FETCH_SCRIPT})"
+		echo "SKIP pulse-prefetch-orchestration.sh tests (script not found at: ${PREFETCH_ORCHESTRATION_SCRIPT})"
 	fi
 
 	echo ""

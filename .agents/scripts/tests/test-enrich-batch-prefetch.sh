@@ -81,13 +81,13 @@ else
 fi
 
 # Verify cmd_enrich calls both helpers (use grep on the actual file path)
-if grep -q '_enrich_check_rate_limit' "${TEST_SCRIPTS_DIR}/../issue-sync-helper.sh"; then
+if grep -q '_enrich_check_rate_limit' "${TEST_SCRIPTS_DIR}/../issue-sync-helper-enrich.sh"; then
 	print_result "cmd_enrich calls _enrich_check_rate_limit" 0
 else
 	print_result "cmd_enrich calls _enrich_check_rate_limit" 1 "(call not found in cmd_enrich)"
 fi
 
-if grep -q '_enrich_prefetch_issues_map' "${TEST_SCRIPTS_DIR}/../issue-sync-helper.sh"; then
+if grep -q '_enrich_prefetch_issues_map' "${TEST_SCRIPTS_DIR}/../issue-sync-helper-enrich.sh"; then
 	print_result "cmd_enrich calls _enrich_prefetch_issues_map" 0
 else
 	print_result "cmd_enrich calls _enrich_prefetch_issues_map" 1 "(call not found in cmd_enrich)"
