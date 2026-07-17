@@ -671,6 +671,14 @@ build_sandbox_passthrough_csv() {
 	local name
 
 	while IFS='=' read -r name _; do
+		if _headless_private_workload_enabled; then
+			case "$name" in
+			XDG_CACHE_HOME | XDG_CONFIG_HOME | XDG_DATA_HOME | XDG_STATE_HOME)
+				names+=("$name")
+				;;
+			esac
+			continue
+		fi
 		case "$name" in
 		# Session-bound OpenCode env makes isolated canary/worker runs attach to
 		# the parent TUI session and fail with "Session not found" (GH#23065).

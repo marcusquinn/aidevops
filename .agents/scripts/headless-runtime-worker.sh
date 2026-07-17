@@ -119,12 +119,14 @@ _maybe_rotate_isolated_auth() {
 	local cooldown_until now_ms identity_label
 	cooldown_until=$(printf '%s' "$pool_match" | jq -r '.cooldownUntil // 0' 2>/dev/null || echo 0)
 	[[ -n "$cooldown_until" ]] || cooldown_until=0
-	# Log-friendly identity: prefer email, fall back to a short access-token
-	# fingerprint. Never log full access tokens (they are secrets).
-	if [[ -n "$current_email" ]]; then
+	# Log-friendly identity: private workloads suppress account identity, while
+	# ordinary workers may use email. Never log access-token fragments.
+	if [[ "${AIDEVOPS_PRIVATE_WORKLOAD:-0}" == "1" ]]; then
+		identity_label="[private]"
+	elif [[ -n "$current_email" ]]; then
 		identity_label="$current_email"
 	else
-		identity_label="access=${current_access:0:8}…"
+		identity_label="access credential"
 	fi
 	now_ms=$(($(date +%s) * 1000))
 
@@ -139,10 +141,12 @@ _maybe_rotate_isolated_auth() {
 			local new_email new_access new_label
 			new_email=$(jq -r --arg p "$provider" '.[$p].email // empty' "$isolated_auth" 2>/dev/null || echo "")
 			new_access=$(jq -r --arg p "$provider" '.[$p].access // empty' "$isolated_auth" 2>/dev/null || echo "")
-			if [[ -n "$new_email" ]]; then
+			if [[ "${AIDEVOPS_PRIVATE_WORKLOAD:-0}" == "1" ]]; then
+				new_label="[private]"
+			elif [[ -n "$new_email" ]]; then
 				new_label="$new_email"
 			elif [[ -n "$new_access" ]]; then
-				new_label="access=${new_access:0:8}…"
+				new_label="access credential"
 			else
 				new_label="$_HRW_STATUS_UNKNOWN"
 			fi
@@ -340,6 +344,10 @@ _preserve_no_activity_output() {
 	local model="${3:-unknown}"
 
 	if [[ -z "$output_file" || ! -f "$output_file" ]]; then
+		return 0
+	fi
+	if _headless_private_workload_enabled; then
+		rm -f "$output_file" 2>/dev/null || true
 		return 0
 	fi
 
@@ -1639,6 +1647,16 @@ _cmd_run_finish() {
 	# first query already proved the issue and matching PR are terminal.
 	local external_terminal_confirmed="${4:-0}"
 	local finish_status=0
+	if _headless_private_workload_enabled; then
+		_release_session_lock "$session_key"
+		if declare -F _cleanup_headless_runtime_temp_paths >/dev/null 2>&1; then
+			_cleanup_headless_runtime_temp_paths
+		fi
+		_WORKER_WORKTREE_PATH=""
+		WORKER_TARGET_BRANCH=""
+		trap - EXIT
+		return 0
+	fi
 	_HRW_FINAL_RUNTIME_EVENT="worker.completed"
 	_HRW_FINAL_RUNTIME_STATUS="${_run_result_label:-$ledger_status}"
 	_HRW_FINAL_RUNTIME_CLASSIFICATION="${_run_failure_reason:-}"
@@ -1713,11 +1731,28 @@ _hrw_mark_runtime_launch_started() {
 	return 0
 }
 
+_hrw_prepare_private_workload() {
+	local session_key="$1"
+	_WORKER_WORKTREE_PATH=""
+	WORKER_TARGET_BRANCH=""
+	export WORKER_NO_EXIT_PUSH=1
+	_acquire_session_lock "$session_key" || return 2
+	_WORKER_START_EPOCH_MS=$(python3 -c 'import time; print(int(time.time() * 1000))' 2>/dev/null || printf '%s' "0")
+	# shellcheck disable=SC2064
+	trap "_private_workload_exit_trap '$session_key'" EXIT
+	return 0
+}
+
 _cmd_run_prepare() {
 	local session_key="$1"
 	local work_dir="$2"
 	_WORKER_RUNTIME_LAUNCH_STARTED=0
 	unset _WORKER_PRELAUNCH_FAILURE_REASON 2>/dev/null || true
+	if _headless_private_workload_enabled; then
+		local private_prepare_status=0
+		_hrw_prepare_private_workload "$session_key" || private_prepare_status=$?
+		return "$private_prepare_status"
+	fi
 
 	# t2983 Fix C: Worker-role guard — WORKER_WORKTREE_PATH must be set.
 	# After GH#21353 (Fix A), the dispatcher never launches a worker when
