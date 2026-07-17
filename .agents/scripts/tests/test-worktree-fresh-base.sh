@@ -81,4 +81,23 @@ PINNED_PATH="${WORKTREES}/canonical-test-pinned-base"
 }
 printf 'PASS immutable explicit base permits audited offline recovery\n'
 
+REGISTRY_DB="${HOME}/.aidevops/.agent-workspace/worktree-registry.db"
+PINNED_OWNER=$(sqlite3 -separator '|' "$REGISTRY_DB" \
+	"SELECT branch, task_id FROM worktree_owners WHERE branch = 'test/pinned-base';")
+[[ "$PINNED_OWNER" == "test/pinned-base|" ]] || {
+	printf 'FAIL worktree without --issue registered unexpected owner row %s\n' "${PINNED_OWNER:-<missing>}"
+	exit 1
+}
+printf 'PASS worktree without --issue retains an empty registry task ID\n'
+
+(cd "$CANONICAL" && AIDEVOPS_SKIP_AUTO_CLAIM=1 "$HELPER" add test/issue-task \
+	--issue 123 --base "$PINNED_SHA" >/dev/null)
+ISSUE_OWNER=$(sqlite3 -separator '|' "$REGISTRY_DB" \
+	"SELECT branch, task_id FROM worktree_owners WHERE branch = 'test/issue-task';")
+[[ "$ISSUE_OWNER" == "test/issue-task|123" ]] || {
+	printf 'FAIL explicit --issue registered unexpected owner row %s\n' "${ISSUE_OWNER:-<missing>}"
+	exit 1
+}
+printf 'PASS explicit --issue propagates into the registry task ID\n'
+
 exit 0

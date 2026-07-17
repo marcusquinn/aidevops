@@ -898,8 +898,9 @@ cmd_add() {
 	# Create worktree (existing branch → simple checkout; new branch → base-ref dance).
 	_cmd_add_create_worktree "$branch" "$path" "$explicit_base" || return 1
 
-	# Register ownership (t189)
-	register_worktree "$path" "$branch"
+	# Register ownership (t189). Preserve the explicit issue identity so a
+	# same-task headless continuation can safely reclaim this worktree.
+	register_worktree "$path" "$branch" --task "$explicit_issue"
 
 	# Restore gitignored dependencies (node_modules) from canonical repo.
 	local _repo_root=""
