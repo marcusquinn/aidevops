@@ -23,14 +23,14 @@ EAGER_MCPS = set()
 # Lazy-loaded (enabled: False): Subagent-only, start on-demand
 LAZY_MCPS = {
     'MCP_DOCKER', 'ahrefs', 'amazon-order-history',
-    'chrome-devtools', 'claude-code-mcp', 'context7', 'dataforseo', 'gh_grep',
+    'chrome-devtools', 'claude-code-mcp', 'context7', 'dataforseo',
     'google-analytics-mcp', 'grep_app', 'gsc', 'ios-simulator', 'localwp',
     'macos-automator', 'openapi-search', 'outscraper', 'playwriter', 'quickfile',
     'sentry', 'shadcn', 'socket', 'websearch',
 }
 
 # Oh-My-OpenCode tool patterns to disable globally
-OMO_TOOL_PATTERNS = ['grep_app_*', 'websearch_*', 'gh_grep_*']
+OMO_TOOL_PATTERNS = ['grep_app_*', 'websearch_*']
 
 
 def apply_mcp_loading_policy(config):
@@ -61,6 +61,12 @@ def remove_deprecated_mcps(config):
         print("  Removed deprecated osgrep MCP")
     if 'osgrep_*' in config.get('tools', {}):
         del config['tools']['osgrep_*']
+    # gh_grep MCP removed — github-search subagent uses rg/bash instead
+    if 'gh_grep' in config.get('mcp', {}):
+        del config['mcp']['gh_grep']
+        print("  Removed deprecated gh_grep MCP")
+    if 'gh_grep_*' in config.get('tools', {}):
+        del config['tools']['gh_grep_*']
 
 
 def _register_playwriter(config, bun_path):

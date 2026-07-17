@@ -815,11 +815,13 @@ _remove_deprecated_mcp_entries() {
 		"hostinger-api"
 		"shadcn"
 		"repomix"
+		"gh_grep"
 	)
 
 	# Tool rules to remove (for MCPs that no longer exist)
 	local auggie_tool="auggie-mcp_*"
 	local augment_tool="augment-context-engine_*"
+	local gh_grep_tool="gh_grep_*"
 	local deprecated_tools=(
 		"$auggie_tool"
 		"$augment_tool"
@@ -830,6 +832,7 @@ _remove_deprecated_mcp_entries() {
 		"serper_*"
 		"shadcn_*"
 		"repomix_*"
+		"$gh_grep_tool"
 	)
 
 	for mcp in "${deprecated_mcps[@]}"; do
@@ -998,7 +1001,6 @@ cleanup_deprecated_mcps() {
 # Disable MCPs globally that should only be enabled on-demand via subagents
 # This reduces session startup context by disabling rarely-used MCPs
 # - playwriter: ~3K tokens - enable via @playwriter subagent
-# - gh_grep: ~600 tokens - replaced by @github-search subagent (uses rg/bash)
 # - google-analytics-mcp: ~800 tokens - enable via @google-analytics subagent
 # - context7: ~800 tokens - enable via @context7 subagent (for library docs lookup)
 disable_ondemand_mcps() {
@@ -1019,7 +1021,6 @@ disable_ondemand_mcps() {
 	local -a ondemand_mcps=(
 		"cloudflare-api"
 		"context7"
-		"gh_grep"
 		"google-analytics-mcp"
 		"grep_app"
 		"playwright"
@@ -1156,8 +1157,8 @@ validate_opencode_config() {
 	fi
 
 	# Check 2: tools entries must be booleans, not objects
-	# Invalid: {"tools": {"gh_grep": {}}}
-	# Valid:   {"tools": {"gh_grep": true}}
+	# Invalid: {"tools": {"example_tool": {}}}
+	# Valid:   {"tools": {"example_tool": true}}
 	local tools_as_objects
 	tools_as_objects=$(jq -r '.tools // {} | to_entries[] | select(.value | type == "object") | .key' "$opencode_config" 2>/dev/null | head -5)
 	if [[ -n "$tools_as_objects" ]]; then

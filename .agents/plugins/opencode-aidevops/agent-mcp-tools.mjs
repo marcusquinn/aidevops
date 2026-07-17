@@ -25,7 +25,6 @@ const AGENT_MCP_TOOLS = {
   // Context / search
   context7: ["context7_*"],
   "openapi-search": ["openapi-search_*"],
-  "github-search": ["gh_grep_*"],
   // Cloud / API
   "cloudflare-mcp": ["cloudflare-api_*"],
   // SEO / analytics

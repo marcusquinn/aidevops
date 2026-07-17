@@ -36,11 +36,6 @@
       "url": "https://mcp.socket.dev/",
       "description": "Socket.dev dependency security scanning MCP"
     },
-    "gh_grep": {
-      "type": "remote",
-      "url": "https://mcp.grep.app",
-      "description": "GitHub code search via grep.app"
-    },
     "google-analytics-mcp": {
       "command": "pipx",
       "args": ["run", "analytics-mcp"],
