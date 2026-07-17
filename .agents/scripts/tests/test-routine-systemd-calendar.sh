@@ -99,6 +99,32 @@ test_step_minutes_supported() {
 	return 0
 }
 
+test_execstart_uses_systemd_quoting() {
+	local tmp_home=""
+	local service_file=""
+	local exec_start=""
+	local expected=""
+	tmp_home=$(mktemp -d)
+	service_file="${tmp_home}/.config/systemd/user/sh.aidevops.routine-test.service"
+
+	HOME="$tmp_home" "$ROUTINE_HELPER" install-systemd \
+		--name test \
+		--schedule '0 9 * * *' \
+		--dir "$tmp_home" \
+		--prompt 'test prompt' >/dev/null 2>&1
+	exec_start=$(grep '^ExecStart=' "$service_file")
+	expected="ExecStart=/bin/bash -lc \"opencode run --dir '${tmp_home}' --agent 'Build+' --title 'Scheduled routine' 'test prompt'\""
+
+	if [[ "$exec_start" == "$expected" ]]; then
+		print_result "ExecStart keeps the shell command as one systemd argument" 0
+	else
+		print_result "ExecStart keeps the shell command as one systemd argument" 1 \
+			"Expected: $expected; got: $exec_start"
+	fi
+	rm -rf "$tmp_home"
+	return 0
+}
+
 test_daily_expression_supported() {
 	local output=""
 	output=$("${REPO_SCRIPTS_DIR}/routine-schedule-helper.sh" systemd-calendar 'daily(@03:30)')
@@ -145,6 +171,7 @@ main() {
 	test_wildcard_weekday_omits_prefix
 	test_numeric_weekday_keeps_prefix
 	test_step_minutes_supported
+	test_execstart_uses_systemd_quoting
 	test_daily_expression_supported
 	test_pulse_step_minutes_supported
 	test_empty_schedule_fails_cleanly
