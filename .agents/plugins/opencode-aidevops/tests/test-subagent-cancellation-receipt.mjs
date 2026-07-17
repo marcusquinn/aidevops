@@ -180,6 +180,44 @@ test("missing lifecycle events and telemetry produce an explicit incomplete unkn
   assert.equal(receipt.ledger[0].status, "unknown");
 });
 
+test("abort and receipt persistence failures are logged for diagnostics", async () => {
+  const logs = [];
+  const lifecycle = createSubagentCancellationReceipt({
+    session: {
+      abort: async () => {
+        throw new Error("abort unavailable");
+      },
+    },
+  }, {
+    maxWaitMs: 0,
+    qualityLog: (level, message) => logs.push([level, message]),
+    recordReceipt: () => {
+      throw new Error("telemetry unavailable");
+    },
+  });
+  lifecycle.beforeTool(
+    { tool: "task", sessionID: "parent-failure", callID: "task-failure" },
+    { args: {} },
+  );
+  const output = {
+    output: "Task aborted",
+    metadata: { sessionId: "child-failure", status: "aborted" },
+  };
+
+  const receipt = await lifecycle.afterTool(
+    { tool: "task", sessionID: "parent-failure", callID: "task-failure" },
+    output,
+  );
+
+  assert.equal(receipt.complete, false);
+  assert.ok(receipt.incomplete_reasons.includes("abort_api_failed"));
+  assert.ok(receipt.incomplete_reasons.includes("telemetry_unavailable"));
+  assert.deepEqual(logs.slice(0, 2), [
+    ["WARN", "[subagent-cancellation] session abort failed: abort unavailable"],
+    ["WARN", "[subagent-cancellation] receipt persistence failed: telemetry unavailable"],
+  ]);
+});
+
 test("the parent-facing receipt remains entry- and byte-bounded", async () => {
   let lifecycle;
   const client = {
