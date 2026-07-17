@@ -9,7 +9,8 @@ Signal mining converts raw operational data into structured findings: `{file, is
 
 ## Signal Sources
 
-Run all sources unless `SIGNAL_SOURCES` is set (see [Filtering](#filtering-by-signal_sources)).
+Run only the sources enabled by the program's validated `## Signal Sources`
+booleans (see [Filtering](#filtering-by-signal_sources)).
 
 ### 1. Session Miner Data
 
@@ -57,15 +58,15 @@ rg "observed|recurring|failure rate|%" ~/.aidevops/agents/AGENTS.md 2>/dev/null 
 ```bash
 # Run comprehension tests and capture failures
 # --json emits composite metric only (pass_rate, failed, passed, total)
-agent-test-helper.sh run --suite agent-optimization --json 2>/dev/null | \
+agent-test-helper.sh run .agents/tests/agents-md-knowledge.json --json 2>/dev/null | \
   jq '{failed: .failed, pass_rate: .pass_rate, source: "comprehension-tests"}'
 
 # List individual failed tests from the latest result file
-latest=$(ls -t ~/.aidevops/.agent-workspace/agent-tests/results/agent-optimization-*.json 2>/dev/null | head -1)
+latest=$(ls -t ~/.aidevops/.agent-workspace/agent-tests/results/agents-md-knowledge-*.json 2>/dev/null | head -1)
 [[ -n "$latest" ]] && jq -r '.results[] | select(.status == "fail") | {id: .id, status: .status}' "$latest"
 
 # Check which test suites exist
-ls ~/.aidevops/agents/tests/*.test.json 2>/dev/null | head -10
+ls ~/.aidevops/agents/tests/*.json 2>/dev/null | head -10
 ```
 
 ### 5. Git Churn Analysis
@@ -99,7 +100,7 @@ markdownlint-cli2 ~/.aidevops/agents/**/*.md 2>&1 | \
 ### 7. Instruction Candidates (instruction-to-save)
 
 Detects user utterances from session history that appear to be persistent rules or
-conventions that should be captured in instruction files (AGENTS.md, build.txt, etc.).
+conventions that should be captured in canonical instruction files such as `.agents/AGENTS.md`.
 
 Sourced from the session miner pipeline — available in `compressed_signals.json` after
 a pulse run, and surfaced in the pulse summary under "Instruction Candidates".
@@ -124,7 +125,7 @@ cat ~/.aidevops/.agent-workspace/work/session-miner/feedback_actions.md 2>/dev/n
 
 **Detection criteria (conservative — high precision over recall):**
 
-- Explicit save requests: "add this to AGENTS.md", "update build.txt"
+- Explicit save requests: "add this to .agents/AGENTS.md", "update .agents/reference/error-prevention.md"
 - Persistent directive language: "from now on", "going forward", "always use X", "never do Y"
 - Convention declarations: "the rule is", "we always", "prefer X over Y"
 - Filtered out: task-specific directions referencing particular files, PRs, commits, or one-off commands
@@ -184,20 +185,19 @@ SIGNAL_FINDINGS = deduplicate_and_rank([
 
 ## Filtering by SIGNAL_SOURCES
 
-When `SIGNAL_SOURCES` is set in the research program, only run the listed sources:
+Map enabled program keys to mining sources exactly as follows:
 
-| Source key | Description |
-|------------|-------------|
-| `session-miner` | Session miner data |
-| `pulse-outcomes` | Pulse dispatch outcomes |
-| `error-feedback` | Error-feedback patterns |
-| `comprehension-tests` | Comprehension test results |
-| `git-churn` | Git churn analysis |
-| `linter` | Linter violations |
-| `instruction-to-save` | Instruction candidates from session history |
-| `all` | All sources (default) |
+| Program key | Sources enabled |
+|-------------|-----------------|
+| `session_miner` | Session miner data, error-feedback patterns, instruction candidates |
+| `pulse_outcomes` | Pulse dispatch outcomes |
+| `comprehension` | Comprehension test results |
+| `git_churn` | Git churn analysis |
+| `linters` | Linter violations |
 
-Example: `signal_sources: session-miner,git-churn` runs only those two sources.
+Disabled keys run none of their mapped sources. Do not accept aliases, hyphenated
+variants, an implicit `all`, or supplementary sources detached from their owning
+program key.
 
 ## Output Contract
 

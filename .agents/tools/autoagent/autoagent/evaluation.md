@@ -7,55 +7,46 @@ Sub-doc for `autoagent.md`. Loaded during Step 2 (Loop) for metric measurement.
 
 ## Multi-Trial Evaluation
 
-Single-trial measurements are noisy. Use multi-trial evaluation for statistically reliable keep/discard decisions.
+Single-trial measurements are noisy. Use the program's `## Evaluation` contract
+for statistically reliable keep/discard decisions.
 
-```bash
-multi_trial_evaluate() {
-    local metric_cmd="$1"
-    local n_trials="$2"
-    local results=()
-    local result
+```text
+results = run METRIC_CMD in CANDIDATE_PATH exactly TRIALS_PER_HYPOTHESIS times
+if any trial times out, exits non-zero, or does not emit exactly one number: ERROR
 
-    for i in $(seq 1 "$n_trials"); do
-        result=$(timeout "$PER_EXPERIMENT" bash -c "$metric_cmd" 2>/dev/null | \
-            grep -E '^[0-9]+(\.[0-9]+)?$' | tail -1)
-        if [ -z "$result" ]; then
-            echo "ERROR"
-            return 1
-        fi
-        results+=("$result")
-    done
+improved = count(score improves on BEST_METRIC in METRIC_DIR)
+required = TRIALS_PER_HYPOTHESIS when REQUIRED_IMPROVEMENTS == "all"
+required = floor(TRIALS_PER_HYPOTHESIS / 2) + 1 otherwise
+median_score = median(results)
+passed = improved >= required and median_score improves on BEST_METRIC
 
-    printf '%s\n' "${results[@]}" | sort -n | \
-        awk 'BEGIN{c=0} {a[c++]=$1} END{
-            if (c%2) print a[int(c/2)];
-            else print (a[c/2-1]+a[c/2])/2
-        }'
-    return 0
-}
+return results, median_score, improved, required, passed
 ```
 
 **Statistical rules:**
-- **Minimum trials:** 2 (default `TRIALS_PER_HYPOTHESIS`)
-- **Keep threshold:** median of N trials must show improvement vs `BEST_METRIC`
+- **Trials:** use the validated positive integer from `## Evaluation`
+- **Keep threshold:** enforce `required_improvements` and require an improved median
 - **Tie-breaking:** median equals `BEST_METRIC` → discard (no improvement = not worth keeping)
-- **Error handling:** any single trial returning ERROR → overall result = ERROR → rollback
+- **Error handling:** any trial error checkpoints and removes only the owned candidate
 - **Why median:** robust against outlier runs (cold cache, background load)
 
 ---
 
 ## Trajectory Recording
 
-Every hypothesis attempt is recorded in `todo/research/{PROGRAM_NAME}-trajectory.jsonl` (JSONL, append-only).
+Every hypothesis attempt is recorded in
+`WORKTREE_PATH/todo/research/{PROGRAM_NAME}-trajectory.jsonl` (JSONL,
+append-only). The runner commits this exact owned path with the matching results and
+checkpoint state after every keep, discard, constraint failure, or crash.
 
 ### Record Format
 
 ```json
 {
   "iteration": 5,
-  "hypothesis": "Consolidate file discovery rules in build.txt",
+  "hypothesis": "Consolidate file discovery rules in .agents/reference/error-prevention.md",
   "hypothesis_type": "instruction_refinement",
-  "files_modified": [".agents/prompts/build.txt"],
+  "files_modified": [".agents/reference/error-prevention.md"],
   "diff_summary": "+3/-7 lines",
   "trials": [
     {"trial": 1, "score": 0.87, "sub_scores": {"pass_rate": 0.90, "token_ratio": 0.82}},
@@ -76,7 +67,7 @@ Every hypothesis attempt is recorded in `todo/research/{PROGRAM_NAME}-trajectory
 record_trajectory() {
     local iteration="$1" hypothesis="$2" median_score="$3"
     local decision="$4" hypothesis_type="$5" files_modified="$6"
-    local trajectory_file="$REPO_ROOT/todo/research/${PROGRAM_NAME}-trajectory.jsonl"
+    local trajectory_file="$WORKTREE_PATH/todo/research/${PROGRAM_NAME}-trajectory.jsonl"
     mkdir -p "$(dirname "$trajectory_file")"
     jq -n \
       --argjson iter "$iteration" --arg hyp "$hypothesis" \
@@ -132,19 +123,21 @@ jq -r 'select(.decision == "discard") | .files_modified[]' \
 
 ```bash
 # Standard invocation — returns composite score as float on last line of stdout
-autoagent-metric-helper.sh run --suite agent-optimization
+autoagent-metric-helper.sh score --suite .agents/tests/agents-md-knowledge.json
 
 # With JSON sub-scores
-METRIC_JSON=$(autoagent-metric-helper.sh run --suite agent-optimization --json)
-COMPOSITE=$(echo "$METRIC_JSON" | jq '.composite_score')
-PASS_RATE=$(echo "$METRIC_JSON" | jq '.pass_rate')
-TOKEN_RATIO=$(echo "$METRIC_JSON" | jq '.token_ratio')
+METRIC_JSON=$(autoagent-metric-helper.sh compare --suite .agents/tests/agents-md-knowledge.json)
+COMPOSITE=$(jq '.composite_score' <<<"$METRIC_JSON")
+PASS_RATE=$(jq '.sub_scores.comprehension' <<<"$METRIC_JSON")
+TOKEN_RATIO=$(jq '.sub_scores.token_cost_ratio' <<<"$METRIC_JSON")
 ```
 
-**Composite score formula:** `composite_score = pass_rate * (1 - 0.3 * token_ratio)`
+**Composite score formula:**
+`wc * comprehension + wl * lint + wt * clamp(2 - token_ratio, 0, 1)`
 
-- `pass_rate`: fraction of comprehension tests passing (0–1)
-- `token_ratio`: `avg_response_chars / baseline_chars` (proxy for token usage)
+- `comprehension`: fraction of suite tests passing (0–1)
+- `token_ratio`: `avg_response_chars / baseline_chars`; ratios at or below 1 earn
+  full token weight, while ratios at or above 2 earn zero token weight
 - Direction: `higher` is better
 
 ---
@@ -155,6 +148,6 @@ TOKEN_RATIO=$(echo "$METRIC_JSON" | jq '.token_ratio')
 |-----------|-------|--------|
 | Wall-clock timeout | `elapsed >= TIMEOUT` | Break loop, proceed to completion |
 | Max iterations | `ITERATION_COUNT >= MAX_ITER` | Break loop, proceed to completion |
-| Goal reached | `BEST_METRIC >= GOAL` | Break loop, proceed to completion |
-| Per-experiment timeout | `timeout PER_EXPERIMENT cmd` | Treat as crash, revert, continue |
+| Goal reached | `goal_met(BEST_METRIC, GOAL, METRIC_DIR)` | Break loop, proceed to completion |
+| Per-experiment timeout | `timeout PER_EXPERIMENT cmd` | Checkpoint candidate, treat as crash, continue |
 | All hypothesis types exhausted | No new hypotheses possible | Break loop, proceed to completion |

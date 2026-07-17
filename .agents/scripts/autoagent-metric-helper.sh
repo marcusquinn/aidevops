@@ -15,15 +15,16 @@
 #   autoagent-metric-helper.sh compare [--suite <path>] [--weights <w1,w2,w3>] [--baseline-file <path>]
 #   autoagent-metric-helper.sh help
 #
-# Composite formula (v1):
-#   composite = 0.6 * comprehension_score + 0.3 * linter_score - 0.1 * max(0, token_cost_ratio - 1.0)
+# Composite formula (v2):
+#   token_efficiency = clamp(2 - token_cost_ratio, 0, 1)
+#   composite = wc * comprehension_score + wl * linter_score + wt * token_efficiency
 #
 # Weights configurable via --weights "0.6,0.3,0.1"
 #
 # Baseline sidecar: todo/research/.autoagent-baseline.json
 #
 # Author: AI DevOps Framework
-# Version: 1.0.0
+# Version: 2.0.0
 # License: MIT
 
 set -euo pipefail
@@ -47,13 +48,26 @@ if [[ -z "${NC+x}" ]]; then NC='\033[0m'; fi
 # Defaults
 readonly DEFAULT_BASELINE_FILE="todo/research/.autoagent-baseline.json"
 readonly DEFAULT_WEIGHTS="0.6,0.3,0.1"
-readonly DEFAULT_SUITE=""
+readonly DEFAULT_SUITE=".agents/tests/agents-md-knowledge.json"
+readonly NEUTRAL_SUITE_JSON='{"pass_rate":1.0,"avg_response_chars":null}'
 
 # Logging helpers
-log_info() { echo -e "${YELLOW}[INFO]${NC} $*" >&2; }
-log_warn() { echo -e "${YELLOW}[WARN]${NC} $*" >&2; }
-log_error() { echo -e "${RED}[ERROR]${NC} $*" >&2; }
-log_ok() { echo -e "${GREEN}[OK]${NC} $*" >&2; }
+log_info() {
+	printf '%b[INFO]%b %s\n' "$YELLOW" "$NC" "$*" >&2
+	return 0
+}
+log_warn() {
+	printf '%b[WARN]%b %s\n' "$YELLOW" "$NC" "$*" >&2
+	return 0
+}
+log_error() {
+	printf '%b[ERROR]%b %s\n' "$RED" "$NC" "$*" >&2
+	return 0
+}
+log_ok() {
+	printf '%b[OK]%b %s\n' "$GREEN" "$NC" "$*" >&2
+	return 0
+}
 
 #######################################
 # Parse weights string into three variables
@@ -66,20 +80,79 @@ log_ok() { echo -e "${GREEN}[OK]${NC} $*" >&2; }
 #######################################
 parse_weights() {
 	local weights_str="$1"
-	local w1 w2 w3
+	local w1=""
+	local w2=""
+	local w3=""
+	local extra=""
+	local numeric_pattern='^([0-9]+([.][0-9]*)?|[.][0-9]+)$'
 
-	w1=$(echo "$weights_str" | cut -d',' -f1)
-	w2=$(echo "$weights_str" | cut -d',' -f2)
-	w3=$(echo "$weights_str" | cut -d',' -f3)
+	IFS=',' read -r w1 w2 w3 extra <<<"$weights_str"
+	if [[ -n "$extra" || -z "$w1" || -z "$w2" || -z "$w3" ]] ||
+		[[ ! "$w1" =~ $numeric_pattern || ! "$w2" =~ $numeric_pattern || ! "$w3" =~ $numeric_pattern ]]; then
+		log_error "Invalid weights: '$weights_str'. Expected exactly three non-negative numbers (for example 0.6,0.3,0.1)"
+		return 1
+	fi
 
-	if [[ -z "$w1" || -z "$w2" || -z "$w3" ]]; then
-		log_error "Invalid weights format: '$weights_str'. Expected 'w1,w2,w3' (e.g. '0.6,0.3,0.1')"
+	if ! awk -v w1="$w1" -v w2="$w2" -v w3="$w3" \
+		'BEGIN { sum=w1+w2+w3; delta=sum-1; if (delta<0) delta=-delta; exit(delta <= 0.000001 ? 0 : 1) }'; then
+		log_error "Invalid weights: '$weights_str'. Values must sum to 1.0"
 		return 1
 	fi
 
 	WEIGHT_COMPREHENSION="$w1"
 	WEIGHT_LINT="$w2"
 	WEIGHT_TOKENS="$w3"
+	return 0
+}
+
+#######################################
+# Run an agent test suite once and return its JSON metrics.
+# Arguments:
+#   $1 - suite path
+# Outputs: suite JSON, or neutral JSON when unavailable
+# Returns: 0 always (graceful degradation)
+#######################################
+_run_suite_json() {
+	local suite="$1"
+	local agent_test_helper="${SCRIPT_DIR}/agent-test-helper.sh"
+	local json_output=""
+
+	if [[ ! -x "$agent_test_helper" ]]; then
+		log_warn "agent-test-helper.sh not found or not executable; using neutral suite metrics"
+		printf '%s\n' "$NEUTRAL_SUITE_JSON"
+		return 0
+	fi
+	if [[ -z "$suite" || ! -f "$suite" ]]; then
+		log_warn "Test suite unavailable: ${suite:-<empty>}; using neutral suite metrics"
+		printf '%s\n' "$NEUTRAL_SUITE_JSON"
+		return 0
+	fi
+
+	json_output=$("$agent_test_helper" run "$suite" --json 2>/dev/null) || json_output=""
+	if [[ -z "$json_output" ]] || ! jq -e . >/dev/null 2>&1 <<<"$json_output"; then
+		log_warn "agent-test-helper.sh run failed; using neutral suite metrics"
+		printf '%s\n' "$NEUTRAL_SUITE_JSON"
+		return 0
+	fi
+
+	printf '%s\n' "$json_output"
+	return 0
+}
+
+#######################################
+# Extract comprehension score from suite JSON.
+# Arguments:
+#   $1 - suite JSON
+# Outputs: float on stdout
+# Returns: 0 always
+#######################################
+_comprehension_from_json() {
+	local suite_json="$1"
+	local pass_rate="1.0"
+
+	pass_rate=$(jq -r '.pass_rate // 1.0' 2>/dev/null <<<"$suite_json") || pass_rate="1.0"
+	[[ -n "$pass_rate" && "$pass_rate" != "null" ]] || pass_rate="1.0"
+	printf '%s\n' "$pass_rate"
 	return 0
 }
 
@@ -94,41 +167,10 @@ parse_weights() {
 #######################################
 cmd_comprehension() {
 	local suite="$1"
-	local agent_test_helper="${SCRIPT_DIR}/agent-test-helper.sh"
+	local suite_json=""
 
-	if [[ ! -x "$agent_test_helper" ]]; then
-		log_warn "agent-test-helper.sh not found or not executable — returning neutral comprehension score"
-		echo "1.0"
-		return 0
-	fi
-
-	if [[ -z "$suite" ]]; then
-		log_warn "No test suite specified (--suite) — returning neutral comprehension score"
-		echo "1.0"
-		return 0
-	fi
-
-	if [[ ! -f "$suite" ]]; then
-		log_warn "Test suite not found: $suite — returning neutral comprehension score"
-		echo "1.0"
-		return 0
-	fi
-
-	local json_output
-	json_output=$("$agent_test_helper" run "$suite" --json 2>/dev/null) || {
-		log_warn "agent-test-helper.sh run failed — returning neutral comprehension score"
-		echo "1.0"
-		return 0
-	}
-
-	local pass_rate
-	pass_rate=$(echo "$json_output" | jq -r '.pass_rate // "1.0"' 2>/dev/null) || pass_rate="1.0"
-
-	if [[ -z "$pass_rate" ]]; then
-		pass_rate="1.0"
-	fi
-
-	echo "$pass_rate"
+	suite_json=$(_run_suite_json "$suite")
+	_comprehension_from_json "$suite_json"
 	return 0
 }
 
@@ -231,7 +273,8 @@ _format_ratio() {
 
 #######################################
 # Compute linter pass rate
-# Checks changed files (git diff vs main) or a capped sample of tracked files.
+# Checks working-tree changes vs main plus non-ignored untracked files, or a capped
+# sample of tracked files when no relevant candidate changes exist.
 # Scoped to changed files for performance — full-repo lint is too slow for a
 # fitness function called in tight autoagent research loops.
 # Outputs:
@@ -247,21 +290,26 @@ cmd_lint() {
 	local base_ref
 	base_ref=$(_lint_base_ref)
 
-	# Collect shell files: changed vs base, or capped sample
-	local sh_files=""
+	# Collect tracked working-tree differences and non-ignored untracked files once.
+	local candidate_files=""
+	local changed_files=""
+	local untracked_files=""
 	if [[ -n "$base_ref" ]]; then
-		sh_files=$(git diff --name-only "$base_ref" HEAD -- '*.sh' 2>/dev/null | grep '.agents/scripts/' || true)
+		changed_files=$(git diff --name-only "$base_ref" -- 2>/dev/null) || changed_files=""
 	fi
-	if [[ -z "$sh_files" ]]; then
-		sh_files=$(git ls-files '.agents/scripts/*.sh' 2>/dev/null | head -20) || sh_files=""
-	fi
+	untracked_files=$(git ls-files --others --exclude-standard -- 2>/dev/null) || untracked_files=""
+	candidate_files=$(printf '%s\n%s\n' "$changed_files" "$untracked_files" |
+		grep -E '^(\.agents/scripts/.*\.sh|\.agents/.*\.md)$' |
+		LC_ALL=C sort -u) || candidate_files=""
 
-	# Collect markdown files: changed vs base, or capped sample
+	# Use changed candidates when present; otherwise retain bounded tracked samples.
+	local sh_files=""
 	local md_files=""
-	if [[ -n "$base_ref" ]]; then
-		md_files=$(git diff --name-only "$base_ref" HEAD -- '*.md' 2>/dev/null | grep '.agents/' || true)
-	fi
-	if [[ -z "$md_files" ]]; then
+	if [[ -n "$candidate_files" ]]; then
+		sh_files=$(grep -E '^\.agents/scripts/.*\.sh$' <<<"$candidate_files") || sh_files=""
+		md_files=$(grep -E '^\.agents/.*\.md$' <<<"$candidate_files") || md_files=""
+	else
+		sh_files=$(git ls-files '.agents/scripts/*.sh' 2>/dev/null | head -20) || sh_files=""
 		md_files=$(git ls-files '.agents/**/*.md' 2>/dev/null | head -20) || md_files=""
 	fi
 
@@ -320,14 +368,13 @@ cmd_lint() {
 # Returns:
 #   0 always (graceful degradation)
 #######################################
-cmd_tokens() {
-	local suite="$1"
+_token_ratio_from_json() {
+	local suite_json="$1"
 	local baseline_file="$2"
-	local agent_test_helper="${SCRIPT_DIR}/agent-test-helper.sh"
 
 	if [[ ! -f "$baseline_file" ]]; then
 		log_warn "No baseline file found at $baseline_file — returning neutral token ratio"
-		echo "1.0"
+		printf '%s\n' "1.0"
 		return 0
 	fi
 
@@ -336,33 +383,44 @@ cmd_tokens() {
 
 	if [[ -z "$baseline_chars" || "$baseline_chars" == "0" || "$baseline_chars" == "null" ]]; then
 		log_warn "Baseline has no avg_tokens — returning neutral token ratio"
-		echo "1.0"
+		printf '%s\n' "1.0"
 		return 0
 	fi
-
-	if [[ ! -x "$agent_test_helper" || -z "$suite" || ! -f "$suite" ]]; then
-		log_warn "Cannot measure current tokens (no agent-test-helper or suite) — returning neutral"
-		echo "1.0"
-		return 0
-	fi
-
-	local json_output
-	json_output=$("$agent_test_helper" run "$suite" --json 2>/dev/null) || {
-		log_warn "agent-test-helper.sh run failed for token measurement — returning neutral"
-		echo "1.0"
-		return 0
-	}
 
 	local current_chars
-	current_chars=$(echo "$json_output" | jq -r '.avg_response_chars // 0' 2>/dev/null) || current_chars="0"
+	current_chars=$(jq -r '.avg_response_chars // 0' 2>/dev/null <<<"$suite_json") || current_chars="0"
 
-	if [[ -z "$current_chars" || "$current_chars" == "0" ]]; then
+	if [[ -z "$current_chars" || "$current_chars" == "0" || "$current_chars" == "null" ]]; then
 		log_warn "Could not measure current avg_response_chars — returning neutral"
-		echo "1.0"
+		printf '%s\n' "1.0"
 		return 0
 	fi
 
 	_format_ratio "$current_chars" "$baseline_chars"
+	return 0
+}
+
+#######################################
+# Compute token cost ratio from at most one standalone suite execution.
+# Arguments:
+#   $1 - suite path
+#   $2 - baseline file path
+# Outputs: float ratio on stdout
+# Returns: 0 always
+#######################################
+cmd_tokens() {
+	local suite="$1"
+	local baseline_file="$2"
+	local suite_json=""
+
+	if [[ ! -f "$baseline_file" ]]; then
+		log_warn "No baseline file found at $baseline_file — returning neutral token ratio"
+		printf '%s\n' "1.0"
+		return 0
+	fi
+
+	suite_json=$(_run_suite_json "$suite")
+	_token_ratio_from_json "$suite_json" "$baseline_file"
 	return 0
 }
 
@@ -451,7 +509,8 @@ EOF
 
 #######################################
 # Compute composite score from sub-scores
-# composite = wc*comprehension + wl*lint - wt*max(0, token_ratio-1.0), clamped [0,1]
+# token_efficiency = clamp(2-token_ratio, 0, 1)
+# composite = wc*comprehension + wl*lint + wt*token_efficiency
 # Arguments:
 #   $1 - comprehension score
 #   $2 - linter score
@@ -469,21 +528,36 @@ _compute_composite() {
 	# Use awk with ternary operators to avoid multi-line if blocks (nesting depth)
 	if command -v awk >/dev/null 2>&1; then
 		result=$(awk -v c="$c" -v l="$l" -v t="$t" -v wc="$wc" -v wl="$wl" -v wt="$wt" \
-			'BEGIN { p=(t>1?t-1:0); s=wc*c+wl*l-wt*p; s=(s<0?0:(s>1?1:s)); printf "%.4f\n",s }' \
+			'BEGIN { e=2-t; e=(e<0?0:(e>1?1:e)); s=wc*c+wl*l+wt*e; s=(s<0?0:(s>1?1:s)); printf "%.4f\n",s }' \
 			2>/dev/null) || result="0.0"
-		echo "$result"
+		printf '%s\n' "$result"
 	elif command -v bc >/dev/null 2>&1; then
 		local raw
-		raw=$(printf 'scale=4; c=%s; l=%s; t=%s; p=t-1.0; if(p<0)p=0; %s*c+%s*l-%s*p\n' \
+		raw=$(printf 'scale=4; c=%s; l=%s; t=%s; e=2-t; if(e<0)e=0; if(e>1)e=1; %s*c+%s*l+%s*e\n' \
 			"$c" "$l" "$t" "$wc" "$wl" "$wt" | bc 2>/dev/null) || raw="0.0"
 		case "$raw" in
-		.*) echo "0${raw}" ;;
-		*) echo "$raw" ;;
+		.*) printf '0%s\n' "$raw" ;;
+		*) printf '%s\n' "$raw" ;;
 		esac
 	else
 		log_warn "Neither bc nor awk available — cannot compute composite score"
-		echo "0.0"
+		printf '%s\n' "0.0"
 	fi
+	return 0
+}
+
+#######################################
+# Compute clamped token efficiency from a token ratio.
+# Arguments:
+#   $1 - token ratio
+# Outputs: float on stdout
+# Returns: 0 always
+#######################################
+_compute_token_efficiency() {
+	local token_ratio="$1"
+
+	awk -v t="$token_ratio" 'BEGIN { e=2-t; e=(e<0?0:(e>1?1:e)); printf "%.4f\n",e }' 2>/dev/null ||
+		printf '%s\n' "1.0"
 	return 0
 }
 
@@ -506,17 +580,21 @@ cmd_score() {
 	local WEIGHT_COMPREHENSION WEIGHT_LINT WEIGHT_TOKENS
 	parse_weights "$weights_str" || return 1
 
-	local comprehension_score linter_score token_ratio
-	comprehension_score=$(cmd_comprehension "$suite" 2>/dev/null) || comprehension_score="1.0"
+	local suite_json=""
+	local comprehension_score="1.0"
+	local linter_score="1.0"
+	local token_ratio="1.0"
+	suite_json=$(_run_suite_json "$suite")
+	comprehension_score=$(_comprehension_from_json "$suite_json")
 	linter_score=$(cmd_lint 2>/dev/null) || linter_score="1.0"
-	token_ratio=$(cmd_tokens "$suite" "$baseline_file" 2>/dev/null) || token_ratio="1.0"
+	token_ratio=$(_token_ratio_from_json "$suite_json" "$baseline_file" 2>/dev/null) || token_ratio="1.0"
 
 	local composite
 	composite=$(_compute_composite \
 		"$comprehension_score" "$linter_score" "$token_ratio" \
 		"$WEIGHT_COMPREHENSION" "$WEIGHT_LINT" "$WEIGHT_TOKENS")
 
-	echo "$composite"
+	printf '%s\n' "$composite"
 	return 0
 }
 
@@ -539,11 +617,19 @@ cmd_compare() {
 	local WEIGHT_COMPREHENSION WEIGHT_LINT WEIGHT_TOKENS
 	parse_weights "$weights_str" || return 1
 
-	local comprehension_score linter_score token_ratio composite
-	comprehension_score=$(cmd_comprehension "$suite" 2>/dev/null) || comprehension_score="1.0"
+	local suite_json=""
+	local comprehension_score="1.0"
+	local linter_score="1.0"
+	local token_ratio="1.0"
+	local token_efficiency="1.0"
+	local composite="0.0"
+	suite_json=$(_run_suite_json "$suite")
+	comprehension_score=$(_comprehension_from_json "$suite_json")
 	linter_score=$(cmd_lint 2>/dev/null) || linter_score="1.0"
-	token_ratio=$(cmd_tokens "$suite" "$baseline_file" 2>/dev/null) || token_ratio="1.0"
-	composite=$(cmd_score "$suite" "$weights_str" "$baseline_file" 2>/dev/null) || composite="0.0"
+	token_ratio=$(_token_ratio_from_json "$suite_json" "$baseline_file" 2>/dev/null) || token_ratio="1.0"
+	token_efficiency=$(_compute_token_efficiency "$token_ratio")
+	composite=$(_compute_composite "$comprehension_score" "$linter_score" "$token_ratio" \
+		"$WEIGHT_COMPREHENSION" "$WEIGHT_LINT" "$WEIGHT_TOKENS")
 
 	# Read baseline values for delta computation
 	local baseline_comprehension="null"
@@ -566,27 +652,29 @@ cmd_compare() {
 		--argjson comprehension "$comprehension_score" \
 		--argjson lint "$linter_score" \
 		--argjson tokens "$token_ratio" \
-		--arg wc "$WEIGHT_COMPREHENSION" \
-		--arg wl "$WEIGHT_LINT" \
-		--arg wt "$WEIGHT_TOKENS" \
+		--argjson token_efficiency "$token_efficiency" \
+		--argjson wc "$WEIGHT_COMPREHENSION" \
+		--argjson wl "$WEIGHT_LINT" \
+		--argjson wt "$WEIGHT_TOKENS" \
 		--argjson b_comprehension "${baseline_comprehension:-null}" \
 		--argjson b_linter "${baseline_linter:-null}" \
 		'{
 			"timestamp": $timestamp,
 			"composite_score": $composite,
 			"sub_scores": {
-				"comprehension": $comprehension,
-				"lint": $lint,
-				"token_cost_ratio": $tokens
+				comprehension: $comprehension,
+				lint: $lint,
+				"token_cost_ratio": $tokens,
+				"token_efficiency": $token_efficiency
 			},
 			"weights": {
-				"comprehension": $wc,
-				"lint": $wl,
+				comprehension: $wc,
+				lint: $wl,
 				"tokens": $wt
 			},
 			"baseline_delta": {
-				"comprehension": (if $b_comprehension != null then ($comprehension - $b_comprehension) else null end),
-				"lint": (if $b_linter != null then ($lint - $b_linter) else null end)
+				comprehension: (if $b_comprehension != null then ($comprehension - $b_comprehension) else null end),
+				lint: (if $b_linter != null then ($lint - $b_linter) else null end)
 			}
 		}' 2>/dev/null || {
 		# Fallback if jq not available
@@ -621,8 +709,9 @@ OPTIONS:
   --baseline-file <path>  Baseline sidecar path (default: todo/research/.autoagent-baseline.json)
   --json                  Machine-readable output (where applicable)
 
-COMPOSITE FORMULA (v1):
-  composite = 0.6 * comprehension_score + 0.3 * linter_score - 0.1 * max(0, token_cost_ratio - 1.0)
+COMPOSITE FORMULA (v2):
+  token_efficiency = clamp(2 - token_cost_ratio, 0, 1)
+  composite = wc * comprehension_score + wl * linter_score + wt * token_efficiency
 
 BASELINE SIDECAR FORMAT:
   {
@@ -631,7 +720,7 @@ BASELINE SIDECAR FORMAT:
     "linter_score": 0.92,
     "avg_tokens": 1234,
     "files_checked": 45,
-    "suite": ".agents/tests/agent-optimization.test.json"
+    "suite": ".agents/tests/agents-md-knowledge.json"
   }
 
 GRACEFUL DEGRADATION:
@@ -643,19 +732,19 @@ GRACEFUL DEGRADATION:
 
 EXAMPLES:
   # Establish baseline
-  autoagent-metric-helper.sh baseline --suite .agents/tests/smoke.json
+  autoagent-metric-helper.sh baseline --suite .agents/tests/agents-md-knowledge.json
 
   # Get composite score (used as METRIC_CMD in autoresearch)
-  autoagent-metric-helper.sh score --suite .agents/tests/smoke.json
+  autoagent-metric-helper.sh score --suite .agents/tests/agents-md-knowledge.json
 
   # Compare current vs baseline
-  autoagent-metric-helper.sh compare --suite .agents/tests/smoke.json
+  autoagent-metric-helper.sh compare --suite .agents/tests/agents-md-knowledge.json
 
   # Custom weights (emphasise lint over comprehension)
   autoagent-metric-helper.sh score --weights "0.4,0.5,0.1"
 
   # Custom baseline location
-  autoagent-metric-helper.sh baseline --baseline-file /tmp/my-baseline.json
+  autoagent-metric-helper.sh baseline --baseline-file "${AIDEVOPS_TEMP_DIR:-$HOME/.aidevops/.agent-workspace/tmp}/my-baseline.json"
 EOF
 	return 0
 }
@@ -671,20 +760,37 @@ main() {
 	local suite="$DEFAULT_SUITE"
 	local weights="$DEFAULT_WEIGHTS"
 	local baseline_file="$DEFAULT_BASELINE_FILE"
+	local argument=""
+	local value=""
 
-	local remaining_args=()
 	while [[ $# -gt 0 ]]; do
-		case "$1" in
+		argument="$1"
+		case "$argument" in
 		--suite)
-			suite="$2"
+			value="${2:-}"
+			if [[ $# -lt 2 || -z "$value" || "$value" == --* ]]; then
+				log_error "Missing value for --suite"
+				return 1
+			fi
+			suite="$value"
 			shift 2
 			;;
 		--weights)
-			weights="$2"
+			value="${2:-}"
+			if [[ $# -lt 2 || -z "$value" || "$value" == --* ]]; then
+				log_error "Missing value for --weights"
+				return 1
+			fi
+			weights="$value"
 			shift 2
 			;;
 		--baseline-file)
-			baseline_file="$2"
+			value="${2:-}"
+			if [[ $# -lt 2 || -z "$value" || "$value" == --* ]]; then
+				log_error "Missing value for --baseline-file"
+				return 1
+			fi
+			baseline_file="$value"
 			shift 2
 			;;
 		--json)
@@ -692,33 +798,34 @@ main() {
 			shift
 			;;
 		*)
-			remaining_args+=("$1")
-			shift
+			log_error "Unexpected argument: $argument"
+			return 1
 			;;
 		esac
 	done
 
+	local status=0
 	case "$command" in
 	score)
-		cmd_score "$suite" "$weights" "$baseline_file"
+		cmd_score "$suite" "$weights" "$baseline_file" || status=$?
 		;;
 	comprehension)
-		cmd_comprehension "$suite"
+		cmd_comprehension "$suite" || status=$?
 		;;
 	lint)
-		cmd_lint
+		cmd_lint || status=$?
 		;;
 	tokens)
-		cmd_tokens "$suite" "$baseline_file"
+		cmd_tokens "$suite" "$baseline_file" || status=$?
 		;;
 	baseline)
-		cmd_baseline "$suite" "$baseline_file"
+		cmd_baseline "$suite" "$baseline_file" || status=$?
 		;;
 	compare)
-		cmd_compare "$suite" "$weights" "$baseline_file"
+		cmd_compare "$suite" "$weights" "$baseline_file" || status=$?
 		;;
 	help | --help | -h)
-		cmd_help
+		cmd_help || status=$?
 		;;
 	*)
 		log_error "Unknown subcommand: $command"
@@ -726,6 +833,7 @@ main() {
 		return 1
 		;;
 	esac
+	return "$status"
 }
 
 main "$@"
