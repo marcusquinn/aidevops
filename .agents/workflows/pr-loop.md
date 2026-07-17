@@ -1,5 +1,5 @@
 ---
-description: Iterate on PR until approved or merged
+description: Iterate on PR until ready for upstream hand-off, approved, or merged
 agent: Build+
 mode: subagent
 ---
@@ -7,7 +7,7 @@ mode: subagent
 <!-- SPDX-License-Identifier: MIT -->
 <!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
 
-Monitor and iterate on a PR until it is approved or merged.
+Monitor and iterate on a PR until it is ready for external upstream hand-off or, with maintainer-equivalent target-repository access, approved/merged.
 
 ## Usage
 
@@ -24,9 +24,9 @@ Monitor and iterate on a PR until it is approved or merged.
 
 ## Workflow
 
-Each iteration checks: CI Status → Review Add-on Status (t1382) → Review Status → Merge Readiness.
+Each iteration checks: CI Status → Review Add-on Status (t1382) → Review Status → Merge/Hand-off Readiness.
 
-Invocation is explicit finalisation consent. If the target PR is draft and local/session evidence says it is ready for merge preparation, run `gh pr ready <PR>` before merge polling; otherwise report the blocker and leave it draft. For `origin:interactive` PRs, pulse merge throughput still requires `allow-auto-merge` or the configured `interactive_pr_auto_merge` preference.
+Invocation is explicit finalisation consent. Classify permission against the PR's target/upstream repository: `admin`, `maintain`, or `write` is maintainer-equivalent on GitHub; lower or ambiguous permission is external. If the PR is draft and local/session evidence says it is ready, run `gh pr ready <PR>`; otherwise report the blocker and leave it draft. Maintainer-equivalent loops may continue to merge polling (with the normal auto-merge opt-in for `origin:interactive`). External loops never merge: once the exact ready head has terminal-success required CI and actionable review findings are resolved, hand the open PR to upstream maintainers and stop. Pending upstream human approval is a successful hand-off state, not an indefinite polling condition.
 
 **On issues:** CI failures → report and wait. Changes requested → verify, address valid feedback. Stale review → auto-trigger re-review (unless `--no-auto-trigger`).
 
@@ -75,6 +75,7 @@ If the required CheckRun does NOT refresh within ~60 seconds after an approval, 
 
 | Outcome | Promise |
 |---------|---------|
+| External PR ready for upstream maintainers | `<promise>PR_READY_EXTERNAL</promise>` |
 | PR approved | `<promise>PR_APPROVED</promise>` |
 | PR merged | `<promise>PR_MERGED</promise>` |
 | Max iterations reached | Exit with status report |
