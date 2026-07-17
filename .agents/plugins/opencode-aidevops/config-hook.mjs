@@ -573,6 +573,7 @@ function registerAgents(config, agentsDir) {
 }
 
 const RESEARCH_ONLY_AGENT_NAME = "research-only";
+const UNSAFE_FRONTMATTER_KEYS = new Set(["__proto__", "constructor", "prototype"]);
 const RESEARCH_ONLY_FALLBACK_PROMPT = `# Research-only subagent
 
 Gather evidence from the assigned repository and read-only web sources. Return
@@ -581,39 +582,47 @@ external state, invoke another agent, access credentials, or perform Git,
 account, network-write, or worktree operations.`;
 
 function parseFrontmatterScalar(value) {
-  if (value === "true") return true;
-  if (value === "false") return false;
-  if (value.startsWith('"')) return JSON.parse(value);
-  return value;
+  const booleans = { true: true, false: false };
+  if (Object.hasOwn(booleans, value)) return booleans[value];
+  return value.startsWith('"') ? JSON.parse(value) : value;
+}
+
+function parseFrontmatterEntry(line) {
+  if (!line.trim() || line.trimStart().startsWith("#")) return null;
+  const entry = line.match(/^( *)(?:"([^"]+)"|([A-Za-z0-9_.-]+)):\s*(.*)$/);
+  if (!entry || entry[1].length % 2 !== 0) throw new Error("Invalid agent frontmatter entry");
+  return entry;
+}
+
+function assignFrontmatterEntry(stack, entry) {
+  const indent = entry[1].length;
+  while (stack.at(-1).indent >= indent) stack.pop();
+  if (indent > stack.at(-1).indent + 2) throw new Error("Invalid agent frontmatter indentation");
+
+  const key = entry[2] || entry[3];
+  const parent = stack.at(-1).value;
+  if (UNSAFE_FRONTMATTER_KEYS.has(key) || Object.hasOwn(parent, key)) {
+    throw new Error("Unsafe or duplicate agent frontmatter key");
+  }
+  parent[key] = entry[4] ? parseFrontmatterScalar(entry[4]) : {};
+  if (!entry[4]) stack.push({ indent, value: parent[key] });
 }
 
 function parseAgentFrontmatter(source) {
-  const match = source.match(/^---\n([\s\S]*?)\n---\n?([\s\S]*)$/);
-  if (!match) return null;
+  try {
+    const match = source.match(/^---\n([\s\S]*?)\n---\n?([\s\S]*)$/);
+    if (!match) throw new Error("Agent frontmatter is missing");
 
-  const profile = {};
-  const stack = [{ indent: -1, value: profile }];
-  for (const line of match[1].split("\n")) {
-    if (!line.trim() || line.trimStart().startsWith("#")) continue;
-    const entry = line.match(/^( *)(?:"([^"]+)"|([A-Za-z0-9_.-]+)):\s*(.*)$/);
-    if (!entry || entry[1].length % 2 !== 0) return null;
-
-    const indent = entry[1].length;
-    while (stack.at(-1).indent >= indent) stack.pop();
-    if (indent > stack.at(-1).indent + 2) return null;
-
-    const key = entry[2] || entry[3];
-    const parent = stack.at(-1).value;
-    if (["__proto__", "constructor", "prototype"].includes(key) || Object.hasOwn(parent, key)) return null;
-    try {
-      parent[key] = entry[4] ? parseFrontmatterScalar(entry[4]) : {};
-    } catch {
-      return null;
+    const profile = {};
+    const stack = [{ indent: -1, value: profile }];
+    for (const line of match[1].split("\n")) {
+      const entry = parseFrontmatterEntry(line);
+      if (entry) assignFrontmatterEntry(stack, entry);
     }
-    if (!entry[4]) stack.push({ indent, value: parent[key] });
+    return { profile, prompt: match[2].trim() };
+  } catch {
+    return null;
   }
-
-  return { profile, prompt: match[2].trim() };
 }
 
 function researchOnlyProfile(agentsDir) {
