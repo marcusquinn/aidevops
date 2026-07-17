@@ -815,11 +815,13 @@ _remove_deprecated_mcp_entries() {
 		"hostinger-api"
 		"shadcn"
 		"repomix"
+		"gh_grep"
 	)
 
 	# Tool rules to remove (for MCPs that no longer exist)
 	local auggie_tool="auggie-mcp_*"
 	local augment_tool="augment-context-engine_*"
+	local gh_grep_tool="gh_grep_*"
 	local deprecated_tools=(
 		"$auggie_tool"
 		"$augment_tool"
@@ -830,6 +832,7 @@ _remove_deprecated_mcp_entries() {
 		"serper_*"
 		"shadcn_*"
 		"repomix_*"
+		"$gh_grep_tool"
 	)
 
 	for mcp in "${deprecated_mcps[@]}"; do

@@ -61,6 +61,12 @@ def remove_deprecated_mcps(config):
         print("  Removed deprecated osgrep MCP")
     if 'osgrep_*' in config.get('tools', {}):
         del config['tools']['osgrep_*']
+    # gh_grep MCP removed — github-search subagent uses rg/bash instead
+    if 'gh_grep' in config.get('mcp', {}):
+        del config['mcp']['gh_grep']
+        print("  Removed deprecated gh_grep MCP")
+    if 'gh_grep_*' in config.get('tools', {}):
+        del config['tools']['gh_grep_*']
 
 
 def _register_playwriter(config, bun_path):
