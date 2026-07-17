@@ -1182,6 +1182,10 @@ deploy_aidevops_agents() {
 	fi
 	_runtime_bundle_activate "$target_dir" "$_AIDEVOPS_STAGED_BUNDLE_DIR" || return 1
 	_verify_agents_deploy_or_restore "$source_dir" "$target_dir" || return 1
+	pin_aidevops_active_runtime_bundle_root || {
+		print_error "Unable to bind setup to the activated runtime bundle"
+		return 1
+	}
 
 	print_success "Deployed agents to $target_dir"
 	_install_canonical_git_guard_shim "$target_dir" || return 1

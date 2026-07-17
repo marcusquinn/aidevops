@@ -62,9 +62,16 @@ install_aidevops_cli() {
 	# which resolves to .agents/scripts/setup/modules/ when sourced from setup.sh.
 	local cli_source="${INSTALL_DIR:?INSTALL_DIR not set}/bin/aidevops"
 	local orchestrator_source="$INSTALL_DIR/aidevops.sh"
-	local deployed_cli="${AGENTS_DIR:?AGENTS_DIR not set}/aidevops.sh"
+	local deployed_root=""
+	if declare -F resolve_aidevops_runtime_bundle_root >/dev/null 2>&1; then
+		deployed_root=$(resolve_aidevops_runtime_bundle_root "$HOME/.aidevops/agents") || deployed_root=""
+	fi
+	if [[ -z "$deployed_root" ]]; then
+		deployed_root="${AGENTS_DIR:?AGENTS_DIR not set}"
+	fi
+	local deployed_cli="${deployed_root}/aidevops.sh"
 	local convergence_helper="${INSTALL_DIR}/.agents/scripts/aidevops-cli-converge-helper.sh"
-	local deployed_version="${AGENTS_DIR}/VERSION"
+	local deployed_version="${deployed_root}/VERSION"
 
 	if [[ ! -f "$cli_source" || ! -f "$orchestrator_source" || ! -x "$convergence_helper" ]]; then
 		print_warning "aidevops CLI sources not found under $INSTALL_DIR - skipping CLI installation"

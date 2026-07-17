@@ -107,7 +107,15 @@ test_setup_stage_contract() {
 	assert_contains "gui-desktop scope maps to native app installer" "$text" "gui-desktop | gui | app | \"\$SETUP_STAGE_GUI_DESKTOP\") printf '%s' \"\$SETUP_STAGE_GUI_DESKTOP\""
 	assert_contains "ai-session scope maps to incremental setup" "$text" "ai-session | ai | \"\$SETUP_STAGE_AI_SESSION\") printf '%s' \"\$SETUP_STAGE_AI_SESSION\""
 	assert_contains "ai-session scoped stage falls back to full setup" "$text" "AI-session incremental setup unavailable or failed; falling back to full setup"
+	# shellcheck disable=SC2016 # Match literal setup.sh expressions.
+	assert_contains "ai-session accepts linked worktree git files" "$text" 'git -C "$checkout_root" rev-parse --git-dir'
+	# shellcheck disable=SC2016 # Match literal setup.sh expressions.
+	assert_contains "ai-session resolves linked worktree common git dir" "$text" 'git -C "$checkout_root" rev-parse --git-common-dir'
 	assert_contains "ai-session verifies deployed sha" "$text" "_setup_ai_session_verify_deploy \"\$current_sha\""
+	# shellcheck disable=SC2016 # Match literal setup.sh expressions.
+	assert_contains "ai-session verifies active bundle manifest version" "$text" '_setup_bundle_manifest_value "$manifest_file" framework_version'
+	# shellcheck disable=SC2016 # Match literal setup.sh expressions.
+	assert_contains "ai-session verifies active bundle manifest sha" "$text" '_setup_bundle_manifest_value "$manifest_file" git_sha'
 	assert_contains "ai-session reconciles generated runtime config" "$text" "_time_step \"\$SETUP_STAGE_RUNTIME_CONFIG\" _setup_reconcile_runtime_config"
 	assert_contains "runtime reconciliation updates enabled primary runtimes" "$text" "update_runtime_configs || return \$?"
 	assert_contains "runtime reconciliation deploys commands to remaining runtimes" "$text" "deploy_commands_to_all_runtimes || return \$?"
@@ -124,6 +132,54 @@ test_setup_stage_contract() {
 	assert_occurrence_count "scoped, ai-session, and noninteractive setup register opencode plugin" "$text" \
 		"_time_step \"\$SETUP_STAGE_OPENCODE_PLUGINS\" setup_opencode_plugins" 3
 	assert_contains "unknown stages print actionable help" "$text" "Unknown setup stage/scope"
+	return 0
+}
+
+test_linked_worktree_checkout_contract() {
+	local tmp_dir=""
+	local source_repo=""
+	local linked_worktree=""
+	local helper_text=""
+	tmp_dir=$(mktemp -d "${TMPDIR:-/tmp}/aidevops-linked-checkout-test.XXXXXX") || {
+		print_result "linked worktree fixture created" 1
+		return 0
+	}
+	source_repo="$tmp_dir/repo"
+	linked_worktree="$tmp_dir/linked"
+	/usr/bin/git init -q "$source_repo" &&
+		/usr/bin/git -C "$source_repo" config user.email "test@example.invalid" &&
+		/usr/bin/git -C "$source_repo" config user.name "Test" &&
+		/usr/bin/git -C "$source_repo" config commit.gpgsign false &&
+		printf 'fixture\n' >"$source_repo/file" &&
+		/usr/bin/git -C "$source_repo" add file &&
+		/usr/bin/git -C "$source_repo" commit -qm fixture &&
+		/usr/bin/git -C "$source_repo" worktree add -q -b linked-test "$linked_worktree" || {
+		print_result "linked worktree fixture created" 1
+		rm -rf "$tmp_dir"
+		return 0
+	}
+	helper_text=$(python3 - "$SETUP_SH" <<'PY'
+import pathlib
+import re
+import sys
+
+text = pathlib.Path(sys.argv[1]).read_text()
+match = re.search(r"(?ms)^_setup_git_checkout_available\(\) \{.*?^\}", text)
+if not match:
+    raise SystemExit(1)
+print(match.group(0))
+PY
+	) || helper_text=""
+	if [[ -n "$helper_text" ]]; then
+		eval "$helper_text"
+	fi
+	if [[ -f "$linked_worktree/.git" ]] && declare -F _setup_git_checkout_available >/dev/null 2>&1 &&
+		_setup_git_checkout_available "$linked_worktree"; then
+		print_result "ai-session checkout detection accepts linked worktree .git files" 0
+	else
+		print_result "ai-session checkout detection accepts linked worktree .git files" 1
+	fi
+	rm -rf "$tmp_dir"
 	return 0
 }
 
@@ -234,6 +290,7 @@ PY
 
 main() {
 	test_setup_stage_contract
+	test_linked_worktree_checkout_contract
 	test_setup_version_substitution_keeps_syntax
 	test_cli_scope_contract
 	test_gui_desktop_package_contract
