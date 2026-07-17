@@ -2,7 +2,7 @@ import { execFileSync, execSync } from "child_process";
 import { existsSync, realpathSync, statSync } from "fs";
 import { join } from "path";
 
-let tool;
+export let tool;
 try {
   ({ tool } = await import("@opencode-ai/plugin"));
 } catch {
