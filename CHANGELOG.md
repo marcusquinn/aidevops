@@ -10,9 +10,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.32.148] - 2026-07-18
+
+### Changed
+
+- Maintenance: mark t18156 complete (pr:#28144 completed:2026-07-17) [skip ci]
+- Maintenance: sync ref:GH#28141 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#28140 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#28139 to TODO.md [skip ci]
+- Maintenance: mark t18154 complete (pr:#28137 completed:2026-07-17) [skip ci]
+- Tests: follow split helper ownership paths (#28137)
+- Maintenance: sync ref:GH#28133 to TODO.md [skip ci]
+
 ### Fixed
 
-- initialize OpenCode tab status for idle and legacy permission events (#28140)
+- restore OpenCode tab status lifecycle (#28144)
+- fail closed on ambiguous PR repair routing (#28142)
+- avoid large approval JSON in argv (#28138)
+- preserve host process temp directories (#28136)
+- reset review escalation after new commits (#28132)
+- escape routine systemd commands correctly (#28131)
+- classify Ruby changes in complexity gate (#28129)
+- record portable audit lock owner pid (#28126)
+- retain issue identity in worktree ownership (#28120)
+- exclude native preflight failures from transport counts (#28117)
 
 ## [3.32.147] - 2026-07-17
 
