@@ -10,6 +10,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- simplify OpenCode session status event dispatch (#28070)
+
 ## [3.32.143] - 2026-07-17
 
 ### Added

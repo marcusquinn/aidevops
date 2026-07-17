@@ -18,17 +18,82 @@ function isRootSessionInfo(info) {
   return Boolean(info) && !info.parentID;
 }
 
+const ROOT_SESSION_STATUSES = new Set(["busy", "retry", "idle"]);
+
+function handleSessionCreated({ info, sessionID, state, resetState }) {
+  if (!isRootSessionInfo(info)) return;
+  state.activeRootSessionID = sessionID;
+  resetState();
+}
+
+function handleSessionUpdated({ info, sessionID, state, resetState }) {
+  if (state.activeRootSessionID || !isRootSessionInfo(info)) return;
+  state.activeRootSessionID = sessionID;
+  resetState();
+}
+
+function handleSessionDeleted({ sessionID, state, resetState }) {
+  if (sessionID !== state.activeRootSessionID) return;
+  state.activeRootSessionID = "";
+  resetState();
+}
+
+function handleMessageUpdated({ info, sessionID, state, setTerminalTitleStatus }) {
+  if (
+    sessionID !== state.activeRootSessionID ||
+    info?.role !== "user" ||
+    state.pendingPermissionIDs.size > 0
+  ) {
+    return;
+  }
+  setTerminalTitleStatus("busy");
+}
+
+function handleSessionStatus({ event, sessionID, state, setTerminalTitleStatus }) {
+  if (sessionID !== state.activeRootSessionID || state.pendingPermissionIDs.size > 0) return;
+  const status = event.properties?.status?.type;
+  if (!ROOT_SESSION_STATUSES.has(status)) return;
+  setTerminalTitleStatus(status);
+}
+
+function handlePermissionAsked({ event, sessionID, state, setTerminalTitleStatus }) {
+  if (sessionID !== state.activeRootSessionID) return;
+  const requestID = event.properties?.id;
+  if (!requestID) return;
+  state.pendingPermissionIDs.add(requestID);
+  setTerminalTitleStatus("permission");
+}
+
+function handlePermissionReplied({ event, sessionID, state, setTerminalTitleStatus }) {
+  if (sessionID !== state.activeRootSessionID) return;
+  const wasPending = state.pendingPermissionIDs.delete(event.properties?.requestID);
+  if (!wasPending || state.pendingPermissionIDs.size > 0) return;
+  setTerminalTitleStatus("busy");
+}
+
+const EVENT_HANDLERS = new Map([
+  ["session.created", handleSessionCreated],
+  ["session.updated", handleSessionUpdated],
+  ["session.deleted", handleSessionDeleted],
+  ["message.updated", handleMessageUpdated],
+  ["session.status", handleSessionStatus],
+  ["permission.asked", handlePermissionAsked],
+  ["permission.replied", handlePermissionReplied],
+]);
+
 export function createSessionTitleStatusHandler({
   isHeadless = () => false,
   isEnabled = () => process.env.AIDEVOPS_TAB_STATUS_ENABLED !== "false",
   resetTerminalTitleState = defaultResetTerminalTitleState,
   setTerminalTitleStatus = defaultSetTerminalTitleStatus,
 } = {}) {
-  let activeRootSessionID = "";
-  const pendingPermissionIDs = new Set();
+  const state = {
+    activeRootSessionID: "",
+    pendingPermissionIDs: new Set(),
+  };
 
   const resetState = () => {
-    pendingPermissionIDs.clear();
+    state.pendingPermissionIDs.clear();
     resetTerminalTitleState();
   };
 
@@ -38,37 +103,8 @@ export function createSessionTitleStatusHandler({
     const event = getEvent(input);
     const info = event.properties?.info;
     const sessionID = sessionIDFrom(event);
+    if (!sessionID) return;
 
-    if (event.type === "session.created" && isRootSessionInfo(info) && sessionID) {
-      activeRootSessionID = sessionID;
-      resetState();
-    } else if (event.type === "session.updated" && !activeRootSessionID && isRootSessionInfo(info) && sessionID) {
-      activeRootSessionID = sessionID;
-      resetState();
-    } else if (event.type === "session.deleted" && sessionID === activeRootSessionID) {
-      activeRootSessionID = "";
-      resetState();
-    } else if (
-      event.type === "message.updated" &&
-      sessionID === activeRootSessionID &&
-      info?.role === "user" &&
-      pendingPermissionIDs.size === 0
-    ) {
-      setTerminalTitleStatus("busy");
-    } else if (event.type === "session.status" && sessionID === activeRootSessionID) {
-      const status = event.properties?.status?.type;
-      if (pendingPermissionIDs.size === 0 && (status === "busy" || status === "retry" || status === "idle")) {
-        setTerminalTitleStatus(status);
-      }
-    } else if (event.type === "permission.asked" && sessionID === activeRootSessionID) {
-      const requestID = event.properties?.id;
-      if (requestID) {
-        pendingPermissionIDs.add(requestID);
-        setTerminalTitleStatus("permission");
-      }
-    } else if (event.type === "permission.replied" && sessionID === activeRootSessionID) {
-      const wasPending = pendingPermissionIDs.delete(event.properties?.requestID);
-      if (wasPending && pendingPermissionIDs.size === 0) setTerminalTitleStatus("busy");
-    }
+    EVENT_HANDLERS.get(event.type)?.({ event, info, sessionID, state, resetState, setTerminalTitleStatus });
   };
 }

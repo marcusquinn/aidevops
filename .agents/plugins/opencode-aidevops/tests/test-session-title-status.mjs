@@ -98,6 +98,8 @@ test("first root user message marks the session busy before native status", asyn
     setTerminalTitleStatus: (status) => statuses.push(status),
   });
 
+  await handler(event("message.updated", { info: { role: "user" } }));
+  await handler(event("permission.asked", { id: "permission-without-session" }));
   await handler(event("session.created", { info: { id: "root-1", title: "Root" } }));
   await handler(event("message.updated", {
     sessionID: "child-1",
