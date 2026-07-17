@@ -433,6 +433,51 @@ else
 fi
 rm -rf "$fixture12"
 
+# Test 13: Login-shell startup output cannot pollute the discovered path.
+login_shell_output13=$'startup banner\n__AIDEVOPS_OPENCODE__/home/test/.nvm/bin/opencode\n'
+result13=$(printf '%s' "$login_shell_output13" | _pulse_extract_login_shell_opencode_binary)
+if [[ "$result13" == "/home/test/.nvm/bin/opencode" ]]; then
+	print_result "login-shell discovery — ignores startup output" 0
+else
+	print_result "login-shell discovery — ignores startup output" 1 \
+		"result=$result13"
+fi
+
+# Test 14: A failed shim write must fail immediately without reporting a path.
+fixture14=$(mktemp -d 2>/dev/null || mktemp -d -t t2954n)
+explicit14=$(build_fixture_node_install "$fixture14" "opencode" "nvm" "v24.13.1")
+shim14=$(_pulse_write_direct_opencode_shim "$explicit14")
+before14=$(cat "$shim14")
+if grep -Fq "\${HOME:+:\$HOME/.local/bin}" "$shim14"; then
+	print_result "stable shim — HOME-dependent paths are evaluated at runtime" 0
+else
+	print_result "stable shim — HOME-dependent paths are evaluated at runtime" 1
+fi
+cat() {
+	return 1
+}
+result14=$(_pulse_write_direct_opencode_shim "$explicit14" 2>/dev/null)
+rc14=$?
+unset -f cat
+after14=$(cat "$shim14")
+if [[ "$rc14" -ne 0 && -z "$result14" && "$after14" == "$before14" ]]; then
+	print_result "stable shim — write failure preserves the existing shim" 0
+else
+	print_result "stable shim — write failure preserves the existing shim" 1 \
+		"rc=$rc14 result=$result14"
+fi
+rm -rf "$fixture14"
+
+# Test 15: An empty HOME fails closed before any root-level fallback is built.
+result15=$(HOME="" _resolve_pulse_runtime_binary 2>/dev/null)
+rc15=$?
+if [[ "$rc15" -ne 0 && -z "$result15" ]]; then
+	print_result "runtime resolution — empty HOME fails without a root-level path" 0
+else
+	print_result "runtime resolution — empty HOME fails without a root-level path" 1 \
+		"rc=$rc15 result=$result15"
+fi
+
 # --- Summary ---
 echo ""
 echo "Tests run: $TESTS_RUN"
