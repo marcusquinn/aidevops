@@ -256,6 +256,11 @@
           "default": true,
           "description": "Install git pre-commit and pre-push safety hooks."
         },
+        "canonical_git_guard": {
+          "type": "boolean",
+          "default": true,
+          "description": "Keep the canonical-worktree Git mutation guard enabled. Set false only in an untracked local .aidevops.json project config; tracked config is ignored for this safety opt-out."
+        },
         "verification_enabled": {
           "type": "boolean",
           "default": true,

@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import shutil
@@ -13,6 +14,7 @@ from pathlib import Path
 from typing import Callable
 
 BLOCK_EXIT = 42
+PROJECT_CONFIG_NAME = ".aidevops.json"
 READ_ONLY = {
     "status",
     "diff",
@@ -97,6 +99,37 @@ def _is_canonical(real_git_path: str, cwd: str, git_prefix: list[str]) -> bool:
         and common_dir
         and os.path.realpath(git_dir) == os.path.realpath(common_dir)
     )
+
+
+def _project_disables_canonical_guard(real_git_path: str, cwd: str) -> bool:
+    """Return whether an untracked local project config opts out of the guard."""
+    repo_root = _git_output(real_git_path, cwd, "rev-parse", "--show-toplevel")
+    if not repo_root:
+        return False
+
+    config_path = Path(repo_root) / PROJECT_CONFIG_NAME
+    if not config_path.is_file():
+        return False
+
+    # A tracked file could arrive from an untrusted clone. Only a local config
+    # may opt out of this safety control.
+    if _git_output(
+        real_git_path,
+        repo_root,
+        "ls-files",
+        "--error-unmatch",
+        "--",
+        PROJECT_CONFIG_NAME,
+    ):
+        return False
+
+    try:
+        config = json.loads(config_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return False
+
+    safety = config.get("safety") if isinstance(config, dict) else None
+    return isinstance(safety, dict) and safety.get("canonical_git_guard") is False
 
 
 def _split_invocation(
@@ -269,6 +302,8 @@ def classify_git_argv(
     else:
         if not is_canonical:
             result = True, "linked worktree or non-repository target"
+        elif _project_disables_canonical_guard(real_git_path, effective_cwd):
+            result = True, "canonical Git guard disabled by untracked local project configuration"
         elif _is_allowed_canonical(subcommand, args):
             result = True, "read-only canonical operation or linked-worktree creation"
         else:

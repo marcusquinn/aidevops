@@ -340,6 +340,22 @@ This creates:
 
 **Available features:** `planning`, `git-workflow`, `code-quality`, `time-tracking`, `beads`
 
+### Per-project canonical Git guard
+
+The canonical-worktree Git guard is enabled by default. To opt out for one
+local project, add this to that project's **untracked** `.aidevops.json`:
+
+```json
+{
+  "safety": {
+    "canonical_git_guard": false
+  }
+}
+```
+
+Tracked configuration is deliberately ignored for this opt-out, so a cloned
+repository cannot disable the local safety control.
+
 ### Per-repo platform setup
 
 After `aidevops init` registers a new repo, run `/setup-git` in your AI assistant

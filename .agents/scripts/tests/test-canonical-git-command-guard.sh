@@ -126,6 +126,12 @@ assert_allowed "allows canonical symbolic-ref query" "$REPO" "git symbolic-ref r
 assert_allowed "allows canonical short symbolic-ref query" "$REPO" "git symbolic-ref --short refs/remotes/origin/HEAD"
 assert_allowed "allows reordered canonical symbolic-ref query flags" "$REPO" "git symbolic-ref refs/remotes/origin/HEAD --quiet --short"
 assert_allowed "allows canonical non-recursive symbolic-ref query" "$REPO" "git symbolic-ref --no-recurse refs/remotes/origin/HEAD"
+printf '{"safety":{"canonical_git_guard":false}}\n' >"${REPO}/.aidevops.json"
+assert_allowed "allows canonical mutation when untracked project config disables guard" "$REPO" "git add README.md"
+git -C "$REPO" add .aidevops.json
+assert_blocked "ignores tracked project config attempting to disable guard" "git add README.md"
+git -C "$REPO" reset -- .aidevops.json
+rm -f "${REPO}/.aidevops.json"
 assert_allowed "allows canonical worktree creation" "$REPO" "git worktree add '$LINKED' -b feature/example"
 git -C "$REPO" worktree add -q -b feature/example "$LINKED"
 assert_allowed "allows normal Git mutation in linked worktree" "$LINKED" "git switch -c feature/linked-child"

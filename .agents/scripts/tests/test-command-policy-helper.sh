@@ -255,6 +255,13 @@ test_canonical_delegation() {
 	git -C "$repo" add README.md
 	git -C "$repo" commit -q -m seed
 	assert_decision "forbids canonical branch mutation through canonical guard" "git branch -m main renamed" forbid git.canonical-worktree 20 "$repo"
+	printf '{"safety":{"canonical_git_guard":false}}\n' >"${repo}/.aidevops.json"
+	assert_decision "allows canonical mutation from untracked project guard opt-out" "git add README.md" allow command.default-allow 0 "$repo"
+	git -C "$repo" add .aidevops.json
+	assert_decision "rejects tracked project guard opt-out" "git add README.md" forbid git.canonical-worktree 20 "$repo"
+	git -C "$repo" reset -- .aidevops.json
+	rm -f "${repo}/.aidevops.json"
+
 	git -C "$repo" worktree add -q -b feature/test "$linked"
 	assert_decision "allows linked-worktree branch creation" "git switch -c feature/child" allow command.default-allow 0 "$linked"
 	assert_decision "forbids generic Git destructive operation in linked worktree" "git reset --hard HEAD" forbid git.reset-destructive 20 "$linked"
