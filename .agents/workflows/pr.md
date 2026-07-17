@@ -80,15 +80,19 @@ head has a terminal required-check failure that a base refresh can plausibly fix
 | Merge | `--merge` | Preserve full commit history |
 | Rebase | `--rebase` | Linear history, no merge commits |
 
-### Pre-Merge: Review Bot Gate (t1382)
+### Pre-Merge: Review Add-on Check (t1382)
 
 ```bash
-~/.aidevops/agents/scripts/review-bot-gate-helper.sh check 123   # PASS/WAITING/SKIP
-~/.aidevops/agents/scripts/review-bot-gate-helper.sh wait 123    # Wait up to 10 min
+~/.aidevops/agents/scripts/review-bot-gate-helper.sh check 123   # PASS/PASS_ADVISORY/PASS_RATE_LIMITED/WAITING/SKIP
+~/.aidevops/agents/scripts/review-bot-gate-helper.sh wait 123    # Polls only when strict/trust policy returns WAITING
 ~/.aidevops/agents/scripts/review-bot-gate-helper.sh list 123    # List bot activity
 ```
 
-Add `skip-review-gate` label to bypass for docs-only PRs or repos without bots.
+The permanent default is advisory: required project CI controls merge readiness,
+and late add-on feedback is handled after merge. Set `completion_behavior: strict`
+only for repositories that explicitly require review-before-merge. The
+`skip-review-gate` label is a trusted-internal exception and is denied for
+external or unknown authors.
 
 **Merge**: `gh pr merge 123 --squash [--auto] [--delete-branch]` | GitLab: `glab mr merge 123 --squash [--when-pipeline-succeeds]`
 

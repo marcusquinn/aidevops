@@ -263,6 +263,10 @@ main() {
 	assert_gate "same-name check-run and status retain independent source failures" same_name_source_conflict 1
 	set_live_evidence PASS
 	assert_gate "configured non-required provider failure passes with typed current-head evidence" configured_fail 0
+	set_live_evidence PASS_ADVISORY
+	assert_gate "configured provider failure passes with trusted advisory-default evidence" configured_fail 0
+	set_live_evidence PASS_ADVISORY sha-reviewed external false
+	assert_gate "configured provider failure blocks external advisory evidence" configured_fail 1
 	set_live_evidence PASS_RATE_LIMITED sha-reviewed external false
 	assert_gate "configured provider failure blocks external rate-limit evidence" configured_fail 1
 	_PULSE_REVIEW_GATE_EVIDENCE=""
@@ -288,8 +292,8 @@ main() {
 	assert_gate "late review activity invalidates stale gate success" stale_gate 1
 	_PULSE_REVIEW_GATE_EVIDENCE=""
 	assert_gate "missing status gate fails closed without live evidence" no_status_gate 1
-	set_live_evidence PASS
-	assert_gate "live gate evidence permits repositories without a status context" no_status_gate 0
+	set_live_evidence PASS_ADVISORY
+	assert_gate "trusted advisory evidence permits repositories without a status context" no_status_gate 0
 	set_live_evidence PASS sha-other
 	assert_gate "live gate evidence for another head fails closed" no_status_gate 1
 	_PULSE_REVIEW_GATE_EVIDENCE=""

@@ -12,7 +12,7 @@ mkdir -p "${ROOT}/bin" "${ROOT}/helpers"
 
 cat >"${ROOT}/helpers/review-bot-gate-helper.sh" <<'STUB'
 #!/usr/bin/env bash
-printf 'PASS\n'
+printf '%s\n' "${REVIEW_GATE_TEST_RESULT:-PASS}"
 exit 0
 STUB
 chmod +x "${ROOT}/helpers/review-bot-gate-helper.sh"
@@ -81,7 +81,8 @@ source '${SCRIPTS_DIR}/full-loop-helper-commit.sh'
 cmd_pre_merge_gate 42 testorg/testrepo
 RUNNER
 	chmod +x "$runner"
-	GH_TEST_MODE="$mode" PATH="${ROOT}/bin:/opt/homebrew/bin:/usr/bin:/bin" bash "$runner" >/dev/null 2>&1
+	GH_TEST_MODE="$mode" REVIEW_GATE_TEST_RESULT="${REVIEW_GATE_TEST_RESULT:-PASS}" \
+		PATH="${ROOT}/bin:/opt/homebrew/bin:/usr/bin:/bin" bash "$runner" >/dev/null 2>&1
 	return $?
 }
 
@@ -90,6 +91,12 @@ run_gate pass || {
 	exit 1
 }
 printf 'PASS terminal remote evidence is accepted\n'
+
+REVIEW_GATE_TEST_RESULT=PASS_ADVISORY run_gate pass || {
+	printf 'FAIL advisory-default review result was rejected\n'
+	exit 1
+}
+printf 'PASS advisory-default review result is accepted\n'
 
 run_gate optional-cancelled || {
 	printf 'FAIL cancelled optional history blocked passing required checks\n'

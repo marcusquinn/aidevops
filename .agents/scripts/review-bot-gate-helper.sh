@@ -14,7 +14,7 @@
 #   review-bot-gate-helper.sh batch-retry   [REPO]
 #
 # Commands:
-#   check          — Check once, return PASS/PASS_RATE_LIMITED/WAITING/SKIP
+#   check          — Check once, return PASS/PASS_ADVISORY/PASS_RATE_LIMITED/WAITING/SKIP
 #   event-check    — Accept trusted bot review evidence from the Actions event
 #   classify-infra-rate-limit — Classify API exhaustion from immutable event trust
 #   wait           — Poll until a bot posts or timeout (default 600s)
@@ -28,8 +28,9 @@
 #
 # Output values for check/wait:
 #   PASS              — At least one bot posted a real review
+#   PASS_ADVISORY     — No completed review; default policy defers late feedback
 #   PASS_RATE_LIMITED  — Bots are rate-limited but grace period exceeded (GH#3827)
-#   WAITING           — No real reviews yet, still within grace period
+#   WAITING           — Explicit strict/wait policy requires more review evidence
 #   SKIP              — PR has skip-review-gate label
 #
 # Exit codes:
@@ -48,8 +49,8 @@
 #                              { "review_gate": { "rate_limit_behavior": "pass",
 #                                "tools": { "coderabbitai": { "rate_limit_behavior": "wait" } } } }
 #   REVIEW_GATE_COMPLETION_BEHAVIOR — Global default for bot completion:
-#                              "fast" (default, accept settled comments) or
-#                              "strict" (require bot success status when needed).
+#                              "fast" (default, add-ons are advisory) or
+#                              "strict" (require completed review evidence).
 #                              Override per-repo or per-tool in repos.json:
 #                              { "review_gate": { "completion_behavior": "strict",
 #                                "tools": { "coderabbitai": { "completion_behavior": "fast" } } } }
@@ -76,8 +77,10 @@ KNOWN_BOTS=(
 	"copilot"
 )
 REVIEW_GATE_STATUS_PASS="$(printf 'P%s' 'ASS')"
+RBG_PASS_ADVISORY="PASS_ADVISORY"
 RBG_PASS_RATE_LIMITED="PASS_RATE_LIMITED"
 RBG_FALSE="false"
+RBG_COMPLETION_STRICT="strict"
 
 # Rate-limit / quota notice patterns — entries that indicate the bot tried to
 # review but was capacity-constrained. Used by grace-period logic
@@ -134,7 +137,8 @@ RATE_LIMIT_GRACE_SECONDS="${RATE_LIMIT_GRACE_SECONDS:-1800}"
 REVIEW_GATE_RATE_LIMIT_BEHAVIOR="${REVIEW_GATE_RATE_LIMIT_BEHAVIOR:-pass}"
 
 # GH#23066: Global default for completion evidence behavior.
-# Values: "fast" keeps high-throughput settled-comment semantics; "strict"
+# Values: "fast" keeps add-on review advisory so required CI controls merge
+# readiness; "strict" requires completed review evidence before merge and also
 # requires bot-specific terminal success evidence for two-phase bots such as
 # CodeRabbit. Override per-repo or per-tool via repos.json review_gate config.
 REVIEW_GATE_COMPLETION_BEHAVIOR="${REVIEW_GATE_COMPLETION_BEHAVIOR:-fast}"
@@ -156,9 +160,9 @@ usage() {
 	echo "Usage: $(basename "$0") {check|event-check|classify-infra-rate-limit|wait|list|request-retry|status-json|batch-retry} <PR_NUMBER> [REPO] [MAX_WAIT]"
 	echo ""
 	echo "Commands:"
-	echo "  check          Check once for bot reviews (returns PASS/PASS_RATE_LIMITED/WAITING/SKIP)"
+	echo "  check          Check once for bot reviews (returns PASS/PASS_ADVISORY/PASS_RATE_LIMITED/WAITING/SKIP)"
 	echo "  event-check    Check trusted bot review evidence from REVIEW_GATE_EVENT_* variables"
-	echo "  classify-infra-rate-limit  Resolve trusted/default-pass API exhaustion without another API call"
+	echo "  classify-infra-rate-limit  Resolve trusted/default-advisory API exhaustion without another API call"
 	echo "  wait           Poll until bot reviews appear or timeout"
 	echo "  list           List all bot comments found"
 	echo "  request-retry  Request review retry if bots were rate-limited (idempotent)"
@@ -185,15 +189,15 @@ classify_infra_rate_limit() {
 	completion_behavior=$(_get_completion_behavior "$repo_slug" "")
 	repos_json="${HOME}/.config/aidevops/repos.json"
 	if [[ -f "$repos_json" ]] && command -v jq >/dev/null 2>&1; then
-		strict_tool_override=$(jq -r --arg slug "$repo_slug" '
+		strict_tool_override=$(jq -r --arg slug "$repo_slug" --arg strict "$RBG_COMPLETION_STRICT" '
 			[first(.initialized_repos[]? | select(.slug == $slug)).review_gate.tools[]?
-			| select(.rate_limit_behavior == "wait" or .completion_behavior == "strict")]
-			| if length > 0 then "true" else "false" end
+			| select(.rate_limit_behavior == "wait" or .completion_behavior == $strict)]
+			| if length > 0 then "true" else (false | tostring) end
 		' "$repos_json" 2>/dev/null) || strict_tool_override="true"
 	fi
 
 	if [[ "$rate_limit_behavior" == "pass" && "$completion_behavior" == "fast" && "$strict_tool_override" != "true" ]]; then
-		printf '%s\n' "$RBG_PASS_RATE_LIMITED"
+		printf '%s\n' "$RBG_PASS_ADVISORY"
 		return 0
 	fi
 
@@ -279,6 +283,54 @@ _get_completion_behavior() {
 	return 0
 }
 
+_review_gate_requires_completed_review() {
+	# Add-on review is advisory by default. Explicit strict completion is the
+	# single opt-in that turns missing/incomplete provider evidence into a merge
+	# wait. Preserve the GH#17671 external-contributor defence independently of
+	# user preference: untrusted/unknown authors still require review evidence.
+	local repo_slug="$1"
+	local author_association="${REVIEW_GATE_AUTHOR_ASSOCIATION:-}"
+	local behavior=""
+	local repos_json="${HOME}/.config/aidevops/repos.json"
+	local strict_tool_override="$RBG_FALSE"
+
+	#aidevops:trust-boundary
+	case "$author_association" in
+	OWNER | MEMBER | COLLABORATOR) ;;
+	*) return 0 ;;
+	esac
+
+	behavior=$(_get_completion_behavior "$repo_slug" "")
+	[[ "$behavior" == "$RBG_COMPLETION_STRICT" ]] && return 0
+
+	if [[ -f "$repos_json" ]] && command -v jq >/dev/null 2>&1; then
+		strict_tool_override=$(jq -r --arg slug "$repo_slug" --arg strict "$RBG_COMPLETION_STRICT" '
+			[first(.initialized_repos[]? | select(.slug == $slug)).review_gate.tools[]?
+			| select(.completion_behavior == $strict)]
+			| if length > 0 then "true" else (false | tostring) end
+		' "$repos_json" 2>/dev/null) || strict_tool_override="true"
+	fi
+	[[ "$strict_tool_override" == "true" ]] && return 0
+	return 1
+}
+
+_emit_advisory_or_wait() {
+	local repo_slug="$1"
+	local detail="$2"
+
+	if _review_gate_requires_completed_review "$repo_slug"; then
+		echo "WAITING"
+		echo "${detail}" >&2
+		echo "Review completion is required by explicit strict policy or the external-contributor trust boundary." >&2
+		return 1
+	fi
+
+	echo "$RBG_PASS_ADVISORY"
+	echo "${detail}" >&2
+	echo "Advisory default: required CI controls merge readiness; late add-on feedback is handled by the post-merge sweep." >&2
+	return 0
+}
+
 _requires_success_status_completion() {
 	# GH#23066: Strict completion is opt-in so high-throughput repos keep the
 	# existing fast path by default. Limit the stricter requirement to two-phase
@@ -287,7 +339,7 @@ _requires_success_status_completion() {
 	local bot_login="$2"
 	local behavior
 	behavior=$(_get_completion_behavior "$repo_slug" "$bot_login")
-	[[ "$behavior" != "strict" ]] && return 1
+	[[ "$behavior" != "$RBG_COMPLETION_STRICT" ]] && return 1
 	_is_two_phase_bot "$bot_login" && return 0
 	return 1
 }
@@ -989,14 +1041,12 @@ _emit_review_gate_check_result() {
 		echo "Status check fallback: bots posted non-review states but have SUCCESS status checks" >&2
 		return 0
 	elif [[ -n "$REVIEW_GATE_NON_REVIEW_BOTS" ]]; then
-		# GH#22802: Failed/skipped/placeholder bot states are not capacity
-		# constraints and must not inherit the user preference for true rate
-		# limits. Keep waiting so a follow-up issue or human decision can happen
-		# from the actual non-review state instead of silently merging.
-		echo "WAITING"
-		echo "Bots posted non-review states that are not rate limits: ${REVIEW_GATE_NON_REVIEW_BOTS}" >&2
-		echo "Gate will keep polling; review_gate.rate_limit_behavior only applies to true rate-limit notices." >&2
-		return 1
+		# Failed/skipped/placeholder states are not real reviews. They remain
+		# distinct from rate limits for diagnostics, but only explicit strict
+		# completion turns their absence into a merge wait.
+		_emit_advisory_or_wait "$repo" \
+			"Bots posted non-review states that are not rate limits: ${REVIEW_GATE_NON_REVIEW_BOTS}"
+		return $?
 	elif [[ -n "$REVIEW_GATE_RATE_LIMITED_BOTS" ]] && any_bot_has_success_status "$pr_number" "$repo" "$prepared_status_contexts" true; then
 		# GH#3005: All bots are rate-limited in comments, but at least one
 		# posted a SUCCESS commit status check. Treat as reviewed.
@@ -1012,7 +1062,11 @@ _emit_review_gate_check_result() {
 		# stops). The daily quality sweep provides codebase-level coverage.
 		# Configure per-tool or per-repo via repos.json review_gate, or globally
 		# via REVIEW_GATE_RATE_LIMIT_BEHAVIOR env var.
-		if _should_pass_rate_limited "$repo" "$REVIEW_GATE_RATE_LIMITED_BOTS"; then
+		if _review_gate_requires_completed_review "$repo"; then
+			echo "WAITING"
+			echo "Bots are rate-limited and completed review evidence is explicitly required: ${REVIEW_GATE_RATE_LIMITED_BOTS}" >&2
+			return 1
+		elif _should_pass_rate_limited "$repo" "$REVIEW_GATE_RATE_LIMITED_BOTS"; then
 			echo "$RBG_PASS_RATE_LIMITED"
 			echo "Bots are rate-limited (tried but capacity-constrained): ${REVIEW_GATE_RATE_LIMITED_BOTS}" >&2
 			echo "Passing gate — configured to pass on rate limit (review_gate.rate_limit_behavior=pass)." >&2
@@ -1024,15 +1078,15 @@ _emit_review_gate_check_result() {
 			return 1
 		fi
 	else
-		echo "WAITING"
-		echo "No review bots found yet. Known bots: ${KNOWN_BOTS[*]}" >&2
-		return 1
+		_emit_advisory_or_wait "$repo" "No review bots found yet. Known bots: ${KNOWN_BOTS[*]}"
+		return $?
 	fi
 }
 
 do_check() {
 	local pr_number="$1"
 	local repo="$2"
+	local REVIEW_GATE_AUTHOR_ASSOCIATION="${REVIEW_GATE_AUTHOR_ASSOCIATION:-}"
 	# These caller-local accumulators are populated/read by helpers through Bash
 	# dynamic scoping; keep targeted ShellCheck suppressions beside each local.
 	# shellcheck disable=SC2034
@@ -1042,10 +1096,24 @@ do_check() {
 	# shellcheck disable=SC2034
 	local REVIEW_GATE_NON_REVIEW_BOTS=""
 
-	# Check skip label first
+	if [[ -z "$REVIEW_GATE_AUTHOR_ASSOCIATION" ]]; then
+		REVIEW_GATE_AUTHOR_ASSOCIATION=$(gh pr view "$pr_number" --repo "$repo" \
+			--json authorAssociation --jq '.authorAssociation // empty' 2>/dev/null || true)
+	fi
+
+	# #aidevops:trust-boundary — skip labels are an internal exception. Resolve
+	# immutable author trust before honoring one so every caller, not only the
+	# reusable workflow, fails closed for external or unknown authors.
 	if check_for_skip_label "$pr_number" "$repo"; then
-		echo "SKIP"
-		return 0
+		case "$REVIEW_GATE_AUTHOR_ASSOCIATION" in
+		OWNER | MEMBER | COLLABORATOR)
+			echo "SKIP"
+			return 0
+			;;
+		esac
+		echo "WAITING"
+		echo "skip-review-gate denied for external or unknown author association." >&2
+		return 1
 	fi
 
 	local all_commenters
@@ -1087,7 +1155,7 @@ do_wait() {
 		local result
 		result=$(do_check "$pr_number" "$repo") || true
 
-		if [[ "$result" == "$REVIEW_GATE_STATUS_PASS" || "$result" == "$RBG_PASS_RATE_LIMITED" || "$result" == "SKIP" ]]; then
+		if [[ "$result" == "$REVIEW_GATE_STATUS_PASS" || "$result" == "$RBG_PASS_ADVISORY" || "$result" == "$RBG_PASS_RATE_LIMITED" || "$result" == "SKIP" ]]; then
 			echo "$result"
 			return 0
 		fi
@@ -1111,7 +1179,7 @@ do_status_json() {
 	local blocked_prefix="bloc"
 	local merge_gate="${blocked_prefix}ked"
 	local status_pass
-	local pr_json_before="" pr_json="" head_sha_before="" head_sha="" author_login="" author_association="" author_class="external"
+	local pr_json_before="" pr_json="" head_sha_before="" head_sha="" author_login="" author_association_before="" author_association="" author_class="external"
 	local head_stable="$RBG_FALSE"
 	local permitted="$RBG_FALSE" reason="outcome_not_permitted"
 	status_pass=$(printf 'P%s' 'ASS')
@@ -1120,7 +1188,8 @@ do_status_json() {
 	pr_api=$(printf 'repos/%s/pulls/%s' "$repo" "$pr_number")
 	pr_json_before=$(gh api "$pr_api" 2>/dev/null) || pr_json_before=""
 	head_sha_before=$(jq -r '.head.sha // ""' <<<"$pr_json_before" 2>/dev/null) || head_sha_before=""
-	output=$(REVIEW_GATE_EXPECTED_HEAD_SHA="$head_sha_before" do_check "$pr_number" "$repo" 2>/dev/null) || rc=$?
+	author_association_before=$(jq -r '.author_association // ""' <<<"$pr_json_before" 2>/dev/null) || author_association_before=""
+	output=$(REVIEW_GATE_EXPECTED_HEAD_SHA="$head_sha_before" REVIEW_GATE_AUTHOR_ASSOCIATION="$author_association_before" do_check "$pr_number" "$repo" 2>/dev/null) || rc=$?
 	pr_json=$(gh api "$pr_api" 2>/dev/null) || pr_json=""
 	if [[ -n "$pr_json" ]]; then
 		head_sha=$(jq -r '.head.sha // ""' <<<"$pr_json" 2>/dev/null) || head_sha=""
@@ -1134,7 +1203,7 @@ do_status_json() {
 	OWNER | MEMBER | COLLABORATOR) author_class="trusted" ;;
 	esac
 
-	# #aidevops:trust-boundary — SKIP and rate-limit grace are trusted-author
+	# #aidevops:trust-boundary — SKIP, advisory completion, and rate-limit grace are trusted-author
 	# policy outcomes. External contributors require a real PASS; malformed or
 	# metadata-less evidence can never authorize an advisory merge decision.
 	case "$output" in
@@ -1160,10 +1229,18 @@ do_status_json() {
 			reason="external_rate_limit_grace_denied"
 		fi
 		;;
+	P[A]SS_ADVISORY)
+		if [[ "$author_class" == "trusted" && "$head_stable" == "true" ]]; then
+			permitted="true"
+			reason="trusted_advisory_default"
+		else
+			reason="external_advisory_denied"
+		fi
+		;;
 	esac
 
 	case "$output:$permitted" in
-	"$status_pass:true" | P[A]SS_RATE_LIMITED:true | SKIP:true)
+	"$status_pass:true" | P[A]SS_ADVISORY:true | P[A]SS_RATE_LIMITED:true | SKIP:true)
 		state="pass"
 		merge_gate="clear"
 		;;

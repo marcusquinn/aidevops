@@ -13,12 +13,14 @@ name: Review Bot Gate
 #   aidevops sync-workflows        # preview resync plan
 #   aidevops sync-workflows --apply
 #
-# To enforce: add "review-bot-gate" as a required status check in
-# GitHub branch protection settings for each repo.
+# The status may remain required for compatibility, but the permanent default
+# is advisory: required project CI may merge without an add-on response. Set
+# completion_behavior: strict explicitly to require review-before-merge.
 #
-# Rate-limit behaviour: controlled by `review_gate.rate_limit_behavior` in
-# ~/.config/aidevops/repos.json. Default: "pass" (merge proceeds when bots
-# are rate-limited). Set "wait" to block merge until bots come off rate-limit.
+# Local/Pulse completion uses `review_gate.completion_behavior` in repos.json.
+# CI completion uses the `AIDEVOPS_REVIEW_GATE_COMPLETION_BEHAVIOR` repository
+# Actions variable below. Both default to "fast"; set both to "strict" when a
+# repository explicitly requires review-before-merge.
 # See: .agents/reference/repos-json-fields.md "review_gate" field.
 #
 # Pinning options:
@@ -62,4 +64,6 @@ jobs:
     with:
       # Keep this equal to the ref on `uses:` so helper code is pinned with the reusable YAML.
       aidevops_ref: main
+      # Explicit CI opt-in: set this Actions variable to strict when required.
+      completion_behavior: ${{ vars.AIDEVOPS_REVIEW_GATE_COMPLETION_BEHAVIOR || 'fast' }}
     secrets: inherit

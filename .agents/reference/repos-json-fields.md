@@ -99,11 +99,12 @@ Global equivalent: `orchestration.interactive_pr_auto_merge` in `~/.config/aidev
 
 ## Review Gate Configuration
 
-`review_gate` — per-repo review gate configuration (t2123, GH#19173; extended in t2139, GH#19251). Controls behaviour when review bots rate-limit or post placeholder comments.
+`review_gate` — per-repo review add-on configuration (t2123, GH#19173; extended in t2139, GH#19251). Required project CI controls merge readiness by default; add-on completion becomes blocking only through explicit strict configuration.
 
 ```json
 {
   "rate_limit_behavior": "pass",
+  "completion_behavior": "fast",
   "min_edit_lag_seconds": 30,
   "advisory_check_contexts": ["CodeRabbit"],
   "tools": {
@@ -118,13 +119,14 @@ Global equivalent: `orchestration.interactive_pr_auto_merge` in `~/.config/aidev
 | Field | Default | Description |
 |-------|---------|-------------|
 | `rate_limit_behavior` | `"pass"` | `"pass"` exits 0 for bot rate limits and trusted internal API exhaustion, delegating late feedback to the post-merge scanner; `"wait"` blocks when evidence cannot be evaluated. External/unknown authors always block. |
+| `completion_behavior` | `"fast"` | `"fast"` is the permanent advisory default: absent, pending, unavailable, or late add-on review does not delay a merge after required CI passes. `"strict"` explicitly opts into review-before-merge and terminal completion evidence. |
 | `min_edit_lag_seconds` | 30 | Seconds a bot comment must be "settled" before it counts. Defeats CodeRabbit's two-phase placeholder (stub at ~14s, final edit at ~90-120s). |
 | `advisory_check_contexts` | `[]` | Exact non-required review-provider check names that may be advisory only when typed live evidence permits the outcome for the current PR head and review threads are resolved. Required, maintainer-gate, unknown, malformed-evidence, and external rate-limit failures always block. |
 | `tools` | — | Per-tool overrides keyed by bot login (`coderabbitai`, `gemini-code-assist`, `augment-code`, `augmentcode`, `copilot`) |
 
-Resolution order (per field independently): per-tool > per-repo > env var (`REVIEW_GATE_RATE_LIMIT_BEHAVIOR` / `REVIEW_BOT_MIN_EDIT_LAG_SECONDS`) > hard default.
+Resolution order (per field independently): per-tool > per-repo > env var (`REVIEW_GATE_RATE_LIMIT_BEHAVIOR`, `REVIEW_GATE_COMPLETION_BEHAVIOR`, or `REVIEW_BOT_MIN_EDIT_LAG_SECONDS`) > hard default.
 
-The reusable workflow exposes matching `rate_limit_behavior` and `completion_behavior` inputs for CI callers. Their defaults are `pass` and `fast`; set either `rate_limit_behavior: wait` or `completion_behavior: strict` to keep GitHub API exhaustion fail-closed. Per-tool `wait`/`strict` overrides also fail closed when the unavailable API prevents identifying which provider supplied evidence.
+The reusable workflow exposes matching `rate_limit_behavior` and `completion_behavior` inputs for CI callers. Their defaults are `pass` and `fast`. The canonical caller maps the repository Actions variable `AIDEVOPS_REVIEW_GATE_COMPLETION_BEHAVIOR` to the completion input and falls back to `fast` when unset. `fast` never waits for add-on completion on trusted maintainer-controlled PRs; late findings are swept into follow-up issues. Set both the local `review_gate.completion_behavior` and the CI variable to `strict` only when a repository explicitly accepts the added delay of review-before-merge. External/unknown authors retain the GH#17671 defence-in-depth boundary, and per-tool `wait`/`strict` overrides remain fail-closed when provider identity cannot be evaluated.
 
 CLI: `aidevops review-gate --help` — configure rate-limit/completion policy and add or remove exact advisory check contexts without hand-editing JSON.
 

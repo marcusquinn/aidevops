@@ -274,13 +274,15 @@ _pmrc_review_evidence_permits_advisory() {
 	local head_sha="$4"
 
 	jq -e --arg repo "$repo_slug" --arg pr "$pr_number" --arg head "$head_sha" '
-		.schema == "aidevops.review-gate-evidence/v1"
+		"trusted" as $trusted
+		| .schema == "aidevops.review-gate-evidence/v1"
 		and .repo == $repo and (.pr | tostring) == $pr and .head_sha == $head
 		and .permitted == true and .state == "pass" and .merge_gate == "clear"
 		and (
 			.status == "PASS"
-			or (.status == "SKIP" and .author.class == "trusted")
-			or (.status == "PASS_RATE_LIMITED" and .author.class == "trusted")
+			or (.status == "PASS_ADVISORY" and .author.class == $trusted)
+			or (.status == "SKIP" and .author.class == $trusted)
+			or (.status == "PASS_RATE_LIMITED" and .author.class == $trusted)
 			or (.status == "SKIP_TRUSTED_DEPENDABOT" and .author.class == "trusted-bot")
 		)
 	' <<<"$evidence_json" >/dev/null 2>&1

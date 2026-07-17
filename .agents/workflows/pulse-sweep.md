@@ -173,13 +173,13 @@ Output a brief summary of total actions taken across all cycles (past tense).
 1. **External contributor gate.** `check_external_contributor_pr` / `check_permission_failure_pr` from `pulse-wrapper.sh`. NEVER auto-merge external PRs.
 2. **Maintainer review gate.** If ANY linked issue has `needs-maintainer-review`, do NOT merge.
 3. **Workflow file guard.** `check_workflow_merge_guard` from `pulse-wrapper.sh`.
-4. **Review gate.** `review-bot-gate-helper.sh check NUMBER SLUG`. Merge on PASS or PASS_RATE_LIMITED. Do NOT merge on WAITING.
+4. **Review add-on.** `review-bot-gate-helper.sh check NUMBER SLUG`. Merge on `PASS`, `PASS_ADVISORY`, or `PASS_RATE_LIMITED`. `WAITING` is reserved for explicit strict/wait policy or the external-contributor trust boundary.
 5. **Unresolved review suggestions.** Check with `gh api "repos/SLUG/pulls/NUMBER/comments"`. If actionable, dispatch a fix worker (label `needs-review-fixes`).
 
 ### PR triage
 
 - **Green CI + collaborator** → `approve_collaborator_pr` then `gh pr merge --squash`
-- **Green CI + WAITING on bots** → skip, run `request-retry`
+- **Green CI + strict-policy `WAITING` on bots** → skip; run `request-retry` only when a true rate-limit notice makes a retry useful
 - **Failing CI** → check if systemic (same check fails on 3+ PRs → file workflow issue). If per-PR, dispatch fix worker.
 - **Open 6+ hours with no recent commits** → comment, consider closing and re-filing
 - **Two PRs targeting same issue** → comment on newer one flagging duplicate

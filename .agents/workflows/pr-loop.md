@@ -24,7 +24,7 @@ Monitor and iterate on a PR until it is approved or merged.
 
 ## Workflow
 
-Each iteration checks: CI Status → Review Bot Gate (t1382) → Review Status → Merge Readiness.
+Each iteration checks: CI Status → Review Add-on Status (t1382) → Review Status → Merge Readiness.
 
 Invocation is explicit finalisation consent. If the target PR is draft and local/session evidence says it is ready for merge preparation, run `gh pr ready <PR>` before merge polling; otherwise report the blocker and leave it draft. For `origin:interactive` PRs, pulse merge throughput still requires `allow-auto-merge` or the configured `interactive_pr_auto_merge` preference.
 
@@ -32,20 +32,25 @@ Invocation is explicit finalisation consent. If the target PR is draft and local
 
 **COMMENTED reviews:** Some bots (e.g., Gemini Code Assist) post as `COMMENTED` not `CHANGES_REQUESTED`, so `reviewDecision` stays `NONE`. The loop detects unresolved review threads and surfaces them.
 
-### Review Bot Gate (t1382)
+### Review Add-on Policy (t1382)
 
-Before merge, verify at least one AI review bot has posted — prevents merging before bots finish analysis.
+Required project CI controls merge readiness. Collect any available AI review
+feedback, but under the permanent default do not wait for an add-on to respond.
+Only explicit `completion_behavior: strict` or the external-contributor trust
+boundary requires completed review evidence.
 
 ```bash
 RESULT=$(~/.aidevops/agents/scripts/review-bot-gate-helper.sh check "$PR_NUMBER" "$REPO")
-# Returns: PASS (bots found), WAITING (no bots yet), SKIP (label present)
+# Returns: PASS, PASS_ADVISORY, PASS_RATE_LIMITED, WAITING, or SKIP
 ```
 
 | Result | Action |
 |--------|--------|
-| `WAITING` | Poll (most bots post within 2-5 min). `review-bot-gate` CI check also blocks at GitHub level. |
+| `PASS_ADVISORY` | Proceed after required CI; late add-on feedback becomes post-merge follow-up work. |
+| `PASS_RATE_LIMITED` | Proceed for a trusted PR under pass-on-rate-limit policy; sweep late feedback. |
+| `WAITING` | Poll only because strict policy or the external trust boundary explicitly requires completed review. |
 | `PASS` | Read bot reviews; address critical/security findings before merge. Non-critical → follow-up. |
-| `SKIP` | PR has `skip-review-gate` label — proceed. |
+| `SKIP` | Trusted internal PR has `skip-review-gate` label — proceed. |
 
 AI review verification rules: `reference/session.md` "Bot Reviewer Feedback" and `AGENTS.md` "AI Suggestion Verification".
 
