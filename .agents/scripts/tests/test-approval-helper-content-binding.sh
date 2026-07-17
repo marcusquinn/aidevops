@@ -185,9 +185,87 @@ reset_and_sign() {
 	return $?
 }
 
+file_mode() {
+	local path="$1"
+	stat -f '%Lp' "$path" 2>/dev/null || stat -c '%a' "$path" 2>/dev/null
+	return $?
+}
+
+test_snapshot_temp_permissions() {
+	local AIDEVOPS_TEMP_DIR="${TEST_ROOT}/managed-temp-permissions"
+	local temp_dir="" json_file=""
+	temp_dir=$(_approval_snapshot_v2_create_temp_dir) || {
+		print_result "snapshot staging uses a private managed temp directory" 1
+		return 0
+	}
+	json_file="$temp_dir/input.json"
+	_approval_snapshot_v2_write_json_file "$json_file" '{"ok":true}' || true
+	if [[ "$(file_mode "$AIDEVOPS_TEMP_DIR")" == "700" && "$(file_mode "$temp_dir")" == "700" && "$(file_mode "$json_file")" == "600" ]]; then
+		print_result "snapshot staging uses mode-700 directories and mode-600 files" 0
+	else
+		print_result "snapshot staging uses mode-700 directories and mode-600 files" 1
+	fi
+	rm -rf "$temp_dir"
+	return 0
+}
+
+write_large_fixture_body() {
+	local path="$1"
+	local fill_character="$2"
+	python3 - "$path" "$fill_character" <<'PY'
+import json
+import sys
+
+path, fill_character = sys.argv[1:]
+with open(path, encoding="utf-8") as handle:
+    payload = json.load(handle)
+payload[0][0]["body"] = fill_character * 2200000
+with open(path, "w", encoding="utf-8") as handle:
+    json.dump(payload, handle)
+PY
+	return $?
+}
+
+test_large_snapshots_avoid_argv_limits() {
+	local AIDEVOPS_TEMP_DIR="${TEST_ROOT}/managed-temp-large"
+	local payload="" issue_digest="" pr_head=""
+	write_baseline_fixtures
+	write_large_fixture_body "$FIXTURES/comments-41.json" i
+	payload=$(AIDEVOPS_TEMP_DIR="$AIDEVOPS_TEMP_DIR" PATH="${TEST_ROOT}/bin:$PATH" FIXTURES="$FIXTURES" approval_snapshot_v2_payload issue 41 owner/repo "2026-01-01T00:05:00Z") || true
+	issue_digest=$(printf '%s' "$payload" | jq -r 'select(.target.kind == "issue") | .snapshot_sha256' 2>/dev/null || true)
+	if [[ "$issue_digest" =~ ^[0-9a-f]{64}$ ]] && directory_is_empty "$AIDEVOPS_TEMP_DIR"; then
+		print_result "oversized issue approval avoids argv and cleans staging files" 0
+	else
+		print_result "oversized issue approval avoids argv and cleans staging files" 1
+	fi
+
+	write_baseline_fixtures
+	write_large_fixture_body "$FIXTURES/review-comments-42.json" p
+	payload=$(AIDEVOPS_TEMP_DIR="$AIDEVOPS_TEMP_DIR" PATH="${TEST_ROOT}/bin:$PATH" FIXTURES="$FIXTURES" approval_snapshot_v2_payload pr 42 owner/repo "2026-01-01T00:05:00Z") || true
+	pr_head=$(printf '%s' "$payload" | jq -r '.pr.head_sha' 2>/dev/null || true)
+	if [[ "$pr_head" == "$PR_HEAD" ]] && directory_is_empty "$AIDEVOPS_TEMP_DIR"; then
+		print_result "oversized PR approval avoids argv and cleans staging files" 0
+	else
+		print_result "oversized PR approval avoids argv and cleans staging files" 1
+	fi
+	return 0
+}
+
+directory_is_empty() {
+	local directory="$1"
+	local candidate=""
+	[[ -d "$directory" ]] || return 1
+	for candidate in "$directory"/* "$directory"/.[!.]* "$directory"/..?*; do
+		[[ -e "$candidate" || -L "$candidate" ]] && return 1
+	done
+	return 0
+}
+
 main() {
 	install_gh_stub
 	write_baseline_fixtures
+	test_snapshot_temp_permissions
+	test_large_snapshots_avoid_argv_limits
 	ssh-keygen -t ed25519 -N '' -f "${TEST_ROOT}/approval.key" -q
 	cp "${TEST_ROOT}/approval.key.pub" "${TEST_ROOT}/approval.pub"
 
