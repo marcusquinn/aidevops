@@ -20,16 +20,22 @@ function isRootSessionInfo(info) {
 
 const ROOT_SESSION_STATUSES = new Set(["busy", "retry", "idle"]);
 
-function handleSessionCreated({ info, sessionID, state, resetState }) {
-  if (!isRootSessionInfo(info)) return;
+function activateRootSession({ sessionID, state, resetState, setTerminalTitleStatus }) {
   state.activeRootSessionID = sessionID;
   resetState();
+  setTerminalTitleStatus("idle");
 }
 
-function handleSessionUpdated({ info, sessionID, state, resetState }) {
+function handleSessionCreated(context) {
+  const { info } = context;
+  if (!isRootSessionInfo(info)) return;
+  activateRootSession(context);
+}
+
+function handleSessionUpdated(context) {
+  const { info, state } = context;
   if (state.activeRootSessionID || !isRootSessionInfo(info)) return;
-  state.activeRootSessionID = sessionID;
-  resetState();
+  activateRootSession(context);
 }
 
 function handleSessionDeleted({ sessionID, state, resetState }) {
@@ -56,6 +62,11 @@ function handleSessionStatus({ event, sessionID, state, setTerminalTitleStatus }
   setTerminalTitleStatus(status);
 }
 
+function handleSessionIdle({ sessionID, state, setTerminalTitleStatus }) {
+  if (sessionID !== state.activeRootSessionID || state.pendingPermissionIDs.size > 0) return;
+  setTerminalTitleStatus("idle");
+}
+
 function handlePermissionAsked({ event, sessionID, state, setTerminalTitleStatus }) {
   if (sessionID !== state.activeRootSessionID) return;
   const requestID = event.properties?.id;
@@ -66,7 +77,8 @@ function handlePermissionAsked({ event, sessionID, state, setTerminalTitleStatus
 
 function handlePermissionReplied({ event, sessionID, state, setTerminalTitleStatus }) {
   if (sessionID !== state.activeRootSessionID) return;
-  const wasPending = state.pendingPermissionIDs.delete(event.properties?.requestID);
+  const requestID = event.properties?.requestID || event.properties?.permissionID;
+  const wasPending = state.pendingPermissionIDs.delete(requestID);
   if (!wasPending || state.pendingPermissionIDs.size > 0) return;
   setTerminalTitleStatus("busy");
 }
@@ -77,7 +89,9 @@ const EVENT_HANDLERS = new Map([
   ["session.deleted", handleSessionDeleted],
   ["message.updated", handleMessageUpdated],
   ["session.status", handleSessionStatus],
+  ["session.idle", handleSessionIdle],
   ["permission.asked", handlePermissionAsked],
+  ["permission.updated", handlePermissionAsked],
   ["permission.replied", handlePermissionReplied],
 ]);
 

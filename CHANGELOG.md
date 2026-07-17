@@ -10,6 +10,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- initialize OpenCode tab status for idle and legacy permission events (#28140)
+
 ## [3.32.147] - 2026-07-17
 
 ### Fixed
