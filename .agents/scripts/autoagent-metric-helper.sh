@@ -533,7 +533,7 @@ _compute_composite() {
 		printf '%s\n' "$result"
 	elif command -v bc >/dev/null 2>&1; then
 		local raw
-		raw=$(printf 'scale=4; c=%s; l=%s; t=%s; e=2-t; if(e<0)e=0; if(e>1)e=1; %s*c+%s*l+%s*e\n' \
+		raw=$(printf 'scale=4; c=%s; l=%s; t=%s; e=2-t; if(e<0)e=0; if(e>1)e=1; s=%s*c+%s*l+%s*e; if(s<0)s=0; if(s>1)s=1; s\n' \
 			"$c" "$l" "$t" "$wc" "$wl" "$wt" | bc 2>/dev/null) || raw="0.0"
 		case "$raw" in
 		.*) printf '0%s\n' "$raw" ;;
