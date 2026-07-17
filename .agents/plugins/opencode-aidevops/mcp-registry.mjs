@@ -194,15 +194,6 @@ function getMcpRegistry() {
       globallyEnabled: false,
       description: "OpenAPI schema search across public APIs",
     },
-    {
-      name: "gh_grep",
-      type: "remote",
-      url: "https://mcp.grep.app",
-      eager: false,
-      toolPattern: "gh_grep_*",
-      globallyEnabled: false,
-      description: "GitHub code search via grep.app",
-    },
     // --- Local MCPs requiring installed binaries ---
     {
       name: "chrome-devtools",
