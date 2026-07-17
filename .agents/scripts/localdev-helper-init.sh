@@ -63,6 +63,23 @@ cmd_init() {
 	return 0
 }
 
+# Run mkcert without a runtime-isolated XDG data root. OpenCode intentionally
+# redirects XDG_DATA_HOME per session; inheriting it would create a different CA
+# for every project. A caller-provided CAROOT remains the explicit override.
+run_stable_mkcert() {
+	local explicit_caroot="${CAROOT:-}"
+	(
+		unset XDG_DATA_HOME
+		if [[ -n "$explicit_caroot" ]]; then
+			export CAROOT="$explicit_caroot"
+		else
+			unset CAROOT
+		fi
+		command mkcert "$@"
+	) && return 0
+	return 1
+}
+
 # Install mkcert if not present. Supports macOS (brew) and Linux (apt, dnf,
 # pacman, apk). On Linux, the apt package name is "mkcert" (available in
 # Ubuntu 20.04+ and Debian 11+). libnss3-tools is required on Debian/Ubuntu
@@ -73,37 +90,35 @@ cmd_init() {
 # to create and trust the local CA root.
 # Returns: 0 if mkcert is available after this function, 1 if installation failed.
 ensure_mkcert() {
-	if command -v mkcert >/dev/null 2>&1; then
-		return 0
-	fi
-
-	print_info "mkcert not found — attempting to install..."
-
 	local installed=false
-
-	if command -v brew >/dev/null 2>&1; then
-		if brew install mkcert 2>/dev/null; then
-			installed=true
-		fi
-	elif command -v apt-get >/dev/null 2>&1; then
-		if sudo apt-get update -qq && sudo apt-get install -y -qq mkcert libnss3-tools 2>/dev/null; then
-			installed=true
-		fi
-	elif command -v apt >/dev/null 2>&1; then
-		if sudo apt update -qq && sudo apt install -y -qq mkcert libnss3-tools 2>/dev/null; then
-			installed=true
-		fi
-	elif command -v dnf >/dev/null 2>&1; then
-		if sudo dnf install -y mkcert 2>/dev/null; then
-			installed=true
-		fi
-	elif command -v pacman >/dev/null 2>&1; then
-		if sudo pacman -S --noconfirm mkcert 2>/dev/null; then
-			installed=true
-		fi
-	elif command -v apk >/dev/null 2>&1; then
-		if sudo apk add mkcert 2>/dev/null; then
-			installed=true
+	if command -v mkcert >/dev/null 2>&1; then
+		installed=true
+	else
+		print_info "mkcert not found — attempting to install..."
+		if command -v brew >/dev/null 2>&1; then
+			if brew install mkcert 2>/dev/null; then
+				installed=true
+			fi
+		elif command -v apt-get >/dev/null 2>&1; then
+			if sudo apt-get update -qq && sudo apt-get install -y -qq mkcert libnss3-tools 2>/dev/null; then
+				installed=true
+			fi
+		elif command -v apt >/dev/null 2>&1; then
+			if sudo apt update -qq && sudo apt install -y -qq mkcert libnss3-tools 2>/dev/null; then
+				installed=true
+			fi
+		elif command -v dnf >/dev/null 2>&1; then
+			if sudo dnf install -y mkcert 2>/dev/null; then
+				installed=true
+			fi
+		elif command -v pacman >/dev/null 2>&1; then
+			if sudo pacman -S --noconfirm mkcert 2>/dev/null; then
+				installed=true
+			fi
+		elif command -v apk >/dev/null 2>&1; then
+			if sudo apk add mkcert 2>/dev/null; then
+				installed=true
+			fi
 		fi
 	fi
 
@@ -147,16 +162,16 @@ ensure_mkcert() {
 		return 1
 	fi
 
-	print_success "mkcert installed"
+	print_success "mkcert available"
 
 	# Install the local CA into the system trust store (one-time setup).
 	# This makes mkcert-generated certs trusted by browsers and curl.
 	print_info "Installing mkcert local CA root (may require sudo)..."
-	if mkcert -install 2>/dev/null; then
+	if run_stable_mkcert -install 2>/dev/null; then
 		print_success "mkcert CA root installed and trusted"
 	else
 		print_warning "mkcert -install failed — certs will generate but browsers may not trust them"
-		echo "  Run manually: mkcert -install"
+		echo "  Re-run localdev-helper.sh init in an interactive terminal to authorize trust installation"
 	fi
 
 	return 0
@@ -168,8 +183,8 @@ check_init_prerequisites() {
 
 	command -v docker >/dev/null 2>&1 || missing+=("docker")
 
-	# Try to auto-install mkcert if missing (GH#6415)
-	if ! command -v mkcert >/dev/null 2>&1 && ! ensure_mkcert; then
+	# Install if missing and reconcile trust against the stable CA root (GH#6415).
+	if ! ensure_mkcert; then
 		missing+=("mkcert")
 	fi
 
@@ -400,8 +415,6 @@ entryPoints:
     address: ":443"
 
 providers:
-  docker:
-    exposedByDefault: false
   file:
     directory: /etc/traefik/conf.d
     watch: true
@@ -447,7 +460,6 @@ services:
       - "443:443"
       - "8080:8080"
     volumes:
-      - /var/run/docker.sock:/var/run/docker.sock:ro
       - ./traefik.yml:/etc/traefik/traefik.yml:ro
       - ./conf.d:/etc/traefik/conf.d:ro
       - ~/.local-ssl-certs:/certs:ro
