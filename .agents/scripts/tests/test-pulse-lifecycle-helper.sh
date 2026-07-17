@@ -68,7 +68,9 @@ _assert_eq() {
 
 _setup() {
 	TEST_ROOT=$(mktemp -d -t pulse-lifecycle-test.XXXXXX)
-	mkdir -p "${TEST_ROOT}/scripts" "${TEST_ROOT}/logs"
+	mkdir -p "${TEST_ROOT}/scripts/setup/modules" "${TEST_ROOT}/logs" "${TEST_ROOT}/custom"
+	cp "${SCRIPT_DIR}/../setup/modules/agent-runtime.sh" \
+		"${TEST_ROOT}/scripts/setup/modules/agent-runtime.sh"
 
 	# Create mock pulse-wrapper.sh that sleeps long enough to be caught by
 	# pgrep. sleep 300 keeps it alive for the life of the test suite.
@@ -90,7 +92,7 @@ SH
 	# . must be escaped. mktemp paths contain only [A-Za-z0-9./] so this
 	# is sufficient.
 	local _escaped_root="${TEST_ROOT//./\\.}"
-	export AIDEVOPS_PULSE_PROCESS_PATTERN="${_escaped_root}/scripts/pulse-wrapper\\.sh"
+	export AIDEVOPS_PULSE_PROCESS_PATTERN="${_escaped_root}/.*/pulse-wrapper\\.sh"
 
 	# Ensure env overrides don't leak between tests.
 	unset AIDEVOPS_SKIP_PULSE_RESTART 2>/dev/null || true
@@ -477,6 +479,66 @@ test_missing_pulse_script_exit_2() {
 	# Restore for subsequent tests.
 	mv "$_saved" "${TEST_ROOT}/scripts/pulse-wrapper.sh"
 	_assert_eq "start with missing pulse-wrapper.sh exits 2" "2" "$rc"
+	return 0
+}
+
+test_reconcile_managed_preserves_custom_scheduler_without_canonical_supervisor() {
+	local fake_bin="${TEST_ROOT}/fake-bin-missing-supervisor"
+	local custom_script="${TEST_ROOT}/custom/pulse-wrapper.sh"
+	local signal_log="${TEST_ROOT}/custom-signals.log"
+	local custom_pid=""
+	local output=""
+	mkdir -p "$fake_bin"
+	cat >"$fake_bin/launchctl" <<'SH'
+#!/usr/bin/env bash
+command_name="${1:-}"
+target="${2:-}"
+if [[ "$command_name" == "print-disabled" ]]; then
+	printf '%s\n' '    "com.example.observation-pulse" => false'
+	exit 0
+fi
+if [[ "$command_name" == "print" && "$target" == *"com.example.observation-pulse" ]]; then
+	exit 0
+fi
+exit 1
+SH
+	chmod +x "$fake_bin/launchctl"
+	cat >"$custom_script" <<'SH'
+#!/usr/bin/env bash
+trap 'printf "TERM\n" >>"${CUSTOM_SIGNAL_LOG:?}"; exit 0' TERM
+while :; do
+	sleep 1
+done
+SH
+	chmod +x "$custom_script"
+	: >"$signal_log"
+	CUSTOM_SIGNAL_LOG="$signal_log" "$custom_script" &
+	custom_pid=$!
+	MOCK_PIDS+=("$custom_pid")
+	sleep 0.2
+	output=$(PATH="$fake_bin:$PATH" \
+		AIDEVOPS_ACTIVE_AGENTS_LINK="$TEST_ROOT" \
+		AIDEVOPS_PULSE_MANAGED_ENABLED=true \
+		AIDEVOPS_PULSE_OS_NAME=Darwin \
+		AIDEVOPS_RUNTIME_TRANSITION_LOCK_DIR="${TEST_ROOT}/locks/reconcile.lock.d" \
+		"$HELPER" reconcile-managed 2>&1)
+	if kill -0 "$custom_pid" 2>/dev/null; then
+		_print_result "reconcile-managed preserves custom scheduler PID when canonical supervisor is absent" 1
+	else
+		_print_result "reconcile-managed terminated custom scheduler PID $custom_pid" 0
+	fi
+	if [[ ! -s "$signal_log" ]]; then
+		_print_result "reconcile-managed sends no signal to custom scheduler" 1
+	else
+		_print_result "reconcile-managed signalled custom scheduler (signals=$(<"$signal_log"))" 0
+	fi
+	if [[ "$output" == *"canonical supervisor is absent or disabled"* ]]; then
+		_print_result "reconcile-managed reports a clear missing-supervisor no-op" 1
+	else
+		_print_result "reconcile-managed missing-supervisor result was unclear (out=$output)" 0
+	fi
+	kill -KILL "$custom_pid" 2>/dev/null || true
+	wait "$custom_pid" 2>/dev/null || true
 	return 0
 }
 
@@ -901,6 +963,7 @@ main() {
 	test_skip_env_honoured_in_restart_if_running
 	test_skip_env_honoured_in_restart
 	test_missing_pulse_script_exit_2
+	test_reconcile_managed_preserves_custom_scheduler_without_canonical_supervisor
 	test_pulse_pids_suppresses_broken_pipe_when_consumer_exits_early
 	test_pipe_trap_restore_avoids_eval
 	test_pipe_trap_restore_ignored_sigpipe

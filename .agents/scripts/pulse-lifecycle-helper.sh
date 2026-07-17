@@ -54,6 +54,7 @@ _PULSE_AGENTS_DIR="${AIDEVOPS_AGENTS_DIR:-${HOME}/.aidevops/agents}"
 _PULSE_SCRIPT="${_PULSE_AGENTS_DIR}/scripts/pulse-wrapper.sh"
 _PULSE_LOG="${HOME}/.aidevops/logs/pulse-wrapper.log"
 _PULSE_ACTIVE_AGENTS_LINK="${AIDEVOPS_ACTIVE_AGENTS_LINK:-${HOME}/.aidevops/agents}"
+_PULSE_OS_DARWIN="Darwin"
 
 # Process-match pattern for pgrep. The production default matches any
 # pulse-wrapper.sh script regardless of path. Tests may override this to
@@ -171,7 +172,7 @@ _pulse_launchd_supervisor_disabled() {
 	local disabled_state=""
 	local disabled_line=""
 	[[ -n "$os_name" ]] || os_name=$(uname -s 2>/dev/null || printf 'unknown')
-	[[ "$os_name" == "Darwin" ]] || return 1
+	[[ "$os_name" == "$_PULSE_OS_DARWIN" ]] || return 1
 	command -v launchctl >/dev/null 2>&1 || return 1
 	disabled_state=$(launchctl print-disabled "gui/$(id -u)" 2>/dev/null) || return 1
 	while IFS= read -r disabled_line; do
@@ -185,39 +186,189 @@ _pulse_launchd_supervisor_disabled() {
 _pulse_launchd_supervisor_present() {
 	local os_name="${AIDEVOPS_PULSE_OS_NAME:-}"
 	local pulse_label="${AIDEVOPS_PULSE_LAUNCHD_LABEL:-com.aidevops.aidevops-supervisor-pulse}"
-	local pulse_plist="${HOME}/Library/LaunchAgents/${pulse_label}.plist"
 	[[ -n "$os_name" ]] || os_name=$(uname -s 2>/dev/null || printf 'unknown')
-	[[ "$os_name" == "Darwin" ]] || return 1
+	[[ "$os_name" == "$_PULSE_OS_DARWIN" ]] || return 1
 	command -v launchctl >/dev/null 2>&1 || return 1
-	[[ -f "$pulse_plist" ]] && return 0
 	launchctl print "gui/$(id -u)/${pulse_label}" >/dev/null 2>&1 || return 1
 	return 0
 }
 
+_pulse_managed_supervisor_kind() {
+	local os_name="${AIDEVOPS_PULSE_OS_NAME:-}"
+	local cron_state=""
+	[[ -n "$os_name" ]] || os_name=$(uname -s 2>/dev/null || printf 'unknown')
+	if [[ "$os_name" == "$_PULSE_OS_DARWIN" ]]; then
+		_pulse_launchd_supervisor_disabled && return 1
+		_pulse_launchd_supervisor_present || return 1
+		printf '%s\n' "launchd"
+		return 0
+	fi
+	if [[ -f "${HOME}/.config/systemd/user/aidevops-supervisor-pulse.timer" ]] &&
+		command -v systemctl >/dev/null 2>&1 &&
+		systemctl --user is-enabled aidevops-supervisor-pulse.timer >/dev/null 2>&1; then
+		printf '%s\n' "systemd"
+		return 0
+	fi
+	if command -v crontab >/dev/null 2>&1; then
+		cron_state=$(crontab -l 2>/dev/null) || cron_state=""
+		if [[ "$cron_state" == *"aidevops: supervisor-pulse"* ]]; then
+			printf '%s\n' "cron"
+			return 0
+		fi
+	fi
+	return 1
+}
+
+_pulse_command_uses_script() {
+	local command_line="$1"
+	local script_path="$2"
+	case "$command_line" in
+	"$script_path" | "$script_path "* | *" $script_path" | *" $script_path "*) return 0 ;;
+	esac
+	return 1
+}
+
+_pulse_command_is_managed() {
+	local command_line="$1"
+	local active_link_script="${_PULSE_ACTIVE_AGENTS_LINK}/scripts/pulse-wrapper.sh"
+	local bundles_dir=""
+	_pulse_command_uses_script "$command_line" "$active_link_script" && return 0
+	_pulse_command_uses_script "$command_line" "$_PULSE_SCRIPT" && return 0
+	case "$_PULSE_AGENTS_DIR" in
+	*/runtime-bundles/*/agents) bundles_dir="${_PULSE_AGENTS_DIR%/*/*}" ;;
+	esac
+	if [[ -n "$bundles_dir" &&
+		"$command_line" == *"${bundles_dir}/"*"/agents/scripts/pulse-wrapper.sh"* ]]; then
+		return 0
+	fi
+	return 1
+}
+
+_pulse_managed_pids() {
+	local candidate_pids=""
+	local candidate_pid=""
+	local command_line=""
+	candidate_pids=$(_pulse_pids_raw)
+	[[ -n "$candidate_pids" ]] || return 0
+	while IFS= read -r candidate_pid; do
+		[[ "$candidate_pid" =~ ^[0-9]+$ ]] || continue
+		command_line=$(ps -p "$candidate_pid" -o command= 2>/dev/null) || command_line=""
+		if _pulse_command_is_managed "$command_line"; then
+			printf '%s\n' "$candidate_pid"
+		fi
+	done <<<"$candidate_pids"
+	return 0
+}
+
+_pulse_active_runtime_pids() {
+	local managed_pids=""
+	local managed_pid=""
+	local command_line=""
+	local active_link_script="${_PULSE_ACTIVE_AGENTS_LINK}/scripts/pulse-wrapper.sh"
+	managed_pids=$(_pulse_managed_pids)
+	[[ -n "$managed_pids" ]] || return 0
+	while IFS= read -r managed_pid; do
+		command_line=$(ps -p "$managed_pid" -o command= 2>/dev/null) || command_line=""
+		if _pulse_command_uses_script "$command_line" "$_PULSE_SCRIPT" ||
+			_pulse_command_uses_script "$command_line" "$active_link_script"; then
+			printf '%s\n' "$managed_pid"
+		fi
+	done <<<"$managed_pids"
+	return 0
+}
+
+_pulse_pid_is_live() {
+	local pulse_pid="$1"
+	local process_state=""
+	kill -0 "$pulse_pid" 2>/dev/null || return 1
+	process_state=$(ps -p "$pulse_pid" -o stat= 2>/dev/null | tr -d ' ') || return 1
+	[[ -n "$process_state" && "$process_state" != Z* ]] || return 1
+	return 0
+}
+
+_stop_managed() {
+	local managed_pids=""
+	local managed_pid=""
+	local survivors=""
+	local residual=""
+	local display_pids=""
+	managed_pids=$(_pulse_managed_pids)
+	[[ -n "$managed_pids" ]] || return 0
+	display_pids=$(printf '%s\n' "$managed_pids" | tr '\n' ' ')
+	_pl_info "Stopping managed Pulse instance(s): ${display_pids}"
+	while IFS= read -r managed_pid; do
+		kill -TERM "$managed_pid" 2>/dev/null || true
+	done <<<"$managed_pids"
+	sleep "$_PULSE_SIGTERM_WAIT"
+	while IFS= read -r managed_pid; do
+		if _pulse_pid_is_live "$managed_pid"; then
+			survivors+="${managed_pid}"$'\n'
+		fi
+	done <<<"$managed_pids"
+	if [[ -n "$survivors" ]]; then
+		display_pids=$(printf '%s' "$survivors" | tr '\n' ' ')
+		_pl_warn "SIGTERM timeout, escalating managed Pulse to SIGKILL: ${display_pids}"
+		while IFS= read -r managed_pid; do
+			[[ -n "$managed_pid" ]] || continue
+			kill -KILL "$managed_pid" 2>/dev/null || true
+		done <<<"$survivors"
+		sleep 1
+	fi
+	while IFS= read -r managed_pid; do
+		if _pulse_pid_is_live "$managed_pid"; then
+			residual+="${managed_pid}"$'\n'
+		fi
+	done <<<"$managed_pids"
+	if [[ -n "$residual" ]]; then
+		display_pids=$(printf '%s' "$residual" | tr '\n' ' ')
+		_pl_err "Failed to stop managed Pulse PIDs: ${display_pids}"
+		return 1
+	fi
+	return 0
+}
+
 _pulse_start_managed() {
+	local supervisor_kind="$1"
 	local pulse_label="${AIDEVOPS_PULSE_LAUNCHD_LABEL:-com.aidevops.aidevops-supervisor-pulse}"
 	local launchd_target=""
-	local launchd_wait_count=0
-	launchd_target="gui/$(id -u)/${pulse_label}"
-	if _pulse_launchd_supervisor_present; then
+	local managed_wait_count=0
+	case "$supervisor_kind" in
+	launchd)
+		launchd_target="gui/$(id -u)/${pulse_label}"
 		_pl_info "Requesting Pulse restart from launchd supervisor ${pulse_label}"
 		if ! launchctl kickstart -k "$launchd_target" >/dev/null 2>&1; then
 			_pl_err "launchd could not restart Pulse; refusing an unmanaged fallback"
 			return 1
 		fi
-		while [[ "$launchd_wait_count" -lt 5 ]]; do
-			if _is_running; then
-				_pl_ok "Pulse restarted by launchd"
-				return 0
-			fi
-			sleep 1
-			launchd_wait_count=$((launchd_wait_count + 1))
-		done
-		_pl_err "launchd accepted the Pulse restart but no managed process appeared"
+		;;
+	systemd)
+		_pl_info "Requesting Pulse restart from systemd supervisor aidevops-supervisor-pulse"
+		if ! systemctl --user restart aidevops-supervisor-pulse.service >/dev/null 2>&1; then
+			_pl_err "systemd could not restart Pulse; refusing an unmanaged fallback"
+			return 1
+		fi
+		;;
+	cron)
+		_pl_info "Starting Pulse from the canonical managed cron runtime"
+		mkdir -p "${_PULSE_LOG%/*}"
+		AIDEVOPS_PULSE_SOURCE=lifecycle-helper nohup "$_PULSE_SCRIPT" >>"$_PULSE_LOG" 2>&1 &
+		disown 2>/dev/null || true
+		;;
+	*)
+		_pl_err "Unknown managed Pulse supervisor kind: ${supervisor_kind}"
 		return 1
-	fi
-	_start || return $?
-	return 0
+		;;
+	esac
+	while [[ "$managed_wait_count" -lt 5 ]]; do
+		if [[ -n "$(_pulse_active_runtime_pids)" ]]; then
+			_pl_ok "Pulse restarted by ${supervisor_kind}"
+			return 0
+		fi
+		sleep 1
+		managed_wait_count=$((managed_wait_count + 1))
+	done
+	_pl_err "${supervisor_kind} accepted the Pulse restart but no managed process appeared"
+	return 1
 }
 
 # _pulse_pids_raw: print ALL matching pulse PIDs including subshells of the
@@ -460,7 +611,7 @@ _reconcile_managed() {
 	local runtime_module="${_PULSE_AGENTS_DIR}/scripts/setup/modules/agent-runtime.sh"
 	local reconcile_rc=0
 	local bundle_id=""
-	local supervisor_disabled=false
+	local supervisor_kind=""
 
 	if [[ ! -r "$runtime_module" ]]; then
 		_pl_err "Runtime transition support is missing from the activated bundle"
@@ -474,19 +625,21 @@ _reconcile_managed() {
 	fi
 
 	if [[ "${AIDEVOPS_PULSE_MANAGED_ENABLED:-false}" != "true" ]]; then
-		supervisor_disabled=true
-	elif _pulse_launchd_supervisor_disabled; then
-		supervisor_disabled=true
+		_pl_info "Pulse reconciliation skipped because its canonical supervisor is disabled"
+		aidevops_runtime_transition_lock_release
+		return 0
+	fi
+	if ! supervisor_kind=$(_pulse_managed_supervisor_kind); then
+		_pl_info "Pulse reconciliation skipped because its canonical supervisor is absent or disabled"
+		aidevops_runtime_transition_lock_release
+		return 0
 	fi
 
 	if ! _pulse_refresh_active_runtime; then
 		_pl_err "Unable to resolve the active runtime bundle"
 		reconcile_rc=1
-	elif [[ "$supervisor_disabled" == "true" ]]; then
-		_stop_all || reconcile_rc=$?
-		[[ "$reconcile_rc" -eq 0 ]] && _pl_info "Pulse remains stopped because its supervisor is disabled"
 	else
-		_stop_all || reconcile_rc=$?
+		_stop_managed || reconcile_rc=$?
 		if [[ "$reconcile_rc" -eq 0 ]]; then
 			sleep "$_PULSE_RESTART_WAIT"
 			if ! _pulse_refresh_active_runtime; then
@@ -495,7 +648,7 @@ _reconcile_managed() {
 			else
 				bundle_id=$(_pulse_runtime_bundle_id)
 				_pl_info "Starting Pulse from activated runtime bundle ${bundle_id}"
-				_pulse_start_managed || reconcile_rc=$?
+				_pulse_start_managed "$supervisor_kind" || reconcile_rc=$?
 			fi
 		fi
 	fi

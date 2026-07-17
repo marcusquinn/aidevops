@@ -8,6 +8,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 TEST_ROOT=""
 PULSE_PATTERN=""
+CUSTOM_PULSE_PID=""
+CUSTOM_SIGNAL_LOG=""
 TESTS_RUN=0
 
 print_info() { local message="$1"; printf '%s\n' "$message"; return 0; }
@@ -65,6 +67,33 @@ SH
 	return 0
 }
 
+write_enabled_launchctl_fixture() {
+	local fake_bin="$1"
+	mkdir -p "$fake_bin"
+	cat >"$fake_bin/launchctl" <<'SH'
+#!/usr/bin/env bash
+command_name="${1:-}"
+case "$command_name" in
+print-disabled)
+	printf '%s\n' '    "com.aidevops.aidevops-supervisor-pulse" => false'
+	exit 0
+	;;
+print)
+	exit 0
+	;;
+kickstart)
+	printf '%s\n' "$*" >>"${LAUNCHCTL_LOG:?}"
+	active_root=$(cd "${AIDEVOPS_ACTIVE_AGENTS_LINK:?}" && pwd -P)
+	nohup "$active_root/scripts/pulse-wrapper.sh" >/dev/null 2>&1 &
+	exit 0
+	;;
+esac
+exit 1
+SH
+	chmod +x "$fake_bin/launchctl"
+	return 0
+}
+
 assert_only_active_bundle_runs() {
 	local active_script="$1"
 	local stale_script="$2"
@@ -84,6 +113,7 @@ test_stale_install_dir_uses_active_bundle() {
 	local active_link="$3"
 	local output=""
 	local output_file="$TEST_ROOT/stale-restart.out"
+	local stale_pid=""
 
 	INSTALL_DIR="$TEST_ROOT/caller-worktree"
 	export INSTALL_DIR
@@ -94,8 +124,14 @@ printf 'caller-worktree\n' >>"${PULSE_START_LOG:?}"
 SH
 	chmod +x "$INSTALL_DIR/.agents/scripts/pulse-wrapper.sh"
 
+	nohup "$stale_root/agents/scripts/pulse-wrapper.sh" >/dev/null 2>&1 &
+	stale_pid=$!
+	sleep 0.2
 	_restart_pulse_if_running "$stale_root/agents" true "$active_link" >"$output_file"
 	output=$(<"$output_file")
+	if kill -0 "$stale_pid" 2>/dev/null; then
+		fail "stale managed Pulse PID survived reconciliation"
+	fi
 	[[ "$output" == *"bundle-b"* ]] || fail "restart diagnostics omit the selected active bundle"
 	[[ "$output" != *"$TEST_ROOT"* ]] || fail "restart diagnostics expose a private local path"
 	grep -qF "$active_root/agents/scripts/pulse-wrapper.sh" "$PULSE_START_LOG" || \
@@ -110,19 +146,25 @@ SH
 	return 0
 }
 
-test_disabled_supervisor_stays_stopped() {
+test_disabled_supervisor_is_safe_noop() {
 	local active_root="$1"
 	local active_link="$2"
 	local starts_before=""
 	local starts_after=""
+	local pulse_pid=""
+	pulse_pid=$(pgrep -f "$PULSE_PATTERN" | while IFS= read -r candidate_pid; do
+		if ps -p "$candidate_pid" -o command= | grep -qF "$active_root/agents/scripts/pulse-wrapper.sh"; then
+			printf '%s\n' "$candidate_pid"
+			break
+		fi
+	done)
 	starts_before=$(wc -l <"$PULSE_START_LOG" | tr -d ' ')
 	_restart_pulse_if_running "$active_root/agents" false "$active_link" >/dev/null
 	starts_after=$(wc -l <"$PULSE_START_LOG" | tr -d ' ')
 	[[ "$starts_after" == "$starts_before" ]] || fail "disabled reconciliation started a new Pulse"
-	if pgrep -f "$PULSE_PATTERN" >/dev/null 2>&1; then
-		fail "disabled supervisor reconciliation left Pulse running"
-	fi
-	pass "disabled supervisor remains stopped without a manual fallback"
+	[[ -n "$pulse_pid" ]] || fail "disabled reconciliation fixture had no active managed Pulse"
+	kill -0 "$pulse_pid" 2>/dev/null || fail "disabled reconciliation terminated the existing managed Pulse"
+	pass "disabled supervisor causes a signal-free reconciliation no-op"
 	return 0
 }
 
@@ -169,6 +211,7 @@ test_launchd_disabled_service_stays_stopped() {
 	local fake_bin="$TEST_ROOT/fake-bin"
 	local starts_before=""
 	local starts_after=""
+	local pulse_pid=""
 	mkdir -p "$fake_bin"
 	cat >"$fake_bin/launchctl" <<'SH'
 #!/usr/bin/env bash
@@ -180,6 +223,12 @@ fi
 exit 1
 SH
 	chmod +x "$fake_bin/launchctl"
+	pulse_pid=$(pgrep -f "$PULSE_PATTERN" | while IFS= read -r candidate_pid; do
+		if ps -p "$candidate_pid" -o command= | grep -qF "$active_root/agents/scripts/pulse-wrapper.sh"; then
+			printf '%s\n' "$candidate_pid"
+			break
+		fi
+	done)
 	starts_before=$(wc -l <"$PULSE_START_LOG" | tr -d ' ')
 	(
 		export PATH="$fake_bin:$PATH"
@@ -188,10 +237,57 @@ SH
 	)
 	starts_after=$(wc -l <"$PULSE_START_LOG" | tr -d ' ')
 	[[ "$starts_after" == "$starts_before" ]] || fail "disabled launchd reconciliation started a new Pulse"
-	if pgrep -f "$PULSE_PATTERN" >/dev/null 2>&1; then
-		fail "disabled launchd service reconciliation left Pulse running"
-	fi
-	pass "disabled launchd service remains authoritative without a manual fallback"
+	[[ -n "$pulse_pid" ]] || fail "disabled launchd fixture had no active managed Pulse"
+	kill -0 "$pulse_pid" 2>/dev/null || fail "disabled launchd reconciliation terminated the existing managed Pulse"
+	pass "disabled launchd service causes a signal-free reconciliation no-op"
+	return 0
+}
+
+test_missing_canonical_supervisor_preserves_custom_scheduler() {
+	local active_root="$1"
+	local active_link="$2"
+	local fake_bin="$TEST_ROOT/fake-bin"
+	local custom_script="$TEST_ROOT/custom/scripts/pulse-wrapper.sh"
+	local output=""
+	local starts_before=""
+	local starts_after=""
+	mkdir -p "${custom_script%/*}"
+	cat >"$fake_bin/launchctl" <<'SH'
+#!/usr/bin/env bash
+command_name="${1:-}"
+target="${2:-}"
+if [[ "$command_name" == "print-disabled" ]]; then
+	printf '%s\n' '    "com.example.observation-pulse" => false'
+	exit 0
+fi
+if [[ "$command_name" == "print" && "$target" == *"com.example.observation-pulse" ]]; then
+	exit 0
+fi
+exit 1
+SH
+	chmod +x "$fake_bin/launchctl"
+	cat >"$custom_script" <<'SH'
+#!/usr/bin/env bash
+trap 'printf "TERM\n" >>"${CUSTOM_SIGNAL_LOG:?}"; exit 0' TERM
+while :; do
+	sleep 1
+done
+SH
+	chmod +x "$custom_script"
+	CUSTOM_SIGNAL_LOG="$TEST_ROOT/custom-signals.log"
+	: >"$CUSTOM_SIGNAL_LOG"
+	export CUSTOM_SIGNAL_LOG
+	"$custom_script" &
+	CUSTOM_PULSE_PID=$!
+	sleep 0.2
+	starts_before=$(wc -l <"$PULSE_START_LOG" | tr -d ' ')
+	output=$(_restart_pulse_if_running "$active_root/agents" true "$active_link" 2>&1)
+	starts_after=$(wc -l <"$PULSE_START_LOG" | tr -d ' ')
+	[[ "$starts_after" == "$starts_before" ]] || fail "missing canonical supervisor started a managed Pulse"
+	kill -0 "$CUSTOM_PULSE_PID" 2>/dev/null || fail "missing canonical supervisor terminated custom scheduler PID"
+	[[ ! -s "$CUSTOM_SIGNAL_LOG" ]] || fail "missing canonical supervisor signalled custom scheduler"
+	[[ "$output" == *"canonical supervisor is absent or disabled"* ]] || fail "missing canonical supervisor did not report a no-op"
+	pass "agent deployment preserves custom scheduler when canonical supervisor is absent"
 	return 0
 }
 
@@ -201,27 +297,7 @@ test_launchd_enabled_service_owns_restart() {
 	local fake_bin="$TEST_ROOT/fake-bin"
 	local launchctl_log="$TEST_ROOT/launchctl.log"
 	local output_file="$TEST_ROOT/launchd-restart.out"
-	cat >"$fake_bin/launchctl" <<'SH'
-#!/usr/bin/env bash
-command_name="${1:-}"
-case "$command_name" in
-print-disabled)
-	printf '%s\n' '    "com.aidevops.aidevops-supervisor-pulse" => false'
-	exit 0
-	;;
-print)
-	exit 0
-	;;
-kickstart)
-	printf '%s\n' "$*" >>"${LAUNCHCTL_LOG:?}"
-	active_root=$(cd "${AIDEVOPS_ACTIVE_AGENTS_LINK:?}" && pwd -P)
-	nohup "$active_root/scripts/pulse-wrapper.sh" >/dev/null 2>&1 &
-	exit 0
-	;;
-esac
-exit 1
-SH
-	chmod +x "$fake_bin/launchctl"
+	write_enabled_launchctl_fixture "$fake_bin"
 	: >"$launchctl_log"
 	(
 		export PATH="$fake_bin:$PATH"
@@ -232,6 +308,8 @@ SH
 	grep -q '^kickstart -k gui/' "$launchctl_log" || fail "enabled launchd service did not receive the restart request"
 	grep -qF "$active_root/agents/scripts/pulse-wrapper.sh" "$PULSE_START_LOG" || \
 		fail "launchd fixture did not start Pulse from the active bundle"
+	kill -0 "$CUSTOM_PULSE_PID" 2>/dev/null || fail "enabled canonical restart terminated custom scheduler PID"
+	[[ ! -s "$CUSTOM_SIGNAL_LOG" ]] || fail "enabled canonical restart signalled custom scheduler"
 	assert_only_active_bundle_runs \
 		"$active_root/agents/scripts/pulse-wrapper.sh" \
 		"$TEST_ROOT/caller-worktree/.agents/scripts/pulse-wrapper.sh"
@@ -244,6 +322,7 @@ main() {
 	local active_root=""
 	local active_link=""
 	local escaped_root=""
+	local fake_bin=""
 
 	TEST_ROOT=$(mktemp -d)
 	trap cleanup EXIT
@@ -258,20 +337,27 @@ main() {
 	ln -s "$active_root/agents" "$active_link"
 
 	escaped_root=$(printf '%s' "$TEST_ROOT" | sed 's/[][\\.^$*+?{}|()]/\\&/g')
-	PULSE_PATTERN="${escaped_root}/runtime-bundles/.*/agents/scripts/pulse-wrapper\\.sh"
+	PULSE_PATTERN="${escaped_root}/.*/pulse-wrapper\\.sh"
 	PULSE_START_LOG="$TEST_ROOT/pulse-starts.log"
 	: >"$PULSE_START_LOG"
 	export PULSE_START_LOG
 	export AIDEVOPS_PULSE_PROCESS_PATTERN="$PULSE_PATTERN"
 	export AIDEVOPS_PULSE_RESTART_WAIT=0
 	export AIDEVOPS_PULSE_SIGTERM_WAIT=1
-	export AIDEVOPS_PULSE_OS_NAME=Linux
+	fake_bin="$TEST_ROOT/fake-bin"
+	LAUNCHCTL_LOG="$TEST_ROOT/launchctl.log"
+	: >"$LAUNCHCTL_LOG"
+	write_enabled_launchctl_fixture "$fake_bin"
+	PATH="$fake_bin:$PATH"
+	export PATH LAUNCHCTL_LOG
+	export AIDEVOPS_PULSE_OS_NAME=Darwin
 	export AIDEVOPS_RUNTIME_TRANSITION_LOCK_WAIT_SECONDS=10
 
 	test_stale_install_dir_uses_active_bundle "$stale_root" "$active_root" "$active_link"
-	test_disabled_supervisor_stays_stopped "$active_root" "$active_link"
+	test_disabled_supervisor_is_safe_noop "$active_root" "$active_link"
 	test_concurrent_transition_converges_on_active_bundle "$stale_root" "$active_root" "$active_link"
 	test_launchd_disabled_service_stays_stopped "$active_root" "$active_link"
+	test_missing_canonical_supervisor_preserves_custom_scheduler "$active_root" "$active_link"
 	test_launchd_enabled_service_owns_restart "$active_root" "$active_link"
 
 	printf 'Results: %s checks passed\n' "$TESTS_RUN"
