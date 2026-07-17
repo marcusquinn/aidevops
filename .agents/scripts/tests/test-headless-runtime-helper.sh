@@ -653,6 +653,62 @@ test_worker_worktree_claim_classifies_unreclaimed_live_owner() {
 	return 0
 }
 
+test_runtime_launch_marker_precedes_invocation() {
+	local marker_file="${TEST_ROOT}/runtime-launch-marker.log"
+	_WORKER_RUNTIME_LAUNCH_STARTED=0
+	_hrw_mark_runtime_launch_started "issue-28060" "opencode" >"$marker_file" 2>&1
+	local output=""
+	output=$(<"$marker_file")
+
+	local marker_line="" invoke_line=""
+	# shellcheck disable=SC2016 # Match the literal caller variables in source.
+	marker_line=$(grep -n '_hrw_mark_runtime_launch_started "$session_key" "$runtime"' "$HELPER_SCRIPT" | cut -d: -f1)
+	invoke_line=$(grep -n 'claude) _invoke_claude' "$HELPER_SCRIPT" | cut -d: -f1)
+	if [[ "$_WORKER_RUNTIME_LAUNCH_STARTED" -eq 1 && "$output" == *"pre_runtime_launch session=issue-28060 runtime=opencode"* &&
+		"$marker_line" =~ ^[0-9]+$ && "$invoke_line" =~ ^[0-9]+$ && "$marker_line" -lt "$invoke_line" ]]; then
+		print_result "runtime launch marker is emitted immediately before invocation" 0
+	else
+		print_result "runtime launch marker is emitted immediately before invocation" 1 \
+			"started=$_WORKER_RUNTIME_LAUNCH_STARTED marker_line=$marker_line invoke_line=$invoke_line output=$output"
+	fi
+	_WORKER_RUNTIME_LAUNCH_STARTED=0
+	return 0
+}
+
+test_clean_prelaunch_exit_is_precise_nonzero_failure() {
+	local output="" status=0
+	set +e
+	output=$(
+		(
+			print_info() { printf '%s\n' "$*"; return 0; }
+			print_warning() { printf '%s\n' "$*"; return 0; }
+			_push_wip_commits_on_exit() { return 0; }
+			_emit_worker_runtime_event() { return 0; }
+			_hrw_record_terminal_outcome() { return 0; }
+			_cleanup_headless_runtime_temp_paths() { return 0; }
+			_release_dispatch_claim() { return 0; }
+			_release_session_lock() { return 0; }
+			_update_dispatch_ledger() { return 0; }
+			_WORKER_RUNTIME_LAUNCH_STARTED=0
+			_WORKER_START_EPOCH_MS=0
+			AIDEVOPS_DISPATCH_LEASE_TOKEN=""
+			trap "_exit_trap_handler 'issue-28060'" EXIT
+			exit 0
+		)
+	) || status=$?
+	set -e
+
+	if [[ "$status" -eq 1 && "$output" == *"reason=worker_runtime_not_invoked"* &&
+		"$output" != *"worker_noop_zero_output"* ]] &&
+		_worker_failure_reason_is_launch_preflight "worker_runtime_not_invoked"; then
+		print_result "clean exit before runtime invocation is a precise non-zero prelaunch failure" 0
+		return 0
+	fi
+	print_result "clean exit before runtime invocation is a precise non-zero prelaunch failure" 1 \
+		"status=$status output=$output"
+	return 0
+}
+
 test_deleted_cwd_recovery_uses_worker_worktree() {
 	local worktree_dir="${TEST_ROOT}/deleted-cwd-worktree"
 	local stale_dir="${TEST_ROOT}/deleted-cwd-stale"
@@ -3513,6 +3569,8 @@ main() {
 	test_worker_worktree_claim_reclaims_dispatch_precreate_owner
 	test_worker_worktree_clean_without_upstream_blocks_local_commits
 	test_worker_worktree_claim_classifies_unreclaimed_live_owner
+	test_runtime_launch_marker_precedes_invocation
+	test_clean_prelaunch_exit_is_precise_nonzero_failure
 	test_deleted_cwd_recovery_uses_worker_worktree
 	test_cmd_run_aborts_issue_worker_before_canary_when_env_missing
 	test_cmd_run_preserves_worker_origin_overrides_before_canary

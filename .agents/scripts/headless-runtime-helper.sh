@@ -1172,13 +1172,6 @@ _execute_run_attempt() {
 		return 11
 	fi
 
-	# t3077 — emit canonical worker_started lifecycle marker.
-	# Replaces the legacy print_info worker_start emit; the legacy line
-	# format is preserved as a fallback when verbose mode is disabled so
-	# existing log parsers continue to work.
-	_emit_verbose_checkpoint worker_started \
-		"model=${selected_model} runtime=${runtime} fix_the_fixer=${_T3077_FIX_THE_FIXER:-0}"
-	print_info "[lifecycle] worker_start session=$session_key model=$selected_model runtime=$runtime pid=$$"
 	if [[ -x "$RESOURCE_METRICS_HELPER" ]]; then
 		"$RESOURCE_METRICS_HELPER" sample \
 			--pid "$$" \
@@ -1201,6 +1194,13 @@ _execute_run_attempt() {
 		print_info "[lifecycle] verbose_watcher_started pid=${_t3077_watcher_pid} worker=$$ log=${output_file}"
 	fi
 
+	# Publish readiness only at the runtime invocation boundary. The EXIT trap
+	# uses the pre_runtime_launch marker to distinguish preparation failures
+	# from legitimate post-launch zero-output exits.
+	_hrw_mark_runtime_launch_started "$session_key" "$runtime"
+	_emit_verbose_checkpoint worker_started \
+		"model=${selected_model} runtime=${runtime} fix_the_fixer=${_T3077_FIX_THE_FIXER:-0}"
+	print_info "[lifecycle] worker_start session=$session_key model=$selected_model runtime=$runtime pid=$$"
 	case "$runtime" in
 	claude) _invoke_claude "$output_file" "$exit_code_file" "$work_dir" "${cmd[@]}" ;;
 	*) _invoke_opencode "$output_file" "$exit_code_file" "${cmd[@]}" ;;
