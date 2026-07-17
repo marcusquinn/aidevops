@@ -47,7 +47,7 @@ create_traefik_route() {
 http:
   routers:
     ${name}:
-      rule: "Host(\`${domain}\`) || Host(\`*.${domain}\`)"
+      rule: "Host(\`${domain}\`)"
       entryPoints:
         - websecure
       service: ${name}
