@@ -331,8 +331,15 @@ _resolve_pulse_runtime_binary() {
 	local _have_validator=0
 	declare -F _setup_validate_opencode_binary >/dev/null 2>&1 && _have_validator=1
 
+	# Setup can be invoked by a systemd auto-update process whose PATH omits
+	# nvm/fnm/volta. Prefer the current interactive shell's explicit OpenCode
+	# path when it is supplied, then persist the daemon-safe shim below.
+	if [[ -n "${OPENCODE_BIN:-}" ]]; then
+		opencode_bin=$(_pulse_validate_opencode_candidate "$OPENCODE_BIN" "$_have_validator" || true)
+	fi
+
 	# 1. Persisted path (validated). Drop+re-resolve on validation failure.
-	if [[ -f "$_persisted_file" ]]; then
+	if [[ -z "$opencode_bin" && -f "$_persisted_file" ]]; then
 		local _persisted
 		_persisted=$(head -n1 "$_persisted_file" 2>/dev/null || true)
 		if [[ -n "$_persisted" ]] && [[ -x "$_persisted" ]]; then

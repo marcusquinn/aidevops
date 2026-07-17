@@ -100,8 +100,9 @@ if [ "$_needs_node" = "1" ] && ! command -v node >/dev/null 2>&1; then
 	exit 127
 fi
 case "\$1" in
-	--version) echo '$_ver_str' ;;
-	*) echo "stub" ;;
+--version) echo '$_ver_str' ;;
+--help) echo 'opencode run [message]' ;;
+*) echo "stub" ;;
 esac
 EOF
 	if [[ "$_needs_node" == "1" ]]; then
@@ -132,8 +133,15 @@ build_fixture_fixed_path() {
 	cat >"$_home/$_path" <<EOF
 #!/bin/sh
 case "\$1" in
-	--version) echo '$_ver_str' ;;
-	*) echo "stub" ;;
+--version) echo '$_ver_str' ;;
+--help)
+  if [ "$_product" = "opencode" ]; then
+    echo 'opencode run [message]'
+  else
+    echo 'claude help'
+  fi
+  ;;
+*) echo "stub" ;;
 esac
 EOF
 	chmod +x "$_home/$_path"
@@ -161,6 +169,16 @@ run_resolver_with_path() {
 	(
 		export HOME="$_fixture_home"
 		export PATH="$_path_prefix:/usr/bin:/bin"
+		_resolve_pulse_runtime_binary
+	)
+}
+
+run_resolver_with_explicit_bin() {
+	local _fixture_home="$1" _explicit_bin="$2"
+	(
+		export HOME="$_fixture_home"
+		export PATH="/usr/bin:/bin"
+		export OPENCODE_BIN="$_explicit_bin"
 		_resolve_pulse_runtime_binary
 	)
 }
@@ -398,6 +416,22 @@ case "$path11_empty" in
 		;;
 esac
 rm -rf "$fixture11"
+
+# Test 12: An explicit runtime binary survives a minimal systemd PATH and is
+# normalized to the daemon-safe shim. This is the auto-update regeneration
+# path that previously dropped OPENCODE_BIN and selected /usr/bin/opencode.
+fixture12=$(mktemp -d 2>/dev/null || mktemp -d -t t2954l)
+explicit12=$(build_fixture_node_install "$fixture12" "opencode" "nvm" "v24.13.1")
+expected12="$fixture12/.local/bin/opencode"
+result12=$(run_resolver_with_explicit_bin "$fixture12" "$explicit12")
+persisted12=$(cat "$fixture12/.config/aidevops/scheduler-runtime-bin" 2>/dev/null || true)
+if [[ "$result12" == "$expected12" && "$persisted12" == "$expected12" ]]; then
+	print_result "explicit OPENCODE_BIN — normalized and persisted under minimal PATH" 0
+else
+	print_result "explicit OPENCODE_BIN — normalized and persisted under minimal PATH" 1 \
+		"result=$result12 persisted=$persisted12 expected=$expected12"
+fi
+rm -rf "$fixture12"
 
 # --- Summary ---
 echo ""
