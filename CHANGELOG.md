@@ -10,9 +10,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.32.145] - 2026-07-17
+
 ### Changed
 
-- reduce OpenCode shell environment hook complexity (#28074)
+- Maintenance: ratchet QLTY_SMELL_THRESHOLD 59→57 (-2) [skip ci]
+- Refactor: simplify shell environment projection (#28077)
+- Maintenance: ratchet QLTY_SMELL_THRESHOLD 61→59 (-2) [skip ci]
+
+### Fixed
+
+- harden worker launch evidence (#28067)
 
 ## [3.32.144] - 2026-07-17
 
