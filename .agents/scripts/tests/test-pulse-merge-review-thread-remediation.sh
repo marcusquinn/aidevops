@@ -285,6 +285,54 @@ test_changes_requested_empty_worker_label_pattern_does_not_match_every_label() {
 	return 0
 }
 
+test_changes_requested_refreshes_empty_caller_labels() {
+	setup_test_env
+	define_helpers_under_test || { teardown_test_env; return 0; }
+	local route_log="${TEST_ROOT}/route.log"
+	: >"$route_log"
+	gh_pr_view() { printf 'origin:interactive\n'; return 0; }
+	_route_pr_to_fix_worker() {
+		local pr_number="$1"
+		local repo_slug="$2"
+		local linked_issue="$3"
+		local kind="$4"
+		local labels="$5"
+		printf '%s|%s|%s|%s|%s\n' "$pr_number" "$repo_slug" "$linked_issue" "$kind" "$labels" >>"$route_log"
+		return 1
+	}
+	_pulse_merge_dismiss_coderabbit_nits() { return 1; }
+
+	_handle_changes_requested_review_gate 77 owner/repo CHANGES_REQUESTED 42 "" || true
+	if grep -q '77|owner/repo|42|review|origin:interactive' "$route_log"; then
+		print_result "CHANGES_REQUESTED refreshes empty caller labels" 0
+	else
+		print_result "CHANGES_REQUESTED refreshes empty caller labels" 1 \
+			"route=$(tr '\n' ';' <"$route_log"), log=$(tr '\n' ';' <"$LOGFILE")"
+	fi
+	teardown_test_env
+	return 0
+}
+
+test_changes_requested_label_read_failure_does_not_route() {
+	setup_test_env
+	define_helpers_under_test || { teardown_test_env; return 0; }
+	local route_log="${TEST_ROOT}/route.log"
+	: >"$route_log"
+	gh_pr_view() { return 1; }
+	_route_pr_to_fix_worker() { printf 'route\n' >>"$route_log"; return 0; }
+	_pulse_merge_dismiss_coderabbit_nits() { return 1; }
+
+	_handle_changes_requested_review_gate 77 owner/repo CHANGES_REQUESTED 42 "" || true
+	if [[ ! -s "$route_log" ]] && grep -q 'current PR labels unavailable' "$LOGFILE"; then
+		print_result "CHANGES_REQUESTED label read failure does not route" 0
+	else
+		print_result "CHANGES_REQUESTED label read failure does not route" 1 \
+			"route=$(tr '\n' ';' <"$route_log"), log=$(tr '\n' ';' <"$LOGFILE")"
+	fi
+	teardown_test_env
+	return 0
+}
+
 main() {
 	test_unresolved_conversation_dispatches_targeted_human_thread_remediation
 	test_repo_path_lookup_ignores_slug_case
@@ -294,6 +342,8 @@ main() {
 	test_changes_requested_routes_when_remediation_unavailable
 	test_changes_requested_skips_remediation_for_external_contributor
 	test_changes_requested_empty_worker_label_pattern_does_not_match_every_label
+	test_changes_requested_refreshes_empty_caller_labels
+	test_changes_requested_label_read_failure_does_not_route
 	printf '\nTests run: %d\n' "$TESTS_RUN"
 	printf 'Tests failed: %d\n' "$TESTS_FAILED"
 	if [[ "$TESTS_FAILED" -gt 0 ]]; then

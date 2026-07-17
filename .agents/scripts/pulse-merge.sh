@@ -245,9 +245,12 @@ _handle_changes_requested_review_gate() {
 	# Fetch labels once — reused by both the nits-ok check and the
 	# worker-routing block below.
 	_cr_pr_labels="$pr_labels"
-	if [[ $# -lt 5 && -z "$_cr_pr_labels" ]]; then
-		_cr_pr_labels=$(gh_pr_view "$pr_number" --repo "$repo_slug" \
-			--json labels --jq '[.labels[].name] | join(",")' 2>/dev/null) || _cr_pr_labels=""
+	if [[ -z "$_cr_pr_labels" ]]; then
+		if ! _cr_pr_labels=$(gh_pr_view "$pr_number" --repo "$repo_slug" \
+			--json labels --jq '[.labels[].name] | join(",")' 2>/dev/null); then
+			echo "[pulse-wrapper] Merge pass: skipping review routing for PR #${pr_number} in ${repo_slug} — current PR labels unavailable" >>"$LOGFILE"
+			return 1
+		fi
 	fi
 
 	# t2179: coderabbit-nits-ok path.
@@ -957,11 +960,9 @@ _handle_post_merge_actions() {
 		# t2099 / GH#19032: parent-task close guard. Parent roadmap issues must
 		# stay open until ALL phase children merge (t2046). The PR-body keyword
 		# guard prevents workers from writing Closes/Resolves/Fixes against a
-		# parent, and they instead use "For #NNN" / "Ref #NNN". BUT
-		# `_extract_linked_issue` also falls back to matching `GH#NNN:` in
-		# the PR title — which is the canonical PR title format for
-		# parent-task phase PRs. Without this check, every phase PR would
-		# silently close its parent on merge.
+		# parent, and they instead use "For #NNN" / "Ref #NNN". Keep this
+		# independent metadata guard as defence in depth in case a parent PR body
+		# accidentally contains a native closing clause.
 		#
 		# Behaviour:
 		#   - Still post the closing comment (it doubles as a phase-merged
@@ -1667,8 +1668,8 @@ process_pr() {
 }
 
 #######################################
-# Extract linked issue number from PR title or body.
-# Looks for: GitHub-native close keywords in PR body, "GH#NNN:" prefix in title.
+# Extract linked issue number from a GitHub-native closing clause in the PR body.
+# A "GH#NNN:" title may confirm that identity but may never override it.
 #
 # Close keyword matching (GH#18098): only GitHub-native keywords trigger auto-close —
 # bare GH#NNN references in "Related" sections do NOT.  GitHub's full keyword list:
@@ -1682,9 +1683,15 @@ process_pr() {
 _extract_linked_issue() {
 	local pr_number="$1"
 	local repo_slug="$2"
-	local pr_title pr_body
-	pr_title=$(gh_pr_view "$pr_number" --repo "$repo_slug" --json title --jq '.title // empty' 2>/dev/null) || pr_title=""
-	pr_body=$(gh_pr_view "$pr_number" --repo "$repo_slug" --json body --jq '.body // empty' 2>/dev/null) || pr_body=""
+	local pr_title="" pr_body=""
+	if ! pr_title=$(gh_pr_view "$pr_number" --repo "$repo_slug" --json title --jq '.title // empty' 2>/dev/null); then
+		echo "[pulse-wrapper] _extract_linked_issue: PR #${pr_number} in ${repo_slug} title metadata unavailable — no routing target" >>"$LOGFILE"
+		return 1
+	fi
+	if ! pr_body=$(gh_pr_view "$pr_number" --repo "$repo_slug" --json body --jq '.body // empty' 2>/dev/null); then
+		echo "[pulse-wrapper] _extract_linked_issue: PR #${pr_number} in ${repo_slug} body metadata unavailable — no routing target" >>"$LOGFILE"
+		return 1
+	fi
 
 	# Match GitHub-native close keywords in the PR body only (case-insensitive).
 	# Matches: close/closes/closed, fix/fixes/fixed, resolve/resolves/resolved.
@@ -1695,26 +1702,30 @@ _extract_linked_issue() {
 	# the body has a closing keyword AND the title also names a number — it picks
 	# WHICH issue from the body matches when there are multiple. It is NEVER an
 	# override that creates a match where the body intentionally has none. (t2108)
-	local body_issue title_issue
-	body_issue=$(printf '%s' "$pr_body" | grep -ioE '(close[ds]?|fix(es|ed)?|resolve[ds]?)\s+#[0-9]+' | head -1 | grep -oE '[0-9]+')
-	title_issue=$(printf '%s' "$pr_title" | grep -oE 'GH#[0-9]+' | head -1 | grep -oE '[0-9]+')
+	local body_issues="" body_issue="" title_issue=""
+	body_issues=$(printf '%s' "$pr_body" \
+		| grep -ioE '(close[ds]?|fix(es|ed)?|resolve[ds]?)\s+#[0-9]+' \
+		| grep -oE '[0-9]+' | sort -u) || body_issues=""
+	title_issue=$(printf '%s' "$pr_title" | grep -oE 'GH#[0-9]+' | head -1 | grep -oE '[0-9]+') || title_issue=""
 
 	# No closing keyword in the body → return empty. The PR is intentionally
 	# not closing any issue (planning-only PR, multi-PR roadmap, "For #NNN"
 	# reference, etc.). _handle_post_merge_actions will skip the close path
 	# when this returns empty. (t2108)
-	if [[ -z "$body_issue" ]]; then
+	if [[ -z "$body_issues" ]]; then
 		return 0
 	fi
+	if [[ "$body_issues" == *$'\n'* ]]; then
+		echo "[pulse-wrapper] _extract_linked_issue: PR #${pr_number} in ${repo_slug} has ambiguous closing issue identities — no routing target" >>"$LOGFILE"
+		return 1
+	fi
+	body_issue="$body_issues"
 
-	# Body has a closing keyword. If the title also names a number, prefer the
-	# title-named issue when it differs from body_issue (matches the historical
-	# behaviour where the GH#NNN: title prefix is the primary identifier and
-	# the body may reference additional issues). When they match or the title
-	# has no number, return body_issue. (t2108)
-	if [[ -n "$title_issue" ]]; then
-		printf '%s' "$title_issue"
-		return 0
+	# A title identity is corroborating evidence only. A mismatch means target
+	# identity is ambiguous and destructive callers must fail closed.
+	if [[ -n "$title_issue" && "$title_issue" != "$body_issue" ]]; then
+		echo "[pulse-wrapper] _extract_linked_issue: PR #${pr_number} in ${repo_slug} title issue #${title_issue} disagrees with closing issue #${body_issue} — no routing target" >>"$LOGFILE"
+		return 1
 	fi
 	printf '%s' "$body_issue"
 	return 0
