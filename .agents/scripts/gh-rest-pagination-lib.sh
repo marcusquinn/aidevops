@@ -18,6 +18,7 @@ _GHRP_SLURP_REQUESTED=0
 _GHRP_SILENT_REQUESTED=0
 _GHRP_HOSTNAME="${GH_HOST:-github.com}"
 _GHRP_FALLBACK_SAFE=0
+_GHRP_PREFLIGHT_ONLY=0
 _GHRP_PAGE_ARGS=()
 _GHRP_PAGE_FILES=()
 _GHRP_VISITED_ENDPOINTS=()
@@ -66,6 +67,39 @@ _ghrp_find_endpoint_index() {
 	return 1
 }
 
+_ghrp_validate_prepare() {
+	local paginate_requested="$1"
+	local unsupported="$2"
+	local method="$3"
+	local fields_requested="$4"
+	local method_explicit="$5"
+	local jq_requested="$6"
+	local template_requested="$7"
+
+	[[ "$paginate_requested" -eq 1 ]] || return 1
+	[[ "$unsupported" -eq 0 ]] || return 1
+	[[ "$method" == "GET" ]] || return 1
+	if [[ "$fields_requested" -eq 1 && "$method_explicit" -ne 1 ]]; then
+		# Native gh changes its default method to POST when fields are present.
+		# Only an explicit GET proves these fields belong in the query string.
+		return 1
+	fi
+	if [[ "$_GHRP_SLURP_REQUESTED" -eq 1 && ("$jq_requested" -eq 1 || "$template_requested" -eq 1) ]]; then
+		# Native gh rejects --slurp with --jq/--template before transport. Let the
+		# native CLI preserve its exact diagnostic without recording a request.
+		_GHRP_PREFLIGHT_ONLY=1
+		return 1
+	fi
+	if [[ "$_GHRP_SLURP_REQUESTED" -eq 1 ]]; then
+		[[ "$_GHRP_INCLUDE_REQUESTED" -eq 0 && "$_GHRP_SILENT_REQUESTED" -eq 0 ]] || return 1
+		command -v jq >/dev/null 2>&1 || return 1
+	fi
+	[[ "$_GHRP_SILENT_REQUESTED" -eq 0 ]] || return 1
+	_ghrp_find_endpoint_index || return 1
+	[[ "$_GHRP_ENDPOINT" != "graphql" && "$_GHRP_ENDPOINT" != graphql/* ]] || return 1
+	return 0
+}
+
 _ghrp_prepare() {
 	local path="$1"
 	shift
@@ -87,6 +121,7 @@ _ghrp_prepare() {
 	_GHRP_SILENT_REQUESTED=0
 	_GHRP_HOSTNAME="${GH_HOST:-github.com}"
 	_GHRP_BASE_ENDPOINT_INDEX=-1
+	_GHRP_PREFLIGHT_ONLY=0
 	[[ "$path" == "rest" ]] || return 1
 	[[ "${AIDEVOPS_GH_EXPLICIT_PAGINATION_DISABLE:-0}" != "1" ]] || return 1
 
@@ -147,21 +182,8 @@ _ghrp_prepare() {
 	done
 
 	[[ -z "$expect_value" ]] || return 1
-	[[ "$paginate_requested" -eq 1 ]] || return 1
-	[[ "$unsupported" -eq 0 ]] || return 1
-	[[ "$method" == "GET" ]] || return 1
-	if [[ "$fields_requested" -eq 1 && "$method_explicit" -ne 1 ]]; then
-		# Native gh changes its default method to POST when fields are present.
-		# Only an explicit GET proves these fields belong in the query string.
-		return 1
-	fi
-	if [[ "$_GHRP_SLURP_REQUESTED" -eq 1 ]]; then
-		[[ "$jq_requested" -eq 0 && "$template_requested" -eq 0 && "$_GHRP_INCLUDE_REQUESTED" -eq 0 && "$_GHRP_SILENT_REQUESTED" -eq 0 ]] || return 1
-		command -v jq >/dev/null 2>&1 || return 1
-	fi
-	[[ "$_GHRP_SILENT_REQUESTED" -eq 0 ]] || return 1
-	_ghrp_find_endpoint_index || return 1
-	[[ "$_GHRP_ENDPOINT" != "graphql" && "$_GHRP_ENDPOINT" != graphql/* ]] || return 1
+	_ghrp_validate_prepare "$paginate_requested" "$unsupported" "$method" \
+		"$fields_requested" "$method_explicit" "$jq_requested" "$template_requested" || return 1
 	return 0
 }
 
