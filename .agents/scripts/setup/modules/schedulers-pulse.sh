@@ -328,14 +328,15 @@ _resolve_pulse_runtime_binary() {
 	# CLI under the opencode bin name) cannot silently take the slot.
 	local _persisted_file="$HOME/.config/aidevops/scheduler-runtime-bin"
 	local opencode_bin=""
+	local _explicit_opencode_bin="${OPENCODE_BIN:-}"
 	local _have_validator=0
 	declare -F _setup_validate_opencode_binary >/dev/null 2>&1 && _have_validator=1
 
 	# Setup can be invoked by a systemd auto-update process whose PATH omits
 	# nvm/fnm/volta. Prefer the current interactive shell's explicit OpenCode
 	# path when it is supplied, then persist the daemon-safe shim below.
-	if [[ -n "${OPENCODE_BIN:-}" ]]; then
-		opencode_bin=$(_pulse_validate_opencode_candidate "$OPENCODE_BIN" "$_have_validator" || true)
+	if [[ -n "$_explicit_opencode_bin" ]]; then
+		opencode_bin=$(_pulse_validate_opencode_candidate "$_explicit_opencode_bin" "$_have_validator" || true)
 	fi
 
 	# 1. Persisted path (validated). Drop+re-resolve on validation failure.
