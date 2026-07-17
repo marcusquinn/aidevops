@@ -1184,7 +1184,7 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [ ] t18153 Clarify authority-aware full-loop lifecycle ref:GH#28112
 
-- [ ] t18154 Repair stale test source paths after helper module splits #bug #framework #reliability #auto-dispatch ~45m tier:standard ref:GH#28133 logged:2026-07-17 -> [todo/tasks/t18154-brief.md]
+- [x] t18154 Repair stale test source paths after helper module splits #bug #framework #reliability #auto-dispatch ~45m tier:standard ref:GH#28133 logged:2026-07-17 -> [todo/tasks/t18154-brief.md] pr:#28137 completed:2026-07-17
 
 ## In Progress
 
