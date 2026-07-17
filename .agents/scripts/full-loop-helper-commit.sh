@@ -24,6 +24,7 @@
 [[ -n "${_FULL_LOOP_COMMIT_LIB_LOADED:-}" ]] && return 0
 _FULL_LOOP_COMMIT_LIB_LOADED=1
 _FULL_LOOP_CHECK_PENDING="pending"
+_FULL_LOOP_CHECK_INDETERMINATE="indeterminate"
 
 # Defensive SCRIPT_DIR fallback
 if [[ -z "${SCRIPT_DIR:-}" ]]; then
@@ -65,6 +66,50 @@ _full_loop_persist_pr_check_evidence() {
 	return 0
 }
 
+_full_loop_query_required_checks() {
+	local pr_number="$1"
+	local repo="$2"
+	local pr_head_ref="$3"
+	local required_checks=""
+	local required_rc=0
+	local required_checks_stderr=""
+	local required_checks_stderr_file=""
+	local minimum_check_count=1
+	local expected_no_required_checks="no required checks reported on the '${pr_head_ref}' branch"
+
+	FULL_LOOP_REQUIRED_CHECKS_JSON=""
+	FULL_LOOP_REQUIRED_CHECKS_ERROR_EVIDENCE="unavailable"
+	FULL_LOOP_REQUIRED_CHECKS_ERROR_DETAIL="gh exit ${required_rc}"
+	FULL_LOOP_REQUIRED_CHECKS_SUCCESS_EVIDENCE="required-checks-pass"
+	FULL_LOOP_REQUIRED_CHECKS_SUCCESS_SUMMARY="required checks are terminal-success"
+
+	required_checks_stderr_file=$(mktemp "${TMPDIR:-/tmp}/aidevops-full-loop-required-checks.XXXXXX") || {
+		FULL_LOOP_REQUIRED_CHECKS_ERROR_EVIDENCE="stderr-capture-unavailable"
+		FULL_LOOP_REQUIRED_CHECKS_ERROR_DETAIL="cannot capture gh stderr"
+		return 1
+	}
+	required_checks=$(gh pr checks "$pr_number" --repo "$repo" \
+		--required --json name,state,bucket 2>"$required_checks_stderr_file") || required_rc=$?
+	required_checks_stderr=$(<"$required_checks_stderr_file")
+	rm -f "$required_checks_stderr_file"
+	FULL_LOOP_REQUIRED_CHECKS_ERROR_DETAIL="gh exit ${required_rc}"
+
+	if [[ "$required_rc" -eq 1 && -z "$required_checks" && -n "$pr_head_ref" && "$required_checks_stderr" == "$expected_no_required_checks" ]]; then
+		required_checks="[]"
+		minimum_check_count=0
+		FULL_LOOP_REQUIRED_CHECKS_SUCCESS_EVIDENCE="no-required-checks"
+		FULL_LOOP_REQUIRED_CHECKS_SUCCESS_SUMMARY="no required checks are configured"
+	elif [[ -n "$required_checks_stderr" || ("$required_rc" -ne 0 && "$required_rc" -ne 1 && "$required_rc" -ne 8) ]]; then
+		return 1
+	fi
+	if [[ -z "$required_checks" ]] || ! printf '%s' "$required_checks" | jq -e --argjson minimum "$minimum_check_count" \
+		'type == "array" and length >= $minimum' >/dev/null 2>&1; then
+		return 1
+	fi
+	FULL_LOOP_REQUIRED_CHECKS_JSON="$required_checks"
+	return 0
+}
+
 _full_loop_verify_pr_readiness() {
 	local pr_number="$1"
 	local repo="$2"
@@ -88,22 +133,22 @@ _full_loop_verify_pr_readiness() {
 	fi
 	local verified_head=""
 	verified_head=$(printf '%s' "$pr_json" | jq -r '.headRefOid // empty')
+	local pr_head_ref=""
+	pr_head_ref=$(printf '%s' "$pr_json" | jq -r '.headRefName // empty')
 
 	local required_checks=""
-	local required_rc=0
-	required_checks=$(gh pr checks "$pr_number" --repo "$repo" \
-		--required --json name,state,bucket 2>/dev/null) || required_rc=$?
-	if [[ -z "$required_checks" ]] || ! printf '%s' "$required_checks" | jq -e 'type == "array"' >/dev/null; then
-		FULL_LOOP_PR_CHECK_STATUS="indeterminate"
+	_full_loop_query_required_checks "$pr_number" "$repo" "$pr_head_ref" || {
+		FULL_LOOP_PR_CHECK_STATUS="$_FULL_LOOP_CHECK_INDETERMINATE"
 		export FULL_LOOP_PR_CHECK_STATUS
-		_full_loop_persist_pr_check_evidence "$FULL_LOOP_PR_CHECK_STATUS" "$verified_head" "unavailable" || true
-		print_error "PR #${pr_number} required-check evidence is indeterminate (gh exit ${required_rc})"
+		_full_loop_persist_pr_check_evidence "$FULL_LOOP_PR_CHECK_STATUS" "$verified_head" "$FULL_LOOP_REQUIRED_CHECKS_ERROR_EVIDENCE" || true
+		print_error "PR #${pr_number} required-check evidence is indeterminate (${FULL_LOOP_REQUIRED_CHECKS_ERROR_DETAIL})"
 		return 1
-	fi
+	}
+	required_checks="$FULL_LOOP_REQUIRED_CHECKS_JSON"
 	local post_checks_head=""
 	post_checks_head=$(gh pr view "$pr_number" --repo "$repo" --json headRefOid --jq '.headRefOid // empty' 2>/dev/null) || true
 	if [[ -z "$post_checks_head" || "$post_checks_head" != "$verified_head" ]]; then
-		FULL_LOOP_PR_CHECK_STATUS="indeterminate"
+		FULL_LOOP_PR_CHECK_STATUS="$_FULL_LOOP_CHECK_INDETERMINATE"
 		export FULL_LOOP_PR_CHECK_STATUS
 		_full_loop_persist_pr_check_evidence "$FULL_LOOP_PR_CHECK_STATUS" "$post_checks_head" "head-drift-during-check-query" || true
 		print_error "PR #${pr_number} head changed while required checks were queried; refresh exact-head evidence"
@@ -130,8 +175,6 @@ _full_loop_verify_pr_readiness() {
 	fi
 	FULL_LOOP_PR_CHECK_STATUS="terminal-success"
 	export FULL_LOOP_PR_CHECK_STATUS
-	local pr_head_ref=""
-	pr_head_ref=$(printf '%s' "$pr_json" | jq -r '.headRefName // empty')
 	local local_branch=""
 	local_branch=$(git branch --show-current 2>/dev/null || true)
 	if [[ -n "$local_branch" && "$local_branch" == "$pr_head_ref" ]]; then
@@ -142,11 +185,11 @@ _full_loop_verify_pr_readiness() {
 			return 1
 		fi
 	fi
-	_full_loop_persist_pr_check_evidence "$FULL_LOOP_PR_CHECK_STATUS" "$verified_head" "required-checks-pass" || true
+	_full_loop_persist_pr_check_evidence "$FULL_LOOP_PR_CHECK_STATUS" "$verified_head" "$FULL_LOOP_REQUIRED_CHECKS_SUCCESS_EVIDENCE" || true
 
 	FULL_LOOP_VERIFIED_PR_HEAD_SHA="$verified_head"
 	export FULL_LOOP_VERIFIED_PR_HEAD_SHA
-	print_success "Remote PR evidence verified at head ${verified_head}; required checks are terminal-success"
+	print_success "Remote PR evidence verified at head ${verified_head}; ${FULL_LOOP_REQUIRED_CHECKS_SUCCESS_SUMMARY}"
 	return 0
 }
 

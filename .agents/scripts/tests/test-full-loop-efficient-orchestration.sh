@@ -114,9 +114,38 @@ gh() {
 	fi
 	if [[ "$1 $2" == "pr checks" ]]; then
 		case "$CHECK_MODE" in
-		pending) printf '[{"name":"required","state":"IN_PROGRESS","bucket":"pending"}]\n'; return 8 ;;
-		failure) printf '[{"name":"required","state":"FAILURE","bucket":"fail"}]\n'; return 1 ;;
-		success) printf '[{"name":"required","state":"SUCCESS","bucket":"pass"}]\n'; return 0 ;;
+		pending)
+			printf '[{"name":"required","state":"IN_PROGRESS","bucket":"pending"}]\n'
+			return 8
+			;;
+		failure)
+			printf '[{"name":"required","state":"FAILURE","bucket":"fail"}]\n'
+			return 1
+			;;
+		success)
+			printf '[{"name":"required","state":"SUCCESS","bucket":"pass"}]\n'
+			return 0
+			;;
+		no-required)
+			printf "no required checks reported on the 'fixture-remote' branch\n" >&2
+			return 1
+			;;
+		api-error)
+			printf 'HTTP 503: service unavailable\n' >&2
+			return 1
+			;;
+		changed-wording)
+			printf "no required checks configured for the 'fixture-remote' branch\n" >&2
+			return 1
+			;;
+		malformed)
+			printf 'not-json\n'
+			return 0
+			;;
+		empty-array)
+			printf '[]\n'
+			return 0
+			;;
 		esac
 	fi
 	return 1
@@ -138,12 +167,24 @@ _full_loop_verify_pr_readiness 42 owner/repo || fail "terminal success failed re
 [[ "$FULL_LOOP_PR_CHECK_STATUS" == "terminal-success" ]] || fail "terminal success was not classified"
 load_state
 [[ "$PR_CHECK_STATUS" == "terminal-success" && "$PR_CHECK_HEAD" == "abc123" ]] || fail "terminal success evidence was not persisted"
+CHECK_MODE="no-required"
+_full_loop_verify_pr_readiness 42 owner/repo || fail "explicit no-required-checks evidence failed readiness"
+[[ "$FULL_LOOP_PR_CHECK_STATUS" == "terminal-success" ]] || fail "explicit no-required-checks evidence was not terminal-success"
+load_state
+[[ "$PR_CHECK_STATUS" == "terminal-success" && "$PR_CHECK_EVIDENCE" == "no-required-checks" ]] || fail "explicit no-required-checks evidence was not persisted"
+for CHECK_MODE in api-error changed-wording malformed empty-array; do
+	_full_loop_verify_pr_readiness 42 owner/repo && fail "indeterminate required-check response passed readiness: ${CHECK_MODE}"
+	[[ "$FULL_LOOP_PR_CHECK_STATUS" == "indeterminate" ]] || fail "indeterminate required-check response was misclassified: ${CHECK_MODE}"
+done
+load_state
+[[ "$PR_CHECK_STATUS" == "indeterminate" && "$PR_CHECK_EVIDENCE" == "unavailable" ]] || fail "indeterminate required-check evidence was not persisted"
+CHECK_MODE="success"
 POST_CHECK_HEAD="def456"
 _full_loop_verify_pr_readiness 42 owner/repo && fail "head drift during check query passed readiness"
 load_state
 [[ "$PR_CHECK_STATUS" == "indeterminate" && "$PR_CHECK_HEAD" == "def456" ]] || fail "head drift did not invalidate durable success evidence"
 POST_CHECK_HEAD="abc123"
-pass "PR convergence distinguishes pending, terminal failure, and exact-head success"
+pass "PR convergence distinguishes pending, failure, no-required, indeterminate, and exact-head success"
 
 EXECUTOR_STATUS="running"
 EXECUTOR_PID="$$"
