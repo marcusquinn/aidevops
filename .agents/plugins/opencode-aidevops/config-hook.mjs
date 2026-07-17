@@ -580,10 +580,59 @@ findings, citations, uncertainty, and recommendations. Never modify local or
 external state, invoke another agent, access credentials, or perform Git,
 account, network-write, or worktree operations.`;
 
-function researchOnlyPrompt(agentsDir) {
+function parseFrontmatterScalar(value) {
+  if (value === "true") return true;
+  if (value === "false") return false;
+  if (value.startsWith('"')) return JSON.parse(value);
+  return value;
+}
+
+function parseAgentFrontmatter(source) {
+  const match = source.match(/^---\n([\s\S]*?)\n---\n?([\s\S]*)$/);
+  if (!match) return null;
+
+  const profile = {};
+  const stack = [{ indent: -1, value: profile }];
+  for (const line of match[1].split("\n")) {
+    if (!line.trim() || line.trimStart().startsWith("#")) continue;
+    const entry = line.match(/^( *)(?:"([^"]+)"|([A-Za-z0-9_.-]+)):\s*(.*)$/);
+    if (!entry || entry[1].length % 2 !== 0) return null;
+
+    const indent = entry[1].length;
+    while (stack.at(-1).indent >= indent) stack.pop();
+    if (indent > stack.at(-1).indent + 2) return null;
+
+    const key = entry[2] || entry[3];
+    const parent = stack.at(-1).value;
+    if (["__proto__", "constructor", "prototype"].includes(key) || Object.hasOwn(parent, key)) return null;
+    try {
+      parent[key] = entry[4] ? parseFrontmatterScalar(entry[4]) : {};
+    } catch {
+      return null;
+    }
+    if (!entry[4]) stack.push({ indent, value: parent[key] });
+  }
+
+  return { profile, prompt: match[2].trim() };
+}
+
+function researchOnlyProfile(agentsDir) {
   const source = readIfExists(join(agentsDir, "tools", "ai-assistants", "research-only.md"));
-  if (!source) return RESEARCH_ONLY_FALLBACK_PROMPT;
-  return source.replace(/^---\n[\s\S]*?\n---\n?/, "").trim();
+  const parsed = source ? parseAgentFrontmatter(source) : null;
+  if (!parsed || typeof parsed.profile.description !== "string") {
+    return {
+      description: "Research-only profile unavailable",
+      mode: "subagent",
+      disable: true,
+      prompt: RESEARCH_ONLY_FALLBACK_PROMPT,
+      tools: { "*": false },
+      permission: "deny",
+    };
+  }
+
+  const profile = { ...parsed.profile };
+  delete profile.name;
+  return { ...profile, prompt: parsed.prompt || RESEARCH_ONLY_FALLBACK_PROMPT };
 }
 
 /**
@@ -595,45 +644,7 @@ function researchOnlyPrompt(agentsDir) {
  */
 export function registerResearchOnlyAgent(config, agentsDir) {
   if (!config.agent) config.agent = {};
-  config.agent[RESEARCH_ONLY_AGENT_NAME] = {
-    description: "Non-mutating repository and web research with a fail-closed capability envelope",
-    mode: "subagent",
-    prompt: researchOnlyPrompt(agentsDir),
-    tools: {
-      "*": false,
-      read: true,
-      grep: true,
-      glob: true,
-      webfetch: true,
-      websearch: true,
-      write: false,
-      edit: false,
-      apply_patch: false,
-      bash: false,
-      task: false,
-      todowrite: false,
-      skill: false,
-    },
-    permission: {
-      "*": "deny",
-      read: {
-        "*": "allow",
-        "*.env": "deny",
-        "*.env.*": "deny",
-        "*.env.example": "allow",
-      },
-      grep: "allow",
-      glob: "allow",
-      webfetch: "allow",
-      websearch: "allow",
-      write: "deny",
-      edit: "deny",
-      apply_patch: "deny",
-      bash: "deny",
-      task: "deny",
-      external_directory: "deny",
-    },
-  };
+  config.agent[RESEARCH_ONLY_AGENT_NAME] = researchOnlyProfile(agentsDir);
   return 1;
 }
 
