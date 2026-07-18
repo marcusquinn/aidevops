@@ -64,14 +64,17 @@ report=$(bash "$HELPER" json)
 after_checksum=$(fixture_checksum)
 [[ "$before_checksum" == "$after_checksum" ]] || fail "inventory changed fixture byte identity"
 
-[[ "$(printf '%s' "$report" | jq -r '.schema_version')" == "1" ]] || fail "schema version missing"
+[[ "$(printf '%s' "$report" | jq -r '.schema_version')" == "2" ]] || fail "schema version missing"
 [[ "$(printf '%s' "$report" | jq -r '.read_only')" == "true" ]] || fail "read-only marker missing"
-[[ "$(printf '%s' "$report" | jq '.stores | length')" == "10" ]] || fail "expected ten explicit producer stores"
+[[ "$(printf '%s' "$report" | jq '.stores | length')" == "15" ]] || fail "expected explicit producer and split OpenCode stores"
 [[ "$(printf '%s' "$report" | jq '[.stores[].reclaimable_bytes] | add')" == "0" ]] || fail "foundation report suggested reclaimable bytes"
 [[ "$(printf '%s' "$report" | jq '[.stores[] | select(.total_bytes != null) | (.total_bytes == (.protected_bytes + .reclaimable_bytes + .unknown_bytes))] | all')" == "true" ]] || fail "storage categories did not reconcile with totals"
 [[ "$(printf '%s' "$report" | jq -r '.stores[] | select(.store_id == "runtime-bundles") | .unknown_bytes > 0')" == "true" ]] || fail "runtime bundles were not fail-closed unknown"
 [[ "$(printf '%s' "$report" | jq -r '.stores[] | select(.store_id == "observability") | .protected_bytes > 0')" == "true" ]] || fail "audit evidence was not protected"
 [[ "$(printf '%s' "$report" | jq -r '.stores[] | select(.store_id == "npm-cache") | .owner')" == "external" ]] || fail "npm ownership was claimed by aidevops"
+[[ "$(printf '%s' "$report" | jq -r '.stores[] | select(.store_id == "opencode-active-db") | .owner')" == "joint" ]] || fail "OpenCode active DB ownership was not bounded"
+[[ "$(printf '%s' "$report" | jq -r '.stores[] | select(.store_id == "opencode-active-db") | .safety_class')" == "unknown" ]] || fail "unavailable OpenCode schema did not fail closed"
+[[ "$(printf '%s' "$report" | jq '[.stores[] | select(.store_id | startswith("opencode-")) | .reclaimable_bytes] | add')" == "0" ]] || fail "OpenCode report exposed cleanup candidates"
 
 report=$(BACKUP_KEEP_COUNT=1 AIDEVOPS_WORKER_EXCERPT_KEEP_COUNT=1 bash "$HELPER" json)
 [[ "$(printf '%s' "$report" | jq -r '.stores[] | select(.store_id == "agent-backups") | .reclaimable_bytes > 0')" == "true" ]] || fail "backup dry-run candidates were not reported"
@@ -81,6 +84,7 @@ report=$(BACKUP_KEEP_COUNT=1 AIDEVOPS_WORKER_EXCERPT_KEEP_COUNT=1 bash "$HELPER"
 human=$(bash "$HELPER" status)
 [[ "$human" == *"Storage Inventory (read-only)"* ]] || fail "human report heading missing"
 [[ "$human" == *"No cleanup was performed"* ]] || fail "human report omitted non-destructive guarantee"
+[[ "$human" == *"next: Use aidevops opencode-db report"* ]] || fail "human report omitted OpenCode guidance"
 
 mv "$HOME/.aidevops/runtime-bundles" "$HOME/.aidevops/runtime-bundles-real"
 ln -s "$HOME/.aidevops/runtime-bundles-real" "$HOME/.aidevops/runtime-bundles"
