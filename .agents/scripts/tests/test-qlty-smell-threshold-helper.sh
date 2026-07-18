@@ -169,6 +169,11 @@ pass_output=$("$HELPER" "$CONF" 2>&1)
 pass_rc=$?
 assert_rc "valid SARIF below threshold passes" "0" "$pass_rc"
 assert_contains "valid SARIF reports headroom" "Within threshold" "$pass_output"
+assert_contains "valid SARIF reports qlty version" "Qlty version: qlty test-stub" "$pass_output"
+assert_contains "valid SARIF reports scan mode" "Scan mode: direct-checkout" "$pass_output"
+assert_contains "valid SARIF reports logical root" "Scan root: repository-root" "$pass_output"
+assert_contains "valid SARIF reports normalized count" "Normalized result count: 1" "$pass_output"
+assert_contains "valid SARIF reports per-rule counts" $'  1\tfile-complexity' "$pass_output"
 
 write_stub_qlty fail "$BIN_DIR"
 fail_output=$("$HELPER" "$CONF" 2>&1)
