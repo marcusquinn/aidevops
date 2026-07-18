@@ -70,6 +70,8 @@ git() {
 
 INSTALL_DIR="$TEST_ROOT/repo"
 HOME="$TEST_ROOT/home"
+_AIDEVOPS_REAL_HOME="$HOME"
+AGENTS_DIR="$HOME/.aidevops/agents"
 mkdir -p "$INSTALL_DIR" "$HOME/.aidevops/agents"
 printf '1.0.0\n' >"$INSTALL_DIR/VERSION"
 printf '1.0.0\n' >"$HOME/.aidevops/agents/VERSION"
@@ -220,7 +222,7 @@ _run_update_setup() {
 	printf '%s\n' "$SETUP_SHA" >"$HOME/.aidevops/.deployed-sha"
 	return "$SETUP_RC"
 }
-AGENTS_DIR="$TEST_ROOT/no-agents"
+AGENTS_DIR="$HOME/.aidevops/agents"
 AIDEVOPS_SKIP_PULSE_RESTART=1
 _AIDEVOPS_UPDATE_TRUE=true
 

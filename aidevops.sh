@@ -252,9 +252,9 @@ _update_verify_deployment_state() {
 	local repo_version=""
 	local deployed_version=""
 	local deployed_sha=""
-	local stamp_file="$HOME/.aidevops/.deployed-sha"
+	local stamp_file="$_AIDEVOPS_REAL_HOME/.aidevops/.deployed-sha"
 	repo_version=$(cat "$INSTALL_DIR/VERSION" 2>/dev/null || echo "unknown")
-	deployed_version=$(cat "$HOME/.aidevops/agents/VERSION" 2>/dev/null || echo "none")
+	deployed_version=$(cat "$AGENTS_DIR/VERSION" 2>/dev/null || echo "none")
 	if [[ -f "$stamp_file" ]]; then
 		deployed_sha=$(tr -d '[:space:]' <"$stamp_file" 2>/dev/null) || deployed_sha=""
 	fi
@@ -293,7 +293,7 @@ _update_render_changelog() {
 	fi
 	echo ""
 	print_info "Changes since $current_version ($total_commits commits):"
-	git -C "$INSTALL_DIR" log --oneline --max-count=20 "$old_hash..$new_hash"
+	git -C "$INSTALL_DIR" log --oneline --max-count=20 "$old_hash..$new_hash" || true
 	if [[ "$total_commits" -gt 20 ]]; then
 		echo "  ... and more (run 'git log --oneline' in $INSTALL_DIR for full list)"
 	fi
