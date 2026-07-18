@@ -39,7 +39,8 @@ def _atomic_write(path: Path, content: str) -> None:
         descriptor, temporary_name = tempfile.mkstemp(
             prefix=f".{path.name}.", dir=path.parent
         )
-        os.fchmod(descriptor, 0o600)
+        if hasattr(os, "fchmod"):
+            os.fchmod(descriptor, 0o600)
         handle = os.fdopen(descriptor, "w", encoding="utf-8")
         descriptor = -1
         with handle:

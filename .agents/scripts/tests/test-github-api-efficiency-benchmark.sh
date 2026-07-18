@@ -7,7 +7,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit 1
 readonly BENCHMARK="${SCRIPT_DIR}/../github-api-efficiency-benchmark.sh"
-readonly TEMP_BASE="${AIDEVOPS_TEMP_DIR:-${HOME}/.aidevops/.agent-workspace/tmp}"
+readonly TEMP_BASE="${AIDEVOPS_TEMP_DIR:-${HOME:+$HOME/.aidevops/.agent-workspace/tmp}}"
 
 TEST_ROOT=""
 TESTS_RUN=0
