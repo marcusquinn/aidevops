@@ -242,7 +242,7 @@ _prefetch_repo_prs() {
 			_used_batch_cache=true
 			echo "[pulse-wrapper] _prefetch_repo_prs: using batch cache for ${slug}" >>"$LOGFILE"
 			_prefetch_record_batch_cache_hit prs "$_batch_prs"
-			_PULSE_HEALTH_BATCH_CACHE_HITS=$((_PULSE_HEALTH_BATCH_CACHE_HITS + 1))
+			_PULSE_HEALTH_BATCH_CACHE_HITS=$(( ${_PULSE_HEALTH_BATCH_CACHE_HITS:-0} + 1 ))
 		fi
 	fi
 

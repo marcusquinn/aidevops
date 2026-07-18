@@ -407,7 +407,7 @@ run_prefetch_consumer_case() (
 		printf '[]'
 		return 0
 	}
-	_PULSE_HEALTH_BATCH_CACHE_HITS=0
+	unset _PULSE_HEALTH_BATCH_CACHE_HITS
 	_prefetch_repo_prs owner/repo '{}' full >"$TEST_ROOT/pr-output.txt"
 	_prefetch_repo_issues owner/repo '{}' full >"$TEST_ROOT/issue-output.txt"
 
@@ -433,7 +433,7 @@ run_prefetch_consumer_case() (
 
 	[[ "$(grep -c -E '^(prs|issues)$' "$live_calls")" == "2" ]] || return 1
 	[[ ! -s "$telemetry_calls" ]] || return 1
-	[[ "$_PULSE_HEALTH_BATCH_CACHE_HITS" == "0" ]] || return 1
+	[[ "${_PULSE_HEALTH_BATCH_CACHE_HITS:-0}" == "0" ]] || return 1
 	local expected_state="$mode"
 	[[ "$mode" == "fetch-failed" ]] && expected_state="missing"
 	grep -q "cache_state=${expected_state}" "$LOGFILE" || return 1
