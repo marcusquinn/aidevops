@@ -68,20 +68,25 @@ export PATH="${SCRIPT_DIR}:${PATH}"
 #   4. credentials.sh       — picks up gh tokens / API keys before merge calls gh.
 #   5. pulse-wrapper-config.sh — defines LOGFILE, REPOS_JSON, STOP_FLAG, etc.
 #   6. pulse-repo-meta.sh   — get_repo_role_by_slug, get_repo_path_by_slug.
-#   7. pulse-dispatch-core.sh — provides unlock_issue_after_worker (called from
+#   7. dependency-event-reconciler.sh — provides closure reconciliation called
+#                             from pulse-merge.sh after a linked issue closes.
+#   8. pulse-triage-cache.sh — provides the idempotent comment primitive used by
+#                             conflict and stuck-PR escalation paths.
+#   9. pulse-dispatch-core.sh — provides unlock_issue_after_worker (called from
 #                             pulse-merge.sh:338,385 in _handle_post_merge_actions
 #                             and _handle_post_close_actions). Without this,
 #                             stderr emits 'unlock_issue_after_worker: command not
 #                             found' on every merged/closed PR (t3036).
-#   8. pulse-fast-fail.sh   — provides fast_fail_reset (called from pulse-merge.sh:383
+#  10. pulse-fast-fail.sh   — provides fast_fail_reset (called from pulse-merge.sh:383
 #                             in _handle_post_close_actions). Without this, stderr
 #                             emits 'fast_fail_reset: command not found' on every
 #                             closed PR (t3036).
-#   9. pulse-merge.sh       — merge_ready_prs_all_repos + gate helpers; also
+#  11. pulse-merge.sh       — merge_ready_prs_all_repos + gate helpers; also
 #                             transitively sources shared-claim-lifecycle.sh and
 #                             shared-phase-filing.sh.
-#  10. pulse-merge-conflict.sh — conflict handling, interactive PR handover.
-#  11. pulse-merge-feedback.sh — CI/conflict/review feedback routing to linked issues.
+#  12. pulse-merge-conflict.sh — conflict handling, interactive PR handover.
+#  13. pulse-merge-feedback.sh — CI/conflict/review feedback routing to linked issues.
+#  14. pulse-merge-stuck.sh — stuck-PR detection and idempotent escalation.
 #
 # pulse-merge.sh normally requires PULSE_MERGE_BATCH_LIMIT and PULSE_START_EPOCH
 # to be set by the pulse-wrapper.sh bootstrap (lines 180, 727). They are
@@ -105,6 +110,15 @@ fi
 source "${SCRIPT_DIR}/pulse-wrapper-config.sh"
 # shellcheck source=/dev/null
 source "${SCRIPT_DIR}/pulse-repo-meta.sh"
+# GH#28207: pulse-merge.sh reconciles dependants after verified issue closure,
+# while conflict/stuck paths post through the triage cache's idempotent helper.
+# These required providers must precede every consumer in the standalone chain;
+# source them without an optional fallback so startup fails before processing
+# merges if either provider cannot load.
+# shellcheck source=./dependency-event-reconciler.sh
+source "${SCRIPT_DIR}/dependency-event-reconciler.sh"
+# shellcheck source=./pulse-triage-cache.sh
+source "${SCRIPT_DIR}/pulse-triage-cache.sh"
 # t3036 (GH#21616): pulse-dispatch-core defines unlock_issue_after_worker;
 # pulse-fast-fail defines fast_fail_reset. Both are called from
 # _handle_post_merge_actions / _handle_post_close_actions in pulse-merge.sh.
