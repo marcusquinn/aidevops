@@ -738,11 +738,13 @@ Next action: fix or wait out the worker/runtime failure family, then approve and
 
 #######################################
 # Pre-create a worker worktree so the worker can start coding immediately
-# instead of spending 5-8 tool calls on worktree setup. Populates two
-# module-level globals:
+# instead of spending 5-8 tool calls on worktree setup. Populates module-level
+# worktree and optional continuation-transfer globals:
 #   _DLW_WORKTREE_PATH    — absolute path on success, empty on failure
 #   _DLW_WORKTREE_BRANCH  — branch name on success, empty on failure
 #   _DLW_WORKTREE_REUSED  — 1 when an existing issue worktree was reused, else 0
+#   _DLW_WORKTREE_TRANSFER_MODE and _DLW_WORKTREE_EXPECTED_OWNER_* — exact
+#       registry owner snapshot for an explicitly validated continuation
 # All are reset on entry so the orchestrator always sees the fresh state.
 #
 # Issue-linked branch naming (GH#19042):
@@ -926,12 +928,37 @@ _dlw_prepare_existing_worktree() {
 	return 0
 }
 
+_dlw_capture_reused_worktree_owner() {
+	local issue_number="$1"
+	local worktree_path="$2"
+	declare -F check_worktree_owner >/dev/null 2>&1 || return 1
+
+	local owner_info=""
+	owner_info=$(check_worktree_owner "$worktree_path" 2>/dev/null || true)
+	[[ -n "$owner_info" ]] || return 1
+
+	IFS='|' read -r _DLW_WORKTREE_EXPECTED_OWNER_PID \
+		_DLW_WORKTREE_EXPECTED_OWNER_SESSION \
+		_DLW_WORKTREE_EXPECTED_OWNER_BATCH \
+		_DLW_WORKTREE_EXPECTED_OWNER_TASK \
+		_DLW_WORKTREE_EXPECTED_OWNER_CREATED_AT <<<"$owner_info"
+	_DLW_WORKTREE_TRANSFER_MODE="continuation"
+	echo "[dispatch_with_dedup] Captured expected registry owner for #${issue_number} continuation without replacing it: ${worktree_path}" >>"$LOGFILE"
+	return 0
+}
+
 _dlw_precreate_worktree() {
 	local issue_number="$1"
 	local repo_path="$2"
 	_DLW_WORKTREE_PATH=""
 	_DLW_WORKTREE_BRANCH=""
 	_DLW_WORKTREE_REUSED=0
+	_DLW_WORKTREE_TRANSFER_MODE=""
+	_DLW_WORKTREE_EXPECTED_OWNER_PID=""
+	_DLW_WORKTREE_EXPECTED_OWNER_SESSION=""
+	_DLW_WORKTREE_EXPECTED_OWNER_BATCH=""
+	_DLW_WORKTREE_EXPECTED_OWNER_TASK=""
+	_DLW_WORKTREE_EXPECTED_OWNER_CREATED_AT=""
 	local _precreate_session="dispatch-precreate-${issue_number}"
 
 	local _wt_helper="${SCRIPT_DIR}/worktree-helper.sh"
@@ -962,7 +989,8 @@ _dlw_precreate_worktree() {
 		_DLW_WORKTREE_PATH="$_existing_path"
 		_DLW_WORKTREE_BRANCH="$_existing_branch"
 		_DLW_WORKTREE_REUSED=1
-		if declare -F register_worktree >/dev/null 2>&1; then
+		if ! _dlw_capture_reused_worktree_owner "$issue_number" "$_DLW_WORKTREE_PATH" && \
+			declare -F register_worktree >/dev/null 2>&1; then
 			register_worktree "$_DLW_WORKTREE_PATH" "$_DLW_WORKTREE_BRANCH" \
 				--task "$issue_number" \
 				--session "$_precreate_session" 2>/dev/null || true
@@ -1668,6 +1696,10 @@ _dlw_spawn_lifecycle_observer() {
 #   $10 - selected_model (may be empty for auto-select)
 #   $11 - worker_worktree_path (may be empty)
 #   $12 - worker_worktree_branch (may be empty)
+#   $13 - attempt_id (optional)
+#   $14 - attempt_started_at (optional)
+#   $15 - worktree transfer mode (empty|continuation)
+#   $16-$20 - expected owner PID, session, batch, task, and created_at
 # Stdout: worker PID
 #######################################
 _dlw_build_worker_title() {
@@ -1744,6 +1776,26 @@ _dlw_append_trusted_release_env() {
 	return 0
 }
 
+_dlw_append_worktree_transfer_env() {
+	local transfer_mode="$1"
+	local expected_owner_pid="$2"
+	local expected_owner_session="$3"
+	local expected_owner_batch="$4"
+	local expected_owner_task="$5"
+	local expected_owner_created_at="$6"
+	[[ "$transfer_mode" == "continuation" ]] || return 0
+
+	worker_cmd+=(
+		AIDEVOPS_WORKTREE_OWNER_TRANSFER_MODE="$transfer_mode"
+		AIDEVOPS_WORKTREE_EXPECTED_OWNER_PID="$expected_owner_pid"
+		AIDEVOPS_WORKTREE_EXPECTED_OWNER_SESSION="$expected_owner_session"
+		AIDEVOPS_WORKTREE_EXPECTED_OWNER_BATCH="$expected_owner_batch"
+		AIDEVOPS_WORKTREE_EXPECTED_OWNER_TASK="$expected_owner_task"
+		AIDEVOPS_WORKTREE_EXPECTED_OWNER_CREATED_AT="$expected_owner_created_at"
+	)
+	return 0
+}
+
 #######################################
 # Launch a worker process detached from the pulse process group.
 # Stdout: worker PID
@@ -1760,6 +1812,8 @@ _dlw_nohup_launch() {
 	local dispatch_model_tier="$9"
 	local selected_model="${10}"
 	local worker_worktree_path="${11}" worker_worktree_branch="${12}" attempt_id="${13:-}" attempt_started_at="${14:-}"
+	local transfer_mode="${15:-}" expected_owner_pid="${16:-}" expected_owner_session="${17:-}"
+	local expected_owner_batch="${18:-}" expected_owner_task="${19:-}" expected_owner_created_at="${20:-}"
 	[[ -n "$attempt_id" ]] || attempt_id=$(aidevops_generate_execution_id "attempt")
 	[[ "$attempt_started_at" =~ ^[0-9]+$ ]] || attempt_started_at=$(_worker_attempt_start_marker)
 	local parent_worker_id="" root_worker_id="" correlation_id="" worker_id="" dispatch_event_id="" root_event_id=""
@@ -1803,9 +1857,11 @@ _dlw_nohup_launch() {
 		AIDEVOPS_DISPATCH_LEASE_DEVICE="${_claim_lease_device:-}"
 		AIDEVOPS_DISPATCH_TIER="$dispatch_model_tier"
 		AIDEVOPS_DISPATCH_MODEL="$selected_model"
-		AIDEVOPS_ALLOW_WORKER_WORKTREE_OWNER_TRANSFER=1
 	)
 	_dlw_append_trusted_release_env
+	_dlw_append_worktree_transfer_env "$transfer_mode" "$expected_owner_pid" \
+		"$expected_owner_session" "$expected_owner_batch" "$expected_owner_task" \
+		"$expected_owner_created_at"
 	if _dlw_min_worker_floor_active; then
 		worker_cmd+=(
 			AIDEVOPS_MIN_WORKER_FLOOR_BYPASS_ACTIVE=1
@@ -2393,6 +2449,12 @@ _dispatch_launch_worker() {
 	fi
 	_ds_record "$issue_number" "$repo_slug" "precreate_worktree" "$_ds_t0"
 	local worker_worktree_path="$_DLW_WORKTREE_PATH" worker_worktree_branch="$_DLW_WORKTREE_BRANCH" worker_worktree_reused="${_DLW_WORKTREE_REUSED:-0}"
+	local worker_transfer_mode="${_DLW_WORKTREE_TRANSFER_MODE:-}"
+	local worker_expected_owner_pid="${_DLW_WORKTREE_EXPECTED_OWNER_PID:-}"
+	local worker_expected_owner_session="${_DLW_WORKTREE_EXPECTED_OWNER_SESSION:-}"
+	local worker_expected_owner_batch="${_DLW_WORKTREE_EXPECTED_OWNER_BATCH:-}"
+	local worker_expected_owner_task="${_DLW_WORKTREE_EXPECTED_OWNER_TASK:-}"
+	local worker_expected_owner_created_at="${_DLW_WORKTREE_EXPECTED_OWNER_CREATED_AT:-}"
 	if _dlw_check_worker_branch_orphan_loop "$issue_number" "$repo_slug" "$worker_worktree_branch" "$worker_worktree_reused" "${repo_path}/TODO.md" "$worker_worktree_path"; then
 		_dlw_pre_runtime_failure "$issue_number" "$repo_slug" "worker_branch_orphan_hold" 2 || return $?
 	fi
@@ -2406,7 +2468,9 @@ _dispatch_launch_worker() {
 	if ! worker_pid=$(_dlw_nohup_launch "$issue_number" "$repo_slug" "$dispatch_title" "$issue_title" \
 		"$session_key" "$worker_log" "$launch_prompt" "$repo_path" \
 		"$dispatch_model_tier" "$selected_model" \
-		"$worker_worktree_path" "$worker_worktree_branch" "$attempt_id" "$attempt_started_at"); then
+		"$worker_worktree_path" "$worker_worktree_branch" "$attempt_id" "$attempt_started_at" \
+		"$worker_transfer_mode" "$worker_expected_owner_pid" "$worker_expected_owner_session" \
+		"$worker_expected_owner_batch" "$worker_expected_owner_task" "$worker_expected_owner_created_at"); then
 		_ds_record "$issue_number" "$repo_slug" "worker_spawn" "$_ds_t0"
 		_dlw_pre_runtime_failure "$issue_number" "$repo_slug" "worker_launch_failed" 2 || return $?
 		return 1

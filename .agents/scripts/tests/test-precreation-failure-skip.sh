@@ -152,6 +152,7 @@ _dlw_prewarm_opencode_db() { _DLW_PREWARM_DIR=""; return 0; }
 _dlw_exec_detached() {
 	# Record that setsid would have been called
 	echo "SETSID_CALLED" >>"${TMP}/setsid-calls.txt"
+	printf '%s\n' "$@" >"${TMP}/launch-args.txt"
 	echo "12345"  # fake PID
 	return 0
 }
@@ -190,6 +191,13 @@ register_worktree() {
 	REGISTERED_WORKTREE_ARGS="${wt_path}|${branch}|${task}|${session}"
 	return 0
 }
+STUB_OWNER_INFO=""
+check_worktree_owner() {
+	local wt_path="$1"
+	[[ -n "$wt_path" && -n "$STUB_OWNER_INFO" ]] || return 1
+	printf '%s\n' "$STUB_OWNER_INFO"
+	return 0
+}
 
 # Re-stub launch-orchestrator dependencies after sourcing; the module defines
 # real implementations when loaded, but this test isolates precreation failure.
@@ -204,6 +212,16 @@ _dlw_resolve_tier_and_model() {
 _dlw_canary_preflight() { return 0; }
 _dlw_prebootstrap_gates() { return 0; }
 _dlw_assign_and_label() { return 0; }
+_dlw_prepare_opencode_db() { _DLW_PREWARM_DIR=""; return 0; }
+_dlw_min_worker_floor_active() { return 1; }
+_dlw_bundle_agent_name() { return 1; }
+_worker_attempt_start_marker() { printf '123\n'; return 0; }
+_dlw_exec_detached() {
+	echo "SETSID_CALLED" >>"${TMP}/setsid-calls.txt"
+	printf '%s\n' "$@" >"${TMP}/launch-args.txt"
+	echo "12345"
+	return 0
+}
 STUB_REFRESH_STATE="OPEN"
 
 gh() {
@@ -325,6 +343,7 @@ mkdir -p "$STUB_EXISTING_PATH"
 export STUB_EXISTING_WORKTREE_LINE="${STUB_EXISTING_PATH} abcdef [${STUB_EXISTING_BRANCH}]"
 : >"$LOGFILE"
 REGISTERED_WORKTREE_ARGS=""
+STUB_OWNER_INFO="12345|generation-7|batch-7|66666|2026-07-18T00:00:00Z"
 _dlw_precreate_worktree "66666" "$FAKE_REPO"
 rc=$?
 unset STUB_EXISTING_WORKTREE_LINE
@@ -341,14 +360,56 @@ else
 	fail "reused worktree is marked reused" "got: '${_DLW_WORKTREE_REUSED:-unset}', expected: '1'"
 fi
 
-if [[ "$REGISTERED_WORKTREE_ARGS" == "${STUB_EXISTING_PATH}|${STUB_EXISTING_BRANCH}|66666|dispatch-precreate-66666" ]]; then
-	pass "reused precreated worktree is registered as transferable"
+if [[ -z "$REGISTERED_WORKTREE_ARGS" ]]; then
+	pass "reused worktree does not replace its live registry owner"
 else
-	fail "reused precreated worktree is registered as transferable" "got: '$REGISTERED_WORKTREE_ARGS'"
+	fail "reused worktree does not replace its live registry owner" "got registration: '$REGISTERED_WORKTREE_ARGS'"
+fi
+
+if [[ "${_DLW_WORKTREE_TRANSFER_MODE:-}" == "continuation" &&
+	"${_DLW_WORKTREE_EXPECTED_OWNER_PID:-}" == "12345" &&
+	"${_DLW_WORKTREE_EXPECTED_OWNER_SESSION:-}" == "generation-7" &&
+	"${_DLW_WORKTREE_EXPECTED_OWNER_BATCH:-}" == "batch-7" &&
+	"${_DLW_WORKTREE_EXPECTED_OWNER_TASK:-}" == "66666" &&
+	"${_DLW_WORKTREE_EXPECTED_OWNER_CREATED_AT:-}" == "2026-07-18T00:00:00Z" ]]; then
+	pass "reused worktree captures exact continuation owner identity"
+else
+	fail "reused worktree captures exact continuation owner identity" \
+		"mode=${_DLW_WORKTREE_TRANSFER_MODE:-unset} pid=${_DLW_WORKTREE_EXPECTED_OWNER_PID:-unset} session=${_DLW_WORKTREE_EXPECTED_OWNER_SESSION:-unset} task=${_DLW_WORKTREE_EXPECTED_OWNER_TASK:-unset}"
+fi
+STUB_OWNER_INFO=""
+
+# =============================================================================
+# Test 4: continuation owner identity is passed through the worker launch env
+# =============================================================================
+self_login="testuser"
+: >"${TMP}/launch-args.txt"
+launch_rc=0
+_dlw_nohup_launch "66666" "owner/repo" "Dispatch" "Issue" "issue-66666" \
+	"${TMP}/worker.log" "/full-loop test" "$FAKE_REPO" "standard" "" \
+	"$STUB_EXISTING_PATH" "$STUB_EXISTING_BRANCH" "attempt-test" "123" \
+	"continuation" "12345" "generation-7" "batch-7" "66666" "2026-07-18T00:00:00Z" \
+	>/dev/null || launch_rc=$?
+transfer_env_ok=1
+for expected_arg in \
+	"AIDEVOPS_WORKTREE_OWNER_TRANSFER_MODE=continuation" \
+	"AIDEVOPS_WORKTREE_EXPECTED_OWNER_PID=12345" \
+	"AIDEVOPS_WORKTREE_EXPECTED_OWNER_SESSION=generation-7" \
+	"AIDEVOPS_WORKTREE_EXPECTED_OWNER_BATCH=batch-7" \
+	"AIDEVOPS_WORKTREE_EXPECTED_OWNER_TASK=66666" \
+	"AIDEVOPS_WORKTREE_EXPECTED_OWNER_CREATED_AT=2026-07-18T00:00:00Z"; do
+	grep -Fqx "$expected_arg" "${TMP}/launch-args.txt" || transfer_env_ok=0
+done
+if [[ "$launch_rc" -eq 0 && "$transfer_env_ok" -eq 1 ]] && \
+	! grep -Fq "AIDEVOPS_ALLOW_WORKER_WORKTREE_OWNER_TRANSFER" "${TMP}/launch-args.txt"; then
+	pass "worker launch carries exact continuation transfer contract"
+else
+	fail "worker launch carries exact continuation transfer contract" \
+		"rc=$launch_rc args=$(tr '\n' ' ' <"${TMP}/launch-args.txt")"
 fi
 
 # =============================================================================
-# Test 4: _dlw_check_worker_branch_orphan_loop skips fresh branches
+# Test 5: _dlw_check_worker_branch_orphan_loop skips fresh branches
 # =============================================================================
 : >"$STUB_DEDUP_CALLS_FILE"
 if _dlw_check_worker_branch_orphan_loop "55555" "owner/repo" "feature/auto-gh55555" "0"; then
@@ -362,7 +423,7 @@ else
 fi
 
 # =============================================================================
-# Test 5: _dlw_check_worker_branch_orphan_loop still checks reused branches
+# Test 6: _dlw_check_worker_branch_orphan_loop still checks reused branches
 # =============================================================================
 : >"$STUB_DEDUP_CALLS_FILE"
 if _dlw_check_worker_branch_orphan_loop "44444" "owner/repo" "feature/auto-gh44444" "1"; then
