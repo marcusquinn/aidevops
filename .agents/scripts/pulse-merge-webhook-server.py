@@ -65,6 +65,7 @@ LEDGER_FILE = Path(
 )
 
 _LEDGER_SCHEMA = "aidevops-webhook-deliveries/v1"
+_LEDGER_STRING_FIELDS = ("id", "event", "payload_sha256", "outcome")
 _ACTION_PROTOCOL = os.environ.get("WEBHOOK_ACTION_PROTOCOL_VERSION", "v1")
 _DELIVERY_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
 _EVENT_RE = re.compile(r"^[a-z0-9_]{1,64}$")
@@ -362,6 +363,14 @@ def _invalidation_records(event: str, payload: dict[str, Any]) -> list[str]:
     return records
 
 
+def _ledger_entry_is_valid(entry: Any) -> bool:
+    if not isinstance(entry, dict):
+        return False
+    if not isinstance(entry.get("received_at"), int):
+        return False
+    return all(isinstance(entry.get(field), str) for field in _LEDGER_STRING_FIELDS)
+
+
 def _load_ledger() -> dict[str, Any]:
     if not LEDGER_FILE.exists():
         return {"schema": _LEDGER_SCHEMA, "deliveries": []}
@@ -373,14 +382,7 @@ def _load_ledger() -> dict[str, Any]:
     if not isinstance(deliveries, list):
         raise ValueError("invalid delivery ledger entries")
     for entry in deliveries:
-        if (
-            not isinstance(entry, dict)
-            or not isinstance(entry.get("id"), str)
-            or not isinstance(entry.get("received_at"), int)
-            or not isinstance(entry.get("event"), str)
-            or not isinstance(entry.get("payload_sha256"), str)
-            or not isinstance(entry.get("outcome"), str)
-        ):
+        if not _ledger_entry_is_valid(entry):
             raise ValueError("invalid delivery ledger entry")
     return ledger
 
