@@ -8,7 +8,7 @@
 # (t1993: schedule post-merge-review-scanner.sh).
 #
 # This module contains the self-contained sub-cluster of functions that read,
-# write, refresh, prune, push, and backfill .agents/configs/simplification-state.json
+# write, refresh, prune, publish, and backfill .agents/configs/simplification-state.json
 # — the shared hash registry the simplification routine uses to detect which
 # files have been processed, how many passes they have been through, and whether
 # they have converged.
@@ -320,30 +320,34 @@ _simplification_state_prune() {
 	return 0
 }
 
-# Commit and push simplification state to main (planning data, not code).
+# Publish simplification state without mutating the source checkout.
 # Arguments: $1 - repo_path
 _simplification_state_push() {
 	local repo_path="$1"
 	local state_rel=".agents/configs/simplification-state.json"
+	local module_dir="${BASH_SOURCE[0]%/*}"
+	local main_branch="" base_sha="" publication_rc=0
 
-	# Only push from the canonical (main) worktree
-	local main_branch
+	if ! declare -F planning_publish >/dev/null 2>&1; then
+		[[ "$module_dir" != "${BASH_SOURCE[0]}" ]] || module_dir="."
+		module_dir=$(cd "$module_dir" && pwd) || return 1
+		[[ -f "${module_dir}/planning-publisher.sh" ]] || return 1
+		# shellcheck source=./planning-publisher.sh
+		source "${module_dir}/planning-publisher.sh"
+	fi
 	main_branch=$(git -C "$repo_path" symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's|refs/remotes/origin/||') || main_branch="main"
-	local current_branch
-	current_branch=$(git -C "$repo_path" rev-parse --abbrev-ref HEAD 2>/dev/null) || current_branch=""
+	base_sha=$(git -C "$repo_path" rev-parse HEAD 2>/dev/null) || return 1
 
-	if [[ "$current_branch" != "$main_branch" ]]; then
-		echo "[pulse-wrapper] simplification-state: skipping push — not on $main_branch (on $current_branch)" >>"$LOGFILE"
-		return 0
-	fi
-
-	if ! git -C "$repo_path" diff --quiet -- "$state_rel" 2>/dev/null; then
-		git -C "$repo_path" add "$state_rel" 2>/dev/null || return 1
-		git -C "$repo_path" commit -m "chore: update simplification state registry" --no-verify 2>/dev/null || return 1
-		git -C "$repo_path" push origin "$main_branch" 2>/dev/null || return 1
-		echo "[pulse-wrapper] simplification-state: pushed updated state to $main_branch" >>"$LOGFILE"
-	fi
-	return 0
+	AIDEVOPS_PLANNING_BASE_SHA="$base_sha" \
+		AIDEVOPS_PLANNING_PUBLISH_SCOPE="simplification-state" \
+		planning_publish "$repo_path" "chore: update simplification state registry" \
+			origin "$main_branch" "$state_rel" || publication_rc=$?
+	case "$publication_rc" in
+	0) echo "[pulse-wrapper] simplification-state: ${PLANNING_PUBLISH_RESULT:-published} on $main_branch" >>"${LOGFILE:-/dev/null}" ;;
+	2) echo "[pulse-wrapper] simplification-state: retryable publication conflict on $main_branch" >>"${LOGFILE:-/dev/null}" ;;
+	*) echo "[pulse-wrapper] simplification-state: publication failed on $main_branch (rc=$publication_rc)" >>"${LOGFILE:-/dev/null}" ;;
+	esac
+	return "$publication_rc"
 }
 
 # Create a follow-up function-complexity-debt issue when Qlty smells persist after
