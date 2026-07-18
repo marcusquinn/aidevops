@@ -36,6 +36,7 @@ setup_env() {
 	export PULSE_EVENTS_TICKLE_ENABLED=0
 	export PULSE_PREFETCH_FULL_SWEEP_INTERVAL=999999999
 	export PULSE_BATCH_SEARCH_LAST_RESORT=1
+	export PULSE_BATCH_SNAPSHOT_AUTH_SCOPE=github.com
 	unset AIDEVOPS_GH_FORCE_REST_READS
 	unset AIDEVOPS_GH_REST_FIRST_READS
 	mkdir -p "$HOME" "$PULSE_BATCH_PREFETCH_CACHE_DIR" "$TEST_ROOT/bin"
@@ -80,6 +81,14 @@ if [[ "\$1" == "api" ]]; then
 		printf 'HTTP/2 200\\r\\netag: "etag-issue-v2"\\r\\n\\r\\n[{"number":3,"title":"Issue","state":"open","updated_at":"2026-05-02T00:00:00Z","labels":[],"assignees":[]},{"number":4,"title":"PR-shaped issue","pull_request":{},"updated_at":"2026-05-02T00:00:00Z"}]'
     exit 0
   fi
+  if [[ "$mode" == "paginated" ]]; then
+    if [[ "\$*" == *'/pulls?state=open'* ]]; then
+      printf 'HTTP/2 200\r\netag: "etag-pr-page"\r\nlink: <https://api.github.com/repositories/1/pulls?page=2>; rel="next"\r\n\r\n[{"number":8,"title":"PR page","updated_at":"2026-05-02T00:00:00Z","user":{"login":"dev"},"head":{"sha":"def","ref":"branch"}}]'
+      exit 0
+    fi
+    printf 'HTTP/2 200\r\netag: "etag-issue-page"\r\nlink: <https://api.github.com/repositories/1/issues?page=2>; rel="next"\r\n\r\n[{"number":9,"title":"Issue page","state":"open","updated_at":"2026-05-02T00:00:00Z","labels":[],"assignees":[]}]'
+    exit 0
+  fi
   printf 'HTTP/2 500\\r\\n\\r\\n{}'
   exit 1
 fi
@@ -100,10 +109,10 @@ SH
 
 seed_cache() {
 	cat >"$PULSE_BATCH_PREFETCH_CACHE_DIR/issues-owner__repo.json" <<'JSON'
-{"timestamp":"2026-05-01T00:00:00Z","etag":"\"etag-v1\"","items":[{"number":1,"title":"Cached issue","state":"open","labels":[],"assignees":[],"updatedAt":"2026-05-01T00:00:00Z"}]}
+{"schema":"aidevops-pulse-snapshot/v1","repository":"owner/repo","collection":"issues","projection":"number,title,state,labels,updatedAt,assignees","auth_scope":"github.com","generation":"seed","source":"conditional-rest","complete":true,"truncated":false,"fetched_at":"2026-05-01T00:00:00Z","timestamp":"2026-05-01T00:00:00Z","etag":"\"etag-v1\"","items":[{"number":1,"title":"Cached issue","state":"open","labels":[],"assignees":[],"updatedAt":"2026-05-01T00:00:00Z"}]}
 JSON
 	cat >"$PULSE_BATCH_PREFETCH_CACHE_DIR/prs-owner__repo.json" <<'JSON'
-{"timestamp":"2026-05-01T00:00:00Z","etag":"\"etag-v1\"","items":[{"number":2,"title":"Cached PR","labels":[],"assignees":[],"updatedAt":"2026-05-01T00:00:00Z"}]}
+{"schema":"aidevops-pulse-snapshot/v1","repository":"owner/repo","collection":"prs","projection":"number,title,labels,updatedAt,assignees,createdAt,author,headRefOid,headRefName","auth_scope":"github.com","generation":"seed","source":"conditional-rest","complete":true,"truncated":false,"fetched_at":"2026-05-01T00:00:00Z","timestamp":"2026-05-01T00:00:00Z","etag":"\"etag-v1\"","items":[{"number":2,"title":"Cached PR","labels":[],"assignees":[],"updatedAt":"2026-05-01T00:00:00Z","createdAt":"2026-05-01T00:00:00Z","author":{"login":"dev"},"headRefOid":"seed-sha","headRefName":"seed-branch"}]}
 JSON
 	return 0
 }
@@ -158,7 +167,13 @@ test_unchanged_repo_uses_304_cache() {
 	write_gh_stub not_modified
 	local output
 	output=$("$HELPER" refresh)
-	if grep -q 'conditional_304=2' <<<"$output" && ! grep -q 'search issues' "$TEST_ROOT/gh-calls.log"; then
+	local issues_snapshot="" prs_snapshot=""
+	issues_snapshot=$("$HELPER" read-snapshot --kind issues --slug owner/repo 2>/dev/null) || issues_snapshot="{}"
+	prs_snapshot=$("$HELPER" read-snapshot --kind prs --slug owner/repo 2>/dev/null) || prs_snapshot="{}"
+	if grep -q 'conditional_304=2' <<<"$output" \
+		&& ! grep -q 'search issues' "$TEST_ROOT/gh-calls.log" \
+		&& [[ "$(printf '%s' "$issues_snapshot" | jq -r '.complete')" == "true" ]] \
+		&& [[ "$(printf '%s' "$issues_snapshot" | jq -r '.generation')" == "$(printf '%s' "$prs_snapshot" | jq -r '.generation')" ]]; then
 		print_result "unchanged repo returns conditional 304 and skips search" 0
 	else
 		print_result "unchanged repo returns conditional 304 and skips search" 1
@@ -177,10 +192,33 @@ test_changed_repo_refreshes_cache() {
 	pr_author=$(jq -r '.items[0].author.login' "$PULSE_BATCH_PREFETCH_CACHE_DIR/prs-owner__repo.json")
 	local issue_state
 	issue_state=$(jq -r '.items[0].state' "$PULSE_BATCH_PREFETCH_CACHE_DIR/issues-owner__repo.json")
-	if grep -q 'conditional_refreshes=2' <<<"$output" && [[ "$issue_count" == "1" && "$pr_author" == "dev" && "$issue_state" == "open" ]]; then
+	local issues_snapshot="" prs_snapshot=""
+	issues_snapshot=$("$HELPER" read-snapshot --kind issues --slug owner/repo 2>/dev/null) || issues_snapshot="{}"
+	prs_snapshot=$("$HELPER" read-snapshot --kind prs --slug owner/repo 2>/dev/null) || prs_snapshot="{}"
+	if grep -q 'conditional_refreshes=2' <<<"$output" \
+		&& [[ "$issue_count" == "1" && "$pr_author" == "dev" && "$issue_state" == "open" ]] \
+		&& [[ "$(printf '%s' "$issues_snapshot" | jq -r '.schema')" == "aidevops-pulse-snapshot/v1" ]] \
+		&& [[ "$(printf '%s' "$issues_snapshot" | jq -r '.generation')" == "$(printf '%s' "$prs_snapshot" | jq -r '.generation')" ]] \
+		&& [[ "$(printf '%s' "$prs_snapshot" | jq -r '.items[0].headRefOid')" == "abc" ]]; then
 		print_result "changed repo refreshes normalized issue and PR caches" 0
 	else
 		print_result "changed repo refreshes normalized issue and PR caches" 1
+	fi
+	teardown_env
+	return 0
+}
+
+test_paginated_response_is_not_complete() {
+	setup_env
+	write_gh_stub paginated
+	"$HELPER" refresh >/dev/null
+	local issues_complete="" prs_complete=""
+	issues_complete=$(jq -r '.complete' "$PULSE_BATCH_PREFETCH_CACHE_DIR/issues-owner__repo.json")
+	prs_complete=$(jq -r '.complete' "$PULSE_BATCH_PREFETCH_CACHE_DIR/prs-owner__repo.json")
+	if [[ "$issues_complete" == "false" && "$prs_complete" == "false" ]]; then
+		print_result "pagination metadata prevents truncated snapshots from claiming completeness" 0
+	else
+		print_result "pagination metadata prevents truncated snapshots from claiming completeness" 1
 	fi
 	teardown_env
 	return 0
@@ -538,6 +576,7 @@ SH
 
 test_unchanged_repo_uses_304_cache
 test_changed_repo_refreshes_cache
+test_paginated_response_is_not_complete
 test_conditional_failure_routes_to_rest_by_default
 test_search_opt_in_preserves_owner_search
 test_legacy_issue_cache_avoids_search_by_default

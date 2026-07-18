@@ -168,13 +168,14 @@ _prefetch_prs_format_output() {
 			(.number | tostring) as $num |
 			($check_map[$num] // "unknown") as $cs |
 			"- PR #\(.number): \(.title) [checks: \($cs)] [review: \(
-				if .reviewDecision == null or .reviewDecision == "" then "NONE"
+				if has("reviewDecision") | not then "UNKNOWN"
+				elif .reviewDecision == null or .reviewDecision == "" then "NONE"
 				else .reviewDecision
 				end
-			)] [author: \(.author.login // "unknown")] [branch: \(.headRefName)] [updated: \(.updatedAt)]"
+			)] [author: \(.author.login // "unknown")] [branch: \(.headRefName // "unknown")] [updated: \(.updatedAt)]"
 		'
 	else
-		echo "$pr_json" | jq -r '.[] | "- PR #\(.number): \(.title) [checks: unknown] [review: \(if .reviewDecision == null or .reviewDecision == "" then "NONE" else .reviewDecision end)] [author: \(.author.login // "unknown")] [branch: \(.headRefName)] [updated: \(.updatedAt)]"'
+		echo "$pr_json" | jq -r '.[] | "- PR #\(.number): \(.title) [checks: unknown] [review: \(if has("reviewDecision") | not then "UNKNOWN" elif .reviewDecision == null or .reviewDecision == "" then "NONE" else .reviewDecision end)] [author: \(.author.login // "unknown")] [branch: \(.headRefName // "unknown")] [updated: \(.updatedAt)]"'
 	fi
 	return 0
 }
@@ -213,6 +214,9 @@ _prefetch_repo_prs() {
 	local cache_entry="${2:-}"
 	[[ -n "$cache_entry" ]] || cache_entry="{}"
 	local sweep_mode="${3:-full}"
+	local canonical_snapshot="${4:-}"
+	local canonical_snapshot_supplied=false
+	[[ "$#" -ge 4 ]] && canonical_snapshot_supplied=true
 
 	# PRs (createdAt included for daily PR cap — GH#3821)
 	# GH#15060: statusCheckRollup is the heaviest field in the GraphQL payload —
@@ -235,7 +239,16 @@ _prefetch_repo_prs() {
 	# Execution order: idle skip (L2, handled by caller) → batch cache (L3) → delta/full (L4/L5)
 	local _batch_helper="${SCRIPT_DIR}/pulse-batch-prefetch-helper.sh"
 	local _used_batch_cache=false
-	if [[ "${PULSE_BATCH_PREFETCH_ENABLED:-1}" == "1" && -x "$_batch_helper" ]]; then
+	if [[ "$canonical_snapshot_supplied" == "true" ]]; then
+		local _canonical_prs=""
+		if _canonical_prs=$(printf '%s' "$canonical_snapshot" | jq -ce '.items | select(type == "array")' 2>/dev/null); then
+			pr_json="$_canonical_prs"
+			_used_batch_cache=true
+			echo "[pulse-wrapper] _prefetch_repo_prs: using cycle canonical snapshot for ${slug}" >>"$LOGFILE"
+			_prefetch_record_batch_cache_hit prs "$_canonical_prs"
+			_PULSE_HEALTH_BATCH_CACHE_HITS=$(( ${_PULSE_HEALTH_BATCH_CACHE_HITS:-0} + 1 ))
+		fi
+	elif [[ "${PULSE_BATCH_PREFETCH_ENABLED:-1}" == "1" && -x "$_batch_helper" ]]; then
 		local _batch_prs
 		if _batch_prs=$("$_batch_helper" read-cache --kind prs --slug "$slug" 2>>"$LOGFILE"); then
 			pr_json="$_batch_prs"
@@ -355,6 +368,9 @@ _prefetch_repo_issues() {
 	local cache_entry="${2:-}"
 	[[ -n "$cache_entry" ]] || cache_entry="{}"
 	local sweep_mode="${3:-full}"
+	local canonical_snapshot="${4:-}"
+	local canonical_snapshot_supplied=false
+	[[ "$#" -ge 4 ]] && canonical_snapshot_supplied=true
 
 	# Issues (include assignees for dispatch dedup)
 	# Filter out supervisor/contributor/persistent/quality-review issues —
@@ -370,7 +386,16 @@ _prefetch_repo_issues() {
 	# Execution order: idle skip (L2, handled by caller) → batch cache (L3) → delta/full (L4/L5)
 	local _batch_helper="${SCRIPT_DIR}/pulse-batch-prefetch-helper.sh"
 	local _used_batch_cache=false
-	if [[ "${PULSE_BATCH_PREFETCH_ENABLED:-1}" == "1" && -x "$_batch_helper" ]]; then
+	if [[ "$canonical_snapshot_supplied" == "true" ]]; then
+		local _canonical_issues=""
+		if _canonical_issues=$(printf '%s' "$canonical_snapshot" | jq -ce '.items | select(type == "array")' 2>/dev/null); then
+			issue_json="$_canonical_issues"
+			_used_batch_cache=true
+			echo "[pulse-wrapper] _prefetch_repo_issues: using cycle canonical snapshot for ${slug}" >>"$LOGFILE"
+			_prefetch_record_batch_cache_hit issues "$_canonical_issues"
+			_PULSE_HEALTH_BATCH_CACHE_HITS=$(( ${_PULSE_HEALTH_BATCH_CACHE_HITS:-0} + 1 ))
+		fi
+	elif [[ "${PULSE_BATCH_PREFETCH_ENABLED:-1}" == "1" && -x "$_batch_helper" ]]; then
 		local _batch_issues
 		if _batch_issues=$("$_batch_helper" read-cache --kind issues --slug "$slug" 2>>"$LOGFILE"); then
 			issue_json="$_batch_issues"

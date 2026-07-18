@@ -419,7 +419,7 @@ if [[ "$1" == "api" && "$2" == *"/issues"* ]]; then
 fi
 # gh api repos/{slug}/pulls → simulate REST success
 if [[ "$1" == "api" && "$2" == *"/pulls"* ]]; then
-	printf '[{"number":7,"title":"Test PR","labels":[],"updated_at":"2026-04-22T17:00:00Z","assignees":[],"created_at":"2026-04-22T16:00:00Z","user":{"login":"testuser"}}]\n'
+	printf '[{"number":7,"title":"Test PR","labels":[],"updated_at":"2026-04-22T17:00:00Z","assignees":[],"created_at":"2026-04-22T16:00:00Z","user":{"login":"testuser"},"head":{"sha":"abcdef123456","ref":"feature"}}]\n'
 	exit 0
 fi
 exit 1
@@ -484,6 +484,20 @@ if [[ -f "$_prs_cache" ]]; then
 	else
 		print_result "REST fallback: PRs cache author.login mapped from REST user.login" 1 "(author.login='${_pr_author}', expected 'testuser')"
 	fi
+fi
+
+_issues_snapshot=""
+_prs_snapshot=""
+_issues_snapshot=$(PULSE_BATCH_PREFETCH_CACHE_DIR="$BATCH_CACHE_DIR_TEST" LOGFILE="/dev/null" \
+	bash "$BATCH_PREFETCH_SCRIPT" read-snapshot --kind issues --slug testowner/testrepo 2>/dev/null) || _issues_snapshot="{}"
+_prs_snapshot=$(PULSE_BATCH_PREFETCH_CACHE_DIR="$BATCH_CACHE_DIR_TEST" LOGFILE="/dev/null" \
+	bash "$BATCH_PREFETCH_SCRIPT" read-snapshot --kind prs --slug testowner/testrepo 2>/dev/null) || _prs_snapshot="{}"
+if [[ "$(printf '%s' "$_issues_snapshot" | jq -r '.complete // false')" == "true" ]] \
+	&& [[ "$(printf '%s' "$_issues_snapshot" | jq -r '.generation // ""')" == "$(printf '%s' "$_prs_snapshot" | jq -r '.generation // ""')" ]] \
+	&& [[ "$(printf '%s' "$_prs_snapshot" | jq -r '.items[0].headRefOid // ""')" == "abcdef123456" ]]; then
+	print_result "REST fallback: canonical snapshots preserve completeness, generation, and full head SHA" 0
+else
+	print_result "REST fallback: canonical snapshots preserve completeness, generation, and full head SHA" 1
 fi
 
 # =============================================================================
