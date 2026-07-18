@@ -6,13 +6,13 @@
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 source "${SCRIPT_DIR}/shared-constants.sh"
 set -euo pipefail
-init_log_file
 
 readonly OBS_DIR="${HOME}/.aidevops/.agent-workspace/observability"
 readonly OBS_METRICS="${OBS_DIR}/metrics.jsonl" OBS_OFFSETS="${OBS_DIR}/parse-offsets.json"
 readonly CLAUDE_LOG_DIR="${HOME}/.claude/projects"
 readonly RATE_LIMITS_CONFIG_USER="${HOME}/.config/aidevops/rate-limits.json"
 readonly RATE_LIMITS_CONFIG_TEMPLATE="${SCRIPT_DIR}/../configs/rate-limits.json.txt"
+readonly RUNTIME_EVENTS_RETENTION="${SCRIPT_DIR}/runtime-events-retention.mjs"
 readonly DEFAULT_WARN_PCT=80 DEFAULT_WINDOW_MINUTES=1
 
 init_storage() {
@@ -650,11 +650,30 @@ cmd_runtime_events() {
 	return 0
 }
 
+cmd_storage() {
+	command -v node &>/dev/null || {
+		print_error "node required"
+		return 1
+	}
+	node "$RUNTIME_EVENTS_RETENTION" inventory --db "${OBS_DIR}/llm-requests.db" "$@"
+	return $?
+}
+
+cmd_retention() {
+	command -v node &>/dev/null || {
+		print_error "node required"
+		return 1
+	}
+	node "$RUNTIME_EVENTS_RETENTION" archive --db "${OBS_DIR}/llm-requests.db" "$@"
+	return $?
+}
+
 cmd_help() {
 	cat <<EOF
 Observability Helper — LLM request and runtime-event evidence
 Usage: observability-helper.sh [command] [options]
-Commands: ingest | record (--model X) | rate-limits | cache-health | runtime-events [limit] | help
+Commands: ingest | record (--model X) | rate-limits | cache-health | runtime-events [limit]
+          storage [--json] | retention [--dry-run|--apply] [--before ISO] [--max-rows N] | help
 
 Record options:
   --model MODEL          Model name (required)
@@ -678,12 +697,20 @@ EOF
 main() {
 	local command="${1:-help}"
 	shift || true
-	init_storage || return 1
+	case "$command" in
+	storage | retention) ;;
+	*)
+		init_log_file
+		init_storage || return 1
+		;;
+	esac
 	case "$command" in
 	ingest | parse | import) cmd_ingest "$@" ;; record | r) cmd_record "$@" ;;
 	rate-limits | rate_limits | ratelimits | rl) cmd_rate_limits "$@" ;;
 	cache-health | cache_health | ch) cmd_cache_health "$@" ;;
 	runtime-events | runtime_events | events) cmd_runtime_events "$@" ;;
+	storage | storage-inventory) cmd_storage "$@" ;;
+	retention | archive) cmd_retention "$@" ;;
 	help | --help | -h) cmd_help ;; *)
 		print_error "Unknown: $command"
 		cmd_help

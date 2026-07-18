@@ -36,6 +36,10 @@ import {
   enrichActiveSpan,
   runtimeEventOtelAttributes,
 } from "./otel-enrichment.mjs";
+import {
+  PartStreamSummaryTracker,
+  summarizeToolMetadata,
+} from "./observability-retention.mjs";
 import { toolOutcomeFailed } from "./session-continuation-guard.mjs";
 
 const HOME = homedir();
@@ -223,8 +227,11 @@ function _isSchemaInitialized() {
       ["-readonly", "-separator", "|", DB_PATH,
        "SELECT " +
       "(SELECT COUNT(*) FROM sqlite_master WHERE type='table' " +
-       "AND name IN ('llm_requests','tool_calls','session_summaries')) AS tbls, " +
-       "(SELECT COUNT(*) FROM pragma_table_info('tool_calls') WHERE name='intent') AS intent_col;"],
+       "AND name IN ('llm_requests','tool_calls','session_summaries','runtime_events','runtime_event_archives')) AS tbls, " +
+       "(SELECT COUNT(*) FROM pragma_table_info('tool_calls') WHERE name='intent') AS intent_col, " +
+       "(SELECT COUNT(*) FROM sqlite_master WHERE type='trigger' " +
+       "AND name IN ('runtime_events_reject_update','runtime_events_reject_delete'," +
+       "'runtime_event_archives_reject_update','runtime_event_archives_reject_delete')) AS guards;"],
       {
         encoding: "utf-8",
         timeout: 2000,
@@ -232,8 +239,8 @@ function _isSchemaInitialized() {
       },
     ).trim();
     if (!result) return false;
-    const [tbls, intentCol] = result.split("|");
-    return tbls === "3" && intentCol === "1";
+    const [tbls, intentCol, guards] = result.split("|");
+    return tbls === "5" && intentCol === "1" && guards === "4";
   } catch {
     return false;
   }
@@ -620,6 +627,7 @@ const sessionToolCounts = new Map();
  * @type {Set<string>}
  */
 const recordedMessages = new Set();
+const partStreamSummaries = new PartStreamSummaryTracker();
 
 /**
  * Whether the database was successfully initialised.
@@ -663,6 +671,11 @@ export function handleEvent(input) {
     return;
   }
 
+  // Text/reasoning part streams can emit hundreds of redundant updates for a
+  // single response. Keep terminal/error parts, but summarize ordinary deltas
+  // into the eventual message.completed envelope.
+  if (partStreamSummaries.observe(event)) return;
+
   recordOpenCodeRuntimeEvent(event);
 }
 
@@ -671,11 +684,20 @@ function projectRuntimeEvent(envelope) {
   enrichActiveSpan(runtimeEventOtelAttributes(envelope)).catch(() => {});
 }
 
-function recordOpenCodeRuntimeEvent(event, eventType = event.type) {
+function firstTruthy(values, fallback = null) {
+  return values.find(Boolean) || fallback;
+}
+
+function recordOpenCodeRuntimeEvent(event, eventType = event.type, additionalPayload = {}) {
   const properties = event.properties || {};
   const info = properties.info || {};
-  const sessionId = info.sessionID || properties.sessionID || properties.sessionId || null;
-  const subjectId = info.id || properties.id || sessionId || "runtime:opencode";
+  const part = properties.part || {};
+  const sessionId = firstTruthy([
+    info.sessionID, part.sessionID, part.sessionId, properties.sessionID, properties.sessionId,
+  ]);
+  const subjectId = firstTruthy([
+    info.id, part.id, part.messageID, part.messageId, properties.id, sessionId,
+  ], "runtime:opencode");
   const envelope = appendRuntimeEvent({
     eventType,
     subjectId,
@@ -685,12 +707,15 @@ function recordOpenCodeRuntimeEvent(event, eventType = event.type) {
     rootEventId: properties.rootEventID,
     parentEventId: properties.parentEventID,
     payload: {
-      error_type: info.error?.name || properties.error?.name || null,
-      finish_reason: info.finish || null,
+      error_type: firstTruthy([
+        info.error?.name, properties.error?.name, part.error?.name, part.state?.error?.name,
+      ]),
+      finish_reason: info.finish || part.finish || part.state?.status || null,
       model_id: info.modelID || null,
       provider_id: info.providerID || null,
       role: info.role || null,
       source: "opencode",
+      ...additionalPayload,
     },
   });
   projectRuntimeEvent(envelope);
@@ -716,7 +741,7 @@ function handleMessageUpdated(event) {
   if (recordedMessages.has(msg.id)) return;
   recordedMessages.add(msg.id);
 
-  recordOpenCodeRuntimeEvent(event, "message.completed");
+  recordOpenCodeRuntimeEvent(event, "message.completed", partStreamSummaries.consume(msg));
 
   // Prevent unbounded memory growth — prune old entries periodically
   if (recordedMessages.size > 10000) {
@@ -842,7 +867,7 @@ ON CONFLICT(session_id) DO UPDATE SET
  * @param {string | null | undefined} args.intent
  * @param {0 | 1} args.isSuccess
  * @param {number | null | undefined} args.durationMs - Elapsed ms, or null/undefined to store SQL NULL
- * @param {object | null | undefined} args.metadata - Raw metadata object; JSON-stringified before escape
+ * @param {object | null | undefined} args.metadata - Raw metadata object; summarized before persistence
  * @returns {string} INSERT statement ready for sqliteExec
  */
 export function buildToolCallInsertSql({ sessionID, callID, toolName, intent, isSuccess, durationMs, metadata }) {
@@ -851,9 +876,8 @@ export function buildToolCallInsertSql({ sessionID, callID, toolName, intent, is
     : "NULL";
   // sqlEscape(null) returns the literal string "NULL" — we exploit that
   // so the metadata column renders as SQL NULL when metadata is absent.
-  const metadataValue = (metadata !== null && metadata !== undefined)
-    ? JSON.stringify(metadata)
-    : null;
+  const metadataSummary = summarizeToolMetadata(metadata);
+  const metadataValue = metadataSummary === null ? null : JSON.stringify(metadataSummary);
 
   return `INSERT INTO tool_calls (
     session_id, call_id, tool_name, intent, success, duration_ms, metadata

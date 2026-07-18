@@ -30,7 +30,7 @@ STORAGE_OWNER_FRAMEWORK=framework
 STORAGE_SAFETY_MIXED=mixed
 STORAGE_DISPOSITION_PROTECTED=protected
 STORAGE_PRODUCER_PULSE=pulse-wrapper
-STORAGE_UNKNOWN="unknown"
+STORAGE_UNKNOWN=unknown
 STORAGE_PROTECTED="protected"
 STORAGE_JOINT="joint"
 STORAGE_ACTIVE="active"
@@ -114,12 +114,12 @@ _storage_emit_measured_record() {
 	local protection_reason="$8"
 	local next_action="$9"
 	local measured="${10}"
-	local total_bytes="null"
+	local total_bytes="$STORAGE_JSON_NULL"
 	local confidence="unavailable"
 	local error=""
-	local protected_bytes="null"
+	local protected_bytes="$STORAGE_JSON_NULL"
 	local reclaimable_bytes=0
-	local unknown_bytes="null"
+	local unknown_bytes="$STORAGE_JSON_NULL"
 
 	IFS='|' read -r total_bytes confidence error <<<"$measured"
 	if [[ "$total_bytes" != "$STORAGE_JSON_NULL" ]]; then
@@ -569,6 +569,52 @@ _storage_emit_retention_record() {
 	return 0
 }
 
+_storage_observability_record() {
+	local home_label="~"
+	local display_path="${home_label}/.aidevops/.agent-workspace/observability"
+	local actual_path="${HOME}/.aidevops/.agent-workspace/observability"
+	local report=""
+	local measured=""
+	local total_bytes="$STORAGE_JSON_NULL"
+	local confidence="unavailable"
+	local sizing_error=""
+
+	report=$(bash "$SCRIPT_DIR/observability-helper.sh" storage --json 2>/dev/null || true)
+	if [[ -z "$report" ]] || ! printf '%s\n' "$report" | jq -e '
+		def is_number: type == "number";
+		type == "object" and (.active_bytes | is_number) and
+		(.archive_bytes | is_number) and (.protected_bytes | is_number) and
+		(.reclaimable_bytes | is_number) and (.unknown_bytes | is_number)
+	' >/dev/null 2>&1; then
+		_storage_emit_record "observability" "opencode-aidevops" "$display_path" "$actual_path" \
+			"$STORAGE_OWNER_FRAMEWORK" "$STORAGE_UNKNOWN" "retention inventory unavailable" "$STORAGE_UNKNOWN" \
+			"classification unavailable" "Use observability-helper.sh storage --json" |
+			jq -c '.error = "retention-inventory-unavailable"'
+		return 0
+	fi
+
+	measured=$(_storage_measure_path "$actual_path")
+	IFS='|' read -r total_bytes confidence sizing_error <<<"$measured"
+	jq -cn \
+		--arg path "$display_path" \
+		--arg owner "$STORAGE_OWNER_FRAMEWORK" \
+		--arg confidence "$confidence" \
+		--arg sizing_error "$sizing_error" \
+		--argjson total_bytes "$total_bytes" \
+		--argjson retention "$report" '
+		($retention.protected_bytes | if $total_bytes == null then null elif . > $total_bytes then $total_bytes else . end) as $protected |
+		(if $total_bytes == null then null else ($total_bytes - ($protected // 0)) end) as $unknown |
+		{store_id:"observability",producer:"opencode-aidevops",path:$path,owner:$owner,safety_class:"audit",
+		 policy:$retention.policy,total_bytes:$total_bytes,active_bytes:$retention.active_bytes,
+		 archive_bytes:$retention.archive_bytes,candidate_bytes:$retention.candidate_bytes,
+		 protected_bytes:$protected,reclaimable_bytes:0,unknown_bytes:$unknown,
+		 protection_reasons:["verified archives and pinned state-recovery evidence"],
+		 sizing_confidence:(if $sizing_error == "" and $retention.error == null then "estimated" else "unavailable" end),
+		 next_action:$retention.next_action,
+		 error:(if $sizing_error != "" then $sizing_error else $retention.error end)}'
+	return 0
+}
+
 _storage_inventory_records() {
 	local home_label="~"
 	local framework_owner="$STORAGE_OWNER_FRAMEWORK"
@@ -577,7 +623,7 @@ _storage_inventory_records() {
 	local protected_disposition="$STORAGE_DISPOSITION_PROTECTED"
 	local pulse_producer="$STORAGE_PRODUCER_PULSE"
 	_storage_emit_runtime_bundle_record
-	_storage_emit_record "observability" "opencode-aidevops" "${home_label}/.aidevops/.agent-workspace/observability" "${HOME}/.aidevops/.agent-workspace/observability" "$framework_owner" "audit" "append-only audit evidence; compaction contract pending" "$protected_disposition" "audit evidence" "Use observability-helper.sh for bounded queries"
+	_storage_observability_record
 	_storage_emit_retention_record "agent-backups" "setup-backup" "${home_label}/.aidevops/agents-backups" "${HOME}/.aidevops/agents-backups" "$STORAGE_SAFETY_MIXED" "10 snapshots, 180 days, and 4 GiB soft limits" "newest verified rollback and retention trash" "Setup computes a dry run before confirmed producer-owned rotation" "_backup_retention_plan"
 	_storage_emit_retention_record "worker-failure-excerpts" "headless-runtime" "${home_label}/.aidevops/logs/worker-failure-excerpts" "${HOME}/.aidevops/logs/worker-failure-excerpts" "$STORAGE_SAFETY_MIXED" "64 KiB per excerpt; 3 excerpts, 30 days, and 192 KiB per session soft limits" "newest unresolved recovery evidence per session" "Headless runtime computes a dry run after each preserved failure" "_storage_worker_excerpt_plan"
 	_storage_emit_record "pulse-hot-log" "$pulse_producer" "${home_label}/.aidevops/logs/pulse.log" "${HOME}/.aidevops/logs/pulse.log" "$framework_owner" "$active_class" "50 MiB active-file cap with gzip archive rotation" "$protected_disposition" "$active_writer_reason" "Use pulse-owned rotate_pulse_log; never unlink the active file"
@@ -603,7 +649,7 @@ _storage_inventory_json() {
 
 _storage_format_bytes() {
 	local bytes="$1"
-	if [[ "$bytes" == "null" ]]; then
+	if [[ "$bytes" == "$STORAGE_JSON_NULL" ]]; then
 		printf 'unavailable'
 	elif [[ "$bytes" -ge 1073741824 ]]; then
 		printf '%s.%s GiB' "$((bytes / 1073741824))" "$(((bytes % 1073741824) * 10 / 1073741824))"

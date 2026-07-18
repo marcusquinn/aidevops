@@ -154,8 +154,8 @@ fi
 # This is the primary regression — pre-fix, ALL workers logged this error.
 # =============================================================================
 
-lock_errors=$(grep -c "database is locked" "${LOG_DIR}"/worker-*.log 2>/dev/null \
-	| awk -F: '{sum += $2} END {print sum+0}')
+lock_errors=$(grep -c "database is locked" "${LOG_DIR}"/worker-*.log 2>/dev/null |
+	awk -F: '{sum += $2} END {print sum+0}')
 if [[ "$lock_errors" -eq 0 ]]; then
 	pass "zero 'database is locked' errors across $WORKER_COUNT workers"
 else
@@ -176,17 +176,17 @@ else
 fi
 
 # =============================================================================
-# Assertion 4: all four tables exist with expected columns and triggers.
+# Assertion 4: all five tables exist with expected columns and triggers.
 # =============================================================================
 
 table_count=$(sqlite3 "$DB_PATH" \
-	"SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('llm_requests','tool_calls','session_summaries','runtime_events');" \
+	"SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('llm_requests','tool_calls','session_summaries','runtime_events','runtime_event_archives');" \
 	2>/dev/null || echo "0")
-if [[ "$table_count" == "4" ]]; then
-	pass "all 4 tables created, including runtime_events"
+if [[ "$table_count" == "5" ]]; then
+	pass "all 5 tables created, including runtime-event archive manifests"
 else
-	fail "all 4 observability tables created" \
-		"found $table_count of 4"
+	fail "all 5 observability tables created" \
+		"found $table_count of 5"
 fi
 
 intent_col_count=$(sqlite3 "$DB_PATH" \
@@ -207,6 +207,16 @@ if [[ "$runtime_guard_count" == "2" ]]; then
 else
 	fail "runtime_events append-only triggers present" \
 		"trigger count: $runtime_guard_count (expected 2)"
+fi
+
+archive_guard_count=$(sqlite3 "$DB_PATH" \
+	"SELECT COUNT(*) FROM sqlite_master WHERE type='trigger' AND name IN ('runtime_event_archives_reject_update','runtime_event_archives_reject_delete');" \
+	2>/dev/null || echo "0")
+if [[ "$archive_guard_count" == "2" ]]; then
+	pass "runtime-event archive manifests are append-only"
+else
+	fail "runtime-event archive manifest guards present" \
+		"trigger count: $archive_guard_count (expected 2)"
 fi
 
 # =============================================================================
