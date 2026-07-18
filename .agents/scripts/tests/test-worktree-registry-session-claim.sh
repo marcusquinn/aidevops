@@ -156,6 +156,44 @@ test_untrusted_session_cannot_roll_owner_pid() {
 	return 0
 }
 
+test_canonical_paths_are_purged_without_signalling_live_owner() {
+	reset_registry
+	local canonical_path="${TEST_ROOT}/canonical"
+	local linked_path="${TEST_ROOT}/linked"
+	mkdir -p "$canonical_path"
+	/usr/bin/git -C "$canonical_path" init -q -b develop
+	/usr/bin/git -C "$canonical_path" config user.name Test
+	/usr/bin/git -C "$canonical_path" config user.email test@example.invalid
+	/usr/bin/git -C "$canonical_path" config commit.gpgsign false
+	printf 'seed\n' >"${canonical_path}/README.md"
+	/usr/bin/git -C "$canonical_path" add README.md
+	/usr/bin/git -C "$canonical_path" commit -q -m seed
+	/usr/bin/git -C "$canonical_path" symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/develop
+	/usr/bin/git -C "$canonical_path" worktree add -q -b feature/linked "$linked_path"
+
+	_init_registry_db
+	sqlite3 "$WORKTREE_REGISTRY_DB" "
+		INSERT OR REPLACE INTO worktree_owners
+			(worktree_path, branch, owner_pid, owner_session)
+		VALUES ('$canonical_path', 'develop', $OWNER_PID, 'ses_invalid_canonical');
+	"
+
+	local rc=0
+	if claim_worktree_ownership "$canonical_path" develop --owner-pid "$CLAIM_PID" --session ses_claim; then
+		rc=1
+	fi
+	local canonical_rows=""
+	canonical_rows=$(sqlite3 "$WORKTREE_REGISTRY_DB" "SELECT COUNT(*) FROM worktree_owners WHERE worktree_path = '$canonical_path';")
+	[[ "$canonical_rows" == "0" ]] || rc=1
+	kill -0 "$OWNER_PID" >/dev/null 2>&1 || rc=1
+
+	export OPENCODE_SESSION_ID="ses_linked_owner"
+	claim_worktree_ownership "$linked_path" feature/linked --owner-pid "$CLAIM_PID" --session "$OPENCODE_SESSION_ID" || rc=1
+	[[ "$(owner_info "$linked_path")" == "${CLAIM_PID}|${OPENCODE_SESSION_ID}|"* ]] || rc=1
+	print_result "canonical rows are purged without signalling live PIDs while linked ownership works" "$rc"
+	return 0
+}
+
 main() {
 	start_live_pids
 	test_same_opencode_session_rolls_owner_pid
@@ -163,6 +201,7 @@ main() {
 	test_different_session_stays_blocked
 	test_empty_session_cannot_roll_owner_pid
 	test_untrusted_session_cannot_roll_owner_pid
+	test_canonical_paths_are_purged_without_signalling_live_owner
 	printf 'Results: %s/%s passed, %s failed\n' "$((TESTS_RUN - TESTS_FAILED))" "$TESTS_RUN" "$TESTS_FAILED"
 	[[ "$TESTS_FAILED" -eq 0 ]] && return 0
 	return 1

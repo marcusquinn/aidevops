@@ -18,7 +18,9 @@ import { fileURLToPath } from "node:url";
 import test from "node:test";
 import {
   checkCanonicalGitSafetyGate,
+  checkCanonicalWriteSafetyGate,
   checkCommandSafetyGate,
+  isDirectFileMutationTool,
 } from "../quality-hooks-git-safety.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -40,6 +42,84 @@ function setupRepo() {
   execFileSync(realGit, ["worktree", "add", "-q", "-b", "feature/test", linked], { cwd: repo });
   return { root, repo, linked };
 }
+
+test("classifies built-in and namespaced direct file mutation tools", () => {
+  for (const tool of ["Write", "write_file", "edit", "edit_file", "write", "functions.apply_patch", "namespace/Edit", "tools::apply-patch"]) {
+    assert.equal(isDirectFileMutationTool(tool), true, tool);
+  }
+  for (const tool of ["Bash", "read", "functions.read", "glob"]) {
+    assert.equal(isDirectFileMutationTool(tool), false, tool);
+  }
+});
+
+test("classifies every apply-patch target instead of trusting linked cwd", () => {
+  const { root, repo, linked } = setupRepo();
+  try {
+    const linkedPatch = "*** Begin Patch\n*** Add File: linked-only.md\n+safe\n*** End Patch\n";
+    assert.doesNotThrow(
+      () => checkCanonicalWriteSafetyGate("", scriptsDir, linked, linkedPatch),
+    );
+    const canonicalPatch = `*** Begin Patch\n*** Update File: ${join(repo, "README.md")}\n@@\n-seed\n+unsafe\n*** End Patch\n`;
+    assert.throws(
+      () => checkCanonicalWriteSafetyGate("", scriptsDir, linked, canonicalPatch),
+      /canonical write policy.*read-only session mirrors/,
+    );
+    assert.throws(
+      () => checkCanonicalWriteSafetyGate("", scriptsDir, linked, ""),
+      /targets could not be classified/,
+    );
+    assert.throws(
+      () => checkCanonicalWriteSafetyGate("", scriptsDir, linked, { invalid: true }),
+      /targets could not be classified/,
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("fails closed when canonical policy returns a non-object payload", () => {
+  const root = mkdtempSync(join(tmpdir(), "aidevops-canonical-policy-"));
+  const isolatedScripts = join(root, "scripts");
+  mkdirSync(isolatedScripts);
+  try {
+    writeFileSync(
+      join(isolatedScripts, "canonical-write-policy-helper.py"),
+      "print('null')\n",
+    );
+    assert.throws(
+      () => checkCanonicalWriteSafetyGate("README.md", isolatedScripts),
+      /malformed output/,
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("blocks every canonical direct write and preserves linked-worktree writes", () => {
+  const { root, repo, linked } = setupRepo();
+  try {
+    assert.throws(
+      () => checkCanonicalWriteSafetyGate(join(repo, "README.md"), scriptsDir, repo),
+      /canonical write policy.*read-only session mirrors/,
+    );
+    assert.throws(
+      () => checkCanonicalWriteSafetyGate("", scriptsDir, repo),
+      /canonical write policy/,
+    );
+    assert.throws(
+      () => checkCanonicalWriteSafetyGate(join(repo, "new-file.md"), scriptsDir, linked),
+      /canonical write policy/,
+    );
+    assert.doesNotThrow(
+      () => checkCanonicalWriteSafetyGate(join(linked, "README.md"), scriptsDir, linked),
+    );
+    assert.doesNotThrow(
+      () => checkCanonicalWriteSafetyGate("new-file.md", scriptsDir, linked),
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
 
 test("blocks canonical branch mutation before execution", () => {
   const { root, repo } = setupRepo();
@@ -280,6 +360,24 @@ test("fails closed when required policy is malformed", () => {
     assert.throws(
       () => checkCommandSafetyGate("printf safe", isolatedScripts, process.cwd()),
       /policy\.invalid.*malformed/,
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("fails closed when command policy exits nonzero with an allow payload", () => {
+  const root = mkdtempSync(join(tmpdir(), "aidevops-command-policy-exit-"));
+  const isolatedScripts = join(root, "scripts");
+  mkdirSync(isolatedScripts);
+  try {
+    writeFileSync(
+      join(isolatedScripts, "command-policy-helper.py"),
+      "import sys\nprint('{\"decision\":\"allow\"}')\nsys.exit(1)\n",
+    );
+    assert.throws(
+      () => checkCommandSafetyGate("printf safe", isolatedScripts, process.cwd()),
+      /shared command policy \(allow/,
     );
   } finally {
     rmSync(root, { recursive: true, force: true });

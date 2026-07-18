@@ -313,7 +313,12 @@ _verify_deployed_core_plugin_freshness() {
 	local source_file
 	local target_file
 	local -a core_plugin_files=(
+		"hooks/git_safety_guard.py"
 		"plugins/opencode-aidevops/model-limits.mjs"
+		"plugins/opencode-aidevops/quality-hooks-git-safety.mjs"
+		"plugins/opencode-aidevops/quality-hooks.mjs"
+		"scripts/canonical_branch_policy.py"
+		"scripts/canonical-write-policy-helper.py"
 	)
 
 	for rel_path in "${core_plugin_files[@]}"; do

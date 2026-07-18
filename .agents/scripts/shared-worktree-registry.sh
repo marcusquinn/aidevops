@@ -67,6 +67,7 @@ WORKTREE_REGISTRY_DIR="${WORKTREE_REGISTRY_DIR:-${_WORKTREE_REGISTRY_HOME}/.aide
 WORKTREE_REGISTRY_DB="${WORKTREE_REGISTRY_DB:-${WORKTREE_REGISTRY_DIR}/worktree-registry.db}"
 WORKTREE_OWNER_DEAD_COOLDOWN_MINUTES="${WORKTREE_OWNER_DEAD_COOLDOWN_MINUTES:-60}"
 WORKTREE_OWNER_STALE_LIVE_MAX_HOURS="${WORKTREE_OWNER_STALE_LIVE_MAX_HOURS:-168}"
+_WORKTREE_REGISTRY_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || return 1
 
 # Get the command name (basename) for a given PID.
 # Returns empty string if the PID does not exist or info is unavailable.
@@ -283,6 +284,33 @@ _wt_registry_lookup_path() {
 	return 0
 }
 
+# Classify an existing path through the runtime-neutral canonical policy.
+# Synthetic/nonexistent fixture paths classify as outside Git and remain valid.
+_wt_worktree_classification() {
+	local wt_path="$1"
+	local policy_helper="${_WORKTREE_REGISTRY_SCRIPT_DIR}/canonical-write-policy-helper.py"
+	[[ -f "$policy_helper" ]] || return 1
+	python3 "$policy_helper" classify --cwd "$wt_path" --field classification 2>/dev/null
+	return $?
+}
+
+_wt_path_is_canonical() {
+	local wt_path="$1"
+	local classification=""
+	classification=$(_wt_worktree_classification "$wt_path") || return 1
+	[[ "$classification" == "canonical" ]]
+	return $?
+}
+
+_wt_delete_owner_row() {
+	local wt_path="$1"
+	[[ -f "$WORKTREE_REGISTRY_DB" ]] || return 0
+	sqlite3 "$WORKTREE_REGISTRY_DB" \
+		"DELETE FROM worktree_owners WHERE worktree_path = '$(_wt_sql_escape "$wt_path")';" \
+		2>/dev/null || return 1
+	return 0
+}
+
 # Initialize the registry database
 _init_registry_db() {
 	mkdir -p "$WORKTREE_REGISTRY_DIR" 2>/dev/null || true
@@ -321,8 +349,18 @@ _init_registry_db() {
 		sqlite3 "$WORKTREE_REGISTRY_DB" "
             ALTER TABLE worktree_owners
             ADD COLUMN owner_comm TEXT DEFAULT '';
-        " 2>/dev/null || true
+		" 2>/dev/null || true
 	fi
+	return 0
+}
+
+# Public recovery hook: delete only a structurally canonical ownership row.
+remove_canonical_worktree_owner() {
+	local wt_path="$1"
+	_init_registry_db || return 1
+	wt_path=$(_wt_registry_lookup_path "$wt_path")
+	_wt_path_is_canonical "$wt_path" || return 1
+	_wt_delete_owner_row "$wt_path" || return 1
 	return 0
 }
 
@@ -368,8 +406,12 @@ register_worktree() {
 	local owner_comm
 	owner_comm=$(_get_proc_comm "$owner_pid")
 
-	_init_registry_db
+	_init_registry_db || return 1
 	wt_path=$(_wt_registry_lookup_path "$wt_path")
+	if _wt_path_is_canonical "$wt_path"; then
+		_wt_delete_owner_row "$wt_path" || return 1
+		return 1
+	fi
 
 	{
 		_wt_sqlite_set_owner_pid_param "$owner_pid"
@@ -543,8 +585,12 @@ claim_worktree_ownership() {
 	local trusted_opencode_session=0
 	_wt_is_trusted_opencode_session "$session_id" && trusted_opencode_session=1
 
-	_init_registry_db
+	_init_registry_db || return 1
 	wt_path=$(_wt_registry_lookup_path "$wt_path")
+	if _wt_path_is_canonical "$wt_path"; then
+		_wt_delete_owner_row "$wt_path" || return 1
+		return 1
+	fi
 
 	local final_owner_info=""
 	final_owner_info=$(_wt_claim_owner_record "$wt_path" "$branch" "$owner_pid" "$session_id" \
