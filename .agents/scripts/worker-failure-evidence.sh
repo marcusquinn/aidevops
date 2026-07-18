@@ -6,6 +6,13 @@
 [[ -n "${_WORKER_FAILURE_EVIDENCE_LOADED:-}" ]] && return 0
 _WORKER_FAILURE_EVIDENCE_LOADED=1
 
+if ! declare -F _file_mtime_epoch >/dev/null 2>&1; then
+	_worker_failure_evidence_dir="${BASH_SOURCE[0]%/*}"
+	# shellcheck source=./portable-stat.sh
+	source "${_worker_failure_evidence_dir}/portable-stat.sh"
+	unset _worker_failure_evidence_dir
+fi
+
 WORKER_EXCERPT_KEEP_COUNT="${AIDEVOPS_WORKER_EXCERPT_KEEP_COUNT:-3}"
 WORKER_EXCERPT_MAX_AGE_DAYS="${AIDEVOPS_WORKER_EXCERPT_MAX_AGE_DAYS:-30}"
 WORKER_EXCERPT_MAX_BYTES="${AIDEVOPS_WORKER_EXCERPT_MAX_BYTES:-196608}"

@@ -28,6 +28,14 @@ source "${SCRIPTS_DIR}/shared-constants.sh"
 # shellcheck source=../worker-failure-evidence.sh
 source "${SCRIPTS_DIR}/worker-failure-evidence.sh"
 
+test_standalone_source_loads_portable_stat() {
+	WORKER_MODULE_PATH="${SCRIPTS_DIR}/worker-failure-evidence.sh" \
+		bash -c 'source "$WORKER_MODULE_PATH" && declare -F _file_mtime_epoch >/dev/null' \
+		|| fail "standalone source did not load portable stat dependency"
+	printf 'PASS: standalone source loads portable stat dependency\n'
+	return 0
+}
+
 make_excerpt() {
 	local excerpt_dir="$1"
 	local excerpt_name="$2"
@@ -150,6 +158,7 @@ test_failure_result_survives_source_cleanup() {
 }
 
 main() {
+	test_standalone_source_loads_portable_stat
 	test_plan_preserves_newest_recovery_evidence
 	test_apply_requires_confirmation_and_stages_first
 	test_writer_caps_excerpt_and_fails_closed_on_unknown
