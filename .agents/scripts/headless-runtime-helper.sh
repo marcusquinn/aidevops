@@ -343,6 +343,9 @@ _invoke_opencode() {
 	# Merge worker session data back to shared DB, then clean up.
 	# Worker is done — no contention, single-writer merge is safe.
 	if [[ -n "$isolated_data_dir" && -d "$isolated_data_dir" ]]; then
+		if ! _replay_preserved_worker_dbs; then
+			print_warning "[lifecycle] db_merge_recovery_replay_incomplete pid=$$"
+		fi
 		if _merge_worker_db "$isolated_data_dir"; then
 			print_info "[lifecycle] db_merged dir=$isolated_data_dir pid=$$"
 		else

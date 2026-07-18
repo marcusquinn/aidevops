@@ -1733,6 +1733,64 @@ SQL
 	return 0
 }
 
+test_merge_worker_db_maps_columns_by_name() {
+	local shared_dir="${HOME}/.local/share/opencode"
+	local isolated_dir="${TEST_ROOT}/merge-opencode-column-order"
+	local shared_db="${shared_dir}/opencode.db"
+	local worker_db="${isolated_dir}/opencode/opencode.db"
+	mkdir -p "$shared_dir" "${isolated_dir}/opencode"
+	rm -f "$shared_db" "$worker_db"
+	sqlite3 "$shared_db" <<'SQL'
+CREATE TABLE project (id TEXT PRIMARY KEY, name TEXT NOT NULL, note TEXT DEFAULT 'shared-default');
+CREATE TABLE session (id TEXT PRIMARY KEY, project_id TEXT NOT NULL, slug TEXT NOT NULL, title TEXT NOT NULL, optional_value TEXT);
+CREATE TABLE message (id TEXT PRIMARY KEY, session_id TEXT NOT NULL, data TEXT NOT NULL, optional_value TEXT);
+INSERT INTO project VALUES ('project-keep', 'Shared', 'old');
+INSERT INTO session VALUES ('session-keep', 'project-keep', 'shared-slug', 'Old', NULL);
+INSERT INTO message VALUES ('message-keep', 'session-keep', 'old', NULL);
+SQL
+	sqlite3 "$worker_db" <<'SQL'
+CREATE TABLE project (name TEXT NOT NULL, id TEXT PRIMARY KEY);
+CREATE TABLE session (title TEXT NOT NULL, slug TEXT NOT NULL, id TEXT PRIMARY KEY, project_id TEXT NOT NULL);
+CREATE TABLE message (data TEXT NOT NULL, session_id TEXT NOT NULL, id TEXT PRIMARY KEY);
+INSERT INTO project VALUES ('Worker', 'project-keep');
+INSERT INTO session VALUES ('New', 'worker-slug', 'session-keep', 'project-keep');
+INSERT INTO message VALUES ('new', 'session-keep', 'message-keep');
+SQL
+
+	local merge_status=0 merged_values=""
+	_merge_worker_db "$isolated_dir" || merge_status=$?
+	merged_values=$(sqlite3 "$shared_db" "SELECT slug || '|' || title || '|' || COALESCE(optional_value, 'null') FROM session WHERE id = 'session-keep'; SELECT data || '|' || COALESCE(optional_value, 'null') FROM message WHERE id = 'message-keep';")
+	if [[ "$merge_status" -eq 0 && "$merged_values" == $'worker-slug|New|null\nnew|null' ]]; then
+		print_result "merge worker DB maps reordered and additive columns by name" 0
+		return 0
+	fi
+	print_result "merge worker DB maps reordered and additive columns by name" 1 \
+		"status=$merge_status merged=$merged_values"
+	return 0
+}
+
+test_merge_worker_db_rejects_missing_required_destination_column() {
+	local shared_dir="${HOME}/.local/share/opencode"
+	local isolated_dir="${TEST_ROOT}/merge-opencode-missing-required"
+	local shared_db="${shared_dir}/opencode.db"
+	local worker_db="${isolated_dir}/opencode/opencode.db"
+	mkdir -p "$shared_dir" "${isolated_dir}/opencode"
+	rm -f "$shared_db" "$worker_db"
+	sqlite3 "$shared_db" "CREATE TABLE project (id TEXT PRIMARY KEY); CREATE TABLE session (id TEXT PRIMARY KEY, project_id TEXT NOT NULL, slug TEXT NOT NULL); INSERT INTO project VALUES ('project-keep'); INSERT INTO session VALUES ('session-keep', 'project-keep', 'original');"
+	sqlite3 "$worker_db" "CREATE TABLE project (id TEXT PRIMARY KEY); CREATE TABLE session (id TEXT PRIMARY KEY, project_id TEXT NOT NULL); INSERT INTO project VALUES ('project-keep'); INSERT INTO session VALUES ('session-keep', 'project-keep');"
+
+	local merge_status=0 shared_slug=""
+	_merge_worker_db "$isolated_dir" || merge_status=$?
+	shared_slug=$(sqlite3 "$shared_db" "SELECT slug FROM session WHERE id = 'session-keep';")
+	if [[ "$merge_status" -ne 0 && "$shared_slug" == "original" ]]; then
+		print_result "merge worker DB rejects missing required destination columns" 0
+		return 0
+	fi
+	print_result "merge worker DB rejects missing required destination columns" 1 \
+		"status=$merge_status shared_slug=$shared_slug"
+	return 0
+}
+
 test_merge_worker_db_failure_preserves_recovery_db_without_auth() {
 	local shared_dir="${HOME}/.local/share/opencode"
 	local isolated_dir="${TEST_ROOT}/merge-opencode-failure"
@@ -1768,6 +1826,34 @@ test_merge_worker_db_failure_preserves_recovery_db_without_auth() {
 
 	print_result "failed merge rolls back and preserves DB without worker auth" 1 \
 		"status=$merge_status recovered=${recovered_db:-none} recovery_auth=$recovery_auth_count shared_title=$shared_title"
+	return 0
+}
+
+test_replay_preserved_worker_db_verifies_before_deletion() {
+	local shared_dir="${HOME}/.local/share/opencode"
+	local isolated_dir="${TEST_ROOT}/replay-opencode-worker"
+	local recovery_root="${TEST_ROOT}/replay-worker-db-recovery"
+	local shared_db="${shared_dir}/opencode.db"
+	local worker_db="${isolated_dir}/opencode/opencode.db"
+	mkdir -p "$shared_dir" "${isolated_dir}/opencode"
+	rm -f "$shared_db" "$worker_db"
+	sqlite3 "$shared_db" "CREATE TABLE project (id TEXT PRIMARY KEY, name TEXT); CREATE TABLE session (id TEXT PRIMARY KEY, project_id TEXT NOT NULL, slug TEXT NOT NULL, title TEXT NOT NULL); CREATE TABLE message (id TEXT PRIMARY KEY, session_id TEXT NOT NULL, data TEXT NOT NULL); INSERT INTO project VALUES ('project-replay', 'Shared'); INSERT INTO session VALUES ('session-replay', 'project-replay', 'old-slug', 'Old');"
+	sqlite3 "$worker_db" "CREATE TABLE project (name TEXT, id TEXT PRIMARY KEY); CREATE TABLE session (title TEXT NOT NULL, slug TEXT NOT NULL, project_id TEXT NOT NULL, id TEXT PRIMARY KEY); CREATE TABLE message (data TEXT NOT NULL, id TEXT PRIMARY KEY, session_id TEXT NOT NULL); INSERT INTO project VALUES ('Worker', 'project-replay'); INSERT INTO session VALUES ('Recovered', 'new-slug', 'project-replay', 'session-replay'); INSERT INTO message VALUES ('recovered-child', 'message-replay', 'session-replay');"
+	AIDEVOPS_WORKER_DB_RECOVERY_DIR="$recovery_root" _preserve_failed_worker_db "$isolated_dir"
+
+	local first_status=0 second_status=0 merged_values="" artifact_count=0
+	AIDEVOPS_WORKER_DB_RECOVERY_DIR="$recovery_root" _replay_preserved_worker_dbs || first_status=$?
+	AIDEVOPS_WORKER_DB_RECOVERY_DIR="$recovery_root" _replay_preserved_worker_dbs || second_status=$?
+	merged_values=$(sqlite3 "$shared_db" "SELECT slug || '|' || title FROM session WHERE id = 'session-replay'; SELECT data FROM message WHERE session_id = 'session-replay';")
+	for worker_db in "$recovery_root"/*/opencode.db; do
+		[[ -f "$worker_db" ]] && artifact_count=$((artifact_count + 1))
+	done
+	if [[ "$first_status" -eq 0 && "$second_status" -eq 0 && "$merged_values" == $'new-slug|Recovered\nrecovered-child' && "$artifact_count" -eq 0 ]]; then
+		print_result "recovery replay verifies graph, deletes artifact, and is idempotent" 0
+		return 0
+	fi
+	print_result "recovery replay verifies graph, deletes artifact, and is idempotent" 1 \
+		"first=$first_status second=$second_status merged=$merged_values artifacts=$artifact_count"
 	return 0
 }
 
@@ -3560,7 +3646,10 @@ run_worker_db_persistence_tests() {
 	test_seed_worker_db_session_context_vacuums_pruned_backup
 	test_seed_worker_db_session_context_copies_complete_graph
 	test_merge_worker_db_replaces_complete_session_graph_atomically
+	test_merge_worker_db_maps_columns_by_name
+	test_merge_worker_db_rejects_missing_required_destination_column
 	test_merge_worker_db_failure_preserves_recovery_db_without_auth
+	test_replay_preserved_worker_db_verifies_before_deletion
 	test_sync_worker_db_migration_metadata_repairs_prewarmed_project_table
 	test_sync_worker_db_migration_metadata_replaces_stale_ledgers
 	test_copy_worker_db_migration_ledger_preserves_rows_when_attach_fails
