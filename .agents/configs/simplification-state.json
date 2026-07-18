@@ -8050,10 +8050,10 @@
       "passes": 3
     },
     ".agents/scripts/headless-runtime-worker.sh": {
-      "hash": "68319959de2f768622e60b2c81dfc4f8f43ef334",
-      "at": "2026-07-18T15:45:23Z",
+      "hash": "a9b216df8f2ef8122bf5bf225beeb32a69b3dd89",
+      "at": "2026-07-18T19:32:17Z",
       "pr": 26521,
-      "passes": 7
+      "passes": 8
     },
     ".agents/scripts/install-hooks-helper.sh": {
       "hash": "0fa74195f7243ea22d952d156e4faccb1bbc2125",
