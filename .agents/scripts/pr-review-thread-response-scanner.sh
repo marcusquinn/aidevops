@@ -961,7 +961,7 @@ _prrts_write_prompt_file() {
 	safe_slug="$(_prrts_safe_slug "$repo_slug")"
 	safe_title="$(_prrts_prompt_metadata_line "$title" 300)"
 	safe_preview="$(_prrts_prompt_metadata_line "$preview" 500)"
-	scanner_path="${SCRIPT_DIR}/pr-review-thread-response-scanner.sh"
+	scanner_path="${HOME}/.aidevops/agents/scripts/pr-review-thread-response-scanner.sh"
 	prompt_file="${STATE_DIR}/${safe_slug}-${pr_number}-prompt.md"
 	cat >"$prompt_file" <<PROMPT_EOF
 # PR REVIEW THREAD RESPONSE — BOUNDED WORKER
