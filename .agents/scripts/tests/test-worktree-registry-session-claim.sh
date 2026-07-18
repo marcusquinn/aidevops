@@ -187,6 +187,26 @@ test_canonical_paths_are_purged_without_signalling_live_owner() {
 	[[ "$canonical_rows" == "0" ]] || rc=1
 	kill -0 "$OWNER_PID" >/dev/null 2>&1 || rc=1
 
+	sqlite3 "$WORKTREE_REGISTRY_DB" "
+		INSERT OR REPLACE INTO worktree_owners
+			(worktree_path, branch, owner_pid, owner_session, owner_batch, task_id)
+		VALUES ('$canonical_path', 'develop', $OWNER_PID, 'prior-worker', 'generation-7', '22438');
+	"
+	local canonical_owner="" expected_pid="" expected_session="" expected_batch=""
+	local expected_task="" expected_created_at=""
+	canonical_owner=$(owner_info "$canonical_path")
+	IFS='|' read -r expected_pid expected_session expected_batch expected_task expected_created_at <<<"$canonical_owner"
+	if transfer_worktree_ownership_if_expected "$canonical_path" develop \
+		--owner-pid "$CLAIM_PID" --session continuation-worker --batch generation-8 --task 22438 \
+		--expected-owner-pid "$expected_pid" --expected-session "$expected_session" \
+		--expected-batch "$expected_batch" --expected-task "$expected_task" \
+		--expected-created-at "$expected_created_at"; then
+		rc=1
+	fi
+	canonical_rows=$(sqlite3 "$WORKTREE_REGISTRY_DB" "SELECT COUNT(*) FROM worktree_owners WHERE worktree_path = '$canonical_path';")
+	[[ "$canonical_rows" == "0" ]] || rc=1
+	kill -0 "$OWNER_PID" >/dev/null 2>&1 || rc=1
+
 	export OPENCODE_SESSION_ID="ses_linked_owner"
 	claim_worktree_ownership "$linked_path" feature/linked --owner-pid "$CLAIM_PID" --session "$OPENCODE_SESSION_ID" || rc=1
 	[[ "$(owner_info "$linked_path")" == "${CLAIM_PID}|${OPENCODE_SESSION_ID}|"* ]] || rc=1

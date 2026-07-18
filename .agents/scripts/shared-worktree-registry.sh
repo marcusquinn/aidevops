@@ -748,8 +748,12 @@ transfer_worktree_ownership_if_expected() {
 	local owner_comm=""
 	owner_comm=$(_get_proc_comm "$owner_pid")
 
-	_init_registry_db
+	_init_registry_db || return 1
 	wt_path=$(_wt_registry_lookup_path "$wt_path")
+	if _wt_path_is_canonical "$wt_path"; then
+		_wt_delete_owner_row "$wt_path" || return 1
+		return 1
+	fi
 	_wt_compare_and_swap_owner_record "$wt_path" "$branch" "$owner_pid" \
 		"$session_id" "$batch_id" "$task_id" "$owner_comm" \
 		"$expected_owner_pid" "$expected_session_id" "$expected_batch_id" \

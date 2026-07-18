@@ -965,6 +965,24 @@ _dlw_capture_reused_worktree_owner() {
 	return 0
 }
 
+_dlw_claim_unowned_reused_worktree() {
+	local issue_number="$1"
+	local worktree_path="$2"
+	local branch="$3"
+	local session_id="dispatch-precreate-${issue_number}"
+
+	if ! declare -F claim_worktree_ownership >/dev/null 2>&1; then
+		echo "[dispatch_with_dedup] Refusing reused worktree without an atomic owner claim for #${issue_number}: ${worktree_path}" >>"$LOGFILE"
+		return 1
+	fi
+	if ! claim_worktree_ownership "$worktree_path" "$branch" \
+		--task "$issue_number" --session "$session_id" 2>/dev/null; then
+		echo "[dispatch_with_dedup] Atomic owner claim rejected for reused worktree #${issue_number}: ${worktree_path}" >>"$LOGFILE"
+		return 1
+	fi
+	return 0
+}
+
 _dlw_precreate_worktree() {
 	local issue_number="$1"
 	local repo_path="$2"
@@ -1007,13 +1025,12 @@ _dlw_precreate_worktree() {
 		_DLW_WORKTREE_BRANCH="$_existing_branch"
 		_DLW_WORKTREE_REUSED=1
 		local _has_continuation_owner=0
-		_dlw_capture_reused_worktree_owner "$issue_number" "$_DLW_WORKTREE_PATH" && _has_continuation_owner=1
-		_dlw_prepare_existing_worktree "$_existing_path" "$repo_path" "$_has_continuation_owner"
-		if [[ "$_has_continuation_owner" -eq 0 ]] && declare -F register_worktree >/dev/null 2>&1; then
-			register_worktree "$_DLW_WORKTREE_PATH" "$_DLW_WORKTREE_BRANCH" \
-				--task "$issue_number" \
-				--session "$_precreate_session" 2>/dev/null || true
+		if _dlw_capture_reused_worktree_owner "$issue_number" "$_DLW_WORKTREE_PATH"; then
+			_has_continuation_owner=1
+		elif ! _dlw_claim_unowned_reused_worktree "$issue_number" "$_DLW_WORKTREE_PATH" "$_DLW_WORKTREE_BRANCH"; then
+			return 1
 		fi
+		_dlw_prepare_existing_worktree "$_existing_path" "$repo_path" "$_has_continuation_owner"
 		# Restore gitignored deps that git clean -fd just wiped
 		_dlw_restore_worktree_deps "$_DLW_WORKTREE_PATH" "$repo_path"
 		echo "[dispatch_with_dedup] Reusing existing worktree for #${issue_number}: ${_DLW_WORKTREE_PATH} (branch: ${_DLW_WORKTREE_BRANCH})" >>"$LOGFILE"

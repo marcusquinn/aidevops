@@ -198,6 +198,30 @@ check_worktree_owner() {
 	printf '%s\n' "$STUB_OWNER_INFO"
 	return 0
 }
+CLAIMED_WORKTREE_ARGS=""
+STUB_CLAIM_WORKTREE_RC=0
+claim_worktree_ownership() {
+	local wt_path="$1"
+	local branch="$2"
+	shift 2
+	local task="" session=""
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+		--task)
+			task="${2:-}"
+			shift 2
+			;;
+		--session)
+			session="${2:-}"
+			shift 2
+			;;
+		*) shift ;;
+		esac
+	done
+	CLAIMED_WORKTREE_ARGS="${wt_path}|${branch}|${task}|${session}"
+	[[ "$STUB_CLAIM_WORKTREE_RC" -eq 0 ]] || return 1
+	return 0
+}
 
 # Re-stub launch-orchestrator dependencies after sourcing; the module defines
 # real implementations when loaded, but this test isolates precreation failure.
@@ -287,6 +311,7 @@ export STUB_WT_SUCCESS_PATH
 mkdir -p "$STUB_WT_SUCCESS_PATH"
 : >"$LOGFILE"
 REGISTERED_WORKTREE_ARGS=""
+CLAIMED_WORKTREE_ARGS=""
 _dlw_precreate_worktree "88888" "$FAKE_REPO"
 rc=$?
 if [[ $rc -eq 0 ]]; then
@@ -311,6 +336,12 @@ if [[ "$REGISTERED_WORKTREE_ARGS" == "${STUB_WT_SUCCESS_PATH}|${_DLW_WORKTREE_BR
 	pass "fresh precreated worktree is registered as transferable"
 else
 	fail "fresh precreated worktree is registered as transferable" "got: '$REGISTERED_WORKTREE_ARGS'"
+fi
+
+if [[ -z "$CLAIMED_WORKTREE_ARGS" ]]; then
+	pass "fresh precreated worktree does not use the reuse claim path"
+else
+	fail "fresh precreated worktree does not use the reuse claim path" "got: '$CLAIMED_WORKTREE_ARGS'"
 fi
 
 # =============================================================================
@@ -343,6 +374,7 @@ mkdir -p "$STUB_EXISTING_PATH"
 export STUB_EXISTING_WORKTREE_LINE="${STUB_EXISTING_PATH} abcdef [${STUB_EXISTING_BRANCH}]"
 : >"$LOGFILE"
 REGISTERED_WORKTREE_ARGS=""
+CLAIMED_WORKTREE_ARGS=""
 STUB_OWNER_INFO="12345|generation-7|batch-7|66666|2026-07-18T00:00:00Z"
 _dlw_precreate_worktree "66666" "$FAKE_REPO"
 rc=$?
@@ -366,6 +398,12 @@ else
 	fail "reused worktree does not replace its live registry owner" "got registration: '$REGISTERED_WORKTREE_ARGS'"
 fi
 
+if [[ -z "$CLAIMED_WORKTREE_ARGS" ]]; then
+	pass "reused worktree with a captured owner does not use the unowned claim path"
+else
+	fail "reused worktree with a captured owner does not use the unowned claim path" "got: '$CLAIMED_WORKTREE_ARGS'"
+fi
+
 if [[ "${_DLW_WORKTREE_TRANSFER_MODE:-}" == "continuation" &&
 	"${_DLW_WORKTREE_EXPECTED_OWNER_PID:-}" == "12345" &&
 	"${_DLW_WORKTREE_EXPECTED_OWNER_SESSION:-}" == "generation-7" &&
@@ -384,6 +422,42 @@ if grep -Fq "Preserving reused worktree until its expected continuation owner tr
 else
 	fail "dispatch does not mutate a reused worktree before owner transfer" "missing preservation log"
 fi
+
+# =============================================================================
+# Test 3b: an unowned reused worktree is claimed atomically before preparation
+# =============================================================================
+export STUB_EXISTING_WORKTREE_LINE="${STUB_EXISTING_PATH} abcdef [${STUB_EXISTING_BRANCH}]"
+REGISTERED_WORKTREE_ARGS=""
+CLAIMED_WORKTREE_ARGS=""
+STUB_CLAIM_WORKTREE_RC=0
+: >"$LOGFILE"
+_dlw_precreate_worktree "66666" "$FAKE_REPO"
+rc=$?
+expected_claim="${STUB_EXISTING_PATH}|${STUB_EXISTING_BRANCH}|66666|dispatch-precreate-66666"
+if [[ "$rc" -eq 0 && "$CLAIMED_WORKTREE_ARGS" == "$expected_claim" && -z "$REGISTERED_WORKTREE_ARGS" ]]; then
+	pass "unowned reused worktree uses an atomic ownership claim"
+else
+	fail "unowned reused worktree uses an atomic ownership claim" \
+		"rc=$rc claim='$CLAIMED_WORKTREE_ARGS' registration='$REGISTERED_WORKTREE_ARGS'"
+fi
+
+REGISTERED_WORKTREE_ARGS=""
+CLAIMED_WORKTREE_ARGS=""
+STUB_CLAIM_WORKTREE_RC=1
+if _dlw_precreate_worktree "66666" "$FAKE_REPO"; then
+	rc=0
+else
+	rc=$?
+fi
+if [[ "$rc" -eq 1 && "$CLAIMED_WORKTREE_ARGS" == "$expected_claim" && -z "$REGISTERED_WORKTREE_ARGS" ]] && \
+	grep -Fq "Atomic owner claim rejected for reused worktree #66666" "$LOGFILE"; then
+	pass "reused worktree fails closed when its atomic ownership claim is rejected"
+else
+	fail "reused worktree fails closed when its atomic ownership claim is rejected" \
+		"rc=$rc claim='$CLAIMED_WORKTREE_ARGS' registration='$REGISTERED_WORKTREE_ARGS'"
+fi
+STUB_CLAIM_WORKTREE_RC=0
+unset STUB_EXISTING_WORKTREE_LINE
 
 # =============================================================================
 # Test 4: a clean ahead worktree preserves continuation commits
