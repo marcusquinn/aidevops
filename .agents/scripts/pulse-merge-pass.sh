@@ -420,14 +420,17 @@ merge_ready_prs_all_repos() {
 		_pmp_clear_merge_pr_cursor "$PULSE_MERGE_PR_CURSOR_FILE"
 	fi
 
-	# t3193: record the zero-progress signal AFTER all repos have been processed.
-	# Checkpoint-resumed passes intentionally skip this aggregate signal because
-	# they only cover the tail of the repo list; the next fresh full pass records
-	# the all-repo zero-progress state without partial-pass distortion.
+	# t3193: positive deterministic progress is conclusive even when a pass pauses
+	# or resumes from a checkpoint, so reset the streak immediately after a merge
+	# or conflict close. A no-progress aggregate is meaningful only after a fresh
+	# full pass; partial tails skip it to avoid distorting the all-repo signal.
 	# Resolves at runtime via bash lazy lookup (pulse-merge-stuck.sh).
-	if [[ "$_mr_completed_all" -eq 1 && "$_mr_resumed_from_checkpoint" -eq 0 ]] \
-		&& declare -F pulse_merge_zero_progress_record >/dev/null 2>&1; then
-		pulse_merge_zero_progress_record "$total_eligible_unmerged" "$total_merged" "$total_closed" || true
+	if declare -F pulse_merge_zero_progress_record >/dev/null 2>&1; then
+		if [[ "$total_merged" -gt 0 || "$total_closed" -gt 0 ]]; then
+			pulse_merge_zero_progress_record "$total_eligible_unmerged" "$total_merged" "$total_closed" || true
+		elif [[ "$_mr_completed_all" -eq 1 && "$_mr_resumed_from_checkpoint" -eq 0 ]]; then
+			pulse_merge_zero_progress_record "$total_eligible_unmerged" "$total_merged" "$total_closed" || true
+		fi
 	fi
 
 	echo "[pulse-wrapper] Deterministic merge pass complete: merged=${total_merged}, closed_conflicting=${total_closed}, failed=${total_failed}, eligible_unmerged=${total_eligible_unmerged}" >>"$_mr_logfile"

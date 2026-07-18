@@ -461,14 +461,26 @@ _pmrc_snapshot_review_gate_fresh() {
 	local checks_json="$3"
 	local activity_json="$4"
 	local live_gate_evidence="${5:-}"
-	local gate_at="" activity_at="" gate_epoch="" activity_epoch=""
+	local gate_at="" activity_at="" evidence_at="" gate_epoch="" activity_epoch="" evidence_epoch=""
 
 	gate_at=$(jq -r --arg completed "$PMRC_CHECK_COMPLETED" --arg success "$PMRC_CHECK_SUCCESS" '[.[]? | select((.name == "review-bot-gate" or .name == "gate / review-bot-gate") and .status == $completed and .conclusion == $success) | .observed_at | select(. != "")] | max // ""' <<<"$checks_json") || return 1
 	activity_at=$(jq -r '.latest_at // ""' <<<"$activity_json") || return 1
+	if [[ -n "$activity_at" ]]; then
+		activity_epoch=$(_pmrc_iso_to_epoch "$activity_at") || return 1
+	fi
+	if [[ -n "$live_gate_evidence" ]]; then
+		evidence_at=$(jq -r '.observed_at // ""' <<<"$live_gate_evidence") || return 1
+		if [[ -n "$evidence_at" ]]; then
+			evidence_epoch=$(_pmrc_iso_to_epoch "$evidence_at") || return 1
+		fi
+	fi
 	if [[ -z "$gate_at" ]]; then
 		#aidevops:trust-boundary — the live helper ran for this exact PR/head, and
 		# the caller immediately revalidates that head before reaching this check.
-		if [[ -n "$live_gate_evidence" ]]; then
+		# Its caller-observed timestamp must also cover the latest bot activity so
+		# activity racing after the live helper remains fail-closed.
+		if [[ "$evidence_epoch" =~ ^[0-9]+$ ]] \
+			&& { [[ -z "$activity_epoch" ]] || [[ "$evidence_epoch" -ge "$activity_epoch" ]]; }; then
 			echo "[pulse-merge] pre-merge snapshot: accepted live review-bot gate bound to the current head for PR #${pr_number} in ${repo_slug}; no status context is installed (GH#27483)" >>"$LOGFILE"
 			return 0
 		fi
@@ -477,8 +489,14 @@ _pmrc_snapshot_review_gate_fresh() {
 	fi
 	[[ -z "$activity_at" ]] && return 0
 	gate_epoch=$(_pmrc_iso_to_epoch "$gate_at") || return 1
-	activity_epoch=$(_pmrc_iso_to_epoch "$activity_at") || return 1
 	if [[ "$activity_epoch" -gt "$gate_epoch" ]]; then
+		#aidevops:trust-boundary — permitted live evidence is bound to the exact
+		# current head. Accept it only when it was observed after the latest bot
+		# activity; otherwise retain the stale-status fail-closed decision.
+		if [[ "$evidence_epoch" =~ ^[0-9]+$ && "$evidence_epoch" -ge "$activity_epoch" ]]; then
+			echo "[pulse-merge] pre-merge snapshot: accepted current-head live review evidence observed after the stale status context for PR #${pr_number} in ${repo_slug} (status_gate=${gate_at}, latest_review_activity=${activity_at}, live_evidence=${evidence_at})" >>"$LOGFILE"
+			return 0
+		fi
 		echo "[pulse-merge] pre-merge snapshot: review-bot gate is stale for PR #${pr_number} in ${repo_slug} (gate=${gate_at}, latest_review_activity=${activity_at}) (GH#27137)" >>"$LOGFILE"
 		return 1
 	fi
