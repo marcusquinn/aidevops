@@ -111,8 +111,8 @@ git() {
 		echo "refs/remotes/origin/main"
 		return 0
 	fi
-	# Fallback: call real git
-	command git "$@"
+	# Fallback: bypass the policy shim for disposable repositories under $TMP.
+	command -p git "$@"
 	return $?
 }
 export -f git
@@ -379,8 +379,39 @@ else
 fi
 STUB_OWNER_INFO=""
 
+if grep -Fq "Preserving reused worktree until its expected continuation owner transfers" "$LOGFILE"; then
+	pass "dispatch does not mutate a reused worktree before owner transfer"
+else
+	fail "dispatch does not mutate a reused worktree before owner transfer" "missing preservation log"
+fi
+
 # =============================================================================
-# Test 4: continuation owner identity is passed through the worker launch env
+# Test 4: a clean ahead worktree preserves continuation commits
+# =============================================================================
+AHEAD_WORKTREE="${TMP}/ahead-worktree"
+mkdir -p "$AHEAD_WORKTREE"
+git -C "$AHEAD_WORKTREE" init -q
+git -C "$AHEAD_WORKTREE" -c user.name="aidevops-test" -c user.email="aidevops-test@example.invalid" \
+	-c commit.gpgsign=false \
+	commit --allow-empty -q -m "initial"
+git -C "$AHEAD_WORKTREE" update-ref refs/remotes/origin/main HEAD
+git -C "$AHEAD_WORKTREE" symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/main >/dev/null
+git -C "$AHEAD_WORKTREE" -c user.name="aidevops-test" -c user.email="aidevops-test@example.invalid" \
+	-c commit.gpgsign=false \
+	commit --allow-empty -q -m "continuation checkpoint"
+ahead_head_before=$(git -C "$AHEAD_WORKTREE" rev-parse HEAD)
+_dlw_prepare_existing_worktree "$AHEAD_WORKTREE" "$AHEAD_WORKTREE"
+ahead_head_after=$(git -C "$AHEAD_WORKTREE" rev-parse HEAD)
+ahead_count=$(git -C "$AHEAD_WORKTREE" rev-list --count origin/main..HEAD)
+if [[ "$ahead_head_after" == "$ahead_head_before" && "$ahead_count" == "1" ]]; then
+	pass "clean ahead continuation preserves local commits"
+else
+	fail "clean ahead continuation preserves local commits" \
+		"before=$ahead_head_before after=$ahead_head_after ahead=$ahead_count"
+fi
+
+# =============================================================================
+# Test 5: continuation owner identity is passed through the worker launch env
 # =============================================================================
 self_login="testuser"
 : >"${TMP}/launch-args.txt"
@@ -409,7 +440,7 @@ else
 fi
 
 # =============================================================================
-# Test 5: _dlw_check_worker_branch_orphan_loop skips fresh branches
+# Test 6: _dlw_check_worker_branch_orphan_loop skips fresh branches
 # =============================================================================
 : >"$STUB_DEDUP_CALLS_FILE"
 if _dlw_check_worker_branch_orphan_loop "55555" "owner/repo" "feature/auto-gh55555" "0"; then
@@ -423,7 +454,7 @@ else
 fi
 
 # =============================================================================
-# Test 6: _dlw_check_worker_branch_orphan_loop still checks reused branches
+# Test 7: _dlw_check_worker_branch_orphan_loop still checks reused branches
 # =============================================================================
 : >"$STUB_DEDUP_CALLS_FILE"
 if _dlw_check_worker_branch_orphan_loop "44444" "owner/repo" "feature/auto-gh44444" "1"; then

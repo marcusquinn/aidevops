@@ -1272,7 +1272,10 @@ _hrw_reclaim_stale_worker_worktree_owner() {
 	IFS='|' read -r owner_pid owner_session owner_batch owner_task created_at <<<"$owner_info"
 
 	if [[ -n "$owner_pid" ]] && ! kill -0 "$owner_pid" 2>/dev/null; then
-		unregister_worktree "$work_dir" 2>/dev/null || true
+		if ! unregister_worktree_if_owner_pid "$work_dir" "$owner_pid" 2>/dev/null; then
+			_WORKER_PRELAUNCH_FAILURE_REASON="worker_worktree_owner_concurrent_mutation"
+			return 1
+		fi
 		print_info "[lifecycle] worker_worktree_reclaimed_dead_owner session=${session_key} branch=${branch} path=${work_dir} previous_pid=${owner_pid}"
 		return 0
 	fi
