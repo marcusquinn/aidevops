@@ -9,6 +9,7 @@ PMRC_CHECK_COMPLETED="completed"
 PMRC_CHECK_SUCCESS="success"
 PMRC_CHECK_FAILURE="failure"
 PMRC_BOOL_TRUE="true"
+PMRC_JSON_ARRAY="array"
 PMRC_MAINTAINER_GATE="maintainer-gate"
 PMRC_MAINTAINER_GATE_DISPLAY="Maintainer Review & Assignee Gate"
 PMRC_MAINTAINER_GATE_WORKFLOW="gate / Maintainer Review & Assignee Gate"
@@ -47,8 +48,12 @@ _pmrc_snapshot_checks_json() {
 	# through --argjson, which can exceed the OS per-argument limit (GH#28164).
 	checks_json=$(printf '%s\n%s\n' "$runs_pages" "$statuses_json" | jq -s \
 		--arg completed "$PMRC_CHECK_COMPLETED" --arg success "$PMRC_CHECK_SUCCESS" --arg failure "$PMRC_CHECK_FAILURE" \
+		--arg array_type "$PMRC_JSON_ARRAY" \
 		--arg skipped "skipped" --arg maintainer "$PMRC_MAINTAINER_GATE" --arg maintainer_display "$PMRC_MAINTAINER_GATE_DISPLAY" \
 		--arg maintainer_workflow "$PMRC_MAINTAINER_GATE_WORKFLOW" '
+		if length != 2 or (.[0] | type) != $array_type or (.[1] | type) != "object"
+		then error("invalid check-runs or commit-status response")
+		else . end |
 		.[0] as $pages | .[1] as $statuses |
 		"pending" as $pending | "in_progress" as $in_progress |
 		"error" as $error |
@@ -166,8 +171,8 @@ _pmrc_review_thread_resolution_required() {
 		echo "[pulse-merge] pre-merge snapshot: effective rules fetch failed for ${repo_slug} branch ${base_branch} — failing closed (GH#28130)" >>"$log_target"
 		return 1
 	}
-	required=$(printf '%s' "$rules_json" | jq -r '
-		if type != "array" then error("effective rules response must be an array")
+	required=$(printf '%s' "$rules_json" | jq -r --arg array_type "$PMRC_JSON_ARRAY" '
+		if type != $array_type then error("effective rules response must be an array")
 		else [
 			.[]?
 			| select(.type == "pull_request")
@@ -316,10 +321,10 @@ _pmrc_configured_advisory_contexts_json() {
 		printf '[]\n'
 		return 0
 	fi
-	contexts=$(jq -c --arg slug "$repo_slug" '
+	contexts=$(jq -c --arg slug "$repo_slug" --arg array_type "$PMRC_JSON_ARRAY" '
 		(first(.initialized_repos[]? | select((.slug | ascii_downcase) == ($slug | ascii_downcase)))
 		| .review_gate.advisory_check_contexts // []) as $contexts
-		| if ($contexts | type) == "array" and all($contexts[]; type == "string" and length > 0)
+		| if ($contexts | type) == $array_type and all($contexts[]; type == "string" and length > 0)
 			then ($contexts | unique)
 			else error("invalid review_gate.advisory_check_contexts") end
 	' "$repos_json" 2>/dev/null) || return 1
