@@ -761,7 +761,8 @@ _runtime_bundle_has_live_lease() {
 		case "$lease_pid" in
 		'' | *[!0-9]*) rm -f "$lease_file" ;;
 		*)
-			if kill -0 "$lease_pid" 2>/dev/null; then
+			# kill -0 can report EPERM for a live process owned by another user.
+			if kill -0 "$lease_pid" 2>/dev/null || ps -p "$lease_pid" >/dev/null 2>&1; then
 				has_live_lease=true
 			else
 				rm -f "$lease_file"

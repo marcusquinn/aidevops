@@ -209,6 +209,22 @@ test_live_bundle_lease_survives_three_updates() {
 	return 0
 }
 
+test_permission_denied_signal_check_preserves_live_lease() {
+	local lease_dir="$HOME/.aidevops/runtime-bundles/.leases/permission-denied"
+	local lease_file="$lease_dir/$$"
+	mkdir -p "$lease_dir"
+	printf 'live\n' >"$lease_file"
+
+	(
+		kill() { return 1; }
+		_runtime_bundle_has_live_lease "$lease_dir"
+	) || fail "ps fallback did not recognize the live lease process"
+	[[ -f "$lease_file" ]] || fail "permission-denied signal check removed a live lease"
+	rm -rf "$lease_dir"
+	pass "permission-denied signal check preserves a live lease"
+	return 0
+}
+
 test_stale_lease_and_old_bundle_are_pruned() {
 	local target_dir="$HOME/.aidevops/agents"
 	local stale_bundle="$HOME/.aidevops/runtime-bundles/stale-crash"
@@ -452,6 +468,7 @@ main() {
 	test_process_pin_survives_activation
 	test_setup_rebinds_stale_process_pin_to_active_bundle
 	test_live_bundle_lease_survives_three_updates
+	test_permission_denied_signal_check_preserves_live_lease
 	test_stale_lease_and_old_bundle_are_pruned
 	test_count_and_byte_pressure_preserve_protected_bundles
 	test_runtime_bundle_inventory_explains_protection
