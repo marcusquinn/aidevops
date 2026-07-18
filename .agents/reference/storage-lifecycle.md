@@ -62,8 +62,9 @@ Reference, lease, recovery, and audit checks remain hard vetoes.
 |---|---|---|---|---|
 | `~/.aidevops/runtime-bundles` | framework | active, leased, rollback, cache | Deployment protects current, previous, and live-leased bundles; unreferenced bundles converge under 30-day, 30-bundle, and 8 GiB soft limits | Keep the limits operator-configurable and preserve fail-closed reporting when references or sizing are unavailable |
 | `~/.aidevops/.agent-workspace/observability` | framework | audit, archive, cache | Runtime events are append-only evidence; plugin records runtime and tool-call data | Define the minimum audit envelope, payload/metadata limits, partition or archive semantics, and verified compaction rather than direct row deletion |
-| `~/.aidevops/agents-backups` | framework | rollback, archive | Count-based snapshot retention | Add byte/age reporting and preserve at least the newest verified rollback artifact |
-| `~/.aidevops/logs` and worker failure excerpts | framework | audit, archive, scratch | Individual excerpts are size-capped; policies vary by producer | Define producer ownership and combined age/count/byte retention while retaining terminal failure evidence |
+| `~/.aidevops/agents-backups` | framework | rollback, archive | Setup computes a dry-run plan under 10-snapshot, 180-day, and 4 GiB soft limits; the newest snapshot is always protected | Tune defaults from broader measurements without weakening rollback or attribution checks |
+| `~/.aidevops/logs/worker-failure-excerpts` | framework | recovery, archive | Excerpts are capped at 64 KiB; each session retains its newest evidence while older duplicates converge under 3-excerpt, 30-day, and 192 KiB soft limits | Add terminal issue/PR awareness before reclaiming the newest evidence for any session |
+| Pulse active logs and `~/.aidevops/logs/pulse-archive` | framework | active, archive | Pulse preserves active descriptors while gzip-rotating 50 MiB hot/wrapper logs and 1 MiB timing logs; cold archives converge under 1 GiB | Keep rotation producer-owned and never replace it with generic unlink-by-age cleanup |
 | OpenCode data under its application-data root | joint | active, recovery, archive, unknown | OpenCode owns session and DB formats; aidevops archive/maintenance helpers coordinate selected operations | Separate logical retention from WAL/fragmentation maintenance; report only classifications proven through OpenCode-aware queries |
 | npm and other package-manager caches | external | cache | Package manager owns lifecycle | Context-only reporting; no aidevops aggregate deletion |
 | OS temporary and Trash locations | external or joint | scratch, unknown | OS/runtime-specific | Reclaim only aidevops-attributable artifacts through an owner-aware migration; never broad-clean a directory |
@@ -81,6 +82,30 @@ integrity, and offline rollback dependencies into otherwise immutable bundles.
 The measured duplication is instead bounded by pruning unreferenced bundles.
 This preserves atomic activation and makes each retained rollback bundle
 self-verifying without making npm's global cache framework-owned.
+
+### Coordinated Backup and Log Policies
+
+Setup, headless-runtime failure evidence, and Pulse remain separate storage
+producers. Coordination means they publish compatible inventory records; it does
+not grant a generic helper authority to delete across `~/.aidevops`.
+
+- Setup accepts only timestamp-named snapshot directories that it created. It
+  measures all candidates, protects the newest rollback snapshot, computes an
+  oldest-first dry run, validates a producer-specific confirmation token, and
+  stages exact paths in `.retention-trash` before removal. A symlink, unexpected
+  name, sizing failure, or metadata failure preserves every snapshot.
+- Headless runtime applies the same plan/confirm/stage sequence only to older
+  excerpts for the same sanitized session key. The newest excerpt is unresolved
+  recovery evidence and remains protected regardless of age or size. Ambiguous
+  names and symlinks are unknown rather than cleanup candidates.
+- Pulse retains its descriptor-preserving gzip-and-truncate implementation.
+  Active files are never unlinked, so concurrent writers retain valid file
+  descriptors, and its existing combined cold-archive byte cap remains the only
+  cleanup authority for Pulse logs.
+
+An interrupted staged cleanup leaves either the original or an attributable
+producer-local trash copy. Inventory includes trash bytes as protected until a
+producer can complete or an operator can diagnose the interrupted action.
 
 ## Store Lifecycle Contract
 
@@ -146,8 +171,8 @@ filesystem age or size deletion loop.
    current, previous, and live-leased protections.
 3. Define observability audit retention, payload limits, and archival or
    partitioning semantics before compacting append-only evidence.
-4. Add coordinated policies for framework backups, logs, and worker failure
-   excerpts, including conservative leftover migration.
+4. Maintain coordinated policies for framework backups, Pulse logs, and worker
+   failure excerpts, including conservative attributable-only migration.
 5. Coordinate OpenCode-owned storage through runtime-aware reporting and
    maintenance; keep logical session deletion out of framework cleanup.
 

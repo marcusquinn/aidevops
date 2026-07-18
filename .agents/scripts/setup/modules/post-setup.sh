@@ -122,7 +122,7 @@ print_final_instructions() {
 	echo ""
 	echo "Deployed to:"
 	echo "  ~/.aidevops/agents/     - Agent files (main agents, subagents, scripts)"
-	echo "  ~/.aidevops/*-backups/  - Backups with rotation (keeps last $BACKUP_KEEP_COUNT)"
+	echo "  ~/.aidevops/*-backups/  - Rollback backups (count/age/byte retention; newest protected)"
 	echo ""
 	echo "Next steps:"
 	echo "1. Review config templates in configs/ (keep as placeholders — never store real credentials there)"

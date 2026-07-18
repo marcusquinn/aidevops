@@ -9,10 +9,21 @@ if [[ -f "$SCRIPT_DIR/shared-constants.sh" ]]; then
 	# shellcheck source=shared-constants.sh
 	source "$SCRIPT_DIR/shared-constants.sh"
 fi
+# Read-only policy classifiers are sourced from each producer. Their apply
+# functions are never called by this inventory helper.
+# shellcheck source=setup/_backup.sh
+source "$SCRIPT_DIR/setup/_backup.sh"
+# shellcheck source=worker-failure-evidence.sh
+source "$SCRIPT_DIR/worker-failure-evidence.sh"
 
 STORAGE_SCHEMA_VERSION=1
 STORAGE_SIZE_TIMEOUT_TENTHS="${AIDEVOPS_STORAGE_SIZE_TIMEOUT_TENTHS:-20}"
 STORAGE_DU_COMMAND="${AIDEVOPS_STORAGE_DU_COMMAND:-du}"
+STORAGE_JSON_NULL=null
+STORAGE_OWNER_FRAMEWORK=framework
+STORAGE_SAFETY_MIXED=mixed
+STORAGE_DISPOSITION_PROTECTED=protected
+STORAGE_PRODUCER_PULSE=pulse-wrapper
 
 _storage_usage() {
 	cat <<'USAGE'
@@ -101,7 +112,7 @@ _storage_emit_record() {
 
 	measured=$(_storage_measure_path "$actual_path")
 	IFS='|' read -r total_bytes confidence error <<<"$measured"
-	if [[ "$total_bytes" != "null" ]]; then
+	if [[ "$total_bytes" != "$STORAGE_JSON_NULL" ]]; then
 		case "$disposition" in
 		protected)
 			protected_bytes="$total_bytes"
@@ -252,22 +263,148 @@ _storage_emit_runtime_bundle_record() {
 	fi
 
 	jq -cn \
+		--arg owner "$STORAGE_OWNER_FRAMEWORK" \
+		--arg safety_class "$STORAGE_SAFETY_MIXED" \
 		--arg error "$error" \
 		--arg confidence "$confidence" \
 		--argjson total_bytes "$total_bytes" \
 		--argjson protected_bytes "$protected_bytes" \
 		--argjson reclaimable_bytes "$reclaimable_bytes" \
 		--argjson unknown_bytes "$unknown_bytes" \
-		'{store_id:"runtime-bundles",producer:"agent-deploy",path:"~/.aidevops/runtime-bundles",owner:"framework",safety_class:"mixed",policy:"30-day age, 30-bundle count, and 8 GiB soft limits; references and live leases veto deletion",total_bytes:$total_bytes,protected_bytes:$protected_bytes,reclaimable_bytes:$reclaimable_bytes,unknown_bytes:$unknown_bytes,protection_reasons:["current bundle, previous rollback bundle, live leases, and lease metadata"],sizing_confidence:$confidence,next_action:"Use setup activation for policy-owned pruning; do not delete protected bundles manually",error:(if $error == "" or $error == "missing" then null else $error end)}'
+		'{store_id:"runtime-bundles",producer:"agent-deploy",path:"~/.aidevops/runtime-bundles",owner:$owner,safety_class:$safety_class,policy:"30-day age, 30-bundle count, and 8 GiB soft limits; references and live leases veto deletion",total_bytes:$total_bytes,protected_bytes:$protected_bytes,reclaimable_bytes:$reclaimable_bytes,unknown_bytes:$unknown_bytes,protection_reasons:["current bundle, previous rollback bundle, live leases, and lease metadata"],sizing_confidence:$confidence,next_action:"Use setup activation for policy-owned pruning; do not delete protected bundles manually",error:(if $error == "" or $error == "missing" then null else $error end)}'
+	return 0
+}
+
+_storage_plan_reclaimable_bytes() {
+	local plan="$1"
+	local candidate_path=""
+	local candidate_bytes=""
+	local candidate_reason=""
+	local reclaimable_bytes=0
+	while IFS=$'\t' read -r candidate_path candidate_bytes candidate_reason; do
+		[[ -n "$candidate_path" ]] || continue
+		case "$candidate_bytes" in
+		'' | *[!0-9]*) return 1 ;;
+		esac
+		[[ -n "$candidate_reason" ]] || return 1
+		reclaimable_bytes=$((reclaimable_bytes + candidate_bytes))
+	done <<<"$plan"
+	printf '%s' "$reclaimable_bytes"
+	return 0
+}
+
+_storage_worker_excerpt_plan() {
+	local excerpt_dir="$1"
+	local excerpt_path=""
+	local excerpt_name=""
+	local safe_key=""
+	local known_keys=$'\n'
+	local plan=""
+	[[ -d "$excerpt_dir" && ! -L "$excerpt_dir" ]] || return 0
+	for excerpt_path in "$excerpt_dir"/*; do
+		[[ -e "$excerpt_path" || -L "$excerpt_path" ]] || continue
+		excerpt_name="${excerpt_path##*/}"
+		[[ "$excerpt_name" == ".retention-trash" && -d "$excerpt_path" && ! -L "$excerpt_path" ]] && continue
+		[[ -f "$excerpt_path" && ! -L "$excerpt_path" ]] || return 2
+		if [[ "$excerpt_name" =~ ^(.+)-[0-9]{8}T[0-9]{6}Z-[0-9]+\.log$ ]]; then
+			safe_key="${BASH_REMATCH[1]}"
+		else
+			return 2
+		fi
+		[[ "$safe_key" =~ ^[A-Za-z0-9._-]+$ ]] || return 2
+		[[ "$known_keys" == *$'\n'"${safe_key}"$'\n'* ]] || known_keys+="${safe_key}"$'\n'
+	done
+	while IFS= read -r safe_key; do
+		[[ -n "$safe_key" ]] || continue
+		plan=$(_worker_excerpt_retention_plan "$excerpt_dir" "$safe_key") || return 2
+		[[ -n "$plan" ]] && printf '%s\n' "$plan"
+	done <<<"$known_keys"
+	return 0
+}
+
+_storage_emit_retention_record() {
+	local store_id="$1"
+	local producer="$2"
+	local display_path="$3"
+	local actual_path="$4"
+	local safety_class="$5"
+	local policy="$6"
+	local protection_reason="$7"
+	local next_action="$8"
+	local classifier="$9"
+	local measured=""
+	local total_bytes="$STORAGE_JSON_NULL"
+	local confidence="unavailable"
+	local error=""
+	local plan=""
+	local reclaimable_bytes=0
+	local protected_bytes="$STORAGE_JSON_NULL"
+	local unknown_bytes="$STORAGE_JSON_NULL"
+
+	measured=$(_storage_measure_path "$actual_path")
+	IFS='|' read -r total_bytes confidence error <<<"$measured"
+	if [[ "$total_bytes" != "$STORAGE_JSON_NULL" ]]; then
+		if [[ "$total_bytes" == "0" ]]; then
+			protected_bytes=0
+			unknown_bytes=0
+		elif ! plan=$($classifier "$actual_path"); then
+			protected_bytes=0
+			reclaimable_bytes=0
+			unknown_bytes="$total_bytes"
+			error="classification-unavailable"
+			confidence="unavailable"
+		elif ! reclaimable_bytes=$(_storage_plan_reclaimable_bytes "$plan"); then
+			protected_bytes=0
+			reclaimable_bytes=0
+			unknown_bytes="$total_bytes"
+			error="invalid-retention-plan"
+			confidence="unavailable"
+		elif [[ "$reclaimable_bytes" -gt "$total_bytes" ]]; then
+			protected_bytes=0
+			reclaimable_bytes=0
+			unknown_bytes="$total_bytes"
+			error="candidate-bytes-exceed-total"
+			confidence="unavailable"
+		else
+			protected_bytes=$((total_bytes - reclaimable_bytes))
+			unknown_bytes=0
+		fi
+	fi
+
+	jq -cn \
+		--arg store_id "$store_id" \
+		--arg producer "$producer" \
+		--arg path "$display_path" \
+		--arg safety_class "$safety_class" \
+		--arg policy "$policy" \
+		--arg protection_reason "$protection_reason" \
+		--arg confidence "$confidence" \
+		--arg next_action "$next_action" \
+		--arg owner "$STORAGE_OWNER_FRAMEWORK" \
+		--arg error "$error" \
+		--argjson total_bytes "$total_bytes" \
+		--argjson protected_bytes "$protected_bytes" \
+		--argjson reclaimable_bytes "$reclaimable_bytes" \
+		--argjson unknown_bytes "$unknown_bytes" \
+		'{store_id:$store_id,producer:$producer,path:$path,owner:$owner,safety_class:$safety_class,policy:$policy,total_bytes:$total_bytes,protected_bytes:$protected_bytes,reclaimable_bytes:$reclaimable_bytes,unknown_bytes:$unknown_bytes,protection_reasons:[$protection_reason],sizing_confidence:$confidence,next_action:$next_action,error:(if $error == "" or $error == "missing" then null else $error end)}'
 	return 0
 }
 
 _storage_inventory_records() {
 	local home_label="~"
+	local framework_owner="$STORAGE_OWNER_FRAMEWORK"
+	local active_class="active"
+	local active_writer_reason="active concurrent writer"
+	local protected_disposition="$STORAGE_DISPOSITION_PROTECTED"
+	local pulse_producer="$STORAGE_PRODUCER_PULSE"
 	_storage_emit_runtime_bundle_record
-	_storage_emit_record "observability" "opencode-aidevops" "${home_label}/.aidevops/.agent-workspace/observability" "${HOME}/.aidevops/.agent-workspace/observability" "framework" "audit" "append-only audit evidence; compaction contract pending" "protected" "audit evidence" "Use observability-helper.sh for bounded queries"
-	_storage_emit_record "agent-backups" "setup-backup" "${home_label}/.aidevops/agents-backups" "${HOME}/.aidevops/agents-backups" "framework" "rollback" "count-based snapshots; byte policy pending" "protected" "rollback safety" "Review backup inventory before any cleanup"
-	_storage_emit_record "framework-logs" "multiple-framework-producers" "${home_label}/.aidevops/logs" "${HOME}/.aidevops/logs" "framework" "audit" "producer-specific policies pending" "protected" "audit and unresolved failure evidence" "Use producer-specific diagnostics"
+	_storage_emit_record "observability" "opencode-aidevops" "${home_label}/.aidevops/.agent-workspace/observability" "${HOME}/.aidevops/.agent-workspace/observability" "$framework_owner" "audit" "append-only audit evidence; compaction contract pending" "$protected_disposition" "audit evidence" "Use observability-helper.sh for bounded queries"
+	_storage_emit_retention_record "agent-backups" "setup-backup" "${home_label}/.aidevops/agents-backups" "${HOME}/.aidevops/agents-backups" "$STORAGE_SAFETY_MIXED" "10 snapshots, 180 days, and 4 GiB soft limits" "newest verified rollback and retention trash" "Setup computes a dry run before confirmed producer-owned rotation" "_backup_retention_plan"
+	_storage_emit_retention_record "worker-failure-excerpts" "headless-runtime" "${home_label}/.aidevops/logs/worker-failure-excerpts" "${HOME}/.aidevops/logs/worker-failure-excerpts" "$STORAGE_SAFETY_MIXED" "64 KiB per excerpt; 3 excerpts, 30 days, and 192 KiB per session soft limits" "newest unresolved recovery evidence per session" "Headless runtime computes a dry run after each preserved failure" "_storage_worker_excerpt_plan"
+	_storage_emit_record "pulse-hot-log" "$pulse_producer" "${home_label}/.aidevops/logs/pulse.log" "${HOME}/.aidevops/logs/pulse.log" "$framework_owner" "$active_class" "50 MiB active-file cap with gzip archive rotation" "$protected_disposition" "$active_writer_reason" "Use pulse-owned rotate_pulse_log; never unlink the active file"
+	_storage_emit_record "pulse-wrapper-log" "$pulse_producer" "${home_label}/.aidevops/logs/pulse-wrapper.log" "${HOME}/.aidevops/logs/pulse-wrapper.log" "$framework_owner" "$active_class" "50 MiB active-file cap with gzip archive rotation" "$protected_disposition" "$active_writer_reason" "Use pulse-owned rotate_pulse_log; never unlink the active file"
+	_storage_emit_record "pulse-stage-timings" "$pulse_producer" "${home_label}/.aidevops/logs/pulse-stage-timings.log" "${HOME}/.aidevops/logs/pulse-stage-timings.log" "$framework_owner" "$active_class" "1 MiB active-file cap with gzip archive rotation" "$protected_disposition" "$active_writer_reason" "Use pulse-owned rotate_pulse_log; never unlink the active file"
+	_storage_emit_record "pulse-log-archive" "$pulse_producer" "${home_label}/.aidevops/logs/pulse-archive" "${HOME}/.aidevops/logs/pulse-archive" "$framework_owner" "archive" "1 GiB combined cold archive cap; oldest archives first" "$protected_disposition" "archive already converged by producer" "Use pulse-owned rotate_pulse_log for archive pruning"
 	_storage_emit_record "opencode-data" "opencode" "OpenCode application data" "${AIDEVOPS_OPENCODE_DATA_DIR:-${HOME}/.local/share/opencode}" "joint" "unknown" "runtime-aware maintenance only" "unknown" "OpenCode ownership and active-session state require runtime-aware queries" "Use aidevops opencode-db report"
 	_storage_emit_record "npm-cache" "npm" "npm cache" "${AIDEVOPS_NPM_CACHE_DIR:-${HOME}/.npm}" "external" "cache" "package-manager owned; no aidevops cleanup authority" "protected" "external owner" "Use npm-owned diagnostics and cleanup explicitly"
 	return 0
