@@ -364,6 +364,14 @@ coordination-signal labels (`no-auto-dispatch`, `no-takeover`,
 
 **Test coverage:** `tests/test-enrich-dedup-guard.sh` (32 assertions).
 
+GH#28165 adds a separate `issue-sync-helper.sh sync-body tNNN` operation for
+maintainer-authorized corrections to an exactly mapped, `no-auto-dispatch`-held
+issue. It does not weaken this enrich guard or reuse `--force`: the command
+re-reads current state, rejects genuine non-self claims and concurrent changes,
+writes only the body, verifies the hold and metadata remained unchanged, checks
+the post-write body hash, and requires tamper-evident audit receipts. Ordinary,
+bulk, pulse, decomposition, and dispatch paths remain fail-closed.
+
 ### 4.6 Simultaneous DISPATCH_CLAIM Race (fixed t2422)
 
 **Pattern:** Two runners pass Layers 1–6 together and post `DISPATCH_CLAIM`
