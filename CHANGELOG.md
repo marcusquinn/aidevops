@@ -10,6 +10,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.32.149] - 2026-07-18
+
+### Added
+
+- bound unreferenced runtime bundle storage (#28158)
+- add fail-closed storage inventory reporting (#28156)
+
+### Changed
+
+- Tests: clarify pulse merge metadata fixtures (#28146)
+- Documentation: define bounded storage lifecycle architecture (#28154)
+- Maintenance: sync ref:GH#28152 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#28151 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#28150 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#28149 to TODO.md [skip ci]
+- Maintenance: mark t18155 complete (pr:#28143 completed:2026-07-18) [skip ci]
+
+### Fixed
+
+- recover stale worker DB replay locks (#28182)
+- harden autoagent metric fallbacks (#28180)
+- tolerate unset autoagent test cleanup root (#28179)
+- normalize OpenCode temporary roots (#28159)
+- block merges on required human threads (#28157)
+- keep bundle detection cache outside repositories (#28148)
+- merge worker SQLite graphs by column name (#28147)
+- harden autoagent experiment reliability (#28143)
+
 ## [3.32.148] - 2026-07-18
 
 ### Changed
