@@ -1831,8 +1831,8 @@ _dlw_nohup_launch() {
 	local dispatch_model_tier="$9"
 	local selected_model="${10}"
 	local worker_worktree_path="${11}" worker_worktree_branch="${12}" attempt_id="${13:-}" attempt_started_at="${14:-}"
-	local transfer_mode="${15:-}" expected_owner_pid="${16:-}" expected_owner_session="${17:-}"
-	local expected_owner_batch="${18:-}" expected_owner_task="${19:-}" expected_owner_created_at="${20:-}"
+	local transfer_mode="${_DLW_WORKTREE_TRANSFER_MODE:-}" expected_owner_pid="${_DLW_WORKTREE_EXPECTED_OWNER_PID:-}" expected_owner_session="${_DLW_WORKTREE_EXPECTED_OWNER_SESSION:-}"
+	local expected_owner_batch="${_DLW_WORKTREE_EXPECTED_OWNER_BATCH:-}" expected_owner_task="${_DLW_WORKTREE_EXPECTED_OWNER_TASK:-}" expected_owner_created_at="${_DLW_WORKTREE_EXPECTED_OWNER_CREATED_AT:-}"
 	[[ -n "$attempt_id" ]] || attempt_id=$(aidevops_generate_execution_id "attempt")
 	[[ "$attempt_started_at" =~ ^[0-9]+$ ]] || attempt_started_at=$(_worker_attempt_start_marker)
 	local parent_worker_id="" root_worker_id="" correlation_id="" worker_id="" dispatch_event_id="" root_event_id=""
@@ -1878,9 +1878,9 @@ _dlw_nohup_launch() {
 		AIDEVOPS_DISPATCH_MODEL="$selected_model"
 	)
 	_dlw_append_trusted_release_env
-	_dlw_append_worktree_transfer_env "$transfer_mode" "$expected_owner_pid" \
-		"$expected_owner_session" "$expected_owner_batch" "$expected_owner_task" \
-		"$expected_owner_created_at"
+	local -a transfer_contract=("$transfer_mode" "$expected_owner_pid" "$expected_owner_session"
+		"$expected_owner_batch" "$expected_owner_task" "$expected_owner_created_at")
+	_dlw_append_worktree_transfer_env "${transfer_contract[@]}"
 	if _dlw_min_worker_floor_active; then
 		worker_cmd+=(
 			AIDEVOPS_MIN_WORKER_FLOOR_BYPASS_ACTIVE=1
@@ -2468,12 +2468,6 @@ _dispatch_launch_worker() {
 	fi
 	_ds_record "$issue_number" "$repo_slug" "precreate_worktree" "$_ds_t0"
 	local worker_worktree_path="$_DLW_WORKTREE_PATH" worker_worktree_branch="$_DLW_WORKTREE_BRANCH" worker_worktree_reused="${_DLW_WORKTREE_REUSED:-0}"
-	local worker_transfer_mode="${_DLW_WORKTREE_TRANSFER_MODE:-}"
-	local worker_expected_owner_pid="${_DLW_WORKTREE_EXPECTED_OWNER_PID:-}"
-	local worker_expected_owner_session="${_DLW_WORKTREE_EXPECTED_OWNER_SESSION:-}"
-	local worker_expected_owner_batch="${_DLW_WORKTREE_EXPECTED_OWNER_BATCH:-}"
-	local worker_expected_owner_task="${_DLW_WORKTREE_EXPECTED_OWNER_TASK:-}"
-	local worker_expected_owner_created_at="${_DLW_WORKTREE_EXPECTED_OWNER_CREATED_AT:-}"
 	if _dlw_check_worker_branch_orphan_loop "$issue_number" "$repo_slug" "$worker_worktree_branch" "$worker_worktree_reused" "${repo_path}/TODO.md" "$worker_worktree_path"; then
 		_dlw_pre_runtime_failure "$issue_number" "$repo_slug" "worker_branch_orphan_hold" 2 || return $?
 	fi
@@ -2487,9 +2481,7 @@ _dispatch_launch_worker() {
 	if ! worker_pid=$(_dlw_nohup_launch "$issue_number" "$repo_slug" "$dispatch_title" "$issue_title" \
 		"$session_key" "$worker_log" "$launch_prompt" "$repo_path" \
 		"$dispatch_model_tier" "$selected_model" \
-		"$worker_worktree_path" "$worker_worktree_branch" "$attempt_id" "$attempt_started_at" \
-		"$worker_transfer_mode" "$worker_expected_owner_pid" "$worker_expected_owner_session" \
-		"$worker_expected_owner_batch" "$worker_expected_owner_task" "$worker_expected_owner_created_at"); then
+		"$worker_worktree_path" "$worker_worktree_branch" "$attempt_id" "$attempt_started_at"); then
 		_ds_record "$issue_number" "$repo_slug" "worker_spawn" "$_ds_t0"
 		_dlw_pre_runtime_failure "$issue_number" "$repo_slug" "worker_launch_failed" 2 || return $?
 		return 1
