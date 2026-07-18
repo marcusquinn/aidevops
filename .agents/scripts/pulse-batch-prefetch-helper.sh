@@ -113,6 +113,9 @@ _JSON_NULL="null"
 _JSON_EMPTY_OBJ="{}"
 _JSON_EMPTY_ARR="[]"
 _STATE_OPEN="open"
+_CACHE_STATE_MALFORMED="malformed"
+_CACHE_SNAPSHOT_STATE="missing"
+_CACHE_SNAPSHOT_PATH=""
 
 # --- Feature flag gate ---
 _check_enabled() {
@@ -736,6 +739,72 @@ _cmd_refresh() {
 	return 0
 }
 
+# Resolve a cache snapshot to one canonical state without printing payload data.
+# Sets _CACHE_SNAPSHOT_STATE and _CACHE_SNAPSHOT_PATH for Bash 3.2 callers.
+_resolve_cache_snapshot() {
+	local kind="$1"
+	local slug="$2"
+	local cache_file=""
+	local cache_ts=""
+	local cache_epoch=0
+	local now_epoch=0
+	local age=0
+
+	_CACHE_SNAPSHOT_STATE="missing"
+	_CACHE_SNAPSHOT_PATH=""
+	if ! _check_enabled; then
+		_CACHE_SNAPSHOT_STATE="disabled"
+		return 1
+	fi
+
+	cache_file=$(_cache_file_path "$kind" "$slug")
+	_CACHE_SNAPSHOT_PATH="$cache_file"
+	[[ -f "$cache_file" ]] || return 1
+
+	cache_ts=$(jq -er '
+		select((.timestamp | type) == "string" and (.timestamp | length) > 0) |
+		select((.items | type) == "array") |
+		.timestamp
+	' "$cache_file" 2>/dev/null) || {
+		_CACHE_SNAPSHOT_STATE="$_CACHE_STATE_MALFORMED"
+		return 1
+	}
+
+	if [[ "$(uname)" == "Darwin" ]]; then
+		cache_epoch=$(TZ=UTC date -j -f "%Y-%m-%dT%H:%M:%SZ" "$cache_ts" "+%s" 2>/dev/null) || cache_epoch=0
+	else
+		cache_epoch=$(date -u -d "$cache_ts" +%s 2>/dev/null) || cache_epoch=0
+	fi
+	now_epoch=$(date -u +%s) || now_epoch=0
+	if [[ "$cache_epoch" -le 0 || "$now_epoch" -le 0 ]]; then
+		_CACHE_SNAPSHOT_STATE="$_CACHE_STATE_MALFORMED"
+		return 1
+	fi
+
+	age=$((now_epoch - cache_epoch))
+	if [[ "$age" -lt 0 ]]; then
+		_CACHE_SNAPSHOT_STATE="$_CACHE_STATE_MALFORMED"
+		return 1
+	fi
+	if [[ "$age" -ge "$PULSE_PREFETCH_FULL_SWEEP_INTERVAL" ]]; then
+		_CACHE_SNAPSHOT_STATE="stale"
+		return 1
+	fi
+
+	_CACHE_SNAPSHOT_STATE="hit"
+	return 0
+}
+
+_emit_cache_state() {
+	local state="$1"
+	local kind="$2"
+	local slug="$3"
+	local cardinality="${4:-unknown}"
+	printf 'cache_state=%s kind=%s slug=%s cardinality=%s\n' \
+		"$state" "$kind" "$slug" "$cardinality" >&2
+	return 0
+}
+
 # =============================================================================
 # Subcommand: cache-path
 # =============================================================================
@@ -764,36 +833,16 @@ _cmd_cache_path() {
 		return 1
 	fi
 
-	_check_enabled || return 1
-
-	local cache_file
-	cache_file=$(_cache_file_path "$kind" "$slug")
-
-	if [[ ! -f "$cache_file" ]]; then
+	case "$kind" in
+	"$_KIND_ISSUES" | "$_KIND_PRS") ;;
+	*)
+		echo "Usage: pulse-batch-prefetch-helper.sh cache-path --kind issues|prs --slug owner/repo" >&2
 		return 1
-	fi
+		;;
+	esac
 
-	# Check freshness — stale cache (past TTL) returns exit 1
-	local cache_ts
-	cache_ts=$(jq -r '.timestamp // ""' "$cache_file" 2>/dev/null) || cache_ts=""
-	if [[ -z "$cache_ts" || "$cache_ts" == "$_JSON_NULL" ]]; then
-		return 1
-	fi
-
-	local cache_epoch=0 now_epoch=0
-	if [[ "$(uname)" == "Darwin" ]]; then
-		cache_epoch=$(TZ=UTC date -j -f "%Y-%m-%dT%H:%M:%SZ" "$cache_ts" "+%s" 2>/dev/null) || cache_epoch=0
-	else
-		cache_epoch=$(date -u -d "$cache_ts" +%s 2>/dev/null) || cache_epoch=0
-	fi
-	now_epoch=$(date -u +%s)
-	local age=$((now_epoch - cache_epoch))
-
-	if [[ "$age" -ge "$PULSE_PREFETCH_FULL_SWEEP_INTERVAL" ]]; then
-		return 1  # Cache too old
-	fi
-
-	echo "$cache_file"
+	_resolve_cache_snapshot "$kind" "$slug" || return 1
+	printf '%s\n' "$_CACHE_SNAPSHOT_PATH"
 	return 0
 }
 
@@ -829,19 +878,39 @@ _cmd_read_cache() {
 		return 1
 	fi
 
-	local cache_file
-	cache_file=$(_cmd_cache_path --kind "$kind" --slug "$slug") || return 1
+	case "$kind" in
+	"$_KIND_ISSUES" | "$_KIND_PRS") ;;
+	*)
+		echo "Usage: pulse-batch-prefetch-helper.sh read-cache --kind issues|prs --slug owner/repo" >&2
+		return 1
+		;;
+	esac
 
-	if [[ "$kind" == "$_KIND_ISSUES" ]]; then
-		jq -c --arg state_open "$_STATE_OPEN" '[.items[]? | select(has("state") and ((.state | ascii_downcase) == $state_open))]' "$cache_file" 2>/dev/null || {
-			return 1
-		}
-		return 0
+	if ! _resolve_cache_snapshot "$kind" "$slug"; then
+		_emit_cache_state "$_CACHE_SNAPSHOT_STATE" "$kind" "$slug"
+		return 1
 	fi
 
-	jq -c '.items // []' "$cache_file" 2>/dev/null || {
-		return 1
-	}
+	local items=""
+
+	if [[ "$kind" == "$_KIND_ISSUES" ]]; then
+		items=$(jq -ce --arg state_open "$_STATE_OPEN" '[.items[] | select(has("state") and ((.state | ascii_downcase) == $state_open))]' "$_CACHE_SNAPSHOT_PATH" 2>/dev/null) || {
+			_CACHE_SNAPSHOT_STATE="$_CACHE_STATE_MALFORMED"
+			_emit_cache_state "$_CACHE_SNAPSHOT_STATE" "$kind" "$slug"
+			return 1
+		}
+	else
+		items=$(jq -ce '.items' "$_CACHE_SNAPSHOT_PATH" 2>/dev/null) || {
+			_CACHE_SNAPSHOT_STATE="$_CACHE_STATE_MALFORMED"
+			_emit_cache_state "$_CACHE_SNAPSHOT_STATE" "$kind" "$slug"
+			return 1
+		}
+	fi
+
+	local cardinality="nonempty"
+	[[ "$items" == "$_JSON_EMPTY_ARR" ]] && cardinality="empty"
+	_emit_cache_state "$_CACHE_SNAPSHOT_STATE" "$kind" "$slug" "$cardinality"
+	printf '%s\n' "$items"
 	return 0
 }
 
