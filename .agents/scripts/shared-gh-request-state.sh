@@ -461,13 +461,30 @@ gh_request_state_singleflight_finish() {
 	return 0
 }
 
+_ghrs_rate_parent_dir() {
+	local rate_file="$1"
+	local rate_dir="."
+	[[ -n "$rate_file" ]] || return 1
+	if [[ "$rate_file" == */* ]]; then
+		rate_dir="${rate_file%/*}"
+		[[ -n "$rate_dir" ]] || rate_dir="/"
+	fi
+	printf '%s\n' "$rate_dir"
+	return 0
+}
+
 _ghrs_rate_file() {
 	local rate_file="${AIDEVOPS_GH_REQUEST_STATE_RATE_FILE:-${AIDEVOPS_PULSE_RATE_LIMIT_CACHE:-${HOME:+${HOME}/.aidevops/cache/pulse-graphql-rate-limit.json}}}"
 	local rate_dir=""
 	[[ -n "$rate_file" ]] || return 1
-	rate_dir="${rate_file%/*}"
-	(umask 077 && mkdir -p "$rate_dir") 2>/dev/null || return 1
-	chmod 700 "$rate_dir" 2>/dev/null || return 1
+	rate_dir="$(_ghrs_rate_parent_dir "$rate_file")" || return 1
+	case "$rate_dir" in
+	"." | "/") ;;
+	*)
+		(umask 077 && mkdir -p "$rate_dir") 2>/dev/null || return 1
+		chmod 700 "$rate_dir" 2>/dev/null || return 1
+		;;
+	esac
 	printf '%s\n' "$rate_file"
 	return 0
 }
@@ -536,7 +553,7 @@ gh_request_state_rate_put() {
 	[[ "${AIDEVOPS_GH_REQUEST_STATE_DISABLE:-0}" != "1" && "${AIDEVOPS_GH_REQUEST_STATE_RATE_DISABLE:-0}" != "1" ]] || return 0
 	_ghrs_rate_json_valid "$rate_json" || return 1
 	rate_file="$(_ghrs_rate_file)" || return 1
-	rate_dir="${rate_file%/*}"
+	rate_dir="$(_ghrs_rate_parent_dir "$rate_file")" || return 1
 	now="$(_ghrs_now)"
 	[[ "$now" =~ ^[0-9]+$ && "$now" -gt 0 ]] || return 1
 	scope_fingerprint="$(_ghrs_scope_fingerprint "$pool")" || return 1

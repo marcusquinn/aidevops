@@ -357,6 +357,29 @@ test_rate_state_validation_scope_and_reset() {
 	return 0
 }
 
+test_relative_rate_path_uses_current_directory() {
+	local relative_file="relative-rate.json"
+	local now="" reset_at="" fixture="" result=""
+	(
+		cd "$TEST_ROOT" || return 1
+		export AIDEVOPS_GH_REQUEST_STATE_RATE_FILE="$relative_file"
+		now="$(_ghrs_now)"
+		reset_at=$((now + 3600))
+		fixture=$(rate_fixture 321 "$reset_at")
+		gh_request_state_rate_put "$fixture"
+		if [[ ! -f "$relative_file" ]]; then
+			printf 'FAIL: relative rate path was not written as a file\n' >&2
+			return 1
+		fi
+		result=$(gh_request_state_rate_get normal 20)
+		assert_eq "relative rate path preserves the validated snapshot" "321" \
+			"$(printf '%s' "$result" | jq -r '.resources.graphql.remaining')"
+		assert_eq "relative rate snapshot remains private" "600" "$(file_mode "$relative_file")"
+		assert_eq "root-level rate paths resolve without chmodding root" "/" "$(_ghrs_rate_parent_dir /rate.json)"
+	)
+	return $?
+}
+
 rate_transport() {
 	local now="" reset_at=""
 	printf 'transport\n' >>"${TEST_ROOT}/rate-transport-count"
@@ -399,6 +422,7 @@ main() {
 	test_live_leader_wait_is_bounded
 	test_ownerless_lease_recovery_and_disabled_mode
 	test_rate_state_validation_scope_and_reset
+	test_relative_rate_path_uses_current_directory
 	test_concurrent_rate_probe_is_singleflight
 	printf 'PASS: shared GitHub request-state regression suite\n'
 	return 0
