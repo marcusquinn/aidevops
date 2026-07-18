@@ -485,7 +485,7 @@ try:
     connection.execute("COMMIT")
 except Exception:
     if connection.in_transaction:
-        connection.execute("ROLLBACK")
+        connection.execute('ROLLBACK')
     raise
 finally:
     connection.close()
@@ -635,7 +635,7 @@ try:
         ),
     )
     if cursor.rowcount != 1:
-        connection.execute("ROLLBACK")
+        connection.execute('ROLLBACK')
         sys.exit(1)
     connection.execute("COMMIT")
 except Exception:
@@ -666,9 +666,15 @@ transfer_worktree_ownership_if_expected() {
 	local branch="$2"
 	shift 2
 
-	local task_id="" batch_id="" session_id="" owner_pid_override=""
-	local expected_task_id="" expected_batch_id="" expected_session_id=""
-	local expected_owner_pid="" expected_created_at=""
+	local task_id=""
+	local batch_id=""
+	local session_id=""
+	local owner_pid_override=""
+	local expected_task_id=""
+	local expected_batch_id=""
+	local expected_session_id=""
+	local expected_owner_pid=""
+	local expected_created_at=""
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
 		--task) task_id="${2:-}"; shift 2 ;;

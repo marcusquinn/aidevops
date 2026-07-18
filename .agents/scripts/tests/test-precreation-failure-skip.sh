@@ -415,11 +415,16 @@ fi
 # =============================================================================
 self_login="testuser"
 : >"${TMP}/launch-args.txt"
+_DLW_WORKTREE_TRANSFER_MODE="continuation"
+_DLW_WORKTREE_EXPECTED_OWNER_PID="12345"
+_DLW_WORKTREE_EXPECTED_OWNER_SESSION="generation-7"
+_DLW_WORKTREE_EXPECTED_OWNER_BATCH="batch-7"
+_DLW_WORKTREE_EXPECTED_OWNER_TASK="66666"
+_DLW_WORKTREE_EXPECTED_OWNER_CREATED_AT="2026-07-18T00:00:00Z"
 launch_rc=0
 _dlw_nohup_launch "66666" "owner/repo" "Dispatch" "Issue" "issue-66666" \
 	"${TMP}/worker.log" "/full-loop test" "$FAKE_REPO" "standard" "" \
 	"$STUB_EXISTING_PATH" "$STUB_EXISTING_BRANCH" "attempt-test" "123" \
-	"continuation" "12345" "generation-7" "batch-7" "66666" "2026-07-18T00:00:00Z" \
 	>/dev/null || launch_rc=$?
 transfer_env_ok=1
 for expected_arg in \
