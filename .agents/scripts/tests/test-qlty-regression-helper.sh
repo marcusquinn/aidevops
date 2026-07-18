@@ -37,6 +37,18 @@ assert_contains() {
 	return 0
 }
 
+resolve_git() {
+	local _candidate=""
+	while IFS= read -r _candidate; do
+		case "$_candidate" in
+		*/.aidevops/*/agents/scripts/git | */.aidevops/bin/git | */.agents/scripts/git) continue ;;
+		esac
+		printf '%s\n' "$_candidate"
+		return 0
+	done < <(type -a -p git 2>/dev/null || true)
+	return 1
+}
+
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 HELPER="$SCRIPT_DIR/qlty-regression-helper.sh"
 TMP_ROOT=$(mktemp -d "${TMPDIR:-/tmp}/qlty-regression-test.XXXXXX")
@@ -60,18 +72,31 @@ if [ "${QLTY_STUB_MODE:-parity}" = "mismatch" ] && [ "$(basename "$PWD")" = "rep
 	printf '%s\n' '{"runs":[{"results":[{"ruleId":"qlty:similar-code","locations":[{"physicalLocation":{"artifactLocation":{"uri":"a.sh"}}}]},{"ruleId":"qlty:similar-code","locations":[{"physicalLocation":{"artifactLocation":{"uri":"b.sh"}}}]}]}]}'
 	exit 0
 fi
+if [ "${QLTY_STUB_MODE:-parity}" = "head-fail" ] && [ "$(basename "$PWD")" = "repo" ]; then
+	printf 'simulated head failure\n' >&2
+	exit 2
+fi
 printf '%s\n' '{"runs":[{"results":[{"ruleId":"qlty:similar-code","locations":[{"physicalLocation":{"artifactLocation":{"uri":"a.sh"}}}]}]}]}'
 exit 0
 STUB
 chmod +x "$BIN_DIR/qlty"
-ln -s /usr/bin/git "$BIN_DIR/git"
+GIT_PATH=$(resolve_git || true)
+if [ -z "$GIT_PATH" ]; then
+	printf 'git not found\n' >&2
+	exit 1
+fi
+ln -s "$GIT_PATH" "$BIN_DIR/git"
 
-/usr/bin/git -C "$REPO" init --quiet
-/usr/bin/git -C "$REPO" config user.name "Qlty Test"
-/usr/bin/git -C "$REPO" config user.email "qlty-test@example.invalid"
-printf 'sample\n' >"$REPO/a.sh"
-/usr/bin/git -C "$REPO" add a.sh
-/usr/bin/git -C "$REPO" commit --quiet -m "fixture"
+(
+	cd "$REPO" || exit 1
+	"$GIT_PATH" init --quiet
+	"$GIT_PATH" config user.name "Qlty Test"
+	"$GIT_PATH" config user.email "qlty-test@example.invalid"
+	"$GIT_PATH" config commit.gpgsign false
+	printf 'sample\n' >a.sh
+	"$GIT_PATH" add a.sh
+	"$GIT_PATH" commit --quiet -m "fixture"
+) || exit 1
 
 PATH="$BIN_DIR:$PATH"
 export PATH
@@ -94,6 +119,13 @@ mismatch_rc=$?
 assert_rc "same-tree normalized mismatch blocks" "1" "$mismatch_rc"
 assert_contains "mismatch includes tree evidence" "produced different normalized SARIF identities" "$mismatch_output"
 assert_contains "mismatch includes normalized URI difference" $'+qlty:similar-code\tb.sh' "$mismatch_output"
+
+QLTY_STUB_MODE=head-fail
+export QLTY_STUB_MODE
+head_failure_output=$(cd "$REPO" && "$HELPER" --base HEAD --head HEAD 2>&1)
+head_failure_rc=$?
+assert_rc "head scan failure stops before SARIF parsing" "2" "$head_failure_rc"
+assert_contains "head scan failure identifies the failed ref" "failed to scan head" "$head_failure_output"
 
 QLTY_STUB_MODE=base-fail
 export QLTY_STUB_MODE

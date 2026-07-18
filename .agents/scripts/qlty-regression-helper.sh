@@ -448,7 +448,9 @@ else
 fi
 
 log "scanning head ($HEAD_SHA)"
-run_qlty_sarif "$HEAD_SCAN_DIR" "$_head_sarif" "$HEAD_SCAN_MODE"
+if ! run_qlty_sarif "$HEAD_SCAN_DIR" "$_head_sarif" "$HEAD_SCAN_MODE"; then
+	die "failed to scan head ($HEAD_SHA)"
+fi
 emit_scan_metadata "head" "$HEAD_SCAN_DIR" "$_head_sarif" "$HEAD_SCAN_MODE"
 
 if [ "$BASE_SCAN_FAILED" -eq 1 ]; then
