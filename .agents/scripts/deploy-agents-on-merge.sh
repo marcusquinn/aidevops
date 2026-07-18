@@ -587,90 +587,68 @@ deploy_changed_files() {
 	return 0
 }
 
-main() {
-	parse_args "$@" || return 1
-	validate_repo || return 1
-	validate_stable_target || return 1
-	collect_plugin_namespaces || return 1
+_run_full_deploy() {
+	local full_exit=0
 
-	# Full deploy: delegate to setup.sh
-	if [[ "$FULL_DEPLOY" == "true" ]]; then
-		log_info "Running full deploy via setup.sh --non-interactive..."
-		if [[ "$DRY_RUN" == "true" ]]; then
-			log_info "[dry-run] Would run: AIDEVOPS_NON_INTERACTIVE=true $REPO_DIR/setup.sh --non-interactive"
-			return 0
-		fi
-		env -u AIDEVOPS_AGENTS_DIR -u AGENTS_DIR \
-			AIDEVOPS_NON_INTERACTIVE=true \
-			AIDEVOPS_DEPLOY_TARGET="$TARGET_DIR" \
-			bash "$REPO_DIR/setup.sh" --non-interactive
-		local _full_rc=$?
-		if [[ "$_full_rc" -eq 75 ]]; then
-			log_warn "setup.sh --non-interactive is locked by another deployment (exit 75). Re-run after the active transactional deployment completes."
-		fi
-		return "$_full_rc"
+	log_info "Running full deploy via setup.sh --non-interactive..."
+	if [[ "$DRY_RUN" == "true" ]]; then
+		log_info "[dry-run] Would run: AIDEVOPS_NON_INTERACTIVE=true $REPO_DIR/setup.sh --non-interactive"
+		return 0
 	fi
-
-	# Pull latest (only if on main)
-	pull_latest
-
-	# All mutating incremental paths converge through setup's immutable bundle
-	# staging. Keep the legacy selective functions below for dry-run planning,
-	# but never write through the active agents symlink in place.
-	if [[ "$DRY_RUN" != "true" ]]; then
-		if [[ -n "$DIFF_COMMIT" ]]; then
-			local transactional_changed=""
-			local transactional_count=0
-			local transactional_non_script_count=0
-			if ! transactional_changed=$(detect_changes "$DIFF_COMMIT"); then
-				return 1
-			fi
-			if [[ -z "$transactional_changed" ]]; then
-				log_info "No agent changes since $DIFF_COMMIT"
-				return 2
-			fi
-			transactional_count=$(printf '%s\n' "$transactional_changed" | wc -l | tr -d ' ')
-			if ! transactional_non_script_count=$(printf '%s\n' "$transactional_changed" | grep -cEv '^\.agents/scripts/'); then
-				transactional_non_script_count=0
-			fi
-			if [[ "$transactional_non_script_count" -eq 0 ]]; then
-				log_info "Only scripts changed — using fast scripts-only deploy through atomic setup"
-			else
-				log_info "Deploying $transactional_count changed agent files through atomic setup"
-			fi
-		fi
-		run_transactional_incremental_deploy
-		return $?
+	env -u AIDEVOPS_AGENTS_DIR -u AGENTS_DIR \
+		AIDEVOPS_NON_INTERACTIVE=true \
+		AIDEVOPS_DEPLOY_TARGET="$TARGET_DIR" \
+		bash "$REPO_DIR/setup.sh" --non-interactive || full_exit=$?
+	if [[ "$full_exit" -eq 75 ]]; then
+		log_warn "setup.sh --non-interactive is locked by another deployment (exit 75). Re-run after the active transactional deployment completes."
 	fi
+	return "$full_exit"
+}
 
-	# Scripts-only deploy
+_validate_transactional_diff() {
+	local changed=""
+	local change_count=0
+	local non_script_count=0
+
+	changed=$(detect_changes "$DIFF_COMMIT") || return 1
+	if [[ -z "$changed" ]]; then
+		log_info "No agent changes since $DIFF_COMMIT"
+		return 2
+	fi
+	change_count=$(printf '%s\n' "$changed" | wc -l | tr -d ' ')
+	if ! non_script_count=$(printf '%s\n' "$changed" | grep -cEv '^\.agents/scripts/'); then
+		non_script_count=0
+	fi
+	if [[ "$non_script_count" -eq 0 ]]; then
+		log_info "Only scripts changed — using fast scripts-only deploy through atomic setup"
+	else
+		log_info "Deploying $change_count changed agent files through atomic setup"
+	fi
+	return 0
+}
+
+_run_dry_run_deploy() {
+	local changed=""
+	local change_count=0
+	local non_script_changes=0
+
 	if [[ "$SCRIPTS_ONLY" == "true" ]]; then
 		deploy_scripts_only
 		return $?
 	fi
 
-	# Diff-based deploy
 	if [[ -n "$DIFF_COMMIT" ]]; then
-		local changed
-		if ! changed=$(detect_changes "$DIFF_COMMIT"); then
-			return 1
-		fi
+		changed=$(detect_changes "$DIFF_COMMIT") || return 1
 		if [[ -z "$changed" ]]; then
 			log_info "No agent changes since $DIFF_COMMIT"
 			return 2
 		fi
-
-		# If many files changed, do a full agent sync instead of file-by-file
-		local change_count
 		change_count=$(echo "$changed" | wc -l | tr -d ' ')
 		if [[ "$change_count" -gt 50 ]]; then
 			log_info "Large changeset ($change_count files) — doing full agent sync"
 			deploy_all_agents
 			return $?
 		fi
-
-		# Check if only scripts changed
-		local non_script_changes
 		if ! non_script_changes=$(printf '%s\n' "$changed" | grep -cEv '^\.agents/scripts/'); then
 			non_script_changes=0
 		fi
@@ -684,17 +662,36 @@ main() {
 		return $?
 	fi
 
-	# Default: version-based detection
-	local changed
-	if ! changed=$(detect_changes ""); then
-		return 1
-	fi
+	changed=$(detect_changes "") || return 1
 	if [[ -z "$changed" ]]; then
 		return 2
 	fi
-
-	# Version mismatch detected — full agent sync
 	deploy_all_agents
+	return $?
+}
+
+main() {
+	local diff_exit=0
+
+	parse_args "$@" || return 1
+	validate_repo || return 1
+	validate_stable_target || return 1
+	collect_plugin_namespaces || return 1
+	if [[ "$FULL_DEPLOY" == "true" ]]; then
+		_run_full_deploy
+		return $?
+	fi
+
+	pull_latest
+	if [[ "$DRY_RUN" == "true" ]]; then
+		_run_dry_run_deploy
+		return $?
+	fi
+	if [[ -n "$DIFF_COMMIT" ]]; then
+		_validate_transactional_diff || diff_exit=$?
+		[[ "$diff_exit" -eq 0 ]] || return "$diff_exit"
+	fi
+	run_transactional_incremental_deploy
 	return $?
 }
 

@@ -78,39 +78,16 @@ _runtime_bundle_verify_git_blob_sha256() {
 	return 0
 }
 
-verify_aidevops_runtime_bundle_convergence() {
+_AIDEVOPS_RUNTIME_VERIFY_SOURCE_SHA=""
+_AIDEVOPS_RUNTIME_VERIFY_ACTIVE_ROOT=""
+_AIDEVOPS_RUNTIME_VERIFY_MANIFEST_VERSION=""
+_AIDEVOPS_RUNTIME_VERIFY_MANIFEST_CLI_SHA=""
+
+_runtime_bundle_verify_source() {
 	local repo_dir="$1"
 	local expected_sha="$2"
-	local active_link="${3:-${HOME}/.aidevops/agents}"
-	local stamp_file="${4:-${HOME}/.aidevops/.deployed-sha}"
 	local source_sha=""
 	local resolved_expected_sha=""
-	local active_root=""
-	local bundles_root=""
-	local active_bundle_dir=""
-	local active_bundle_id=""
-	local manifest_file=""
-	local manifest_status=""
-	local manifest_bundle_id=""
-	local manifest_version=""
-	local manifest_sha=""
-	local manifest_cli_sha=""
-	local repo_version=""
-	local active_version=""
-	local deployed_sha=""
-	local expected_short=""
-	local sentinel_pair=""
-	local source_rel=""
-	local active_rel=""
-	local source_hash=""
-	local active_hash=""
-	local -a sentinel_pairs=(
-		"aidevops.sh|aidevops.sh"
-		".agents/scripts/version-manager-release.sh|scripts/version-manager-release.sh"
-		".agents/scripts/deploy-agents-on-merge.sh|scripts/deploy-agents-on-merge.sh"
-		".agents/scripts/runtime-bundle-verifier.sh|scripts/runtime-bundle-verifier.sh"
-		".agents/scripts/setup/modules/agent-deploy.sh|scripts/setup/modules/agent-deploy.sh"
-	)
 
 	if [[ -z "$repo_dir" || ! -d "$repo_dir" ]]; then
 		_runtime_bundle_verify_emit_error "Runtime bundle convergence failed: source checkout is unavailable"
@@ -128,6 +105,14 @@ verify_aidevops_runtime_bundle_convergence() {
 		_runtime_bundle_verify_emit_error "Runtime bundle convergence failed: source checkout HEAD ${source_sha:0:12} does not match release commit ${resolved_expected_sha:0:12}"
 		return 1
 	fi
+	_AIDEVOPS_RUNTIME_VERIFY_SOURCE_SHA="$resolved_expected_sha"
+	return 0
+}
+
+_runtime_bundle_verify_active_link() {
+	local active_link="$1"
+	local active_root=""
+	local bundles_root=""
 
 	if [[ ! -L "$active_link" ]]; then
 		_runtime_bundle_verify_emit_error "Runtime bundle convergence failed: active agents path is not an atomic activation symlink"
@@ -148,10 +133,24 @@ verify_aidevops_runtime_bundle_convergence() {
 		return 1
 		;;
 	esac
+	_AIDEVOPS_RUNTIME_VERIFY_ACTIVE_ROOT="$active_root"
+	return 0
+}
 
-	active_bundle_dir="${active_root%/agents}"
+_runtime_bundle_verify_manifest() {
+	local active_root="$1"
+	local expected_sha="$2"
+	local active_bundle_dir="${active_root%/agents}"
+	local active_bundle_id=""
+	local manifest_file="$active_root/.bundle-manifest"
+	local manifest_status=""
+	local manifest_bundle_id=""
+	local manifest_version=""
+	local manifest_sha=""
+	local manifest_cli_sha=""
+	local expected_short="${expected_sha:0:12}"
+
 	active_bundle_id="${active_bundle_dir##*/}"
-	manifest_file="$active_root/.bundle-manifest"
 	if [[ ! -r "$manifest_file" ]]; then
 		_runtime_bundle_verify_emit_error "Runtime bundle convergence failed: active bundle manifest is missing"
 		return 1
@@ -161,7 +160,6 @@ verify_aidevops_runtime_bundle_convergence() {
 	manifest_version=$(_runtime_bundle_verify_manifest_value "$manifest_file" framework_version 2>/dev/null) || manifest_version=""
 	manifest_sha=$(_runtime_bundle_verify_manifest_value "$manifest_file" git_sha 2>/dev/null) || manifest_sha=""
 	manifest_cli_sha=$(_runtime_bundle_verify_manifest_value "$manifest_file" cli_sha256 2>/dev/null) || manifest_cli_sha=""
-
 	if [[ "$manifest_status" != "validated" ]]; then
 		_runtime_bundle_verify_emit_error "Runtime bundle convergence failed: active bundle manifest status is ${manifest_status:-missing}, expected validated"
 		return 1
@@ -170,7 +168,6 @@ verify_aidevops_runtime_bundle_convergence() {
 		_runtime_bundle_verify_emit_error "Runtime bundle convergence failed: active realpath bundle ID ${active_bundle_id:-missing} does not match manifest bundle ID ${manifest_bundle_id:-missing}"
 		return 1
 	fi
-	expected_short="${resolved_expected_sha:0:12}"
 	case "$active_bundle_id" in
 	*-"$expected_short"-*) ;;
 	*)
@@ -178,31 +175,64 @@ verify_aidevops_runtime_bundle_convergence() {
 		return 1
 		;;
 	esac
+	if [[ "$manifest_sha" != "$expected_sha" ]]; then
+		_runtime_bundle_verify_emit_error "Runtime bundle convergence failed: manifest SHA ${manifest_sha:-missing} does not match release commit $expected_sha"
+		return 1
+	fi
+	_AIDEVOPS_RUNTIME_VERIFY_MANIFEST_VERSION="$manifest_version"
+	_AIDEVOPS_RUNTIME_VERIFY_MANIFEST_CLI_SHA="$manifest_cli_sha"
+	return 0
+}
 
-	repo_version=$(git -C "$repo_dir" show "${resolved_expected_sha}:VERSION" 2>/dev/null) || repo_version=""
+_runtime_bundle_verify_version_and_stamp() {
+	local repo_dir="$1"
+	local expected_sha="$2"
+	local active_root="$3"
+	local stamp_file="$4"
+	local repo_version=""
+	local active_version=""
+	local deployed_sha=""
+
+	repo_version=$(git -C "$repo_dir" show "${expected_sha}:VERSION" 2>/dev/null) || repo_version=""
 	if [[ -r "$active_root/VERSION" ]]; then
 		IFS= read -r active_version <"$active_root/VERSION" || active_version=""
 	fi
-	if [[ -z "$repo_version" || "$repo_version" != "$active_version" || "$repo_version" != "$manifest_version" ]]; then
-		_runtime_bundle_verify_emit_error "Runtime bundle convergence failed: source version=${repo_version:-missing}, active version=${active_version:-missing}, manifest version=${manifest_version:-missing}"
-		return 1
-	fi
-	if [[ "$manifest_sha" != "$resolved_expected_sha" ]]; then
-		_runtime_bundle_verify_emit_error "Runtime bundle convergence failed: manifest SHA ${manifest_sha:-missing} does not match release commit $resolved_expected_sha"
+	if [[ -z "$repo_version" || "$repo_version" != "$active_version" || "$repo_version" != "$_AIDEVOPS_RUNTIME_VERIFY_MANIFEST_VERSION" ]]; then
+		_runtime_bundle_verify_emit_error "Runtime bundle convergence failed: source version=${repo_version:-missing}, active version=${active_version:-missing}, manifest version=${_AIDEVOPS_RUNTIME_VERIFY_MANIFEST_VERSION:-missing}"
 		return 1
 	fi
 	if [[ -r "$stamp_file" ]]; then
 		deployed_sha=$(tr -d '[:space:]' <"$stamp_file" 2>/dev/null) || deployed_sha=""
 	fi
-	if [[ "$deployed_sha" != "$resolved_expected_sha" ]]; then
-		_runtime_bundle_verify_emit_error "Runtime bundle convergence failed: deployed SHA ${deployed_sha:-missing} does not match release commit $resolved_expected_sha"
+	if [[ "$deployed_sha" != "$expected_sha" ]]; then
+		_runtime_bundle_verify_emit_error "Runtime bundle convergence failed: deployed SHA ${deployed_sha:-missing} does not match release commit $expected_sha"
 		return 1
 	fi
+	return 0
+}
+
+_runtime_bundle_verify_sentinels() {
+	local repo_dir="$1"
+	local expected_sha="$2"
+	local active_root="$3"
+	local expected_short="${expected_sha:0:12}"
+	local sentinel_pair=""
+	local source_rel=""
+	local active_rel=""
+	local source_hash=""
+	local active_hash=""
+	local -a sentinel_pairs=(
+		"aidevops.sh|aidevops.sh"
+		".agents/scripts/version-manager-release.sh|scripts/version-manager-release.sh"
+		".agents/scripts/deploy-agents-on-merge.sh|scripts/deploy-agents-on-merge.sh"
+		".agents/scripts/runtime-bundle-verifier.sh|scripts/runtime-bundle-verifier.sh"
+		".agents/scripts/setup/modules/agent-deploy.sh|scripts/setup/modules/agent-deploy.sh"
+	)
 
 	for sentinel_pair in "${sentinel_pairs[@]}"; do
 		source_rel="${sentinel_pair%%|*}"
 		active_rel="${sentinel_pair#*|}"
-		source_hash=$(_runtime_bundle_verify_git_blob_sha256 "$repo_dir" "$resolved_expected_sha" "$source_rel" 2>/dev/null) || {
+		source_hash=$(_runtime_bundle_verify_git_blob_sha256 "$repo_dir" "$expected_sha" "$source_rel" 2>/dev/null) || {
 			_runtime_bundle_verify_emit_error "Runtime bundle convergence failed: release commit sentinel $source_rel cannot be hashed"
 			return 1
 		}
@@ -214,11 +244,38 @@ verify_aidevops_runtime_bundle_convergence() {
 			_runtime_bundle_verify_emit_error "Runtime bundle convergence failed: active sentinel $active_rel does not match release commit $expected_short"
 			return 1
 		fi
-		if [[ "$source_rel" == "aidevops.sh" && "$manifest_cli_sha" != "$active_hash" ]]; then
+		if [[ "$source_rel" == "aidevops.sh" && "$_AIDEVOPS_RUNTIME_VERIFY_MANIFEST_CLI_SHA" != "$active_hash" ]]; then
 			_runtime_bundle_verify_emit_error "Runtime bundle convergence failed: manifest CLI hash does not match the active release sentinel"
 			return 1
 		fi
 	done
 
+	return 0
+}
+
+verify_aidevops_runtime_bundle_convergence() {
+	local repo_dir="$1"
+	local expected_sha="$2"
+	local active_link="${3:-${HOME}/.aidevops/agents}"
+	local stamp_file="${4:-${HOME}/.aidevops/.deployed-sha}"
+
+	_AIDEVOPS_RUNTIME_VERIFY_SOURCE_SHA=""
+	_AIDEVOPS_RUNTIME_VERIFY_ACTIVE_ROOT=""
+	_AIDEVOPS_RUNTIME_VERIFY_MANIFEST_VERSION=""
+	_AIDEVOPS_RUNTIME_VERIFY_MANIFEST_CLI_SHA=""
+	_runtime_bundle_verify_source "$repo_dir" "$expected_sha" || return 1
+	_runtime_bundle_verify_active_link "$active_link" || return 1
+	_runtime_bundle_verify_manifest \
+		"$_AIDEVOPS_RUNTIME_VERIFY_ACTIVE_ROOT" \
+		"$_AIDEVOPS_RUNTIME_VERIFY_SOURCE_SHA" || return 1
+	_runtime_bundle_verify_version_and_stamp \
+		"$repo_dir" \
+		"$_AIDEVOPS_RUNTIME_VERIFY_SOURCE_SHA" \
+		"$_AIDEVOPS_RUNTIME_VERIFY_ACTIVE_ROOT" \
+		"$stamp_file" || return 1
+	_runtime_bundle_verify_sentinels \
+		"$repo_dir" \
+		"$_AIDEVOPS_RUNTIME_VERIFY_SOURCE_SHA" \
+		"$_AIDEVOPS_RUNTIME_VERIFY_ACTIVE_ROOT" || return 1
 	return 0
 }
