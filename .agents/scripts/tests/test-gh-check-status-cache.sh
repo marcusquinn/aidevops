@@ -27,6 +27,9 @@ API_CALLS="${TEST_ROOT}/api-calls.log"
 CHECK_NOW=100
 CHECK_API_MODE=success
 CHECK_API_DELAY=0
+CHECK_API_FIXTURE_FILE=""
+CHECK_API_WAIT_FILE=""
+CHECK_API_RELEASE_FILE=""
 CHECK_SUITES_FIXTURE='{"check_suites":[{"status":"completed","conclusion":"success"}]}'
 
 SHA_A="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
@@ -37,6 +40,8 @@ SHA_E="eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
 SHA_F="ffffffffffffffffffffffffffffffffffffffff"
 SHA_G="1111111111111111111111111111111111111111"
 SHA_H="2222222222222222222222222222222222222222"
+SHA_I="3333333333333333333333333333333333333333"
+SHA_J="4444444444444444444444444444444444444444"
 
 # shellcheck source=../shared-gh-wrappers-checks.sh
 source "$CHECKS_LIB"
@@ -59,6 +64,16 @@ _gh_checks_api_read() {
 	local endpoint="$1"
 	shift
 	printf '%s\n' "$endpoint" >>"$API_CALLS"
+	local fixture="$CHECK_SUITES_FIXTURE"
+	if [[ -n "$CHECK_API_FIXTURE_FILE" && -f "$CHECK_API_FIXTURE_FILE" ]]; then
+		fixture=$(<"$CHECK_API_FIXTURE_FILE")
+	fi
+	if [[ -n "$CHECK_API_WAIT_FILE" && ! -e "$CHECK_API_RELEASE_FILE" ]]; then
+		printf 'waiting\n' >"$CHECK_API_WAIT_FILE"
+		while [[ ! -e "$CHECK_API_RELEASE_FILE" ]]; do
+			sleep 0.01
+		done
+	fi
 	[[ "$CHECK_API_DELAY" == "0" ]] || sleep "$CHECK_API_DELAY"
 
 	case "$CHECK_API_MODE" in
@@ -86,7 +101,18 @@ _gh_checks_api_read() {
 		fi
 	done
 	[[ -n "$jq_filter" ]] || return 1
-	printf '%s\n' "$CHECK_SUITES_FIXTURE" | jq -r "$jq_filter"
+	printf '%s\n' "$fixture" | jq -r "$jq_filter"
+	return $?
+}
+
+wait_for_file() {
+	local path="$1"
+	local attempts=0
+	while [[ ! -s "$path" && "$attempts" -lt 200 ]]; do
+		sleep 0.01
+		attempts=$((attempts + 1))
+	done
+	[[ -s "$path" ]]
 	return $?
 }
 
@@ -326,12 +352,91 @@ test_private_atomic_cache_and_authority_boundary() {
 	return 0
 }
 
+test_invalidation_fences_inflight_publication() {
+	local fixture_file="${TEST_ROOT}/race-fixture.json"
+	local wait_file="${TEST_ROOT}/race-waiting"
+	local release_file="${TEST_ROOT}/race-release"
+	local output_file="${TEST_ROOT}/race-output"
+	local before="" after="" expected="" worker_pid=0 path=""
+	local current_generation="" stored_generation="" result=""
+	CHECK_NOW=900
+	CHECK_API_MODE=success
+	printf '%s\n' '{"check_suites":[{"status":"completed","conclusion":"success"}]}' >"$fixture_file"
+	CHECK_API_FIXTURE_FILE="$fixture_file"
+	CHECK_API_WAIT_FILE="$wait_file"
+	CHECK_API_RELEASE_FILE="$release_file"
+	gh_pr_check_status_cache_invalidate "owner/repo" "$SHA_I"
+	before=$(api_call_count)
+	(gh_pr_check_status_rest "owner/repo" "$SHA_I" >"$output_file") &
+	worker_pid=$!
+	wait_for_file "$wait_file"
+	printf '%s\n' '{"check_suites":[{"status":"completed","conclusion":"failure"}]}' >"$fixture_file"
+	gh_pr_check_status_cache_invalidate "owner/repo" "$SHA_I"
+	printf 'release\n' >"$release_file"
+	wait "$worker_pid"
+	result=$(tr -d '\n' <"$output_file")
+	assert_eq "invalidation fences an in-flight stale publication" "FAIL" "$result"
+	after=$(api_call_count)
+	expected=$((before + 2))
+	assert_eq "fenced publication retries with one fresh transport" "$expected" "$after"
+	path=$(cache_path "owner/repo" "$SHA_I")
+	current_generation=$(_gh_pr_check_status_invalidation_generation "owner/repo" "$SHA_I")
+	stored_generation=$(jq -r '.invalidation_generation' "$path")
+	assert_eq "refreshed cache stores the current invalidation generation" \
+		"$current_generation" "$stored_generation"
+	result=$(gh_pr_check_status_rest "owner/repo" "$SHA_I")
+	assert_eq "post-invalidation reader reuses only the fresh observation" "FAIL" "$result"
+	assert_eq "fresh post-invalidation read is transport-free" "$after" "$(api_call_count)"
+
+	CHECK_API_FIXTURE_FILE=""
+	CHECK_API_WAIT_FILE=""
+	CHECK_API_RELEASE_FILE=""
+	export AIDEVOPS_GH_CHECK_STATUS_CACHE_DISABLE=1
+	CHECK_SUITES_FIXTURE='{"check_suites":[{"status":"completed","conclusion":"success"}]}'
+	result=$(gh_pr_check_status_rest "owner/repo" "$SHA_I")
+	assert_eq "disabled cache still returns the live aggregate observation" "PASS" "$result"
+	unset AIDEVOPS_GH_CHECK_STATUS_CACHE_DISABLE
+	return 0
+}
+
+test_invalidation_fences_all_auth_scopes() {
+	local before="" after="" expected="" result=""
+	CHECK_NOW=1000
+	CHECK_API_MODE=success
+	CHECK_SUITES_FIXTURE='{"check_suites":[{"status":"completed","conclusion":"success"}]}'
+	before=$(api_call_count)
+	AIDEVOPS_GH_AUTH_PRINCIPAL=default
+	result=$(gh_pr_check_status_rest "owner/repo" "$SHA_J")
+	assert_eq "default auth scope seeds a terminal check observation" "PASS" "$result"
+	AIDEVOPS_GH_AUTH_PRINCIPAL=alternate
+	CHECK_SUITES_FIXTURE='{"check_suites":[{"status":"completed","conclusion":"failure"}]}'
+	result=$(gh_pr_check_status_rest "owner/repo" "$SHA_J")
+	assert_eq "alternate auth scope retains an isolated cache entry" "FAIL" "$result"
+	after=$(api_call_count)
+	expected=$((before + 2))
+	assert_eq "two auth scopes perform two initial transports" "$expected" "$after"
+
+	AIDEVOPS_GH_AUTH_PRINCIPAL=default
+	gh_pr_check_status_cache_invalidate "owner/repo" "$SHA_J"
+	AIDEVOPS_GH_AUTH_PRINCIPAL=alternate
+	CHECK_SUITES_FIXTURE='{"check_suites":[{"status":"completed","conclusion":"success"}]}'
+	result=$(gh_pr_check_status_rest "owner/repo" "$SHA_J")
+	assert_eq "default-scope invalidation fences the alternate scope" "PASS" "$result"
+	after=$(api_call_count)
+	expected=$((expected + 1))
+	assert_eq "alternate scope refreshes after shared invalidation" "$expected" "$after"
+	AIDEVOPS_GH_AUTH_PRINCIPAL=default
+	return 0
+}
+
 main() {
 	test_terminal_reuse_dedup_and_order
 	test_new_head_repo_and_auth_scope_miss
 	test_actionable_and_terminal_expiry
 	test_corruption_failure_and_invalidation
 	test_private_atomic_cache_and_authority_boundary
+	test_invalidation_fences_inflight_publication
+	test_invalidation_fences_all_auth_scopes
 	printf 'PASS: PR check-status cache regression suite\n'
 	return 0
 }
