@@ -910,6 +910,12 @@ _dlw_restore_worktree_deps() {
 _dlw_prepare_existing_worktree() {
 	local existing_path="$1"
 	local repo_path="$2"
+	local preserve_owner_state="${3:-0}"
+	if [[ "$preserve_owner_state" == "1" ]]; then
+		echo "[dispatch_with_dedup] Preserving reused worktree until its expected continuation owner transfers: ${existing_path}" >>"$LOGFILE"
+		return 0
+	fi
+
 	local existing_status=""
 	existing_status=$(git -C "$existing_path" status --porcelain 2>/dev/null || true)
 	if [[ -n "$existing_status" ]]; then
@@ -919,11 +925,23 @@ _dlw_prepare_existing_worktree() {
 		return 0
 	fi
 
-	# Clean retries restart from the latest default branch.
+	local main_branch=""
+	main_branch=$(git -C "$repo_path" symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's|refs/remotes/origin/||' || true)
+	main_branch="${main_branch:-main}"
+	local ahead_count=""
+	ahead_count=$(git -C "$existing_path" rev-list --count "origin/${main_branch}..HEAD" 2>/dev/null || true)
+	if [[ ! "$ahead_count" =~ ^[0-9]+$ ]]; then
+		echo "[dispatch_with_dedup] Preserving existing worktree because ahead state is unverified: ${existing_path}" >>"$LOGFILE"
+		return 0
+	fi
+	if [[ "$ahead_count" -gt 0 ]]; then
+		echo "[dispatch_with_dedup] Preserving ahead existing worktree for same-runner resume: ${existing_path} (ahead=${ahead_count})" >>"$LOGFILE"
+		return 0
+	fi
+
+	# Only clean, verified zero-ahead retries restart from the default branch.
 	git -C "$existing_path" checkout -- . 2>/dev/null || true
 	git -C "$existing_path" clean -fd 2>/dev/null || true
-	local main_branch=""
-	main_branch=$(git -C "$repo_path" symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's|refs/remotes/origin/||') || main_branch="main"
 	git -C "$existing_path" reset --hard "origin/${main_branch}" 2>/dev/null || true
 	return 0
 }
@@ -985,12 +1003,13 @@ _dlw_precreate_worktree() {
 	done < <(git -C "$repo_path" worktree list 2>/dev/null)
 
 	if [[ -n "$_existing_path" ]]; then
-		_dlw_prepare_existing_worktree "$_existing_path" "$repo_path"
 		_DLW_WORKTREE_PATH="$_existing_path"
 		_DLW_WORKTREE_BRANCH="$_existing_branch"
 		_DLW_WORKTREE_REUSED=1
-		if ! _dlw_capture_reused_worktree_owner "$issue_number" "$_DLW_WORKTREE_PATH" && \
-			declare -F register_worktree >/dev/null 2>&1; then
+		local _has_continuation_owner=0
+		_dlw_capture_reused_worktree_owner "$issue_number" "$_DLW_WORKTREE_PATH" && _has_continuation_owner=1
+		_dlw_prepare_existing_worktree "$_existing_path" "$repo_path" "$_has_continuation_owner"
+		if [[ "$_has_continuation_owner" -eq 0 ]] && declare -F register_worktree >/dev/null 2>&1; then
 			register_worktree "$_DLW_WORKTREE_PATH" "$_DLW_WORKTREE_BRANCH" \
 				--task "$issue_number" \
 				--session "$_precreate_session" 2>/dev/null || true
