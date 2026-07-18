@@ -151,4 +151,12 @@ The repository root is a public contract, not a scratch space. New top-level fil
 
 Run `.agents/scripts/repo-layout-audit-helper.sh --check` to audit tracked top-level drift. The audit is non-destructive: it reports unknown paths and recommends likely homes, but never moves files.
 
+## Storage Lifecycle
+
+Framework storage ownership, safety classes, convergence rules, and the
+read-only reporting contract are defined in
+`reference/storage-lifecycle.md`. Store-specific cleanup must preserve that
+contract and fail closed when ownership or active-reference evidence is
+unavailable.
+
 **Ingested skills** retain the `-skill` suffix as a provenance marker for automated upstream update checks. On ingestion, upstream structure is transposed to `{name}-skill.md` + `{name}-skill/`. See `tools/build-agent/add-skill.md`.

@@ -738,53 +738,107 @@ _runtime_bundle_switch_link() {
 	return 0
 }
 
+_runtime_bundle_size_bytes() {
+	local bundle_dir="$1"
+	local size_kib=""
+	size_kib=$(LC_ALL=C du -sk "$bundle_dir" 2>/dev/null | cut -f1) || return 1
+	case "$size_kib" in
+	'' | *[!0-9]*) return 1 ;;
+	esac
+	printf '%s' "$((size_kib * 1024))"
+	return 0
+}
+
+_runtime_bundle_has_live_lease() {
+	local lease_dir="$1"
+	local lease_file=""
+	local lease_pid=""
+	local has_live_lease=false
+	[[ -d "$lease_dir" ]] || return 1
+	for lease_file in "$lease_dir"/*; do
+		[[ -f "$lease_file" ]] || continue
+		lease_pid="${lease_file##*/}"
+		case "$lease_pid" in
+		'' | *[!0-9]*) rm -f "$lease_file" ;;
+		*)
+			if kill -0 "$lease_pid" 2>/dev/null; then
+				has_live_lease=true
+			else
+				rm -f "$lease_file"
+			fi
+			;;
+		esac
+	done
+	rmdir "$lease_dir" 2>/dev/null || true
+	[[ "$has_live_lease" == "true" ]]
+}
+
+_runtime_bundle_numeric_limit() {
+	local value="$1"
+	local fallback="$2"
+	case "$value" in
+	'' | *[!0-9]*) printf '%s' "$fallback" ;;
+	*) printf '%s' "$value" ;;
+	esac
+	return 0
+}
+
 _runtime_bundle_prune() {
 	local bundles_dir="$1"
 	local active_root="$2"
 	local previous_root="$3"
 	local candidate_dir=""
+	local candidate_agents_root=""
 	local bundle_id=""
-	local lease_dir=""
-	local lease_file=""
-	local lease_pid=""
-	local has_live_lease=false
-	local retention_seconds="${AIDEVOPS_RUNTIME_BUNDLE_RETENTION_SECONDS:-2592000}"
+	local retention_seconds=""
+	local max_count=""
+	local max_bytes=""
 	local now=""
 	local modified=""
+	local bundle_bytes=""
+	local candidate_rows=""
+	local total_count=0
+	local total_bytes=0
+	local bytes_known=1
+	local should_remove=0
 
-	case "$retention_seconds" in
-	'' | *[!0-9]*) retention_seconds=2592000 ;;
-	esac
+	retention_seconds=$(_runtime_bundle_numeric_limit "${AIDEVOPS_RUNTIME_BUNDLE_RETENTION_SECONDS:-2592000}" 2592000)
+	max_count=$(_runtime_bundle_numeric_limit "${AIDEVOPS_RUNTIME_BUNDLE_MAX_COUNT:-30}" 30)
+	max_bytes=$(_runtime_bundle_numeric_limit "${AIDEVOPS_RUNTIME_BUNDLE_MAX_BYTES:-8589934592}" 8589934592)
 	now=$(date +%s) || return 1
 
 	for candidate_dir in "$bundles_dir"/*; do
 		[[ -d "$candidate_dir/agents" ]] || continue
-		[[ "$candidate_dir/agents" == "$active_root" || "$candidate_dir/agents" == "$previous_root" ]] && continue
-		bundle_id="${candidate_dir##*/}"
-		lease_dir="$bundles_dir/.leases/$bundle_id"
-		has_live_lease=false
-		if [[ -d "$lease_dir" ]]; then
-			for lease_file in "$lease_dir"/*; do
-				[[ -f "$lease_file" ]] || continue
-				lease_pid="${lease_file##*/}"
-				case "$lease_pid" in
-				'' | *[!0-9]*) rm -f "$lease_file" ;;
-				*)
-					if kill -0 "$lease_pid" 2>/dev/null; then
-						has_live_lease=true
-					else
-						rm -f "$lease_file"
-					fi
-					;;
-				esac
-			done
-			rmdir "$lease_dir" 2>/dev/null || true
+		candidate_agents_root=$(cd "$candidate_dir/agents" 2>/dev/null && pwd -P) || continue
+		total_count=$((total_count + 1))
+		if bundle_bytes=$(_runtime_bundle_size_bytes "$candidate_dir"); then
+			total_bytes=$((total_bytes + bundle_bytes))
+		else
+			bundle_bytes=0
+			bytes_known=0
 		fi
-		[[ "$has_live_lease" == "true" ]] && continue
+		[[ "$candidate_agents_root" == "$active_root" || "$candidate_agents_root" == "$previous_root" ]] && continue
+		bundle_id="${candidate_dir##*/}"
+		if _runtime_bundle_has_live_lease "$bundles_dir/.leases/$bundle_id"; then
+			continue
+		fi
 		modified=$(_file_mtime_epoch "$candidate_dir")
-		[[ $((now - modified)) -lt "$retention_seconds" ]] && continue
-		rm -rf "$candidate_dir"
+		candidate_rows+="${modified}"$'\t'"${bundle_bytes}"$'\t'"${candidate_dir}"$'\n'
 	done
+
+	while IFS=$'\t' read -r modified bundle_bytes candidate_dir; do
+		[[ -n "$candidate_dir" ]] || continue
+		should_remove=0
+		if [[ $((now - modified)) -ge "$retention_seconds" ]] || [[ "$total_count" -gt "$max_count" ]]; then
+			should_remove=1
+		elif [[ "$bytes_known" -eq 1 && "$total_bytes" -gt "$max_bytes" ]]; then
+			should_remove=1
+		fi
+		[[ "$should_remove" -eq 1 ]] || continue
+		rm -rf "$candidate_dir" || return 1
+		total_count=$((total_count - 1))
+		total_bytes=$((total_bytes - bundle_bytes))
+	done < <(printf '%s' "$candidate_rows" | LC_ALL=C sort -n -k1,1)
 	rmdir "$bundles_dir/.leases" 2>/dev/null || true
 	return 0
 }

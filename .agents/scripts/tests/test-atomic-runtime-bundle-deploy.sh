@@ -223,6 +223,67 @@ test_stale_lease_and_old_bundle_are_pruned() {
 	return 0
 }
 
+test_count_and_byte_pressure_preserve_protected_bundles() {
+	local target_dir="$HOME/.aidevops/agents"
+	local bundles_dir="$HOME/.aidevops/runtime-bundles"
+	local previous_bundle="$bundles_dir/pressure-previous"
+	local active_root=""
+	local previous_root=""
+	local live_bundle="$bundles_dir/pressure-live"
+	local before_checksum=""
+	local after_checksum=""
+	active_root=$(_runtime_bundle_resolve_root "$target_dir")
+	mkdir -p "$previous_bundle/agents/scripts"
+	printf '#!/usr/bin/env bash\n' >"$previous_bundle/agents/scripts/helper.sh"
+	previous_root=$(cd "$previous_bundle/agents" && pwd -P)
+	rm -f "$HOME/.aidevops/previous-runtime-bundle"
+	ln -s "$previous_root" "$HOME/.aidevops/previous-runtime-bundle"
+	mkdir -p "$live_bundle/agents" "$bundles_dir/.leases/pressure-live"
+	printf 'live\n' >"$live_bundle/agents/marker"
+	printf '%s\n' "$live_bundle/agents" >"$bundles_dir/.leases/pressure-live/$$"
+	mkdir -p "$bundles_dir/pressure-count-a/agents" "$bundles_dir/pressure-count-b/agents"
+	printf 'candidate-a\n' >"$bundles_dir/pressure-count-a/agents/marker"
+	printf 'candidate-b\n' >"$bundles_dir/pressure-count-b/agents/marker"
+	before_checksum=$(cksum "$active_root/scripts/helper.sh" "$previous_root/scripts/helper.sh" "$live_bundle/agents/marker")
+
+	AIDEVOPS_RUNTIME_BUNDLE_RETENTION_SECONDS=999999999 \
+		AIDEVOPS_RUNTIME_BUNDLE_MAX_COUNT=3 \
+		AIDEVOPS_RUNTIME_BUNDLE_MAX_BYTES=999999999999 \
+		_runtime_bundle_prune "$bundles_dir" "$active_root" "$previous_root"
+	[[ ! -d "$bundles_dir/pressure-count-a" && ! -d "$bundles_dir/pressure-count-b" ]] || fail "count pressure did not converge unprotected bundles"
+	[[ -d "$active_root" && -d "$previous_root" && -d "$live_bundle" ]] || fail "count pressure removed a protected bundle"
+
+	mkdir -p "$bundles_dir/pressure-bytes/agents"
+	printf 'byte-pressure-candidate\n' >"$bundles_dir/pressure-bytes/agents/marker"
+	AIDEVOPS_RUNTIME_BUNDLE_RETENTION_SECONDS=999999999 \
+		AIDEVOPS_RUNTIME_BUNDLE_MAX_COUNT=999 \
+		AIDEVOPS_RUNTIME_BUNDLE_MAX_BYTES=1 \
+		_runtime_bundle_prune "$bundles_dir" "$active_root" "$previous_root"
+	[[ ! -d "$bundles_dir/pressure-bytes" ]] || fail "byte pressure did not prune the unprotected candidate"
+	after_checksum=$(cksum "$active_root/scripts/helper.sh" "$previous_root/scripts/helper.sh" "$live_bundle/agents/marker")
+	assert_eq "$before_checksum" "$after_checksum" "count and byte pressure preserve protected bundle byte identity"
+	return 0
+}
+
+test_runtime_bundle_inventory_explains_protection() {
+	local bundles_dir="$HOME/.aidevops/runtime-bundles"
+	local report_candidate="$bundles_dir/report-candidate"
+	local report=""
+	local before_checksum=""
+	local after_checksum=""
+	mkdir -p "$report_candidate/agents"
+	printf 'reclaimable-candidate\n' >"$report_candidate/agents/marker"
+	before_checksum=$(cksum "$report_candidate/agents/marker")
+	report=$(bash "$REPO_ROOT/.agents/scripts/storage-inventory-helper.sh" json)
+	after_checksum=$(cksum "$report_candidate/agents/marker")
+	assert_eq "$before_checksum" "$after_checksum" "runtime bundle inventory is read-only"
+	[[ "$(printf '%s' "$report" | jq -r '.stores[] | select(.store_id == "runtime-bundles") | .protected_bytes > 0')" == "true" ]] || fail "runtime inventory omitted protected bytes"
+	[[ "$(printf '%s' "$report" | jq -r '.stores[] | select(.store_id == "runtime-bundles") | .reclaimable_bytes > 0')" == "true" ]] || fail "runtime inventory omitted unreferenced reclaimable bytes"
+	[[ "$(printf '%s' "$report" | jq -r '.stores[] | select(.store_id == "runtime-bundles") | .unknown_bytes')" == "0" ]] || fail "runtime inventory left classified bundles unknown"
+	pass "runtime inventory explains protected and reclaimable bundle bytes"
+	return 0
+}
+
 test_macos_and_linux_link_paths() {
 	local os_name=""
 	local os_root=""
@@ -392,6 +453,8 @@ main() {
 	test_setup_rebinds_stale_process_pin_to_active_bundle
 	test_live_bundle_lease_survives_three_updates
 	test_stale_lease_and_old_bundle_are_pruned
+	test_count_and_byte_pressure_preserve_protected_bundles
+	test_runtime_bundle_inventory_explains_protection
 	test_macos_and_linux_link_paths
 	test_plugin_dependency_smoke_check
 	install_mock_plugin_dependency_hooks
