@@ -38,6 +38,8 @@ TMPDIR="${TEST_DIR}/runtime-temp"
 export TMPDIR
 
 assert_ephemeral "${TMPDIR}/nvm/bin/opencode"
+TMPDIR="${TMPDIR}/" assert_ephemeral "${TEST_DIR}/runtime-temp/nvm/bin/opencode"
+TMPDIR="/" assert_ephemeral "/opt/example/bin/opencode"
 assert_ephemeral "/tmp/nvm/bin/opencode"
 assert_ephemeral "/private/tmp/nvm/bin/opencode"
 assert_ephemeral "/var/folders/aa/bb/T/tmp.example/.nvm/bin/opencode"
