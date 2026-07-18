@@ -113,6 +113,9 @@ _KIND_PRS="prs"
 _JSON_NULL="null"
 _JSON_EMPTY_OBJ="{}"
 _JSON_EMPTY_ARR="[]"
+_JSON_TYPE_ARRAY=array
+_JSON_TYPE_BOOLEAN=boolean
+_JSON_TYPE_STRING=string
 _STATE_OPEN="open"
 _CACHE_STATE_MALFORMED="malformed"
 _CACHE_SNAPSHOT_STATE="missing"
@@ -911,7 +914,8 @@ _emit_cache_state() {
 # Subcommand: cache-path
 # =============================================================================
 _cmd_cache_path() {
-	local kind="" slug=""
+	local kind=""
+	local slug=""
 	local _args=("$@")
 	local _i=0
 	while [[ $_i -lt ${#_args[@]} ]]; do
@@ -956,7 +960,8 @@ _cmd_cache_path() {
 # Output: JSON array of items on stdout, exit 1 on miss/stale
 # =============================================================================
 _cmd_read_cache() {
-	local kind="" slug=""
+	local kind=""
+	local slug=""
 	local _args=("$@")
 	local _i=0
 	while [[ $_i -lt ${#_args[@]} ]]; do
@@ -1022,7 +1027,8 @@ _cmd_read_cache() {
 # but cannot authorize state-fingerprint hits through this stricter interface.
 # =============================================================================
 _cmd_read_snapshot() {
-	local kind="" slug=""
+	local kind=""
+	local slug=""
 	local _args=("$@")
 	local _i=0
 	while [[ $_i -lt ${#_args[@]} ]]; do
@@ -1057,25 +1063,27 @@ _cmd_read_snapshot() {
 	local envelope=""
 	envelope=$(jq -ce \
 		--arg schema "$_SNAPSHOT_SCHEMA" --arg slug "$slug" --arg kind "$kind" \
-		--arg projection "$projection" --arg auth_scope "$_BATCH_SNAPSHOT_AUTH_SCOPE" '
+		--arg projection "$projection" --arg auth_scope "$_BATCH_SNAPSHOT_AUTH_SCOPE" \
+		--arg type_array "$_JSON_TYPE_ARRAY" --arg type_boolean "$_JSON_TYPE_BOOLEAN" \
+		--arg type_string "$_JSON_TYPE_STRING" '
 		select(.schema == $schema and .repository == $slug and .collection == $kind) |
 		select(.projection == $projection and .auth_scope == $auth_scope) |
-		select((.generation | type) == "string" and (.generation | length) > 0) |
-		select((.source | type) == "string" and (.source | length) > 0) |
-		select((.fetched_at | type) == "string" and (.fetched_at | length) > 0) |
-		select((.complete | type) == "boolean" and (.items | type) == "array") |
+		select((.generation | type) == $type_string and (.generation | length) > 0) |
+		select((.source | type) == $type_string and (.source | length) > 0) |
+		select((.fetched_at | type) == $type_string and (.fetched_at | length) > 0) |
+		select((.complete | type) == $type_boolean and (.items | type) == $type_array) |
 		if $kind == "issues" then
 			select(all(.items[];
 				(.number | type) == "number" and has("title") and
-				(.state | type) == "string" and (.labels | type) == "array" and
-				has("updatedAt") and (.assignees | type) == "array")) |
+				(.state | type) == $type_string and (.labels | type) == $type_array and
+				has("updatedAt") and (.assignees | type) == $type_array)) |
 			.items = [.items[] | select((.state | ascii_downcase) == "open")]
 		else
 			select(all(.items[];
 				(.number | type) == "number" and has("title") and
-				(.labels | type) == "array" and has("updatedAt") and
-				(.assignees | type) == "array" and has("createdAt") and
-				has("author") and (.headRefOid | type) == "string" and
+				(.labels | type) == $type_array and has("updatedAt") and
+				(.assignees | type) == $type_array and has("createdAt") and
+				has("author") and (.headRefOid | type) == $type_string and
 				(.headRefOid | length) > 0 and has("headRefName")))
 		end
 	' "$_CACHE_SNAPSHOT_PATH" 2>/dev/null) || {

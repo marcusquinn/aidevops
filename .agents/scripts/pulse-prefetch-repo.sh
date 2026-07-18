@@ -156,7 +156,7 @@ _prefetch_build_cache_entry() {
 	local issues_json="$5"
 	local snapshot_complete="${6:-false}"
 	local snapshot_generation="${7:-}"
-	[[ "$snapshot_complete" == "true" ]] || snapshot_complete=false
+	[[ "$snapshot_complete" == "$_PREFETCH_BOOL_TRUE" ]] || snapshot_complete=false
 
 	[[ -n "$prs_json" && "$prs_json" != "$_PREFETCH_JSON_NULL" ]] || prs_json="[]"
 	[[ -n "$issues_json" && "$issues_json" != "$_PREFETCH_JSON_NULL" ]] || issues_json="[]"
@@ -294,7 +294,7 @@ _prefetch_single_repo_cache_decision() {
 
 	PREFETCH_CACHE_HIT="false"
 	if _prefetch_detect_cache_hit "$slug" "$cache_entry" "$issues_snapshot" "$prs_snapshot"; then
-		PREFETCH_CACHE_HIT="true"
+		PREFETCH_CACHE_HIT="$_PREFETCH_BOOL_TRUE"
 		echo "[pulse-wrapper] _prefetch_single_repo: STATE CACHE HIT for ${slug} (fingerprint=${PREFETCH_CURRENT_FINGERPRINT})" >>"$LOGFILE"
 	fi
 	if [[ "$PREFETCH_CACHE_HIT" == "$_PREFETCH_BOOL_TRUE" ]] && echo "$cache_entry" | _prefetch_cache_entry_issues_lack_state; then
@@ -354,7 +354,7 @@ _prefetch_single_repo_update_cache() {
 	local fingerprint="${PREFETCH_CURRENT_FINGERPRINT:-}"
 	local new_entry last_full_sweep
 	last_full_sweep=$(printf '%s\n' "$cache_entry" | jq -r '.last_full_sweep // ""') || last_full_sweep=""
-	if [[ "$sweep_mode" == "$_PREFETCH_ISSUE_SWEEP_FULL" && "$snapshot_complete" == "true" ]]; then
+	if [[ "$sweep_mode" == "$_PREFETCH_ISSUE_SWEEP_FULL" && "$snapshot_complete" == "$_PREFETCH_BOOL_TRUE" ]]; then
 		last_full_sweep="$now_iso"
 	fi
 	new_entry=$(_prefetch_build_cache_entry \
