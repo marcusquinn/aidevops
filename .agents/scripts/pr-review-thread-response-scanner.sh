@@ -1019,6 +1019,10 @@ Thread preview: ${safe_preview}
 
 Verification context:
 - Prefer focused tests/lint for changed files.
+- Do not use shell redirection syntax in Bash commands (less-than, greater-than,
+  append, here-string, or descriptor redirects such as 2>&1); the sandbox
+  command policy rejects it. Use direct command output, supported pipelines,
+  gh --jq, and file tools for persisted content.
 - Preserve existing PR scope and provenance labels.
 - Keep comments concise and cite files/commands as evidence.
 - Completion requires each verified-addressed thread to be resolved with

@@ -1669,16 +1669,10 @@ _cmd_run_finish() {
 		_HRW_TERMINAL_OUTCOME="$_HRW_TELEMETRY_DEFERRED"
 	elif [[ "$ledger_status" == "$_HRW_STATUS_PERMISSION_REQUIRED" ]]; then
 		if ! _hrw_finish_permission_required_run "$session_key" "$work_dir"; then
-			_hrw_record_terminal_outcome "$session_key" "$_HRW_TERMINAL_OUTCOME" \
-				"$_HRW_FINAL_RUNTIME_CLASSIFICATION"
-			_emit_worker_runtime_event "$_HRW_FINAL_RUNTIME_EVENT" \
-				"$_HRW_FINAL_RUNTIME_STATUS" "$_HRW_FINAL_RUNTIME_CLASSIFICATION"
-			_hrw_record_reconciled_outcome "$session_key" "${_run_result_label:-$ledger_status}" \
-				"$_HRW_TERMINAL_OUTCOME" "$_HRW_FINAL_RUNTIME_STATUS" "$_HRW_FINAL_RUNTIME_CLASSIFICATION"
-			_update_dispatch_ledger "$session_key" "$_HRW_STATUS_FAIL"
-			_release_session_lock "$session_key"
-			trap - EXIT
-			return 1
+			_run_failure_reason="$_HRW_PERMISSION_PERSISTENCE_FAILED"
+			_hrw_finish_failed_run "$session_key" "$work_dir" "$external_terminal_confirmed"
+			finish_status=1
+			ledger_status="$_HRW_STATUS_FAIL"
 		fi
 	else
 		if ! _hrw_finish_success_run "$session_key" "$work_dir"; then

@@ -2739,6 +2739,84 @@ test_cmd_run_finish_rejects_unverified_post_pr_handoff() {
 	return 0
 }
 
+test_permission_finish_failure_recovers_draft_and_runs_cleanup() {
+	local result=""
+	result=$(
+		(
+			_run_result_label="permission_required"
+			_run_failure_reason=""
+			local recovery_called=0 cleanup_called=0
+			_hrw_finish_permission_required_run() {
+				_hrw_mark_failed_terminal_state "$_HRW_STATUS_FAILED" "$_HRW_PERMISSION_PERSISTENCE_FAILED"
+				return 1
+			}
+			_worker_external_terminal_complete() { return 1; }
+			_recover_worker_output_on_failure() {
+				recovery_called=1
+				_HRW_RECOVERY_CLASSIFICATION="$_HRW_REASON_DRAFT_CHECKPOINT"
+				return 0
+			}
+			_report_failure_to_fast_fail() { return 0; }
+			_hrw_record_terminal_outcome() { return 0; }
+			_emit_worker_runtime_event() { return 0; }
+			_hrw_record_reconciled_outcome() { return 0; }
+			_hrw_finish_cleanup() {
+				cleanup_called=1
+				printf "cleanup_ledger=%s\n" "$2"
+				return 0
+			}
+
+			local status=0
+			_cmd_run_finish "issue-99999" "$_HRW_STATUS_PERMISSION_REQUIRED" "${TEST_ROOT}" || status=$?
+			printf "status=%s|recovery=%s|cleanup=%s|terminal=%s|classification=%s|failure=%s\n" \
+				"$status" "$recovery_called" "$cleanup_called" "$_HRW_FINAL_RUNTIME_STATUS" \
+				"$_HRW_FINAL_RUNTIME_CLASSIFICATION" "$_run_failure_reason"
+		)
+	)
+	if [[ "$result" == *"cleanup_ledger=fail"* && \
+		"$result" == *"status=1|recovery=1|cleanup=1|terminal=escalated|classification=worker_draft_checkpoint|failure=permission_request_persistence_failed"* ]]; then
+		print_result "permission persistence failure recovers draft and runs common cleanup" 0
+	else
+		print_result "permission persistence failure recovers draft and runs common cleanup" 1 "$result"
+	fi
+	return 0
+}
+
+test_permission_finish_failure_without_output_releases_and_cleans_up() {
+	local result=""
+	result=$(
+		(
+			_run_result_label="permission_required"
+			_run_failure_reason=""
+			local recovery_called=0 cleanup_called=0 released_reason="" fast_fail_reason=""
+			_hrw_finish_permission_required_run() {
+				_hrw_mark_failed_terminal_state "$_HRW_STATUS_FAILED" "$_HRW_PERMISSION_PERSISTENCE_FAILED"
+				return 1
+			}
+			_worker_external_terminal_complete() { return 1; }
+			_recover_worker_output_on_failure() { recovery_called=1; return 1; }
+			_release_dispatch_claim() { released_reason="$2"; return 0; }
+			_report_failure_to_fast_fail() { fast_fail_reason="$2"; return 0; }
+			_hrw_record_terminal_outcome() { return 0; }
+			_emit_worker_runtime_event() { return 0; }
+			_hrw_record_reconciled_outcome() { return 0; }
+			_hrw_finish_cleanup() { cleanup_called=1; return 0; }
+
+			local status=0
+			_cmd_run_finish "issue-99999" "$_HRW_STATUS_PERMISSION_REQUIRED" "${TEST_ROOT}" || status=$?
+			printf "status=%s|recovery=%s|cleanup=%s|released=%s|fast_fail=%s|classification=%s\n" \
+				"$status" "$recovery_called" "$cleanup_called" "$released_reason" "$fast_fail_reason" \
+				"$_HRW_FINAL_RUNTIME_CLASSIFICATION"
+		)
+	)
+	if [[ "$result" == "status=1|recovery=1|cleanup=1|released=worker_failed|fast_fail=permission_request_persistence_failed|classification=permission_request_persistence_failed" ]]; then
+		print_result "permission persistence failure without output releases and cleans up" 0
+	else
+		print_result "permission persistence failure without output releases and cleans up" 1 "$result"
+	fi
+	return 0
+}
+
 test_begin_worker_runtime_run_refreshes_run_id() {
 	local first_run_id="" second_run_id=""
 	AIDEVOPS_RUN_ID="run:stale"
@@ -3714,6 +3792,33 @@ run_worker_db_persistence_tests() {
 	return 0
 }
 
+run_worker_finish_tests() {
+	test_release_dispatch_claim_ignores_non_issue_session_key_digits
+	test_cmd_run_finish_emits_noop_for_zero_output
+	test_cmd_run_finish_emits_complete_for_real_output
+	test_cmd_run_finish_appends_reconciled_attempt_outcome
+	test_cmd_run_finish_rejects_unverified_post_pr_handoff
+	test_permission_finish_failure_recovers_draft_and_runs_cleanup
+	test_permission_finish_failure_without_output_releases_and_cleans_up
+	test_begin_worker_runtime_run_refreshes_run_id
+	test_internal_opencode_retries_refresh_run_id
+	test_reconciled_outcome_persistence_retries
+	test_cmd_run_finish_emits_complete_when_no_workdir
+	test_attempt_orphan_recovery_pr_calls_gh_create
+	test_ensure_orphan_recovery_rejects_empty_branch
+	test_build_orphan_recovery_pr_body_tolerates_missing_publish_flag
+	test_cmd_run_finish_orphan_recovery_success_emits_worker_complete
+	test_cmd_run_finish_local_unpushed_pushes_and_recovers_pr
+	test_handle_worker_branch_orphan_empty_branch_issue_search_is_not_complete
+	test_cmd_run_finish_orphan_recovery_failure_emits_branch_orphan
+	test_cmd_run_finish_local_unpushed_push_failure_emits_distinct_reason
+	test_cmd_run_finish_fail_recovers_branch_orphan_output
+	test_cmd_run_finish_fail_closed_issue_without_merged_pr_fails
+	test_cmd_run_finish_fail_existing_pr_recovery_remains_complete
+	test_cmd_run_finish_fail_confirmed_terminal_state_releases_complete
+	return 0
+}
+
 main() {
 	setup_test_env
 	test_appends_escalation_contract
@@ -3783,27 +3888,7 @@ main() {
 	test_worker_produced_output_branch_no_pr_returns_branch_orphan
 	test_worker_produced_output_local_branch_no_remote_returns_local_branch_unpushed
 	test_worker_produced_output_branch_with_pr_returns_pr_exists
-	test_release_dispatch_claim_ignores_non_issue_session_key_digits
-	test_cmd_run_finish_emits_noop_for_zero_output
-	test_cmd_run_finish_emits_complete_for_real_output
-	test_cmd_run_finish_appends_reconciled_attempt_outcome
-	test_cmd_run_finish_rejects_unverified_post_pr_handoff
-	test_begin_worker_runtime_run_refreshes_run_id
-	test_internal_opencode_retries_refresh_run_id
-	test_reconciled_outcome_persistence_retries
-	test_cmd_run_finish_emits_complete_when_no_workdir
-	test_attempt_orphan_recovery_pr_calls_gh_create
-	test_ensure_orphan_recovery_rejects_empty_branch
-	test_build_orphan_recovery_pr_body_tolerates_missing_publish_flag
-	test_cmd_run_finish_orphan_recovery_success_emits_worker_complete
-	test_cmd_run_finish_local_unpushed_pushes_and_recovers_pr
-	test_handle_worker_branch_orphan_empty_branch_issue_search_is_not_complete
-	test_cmd_run_finish_orphan_recovery_failure_emits_branch_orphan
-	test_cmd_run_finish_local_unpushed_push_failure_emits_distinct_reason
-	test_cmd_run_finish_fail_recovers_branch_orphan_output
-	test_cmd_run_finish_fail_closed_issue_without_merged_pr_fails
-	test_cmd_run_finish_fail_existing_pr_recovery_remains_complete
-	test_cmd_run_finish_fail_confirmed_terminal_state_releases_complete
+	run_worker_finish_tests
 	teardown_test_env
 	printf '\nTests run: %d\n' "$TESTS_RUN"
 	printf 'Failures: %d\n' "$TESTS_FAILED"
