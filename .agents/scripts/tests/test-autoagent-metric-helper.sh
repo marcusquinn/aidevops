@@ -255,6 +255,13 @@ else
 	fail "candidate lint selection is incorrect"
 	TESTS_RUN=$((TESTS_RUN + 1))
 fi
+
+printf '%s\n' '.agents/docs/new.md' >"$GIT_CHANGED_FILE"
+: >"$GIT_UNTRACKED_FILE"
+: >"$LINT_LOG_FILE"
+run_metric lint
+assert_success "lint tolerates a candidate set without shell files"
+assert_equals "1" "$(wc -l <"$LINT_LOG_FILE" | tr -d ' ')" "markdown-only candidates run one linter"
 : >"$GIT_CHANGED_FILE"
 : >"$GIT_UNTRACKED_FILE"
 : >"$LINT_LOG_FILE"
@@ -263,6 +270,14 @@ reset_count
 run_metric tokens --suite "$SUITE_FILE" --baseline-file "$BASELINE_FILE"
 assert_equals "1.0000" "$(<"$STDOUT_FILE")" "standalone tokens uses suite result"
 assert_count "1" "standalone tokens invokes suite once"
+
+reset_count
+MOCK_SUITE_JSON='{"pass_rate":1.0}'
+run_metric tokens --suite "$SUITE_FILE" --baseline-file "$BASELINE_FILE"
+assert_success "missing response-character metric degrades gracefully"
+assert_equals "1.0" "$(<"$STDOUT_FILE")" "missing response-character metric returns neutral token ratio"
+
+MOCK_SUITE_JSON='{"pass_rate":0.5,"avg_response_chars":100}'
 
 reset_count
 run_metric tokens --suite "$SUITE_FILE" --baseline-file "$TEST_ROOT/missing-baseline.json"
