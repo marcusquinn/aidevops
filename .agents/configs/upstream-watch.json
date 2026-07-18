@@ -25,7 +25,7 @@
     {
       "slug": "rudrankriyam/app-store-connect-cli-skills",
       "description": "Community workflow skills for asc CLI — release flows, ASO audit, localization, RevenueCat sync, crash triage",
-      "relevance": "22 higher-level workflow skills complementing the official per-command skills. New skills add orchestration patterns.",
+      "relevance": "23 higher-level workflow skills for the community asc CLI. New skills add orchestration patterns and must be checked against the community CLI version before adoption.",
       "default_branch": "main",
       "added_at": "2026-03-21"
     },
