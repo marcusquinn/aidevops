@@ -55,6 +55,29 @@ _runtime_bundle_verify_sha256_file() {
 	return 0
 }
 
+_runtime_bundle_verify_git_blob_sha256() {
+	local repo_dir="$1"
+	local commit_sha="$2"
+	local file_path="$3"
+	local digest=""
+
+	git -C "$repo_dir" cat-file -e "${commit_sha}:${file_path}" 2>/dev/null || return 1
+	if command -v sha256sum >/dev/null 2>&1; then
+		digest=$(git -C "$repo_dir" show "${commit_sha}:${file_path}" 2>/dev/null | sha256sum | cut -d' ' -f1) || return 1
+	elif command -v shasum >/dev/null 2>&1; then
+		digest=$(git -C "$repo_dir" show "${commit_sha}:${file_path}" 2>/dev/null | shasum -a 256 | cut -d' ' -f1) || return 1
+	elif command -v openssl >/dev/null 2>&1; then
+		digest=$(git -C "$repo_dir" show "${commit_sha}:${file_path}" 2>/dev/null | openssl dgst -sha256 | sed 's/^.*= //') || return 1
+	else
+		return 1
+	fi
+	case "$digest" in
+	'' | *[!0-9a-fA-F]*) return 1 ;;
+	esac
+	printf '%s' "$digest"
+	return 0
+}
+
 verify_aidevops_runtime_bundle_convergence() {
 	local repo_dir="$1"
 	local expected_sha="$2"
@@ -156,9 +179,7 @@ verify_aidevops_runtime_bundle_convergence() {
 		;;
 	esac
 
-	if [[ -r "$repo_dir/VERSION" ]]; then
-		IFS= read -r repo_version <"$repo_dir/VERSION" || repo_version=""
-	fi
+	repo_version=$(git -C "$repo_dir" show "${resolved_expected_sha}:VERSION" 2>/dev/null) || repo_version=""
 	if [[ -r "$active_root/VERSION" ]]; then
 		IFS= read -r active_version <"$active_root/VERSION" || active_version=""
 	fi
@@ -181,8 +202,8 @@ verify_aidevops_runtime_bundle_convergence() {
 	for sentinel_pair in "${sentinel_pairs[@]}"; do
 		source_rel="${sentinel_pair%%|*}"
 		active_rel="${sentinel_pair#*|}"
-		source_hash=$(_runtime_bundle_verify_sha256_file "$repo_dir/$source_rel" 2>/dev/null) || {
-			_runtime_bundle_verify_emit_error "Runtime bundle convergence failed: source sentinel $source_rel cannot be hashed"
+		source_hash=$(_runtime_bundle_verify_git_blob_sha256 "$repo_dir" "$resolved_expected_sha" "$source_rel" 2>/dev/null) || {
+			_runtime_bundle_verify_emit_error "Runtime bundle convergence failed: release commit sentinel $source_rel cannot be hashed"
 			return 1
 		}
 		active_hash=$(_runtime_bundle_verify_sha256_file "$active_root/$active_rel" 2>/dev/null) || {
