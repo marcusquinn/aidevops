@@ -50,7 +50,7 @@ Ask sequentially; show inferred default as option 1; Enter accepts default.
 [x] 3. tool-optimization  — improve script reliability and performance
 [x] 4. tool-creation      — add missing automation
 [x] 5. agent-composition  — improve agent routing and orchestration
-[x] 6. workflow-alignment — align workflows with actual usage patterns
+[x] 6. workflow-optimization — align workflows with actual usage patterns
 ```
 
 **Q3 — Edit surface?** (files that may be modified; defaults based on Q1)
@@ -76,22 +76,47 @@ Safety constraints shown alongside defaults. Confirm or override.
 | Researcher model | `sonnet` |
 | Trials per hypothesis | `2` |
 
-After setup: writes research program to `todo/research/autoagent-{name}.md`, confirms, dispatches to autoagent subagent.
+After setup, stage the research program outside the invoking repository, review it,
+then dispatch the reviewed path to the autoagent subagent.
 
-## Step 3: Write Research Program
+## Step 3: Stage Research Program
 
-Write to `todo/research/autoagent-{name}.md` from `.agents/templates/autoagent-program-template.md`. Confirm path to user.
+For a newly generated program, use this exact staging root:
+
+```bash
+AUTOAGENT_PROGRAM_DIR="${AIDEVOPS_TEMP_DIR:-$HOME/.aidevops/.agent-workspace/tmp}/autoagent-programs"
+SOURCE_PROGRAM="$AUTOAGENT_PROGRAM_DIR/autoagent-${PROGRAM_NAME}.md"
+```
+
+Verify the staging root, create it if needed, write `SOURCE_PROGRAM` from
+`.agents/templates/autoagent-program-template.md`, then read and review the complete
+file before dispatch. Never write the generated program into the invoking or
+canonical repository before the runner establishes worktree ownership.
+
+Existing `--program <path>` inputs remain supported: resolve the supplied file as
+`SOURCE_PROGRAM`, read and review it, and do not copy or rewrite it in this command.
 
 ## Step 4: Dispatch
 
-Options: `1. Begin now [default]` / `2. Queue for later (add to TODO.md)` / `3. Show program file and exit`. Headless: begin now.
+Options: `1. Begin now [default]` / `2. Queue for later (retain reviewed program)` / `3. Show program file and exit`. Headless: begin now.
 
-**Begin now:** dispatch to `.agents/tools/autoagent/autoagent.md` with `--program todo/research/autoagent-{name}.md`.
+**Begin now:** dispatch to `.agents/tools/autoagent/autoagent.md` with
+`--program "$SOURCE_PROGRAM"`.
 
-**Queue:** add to TODO.md:
+**Queue:** before creating durable task text, enter the normal pre-edit linked-worktree
+workflow and copy the reviewed `SOURCE_PROGRAM` to this repo-relative destination:
+
+```bash
+QUEUED_PROGRAM="todo/research/autoagent-${PROGRAM_NAME}.md"
+```
+
+Read the copied file, verify it matches the reviewed source, and complete the normal
+safe linked-worktree persistence workflow. Only then queue the task. Durable task
+text must reference `QUEUED_PROGRAM`'s repo-relative value, never the local temp
+`SOURCE_PROGRAM` path:
 
 ```text
-- [ ] t{next_id} autoagent: {name} — {description} #auto-dispatch ~{hours}h ref:GH#{issue}
+- [ ] t{next_id} autoagent: {name} — {description}; program: todo/research/autoagent-{name}.md #auto-dispatch ~{hours}h ref:GH#{issue}
 ```
 
 ## Signal Scan Mode (`/autoagent --signal-scan`)
@@ -101,10 +126,10 @@ Analysis only — no research program written, no loop started. Mine signals fro
 ```text
 Found N actionable signals. Top 5:
   1. [self-healing]         recurring error in pulse-wrapper.sh:142 — 7 occurrences
-  2. [instruction-refinement] build.txt token count 18k — above 15k threshold
+  2. [instruction-refinement] error-prevention.md repeats file discovery rules
   3. [tool-optimization]    shellcheck violations in 3 scripts
   4. [agent-composition]    agent-routing.md missing 4 new agents
-  5. [workflow-alignment]   full-loop.md step 4.6 diverged from actual release flow
+  5. [workflow-optimization] full-loop.md step 4.6 diverged from actual release flow
 
 Run `/autoagent --focus self-healing` to address these, or `/autoagent` for full setup.
 ```

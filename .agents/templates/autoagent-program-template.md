@@ -35,7 +35,7 @@ Examples:
 
 - `files: .agents/scripts/*.sh` — all helper scripts
 - `files: .agents/**/*.md` — all agent docs
-- `files: .agents/prompts/build.txt, .agents/**/*.md` — multiple patterns
+- `files: .agents/tools/**/*.md, .agents/scripts/*.sh` — multiple patterns
 
 ## Signal Sources
 
@@ -48,7 +48,9 @@ pulse_outcomes: false   # mine pulse dispatch success/failure (requires pulse hi
 ```
 
 At least one signal source must be `true`. Signal sources inform hypothesis generation —
-the autoagent reads signal output before proposing each experiment.
+the autoagent reads signal output before proposing each experiment. All documented
+keys are required exactly once so a misspelling or duplicate cannot silently
+change signal selection.
 
 ## Hypothesis Types
 
@@ -63,28 +65,36 @@ workflow_optimization: false # modify operational patterns
 
 At least one hypothesis type must be `true`. Higher-risk types (`tool_creation`,
 `agent_composition`, `workflow_optimization`) should only be enabled after lower-risk
-types have been exhausted or in elevated-safety programs with 3+ trials.
+types have been exhausted or in elevated-safety programs with 3+ trials. All six
+documented keys are required exactly once.
 
 ## Safety
 
 ```text
-level: standard             # standard | elevated
-never_modify: []            # additional files beyond default never-modify list
-require_review: []          # files that need manual review before keep
+level: standard             # required: standard | elevated
+never_modify: []            # required: additional files beyond default list
+require_review: []          # required: files needing manual review before keep
 ```
 
-**Standard safety** (default): never modifies root `AGENTS.md` (developer/contributor
-guide), `prompts/build.txt`, `configs/*.json`, or any file containing credentials.
-`.agents/AGENTS.md` (user/operational guide) is also protected by default.
+**Standard safety** (default): excludes elevated-only files, including root
+`AGENTS.md` and `.agents/AGENTS.md`, from the expanded target set. It always
+excludes `prompts/build.txt`, an intentionally near-empty compatibility placeholder
+that must never receive framework rules. `.agents/AGENTS.md` is canonical.
 
-**Elevated safety**: may touch root `AGENTS.md` and `prompts/build.txt` non-security
-sections. Requires `trials: 3` minimum and explicit `level: elevated` declaration.
-Use only for overnight programs with full signal coverage.
+**Elevated safety**: may modify elevated-only files only when each target-matched
+file is listed in `require_review`. It never permits security-section changes.
+Elevated programs require at least three trials and explicit `level: elevated`.
+Broad target patterns may overlap protected files because protected matches are
+excluded; the remaining allowed set must not be empty.
+
+Every candidate that changes a `require_review` path needs explicit interactive
+approval after its complete diff is shown and before it is kept. Headless runs
+checkpoint the candidate as `review_required` and stop; they never auto-approve.
 
 ## Metric
 
 ```text
-command: autoagent-metric-helper.sh score     # required
+command: autoagent-metric-helper.sh score --suite .agents/tests/agents-md-knowledge.json # required
 name: composite_score                          # required
 direction: higher                              # required: lower | higher
 baseline: null                                 # auto-populated on first run
@@ -94,7 +104,9 @@ weights: "0.6,0.3,0.1"                        # optional: comprehension,lint,tok
 
 The default `autoagent-metric-helper.sh score` command outputs a composite score
 (0.0–1.0) weighted across comprehension pass rate, lint cleanliness, and token
-efficiency. Override `weights` to shift emphasis.
+efficiency. Always name a shipped suite explicitly so comprehension cannot silently
+degrade to neutral. Override `weights` to shift emphasis; exactly three
+non-negative values summing to 1.0 are required.
 
 Custom metric commands must:
 
@@ -104,13 +116,15 @@ Custom metric commands must:
 
 ## Constraints
 
-Each constraint is a shell command that must exit 0 before the metric is measured.
-The autoagent runs all constraints after each modification. Failure = discard the experiment.
+At least one constraint is required. Every bullet must contain exactly one
+non-empty inline-code shell command. Text outside that span is a human label and
+is never executed. The autoagent runs the extracted commands after each
+modification; any non-zero exit discards the experiment.
 
 ```text
-- Tests must pass: autoagent-metric-helper.sh comprehension | awk '{exit ($1 < 0.8)}'
-- Lint clean: autoagent-metric-helper.sh lint | awk '{exit ($1 < 0.9)}'
-- ShellCheck: find .agents/scripts -name '*.sh' -exec shellcheck {} \;
+- Tests must pass: `autoagent-metric-helper.sh comprehension --suite .agents/tests/agents-md-knowledge.json | awk '{exit ($1 < 0.8)}'`
+- Lint clean: `autoagent-metric-helper.sh lint | awk '{exit ($1 < 0.9)}'`
+- ShellCheck: `find .agents/scripts -name '*.sh' -exec shellcheck {} \;`
 ```
 
 ## Models
@@ -123,18 +137,24 @@ Model tiers: `haiku` (fast/cheap), `sonnet` (balanced), `opus` (best quality).
 Use `sonnet` for most programs. Reserve `opus` for full-autonomous overnight runs
 where hypothesis quality matters more than cost.
 
+## Evaluation
+
+```text
+trials: 2                    # required: positive integer
+required_improvements: majority # required: majority | all
+```
+
+Each trial is compared with the current best score. `majority` requires improvement
+in more than half of the trials; `all` requires every trial to improve. Elevated
+safety requires at least three trials.
+
 ## Budget
 
 ```text
 timeout: 7200          # required: total wall-clock seconds
 max_iterations: 30     # required: max experiment count
 per_experiment: 300    # optional: max seconds per single experiment (default: 5min)
-trials: 2              # optional: repeat each experiment N times for consistency (default: 1)
 ```
-
-**Trials**: running each experiment multiple times filters out noise. A change is
-only kept if it improves the metric in `ceil(trials/2)` or more runs. Higher trial
-counts increase confidence but multiply runtime cost.
 
 ## Hints
 
@@ -203,7 +223,7 @@ require_review: []
 ## Metric
 
 \`\`\`text
-command: autoagent-metric-helper.sh score
+command: autoagent-metric-helper.sh score --suite .agents/tests/agents-md-knowledge.json
 name: composite_score
 direction: higher
 baseline: null
@@ -214,9 +234,9 @@ weights: "0.6,0.3,0.1"
 ## Constraints
 
 \`\`\`text
-- Tests must pass: autoagent-metric-helper.sh comprehension | awk '{exit ($1 < 0.8)}'
-- Lint clean: autoagent-metric-helper.sh lint | awk '{exit ($1 < 0.9)}'
-- ShellCheck: find .agents/scripts -name '*.sh' -exec shellcheck {} \;
+- Tests must pass: `autoagent-metric-helper.sh comprehension --suite .agents/tests/agents-md-knowledge.json | awk '{exit ($1 < 0.8)}'`
+- Lint clean: `autoagent-metric-helper.sh lint | awk '{exit ($1 < 0.9)}'`
+- ShellCheck: `find .agents/scripts -name '*.sh' -exec shellcheck {} \;`
 \`\`\`
 
 ## Models
@@ -225,13 +245,19 @@ weights: "0.6,0.3,0.1"
 researcher: sonnet
 \`\`\`
 
+## Evaluation
+
+\`\`\`text
+trials: 2
+required_improvements: majority
+\`\`\`
+
 ## Budget
 
 \`\`\`text
 timeout: 3600
 max_iterations: 15
 per_experiment: 300
-trials: 2
 \`\`\`
 
 ## Hints
@@ -289,13 +315,13 @@ workflow_optimization: false
 \`\`\`text
 level: standard
 never_modify: []
-require_review: [".agents/prompts/build.txt"]
+require_review: [".agents/tools/autoagent/autoagent.md"]
 \`\`\`
 
 ## Metric
 
 \`\`\`text
-command: autoagent-metric-helper.sh score
+command: autoagent-metric-helper.sh score --suite .agents/tests/agents-md-knowledge.json
 name: composite_score
 direction: higher
 baseline: null
@@ -306,9 +332,9 @@ weights: "0.4,0.2,0.4"
 ## Constraints
 
 \`\`\`text
-- Tests must pass: autoagent-metric-helper.sh comprehension | awk '{exit ($1 < 0.8)}'
-- Lint clean: autoagent-metric-helper.sh lint | awk '{exit ($1 < 0.9)}'
-- Markdownlint: markdownlint-cli2 ".agents/**/*.md"
+- Tests must pass: `autoagent-metric-helper.sh comprehension --suite .agents/tests/agents-md-knowledge.json | awk '{exit ($1 < 0.8)}'`
+- Lint clean: `autoagent-metric-helper.sh lint | awk '{exit ($1 < 0.9)}'`
+- Markdownlint: `markdownlint-cli2 ".agents/**/*.md"`
 \`\`\`
 
 ## Models
@@ -317,13 +343,19 @@ weights: "0.4,0.2,0.4"
 researcher: sonnet
 \`\`\`
 
+## Evaluation
+
+\`\`\`text
+trials: 2
+required_improvements: majority
+\`\`\`
+
 ## Budget
 
 \`\`\`text
 timeout: 7200
 max_iterations: 30
 per_experiment: 300
-trials: 2
 \`\`\`
 
 ## Hints
@@ -352,7 +384,7 @@ target_repo: .
 ## Target
 
 \`\`\`text
-files: .agents/**/*.md, .agents/scripts/*.sh, .agents/prompts/*.txt
+files: .agents/tools/**/*.md, .agents/scripts/*.sh, .agents/AGENTS.md, AGENTS.md
 branch: experiment/autoagent-full-autonomous
 \`\`\`
 
@@ -382,13 +414,13 @@ workflow_optimization: true
 \`\`\`text
 level: elevated
 never_modify: []
-require_review: [".agents/prompts/build.txt", "AGENTS.md"]   # root AGENTS.md
+require_review: [".agents/AGENTS.md", "AGENTS.md"]
 \`\`\`
 
 ## Metric
 
 \`\`\`text
-command: autoagent-metric-helper.sh score
+command: autoagent-metric-helper.sh score --suite .agents/tests/agents-md-knowledge.json
 name: composite_score
 direction: higher
 baseline: null
@@ -399,10 +431,10 @@ weights: "0.6,0.3,0.1"
 ## Constraints
 
 \`\`\`text
-- Tests must pass: autoagent-metric-helper.sh comprehension | awk '{exit ($1 < 0.8)}'
-- Lint clean: autoagent-metric-helper.sh lint | awk '{exit ($1 < 0.9)}'
-- ShellCheck: find .agents/scripts -name '*.sh' -exec shellcheck {} \;
-- Markdownlint: markdownlint-cli2 ".agents/**/*.md"
+- Tests must pass: `autoagent-metric-helper.sh comprehension --suite .agents/tests/agents-md-knowledge.json | awk '{exit ($1 < 0.8)}'`
+- Lint clean: `autoagent-metric-helper.sh lint | awk '{exit ($1 < 0.9)}'`
+- ShellCheck: `find .agents/scripts -name '*.sh' -exec shellcheck {} \;`
+- Markdownlint: `markdownlint-cli2 ".agents/**/*.md"`
 \`\`\`
 
 ## Models
@@ -411,13 +443,19 @@ weights: "0.6,0.3,0.1"
 researcher: sonnet
 \`\`\`
 
+## Evaluation
+
+\`\`\`text
+trials: 3
+required_improvements: majority
+\`\`\`
+
 ## Budget
 
 \`\`\`text
 timeout: 14400
 max_iterations: 50
 per_experiment: 600
-trials: 3
 \`\`\`
 
 ## Hints
@@ -426,7 +464,7 @@ trials: 3
 - Progress to instruction refinement after self-healing exhausts low-hanging fruit
 - Tool creation and agent composition only after iteration 20
 - Equal-or-better with less code is always a win
-- Elevated safety: root AGENTS.md and build.txt changes go to require_review — do not auto-keep
+- Elevated safety: all target-matched elevated-only files require review
 - 3 trials required for consistency — a change must improve in 2 of 3 runs to be kept
 - pulse_outcomes requires pulse history in ~/.aidevops/.agent-workspace/; skip if absent
 ```
