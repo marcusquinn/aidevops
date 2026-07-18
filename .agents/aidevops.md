@@ -70,7 +70,7 @@ configs/[service]-config.json       # Working configs (gitignored)
 
 ## Quality Standards
 
-- SonarCloud: A-grade (zero vulnerabilities, bugs)
+- aidevops framework repository: SonarCloud A-grade (zero vulnerabilities, bugs)
 - ShellCheck: Zero violations
 - Pattern: `local var="$1"` not `$1` directly; explicit `return 0/1` in all functions
 
