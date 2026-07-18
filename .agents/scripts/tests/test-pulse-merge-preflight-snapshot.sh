@@ -215,8 +215,9 @@ set_live_evidence() {
 	local head_sha="${2:-sha-reviewed}"
 	local author_class="${3:-trusted}"
 	local permitted="${4:-true}"
-	_PULSE_REVIEW_GATE_EVIDENCE=$(jq -nc --arg status "$status" --arg head "$head_sha" --arg class "$author_class" --argjson permitted "$permitted" '
-		{schema:"aidevops.review-gate-evidence/v1",repo:"owner/repo",pr:"7",head_sha:$head,status:$status,author:{login:"reviewer",association:(if $class == "trusted" then "MEMBER" else "CONTRIBUTOR" end),class:$class},permitted:$permitted,reason:"test",state:(if $permitted then "pass" else "waiting" end),merge_gate:(if $permitted then "clear" else "blocked" end),exit_code:0}
+	local observed_at="${5:-2026-01-01T00:10:00Z}"
+	_PULSE_REVIEW_GATE_EVIDENCE=$(jq -nc --arg status "$status" --arg head "$head_sha" --arg class "$author_class" --arg observed_at "$observed_at" --argjson permitted "$permitted" '
+		{schema:"aidevops.review-gate-evidence/v1",repo:"owner/repo",pr:"7",head_sha:$head,status:$status,author:{login:"reviewer",association:(if $class == "trusted" then "MEMBER" else "CONTRIBUTOR" end),class:$class},permitted:$permitted,reason:"test",state:(if $permitted then "pass" else "waiting" end),merge_gate:(if $permitted then "clear" else "blocked" end),exit_code:0,observed_at:$observed_at}
 	')
 	return 0
 }
@@ -254,6 +255,57 @@ assert_infrastructure_rerun_unset_logfile_safe() {
 	fi
 	printf 'FAIL unset LOGFILE was not handled safely (rc=%s, output=%s)\n' "$rc" "$output"
 	TESTS_FAILED=$((TESTS_FAILED + 1))
+	return 0
+}
+
+assert_review_and_head_snapshot_cases() {
+	assert_gate "same-name check-run and status retain independent source failures" same_name_source_conflict 1
+	set_live_evidence PASS
+	assert_gate "configured non-required provider failure passes with typed current-head evidence" configured_fail 0
+	set_live_evidence PASS_ADVISORY
+	assert_gate "configured provider failure passes with trusted advisory-default evidence" configured_fail 0
+	set_live_evidence PASS_ADVISORY sha-reviewed external false
+	assert_gate "configured provider failure blocks external advisory evidence" configured_fail 1
+	set_live_evidence PASS_RATE_LIMITED sha-reviewed external false
+	assert_gate "configured provider failure blocks external rate-limit evidence" configured_fail 1
+	_PULSE_REVIEW_GATE_EVIDENCE=""
+	assert_gate "stable maintainer-gate success supersedes stale alias failures" maintainer_alias_fail 0
+	assert_gate "stable maintainer-gate failure remains one logical blocker" maintainer_stable_fail 1
+	if [[ "$(grep -c "maintainer-gate family is terminal-failure" "$LOGFILE" || true)" -eq 1 ]]; then
+		printf 'PASS maintainer-gate aliases emit one audited blocker\n'
+	else
+		printf 'FAIL maintainer-gate aliases did not emit exactly one blocker\n'
+		TESTS_FAILED=$((TESTS_FAILED + 1))
+	fi
+	TESTS_RUN=$((TESTS_RUN + 1))
+	assert_gate "legacy maintainer aliases fail closed without stable context" maintainer_legacy_fail 1
+	assert_gate "infrastructure-failed maintainer gate requests rerun and stays blocked" maintainer_infra_fail 1
+	if [[ "$RERUN_CALLS" -eq 2 ]] && grep -q "maintainer-gate family has a proven infrastructure failure" "$LOGFILE"; then
+		printf 'PASS infrastructure-failed maintainer gate requests audited rerun\n'
+	else
+		printf 'FAIL infrastructure-failed maintainer gate rerun was not requested\n'
+		TESTS_FAILED=$((TESTS_FAILED + 1))
+	fi
+	TESTS_RUN=$((TESTS_RUN + 1))
+	assert_gate "unresolved late inline finding blocks merge" unresolved 1
+	assert_human_review_thread_rules
+	assert_gate "late review activity invalidates stale gate success" stale_gate 1
+	set_live_evidence PASS sha-reviewed trusted true 2026-01-01T00:00:50Z
+	assert_gate "newer typed live evidence supersedes a stale status context" stale_gate 0
+	set_live_evidence PASS sha-reviewed trusted true 2026-01-01T00:00:35Z
+	assert_gate "typed live evidence predating late activity fails closed" stale_gate 1
+	_PULSE_REVIEW_GATE_EVIDENCE=""
+	assert_gate "missing status gate fails closed without live evidence" no_status_gate 1
+	set_live_evidence PASS_ADVISORY
+	_PULSE_REVIEW_GATE_EVIDENCE=$(jq -c 'del(.observed_at)' <<<"$_PULSE_REVIEW_GATE_EVIDENCE")
+	assert_gate "live evidence without an observation timestamp fails closed" no_status_gate 1
+	set_live_evidence PASS_ADVISORY
+	assert_gate "trusted advisory evidence permits repositories without a status context" no_status_gate 0
+	set_live_evidence PASS sha-other
+	assert_gate "live gate evidence for another head fails closed" no_status_gate 1
+	_PULSE_REVIEW_GATE_EVIDENCE=""
+	assert_gate "new commit invalidates reviewed head" new_head 1
+	assert_gate "bounded quiet period blocks recent check completion" recent 1
 	return 0
 }
 
@@ -314,46 +366,7 @@ main() {
 		TESTS_FAILED=$((TESTS_FAILED + 1))
 	fi
 	TESTS_RUN=$((TESTS_RUN + 1))
-	assert_gate "same-name check-run and status retain independent source failures" same_name_source_conflict 1
-	set_live_evidence PASS
-	assert_gate "configured non-required provider failure passes with typed current-head evidence" configured_fail 0
-	set_live_evidence PASS_ADVISORY
-	assert_gate "configured provider failure passes with trusted advisory-default evidence" configured_fail 0
-	set_live_evidence PASS_ADVISORY sha-reviewed external false
-	assert_gate "configured provider failure blocks external advisory evidence" configured_fail 1
-	set_live_evidence PASS_RATE_LIMITED sha-reviewed external false
-	assert_gate "configured provider failure blocks external rate-limit evidence" configured_fail 1
-	_PULSE_REVIEW_GATE_EVIDENCE=""
-	assert_gate "stable maintainer-gate success supersedes stale alias failures" maintainer_alias_fail 0
-	assert_gate "stable maintainer-gate failure remains one logical blocker" maintainer_stable_fail 1
-	if [[ "$(grep -c "maintainer-gate family is terminal-failure" "$LOGFILE" || true)" -eq 1 ]]; then
-		printf 'PASS maintainer-gate aliases emit one audited blocker\n'
-	else
-		printf 'FAIL maintainer-gate aliases did not emit exactly one blocker\n'
-		TESTS_FAILED=$((TESTS_FAILED + 1))
-	fi
-	TESTS_RUN=$((TESTS_RUN + 1))
-	assert_gate "legacy maintainer aliases fail closed without stable context" maintainer_legacy_fail 1
-	assert_gate "infrastructure-failed maintainer gate requests rerun and stays blocked" maintainer_infra_fail 1
-	if [[ "$RERUN_CALLS" -eq 2 ]] && grep -q "maintainer-gate family has a proven infrastructure failure" "$LOGFILE"; then
-		printf 'PASS infrastructure-failed maintainer gate requests audited rerun\n'
-	else
-		printf 'FAIL infrastructure-failed maintainer gate rerun was not requested\n'
-		TESTS_FAILED=$((TESTS_FAILED + 1))
-	fi
-	TESTS_RUN=$((TESTS_RUN + 1))
-	assert_gate "unresolved late inline finding blocks merge" unresolved 1
-	assert_human_review_thread_rules
-	assert_gate "late review activity invalidates stale gate success" stale_gate 1
-	_PULSE_REVIEW_GATE_EVIDENCE=""
-	assert_gate "missing status gate fails closed without live evidence" no_status_gate 1
-	set_live_evidence PASS_ADVISORY
-	assert_gate "trusted advisory evidence permits repositories without a status context" no_status_gate 0
-	set_live_evidence PASS sha-other
-	assert_gate "live gate evidence for another head fails closed" no_status_gate 1
-	_PULSE_REVIEW_GATE_EVIDENCE=""
-	assert_gate "new commit invalidates reviewed head" new_head 1
-	assert_gate "bounded quiet period blocks recent check completion" recent 1
+	assert_review_and_head_snapshot_cases
 	printf '\nTests run: %d\nTests failed: %d\n' "$TESTS_RUN" "$TESTS_FAILED"
 	[[ "$TESTS_FAILED" -eq 0 ]]
 	return $?
