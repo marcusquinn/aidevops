@@ -304,10 +304,13 @@ printf '%s\n' "\$*" >>"${DEAD_STAMP_HELPER_LOG}"
 exit 0
 STUB
 chmod +x "$DEAD_STAMP_HELPER"
-export AIDEVOPS_INTERACTIVE_SESSION_HELPER="$DEAD_STAMP_HELPER"
 
 ORIGINAL_REPOS_JSON="$REPOS_JSON"
+ORIGINAL_PIR_SCRIPT_DIR="$_PIR_SCRIPT_DIR"
+ORIGINAL_SCRIPT_DIR="${SCRIPT_DIR:-}"
 export REPOS_JSON="${TEST_ROOT}/missing-repos.json"
+_PIR_SCRIPT_DIR="$STUB_DIR"
+unset SCRIPT_DIR AIDEVOPS_INTERACTIVE_SESSION_HELPER
 rm -f "$DEAD_STAMP_HELPER_LOG"
 normalize_active_issue_assignments
 
@@ -319,7 +322,12 @@ else
 		"(helper log: $(cat "$DEAD_STAMP_HELPER_LOG" 2>/dev/null || echo 'file missing'))"
 fi
 export REPOS_JSON="$ORIGINAL_REPOS_JSON"
-unset AIDEVOPS_INTERACTIVE_SESSION_HELPER
+_PIR_SCRIPT_DIR="$ORIGINAL_PIR_SCRIPT_DIR"
+if [[ -n "$ORIGINAL_SCRIPT_DIR" ]]; then
+	SCRIPT_DIR="$ORIGINAL_SCRIPT_DIR"
+else
+	unset SCRIPT_DIR
+fi
 
 # Clean up
 rm -f "${STAMP_DIR}/owner-testrepo-555.json"

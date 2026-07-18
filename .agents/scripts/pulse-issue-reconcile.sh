@@ -678,7 +678,7 @@ _normalize_reassign_self() {
 # Returns: 0 always (best-effort; logs failures to $LOGFILE)
 #######################################
 _normalize_reap_dead_stamps() {
-	local claim_helper="${AIDEVOPS_INTERACTIVE_SESSION_HELPER:-${SCRIPT_DIR}/interactive-session-helper.sh}"
+	local claim_helper="${AIDEVOPS_INTERACTIVE_SESSION_HELPER:-${_PIR_SCRIPT_DIR}/interactive-session-helper.sh}"
 	[[ -x "$claim_helper" ]] || return 0
 
 	if ! "$claim_helper" reap-dead-stamps >>"$LOGFILE" 2>&1; then
