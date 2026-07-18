@@ -63,6 +63,14 @@ export function isApplyPatchMutationTool(tool) {
   return ["apply_patch", "applypatch"].includes(normaliseToolName(tool));
 }
 
+function parsePolicyPayload(raw) {
+  const result = JSON.parse(raw);
+  if (!result || typeof result !== "object" || Array.isArray(result)) {
+    throw new TypeError("policy returned a non-object payload");
+  }
+  return result;
+}
+
 export function checkCanonicalWriteSafetyGate(
   filePath,
   scriptsDir,
@@ -87,7 +95,9 @@ export function checkCanonicalWriteSafetyGate(
       helperArgs,
       {
         encoding: "utf8",
-        input: patchText ?? undefined,
+        input: patchText === null
+          ? undefined
+          : (typeof patchText === "string" ? patchText : ""),
         stdio: ["pipe", "pipe", "pipe"],
         timeout: 10000,
       },
@@ -98,7 +108,7 @@ export function checkCanonicalWriteSafetyGate(
   }
   let result;
   try {
-    result = JSON.parse(raw);
+    result = parsePolicyPayload(raw);
   } catch {
     throw new Error("BLOCKED: canonical-write policy returned malformed output");
   }
@@ -107,6 +117,42 @@ export function checkCanonicalWriteSafetyGate(
       `BLOCKED by canonical write policy: ${result.reason || "invalid policy response"}. ACTION_REQUIRED=create_or_use_linked_worktree`,
     );
   }
+}
+
+function commandPolicyError(result) {
+  return new Error(
+    `BLOCKED by shared command policy (${result.decision || "forbid"}, ${result.rule_id || "policy.invalid-response"}): ${result.reason || "invalid policy response"}`,
+  );
+}
+
+function executeCommandPolicy(helperArgs) {
+  let raw = "";
+  let executionError = null;
+  try {
+    raw = execFileSync(
+      "python3",
+      helperArgs,
+      {
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "pipe"],
+        timeout: 10000,
+      },
+    );
+  } catch (error) {
+    executionError = error;
+    raw = error?.stdout?.toString() || "";
+  }
+  let result;
+  try {
+    result = parsePolicyPayload(raw);
+  } catch {
+    const detail = executionError?.stderr?.toString().trim()
+      || executionError?.message
+      || "command policy returned malformed output";
+    throw new Error(`BLOCKED: command policy failed closed: ${detail}`);
+  }
+  if (executionError) throw commandPolicyError(result);
+  return result;
 }
 
 export function checkCommandSafetyGate(command, scriptsDir, cwd = process.cwd(), options = {}) {
@@ -141,40 +187,9 @@ export function checkCommandSafetyGate(command, scriptsDir, cwd = process.cwd(),
       options.workerId || process.env.AIDEVOPS_WORKER_ID || "opencode-worker",
     );
   }
-  let raw = "";
-  try {
-    raw = execFileSync(
-      "python3",
-      helperArgs,
-      {
-        encoding: "utf8",
-        stdio: ["ignore", "pipe", "pipe"],
-        timeout: 10000,
-      },
-    );
-  } catch (error) {
-    raw = error?.stdout?.toString() || "";
-    let result;
-    try {
-      result = JSON.parse(raw);
-    } catch {
-      const detail = error?.stderr?.toString().trim() || error?.message || "policy check failed";
-      throw new Error(`BLOCKED: command policy failed closed: ${detail}`);
-    }
-    throw new Error(
-      `BLOCKED by shared command policy (${result.decision || "forbid"}, ${result.rule_id || "policy.invalid-response"}): ${result.reason || "invalid policy response"}`,
-    );
-  }
-  let result;
-  try {
-    result = JSON.parse(raw);
-  } catch {
-    throw new Error("BLOCKED: command policy returned malformed output");
-  }
+  const result = executeCommandPolicy(helperArgs);
   if (result.decision !== "allow") {
-    throw new Error(
-      `BLOCKED by shared command policy (${result.decision || "forbid"}, ${result.rule_id || "policy.invalid-response"}): ${result.reason || "invalid policy response"}`,
-    );
+    throw commandPolicyError(result);
   }
 }
 

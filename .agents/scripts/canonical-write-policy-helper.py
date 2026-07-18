@@ -16,24 +16,17 @@ import argparse
 import json
 import os
 import re
-import shutil
-import subprocess
 import sys
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
+from canonical_branch_policy import resolve_branch
+from canonical_git_policy import _git_output as _shared_git_output
+from canonical_git_policy import real_git
+
 
 POLICY_VERSION = "canonical-write-policy-v1"
-BRANCH_CONFIG_KEYS = (
-    "canonical_branch",
-    "integration_branch",
-    "dispatch_base_branch",
-    "pr_base_branch",
-    "pr_target_branch",
-    "base_branch",
-    "default_branch",
-)
 
 
 @dataclass
@@ -53,24 +46,15 @@ def _real_git() -> str:
     explicit = os.environ.get("AIDEVOPS_REAL_GIT_BIN", "") or os.environ.get(
         "AIDEVOPS_REAL_GIT", ""
     )
-    if explicit:
-        return explicit
-    if os.path.isfile("/usr/bin/git"):
-        return "/usr/bin/git"
-    return shutil.which("git") or "git"
+    if not explicit and os.path.isfile("/usr/bin/git"):
+        explicit = "/usr/bin/git"
+    return real_git(explicit)
 
 
-def _run_git(cwd: Path, *args: str) -> subprocess.CompletedProcess[str]:
+def _git_output(cwd: Path, *args: str) -> str:
     try:
-        return subprocess.run(
-            [_real_git(), *args],
-            cwd=str(cwd),
-            capture_output=True,
-            text=True,
-            timeout=5,
-            check=False,
-        )
-    except (OSError, subprocess.SubprocessError) as exc:
+        return _shared_git_output(_real_git(), str(cwd), *args)
+    except RuntimeError as exc:
         raise RuntimeError(f"Git repository probe failed: {exc}") from exc
 
 
@@ -83,53 +67,55 @@ def _existing_probe_path(raw_path: str) -> Path:
     return path
 
 
+def _repository_probes(probe_path: Path) -> dict[str, str]:
+    return {
+        "repo_root": _git_output(probe_path, "rev-parse", "--show-toplevel"),
+        "git_dir": _git_output(probe_path, "rev-parse", "--git-dir"),
+        "common_dir": _git_output(probe_path, "rev-parse", "--git-common-dir"),
+        "branch": _git_output(probe_path, "branch", "--show-current"),
+    }
+
+
+def _absolute_probe_value(probe_path: Path, raw_value: str) -> str:
+    path = Path(raw_value)
+    if not path.is_absolute():
+        path = probe_path / path
+    return os.path.realpath(path)
+
+
 def classify_location(raw_path: str) -> Classification:
     """Classify a path as canonical, linked, outside Git, or unknown."""
     probe_path = _existing_probe_path(raw_path)
     try:
-        inside_result = _run_git(probe_path, "rev-parse", "--is-inside-work-tree")
+        inside = _git_output(probe_path, "rev-parse", "--is-inside-work-tree")
     except RuntimeError as exc:
         return Classification("unknown", False, reason=str(exc))
-    if inside_result.returncode != 0 or inside_result.stdout.strip() != "true":
+    if inside != "true":
         return Classification(
             "outside", False, reason="path is outside a Git worktree"
         )
 
     try:
-        probes = {
-            "repo_root": _run_git(
-                probe_path, "rev-parse", "--path-format=absolute", "--show-toplevel"
-            ),
-            "git_dir": _run_git(
-                probe_path, "rev-parse", "--path-format=absolute", "--git-dir"
-            ),
-            "common_dir": _run_git(
-                probe_path,
-                "rev-parse",
-                "--path-format=absolute",
-                "--git-common-dir",
-            ),
-            "branch": _run_git(probe_path, "branch", "--show-current"),
-        }
+        values = _repository_probes(probe_path)
     except RuntimeError as exc:
         return Classification("unknown", True, reason=str(exc))
 
     required = ("repo_root", "git_dir", "common_dir")
-    if any(probes[name].returncode != 0 or not probes[name].stdout.strip() for name in required):
+    if any(not values[name] for name in required):
         return Classification(
             "unknown",
             True,
             reason="required Git worktree identity could not be resolved",
         )
 
-    values = {name: result.stdout.strip() for name, result in probes.items()}
-    git_dir = os.path.realpath(values["git_dir"])
-    common_dir = os.path.realpath(values["common_dir"])
+    repo_root = _absolute_probe_value(probe_path, values["repo_root"])
+    git_dir = _absolute_probe_value(probe_path, values["git_dir"])
+    common_dir = _absolute_probe_value(probe_path, values["common_dir"])
     classification = "canonical" if git_dir == common_dir else "linked"
     return Classification(
         classification,
         True,
-        repo_root=os.path.realpath(values["repo_root"]),
+        repo_root=repo_root,
         git_dir=git_dir,
         common_dir=common_dir,
         branch=values["branch"],
@@ -218,130 +204,14 @@ def check_patch(cwd: str, patch_text: str) -> dict[str, Any]:
     return {**context_decision, "patch_paths": paths}
 
 
-def _normalise_branch(value: Any) -> str:
-    if not isinstance(value, str):
-        return ""
-    branch = value.strip()
-    for prefix in ("refs/heads/", "refs/remotes/origin/", "origin/"):
-        if branch.startswith(prefix):
-            branch = branch[len(prefix) :]
-            break
-    return branch
-
-
-def _branch_from_mapping(mapping: Any) -> str:
-    if not isinstance(mapping, dict):
-        return ""
-    for key in BRANCH_CONFIG_KEYS:
-        branch = _normalise_branch(mapping.get(key))
-        if branch:
-            return branch
-    return ""
-
-
-def _load_json_text(payload: str, source: str) -> Any:
-    try:
-        return json.loads(payload)
-    except json.JSONDecodeError as exc:
-        raise RuntimeError(
-            f"configured branch metadata is unreadable: {source}: {exc}"
-        ) from exc
-
-
-def _load_json(path: Path) -> Any:
-    try:
-        return _load_json_text(path.read_text(encoding="utf-8"), str(path))
-    except OSError as exc:
-        raise RuntimeError(
-            f"configured branch metadata is unreadable: {path}: {exc}"
-        ) from exc
-
-
-def _origin_slug(repo_root: str) -> str:
-    result = _run_git(Path(repo_root), "remote", "get-url", "origin")
-    if result.returncode != 0:
-        return ""
-    remote = result.stdout.strip()
-    match = re.search(r"github\.com[/:]([^/\s]+/[^/\s]+?)(?:\.git)?$", remote)
-    return match.group(1) if match else ""
-
-
-def _project_branch(repo_root: str) -> tuple[str, str]:
-    result = _run_git(Path(repo_root), "show", "HEAD:.aidevops.json")
-    if result.returncode != 0:
-        return "", ""
-    branch = _branch_from_mapping(
-        _load_json_text(result.stdout, "HEAD:.aidevops.json")
-    )
-    return (branch, "project-config-at-head") if branch else ("", "")
-
-
-def _registered_branch(repo_root: str) -> tuple[str, str]:
-    configured_path = os.environ.get("AIDEVOPS_REPOS_CONFIG", "")
-    config_path = (
-        Path(configured_path).expanduser()
-        if configured_path
-        else Path.home() / ".config" / "aidevops" / "repos.json"
-    )
-    if not config_path.is_file():
-        return "", ""
-    payload = _load_json(config_path)
-    entries = payload.get("initialized_repos", []) if isinstance(payload, dict) else []
-    slug = _origin_slug(repo_root)
-    canonical_root = os.path.realpath(repo_root)
-    for entry in entries:
-        if not isinstance(entry, dict):
-            continue
-        entry_slug = entry.get("slug", "")
-        entry_path = entry.get("path", "") or entry.get("repo_path", "")
-        path_matches = bool(entry_path) and os.path.realpath(
-            os.path.expanduser(str(entry_path))
-        ) == canonical_root
-        if (slug and entry_slug == slug) or path_matches:
-            branch = _branch_from_mapping(entry)
-            if branch:
-                return branch, "registered-repo-config"
-    return "", ""
-
-
-def _origin_default_branch(repo_root: str) -> tuple[str, str]:
-    result = _run_git(
-        Path(repo_root),
-        "symbolic-ref",
-        "--quiet",
-        "--short",
-        "refs/remotes/origin/HEAD",
-    )
-    if result.returncode != 0:
-        return "", ""
-    branch = _normalise_branch(result.stdout)
-    return (branch, "origin-head") if branch else ("", "")
-
-
-def _valid_branch(repo_root: str, branch: str) -> bool:
-    result = _run_git(Path(repo_root), "check-ref-format", "--branch", branch)
-    return result.returncode == 0
-
-
 def resolve_canonical_branch(cwd: str) -> dict[str, str]:
     classification = classify_location(cwd)
     if classification.classification not in {"canonical", "linked"}:
         raise RuntimeError(
-            f"canonical branch requires a classified Git worktree: {classification.reason}"
+            "canonical branch requires a classified Git worktree: "
+            f"{classification.reason}"
         )
-    repo_root = classification.repo_root
-    for resolver in (_registered_branch, _project_branch, _origin_default_branch):
-        branch, source = resolver(repo_root)
-        if branch:
-            if not _valid_branch(repo_root, branch):
-                raise RuntimeError(f"configured canonical branch is invalid: {branch}")
-            return {
-                "policy": POLICY_VERSION,
-                "branch": branch,
-                "source": source,
-                "repo_root": repo_root,
-            }
-    raise RuntimeError("origin default or configured canonical branch cannot be resolved")
+    return resolve_branch(classification.repo_root, _git_output, POLICY_VERSION)
 
 
 def _emit(payload: dict[str, Any], field: str) -> None:

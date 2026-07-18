@@ -284,7 +284,11 @@ if [[ "$cmd" == "$SYNC_MIRROR_CMD" && -n "$preservation_ref" ]]; then
 		exit 1
 	fi
 	if [[ -z "$existing_preservation_sha" ]]; then
-		"$REAL_GIT" -C "$repo_path" update-ref "$preservation_ref" "$local_sha" "0000000000000000000000000000000000000000"
+		"$REAL_GIT" -C "$repo_path" update-ref "$preservation_ref" "$local_sha" \
+			"0000000000000000000000000000000000000000" || {
+			printf 'BLOCKED: canonical preservation ref could not be created\n' >&2
+			exit 1
+		}
 	fi
 	[[ "$("$REAL_GIT" -C "$repo_path" rev-parse --verify "${preservation_ref}^{commit}")" == "$local_sha" ]] || {
 		printf 'BLOCKED: divergent canonical commit was not preserved\n' >&2

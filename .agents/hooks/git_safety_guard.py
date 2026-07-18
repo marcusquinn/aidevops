@@ -77,24 +77,31 @@ def _is_direct_file_tool(tool_name: str) -> bool:
     return _normalise_tool_name(tool_name) in DIRECT_FILE_TOOL_NAMES
 
 
-def _canonical_write_policy_helper() -> str:
-    """Resolve the shared canonical-write policy helper."""
+def _resolve_policy_helper(environment_key: str, filename: str) -> str:
+    """Resolve a repository or deployed policy helper."""
     candidates = [
-        os.environ.get("AIDEVOPS_CANONICAL_WRITE_POLICY_HELPER", ""),
-        str(
-            Path(__file__).resolve().parent.parent
-            / "scripts"
-            / "canonical-write-policy-helper.py"
-        ),
-        str(
-            Path.home()
-            / ".aidevops"
-            / "agents"
-            / "scripts"
-            / "canonical-write-policy-helper.py"
-        ),
+        os.environ.get(environment_key, ""),
+        str(Path(__file__).resolve().parent.parent / "scripts" / filename),
+        str(Path.home() / ".aidevops" / "agents" / "scripts" / filename),
     ]
     return next((path for path in candidates if path and os.path.isfile(path)), "")
+
+
+def _run_policy_helper(helper: str, arguments: list, input_text=None):
+    """Execute a validated Python policy helper and require an object payload."""
+    # nosec B603 -- fixed interpreter and policy argv, no shell
+    result = subprocess.run(  # nosec B603
+        [sys.executable, helper, *arguments],
+        input=input_text,
+        capture_output=True,
+        text=True,
+        timeout=10,
+        check=False,
+    )
+    payload = json.loads(result.stdout)
+    if not isinstance(payload, dict):
+        raise TypeError("policy helper returned a non-object payload")
+    return result.returncode, payload
 
 
 def _direct_write_deny(reason: str) -> dict:
@@ -116,31 +123,31 @@ def _check_canonical_write(
     file_path: str, patch_text: "str | None" = None
 ) -> "dict | None":
     """Delegate a direct file mutation to the shared structural policy."""
-    helper = _canonical_write_policy_helper()
+    helper = _resolve_policy_helper(
+        "AIDEVOPS_CANONICAL_WRITE_POLICY_HELPER",
+        "canonical-write-policy-helper.py",
+    )
     if not helper:
         return _direct_write_deny("required canonical-write policy is unavailable")
+    if patch_text is not None and not isinstance(patch_text, str):
+        return _direct_write_deny("apply-patch payload is not text")
     try:
         helper_args = [
-            sys.executable,
-            helper,
             "check-patch" if patch_text is not None else "check-write",
             "--cwd",
             os.getcwd(),
         ]
         if patch_text is None:
             helper_args.extend(["--path", file_path])
-        result = subprocess.run(
-            helper_args,
-            input=patch_text,
-            capture_output=True,
-            text=True,
-            timeout=10,
-            check=False,
-        )
-        payload = json.loads(result.stdout)
-    except (OSError, subprocess.SubprocessError, json.JSONDecodeError) as exc:
+        returncode, payload = _run_policy_helper(helper, helper_args, patch_text)
+    except (
+        OSError,
+        subprocess.SubprocessError,
+        json.JSONDecodeError,
+        TypeError,
+    ) as exc:
         return _direct_write_deny(f"canonical-write policy failed closed: {exc}")
-    if result.returncode == 0 and payload.get("decision") == "allow":
+    if returncode == 0 and payload.get("decision") == "allow":
         return None
     return _direct_write_deny(
         payload.get("reason", "canonical-write policy returned an invalid response")
@@ -149,19 +156,14 @@ def _check_canonical_write(
 
 def _check_command_policy(command: str) -> "dict | None":
     """Return a Claude deny payload unless the shared safety floor allows."""
-    candidates = [
-        os.environ.get("AIDEVOPS_COMMAND_POLICY_HELPER", ""),
-        str(Path(__file__).resolve().parent.parent / "scripts" / "command-policy-helper.py"),
-        str(Path.home() / ".aidevops" / "agents" / "scripts" / "command-policy-helper.py"),
-    ]
-    helper = next((path for path in candidates if path and os.path.isfile(path)), "")
+    helper = _resolve_policy_helper(
+        "AIDEVOPS_COMMAND_POLICY_HELPER", "command-policy-helper.py"
+    )
     decision = "forbid"
     rule_id = "policy.helper-unavailable"
     reason = "required command safety policy helper is unavailable"
     if helper:
         helper_args = [
-            sys.executable,
-            helper,
             "check-command",
             "--cwd",
             os.getcwd(),
@@ -170,30 +172,29 @@ def _check_command_policy(command: str) -> "dict | None":
         ]
         if _is_worker_context():
             helper_args.extend(
-                ["--worker", "--worker-id", os.environ.get("AIDEVOPS_WORKER_ID", "claude-worker")]
+                [
+                    "--worker",
+                    "--worker-id",
+                    os.environ.get("AIDEVOPS_WORKER_ID", "claude-worker"),
+                ]
             )
         try:
-            result = subprocess.run(
-                helper_args,
-                capture_output=True,
-                text=True,
-                timeout=10,
-                check=False,
-            )
-        except (OSError, subprocess.SubprocessError) as exc:
+            returncode, payload = _run_policy_helper(helper, helper_args)
+        except (
+            OSError,
+            subprocess.SubprocessError,
+            json.JSONDecodeError,
+            TypeError,
+        ) as exc:
             rule_id = "policy.helper-error"
             reason = f"command safety policy failed closed: {exc}"
         else:
-            try:
-                payload = json.loads(result.stdout)
-            except (json.JSONDecodeError, TypeError):
-                payload = {}
             decision = payload.get("decision", "forbid")
             rule_id = payload.get("rule_id", "policy.invalid-response")
             reason = payload.get(
                 "reason", "command safety policy returned an invalid response"
             )
-            if result.returncode == 0 and decision == "allow":
+            if returncode == 0 and decision == "allow":
                 return None
     return {
         "hookSpecificOutput": {

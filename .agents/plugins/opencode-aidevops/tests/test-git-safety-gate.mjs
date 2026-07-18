@@ -68,6 +68,28 @@ test("classifies every apply-patch target instead of trusting linked cwd", () =>
       () => checkCanonicalWriteSafetyGate("", scriptsDir, linked, ""),
       /targets could not be classified/,
     );
+    assert.throws(
+      () => checkCanonicalWriteSafetyGate("", scriptsDir, linked, { invalid: true }),
+      /targets could not be classified/,
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("fails closed when canonical policy returns a non-object payload", () => {
+  const root = mkdtempSync(join(tmpdir(), "aidevops-canonical-policy-"));
+  const isolatedScripts = join(root, "scripts");
+  mkdirSync(isolatedScripts);
+  try {
+    writeFileSync(
+      join(isolatedScripts, "canonical-write-policy-helper.py"),
+      "print('null')\n",
+    );
+    assert.throws(
+      () => checkCanonicalWriteSafetyGate("README.md", isolatedScripts),
+      /malformed output/,
+    );
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -338,6 +360,24 @@ test("fails closed when required policy is malformed", () => {
     assert.throws(
       () => checkCommandSafetyGate("printf safe", isolatedScripts, process.cwd()),
       /policy\.invalid.*malformed/,
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("fails closed when command policy exits nonzero with an allow payload", () => {
+  const root = mkdtempSync(join(tmpdir(), "aidevops-command-policy-exit-"));
+  const isolatedScripts = join(root, "scripts");
+  mkdirSync(isolatedScripts);
+  try {
+    writeFileSync(
+      join(isolatedScripts, "command-policy-helper.py"),
+      "import sys\nprint('{\"decision\":\"allow\"}')\nsys.exit(1)\n",
+    );
+    assert.throws(
+      () => checkCommandSafetyGate("printf safe", isolatedScripts, process.cwd()),
+      /shared command policy \(allow/,
     );
   } finally {
     rmSync(root, { recursive: true, force: true });

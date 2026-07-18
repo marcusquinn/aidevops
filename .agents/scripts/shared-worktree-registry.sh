@@ -311,19 +311,6 @@ _wt_delete_owner_row() {
 	return 0
 }
 
-# Remove historical canonical rows without signalling or inspecting owner PIDs.
-_wt_purge_canonical_owner_rows() {
-	local stored_path=""
-	[[ -f "$WORKTREE_REGISTRY_DB" ]] || return 0
-	while IFS= read -r stored_path; do
-		[[ -n "$stored_path" ]] || continue
-		if _wt_path_is_canonical "$stored_path"; then
-			_wt_delete_owner_row "$stored_path" || return 1
-		fi
-	done < <(sqlite3 "$WORKTREE_REGISTRY_DB" "SELECT worktree_path FROM worktree_owners;" 2>/dev/null || true)
-	return 0
-}
-
 # Initialize the registry database
 _init_registry_db() {
 	mkdir -p "$WORKTREE_REGISTRY_DIR" 2>/dev/null || true
@@ -364,7 +351,6 @@ _init_registry_db() {
             ADD COLUMN owner_comm TEXT DEFAULT '';
 		" 2>/dev/null || true
 	fi
-	_wt_purge_canonical_owner_rows || return 1
 	return 0
 }
 

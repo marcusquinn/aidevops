@@ -246,17 +246,20 @@ function recordChildSubagent(taskId, scriptsDir, log) {
  * @param {object} input - Tool input
  * @param {object} output - Tool output
  */
+function enforceDirectFileMutationSafety(ctx, input, output) {
+  if (!isDirectFileMutationTool(input.tool)) return;
+  const writeCwd = output.args?.workdir || output.args?.cwd || process.cwd();
+  const filePath = output.args?.filePath || output.args?.file_path || output.args?.path || "";
+  const rawPatchText = output.args?.patchText || output.args?.patch_text || "";
+  const patchText = isApplyPatchMutationTool(input.tool)
+    ? (typeof rawPatchText === "string" ? rawPatchText : "")
+    : null;
+  checkCanonicalWriteSafetyGate(filePath, ctx.scriptsDir, writeCwd, patchText);
+}
+
 function handleToolBefore(ctx, log, input, output) {
   ctx.continuationGuard?.beforeTool(input, output);
-
-  if (isDirectFileMutationTool(input.tool)) {
-    const writeCwd = output.args?.workdir || output.args?.cwd || process.cwd();
-    const filePath = output.args?.filePath || output.args?.file_path || output.args?.path || "";
-    const patchText = isApplyPatchMutationTool(input.tool)
-      ? output.args?.patchText || output.args?.patch_text || ""
-      : null;
-    checkCanonicalWriteSafetyGate(filePath, ctx.scriptsDir, writeCwd, patchText);
-  }
+  enforceDirectFileMutationSafety(ctx, input, output);
 
   if (isBashTool(input.tool)) {
     const bashCwd = output.args?.workdir || output.args?.cwd || process.cwd();
