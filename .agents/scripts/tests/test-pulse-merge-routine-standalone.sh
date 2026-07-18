@@ -468,8 +468,9 @@ fi
 
 printf '\n=== Standalone post-merge provider regression guards ===\n'
 
+SOURCE_CHAIN_TEST_HOME=$(mktemp -d "${TMPDIR:-/tmp}/pmr-source-chain-home-XXXXXX")
 SOURCE_CHAIN_HARNESS=$(mktemp "${TMPDIR:-/tmp}/pmr-source-chain-harness-XXXXXX")
-trap 'rm -f "$PARSER_HARNESS" "$SCOPE_HARNESS" "$BUDGET_HARNESS" "$SOURCE_CHAIN_HARNESS"' EXIT
+trap 'rm -f "$PARSER_HARNESS" "$SCOPE_HARNESS" "$BUDGET_HARNESS" "$SOURCE_CHAIN_HARNESS"; rm -rf "$SOURCE_CHAIN_TEST_HOME"' EXIT
 
 cat >"$SOURCE_CHAIN_HARNESS" <<'SOURCE_CHAIN_HARNESS_EOF'
 #!/usr/bin/env bash
@@ -592,7 +593,7 @@ SOURCE_CHAIN_HARNESS_EOF
 chmod +x "$SOURCE_CHAIN_HARNESS"
 source_chain_output=$(ROUTINE_FILE="$ROUTINE_FILE" \
 	ROUTINE_TEST_SCRIPTS_DIR="$SCRIPTS_DIR" \
-	SOURCE_CHAIN_TEST_HOME="${TMPDIR:-/tmp}/pmr-source-chain-home-$$" \
+	SOURCE_CHAIN_TEST_HOME="$SOURCE_CHAIN_TEST_HOME" \
 	bash "$SOURCE_CHAIN_HARNESS" 2>&1)
 source_chain_rc=$?
 
