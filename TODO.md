@@ -4681,3 +4681,5 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [ ] t18162 Report and maintain OpenCode storage through ownership-aware contracts #enhancement ref:GH#28153
 
 - [ ] t18161 Coordinate retention for agent backups logs and worker failure evidence #enhancement ref:GH#28152
+
+- [ ] t18163 Fix same-task scheduler ownership transfer for preserved worktrees #auto-dispatch #bug #reliability ref:GH#28203
