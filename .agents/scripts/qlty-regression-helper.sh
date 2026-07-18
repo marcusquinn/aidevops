@@ -28,8 +28,8 @@
 #   2 — invocation or environment error
 #
 # Design notes:
-# - Uses `git worktree add` to scan the base ref in an isolated tree so
-#   the primary worktree is not disturbed. Head is scanned in-place.
+# - Uses standalone shared clones for isolated refs. Unlike linked worktrees,
+#   these retain a .git directory, matching the authoritative CI checkout.
 # - Total-count diff (not SARIF fingerprint diff) because qlty's
 #   fingerprints are not stable across line shifts.
 
@@ -39,6 +39,10 @@ SCRIPT_NAME=$(basename "$0")
 TMP_DIR=""
 BASE_WORKTREE=""
 HEAD_WORKTREE=""
+QLTY_BIN=""
+QLTY_VERSION=""
+UNKNOWN_VALUE="unknown"
+DIRECT_SCAN_MODE="direct-checkout"
 
 cleanup() {
 	if [ -n "$BASE_WORKTREE" ] && [ -d "$BASE_WORKTREE" ]; then
@@ -97,14 +101,16 @@ find_qlty() {
 run_qlty_sarif() {
 	local _dir="$1"
 	local _out="$2"
-	local _qlty_bin
-	_qlty_bin=$(find_qlty) || {
-		die "qlty CLI not found (install: https://qlty.sh/install)"
-	}
+	local _mode="${3:-isolated-clone}"
+	local _cache_key=""
+	local _cache_dir=""
+	_cache_key=$(basename "$_out" .sarif)
+	_cache_dir="$TMP_DIR/cache-${_cache_key}"
+	mkdir -p "$_cache_dir"
 	# --all: scan all files; --sarif: JSON output;
 	# --no-snippets: compact; --quiet: suppress progress.
 	# qlty exits non-zero when smells exist — SARIF still written to stdout.
-	(cd "$_dir" && "$_qlty_bin" smells --all --sarif --no-snippets --quiet) \
+	(cd "$_dir" && XDG_CACHE_HOME="$_cache_dir" "$QLTY_BIN" smells --all --sarif --no-snippets --quiet) \
 		>"$_out" 2>/dev/null || true
 	if [ ! -s "$_out" ]; then
 		log "ERROR: qlty produced no output for $_dir"
@@ -115,6 +121,65 @@ run_qlty_sarif() {
 		return 1
 	fi
 	return 0
+}
+
+create_scan_clone() {
+	local _destination="$1"
+	local _sha="$2"
+	local _repo_root="$3"
+	git clone --quiet --shared --no-checkout "$_repo_root" "$_destination" || return 1
+	git -C "$_destination" checkout --detach --quiet "$_sha" || return 1
+	return 0
+}
+
+normalized_identities() {
+	local _sarif="$1"
+	jq -r '.runs[0].results[] |
+		[(.ruleId // $unknown),
+		 ([.locations[]?.physicalLocation?.artifactLocation?.uri? | select(. != null)] | sort | join("|"))]
+		| @tsv' --arg unknown "$UNKNOWN_VALUE" "$_sarif" | LC_ALL=C sort
+	return 0
+}
+
+emit_scan_metadata() {
+	local _label="$1"
+	local _dir="$2"
+	local _sarif="$3"
+	local _mode="$4"
+	local _commit=""
+	local _tree=""
+	local _count=""
+	local _rule=""
+	_commit=$(git -C "$_dir" rev-parse HEAD)
+	_tree=$(git -C "$_dir" rev-parse 'HEAD^{tree}')
+	_count=$(count_smells "$_sarif")
+	log "$_label metadata: version=$QLTY_VERSION commit=$_commit tree=$_tree mode=$_mode root=repository-root config=.qlty/qlty.toml total=$_count"
+	log "$_label per-rule counts:"
+	while IFS= read -r _rule; do
+		log "  $_rule"
+	done < <(list_rules "$_sarif")
+	return 0
+}
+
+verify_same_tree_results() {
+	local _base_tree="$1"
+	local _head_tree="$2"
+	local _base_sarif="$3"
+	local _head_sarif="$4"
+	local _base_ids="$TMP_DIR/base.identities"
+	local _head_ids="$TMP_DIR/head.identities"
+	if [ "$_base_tree" != "$_head_tree" ]; then
+		return 0
+	fi
+	normalized_identities "$_base_sarif" >"$_base_ids"
+	normalized_identities "$_head_sarif" >"$_head_ids"
+	if cmp -s "$_base_ids" "$_head_ids"; then
+		log "identical trees produced identical normalized SARIF identities"
+		return 0
+	fi
+	log "ERROR: identical tree $_head_tree produced different normalized SARIF identities"
+	diff -u "$_base_ids" "$_head_ids" >&2 || true
+	return 1
 }
 
 # count_smells <sarif-file>
@@ -138,8 +203,8 @@ list_rules() {
 # list_files <sarif-file> — prints "<count>\t<file>" sorted desc.
 list_files() {
 	local _sarif="$1"
-	jq -r '.runs[0].results
-		| map(.locations[0].physicalLocation.artifactLocation.uri // "unknown")
+	jq -r --arg unknown "$UNKNOWN_VALUE" '.runs[0].results
+		| map(.locations[0].physicalLocation.artifactLocation.uri // $unknown)
 		| group_by(.)
 		| map({file: .[0], count: length})
 		| sort_by(-.count)
@@ -172,9 +237,9 @@ delta_rules() {
 delta_files() {
 	local _base="$1"
 	local _head="$2"
-	jq -rn --slurpfile b "$_base" --slurpfile h "$_head" '
+	jq -rn --arg unknown "$UNKNOWN_VALUE" --slurpfile b "$_base" --slurpfile h "$_head" '
 		def counts(s): s[0].runs[0].results
-			| map(.locations[0].physicalLocation.artifactLocation.uri // "unknown")
+			| map(.locations[0].physicalLocation.artifactLocation.uri // $unknown)
 			| group_by(.)
 			| map({key: .[0], value: length})
 			| from_entries;
@@ -307,9 +372,12 @@ done
 
 if [ "$DRY_RUN" -eq 1 ]; then
 	TMP_DIR=$(mktemp -d)
+	QLTY_BIN=$(find_qlty) || die "qlty CLI not found"
+	QLTY_VERSION=$("$QLTY_BIN" --version 2>/dev/null) || QLTY_VERSION="$UNKNOWN_VALUE"
 	_head_sarif="$TMP_DIR/head.sarif"
 	log "dry-run: scanning current tree"
-	run_qlty_sarif "." "$_head_sarif"
+	run_qlty_sarif "." "$_head_sarif" "$DIRECT_SCAN_MODE"
+	emit_scan_metadata "head" "." "$_head_sarif" "$DIRECT_SCAN_MODE"
 	_count=$(count_smells "$_head_sarif")
 	printf 'Total smells: %s\n' "$_count"
 	if [ -n "$SARIF_HEAD" ]; then
@@ -331,16 +399,24 @@ fi
 
 BASE_SHA=$(git rev-parse "$BASE")
 HEAD_SHA=$(git rev-parse "$HEAD")
+BASE_TREE=$(git rev-parse "$BASE^{tree}")
+HEAD_TREE=$(git rev-parse "$HEAD^{tree}")
+REPO_ROOT=$(git rev-parse --show-toplevel)
+QLTY_BIN=$(find_qlty) || die "qlty CLI not found"
+QLTY_VERSION=$("$QLTY_BIN" --version 2>/dev/null) || QLTY_VERSION="$UNKNOWN_VALUE"
+if [ -n "${QLTY_CLI_VERSION:-}" ] && [[ "$QLTY_VERSION" != *" ${QLTY_CLI_VERSION}"* ]]; then
+	die "Qlty CLI version mismatch: expected ${QLTY_CLI_VERSION}, resolved $QLTY_VERSION"
+fi
 
 TMP_DIR=$(mktemp -d)
 _base_sarif="$TMP_DIR/base.sarif"
 _head_sarif="$TMP_DIR/head.sarif"
 
-# Scan base in an isolated worktree so we do not disturb the primary tree.
+# Scan base in a standalone clone so qlty observes a normal .git directory.
 BASE_WORKTREE="$TMP_DIR/base-worktree"
-log "creating base worktree at $BASE_SHA"
-if ! git worktree add --detach --force "$BASE_WORKTREE" "$BASE_SHA" >/dev/null 2>&1; then
-	die "failed to create base worktree for $BASE_SHA"
+log "creating base scan clone at $BASE_SHA"
+if ! create_scan_clone "$BASE_WORKTREE" "$BASE_SHA" "$REPO_ROOT"; then
+	die "failed to create base scan clone for $BASE_SHA"
 fi
 
 log "scanning base ($BASE_SHA)"
@@ -350,21 +426,38 @@ if ! run_qlty_sarif "$BASE_WORKTREE" "$_base_sarif"; then
 	BASE_SCAN_FAILED=1
 else
 	BASE_SCAN_FAILED=0
+	emit_scan_metadata "base" "$BASE_WORKTREE" "$_base_sarif" "isolated-clone"
 fi
 
-# Scan head in its own isolated worktree so the result is always the
-# ref at HEAD_SHA, not whatever happens to be in the working tree.
-HEAD_WORKTREE="$TMP_DIR/head-worktree"
-log "creating head worktree at $HEAD_SHA"
-if ! git worktree add --detach --force "$HEAD_WORKTREE" "$HEAD_SHA" >/dev/null 2>&1; then
-	die "failed to create head worktree for $HEAD_SHA"
+# Prefer the authoritative direct checkout when it has the requested tree.
+# GitHub's synthetic merge commit and PR head can have different commits but
+# the same tree; scanning the direct checkout preserves absolute-gate parity.
+CURRENT_TREE=$(git rev-parse 'HEAD^{tree}')
+WORKTREE_STATUS=$(git status --porcelain --untracked-files=normal)
+if [ "$CURRENT_TREE" = "$HEAD_TREE" ] && [ -z "$WORKTREE_STATUS" ]; then
+	HEAD_SCAN_DIR="$REPO_ROOT"
+	HEAD_SCAN_MODE="$DIRECT_SCAN_MODE"
+else
+	HEAD_WORKTREE="$TMP_DIR/head-worktree"
+	HEAD_SCAN_DIR="$HEAD_WORKTREE"
+	HEAD_SCAN_MODE="isolated-clone"
+	log "creating head scan clone at $HEAD_SHA"
+	if ! create_scan_clone "$HEAD_WORKTREE" "$HEAD_SHA" "$REPO_ROOT"; then
+		die "failed to create head scan clone for $HEAD_SHA"
+	fi
 fi
 
 log "scanning head ($HEAD_SHA)"
-run_qlty_sarif "$HEAD_WORKTREE" "$_head_sarif"
+run_qlty_sarif "$HEAD_SCAN_DIR" "$_head_sarif" "$HEAD_SCAN_MODE"
+emit_scan_metadata "head" "$HEAD_SCAN_DIR" "$_head_sarif" "$HEAD_SCAN_MODE"
 
 if [ "$BASE_SCAN_FAILED" -eq 1 ]; then
 	cp "$_head_sarif" "$_base_sarif"
+fi
+
+IDENTITY_MISMATCH=0
+if [ "$BASE_SCAN_FAILED" -eq 0 ] && ! verify_same_tree_results "$BASE_TREE" "$HEAD_TREE" "$_base_sarif" "$_head_sarif"; then
+	IDENTITY_MISMATCH=1
 fi
 
 BASE_COUNT=$(count_smells "$_base_sarif")
@@ -385,6 +478,11 @@ if [ -n "$OUTPUT_MD" ]; then
 		"$_base_sarif" "$_head_sarif" \
 		"$BASE_SHA" "$HEAD_SHA" "$OUTPUT_MD"
 	log "report written to $OUTPUT_MD"
+fi
+
+if [ "$IDENTITY_MISMATCH" -eq 1 ]; then
+	log "REGRESSION: normalized SARIF differs for identical trees"
+	exit 1
 fi
 
 if [ "$DELTA" -gt 0 ] && [ "$ALLOW_INCREASE" -eq 0 ]; then
