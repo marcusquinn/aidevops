@@ -427,7 +427,7 @@ _prefetch_detect_cache_hit() {
 	[[ -n "$PREFETCH_CURRENT_FINGERPRINT" ]] || return 1
 	PREFETCH_CURRENT_SNAPSHOT_GENERATION=$(printf '%s' "$issues_snapshot" | jq -r '.generation // ""' 2>/dev/null) || PREFETCH_CURRENT_SNAPSHOT_GENERATION=""
 
-	local cached_fp cached_schema
+	local cached_fp="" cached_schema=""
 	cached_fp=$(echo "$cache_entry" | jq -r '.state_fingerprint // ""' 2>/dev/null) || cached_fp=""
 	cached_schema=$(echo "$cache_entry" | jq -r '.state_fingerprint_schema // ""' 2>/dev/null) || cached_schema=""
 	[[ "$cached_schema" == "$_PREFETCH_FINGERPRINT_SCHEMA" ]] || return 1
