@@ -4663,3 +4663,5 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [ ] t18157 Block reads of credential-bearing runtime configuration #security ref:GH#28141
 
 - [ ] t18158 Add fail-closed cross-store storage inventory reporting #enhancement ref:GH#28149
+
+- [ ] t18159 Bound runtime-bundle growth without weakening leases or rollback #enhancement ref:GH#28150
