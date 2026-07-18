@@ -143,6 +143,21 @@ _status_capability_readiness() {
 	return 0
 }
 
+_status_storage_inventory() {
+	local helper="${AGENTS_DIR:-${HOME:-}/.aidevops/agents}/scripts/storage-inventory-helper.sh"
+	local report=""
+
+	[[ -f "$helper" ]] || return 0
+	report=$(AIDEVOPS_STORAGE_SIZE_TIMEOUT_TENTHS="${AIDEVOPS_STATUS_STORAGE_TIMEOUT_TENTHS:-3}" bash "$helper" status 2>/dev/null) || report=""
+	if [[ -n "$report" ]]; then
+		printf '%s\n\n' "$report"
+	else
+		print_warning "Storage inventory unavailable; no cleanup decision was made"
+		echo ""
+	fi
+	return 0
+}
+
 _status_bundle_manifest_value() {
 	local manifest_file="$1"
 	local key="$2"
@@ -247,6 +262,7 @@ cmd_status() {
 	_status_runtime_config_parity
 	_status_headless_runtime_config
 	_status_capability_readiness
+	_status_storage_inventory
 	print_header "SSH Configuration"
 	check_file "$HOME/.ssh/id_ed25519" && print_success "Ed25519 SSH key" || print_warning "Ed25519 SSH key - not found"
 	echo ""
