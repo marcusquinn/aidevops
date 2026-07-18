@@ -617,6 +617,100 @@ _runtime_bundle_write_manifest() {
 	return 0
 }
 
+_runtime_bundle_manifest_value() {
+	local manifest_file="$1"
+	local key="$2"
+	local line=""
+
+	[[ -r "$manifest_file" ]] || return 1
+	while IFS= read -r line || [[ -n "$line" ]]; do
+		case "$line" in
+		"${key}="*)
+			printf '%s' "${line#*=}"
+			return 0
+			;;
+		esac
+	done <"$manifest_file"
+	return 1
+}
+
+_runtime_bundle_compare_versions() {
+	local left="$1"
+	local right="$2"
+	local left_major="" left_minor="" left_patch=""
+	local right_major="" right_minor="" right_patch=""
+
+	left="${left#v}"
+	right="${right#v}"
+	[[ "$left" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || return 1
+	[[ "$right" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || return 1
+	IFS='.' read -r left_major left_minor left_patch <<<"$left"
+	IFS='.' read -r right_major right_minor right_patch <<<"$right"
+
+	if ((10#$left_major < 10#$right_major)); then
+		printf '%s' '-1'
+		return 0
+	fi
+	if ((10#$left_major > 10#$right_major)); then
+		printf '%s' '1'
+		return 0
+	fi
+	if ((10#$left_minor < 10#$right_minor)); then
+		printf '%s' '-1'
+		return 0
+	fi
+	if ((10#$left_minor > 10#$right_minor)); then
+		printf '%s' '1'
+		return 0
+	fi
+	if ((10#$left_patch < 10#$right_patch)); then
+		printf '%s' '-1'
+		return 0
+	fi
+	if ((10#$left_patch > 10#$right_patch)); then
+		printf '%s' '1'
+		return 0
+	fi
+	printf '%s' '0'
+	return 0
+}
+
+# Print a reason when setup is attempting to activate a candidate that is older
+# than the active global runtime. Missing comparison evidence intentionally
+# prints nothing. Explicit rollback tooling uses its own audited link transition
+# and does not route through setup activation.
+_runtime_bundle_stale_candidate_reason() {
+	local bundle_dir="$1"
+	local active_root="$2"
+	local candidate_manifest="$bundle_dir/manifest"
+	local active_manifest="$active_root/.bundle-manifest"
+	local candidate_version="" active_version="" version_relation=""
+	local candidate_sha="" active_sha=""
+	local repo_dir="${INSTALL_DIR:-}"
+
+	candidate_version=$(_runtime_bundle_manifest_value "$candidate_manifest" framework_version 2>/dev/null || :)
+	active_version=$(_runtime_bundle_manifest_value "$active_manifest" framework_version 2>/dev/null || :)
+	if [[ -n "$candidate_version" && -n "$active_version" ]]; then
+		version_relation=$(_runtime_bundle_compare_versions "$candidate_version" "$active_version" 2>/dev/null || :)
+		if [[ "$version_relation" == "-1" ]]; then
+			printf 'candidate version %s is older than active version %s' "$candidate_version" "$active_version"
+			return 0
+		fi
+	fi
+
+	candidate_sha=$(_runtime_bundle_manifest_value "$candidate_manifest" git_sha 2>/dev/null || :)
+	active_sha=$(_runtime_bundle_manifest_value "$active_manifest" git_sha 2>/dev/null || :)
+	[[ -n "$repo_dir" && "$candidate_sha" != "$active_sha" ]] || return 0
+	[[ "$candidate_sha" =~ ^[0-9a-fA-F]{7,64}$ ]] || return 0
+	[[ "$active_sha" =~ ^[0-9a-fA-F]{7,64}$ ]] || return 0
+	git -C "$repo_dir" cat-file -e "${candidate_sha}^{commit}" 2>/dev/null || return 0
+	git -C "$repo_dir" cat-file -e "${active_sha}^{commit}" 2>/dev/null || return 0
+	if git -C "$repo_dir" merge-base --is-ancestor "$candidate_sha" "$active_sha" 2>/dev/null; then
+		printf 'candidate source %.12s is an ancestor of active source %.12s' "$candidate_sha" "$active_sha"
+	fi
+	return 0
+}
+
 _runtime_bundle_validate() {
 	local bundle_dir="$1"
 	local source_dir="$2"
@@ -853,10 +947,16 @@ _runtime_bundle_activate_locked() {
 	local previous_link="$parent_dir/previous-runtime-bundle"
 	local previous_root=""
 	local legacy_dir=""
+	local stale_reason=""
 	agents_root=$(_runtime_bundle_resolve_root "$bundle_dir/agents") || return 1
 	bundles_dir=$(cd "${bundle_dir%/*}" && pwd -P) || return 1
 
 	if previous_root=$(_runtime_bundle_resolve_root "$target_dir" 2>/dev/null); then
+		stale_reason=$(_runtime_bundle_stale_candidate_reason "$bundle_dir" "$previous_root")
+		if [[ -n "$stale_reason" ]]; then
+			print_error "Refusing stale runtime bundle activation: ${stale_reason}. Use a dedicated audited rollback operation instead of setup."
+			return 1
+		fi
 		_AIDEVOPS_PREVIOUS_BUNDLE_ROOT="$previous_root"
 	fi
 	if [[ -d "$target_dir" && ! -L "$target_dir" ]]; then

@@ -11,7 +11,7 @@ function getEvent(input) {
 }
 
 function sessionIDFrom(event) {
-  return event.properties?.sessionID || event.properties?.info?.id || "";
+  return event.properties?.sessionID || event.properties?.info?.sessionID || event.properties?.info?.id || "";
 }
 
 function isRootSessionInfo(info) {
@@ -19,6 +19,21 @@ function isRootSessionInfo(info) {
 }
 
 const ROOT_SESSION_STATUSES = new Set(["busy", "retry", "idle"]);
+const TERMINAL_ASSISTANT_FINISH_REASONS = new Set(["stop", "end_turn", "completed"]);
+const MAX_TRACKED_MESSAGE_IDS = 128;
+
+function rememberMessageID(ids, messageID) {
+  if (!messageID || ids.has(messageID)) return false;
+  ids.add(messageID);
+  while (ids.size > MAX_TRACKED_MESSAGE_IDS) ids.delete(ids.values().next().value);
+  return true;
+}
+
+function isTerminalAssistantCompletion(info) {
+  if (info?.role !== "assistant" || info.summary === true || info.mode === "compaction") return false;
+  if (typeof info.time?.completed !== "number") return false;
+  return TERMINAL_ASSISTANT_FINISH_REASONS.has(String(info.finish || "").toLowerCase());
+}
 
 function activateRootSession({ sessionID, state, resetState, setTerminalTitleStatus }) {
   state.activeRootSessionID = sessionID;
@@ -44,21 +59,52 @@ function handleSessionDeleted({ sessionID, state, resetState }) {
   resetState();
 }
 
-function handleMessageUpdated({ info, sessionID, state, setTerminalTitleStatus }) {
+function handleUserMessageUpdated({ info, state, setTerminalTitleStatus }) {
+  const messageID = info.id || "";
+  if (!rememberMessageID(state.seenUserMessageIDs, messageID)) return;
+  const createdAt = Number.isFinite(info.time?.created) ? info.time.created : null;
   if (
-    sessionID !== state.activeRootSessionID ||
-    info?.role !== "user" ||
-    state.pendingPermissionIDs.size > 0
+    state.activeUserMessageID &&
+    state.activeUserCreatedAt !== null &&
+    (createdAt === null || createdAt < state.activeUserCreatedAt)
   ) {
     return;
   }
-  setTerminalTitleStatus("busy");
+  state.activeUserMessageID = messageID;
+  state.activeUserCreatedAt = createdAt;
+  state.completedUserMessageID = "";
+  if (state.pendingPermissionIDs.size === 0) setTerminalTitleStatus("busy");
+}
+
+function handleAssistantMessageUpdated({ info, state, setTerminalTitleStatus }) {
+  if (
+    !isTerminalAssistantCompletion(info) ||
+    state.pendingPermissionIDs.size > 0 ||
+    !state.activeUserMessageID ||
+    info.parentID !== state.activeUserMessageID
+  ) return;
+  if (!rememberMessageID(state.completedAssistantMessageIDs, info.id)) return;
+  state.completedUserMessageID = state.activeUserMessageID;
+  setTerminalTitleStatus("idle");
+}
+
+function handleMessageUpdated(context) {
+  const { info, sessionID, state } = context;
+  if (sessionID !== state.activeRootSessionID) return;
+  if (info?.role === "user") handleUserMessageUpdated(context);
+  else handleAssistantMessageUpdated(context);
 }
 
 function handleSessionStatus({ event, sessionID, state, setTerminalTitleStatus }) {
   if (sessionID !== state.activeRootSessionID || state.pendingPermissionIDs.size > 0) return;
   const status = event.properties?.status?.type;
   if (!ROOT_SESSION_STATUSES.has(status)) return;
+  if (
+    status === "busy" &&
+    state.completedUserMessageID &&
+    state.completedUserMessageID === state.activeUserMessageID
+  ) return;
+  if (status !== "idle") state.completedUserMessageID = "";
   setTerminalTitleStatus(status);
 }
 
@@ -71,6 +117,7 @@ function handlePermissionAsked({ event, sessionID, state, setTerminalTitleStatus
   if (sessionID !== state.activeRootSessionID) return;
   const requestID = event.properties?.id;
   if (!requestID) return;
+  state.completedUserMessageID = "";
   state.pendingPermissionIDs.add(requestID);
   setTerminalTitleStatus("permission");
 }
@@ -80,6 +127,7 @@ function handlePermissionReplied({ event, sessionID, state, setTerminalTitleStat
   const requestID = event.properties?.requestID || event.properties?.permissionID;
   const wasPending = state.pendingPermissionIDs.delete(requestID);
   if (!wasPending || state.pendingPermissionIDs.size > 0) return;
+  state.completedUserMessageID = "";
   setTerminalTitleStatus("busy");
 }
 
@@ -103,11 +151,21 @@ export function createSessionTitleStatusHandler({
 } = {}) {
   const state = {
     activeRootSessionID: "",
+    activeUserMessageID: "",
+    activeUserCreatedAt: null,
+    completedUserMessageID: "",
+    completedAssistantMessageIDs: new Set(),
     pendingPermissionIDs: new Set(),
+    seenUserMessageIDs: new Set(),
   };
 
   const resetState = () => {
+    state.activeUserMessageID = "";
+    state.activeUserCreatedAt = null;
+    state.completedUserMessageID = "";
+    state.completedAssistantMessageIDs.clear();
     state.pendingPermissionIDs.clear();
+    state.seenUserMessageIDs.clear();
     resetTerminalTitleState();
   };
 

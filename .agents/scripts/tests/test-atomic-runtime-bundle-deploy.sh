@@ -103,6 +103,60 @@ stage_revision() {
 	return 0
 }
 
+set_bundle_manifest_sha() {
+	local bundle_dir="$1"
+	local git_sha="$2"
+	local manifest_file=""
+	local manifest_tmp=""
+	local line=""
+
+	for manifest_file in "$bundle_dir/manifest" "$bundle_dir/agents/.bundle-manifest"; do
+		manifest_tmp="${manifest_file}.tmp"
+		while IFS= read -r line || [[ -n "$line" ]]; do
+			if [[ "$line" == git_sha=* ]]; then
+				printf 'git_sha=%s\n' "$git_sha"
+			else
+				printf '%s\n' "$line"
+			fi
+		done <"$manifest_file" >"$manifest_tmp"
+		mv "$manifest_tmp" "$manifest_file"
+	done
+	return 0
+}
+
+install_mock_ancestor_git() {
+	git() {
+		local first_arg="$1"
+		local third_arg="${3:-}"
+		local fourth_arg="${4:-}"
+		local fifth_arg="${5:-}"
+		local sixth_arg="${6:-}"
+		if [[ "$first_arg" == "-C" && "$third_arg" == "cat-file" ]]; then
+			case "$fifth_arg" in
+			"1111111111111111111111111111111111111111^{commit}" | "2222222222222222222222222222222222222222^{commit}") return 0 ;;
+			esac
+			return 1
+		fi
+		if [[ "$first_arg" == "-C" && "$third_arg" == "merge-base" ]]; then
+			[[ "$fourth_arg" == "--is-ancestor" &&
+				"$fifth_arg" == "1111111111111111111111111111111111111111" &&
+				"$sixth_arg" == "2222222222222222222222222222222222222222" ]]
+			return $?
+		fi
+		return 1
+	}
+	return 0
+}
+
+test_manifest_value_reads_unterminated_final_line() {
+	local manifest_file="$TEST_ROOT/manifest-without-trailing-newline"
+
+	printf 'schema=1\nframework_version=15.0.0' >"$manifest_file"
+	assert_eq "15.0.0" "$(_runtime_bundle_manifest_value "$manifest_file" framework_version)" \
+		"manifest reader accepts an unterminated final line"
+	return 0
+}
+
 test_initial_activation_and_manifest() {
 	local target_dir="$HOME/.aidevops/agents"
 	local active_root=""
@@ -470,6 +524,61 @@ test_plist_override_survives_two_bundle_activations() {
 	return 0
 }
 
+test_serialized_older_version_refuses_global_activation() {
+	local target_dir="$HOME/.aidevops/agents"
+	local stale_bundle=""
+	local current_bundle=""
+	local active_before=""
+	local active_after=""
+
+	write_fake_revision "12.0.0" "serialized-stale-version"
+	stage_revision "$target_dir"
+	stale_bundle="$_AIDEVOPS_STAGED_BUNDLE_DIR"
+	write_fake_revision "13.0.0" "serialized-current-version"
+	stage_revision "$target_dir"
+	current_bundle="$_AIDEVOPS_STAGED_BUNDLE_DIR"
+	_runtime_bundle_activate "$target_dir" "$current_bundle"
+	active_before=$(_runtime_bundle_resolve_root "$target_dir")
+
+	if _runtime_bundle_activate "$target_dir" "$stale_bundle"; then
+		fail "serialized older candidate unexpectedly replaced the active bundle"
+	fi
+	active_after=$(_runtime_bundle_resolve_root "$target_dir")
+	assert_eq "$active_before" "$active_after" "serialized older candidate preserves the active bundle"
+	assert_eq "13.0.0" "$(tr -d '[:space:]' <"$target_dir/VERSION")" "serialized activation cannot move the global version backwards"
+	return 0
+}
+
+test_same_version_ancestor_refuses_global_activation() {
+	local target_dir="$HOME/.aidevops/agents"
+	local stale_bundle=""
+	local current_bundle=""
+	local active_before=""
+	local active_after=""
+
+	write_fake_revision "14.0.0" "same-version-ancestor"
+	stage_revision "$target_dir"
+	stale_bundle="$_AIDEVOPS_STAGED_BUNDLE_DIR"
+	set_bundle_manifest_sha "$stale_bundle" "1111111111111111111111111111111111111111"
+	write_fake_revision "14.0.0" "same-version-descendant"
+	stage_revision "$target_dir"
+	current_bundle="$_AIDEVOPS_STAGED_BUNDLE_DIR"
+	set_bundle_manifest_sha "$current_bundle" "2222222222222222222222222222222222222222"
+	_runtime_bundle_activate "$target_dir" "$current_bundle"
+	active_before=$(_runtime_bundle_resolve_root "$target_dir")
+
+	install_mock_ancestor_git
+	if _runtime_bundle_activate "$target_dir" "$stale_bundle"; then
+		unset -f git
+		fail "same-version ancestor unexpectedly replaced its active descendant"
+	fi
+	unset -f git
+	active_after=$(_runtime_bundle_resolve_root "$target_dir")
+	assert_eq "$active_before" "$active_after" "same-version ancestor candidate preserves the active descendant"
+	assert_file_contains "$target_dir/scripts/helper.sh" 'same-version-descendant' "same-version ancestry guard preserves active source content"
+	return 0
+}
+
 main() {
 	TEST_ROOT=$(mktemp -d)
 	trap cleanup EXIT
@@ -483,6 +592,7 @@ main() {
 	AIDEVOPS_AGENT_DEPLOY_MIN_FILES=1
 	export AIDEVOPS_AGENT_DEPLOY_MIN_FILES
 
+	test_manifest_value_reads_unterminated_final_line
 	test_initial_activation_and_manifest
 	test_interrupted_staging_preserves_active
 	test_failed_activation_rolls_back
@@ -500,6 +610,8 @@ main() {
 	test_dependency_install_recovery_activates_candidate
 	test_dependency_install_failure_preserves_active_bundle
 	test_plist_override_survives_two_bundle_activations
+	test_serialized_older_version_refuses_global_activation
+	test_same_version_ancestor_refuses_global_activation
 
 	printf 'Results: %s checks passed\n' "$TESTS_RUN"
 	return 0
