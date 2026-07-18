@@ -655,7 +655,7 @@ test_private_output_filter_removes_content() {
 HTTP 429 rate limit for ${secret_marker}
 EOF
 
-	"$PRIVATE_OUTPUT_FILTER" <"$input_file" >"$output_file"
+	python3 "$PRIVATE_OUTPUT_FILTER" <"$input_file" >"$output_file"
 	local filtered_output
 	filtered_output=$(<"$output_file")
 	if [[ "$filtered_output" == *'"type":"step_start"'* && \

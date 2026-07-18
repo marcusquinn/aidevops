@@ -111,7 +111,7 @@ _invoke_opencode() {
 	local private_workload=0
 	if _headless_private_workload_enabled; then
 		private_workload=1
-		if [[ ! -x "$PRIVATE_OUTPUT_FILTER" ]] || ! command -v python3 >/dev/null 2>&1; then
+		if [[ ! -f "$PRIVATE_OUTPUT_FILTER" ]] || ! command -v python3 >/dev/null 2>&1; then
 			print_error "Private workload output filter is unavailable"
 			printf '%s' "86" >"$exit_code_file"
 			return 0
@@ -243,7 +243,7 @@ _invoke_opencode() {
 			# and kills every sandboxed worker at ~93s.
 			if [[ -n "$passthrough_csv" ]]; then
 				if [[ "$private_workload" -eq 1 ]]; then
-					run_without_opencode_session_env "$SANDBOX_EXEC_HELPER" run --timeout "$HEADLESS_SANDBOX_TIMEOUT_DEFAULT" --allow-secret-io --private-output --egress-mode "$egress_mode" --worker-id "$egress_worker_id" --passthrough "$passthrough_csv" -- "${_oc_cmd[@]}" 2>&1 | "$PRIVATE_OUTPUT_FILTER" >"$output_file" 2>/dev/null
+					run_without_opencode_session_env "$SANDBOX_EXEC_HELPER" run --timeout "$HEADLESS_SANDBOX_TIMEOUT_DEFAULT" --allow-secret-io --private-output --egress-mode "$egress_mode" --worker-id "$egress_worker_id" --passthrough "$passthrough_csv" -- "${_oc_cmd[@]}" 2>&1 | python3 "$PRIVATE_OUTPUT_FILTER" >"$output_file" 2>/dev/null
 					local -a private_pipeline_status=("${PIPESTATUS[@]}")
 					if [[ "${private_pipeline_status[1]:-1}" -ne 0 ]]; then
 						printf '%s' "86" >"$exit_code_file"
@@ -256,7 +256,7 @@ _invoke_opencode() {
 				fi
 			else
 				if [[ "$private_workload" -eq 1 ]]; then
-					run_without_opencode_session_env "$SANDBOX_EXEC_HELPER" run --timeout "$HEADLESS_SANDBOX_TIMEOUT_DEFAULT" --allow-secret-io --private-output --egress-mode "$egress_mode" --worker-id "$egress_worker_id" -- "${_oc_cmd[@]}" 2>&1 | "$PRIVATE_OUTPUT_FILTER" >"$output_file" 2>/dev/null
+					run_without_opencode_session_env "$SANDBOX_EXEC_HELPER" run --timeout "$HEADLESS_SANDBOX_TIMEOUT_DEFAULT" --allow-secret-io --private-output --egress-mode "$egress_mode" --worker-id "$egress_worker_id" -- "${_oc_cmd[@]}" 2>&1 | python3 "$PRIVATE_OUTPUT_FILTER" >"$output_file" 2>/dev/null
 					local -a private_pipeline_status=("${PIPESTATUS[@]}")
 					if [[ "${private_pipeline_status[1]:-1}" -ne 0 ]]; then
 						printf '%s' "86" >"$exit_code_file"
