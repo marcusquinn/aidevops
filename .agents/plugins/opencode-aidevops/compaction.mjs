@@ -365,7 +365,7 @@ export async function compactingHook(deps, _input, output, directory) {
       "- Git workflow: run pre-edit-check.sh before any file modifications",
       "- Security: never expose credentials in output/logs",
       "- Working directory: ~/.aidevops/.agent-workspace/work/[project]/",
-      "- Quality: preserve only repository-configured or demonstrably required checks; optional services such as SonarQube Cloud or Codacy are not merge gates without repository configuration or required-check evidence",
+      "- Quality: ShellCheck zero violations; preserve only repository-configured or demonstrably required checks; optional services such as SonarQube Cloud or Codacy are not merge gates without repository configuration or required-check evidence",
       "- ALWAYS Read before Edit/Write — these tools fail without a prior Read",
       "",
       "## Session-Analysis Evidence",
