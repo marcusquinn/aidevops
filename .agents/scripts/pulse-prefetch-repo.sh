@@ -352,7 +352,7 @@ _prefetch_single_repo_update_cache() {
 	local now_iso
 	now_iso=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 	local fingerprint="${PREFETCH_CURRENT_FINGERPRINT:-}"
-	local new_entry last_full_sweep
+	local new_entry="" last_full_sweep=""
 	last_full_sweep=$(printf '%s\n' "$cache_entry" | jq -r '.last_full_sweep // ""') || last_full_sweep=""
 	if [[ "$sweep_mode" == "$_PREFETCH_ISSUE_SWEEP_FULL" && "$snapshot_complete" == "$_PREFETCH_BOOL_TRUE" ]]; then
 		last_full_sweep="$now_iso"
