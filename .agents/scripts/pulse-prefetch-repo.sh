@@ -29,10 +29,9 @@ _PREFETCH_NONE_LINE="- None"
 #######################################
 # GH#18984 (t2098): Emit cached-data replay for an idle repo on cache-hit.
 #
-# On cache-hit, replays cached PR/issue sections from the cache entry
-# instead of making 6 expensive gh API calls. The only live call is
-# _prefetch_prs_enrich_checks for repos with cached PRs > 0 (catches
-# reviewDecision changes that don't always update updatedAt).
+# On cache-hit, renders the current canonical PR/issue snapshots instead of
+# making duplicate list calls. Check enrichment remains observational and live;
+# normalized snapshots report GraphQL-only review fields as UNKNOWN.
 #
 # Writes markdown sections to stdout. Sets PREFETCH_UPDATED_PRS and
 # PREFETCH_UPDATED_ISSUES for the cache-update path in the caller.
@@ -40,10 +39,14 @@ _PREFETCH_NONE_LINE="- None"
 # Arguments:
 #   $1 - repo slug
 #   $2 - cache_entry JSON
+#   $3 - canonical PR snapshot envelope (optional for tier replay)
+#   $4 - canonical issue snapshot envelope (optional for tier replay)
 #######################################
 _prefetch_single_repo_idle_skip() {
 	local slug="$1"
 	local cache_entry="$2"
+	local prs_snapshot="${3:-}"
+	local issues_snapshot="${4:-}"
 
 	local _cached_last
 	_cached_last=$(echo "$cache_entry" | jq -r '.last_prefetch // "unknown"' 2>/dev/null) || _cached_last="unknown"
@@ -53,8 +56,16 @@ _prefetch_single_repo_idle_skip() {
 	echo ""
 
 	local _cached_prs="" _cached_issues="" _cached_pr_count=0 _cached_issue_count=0
-	_cached_prs=$(echo "$cache_entry" | jq -c '.prs // []' 2>/dev/null) || _cached_prs="[]"
-	_cached_issues=$(echo "$cache_entry" | jq -c '.issues // []' 2>/dev/null) || _cached_issues="[]"
+	if [[ -n "$prs_snapshot" ]] && _cached_prs=$(printf '%s' "$prs_snapshot" | jq -ce '.items | select(type == "array")' 2>/dev/null); then
+		:
+	else
+		_cached_prs=$(echo "$cache_entry" | jq -c '.prs // []' 2>/dev/null) || _cached_prs="[]"
+	fi
+	if [[ -n "$issues_snapshot" ]] && _cached_issues=$(printf '%s' "$issues_snapshot" | jq -ce '.items | select(type == "array")' 2>/dev/null); then
+		:
+	else
+		_cached_issues=$(echo "$cache_entry" | jq -c '.issues // []' 2>/dev/null) || _cached_issues="[]"
+	fi
 	_cached_pr_count=$(echo "$_cached_prs" | jq 'length' 2>/dev/null) || _cached_pr_count=0
 	[[ "$_cached_pr_count" =~ ^[0-9]+$ ]] || _cached_pr_count=0
 	_cached_issues=$(echo "$_cached_issues" | _prefetch_open_issues_only)
@@ -64,7 +75,7 @@ _prefetch_single_repo_idle_skip() {
 	# Replay cached PR section
 	echo "### Open PRs (${_cached_pr_count}) [cached]"
 	if [[ "$_cached_pr_count" -gt 0 ]]; then
-		echo "$_cached_prs" | jq -r '.[] | "- PR #\(.number): \(.title) [review: \(.reviewDecision // "NONE")] [updated: \(.updatedAt)]"'
+		echo "$_cached_prs" | jq -r '.[] | "- PR #\(.number): \(.title) [review: \(if has("reviewDecision") | not then "UNKNOWN" elif .reviewDecision == null or .reviewDecision == "" then "NONE" else .reviewDecision end)] [updated: \(.updatedAt)]"'
 	else
 		echo "$_PREFETCH_NONE_LINE"
 	fi
@@ -133,6 +144,8 @@ _prefetch_single_repo_idle_skip() {
 #   $3 - state fingerprint
 #   $4 - PR JSON array
 #   $5 - issue JSON array
+#   $6 - whether the canonical snapshot pair was complete
+#   $7 - canonical snapshot generation
 # Outputs: JSON cache entry object
 #######################################
 _prefetch_build_cache_entry() {
@@ -141,6 +154,9 @@ _prefetch_build_cache_entry() {
 	local fingerprint="$3"
 	local prs_json="$4"
 	local issues_json="$5"
+	local snapshot_complete="${6:-false}"
+	local snapshot_generation="${7:-}"
+	[[ "$snapshot_complete" == "$_PREFETCH_BOOL_TRUE" ]] || snapshot_complete=false
 
 	[[ -n "$prs_json" && "$prs_json" != "$_PREFETCH_JSON_NULL" ]] || prs_json="[]"
 	[[ -n "$issues_json" && "$issues_json" != "$_PREFETCH_JSON_NULL" ]] || issues_json="[]"
@@ -166,9 +182,15 @@ _prefetch_build_cache_entry() {
 		--arg now "$now_iso" \
 		--arg lfs "$last_full_sweep" \
 		--arg fp "$fingerprint" \
+		--arg fp_schema "${_PREFETCH_FINGERPRINT_SCHEMA:-canonical-snapshot-v1}" \
+		--arg generation "$snapshot_generation" \
+		--argjson snapshot_complete "$snapshot_complete" \
 		--slurpfile prs "$prs_file" \
 		--slurpfile issues "$issues_file" \
-		'{last_prefetch: $now, last_full_sweep: $lfs, state_fingerprint: $fp, prs: ($prs[0] // []), issues: ($issues[0] // [])}') || jq_status=$?
+		'{last_prefetch: $now, last_full_sweep: $lfs, state_fingerprint: $fp,
+		  state_fingerprint_schema: $fp_schema, snapshot_generation: $generation,
+		  snapshot_complete: $snapshot_complete,
+		  prs: ($prs[0] // []), issues: ($issues[0] // [])}') || jq_status=$?
 	rm -f "$prs_file" "$issues_file"
 	[[ "$jq_status" -eq 0 ]] || return "$jq_status"
 	printf '%s\n' "$jq_output"
@@ -230,19 +252,49 @@ _prefetch_single_repo_sweep_mode() {
 }
 
 #######################################
+# Resolve each canonical collection exactly once for a repository cycle.
+# Sets PREFETCH_CANONICAL_* globals for Bash 3.2 callers.
+# Arguments: $1=slug
+#######################################
+_prefetch_single_repo_load_snapshots() {
+	local slug="$1"
+	local helper="${PULSE_BATCH_PREFETCH_HELPER:-${SCRIPT_DIR}/pulse-batch-prefetch-helper.sh}"
+	PREFETCH_CANONICAL_ISSUES_SNAPSHOT="{}"
+	PREFETCH_CANONICAL_PRS_SNAPSHOT="{}"
+	PREFETCH_CANONICAL_SNAPSHOT_COMPLETE=false
+	PREFETCH_CANONICAL_SNAPSHOT_GENERATION=""
+
+	if [[ "${PULSE_BATCH_PREFETCH_ENABLED:-1}" != "1" || ! -x "$helper" ]]; then
+		return 0
+	fi
+	PREFETCH_CANONICAL_ISSUES_SNAPSHOT=$("$helper" read-snapshot --kind issues --slug "$slug" 2>>"$LOGFILE") || PREFETCH_CANONICAL_ISSUES_SNAPSHOT="{}"
+	PREFETCH_CANONICAL_PRS_SNAPSHOT=$("$helper" read-snapshot --kind prs --slug "$slug" 2>>"$LOGFILE") || PREFETCH_CANONICAL_PRS_SNAPSHOT="{}"
+
+	if _canonical_snapshot_pair_complete \
+		"$slug" "$PREFETCH_CANONICAL_ISSUES_SNAPSHOT" "$PREFETCH_CANONICAL_PRS_SNAPSHOT"; then
+		PREFETCH_CANONICAL_SNAPSHOT_COMPLETE=true
+		PREFETCH_CANONICAL_SNAPSHOT_GENERATION=$(printf '%s' "$PREFETCH_CANONICAL_ISSUES_SNAPSHOT" | jq -r '.generation // ""' 2>/dev/null) || PREFETCH_CANONICAL_SNAPSHOT_GENERATION=""
+	fi
+	return 0
+}
+
+#######################################
 # Detect whether cached repo state can be replayed.
-# Arguments: $1=slug, $2=cache_entry, $3=sweep_mode
+# Arguments: $1=slug, $2=cache_entry, $3=sweep_mode,
+#            $4=issue snapshot, $5=PR snapshot
 # Sets: PREFETCH_CACHE_HIT, PREFETCH_SWEEP_MODE
 #######################################
 _prefetch_single_repo_cache_decision() {
 	local slug="$1"
 	local cache_entry="$2"
 	local sweep_mode="$3"
+	local issues_snapshot="${4:-}"
+	local prs_snapshot="${5:-}"
 	PREFETCH_SWEEP_MODE="$sweep_mode"
 
 	PREFETCH_CACHE_HIT="false"
-	if _prefetch_detect_cache_hit "$slug" "$cache_entry"; then
-		PREFETCH_CACHE_HIT="true"
+	if _prefetch_detect_cache_hit "$slug" "$cache_entry" "$issues_snapshot" "$prs_snapshot"; then
+		PREFETCH_CACHE_HIT="$_PREFETCH_BOOL_TRUE"
 		echo "[pulse-wrapper] _prefetch_single_repo: STATE CACHE HIT for ${slug} (fingerprint=${PREFETCH_CURRENT_FINGERPRINT})" >>"$LOGFILE"
 	fi
 	if [[ "$PREFETCH_CACHE_HIT" == "$_PREFETCH_BOOL_TRUE" ]] && echo "$cache_entry" | _prefetch_cache_entry_issues_lack_state; then
@@ -255,7 +307,8 @@ _prefetch_single_repo_cache_decision() {
 
 #######################################
 # Render one repo prefetch block to its output file.
-# Arguments: $1=slug, $2=path, $3=outfile, $4=cache_entry, $5=sweep_mode, $6=cache_hit
+# Arguments: $1=slug, $2=path, $3=outfile, $4=cache_entry, $5=sweep_mode,
+#            $6=cache_hit, $7=issue snapshot, $8=PR snapshot
 #######################################
 _prefetch_single_repo_write_output() {
 	local slug="$1"
@@ -264,16 +317,18 @@ _prefetch_single_repo_write_output() {
 	local cache_entry="$4"
 	local sweep_mode="$5"
 	local cache_hit="$6"
+	local issues_snapshot="${7:-}"
+	local prs_snapshot="${8:-}"
 
 	{
 		echo "## ${slug} (${path})"
 		echo ""
 		if [[ "$cache_hit" == "$_PREFETCH_BOOL_TRUE" ]]; then
-			_prefetch_single_repo_idle_skip "$slug" "$cache_entry"
+			_prefetch_single_repo_idle_skip "$slug" "$cache_entry" "$prs_snapshot" "$issues_snapshot"
 		else
-			_prefetch_repo_prs "$slug" "$cache_entry" "$sweep_mode"
+			_prefetch_repo_prs "$slug" "$cache_entry" "$sweep_mode" "$prs_snapshot"
 			_prefetch_repo_daily_cap "$slug"
-			_prefetch_repo_issues "$slug" "$cache_entry" "$sweep_mode"
+			_prefetch_repo_issues "$slug" "$cache_entry" "$sweep_mode" "$issues_snapshot"
 		fi
 	} >"$outfile"
 	return 0
@@ -281,37 +336,31 @@ _prefetch_single_repo_write_output() {
 
 #######################################
 # Persist fresh cache entry for one repo after prefetch output is generated.
-# Arguments: $1=slug, $2=cache_entry, $3=sweep_mode
+# Arguments: $1=slug, $2=cache_entry, $3=sweep_mode,
+#            $4=snapshot_complete, $5=snapshot_generation
 #######################################
 _prefetch_single_repo_update_cache() {
 	local slug="$1"
 	local cache_entry="$2"
 	local sweep_mode="$3"
+	local snapshot_complete="${4:-false}"
+	local snapshot_generation="${5:-}"
 
 	# GH#15286: Update cache with fresh data.
 	# t2041: also persist the state_fingerprint for Layer 1 cache-hit
 	# detection on the next cycle.
 	local now_iso
 	now_iso=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-	# If the fingerprint wasn't already computed for cache-hit detection
-	# (e.g. cache entry was empty), compute it now so the cache write is
-	# consistent.
-	if [[ -z "${PREFETCH_CURRENT_FINGERPRINT:-}" ]]; then
-		PREFETCH_CURRENT_FINGERPRINT=$(_compute_repo_state_fingerprint "$slug")
-	fi
 	local fingerprint="${PREFETCH_CURRENT_FINGERPRINT:-}"
-	local new_entry
-	if [[ "$sweep_mode" == "$_PREFETCH_ISSUE_SWEEP_FULL" ]]; then
-		new_entry=$(_prefetch_build_cache_entry \
-			"$now_iso" "$now_iso" "$fingerprint" \
-			"${PREFETCH_UPDATED_PRS:-[]}" "${PREFETCH_UPDATED_ISSUES:-[]}") || new_entry=""
-	else
-		local last_full_sweep
-		last_full_sweep=$(printf '%s\n' "$cache_entry" | jq -r '.last_full_sweep // ""') || last_full_sweep=""
-		new_entry=$(_prefetch_build_cache_entry \
-			"$now_iso" "$last_full_sweep" "$fingerprint" \
-			"${PREFETCH_UPDATED_PRS:-[]}" "${PREFETCH_UPDATED_ISSUES:-[]}") || new_entry=""
+	local new_entry="" last_full_sweep=""
+	last_full_sweep=$(printf '%s\n' "$cache_entry" | jq -r '.last_full_sweep // ""') || last_full_sweep=""
+	if [[ "$sweep_mode" == "$_PREFETCH_ISSUE_SWEEP_FULL" && "$snapshot_complete" == "$_PREFETCH_BOOL_TRUE" ]]; then
+		last_full_sweep="$now_iso"
 	fi
+	new_entry=$(_prefetch_build_cache_entry \
+		"$now_iso" "$last_full_sweep" "$fingerprint" \
+		"${PREFETCH_UPDATED_PRS:-[]}" "${PREFETCH_UPDATED_ISSUES:-[]}" \
+		"$snapshot_complete" "$snapshot_generation") || new_entry=""
 	if [[ -n "$new_entry" && "$new_entry" != "$_PREFETCH_JSON_NULL" ]]; then
 		_prefetch_cache_set "$slug" "$new_entry"
 	else
@@ -346,20 +395,27 @@ _prefetch_single_repo() {
 	# Reset shared output vars (subshell-safe: each repo runs in its own subshell)
 	PREFETCH_UPDATED_PRS="[]"
 	PREFETCH_UPDATED_ISSUES="[]"
+	_prefetch_single_repo_load_snapshots "$slug"
+	local issues_snapshot="$PREFETCH_CANONICAL_ISSUES_SNAPSHOT"
+	local prs_snapshot="$PREFETCH_CANONICAL_PRS_SNAPSHOT"
 
-	# t2041 Layer 1: detect cache hit. When the current state fingerprint
-	# matches the cached one AND the cheap verification query shows nothing
-	# has changed since last_prefetch, emit a compact "cache hit" marker
+	# t2041 Layer 1: detect cache hit. When one complete canonical snapshot
+	# generation hashes to the cached fingerprint, emit a compact "cache hit" marker
 	# the LLM can use to short-circuit deep analysis. We STILL write the
 	# Open PRs / Queued Issues sections (so the LLM has recent state if it
 	# decides to read deeper) but the LLM-facing summary leads with the
 	# cache-hit signal so cheap cycles stay cheap.
-	_prefetch_single_repo_cache_decision "$slug" "$cache_entry" "$sweep_mode"
+	_prefetch_single_repo_cache_decision \
+		"$slug" "$cache_entry" "$sweep_mode" "$issues_snapshot" "$prs_snapshot"
 	local cache_hit="$PREFETCH_CACHE_HIT"
 	sweep_mode="$PREFETCH_SWEEP_MODE"
 
-	_prefetch_single_repo_write_output "$slug" "$path" "$outfile" "$cache_entry" "$sweep_mode" "$cache_hit"
-	_prefetch_single_repo_update_cache "$slug" "$cache_entry" "$sweep_mode"
+	_prefetch_single_repo_write_output \
+		"$slug" "$path" "$outfile" "$cache_entry" "$sweep_mode" "$cache_hit" \
+		"$issues_snapshot" "$prs_snapshot"
+	_prefetch_single_repo_update_cache \
+		"$slug" "$cache_entry" "$sweep_mode" \
+		"$PREFETCH_CANONICAL_SNAPSHOT_COMPLETE" "$PREFETCH_CANONICAL_SNAPSHOT_GENERATION"
 
 	return 0
 }

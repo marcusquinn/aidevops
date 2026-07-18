@@ -18,6 +18,7 @@
 # Usage:
 #   pulse-batch-prefetch-helper.sh refresh              # Fetch and cache
 #   pulse-batch-prefetch-helper.sh cache-path --kind issues --slug owner/repo
+#   pulse-batch-prefetch-helper.sh read-snapshot --kind issues --slug owner/repo
 #   pulse-batch-prefetch-helper.sh evict-issue owner/repo 123
 #   pulse-batch-prefetch-helper.sh clear                # Wipe cache
 #   pulse-batch-prefetch-helper.sh status               # Show cache ages
@@ -112,10 +113,18 @@ _KIND_PRS="prs"
 _JSON_NULL="null"
 _JSON_EMPTY_OBJ="{}"
 _JSON_EMPTY_ARR="[]"
+_JSON_TYPE_ARRAY=array
+_JSON_TYPE_BOOLEAN=boolean
+_JSON_TYPE_STRING=string
 _STATE_OPEN="open"
 _CACHE_STATE_MALFORMED="malformed"
 _CACHE_SNAPSHOT_STATE="missing"
 _CACHE_SNAPSHOT_PATH=""
+_SNAPSHOT_SCHEMA="aidevops-pulse-snapshot/v1"
+_SNAPSHOT_ISSUES_PROJECTION="number,title,state,labels,updatedAt,assignees"
+_SNAPSHOT_PRS_PROJECTION="number,title,labels,updatedAt,assignees,createdAt,author,headRefOid,headRefName"
+_BATCH_SNAPSHOT_GENERATION="${PULSE_BATCH_SNAPSHOT_GENERATION:-}"
+_BATCH_SNAPSHOT_AUTH_SCOPE="${PULSE_BATCH_SNAPSHOT_AUTH_SCOPE:-${GH_HOST:-github.com}|${AIDEVOPS_GH_AUTH_MODE:-gh}|${AIDEVOPS_GH_AUTH_PRINCIPAL:-default}}"
 
 # --- Feature flag gate ---
 _check_enabled() {
@@ -123,6 +132,29 @@ _check_enabled() {
 		return 1
 	fi
 	return 0
+}
+
+_snapshot_projection() {
+	local kind="$1"
+	case "$kind" in
+	issues) printf '%s\n' "$_SNAPSHOT_ISSUES_PROJECTION" ;;
+	prs) printf '%s\n' "$_SNAPSHOT_PRS_PROJECTION" ;;
+	*) return 1 ;;
+	esac
+	return 0
+}
+
+_snapshot_collection_complete() {
+	local payload="$1"
+	local limit="${2:-100}"
+	[[ "$limit" =~ ^[0-9]+$ && "$limit" -gt 0 ]] || limit=100
+	[[ "$limit" -le 100 ]] || limit=100
+	local count=""
+	count=$(printf '%s' "$payload" | jq -er 'select(type == "array") | length' 2>/dev/null) || return 1
+	if [[ "$count" =~ ^[0-9]+$ && "$count" -lt "$limit" ]]; then
+		return 0
+	fi
+	return 1
 }
 
 # --- Logging ---
@@ -161,7 +193,7 @@ _prefetch_rest_issues_for_slug() {
 	declare -F gh_record_call >/dev/null && gh_record_call rest pulse_batch_prefetch_rest_issues || true
 	local rest_json
 	rest_json=$(_prefetch_gh_read gh api "/repos/${slug}/issues?state=open&per_page=${BATCH_SEARCH_LIMIT}" 2>/dev/null) || rest_json=""
-	if [[ -z "$rest_json" || "$rest_json" == "$_JSON_NULL" || "$rest_json" == "$_JSON_EMPTY_ARR" ]]; then
+	if [[ -z "$rest_json" || "$rest_json" == "$_JSON_NULL" ]]; then
 		_log "REST issues fallback: empty/null response for ${slug}"
 		return 1
 	fi
@@ -169,9 +201,28 @@ _prefetch_rest_issues_for_slug() {
 	cache_file=$(_cache_file_path "$_KIND_ISSUES" "$slug")
 	local ts
 	ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-	echo "$rest_json" | jq --arg ts "$ts" --arg state_open "$_STATE_OPEN" '{
+	local complete=false
+	_snapshot_collection_complete "$rest_json" "$BATCH_SEARCH_LIMIT" && complete=true
+	local projection=""
+	projection=$(_snapshot_projection "$_KIND_ISSUES") || return 1
+	local tmp_file=""
+	tmp_file=$(mktemp "${BATCH_CACHE_DIR}/.issues-snapshot.XXXXXX") || return 1
+	echo "$rest_json" | jq --arg ts "$ts" --arg state_open "$_STATE_OPEN" \
+		--arg schema "$_SNAPSHOT_SCHEMA" --arg slug "$slug" --arg collection "$_KIND_ISSUES" \
+		--arg projection "$projection" --arg auth_scope "$_BATCH_SNAPSHOT_AUTH_SCOPE" \
+		--arg generation "$_BATCH_SNAPSHOT_GENERATION" --argjson complete "$complete" '{
+		schema: $schema,
+		repository: $slug,
+		collection: $collection,
+		projection: $projection,
+		auth_scope: $auth_scope,
+		generation: $generation,
+		source: "rest-fallback",
+		complete: $complete,
+		truncated: ($complete | not),
+		fetched_at: $ts,
 		timestamp: $ts,
-		items: [.[] | {
+		items: [.[] | select(.pull_request == null) | {
 			number: .number,
 			title: .title,
 			state: (.state // $state_open),
@@ -179,7 +230,8 @@ _prefetch_rest_issues_for_slug() {
 			updatedAt: .updated_at,
 			assignees: (.assignees // [])
 		}]
-	}' >"$cache_file" 2>/dev/null || {
+	}' >"$tmp_file" 2>/dev/null && mv "$tmp_file" "$cache_file" || {
+		rm -f "$tmp_file"
 		_log "REST issues fallback: failed to write cache for ${slug}"
 		return 1
 	}
@@ -202,7 +254,7 @@ _prefetch_rest_prs_for_slug() {
 	declare -F gh_record_call >/dev/null && gh_record_call rest pulse_batch_prefetch_rest_prs || true
 	local rest_json
 	rest_json=$(_prefetch_gh_read gh api "/repos/${slug}/pulls?state=open&per_page=${BATCH_SEARCH_LIMIT}" 2>/dev/null) || rest_json=""
-	if [[ -z "$rest_json" || "$rest_json" == "$_JSON_NULL" || "$rest_json" == "$_JSON_EMPTY_ARR" ]]; then
+	if [[ -z "$rest_json" || "$rest_json" == "$_JSON_NULL" ]]; then
 		_log "REST PRs fallback: empty/null response for ${slug}"
 		return 1
 	fi
@@ -210,7 +262,26 @@ _prefetch_rest_prs_for_slug() {
 	cache_file=$(_cache_file_path "$_KIND_PRS" "$slug")
 	local ts
 	ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-	echo "$rest_json" | jq --arg ts "$ts" '{
+	local complete=false
+	_snapshot_collection_complete "$rest_json" "$BATCH_SEARCH_LIMIT" && complete=true
+	local projection=""
+	projection=$(_snapshot_projection "$_KIND_PRS") || return 1
+	local tmp_file=""
+	tmp_file=$(mktemp "${BATCH_CACHE_DIR}/.prs-snapshot.XXXXXX") || return 1
+	echo "$rest_json" | jq --arg ts "$ts" --arg schema "$_SNAPSHOT_SCHEMA" \
+		--arg slug "$slug" --arg collection "$_KIND_PRS" --arg projection "$projection" \
+		--arg auth_scope "$_BATCH_SNAPSHOT_AUTH_SCOPE" --arg generation "$_BATCH_SNAPSHOT_GENERATION" \
+		--argjson complete "$complete" '{
+		schema: $schema,
+		repository: $slug,
+		collection: $collection,
+		projection: $projection,
+		auth_scope: $auth_scope,
+		generation: $generation,
+		source: "rest-fallback",
+		complete: $complete,
+		truncated: ($complete | not),
+		fetched_at: $ts,
 		timestamp: $ts,
 		items: [.[] | {
 			number: .number,
@@ -219,9 +290,12 @@ _prefetch_rest_prs_for_slug() {
 			updatedAt: .updated_at,
 			assignees: (.assignees // []),
 			createdAt: (.created_at // null),
-			author: (if .user then {login: .user.login} else null end)
+			author: (if .user then {login: .user.login} else null end),
+			headRefOid: (.head.sha // null),
+			headRefName: (.head.ref // null)
 		}]
-	}' >"$cache_file" 2>/dev/null || {
+	}' >"$tmp_file" 2>/dev/null && mv "$tmp_file" "$cache_file" || {
+		rm -f "$tmp_file"
 		_log "REST PRs fallback: failed to write cache for ${slug}"
 		return 1
 	}
@@ -335,7 +409,9 @@ _normalize_search_to_prefetch_schema() {
 					updatedAt: .updatedAt,
 					assignees: (.assignees // []),
 					createdAt: (.createdAt // null),
-					author: (.author // null)
+					author: (.author // null),
+					headRefOid: (.headRefOid // null),
+					headRefName: (.headRefName // null)
 				}]
 			}) |
 			from_entries
@@ -373,7 +449,11 @@ _conditional_rest_update_cache_from_response() {
 	local cache_file="$4"
 	# Keep response parsing in Python so this shell library stays below the
 	# function-complexity gate while preserving atomic cache writes.
-	python3 "${SCRIPT_DIR}/pulse-batch-conditional-cache.py" "$kind" "$slug" "$response_file" "$cache_file"
+	local projection=""
+	projection=$(_snapshot_projection "$kind") || return 1
+	python3 "${SCRIPT_DIR}/pulse-batch-conditional-cache.py" \
+		"$kind" "$slug" "$response_file" "$cache_file" \
+		"$_BATCH_SNAPSHOT_GENERATION" "$_BATCH_SNAPSHOT_AUTH_SCOPE" "$projection"
 	return 0
 }
 
@@ -385,9 +465,15 @@ _conditional_rest_refresh_slug() {
 	cache_file=$(_cache_file_path "$kind" "$slug")
 	local endpoint
 	endpoint=$(_conditional_rest_endpoint "$kind" "$slug") || return 1
+	local projection=""
+	projection=$(_snapshot_projection "$kind") || return 1
 	local etag=""
 	if [[ -f "$cache_file" ]]; then
-		etag=$(jq -r '.etag // ""' "$cache_file" 2>/dev/null) || etag=""
+		etag=$(jq -r --arg schema "$_SNAPSHOT_SCHEMA" --arg kind "$kind" \
+			--arg projection "$projection" --arg auth_scope "$_BATCH_SNAPSHOT_AUTH_SCOPE" '
+			select(.schema == $schema and .collection == $kind and .projection == $projection) |
+			select(.auth_scope == $auth_scope and .complete == true) | .etag // ""
+		' "$cache_file" 2>/dev/null) || etag=""
 		[[ "$etag" == "$_JSON_NULL" ]] && etag=""
 	fi
 	[[ -n "$etag" ]] || _OWNER_CONDITIONAL_MISSES=$((_OWNER_CONDITIONAL_MISSES + 1))
@@ -444,6 +530,8 @@ _write_per_slug_caches() {
 
 	local slugs
 	slugs=$(echo "$normalized_json" | jq -r 'keys[]' 2>/dev/null) || return 1
+	local projection=""
+	projection=$(_snapshot_projection "$kind") || return 1
 
 	local slug
 	while IFS= read -r slug; do
@@ -452,10 +540,26 @@ _write_per_slug_caches() {
 		cache_file=$(_cache_file_path "$kind" "$slug")
 		local ts
 		ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-		echo "$normalized_json" | jq --arg slug "$slug" --arg ts "$ts" '{
+		local tmp_file=""
+		tmp_file=$(mktemp "${BATCH_CACHE_DIR}/.search-snapshot.XXXXXX") || continue
+		echo "$normalized_json" | jq --arg slug "$slug" --arg ts "$ts" \
+			--arg schema "$_SNAPSHOT_SCHEMA" --arg collection "$kind" \
+			--arg projection "$projection" --arg auth_scope "$_BATCH_SNAPSHOT_AUTH_SCOPE" \
+			--arg generation "$_BATCH_SNAPSHOT_GENERATION" '{
+			schema: $schema,
+			repository: $slug,
+			collection: $collection,
+			projection: $projection,
+			auth_scope: $auth_scope,
+			generation: $generation,
+			source: "owner-search",
+			complete: false,
+			truncated: true,
+			fetched_at: $ts,
 			timestamp: $ts,
 			items: .[$slug]
-		}' >"$cache_file" 2>/dev/null || {
+		}' >"$tmp_file" 2>/dev/null && mv "$tmp_file" "$cache_file" || {
+			rm -f "$tmp_file"
 			_log "WARNING: failed to write cache for ${kind}/${slug}"
 		}
 	done <<<"$slugs"
@@ -654,6 +758,7 @@ _cmd_refresh() {
 	}
 
 	mkdir -p "$BATCH_CACHE_DIR" 2>/dev/null || true
+	_BATCH_SNAPSHOT_GENERATION="$(date -u +%Y%m%dT%H%M%SZ)-$$"
 
 	local owner_groups
 	owner_groups=$(_group_repos_by_owner "$REPOS_JSON") || {
@@ -809,7 +914,8 @@ _emit_cache_state() {
 # Subcommand: cache-path
 # =============================================================================
 _cmd_cache_path() {
-	local kind="" slug=""
+	local kind=""
+	local slug=""
 	local _args=("$@")
 	local _i=0
 	while [[ $_i -lt ${#_args[@]} ]]; do
@@ -854,7 +960,8 @@ _cmd_cache_path() {
 # Output: JSON array of items on stdout, exit 1 on miss/stale
 # =============================================================================
 _cmd_read_cache() {
-	local kind="" slug=""
+	local kind=""
+	local slug=""
 	local _args=("$@")
 	local _i=0
 	while [[ $_i -lt ${#_args[@]} ]]; do
@@ -915,6 +1022,84 @@ _cmd_read_cache() {
 }
 
 # =============================================================================
+# Subcommand: read-snapshot
+# Read a versioned canonical envelope. Legacy caches remain valid for read-cache
+# but cannot authorize state-fingerprint hits through this stricter interface.
+# =============================================================================
+_cmd_read_snapshot() {
+	local kind=""
+	local slug=""
+	local _args=("$@")
+	local _i=0
+	while [[ $_i -lt ${#_args[@]} ]]; do
+		case "${_args[$_i]}" in
+		--kind)
+			kind="${_args[$_i+1]:-}"
+			_i=$((_i + 2))
+			;;
+		--slug)
+			slug="${_args[$_i+1]:-}"
+			_i=$((_i + 2))
+			;;
+		*) _i=$((_i + 1)) ;;
+		esac
+	done
+
+	local projection=""
+	projection=$(_snapshot_projection "$kind") || {
+		echo "Usage: pulse-batch-prefetch-helper.sh read-snapshot --kind issues|prs --slug owner/repo" >&2
+		return 1
+	}
+	[[ -n "$slug" ]] || {
+		echo "Usage: pulse-batch-prefetch-helper.sh read-snapshot --kind issues|prs --slug owner/repo" >&2
+		return 1
+	}
+
+	if ! _resolve_cache_snapshot "$kind" "$slug"; then
+		_emit_cache_state "$_CACHE_SNAPSHOT_STATE" "$kind" "$slug"
+		return 1
+	fi
+
+	local envelope=""
+	envelope=$(jq -ce \
+		--arg schema "$_SNAPSHOT_SCHEMA" --arg slug "$slug" --arg kind "$kind" \
+		--arg projection "$projection" --arg auth_scope "$_BATCH_SNAPSHOT_AUTH_SCOPE" \
+		--arg type_array "$_JSON_TYPE_ARRAY" --arg type_boolean "$_JSON_TYPE_BOOLEAN" \
+		--arg type_string "$_JSON_TYPE_STRING" '
+		select(.schema == $schema and .repository == $slug and .collection == $kind) |
+		select(.projection == $projection and .auth_scope == $auth_scope) |
+		select((.generation | type) == $type_string and (.generation | length) > 0) |
+		select((.source | type) == $type_string and (.source | length) > 0) |
+		select((.fetched_at | type) == $type_string and (.fetched_at | length) > 0) |
+		select((.complete | type) == $type_boolean and (.items | type) == $type_array) |
+		if $kind == "issues" then
+			select(all(.items[];
+				(.number | type) == "number" and has("title") and
+				(.state | type) == $type_string and (.labels | type) == $type_array and
+				has("updatedAt") and (.assignees | type) == $type_array)) |
+			.items = [.items[] | select((.state | ascii_downcase) == "open")]
+		else
+			select(all(.items[];
+				(.number | type) == "number" and has("title") and
+				(.labels | type) == $type_array and has("updatedAt") and
+				(.assignees | type) == $type_array and has("createdAt") and
+				has("author") and (.headRefOid | type) == $type_string and
+				(.headRefOid | length) > 0 and has("headRefName")))
+		end
+	' "$_CACHE_SNAPSHOT_PATH" 2>/dev/null) || {
+		_CACHE_SNAPSHOT_STATE="incompatible"
+		_emit_cache_state "$_CACHE_SNAPSHOT_STATE" "$kind" "$slug"
+		return 1
+	}
+
+	local cardinality="nonempty"
+	[[ "$(printf '%s' "$envelope" | jq -c '.items')" == "$_JSON_EMPTY_ARR" ]] && cardinality="empty"
+	_emit_cache_state "$_CACHE_SNAPSHOT_STATE" "$kind" "$slug" "$cardinality"
+	printf '%s\n' "$envelope"
+	return 0
+}
+
+# =============================================================================
 # Subcommand: evict-issue
 # Remove a single issue from the normalized owner/repo issues cache.
 # Arguments: owner/repo issue_number
@@ -937,8 +1122,14 @@ _cmd_evict_issue() {
 	fi
 
 	local tmp_file
-	tmp_file=$(mktemp)
-	if jq --argjson issue_number "$issue_number" '(.items // []) as $items | .items = [$items[] | select((.number // 0) != $issue_number)]' "$cache_file" >"$tmp_file" 2>/dev/null; then
+	tmp_file=$(mktemp "${BATCH_CACHE_DIR}/.evict-snapshot.XXXXXX") || return 1
+	if jq --argjson issue_number "$issue_number" '
+		(.items // []) as $items |
+		.items = [$items[] | select((.number // 0) != $issue_number)] |
+		.complete = false |
+		.truncated = true |
+		.source = "local-eviction"
+	' "$cache_file" >"$tmp_file" 2>/dev/null; then
 		mv "$tmp_file" "$cache_file"
 		_log "evicted issue #${issue_number} from issues cache for ${slug}"
 		return 0
@@ -1036,6 +1227,9 @@ main() {
 	read-cache)
 		_cmd_read_cache "$@"
 		;;
+	read-snapshot)
+		_cmd_read_snapshot "$@"
+		;;
 	evict-issue)
 		_cmd_evict_issue "$@"
 		;;
@@ -1052,6 +1246,7 @@ main() {
 		echo "  refresh                          Fetch all repos via org-level search and cache"
 		echo "  cache-path --kind K --slug S     Return cache path if fresh, exit 1 if stale"
 		echo "  read-cache --kind K --slug S     Read cached items as JSON array"
+		echo "  read-snapshot --kind K --slug S  Read a canonical snapshot envelope"
 		echo "  evict-issue owner/repo N         Remove one issue from the issues cache"
 		echo "  clear                            Wipe batch cache directory"
 		echo "  status                           Show cache file ages and counts"
