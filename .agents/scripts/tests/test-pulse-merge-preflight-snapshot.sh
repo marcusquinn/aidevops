@@ -103,6 +103,13 @@ gh() {
 		return $?
 		;;
 	*check-runs*)
+		if [[ "$SNAPSHOT_MODE" == "large_payload" ]]; then
+			printf '[{"padding":"'
+			dd if=/dev/zero bs=1024 count=512 2>/dev/null | tr '\000' x
+			printf '","check_runs":[{"name":"required-a","status":"completed","conclusion":"success","completed_at":"2026-01-01T00:01:00Z"}]}]\n'
+			return 0
+		fi
+		[[ "$SNAPSHOT_MODE" == "empty_check_runs" ]] && return 0
 		local required_conclusion="success" required_url="" broad_status="completed" broad_conclusion="success"
 		local broad_completed_at="2026-01-01T00:01:00Z" extra_check=""
 		[[ "$SNAPSHOT_MODE" == "required_fail" ]] && required_conclusion="failure"
@@ -253,6 +260,8 @@ assert_infrastructure_rerun_unset_logfile_safe() {
 main() {
 	assert_infrastructure_rerun_unset_defaults_safe
 	assert_infrastructure_rerun_unset_logfile_safe
+	assert_gate "large paginated check payload streams without argument overflow" large_payload 0
+	assert_gate "empty check-run response fails closed" empty_check_runs 1
 	assert_gate "terminal checks with explicit baseline advisory pass" happy_advisory 0
 	if grep -q "IGNORED non-required baseline advisory failure 'Qlty Smell Threshold'" "$LOGFILE"; then
 		printf 'PASS ignored advisory failure is audited\n'

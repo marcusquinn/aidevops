@@ -382,6 +382,51 @@ _gh_run_bounded_function() {
 	return $?
 }
 
+# Successful commands without `gh api --include` cannot carry HTTP cooldown
+# headers. Skip their response bodies so large JSON payloads do not enter the
+# secondary-rate-limit classifier (GH#28164).
+_gh_cooldown_should_inspect_response() {
+	local rc="$1"
+	shift
+	local arg=""
+	[[ "$rc" != "0" ]] && return 0
+	for arg in "$@"; do
+		case "$arg" in
+		-i | --include) return 0 ;;
+		esac
+	done
+	return 1
+}
+
+# Bound response evidence before passing it through shell classifiers. GitHub
+# rate-limit headers and error messages occur at the start of their streams.
+_gh_cooldown_response_excerpt() {
+	local out_file="$1"
+	local err_file="$2"
+	local max_bytes=65536
+	if [[ -f "$out_file" ]]; then
+		dd if="$out_file" "bs=${max_bytes}" count=1 2>/dev/null || true
+	fi
+	printf '\n'
+	if [[ -f "$err_file" ]]; then
+		dd if="$err_file" "bs=${max_bytes}" count=1 2>/dev/null || true
+	fi
+	return 0
+}
+
+_gh_record_cooldown_response_if_needed() {
+	local rc="$1"
+	local out_file="$2"
+	local err_file="$3"
+	shift 3
+	local response_text=""
+	command -v _gh_secondary_cooldown_record_if_needed >/dev/null 2>&1 || return 0
+	_gh_cooldown_should_inspect_response "$rc" "$@" || return 0
+	response_text=$(_gh_cooldown_response_excerpt "$out_file" "$err_file") || response_text=""
+	_gh_secondary_cooldown_record_if_needed "$rc" "$response_text" "$_GH_COOLDOWN_CONTEXT_METHOD" "$_GH_COOLDOWN_CONTEXT_ENDPOINT" "$_GH_COOLDOWN_CONTEXT_QUERY_SHAPE" "$_GH_COOLDOWN_CONTEXT_OPERATION" "$_GH_COOLDOWN_CONTEXT_WRAPPER" "$_GH_COOLDOWN_CONTEXT_STAGE"
+	return 0
+}
+
 _gh_with_timeout() {
 	local op_class="${1:-read}"
 	shift
@@ -406,7 +451,6 @@ _gh_with_timeout() {
 	local cmd="${1:-}"
 	local err_file=""
 	local out_file=""
-	local response_text=""
 	local rc=0
 	if [[ -n "$cmd" ]] && declare -f "$cmd" >/dev/null; then
 		err_file=$(mktemp -t aidevops-gh-secondary.XXXXXX) || {
@@ -428,11 +472,7 @@ _gh_with_timeout() {
 		rc=$?
 		cat "$out_file" 2>/dev/null || true
 		cat "$err_file" >&2 2>/dev/null || true
-		if command -v _gh_secondary_cooldown_record_if_needed >/dev/null 2>&1; then
-			response_text="$(cat "$out_file" 2>/dev/null || true)
-$(cat "$err_file" 2>/dev/null || true)"
-			_gh_secondary_cooldown_record_if_needed "$rc" "$response_text" "$_GH_COOLDOWN_CONTEXT_METHOD" "$_GH_COOLDOWN_CONTEXT_ENDPOINT" "$_GH_COOLDOWN_CONTEXT_QUERY_SHAPE" "$_GH_COOLDOWN_CONTEXT_OPERATION" "$_GH_COOLDOWN_CONTEXT_WRAPPER" "$_GH_COOLDOWN_CONTEXT_STAGE"
-		fi
+		_gh_record_cooldown_response_if_needed "$rc" "$out_file" "$err_file" "$@"
 		rm -f "$err_file" "$out_file"
 		return $rc
 	fi
@@ -454,11 +494,7 @@ $(cat "$err_file" 2>/dev/null || true)"
 	if [[ -n "$err_file" && -n "$out_file" ]]; then
 		cat "$out_file" 2>/dev/null || true
 		cat "$err_file" >&2 2>/dev/null || true
-		if command -v _gh_secondary_cooldown_record_if_needed >/dev/null 2>&1; then
-			response_text="$(cat "$out_file" 2>/dev/null || true)
-$(cat "$err_file" 2>/dev/null || true)"
-			_gh_secondary_cooldown_record_if_needed "$rc" "$response_text" "$_GH_COOLDOWN_CONTEXT_METHOD" "$_GH_COOLDOWN_CONTEXT_ENDPOINT" "$_GH_COOLDOWN_CONTEXT_QUERY_SHAPE" "$_GH_COOLDOWN_CONTEXT_OPERATION" "$_GH_COOLDOWN_CONTEXT_WRAPPER" "$_GH_COOLDOWN_CONTEXT_STAGE"
-		fi
+		_gh_record_cooldown_response_if_needed "$rc" "$out_file" "$err_file" "$@"
 		rm -f "$err_file" "$out_file"
 	fi
 	return $rc
