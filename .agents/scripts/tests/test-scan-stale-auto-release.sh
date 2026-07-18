@@ -40,6 +40,10 @@
 #   13. release-if-dead preserves live, cross-host, and lockdown claims.
 #   14. scan-stale preserves lockdown and unverifiable claims.
 #   15. claim stamps record the durable runtime owner rather than the helper PID.
+#   16. direct pulse reaper releases a safe dead stamp without repo discovery.
+#   17. direct pulse reaper preserves a surviving worktree.
+#   18. direct pulse reaper enforces its per-cycle stamp cap.
+#   19. direct pulse reaper preserves stamps with invalid target metadata.
 #
 # Stub strategy: override `_isc_release_claim_by_stamp_path` as a shell function
 # after sourcing the helper to capture auto-release calls without real gh ops.
@@ -493,6 +497,64 @@ else
 	fail "claim stamp records the durable runtime owner"
 fi
 rm -f "$DURABLE_STAMP"
+
+# =============================================================================
+# Test 16 — direct pulse reaper releases a safe dead stamp
+# =============================================================================
+: >"$RELEASE_LOG"
+ISC_LABEL_MODE="absent"
+write_stamp "outside-repos-120.json" "99999" "/nonexistent/path/120" "120" "outside/repo"
+_isc_cmd_reap_dead_stamps >/dev/null 2>/dev/null || true
+if [[ ! -f "${STAMP_DIR}/outside-repos-120.json" ]] && [[ "$(wc -l <"$RELEASE_LOG" | tr -d ' ')" -eq 1 ]]; then
+	pass "direct pulse reaper releases a safe stamp without repo discovery"
+else
+	fail "direct pulse reaper releases a safe stamp without repo discovery"
+fi
+
+# =============================================================================
+# Test 17 — direct pulse reaper preserves a surviving worktree
+# =============================================================================
+: >"$RELEASE_LOG"
+write_stamp "outside-repos-121.json" "99999" "$EXISTING_WORKTREE" "121" "outside/repo"
+_isc_cmd_reap_dead_stamps >/dev/null 2>/dev/null || true
+if [[ -f "${STAMP_DIR}/outside-repos-121.json" ]] && [[ ! -s "$RELEASE_LOG" ]]; then
+	pass "direct pulse reaper preserves a surviving worktree"
+else
+	fail "direct pulse reaper preserves a surviving worktree"
+fi
+rm -f "${STAMP_DIR}/outside-repos-121.json"
+
+# =============================================================================
+# Test 18 — direct pulse reaper bounds stamp examination per cycle
+# =============================================================================
+: >"$RELEASE_LOG"
+write_stamp "a-repo-122.json" "99999" "/nonexistent/path/122" "122" "a/repo"
+write_stamp "b-repo-123.json" "99999" "/nonexistent/path/123" "123" "b/repo"
+AIDEVOPS_DEAD_STAMP_REAP_LIMIT=1 _isc_cmd_reap_dead_stamps >/dev/null 2>/dev/null || true
+if [[ ! -f "${STAMP_DIR}/a-repo-122.json" ]] && \
+	[[ -f "${STAMP_DIR}/b-repo-123.json" ]] && \
+	[[ "$(wc -l <"$RELEASE_LOG" | tr -d ' ')" -eq 1 ]]; then
+	pass "direct pulse reaper enforces its per-cycle stamp cap"
+else
+	fail "direct pulse reaper enforces its per-cycle stamp cap"
+fi
+rm -f "${STAMP_DIR}/a-repo-122.json" "${STAMP_DIR}/b-repo-123.json"
+
+# =============================================================================
+# Test 19 — direct pulse reaper rejects invalid issue and slug metadata
+# =============================================================================
+: >"$RELEASE_LOG"
+write_stamp "invalid-issue.json" "99999" "/nonexistent/path/124" "0" "owner/repo"
+write_stamp "invalid-slug.json" "99999" "/nonexistent/path/125" "125" "owner/repo/extra"
+_isc_cmd_reap_dead_stamps >/dev/null 2>/dev/null || true
+if [[ -f "${STAMP_DIR}/invalid-issue.json" ]] && \
+	[[ -f "${STAMP_DIR}/invalid-slug.json" ]] && \
+	[[ ! -s "$RELEASE_LOG" ]]; then
+	pass "direct pulse reaper preserves stamps with invalid target metadata"
+else
+	fail "direct pulse reaper preserves stamps with invalid target metadata"
+fi
+rm -f "${STAMP_DIR}/invalid-issue.json" "${STAMP_DIR}/invalid-slug.json"
 
 # =============================================================================
 # Summary
