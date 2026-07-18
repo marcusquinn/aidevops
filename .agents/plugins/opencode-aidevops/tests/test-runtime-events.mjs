@@ -464,6 +464,21 @@ test("OpenCode observability emits runtime evidence without changing legacy tabl
       type: "session.created",
       properties: { info: { id: "session:1", sessionID: "session:1" } },
     } });
+    for (let index = 0; index < 100; index++) {
+      observability.handleEvent({ event: {
+        type: "message.part.delta",
+        properties: { part: {
+          id: "part:1", messageID: "message:1", sessionID: "session:1", text: "stream fragment",
+        } },
+      } });
+    }
+    observability.handleEvent({ event: {
+      type: "message.part.updated",
+      properties: { part: {
+        error: { name: "PartFailure" }, id: "part:error", messageID: "message:1",
+        sessionID: "session:1", state: { status: "failed" },
+      } },
+    } });
     observability.handleEvent({ event: {
       type: "message.updated",
       properties: { info: {
@@ -504,9 +519,16 @@ test("OpenCode observability emits runtime evidence without changing legacy tabl
         (SELECT COUNT(*) FROM runtime_events),
         (SELECT group_concat(event_type, ',') FROM (
           SELECT event_type FROM runtime_events ORDER BY id
-        ));
+        )),
+        (SELECT json_extract(payload_json, '$.suppressed_part_events')
+          FROM runtime_events WHERE event_type = 'message.completed'),
+        (SELECT json_extract(payload_json, '$.error_type')
+          FROM runtime_events WHERE event_type = 'message.part.updated');
     `], { encoding: "utf8" }).trim();
-    assert.equal(counts, "1|1|4|session.created,message.completed,tool.completed,subagent.cancellation.receipt");
+    assert.equal(
+      counts,
+      "1|1|5|session.created,message.part.updated,message.completed,tool.completed,subagent.cancellation.receipt|100|PartFailure",
+    );
   } finally {
     rmSync(tempDir, { force: true, recursive: true });
   }

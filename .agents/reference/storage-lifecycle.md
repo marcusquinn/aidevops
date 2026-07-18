@@ -61,7 +61,7 @@ Reference, lease, recovery, and audit checks remain hard vetoes.
 | Store | Owner | Primary classes | Existing authority | Required next contract |
 |---|---|---|---|---|
 | `~/.aidevops/runtime-bundles` | framework | active, leased, rollback, cache | Deployment protects current, previous, and live-leased bundles; unreferenced bundles converge under 30-day, 30-bundle, and 8 GiB soft limits | Keep the limits operator-configurable and preserve fail-closed reporting when references or sizing are unavailable |
-| `~/.aidevops/.agent-workspace/observability` | framework | audit, archive, cache | Runtime events are append-only evidence; plugin records runtime and tool-call data | Define the minimum audit envelope, payload/metadata limits, partition or archive semantics, and verified compaction rather than direct row deletion |
+| `~/.aidevops/.agent-workspace/observability` | framework | audit, archive, cache | Part streams and tool metadata are bounded at ingestion; runtime events use a 30-day active candidate window, verified immutable archive partitions, compacted low-value summaries, pinned recovery state, and append-only manifests | Measure defaults across routine/high-activity installations before changing the active window or adding any archive deletion policy |
 | `~/.aidevops/agents-backups` | framework | rollback, archive | Setup computes a dry-run plan under 10-snapshot, 180-day, and 4 GiB soft limits; the newest snapshot is always protected | Tune defaults from broader measurements without weakening rollback or attribution checks |
 | `~/.aidevops/logs/worker-failure-excerpts` | framework | recovery, archive | Excerpts are capped at 64 KiB; each session retains its newest evidence while older duplicates converge under 3-excerpt, 30-day, and 192 KiB soft limits | Add terminal issue/PR awareness before reclaiming the newest evidence for any session |
 | Pulse active logs and `~/.aidevops/logs/pulse-archive` | framework | active, archive | Pulse preserves active descriptors while gzip-rotating 50 MiB hot/wrapper logs and 1 MiB timing logs; cold archives converge under 1 GiB | Keep rotation producer-owned and never replace it with generic unlink-by-age cleanup |
@@ -170,7 +170,10 @@ filesystem age or size deletion loop.
 2. Bound runtime bundles and evaluate lock-keyed dependency reuse while retaining
    current, previous, and live-leased protections.
 3. Define observability audit retention, payload limits, and archival or
-   partitioning semantics before compacting append-only evidence.
+   partitioning semantics before compacting append-only evidence. The initial
+   contract is implemented by `runtime-events-retention.mjs`; future changes
+   must preserve its dry-run, integrity, interruption, and protected-envelope
+   tests.
 4. Maintain coordinated policies for framework backups, Pulse logs, and worker
    failure excerpts, including conservative attributable-only migration.
 5. Coordinate OpenCode-owned storage through runtime-aware reporting and

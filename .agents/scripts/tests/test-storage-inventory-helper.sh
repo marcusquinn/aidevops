@@ -70,7 +70,9 @@ after_checksum=$(fixture_checksum)
 [[ "$(printf '%s' "$report" | jq '[.stores[].reclaimable_bytes] | add')" == "0" ]] || fail "foundation report suggested reclaimable bytes"
 [[ "$(printf '%s' "$report" | jq '[.stores[] | select(.total_bytes != null) | (.total_bytes == (.protected_bytes + .reclaimable_bytes + .unknown_bytes))] | all')" == "true" ]] || fail "storage categories did not reconcile with totals"
 [[ "$(printf '%s' "$report" | jq -r '.stores[] | select(.store_id == "runtime-bundles") | .unknown_bytes > 0')" == "true" ]] || fail "runtime bundles were not fail-closed unknown"
-[[ "$(printf '%s' "$report" | jq -r '.stores[] | select(.store_id == "observability") | .protected_bytes > 0')" == "true" ]] || fail "audit evidence was not protected"
+[[ "$(printf '%s' "$report" | jq -r '.stores[] | select(.store_id == "observability") | .total_bytes > 0')" == "true" ]] || fail "observability bytes were not measured"
+[[ "$(printf '%s' "$report" | jq -r '.stores[] | select(.store_id == "observability") | .unknown_bytes > 0')" == "true" ]] || fail "unattributed observability bytes did not fail closed"
+[[ "$(printf '%s' "$report" | jq -r '.stores[] | select(.store_id == "observability") | has("active_bytes") and has("archive_bytes") and has("candidate_bytes")')" == "true" ]] || fail "observability lifecycle byte classes missing"
 [[ "$(printf '%s' "$report" | jq -r '.stores[] | select(.store_id == "npm-cache") | .owner')" == "external" ]] || fail "npm ownership was claimed by aidevops"
 
 report=$(BACKUP_KEEP_COUNT=1 AIDEVOPS_WORKER_EXCERPT_KEEP_COUNT=1 bash "$HELPER" json)
