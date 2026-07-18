@@ -623,7 +623,7 @@ _runtime_bundle_manifest_value() {
 	local line=""
 
 	[[ -r "$manifest_file" ]] || return 1
-	while IFS= read -r line; do
+	while IFS= read -r line || [[ -n "$line" ]]; do
 		case "$line" in
 		"${key}="*)
 			printf '%s' "${line#*=}"

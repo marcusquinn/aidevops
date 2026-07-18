@@ -112,7 +112,7 @@ set_bundle_manifest_sha() {
 
 	for manifest_file in "$bundle_dir/manifest" "$bundle_dir/agents/.bundle-manifest"; do
 		manifest_tmp="${manifest_file}.tmp"
-		while IFS= read -r line; do
+		while IFS= read -r line || [[ -n "$line" ]]; do
 			if [[ "$line" == git_sha=* ]]; then
 				printf 'git_sha=%s\n' "$git_sha"
 			else
@@ -145,6 +145,15 @@ install_mock_ancestor_git() {
 		fi
 		return 1
 	}
+	return 0
+}
+
+test_manifest_value_reads_unterminated_final_line() {
+	local manifest_file="$TEST_ROOT/manifest-without-trailing-newline"
+
+	printf 'schema=1\nframework_version=15.0.0' >"$manifest_file"
+	assert_eq "15.0.0" "$(_runtime_bundle_manifest_value "$manifest_file" framework_version)" \
+		"manifest reader accepts an unterminated final line"
 	return 0
 }
 
@@ -583,6 +592,7 @@ main() {
 	AIDEVOPS_AGENT_DEPLOY_MIN_FILES=1
 	export AIDEVOPS_AGENT_DEPLOY_MIN_FILES
 
+	test_manifest_value_reads_unterminated_final_line
 	test_initial_activation_and_manifest
 	test_interrupted_staging_preserves_active
 	test_failed_activation_rolls_back

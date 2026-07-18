@@ -59,31 +59,40 @@ function handleSessionDeleted({ sessionID, state, resetState }) {
   resetState();
 }
 
-function handleMessageUpdated({ info, sessionID, state, setTerminalTitleStatus }) {
-  if (sessionID !== state.activeRootSessionID) return;
-  if (info?.role === "user") {
-    const messageID = info.id || "";
-    if (!rememberMessageID(state.seenUserMessageIDs, messageID)) return;
-    const createdAt = Number.isFinite(info.time?.created) ? info.time.created : null;
-    if (
-      state.activeUserMessageID &&
-      state.activeUserCreatedAt !== null &&
-      (createdAt === null || createdAt < state.activeUserCreatedAt)
-    ) {
-      return;
-    }
-    state.activeUserMessageID = messageID;
-    state.activeUserCreatedAt = createdAt;
-    state.completedUserMessageID = "";
-    if (state.pendingPermissionIDs.size === 0) setTerminalTitleStatus("busy");
+function handleUserMessageUpdated({ info, state, setTerminalTitleStatus }) {
+  const messageID = info.id || "";
+  if (!rememberMessageID(state.seenUserMessageIDs, messageID)) return;
+  const createdAt = Number.isFinite(info.time?.created) ? info.time.created : null;
+  if (
+    state.activeUserMessageID &&
+    state.activeUserCreatedAt !== null &&
+    (createdAt === null || createdAt < state.activeUserCreatedAt)
+  ) {
     return;
   }
-  if (!isTerminalAssistantCompletion(info) || state.pendingPermissionIDs.size > 0) return;
-  if (!state.activeUserMessageID) return;
-  if (state.activeUserMessageID && info.parentID && info.parentID !== state.activeUserMessageID) return;
+  state.activeUserMessageID = messageID;
+  state.activeUserCreatedAt = createdAt;
+  state.completedUserMessageID = "";
+  if (state.pendingPermissionIDs.size === 0) setTerminalTitleStatus("busy");
+}
+
+function handleAssistantMessageUpdated({ info, state, setTerminalTitleStatus }) {
+  if (
+    !isTerminalAssistantCompletion(info) ||
+    state.pendingPermissionIDs.size > 0 ||
+    !state.activeUserMessageID ||
+    info.parentID !== state.activeUserMessageID
+  ) return;
   if (!rememberMessageID(state.completedAssistantMessageIDs, info.id)) return;
   state.completedUserMessageID = state.activeUserMessageID;
   setTerminalTitleStatus("idle");
+}
+
+function handleMessageUpdated(context) {
+  const { info, sessionID, state } = context;
+  if (sessionID !== state.activeRootSessionID) return;
+  if (info?.role === "user") handleUserMessageUpdated(context);
+  else handleAssistantMessageUpdated(context);
 }
 
 function handleSessionStatus({ event, sessionID, state, setTerminalTitleStatus }) {

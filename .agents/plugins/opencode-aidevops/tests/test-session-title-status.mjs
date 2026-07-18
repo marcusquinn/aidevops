@@ -146,6 +146,15 @@ test("terminal root assistant completion restores idle without a native idle eve
   }));
   await handler(event("message.updated", {
     info: {
+      id: "assistant-without-parent",
+      sessionID: "root-completion",
+      role: "assistant",
+      finish: "stop",
+      time: { created: 10, completed: 20 },
+    },
+  }));
+  await handler(event("message.updated", {
+    info: {
       id: "assistant-stale",
       sessionID: "root-completion",
       parentID: "older-user",
