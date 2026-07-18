@@ -1796,12 +1796,12 @@ _dlw_append_trusted_release_env() {
 }
 
 _dlw_append_worktree_transfer_env() {
-	local transfer_mode="$1"
-	local expected_owner_pid="$2"
-	local expected_owner_session="$3"
-	local expected_owner_batch="$4"
-	local expected_owner_task="$5"
-	local expected_owner_created_at="$6"
+	local transfer_mode="${_DLW_WORKTREE_TRANSFER_MODE:-}"
+	local expected_owner_pid="${_DLW_WORKTREE_EXPECTED_OWNER_PID:-}"
+	local expected_owner_session="${_DLW_WORKTREE_EXPECTED_OWNER_SESSION:-}"
+	local expected_owner_batch="${_DLW_WORKTREE_EXPECTED_OWNER_BATCH:-}"
+	local expected_owner_task="${_DLW_WORKTREE_EXPECTED_OWNER_TASK:-}"
+	local expected_owner_created_at="${_DLW_WORKTREE_EXPECTED_OWNER_CREATED_AT:-}"
 	[[ "$transfer_mode" == "continuation" ]] || return 0
 
 	worker_cmd+=(
@@ -1831,8 +1831,6 @@ _dlw_nohup_launch() {
 	local dispatch_model_tier="$9"
 	local selected_model="${10}"
 	local worker_worktree_path="${11}" worker_worktree_branch="${12}" attempt_id="${13:-}" attempt_started_at="${14:-}"
-	local transfer_mode="${_DLW_WORKTREE_TRANSFER_MODE:-}" expected_owner_pid="${_DLW_WORKTREE_EXPECTED_OWNER_PID:-}" expected_owner_session="${_DLW_WORKTREE_EXPECTED_OWNER_SESSION:-}"
-	local expected_owner_batch="${_DLW_WORKTREE_EXPECTED_OWNER_BATCH:-}" expected_owner_task="${_DLW_WORKTREE_EXPECTED_OWNER_TASK:-}" expected_owner_created_at="${_DLW_WORKTREE_EXPECTED_OWNER_CREATED_AT:-}"
 	[[ -n "$attempt_id" ]] || attempt_id=$(aidevops_generate_execution_id "attempt")
 	[[ "$attempt_started_at" =~ ^[0-9]+$ ]] || attempt_started_at=$(_worker_attempt_start_marker)
 	local parent_worker_id="" root_worker_id="" correlation_id="" worker_id="" dispatch_event_id="" root_event_id=""
@@ -1878,9 +1876,7 @@ _dlw_nohup_launch() {
 		AIDEVOPS_DISPATCH_MODEL="$selected_model"
 	)
 	_dlw_append_trusted_release_env
-	local -a transfer_contract=("$transfer_mode" "$expected_owner_pid" "$expected_owner_session"
-		"$expected_owner_batch" "$expected_owner_task" "$expected_owner_created_at")
-	_dlw_append_worktree_transfer_env "${transfer_contract[@]}"
+	_dlw_append_worktree_transfer_env
 	if _dlw_min_worker_floor_active; then
 		worker_cmd+=(
 			AIDEVOPS_MIN_WORKER_FLOOR_BYPASS_ACTIVE=1
