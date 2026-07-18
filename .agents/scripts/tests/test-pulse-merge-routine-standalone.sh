@@ -2,15 +2,15 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 #
-# test-pulse-merge-routine-standalone.sh — t3036 / GH#21616 regression guard.
+# test-pulse-merge-routine-standalone.sh — t3036 / GH#21616 / GH#28207 guard.
 #
 # Asserts that pulse-merge-routine.sh (a standalone helper invoked by launchd
 # every 120s) bootstraps successfully WITHOUT pulse-wrapper.sh's environment
 # in scope. The routine sources pulse-merge.sh which references
-# PULSE_START_EPOCH, unlock_issue_after_worker, and fast_fail_reset — all
-# normally set by pulse-wrapper.sh. Without explicit defaults / sourcing,
-# `set -euo pipefail` in the routine causes a hard fail on the first
-# unbound variable, and stderr noise on every merged/closed PR.
+# PULSE_START_EPOCH, unlock_issue_after_worker, fast_fail_reset, dependency
+# reconciliation, and idempotent comments — all normally provided by
+# pulse-wrapper.sh. Without explicit defaults / sourcing, `set -euo pipefail`
+# in the routine causes hard failures or silently skips post-merge work.
 #
 # Root cause (t3036, GH#21616):
 #   1. pulse-merge-routine.sh ran under `set -euo pipefail` (line 42) but did
@@ -24,10 +24,16 @@
 #      pulse-merge.sh:338,383,385 but neither library was sourced by the
 #      routine — every successful merge/close emitted 'command not found'
 #      stderr noise.
+#   3. reconcile_dependants_after_verified_closure was called after a linked
+#      issue close but dependency-event-reconciler.sh was not sourced.
+#   4. Standalone stuck-PR paths guarded and skipped escalation because
+#      _gh_idempotent_comment from pulse-triage-cache.sh was not sourced.
 #
 # Fix (t3036, this PR):
 #   - Initialise PULSE_START_EPOCH in the env-var defaults block.
 #   - Source pulse-dispatch-core.sh and pulse-fast-fail.sh in the source chain.
+#   - Source dependency-event-reconciler.sh and pulse-triage-cache.sh before
+#     pulse-merge.sh and its conflict/stuck consumers (GH#28207).
 #
 # Test scenarios (all run with PULSE_START_EPOCH UNSET to catch regressions):
 #   1. --help completes with exit 0 and no stderr noise
@@ -42,7 +48,14 @@
 #   10. merge LaunchAgent uses normal spawn priority with explicit KeepAlive=false
 #   11. standalone PATH repair keeps the framework gh shim first
 #   12. leading --repo defaults to the run subcommand (GH#25698)
-#   13. GraphQL budget probing does not depend on the REST core budget
+#   13. --pr configures an exact target
+#   14. --pr rejects a missing --repo
+#   15. dry-run stops before CI repair writes
+#   16. exact spot-check bypasses the all-PR merge pass
+#   17. GraphQL budget probing does not depend on the REST core budget
+#   18. linked-issue closure invokes dependency reconciliation
+#   19. stuck escalation invokes the idempotent comment provider
+#   20. both paths run without missing-function diagnostics
 
 set -uo pipefail
 
@@ -451,6 +464,158 @@ if [[ "$budget_rc" -eq 0 ]]; then
 else
 	fail "17: GraphQL budget probe is independent of REST core rate limit" \
 		"harness rc=${budget_rc}, output=${budget_output}"
+fi
+
+printf '\n=== Standalone post-merge provider regression guards ===\n'
+
+SOURCE_CHAIN_TEST_HOME=$(mktemp -d "${TMPDIR:-/tmp}/pmr-source-chain-home-XXXXXX")
+SOURCE_CHAIN_HARNESS=$(mktemp "${TMPDIR:-/tmp}/pmr-source-chain-harness-XXXXXX")
+trap 'rm -f "$PARSER_HARNESS" "$SCOPE_HARNESS" "$BUDGET_HARNESS" "$SOURCE_CHAIN_HARNESS"; rm -rf "$SOURCE_CHAIN_TEST_HOME"' EXIT
+
+cat >"$SOURCE_CHAIN_HARNESS" <<'SOURCE_CHAIN_HARNESS_EOF'
+#!/usr/bin/env bash
+set -uo pipefail
+
+HOME="${SOURCE_CHAIN_TEST_HOME:?}"
+LOGFILE=/dev/null
+AIDEVOPS_MERGE_STUCK_AGE_MINUTES=1
+export HOME LOGFILE AIDEVOPS_MERGE_STUCK_AGE_MINUTES
+
+# Extract the production standalone source block while pinning SCRIPT_DIR to
+# the repository scripts directory. This exercises the exact ordered chain
+# without invoking the routine entry point or contacting GitHub.
+# shellcheck disable=SC1090
+source <(awk '
+	BEGIN { print "SCRIPT_DIR=\"${ROUTINE_TEST_SCRIPTS_DIR}\"" }
+	/^# Source pulse libraries$/ { capture=1; next }
+	capture && /^# Env-var defaults/ { exit }
+	capture { print }
+' "$ROUTINE_FILE")
+
+declare -F reconcile_dependants_after_verified_closure >/dev/null 2>&1 || exit 21
+declare -F _gh_idempotent_comment >/dev/null 2>&1 || exit 22
+
+_pm_build_closing_comment() {
+	printf 'mock closeout'
+	return 0
+}
+_pm_upsert_pr_closing_comment() {
+	return 0
+}
+unlock_issue_after_worker() {
+	return 0
+}
+_pm_issue_api() {
+	local repo_slug="$1"
+	local issue_number="$2"
+	printf 'repos/%s/issues/%s' "$repo_slug" "$issue_number"
+	return 0
+}
+gh() {
+	local command="${1:-}"
+	if [[ "$command" == "api" ]]; then
+		printf '[]\n'
+		return 0
+	fi
+	return 1
+}
+gh_issue_comment() {
+	return 0
+}
+set_solved_label() {
+	return 0
+}
+clear_terminal_issue_dispatch_labels() {
+	return 0
+}
+_gh_with_timeout() {
+	return 0
+}
+reconcile_dependants_after_verified_closure() {
+	local repo_slug="$1"
+	local issue_number="$2"
+	printf 'reconciled:%s:%s\n' "$repo_slug" "$issue_number"
+	return 0
+}
+fast_fail_reset() {
+	return 0
+}
+_pm_resolve_superseded_original_issue() {
+	return 1
+}
+_pm_handle_partial_parent_closeout() {
+	return 0
+}
+_release_interactive_claim_on_merge() {
+	return 0
+}
+auto_file_next_phase() {
+	return 0
+}
+_unblock_circuit_breaker_meta_pr() {
+	return 0
+}
+invalidate_footprint_cache_for_issue() {
+	return 0
+}
+
+_handle_post_merge_actions 42 owner/repo 77 summary origin:worker main
+
+gh_pr_view() {
+	printf 'mock-head-sha\n'
+	return 0
+}
+_pms_check_runs_for_head() {
+	printf '{"check_runs":[]}\n'
+	return 0
+}
+_pms_failing_check_bullets() {
+	printf '%s\n' '- mocked failing check'
+	return 0
+}
+_gh_idempotent_comment() {
+	local entity_number="$1"
+	local repo_slug="$2"
+	local marker="$3"
+	local comment_body="$4"
+	local entity_type="${5:-issue}"
+	: "$marker" "$comment_body"
+	printf 'idempotent:%s:%s:%s\n' "$entity_number" "$repo_slug" "$entity_type"
+	return 0
+}
+pulse_stats_increment() {
+	return 0
+}
+
+_escalate_individual_stuck_pr 43 owner/repo STUCK_CHECKS_FAILING 77
+SOURCE_CHAIN_HARNESS_EOF
+
+chmod +x "$SOURCE_CHAIN_HARNESS"
+source_chain_output=$(ROUTINE_FILE="$ROUTINE_FILE" \
+	ROUTINE_TEST_SCRIPTS_DIR="$SCRIPTS_DIR" \
+	SOURCE_CHAIN_TEST_HOME="$SOURCE_CHAIN_TEST_HOME" \
+	bash "$SOURCE_CHAIN_HARNESS" 2>&1)
+source_chain_rc=$?
+
+if [[ "$source_chain_rc" -eq 0 && "$source_chain_output" == *"reconciled:owner/repo:77"* ]]; then
+	pass "18: linked-issue close invokes standalone dependency reconciliation"
+else
+	fail "18: linked-issue close invokes standalone dependency reconciliation" \
+		"harness rc=${source_chain_rc}, output=${source_chain_output}"
+fi
+
+if [[ "$source_chain_rc" -eq 0 && "$source_chain_output" == *"idempotent:77:owner/repo:issue"* ]]; then
+	pass "19: stuck escalation invokes standalone idempotent comment provider"
+else
+	fail "19: stuck escalation invokes standalone idempotent comment provider" \
+		"harness rc=${source_chain_rc}, output=${source_chain_output}"
+fi
+
+if [[ "$source_chain_rc" -eq 0 && "$source_chain_output" != *"command not found"* && "$source_chain_output" != *"not defined"* ]]; then
+	pass "20: post-merge providers run without missing-function diagnostics"
+else
+	fail "20: post-merge providers run without missing-function diagnostics" \
+		"harness rc=${source_chain_rc}, output=${source_chain_output}"
 fi
 
 # =============================================================================
