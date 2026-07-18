@@ -179,6 +179,35 @@ _prefetch_prs_format_output() {
 	return 0
 }
 
+#######################################
+# Record a validated batch-cache hit without counting an HTTP attempt.
+# Arguments: $1=kind, $2=validated JSON-array payload
+#######################################
+_prefetch_record_batch_cache_hit() {
+	local kind="$1"
+	local payload="$2"
+	local decision="hit-nonempty"
+	[[ "$payload" == "[]" ]] && decision="hit-empty"
+	if command -v gh_record_call >/dev/null 2>&1; then
+		gh_record_call other "pulse_batch_prefetch_${kind}_cache" unknown other \
+			"$decision" "" cache 2>/dev/null || true
+	fi
+	return 0
+}
+
+#######################################
+# Log a canonical cache state that occurs after a cache miss.
+# Arguments: $1=state, $2=kind, $3=slug
+#######################################
+_prefetch_log_batch_cache_state() {
+	local state="$1"
+	local kind="$2"
+	local slug="$3"
+	printf '[pulse-wrapper] cache_state=%s kind=%s slug=%s cardinality=unknown\n' \
+		"$state" "$kind" "$slug" >>"$LOGFILE"
+	return 0
+}
+
 _prefetch_repo_prs() {
 	local slug="$1"
 	local cache_entry="${2:-}"
@@ -208,11 +237,11 @@ _prefetch_repo_prs() {
 	local _used_batch_cache=false
 	if [[ "${PULSE_BATCH_PREFETCH_ENABLED:-1}" == "1" && -x "$_batch_helper" ]]; then
 		local _batch_prs
-		_batch_prs=$("$_batch_helper" read-cache --kind prs --slug "$slug" 2>/dev/null) || _batch_prs=""
-		if [[ -n "$_batch_prs" && "$_batch_prs" != "[]" && "$_batch_prs" != "null" ]]; then
+		if _batch_prs=$("$_batch_helper" read-cache --kind prs --slug "$slug" 2>>"$LOGFILE"); then
 			pr_json="$_batch_prs"
 			_used_batch_cache=true
 			echo "[pulse-wrapper] _prefetch_repo_prs: using batch cache for ${slug}" >>"$LOGFILE"
+			_prefetch_record_batch_cache_hit prs "$_batch_prs"
 			_PULSE_HEALTH_BATCH_CACHE_HITS=$((_PULSE_HEALTH_BATCH_CACHE_HITS + 1))
 		fi
 	fi
@@ -242,6 +271,7 @@ _prefetch_repo_prs() {
 					_pulse_mark_rate_limited "_prefetch_repo_prs:${slug}"
 				fi
 				echo "[pulse-wrapper] _prefetch_repo_prs: gh_pr_list FAILED for ${slug}: ${err_msg}" >>"$LOGFILE"
+				_prefetch_log_batch_cache_state fetch-failed prs "$slug"
 				pr_json="[]"
 			fi
 		fi
@@ -342,11 +372,11 @@ _prefetch_repo_issues() {
 	local _used_batch_cache=false
 	if [[ "${PULSE_BATCH_PREFETCH_ENABLED:-1}" == "1" && -x "$_batch_helper" ]]; then
 		local _batch_issues
-		_batch_issues=$("$_batch_helper" read-cache --kind issues --slug "$slug" 2>/dev/null) || _batch_issues=""
-		if [[ -n "$_batch_issues" && "$_batch_issues" != "[]" && "$_batch_issues" != "null" ]]; then
+		if _batch_issues=$("$_batch_helper" read-cache --kind issues --slug "$slug" 2>>"$LOGFILE"); then
 			issue_json="$_batch_issues"
 			_used_batch_cache=true
 			echo "[pulse-wrapper] _prefetch_repo_issues: using batch cache for ${slug}" >>"$LOGFILE"
+			_prefetch_record_batch_cache_hit issues "$_batch_issues"
 			_PULSE_HEALTH_BATCH_CACHE_HITS=$(( ${_PULSE_HEALTH_BATCH_CACHE_HITS:-0} + 1 ))
 		fi
 	fi
@@ -375,6 +405,7 @@ _prefetch_repo_issues() {
 					_pulse_mark_rate_limited "_prefetch_repo_issues:${slug}"
 				fi
 				echo "[pulse-wrapper] _prefetch_repo_issues: gh_issue_list FAILED for ${slug}: ${issue_err_msg}" >>"$LOGFILE"
+				_prefetch_log_batch_cache_state fetch-failed issues "$slug"
 				issue_json="[]"
 			fi
 		fi
