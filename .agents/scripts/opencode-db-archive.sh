@@ -43,6 +43,12 @@ readonly DEFAULT_RETENTION_DAYS=30
 readonly DEFAULT_BATCH_SIZE=500
 readonly DEFAULT_MAX_DURATION=60
 readonly EVENT_TABLE_NAME="event"
+readonly UNKNOWN_STATE="unknown"
+
+ARCHIVE_BATCH_SIZE="${OPENCODE_DB_ARCHIVE_BATCH_SIZE:-$DEFAULT_BATCH_SIZE}"
+ARCHIVE_BATCH_DELAY_SECONDS="${OPENCODE_DB_ARCHIVE_BATCH_DELAY_SECONDS:-0}"
+DB_HOLDER_COMMAND="${OPENCODE_DB_HOLDER_COMMAND:-lsof}"
+WAL_STABILITY_DELAY_SECONDS="${OPENCODE_DB_WAL_STABILITY_DELAY_SECONDS:-1}"
 
 ACTIVE_DB="${OPENCODE_DB_PATH:-${OPENCODE_DB:-$DEFAULT_DB}}"
 _archive_default_dir="${ACTIVE_DB%/*}"
@@ -169,15 +175,180 @@ file_size_bytes() {
 	return 0
 }
 
+# Return a stable signature for the active WAL without reading its contents.
+# Missing is a valid stable state; unknown metadata fails closed.
+_wal_signature() {
+	local wal_path="$1"
+	local wal_bytes=""
+	local wal_mtime=""
+
+	if [[ ! -e "$wal_path" && ! -L "$wal_path" ]]; then
+		printf '%s' "missing"
+		return 0
+	fi
+	if [[ ! -f "$wal_path" ]]; then
+		printf '%s' "$UNKNOWN_STATE"
+		return 0
+	fi
+
+	wal_bytes=$(file_size_bytes "$wal_path" 2>/dev/null || true)
+	wal_mtime=$(_file_mtime_epoch "$wal_path" 2>/dev/null || true)
+	if [[ ! "$wal_bytes" =~ ^[0-9]+$ || ! "$wal_mtime" =~ ^[0-9]+$ ]]; then
+		printf '%s' "$UNKNOWN_STATE"
+		return 0
+	fi
+	printf '%s:%s' "$wal_bytes" "$wal_mtime"
+	return 0
+}
+
+# Hard-veto mutation while the WAL changes between two observations.
+_wal_is_stable() {
+	local db="$1"
+	local wal_path="${db}-wal"
+	local before=""
+	local after=""
+
+	before=$(_wal_signature "$wal_path")
+	if [[ "$before" == "$UNKNOWN_STATE" ]]; then
+		return 1
+	fi
+	sleep "$WAL_STABILITY_DELAY_SECONDS"
+	after=$(_wal_signature "$wal_path")
+	if [[ "$after" == "$UNKNOWN_STATE" || "$before" != "$after" ]]; then
+		return 1
+	fi
+	return 0
+}
+
+# Emit a holder count, or "unknown" when holder evidence is unavailable.
+_db_holder_count() {
+	local db="$1"
+	local holder_pids=""
+	local holder_count="0"
+
+	if ! command -v "$DB_HOLDER_COMMAND" >/dev/null 2>&1; then
+		printf '%s' "$UNKNOWN_STATE"
+		return 0
+	fi
+	holder_pids=$("$DB_HOLDER_COMMAND" -t "$db" 2>/dev/null || true)
+	if [[ -n "$holder_pids" ]]; then
+		holder_count=$(printf '%s\n' "$holder_pids" | awk 'NF' | sort -u | wc -l | tr -d ' ')
+	fi
+	printf '%s' "${holder_count:-0}"
+	return 0
+}
+
+_sqlite_table_columns() {
+	local db="$1"
+	local table_name="$2"
+	sqlite3 "$db" "SELECT COALESCE(group_concat(name, ','), '') FROM (SELECT name FROM pragma_table_info('${table_name}') ORDER BY cid);" 2>/dev/null
+	return $?
+}
+
+# Support only a schema whose complete logical-session write surface is known.
+# Extra columns or session-linked tables are unknown OpenCode data and remain
+# in the active database untouched.
+_archive_table_schema_supported() {
+	local db="$1"
+	local table_name="$2"
+	local actual=""
+	local expected=""
+	local compatible=""
+
+	actual=$(_sqlite_table_columns "$db" "$table_name") || return 1
+	case "$table_name" in
+	project)
+		expected="id,worktree,vcs,name,icon_url,icon_color,time_created,time_updated,time_initialized,sandboxes,commands"
+		compatible="${expected},icon_url_override"
+		;;
+	session)
+		expected="id,project_id,parent_id,slug,directory,title,version,share_url,summary_additions,summary_deletions,summary_files,summary_diffs,revert,permission,time_created,time_updated,time_compacting,time_archived,workspace_id"
+		compatible="${expected},path"
+		;;
+	message) expected="id,session_id,time_created,time_updated,data" ;;
+	part) expected="id,message_id,session_id,time_created,time_updated,data" ;;
+	todo) expected="session_id,content,status,priority,position,time_created,time_updated" ;;
+	session_share) expected="session_id,id,secret,url,time_created,time_updated" ;;
+	event) expected="id,aggregate_id,seq,type,data" ;;
+	*) return 1 ;;
+	esac
+
+	if [[ "$actual" == "$expected" || (-n "$compatible" && "$actual" == "$compatible") ]]; then
+		return 0
+	fi
+	return 1
+}
+
+_archive_validate_active_schema() {
+	local table_name=""
+	local unknown_session_tables=""
+
+	for table_name in project session message part todo session_share; do
+		if ! _archive_table_schema_supported "$ACTIVE_DB" "$table_name"; then
+			print_error "Unsupported or unavailable OpenCode ${table_name} schema; active data was left untouched."
+			return 1
+		fi
+	done
+	if _sqlite_has_table "$ACTIVE_DB" "$EVENT_TABLE_NAME" && ! _archive_table_schema_supported "$ACTIVE_DB" "$EVENT_TABLE_NAME"; then
+		print_error "Unsupported OpenCode event schema; active data was left untouched."
+		return 1
+	fi
+
+	unknown_session_tables=$(sqlite3 "$ACTIVE_DB" \
+		"SELECT DISTINCT m.name FROM sqlite_master m JOIN pragma_table_info(m.name) p WHERE m.type='table' AND p.name='session_id' AND m.name NOT IN ('message','part','todo','session_share') ORDER BY m.name;" 2>/dev/null || true)
+	if [[ -n "$unknown_session_tables" ]]; then
+		print_error "Unsupported session-linked OpenCode tables detected; active data was left untouched."
+		return 1
+	fi
+	return 0
+}
+
+_archive_mutation_preflight() {
+	local holder_count=""
+
+	holder_count=$(_db_holder_count "$ACTIVE_DB")
+	if [[ "$holder_count" == "$UNKNOWN_STATE" ]]; then
+		print_warning "Archive deferred — active DB holder state is unavailable."
+		return 2
+	fi
+	if [[ "$holder_count" -gt 0 ]]; then
+		print_warning "Archive deferred — ${holder_count} process(es) hold the active DB open."
+		return 2
+	fi
+	if ! _wal_is_stable "$ACTIVE_DB"; then
+		print_warning "Archive deferred — active WAL changed during the safety observation window."
+		return 2
+	fi
+	if ! _archive_validate_active_schema; then
+		return 3
+	fi
+	return 0
+}
+
 # Checkpoint the archive WAL — called on normal exit and via trap on early return.
 # Uses a global flag to prevent double-run when the fast-path calls it explicitly.
 _ARCHIVE_CHECKPOINT_DONE=0
+_ARCHIVE_CLEANUP_ENABLED=0
 _checkpoint_archive_db() {
 	local archive_db="$1"
 	if ((_ARCHIVE_CHECKPOINT_DONE)); then return 0; fi
 	_ARCHIVE_CHECKPOINT_DONE=1
 	sqlite3 "$archive_db" "PRAGMA wal_checkpoint(TRUNCATE);" 2>/dev/null || true
 	return 0
+}
+
+_archive_cleanup() {
+	if ((_ARCHIVE_CLEANUP_ENABLED)) && [[ -f "$ARCHIVE_DB" ]]; then
+		_checkpoint_archive_db "$ARCHIVE_DB"
+	fi
+	return 0
+}
+
+_archive_interrupt() {
+	local exit_code="$1"
+	print_warning "Archive interrupted; committed batches remain queryable and the active transaction will roll back."
+	exit "$exit_code"
+	return 1
 }
 
 # --- Schema creation in archive DB -------------------------------------------
@@ -463,6 +634,80 @@ _check_wal_post_archive() {
 	return 0
 }
 
+_checkpoint_active_db_truncate() {
+	local checkpoint_output=""
+	local blocked=""
+	local log_pages=""
+	local checkpointed_pages=""
+
+	checkpoint_output=$(sqlite3 "$ACTIVE_DB" "PRAGMA wal_checkpoint(TRUNCATE);" 2>/dev/null) || return 1
+	IFS='|' read -r blocked log_pages checkpointed_pages <<<"$checkpoint_output"
+	if [[ "${blocked:-1}" != "0" ]]; then
+		return 1
+	fi
+	return 0
+}
+
+# Compact only with positive idle-holder, stable-WAL, and checkpoint evidence.
+# This reclaims SQLite free pages; it never selects logical sessions by size.
+_archive_compact_active_db() {
+	local freelist_count=""
+	local holder_count=""
+	local quick_check=""
+
+	freelist_count=$(sqlite3 "$ACTIVE_DB" "PRAGMA freelist_count;" 2>/dev/null || true)
+	if [[ ! "$freelist_count" =~ ^[0-9]+$ ]]; then
+		print_warning "VACUUM deferred — freelist state is unavailable."
+		return 2
+	fi
+	if [[ "$freelist_count" -eq 0 ]]; then
+		print_info "VACUUM not needed — active DB has no free pages."
+		return 0
+	fi
+
+	holder_count=$(_db_holder_count "$ACTIVE_DB")
+	if [[ "$holder_count" == "$UNKNOWN_STATE" ]]; then
+		print_warning "VACUUM deferred — active DB holder state is unavailable."
+		return 2
+	fi
+	if [[ "$holder_count" -gt 0 ]]; then
+		print_warning "VACUUM deferred — ${holder_count} process(es) hold the active DB open."
+		return 2
+	fi
+	if ! _wal_is_stable "$ACTIVE_DB"; then
+		print_warning "VACUUM deferred — active WAL changed during the safety observation window."
+		return 2
+	fi
+
+	print_info "Running pre-VACUUM wal_checkpoint(TRUNCATE)..."
+	if ! _checkpoint_active_db_truncate; then
+		print_warning "VACUUM deferred — pre-VACUUM checkpoint was busy or unavailable."
+		return 2
+	fi
+	holder_count=$(_db_holder_count "$ACTIVE_DB")
+	if [[ "$holder_count" == "$UNKNOWN_STATE" || "$holder_count" -gt 0 ]]; then
+		print_warning "VACUUM deferred — active DB holder state changed after checkpoint."
+		return 2
+	fi
+
+	print_info "Running VACUUM on active DB..."
+	if ! sqlite3 "$ACTIVE_DB" "VACUUM;" 2>/dev/null; then
+		print_warning "VACUUM deferred — exclusive access was lost. Will retry next cycle."
+		return 2
+	fi
+	print_info "Running post-VACUUM wal_checkpoint(TRUNCATE)..."
+	if ! _checkpoint_active_db_truncate; then
+		print_warning "Post-VACUUM checkpoint was busy or unavailable; maintenance remains incomplete."
+		return 2
+	fi
+	quick_check=$(sqlite3 "$ACTIVE_DB" "PRAGMA quick_check;" 2>/dev/null || true)
+	if [[ "$quick_check" != "ok" ]]; then
+		print_error "Active DB quick_check failed after VACUUM."
+		return 1
+	fi
+	return 0
+}
+
 _archive_candidate_filter() {
 	local retention_enabled="$1"
 	local cutoff_ms="$2"
@@ -535,6 +780,26 @@ cmd_archive() {
 	check_active_db || return 1
 	_validate_nonnegative_integer "$retention_days" "--retention-days" || return 1
 	_validate_nonnegative_integer "$keep_sessions" "--keep-sessions" || return 1
+	_validate_nonnegative_integer "$max_duration" "--max-duration-seconds" || return 1
+	_validate_nonnegative_integer "$ARCHIVE_BATCH_SIZE" "OPENCODE_DB_ARCHIVE_BATCH_SIZE" || return 1
+	if [[ "$ARCHIVE_BATCH_SIZE" -eq 0 ]]; then
+		print_error "OPENCODE_DB_ARCHIVE_BATCH_SIZE must be greater than zero."
+		return 1
+	fi
+	if [[ ! "$ARCHIVE_BATCH_DELAY_SECONDS" =~ ^[0-9]+([.][0-9]+)?$ ]]; then
+		print_error "OPENCODE_DB_ARCHIVE_BATCH_DELAY_SECONDS must be a non-negative number."
+		return 1
+	fi
+	if [[ ! "$WAL_STABILITY_DELAY_SECONDS" =~ ^[0-9]+([.][0-9]+)?$ ]]; then
+		print_error "OPENCODE_DB_WAL_STABILITY_DELAY_SECONDS must be a non-negative number."
+		return 1
+	fi
+
+	local preflight_rc=0
+	_archive_mutation_preflight || preflight_rc=$?
+	if [[ "$preflight_rc" -ne 0 ]]; then
+		return "$preflight_rc"
+	fi
 
 	local cutoff_ms
 	cutoff_ms=$(($(date +%s) * 1000 - retention_days * 86400 * 1000))
@@ -580,7 +845,8 @@ cmd_archive() {
 
 	if ((total_eligible == 0)); then
 		print_success "No sessions match the archive retention target."
-		return 0
+		_archive_compact_active_db
+		return $?
 	fi
 
 	print_info "Found $total_eligible sessions eligible for archiving"
@@ -614,6 +880,13 @@ cmd_archive() {
 
 	# Create archive DB and schema
 	create_archive_schema "$ARCHIVE_DB"
+	local archive_table=""
+	for archive_table in project session message part todo session_share event; do
+		if ! _archive_table_schema_supported "$ARCHIVE_DB" "$archive_table"; then
+			print_error "Archive schema is unavailable or unsupported; active data was left untouched."
+			return 3
+		fi
+	done
 
 	local project_insert_columns project_select_columns
 	local session_insert_columns session_select_columns
@@ -629,12 +902,13 @@ cmd_archive() {
 	local size_before
 	size_before=$(file_size_bytes "$ACTIVE_DB")
 
-	# Cleanup scope: checkpoint the archive WAL on any exit path (normal or signal).
-	# _checkpoint_archive_db uses a global flag to prevent double-run; the trap
-	# ensures it runs on early return between batches, and the fast-path call below
-	# (before vacuum) runs it explicitly on normal completion.
+	# Cleanup scope: checkpoint the archive WAL on every process exit. SQLite rolls
+	# back an interrupted in-flight batch; already committed batches stay queryable.
 	_ARCHIVE_CHECKPOINT_DONE=0
-	trap '_checkpoint_archive_db "$ARCHIVE_DB"' RETURN
+	_ARCHIVE_CLEANUP_ENABLED=1
+	trap '_archive_cleanup' EXIT
+	trap '_archive_interrupt 130' INT
+	trap '_archive_interrupt 143' TERM
 
 	local start_time
 	start_time=$(date +%s)
@@ -652,7 +926,7 @@ cmd_archive() {
 		fi
 
 		batch_num=$((batch_num + 1))
-		local batch_limit="$DEFAULT_BATCH_SIZE"
+		local batch_limit="$ARCHIVE_BATCH_SIZE"
 		local remaining=$((total_eligible - archived_total))
 		if ((remaining < batch_limit)); then
 			batch_limit=$remaining
@@ -758,20 +1032,22 @@ BATCH_SQL
 		if ((freed < 0)); then freed=0; fi
 
 		print_info "Archived $archived_total/$total_eligible sessions [batch $batch_num] ($(format_bytes "$freed") freed)"
+		if [[ "$ARCHIVE_BATCH_DELAY_SECONDS" != "0" ]]; then
+			sleep "$ARCHIVE_BATCH_DELAY_SECONDS"
+		fi
 	done
 
 	# Fast-path explicit cleanup: checkpoint archive WAL before vacuum.
 	# Marks done so the RETURN trap does not double-run.
 	_checkpoint_archive_db "$ARCHIVE_DB"
 
-	# Reclaim space — VACUUM works regardless of auto_vacuum setting.
-	# PRAGMA incremental_vacuum is a no-op when auto_vacuum=0 (the SQLite default
-	# used by OpenCode), so VACUUM is required here. VACUUM needs exclusive access;
-	# if another connection holds the DB (interactive session), skip gracefully and
-	# retry on the next archive cycle.
-	print_info "Running VACUUM on active DB..."
-	if ! sqlite3 "$ACTIVE_DB" "VACUUM;" 2>/dev/null; then
-		print_warning "VACUUM skipped — database is in use by another process. Will retry next cycle."
+	local compact_rc=0
+	_archive_compact_active_db || compact_rc=$?
+	local archive_quick_check=""
+	archive_quick_check=$(sqlite3 "$ARCHIVE_DB" "PRAGMA quick_check;" 2>/dev/null || true)
+	if [[ "$archive_quick_check" != "ok" ]]; then
+		print_error "Archive DB quick_check failed after archive pass."
+		return 1
 	fi
 
 	local size_after
@@ -785,6 +1061,11 @@ BATCH_SQL
 	print_success "Archive DB: $(format_bytes "$(file_size_bytes "$ARCHIVE_DB")")"
 	# Surface large WAL that remains after archiving (active readers may be blocking truncation).
 	_check_wal_post_archive "$ACTIVE_DB"
+	_ARCHIVE_CLEANUP_ENABLED=0
+	trap - EXIT INT TERM
+	if [[ "$compact_rc" -ne 0 ]]; then
+		return "$compact_rc"
+	fi
 	return 0
 }
 
@@ -918,14 +1199,15 @@ HELP
 
 main() {
 	local command="${1:-help}"
+	local rc=0
 	shift || true
 
 	case "$command" in
 	archive)
-		cmd_archive "$@"
+		cmd_archive "$@" || rc=$?
 		;;
 	stats)
-		cmd_stats "$@"
+		cmd_stats "$@" || rc=$?
 		;;
 	help | --help | -h)
 		cmd_help
@@ -936,7 +1218,7 @@ main() {
 		return 1
 		;;
 	esac
-	return 0
+	return "$rc"
 }
 
 main "$@"

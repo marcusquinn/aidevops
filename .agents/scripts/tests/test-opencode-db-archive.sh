@@ -469,6 +469,131 @@ else
 	_fail "HOME/XDG unset default path mismatch with rc=$rc — output: $out"
 fi
 
+# Active database holders are a hard veto before candidate selection or writes.
+_reset_dbs
+_make_active_db_with_session_path
+mock_holder="${SANDBOX}/mock-holder"
+printf '%s\n' '#!/usr/bin/env bash' 'printf "4242\n"' 'exit 0' >"$mock_holder"
+chmod +x "$mock_holder"
+set +e
+out=$(OPENCODE_DB="$ACTIVE_DB" OPENCODE_ARCHIVE_DB="$ARCHIVE_DB" \
+	OPENCODE_DB_HOLDER_COMMAND="$mock_holder" OPENCODE_DB_WAL_STABILITY_DELAY_SECONDS=0 \
+	"$HELPER" archive --retention-days 0 --max-duration-seconds 30 2>&1)
+rc=$?
+set -e
+active_sessions=$(sqlite3 "$ACTIVE_DB" "SELECT COUNT(*) FROM session;")
+if [[ "$rc" -eq 2 && "$active_sessions" == "1" && ! -e "$ARCHIVE_DB" && "$out" == *"hold the active DB open"* ]]; then
+	_pass "active DB holder veto leaves logical sessions untouched"
+else
+	_fail "active-holder veto mismatch: rc=${rc}, active=${active_sessions}, output=${out}"
+fi
+
+# A changing WAL is a hard veto even when holder inspection reports idle.
+_reset_dbs
+_make_active_db_with_session_path
+mock_idle_holder="${SANDBOX}/mock-idle-holder"
+printf '%s\n' '#!/usr/bin/env bash' 'exit 1' >"$mock_idle_holder"
+chmod +x "$mock_idle_holder"
+(
+	sleep 1
+	: >"${ACTIVE_DB}-wal"
+) &
+wal_writer_pid=$!
+set +e
+out=$(OPENCODE_DB="$ACTIVE_DB" OPENCODE_ARCHIVE_DB="$ARCHIVE_DB" \
+	OPENCODE_DB_HOLDER_COMMAND="$mock_idle_holder" OPENCODE_DB_WAL_STABILITY_DELAY_SECONDS=3 \
+	"$HELPER" archive --retention-days 0 --max-duration-seconds 30 2>&1)
+rc=$?
+set -e
+wait "$wal_writer_pid"
+rm -f "${ACTIVE_DB}-wal" "${ACTIVE_DB}-shm"
+active_sessions=$(sqlite3 "$ACTIVE_DB" "SELECT COUNT(*) FROM session;")
+if [[ "$rc" -eq 2 && "$active_sessions" == "1" && ! -e "$ARCHIVE_DB" && "$out" == *"active WAL changed"* ]]; then
+	_pass "changing WAL veto leaves logical sessions untouched"
+else
+	_fail "changing-WAL veto mismatch: rc=${rc}, active=${active_sessions}, output=${out}"
+fi
+
+# Unavailable and future schemas remain unknown and are never partially moved.
+_reset_dbs
+printf 'not-a-sqlite-database\n' >"$ACTIVE_DB"
+before_checksum=$(cksum "$ACTIVE_DB")
+set +e
+out=$(OPENCODE_DB="$ACTIVE_DB" OPENCODE_ARCHIVE_DB="$ARCHIVE_DB" \
+	OPENCODE_DB_WAL_STABILITY_DELAY_SECONDS=0 "$HELPER" archive --retention-days 0 2>&1)
+rc=$?
+set -e
+after_checksum=$(cksum "$ACTIVE_DB")
+if [[ "$rc" -eq 3 && "$before_checksum" == "$after_checksum" && ! -e "$ARCHIVE_DB" && "$out" == *"schema"* ]]; then
+	_pass "unavailable schema fails closed without creating an archive"
+else
+	_fail "unavailable-schema fail-closed mismatch: rc=${rc}, output=${out}"
+fi
+
+_reset_dbs
+_make_active_db_with_session_path
+sqlite3 "$ACTIVE_DB" "ALTER TABLE session ADD COLUMN future_payload text; UPDATE session SET future_payload='preserve-me';"
+set +e
+out=$(OPENCODE_DB="$ACTIVE_DB" OPENCODE_ARCHIVE_DB="$ARCHIVE_DB" \
+	OPENCODE_DB_WAL_STABILITY_DELAY_SECONDS=0 "$HELPER" archive --retention-days 0 2>&1)
+rc=$?
+set -e
+future_payload=$(sqlite3 "$ACTIVE_DB" "SELECT future_payload FROM session WHERE id='ses1';")
+if [[ "$rc" -eq 3 && "$future_payload" == "preserve-me" && ! -e "$ARCHIVE_DB" ]]; then
+	_pass "unknown future session schema remains active and untouched"
+else
+	_fail "future-schema fail-closed mismatch: rc=${rc}, payload=${future_payload}, output=${out}"
+fi
+
+# A signal between committed batches leaves both databases queryable and every
+# logical session present in exactly one database.
+_reset_dbs
+_make_active_db_with_sessions $'interrupt-a,1\ninterrupt-b,2'
+interrupt_output="${SANDBOX}/interrupt-output.log"
+OPENCODE_DB="$ACTIVE_DB" OPENCODE_ARCHIVE_DB="$ARCHIVE_DB" \
+	OPENCODE_DB_WAL_STABILITY_DELAY_SECONDS=0 OPENCODE_DB_ARCHIVE_BATCH_SIZE=1 \
+	OPENCODE_DB_ARCHIVE_BATCH_DELAY_SECONDS=10 \
+	"$HELPER" archive --retention-days 0 --max-duration-seconds 30 >"$interrupt_output" 2>&1 &
+archive_pid=$!
+archive_rows=0
+for _attempt in {1..100}; do
+	if [[ -f "$ARCHIVE_DB" ]]; then
+		archive_rows=$(sqlite3 "$ARCHIVE_DB" "SELECT COUNT(*) FROM session;" 2>/dev/null || printf '0')
+		[[ "$archive_rows" -gt 0 ]] && break
+	fi
+	sleep 0.05
+done
+kill -TERM "$archive_pid" 2>/dev/null || true
+set +e
+wait "$archive_pid"
+rc=$?
+set -e
+active_quick_check=$(sqlite3 "$ACTIVE_DB" "PRAGMA quick_check;" 2>/dev/null || true)
+archive_quick_check=$(sqlite3 "$ARCHIVE_DB" "PRAGMA quick_check;" 2>/dev/null || true)
+preserved_sessions=$(sqlite3 "$ACTIVE_DB" "ATTACH DATABASE '$ARCHIVE_DB' AS archive; SELECT COUNT(*) FROM (SELECT id FROM main.session UNION SELECT id FROM archive.session);" 2>/dev/null || printf '0')
+if [[ "$rc" -eq 143 && "$active_quick_check" == "ok" && "$archive_quick_check" == "ok" && "$preserved_sessions" == "2" ]]; then
+	_pass "interrupted archive preserves queryable active and archive databases"
+else
+	_fail "interrupted archive mismatch: rc=${rc}, active=${active_quick_check}, archive=${archive_quick_check}, sessions=${preserved_sessions}"
+fi
+
+# VACUUM is bracketed by idle-only checkpoints and leaves both DBs verified.
+_reset_dbs
+_make_active_db_with_session_path
+sqlite3 "$ACTIVE_DB" "UPDATE message SET data=hex(randomblob(262144));"
+set +e
+out=$(OPENCODE_DB="$ACTIVE_DB" OPENCODE_ARCHIVE_DB="$ARCHIVE_DB" \
+	OPENCODE_DB_WAL_STABILITY_DELAY_SECONDS=0 "$HELPER" archive --retention-days 0 --max-duration-seconds 30 2>&1)
+rc=$?
+set -e
+active_quick_check=$(sqlite3 "$ACTIVE_DB" "PRAGMA quick_check;" 2>/dev/null || true)
+archive_quick_check=$(sqlite3 "$ARCHIVE_DB" "PRAGMA quick_check;" 2>/dev/null || true)
+if [[ "$rc" -eq 0 && "$out" == *"pre-VACUUM wal_checkpoint(TRUNCATE)"* && "$out" == *"post-VACUUM wal_checkpoint(TRUNCATE)"* && "$active_quick_check" == "ok" && "$archive_quick_check" == "ok" ]]; then
+	_pass "archive VACUUM uses idle checkpoints and verifies both databases"
+else
+	_fail "archive VACUUM coordination mismatch: rc=${rc}, active=${active_quick_check}, archive=${archive_quick_check}, output=${out}"
+fi
+
 printf '\nResults: %d passed, %d failed\n' "$PASS" "$FAIL"
 if [[ "$FAIL" -gt 0 ]]; then
 	exit 1
