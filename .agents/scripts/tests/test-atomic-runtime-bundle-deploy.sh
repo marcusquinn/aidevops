@@ -209,6 +209,43 @@ test_live_bundle_lease_survives_three_updates() {
 	return 0
 }
 
+test_permission_denied_signal_check_preserves_live_lease() {
+	local lease_dir="$HOME/.aidevops/runtime-bundles/.leases/permission-denied"
+	local lease_file="$lease_dir/$$"
+	mkdir -p "$lease_dir"
+	printf 'live\n' >"$lease_file"
+
+	(
+		kill() { return 1; }
+		_runtime_bundle_has_live_lease "$lease_dir"
+	) || fail "ps fallback did not recognize the live lease process"
+	[[ -f "$lease_file" ]] || fail "permission-denied signal check removed a live lease"
+	rm -rf "$lease_dir"
+	pass "permission-denied signal check preserves a live lease"
+	return 0
+}
+
+test_proc_fallback_preserves_live_lease_without_ps() {
+	local lease_dir="$HOME/.aidevops/runtime-bundles/.leases/proc-fallback"
+	local lease_file="$lease_dir/$$"
+	if [[ ! -d "/proc/$$" ]]; then
+		print_skip "/proc lease fallback requires Linux"
+		return 0
+	fi
+	mkdir -p "$lease_dir"
+	printf 'live\n' >"$lease_file"
+
+	(
+		kill() { return 1; }
+		ps() { return 127; }
+		_runtime_bundle_has_live_lease "$lease_dir"
+	) || fail "/proc fallback did not recognize the live lease process"
+	[[ -f "$lease_file" ]] || fail "/proc fallback removed a live lease"
+	rm -rf "$lease_dir"
+	pass "/proc fallback preserves a live lease without ps"
+	return 0
+}
+
 test_stale_lease_and_old_bundle_are_pruned() {
 	local target_dir="$HOME/.aidevops/agents"
 	local stale_bundle="$HOME/.aidevops/runtime-bundles/stale-crash"
@@ -452,6 +489,8 @@ main() {
 	test_process_pin_survives_activation
 	test_setup_rebinds_stale_process_pin_to_active_bundle
 	test_live_bundle_lease_survives_three_updates
+	test_permission_denied_signal_check_preserves_live_lease
+	test_proc_fallback_preserves_live_lease_without_ps
 	test_stale_lease_and_old_bundle_are_pruned
 	test_count_and_byte_pressure_preserve_protected_bundles
 	test_runtime_bundle_inventory_explains_protection
