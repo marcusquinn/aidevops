@@ -1503,37 +1503,59 @@ _rollback_prelaunch_ownership() {
 	local issue_meta_json=""
 	issue_meta_json=$(gh issue view "$issue_number" --repo "$repo_slug" \
 		--json state,labels,assignees,locked 2>/dev/null) || return 1
-	local owns_queued=""
-	owns_queued=$(printf '%s' "$issue_meta_json" | jq -r --arg self "$self_login" '
+
+	# GH#1214 / t2769 fix: separate the "should we change status?" question from
+	# "should we unassign?". Previously, both were gated on owns_queued; when
+	# status:queued was absent (race, label inconsistency), the function returned 0
+	# without unassigning — leaving a stale assignment that fed the no_work circuit
+	# breaker through stale-recovery→fast-fail→t2769 over 4 cycles.
+	#
+	# New logic: always unassign self if assigned, regardless of status label.
+	# Only transition status:queued → status:available if status:queued is present.
+	local is_assigned=""
+	is_assigned=$(printf '%s' "$issue_meta_json" | jq -r --arg self "$self_login" '
 		(.state == "OPEN") and
-		(([.labels[].name] | index("status:queued")) != null) and
 		(([.assignees[].login] | index($self)) != null)
 	' 2>/dev/null) || return 1
-	[[ "$owns_queued" == "true" ]] || return 0
+	[[ "$is_assigned" == "true" ]] || return 0
 
-	if ! set_issue_status "$issue_number" "$repo_slug" "available" \
-		--remove-assignee "$self_login" >/dev/null 2>&1; then
-		echo "[dispatch_with_dedup] Pre-launch rollback failed for #${issue_number}: unable to restore available ownership" >>"$LOGFILE"
-		return 1
+	local has_queued=""
+	has_queued=$(printf '%s' "$issue_meta_json" | jq -r '
+		([.labels[].name] | index("status:queued")) != null
+	' 2>/dev/null) || has_queued="false"
+
+	if [[ "$has_queued" == "true" ]]; then
+		if ! set_issue_status "$issue_number" "$repo_slug" "available" \
+			--remove-assignee "$self_login" >/dev/null 2>&1; then
+			echo "[dispatch_with_dedup] Pre-launch rollback failed for #${issue_number}: unable to restore available ownership" >>"$LOGFILE"
+			return 1
+		fi
+	else
+		# Status label isn't queued (race or prior mutation); unassign only.
+		if ! gh issue edit "$issue_number" --repo "$repo_slug" \
+			--remove-assignee "$self_login" >/dev/null 2>&1; then
+			echo "[dispatch_with_dedup] Pre-launch rollback unassign-only failed for #${issue_number}" >>"$LOGFILE"
+			return 1
+		fi
+		echo "[dispatch_with_dedup] Pre-launch rollback: unassigned ${self_login} from #${issue_number} without status change (status:queued absent)" >>"$LOGFILE"
 	fi
 	if declare -F unlock_issue_after_worker >/dev/null 2>&1; then
 		unlock_issue_after_worker "$issue_number" "$repo_slug" || return 1
 	fi
 
+	# Verification: self must no longer be assigned. Status and lock checks
+	# are conditional — the issue may have been mutated by a concurrent runner
+	# or locked state may persist if unlock_issue_after_worker is unavailable.
 	issue_meta_json=$(gh issue view "$issue_number" --repo "$repo_slug" \
 		--json state,labels,assignees,locked 2>/dev/null) || return 1
-	if ! printf '%s' "$issue_meta_json" | jq -e --arg self "$self_login" '
-		.state == "OPEN" and
-		(([.labels[].name] | index("status:queued")) == null) and
-		(([.labels[].name] | index("status:available")) != null) and
-		(([.assignees[].login] | index($self)) == null) and
-		(.locked != true)
+	if printf '%s' "$issue_meta_json" | jq -e --arg self "$self_login" '
+		([.assignees[].login] | index($self)) != null
 	' >/dev/null 2>&1; then
-		echo "[dispatch_with_dedup] Pre-launch rollback verification failed for #${issue_number}; retaining claim for stale recovery" >>"$LOGFILE"
+		echo "[dispatch_with_dedup] Pre-launch rollback verification failed for #${issue_number}: self still assigned; retaining claim for stale recovery" >>"$LOGFILE"
 		return 1
 	fi
 
-	echo "[dispatch_with_dedup] Pre-launch rollback verified for #${issue_number}: queued ownership removed and issue unlocked" >>"$LOGFILE"
+	echo "[dispatch_with_dedup] Pre-launch rollback verified for #${issue_number}: assignee removed" >>"$LOGFILE"
 	return 0
 }
 
