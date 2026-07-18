@@ -527,7 +527,7 @@ try:
     connection.execute("COMMIT")
 except Exception:
     if connection.in_transaction:
-        connection.execute("ROLLBACK")
+        connection.execute('ROLLBACK')
     raise
 finally:
     connection.close()
@@ -681,7 +681,7 @@ try:
         ),
     )
     if cursor.rowcount != 1:
-        connection.execute("ROLLBACK")
+        connection.execute('ROLLBACK')
         sys.exit(1)
     connection.execute("COMMIT")
 except Exception:
@@ -708,24 +708,37 @@ PY
 #   0 - exact expected owner was atomically replaced
 #   1 - validation failed or the owner record changed before the transition
 transfer_worktree_ownership_if_expected() {
+	[[ $# -ge 2 ]] || return 1
 	local wt_path="$1"
 	local branch="$2"
 	shift 2
 
-	local task_id="" batch_id="" session_id="" owner_pid_override=""
-	local expected_task_id="" expected_batch_id="" expected_session_id=""
-	local expected_owner_pid="" expected_created_at=""
+	local task_id=""
+	local batch_id=""
+	local session_id=""
+	local owner_pid_override=""
+	local expected_task_id=""
+	local expected_batch_id=""
+	local expected_session_id=""
+	local expected_owner_pid=""
+	local expected_created_at=""
 	while [[ $# -gt 0 ]]; do
-		case "$1" in
-		--task) task_id="${2:-}"; shift 2 ;;
-		--batch) batch_id="${2:-}"; shift 2 ;;
-		--session) session_id="${2:-}"; shift 2 ;;
-		--owner-pid) owner_pid_override="${2:-}"; shift 2 ;;
-		--expected-task) expected_task_id="${2:-}"; shift 2 ;;
-		--expected-batch) expected_batch_id="${2:-}"; shift 2 ;;
-		--expected-session) expected_session_id="${2:-}"; shift 2 ;;
-		--expected-owner-pid) expected_owner_pid="${2:-}"; shift 2 ;;
-		--expected-created-at) expected_created_at="${2:-}"; shift 2 ;;
+		local option="$1"
+		case "$option" in
+		--task | --batch | --session | --owner-pid | --expected-task | --expected-batch | --expected-session | --expected-owner-pid | --expected-created-at)
+			[[ $# -ge 2 ]] || return 1
+			;;
+		esac
+		case "$option" in
+		--task) task_id="$2"; shift 2 ;;
+		--batch) batch_id="$2"; shift 2 ;;
+		--session) session_id="$2"; shift 2 ;;
+		--owner-pid) owner_pid_override="$2"; shift 2 ;;
+		--expected-task) expected_task_id="$2"; shift 2 ;;
+		--expected-batch) expected_batch_id="$2"; shift 2 ;;
+		--expected-session) expected_session_id="$2"; shift 2 ;;
+		--expected-owner-pid) expected_owner_pid="$2"; shift 2 ;;
+		--expected-created-at) expected_created_at="$2"; shift 2 ;;
 		*) return 1 ;;
 		esac
 	done
@@ -742,8 +755,12 @@ transfer_worktree_ownership_if_expected() {
 	local owner_comm=""
 	owner_comm=$(_get_proc_comm "$owner_pid")
 
-	_init_registry_db
+	_init_registry_db || return 1
 	wt_path=$(_wt_registry_lookup_path "$wt_path")
+	if _wt_path_is_canonical "$wt_path"; then
+		_wt_delete_owner_row "$wt_path" || return 1
+		return 1
+	fi
 	_wt_compare_and_swap_owner_record "$wt_path" "$branch" "$owner_pid" \
 		"$session_id" "$batch_id" "$task_id" "$owner_comm" \
 		"$expected_owner_pid" "$expected_session_id" "$expected_batch_id" \

@@ -592,11 +592,13 @@ test_failure_classification_distinct() {
 	# argument distinct from generic worker-failure paths. Specifically:
 	# - "no_worker_process" — never spawned (infra)
 	# - "cli_usage_output" — spawned but invoked wrong (config bug)
-	# - "worker_worktree_live_owner" — exited during prelaunch ownership guard
+	# - "worker_worktree_live_owner" / continuation subreasons — exited during
+	#   the prelaunch ownership guard
 	# These are wired in pulse-dispatch-engine.sh check_worker_launch.
 	if grep -q '"no_worker_process"' "$PULSE_ENGINE" \
 		&& grep -q '"cli_usage_output"' "$PULSE_ENGINE" \
 		&& grep -q 'worker_worktree_live_owner' "$PULSE_ENGINE" \
+		&& grep -q 'worker_worktree_continuation_' "$PULSE_ENGINE" \
 		&& grep -q 'PULSE_LAUNCH_STABILITY_SECONDS' "$PULSE_ENGINE"; then
 		print_result "invariant: launch failures classified distinctly (no_worker_process vs cli_usage_output)" 0
 		return 0
@@ -607,17 +609,18 @@ test_failure_classification_distinct() {
 }
 
 test_worker_worktree_live_owner_skips_fast_fail_state() {
-	if grep -q 'worker_worktree_live_owner' "$WORKER_LIFECYCLE"; then
-		print_result "invariant: worker_worktree_live_owner is treated as prelaunch control failure" 0
+	if grep -q 'worker_worktree_live_owner' "$WORKER_LIFECYCLE" \
+		&& grep -q 'worker_worktree_continuation_' "$WORKER_LIFECYCLE"; then
+		print_result "invariant: worktree owner reasons are treated as prelaunch control failures" 0
 		return 0
 	fi
-	print_result "invariant: worker_worktree_live_owner is treated as prelaunch control failure" 1 \
-		"Expected worker_worktree_live_owner in _worker_failure_reason_is_launch_preflight"
+	print_result "invariant: worktree owner reasons are treated as prelaunch control failures" 1 \
+		"Expected live-owner and continuation reasons in _worker_failure_reason_is_launch_preflight"
 	return 0
 }
 
 test_prelaunch_reason_parser_behavioural() {
-	local sandbox helper_extract log_file reason
+	local sandbox helper_extract log_file reason candidate failed_candidate=""
 	sandbox=$(mktemp -d "${TMPDIR:-/tmp}/aidevops-prelaunch-reason-test.XXXXXX")
 	# shellcheck disable=SC2064
 	trap "rm -rf '$sandbox' 2>/dev/null || true" RETURN
@@ -625,15 +628,29 @@ test_prelaunch_reason_parser_behavioural() {
 	log_file="${sandbox}/worker.log"
 
 	awk '/^_pulse_worker_log_prelaunch_failure_reason\(\) \{/,/^\}/' "$PULSE_ENGINE" >"$helper_extract"
-	printf '[exit-trap] using prelaunch failure reason: worker_worktree_live_owner\n' >"$log_file"
-	reason=$(bash -c "source '$helper_extract'; _pulse_worker_log_prelaunch_failure_reason '$log_file'" 2>/dev/null)
+	local rc=0
+	for candidate in \
+		worker_worktree_live_owner \
+		worker_worktree_continuation_task_mismatch \
+		worker_worktree_continuation_owner_mismatch \
+		worker_worktree_continuation_concurrent_mutation \
+		worker_worktree_continuation_state_rejected \
+		worker_worktree_owner_concurrent_mutation; do
+		printf '[exit-trap] using prelaunch failure reason: %s\n' "$candidate" >"$log_file"
+		reason=$(bash -c "source '$helper_extract'; _pulse_worker_log_prelaunch_failure_reason '$log_file'" 2>/dev/null)
+		if [[ "$reason" != "$candidate" ]]; then
+			rc=1
+			failed_candidate="$candidate"
+			break
+		fi
+	done
 
-	if [[ "$reason" == "worker_worktree_live_owner" ]]; then
-		print_result "invariant: worker log prelaunch reason parser preserves live-owner reason" 0
+	if [[ "$rc" -eq 0 ]]; then
+		print_result "invariant: worker log parser preserves bounded worktree owner subreasons" 0
 		return 0
 	fi
-	print_result "invariant: worker log prelaunch reason parser preserves live-owner reason" 1 \
-		"Expected worker_worktree_live_owner, got '${reason:-<empty>}'"
+	print_result "invariant: worker log parser preserves bounded worktree owner subreasons" 1 \
+		"Failed candidate '${failed_candidate:-<empty>}', got '${reason:-<empty>}'"
 	return 0
 }
 
@@ -647,17 +664,17 @@ test_prelaunch_reason_parser_preserves_explicit_reason() {
 
 	awk '/^_pulse_worker_log_prelaunch_failure_reason\(\) \{/,/^\}/' "$PULSE_ENGINE" >"$helper_extract"
 	{
-		printf '[exit-trap] using prelaunch failure reason: worker_worktree_live_owner\n'
+		printf '[exit-trap] using prelaunch failure reason: worker_worktree_continuation_owner_mismatch\n'
 		printf '[exit-trap] session=abc reason=no_worker_process status=1\n'
 	} >"$log_file"
 	reason=$(bash -c "source '$helper_extract'; _pulse_worker_log_prelaunch_failure_reason '$log_file'" 2>/dev/null)
 
-	if [[ "$reason" == "worker_worktree_live_owner" ]]; then
+	if [[ "$reason" == "worker_worktree_continuation_owner_mismatch" ]]; then
 		print_result "invariant: explicit prelaunch reason is not overwritten by generic session reason" 0
 		return 0
 	fi
 	print_result "invariant: explicit prelaunch reason is not overwritten by generic session reason" 1 \
-		"Expected worker_worktree_live_owner, got '${reason:-<empty>}'"
+		"Expected worker_worktree_continuation_owner_mismatch, got '${reason:-<empty>}'"
 	return 0
 }
 

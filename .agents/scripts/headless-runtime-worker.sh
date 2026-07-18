@@ -41,6 +41,8 @@ _HRW_REASON_DRAFT_CHECKPOINT="worker_draft_checkpoint"
 _HRW_REASON_DRAFT_ESCALATION_FAILED="worker_draft_checkpoint_escalation_failed"
 _HRW_REASON_CLOSED_UNMERGED="worker_closed_unmerged_pr"
 _HRW_REASON_UNVERIFIED_HANDOFF="worker_post_pr_handoff_unverified"
+_HRW_REASON_WORKTREE_CONTINUATION_STATE_REJECTED="worker_worktree_continuation_state_rejected"
+_HRW_REASON_WORKTREE_OWNER_CONCURRENT_MUTATION="worker_worktree_owner_concurrent_mutation"
 _HRW_EVENT_FAILED="worker.failed"
 _HRW_NMR_LABEL="needs-maintainer-review"
 _HRW_PERMISSION_PERSISTENCE_FAILED="permission_request_persistence_failed"
@@ -1224,7 +1226,7 @@ _hrw_transfer_authorized_continuation_owner() {
 	local expected_owner_task="${AIDEVOPS_WORKTREE_EXPECTED_OWNER_TASK:-}"
 	local expected_owner_created_at="${AIDEVOPS_WORKTREE_EXPECTED_OWNER_CREATED_AT:-}"
 
-	_WORKER_PRELAUNCH_FAILURE_REASON="worker_worktree_continuation_state_rejected"
+	_WORKER_PRELAUNCH_FAILURE_REASON="$_HRW_REASON_WORKTREE_CONTINUATION_STATE_REJECTED"
 	[[ "$expected_owner_pid" =~ ^[0-9]+$ ]] || return 1
 	[[ -n "$expected_owner_session" && -n "$expected_owner_task" && -n "$expected_owner_created_at" ]] || return 1
 
@@ -1272,7 +1274,10 @@ _hrw_reclaim_stale_worker_worktree_owner() {
 	IFS='|' read -r owner_pid owner_session owner_batch owner_task created_at <<<"$owner_info"
 
 	if [[ -n "$owner_pid" ]] && ! kill -0 "$owner_pid" 2>/dev/null; then
-		unregister_worktree "$work_dir" 2>/dev/null || true
+		if ! unregister_worktree_if_owner_pid "$work_dir" "$owner_pid" 2>/dev/null; then
+			_WORKER_PRELAUNCH_FAILURE_REASON="$_HRW_REASON_WORKTREE_OWNER_CONCURRENT_MUTATION"
+			return 1
+		fi
 		print_info "[lifecycle] worker_worktree_reclaimed_dead_owner session=${session_key} branch=${branch} path=${work_dir} previous_pid=${owner_pid}"
 		return 0
 	fi
@@ -1286,12 +1291,12 @@ _hrw_reclaim_stale_worker_worktree_owner() {
 	# exits immediately, and pulse retries the same issue forever.
 	if _hrw_is_dispatch_precreate_owner "$owner_session" || [[ "${AIDEVOPS_ALLOW_WORKER_WORKTREE_OWNER_TRANSFER:-0}" == "1" ]]; then
 		if ! _hrw_worktree_clean_for_owner_reclaim "$work_dir"; then
-			_WORKER_PRELAUNCH_FAILURE_REASON="worker_worktree_continuation_state_rejected"
+			_WORKER_PRELAUNCH_FAILURE_REASON="$_HRW_REASON_WORKTREE_CONTINUATION_STATE_REJECTED"
 			return 1
 		fi
 		if ! _hrw_transfer_worktree_owner_snapshot "$session_key" "$work_dir" "$branch" \
 			"$owner_pid" "$owner_session" "$owner_batch" "$owner_task" "$created_at"; then
-			_WORKER_PRELAUNCH_FAILURE_REASON="worker_worktree_owner_concurrent_mutation"
+			_WORKER_PRELAUNCH_FAILURE_REASON="$_HRW_REASON_WORKTREE_OWNER_CONCURRENT_MUTATION"
 			return 1
 		fi
 		print_info "[lifecycle] worker_worktree_reclaimed_dispatch_precreate_owner session=${session_key} branch=${branch} path=${work_dir} previous_pid=${owner_pid} previous_session=${owner_session}"
@@ -1312,13 +1317,13 @@ _hrw_reclaim_stale_worker_worktree_owner() {
 	[[ "$owner_age_s" -ge "$reclaim_age_s" ]] || return 1
 
 	if ! _hrw_worktree_clean_for_owner_reclaim "$work_dir"; then
-		_WORKER_PRELAUNCH_FAILURE_REASON="worker_worktree_continuation_state_rejected"
+		_WORKER_PRELAUNCH_FAILURE_REASON="$_HRW_REASON_WORKTREE_CONTINUATION_STATE_REJECTED"
 		return 1
 	fi
 
 	if ! _hrw_transfer_worktree_owner_snapshot "$session_key" "$work_dir" "$branch" \
 		"$owner_pid" "$owner_session" "$owner_batch" "$owner_task" "$created_at"; then
-		_WORKER_PRELAUNCH_FAILURE_REASON="worker_worktree_owner_concurrent_mutation"
+		_WORKER_PRELAUNCH_FAILURE_REASON="$_HRW_REASON_WORKTREE_OWNER_CONCURRENT_MUTATION"
 		return 1
 	fi
 	print_warning "[lifecycle] worker_worktree_reclaimed_stale_live_owner session=${session_key} branch=${branch} path=${work_dir} previous_pid=${owner_pid} age_s=${owner_age_s}"
@@ -1341,7 +1346,7 @@ _hrw_claim_worker_worktree() {
 	local transfer_mode="${AIDEVOPS_WORKTREE_OWNER_TRANSFER_MODE:-}"
 	if [[ -n "$transfer_mode" ]]; then
 		if [[ "$transfer_mode" != "continuation" ]]; then
-			_WORKER_PRELAUNCH_FAILURE_REASON="worker_worktree_continuation_state_rejected"
+			_WORKER_PRELAUNCH_FAILURE_REASON="$_HRW_REASON_WORKTREE_CONTINUATION_STATE_REJECTED"
 			print_error "[fatal] unsupported worker worktree transfer mode: ${transfer_mode}"
 			return 1
 		fi
