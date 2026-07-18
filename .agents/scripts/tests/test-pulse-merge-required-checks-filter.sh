@@ -312,9 +312,9 @@ test_required_checks_gh_reads_are_timeout_wrapped() {
 		return 0
 	fi
 
-	if { awk '{ if (sub(/\\$/, "")) { printf "%s", $0 } else { print } }' "$required_checks_script" \
-		| sed -E 's/_pmrc_gh_read[[:space:]]+gh[[:space:]]+(api|pr[[:space:]]+checks)//g' \
-		| grep -nE '^[[:space:]]*[^#]*(^|[[:space:]])gh[[:space:]]+(api|pr[[:space:]]+checks)([[:space:]]|$)'; } >/dev/null 2>&1; then
+	if { awk '{ if (sub(/\\$/, "")) { printf "%s", $0 } else { print } }' "$required_checks_script" |
+		sed -E 's/_pmrc_gh_read[[:space:]]+gh[[:space:]]+(api|pr[[:space:]]+checks)//g' |
+		grep -nE '^[[:space:]]*[^#]*(^|[[:space:]])gh[[:space:]]+(api|pr[[:space:]]+checks)([[:space:]]|$)'; } >/dev/null 2>&1; then
 		print_result "required-check gh reads use timeout wrapper" 1
 	else
 		print_result "required-check gh reads use timeout wrapper" 0
@@ -356,6 +356,10 @@ define_function_under_test() {
 	fi
 	# shellcheck disable=SC1090  # dynamic source from sibling lib
 	source "$checks_lib"
+	# Load the required-check module constants before evaluating selected
+	# functions in isolation; extracted functions reference the PMRC_* contract.
+	# shellcheck disable=SC1090  # dynamic source from sibling lib
+	source "$REQUIRED_CHECKS_SCRIPT"
 	gh_pr_view() {
 		if gh pr view "$@"; then
 			return 0
