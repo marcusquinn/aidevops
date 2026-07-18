@@ -122,6 +122,68 @@ test("first root user message marks the session busy before native status", asyn
   assert.deepEqual(statuses, ["idle", "busy", "permission"]);
 });
 
+test("terminal root assistant completion restores idle without a native idle event", async () => {
+  const statuses = [];
+  const handler = createSessionTitleStatusHandler({
+    isHeadless: () => false,
+    isEnabled: () => true,
+    setTerminalTitleStatus: (status) => statuses.push(status),
+  });
+
+  await handler(event("session.created", { info: { id: "root-completion", title: "Completion" } }));
+  await handler(event("message.updated", {
+    info: { id: "user-1", sessionID: "root-completion", role: "user" },
+  }));
+  await handler(event("message.updated", {
+    info: {
+      id: "assistant-tools",
+      sessionID: "root-completion",
+      parentID: "user-1",
+      role: "assistant",
+      finish: "tool-calls",
+      time: { created: 10, completed: 20 },
+    },
+  }));
+  await handler(event("message.updated", {
+    info: {
+      id: "assistant-stale",
+      sessionID: "root-completion",
+      parentID: "older-user",
+      role: "assistant",
+      finish: "stop",
+      time: { created: 10, completed: 20 },
+    },
+  }));
+  const terminalCompletion = event("message.updated", {
+    info: {
+      id: "assistant-final",
+      sessionID: "root-completion",
+      parentID: "user-1",
+      role: "assistant",
+      finish: "stop",
+      time: { created: 10, completed: 30 },
+    },
+  });
+  await handler(terminalCompletion);
+  await handler(terminalCompletion);
+  await handler(event("message.updated", {
+    info: { id: "user-2", sessionID: "root-completion", role: "user" },
+  }));
+  await handler(terminalCompletion);
+  await handler(event("message.updated", {
+    info: {
+      id: "assistant-final-2",
+      sessionID: "root-completion",
+      parentID: "user-2",
+      role: "assistant",
+      finish: "end_turn",
+      time: { created: 40, completed: 50 },
+    },
+  }));
+
+  assert.deepEqual(statuses, ["idle", "busy", "idle", "busy", "idle"]);
+});
+
 test("legacy idle and permission events retain lifecycle status compatibility", async () => {
   const statuses = [];
   const handler = createSessionTitleStatusHandler({
