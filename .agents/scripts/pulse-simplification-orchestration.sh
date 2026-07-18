@@ -274,7 +274,7 @@ _check_ci_nesting_threshold_proximity() {
 }
 
 # _complexity_scan_state_refresh — prune/refresh/backfill simplification state (t1754, t1855, t2001)
-# Updates state file and pushes to main if any entries changed.
+# Updates state and publishes it checkout-free if any entries changed.
 _complexity_scan_state_refresh() {
 	local aidevops_path="$1"
 	local state_file="$2"
@@ -328,7 +328,7 @@ _complexity_scan_state_refresh() {
 		echo "[pulse-wrapper] simplification-state: closed $spurious_closed spurious zero-smell re-queue issues (GH#18795)" >>"$LOGFILE"
 	fi
 
-	# Push state file if updated (planning data — direct to main)
+	# Publish state without staging or committing in the canonical checkout.
 	if [[ "$state_updated" == true ]]; then
 		_simplification_state_push "$aidevops_path"
 	fi
