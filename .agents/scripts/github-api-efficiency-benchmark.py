@@ -58,7 +58,10 @@ def _atomic_write(path: Path, content: str) -> None:
         if descriptor >= 0:
             os.close(descriptor)
         if temporary_name:
-            Path(temporary_name).unlink(missing_ok=True)
+            try:
+                os.unlink(temporary_name)
+            except FileNotFoundError:
+                pass
 
 
 def _parser() -> argparse.ArgumentParser:
