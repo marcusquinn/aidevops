@@ -156,6 +156,15 @@ test_default_state_root_is_operational() {
 	return 0
 }
 
+test_portable_mtime_dependency_is_available() {
+	if ! declare -F _file_mtime_epoch >/dev/null 2>&1; then
+		printf 'FAIL: shared request state did not load portable mtime support\n' >&2
+		return 1
+	fi
+	printf 'PASS: shared request state loads portable mtime support\n'
+	return 0
+}
+
 test_concurrent_workers_share_one_result() {
 	local key="" result_file="${TEST_ROOT}/shared-result" counter_file="${TEST_ROOT}/transport-count"
 	local worker=0 pid=0 count=0 output=""
@@ -382,6 +391,7 @@ test_concurrent_rate_probe_is_singleflight() {
 main() {
 	test_scope_key_isolation
 	test_default_state_root_is_operational
+	test_portable_mtime_dependency_is_available
 	test_concurrent_workers_share_one_result
 	test_observed_follower_consumes_matching_outcome
 	test_dead_leader_is_recovered

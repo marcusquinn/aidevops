@@ -6,6 +6,15 @@
 [[ "${BASH_SOURCE[0]}" == "${0}" ]] && set -euo pipefail
 
 [[ -n "${_SHARED_GH_REQUEST_STATE_LOADED:-}" ]] && return 0
+
+_GHRS_SELF="${BASH_SOURCE[0]:-${0:-}}"
+if ! declare -F _file_mtime_epoch >/dev/null 2>&1; then
+	# shellcheck source=./portable-stat.sh
+	if ! source "${_GHRS_SELF%/*}/portable-stat.sh"; then
+		[[ "${BASH_SOURCE[0]}" == "${0}" ]] && exit 1
+		return 1
+	fi
+fi
 _SHARED_GH_REQUEST_STATE_LOADED=1
 
 _GHRS_LEASE_SCHEMA="aidevops-gh-request-lease/v1"
@@ -108,21 +117,6 @@ _ghrs_request_dir() {
 	return 0
 }
 
-_ghrs_file_mtime() {
-	local path="$1"
-	local modified_at=""
-	if stat -f '%m' "$path" >/dev/null 2>&1; then
-		modified_at=$(stat -f '%m' "$path" 2>/dev/null) || modified_at=""
-	elif stat -c '%Y' "$path" >/dev/null 2>&1; then
-		modified_at=$(stat -c '%Y' "$path" 2>/dev/null) || modified_at=""
-	else
-		return 1
-	fi
-	[[ "$modified_at" =~ ^[0-9]+$ ]] || return 1
-	printf '%s\n' "$modified_at"
-	return 0
-}
-
 _ghrs_sleep_jitter() {
 	local base_ms="${AIDEVOPS_GH_SINGLEFLIGHT_WAIT_BASE_MS:-60}"
 	local jitter_ms="${AIDEVOPS_GH_SINGLEFLIGHT_WAIT_JITTER_MS:-90}"
@@ -190,7 +184,8 @@ _ghrs_owner_is_stale() {
 	local modified_at=""
 	local age=0
 	[[ "$orphan_grace" =~ ^[0-9]+$ ]] || orphan_grace=2
-	modified_at="$(_ghrs_file_mtime "$lease_dir")" || return 1
+	modified_at="$(_file_mtime_epoch "$lease_dir")" || return 1
+	[[ "$modified_at" =~ ^[0-9]+$ ]] || return 1
 	age=$((now - modified_at))
 	[[ "$age" -lt 0 ]] && age=0
 	[[ "$age" -ge "$orphan_grace" ]]
