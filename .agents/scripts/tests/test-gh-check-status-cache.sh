@@ -26,6 +26,7 @@ mkdir -p "$HOME"
 API_CALLS="${TEST_ROOT}/api-calls.log"
 CHECK_NOW=100
 CHECK_API_MODE=success
+CHECK_API_DELAY=0
 CHECK_SUITES_FIXTURE='{"check_suites":[{"status":"completed","conclusion":"success"}]}'
 
 SHA_A="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
@@ -58,6 +59,7 @@ _gh_checks_api_read() {
 	local endpoint="$1"
 	shift
 	printf '%s\n' "$endpoint" >>"$API_CALLS"
+	[[ "$CHECK_API_DELAY" == "0" ]] || sleep "$CHECK_API_DELAY"
 
 	case "$CHECK_API_MODE" in
 	failure)
@@ -274,7 +276,7 @@ test_corruption_failure_and_invalidation() {
 }
 
 test_private_atomic_cache_and_authority_boundary() {
-	local path="" dir="" result="" job=""
+	local path="" dir="" result="" job="" before="" after="" expected=""
 	path=$(cache_path "owner/repo" "$SHA_H")
 	dir="${path%/*}"
 	assert_eq "cache directory is private" "700" "$(file_mode "$dir")"
@@ -283,10 +285,16 @@ test_private_atomic_cache_and_authority_boundary() {
 	gh_pr_check_status_cache_invalidate "owner/repo" "$SHA_H"
 	CHECK_NOW=800
 	CHECK_SUITES_FIXTURE='{"check_suites":[{"status":"completed","conclusion":"success"}]}'
+	CHECK_API_DELAY=0.25
+	before=$(api_call_count)
 	for job in 1 2 3 4; do
 		gh_pr_check_status_rest "owner/repo" "$SHA_H" >/dev/null &
 	done
 	wait
+	CHECK_API_DELAY=0
+	after=$(api_call_count)
+	expected=$((before + 1))
+	assert_eq "concurrent aggregate misses perform one transport" "$expected" "$after"
 	path=$(cache_path "owner/repo" "$SHA_H")
 	result=$(jq -r --arg sha "$SHA_H" 'select(.head_sha == $sha and .state == "PASS") | .state' "$path")
 	assert_eq "concurrent last-writer-wins cache remains valid" "PASS" "$result"
@@ -295,6 +303,16 @@ test_private_atomic_cache_and_authority_boundary() {
 		return 1
 	fi
 	printf 'PASS: atomic cache writes leave no temporary files\n'
+
+	before=$(api_call_count)
+	CHECK_API_DELAY=0.1
+	gh_pr_check_runs_rest "owner/repo" "$SHA_H" >/dev/null &
+	gh_pr_check_runs_rest "owner/repo" "$SHA_H" >/dev/null &
+	wait
+	CHECK_API_DELAY=0
+	after=$(api_call_count)
+	expected=$((before + 4))
+	assert_eq "named check reads remain live and uncoalesced" "$expected" "$after"
 
 	if grep -q 'gh_pr_check_status_rest' "$MERGE_REQUIRED_LIB"; then
 		printf 'FAIL: final required-check module references aggregate cached status\n' >&2

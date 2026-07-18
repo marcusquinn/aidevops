@@ -29,6 +29,15 @@
 [[ -n "${_SHARED_GH_WRAPPERS_REST_FALLBACK_LOADED:-}" ]] && return 0
 _SHARED_GH_WRAPPERS_REST_FALLBACK_LOADED=1
 
+_gh_rest_fallback_dir="${BASH_SOURCE[0]%/*}"
+[[ "$_gh_rest_fallback_dir" == "${BASH_SOURCE[0]}" ]] && _gh_rest_fallback_dir="."
+if ! declare -F gh_request_state_rate_json >/dev/null 2>&1 && [[ -f "${_gh_rest_fallback_dir}/shared-gh-request-state.sh" ]]; then
+	# shellcheck source=./shared-gh-request-state.sh
+	# shellcheck disable=SC1091
+	source "${_gh_rest_fallback_dir}/shared-gh-request-state.sh"
+fi
+unset _gh_rest_fallback_dir
+
 # Threshold below which we route reads/writes through REST instead of GraphQL.
 # Env override: AIDEVOPS_GH_REST_FALLBACK_THRESHOLD
 #
@@ -60,8 +69,6 @@ _SHARED_GH_WRAPPERS_REST_FALLBACK_LOADED=1
 #                         this only shifts supported read/list/search translators
 #                         to the REST core bucket earlier.
 _GH_REST_FALLBACK_THRESHOLD="${AIDEVOPS_GH_REST_FALLBACK_THRESHOLD:-3000}"
-_GH_REST_FALLBACK_RATE_LIMIT_CACHE=""
-_GH_REST_FALLBACK_RATE_LIMIT_CACHE_TS=0
 _GH_LAST_GRAPHQL_REMAINING=""
 _GH_REST_PR_VIEW_CACHE_DIR=""
 
@@ -290,11 +297,22 @@ _rest_split_csv() {
 }
 
 #######################################
+# Fetch the full rate-limit projection for shared, auth-scoped persistence.
+#######################################
+_rest_rate_limit_json_fetch() {
+	if declare -F _gh_with_timeout >/dev/null 2>&1; then
+		_gh_with_timeout read gh api rate_limit
+		return $?
+	fi
+	gh api rate_limit
+	return $?
+}
+
+#######################################
 # Return 0 (true) when GraphQL rate limit remaining is <= threshold.
 # `gh api rate_limit` is a free endpoint (does not count against quotas).
-# Fail-safe: if the response is unparseable (network error, gh auth missing),
-# return 1 (false) so the caller sees the original error rather than triggering
-# an unnecessary REST retry that may also fail.
+# Fail-safe: an unavailable or malformed rate projection does not trigger a
+# second transport path. Callers retain the original GitHub CLI failure.
 #
 # Optional arg: $1=pre-computed remaining count (integer string).
 # When provided, skips the `gh api rate_limit` call — callers that already
@@ -311,28 +329,20 @@ _rest_should_fallback() {
 	[[ "${AIDEVOPS_GH_FORCE_REST_READS:-0}" == "1" ]] && return 0
 	local remaining="${1:-}"
 	if [[ -z "$remaining" ]]; then
-		local _now=0
 		local _ttl="${AIDEVOPS_GH_REST_FALLBACK_CACHE_TTL:-20}"
-		if [[ "${AIDEVOPS_GH_REST_FALLBACK_DISABLE_CACHE:-0}" != "1" && "$_ttl" =~ ^[0-9]+$ && "$_ttl" -gt 0 ]]; then
-			_now=$(date +%s 2>/dev/null || printf '0')
-			if [[ "$_GH_REST_FALLBACK_RATE_LIMIT_CACHE" =~ ^[0-9]+$ && "$_now" -gt 0 && $((_now - _GH_REST_FALLBACK_RATE_LIMIT_CACHE_TS)) -le "$_ttl" ]]; then
-				remaining="$_GH_REST_FALLBACK_RATE_LIMIT_CACHE"
-			else
-				remaining=$(gh api rate_limit --jq '.resources.graphql.remaining' 2>/dev/null)
-				if [[ "$remaining" =~ ^[0-9]+$ ]]; then
-					_GH_REST_FALLBACK_RATE_LIMIT_CACHE="$remaining"
-					_GH_REST_FALLBACK_RATE_LIMIT_CACHE_TS="$_now"
-				fi
+		[[ "$_ttl" =~ ^[0-9]+$ ]] || _ttl=20
+		[[ "${AIDEVOPS_GH_REST_FALLBACK_DISABLE_CACHE:-0}" != "1" ]] || _ttl=0
+		if declare -F gh_request_state_rate_json >/dev/null 2>&1; then
+			local rate_json=""
+			if ! rate_json=$(gh_request_state_rate_json normal "$_ttl" _rest_rate_limit_json_fetch 2>/dev/null); then
+				return 1
 			fi
+			remaining=$(printf '%s' "$rate_json" | jq -r '.resources.graphql.remaining // ""' 2>/dev/null) || remaining=""
 		else
 			remaining=$(gh api rate_limit --jq '.resources.graphql.remaining' 2>/dev/null)
 		fi
 	fi
-	# When the rate_limit query itself fails, remaining is empty. Treat that as
-	# exhausted so supported calls can move to REST instead of skipping fallback.
-	if [[ -z "$remaining" ]]; then
-		return 0
-	fi
+	[[ -n "$remaining" ]] || return 1
 	[[ "$remaining" =~ ^[0-9]+$ ]] || return 1
 	_GH_LAST_GRAPHQL_REMAINING="$remaining"
 	if [[ "$remaining" -le "$_GH_REST_FALLBACK_THRESHOLD" ]]; then

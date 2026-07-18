@@ -60,6 +60,9 @@ if [[ "\$1" == "api" && "\$2" == "rate_limit" ]]; then
 	printf '{"resources":{"graphql":{"remaining":5000}}}'
 	exit 0
 fi
+if [[ "\${STUB_GH_DELAY:-0}" != "0" && "\$1" == "api" && "\$2" == /repos/* ]]; then
+	sleep "\$STUB_GH_DELAY"
+fi
 if [[ "\$1" == "api" ]]; then
   if [[ "\$*" == *'/users/owner --jq .type'* ]]; then
     printf 'User'
@@ -109,10 +112,10 @@ SH
 
 seed_cache() {
 	cat >"$PULSE_BATCH_PREFETCH_CACHE_DIR/issues-owner__repo.json" <<'JSON'
-{"schema":"aidevops-pulse-snapshot/v1","repository":"owner/repo","collection":"issues","projection":"number,title,state,labels,updatedAt,assignees","auth_scope":"github.com","generation":"seed","source":"conditional-rest","complete":true,"truncated":false,"fetched_at":"2026-05-01T00:00:00Z","timestamp":"2026-05-01T00:00:00Z","etag":"\"etag-v1\"","items":[{"number":1,"title":"Cached issue","state":"open","labels":[],"assignees":[],"updatedAt":"2026-05-01T00:00:00Z"}]}
+{"schema":"aidevops-pulse-snapshot/v1","repository":"owner/repo","collection":"issues","projection":"number,title,state,labels,updatedAt,assignees","auth_scope":"github.com|default","generation":"seed","source":"conditional-rest","complete":true,"truncated":false,"fetched_at":"2026-05-01T00:00:00Z","timestamp":"2026-05-01T00:00:00Z","etag":"\"etag-v1\"","items":[{"number":1,"title":"Cached issue","state":"open","labels":[],"assignees":[],"updatedAt":"2026-05-01T00:00:00Z"}]}
 JSON
 	cat >"$PULSE_BATCH_PREFETCH_CACHE_DIR/prs-owner__repo.json" <<'JSON'
-{"schema":"aidevops-pulse-snapshot/v1","repository":"owner/repo","collection":"prs","projection":"number,title,labels,updatedAt,assignees,createdAt,author,headRefOid,headRefName","auth_scope":"github.com","generation":"seed","source":"conditional-rest","complete":true,"truncated":false,"fetched_at":"2026-05-01T00:00:00Z","timestamp":"2026-05-01T00:00:00Z","etag":"\"etag-v1\"","items":[{"number":2,"title":"Cached PR","labels":[],"assignees":[],"updatedAt":"2026-05-01T00:00:00Z","createdAt":"2026-05-01T00:00:00Z","author":{"login":"dev"},"headRefOid":"seed-sha","headRefName":"seed-branch"}]}
+{"schema":"aidevops-pulse-snapshot/v1","repository":"owner/repo","collection":"prs","projection":"number,title,labels,updatedAt,assignees,createdAt,author,headRefOid,headRefName","auth_scope":"github.com|default","generation":"seed","source":"conditional-rest","complete":true,"truncated":false,"fetched_at":"2026-05-01T00:00:00Z","timestamp":"2026-05-01T00:00:00Z","etag":"\"etag-v1\"","items":[{"number":2,"title":"Cached PR","labels":[],"assignees":[],"updatedAt":"2026-05-01T00:00:00Z","createdAt":"2026-05-01T00:00:00Z","author":{"login":"dev"},"headRefOid":"seed-sha","headRefName":"seed-branch"}]}
 JSON
 	return 0
 }
@@ -542,6 +545,35 @@ test_search_opt_in_preserves_owner_search() {
 	return 0
 }
 
+test_concurrent_refreshes_share_canonical_transport() {
+	setup_env
+	seed_cache
+	write_gh_stub changed
+	export STUB_GH_DELAY=1.5
+	local worker=0 pid=0 issue_calls=0 pr_calls=0
+	local -a pids=()
+	for worker in 1 2 3 4 5 6; do
+		"$HELPER" refresh >"${TEST_ROOT}/refresh-${worker}.out" &
+		pids+=("$!")
+	done
+	for pid in "${pids[@]}"; do
+		wait "$pid"
+	done
+	unset STUB_GH_DELAY
+	issue_calls=$(grep -c '/repos/owner/repo/issues?state=open' "$TEST_ROOT/gh-calls.log" 2>/dev/null || true)
+	pr_calls=$(grep -c '/repos/owner/repo/pulls?state=open' "$TEST_ROOT/gh-calls.log" 2>/dev/null || true)
+	if [[ "$issue_calls" -eq 1 && "$pr_calls" -eq 1 ]] &&
+		jq -e '.source == "conditional-rest" and .items[0].number == 3' "$PULSE_BATCH_PREFETCH_CACHE_DIR/issues-owner__repo.json" >/dev/null &&
+		jq -e '.source == "conditional-rest" and .items[0].number == 7' "$PULSE_BATCH_PREFETCH_CACHE_DIR/prs-owner__repo.json" >/dev/null; then
+		print_result "concurrent refreshes perform one canonical transport per projection" 0
+	else
+		printf '  issue_calls=%s pr_calls=%s\n' "$issue_calls" "$pr_calls" >&2
+		print_result "concurrent refreshes perform one canonical transport per projection" 1
+	fi
+	teardown_env
+	return 0
+}
+
 test_prefetch_gh_reads_are_timeout_wrapped() {
 	if prefetch_raw_gh_read_matches "$HELPER"; then
 		print_result "prefetch gh reads use timeout wrapper" 1
@@ -579,6 +611,7 @@ test_changed_repo_refreshes_cache
 test_paginated_response_is_not_complete
 test_conditional_failure_routes_to_rest_by_default
 test_search_opt_in_preserves_owner_search
+test_concurrent_refreshes_share_canonical_transport
 test_legacy_issue_cache_avoids_search_by_default
 test_read_cache_filters_closed_issues
 test_read_cache_accepts_fresh_empty_arrays

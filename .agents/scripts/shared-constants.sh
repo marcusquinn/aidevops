@@ -953,7 +953,9 @@ _SC_SELF="${BASH_SOURCE[0]:-${0:-}}"
 # retry keeps scheduled helpers self-healing without masking persistent install
 # corruption.
 _source_shared_module_with_retry() {
-	local module_path="$1"
+	# `module_path` is a special zsh array used by zmodload. Shadowing it while
+	# evaluating the regex guards below breaks lazy loading of zsh/regex.
+	local module_file="$1"
 	local attempts="${AIDEVOPS_SHARED_SOURCE_ATTEMPTS:-5}"
 	local interval="${AIDEVOPS_SHARED_SOURCE_INTERVAL:-1}"
 	local attempt=1
@@ -963,9 +965,9 @@ _source_shared_module_with_retry() {
 	[[ "$attempts" -gt 0 ]] || attempts=1
 
 	while [[ "$attempt" -le "$attempts" ]]; do
-		if [[ -f "$module_path" ]]; then
+		if [[ -f "$module_file" ]]; then
 			# shellcheck source=/dev/null
-			source "$module_path"
+			source "$module_file"
 			return $?
 		fi
 		if [[ "$attempt" -lt "$attempts" && "$interval" -gt 0 ]]; then
@@ -974,7 +976,7 @@ _source_shared_module_with_retry() {
 		attempt=$((attempt + 1))
 	done
 
-	printf '[ERROR] shared module missing after %s attempt(s): %s\n' "$attempts" "$module_path" >&2
+	printf '[ERROR] shared module missing after %s attempt(s): %s\n' "$attempts" "$module_file" >&2
 	return 1
 }
 
