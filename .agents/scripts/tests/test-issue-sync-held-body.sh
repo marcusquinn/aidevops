@@ -33,9 +33,11 @@ FAIL_COUNT=0
 WRITE_COUNT=0
 AUDIT_COUNT=0
 FETCH_COUNT=0
+SCAN_COUNT=0
 FETCH_COUNT_FILE="${TEST_ROOT}/fetch-count"
 WRITE_FAIL=false
 AUDIT_FAIL_STAGE=""
+SCAN_FAIL_ROLE=""
 INITIAL_JSON=""
 IMMEDIATE_JSON=""
 POST_JSON=""
@@ -98,9 +100,11 @@ reset_case() {
 	WRITE_COUNT=0
 	AUDIT_COUNT=0
 	FETCH_COUNT=0
+	SCAN_COUNT=0
 	printf '0\n' >"$FETCH_COUNT_FILE"
 	WRITE_FAIL=false
 	AUDIT_FAIL_STAGE=""
+	SCAN_FAIL_ROLE=""
 	INITIAL_JSON=$(make_state "$current_body")
 	IMMEDIATE_JSON="$INITIAL_JSON"
 	POST_JSON=$(make_state "${DESIRED_BODY}"$'\n\n<!-- aidevops:sig -->\n---\n[signed receipt]')
@@ -113,7 +117,14 @@ compose_issue_body() {
 	printf '%s' "$DESIRED_BODY"
 	return 0
 }
-_body_sync_scan_file() { return 0; }
+_body_sync_scan_file() {
+	local body_file="$1"
+	local body_role="${2:-body}"
+	: "$body_file"
+	SCAN_COUNT=$((SCAN_COUNT + 1))
+	[[ "$SCAN_FAIL_ROLE" != "$body_role" ]]
+	return $?
+}
 _body_sync_fetch_state() {
 	local repo="$1"
 	local issue_number="$2"
@@ -156,6 +167,16 @@ run_apply() {
 reset_case
 assert_success "unassigned held issue receives body-only verified update" run_apply
 [[ "$WRITE_COUNT" -eq 1 && "$AUDIT_COUNT" -eq 2 ]] && pass "success writes once with authorization and verification receipts" || fail "success receipt/write counts"
+[[ "$SCAN_COUNT" -eq 2 ]] && pass "current and desired bodies are both scanned" || fail "body scan count"
+
+lf_hash=$(_body_sync_hash_body $'Line one\nLine two\n\n<!-- aidevops:sig -->\nignored')
+crlf_hash=$(_body_sync_hash_body $'Line one\r\nLine two\r\n\r\n<!-- aidevops:sig -->\r\nignored')
+[[ "$lf_hash" == "$crlf_hash" ]] && pass "body hash normalizes CRLF before verification" || fail "CRLF body hash normalization"
+
+reset_case
+SCAN_FAIL_ROLE="desired"
+assert_failure "desired-body prompt injection scan fails closed" run_apply
+[[ "$WRITE_COUNT" -eq 0 ]] && pass "desired-body scan failure performs no write" || fail "desired-body scan failure wrote"
 
 reset_case
 INITIAL_JSON=$(make_state "$(jq -r '.body' <<<"$INITIAL_JSON")" OPEN "no-auto-dispatch,status:in-progress" other)
