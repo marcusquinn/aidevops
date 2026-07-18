@@ -102,9 +102,9 @@
   },
   "files": {
     ".agents/aidevops.md": {
-      "at": "2026-07-05T17:10:16Z",
-      "hash": "87c719d97b68db3c0abd9393e2b4b74adccd21c8",
-      "passes": 4,
+      "at": "2026-07-18T18:25:46Z",
+      "hash": "159aa61422c8e96b977eb76313109e8b8f013a49",
+      "passes": 5,
       "pr": 13063
     },
     ".agents/aidevops/add-new-mcp-to-aidevops.md": {
@@ -318,9 +318,9 @@
       "pr": 18146
     },
     ".agents/commands/aidevops-framework.md": {
-      "at": "2026-07-05T17:11:11Z",
-      "hash": "87c719d97b68db3c0abd9393e2b4b74adccd21c8",
-      "passes": 4,
+      "at": "2026-07-18T18:25:49Z",
+      "hash": "159aa61422c8e96b977eb76313109e8b8f013a49",
+      "passes": 5,
       "pr": 18224
     },
     ".agents/commands/aidevops-legal.md": {
@@ -348,9 +348,9 @@
       "pr": 18173
     },
     ".agents/commands/aidevops.md": {
-      "at": "2026-07-05T17:11:14Z",
-      "hash": "87c719d97b68db3c0abd9393e2b4b74adccd21c8",
-      "passes": 4,
+      "at": "2026-07-18T18:25:49Z",
+      "hash": "159aa61422c8e96b977eb76313109e8b8f013a49",
+      "passes": 5,
       "pr": 18223
     },
     ".agents/commands/automate.md": {
