@@ -188,13 +188,15 @@ def _refresh_cached_response(
             for item in items
             if str(item.get("state") or "open").lower() == "open"
         ]
-    compatible = (
-        payload.get("schema") == _SNAPSHOT_SCHEMA
-        and payload.get("repository") == slug
-        and payload.get("collection") == kind
-        and payload.get("projection") == projection
-        and payload.get("auth_scope") == auth_scope
-        and isinstance(payload.get("complete"), bool)
+    compatible = all(
+        (
+            payload.get("schema") == _SNAPSHOT_SCHEMA,
+            payload.get("repository") == slug,
+            payload.get("collection") == kind,
+            payload.get("projection") == projection,
+            payload.get("auth_scope") == auth_scope,
+            isinstance(payload.get("complete"), bool),
+        )
     )
     payload.update(
         {
