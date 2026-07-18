@@ -247,6 +247,59 @@ _run_update_setup() {
 	return $?
 }
 
+_update_verify_deployment_state() {
+	local expected_sha="$1"
+	local repo_version=""
+	local deployed_version=""
+	local deployed_sha=""
+	local stamp_file="$_AIDEVOPS_REAL_HOME/.aidevops/.deployed-sha"
+	repo_version=$(cat "$INSTALL_DIR/VERSION" 2>/dev/null || echo "unknown")
+	deployed_version=$(cat "$AGENTS_DIR/VERSION" 2>/dev/null || echo "none")
+	if [[ -f "$stamp_file" ]]; then
+		deployed_sha=$(tr -d '[:space:]' <"$stamp_file" 2>/dev/null) || deployed_sha=""
+	fi
+	if [[ "$repo_version" != "$deployed_version" ]]; then
+		print_error "Agent deployment failed: repo version $repo_version, deployed version $deployed_version"
+		return 1
+	fi
+	if [[ -z "$deployed_sha" || "$deployed_sha" != "$expected_sha" ]]; then
+		print_error "Agent deployment failed: activated SHA ${deployed_sha:-none} does not match repository HEAD $expected_sha"
+		return 1
+	fi
+	return 0
+}
+
+_run_update_setup_transaction() {
+	local output_mode="$1"
+	local expected_sha="$2"
+	local setup_exit=0
+	_run_update_setup "$output_mode" || setup_exit=$?
+	if [[ "$setup_exit" -ne 0 ]]; then
+		print_error "Agent deployment failed: setup exited with code $setup_exit"
+		return 1
+	fi
+	_update_verify_deployment_state "$expected_sha" || return 1
+	return 0
+}
+
+_update_render_changelog() {
+	local old_hash="$1"
+	local new_hash="$2"
+	local current_version="$3"
+	local total_commits=0
+	total_commits=$(git -C "$INSTALL_DIR" rev-list --count "$old_hash..$new_hash" 2>/dev/null || echo "0")
+	if [[ "$total_commits" -eq 0 ]]; then
+		return 0
+	fi
+	echo ""
+	print_info "Changes since $current_version ($total_commits commits):"
+	git -C "$INSTALL_DIR" log --oneline --max-count=20 "$old_hash..$new_hash" || true
+	if [[ "$total_commits" -gt 20 ]]; then
+		echo "  ... and more (run 'git log --oneline' in $INSTALL_DIR for full list)"
+	fi
+	return 0
+}
+
 # Update/upgrade command
 cmd_update() {
 	local skip_project_sync=false
@@ -305,7 +358,7 @@ cmd_update() {
 			if [[ "$repo_version" != "$deployed_version" ]]; then
 				print_warning "Deployed agents ($deployed_version) don't match repo ($repo_version)"
 				print_info "Re-running incremental setup to sync agents..."
-				_run_update_setup "$update_output_mode"
+				_run_update_setup_transaction "$update_output_mode" "$local_hash" || return 1
 			else
 				# t2706: VERSION matches but .deployed-sha may lag HEAD when
 				# fixes land between releases. Detect and redeploy on framework
@@ -330,7 +383,7 @@ cmd_update() {
 						if [[ "$has_code_drift" -eq 1 ]]; then
 							print_warning "Deployed scripts drifted (${deployed_sha:0:7}→${local_hash:0:7})"
 							print_info "Re-running incremental setup to deploy latest scripts..."
-							_run_update_setup "$update_output_mode"
+							_run_update_setup_transaction "$update_output_mode" "$local_hash" || return 1
 						fi
 						# GH#21735: workflow templates can change between
 						# releases without triggering has_code_drift (templates
@@ -360,14 +413,7 @@ cmd_update() {
 			fi
 			if [[ "$old_hash" != "$new_hash" ]]; then
 				if _update_repo_verify_files_changed "$old_hash" "$new_hash"; then reconcile_repo_verify=true; fi
-				local total_commits
-				total_commits=$(git rev-list --count "$old_hash..$new_hash" 2>/dev/null || echo "0")
-				if [[ "$total_commits" -gt 0 ]]; then
-					echo ""
-					print_info "Changes since $current_version ($total_commits commits):"
-					git log --oneline "$old_hash..$new_hash" | grep -E '^[a-f0-9]+ (feat|fix|refactor|perf|docs):' | head -20
-					[[ "$total_commits" -gt 20 ]] && echo "  ... and more (run 'git log --oneline' in $INSTALL_DIR for full list)"
-				fi
+				_update_render_changelog "$old_hash" "$new_hash" "$current_version"
 				# GH#21735: surface workflow template drift so the
 				# operator can resync downstream callers before CI bites.
 				_update_check_workflow_drift "$old_hash" "$new_hash"
@@ -377,16 +423,8 @@ cmd_update() {
 			_update_verify_signature
 			echo ""
 			print_info "Running incremental setup to apply changes (falls back to full setup if needed)..."
-			local setup_exit=0
-			_run_update_setup "$update_output_mode" || setup_exit=$?
-			local repo_version deployed_version
-			repo_version=$(cat "$INSTALL_DIR/VERSION" 2>/dev/null || echo "unknown")
-			deployed_version=$(cat "$HOME/.aidevops/agents/VERSION" 2>/dev/null || echo "none")
-			[[ "$setup_exit" -ne 0 ]] && print_warning "Setup exited with code $setup_exit"
-			if [[ "$repo_version" != "$deployed_version" ]]; then
-				print_warning "Agent deployment incomplete: repo=$repo_version, deployed=$deployed_version"
-				print_info "Run 'bash $INSTALL_DIR/setup.sh' manually to deploy agents"
-			else print_success "Updated to version $new_version (agents deployed)"; fi
+			_run_update_setup_transaction "$update_output_mode" "$new_hash" || return 1
+			print_success "Updated to version $new_version (agents deployed)"
 		fi
 	else
 		_update_fresh_install || return 1

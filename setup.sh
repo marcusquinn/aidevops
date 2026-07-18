@@ -85,8 +85,6 @@ if [[ -d "$SETUP_MODULES_DIR" ]]; then
 	# shellcheck disable=SC1091  # Dynamic path via $SETUP_MODULES_DIR; files exist at runtime
 	source "$SETUP_MODULES_DIR/_common.sh"
 	# shellcheck disable=SC1091
-	source "$SETUP_MODULES_DIR/_backup.sh"
-	# shellcheck disable=SC1091
 	source "$SETUP_MODULES_DIR/_validation.sh"
 	# shellcheck disable=SC1091
 	source "$SETUP_MODULES_DIR/_migration.sh"
