@@ -10,6 +10,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.32.150] - 2026-07-18
+
+### Changed
+
+- Maintenance: sync ref:GH#28203 to TODO.md [skip ci]
+
+### Fixed
+
+- recover pulse merge progress signals (#28205)
+- handle CRLF supersedes markers (#28194)
+
 ## [3.32.149] - 2026-07-18
 
 ### Added
