@@ -684,14 +684,20 @@ function projectRuntimeEvent(envelope) {
   enrichActiveSpan(runtimeEventOtelAttributes(envelope)).catch(() => {});
 }
 
+function firstTruthy(values, fallback = null) {
+  return values.find(Boolean) || fallback;
+}
+
 function recordOpenCodeRuntimeEvent(event, eventType = event.type, additionalPayload = {}) {
   const properties = event.properties || {};
   const info = properties.info || {};
   const part = properties.part || {};
-  const sessionId = info.sessionID || part.sessionID || part.sessionId ||
-    properties.sessionID || properties.sessionId || null;
-  const subjectId = info.id || part.id || part.messageID || part.messageId ||
-    properties.id || sessionId || "runtime:opencode";
+  const sessionId = firstTruthy([
+    info.sessionID, part.sessionID, part.sessionId, properties.sessionID, properties.sessionId,
+  ]);
+  const subjectId = firstTruthy([
+    info.id, part.id, part.messageID, part.messageId, properties.id, sessionId,
+  ], "runtime:opencode");
   const envelope = appendRuntimeEvent({
     eventType,
     subjectId,
@@ -701,8 +707,9 @@ function recordOpenCodeRuntimeEvent(event, eventType = event.type, additionalPay
     rootEventId: properties.rootEventID,
     parentEventId: properties.parentEventID,
     payload: {
-      error_type: info.error?.name || properties.error?.name || part.error?.name ||
-        part.state?.error?.name || null,
+      error_type: firstTruthy([
+        info.error?.name, properties.error?.name, part.error?.name, part.state?.error?.name,
+      ]),
       finish_reason: info.finish || part.finish || part.state?.status || null,
       model_id: info.modelID || null,
       provider_id: info.providerID || null,

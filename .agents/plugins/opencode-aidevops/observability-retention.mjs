@@ -41,6 +41,10 @@ function normalizedStatus(value) {
   return SAFE_STATUSES.has(normalized) ? normalized : "other";
 }
 
+function firstTruthy(values, fallback) {
+  return values.find(Boolean) || fallback;
+}
+
 /**
  * Replace raw host-tool metadata with a small outcome envelope. Raw values,
  * paths, output fragments, and unknown keys never cross the storage boundary.
@@ -91,10 +95,13 @@ function partStreamKey(event) {
   const properties = event?.properties || {};
   const part = properties.part || {};
   const info = properties.info || {};
-  const sessionId = part.sessionID || part.sessionId || info.sessionID ||
-    properties.sessionID || properties.sessionId || "unknown-session";
-  const messageId = part.messageID || part.messageId || info.messageID ||
-    info.messageId || properties.messageID || properties.messageId || "unknown-message";
+  const sessionId = firstTruthy([
+    part.sessionID, part.sessionId, info.sessionID, properties.sessionID, properties.sessionId,
+  ], "unknown-session");
+  const messageId = firstTruthy([
+    part.messageID, part.messageId, info.messageID, info.messageId,
+    properties.messageID, properties.messageId,
+  ], "unknown-message");
   return `${sessionId}:${messageId}`;
 }
 
