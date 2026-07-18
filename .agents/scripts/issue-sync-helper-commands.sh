@@ -311,13 +311,24 @@ cmd_help() {
 	cat <<'EOF'
 Issue Sync Helper — stateless TODO.md <-> GitHub Issues sync via gh CLI.
 Usage: issue-sync-helper.sh [command] [options]
-Commands: push [tNNN] | enrich [tNNN] | pull | close [tNNN] | reopen
+Commands: push [tNNN] | enrich [tNNN] | sync-body tNNN | pull | close [tNNN] | reopen
           reconcile | relationships [tNNN] | backfill-sub-issues [--issue N]
           backfill-cross-phase-blocked-by --issue N
           status | help
 Options: --repo SLUG | --project-root PATH | --dry-run | --verbose
          --force (skip evidence on close; bypass enrich body-gate)
          --force-push (allow bulk push outside CI — use with caution, risk of duplicates)
+         --allow-closed (only with sync-body; explicit closed-issue correction)
+
+Held body synchronization:
+  sync-body tNNN — admin/maintain-authorized body-only update for exactly one
+                   mapped issue that retains no-auto-dispatch. Requires
+                   an authoritative local brief, rejects non-self active claims
+                   and uncertain/concurrent state, preserves title, labels,
+                   assignees, relationships, and lifecycle state, then verifies
+                   the remote body hash and writes tamper-evident audit receipts.
+                   Ordinary enrich, --force, bulk, pulse, and dispatch semantics
+                   are unchanged. Closed issues require --allow-closed.
 
 Drift detection:
   status    — reports forward drift (open issue, done TODO) and reverse drift

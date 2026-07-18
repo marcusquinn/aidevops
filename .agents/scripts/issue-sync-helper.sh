@@ -67,6 +67,10 @@ source "${SCRIPT_DIR}/issue-sync-helper-push.sh"
 # shellcheck disable=SC1091  # sub-library resolved at runtime via $SCRIPT_DIR
 source "${SCRIPT_DIR}/issue-sync-helper-enrich.sh"
 
+# shellcheck source=./issue-sync-helper-body.sh
+# shellcheck disable=SC1091  # sub-library resolved at runtime via $SCRIPT_DIR
+source "${SCRIPT_DIR}/issue-sync-helper-body.sh"
+
 # shellcheck source=./issue-sync-helper-commands.sh
 # shellcheck disable=SC1091  # sub-library resolved at runtime via $SCRIPT_DIR
 source "${SCRIPT_DIR}/issue-sync-helper-commands.sh"
@@ -86,6 +90,7 @@ DRY_RUN="${DRY_RUN:-false}"
 FORCE_CLOSE="${FORCE_CLOSE:-false}"
 FORCE_PUSH="${FORCE_PUSH:-false}"
 FORCE_ENRICH="${FORCE_ENRICH:-false}"
+ALLOW_CLOSED_BODY_SYNC="${ALLOW_CLOSED_BODY_SYNC:-false}"
 REPO_SLUG=""
 PROJECT_ROOT_ARG=""
 
@@ -427,6 +432,10 @@ main() {
 			FORCE_PUSH="true"
 			shift
 			;;
+		--allow-closed)
+			ALLOW_CLOSED_BODY_SYNC="true"
+			shift
+			;;
 		help | --help | -h)
 			cmd_help
 			return 0
@@ -441,6 +450,13 @@ main() {
 	case "$command" in
 	push) run_relationship_scoped_command cmd_push "${positional_args[1]:-}" ;;
 	enrich) run_relationship_scoped_command cmd_enrich "${positional_args[1]:-}" ;;
+	sync-body)
+		[[ ${#positional_args[@]} -eq 2 ]] || {
+			print_error "sync-body requires exactly one task ID"
+			return 1
+		}
+		cmd_sync_body "${positional_args[1]}"
+		;;
 	pull) cmd_pull ;; close) cmd_close "${positional_args[1]:-}" ;; reopen) cmd_reopen ;;
 	reconcile) cmd_reconcile ;;
 	relationships) run_relationship_scoped_command cmd_relationships "${positional_args[1]:-}" ;;
