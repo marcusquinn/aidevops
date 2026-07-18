@@ -39,7 +39,7 @@ setup() {
 	TEST_HOME="$TEST_DIR/home"
 	trap teardown EXIT
 	mkdir -p "$TEST_DIR/repo/.agents/scripts" "$TEST_HOME/.aidevops"
-cat >"$TEST_DIR/repo/.agents/scripts/deploy-agents-on-merge.sh" <<'EOF'
+	cat >"$TEST_DIR/repo/.agents/scripts/deploy-agents-on-merge.sh" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 printf 'AIDEVOPS_AGENTS_DIR=%s\n' "${AIDEVOPS_AGENTS_DIR-unset}" >>"${SYNC_ENV_LOG_PATH:?SYNC_ENV_LOG_PATH must be set}"
@@ -312,7 +312,7 @@ test_release_sync_unsets_session_pins() {
 		AGENTS_DIR="$TEST_DIR/.aidevops/runtime-bundles/old/agents" \
 		invoke_release_sync "$repo_path"
 
-	if grep -q '^AIDEVOPS_AGENTS_DIR=unset$' "$TEST_DIR/sync-env.log" && \
+	if grep -q '^AIDEVOPS_AGENTS_DIR=unset$' "$TEST_DIR/sync-env.log" &&
 		grep -q '^AGENTS_DIR=unset$' "$TEST_DIR/sync-env.log"; then
 		print_result "release sync isolates inherited runtime pins" 0
 	else

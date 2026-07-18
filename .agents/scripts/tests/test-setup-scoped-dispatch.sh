@@ -167,7 +167,8 @@ test_linked_worktree_checkout_contract() {
 		rm -rf "$tmp_dir"
 		return 0
 	}
-	helper_text=$(python3 - "$SETUP_SH" <<'PY'
+	helper_text=$(
+		python3 - "$SETUP_SH" <<'PY'
 import pathlib
 import re
 import sys
