@@ -49,6 +49,19 @@ credential-shaped values, absolute/file paths, configured private roots, and
 repository-like identifiers are redacted before persistence. CamelCase and
 snake_case path/repository keys receive the same treatment.
 
+The plugin additionally bounds two host-runtime amplification surfaces before
+they reach SQLite:
+
+- ordinary `message.part.delta` and `message.part.updated` streams are counted
+  and measured in memory, then represented by `suppressed_part_events` and
+  `suppressed_part_bytes` on the terminal `message.completed` event. Part
+  errors and terminal statuses bypass suppression and remain individual rows;
+- raw host-tool metadata is never persisted. `tool_calls.metadata` contains a
+  versioned outcome summary capped at 1 KiB (status, exit code, timeout,
+  truncation, and aggregate byte/line counts). Unknown keys, paths, output
+  fragments, and error text are omitted. The dedicated `success` and
+  `duration_ms` columns remain the primary tool outcome evidence.
+
 Use `appendRuntimeEvent()` for ordinary evidence. Evidence writes fail open:
 validation, queue, lock, or disk failures never change the runtime action's
 result. Use `appendStateSnapshot()` and `appendStateDelta()` for bounded state
@@ -69,9 +82,41 @@ with argv (`execFileSync`/`spawn`), never shell-interpolated database paths.
 `runtime-events.mjs` is the sole runtime-event schema and migration authority;
 the OpenCode plugin consumes it.
 
-Retention is not currently enforced for `runtime_events`: history can grow.
-Storage pressure is reduced by no-op state suppression and bounded payloads,
-but those controls do not constitute bounded history or an age/count policy.
+Runtime-event maintenance uses an explicit archive boundary rather than
+ordinary row deletion. The minimum retained envelope includes state-recovery
+rows and lifecycle, terminal, error, permission, security, audit, release,
+deploy, and subagent evidence. The default 30-day active window is a soft
+candidate threshold; state snapshots/deltas stay active because current-state
+reconstruction depends on them.
+
+`observability-helper.sh retention` is a dry run by default. `--apply` writes a
+bounded JSONL partition plus an immutable sidecar manifest under
+`runtime-events-archive/`, verifies SHA-256, bytes, source/event counts, and the
+protected/compacted split, and only then removes the verified source range in
+one `BEGIN IMMEDIATE` transaction. Protected rows are archived verbatim;
+unprotected rows become per-event-type count/byte/time summaries. The
+transaction rechecks the exact source range, temporarily suspends only the
+delete guard, restores it, and appends an immutable `runtime_event_archives`
+manifest row. A failed/corrupt archive leaves source rows intact. Interruption
+after file verification is resumable and reuses the verified partition.
+Archive deletion is not automatic.
+
+```bash
+# Physical and classified bytes; never prints raw payloads
+observability-helper.sh storage --json
+
+# Explain one bounded candidate partition without writing
+observability-helper.sh retention --dry-run
+
+# Explicit maintenance after reviewing the dry run
+observability-helper.sh retention --apply --max-rows 5000
+```
+
+The shared storage inventory reports active, archive, protected, reclaimable,
+candidate, and unknown bytes. Unattributed files and unavailable verification
+remain unknown; a verified archive or pinned state row is required before any
+byte is classified as protected, and source bytes are never called reclaimable
+before the archive transaction commits.
 
 Full-loop keeps authoritative resumable state in `.agents/loop-state/full-loop.local.state` and appends local transition evidence to `full-loop-events.jsonl`. Schema v2 records the run ID, state revision, phase status/start/end/attempt, terminal evidence, next safe action, observed executor status/PID/heartbeat, manual resumes, reused subagent units, and duplicate work avoided. Status must validate executor liveness instead of trusting a stale PID. These records drive lifecycle recovery; runtime events and plugin cost/tool data remain fail-open reporting evidence. Aggregate phase wall time, active compute, CI wait/repair, release/cleanup time, calls by tier, retries/outcomes, reuse, false-positive gates, and manual resumes when producing performance reports.
 

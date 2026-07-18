@@ -61,7 +61,7 @@ Reference, lease, recovery, and audit checks remain hard vetoes.
 | Store | Owner | Primary classes | Existing authority | Required next contract |
 |---|---|---|---|---|
 | `~/.aidevops/runtime-bundles` | framework | active, leased, rollback, cache | Deployment protects current, previous, and live-leased bundles; unreferenced bundles converge under 30-day, 30-bundle, and 8 GiB soft limits | Keep the limits operator-configurable and preserve fail-closed reporting when references or sizing are unavailable |
-| `~/.aidevops/.agent-workspace/observability` | framework | audit, archive, cache | Runtime events are append-only evidence; plugin records runtime and tool-call data | Define the minimum audit envelope, payload/metadata limits, partition or archive semantics, and verified compaction rather than direct row deletion |
+| `~/.aidevops/.agent-workspace/observability` | framework | audit, archive, cache | Part streams and tool metadata are bounded at ingestion; runtime events use a 30-day active candidate window, verified immutable archive partitions, compacted low-value summaries, pinned recovery state, and append-only manifests | Measure defaults across routine/high-activity installations before changing the active window or adding any archive deletion policy |
 | `~/.aidevops/agents-backups` | framework | rollback, archive | Count-based snapshot retention | Add byte/age reporting and preserve at least the newest verified rollback artifact |
 | `~/.aidevops/logs` and worker failure excerpts | framework | audit, archive, scratch | Individual excerpts are size-capped; policies vary by producer | Define producer ownership and combined age/count/byte retention while retaining terminal failure evidence |
 | OpenCode data under its application-data root | joint | active, recovery, archive, unknown | OpenCode owns session and DB formats; aidevops archive/maintenance helpers coordinate selected operations | Separate logical retention from WAL/fragmentation maintenance; report only classifications proven through OpenCode-aware queries |
@@ -145,7 +145,10 @@ filesystem age or size deletion loop.
 2. Bound runtime bundles and evaluate lock-keyed dependency reuse while retaining
    current, previous, and live-leased protections.
 3. Define observability audit retention, payload limits, and archival or
-   partitioning semantics before compacting append-only evidence.
+   partitioning semantics before compacting append-only evidence. The initial
+   contract is implemented by `runtime-events-retention.mjs`; future changes
+   must preserve its dry-run, integrity, interruption, and protected-envelope
+   tests.
 4. Add coordinated policies for framework backups, logs, and worker failure
    excerpts, including conservative leftover migration.
 5. Coordinate OpenCode-owned storage through runtime-aware reporting and

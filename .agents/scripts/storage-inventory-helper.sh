@@ -13,6 +13,8 @@ fi
 STORAGE_SCHEMA_VERSION=1
 STORAGE_SIZE_TIMEOUT_TENTHS="${AIDEVOPS_STORAGE_SIZE_TIMEOUT_TENTHS:-20}"
 STORAGE_DU_COMMAND="${AIDEVOPS_STORAGE_DU_COMMAND:-du}"
+STORAGE_JSON_NULL="null"
+STORAGE_OWNER_FRAMEWORK="framework"
 
 _storage_usage() {
 	cat <<'USAGE'
@@ -92,16 +94,16 @@ _storage_emit_record() {
 	local protection_reason="$9"
 	local next_action="${10}"
 	local measured=""
-	local total_bytes="null"
+	local total_bytes="$STORAGE_JSON_NULL"
 	local confidence="unavailable"
 	local error=""
-	local protected_bytes="null"
+	local protected_bytes="$STORAGE_JSON_NULL"
 	local reclaimable_bytes=0
-	local unknown_bytes="null"
+	local unknown_bytes="$STORAGE_JSON_NULL"
 
 	measured=$(_storage_measure_path "$actual_path")
 	IFS='|' read -r total_bytes confidence error <<<"$measured"
-	if [[ "$total_bytes" != "null" ]]; then
+	if [[ "$total_bytes" != "$STORAGE_JSON_NULL" ]]; then
 		case "$disposition" in
 		protected)
 			protected_bytes="$total_bytes"
@@ -262,12 +264,58 @@ _storage_emit_runtime_bundle_record() {
 	return 0
 }
 
+_storage_observability_record() {
+	local home_label="~"
+	local display_path="${home_label}/.aidevops/.agent-workspace/observability"
+	local actual_path="${HOME}/.aidevops/.agent-workspace/observability"
+	local report=""
+	local measured=""
+	local total_bytes="$STORAGE_JSON_NULL"
+	local confidence="unavailable"
+	local sizing_error=""
+
+	report=$(bash "$SCRIPT_DIR/observability-helper.sh" storage --json 2>/dev/null || true)
+	if [[ -z "$report" ]] || ! printf '%s\n' "$report" | jq -e '
+		def is_number: type == "number";
+		type == "object" and (.active_bytes | is_number) and
+		(.archive_bytes | is_number) and (.protected_bytes | is_number) and
+		(.reclaimable_bytes | is_number) and (.unknown_bytes | is_number)
+	' >/dev/null 2>&1; then
+		_storage_emit_record "observability" "opencode-aidevops" "$display_path" "$actual_path" \
+			"$STORAGE_OWNER_FRAMEWORK" "unknown" "retention inventory unavailable" "unknown" \
+			"classification unavailable" "Use observability-helper.sh storage --json" |
+			jq -c '.error = "retention-inventory-unavailable"'
+		return 0
+	fi
+
+	measured=$(_storage_measure_path "$actual_path")
+	IFS='|' read -r total_bytes confidence sizing_error <<<"$measured"
+	jq -cn \
+		--arg path "$display_path" \
+		--arg owner "$STORAGE_OWNER_FRAMEWORK" \
+		--arg confidence "$confidence" \
+		--arg sizing_error "$sizing_error" \
+		--argjson total_bytes "$total_bytes" \
+		--argjson retention "$report" '
+		($retention.protected_bytes | if $total_bytes == null then null elif . > $total_bytes then $total_bytes else . end) as $protected |
+		(if $total_bytes == null then null else ($total_bytes - ($protected // 0)) end) as $unknown |
+		{store_id:"observability",producer:"opencode-aidevops",path:$path,owner:$owner,safety_class:"audit",
+		 policy:$retention.policy,total_bytes:$total_bytes,active_bytes:$retention.active_bytes,
+		 archive_bytes:$retention.archive_bytes,candidate_bytes:$retention.candidate_bytes,
+		 protected_bytes:$protected,reclaimable_bytes:0,unknown_bytes:$unknown,
+		 protection_reasons:["verified archives and pinned state-recovery evidence"],
+		 sizing_confidence:(if $sizing_error == "" and $retention.error == null then "estimated" else "unavailable" end),
+		 next_action:$retention.next_action,
+		 error:(if $sizing_error != "" then $sizing_error else $retention.error end)}'
+	return 0
+}
+
 _storage_inventory_records() {
 	local home_label="~"
 	_storage_emit_runtime_bundle_record
-	_storage_emit_record "observability" "opencode-aidevops" "${home_label}/.aidevops/.agent-workspace/observability" "${HOME}/.aidevops/.agent-workspace/observability" "framework" "audit" "append-only audit evidence; compaction contract pending" "protected" "audit evidence" "Use observability-helper.sh for bounded queries"
-	_storage_emit_record "agent-backups" "setup-backup" "${home_label}/.aidevops/agents-backups" "${HOME}/.aidevops/agents-backups" "framework" "rollback" "count-based snapshots; byte policy pending" "protected" "rollback safety" "Review backup inventory before any cleanup"
-	_storage_emit_record "framework-logs" "multiple-framework-producers" "${home_label}/.aidevops/logs" "${HOME}/.aidevops/logs" "framework" "audit" "producer-specific policies pending" "protected" "audit and unresolved failure evidence" "Use producer-specific diagnostics"
+	_storage_observability_record
+	_storage_emit_record "agent-backups" "setup-backup" "${home_label}/.aidevops/agents-backups" "${HOME}/.aidevops/agents-backups" "$STORAGE_OWNER_FRAMEWORK" "rollback" "count-based snapshots; byte policy pending" "protected" "rollback safety" "Review backup inventory before any cleanup"
+	_storage_emit_record "framework-logs" "multiple-framework-producers" "${home_label}/.aidevops/logs" "${HOME}/.aidevops/logs" "$STORAGE_OWNER_FRAMEWORK" "audit" "producer-specific policies pending" "protected" "audit and unresolved failure evidence" "Use producer-specific diagnostics"
 	_storage_emit_record "opencode-data" "opencode" "OpenCode application data" "${AIDEVOPS_OPENCODE_DATA_DIR:-${HOME}/.local/share/opencode}" "joint" "unknown" "runtime-aware maintenance only" "unknown" "OpenCode ownership and active-session state require runtime-aware queries" "Use aidevops opencode-db report"
 	_storage_emit_record "npm-cache" "npm" "npm cache" "${AIDEVOPS_NPM_CACHE_DIR:-${HOME}/.npm}" "external" "cache" "package-manager owned; no aidevops cleanup authority" "protected" "external owner" "Use npm-owned diagnostics and cleanup explicitly"
 	return 0
@@ -287,7 +335,7 @@ _storage_inventory_json() {
 
 _storage_format_bytes() {
 	local bytes="$1"
-	if [[ "$bytes" == "null" ]]; then
+	if [[ "$bytes" == "$STORAGE_JSON_NULL" ]]; then
 		printf 'unavailable'
 	elif [[ "$bytes" -ge 1073741824 ]]; then
 		printf '%s.%s GiB' "$((bytes / 1073741824))" "$(((bytes % 1073741824) * 10 / 1073741824))"

@@ -25,7 +25,8 @@ const REPOSITORY_LIKE_PATTERN = /\b[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\b/g;
 const ORDINARY_PAYLOAD_KEYS = new Set([
   "attempt_id", "call_id", "classification", "duration_ms", "error_type", "exit_code",
   "finish_reason", "model_id", "observation", "provider_id", "reason", "result",
-  "role", "run_id", "source", "status", "success", "tool_name",
+  "role", "run_id", "source", "status", "success", "suppressed_part_bytes",
+  "suppressed_part_events", "tool_name",
 ]);
 const NOT_SCALAR = Symbol("not-scalar");
 
