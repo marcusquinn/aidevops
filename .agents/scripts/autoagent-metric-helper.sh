@@ -306,8 +306,8 @@ cmd_lint() {
 	local sh_files=""
 	local md_files=""
 	if [[ -n "$candidate_files" ]]; then
-		sh_files=$(grep -E '^\.agents/scripts/.*\.sh$' <<<"$candidate_files") || sh_files=""
-		md_files=$(grep -E '^\.agents/.*\.md$' <<<"$candidate_files") || md_files=""
+		sh_files=$(grep -E '^\.agents/scripts/.*\.sh$' <<<"$candidate_files" || true)
+		md_files=$(grep -E '^\.agents/.*\.md$' <<<"$candidate_files" || true)
 	else
 		sh_files=$(git ls-files '.agents/scripts/*.sh' 2>/dev/null | head -20) || sh_files=""
 		md_files=$(git ls-files '.agents/**/*.md' 2>/dev/null | head -20) || md_files=""
@@ -387,10 +387,12 @@ _token_ratio_from_json() {
 		return 0
 	fi
 
-	local current_chars
-	current_chars=$(jq -r '.avg_response_chars // 0' 2>/dev/null <<<"$suite_json") || current_chars="0"
+	local current_chars=""
+	if [[ -n "$suite_json" ]]; then
+		current_chars=$(jq -r '.avg_response_chars // ""' <<<"$suite_json") || current_chars=""
+	fi
 
-	if [[ -z "$current_chars" || "$current_chars" == "0" || "$current_chars" == "null" ]]; then
+	if [[ -z "$current_chars" || "$current_chars" == "0" ]]; then
 		log_warn "Could not measure current avg_response_chars — returning neutral"
 		printf '%s\n' "1.0"
 		return 0
