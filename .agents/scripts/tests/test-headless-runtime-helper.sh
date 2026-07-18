@@ -1857,6 +1857,59 @@ test_replay_preserved_worker_db_verifies_before_deletion() {
 	return 0
 }
 
+test_worker_db_replay_lock_recovers_stale_owner_and_waits_for_pid() {
+	local recovery_root="${TEST_ROOT}/replay-lock-recovery"
+	local replay_lock="${recovery_root}/.replay.lock"
+	local stale_status=0 live_status=0 race_status=0
+	local acquired_pid="" observed_pid="" race_pid=""
+	local lock_holder_pid="" pid_writer_pid=""
+
+	mkdir -p "$replay_lock"
+	printf '%s\n' '99999999' >"${replay_lock}/pid"
+	_acquire_worker_db_replay_lock "$replay_lock" || stale_status=$?
+	acquired_pid=$(_read_worker_db_replay_lock_pid "$replay_lock")
+	_release_worker_db_replay_lock "$replay_lock"
+
+	mkdir -p "$replay_lock"
+	command sleep 5 &
+	lock_holder_pid=$!
+	(
+		command sleep 0.2
+		printf '%s\n' "$lock_holder_pid" >"${replay_lock}/pid"
+	) &
+	pid_writer_pid=$!
+	_acquire_worker_db_replay_lock "$replay_lock" || live_status=$?
+	wait "$pid_writer_pid" 2>/dev/null || true
+	observed_pid=$(_read_worker_db_replay_lock_pid "$replay_lock")
+	kill "$lock_holder_pid" 2>/dev/null || true
+	wait "$lock_holder_pid" 2>/dev/null || true
+	rm -rf "$replay_lock"
+
+	mkdir -p "$replay_lock"
+	printf '%s\n' '99999999' >"${replay_lock}/pid"
+	mkdir() {
+		local mkdir_target="$1"
+		if [[ "$mkdir_target" == "${replay_lock}/.reclaim" ]]; then
+			command rm -rf "$replay_lock"
+			return 1
+		fi
+		command mkdir "$@"
+		return $?
+	}
+	_acquire_worker_db_replay_lock "$replay_lock" || race_status=$?
+	unset -f mkdir
+	race_pid=$(_read_worker_db_replay_lock_pid "$replay_lock")
+	_release_worker_db_replay_lock "$replay_lock"
+
+	if [[ "$stale_status" -eq 0 && "$acquired_pid" == "$$" && "$live_status" -eq 1 && "$observed_pid" == "$lock_holder_pid" && "$race_status" -eq 0 && "$race_pid" == "$$" ]]; then
+		print_result "worker DB replay lock reclaims stale owners, waits for PIDs, and retries owner release races" 0
+		return 0
+	fi
+	print_result "worker DB replay lock reclaims stale owners, waits for PIDs, and retries owner release races" 1 \
+		"stale_status=$stale_status acquired=$acquired_pid live_status=$live_status observed=$observed_pid holder=$lock_holder_pid race_status=$race_status race_pid=$race_pid"
+	return 0
+}
+
 test_sync_worker_db_migration_metadata_repairs_prewarmed_project_table() {
 	local shared_dir="${HOME}/.local/share/opencode"
 	local isolated_dir="${TEST_ROOT}/isolated-opencode-prewarm"
@@ -3650,6 +3703,7 @@ run_worker_db_persistence_tests() {
 	test_merge_worker_db_rejects_missing_required_destination_column
 	test_merge_worker_db_failure_preserves_recovery_db_without_auth
 	test_replay_preserved_worker_db_verifies_before_deletion
+	test_worker_db_replay_lock_recovers_stale_owner_and_waits_for_pid
 	test_sync_worker_db_migration_metadata_repairs_prewarmed_project_table
 	test_sync_worker_db_migration_metadata_replaces_stale_ledgers
 	test_copy_worker_db_migration_ledger_preserves_rows_when_attach_fails
