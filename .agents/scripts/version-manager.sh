@@ -125,6 +125,10 @@ _version_manager_guard_headless_release_scope() {
 }
 
 # Source sub-libraries
+# shellcheck source=./runtime-bundle-verifier.sh
+# shellcheck disable=SC1091
+source "${SCRIPT_DIR}/runtime-bundle-verifier.sh"
+
 # shellcheck source=./version-manager-changelog.sh
 # shellcheck disable=SC1091  # sub-library resolved at runtime via $SCRIPT_DIR
 source "${SCRIPT_DIR}/version-manager-changelog.sh"
