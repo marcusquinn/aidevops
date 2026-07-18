@@ -8,6 +8,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit 1
 REPO_ROOT="${SCRIPT_DIR}/../../.."
 SETUP_SH="${REPO_ROOT}/setup.sh"
 AIDEVOPS_SH="${REPO_ROOT}/aidevops.sh"
+RUNTIME_BUNDLE_VERIFIER="${REPO_ROOT}/.agents/scripts/runtime-bundle-verifier.sh"
 PACKAGE_JSON="${REPO_ROOT}/package.json"
 GUI_WEB_PACKAGE_JSON="${REPO_ROOT}/packages/gui-web/package.json"
 
@@ -92,8 +93,13 @@ PY
 
 test_setup_stage_contract() {
 	local text=""
+	local verifier_text=""
 	text="$(file_text "$SETUP_SH")" || {
 		print_result "setup.sh is readable" 1 "$SETUP_SH"
+		return 0
+	}
+	verifier_text="$(file_text "$RUNTIME_BUNDLE_VERIFIER")" || {
+		print_result "runtime bundle verifier is readable" 1 "$RUNTIME_BUNDLE_VERIFIER"
 		return 0
 	}
 
@@ -112,10 +118,13 @@ test_setup_stage_contract() {
 	# shellcheck disable=SC2016 # Match literal setup.sh expressions.
 	assert_contains "ai-session resolves linked worktree common git dir" "$text" 'git -C "$checkout_root" rev-parse --git-common-dir'
 	assert_contains "ai-session verifies deployed sha" "$text" "_setup_ai_session_verify_deploy \"\$current_sha\""
-	# shellcheck disable=SC2016 # Match literal setup.sh expressions.
-	assert_contains "ai-session verifies active bundle manifest version" "$text" '_setup_bundle_manifest_value "$manifest_file" framework_version'
-	# shellcheck disable=SC2016 # Match literal setup.sh expressions.
-	assert_contains "ai-session verifies active bundle manifest sha" "$text" '_setup_bundle_manifest_value "$manifest_file" git_sha'
+	assert_contains "setup sources the authoritative runtime bundle verifier" "$text" '.agents/scripts/runtime-bundle-verifier.sh'
+	assert_contains "ai-session delegates to the authoritative verifier" "$text" 'verify_aidevops_runtime_bundle_convergence'
+	# shellcheck disable=SC2016 # Match literal verifier expressions.
+	assert_contains "verifier checks active bundle manifest version" "$verifier_text" '_runtime_bundle_verify_manifest_value "$manifest_file" framework_version'
+	# shellcheck disable=SC2016 # Match literal verifier expressions.
+	assert_contains "verifier checks active bundle manifest sha" "$verifier_text" '_runtime_bundle_verify_manifest_value "$manifest_file" git_sha'
+	assert_contains "verifier checks release sentinel hashes" "$verifier_text" '.agents/scripts/version-manager-release.sh|scripts/version-manager-release.sh'
 	assert_contains "ai-session reconciles generated runtime config" "$text" "_time_step \"\$SETUP_STAGE_RUNTIME_CONFIG\" _setup_reconcile_runtime_config"
 	assert_contains "runtime reconciliation updates enabled primary runtimes" "$text" "update_runtime_configs || return \$?"
 	assert_contains "runtime reconciliation deploys commands to remaining runtimes" "$text" "deploy_commands_to_all_runtimes || return \$?"
