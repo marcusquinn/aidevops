@@ -168,6 +168,16 @@ test_resolves_body_returns_issue() {
 	return 0
 }
 
+test_closing_keyword_regex_is_posix_portable() {
+	if grep -Fq "resolve[ds]?)[[:space:]]+#[0-9]+'" "$MERGE_SCRIPT"; then
+		print_result "scenario2b: closing keyword regex uses POSIX whitespace class" 0
+		return 0
+	fi
+	print_result "scenario2b: closing keyword regex uses POSIX whitespace class" 1 \
+		"Expected the closing keyword regex to use [[:space:]] instead of a non-portable shorthand"
+	return 0
+}
+
 # Scenario 3: title/body mismatch is ambiguous and must not select either issue.
 test_title_mismatch_returns_empty() {
 	export TEST_PR_TITLE="GH#19042: cross-issue"
@@ -222,6 +232,7 @@ main() {
 
 	test_for_ref_body_no_close_returns_empty
 	test_resolves_body_returns_issue
+	test_closing_keyword_regex_is_posix_portable
 	test_title_mismatch_returns_empty
 	test_ref_body_tnnn_title_returns_empty
 	test_multiple_closing_issues_return_empty
