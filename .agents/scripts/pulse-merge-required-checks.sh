@@ -13,6 +13,8 @@ PMRC_JSON_ARRAY="array"
 PMRC_MAINTAINER_GATE="maintainer-gate"
 PMRC_MAINTAINER_GATE_DISPLAY="Maintainer Review & Assignee Gate"
 PMRC_MAINTAINER_GATE_WORKFLOW="gate / Maintainer Review & Assignee Gate"
+PMRC_SUBJECT_HEAD_PREFIX="head "
+PMRC_SUBJECT_PR_PREFIX="PR #"
 : "${_PULSE_MERGE_PREFLIGHT_BLOCKING_CHECKS_JSON:=[]}"
 
 _pmrc_gh_read() {
@@ -36,14 +38,30 @@ _pmrc_iso_to_epoch() {
 	return 0
 }
 
+_pmrc_snapshot_log_failure() {
+	local repo_slug="$1"
+	local subject="$2"
+	local stage="$3"
+	local log_target="${LOGFILE:-/dev/stderr}"
+
+	echo "[pulse-merge] pre-merge snapshot: ${stage} failed for ${subject} in ${repo_slug} — failing closed (GH#28209)" >>"$log_target"
+	return 0
+}
+
 _pmrc_snapshot_checks_json() {
 	local repo_slug="$1"
 	local head_sha="$2"
 	local runs_pages="" statuses_json="" checks_json=""
 
 	runs_pages=$(_pmrc_gh_read gh api "repos/${repo_slug}/commits/${head_sha}/check-runs?per_page=100" \
-		--paginate --slurp 2>/dev/null) || return 1
-	statuses_json=$(_pmrc_gh_read gh api "repos/${repo_slug}/commits/${head_sha}/status" 2>/dev/null) || return 1
+		--paginate --slurp 2>/dev/null) || {
+		_pmrc_snapshot_log_failure "$repo_slug" "${PMRC_SUBJECT_HEAD_PREFIX}${head_sha:0:12}" "check-runs fetch"
+		return 1
+	}
+	statuses_json=$(_pmrc_gh_read gh api "repos/${repo_slug}/commits/${head_sha}/status" 2>/dev/null) || {
+		_pmrc_snapshot_log_failure "$repo_slug" "${PMRC_SUBJECT_HEAD_PREFIX}${head_sha:0:12}" "commit-status fetch"
+		return 1
+	}
 	# Stream API documents over stdin instead of passing large check-run payloads
 	# through --argjson, which can exceed the OS per-argument limit (GH#28164).
 	checks_json=$(printf '%s\n%s\n' "$runs_pages" "$statuses_json" | jq -s \
@@ -118,7 +136,10 @@ _pmrc_snapshot_checks_json() {
 			end
 		)
 		| sort_by(.name)
-	' 2>/dev/null) || return 1
+	' 2>/dev/null) || {
+		_pmrc_snapshot_log_failure "$repo_slug" "${PMRC_SUBJECT_HEAD_PREFIX}${head_sha:0:12}" "check-set parse"
+		return 1
+	}
 	printf '%s\n' "$checks_json"
 	return 0
 }
@@ -130,11 +151,20 @@ _pmrc_snapshot_bot_activity_json() {
 	local bot_re="coderabbitai|gemini-code-assist|augment-code|augmentcode|copilot"
 
 	reviews=$(_pmrc_gh_read gh api "repos/${repo_slug}/pulls/${pr_number}/reviews?per_page=100" \
-		--paginate --slurp 2>/dev/null) || return 1
+		--paginate --slurp 2>/dev/null) || {
+		_pmrc_snapshot_log_failure "$repo_slug" "${PMRC_SUBJECT_PR_PREFIX}${pr_number}" "reviews fetch"
+		return 1
+	}
 	issue_comments=$(_pmrc_gh_read gh api "repos/${repo_slug}/issues/${pr_number}/comments?per_page=100" \
-		--paginate --slurp 2>/dev/null) || return 1
+		--paginate --slurp 2>/dev/null) || {
+		_pmrc_snapshot_log_failure "$repo_slug" "${PMRC_SUBJECT_PR_PREFIX}${pr_number}" "issue-comments fetch"
+		return 1
+	}
 	inline_comments=$(_pmrc_gh_read gh api "repos/${repo_slug}/pulls/${pr_number}/comments?per_page=100" \
-		--paginate --slurp 2>/dev/null) || return 1
+		--paginate --slurp 2>/dev/null) || {
+		_pmrc_snapshot_log_failure "$repo_slug" "${PMRC_SUBJECT_PR_PREFIX}${pr_number}" "inline-comments fetch"
+		return 1
+	}
 	activity=$(jq -n --argjson reviews "$reviews" --argjson issues "$issue_comments" \
 		--argjson inline "$inline_comments" --arg bots "$bot_re" '
 		[
@@ -144,7 +174,10 @@ _pmrc_snapshot_bot_activity_json() {
 			| select(. != "")
 		] as $events
 		| {count: ($events | length), latest_at: ($events | max // "")}
-	' 2>/dev/null) || return 1
+	' 2>/dev/null) || {
+		_pmrc_snapshot_log_failure "$repo_slug" "${PMRC_SUBJECT_PR_PREFIX}${pr_number}" "bot-activity parse"
+		return 1
+	}
 	printf '%s\n' "$activity"
 	return 0
 }
@@ -479,8 +512,8 @@ _pmrc_snapshot_review_gate_fresh() {
 		# the caller immediately revalidates that head before reaching this check.
 		# Its caller-observed timestamp must also cover the latest bot activity so
 		# activity racing after the live helper remains fail-closed.
-		if [[ "$evidence_epoch" =~ ^[0-9]+$ ]] \
-			&& { [[ -z "$activity_epoch" ]] || [[ "$evidence_epoch" -ge "$activity_epoch" ]]; }; then
+		if [[ "$evidence_epoch" =~ ^[0-9]+$ ]] &&
+			{ [[ -z "$activity_epoch" ]] || [[ "$evidence_epoch" -ge "$activity_epoch" ]]; }; then
 			echo "[pulse-merge] pre-merge snapshot: accepted live review-bot gate bound to the current head for PR #${pr_number} in ${repo_slug}; no status context is installed (GH#27483)" >>"$LOGFILE"
 			return 0
 		fi
@@ -534,14 +567,26 @@ _pulse_merge_preflight_snapshot_gate() {
 	local pr_json="" current_head_sha="" base_branch="" required_contexts="" checks_json="" activity_json=""
 	_PULSE_MERGE_PREFLIGHT_BLOCKING_CHECKS_JSON="[]"
 
-	pr_json=$(_pmrc_gh_read gh api "repos/${repo_slug}/pulls/${pr_number}" 2>/dev/null) || return 1
-	current_head_sha=$(jq -r '.head.sha // ""' <<<"$pr_json" 2>/dev/null) || return 1
-	base_branch=$(jq -r '.base.ref // ""' <<<"$pr_json" 2>/dev/null) || return 1
+	pr_json=$(_pmrc_gh_read gh api "repos/${repo_slug}/pulls/${pr_number}" 2>/dev/null) || {
+		_pmrc_snapshot_log_failure "$repo_slug" "${PMRC_SUBJECT_PR_PREFIX}${pr_number}" "pull-request fetch"
+		return 1
+	}
+	current_head_sha=$(jq -r '.head.sha // ""' <<<"$pr_json" 2>/dev/null) || {
+		_pmrc_snapshot_log_failure "$repo_slug" "${PMRC_SUBJECT_PR_PREFIX}${pr_number}" "head parse"
+		return 1
+	}
+	base_branch=$(jq -r '.base.ref // ""' <<<"$pr_json" 2>/dev/null) || {
+		_pmrc_snapshot_log_failure "$repo_slug" "${PMRC_SUBJECT_PR_PREFIX}${pr_number}" "base-branch parse"
+		return 1
+	}
 	if [[ -z "$current_head_sha" || "$current_head_sha" != "$expected_head_sha" ]]; then
 		echo "[pulse-merge] pre-merge snapshot: head changed for PR #${pr_number} in ${repo_slug} (expected=${expected_head_sha:-unknown}, current=${current_head_sha:-unknown}) — prior gate state revoked (GH#27137)" >>"$LOGFILE"
 		return 1
 	fi
-	required_contexts=$(_required_contexts_for_default_branch "$repo_slug") || return 1
+	required_contexts=$(_required_contexts_for_default_branch "$repo_slug") || {
+		_pmrc_snapshot_log_failure "$repo_slug" "${PMRC_SUBJECT_PR_PREFIX}${pr_number}" "required-context lookup"
+		return 1
+	}
 	checks_json=$(_pmrc_snapshot_checks_json "$repo_slug" "$current_head_sha") || return 1
 	activity_json=$(_pmrc_snapshot_bot_activity_json "$repo_slug" "$pr_number") || return 1
 	_pmrc_review_evidence_permits_advisory "$live_gate_evidence" "$repo_slug" "$pr_number" "$current_head_sha" || live_gate_evidence=""
