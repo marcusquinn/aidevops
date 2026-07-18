@@ -60,7 +60,7 @@ Reference, lease, recovery, and audit checks remain hard vetoes.
 
 | Store | Owner | Primary classes | Existing authority | Required next contract |
 |---|---|---|---|---|
-| `~/.aidevops/runtime-bundles` | framework | active, leased, rollback, cache | Deployment helper protects current, previous, and live-leased bundles; unleased bundles use an age threshold | Add byte/count visibility and bounded unreferenced convergence without weakening lease protection; assess immutable dependency reuse separately |
+| `~/.aidevops/runtime-bundles` | framework | active, leased, rollback, cache | Deployment protects current, previous, and live-leased bundles; unreferenced bundles converge under 30-day, 30-bundle, and 8 GiB soft limits | Keep the limits operator-configurable and preserve fail-closed reporting when references or sizing are unavailable |
 | `~/.aidevops/.agent-workspace/observability` | framework | audit, archive, cache | Runtime events are append-only evidence; plugin records runtime and tool-call data | Define the minimum audit envelope, payload/metadata limits, partition or archive semantics, and verified compaction rather than direct row deletion |
 | `~/.aidevops/agents-backups` | framework | rollback, archive | Count-based snapshot retention | Add byte/age reporting and preserve at least the newest verified rollback artifact |
 | `~/.aidevops/logs` and worker failure excerpts | framework | audit, archive, scratch | Individual excerpts are size-capped; policies vary by producer | Define producer ownership and combined age/count/byte retention while retaining terminal failure evidence |
@@ -70,6 +70,17 @@ Reference, lease, recovery, and audit checks remain hard vetoes.
 
 The inventory is intentionally conservative. A child implementation may split a
 row when one path contains artifacts with different owners or safety classes.
+
+### Runtime Bundle Dependency Decision
+
+Runtime activation continues to verify the OpenCode host's existing dependency
+tree first and installs declared dependencies inside a staged bundle only when
+that verification fails. A new lock-keyed shared dependency store is deferred:
+it would introduce shared mutable ownership, concurrent-install locking, cache
+integrity, and offline rollback dependencies into otherwise immutable bundles.
+The measured duplication is instead bounded by pruning unreferenced bundles.
+This preserves atomic activation and makes each retained rollback bundle
+self-verifying without making npm's global cache framework-owned.
 
 ## Store Lifecycle Contract
 

@@ -139,9 +139,132 @@ _storage_emit_record() {
 	return 0
 }
 
+_storage_bundle_root_from_link() {
+	local link_path="$1"
+	local bundles_dir="$2"
+	local agents_root=""
+	local bundle_root=""
+	local canonical_bundles=""
+	[[ -L "$link_path" ]] || return 1
+	agents_root=$(cd "$link_path" 2>/dev/null && pwd -P) || return 1
+	bundle_root="${agents_root%/agents}"
+	canonical_bundles=$(cd "$bundles_dir" 2>/dev/null && pwd -P) || return 1
+	[[ "$agents_root" == "$bundle_root/agents" && "$bundle_root" == "$canonical_bundles/"* ]] || return 1
+	printf '%s' "$bundle_root"
+	return 0
+}
+
+_storage_bundle_lease_is_live() {
+	local lease_dir="$1"
+	local lease_file=""
+	local lease_pid=""
+	[[ -d "$lease_dir" ]] || return 1
+	for lease_file in "$lease_dir"/*; do
+		[[ -f "$lease_file" ]] || continue
+		lease_pid="${lease_file##*/}"
+		case "$lease_pid" in
+		'' | *[!0-9]*) continue ;;
+		esac
+		kill -0 "$lease_pid" 2>/dev/null && return 0
+	done
+	return 1
+}
+
+_storage_emit_runtime_bundle_record() {
+	local bundles_dir="${HOME}/.aidevops/runtime-bundles"
+	local measured=""
+	local total_bytes="null"
+	local confidence="unavailable"
+	local error=""
+	local protected_bytes=0
+	local reclaimable_bytes=0
+	local unknown_bytes="null"
+	local active_bundle=""
+	local previous_bundle=""
+	local protected_list=$'\n'
+	local lease_dir=""
+	local leased_bundle=""
+	local bundle_root=""
+	local bundle_measure=""
+	local bundle_bytes=""
+	local bundle_confidence=""
+	local bundle_error=""
+
+	measured=$(_storage_measure_path "$bundles_dir")
+	IFS='|' read -r total_bytes confidence error <<<"$measured"
+	if [[ "$total_bytes" == "0" ]]; then
+		unknown_bytes=0
+	elif [[ "$total_bytes" != "null" ]]; then
+		if ! active_bundle=$(_storage_bundle_root_from_link "${HOME}/.aidevops/agents" "$bundles_dir"); then
+			error="active-reference-unavailable"
+			unknown_bytes="$total_bytes"
+		else
+			protected_list+="${active_bundle}"$'\n'
+			if [[ -L "${HOME}/.aidevops/previous-runtime-bundle" ]]; then
+				if previous_bundle=$(_storage_bundle_root_from_link "${HOME}/.aidevops/previous-runtime-bundle" "$bundles_dir"); then
+					[[ "$protected_list" == *$'\n'"${previous_bundle}"$'\n'* ]] || protected_list+="${previous_bundle}"$'\n'
+				else
+					error="previous-reference-unavailable"
+				fi
+			fi
+			for lease_dir in "$bundles_dir/.leases"/*; do
+				[[ -d "$lease_dir" ]] || continue
+				_storage_bundle_lease_is_live "$lease_dir" || continue
+				leased_bundle="$bundles_dir/${lease_dir##*/}"
+				[[ -d "$leased_bundle/agents" ]] || {
+					error="live-lease-target-unavailable"
+					continue
+				}
+				[[ "$protected_list" == *$'\n'"${leased_bundle}"$'\n'* ]] || protected_list+="${leased_bundle}"$'\n'
+			done
+			if [[ -z "$error" ]]; then
+				while IFS= read -r bundle_root; do
+					[[ -n "$bundle_root" ]] || continue
+					bundle_measure=$(_storage_measure_path "$bundle_root")
+					IFS='|' read -r bundle_bytes bundle_confidence bundle_error <<<"$bundle_measure"
+					if [[ "$bundle_bytes" == "null" ]]; then
+						error="protected-size-unavailable"
+						break
+					fi
+					protected_bytes=$((protected_bytes + bundle_bytes))
+				done <<<"$protected_list"
+			fi
+			if [[ -z "$error" ]]; then
+				bundle_measure=$(_storage_measure_path "$bundles_dir/.leases")
+				IFS='|' read -r bundle_bytes bundle_confidence bundle_error <<<"$bundle_measure"
+				if [[ "$bundle_bytes" == "null" ]]; then
+					error="lease-metadata-size-unavailable"
+				else
+					protected_bytes=$((protected_bytes + bundle_bytes))
+				fi
+			fi
+			if [[ -z "$error" ]]; then
+				[[ "$protected_bytes" -le "$total_bytes" ]] || protected_bytes="$total_bytes"
+				reclaimable_bytes=$((total_bytes - protected_bytes))
+				unknown_bytes=0
+			else
+				protected_bytes=0
+				reclaimable_bytes=0
+				unknown_bytes="$total_bytes"
+				confidence="unavailable"
+			fi
+		fi
+	fi
+
+	jq -cn \
+		--arg error "$error" \
+		--arg confidence "$confidence" \
+		--argjson total_bytes "$total_bytes" \
+		--argjson protected_bytes "$protected_bytes" \
+		--argjson reclaimable_bytes "$reclaimable_bytes" \
+		--argjson unknown_bytes "$unknown_bytes" \
+		'{store_id:"runtime-bundles",producer:"agent-deploy",path:"~/.aidevops/runtime-bundles",owner:"framework",safety_class:"mixed",policy:"30-day age, 30-bundle count, and 8 GiB soft limits; references and live leases veto deletion",total_bytes:$total_bytes,protected_bytes:$protected_bytes,reclaimable_bytes:$reclaimable_bytes,unknown_bytes:$unknown_bytes,protection_reasons:["current bundle, previous rollback bundle, live leases, and lease metadata"],sizing_confidence:$confidence,next_action:"Use setup activation for policy-owned pruning; do not delete protected bundles manually",error:(if $error == "" or $error == "missing" then null else $error end)}'
+	return 0
+}
+
 _storage_inventory_records() {
 	local home_label="~"
-	_storage_emit_record "runtime-bundles" "agent-deploy" "${home_label}/.aidevops/runtime-bundles" "${HOME}/.aidevops/runtime-bundles" "framework" "unknown" "30-day unleased age policy; detailed bounds pending" "unknown" "bundle references require store-specific classification" "Review runtime-bundle status; do not delete manually"
+	_storage_emit_runtime_bundle_record
 	_storage_emit_record "observability" "opencode-aidevops" "${home_label}/.aidevops/.agent-workspace/observability" "${HOME}/.aidevops/.agent-workspace/observability" "framework" "audit" "append-only audit evidence; compaction contract pending" "protected" "audit evidence" "Use observability-helper.sh for bounded queries"
 	_storage_emit_record "agent-backups" "setup-backup" "${home_label}/.aidevops/agents-backups" "${HOME}/.aidevops/agents-backups" "framework" "rollback" "count-based snapshots; byte policy pending" "protected" "rollback safety" "Review backup inventory before any cleanup"
 	_storage_emit_record "framework-logs" "multiple-framework-producers" "${home_label}/.aidevops/logs" "${HOME}/.aidevops/logs" "framework" "audit" "producer-specific policies pending" "protected" "audit and unresolved failure evidence" "Use producer-specific diagnostics"
