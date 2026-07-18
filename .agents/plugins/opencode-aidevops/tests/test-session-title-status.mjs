@@ -132,7 +132,7 @@ test("terminal root assistant completion restores idle without a native idle eve
 
   await handler(event("session.created", { info: { id: "root-completion", title: "Completion" } }));
   await handler(event("message.updated", {
-    info: { id: "user-1", sessionID: "root-completion", role: "user" },
+    info: { id: "user-1", sessionID: "root-completion", role: "user", time: { created: 10 } },
   }));
   await handler(event("message.updated", {
     info: {
@@ -166,8 +166,15 @@ test("terminal root assistant completion restores idle without a native idle eve
   });
   await handler(terminalCompletion);
   await handler(terminalCompletion);
+  await handler(event("session.status", { sessionID: "root-completion", status: { type: "busy" } }));
   await handler(event("message.updated", {
-    info: { id: "user-2", sessionID: "root-completion", role: "user" },
+    info: { id: "user-2", sessionID: "root-completion", role: "user", time: { created: 40 } },
+  }));
+  await handler(event("message.updated", {
+    info: { id: "user-1", sessionID: "root-completion", role: "user", time: { created: 10 } },
+  }));
+  await handler(event("message.updated", {
+    info: { id: "unseen-older-user", sessionID: "root-completion", role: "user", time: { created: 5 } },
   }));
   await handler(terminalCompletion);
   await handler(event("message.updated", {
@@ -282,6 +289,16 @@ test("session status handler supports hot-loaded root sessions and ignores headl
   });
   await interactiveHandler(event("session.updated", { info: { id: "restored-root", title: "Restored" } }));
   await interactiveHandler(event("session.status", { sessionID: "restored-root", status: { type: "busy" } }));
+  await interactiveHandler(event("message.updated", {
+    info: {
+      id: "historical-assistant",
+      sessionID: "restored-root",
+      parentID: "historical-user",
+      role: "assistant",
+      finish: "stop",
+      time: { created: 10, completed: 20 },
+    },
+  }));
 
   const headlessHandler = createSessionTitleStatusHandler({
     isHeadless: () => true,
