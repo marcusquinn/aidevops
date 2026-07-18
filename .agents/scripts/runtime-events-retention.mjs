@@ -13,12 +13,11 @@ import {
   lstatSync,
   mkdirSync,
   openSync,
-  readFileSync,
   renameSync,
   unlinkSync,
   writeFileSync,
 } from "node:fs";
-import { basename, dirname, isAbsolute, join, resolve } from "node:path";
+import { dirname, isAbsolute, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import {
   initialiseRuntimeEventStore,
@@ -26,6 +25,7 @@ import {
 } from "./runtime-events-store.mjs";
 import { runRetentionCommand } from "./runtime-events-retention-cli.mjs";
 import { buildRuntimeEventRetentionInventory } from "./runtime-events-retention-inventory.mjs";
+import { verifyArchiveArtifacts } from "./runtime-events-retention-verification.mjs";
 import { canonicalizeSqliteDbPath, sqlEscape } from "./sqlite-process.mjs";
 
 export const RUNTIME_EVENT_ARCHIVE_SCHEMA_VERSION = 1;
@@ -235,38 +235,12 @@ function manifestForContents(header, archiveFile, contents) {
 
 /** Verify a partition and its sidecar without trusting filenames or row claims. */
 export function verifyRuntimeEventArchive(archivePath, manifestPath = `${archivePath}.manifest.json`) {
-  const errors = [];
-  let manifest = null;
-  let contents = "";
-  try {
-    if (lstatSync(archivePath).isSymbolicLink() || lstatSync(manifestPath).isSymbolicLink()) {
-      throw new Error("archive artifacts must not be symbolic links");
-    }
-    contents = readFileSync(archivePath, "utf8");
-    manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
-    const lines = contents.trimEnd().split("\n").map((line) => JSON.parse(line));
-    const header = lines[0];
-    const eventCount = lines.slice(1).filter((record) => record.record_type === "event").length;
-    const compactedCount = lines.slice(1)
-      .filter((record) => record.record_type === "summary")
-      .reduce((total, record) => total + Number(record.count || 0), 0);
-    if (header.record_type !== "manifest" || header.schema_version !== RUNTIME_EVENT_ARCHIVE_SCHEMA_VERSION) {
-      errors.push("invalid archive header");
-    }
-    if (manifest.archive_sha256 !== sha256(contents)) errors.push("archive digest mismatch");
-    if (manifest.archive_file !== basename(archivePath)) errors.push("archive filename mismatch");
-    if (manifest.archive_bytes !== Buffer.byteLength(contents, "utf8")) errors.push("archive byte count mismatch");
-    if (manifest.archive_record_count !== lines.length - 1) errors.push("archive record count mismatch");
-    if (manifest.protected_row_count !== eventCount) errors.push("protected event count mismatch");
-    if (manifest.compacted_row_count !== compactedCount) errors.push("compacted event count mismatch");
-    if (manifest.source_row_count !== eventCount + compactedCount) errors.push("source event count mismatch");
-    if (manifest.partition_id !== header.partition_id || manifest.source_sha256 !== header.source_sha256) {
-      errors.push("archive manifest/header mismatch");
-    }
-  } catch (error) {
-    errors.push(error instanceof Error ? error.message : "archive verification failed");
-  }
-  return Object.freeze({ errors, manifest, ok: errors.length === 0 });
+  return verifyArchiveArtifacts({
+    archivePath,
+    digest: sha256,
+    manifestPath,
+    schemaVersion: RUNTIME_EVENT_ARCHIVE_SCHEMA_VERSION,
+  });
 }
 
 function persistPartition(archiveDir, partition) {
