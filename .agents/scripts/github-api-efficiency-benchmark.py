@@ -18,7 +18,7 @@ from github_api_efficiency_inputs import BenchmarkInputError, build_window
 from github_api_efficiency_report import (
     EXIT_INCONCLUSIVE,
     EXIT_REGRESSION,
-    STATUS_PASS,
+    STATUS_OK,
     STATUS_REGRESSION,
     Thresholds,
     build_result,
@@ -159,7 +159,7 @@ def main() -> int:
         print(f"github-api-efficiency-benchmark: {exc}", file=sys.stderr)
         return EXIT_INCONCLUSIVE
     print(f"{result['status']}: {len(result['reasons'])} decision reason(s)")
-    if result["status"] == STATUS_PASS:
+    if result["status"] == STATUS_OK:
         return 0
     if result["status"] == STATUS_REGRESSION:
         return EXIT_REGRESSION

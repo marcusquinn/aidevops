@@ -18,7 +18,7 @@ from github_api_efficiency_metrics import TRANSPORT_METRICS
 
 
 BENCHMARK_SCHEMA = "aidevops-github-api-efficiency-benchmark/v1"
-STATUS_PASS = "PASS"
+STATUS_OK = "PASS"
 STATUS_REGRESSION = "REGRESSION"
 STATUS_INCONCLUSIVE = "INCONCLUSIVE"
 EXIT_REGRESSION = 1
@@ -438,7 +438,7 @@ def build_result(
     status = STATUS_INCONCLUSIVE
     if not reasons:
         reasons = _regression_reasons(baseline, canary, thresholds)
-        status = STATUS_REGRESSION if reasons else STATUS_PASS
+        status = STATUS_REGRESSION if reasons else STATUS_OK
     return {
         "schema": BENCHMARK_SCHEMA,
         "status": status,
