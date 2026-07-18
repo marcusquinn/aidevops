@@ -10,6 +10,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.32.151] - 2026-07-18
+
+### Changed
+
+- Refactor: simplify compaction event handling (#28098)
+
+### Fixed
+
+- audit pulse snapshot failures (#28215)
+- use portable linked issue whitespace matching (#28193)
+- guard MCP health test sandbox path (#28085)
+- make qlty scan counts deterministic (#28181)
+- handle missing HOME in runtime status (#28118)
+
 ## [3.32.150] - 2026-07-18
 
 ### Changed
