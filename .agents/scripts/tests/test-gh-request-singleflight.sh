@@ -126,6 +126,7 @@ singleflight_worker() {
 
 test_scope_key_isolation() {
 	local key_default="" key_repeat="" key_repo="" key_projection="" key_identity="" key_principal="" key_pool=""
+	local invalidation_default="" invalidation_principal="" invalidation_pool="" invalidation_repo=""
 	key_default=$(gh_request_state_request_key owner/repo checks aggregate/v1 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa rest-core)
 	key_repeat=$(gh_request_state_request_key owner/repo checks aggregate/v1 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa rest-core)
 	key_repo=$(gh_request_state_request_key other/repo checks aggregate/v1 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa rest-core)
@@ -135,6 +136,14 @@ test_scope_key_isolation() {
 	key_principal=$(gh_request_state_request_key owner/repo checks aggregate/v1 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa rest-core)
 	AIDEVOPS_GH_AUTH_PRINCIPAL=default
 	key_pool=$(gh_request_state_request_key owner/repo checks aggregate/v1 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa graphql)
+	invalidation_default=$(gh_request_state_invalidation_key owner/repo checks aggregate/v1 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa)
+	invalidation_repo=$(gh_request_state_invalidation_key other/repo checks aggregate/v1 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa)
+	AIDEVOPS_GH_AUTH_PRINCIPAL=alternate
+	invalidation_principal=$(gh_request_state_invalidation_key owner/repo checks aggregate/v1 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa)
+	AIDEVOPS_GH_AUTH_PRINCIPAL=default
+	AIDEVOPS_GH_API_POOL=graphql
+	invalidation_pool=$(gh_request_state_invalidation_key owner/repo checks aggregate/v1 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa)
+	AIDEVOPS_GH_API_POOL=default
 
 	assert_eq "identical request scope produces a stable key" "$key_default" "$key_repeat"
 	assert_ne "repository changes the request key" "$key_default" "$key_repo"
@@ -142,6 +151,9 @@ test_scope_key_isolation() {
 	assert_ne "immutable identity changes the request key" "$key_default" "$key_identity"
 	assert_ne "auth principal changes the request key" "$key_default" "$key_principal"
 	assert_ne "API pool changes the request key" "$key_default" "$key_pool"
+	assert_ne "repository changes the invalidation key" "$invalidation_default" "$invalidation_repo"
+	assert_eq "auth rotation preserves the canonical invalidation key" "$invalidation_default" "$invalidation_principal"
+	assert_eq "API pool rotation preserves the canonical invalidation key" "$invalidation_default" "$invalidation_pool"
 	return 0
 }
 
@@ -321,6 +333,59 @@ test_ownerless_lease_recovery_and_disabled_mode() {
 	return 0
 }
 
+test_request_invalidation_generations_are_atomic() {
+	local key="" initial="" first="" second="" final="" request_dir="" generation=""
+	local job=0 pid=0
+	local -a pids=()
+	key=$(gh_request_state_request_key owner/repo canonical-snapshot issues/v1 issues rest-core)
+	initial=$(gh_request_state_invalidation_generation_get "$key")
+	assert_eq "missing invalidation marker uses the stable initial generation" \
+		"$_GHRS_INVALIDATION_INITIAL" "$initial"
+
+	gh_request_state_invalidate "$key"
+	first=$(gh_request_state_invalidation_generation_get "$key")
+	assert_ne "explicit invalidation advances the request generation" "$initial" "$first"
+	if ! gh_request_state_invalidation_generation_is_current "$key" "$first"; then
+		printf 'FAIL: current invalidation generation was rejected\n' >&2
+		return 1
+	fi
+	printf 'PASS: current invalidation generation is accepted\n'
+	if gh_request_state_invalidation_generation_is_current "$key" "$initial"; then
+		printf 'FAIL: invalidation retained the prior generation\n' >&2
+		return 1
+	fi
+	printf 'PASS: prior invalidation generation is fenced\n'
+
+	gh_request_state_singleflight_begin "$key"
+	assert_eq "invalidation outcome fixture elects a leader" "leader" "$_GHRS_BEGIN_ROLE"
+	generation="$_GHRS_BEGIN_GENERATION"
+	gh_request_state_singleflight_finish "$key" "$generation" success
+	request_dir="$(_ghrs_request_dir "$key")"
+	[[ -f "${request_dir}/outcome.json" ]] || return 1
+	gh_request_state_invalidate "$key"
+	second=$(gh_request_state_invalidation_generation_get "$key")
+	assert_ne "repeated invalidation cannot reuse a generation" "$first" "$second"
+	assert_eq "invalidation marker remains private" "600" "$(file_mode "${request_dir}/invalidation.json")"
+	assert_eq "invalidation removes stale single-flight outcomes" "false" \
+		"$([[ -e "${request_dir}/outcome.json" ]] && printf true || printf false)"
+
+	for job in 1 2 3 4; do
+		(gh_request_state_invalidate "$key") &
+		pids+=("$!")
+	done
+	for pid in "${pids[@]}"; do
+		wait "$pid"
+	done
+	final=$(gh_request_state_invalidation_generation_get "$key")
+	assert_ne "concurrent invalidations advance beyond the prior marker" "$second" "$final"
+	if compgen -G "${request_dir}/.invalidation.*" >/dev/null; then
+		printf 'FAIL: concurrent invalidation left temporary files behind\n' >&2
+		return 1
+	fi
+	printf 'PASS: concurrent invalidation leaves no temporary files\n'
+	return 0
+}
+
 rate_fixture() {
 	local remaining="$1"
 	local reset_at="$2"
@@ -421,6 +486,7 @@ main() {
 	test_expired_live_leader_is_fenced
 	test_live_leader_wait_is_bounded
 	test_ownerless_lease_recovery_and_disabled_mode
+	test_request_invalidation_generations_are_atomic
 	test_rate_state_validation_scope_and_reset
 	test_relative_rate_path_uses_current_directory
 	test_concurrent_rate_probe_is_singleflight

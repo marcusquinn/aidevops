@@ -88,6 +88,7 @@ def _snapshot_payload(
     projection: str,
     auth_scope: str,
     generation: str,
+    invalidation_generation: str,
     source: str,
     now: str,
     etag: str,
@@ -102,6 +103,7 @@ def _snapshot_payload(
         "projection": projection,
         "auth_scope": auth_scope,
         "generation": generation,
+        "invalidation_generation": invalidation_generation,
         "source": source,
         "complete": complete,
         "truncated": not complete,
@@ -118,15 +120,24 @@ def _snapshot_payload(
 
 def main(argv: list[str]) -> int:
     result = 0
-    if len(argv) != 8:
+    if len(argv) != 9:
         print(
             "usage: pulse-batch-conditional-cache.py KIND SLUG RESPONSE_FILE "
-            "CACHE_FILE GENERATION AUTH_SCOPE PROJECTION",
+            "CACHE_FILE GENERATION AUTH_SCOPE PROJECTION INVALIDATION_GENERATION",
             file=sys.stderr,
         )
         result = 2
     else:
-        kind, slug, response_file, cache_file, generation, auth_scope, projection = argv[1:8]
+        (
+            kind,
+            slug,
+            response_file,
+            cache_file,
+            generation,
+            auth_scope,
+            projection,
+            invalidation_generation,
+        ) = argv[1:9]
         status, etag, has_next, body = _split_response(response_file)
         now = _now_iso()
         if status == 304:
@@ -139,6 +150,7 @@ def main(argv: list[str]) -> int:
                 generation,
                 auth_scope,
                 projection,
+                invalidation_generation,
             )
         elif status < 200 or status >= 300:
             result = 1
@@ -151,6 +163,7 @@ def main(argv: list[str]) -> int:
                     projection,
                     auth_scope,
                     generation,
+                    invalidation_generation,
                     "conditional-rest",
                     now,
                     etag,
@@ -172,6 +185,7 @@ def _refresh_cached_response(
     generation: str,
     auth_scope: str,
     projection: str,
+    invalidation_generation: str,
 ) -> int:
     if not os.path.exists(cache_file):
         return 1
@@ -206,6 +220,7 @@ def _refresh_cached_response(
             "projection": projection if compatible else payload.get("projection", "legacy"),
             "auth_scope": auth_scope,
             "generation": generation,
+            "invalidation_generation": invalidation_generation,
             "source": "conditional-rest",
             "complete": payload.get("complete", False) if compatible else False,
             "truncated": not (payload.get("complete", False) if compatible else False),

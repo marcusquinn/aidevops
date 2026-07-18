@@ -19,8 +19,11 @@ _SHARED_GH_REQUEST_STATE_LOADED=1
 
 _GHRS_LEASE_SCHEMA="aidevops-gh-request-lease/v1"
 _GHRS_OUTCOME_SCHEMA="aidevops-gh-request-outcome/v1"
+_GHRS_INVALIDATION_SCHEMA="aidevops-gh-request-invalidation/v1"
+_GHRS_INVALIDATION_INITIAL="0000000000000000000000000000000000000000000000000000000000000000"
 _GHRS_RATE_SCHEMA="aidevops-gh-rate-limit-state/v1"
 _GHRS_REQUEST_PROJECTION="request-coordination/v1"
+_GHRS_INVALIDATION_KEY_PROJECTION="request-invalidation-key/v1"
 _GHRS_ROLE_BYPASS="bypass"
 _GHRS_STATUS_SUCCESS="success"
 _GHRS_STATUS_FAILURE="failure"
@@ -94,6 +97,24 @@ gh_request_state_request_key() {
 	return $?
 }
 
+# Return an auth-independent invalidation identity. Request coalescing remains
+# credential-scoped, while a verified repository event fences stale envelopes
+# written by any rotated principal or API pool for the same canonical state.
+gh_request_state_invalidation_key() {
+	local repository="$1"
+	local operation="$2"
+	local projection="$3"
+	local identity="$4"
+	local host="${GH_HOST:-github.com}"
+	local material=""
+	[[ -n "$repository" && -n "$operation" && -n "$projection" && -n "$identity" ]] || return 1
+	material=$(printf '%s\034%s\034%s\034%s\034%s\034%s' \
+		"$_GHRS_INVALIDATION_KEY_PROJECTION" "$host" "$repository" \
+		"$operation" "$projection" "$identity")
+	_ghrs_digest "$material"
+	return $?
+}
+
 _ghrs_base_dir() {
 	local work_dir="${AIDEVOPS_WORK_DIR:-${HOME:+${HOME}/.aidevops/.agent-workspace/work}}"
 	local base_dir="${AIDEVOPS_GH_REQUEST_STATE_DIR:-${work_dir:+${work_dir}/github-request-state}}"
@@ -114,6 +135,87 @@ _ghrs_request_dir() {
 	(umask 077 && mkdir -p "$request_dir") 2>/dev/null || return 1
 	chmod 700 "${base_dir}/requests" "$request_dir" 2>/dev/null || return 1
 	printf '%s\n' "$request_dir"
+	return 0
+}
+
+_ghrs_invalidation_generation_valid() {
+	local generation="$1"
+	[[ "$generation" =~ ^[A-Fa-f0-9]{64}$ ]]
+	return $?
+}
+
+# Return the current invalidation generation for one exact request identity.
+# Missing markers map to a stable initial generation so pre-marker cache entries
+# remain compatible until the first explicit invalidation.
+gh_request_state_invalidation_generation_get() {
+	local key="$1"
+	local request_dir=""
+	local marker_file=""
+	local generation=""
+	[[ "$key" =~ ^[A-Fa-f0-9]{64}$ ]] || return 1
+	request_dir="$(_ghrs_request_dir "$key")" || return 1
+	marker_file="${request_dir}/invalidation.json"
+	if [[ ! -e "$marker_file" ]]; then
+		printf '%s\n' "$_GHRS_INVALIDATION_INITIAL"
+		return 0
+	fi
+	generation=$(jq -er --arg schema "$_GHRS_INVALIDATION_SCHEMA" --arg key "$key" '
+		select(.schema == $schema and .key == $key) |
+		select((.invalidated_at | type) == "number" and (.invalidated_at | floor) == .invalidated_at) |
+		.invalidation_generation
+	' "$marker_file" 2>/dev/null) || return 1
+	_ghrs_invalidation_generation_valid "$generation" || return 1
+	printf '%s\n' "$generation"
+	return 0
+}
+
+gh_request_state_invalidation_generation_is_current() {
+	local key="$1"
+	local generation="$2"
+	local current_generation=""
+	_ghrs_invalidation_generation_valid "$generation" || return 1
+	current_generation=$(gh_request_state_invalidation_generation_get "$key") || return 1
+	[[ "$current_generation" == "$generation" ]]
+	return $?
+}
+
+# Atomically advance one exact request identity before providers remove their
+# cache entry. Late writers retain the old generation in their envelopes and
+# therefore become safe misses even if they publish after the invalidation.
+gh_request_state_invalidate() {
+	local key="$1"
+	local request_dir=""
+	local marker_tmp=""
+	local generation=""
+	local now=""
+	local process_pid=""
+	[[ "$key" =~ ^[A-Fa-f0-9]{64}$ ]] || return 1
+	request_dir="$(_ghrs_request_dir "$key")" || return 1
+	now="$(_ghrs_now)"
+	process_pid="$(_ghrs_pid)" || return 1
+	[[ "$now" =~ ^[0-9]+$ && "$now" -gt 0 ]] || return 1
+	marker_tmp=$(mktemp "${request_dir}/.invalidation.XXXXXX" 2>/dev/null) || return 1
+	generation="$(_ghrs_digest "${key}:${now}:${process_pid}:${marker_tmp}")" || {
+		rm -f "$marker_tmp"
+		return 1
+	}
+	chmod 600 "$marker_tmp" 2>/dev/null || {
+		rm -f "$marker_tmp"
+		return 1
+	}
+	if ! jq -n --arg schema "$_GHRS_INVALIDATION_SCHEMA" --arg key "$key" \
+		--arg generation "$generation" --argjson invalidated_at "$now" \
+		'{schema:$schema,key:$key,invalidation_generation:$generation,
+		invalidated_at:$invalidated_at}' >"$marker_tmp"; then
+		rm -f "$marker_tmp"
+		return 1
+	fi
+	mv "$marker_tmp" "${request_dir}/invalidation.json" 2>/dev/null || {
+		rm -f "$marker_tmp"
+		return 1
+	}
+	rm -f "${request_dir}/outcome.json" 2>/dev/null || true
+	_ghrs_record invalidate
 	return 0
 }
 

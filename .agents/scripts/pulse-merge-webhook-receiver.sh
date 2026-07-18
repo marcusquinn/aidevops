@@ -13,11 +13,10 @@
 #   - Configuration loaded from .agents/configs/webhook-receiver.conf.
 #   - Secret loaded from the env var named in WEBHOOK_SECRET_ENV
 #     (e.g. GITHUB_WEBHOOK_SECRET, set via gopass or credentials.sh).
-#   - Embedded Python HTTP server (stdlib only) handles request loop:
-#     reads body, validates HMAC, parses JSON, prints ACTION lines on
-#     stdout that the bash parent reads via FIFO and dispatches.
-#   - Each ACTION line: "PROCESS_PR <slug> <pr_number>".
-#   - Unknown events / bad signatures → server returns 4xx, no ACTION.
+#   - Python HTTP server (stdlib only) handles the request loop, records
+#     authenticated delivery IDs, and prints versioned invalidation records
+#     before existing "PROCESS_PR <slug> <pr_number>" action lines.
+#   - Unknown events return 204; bad signatures return 401; neither mutates state.
 #
 # This split (Python parses, bash dispatches) keeps the gh + process_pr
 # call path identical to the polling routine — no duplicated merge logic.
@@ -35,7 +34,7 @@
 #   - Payload URL: https://<your-tunnel>/webhook (Cloudflare Tunnel etc.)
 #   - Content type: application/json
 #   - Secret: the value stored in WEBHOOK_SECRET_ENV
-#   - Events: Check suites, Pull request reviews, Pull requests
+#   - Events: Issues/comments, pull requests/reviews, checks/status/workflows
 #
 # Part of aidevops framework: https://aidevops.sh
 
@@ -72,6 +71,11 @@ _WEBHOOK_OVERRIDE_EVENTS="${WEBHOOK_HANDLED_EVENTS:-}"
 _WEBHOOK_OVERRIDE_MAX="${WEBHOOK_MAX_BODY_BYTES:-}"
 _WEBHOOK_OVERRIDE_SECRET_ENV="${WEBHOOK_SECRET_ENV:-}"
 _WEBHOOK_OVERRIDE_LOG="${WEBHOOK_LOG_FILE:-}"
+_WEBHOOK_OVERRIDE_LEDGER="${WEBHOOK_DELIVERY_LEDGER_FILE:-}"
+_WEBHOOK_OVERRIDE_LEDGER_TTL="${WEBHOOK_DELIVERY_TTL_SECONDS:-}"
+_WEBHOOK_OVERRIDE_LEDGER_MAX="${WEBHOOK_DELIVERY_MAX_ENTRIES:-}"
+_WEBHOOK_OVERRIDE_CONCURRENCY="${WEBHOOK_DISPATCH_MAX_CONCURRENCY:-}"
+_WEBHOOK_OVERRIDE_PROTOCOL="${WEBHOOK_ACTION_PROTOCOL_VERSION:-}"
 
 # shellcheck source=/dev/null
 source "$WEBHOOK_CONF"
@@ -82,6 +86,11 @@ source "$WEBHOOK_CONF"
 [[ -n "$_WEBHOOK_OVERRIDE_MAX" ]] && WEBHOOK_MAX_BODY_BYTES="$_WEBHOOK_OVERRIDE_MAX"
 [[ -n "$_WEBHOOK_OVERRIDE_SECRET_ENV" ]] && WEBHOOK_SECRET_ENV="$_WEBHOOK_OVERRIDE_SECRET_ENV"
 [[ -n "$_WEBHOOK_OVERRIDE_LOG" ]] && WEBHOOK_LOG_FILE="$_WEBHOOK_OVERRIDE_LOG"
+[[ -n "$_WEBHOOK_OVERRIDE_LEDGER" ]] && WEBHOOK_DELIVERY_LEDGER_FILE="$_WEBHOOK_OVERRIDE_LEDGER"
+[[ -n "$_WEBHOOK_OVERRIDE_LEDGER_TTL" ]] && WEBHOOK_DELIVERY_TTL_SECONDS="$_WEBHOOK_OVERRIDE_LEDGER_TTL"
+[[ -n "$_WEBHOOK_OVERRIDE_LEDGER_MAX" ]] && WEBHOOK_DELIVERY_MAX_ENTRIES="$_WEBHOOK_OVERRIDE_LEDGER_MAX"
+[[ -n "$_WEBHOOK_OVERRIDE_CONCURRENCY" ]] && WEBHOOK_DISPATCH_MAX_CONCURRENCY="$_WEBHOOK_OVERRIDE_CONCURRENCY"
+[[ -n "$_WEBHOOK_OVERRIDE_PROTOCOL" ]] && WEBHOOK_ACTION_PROTOCOL_VERSION="$_WEBHOOK_OVERRIDE_PROTOCOL"
 
 # Load credentials.sh (provides the webhook secret env var if not from gopass).
 if [[ -f "${HOME}/.config/aidevops/credentials.sh" ]]; then
@@ -90,6 +99,13 @@ if [[ -f "${HOME}/.config/aidevops/credentials.sh" ]]; then
 fi
 
 WEBHOOK_LOG_FILE="${WEBHOOK_LOG_FILE:-${HOME}/.aidevops/logs/pulse-merge-webhook.log}"
+WEBHOOK_HANDLED_EVENTS="${WEBHOOK_HANDLED_EVENTS:-check_run,check_suite,status,workflow_run,issues,issue_comment,pull_request,pull_request_review,pull_request_review_comment,pull_request_review_thread}"
+WEBHOOK_DELIVERY_LEDGER_FILE="${WEBHOOK_DELIVERY_LEDGER_FILE:-${HOME}/.aidevops/state/pulse-merge-webhook-deliveries.json}"
+WEBHOOK_DELIVERY_TTL_SECONDS="${WEBHOOK_DELIVERY_TTL_SECONDS:-604800}"
+WEBHOOK_DELIVERY_MAX_ENTRIES="${WEBHOOK_DELIVERY_MAX_ENTRIES:-4096}"
+WEBHOOK_DISPATCH_MAX_CONCURRENCY="${WEBHOOK_DISPATCH_MAX_CONCURRENCY:-4}"
+WEBHOOK_ACTION_PROTOCOL_VERSION="${WEBHOOK_ACTION_PROTOCOL_VERSION:-v1}"
+_WEBHOOK_INVALIDATION_FAILED=0
 mkdir -p "$(dirname "$WEBHOOK_LOG_FILE")"
 
 _whlog() {
@@ -105,6 +121,7 @@ _whlog() {
 # We never log the secret itself — only whether it is set.
 _resolve_secret() {
 	local env_var_name="${WEBHOOK_SECRET_ENV:-GITHUB_WEBHOOK_SECRET}"
+	[[ "$env_var_name" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || return 1
 	# shellcheck disable=SC2086
 	local secret_val="${!env_var_name:-}"
 	if [[ -z "$secret_val" ]]; then
@@ -117,6 +134,125 @@ _resolve_secret() {
 	return 0
 }
 
+_clear_webhook_secret_env() {
+	local env_var_name="${WEBHOOK_SECRET_ENV:-GITHUB_WEBHOOK_SECRET}"
+	[[ "$env_var_name" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || return 1
+	unset "$env_var_name"
+	return 0
+}
+
+_webhook_positive_integer() {
+	local value="$1"
+	[[ "$value" =~ ^[0-9]+$ && "$value" -gt 0 ]]
+	return $?
+}
+
+_webhook_valid_slug() {
+	local slug="$1"
+	local owner="${slug%%/*}"
+	local name="${slug#*/}"
+	[[ "$slug" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || return 1
+	[[ "$owner" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]*$ ]] || return 1
+	[[ "$name" != "." && "$name" != ".." ]]
+	return $?
+}
+
+_webhook_invalidate_collection() {
+	local kind="$1"
+	local slug="$2"
+	local helper="${SCRIPT_DIR}/pulse-batch-prefetch-helper.sh"
+	case "$kind" in
+	issues | prs) ;;
+	*) return 1 ;;
+	esac
+	_webhook_valid_slug "$slug" || return 1
+	[[ -x "$helper" ]] || return 1
+	if ! "$helper" invalidate-collection --kind "$kind" --slug "$slug" >/dev/null 2>>"$WEBHOOK_LOG_FILE"; then
+		return 1
+	fi
+	_whlog INFO "Invalidated canonical ${kind} snapshot for ${slug}"
+	return 0
+}
+
+_webhook_invalidate_checks() {
+	local slug="$1"
+	local sha="$2"
+	_webhook_valid_slug "$slug" || return 1
+	[[ "$sha" =~ ^[A-Fa-f0-9]{40}$ ]] || return 1
+	declare -F gh_pr_check_status_cache_invalidate >/dev/null 2>&1 || return 1
+	gh_pr_check_status_cache_invalidate "$slug" "$sha" || return 1
+	_whlog INFO "Invalidated exact-SHA check snapshot for ${slug}"
+	return 0
+}
+
+_webhook_wait_for_dispatch_slot() {
+	local max_concurrency="${WEBHOOK_DISPATCH_MAX_CONCURRENCY:-4}"
+	_webhook_positive_integer "$max_concurrency" || max_concurrency=4
+	while [[ "$(jobs -rp | wc -l)" -ge "$max_concurrency" ]]; do
+		sleep 0.2
+	done
+	return 0
+}
+
+_dispatch_webhook_action_line() {
+	local line="$1"
+	local verb="" version="" scope="" first="" second="" extra=""
+	case "$line" in
+	'#'*)
+		_whlog INFO "${line#'# '}"
+		[[ "$line" == '# accepted '* ]] && _WEBHOOK_INVALIDATION_FAILED=0
+		return 0
+		;;
+	'') return 0 ;;
+	esac
+	IFS=' ' read -r verb version scope first second extra <<<"$line"
+	case "${verb} ${version} ${scope}" in
+	"INVALIDATE v1 collection")
+		_WEBHOOK_INVALIDATION_FAILED=0
+		if [[ -n "$extra" ]] || ! _webhook_invalidate_collection "$first" "$second"; then
+			_WEBHOOK_INVALIDATION_FAILED=1
+			_whlog ERROR "Rejected or failed collection invalidation record"
+		fi
+		return 0
+		;;
+	"INVALIDATE v1 checks")
+		_WEBHOOK_INVALIDATION_FAILED=0
+		if [[ -n "$extra" ]] || ! _webhook_invalidate_checks "$first" "$second"; then
+			_WEBHOOK_INVALIDATION_FAILED=1
+			_whlog ERROR "Rejected or failed check invalidation record"
+		fi
+		return 0
+		;;
+	esac
+	if [[ "$verb" == "PROCESS_PR" && -n "$version" && -n "$scope" \
+		&& -z "$first" && -z "$second" && -z "$extra" ]]; then
+		local slug="$version"
+		local pr_number="$scope"
+		if ! _webhook_valid_slug "$slug" \
+			|| [[ ! "$pr_number" =~ ^[0-9]+$ || "$pr_number" -le 0 ]]; then
+			_whlog WARN "Malformed PROCESS_PR action"
+			return 0
+		fi
+		if [[ "$_WEBHOOK_INVALIDATION_FAILED" == "1" ]]; then
+			_whlog WARN "Skipped process_pr because canonical invalidation failed; polling remains active"
+			return 0
+		fi
+		_whlog INFO "Dispatching process_pr ${slug}#${pr_number}"
+		(
+			set +e
+			process_pr "$slug" "$pr_number"
+			_whlog INFO "process_pr ${slug}#${pr_number} returned ${?}"
+		) &
+		_webhook_wait_for_dispatch_slot
+		return 0
+	fi
+	if [[ "$verb" == "INVALIDATE" || "$verb" == "DELIVERY" ]]; then
+		_WEBHOOK_INVALIDATION_FAILED=1
+	fi
+	_whlog WARN "Unknown line from server"
+	return 0
+}
+
 # =============================================================================
 # Subcommand: --check (config + secret validation, no listener)
 # =============================================================================
@@ -125,8 +261,34 @@ cmd_check() {
 	local errors=0
 	printf 'webhook-receiver config: %s\n' "$WEBHOOK_CONF"
 	printf '  listen:  %s:%s\n' "${WEBHOOK_LISTEN_HOST:-127.0.0.1}" "${WEBHOOK_LISTEN_PORT:-9301}"
-	printf '  events:  %s\n' "${WEBHOOK_HANDLED_EVENTS:-check_suite,pull_request_review,pull_request}"
+	printf '  events:  %s\n' "${WEBHOOK_HANDLED_EVENTS}"
+	printf '  protocol: %s\n' "$WEBHOOK_ACTION_PROTOCOL_VERSION"
 	printf '  log:     %s\n' "$WEBHOOK_LOG_FILE"
+	printf '  ledger:  %s (ttl=%ss, max=%s)\n' \
+		"$WEBHOOK_DELIVERY_LEDGER_FILE" "$WEBHOOK_DELIVERY_TTL_SECONDS" "$WEBHOOK_DELIVERY_MAX_ENTRIES"
+	case "${WEBHOOK_LISTEN_HOST:-127.0.0.1}" in
+	127.0.0.1 | ::1) ;;
+	*)
+		printf '  listen:  INVALID — loopback host required\n' >&2
+		errors=$((errors + 1))
+		;;
+	esac
+	if [[ "$WEBHOOK_ACTION_PROTOCOL_VERSION" != "v1" ]]; then
+		printf '  protocol: INVALID — expected v1\n' >&2
+		errors=$((errors + 1))
+	fi
+	local numeric_value=""
+	for numeric_value in \
+		"${WEBHOOK_LISTEN_PORT:-9301}" \
+		"${WEBHOOK_MAX_BODY_BYTES:-1048576}" \
+		"$WEBHOOK_DELIVERY_TTL_SECONDS" \
+		"$WEBHOOK_DELIVERY_MAX_ENTRIES" \
+		"$WEBHOOK_DISPATCH_MAX_CONCURRENCY"; do
+		if ! _webhook_positive_integer "$numeric_value"; then
+			printf '  numeric config: INVALID (%s)\n' "$numeric_value" >&2
+			errors=$((errors + 1))
+		fi
+	done
 
 	local secret
 	secret=$(_resolve_secret)
@@ -158,21 +320,26 @@ cmd_check() {
 
 cmd_run() {
 	local secret
+	if [[ "$WEBHOOK_ACTION_PROTOCOL_VERSION" != "v1" ]]; then
+		printf 'webhook-receiver: unsupported action protocol %s\n' "$WEBHOOK_ACTION_PROTOCOL_VERSION" >&2
+		return 1
+	fi
 	secret=$(_resolve_secret)
 	if [[ -z "$secret" ]]; then
 		_whlog ERROR "Cannot start: webhook secret env var ${WEBHOOK_SECRET_ENV} not set"
 		printf 'webhook-receiver: secret %s not set; refusing to start\n' "${WEBHOOK_SECRET_ENV}" >&2
 		return 1
 	fi
+	_clear_webhook_secret_env || return 1
 
 	# Make config available to the Python child via env vars (avoid arg leakage).
 	export WEBHOOK_LISTEN_HOST="${WEBHOOK_LISTEN_HOST:-127.0.0.1}"
 	export WEBHOOK_LISTEN_PORT="${WEBHOOK_LISTEN_PORT:-9301}"
-	export WEBHOOK_HANDLED_EVENTS="${WEBHOOK_HANDLED_EVENTS:-check_suite,pull_request_review,pull_request}"
+	export WEBHOOK_HANDLED_EVENTS
 	export WEBHOOK_MAX_BODY_BYTES="${WEBHOOK_MAX_BODY_BYTES:-1048576}"
-	export WEBHOOK_LOG_FILE
-	# Pass the secret only via env to the python child (single-process; not exec'd).
-	export _PULSE_WEBHOOK_SECRET="$secret"
+	export WEBHOOK_LOG_FILE WEBHOOK_DELIVERY_LEDGER_FILE
+	export WEBHOOK_DELIVERY_TTL_SECONDS WEBHOOK_DELIVERY_MAX_ENTRIES
+	export WEBHOOK_ACTION_PROTOCOL_VERSION
 
 	_whlog INFO "Starting receiver on ${WEBHOOK_LISTEN_HOST}:${WEBHOOK_LISTEN_PORT} (events=${WEBHOOK_HANDLED_EVENTS})"
 
@@ -180,6 +347,8 @@ cmd_run() {
 	# callable from the dispatch loop below. We mirror pulse-merge-routine.sh.
 	# shellcheck source=/dev/null
 	source "${SCRIPT_DIR}/shared-constants.sh"
+	# shellcheck source=/dev/null
+	source "${SCRIPT_DIR}/shared-gh-wrappers-checks.sh"
 	# shellcheck source=/dev/null
 	source "${SCRIPT_DIR}/config-helper.sh" 2>/dev/null || true
 	# shellcheck source=/dev/null
@@ -195,47 +364,11 @@ cmd_run() {
 	# shellcheck source=/dev/null
 	source "${SCRIPT_DIR}/pulse-merge-feedback.sh"
 
-	# The Python server prints one ACTION line per accepted webhook to stdout:
-	#   PROCESS_PR <slug> <pr_number>
-	# Lines starting with "#" are diagnostic logs we forward to the log file.
-	# We pipe its stdout into a while-read loop that calls process_pr.
+	# Invalidation records are emitted before PROCESS_PR lines for each delivery.
+	# The secret is scoped only to the Python server process.
 	while IFS= read -r line; do
-		case "$line" in
-		'#'*)
-			_whlog INFO "${line#'# '}"
-			;;
-		PROCESS_PR\ *)
-			# Parse: PROCESS_PR <slug> <pr_number>
-			# shellcheck disable=SC2086
-			set -- $line
-			local _slug="${2:-}"
-			local _pr="${3:-}"
-			if [[ -z "$_slug" || -z "$_pr" ]]; then
-				_whlog WARN "Malformed ACTION line: ${line}"
-				continue
-			fi
-			_whlog INFO "Dispatching process_pr ${_slug}#${_pr}"
-			# Run in a subshell so a failure inside process_pr cannot
-			# crash the receiver loop (set -e considerations, etc.).
-			(
-				set +e
-				process_pr "$_slug" "$_pr"
-				_whlog INFO "process_pr ${_slug}#${_pr} returned ${?}"
-			) &
-			# Cap concurrency at 4 in-flight dispatches to avoid
-			# saturating the GitHub API on bursty webhook deliveries.
-			while [[ "$(jobs -rp | wc -l)" -ge 4 ]]; do
-				sleep 0.2
-			done
-			;;
-		'')
-			:
-			;;
-		*)
-			_whlog WARN "Unknown line from server: ${line}"
-			;;
-		esac
-	done < <(python3 -u "${SCRIPT_DIR}/pulse-merge-webhook-receiver.sh" --__server)
+		_dispatch_webhook_action_line "$line"
+	done < <(_PULSE_WEBHOOK_SECRET="$secret" python3 -u "${SCRIPT_DIR}/pulse-merge-webhook-server.py")
 
 	_whlog WARN "Server stdout loop exited"
 	wait
@@ -249,7 +382,7 @@ cmd_run() {
 # under the function-complexity gate. Stdout = ACTION protocol.
 
 cmd_server() {
-	exec python3 "${SCRIPT_DIR}/pulse-merge-webhook-server.py"
+	exec python3 -u "${SCRIPT_DIR}/pulse-merge-webhook-server.py"
 }
 
 # =============================================================================
@@ -274,9 +407,10 @@ Secret:
   Or in ~/.config/aidevops/credentials.sh (mode 600).
 
 Events handled:
-  - check_suite.completed (conclusion=success)
-  - pull_request_review.submitted (state in: approved, changes_requested)
-  - pull_request.labeled (auto-dispatch, coderabbit-nits-ok, ai-approved)
+  - Issue and issue-comment mutations invalidate the issue or PR collection.
+  - Pull-request and review mutations invalidate the PR collection.
+  - Check-run, check-suite, status, and workflow changes invalidate an exact SHA.
+  - Eligible successful checks, approvals, and merge labels may also call process_pr.
 
 Backstop:
   pulse-merge-routine.sh's 120s polling loop continues to run regardless
@@ -290,7 +424,7 @@ GitHub-side setup:
     - Payload URL: https://<your-tunnel>/webhook
     - Content type: application/json
     - Secret: same value as the env var above
-    - Events: Check suites, Pull request reviews, Pull requests
+    - Events: ${WEBHOOK_HANDLED_EVENTS}
 
 Logs:
   ${WEBHOOK_LOG_FILE}
@@ -312,7 +446,7 @@ main() {
 		cmd_check
 		;;
 	--__server)
-		# Internal: invoked by cmd_run via the python pipe.
+		# Internal diagnostic entry point for the Python server.
 		cmd_server
 		;;
 	help | -h | --help)
@@ -327,5 +461,7 @@ main() {
 	return 0
 }
 
-main "$@"
-exit $?
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+	main "$@"
+	exit $?
+fi

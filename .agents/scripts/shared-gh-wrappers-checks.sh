@@ -67,6 +67,8 @@ _GH_PR_CHECK_STATUS_PROJECTION="check-suites-aggregate/v1"
 _GH_PR_CHECK_STATUS_SOURCE="rest-check-suites"
 _GH_PR_CHECK_STATUS_NONE=none
 _GH_PR_CHECK_STATUS_CACHE_PUT_OK=0
+_GH_PR_CHECK_STATUS_FETCH_INVALIDATED=0
+_GH_PR_CHECK_STATUS_INVALIDATION_INITIAL="${_GHRS_INVALIDATION_INITIAL:-0000000000000000000000000000000000000000000000000000000000000000}"
 
 #######################################
 # Record an observational check-status cache decision without counting an HTTP
@@ -178,6 +180,47 @@ _gh_pr_check_status_cache_key() {
 	return 0
 }
 
+_gh_pr_check_status_request_key() {
+	local slug="$1"
+	local sha="$2"
+	declare -F gh_request_state_request_key >/dev/null 2>&1 || return 1
+	gh_request_state_request_key "$slug" check-suites-aggregate \
+		"$_GH_PR_CHECK_STATUS_PROJECTION" "$sha" rest-core
+	return $?
+}
+
+_gh_pr_check_status_invalidation_key() {
+	local slug="$1"
+	local sha="$2"
+	declare -F gh_request_state_invalidation_key >/dev/null 2>&1 || return 1
+	gh_request_state_invalidation_key "$slug" check-suites-aggregate \
+		"$_GH_PR_CHECK_STATUS_PROJECTION" "$sha"
+	return $?
+}
+
+_gh_pr_check_status_invalidation_generation() {
+	local slug="$1"
+	local sha="$2"
+	local request_key=""
+	if ! declare -F gh_request_state_invalidation_generation_get >/dev/null 2>&1; then
+		printf '%s\n' "$_GH_PR_CHECK_STATUS_INVALIDATION_INITIAL"
+		return 0
+	fi
+	request_key="$(_gh_pr_check_status_invalidation_key "$slug" "$sha")" || return 1
+	gh_request_state_invalidation_generation_get "$request_key"
+	return $?
+}
+
+_gh_pr_check_status_invalidation_generation_is_current() {
+	local slug="$1"
+	local sha="$2"
+	local generation="$3"
+	local invalidation_key=""
+	invalidation_key="$(_gh_pr_check_status_invalidation_key "$slug" "$sha")" || return 1
+	gh_request_state_invalidation_generation_is_current "$invalidation_key" "$generation"
+	return $?
+}
+
 #######################################
 # Resolve a private disposable cache path.
 # Args: $1=repo slug, $2=full head SHA
@@ -211,7 +254,7 @@ _gh_pr_check_status_cache_get() {
 		return 1
 	fi
 
-	local path="" auth_scope="" entry=""
+	local path="" auth_scope="" entry="" invalidation_generation=""
 	path="$(_gh_pr_check_status_cache_path "$slug" "$sha")" || {
 		_gh_pr_check_status_cache_record bypass
 		return 1
@@ -221,15 +264,22 @@ _gh_pr_check_status_cache_get() {
 		return 1
 	}
 	auth_scope="$(_gh_pr_check_status_cache_auth_scope)"
+	invalidation_generation="$(_gh_pr_check_status_invalidation_generation "$slug" "$sha")" || {
+		_gh_pr_check_status_cache_record invalid-invalidation-marker
+		return 1
+	}
 	entry=$(jq -er --arg schema "$_GH_PR_CHECK_STATUS_SCHEMA" \
 		--arg repository "$slug" --arg head_sha "$sha" \
 		--arg projection "$_GH_PR_CHECK_STATUS_PROJECTION" \
 		--arg auth_scope "$auth_scope" --arg source "$_GH_PR_CHECK_STATUS_SOURCE" \
-		--arg none_state "$_GH_PR_CHECK_STATUS_NONE" '
+		--arg none_state "$_GH_PR_CHECK_STATUS_NONE" \
+		--arg invalidation_generation "$invalidation_generation" \
+		--arg invalidation_initial "$_GH_PR_CHECK_STATUS_INVALIDATION_INITIAL" '
 		select(
 			.schema == $schema and .repository == $repository and
 			.head_sha == $head_sha and .projection == $projection and
 			.auth_scope == $auth_scope and .source == $source and
+			(.invalidation_generation // $invalidation_initial) == $invalidation_generation and
 			.validation == "validated" and
 			(.fetched_at | type == "number" and floor == .) and
 			(
@@ -264,17 +314,22 @@ _gh_pr_check_status_cache_get() {
 #######################################
 # Atomically store one validated aggregate observation. Concurrent writers use
 # unique temp files; last-writer-wins is safe for the same immutable identity.
-# Args: $1=repo slug, $2=full head SHA, $3=aggregate state
+# Args: $1=repo slug, $2=full head SHA, $3=aggregate state,
+#       $4=request invalidation generation (optional)
 #######################################
 _gh_pr_check_status_cache_put() {
 	local slug="$1"
 	local sha="$2"
 	local check_state="$3"
+	local invalidation_generation="${4:-}"
 	_GH_PR_CHECK_STATUS_CACHE_PUT_OK=0
 	[[ "${AIDEVOPS_GH_CHECK_STATUS_CACHE_DISABLE:-0}" != "1" ]] || return 0
 	_gh_pr_check_status_cache_identity_valid "$slug" "$sha" || return 0
 	local expiry_class="" path="" dir="" tmp="" now="" auth_scope=""
 	expiry_class="$(_gh_pr_check_status_cache_class "$check_state")" || return 0
+	if [[ -z "$invalidation_generation" ]]; then
+		invalidation_generation="$(_gh_pr_check_status_invalidation_generation "$slug" "$sha")" || return 0
+	fi
 	path="$(_gh_pr_check_status_cache_path "$slug" "$sha")" || return 0
 	dir="${path%/*}"
 	now="$(_gh_pr_check_status_cache_now)"
@@ -290,10 +345,12 @@ _gh_pr_check_status_cache_put() {
 		--arg projection "$_GH_PR_CHECK_STATUS_PROJECTION" \
 		--arg auth_scope "$auth_scope" --arg state "$check_state" \
 		--arg expiry_class "$expiry_class" --arg source "$_GH_PR_CHECK_STATUS_SOURCE" \
+		--arg invalidation_generation "$invalidation_generation" \
 		--argjson fetched_at "$now" \
 		'{schema:$schema,repository:$repository,head_sha:$head_sha,projection:$projection,
 		auth_scope:$auth_scope,state:$state,fetched_at:$fetched_at,
-		expiry_class:$expiry_class,source:$source,validation:"validated"}' >"$tmp"; then
+		expiry_class:$expiry_class,source:$source,validation:"validated",
+		invalidation_generation:$invalidation_generation}' >"$tmp"; then
 		rm -f "$tmp"
 		return 0
 	fi
@@ -315,8 +372,12 @@ gh_pr_check_status_cache_invalidate() {
 	local slug="$1"
 	local sha="$2"
 	local path=""
+	local request_key=""
+	request_key="$(_gh_pr_check_status_invalidation_key "$slug" "$sha")" || return 1
+	declare -F gh_request_state_invalidate >/dev/null 2>&1 || return 1
+	gh_request_state_invalidate "$request_key" || return 1
 	path="$(_gh_pr_check_status_cache_path "$slug" "$sha")" || return 0
-	rm -f "$path"
+	rm -f "$path" || return 1
 	_gh_pr_check_status_cache_record invalidate
 	return 0
 }
@@ -396,14 +457,22 @@ _gh_pr_check_status_rest_fetch() {
 # Fetch and publish one aggregate observation. A coordinated leader must still
 # own its generation immediately before the cache write.
 # Args: $1=repo slug, $2=full head SHA, $3=request key (optional),
-#       $4=generation (optional)
+#       $4=lease generation (optional), $5=invalidation generation (optional)
 #######################################
 _gh_pr_check_status_fetch_and_cache() {
 	local slug="$1"
 	local sha="$2"
 	local request_key="${3:-}"
 	local generation="${4:-}"
+	local invalidation_generation="${5:-}"
 	local check_state=""
+	_GH_PR_CHECK_STATUS_FETCH_INVALIDATED=0
+	if [[ -z "$request_key" ]]; then
+		request_key="$(_gh_pr_check_status_request_key "$slug" "$sha")" || return 1
+	fi
+	if [[ -z "$invalidation_generation" ]]; then
+		invalidation_generation=$(_gh_pr_check_status_invalidation_generation "$slug" "$sha") || return 1
+	fi
 	_gh_pr_check_status_cache_record fetch
 	if ! check_state="$(_gh_pr_check_status_rest_fetch "$slug" "$sha")"; then
 		_gh_pr_check_status_cache_record fetch-failed
@@ -413,9 +482,23 @@ _gh_pr_check_status_fetch_and_cache() {
 		_gh_pr_check_status_cache_record publish-fenced
 		return 1
 	fi
-	_gh_pr_check_status_cache_put "$slug" "$sha" "$check_state"
+	if ! _gh_pr_check_status_invalidation_generation_is_current "$slug" "$sha" "$invalidation_generation"; then
+		_GH_PR_CHECK_STATUS_FETCH_INVALIDATED=1
+		_gh_pr_check_status_cache_record publish-invalidated
+		return 1
+	fi
+	if [[ "${AIDEVOPS_GH_CHECK_STATUS_CACHE_DISABLE:-0}" == "1" ]]; then
+		printf '%s\n' "$check_state"
+		return 0
+	fi
+	_gh_pr_check_status_cache_put "$slug" "$sha" "$check_state" "$invalidation_generation"
 	if [[ -n "$request_key" && "$_GH_PR_CHECK_STATUS_CACHE_PUT_OK" != "1" ]]; then
 		_gh_pr_check_status_cache_record publish-failed
+		return 1
+	fi
+	if ! _gh_pr_check_status_invalidation_generation_is_current "$slug" "$sha" "$invalidation_generation"; then
+		_GH_PR_CHECK_STATUS_FETCH_INVALIDATED=1
+		_gh_pr_check_status_cache_record publish-invalidated
 		return 1
 	fi
 	printf '%s\n' "$check_state"
@@ -433,35 +516,48 @@ _gh_pr_check_status_singleflight() {
 	local sha="$2"
 	local request_key=""
 	local generation=""
+	local invalidation_generation=""
 	local check_state=""
+	local attempts=0
 	if [[ "${AIDEVOPS_GH_CHECK_STATUS_CACHE_DISABLE:-0}" == "1" ]] || ! declare -F gh_request_state_singleflight_begin >/dev/null 2>&1; then
 		_gh_pr_check_status_fetch_and_cache "$slug" "$sha" || printf 'none\n'
 		return 0
 	fi
-	request_key=$(gh_request_state_request_key "$slug" check-suites-aggregate "$_GH_PR_CHECK_STATUS_PROJECTION" "$sha" rest-core) || {
+	request_key="$(_gh_pr_check_status_request_key "$slug" "$sha")" || {
 		_gh_pr_check_status_fetch_and_cache "$slug" "$sha" || printf 'none\n'
 		return 0
 	}
-	gh_request_state_singleflight_begin "$request_key"
-	generation="$_GHRS_BEGIN_GENERATION"
-	case "$_GHRS_BEGIN_ROLE" in
+	while [[ "$attempts" -lt 2 ]]; do
+		attempts=$((attempts + 1))
+		gh_request_state_singleflight_begin "$request_key"
+		generation="$_GHRS_BEGIN_GENERATION"
+		case "$_GHRS_BEGIN_ROLE" in
 	leader)
 		if check_state="$(_gh_pr_check_status_cache_get "$slug" "$sha")"; then
 			gh_request_state_singleflight_finish "$request_key" "$generation" success || true
 			printf '%s\n' "$check_state"
 			return 0
 		fi
-		if _gh_pr_check_status_fetch_and_cache "$slug" "$sha" "$request_key" "$generation"; then
+		invalidation_generation=$(_gh_pr_check_status_invalidation_generation "$slug" "$sha") || invalidation_generation=""
+		if [[ -n "$invalidation_generation" ]] && \
+			_gh_pr_check_status_fetch_and_cache "$slug" "$sha" "$request_key" "$generation" "$invalidation_generation"; then
 			gh_request_state_singleflight_finish "$request_key" "$generation" success || true
 			return 0
 		fi
 		gh_request_state_singleflight_finish "$request_key" "$generation" failure || true
+		if [[ "$_GH_PR_CHECK_STATUS_FETCH_INVALIDATED" == "1" && "$attempts" -lt 2 ]]; then
+			continue
+		fi
 		printf 'none\n'
 		return 0
 		;;
 	follower-success)
 		_gh_pr_check_status_cache_record coalesced
-		_gh_pr_check_status_cache_get "$slug" "$sha" || printf 'none\n'
+		if _gh_pr_check_status_cache_get "$slug" "$sha"; then
+			return 0
+		fi
+		[[ "$attempts" -lt 2 ]] && continue
+		printf 'none\n'
 		return 0
 		;;
 	follower-failure | timeout)
@@ -473,7 +569,8 @@ _gh_pr_check_status_singleflight() {
 		_gh_pr_check_status_fetch_and_cache "$slug" "$sha" || printf 'none\n'
 		return 0
 		;;
-	esac
+		esac
+	done
 	printf 'none\n'
 	return 0
 }
