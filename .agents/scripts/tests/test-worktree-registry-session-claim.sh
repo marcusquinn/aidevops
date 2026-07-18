@@ -156,6 +156,56 @@ test_untrusted_session_cannot_roll_owner_pid() {
 	return 0
 }
 
+test_expected_owner_transfer_is_atomic() {
+	reset_registry
+	local wt_path="${TEST_ROOT}/expected-transfer"
+	mkdir -p "$wt_path"
+	register_worktree "$wt_path" "feature/expected-transfer" --owner-pid "$OWNER_PID" \
+		--session "prior-worker" --batch "generation-7" --task "22438"
+
+	local current_owner="" expected_pid="" expected_session="" expected_batch=""
+	local expected_task="" expected_created_at=""
+	current_owner=$(owner_info "$wt_path")
+	IFS='|' read -r expected_pid expected_session expected_batch expected_task expected_created_at <<<"$current_owner"
+
+	local rc=0
+	transfer_worktree_ownership_if_expected "$wt_path" "feature/expected-transfer" \
+		--owner-pid "$CLAIM_PID" --session "continuation-worker" --batch "generation-8" --task "22438" \
+		--expected-owner-pid "$expected_pid" --expected-session "$expected_session" \
+		--expected-batch "$expected_batch" --expected-task "$expected_task" \
+		--expected-created-at "$expected_created_at" || rc=1
+	[[ "$(owner_info "$wt_path")" == "${CLAIM_PID}|continuation-worker|generation-8|22438|"* ]] || rc=1
+	print_result "exact expected owner transfers atomically" "$rc"
+	return 0
+}
+
+test_expected_owner_transfer_rejects_concurrent_mutation() {
+	reset_registry
+	local wt_path="${TEST_ROOT}/concurrent-transfer"
+	mkdir -p "$wt_path"
+	register_worktree "$wt_path" "feature/concurrent-transfer" --owner-pid "$OWNER_PID" \
+		--session "prior-worker" --batch "generation-7" --task "22438"
+
+	local captured_owner="" expected_pid="" expected_session="" expected_batch=""
+	local expected_task="" expected_created_at=""
+	captured_owner=$(owner_info "$wt_path")
+	IFS='|' read -r expected_pid expected_session expected_batch expected_task expected_created_at <<<"$captured_owner"
+
+	register_worktree "$wt_path" "feature/concurrent-transfer" --owner-pid "$CLAIM_PID" \
+		--session "competing-worker" --batch "generation-8" --task "22438"
+	local rc=0
+	if transfer_worktree_ownership_if_expected "$wt_path" "feature/concurrent-transfer" \
+		--owner-pid "$OWNER_PID" --session "late-worker" --batch "generation-9" --task "22438" \
+		--expected-owner-pid "$expected_pid" --expected-session "$expected_session" \
+		--expected-batch "$expected_batch" --expected-task "$expected_task" \
+		--expected-created-at "$expected_created_at"; then
+		rc=1
+	fi
+	[[ "$(owner_info "$wt_path")" == "${CLAIM_PID}|competing-worker|generation-8|22438|"* ]] || rc=1
+	print_result "expected-owner transfer rejects concurrent registry mutation" "$rc"
+	return 0
+}
+
 main() {
 	start_live_pids
 	test_same_opencode_session_rolls_owner_pid
@@ -163,6 +213,8 @@ main() {
 	test_different_session_stays_blocked
 	test_empty_session_cannot_roll_owner_pid
 	test_untrusted_session_cannot_roll_owner_pid
+	test_expected_owner_transfer_is_atomic
+	test_expected_owner_transfer_rejects_concurrent_mutation
 	printf 'Results: %s/%s passed, %s failed\n' "$((TESTS_RUN - TESTS_FAILED))" "$TESTS_RUN" "$TESTS_FAILED"
 	[[ "$TESTS_FAILED" -eq 0 ]] && return 0
 	return 1
