@@ -8,6 +8,7 @@ _PULSE_MERGE_REQUIRED_CHECKS_LOADED=1
 PMRC_CHECK_COMPLETED="completed"
 PMRC_CHECK_SUCCESS="success"
 PMRC_CHECK_FAILURE="failure"
+PMRC_BOOL_TRUE="true"
 PMRC_MAINTAINER_GATE="maintainer-gate"
 PMRC_MAINTAINER_GATE_DISPLAY="Maintainer Review & Assignee Gate"
 PMRC_MAINTAINER_GATE_WORKFLOW="gate / Maintainer Review & Assignee Gate"
@@ -140,10 +141,53 @@ _pmrc_snapshot_bot_activity_json() {
 	return 0
 }
 
+#######################################
+# Resolve whether active rulesets applying to a PR base branch require every
+# review thread to be resolved. GitHub exposes the effective rules for a branch,
+# so this does not rely on user-defined ruleset names or duplicate ref matching.
+#
+# Args: $1=repo_slug, $2=base_branch
+# Stdout: true or false
+# Returns: 0=requirement resolved, 1=API/parse error
+#######################################
+_pmrc_review_thread_resolution_required() {
+	local repo_slug="$1"
+	local base_branch="$2"
+	local encoded_branch="" rules_json="" required=""
+	local log_target="${LOGFILE:-/dev/stderr}"
+
+	[[ -n "$repo_slug" && -n "$base_branch" ]] || return 1
+	encoded_branch=$(jq -nr --arg branch "$base_branch" '$branch | @uri') || return 1
+	[[ -n "$encoded_branch" ]] || return 1
+	rules_json=$(_pmrc_gh_read gh api "repos/${repo_slug}/rules/branches/${encoded_branch}" 2>/dev/null) || {
+		echo "[pulse-merge] pre-merge snapshot: effective rules fetch failed for ${repo_slug} branch ${base_branch} — failing closed (GH#28130)" >>"$log_target"
+		return 1
+	}
+	required=$(printf '%s' "$rules_json" | jq -r '
+		if type != "array" then error("effective rules response must be an array")
+		else [
+			.[]?
+			| select(.type == "pull_request")
+			| (.parameters?.required_review_thread_resolution? // false)
+		] | any
+		end
+	' 2>>"$log_target") || {
+		echo "[pulse-merge] pre-merge snapshot: effective rules parse failed for ${repo_slug} branch ${base_branch} — failing closed (GH#28130)" >>"$log_target"
+		return 1
+	}
+	case "$required" in
+	true | false) printf '%s\n' "$required" ;;
+	*) return 1 ;;
+	esac
+	return 0
+}
+
 _pmrc_snapshot_review_threads_clear() {
 	local repo_slug="$1"
 	local pr_number="$2"
-	local owner="${repo_slug%%/*}" name="${repo_slug##*/}" response="" count="" has_next=""
+	local base_branch="$3"
+	local owner="${repo_slug%%/*}" name="${repo_slug##*/}" response="" counts="" has_next=""
+	local total_count="" bot_count="" resolution_required=""
 	local bot_re="coderabbitai|gemini-code-assist|augment-code|augmentcode|copilot"
 
 	# shellcheck disable=SC2016
@@ -164,14 +208,27 @@ _pmrc_snapshot_review_threads_clear() {
 	fi
 	has_next=$(printf '%s' "$response" | jq -r '.data.repository.pullRequest.reviewThreads.pageInfo.hasNextPage // false') || return 1
 	[[ "$has_next" == "false" ]] || return 1
-	count=$(printf '%s' "$response" | jq -r --arg bots "$bot_re" '[
-		.data.repository.pullRequest.reviewThreads.nodes[]?
-		| select((.isResolved // false) == false)
-		| select((.comments.nodes[0].author.login // "") | test($bots; "i"))
-	] | length') || return 1
-	[[ "$count" =~ ^[0-9]+$ ]] || return 1
-	if [[ "$count" -gt 0 ]]; then
-		echo "[pulse-merge] pre-merge snapshot: PR #${pr_number} in ${repo_slug} has ${count} unresolved review-bot thread(s) — merge blocked until resolved or classified (GH#27137)" >>"$LOGFILE"
+	counts=$(printf '%s' "$response" | jq -c --arg bots "$bot_re" '
+		[.data.repository.pullRequest.reviewThreads.nodes[]?
+		| select((.isResolved // false) == false)] as $unresolved
+		| {
+			total: ($unresolved | length),
+			bots: ([$unresolved[]
+				| select((.comments.nodes[0].author.login // "") | test($bots; "i"))
+			] | length)
+		}
+	') || return 1
+	total_count=$(jq -r '.total' <<<"$counts") || return 1
+	bot_count=$(jq -r '.bots' <<<"$counts") || return 1
+	[[ "$total_count" =~ ^[0-9]+$ && "$bot_count" =~ ^[0-9]+$ ]] || return 1
+	if [[ "$bot_count" -gt 0 ]]; then
+		echo "[pulse-merge] pre-merge snapshot: PR #${pr_number} in ${repo_slug} has ${bot_count} unresolved review-bot thread(s) — merge blocked until resolved or classified (GH#27137)" >>"$LOGFILE"
+		return 1
+	fi
+	[[ "$total_count" -gt 0 ]] || return 0
+	resolution_required=$(_pmrc_review_thread_resolution_required "$repo_slug" "$base_branch") || return 1
+	if [[ "$resolution_required" == "$PMRC_BOOL_TRUE" ]]; then
+		echo "[pulse-merge] pre-merge snapshot: PR #${pr_number} in ${repo_slug} has ${total_count} unresolved review thread(s), and branch ${base_branch} requires thread resolution — merge blocked (GH#28130)" >>"$LOGFILE"
 		return 1
 	fi
 	return 0
@@ -349,13 +406,13 @@ _pmrc_snapshot_checks_acceptable() {
 		if [[ "$family" == "$PMRC_MAINTAINER_GATE" ]]; then
 			echo "[pulse-merge] pre-merge snapshot: maintainer-gate family is terminal-${conclusion} for PR #${pr_number} in ${repo_slug}; aliases=${members}, required=${required} — merge blocked" >>"$LOGFILE"
 			blockers=$((blockers + 1))
-		elif [[ "$required" == "true" ]] &&
+		elif [[ "$required" == "$PMRC_BOOL_TRUE" ]] &&
 			declare -F _ci_check_url_has_infra_failure_log >/dev/null 2>&1 &&
 			_ci_check_url_has_infra_failure_log "$repo_slug" "$link"; then
 			_pmrc_rerun_infrastructure_check "$repo_slug" "$pr_number" "$name" "$link" || true
 			echo "[pulse-merge] pre-merge snapshot: required check '${name}' has a proven infrastructure failure for PR #${pr_number} in ${repo_slug} — code repair suppressed; merge blocked pending rerun" >>"$LOGFILE"
 			blockers=$((blockers + 1))
-		elif [[ "$required" == "true" ]]; then
+		elif [[ "$required" == "$PMRC_BOOL_TRUE" ]]; then
 			echo "[pulse-merge] pre-merge snapshot: required check '${name}' is terminal-${conclusion} for PR #${pr_number} in ${repo_slug} (GH#27137)" >>"$LOGFILE"
 			blocking_names="${blocking_names}${name}"$'\n'
 			blockers=$((blockers + 1))
@@ -448,11 +505,12 @@ _pulse_merge_preflight_snapshot_gate() {
 	local pr_number="$2"
 	local expected_head_sha="$3"
 	local live_gate_evidence="${_PULSE_REVIEW_GATE_EVIDENCE:-}"
-	local pr_json="" current_head_sha="" required_contexts="" checks_json="" activity_json=""
+	local pr_json="" current_head_sha="" base_branch="" required_contexts="" checks_json="" activity_json=""
 	_PULSE_MERGE_PREFLIGHT_BLOCKING_CHECKS_JSON="[]"
 
 	pr_json=$(_pmrc_gh_read gh api "repos/${repo_slug}/pulls/${pr_number}" 2>/dev/null) || return 1
 	current_head_sha=$(jq -r '.head.sha // ""' <<<"$pr_json" 2>/dev/null) || return 1
+	base_branch=$(jq -r '.base.ref // ""' <<<"$pr_json" 2>/dev/null) || return 1
 	if [[ -z "$current_head_sha" || "$current_head_sha" != "$expected_head_sha" ]]; then
 		echo "[pulse-merge] pre-merge snapshot: head changed for PR #${pr_number} in ${repo_slug} (expected=${expected_head_sha:-unknown}, current=${current_head_sha:-unknown}) — prior gate state revoked (GH#27137)" >>"$LOGFILE"
 		return 1
@@ -462,10 +520,10 @@ _pulse_merge_preflight_snapshot_gate() {
 	activity_json=$(_pmrc_snapshot_bot_activity_json "$repo_slug" "$pr_number") || return 1
 	_pmrc_review_evidence_permits_advisory "$live_gate_evidence" "$repo_slug" "$pr_number" "$current_head_sha" || live_gate_evidence=""
 	_pmrc_snapshot_review_gate_fresh "$repo_slug" "$pr_number" "$checks_json" "$activity_json" "$live_gate_evidence" || return 1
-	_pmrc_snapshot_review_threads_clear "$repo_slug" "$pr_number" || return 1
+	_pmrc_snapshot_review_threads_clear "$repo_slug" "$pr_number" "$base_branch" || return 1
 	_pmrc_snapshot_checks_acceptable "$repo_slug" "$pr_number" "$checks_json" "$required_contexts" "$live_gate_evidence" "$current_head_sha" || return 1
 	_pmrc_snapshot_quiet_period_passes "$repo_slug" "$pr_number" "$checks_json" "$activity_json" || return 1
-	echo "[pulse-merge] pre-merge snapshot: current head ${current_head_sha:0:12}, fresh review gate, resolved bot threads, terminal checks, and quiet period verified for PR #${pr_number} in ${repo_slug} (GH#27137)" >>"$LOGFILE"
+	echo "[pulse-merge] pre-merge snapshot: current head ${current_head_sha:0:12}, fresh review gate, merge-policy-compatible review threads, terminal checks, and quiet period verified for PR #${pr_number} in ${repo_slug} (GH#27137)" >>"$LOGFILE"
 	return 0
 }
 

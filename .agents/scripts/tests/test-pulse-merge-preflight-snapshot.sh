@@ -47,6 +47,33 @@ _ci_check_url_has_infra_failure_log() {
 	return $?
 }
 
+stub_review_threads() {
+	if [[ "$SNAPSHOT_MODE" == "unresolved" ]]; then
+		printf '%s\n' '{"data":{"repository":{"pullRequest":{"reviewThreads":{"pageInfo":{"hasNextPage":false},"nodes":[{"isResolved":false,"comments":{"nodes":[{"author":{"login":"gemini-code-assist[bot]"}}]}}]}}}}}'
+	elif [[ "$SNAPSHOT_MODE" == human_* ]]; then
+		printf '%s\n' '{"data":{"repository":{"pullRequest":{"reviewThreads":{"pageInfo":{"hasNextPage":false},"nodes":[{"isResolved":false,"comments":{"nodes":[{"author":{"login":"human-reviewer"}}]}}]}}}}}'
+	else
+		printf '%s\n' '{"data":{"repository":{"pullRequest":{"reviewThreads":{"pageInfo":{"hasNextPage":false},"nodes":[]}}}}}'
+	fi
+	return 0
+}
+
+stub_effective_rules() {
+	local endpoint="$1"
+	if [[ "$SNAPSHOT_MODE" == "human_rules_error" ]]; then
+		return 1
+	elif [[ "$SNAPSHOT_MODE" == "human_rules_malformed" ]]; then
+		printf '%s\n' '{"unexpected":"object"}'
+	elif [[ "$SNAPSHOT_MODE" == "human_required_slash" && "$endpoint" != "repos/owner/repo/rules/branches/release%2F1.x" ]]; then
+		return 1
+	elif [[ "$SNAPSHOT_MODE" == "human_required" || "$SNAPSHOT_MODE" == "human_required_slash" ]]; then
+		printf '%s\n' '[{"type":"pull_request","ruleset_source":"arbitrary-policy-name","parameters":{"required_review_thread_resolution":true}}]'
+	else
+		printf '%s\n' '[{"type":"pull_request","parameters":{"required_review_thread_resolution":false}}]'
+	fi
+	return 0
+}
+
 gh() {
 	local command="$1"
 	local endpoint="${2:-}"
@@ -57,21 +84,23 @@ gh() {
 	[[ "$command" == "api" ]] || return 1
 
 	if [[ "$endpoint" == "graphql" ]]; then
-		if [[ "$SNAPSHOT_MODE" == "unresolved" ]]; then
-			printf '%s\n' '{"data":{"repository":{"pullRequest":{"reviewThreads":{"pageInfo":{"hasNextPage":false},"nodes":[{"isResolved":false,"comments":{"nodes":[{"author":{"login":"gemini-code-assist[bot]"}}]}}]}}}}}'
-		else
-			printf '%s\n' '{"data":{"repository":{"pullRequest":{"reviewThreads":{"pageInfo":{"hasNextPage":false},"nodes":[]}}}}}'
-		fi
-		return 0
+		stub_review_threads
+		return $?
 	fi
 
 	case "$endpoint" in
 	repos/owner/repo/pulls/7)
 		if [[ "$SNAPSHOT_MODE" == "new_head" ]]; then
-			printf '%s\n' '{"head":{"sha":"sha-new"}}'
+			printf '%s\n' '{"head":{"sha":"sha-new"},"base":{"ref":"main"}}'
+		elif [[ "$SNAPSHOT_MODE" == "human_required_slash" ]]; then
+			printf '%s\n' '{"head":{"sha":"sha-reviewed"},"base":{"ref":"release/1.x"}}'
 		else
-			printf '%s\n' '{"head":{"sha":"sha-reviewed"}}'
+			printf '%s\n' '{"head":{"sha":"sha-reviewed"},"base":{"ref":"main"}}'
 		fi
+		;;
+	repos/owner/repo/rules/branches/*)
+		stub_effective_rules "$endpoint"
+		return $?
 		;;
 	*check-runs*)
 		local required_conclusion="success" required_url="" broad_status="completed" broad_conclusion="success"
@@ -155,6 +184,22 @@ assert_gate() {
 	fi
 	printf 'FAIL %s (expected rc=%s, actual rc=%s)\n' "$description" "$expected_rc" "$rc"
 	TESTS_FAILED=$((TESTS_FAILED + 1))
+	return 0
+}
+
+assert_human_review_thread_rules() {
+	assert_gate "unresolved human thread blocks when effective rules require resolution" human_required 1
+	if grep -q "requires thread resolution" "$LOGFILE"; then
+		printf 'PASS required human thread blocker is audited\n'
+	else
+		printf 'FAIL required human thread blocker is audited\n'
+		TESTS_FAILED=$((TESTS_FAILED + 1))
+	fi
+	TESTS_RUN=$((TESTS_RUN + 1))
+	assert_gate "unresolved human thread passes when effective rules do not require resolution" human_not_required 0
+	assert_gate "required human thread supports slash-containing base branches" human_required_slash 1
+	assert_gate "effective-rules API failure with unresolved human thread fails closed" human_rules_error 1
+	assert_gate "malformed effective-rules response with unresolved human thread fails closed" human_rules_malformed 1
 	return 0
 }
 
@@ -289,6 +334,7 @@ main() {
 	fi
 	TESTS_RUN=$((TESTS_RUN + 1))
 	assert_gate "unresolved late inline finding blocks merge" unresolved 1
+	assert_human_review_thread_rules
 	assert_gate "late review activity invalidates stale gate success" stale_gate 1
 	_PULSE_REVIEW_GATE_EVIDENCE=""
 	assert_gate "missing status gate fails closed without live evidence" no_status_gate 1

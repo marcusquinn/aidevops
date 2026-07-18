@@ -84,8 +84,12 @@ test_snapshot_review_threads_fail_closed_on_missing_pr_data() {
 		"jq -e '.data.repository.pullRequest != null' >/dev/null"
 	_assert_not_contains_literal "review thread pagination does not hide jq diagnostics" \
 		"jq -r '.data.repository.pullRequest.reviewThreads.pageInfo.hasNextPage // false' 2>/dev/null"
-	_assert_contains_literal "review thread count preserves jq diagnostics" \
-		"] | length') || return 1"
+	_assert_contains_literal "review thread counts preserve jq diagnostics" \
+		"counts=\$(printf '%s' \"\$response\" | jq -c --arg bots \"\$bot_re\" '"
+	_assert_contains_literal "effective rules inspect the exact thread-resolution parameter" \
+		".parameters?.required_review_thread_resolution? // false"
+	_assert_not_contains_literal "thread-resolution policy does not rely on ruleset names" \
+		"thread.*resolut"
 	return 0
 }
 
