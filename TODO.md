@@ -4665,3 +4665,5 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [ ] t18158 Add fail-closed cross-store storage inventory reporting #enhancement ref:GH#28149
 
 - [ ] t18159 Bound runtime-bundle growth without weakening leases or rollback #enhancement ref:GH#28150
+
+- [ ] t18160 Bound observability growth while preserving append-only audit evidence #enhancement ref:GH#28151
