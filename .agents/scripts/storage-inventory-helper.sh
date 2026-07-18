@@ -9,10 +9,22 @@ if [[ -f "$SCRIPT_DIR/shared-constants.sh" ]]; then
 	# shellcheck source=shared-constants.sh
 	source "$SCRIPT_DIR/shared-constants.sh"
 fi
+OPENCODE_STORAGE_PROBES_AVAILABLE=0
+if [[ -f "$SCRIPT_DIR/opencode-db-safety-lib.sh" ]]; then
+	# shellcheck source=opencode-db-safety-lib.sh
+	source "$SCRIPT_DIR/opencode-db-safety-lib.sh"
+	OPENCODE_STORAGE_PROBES_AVAILABLE=1
+fi
 
-STORAGE_SCHEMA_VERSION=1
+STORAGE_SCHEMA_VERSION=2
 STORAGE_SIZE_TIMEOUT_TENTHS="${AIDEVOPS_STORAGE_SIZE_TIMEOUT_TENTHS:-20}"
 STORAGE_DU_COMMAND="${AIDEVOPS_STORAGE_DU_COMMAND:-du}"
+STORAGE_UNKNOWN="unknown"
+STORAGE_PROTECTED="protected"
+STORAGE_JOINT="joint"
+STORAGE_ACTIVE="active"
+STORAGE_ARCHIVE="archive"
+STORAGE_PRODUCER_OPENCODE="opencode"
 
 _storage_usage() {
 	cat <<'USAGE'
@@ -80,18 +92,17 @@ _storage_measure_path() {
 	return 0
 }
 
-_storage_emit_record() {
+_storage_emit_measured_record() {
 	local store_id="$1"
 	local producer="$2"
 	local display_path="$3"
-	local actual_path="$4"
-	local owner="$5"
-	local safety_class="$6"
-	local policy="$7"
-	local disposition="$8"
-	local protection_reason="$9"
-	local next_action="${10}"
-	local measured=""
+	local owner="$4"
+	local safety_class="$5"
+	local policy="$6"
+	local disposition="$7"
+	local protection_reason="$8"
+	local next_action="$9"
+	local measured="${10}"
 	local total_bytes="null"
 	local confidence="unavailable"
 	local error=""
@@ -99,7 +110,6 @@ _storage_emit_record() {
 	local reclaimable_bytes=0
 	local unknown_bytes="null"
 
-	measured=$(_storage_measure_path "$actual_path")
 	IFS='|' read -r total_bytes confidence error <<<"$measured"
 	if [[ "$total_bytes" != "null" ]]; then
 		case "$disposition" in
@@ -139,13 +149,182 @@ _storage_emit_record() {
 	return 0
 }
 
+_storage_emit_record() {
+	local store_id="$1"
+	local producer="$2"
+	local display_path="$3"
+	local actual_path="$4"
+	local owner="$5"
+	local safety_class="$6"
+	local policy="$7"
+	local disposition="$8"
+	local protection_reason="$9"
+	local next_action="${10}"
+	local measured=""
+
+	measured=$(_storage_measure_path "$actual_path")
+	_storage_emit_measured_record "$store_id" "$producer" "$display_path" "$owner" \
+		"$safety_class" "$policy" "$disposition" "$protection_reason" "$next_action" "$measured"
+	return 0
+}
+
+_storage_measure_group() {
+	local total_bytes=0
+	local path=""
+	local measured=""
+	local path_bytes=""
+	local confidence=""
+	local error=""
+	local saw_path=0
+
+	for path in "$@"; do
+		measured=$(_storage_measure_path "$path")
+		IFS='|' read -r path_bytes confidence error <<<"$measured"
+		if [[ "$path_bytes" == "null" ]]; then
+			printf 'null|unavailable|%s' "${error:-component-unavailable}"
+			return 0
+		fi
+		if [[ "$error" != "missing" ]]; then
+			saw_path=1
+		fi
+		total_bytes=$((total_bytes + path_bytes))
+	done
+	if [[ "$saw_path" -eq 0 ]]; then
+		printf '0|exact|missing'
+	else
+		printf '%s|exact|' "$total_bytes"
+	fi
+	return 0
+}
+
+_storage_opencode_residual_measurement() {
+	local root_path="$1"
+	shift
+	local root_measure=""
+	local root_bytes=""
+	local root_confidence=""
+	local root_error=""
+	local known_bytes=0
+	local component_path=""
+	local component_measure=""
+	local component_bytes=""
+	local component_confidence=""
+	local component_error=""
+
+	root_measure=$(_storage_measure_path "$root_path")
+	IFS='|' read -r root_bytes root_confidence root_error <<<"$root_measure"
+	if [[ "$root_bytes" == "null" ]]; then
+		printf 'null|unavailable|%s' "${root_error:-root-unavailable}"
+		return 0
+	fi
+	for component_path in "$@"; do
+		if [[ "$component_path" != "$root_path" && "$component_path" != "$root_path/"* ]]; then
+			continue
+		fi
+		component_measure=$(_storage_measure_path "$component_path")
+		IFS='|' read -r component_bytes component_confidence component_error <<<"$component_measure"
+		if [[ "$component_bytes" == "null" ]]; then
+			printf 'null|unavailable|known-component-unavailable'
+			return 0
+		fi
+		known_bytes=$((known_bytes + component_bytes))
+	done
+	root_bytes=$((root_bytes - known_bytes))
+	[[ "$root_bytes" -ge 0 ]] || root_bytes=0
+	printf '%s|estimated|' "$root_bytes"
+	return 0
+}
+
+_storage_opencode_records() {
+	local data_root="${AIDEVOPS_OPENCODE_DATA_DIR:-${HOME}/.local/share/opencode}"
+	local active_db="${AIDEVOPS_OPENCODE_DB_PATH:-${OPENCODE_DB_PATH:-${OPENCODE_DB:-${data_root}/opencode.db}}}"
+	local active_dir="${active_db%/*}"
+	local archive_db=""
+	local legacy_path="${data_root}/storage"
+	local tool_path="${data_root}/tool"
+	local active_measure=""
+	local wal_measure=""
+	local archive_measure=""
+	local legacy_measure=""
+	local tool_measure=""
+	local residual_measure=""
+	local active_schema="$STORAGE_UNKNOWN"
+	local archive_schema="$STORAGE_UNKNOWN"
+	local holder_count="$STORAGE_UNKNOWN"
+	local wal_state="$STORAGE_UNKNOWN"
+	local active_class="$STORAGE_ACTIVE"
+	local active_disposition="$STORAGE_PROTECTED"
+	local active_reason="OpenCode-owned logical sessions and live SQLite pages are never cleanup candidates"
+	local archive_class="$STORAGE_ARCHIVE"
+	local archive_disposition="$STORAGE_PROTECTED"
+	local archive_reason="archive retention and integrity require explicit OpenCode-aware verification"
+	local wal_reason="idle snapshot only; maintenance still requires holder and checkpoint evidence"
+
+	if [[ "$active_dir" == "$active_db" ]]; then
+		active_dir="."
+	fi
+	archive_db="${AIDEVOPS_OPENCODE_ARCHIVE_DB:-${OPENCODE_ARCHIVE_DB:-${active_dir}/opencode-archive.db}}"
+	active_measure=$(_storage_measure_group "$active_db")
+	wal_measure=$(_storage_measure_group "${active_db}-wal" "${active_db}-shm")
+	archive_measure=$(_storage_measure_group "$archive_db" "${archive_db}-wal" "${archive_db}-shm")
+	legacy_measure=$(_storage_measure_group "$legacy_path")
+	tool_measure=$(_storage_measure_group "$tool_path")
+	residual_measure=$(_storage_opencode_residual_measurement "$data_root" \
+		"$active_db" "${active_db}-wal" "${active_db}-shm" \
+		"$archive_db" "${archive_db}-wal" "${archive_db}-shm" "$legacy_path" "$tool_path")
+
+	if [[ "$OPENCODE_STORAGE_PROBES_AVAILABLE" -eq 1 ]]; then
+		active_schema=$(opencode_db_schema_state "$active_db")
+		archive_schema=$(opencode_db_schema_state "$archive_db")
+		holder_count=$(opencode_db_holder_count "$active_db" "${AIDEVOPS_STORAGE_LSOF_COMMAND:-lsof}")
+		wal_state=$(opencode_db_wal_state "$active_db" "${AIDEVOPS_STORAGE_WAL_SAMPLE_DELAY_SECONDS:-0.1}")
+	fi
+	if [[ "$active_schema" == "$STORAGE_UNKNOWN" ]]; then
+		active_class="$STORAGE_UNKNOWN"
+		active_disposition="$STORAGE_UNKNOWN"
+		active_reason="active database schema is unavailable; all bytes remain unknown and untouched"
+	fi
+	if [[ "$archive_schema" == "$STORAGE_UNKNOWN" ]]; then
+		archive_class="$STORAGE_UNKNOWN"
+		archive_disposition="$STORAGE_UNKNOWN"
+		archive_reason="archive schema is unavailable; all bytes remain unknown and untouched"
+	fi
+	if [[ "$holder_count" =~ ^[0-9]+$ && "$holder_count" -gt 0 ]]; then
+		wal_reason="active database holder detected; WAL and shared-memory bytes are protected"
+	elif [[ "$wal_state" == "changing" ]]; then
+		wal_reason="WAL changed during observation; active SQLite state is protected"
+	elif [[ "$holder_count" == "$STORAGE_UNKNOWN" || "$wal_state" == "$STORAGE_UNKNOWN" ]]; then
+		wal_reason="holder or WAL state is unavailable; active SQLite bytes are protected"
+	fi
+
+	_storage_emit_measured_record "opencode-active-db" "$STORAGE_PRODUCER_OPENCODE" "OpenCode active database" "$STORAGE_JOINT" \
+		"$active_class" "logical session retention is OpenCode-owned" "$active_disposition" "$active_reason" \
+		"Use aidevops opencode-db report; do not select sessions by age or size" "$active_measure"
+	_storage_emit_measured_record "opencode-active-wal" "$STORAGE_PRODUCER_OPENCODE" "OpenCode active WAL/SHM" "$STORAGE_JOINT" \
+		"$STORAGE_ACTIVE" "checkpoint and VACUUM only after idle-holder evidence" "$STORAGE_PROTECTED" "$wal_reason" \
+		"Close OpenCode holders, then use aidevops opencode-db maintain" "$wal_measure"
+	_storage_emit_measured_record "opencode-archive" "aidevops-opencode-archive" "OpenCode archive database" "$STORAGE_JOINT" \
+		"$archive_class" "archive data is retained; no generic deletion contract" "$archive_disposition" "$archive_reason" \
+		"Inspect with aidevops opencode-db sessions --include-archive" "$archive_measure"
+	_storage_emit_measured_record "opencode-legacy" "$STORAGE_PRODUCER_OPENCODE" "OpenCode legacy storage" "$STORAGE_UNKNOWN" \
+		"$STORAGE_UNKNOWN" "legacy format lifecycle is owned upstream" "$STORAGE_UNKNOWN" "legacy format ownership or migration state is unproved" \
+		"Use an upstream OpenCode migration/export path; leave data untouched" "$legacy_measure"
+	_storage_emit_measured_record "opencode-tool-output" "$STORAGE_PRODUCER_OPENCODE" "OpenCode tool output" "$STORAGE_UNKNOWN" \
+		"$STORAGE_UNKNOWN" "tool-output lifecycle is owned upstream" "$STORAGE_UNKNOWN" "tool output may be referenced by logical sessions" \
+		"Use OpenCode-owned controls; no aidevops cleanup is available" "$tool_measure"
+	_storage_emit_measured_record "opencode-unclassified" "$STORAGE_PRODUCER_OPENCODE" "Other OpenCode application data" "$STORAGE_UNKNOWN" \
+		"$STORAGE_UNKNOWN" "future and unclassified formats fail closed" "$STORAGE_UNKNOWN" "unclassified OpenCode bytes have no proved mutation contract" \
+		"Review with current OpenCode documentation and leave untouched" "$residual_measure"
+	return 0
+}
+
 _storage_inventory_records() {
 	local home_label="~"
 	_storage_emit_record "runtime-bundles" "agent-deploy" "${home_label}/.aidevops/runtime-bundles" "${HOME}/.aidevops/runtime-bundles" "framework" "unknown" "30-day unleased age policy; detailed bounds pending" "unknown" "bundle references require store-specific classification" "Review runtime-bundle status; do not delete manually"
 	_storage_emit_record "observability" "opencode-aidevops" "${home_label}/.aidevops/.agent-workspace/observability" "${HOME}/.aidevops/.agent-workspace/observability" "framework" "audit" "append-only audit evidence; compaction contract pending" "protected" "audit evidence" "Use observability-helper.sh for bounded queries"
 	_storage_emit_record "agent-backups" "setup-backup" "${home_label}/.aidevops/agents-backups" "${HOME}/.aidevops/agents-backups" "framework" "rollback" "count-based snapshots; byte policy pending" "protected" "rollback safety" "Review backup inventory before any cleanup"
 	_storage_emit_record "framework-logs" "multiple-framework-producers" "${home_label}/.aidevops/logs" "${HOME}/.aidevops/logs" "framework" "audit" "producer-specific policies pending" "protected" "audit and unresolved failure evidence" "Use producer-specific diagnostics"
-	_storage_emit_record "opencode-data" "opencode" "OpenCode application data" "${AIDEVOPS_OPENCODE_DATA_DIR:-${HOME}/.local/share/opencode}" "joint" "unknown" "runtime-aware maintenance only" "unknown" "OpenCode ownership and active-session state require runtime-aware queries" "Use aidevops opencode-db report"
+	_storage_opencode_records
 	_storage_emit_record "npm-cache" "npm" "npm cache" "${AIDEVOPS_NPM_CACHE_DIR:-${HOME}/.npm}" "external" "cache" "package-manager owned; no aidevops cleanup authority" "protected" "external owner" "Use npm-owned diagnostics and cleanup explicitly"
 	return 0
 }
@@ -189,17 +368,19 @@ _storage_status() {
 	local unknown=""
 	local confidence=""
 	local reason=""
+	local next_action=""
 	local error=""
 	report=$(_storage_inventory_json)
 	printf 'Storage Inventory (read-only)\n'
-	printf '%-20s %-10s %-10s %12s %12s %12s %12s %-11s\n' "Store" "Owner" "Class" "Total" "Protected" "Reclaimable" "Unknown" "Confidence"
-	printf '%s\n' "$report" | jq -r '.stores[] | [.store_id,.owner,.safety_class,(.total_bytes|tostring),(.protected_bytes|tostring),(.reclaimable_bytes|tostring),(.unknown_bytes|tostring),.sizing_confidence,.protection_reasons[0],(.error // "")] | @tsv' |
-		while IFS=$'\t' read -r store_id owner safety_class total protected reclaimable unknown confidence reason error; do
-			printf '%-20s %-10s %-10s %12s %12s %12s %12s %-11s\n' \
+	printf '%-24s %-10s %-10s %12s %12s %12s %12s %-11s\n' "Store" "Owner" "Class" "Total" "Protected" "Reclaimable" "Unknown" "Confidence"
+	printf '%s\n' "$report" | jq -r '.stores[] | [.store_id,.owner,.safety_class,(.total_bytes|tostring),(.protected_bytes|tostring),(.reclaimable_bytes|tostring),(.unknown_bytes|tostring),.sizing_confidence,.protection_reasons[0],.next_action,(.error // "")] | @tsv' |
+		while IFS=$'\t' read -r store_id owner safety_class total protected reclaimable unknown confidence reason next_action error; do
+			printf '%-24s %-10s %-10s %12s %12s %12s %12s %-11s\n' \
 				"$store_id" "$owner" "$safety_class" "$(_storage_format_bytes "$total")" "$(_storage_format_bytes "$protected")" "$(_storage_format_bytes "$reclaimable")" "$(_storage_format_bytes "$unknown")" "$confidence"
 			printf '  reason: %s' "$reason"
 			[[ -n "$error" ]] && printf ' (%s)' "$error"
 			printf '\n'
+			printf '  next: %s\n' "$next_action"
 		done
 	printf 'No cleanup was performed. Unknown or unavailable classifications are never reclaimable.\n'
 	return 0

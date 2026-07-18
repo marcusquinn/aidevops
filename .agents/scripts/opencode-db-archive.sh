@@ -27,6 +27,13 @@ set -Eeuo pipefail
 _oda_dir="${BASH_SOURCE[0]%/*}"
 # shellcheck source=shared-constants.sh
 [[ -f "${_oda_dir}/shared-constants.sh" ]] && source "${_oda_dir}/shared-constants.sh"
+# shellcheck source=opencode-db-safety-lib.sh
+if [[ -f "${_oda_dir}/opencode-db-safety-lib.sh" ]]; then
+	source "${_oda_dir}/opencode-db-safety-lib.sh"
+else
+	printf 'opencode-db-archive: missing safety library\n' >&2
+	exit 1
+fi
 
 # --- Configuration -----------------------------------------------------------
 
@@ -43,7 +50,6 @@ readonly DEFAULT_RETENTION_DAYS=30
 readonly DEFAULT_BATCH_SIZE=500
 readonly DEFAULT_MAX_DURATION=60
 readonly EVENT_TABLE_NAME="event"
-readonly UNKNOWN_STATE="unknown"
 
 ARCHIVE_BATCH_SIZE="${OPENCODE_DB_ARCHIVE_BATCH_SIZE:-$DEFAULT_BATCH_SIZE}"
 ARCHIVE_BATCH_DELAY_SECONDS="${OPENCODE_DB_ARCHIVE_BATCH_DELAY_SECONDS:-0}"
@@ -175,129 +181,23 @@ file_size_bytes() {
 	return 0
 }
 
-# Return a stable signature for the active WAL without reading its contents.
-# Missing is a valid stable state; unknown metadata fails closed.
-_wal_signature() {
-	local wal_path="$1"
-	local wal_bytes=""
-	local wal_mtime=""
-
-	if [[ ! -e "$wal_path" && ! -L "$wal_path" ]]; then
-		printf '%s' "missing"
-		return 0
-	fi
-	if [[ ! -f "$wal_path" ]]; then
-		printf '%s' "$UNKNOWN_STATE"
-		return 0
-	fi
-
-	wal_bytes=$(file_size_bytes "$wal_path" 2>/dev/null || true)
-	wal_mtime=$(_file_mtime_epoch "$wal_path" 2>/dev/null || true)
-	if [[ ! "$wal_bytes" =~ ^[0-9]+$ || ! "$wal_mtime" =~ ^[0-9]+$ ]]; then
-		printf '%s' "$UNKNOWN_STATE"
-		return 0
-	fi
-	printf '%s:%s' "$wal_bytes" "$wal_mtime"
-	return 0
-}
-
-# Hard-veto mutation while the WAL changes between two observations.
 _wal_is_stable() {
 	local db="$1"
-	local wal_path="${db}-wal"
-	local before=""
-	local after=""
-
-	before=$(_wal_signature "$wal_path")
-	if [[ "$before" == "$UNKNOWN_STATE" ]]; then
-		return 1
-	fi
-	sleep "$WAL_STABILITY_DELAY_SECONDS"
-	after=$(_wal_signature "$wal_path")
-	if [[ "$after" == "$UNKNOWN_STATE" || "$before" != "$after" ]]; then
-		return 1
-	fi
-	return 0
-}
-
-# Emit a holder count, or "unknown" when holder evidence is unavailable.
-_db_holder_count() {
-	local db="$1"
-	local holder_pids=""
-	local holder_count="0"
-
-	if ! command -v "$DB_HOLDER_COMMAND" >/dev/null 2>&1; then
-		printf '%s' "$UNKNOWN_STATE"
-		return 0
-	fi
-	holder_pids=$("$DB_HOLDER_COMMAND" -t "$db" 2>/dev/null || true)
-	if [[ -n "$holder_pids" ]]; then
-		holder_count=$(printf '%s\n' "$holder_pids" | awk 'NF' | sort -u | wc -l | tr -d ' ')
-	fi
-	printf '%s' "${holder_count:-0}"
-	return 0
-}
-
-_sqlite_table_columns() {
-	local db="$1"
-	local table_name="$2"
-	sqlite3 "$db" "SELECT COALESCE(group_concat(name, ','), '') FROM (SELECT name FROM pragma_table_info('${table_name}') ORDER BY cid);" 2>/dev/null
+	local wal_state=""
+	wal_state=$(opencode_db_wal_state "$db" "$WAL_STABILITY_DELAY_SECONDS")
+	[[ "$wal_state" == "stable" ]]
 	return $?
 }
 
-# Support only a schema whose complete logical-session write surface is known.
-# Extra columns or session-linked tables are unknown OpenCode data and remain
-# in the active database untouched.
-_archive_table_schema_supported() {
+_db_holder_count() {
 	local db="$1"
-	local table_name="$2"
-	local actual=""
-	local expected=""
-	local compatible=""
-
-	actual=$(_sqlite_table_columns "$db" "$table_name") || return 1
-	case "$table_name" in
-	project)
-		expected="id,worktree,vcs,name,icon_url,icon_color,time_created,time_updated,time_initialized,sandboxes,commands"
-		compatible="${expected},icon_url_override"
-		;;
-	session)
-		expected="id,project_id,parent_id,slug,directory,title,version,share_url,summary_additions,summary_deletions,summary_files,summary_diffs,revert,permission,time_created,time_updated,time_compacting,time_archived,workspace_id"
-		compatible="${expected},path"
-		;;
-	message) expected="id,session_id,time_created,time_updated,data" ;;
-	part) expected="id,message_id,session_id,time_created,time_updated,data" ;;
-	todo) expected="session_id,content,status,priority,position,time_created,time_updated" ;;
-	session_share) expected="session_id,id,secret,url,time_created,time_updated" ;;
-	event) expected="id,aggregate_id,seq,type,data" ;;
-	*) return 1 ;;
-	esac
-
-	if [[ "$actual" == "$expected" || (-n "$compatible" && "$actual" == "$compatible") ]]; then
-		return 0
-	fi
-	return 1
+	opencode_db_holder_count "$db" "$DB_HOLDER_COMMAND"
+	return 0
 }
 
 _archive_validate_active_schema() {
-	local table_name=""
-	local unknown_session_tables=""
-
-	for table_name in project session message part todo session_share; do
-		if ! _archive_table_schema_supported "$ACTIVE_DB" "$table_name"; then
-			print_error "Unsupported or unavailable OpenCode ${table_name} schema; active data was left untouched."
-			return 1
-		fi
-	done
-	if _sqlite_has_table "$ACTIVE_DB" "$EVENT_TABLE_NAME" && ! _archive_table_schema_supported "$ACTIVE_DB" "$EVENT_TABLE_NAME"; then
-		print_error "Unsupported OpenCode event schema; active data was left untouched."
-		return 1
-	fi
-
-	unknown_session_tables=$(sqlite3 "$ACTIVE_DB" \
-		"SELECT DISTINCT m.name FROM sqlite_master m JOIN pragma_table_info(m.name) p WHERE m.type='table' AND p.name='session_id' AND m.name NOT IN ('message','part','todo','session_share') ORDER BY m.name;" 2>/dev/null || true)
-	if [[ -n "$unknown_session_tables" ]]; then
-		print_error "Unsupported session-linked OpenCode tables detected; active data was left untouched."
+	if ! opencode_archive_schema_supported "$ACTIVE_DB" optional; then
+		print_error "Unsupported or unavailable OpenCode session schema; active data was left untouched."
 		return 1
 	fi
 	return 0
@@ -307,7 +207,7 @@ _archive_mutation_preflight() {
 	local holder_count=""
 
 	holder_count=$(_db_holder_count "$ACTIVE_DB")
-	if [[ "$holder_count" == "$UNKNOWN_STATE" ]]; then
+	if [[ "$holder_count" == "$OPENCODE_DB_STATE_UNKNOWN" ]]; then
 		print_warning "Archive deferred — active DB holder state is unavailable."
 		return 2
 	fi
@@ -607,7 +507,7 @@ _check_wal_post_archive() {
 	[[ -f "$wal_path" ]] || return 0
 	local wal_bytes wal_mb
 	wal_bytes=$(file_size_bytes "$wal_path")
-	wal_mb=$(( wal_bytes / 1048576 ))
+	wal_mb=$((wal_bytes / 1048576))
 	local threshold="${WAL_LARGE_THRESHOLD_MB:-500}"
 	[[ "$wal_mb" -ge "$threshold" ]] || return 0
 	print_warning "WAL still large after archive: $(format_bytes "$wal_bytes") (${wal_path})"
@@ -616,7 +516,7 @@ _check_wal_post_archive() {
 	ckpt_out=$(sqlite3 "$db" "PRAGMA wal_checkpoint(PASSIVE);" 2>/dev/null || echo "0|0|0")
 	IFS='|' read -r blocked log_pages ckpt_pages <<<"$ckpt_out"
 	if [[ "${blocked:-0}" == "1" ]] && [[ "${log_pages:-0}" -gt "${ckpt_pages:-0}" ]]; then
-		local unckpt=$(( ${log_pages:-0} - ${ckpt_pages:-0} ))
+		local unckpt=$((${log_pages:-0} - ${ckpt_pages:-0}))
 		print_warning "WAL checkpoint busy: ${unckpt} frame(s) still held by active readers"
 		local n_holders=0
 		if command -v lsof >/dev/null 2>&1 && [[ -f "$db" ]]; then
@@ -666,7 +566,7 @@ _archive_compact_active_db() {
 	fi
 
 	holder_count=$(_db_holder_count "$ACTIVE_DB")
-	if [[ "$holder_count" == "$UNKNOWN_STATE" ]]; then
+	if [[ "$holder_count" == "$OPENCODE_DB_STATE_UNKNOWN" ]]; then
 		print_warning "VACUUM deferred — active DB holder state is unavailable."
 		return 2
 	fi
@@ -685,7 +585,7 @@ _archive_compact_active_db() {
 		return 2
 	fi
 	holder_count=$(_db_holder_count "$ACTIVE_DB")
-	if [[ "$holder_count" == "$UNKNOWN_STATE" || "$holder_count" -gt 0 ]]; then
+	if [[ "$holder_count" == "$OPENCODE_DB_STATE_UNKNOWN" || "$holder_count" -gt 0 ]]; then
 		print_warning "VACUUM deferred — active DB holder state changed after checkpoint."
 		return 2
 	fi
@@ -880,13 +780,10 @@ cmd_archive() {
 
 	# Create archive DB and schema
 	create_archive_schema "$ARCHIVE_DB"
-	local archive_table=""
-	for archive_table in project session message part todo session_share event; do
-		if ! _archive_table_schema_supported "$ARCHIVE_DB" "$archive_table"; then
-			print_error "Archive schema is unavailable or unsupported; active data was left untouched."
-			return 3
-		fi
-	done
+	if ! opencode_archive_schema_supported "$ARCHIVE_DB" required; then
+		print_error "Archive schema is unavailable or unsupported; active data was left untouched."
+		return 3
+	fi
 
 	local project_insert_columns project_select_columns
 	local session_insert_columns session_select_columns
