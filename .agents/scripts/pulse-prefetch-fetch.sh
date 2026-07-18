@@ -116,7 +116,10 @@ _prefetch_prs_try_delta() {
 # `statusCheckRollup` field that was the single heaviest payload in the
 # pulse's GraphQL budget).
 #
-# Non-fatal: returns "[]" on failure (caller treats as "no check info").
+# The batch helper caches only this observational aggregate, emits cache/fetch
+# decisions to gh transport telemetry, and preserves live named-check reads for
+# final required-check and merge authority. Non-fatal: returns "[]" on failure
+# (caller treats as "no check info").
 #
 # Arguments:
 #   $1 - repo slug
@@ -250,7 +253,7 @@ _prefetch_repo_prs() {
 			_used_batch_cache=true
 			echo "[pulse-wrapper] _prefetch_repo_prs: using cycle canonical snapshot for ${slug}" >>"$LOGFILE"
 			_prefetch_record_batch_cache_hit prs "$_canonical_prs"
-			_PULSE_HEALTH_BATCH_CACHE_HITS=$(( ${_PULSE_HEALTH_BATCH_CACHE_HITS:-0} + 1 ))
+			_PULSE_HEALTH_BATCH_CACHE_HITS=$((${_PULSE_HEALTH_BATCH_CACHE_HITS:-0} + 1))
 		fi
 	elif [[ "${PULSE_BATCH_PREFETCH_ENABLED:-1}" == "1" && -x "$_batch_helper" ]]; then
 		local _batch_prs
@@ -259,7 +262,7 @@ _prefetch_repo_prs() {
 			_used_batch_cache=true
 			echo "[pulse-wrapper] _prefetch_repo_prs: using batch cache for ${slug}" >>"$LOGFILE"
 			_prefetch_record_batch_cache_hit prs "$_batch_prs"
-			_PULSE_HEALTH_BATCH_CACHE_HITS=$(( ${_PULSE_HEALTH_BATCH_CACHE_HITS:-0} + 1 ))
+			_PULSE_HEALTH_BATCH_CACHE_HITS=$((${_PULSE_HEALTH_BATCH_CACHE_HITS:-0} + 1))
 		fi
 	fi
 
@@ -442,7 +445,7 @@ _prefetch_repo_issues() {
 			_used_batch_cache=true
 			echo "[pulse-wrapper] _prefetch_repo_issues: using cycle canonical snapshot for ${slug}" >>"$LOGFILE"
 			_prefetch_record_batch_cache_hit issues "$_canonical_issues"
-			_PULSE_HEALTH_BATCH_CACHE_HITS=$(( ${_PULSE_HEALTH_BATCH_CACHE_HITS:-0} + 1 ))
+			_PULSE_HEALTH_BATCH_CACHE_HITS=$((${_PULSE_HEALTH_BATCH_CACHE_HITS:-0} + 1))
 		fi
 	elif [[ "${PULSE_BATCH_PREFETCH_ENABLED:-1}" == "1" && -x "$_batch_helper" ]]; then
 		local _batch_issues
@@ -451,7 +454,7 @@ _prefetch_repo_issues() {
 			_used_batch_cache=true
 			echo "[pulse-wrapper] _prefetch_repo_issues: using batch cache for ${slug}" >>"$LOGFILE"
 			_prefetch_record_batch_cache_hit issues "$_batch_issues"
-			_PULSE_HEALTH_BATCH_CACHE_HITS=$(( ${_PULSE_HEALTH_BATCH_CACHE_HITS:-0} + 1 ))
+			_PULSE_HEALTH_BATCH_CACHE_HITS=$((${_PULSE_HEALTH_BATCH_CACHE_HITS:-0} + 1))
 		fi
 	fi
 
@@ -489,7 +492,6 @@ _prefetch_repo_issues() {
 	_prefetch_repo_issues_render "$issue_json"
 	return 0
 }
-
 
 # =============================================================================
 # Issue Delta Fetch Helper (GH#15286)
