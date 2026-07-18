@@ -18,6 +18,7 @@ git clone -q "$REMOTE" "$REPO"
 git -C "$REPO" switch -q -c main
 git -C "$REPO" config user.name Test
 git -C "$REPO" config user.email test@example.invalid
+git -C "$REPO" config commit.gpgsign false
 git -C "$REPO" commit -q --allow-empty -m seed
 git -C "$REPO" push -q -u origin main
 git -C "$REPO" remote set-head origin main

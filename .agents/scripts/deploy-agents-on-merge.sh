@@ -6,18 +6,18 @@ set -euo pipefail
 # deploy-agents-on-merge.sh - Fast targeted agent deployment after PR merge
 #
 # Called by the supervisor after merging PRs that modify .agents/ files.
-# Much faster than full setup.sh --non-interactive because it only syncs
-# changed agent files instead of running all migrations and optional steps.
+# Uses setup's changed-stage planner, immutable runtime-bundle staging, and
+# atomic activation without running unrelated optional setup steps.
 #
 # Usage:
 #   deploy-agents-on-merge.sh [options]
 #
 # Options:
 #   --repo <path>       Path to the aidevops repo (default: ~/Git/aidevops)
-#   --scripts-only      Only deploy .agents/scripts/ (fastest)
+#   --scripts-only      Compatibility hint for a scripts-only change set
 #   --full              Run full setup.sh --non-interactive instead
 #   --dry-run           Show what would be deployed without doing it
-#   --diff <commit>     Only deploy files changed since <commit>
+#   --diff <commit>     Validate/detect agent changes since <commit>
 #   --quiet             Suppress non-error output
 #   --help              Show this help
 #
