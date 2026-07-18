@@ -128,14 +128,22 @@ install_mock_ancestor_git() {
 	git() {
 		local first_arg="$1"
 		local third_arg="${3:-}"
+		local fourth_arg="${4:-}"
+		local fifth_arg="${5:-}"
+		local sixth_arg="${6:-}"
 		if [[ "$first_arg" == "-C" && "$third_arg" == "cat-file" ]]; then
-			return 0
+			case "$fifth_arg" in
+			"1111111111111111111111111111111111111111^{commit}" | "2222222222222222222222222222222222222222^{commit}") return 0 ;;
+			esac
+			return 1
 		fi
 		if [[ "$first_arg" == "-C" && "$third_arg" == "merge-base" ]]; then
-			return 0
+			[[ "$fourth_arg" == "--is-ancestor" &&
+				"$fifth_arg" == "1111111111111111111111111111111111111111" &&
+				"$sixth_arg" == "2222222222222222222222222222222222222222" ]]
+			return $?
 		fi
-		command git "$@"
-		return $?
+		return 1
 	}
 	return 0
 }

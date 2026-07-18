@@ -675,9 +675,10 @@ _runtime_bundle_compare_versions() {
 	return 0
 }
 
-# Print a reason and return 0 when setup is attempting to activate a candidate
-# that is older than the active global runtime. Explicit rollback tooling uses
-# its own audited link transition and does not route through setup activation.
+# Print a reason when setup is attempting to activate a candidate that is older
+# than the active global runtime. Missing comparison evidence intentionally
+# prints nothing. Explicit rollback tooling uses its own audited link transition
+# and does not route through setup activation.
 _runtime_bundle_stale_candidate_reason() {
 	local bundle_dir="$1"
 	local active_root="$2"
@@ -687,28 +688,27 @@ _runtime_bundle_stale_candidate_reason() {
 	local candidate_sha="" active_sha=""
 	local repo_dir="${INSTALL_DIR:-}"
 
-	candidate_version=$(_runtime_bundle_manifest_value "$candidate_manifest" framework_version) || candidate_version=""
-	active_version=$(_runtime_bundle_manifest_value "$active_manifest" framework_version) || active_version=""
+	candidate_version=$(_runtime_bundle_manifest_value "$candidate_manifest" framework_version 2>/dev/null || :)
+	active_version=$(_runtime_bundle_manifest_value "$active_manifest" framework_version 2>/dev/null || :)
 	if [[ -n "$candidate_version" && -n "$active_version" ]]; then
-		version_relation=$(_runtime_bundle_compare_versions "$candidate_version" "$active_version") || version_relation=""
+		version_relation=$(_runtime_bundle_compare_versions "$candidate_version" "$active_version" 2>/dev/null || :)
 		if [[ "$version_relation" == "-1" ]]; then
 			printf 'candidate version %s is older than active version %s' "$candidate_version" "$active_version"
 			return 0
 		fi
 	fi
 
-	candidate_sha=$(_runtime_bundle_manifest_value "$candidate_manifest" git_sha) || candidate_sha=""
-	active_sha=$(_runtime_bundle_manifest_value "$active_manifest" git_sha) || active_sha=""
-	[[ -n "$repo_dir" && "$candidate_sha" != "$active_sha" ]] || return 1
-	[[ "$candidate_sha" =~ ^[0-9a-fA-F]{7,64}$ ]] || return 1
-	[[ "$active_sha" =~ ^[0-9a-fA-F]{7,64}$ ]] || return 1
-	git -C "$repo_dir" cat-file -e "${candidate_sha}^{commit}" 2>/dev/null || return 1
-	git -C "$repo_dir" cat-file -e "${active_sha}^{commit}" 2>/dev/null || return 1
+	candidate_sha=$(_runtime_bundle_manifest_value "$candidate_manifest" git_sha 2>/dev/null || :)
+	active_sha=$(_runtime_bundle_manifest_value "$active_manifest" git_sha 2>/dev/null || :)
+	[[ -n "$repo_dir" && "$candidate_sha" != "$active_sha" ]] || return 0
+	[[ "$candidate_sha" =~ ^[0-9a-fA-F]{7,64}$ ]] || return 0
+	[[ "$active_sha" =~ ^[0-9a-fA-F]{7,64}$ ]] || return 0
+	git -C "$repo_dir" cat-file -e "${candidate_sha}^{commit}" 2>/dev/null || return 0
+	git -C "$repo_dir" cat-file -e "${active_sha}^{commit}" 2>/dev/null || return 0
 	if git -C "$repo_dir" merge-base --is-ancestor "$candidate_sha" "$active_sha" 2>/dev/null; then
 		printf 'candidate source %.12s is an ancestor of active source %.12s' "$candidate_sha" "$active_sha"
-		return 0
 	fi
-	return 1
+	return 0
 }
 
 _runtime_bundle_validate() {
@@ -952,7 +952,8 @@ _runtime_bundle_activate_locked() {
 	bundles_dir=$(cd "${bundle_dir%/*}" && pwd -P) || return 1
 
 	if previous_root=$(_runtime_bundle_resolve_root "$target_dir" 2>/dev/null); then
-		if stale_reason=$(_runtime_bundle_stale_candidate_reason "$bundle_dir" "$previous_root"); then
+		stale_reason=$(_runtime_bundle_stale_candidate_reason "$bundle_dir" "$previous_root")
+		if [[ -n "$stale_reason" ]]; then
 			print_error "Refusing stale runtime bundle activation: ${stale_reason}. Use a dedicated audited rollback operation instead of setup."
 			return 1
 		fi
