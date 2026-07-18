@@ -1648,9 +1648,13 @@ _cmd_run_finish() {
 	local external_terminal_confirmed="${4:-0}"
 	local finish_status=0
 	if _headless_private_workload_enabled; then
-		_release_session_lock "$session_key"
 		if declare -F _cleanup_headless_runtime_temp_paths >/dev/null 2>&1; then
-			_cleanup_headless_runtime_temp_paths
+			_cleanup_headless_runtime_temp_paths || true
+		fi
+		_release_session_lock "$session_key" || true
+		if [[ -n "${_PRIVATE_WORKLOAD_LOCK_KEY:-}" ]]; then
+			_release_private_workload_lock "$_PRIVATE_WORKLOAD_LOCK_KEY" || true
+			_PRIVATE_WORKLOAD_LOCK_KEY=""
 		fi
 		_WORKER_WORKTREE_PATH=""
 		WORKER_TARGET_BRANCH=""
@@ -1731,15 +1735,47 @@ _hrw_mark_runtime_launch_started() {
 	return 0
 }
 
+_private_workload_directory_lock_key() {
+	local work_dir="$1"
+	local resolved_work_dir=""
+	local work_dir_hash=""
+	resolved_work_dir=$(cd "$work_dir" 2>/dev/null && pwd -P) || return 1
+	work_dir_hash=$(printf '%s' "$resolved_work_dir" | python3 -c \
+		'import hashlib, sys; print(hashlib.sha256(sys.stdin.buffer.read()).hexdigest())') || return 1
+	[[ "$work_dir_hash" =~ ^[a-f0-9]{64}$ ]] || return 1
+	printf 'private-workload-dir-%s\n' "$work_dir_hash"
+	return 0
+}
+
 _hrw_prepare_private_workload() {
 	local session_key="$1"
+	local work_dir="$2"
+	local expected_model="$3"
+	local expected_agent="$4"
+	local expected_profile_sha256="$5"
+	local workload_lock_key=""
 	_WORKER_WORKTREE_PATH=""
 	WORKER_TARGET_BRANCH=""
 	export WORKER_NO_EXIT_PUSH=1
 	_acquire_session_lock "$session_key" || return 2
+	workload_lock_key=$(_private_workload_directory_lock_key "$work_dir") || {
+		_release_session_lock "$session_key"
+		return 1
+	}
+	if ! _acquire_private_workload_lock "$workload_lock_key"; then
+		_release_session_lock "$session_key"
+		return 2
+	fi
+	if ! _validate_private_workload_profile "$work_dir" "$expected_model" \
+		"$expected_agent" "$expected_profile_sha256"; then
+		_release_private_workload_lock "$workload_lock_key"
+		_release_session_lock "$session_key"
+		return 1
+	fi
+	_PRIVATE_WORKLOAD_LOCK_KEY="$workload_lock_key"
 	_WORKER_START_EPOCH_MS=$(python3 -c 'import time; print(int(time.time() * 1000))' 2>/dev/null || printf '%s' "0")
 	# shellcheck disable=SC2064
-	trap "_private_workload_exit_trap '$session_key'" EXIT
+	trap "_private_workload_exit_trap '$session_key' '$workload_lock_key'" EXIT
 	return 0
 }
 
@@ -1750,7 +1786,9 @@ _cmd_run_prepare() {
 	unset _WORKER_PRELAUNCH_FAILURE_REASON 2>/dev/null || true
 	if _headless_private_workload_enabled; then
 		local private_prepare_status=0
-		_hrw_prepare_private_workload "$session_key" || private_prepare_status=$?
+		_hrw_prepare_private_workload "$session_key" "$work_dir" \
+			"${model_override:-}" "${agent_name:-}" \
+			"${private_profile_sha256:-}" || private_prepare_status=$?
 		return "$private_prepare_status"
 	fi
 

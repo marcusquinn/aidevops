@@ -252,7 +252,7 @@ setup_private_workload_profile_fixture() {
   "snapshot": false,
   "agent": {
     "provisional-adjudicator": {
-      "description": "Restricted provisional adjudicator.",
+      "description": "Adjudicates one protected award batch through fixed, capability-restricted tools.",
       "mode": "primary",
       "model": "openai/gpt-5.6-sol",
       "permission": {
@@ -289,31 +289,48 @@ EOF
 	return 0
 }
 
-test_private_workload_arguments_are_fail_closed() {
-	local role="triage" session_key="private-test" work_dir="${TEST_ROOT}/private-profile"
-	local title="Private workload" prompt="$PRIVATE_WORKLOAD_PROMPT" prompt_file=""
-	local model_override="openai/gpt-5.6-sol" initial_model="" tier_override=""
-	local variant_override="" agent_name="provisional-adjudicator" headless_runtime="opencode"
-	local detach=0 private_workload=0
-	local -a extra_args=("--pure")
-	local helper_source=""
-	local launch_source=""
-	setup_private_workload_profile_fixture "$work_dir"
-	helper_source=$(<"$HELPER_SCRIPT")
-	launch_source=$(<"${HELPER_SCRIPT%/*}/headless-runtime-launch.sh")
+private_workload_profile_sha256() {
+	local work_dir="$1"
+	python3 - "$work_dir" <<'PY' || return 1
+import hashlib
+import sys
+from pathlib import Path
 
-	_parse_run_args --private-workload
-	local valid_status=0
-	local valid_output=""
-	valid_output=$(_validate_private_workload_args 2>&1) || valid_status=$?
+root = Path(sys.argv[1])
+paths = (
+    ".opencode/opencode.json",
+    ".opencode/tool/provisional_fetch.ts",
+    ".opencode/tool/provisional_submit.ts",
+    "instructions.md",
+    "jobs.jsonl",
+)
+digest = hashlib.sha256()
+for relative_path in paths:
+    contents = (root / relative_path).read_bytes()
+    digest.update(relative_path.encode("utf-8"))
+    digest.update(b"\0")
+    digest.update(str(len(contents)).encode("ascii"))
+    digest.update(b"\0")
+    digest.update(contents)
+print(digest.hexdigest())
+PY
+	return 0
+}
 
-	local generated_profile_status=0
+_private_profile_fixture_statuses() {
+	local work_dir="$1"
+	local model_override="$2"
+	local agent_name="$3"
+	local profile_sha256="$4"
+	local generated_profile_status=0 generated_profile_removed=0
+	local unexpected_profile_entry_status=0 unexpected_instruction_status=0
 	mkdir "${work_dir}/.opencode/node_modules"
 	printf '%s\n' '*' >"${work_dir}/.opencode/.gitignore"
 	printf '%s\n' '{}' >"${work_dir}/.opencode/package.json"
 	printf '%s\n' '{}' >"${work_dir}/.opencode/package-lock.json"
-	_validate_private_workload_args >/dev/null 2>&1 || generated_profile_status=$?
-	local generated_profile_removed=0
+	_validate_private_workload_profile "$work_dir" "$model_override" "$agent_name" \
+		"$profile_sha256" \
+		>/dev/null 2>&1 || generated_profile_status=$?
 	if [[ ! -e "${work_dir}/.opencode/node_modules" && \
 		! -e "${work_dir}/.opencode/.gitignore" && \
 		! -e "${work_dir}/.opencode/package.json" && \
@@ -321,60 +338,153 @@ test_private_workload_arguments_are_fail_closed() {
 		generated_profile_removed=1
 	fi
 
-	local unexpected_profile_entry_status=0
 	mkdir "${work_dir}/.opencode/plugin"
 	printf '%s\n' 'export default {};' >"${work_dir}/.opencode/plugin/untrusted.ts"
-	_validate_private_workload_args >/dev/null 2>&1 || unexpected_profile_entry_status=$?
+	_validate_private_workload_profile "$work_dir" "$model_override" "$agent_name" \
+		"$profile_sha256" \
+		>/dev/null 2>&1 || unexpected_profile_entry_status=$?
 	rm -rf "${work_dir}/.opencode/plugin"
 
-	local unexpected_instruction_status=0
 	printf '%s\n' 'Unapproved instructions.' >"${work_dir}/AGENTS.md"
 	chmod 600 "${work_dir}/AGENTS.md"
-	_validate_private_workload_args >/dev/null 2>&1 || unexpected_instruction_status=$?
+	_validate_private_workload_profile "$work_dir" "$model_override" "$agent_name" \
+		"$profile_sha256" \
+		>/dev/null 2>&1 || unexpected_instruction_status=$?
 	rm -f "${work_dir}/AGENTS.md"
+	printf '%s|%s|%s|%s\n' "$generated_profile_status" "$generated_profile_removed" \
+		"$unexpected_profile_entry_status" "$unexpected_instruction_status"
+	return 0
+}
+
+_private_profile_rejection_statuses() {
+	local work_dir="$1"
+	local model_override="$2"
+	local agent_name="$3"
+	local unsafe_profile_status=0 unexpected_permission_status=0 unexpected_config_status=0
+	local description_status=0 steps_status=0 current_profile_sha256=""
+	jq '.agent["provisional-adjudicator"].permission.read = "allow"' \
+		"${work_dir}/.opencode/opencode.json" >"${work_dir}/.opencode/opencode.json.tmp"
+	mv "${work_dir}/.opencode/opencode.json.tmp" "${work_dir}/.opencode/opencode.json"
+	chmod 600 "${work_dir}/.opencode/opencode.json"
+	current_profile_sha256=$(private_workload_profile_sha256 "$work_dir") || return 1
+	_validate_private_workload_profile "$work_dir" "$model_override" "$agent_name" \
+		"$current_profile_sha256" \
+		>/dev/null 2>&1 || unsafe_profile_status=$?
+
+	jq '.agent["provisional-adjudicator"].permission.read = "deny" | .agent["provisional-adjudicator"].permission.exfiltrate = "allow"' \
+		"${work_dir}/.opencode/opencode.json" >"${work_dir}/.opencode/opencode.json.tmp"
+	mv "${work_dir}/.opencode/opencode.json.tmp" "${work_dir}/.opencode/opencode.json"
+	chmod 600 "${work_dir}/.opencode/opencode.json"
+	current_profile_sha256=$(private_workload_profile_sha256 "$work_dir") || return 1
+	_validate_private_workload_profile "$work_dir" "$model_override" "$agent_name" \
+		"$current_profile_sha256" \
+		>/dev/null 2>&1 || unexpected_permission_status=$?
+
+	jq 'del(.agent["provisional-adjudicator"].permission.exfiltrate) | .plugin = ["untrusted-plugin"]' \
+		"${work_dir}/.opencode/opencode.json" >"${work_dir}/.opencode/opencode.json.tmp"
+	mv "${work_dir}/.opencode/opencode.json.tmp" "${work_dir}/.opencode/opencode.json"
+	chmod 600 "${work_dir}/.opencode/opencode.json"
+	current_profile_sha256=$(private_workload_profile_sha256 "$work_dir") || return 1
+	_validate_private_workload_profile "$work_dir" "$model_override" "$agent_name" \
+		"$current_profile_sha256" \
+		>/dev/null 2>&1 || unexpected_config_status=$?
+
+	jq 'del(.plugin) | .agent["provisional-adjudicator"].description = "Unapproved description"' \
+		"${work_dir}/.opencode/opencode.json" >"${work_dir}/.opencode/opencode.json.tmp"
+	mv "${work_dir}/.opencode/opencode.json.tmp" "${work_dir}/.opencode/opencode.json"
+	chmod 600 "${work_dir}/.opencode/opencode.json"
+	current_profile_sha256=$(private_workload_profile_sha256 "$work_dir") || return 1
+	_validate_private_workload_profile "$work_dir" "$model_override" "$agent_name" \
+		"$current_profile_sha256" \
+		>/dev/null 2>&1 || description_status=$?
+
+	jq '.agent["provisional-adjudicator"].description = "Adjudicates one protected award batch through fixed, capability-restricted tools." | .agent["provisional-adjudicator"].steps = 13' \
+		"${work_dir}/.opencode/opencode.json" >"${work_dir}/.opencode/opencode.json.tmp"
+	mv "${work_dir}/.opencode/opencode.json.tmp" "${work_dir}/.opencode/opencode.json"
+	chmod 600 "${work_dir}/.opencode/opencode.json"
+	current_profile_sha256=$(private_workload_profile_sha256 "$work_dir") || return 1
+	_validate_private_workload_profile "$work_dir" "$model_override" "$agent_name" \
+		"$current_profile_sha256" \
+		>/dev/null 2>&1 || steps_status=$?
+	printf '%s|%s|%s|%s|%s\n' "$unsafe_profile_status" "$unexpected_permission_status" \
+		"$unexpected_config_status" "$description_status" "$steps_status"
+	return 0
+}
+
+test_private_workload_arguments_are_fail_closed() {
+	local AIDEVOPS_HEADLESS_PROVIDER_ALLOWLIST="openai"
+	local role="triage" session_key="private-test" work_dir="${TEST_ROOT}/private-profile"
+	local title="Private workload" prompt="$PRIVATE_WORKLOAD_PROMPT" prompt_file=""
+	local model_override="openai/gpt-5.6-sol" initial_model="" tier_override=""
+	local variant_override="" agent_name="provisional-adjudicator" headless_runtime="opencode"
+	local detach=0 private_workload=0
+	local private_profile_sha256=""
+	local -a extra_args=("--pure")
+	local helper_source=""
+	local launch_source=""
+	setup_private_workload_profile_fixture "$work_dir"
+	private_profile_sha256=$(private_workload_profile_sha256 "$work_dir") || return 1
+	helper_source=$(<"$HELPER_SCRIPT")
+	launch_source=$(<"${HELPER_SCRIPT%/*}/headless-runtime-launch.sh")
+
+	_parse_run_args --private-workload --private-profile-sha256 "$private_profile_sha256"
+	local valid_status=0
+	local valid_output=""
+	valid_output=$(_validate_private_workload_args 2>&1) || valid_status=$?
+
+	local fixture_statuses=""
+	local generated_profile_status=0 generated_profile_removed=0
+	local unexpected_profile_entry_status=0 unexpected_instruction_status=0
+	fixture_statuses=$(_private_profile_fixture_statuses \
+		"$work_dir" "$model_override" "$agent_name" "$private_profile_sha256")
+	IFS='|' read -r generated_profile_status generated_profile_removed \
+		unexpected_profile_entry_status unexpected_instruction_status <<<"$fixture_statuses"
 
 	local invalid_extra_status=0
 	extra_args=("--pure" "--print-logs")
 	_validate_private_workload_args >/dev/null 2>&1 || invalid_extra_status=$?
+
+	local missing_profile_hash_status=0
+	private_profile_sha256=""
+	_validate_private_workload_args >/dev/null 2>&1 || missing_profile_hash_status=$?
+	private_profile_sha256=$(private_workload_profile_sha256 "$work_dir") || return 1
+	local mismatched_profile_hash_status=0
+	_validate_private_workload_profile "$work_dir" "$model_override" "$agent_name" \
+		"0000000000000000000000000000000000000000000000000000000000000000" \
+		>/dev/null 2>&1 || mismatched_profile_hash_status=$?
 
 	local invalid_prompt_status=0
 	extra_args=("--pure")
 	prompt="Confidential candidate details"
 	_validate_private_workload_args >/dev/null 2>&1 || invalid_prompt_status=$?
 
-	local invalid_model_status=0
+	local invalid_provider_status=0
 	prompt="$PRIVATE_WORKLOAD_PROMPT"
-	model_override="openai/gpt-5.5"
-	_validate_private_workload_args >/dev/null 2>&1 || invalid_model_status=$?
+	model_override="anthropic/claude-sonnet-4-6"
+	_validate_private_workload_args >/dev/null 2>&1 || invalid_provider_status=$?
 
-	local unsafe_profile_status=0
+	local missing_allowlist_status=0
 	model_override="openai/gpt-5.6-sol"
-	jq '.agent["provisional-adjudicator"].permission.read = "allow"' \
-		"${work_dir}/.opencode/opencode.json" >"${work_dir}/.opencode/opencode.json.tmp"
-	mv "${work_dir}/.opencode/opencode.json.tmp" "${work_dir}/.opencode/opencode.json"
-	chmod 600 "${work_dir}/.opencode/opencode.json"
-	_validate_private_workload_args >/dev/null 2>&1 || unsafe_profile_status=$?
+	AIDEVOPS_HEADLESS_PROVIDER_ALLOWLIST=""
+	_validate_private_workload_args >/dev/null 2>&1 || missing_allowlist_status=$?
+	AIDEVOPS_HEADLESS_PROVIDER_ALLOWLIST="openai"
 
-	local unexpected_permission_status=0
-	jq '.agent["provisional-adjudicator"].permission.read = "deny" | .agent["provisional-adjudicator"].permission.exfiltrate = "allow"' \
-		"${work_dir}/.opencode/opencode.json" >"${work_dir}/.opencode/opencode.json.tmp"
-	mv "${work_dir}/.opencode/opencode.json.tmp" "${work_dir}/.opencode/opencode.json"
-	chmod 600 "${work_dir}/.opencode/opencode.json"
-	_validate_private_workload_args >/dev/null 2>&1 || unexpected_permission_status=$?
-
-	local unexpected_config_status=0
-	jq 'del(.agent["provisional-adjudicator"].permission.exfiltrate) | .plugin = ["untrusted-plugin"]' \
-		"${work_dir}/.opencode/opencode.json" >"${work_dir}/.opencode/opencode.json.tmp"
-	mv "${work_dir}/.opencode/opencode.json.tmp" "${work_dir}/.opencode/opencode.json"
-	chmod 600 "${work_dir}/.opencode/opencode.json"
-	_validate_private_workload_args >/dev/null 2>&1 || unexpected_config_status=$?
+	local rejection_statuses=""
+	local unsafe_profile_status=0 unexpected_permission_status=0 unexpected_config_status=0
+	local description_status=0 steps_status=0
+	rejection_statuses=$(_private_profile_rejection_statuses "$work_dir" "$model_override" "$agent_name")
+	IFS='|' read -r unsafe_profile_status unexpected_permission_status \
+		unexpected_config_status description_status steps_status <<<"$rejection_statuses"
 
 	if [[ "$private_workload" -eq 1 && "$valid_status" -eq 0 && \
 		"$generated_profile_status" -eq 0 && "$generated_profile_removed" -eq 1 && \
 		"$unexpected_profile_entry_status" -eq 1 && "$unexpected_instruction_status" -eq 1 && \
-		"$invalid_extra_status" -eq 1 && "$invalid_prompt_status" -eq 1 && \
-		"$invalid_model_status" -eq 1 && "$unsafe_profile_status" -eq 1 && \
+		"$invalid_extra_status" -eq 1 && "$missing_profile_hash_status" -eq 1 && \
+		"$mismatched_profile_hash_status" -eq 1 && "$invalid_prompt_status" -eq 1 && \
+		"$invalid_provider_status" -eq 1 && "$missing_allowlist_status" -eq 1 && \
+		"$unsafe_profile_status" -eq 1 && \
 		"$unexpected_permission_status" -eq 1 && "$unexpected_config_status" -eq 1 && \
+		"$description_status" -eq 1 && "$steps_status" -eq 1 && \
 		"$helper_source" == *'lifecycle_work_dir="[private]"'* && \
 		"$launch_source" == *'display_work_dir="[private]"'* && \
 		"$launch_source" == *'display_recovery_dir="[private]"'* && \
@@ -385,7 +495,7 @@ test_private_workload_arguments_are_fail_closed() {
 	fi
 
 	print_result "private workload arguments enforce the non-content boundary" 1 \
-		"private=${private_workload} valid=${valid_status} generated=${generated_profile_status}:${generated_profile_removed} profile_entry=${unexpected_profile_entry_status} instruction=${unexpected_instruction_status} extra=${invalid_extra_status} prompt=${invalid_prompt_status} model=${invalid_model_status} profile=${unsafe_profile_status} permission=${unexpected_permission_status} unexpected=${unexpected_config_status} output=${valid_output:-<empty>}"
+		"private=${private_workload} valid=${valid_status} generated=${generated_profile_status}:${generated_profile_removed} profile_entry=${unexpected_profile_entry_status} instruction=${unexpected_instruction_status} extra=${invalid_extra_status} hash=${missing_profile_hash_status}:${mismatched_profile_hash_status} prompt=${invalid_prompt_status} provider=${invalid_provider_status}:${missing_allowlist_status} profile=${unsafe_profile_status} permission=${unexpected_permission_status} unexpected=${unexpected_config_status} exact=${description_status}:${steps_status} output=${valid_output:-<empty>}"
 	return 0
 }
 
@@ -393,13 +503,21 @@ test_private_workload_uses_minimal_lifecycle() {
 	local lifecycle_state=""
 	lifecycle_state=$(
 		local AIDEVOPS_PRIVATE_WORKLOAD=1
+		local model_override="openai/gpt-5.6-sol"
+		local agent_name="provisional-adjudicator"
+		local private_profile_sha256="0000000000000000000000000000000000000000000000000000000000000000"
 		local _WORKER_WORKTREE_PATH="/private/path-must-not-persist"
 		local WORKER_TARGET_BRANCH="private-branch-must-not-persist"
 		local WORKER_NO_EXIT_PUSH=0
-		local acquired=0 released=0 cleaned=0 registered=0 updated=0 claimed=0
+		local acquired=0 released=0 workload_acquired=0 workload_released=0
+		local cleaned=0 registered=0 updated=0 claimed=0
+		local lifecycle_order=""
 		_acquire_session_lock() { acquired=$((acquired + 1)); return 0; }
-		_release_session_lock() { released=$((released + 1)); return 0; }
-		_cleanup_headless_runtime_temp_paths() { cleaned=$((cleaned + 1)); return 0; }
+		_release_session_lock() { released=$((released + 1)); lifecycle_order="${lifecycle_order}session,"; return 0; }
+		_acquire_private_workload_lock() { workload_acquired=$((workload_acquired + 1)); return 0; }
+		_release_private_workload_lock() { workload_released=$((workload_released + 1)); lifecycle_order="${lifecycle_order}workload,"; return 0; }
+		_validate_private_workload_profile() { return 0; }
+		_cleanup_headless_runtime_temp_paths() { cleaned=$((cleaned + 1)); lifecycle_order="${lifecycle_order}cleanup,"; return 0; }
 		_register_dispatch_ledger() { registered=$((registered + 1)); return 0; }
 		_update_dispatch_ledger() { updated=$((updated + 1)); return 0; }
 		_hrw_claim_worker_worktree() { claimed=$((claimed + 1)); return 0; }
@@ -410,18 +528,118 @@ test_private_workload_uses_minimal_lifecycle() {
 		local prepared_branch="${WORKER_TARGET_BRANCH:-}"
 		local finish_status=0
 		_cmd_run_finish "private-lifecycle-test" "complete" "$TEST_ROOT" || finish_status=$?
-		printf '%s|%s|%s|%s|%s|%s|%s|%s|%s|%s' \
+		printf '%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s' \
 			"$prepare_status" "$finish_status" "$prepared_path" "$prepared_branch" \
-			"$WORKER_NO_EXIT_PUSH" "$acquired" "$released" "$cleaned" "$registered" "$updated:$claimed"
+			"$WORKER_NO_EXIT_PUSH" "$acquired" "$released" "$workload_acquired" \
+			"$workload_released" "$cleaned" "$registered" "$updated:$claimed" \
+			"$lifecycle_order"
 	)
 
-	if [[ "$lifecycle_state" == "0|0|||1|1|1|1|0|0:0" ]]; then
+	if [[ "$lifecycle_state" == "0|0|||1|1|1|1|1|1|0|0:0|cleanup,session,workload," ]]; then
 		print_result "private workloads bypass persistent worker lifecycle state" 0
 		return 0
 	fi
 
 	print_result "private workloads bypass persistent worker lifecycle state" 1 \
 		"state=${lifecycle_state:-<empty>}"
+	return 0
+}
+
+test_private_workload_lock_is_cross_process_atomic() {
+	local work_dir="${TEST_ROOT}/private-cross-process-lock"
+	local child_script="${TEST_ROOT}/headless-runtime-private-lock-child.sh"
+	local ready_file="${TEST_ROOT}/private-lock-ready"
+	local release_file="${TEST_ROOT}/private-lock-release"
+	local lock_key=""
+	local child_pid=""
+	local child_status=0 second_status=0 third_status=0
+	local remaining_lock_count=""
+	mkdir -p "$work_dir"
+	init_state_db
+	lock_key=$(_private_workload_directory_lock_key "$work_dir") || lock_key=""
+	cat >"$child_script" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+helper_script="$1"
+lock_key="$2"
+ready_file="$3"
+release_file="$4"
+set --
+# shellcheck source=/dev/null
+source "$helper_script" >/dev/null
+_acquire_private_workload_lock "$lock_key" || exit 2
+printf 'ready\n' >"$ready_file"
+while [[ ! -f "$release_file" ]]; do
+	sleep 0.05
+done
+_release_private_workload_lock "$lock_key" || exit 3
+EOF
+	chmod 700 "$child_script"
+	bash "$child_script" "$HELPER_SCRIPT" "$lock_key" "$ready_file" "$release_file" &
+	child_pid=$!
+	local attempt=0
+	while [[ ! -f "$ready_file" && "$attempt" -lt 100 ]]; do
+		kill -0 "$child_pid" 2>/dev/null || break
+		sleep 0.05
+		attempt=$((attempt + 1))
+	done
+	_acquire_private_workload_lock "$lock_key" >/dev/null 2>&1 || second_status=$?
+	printf 'release\n' >"$release_file"
+	wait "$child_pid" || child_status=$?
+	_acquire_private_workload_lock "$lock_key" >/dev/null 2>&1 || third_status=$?
+	_release_private_workload_lock "$lock_key" >/dev/null 2>&1 || true
+	remaining_lock_count=$(sqlite3_with_timeout "$STATE_DB" \
+		"SELECT COUNT(*) FROM private_workload_locks WHERE lock_key = '${lock_key}';" \
+		2>/dev/null) || remaining_lock_count="query-failed"
+
+	if [[ -f "$ready_file" && "$child_status" -eq 0 && "$second_status" -eq 1 && \
+		"$third_status" -eq 0 && "$remaining_lock_count" == "0" ]]; then
+		print_result "private workload lock acquisition is atomic across processes" 0
+		return 0
+	fi
+
+	print_result "private workload lock acquisition is atomic across processes" 1 \
+		"ready=$([[ -f "$ready_file" ]] && printf yes || printf no) child=${child_status} second=${second_status} third=${third_status} remaining=${remaining_lock_count}"
+	return 0
+}
+
+test_private_workload_directory_lock_blocks_distinct_sessions() {
+	local AIDEVOPS_PRIVATE_WORKLOAD=1
+	local work_dir="${TEST_ROOT}/private-directory-lock"
+	local model="openai/gpt-5.6-sol"
+	local agent="provisional-adjudicator"
+	local profile_sha256=""
+	init_state_db
+	setup_private_workload_profile_fixture "$work_dir"
+	profile_sha256=$(private_workload_profile_sha256 "$work_dir") || return 1
+
+	local first_status=0 second_status=0 third_status=0
+	_hrw_prepare_private_workload "private-directory-first" "$work_dir" "$model" "$agent" \
+		"$profile_sha256" \
+		>/dev/null 2>&1 || first_status=$?
+	local workload_lock_key="${_PRIVATE_WORKLOAD_LOCK_KEY:-}"
+	_hrw_prepare_private_workload "private-directory-second" "$work_dir" "$model" "$agent" \
+		"$profile_sha256" \
+		>/dev/null 2>&1 || second_status=$?
+	_cmd_run_finish "private-directory-first" "complete" "$work_dir" >/dev/null 2>&1
+	_hrw_prepare_private_workload "private-directory-third" "$work_dir" "$model" "$agent" \
+		"$profile_sha256" \
+		>/dev/null 2>&1 || third_status=$?
+	_cmd_run_finish "private-directory-third" "complete" "$work_dir" >/dev/null 2>&1
+	local remaining_lock_count=""
+	remaining_lock_count=$(sqlite3_with_timeout "$STATE_DB" \
+		"SELECT COUNT(*) FROM private_workload_locks WHERE lock_key = '${workload_lock_key}';" \
+		2>/dev/null) || remaining_lock_count="query-failed"
+
+	if [[ "$first_status" -eq 0 && "$second_status" -eq 2 && "$third_status" -eq 0 && \
+		"$workload_lock_key" == private-workload-dir-* && \
+		"$remaining_lock_count" == "0" ]]; then
+		print_result "private workload directory locks span distinct session keys" 0
+		return 0
+	fi
+
+	print_result "private workload directory locks span distinct session keys" 1 \
+		"first=${first_status} second=${second_status} third=${third_status} lock=${workload_lock_key:-<empty>} remaining=${remaining_lock_count}"
 	return 0
 }
 
@@ -522,8 +740,11 @@ printf '%s\n' '${secret_marker}' >&2
 EOF
 	chmod +x "$payload_script"
 
-	local sandbox_status=0
+	local unauthorized_status=0 sandbox_status=0
 	HOME="$sandbox_home" "$sandbox_helper" run --private-output --allow-secret-io \
+		--timeout 10 -- bash "$payload_script" >/dev/null 2>&1 || unauthorized_status=$?
+	AIDEVOPS_PRIVATE_WORKLOAD=1 HOME="$sandbox_home" \
+		"$sandbox_helper" run --private-output --allow-secret-io \
 		--timeout 10 -- bash "$payload_script" >"$caller_output" 2>&1 || sandbox_status=$?
 	local persisted_secret=0
 	if grep -R -Fq "$secret_marker" "${sandbox_home}/.aidevops/.agent-workspace/sandbox" 2>/dev/null; then
@@ -534,7 +755,8 @@ EOF
 		audit_output=$(<"${sandbox_home}/.aidevops/.agent-workspace/sandbox/executions.jsonl")
 	fi
 
-	if [[ "$sandbox_status" -eq 0 && "$persisted_secret" -eq 0 && \
+	if [[ "$unauthorized_status" -eq 2 && "$sandbox_status" -eq 0 && \
+		"$persisted_secret" -eq 0 && \
 		"$(<"$caller_output")" == *"$secret_marker"* && \
 		"$audit_output" == *'[private workload command suppressed]'* ]]; then
 		print_result "sandbox private output streams without raw temp or audit capture" 0
@@ -542,7 +764,7 @@ EOF
 	fi
 
 	print_result "sandbox private output streams without raw temp or audit capture" 1 \
-		"status=${sandbox_status} persisted_secret=${persisted_secret} audit=${audit_output:-<empty>}"
+		"unauthorized=${unauthorized_status} status=${sandbox_status} persisted_secret=${persisted_secret} audit=${audit_output:-<empty>}"
 	return 0
 }
 
@@ -4010,6 +4232,8 @@ run_worker_db_persistence_tests() {
 run_private_workload_security_tests() {
 	test_private_workload_arguments_are_fail_closed
 	test_private_workload_uses_minimal_lifecycle
+	test_private_workload_directory_lock_blocks_distinct_sessions
+	test_private_workload_lock_is_cross_process_atomic
 	test_private_output_filter_removes_content
 	test_private_workload_requires_task_complete
 	test_private_workload_skips_persistent_failure_output

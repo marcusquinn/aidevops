@@ -82,6 +82,13 @@ CREATE TABLE IF NOT EXISTS provider_startup_failures (
     updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
     PRIMARY KEY (provider, model)
 );
+
+CREATE TABLE IF NOT EXISTS private_workload_locks (
+    lock_key        TEXT PRIMARY KEY,
+    owner_pid       INTEGER NOT NULL,
+    owner_argv_hash TEXT NOT NULL DEFAULT '',
+    updated_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+);
 SQL
 	return 0
 }
@@ -1803,12 +1810,64 @@ _release_session_lock() {
 	local lock_file="${LOCK_DIR}/${safe_key}.pid"
 
 	if [[ -f "$lock_file" ]]; then
-		local stored_pid
-		stored_pid=$(cat "$lock_file" 2>/dev/null) || stored_pid=""
+		local stored_raw stored_pid
+		stored_raw=$(cat "$lock_file" 2>/dev/null) || stored_raw=""
+		stored_pid="${stored_raw%%|*}"
 		if [[ "$stored_pid" == "$$" ]]; then
 			rm -f "$lock_file"
 		fi
 	fi
+	return 0
+}
+
+_acquire_private_workload_lock() {
+	local workload_lock_key="$1"
+	local owner_hash=""
+	local acquire_result=""
+	local existing_raw=""
+	local existing_pid=""
+	local existing_hash=""
+	local takeover_result=""
+
+	[[ "$workload_lock_key" =~ ^private-workload-dir-[a-f0-9]{64}$ ]] || return 1
+	owner_hash=$(_compute_argv_hash "$$" 2>/dev/null || printf '')
+	[[ "$owner_hash" =~ ^[a-f0-9]{12}$ ]] || return 1
+
+	acquire_result=$(sqlite3_with_timeout "$STATE_DB" \
+		"BEGIN IMMEDIATE; INSERT OR IGNORE INTO private_workload_locks (lock_key, owner_pid, owner_argv_hash) VALUES ('${workload_lock_key}', $$, '${owner_hash}'); SELECT changes(); COMMIT;" \
+		2>/dev/null) || return 1
+	if [[ "$acquire_result" == "1" ]]; then
+		return 0
+	fi
+
+	existing_raw=$(sqlite3_with_timeout "$STATE_DB" \
+		"SELECT owner_pid || '|' || owner_argv_hash FROM private_workload_locks WHERE lock_key = '${workload_lock_key}' LIMIT 1;" \
+		2>/dev/null) || return 1
+	existing_pid="${existing_raw%%|*}"
+	existing_hash="${existing_raw#*|}"
+	if [[ ! "$existing_pid" =~ ^[0-9]+$ || ! "$existing_hash" =~ ^[a-f0-9]{12}$ ]]; then
+		return 1
+	fi
+	if [[ "$existing_pid" == "$$" ]] || \
+		_is_process_alive_and_matches "$existing_pid" "${FRAMEWORK_PROCESS_PATTERN:-}" "$existing_hash"; then
+		print_warning "Duplicate private workload blocked: directory already has an active worker"
+		return 1
+	fi
+
+	takeover_result=$(sqlite3_with_timeout "$STATE_DB" \
+		"BEGIN IMMEDIATE; DELETE FROM private_workload_locks WHERE lock_key = '${workload_lock_key}' AND owner_pid = ${existing_pid} AND owner_argv_hash = '${existing_hash}'; INSERT OR IGNORE INTO private_workload_locks (lock_key, owner_pid, owner_argv_hash) VALUES ('${workload_lock_key}', $$, '${owner_hash}'); SELECT CASE WHEN owner_pid = $$ AND owner_argv_hash = '${owner_hash}' THEN 1 ELSE 0 END FROM private_workload_locks WHERE lock_key = '${workload_lock_key}'; COMMIT;" \
+		2>/dev/null) || return 1
+	[[ "$takeover_result" == "1" ]] || return 1
+	return 0
+}
+
+_release_private_workload_lock() {
+	local workload_lock_key="$1"
+
+	[[ "$workload_lock_key" =~ ^private-workload-dir-[a-f0-9]{64}$ ]] || return 1
+	sqlite3_with_timeout "$STATE_DB" \
+		"DELETE FROM private_workload_locks WHERE lock_key = '${workload_lock_key}' AND owner_pid = $$;" \
+		>/dev/null 2>&1 || return 1
 	return 0
 }
 

@@ -458,10 +458,15 @@ _private_output_has_task_complete() {
 
 _private_workload_exit_trap() {
 	local session_key="$1"
+	local workload_lock_key="${2:-}"
 	if declare -F _cleanup_headless_runtime_temp_paths >/dev/null 2>&1; then
-		_cleanup_headless_runtime_temp_paths
+		_cleanup_headless_runtime_temp_paths || true
 	fi
-	_release_session_lock "$session_key"
+	_release_session_lock "$session_key" || true
+	if [[ -n "$workload_lock_key" ]]; then
+		_release_private_workload_lock "$workload_lock_key" || true
+	fi
+	_PRIVATE_WORKLOAD_LOCK_KEY=""
 	trap - EXIT
 	return 0
 }
@@ -1627,6 +1632,8 @@ cmd_run() {
 	detach=0
 	local private_workload
 	private_workload="${AIDEVOPS_PRIVATE_WORKLOAD:-0}"
+	local private_profile_sha256
+	private_profile_sha256=""
 	local -a extra_args=()
 
 	_parse_run_args "$@" || return 1
@@ -2053,7 +2060,7 @@ headless-runtime-helper.sh - Model-aware headless runtime (OpenCode default, Cla
 Usage:
   headless-runtime-helper.sh select [--role pulse|worker|triage] [--model provider/model]
   headless-runtime-helper.sh canary [--role pulse|worker|triage] [--model provider/model] [--tier simple|standard|thinking]
-  headless-runtime-helper.sh run --role pulse|worker|triage --session-key KEY --dir PATH --title TITLE (--prompt TEXT | --prompt-file FILE) [--model provider/model | --initial-model provider/model] [--tier simple|standard|thinking] [--variant NAME] [--agent NAME] [--runtime opencode|claude] [--opencode-arg ARG] [--private-workload] [--detach]
+  headless-runtime-helper.sh run --role pulse|worker|triage --session-key KEY --dir PATH --title TITLE (--prompt TEXT | --prompt-file FILE) [--model provider/model | --initial-model provider/model] [--tier simple|standard|thinking] [--variant NAME] [--agent NAME] [--runtime opencode|claude] [--opencode-arg ARG] [--private-workload --private-profile-sha256 HASH] [--detach]
   headless-runtime-helper.sh backoff [status|set MODEL-OR-PROVIDER REASON [SECONDS]|clear MODEL-OR-PROVIDER]
   headless-runtime-helper.sh session [status|clear PROVIDER SESSION_KEY]
   headless-runtime-helper.sh metrics [--role pulse|worker|triage] [--hours N] [--model SUBSTRING] [--fast-threshold N]
@@ -2065,10 +2072,13 @@ Runtime selection:
 
 Private workloads:
   --private-workload is a fail-closed OpenCode mode for provider-approved protected data.
-  It requires --role triage, explicit --model and --agent values, and exactly one
-  --opencode-arg --pure. It forbids detach and variants, requires the sandbox,
-  suppresses transcript streaming and diagnostic excerpts, sanitizes activity
-  evidence, and discards the isolated OpenCode session database after exit.
+  It requires --role triage, explicit --model and --agent values, an exact
+  --private-profile-sha256, and exactly one --opencode-arg --pure. The model
+  provider must also appear in AIDEVOPS_HEADLESS_PROVIDER_ALLOWLIST. It forbids
+  detach and variants, requires the sandbox, prevents concurrent runs in the same
+  private directory, suppresses transcript streaming and diagnostic excerpts,
+  sanitizes activity evidence, and discards the isolated OpenCode session database
+  after exit.
 
 Backoff granularity:
   Rate limits and provider errors are recorded per model (e.g. anthropic/claude-sonnet-4-6).

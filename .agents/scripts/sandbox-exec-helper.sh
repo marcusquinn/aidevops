@@ -1294,6 +1294,15 @@ _sandbox_run_parse_args() {
 	return 0
 }
 
+_sandbox_validate_private_output_mode() {
+	local private_output_value="$1"
+	if [[ "$private_output_value" == "true" && "${AIDEVOPS_PRIVATE_WORKLOAD:-0}" != "1" ]]; then
+		log_sandbox "$SANDBOX_ERROR_LEVEL" "Private output requires an active private workload"
+		return 2
+	fi
+	return 0
+}
+
 sandbox_run() {
 	local timeout_secs="$SANDBOX_DEFAULT_TIMEOUT"
 	local block_network=false
@@ -1325,6 +1334,7 @@ sandbox_run() {
 		log_sandbox "$SANDBOX_ERROR_LEVEL" "No command provided"
 		return 1
 	fi
+	_sandbox_validate_private_output_mode "$private_output" || return $?
 	case "$egress_mode" in
 	off | auto | required) ;;
 	*)

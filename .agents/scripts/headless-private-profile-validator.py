@@ -5,6 +5,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import hmac
 import json
 import os
 import shutil
@@ -38,6 +40,17 @@ EXPECTED_CONFIG_KEYS = {
     "snapshot",
 }
 EXPECTED_AGENT_KEYS = {"description", "mode", "model", "permission", "steps"}
+EXPECTED_AGENT_DESCRIPTION = (
+    "Adjudicates one protected award batch through fixed, "
+    "capability-restricted tools."
+)
+IMMUTABLE_PROFILE_PATHS = (
+    ".opencode/opencode.json",
+    ".opencode/tool/provisional_fetch.ts",
+    ".opencode/tool/provisional_submit.ts",
+    "instructions.md",
+    "jobs.jsonl",
+)
 DENIED_CAPABILITIES = {
     "bash",
     "edit",
@@ -164,12 +177,34 @@ def validate_config_values(
             raise ValueError("Restricted OpenCode runtime does not match the request")
 
 
-def validate_steps(steps: Any) -> None:
-    if (
-        not isinstance(steps, int)
-        or isinstance(steps, bool)
-        or not 1 <= steps <= 10_000
-    ):
+def profile_sha256(root: Path) -> str:
+    digest = hashlib.sha256()
+    for relative_path in IMMUTABLE_PROFILE_PATHS:
+        contents = (root / relative_path).read_bytes()
+        digest.update(relative_path.encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(str(len(contents)).encode("ascii"))
+        digest.update(b"\0")
+        digest.update(contents)
+    return digest.hexdigest()
+
+
+def job_count(path: Path) -> int:
+    count = 0
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        if not isinstance(json.loads(line), dict):
+            raise ValueError("Invalid private workload job record")
+        count += 1
+    if count < 1:
+        raise ValueError("Private workload requires at least one job")
+    return count
+
+
+def validate_steps(steps: Any, expected_job_count: int) -> None:
+    expected_steps = max(12, expected_job_count * 6)
+    if not isinstance(steps, int) or isinstance(steps, bool) or steps != expected_steps:
         raise ValueError("Invalid restricted OpenCode agent step count")
 
 
@@ -195,22 +230,28 @@ def validate_permissions(value: Any) -> None:
             raise ValueError("Unsafe restricted OpenCode permissions")
 
 
-def validate_agent_config(value: Any, model: str) -> None:
+def validate_agent_config(value: Any, model: str, expected_job_count: int) -> None:
     agent_config = exact_mapping(
         value,
         EXPECTED_AGENT_KEYS,
         "Unexpected restricted OpenCode agent configuration",
     )
     description = agent_config["description"]
-    if not isinstance(description, str) or not description:
+    if description != EXPECTED_AGENT_DESCRIPTION:
         raise ValueError("Invalid restricted OpenCode agent description")
     if agent_config["mode"] != "primary" or agent_config["model"] != model:
         raise ValueError("Invalid restricted OpenCode agent runtime")
-    validate_steps(agent_config["steps"])
+    validate_steps(agent_config["steps"], expected_job_count)
     validate_permissions(agent_config["permission"])
 
 
-def validate_config(config: Any, model: str, agent: str, provider: str) -> None:
+def validate_config(
+    config: Any,
+    model: str,
+    agent: str,
+    provider: str,
+    expected_job_count: int,
+) -> None:
     root_config = exact_mapping(
         config,
         EXPECTED_CONFIG_KEYS,
@@ -223,19 +264,29 @@ def validate_config(config: Any, model: str, agent: str, provider: str) -> None:
         {agent},
         "Unexpected restricted OpenCode agent",
     )
-    validate_agent_config(agents[agent], model)
+    validate_agent_config(agents[agent], model, expected_job_count)
 
 
 def main() -> int:
-    if len(sys.argv) != 5:
+    if len(sys.argv) != 6:
         return 2
     root = Path(sys.argv[1])
-    model, agent, provider = sys.argv[2:]
+    model, agent, provider = sys.argv[2:5]
+    expected_profile_sha256 = sys.argv[5]
+    if len(expected_profile_sha256) != 64 or any(
+        character not in "0123456789abcdef" for character in expected_profile_sha256
+    ):
+        raise ValueError("Invalid private workload profile hash")
     uid = os.getuid()
     opencode_root, entries = validate_layout(root, uid)
     remove_generated_runtime_entries(opencode_root, entries, uid)
-    config: Any = json.loads((opencode_root / "opencode.json").read_text(encoding="utf-8"))
-    validate_config(config, model, agent, provider)
+    if not hmac.compare_digest(profile_sha256(root), expected_profile_sha256):
+        raise ValueError("Private workload profile hash mismatch")
+    expected_job_count = job_count(root / "jobs.jsonl")
+    config: Any = json.loads(
+        (opencode_root / "opencode.json").read_text(encoding="utf-8")
+    )
+    validate_config(config, model, agent, provider, expected_job_count)
     return 0
 
 
