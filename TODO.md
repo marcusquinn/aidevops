@@ -4667,3 +4667,7 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [ ] t18159 Bound runtime-bundle growth without weakening leases or rollback #enhancement ref:GH#28150
 
 - [ ] t18160 Bound observability growth while preserving append-only audit evidence #enhancement ref:GH#28151
+
+- [ ] t18162 Report and maintain OpenCode storage through ownership-aware contracts #enhancement ref:GH#28153
+
+- [ ] t18161 Coordinate retention for agent backups logs and worker failure evidence #enhancement ref:GH#28152
