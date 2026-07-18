@@ -429,8 +429,15 @@ _release_dry_run() {
 	local dr_major dr_minor dr_patch planned_version
 	IFS='.' read -r dr_major dr_minor dr_patch <<<"$current_version"
 	case "$bump_type" in
-	"major") dr_major=$((dr_major + 1)); dr_minor=0; dr_patch=0 ;;
-	"minor") dr_minor=$((dr_minor + 1)); dr_patch=0 ;;
+	"major")
+		dr_major=$((dr_major + 1))
+		dr_minor=0
+		dr_patch=0
+		;;
+	"minor")
+		dr_minor=$((dr_minor + 1))
+		dr_patch=0
+		;;
 	"patch") dr_patch=$((dr_patch + 1)) ;;
 	esac
 	planned_version="${dr_major}.${dr_minor}.${dr_patch}"
@@ -444,8 +451,8 @@ _release_dry_run() {
 		print_info "  Runners with auto_hotfix_accept=true will pull within ~5 minutes"
 		print_info "  Runners with auto_hotfix_accept=false will see a session banner"
 	fi
-	print_info "  Force: $( [[ "$force_flag" -eq 1 ]] && echo "yes" || echo "no" )"
-	print_info "  Skip preflight: $( [[ "$skip_preflight" -eq 1 ]] && echo "yes" || echo "no" )"
+	print_info "  Force: $([[ "$force_flag" -eq 1 ]] && echo "yes" || echo "no")"
+	print_info "  Skip preflight: $([[ "$skip_preflight" -eq 1 ]] && echo "yes" || echo "no")"
 	print_info "=== DRY RUN: No changes made ==="
 	return 0
 }
@@ -455,17 +462,38 @@ _release_dry_run() {
 _parse_release_args() {
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
-		--force) force_flag=1; shift ;;
-		--skip-preflight) skip_preflight=1; shift ;;
-		--allow-dirty) allow_dirty=1; shift ;;
-		--hotfix) hotfix_flag=1; shift ;;
-		--dry-run) dry_run=1; shift ;;
+		--force)
+			force_flag=1
+			shift
+			;;
+		--skip-preflight)
+			skip_preflight=1
+			shift
+			;;
+		--allow-dirty)
+			allow_dirty=1
+			shift
+			;;
+		--hotfix)
+			hotfix_flag=1
+			shift
+			;;
+		--dry-run)
+			dry_run=1
+			shift
+			;;
 		--source-pr)
 			source_pr="${2:-}"
-			[[ -n "$source_pr" ]] || { print_error "--source-pr requires a PR number"; return 1; }
+			[[ -n "$source_pr" ]] || {
+				print_error "--source-pr requires a PR number"
+				return 1
+			}
 			shift 2
 			;;
-		*) print_error "Unknown release option: $1"; return 1 ;;
+		*)
+			print_error "Unknown release option: $1"
+			return 1
+			;;
 		esac
 	done
 	return 0
