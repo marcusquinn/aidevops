@@ -1710,7 +1710,7 @@ _extract_linked_issue() {
 	# override that creates a match where the body intentionally has none. (t2108)
 	local body_issues="" body_issue="" title_issue=""
 	body_issues=$(printf '%s' "$pr_body" \
-		| grep -ioE '(close[ds]?|fix(es|ed)?|resolve[ds]?)\s+#[0-9]+' \
+		| grep -ioE '(close[ds]?|fix(es|ed)?|resolve[ds]?)[[:space:]]+#[0-9]+' \
 		| grep -oE '[0-9]+' | sort -u) || body_issues=""
 	title_issue=$(printf '%s' "$pr_title" | grep -oE 'GH#[0-9]+' | head -1 | grep -oE '[0-9]+') || title_issue=""
 

@@ -168,6 +168,14 @@ test_resolves_body_returns_issue() {
 	return 0
 }
 
+test_closing_keyword_accepts_tab_whitespace() {
+	export TEST_PR_TITLE="GH#19042: fix bug"
+	export TEST_PR_BODY="Resolves"$'\t'"#19042"
+	assert_returns "19042" \
+		"scenario2b: closing keyword with tab whitespace returns issue number"
+	return 0
+}
+
 # Scenario 3: title/body mismatch is ambiguous and must not select either issue.
 test_title_mismatch_returns_empty() {
 	export TEST_PR_TITLE="GH#19042: cross-issue"
@@ -222,6 +230,7 @@ main() {
 
 	test_for_ref_body_no_close_returns_empty
 	test_resolves_body_returns_issue
+	test_closing_keyword_accepts_tab_whitespace
 	test_title_mismatch_returns_empty
 	test_ref_body_tnnn_title_returns_empty
 	test_multiple_closing_issues_return_empty
