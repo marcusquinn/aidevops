@@ -333,6 +333,8 @@ unset _setup_script_dir
 # helpers loaded early by the root entrypoint; normal setup implementation
 # modules live under modules/ so the repository root has no module directory.
 SETUP_IMPL_MODULES_DIR="${SETUP_MODULES_DIR}/modules"
+# shellcheck source=.agents/scripts/runtime-bundle-verifier.sh
+source "${INSTALL_DIR}/.agents/scripts/runtime-bundle-verifier.sh"
 # shellcheck disable=SC1091  # Dynamic path via $SETUP_IMPL_MODULES_DIR
 source "${SETUP_IMPL_MODULES_DIR}/core.sh"
 # shellcheck disable=SC1091
@@ -1331,68 +1333,14 @@ _setup_git_checkout_available() {
 	return 0
 }
 
-_setup_bundle_manifest_value() {
-	local manifest_file="$1"
-	local key="$2"
-	local value=""
-	value=$(grep -m 1 "^${key}=" "$manifest_file" 2>/dev/null) || return 1
-	printf '%s' "${value#*=}"
-	return 0
-}
-
 _setup_ai_session_verify_deploy() {
 	local expected_sha="$1"
-	local active_link="$HOME/.aidevops/agents"
-	local active_root=""
-	local manifest_file=""
-	local manifest_status=""
-	local manifest_version=""
-	local manifest_sha=""
-	local repo_version=""
-	local deployed_version=""
-	local deployed_sha=""
-
-	if [[ ! -L "$active_link" ]]; then
-		print_warning "AI-session incremental verification failed: active agents path is not an activation symlink"
-		return 1
-	fi
-	active_root=$(resolve_aidevops_runtime_bundle_root "$active_link") || {
-		print_warning "AI-session incremental verification failed: active agents symlink cannot be resolved"
-		return 1
-	}
-	manifest_file="$active_root/.bundle-manifest"
-	if [[ ! -r "$manifest_file" ]]; then
-		print_warning "AI-session incremental verification failed: active bundle manifest is missing"
-		return 1
-	fi
-	manifest_status=$(_setup_bundle_manifest_value "$manifest_file" status) || manifest_status=""
-	manifest_version=$(_setup_bundle_manifest_value "$manifest_file" framework_version) || manifest_version=""
-	manifest_sha=$(_setup_bundle_manifest_value "$manifest_file" git_sha) || manifest_sha=""
-
-	if [[ -f "$INSTALL_DIR/VERSION" ]]; then
-		repo_version=$(tr -d '[:space:]' <"$INSTALL_DIR/VERSION" 2>/dev/null) || repo_version=""
-	fi
-	if [[ -f "$active_root/VERSION" ]]; then
-		deployed_version=$(tr -d '[:space:]' <"$active_root/VERSION" 2>/dev/null) || deployed_version=""
-	fi
-	if [[ -f "$HOME/.aidevops/.deployed-sha" ]]; then
-		deployed_sha=$(tr -d '[:space:]' <"$HOME/.aidevops/.deployed-sha" 2>/dev/null) || deployed_sha=""
-	fi
-
-	if [[ "$manifest_status" != "validated" ]]; then
-		print_warning "AI-session incremental verification failed: active bundle manifest status=${manifest_status:-missing}"
-		return 1
-	fi
-	if [[ -z "$repo_version" || "$repo_version" != "$deployed_version" || "$repo_version" != "$manifest_version" ]]; then
-		print_warning "AI-session incremental verification failed: repo version=${repo_version:-unknown}, active=${deployed_version:-none}, manifest=${manifest_version:-none}"
-		return 1
-	fi
-	if [[ -z "$deployed_sha" || "$deployed_sha" != "$expected_sha" || "$manifest_sha" != "$expected_sha" ]]; then
-		print_warning "AI-session incremental verification failed: stamp SHA=${deployed_sha:-none}, manifest SHA=${manifest_sha:-none}, expected=${expected_sha:0:12}"
-		return 1
-	fi
-
-	return 0
+	verify_aidevops_runtime_bundle_convergence \
+		"$INSTALL_DIR" \
+		"$expected_sha" \
+		"$HOME/.aidevops/agents" \
+		"$HOME/.aidevops/.deployed-sha"
+	return $?
 }
 
 _setup_run_ai_session_incremental() {

@@ -257,6 +257,38 @@ regenerate_runtime_config() {
 	return 0
 }
 
+# Route every mutating incremental deployment through setup's transactional
+# runtime-bundle stage. This preserves the previous immutable bundle and only
+# changes the stable agents path via atomic activation after validation.
+run_transactional_incremental_deploy() {
+	local setup_script="$REPO_DIR/setup.sh"
+	local setup_exit=0
+
+	if [[ ! -f "$setup_script" || ! -r "$setup_script" ]]; then
+		log_error "Transactional deployment requires a readable setup helper: $setup_script"
+		return 1
+	fi
+	if [[ "$DRY_RUN" == "true" ]]; then
+		log_info "[dry-run] Would stage and atomically activate a runtime bundle via setup.sh --stage ai-session"
+		return 0
+	fi
+
+	log_info "Staging and atomically activating an immutable runtime bundle..."
+	env -u AIDEVOPS_AGENTS_DIR -u AGENTS_DIR \
+		AIDEVOPS_NON_INTERACTIVE=true \
+		AIDEVOPS_DEPLOY_TARGET="$TARGET_DIR" \
+		bash "$setup_script" --stage ai-session || setup_exit=$?
+	if [[ "$setup_exit" -eq 75 ]]; then
+		log_warn "setup.sh --stage ai-session is locked by another deployment (exit 75)"
+	fi
+	if [[ "$setup_exit" -ne 0 ]]; then
+		log_error "Transactional runtime bundle deployment failed (exit $setup_exit)"
+		return "$setup_exit"
+	fi
+	log_success "Transactional runtime bundle deployment completed"
+	return 0
+}
+
 runtime_config_changes_detected() {
 	local changed_files="${1:-}"
 	local file
@@ -574,13 +606,42 @@ main() {
 			bash "$REPO_DIR/setup.sh" --non-interactive
 		local _full_rc=$?
 		if [[ "$_full_rc" -eq 75 ]]; then
-			log_warn "setup.sh --non-interactive is locked by another process (exit 75). The lightweight deploy path (deploy-agents-on-merge.sh without --full) is unaffected — re-run without --full for an immediate agent sync while the full setup completes."
+			log_warn "setup.sh --non-interactive is locked by another deployment (exit 75). Re-run after the active transactional deployment completes."
 		fi
 		return "$_full_rc"
 	fi
 
 	# Pull latest (only if on main)
 	pull_latest
+
+	# All mutating incremental paths converge through setup's immutable bundle
+	# staging. Keep the legacy selective functions below for dry-run planning,
+	# but never write through the active agents symlink in place.
+	if [[ "$DRY_RUN" != "true" ]]; then
+		if [[ -n "$DIFF_COMMIT" ]]; then
+			local transactional_changed=""
+			local transactional_count=0
+			local transactional_non_script_count=0
+			if ! transactional_changed=$(detect_changes "$DIFF_COMMIT"); then
+				return 1
+			fi
+			if [[ -z "$transactional_changed" ]]; then
+				log_info "No agent changes since $DIFF_COMMIT"
+				return 2
+			fi
+			transactional_count=$(printf '%s\n' "$transactional_changed" | wc -l | tr -d ' ')
+			if ! transactional_non_script_count=$(printf '%s\n' "$transactional_changed" | grep -cEv '^\.agents/scripts/'); then
+				transactional_non_script_count=0
+			fi
+			if [[ "$transactional_non_script_count" -eq 0 ]]; then
+				log_info "Only scripts changed — using fast scripts-only deploy through atomic setup"
+			else
+				log_info "Deploying $transactional_count changed agent files through atomic setup"
+			fi
+		fi
+		run_transactional_incremental_deploy
+		return $?
+	fi
 
 	# Scripts-only deploy
 	if [[ "$SCRIPTS_ONLY" == "true" ]]; then
