@@ -10,6 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.32.152] - 2026-07-18
+
+### Fixed
+
+- reject stale runtime bundles and recover idle tabs (#28217)
+
 ## [3.32.151] - 2026-07-18
 
 ### Changed
