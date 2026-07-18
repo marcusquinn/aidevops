@@ -76,13 +76,13 @@ _body_sync_fetch_state() {
 _body_sync_validate_state() {
 	local state_json="$1"
 	local issue_number="$2"
-	jq -e --argjson issue "$issue_number" '
+	jq -e --argjson issue "$issue_number" --arg string_type "string" '
 		type == "object" and .number == $issue and
-		(.title | type == "string") and (.body | type == "string") and
-		(.updatedAt | type == "string") and
+		(.title | type == $string_type) and (.body | type == $string_type) and
+		(.updatedAt | type == $string_type) and
 		(.state == "OPEN" or .state == "CLOSED") and
-		(.labels | type == "array") and all(.labels[]; .name | type == "string") and
-		(.assignees | type == "array") and all(.assignees[]; .login | type == "string")
+		(.labels | type == "array") and all(.labels[]; .name | type == $string_type) and
+		(.assignees | type == "array") and all(.assignees[]; .login | type == $string_type)
 	' <<<"$state_json" >/dev/null 2>&1
 	return $?
 }
