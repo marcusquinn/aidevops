@@ -65,8 +65,11 @@ done
 [[ -n "$repo_root" ]]
 source_sha=$(git -C "$repo_root" rev-parse HEAD)
 bundle_sha="$source_sha"
-if [[ "${MOCK_DEPLOY_MODE:-current}" == "stale" ]]; then
+stamp_sha="$source_sha"
+if [[ "${MOCK_DEPLOY_MODE:-current}" == "stale-active" ]]; then
 	bundle_sha="1111111111111111111111111111111111111111"
+elif [[ "${MOCK_DEPLOY_MODE:-current}" == "stale-stamp" ]]; then
+	stamp_sha="1111111111111111111111111111111111111111"
 fi
 IFS= read -r framework_version <"$repo_root/VERSION"
 bundle_id="${framework_version}-${bundle_sha:0:12}-fixture"
@@ -85,6 +88,9 @@ for sentinel_pair in \
 	mkdir -p "$(dirname "$bundle_root/$active_rel")"
 	cp "$repo_root/$source_rel" "$bundle_root/$active_rel"
 done
+if [[ "${MOCK_DEPLOY_MODE:-current}" == "stale-sentinel" ]]; then
+	printf '%s\n' 'stale release helper' >"$bundle_root/scripts/version-manager-release.sh"
+fi
 cp "$repo_root/VERSION" "$bundle_root/VERSION"
 if command -v sha256sum >/dev/null 2>&1; then
 	cli_sha=$(sha256sum "$bundle_root/aidevops.sh" | cut -d' ' -f1)
@@ -109,7 +115,7 @@ if [[ "$(uname -s)" == "Darwin" ]]; then
 else
 	mv -Tf "$link_tmp" "$active_link"
 fi
-printf '%s\n' "$bundle_sha" >"$HOME/.aidevops/.deployed-sha"
+printf '%s\n' "$stamp_sha" >"$HOME/.aidevops/.deployed-sha"
 exit 0
 EOF
 	chmod +x "$TEST_DIR/repo/.agents/scripts/deploy-agents-on-merge.sh"
@@ -253,17 +259,47 @@ test_release_sync_propagates_deploy_failure() {
 	return 0
 }
 
-test_release_sync_rejects_stale_provenance() {
+test_release_sync_rejects_stale_active_bundle() {
 	: >"$TEST_DIR/sync.log"
 	local repo_path
 	local output=""
-	repo_path=$(create_fake_repo "release-stale" "https://github.com/marcusquinn/aidevops.git")
-	if output=$(MOCK_DEPLOY_MODE=stale invoke_release_sync "$repo_path" 2>&1); then
-		print_result "release sync rejects stale activation provenance" 1 "Stale deployment was reported as converged"
+	repo_path=$(create_fake_repo "release-stale-active" "https://github.com/marcusquinn/aidevops.git")
+	if output=$(MOCK_DEPLOY_MODE=stale-active invoke_release_sync "$repo_path" 2>&1); then
+		print_result "release sync rejects a stale active bundle" 1 "Stale deployment was reported as converged"
 	elif [[ "$output" == *"does not identify release commit"* && "$output" == *"provenance did not converge"* ]]; then
-		print_result "release sync rejects stale activation provenance" 0
+		print_result "release sync rejects a stale active bundle" 0
 	else
-		print_result "release sync rejects stale activation provenance" 1 "Missing actionable stale-provenance evidence: $output"
+		print_result "release sync rejects a stale active bundle" 1 "Missing actionable stale-active evidence: $output"
+	fi
+	return 0
+}
+
+test_release_sync_rejects_stale_deployed_sha() {
+	: >"$TEST_DIR/sync.log"
+	local repo_path
+	local output=""
+	repo_path=$(create_fake_repo "release-stale-stamp" "https://github.com/marcusquinn/aidevops.git")
+	if output=$(MOCK_DEPLOY_MODE=stale-stamp invoke_release_sync "$repo_path" 2>&1); then
+		print_result "release sync rejects a stale deployed SHA" 1 "Stale deployment stamp was reported as converged"
+	elif [[ "$output" == *"deployed SHA"* && "$output" == *"does not match release commit"* ]]; then
+		print_result "release sync rejects a stale deployed SHA" 0
+	else
+		print_result "release sync rejects a stale deployed SHA" 1 "Missing actionable stale-stamp evidence: $output"
+	fi
+	return 0
+}
+
+test_release_sync_rejects_stale_sentinel() {
+	: >"$TEST_DIR/sync.log"
+	local repo_path
+	local output=""
+	repo_path=$(create_fake_repo "release-stale-sentinel" "https://github.com/marcusquinn/aidevops.git")
+	if output=$(MOCK_DEPLOY_MODE=stale-sentinel invoke_release_sync "$repo_path" 2>&1); then
+		print_result "release sync rejects a stale sentinel hash" 1 "Stale release sentinel was reported as converged"
+	elif [[ "$output" == *"active sentinel scripts/version-manager-release.sh"* && "$output" == *"does not match release commit"* ]]; then
+		print_result "release sync rejects a stale sentinel hash" 0
+	else
+		print_result "release sync rejects a stale sentinel hash" 1 "Missing actionable stale-sentinel evidence: $output"
 	fi
 	return 0
 }
@@ -295,7 +331,9 @@ main() {
 	test_release_sync_explicit_full
 	test_release_sync_skips_other_remotes
 	test_release_sync_propagates_deploy_failure
-	test_release_sync_rejects_stale_provenance
+	test_release_sync_rejects_stale_active_bundle
+	test_release_sync_rejects_stale_deployed_sha
+	test_release_sync_rejects_stale_sentinel
 	test_release_sync_unsets_session_pins
 
 	teardown
