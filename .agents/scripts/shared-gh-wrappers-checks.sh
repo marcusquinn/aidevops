@@ -53,10 +53,20 @@
 [[ -n "${_SHARED_GH_WRAPPERS_CHECKS_LIB_LOADED:-}" ]] && return 0
 _SHARED_GH_WRAPPERS_CHECKS_LIB_LOADED=1
 
+_gh_checks_lib_dir="${BASH_SOURCE[0]%/*}"
+[[ "$_gh_checks_lib_dir" == "${BASH_SOURCE[0]}" ]] && _gh_checks_lib_dir="."
+if ! declare -F gh_request_state_singleflight_begin >/dev/null 2>&1 && [[ -f "${_gh_checks_lib_dir}/shared-gh-request-state.sh" ]]; then
+	# shellcheck source=./shared-gh-request-state.sh
+	# shellcheck disable=SC1091
+	source "${_gh_checks_lib_dir}/shared-gh-request-state.sh"
+fi
+unset _gh_checks_lib_dir
+
 _GH_PR_CHECK_STATUS_SCHEMA="aidevops-gh-pr-check-status/v1"
 _GH_PR_CHECK_STATUS_PROJECTION="check-suites-aggregate/v1"
 _GH_PR_CHECK_STATUS_SOURCE="rest-check-suites"
 _GH_PR_CHECK_STATUS_NONE=none
+_GH_PR_CHECK_STATUS_CACHE_PUT_OK=0
 
 #######################################
 # Record an observational check-status cache decision without counting an HTTP
@@ -75,7 +85,7 @@ _gh_pr_check_status_cache_record() {
 # Resolve the non-secret auth identity used to isolate cache entries.
 #######################################
 _gh_pr_check_status_cache_auth_scope() {
-	printf '%s' "${AIDEVOPS_GH_CHECK_STATUS_CACHE_AUTH_SCOPE:-${GH_HOST:-github.com}|${AIDEVOPS_GH_AUTH_MODE:-gh}|${AIDEVOPS_GH_AUTH_PRINCIPAL:-default}}"
+	printf '%s|%s' "${AIDEVOPS_GH_CHECK_STATUS_CACHE_AUTH_SCOPE:-${GH_HOST:-github.com}|${AIDEVOPS_GH_AUTH_MODE:-gh}|${AIDEVOPS_GH_AUTH_PRINCIPAL:-default}}" "${AIDEVOPS_GH_API_POOL:-default}"
 	return 0
 }
 
@@ -161,7 +171,7 @@ _gh_pr_check_status_cache_key() {
 	elif command -v openssl >/dev/null 2>&1; then
 		key=$(printf '%s' "$material" | openssl dgst -sha256 | awk '{print $NF}')
 	else
-		key=$(printf '%s' "$material" | cksum | awk '{print $1}')
+		return 1
 	fi
 	[[ -n "$key" ]] || return 1
 	printf '%s\n' "$key"
@@ -260,6 +270,7 @@ _gh_pr_check_status_cache_put() {
 	local slug="$1"
 	local sha="$2"
 	local check_state="$3"
+	_GH_PR_CHECK_STATUS_CACHE_PUT_OK=0
 	[[ "${AIDEVOPS_GH_CHECK_STATUS_CACHE_DISABLE:-0}" != "1" ]] || return 0
 	_gh_pr_check_status_cache_identity_valid "$slug" "$sha" || return 0
 	local expiry_class="" path="" dir="" tmp="" now="" auth_scope=""
@@ -287,6 +298,7 @@ _gh_pr_check_status_cache_put() {
 		return 0
 	fi
 	if mv "$tmp" "$path" 2>/dev/null; then
+		_GH_PR_CHECK_STATUS_CACHE_PUT_OK=1
 		_gh_pr_check_status_cache_record "store-${expiry_class}"
 	else
 		rm -f "$tmp"
@@ -380,6 +392,92 @@ _gh_pr_check_status_rest_fetch() {
 	return 0
 }
 
+#######################################
+# Fetch and publish one aggregate observation. A coordinated leader must still
+# own its generation immediately before the cache write.
+# Args: $1=repo slug, $2=full head SHA, $3=request key (optional),
+#       $4=generation (optional)
+#######################################
+_gh_pr_check_status_fetch_and_cache() {
+	local slug="$1"
+	local sha="$2"
+	local request_key="${3:-}"
+	local generation="${4:-}"
+	local check_state=""
+	_gh_pr_check_status_cache_record fetch
+	if ! check_state="$(_gh_pr_check_status_rest_fetch "$slug" "$sha")"; then
+		_gh_pr_check_status_cache_record fetch-failed
+		return 1
+	fi
+	if [[ -n "$request_key" && -n "$generation" ]] && ! gh_request_state_singleflight_is_owner "$request_key" "$generation"; then
+		_gh_pr_check_status_cache_record publish-fenced
+		return 1
+	fi
+	_gh_pr_check_status_cache_put "$slug" "$sha" "$check_state"
+	if [[ -n "$request_key" && "$_GH_PR_CHECK_STATUS_CACHE_PUT_OK" != "1" ]]; then
+		_gh_pr_check_status_cache_record publish-failed
+		return 1
+	fi
+	printf '%s\n' "$check_state"
+	return 0
+}
+
+#######################################
+# Coordinate only the exact-SHA aggregate check-suites cache miss. Named check
+# runs remain deliberately outside this path because they have different output
+# and freshness semantics.
+# Args: $1=repo slug, $2=full head SHA
+#######################################
+_gh_pr_check_status_singleflight() {
+	local slug="$1"
+	local sha="$2"
+	local request_key=""
+	local generation=""
+	local check_state=""
+	if [[ "${AIDEVOPS_GH_CHECK_STATUS_CACHE_DISABLE:-0}" == "1" ]] || ! declare -F gh_request_state_singleflight_begin >/dev/null 2>&1; then
+		_gh_pr_check_status_fetch_and_cache "$slug" "$sha" || printf 'none\n'
+		return 0
+	fi
+	request_key=$(gh_request_state_request_key "$slug" check-suites-aggregate "$_GH_PR_CHECK_STATUS_PROJECTION" "$sha" rest-core) || {
+		_gh_pr_check_status_fetch_and_cache "$slug" "$sha" || printf 'none\n'
+		return 0
+	}
+	gh_request_state_singleflight_begin "$request_key"
+	generation="$_GHRS_BEGIN_GENERATION"
+	case "$_GHRS_BEGIN_ROLE" in
+	leader)
+		if check_state="$(_gh_pr_check_status_cache_get "$slug" "$sha")"; then
+			gh_request_state_singleflight_finish "$request_key" "$generation" success || true
+			printf '%s\n' "$check_state"
+			return 0
+		fi
+		if _gh_pr_check_status_fetch_and_cache "$slug" "$sha" "$request_key" "$generation"; then
+			gh_request_state_singleflight_finish "$request_key" "$generation" success || true
+			return 0
+		fi
+		gh_request_state_singleflight_finish "$request_key" "$generation" failure || true
+		printf 'none\n'
+		return 0
+		;;
+	follower-success)
+		_gh_pr_check_status_cache_record coalesced
+		_gh_pr_check_status_cache_get "$slug" "$sha" || printf 'none\n'
+		return 0
+		;;
+	follower-failure | timeout)
+		_gh_pr_check_status_cache_record "coalesced-${_GHRS_BEGIN_ROLE}"
+		printf 'none\n'
+		return 0
+		;;
+	bypass)
+		_gh_pr_check_status_fetch_and_cache "$slug" "$sha" || printf 'none\n'
+		return 0
+		;;
+	esac
+	printf 'none\n'
+	return 0
+}
+
 gh_pr_check_status_rest() {
 	local slug="$1"
 	local sha="$2"
@@ -395,16 +493,8 @@ gh_pr_check_status_rest() {
 		return 0
 	fi
 
-	_gh_pr_check_status_cache_record fetch
-	if _check_state="$(_gh_pr_check_status_rest_fetch "$slug" "$sha")"; then
-		_gh_pr_check_status_cache_put "$slug" "$sha" "$_check_state"
-		printf '%s\n' "$_check_state"
-		return 0
-	fi
-
-	_gh_pr_check_status_cache_record fetch-failed
-	printf 'none\n'
-	return 0
+	_gh_pr_check_status_singleflight "$slug" "$sha"
+	return $?
 }
 
 #######################################

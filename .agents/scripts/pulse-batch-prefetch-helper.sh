@@ -60,6 +60,12 @@ SCRIPT_DIR="${BASH_SOURCE[0]%/*}"
 SCRIPT_DIR="$(cd "$SCRIPT_DIR" && pwd)"
 _PULSE_BATCH_SEARCH_LAST_RESORT_ENV="${PULSE_BATCH_SEARCH_LAST_RESORT-}"
 
+# shellcheck source=./shared-gh-request-state.sh
+if [[ -f "${SCRIPT_DIR}/shared-gh-request-state.sh" ]]; then
+	# shellcheck disable=SC1091
+	source "${SCRIPT_DIR}/shared-gh-request-state.sh"
+fi
+
 # Source shared constants for colors and helpers
 # shellcheck source=./shared-constants.sh
 # shellcheck disable=SC1091
@@ -124,7 +130,9 @@ _SNAPSHOT_SCHEMA="aidevops-pulse-snapshot/v1"
 _SNAPSHOT_ISSUES_PROJECTION="number,title,state,labels,updatedAt,assignees"
 _SNAPSHOT_PRS_PROJECTION="number,title,labels,updatedAt,assignees,createdAt,author,headRefOid,headRefName"
 _BATCH_SNAPSHOT_GENERATION="${PULSE_BATCH_SNAPSHOT_GENERATION:-}"
-_BATCH_SNAPSHOT_AUTH_SCOPE="${PULSE_BATCH_SNAPSHOT_AUTH_SCOPE:-${GH_HOST:-github.com}|${AIDEVOPS_GH_AUTH_MODE:-gh}|${AIDEVOPS_GH_AUTH_PRINCIPAL:-default}}"
+_BATCH_SNAPSHOT_AUTH_SCOPE="${PULSE_BATCH_SNAPSHOT_AUTH_SCOPE:-${GH_HOST:-github.com}|${AIDEVOPS_GH_AUTH_MODE:-gh}|${AIDEVOPS_GH_AUTH_PRINCIPAL:-default}}|${AIDEVOPS_GH_API_POOL:-default}"
+_BATCH_INITIAL_SNAPSHOT_MARKERS=""
+_BATCH_SNAPSHOT_MARKER_MISSING="$_CACHE_SNAPSHOT_STATE"
 
 # --- Feature flag gate ---
 _check_enabled() {
@@ -442,6 +450,64 @@ _conditional_rest_endpoint() {
 	return 0
 }
 
+_conditional_rest_snapshot_marker() {
+	local kind="$1"
+	local slug="$2"
+	local projection=""
+	local cache_file=""
+	projection=$(_snapshot_projection "$kind") || return 1
+	cache_file=$(_cache_file_path "$kind" "$slug")
+	[[ -s "$cache_file" ]] || return 1
+	jq -er --arg schema "$_SNAPSHOT_SCHEMA" --arg slug "$slug" --arg kind "$kind" \
+		--arg projection "$projection" --arg auth_scope "$_BATCH_SNAPSHOT_AUTH_SCOPE" \
+		--arg string_type "$_JSON_TYPE_STRING" '
+		select(
+			.schema == $schema and .repository == $slug and .collection == $kind and
+			.projection == $projection and .auth_scope == $auth_scope and
+			.source == "conditional-rest" and .complete == true and
+			(.generation | type == $string_type and length > 0) and
+			(.fetched_at | type == $string_type and length > 0)
+		) |
+		[.generation, .fetched_at, (.etag // "")] | @tsv
+	' "$cache_file" 2>/dev/null
+	return $?
+}
+
+_conditional_rest_capture_initial_markers() {
+	local owner_groups="$1"
+	local owner="" slugs="" slug="" kind="" marker="" record=""
+	_BATCH_INITIAL_SNAPSHOT_MARKERS=""
+	while IFS='|' read -r owner slugs; do
+		[[ -n "$owner" ]] || continue
+		while IFS= read -r slug; do
+			[[ -n "$slug" ]] || continue
+			for kind in "$_KIND_ISSUES" "$_KIND_PRS"; do
+				marker=$(_conditional_rest_snapshot_marker "$kind" "$slug") || marker="$_BATCH_SNAPSHOT_MARKER_MISSING"
+				record="${kind}|${slug}|${marker}"
+				if [[ -n "$_BATCH_INITIAL_SNAPSHOT_MARKERS" ]]; then
+					_BATCH_INITIAL_SNAPSHOT_MARKERS="${_BATCH_INITIAL_SNAPSHOT_MARKERS}"$'\n'"${record}"
+				else
+					_BATCH_INITIAL_SNAPSHOT_MARKERS="$record"
+				fi
+			done
+		done < <(tr ',' '\n' <<<"$slugs")
+	done <<<"$owner_groups"
+	return 0
+}
+
+_conditional_rest_initial_marker() {
+	local kind="$1"
+	local slug="$2"
+	local stored_kind="" stored_slug="" marker=""
+	while IFS='|' read -r stored_kind stored_slug marker; do
+		if [[ "$stored_kind" == "$kind" && "$stored_slug" == "$slug" ]]; then
+			printf '%s\n' "$marker"
+			return 0
+		fi
+	done <<<"$_BATCH_INITIAL_SNAPSHOT_MARKERS"
+	return 1
+}
+
 _conditional_rest_update_cache_from_response() {
 	local kind="$1"
 	local slug="$2"
@@ -457,9 +523,11 @@ _conditional_rest_update_cache_from_response() {
 	return 0
 }
 
-_conditional_rest_refresh_slug() {
+_conditional_rest_refresh_slug_leader() {
 	local kind="$1"
 	local slug="$2"
+	local request_key="${3:-}"
+	local generation="${4:-}"
 	[[ "${PULSE_BATCH_CONDITIONAL_REST_ENABLED:-1}" == "1" ]] || return 1
 	local cache_file
 	cache_file=$(_cache_file_path "$kind" "$slug")
@@ -487,6 +555,10 @@ _conditional_rest_refresh_slug() {
 		_prefetch_gh_read gh api -i -H "Accept: application/vnd.github+json" "$endpoint" >"$response_file" 2>"$err_file" || rc=$?
 	fi
 	local status=""
+	if [[ -n "$request_key" && -n "$generation" ]] && ! gh_request_state_singleflight_is_owner "$request_key" "$generation"; then
+		rm -f "$response_file" "$err_file"
+		return 1
+	fi
 	status=$(_conditional_rest_update_cache_from_response "$kind" "$slug" "$response_file" "$cache_file" 2>/dev/null) || status=""
 	rm -f "$response_file" "$err_file"
 	case "$status" in
@@ -507,6 +579,57 @@ _conditional_rest_refresh_slug() {
 		return 1
 		;;
 	esac
+	return 1
+}
+
+_conditional_rest_refresh_slug() {
+	local kind="$1"
+	local slug="$2"
+	local projection=""
+	local request_key=""
+	local generation=""
+	local initial_marker=""
+	local current_marker=""
+	projection=$(_snapshot_projection "$kind") || return 1
+	initial_marker=$(_conditional_rest_initial_marker "$kind" "$slug") || {
+		initial_marker=$(_conditional_rest_snapshot_marker "$kind" "$slug") || initial_marker="$_BATCH_SNAPSHOT_MARKER_MISSING"
+	}
+	if ! declare -F gh_request_state_singleflight_begin >/dev/null 2>&1; then
+		_conditional_rest_refresh_slug_leader "$kind" "$slug"
+		return $?
+	fi
+	request_key=$(gh_request_state_request_key "$slug" canonical-snapshot "$projection" "$kind" rest-core) || {
+		_conditional_rest_refresh_slug_leader "$kind" "$slug"
+		return $?
+	}
+	gh_request_state_singleflight_begin "$request_key"
+	generation="$_GHRS_BEGIN_GENERATION"
+	case "$_GHRS_BEGIN_ROLE" in
+	leader)
+		current_marker=$(_conditional_rest_snapshot_marker "$kind" "$slug") || current_marker=""
+		if [[ -n "$current_marker" && "$current_marker" != "$initial_marker" ]]; then
+			gh_request_state_singleflight_finish "$request_key" "$generation" success || true
+			_log "conditional REST ${kind}: reused concurrently published snapshot for ${slug}"
+			return 0
+		fi
+		if _conditional_rest_refresh_slug_leader "$kind" "$slug" "$request_key" "$generation"; then
+			gh_request_state_singleflight_finish "$request_key" "$generation" success || true
+			return 0
+		fi
+		gh_request_state_singleflight_finish "$request_key" "$generation" failure || true
+		return 1
+		;;
+	follower-success)
+		_log "conditional REST ${kind}: coalesced shared refresh for ${slug}"
+		return 0
+		;;
+	follower-failure | timeout) return 1 ;;
+	bypass)
+		_conditional_rest_refresh_slug_leader "$kind" "$slug"
+		return $?
+		;;
+	esac
+	return 1
 }
 
 _conditional_rest_per_slug() {
@@ -770,6 +893,7 @@ _cmd_refresh() {
 		_log "no pulse-enabled repos found — nothing to prefetch"
 		return 0
 	fi
+	_conditional_rest_capture_initial_markers "$owner_groups"
 
 	# Shared counters updated by _refresh_owner_issues/_refresh_owner_prs
 	_OWNER_SEARCH_CALLS=0

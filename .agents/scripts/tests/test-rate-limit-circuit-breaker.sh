@@ -59,10 +59,13 @@ trap 'rm -rf "$TMP"' EXIT
 
 export LOGFILE="${TMP}/test-pulse.log"
 export HOME="${TMP}/home"
+export AIDEVOPS_GH_REQUEST_STATE_DIR="${TMP}/request-state"
 mkdir -p "${HOME}/.aidevops/logs"
 
 # Stub pulse-stats-helper.sh — track counter increments.
 STATS_COUNTER_FILE="${TMP}/stats-counter.log"
+GH_RATE_CALLS="${TMP}/rate-calls.log"
+export GH_RATE_CALLS
 pulse_stats_increment() {
 	local counter_name="$1"
 	printf '%s\n' "$counter_name" >>"$STATS_COUNTER_FILE"
@@ -87,6 +90,8 @@ export -f pulse_stats_increment pulse_stats_get_24h
 #   STUB_GH_FAIL      — 1 to make gh api rate_limit fail entirely
 gh() {
 	if [[ "$1" == "api" && "$2" == "rate_limit" ]]; then
+		printf 'rate-limit\n' >>"$GH_RATE_CALLS"
+		[[ "${STUB_GH_DELAY:-0}" == "0" ]] || sleep "$STUB_GH_DELAY"
 		if [[ "${STUB_GH_FAIL:-0}" == "1" ]]; then
 			return 1
 		fi
@@ -118,6 +123,8 @@ export -f gh
 # Source the circuit breaker helper.
 # shellcheck source=../pulse-rate-limit-circuit-breaker.sh
 source "${SCRIPTS_DIR}/pulse-rate-limit-circuit-breaker.sh"
+# shellcheck source=../shared-gh-wrappers-rest-fallback.sh
+source "${SCRIPTS_DIR}/shared-gh-wrappers-rest-fallback.sh"
 
 # Re-override pulse_stats_* AFTER sourcing — the circuit breaker sources
 # the real pulse-stats-helper.sh which replaces our capturing stubs.
@@ -144,6 +151,7 @@ pulse_stats_get_24h() {
 reset_test_state() {
 	: >"$LOGFILE"
 	: >"$STATS_COUNTER_FILE"
+	: >"$GH_RATE_CALLS"
 	rm -f "${HOME}/.aidevops/logs/pulse-graphql-circuit-breaker.state"
 	rm -f "${HOME}/.aidevops/cache/pulse-graphql-rate-limit.json"
 	unset AIDEVOPS_SKIP_PULSE_CIRCUIT_BREAKER 2>/dev/null || true
@@ -154,6 +162,7 @@ reset_test_state() {
 	unset STUB_GH_CORE_REMAINING 2>/dev/null || true
 	unset STUB_GH_CORE_LIMIT 2>/dev/null || true
 	unset STUB_GH_FAIL 2>/dev/null || true
+	unset STUB_GH_DELAY 2>/dev/null || true
 	STUB_GH_REMAINING=5000
 	STUB_GH_LIMIT=5000
 	export AIDEVOPS_PULSE_CIRCUIT_BREAKER_THRESHOLD="0.05"
@@ -736,6 +745,34 @@ else
 	unset AIDEVOPS_SKIP_NO_WORK_BREAKER NO_WORK_WINDOW_SECS NO_WORK_WINDOW_MAX 2>/dev/null || true
 fi  # end: no_work breaker tests
 
+test_shared_rate_probe_coalesces_consumers() {
+	reset_test_state
+	export STUB_GH_REMAINING=1000
+	export STUB_GH_DELAY=0.25
+	local pid=0 count=0 output=""
+	local -a pids=()
+	(_cb_rate_limit_json normal >"${TMP}/shared-rate-circuit.json") &
+	pids+=("$!")
+	(_rest_should_fallback >/dev/null || true) &
+	pids+=("$!")
+	(_cb_rate_limit_json normal >"${TMP}/shared-rate-circuit-2.json") &
+	pids+=("$!")
+	(_rest_should_fallback >/dev/null || true) &
+	pids+=("$!")
+	for pid in "${pids[@]}"; do
+		wait "$pid"
+	done
+	count=$(wc -l <"$GH_RATE_CALLS")
+	count="${count//[!0-9]/}"
+	output=$(jq -r '.resources.graphql.remaining' "${TMP}/shared-rate-circuit.json" 2>/dev/null) || output=""
+	if [[ "$count" == "1" && "$output" == "1000" ]]; then
+		pass "REST fallback and circuit breaker share one concurrent rate probe"
+	else
+		fail "REST fallback and circuit breaker share one concurrent rate probe" "calls=${count:-0} remaining=${output:-missing}"
+	fi
+	return 0
+}
+
 # =============================================================================
 # Run all tests
 # =============================================================================
@@ -757,6 +794,7 @@ test_log_message_on_trip
 test_graphql_exhausted_rest_core_healthy_allows_dispatch
 test_graphql_exhausted_rest_core_low_blocks_dispatch
 test_graphql_exhausted_rest_fallback_disabled_blocks_dispatch
+test_shared_rate_probe_coalesces_consumers
 
 # =============================================================================
 # Summary

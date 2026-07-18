@@ -223,7 +223,13 @@ _stub_gh_api() {
 	local path="${2:-}"
 	local remaining="${STUB_RATE_LIMIT_REMAINING:-5000}"
 	if [[ "$subcommand" == "rate_limit" ]]; then
-		printf '%s\n' "$remaining"
+		printf '{"resources":{"graphql":{"remaining":'
+		if [[ "$remaining" =~ ^[0-9]+$ ]]; then
+			printf '%s' "$remaining"
+		else
+			printf '"%s"' "$remaining"
+		fi
+		printf ',"limit":5000}}}\n'
 		return 0
 	fi
 	if [[ "$subcommand" == "user" ]]; then
@@ -971,7 +977,7 @@ export STUB_RATE_LIMIT_REMAINING=0
 issue_list_title=$(gh_issue_list --repo "owner/repo" --state open \
 	--json number,title,url,assignees,labels,updatedAt --jq '.[0].title' 2>/dev/null || true)
 
-if [[ "$issue_list_title" == '"Reduce GraphQL list-call pressure"' ]] &&
+if [[ "$issue_list_title" == "Reduce GraphQL list-call pressure" ]] &&
 	grep -qE '^api /repos/owner/repo/issues\?state=open&per_page=30' "$GH_CALLS" 2>/dev/null &&
 	! grep -qE '^issue list' "$GH_CALLS" 2>/dev/null; then
 	pass "gh_issue_list REST fallback preserves compact --json/--jq shape"

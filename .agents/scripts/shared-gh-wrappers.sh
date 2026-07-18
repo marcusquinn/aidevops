@@ -164,6 +164,10 @@ if [[ -n "$_SHARED_GH_WRAPPERS_DIR" && -f "$_SHARED_GH_WRAPPERS_DIR/shared-gh-se
 	# shellcheck source=shared-gh-secondary-cooldown.sh
 	source "$_SHARED_GH_WRAPPERS_DIR/shared-gh-secondary-cooldown.sh"
 fi
+if [[ -n "$_SHARED_GH_WRAPPERS_DIR" && -f "$_SHARED_GH_WRAPPERS_DIR/shared-gh-request-state.sh" ]]; then
+	# shellcheck source=shared-gh-request-state.sh
+	source "$_SHARED_GH_WRAPPERS_DIR/shared-gh-request-state.sh"
+fi
 if [[ -n "$_SHARED_GH_WRAPPERS_DIR" && -f "$_SHARED_GH_WRAPPERS_DIR/shared-gh-wrappers-rest-fallback.sh" ]]; then
 	# shellcheck source=shared-gh-wrappers-rest-fallback.sh
 	source "$_SHARED_GH_WRAPPERS_DIR/shared-gh-wrappers-rest-fallback.sh"
