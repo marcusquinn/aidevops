@@ -72,6 +72,16 @@ gh() {
 		printf 'HTTP/2 200\r\nX-RateLimit-Remaining: 0\r\nX-RateLimit-Reset: 9999999999\r\nX-RateLimit-Resource: graphql\r\nX-GitHub-Request-Id: REQ-PRIMARY\r\n\r\n{"message":"GraphQL: API rate limit already exceeded"}\n'
 		return 1
 	fi
+	if [[ "${GH_PRIMARY_REMAINING_ZERO_SUCCESS:-0}" == "1" ]]; then
+		printf 'HTTP/2 200\r\nX-RateLimit-Remaining: 0\r\nX-RateLimit-Reset: 9999999999\r\nX-RateLimit-Resource: graphql\r\nX-GitHub-Request-Id: REQ-PRIMARY-SUCCESS\r\n\r\n{"ok":true}\n'
+		return 0
+	fi
+	if [[ "${GH_LARGE_SUCCESS:-0}" == "1" ]]; then
+		printf '{"payload":"'
+		dd if=/dev/zero bs=1024 count=512 2>/dev/null | tr '\000' x
+		printf '"}\n'
+		return 0
+	fi
 	printf '{"ok":true}\n'
 	return 0
 }
@@ -85,7 +95,7 @@ reset_case() {
 	rm -f "$AIDEVOPS_GH_SECONDARY_COOLDOWN_FILE"
 	rm -f "$AIDEVOPS_GH_SECONDARY_COOLDOWN_EVENTS_FILE"
 	rm -f "$AIDEVOPS_GH_READ_RAMP_STATE_FILE"
-	unset GH_SECONDARY_FAIL GH_REST_CORE_403_FAIL GH_CORE_RATE_LIMIT_RESET GH_SEARCH_RATE_LIMIT_RESET GH_HEADER_LIMIT_FAIL GH_GENERIC_403_FAIL GH_ABUSE_403_FAIL GH_PRIMARY_REMAINING_ZERO_FAIL AIDEVOPS_GH_SECONDARY_COOLDOWN_OVERRIDE AIDEVOPS_GH_SECONDARY_COOLDOWN_EVENTS_MAX_LINES AIDEVOPS_GH_SECONDARY_COOLDOWN_EVENTS_MAX_BYTES AIDEVOPS_GH_READ_RAMP_BUDGET AIDEVOPS_GH_READ_RAMP_BOOT_SECS AIDEVOPS_GH_READ_RAMP_RECOVERY_SECS AIDEVOPS_GH_READ_RAMP_OVERRIDE AIDEVOPS_GH_AUTH_MODE AIDEVOPS_GH_AUTH_PRINCIPAL AIDEVOPS_GH_COOLDOWN_OPERATION AIDEVOPS_GH_COOLDOWN_WRAPPER AIDEVOPS_GH_COOLDOWN_STAGE AIDEVOPS_GH_API_POOL AIDEVOPS_GH_ROUTE_DECISION 2>/dev/null || true
+	unset GH_SECONDARY_FAIL GH_REST_CORE_403_FAIL GH_CORE_RATE_LIMIT_RESET GH_SEARCH_RATE_LIMIT_RESET GH_HEADER_LIMIT_FAIL GH_GENERIC_403_FAIL GH_ABUSE_403_FAIL GH_PRIMARY_REMAINING_ZERO_FAIL GH_PRIMARY_REMAINING_ZERO_SUCCESS GH_LARGE_SUCCESS AIDEVOPS_GH_SECONDARY_COOLDOWN_OVERRIDE AIDEVOPS_GH_SECONDARY_COOLDOWN_EVENTS_MAX_LINES AIDEVOPS_GH_SECONDARY_COOLDOWN_EVENTS_MAX_BYTES AIDEVOPS_GH_READ_RAMP_BUDGET AIDEVOPS_GH_READ_RAMP_BOOT_SECS AIDEVOPS_GH_READ_RAMP_RECOVERY_SECS AIDEVOPS_GH_READ_RAMP_OVERRIDE AIDEVOPS_GH_AUTH_MODE AIDEVOPS_GH_AUTH_PRINCIPAL AIDEVOPS_GH_COOLDOWN_OPERATION AIDEVOPS_GH_COOLDOWN_WRAPPER AIDEVOPS_GH_COOLDOWN_STAGE AIDEVOPS_GH_API_POOL AIDEVOPS_GH_ROUTE_DECISION 2>/dev/null || true
 	_GH_SECONDARY_COOLDOWN_LOGGED_ACTIVE=0
 	_GH_SECONDARY_COOLDOWN_LOGGED_RAMP=0
 	_gh_secondary_system_boot_ts() { return 1; }
@@ -243,6 +253,39 @@ test_remaining_zero_diagnostic_classifies_primary_quota() {
 		return 0
 	fi
 	printf 'FAIL remaining-zero diagnostic missing or malformed\n'
+	return 1
+}
+
+test_successful_include_preserves_remaining_zero_detection() {
+	reset_case
+	export GH_PRIMARY_REMAINING_ZERO_SUCCESS=1
+	_gh_with_timeout read gh api -i graphql >"${TMP_HOME}/primary-quota-success.out" 2>"$ERR_LOG"
+	local rc=$?
+	if [[ "$rc" -eq 0 ]] && [[ -f "$AIDEVOPS_GH_SECONDARY_COOLDOWN_FILE" ]] && \
+		jq -e '.reason == "github-api-rate-limit-remaining-zero" and .last_request_id == "REQ-PRIMARY-SUCCESS" and .diagnostic.http_status == "200"' "$AIDEVOPS_GH_SECONDARY_COOLDOWN_FILE" >/dev/null; then
+		printf 'PASS successful include response preserves remaining-zero detection\n'
+		return 0
+	fi
+	printf 'FAIL successful include response lost remaining-zero detection\n'
+	return 1
+}
+
+test_large_success_response_skips_cooldown_scan() {
+	reset_case
+	export GH_LARGE_SUCCESS=1
+	local output_file="${TMP_HOME}/large-success.out"
+	local rc=0
+	local output_bytes=0
+	set +e
+	_gh_run_bounded_function 5 _gh_with_timeout read gh api repos/owner/repo/check-runs >"$output_file" 2>"$ERR_LOG"
+	rc=$?
+	set -e
+	output_bytes=$(wc -c <"$output_file" | tr -d ' ')
+	if [[ "$rc" -eq 0 && "$output_bytes" -gt 500000 && ! -f "$AIDEVOPS_GH_SECONDARY_COOLDOWN_FILE" ]]; then
+		printf 'PASS large successful response bypasses cooldown body scan\n'
+		return 0
+	fi
+	printf 'FAIL large successful response stalled or created cooldown: rc=%s bytes=%s\n' "$rc" "$output_bytes"
 	return 1
 }
 
@@ -443,6 +486,8 @@ test_rest_core_403_uses_rate_limit_reset_and_skips_next_call
 test_rest_search_403_uses_search_rate_limit_reset
 test_abuse_403_diagnostic_distinguishes_abuse_text
 test_remaining_zero_diagnostic_classifies_primary_quota
+test_successful_include_preserves_remaining_zero_detection
+test_large_success_response_skips_cooldown_scan
 test_active_cooldown_skips_without_gh_call
 test_override_allows_audited_call
 test_default_path_without_home_is_user_scoped

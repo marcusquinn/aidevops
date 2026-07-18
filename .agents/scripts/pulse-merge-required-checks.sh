@@ -43,10 +43,13 @@ _pmrc_snapshot_checks_json() {
 	runs_pages=$(_pmrc_gh_read gh api "repos/${repo_slug}/commits/${head_sha}/check-runs?per_page=100" \
 		--paginate --slurp 2>/dev/null) || return 1
 	statuses_json=$(_pmrc_gh_read gh api "repos/${repo_slug}/commits/${head_sha}/status" 2>/dev/null) || return 1
-	checks_json=$(jq -n --argjson pages "$runs_pages" --argjson statuses "$statuses_json" \
+	# Stream API documents over stdin instead of passing large check-run payloads
+	# through --argjson, which can exceed the OS per-argument limit (GH#28164).
+	checks_json=$(printf '%s\n%s\n' "$runs_pages" "$statuses_json" | jq -s \
 		--arg completed "$PMRC_CHECK_COMPLETED" --arg success "$PMRC_CHECK_SUCCESS" --arg failure "$PMRC_CHECK_FAILURE" \
 		--arg skipped "skipped" --arg maintainer "$PMRC_MAINTAINER_GATE" --arg maintainer_display "$PMRC_MAINTAINER_GATE_DISPLAY" \
 		--arg maintainer_workflow "$PMRC_MAINTAINER_GATE_WORKFLOW" '
+		.[0] as $pages | .[1] as $statuses |
 		"pending" as $pending | "in_progress" as $in_progress |
 		"error" as $error |
 		[
