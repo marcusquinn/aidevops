@@ -574,6 +574,66 @@ test_concurrent_refreshes_share_canonical_transport() {
 	return 0
 }
 
+test_collection_invalidation_is_narrow_and_refreshable() {
+	setup_env
+	seed_cache
+	local invalidation_generation=""
+	invalidation_generation=$("$HELPER" invalidate-collection --kind issues --slug owner/repo) || invalidation_generation=""
+	local prs_snapshot=""
+	prs_snapshot=$("$HELPER" read-snapshot --kind prs --slug owner/repo 2>/dev/null) || prs_snapshot="{}"
+	local passed=0
+	if [[ -z "$invalidation_generation" ]] \
+		|| [[ -f "$PULSE_BATCH_PREFETCH_CACHE_DIR/issues-owner__repo.json" ]] \
+		|| "$HELPER" read-snapshot --kind issues --slug owner/repo >/dev/null 2>&1 \
+		|| [[ "$(printf '%s' "$prs_snapshot" | jq -r '.items[0].number // 0')" != "2" ]]; then
+		passed=1
+	fi
+	write_gh_stub changed
+	"$HELPER" refresh >/dev/null
+	local refreshed_generation=""
+	refreshed_generation=$(jq -r '.invalidation_generation // ""' \
+		"$PULSE_BATCH_PREFETCH_CACHE_DIR/issues-owner__repo.json")
+	if [[ "$refreshed_generation" != "$invalidation_generation" ]] \
+		|| ! "$HELPER" read-snapshot --kind issues --slug owner/repo >/dev/null 2>&1; then
+		passed=1
+	fi
+	print_result "issue invalidation preserves PR cache and permits a current-generation refresh" "$passed"
+	teardown_env
+	return 0
+}
+
+test_inflight_invalidation_fences_stale_publication() {
+	setup_env
+	seed_cache
+	write_gh_stub changed
+	export STUB_GH_DELAY=1.5
+	local refresh_pid=0 attempts=0
+	"$HELPER" refresh >"$TEST_ROOT/raced-refresh.out" &
+	refresh_pid=$!
+	while ! grep -q '/repos/owner/repo/issues?state=open' "$TEST_ROOT/gh-calls.log" 2>/dev/null; do
+		sleep 0.05
+		attempts=$((attempts + 1))
+		if [[ "$attempts" -ge 100 ]]; then
+			break
+		fi
+	done
+	local invalidation_generation=""
+	if [[ "$attempts" -lt 100 ]]; then
+		invalidation_generation=$("$HELPER" invalidate-collection --kind issues --slug owner/repo) || invalidation_generation=""
+	fi
+	wait "$refresh_pid" || true
+	unset STUB_GH_DELAY
+	local passed=0
+	if [[ -z "$invalidation_generation" ]] \
+		|| [[ -f "$PULSE_BATCH_PREFETCH_CACHE_DIR/issues-owner__repo.json" ]] \
+		|| "$HELPER" read-snapshot --kind issues --slug owner/repo >/dev/null 2>&1; then
+		passed=1
+	fi
+	print_result "in-flight issue invalidation fences stale canonical publication" "$passed"
+	teardown_env
+	return 0
+}
+
 test_prefetch_gh_reads_are_timeout_wrapped() {
 	if prefetch_raw_gh_read_matches "$HELPER"; then
 		print_result "prefetch gh reads use timeout wrapper" 1
@@ -612,6 +672,8 @@ test_paginated_response_is_not_complete
 test_conditional_failure_routes_to_rest_by_default
 test_search_opt_in_preserves_owner_search
 test_concurrent_refreshes_share_canonical_transport
+test_collection_invalidation_is_narrow_and_refreshable
+test_inflight_invalidation_fences_stale_publication
 test_legacy_issue_cache_avoids_search_by_default
 test_read_cache_filters_closed_issues
 test_read_cache_accepts_fresh_empty_arrays
