@@ -603,6 +603,154 @@ claim_worktree_ownership() {
 	return 1
 }
 
+_wt_compare_and_swap_owner_record() {
+	local wt_path="$1"
+	shift
+	local branch="$1"
+	shift
+	local owner_pid="$1"
+	shift
+	local session_id="$1"
+	shift
+	local batch_id="$1"
+	shift
+	local task_id="$1"
+	shift
+	local owner_comm="$1"
+	shift
+	local expected_owner_pid="$1"
+	shift
+	local expected_session_id="$1"
+	shift
+	local expected_batch_id="$1"
+	shift
+	local expected_task_id="$1"
+	shift
+	local expected_created_at="$1"
+
+	python3 - "$WORKTREE_REGISTRY_DB" "$wt_path" "$branch" "$owner_pid" \
+		"$session_id" "$batch_id" "$task_id" "$owner_comm" \
+		"$expected_owner_pid" "$expected_session_id" "$expected_batch_id" \
+		"$expected_task_id" "$expected_created_at" <<'PY' || return 1
+import sqlite3
+import sys
+
+(
+    db_path,
+    worktree_path,
+    branch,
+    owner_pid_text,
+    session_id,
+    batch_id,
+    task_id,
+    owner_comm,
+    expected_owner_pid_text,
+    expected_session_id,
+    expected_batch_id,
+    expected_task_id,
+    expected_created_at,
+) = sys.argv[1:]
+
+connection = sqlite3.connect(db_path, isolation_level=None)
+try:
+    connection.execute("BEGIN IMMEDIATE")
+    cursor = connection.execute(
+        """UPDATE worktree_owners
+           SET branch = ?, owner_pid = ?, owner_session = ?, owner_batch = ?,
+               task_id = ?, owner_comm = ?, owner_dead_seen_at = '',
+               created_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
+           WHERE worktree_path = ?
+             AND owner_pid = ?
+             AND COALESCE(owner_session, '') = ?
+             AND COALESCE(owner_batch, '') = ?
+             AND COALESCE(task_id, '') = ?
+             AND COALESCE(created_at, '') = ?""",
+        (
+            branch,
+            int(owner_pid_text),
+            session_id,
+            batch_id,
+            task_id,
+            owner_comm,
+            worktree_path,
+            int(expected_owner_pid_text),
+            expected_session_id,
+            expected_batch_id,
+            expected_task_id,
+            expected_created_at,
+        ),
+    )
+    if cursor.rowcount != 1:
+        connection.execute("ROLLBACK")
+        sys.exit(1)
+    connection.execute("COMMIT")
+except Exception:
+    if connection.in_transaction:
+        connection.execute("ROLLBACK")
+    raise
+finally:
+    connection.close()
+PY
+	return 0
+}
+
+# Atomically transfer ownership when the complete expected owner record still
+# matches. This is the only path allowed to take over a live continuation owner;
+# callers must validate continuation authority before invoking it.
+# Arguments:
+#   $1 - worktree path (required)
+#   $2 - branch name (required)
+#   Flags: --task <id>, --batch <id>, --session <id>, --owner-pid <pid>,
+#          --expected-task <id>, --expected-batch <id>,
+#          --expected-session <id>, --expected-owner-pid <pid>,
+#          --expected-created-at <timestamp>
+# Returns:
+#   0 - exact expected owner was atomically replaced
+#   1 - validation failed or the owner record changed before the transition
+transfer_worktree_ownership_if_expected() {
+	local wt_path="$1"
+	local branch="$2"
+	shift 2
+
+	local task_id="" batch_id="" session_id="" owner_pid_override=""
+	local expected_task_id="" expected_batch_id="" expected_session_id=""
+	local expected_owner_pid="" expected_created_at=""
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+		--task) task_id="${2:-}"; shift 2 ;;
+		--batch) batch_id="${2:-}"; shift 2 ;;
+		--session) session_id="${2:-}"; shift 2 ;;
+		--owner-pid) owner_pid_override="${2:-}"; shift 2 ;;
+		--expected-task) expected_task_id="${2:-}"; shift 2 ;;
+		--expected-batch) expected_batch_id="${2:-}"; shift 2 ;;
+		--expected-session) expected_session_id="${2:-}"; shift 2 ;;
+		--expected-owner-pid) expected_owner_pid="${2:-}"; shift 2 ;;
+		--expected-created-at) expected_created_at="${2:-}"; shift 2 ;;
+		*) return 1 ;;
+		esac
+	done
+
+	[[ -n "$wt_path" && -n "$task_id" && "$task_id" == "$expected_task_id" ]] || return 1
+	[[ "$expected_owner_pid" =~ ^[0-9]+$ && -n "$expected_created_at" ]] || return 1
+	if [[ -z "$session_id" ]]; then
+		session_id="${OPENCODE_SESSION_ID:-${CLAUDE_SESSION_ID:-}}"
+	fi
+
+	local owner_pid=""
+	owner_pid=$(_resolve_worktree_owner_pid "$owner_pid_override")
+	[[ "$owner_pid" =~ ^[0-9]+$ ]] || return 1
+	local owner_comm=""
+	owner_comm=$(_get_proc_comm "$owner_pid")
+
+	_init_registry_db
+	wt_path=$(_wt_registry_lookup_path "$wt_path")
+	_wt_compare_and_swap_owner_record "$wt_path" "$branch" "$owner_pid" \
+		"$session_id" "$batch_id" "$task_id" "$owner_comm" \
+		"$expected_owner_pid" "$expected_session_id" "$expected_batch_id" \
+		"$expected_task_id" "$expected_created_at" || return 1
+	return 0
+}
+
 # Unregister ownership of a worktree
 # Arguments:
 #   $1 - worktree path (required)
