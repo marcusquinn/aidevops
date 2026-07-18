@@ -30,9 +30,9 @@ RUN_STATUS=0
 MOCK_SUITE_JSON='{"pass_rate":1.0,"avg_response_chars":100}'
 
 cleanup() {
-	case "$TEST_ROOT" in
-	"$TEMP_BASE"/autoagent-metric-test.*) rm -rf "$TEST_ROOT" ;;
-	*) printf 'Refusing unsafe cleanup path: %s\n' "$TEST_ROOT" >&2 ;;
+	case "${TEST_ROOT:-}" in
+	"$TEMP_BASE"/autoagent-metric-test.*) rm -rf "${TEST_ROOT:-}" ;;
+	*) printf 'Refusing unsafe cleanup path: %s\n' "${TEST_ROOT:-}" >&2 ;;
 	esac
 	return 0
 }
@@ -122,6 +122,11 @@ run_metric() {
 		>"$STDOUT_FILE" 2>"$STDERR_FILE" || RUN_STATUS=$?
 	return 0
 }
+
+RUN_STATUS=0
+(unset TEST_ROOT; cleanup) >"$STDOUT_FILE" 2>"$STDERR_FILE" || RUN_STATUS=$?
+assert_success "cleanup tolerates an unset test root"
+assert_stderr_contains "Refusing unsafe cleanup path:" "unset test root refuses cleanup safely"
 
 mkdir -p "$FIXTURE_DIR" "$BIN_DIR" "$WORKTREE_DIR/.agents/scripts" \
 	"$WORKTREE_DIR/.agents/docs" "$WORKTREE_DIR/.agents/tests" "$WORKTREE_DIR/unrelated" || exit 1
