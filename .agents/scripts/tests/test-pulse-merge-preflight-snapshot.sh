@@ -29,9 +29,31 @@ cleanup() {
 }
 trap cleanup EXIT
 
+_pmrc_gh_read() {
+	local command="$1"
+	local subcommand="${2:-}"
+	local endpoint="${3:-}"
+
+	[[ "$command" == "gh" && "$subcommand" == "api" ]] || return 1
+	case "${SNAPSHOT_MODE}:${endpoint}" in
+	"pr_fetch_error:repos/owner/repo/pulls/7" | "check_runs_error:"*check-runs* | \
+		"status_error:"*commits/sha-reviewed/status* | "reviews_error:"*pulls/7/reviews* | \
+		"issue_comments_error:"*issues/7/comments* | "inline_comments_error:"*pulls/7/comments*)
+		return 1
+		;;
+	"pr_parse_error:repos/owner/repo/pulls/7" | "activity_parse_error:"*pulls/7/comments*)
+		printf '%s\n' '{'
+		return 0
+		;;
+	esac
+	"$@"
+	return $?
+}
+
 _required_contexts_for_default_branch() {
 	local repo_slug="$1"
 	[[ -n "$repo_slug" ]] || return 1
+	[[ "$SNAPSHOT_MODE" == "required_contexts_error" ]] && return 1
 	printf 'required-a\n'
 	[[ "$SNAPSHOT_MODE" == "maintainer_alias_fail" || "$SNAPSHOT_MODE" == "maintainer_infra_fail" ]] && printf 'Maintainer Review & Assignee Gate\n'
 	return 0
@@ -194,6 +216,36 @@ assert_gate() {
 	return 0
 }
 
+assert_gate_logged() {
+	local description="$1"
+	local mode="$2"
+	local expected_log="$3"
+
+	assert_gate "$description" "$mode" 1
+	TESTS_RUN=$((TESTS_RUN + 1))
+	if grep -q "$expected_log" "$LOGFILE"; then
+		printf 'PASS %s is audited\n' "$description"
+		return 0
+	fi
+	printf 'FAIL %s did not log: %s\n' "$description" "$expected_log"
+	TESTS_FAILED=$((TESTS_FAILED + 1))
+	return 0
+}
+
+assert_snapshot_acquisition_failures_are_audited() {
+	assert_gate_logged "pull-request fetch failure" pr_fetch_error "pull-request fetch failed"
+	assert_gate_logged "pull-request parse failure" pr_parse_error "head parse failed"
+	assert_gate_logged "required-context lookup failure" required_contexts_error "required-context lookup failed"
+	assert_gate_logged "check-runs fetch failure" check_runs_error "check-runs fetch failed"
+	assert_gate_logged "commit-status fetch failure" status_error "commit-status fetch failed"
+	assert_gate_logged "check-set parse failure" empty_check_runs "check-set parse failed"
+	assert_gate_logged "reviews fetch failure" reviews_error "reviews fetch failed"
+	assert_gate_logged "issue-comments fetch failure" issue_comments_error "issue-comments fetch failed"
+	assert_gate_logged "inline-comments fetch failure" inline_comments_error "inline-comments fetch failed"
+	assert_gate_logged "bot-activity parse failure" activity_parse_error "bot-activity parse failed"
+	return 0
+}
+
 assert_human_review_thread_rules() {
 	assert_gate "unresolved human thread blocks when effective rules require resolution" human_required 1
 	if grep -q "requires thread resolution" "$LOGFILE"; then
@@ -312,8 +364,8 @@ assert_review_and_head_snapshot_cases() {
 main() {
 	assert_infrastructure_rerun_unset_defaults_safe
 	assert_infrastructure_rerun_unset_logfile_safe
+	assert_snapshot_acquisition_failures_are_audited
 	assert_gate "large paginated check payload streams without argument overflow" large_payload 0
-	assert_gate "empty check-run response fails closed" empty_check_runs 1
 	assert_gate "terminal checks with explicit baseline advisory pass" happy_advisory 0
 	if grep -q "IGNORED non-required baseline advisory failure 'Qlty Smell Threshold'" "$LOGFILE"; then
 		printf 'PASS ignored advisory failure is audited\n'
