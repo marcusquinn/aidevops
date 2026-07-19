@@ -2460,9 +2460,9 @@
       "pr": 18681
     },
     ".agents/scripts/pulse-simplification-state.sh": {
-      "at": "2026-07-18T15:46:41Z",
-      "hash": "581fe2fb55c73c4b6c2de0880089fb7c9ce7f15d",
-      "passes": 12,
+      "at": "2026-07-19T17:10:04Z",
+      "hash": "5e39a9c2597a9b29a2876337b5f493219e33ca64",
+      "passes": 13,
       "pr": 18680
     },
     ".agents/scripts/pulse-simplification.sh": {
@@ -7486,15 +7486,15 @@
       "pr": 15490
     },
     "aidevops.sh": {
-      "at": "2026-07-19T02:55:18Z",
-      "hash": "c21e6165d8816a3a07c6e57bb98a960d01597557",
-      "passes": 279,
+      "at": "2026-07-19T17:11:08Z",
+      "hash": "de8d962a212a57b2d6154c0772c5b32f215a368d",
+      "passes": 280,
       "pr": 19029
     },
     "setup.sh": {
-      "at": "2026-07-19T02:55:19Z",
-      "hash": "8510fd05b1cf5cc3a5f985239dbc8007e8aedad2",
-      "passes": 275,
+      "at": "2026-07-19T17:11:08Z",
+      "hash": "4303cdad851174c796b02e13d381e098d9bf3ded",
+      "passes": 276,
       "pr": 15470
     },
     "todo/tasks/GH#15363-brief.md": {
