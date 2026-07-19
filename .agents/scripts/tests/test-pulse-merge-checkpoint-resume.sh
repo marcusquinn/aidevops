@@ -129,6 +129,10 @@ pulse_merge_zero_progress_record() {
 
 printf '%sRunning pulse merge checkpoint resume tests (GH#25697)%s\n' "$TEST_GREEN" "$TEST_NC"
 
+_pmp_record_deterministic_progress_now 1 0
+assert_equals "successful merge persists zero-progress recovery immediately" "0:1:0 " "$ZERO_PROGRESS_CALLS"
+ZERO_PROGRESS_CALLS=""
+
 STOP_AFTER_REPO="org/two"
 merge_ready_prs_all_repos
 assert_equals "first pass stops after repo two" "org/one org/two " "$PROCESSED_REPOS"

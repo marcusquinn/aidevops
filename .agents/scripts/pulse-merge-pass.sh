@@ -304,6 +304,25 @@ _pmp_add_counter_var() {
 	return 0
 }
 
+# Persist conclusive queue-draining progress at the mutation boundary. The
+# outer merge routine can be killed by its watchdog before the all-repo pass
+# returns, so the end-of-pass aggregate remains a fallback rather than the only
+# place that resets the zero-progress streak (GH#28285).
+_pmp_record_deterministic_progress_now() {
+	local merged_count="$1"
+	local progress_count="$2"
+
+	[[ "$merged_count" =~ ^[0-9]+$ ]] || merged_count=0
+	[[ "$progress_count" =~ ^[0-9]+$ ]] || progress_count=0
+	if [[ "$merged_count" -le 0 && "$progress_count" -le 0 ]]; then
+		return 0
+	fi
+	if declare -F pulse_merge_zero_progress_record >/dev/null 2>&1; then
+		pulse_merge_zero_progress_record 0 "$merged_count" "$progress_count" || true
+	fi
+	return 0
+}
+
 _pmp_process_merge_repo_for_pass() {
 	local repo_slug="$1"
 	local checkpoint_file="$2"
