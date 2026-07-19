@@ -355,7 +355,10 @@ _storage_bundle_lease_is_live() {
 		case "$lease_pid" in
 		'' | *[!0-9]*) continue ;;
 		esac
-		kill -0 "$lease_pid" 2>/dev/null && return 0
+		# kill -0 can report EPERM for a live process owned by another user.
+		if kill -0 "$lease_pid" 2>/dev/null || [[ -d "/proc/$lease_pid" ]] || ps -p "$lease_pid" >/dev/null 2>&1; then
+			return 0
+		fi
 	done
 	return 1
 }
