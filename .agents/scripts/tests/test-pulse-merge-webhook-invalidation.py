@@ -69,6 +69,8 @@ class WebhookInvalidationTests(unittest.TestCase):
         self.secret = b"signed-fixture-secret"
         self.records: list[str] = []
         self.logs: list[str] = []
+        self.received_markers: list[int] = []
+        self.dispatch_evidence: list[str] = []
         self.original_emit = SERVER._emit_records
         self.original_log = SERVER._log
         SERVER.SECRET = self.secret
@@ -89,7 +91,10 @@ class WebhookInvalidationTests(unittest.TestCase):
             "workflow_run",
         }
 
-        def capture_records(invalidations: list[str], actions: list[tuple[str, int]]) -> None:
+        def capture_records(
+            invalidations: list[str], actions: list[tuple[str, int]], received_ms: int
+        ) -> None:
+            self.received_markers.append(received_ms)
             self.records.extend(invalidations)
             self.records.extend(f"PROCESS_PR {slug} {number}" for slug, number in actions)
 
@@ -236,6 +241,8 @@ class WebhookInvalidationTests(unittest.TestCase):
             ["INVALIDATE v1 collection issues owner/repo"],
             self.records,
         )
+        self.assertEqual(1, len(self.received_markers))
+        self.assertGreater(self.received_markers[0], 0)
         self.assertEqual(0o600, stat.S_IMODE(self.ledger.stat().st_mode))
         ledger_text = self.ledger.read_text(encoding="utf-8")
         self.assertNotIn("RAW-BODY-SENTINEL", ledger_text)
@@ -548,8 +555,15 @@ class WebhookInvalidationTests(unittest.TestCase):
         actions = self.root / "actions.txt"
         actions.write_text("\n".join(records) + "\n", encoding="utf-8")
         call_log = self.root / "dispatch.log"
+        evidence_log = self.root / "dispatch-evidence.log"
         script = r'''
 source "$RECEIVER_PATH"
+gh_record_efficiency_evidence() {
+    local name="$1"
+    local value="$2"
+    printf '%s|%s\n' "$name" "$value" >>"$EVIDENCE_LOG"
+    return 0
+}
 _webhook_invalidate_collection() {
     local kind="$1"
     local slug="$2"
@@ -579,6 +593,7 @@ wait
             {
                 "ACTIONS_FILE": str(actions),
                 "CALL_LOG": str(call_log),
+                "EVIDENCE_LOG": str(evidence_log),
                 "FAIL_COLLECTION": "1" if fail_collection else "0",
                 "HOME": str(self.root / "home"),
                 "RECEIVER_PATH": str(RECEIVER_PATH),
@@ -594,13 +609,20 @@ wait
             check=False,
         )  # nosec B603 B607
         self.assertEqual(0, result.returncode, result.stderr or result.stdout)
+        self.dispatch_evidence = (
+            evidence_log.read_text(encoding="utf-8").splitlines()
+            if evidence_log.exists()
+            else []
+        )
         if not call_log.exists():
             return []
         return call_log.read_text(encoding="utf-8").splitlines()
 
     def test_receiver_dispatches_invalidation_before_process_pr(self) -> None:
+        received_ms = int(time.time() * 1000) - 2_000
         calls = self._dispatch_receiver_records(
             [
+                f"DELIVERY v1 received-ms {received_ms}",
                 "INVALIDATE v1 collection prs owner/repo",
                 f"INVALIDATE v1 checks owner/repo {'c' * 40}",
                 "PROCESS_PR owner/repo 12",
@@ -614,10 +636,19 @@ wait
             ],
             calls,
         )
+        self.assertEqual(2, self.dispatch_evidence.count("webhook.invalidations|1"))
+        lag_samples = [
+            int(value.split("|", 1)[1])
+            for value in self.dispatch_evidence
+            if value.startswith("webhook.lag_ms|")
+        ]
+        self.assertEqual(2, len(lag_samples))
+        self.assertTrue(all(value >= 0 for value in lag_samples))
 
     def test_receiver_skips_process_when_invalidation_fails(self) -> None:
         calls = self._dispatch_receiver_records(
             [
+                f"DELIVERY v1 received-ms {int(time.time() * 1000) - 2_000}",
                 "INVALIDATE v1 collection prs owner/repo",
                 "PROCESS_PR owner/repo 12",
                 "# accepted event=pull_request delivery=fixture invalidations=1 actions=1",
@@ -629,6 +660,8 @@ wait
             ["collection|prs|owner/repo", "process|owner/repo|13"],
             calls,
         )
+        self.assertIn("webhook.missed_recoveries|1", self.dispatch_evidence)
+        self.assertNotIn("webhook.invalidations|1", self.dispatch_evidence)
 
     def test_receiver_rejects_unknown_protocol_before_process_pr(self) -> None:
         calls = self._dispatch_receiver_records(

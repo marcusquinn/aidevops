@@ -68,6 +68,25 @@ Each transport aggregate has one sidecar using
 sidecar to the exact aggregate bytes. The result also records the sidecar's own
 SHA-256 digest.
 
+The Pulse wrapper now publishes this sidecar automatically after each real cycle.
+It writes the transport aggregate first, binds the sidecar to those exact bytes,
+and atomically replaces both private files with mode `600`. Defaults are
+`~/.aidevops/logs/gh-api-calls-by-stage.json` and
+`~/.aidevops/logs/gh-api-efficiency-evidence.json`; override them with
+`AIDEVOPS_GH_API_REPORT` and `AIDEVOPS_GH_API_EVIDENCE`. Set
+`AIDEVOPS_GH_API_EVIDENCE_DISABLE=1` to disable sidecar production without
+disabling transport telemetry. Invalid or insufficient retained windows remove a
+stale sidecar instead of preserving misleading evidence.
+
+Coverage contract `1` starts at a private persisted activation timestamp and is
+re-emitted each cycle so a rolling window becomes bounded only after every
+retained attempt post-dates instrumentation activation. Population, latency,
+cache, single-flight, and path-budget ownership currently emit complete coverage
+markers. Webhook and guardrail events are collected, but those groups deliberately
+remain uncovered—and therefore `null`—until duplicate-action, recovery,
+stale-positive, and dispatch-dependency semantics have complete production
+ownership. Never promote absent events in an uncovered group to observed zero.
+
 The following is an intentionally incomplete template. Replace every required
 `null` with a privacy-safe observed value and set `complete` to `true` only when
 the whole fixed window has been reconciled. The transport digest must be 64
@@ -140,8 +159,8 @@ tokens, URLs, or raw log records in the sidecar.
 | `latency` | Aggregate request and completed-action histograms plus peak minute count. |
 | `cache` | Canonical snapshot/check-cache decision counters. |
 | `single_flight` | Leader, follower wait, takeover, and duplicate-leader counters. |
-| `webhook` | Verified invalidation count and aggregate delivery-to-invalidation lag. |
-| `guardrails` | Freshness detections, forced refreshes, dependency checks, and merge-preflight comparisons. |
+| `webhook` | `pulse-merge-webhook-server.py` emits a protocol-v1 millisecond receive marker; `pulse-merge-webhook-receiver.sh` records successful invalidations, delivery-to-invalidation lag, and invalidations delegated to polling recovery. |
+| `guardrails` | Snapshot/check-cache freshness detections, forced live refreshes, and live required-check preflight mismatches. Unsupported stale-positive and dispatch-dependency fields remain unknown. |
 | `path_budgets` | Deterministic call-site counters from focused request-budget tests/telemetry. |
 
 ## Comparability gate
@@ -253,15 +272,30 @@ must not be removed by an efficiency-only canary.
 ## Verification
 
 ```bash
+bash .agents/scripts/tests/test-gh-api-instrument.sh
+bash .agents/scripts/tests/test-gh-request-singleflight.sh
+bash .agents/scripts/tests/test-gh-check-status-cache.sh
+bash .agents/scripts/tests/test-pulse-wrapper-cycle-gates.sh
+bash .agents/scripts/tests/test-pulse-batch-prefetch-conditional-rest.sh
+python3 .agents/scripts/tests/test-pulse-merge-webhook-invalidation.py
+bash .agents/scripts/tests/test-pulse-merge-preflight-snapshot.sh
+bash .agents/scripts/tests/test-github-api-efficiency-evidence.sh
 bash .agents/scripts/tests/test-github-api-efficiency-benchmark.sh
 shellcheck \
+  .agents/scripts/gh-api-instrument.sh \
+  .agents/scripts/pulse-wrapper-cycle-gates.sh \
+  .agents/scripts/pulse-batch-prefetch-helper.sh \
+  .agents/scripts/pulse-merge-webhook-receiver.sh \
   .agents/scripts/github-api-efficiency-benchmark.sh \
   .agents/scripts/tests/test-github-api-efficiency-benchmark.sh
 python3 -m py_compile \
+  .agents/scripts/github-api-efficiency-evidence.py \
   .agents/scripts/github-api-efficiency-benchmark.py \
+  .agents/scripts/github_api_efficiency_events.py \
   .agents/scripts/github_api_efficiency_inputs.py \
   .agents/scripts/github_api_efficiency_metrics.py \
-  .agents/scripts/github_api_efficiency_report.py
+  .agents/scripts/github_api_efficiency_report.py \
+  .agents/scripts/pulse-merge-webhook-server.py
 ```
 
 The fixture suite covers deterministic pass output, regressions, incomplete

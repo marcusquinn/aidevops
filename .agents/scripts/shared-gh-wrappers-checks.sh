@@ -80,6 +80,54 @@ _gh_pr_check_status_cache_record() {
 	if declare -F gh_record_call >/dev/null 2>&1; then
 		gh_record_call other gh_pr_check_status_cache unknown other "$decision" "" cache 2>/dev/null || true
 	fi
+	if declare -F gh_record_efficiency_evidence >/dev/null 2>&1; then
+		case "$decision" in
+		hit-empty)
+			gh_record_efficiency_evidence cache.fresh_empty_hits 1 2>/dev/null || true
+			;;
+		hit-*)
+			gh_record_efficiency_evidence cache.fresh_hits 1 2>/dev/null || true
+			;;
+		miss | bypass | bypass-disabled)
+			gh_record_efficiency_evidence cache.misses 1 2>/dev/null || true
+			;;
+		invalid | invalid-* | refresh-*)
+			gh_record_efficiency_evidence cache.misses 1 2>/dev/null || true
+			gh_record_efficiency_evidence cache.stale 1 2>/dev/null || true
+			gh_record_efficiency_evidence guardrails.stale_snapshot_detections 1 2>/dev/null || true
+			gh_record_efficiency_evidence guardrails.forced_live_refreshes 1 2>/dev/null || true
+			;;
+		invalidate)
+			gh_record_efficiency_evidence cache.invalidated 1 2>/dev/null || true
+			;;
+		fetch)
+			gh_record_efficiency_evidence path_budgets.aggregate_check_fetches 1 2>/dev/null || true
+			;;
+		publish-fenced | publish-invalidated)
+			gh_record_efficiency_evidence guardrails.stale_snapshot_detections 1 2>/dev/null || true
+			;;
+		esac
+	fi
+	return 0
+}
+
+_gh_pr_check_status_record_actionable_head() {
+	local slug="$1"
+	local sha="$2"
+	local normalized_sha=""
+	local token=""
+	_gh_pr_check_status_cache_identity_valid "$slug" "$sha" || return 0
+	declare -F gh_record_efficiency_evidence >/dev/null 2>&1 || return 0
+	gh_record_efficiency_evidence population.actionable_changes 1 2>/dev/null || true
+	normalized_sha=$(printf '%s' "$sha" | tr '[:upper:]' '[:lower:]')
+	if declare -F _ghrs_digest >/dev/null 2>&1; then
+		token=$(_ghrs_digest "$normalized_sha") || token=""
+	fi
+	if [[ -n "$token" ]]; then
+		gh_record_efficiency_evidence population.actionable_head_token "$token" 2>/dev/null || true
+	else
+		gh_record_efficiency_evidence population.actionable_head_hash_failures 1 2>/dev/null || true
+	fi
 	return 0
 }
 
@@ -306,7 +354,11 @@ _gh_pr_check_status_cache_get() {
 		_gh_pr_check_status_cache_record "refresh-${expiry_class}"
 		return 1
 	fi
-	_gh_pr_check_status_cache_record "hit-${expiry_class}"
+	if [[ "$check_state" == "$_GH_PR_CHECK_STATUS_NONE" ]]; then
+		_gh_pr_check_status_cache_record hit-empty
+	else
+		_gh_pr_check_status_cache_record "hit-${expiry_class}"
+	fi
 	printf '%s\n' "$check_state"
 	return 0
 }
@@ -741,6 +793,7 @@ gh_pr_check_status_rest_batch() {
 	local pr_sha="" _check_state=""
 	while IFS= read -r pr_sha; do
 		[[ -n "$pr_sha" ]] || continue
+		_gh_pr_check_status_record_actionable_head "$slug" "$pr_sha"
 		_check_state=$(gh_pr_check_status_rest "$slug" "$pr_sha")
 		printf '%s\t%s\n' "$pr_sha" "$_check_state" >>"$tmp"
 	done <<<"$unique_shas"

@@ -470,8 +470,11 @@ def _record_delivery(
     return "accepted"
 
 
-def _emit_records(invalidations: list[str], actions: list[tuple[str, int]]) -> None:
+def _emit_records(
+    invalidations: list[str], actions: list[tuple[str, int]], received_ms: int
+) -> None:
     with _OUTPUT_LOCK:
+        sys.stdout.write(f"DELIVERY {_ACTION_PROTOCOL} received-ms {received_ms}\n")
         for record in invalidations:
             sys.stdout.write(f"{record}\n")
         for slug, number in actions:
@@ -573,6 +576,7 @@ class WebhookHandler(BaseHTTPRequestHandler):
     def _accept_delivery(
         self, body: bytes, delivery_id: str, event: str, payload: dict[str, Any]
     ) -> None:
+        received_ms = time.time_ns() // 1_000_000
         invalidations = _invalidation_records(event, payload)
         actions = _process_pr_actions(event, payload)
         fingerprint = hashlib.sha256(body).hexdigest()
@@ -588,7 +592,7 @@ class WebhookHandler(BaseHTTPRequestHandler):
             return
         if self._respond_to_replay(decision, event, delivery_id):
             return
-        _emit_records(invalidations, actions)
+        _emit_records(invalidations, actions, received_ms)
         _log(
             f"accepted event={event} delivery={delivery_id} "
             f"invalidations={len(invalidations)} actions={len(actions)}"

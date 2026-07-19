@@ -27,6 +27,21 @@ mkdir -p "$HOME"
 # shellcheck source=../shared-gh-request-state.sh
 source "${SCRIPTS_DIR}/shared-gh-request-state.sh"
 
+EFFICIENCY_EVENTS="${TEST_ROOT}/efficiency-events.tsv"
+: >"$EFFICIENCY_EVENTS"
+gh_record_efficiency_evidence() {
+	local name="$1"
+	local value="${2:-1}"
+	printf '%s\t%s\n' "$name" "$value" >>"$EFFICIENCY_EVENTS"
+	return 0
+}
+
+efficiency_event_total() {
+	local name="$1"
+	awk -F'\t' -v expected="$name" '$1 == expected { total += $2 } END { print total + 0 }' "$EFFICIENCY_EVENTS"
+	return 0
+}
+
 cleanup() {
 	export HOME="$ORIGINAL_HOME"
 	rm -rf "$TEST_ROOT"
@@ -122,6 +137,24 @@ singleflight_worker() {
 		attempts=$((attempts + 1))
 	done
 	return 1
+}
+
+test_efficiency_event_mapping() {
+	: >"$EFFICIENCY_EVENTS"
+	_ghrs_record leader
+	_ghrs_record follower-success
+	_ghrs_record follower-failure
+	_ghrs_record takeover
+	_ghrs_record timeout
+	assert_eq "leader acquisition emits one efficiency event" "1" \
+		"$(efficiency_event_total single_flight.leaders)"
+	assert_eq "followers, takeover, and timeout emit bounded waits" "4" \
+		"$(efficiency_event_total single_flight.waits)"
+	assert_eq "lease recovery emits one takeover" "1" \
+		"$(efficiency_event_total single_flight.takeovers)"
+	assert_eq "duplicate leaders stay absent without an observed violation" "0" \
+		"$(efficiency_event_total single_flight.duplicate_leaders)"
+	return 0
 }
 
 test_scope_key_isolation() {
@@ -477,6 +510,7 @@ test_concurrent_rate_probe_is_singleflight() {
 }
 
 main() {
+	test_efficiency_event_mapping
 	test_scope_key_isolation
 	test_default_state_root_is_operational
 	test_portable_mtime_dependency_is_available

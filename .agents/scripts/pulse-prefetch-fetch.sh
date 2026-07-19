@@ -48,6 +48,7 @@ fi
 _PREFETCH_PR_SWEEP_FULL=full
 _PREFETCH_BOOL_TRUE=true
 _PREFETCH_JSON_NULL=null
+_PREFETCH_JSON_TYPE_ARRAY=array
 _PREFETCH_UNKNOWN=unknown
 _PREFETCH_UNKNOWN_ERROR="unknown error"
 
@@ -216,6 +217,61 @@ _prefetch_log_batch_cache_state() {
 	return 0
 }
 
+#######################################
+# Read a validated item array from a canonical snapshot envelope.
+# Arguments: $1=canonical snapshot envelope
+#######################################
+_prefetch_snapshot_items() {
+	local canonical_snapshot="$1"
+	printf '%s' "$canonical_snapshot" |
+		jq -ce --arg array_type "$_PREFETCH_JSON_TYPE_ARRAY" \
+			'.items | select(type == $array_type)' 2>/dev/null
+	return $?
+}
+
+#######################################
+# Record an invariant violation only when a live fallback follows an
+# authoritative fresh-empty canonical snapshot.
+# Arguments: $1=snapshot-supplied bool, $2=canonical snapshot envelope
+#######################################
+_prefetch_record_fresh_empty_live_fallback() {
+	local snapshot_supplied="$1"
+	local canonical_snapshot="$2"
+	local items=""
+	[[ "$snapshot_supplied" == "$_PREFETCH_BOOL_TRUE" ]] || return 0
+	items=$(_prefetch_snapshot_items "$canonical_snapshot") || return 0
+	[[ "$items" == "[]" ]] || return 0
+	if declare -F gh_record_efficiency_evidence >/dev/null 2>&1; then
+		gh_record_efficiency_evidence path_budgets.fresh_empty_live_fallbacks 1 2>/dev/null || true
+	fi
+	return 0
+}
+
+#######################################
+# Fetch the complete open-PR projection while preserving rate-limit state.
+# Arguments: $1=slug, $2=error file
+# Sets PREFETCH_PR_RESULT.
+#######################################
+_prefetch_prs_fetch_full() {
+	local slug="$1"
+	local pr_err="$2"
+	local err_msg=""
+
+	PREFETCH_PR_RESULT=$(gh_pr_list --repo "$slug" --state open \
+		--json number,title,reviewDecision,updatedAt,headRefName,headRefOid,createdAt,author \
+		--limit "$PULSE_PREFETCH_PR_LIMIT" 2>"$pr_err") || PREFETCH_PR_RESULT=""
+	if [[ -z "$PREFETCH_PR_RESULT" || "$PREFETCH_PR_RESULT" == "$_PREFETCH_JSON_NULL" ]]; then
+		err_msg=$(cat "$pr_err" 2>/dev/null || echo "$_PREFETCH_UNKNOWN_ERROR")
+		if _pulse_gh_err_is_rate_limit "$pr_err"; then
+			_pulse_mark_rate_limited "_prefetch_repo_prs:${slug}"
+		fi
+		echo "[pulse-wrapper] _prefetch_repo_prs: gh_pr_list FAILED for ${slug}: ${err_msg}" >>"$LOGFILE"
+		_prefetch_log_batch_cache_state fetch-failed prs "$slug"
+		PREFETCH_PR_RESULT="[]"
+	fi
+	return 0
+}
+
 _prefetch_repo_prs() {
 	local slug="$1"
 	local cache_entry="${2:-}"
@@ -248,7 +304,7 @@ _prefetch_repo_prs() {
 	local _used_batch_cache=false
 	if [[ "$canonical_snapshot_supplied" == "$_PREFETCH_BOOL_TRUE" ]]; then
 		local _canonical_prs=""
-		if _canonical_prs=$(printf '%s' "$canonical_snapshot" | jq -ce '.items | select(type == "array")' 2>/dev/null); then
+		if _canonical_prs=$(_prefetch_snapshot_items "$canonical_snapshot"); then
 			pr_json="$_canonical_prs"
 			_used_batch_cache=true
 			echo "[pulse-wrapper] _prefetch_repo_prs: using cycle canonical snapshot for ${slug}" >>"$LOGFILE"
@@ -267,6 +323,8 @@ _prefetch_repo_prs() {
 	fi
 
 	if [[ "$_used_batch_cache" == "false" ]]; then
+		_prefetch_record_fresh_empty_live_fallback \
+			"$canonical_snapshot_supplied" "$canonical_snapshot"
 		# Delta fetch: try merging recent changes into cache (GH#15286)
 		PREFETCH_PR_SWEEP_MODE="$sweep_mode"
 		PREFETCH_PR_RESULT=""
@@ -277,23 +335,9 @@ _prefetch_repo_prs() {
 		fi
 
 		# Full fetch: either requested directly or delta fell back.
-		# headRefOid required for REST check-suites lookup (GH#21799).
 		if [[ "$sweep_mode" == "$_PREFETCH_PR_SWEEP_FULL" ]]; then
-			pr_json=$(gh_pr_list --repo "$slug" --state open \
-				--json number,title,reviewDecision,updatedAt,headRefName,headRefOid,createdAt,author \
-				--limit "$PULSE_PREFETCH_PR_LIMIT" 2>"$pr_err") || pr_json=""
-
-			if [[ -z "$pr_json" || "$pr_json" == "$_PREFETCH_JSON_NULL" ]]; then
-				local err_msg
-				err_msg=$(cat "$pr_err" 2>/dev/null || echo "$_PREFETCH_UNKNOWN_ERROR")
-				# GH#18979 (t2097): classify rate-limit errors and flag the cycle
-				if _pulse_gh_err_is_rate_limit "$pr_err"; then
-					_pulse_mark_rate_limited "_prefetch_repo_prs:${slug}"
-				fi
-				echo "[pulse-wrapper] _prefetch_repo_prs: gh_pr_list FAILED for ${slug}: ${err_msg}" >>"$LOGFILE"
-				_prefetch_log_batch_cache_state fetch-failed prs "$slug"
-				pr_json="[]"
-			fi
+			_prefetch_prs_fetch_full "$slug" "$pr_err"
+			pr_json="$PREFETCH_PR_RESULT"
 		fi
 	fi
 	rm -f "$pr_err"
@@ -440,7 +484,7 @@ _prefetch_repo_issues() {
 	local _used_batch_cache=false
 	if [[ "$canonical_snapshot_supplied" == "$_PREFETCH_BOOL_TRUE" ]]; then
 		local _canonical_issues=""
-		if _canonical_issues=$(printf '%s' "$canonical_snapshot" | jq -ce '.items | select(type == "array")' 2>/dev/null); then
+		if _canonical_issues=$(_prefetch_snapshot_items "$canonical_snapshot"); then
 			issue_json="$_canonical_issues"
 			_used_batch_cache=true
 			echo "[pulse-wrapper] _prefetch_repo_issues: using cycle canonical snapshot for ${slug}" >>"$LOGFILE"
@@ -459,6 +503,8 @@ _prefetch_repo_issues() {
 	fi
 
 	if [[ "$_used_batch_cache" == "false" ]]; then
+		_prefetch_record_fresh_empty_live_fallback \
+			"$canonical_snapshot_supplied" "$canonical_snapshot"
 		# Delta fetch: try merging recent changes into cache (GH#15286)
 		PREFETCH_ISSUE_SWEEP_MODE="$sweep_mode"
 		PREFETCH_ISSUE_RESULT=""

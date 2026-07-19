@@ -106,6 +106,7 @@ WEBHOOK_DELIVERY_MAX_ENTRIES="${WEBHOOK_DELIVERY_MAX_ENTRIES:-4096}"
 WEBHOOK_DISPATCH_MAX_CONCURRENCY="${WEBHOOK_DISPATCH_MAX_CONCURRENCY:-4}"
 WEBHOOK_ACTION_PROTOCOL_VERSION="${WEBHOOK_ACTION_PROTOCOL_VERSION:-v1}"
 _WEBHOOK_INVALIDATION_FAILED=0
+_WEBHOOK_DELIVERY_RECEIVED_MS=0
 mkdir -p "$(dirname "$WEBHOOK_LOG_FILE")"
 
 _whlog() {
@@ -114,6 +115,40 @@ _whlog() {
 	local ts
 	ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 	printf '[%s] [%s] %s\n' "$ts" "$level" "$*" >>"$WEBHOOK_LOG_FILE"
+	return 0
+}
+
+_webhook_now_ms() {
+	local now_ms=""
+	if declare -F _gh_now_ms >/dev/null 2>&1; then
+		_gh_now_ms || return 1
+		return 0
+	fi
+	now_ms=$(date +%s 2>/dev/null) || return 1
+	[[ "$now_ms" =~ ^[0-9]+$ ]] || return 1
+	printf '%s\n' "$((now_ms * 1000))"
+	return 0
+}
+
+_webhook_record_invalidation_evidence() {
+	local received_ms="${_WEBHOOK_DELIVERY_RECEIVED_MS:-0}"
+	local now_ms=""
+	local lag_ms=""
+	declare -F gh_record_efficiency_evidence >/dev/null 2>&1 || return 0
+	gh_record_efficiency_evidence webhook.invalidations 1 2>/dev/null || true
+	[[ "$received_ms" =~ ^[0-9]+$ && "$received_ms" -gt 0 ]] || return 0
+	now_ms=$(_webhook_now_ms) || return 0
+	[[ "$now_ms" =~ ^[0-9]+$ && "$now_ms" -ge "$received_ms" ]] || return 0
+	lag_ms=$((now_ms - received_ms))
+	[[ "$lag_ms" -le 604800000 ]] || return 0
+	gh_record_efficiency_evidence webhook.lag_ms "$lag_ms" 2>/dev/null || true
+	return 0
+}
+
+_webhook_record_missed_recovery() {
+	if declare -F gh_record_efficiency_evidence >/dev/null 2>&1; then
+		gh_record_efficiency_evidence webhook.missed_recoveries 1 2>/dev/null || true
+	fi
 	return 0
 }
 
@@ -200,26 +235,53 @@ _dispatch_webhook_action_line() {
 	case "$line" in
 	'#'*)
 		_whlog INFO "${line#'# '}"
-		[[ "$line" == '# accepted '* ]] && _WEBHOOK_INVALIDATION_FAILED=0
+		if [[ "$line" == '# accepted '* ]]; then
+			_WEBHOOK_INVALIDATION_FAILED=0
+			_WEBHOOK_DELIVERY_RECEIVED_MS=0
+		fi
 		return 0
 		;;
 	'') return 0 ;;
 	esac
 	IFS=' ' read -r verb version scope first second extra <<<"$line"
 	case "${verb} ${version} ${scope}" in
+	"DELIVERY v1 received-ms")
+		if [[ "$first" =~ ^[0-9]+$ && "$first" -gt 0 \
+			&& -z "$second" && -z "$extra" ]]; then
+			_WEBHOOK_DELIVERY_RECEIVED_MS="$first"
+			_WEBHOOK_INVALIDATION_FAILED=0
+		else
+			_WEBHOOK_DELIVERY_RECEIVED_MS=0
+			_WEBHOOK_INVALIDATION_FAILED=1
+			_whlog ERROR "Rejected malformed delivery timing record"
+		fi
+		return 0
+		;;
 	"INVALIDATE v1 collection")
 		_WEBHOOK_INVALIDATION_FAILED=0
-		if [[ -n "$extra" ]] || ! _webhook_invalidate_collection "$first" "$second"; then
+		if [[ -n "$extra" ]]; then
 			_WEBHOOK_INVALIDATION_FAILED=1
-			_whlog ERROR "Rejected or failed collection invalidation record"
+			_whlog ERROR "Rejected malformed collection invalidation record"
+		elif ! _webhook_invalidate_collection "$first" "$second"; then
+			_WEBHOOK_INVALIDATION_FAILED=1
+			_webhook_record_missed_recovery
+			_whlog ERROR "Failed collection invalidation; polling recovery remains active"
+		else
+			_webhook_record_invalidation_evidence
 		fi
 		return 0
 		;;
 	"INVALIDATE v1 checks")
 		_WEBHOOK_INVALIDATION_FAILED=0
-		if [[ -n "$extra" ]] || ! _webhook_invalidate_checks "$first" "$second"; then
+		if [[ -n "$extra" ]]; then
 			_WEBHOOK_INVALIDATION_FAILED=1
-			_whlog ERROR "Rejected or failed check invalidation record"
+			_whlog ERROR "Rejected malformed check invalidation record"
+		elif ! _webhook_invalidate_checks "$first" "$second"; then
+			_WEBHOOK_INVALIDATION_FAILED=1
+			_webhook_record_missed_recovery
+			_whlog ERROR "Failed check invalidation; polling recovery remains active"
+		else
+			_webhook_record_invalidation_evidence
 		fi
 		return 0
 		;;
@@ -347,6 +409,8 @@ cmd_run() {
 	# callable from the dispatch loop below. We mirror pulse-merge-routine.sh.
 	# shellcheck source=/dev/null
 	source "${SCRIPT_DIR}/shared-constants.sh"
+	# shellcheck source=/dev/null
+	source "${SCRIPT_DIR}/gh-api-instrument.sh"
 	# shellcheck source=/dev/null
 	source "${SCRIPT_DIR}/shared-gh-wrappers-checks.sh"
 	# shellcheck source=/dev/null

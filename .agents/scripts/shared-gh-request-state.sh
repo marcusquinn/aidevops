@@ -243,6 +243,20 @@ _ghrs_record() {
 	if declare -F gh_record_call >/dev/null 2>&1; then
 		gh_record_call other gh_request_singleflight unknown other "$decision" "$operation" coordination 2>/dev/null || true
 	fi
+	if declare -F gh_record_efficiency_evidence >/dev/null 2>&1; then
+		case "$decision" in
+		leader)
+			gh_record_efficiency_evidence single_flight.leaders 1 2>/dev/null || true
+			;;
+		follower-success | follower-failure | timeout)
+			gh_record_efficiency_evidence single_flight.waits 1 2>/dev/null || true
+			;;
+		takeover)
+			gh_record_efficiency_evidence single_flight.waits 1 2>/dev/null || true
+			gh_record_efficiency_evidence single_flight.takeovers 1 2>/dev/null || true
+			;;
+		esac
+	fi
 	return 0
 }
 

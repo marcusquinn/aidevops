@@ -1642,7 +1642,7 @@ main() {
 	# Register EXIT trap BEFORE acquiring the lock so the lock is always
 	# released on exit — including set -e aborts, SIGTERM, and return paths.
 	# SIGKILL cannot be trapped; stale-lock detection handles that case.
-	trap 'release_instance_lock' EXIT
+	trap '_pulse_efficiency_cycle_finish; release_instance_lock' EXIT
 
 	if ! acquire_instance_lock; then
 		return 0
@@ -1681,6 +1681,7 @@ main() {
 		export AIDEVOPS_GH_PR_VIEW_CACHE_TTL="${AIDEVOPS_PULSE_PR_VIEW_CACHE_TTL:-3600}"
 		_save_cleanup_scope
 		push_cleanup 'release_instance_lock'
+		push_cleanup '_pulse_efficiency_cycle_finish'
 		# GH#23728: keep EXIT (not RETURN) for SIGTERM/set -e lock safety, but
 		# register release_instance_lock before replacing the direct EXIT trap.
 		trap '_run_cleanups' EXIT
@@ -1699,6 +1700,7 @@ main() {
 		if [[ "$_pulse_pr_cache_cleanup_scope" -eq 0 ]]; then
 			_save_cleanup_scope
 			push_cleanup 'release_instance_lock'
+			push_cleanup '_pulse_efficiency_cycle_finish'
 			# GH#23728: keep EXIT (not RETURN) for SIGTERM/set -e lock safety, but
 			# register release_instance_lock before replacing the direct EXIT trap.
 			trap '_run_cleanups' EXIT
@@ -1826,6 +1828,12 @@ main() {
 		return 0
 	fi
 
+	# GH#27777: bracket every real pulse cycle with typed production evidence.
+	# The fail-open finish hook is also registered in the EXIT cleanup path so
+	# unexpected set -e exits publish a conservative partial cycle rather than
+	# silently dropping the observation window.
+	_pulse_efficiency_cycle_start
+
 	# t3068: drain any pending approval-trigger records before the regular
 	# cycle. Backstop for the dedicated 60s --merge-only plist; if an
 	# approval landed since the last merge-only tick, we pick it up here
@@ -1835,6 +1843,7 @@ main() {
 
 	# Run pre-flight stages (cleanup, prefetch, normalization)
 	if ! _run_preflight_stages; then
+		_pulse_efficiency_cycle_finish idle
 		return 0
 	fi
 
@@ -1842,6 +1851,7 @@ main() {
 	# been issued during the prefetch/cleanup phase above (t2943)
 	if [[ -f "$STOP_FLAG" ]]; then
 		echo "[pulse-wrapper] Stop flag appeared during setup — aborting before run_pulse()" >>"$LOGFILE"
+		_pulse_efficiency_cycle_finish idle
 		return 0
 	fi
 
@@ -1892,6 +1902,7 @@ main() {
 			[[ "$_pw_mtime_now" -gt 0 ]] &&
 			[[ "$_pw_mtime_now" != "$_pw_mtime_loaded" ]]; then
 			echo "[pulse-wrapper] t3033: source modified (${_pw_mtime_loaded} -> ${_pw_mtime_now}) — releasing lock and re-execing for fresh code" >>"$WRAPPER_LOGFILE"
+			_pulse_efficiency_cycle_finish
 			release_instance_lock
 			exec "$_pw_self" "$@"
 			# exec should not return; if it does, log and fall through to normal exit
@@ -1899,6 +1910,7 @@ main() {
 		fi
 	fi
 
+	_pulse_efficiency_cycle_finish
 	return 0
 }
 

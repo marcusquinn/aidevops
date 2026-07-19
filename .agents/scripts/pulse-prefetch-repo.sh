@@ -274,6 +274,13 @@ _prefetch_single_repo_load_snapshots() {
 	PREFETCH_CANONICAL_SNAPSHOT_GENERATION=""
 
 	if [[ "${PULSE_BATCH_PREFETCH_ENABLED:-1}" != "1" || ! -x "$helper" ]]; then
+		if declare -F gh_record_efficiency_evidence >/dev/null 2>&1; then
+			local collection=""
+			for collection in issues prs; do
+				gh_record_efficiency_evidence cache.misses 1 2>/dev/null || true
+				gh_record_efficiency_evidence guardrails.forced_live_refreshes 1 2>/dev/null || true
+			done
+		fi
 		return 0
 	fi
 	PREFETCH_CANONICAL_ISSUES_SNAPSHOT=$("$helper" read-snapshot --kind issues --slug "$slug" 2>>"$LOGFILE") || PREFETCH_CANONICAL_ISSUES_SNAPSHOT="{}"
