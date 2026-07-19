@@ -90,6 +90,7 @@ def _window_inconclusive_reasons(window: Window) -> list[str]:
     )
     health_fields = {
         "unknown_quota_cost_attempts": "quota cost is unknown",
+        "unknown_elapsed_attempts": "request latency is unknown",
         "duplicate_attempt_ids": "duplicate attempt IDs exist",
         "unidentified_attempts": "unidentified attempts exist",
         "unknown_page_attempts": "unknown page attempts exist",

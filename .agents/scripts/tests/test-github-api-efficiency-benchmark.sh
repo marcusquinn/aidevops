@@ -133,6 +133,7 @@ def transport(
     additional_pages,
     elapsed_ms,
     unknown_quota=0,
+    unknown_elapsed=0,
     other_attempts=0,
     schema=2,
 ):
@@ -153,6 +154,7 @@ def transport(
             "successful_attempts": attempts - errors,
             "failed_attempts": errors,
             "elapsed_ms": elapsed_ms,
+            "unknown_elapsed_attempts": unknown_elapsed,
             "known_quota_cost": graphql_points,
             "unknown_quota_cost_attempts": unknown_quota,
             "duplicate_attempt_ids": 0,
@@ -350,6 +352,22 @@ unknown_quota_report = transport(
 )
 write_case("unknown-quota", unknown_quota_report, PASS_EVIDENCE)
 
+unknown_latency_report = transport(
+    50_000,
+    43_200,
+    800,
+    160,
+    180,
+    560,
+    80,
+    errors=5,
+    retries=8,
+    additional_pages=25,
+    elapsed_ms=360_000,
+    unknown_elapsed=1,
+)
+write_case("unknown-latency", unknown_latency_report, PASS_EVIDENCE)
+
 incompatible_report = copy.deepcopy(PASS_REPORT)
 incompatible_report["_meta"]["schema_version"] = 1
 write_case("incompatible", incompatible_report, PASS_EVIDENCE)
@@ -469,6 +487,11 @@ test_fail_closed_transport() {
 	assert_eq "unknown quota evidence exits two" "2" "$LAST_EXIT"
 	assert_jq "unknown quota evidence cannot pass" \
 		'.status == "INCONCLUSIVE" and (.reasons | any(contains("quota cost is unknown")))' "$LAST_JSON"
+
+	run_case unknown-latency
+	assert_eq "unknown latency evidence exits two" "2" "$LAST_EXIT"
+	assert_jq "unknown latency evidence cannot pass" \
+		'.status == "INCONCLUSIVE" and (.reasons | any(contains("request latency is unknown")))' "$LAST_JSON"
 
 	run_case unclassified
 	assert_eq "unclassified transport exits two" "2" "$LAST_EXIT"

@@ -15,6 +15,7 @@ BEGIN {
 	total_calls = 0
 	logical_events = 0
 	cache_events = 0
+	evidence_events = 0
 	legacy_events = 0
 	attempted_requests = 0
 	opaque_paginated_attempts = 0
@@ -37,6 +38,18 @@ function metric_add_dimensions(caller, path, auth, pool, decision, metric, amoun
 	metric_add("auth", auth, metric, amount)
 	metric_add("pool", pool, metric, amount)
 	metric_add("decision", decision, metric, amount)
+}
+
+function percentile(histogram, total, percent,    target, cumulative, key, values, n, i) {
+	if (total < 1) return 0
+	for (key in histogram) values[++n] = key + 0
+	sort_values(values, n)
+	target = int((total * percent + 99) / 100)
+	for (i = 1; i <= n; i++) {
+		cumulative += histogram[values[i]]
+		if (cumulative >= target) return values[i]
+	}
+	return values[n] + 0
 }
 
 function sort_values(values, n,    i, j, swap) {
@@ -69,6 +82,7 @@ function emit_group(title, group,    pair, parts, values, n, i, value) {
 		printf "      \"total\": %d,\n", metric_get(group, value, "total")
 		printf "      \"logical_events\": %d,\n", metric_get(group, value, "logical_events")
 		printf "      \"cache_events\": %d,\n", metric_get(group, value, "cache_events")
+		printf "      \"evidence_events\": %d,\n", metric_get(group, value, "evidence_events")
 		printf "      \"legacy_events\": %d,\n", metric_get(group, value, "legacy_events")
 		printf "      \"attempted_requests\": %d,\n", metric_get(group, value, "attempted_requests")
 		printf "      \"opaque_paginated_attempts\": %d,\n", metric_get(group, value, "opaque_paginated_attempts")
@@ -78,6 +92,7 @@ function emit_group(title, group,    pair, parts, values, n, i, value) {
 		printf "      \"successful_attempts\": %d,\n", metric_get(group, value, "successful_attempts")
 		printf "      \"failed_attempts\": %d,\n", metric_get(group, value, "failed_attempts")
 		printf "      \"elapsed_ms\": %d,\n", metric_get(group, value, "elapsed_ms")
+		printf "      \"unknown_elapsed_attempts\": %d,\n", metric_get(group, value, "unknown_elapsed_attempts")
 		printf "      \"known_quota_cost\": %d,\n", metric_get(group, value, "known_quota_cost")
 		printf "      \"unknown_quota_cost_attempts\": %d\n", metric_get(group, value, "unknown_quota_cost_attempts")
 		printf "    }"
@@ -167,26 +182,38 @@ $1 !~ /^[0-9]+$/ || NF < 3 {
 		if (attempt_id == "" || attempt_id == "unknown") {
 			retained_unidentified_attempts++
 			attempt_unidentified = 1
-		} else if (attempt_id in seen_attempt_id) {
+		} else if (attempt_id in seen_retained_attempt_id) {
 			retained_duplicate_attempt_ids++
-			attempt_duplicate = 1
 		} else {
-			seen_attempt_id[attempt_id] = 1
+			seen_retained_attempt_id[attempt_id] = 1
 		}
 		if (page !~ /^[0-9]+$/ || page + 0 < 1) {
 			retained_unknown_page_attempts++
 			attempt_page_unknown = 1
 		}
-		if (first_retained_attempt_ts == 0 || ts < first_retained_attempt_ts) first_retained_attempt_ts = ts
-		if (ts > last_retained_attempt_ts) last_retained_attempt_ts = ts
+		if (first_observed_attempt_ts == 0 || ts < first_observed_attempt_ts) first_observed_attempt_ts = ts
+		if (ts > last_observed_attempt_ts) last_observed_attempt_ts = ts
 	}
 
 	if (ts < cutoff) next
 	window_records++
+	if (kind == "attempt" && !attempt_unidentified) {
+		if (attempt_id in seen_window_attempt_id) {
+			attempt_duplicate = 1
+		} else {
+			seen_window_attempt_id[attempt_id] = 1
+		}
+	}
 	record_budget(pool, budget, ts)
 	if (logical_id != "" && logical_id != "unknown" && !(logical_id in seen_window_logical_id)) {
 		seen_window_logical_id[logical_id] = 1
 		logical_operations++
+	}
+
+	if (kind == "evidence") {
+		evidence_events++
+		metric_add_dimensions(caller, path, auth, pool, decision, "evidence_events", 1)
+		next
 	}
 
 	if (kind != "attempt") {
@@ -215,9 +242,16 @@ $1 !~ /^[0-9]+$/ || NF < 3 {
 		duplicate_attempt_ids++
 		next
 	}
+	if (first_window_attempt_ts == 0 || ts < first_window_attempt_ts) first_window_attempt_ts = ts
+	if (ts > last_window_attempt_ts) last_window_attempt_ts = ts
 	if (attempt_page_unknown) unknown_page_attempts++
 
 	attempted_requests++
+	minute = int(ts / 60)
+	minute_attempts[minute]++
+	if (minute_attempts[minute] > peak_attempts_per_minute) {
+		peak_attempts_per_minute = minute_attempts[minute]
+	}
 	metric_add_dimensions(caller, path, auth, pool, decision, "attempted_requests", 1)
 	metric_add("outcome", outcome, "attempted_requests", 1)
 	if (decision == "native-pagination-opaque") {
@@ -245,8 +279,14 @@ $1 !~ /^[0-9]+$/ || NF < 3 {
 		metric_add_dimensions(caller, path, auth, pool, decision, "failed_attempts", 1)
 	}
 	if (elapsed_ms ~ /^[0-9]+$/) {
-		elapsed_ms_total += elapsed_ms
+		elapsed_value = elapsed_ms + 0
+		elapsed_ms_total += elapsed_value
+		latency_hist[elapsed_value]++
+		latency_count++
 		metric_add_dimensions(caller, path, auth, pool, decision, "elapsed_ms", elapsed_ms)
+	} else {
+		unknown_elapsed_attempts++
+		metric_add_dimensions(caller, path, auth, pool, decision, "unknown_elapsed_attempts", 1)
 	}
 	if (quota_cost ~ /^[0-9]+$/) {
 		known_quota_cost += quota_cost
@@ -260,9 +300,11 @@ $1 !~ /^[0-9]+$/ || NF < 3 {
 
 END {
 	effective_window_seconds = 0
-	if (first_retained_attempt_ts > 0 && last_retained_attempt_ts >= first_retained_attempt_ts) {
-		effective_window_seconds = last_retained_attempt_ts - first_retained_attempt_ts
+	if (first_window_attempt_ts > 0 && last_window_attempt_ts >= first_window_attempt_ts) {
+		effective_window_seconds = last_window_attempt_ts - first_window_attempt_ts
 	}
+	request_p50_ms = percentile(latency_hist, latency_count, 50)
+	request_p95_ms = percentile(latency_hist, latency_count, 95)
 	attempts_exact = (duplicate_attempt_ids == 0 && unidentified_attempts == 0 && unknown_page_attempts == 0 && window_malformed_v2_records == 0) ? "true" : "false"
 
 	print "{"
@@ -272,9 +314,11 @@ END {
 	printf "    \"since_ts\": %d,\n", cutoff
 	printf "    \"requested_window_seconds\": %d,\n", window
 	printf "    \"window_seconds\": %d,\n", window
-	printf "    \"first_retained_ts\": %d,\n", first_retained_attempt_ts + 0
-	printf "    \"last_retained_ts\": %d,\n", last_retained_attempt_ts + 0
+	printf "    \"first_retained_ts\": %d,\n", first_window_attempt_ts + 0
+	printf "    \"last_retained_ts\": %d,\n", last_window_attempt_ts + 0
 	printf "    \"effective_window_seconds\": %d,\n", effective_window_seconds
+	printf "    \"first_observed_attempt_ts\": %d,\n", first_observed_attempt_ts + 0
+	printf "    \"last_observed_attempt_ts\": %d,\n", last_observed_attempt_ts + 0
 	printf "    \"first_retained_record_ts\": %d,\n", first_retained_record_ts + 0
 	printf "    \"last_retained_record_ts\": %d,\n", last_retained_record_ts + 0
 	printf "    \"retained_records\": %d,\n", retained_records + 0
@@ -283,6 +327,7 @@ END {
 	printf "    \"logical_operations\": %d,\n", logical_operations + 0
 	printf "    \"logical_events\": %d,\n", logical_events
 	printf "    \"cache_events\": %d,\n", cache_events
+	printf "    \"evidence_events\": %d,\n", evidence_events
 	printf "    \"legacy_events\": %d,\n", legacy_events
 	printf "    \"attempted_requests\": %d,\n", attempted_requests
 	printf "    \"opaque_paginated_attempts\": %d,\n", opaque_paginated_attempts + 0
@@ -292,6 +337,10 @@ END {
 	printf "    \"successful_attempts\": %d,\n", successful_attempts + 0
 	printf "    \"failed_attempts\": %d,\n", failed_attempts + 0
 	printf "    \"elapsed_ms\": %d,\n", elapsed_ms_total + 0
+	printf "    \"unknown_elapsed_attempts\": %d,\n", unknown_elapsed_attempts + 0
+	printf "    \"request_p50_ms\": %d,\n", request_p50_ms + 0
+	printf "    \"request_p95_ms\": %d,\n", request_p95_ms + 0
+	printf "    \"peak_attempts_per_minute\": %d,\n", peak_attempts_per_minute + 0
 	printf "    \"known_quota_cost\": %d,\n", known_quota_cost + 0
 	printf "    \"unknown_quota_cost_attempts\": %d,\n", unknown_quota_cost_attempts + 0
 	printf "    \"duplicate_attempt_ids\": %d,\n", duplicate_attempt_ids + 0

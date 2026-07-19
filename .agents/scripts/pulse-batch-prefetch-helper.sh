@@ -73,6 +73,14 @@ if [[ -f "${SCRIPT_DIR}/shared-constants.sh" ]]; then
 	source "${SCRIPT_DIR}/shared-constants.sh"
 fi
 
+# Source privacy-safe efficiency instrumentation for cache/single-flight events.
+# shellcheck source=./gh-api-instrument.sh
+# shellcheck disable=SC1091
+if ! declare -F gh_record_efficiency_evidence >/dev/null 2>&1 \
+	&& [[ -f "${SCRIPT_DIR}/gh-api-instrument.sh" ]]; then
+	source "${SCRIPT_DIR}/gh-api-instrument.sh"
+fi
+
 # Source L1 events ETag tickle helper (t2830, GH#20868).
 # Provides events_tickle <owner> — skips batch search on 304 ETag match.
 # Fail-open: if the file is absent, events_tickle is a no-op stub below.
@@ -125,6 +133,8 @@ _JSON_TYPE_STRING=string
 _STATE_OPEN="open"
 _CACHE_STATE_MALFORMED="malformed"
 _CACHE_STATE_INVALIDATED="invalidated"
+_CACHE_CARDINALITY_EMPTY=empty
+_CACHE_CARDINALITY_UNKNOWN=unknown
 _CACHE_SNAPSHOT_STATE="missing"
 _CACHE_SNAPSHOT_PATH=""
 _SNAPSHOT_SCHEMA="aidevops-pulse-snapshot/v1"
@@ -1179,11 +1189,43 @@ _resolve_cache_snapshot() {
 	return 0
 }
 
+_record_cache_state_evidence() {
+	local state="$1"
+	local cardinality="${2:-$_CACHE_CARDINALITY_UNKNOWN}"
+	declare -F gh_record_efficiency_evidence >/dev/null 2>&1 || return 0
+	case "$state" in
+	hit)
+		if [[ "$cardinality" == "$_CACHE_CARDINALITY_EMPTY" ]]; then
+			gh_record_efficiency_evidence cache.fresh_empty_hits 1 2>/dev/null || true
+		else
+			gh_record_efficiency_evidence cache.fresh_hits 1 2>/dev/null || true
+		fi
+		;;
+	stale | malformed | incompatible)
+		gh_record_efficiency_evidence cache.misses 1 2>/dev/null || true
+		gh_record_efficiency_evidence cache.stale 1 2>/dev/null || true
+		gh_record_efficiency_evidence guardrails.stale_snapshot_detections 1 2>/dev/null || true
+		gh_record_efficiency_evidence guardrails.forced_live_refreshes 1 2>/dev/null || true
+		;;
+	invalidated)
+		gh_record_efficiency_evidence cache.misses 1 2>/dev/null || true
+		gh_record_efficiency_evidence cache.invalidated 1 2>/dev/null || true
+		gh_record_efficiency_evidence guardrails.forced_live_refreshes 1 2>/dev/null || true
+		;;
+	missing | disabled)
+		gh_record_efficiency_evidence cache.misses 1 2>/dev/null || true
+		gh_record_efficiency_evidence guardrails.forced_live_refreshes 1 2>/dev/null || true
+		;;
+	esac
+	return 0
+}
+
 _emit_cache_state() {
 	local state="$1"
 	local kind="$2"
 	local slug="$3"
-	local cardinality="${4:-unknown}"
+	local cardinality="${4:-$_CACHE_CARDINALITY_UNKNOWN}"
+	_record_cache_state_evidence "$state" "$cardinality"
 	printf 'cache_state=%s kind=%s slug=%s cardinality=%s\n' \
 		"$state" "$kind" "$slug" "$cardinality" >&2
 	return 0
@@ -1294,7 +1336,7 @@ _cmd_read_cache() {
 	fi
 
 	local cardinality="nonempty"
-	[[ "$items" == "$_JSON_EMPTY_ARR" ]] && cardinality="empty"
+	[[ "$items" == "$_JSON_EMPTY_ARR" ]] && cardinality="$_CACHE_CARDINALITY_EMPTY"
 	_emit_cache_state "$_CACHE_SNAPSHOT_STATE" "$kind" "$slug" "$cardinality"
 	printf '%s\n' "$items"
 	return 0
@@ -1372,7 +1414,7 @@ _cmd_read_snapshot() {
 	}
 
 	local cardinality="nonempty"
-	[[ "$(printf '%s' "$envelope" | jq -c '.items')" == "$_JSON_EMPTY_ARR" ]] && cardinality="empty"
+	[[ "$(printf '%s' "$envelope" | jq -c '.items')" == "$_JSON_EMPTY_ARR" ]] && cardinality="$_CACHE_CARDINALITY_EMPTY"
 	_emit_cache_state "$_CACHE_SNAPSHOT_STATE" "$kind" "$slug" "$cardinality"
 	printf '%s\n' "$envelope"
 	return 0

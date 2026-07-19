@@ -42,9 +42,31 @@ SHA_G="1111111111111111111111111111111111111111"
 SHA_H="2222222222222222222222222222222222222222"
 SHA_I="3333333333333333333333333333333333333333"
 SHA_J="4444444444444444444444444444444444444444"
+SHA_K="5555555555555555555555555555555555555555"
 
 # shellcheck source=../shared-gh-wrappers-checks.sh
 source "$CHECKS_LIB"
+
+EFFICIENCY_EVENTS="${TEST_ROOT}/efficiency-events.tsv"
+: >"$EFFICIENCY_EVENTS"
+gh_record_efficiency_evidence() {
+	local name="$1"
+	local value="${2:-1}"
+	printf '%s\t%s\n' "$name" "$value" >>"$EFFICIENCY_EVENTS"
+	return 0
+}
+
+efficiency_event_total() {
+	local name="$1"
+	awk -F'\t' -v expected="$name" '$1 == expected { total += $2 } END { print total + 0 }' "$EFFICIENCY_EVENTS"
+	return 0
+}
+
+efficiency_event_unique_values() {
+	local name="$1"
+	awk -F'\t' -v expected="$name" '$1 == expected && !seen[$2]++ { total++ } END { print total + 0 }' "$EFFICIENCY_EVENTS"
+	return 0
+}
 
 cleanup() {
 	export HOME="$ORIGINAL_HOME"
@@ -429,6 +451,41 @@ test_invalidation_fences_all_auth_scopes() {
 	return 0
 }
 
+test_efficiency_evidence_tracks_exact_decisions() {
+	local result=""
+	: >"$EFFICIENCY_EVENTS"
+	CHECK_NOW=1100
+	CHECK_API_MODE=success
+	CHECK_SUITES_FIXTURE='{}'
+	result=$(gh_pr_check_status_rest_batch "owner/repo" \
+		'[{"number":11,"headRefOid":"5555555555555555555555555555555555555555"}]')
+	assert_json_eq "empty aggregate fixture remains an explicit none state" \
+		'[{"number":11,"status":"none"}]' "$result"
+	result=$(gh_pr_check_status_rest_batch "owner/repo" \
+		'[{"number":11,"headRefOid":"5555555555555555555555555555555555555555"}]')
+	assert_json_eq "fresh empty aggregate is reused without transport" \
+		'[{"number":11,"status":"none"}]' "$result"
+	gh_pr_check_status_cache_invalidate "owner/repo" "$SHA_K"
+	assert_eq "cold leader path records both cache lookup misses" "2" \
+		"$(efficiency_event_total cache.misses)"
+	assert_eq "fresh empty cache decision is distinct" "1" \
+		"$(efficiency_event_total cache.fresh_empty_hits)"
+	assert_eq "successful invalidation is counted" "1" \
+		"$(efficiency_event_total cache.invalidated)"
+	assert_eq "one leader transport records one aggregate check fetch" "1" \
+		"$(efficiency_event_total path_budgets.aggregate_check_fetches)"
+	assert_eq "each batch observation records one actionable change" "2" \
+		"$(efficiency_event_total population.actionable_changes)"
+	assert_eq "repeated actionable heads use one opaque token" "1" \
+		"$(efficiency_event_unique_values population.actionable_head_token)"
+	if grep -Fq "$SHA_K" "$EFFICIENCY_EVENTS"; then
+		printf 'FAIL: actionable evidence exposed a raw head SHA\n' >&2
+		return 1
+	fi
+	printf 'PASS: actionable evidence keeps head identities opaque\n'
+	return 0
+}
+
 main() {
 	test_terminal_reuse_dedup_and_order
 	test_new_head_repo_and_auth_scope_miss
@@ -437,6 +494,7 @@ main() {
 	test_private_atomic_cache_and_authority_boundary
 	test_invalidation_fences_inflight_publication
 	test_invalidation_fences_all_auth_scopes
+	test_efficiency_evidence_tracks_exact_decisions
 	printf 'PASS: PR check-status cache regression suite\n'
 	return 0
 }

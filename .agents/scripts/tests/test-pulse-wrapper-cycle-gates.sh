@@ -27,6 +27,7 @@ fail() {
 
 export SCRIPT_DIR="${TMP}/scripts"
 export WRAPPER_LOGFILE="${TMP}/wrapper.log"
+export AIDEVOPS_GH_API_EVIDENCE_COVERAGE_START_FILE="${TMP}/coverage-start"
 export PULSE_SCOPE_REPOS="owner/repo"
 mkdir -p "$SCRIPT_DIR"
 : >"$WRAPPER_LOGFILE"
@@ -65,6 +66,30 @@ state)
 esac
 EOF
 chmod +x "${SCRIPT_DIR}/pulse-idle-backoff-helper.sh"
+
+EVIDENCE_FILE="${TMP}/evidence.log"
+AGGREGATE_FILE="${TMP}/aggregate.log"
+TRIM_FILE="${TMP}/trim.log"
+: >"$EVIDENCE_FILE"
+: >"$AGGREGATE_FILE"
+: >"$TRIM_FILE"
+
+gh_record_efficiency_evidence() {
+	local name="$1"
+	local value="$2"
+	printf '%s=%s\n' "$name" "$value" >>"$EVIDENCE_FILE"
+	return 0
+}
+
+gh_aggregate_calls() {
+	printf 'aggregate\n' >>"$AGGREGATE_FILE"
+	return 0
+}
+
+gh_trim_log() {
+	printf 'trim\n' >>"$TRIM_FILE"
+	return 0
+}
 
 SOURCE_SCRIPT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/pulse-wrapper-cycle-gates.sh"
 # shellcheck disable=SC1090
@@ -110,6 +135,85 @@ if grep -q 'timed out after 30s' "$WRAPPER_LOGFILE"; then
 	pass "idle-work timeout is logged"
 else
 	fail "idle-work timeout is logged"
+fi
+
+: >"$EVIDENCE_FILE"
+: >"$AGGREGATE_FILE"
+: >"$TRIM_FILE"
+_pulse_efficiency_cycle_start
+_PULSE_EFFICIENCY_CYCLE_START_MS=$((_PULSE_EFFICIENCY_CYCLE_START_MS - 25))
+_pulse_efficiency_cycle_finish idle
+if grep -q '^contract=1$' "$EVIDENCE_FILE" \
+	&& grep -q '^coverage-start=[0-9]' "$EVIDENCE_FILE" \
+	&& grep -q '^coverage.population=1$' "$EVIDENCE_FILE" \
+	&& grep -q '^coverage.latency=1$' "$EVIDENCE_FILE" \
+	&& grep -q '^coverage.cache=1$' "$EVIDENCE_FILE" \
+	&& grep -q '^coverage.single_flight=1$' "$EVIDENCE_FILE" \
+	&& grep -q '^coverage.path_budgets=1$' "$EVIDENCE_FILE" \
+	&& grep -q '^population.pulse_cycles=1$' "$EVIDENCE_FILE" \
+	&& grep -q '^population.unchanged_cycles=1$' "$EVIDENCE_FILE" \
+	&& grep -q '^coverage-end=[0-9]' "$EVIDENCE_FILE" \
+	&& ! grep -q '^latency.completed_action_ms=' "$EVIDENCE_FILE"; then
+	pass "idle cycle publishes complete typed evidence"
+else
+	fail "idle cycle publishes complete typed evidence"
+fi
+
+_pulse_efficiency_cycle_finish idle
+if [[ "$(wc -l <"$AGGREGATE_FILE" | tr -d ' ')" == "1" ]] \
+	&& [[ "$(wc -l <"$TRIM_FILE" | tr -d ' ')" == "1" ]]; then
+	pass "cycle finish aggregates and trims exactly once"
+else
+	fail "cycle finish aggregates and trims exactly once"
+fi
+
+: >"$EVIDENCE_FILE"
+_PULSE_HEALTH_PRS_MERGED=1
+_PULSE_HEALTH_PRS_CLOSED_CONFLICTING=0
+_PULSE_EFFICIENCY_CYCLE_OUTCOME=idle
+_pulse_efficiency_cycle_start
+_PULSE_EFFICIENCY_CYCLE_START_MS=$((_PULSE_EFFICIENCY_CYCLE_START_MS - 25))
+_pulse_record_cycle_outcome 0
+_pulse_efficiency_cycle_finish
+if [[ "$_PULSE_EFFICIENCY_CYCLE_OUTCOME" == "active" ]] \
+	&& grep -Eq '^latency.completed_action_ms=[1-9][0-9]*$' "$EVIDENCE_FILE" \
+	&& ! grep -q '^population.unchanged_cycles=' "$EVIDENCE_FILE"; then
+	pass "active cycle records completed-action latency"
+else
+	fail "active cycle records completed-action latency"
+fi
+
+PREFETCH_INFRA="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/pulse-prefetch-infra.sh"
+# shellcheck disable=SC1090
+source "$PREFETCH_INFRA"
+local_entries_a=$'beta/repo|/private/beta\nalpha/repo|/private/alpha\nbeta/repo|/duplicate'
+local_entries_b=$'alpha/repo|/changed/path\nbeta/repo|/other/path'
+: >"$EVIDENCE_FILE"
+_prefetch_record_efficiency_population "$local_entries_a"
+repo_hash_a=$(awk -F= '$1 == "population.repository_set_sha256" {print $2}' "$EVIDENCE_FILE")
+first_population_log=$(<"$EVIDENCE_FILE")
+: >"$EVIDENCE_FILE"
+_prefetch_record_efficiency_population "$local_entries_b"
+repo_hash_b=$(awk -F= '$1 == "population.repository_set_sha256" {print $2}' "$EVIDENCE_FILE")
+if [[ "$repo_hash_a" =~ ^[0-9a-f]{64}$ && "$repo_hash_a" == "$repo_hash_b" ]] \
+	&& printf '%s\n' "$first_population_log" | grep -q '^population.repository_count=2$' \
+	&& ! printf '%s\n' "$first_population_log" | grep -qE 'alpha/repo|beta/repo|/private/'; then
+	pass "repository population evidence is deterministic and private"
+else
+	fail "repository population evidence is deterministic and private"
+fi
+
+PREFETCH_REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/pulse-prefetch-repo.sh"
+# shellcheck disable=SC1090
+source "$PREFETCH_REPO"
+: >"$EVIDENCE_FILE"
+PULSE_BATCH_PREFETCH_ENABLED=0
+_prefetch_single_repo_load_snapshots alpha/repo
+if [[ "$(grep -c '^cache.misses=1$' "$EVIDENCE_FILE")" == "2" ]] \
+	&& [[ "$(grep -c '^guardrails.forced_live_refreshes=1$' "$EVIDENCE_FILE")" == "2" ]]; then
+	pass "disabled canonical cache records forced live decisions"
+else
+	fail "disabled canonical cache records forced live decisions"
 fi
 
 printf '\nTests run: %s failed: %s\n' "$TESTS_RUN" "$TESTS_FAILED"

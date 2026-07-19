@@ -8,13 +8,12 @@ from __future__ import annotations
 import argparse
 import json
 import math
-import os
 from pathlib import Path
 import re
 import sys
-import tempfile
 
 from github_api_efficiency_inputs import BenchmarkInputError, build_window
+from github_api_efficiency_io import AtomicWriteError, atomic_write_text
 from github_api_efficiency_report import (
     EXIT_INCONCLUSIVE,
     EXIT_REGRESSION,
@@ -30,38 +29,10 @@ _LABEL_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._ -]{0,63}$")
 
 
 def _atomic_write(path: Path, content: str) -> None:
-    descriptor = -1
-    temporary_name = ""
     try:
-        if path.is_symlink():
-            raise BenchmarkInputError("output path must not be a symlink")
-        path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-        descriptor, temporary_name = tempfile.mkstemp(
-            prefix=f".{path.name}.", dir=path.parent
-        )
-        if hasattr(os, "fchmod"):
-            os.fchmod(descriptor, 0o600)
-        handle = os.fdopen(descriptor, "w", encoding="utf-8")
-        descriptor = -1
-        with handle:
-            handle.write(content)
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.replace(temporary_name, path)
-    except BenchmarkInputError:
-        raise
-    except OSError as exc:
-        raise BenchmarkInputError(
-            "could not atomically write an output report"
-        ) from exc
-    finally:
-        if descriptor >= 0:
-            os.close(descriptor)
-        if temporary_name:
-            try:
-                os.unlink(temporary_name)
-            except FileNotFoundError:
-                pass
+        atomic_write_text(path, content)
+    except AtomicWriteError as exc:
+        raise BenchmarkInputError(str(exc)) from exc
 
 
 def _parser() -> argparse.ArgumentParser:

@@ -37,6 +37,10 @@ setup_env() {
 	export PULSE_PREFETCH_FULL_SWEEP_INTERVAL=999999999
 	export PULSE_BATCH_SEARCH_LAST_RESORT=1
 	export PULSE_BATCH_SNAPSHOT_AUTH_SCOPE=github.com
+	export AIDEVOPS_GH_API_LOG="$TEST_ROOT/gh-api-calls.log"
+	export AIDEVOPS_GH_API_REPORT="$TEST_ROOT/gh-api-report.json"
+	export AIDEVOPS_GH_API_EVIDENCE="$TEST_ROOT/gh-api-evidence.json"
+	unset AIDEVOPS_GH_API_INSTRUMENT_DISABLE
 	unset AIDEVOPS_GH_FORCE_REST_READS
 	unset AIDEVOPS_GH_REST_FIRST_READS
 	mkdir -p "$HOME" "$PULSE_BATCH_PREFETCH_CACHE_DIR" "$TEST_ROOT/bin"
@@ -335,6 +339,34 @@ test_read_cache_rejects_non_hit_states() {
 	return 0
 }
 
+test_cache_states_record_private_efficiency_evidence() {
+	setup_env
+	local cache_file="$PULSE_BATCH_PREFETCH_CACHE_DIR/prs-owner__repo.json"
+	local state_meta="$TEST_ROOT/cache-evidence-state.log"
+	local now=""
+	now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+	printf '{"timestamp":"%s","items":[]}\n' "$now" >"$cache_file"
+	"$HELPER" read-cache --kind prs --slug owner/repo >/dev/null 2>"$state_meta"
+	local passed=0
+	if ! grep -q 'evidence:cache.fresh_empty_hits:1' "$AIDEVOPS_GH_API_LOG" \
+		|| grep -q 'owner/repo' "$AIDEVOPS_GH_API_LOG"; then
+		passed=1
+	fi
+	: >"$AIDEVOPS_GH_API_LOG"
+	export PULSE_PREFETCH_FULL_SWEEP_INTERVAL=1
+	printf '{"timestamp":"2026-01-01T00:00:00Z","items":[]}\n' >"$cache_file"
+	if "$HELPER" read-cache --kind prs --slug owner/repo >/dev/null 2>"$state_meta"; then
+		passed=1
+	fi
+	local event=""
+	for event in cache.misses cache.stale guardrails.stale_snapshot_detections guardrails.forced_live_refreshes; do
+		grep -q "evidence:${event}:1" "$AIDEVOPS_GH_API_LOG" || passed=1
+	done
+	print_result "cache states emit typed evidence without repository identities" "$passed"
+	teardown_env
+	return 0
+}
+
 test_read_cache_recovers_after_atomic_replacement() {
 	setup_env
 	local cache_file="$PULSE_BATCH_PREFETCH_CACHE_DIR/prs-owner__repo.json"
@@ -484,6 +516,36 @@ run_prefetch_consumer_case() (
 	fi
 	return 0
 )
+
+fresh_empty_fallback_guardrail_case() (
+	setup_env
+	local scripts_dir=""
+	scripts_dir=$(cd "$SCRIPT_DIR/.." && pwd)
+	SCRIPT_DIR="$scripts_dir"
+	local evidence_calls="$TEST_ROOT/fallback-evidence.log"
+	gh_record_efficiency_evidence() {
+		local name="$1"
+		local value="$2"
+		printf '%s=%s\n' "$name" "$value" >>"$evidence_calls"
+		return 0
+	}
+	unset _PULSE_PREFETCH_FETCH_LOADED
+	# shellcheck source=../pulse-prefetch-fetch.sh
+	source "$scripts_dir/pulse-prefetch-fetch.sh"
+	_prefetch_record_fresh_empty_live_fallback true '{"items":[]}'
+	_prefetch_record_fresh_empty_live_fallback true '{"items":[{"number":1}]}'
+	_prefetch_record_fresh_empty_live_fallback false '{"items":[]}'
+	[[ "$(grep -c '^path_budgets.fresh_empty_live_fallbacks=1$' "$evidence_calls")" == "1" ]]
+)
+
+test_fresh_empty_fallback_guardrail_is_narrow() {
+	if fresh_empty_fallback_guardrail_case; then
+		print_result "fresh-empty live fallback guardrail records only violations" 0
+	else
+		print_result "fresh-empty live fallback guardrail records only violations" 1
+	fi
+	return 0
+}
 
 test_prefetch_consumers_accept_fresh_empty_hits() {
 	if run_prefetch_consumer_case empty; then
@@ -678,7 +740,9 @@ test_legacy_issue_cache_avoids_search_by_default
 test_read_cache_filters_closed_issues
 test_read_cache_accepts_fresh_empty_arrays
 test_read_cache_rejects_non_hit_states
+test_cache_states_record_private_efficiency_evidence
 test_read_cache_recovers_after_atomic_replacement
+test_fresh_empty_fallback_guardrail_is_narrow
 test_prefetch_consumers_accept_fresh_empty_hits
 test_prefetch_consumers_accept_nonempty_legacy_and_versioned_hits
 test_prefetch_consumers_fallback_on_non_hit_states

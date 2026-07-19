@@ -176,6 +176,40 @@ _PREFETCH_ISSUES_PROJECTION="number,title,state,labels,updatedAt,assignees"
 _PREFETCH_PRS_PROJECTION="number,title,labels,updatedAt,assignees,createdAt,author,headRefOid,headRefName"
 _PREFETCH_FINGERPRINT_SCHEMA="canonical-snapshot-v1"
 
+#######################################
+# Hash stdin with SHA-256 without exposing repository identities.
+#######################################
+_prefetch_sha256_stdin() {
+	local hash=""
+	if command -v shasum >/dev/null 2>&1; then
+		hash=$(shasum -a 256 2>/dev/null | awk '{print $1}') || hash=""
+	elif command -v sha256sum >/dev/null 2>&1; then
+		hash=$(sha256sum 2>/dev/null | awk '{print $1}') || hash=""
+	fi
+	[[ "$hash" =~ ^[0-9a-f]{64}$ ]] || return 1
+	printf '%s\n' "$hash"
+	return 0
+}
+
+#######################################
+# Record the active repository population using count + opaque set digest.
+# Arguments: $1=newline-delimited slug|path entries
+#######################################
+_prefetch_record_efficiency_population() {
+	local repo_entries="$1"
+	local repo_slugs=""
+	local repo_count=""
+	local repo_set_hash=""
+	declare -F gh_record_efficiency_evidence >/dev/null 2>&1 || return 0
+	repo_slugs=$(printf '%s\n' "$repo_entries" | awk -F'|' 'NF && $1 != "" {print $1}' | LC_ALL=C sort -u) || return 0
+	repo_count=$(printf '%s\n' "$repo_slugs" | awk 'NF {count++} END {print count + 0}') || return 0
+	[[ "$repo_count" =~ ^[0-9]+$ && "$repo_count" -gt 0 ]] || return 0
+	repo_set_hash=$(printf '%s\n' "$repo_slugs" | _prefetch_sha256_stdin) || return 0
+	gh_record_efficiency_evidence population.repository_count "$repo_count" 2>/dev/null || true
+	gh_record_efficiency_evidence population.repository_set_sha256 "$repo_set_hash" 2>/dev/null || true
+	return 0
+}
+
 # Load the budget config once per process. Called lazily from the t2041
 # helpers. Reads `.agents/configs/pulse-sweep-budget.json` relative to
 # the aidevops repo deploy. Per-repo overrides override default values;

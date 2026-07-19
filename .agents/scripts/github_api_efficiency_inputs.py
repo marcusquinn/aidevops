@@ -40,6 +40,7 @@ REPORT_COUNTERS = (
     "successful_attempts",
     "failed_attempts",
     "elapsed_ms",
+    "unknown_elapsed_attempts",
     "known_quota_cost",
     "unknown_quota_cost_attempts",
     "duplicate_attempt_ids",
@@ -289,16 +290,24 @@ def _validate_evidence(
     _validate_evidence_groups(payload)
 
 
+def load_transport_report(
+    path: Path, role: str = "transport report"
+) -> tuple[dict[str, Any], str]:
+    """Load and validate one immutable schema-v2 transport report."""
+    report, transport_sha256 = _load_object(path, role)
+    _validate_report(report)
+    return report, transport_sha256
+
+
 def build_window(
     label: str, report_path: Path, evidence_path: Path
 ) -> Window:
-    report, transport_sha256 = _load_object(
+    report, transport_sha256 = load_transport_report(
         report_path, f"{label} transport report"
     )
     evidence, evidence_sha256 = _load_object(
         evidence_path, f"{label} evidence"
     )
-    _validate_report(report)
     _validate_evidence(evidence, transport_sha256)
     totals, normalized = build_transport_metrics(report, evidence)
     return Window(

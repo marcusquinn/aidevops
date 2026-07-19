@@ -31,6 +31,7 @@ trap 'rm -rf "$TMPDIR"' EXIT
 
 export AIDEVOPS_GH_API_LOG="$TMPDIR/gh-api-calls.log"
 export AIDEVOPS_GH_API_REPORT="$TMPDIR/report.json"
+export AIDEVOPS_GH_API_EVIDENCE="$TMPDIR/evidence.json"
 
 assert_eq() {
 	local label="$1"
@@ -85,6 +86,8 @@ assert_eq "log has 6 lines" "6" "$line_count"
 gh_aggregate_calls
 
 assert_file_exists "report file created" "$AIDEVOPS_GH_API_REPORT"
+report_mode=$(stat -f '%Lp' "$AIDEVOPS_GH_API_REPORT" 2>/dev/null || stat -c '%a' "$AIDEVOPS_GH_API_REPORT" 2>/dev/null)
+assert_eq "atomic report is private" "600" "$report_mode"
 
 if ! jq -e '.' "$AIDEVOPS_GH_API_REPORT" >/dev/null 2>&1; then
 	echo "  FAIL: report is not valid JSON"
@@ -145,6 +148,13 @@ if [[ -f "$AIDEVOPS_GH_API_REPORT" ]]; then
 	FAIL=$((FAIL + 1))
 else
 	echo "  PASS: clear removed report"
+	PASS=$((PASS + 1))
+fi
+if [[ -f "$AIDEVOPS_GH_API_EVIDENCE" ]]; then
+	echo "  FAIL: clear left evidence behind: $AIDEVOPS_GH_API_EVIDENCE"
+	FAIL=$((FAIL + 1))
+else
+	echo "  PASS: clear removed evidence"
 	PASS=$((PASS + 1))
 fi
 
@@ -386,18 +396,63 @@ assert_eq "requested window retained separately" "3600" "$(jq -r '._meta.request
 assert_eq "first retained attempt timestamp" "$first_ts" "$(jq -r '._meta.first_retained_ts' "$AIDEVOPS_GH_API_REPORT")"
 assert_eq "last retained attempt timestamp" "$last_ts" "$(jq -r '._meta.last_retained_ts' "$AIDEVOPS_GH_API_REPORT")"
 assert_eq "effective window uses observed range" "20" "$(jq -r '._meta.effective_window_seconds' "$AIDEVOPS_GH_API_REPORT")"
+assert_file_exists "digest-bound evidence sidecar created" "$AIDEVOPS_GH_API_EVIDENCE"
+report_digest=$(python3 -c 'import hashlib,sys;print(hashlib.sha256(open(sys.argv[1], "rb").read()).hexdigest())' "$AIDEVOPS_GH_API_REPORT")
+evidence_digest=$(jq -r '.transport_sha256' "$AIDEVOPS_GH_API_EVIDENCE")
+assert_eq "evidence sidecar is bound to report bytes" "$report_digest" "$evidence_digest"
+assert_eq "incomplete production evidence fails closed" "false" "$(jq -r '.complete' "$AIDEVOPS_GH_API_EVIDENCE")"
+evidence_mode=$(stat -f '%Lp' "$AIDEVOPS_GH_API_EVIDENCE" 2>/dev/null || stat -c '%a' "$AIDEVOPS_GH_API_EVIDENCE" 2>/dev/null)
+assert_eq "evidence sidecar is private" "600" "$evidence_mode"
+rm -f "$AIDEVOPS_GH_API_LOG"
+gh_record_call rest invalid-window-caller
+gh_aggregate_calls
+if [[ -f "$AIDEVOPS_GH_API_EVIDENCE" ]]; then
+	echo "  FAIL: invalid aggregate left a stale evidence sidecar"
+	FAIL=$((FAIL + 1))
+else
+	echo "  PASS: invalid aggregate removed stale evidence sidecar"
+	PASS=$((PASS + 1))
+fi
 
 # --- Test 12b: retained opaque history does not poison a fresh window -------
 gh_clear_log
 outside_ts=$((now - 120))
 inside_ts=$((now - 10))
-printf '%s\topaque-caller\trest\tgh-pat\trest-core\tnative-pagination-opaque\t\tv2\tattempt\tlogical-old\tattempt-old\t0\t0\tsuccess\t200\t10\t\n' "$outside_ts" >>"$AIDEVOPS_GH_API_LOG"
-printf '%s\texact-caller\trest\tgh-pat\trest-core\trest-selected\t\tv2\tattempt\tlogical-new\tattempt-new\t1\t0\tsuccess\t200\t10\t\n' "$inside_ts" >>"$AIDEVOPS_GH_API_LOG"
+inside_last_ts=$((now - 5))
+printf '%s\topaque-caller\trest\tgh-pat\trest-core\tnative-pagination-opaque\t\tv2\tattempt\tlogical-old\tattempt-shared\t0\t0\tsuccess\t200\t10\t\n' "$outside_ts" >>"$AIDEVOPS_GH_API_LOG"
+printf '%s\texact-caller\trest\tgh-pat\trest-core\trest-selected\t\tv2\tattempt\tlogical-new\tattempt-shared\t1\t0\tsuccess\t200\t10\t\n' "$inside_ts" >>"$AIDEVOPS_GH_API_LOG"
+printf '%s\texact-caller\trest\tgh-pat\trest-core\trest-selected\t\tv2\tattempt\tlogical-new\tattempt-new\t2\t0\tsuccess\t200\t20\t\n' "$inside_last_ts" >>"$AIDEVOPS_GH_API_LOG"
 gh_aggregate_calls "$AIDEVOPS_GH_API_REPORT" 60
 assert_eq "fresh window excludes retained unknown pages" "0" "$(jq -r '._meta.unknown_page_attempts' "$AIDEVOPS_GH_API_REPORT")"
 assert_eq "retained unknown page remains auditable" "1" "$(jq -r '._meta.retained_unknown_page_attempts' "$AIDEVOPS_GH_API_REPORT")"
+assert_eq "old duplicate ID does not poison fresh attempts" "2" "$(jq -r '._meta.attempted_requests' "$AIDEVOPS_GH_API_REPORT")"
+assert_eq "retained duplicate remains auditable" "1" "$(jq -r '._meta.retained_duplicate_attempt_ids' "$AIDEVOPS_GH_API_REPORT")"
+assert_eq "fresh window duplicate count stays scoped" "0" "$(jq -r '._meta.duplicate_attempt_ids' "$AIDEVOPS_GH_API_REPORT")"
 assert_eq "fresh exact window ignores old opaque call" "0" "$(jq -r '._meta.opaque_paginated_attempts' "$AIDEVOPS_GH_API_REPORT")"
+assert_eq "fresh window first timestamp excludes history" "$inside_ts" "$(jq -r '._meta.first_retained_ts' "$AIDEVOPS_GH_API_REPORT")"
+assert_eq "fresh window last timestamp excludes history" "$inside_last_ts" "$(jq -r '._meta.last_retained_ts' "$AIDEVOPS_GH_API_REPORT")"
+assert_eq "fresh effective window excludes history" "5" "$(jq -r '._meta.effective_window_seconds' "$AIDEVOPS_GH_API_REPORT")"
 assert_eq "fresh window exactness is true" "true" "$(jq -r '._meta.attempts_exact' "$AIDEVOPS_GH_API_REPORT")"
+
+# --- Test 12c: typed evidence and latency completeness stay explicit --------
+gh_clear_log
+latency_ts=$((now - 5))
+gh_record_efficiency_evidence cache.fresh_hits 1
+printf '%s\tlatency-caller\trest\tgh-pat\trest-core\trest-selected\t\tv2\tattempt\tlogical-latency\tattempt-latency-1\t1\t0\tsuccess\t200\t10\t\n' "$latency_ts" >>"$AIDEVOPS_GH_API_LOG"
+printf '%s\tlatency-caller\trest\tgh-pat\trest-core\trest-selected\t\tv2\tattempt\tlogical-latency\tattempt-latency-2\t2\t0\tsuccess\t200\t30\t\n' "$latency_ts" >>"$AIDEVOPS_GH_API_LOG"
+printf '%s\tlatency-caller\trest\tgh-pat\trest-core\trest-selected\t\tv2\tattempt\tlogical-latency\tattempt-latency-3\t3\t0\tsuccess\t200\t20\t\n' "$latency_ts" >>"$AIDEVOPS_GH_API_LOG"
+printf '%s\tlatency-caller\trest\tgh-pat\trest-core\trest-selected\t\tv2\tattempt\tlogical-latency\tattempt-latency-4\t4\t0\tsuccess\t200\t\t\n' "$latency_ts" >>"$AIDEVOPS_GH_API_LOG"
+gh_aggregate_calls "$AIDEVOPS_GH_API_REPORT" 60
+assert_eq "typed evidence is not a logical call" "0" "$(jq -r '._meta.total_calls' "$AIDEVOPS_GH_API_REPORT")"
+assert_eq "typed evidence event is counted" "1" "$(jq -r '._meta.evidence_events' "$AIDEVOPS_GH_API_REPORT")"
+assert_eq "typed evidence route remains parseable" "1" "$(jq -r '.by_route_decision["evidence:cache.fresh_hits:1"].evidence_events' "$AIDEVOPS_GH_API_REPORT")"
+assert_eq "nearest-rank request p50 uses known samples" "20" "$(jq -r '._meta.request_p50_ms' "$AIDEVOPS_GH_API_REPORT")"
+assert_eq "nearest-rank request p95 uses known samples" "30" "$(jq -r '._meta.request_p95_ms' "$AIDEVOPS_GH_API_REPORT")"
+assert_eq "missing elapsed values stay explicit" "1" "$(jq -r '._meta.unknown_elapsed_attempts' "$AIDEVOPS_GH_API_REPORT")"
+assert_eq "peak attempts per minute uses transport attempts" "4" "$(jq -r '._meta.peak_attempts_per_minute' "$AIDEVOPS_GH_API_REPORT")"
+invalid_evidence_status=0
+gh_record_efficiency_evidence "Invalid Name" 1 || invalid_evidence_status=$?
+assert_eq "invalid evidence identifiers are rejected" "1" "$invalid_evidence_status"
 
 # --- Test 13: time/line/byte retention is atomic and bounded -------------
 export AIDEVOPS_GH_API_LOG_MAX_LINES=3

@@ -48,6 +48,13 @@ _pmrc_snapshot_log_failure() {
 	return 0
 }
 
+_pmrc_record_preflight_check_mismatch() {
+	if declare -F gh_record_efficiency_evidence >/dev/null 2>&1; then
+		gh_record_efficiency_evidence guardrails.required_check_merge_preflight_mismatches 1 2>/dev/null || true
+	fi
+	return 0
+}
+
 _pmrc_snapshot_checks_json() {
 	local repo_slug="$1"
 	local head_sha="$2"
@@ -593,7 +600,12 @@ _pulse_merge_preflight_snapshot_gate() {
 	_pmrc_review_evidence_permits_advisory "$live_gate_evidence" "$repo_slug" "$pr_number" "$current_head_sha" || live_gate_evidence=""
 	_pmrc_snapshot_review_gate_fresh "$repo_slug" "$pr_number" "$checks_json" "$activity_json" "$live_gate_evidence" || return 1
 	_pmrc_snapshot_review_threads_clear "$repo_slug" "$pr_number" "$base_branch" || return 1
-	_pmrc_snapshot_checks_acceptable "$repo_slug" "$pr_number" "$checks_json" "$required_contexts" "$live_gate_evidence" "$current_head_sha" || return 1
+	if ! _pmrc_snapshot_checks_acceptable \
+		"$repo_slug" "$pr_number" "$checks_json" "$required_contexts" \
+		"$live_gate_evidence" "$current_head_sha"; then
+		_pmrc_record_preflight_check_mismatch
+		return 1
+	fi
 	_pmrc_snapshot_quiet_period_passes "$repo_slug" "$pr_number" "$checks_json" "$activity_json" || return 1
 	echo "[pulse-merge] pre-merge snapshot: current head ${current_head_sha:0:12}, fresh review gate, merge-policy-compatible review threads, terminal checks, and quiet period verified for PR #${pr_number} in ${repo_slug} (GH#27137)" >>"$LOGFILE"
 	return 0

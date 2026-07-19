@@ -22,6 +22,15 @@ SNAPSHOT_MODE="happy_advisory"
 RERUN_CALLS=0
 TESTS_RUN=0
 TESTS_FAILED=0
+EVIDENCE_LOG="${TEST_ROOT}/efficiency-evidence.log"
+: >"$EVIDENCE_LOG"
+
+gh_record_efficiency_evidence() {
+	local name="$1"
+	local value="$2"
+	printf '%s=%s\n' "$name" "$value" >>"$EVIDENCE_LOG"
+	return 0
+}
 
 cleanup() {
 	rm -rf "$TEST_ROOT"
@@ -379,7 +388,15 @@ main() {
 	fi
 	TESTS_RUN=$((TESTS_RUN + 1))
 	assert_gate "skipped rerun preserves successful baseline companion" skipped_companion_rerun 0
+	: >"$EVIDENCE_LOG"
 	assert_gate "active broad check blocks merge" pending 1
+	TESTS_RUN=$((TESTS_RUN + 1))
+	if [[ "$(grep -c '^guardrails.required_check_merge_preflight_mismatches=1$' "$EVIDENCE_LOG")" == "1" ]]; then
+		printf 'PASS live preflight mismatch emits typed guardrail evidence\n'
+	else
+		printf 'FAIL live preflight mismatch did not emit typed guardrail evidence\n'
+		TESTS_FAILED=$((TESTS_FAILED + 1))
+	fi
 	assert_gate "terminal failed required check blocks merge" required_fail 1
 	assert_gate "infrastructure-failed required check requests rerun and stays blocked" required_infra_fail 1
 	if [[ "$RERUN_CALLS" -eq 1 ]] && grep -q "requested infrastructure rerun.*run=303" "$LOGFILE"; then
