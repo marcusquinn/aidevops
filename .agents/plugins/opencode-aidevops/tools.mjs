@@ -213,17 +213,18 @@ function createPreEditCheckTool(scriptsDir, timeoutMs = 120000) {
       const taskArgs = args.task ? ["--loop-mode", "--task", args.task] : [];
       const result = await runPreEditCheck(script, taskArgs, targetWorkdir, timeoutMs);
       const cmdOutput = (result.stdout + result.stderr).trim();
+      let response;
       if (result.timedOut) {
-        return `Pre-edit check TIMED OUT after ${timeoutMs}ms: child process tree terminated before returning\n${cmdOutput}`;
+        response = `Pre-edit check TIMED OUT after ${timeoutMs}ms: child process tree terminated before returning\n${cmdOutput}`;
+      } else if (result.error) {
+        response = `Pre-edit check failed to start: ${result.error.message}\n${cmdOutput}`;
+      } else {
+        const code = result.code ?? 1;
+        response = code === 0
+          ? `Pre-edit check PASSED (exit 0):\n${cmdOutput}`
+          : `Pre-edit check exit ${code}: ${PRE_EDIT_GUIDANCE[code] || "Unknown"}\n${cmdOutput}`;
       }
-      if (result.error) {
-        return `Pre-edit check failed to start: ${result.error.message}\n${cmdOutput}`;
-      }
-      if (result.code === 0) {
-        return `Pre-edit check PASSED (exit 0):\n${cmdOutput}`;
-      }
-      const code = result.code ?? 1;
-      return `Pre-edit check exit ${code}: ${PRE_EDIT_GUIDANCE[code] || "Unknown"}\n${cmdOutput}`;
+      return response;
     },
   });
 }
