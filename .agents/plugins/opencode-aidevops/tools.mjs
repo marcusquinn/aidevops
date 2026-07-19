@@ -165,6 +165,61 @@ function createMemoryTool(scriptsDir, run) {
   });
 }
 
+const PRE_EDIT_GUIDANCE = {
+  1: "STOP — you are on main/master branch. Create a worktree first.",
+  2: "Create a worktree before proceeding with edits.",
+  3: "WARNING — proceed with caution.",
+};
+
+/**
+ * Resolve and validate a requested Git worktree path.
+ * @param {string} requestedWorkdir
+ * @returns {string}
+ */
+function resolveGitWorktree(requestedWorkdir) {
+  let targetWorkdir = "";
+  try {
+    const resolvedWorkdir = realpathSync(requestedWorkdir);
+    if (statSync(resolvedWorkdir).isDirectory()) {
+      const insideWorktree = execFileSync(
+        "git",
+        ["-C", resolvedWorkdir, "rev-parse", "--is-inside-work-tree"],
+        {
+          encoding: "utf-8",
+          timeout: 5000,
+          stdio: ["ignore", "pipe", "ignore"],
+        },
+      ).trim();
+      if (insideWorktree === "true") targetWorkdir = resolvedWorkdir;
+    }
+  } catch {
+    targetWorkdir = "";
+  }
+  return targetWorkdir;
+}
+
+/**
+ * Format the pre-edit subprocess outcome for the tool response.
+ * @param {{code: number|null, stdout: string, stderr: string, timedOut: boolean, error?: Error}} result
+ * @param {number} timeoutMs
+ * @returns {string}
+ */
+function formatPreEditCheckResult(result, timeoutMs) {
+  const cmdOutput = (result.stdout + result.stderr).trim();
+  let response;
+  if (result.timedOut) {
+    response = `Pre-edit check TIMED OUT after ${timeoutMs}ms: child process tree terminated before returning\n${cmdOutput}`;
+  } else if (result.error) {
+    response = `Pre-edit check failed to start: ${result.error.message}\n${cmdOutput}`;
+  } else {
+    const code = result.code ?? 1;
+    response = code === 0
+      ? `Pre-edit check PASSED (exit 0):\n${cmdOutput}`
+      : `Pre-edit check exit ${code}: ${PRE_EDIT_GUIDANCE[code] || "Unknown"}\n${cmdOutput}`;
+  }
+  return response;
+}
+
 /**
  * Create the pre-edit check tool.
  * @param {string} scriptsDir - Path to scripts directory
@@ -172,12 +227,6 @@ function createMemoryTool(scriptsDir, run) {
  * @returns {object} Tool definition
  */
 function createPreEditCheckTool(scriptsDir, timeoutMs = 120000) {
-  const PRE_EDIT_GUIDANCE = {
-    1: "STOP — you are on main/master branch. Create a worktree first.",
-    2: "Create a worktree before proceeding with edits.",
-    3: "WARNING — proceed with caution.",
-  };
-
   return tool({
     description:
       'Run the pre-edit git safety check before modifying files. Returns exit code and guidance. Args: task (optional string for loop mode), workdir (optional target Git worktree)',
@@ -192,39 +241,13 @@ function createPreEditCheckTool(scriptsDir, timeoutMs = 120000) {
         return "pre-edit-check.sh not found — cannot verify git safety";
       }
       const requestedWorkdir = args.workdir || process.cwd();
-      let targetWorkdir = "";
-      try {
-        targetWorkdir = realpathSync(requestedWorkdir);
-        if (!statSync(targetWorkdir).isDirectory()) targetWorkdir = "";
-        const insideWorktree = targetWorkdir
-          ? execFileSync("git", ["-C", targetWorkdir, "rev-parse", "--is-inside-work-tree"], {
-              encoding: "utf-8",
-              timeout: 5000,
-              stdio: ["ignore", "pipe", "ignore"],
-            }).trim()
-          : "";
-        if (insideWorktree !== "true") targetWorkdir = "";
-      } catch {
-        targetWorkdir = "";
-      }
+      const targetWorkdir = resolveGitWorktree(requestedWorkdir);
       if (!targetWorkdir) {
         return `Pre-edit check exit 1: target workdir must resolve to an existing Git worktree\n${requestedWorkdir}`;
       }
       const taskArgs = args.task ? ["--loop-mode", "--task", args.task] : [];
       const result = await runPreEditCheck(script, taskArgs, targetWorkdir, timeoutMs);
-      const cmdOutput = (result.stdout + result.stderr).trim();
-      let response;
-      if (result.timedOut) {
-        response = `Pre-edit check TIMED OUT after ${timeoutMs}ms: child process tree terminated before returning\n${cmdOutput}`;
-      } else if (result.error) {
-        response = `Pre-edit check failed to start: ${result.error.message}\n${cmdOutput}`;
-      } else {
-        const code = result.code ?? 1;
-        response = code === 0
-          ? `Pre-edit check PASSED (exit 0):\n${cmdOutput}`
-          : `Pre-edit check exit ${code}: ${PRE_EDIT_GUIDANCE[code] || "Unknown"}\n${cmdOutput}`;
-      }
-      return response;
+      return formatPreEditCheckResult(result, timeoutMs);
     },
   });
 }
