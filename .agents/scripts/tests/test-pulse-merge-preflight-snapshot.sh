@@ -30,7 +30,7 @@ cleanup() {
 trap cleanup EXIT
 
 _pmrc_gh_read() {
-	local command="$1"
+	local command="${1:-}"
 	local subcommand="${2:-}"
 	local endpoint="${3:-}"
 
