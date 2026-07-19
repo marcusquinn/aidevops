@@ -190,3 +190,4 @@ and monotonically decreases".
 | 59 | ratchet-post-merge | auto-ratchet after 3a90365 ("GH#28051: source research profile from frontmatter (#28071)"): count 57 + 2 buffer = 59 (previously 61, reduction 2) |
 | 57 | ratchet-post-merge | auto-ratchet after ddd5e5e ("refactor: simplify shell environment projection (#28077)"): count 55 + 2 buffer = 57 (previously 59, reduction 2) |
 | 56 | ratchet-post-merge | auto-ratchet after 956dc2e ("fix: harden pulse prefetch JSON parsing (#28258)"): count 54 + 2 buffer = 56 (previously 57, reduction 1) |
+| 54 | ratchet-post-merge | auto-ratchet after cbf598e ("fix: stabilize Qlty cache-sensitive scans (#28268)"): count 52 + 2 buffer = 54 (previously 56, reduction 2) |
