@@ -10,6 +10,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.32.154] - 2026-07-19
+
+### Changed
+
+- Maintenance: update simplification state registry
+
+### Fixed
+
+- guard standalone pulse mocks against unset args (#28255)
+- parse pulse PR coordinates once (#28256)
+
 ## [3.32.153] - 2026-07-19
 
 ### Changed
