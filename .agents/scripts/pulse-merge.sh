@@ -1584,6 +1584,7 @@ ${merge_output}"
 
 	if [[ $_merge_exit -eq 0 ]]; then
 		echo "[pulse-wrapper] Deterministic merge: merged PR #${pr_number} in ${repo_slug}" >>"$LOGFILE"
+		_pmp_record_deterministic_progress_now 1 0
 		# t2411: emit audit log for origin:interactive auto-merges
 		local _ipr_labels="$pr_labels"
 		if [[ "$_ipr_labels" == *"origin:interactive"* ]]; then

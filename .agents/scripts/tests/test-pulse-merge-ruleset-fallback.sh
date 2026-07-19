@@ -21,6 +21,7 @@ TESTS_FAILED=0
 TEST_ROOT=""
 GH_LOG=""
 REMEDIATION_LOG=""
+MERGE_EVENT_LOG=""
 _OW_LABEL_PAT=",origin:worker,"
 
 print_result() {
@@ -51,7 +52,9 @@ setup_test_env() {
 	: >"$GH_LOG"
 	REMEDIATION_LOG="${TEST_ROOT}/remediation.log"
 	: >"$REMEDIATION_LOG"
-	export TEST_ROOT GH_LOG REMEDIATION_LOG
+	MERGE_EVENT_LOG="${TEST_ROOT}/merge-events.log"
+	: >"$MERGE_EVENT_LOG"
+	export TEST_ROOT GH_LOG REMEDIATION_LOG MERGE_EVENT_LOG
 
 cat >"${TEST_ROOT}/bin/gh" <<'GHEOF'
 #!/usr/bin/env bash
@@ -187,7 +190,16 @@ _set_native_auto_merge_or_skip() { return 1; }
 _repo_allows_auto_merge() { return "${REPO_ALLOWS_AUTO_MERGE_RC:-0}"; }
 _attempt_existing_auto_merge_behind_update_branch() { return 1; }
 _attempt_green_behind_update_branch() { return "${GREEN_BEHIND_UPDATE_RC:-1}"; }
-_handle_post_merge_actions() { return 0; }
+_pmp_record_deterministic_progress_now() {
+	local merged_count="$1"
+	local progress_count="$2"
+	printf 'progress:%s:%s\n' "$merged_count" "$progress_count" >>"$MERGE_EVENT_LOG"
+	return 0
+}
+_handle_post_merge_actions() {
+	printf 'post-merge\n' >>"$MERGE_EVENT_LOG"
+	return 0
+}
 gh_pr_view() { printf '{"labels":[]}'; return 0; }
 
 _pulse_merge_maybe_dispatch_review_thread_remediation() {
@@ -427,6 +439,17 @@ test_stale_cache_401_retries_admin_merge_once() {
 		unset GH_STUB_MODE
 		return 0
 	fi
+
+	local merge_events=""
+	merge_events=$(tr '\n' ' ' <"$MERGE_EVENT_LOG")
+	if [[ "$merge_events" != "progress:1:0 post-merge " ]]; then
+		print_result "successful merge records recovery before post-merge actions" 1 \
+			"event order: ${merge_events:-none}"
+		teardown_test_env
+		unset GH_STUB_MODE
+		return 0
+	fi
+	print_result "successful merge records recovery before post-merge actions" 0
 
 	if [[ -f "${HOME}/.cache/gh/graphql-401.cache" ]] || \
 		! find "${HOME}/.cache/gh" -path '*/aidevops-quarantine-*/*graphql-401.cache*' -type f | grep -q .; then
