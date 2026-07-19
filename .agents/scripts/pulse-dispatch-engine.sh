@@ -198,7 +198,8 @@ _pulse_worker_log_prelaunch_failure_reason() {
 	' "$log_path" 2>/dev/null) || reason=""
 
 	case "$reason" in
-	worker_worktree_live_owner|crash_during_startup)
+	worker_worktree_live_owner | worker_worktree_continuation_* | \
+		worker_worktree_owner_concurrent_mutation | crash_during_startup)
 		printf '%s\n' "$reason"
 		;;
 	*)
