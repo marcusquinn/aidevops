@@ -1,4 +1,4 @@
-import { execFileSync, execSync } from "child_process";
+import { execFileSync, execSync, spawn } from "child_process";
 import { existsSync, realpathSync, statSync } from "fs";
 import { join } from "path";
 
@@ -168,9 +168,10 @@ function createMemoryTool(scriptsDir, run) {
 /**
  * Create the pre-edit check tool.
  * @param {string} scriptsDir - Path to scripts directory
+ * @param {number} [timeoutMs=120000] - Maximum check runtime
  * @returns {object} Tool definition
  */
-function createPreEditCheckTool(scriptsDir) {
+function createPreEditCheckTool(scriptsDir, timeoutMs = 120000) {
   const PRE_EDIT_GUIDANCE = {
     1: "STOP — you are on main/master branch. Create a worktree first.",
     2: "Create a worktree before proceeding with edits.",
@@ -210,20 +211,63 @@ function createPreEditCheckTool(scriptsDir) {
         return `Pre-edit check exit 1: target workdir must resolve to an existing Git worktree\n${requestedWorkdir}`;
       }
       const taskArgs = args.task ? ["--loop-mode", "--task", args.task] : [];
-      try {
-        const result = execFileSync("bash", [script, ...taskArgs], {
-          cwd: targetWorkdir,
-          encoding: "utf-8",
-          timeout: 10000,
-          stdio: ["pipe", "pipe", "pipe"],
-        });
-        return `Pre-edit check PASSED (exit 0):\n${result.trim()}`;
-      } catch (err) {
-        const code = err.status || 1;
-        const cmdOutput = (err.stdout || "") + (err.stderr || "");
-        return `Pre-edit check exit ${code}: ${PRE_EDIT_GUIDANCE[code] || "Unknown"}\n${cmdOutput.trim()}`;
+      const result = await runPreEditCheck(script, taskArgs, targetWorkdir, timeoutMs);
+      const cmdOutput = (result.stdout + result.stderr).trim();
+      if (result.timedOut) {
+        return `Pre-edit check TIMED OUT after ${timeoutMs}ms: child process tree terminated before returning\n${cmdOutput}`;
       }
+      if (result.error) {
+        return `Pre-edit check failed to start: ${result.error.message}\n${cmdOutput}`;
+      }
+      if (result.code === 0) {
+        return `Pre-edit check PASSED (exit 0):\n${cmdOutput}`;
+      }
+      const code = result.code ?? 1;
+      return `Pre-edit check exit ${code}: ${PRE_EDIT_GUIDANCE[code] || "Unknown"}\n${cmdOutput}`;
     },
+  });
+}
+
+/**
+ * Run loop-mode checks in their own process group so a timeout cannot leave a
+ * helper running long enough to create a worktree after the tool has returned.
+ * @param {string} script
+ * @param {string[]} args
+ * @param {string} cwd
+ * @param {number} timeoutMs
+ * @returns {Promise<{code: number|null, stdout: string, stderr: string, timedOut: boolean, error?: Error}>}
+ */
+function runPreEditCheck(script, args, cwd, timeoutMs) {
+  return new Promise((resolve) => {
+    const child = spawn("bash", [script, ...args], {
+      cwd,
+      detached: true,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    let stdout = "";
+    let stderr = "";
+    let timedOut = false;
+    let spawnError;
+
+    child.stdout.setEncoding("utf-8");
+    child.stderr.setEncoding("utf-8");
+    child.stdout.on("data", (chunk) => { stdout += chunk; });
+    child.stderr.on("data", (chunk) => { stderr += chunk; });
+    child.on("error", (error) => { spawnError = error; });
+
+    const timer = setTimeout(() => {
+      timedOut = true;
+      try {
+        process.kill(-child.pid, "SIGKILL");
+      } catch {
+        child.kill("SIGKILL");
+      }
+    }, timeoutMs);
+
+    child.on("close", (code) => {
+      clearTimeout(timer);
+      resolve({ code, stdout, stderr, timedOut, error: spawnError });
+    });
   });
 }
 
@@ -251,12 +295,13 @@ function createPreEditCheckTool(scriptsDir) {
  *
  * @param {string} scriptsDir - Path to scripts directory
  * @param {function} run - Shell command runner
+ * @param {{preEditTimeoutMs?: number}} [options] - Tool-specific test/runtime overrides
  * @returns {Record<string, object>}
  */
-export function createTools(scriptsDir, run) {
+export function createTools(scriptsDir, run, options = {}) {
   return {
     aidevops: createAidevopsTool(run),
     aidevops_memory: createMemoryTool(scriptsDir, run),
-    aidevops_pre_edit_check: createPreEditCheckTool(scriptsDir),
+    aidevops_pre_edit_check: createPreEditCheckTool(scriptsDir, options.preEditTimeoutMs),
   };
 }
