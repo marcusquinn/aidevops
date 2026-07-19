@@ -21,6 +21,7 @@ fi
 _PREFETCH_BOOL_TRUE=true
 _PREFETCH_JSON_NULL=null
 _PREFETCH_NONE_LINE="- None"
+_PREFETCH_UNKNOWN=unknown
 
 # =============================================================================
 # Single-Repo Orchestration (GH#5627, GH#18984/t2098)
@@ -49,33 +50,41 @@ _prefetch_single_repo_idle_skip() {
 	local issues_snapshot="${4:-}"
 
 	local _cached_last
-	_cached_last=$(echo "$cache_entry" | jq -r '.last_prefetch // "unknown"' 2>/dev/null) || _cached_last="unknown"
+	if [[ -n "$cache_entry" ]]; then
+		_cached_last=$(printf '%s\n' "$cache_entry" | jq -r --arg unknown "$_PREFETCH_UNKNOWN" '.last_prefetch // $unknown') || _cached_last="$_PREFETCH_UNKNOWN"
+	else
+		_cached_last="$_PREFETCH_UNKNOWN"
+	fi
 	echo "> **State cache hit** — fingerprint unchanged since \`${_cached_last}\`."
 	echo "> No open issues or PRs have been updated since then."
 	echo "> LLM may skip deep analysis of this repo this cycle."
 	echo ""
 
 	local _cached_prs="" _cached_issues="" _cached_pr_count=0 _cached_issue_count=0
-	if [[ -n "$prs_snapshot" ]] && _cached_prs=$(printf '%s' "$prs_snapshot" | jq -ce '.items | select(type == "array")' 2>/dev/null); then
+	if [[ -n "$prs_snapshot" ]] && _cached_prs=$(printf '%s' "$prs_snapshot" | jq -ce '.items | select(type == "array")'); then
 		:
+	elif [[ -n "$cache_entry" ]]; then
+		_cached_prs=$(printf '%s\n' "$cache_entry" | jq -c '.prs // []') || _cached_prs="[]"
 	else
-		_cached_prs=$(echo "$cache_entry" | jq -c '.prs // []' 2>/dev/null) || _cached_prs="[]"
+		_cached_prs="[]"
 	fi
-	if [[ -n "$issues_snapshot" ]] && _cached_issues=$(printf '%s' "$issues_snapshot" | jq -ce '.items | select(type == "array")' 2>/dev/null); then
+	if [[ -n "$issues_snapshot" ]] && _cached_issues=$(printf '%s' "$issues_snapshot" | jq -ce '.items | select(type == "array")'); then
 		:
+	elif [[ -n "$cache_entry" ]]; then
+		_cached_issues=$(printf '%s\n' "$cache_entry" | jq -c '.issues // []') || _cached_issues="[]"
 	else
-		_cached_issues=$(echo "$cache_entry" | jq -c '.issues // []' 2>/dev/null) || _cached_issues="[]"
+		_cached_issues="[]"
 	fi
-	_cached_pr_count=$(echo "$_cached_prs" | jq 'length' 2>/dev/null) || _cached_pr_count=0
+	_cached_pr_count=$(printf '%s\n' "$_cached_prs" | jq 'length') || _cached_pr_count=0
 	[[ "$_cached_pr_count" =~ ^[0-9]+$ ]] || _cached_pr_count=0
-	_cached_issues=$(echo "$_cached_issues" | _prefetch_open_issues_only)
-	_cached_issue_count=$(echo "$_cached_issues" | jq 'length' 2>/dev/null) || _cached_issue_count=0
+	_cached_issues=$(printf '%s\n' "$_cached_issues" | _prefetch_open_issues_only)
+	_cached_issue_count=$(printf '%s\n' "$_cached_issues" | jq 'length') || _cached_issue_count=0
 	[[ "$_cached_issue_count" =~ ^[0-9]+$ ]] || _cached_issue_count=0
 
 	# Replay cached PR section
 	echo "### Open PRs (${_cached_pr_count}) [cached]"
 	if [[ "$_cached_pr_count" -gt 0 ]]; then
-		echo "$_cached_prs" | jq -r '.[] | "- PR #\(.number): \(.title) [review: \(if has("reviewDecision") | not then "UNKNOWN" elif .reviewDecision == null or .reviewDecision == "" then "NONE" else .reviewDecision end)] [updated: \(.updatedAt)]"'
+		printf '%s\n' "$_cached_prs" | jq -r '.[] | "- PR #\(.number): \(.title) [review: \(if has("reviewDecision") | not then "UNKNOWN" elif .reviewDecision == null or .reviewDecision == "" then "NONE" else .reviewDecision end)] [updated: \(.updatedAt)]"'
 	else
 		echo "$_PREFETCH_NONE_LINE"
 	fi
@@ -90,7 +99,7 @@ _prefetch_single_repo_idle_skip() {
 		_checks_json=$(_prefetch_prs_enrich_checks "$slug" "$_cached_prs")
 		if [[ -n "$_checks_json" && "$_checks_json" != "[]" && "$_checks_json" != "$_PREFETCH_JSON_NULL" ]]; then
 			echo "### PR Check Status (live)"
-			echo "$_checks_json" | jq -r '.[] | "- PR #\(.number): \(.status // "unknown")"' 2>/dev/null || true
+			printf '%s\n' "$_checks_json" | jq -r '.[] | "- PR #\(.number): \(.status // "unknown")"' || true
 			echo ""
 		fi
 	fi
@@ -103,15 +112,15 @@ _prefetch_single_repo_idle_skip() {
 	# Replay cached issue sections using same filter logic as _prefetch_repo_issues
 	# GH#20048: shared helper replaces inline jq non-task filter
 	local _filtered_cached="" _disp_json="" _sweep_json="" _disp_count=0 _sweep_count=0
-	_filtered_cached=$(echo "$_cached_issues" | _filter_non_task_issues)
-	_disp_json=$(echo "$_filtered_cached" | jq -c '[.[] | select(.labels | map(.name) | (index("source:quality-sweep") or index("source:review-feedback")) | not)]' 2>/dev/null) || _disp_json="[]"
-	_sweep_json=$(echo "$_filtered_cached" | jq -c '[.[] | select(.labels | map(.name) | (index("source:quality-sweep") or index("source:review-feedback")))]' 2>/dev/null) || _sweep_json="[]"
-	_disp_count=$(echo "$_disp_json" | jq 'length' 2>/dev/null) || _disp_count=0
-	_sweep_count=$(echo "$_sweep_json" | jq 'length' 2>/dev/null) || _sweep_count=0
+	_filtered_cached=$(printf '%s\n' "$_cached_issues" | _filter_non_task_issues)
+	_disp_json=$(printf '%s\n' "$_filtered_cached" | jq -c '[.[] | select(.labels | map(.name) | (index("source:quality-sweep") or index("source:review-feedback")) | not)]') || _disp_json="[]"
+	_sweep_json=$(printf '%s\n' "$_filtered_cached" | jq -c '[.[] | select(.labels | map(.name) | (index("source:quality-sweep") or index("source:review-feedback")))]') || _sweep_json="[]"
+	_disp_count=$(printf '%s\n' "$_disp_json" | jq 'length') || _disp_count=0
+	_sweep_count=$(printf '%s\n' "$_sweep_json" | jq 'length') || _sweep_count=0
 
 	if [[ "$_disp_count" -gt 0 ]]; then
 		echo "### Open Issues (${_disp_count}) [cached]"
-		echo "$_disp_json" | jq -r '.[] | "- Issue #\(.number): \(.title) [labels: \(if (.labels | length) == 0 then "none" else (.labels | map(.name) | join(", ")) end)] [assignees: \(if (.assignees | length) == 0 then "none" else (.assignees | map(.login) | join(", ")) end)] [updated: \(.updatedAt)]"'
+		printf '%s\n' "$_disp_json" | jq -r '.[] | "- Issue #\(.number): \(.title) [labels: \(if (.labels | length) == 0 then "none" else (.labels | map(.name) | join(", ")) end)] [assignees: \(if (.assignees | length) == 0 then "none" else (.assignees | map(.login) | join(", ")) end)] [updated: \(.updatedAt)]"'
 	else
 		echo "### Open Issues (0) [cached]"
 		echo "$_PREFETCH_NONE_LINE"
@@ -119,7 +128,7 @@ _prefetch_single_repo_idle_skip() {
 	echo ""
 	if [[ "$_sweep_count" -gt 0 ]]; then
 		echo "### Quality-Tracked Issues (${_sweep_count}) [cached]"
-		echo "$_sweep_json" | jq -r '.[] | "- Issue #\(.number): \(.title)"'
+		printf '%s\n' "$_sweep_json" | jq -r '.[] | "- Issue #\(.number): \(.title)"'
 		echo ""
 	fi
 
