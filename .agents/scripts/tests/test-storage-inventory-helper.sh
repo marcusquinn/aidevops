@@ -96,6 +96,23 @@ report=$(bash "$HELPER" json)
 rm "$HOME/.aidevops/runtime-bundles"
 mv "$HOME/.aidevops/runtime-bundles-real" "$HOME/.aidevops/runtime-bundles"
 
+rm -rf "$HOME/.aidevops/runtime-bundles"
+mkdir -p \
+	"$HOME/.aidevops/runtime-bundles/active/agents" \
+	"$HOME/.aidevops/runtime-bundles/cross-user/agents" \
+	"$HOME/.aidevops/runtime-bundles/candidate/agents" \
+	"$HOME/.aidevops/runtime-bundles/.leases/cross-user"
+printf 'active\n' >"$HOME/.aidevops/runtime-bundles/active/agents/data"
+dd if=/dev/zero of="$HOME/.aidevops/runtime-bundles/cross-user/agents/data" bs=1024 count=64 2>/dev/null
+printf 'candidate\n' >"$HOME/.aidevops/runtime-bundles/candidate/agents/data"
+printf 'lease\n' >"$HOME/.aidevops/runtime-bundles/.leases/cross-user/$$"
+ln -s "$HOME/.aidevops/runtime-bundles/active/agents" "$HOME/.aidevops/agents"
+KILL_EPERM_ENV="$TEST_ROOT/kill-eperm-env"
+printf '%s\n' 'kill() { return 1; }' >"$KILL_EPERM_ENV"
+report=$(BASH_ENV="$KILL_EPERM_ENV" bash "$HELPER" json)
+[[ -n "$report" ]] || fail "ps fallback returned an empty storage report"
+printf '%s' "$report" | jq -e '.stores[] | select(.store_id == "runtime-bundles") | .protected_bytes > .reclaimable_bytes' >/dev/null || fail "ps fallback did not protect a cross-user runtime bundle lease"
+
 FAILING_DU="$TEST_ROOT/failing-du"
 printf '%s\n' '#!/usr/bin/env bash' 'exit 1' >"$FAILING_DU"
 chmod +x "$FAILING_DU"
