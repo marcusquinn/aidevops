@@ -175,6 +175,33 @@ test_simplification_state_scope_preserves_checkout() {
 	return 0
 }
 
+test_simplification_state_defaults_to_main_without_origin_head() {
+	local name="defaults simplification-state publication to main when origin/HEAD is unavailable"
+	local root="" repo="" remote_state=""
+	root=$(mktemp -d) || return 0
+	setup_repo "$root" || {
+		fail "$name" setup
+		return 0
+	}
+	repo="${root}/work"
+	mkdir -p "${repo}/.agents/configs" || return 0
+	printf '%s\n' '{"files":{"fallback.sh":{"passes":1}}}' >"${repo}/.agents/configs/simplification-state.json"
+	git -C "$repo" symbolic-ref --delete refs/remotes/origin/HEAD 2>/dev/null || true
+	run_simplification_publish "$repo" || {
+		fail "$name" publish
+		rm -rf "$root"
+		return 0
+	}
+	remote_state=$(git --git-dir="${root}/remote.git" show main:.agents/configs/simplification-state.json 2>/dev/null) || remote_state=""
+	if [[ "$remote_state" == *"fallback.sh"* ]]; then
+		pass "$name"
+	else
+		fail "$name" "fallback publication did not reach main"
+	fi
+	rm -rf "$root"
+	return 0
+}
+
 test_simplification_state_conflict_is_retryable() {
 	local name="simplification-state contention fails retryably without overwriting remote state"
 	local root="" repo="" hook="" before="" after="" rc=0 remote_state=""
@@ -542,6 +569,7 @@ main() {
 	test_git_binary_availability_is_validated
 	test_state_allowlist_and_idempotence
 	test_simplification_state_scope_preserves_checkout
+	test_simplification_state_defaults_to_main_without_origin_head
 	test_simplification_state_conflict_is_retryable
 	test_validation_failure_pushes_nothing
 	test_contention_replay_and_conflict
