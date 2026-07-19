@@ -167,7 +167,9 @@ run_threshold_check() {
 	local _conf="${1:-.agents/configs/complexity-thresholds.conf}"
 	local _threshold=""
 	local _qlty_bin=""
+	local _cache_dir=""
 	local _diag_file=""
+	local _warmup_file=""
 	local _sarif=""
 	local _count=""
 	local _headroom=""
@@ -187,10 +189,23 @@ run_threshold_check() {
 	_qlty_version=$(qlty_version "$_qlty_bin")
 	verify_qlty_version "$_qlty_version" || return 1
 
-	printf 'Counting total qlty smells across all files...\n'
+	printf 'Warming isolated qlty cache before authoritative scan...\n'
 	_diag_file=$(mktemp "${TMPDIR:-/tmp}/qlty-smell-threshold.XXXXXX") || return 1
-	_sarif=$("$_qlty_bin" smells --all --sarif --no-snippets --quiet 2>"$_diag_file")
+	_warmup_file=$(mktemp "${TMPDIR:-/tmp}/qlty-smell-warmup.XXXXXX") || {
+		rm -f "$_diag_file"
+		return 1
+	}
+	_cache_dir=$(mktemp -d "${TMPDIR:-/tmp}/qlty-smell-cache.XXXXXX") || {
+		rm -f "$_diag_file" "$_warmup_file"
+		return 1
+	}
+	XDG_CACHE_HOME="$_cache_dir" "$_qlty_bin" smells --all --sarif --no-snippets --quiet \
+		>"$_warmup_file" 2>/dev/null || true
+	printf 'Counting total qlty smells across all files...\n'
+	_sarif=$(XDG_CACHE_HOME="$_cache_dir" "$_qlty_bin" smells --all --sarif --no-snippets --quiet 2>"$_diag_file")
 	_qlty_rc=$?
+	rm -f "$_warmup_file"
+	rm -rf "$_cache_dir"
 	if is_blank_output "$_sarif"; then
 		emit_sarif_warning "empty" "$_diag_file" "$_qlty_bin" "" "$_qlty_rc"
 		rm -f "$_diag_file"
