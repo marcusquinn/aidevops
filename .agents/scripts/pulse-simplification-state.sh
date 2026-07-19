@@ -335,7 +335,8 @@ _simplification_state_push() {
 		# shellcheck source=./planning-publisher.sh
 		source "${module_dir}/planning-publisher.sh"
 	fi
-	main_branch=$(git -C "$repo_path" symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's|refs/remotes/origin/||') || main_branch="main"
+	main_branch=$(git -C "$repo_path" symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's|refs/remotes/origin/||') || main_branch=""
+	main_branch="${main_branch:-main}"
 	base_sha=$(git -C "$repo_path" rev-parse HEAD 2>/dev/null) || return 1
 
 	AIDEVOPS_PLANNING_BASE_SHA="$base_sha" \
