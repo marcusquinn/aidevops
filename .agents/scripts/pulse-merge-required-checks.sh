@@ -564,21 +564,22 @@ _pulse_merge_preflight_snapshot_gate() {
 	local pr_number="$2"
 	local expected_head_sha="$3"
 	local live_gate_evidence="${_PULSE_REVIEW_GATE_EVIDENCE:-}"
-	local pr_json="" current_head_sha="" base_branch="" required_contexts="" checks_json="" activity_json=""
+	local pr_json="" pr_coordinates="" current_head_sha="" base_branch="" required_contexts="" checks_json="" activity_json=""
 	_PULSE_MERGE_PREFLIGHT_BLOCKING_CHECKS_JSON="[]"
 
 	pr_json=$(_pmrc_gh_read gh api "repos/${repo_slug}/pulls/${pr_number}" 2>/dev/null) || {
 		_pmrc_snapshot_log_failure "$repo_slug" "${PMRC_SUBJECT_PR_PREFIX}${pr_number}" "pull-request fetch"
 		return 1
 	}
-	current_head_sha=$(jq -r '.head.sha // ""' <<<"$pr_json" 2>/dev/null) || {
-		_pmrc_snapshot_log_failure "$repo_slug" "${PMRC_SUBJECT_PR_PREFIX}${pr_number}" "head parse"
+	if [[ -z "$pr_json" ]]; then
+		_pmrc_snapshot_log_failure "$repo_slug" "${PMRC_SUBJECT_PR_PREFIX}${pr_number}" "pull-request parse"
+		return 1
+	fi
+	pr_coordinates=$(jq -r '[(.head.sha // ""), (.base.ref // "")] | join("\u001f")' <<<"$pr_json") || {
+		_pmrc_snapshot_log_failure "$repo_slug" "${PMRC_SUBJECT_PR_PREFIX}${pr_number}" "pull-request parse"
 		return 1
 	}
-	base_branch=$(jq -r '.base.ref // ""' <<<"$pr_json" 2>/dev/null) || {
-		_pmrc_snapshot_log_failure "$repo_slug" "${PMRC_SUBJECT_PR_PREFIX}${pr_number}" "base-branch parse"
-		return 1
-	}
+	IFS=$'\x1f' read -r current_head_sha base_branch <<<"$pr_coordinates"
 	if [[ -z "$current_head_sha" || "$current_head_sha" != "$expected_head_sha" ]]; then
 		echo "[pulse-merge] pre-merge snapshot: head changed for PR #${pr_number} in ${repo_slug} (expected=${expected_head_sha:-unknown}, current=${current_head_sha:-unknown}) — prior gate state revoked (GH#27137)" >>"$LOGFILE"
 		return 1
