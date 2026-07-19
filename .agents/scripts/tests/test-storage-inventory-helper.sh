@@ -110,9 +110,7 @@ ln -s "$HOME/.aidevops/runtime-bundles/active/agents" "$HOME/.aidevops/agents"
 KILL_EPERM_ENV="$TEST_ROOT/kill-eperm-env"
 printf '%s\n' 'kill() { return 1; }' >"$KILL_EPERM_ENV"
 report=$(BASH_ENV="$KILL_EPERM_ENV" bash "$HELPER" json)
-runtime_protected=$(printf '%s' "$report" | jq -r '.stores[] | select(.store_id == "runtime-bundles") | .protected_bytes')
-runtime_reclaimable=$(printf '%s' "$report" | jq -r '.stores[] | select(.store_id == "runtime-bundles") | .reclaimable_bytes')
-[[ "$runtime_protected" -gt "$runtime_reclaimable" ]] || fail "ps fallback did not protect a cross-user runtime bundle lease"
+[[ -n "$report" ]] && [[ "$(printf '%s' "$report" | jq -r '.stores[] | select(.store_id == "runtime-bundles") | .protected_bytes > .reclaimable_bytes')" == "true" ]] || fail "ps fallback did not protect a cross-user runtime bundle lease"
 
 FAILING_DU="$TEST_ROOT/failing-du"
 printf '%s\n' '#!/usr/bin/env bash' 'exit 1' >"$FAILING_DU"
