@@ -29,6 +29,7 @@ export SCRIPT_DIR="${TMP}/scripts"
 export WRAPPER_LOGFILE="${TMP}/wrapper.log"
 export AIDEVOPS_GH_API_EVIDENCE_COVERAGE_START_FILE="${TMP}/coverage-start"
 export PULSE_SCOPE_REPOS="owner/repo"
+unset GH_API_REPORT
 mkdir -p "$SCRIPT_DIR"
 : >"$WRAPPER_LOGFILE"
 
@@ -161,7 +162,7 @@ fi
 
 coverage_end_value=$(grep "^coverage-end=" "$EVIDENCE_FILE")
 coverage_end_value="${coverage_end_value#*=}"
-if grep -q "^|86400|${coverage_end_value}$" "$AGGREGATE_FILE"; then
+if grep -q -- "^|86400|${coverage_end_value}$" "$AGGREGATE_FILE"; then
 	pass "cycle aggregate uses the completed coverage cutoff"
 else
 	fail "cycle aggregate uses the completed coverage cutoff" "args=$(<"$AGGREGATE_FILE")"
