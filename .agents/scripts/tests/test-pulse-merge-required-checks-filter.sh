@@ -83,6 +83,7 @@ print_result() {
 #   ruleset_review_paginated_approved — later REST page restores approval
 #   ruleset_review_author_only — only the PR author approved
 #   ruleset_review_malformed_response — REST reviews payload is not page arrays
+#   ruleset_review_malformed_element — a REST reviews page contains a non-object
 #   ruleset_review_fetch_error — REST reviews endpoint fails
 #   error           — branch-protection API exits non-zero
 setup_test_env() {
@@ -124,7 +125,7 @@ apply_jq() {
 
 if [[ "$1" == "api" && "$2" == repos/* && "$*" == *"/rulesets/"* ]]; then
 	case "${MOCK_GH_MODE:-all_pass}" in
-	ruleset_review_only_missing | ruleset_review_only_approved | ruleset_review_latest_changes_requested | ruleset_review_paginated_approved | ruleset_review_author_only | ruleset_review_malformed_response | ruleset_review_fetch_error)
+	ruleset_review_only_missing | ruleset_review_only_approved | ruleset_review_latest_changes_requested | ruleset_review_paginated_approved | ruleset_review_author_only | ruleset_review_malformed_response | ruleset_review_malformed_element | ruleset_review_fetch_error)
 		apply_jq '{"conditions":{"ref_name":{"include":["refs/heads/main"]}},"rules":[{"type":"pull_request","parameters":{"required_approving_review_count":1}}]}' "$@"
 		;;
 	ruleset_mixed_review_status)
@@ -145,7 +146,7 @@ fi
 
 if [[ "$1" == "api" && "$2" == repos/* && "$*" == *"/rulesets"* ]]; then
 	case "${MOCK_GH_MODE:-all_pass}" in
-	ruleset_review_only_missing | ruleset_review_only_approved | ruleset_mixed_review_status | ruleset_review_zero | ruleset_review_malformed_optional | ruleset_review_latest_changes_requested | ruleset_review_paginated_approved | ruleset_review_author_only | ruleset_review_malformed_response | ruleset_review_fetch_error)
+	ruleset_review_only_missing | ruleset_review_only_approved | ruleset_mixed_review_status | ruleset_review_zero | ruleset_review_malformed_optional | ruleset_review_latest_changes_requested | ruleset_review_paginated_approved | ruleset_review_author_only | ruleset_review_malformed_response | ruleset_review_malformed_element | ruleset_review_fetch_error)
 		apply_jq '[{"id":101,"enforcement":"active"}]' "$@"
 		;;
 	*)
@@ -171,6 +172,9 @@ if [[ "$1" == "api" && "$2" == repos/*/pulls/*/reviews* ]]; then
 		;;
 	ruleset_review_malformed_response)
 		printf '%s\n' '{"reviews":[]}'
+		;;
+	ruleset_review_malformed_element)
+		printf '%s\n' '[[{"id":1,"state":"APPROVED","submitted_at":"2026-06-01T00:00:00Z","user":{"login":"reviewer"}},null]]'
 		;;
 	ruleset_review_fetch_error)
 		printf 'gh: mock reviews endpoint error\n' >&2
@@ -775,6 +779,16 @@ test_ruleset_malformed_reviews_fail_closed() {
 	return 0
 }
 
+test_ruleset_malformed_review_element_fails_closed() {
+	: >"$GH_CALL_LOG"
+	: >"$LOGFILE"
+	export MOCK_GH_MODE="ruleset_review_malformed_element"
+	assert_ruleset_review_gate_returns 1 "non-object REST review element fails closed"
+	assert_log_contains "review parse failed" \
+		"non-object REST review element: parse failure logged"
+	return 0
+}
+
 test_ruleset_review_fetch_error_fails_closed() {
 	: >"$GH_CALL_LOG"
 	: >"$LOGFILE"
@@ -857,6 +871,7 @@ main() {
 	test_ruleset_paginated_latest_approval_allows_merge
 	test_ruleset_author_approval_does_not_count
 	test_ruleset_malformed_reviews_fail_closed
+	test_ruleset_malformed_review_element_fails_closed
 	test_ruleset_review_fetch_error_fails_closed
 	test_ruleset_mixed_review_status_preserves_both_gates
 	test_ruleset_review_zero_does_not_require_approval

@@ -811,7 +811,7 @@ _check_ruleset_required_reviews_passing() {
 		return 1
 	fi
 	approved_count=$(jq -er --arg author "$pr_author" --arg empty "$empty_string" --arg array_type "$PMRC_JSON_ARRAY" '
-		if type != $array_type or any(.[]; type != $array_type) then
+		if type != $array_type or any(.[]; type != $array_type) or any(.[][]?; type != "object") then
 			error("invalid paginated reviews response")
 		else
 			[.[][]? | {
