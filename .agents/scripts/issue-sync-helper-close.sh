@@ -264,10 +264,51 @@ _mark_reopen_merged_pr_task() {
 	return 0
 }
 
+_reopen_find_merged_pr() {
+	local repo="$1" tid="$2" ref_num="$3"
+	local owner="${repo%%/*}" name="${repo#*/}"
+	local pr_info="" result=""
+
+	pr_info=$(gh_find_merged_pr "$repo" "$tid" 2>/dev/null || true)
+	if [[ -n "$pr_info" ]]; then
+		printf '%s\n' "$pr_info"
+		return 0
+	fi
+
+	# A full-loop PR may be titled with GH#NNN rather than the TODO task ID.
+	# Query GitHub's structural closing relationship so a merged implementation
+	# cannot be reopened merely because title-based discovery missed it.
+	[[ "$repo" == */* && -n "$owner" && -n "$name" && "$ref_num" =~ ^[0-9]+$ ]] || return 1
+	# shellcheck disable=SC2016
+	result=$(gh api graphql -f query='
+query($owner:String!,$name:String!,$number:Int!) {
+  repository(owner:$owner,name:$name) {
+    nameWithOwner
+    issue(number:$number) {
+      closedByPullRequestsReferences(first:100) {
+        nodes { number url state mergedAt repository { nameWithOwner } }
+        pageInfo { hasNextPage }
+      }
+    }
+  }
+}' -F owner="$owner" -F name="$name" -F number="$ref_num" 2>/dev/null) || return 1
+	printf '%s' "$result" | jq -er --arg repo "$repo" '
+      .data.repository
+      | select(.nameWithOwner == $repo)
+      | .issue.closedByPullRequestsReferences
+      | select(.pageInfo.hasNextPage == false)
+      | [.nodes[]
+          | select(.repository.nameWithOwner == $repo and .state == "MERGED" and (.mergedAt // "") != "")]
+      | first
+      | select(. != null)
+      | "\(.number)|\(.url)"' 2>/dev/null
+	return $?
+}
+
 _reopen_mark_if_completed() {
 	local repo="$1" tid="$2" ref_num="$3" todo_file="$4"
 	local pr_info
-	pr_info=$(gh_find_merged_pr "$repo" "$tid" 2>/dev/null || echo "")
+	pr_info=$(_reopen_find_merged_pr "$repo" "$tid" "$ref_num" 2>/dev/null || true)
 	if [[ -n "$pr_info" ]]; then
 		local pr_num="${pr_info%%|*}"
 		_mark_reopen_merged_pr_task "$tid" "$todo_file" "$ref_num" "$pr_num"
