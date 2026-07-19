@@ -151,7 +151,11 @@ _pulse_efficiency_cycle_finish() {
 	fi
 	[[ "$now_seconds" -gt 0 ]] && _pulse_efficiency_record coverage-end "$now_seconds"
 	if declare -F gh_aggregate_calls >/dev/null 2>&1; then
-		gh_aggregate_calls 2>/dev/null || true
+		if [[ "$now_seconds" -gt 0 ]]; then
+			gh_aggregate_calls "${GH_API_REPORT:-}" 86400 "$now_seconds" 2>/dev/null || true
+		else
+			gh_aggregate_calls 2>/dev/null || true
+		fi
 	fi
 	if declare -F gh_trim_log >/dev/null 2>&1; then
 		gh_trim_log 2>/dev/null || true

@@ -69,14 +69,23 @@ sidecar to the exact aggregate bytes. The result also records the sidecar's own
 SHA-256 digest.
 
 The Pulse wrapper now publishes this sidecar automatically after each real cycle.
-It writes the transport aggregate first, binds the sidecar to those exact bytes,
-and atomically replaces both private files with mode `600`. Defaults are
+It snapshots the active transport log under the appender lock, applies the
+completed cycle’s inclusive end timestamp, writes the transport aggregate,
+binds the sidecar to those exact bytes, and atomically replaces both private
+files with mode `600`. Attempts appended by concurrent processes after the
+cycle cutoff remain available for the next report instead of extending the
+completed evidence window. Defaults are
 `~/.aidevops/logs/gh-api-calls-by-stage.json` and
 `~/.aidevops/logs/gh-api-efficiency-evidence.json`; override them with
 `AIDEVOPS_GH_API_REPORT` and `AIDEVOPS_GH_API_EVIDENCE`. Set
 `AIDEVOPS_GH_API_EVIDENCE_DISABLE=1` to disable sidecar production without
 disabling transport telemetry. Invalid or insufficient retained windows remove a
 stale sidecar instead of preserving misleading evidence.
+
+The active transport log remains bounded at 48 hours, one million records, or
+128 MiB—whichever limit is reached first. Reported effective duration remains
+authoritative: unusually high request volume can still exhaust a size bound
+before the requested observation duration and therefore cannot support `PASS`.
 
 Coverage contract `1` starts at a private persisted activation timestamp and is
 re-emitted each cycle so a rolling window becomes bounded only after every

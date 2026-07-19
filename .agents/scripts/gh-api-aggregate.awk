@@ -7,7 +7,7 @@
 # gh-api-instrument.sh. Legacy rows remain logical observations; they are never
 # represented as proven network attempts. Designed for BSD awk (macOS default).
 #
-# Required -v variables: now, cutoff, window
+# Required -v variables: now (inclusive fixed-window end), cutoff, window
 # Output: one deterministic JSON document on stdout.
 # =============================================================================
 
@@ -133,6 +133,7 @@ $1 !~ /^[0-9]+$/ || NF < 3 {
 
 {
 	ts = $1 + 0
+	if (ts > now) next
 	caller = ($2 != "") ? $2 : "unknown"
 	path = ($3 != "") ? $3 : "other"
 	auth = (NF >= 4 && $4 != "") ? $4 : "unknown"
