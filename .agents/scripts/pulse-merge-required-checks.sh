@@ -805,17 +805,29 @@ _check_ruleset_required_reviews_passing() {
 	[[ "$required_count" =~ ^[0-9]+$ ]] || required_count=0
 	[[ "$required_count" -eq 0 ]] && return 0
 
-	local reviews_json="" approved_count=""
-	reviews_json=$(gh_pr_view "$pr_number" --repo "$repo_slug" --json reviews 2>/dev/null) || reviews_json=""
-	if [[ -z "$reviews_json" || "$reviews_json" == null ]]; then
+	local reviews_pages="" approved_count="" empty_string=""
+	reviews_pages=$(_pmrc_gh_read gh api "repos/${repo_slug}/pulls/${pr_number}/reviews?per_page=100" --paginate --slurp 2>/dev/null) || reviews_pages=""
+	if [[ -z "$reviews_pages" || "$reviews_pages" == null ]]; then
 		echo "[pulse-merge] _check_ruleset_required_reviews_passing: review fetch failed for PR #${pr_number} in ${repo_slug} with ruleset requiring ${required_count} approval(s) — failing closed (GH#24577)" >>"$LOGFILE"
 		return 1
 	fi
-	approved_count=$(jq -r --arg author "$pr_author" '
-		[.reviews[]?] | sort_by(.submittedAt // "") | group_by(.author.login // "")
-		| map(last) | map(select((.author.login // "") != $author))
-		| map(select((.state // "" | ascii_upcase) == "APPROVED")) | length
-	' <<<"$reviews_json" 2>/dev/null) || approved_count=""
+	approved_count=$(jq -er --arg author "$pr_author" --arg empty "$empty_string" --arg array_type "$PMRC_JSON_ARRAY" '
+		if type != $array_type or any(.[]; type != $array_type) or any(.[][]?; type != "object") then
+			error("invalid paginated reviews response")
+		else
+			[.[][]? | {
+				login: (.user.login // $empty),
+				state: (.state // $empty),
+				submitted_at: (.submitted_at // $empty),
+				id: (.id // 0)
+			} | select(.login != $empty)]
+			| group_by(.login)
+			| map(max_by([.submitted_at, .id]))
+			| map(select(.login != $author))
+			| map(select((.state | ascii_upcase) == "APPROVED"))
+			| length
+		end
+	' <<<"$reviews_pages" 2>/dev/null) || approved_count=""
 	if [[ ! "$approved_count" =~ ^[0-9]+$ ]]; then
 		echo "[pulse-merge] _check_ruleset_required_reviews_passing: review parse failed for PR #${pr_number} in ${repo_slug} — failing closed (GH#24577)" >>"$LOGFILE"
 		return 1

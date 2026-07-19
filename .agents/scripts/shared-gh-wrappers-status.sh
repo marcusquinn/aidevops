@@ -675,7 +675,7 @@ gh_pr_view() {
 	gh_record_call graphql gh_pr_view 2>/dev/null || true
 	_out=$(_gh_with_timeout read gh pr view "$@")
 	local rc=$?
-	if [[ $rc -ne 0 ]] && _rest_should_fallback; then
+	if [[ $rc -ne 0 ]] && _rest_pr_view_can_emergency_fallback_args "$@" && _rest_should_fallback; then
 		print_info "[INFO] gh-wrapper: GraphQL exhausted, falling back to REST for pr view #${_first_num}"
 		_out=$(_rest_pr_view "$@")
 		rc=$?

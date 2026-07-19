@@ -435,6 +435,27 @@ _rest_pr_view_can_preserve_args() {
 }
 
 #######################################
+# Return 0 when a failed GraphQL PR view can fall back without fabricating
+# collection fields that the single-PR REST endpoint does not provide. Explicit
+# scalar unknowns (for example reviewDecision: null) remain safe for emergency
+# fallback because callers already distinguish unknown from authoritative data.
+# Args: gh-style argv
+#######################################
+_rest_pr_view_can_emergency_fallback_args() {
+	local fields
+	fields="$(_rest_args_json_fields "$@")"
+	[[ -z "$fields" ]] && return 0
+	local field
+	while IFS= read -r field; do
+		case "$field" in
+		statusCheckRollup|reviews|latestReviews|reviewThreads|commits|files) return 1 ;;
+		*) ;;
+		esac
+	done < <(_rest_split_csv "$fields")
+	return 0
+}
+
+#######################################
 # Internal: If first arg looks like a GitHub issue URL, extract the repo slug
 # and issue number. Returns via stdout on two lines (repo, then num) so we
 # stay bash 3.2-compatible (nameref `local -n` is bash 4.3+).
