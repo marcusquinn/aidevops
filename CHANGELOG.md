@@ -10,6 +10,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.32.153] - 2026-07-19
+
+### Changed
+
+- Maintenance: update simplification state registry
+- Maintenance: update simplification state registry
+- Maintenance: update simplification state registry
+- Documentation: adopt serve-sim preview launch options (#28236)
+- Documentation: adopt asc cli resolution center release (#28232)
+- Documentation: review App Store Connect community skills refresh (#28230)
+
+### Fixed
+
+- recover worker finalization and clarify shell policy (#28244)
+- scope compaction quality gates to repositories (#28233)
+- load standalone pulse merge dependencies (#28240)
+- publish simplification state checkout-free (#28228)
+- use stable review scanner path (#28224)
+
 ## [3.32.152] - 2026-07-18
 
 ### Fixed
