@@ -290,9 +290,39 @@ else
 fi
 ORIGIN_API_FAIL=0
 
-# Stub: gh_pr_comment — records call, returns 0
+# Stub: gh_pr_comment — records body-file use and can simulate policy failure.
+GH_PR_COMMENT_FAIL=0
 gh_pr_comment() {
-	printf 'gh_pr_comment pr=%s\n' "${1:-}" >>"$STUB_LOG"
+	local pr_number="${1:-}"
+	local body_file=""
+	shift || return 1
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+		--body-file)
+			body_file="${2:-}"
+			shift 2 || return 1
+			;;
+		--body-file=*)
+			body_file="${1#--body-file=}"
+			shift
+			;;
+		*) shift ;;
+		esac
+	done
+	printf 'gh_pr_comment pr=%s body_file=%s\n' "$pr_number" "$body_file" >>"$STUB_LOG"
+	if [[ "$GH_PR_COMMENT_FAIL" -eq 1 ]]; then
+		printf 'signature gate: comments require --body-file\n' >&2
+		return 1
+	fi
+	if [[ -z "$body_file" || ! -r "$body_file" ]]; then
+		printf 'missing readable merge summary body file\n' >&2
+		return 1
+	fi
+	if ! grep -q '<!-- MERGE_SUMMARY -->' "$body_file"; then
+		printf 'missing canonical merge summary marker\n' >&2
+		return 1
+	fi
+	GH_EXISTING_MERGE_SUMMARY_COUNT=1
 	return 0
 }
 export -f gh_pr_comment
@@ -314,6 +344,7 @@ set_origin_label() {
 		printf 'GraphQL: Resource not accessible by integration\n' >&2
 		return 1
 	fi
+	printf 'https://github.com/%s/pull/%s\n' "$repo_slug" "$issue_num"
 	return 0
 }
 export -f set_origin_label
@@ -701,6 +732,44 @@ else
 	fail "first post: gh_pr_comment IS called when no MERGE_SUMMARY exists" \
 		"gh_pr_comment was NOT called; stub log: $(cat "$STUB_LOG" 2>/dev/null)"
 fi
+
+if grep -q 'gh_pr_comment pr=999 body_file=' "$STUB_LOG" 2>/dev/null; then
+	pass "first post: canonical merge summary is posted through --body-file"
+else
+	fail "first post: canonical merge summary is posted through --body-file" \
+		"body-file call missing; stub log: $(cat "$STUB_LOG" 2>/dev/null)"
+fi
+
+# =============================================================================
+# Test 6: posting failure is a lifecycle failure with preserved diagnostics
+# The signature gate rejects the write. Expected: _post_merge_summary returns 1,
+# keeps the gate's stderr visible, and cmd_commit_and_pr propagates the failure.
+# =============================================================================
+: >"$STUB_LOG"
+GH_EXISTING_MERGE_SUMMARY_COUNT=0
+GH_PR_COMMENT_FAIL=1
+post_failure_rc=0
+post_failure_stderr=""
+post_failure_stderr=$(_post_merge_summary "999" "owner/repo" "42" "impl" "file.sh" "shellcheck" "none" 2>&1) || post_failure_rc=$?
+
+if [[ "$post_failure_rc" -eq 1 ]]; then
+	pass "post failure: _post_merge_summary returns non-success"
+else
+	fail "post failure: _post_merge_summary returns non-success" "got exit ${post_failure_rc}"
+fi
+
+if [[ "$post_failure_stderr" == *"signature gate: comments require --body-file"* ]]; then
+	pass "post failure: policy diagnostics remain visible"
+else
+	fail "post failure: policy diagnostics remain visible" "stderr: ${post_failure_stderr}"
+fi
+
+if grep -q '_post_merge_summary .* || return 1' "${SCRIPTS_DIR}/full-loop-helper.sh"; then
+	pass "post failure: commit-and-pr propagates merge-summary failure"
+else
+	fail "post failure: commit-and-pr propagates merge-summary failure"
+fi
+GH_PR_COMMENT_FAIL=0
 
 # =============================================================================
 # Summary

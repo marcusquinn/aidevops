@@ -185,7 +185,7 @@ Worker aborted PR creation: issue #${issue_number} was already closed by the tim
 	local pr_number=""
 	pr_number=$(_create_pr "$repo" "$pr_title" "$pr_body" "$origin_label" "${extra_labels[@]+"${extra_labels[@]}"}") || return 1
 
-	_post_merge_summary "$pr_number" "$repo" "$issue_number" "$summary_what" "$files_changed" "$summary_testing" "$summary_decisions"
+	_post_merge_summary "$pr_number" "$repo" "$issue_number" "$summary_what" "$files_changed" "$summary_testing" "$summary_decisions" || return 1
 	_label_issue_in_review "$issue_number" "$repo"
 	_label_pr_in_review "$pr_number" "$repo"
 	if is_loop_active; then
