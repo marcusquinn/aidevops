@@ -57,8 +57,8 @@
 #                                   (default ~/.aidevops/logs/gh-api-efficiency-evidence.json)
 #   AIDEVOPS_GH_API_EVIDENCE_DISABLE=1 — skip automatic sidecar generation
 #   AIDEVOPS_GH_API_LOG_MAX_LINES — when set and exceeded, trim() retains
-#                                   the newest bounded records (default 50000)
-#   AIDEVOPS_GH_API_LOG_MAX_BYTES — maximum retained log bytes (default 16 MiB)
+#                                   the newest bounded records (default 1000000)
+#   AIDEVOPS_GH_API_LOG_MAX_BYTES — maximum retained log bytes (default 128 MiB)
 #   AIDEVOPS_GH_API_RETENTION_SECONDS — maximum record age (default 172800)
 #   AIDEVOPS_GH_API_EMPTY_LOCK_GRACE_TRIES — 10ms waits before reclaiming an
 #                                   empty lock directory (default 100)
@@ -108,9 +108,12 @@ esac
 GH_API_LOG="${AIDEVOPS_GH_API_LOG:-${_GH_API_HOME}/.aidevops/logs/gh-api-calls.log}"
 GH_API_REPORT="${AIDEVOPS_GH_API_REPORT:-${_GH_API_HOME}/.aidevops/logs/gh-api-calls-by-stage.json}"
 GH_API_EVIDENCE="${AIDEVOPS_GH_API_EVIDENCE:-${_GH_API_HOME}/.aidevops/logs/gh-api-efficiency-evidence.json}"
-GH_API_LOG_MAX_LINES="${AIDEVOPS_GH_API_LOG_MAX_LINES:-50000}"
-GH_API_LOG_MAX_BYTES="${AIDEVOPS_GH_API_LOG_MAX_BYTES:-16777216}"
-GH_API_RETENTION_SECONDS="${AIDEVOPS_GH_API_RETENTION_SECONDS:-172800}"
+_GH_API_DEFAULT_LOG_MAX_LINES=1000000
+_GH_API_DEFAULT_LOG_MAX_BYTES=134217728
+_GH_API_DEFAULT_RETENTION_SECONDS=172800
+GH_API_LOG_MAX_LINES="${AIDEVOPS_GH_API_LOG_MAX_LINES:-$_GH_API_DEFAULT_LOG_MAX_LINES}"
+GH_API_LOG_MAX_BYTES="${AIDEVOPS_GH_API_LOG_MAX_BYTES:-$_GH_API_DEFAULT_LOG_MAX_BYTES}"
+GH_API_RETENTION_SECONDS="${AIDEVOPS_GH_API_RETENTION_SECONDS:-$_GH_API_DEFAULT_RETENTION_SECONDS}"
 GH_API_ERROR_KEY="error"
 _GH_API_EMPTY_LOCK_GRACE_TRIES="${AIDEVOPS_GH_API_EMPTY_LOCK_GRACE_TRIES:-100}"
 [[ "$_GH_API_EMPTY_LOCK_GRACE_TRIES" =~ ^[0-9]+$ ]] || _GH_API_EMPTY_LOCK_GRACE_TRIES=100
@@ -514,20 +517,44 @@ _gh_write_efficiency_sidecar() {
 	return 0
 }
 
-# --- gh_aggregate_calls [out_path] [window_secs] -------------------------
-# Read the log and atomically publish a deterministic JSON report. Successful
-# production reports automatically receive a SHA-256-bound evidence sidecar.
+# Copy one stable input while holding the same short-lived lock as appenders.
+# Aggregation then reads the private snapshot without chasing a growing log.
+_gh_snapshot_log() {
+	local destination="$1"
+	_gh_log_lock_acquire || return 1
+	if ! cp "$GH_API_LOG" "$destination" 2>/dev/null; then
+		_gh_log_lock_release
+		return 1
+	fi
+	_gh_log_lock_release
+	chmod 0600 "$destination" 2>/dev/null || true
+	return 0
+}
+
+# --- gh_aggregate_calls [out_path] [window_secs] [end_ts] ----------------
+# Snapshot the active log and atomically publish a deterministic JSON report.
+# An explicit end timestamp creates a completed-cycle cutoff even while other
+# processes keep appending. Successful production reports automatically receive
+# a SHA-256-bound evidence sidecar.
 gh_aggregate_calls() {
 	[[ "${AIDEVOPS_GH_API_INSTRUMENT_DISABLE:-0}" == "1" ]] && return 0
 	local out="${1:-$GH_API_REPORT}"
 	local window="${2:-86400}"
+	local requested_end="${3:-}"
+	local current_now=""
 	local now=""
 	local cutoff=0
 	local out_dir="."
 	local tmp=""
+	local snapshot=""
 	local awk_script=""
 	[[ "$window" =~ ^[1-9][0-9]*$ ]] || window=86400
-	now=$(_gh_now_seconds) || return 1
+	current_now=$(_gh_now_seconds) || return 1
+	now="$current_now"
+	if [[ -n "$requested_end" ]]; then
+		[[ "$requested_end" =~ ^[1-9][0-9]*$ && "$requested_end" -le "$current_now" ]] || return 1
+		now="$requested_end"
+	fi
 	cutoff=$((now - window))
 	if [[ "$out" == */* ]]; then
 		out_dir="${out%/*}"
@@ -557,11 +584,21 @@ gh_aggregate_calls() {
 		mv "$tmp" "$out" 2>/dev/null || rm -f "$tmp"
 		return 1
 	fi
-	if ! awk -F'\t' -v now="$now" -v cutoff="$cutoff" -v window="$window" \
-		-f "$awk_script" "$GH_API_LOG" >"$tmp" 2>/dev/null; then
+	snapshot=$(mktemp "${out}.source.XXXXXX" 2>/dev/null) || {
 		rm -f "$tmp"
 		return 1
+	}
+	chmod 0600 "$snapshot" 2>/dev/null || true
+	if ! _gh_snapshot_log "$snapshot"; then
+		rm -f "$tmp" "$snapshot"
+		return 1
 	fi
+	if ! awk -F'\t' -v now="$now" -v cutoff="$cutoff" -v window="$window" \
+		-f "$awk_script" "$snapshot" >"$tmp" 2>/dev/null; then
+		rm -f "$tmp" "$snapshot"
+		return 1
+	fi
+	rm -f "$snapshot"
 	if ! mv "$tmp" "$out" 2>/dev/null; then
 		rm -f "$tmp"
 		return 1
@@ -581,9 +618,9 @@ gh_trim_log() {
 	local now=""
 	local cutoff=0
 	local tmp=""
-	[[ "$GH_API_LOG_MAX_LINES" =~ ^[0-9]+$ && "$GH_API_LOG_MAX_LINES" -gt 0 ]] || GH_API_LOG_MAX_LINES=50000
-	[[ "$GH_API_LOG_MAX_BYTES" =~ ^[0-9]+$ && "$GH_API_LOG_MAX_BYTES" -gt 0 ]] || GH_API_LOG_MAX_BYTES=16777216
-	[[ "$GH_API_RETENTION_SECONDS" =~ ^[0-9]+$ && "$GH_API_RETENTION_SECONDS" -gt 0 ]] || GH_API_RETENTION_SECONDS=172800
+	[[ "$GH_API_LOG_MAX_LINES" =~ ^[0-9]+$ && "$GH_API_LOG_MAX_LINES" -gt 0 ]] || GH_API_LOG_MAX_LINES="$_GH_API_DEFAULT_LOG_MAX_LINES"
+	[[ "$GH_API_LOG_MAX_BYTES" =~ ^[0-9]+$ && "$GH_API_LOG_MAX_BYTES" -gt 0 ]] || GH_API_LOG_MAX_BYTES="$_GH_API_DEFAULT_LOG_MAX_BYTES"
+	[[ "$GH_API_RETENTION_SECONDS" =~ ^[0-9]+$ && "$GH_API_RETENTION_SECONDS" -gt 0 ]] || GH_API_RETENTION_SECONDS="$_GH_API_DEFAULT_RETENTION_SECONDS"
 	now=$(_gh_now_seconds) || return 0
 	cutoff=$((now - GH_API_RETENTION_SECONDS))
 	_gh_log_lock_acquire || return 0
@@ -655,7 +692,9 @@ Subcommands:
   record <path> [caller] [auth] [pool] [decision] [budget]
                           Append one routing/cache record
   evidence <name> [value] Append one typed benchmark evidence record
-  report [out] [window_s]  Aggregate to JSON (default ${GH_API_REPORT##*/}, 24h)
+  report [out] [window_s] [end_ts]
+                          Aggregate a fixed-cutoff JSON window
+                          (default ${GH_API_REPORT##*/}, 24h, current time)
   trim                     Atomically apply age, line, and byte retention bounds
   clear                    Remove log + report
 

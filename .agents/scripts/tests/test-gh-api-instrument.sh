@@ -434,7 +434,31 @@ assert_eq "fresh window last timestamp excludes history" "$inside_last_ts" "$(jq
 assert_eq "fresh effective window excludes history" "5" "$(jq -r '._meta.effective_window_seconds' "$AIDEVOPS_GH_API_REPORT")"
 assert_eq "fresh window exactness is true" "true" "$(jq -r '._meta.attempts_exact' "$AIDEVOPS_GH_API_REPORT")"
 
-# --- Test 12c: typed evidence and latency completeness stay explicit --------
+# --- Test 12c: fixed cutoffs exclude concurrent post-cycle appends ----------
+gh_clear_log
+fixed_end_ts=$((now - 5))
+post_cycle_ts=$((fixed_end_ts + 1))
+printf "%s\tfixed-caller\trest\tgh-pat\trest-core\trest-selected\t4999\tv2\tattempt\tlogical-fixed\tattempt-fixed-1\t1\t0\tsuccess\t200\t10\t1\n" "$fixed_end_ts" >>"$AIDEVOPS_GH_API_LOG"
+printf "%s\tfuture-caller\trest\tgh-pat\trest-core\trest-selected\t4998\tv2\tattempt\tlogical-future\tattempt-future-1\t1\t0\tsuccess\t200\t10\t1\n" "$post_cycle_ts" >>"$AIDEVOPS_GH_API_LOG"
+gh_aggregate_calls "$AIDEVOPS_GH_API_REPORT" 60 "$fixed_end_ts"
+assert_eq "explicit cutoff becomes report timestamp" "$fixed_end_ts" "$(jq -r "._meta.generated_at_ts" "$AIDEVOPS_GH_API_REPORT")"
+assert_eq "post-cutoff attempt is excluded" "1" "$(jq -r "._meta.attempted_requests" "$AIDEVOPS_GH_API_REPORT")"
+assert_eq "post-cutoff attempt is excluded from retained audit" "1" "$(jq -r "._meta.retained_records" "$AIDEVOPS_GH_API_REPORT")"
+assert_eq "fixed report ends at the completed cutoff" "$fixed_end_ts" "$(jq -r "._meta.last_retained_ts" "$AIDEVOPS_GH_API_REPORT")"
+if compgen -G "${AIDEVOPS_GH_API_REPORT}.source.*" >/dev/null; then
+	echo "  FAIL: aggregate left a private source snapshot behind"
+	FAIL=$((FAIL + 1))
+else
+	echo "  PASS: aggregate removed its private source snapshot"
+	PASS=$((PASS + 1))
+fi
+set +e
+gh_aggregate_calls "$AIDEVOPS_GH_API_REPORT" 60 "$((now + 60))"
+future_cutoff_status=$?
+set -e
+assert_eq "future report cutoff is rejected" "1" "$future_cutoff_status"
+
+# --- Test 12d: typed evidence and latency completeness stay explicit --------
 gh_clear_log
 latency_ts=$((now - 5))
 gh_record_efficiency_evidence cache.fresh_hits 1
