@@ -100,8 +100,9 @@ if [ "$_needs_node" = "1" ] && ! command -v node >/dev/null 2>&1; then
 	exit 127
 fi
 case "\$1" in
-	--version) echo '$_ver_str' ;;
-	*) echo "stub" ;;
+--version) echo '$_ver_str' ;;
+--help) echo 'opencode run [message]' ;;
+*) echo "stub" ;;
 esac
 EOF
 	if [[ "$_needs_node" == "1" ]]; then
@@ -132,8 +133,15 @@ build_fixture_fixed_path() {
 	cat >"$_home/$_path" <<EOF
 #!/bin/sh
 case "\$1" in
-	--version) echo '$_ver_str' ;;
-	*) echo "stub" ;;
+--version) echo '$_ver_str' ;;
+--help)
+  if [ "$_product" = "opencode" ]; then
+    echo 'opencode run [message]'
+  else
+    echo 'claude help'
+  fi
+  ;;
+*) echo "stub" ;;
 esac
 EOF
 	chmod +x "$_home/$_path"
@@ -161,6 +169,16 @@ run_resolver_with_path() {
 	(
 		export HOME="$_fixture_home"
 		export PATH="$_path_prefix:/usr/bin:/bin"
+		_resolve_pulse_runtime_binary
+	)
+}
+
+run_resolver_with_explicit_bin() {
+	local _fixture_home="$1" _explicit_bin="$2"
+	(
+		export HOME="$_fixture_home"
+		export PATH="/usr/bin:/bin"
+		export OPENCODE_BIN="$_explicit_bin"
 		_resolve_pulse_runtime_binary
 	)
 }
@@ -398,6 +416,67 @@ case "$path11_empty" in
 		;;
 esac
 rm -rf "$fixture11"
+
+# Test 12: An explicit runtime binary survives a minimal systemd PATH and is
+# normalized to the daemon-safe shim. This is the auto-update regeneration
+# path that previously dropped OPENCODE_BIN and selected /usr/bin/opencode.
+fixture12=$(mktemp -d 2>/dev/null || mktemp -d -t t2954l)
+explicit12=$(build_fixture_node_install "$fixture12" "opencode" "nvm" "v24.13.1")
+expected12="$fixture12/.local/bin/opencode"
+result12=$(run_resolver_with_explicit_bin "$fixture12" "$explicit12")
+persisted12=$(cat "$fixture12/.config/aidevops/scheduler-runtime-bin" 2>/dev/null || true)
+if [[ "$result12" == "$expected12" && "$persisted12" == "$expected12" ]]; then
+	print_result "explicit OPENCODE_BIN — normalized and persisted under minimal PATH" 0
+else
+	print_result "explicit OPENCODE_BIN — normalized and persisted under minimal PATH" 1 \
+		"result=$result12 persisted=$persisted12 expected=$expected12"
+fi
+rm -rf "$fixture12"
+
+# Test 13: Login-shell startup output cannot pollute the discovered path.
+login_shell_output13=$'startup banner\n__AIDEVOPS_OPENCODE__/home/test/.nvm/bin/opencode\n'
+result13=$(printf '%s' "$login_shell_output13" | _pulse_extract_login_shell_opencode_binary)
+if [[ "$result13" == "/home/test/.nvm/bin/opencode" ]]; then
+	print_result "login-shell discovery — ignores startup output" 0
+else
+	print_result "login-shell discovery — ignores startup output" 1 \
+		"result=$result13"
+fi
+
+# Test 14: A failed shim write must fail immediately without reporting a path.
+fixture14=$(mktemp -d 2>/dev/null || mktemp -d -t t2954n)
+explicit14=$(build_fixture_node_install "$fixture14" "opencode" "nvm" "v24.13.1")
+shim14=$(_pulse_write_direct_opencode_shim "$explicit14")
+before14=$(cat "$shim14")
+if grep -Fq "\${HOME:+:\$HOME/.local/bin}" "$shim14"; then
+	print_result "stable shim — HOME-dependent paths are evaluated at runtime" 0
+else
+	print_result "stable shim — HOME-dependent paths are evaluated at runtime" 1
+fi
+cat() {
+	return 1
+}
+result14=$(_pulse_write_direct_opencode_shim "$explicit14" 2>/dev/null)
+rc14=$?
+unset -f cat
+after14=$(cat "$shim14")
+if [[ "$rc14" -ne 0 && -z "$result14" && "$after14" == "$before14" ]]; then
+	print_result "stable shim — write failure preserves the existing shim" 0
+else
+	print_result "stable shim — write failure preserves the existing shim" 1 \
+		"rc=$rc14 result=$result14"
+fi
+rm -rf "$fixture14"
+
+# Test 15: An empty HOME fails closed before any root-level fallback is built.
+result15=$(HOME="" _resolve_pulse_runtime_binary 2>/dev/null)
+rc15=$?
+if [[ "$rc15" -ne 0 && -z "$result15" ]]; then
+	print_result "runtime resolution — empty HOME fails without a root-level path" 0
+else
+	print_result "runtime resolution — empty HOME fails without a root-level path" 1 \
+		"rc=$rc15 result=$result15"
+fi
 
 # --- Summary ---
 echo ""
