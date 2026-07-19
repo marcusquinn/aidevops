@@ -10,6 +10,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.32.156] - 2026-07-19
+
+### Changed
+
+- Maintenance: update simplification state registry
+
+### Fixed
+
+- localize headless runtime test mock parameters (#28274)
+- preserve merged issue completion evidence (#28267)
+
 ## [3.32.155] - 2026-07-19
 
 ### Added
