@@ -190,6 +190,11 @@ _set_native_auto_merge_or_skip() { return 1; }
 _repo_allows_auto_merge() { return "${REPO_ALLOWS_AUTO_MERGE_RC:-0}"; }
 _attempt_existing_auto_merge_behind_update_branch() { return 1; }
 _attempt_green_behind_update_branch() { return "${GREEN_BEHIND_UPDATE_RC:-1}"; }
+sleep() {
+	local seconds="$1"
+	printf 'sleep:%s\n' "$seconds" >>"$MERGE_EVENT_LOG"
+	return 0
+}
 _pmp_record_deterministic_progress_now() {
 	local merged_count="$1"
 	local progress_count="$2"
@@ -442,14 +447,14 @@ test_stale_cache_401_retries_admin_merge_once() {
 
 	local merge_events=""
 	merge_events=$(tr '\n' ' ' <"$MERGE_EVENT_LOG")
-	if [[ "$merge_events" != "progress:1:0 post-merge " ]]; then
-		print_result "successful merge records recovery before post-merge actions" 1 \
+	if [[ "$merge_events" != "progress:1:0 sleep:1 post-merge " ]]; then
+		print_result "successful merge records recovery before interruptible post-merge work" 1 \
 			"event order: ${merge_events:-none}"
 		teardown_test_env
 		unset GH_STUB_MODE
 		return 0
 	fi
-	print_result "successful merge records recovery before post-merge actions" 0
+	print_result "successful merge records recovery before interruptible post-merge work" 0
 
 	if [[ -f "${HOME}/.cache/gh/graphql-401.cache" ]] || \
 		! find "${HOME}/.cache/gh" -path '*/aidevops-quarantine-*/*graphql-401.cache*' -type f | grep -q .; then

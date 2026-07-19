@@ -1579,12 +1579,16 @@ ${merge_output}"
 		fi
 	fi
 
-	# Rate-limit: 1 second between merges to avoid GitHub API abuse
-	sleep 1
-
 	if [[ $_merge_exit -eq 0 ]]; then
 		echo "[pulse-wrapper] Deterministic merge: merged PR #${pr_number} in ${repo_slug}" >>"$LOGFILE"
 		_pmp_record_deterministic_progress_now 1 0
+	fi
+
+	# Rate-limit: 1 second between merges to avoid GitHub API abuse. Persist a
+	# successful mutation before this interruptible wait (GH#28285).
+	sleep 1
+
+	if [[ $_merge_exit -eq 0 ]]; then
 		# t2411: emit audit log for origin:interactive auto-merges
 		local _ipr_labels="$pr_labels"
 		if [[ "$_ipr_labels" == *"origin:interactive"* ]]; then
