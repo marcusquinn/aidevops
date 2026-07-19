@@ -1435,6 +1435,26 @@ else
 		"preserve_ok=${unsupported_preserve_ok} rest_calls=${unsupported_rest_calls} graphql_calls=${unsupported_graphql_calls} GH_CALLS=$(cat "$GH_CALLS")"
 fi
 
+: >"$GH_CALLS"
+: >"$GH_INFO_OUTPUT"
+export STUB_RATE_LIMIT_REMAINING=0
+export STUB_PRIMARY_FAIL=1
+export AIDEVOPS_GH_PR_VIEW_CACHE_DISABLE=1
+unsupported_fallback_output=""
+unsupported_fallback_rc=0
+unsupported_fallback_output=$(gh_pr_view 123 --repo "owner/repo" --json reviews 2>/dev/null) || unsupported_fallback_rc=$?
+unset STUB_PRIMARY_FAIL AIDEVOPS_GH_PR_VIEW_CACHE_DISABLE
+export STUB_RATE_LIMIT_REMAINING=5000
+
+unsupported_fallback_rest_calls=$(grep -cE '^api /repos/owner/repo/pulls/123$' "$GH_CALLS" 2>/dev/null || true)
+unsupported_fallback_graphql_calls=$(grep -cE '^pr view 123 --repo owner/repo --json reviews$' "$GH_CALLS" 2>/dev/null || true)
+if [[ "$unsupported_fallback_rc" -ne 0 && -z "$unsupported_fallback_output" && "$unsupported_fallback_rest_calls" == "0" && "$unsupported_fallback_graphql_calls" == "1" ]]; then
+	pass "gh_pr_view exhaustion preserves failure for GraphQL-only fields"
+else
+	fail "gh_pr_view exhaustion preserves failure for GraphQL-only fields" \
+		"rc=${unsupported_fallback_rc} output=${unsupported_fallback_output} rest_calls=${unsupported_fallback_rest_calls} graphql_calls=${unsupported_fallback_graphql_calls} GH_CALLS=$(cat "$GH_CALLS")"
+fi
+
 if grep -q 'stable-within-cycle' "${SCRIPTS_DIR}/shared-gh-wrappers-rest-fallback.sh" 2>/dev/null &&
 	grep -q 'fields like mergeable' "${SCRIPTS_DIR}/shared-gh-wrappers-rest-fallback.sh" 2>/dev/null &&
 	grep -q 'GraphQL-only fields' "${SCRIPTS_DIR}/shared-gh-wrappers-rest-fallback.sh" 2>/dev/null; then
