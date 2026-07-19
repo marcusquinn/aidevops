@@ -45,6 +45,9 @@ _pmrc_gh_read() {
 		printf '%s\n' '{'
 		return 0
 		;;
+	"pr_empty:repos/owner/repo/pulls/7")
+		return 0
+		;;
 	esac
 	"$@"
 	return $?
@@ -234,7 +237,8 @@ assert_gate_logged() {
 
 assert_snapshot_acquisition_failures_are_audited() {
 	assert_gate_logged "pull-request fetch failure" pr_fetch_error "pull-request fetch failed"
-	assert_gate_logged "pull-request parse failure" pr_parse_error "head parse failed"
+	assert_gate_logged "empty pull-request response" pr_empty "pull-request parse failed"
+	assert_gate_logged "pull-request parse failure" pr_parse_error "pull-request parse failed"
 	assert_gate_logged "required-context lookup failure" required_contexts_error "required-context lookup failed"
 	assert_gate_logged "check-runs fetch failure" check_runs_error "check-runs fetch failed"
 	assert_gate_logged "commit-status fetch failure" status_error "commit-status fetch failed"
