@@ -177,7 +177,7 @@ test_simplification_state_scope_preserves_checkout() {
 
 test_simplification_state_defaults_to_main_without_origin_head() {
 	local name="defaults simplification-state publication to main when origin/HEAD is unavailable"
-	local root="" repo="" remote_state=""
+	local root="" repo="" remote_state="" publish_rc=0
 	root=$(mktemp -d) || return 0
 	setup_repo "$root" || {
 		fail "$name" setup
@@ -187,11 +187,15 @@ test_simplification_state_defaults_to_main_without_origin_head() {
 	mkdir -p "${repo}/.agents/configs" || return 0
 	printf '%s\n' '{"files":{"fallback.sh":{"passes":1}}}' >"${repo}/.agents/configs/simplification-state.json"
 	git -C "$repo" symbolic-ref --delete refs/remotes/origin/HEAD 2>/dev/null || true
-	run_simplification_publish "$repo" || {
+	LOGFILE=/dev/null AIDEVOPS_PLANNING_VALIDATOR=/usr/bin/true \
+		bash -c 'set -eo pipefail; source "$1"; _simplification_state_push "$2"' \
+		_ "$STATE_SCRIPT" "$repo"
+	publish_rc=$?
+	if [[ "$publish_rc" -ne 0 ]]; then
 		fail "$name" publish
 		rm -rf "$root"
 		return 0
-	}
+	fi
 	remote_state=$(git --git-dir="${root}/remote.git" show main:.agents/configs/simplification-state.json 2>/dev/null) || remote_state=""
 	if [[ "$remote_state" == *"fallback.sh"* ]]; then
 		pass "$name"
