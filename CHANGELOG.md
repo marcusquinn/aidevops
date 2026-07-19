@@ -10,6 +10,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.32.155] - 2026-07-19
+
+### Added
+
+- add GitHub API efficiency evidence sidecars (#28261)
+
+### Changed
+
+- Maintenance: ratchet QLTY_SMELL_THRESHOLD 57→56 (-1) [skip ci]
+
+### Fixed
+
+- enforce signed merge summary posting (#28259)
+- harden pulse prefetch JSON parsing (#28258)
+- guard pulse snapshot command argument (#28257)
+
 ## [3.32.154] - 2026-07-19
 
 ### Changed
