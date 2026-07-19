@@ -2761,8 +2761,10 @@ test_permission_finish_failure_recovers_draft_and_runs_cleanup() {
 			_emit_worker_runtime_event() { return 0; }
 			_hrw_record_reconciled_outcome() { return 0; }
 			_hrw_finish_cleanup() {
+				local session_key="$1"
+				local ledger_status="$2"
 				cleanup_called=1
-				printf "cleanup_ledger=%s\n" "$2"
+				printf "cleanup_ledger=%s\n" "$ledger_status"
 				return 0
 			}
 
@@ -2795,8 +2797,18 @@ test_permission_finish_failure_without_output_releases_and_cleans_up() {
 			}
 			_worker_external_terminal_complete() { return 1; }
 			_recover_worker_output_on_failure() { recovery_called=1; return 1; }
-			_release_dispatch_claim() { released_reason="$2"; return 0; }
-			_report_failure_to_fast_fail() { fast_fail_reason="$2"; return 0; }
+			_release_dispatch_claim() {
+				local session_key="$1"
+				local reason="$2"
+				released_reason="$reason"
+				return 0
+			}
+			_report_failure_to_fast_fail() {
+				local session_key="$1"
+				local reason="$2"
+				fast_fail_reason="$reason"
+				return 0
+			}
 			_hrw_record_terminal_outcome() { return 0; }
 			_emit_worker_runtime_event() { return 0; }
 			_hrw_record_reconciled_outcome() { return 0; }
