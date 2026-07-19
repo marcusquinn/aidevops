@@ -94,6 +94,19 @@ case "${QLTY_STUB_MODE:-empty}" in
 		printf '{"runs":[{"results":[{"ruleId":"file-complexity","locations":[{"physicalLocation":{"artifactLocation":{"uri":"ok.py"}}}]}]}]}'
 		exit 0
 		;;
+	cache-sensitive)
+		if [ -z "${XDG_CACHE_HOME:-}" ]; then
+			printf 'missing isolated cache\n' >&2
+			exit 2
+		fi
+		if [ ! -f "$XDG_CACHE_HOME/warmed" ]; then
+			: >"$XDG_CACHE_HOME/warmed"
+			printf '{"runs":[{"results":[{"ruleId":"qlty:similar-code","locations":[{"physicalLocation":{"artifactLocation":{"uri":"cold-a.py"}}}]},{"ruleId":"qlty:similar-code","locations":[{"physicalLocation":{"artifactLocation":{"uri":"cold-b.py"}}}]},{"ruleId":"qlty:similar-code","locations":[{"physicalLocation":{"artifactLocation":{"uri":"cold-c.py"}}}]}]}]}'
+		else
+			printf '{"runs":[{"results":[{"ruleId":"file-complexity","locations":[{"physicalLocation":{"artifactLocation":{"uri":"stable.py"}}}]}]}]}'
+		fi
+		exit 0
+		;;
 	fail)
 		printf '{"runs":[{"results":[{"ruleId":"file-complexity","locations":[{"physicalLocation":{"artifactLocation":{"uri":"a.py"}}}]},{"ruleId":"function-complexity","locations":[{"physicalLocation":{"artifactLocation":{"uri":"b.py"}}}]},{"ruleId":"function-complexity","locations":[{"physicalLocation":{"artifactLocation":{"uri":"b.py"}}}]}]}]}'
 		exit 0
@@ -174,6 +187,19 @@ assert_contains "valid SARIF reports scan mode" "Scan mode: direct-checkout" "$p
 assert_contains "valid SARIF reports logical root" "Scan root: repository-root" "$pass_output"
 assert_contains "valid SARIF reports normalized count" "Normalized result count: 1" "$pass_output"
 assert_contains "valid SARIF reports per-rule counts" $'  1\tfile-complexity' "$pass_output"
+
+write_stub_qlty cache-sensitive "$BIN_DIR"
+cache_sensitive_output=$($HELPER "$CONF" 2>&1)
+cache_sensitive_rc=$?
+assert_rc "cold-cache-only similar-code findings do not affect the gate" "0" "$cache_sensitive_rc"
+assert_contains "absolute scan warms an isolated cache" "Warming isolated qlty cache" "$cache_sensitive_output"
+assert_contains "authoritative scan uses the stable warm-cache count" "Normalized result count: 1" "$cache_sensitive_output"
+assert_not_contains "cold-cache-only similar-code identities are discarded" "cold-a.py" "$cache_sensitive_output"
+
+repeated_cache_output=$($HELPER "$CONF" 2>&1)
+repeated_cache_rc=$?
+assert_rc "repeated isolated-cache scan remains stable" "0" "$repeated_cache_rc"
+assert_contains "repeated scan retains stable count" "Normalized result count: 1" "$repeated_cache_output"
 
 write_stub_qlty fail "$BIN_DIR"
 fail_output=$("$HELPER" "$CONF" 2>&1)

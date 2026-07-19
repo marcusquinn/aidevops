@@ -41,26 +41,11 @@ BASE_WORKTREE=""
 HEAD_WORKTREE=""
 QLTY_BIN=""
 QLTY_VERSION=""
+GIT_BIN=""
 UNKNOWN_VALUE="unknown"
 DIRECT_SCAN_MODE="direct-checkout"
 
 cleanup() {
-	if [ -n "$BASE_WORKTREE" ] && [ -d "$BASE_WORKTREE" ]; then
-		# Path-shape assertion (t2974): only remove paths matching the fixture pattern
-		if [[ "$BASE_WORKTREE" != */base-worktree ]]; then
-			log "WARN: Path '$BASE_WORKTREE' does not match fixture pattern — skipping remove"
-		else
-			git worktree remove --force "$BASE_WORKTREE" >/dev/null 2>&1 || true
-		fi
-	fi
-	if [ -n "$HEAD_WORKTREE" ] && [ -d "$HEAD_WORKTREE" ]; then
-		# Path-shape assertion (t2974): only remove paths matching the fixture pattern
-		if [[ "$HEAD_WORKTREE" != */head-worktree ]]; then
-			log "WARN: Path '$HEAD_WORKTREE' does not match fixture pattern — skipping remove"
-		else
-			git worktree remove --force "$HEAD_WORKTREE" >/dev/null 2>&1 || true
-		fi
-	fi
 	if [ -n "$TMP_DIR" ] && [ -d "$TMP_DIR" ]; then
 		rm -rf "$TMP_DIR"
 	fi
@@ -97,6 +82,22 @@ find_qlty() {
 	return 1
 }
 
+resolve_git() {
+	local _candidate=""
+	if [ -n "${AIDEVOPS_REAL_GIT_BIN:-}" ] && [ -x "$AIDEVOPS_REAL_GIT_BIN" ]; then
+		printf '%s\n' "$AIDEVOPS_REAL_GIT_BIN"
+		return 0
+	fi
+	while IFS= read -r _candidate; do
+		case "$_candidate" in
+		*/.aidevops/*/agents/scripts/git | */.aidevops/bin/git | */.agents/scripts/git) continue ;;
+		esac
+		printf '%s\n' "$_candidate"
+		return 0
+	done < <(type -a -p git 2>/dev/null || true)
+	return 1
+}
+
 # run_qlty_sarif <working-dir> <output-file>
 run_qlty_sarif() {
 	local _dir="$1"
@@ -110,6 +111,11 @@ run_qlty_sarif() {
 	# --all: scan all files; --sarif: JSON output;
 	# --no-snippets: compact; --quiet: suppress progress.
 	# qlty exits non-zero when smells exist — SARIF still written to stdout.
+	# Qlty 0.619.0 and 0.635.0 can emit extra similar-code findings on the
+	# first scan of an empty cache. Warm that per-ref cache, then retain only
+	# the second scan so cold/warm runner state cannot change gate results.
+	(cd "$_dir" && XDG_CACHE_HOME="$_cache_dir" "$QLTY_BIN" smells --all --sarif --no-snippets --quiet) \
+		>/dev/null 2>/dev/null || true
 	(cd "$_dir" && XDG_CACHE_HOME="$_cache_dir" "$QLTY_BIN" smells --all --sarif --no-snippets --quiet) \
 		>"$_out" 2>/dev/null || true
 	if [ ! -s "$_out" ]; then
@@ -127,8 +133,8 @@ create_scan_clone() {
 	local _destination="$1"
 	local _sha="$2"
 	local _repo_root="$3"
-	git clone --quiet --shared --no-checkout "$_repo_root" "$_destination" || return 1
-	git -C "$_destination" checkout --detach --quiet "$_sha" || return 1
+	"$GIT_BIN" clone --quiet --shared --no-checkout "$_repo_root" "$_destination" || return 1
+	"$GIT_BIN" -C "$_destination" checkout --detach --quiet "$_sha" || return 1
 	return 0
 }
 
@@ -404,6 +410,7 @@ HEAD_TREE=$(git rev-parse "$HEAD^{tree}")
 REPO_ROOT=$(git rev-parse --show-toplevel)
 QLTY_BIN=$(find_qlty) || die "qlty CLI not found"
 QLTY_VERSION=$("$QLTY_BIN" --version 2>/dev/null) || QLTY_VERSION="$UNKNOWN_VALUE"
+GIT_BIN=$(resolve_git) || die "native git executable not found"
 if [ -n "${QLTY_CLI_VERSION:-}" ] && [[ "$QLTY_VERSION" != *" ${QLTY_CLI_VERSION}"* ]]; then
 	die "Qlty CLI version mismatch: expected ${QLTY_CLI_VERSION}, resolved $QLTY_VERSION"
 fi

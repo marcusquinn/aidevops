@@ -76,6 +76,19 @@ if [ "${QLTY_STUB_MODE:-parity}" = "head-fail" ] && [ "$(basename "$PWD")" = "re
 	printf 'simulated head failure\n' >&2
 	exit 2
 fi
+if [ "${QLTY_STUB_MODE:-parity}" = "cache-sensitive" ]; then
+	if [ -z "${XDG_CACHE_HOME:-}" ]; then
+		printf 'missing isolated cache\n' >&2
+		exit 2
+	fi
+	if [ ! -f "$XDG_CACHE_HOME/warmed" ]; then
+		: >"$XDG_CACHE_HOME/warmed"
+		printf '%s\n' '{"runs":[{"results":[{"ruleId":"qlty:similar-code","locations":[{"physicalLocation":{"artifactLocation":{"uri":"cold-a.sh"}}}]},{"ruleId":"qlty:similar-code","locations":[{"physicalLocation":{"artifactLocation":{"uri":"cold-b.sh"}}}]},{"ruleId":"qlty:similar-code","locations":[{"physicalLocation":{"artifactLocation":{"uri":"cold-c.sh"}}}]},{"ruleId":"qlty:similar-code","locations":[{"physicalLocation":{"artifactLocation":{"uri":"a.sh"}}}]}]}]}'
+	else
+		printf '%s\n' '{"runs":[{"results":[{"ruleId":"qlty:similar-code","locations":[{"physicalLocation":{"artifactLocation":{"uri":"a.sh"}}}]}]}]}'
+	fi
+	exit 0
+fi
 printf '%s\n' '{"runs":[{"results":[{"ruleId":"qlty:similar-code","locations":[{"physicalLocation":{"artifactLocation":{"uri":"a.sh"}}}]}]}]}'
 exit 0
 STUB
@@ -111,6 +124,20 @@ assert_contains "head metadata identifies direct checkout" "mode=direct-checkout
 assert_contains "same-tree identity parity is explicit" "identical normalized SARIF identities" "$parity_output"
 assert_contains "resolved Qlty version is logged" "version=qlty 0.635.0 linux-x64" "$parity_output"
 assert_contains "per-rule counts are logged" $'1\tqlty:similar-code' "$parity_output"
+
+QLTY_STUB_MODE=cache-sensitive
+export QLTY_STUB_MODE
+cache_sensitive_output=$(cd "$REPO" && "$HELPER" --base HEAD --head HEAD 2>&1)
+cache_sensitive_rc=$?
+assert_rc "cold-cache-only similar-code findings do not affect same-tree scans" "0" "$cache_sensitive_rc"
+assert_contains "both authoritative scans use warm-cache counts" "base: 1  head: 1  delta: 0" "$cache_sensitive_output"
+
+printf 'metadata only\n' >"$REPO/VERSION"
+(cd "$REPO" && "$GIT_PATH" add VERSION && "$GIT_PATH" commit --quiet -m "metadata fixture") || exit 1
+metadata_output=$(cd "$REPO" && "$HELPER" --base HEAD^ --head HEAD 2>&1)
+metadata_rc=$?
+assert_rc "metadata-only commit preserves unchanged source findings" "0" "$metadata_rc"
+assert_contains "metadata-only scan reports zero delta" "base: 1  head: 1  delta: 0" "$metadata_output"
 
 QLTY_STUB_MODE=mismatch
 export QLTY_STUB_MODE
