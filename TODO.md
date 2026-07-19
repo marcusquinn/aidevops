@@ -4682,4 +4682,4 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [ ] t18161 Coordinate retention for agent backups logs and worker failure evidence #enhancement ref:GH#28152
 
-- [ ] t18163 Fix same-task scheduler ownership transfer for preserved worktrees #auto-dispatch #bug #reliability ref:GH#28203
+- [x] t18163 Fix same-task scheduler ownership transfer for preserved worktrees #auto-dispatch #bug #reliability ref:GH#28203 pr:#28246 completed:2026-07-19
