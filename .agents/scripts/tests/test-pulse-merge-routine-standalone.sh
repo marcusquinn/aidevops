@@ -506,8 +506,8 @@ unlock_issue_after_worker() {
 	return 0
 }
 _pm_issue_api() {
-	local repo_slug="$1"
-	local issue_number="$2"
+	local repo_slug="${1:-}"
+	local issue_number="${2:-}"
 	printf 'repos/%s/issues/%s' "$repo_slug" "$issue_number"
 	return 0
 }
@@ -532,8 +532,8 @@ _gh_with_timeout() {
 	return 0
 }
 reconcile_dependants_after_verified_closure() {
-	local repo_slug="$1"
-	local issue_number="$2"
+	local repo_slug="${1:-}"
+	local issue_number="${2:-}"
 	printf 'reconciled:%s:%s\n' "$repo_slug" "$issue_number"
 	return 0
 }
@@ -574,10 +574,10 @@ _pms_failing_check_bullets() {
 	return 0
 }
 _gh_idempotent_comment() {
-	local entity_number="$1"
-	local repo_slug="$2"
-	local marker="$3"
-	local comment_body="$4"
+	local entity_number="${1:-}"
+	local repo_slug="${2:-}"
+	local marker="${3:-}"
+	local comment_body="${4:-}"
 	local entity_type="${5:-issue}"
 	: "$marker" "$comment_body"
 	printf 'idempotent:%s:%s:%s\n' "$entity_number" "$repo_slug" "$entity_type"
