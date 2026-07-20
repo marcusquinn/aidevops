@@ -67,7 +67,7 @@ wp db import "<PRIVATE_LOCAL_EXPORT_PATH>" --path="<LOCAL_WORDPRESS_PATH>"
 wp search-replace "<SOURCE_URL>" "<LOCAL_URL>" --all-tables-with-prefix --precise --skip-columns=guid --dry-run --path="<LOCAL_WORDPRESS_PATH>"
 ```
 
-Review the dry-run count and sampled tables. Use `wp search-replace`, not raw SQL, so serialized values remain valid. Check mapped domains and scheme variants separately. Only then run the same command without `--dry-run` against local. Preserve GUIDs unless the project has a documented exception.
+Review the dry-run count and sampled tables. Use `wp search-replace`, not raw SQL, so serialized values remain valid. The supported `--precise` option forces PHP processing for every column instead of using SQL for non-serialized data; keep it for a thorough local clone even though it is slower. Check mapped domains and scheme variants separately. Only then run the same command without `--dry-run` against local. Preserve GUIDs unless the project has a documented exception.
 
 For multisite, enumerate every site and perform dry-run then apply per verified source/target URL mapping. Never substitute one broad domain fragment across unrelated mapped sites.
 
