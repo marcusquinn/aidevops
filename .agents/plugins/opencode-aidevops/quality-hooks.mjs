@@ -287,7 +287,7 @@ function handleToolBefore(ctx, log, input, output) {
     "aidevops.runtime": "opencode",
   }).catch(() => {});
 
-  if (isBashTool(input.tool)) {
+  if (isBashTool(input.tool) && output.args) {
     const bashCwd = output.args?.workdir || output.args?.cwd || process.cwd();
     output.args.command = checkCanonicalGitSafetyGate(
       output.args?.command || "",

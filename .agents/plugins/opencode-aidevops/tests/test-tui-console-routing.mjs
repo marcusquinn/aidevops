@@ -104,3 +104,19 @@ test("post-tool operation telemetry stays out of the TUI and is safely persisted
     rmSync(tempDir, { recursive: true, force: true });
   }
 });
+
+test("pre-tool bash handling tolerates a missing args payload", async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "aidevops-missing-tool-args-"));
+
+  try {
+    const hooks = createQualityHooks({ scriptsDir: tempDir, logsDir: tempDir });
+    await assert.doesNotReject(
+      hooks.toolExecuteBefore(
+        { tool: "bash", callID: "" },
+        {},
+      ),
+    );
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
