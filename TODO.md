@@ -4686,6 +4686,6 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [ ] t18164 Add durable one-shot scheduling and completion-aware routine logging #auto-dispatch #enhancement #framework ref:GH#28313
 
-- [ ] t18165 Unify typed Pulse outcomes and heartbeat-progress state #enhancement #framework #observability #pulse ref:GH#28361
+- [x] t18165 Unify typed Pulse outcomes and heartbeat-progress state #enhancement #framework #observability #pulse ref:GH#28361 pr:#28375 completed:2026-07-20
 
 - [ ] t18166 Make Pulse cycle-health fixtures time-stable #auto-dispatch #bug #pulse #testing ref:GH#28376
