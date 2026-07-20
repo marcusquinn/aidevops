@@ -17,6 +17,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
 import {
+  bindActiveScriptsDir,
   checkCanonicalGitSafetyGate,
   checkCanonicalWriteSafetyGate,
   checkCommandSafetyGate,
@@ -181,12 +182,13 @@ test("allows the repository full-loop commit-and-pr wrapper only from a linked w
       /canonical worktree mutation/,
     );
     const activeWrapper = join(activeScriptsDir, "full-loop-helper.sh");
-    assert.doesNotThrow(() => checkCanonicalGitSafetyGate(
+    const activeScriptsDirBinding = bindActiveScriptsDir(activeScriptsDir, scriptsDir);
+    assert.equal(checkCanonicalGitSafetyGate(
       `PR_NUMBER=$(${activeWrapper} commit-and-pr --issue 123 --message 'fix: example')`,
       scriptsDir,
       linked,
       { activeScriptsDir },
-    ));
+    ), `PR_NUMBER=$(${activeWrapper} commit-and-pr --issue 123 --message 'fix: example')`);
     assert.throws(
       () => checkCanonicalGitSafetyGate(
         `${activeWrapper} commit-and-pr --issue 123`,
@@ -211,6 +213,36 @@ test("allows the repository full-loop commit-and-pr wrapper only from a linked w
         linked,
       ));
     }
+
+    const rotatedScriptsDir = join(root, "rotated", "agents", "scripts");
+    mkdirSync(rotatedScriptsDir, { recursive: true });
+    writeFileSync(join(rotatedScriptsDir, "full-loop-helper.sh"), "#!/bin/sh\n");
+    rmSync(activeScriptsDir);
+    symlinkSync(rotatedScriptsDir, activeScriptsDir, "dir");
+    const rotatedCommand = `PR_NUMBER=$(${activeWrapper} commit-and-pr --issue 123 --message 'fix: example')`;
+    assert.equal(
+      checkCanonicalGitSafetyGate(rotatedCommand, scriptsDir, linked, {
+        activeScriptsDir,
+        activeScriptsDirBinding,
+      }),
+      `PR_NUMBER=$('${join(scriptsDir, "full-loop-helper.sh")}' commit-and-pr --issue 123 --message 'fix: example')`,
+    );
+    assert.throws(
+      () => checkCanonicalGitSafetyGate(rotatedCommand, scriptsDir, repo, {
+        activeScriptsDir,
+        activeScriptsDirBinding,
+      }),
+      /canonical worktree mutation/,
+    );
+    assert.throws(
+      () => checkCanonicalGitSafetyGate(
+        `${join(rotatedScriptsDir, "full-loop-helper.sh")} commit-and-pr --issue 123`,
+        scriptsDir,
+        linked,
+        { activeScriptsDir },
+      ),
+      /unclassified nested Git invocation/,
+    );
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

@@ -243,6 +243,7 @@ export async function AidevopsPlugin({ directory, client }) {
     checkpointHelper: join(SCRIPTS_DIR, "session-checkpoint-helper.sh"),
   });
   const { toolExecuteBefore, toolExecuteAfter, qualityLog } = createQualityHooks({
+    activeScriptsDir: join(ACTIVE_AGENTS_DIR, "scripts"),
     scriptsDir: SCRIPTS_DIR,
     logsDir: LOGS_DIR,
     continuationGuard,
