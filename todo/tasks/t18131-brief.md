@@ -145,7 +145,7 @@ python3 -m json.tool .agents/configs/pulse-sweep-budget.json >/dev/null
 ### Recoverability Checkpoint
 
 - [x] Focused tests pass: quota instrumentation/shim suites plus benchmark/evidence fixtures
-- [x] WIP commit created before post-rebase broad gates: `b9e981fd4`
+- [x] WIP commit created before post-rebase broad gates: `GH#27777: attribute exact direct REST quota cost`
 - [ ] Evidence-triggered broad verification: changed lint passes; final bounded canary remains pending
 
 ### Safety-Stop Recovery
