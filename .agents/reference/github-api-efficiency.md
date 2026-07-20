@@ -61,6 +61,30 @@ The benchmark validates:
 Any unknown quota cost or unclassified transport attempt prevents `PASS`.
 Never derive a benchmark by reading the raw JSONL/log source directly.
 
+### Quota-cost attribution
+
+Quota cost is known only when the operation owns authoritative per-request
+evidence. An explicit operation-provided cost takes precedence. The `gh` shim
+can additionally attribute documented primary-rate cost after a successful,
+uncached, non-conditional direct `gh api` request to `github.com`:
+
+- REST requests cost `1` primary-rate point;
+- `GET /rate_limit` costs `0` primary-rate points.
+
+Failed requests without operation-owned cost evidence remain unknown because
+the exit status does not prove whether GitHub charged the request. Cached and
+conditional requests remain unknown because their result can cost either zero
+or one. Native opaque pagination, GitHub Enterprise hosts, unknown/future
+`gh api` options, GraphQL, and higher-level `gh` commands also remain unknown.
+Explicit REST pagination can record each successful page independently after
+the shim has proved that page boundary.
+
+Do not infer an operation's GraphQL cost by subtracting cumulative rate-limit
+headers: concurrent clients can change those values between observations. A
+GraphQL operation becomes exact only when it returns and owns its own
+`rateLimit { cost }` value. Partial REST attribution does not relax the
+benchmark's zero-unknown-cost comparability gate.
+
 ### Evidence sidecar
 
 Each transport aggregate has one sidecar using
@@ -282,6 +306,7 @@ must not be removed by an efficiency-only canary.
 
 ```bash
 bash .agents/scripts/tests/test-gh-api-instrument.sh
+bash .agents/scripts/tests/test-gh-shim.sh
 bash .agents/scripts/tests/test-gh-request-singleflight.sh
 bash .agents/scripts/tests/test-gh-check-status-cache.sh
 bash .agents/scripts/tests/test-pulse-wrapper-cycle-gates.sh
@@ -291,7 +316,9 @@ bash .agents/scripts/tests/test-pulse-merge-preflight-snapshot.sh
 bash .agents/scripts/tests/test-github-api-efficiency-evidence.sh
 bash .agents/scripts/tests/test-github-api-efficiency-benchmark.sh
 shellcheck \
+  .agents/scripts/gh \
   .agents/scripts/gh-api-instrument.sh \
+  .agents/scripts/gh-quota-attribution-lib.sh \
   .agents/scripts/pulse-wrapper-cycle-gates.sh \
   .agents/scripts/pulse-batch-prefetch-helper.sh \
   .agents/scripts/pulse-merge-webhook-receiver.sh \
