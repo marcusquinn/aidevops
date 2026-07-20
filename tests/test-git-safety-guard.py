@@ -91,6 +91,9 @@ class CanonicalWritePolicyTests(unittest.TestCase):
     def test_linked_worktree_write_is_allowed(self):
         self.assertIsNone(self._check(self.linked, self.linked / "new-file.md"))
 
+    def test_canonical_context_can_target_its_linked_worktree(self):
+        self.assertIsNone(self._check(self.repo, self.linked / "new-file.md"))
+
     def test_linked_context_cannot_target_canonical_checkout(self):
         denial = self._check(self.linked, self.repo / "README.md")
         self.assertIsNotNone(denial)
@@ -180,6 +183,12 @@ class CanonicalWritePolicyTests(unittest.TestCase):
 *** End Patch
 """
         self.assertIsNone(self._check(self.linked, patch_text=linked_patch))
+        absolute_linked_patch = f"""*** Begin Patch
+*** Add File: {self.linked / 'absolute-linked.md'}
++safe
+*** End Patch
+"""
+        self.assertIsNone(self._check(self.repo, patch_text=absolute_linked_patch))
         canonical_patch = f"""*** Begin Patch
 *** Update File: {self.repo / 'README.md'}
 @@
