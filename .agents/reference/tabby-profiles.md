@@ -19,6 +19,14 @@ Do not put `/bin/zsh -l -c 'opencode; exec zsh'` in Tabby's `command` field.
 Tabby expects `command` to be the executable path and shell flags to be separate
 `args`; using the whole command string can make profile launches fail.
 
+Tabby's command-line editor parses unquoted shell operators (`&&`, `;`, `>`,
+and similar) into object-valued arguments. Its PTY launcher accepts only string
+arguments, so such a saved profile can leave the Tabby renderer unresponsive.
+For a custom command containing operators, paste the complete quoted invocation
+`/bin/zsh -l -c '<command>'` into the combined command-line field. Do not paste
+only the inner command. `tabby-helper.sh status` reports profiles containing
+non-string arguments and exits nonzero; repair them before launch.
+
 The safe generated shape is:
 
 ```yaml
