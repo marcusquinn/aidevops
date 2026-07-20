@@ -42,8 +42,7 @@ register_repo "$repo_path" "1.0.0" "planning"
 [[ "$(jq -r '.initialized_repos[0].local_only' "$REPOS_FILE")" == "true" ]]
 [[ "$(jq -r '.initialized_repos[0].pulse' "$REPOS_FILE")" == "false" ]]
 
-printf '\n[remote "origin"]\n\turl = https://github.com/example/remote-backed.git\n\tfetch = +refs/heads/*:refs/remotes/origin/*\n' \
-	>>"$repo_path/.git/config"
+git -C "$repo_path" remote add origin https://github.com/example/remote-backed.git
 register_repo "$repo_path" "1.0.1" "planning"
 
 [[ "$(jq -r '.initialized_repos[0].slug' "$REPOS_FILE")" == "example/remote-backed" ]]
