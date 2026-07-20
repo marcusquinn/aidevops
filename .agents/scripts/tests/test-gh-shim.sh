@@ -83,6 +83,11 @@ if [[ "$1" == "api" && "$2" == "rate_limit" ]]; then
 	printf '%s\n' "${STUB_RATE_LIMIT_REMAINING:-5000}"
 	exit 0
 fi
+if [[ "$1" == "api" && "$2" == "-i" && "$3" =~ ^/search/issues\? ]]; then
+	fixture='{"items":[{"number":22350,"state":"open","title":"Authored PR","html_url":"https://github.com/owner/repo/pull/22350","user":{"login":"managed"},"pull_request":{"merged_at":null}}]}'
+	printf 'HTTP/2 200\r\nX-RateLimit-Resource: search\r\n\r\n%s\n' "$fixture"
+	exit 0
+fi
 if [[ "$1" == "api" && "$2" =~ ^/repos/[^/]+/[^/]+/pulls\? ]]; then
 	jq_filter=""
 	i=3
@@ -116,7 +121,7 @@ if [[ "$1" == "api" && "$2" =~ ^/repos/[^/]+/[^/]+/issues\? ]]; then
 		fi
 		i=$((i + 1))
 	done
-	fixture='[{"number":22430,"state":"open","title":"Reduce GraphQL list-call pressure","html_url":"https://github.com/owner/repo/issues/22430","updated_at":"2026-05-02T17:52:48Z","labels":[{"name":"auto-dispatch"}],"assignees":[{"login":"worker"}]}]'
+	fixture='[{"number":22430,"state":"open","title":"Reduce GraphQL list-call pressure","html_url":"https://github.com/owner/repo/issues/22430","updated_at":"2026-05-02T17:52:48Z","labels":[{"name":"auto-dispatch"}],"assignees":[{"login":"worker"}],"user":{"login":"managed"}}]'
 	if [[ -n "$jq_filter" ]]; then
 		printf '%s\n' "$fixture" | jq -c "$jq_filter"
 	else
@@ -149,6 +154,7 @@ cp "$SHIM" "$TMP/scripts/gh"
 chmod +x "$TMP/scripts/gh"
 cp "$REPO_DIR/.agents/scripts/gh-api-instrument.sh" "$TMP/scripts/gh-api-instrument.sh"
 cp "$REPO_DIR/.agents/scripts/shared-gh-wrappers-rest-fallback.sh" "$TMP/scripts/shared-gh-wrappers-rest-fallback.sh"
+cp "$REPO_DIR/.agents/scripts/shared-gh-wrappers-rest-read-semantics.sh" "$TMP/scripts/shared-gh-wrappers-rest-read-semantics.sh"
 
 # Put stub gh in PATH (for shim's REAL_GH discovery) and the shim in
 # $TMP/scripts (for direct invocation in tests).
@@ -512,6 +518,66 @@ if [[ "$argv" == $'pr\nlist\n--repo\nowner/repo\n--state\nopen\n--json\nnumber,r
 	_pass "REST-first leaves GraphQL-only pr list fields on GraphQL"
 else
 	_fail "REST-first GraphQL-only pr list preservation" "argv: $argv log: $(cat "$AIDEVOPS_GH_API_LOG" 2>/dev/null || true)"
+fi
+
+echo ""
+echo "Test 15a: issue --author @me maps to REST creator"
+_reset_log
+export AIDEVOPS_GH_API_LOG="$TMP/gh-api-calls-issue-author.log"
+rm -f "$AIDEVOPS_GH_API_LOG"
+output=$(AIDEVOPS_GH_FORCE_REST_READS=1 STUB_GH_USER=managed "$SHIM_RUN" issue list --repo owner/repo \
+	--author @me --state all --json number,author --jq '.[0].author.login' 2>/dev/null || true)
+argv=$(_read_argv)
+if [[ "$output" == "managed" ]] && [[ "$argv" == *"creator=managed"* ]] &&
+	grep -q $'\tgh_issue_list\trest' "$AIDEVOPS_GH_API_LOG"; then
+	_pass "forced REST issue author preserves @me through creator filtering"
+else
+	_fail "forced REST issue author filtering" "output: $output argv: $argv log: $(cat "$AIDEVOPS_GH_API_LOG" 2>/dev/null || true)"
+fi
+
+echo ""
+echo "Test 15b: PR --author uses Search API qualifiers"
+_reset_log
+export AIDEVOPS_GH_API_LOG="$TMP/gh-api-calls-pr-author.log"
+rm -f "$AIDEVOPS_GH_API_LOG"
+output=$(AIDEVOPS_GH_FORCE_REST_READS=1 "$SHIM_RUN" pr list --repo owner/repo \
+	--author managed --state all --json number,author --jq '.[0].author.login' 2>/dev/null || true)
+argv=$(_read_argv)
+if [[ "$output" == "managed" ]] && [[ "$argv" == *$'api\n-i\n/search/issues?'* ]] &&
+	[[ "$argv" == *"author%3Amanaged"* ]] && grep -q $'\tgh_pr_list\tsearch-rest' "$AIDEVOPS_GH_API_LOG"; then
+	_pass "forced REST PR author routes through exact Search qualifiers"
+else
+	_fail "forced REST PR author filtering" "output: $output argv: $argv log: $(cat "$AIDEVOPS_GH_API_LOG" 2>/dev/null || true)"
+fi
+
+echo ""
+echo "Test 15c: unsupported issue filters stay on native gh"
+_reset_log
+export AIDEVOPS_GH_API_LOG="$TMP/gh-api-calls-unsupported-issue-list.log"
+rm -f "$AIDEVOPS_GH_API_LOG"
+AIDEVOPS_GH_FORCE_REST_READS=1 "$SHIM_RUN" issue list --repo owner/repo \
+	--milestone future --state open --json number 2>/dev/null || true
+argv=$(_read_argv)
+if [[ "$argv" == $'issue\nlist\n--repo\nowner/repo\n--milestone\nfuture\n--state\nopen\n--json\nnumber' ]] &&
+	grep -q $'\tgh_issue_list\tgraphql' "$AIDEVOPS_GH_API_LOG"; then
+	_pass "unsupported issue filter is never silently dropped by REST rewrite"
+else
+	_fail "unsupported issue filter GraphQL preservation" "argv: $argv log: $(cat "$AIDEVOPS_GH_API_LOG" 2>/dev/null || true)"
+fi
+
+echo ""
+echo "Test 15d: unsupported view flags stay on native gh"
+_reset_log
+export AIDEVOPS_GH_API_LOG="$TMP/gh-api-calls-unsupported-issue-view.log"
+rm -f "$AIDEVOPS_GH_API_LOG"
+AIDEVOPS_GH_FORCE_REST_READS=1 "$SHIM_RUN" issue view 42 --repo owner/repo \
+	--comments --json number 2>/dev/null || true
+argv=$(_read_argv)
+if [[ "$argv" == $'issue\nview\n42\n--repo\nowner/repo\n--comments\n--json\nnumber' ]] &&
+	grep -q $'\tgh_issue_view\tgraphql' "$AIDEVOPS_GH_API_LOG"; then
+	_pass "unsupported issue view flag is never silently dropped by REST rewrite"
+else
+	_fail "unsupported issue view GraphQL preservation" "argv: $argv log: $(cat "$AIDEVOPS_GH_API_LOG" 2>/dev/null || true)"
 fi
 
 # =============================================================================

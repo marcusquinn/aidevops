@@ -36,7 +36,7 @@
 #  15. gh_issue_list falls back to REST when primary fails AND GraphQL exhausted
 #  16. gh_issue_list does NOT fall back when primary succeeds
 #  17. gh_issue_list does NOT fall back when primary fails but GraphQL healthy
-#  18. _rest_issue_list handles --search flag without error (silently skipped)
+#  18. _rest_issue_list rejects unsupported search and unknown semantic flags
 #
 # Stub strategy: define `gh` as a shell function. Shell functions take
 # precedence over PATH binaries, so the stub captures all `gh` invocations
@@ -102,6 +102,7 @@ export -f print_info print_warning print_error print_success log_verbose
 
 export AIDEVOPS_SESSION_ORIGIN=interactive
 export AIDEVOPS_SESSION_USER=testuser
+export AIDEVOPS_GH_REST_FALLBACK_DISABLE_CACHE=1
 
 stub_rest_list_result() {
 	local path="$1"
@@ -140,13 +141,13 @@ gh() {
 	# gh api rate_limit — returns configurable value
 	if [[ "$1" == "api" && "$2" == "rate_limit" ]]; then
 		local remaining="${STUB_RATE_LIMIT_REMAINING:-5000}"
-		printf '%s\n' "$remaining"
+		printf '{"resources":{"graphql":{"remaining":%s,"limit":5000,"reset":0}}}\n' "$remaining"
 		return 0
 	fi
 
 	# gh api user — returns testuser
 	if [[ "$1" == "api" && "$2" == "user" ]]; then
-		printf '"testuser"\n'
+		printf 'testuser\n'
 		return 0
 	fi
 
@@ -423,6 +424,49 @@ else
 fi
 
 # =============================================================================
+# Test 13: _rest_issue_list preserves author as the REST creator filter
+# =============================================================================
+: >"$GH_CALLS"
+
+_rest_issue_list --repo "owner/repo" --state all --author "alice" >/dev/null 2>&1 || true
+
+if grep -qE 'creator=alice' "$GH_CALLS" 2>/dev/null; then
+	pass "_rest_issue_list maps --author to creator"
+else
+	fail "_rest_issue_list maps --author to creator" \
+		"GH_CALLS=$(cat "$GH_CALLS")"
+fi
+
+# =============================================================================
+# Test 14: _rest_issue_list resolves --author @me before REST translation
+# =============================================================================
+: >"$GH_CALLS"
+
+_rest_issue_list --repo "owner/repo" --state all --author "@me" >/dev/null 2>&1 || true
+
+if grep -qE '^api user --jq ' "$GH_CALLS" 2>/dev/null &&
+	grep -qE 'creator=testuser' "$GH_CALLS" 2>/dev/null; then
+	pass "_rest_issue_list resolves --author @me"
+else
+	fail "_rest_issue_list resolves --author @me" \
+		"GH_CALLS=$(cat "$GH_CALLS")"
+fi
+
+# =============================================================================
+# Test 15: concrete bot identities remain valid author filters
+# =============================================================================
+: >"$GH_CALLS"
+
+_rest_issue_list --repo "owner/repo" --state all --author "dependabot[bot]" >/dev/null 2>&1 || true
+
+if grep -qE 'creator=dependabot%5Bbot%5D' "$GH_CALLS" 2>/dev/null; then
+	pass "_rest_issue_list preserves bot author logins"
+else
+	fail "_rest_issue_list preserves bot author logins" \
+		"GH_CALLS=$(cat "$GH_CALLS")"
+fi
+
+# =============================================================================
 # Test 11: _rest_issue_list returns error when --repo is missing
 # =============================================================================
 _err_output=$(_rest_issue_list --state open 2>&1)
@@ -435,7 +479,7 @@ else
 fi
 
 # =============================================================================
-# Test 11: gh_issue_view falls back to REST when primary fails AND GraphQL exhausted
+# Test 11: gh_issue_view routes proactively when GraphQL is exhausted
 # =============================================================================
 : >"$GH_CALLS"
 : >"$GH_INFO_OUTPUT"
@@ -444,13 +488,13 @@ export STUB_RATE_LIMIT_REMAINING=0
 
 gh_issue_view 42 --repo "owner/repo" --json state --jq '.state' >/dev/null 2>&1 || true
 
-if grep -qE '^issue view' "$GH_CALLS" 2>/dev/null &&
-	grep -qE '^api rate_limit' "$GH_CALLS" 2>/dev/null &&
+if grep -qE '^api rate_limit' "$GH_CALLS" 2>/dev/null &&
 	grep -qE '^api /repos/owner/repo/issues/42' "$GH_CALLS" 2>/dev/null &&
-	grep -q 'GraphQL exhausted.*issue view' "$GH_INFO_OUTPUT" 2>/dev/null; then
-	pass "gh_issue_view falls back to REST when primary fails AND exhausted"
+	! grep -qE '^issue view' "$GH_CALLS" 2>/dev/null &&
+	grep -q 'GraphQL budget low.*issue view' "$GH_INFO_OUTPUT" 2>/dev/null; then
+	pass "gh_issue_view proactively routes to REST when exhausted"
 else
-	fail "gh_issue_view falls back to REST when primary fails AND exhausted" \
+	fail "gh_issue_view proactively routes to REST when exhausted" \
 		"GH_CALLS=$(cat "$GH_CALLS") | INFO=$(cat "$GH_INFO_OUTPUT")"
 fi
 
@@ -496,7 +540,7 @@ unset STUB_PRIMARY_FAIL
 export STUB_RATE_LIMIT_REMAINING=5000
 
 # =============================================================================
-# Test 14: gh_issue_list falls back to REST when primary fails AND GraphQL exhausted
+# Test 14: gh_issue_list routes proactively when GraphQL is exhausted
 # =============================================================================
 : >"$GH_CALLS"
 : >"$GH_INFO_OUTPUT"
@@ -505,13 +549,13 @@ export STUB_RATE_LIMIT_REMAINING=0
 
 gh_issue_list --repo "owner/repo" --state open --json number >/dev/null 2>&1 || true
 
-if grep -qE '^issue list' "$GH_CALLS" 2>/dev/null &&
-	grep -qE '^api rate_limit' "$GH_CALLS" 2>/dev/null &&
+if grep -qE '^api rate_limit' "$GH_CALLS" 2>/dev/null &&
 	grep -qE '^api /repos/owner/repo/issues\?' "$GH_CALLS" 2>/dev/null &&
-	grep -q 'GraphQL exhausted.*issue list' "$GH_INFO_OUTPUT" 2>/dev/null; then
-	pass "gh_issue_list falls back to REST when primary fails AND exhausted"
+	! grep -qE '^issue list' "$GH_CALLS" 2>/dev/null &&
+	grep -q 'GraphQL budget low.*issue list' "$GH_INFO_OUTPUT" 2>/dev/null; then
+	pass "gh_issue_list proactively routes to REST when exhausted"
 else
-	fail "gh_issue_list falls back to REST when primary fails AND exhausted" \
+	fail "gh_issue_list proactively routes to REST when exhausted" \
 		"GH_CALLS=$(cat "$GH_CALLS") | INFO=$(cat "$GH_INFO_OUTPUT")"
 fi
 
@@ -545,11 +589,10 @@ export STUB_RATE_LIMIT_REMAINING=5000
 gh_issue_list --repo "owner/repo" --state open >/dev/null 2>&1 || true
 
 if grep -qE '^issue list' "$GH_CALLS" 2>/dev/null &&
-	grep -qE '^api rate_limit' "$GH_CALLS" 2>/dev/null &&
 	! grep -qE '^api /repos/owner/repo/issues\?' "$GH_CALLS" 2>/dev/null; then
-	pass "gh_issue_list does NOT fall back when primary fails but GraphQL healthy"
+	pass "gh_issue_list does NOT broaden a non-JSON primary failure"
 else
-	fail "gh_issue_list does NOT fall back when primary fails but GraphQL healthy" \
+	fail "gh_issue_list does NOT broaden a non-JSON primary failure" \
 		"GH_CALLS=$(cat "$GH_CALLS")"
 fi
 
@@ -557,7 +600,7 @@ unset STUB_PRIMARY_FAIL
 export STUB_RATE_LIMIT_REMAINING=5000
 
 # =============================================================================
-# Test 17: _rest_issue_list handles --search flag without error (silently skipped)
+# Test 17: _rest_issue_list rejects search instead of silently broadening
 # =============================================================================
 : >"$GH_CALLS"
 
@@ -565,12 +608,64 @@ _result=$(_rest_issue_list --repo "owner/repo" --state open \
 	--search "in:title [Supervisor:" 2>&1)
 _rc=$?
 
-if [[ $_rc -eq 0 ]]; then
-	pass "_rest_issue_list handles --search flag without error (silently skipped)"
+if [[ $_rc -ne 0 ]] && ! grep -qE '^api /repos/.+/issues\?' "$GH_CALLS" 2>/dev/null; then
+	pass "_rest_issue_list rejects --search instead of silently dropping it"
 else
-	fail "_rest_issue_list handles --search flag without error (silently skipped)" \
+	fail "_rest_issue_list rejects --search instead of silently dropping it" \
 		"rc=${_rc} output=${_result}"
 fi
+
+# =============================================================================
+# Test 18: _rest_issue_list rejects unknown flag-value pairs before API access
+# =============================================================================
+: >"$GH_CALLS"
+
+_result=$(_rest_issue_list --repo "owner/repo" --state open \
+	--milestone "future" 2>&1)
+_rc=$?
+
+if [[ $_rc -ne 0 ]] && ! grep -qE '^api /repos/.+/issues\?' "$GH_CALLS" 2>/dev/null; then
+	pass "_rest_issue_list fails closed for unknown semantic flags"
+else
+	fail "_rest_issue_list fails closed for unknown semantic flags" \
+		"rc=${_rc} output=${_result} calls=$(cat "$GH_CALLS")"
+fi
+
+# =============================================================================
+# Test 19: direct issue view rejects unknown semantic flags before API access
+# =============================================================================
+: >"$GH_CALLS"
+
+_result=$(_rest_issue_view 42 --repo "owner/repo" --comments --json number 2>&1)
+_rc=$?
+
+if [[ $_rc -ne 0 ]] && ! grep -qE '^api /repos/.+/issues/42' "$GH_CALLS" 2>/dev/null; then
+	pass "_rest_issue_view fails closed for unknown semantic flags"
+else
+	fail "_rest_issue_view fails closed for unknown semantic flags" \
+		"rc=${_rc} output=${_result} calls=$(cat "$GH_CALLS")"
+fi
+
+# =============================================================================
+# Test 20: low-budget issue view keeps unsupported shapes on native GraphQL
+# =============================================================================
+: >"$GH_CALLS"
+: >"$GH_INFO_OUTPUT"
+export STUB_PRIMARY_FAIL=1
+export STUB_RATE_LIMIT_REMAINING=0
+
+unsupported_view_rc=0
+gh_issue_view 42 --repo "owner/repo" --comments --json number >/dev/null 2>&1 || unsupported_view_rc=$?
+
+if [[ "$unsupported_view_rc" -ne 0 ]] && grep -qE '^issue view' "$GH_CALLS" 2>/dev/null &&
+	! grep -qE '^api /repos/.+/issues/42' "$GH_CALLS" 2>/dev/null; then
+	pass "gh_issue_view never rewrites unsupported arguments to REST"
+else
+	fail "gh_issue_view never rewrites unsupported arguments to REST" \
+		"rc=${unsupported_view_rc} calls=$(cat "$GH_CALLS")"
+fi
+unset STUB_PRIMARY_FAIL
+export STUB_RATE_LIMIT_REMAINING=5000
 
 # =============================================================================
 # Summary

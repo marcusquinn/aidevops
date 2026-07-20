@@ -214,10 +214,12 @@ SIG_HELPER="$_STUB_SIG_HELPER"
 # Strategy: use eval to extract the function bodies from the shim.
 _SHIM_SCRIPT="${SCRIPTS_DIR}/gh"
 
-# Extract and define only the two helper functions we need.
+# Extract and define the helper plus its direct signature dependencies.
 # This avoids executing the shim's main body which calls exec.
 _SHIM_FUNCS=$(awk '
 	/^_shim_api_is_write_endpoint\(\)/ { printing=1; depth=0 }
+	/^_shim_body_is_ops_audit\(\)/      { printing=1; depth=0 }
+	/^_shim_sig_footer_for_body\(\)/    { printing=1; depth=0 }
 	/^_shim_api_inject_body_sig\(\)/   { printing=1; depth=0 }
 	printing {
 		print
