@@ -32,6 +32,9 @@ unset GITHUB_ACTIONS
 unset AIDEVOPS_SESSION_ORIGIN
 unset AIDEVOPS_USER_INSTIGATED_EXTERNAL_GH_WRITE
 unset AIDEVOPS_EXTERNAL_GH_WRITE_ALLOWLIST
+unset AIDEVOPS_GH_QUOTA_COST
+unset AIDEVOPS_GH_QUOTA_COST_ON_SUCCESS
+unset GH_HOST
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)" || exit
 REPO_DIR="$(cd "${SCRIPT_DIR}/../../.." && pwd)" || exit
@@ -79,6 +82,9 @@ fi
 for arg in "$@"; do
 	printf '%s\n' "$arg" >>"$STUB_GH_LOG"
 done
+if [[ "${STUB_GH_EXIT_CODE:-0}" =~ ^[1-9][0-9]*$ ]]; then
+	exit "$STUB_GH_EXIT_CODE"
+fi
 if [[ "$1" == "api" && "$2" == "rate_limit" ]]; then
 	printf '%s\n' "${STUB_RATE_LIMIT_REMAINING:-5000}"
 	exit 0
@@ -153,6 +159,7 @@ chmod +x "$TMP/scripts/gh-signature-helper.sh"
 cp "$SHIM" "$TMP/scripts/gh"
 chmod +x "$TMP/scripts/gh"
 cp "$REPO_DIR/.agents/scripts/gh-api-instrument.sh" "$TMP/scripts/gh-api-instrument.sh"
+cp "$REPO_DIR/.agents/scripts/gh-quota-attribution-lib.sh" "$TMP/scripts/gh-quota-attribution-lib.sh"
 cp "$REPO_DIR/.agents/scripts/shared-gh-wrappers-rest-fallback.sh" "$TMP/scripts/shared-gh-wrappers-rest-fallback.sh"
 cp "$REPO_DIR/.agents/scripts/shared-gh-wrappers-rest-read-semantics.sh" "$TMP/scripts/shared-gh-wrappers-rest-read-semantics.sh"
 
@@ -177,6 +184,17 @@ _read_argv() {
 _reset_log() {
 	: >"$STUB_GH_LOG"
 	[[ -n "${STUB_SIG_LOG:-}" ]] && : >"$STUB_SIG_LOG"
+	return 0
+}
+
+_read_attempt_quota() {
+	local log_file="$1"
+	awk -F '\t' '
+		$9 == "attempt" {
+			quota = ($17 == "" ? "unknown" : $17)
+		}
+		END { print quota }
+	' "$log_file"
 	return 0
 }
 
@@ -849,6 +867,72 @@ for short_opt in -q -p -t; do
 		else
 			_fail "headless REST guard skips $short_opt argument" "argv: $argv err: $(cat "$TMP/guard-api-$short_opt-injection.err" || true)"
 		fi
+	fi
+done
+
+# =============================================================================
+# Test 22: exact quota cost is limited to unambiguous successful REST requests
+# =============================================================================
+echo ""
+echo "Test 22: conservative direct REST quota attribution"
+quota_log="$TMP/quota-attribution.log"
+
+: >"$quota_log"
+AIDEVOPS_GH_API_LOG="$quota_log" "$SHIM_RUN" api --jq . /repos/owner/repo >/dev/null 2>&1
+if [[ "$(_read_attempt_quota "$quota_log")" == "1" ]]; then
+	_pass "successful direct REST request records documented cost one"
+else
+	_fail "direct REST cost attribution" "quota: $(_read_attempt_quota "$quota_log")"
+fi
+
+: >"$quota_log"
+AIDEVOPS_GH_API_LOG="$quota_log" "$SHIM_RUN" api /repos/owner/repo/labels -f name=fixture >/dev/null 2>&1
+if [[ "$(_read_attempt_quota "$quota_log")" == "1" ]]; then
+	_pass "successful direct REST write records documented cost one"
+else
+	_fail "direct REST write cost attribution" "quota: $(_read_attempt_quota "$quota_log")"
+fi
+
+: >"$quota_log"
+AIDEVOPS_GH_API_LOG="$quota_log" "$SHIM_RUN" api rate_limit >/dev/null 2>&1
+if [[ "$(_read_attempt_quota "$quota_log")" == "0" ]]; then
+	_pass "successful GET /rate_limit records documented cost zero"
+else
+	_fail "rate-limit endpoint cost attribution" "quota: $(_read_attempt_quota "$quota_log")"
+fi
+
+for ambiguous_case in conditional cache pagination enterprise graphql unknown-option failure; do
+	: >"$quota_log"
+	case "$ambiguous_case" in
+	conditional)
+		AIDEVOPS_GH_API_LOG="$quota_log" "$SHIM_RUN" api /repos/owner/repo -H 'If-None-Match: fixture' >/dev/null 2>&1
+		;;
+	cache)
+		AIDEVOPS_GH_API_LOG="$quota_log" "$SHIM_RUN" api /repos/owner/repo --cache 1h >/dev/null 2>&1
+		;;
+	pagination)
+		AIDEVOPS_GH_EXPLICIT_PAGINATION_DISABLE=1 AIDEVOPS_GH_API_LOG="$quota_log" \
+			"$SHIM_RUN" api /repos/owner/repo --paginate >/dev/null 2>&1
+		;;
+	enterprise)
+		GH_HOST=enterprise.example AIDEVOPS_GH_API_LOG="$quota_log" "$SHIM_RUN" api /repos/owner/repo >/dev/null 2>&1
+		;;
+	graphql)
+		AIDEVOPS_GH_API_LOG="$quota_log" "$SHIM_RUN" api graphql -f 'query={viewer{login}}' >/dev/null 2>&1
+		;;
+	unknown-option)
+		AIDEVOPS_GH_API_LOG="$quota_log" "$SHIM_RUN" api /repos/owner/repo --future-option >/dev/null 2>&1
+		;;
+	failure)
+		if STUB_GH_EXIT_CODE=1 AIDEVOPS_GH_API_LOG="$quota_log" "$SHIM_RUN" api /repos/owner/repo >/dev/null 2>&1; then
+			_fail "failed REST command status" "stub failure unexpectedly succeeded"
+		fi
+		;;
+	esac
+	if [[ "$(_read_attempt_quota "$quota_log")" == "unknown" ]]; then
+		_pass "$ambiguous_case request keeps quota cost unknown"
+	else
+		_fail "$ambiguous_case quota fail-closed behavior" "quota: $(_read_attempt_quota "$quota_log")"
 	fi
 done
 

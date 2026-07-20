@@ -32,6 +32,7 @@ trap 'rm -rf "$TMPDIR"' EXIT
 export AIDEVOPS_GH_API_LOG="$TMPDIR/gh-api-calls.log"
 export AIDEVOPS_GH_API_REPORT="$TMPDIR/report.json"
 export AIDEVOPS_GH_API_EVIDENCE="$TMPDIR/evidence.json"
+unset AIDEVOPS_GH_QUOTA_COST AIDEVOPS_GH_QUOTA_COST_ON_SUCCESS
 
 assert_eq() {
 	local label="$1"
@@ -384,6 +385,22 @@ fi
 gh_aggregate_calls
 assert_eq "success and failure attempts recorded" "2" "$(jq -r '._meta.attempted_requests' "$AIDEVOPS_GH_API_REPORT")"
 assert_eq "failed outcome recorded" "1" "$(jq -r '._meta.failed_attempts' "$AIDEVOPS_GH_API_REPORT")"
+
+# --- Test 11b: inferred quota is recorded only after transport success -------
+gh_clear_log
+AIDEVOPS_GH_QUOTA_COST_ON_SUCCESS=1 \
+	gh_run_transport_attempt rest quota-caller logical-quota 1 0 -- true
+set +e
+AIDEVOPS_GH_QUOTA_COST_ON_SUCCESS=1 \
+	gh_run_transport_attempt rest quota-caller logical-quota 1 1 -- false
+inferred_failure_status=$?
+set -e
+AIDEVOPS_GH_QUOTA_COST=3 AIDEVOPS_GH_QUOTA_COST_ON_SUCCESS=1 \
+	gh_run_transport_attempt rest quota-caller logical-quota 1 0 -- true
+assert_eq "inferred-cost transport failure status preserved" "1" "$inferred_failure_status"
+gh_aggregate_calls
+assert_eq "successful inferred and explicit costs reconcile" "4" "$(jq -r '._meta.known_quota_cost' "$AIDEVOPS_GH_API_REPORT")"
+assert_eq "failed inferred cost remains unknown" "1" "$(jq -r '._meta.unknown_quota_cost_attempts' "$AIDEVOPS_GH_API_REPORT")"
 
 # --- Test 12: effective window comes from retained attempt timestamps -----
 gh_clear_log

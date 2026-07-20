@@ -484,9 +484,14 @@ gh_run_transport_attempt() {
 	local elapsed_ms=""
 	local rc=0
 	local outcome="success"
+	local quota_cost="${AIDEVOPS_GH_QUOTA_COST:-}"
+	local success_quota_cost="${AIDEVOPS_GH_QUOTA_COST_ON_SUCCESS:-}"
 	start_ms=$(_gh_now_ms) || start_ms=""
 	if "$@"; then
 		rc=0
+		if [[ -z "$quota_cost" && -n "$success_quota_cost" ]]; then
+			quota_cost="$success_quota_cost"
+		fi
 	else
 		rc=$?
 		outcome="$GH_API_ERROR_KEY"
@@ -496,7 +501,7 @@ gh_run_transport_attempt() {
 		elapsed_ms=$((end_ms - start_ms))
 	fi
 	gh_record_attempt "$path" "$caller" "$logical_id" "" "$page" "$retry" "$outcome" \
-		"${AIDEVOPS_GH_HTTP_STATUS:-}" "$elapsed_ms" "${AIDEVOPS_GH_QUOTA_COST:-}" \
+		"${AIDEVOPS_GH_HTTP_STATUS:-}" "$elapsed_ms" "$quota_cost" \
 		"${AIDEVOPS_GH_AUTH_MODE:-}" "${AIDEVOPS_GH_API_POOL:-}" "${AIDEVOPS_GH_ROUTE_DECISION:-}" \
 		"${AIDEVOPS_GH_BUDGET_REMAINING:-${_GH_LAST_GRAPHQL_REMAINING:-}}"
 	return "$rc"
