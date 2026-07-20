@@ -185,6 +185,22 @@ got=$(classify_fixture "$pr_needed" "${ROOT}/missing-repository")
 	&& print_result "unavailable git comparison is unknown, never an empty diff" 0 \
 	|| print_result "unavailable git comparison is unknown, never an empty diff" 1 "got=$got"
 
+cleanup_contract=$(bash -c 'source "$1"; declare -f _psh_diff_files_json' _ "$HELPER")
+cleanup_callback=$(bash -c 'source "$1"; declare -f _psh_cleanup_temp_refs' _ "$HELPER")
+cleanup_noargs_rc=0
+bash -uc 'source "$1"; _psh_cleanup_temp_refs' _ "$HELPER" || cleanup_noargs_rc=$?
+if [[ "$cleanup_contract" == *"_save_cleanup_scope"* \
+	&& "$cleanup_contract" == *"trap '_run_cleanups' RETURN"* \
+	&& "$cleanup_contract" == *"push_cleanup _psh_cleanup_temp_refs"* \
+	&& "$cleanup_callback" == *"local repo_path=\"\${1:-\${repo_path:-}}\""* \
+	&& "$cleanup_callback" == *"local ref_prefix=\"\${2:-\${ref_prefix:-}}\""* \
+	&& "$cleanup_callback" == *"_psh_delete_temp_refs \"\$repo_path\" \"\$ref_prefix\""* \
+	&& "$cleanup_noargs_rc" -eq 0 ]]; then
+	print_result "temporary PR refs have return-trap and fast-path cleanup" 0
+else
+	print_result "temporary PR refs have return-trap and fast-path cleanup" 1 "cleanup contract missing"
+fi
+
 if [[ "$TESTS_FAILED" -eq 0 ]]; then
 	printf '\nAll %s pr-supersession tests passed.\n' "$TESTS_RUN"
 	exit 0
