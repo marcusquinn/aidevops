@@ -18,11 +18,22 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)" || exit
+# shellcheck source=./runtime-bundle-lease.sh
+source "${SCRIPT_DIR}/runtime-bundle-lease.sh"
+if ! aidevops_runtime_bundle_lease_acquire "${SCRIPT_DIR%/scripts}"; then
+	printf "[headless-runtime] FATAL: could not acquire runtime bundle lease for %s\n" "${SCRIPT_DIR%/scripts}" >&2
+	exit 1
+fi
+trap 'aidevops_runtime_bundle_lease_release' EXIT
 # shellcheck source-path=SCRIPTDIR
 # shellcheck source=./shared-constants.sh
 source "${SCRIPT_DIR}/shared-constants.sh"
 # shellcheck source=./worker-lifecycle-common.sh
 source "${SCRIPT_DIR}/worker-lifecycle-common.sh"
+# Worker failure excerpts own their capped write and duplicate-evidence
+# retention contract in a focused module.
+# shellcheck source=./worker-failure-evidence.sh
+source "${SCRIPT_DIR}/worker-failure-evidence.sh"
 
 # SSH agent integration for commit signing (t1882)
 # Source persisted agent.env so workers can sign commits without passphrase prompts.
@@ -866,45 +877,6 @@ _t3077_write_preflight_sentinel() {
 }
 
 #######################################
-# Preserve a small worker output excerpt for failure-metric forensics.
-#
-# Args:
-#   $1 - output file path
-#   $2 - session key
-# stdout: excerpt path, or empty on failure/no file
-# Returns: 0 always (observability must fail open)
-#######################################
-_metric_failure_excerpt_path() {
-	local output_file="$1"
-	local session_key="$2"
-	if _headless_private_workload_enabled; then
-		return 0
-	fi
-	if [[ -z "$output_file" || ! -f "$output_file" ]]; then
-		return 0
-	fi
-	local excerpt_dir="${HOME}/.aidevops/logs/worker-failure-excerpts"
-	mkdir -p "$excerpt_dir" 2>/dev/null || return 0
-	local safe_key timestamp excerpt_path
-	safe_key=$(printf '%s' "$session_key" | tr -c 'A-Za-z0-9._-' '_')
-	timestamp=$(date -u +%Y%m%dT%H%M%SZ 2>/dev/null || printf '%s' "unknown")
-	excerpt_path="${excerpt_dir}/${safe_key:-unknown}-${timestamp}-$$.log"
-	python3 - "$output_file" "$excerpt_path" <<'PY' >/dev/null 2>&1 || return 0
-import sys
-src, dst = sys.argv[1], sys.argv[2]
-try:
-    with open(src, "rb") as f:
-        data = f.read()[-65536:]
-    with open(dst, "wb") as f:
-        f.write(data)
-except OSError:
-    sys.exit(0)
-PY
-	[[ -s "$excerpt_path" ]] && printf '%s' "$excerpt_path"
-	return 0
-}
-
-#######################################
 # Derive structured, secret-free worker failure evidence fields.
 #
 # Args:
@@ -1472,10 +1444,9 @@ _execute_run_attempt() {
 	# session state to the output file so the worker log captures it.
 	# OpenCode exits silently on API errors; this is our only visibility.
 	# Extract session ID BEFORE the append block to avoid SC2094 (read+write same file).
-	local _diag_session_id="" _diag_incomplete_msgs="0" _metric_session_id="" _metric_output_file=""
+	local _diag_session_id="" _diag_incomplete_msgs="0" _metric_session_id="" _metric_output_file="" _metric_excerpt_candidate=""
 	if [[ -f "$output_file" ]]; then
 		_metric_session_id=$(extract_session_id_from_output "$output_file" 2>/dev/null || true)
-		_metric_output_file=$(_metric_failure_excerpt_path "$output_file" "$session_key")
 	fi
 	if [[ "${exit_code:-}" == "0" && -n "$_metric_session_id" ]]; then
 		_diag_session_id="$_metric_session_id"
@@ -1504,6 +1475,7 @@ _execute_run_attempt() {
 	} >>"$output_file" 2>/dev/null || true
 
 	print_info "[lifecycle] calling_handle_run_result session=$session_key exit_code=$exit_code output_size=$(wc -c <"$output_file" 2>/dev/null || echo 0)"
+	_metric_excerpt_candidate=$(_metric_failure_excerpt_candidate_path "$output_file" "$session_key")
 	local handle_exit=0
 	if _handle_run_result "$exit_code" "$output_file" "$role" "$provider" "$session_key" "$selected_model"; then
 		handle_exit=0
@@ -1536,9 +1508,8 @@ _execute_run_attempt() {
 		rm -f "$resource_stop_file" "$resource_result_file" 2>/dev/null || true
 	fi
 	local _metric_result_label="${_run_result_label:-fail""ed}"
-	if [[ "$_metric_result_label" == "success" ]]; then
-		_metric_output_file=""
-	fi
+	_metric_output_file=$(_metric_failure_excerpt_for_result "$_metric_result_label" "$_metric_excerpt_candidate" "$session_key")
+	[[ -z "$_metric_excerpt_candidate" ]] || rm -f "$_metric_excerpt_candidate"
 	local _launch_failure_cause="" _next_action=""
 	local _evidence_fields
 	_evidence_fields=$(_derive_worker_failure_evidence \

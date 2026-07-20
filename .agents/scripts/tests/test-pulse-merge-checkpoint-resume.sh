@@ -76,6 +76,7 @@ source "$PROCESS_FILE"
 PROCESSED_REPOS=""
 ZERO_PROGRESS_CALLS=""
 STOP_AFTER_REPO=""
+MERGE_ON_REPO=""
 
 repo_allows_pulse_write_actions() {
 	local repo_slug="$1"
@@ -90,8 +91,12 @@ _merge_ready_prs_for_repo() {
 	local failed_var="$4"
 	local pr_count_var="${5:-}"
 
+	local merged_count=0
+	[[ "$repo_slug" == "$MERGE_ON_REPO" ]] && merged_count=1
 	PROCESSED_REPOS="${PROCESSED_REPOS}${repo_slug} "
-	eval "${merged_var}=0; ${closed_var}=0; ${failed_var}=0"
+	printf -v "$merged_var" '%s' "$merged_count"
+	printf -v "$closed_var" '%s' '0'
+	printf -v "$failed_var" '%s' '0'
 	if [[ -n "$pr_count_var" ]]; then
 		printf -v "$pr_count_var" '%s' '0'
 	fi
@@ -123,6 +128,10 @@ pulse_merge_zero_progress_record() {
 }
 
 printf '%sRunning pulse merge checkpoint resume tests (GH#25697)%s\n' "$TEST_GREEN" "$TEST_NC"
+
+_pmp_record_deterministic_progress_now 1 0
+assert_equals "successful merge persists zero-progress recovery immediately" "0:1:0 " "$ZERO_PROGRESS_CALLS"
+ZERO_PROGRESS_CALLS=""
 
 STOP_AFTER_REPO="org/two"
 merge_ready_prs_all_repos
@@ -156,6 +165,15 @@ if [[ ! -f "$PULSE_MERGE_CHECKPOINT_FILE" ]]; then
 else
 	fail "checkpoint without newline clears after resume" "checkpoint still exists"
 fi
+
+rm -f "$PULSE_MERGE_CHECKPOINT_FILE"
+STOP_AFTER_REPO="org/two"
+MERGE_ON_REPO="org/two"
+PROCESSED_REPOS=""
+ZERO_PROGRESS_CALLS=""
+merge_ready_prs_all_repos
+assert_equals "interrupted pass records conclusive merge progress" "2:1:0 " "$ZERO_PROGRESS_CALLS"
+rm -f "$STOP_FLAG"
 
 if [[ "$TESTS_FAILED" -eq 0 ]]; then
 	printf '\n%sAll %s tests passed%s\n' "$TEST_GREEN" "$TESTS_RUN" "$TEST_NC"

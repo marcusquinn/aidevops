@@ -106,19 +106,48 @@ log_worktree_removal_event() {
 	return 0
 }
 
+_worktree_proc_entry_is_provably_foreign_uid() {
+	local proc_dir="$1"
+	local current_uid="$2"
+	local field=""
+	local real_uid=""
+	local effective_uid=""
+	local saved_uid=""
+	local filesystem_uid=""
+	local process_uid=""
+
+	[[ "$current_uid" =~ ^[0-9]+$ && -r "$proc_dir/status" ]] || return 1
+	while IFS=$' \t' read -r field real_uid effective_uid saved_uid filesystem_uid _; do
+		[[ "$field" == "Uid:" ]] || continue
+		for process_uid in "$real_uid" "$effective_uid" "$saved_uid" "$filesystem_uid"; do
+			[[ "$process_uid" =~ ^[0-9]+$ ]] || return 1
+			[[ "$process_uid" != "$current_uid" ]] || return 1
+		done
+		return 0
+	done <"$proc_dir/status"
+	return 1
+}
+
 _capture_worktree_proc_cwds() {
 	local proc_root="$1"
 	local cwd_link=""
 	local cwd_target=""
 	local captured_count=0
+	local current_uid=""
+	local proc_dir=""
+
+	current_uid=$(id -u 2>/dev/null) || current_uid=""
 
 	for cwd_link in "$proc_root"/[0-9]*/cwd; do
 		[[ -L "$cwd_link" || -e "$cwd_link" ]] || continue
 		if ! cwd_target=$(readlink "$cwd_link" 2>/dev/null); then
-			# Vanished processes are harmless; persistent unreadability means the
-			# snapshot is incomplete and must fail closed.
-			[[ -L "$cwd_link" || -e "$cwd_link" ]] && return 1
-			continue
+			# Vanished processes are harmless. Linux commonly denies cwd reads for
+			# other users, so skip only entries whose four status UIDs prove they
+			# are foreign; same-user and unknown ownership still fail closed.
+			[[ -L "$cwd_link" || -e "$cwd_link" ]] || continue
+			proc_dir="${cwd_link%/cwd}"
+			_worktree_proc_entry_is_provably_foreign_uid "$proc_dir" "$current_uid" && continue
+			return 1
 		fi
 		if [[ -n "$cwd_target" ]]; then
 			printf '%s\n' "$cwd_target"

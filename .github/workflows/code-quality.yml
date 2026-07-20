@@ -844,6 +844,8 @@ jobs:
   qlty-smell-threshold:
     name: Qlty Smell Threshold
     runs-on: ubuntu-latest
+    env:
+      QLTY_CLI_VERSION: "0.635.0"
 
     steps:
     - name: Checkout code

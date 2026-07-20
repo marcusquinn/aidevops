@@ -156,6 +156,129 @@ test_untrusted_session_cannot_roll_owner_pid() {
 	return 0
 }
 
+test_canonical_paths_are_purged_without_signalling_live_owner() {
+	reset_registry
+	local canonical_path="${TEST_ROOT}/canonical"
+	local linked_path="${TEST_ROOT}/linked"
+	mkdir -p "$canonical_path"
+	/usr/bin/git -C "$canonical_path" init -q -b develop
+	/usr/bin/git -C "$canonical_path" config user.name Test
+	/usr/bin/git -C "$canonical_path" config user.email test@example.invalid
+	/usr/bin/git -C "$canonical_path" config commit.gpgsign false
+	printf 'seed\n' >"${canonical_path}/README.md"
+	/usr/bin/git -C "$canonical_path" add README.md
+	/usr/bin/git -C "$canonical_path" commit -q -m seed
+	/usr/bin/git -C "$canonical_path" symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/develop
+	/usr/bin/git -C "$canonical_path" worktree add -q -b feature/linked "$linked_path"
+
+	_init_registry_db
+	sqlite3 "$WORKTREE_REGISTRY_DB" "
+		INSERT OR REPLACE INTO worktree_owners
+			(worktree_path, branch, owner_pid, owner_session)
+		VALUES ('$canonical_path', 'develop', $OWNER_PID, 'ses_invalid_canonical');
+	"
+
+	local rc=0
+	if claim_worktree_ownership "$canonical_path" develop --owner-pid "$CLAIM_PID" --session ses_claim; then
+		rc=1
+	fi
+	local canonical_rows=""
+	canonical_rows=$(sqlite3 "$WORKTREE_REGISTRY_DB" "SELECT COUNT(*) FROM worktree_owners WHERE worktree_path = '$canonical_path';")
+	[[ "$canonical_rows" == "0" ]] || rc=1
+	kill -0 "$OWNER_PID" >/dev/null 2>&1 || rc=1
+
+	sqlite3 "$WORKTREE_REGISTRY_DB" "
+		INSERT OR REPLACE INTO worktree_owners
+			(worktree_path, branch, owner_pid, owner_session, owner_batch, task_id)
+		VALUES ('$canonical_path', 'develop', $OWNER_PID, 'prior-worker', 'generation-7', '22438');
+	"
+	local canonical_owner="" expected_pid="" expected_session="" expected_batch=""
+	local expected_task="" expected_created_at=""
+	canonical_owner=$(owner_info "$canonical_path")
+	IFS='|' read -r expected_pid expected_session expected_batch expected_task expected_created_at <<<"$canonical_owner"
+	if transfer_worktree_ownership_if_expected "$canonical_path" develop \
+		--owner-pid "$CLAIM_PID" --session continuation-worker --batch generation-8 --task 22438 \
+		--expected-owner-pid "$expected_pid" --expected-session "$expected_session" \
+		--expected-batch "$expected_batch" --expected-task "$expected_task" \
+		--expected-created-at "$expected_created_at"; then
+		rc=1
+	fi
+	canonical_rows=$(sqlite3 "$WORKTREE_REGISTRY_DB" "SELECT COUNT(*) FROM worktree_owners WHERE worktree_path = '$canonical_path';")
+	[[ "$canonical_rows" == "0" ]] || rc=1
+	kill -0 "$OWNER_PID" >/dev/null 2>&1 || rc=1
+
+	export OPENCODE_SESSION_ID="ses_linked_owner"
+	claim_worktree_ownership "$linked_path" feature/linked --owner-pid "$CLAIM_PID" --session "$OPENCODE_SESSION_ID" || rc=1
+	[[ "$(owner_info "$linked_path")" == "${CLAIM_PID}|${OPENCODE_SESSION_ID}|"* ]] || rc=1
+	print_result "canonical rows are purged without signalling live PIDs while linked ownership works" "$rc"
+	return 0
+}
+
+test_expected_owner_transfer_is_atomic() {
+	reset_registry
+	local wt_path="${TEST_ROOT}/expected-transfer"
+	mkdir -p "$wt_path"
+	register_worktree "$wt_path" "feature/expected-transfer" --owner-pid "$OWNER_PID" \
+		--session "prior-worker" --batch "generation-7" --task "22438"
+
+	local current_owner="" expected_pid="" expected_session="" expected_batch=""
+	local expected_task="" expected_created_at=""
+	current_owner=$(owner_info "$wt_path")
+	IFS='|' read -r expected_pid expected_session expected_batch expected_task expected_created_at <<<"$current_owner"
+
+	local rc=0
+	transfer_worktree_ownership_if_expected "$wt_path" "feature/expected-transfer" \
+		--owner-pid "$CLAIM_PID" --session "continuation-worker" --batch "generation-8" --task "22438" \
+		--expected-owner-pid "$expected_pid" --expected-session "$expected_session" \
+		--expected-batch "$expected_batch" --expected-task "$expected_task" \
+		--expected-created-at "$expected_created_at" || rc=1
+	[[ "$(owner_info "$wt_path")" == "${CLAIM_PID}|continuation-worker|generation-8|22438|"* ]] || rc=1
+	print_result "exact expected owner transfers atomically" "$rc"
+	return 0
+}
+
+test_expected_owner_transfer_rejects_concurrent_mutation() {
+	reset_registry
+	local wt_path="${TEST_ROOT}/concurrent-transfer"
+	mkdir -p "$wt_path"
+	register_worktree "$wt_path" "feature/concurrent-transfer" --owner-pid "$OWNER_PID" \
+		--session "prior-worker" --batch "generation-7" --task "22438"
+
+	local captured_owner="" expected_pid="" expected_session="" expected_batch=""
+	local expected_task="" expected_created_at=""
+	captured_owner=$(owner_info "$wt_path")
+	IFS='|' read -r expected_pid expected_session expected_batch expected_task expected_created_at <<<"$captured_owner"
+
+	register_worktree "$wt_path" "feature/concurrent-transfer" --owner-pid "$CLAIM_PID" \
+		--session "competing-worker" --batch "generation-8" --task "22438"
+	local rc=0
+	if transfer_worktree_ownership_if_expected "$wt_path" "feature/concurrent-transfer" \
+		--owner-pid "$OWNER_PID" --session "late-worker" --batch "generation-9" --task "22438" \
+		--expected-owner-pid "$expected_pid" --expected-session "$expected_session" \
+		--expected-batch "$expected_batch" --expected-task "$expected_task" \
+		--expected-created-at "$expected_created_at"; then
+		rc=1
+	fi
+	[[ "$(owner_info "$wt_path")" == "${CLAIM_PID}|competing-worker|generation-8|22438|"* ]] || rc=1
+	print_result "expected-owner transfer rejects concurrent registry mutation" "$rc"
+	return 0
+}
+
+test_expected_owner_transfer_rejects_missing_option_value_cleanly() {
+	reset_registry
+	local wt_path="${TEST_ROOT}/missing-option-value"
+	mkdir -p "$wt_path"
+
+	local output="" status=0 rc=0
+	output=$(transfer_worktree_ownership_if_expected "$wt_path" "feature/missing-option-value" \
+		--task 2>&1) || status=$?
+	if [[ "$status" -eq 0 || "$output" == *"shift count out of range"* ]]; then
+		rc=1
+	fi
+	print_result "expected-owner transfer rejects a missing option value cleanly" "$rc"
+	return 0
+}
+
 main() {
 	start_live_pids
 	test_same_opencode_session_rolls_owner_pid
@@ -163,6 +286,10 @@ main() {
 	test_different_session_stays_blocked
 	test_empty_session_cannot_roll_owner_pid
 	test_untrusted_session_cannot_roll_owner_pid
+	test_canonical_paths_are_purged_without_signalling_live_owner
+	test_expected_owner_transfer_is_atomic
+	test_expected_owner_transfer_rejects_concurrent_mutation
+	test_expected_owner_transfer_rejects_missing_option_value_cleanly
 	printf 'Results: %s/%s passed, %s failed\n' "$((TESTS_RUN - TESTS_FAILED))" "$TESTS_RUN" "$TESTS_FAILED"
 	[[ "$TESTS_FAILED" -eq 0 ]] && return 0
 	return 1

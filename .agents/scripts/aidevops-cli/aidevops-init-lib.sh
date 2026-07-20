@@ -35,6 +35,8 @@ _init_lib_dir="${BASH_SOURCE[0]%/*}"
 [[ "$_init_lib_dir" == "${BASH_SOURCE[0]}" ]] && _init_lib_dir="."
 # shellcheck source=aidevops-project-config-lib.sh
 source "${_init_lib_dir}/aidevops-project-config-lib.sh"
+# shellcheck source=aidevops-project-context-lib.sh
+source "${_init_lib_dir}/aidevops-project-context-lib.sh"
 unset _init_lib_dir
 
 _AGENT_SOURCE_TEMPLATE_VERSION="1"
@@ -66,6 +68,8 @@ _init_write_project_config() {
 	local enable_beads="$2"
 	local enable_sops="$3"
 	local enable_security="$4"
+	local enable_deployment_context="$5"
+	local enable_wordpress_context="$6"
 	local desired_file merged_file
 	_init_load_repo_verify_lib || return 1
 	_repo_verify_lock_acquire "$config_file" || return 1
@@ -89,8 +93,9 @@ _init_write_project_config() {
 		--argjson git_workflow "$enable_git_workflow" --argjson code_quality "$enable_code_quality" \
 		--argjson time_tracking "$enable_time_tracking" --argjson database "$enable_database" \
 		--argjson beads "$enable_beads" --argjson sops "$enable_sops" --argjson security "$enable_security" \
+		--argjson deployment_context "$enable_deployment_context" --argjson wordpress_context "$enable_wordpress_context" \
 		'{version:$version,initialized:$initialized,init_scope:$init_scope,has_interface:$has_interface,agent_source:$agent_source,
-		features:{planning:$planning,git_workflow:$git_workflow,code_quality:$code_quality,time_tracking:$time_tracking,database:$database,beads:$beads,sops:$sops,security:$security},
+		features:{planning:$planning,git_workflow:$git_workflow,code_quality:$code_quality,time_tracking:$time_tracking,database:$database,beads:$beads,sops:$sops,security:$security,deployment_context:$deployment_context,wordpress_context:$wordpress_context},
 		time_tracking:{enabled:$time_tracking,prompt_on_commit:true,auto_record_branch_start:true},
 		database:{enabled:$database,schema_path:"schemas",migrations_path:"migrations",seeds_path:"seeds",auto_generate_migration:true},
 		beads:{enabled:$beads,sync_on_commit:false,auto_ready_check:true},
@@ -569,9 +574,9 @@ _update_agents_md_worktrees() {
 			continue
 		fi
 		if [[ "$in_section" == "true" ]]; then
-			if [[ "$line" == "## "* ]]; then
+			if [[ "$line" == "## "* || "$line" == "<!-- aidevops:"*":start -->" ]]; then
 				in_section=false
-				printf '%s\n' "$line" >>"$tmp_file"
+				printf '\n%s\n' "$line" >>"$tmp_file"
 			fi
 			continue
 		fi
@@ -612,9 +617,9 @@ _update_agents_md_security() {
 
 		if [[ "$in_security" == "true" ]]; then
 			# Check if we've hit the next ## heading (end of Security section)
-			if [[ "$line" == "## "* ]]; then
+			if [[ "$line" == "## "* || "$line" == "<!-- aidevops:"*":start -->" ]]; then
 				in_security=false
-				printf '%s\n' "$line" >>"$tmp_file"
+				printf '\n%s\n' "$line" >>"$tmp_file"
 			fi
 			# Skip lines within the old Security section
 			continue
@@ -641,6 +646,8 @@ _init_parse_features() {
 	planning) echo "planning" ;; git-workflow) echo "git_workflow" ;; code-quality) echo "code_quality" ;;
 	time-tracking) echo "time_tracking planning" ;; database) echo "database" ;;
 	beads) echo "beads planning" ;; sops) echo "sops" ;; security) echo "security" ;;
+	deployment-context | hosting-context) echo "deployment_context" ;;
+	wordpress-context) echo "wordpress_context deployment_context" ;;
 	*)
 		local result=""
 		IFS=',' read -ra FL <<<"$features"
@@ -650,6 +657,8 @@ _init_parse_features() {
 			code-quality) result="$result code_quality" ;; time-tracking) result="$result time_tracking planning" ;;
 			database) result="$result database" ;; beads) result="$result beads planning" ;;
 			sops) result="$result sops" ;; security) result="$result security" ;;
+			deployment-context | hosting-context) result="$result deployment_context" ;;
+			wordpress-context) result="$result wordpress_context deployment_context" ;;
 			esac
 		done
 		echo "$result"
@@ -934,7 +943,8 @@ _init_run_workflow() {
 	parsed=$(_init_parse_features "$features")
 	local enable_planning=false enable_git_workflow=false enable_code_quality=false
 	local enable_time_tracking=false enable_database=false enable_beads=false
-	local enable_sops=false enable_security=false
+	local enable_sops=false enable_security=false enable_deployment_context=false
+	local enable_wordpress_context=false
 	local _f
 	for _f in $parsed; do
 		case "$_f" in
@@ -942,6 +952,8 @@ _init_run_workflow() {
 		code_quality) enable_code_quality=true ;; time_tracking) enable_time_tracking=true ;;
 		database) enable_database=true ;; beads) enable_beads=true ;;
 		sops) enable_sops=true ;; security) enable_security=true ;;
+		deployment_context) enable_deployment_context=true ;;
+		wordpress_context) enable_wordpress_context=true ;;
 		esac
 	done
 
@@ -977,7 +989,8 @@ _init_prepare_project_config() {
 	fi
 	_init_write_project_config "$config_file" "$aidevops_version" "$init_scope" "$has_interface" "$is_agent_source" \
 		"$enable_planning" "$enable_git_workflow" "$enable_code_quality" "$enable_time_tracking" \
-		"$enable_database" "$enable_beads" "$enable_sops" "$enable_security" || {
+		"$enable_database" "$enable_beads" "$enable_sops" "$enable_security" \
+		"$enable_deployment_context" "$enable_wordpress_context" || {
 		print_error "Failed to write .aidevops.json"
 		return 1
 	}
@@ -1075,6 +1088,7 @@ _init_config_and_agents() {
 			print_success "Created .agents/AGENTS.md"
 		fi
 	fi
+	_init_scaffold_project_context "$project_root" "$enable_deployment_context" "$enable_wordpress_context" || return 1
 
 	_init_root_agents_file || return 1
 	return 0
@@ -1587,6 +1601,8 @@ _init_security_and_registration() {
 	[[ "$enable_beads" == "true" ]] && features_list="${features_list}beads,"
 	[[ "$enable_sops" == "true" ]] && features_list="${features_list}sops,"
 	[[ "$enable_security" == "true" ]] && features_list="${features_list}security,"
+	[[ "$enable_deployment_context" == "true" ]] && features_list="${features_list}deployment-context,"
+	[[ "$enable_wordpress_context" == "true" ]] && features_list="${features_list}wordpress-context,"
 	features_list="${features_list%,}" # Remove trailing comma
 
 	# Register the *main* repo path (not the worktree path) in repos.json.
@@ -1617,6 +1633,9 @@ _init_commit_files() {
 	[[ -f "$project_root/.gitattributes" ]] && init_files+=(".gitattributes")
 	[[ -f "$project_root/.gitignore" ]] && init_files+=(".gitignore")
 	[[ -d "$project_root/.agents" ]] && init_files+=(".agents/")
+	[[ -f "$project_root/.aidevops/.gitignore" ]] && init_files+=(".aidevops/.gitignore")
+	[[ -f "$project_root/.aidevops/deployments.yaml" ]] && init_files+=(".aidevops/deployments.yaml")
+	[[ -f "$project_root/.aidevops/wordpress.yaml" ]] && init_files+=(".aidevops/wordpress.yaml")
 	[[ -f "$project_root/AGENTS.md" ]] && init_files+=("AGENTS.md")
 	[[ -f "$project_root/DESIGN.md" ]] && init_files+=("DESIGN.md")
 	[[ -f "$project_root/TODO.md" ]] && init_files+=("TODO.md")
@@ -1670,6 +1689,8 @@ _init_print_summary() {
 	[[ "$enable_beads" == "true" ]] && echo "  ✓ Beads (task graph visualization)"
 	[[ "$enable_sops" == "true" ]] && echo "  ✓ SOPS (encrypted config files with age backend)"
 	[[ "$enable_security" == "true" ]] && echo "  ✓ Security (per-repo posture assessment)"
+	[[ "$enable_deployment_context" == "true" ]] && echo "  ✓ Deployment context (.aidevops/deployments.yaml)"
+	[[ "$enable_wordpress_context" == "true" ]] && echo "  ✓ WordPress context (.aidevops/wordpress.yaml)"
 	[[ -f "$project_root/MODELS.md" ]] && echo "  ✓ MODELS.md (per-repo model performance leaderboard)"
 	echo ""
 	# When init ran inside a worktree (check_protected_branch created one),

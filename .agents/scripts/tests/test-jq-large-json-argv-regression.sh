@@ -50,7 +50,7 @@ build_large_json() {
 import json
 payload = "x" * 300
 print(json.dumps([
-    {"number": i, "labels": [{"name": "bug"}], "assignees": [{"login": "dev"}], "updatedAt": "2026-06-26T00:00:00Z", "title": payload}
+    {"number": i, "state": "open", "labels": [{"name": "bug"}], "assignees": [{"login": "dev"}], "updatedAt": "2026-06-26T00:00:00Z", "title": payload}
     for i in range(600)
 ]))
 PY
@@ -59,7 +59,7 @@ PY
 import json
 payload = "y" * 300
 print(json.dumps([
-    {"number": i, "labels": [{"name": "ready"}], "assignees": [{"login": "dev"}], "reviewDecision": "APPROVED", "mergeable": "MERGEABLE", "updatedAt": "2026-06-26T00:00:00Z", "title": payload}
+    {"number": i, "labels": [{"name": "ready"}], "assignees": [{"login": "dev"}], "reviewDecision": "APPROVED", "mergeable": "MERGEABLE", "updatedAt": "2026-06-26T00:00:00Z", "headRefOid": f"sha-{i:040d}", "title": payload}
     for i in range(600)
 ]))
 PY
@@ -90,8 +90,18 @@ test_prefetch_fingerprint_accepts_large_lists() {
 	setup_env
 	# shellcheck source=../pulse-prefetch-infra.sh
 	source "$SCRIPTS_DIR/pulse-prefetch-infra.sh"
-	local hash
-	hash=$(_compute_repo_state_fingerprint "owner/repo")
+	local issues_snapshot="" prs_snapshot="" hash=""
+	issues_snapshot=$(printf '%s' "$LARGE_ISSUES_JSON" | jq -c \
+		--arg schema "$_PREFETCH_SNAPSHOT_SCHEMA" --arg projection "$_PREFETCH_ISSUES_PROJECTION" \
+		'{schema:$schema,repository:"owner/repo",collection:"issues",projection:$projection,
+		  auth_scope:"github.com",generation:"large",source:"fixture",
+		  fetched_at:"2026-06-26T00:00:00Z",complete:true,items:.}')
+	prs_snapshot=$(printf '%s' "$LARGE_PRS_JSON" | jq -c \
+		--arg schema "$_PREFETCH_SNAPSHOT_SCHEMA" --arg projection "$_PREFETCH_PRS_PROJECTION" \
+		'{schema:$schema,repository:"owner/repo",collection:"prs",projection:$projection,
+		  auth_scope:"github.com",generation:"large",source:"fixture",
+		  fetched_at:"2026-06-26T00:00:00Z",complete:true,items:.}')
+	hash=$(_compute_repo_state_fingerprint "owner/repo" "$issues_snapshot" "$prs_snapshot")
 	if [[ "$hash" =~ ^[0-9a-f]{16}$ ]]; then
 		print_result "prefetch fingerprint avoids large jq argv" 0
 	else

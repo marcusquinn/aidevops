@@ -17,7 +17,7 @@ fi
 # AI Assistant Server Access Framework Setup Script
 # Helps developers set up the framework for their infrastructure
 #
-# Version: 3.32.148
+# Version: 3.32.157
 #
 # Quick Install:
 #   npm install -g aidevops && aidevops update          (recommended)
@@ -84,8 +84,6 @@ SETUP_MODULES_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.agents/scripts/setup" 2
 if [[ -d "$SETUP_MODULES_DIR" ]]; then
 	# shellcheck disable=SC1091  # Dynamic path via $SETUP_MODULES_DIR; files exist at runtime
 	source "$SETUP_MODULES_DIR/_common.sh"
-	# shellcheck disable=SC1091
-	source "$SETUP_MODULES_DIR/_backup.sh"
 	# shellcheck disable=SC1091
 	source "$SETUP_MODULES_DIR/_validation.sh"
 	# shellcheck disable=SC1091

@@ -223,7 +223,13 @@ _stub_gh_api() {
 	local path="${2:-}"
 	local remaining="${STUB_RATE_LIMIT_REMAINING:-5000}"
 	if [[ "$subcommand" == "rate_limit" ]]; then
-		printf '%s\n' "$remaining"
+		printf '{"resources":{"graphql":{"remaining":'
+		if [[ "$remaining" =~ ^[0-9]+$ ]]; then
+			printf '%s' "$remaining"
+		else
+			printf '"%s"' "$remaining"
+		fi
+		printf ',"limit":5000}}}\n'
 		return 0
 	fi
 	if [[ "$subcommand" == "user" ]]; then
@@ -971,7 +977,7 @@ export STUB_RATE_LIMIT_REMAINING=0
 issue_list_title=$(gh_issue_list --repo "owner/repo" --state open \
 	--json number,title,url,assignees,labels,updatedAt --jq '.[0].title' 2>/dev/null || true)
 
-if [[ "$issue_list_title" == '"Reduce GraphQL list-call pressure"' ]] &&
+if [[ "$issue_list_title" == "Reduce GraphQL list-call pressure" ]] &&
 	grep -qE '^api /repos/owner/repo/issues\?state=open&per_page=30' "$GH_CALLS" 2>/dev/null &&
 	! grep -qE '^issue list' "$GH_CALLS" 2>/dev/null; then
 	pass "gh_issue_list REST fallback preserves compact --json/--jq shape"
@@ -1427,6 +1433,26 @@ if [[ "$unsupported_preserve_ok" == "1" && "$unsupported_rest_calls" == "0" && "
 else
 	fail "gh_pr_view freshness classes keep GraphQL-only fields off REST reuse" \
 		"preserve_ok=${unsupported_preserve_ok} rest_calls=${unsupported_rest_calls} graphql_calls=${unsupported_graphql_calls} GH_CALLS=$(cat "$GH_CALLS")"
+fi
+
+: >"$GH_CALLS"
+: >"$GH_INFO_OUTPUT"
+export STUB_RATE_LIMIT_REMAINING=0
+export STUB_PRIMARY_FAIL=1
+export AIDEVOPS_GH_PR_VIEW_CACHE_DISABLE=1
+unsupported_fallback_output=""
+unsupported_fallback_rc=0
+unsupported_fallback_output=$(gh_pr_view 123 --repo "owner/repo" --json reviews 2>/dev/null) || unsupported_fallback_rc=$?
+unset STUB_PRIMARY_FAIL AIDEVOPS_GH_PR_VIEW_CACHE_DISABLE
+export STUB_RATE_LIMIT_REMAINING=5000
+
+unsupported_fallback_rest_calls=$(grep -cE '^api /repos/owner/repo/pulls/123$' "$GH_CALLS" 2>/dev/null || true)
+unsupported_fallback_graphql_calls=$(grep -cE '^pr view 123 --repo owner/repo --json reviews$' "$GH_CALLS" 2>/dev/null || true)
+if [[ "$unsupported_fallback_rc" -ne 0 && -z "$unsupported_fallback_output" && "$unsupported_fallback_rest_calls" == "0" && "$unsupported_fallback_graphql_calls" == "1" ]]; then
+	pass "gh_pr_view exhaustion preserves failure for GraphQL-only fields"
+else
+	fail "gh_pr_view exhaustion preserves failure for GraphQL-only fields" \
+		"rc=${unsupported_fallback_rc} output=${unsupported_fallback_output} rest_calls=${unsupported_fallback_rest_calls} graphql_calls=${unsupported_fallback_graphql_calls} GH_CALLS=$(cat "$GH_CALLS")"
 fi
 
 if grep -q 'stable-within-cycle' "${SCRIPTS_DIR}/shared-gh-wrappers-rest-fallback.sh" 2>/dev/null &&

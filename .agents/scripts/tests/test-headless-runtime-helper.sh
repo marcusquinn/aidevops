@@ -1071,7 +1071,7 @@ test_worker_worktree_claim_reclaims_stale_live_same_task_owner() {
 	init_git_worktree "$worktree_dir"
 	export WORKER_ISSUE_NUMBER="22438"
 	export AIDEVOPS_WORKER_WORKTREE_OWNER_RECLAIM_AGE_SECONDS="1"
-	local claim_calls=0 unregister_called=0
+	local claim_calls=0 transfer_called=0 unregister_called=0
 	local live_pid="$$"
 
 	claim_worktree_ownership() {
@@ -1095,20 +1095,28 @@ test_worker_worktree_claim_reclaims_stale_live_same_task_owner() {
 		unregister_called=$((unregister_called + 1))
 		return 0
 	}
+	transfer_worktree_ownership_if_expected() {
+		local transfer_path="$1"
+		local transfer_branch="$2"
+		[[ -n "$transfer_path" && -n "$transfer_branch" ]] || return 1
+		transfer_called=$((transfer_called + 1))
+		return 0
+	}
 
 	local status=0
 	_hrw_claim_worker_worktree "issue-22438" "$worktree_dir" >/dev/null || status=$?
 
-	unset -f claim_worktree_ownership check_worktree_owner unregister_worktree 2>/dev/null || true
+	unset -f claim_worktree_ownership check_worktree_owner unregister_worktree \
+		transfer_worktree_ownership_if_expected 2>/dev/null || true
 	unset WORKER_ISSUE_NUMBER AIDEVOPS_WORKER_WORKTREE_OWNER_RECLAIM_AGE_SECONDS _WORKER_PRELAUNCH_FAILURE_REASON 2>/dev/null || true
 
-	if [[ "$status" -eq 0 && "$claim_calls" -eq 2 && "$unregister_called" -eq 1 ]]; then
+	if [[ "$status" -eq 0 && "$claim_calls" -eq 2 && "$transfer_called" -eq 1 && "$unregister_called" -eq 0 ]]; then
 		print_result "worker worktree claim reclaims stale live same-task owner" 0
 		return 0
 	fi
 
 	print_result "worker worktree claim reclaims stale live same-task owner" 1 \
-		"status=$status calls=$claim_calls unregister=$unregister_called"
+		"status=$status calls=$claim_calls transfer=$transfer_called unregister=$unregister_called"
 	return 0
 }
 
@@ -1118,7 +1126,7 @@ test_worker_worktree_claim_reclaims_dispatch_precreate_owner() {
 	init_git_worktree "$worktree_dir"
 	export WORKER_ISSUE_NUMBER="22438"
 	export AIDEVOPS_WORKER_WORKTREE_OWNER_RECLAIM_AGE_SECONDS="900"
-	local claim_calls=0 unregister_called=0
+	local claim_calls=0 transfer_called=0 unregister_called=0
 	local live_pid="$$"
 
 	claim_worktree_ownership() {
@@ -1142,20 +1150,267 @@ test_worker_worktree_claim_reclaims_dispatch_precreate_owner() {
 		unregister_called=$((unregister_called + 1))
 		return 0
 	}
+	transfer_worktree_ownership_if_expected() {
+		local transfer_path="$1"
+		local transfer_branch="$2"
+		[[ -n "$transfer_path" && -n "$transfer_branch" ]] || return 1
+		transfer_called=$((transfer_called + 1))
+		return 0
+	}
 
 	local status=0
 	_hrw_claim_worker_worktree "issue-22438" "$worktree_dir" >/dev/null || status=$?
 
-	unset -f claim_worktree_ownership check_worktree_owner unregister_worktree 2>/dev/null || true
+	unset -f claim_worktree_ownership check_worktree_owner unregister_worktree \
+		transfer_worktree_ownership_if_expected 2>/dev/null || true
 	unset WORKER_ISSUE_NUMBER AIDEVOPS_WORKER_WORKTREE_OWNER_RECLAIM_AGE_SECONDS _WORKER_PRELAUNCH_FAILURE_REASON 2>/dev/null || true
 
-	if [[ "$status" -eq 0 && "$claim_calls" -eq 2 && "$unregister_called" -eq 1 ]]; then
+	if [[ "$status" -eq 0 && "$claim_calls" -eq 2 && "$transfer_called" -eq 1 && "$unregister_called" -eq 0 ]]; then
 		print_result "worker worktree claim reclaims dispatch precreate owner" 0
 		return 0
 	fi
 
 	print_result "worker worktree claim reclaims dispatch precreate owner" 1 \
-		"status=$status calls=$claim_calls unregister=$unregister_called"
+		"status=$status calls=$claim_calls transfer=$transfer_called unregister=$unregister_called"
+	return 0
+}
+
+set_continuation_transfer_env() {
+	local owner_pid="$1"
+	local owner_session="$2"
+	local owner_batch="$3"
+	local owner_task="$4"
+	local owner_created_at="$5"
+	export AIDEVOPS_WORKTREE_OWNER_TRANSFER_MODE="continuation"
+	export AIDEVOPS_WORKTREE_EXPECTED_OWNER_PID="$owner_pid"
+	export AIDEVOPS_WORKTREE_EXPECTED_OWNER_SESSION="$owner_session"
+	export AIDEVOPS_WORKTREE_EXPECTED_OWNER_BATCH="$owner_batch"
+	export AIDEVOPS_WORKTREE_EXPECTED_OWNER_TASK="$owner_task"
+	export AIDEVOPS_WORKTREE_EXPECTED_OWNER_CREATED_AT="$owner_created_at"
+	return 0
+}
+
+clear_continuation_transfer_env() {
+	unset AIDEVOPS_WORKTREE_OWNER_TRANSFER_MODE \
+		AIDEVOPS_WORKTREE_EXPECTED_OWNER_PID \
+		AIDEVOPS_WORKTREE_EXPECTED_OWNER_SESSION \
+		AIDEVOPS_WORKTREE_EXPECTED_OWNER_BATCH \
+		AIDEVOPS_WORKTREE_EXPECTED_OWNER_TASK \
+		AIDEVOPS_WORKTREE_EXPECTED_OWNER_CREATED_AT \
+		WORKER_ISSUE_NUMBER _WORKER_PRELAUNCH_FAILURE_REASON 2>/dev/null || true
+	return 0
+}
+
+test_worker_worktree_continuation_transfers_dirty_same_task_owner() {
+	local worktree_dir="${TEST_ROOT}/continuation-dirty"
+	mkdir -p "$worktree_dir"
+	init_git_worktree "$worktree_dir"
+	printf 'preserve me\n' >"${worktree_dir}/continuation.txt"
+	export WORKER_ISSUE_NUMBER="22438"
+	local live_pid="$$" owner_created_at="2026-07-18T00:00:00Z"
+	set_continuation_transfer_env "$live_pid" "generation-7" "batch-7" "22438" "$owner_created_at"
+	local claim_calls=0 transfer_calls=0
+
+	claim_worktree_ownership() {
+		claim_calls=$((claim_calls + 1))
+		return 1
+	}
+	check_worktree_owner() {
+		local check_path="$1"
+		[[ -n "$check_path" ]] || return 1
+		printf '%s|%s|%s|%s|%s\n' "$live_pid" "generation-7" "batch-7" "22438" "$owner_created_at"
+		return 0
+	}
+	transfer_worktree_ownership_if_expected() {
+		local transfer_path="$1"
+		local transfer_branch="$2"
+		[[ -n "$transfer_path" && -n "$transfer_branch" ]] || return 1
+		transfer_calls=$((transfer_calls + 1))
+		return 0
+	}
+
+	local status=0 preserved_status=""
+	_hrw_claim_worker_worktree "issue-22438" "$worktree_dir" >/dev/null || status=$?
+	preserved_status=$(git -C "$worktree_dir" status --porcelain 2>/dev/null || true)
+
+	unset -f claim_worktree_ownership check_worktree_owner transfer_worktree_ownership_if_expected 2>/dev/null || true
+	clear_continuation_transfer_env
+
+	if [[ "$status" -eq 0 && "$claim_calls" -eq 0 && "$transfer_calls" -eq 1 &&
+		"$preserved_status" == *"continuation.txt"* ]]; then
+		print_result "dirty same-task continuation transfers without discarding edits" 0
+		return 0
+	fi
+	print_result "dirty same-task continuation transfers without discarding edits" 1 \
+		"status=$status claim_calls=$claim_calls transfer_calls=$transfer_calls git_status=${preserved_status:-<empty>}"
+	return 0
+}
+
+test_worker_worktree_continuation_transfers_ahead_same_task_owner() {
+	local worktree_dir="${TEST_ROOT}/continuation-ahead"
+	mkdir -p "$worktree_dir"
+	init_git_worktree "$worktree_dir"
+	git -C "$worktree_dir" -c user.name="aidevops-test" -c user.email="aidevops-test@example.invalid" \
+		commit --allow-empty -q -m "continuation checkpoint"
+	local expected_head=""
+	expected_head=$(git -C "$worktree_dir" rev-parse HEAD)
+	export WORKER_ISSUE_NUMBER="22438"
+	local live_pid="$$" owner_created_at="2026-07-18T00:00:01Z"
+	set_continuation_transfer_env "$live_pid" "generation-7" "batch-7" "22438" "$owner_created_at"
+	local claim_calls=0 transfer_calls=0
+
+	claim_worktree_ownership() {
+		claim_calls=$((claim_calls + 1))
+		return 1
+	}
+	check_worktree_owner() {
+		local check_path="$1"
+		[[ -n "$check_path" ]] || return 1
+		printf '%s|%s|%s|%s|%s\n' "$live_pid" "generation-7" "batch-7" "22438" "$owner_created_at"
+		return 0
+	}
+	transfer_worktree_ownership_if_expected() {
+		local transfer_path="$1"
+		local transfer_branch="$2"
+		[[ -n "$transfer_path" && -n "$transfer_branch" ]] || return 1
+		transfer_calls=$((transfer_calls + 1))
+		return 0
+	}
+
+	local status=0 actual_head="" ahead_count=""
+	_hrw_claim_worker_worktree "issue-22438" "$worktree_dir" >/dev/null || status=$?
+	actual_head=$(git -C "$worktree_dir" rev-parse HEAD 2>/dev/null || true)
+	ahead_count=$(git -C "$worktree_dir" rev-list --count origin/main..HEAD 2>/dev/null || true)
+
+	unset -f claim_worktree_ownership check_worktree_owner transfer_worktree_ownership_if_expected 2>/dev/null || true
+	clear_continuation_transfer_env
+
+	if [[ "$status" -eq 0 && "$claim_calls" -eq 0 && "$transfer_calls" -eq 1 &&
+		"$actual_head" == "$expected_head" && "$ahead_count" == "1" ]]; then
+		print_result "ahead same-task continuation transfers without discarding commits" 0
+		return 0
+	fi
+	print_result "ahead same-task continuation transfers without discarding commits" 1 \
+		"status=$status claim_calls=$claim_calls transfer_calls=$transfer_calls head=$actual_head ahead=$ahead_count"
+	return 0
+}
+
+test_worker_worktree_continuation_classifies_task_mismatch() {
+	local worktree_dir="${TEST_ROOT}/continuation-task-mismatch"
+	mkdir -p "$worktree_dir"
+	export WORKER_ISSUE_NUMBER="22438"
+	local live_pid="$$" owner_created_at="2026-07-18T00:00:02Z" transfer_calls=0
+	set_continuation_transfer_env "$live_pid" "generation-7" "batch-7" "99999" "$owner_created_at"
+	check_worktree_owner() {
+		local check_path="$1"
+		[[ -n "$check_path" ]] || return 1
+		printf '%s|%s|%s|%s|%s\n' "$live_pid" "generation-7" "batch-7" "99999" "$owner_created_at"
+		return 0
+	}
+	transfer_worktree_ownership_if_expected() {
+		transfer_calls=$((transfer_calls + 1))
+		return 0
+	}
+
+	local status=0 reason=""
+	_hrw_claim_worker_worktree "issue-22438" "$worktree_dir" >/dev/null 2>&1 || status=$?
+	reason="${_WORKER_PRELAUNCH_FAILURE_REASON:-}"
+	unset -f check_worktree_owner transfer_worktree_ownership_if_expected 2>/dev/null || true
+	clear_continuation_transfer_env
+
+	if [[ "$status" -ne 0 && "$transfer_calls" -eq 0 && "$reason" == "worker_worktree_continuation_task_mismatch" ]]; then
+		print_result "same-task continuation rejects registry task mismatch precisely" 0
+		return 0
+	fi
+	print_result "same-task continuation rejects registry task mismatch precisely" 1 \
+		"status=$status transfer_calls=$transfer_calls reason=${reason:-<empty>}"
+	return 0
+}
+
+test_worker_worktree_continuation_classifies_owner_mismatch() {
+	local worktree_dir="${TEST_ROOT}/continuation-owner-mismatch"
+	mkdir -p "$worktree_dir"
+	export WORKER_ISSUE_NUMBER="22438"
+	local live_pid="$$" owner_created_at="2026-07-18T00:00:03Z" transfer_calls=0
+	set_continuation_transfer_env "$live_pid" "generation-7" "batch-7" "22438" "$owner_created_at"
+	check_worktree_owner() {
+		local check_path="$1"
+		[[ -n "$check_path" ]] || return 1
+		printf '%s|%s|%s|%s|%s\n' "$live_pid" "competing-generation" "batch-8" "22438" "$owner_created_at"
+		return 0
+	}
+	transfer_worktree_ownership_if_expected() {
+		transfer_calls=$((transfer_calls + 1))
+		return 0
+	}
+
+	local status=0 reason=""
+	_hrw_claim_worker_worktree "issue-22438" "$worktree_dir" >/dev/null 2>&1 || status=$?
+	reason="${_WORKER_PRELAUNCH_FAILURE_REASON:-}"
+	unset -f check_worktree_owner transfer_worktree_ownership_if_expected 2>/dev/null || true
+	clear_continuation_transfer_env
+
+	if [[ "$status" -ne 0 && "$transfer_calls" -eq 0 && "$reason" == "worker_worktree_continuation_owner_mismatch" ]]; then
+		print_result "same-task continuation rejects expected-owner mismatch precisely" 0
+		return 0
+	fi
+	print_result "same-task continuation rejects expected-owner mismatch precisely" 1 \
+		"status=$status transfer_calls=$transfer_calls reason=${reason:-<empty>}"
+	return 0
+}
+
+test_worker_worktree_continuation_classifies_concurrent_mutation() {
+	local worktree_dir="${TEST_ROOT}/continuation-concurrent-mutation"
+	mkdir -p "$worktree_dir"
+	export WORKER_ISSUE_NUMBER="22438"
+	local live_pid="$$" owner_created_at="2026-07-18T00:00:04Z" transfer_calls=0
+	set_continuation_transfer_env "$live_pid" "generation-7" "batch-7" "22438" "$owner_created_at"
+	check_worktree_owner() {
+		local check_path="$1"
+		[[ -n "$check_path" ]] || return 1
+		printf '%s|%s|%s|%s|%s\n' "$live_pid" "generation-7" "batch-7" "22438" "$owner_created_at"
+		return 0
+	}
+	transfer_worktree_ownership_if_expected() {
+		transfer_calls=$((transfer_calls + 1))
+		return 1
+	}
+
+	local status=0 reason=""
+	_hrw_claim_worker_worktree "issue-22438" "$worktree_dir" >/dev/null 2>&1 || status=$?
+	reason="${_WORKER_PRELAUNCH_FAILURE_REASON:-}"
+	unset -f check_worktree_owner transfer_worktree_ownership_if_expected 2>/dev/null || true
+	clear_continuation_transfer_env
+
+	if [[ "$status" -ne 0 && "$transfer_calls" -eq 1 && "$reason" == "worker_worktree_continuation_concurrent_mutation" ]]; then
+		print_result "same-task continuation rejects concurrent owner mutation precisely" 0
+		return 0
+	fi
+	print_result "same-task continuation rejects concurrent owner mutation precisely" 1 \
+		"status=$status transfer_calls=$transfer_calls reason=${reason:-<empty>}"
+	return 0
+}
+
+test_worker_worktree_continuation_classifies_invalid_state() {
+	local worktree_dir="${TEST_ROOT}/continuation-invalid-state"
+	mkdir -p "$worktree_dir"
+	export WORKER_ISSUE_NUMBER="22438"
+	export AIDEVOPS_WORKTREE_OWNER_TRANSFER_MODE="continuation"
+	unset AIDEVOPS_WORKTREE_EXPECTED_OWNER_PID AIDEVOPS_WORKTREE_EXPECTED_OWNER_SESSION \
+		AIDEVOPS_WORKTREE_EXPECTED_OWNER_BATCH AIDEVOPS_WORKTREE_EXPECTED_OWNER_TASK \
+		AIDEVOPS_WORKTREE_EXPECTED_OWNER_CREATED_AT 2>/dev/null || true
+
+	local status=0 reason=""
+	_hrw_claim_worker_worktree "issue-22438" "$worktree_dir" >/dev/null 2>&1 || status=$?
+	reason="${_WORKER_PRELAUNCH_FAILURE_REASON:-}"
+	clear_continuation_transfer_env
+
+	if [[ "$status" -ne 0 && "$reason" == "worker_worktree_continuation_state_rejected" ]]; then
+		print_result "same-task continuation rejects incomplete transfer state precisely" 0
+		return 0
+	fi
+	print_result "same-task continuation rejects incomplete transfer state precisely" 1 \
+		"status=$status reason=${reason:-<empty>}"
 	return 0
 }
 
@@ -2426,6 +2681,59 @@ test_replay_preserved_worker_db_verifies_before_deletion() {
 	return 0
 }
 
+test_worker_db_replay_lock_recovers_stale_owner_and_waits_for_pid() {
+	local recovery_root="${TEST_ROOT}/replay-lock-recovery"
+	local replay_lock="${recovery_root}/.replay.lock"
+	local stale_status=0 live_status=0 race_status=0
+	local acquired_pid="" observed_pid="" race_pid=""
+	local lock_holder_pid="" pid_writer_pid=""
+
+	mkdir -p "$replay_lock"
+	printf '%s\n' '99999999' >"${replay_lock}/pid"
+	_acquire_worker_db_replay_lock "$replay_lock" || stale_status=$?
+	acquired_pid=$(_read_worker_db_replay_lock_pid "$replay_lock")
+	_release_worker_db_replay_lock "$replay_lock"
+
+	mkdir -p "$replay_lock"
+	command sleep 5 &
+	lock_holder_pid=$!
+	(
+		command sleep 0.2
+		printf '%s\n' "$lock_holder_pid" >"${replay_lock}/pid"
+	) &
+	pid_writer_pid=$!
+	_acquire_worker_db_replay_lock "$replay_lock" || live_status=$?
+	wait "$pid_writer_pid" 2>/dev/null || true
+	observed_pid=$(_read_worker_db_replay_lock_pid "$replay_lock")
+	kill "$lock_holder_pid" 2>/dev/null || true
+	wait "$lock_holder_pid" 2>/dev/null || true
+	rm -rf "$replay_lock"
+
+	mkdir -p "$replay_lock"
+	printf '%s\n' '99999999' >"${replay_lock}/pid"
+	mkdir() {
+		local mkdir_target="$1"
+		if [[ "$mkdir_target" == "${replay_lock}/.reclaim" ]]; then
+			command rm -rf "$replay_lock"
+			return 1
+		fi
+		command mkdir "$@"
+		return $?
+	}
+	_acquire_worker_db_replay_lock "$replay_lock" || race_status=$?
+	unset -f mkdir
+	race_pid=$(_read_worker_db_replay_lock_pid "$replay_lock")
+	_release_worker_db_replay_lock "$replay_lock"
+
+	if [[ "$stale_status" -eq 0 && "$acquired_pid" == "$$" && "$live_status" -eq 1 && "$observed_pid" == "$lock_holder_pid" && "$race_status" -eq 0 && "$race_pid" == "$$" ]]; then
+		print_result "worker DB replay lock reclaims stale owners, waits for PIDs, and retries owner release races" 0
+		return 0
+	fi
+	print_result "worker DB replay lock reclaims stale owners, waits for PIDs, and retries owner release races" 1 \
+		"stale_status=$stale_status acquired=$acquired_pid live_status=$live_status observed=$observed_pid holder=$lock_holder_pid race_status=$race_status race_pid=$race_pid"
+	return 0
+}
+
 test_sync_worker_db_migration_metadata_repairs_prewarmed_project_table() {
 	local shared_dir="${HOME}/.local/share/opencode"
 	local isolated_dir="${TEST_ROOT}/isolated-opencode-prewarm"
@@ -3251,6 +3559,96 @@ test_cmd_run_finish_rejects_unverified_post_pr_handoff() {
 	else
 		print_result "unverified POST_PR_HANDOFF cannot suppress failure routing" 1 \
 			"captured=${captured:-<empty>} release=${release_reason:-<empty>} ledger=${ledger_status:-<empty>} result=${finish_result:-<empty>}"
+	fi
+	return 0
+}
+
+test_permission_finish_failure_recovers_draft_and_runs_cleanup() {
+	local result=""
+	result=$(
+		(
+			_run_result_label="permission_required"
+			_run_failure_reason=""
+			local recovery_called=0 cleanup_called=0
+			_hrw_finish_permission_required_run() {
+				_hrw_mark_failed_terminal_state "$_HRW_STATUS_FAILED" "$_HRW_PERMISSION_PERSISTENCE_FAILED"
+				return 1
+			}
+			_worker_external_terminal_complete() { return 1; }
+			_recover_worker_output_on_failure() {
+				recovery_called=1
+				_HRW_RECOVERY_CLASSIFICATION="$_HRW_REASON_DRAFT_CHECKPOINT"
+				return 0
+			}
+			_report_failure_to_fast_fail() { return 0; }
+			_hrw_record_terminal_outcome() { return 0; }
+			_emit_worker_runtime_event() { return 0; }
+			_hrw_record_reconciled_outcome() { return 0; }
+			_hrw_finish_cleanup() {
+				local session_key="$1"
+				local ledger_status="$2"
+				cleanup_called=1
+				printf "cleanup_ledger=%s\n" "$ledger_status"
+				return 0
+			}
+
+			local status=0
+			_cmd_run_finish "issue-99999" "$_HRW_STATUS_PERMISSION_REQUIRED" "${TEST_ROOT}" || status=$?
+			printf "status=%s|recovery=%s|cleanup=%s|terminal=%s|classification=%s|failure=%s\n" \
+				"$status" "$recovery_called" "$cleanup_called" "$_HRW_FINAL_RUNTIME_STATUS" \
+				"$_HRW_FINAL_RUNTIME_CLASSIFICATION" "$_run_failure_reason"
+		)
+	)
+	if [[ "$result" == *"cleanup_ledger=fail"* && \
+		"$result" == *"status=1|recovery=1|cleanup=1|terminal=escalated|classification=worker_draft_checkpoint|failure=permission_request_persistence_failed"* ]]; then
+		print_result "permission persistence failure recovers draft and runs common cleanup" 0
+	else
+		print_result "permission persistence failure recovers draft and runs common cleanup" 1 "$result"
+	fi
+	return 0
+}
+
+test_permission_finish_failure_without_output_releases_and_cleans_up() {
+	local result=""
+	result=$(
+		(
+			_run_result_label="permission_required"
+			_run_failure_reason=""
+			local recovery_called=0 cleanup_called=0 released_reason="" fast_fail_reason=""
+			_hrw_finish_permission_required_run() {
+				_hrw_mark_failed_terminal_state "$_HRW_STATUS_FAILED" "$_HRW_PERMISSION_PERSISTENCE_FAILED"
+				return 1
+			}
+			_worker_external_terminal_complete() { return 1; }
+			_recover_worker_output_on_failure() { recovery_called=1; return 1; }
+			_release_dispatch_claim() {
+				local session_key="$1"
+				local reason="$2"
+				released_reason="$reason"
+				return 0
+			}
+			_report_failure_to_fast_fail() {
+				local session_key="$1"
+				local reason="$2"
+				fast_fail_reason="$reason"
+				return 0
+			}
+			_hrw_record_terminal_outcome() { return 0; }
+			_emit_worker_runtime_event() { return 0; }
+			_hrw_record_reconciled_outcome() { return 0; }
+			_hrw_finish_cleanup() { cleanup_called=1; return 0; }
+
+			local status=0
+			_cmd_run_finish "issue-99999" "$_HRW_STATUS_PERMISSION_REQUIRED" "${TEST_ROOT}" || status=$?
+			printf "status=%s|recovery=%s|cleanup=%s|released=%s|fast_fail=%s|classification=%s\n" \
+				"$status" "$recovery_called" "$cleanup_called" "$released_reason" "$fast_fail_reason" \
+				"$_HRW_FINAL_RUNTIME_CLASSIFICATION"
+		)
+	)
+	if [[ "$result" == "status=1|recovery=1|cleanup=1|released=worker_failed|fast_fail=permission_request_persistence_failed|classification=permission_request_persistence_failed" ]]; then
+		print_result "permission persistence failure without output releases and cleans up" 0
+	else
+		print_result "permission persistence failure without output releases and cleans up" 1 "$result"
 	fi
 	return 0
 }
@@ -4219,6 +4617,7 @@ run_worker_db_persistence_tests() {
 	test_merge_worker_db_rejects_missing_required_destination_column
 	test_merge_worker_db_failure_preserves_recovery_db_without_auth
 	test_replay_preserved_worker_db_verifies_before_deletion
+	test_worker_db_replay_lock_recovers_stale_owner_and_waits_for_pid
 	test_sync_worker_db_migration_metadata_repairs_prewarmed_project_table
 	test_sync_worker_db_migration_metadata_replaces_stale_ledgers
 	test_copy_worker_db_migration_ledger_preserves_rows_when_attach_fails
@@ -4244,6 +4643,48 @@ run_private_workload_security_tests() {
 	return 0
 }
 
+run_worker_finish_tests() {
+	test_release_dispatch_claim_ignores_non_issue_session_key_digits
+	test_cmd_run_finish_emits_noop_for_zero_output
+	test_cmd_run_finish_emits_complete_for_real_output
+	test_cmd_run_finish_appends_reconciled_attempt_outcome
+	test_cmd_run_finish_rejects_unverified_post_pr_handoff
+	test_permission_finish_failure_recovers_draft_and_runs_cleanup
+	test_permission_finish_failure_without_output_releases_and_cleans_up
+	test_begin_worker_runtime_run_refreshes_run_id
+	test_internal_opencode_retries_refresh_run_id
+	test_reconciled_outcome_persistence_retries
+	test_cmd_run_finish_emits_complete_when_no_workdir
+	test_attempt_orphan_recovery_pr_calls_gh_create
+	test_ensure_orphan_recovery_rejects_empty_branch
+	test_build_orphan_recovery_pr_body_tolerates_missing_publish_flag
+	test_cmd_run_finish_orphan_recovery_success_emits_worker_complete
+	test_cmd_run_finish_local_unpushed_pushes_and_recovers_pr
+	test_handle_worker_branch_orphan_empty_branch_issue_search_is_not_complete
+	test_cmd_run_finish_orphan_recovery_failure_emits_branch_orphan
+	test_cmd_run_finish_local_unpushed_push_failure_emits_distinct_reason
+	test_cmd_run_finish_fail_recovers_branch_orphan_output
+	test_cmd_run_finish_fail_closed_issue_without_merged_pr_fails
+	test_cmd_run_finish_fail_existing_pr_recovery_remains_complete
+	test_cmd_run_finish_fail_confirmed_terminal_state_releases_complete
+	return 0
+}
+
+run_worker_worktree_ownership_tests() {
+	test_worker_worktree_claim_transfers_to_runtime_pid
+	test_worker_worktree_claim_reclaims_stale_live_same_task_owner
+	test_worker_worktree_claim_reclaims_dispatch_precreate_owner
+	test_worker_worktree_continuation_transfers_dirty_same_task_owner
+	test_worker_worktree_continuation_transfers_ahead_same_task_owner
+	test_worker_worktree_continuation_classifies_task_mismatch
+	test_worker_worktree_continuation_classifies_owner_mismatch
+	test_worker_worktree_continuation_classifies_concurrent_mutation
+	test_worker_worktree_continuation_classifies_invalid_state
+	test_worker_worktree_clean_without_upstream_blocks_local_commits
+	test_worker_worktree_claim_classifies_unreclaimed_live_owner
+	return 0
+}
+
 main() {
 	setup_test_env
 	test_appends_escalation_contract
@@ -4264,11 +4705,7 @@ main() {
 	test_issue_worker_env_contract_rejects_missing_env
 	test_issue_worker_env_contract_rejects_missing_worktree
 	test_issue_worker_env_contract_accepts_valid_precreated_worktree
-	test_worker_worktree_claim_transfers_to_runtime_pid
-	test_worker_worktree_claim_reclaims_stale_live_same_task_owner
-	test_worker_worktree_claim_reclaims_dispatch_precreate_owner
-	test_worker_worktree_clean_without_upstream_blocks_local_commits
-	test_worker_worktree_claim_classifies_unreclaimed_live_owner
+	run_worker_worktree_ownership_tests
 	test_runtime_launch_marker_precedes_invocation
 	test_clean_prelaunch_exit_is_precise_nonzero_failure
 	test_deleted_cwd_recovery_uses_worker_worktree
@@ -4312,27 +4749,7 @@ main() {
 	test_worker_produced_output_branch_no_pr_returns_branch_orphan
 	test_worker_produced_output_local_branch_no_remote_returns_local_branch_unpushed
 	test_worker_produced_output_branch_with_pr_returns_pr_exists
-	test_release_dispatch_claim_ignores_non_issue_session_key_digits
-	test_cmd_run_finish_emits_noop_for_zero_output
-	test_cmd_run_finish_emits_complete_for_real_output
-	test_cmd_run_finish_appends_reconciled_attempt_outcome
-	test_cmd_run_finish_rejects_unverified_post_pr_handoff
-	test_begin_worker_runtime_run_refreshes_run_id
-	test_internal_opencode_retries_refresh_run_id
-	test_reconciled_outcome_persistence_retries
-	test_cmd_run_finish_emits_complete_when_no_workdir
-	test_attempt_orphan_recovery_pr_calls_gh_create
-	test_ensure_orphan_recovery_rejects_empty_branch
-	test_build_orphan_recovery_pr_body_tolerates_missing_publish_flag
-	test_cmd_run_finish_orphan_recovery_success_emits_worker_complete
-	test_cmd_run_finish_local_unpushed_pushes_and_recovers_pr
-	test_handle_worker_branch_orphan_empty_branch_issue_search_is_not_complete
-	test_cmd_run_finish_orphan_recovery_failure_emits_branch_orphan
-	test_cmd_run_finish_local_unpushed_push_failure_emits_distinct_reason
-	test_cmd_run_finish_fail_recovers_branch_orphan_output
-	test_cmd_run_finish_fail_closed_issue_without_merged_pr_fails
-	test_cmd_run_finish_fail_existing_pr_recovery_remains_complete
-	test_cmd_run_finish_fail_confirmed_terminal_state_releases_complete
+	run_worker_finish_tests
 	teardown_test_env
 	printf '\nTests run: %d\n' "$TESTS_RUN"
 	printf 'Failures: %d\n' "$TESTS_FAILED"

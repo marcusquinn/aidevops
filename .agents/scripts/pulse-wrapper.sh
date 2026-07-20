@@ -204,6 +204,15 @@ _pw_bootstrap_script_dir="$(_pulse_wrapper_resolve_script_dir "$_pw_source_path"
 	return 2 2>/dev/null || exit 2
 }
 source "${_pw_bootstrap_script_dir}/portable-stat.sh"
+# shellcheck source=./runtime-bundle-lease.sh
+source "${_pw_bootstrap_script_dir}/runtime-bundle-lease.sh"
+if [[ "${BASH_SOURCE[0]:-}" == "${0:-}" ]]; then
+	if ! aidevops_runtime_bundle_lease_acquire "${_pw_bootstrap_script_dir%/scripts}"; then
+		printf '[pulse-wrapper] FATAL: could not acquire runtime bundle lease for %s\n' "${_pw_bootstrap_script_dir%/scripts}" >&2
+		return 2 2>/dev/null || exit 2
+	fi
+	trap 'aidevops_runtime_bundle_lease_release' EXIT
+fi
 unset _pw_source_path _pw_bootstrap_script_dir
 if [[ "$_pulse_skip_jitter" -eq 0 ]]; then
 	_pw_ffjit_lockdir="${HOME}/.aidevops/logs/pulse-wrapper.lockdir"
@@ -1642,7 +1651,7 @@ main() {
 	# Register EXIT trap BEFORE acquiring the lock so the lock is always
 	# released on exit — including set -e aborts, SIGTERM, and return paths.
 	# SIGKILL cannot be trapped; stale-lock detection handles that case.
-	trap 'release_instance_lock' EXIT
+	trap '_pulse_efficiency_cycle_finish; release_instance_lock; aidevops_runtime_bundle_lease_release' EXIT
 
 	if ! acquire_instance_lock; then
 		return 0
@@ -1680,7 +1689,12 @@ main() {
 		export AIDEVOPS_GH_PR_VIEW_CACHE_DIR="${AIDEVOPS_PULSE_PR_VIEW_CACHE_DIR:-${HOME}/.aidevops/cache/pulse-pr-view-cache}"
 		export AIDEVOPS_GH_PR_VIEW_CACHE_TTL="${AIDEVOPS_PULSE_PR_VIEW_CACHE_TTL:-3600}"
 		_save_cleanup_scope
+		# Register process-lifetime resources first so LIFO cleanup removes
+		# per-cycle caches, records the cycle, releases the lock, then drops the
+		# runtime bundle lease last.
+		push_cleanup 'aidevops_runtime_bundle_lease_release'
 		push_cleanup 'release_instance_lock'
+		push_cleanup '_pulse_efficiency_cycle_finish'
 		# GH#23728: keep EXIT (not RETURN) for SIGTERM/set -e lock safety, but
 		# register release_instance_lock before replacing the direct EXIT trap.
 		trap '_run_cleanups' EXIT
@@ -1698,7 +1712,9 @@ main() {
 		export PULSE_PR_LIST_PROVIDER_CACHE_TTL="${AIDEVOPS_PULSE_PR_LIST_CACHE_TTL:-3600}"
 		if [[ "$_pulse_pr_cache_cleanup_scope" -eq 0 ]]; then
 			_save_cleanup_scope
+			push_cleanup 'aidevops_runtime_bundle_lease_release'
 			push_cleanup 'release_instance_lock'
+			push_cleanup '_pulse_efficiency_cycle_finish'
 			# GH#23728: keep EXIT (not RETURN) for SIGTERM/set -e lock safety, but
 			# register release_instance_lock before replacing the direct EXIT trap.
 			trap '_run_cleanups' EXIT
@@ -1826,6 +1842,12 @@ main() {
 		return 0
 	fi
 
+	# GH#27777: bracket every real pulse cycle with typed production evidence.
+	# The fail-open finish hook is also registered in the EXIT cleanup path so
+	# unexpected set -e exits publish a conservative partial cycle rather than
+	# silently dropping the observation window.
+	_pulse_efficiency_cycle_start
+
 	# t3068: drain any pending approval-trigger records before the regular
 	# cycle. Backstop for the dedicated 60s --merge-only plist; if an
 	# approval landed since the last merge-only tick, we pick it up here
@@ -1835,6 +1857,7 @@ main() {
 
 	# Run pre-flight stages (cleanup, prefetch, normalization)
 	if ! _run_preflight_stages; then
+		_pulse_efficiency_cycle_finish idle
 		return 0
 	fi
 
@@ -1842,6 +1865,7 @@ main() {
 	# been issued during the prefetch/cleanup phase above (t2943)
 	if [[ -f "$STOP_FLAG" ]]; then
 		echo "[pulse-wrapper] Stop flag appeared during setup — aborting before run_pulse()" >>"$LOGFILE"
+		_pulse_efficiency_cycle_finish idle
 		return 0
 	fi
 
@@ -1876,9 +1900,10 @@ main() {
 	#
 	# Lock protocol: we release the instance lock BEFORE exec so the re-exec'd
 	# process can acquire it cleanly. exec does NOT trigger EXIT traps (bash
-	# replaces the process image), so release_instance_lock must be called
-	# explicitly here. The rate-limit t3018 self-heal handles the resulting
-	# state: no live lock holder → stale stamp cleared → proceeds normally.
+	# replaces the process image), so both the instance lock and runtime bundle
+	# lease must be released explicitly here. The rate-limit t3018 self-heal
+	# handles the resulting state: no live lock holder → stale stamp cleared →
+	# proceeds normally.
 	#
 	# In-flight workers: workers are detached via setsid (_dlw_exec_detached)
 	# and survive parent re-exec regardless. No in-flight dispatch is interrupted.
@@ -1892,13 +1917,16 @@ main() {
 			[[ "$_pw_mtime_now" -gt 0 ]] &&
 			[[ "$_pw_mtime_now" != "$_pw_mtime_loaded" ]]; then
 			echo "[pulse-wrapper] t3033: source modified (${_pw_mtime_loaded} -> ${_pw_mtime_now}) — releasing lock and re-execing for fresh code" >>"$WRAPPER_LOGFILE"
+			_pulse_efficiency_cycle_finish
 			release_instance_lock
+			aidevops_runtime_bundle_lease_release
 			exec "$_pw_self" "$@"
 			# exec should not return; if it does, log and fall through to normal exit
 			echo "[pulse-wrapper] t3033: exec failed for '${_pw_self}' — continuing with normal exit" >>"$WRAPPER_LOGFILE"
 		fi
 	fi
 
+	_pulse_efficiency_cycle_finish
 	return 0
 }
 

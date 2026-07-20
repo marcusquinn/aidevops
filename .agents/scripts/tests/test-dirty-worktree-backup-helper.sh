@@ -34,70 +34,119 @@ teardown() {
 setup_repo() {
 	local repo_dir="$1"
 	mkdir -p "$repo_dir"
-	(
-		cd "$repo_dir" || exit 1
-		git init -q -b main
-		git config user.email test@example.invalid
-		git config user.name Test
-		printf 'base\n' >README.md
-		git add README.md
-		git commit -q -m init
-	)
+	/usr/bin/git -C "$repo_dir" init -q -b main || return 1
+	/usr/bin/git -C "$repo_dir" config user.email test@example.invalid || return 1
+	/usr/bin/git -C "$repo_dir" config user.name Test || return 1
+	/usr/bin/git -C "$repo_dir" config commit.gpgsign false || return 1
+	printf 'base\n' >"$repo_dir/README.md"
+	/usr/bin/git -C "$repo_dir" add README.md || return 1
+	/usr/bin/git -C "$repo_dir" commit -q -m init || return 1
 	return 0
 }
 
-test_backup_preserves_dirty_without_mutation() {
-	local repo_dir="${TEST_ROOT}/repo"
-	local backup_root="${TEST_ROOT}/backups"
+test_round_trip_preserves_exact_state() {
+	local repo_dir="${TEST_ROOT}/round-trip-repo"
+	local backup_root="${TEST_ROOT}/round-trip-backups"
 	local output=""
+	local backup_dir=""
+	local backup_id=""
+	local rc=0
+
+	setup_repo "$repo_dir" || return 1
+	printf 'staged\n' >"$repo_dir/staged.txt"
+	/usr/bin/git -C "$repo_dir" add staged.txt || return 1
+	printf 'unstaged\n' >>"$repo_dir/README.md"
+	mkdir -p "$repo_dir/todo/tasks"
+	printf 'brief\n' >"$repo_dir/todo/tasks/t1-brief.md"
+	ln -s ../../README.md "$repo_dir/todo/tasks/readme-link"
+
+	output=$(AIDEVOPS_REAL_GIT_BIN=/usr/bin/git AIDEVOPS_DIRTY_BACKUP_ROOT="$backup_root" \
+		bash "$HELPER" backup --repo "$repo_dir" --reason $'roundtrip\twith\nmetadata' \
+		--task t1 --operation-id round-trip --machine 2>/dev/null) || return 1
+	IFS='|' read -r backup_id backup_dir <<<"$output"
+	[[ -n "$backup_id" && -d "$backup_dir" ]] || return 1
+	[[ -s "$backup_dir/tracked.patch" ]] || rc=1
+	[[ -f "$backup_dir/untracked/todo/tasks/t1-brief.md" ]] || rc=1
+	[[ -L "$backup_dir/untracked/todo/tasks/readme-link" ]] || rc=1
+	[[ -f "$backup_dir/manifest.tsv" ]] || rc=1
+	AIDEVOPS_REAL_GIT_BIN=/usr/bin/git AIDEVOPS_DIRTY_BACKUP_ROOT="$backup_root" \
+		bash "$HELPER" verify --repo "$repo_dir" --backup "$backup_id" >/dev/null || rc=1
+	AIDEVOPS_REAL_GIT_BIN=/usr/bin/git AIDEVOPS_DIRTY_BACKUP_ROOT="$backup_root" \
+		bash "$HELPER" matches --repo "$repo_dir" --backup "$backup_id" >/dev/null || rc=1
+	local repeated_output=""
+	repeated_output=$(AIDEVOPS_REAL_GIT_BIN=/usr/bin/git AIDEVOPS_DIRTY_BACKUP_ROOT="$backup_root" \
+		bash "$HELPER" backup --repo "$repo_dir" --operation-id round-trip --machine 2>/dev/null) || rc=1
+	[[ "$repeated_output" == "$output" ]] || rc=1
+	if AIDEVOPS_REAL_GIT_BIN=/usr/bin/git AIDEVOPS_DIRTY_BACKUP_ROOT="$backup_root" \
+		bash "$HELPER" verify --repo "$repo_dir" --backup ../escape >/dev/null 2>&1; then
+		rc=1
+	fi
+
+	AIDEVOPS_REAL_GIT_BIN=/usr/bin/git AIDEVOPS_DIRTY_BACKUP_ROOT="$backup_root" \
+		bash "$HELPER" clean --repo "$repo_dir" --backup "$backup_id" \
+		--confirm CLEAN_VERIFIED_DIRTY_WORKTREE_BACKUP >/dev/null || rc=1
+	[[ -z "$(/usr/bin/git -C "$repo_dir" status --porcelain=v1)" ]] || rc=1
+	[[ ! -e "$repo_dir/todo/tasks/t1-brief.md" ]] || rc=1
+
+	AIDEVOPS_REAL_GIT_BIN=/usr/bin/git AIDEVOPS_DIRTY_BACKUP_ROOT="$backup_root" \
+		bash "$HELPER" restore --repo "$repo_dir" --backup "$backup_id" \
+		--confirm RESTORE_DIRTY_WORKTREE_BACKUP >/dev/null || rc=1
+	AIDEVOPS_REAL_GIT_BIN=/usr/bin/git AIDEVOPS_DIRTY_BACKUP_ROOT="$backup_root" \
+		bash "$HELPER" matches --repo "$repo_dir" --backup "$backup_id" >/dev/null || rc=1
+	[[ -L "$repo_dir/todo/tasks/readme-link" ]] || rc=1
+	[[ "$(/usr/bin/git -C "$repo_dir" show :staged.txt)" == "staged" ]] || rc=1
+
+	print_result "backup-clean-restore round trip preserves HEAD, index, tracked, untracked, and symlink state" "$rc" "backup_id=$backup_id"
+	return 0
+}
+
+test_clean_refuses_changed_state() {
+	local repo_dir="${TEST_ROOT}/changed-repo"
+	local backup_root="${TEST_ROOT}/changed-backups"
+	local output=""
+	local backup_id=""
 	local backup_dir=""
 	local rc=0
 
 	setup_repo "$repo_dir" || return 1
-	(
-		cd "$repo_dir" || exit 1
-		printf 'edit\n' >>README.md
-		mkdir -p todo/tasks
-		printf 'brief\n' >todo/tasks/t1-brief.md
-	)
-
-	output=$(AIDEVOPS_DIRTY_BACKUP_ROOT="$backup_root" "$HELPER" backup --repo "$repo_dir" --reason test --task t1 2>/dev/null) || rc=1
-	backup_dir="$output"
-
-	[[ "$rc" -eq 0 ]] || return 1
-	[[ -s "$backup_dir/tracked.patch" ]] || rc=1
-	[[ -f "$backup_dir/untracked/todo/tasks/t1-brief.md" ]] || rc=1
-	[[ -f "$backup_dir/manifest.tsv" ]] || rc=1
-	(
-		cd "$repo_dir" || exit 1
-		git status --short | grep -q 'README.md' && git status --short | grep -q 'todo/'
-	) || rc=1
-
-	print_result "backup preserves tracked and untracked dirt without mutating repo" "$rc" "backup_dir=$backup_dir"
+	printf 'first\n' >>"$repo_dir/README.md"
+	output=$(AIDEVOPS_REAL_GIT_BIN=/usr/bin/git AIDEVOPS_DIRTY_BACKUP_ROOT="$backup_root" \
+		bash "$HELPER" backup --repo "$repo_dir" --operation-id changed --machine 2>/dev/null) || return 1
+	IFS='|' read -r backup_id backup_dir <<<"$output"
+	printf 'second\n' >>"$repo_dir/README.md"
+	if AIDEVOPS_REAL_GIT_BIN=/usr/bin/git AIDEVOPS_DIRTY_BACKUP_ROOT="$backup_root" \
+		bash "$HELPER" clean --repo "$repo_dir" --backup "$backup_id" \
+		--confirm CLEAN_VERIFIED_DIRTY_WORKTREE_BACKUP >/dev/null 2>&1; then
+		rc=1
+	fi
+	grep -q '^second$' "$repo_dir/README.md" || rc=1
+	[[ -d "$backup_dir" ]] || rc=1
+	print_result "clean refuses state changed after preservation" "$rc"
 	return 0
 }
 
-test_prune_removes_terminal_pr_backup() {
+test_prune_requires_terminal_state() {
+	local repo_dir="${TEST_ROOT}/prune-repo"
 	local backup_root="${TEST_ROOT}/prune-backups"
-	local backup_dir="${backup_root}/sample"
-	local bin_dir="${TEST_ROOT}/bin"
+	local output=""
+	local backup_id=""
+	local backup_dir=""
 	local rc=0
-	mkdir -p "$backup_dir" "$bin_dir"
-	{
-		printf 'schema\tdirty-worktree-backup-v1\n'
-		printf 'repo_slug\towner/repo\n'
-		printf 'pr\t123\n'
-		printf 'state\topen\n'
-	} >"$backup_dir/manifest.tsv"
-	cat >"$bin_dir/gh" <<'GH'
-#!/usr/bin/env bash
-printf 'MERGED\n'
-GH
-	chmod +x "$bin_dir/gh"
 
-	PATH="$bin_dir:$PATH" AIDEVOPS_DIRTY_BACKUP_ROOT="$backup_root" "$HELPER" prune --force >/dev/null 2>&1 || rc=1
+	setup_repo "$repo_dir" || return 1
+	printf 'open backup\n' >>"$repo_dir/README.md"
+	output=$(AIDEVOPS_REAL_GIT_BIN=/usr/bin/git AIDEVOPS_DIRTY_BACKUP_ROOT="$backup_root" \
+		bash "$HELPER" backup --repo "$repo_dir" --operation-id prune --machine 2>/dev/null) || return 1
+	IFS='|' read -r backup_id backup_dir <<<"$output"
+	AIDEVOPS_REAL_GIT_BIN=/usr/bin/git AIDEVOPS_DIRTY_BACKUP_ROOT="$backup_root" \
+		bash "$HELPER" prune --force --retention-days 0 >/dev/null || rc=1
+	[[ -d "$backup_dir" ]] || rc=1
+	AIDEVOPS_DIRTY_BACKUP_ROOT="$backup_root" bash "$HELPER" acknowledge \
+		--backup "$backup_id" --confirm ACKNOWLEDGE_DIRTY_WORKTREE_BACKUP >/dev/null || rc=1
+	AIDEVOPS_REAL_GIT_BIN=/usr/bin/git AIDEVOPS_DIRTY_BACKUP_ROOT="$backup_root" \
+		bash "$HELPER" prune --force --retention-days 0 >/dev/null || rc=1
 	[[ ! -d "$backup_dir" ]] || rc=1
-	print_result "prune removes backups linked to terminal PRs" "$rc"
+	print_result "prune retains open evidence and removes only acknowledged backups" "$rc"
 	return 0
 }
 
@@ -105,8 +154,9 @@ main() {
 	TEST_ROOT=$(mktemp -d "${TMPDIR:-/tmp}/dirty-backup-test.XXXXXX") || exit 1
 	trap teardown EXIT
 
-	test_backup_preserves_dirty_without_mutation
-	test_prune_removes_terminal_pr_backup
+	test_round_trip_preserves_exact_state
+	test_clean_refuses_changed_state
+	test_prune_requires_terminal_state
 
 	printf '\nTests run: %s, failed: %s\n' "$TESTS_RUN" "$TESTS_FAILED"
 	[[ "$TESTS_FAILED" -eq 0 ]]

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
-# Checkout-free publication of TODO.md and todo/** changes.
+# Checkout-free publication of narrowly allowlisted repository state.
 
 [[ "${BASH_SOURCE[0]}" == "${0}" ]] && set -euo pipefail
 [[ -n "${_PLANNING_PUBLISHER_LOADED:-}" ]] && return 0
@@ -42,11 +42,13 @@ _planning_publish_log_retryable_conflict() {
 
 _planning_publish_path_allowed() {
 	local path="$1"
-	case "$path" in
-	TODO.md | todo/*)
+	local scope="${AIDEVOPS_PLANNING_PUBLISH_SCOPE:-planning}"
+	case "${scope}:${path}" in
+	planning:TODO.md | planning:todo/*)
 		[[ "$path" != *'..'* && "$path" != *'//'* && "$path" != */ ]]
 		return $?
 		;;
+	simplification-state:.agents/configs/simplification-state.json) return 0 ;;
 	*) return 1 ;;
 	esac
 }
@@ -70,11 +72,11 @@ _planning_publish_snapshot() {
 	while IFS= read -r path; do
 		[[ -n "$path" ]] || continue
 		_planning_publish_path_allowed "$path" || {
-			_planning_publish_log error "Unauthorized planning path: $path"
+			_planning_publish_log error "Unauthorized publication path: $path"
 			return 1
 		}
 		if [[ -L "${repo_path}/${path}" ]] || [[ -d "${repo_path}/${path}" ]]; then
-			_planning_publish_log error "Planning paths must be regular files: $path"
+			_planning_publish_log error "Publication paths must be regular files: $path"
 			return 1
 		fi
 		if [[ -f "${repo_path}/${path}" ]]; then
@@ -280,6 +282,24 @@ planning_publish() {
 		}
 		latest_sha="${parent_resolution%%|*}"
 		expected_sha="${parent_resolution#*|}"
+		_planning_publish_build_index "$repo_path" "$latest_sha" "$snapshot_file" "$index_file" || {
+			rm -rf "$temp_dir"
+			return 1
+		}
+		_planning_publish_verify_index "$repo_path" "$latest_sha" "$snapshot_file" "$index_file" || {
+			rm -rf "$temp_dir"
+			return 1
+		}
+		tree_sha=$(GIT_INDEX_FILE="$index_file" _planning_git -C "$repo_path" write-tree) || {
+			rm -rf "$temp_dir"
+			return 1
+		}
+		if [[ "$tree_sha" == "$(_planning_git -C "$repo_path" rev-parse "${latest_sha}^{tree}")" ]]; then
+			PLANNING_PUBLISH_RESULT="noop"
+			PLANNING_PUBLISHED_COMMIT="$latest_sha"
+			rm -rf "$temp_dir"
+			return 0
+		fi
 		if [[ -z "$parent_sha" && -n "$base_sha" && "$base_sha" != "$latest_sha" ]] && \
 			_planning_publish_parent_conflicts "$repo_path" "$base_sha" "$latest_sha" "$snapshot_file"; then
 			_planning_publish_log_retryable_conflict "$publication_id"
@@ -292,24 +312,6 @@ planning_publish() {
 			return 2
 		fi
 		parent_sha="$latest_sha"
-		_planning_publish_build_index "$repo_path" "$parent_sha" "$snapshot_file" "$index_file" || {
-			rm -rf "$temp_dir"
-			return 1
-		}
-		_planning_publish_verify_index "$repo_path" "$parent_sha" "$snapshot_file" "$index_file" || {
-			rm -rf "$temp_dir"
-			return 1
-		}
-		tree_sha=$(GIT_INDEX_FILE="$index_file" _planning_git -C "$repo_path" write-tree) || {
-			rm -rf "$temp_dir"
-			return 1
-		}
-		if [[ "$tree_sha" == "$(_planning_git -C "$repo_path" rev-parse "${parent_sha}^{tree}")" ]]; then
-			PLANNING_PUBLISH_RESULT="noop"
-			PLANNING_PUBLISHED_COMMIT="$parent_sha"
-			rm -rf "$temp_dir"
-			return 0
-		fi
 		candidate_sha=$(printf '%s\n\nPlanning-Publication-ID: %s\n' "$commit_msg" "$publication_id" | _planning_git -C "$repo_path" commit-tree "$tree_sha" -p "$parent_sha") || {
 			rm -rf "$temp_dir"
 			return 1
@@ -336,7 +338,7 @@ planning_publish() {
 		if [[ $push_rc -eq 0 ]]; then
 			PLANNING_PUBLISH_RESULT="published"
 			PLANNING_PUBLISHED_COMMIT="$candidate_sha"
-			_planning_publish_log success "Published planning files (${publication_id})"
+			_planning_publish_log success "Published allowlisted files (${publication_id})"
 			rm -rf "$temp_dir"
 			return 0
 		fi

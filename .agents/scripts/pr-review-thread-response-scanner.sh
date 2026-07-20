@@ -961,7 +961,7 @@ _prrts_write_prompt_file() {
 	safe_slug="$(_prrts_safe_slug "$repo_slug")"
 	safe_title="$(_prrts_prompt_metadata_line "$title" 300)"
 	safe_preview="$(_prrts_prompt_metadata_line "$preview" 500)"
-	scanner_path="${SCRIPT_DIR}/pr-review-thread-response-scanner.sh"
+	scanner_path="${HOME}/.aidevops/agents/scripts/pr-review-thread-response-scanner.sh"
 	prompt_file="${STATE_DIR}/${safe_slug}-${pr_number}-prompt.md"
 	cat >"$prompt_file" <<PROMPT_EOF
 # PR REVIEW THREAD RESPONSE — BOUNDED WORKER
@@ -1019,6 +1019,10 @@ Thread preview: ${safe_preview}
 
 Verification context:
 - Prefer focused tests/lint for changed files.
+- Do not use shell redirection syntax in Bash commands (less-than, greater-than,
+  append, here-string, or descriptor redirects such as 2>&1); the sandbox
+  command policy rejects it. Use direct command output, supported pipelines,
+  gh --jq, and file tools for persisted content.
 - Preserve existing PR scope and provenance labels.
 - Keep comments concise and cite files/commands as evidence.
 - Completion requires each verified-addressed thread to be resolved with

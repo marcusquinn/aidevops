@@ -67,6 +67,7 @@ TASK_DESC=""
 CHECK_COMMAND=""
 VERIFY_OP=""
 TARGET_FILE=""
+ACTION_LINKED_WORKTREE_REQUIRED="ACTION_REQUIRED=create_or_use_linked_worktree"
 
 while [[ $# -gt 0 ]]; do
 	case $1 in
@@ -573,7 +574,7 @@ _handle_main_repo_off_main() {
 	local branch="$1"
 	echo -e "${RED}BLOCKED${NC}: canonical repository is on '$branch' instead of its default branch"
 	echo "CANONICAL_STATE_INVALID=true"
-	echo "ACTION_REQUIRED=create_or_use_linked_worktree"
+	echo "$ACTION_LINKED_WORKTREE_REQUIRED"
 	echo "HINT: do not switch branches in the canonical repository; coordinate canonical-recovery-helper.sh separately"
 	if [[ "$LOOP_MODE" == "true" ]] || [[ ! -t 0 ]]; then
 		exit 2
@@ -623,59 +624,47 @@ if ! git rev-parse --is-inside-work-tree &>/dev/null; then
 	exit 0
 fi
 
-# Resolve structural worktree identity before interpreting detached HEAD.
-precheck_git_common_dir=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)
-precheck_git_dir=$(git rev-parse --path-format=absolute --git-dir 2>/dev/null || true)
+# Resolve structural worktree identity before branch handling or ownership.
+canonical_policy_helper="${SCRIPT_DIR}/canonical-write-policy-helper.py"
+if [[ ! -f "$canonical_policy_helper" ]]; then
+	echo -e "${RED}BLOCKED${NC}: canonical-write policy helper is unavailable"
+	echo "ACTION_REQUIRED=repair_canonical_write_policy"
+	exit 1
+fi
+worktree_classification=""
+if ! worktree_classification=$(python3 "$canonical_policy_helper" classify --cwd "$PWD" --field classification 2>/dev/null); then
+	echo -e "${RED}BLOCKED${NC}: Git worktree identity could not be classified safely"
+	echo "ACTION_REQUIRED=repair_canonical_write_policy"
+	exit 1
+fi
+
+if [[ "$worktree_classification" == "canonical" ]]; then
+	current_branch=$(git branch --show-current 2>/dev/null || true)
+	[[ -n "$current_branch" ]] || current_branch="detached"
+	[[ "$LOOP_MODE" == "true" ]] && _handle_loop_mode_on_protected "$current_branch"
+	echo -e "${RED}BLOCKED${NC}: canonical checkouts are read-only session mirrors"
+	echo "CANONICAL_WORKTREE=true"
+	echo "$ACTION_LINKED_WORKTREE_REQUIRED"
+	echo "HINT: create a safe linked worktree; use canonical-recovery-helper.sh only for audited mirror synchronization"
+	if [[ ! -t 0 ]] || [[ "${FULL_LOOP_HEADLESS:-false}" == "true" ]]; then
+		exit 2
+	fi
+	exit 1
+fi
+if [[ "$worktree_classification" != "linked" ]]; then
+	echo -e "${RED}BLOCKED${NC}: expected a linked Git worktree, got '$worktree_classification'"
+	echo "$ACTION_LINKED_WORKTREE_REQUIRED"
+	exit 1
+fi
 
 # Detached HEAD is valid only inside a linked worktree (for isolated releases).
 current_branch=$(git branch --show-current 2>/dev/null || echo "")
 if [[ -z "$current_branch" ]]; then
-	if [[ -n "$precheck_git_dir" && -n "$precheck_git_common_dir" && "$precheck_git_dir" != "$precheck_git_common_dir" ]]; then
-		current_branch="detached-release-worktree"
-	else
-		echo -e "${RED}BLOCKED${NC}: canonical detached HEAD is not a writable session context"
-		echo "ACTION_REQUIRED=create_or_use_linked_worktree"
-		exit 1
-	fi
-fi
-
-# --- Protected branch (main/master) ---
-if [[ "$current_branch" == "main" || "$current_branch" == "master" ]]; then
-	# Loop mode: auto-decide based on file path (preferred) or task description
-	[[ "$LOOP_MODE" == "true" ]] && _handle_loop_mode_on_protected "$current_branch"
-
-	# Detect headless mode (GH#4400): workers dispatched without --loop-mode
-	# get the interactive prompt and loop forever trying to edit. Detect
-	# headless by checking if stdin is not a terminal (no TTY = headless).
-	# In headless mode, output a concise machine-readable error and exit 2
-	# (worktree needed) instead of the verbose interactive prompt.
-	if [[ ! -t 0 ]] || [[ "${FULL_LOOP_HEADLESS:-false}" == "true" ]]; then
-		echo -e "${RED}BLOCKED${NC}: Canonical repo directory is on protected '$current_branch'; move code edits into a linked worktree."
-		echo "HEADLESS_BLOCKED=true"
-		echo "ACTION_REQUIRED=create_worktree"
-		echo "HINT: Use --loop-mode --file 'path' or --loop-mode --task 'description' to auto-create a worktree,"
-		echo "or dispatch with --dir pointing to an existing worktree, not the main repo."
-		exit 2
-	fi
-
-	# Interactive mode: show warning and exit
-	_show_protected_branch_warning "$current_branch"
-fi
-
-# --- Feature branch (not main/master) ---
-
-# Determine if this is the main worktree (canonical repo directory) or a linked worktree
-git_common_dir=$(git rev-parse --git-common-dir 2>/dev/null)
-git_dir=$(git rev-parse --git-dir 2>/dev/null)
-
-is_main_worktree=false
-if [[ "$git_dir" == "$git_common_dir" ]] || [[ "$git_dir" == ".git" ]]; then
-	is_main_worktree=true
+	current_branch="detached-release-worktree"
 fi
 
 # Keep the OpenCode session title authoritative while OpenCode is active.
 # Outside OpenCode, retain the repo/branch shell-title fallback.
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 # shellcheck source=/dev/null
 source "${SCRIPT_DIR}/shared-constants.sh"
 
@@ -706,11 +695,6 @@ if declare -f claim_worktree_ownership >/dev/null 2>&1; then
 		fi
 		_handle_ownership_conflict "$worktree_path" "$owner_pid" "$owner_session" "$owner_created"
 	fi
-fi
-
-# Canonical repo directory on a feature branch — warn and offer options
-if [[ "$is_main_worktree" == "true" ]]; then
-	_handle_main_repo_off_main "$current_branch"
 fi
 
 # --- Linked worktree (correct working context) ---

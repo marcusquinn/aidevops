@@ -41,6 +41,8 @@ _HRW_REASON_DRAFT_CHECKPOINT="worker_draft_checkpoint"
 _HRW_REASON_DRAFT_ESCALATION_FAILED="worker_draft_checkpoint_escalation_failed"
 _HRW_REASON_CLOSED_UNMERGED="worker_closed_unmerged_pr"
 _HRW_REASON_UNVERIFIED_HANDOFF="worker_post_pr_handoff_unverified"
+_HRW_REASON_WORKTREE_CONTINUATION_STATE_REJECTED="worker_worktree_continuation_state_rejected"
+_HRW_REASON_WORKTREE_OWNER_CONCURRENT_MUTATION="worker_worktree_owner_concurrent_mutation"
 _HRW_EVENT_FAILED="worker.failed"
 _HRW_NMR_LABEL="needs-maintainer-review"
 _HRW_PERMISSION_PERSISTENCE_FAILED="permission_request_persistence_failed"
@@ -1200,6 +1202,73 @@ _hrw_is_dispatch_precreate_owner() {
 	return 1
 }
 
+_hrw_transfer_worktree_owner_snapshot() {
+	local session_key="$1"
+	local work_dir="$2"
+	local branch="$3"
+	local owner_pid="$4"
+	local owner_session="$5"
+	local owner_batch="$6"
+	local owner_task="$7"
+	local created_at="$8"
+
+	transfer_worktree_ownership_if_expected "$work_dir" "$branch" \
+		--session "$session_key" \
+		--task "${WORKER_ISSUE_NUMBER:-}" \
+		--owner-pid "$$" \
+		--expected-owner-pid "$owner_pid" \
+		--expected-session "$owner_session" \
+		--expected-batch "$owner_batch" \
+		--expected-task "$owner_task" \
+		--expected-created-at "$created_at" || return 1
+	return 0
+}
+
+_hrw_transfer_authorized_continuation_owner() {
+	local session_key="$1"
+	local work_dir="$2"
+	local branch="$3"
+	local expected_owner_pid="${AIDEVOPS_WORKTREE_EXPECTED_OWNER_PID:-}"
+	local expected_owner_session="${AIDEVOPS_WORKTREE_EXPECTED_OWNER_SESSION:-}"
+	local expected_owner_batch="${AIDEVOPS_WORKTREE_EXPECTED_OWNER_BATCH:-}"
+	local expected_owner_task="${AIDEVOPS_WORKTREE_EXPECTED_OWNER_TASK:-}"
+	local expected_owner_created_at="${AIDEVOPS_WORKTREE_EXPECTED_OWNER_CREATED_AT:-}"
+
+	_WORKER_PRELAUNCH_FAILURE_REASON="$_HRW_REASON_WORKTREE_CONTINUATION_STATE_REJECTED"
+	[[ "$expected_owner_pid" =~ ^[0-9]+$ ]] || return 1
+	[[ -n "$expected_owner_session" && -n "$expected_owner_task" && -n "$expected_owner_created_at" ]] || return 1
+
+	local owner_info=""
+	owner_info=$(check_worktree_owner "$work_dir" 2>/dev/null || true)
+	[[ -n "$owner_info" ]] || {
+		_WORKER_PRELAUNCH_FAILURE_REASON="worker_worktree_continuation_owner_mismatch"
+		return 1
+	}
+
+	local owner_pid="" owner_session="" owner_batch="" owner_task="" created_at=""
+	IFS='|' read -r owner_pid owner_session owner_batch owner_task created_at <<<"$owner_info"
+	if [[ -z "${WORKER_ISSUE_NUMBER:-}" || "$expected_owner_task" != "${WORKER_ISSUE_NUMBER:-}" ||
+		"$owner_task" != "${WORKER_ISSUE_NUMBER:-}" ]]; then
+		_WORKER_PRELAUNCH_FAILURE_REASON="worker_worktree_continuation_task_mismatch"
+		return 1
+	fi
+	if [[ "$owner_pid" != "$expected_owner_pid" || "$owner_session" != "$expected_owner_session" ||
+		"$owner_batch" != "$expected_owner_batch" || "$created_at" != "$expected_owner_created_at" ]]; then
+		_WORKER_PRELAUNCH_FAILURE_REASON="worker_worktree_continuation_owner_mismatch"
+		return 1
+	fi
+
+	if ! _hrw_transfer_worktree_owner_snapshot "$session_key" "$work_dir" "$branch" \
+		"$owner_pid" "$owner_session" "$owner_batch" "$owner_task" "$created_at"; then
+		_WORKER_PRELAUNCH_FAILURE_REASON="worker_worktree_continuation_concurrent_mutation"
+		return 1
+	fi
+
+	print_info "[lifecycle] worker_worktree_continuation_owner_transferred session=${session_key} branch=${branch} path=${work_dir} previous_pid=${owner_pid} previous_session=${owner_session}"
+	unset _WORKER_PRELAUNCH_FAILURE_REASON 2>/dev/null || true
+	return 0
+}
+
 _hrw_reclaim_stale_worker_worktree_owner() {
 	local session_key="$1"
 	local work_dir="$2"
@@ -1213,7 +1282,10 @@ _hrw_reclaim_stale_worker_worktree_owner() {
 	IFS='|' read -r owner_pid owner_session owner_batch owner_task created_at <<<"$owner_info"
 
 	if [[ -n "$owner_pid" ]] && ! kill -0 "$owner_pid" 2>/dev/null; then
-		unregister_worktree "$work_dir" 2>/dev/null || true
+		if ! unregister_worktree_if_owner_pid "$work_dir" "$owner_pid" 2>/dev/null; then
+			_WORKER_PRELAUNCH_FAILURE_REASON="$_HRW_REASON_WORKTREE_OWNER_CONCURRENT_MUTATION"
+			return 1
+		fi
 		print_info "[lifecycle] worker_worktree_reclaimed_dead_owner session=${session_key} branch=${branch} path=${work_dir} previous_pid=${owner_pid}"
 		return 0
 	fi
@@ -1227,9 +1299,14 @@ _hrw_reclaim_stale_worker_worktree_owner() {
 	# exits immediately, and pulse retries the same issue forever.
 	if _hrw_is_dispatch_precreate_owner "$owner_session" || [[ "${AIDEVOPS_ALLOW_WORKER_WORKTREE_OWNER_TRANSFER:-0}" == "1" ]]; then
 		if ! _hrw_worktree_clean_for_owner_reclaim "$work_dir"; then
+			_WORKER_PRELAUNCH_FAILURE_REASON="$_HRW_REASON_WORKTREE_CONTINUATION_STATE_REJECTED"
 			return 1
 		fi
-		unregister_worktree "$work_dir" 2>/dev/null || true
+		if ! _hrw_transfer_worktree_owner_snapshot "$session_key" "$work_dir" "$branch" \
+			"$owner_pid" "$owner_session" "$owner_batch" "$owner_task" "$created_at"; then
+			_WORKER_PRELAUNCH_FAILURE_REASON="$_HRW_REASON_WORKTREE_OWNER_CONCURRENT_MUTATION"
+			return 1
+		fi
 		print_info "[lifecycle] worker_worktree_reclaimed_dispatch_precreate_owner session=${session_key} branch=${branch} path=${work_dir} previous_pid=${owner_pid} previous_session=${owner_session}"
 		unset _WORKER_PRELAUNCH_FAILURE_REASON 2>/dev/null || true
 		return 0
@@ -1248,10 +1325,15 @@ _hrw_reclaim_stale_worker_worktree_owner() {
 	[[ "$owner_age_s" -ge "$reclaim_age_s" ]] || return 1
 
 	if ! _hrw_worktree_clean_for_owner_reclaim "$work_dir"; then
+		_WORKER_PRELAUNCH_FAILURE_REASON="$_HRW_REASON_WORKTREE_CONTINUATION_STATE_REJECTED"
 		return 1
 	fi
 
-	unregister_worktree "$work_dir" 2>/dev/null || true
+	if ! _hrw_transfer_worktree_owner_snapshot "$session_key" "$work_dir" "$branch" \
+		"$owner_pid" "$owner_session" "$owner_batch" "$owner_task" "$created_at"; then
+		_WORKER_PRELAUNCH_FAILURE_REASON="$_HRW_REASON_WORKTREE_OWNER_CONCURRENT_MUTATION"
+		return 1
+	fi
 	print_warning "[lifecycle] worker_worktree_reclaimed_stale_live_owner session=${session_key} branch=${branch} path=${work_dir} previous_pid=${owner_pid} age_s=${owner_age_s}"
 	unset _WORKER_PRELAUNCH_FAILURE_REASON 2>/dev/null || true
 	return 0
@@ -1269,6 +1351,20 @@ _hrw_claim_worker_worktree() {
 
 	local branch=""
 	branch=$(_hrw_current_worktree_branch "$work_dir")
+	local transfer_mode="${AIDEVOPS_WORKTREE_OWNER_TRANSFER_MODE:-}"
+	if [[ -n "$transfer_mode" ]]; then
+		if [[ "$transfer_mode" != "continuation" ]]; then
+			_WORKER_PRELAUNCH_FAILURE_REASON="$_HRW_REASON_WORKTREE_CONTINUATION_STATE_REJECTED"
+			print_error "[fatal] unsupported worker worktree transfer mode: ${transfer_mode}"
+			return 1
+		fi
+		if _hrw_transfer_authorized_continuation_owner "$session_key" "$work_dir" "$branch"; then
+			print_info "[lifecycle] worker_worktree_claimed session=${session_key} branch=${branch} path=${work_dir} pid=$$ mode=continuation"
+			return 0
+		fi
+		print_error "[fatal] worker worktree continuation transfer rejected: ${work_dir} reason=${_WORKER_PRELAUNCH_FAILURE_REASON:-worker_worktree_live_owner}"
+		return 1
+	fi
 
 	# t3550: dispatcher pre-creation registers the worktree to a short-lived
 	# pulse subshell. After that subshell exits, cleanup sees a dead owner and
@@ -1631,6 +1727,9 @@ _hrw_finish_cleanup() {
 	if declare -F _cleanup_headless_runtime_temp_paths >/dev/null 2>&1; then
 		_cleanup_headless_runtime_temp_paths
 	fi
+	if declare -F aidevops_runtime_bundle_lease_release >/dev/null 2>&1; then
+		aidevops_runtime_bundle_lease_release || print_warning "Failed to release the worker runtime bundle lease"
+	fi
 	trap - EXIT
 	return 0
 }
@@ -1691,16 +1790,10 @@ _cmd_run_finish() {
 		_HRW_TERMINAL_OUTCOME="$_HRW_TELEMETRY_DEFERRED"
 	elif [[ "$ledger_status" == "$_HRW_STATUS_PERMISSION_REQUIRED" ]]; then
 		if ! _hrw_finish_permission_required_run "$session_key" "$work_dir"; then
-			_hrw_record_terminal_outcome "$session_key" "$_HRW_TERMINAL_OUTCOME" \
-				"$_HRW_FINAL_RUNTIME_CLASSIFICATION"
-			_emit_worker_runtime_event "$_HRW_FINAL_RUNTIME_EVENT" \
-				"$_HRW_FINAL_RUNTIME_STATUS" "$_HRW_FINAL_RUNTIME_CLASSIFICATION"
-			_hrw_record_reconciled_outcome "$session_key" "${_run_result_label:-$ledger_status}" \
-				"$_HRW_TERMINAL_OUTCOME" "$_HRW_FINAL_RUNTIME_STATUS" "$_HRW_FINAL_RUNTIME_CLASSIFICATION"
-			_update_dispatch_ledger "$session_key" "$_HRW_STATUS_FAIL"
-			_release_session_lock "$session_key"
-			trap - EXIT
-			return 1
+			_run_failure_reason="$_HRW_PERMISSION_PERSISTENCE_FAILED"
+			_hrw_finish_failed_run "$session_key" "$work_dir" "$external_terminal_confirmed"
+			finish_status=1
+			ledger_status="$_HRW_STATUS_FAIL"
 		fi
 	else
 		if ! _hrw_finish_success_run "$session_key" "$work_dir"; then
@@ -1840,7 +1933,7 @@ _cmd_run_prepare() {
 	# instead of emitting a fixed 'process_exit' reason for all abnormal exits.
 	# SC2064: session_key is intentionally baked in at trap-set time.
 	# shellcheck disable=SC2064
-	trap "_exit_trap_handler '$session_key'" EXIT
+	trap "_exit_trap_handler '$session_key'; if declare -F aidevops_runtime_bundle_lease_release >/dev/null 2>&1; then aidevops_runtime_bundle_lease_release; fi" EXIT
 
 	# GH#20564: Record worker start time in milliseconds for exit trap classifier.
 	# classify_worker_exit uses this to distinguish crash_during_startup (no

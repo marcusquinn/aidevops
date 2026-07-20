@@ -498,7 +498,128 @@ test_proc_snapshot_rejects_partial_visibility() {
 }
 
 # =============================================================================
-# Test 15: guard refusals expose a machine-readable reason without changing the
+# Linux /proc entries that are unreadable but provably foreign do not invalidate
+# otherwise usable evidence.
+# =============================================================================
+test_proc_snapshot_skips_foreign_uid_unreadable_entry() {
+	local proc_root="${TEST_DIR}/fake-proc-foreign"
+	local current_uid=""
+	local foreign_uid=""
+	local output=""
+	local rc=0
+	current_uid=$(id -u)
+	foreign_uid=$((current_uid + 1))
+	mkdir -p "${proc_root}/1" "${proc_root}/2"
+	ln -s /visible-cwd "${proc_root}/1/cwd"
+	ln -s /foreign-cwd "${proc_root}/2/cwd"
+	printf 'Uid:\t%s\t%s\t%s\t%s\n' \
+		"$foreign_uid" "$foreign_uid" "$foreign_uid" "$foreign_uid" >"${proc_root}/2/status"
+
+	output=$(
+		readlink() {
+			local link_path="$1"
+			[[ "$link_path" == */1/cwd ]] || return 1
+			printf '/visible-cwd\n'
+			return 0
+		}
+		_capture_worktree_proc_cwds "$proc_root"
+	) || rc=1
+	[[ "$output" == "/visible-cwd" ]] || rc=1
+	print_result "proc_snapshot_skips_foreign_uid_unreadable_entry" "$rc" \
+		"Expected foreign unreadable cwd to be skipped without hiding visible evidence"
+	return 0
+}
+
+# =============================================================================
+# Same-UID unreadability remains fail-closed because the hidden cwd may be in a
+# candidate worktree.
+# =============================================================================
+test_proc_snapshot_rejects_same_uid_unreadable_entry() {
+	local proc_root="${TEST_DIR}/fake-proc-same-uid"
+	local current_uid=""
+	local rc=0
+	current_uid=$(id -u)
+	mkdir -p "${proc_root}/1" "${proc_root}/2"
+	ln -s /visible-cwd "${proc_root}/1/cwd"
+	ln -s /same-user-cwd "${proc_root}/2/cwd"
+	printf 'Uid:\t%s\t%s\t%s\t%s\n' \
+		"$current_uid" "$current_uid" "$current_uid" "$current_uid" >"${proc_root}/2/status"
+
+	if (
+		readlink() {
+			local link_path="$1"
+			[[ "$link_path" == */1/cwd ]] || return 1
+			printf '/visible-cwd\n'
+			return 0
+		}
+		_capture_worktree_proc_cwds "$proc_root" >/dev/null
+	); then
+		rc=1
+	fi
+	print_result "proc_snapshot_rejects_same_uid_unreadable_entry" "$rc" \
+		"Expected same-UID unreadability to invalidate the snapshot"
+	return 0
+}
+
+# =============================================================================
+# Foreign skips alone are not usable evidence: an empty snapshot still blocks
+# destructive cleanup.
+# =============================================================================
+test_proc_snapshot_requires_usable_evidence_after_foreign_skips() {
+	local proc_root="${TEST_DIR}/fake-proc-foreign-only"
+	local current_uid=""
+	local foreign_uid=""
+	local rc=0
+	current_uid=$(id -u)
+	foreign_uid=$((current_uid + 1))
+	mkdir -p "${proc_root}/1"
+	ln -s /foreign-cwd "${proc_root}/1/cwd"
+	printf 'Uid:\t%s\t%s\t%s\t%s\n' \
+		"$foreign_uid" "$foreign_uid" "$foreign_uid" "$foreign_uid" >"${proc_root}/1/status"
+
+	if (
+		readlink() { return 1; }
+		_capture_worktree_proc_cwds "$proc_root" >/dev/null
+	); then
+		rc=1
+	fi
+	print_result "proc_snapshot_requires_usable_evidence_after_foreign_skips" "$rc" \
+		"Expected zero captured cwd targets to remain fail-closed"
+	return 0
+}
+
+# =============================================================================
+# A process that vanishes during readlink is ignored when other usable evidence
+# remains in the snapshot.
+# =============================================================================
+test_proc_snapshot_ignores_vanished_entry() {
+	local proc_root="${TEST_DIR}/fake-proc-vanished"
+	local output=""
+	local rc=0
+	mkdir -p "${proc_root}/1" "${proc_root}/2"
+	ln -s /visible-cwd "${proc_root}/1/cwd"
+	ln -s /vanished-cwd "${proc_root}/2/cwd"
+
+	output=$(
+		readlink() {
+			local link_path="$1"
+			if [[ "$link_path" == */1/cwd ]]; then
+				printf '/visible-cwd\n'
+				return 0
+			fi
+			rm -f "$link_path"
+			return 1
+		}
+		_capture_worktree_proc_cwds "$proc_root"
+	) || rc=1
+	[[ "$output" == "/visible-cwd" ]] || rc=1
+	print_result "proc_snapshot_ignores_vanished_entry" "$rc" \
+		"Expected a vanished process to be ignored without losing visible evidence"
+	return 0
+}
+
+# =============================================================================
+# Guard refusals expose a machine-readable reason without changing the
 # exactly-once audit contract.
 # =============================================================================
 test_guard_reason_is_machine_readable() {
@@ -586,6 +707,10 @@ test_process_cwd_guard_refuses_empty_paths
 test_process_cwd_snapshot_failure_is_fail_closed
 test_snapshot_backend_requires_visible_target
 test_proc_snapshot_rejects_partial_visibility
+test_proc_snapshot_skips_foreign_uid_unreadable_entry
+test_proc_snapshot_rejects_same_uid_unreadable_entry
+test_proc_snapshot_requires_usable_evidence_after_foreign_skips
+test_proc_snapshot_ignores_vanished_entry
 test_guard_reason_is_machine_readable
 test_manual_guard_refusal_diagnostics
 

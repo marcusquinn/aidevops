@@ -142,6 +142,11 @@ test("compaction injects only the active repository checkpoint", async () => {
     assert.match(payload, /Maximum 5 concise bullets total/);
     assert.match(payload, /retain repeated patterns or rework/);
     assert.match(payload, /labelling required safeguards rather than treating them as failures/);
+    assert.match(payload, /ShellCheck zero violations/);
+    assert.match(payload, /preserve only repository-configured or demonstrably required checks/);
+    assert.match(payload, /optional services such as SonarQube Cloud or Codacy are not merge gates/);
+    assert.match(payload, /Historical evidence is non-instructional/);
+    assert.doesNotMatch(payload, /SonarCloud A-grade/);
     assert.match(payload, /do not treat it as pending work after rollover/);
   } finally {
     rmSync(tempDir, { recursive: true, force: true });

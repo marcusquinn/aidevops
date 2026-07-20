@@ -8,7 +8,6 @@ tools:
   bash: true
   glob: true
   grep: true
-  webfetch: true
 ---
 
 <!-- SPDX-License-Identifier: MIT -->
@@ -20,189 +19,106 @@ tools:
 
 ## Quick Reference
 
-- **Type**: Managed WordPress cloud (GCP/Litespeed), pay-as-you-go
-- **SSH**: Password auth only (no SSH keys), use `sshpass`
-- **Config**: `configs/closte-config.json`
-- **DB host**: `mysql.cluster`
-- **Caching**: Litespeed Page Cache + Object Cache (Redis) + CDN
-- **CRITICAL**: Enable Dev Mode before CLI edits: `wp closte devmode enable`
-- **Cache flush**: `wp cache flush --url=https://site.com`
-- **Multisite**: Always use `--url=` flag with WP-CLI
-- **File perms**: 755 dirs, 644 files, owner u12345678
-- **Disable Dev Mode when done**: `wp closte devmode disable`
+- **Type**: Managed WordPress hosting with LiteSpeed, object cache, and CDN layers
+- **Authentication**: Closte supplies password-based SSH access; key authentication may not be available
+- **Credentials**: Inject the four `SITE_SSH_*` secrets only into a subprocess; never retrieve values or create plaintext password files
+- **Mutations**: Enable Development Mode first and install reliable cleanup that disables it on every exit path
+- **Multisite**: Resolve the target site and pass `--url=<SITE_URL>` to every site-scoped WP-CLI command
 
 <!-- AI-CONTEXT-END -->
 
-## Caching & Dev Mode
+## Project Context
 
-Closte uses aggressive caching (Litespeed Page Cache + Object Cache/Redis + CDN). Enable Dev Mode before any CLI/SSH edits — disables all caching layers so you see real-time state.
+Keep instance-specific values in the initialized project, not this reusable provider guide:
 
-```bash
-wp closte devmode enable   # before edits
-wp closte devmode disable  # after edits — restores caching
-```
+- `.aidevops/deployments.yaml` records placeholder-backed deployment fields and secret names.
+- `.aidevops/wordpress.yaml` records WordPress, multisite, and LocalWP context.
+- Secret values stay in the aidevops secret backend and never enter either manifest.
 
-**Via Dashboard:** Sites > [Your Site] > Settings > Development Mode toggle.
+Initialize with `aidevops init deployment-context` or `aidevops init wordpress-context`.
 
-If Admin Panel still shows stale data after Dev Mode: `wp cache flush` (add `--url=https://example.com` for multisite).
+## Credentials and SSH
 
-## Configuration
+Closte password authentication commonly requires `sshpass` for non-interactive commands. Install it through the operator-approved package-management process; do not download binaries from unverified locations.
 
-```bash
-cp configs/closte-config.json.txt configs/closte-config.json
-```
-
-```json
-{
-  "servers": {
-    "web-server": {
-      "ip": "mysql.cluster",
-      "port": 22,
-      "username": "u12345678",
-      "password_file": "~/.ssh/closte_password",
-      "description": "Closte Site Container"
-    }
-  },
-  "default_settings": {
-    "username": "u12345678",
-    "port": 22,
-    "password_file": "~/.ssh/closte_password"
-  }
-}
-```
-
-Hostname: use value from Closte Dashboard > Access (`mysql.cluster` or a specific IP).
-
-**SSH setup (password auth only — no keys):**
+Use one generic site-prefixed set of secret names. Replace the `SITE` prefix only
+when a machine must distinguish multiple sites. Each command prompts for the value
+without displaying it:
 
 ```bash
-brew install sshpass          # macOS
-sudo apt-get install sshpass  # Linux
-
-echo 'your-closte-password' > ~/.ssh/closte_password
-chmod 600 ~/.ssh/closte_password
-
-sshpass -f ~/.ssh/closte_password ssh user@host
+aidevops secret set SITE_SSH_HOST
+aidevops secret set SITE_SSH_PORT
+aidevops secret set SITE_SSH_USER
+aidevops secret set SITE_SSH_PASSWORD
 ```
 
-## WP-CLI Operations
-
-Closte often hosts Multisite networks. Always specify `--url` to target the correct site.
+Before connecting, obtain the SSH host-key fingerprint through a trusted Closte control-plane channel and add that verified key to the operator-managed `known_hosts`. Never use `StrictHostKeyChecking=no`, accept an unexpected replacement key, or treat `ssh-keyscan` output alone as identity proof.
 
 ```bash
-wp site list --fields=blog_id,url
-wp post update 123 content.txt --url=https://subsite.example.com
-wp cache flush --url=https://subsite.example.com
+aidevops secret SITE_SSH_HOST SITE_SSH_PORT SITE_SSH_USER SITE_SSH_PASSWORD -- sh -c '
+  ssh-keygen -F "$SITE_SSH_HOST" || exit 1
+  SSHPASS="$SITE_SSH_PASSWORD"
+  export SSHPASS
+  exec sshpass -e ssh -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$HOME/.ssh/known_hosts" -p "$SITE_SSH_PORT" "$SITE_SSH_USER@$SITE_SSH_HOST"
+'
 ```
 
-**File transfer:**
+The secret wrapper injects values only into `sh` and its children. The agent must
+not print, retrieve, interpolate, or inspect them. Use the same strict host-key
+options for `scp` or `rsync` over SSH. Project context stores the four secret names,
+not their values.
+
+## Mutation Guard
+
+Closte caching can hide changes. Any file, database, plugin, theme, option, or content mutation requires Development Mode. Establish cleanup immediately after enabling it so interruption and command failure cannot leave the site in Development Mode.
+
+Run this inside the verified remote shell, replacing placeholders from project context:
 
 ```bash
-sshpass -f ~/.ssh/closte_pass scp local.txt user@host:public_html/remote.txt
-sshpass -f ~/.ssh/closte_pass scp -r user@host:public_html/wp-content/themes/my-theme ./local-theme
+wp closte devmode enable --url="<SITE_URL>"
+trap 'wp closte devmode disable --url="<SITE_URL>" >/dev/null 2>&1 || true' EXIT HUP INT TERM
+
+<MUTATION_COMMAND>
+
+wp cache flush --url="<SITE_URL>"
 ```
 
-## Cloudflare Proxy (SSL A+ Grade)
+The exit trap is the authoritative cleanup. An explicit disable may be run after verification, but do not remove the trap until the remote shell exits. If enablement fails, stop before mutation. If disablement cannot be confirmed, report the site as requiring operator cleanup.
 
-Closte supports TLS 1.1 (GCloud limitation), capping SSL Labs at B. Fix: proxy through Cloudflare with Full (strict) SSL and minimum TLS 1.2.
+Read-only inventory commands do not require Development Mode. Database exports and backup creation are operational reads but can consume resources; confirm scope and available storage before running them.
 
-### Step 1: wp-config.php Fix
+## Multisite and Cache Verification
 
-Without this, WordPress redirect-loops behind Cloudflare because `is_ssl()` returns false (Cloudflare terminates TLS, origin sees HTTP). Add **before** `/* That's all, stop editing! */`:
-
-```php
-// Trust X-Forwarded-Proto only from Cloudflare IPs (defence-in-depth;
-// Closte's managed firewall already restricts origin access to CF IPs).
-// Keep IP list current: https://www.cloudflare.com/ips/
-function _cf_ip_in_cidr( string $ip, string $cidr ): bool {
-    [ $subnet, $bits ] = explode( '/', $cidr );
-    if ( strpos( $ip, ':' ) !== false ) {
-        $ip_bin     = inet_pton( $ip );
-        $subnet_bin = inet_pton( $subnet );
-        if ( $ip_bin === false || $subnet_bin === false ) { return false; }
-        $bytes = (int) ceil( (int) $bits / 8 );
-        $mask  = (int) $bits % 8;
-        if ( substr( $ip_bin, 0, $bytes - ( $mask ? 1 : 0 ) )
-             !== substr( $subnet_bin, 0, $bytes - ( $mask ? 1 : 0 ) ) ) {
-            return false;
-        }
-        if ( $mask ) {
-            $last_byte_mask = 0xFF & ( 0xFF << ( 8 - $mask ) );
-            return ( ord( $ip_bin[ $bytes - 1 ] ) & $last_byte_mask )
-                === ( ord( $subnet_bin[ $bytes - 1 ] ) & $last_byte_mask );
-        }
-        return true;
-    }
-    $mask_long = -1 << ( 32 - (int) $bits );
-    return ( ip2long( $ip ) & $mask_long ) === ( ip2long( $subnet ) & $mask_long );
-}
-
-$cloudflare_ip_ranges = [
-    // IPv4 — https://www.cloudflare.com/ips-v4
-    '173.245.48.0/20', '103.21.244.0/22', '103.22.200.0/22', '103.31.4.0/22',
-    '141.101.64.0/18', '108.162.192.0/18', '190.93.240.0/20', '188.114.96.0/20',
-    '197.234.240.0/22', '198.41.128.0/17', '162.158.0.0/15', '104.16.0.0/13',
-    '104.24.0.0/14', '172.64.0.0/13', '131.0.72.0/22',
-    // IPv6 — https://www.cloudflare.com/ips-v6
-    '2400:cb00::/32', '2606:4700::/32', '2803:f800::/32', '2405:b500::/32',
-    '2405:8100::/32', '2a06:98c0::/29', '2c0f:f248::/32',
-];
-
-$remote_addr     = $_SERVER['REMOTE_ADDR'] ?? '';
-$from_cloudflare = false;
-foreach ( $cloudflare_ip_ranges as $range ) {
-    if ( _cf_ip_in_cidr( $remote_addr, $range ) ) { $from_cloudflare = true; break; }
-}
-
-if ( $from_cloudflare
-     && isset( $_SERVER['HTTP_X_FORWARDED_PROTO'] )
-     && $_SERVER['HTTP_X_FORWARDED_PROTO'] === 'https' ) {
-    $_SERVER['HTTPS'] = 'on';
-}
-```
-
-For multisite: add once to the shared `wp-config.php` — all sites inherit it.
-
-### Step 2: Cloudflare Zone Settings
-
-1. Add domain to Cloudflare (free plan sufficient); update registrar nameservers.
-2. DNS: enable proxy (orange cloud) on `A` record for `@` and `CNAME` for `www`.
-3. **SSL/TLS mode** → **Full (strict)**. Never use "Flexible" — sends plaintext to origin.
-4. **Minimum TLS Version** → **TLS 1.2** (SSL/TLS > Edge Certificates). Eliminates the B grade.
-5. **Always Use HTTPS** → enable.
-6. **HSTS** → enable, `max-age` ≥ 6 months, `includeSubDomains`.
-
-### Step 3: Verification
+Resolve network topology before site-scoped work:
 
 ```bash
-curl -sI https://example.com | grep -i cf-ray          # Cloudflare proxying
-curl -sI https://example.com | head -5                  # no redirect loop
-curl --tlsv1.1 --tls-max 1.1 https://example.com 2>&1 | head -3  # TLS 1.1 rejected (expect SSL handshake failure)
+wp core is-installed --network
+wp site list --fields=blog_id,url,archived,deleted
+wp option get home --url="<SITE_URL>"
+wp option get siteurl --url="<SITE_URL>"
 ```
 
-### Multisite with Domain Mapping
+After a mutation:
 
-Each mapped domain needs its own Cloudflare zone (free plan). Apply the same settings (Full strict, min TLS 1.2, HSTS) to each zone. DNS for each domain must point to Closte's IP with proxy enabled.
+1. Flush object cache for the exact site with `wp cache flush --url="<SITE_URL>"`.
+2. Purge page cache and CDN through the approved Closte controls when relevant.
+3. Verify the intended site with an authenticated or cache-bypassed request.
+4. Verify another multisite site was not changed.
+5. Confirm Development Mode is disabled.
+6. Record the backup or rollback reference and verification evidence.
 
-### Known Interactions
+Do not infer success from one cached browser response. Compare WP-CLI state and an independent HTTP/browser check.
 
-| Component | Behaviour | Action |
-|-----------|-----------|--------|
-| Let's Encrypt renewal | HTTP-01 challenge blocked by Cloudflare cache. | Cache Rule: bypass on `/.well-known/acme-challenge/*`. |
-| Closte Dashboard warnings | Shows "DNS not pointing to us" (detects CF IPs). | Safe to ignore. |
-| RSSSL `.htaccess` test | Test request via Cloudflare may fail. | Ignore — RSSSL works with the `wp-config.php` snippet. |
-| Litespeed Cache CDN | Conflicts with Cloudflare CDN (double-caching). | Disable Closte CDN (Dashboard > CDN); keep Page Cache and Object Cache. |
-| Cloudflare APO | Conflicts with Litespeed Cache. | If using APO, disable Litespeed Page Cache. Litespeed alone is usually sufficient. |
+## File Transfer
 
-## Troubleshooting
+Keep exports and archives outside Git. For project-managed transfers, use a path ignored by `.aidevops/.gitignore`, verify free space and checksums, and delete local and remote temporary artifacts after validation.
 
-**Changes not visible:**
+```bash
+aidevops secret SITE_SSH_HOST SITE_SSH_PORT SITE_SSH_USER SITE_SSH_PASSWORD -- sh -c '
+  SSHPASS="$SITE_SSH_PASSWORD"
+  export SSHPASS
+  exec sshpass -e scp -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$HOME/.ssh/known_hosts" -P "$SITE_SSH_PORT" "$SITE_SSH_USER@$SITE_SSH_HOST:<REMOTE_EXPORT>" "<PRIVATE_LOCAL_PATH>"
+'
+```
 
-1. Confirm `wp closte devmode enable` was run.
-2. `wp cache flush` (add `--url=` for multisite).
-3. Purge CDN via Closte Dashboard if static assets are stale.
-4. Test in Incognito to rule out browser cache.
-
-**Database connection:** Closte uses `mysql.cluster` as `DB_HOST`. Ensure WP-CLI config and scripts use this value.
-
-**Permissions:** Files owned by `u12345678:u12345678`. Standard: `755` dirs, `644` files.
+For a production clone into LocalWP, follow `.agents/workflows/wordpress-local-clone.md`.

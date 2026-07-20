@@ -42,7 +42,7 @@ main() {
 	printf '%s\n' '{"scripts":{"lint":"eslint .","typecheck":"tsc --noEmit"}}' >"$repo_root/package.json"
 	/usr/bin/git -C "$repo_root" add package.json
 
-	_init_write_project_config "$repo_root/.aidevops.json" "9.9.9" "standard" false false true true true false false false false true
+	_init_write_project_config "$repo_root/.aidevops.json" "9.9.9" "standard" false false true true true false false false false true false false
 	assert_equal "true" "$(jq -r '.custom.keep' "$repo_root/.aidevops.json")" "init preserves unknown configuration keys"
 	assert_equal "false" "$(jq -r '.features.planning' "$repo_root/.aidevops.json")" "init preserves explicit feature values"
 	assert_equal "9.9.9" "$(jq -r '.version' "$repo_root/.aidevops.json")" "init refreshes managed version"
@@ -58,7 +58,7 @@ main() {
 	printf '{invalid\n' >"$invalid_config"
 	local invalid_before invalid_after invalid_status=0
 	invalid_before=$(cksum <"$invalid_config")
-	_init_write_project_config "$invalid_config" "9.9.9" "standard" false false true true true false false false false true >/dev/null 2>&1 || invalid_status=$?
+	_init_write_project_config "$invalid_config" "9.9.9" "standard" false false true true true false false false false true false false >/dev/null 2>&1 || invalid_status=$?
 	invalid_after=$(cksum <"$invalid_config")
 	assert_equal "1" "$invalid_status" "init refuses to overwrite invalid existing config"
 	assert_equal "$invalid_before" "$invalid_after" "invalid existing config remains untouched"

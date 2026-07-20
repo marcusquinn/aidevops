@@ -16,8 +16,7 @@
 #   - Environment vars: PULSE_RATE_LIMIT_FLAG, LOGFILE, PULSE_PREFETCH_CACHE_FILE,
 #     PULSE_PREFETCH_FULL_SWEEP_INTERVAL, PULSE_QUEUED_SCAN_LIMIT,
 #     PULSE_SWEEP_TOKEN_BUDGET, PULSE_SWEEP_MAX_EVENTS_PER_PASS,
-#     PULSE_SWEEP_DEFERRAL_PROMOTION_THRESHOLD, PULSE_SWEEP_VERIFICATION_QUERY_LIMIT,
-#     PULSE_SWEEP_CACHE_HIT_ENABLED
+#     PULSE_SWEEP_DEFERRAL_PROMOTION_THRESHOLD, PULSE_SWEEP_CACHE_HIT_ENABLED
 #
 # Part of aidevops framework: https://aidevops.sh
 
@@ -136,26 +135,36 @@ _pulse_mark_rate_limited() {
 }
 
 #######################################
-# Check if a repo's cached issues contain any items with a given label.
-# Used by NMR and needs-info scans to skip repos with 0 matching items.
+# Check whether a complete repo cache proves that no issue has a given label.
+# Used by NMR and needs-info scans to skip only proven-zero repositories.
 #
 # Arguments:
 #   $1 - repo slug
 #   $2 - label name to check for
 # Returns:
-#   0 if cached count > 0 or no cache available (proceed with live query)
-#   1 if cached count == 0 (safe to skip)
+#   0 if a valid complete cache has exactly 0 matches (safe to skip)
+#   1 if matches exist or cache evidence is absent, invalid, or incomplete
 #######################################
 _prefetch_cached_label_count_is_zero() {
 	local slug="$1"
 	local label="$2"
-	local cache_entry cached_count
-	cache_entry=$(_prefetch_cache_get "$slug" 2>/dev/null) || cache_entry=""
-	[[ -n "$cache_entry" ]] || return 0 # no cache = proceed
-	cached_count=$(echo "$cache_entry" | jq --arg l "$label" \
-		'[.issues // [] | .[] | select(.labels | map(.name) | index($l))] | length' 2>/dev/null) || return 0
-	[[ "$cached_count" == "0" ]] && return 1
-	return 0
+	local cache_entry=""
+	local cached_count=""
+
+	[[ -n "$slug" && -n "$label" ]] || return 1
+	cache_entry=$(_prefetch_cache_get "$slug" 2>/dev/null) || return 1
+	[[ -n "$cache_entry" ]] || return 1
+	cached_count=$(printf '%s\n' "$cache_entry" | jq -er --arg label "$label" '
+		"object" as $object_type | "array" as $array_type | "string" as $string_type
+		| select(type == $object_type and .snapshot_complete == true)
+		| .issues
+		| select(type == $array_type and all(.[];
+			type == $object_type and (.labels | type) == $array_type
+			and all(.labels[]; type == $object_type and (.name | type) == $string_type)))
+		| [.[] | select(.labels | map(.name) | index($label))] | length
+	' 2>/dev/null) || return 1
+	[[ "$cached_count" == "0" ]] && return 0
+	return 1
 }
 
 # =============================================================================
@@ -170,8 +179,46 @@ _prefetch_cached_label_count_is_zero() {
 : "${PULSE_SWEEP_TOKEN_BUDGET:=3000}"
 : "${PULSE_SWEEP_MAX_EVENTS_PER_PASS:=50}"
 : "${PULSE_SWEEP_DEFERRAL_PROMOTION_THRESHOLD:=3}"
-: "${PULSE_SWEEP_VERIFICATION_QUERY_LIMIT:=5}"
 : "${PULSE_SWEEP_CACHE_HIT_ENABLED:=true}"
+
+_PREFETCH_SNAPSHOT_SCHEMA="aidevops-pulse-snapshot/v1"
+_PREFETCH_ISSUES_PROJECTION="number,title,state,labels,updatedAt,assignees"
+_PREFETCH_PRS_PROJECTION="number,title,labels,updatedAt,assignees,createdAt,author,headRefOid,headRefName"
+_PREFETCH_FINGERPRINT_SCHEMA="canonical-snapshot-v1"
+
+#######################################
+# Hash stdin with SHA-256 without exposing repository identities.
+#######################################
+_prefetch_sha256_stdin() {
+	local hash=""
+	if command -v shasum >/dev/null 2>&1; then
+		hash=$(shasum -a 256 2>/dev/null | awk '{print $1}') || hash=""
+	elif command -v sha256sum >/dev/null 2>&1; then
+		hash=$(sha256sum 2>/dev/null | awk '{print $1}') || hash=""
+	fi
+	[[ "$hash" =~ ^[0-9a-f]{64}$ ]] || return 1
+	printf '%s\n' "$hash"
+	return 0
+}
+
+#######################################
+# Record the active repository population using count + opaque set digest.
+# Arguments: $1=newline-delimited slug|path entries
+#######################################
+_prefetch_record_efficiency_population() {
+	local repo_entries="$1"
+	local repo_slugs=""
+	local repo_count=""
+	local repo_set_hash=""
+	declare -F gh_record_efficiency_evidence >/dev/null 2>&1 || return 0
+	repo_slugs=$(printf '%s\n' "$repo_entries" | awk -F'|' 'NF && $1 != "" {print $1}' | LC_ALL=C sort -u) || return 0
+	repo_count=$(printf '%s\n' "$repo_slugs" | awk 'NF {count++} END {print count + 0}') || return 0
+	[[ "$repo_count" =~ ^[0-9]+$ && "$repo_count" -gt 0 ]] || return 0
+	repo_set_hash=$(printf '%s\n' "$repo_slugs" | _prefetch_sha256_stdin) || return 0
+	gh_record_efficiency_evidence population.repository_count "$repo_count" 2>/dev/null || true
+	gh_record_efficiency_evidence population.repository_set_sha256 "$repo_set_hash" 2>/dev/null || true
+	return 0
+}
 
 # Load the budget config once per process. Called lazily from the t2041
 # helpers. Reads `.agents/configs/pulse-sweep-budget.json` relative to
@@ -199,8 +246,6 @@ _load_pulse_sweep_budget_config() {
 	[[ "$_v" =~ ^[0-9]+$ ]] && PULSE_SWEEP_MAX_EVENTS_PER_PASS="$_v"
 	_v=$(jq -r '.default.deferral_promotion_threshold // empty' "$config_file" 2>/dev/null)
 	[[ "$_v" =~ ^[0-9]+$ ]] && PULSE_SWEEP_DEFERRAL_PROMOTION_THRESHOLD="$_v"
-	_v=$(jq -r '.default.verification_query_limit // empty' "$config_file" 2>/dev/null)
-	[[ "$_v" =~ ^[0-9]+$ ]] && PULSE_SWEEP_VERIFICATION_QUERY_LIMIT="$_v"
 	_v=$(jq -r '.default.state_fingerprint_cache_hit_enabled // empty' "$config_file" 2>/dev/null)
 	[[ "$_v" == "true" || "$_v" == "false" ]] && PULSE_SWEEP_CACHE_HIT_ENABLED="$_v"
 
@@ -208,58 +253,79 @@ _load_pulse_sweep_budget_config() {
 }
 
 #######################################
-# t2041 Layer 1: Compute a short deterministic fingerprint of a repo's
-# LLM-observable state.
+# Return 0 only when two canonical collection snapshots form one complete,
+# projection-compatible repository generation.
+# Arguments: $1=slug, $2=issue snapshot envelope, $3=PR snapshot envelope
+#######################################
+_canonical_snapshot_pair_complete() {
+	local slug="$1"
+	local issues_snapshot="$2"
+	local prs_snapshot="$3"
+	[[ -n "$slug" && -n "$issues_snapshot" && -n "$prs_snapshot" ]] || return 1
+
+	local issues_identity="" prs_identity=""
+	issues_identity=$(printf '%s' "$issues_snapshot" | jq -er \
+		--arg schema "$_PREFETCH_SNAPSHOT_SCHEMA" --arg slug "$slug" \
+		--arg projection "$_PREFETCH_ISSUES_PROJECTION" '
+		select(.schema == $schema and .repository == $slug and .collection == "issues") |
+		select(.projection == $projection and .complete == true and (.items | type) == "array") |
+		select(all(.items[];
+			(.number | type) == "number" and (.state | type) == "string" and
+			(.labels | type) == "array" and (.assignees | type) == "array" and has("updatedAt"))) |
+		select((.source | type) == "string" and (.fetched_at | type) == "string") |
+		[.generation, .auth_scope] | select(all(.[]; type == "string" and length > 0)) | @tsv
+	' 2>/dev/null) || return 1
+	prs_identity=$(printf '%s' "$prs_snapshot" | jq -er \
+		--arg schema "$_PREFETCH_SNAPSHOT_SCHEMA" --arg slug "$slug" \
+		--arg projection "$_PREFETCH_PRS_PROJECTION" '
+		select(.schema == $schema and .repository == $slug and .collection == "prs") |
+		select(.projection == $projection and .complete == true and (.items | type) == "array") |
+		select(all(.items[];
+			(.number | type) == "number" and (.labels | type) == "array" and
+			(.assignees | type) == "array" and has("updatedAt") and
+			(.headRefOid | type) == "string" and (.headRefOid | length) > 0)) |
+		select((.source | type) == "string" and (.fetched_at | type) == "string") |
+		[.generation, .auth_scope] | select(all(.[]; type == "string" and length > 0)) | @tsv
+	' 2>/dev/null) || return 1
+	if [[ "$issues_identity" == "$prs_identity" ]]; then
+		return 0
+	fi
+	return 1
+}
+
+#######################################
+# Compute a short deterministic fingerprint from one canonical snapshot pair.
 #
 # The fingerprint is a SHA-256 of the canonicalized set of:
 #   - issues: (number, labels_sorted, assignees_sorted, updatedAt)
-#   - PRs:    (number, labels_sorted, assignees_sorted, reviewDecision,
-#              mergeable, updatedAt)
-# across all open issues and PRs. PR state must be in the fingerprint so
-# PR churn (review rotation, CI status change, labels) invalidates the
-# cache — if PRs were excluded, the cache would say "clean" even when
-# a PR was ready to merge (CodeRabbit review on PR #18546).
+#   - PRs:    (number, labels_sorted, assignees_sorted, updatedAt, headRefOid)
+# across all open issues and PRs. GraphQL-only projections remain on the exact
+# PR-list provider; this normalized fingerprint never fabricates those fields.
+# Final dispatch and merge authority remains live and fail-closed.
 #
 # Arguments:
 #   $1 - repo slug (owner/repo)
+#   $2 - canonical issue snapshot envelope
+#   $3 - canonical PR snapshot envelope
 # Outputs:
 #   16-char hex fingerprint on stdout, empty string on error
-# Returns: 0 always (fail-open)
+# Returns: 0 always (empty forces the full-analysis path)
 #######################################
 _compute_repo_state_fingerprint() {
 	local slug="$1"
+	local issues_snapshot="${2:-}"
+	local prs_snapshot="${3:-}"
 	[[ -n "$slug" ]] || {
 		echo ""
 		return 0
 	}
-
-	local limit="${PULSE_QUEUED_SCAN_LIMIT:-200}"
-
-	local issues_json prs_json
-	local issues_ok=false prs_ok=false
-	issues_json=$(gh_issue_list --repo "$slug" --state open \
-		--json number,labels,assignees,updatedAt \
-		--limit "$limit" 2>/dev/null) && issues_ok=true
-	prs_json=$(pulse_pr_list_get --repo "$slug" --state open \
-		--json number,labels,assignees,reviewDecision,mergeable,updatedAt \
-		--limit "$limit" 2>/dev/null) && prs_ok=true
-
-	# Fail-open: if BOTH fetches failed entirely (not just returned empty
-	# lists from successful fetches), return an empty fingerprint so the
-	# caller falls through to the existing Layer 2 delta prefetch. A
-	# single-side failure still produces a usable fingerprint because
-	# t2041's verification query is a second check — worst case we miss
-	# one churn cycle, never worse than today's behaviour.
-	if [[ "$issues_ok" != "true" && "$prs_ok" != "true" ]]; then
+	_canonical_snapshot_pair_complete "$slug" "$issues_snapshot" "$prs_snapshot" || {
 		echo ""
 		return 0
-	fi
-
-	[[ -n "$issues_json" && "$issues_json" != "null" ]] || issues_json="[]"
-	[[ -n "$prs_json" && "$prs_json" != "null" ]] || prs_json="[]"
+	}
 
 	# Canonicalize both lists. The PR/issue arrays can exceed Linux
-	# MAX_ARG_STRLEN, so pass them through temp files instead of jq --argjson.
+	# MAX_ARG_STRLEN, so pass their envelopes through files instead of jq argv.
 	local canon
 	local issues_file="" prs_file=""
 	issues_file=$(mktemp) || {
@@ -271,12 +337,12 @@ _compute_repo_state_fingerprint() {
 		echo ""
 		return 0
 	}
-	if ! printf '%s' "$issues_json" >"$issues_file"; then
+	if ! printf '%s' "$issues_snapshot" >"$issues_file"; then
 		rm -f "$issues_file" "$prs_file"
 		echo ""
 		return 0
 	fi
-	if ! printf '%s' "$prs_json" >"$prs_file"; then
+	if ! printf '%s' "$prs_snapshot" >"$prs_file"; then
 		rm -f "$issues_file" "$prs_file"
 		echo ""
 		return 0
@@ -284,8 +350,8 @@ _compute_repo_state_fingerprint() {
 	canon=$(jq -cSn \
 		--slurpfile issues "$issues_file" \
 		--slurpfile prs "$prs_file" '
-		($issues[0] // []) as $issues |
-		($prs[0] // []) as $prs |
+		($issues[0].items // []) as $issues |
+		($prs[0].items // []) as $prs |
 		{
 			issues: ($issues | sort_by(.number) | map({
 				n: .number,
@@ -297,9 +363,8 @@ _compute_repo_state_fingerprint() {
 				n: .number,
 				l: ([.labels[].name] | sort),
 				a: ([.assignees[].login] | sort),
-				r: .reviewDecision,
-				m: .mergeable,
-				u: .updatedAt
+				u: .updatedAt,
+				h: .headRefOid
 			}))
 		}
 	' 2>/dev/null) || canon=""
@@ -319,51 +384,6 @@ _compute_repo_state_fingerprint() {
 		hash=""
 	fi
 	echo "$hash"
-	return 0
-}
-
-#######################################
-# t2041 Layer 1: Run the cheap verification queries.
-#
-# Returns 0 (unchanged) only if BOTH `gh issue list --search "updated:>ISO"`
-# AND `gh pr list --search "updated:>ISO"` return empty results. Returns 1
-# if anything has changed since ISO or any query fails (fail-closed — force
-# fresh fetch on any doubt).
-#
-# The PR-side verification is critical: without it, cache-hit cycles
-# would continue serving stale PR state even when a PR was ready for
-# merge (CodeRabbit review on PR #18546).
-#
-# Arguments:
-#   $1 - repo slug
-#   $2 - last_pass_iso (from cache)
-#######################################
-_verify_repo_state_unchanged() {
-	local slug="$1"
-	local last_pass_iso="$2"
-	[[ -n "$slug" && -n "$last_pass_iso" && "$last_pass_iso" != "null" ]] || return 1
-	_load_pulse_sweep_budget_config
-	local verif_limit="${PULSE_SWEEP_VERIFICATION_QUERY_LIMIT:-5}"
-
-	# Issue-side verification
-	local changed_json count
-	changed_json=$(gh_issue_list --repo "$slug" --state open \
-		--search "updated:>${last_pass_iso}" \
-		--json number --limit "$verif_limit" 2>/dev/null) || return 1
-	[[ -n "$changed_json" && "$changed_json" != "null" ]] || return 1
-	count=$(printf '%s' "$changed_json" | jq 'length' 2>/dev/null) || count=""
-	[[ "$count" =~ ^[0-9]+$ ]] || return 1
-	[[ "$count" -eq 0 ]] || return 1
-
-	# PR-side verification — same bound, same fail-closed semantics
-	changed_json=$(gh_pr_list --repo "$slug" --state open \
-		--search "updated:>${last_pass_iso}" \
-		--json number --limit "$verif_limit" 2>/dev/null) || return 1
-	[[ -n "$changed_json" && "$changed_json" != "null" ]] || return 1
-	count=$(printf '%s' "$changed_json" | jq 'length' 2>/dev/null) || count=""
-	[[ "$count" =~ ^[0-9]+$ ]] || return 1
-	[[ "$count" -eq 0 ]] || return 1
-
 	return 0
 }
 
@@ -428,34 +448,35 @@ prefetch_hygiene_anomalies() {
 # Returns 0 (hit — LLM can skip deep analysis) if:
 #   1. Cache entry has a state_fingerprint field
 #   2. Current fingerprint equals cached fingerprint
-#   3. Verification query confirms no changes since last_prefetch
+#   3. Both snapshots are complete, compatible, and from one generation
 # Returns 1 (miss — run full analysis) otherwise.
 #
 # Arguments:
 #   $1 - repo slug
 #   $2 - cache entry JSON (from _prefetch_cache_get)
-#   $3 - output variable name: caller reads PREFETCH_CURRENT_FINGERPRINT
-#        after return (bash 3.2 — no namerefs)
+#   $3 - canonical issue snapshot envelope
+#   $4 - canonical PR snapshot envelope
 #######################################
 _prefetch_detect_cache_hit() {
 	local slug="$1"
 	local cache_entry="$2"
+	local issues_snapshot="${3:-}"
+	local prs_snapshot="${4:-}"
 
 	PREFETCH_CURRENT_FINGERPRINT=""
+	PREFETCH_CURRENT_SNAPSHOT_GENERATION=""
 
-	# Compute the current fingerprint unconditionally — we need it for
-	# the cache write at end-of-pass even on a miss.
-	PREFETCH_CURRENT_FINGERPRINT=$(_compute_repo_state_fingerprint "$slug")
+	PREFETCH_CURRENT_FINGERPRINT=$(_compute_repo_state_fingerprint \
+		"$slug" "$issues_snapshot" "$prs_snapshot")
 	[[ -n "$PREFETCH_CURRENT_FINGERPRINT" ]] || return 1
+	PREFETCH_CURRENT_SNAPSHOT_GENERATION=$(printf '%s' "$issues_snapshot" | jq -r '.generation // ""' 2>/dev/null) || PREFETCH_CURRENT_SNAPSHOT_GENERATION=""
 
-	local cached_fp
+	local cached_fp="" cached_schema=""
 	cached_fp=$(echo "$cache_entry" | jq -r '.state_fingerprint // ""' 2>/dev/null) || cached_fp=""
+	cached_schema=$(echo "$cache_entry" | jq -r '.state_fingerprint_schema // ""' 2>/dev/null) || cached_schema=""
+	[[ "$cached_schema" == "$_PREFETCH_FINGERPRINT_SCHEMA" ]] || return 1
 	[[ -n "$cached_fp" && "$cached_fp" != "null" ]] || return 1
 	[[ "$cached_fp" == "$PREFETCH_CURRENT_FINGERPRINT" ]] || return 1
-
-	local last_prefetch
-	last_prefetch=$(echo "$cache_entry" | jq -r '.last_prefetch // ""' 2>/dev/null) || last_prefetch=""
-	_verify_repo_state_unchanged "$slug" "$last_prefetch" || return 1
 
 	return 0
 }

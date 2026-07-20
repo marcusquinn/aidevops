@@ -293,8 +293,8 @@ else
 fi
 
 # =============================================================================
-# Part 6b (GH#27039) — an aged stamped claim is routed through the bounded
-# release-if-dead command instead of being skipped forever.
+# Part 6b (GH#28211) — the coordinator invokes the bounded direct stamp reaper
+# before repos.json or GitHub issue-discovery gates.
 # =============================================================================
 DEAD_STAMP_HELPER_LOG="${TEST_ROOT}/dead-stamp-helper.log"
 DEAD_STAMP_HELPER="${STUB_DIR}/interactive-session-helper.sh"
@@ -304,30 +304,30 @@ printf '%s\n' "\$*" >>"${DEAD_STAMP_HELPER_LOG}"
 exit 0
 STUB
 chmod +x "$DEAD_STAMP_HELPER"
-export AIDEVOPS_INTERACTIVE_SESSION_HELPER="$DEAD_STAMP_HELPER"
 
-cat >"${STUB_DIR}/gh" <<STUB
-#!/usr/bin/env bash
-if [[ "\$1" == "issue" && "\$2" == "list" ]]; then
-    echo '[{"number":557,"updatedAt":"2020-01-01T00:00:00Z","labels":[{"name":"origin:interactive"},{"name":"status:in-review"}]}]'
-    exit 0
-fi
-exit 1
-STUB
-chmod +x "${STUB_DIR}/gh"
-jq -n --arg host "$(hostname 2>/dev/null || echo unknown)" '{
-	issue: 557, slug: "owner/testrepo", pid: 99999, hostname: $host
-}' >"${STAMP_DIR}/owner-testrepo-557.json"
+ORIGINAL_REPOS_JSON="$REPOS_JSON"
+ORIGINAL_PIR_SCRIPT_DIR="$_PIR_SCRIPT_DIR"
+ORIGINAL_SCRIPT_DIR="${SCRIPT_DIR:-}"
+export REPOS_JSON="${TEST_ROOT}/missing-repos.json"
+_PIR_SCRIPT_DIR="$STUB_DIR"
+unset SCRIPT_DIR AIDEVOPS_INTERACTIVE_SESSION_HELPER
+rm -f "$DEAD_STAMP_HELPER_LOG"
+normalize_active_issue_assignments
 
-_normalize_unassign_stampless_interactive "testrunner" "$REPOS_JSON" "$NOW_EPOCH_P5" "86400"
-if [[ -f "$DEAD_STAMP_HELPER_LOG" ]] && grep -q -- "release-if-dead 557 owner/testrepo" "$DEAD_STAMP_HELPER_LOG"; then
-	print_result "GH#27039: stamped stale claim uses bounded release-if-dead command" 0
+REAPER_CALL_COUNT=$(grep -c '^reap-dead-stamps$' "$DEAD_STAMP_HELPER_LOG" 2>/dev/null || true)
+if [[ "$REAPER_CALL_COUNT" -eq 1 ]]; then
+	print_result "GH#28211: coordinator directly reaps stamps once without repos.json discovery" 0
 else
-	print_result "GH#27039: stamped stale claim uses bounded release-if-dead command" 1 \
+	print_result "GH#28211: coordinator directly reaps stamps once without repos.json discovery" 1 \
 		"(helper log: $(cat "$DEAD_STAMP_HELPER_LOG" 2>/dev/null || echo 'file missing'))"
 fi
-unset AIDEVOPS_INTERACTIVE_SESSION_HELPER
-rm -f "${STAMP_DIR}/owner-testrepo-557.json"
+export REPOS_JSON="$ORIGINAL_REPOS_JSON"
+_PIR_SCRIPT_DIR="$ORIGINAL_PIR_SCRIPT_DIR"
+if [[ -n "$ORIGINAL_SCRIPT_DIR" ]]; then
+	SCRIPT_DIR="$ORIGINAL_SCRIPT_DIR"
+else
+	unset SCRIPT_DIR
+fi
 
 # Clean up
 rm -f "${STAMP_DIR}/owner-testrepo-555.json"

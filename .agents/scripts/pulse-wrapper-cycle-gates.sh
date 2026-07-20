@@ -32,6 +32,138 @@ if [[ -z "${SCRIPT_DIR:-}" ]]; then
 	unset _lib_path
 fi
 
+_PULSE_EFFICIENCY_CYCLE_STARTED=0
+_PULSE_EFFICIENCY_CYCLE_START_MS=0
+_PULSE_EFFICIENCY_CYCLE_OUTCOME=idle
+
+_pulse_efficiency_record() {
+	local name="$1"
+	local value="${2:-1}"
+	if declare -F gh_record_efficiency_evidence >/dev/null 2>&1; then
+		gh_record_efficiency_evidence "$name" "$value" 2>/dev/null || true
+	fi
+	return 0
+}
+
+_pulse_efficiency_now_seconds() {
+	date +%s 2>/dev/null || printf '0\n'
+	return 0
+}
+
+_pulse_efficiency_now_ms() {
+	local now_seconds=""
+	if declare -F _gh_now_ms >/dev/null 2>&1; then
+		_gh_now_ms || return 1
+		return 0
+	fi
+	now_seconds=$(_pulse_efficiency_now_seconds)
+	[[ "$now_seconds" =~ ^[0-9]+$ ]] || return 1
+	printf '%s\n' "$((now_seconds * 1000))"
+	return 0
+}
+
+_pulse_efficiency_coverage_start_seconds() {
+	local now_seconds="$1"
+	local state_file="${AIDEVOPS_GH_API_EVIDENCE_COVERAGE_START_FILE:-${AIDEVOPS_STATE_DIR:-${HOME}/.aidevops/state}/github-api-efficiency-contract-v1.started-at}"
+	local state_dir="${state_file%/*}"
+	local existing=""
+	local temporary=""
+	[[ "$state_dir" != "$state_file" ]] || state_dir="."
+	if [[ -f "$state_file" && ! -L "$state_file" ]]; then
+		IFS= read -r existing <"$state_file" || existing=""
+		if [[ "$existing" =~ ^[0-9]+$ && "$existing" -gt 0 \
+			&& "$existing" -le "$now_seconds" ]]; then
+			printf '%s\n' "$existing"
+			return 0
+		fi
+	fi
+	mkdir -p "$state_dir" 2>/dev/null || {
+		printf '%s\n' "$now_seconds"
+		return 0
+	}
+	temporary=$(mktemp "${state_dir}/.github-api-efficiency-coverage.XXXXXX" 2>/dev/null) || {
+		printf '%s\n' "$now_seconds"
+		return 0
+	}
+	chmod 0600 "$temporary" 2>/dev/null || true
+	if ! printf '%s\n' "$now_seconds" >"$temporary"; then
+		rm -f "$temporary"
+		printf '%s\n' "$now_seconds"
+		return 0
+	fi
+	if [[ -e "$state_file" || -L "$state_file" ]]; then
+		rm -f "$temporary"
+	else
+		mv "$temporary" "$state_file" 2>/dev/null || rm -f "$temporary"
+	fi
+	if [[ -f "$state_file" && ! -L "$state_file" ]]; then
+		IFS= read -r existing <"$state_file" || existing=""
+	fi
+	if [[ "$existing" =~ ^[0-9]+$ && "$existing" -gt 0 \
+		&& "$existing" -le "$now_seconds" ]]; then
+		printf '%s\n' "$existing"
+	else
+		printf '%s\n' "$now_seconds"
+	fi
+	return 0
+}
+
+_pulse_efficiency_cycle_start() {
+	local now_seconds=""
+	local now_ms=""
+	local coverage_start=""
+	local group=""
+	now_seconds=$(_pulse_efficiency_now_seconds)
+	now_ms=$(_pulse_efficiency_now_ms) || now_ms=""
+	[[ "$now_seconds" =~ ^[0-9]+$ && "$now_seconds" -gt 0 ]] || return 0
+	[[ "$now_ms" =~ ^[0-9]+$ ]] || now_ms=$((now_seconds * 1000))
+	coverage_start=$(_pulse_efficiency_coverage_start_seconds "$now_seconds")
+	[[ "$coverage_start" =~ ^[0-9]+$ ]] || coverage_start="$now_seconds"
+	_PULSE_EFFICIENCY_CYCLE_STARTED=1
+	_PULSE_EFFICIENCY_CYCLE_START_MS="$now_ms"
+	_PULSE_EFFICIENCY_CYCLE_OUTCOME=idle
+	_pulse_efficiency_record contract 1
+	_pulse_efficiency_record coverage-start "$coverage_start"
+	for group in population latency cache single_flight path_budgets; do
+		_pulse_efficiency_record "coverage.${group}" 1
+	done
+	return 0
+}
+
+_pulse_efficiency_cycle_finish() {
+	local outcome="${1:-${_PULSE_EFFICIENCY_CYCLE_OUTCOME:-idle}}"
+	local now_seconds=""
+	local now_ms=""
+	local elapsed_ms=0
+	[[ "${_PULSE_EFFICIENCY_CYCLE_STARTED:-0}" == "1" ]] || return 0
+	now_seconds=$(_pulse_efficiency_now_seconds)
+	now_ms=$(_pulse_efficiency_now_ms) || now_ms=""
+	[[ "$now_seconds" =~ ^[0-9]+$ && "$now_seconds" -gt 0 ]] || now_seconds=0
+	if [[ "$now_ms" =~ ^[0-9]+$ && "${_PULSE_EFFICIENCY_CYCLE_START_MS:-0}" =~ ^[0-9]+$ \
+		&& "$now_ms" -ge "${_PULSE_EFFICIENCY_CYCLE_START_MS:-0}" ]]; then
+		elapsed_ms=$((now_ms - _PULSE_EFFICIENCY_CYCLE_START_MS))
+	fi
+	_pulse_efficiency_record population.pulse_cycles 1
+	if [[ "$outcome" == "active" ]]; then
+		_pulse_efficiency_record latency.completed_action_ms "$elapsed_ms"
+	else
+		_pulse_efficiency_record population.unchanged_cycles 1
+	fi
+	[[ "$now_seconds" -gt 0 ]] && _pulse_efficiency_record coverage-end "$now_seconds"
+	if declare -F gh_aggregate_calls >/dev/null 2>&1; then
+		if [[ "$now_seconds" -gt 0 ]]; then
+			gh_aggregate_calls "${GH_API_REPORT:-}" 86400 "$now_seconds" 2>/dev/null || true
+		else
+			gh_aggregate_calls 2>/dev/null || true
+		fi
+	fi
+	if declare -F gh_trim_log >/dev/null 2>&1; then
+		gh_trim_log 2>/dev/null || true
+	fi
+	_PULSE_EFFICIENCY_CYCLE_STARTED=0
+	return 0
+}
+
 _pulse_scope_repos_for_available_work_gate() {
 	local _scope="${PULSE_SCOPE_REPOS:-}"
 	if [[ -z "$_scope" && -f "${SCOPE_FILE:-}" ]]; then
@@ -72,7 +204,7 @@ _pulse_available_auto_dispatch_work_exists() {
 		_count=""
 		_query_rc=0
 		_count=$(timeout_sec "$_remaining" gh api -X GET search/issues \
-			-f "q=repo:${_slug} is:issue is:open label:auto-dispatch label:status:available -label:needs-maintainer-review -label:needs-maintainer-permissions no:assignee" \
+			-f "q=repo:${_slug} is:issue is:open label:auto-dispatch label:status:available -label:needs-maintainer-review -label:needs-maintainer-permissions -label:infrastructure no:assignee" \
 			-f per_page=1 \
 			--jq '.total_count // 0' 2>/dev/null) || _query_rc=$?
 		if [[ "$_query_rc" -eq 124 ]]; then
@@ -254,7 +386,6 @@ _pulse_record_cycle_outcome() {
 	local _ledger_before="${1:-0}"
 	[[ "$_ledger_before" =~ ^[0-9]+$ ]] || _ledger_before=0
 	local _ib_helper="${SCRIPT_DIR}/pulse-idle-backoff-helper.sh"
-	[[ -x "$_ib_helper" ]] || return 0
 	local _ledger_helper="${SCRIPT_DIR}/dispatch-ledger-helper.sh"
 	local _ledger_after=0
 	if [[ -x "$_ledger_helper" ]]; then
@@ -268,7 +399,10 @@ _pulse_record_cycle_outcome() {
 		|| [[ "$_ledger_after" -gt "$_ledger_before" ]]; then
 		_outcome="active"
 	fi
-	"$_ib_helper" record-cycle "$_outcome" >/dev/null 2>&1 || true
+	_PULSE_EFFICIENCY_CYCLE_OUTCOME="$_outcome"
+	if [[ -x "$_ib_helper" ]]; then
+		"$_ib_helper" record-cycle "$_outcome" >/dev/null 2>&1 || true
+	fi
 	echo "[pulse-wrapper] Cycle outcome: ${_outcome} (merged=${_PULSE_HEALTH_PRS_MERGED:-0} closed=${_PULSE_HEALTH_PRS_CLOSED_CONFLICTING:-0} ledger=${_ledger_before}→${_ledger_after}) (t3027)" >>"${LOGFILE:-/dev/null}"
 	return 0
 }

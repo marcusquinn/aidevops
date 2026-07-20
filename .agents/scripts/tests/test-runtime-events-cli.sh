@@ -47,7 +47,9 @@ source "$WORKER_LIFECYCLE"
 source "$WORKER_LAUNCH"
 CAPTURED_LAUNCH_ARGS="${TEST_ROOT}/launch-args"
 HEADLESS_RUNTIME_HELPER="${TEST_ROOT}/headless-runtime-helper.sh"
+LOGFILE="${TEST_ROOT}/pulse.log"
 self_login="runner"
+mkdir -p "${TEST_ROOT}/worktree"
 _dlw_prewarm_opencode_db() {
 	local worker_log="$1"
 	[[ -n "$worker_log" ]] || return 1
@@ -77,7 +79,7 @@ _dlw_exec_detached() {
 launch_pid=$(_dlw_nohup_launch \
 	"27030" "owner/repo" "dispatch" "lineage" "issue-27030" \
 	"${TEST_ROOT}/worker.log" "prompt" "${TEST_ROOT}/repo" "sonnet" "" \
-	"${TEST_ROOT}/worktree" "feature/gh-27030")
+	"${TEST_ROOT}/worktree" "feature/gh-27030" "attempt-test" "12345")
 [[ "$launch_pid" == "43210" ]]
 grep -Eq '^AIDEVOPS_WORKER_ID=worker:issue-27030:' "$CAPTURED_LAUNCH_ARGS"
 grep -q '^AIDEVOPS_PARENT_WORKER_ID=worker:child$' "$CAPTURED_LAUNCH_ARGS"
@@ -97,7 +99,7 @@ AIDEVOPS_WORKER_ID="$child_worker_id" \
 	AIDEVOPS_PARENT_EVENT_ID="$dispatch_event_id" \
 	AIDEVOPS_CAUSATION_ID="$dispatch_event_id" \
 	node "$RUNTIME_EVENTS" emit worker.started --status running \
-		--source worker_self_reported >/dev/null
+	--source worker_self_reported >/dev/null
 
 causal_rows=$(node "$RUNTIME_EVENTS" query --worker "$child_worker_id" --limit 10)
 [[ "$(printf '%s' "$causal_rows" | jq -r 'map(select(.event_type == "worker.dispatched"))[0].event_id')" == "$dispatch_event_id" ]]
@@ -114,8 +116,10 @@ import sys
 failure = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8")
 handler = failure[failure.index("_exit_trap_handler()") : failure.index("_recover_dirty_worker_pr()")]
 assert "worker.exited" not in handler
-assert handler.index("_push_wip_commits_on_exit") < handler.index("_emit_worker_runtime_event")
-assert handler.index('reason="worker_complete"') < handler.index("_emit_worker_runtime_event")
+assert "_hrff_finalize_exit_trap" in handler
+finalizer = failure[failure.index("_hrff_finalize_exit_trap()") : failure.index("_exit_trap_handler()")]
+assert finalizer.index("_push_wip_commits_on_exit") < finalizer.index("_emit_worker_runtime_event")
+assert finalizer.index('reason="worker_complete"') < finalizer.index("_emit_worker_runtime_event")
 
 worker = pathlib.Path(sys.argv[2]).read_text(encoding="utf-8")
 finish = worker[worker.index("_cmd_run_finish()") : worker.index("_cmd_run_prepare()")]

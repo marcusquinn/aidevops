@@ -67,6 +67,7 @@ WORKTREE_REGISTRY_DIR="${WORKTREE_REGISTRY_DIR:-${_WORKTREE_REGISTRY_HOME}/.aide
 WORKTREE_REGISTRY_DB="${WORKTREE_REGISTRY_DB:-${WORKTREE_REGISTRY_DIR}/worktree-registry.db}"
 WORKTREE_OWNER_DEAD_COOLDOWN_MINUTES="${WORKTREE_OWNER_DEAD_COOLDOWN_MINUTES:-60}"
 WORKTREE_OWNER_STALE_LIVE_MAX_HOURS="${WORKTREE_OWNER_STALE_LIVE_MAX_HOURS:-168}"
+_WORKTREE_REGISTRY_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || return 1
 
 # Get the command name (basename) for a given PID.
 # Returns empty string if the PID does not exist or info is unavailable.
@@ -283,6 +284,33 @@ _wt_registry_lookup_path() {
 	return 0
 }
 
+# Classify an existing path through the runtime-neutral canonical policy.
+# Synthetic/nonexistent fixture paths classify as outside Git and remain valid.
+_wt_worktree_classification() {
+	local wt_path="$1"
+	local policy_helper="${_WORKTREE_REGISTRY_SCRIPT_DIR}/canonical-write-policy-helper.py"
+	[[ -f "$policy_helper" ]] || return 1
+	python3 "$policy_helper" classify --cwd "$wt_path" --field classification 2>/dev/null
+	return $?
+}
+
+_wt_path_is_canonical() {
+	local wt_path="$1"
+	local classification=""
+	classification=$(_wt_worktree_classification "$wt_path") || return 1
+	[[ "$classification" == "canonical" ]]
+	return $?
+}
+
+_wt_delete_owner_row() {
+	local wt_path="$1"
+	[[ -f "$WORKTREE_REGISTRY_DB" ]] || return 0
+	sqlite3 "$WORKTREE_REGISTRY_DB" \
+		"DELETE FROM worktree_owners WHERE worktree_path = '$(_wt_sql_escape "$wt_path")';" \
+		2>/dev/null || return 1
+	return 0
+}
+
 # Initialize the registry database
 _init_registry_db() {
 	mkdir -p "$WORKTREE_REGISTRY_DIR" 2>/dev/null || true
@@ -321,8 +349,18 @@ _init_registry_db() {
 		sqlite3 "$WORKTREE_REGISTRY_DB" "
             ALTER TABLE worktree_owners
             ADD COLUMN owner_comm TEXT DEFAULT '';
-        " 2>/dev/null || true
+		" 2>/dev/null || true
 	fi
+	return 0
+}
+
+# Public recovery hook: delete only a structurally canonical ownership row.
+remove_canonical_worktree_owner() {
+	local wt_path="$1"
+	_init_registry_db || return 1
+	wt_path=$(_wt_registry_lookup_path "$wt_path")
+	_wt_path_is_canonical "$wt_path" || return 1
+	_wt_delete_owner_row "$wt_path" || return 1
 	return 0
 }
 
@@ -368,8 +406,12 @@ register_worktree() {
 	local owner_comm
 	owner_comm=$(_get_proc_comm "$owner_pid")
 
-	_init_registry_db
+	_init_registry_db || return 1
 	wt_path=$(_wt_registry_lookup_path "$wt_path")
+	if _wt_path_is_canonical "$wt_path"; then
+		_wt_delete_owner_row "$wt_path" || return 1
+		return 1
+	fi
 
 	{
 		_wt_sqlite_set_owner_pid_param "$owner_pid"
@@ -485,7 +527,7 @@ try:
     connection.execute("COMMIT")
 except Exception:
     if connection.in_transaction:
-        connection.execute("ROLLBACK")
+        connection.execute('ROLLBACK')
     raise
 finally:
     connection.close()
@@ -543,8 +585,12 @@ claim_worktree_ownership() {
 	local trusted_opencode_session=0
 	_wt_is_trusted_opencode_session "$session_id" && trusted_opencode_session=1
 
-	_init_registry_db
+	_init_registry_db || return 1
 	wt_path=$(_wt_registry_lookup_path "$wt_path")
+	if _wt_path_is_canonical "$wt_path"; then
+		_wt_delete_owner_row "$wt_path" || return 1
+		return 1
+	fi
 
 	local final_owner_info=""
 	final_owner_info=$(_wt_claim_owner_record "$wt_path" "$branch" "$owner_pid" "$session_id" \
@@ -555,6 +601,171 @@ claim_worktree_ownership() {
 	fi
 
 	return 1
+}
+
+_wt_compare_and_swap_owner_record() {
+	local wt_path="$1"
+	shift
+	local branch="$1"
+	shift
+	local owner_pid="$1"
+	shift
+	local session_id="$1"
+	shift
+	local batch_id="$1"
+	shift
+	local task_id="$1"
+	shift
+	local owner_comm="$1"
+	shift
+	local expected_owner_pid="$1"
+	shift
+	local expected_session_id="$1"
+	shift
+	local expected_batch_id="$1"
+	shift
+	local expected_task_id="$1"
+	shift
+	local expected_created_at="$1"
+
+	python3 - "$WORKTREE_REGISTRY_DB" "$wt_path" "$branch" "$owner_pid" \
+		"$session_id" "$batch_id" "$task_id" "$owner_comm" \
+		"$expected_owner_pid" "$expected_session_id" "$expected_batch_id" \
+		"$expected_task_id" "$expected_created_at" <<'PY' || return 1
+import sqlite3
+import sys
+
+(
+    db_path,
+    worktree_path,
+    branch,
+    owner_pid_text,
+    session_id,
+    batch_id,
+    task_id,
+    owner_comm,
+    expected_owner_pid_text,
+    expected_session_id,
+    expected_batch_id,
+    expected_task_id,
+    expected_created_at,
+) = sys.argv[1:]
+
+connection = sqlite3.connect(db_path, isolation_level=None)
+try:
+    connection.execute("BEGIN IMMEDIATE")
+    cursor = connection.execute(
+        """UPDATE worktree_owners
+           SET branch = ?, owner_pid = ?, owner_session = ?, owner_batch = ?,
+               task_id = ?, owner_comm = ?, owner_dead_seen_at = '',
+               created_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
+           WHERE worktree_path = ?
+             AND owner_pid = ?
+             AND COALESCE(owner_session, '') = ?
+             AND COALESCE(owner_batch, '') = ?
+             AND COALESCE(task_id, '') = ?
+             AND COALESCE(created_at, '') = ?""",
+        (
+            branch,
+            int(owner_pid_text),
+            session_id,
+            batch_id,
+            task_id,
+            owner_comm,
+            worktree_path,
+            int(expected_owner_pid_text),
+            expected_session_id,
+            expected_batch_id,
+            expected_task_id,
+            expected_created_at,
+        ),
+    )
+    if cursor.rowcount != 1:
+        connection.execute('ROLLBACK')
+        sys.exit(1)
+    connection.execute("COMMIT")
+except Exception:
+    if connection.in_transaction:
+        connection.execute("ROLLBACK")
+    raise
+finally:
+    connection.close()
+PY
+	return 0
+}
+
+# Atomically transfer ownership when the complete expected owner record still
+# matches. This is the only path allowed to take over a live continuation owner;
+# callers must validate continuation authority before invoking it.
+# Arguments:
+#   $1 - worktree path (required)
+#   $2 - branch name (required)
+#   Flags: --task <id>, --batch <id>, --session <id>, --owner-pid <pid>,
+#          --expected-task <id>, --expected-batch <id>,
+#          --expected-session <id>, --expected-owner-pid <pid>,
+#          --expected-created-at <timestamp>
+# Returns:
+#   0 - exact expected owner was atomically replaced
+#   1 - validation failed or the owner record changed before the transition
+transfer_worktree_ownership_if_expected() {
+	[[ $# -ge 2 ]] || return 1
+	local wt_path="$1"
+	local branch="$2"
+	shift 2
+
+	local task_id=""
+	local batch_id=""
+	local session_id=""
+	local owner_pid_override=""
+	local expected_task_id=""
+	local expected_batch_id=""
+	local expected_session_id=""
+	local expected_owner_pid=""
+	local expected_created_at=""
+	while [[ $# -gt 0 ]]; do
+		local option="$1"
+		case "$option" in
+		--task | --batch | --session | --owner-pid | --expected-task | --expected-batch | --expected-session | --expected-owner-pid | --expected-created-at)
+			[[ $# -ge 2 ]] || return 1
+			;;
+		esac
+		case "$option" in
+		--task) task_id="$2"; shift 2 ;;
+		--batch) batch_id="$2"; shift 2 ;;
+		--session) session_id="$2"; shift 2 ;;
+		--owner-pid) owner_pid_override="$2"; shift 2 ;;
+		--expected-task) expected_task_id="$2"; shift 2 ;;
+		--expected-batch) expected_batch_id="$2"; shift 2 ;;
+		--expected-session) expected_session_id="$2"; shift 2 ;;
+		--expected-owner-pid) expected_owner_pid="$2"; shift 2 ;;
+		--expected-created-at) expected_created_at="$2"; shift 2 ;;
+		*) return 1 ;;
+		esac
+	done
+
+	[[ -n "$wt_path" && -n "$task_id" && "$task_id" == "$expected_task_id" ]] || return 1
+	[[ "$expected_owner_pid" =~ ^[0-9]+$ && -n "$expected_created_at" ]] || return 1
+	if [[ -z "$session_id" ]]; then
+		session_id="${OPENCODE_SESSION_ID:-${CLAUDE_SESSION_ID:-}}"
+	fi
+
+	local owner_pid=""
+	owner_pid=$(_resolve_worktree_owner_pid "$owner_pid_override")
+	[[ "$owner_pid" =~ ^[0-9]+$ ]] || return 1
+	local owner_comm=""
+	owner_comm=$(_get_proc_comm "$owner_pid")
+
+	_init_registry_db || return 1
+	wt_path=$(_wt_registry_lookup_path "$wt_path")
+	if _wt_path_is_canonical "$wt_path"; then
+		_wt_delete_owner_row "$wt_path" || return 1
+		return 1
+	fi
+	_wt_compare_and_swap_owner_record "$wt_path" "$branch" "$owner_pid" \
+		"$session_id" "$batch_id" "$task_id" "$owner_comm" \
+		"$expected_owner_pid" "$expected_session_id" "$expected_batch_id" \
+		"$expected_task_id" "$expected_created_at" || return 1
+	return 0
 }
 
 # Unregister ownership of a worktree

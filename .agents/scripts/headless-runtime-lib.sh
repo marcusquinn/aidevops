@@ -689,29 +689,28 @@ build_sandbox_passthrough_csv() {
 		case "$name" in
 		# Session-bound OpenCode env makes isolated canary/worker runs attach to
 		# the parent TUI session and fail with "Session not found" (GH#23065).
-		AIDEVOPS_OPENCODE_SESSION_ID | OPENCODE_SESSION_ID | OPENCODE_PID | OPENCODE_RUN_ID | OPENCODE_PROCESS_ROLE | OPENCODE | OPENCODE_SERVER_PASSWORD) ;;
+		AIDEVOPS_OPENCODE_SESSION_ID | OPENCODE_SESSION_ID | OPENCODE_PID | OPENCODE_RUN_ID | OPENCODE_PROCESS_ROLE | OPENCODE | OPENCODE_SERVER_PASSWORD) continue ;;
 		OPENAI_* | ANTHROPIC_* | GOOGLE_* | CLAUDE_*)
 			if [[ -n "$provider" ]] && ! _headless_provider_env_allowed "$provider" "$name"; then
 				continue
 			fi
-			if [[ "$seen_names" == *" ${name} "* ]]; then
-				continue
-			fi
-			seen_names+="${name} "
-			names+=("$name")
 			;;
+		# Permission and blocker tooling needs this bounded worker identity set.
+		# Keep it explicit: arbitrary WORKER_* values may carry unrelated runtime
+		# configuration and must not cross the clean sandbox boundary.
+		WORKER_ISSUE_NUMBER | WORKER_REPO_SLUG | DISPATCH_REPO_SLUG | WORKER_SESSION_KEY | WORKER_WORKTREE_PATH | WORKER_GITHUB_LOGIN) ;;
 		# OTEL_* is passed through so headless workers under the sandbox
 		# can export OTLP traces when OTEL_EXPORTER_OTLP_ENDPOINT is set.
 		# Without this, opencode never initialises its OTLP exporter and
 		# all aidevops.* plugin span enrichment is silently dropped (t2186).
-		AIDEVOPS_* | PULSE_* | GH_* | GITHUB_* | OPENCODE_* | XDG_* | OTEL_* | REAL_HOME | TMPDIR | TMP | TEMP | RTK_* | VERIFY_*)
-			if [[ "$seen_names" == *" ${name} "* ]]; then
-				continue
-			fi
-			seen_names+="${name} "
-			names+=("$name")
-			;;
+		AIDEVOPS_* | PULSE_* | GH_* | GITHUB_* | OPENCODE_* | XDG_* | OTEL_* | REAL_HOME | TMPDIR | TMP | TEMP | RTK_* | VERIFY_*) ;;
+		*) continue ;;
 		esac
+		if [[ "$seen_names" == *" ${name} "* ]]; then
+			continue
+		fi
+		seen_names+="${name} "
+		names+=("$name")
 	done < <(env)
 
 	local IFS=,
@@ -1530,6 +1529,91 @@ _verify_worker_db_merge() {
 }
 
 #######################################
+# Read the owner PID from a worker DB replay lock.
+# Args: $1 = replay lock directory.
+#######################################
+_read_worker_db_replay_lock_pid() {
+	local replay_lock="$1"
+	local locking_pid=""
+	if [[ -f "${replay_lock}/pid" ]]; then
+		IFS= read -r locking_pid 2>/dev/null <"${replay_lock}/pid" || locking_pid=""
+	fi
+	printf '%s' "$locking_pid"
+	return 0
+}
+
+#######################################
+# Acquire a PID-owned replay lock, reclaiming dead or incomplete stale locks.
+# Args: $1 = replay lock directory.
+# Returns: 0 when acquired, 1 when another owner is live or acquisition fails.
+#######################################
+_acquire_worker_db_replay_lock() {
+	local replay_lock="$1"
+	local locking_pid=""
+	local wait_attempt=0
+	local acquire_attempt=0
+
+	while [[ "$acquire_attempt" -lt 2 ]]; do
+		acquire_attempt=$((acquire_attempt + 1))
+		locking_pid=""
+		wait_attempt=0
+		if mkdir "$replay_lock" 2>/dev/null; then
+			if printf '%s\n' "$$" >"${replay_lock}/pid" 2>/dev/null; then
+				return 0
+			fi
+			rm -rf "$replay_lock"
+			return 1
+		fi
+
+		# The owner writes its PID immediately after mkdir. Give that write up to one
+		# second to become visible before treating a PID-less directory as stale.
+		while [[ "$wait_attempt" -lt 10 ]]; do
+			locking_pid=$(_read_worker_db_replay_lock_pid "$replay_lock")
+			[[ -n "$locking_pid" ]] && break
+			wait_attempt=$((wait_attempt + 1))
+			sleep 0.1
+		done
+		if [[ "$locking_pid" =~ ^[0-9]+$ ]] && kill -0 "$locking_pid" 2>/dev/null; then
+			return 1
+		fi
+
+		# Serialize stale cleanup inside the existing directory. If the owner
+		# released it between the liveness check and this mkdir, retry acquisition.
+		if ! mkdir "${replay_lock}/.reclaim" 2>/dev/null; then
+			[[ ! -d "$replay_lock" ]] && continue
+			return 1
+		fi
+		locking_pid=$(_read_worker_db_replay_lock_pid "$replay_lock")
+		if [[ "$locking_pid" =~ ^[0-9]+$ ]] && kill -0 "$locking_pid" 2>/dev/null; then
+			rm -rf "${replay_lock}/.reclaim"
+			return 1
+		fi
+		rm -rf "$replay_lock" || return 1
+		mkdir "$replay_lock" 2>/dev/null || return 1
+		if ! printf '%s\n' "$$" >"${replay_lock}/pid" 2>/dev/null; then
+			rm -rf "$replay_lock"
+			return 1
+		fi
+		return 0
+	done
+	return 1
+}
+
+#######################################
+# Release a worker DB replay lock only when this process still owns it.
+# Args: $1 = replay lock directory.
+#######################################
+_release_worker_db_replay_lock() {
+	local replay_lock="$1"
+	local locking_pid=""
+	locking_pid=$(_read_worker_db_replay_lock_pid "$replay_lock")
+	if [[ "$locking_pid" == "$$" ]]; then
+		rm -rf "$replay_lock"
+	fi
+	return 0
+}
+
+#######################################
 # Replay retained worker DBs. Artifacts are deleted only after graph verification.
 # Returns 0 when every attempted artifact merged or no artifacts exist.
 #######################################
@@ -1539,7 +1623,7 @@ _replay_preserved_worker_dbs() {
 	local replay_lock="${recovery_root}/.replay.lock"
 	local recovery_db recovery_dir replay_dir replay_failed=0
 	[[ -d "$recovery_root" && -f "$shared_db" ]] || return 0
-	mkdir "$replay_lock" 2>/dev/null || return 0
+	_acquire_worker_db_replay_lock "$replay_lock" || return 0
 	for recovery_db in "$recovery_root"/*/opencode.db; do
 		[[ -f "$recovery_db" ]] || continue
 		recovery_dir="${recovery_db%/opencode.db}"
@@ -1559,7 +1643,7 @@ _replay_preserved_worker_dbs() {
 		fi
 		rm -rf "$replay_dir"
 	done
-	rm -rf "$replay_lock"
+	_release_worker_db_replay_lock "$replay_lock"
 	[[ "$replay_failed" -eq 0 ]]
 }
 

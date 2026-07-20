@@ -32,6 +32,8 @@ serve-sim                         # Preview UI at http://localhost:3200
 serve-sim --detach -q             # Start background preview and return JSON with url/streamUrl
 serve-sim --host 0.0.0.0          # Expose preview on a trusted LAN
 serve-sim --codec mjpeg           # Pin stream codec when H.264 is unavailable
+serve-sim --panes devices,tools   # Choose the preview panes opened at startup
+serve-sim --fit --theme dark      # Fit the device and set simulator appearance
 serve-sim --list -q               # List running simulator streams
 serve-sim tap 0.5 0.9             # Tap normalized screen coordinates
 serve-sim button home             # Send hardware button
@@ -76,6 +78,8 @@ Do **not** use it for Android emulators, real iOS hardware, building/installing 
 | Stream only | `serve-sim --no-preview [device...]` | Foreground stream without React preview UI |
 | List streams | `serve-sim --list -q` | Use `-q` for machine-readable output |
 | Force compatibility stream | `serve-sim --codec mjpeg [device...]`, open the preview with `?codec=mjpeg`, or use Stream → Codec | Use MJPEG if H.264/WebCodecs stutters or fails while recording |
+| Set initial preview layout | `serve-sim --panes devices,tools --fit [device...]` | Panes: `devices`, `tools`, `devtools`, or exclusive `none`; `--fit` ignores saved sizing for the initial render |
+| Set simulator appearance | `serve-sim --theme dark [device...]` | Applies `light` or `dark` appearance before opening the preview |
 | Stop streams | `serve-sim --kill [device]` | Stop all streams or one device stream |
 | Tap | `serve-sim tap 0.5 0.9 [-d udid]` | Normalized 0..1 screen coordinates; prefer this over raw gesture JSON for plain taps |
 | Gesture | `serve-sim gesture '<json>' [-d udid]` | Use documented JSON shape; avoid guessing coordinates |
@@ -97,13 +101,14 @@ Do **not** use it for Android emulators, real iOS hardware, building/installing 
 2. Start the preview with `serve-sim --detach -q`.
 3. Parse only JSON/quiet output; do not scrape human-readable output.
 4. Surface the returned `url` to the user. If the current runtime exposes a preview/open-url tool, pass the URL there too.
-5. Use `agent-device snapshot` or `ios-simulator-mcp` for accessibility-aware targeting; use `serve-sim` for the shared visual stream and simulator-specific commands.
-6. If the browser preview stutters, drops frames, or reports an H.264 decoder failure while screen recording, restart with `serve-sim --codec mjpeg`, switch the Stream → Codec control to MJPEG, or append `?codec=mjpeg` to the preview URL.
-7. For plain coordinate taps, use `serve-sim tap <x> <y>` with normalized 0..1 values; reserve `serve-sim gesture '<json>'` for drag, swipe, and multi-touch shapes.
-8. When diagnosing what just happened, open the Event Log panel in the browser tools area or run `serve-sim event-log -n 50 -j` against the active server; printable keyboard input is intentionally redacted while control keys, normalized tap/drag coordinates, command status, and device labels remain visible.
-9. Run shared-simulator Bun suites serially (`bun test --max-concurrency=1 ...`) so one simulator stream, pointer state, or native helper crash does not cascade across concurrent tests.
-10. Treat isolated `ConnectionRefused` / `server not alive`, hook timeout, or `ECONNRESET` failures in shared-simulator suites as possible simulator wedges: reboot the simulator and retry once before attributing the failure to app code.
-11. Clean up with `serve-sim --kill` unless the user asks to keep the simulator stream running.
+5. When review needs a deterministic first view, add `--panes <list>`, `--fit`, or `--theme <light|dark>`; these startup choices do not replace interactive preview controls.
+6. Use `agent-device snapshot` or `ios-simulator-mcp` for accessibility-aware targeting; use `serve-sim` for the shared visual stream and simulator-specific commands.
+7. If the browser preview stutters, drops frames, or reports an H.264 decoder failure while screen recording, restart with `serve-sim --codec mjpeg`, switch the Stream → Codec control to MJPEG, or append `?codec=mjpeg` to the preview URL.
+8. For plain coordinate taps, use `serve-sim tap <x> <y>` with normalized 0..1 values; reserve `serve-sim gesture '<json>'` for drag, swipe, and multi-touch shapes.
+9. When diagnosing what just happened, open the Event Log panel in the browser tools area or run `serve-sim event-log -n 50 -j` against the active server; printable keyboard input is intentionally redacted while control keys, normalized tap/drag coordinates, command status, and device labels remain visible.
+10. Run shared-simulator Bun suites serially (`bun test --max-concurrency=1 ...`) so one simulator stream, pointer state, or native helper crash does not cascade across concurrent tests.
+11. Treat isolated `ConnectionRefused` / `server not alive`, hook timeout, or `ECONNRESET` failures in shared-simulator suites as possible simulator wedges: reboot the simulator and retry once before attributing the failure to app code.
+12. Clean up with `serve-sim --kill` unless the user asks to keep the simulator stream running.
 
 ## Expo / Dev Server Embedding
 

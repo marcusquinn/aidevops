@@ -18,6 +18,7 @@
 # Usage:
 #   pulse-batch-prefetch-helper.sh refresh              # Fetch and cache
 #   pulse-batch-prefetch-helper.sh cache-path --kind issues --slug owner/repo
+#   pulse-batch-prefetch-helper.sh read-snapshot --kind issues --slug owner/repo
 #   pulse-batch-prefetch-helper.sh evict-issue owner/repo 123
 #   pulse-batch-prefetch-helper.sh clear                # Wipe cache
 #   pulse-batch-prefetch-helper.sh status               # Show cache ages
@@ -59,11 +60,25 @@ SCRIPT_DIR="${BASH_SOURCE[0]%/*}"
 SCRIPT_DIR="$(cd "$SCRIPT_DIR" && pwd)"
 _PULSE_BATCH_SEARCH_LAST_RESORT_ENV="${PULSE_BATCH_SEARCH_LAST_RESORT-}"
 
+# shellcheck source=./shared-gh-request-state.sh
+if [[ -f "${SCRIPT_DIR}/shared-gh-request-state.sh" ]]; then
+	# shellcheck disable=SC1091
+	source "${SCRIPT_DIR}/shared-gh-request-state.sh"
+fi
+
 # Source shared constants for colors and helpers
 # shellcheck source=./shared-constants.sh
 # shellcheck disable=SC1091
 if [[ -f "${SCRIPT_DIR}/shared-constants.sh" ]]; then
 	source "${SCRIPT_DIR}/shared-constants.sh"
+fi
+
+# Source privacy-safe efficiency instrumentation for cache/single-flight events.
+# shellcheck source=./gh-api-instrument.sh
+# shellcheck disable=SC1091
+if ! declare -F gh_record_efficiency_evidence >/dev/null 2>&1 \
+	&& [[ -f "${SCRIPT_DIR}/gh-api-instrument.sh" ]]; then
+	source "${SCRIPT_DIR}/gh-api-instrument.sh"
 fi
 
 # Source L1 events ETag tickle helper (t2830, GH#20868).
@@ -112,7 +127,25 @@ _KIND_PRS="prs"
 _JSON_NULL="null"
 _JSON_EMPTY_OBJ="{}"
 _JSON_EMPTY_ARR="[]"
+_JSON_TYPE_ARRAY=array
+_JSON_TYPE_BOOLEAN=boolean
+_JSON_TYPE_STRING=string
 _STATE_OPEN="open"
+_CACHE_STATE_MALFORMED="malformed"
+_CACHE_STATE_INVALIDATED="invalidated"
+_CACHE_CARDINALITY_EMPTY=empty
+_CACHE_CARDINALITY_UNKNOWN=unknown
+_CACHE_SNAPSHOT_STATE="missing"
+_CACHE_SNAPSHOT_PATH=""
+_SNAPSHOT_SCHEMA="aidevops-pulse-snapshot/v1"
+_SNAPSHOT_ISSUES_PROJECTION="number,title,state,labels,updatedAt,assignees"
+_SNAPSHOT_PRS_PROJECTION="number,title,labels,updatedAt,assignees,createdAt,author,headRefOid,headRefName"
+_BATCH_SNAPSHOT_GENERATION="${PULSE_BATCH_SNAPSHOT_GENERATION:-}"
+_BATCH_SNAPSHOT_AUTH_SCOPE="${PULSE_BATCH_SNAPSHOT_AUTH_SCOPE:-${GH_HOST:-github.com}|${AIDEVOPS_GH_AUTH_MODE:-gh}|${AIDEVOPS_GH_AUTH_PRINCIPAL:-default}}|${AIDEVOPS_GH_API_POOL:-default}"
+_BATCH_INITIAL_SNAPSHOT_MARKERS=""
+_BATCH_INITIAL_INVALIDATION_GENERATIONS=""
+_BATCH_SNAPSHOT_MARKER_MISSING="$_CACHE_SNAPSHOT_STATE"
+_BATCH_INVALIDATION_INITIAL="${_GHRS_INVALIDATION_INITIAL:-0000000000000000000000000000000000000000000000000000000000000000}"
 
 # --- Feature flag gate ---
 _check_enabled() {
@@ -120,6 +153,86 @@ _check_enabled() {
 		return 1
 	fi
 	return 0
+}
+
+_snapshot_projection() {
+	local kind="$1"
+	case "$kind" in
+	issues) printf '%s\n' "$_SNAPSHOT_ISSUES_PROJECTION" ;;
+	prs) printf '%s\n' "$_SNAPSHOT_PRS_PROJECTION" ;;
+	*) return 1 ;;
+	esac
+	return 0
+}
+
+_snapshot_request_key() {
+	local kind="$1"
+	local slug="$2"
+	local projection=""
+	projection=$(_snapshot_projection "$kind") || return 1
+	declare -F gh_request_state_request_key >/dev/null 2>&1 || return 1
+	gh_request_state_request_key "$slug" canonical-snapshot "$projection" "$kind" rest-core
+	return $?
+}
+
+_snapshot_invalidation_key() {
+	local kind="$1"
+	local slug="$2"
+	local projection=""
+	projection=$(_snapshot_projection "$kind") || return 1
+	declare -F gh_request_state_invalidation_key >/dev/null 2>&1 || return 1
+	gh_request_state_invalidation_key "$slug" canonical-snapshot "$projection" "$kind"
+	return $?
+}
+
+_snapshot_invalidation_generation() {
+	local kind="$1"
+	local slug="$2"
+	local request_key=""
+	if ! declare -F gh_request_state_invalidation_generation_get >/dev/null 2>&1; then
+		printf '%s\n' "$_BATCH_INVALIDATION_INITIAL"
+		return 0
+	fi
+	request_key="$(_snapshot_invalidation_key "$kind" "$slug")" || return 1
+	gh_request_state_invalidation_generation_get "$request_key"
+	return $?
+}
+
+_snapshot_invalidation_generation_is_current() {
+	local kind="$1"
+	local slug="$2"
+	local generation="$3"
+	local request_key=""
+	request_key="$(_snapshot_invalidation_key "$kind" "$slug")" || return 1
+	gh_request_state_invalidation_generation_is_current "$request_key" "$generation"
+	return $?
+}
+
+_snapshot_initial_invalidation_generation() {
+	local kind="$1"
+	local slug="$2"
+	local stored_kind="" stored_slug="" generation=""
+	while IFS='|' read -r stored_kind stored_slug generation; do
+		if [[ "$stored_kind" == "$kind" && "$stored_slug" == "$slug" && -n "$generation" ]]; then
+			printf '%s\n' "$generation"
+			return 0
+		fi
+	done <<<"$_BATCH_INITIAL_INVALIDATION_GENERATIONS"
+	_snapshot_invalidation_generation "$kind" "$slug"
+	return $?
+}
+
+_snapshot_collection_complete() {
+	local payload="$1"
+	local limit="${2:-100}"
+	[[ "$limit" =~ ^[0-9]+$ && "$limit" -gt 0 ]] || limit=100
+	[[ "$limit" -le 100 ]] || limit=100
+	local count=""
+	count=$(printf '%s' "$payload" | jq -er 'select(type == "array") | length' 2>/dev/null) || return 1
+	if [[ "$count" =~ ^[0-9]+$ && "$count" -lt "$limit" ]]; then
+		return 0
+	fi
+	return 1
 }
 
 # --- Logging ---
@@ -155,10 +268,12 @@ _is_search_rate_limited() {
 # Returns: 0 on success (cache written), 1 on failure (REST also failed/no data)
 _prefetch_rest_issues_for_slug() {
 	local slug="$1"
+	local invalidation_generation=""
+	invalidation_generation="$(_snapshot_initial_invalidation_generation "$_KIND_ISSUES" "$slug")" || return 1
 	declare -F gh_record_call >/dev/null && gh_record_call rest pulse_batch_prefetch_rest_issues || true
 	local rest_json
 	rest_json=$(_prefetch_gh_read gh api "/repos/${slug}/issues?state=open&per_page=${BATCH_SEARCH_LIMIT}" 2>/dev/null) || rest_json=""
-	if [[ -z "$rest_json" || "$rest_json" == "$_JSON_NULL" || "$rest_json" == "$_JSON_EMPTY_ARR" ]]; then
+	if [[ -z "$rest_json" || "$rest_json" == "$_JSON_NULL" ]]; then
 		_log "REST issues fallback: empty/null response for ${slug}"
 		return 1
 	fi
@@ -166,9 +281,30 @@ _prefetch_rest_issues_for_slug() {
 	cache_file=$(_cache_file_path "$_KIND_ISSUES" "$slug")
 	local ts
 	ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-	echo "$rest_json" | jq --arg ts "$ts" --arg state_open "$_STATE_OPEN" '{
+	local complete=false
+	_snapshot_collection_complete "$rest_json" "$BATCH_SEARCH_LIMIT" && complete=true
+	local projection=""
+	projection=$(_snapshot_projection "$_KIND_ISSUES") || return 1
+	local tmp_file=""
+	tmp_file=$(mktemp "${BATCH_CACHE_DIR}/.issues-snapshot.XXXXXX") || return 1
+	if ! printf '%s\n' "$rest_json" | jq --arg ts "$ts" --arg state_open "$_STATE_OPEN" \
+		--arg schema "$_SNAPSHOT_SCHEMA" --arg slug "$slug" --arg collection "$_KIND_ISSUES" \
+		--arg projection "$projection" --arg auth_scope "$_BATCH_SNAPSHOT_AUTH_SCOPE" \
+		--arg generation "$_BATCH_SNAPSHOT_GENERATION" \
+		--arg invalidation_generation "$invalidation_generation" --argjson complete "$complete" '{
+		schema: $schema,
+		repository: $slug,
+		collection: $collection,
+		projection: $projection,
+		auth_scope: $auth_scope,
+		generation: $generation,
+		invalidation_generation: $invalidation_generation,
+		source: "rest-fallback",
+		complete: $complete,
+		truncated: ($complete | not),
+		fetched_at: $ts,
 		timestamp: $ts,
-		items: [.[] | {
+		items: [.[] | select(.pull_request == null) | {
 			number: .number,
 			title: .title,
 			state: (.state // $state_open),
@@ -176,10 +312,21 @@ _prefetch_rest_issues_for_slug() {
 			updatedAt: .updated_at,
 			assignees: (.assignees // [])
 		}]
-	}' >"$cache_file" 2>/dev/null || {
+	}' >"$tmp_file" 2>/dev/null; then
+		rm -f "$tmp_file"
 		_log "REST issues fallback: failed to write cache for ${slug}"
 		return 1
+	fi
+	if ! _snapshot_invalidation_generation_is_current "$_KIND_ISSUES" "$slug" "$invalidation_generation"; then
+		rm -f "$tmp_file"
+		_log "REST issues fallback: publication fenced for ${slug}"
+		return 1
+	fi
+	mv "$tmp_file" "$cache_file" || {
+		rm -f "$tmp_file"
+		return 1
 	}
+	_snapshot_invalidation_generation_is_current "$_KIND_ISSUES" "$slug" "$invalidation_generation" || return 1
 	local item_count
 	item_count=$(jq '.items | length' "$cache_file" 2>/dev/null) || item_count=0
 	_log "REST issues fallback: wrote ${item_count} items to cache for ${slug}"
@@ -196,10 +343,12 @@ _prefetch_rest_issues_for_slug() {
 # Returns: 0 on success (cache written), 1 on failure (REST also failed/no data)
 _prefetch_rest_prs_for_slug() {
 	local slug="$1"
+	local invalidation_generation=""
+	invalidation_generation="$(_snapshot_initial_invalidation_generation "$_KIND_PRS" "$slug")" || return 1
 	declare -F gh_record_call >/dev/null && gh_record_call rest pulse_batch_prefetch_rest_prs || true
 	local rest_json
 	rest_json=$(_prefetch_gh_read gh api "/repos/${slug}/pulls?state=open&per_page=${BATCH_SEARCH_LIMIT}" 2>/dev/null) || rest_json=""
-	if [[ -z "$rest_json" || "$rest_json" == "$_JSON_NULL" || "$rest_json" == "$_JSON_EMPTY_ARR" ]]; then
+	if [[ -z "$rest_json" || "$rest_json" == "$_JSON_NULL" ]]; then
 		_log "REST PRs fallback: empty/null response for ${slug}"
 		return 1
 	fi
@@ -207,7 +356,28 @@ _prefetch_rest_prs_for_slug() {
 	cache_file=$(_cache_file_path "$_KIND_PRS" "$slug")
 	local ts
 	ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-	echo "$rest_json" | jq --arg ts "$ts" '{
+	local complete=false
+	_snapshot_collection_complete "$rest_json" "$BATCH_SEARCH_LIMIT" && complete=true
+	local projection=""
+	projection=$(_snapshot_projection "$_KIND_PRS") || return 1
+	local tmp_file=""
+	tmp_file=$(mktemp "${BATCH_CACHE_DIR}/.prs-snapshot.XXXXXX") || return 1
+	if ! printf '%s\n' "$rest_json" | jq --arg ts "$ts" --arg schema "$_SNAPSHOT_SCHEMA" \
+		--arg slug "$slug" --arg collection "$_KIND_PRS" --arg projection "$projection" \
+		--arg auth_scope "$_BATCH_SNAPSHOT_AUTH_SCOPE" --arg generation "$_BATCH_SNAPSHOT_GENERATION" \
+		--arg invalidation_generation "$invalidation_generation" \
+		--argjson complete "$complete" '{
+		schema: $schema,
+		repository: $slug,
+		collection: $collection,
+		projection: $projection,
+		auth_scope: $auth_scope,
+		generation: $generation,
+		invalidation_generation: $invalidation_generation,
+		source: "rest-fallback",
+		complete: $complete,
+		truncated: ($complete | not),
+		fetched_at: $ts,
 		timestamp: $ts,
 		items: [.[] | {
 			number: .number,
@@ -216,12 +386,25 @@ _prefetch_rest_prs_for_slug() {
 			updatedAt: .updated_at,
 			assignees: (.assignees // []),
 			createdAt: (.created_at // null),
-			author: (if .user then {login: .user.login} else null end)
+			author: (if .user then {login: .user.login} else null end),
+			headRefOid: (.head.sha // null),
+			headRefName: (.head.ref // null)
 		}]
-	}' >"$cache_file" 2>/dev/null || {
+	}' >"$tmp_file" 2>/dev/null; then
+		rm -f "$tmp_file"
 		_log "REST PRs fallback: failed to write cache for ${slug}"
 		return 1
+	fi
+	if ! _snapshot_invalidation_generation_is_current "$_KIND_PRS" "$slug" "$invalidation_generation"; then
+		rm -f "$tmp_file"
+		_log "REST PRs fallback: publication fenced for ${slug}"
+		return 1
+	fi
+	mv "$tmp_file" "$cache_file" || {
+		rm -f "$tmp_file"
+		return 1
 	}
+	_snapshot_invalidation_generation_is_current "$_KIND_PRS" "$slug" "$invalidation_generation" || return 1
 	local item_count
 	item_count=$(jq '.items | length' "$cache_file" 2>/dev/null) || item_count=0
 	_log "REST PRs fallback: wrote ${item_count} items to cache for ${slug}"
@@ -332,7 +515,9 @@ _normalize_search_to_prefetch_schema() {
 					updatedAt: .updatedAt,
 					assignees: (.assignees // []),
 					createdAt: (.createdAt // null),
-					author: (.author // null)
+					author: (.author // null),
+					headRefOid: (.headRefOid // null),
+					headRefName: (.headRefName // null)
 				}]
 			}) |
 			from_entries
@@ -363,28 +548,122 @@ _conditional_rest_endpoint() {
 	return 0
 }
 
+_conditional_rest_snapshot_marker() {
+	local kind="$1"
+	local slug="$2"
+	local projection=""
+	local cache_file=""
+	local invalidation_generation=""
+	projection=$(_snapshot_projection "$kind") || return 1
+	invalidation_generation="$(_snapshot_invalidation_generation "$kind" "$slug")" || return 1
+	cache_file=$(_cache_file_path "$kind" "$slug")
+	[[ -s "$cache_file" ]] || return 1
+	jq -er --arg schema "$_SNAPSHOT_SCHEMA" --arg slug "$slug" --arg kind "$kind" \
+		--arg projection "$projection" --arg auth_scope "$_BATCH_SNAPSHOT_AUTH_SCOPE" \
+		--arg string_type "$_JSON_TYPE_STRING" \
+		--arg invalidation_generation "$invalidation_generation" \
+		--arg invalidation_initial "$_BATCH_INVALIDATION_INITIAL" '
+		select(
+			.schema == $schema and .repository == $slug and .collection == $kind and
+			.projection == $projection and .auth_scope == $auth_scope and
+			(.invalidation_generation // $invalidation_initial) == $invalidation_generation and
+			.source == "conditional-rest" and .complete == true and
+			(.generation | type == $string_type and length > 0) and
+			(.fetched_at | type == $string_type and length > 0)
+		) |
+		[.generation, .fetched_at, (.etag // "")] | @tsv
+	' "$cache_file" 2>/dev/null
+	return $?
+}
+
+_conditional_rest_capture_initial_markers() {
+	local owner_groups="$1"
+	local owner="" slugs="" slug="" kind="" marker="" record=""
+	local invalidation_generation="" invalidation_record=""
+	_BATCH_INITIAL_SNAPSHOT_MARKERS=""
+	_BATCH_INITIAL_INVALIDATION_GENERATIONS=""
+	while IFS='|' read -r owner slugs; do
+		[[ -n "$owner" ]] || continue
+		while IFS= read -r slug; do
+			[[ -n "$slug" ]] || continue
+			for kind in "$_KIND_ISSUES" "$_KIND_PRS"; do
+				marker=$(_conditional_rest_snapshot_marker "$kind" "$slug") || marker="$_BATCH_SNAPSHOT_MARKER_MISSING"
+				invalidation_generation=$(_snapshot_invalidation_generation "$kind" "$slug") || invalidation_generation=""
+				record="${kind}|${slug}|${marker}"
+				invalidation_record="${kind}|${slug}|${invalidation_generation}"
+				if [[ -n "$_BATCH_INITIAL_SNAPSHOT_MARKERS" ]]; then
+					_BATCH_INITIAL_SNAPSHOT_MARKERS="${_BATCH_INITIAL_SNAPSHOT_MARKERS}"$'\n'"${record}"
+				else
+					_BATCH_INITIAL_SNAPSHOT_MARKERS="$record"
+				fi
+				if [[ -n "$_BATCH_INITIAL_INVALIDATION_GENERATIONS" ]]; then
+					_BATCH_INITIAL_INVALIDATION_GENERATIONS="${_BATCH_INITIAL_INVALIDATION_GENERATIONS}"$'\n'"${invalidation_record}"
+				else
+					_BATCH_INITIAL_INVALIDATION_GENERATIONS="$invalidation_record"
+				fi
+			done
+		done < <(tr ',' '\n' <<<"$slugs")
+	done <<<"$owner_groups"
+	return 0
+}
+
+_conditional_rest_initial_marker() {
+	local kind="$1"
+	local slug="$2"
+	local stored_kind="" stored_slug="" marker=""
+	while IFS='|' read -r stored_kind stored_slug marker; do
+		if [[ "$stored_kind" == "$kind" && "$stored_slug" == "$slug" ]]; then
+			printf '%s\n' "$marker"
+			return 0
+		fi
+	done <<<"$_BATCH_INITIAL_SNAPSHOT_MARKERS"
+	return 1
+}
+
 _conditional_rest_update_cache_from_response() {
 	local kind="$1"
 	local slug="$2"
 	local response_file="$3"
 	local cache_file="$4"
+	local invalidation_generation="$5"
 	# Keep response parsing in Python so this shell library stays below the
 	# function-complexity gate while preserving atomic cache writes.
-	python3 "${SCRIPT_DIR}/pulse-batch-conditional-cache.py" "$kind" "$slug" "$response_file" "$cache_file"
+	local projection=""
+	projection=$(_snapshot_projection "$kind") || return 1
+	python3 "${SCRIPT_DIR}/pulse-batch-conditional-cache.py" \
+		"$kind" "$slug" "$response_file" "$cache_file" \
+		"$_BATCH_SNAPSHOT_GENERATION" "$_BATCH_SNAPSHOT_AUTH_SCOPE" "$projection" \
+		"$invalidation_generation"
 	return 0
 }
 
-_conditional_rest_refresh_slug() {
+_conditional_rest_refresh_slug_leader() {
 	local kind="$1"
 	local slug="$2"
+	local request_key="${3:-}"
+	local generation="${4:-}"
+	local invalidation_generation="${5:-}"
 	[[ "${PULSE_BATCH_CONDITIONAL_REST_ENABLED:-1}" == "1" ]] || return 1
+	if [[ -z "$invalidation_generation" ]]; then
+		invalidation_generation="$(_snapshot_initial_invalidation_generation "$kind" "$slug")" || return 1
+	fi
 	local cache_file
 	cache_file=$(_cache_file_path "$kind" "$slug")
 	local endpoint
 	endpoint=$(_conditional_rest_endpoint "$kind" "$slug") || return 1
+	local projection=""
+	projection=$(_snapshot_projection "$kind") || return 1
 	local etag=""
 	if [[ -f "$cache_file" ]]; then
-		etag=$(jq -r '.etag // ""' "$cache_file" 2>/dev/null) || etag=""
+		etag=$(jq -r --arg schema "$_SNAPSHOT_SCHEMA" --arg kind "$kind" \
+			--arg projection "$projection" --arg auth_scope "$_BATCH_SNAPSHOT_AUTH_SCOPE" \
+			--arg invalidation_generation "$invalidation_generation" \
+			--arg invalidation_initial "$_BATCH_INVALIDATION_INITIAL" '
+			select(.schema == $schema and .collection == $kind and .projection == $projection) |
+			select(.auth_scope == $auth_scope and .complete == true) |
+			select((.invalidation_generation // $invalidation_initial) == $invalidation_generation) |
+			.etag // ""
+		' "$cache_file" 2>/dev/null) || etag=""
 		[[ "$etag" == "$_JSON_NULL" ]] && etag=""
 	fi
 	[[ -n "$etag" ]] || _OWNER_CONDITIONAL_MISSES=$((_OWNER_CONDITIONAL_MISSES + 1))
@@ -398,8 +677,20 @@ _conditional_rest_refresh_slug() {
 		_prefetch_gh_read gh api -i -H "Accept: application/vnd.github+json" "$endpoint" >"$response_file" 2>"$err_file" || rc=$?
 	fi
 	local status=""
-	status=$(_conditional_rest_update_cache_from_response "$kind" "$slug" "$response_file" "$cache_file" 2>/dev/null) || status=""
+	if [[ -n "$request_key" && -n "$generation" ]] && ! gh_request_state_singleflight_is_owner "$request_key" "$generation"; then
+		rm -f "$response_file" "$err_file"
+		return 1
+	fi
+	if ! _snapshot_invalidation_generation_is_current "$kind" "$slug" "$invalidation_generation"; then
+		rm -f "$response_file" "$err_file"
+		return 1
+	fi
+	status=$(_conditional_rest_update_cache_from_response "$kind" "$slug" "$response_file" "$cache_file" "$invalidation_generation" 2>/dev/null) || status=""
 	rm -f "$response_file" "$err_file"
+	if [[ -n "$status" ]] && ! _snapshot_invalidation_generation_is_current "$kind" "$slug" "$invalidation_generation"; then
+		_log "conditional REST ${kind}: publication invalidated for ${slug}"
+		return 1
+	fi
 	case "$status" in
 	304)
 		_OWNER_CONDITIONAL_304=$((_OWNER_CONDITIONAL_304 + 1))
@@ -418,6 +709,62 @@ _conditional_rest_refresh_slug() {
 		return 1
 		;;
 	esac
+	return 1
+}
+
+_conditional_rest_refresh_slug() {
+	local kind="$1"
+	local slug="$2"
+	local projection=""
+	local request_key=""
+	local generation=""
+	local invalidation_generation=""
+	local initial_marker=""
+	local current_marker=""
+	projection=$(_snapshot_projection "$kind") || return 1
+	invalidation_generation="$(_snapshot_initial_invalidation_generation "$kind" "$slug")" || return 1
+	initial_marker=$(_conditional_rest_initial_marker "$kind" "$slug") || {
+		initial_marker=$(_conditional_rest_snapshot_marker "$kind" "$slug") || initial_marker="$_BATCH_SNAPSHOT_MARKER_MISSING"
+	}
+	if ! declare -F gh_request_state_singleflight_begin >/dev/null 2>&1; then
+		_conditional_rest_refresh_slug_leader "$kind" "$slug" "" "" "$invalidation_generation"
+		return $?
+	fi
+	request_key="$(_snapshot_request_key "$kind" "$slug")" || {
+		_conditional_rest_refresh_slug_leader "$kind" "$slug" "" "" "$invalidation_generation"
+		return $?
+	}
+	gh_request_state_singleflight_begin "$request_key"
+	generation="$_GHRS_BEGIN_GENERATION"
+	case "$_GHRS_BEGIN_ROLE" in
+	leader)
+		current_marker=$(_conditional_rest_snapshot_marker "$kind" "$slug") || current_marker=""
+		if [[ -n "$current_marker" && "$current_marker" != "$initial_marker" ]]; then
+			gh_request_state_singleflight_finish "$request_key" "$generation" success || true
+			_log "conditional REST ${kind}: reused concurrently published snapshot for ${slug}"
+			return 0
+		fi
+		if _conditional_rest_refresh_slug_leader "$kind" "$slug" "$request_key" "$generation" "$invalidation_generation"; then
+			gh_request_state_singleflight_finish "$request_key" "$generation" success || true
+			return 0
+		fi
+		gh_request_state_singleflight_finish "$request_key" "$generation" failure || true
+		return 1
+		;;
+	follower-success)
+		if _conditional_rest_snapshot_marker "$kind" "$slug" >/dev/null 2>&1; then
+			_log "conditional REST ${kind}: coalesced shared refresh for ${slug}"
+			return 0
+		fi
+		return 1
+		;;
+	follower-failure | timeout) return 1 ;;
+	bypass)
+		_conditional_rest_refresh_slug_leader "$kind" "$slug" "" "" "$invalidation_generation"
+		return $?
+		;;
+	esac
+	return 1
 }
 
 _conditional_rest_per_slug() {
@@ -441,20 +788,53 @@ _write_per_slug_caches() {
 
 	local slugs
 	slugs=$(echo "$normalized_json" | jq -r 'keys[]' 2>/dev/null) || return 1
+	local projection=""
+	projection=$(_snapshot_projection "$kind") || return 1
 
 	local slug
 	while IFS= read -r slug; do
 		[[ -n "$slug" ]] || continue
+		local invalidation_generation=""
+		invalidation_generation="$(_snapshot_initial_invalidation_generation "$kind" "$slug")" || continue
 		local cache_file
 		cache_file=$(_cache_file_path "$kind" "$slug")
 		local ts
 		ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-		echo "$normalized_json" | jq --arg slug "$slug" --arg ts "$ts" '{
+		local tmp_file=""
+		tmp_file=$(mktemp "${BATCH_CACHE_DIR}/.search-snapshot.XXXXXX") || continue
+		if ! printf '%s\n' "$normalized_json" | jq --arg slug "$slug" --arg ts "$ts" \
+			--arg schema "$_SNAPSHOT_SCHEMA" --arg collection "$kind" \
+			--arg projection "$projection" --arg auth_scope "$_BATCH_SNAPSHOT_AUTH_SCOPE" \
+			--arg generation "$_BATCH_SNAPSHOT_GENERATION" \
+			--arg invalidation_generation "$invalidation_generation" '{
+			schema: $schema,
+			repository: $slug,
+			collection: $collection,
+			projection: $projection,
+			auth_scope: $auth_scope,
+			generation: $generation,
+			invalidation_generation: $invalidation_generation,
+			source: "owner-search",
+			complete: false,
+			truncated: true,
+			fetched_at: $ts,
 			timestamp: $ts,
 			items: .[$slug]
-		}' >"$cache_file" 2>/dev/null || {
+		}' >"$tmp_file" 2>/dev/null; then
+			rm -f "$tmp_file"
 			_log "WARNING: failed to write cache for ${kind}/${slug}"
+			continue
+		fi
+		if ! _snapshot_invalidation_generation_is_current "$kind" "$slug" "$invalidation_generation"; then
+			rm -f "$tmp_file"
+			_log "WARNING: fenced stale cache publication for ${kind}/${slug}"
+			continue
+		fi
+		mv "$tmp_file" "$cache_file" || {
+			rm -f "$tmp_file"
+			continue
 		}
+		_snapshot_invalidation_generation_is_current "$kind" "$slug" "$invalidation_generation" || true
 	done <<<"$slugs"
 	return 0
 }
@@ -651,6 +1031,7 @@ _cmd_refresh() {
 	}
 
 	mkdir -p "$BATCH_CACHE_DIR" 2>/dev/null || true
+	_BATCH_SNAPSHOT_GENERATION="$(date -u +%Y%m%dT%H%M%SZ)-$$"
 
 	local owner_groups
 	owner_groups=$(_group_repos_by_owner "$REPOS_JSON") || {
@@ -662,6 +1043,7 @@ _cmd_refresh() {
 		_log "no pulse-enabled repos found — nothing to prefetch"
 		return 0
 	fi
+	_conditional_rest_capture_initial_markers "$owner_groups"
 
 	# Shared counters updated by _refresh_owner_issues/_refresh_owner_prs
 	_OWNER_SEARCH_CALLS=0
@@ -736,11 +1118,125 @@ _cmd_refresh() {
 	return 0
 }
 
+# Resolve a cache snapshot to one canonical state without printing payload data.
+# Sets _CACHE_SNAPSHOT_STATE and _CACHE_SNAPSHOT_PATH for Bash 3.2 callers.
+_resolve_cache_snapshot() {
+	local kind="$1"
+	local slug="$2"
+	local cache_file=""
+	local cache_ts=""
+	local cache_epoch=0
+	local now_epoch=0
+	local age=0
+	local invalidation_generation=""
+	local stored_invalidation_generation=""
+
+	_CACHE_SNAPSHOT_STATE="missing"
+	_CACHE_SNAPSHOT_PATH=""
+	if ! _check_enabled; then
+		_CACHE_SNAPSHOT_STATE="disabled"
+		return 1
+	fi
+
+	cache_file=$(_cache_file_path "$kind" "$slug")
+	_CACHE_SNAPSHOT_PATH="$cache_file"
+	[[ -f "$cache_file" ]] || return 1
+	invalidation_generation="$(_snapshot_invalidation_generation "$kind" "$slug")" || {
+		_CACHE_SNAPSHOT_STATE="$_CACHE_STATE_INVALIDATED"
+		return 1
+	}
+	stored_invalidation_generation=$(jq -er --arg initial "$_BATCH_INVALIDATION_INITIAL" \
+		'.invalidation_generation // $initial' "$cache_file" 2>/dev/null) || {
+		_CACHE_SNAPSHOT_STATE="$_CACHE_STATE_MALFORMED"
+		return 1
+	}
+	if [[ "$stored_invalidation_generation" != "$invalidation_generation" ]]; then
+		_CACHE_SNAPSHOT_STATE="$_CACHE_STATE_INVALIDATED"
+		return 1
+	fi
+
+	cache_ts=$(jq -er '
+		select((.timestamp | type) == "string" and (.timestamp | length) > 0) |
+		select((.items | type) == "array") |
+		.timestamp
+	' "$cache_file" 2>/dev/null) || {
+		_CACHE_SNAPSHOT_STATE="$_CACHE_STATE_MALFORMED"
+		return 1
+	}
+
+	if [[ "$(uname)" == "Darwin" ]]; then
+		cache_epoch=$(TZ=UTC date -j -f "%Y-%m-%dT%H:%M:%SZ" "$cache_ts" "+%s" 2>/dev/null) || cache_epoch=0
+	else
+		cache_epoch=$(date -u -d "$cache_ts" +%s 2>/dev/null) || cache_epoch=0
+	fi
+	now_epoch=$(date -u +%s) || now_epoch=0
+	if [[ "$cache_epoch" -le 0 || "$now_epoch" -le 0 ]]; then
+		_CACHE_SNAPSHOT_STATE="$_CACHE_STATE_MALFORMED"
+		return 1
+	fi
+
+	age=$((now_epoch - cache_epoch))
+	if [[ "$age" -lt 0 ]]; then
+		_CACHE_SNAPSHOT_STATE="$_CACHE_STATE_MALFORMED"
+		return 1
+	fi
+	if [[ "$age" -ge "$PULSE_PREFETCH_FULL_SWEEP_INTERVAL" ]]; then
+		_CACHE_SNAPSHOT_STATE="stale"
+		return 1
+	fi
+
+	_CACHE_SNAPSHOT_STATE="hit"
+	return 0
+}
+
+_record_cache_state_evidence() {
+	local state="$1"
+	local cardinality="${2:-$_CACHE_CARDINALITY_UNKNOWN}"
+	declare -F gh_record_efficiency_evidence >/dev/null 2>&1 || return 0
+	case "$state" in
+	hit)
+		if [[ "$cardinality" == "$_CACHE_CARDINALITY_EMPTY" ]]; then
+			gh_record_efficiency_evidence cache.fresh_empty_hits 1 2>/dev/null || true
+		else
+			gh_record_efficiency_evidence cache.fresh_hits 1 2>/dev/null || true
+		fi
+		;;
+	stale | malformed | incompatible)
+		gh_record_efficiency_evidence cache.misses 1 2>/dev/null || true
+		gh_record_efficiency_evidence cache.stale 1 2>/dev/null || true
+		gh_record_efficiency_evidence guardrails.stale_snapshot_detections 1 2>/dev/null || true
+		gh_record_efficiency_evidence guardrails.forced_live_refreshes 1 2>/dev/null || true
+		;;
+	invalidated)
+		gh_record_efficiency_evidence cache.misses 1 2>/dev/null || true
+		gh_record_efficiency_evidence cache.invalidated 1 2>/dev/null || true
+		gh_record_efficiency_evidence guardrails.forced_live_refreshes 1 2>/dev/null || true
+		;;
+	missing | disabled)
+		gh_record_efficiency_evidence cache.misses 1 2>/dev/null || true
+		gh_record_efficiency_evidence guardrails.forced_live_refreshes 1 2>/dev/null || true
+		;;
+	esac
+	return 0
+}
+
+_emit_cache_state() {
+	local state="$1"
+	local kind="$2"
+	local slug="$3"
+	local cardinality="${4:-$_CACHE_CARDINALITY_UNKNOWN}"
+	_record_cache_state_evidence "$state" "$cardinality"
+	printf 'cache_state=%s kind=%s slug=%s cardinality=%s\n' \
+		"$state" "$kind" "$slug" "$cardinality" >&2
+	return 0
+}
+
 # =============================================================================
 # Subcommand: cache-path
 # =============================================================================
 _cmd_cache_path() {
-	local kind="" slug=""
+	local kind=""
+	local slug=""
 	local _args=("$@")
 	local _i=0
 	while [[ $_i -lt ${#_args[@]} ]]; do
@@ -764,36 +1260,16 @@ _cmd_cache_path() {
 		return 1
 	fi
 
-	_check_enabled || return 1
-
-	local cache_file
-	cache_file=$(_cache_file_path "$kind" "$slug")
-
-	if [[ ! -f "$cache_file" ]]; then
+	case "$kind" in
+	"$_KIND_ISSUES" | "$_KIND_PRS") ;;
+	*)
+		echo "Usage: pulse-batch-prefetch-helper.sh cache-path --kind issues|prs --slug owner/repo" >&2
 		return 1
-	fi
+		;;
+	esac
 
-	# Check freshness — stale cache (past TTL) returns exit 1
-	local cache_ts
-	cache_ts=$(jq -r '.timestamp // ""' "$cache_file" 2>/dev/null) || cache_ts=""
-	if [[ -z "$cache_ts" || "$cache_ts" == "$_JSON_NULL" ]]; then
-		return 1
-	fi
-
-	local cache_epoch=0 now_epoch=0
-	if [[ "$(uname)" == "Darwin" ]]; then
-		cache_epoch=$(TZ=UTC date -j -f "%Y-%m-%dT%H:%M:%SZ" "$cache_ts" "+%s" 2>/dev/null) || cache_epoch=0
-	else
-		cache_epoch=$(date -u -d "$cache_ts" +%s 2>/dev/null) || cache_epoch=0
-	fi
-	now_epoch=$(date -u +%s)
-	local age=$((now_epoch - cache_epoch))
-
-	if [[ "$age" -ge "$PULSE_PREFETCH_FULL_SWEEP_INTERVAL" ]]; then
-		return 1  # Cache too old
-	fi
-
-	echo "$cache_file"
+	_resolve_cache_snapshot "$kind" "$slug" || return 1
+	printf '%s\n' "$_CACHE_SNAPSHOT_PATH"
 	return 0
 }
 
@@ -805,7 +1281,8 @@ _cmd_cache_path() {
 # Output: JSON array of items on stdout, exit 1 on miss/stale
 # =============================================================================
 _cmd_read_cache() {
-	local kind="" slug=""
+	local kind=""
+	local slug=""
 	local _args=("$@")
 	local _i=0
 	while [[ $_i -lt ${#_args[@]} ]]; do
@@ -829,19 +1306,117 @@ _cmd_read_cache() {
 		return 1
 	fi
 
-	local cache_file
-	cache_file=$(_cmd_cache_path --kind "$kind" --slug "$slug") || return 1
+	case "$kind" in
+	"$_KIND_ISSUES" | "$_KIND_PRS") ;;
+	*)
+		echo "Usage: pulse-batch-prefetch-helper.sh read-cache --kind issues|prs --slug owner/repo" >&2
+		return 1
+		;;
+	esac
 
-	if [[ "$kind" == "$_KIND_ISSUES" ]]; then
-		jq -c --arg state_open "$_STATE_OPEN" '[.items[]? | select(has("state") and ((.state | ascii_downcase) == $state_open))]' "$cache_file" 2>/dev/null || {
-			return 1
-		}
-		return 0
+	if ! _resolve_cache_snapshot "$kind" "$slug"; then
+		_emit_cache_state "$_CACHE_SNAPSHOT_STATE" "$kind" "$slug"
+		return 1
 	fi
 
-	jq -c '.items // []' "$cache_file" 2>/dev/null || {
+	local items=""
+
+	if [[ "$kind" == "$_KIND_ISSUES" ]]; then
+		items=$(jq -ce --arg state_open "$_STATE_OPEN" '[.items[] | select(has("state") and ((.state | ascii_downcase) == $state_open))]' "$_CACHE_SNAPSHOT_PATH" 2>/dev/null) || {
+			_CACHE_SNAPSHOT_STATE="$_CACHE_STATE_MALFORMED"
+			_emit_cache_state "$_CACHE_SNAPSHOT_STATE" "$kind" "$slug"
+			return 1
+		}
+	else
+		items=$(jq -ce '.items' "$_CACHE_SNAPSHOT_PATH" 2>/dev/null) || {
+			_CACHE_SNAPSHOT_STATE="$_CACHE_STATE_MALFORMED"
+			_emit_cache_state "$_CACHE_SNAPSHOT_STATE" "$kind" "$slug"
+			return 1
+		}
+	fi
+
+	local cardinality="nonempty"
+	[[ "$items" == "$_JSON_EMPTY_ARR" ]] && cardinality="$_CACHE_CARDINALITY_EMPTY"
+	_emit_cache_state "$_CACHE_SNAPSHOT_STATE" "$kind" "$slug" "$cardinality"
+	printf '%s\n' "$items"
+	return 0
+}
+
+# =============================================================================
+# Subcommand: read-snapshot
+# Read a versioned canonical envelope. Legacy caches remain valid for read-cache
+# but cannot authorize state-fingerprint hits through this stricter interface.
+# =============================================================================
+_cmd_read_snapshot() {
+	local kind=""
+	local slug=""
+	local _args=("$@")
+	local _i=0
+	while [[ $_i -lt ${#_args[@]} ]]; do
+		case "${_args[$_i]}" in
+		--kind)
+			kind="${_args[$_i+1]:-}"
+			_i=$((_i + 2))
+			;;
+		--slug)
+			slug="${_args[$_i+1]:-}"
+			_i=$((_i + 2))
+			;;
+		*) _i=$((_i + 1)) ;;
+		esac
+	done
+
+	local projection=""
+	projection=$(_snapshot_projection "$kind") || {
+		echo "Usage: pulse-batch-prefetch-helper.sh read-snapshot --kind issues|prs --slug owner/repo" >&2
 		return 1
 	}
+	[[ -n "$slug" ]] || {
+		echo "Usage: pulse-batch-prefetch-helper.sh read-snapshot --kind issues|prs --slug owner/repo" >&2
+		return 1
+	}
+
+	if ! _resolve_cache_snapshot "$kind" "$slug"; then
+		_emit_cache_state "$_CACHE_SNAPSHOT_STATE" "$kind" "$slug"
+		return 1
+	fi
+
+	local envelope=""
+	envelope=$(jq -ce \
+		--arg schema "$_SNAPSHOT_SCHEMA" --arg slug "$slug" --arg kind "$kind" \
+		--arg projection "$projection" --arg auth_scope "$_BATCH_SNAPSHOT_AUTH_SCOPE" \
+		--arg type_array "$_JSON_TYPE_ARRAY" --arg type_boolean "$_JSON_TYPE_BOOLEAN" \
+		--arg type_string "$_JSON_TYPE_STRING" '
+		select(.schema == $schema and .repository == $slug and .collection == $kind) |
+		select(.projection == $projection and .auth_scope == $auth_scope) |
+		select((.generation | type) == $type_string and (.generation | length) > 0) |
+		select((.source | type) == $type_string and (.source | length) > 0) |
+		select((.fetched_at | type) == $type_string and (.fetched_at | length) > 0) |
+		select((.complete | type) == $type_boolean and (.items | type) == $type_array) |
+		if $kind == "issues" then
+			select(all(.items[];
+				(.number | type) == "number" and has("title") and
+				(.state | type) == $type_string and (.labels | type) == $type_array and
+				has("updatedAt") and (.assignees | type) == $type_array)) |
+			.items = [.items[] | select((.state | ascii_downcase) == "open")]
+		else
+			select(all(.items[];
+				(.number | type) == "number" and has("title") and
+				(.labels | type) == $type_array and has("updatedAt") and
+				(.assignees | type) == $type_array and has("createdAt") and
+				has("author") and (.headRefOid | type) == $type_string and
+				(.headRefOid | length) > 0 and has("headRefName")))
+		end
+	' "$_CACHE_SNAPSHOT_PATH" 2>/dev/null) || {
+		_CACHE_SNAPSHOT_STATE="incompatible"
+		_emit_cache_state "$_CACHE_SNAPSHOT_STATE" "$kind" "$slug"
+		return 1
+	}
+
+	local cardinality="nonempty"
+	[[ "$(printf '%s' "$envelope" | jq -c '.items')" == "$_JSON_EMPTY_ARR" ]] && cardinality="$_CACHE_CARDINALITY_EMPTY"
+	_emit_cache_state "$_CACHE_SNAPSHOT_STATE" "$kind" "$slug" "$cardinality"
+	printf '%s\n' "$envelope"
 	return 0
 }
 
@@ -868,8 +1443,14 @@ _cmd_evict_issue() {
 	fi
 
 	local tmp_file
-	tmp_file=$(mktemp)
-	if jq --argjson issue_number "$issue_number" '(.items // []) as $items | .items = [$items[] | select((.number // 0) != $issue_number)]' "$cache_file" >"$tmp_file" 2>/dev/null; then
+	tmp_file=$(mktemp "${BATCH_CACHE_DIR}/.evict-snapshot.XXXXXX") || return 1
+	if jq --argjson issue_number "$issue_number" '
+		(.items // []) as $items |
+		.items = [$items[] | select((.number // 0) != $issue_number)] |
+		.complete = false |
+		.truncated = true |
+		.source = "local-eviction"
+	' "$cache_file" >"$tmp_file" 2>/dev/null; then
 		mv "$tmp_file" "$cache_file"
 		_log "evicted issue #${issue_number} from issues cache for ${slug}"
 		return 0
@@ -878,6 +1459,45 @@ _cmd_evict_issue() {
 	rm -f "$tmp_file"
 	_log "failed to evict issue #${issue_number} from issues cache for ${slug}"
 	return 1
+}
+
+# =============================================================================
+# Subcommand: invalidate-collection
+# Advance the canonical request generation before removing one repository cache.
+# =============================================================================
+_cmd_invalidate_collection() {
+	local kind=""
+	local slug=""
+	local request_key=""
+	local cache_file=""
+	local _args=("$@")
+	local _i=0
+	while [[ $_i -lt ${#_args[@]} ]]; do
+		case "${_args[$_i]}" in
+		--kind)
+			kind="${_args[$_i+1]:-}"
+			_i=$((_i + 2))
+			;;
+		--slug)
+			slug="${_args[$_i+1]:-}"
+			_i=$((_i + 2))
+			;;
+		*) _i=$((_i + 1)) ;;
+		esac
+	done
+	case "$kind" in
+	"$_KIND_ISSUES" | "$_KIND_PRS") ;;
+	*) return 1 ;;
+	esac
+	[[ "$slug" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || return 1
+	request_key="$(_snapshot_invalidation_key "$kind" "$slug")" || return 1
+	declare -F gh_request_state_invalidate >/dev/null 2>&1 || return 1
+	gh_request_state_invalidate "$request_key" || return 1
+	cache_file=$(_cache_file_path "$kind" "$slug")
+	rm -f "$cache_file" || return 1
+	_log "invalidated canonical ${kind} snapshot for ${slug}"
+	gh_request_state_invalidation_generation_get "$request_key" || return 1
+	return 0
 }
 
 # =============================================================================
@@ -967,6 +1587,12 @@ main() {
 	read-cache)
 		_cmd_read_cache "$@"
 		;;
+	read-snapshot)
+		_cmd_read_snapshot "$@"
+		;;
+	invalidate-collection)
+		_cmd_invalidate_collection "$@"
+		;;
 	evict-issue)
 		_cmd_evict_issue "$@"
 		;;
@@ -983,6 +1609,8 @@ main() {
 		echo "  refresh                          Fetch all repos via org-level search and cache"
 		echo "  cache-path --kind K --slug S     Return cache path if fresh, exit 1 if stale"
 		echo "  read-cache --kind K --slug S     Read cached items as JSON array"
+		echo "  read-snapshot --kind K --slug S  Read a canonical snapshot envelope"
+		echo "  invalidate-collection --kind K --slug S  Invalidate one canonical collection"
 		echo "  evict-issue owner/repo N         Remove one issue from the issues cache"
 		echo "  clear                            Wipe batch cache directory"
 		echo "  status                           Show cache file ages and counts"

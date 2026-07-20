@@ -67,6 +67,8 @@ fi
 /usr/bin/git -C "$REPO" push -q -u origin develop
 /usr/bin/git -C "$UPDATER" fetch -q origin develop
 /usr/bin/git -C "$UPDATER" switch -q -c develop origin/develop
+export AIDEVOPS_REPOS_CONFIG="${ROOT}/repos.json"
+printf '{"initialized_repos":[{"path":"%s","pr_base_branch":"develop"}]}\n' "$REPO" >"$AIDEVOPS_REPOS_CONFIG"
 printf 'remote develop ahead\n' >>"${UPDATER}/README.md"
 /usr/bin/git -C "$UPDATER" commit -q -am 'remote develop ahead'
 /usr/bin/git -C "$UPDATER" push -q origin develop
@@ -205,6 +207,7 @@ else
 fi
 /usr/bin/git -C "$UPDATER" switch -q main
 
+unset AIDEVOPS_REPOS_CONFIG
 /usr/bin/git -C "$REPO" switch -q safety/test
 /usr/bin/git -C "$REPO" worktree add -q "$OCCUPIED" main
 printf 'local divergence\n' >>"${OCCUPIED}/README.md"
@@ -224,5 +227,147 @@ if AIDEVOPS_REAL_GIT_BIN=/usr/bin/git bash "$HELPER" restore-default --repo "$RE
 	printf 'PASS recovery preserves divergent tip and restores exact origin default\n'
 else
 	printf 'FAIL divergent recovery did not preserve local tip or restore origin\n'
+	exit 1
+fi
+
+SYNC_REPO="${ROOT}/sync-repo"
+SYNC_REMOTE="${ROOT}/sync-remote.git"
+SYNC_UPDATER="${ROOT}/sync-updater"
+SYNC_BACKUPS="${ROOT}/sync-backups"
+SYNC_REGISTRY_DIR="${ROOT}/sync-registry"
+SYNC_REGISTRY_DB="${SYNC_REGISTRY_DIR}/worktree-registry.db"
+DIRTY_HELPER="${SCRIPT_DIR}/dirty-worktree-backup-helper.sh"
+mkdir -p "$SYNC_REPO" "$SYNC_REGISTRY_DIR"
+/usr/bin/git init -q --bare "$SYNC_REMOTE"
+/usr/bin/git -C "$SYNC_REPO" init -q -b develop
+/usr/bin/git -C "$SYNC_REPO" config user.name Test
+/usr/bin/git -C "$SYNC_REPO" config user.email test@example.invalid
+/usr/bin/git -C "$SYNC_REPO" config commit.gpgsign false
+printf 'sync seed\n' >"${SYNC_REPO}/README.md"
+/usr/bin/git -C "$SYNC_REPO" add README.md
+/usr/bin/git -C "$SYNC_REPO" commit -q -m seed
+/usr/bin/git -C "$SYNC_REPO" remote add origin "$SYNC_REMOTE"
+/usr/bin/git -C "$SYNC_REPO" push -q -u origin develop
+/usr/bin/git -C "$SYNC_REMOTE" symbolic-ref HEAD refs/heads/develop
+/usr/bin/git -C "$SYNC_REPO" remote set-head origin develop
+/usr/bin/git clone -q "$SYNC_REMOTE" "$SYNC_UPDATER"
+/usr/bin/git -C "$SYNC_UPDATER" config user.name Test
+/usr/bin/git -C "$SYNC_UPDATER" config user.email test@example.invalid
+
+printf 'accidental local commit\n' >"${SYNC_REPO}/local-only.txt"
+/usr/bin/git -C "$SYNC_REPO" add local-only.txt
+/usr/bin/git -C "$SYNC_REPO" commit -q -m 'accidental local commit'
+sync_local_tip=$(/usr/bin/git -C "$SYNC_REPO" rev-parse HEAD)
+printf 'staged state\n' >"${SYNC_REPO}/staged.txt"
+/usr/bin/git -C "$SYNC_REPO" add staged.txt
+printf 'unstaged state\n' >>"${SYNC_REPO}/README.md"
+mkdir -p "${SYNC_REPO}/todo/tasks"
+printf 'untracked state\n' >"${SYNC_REPO}/todo/tasks/recovery.md"
+
+printf 'remote divergence\n' >"${SYNC_UPDATER}/remote-only.txt"
+/usr/bin/git -C "$SYNC_UPDATER" add remote-only.txt
+/usr/bin/git -C "$SYNC_UPDATER" commit -q -m 'remote divergence'
+/usr/bin/git -C "$SYNC_UPDATER" push -q origin develop
+sync_remote_tip=$(/usr/bin/git -C "$SYNC_REMOTE" rev-parse refs/heads/develop)
+
+sqlite3 "$SYNC_REGISTRY_DB" "
+CREATE TABLE worktree_owners (
+  worktree_path TEXT PRIMARY KEY,
+  branch TEXT,
+  owner_pid INTEGER,
+  owner_session TEXT DEFAULT '',
+  owner_batch TEXT DEFAULT '',
+  task_id TEXT DEFAULT '',
+  owner_comm TEXT DEFAULT '',
+  owner_dead_seen_at TEXT DEFAULT '',
+  created_at TEXT DEFAULT ''
+);
+INSERT INTO worktree_owners (worktree_path, branch, owner_pid, owner_session)
+VALUES ('${SYNC_REPO}', 'develop', $$, 'invalid-canonical-owner');
+"
+
+sync_failure_hook="${ROOT}/fail-before-sync-ref-update.sh"
+printf '%s\n' '#!/usr/bin/env bash' 'exit 1' >"$sync_failure_hook"
+chmod +x "$sync_failure_hook"
+sync_output=""
+sync_rc=0
+sync_output=$(AIDEVOPS_REAL_GIT_BIN=/usr/bin/git \
+	AIDEVOPS_DIRTY_BACKUP_ROOT="$SYNC_BACKUPS" \
+	WORKTREE_REGISTRY_DIR="$SYNC_REGISTRY_DIR" \
+	WORKTREE_REGISTRY_DB="$SYNC_REGISTRY_DB" \
+	AIDEVOPS_CANONICAL_BEFORE_REF_UPDATE_HOOK="$sync_failure_hook" \
+	bash "$HELPER" sync-mirror --repo "$SYNC_REPO" --issue 28065 \
+	--confirm SYNCHRONIZE_CANONICAL_MIRROR 2>&1) || sync_rc=$?
+sync_backup_id=""
+while IFS= read -r sync_line; do
+	case "$sync_line" in
+	PRESERVED_BACKUP_ID=*) sync_backup_id="${sync_line#PRESERVED_BACKUP_ID=}" ;;
+	esac
+done <<<"$sync_output"
+sync_preservation_ref="refs/aidevops/canonical-recovery/issue-28065/${sync_local_tip}"
+if [[ "$sync_rc" -ne 0 ]] && [[ -n "$sync_backup_id" ]] &&
+	[[ "$sync_output" == *"RESTORE_COMMAND="* ]] &&
+	[[ -z "$(/usr/bin/git -C "$SYNC_REPO" status --porcelain=v1)" ]] &&
+	[[ "$(/usr/bin/git -C "$SYNC_REPO" rev-parse HEAD)" == "$sync_local_tip" ]] &&
+	[[ "$(/usr/bin/git -C "$SYNC_REPO" rev-parse "$sync_preservation_ref")" == "$sync_local_tip" ]]; then
+	printf 'PASS interrupted synchronization leaves verified recovery evidence and a clean original tip\n'
+else
+	printf 'FAIL interrupted synchronization lost evidence or changed canonical state\n'
+	exit 1
+fi
+
+if [[ "$(sqlite3 "$SYNC_REGISTRY_DB" "SELECT COUNT(*) FROM worktree_owners WHERE worktree_path = '${SYNC_REPO}';")" == "0" ]] &&
+	kill -0 $$ 2>/dev/null; then
+	printf 'PASS invalid canonical ownership row is removed without signalling its live PID\n'
+else
+	printf 'FAIL canonical ownership cleanup retained the row or harmed its live PID\n'
+	exit 1
+fi
+
+sync_output=$(AIDEVOPS_REAL_GIT_BIN=/usr/bin/git \
+	AIDEVOPS_DIRTY_BACKUP_ROOT="$SYNC_BACKUPS" \
+	WORKTREE_REGISTRY_DIR="$SYNC_REGISTRY_DIR" \
+	WORKTREE_REGISTRY_DB="$SYNC_REGISTRY_DB" \
+	bash "$HELPER" sync-mirror --repo "$SYNC_REPO" --issue 28065 \
+	--confirm SYNCHRONIZE_CANONICAL_MIRROR 2>&1)
+if [[ "$sync_output" == *"SYNCHRONIZED_CANONICAL_MIRROR=true"* ]] &&
+	[[ "$(/usr/bin/git -C "$SYNC_REPO" rev-parse HEAD)" == "$sync_remote_tip" ]] &&
+	[[ -z "$(/usr/bin/git -C "$SYNC_REPO" status --porcelain=v1)" ]]; then
+	printf 'PASS safe retry converges the canonical mirror to the exact resolved remote tip\n'
+else
+	printf 'FAIL safe retry did not converge to the exact remote tip\n'
+	exit 1
+fi
+
+AIDEVOPS_REAL_GIT_BIN=/usr/bin/git AIDEVOPS_DIRTY_BACKUP_ROOT="$SYNC_BACKUPS" \
+	bash "$DIRTY_HELPER" restore --repo "$SYNC_REPO" --backup "$sync_backup_id" \
+	--confirm RESTORE_DIRTY_WORKTREE_BACKUP >/dev/null
+if AIDEVOPS_REAL_GIT_BIN=/usr/bin/git AIDEVOPS_DIRTY_BACKUP_ROOT="$SYNC_BACKUPS" \
+	bash "$DIRTY_HELPER" matches --repo "$SYNC_REPO" --backup "$sync_backup_id" >/dev/null &&
+	[[ "$(/usr/bin/git -C "$SYNC_REPO" rev-parse HEAD)" == "$sync_local_tip" ]]; then
+	printf 'PASS emitted backup ID restores byte-identical content and index state\n'
+else
+	printf 'FAIL backup restore did not reconstruct the original canonical state\n'
+	exit 1
+fi
+
+sync_retry_output=$(AIDEVOPS_REAL_GIT_BIN=/usr/bin/git \
+	AIDEVOPS_DIRTY_BACKUP_ROOT="$SYNC_BACKUPS" \
+	WORKTREE_REGISTRY_DIR="$SYNC_REGISTRY_DIR" \
+	WORKTREE_REGISTRY_DB="$SYNC_REGISTRY_DB" \
+	bash "$HELPER" sync-mirror --repo "$SYNC_REPO" --issue 28065 \
+	--confirm SYNCHRONIZE_CANONICAL_MIRROR 2>&1)
+backup_count=0
+for backup_path in "$SYNC_BACKUPS"/*; do
+	[[ -d "$backup_path" ]] || continue
+	backup_count=$((backup_count + 1))
+done
+if [[ "$sync_retry_output" == *"PRESERVED_BACKUP_ID=${sync_backup_id}"* ]] &&
+	[[ "$backup_count" -eq 1 ]] &&
+	[[ "$(/usr/bin/git -C "$SYNC_REPO" rev-parse HEAD)" == "$sync_remote_tip" ]] &&
+	grep -q 'Canonical mirror synchronization authorized' "$HOME/.aidevops/logs/canonical-recovery-audit.jsonl"; then
+	printf 'PASS repeated synchronization reuses durable evidence and remains auditable\n'
+else
+	printf 'FAIL repeated synchronization duplicated evidence or lost auditability\n'
 	exit 1
 fi

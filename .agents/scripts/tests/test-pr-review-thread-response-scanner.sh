@@ -273,14 +273,37 @@ test_dispatch_launches_worker_and_writes_state() {
 
 test_dispatch_prompt_includes_full_thread_command_signatures() {
 	setup_test_env
+	local stable_scanner="${HOME}/.aidevops/agents/scripts/pr-review-thread-response-scanner.sh"
 	$SCANNER dispatch owner/repo "${TEST_ROOT}/repo"
 	wait_for_headless_log || true
-	if grep -Fq "${SCANNER} reply owner/repo <thread_id> <body_file>" "$HEADLESS_PROMPT_CAPTURE" 2>/dev/null &&
-		grep -Fq "${SCANNER} resolve owner/repo <thread_id>" "$HEADLESS_PROMPT_CAPTURE" 2>/dev/null &&
+	if grep -Fq "${stable_scanner} reply owner/repo <thread_id> <body_file>" "$HEADLESS_PROMPT_CAPTURE" 2>/dev/null &&
+		grep -Fq "${stable_scanner} resolve owner/repo <thread_id>" "$HEADLESS_PROMPT_CAPTURE" 2>/dev/null &&
 		grep -Fq 'Write each reply to a local temporary file and pass that path as <body_file>' "$HEADLESS_PROMPT_CAPTURE" 2>/dev/null; then
 		print_result "dispatch prompt includes full reply and resolve signatures" 0
 	else
 		print_result "dispatch prompt includes full reply and resolve signatures" 1 "prompt=$(tr '\n' ' ' <"$HEADLESS_PROMPT_CAPTURE" 2>/dev/null || printf '')"
+	fi
+	teardown_test_env
+	return 0
+}
+
+test_dispatch_prompt_uses_stable_deployed_scanner_path() {
+	setup_test_env
+	local bundled_scanner="${TEST_ROOT}/runtime-bundles/old/agents/scripts/pr-review-thread-response-scanner.sh"
+	local stable_scanner="${HOME}/.aidevops/agents/scripts/pr-review-thread-response-scanner.sh"
+	mkdir -p "$(dirname "$bundled_scanner")"
+	cp "$SCANNER" "$bundled_scanner"
+	chmod +x "$bundled_scanner"
+	"$bundled_scanner" dispatch owner/repo "${TEST_ROOT}/repo"
+	wait_for_headless_log || true
+	if grep -Fq "${stable_scanner} reply owner/repo <thread_id> <body_file>" "$HEADLESS_PROMPT_CAPTURE" 2>/dev/null &&
+		grep -Fq "${stable_scanner} resolve owner/repo <thread_id>" "$HEADLESS_PROMPT_CAPTURE" 2>/dev/null &&
+		grep -Fq "${stable_scanner} mark-complete owner/repo 1" "$HEADLESS_PROMPT_CAPTURE" 2>/dev/null &&
+		grep -Fq "${stable_scanner} mark-blocked owner/repo 1" "$HEADLESS_PROMPT_CAPTURE" 2>/dev/null &&
+		! grep -Fq '/runtime-bundles/' "$HEADLESS_PROMPT_CAPTURE" 2>/dev/null; then
+		print_result "dispatch prompt uses stable deployed scanner path" 0
+	else
+		print_result "dispatch prompt uses stable deployed scanner path" 1 "prompt=$(tr '\n' ' ' <"$HEADLESS_PROMPT_CAPTURE" 2>/dev/null || printf '')"
 	fi
 	teardown_test_env
 	return 0
@@ -304,14 +327,30 @@ test_dispatch_prompt_mentions_graphql_only_thread_operations() {
 
 test_dispatch_prompt_requires_machine_readable_completion_state() {
 	setup_test_env
+	local stable_scanner="${HOME}/.aidevops/agents/scripts/pr-review-thread-response-scanner.sh"
 	$SCANNER dispatch owner/repo "${TEST_ROOT}/repo"
 	wait_for_headless_log || true
-	if grep -q "${SCANNER} mark-complete owner/repo 1" "$HEADLESS_PROMPT_CAPTURE" 2>/dev/null && \
-		grep -q "${SCANNER} mark-blocked owner/repo 1" "$HEADLESS_PROMPT_CAPTURE" 2>/dev/null && \
+	if grep -Fq "${stable_scanner} mark-complete owner/repo 1" "$HEADLESS_PROMPT_CAPTURE" 2>/dev/null && \
+		grep -Fq "${stable_scanner} mark-blocked owner/repo 1" "$HEADLESS_PROMPT_CAPTURE" 2>/dev/null && \
 		grep -q 'readable scanner state' "$HEADLESS_PROMPT_CAPTURE" 2>/dev/null; then
 		print_result "dispatch prompt requires machine-readable completion state" 0
 	else
 		print_result "dispatch prompt requires machine-readable completion state" 1 "prompt=$(tr '\n' ' ' <"$HEADLESS_PROMPT_CAPTURE" 2>/dev/null || printf '')"
+	fi
+	teardown_test_env
+	return 0
+}
+
+test_dispatch_prompt_explains_shell_redirection_constraint() {
+	setup_test_env
+	$SCANNER dispatch owner/repo "${TEST_ROOT}/repo"
+	wait_for_headless_log || true
+	if grep -Fq "Do not use shell redirection syntax in Bash commands" "$HEADLESS_PROMPT_CAPTURE" 2>/dev/null && \
+		grep -Fq "descriptor redirects such as 2>&1" "$HEADLESS_PROMPT_CAPTURE" 2>/dev/null && \
+		grep -Fq "supported pipelines" "$HEADLESS_PROMPT_CAPTURE" 2>/dev/null; then
+		print_result "dispatch prompt explains sandbox shell redirection constraint" 0
+	else
+		print_result "dispatch prompt explains sandbox shell redirection constraint" 1 "prompt capture missing required guidance"
 	fi
 	teardown_test_env
 	return 0
@@ -777,8 +816,10 @@ main() {
 	test_scan_pr_can_include_human_threads_with_opt_in
 	test_dispatch_launches_worker_and_writes_state
 	test_dispatch_prompt_includes_full_thread_command_signatures
+	test_dispatch_prompt_uses_stable_deployed_scanner_path
 	test_dispatch_prompt_mentions_graphql_only_thread_operations
 	test_dispatch_prompt_requires_machine_readable_completion_state
+	test_dispatch_prompt_explains_shell_redirection_constraint
 	test_dispatch_prompt_marks_dynamic_metadata_untrusted
 	test_dispatch_pr_launches_targeted_worker_with_human_opt_in
 	test_dispatch_is_idempotent_for_same_fingerprint

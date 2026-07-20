@@ -171,6 +171,12 @@ _setup_opencode_binary_is_ephemeral() {
 	local bin="$1"
 	local temp_root="${TMPDIR:-}"
 
+	while [[ "$temp_root" == */ && "$temp_root" != "/" ]]; do
+		temp_root="${temp_root%/}"
+	done
+	if [[ "$temp_root" == "/" && "$bin" == /* ]]; then
+		return 0
+	fi
 	if [[ -n "$temp_root" && "$bin" == "$temp_root"/* ]]; then
 		return 0
 	fi

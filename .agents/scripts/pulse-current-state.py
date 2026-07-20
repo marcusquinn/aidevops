@@ -362,25 +362,26 @@ if os.path.exists(api_report):
         read_caller_names = {'gh_issue_list', 'gh_pr_list', 'gh_issue_view', 'gh_pr_view'}
         rest_read_caller_names = {'_rest_issue_list', '_rest_pr_list', '_rest_issue_view', '_rest_pr_view'}
         for caller, data in (report.get('by_caller') or {}).items():
-            if isinstance(data, dict):
-                gql = int(data.get('graphql_calls') or 0) + int(data.get('search_graphql_calls') or 0)
-                if gql > 0:
-                    api_consumers.append({'caller': caller, 'graphql_calls': gql})
-                graphql_calls = int(data.get('graphql_calls') or 0)
-                rest_calls = int(data.get('rest_calls') or 0)
-                search_graphql_calls = int(data.get('search_graphql_calls') or 0)
-                search_rest_calls = int(data.get('search_rest_calls') or 0)
-                if caller in read_caller_names:
-                    api_pressure['graphql_read_calls'] += graphql_calls
-                    api_pressure['rest_read_calls'] += rest_calls
-                    if graphql_calls > 0:
-                        read_graphql_callers.append({'caller': caller, 'graphql_calls': graphql_calls})
-                elif caller in rest_read_caller_names:
-                    api_pressure['rest_read_calls'] += rest_calls
-                else:
-                    api_pressure['graphql_other_calls'] += graphql_calls
-                api_pressure['graphql_search_calls'] += search_graphql_calls
-                api_pressure['rest_search_calls'] += search_rest_calls
+            if not isinstance(data, dict):
+                continue
+            gql = int(data.get('graphql_calls') or 0) + int(data.get('search_graphql_calls') or 0)
+            if gql > 0:
+                api_consumers.append({'caller': caller, 'graphql_calls': gql})
+            graphql_calls = int(data.get('graphql_calls') or 0)
+            rest_calls = int(data.get('rest_calls') or 0)
+            search_graphql_calls = int(data.get('search_graphql_calls') or 0)
+            search_rest_calls = int(data.get('search_rest_calls') or 0)
+            if caller in read_caller_names:
+                api_pressure['graphql_read_calls'] += graphql_calls
+                api_pressure['rest_read_calls'] += rest_calls
+                if graphql_calls > 0:
+                    read_graphql_callers.append({'caller': caller, 'graphql_calls': graphql_calls})
+            elif caller in rest_read_caller_names:
+                api_pressure['rest_read_calls'] += rest_calls
+            else:
+                api_pressure['graphql_other_calls'] += graphql_calls
+            api_pressure['graphql_search_calls'] += search_graphql_calls
+            api_pressure['rest_search_calls'] += search_rest_calls
         api_consumers = sorted(api_consumers, key=lambda item: item['graphql_calls'], reverse=True)[:5]
         read_total = api_pressure['graphql_read_calls'] + api_pressure['rest_read_calls']
         if read_total > 0:

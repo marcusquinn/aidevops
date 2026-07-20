@@ -24,6 +24,7 @@
 #   - _normalize_get_stale_brief_rewrite_rows (stale zero-output hold recovery)
 #   - _normalize_requeue_stale_brief_rewrite_rows (stale zero-output requeue)
 #   - _normalize_reassign_self          (Phase 12: orphaned active issue → self-assign)
+#   - _normalize_reap_dead_stamps       (direct local claim-stamp recovery)
 #   - _normalize_unassign_stampless_interactive (t2148: stampless claim cleanup)
 #   - normalize_active_issue_assignments (coordinator — calls stale-recovery helpers)
 #   - reconcile_labelless_aidevops_issues (t2112 — >100 lines, identity key preserved)
@@ -666,6 +667,27 @@ _normalize_reassign_self() {
 }
 
 #######################################
+# Reap dead local claim stamps independently of GitHub issue discovery.
+#
+# The stamp directory is the authoritative recovery index: requiring a claim
+# to appear in an origin:interactive + assignee query misses claims created on
+# issues without that label or in repositories outside repos.json. The helper
+# applies the canonical same-host PID/argv, worktree, lockdown, and lookup
+# safety gates, with a bounded per-cycle scan.
+#
+# Returns: 0 always (best-effort; logs failures to $LOGFILE)
+#######################################
+_normalize_reap_dead_stamps() {
+	local claim_helper="${AIDEVOPS_INTERACTIVE_SESSION_HELPER:-${_PIR_SCRIPT_DIR}/interactive-session-helper.sh}"
+	[[ -x "$claim_helper" ]] || return 0
+
+	if ! "$claim_helper" reap-dead-stamps >>"$LOGFILE" 2>&1; then
+		echo "[pulse-wrapper] Dead stamp reaper failed; preserving claims for a later cycle" >>"$LOGFILE"
+	fi
+	return 0
+}
+
+#######################################
 # (t2148) Auto-recover stampless origin:interactive claims.
 #
 # Closes the leak described on GH#19380: issues created during an
@@ -762,24 +784,14 @@ _normalize_unassign_stampless_interactive() {
 			[[ "$issue_num" =~ ^[0-9]+$ ]] || continue
 			stamp="${stamp_dir}/${slug_flat}-${issue_num}.json"
 
-			local labels_csv=""
-			labels_csv=$(printf '%s' "$json" | jq -r --argjson n "$issue_num" '[.[] | select(.number == $n) | .labels[].name] | join(",")' 2>/dev/null) || labels_csv=""
 			if [[ -f "$stamp" ]]; then
-				# A stamp is only durable liveness evidence while its same-host
-				# PID/argv identity remains alive. Scheduled pulse previously
-				# skipped these forever and relied on a future interactive
-				# session to run scan-stale, leaving footprint reservations and
-				# overlapping auto-dispatch work globally blocked. Reap one
-				# already-aged candidate through the bounded helper command.
-				[[ ",${labels_csv}," == *",no-auto-dispatch,"* ]] && continue
-				local claim_helper="${AIDEVOPS_INTERACTIVE_SESSION_HELPER:-${SCRIPT_DIR}/interactive-session-helper.sh}"
-				if [[ -x "$claim_helper" ]] && "$claim_helper" release-if-dead "$issue_num" "$slug" >>"$LOGFILE" 2>&1; then
-					total_released=$((total_released + 1))
-					echo "[pulse-wrapper] Stamped interactive auto-release: released dead same-host claim #${issue_num} in ${slug}" >>"$LOGFILE"
-				fi
+				# Stamped claims are handled once per pulse by the direct bounded
+				# reaper. This pass remains strictly for stampless candidates.
 				continue
 			fi
 
+			local labels_csv=""
+			labels_csv=$(printf '%s' "$json" | jq -r --argjson n "$issue_num" '[.[] | select(.number == $n) | .labels[].name] | join(",")' 2>/dev/null) || labels_csv=""
 			if [[ ",${labels_csv}," == *",status:in-review,"* ]]; then
 				local open_pr_count=0 open_pr_rc=0
 				open_pr_count=$(gh_pr_list --repo "$slug" --state open --search "$issue_num" --json number --jq 'length' 2>/dev/null) || open_pr_rc=$?
@@ -837,6 +849,12 @@ _normalize_unassign_stampless_interactive() {
 #######################################
 normalize_active_issue_assignments() {
 	local repos_json="$REPOS_JSON"
+
+	# Pass 0 (GH#28211): scan the authoritative local stamp index directly.
+	# Run before repos.json and GitHub-user gates so recovery does not depend on
+	# repository registration, origin labels, assignees, or issue-list results.
+	_normalize_reap_dead_stamps
+
 	[[ -f "$repos_json" ]] || return 0
 
 	local runner_user
@@ -858,7 +876,7 @@ normalize_active_issue_assignments() {
 	# Pass 2: reset stale assignments (active label, assignee present, no running worker)
 	_normalize_unassign_stale "$runner_user" "$repos_json" "$now_epoch" "$cross_runner_max_runtime"
 
-	# Pass 2b (t2148/GH#27039): recover aged origin:interactive claims.
+	# Pass 2b (t2148): recover aged stampless origin:interactive claims.
 	# Closes the leak where `claim-task-id.sh` auto-assigns on creation
 	# (per t1970) but the interactive session never runs the formal
 	# claim flow, leaving an `origin:interactive + assignee` pair that
@@ -867,8 +885,7 @@ normalize_active_issue_assignments() {
 	# of a stamp file is itself the liveness signal: a real interactive
 	# session creates a stamp via `interactive-session-helper.sh claim`,
 	# while ad-hoc self-assigns from `claim-task-id.sh` (per t1970)
-	# never produce one. Stamped claims are also checked through the bounded
-	# release-if-dead command, which preserves live and cross-host owners.
+	# never produce one. Stamped claims were already handled by Pass 0.
 	# Override via STAMPLESS_INTERACTIVE_AGE_THRESHOLD
 	# (set to 86400 to restore the original 24h behaviour from t2148).
 	local stampless_age_threshold="${STAMPLESS_INTERACTIVE_AGE_THRESHOLD:-3600}"

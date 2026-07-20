@@ -7,6 +7,7 @@ import { basename, normalize } from "path";
 const SECRET_BASENAME_RE = /^(id_(rsa|dsa|ecdsa|ed25519)|\.env(\..*)?|credentials(\.sh|\.json|\.ya?ml)?|service-account(\.json)?|kubeconfig|config\.json|op-vault-export.*|.*password.*|.*passwd.*|.*secret.*)$/i;
 const SECRET_EXTENSION_RE = /\.(pem|key|p12|pfx|kdbx|age|asc|gpg)$/i;
 const PUBLIC_KEY_RE = /\.pub$/i;
+const HOST_RUNTIME_CONFIG_RE = /(^|[/\\])\.config[/\\]opencode[/\\]opencode\.jsonc?$/i;
 const SECRET_PATH_RE = /(^|[/\\])(\.ssh|\.gnupg|\.aws|\.azure|\.config[/\\]gcloud|\.kube|1password|op-vault|password-store)([/\\]|$)/i;
 
 /**
@@ -39,6 +40,7 @@ export function secretReadBlockReason(filePath) {
   if (PUBLIC_KEY_RE.test(base)) return "";
   if (SECRET_BASENAME_RE.test(base)) return "secret-bearing basename";
   if (SECRET_EXTENSION_RE.test(base)) return "secret-bearing file extension";
+  if (HOST_RUNTIME_CONFIG_RE.test(normalized)) return "host runtime config path";
   if (SECRET_PATH_RE.test(normalized)) return "credential-store path";
   return "";
 }

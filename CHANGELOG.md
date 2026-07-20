@@ -10,6 +10,150 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.32.157] - 2026-07-20
+
+### Added
+
+- scaffold deployment and WordPress contexts (#28300)
+
+### Changed
+
+- Maintenance: ratchet QLTY_SMELL_THRESHOLD 54→53 (-1) [skip ci]
+- Refactor: simplify recovery payload validation (#28299)
+- Maintenance: sync ref:GH#28313 to TODO.md [skip ci]
+- Maintenance: mark t18163 complete (pr:#28246 completed:2026-07-19) [skip ci]
+- Maintenance: ratchet QLTY_SMELL_THRESHOLD 56→54 (-2) [skip ci]
+- Refactor: simplify session continuation guard (#28288)
+- Maintenance: update simplification state registry
+
+### Fixed
+
+- restore exact-zero prefetch predicate (#28312)
+- classify unreadable proc cwd owners (#28308)
+- authorize linked-worktree patch targets (#28305)
+- clear stale local-only repo state (#28311)
+- label routine tracking issues at creation (#28266)
+- stabilize Qlty cache-sensitive scans (#28268)
+- persist pulse merge recovery before watchdog timeout (#28286)
+- preserve cross-user inventory leases (#28277)
+- harden simplification branch fallback (#28275)
+
+## [3.32.156] - 2026-07-19
+
+### Changed
+
+- Maintenance: update simplification state registry
+
+### Fixed
+
+- localize headless runtime test mock parameters (#28274)
+- preserve merged issue completion evidence (#28267)
+
+## [3.32.155] - 2026-07-19
+
+### Added
+
+- add GitHub API efficiency evidence sidecars (#28261)
+
+### Changed
+
+- Maintenance: ratchet QLTY_SMELL_THRESHOLD 57→56 (-1) [skip ci]
+
+### Fixed
+
+- enforce signed merge summary posting (#28259)
+- harden pulse prefetch JSON parsing (#28258)
+- guard pulse snapshot command argument (#28257)
+
+## [3.32.154] - 2026-07-19
+
+### Changed
+
+- Maintenance: update simplification state registry
+
+### Fixed
+
+- guard standalone pulse mocks against unset args (#28255)
+- parse pulse PR coordinates once (#28256)
+
+## [3.32.153] - 2026-07-19
+
+### Changed
+
+- Maintenance: update simplification state registry
+- Maintenance: update simplification state registry
+- Maintenance: update simplification state registry
+- Documentation: adopt serve-sim preview launch options (#28236)
+- Documentation: adopt asc cli resolution center release (#28232)
+- Documentation: review App Store Connect community skills refresh (#28230)
+
+### Fixed
+
+- recover worker finalization and clarify shell policy (#28244)
+- scope compaction quality gates to repositories (#28233)
+- load standalone pulse merge dependencies (#28240)
+- publish simplification state checkout-free (#28228)
+- use stable review scanner path (#28224)
+
+## [3.32.152] - 2026-07-18
+
+### Fixed
+
+- reject stale runtime bundles and recover idle tabs (#28217)
+
+## [3.32.151] - 2026-07-18
+
+### Changed
+
+- Refactor: simplify compaction event handling (#28098)
+
+### Fixed
+
+- audit pulse snapshot failures (#28215)
+- use portable linked issue whitespace matching (#28193)
+- guard MCP health test sandbox path (#28085)
+- make qlty scan counts deterministic (#28181)
+- handle missing HOME in runtime status (#28118)
+
+## [3.32.150] - 2026-07-18
+
+### Changed
+
+- Maintenance: sync ref:GH#28203 to TODO.md [skip ci]
+
+### Fixed
+
+- recover pulse merge progress signals (#28205)
+- handle CRLF supersedes markers (#28194)
+
+## [3.32.149] - 2026-07-18
+
+### Added
+
+- bound unreferenced runtime bundle storage (#28158)
+- add fail-closed storage inventory reporting (#28156)
+
+### Changed
+
+- Tests: clarify pulse merge metadata fixtures (#28146)
+- Documentation: define bounded storage lifecycle architecture (#28154)
+- Maintenance: sync ref:GH#28152 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#28151 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#28150 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#28149 to TODO.md [skip ci]
+- Maintenance: mark t18155 complete (pr:#28143 completed:2026-07-18) [skip ci]
+
+### Fixed
+
+- recover stale worker DB replay locks (#28182)
+- harden autoagent metric fallbacks (#28180)
+- tolerate unset autoagent test cleanup root (#28179)
+- normalize OpenCode temporary roots (#28159)
+- block merges on required human threads (#28157)
+- keep bundle detection cache outside repositories (#28148)
+- merge worker SQLite graphs by column name (#28147)
+- harden autoagent experiment reliability (#28143)
+
 ## [3.32.148] - 2026-07-18
 
 ### Changed

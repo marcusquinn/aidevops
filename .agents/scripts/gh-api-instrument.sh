@@ -53,9 +53,12 @@
 #                                   ~/.aidevops/logs/gh-api-calls.log)
 #   AIDEVOPS_GH_API_REPORT       — path to the JSON report (default
 #                                   ~/.aidevops/logs/gh-api-calls-by-stage.json)
+#   AIDEVOPS_GH_API_EVIDENCE     — path to the digest-bound evidence sidecar
+#                                   (default ~/.aidevops/logs/gh-api-efficiency-evidence.json)
+#   AIDEVOPS_GH_API_EVIDENCE_DISABLE=1 — skip automatic sidecar generation
 #   AIDEVOPS_GH_API_LOG_MAX_LINES — when set and exceeded, trim() retains
-#                                   the newest bounded records (default 50000)
-#   AIDEVOPS_GH_API_LOG_MAX_BYTES — maximum retained log bytes (default 16 MiB)
+#                                   the newest bounded records (default 1000000)
+#   AIDEVOPS_GH_API_LOG_MAX_BYTES — maximum retained log bytes (default 128 MiB)
 #   AIDEVOPS_GH_API_RETENTION_SECONDS — maximum record age (default 172800)
 #   AIDEVOPS_GH_API_EMPTY_LOCK_GRACE_TRIES — 10ms waits before reclaiming an
 #                                   empty lock directory (default 100)
@@ -104,9 +107,13 @@ case "$_GH_API_HOME" in
 esac
 GH_API_LOG="${AIDEVOPS_GH_API_LOG:-${_GH_API_HOME}/.aidevops/logs/gh-api-calls.log}"
 GH_API_REPORT="${AIDEVOPS_GH_API_REPORT:-${_GH_API_HOME}/.aidevops/logs/gh-api-calls-by-stage.json}"
-GH_API_LOG_MAX_LINES="${AIDEVOPS_GH_API_LOG_MAX_LINES:-50000}"
-GH_API_LOG_MAX_BYTES="${AIDEVOPS_GH_API_LOG_MAX_BYTES:-16777216}"
-GH_API_RETENTION_SECONDS="${AIDEVOPS_GH_API_RETENTION_SECONDS:-172800}"
+GH_API_EVIDENCE="${AIDEVOPS_GH_API_EVIDENCE:-${_GH_API_HOME}/.aidevops/logs/gh-api-efficiency-evidence.json}"
+_GH_API_DEFAULT_LOG_MAX_LINES=1000000
+_GH_API_DEFAULT_LOG_MAX_BYTES=134217728
+_GH_API_DEFAULT_RETENTION_SECONDS=172800
+GH_API_LOG_MAX_LINES="${AIDEVOPS_GH_API_LOG_MAX_LINES:-$_GH_API_DEFAULT_LOG_MAX_LINES}"
+GH_API_LOG_MAX_BYTES="${AIDEVOPS_GH_API_LOG_MAX_BYTES:-$_GH_API_DEFAULT_LOG_MAX_BYTES}"
+GH_API_RETENTION_SECONDS="${AIDEVOPS_GH_API_RETENTION_SECONDS:-$_GH_API_DEFAULT_RETENTION_SECONDS}"
 GH_API_ERROR_KEY="error"
 _GH_API_EMPTY_LOCK_GRACE_TRIES="${AIDEVOPS_GH_API_EMPTY_LOCK_GRACE_TRIES:-100}"
 [[ "$_GH_API_EMPTY_LOCK_GRACE_TRIES" =~ ^[0-9]+$ ]] || _GH_API_EMPTY_LOCK_GRACE_TRIES=100
@@ -391,6 +398,27 @@ gh_record_call() {
 	return 0
 }
 
+# --- gh_record_efficiency_evidence <name> [value] -----------------------
+# Append a typed, privacy-safe benchmark evidence event. Names and values are
+# restricted to bounded identifiers; repository names, URLs, payloads, and
+# credentials are never accepted. Returns 1 for an invalid event.
+gh_record_efficiency_evidence() {
+	[[ "${AIDEVOPS_GH_API_INSTRUMENT_DISABLE:-0}" == "1" ]] && return 0
+	local name="$1"
+	local value="${2:-1}"
+	local decision=""
+	if [[ ! "$name" =~ ^[a-z][a-z0-9_.-]{0,95}$ ]]; then
+		return 1
+	fi
+	if [[ ! "$value" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$ ]]; then
+		return 1
+	fi
+	decision="evidence:${name}:${value}"
+	_gh_append_v2 evidence github-api-efficiency other unknown other "$decision" \
+		"" "" "" "" "" "" "" "" ""
+	return 0
+}
+
 # --- gh_record_attempt ---------------------------------------------------
 # Record one completed native transport try/page. Arguments are metadata only;
 # command argv never enters the record.
@@ -474,65 +502,110 @@ gh_run_transport_attempt() {
 	return "$rc"
 }
 
-# --- gh_aggregate_calls [out_path] [window_secs] -------------------------
-# Read the log, write a JSON report keyed by caller. Counts entries newer
-# than `now - window_secs` (default 86400 = 24h). awk-only aggregation
-# keeps this independent of jq for the hot path; jq is used only if a
-# downstream caller decides to post-process the file.
-#
-# Output JSON shape:
-#   {
-#     "_meta": {
-#       "generated_at_ts": 1730000000,
-#       "since_ts":        1729913600,
-#       "window_seconds":  86400,
-#       "total_calls":     123
-#     },
-#     "by_caller": {
-#       "pulse-batch-prefetch-helper.sh": {
-#         "graphql_calls":        0,
-#         "rest_calls":           48,
-#         "search_graphql_calls": 0,
-#         "search_rest_calls":    24,
-#         "other_calls":          0,
-#         "total":                72
-#       }
-#     }
-#   }
-#
-# Args:
-#   $1 out_path    — defaults to $GH_API_REPORT
-#   $2 window_secs — defaults to 86400 (24 hours)
-#
-# Returns: 0 on success, 1 if log missing.
+# Generate a digest-bound sidecar for the production aggregate. Evidence build
+# failures remain fail-open for the host process and fail-closed for comparison.
+_gh_write_efficiency_sidecar() {
+	local report="$1"
+	local output="${2:-$GH_API_EVIDENCE}"
+	local script_dir="${BASH_SOURCE[0]%/*}"
+	local producer="${script_dir}/github-api-efficiency-evidence.sh"
+	[[ "${AIDEVOPS_GH_API_EVIDENCE_DISABLE:-0}" != "1" ]] || return 0
+	[[ -f "$report" && -x "$producer" ]] || return 0
+	if ! "$producer" build --transport-report "$report" --output "$output" >/dev/null 2>&1; then
+		rm -f "$output" 2>/dev/null || true
+	fi
+	return 0
+}
+
+# Copy one stable input while holding the same short-lived lock as appenders.
+# Aggregation then reads the private snapshot without chasing a growing log.
+_gh_snapshot_log() {
+	local destination="$1"
+	_gh_log_lock_acquire || return 1
+	if ! cp "$GH_API_LOG" "$destination" 2>/dev/null; then
+		_gh_log_lock_release
+		return 1
+	fi
+	_gh_log_lock_release
+	chmod 0600 "$destination" 2>/dev/null || true
+	return 0
+}
+
+# --- gh_aggregate_calls [out_path] [window_secs] [end_ts] ----------------
+# Snapshot the active log and atomically publish a deterministic JSON report.
+# An explicit end timestamp creates a completed-cycle cutoff even while other
+# processes keep appending. Successful production reports automatically receive
+# a SHA-256-bound evidence sidecar.
 gh_aggregate_calls() {
 	[[ "${AIDEVOPS_GH_API_INSTRUMENT_DISABLE:-0}" == "1" ]] && return 0
 	local out="${1:-$GH_API_REPORT}"
 	local window="${2:-86400}"
-	local now cutoff
-	now=$(date +%s)
+	local requested_end="${3:-}"
+	local current_now=""
+	local now=""
+	local cutoff=0
+	local out_dir="."
+	local tmp=""
+	local snapshot=""
+	local awk_script=""
+	[[ "$window" =~ ^[1-9][0-9]*$ ]] || window=86400
+	current_now=$(_gh_now_seconds) || return 1
+	now="$current_now"
+	if [[ -n "$requested_end" ]]; then
+		[[ "$requested_end" =~ ^[1-9][0-9]*$ && "$requested_end" -le "$current_now" ]] || return 1
+		now="$requested_end"
+	fi
 	cutoff=$((now - window))
-	mkdir -p "${out%/*}" 2>/dev/null || true
+	if [[ "$out" == */* ]]; then
+		out_dir="${out%/*}"
+	fi
+	mkdir -p "$out_dir" 2>/dev/null || return 1
+	tmp=$(mktemp "${out}.tmp.XXXXXX" 2>/dev/null) || return 1
+	chmod 600 "$tmp" 2>/dev/null || {
+		rm -f "$tmp"
+		return 1
+	}
 	if [[ ! -f "$GH_API_LOG" ]]; then
 		printf '{"_meta":{"%s":"no-log","schema_version":2,"requested_window_seconds":%d,"window_seconds":%d},"by_caller":{}}\n' \
-			"$GH_API_ERROR_KEY" \
-			"$window" \
-			"$window" >"$out" 2>/dev/null || true
+			"$GH_API_ERROR_KEY" "$window" "$window" >"$tmp" 2>/dev/null || {
+			rm -f "$tmp"
+			return 1
+		}
+		mv "$tmp" "$out" 2>/dev/null || {
+			rm -f "$tmp"
+			return 1
+		}
 		return 1
 	fi
-	# The awk aggregator lives in a sibling file so the line-based
-	# pre-commit positional-param validator does not flag awk's `$1` field
-	# references as bash positional params (they live inside multi-line
-	# single-quoted blocks the validator can't see).
-	local awk_script
-	awk_script="$(dirname "${BASH_SOURCE[0]}")/gh-api-aggregate.awk"
+	awk_script="${BASH_SOURCE[0]%/*}/gh-api-aggregate.awk"
 	if [[ ! -f "$awk_script" ]]; then
 		printf '{"_meta":{"%s":"missing-awk-script","path":"%s"},"by_caller":{}}\n' \
-			"$GH_API_ERROR_KEY" "$awk_script" >"$out" 2>/dev/null || true
+			"$GH_API_ERROR_KEY" "$awk_script" >"$tmp" 2>/dev/null || true
+		mv "$tmp" "$out" 2>/dev/null || rm -f "$tmp"
 		return 1
 	fi
-	awk -F'\t' -v now="$now" -v cutoff="$cutoff" -v window="$window" \
-		-f "$awk_script" "$GH_API_LOG" >"$out" 2>/dev/null || return 1
+	snapshot=$(mktemp "${out}.source.XXXXXX" 2>/dev/null) || {
+		rm -f "$tmp"
+		return 1
+	}
+	chmod 0600 "$snapshot" 2>/dev/null || true
+	if ! _gh_snapshot_log "$snapshot"; then
+		rm -f "$tmp" "$snapshot"
+		return 1
+	fi
+	if ! awk -F'\t' -v now="$now" -v cutoff="$cutoff" -v window="$window" \
+		-f "$awk_script" "$snapshot" >"$tmp" 2>/dev/null; then
+		rm -f "$tmp" "$snapshot"
+		return 1
+	fi
+	rm -f "$snapshot"
+	if ! mv "$tmp" "$out" 2>/dev/null; then
+		rm -f "$tmp"
+		return 1
+	fi
+	if [[ "$out" == "$GH_API_REPORT" ]]; then
+		_gh_write_efficiency_sidecar "$out" "$GH_API_EVIDENCE"
+	fi
 	return 0
 }
 
@@ -545,9 +618,9 @@ gh_trim_log() {
 	local now=""
 	local cutoff=0
 	local tmp=""
-	[[ "$GH_API_LOG_MAX_LINES" =~ ^[0-9]+$ && "$GH_API_LOG_MAX_LINES" -gt 0 ]] || GH_API_LOG_MAX_LINES=50000
-	[[ "$GH_API_LOG_MAX_BYTES" =~ ^[0-9]+$ && "$GH_API_LOG_MAX_BYTES" -gt 0 ]] || GH_API_LOG_MAX_BYTES=16777216
-	[[ "$GH_API_RETENTION_SECONDS" =~ ^[0-9]+$ && "$GH_API_RETENTION_SECONDS" -gt 0 ]] || GH_API_RETENTION_SECONDS=172800
+	[[ "$GH_API_LOG_MAX_LINES" =~ ^[0-9]+$ && "$GH_API_LOG_MAX_LINES" -gt 0 ]] || GH_API_LOG_MAX_LINES="$_GH_API_DEFAULT_LOG_MAX_LINES"
+	[[ "$GH_API_LOG_MAX_BYTES" =~ ^[0-9]+$ && "$GH_API_LOG_MAX_BYTES" -gt 0 ]] || GH_API_LOG_MAX_BYTES="$_GH_API_DEFAULT_LOG_MAX_BYTES"
+	[[ "$GH_API_RETENTION_SECONDS" =~ ^[0-9]+$ && "$GH_API_RETENTION_SECONDS" -gt 0 ]] || GH_API_RETENTION_SECONDS="$_GH_API_DEFAULT_RETENTION_SECONDS"
 	now=$(_gh_now_seconds) || return 0
 	cutoff=$((now - GH_API_RETENTION_SECONDS))
 	_gh_log_lock_acquire || return 0
@@ -585,7 +658,7 @@ gh_trim_log() {
 # --- gh_clear_log ---------------------------------------------------------
 # Remove the log + report. Used by tests and by the `clear` subcommand.
 gh_clear_log() {
-	rm -f "$GH_API_LOG" "$GH_API_REPORT" 2>/dev/null
+	rm -f "$GH_API_LOG" "$GH_API_REPORT" "$GH_API_EVIDENCE" 2>/dev/null
 	return 0
 }
 
@@ -597,6 +670,9 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
 	case "$cmd" in
 	record)
 		gh_record_call "$@"
+		;;
+	evidence)
+		gh_record_efficiency_evidence "$@"
 		;;
 	report | aggregate)
 		gh_aggregate_calls "$@"
@@ -614,8 +690,11 @@ gh-api-instrument.sh — gh API call instrumentation (t2902)
 
 Subcommands:
   record <path> [caller] [auth] [pool] [decision] [budget]
-                          Append one record to ${GH_API_LOG##*/}
-  report [out] [window_s]  Aggregate to JSON (default ${GH_API_REPORT##*/}, 24h)
+                          Append one routing/cache record
+  evidence <name> [value] Append one typed benchmark evidence record
+  report [out] [window_s] [end_ts]
+                          Aggregate a fixed-cutoff JSON window
+                          (default ${GH_API_REPORT##*/}, 24h, current time)
   trim                     Atomically apply age, line, and byte retention bounds
   clear                    Remove log + report
 

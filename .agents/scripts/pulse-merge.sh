@@ -431,10 +431,12 @@ _check_pr_merge_gates() {
 	# ── Review bot gate (GH#17490) ──
 	# --admin bypasses branch protection; enforce in code (see review-bot-gate-helper.sh).
 	local rbg_helper="${AGENTS_DIR:-$HOME/.aidevops/agents}/scripts/review-bot-gate-helper.sh"
+	local rbg_observed_at=""
 	if [[ -f "$rbg_helper" ]]; then
 		if _is_trusted_dependabot_update_pr "$pr_number" "$repo_slug" "$pr_author"; then
-			_PULSE_REVIEW_GATE_EVIDENCE=$(jq -nc --arg schema "$PULSE_REVIEW_EVIDENCE_SCHEMA" --arg repo "$repo_slug" --arg pr "$pr_number" --arg head "$expected_head_sha" --arg author "$pr_author" \
-				'{schema:$schema,repo:$repo,pr:$pr,head_sha:$head,status:"SKIP_TRUSTED_DEPENDABOT",author:{login:$author,association:"BOT",class:"trusted-bot"},permitted:true,reason:"trusted_dependabot_policy",state:"pass",merge_gate:"clear",exit_code:0}')
+			rbg_observed_at=$(date -u '+%Y-%m-%dT%H:%M:%SZ') || return 1
+			_PULSE_REVIEW_GATE_EVIDENCE=$(jq -nc --arg schema "$PULSE_REVIEW_EVIDENCE_SCHEMA" --arg repo "$repo_slug" --arg pr "$pr_number" --arg head "$expected_head_sha" --arg author "$pr_author" --arg observed_at "$rbg_observed_at" \
+				'{schema:$schema,repo:$repo,pr:$pr,head_sha:$head,status:"SKIP_TRUSTED_DEPENDABOT",author:{login:$author,association:"BOT",class:"trusted-bot"},permitted:true,reason:"trusted_dependabot_policy",state:"pass",merge_gate:"clear",exit_code:0,observed_at:$observed_at}')
 			echo "[pulse-wrapper] Review bot gate: SKIP for trusted Dependabot dependency update PR #${pr_number} in ${repo_slug} (GH#24473)" >>"$LOGFILE"
 			return 0
 		fi
@@ -449,7 +451,8 @@ _check_pr_merge_gates() {
 			and .repo == $repo and (.pr | tostring) == $pr and .head_sha == $head
 			and .permitted == true and .state == "pass" and .merge_gate == "clear"
 		' <<<"$rbg_result" >/dev/null 2>&1; then
-			_PULSE_REVIEW_GATE_EVIDENCE=$(jq -cS . <<<"$rbg_result")
+			rbg_observed_at=$(date -u '+%Y-%m-%dT%H:%M:%SZ') || return 1
+			_PULSE_REVIEW_GATE_EVIDENCE=$(jq -cS --arg observed_at "$rbg_observed_at" '.observed_at = $observed_at' <<<"$rbg_result") || return 1
 			echo "[pulse-wrapper] Review bot gate: ${rbg_status} for PR #${pr_number} in ${repo_slug} (typed current-head evidence)" >>"$LOGFILE"
 		else
 			echo "[pulse-wrapper] Review bot gate: ${rbg_status:-${PULSE_UNKNOWN_STATE}} for PR #${pr_number} in ${repo_slug} — missing or unpermitted current-head evidence; skipping merge" >>"$LOGFILE"
@@ -476,7 +479,7 @@ _pulse_merge_refresh_review_gate_evidence() {
 	local expected_head_sha="$3"
 	local current_evidence="${_PULSE_REVIEW_GATE_EVIDENCE:-}"
 	local rbg_helper="${AGENTS_DIR:-$HOME/.aidevops/agents}/scripts/review-bot-gate-helper.sh"
-	local refreshed_evidence="" evidence_status="" dependabot_author=""
+	local refreshed_evidence="" evidence_status="" dependabot_author="" evidence_observed_at=""
 
 	if jq -e --arg schema "$PULSE_REVIEW_EVIDENCE_SCHEMA" --arg repo "$repo_slug" --arg pr "$pr_number" --arg head "$expected_head_sha" '
 		.schema == $schema
@@ -485,6 +488,8 @@ _pulse_merge_refresh_review_gate_evidence() {
 	' <<<"$current_evidence" >/dev/null 2>&1; then
 		dependabot_author=$(jq -r '.author.login // ""' <<<"$current_evidence" 2>/dev/null) || dependabot_author=""
 		if [[ -n "$dependabot_author" ]] && _is_trusted_dependabot_update_pr "$pr_number" "$repo_slug" "$dependabot_author"; then
+			evidence_observed_at=$(date -u '+%Y-%m-%dT%H:%M:%SZ') || return 1
+			_PULSE_REVIEW_GATE_EVIDENCE=$(jq -cS --arg observed_at "$evidence_observed_at" '.observed_at = $observed_at' <<<"$current_evidence") || return 1
 			return 0
 		fi
 		_PULSE_REVIEW_GATE_EVIDENCE=""
@@ -501,7 +506,8 @@ _pulse_merge_refresh_review_gate_evidence() {
 		echo "[pulse-merge] final trust gate: current-head review evidence is ${evidence_status:-${PULSE_UNKNOWN_STATE}} or unpermitted for PR #${pr_number} in ${repo_slug} — merge blocked" >>"$LOGFILE"
 		return 1
 	fi
-	_PULSE_REVIEW_GATE_EVIDENCE=$(jq -cS . <<<"$refreshed_evidence") || {
+	evidence_observed_at=$(date -u '+%Y-%m-%dT%H:%M:%SZ') || return 1
+	_PULSE_REVIEW_GATE_EVIDENCE=$(jq -cS --arg observed_at "$evidence_observed_at" '.observed_at = $observed_at' <<<"$refreshed_evidence") || {
 		_PULSE_REVIEW_GATE_EVIDENCE=""
 		return 1
 	}
@@ -1573,11 +1579,16 @@ ${merge_output}"
 		fi
 	fi
 
-	# Rate-limit: 1 second between merges to avoid GitHub API abuse
+	if [[ $_merge_exit -eq 0 ]]; then
+		echo "[pulse-wrapper] Deterministic merge: merged PR #${pr_number} in ${repo_slug}" >>"$LOGFILE"
+		_pmp_record_deterministic_progress_now 1 0
+	fi
+
+	# Rate-limit: 1 second between merges to avoid GitHub API abuse. Persist a
+	# successful mutation before this interruptible wait (GH#28285).
 	sleep 1
 
 	if [[ $_merge_exit -eq 0 ]]; then
-		echo "[pulse-wrapper] Deterministic merge: merged PR #${pr_number} in ${repo_slug}" >>"$LOGFILE"
 		# t2411: emit audit log for origin:interactive auto-merges
 		local _ipr_labels="$pr_labels"
 		if [[ "$_ipr_labels" == *"origin:interactive"* ]]; then
@@ -1704,7 +1715,7 @@ _extract_linked_issue() {
 	# override that creates a match where the body intentionally has none. (t2108)
 	local body_issues="" body_issue="" title_issue=""
 	body_issues=$(printf '%s' "$pr_body" \
-		| grep -ioE '(close[ds]?|fix(es|ed)?|resolve[ds]?)\s+#[0-9]+' \
+		| grep -ioE '(close[ds]?|fix(es|ed)?|resolve[ds]?)[[:space:]]+#[0-9]+' \
 		| grep -oE '[0-9]+' | sort -u) || body_issues=""
 	title_issue=$(printf '%s' "$pr_title" | grep -oE 'GH#[0-9]+' | head -1 | grep -oE '[0-9]+') || title_issue=""
 

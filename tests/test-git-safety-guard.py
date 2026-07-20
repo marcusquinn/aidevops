@@ -1,87 +1,216 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
-"""Regression tests for git_safety_guard.py branch-switch protection."""
+"""Regression tests for the shared canonical direct-write policy."""
 
 import importlib.util
+import json
+import subprocess
+import sys
+import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
 
-HOOK_PATH = Path(__file__).parent.parent / ".agents" / "hooks" / "git_safety_guard.py"
+
+ROOT = Path(__file__).parent.parent
+HOOK_PATH = ROOT / ".agents" / "hooks" / "git_safety_guard.py"
+POLICY_PATH = ROOT / ".agents" / "scripts" / "canonical-write-policy-helper.py"
+REAL_GIT = "/usr/bin/git"
+SCRIPTS_DIR = POLICY_PATH.parent
 
 spec = importlib.util.spec_from_file_location("git_safety_guard", HOOK_PATH)
 git_safety_guard = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(git_safety_guard)
+sys.path.insert(0, str(SCRIPTS_DIR))
+policy_spec = importlib.util.spec_from_file_location(
+    "canonical_write_policy_helper", POLICY_PATH
+)
+canonical_write_policy = importlib.util.module_from_spec(policy_spec)
+sys.modules[policy_spec.name] = canonical_write_policy
+policy_spec.loader.exec_module(canonical_write_policy)
 
 
-class TestCanonicalBranchSwitchDash(unittest.TestCase):
-    """Protect canonical checkouts from ``git switch -`` bypasses."""
+class CanonicalWritePolicyTests(unittest.TestCase):
+    """Exercise canonical and linked contexts through the Claude adapter."""
 
-    def _patch_canonical_repo(self, previous_branch: str) -> mock.MagicMock:
-        """Patch repository helpers and return the authorization mock."""
-        patchers = [
-            mock.patch.object(git_safety_guard.os, "getcwd", return_value="/repo"),
-            mock.patch.object(git_safety_guard, "_get_repo_root", return_value="/repo"),
-            mock.patch.object(git_safety_guard, "_is_linked_worktree", return_value=False),
-            mock.patch.object(
-                git_safety_guard,
-                "_resolve_previous_branch",
-                return_value=previous_branch,
-            ),
-            mock.patch.object(git_safety_guard, "_get_default_branch", return_value="main"),
-            mock.patch.object(git_safety_guard, "_branch_target_is_current_turn_authorized"),
-        ]
-        started = [patcher.start() for patcher in patchers]
-        for patcher in patchers:
-            self.addCleanup(patcher.stop)
-        return started[-1]
-
-    def test_git_switch_dash_denies_previous_feature_branch(self):
-        branch_authorized = self._patch_canonical_repo("feature/work")
-
-        deny = git_safety_guard._check_canonical_branch_switch_command(
-            "git switch -", "restore the canonical repo"
+    def setUp(self) -> None:
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp_dir.cleanup)
+        self.root = Path(self.temp_dir.name)
+        self.repo = self.root / "repo"
+        self.linked = self.root / "linked"
+        self.repo.mkdir()
+        self._git(self.repo, "init", "-q", "-b", "develop")
+        self._git(self.repo, "config", "user.name", "Test")
+        self._git(self.repo, "config", "user.email", "test@example.invalid")
+        self._git(self.repo, "config", "commit.gpgsign", "false")
+        (self.repo / "README.md").write_text("seed\n", encoding="utf-8")
+        self._git(self.repo, "add", "README.md")
+        self._git(self.repo, "commit", "-q", "-m", "seed")
+        self._git(
+            self.repo,
+            "worktree",
+            "add",
+            "-q",
+            "-b",
+            "feature/test",
+            str(self.linked),
         )
 
-        self.assertIsNotNone(deny)
-        reason = deny["hookSpecificOutput"]["permissionDecisionReason"]
-        self.assertIn("feature/work", reason)
-        branch_authorized.assert_not_called()
+    @staticmethod
+    def _git(cwd: Path, *args: str) -> str:
+        return subprocess.run(  # nosec B603 -- fixed Git binary and test-owned argv
+            [REAL_GIT, *args],
+            cwd=cwd,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
 
-    def test_git_checkout_dash_denies_previous_feature_branch(self):
-        branch_authorized = self._patch_canonical_repo("feature/work")
+    def _check(
+        self,
+        cwd: Path,
+        target: Path | str = "",
+        patch_text: str | None = None,
+    ):
+        with mock.patch.object(git_safety_guard.os, "getcwd", return_value=str(cwd)):
+            return git_safety_guard._check_canonical_write(
+                str(target), patch_text
+            )
 
-        deny = git_safety_guard._check_canonical_branch_switch_command(
-            "git checkout -", "restore the canonical repo"
+    def test_planning_files_are_denied_in_canonical_develop_checkout(self):
+        for relative_path in ("README.md", "TODO.md", "todo/task.md"):
+            with self.subTest(relative_path=relative_path):
+                denial = self._check(self.repo, self.repo / relative_path)
+                self.assertIsNotNone(denial)
+                reason = denial["hookSpecificOutput"]["permissionDecisionReason"]
+                self.assertIn("read-only session mirrors", reason)
+                self.assertIn("create_or_use_linked_worktree", reason)
+
+    def test_linked_worktree_write_is_allowed(self):
+        self.assertIsNone(self._check(self.linked, self.linked / "new-file.md"))
+
+    def test_canonical_context_can_target_its_linked_worktree(self):
+        self.assertIsNone(self._check(self.repo, self.linked / "new-file.md"))
+
+    def test_linked_context_cannot_target_canonical_checkout(self):
+        denial = self._check(self.linked, self.repo / "README.md")
+        self.assertIsNotNone(denial)
+
+    def test_outside_git_write_reports_outside_reason(self):
+        decision = canonical_write_policy.check_write(
+            str(self.root), str(self.root / "outside.txt")
+        )
+        self.assertEqual(decision["decision"], "allow")
+        self.assertEqual(
+            decision["reason"],
+            "write target and process context are outside canonical worktrees",
         )
 
-        self.assertIsNotNone(deny)
-        reason = deny["hookSpecificOutput"]["permissionDecisionReason"]
-        self.assertIn("feature/work", reason)
-        branch_authorized.assert_not_called()
-
-    def test_git_switch_dash_without_previous_branch_is_ignored(self):
-        branch_authorized = self._patch_canonical_repo("")
-
-        deny = git_safety_guard._check_canonical_branch_switch_command(
-            "git switch -", "restore the canonical repo"
+    def test_missing_policy_helper_fails_closed(self):
+        with mock.patch.object(
+            git_safety_guard, "_resolve_policy_helper", return_value=""
+        ):
+            denial = self._check(self.linked, self.linked / "README.md")
+        self.assertIn(
+            "policy is unavailable",
+            denial["hookSpecificOutput"]["permissionDecisionReason"],
         )
 
-        self.assertIsNone(deny)
-        branch_authorized.assert_not_called()
+    def test_namespaced_direct_file_tools_are_classified(self):
+        for tool_name in (
+            "Edit",
+            "edit_file",
+            "write",
+            "write_file",
+            "functions.apply_patch",
+            "namespace/Edit",
+            "tools::apply-patch",
+        ):
+            with self.subTest(tool_name=tool_name):
+                self.assertTrue(git_safety_guard._is_direct_file_tool(tool_name))
+        self.assertFalse(git_safety_guard._is_direct_file_tool("functions.read"))
 
-    def test_git_switch_dash_resolves_default_branch_before_authorization(self):
-        branch_authorized = self._patch_canonical_repo("main")
-        branch_authorized.return_value = True
+    def test_runtime_neutral_classifier_reports_structure(self):
+        canonical = canonical_write_policy.classify_location(str(self.repo))
+        linked = canonical_write_policy.classify_location(str(self.linked))
+        self.assertEqual(canonical.classification, "canonical")
+        self.assertEqual(linked.classification, "linked")
 
-        deny = git_safety_guard._check_canonical_branch_switch_command(
-            "git switch -", "restore the canonical repo to main"
+    def test_relative_git_identity_is_resolved_from_the_probed_checkout(self):
+        responses = {
+            ("rev-parse", "--is-inside-work-tree"): "true",
+            ("rev-parse", "--show-toplevel"): ".",
+            ("rev-parse", "--git-dir"): ".git",
+            ("rev-parse", "--git-common-dir"): ".git",
+            ("branch", "--show-current"): "develop",
+        }
+
+        def fake_git_output(_cwd: Path, *args: str) -> str:
+            self.assertNotIn("--path-format=absolute", args)
+            return responses.get(args, "")
+
+        with mock.patch.object(
+            canonical_write_policy, "_git_output", side_effect=fake_git_output
+        ):
+            result = canonical_write_policy.classify_location(str(self.repo))
+        self.assertEqual(result.classification, "canonical")
+        self.assertEqual(result.repo_root, str(self.repo.resolve()))
+
+    def test_explicit_project_integration_branch_is_resolved(self):
+        (self.repo / ".aidevops.json").write_text(
+            json.dumps({"pr_base_branch": "develop"}), encoding="utf-8"
+        )
+        self._git(self.repo, "add", ".aidevops.json")
+        self._git(self.repo, "commit", "-q", "-m", "configure integration branch")
+        payload = canonical_write_policy.resolve_canonical_branch(str(self.repo))
+        self.assertEqual(payload["branch"], "develop")
+        self.assertEqual(payload["source"], "project-config-at-head")
+
+    def test_untracked_project_config_cannot_choose_canonical_branch(self):
+        (self.repo / ".aidevops.json").write_text(
+            json.dumps({"pr_base_branch": "untrusted"}), encoding="utf-8"
+        )
+        with self.assertRaisesRegex(RuntimeError, "cannot be resolved"):
+            canonical_write_policy.resolve_canonical_branch(str(self.repo))
+
+    def test_non_object_policy_output_fails_closed(self):
+        result = subprocess.CompletedProcess([], 0, stdout="null", stderr="")
+        with mock.patch.object(
+            git_safety_guard.subprocess, "run", return_value=result
+        ):
+            denial = self._check(self.linked, self.linked / "README.md")
+        self.assertIn(
+            "non-object payload",
+            denial["hookSpecificOutput"]["permissionDecisionReason"],
         )
 
-        self.assertIsNone(deny)
-        branch_authorized.assert_called_once_with(
-            "main", "restore the canonical repo to main"
+    def test_apply_patch_targets_are_classified_individually(self):
+        linked_patch = """*** Begin Patch
+*** Add File: linked-only.md
++safe
+*** End Patch
+"""
+        self.assertIsNone(self._check(self.linked, patch_text=linked_patch))
+        absolute_linked_patch = f"""*** Begin Patch
+*** Add File: {self.linked / 'absolute-linked.md'}
++safe
+*** End Patch
+"""
+        self.assertIsNone(self._check(self.repo, patch_text=absolute_linked_patch))
+        canonical_patch = f"""*** Begin Patch
+*** Update File: {self.repo / 'README.md'}
+@@
+-seed
++unsafe
+*** End Patch
+"""
+        denial = self._check(self.linked, patch_text=canonical_patch)
+        self.assertIsNotNone(denial)
+        self.assertIn(
+            "read-only session mirrors",
+            denial["hookSpecificOutput"]["permissionDecisionReason"],
         )
 
 

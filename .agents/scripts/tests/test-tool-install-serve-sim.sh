@@ -35,6 +35,7 @@ extract_functions() {
 	awk '
 		/^_setup_serve_sim_node_version_ok\(\)/, /^}$/ { print; next }
 		/^_setup_serve_sim_cli_version\(\)/, /^}$/ { print; next }
+		/^_setup_serve_sim_swiftpm_ok\(\)/, /^}$/ { print; next }
 		/^setup_serve_sim\(\)/, /^}$/ { print; next }
 	' "$TOOL_INSTALL" >"$SANDBOX/extract.sh"
 	if ! grep -q '^setup_serve_sim()' "$SANDBOX/extract.sh"; then
@@ -54,9 +55,18 @@ write_shim() {
 }
 
 source_extracted() {
-	print_info() { printf 'INFO: %s\n' "$*"; return 0; }
-	print_success() { printf 'OK: %s\n' "$*"; return 0; }
-	print_warning() { printf 'WARN: %s\n' "$*"; return 0; }
+	print_info() {
+		printf 'INFO: %s\n' "$*"
+		return 0
+	}
+	print_success() {
+		printf 'OK: %s\n' "$*"
+		return 0
+	}
+	print_warning() {
+		printf 'WARN: %s\n' "$*"
+		return 0
+	}
 	setup_prompt() {
 		local var_name="$1"
 		local prompt_text="$2"
@@ -86,9 +96,18 @@ source_extracted() {
 }
 
 source_extracted_with_prompt_failure() {
-	print_info() { printf 'INFO: %s\n' "$*"; return 0; }
-	print_success() { printf 'OK: %s\n' "$*"; return 0; }
-	print_warning() { printf 'WARN: %s\n' "$*"; return 0; }
+	print_info() {
+		printf 'INFO: %s\n' "$*"
+		return 0
+	}
+	print_success() {
+		printf 'OK: %s\n' "$*"
+		return 0
+	}
+	print_warning() {
+		printf 'WARN: %s\n' "$*"
+		return 0
+	}
 	setup_prompt() {
 		return 1
 	}

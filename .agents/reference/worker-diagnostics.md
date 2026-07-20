@@ -26,6 +26,24 @@ Pulse cycle (every 3 min, configurable)
     → On failure: CLAIM_RELEASED posted, issue available for re-dispatch
 ```
 
+### Preserved worktree ownership transfer
+
+Reusing an issue worktree does not make its current registry owner stale. For a
+scheduled same-task continuation, dispatch captures the exact owner PID,
+session, batch, task ID, and ownership timestamp without replacing the row. The
+worker then verifies that snapshot and changes ownership with one atomic
+compare-and-swap. Only that explicit continuation path may preserve dirty files
+or commits ahead of the upstream branch.
+
+Generic claims and stale-owner recovery keep their clean/zero-ahead checks.
+They do not gain authority from a matching task ID alone, and unrelated live
+owners remain protected. Pre-runtime classifications distinguish
+`worker_worktree_continuation_task_mismatch`,
+`worker_worktree_continuation_owner_mismatch`,
+`worker_worktree_continuation_concurrent_mutation`, and
+`worker_worktree_continuation_state_rejected`; use these instead of treating
+every refusal as an opaque `worker_worktree_live_owner` retry.
+
 ### Dispatch claim comment states
 
 Use the issue timeline to distinguish expected dispatch ownership from noisy

@@ -1196,7 +1196,9 @@ _reconcile_pr_origin_label() {
 	local origin_name="$3"
 	local origin_error=""
 	origin_error=$(mktemp) || return 1
-	if ! set_origin_label "$pr_number" "$repo" "$origin_name" --pr 2>"$origin_error"; then
+	# set_origin_label may print the PR URL after a successful REST mutation.
+	# _create_pr is a machine-output function, so keep that status off stdout.
+	if ! set_origin_label "$pr_number" "$repo" "$origin_name" --pr >/dev/null 2>"$origin_error"; then
 		local failure_kind="GitHub label write failed"
 		if grep -qiE 'permission|forbidden|Resource not accessible|HTTP 403' "$origin_error" 2>/dev/null; then
 			failure_kind="credential lacks PR label permission"
@@ -1320,28 +1322,67 @@ _post_merge_summary() {
 	# Counter safety: validate result is a number before comparing (t2763).
 	local _existing_count=0
 	local _tmp_count=""
-	_tmp_count=$(gh api "repos/${repo}/issues/${pr_number}/comments" \
-		--jq '[.[] | select(.body | test("<!-- MERGE_SUMMARY -->"))] | length' 2>/dev/null || true)
-	[[ "$_tmp_count" =~ ^[0-9]+$ ]] && _existing_count="$_tmp_count"
-	if [[ "$_existing_count" -gt 0 ]]; then
+	if ! _tmp_count=$(gh api "repos/${repo}/issues/${pr_number}/comments" \
+		--jq '[.[] | select(.body | test("<!-- MERGE_SUMMARY -->"))] | length'); then
+		print_error "Could not verify existing merge summary comments on PR #${pr_number}; refusing a potentially duplicate post"
+		return 1
+	fi
+	if [[ ! "$_tmp_count" =~ ^[0-9]+$ ]]; then
+		print_error "Invalid merge summary count for PR #${pr_number}: ${_tmp_count:-empty}"
+		return 1
+	fi
+	_existing_count="$_tmp_count"
+	if [[ "$_existing_count" -eq 1 ]]; then
 		print_info "Merge summary comment already exists on PR #${pr_number} — skipping duplicate (t2767)"
 		return 0
 	fi
+	if [[ "$_existing_count" -gt 1 ]]; then
+		print_error "PR #${pr_number} has ${_existing_count} canonical merge summary comments; expected exactly one"
+		return 1
+	fi
 
-	local merge_summary="<!-- MERGE_SUMMARY -->
+	local temp_root="${AIDEVOPS_TEMP_DIR:-${HOME}/.aidevops/.agent-workspace/tmp}"
+	local merge_summary_file=""
+	if ! mkdir -p "$temp_root"; then
+		print_error "Could not create merge summary workspace: ${temp_root}"
+		return 1
+	fi
+	if ! merge_summary_file=$(mktemp "${temp_root}/aidevops-merge-summary.XXXXXX"); then
+		print_error "Could not create merge summary body file in ${temp_root}"
+		return 1
+	fi
+	if ! printf '%s\n' "<!-- MERGE_SUMMARY -->
 ## Completion Summary
 
 - **What**: ${summary_what:-Implementation for issue #${issue_number}}
 - **Issue**: #${issue_number}
 - **Files changed**: ${files_changed:-see diff}
 - **Testing**: ${summary_testing:-shellcheck clean, self-assessed}
-- **Key decisions**: ${summary_decisions:-none}"
-
-	if gh_pr_comment "$pr_number" --repo "$repo" --body "$merge_summary" >/dev/null 2>&1; then
-		print_success "Merge summary comment posted on PR #${pr_number}"
-	else
-		print_warning "Failed to post merge summary comment — post it manually"
+- **Key decisions**: ${summary_decisions:-none}" >"$merge_summary_file"; then
+		print_error "Could not write merge summary body file for PR #${pr_number}"
+		rm -f "$merge_summary_file"
+		return 1
 	fi
+
+	# gh_pr_comment signs a private copy of --body-file before posting. Keep
+	# stderr visible so policy or GitHub failures retain actionable diagnostics.
+	if ! gh_pr_comment "$pr_number" --repo "$repo" --body-file "$merge_summary_file" >/dev/null; then
+		print_error "Failed to post signed merge summary comment on PR #${pr_number}"
+		rm -f "$merge_summary_file"
+		return 1
+	fi
+	rm -f "$merge_summary_file"
+
+	_tmp_count=$(gh api "repos/${repo}/issues/${pr_number}/comments" \
+		--jq '[.[] | select(.body | test("<!-- MERGE_SUMMARY -->"))] | length') || {
+		print_error "Merge summary posted on PR #${pr_number}, but verification failed"
+		return 1
+	}
+	if [[ "$_tmp_count" != "1" ]]; then
+		print_error "Merge summary postcondition failed on PR #${pr_number}: expected 1 canonical comment, found ${_tmp_count:-unknown}"
+		return 1
+	fi
+	print_success "Signed merge summary comment posted and verified on PR #${pr_number}"
 	return 0
 }
 

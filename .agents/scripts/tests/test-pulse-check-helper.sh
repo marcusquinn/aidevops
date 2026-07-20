@@ -174,7 +174,7 @@ if [[ " $* " == *"private/repo-one"* ]]; then
   {"number":1,"title":"secret one","updatedAt":"2000-01-01T00:00:00Z","assignees":[],"labels":[{"name":"auto-dispatch"},{"name":"status:available"},{"name":"tier:standard"}]},
   {"number":2,"title":"secret two","updatedAt":"2000-01-01T00:00:00Z","assignees":[],"labels":[{"name":"auto-dispatch"},{"name":"status:available"},{"name":"tier:standard"}]},
   {"number":3,"title":"secret three","updatedAt":"2000-01-01T00:00:00Z","assignees":[],"labels":[{"name":"auto-dispatch"},{"name":"status:available"},{"name":"tier:standard"}]},
-  {"number":4,"title":"secret four","updatedAt":"2000-01-01T00:00:00Z","assignees":[],"labels":[{"name":"auto-dispatch"},{"name":"status:available"},{"name":"tier:standard"}]}
+  {"number":4,"title":"secret four","updatedAt":"2000-01-01T00:00:00Z","assignees":[],"labels":[{"name":"auto-dispatch"},{"name":"status:available"},{"name":"tier:standard"},{"name":"infrastructure"}]}
 ]
 JSON
   exit 0
@@ -227,7 +227,7 @@ printf '%s=== pulse-check-helper.sh tests ===%s\n' "$TEST_BLUE" "$TEST_NC"
 
 OUT=$(env "${COMMON_ENV[@]}" "$HELPER" report 2>&1)
 assert_contains "text report shows empty active capacity" "Active workers: 0 / 6" "$OUT"
-assert_contains "text report shows aggregate queue" "Auto-dispatch queue: 6 available / 6 open" "$OUT"
+assert_contains "text report excludes infrastructure advisories from available work" "Auto-dispatch queue: 5 available / 6 open" "$OUT"
 assert_contains "underfilled finding appears" "pulse-underfilled-auto-dispatch-queue" "$OUT"
 assert_contains "launch accounting finding appears" "pulse-launch-accounting-gap" "$OUT"
 assert_not_contains "text report omits private slug" "private/repo-one" "$OUT"

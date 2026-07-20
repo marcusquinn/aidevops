@@ -60,7 +60,7 @@ The result: an AI operations platform that manages projects across every busines
 [![Copyright](https://img.shields.io/badge/Copyright-Marcus%20Quinn%202025--2026-blue.svg)](https://github.com/marcusquinn)
 
 <!-- Release & Version Info -->
-[![Version](https://img.shields.io/badge/Version-3.32.148-blue.svg)](https://github.com/marcusquinn/aidevops/releases)
+[![Version](https://img.shields.io/badge/Version-3.32.157-blue.svg)](https://github.com/marcusquinn/aidevops/releases)
 [![npm version](https://img.shields.io/npm/v/aidevops)](https://www.npmjs.com/package/aidevops)
 [![Homebrew](https://img.shields.io/badge/homebrew-marcusquinn%2Ftap-orange)](https://github.com/marcusquinn/homebrew-tap)
 [![GitHub repository](https://img.shields.io/badge/github-repository-181717.svg?logo=github)](https://github.com/marcusquinn/aidevops)
@@ -326,19 +326,23 @@ Initialize **[aidevops](https://aidevops.sh)** features in any git repository:
 
 ```bash
 cd ~/your-project
-aidevops init                         # Enable all features
+aidevops init                         # Enable the default feature set
 aidevops init planning                # Enable only planning
 aidevops init planning,time-tracking  # Enable specific features
+aidevops init deployment-context   # Scaffold a deployment manifest
+aidevops init wordpress-context    # Scaffold WordPress + deployment manifests
 ```
 
 This creates:
 - `.aidevops.json` - Configuration with enabled features
-- `.agents` symlink → `~/.aidevops/agents/`
+- `.agents/AGENTS.md` - Project-specific agent context
 - `TODO.md` - Quick task tracking with time estimates
 - `todo/PLANS.md` - Complex execution plans
 - `.beads/` - Task graph database (if beads enabled)
+- `.aidevops/deployments.yaml` - Deployment instance inventory (opt-in)
+- `.aidevops/wordpress.yaml` - WordPress and LocalWP context (opt-in)
 
-**Available features:** `planning`, `git-workflow`, `code-quality`, `time-tracking`, `beads`
+**Available features:** `planning`, `git-workflow`, `code-quality`, `time-tracking`, `database`, `beads`, `sops`, `security`, `deployment-context`, `wordpress-context`. `hosting-context` is an alias for `deployment-context`; `wordpress-context` implies deployment context. The default `all` set intentionally excludes both project-instance context features.
 
 ### Per-repo platform setup
 

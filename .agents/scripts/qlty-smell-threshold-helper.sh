@@ -7,6 +7,7 @@
 set -u
 
 SCRIPT_NAME=$(basename "$0")
+UNKNOWN_VALUE="unknown"
 
 log() {
 	local _msg="$1"
@@ -26,15 +27,59 @@ find_qlty() {
 	return 1
 }
 
+qlty_version() {
+	local _qlty_bin="$1"
+	local _version=""
+	_version=$("$_qlty_bin" --version 2>/dev/null) || _version="$UNKNOWN_VALUE"
+	printf '%s\n' "$_version"
+	return 0
+}
+
+verify_qlty_version() {
+	local _version="$1"
+	local _expected="${QLTY_CLI_VERSION:-}"
+	if [ -n "$_expected" ] && [[ "$_version" != *" $_expected"* ]]; then
+		printf '::error::Qlty CLI version mismatch: expected %s, resolved %s\n' "$_expected" "$_version"
+		return 1
+	fi
+	return 0
+}
+
+emit_valid_scan_metadata() {
+	local _qlty_version="$1"
+	local _sarif="$2"
+	local _commit="$UNKNOWN_VALUE"
+	local _tree="$UNKNOWN_VALUE"
+	local _config="none"
+	local _mode="${QLTY_SCAN_MODE:-direct-checkout}"
+	local _count="0"
+	_commit=$(git rev-parse HEAD 2>/dev/null) || _commit="$UNKNOWN_VALUE"
+	_tree=$(git rev-parse 'HEAD^{tree}' 2>/dev/null) || _tree="$UNKNOWN_VALUE"
+	if [ -f .qlty/qlty.toml ]; then
+		_config=".qlty/qlty.toml"
+	fi
+	_count=$(printf '%s\n' "$_sarif" | jq '.runs[0].results | length')
+	printf 'Qlty version: %s\n' "$_qlty_version"
+	printf 'Scan commit: %s\n' "$_commit"
+	printf 'Scan tree: %s\n' "$_tree"
+	printf 'Scan mode: %s\n' "$_mode"
+	printf 'Scan root: repository-root\n'
+	printf 'Qlty config: %s\n' "$_config"
+	printf 'Normalized result count: %s\n' "$_count"
+	printf 'Normalized per-rule counts:\n'
+	printf '%s\n' "$_sarif" | jq -r '[.runs[0].results[]?.ruleId? | select(. != null)] | group_by(.) | map({rule: .[0], count: length}) | sort_by(.rule) | .[] | "  \(.count)\t\(.rule)"'
+	return 0
+}
+
 is_non_negative_integer() {
 	local _value="$1"
 	case "$_value" in
-		'' | *[!0-9]*)
-			return 1
-			;;
-		*)
-			return 0
-			;;
+	'' | *[!0-9]*)
+		return 1
+		;;
+	*)
+		return 0
+		;;
 	esac
 	return 1
 }
@@ -122,11 +167,14 @@ run_threshold_check() {
 	local _conf="${1:-.agents/configs/complexity-thresholds.conf}"
 	local _threshold=""
 	local _qlty_bin=""
+	local _cache_dir=""
 	local _diag_file=""
+	local _warmup_file=""
 	local _sarif=""
 	local _count=""
 	local _headroom=""
 	local _qlty_rc="0"
+	local _qlty_version=""
 
 	_threshold=$(read_threshold "$_conf")
 	if [ "$_threshold" -eq 0 ]; then
@@ -138,11 +186,26 @@ run_threshold_check() {
 		printf '::error::qlty CLI not found\n'
 		return 1
 	}
+	_qlty_version=$(qlty_version "$_qlty_bin")
+	verify_qlty_version "$_qlty_version" || return 1
 
-	printf 'Counting total qlty smells across all files...\n'
+	printf 'Warming isolated qlty cache before authoritative scan...\n'
 	_diag_file=$(mktemp "${TMPDIR:-/tmp}/qlty-smell-threshold.XXXXXX") || return 1
-	_sarif=$("$_qlty_bin" smells --all --sarif --no-snippets --quiet 2>"$_diag_file")
+	_warmup_file=$(mktemp "${TMPDIR:-/tmp}/qlty-smell-warmup.XXXXXX") || {
+		rm -f "$_diag_file"
+		return 1
+	}
+	_cache_dir=$(mktemp -d "${TMPDIR:-/tmp}/qlty-smell-cache.XXXXXX") || {
+		rm -f "$_diag_file" "$_warmup_file"
+		return 1
+	}
+	XDG_CACHE_HOME="$_cache_dir" "$_qlty_bin" smells --all --sarif --no-snippets --quiet \
+		>"$_warmup_file" 2>/dev/null || true
+	printf 'Counting total qlty smells across all files...\n'
+	_sarif=$(XDG_CACHE_HOME="$_cache_dir" "$_qlty_bin" smells --all --sarif --no-snippets --quiet 2>"$_diag_file")
 	_qlty_rc=$?
+	rm -f "$_warmup_file"
+	rm -rf "$_cache_dir"
 	if is_blank_output "$_sarif"; then
 		emit_sarif_warning "empty" "$_diag_file" "$_qlty_bin" "" "$_qlty_rc"
 		rm -f "$_diag_file"
@@ -160,6 +223,7 @@ run_threshold_check() {
 		printf '::error::Failed to parse smell count from SARIF output\n'
 		return 1
 	fi
+	emit_valid_scan_metadata "$_qlty_version" "$_sarif"
 
 	printf '\n'
 	printf 'Total qlty smells: %s\n' "$_count"

@@ -25,6 +25,7 @@ mode: subagent
 | Build or debug code | `wp-dev.md` | Development workflow, debugging, implementation patterns |
 | Manage content or routine upkeep | `wp-admin.md` | Admin tasks and site maintenance |
 | Inspect a local site or database | `localwp.md` | LocalWP setup and MCP-backed local DB access |
+| Clone production into LocalWP | `../workflows/wordpress-local-clone.md` | Export, sanitize, contain side effects, and validate |
 | Update many sites | `mainwp.md` | Centralized MainWP operations |
 | Choose plugins | `wp-preferred.md` | 127+ curated plugins across 19 categories |
 | Work with custom fields | `scf.md` | Field modeling and SCF/ACF guidance |

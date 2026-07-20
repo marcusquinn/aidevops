@@ -1,0 +1,23 @@
+schema_version: 1
+deployments:
+  - id: "<DEPLOYMENT_ID>"
+    environment: "<ENVIRONMENT>"
+    provider: "<HOSTING_PROVIDER>"
+    public_url: "<PUBLIC_URL>"
+    ssh:
+      host_secret_name: "<SITE_SSH_HOST_SECRET_NAME>"
+      port_secret_name: "<SITE_SSH_PORT_SECRET_NAME>"
+      username_secret_name: "<SITE_SSH_USER_SECRET_NAME>"
+      password_secret_name: "<SITE_SSH_PASSWORD_SECRET_NAME>"
+    paths:
+      document_root: "<REMOTE_DOCUMENT_ROOT>"
+    database:
+      host_secret_name: "<SITE_DATABASE_HOST_SECRET_NAME>"
+      port_secret_name: "<SITE_DATABASE_PORT_SECRET_NAME>"
+      name_secret_name: "<SITE_DATABASE_NAME_SECRET_NAME>"
+      username_secret_name: "<SITE_DATABASE_USER_SECRET_NAME>"
+      password_secret_name: "<SITE_DATABASE_PASSWORD_SECRET_NAME>"
+    operations:
+      backup_command: "<BACKUP_COMMAND>"
+      deploy_command: "<DEPLOY_COMMAND>"
+      rollback_command: "<ROLLBACK_COMMAND>"

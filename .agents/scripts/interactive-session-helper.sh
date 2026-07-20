@@ -51,6 +51,7 @@
 #   interactive-session-helper.sh unlock <issue> <slug> [--unassign]
 #   interactive-session-helper.sh status [<issue>]
 #   interactive-session-helper.sh scan-stale
+#   interactive-session-helper.sh reap-dead-stamps
 #   interactive-session-helper.sh post-merge <pr_number> [<slug>]
 #   interactive-session-helper.sh help
 
@@ -354,7 +355,7 @@ USAGE:
   interactive-session-helper.sh release-if-dead <issue> <slug>
       Pulse-safe single-claim recovery; releases a dead same-host owner unless
       no-auto-dispatch applies. Live, cross-host, and unknown states fail closed.
-
+  interactive-session-helper.sh reap-dead-stamps  Bounded direct stamp recovery; safety gates fail closed.
   interactive-session-helper.sh post-merge <pr_number> [<slug>]
       Auto-heal two known drift patterns after a planning PR merges (t2225).
       Call after `gh pr merge` succeeds, alongside `release <N>`.
@@ -436,6 +437,9 @@ main() {
 		;;
 	release-if-dead)
 		_isc_cmd_release_if_dead "$@" || rc=$?
+		;;
+	reap-dead-stamps)
+		_isc_cmd_reap_dead_stamps "$@" || rc=$?
 		;;
 	post-merge)
 		_isc_cmd_post_merge "$@" || rc=$?

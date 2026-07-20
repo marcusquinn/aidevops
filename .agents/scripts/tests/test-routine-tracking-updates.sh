@@ -9,6 +9,7 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)" || exit 1
 SCHEDULERS_PLATFORM_SH="$REPO_ROOT/.agents/scripts/setup/modules/schedulers-platform.sh"
 SCHEDULERS_SH="$REPO_ROOT/.agents/scripts/setup/modules/schedulers.sh"
 PULSE_ROUTINES_SH="$REPO_ROOT/.agents/scripts/pulse-routines.sh"
+ROUTINE_LOG_HELPER_SH="$REPO_ROOT/.agents/scripts/routine-log-helper.sh"
 
 TESTS_RUN=0
 TESTS_PASSED=0
@@ -354,6 +355,32 @@ test_pulse_preflight_does_not_launch_opencode_archive() {
 	return 0
 }
 
+test_routine_issue_creation_includes_tracking_label() {
+	local create_log="$TEST_DIR/routine-create.args"
+	# Load the helper functions without creating an issue.
+	# shellcheck source=/dev/null
+	source "$ROUTINE_LOG_HELPER_SH" help >/dev/null
+
+	gh_create_issue() {
+		printf '%q ' "$@" >"$create_log"
+		printf '%s\n' "https://github.com/marcusquinn/aidevops/issues/4242"
+		return 0
+	}
+
+	local issue_number create_args
+	issue_number=$(_create_github_issue "marcusquinn/aidevops" "r999: Test" "body")
+	create_args=$(<"$create_log")
+	if [[ "$issue_number" != "4242" ]] ||
+		[[ "$create_args" != *"--label routines"* ]] ||
+		[[ "$create_args" != *"--label routine-tracking"* ]]; then
+		print_result "routine issue creation includes tracking labels" 1 \
+			"issue=${issue_number}; args=${create_args}"
+		return 0
+	fi
+	print_result "routine issue creation includes tracking labels" 0
+	return 0
+}
+
 main() {
 	setup
 	load_scheduler_helpers
@@ -365,6 +392,7 @@ main() {
 	test_opencode_archive_scheduler_tolerates_unset_home
 	test_opencode_archive_launchd_uses_safe_path_expansion
 	test_pulse_preflight_does_not_launch_opencode_archive
+	test_routine_issue_creation_includes_tracking_label
 	printf '\n%d/%d tests passed\n' "$TESTS_PASSED" "$TESTS_RUN"
 	[[ "$TESTS_FAILED" -eq 0 ]]
 	return $?

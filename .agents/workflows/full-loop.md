@@ -28,12 +28,12 @@ Classify the **target/upstream repository**, not the push remote or fork owner. 
 | Profile | Full-loop terminal path |
 |---------|-------------------------|
 | **aidevops** | Worktree → commit → push → ready PR/review loop → merge → explicitly authorized release/deploy/update → cleanup. Without publication intent, record `release:not-requested`. |
-| **Maintained app/repo** | Worktree → commit → push → ready PR/review loop → merge → audited fast-forward of the local canonical checkout's merged PR base branch (for example `develop`) → cleanup. Full-loop consent authorizes only this safe synchronization, not publication. |
+| **Maintained app/repo** | Worktree → commit → push → ready PR/review loop → merge → audited synchronization of the local canonical checkout's merged PR base branch (for example `develop`) → cleanup. Full-loop consent authorizes only this safe synchronization, not publication. |
 | **External upstream contribution** | Worktree → commit → push to the contributor branch/fork → ready PR/review loop → cleanup. Leave the PR open; do not merge, close the upstream issue, mutate upstream metadata, publish, or synchronize an upstream integration branch. |
 
 External `REMOTE_VERIFIED` means the PR is open and ready, the exact head has terminal-success required checks, and actionable review findings are addressed. Pending upstream human approval is the intended hand-off, not a reason to poll indefinitely. Record `authority:external`, `pr:open`, then perform guarded cleanup.
 
-For a maintained non-aidevops repo, resolve the synchronization branch from the merged PR's verified `baseRefName`; never assume `develop`. Resolve the registered canonical checkout, verify it is currently on that branch, and use `canonical-recovery-helper.sh fast-forward-current` with the linked issue and exact confirmation token. Never pull directly, switch the canonical checkout, overwrite dirt, or bypass divergence/concurrency guards. Any refusal leaves `LOCAL_BASE_SYNCED` incomplete and must be reported with merge evidence.
+For a maintained non-aidevops repo, resolve the synchronization branch from the merged PR's verified `baseRefName`; never assume `develop`. Resolve the registered canonical checkout and verify it is currently on the configured/resolved branch. Use `canonical-recovery-helper.sh fast-forward-current` when clean and non-diverged; use its `sync-mirror` operation when verified preservation is required. Never pull directly, switch the canonical checkout, or bypass preservation/concurrency guards. Any refusal leaves `LOCAL_BASE_SYNCED` incomplete and must be reported with merge evidence.
 
 | # | Step | Signal |
 |---|------|--------|
@@ -212,7 +212,7 @@ Check gate without merging: `full-loop-helper.sh pre-merge-gate "$PR_NUMBER" "$R
 
 **4.6 Conditional Detached Release (aidevops only):** Without explicit trusted release intent, run `full-loop-helper.sh record-no-release "$PR_NUMBER" "$REPO"` after verified merge to record `release:not-requested`, then continue directly to closing and guarded cleanup. The command verifies merged evidence, is idempotent, and refuses to replace `release:published` or `release:failed`. Authorized releases use a fresh detached release worktree at `origin/main`; omitted type defaults to patch and omitted deployment scope defaults to incremental. Major/minor and full deployment must be selected explicitly. Record terminal publication as `release:published` or `release:failed`; do not repeat publication gates after publication succeeds.
 
-**4.7 Maintained-App Local Base Synchronization (MANDATORY):** After a maintained non-aidevops merge, read the merged PR's verified `baseRefName`, resolve the registered canonical checkout, and use `canonical-recovery-helper.sh fast-forward-current` as documented in `workflows/git-workflow.md`. Full-loop consent authorizes this guarded fast-forward. Verify local `HEAD` equals `origin/<baseRefName>` before recording `LOCAL_BASE_SYNCED`.
+**4.7 Maintained-App Local Base Synchronization (MANDATORY):** After a maintained non-aidevops merge, read the merged PR's verified `baseRefName`, resolve the registered canonical checkout, and use the clean `fast-forward-current` or lossless `sync-mirror` operation documented in `workflows/git-workflow.md`. Full-loop consent authorizes this guarded synchronization. Verify local `HEAD` equals `origin/<baseRefName>` before recording `LOCAL_BASE_SYNCED`.
 
 **4.8 Closing Comments:** Managed repos receive structured issue and PR closing comments with the normal pre-close verification. External sessions do not close the upstream issue; follow upstream conventions and leave at most one concise issue comment linking the PR when useful.
 

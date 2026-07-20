@@ -47,6 +47,8 @@ setup_test_repo() {
 	}
 	"$GIT_BIN" -C "$TEST_ROOT" config user.name "Aidevops Test"
 	"$GIT_BIN" -C "$TEST_ROOT" config user.email "test@example.com"
+	"$GIT_BIN" -C "$TEST_ROOT" config core.hooksPath /dev/null
+	"$GIT_BIN" -C "$TEST_ROOT" config commit.gpgsign false
 	printf 'test\n' >"${TEST_ROOT}/README.md"
 	"$GIT_BIN" -C "$TEST_ROOT" add README.md
 	"$GIT_BIN" -C "$TEST_ROOT" commit -m "test: seed repo" >/dev/null 2>&1
@@ -93,7 +95,7 @@ test_blocks_headless_edits_on_main_with_worktree_guidance() {
 	local exit_code=0
 	output=$(FULL_LOOP_HEADLESS=true run_helper "$TEST_ROOT" 2>&1) || exit_code=$?
 
-	if [[ "$exit_code" -eq 2 ]] && [[ "$output" == *"Canonical repo directory is on protected 'main'; move code edits into a linked worktree."* ]] && [[ "$output" == *"HEADLESS_BLOCKED=true"* ]] && [[ "$output" == *"ACTION_REQUIRED=create_worktree"* ]]; then
+	if [[ "$exit_code" -eq 2 ]] && [[ "$output" == *"canonical checkouts are read-only session mirrors"* ]] && [[ "$output" == *"CANONICAL_WORKTREE=true"* ]] && [[ "$output" == *"ACTION_REQUIRED=create_or_use_linked_worktree"* ]]; then
 		print_result "blocks headless edits on main with worktree guidance" 0
 		return 0
 	fi
@@ -164,7 +166,7 @@ test_worker_env_does_not_bypass_canonical_guard() {
 	output=$(WORKER_WORKTREE_PATH="$TEST_ROOT" WORKER_WORKTREE_BRANCH="forged/worker" \
 		FULL_LOOP_HEADLESS=true run_helper "$TEST_ROOT" 2>&1) || exit_code=$?
 
-	if [[ "$exit_code" -eq 2 ]] && [[ "$output" == *"HEADLESS_BLOCKED=true"* ]]; then
+	if [[ "$exit_code" -eq 2 ]] && [[ "$output" == *"CANONICAL_WORKTREE=true"* ]] && [[ "$output" == *"ACTION_REQUIRED=create_or_use_linked_worktree"* ]]; then
 		print_result "worker environment cannot bypass canonical worktree guard" 0
 		return 0
 	fi
@@ -174,18 +176,23 @@ test_worker_env_does_not_bypass_canonical_guard() {
 }
 
 test_warns_when_canonical_repo_is_off_main() {
-	"$GIT_BIN" -C "$TEST_ROOT" switch -c bugfix/off-main >/dev/null 2>&1
+	"$GIT_BIN" -C "$TEST_ROOT" switch -c develop >/dev/null 2>&1
+	"$GIT_BIN" -C "$TEST_ROOT" symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/develop
 
 	local output=""
 	local exit_code=0
 	output=$(run_helper "$TEST_ROOT" 2>&1) || exit_code=$?
+	local canonical_rows=0
+	if [[ -f "$TEST_REGISTRY_DB" ]]; then
+		canonical_rows=$(sqlite3 "$TEST_REGISTRY_DB" "SELECT COUNT(*) FROM worktree_owners WHERE worktree_path = '$TEST_ROOT';")
+	fi
 
-	if [[ "$exit_code" -eq 2 ]] && [[ "$output" == *"CANONICAL_STATE_INVALID=true"* ]] && [[ "$output" == *"ACTION_REQUIRED=create_or_use_linked_worktree"* ]]; then
-		print_result "blocks when canonical repo directory is off main" 0
+	if [[ "$exit_code" -eq 2 ]] && [[ "$output" == *"CANONICAL_WORKTREE=true"* ]] && [[ "$output" == *"ACTION_REQUIRED=create_or_use_linked_worktree"* ]] && [[ "$canonical_rows" -eq 0 ]]; then
+		print_result "blocks canonical origin-default develop before ownership claim" 0
 		return 0
 	fi
 
-	print_result "blocks when canonical repo directory is off main" 1 "exit=${exit_code} output=${output}"
+	print_result "blocks canonical origin-default develop before ownership claim" 1 "exit=${exit_code} rows=${canonical_rows} output=${output}"
 	return 0
 }
 
@@ -278,7 +285,7 @@ test_interactive_allowlisted_path_still_requires_worktree() {
 	local exit_code=0
 	output=$(run_helper "$TEST_ROOT" --file "README.md" 2>&1) || exit_code=$?
 
-	if [[ "$exit_code" -eq 2 ]] && [[ "$output" == *"ACTION_REQUIRED=create_worktree"* ]]; then
+	if [[ "$exit_code" -eq 2 ]] && [[ "$output" == *"ACTION_REQUIRED=create_or_use_linked_worktree"* ]]; then
 		print_result "interactive allowlisted path still requires a linked worktree" 0
 		return 0
 	fi
@@ -349,6 +356,8 @@ test_auto_creates_git_path_worktree_from_ansi_helper_output() {
 	}
 	"$GIT_BIN" -C "$repo_path" config user.name "Aidevops Test"
 	"$GIT_BIN" -C "$repo_path" config user.email "test@example.com"
+	"$GIT_BIN" -C "$repo_path" config core.hooksPath /dev/null
+	"$GIT_BIN" -C "$repo_path" config commit.gpgsign false
 	printf 'test\n' >"${repo_path}/README.md"
 	"$GIT_BIN" -C "$repo_path" add README.md
 	"$GIT_BIN" -C "$repo_path" commit -m "test: seed ansi repo" >/dev/null 2>&1

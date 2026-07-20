@@ -250,6 +250,10 @@ _isc_release_claim_by_stamp_path() {
 		rm -f "$stamp_path" 2>/dev/null || true
 		return 0
 	fi
+	if ! [[ "$r_issue" =~ ^[1-9][0-9]*$ ]] || ! [[ "$r_slug" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]]; then
+		_isc_warn "_isc_release_claim_by_stamp_path: invalid issue/slug — preserving: $stamp_path"
+		return 0
+	fi
 
 	# Delegate to canonical release flow: stamp deletion + label transition.
 	# --unassign is mandatory here: auto-release is the dead-stamp recovery
@@ -269,7 +273,7 @@ _isc_release_claim_by_stamp_path() {
 _isc_cmd_release_if_dead() {
 	local issue="${1:-}"
 	local slug="${2:-}"
-	if [[ -z "$issue" || -z "$slug" ]]; then
+	if ! [[ "$issue" =~ ^[1-9][0-9]*$ ]] || ! [[ "$slug" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]]; then
 		_isc_err "usage: interactive-session-helper.sh release-if-dead <issue> <slug>"
 		return 2
 	fi
@@ -372,12 +376,16 @@ _isc_scan_stampless_phase() {
 #
 # Args:
 #   $1 auto_release_flag — "1" to auto-release, "0" for report-only
+#   $2 stamp_limit       — max stamp files to examine; "0" means unbounded
 #
 # Exit: 0 always.
 _isc_scan_dead_stamps_phase() {
 	local auto_release_flag="${1:-0}"
+	local stamp_limit="${2:-0}"
+	[[ "$stamp_limit" =~ ^[0-9]+$ ]] || stamp_limit=0
 	local stale_count=0
 	local auto_released=0
+	local stamps_examined=0
 	local local_host
 	local_host=$(hostname 2>/dev/null || echo "unknown")
 
@@ -385,13 +393,18 @@ _isc_scan_dead_stamps_phase() {
 		local stamp
 		for stamp in "$CLAIM_STAMP_DIR"/*.json; do
 			[[ -f "$stamp" ]] || continue
+			if [[ "$stamp_limit" -gt 0 && "$stamps_examined" -ge "$stamp_limit" ]]; then
+				break
+			fi
+			stamps_examined=$((stamps_examined + 1))
 			local issue slug worktree pid hostname
 			issue=$(jq -r '.issue // empty' "$stamp" 2>/dev/null || echo "")
 			slug=$(jq -r '.slug // empty' "$stamp" 2>/dev/null || echo "")
 			worktree=$(jq -r '.worktree_path // empty' "$stamp" 2>/dev/null || echo "")
 			pid=$(jq -r '.pid // empty' "$stamp" 2>/dev/null || echo "")
 			hostname=$(jq -r '.hostname // empty' "$stamp" 2>/dev/null || echo "")
-			[[ -z "$issue" || -z "$slug" ]] && continue
+			[[ "$issue" =~ ^[1-9][0-9]*$ ]] || continue
+			[[ "$slug" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || continue
 			# Only consider current-hostname stamps — cross-machine stamps
 			# can't have their PID verified and must not be surfaced as stale.
 			[[ "$hostname" == "$local_host" ]] || continue
@@ -447,6 +460,20 @@ _isc_scan_dead_stamps_phase() {
 			printf 'Total: %d stale claim(s). Release via `aidevops issue release <N>` or reclaim by `cd`-ing into the worktree.\n' "$stale_count"
 		fi
 	fi
+	return 0
+}
+
+# Reap dead local claim stamps without depending on GitHub issue discovery.
+# This is the scheduled-pulse entry point: it reuses the fail-closed Phase 1
+# safety gates while bounding each cycle's filesystem and API work.
+_isc_cmd_reap_dead_stamps() {
+	local stamp_limit="${AIDEVOPS_DEAD_STAMP_REAP_LIMIT:-100}"
+	if ! [[ "$stamp_limit" =~ ^[1-9][0-9]*$ ]]; then
+		_isc_warn "invalid AIDEVOPS_DEAD_STAMP_REAP_LIMIT=${stamp_limit}; using 100"
+		stamp_limit=100
+	fi
+
+	_isc_scan_dead_stamps_phase 1 "$stamp_limit"
 	return 0
 }
 

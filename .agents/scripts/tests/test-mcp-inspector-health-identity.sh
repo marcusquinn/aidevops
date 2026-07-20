@@ -60,7 +60,7 @@ run_health_fixture() {
 	local gateway_port="${2:-}"
 	local dashboard_port="${3:-}"
 
-	: >"${SANDBOX}/curl-args.log"
+	: >"${SANDBOX:?SANDBOX must be initialized}/curl-args.log"
 	OUTPUT=$(PATH="${SANDBOX}/bin:${PATH}" \
 		MCP_HEALTH_FIXTURE="$fixture" \
 		FAKE_CURL_ARGS_LOG="${SANDBOX}/curl-args.log" \

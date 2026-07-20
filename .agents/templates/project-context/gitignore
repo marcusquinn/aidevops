@@ -1,0 +1,10 @@
+# Private deployment transfer artifacts
+transfers/
+exports/
+backups/
+*.sql
+*.sql.gz
+*.tar
+*.tar.gz
+*.zip
+*.log

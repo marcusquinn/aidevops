@@ -11,7 +11,7 @@
 // global state — we can exhaustively verify:
 //   * duration_ms renders as a plain integer when supplied
 //   * duration_ms renders as the SQL NULL keyword (unquoted) when absent
-//   * metadata renders as a JSON-stringified, SQL-escaped literal
+//   * metadata renders as a bounded outcome summary, never raw host payloads
 //   * metadata renders as SQL NULL when absent
 //   * column-count / value-count schema alignment
 //
@@ -219,7 +219,7 @@ describe("buildToolCallInsertSql — duration_ms rendering", () => {
 // ---------------------------------------------------------------------------
 
 describe("buildToolCallInsertSql — metadata rendering", () => {
-  test("object metadata renders as JSON-stringified, SQL-escaped literal", () => {
+  test("object metadata renders as a bounded outcome summary", () => {
     const sql = buildToolCallInsertSql({
       sessionID: "s1",
       callID: "c1",
@@ -227,7 +227,7 @@ describe("buildToolCallInsertSql — metadata rendering", () => {
       intent: null,
       isSuccess: 1,
       durationMs: 5,
-      metadata: { filePath: "/tmp/hello.txt", bytes: 42 },
+      metadata: { filePath: "/tmp/hello.txt", bytes: 42, exitCode: 0, status: "completed" },
     });
     const vals = extractValues(sql);
     // Column index 6 = metadata
@@ -235,7 +235,12 @@ describe("buildToolCallInsertSql — metadata rendering", () => {
     // Unescape the SQL string and parse the JSON.
     const inner = vals[6].slice(1, -1).replace(/''/g, "'");
     const parsed = JSON.parse(inner);
-    assert.deepEqual(parsed, { filePath: "/tmp/hello.txt", bytes: 42 });
+    assert.equal(parsed.status, "completed");
+    assert.equal(parsed.exit_code, 0);
+    assert.equal(parsed.output_bytes, 42);
+    assert.equal(parsed.omitted_keys, 1);
+    assert.equal(parsed.filePath, undefined);
+    assert.doesNotMatch(inner, /hello\.txt|\/tmp/);
   });
 
   test("metadata=null renders as SQL NULL keyword", () => {
@@ -266,7 +271,7 @@ describe("buildToolCallInsertSql — metadata rendering", () => {
     assert.equal(vals[6], "NULL");
   });
 
-  test("metadata containing single quotes is safely escaped", () => {
+  test("unknown metadata strings are omitted instead of escaped into storage", () => {
     const sql = buildToolCallInsertSql({
       sessionID: "s1",
       callID: "c1",
@@ -280,7 +285,9 @@ describe("buildToolCallInsertSql — metadata rendering", () => {
     const vals = extractValues(sql);
     const inner = vals[6].slice(1, -1).replace(/''/g, "'");
     const parsed = JSON.parse(inner);
-    assert.equal(parsed.note, "o'reilly");
+    assert.equal(parsed.omitted_keys, 1);
+    assert.equal(parsed.note, undefined);
+    assert.doesNotMatch(inner, /reilly/);
   });
 });
 

@@ -46,8 +46,9 @@ _ddpr_superseded_issue_refs() {
 	local line="" ref=""
 	local marker_regex='^_Supersedes #([0-9]+) (—|-) this issue is the consolidated spec\._$'
 	while IFS= read -r line; do
+		line="${line%$'\r'}"
 		if [[ "$line" =~ $marker_regex ]]; then
-			ref="${BASH_REMATCH[1]}"
+			ref="${BASH_REMATCH[1]:-}"
 			printf '%s\n' "$ref"
 		fi
 	done <<<"$issue_body"
