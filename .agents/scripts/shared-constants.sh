@@ -1149,7 +1149,14 @@ _run_cleanups() {
 		done <<<"$_CLEANUP_CMDS"
 		while IFS= read -r line; do
 			[[ -z "$line" ]] && continue
-			bash -c "$line" 2>/dev/null || true
+			# Bare function names must run in the current shell so cleanup can
+			# update process-local ownership state before removing resources.
+			# Compound commands remain isolated in a child shell.
+			if [[ "$line" =~ ^[a-zA-Z_][a-zA-Z0-9_]*$ ]] && declare -F "$line" >/dev/null 2>&1; then
+				"$line" 2>/dev/null || true
+			else
+				bash -c "$line" 2>/dev/null || true
+			fi
 		done <<<"$reversed"
 	fi
 	# Restore parent scope (pop from save stack)

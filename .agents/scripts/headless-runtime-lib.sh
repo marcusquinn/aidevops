@@ -674,29 +674,28 @@ build_sandbox_passthrough_csv() {
 		case "$name" in
 		# Session-bound OpenCode env makes isolated canary/worker runs attach to
 		# the parent TUI session and fail with "Session not found" (GH#23065).
-		AIDEVOPS_OPENCODE_SESSION_ID | OPENCODE_SESSION_ID | OPENCODE_PID | OPENCODE_RUN_ID | OPENCODE_PROCESS_ROLE | OPENCODE | OPENCODE_SERVER_PASSWORD) ;;
+		AIDEVOPS_OPENCODE_SESSION_ID | OPENCODE_SESSION_ID | OPENCODE_PID | OPENCODE_RUN_ID | OPENCODE_PROCESS_ROLE | OPENCODE | OPENCODE_SERVER_PASSWORD) continue ;;
 		OPENAI_* | ANTHROPIC_* | GOOGLE_* | CLAUDE_*)
 			if [[ -n "$provider" ]] && ! _headless_provider_env_allowed "$provider" "$name"; then
 				continue
 			fi
-			if [[ "$seen_names" == *" ${name} "* ]]; then
-				continue
-			fi
-			seen_names+="${name} "
-			names+=("$name")
 			;;
+		# Permission and blocker tooling needs this bounded worker identity set.
+		# Keep it explicit: arbitrary WORKER_* values may carry unrelated runtime
+		# configuration and must not cross the clean sandbox boundary.
+		WORKER_ISSUE_NUMBER | WORKER_REPO_SLUG | DISPATCH_REPO_SLUG | WORKER_SESSION_KEY | WORKER_WORKTREE_PATH | WORKER_GITHUB_LOGIN) ;;
 		# OTEL_* is passed through so headless workers under the sandbox
 		# can export OTLP traces when OTEL_EXPORTER_OTLP_ENDPOINT is set.
 		# Without this, opencode never initialises its OTLP exporter and
 		# all aidevops.* plugin span enrichment is silently dropped (t2186).
-		AIDEVOPS_* | PULSE_* | GH_* | GITHUB_* | OPENCODE_* | XDG_* | OTEL_* | REAL_HOME | TMPDIR | TMP | TEMP | RTK_* | VERIFY_*)
-			if [[ "$seen_names" == *" ${name} "* ]]; then
-				continue
-			fi
-			seen_names+="${name} "
-			names+=("$name")
-			;;
+		AIDEVOPS_* | PULSE_* | GH_* | GITHUB_* | OPENCODE_* | XDG_* | OTEL_* | REAL_HOME | TMPDIR | TMP | TEMP | RTK_* | VERIFY_*) ;;
+		*) continue ;;
 		esac
+		if [[ "$seen_names" == *" ${name} "* ]]; then
+			continue
+		fi
+		seen_names+="${name} "
+		names+=("$name")
 	done < <(env)
 
 	local IFS=,

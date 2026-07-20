@@ -28,6 +28,8 @@ source "$REPO_ROOT/.agents/scripts/setup/modules/agent-deploy.sh"
 source "$REPO_ROOT/.agents/scripts/setup/modules/agent-runtime.sh"
 # shellcheck source=../setup/modules/schedulers-pulse.sh
 source "$REPO_ROOT/.agents/scripts/setup/modules/schedulers-pulse.sh"
+# shellcheck source=../runtime-bundle-lease.sh
+source "$REPO_ROOT/.agents/scripts/runtime-bundle-lease.sh"
 
 _xml_escape() { local value="$1"; printf '%s' "$value"; return 0; }
 
@@ -246,12 +248,9 @@ test_setup_rebinds_stale_process_pin_to_active_bundle() {
 test_live_bundle_lease_survives_three_updates() {
 	local target_dir="$HOME/.aidevops/agents"
 	local leased_root=""
-	local leased_bundle=""
 	local version=""
 	leased_root=$(_runtime_bundle_resolve_root "$target_dir")
-	leased_bundle="${leased_root%/agents}"
-	mkdir -p "$HOME/.aidevops/runtime-bundles/.leases/${leased_bundle##*/}"
-	printf '%s\n' "$leased_root" >"$HOME/.aidevops/runtime-bundles/.leases/${leased_bundle##*/}/$$"
+	aidevops_runtime_bundle_lease_acquire "$leased_root" || fail "runtime process could not acquire its bundle lease"
 
 	for version in 5.0.0 6.0.0 7.0.0; do
 		write_fake_revision "$version" "update-$version"
@@ -260,6 +259,7 @@ test_live_bundle_lease_survives_three_updates() {
 	done
 	[[ -x "$leased_root/scripts/helper.sh" ]] || fail "live first bundle helper survives three updates"
 	pass "live first bundle helper survives three updates"
+	aidevops_runtime_bundle_lease_release || fail "runtime process could not release its bundle lease"
 	return 0
 }
 

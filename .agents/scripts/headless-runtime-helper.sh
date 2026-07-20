@@ -18,6 +18,13 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)" || exit
+# shellcheck source=./runtime-bundle-lease.sh
+source "${SCRIPT_DIR}/runtime-bundle-lease.sh"
+if ! aidevops_runtime_bundle_lease_acquire "${SCRIPT_DIR%/scripts}"; then
+	printf "[headless-runtime] FATAL: could not acquire runtime bundle lease for %s\n" "${SCRIPT_DIR%/scripts}" >&2
+	exit 1
+fi
+trap 'aidevops_runtime_bundle_lease_release' EXIT
 # shellcheck source-path=SCRIPTDIR
 # shellcheck source=./shared-constants.sh
 source "${SCRIPT_DIR}/shared-constants.sh"

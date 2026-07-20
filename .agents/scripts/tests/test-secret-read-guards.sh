@@ -34,14 +34,18 @@ import { secretReadBlockReason } from './.agents/plugins/opencode-aidevops/quali
 if (!secretReadBlockReason('/tmp/.ssh/id_ed25519')) process.exit(1);
 if (!secretReadBlockReason('/tmp/private.pem')) process.exit(2);
 if (secretReadBlockReason('/tmp/id_ed25519.pub')) process.exit(3);
+if (!secretReadBlockReason('/home/test/.config/opencode/opencode.json')) process.exit(4);
+if (!secretReadBlockReason('/home/test/.config/opencode/opencode.jsonc')) process.exit(5);
+if (secretReadBlockReason('/workspace/opencode.json')) process.exit(6);
+if (secretReadBlockReason('/home/test/.config/opencode/AGENTS.md')) process.exit(7);
 NODE
 )
 	local rc=$?
 	set -e
 	if [[ "$rc" -eq 0 ]]; then
-		pass "opencode guard blocks private-key paths and allows .pub"
+		pass "opencode guard blocks keys and host runtime config without blocking safe OpenCode files"
 	else
-		fail "opencode guard blocks private-key paths and allows .pub" "exit=$rc output=$output"
+		fail "opencode guard blocks keys and host runtime config without blocking safe OpenCode files" "exit=$rc output=$output"
 	fi
 	return 0
 }
