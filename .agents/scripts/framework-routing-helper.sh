@@ -316,6 +316,38 @@ _lfi_check_dedup() {
 	return 0
 }
 
+# _lfi_extract_created_issue_url — extract one canonical target-repo issue URL
+# Arguments: "$issue_output" "$slug"
+# Prints the URL only when the wrapper output contains exactly one valid issue
+# URL and every issue URL belongs to the requested repository.
+_lfi_extract_created_issue_url() {
+	local issue_output="$1"
+	local slug="$2"
+	local expected_prefix="https://github.com/${slug}/issues/"
+	local issue_url=""
+	local issue_url_count=0
+	local line
+
+	while IFS= read -r line; do
+		if [[ "$line" =~ ^https://github\.com/[^/[:space:]]+/[^/[:space:]]+/issues/[^/[:space:]]+$ ]]; then
+			issue_url_count=$((issue_url_count + 1))
+			if [[ "$line" == "${expected_prefix}"* ]]; then
+				local issue_number="${line#"$expected_prefix"}"
+				if [[ "$issue_number" =~ ^[1-9][0-9]*$ ]]; then
+					issue_url="$line"
+				fi
+			fi
+		fi
+	done <<<"$issue_output"
+
+	if [[ "$issue_url_count" -eq 1 && -n "$issue_url" ]]; then
+		printf '%s\n' "$issue_url"
+		return 0
+	fi
+
+	return 1
+}
+
 # _lfi_create_and_record — create issue via gh, append sig footer, record fingerprint
 # Arguments: "$slug" "$title" "$body" "$labels"
 # Sets _LFI_ISSUE_URL on success. Returns: 0=created, 1=error.
@@ -332,19 +364,41 @@ _lfi_create_and_record() {
 	sig_footer=$("${SCRIPT_DIR}/gh-signature-helper.sh" footer --body "$body" || true)
 	local body_for_api="${body}${sig_footer}"
 
-	local issue_url
-	if ! issue_url=$(gh_create_issue --repo "$slug" \
+	local issue_output
+	if ! issue_output=$(gh_create_issue --repo "$slug" \
 		--title "$title" \
 		--body "$body_for_api" \
 		--label "$labels" 2>&1); then
-		log_error "Failed to create issue: $issue_url"
+		log_error "Failed to create issue: $issue_output"
 		return 1
 	fi
 
+	local issue_url
+	if ! issue_url=$(_lfi_extract_created_issue_url "$issue_output" "$slug"); then
+		log_error "Issue create output did not contain one canonical ${slug} issue URL"
+		printf '%s\n' "$issue_output" >&2
+		return 1
+	fi
+
+	# Preserve wrapper diagnostics without allowing them to contaminate stdout.
+	local output_line
+	while IFS= read -r output_line; do
+		if [[ -n "$output_line" && "$output_line" != "$issue_url" ]]; then
+			printf '%s\n' "$output_line" >&2
+		fi
+	done <<<"$issue_output"
+
 	# Record fingerprint for future cross-path dedup (body without sig footer)
 	local issue_number
-	issue_number=$(printf '%s' "$issue_url" | sed 's|.*/||')
-	record_filing "$title" "$body" "$issue_number"
+	issue_number="${issue_url##*/}"
+	local fingerprint_output
+	if ! fingerprint_output=$(record_filing "$title" "$body" "$issue_number"); then
+		log_error "Issue #${issue_number} was created but its fingerprint could not be recorded"
+		return 1
+	fi
+	if [[ -n "$fingerprint_output" ]]; then
+		printf '%s\n' "$fingerprint_output" >&2
+	fi
 
 	log_success "Framework issue created: $issue_url"
 	_LFI_ISSUE_URL="$issue_url"
