@@ -304,6 +304,47 @@ _pulse_cycle_state_publish() {
 	return $?
 }
 
+_pulse_cycle_state_health_is_current() {
+	local current_cycle_id=""
+	[[ "${_PULSE_CYCLE_STATE_INITIALIZED:-0}" == "1" ]] || return 1
+	[[ -f "${PULSE_HEALTH_FILE:-}" ]] || return 1
+	current_cycle_id=$(jq -r --arg schema "$PULSE_CYCLE_STATE_SCHEMA" '
+		if (.cycle_state | type) == "object" and .cycle_state.schema == $schema
+		then .cycle_state.cycle_id // ""
+		else ""
+		end
+	' "$PULSE_HEALTH_FILE" 2>/dev/null) || current_cycle_id=""
+	[[ -n "$current_cycle_id" && "$current_cycle_id" == "${_PULSE_CYCLE_ID:-}" ]]
+}
+
+_pulse_cycle_state_write_terminal_if_current() {
+	local reacquired_lock=0
+	[[ "${_PULSE_CYCLE_STATE_TERMINAL:-0}" == "1" ]] || return 1
+	if [[ "${_LOCK_OWNED:-false}" == "true" ]]; then
+		write_pulse_health_file
+		return $?
+	fi
+	if declare -F acquire_instance_lock >/dev/null 2>&1 \
+		&& declare -F release_instance_lock >/dev/null 2>&1; then
+		if ! acquire_instance_lock; then
+			printf '[pulse-wrapper] Cycle state: skipped terminal publish for cycle %s because a newer cycle owns the instance lock\n' \
+				"${_PULSE_CYCLE_ID:-unknown}" >>"${WRAPPER_LOGFILE:-/dev/null}"
+			return 0
+		fi
+		reacquired_lock=1
+	fi
+	if _pulse_cycle_state_health_is_current; then
+		write_pulse_health_file || true
+	else
+		printf '[pulse-wrapper] Cycle state: skipped stale terminal publish for cycle %s because current health belongs to another cycle\n' \
+			"${_PULSE_CYCLE_ID:-unknown}" >>"${WRAPPER_LOGFILE:-/dev/null}"
+	fi
+	if [[ "$reacquired_lock" -eq 1 ]]; then
+		release_instance_lock
+	fi
+	return 0
+}
+
 _pulse_cycle_state_finish_if_needed() {
 	local outcome="${1:-interrupted}"
 	[[ "${_PULSE_CYCLE_STATE_INITIALIZED:-0}" == "1" ]] || return 0
@@ -312,7 +353,12 @@ _pulse_cycle_state_finish_if_needed() {
 		_pulse_cycle_state_note_blocker interrupted pulse-wrapper exit || true
 	fi
 	_pulse_cycle_state_finalize "$outcome" "[]" || return 0
-	write_pulse_health_file || true
+	_pulse_cycle_state_write_terminal_if_current || true
+	return 0
+}
+
+_pulse_cycle_state_finish_interrupted() {
+	_pulse_cycle_state_finish_if_needed interrupted
 	return 0
 }
 

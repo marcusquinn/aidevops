@@ -8,6 +8,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 HELPER="$SCRIPT_DIR/../pulse-current-state-helper.sh"
 TMP_DIR="$(mktemp -d)"
 trap 'rm -rf "$TMP_DIR"' EXIT
+export HOME="$TMP_DIR/home"
+mkdir -p "$HOME"
 
 python3 - "$TMP_DIR" <<'PY'
 import json, os, sys, time
@@ -57,6 +59,23 @@ json.dump({
     'prefetch_conditional_304': 3,
     'prefetch_conditional_refreshes': 2,
     'prefetch_conditional_misses': 1,
+    'cycle_state': {
+        'schema': 'aidevops.pulse-cycle-state/v1',
+        'cycle_id': '20260101T000000Z-123',
+        'phase': 'completed',
+        'outcome': 'progressed',
+        'heartbeat_at': iso,
+        'progress': {
+            'last_at': iso,
+            'kinds': ['worker-dispatched'],
+            'consecutive_no_progress_cycles': 0,
+        },
+        'blocker': {
+            'kind': 'none',
+            'fingerprint': None,
+            'consecutive_same_cycles': 0,
+        },
+    },
 }, open(os.path.join(root, 'pulse-health.json'), 'w'))
 json.dump({
     'objectives': [
@@ -93,15 +112,22 @@ PY
 output="$TMP_DIR/out.txt"
 export AIDEVOPS_OBS_DB_OVERRIDE="$TMP_DIR/runtime-events.db"
 export AIDEVOPS_PULSE_RATE_LIMIT_CACHE="$TMP_DIR/rate-limit-cache.json"
+export AIDEVOPS_PULSE_RATE_LIMIT_CACHE_TTL=300
+export AIDEVOPS_GH_REQUEST_STATE_AUTH_SCOPE="pulse-current-state-test"
+export AIDEVOPS_GH_API_POOL="default"
 export AIDEVOPS_PR_REVIEW_THREAD_RESPONSE_STATE_DIR="$TMP_DIR/review-thread-state"
 export AIDEVOPS_OBJECTIVE_STATE_FILE="$TMP_DIR/objective-reconciliation.json"
-python3 - "$AIDEVOPS_PULSE_RATE_LIMIT_CACHE" <<'PY'
-import json, sys, time
-json.dump({
-    'ts': int(time.time()),
-    'rate': {'resources': {'graphql': {'remaining': 4980, 'limit': 5000, 'reset': int(time.time()) + 3600}}},
-}, open(sys.argv[1], 'w'))
-PY
+# shellcheck source=../shared-gh-request-state.sh
+source "${SCRIPT_DIR}/../shared-gh-request-state.sh"
+rate_reset=$(($(date +%s) + 3600))
+rate_fixture=$(jq -cn --argjson reset "$rate_reset" \
+	'{resources:{graphql:{remaining:4980,limit:5000,reset:$reset}}}')
+gh_request_state_rate_put "$rate_fixture"
+cache_status=$("${SCRIPT_DIR}/../pulse-rate-limit-circuit-breaker.sh" status --cached)
+if [[ "$cache_status" != OK:* ]]; then
+	printf 'FAIL canonical rate-cache fixture is unreadable: %s\n' "$cache_status" >&2
+	exit 1
+fi
 "$HELPER" --log-dir "$TMP_DIR" --repo-path "$PWD" --window 15m >"$output"
 
 grep -q 'Dispatch alive: true' "$output"
@@ -109,9 +135,13 @@ grep -q 'Worker terminal events: 4' "$output"
 grep -q 'dispatch_backoff_skipped' "$output"
 grep -q 'GraphQL budget:' "$output"
 grep -q 'Top pre-launch blockers:' "$output"
-grep -q 'Dispatch API blocked by GraphQL: false' "$output"
+if ! grep -q 'Dispatch API blocked by GraphQL: false' "$output"; then
+	printf 'FAIL expected unblocked GraphQL dispatch state:\n%s\n' "$(<"$output")" >&2
+	exit 1
+fi
 grep -q 'API call pressure:' "$output"
 grep -q 'Prefetch cache:' "$output"
+grep -q 'Cycle state:' "$output"
 grep -q 'Review-thread maintainer attention:' "$output"
 grep -q 'needs_decision' "$output"
 grep -q 'worker_launch_total' "$output"
@@ -148,6 +178,9 @@ jq -e '.api_call_pressure.read_rest_ratio == 0.4706' "$json_output" >/dev/null
 jq -e '.prefetch_cache.conditional_304 == 3' "$json_output" >/dev/null
 jq -e '.prefetch_cache.conditional_refreshes == 2' "$json_output" >/dev/null
 jq -e '.prefetch_cache.conditional_misses == 1' "$json_output" >/dev/null
+jq -e '.cycle_state.availability == "available"' "$json_output" >/dev/null
+jq -e '.cycle_state.outcome == "progressed"' "$json_output" >/dev/null
+jq -e '.cycle_state.progress.kinds == ["worker-dispatched"]' "$json_output" >/dev/null
 jq -e '.review_thread_attention[0].blocked_by == "maintainer"' "$json_output" >/dev/null
 jq -e '.review_thread_attention[0].pr_number == 12' "$json_output" >/dev/null
 jq -e '.review_thread_attention[0].reason == "needs_decision"' "$json_output" >/dev/null
@@ -175,9 +208,28 @@ assert 'def build_pre_launch_blockers' in implementation_source
 assert 'def build_graphql_budget' in implementation_source
 assert 'def build_current_state_guardrails' in implementation_source
 assert 'def build_objective_reconciliation' in implementation_source
+assert 'def build_cycle_state' in implementation_source
 assert "graphql_budget_status = (" not in implementation_source
 assert 'import subprocess' not in implementation_source
 assert 'subprocess.check_output' not in implementation_source
 PY
+
+missing_dir="$TMP_DIR/missing-cycle-state"
+mkdir -p "$missing_dir"
+missing_json="$TMP_DIR/missing-cycle-state.json"
+"$HELPER" --log-dir "$missing_dir" --repo-path "$PWD" --window 15m --json >"$missing_json"
+jq -e '.cycle_state.availability == "unavailable"' "$missing_json" >/dev/null
+
+printf '{malformed\n' >"$missing_dir/pulse-health.json"
+malformed_health_json="$TMP_DIR/malformed-health-state.json"
+"$HELPER" --log-dir "$missing_dir" --repo-path "$PWD" --window 15m --json >"$malformed_health_json"
+jq -e '.cycle_state.availability == "malformed" and .cycle_state.reason == "health-json"' \
+	"$malformed_health_json" >/dev/null
+
+printf '{"cycle_state":{"schema":"wrong"}}\n' >"$missing_dir/pulse-health.json"
+malformed_cycle_json="$TMP_DIR/malformed-cycle-state.json"
+"$HELPER" --log-dir "$missing_dir" --repo-path "$PWD" --window 15m --json >"$malformed_cycle_json"
+jq -e '.cycle_state.availability == "malformed" and .cycle_state.reason == "cycle-state-contract"' \
+	"$malformed_cycle_json" >/dev/null
 
 printf 'PASS pulse-current-state-helper\n'

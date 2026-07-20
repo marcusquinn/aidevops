@@ -115,14 +115,16 @@ main() {
 	runtime_state_file=$(mktemp "${TMPDIR:-/tmp}/aidevops-pulse-runtime-state.XXXXXX") || runtime_state_file=""
 	local projection_status=0
 	local projection_output=""
-	AIDEVOPS_ACTIVE_WORKER_PROCESSES="$active_worker_processes" \
-		AIDEVOPS_WORKER_WORKTREE_COUNT="$worker_worktree_count" \
-		AIDEVOPS_GRAPHQL_BUDGET_STATUS="$graphql_budget_status" \
-		AIDEVOPS_OBJECTIVE_STATE_FILE="$objective_state_file" \
-		AIDEVOPS_RUNTIME_STATE_OUTPUT="$runtime_state_file" \
-		projection_output=$(python3 "${SCRIPT_DIR}/pulse-current-state.py" \
-			"$log_dir" "$repo_path" "$window_s" "$as_json" "$SCRIPT_DIR" \
-			"$review_thread_state_dir") || projection_status=$?
+	projection_output=$(
+		AIDEVOPS_ACTIVE_WORKER_PROCESSES="$active_worker_processes" \
+			AIDEVOPS_WORKER_WORKTREE_COUNT="$worker_worktree_count" \
+			AIDEVOPS_GRAPHQL_BUDGET_STATUS="$graphql_budget_status" \
+			AIDEVOPS_OBJECTIVE_STATE_FILE="$objective_state_file" \
+			AIDEVOPS_RUNTIME_STATE_OUTPUT="$runtime_state_file" \
+			python3 "${SCRIPT_DIR}/pulse-current-state.py" \
+				"$log_dir" "$repo_path" "$window_s" "$as_json" "$SCRIPT_DIR" \
+				"$review_thread_state_dir"
+	) || projection_status=$?
 	local overlay_json="{}"
 	overlay_json=$(_observability_overlay_json)
 	if [[ "$projection_status" -eq 0 && "$as_json" -eq 1 ]] && printf '%s' "$projection_output" | jq empty >/dev/null 2>&1; then

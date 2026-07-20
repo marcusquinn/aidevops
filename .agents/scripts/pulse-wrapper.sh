@@ -1198,12 +1198,11 @@ source "${SCRIPT_DIR}/pulse-wrapper-cycle-gates.sh"
 # _pulse_run_deterministic_pipeline
 #
 # Deterministic cycle stages: merge pass, dependency graph, blocked-status
-# refresh, fill floor, routine evaluation, and instance lock release. Extracted
+# refresh, fill floor, and routine evaluation. Extracted
 # from main() (GH#18689) to reduce function length below the 100-line threshold.
 #
 # Side effects:
 #   - merges ready PRs across all repos
-#   - releases the instance lock so the LLM session runs lock-free
 #
 # Exit code: always 0
 # ---------------------------------------------------------------------------
@@ -1418,12 +1417,6 @@ _pulse_run_deterministic_pipeline() {
 			bash "$_dfc_script" scan || true
 	fi
 
-	# Release the instance lock BEFORE the LLM session so the next 2-min
-	# cycle can run deterministic ops (merge pass + fill floor) concurrently.
-	# The LLM session is protected by its own stall/daily-sweep gating,
-	# and workers are protected by 7-layer dedup guards (assignee labels,
-	# DISPATCH_CLAIM comments, ledger checks). No risk of duplication.
-	release_instance_lock
 	return 0
 }
 
@@ -1636,7 +1629,7 @@ main() {
 	# Register EXIT trap BEFORE acquiring the lock so the lock is always
 	# released on exit — including set -e aborts, SIGTERM, and return paths.
 	# SIGKILL cannot be trapped; stale-lock detection handles that case.
-	trap '_pulse_cycle_state_finish_if_needed interrupted; _pulse_efficiency_cycle_finish; release_instance_lock; aidevops_runtime_bundle_lease_release' EXIT
+	trap '_pulse_release_llm_lock; _pulse_cycle_state_finish_interrupted; _pulse_efficiency_cycle_finish; release_instance_lock; aidevops_runtime_bundle_lease_release' EXIT
 
 	if ! acquire_instance_lock; then
 		return 0
@@ -1680,7 +1673,8 @@ main() {
 		push_cleanup 'aidevops_runtime_bundle_lease_release'
 		push_cleanup 'release_instance_lock'
 		push_cleanup '_pulse_efficiency_cycle_finish'
-		push_cleanup '_pulse_cycle_state_finish_if_needed interrupted'
+		push_cleanup '_pulse_cycle_state_finish_interrupted'
+		push_cleanup '_pulse_release_llm_lock'
 		# GH#23728: keep EXIT (not RETURN) for SIGTERM/set -e lock safety, but
 		# register release_instance_lock before replacing the direct EXIT trap.
 		trap '_run_cleanups' EXIT
@@ -1701,7 +1695,8 @@ main() {
 			push_cleanup 'aidevops_runtime_bundle_lease_release'
 			push_cleanup 'release_instance_lock'
 			push_cleanup '_pulse_efficiency_cycle_finish'
-			push_cleanup '_pulse_cycle_state_finish_if_needed interrupted'
+			push_cleanup '_pulse_cycle_state_finish_interrupted'
+			push_cleanup '_pulse_release_llm_lock'
 			# GH#23728: keep EXIT (not RETURN) for SIGTERM/set -e lock safety, but
 			# register release_instance_lock before replacing the direct EXIT trap.
 			trap '_run_cleanups' EXIT
@@ -1874,7 +1869,7 @@ main() {
 	fi
 
 	# Run deterministic pipeline: merge pass, dep graph, blocked-status refresh,
-	# fill floor, routine evaluation, and instance lock release. GH#18689:
+	# fill floor and routine evaluation. GH#18689:
 	# extracted to helper.
 	_pulse_cycle_state_publish deterministic || true
 	_pulse_run_deterministic_pipeline
@@ -1882,6 +1877,11 @@ main() {
 	# Run LLM supervisor if stall/daily-sweep/force conditions are met.
 	# GH#18689: extracted to _pulse_maybe_run_llm_supervisor().
 	_pulse_cycle_state_publish supervising || true
+	# Release the instance lock BEFORE the LLM session so the next 2-min cycle
+	# can run deterministic ops concurrently. Terminal publication briefly
+	# reacquires this lock and writes only when health still names this cycle,
+	# preventing a slow supervisor from overwriting a newer cycle (GH#28361).
+	release_instance_lock
 	_pulse_run_optional_stage "llm_supervisor" _pulse_maybe_run_llm_supervisor || true
 
 	# GH#28361: compute one terminal typed outcome after both deterministic and
@@ -1889,7 +1889,7 @@ main() {
 	# contracts. A cumulative registration count detects launches even when a
 	# different worker completes during the same cycle.
 	_pulse_record_cycle_outcome "$_cycle_dispatch_before"
-	write_pulse_health_file || true
+	_pulse_cycle_state_write_terminal_if_current || true
 	local _cycle_end_epoch
 	_cycle_end_epoch=$(date +%s)
 	local _cycle_duration=$((_cycle_end_epoch - _cycle_start_epoch))
