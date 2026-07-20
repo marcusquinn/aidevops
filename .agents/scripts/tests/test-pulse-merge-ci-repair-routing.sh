@@ -259,6 +259,7 @@ define_process_helper() {
 	[[ -n "$review_gate_src" && -n "$fn_src" ]] || return 1
 
 	_OW_LABEL_PAT=",origin:worker,"
+	PULSE_UNKNOWN_STATE="UNKNOWN"
 	PULSE_MERGE_CLOSE_CONFLICTING=false
 	DRY_RUN=0
 	GATE_CALLS=0
@@ -302,9 +303,12 @@ define_process_helper() {
 	_set_native_auto_merge_or_skip() { return 0; }
 	_pulse_merge_changes_requested_thread_remediation_first_enabled() { return 1; }
 	_pulse_merge_preflight_snapshot_gate() { _PULSE_MERGE_PREFLIGHT_BLOCKING_CHECKS_JSON="$PREFLIGHT_EVIDENCE"; return "$PREFLIGHT_RC"; }
+	_pulse_merge_final_trust_gate() { _PULSE_FINAL_REQUIRES_SYNCHRONOUS_MERGE=0; _PULSE_MERGE_PREFLIGHT_BLOCKING_CHECKS_JSON="$PREFLIGHT_EVIDENCE"; return "$PREFLIGHT_RC"; }
+	_pulse_merge_maybe_dispatch_preflight_remediation() { return 0; }
 	_close_conflicting_pr() { return 0; }
 	_pmp_normalize_mergeable_state_into() { return 0; }
-	printf -v PR_OBJECT '%s' '{"number":100,"mergeable":"MERGEABLE","reviewDecision":"","author":{"login":"worker-bot"},"title":"t1: fix"}'
+	gh_pr_view() { gh pr view "$@"; return $?; }
+	printf -v PR_OBJECT '%s' '{"number":100,"state":"OPEN","mergeable":"MERGEABLE","reviewDecision":"","author":{"login":"worker-bot"},"title":"t1: fix"}'
 
 	# shellcheck disable=SC1090
 	eval "$review_gate_src"
@@ -444,7 +448,7 @@ test_changes_requested_unknown_routes_before_mergeable_skip() {
 	define_process_helper || { print_result "defines process helper for review routing" 1 "could not extract _process_single_ready_pr or review gate"; teardown_test_env; return 0; }
 
 	local pr_object rc=0
-	printf -v pr_object '%s' '{"number":554,"mergeable":"UNKNOWN","reviewDecision":"CHANGES_REQUESTED","author":{"login":"worker-bot"},"title":"GH#500: fix","updatedAt":"2026-06-21T00:00:00Z","headRefOid":"sha554","headRefName":"fix/review","baseRefName":"main","labels":[{"name":"origin:worker"},{"name":"status:in-review"}],"isDraft":false}'
+	printf -v pr_object '%s' '{"number":554,"state":"OPEN","mergeable":"UNKNOWN","reviewDecision":"CHANGES_REQUESTED","author":{"login":"worker-bot"},"title":"GH#500: fix","updatedAt":"2026-06-21T00:00:00Z","headRefOid":"sha554","headRefName":"fix/review","baseRefName":"main","labels":[{"name":"origin:worker"},{"name":"status:in-review"}],"isDraft":false}'
 	_process_single_ready_pr "owner/repo" "$pr_object" || rc=$?
 
 	if [[ "$rc" -ne 1 ]]; then
@@ -466,7 +470,7 @@ test_rest_missing_review_decision_refreshes_before_ci_route() {
 
 	local pr_object rc=0
 	REFRESHED_REVIEW_DECISION="CHANGES_REQUESTED"
-	printf -v pr_object '%s' '{"number":557,"mergeable":"MERGEABLE","reviewDecision":null,"author":{"login":"worker-bot"},"title":"GH#502: fix","updatedAt":"2026-06-21T00:00:00Z","headRefOid":"sha557","headRefName":"fix/rest-review","baseRefName":"main","labels":[{"name":"origin:worker"},{"name":"status:in-review"}],"isDraft":false}'
+	printf -v pr_object '%s' '{"number":557,"state":"OPEN","mergeable":"MERGEABLE","reviewDecision":null,"author":{"login":"worker-bot"},"title":"GH#502: fix","updatedAt":"2026-06-21T00:00:00Z","headRefOid":"sha557","headRefName":"fix/rest-review","baseRefName":"main","labels":[{"name":"origin:worker"},{"name":"status:in-review"}],"isDraft":false}'
 	_process_single_ready_pr "owner/repo" "$pr_object" || rc=$?
 
 	if [[ "$rc" -ne 1 ]]; then
@@ -491,7 +495,7 @@ test_coderabbit_nits_ok_dismissed_once_before_late_gate() {
 	local pr_object rc=0
 	DRY_RUN=0
 	PR_REQUIRED_CHECKS_RC=0
-	printf -v pr_object '%s' '{"number":555,"mergeable":"UNKNOWN","reviewDecision":"CHANGES_REQUESTED","author":{"login":"worker-bot"},"title":"GH#501: fix","updatedAt":"2026-06-21T00:00:00Z","headRefOid":"sha555","headRefName":"fix/nits","baseRefName":"main","labels":[{"name":"origin:worker"},{"name":"status:in-review"},{"name":"coderabbit-nits-ok"}],"isDraft":false}'
+	printf -v pr_object '%s' '{"number":555,"state":"OPEN","mergeable":"UNKNOWN","reviewDecision":"CHANGES_REQUESTED","author":{"login":"worker-bot"},"title":"GH#501: fix","updatedAt":"2026-06-21T00:00:00Z","headRefOid":"sha555","headRefName":"fix/nits","baseRefName":"main","labels":[{"name":"origin:worker"},{"name":"status:in-review"},{"name":"coderabbit-nits-ok"}],"isDraft":false}'
 	_process_single_ready_pr "owner/repo" "$pr_object" || rc=$?
 
 	if [[ "$rc" -ne 4 ]]; then
@@ -509,7 +513,7 @@ test_coderabbit_nits_ok_dismissed_once_before_late_gate() {
 	return 0
 }
 
-test_changes_requested_explicit_empty_labels_skip_refetch() {
+test_changes_requested_empty_labels_refresh_current_metadata() {
 	setup_test_env
 	define_process_helper || { print_result "defines process helper for explicit empty labels" 1 "could not extract review gate"; teardown_test_env; return 0; }
 
@@ -519,12 +523,12 @@ test_changes_requested_explicit_empty_labels_skip_refetch() {
 	local label_fetch_count=0
 	label_fetch_count=$(grep -c -- '--json labels' "$GH_LOG" || true)
 	[[ "$label_fetch_count" =~ ^[0-9]+$ ]] || label_fetch_count=0
-	if [[ "$label_fetch_count" -ne 0 ]]; then
-		print_result "explicit empty PR labels do not refetch labels" 1 "label_fetch_count=${label_fetch_count}"
+	if [[ "$label_fetch_count" -ne 1 ]]; then
+		print_result "empty PR labels refresh current metadata once" 1 "label_fetch_count=${label_fetch_count}"
 	elif [[ "$ROUTE_CALLS" -ne 1 || "$ROUTE_ARGS" != "556|owner/repo|42|review" ]]; then
-		print_result "explicit empty PR labels do not refetch labels" 1 "route_calls=${ROUTE_CALLS}, route_args=${ROUTE_ARGS}"
+		print_result "refreshed empty PR labels preserve review routing" 1 "route_calls=${ROUTE_CALLS}, route_args=${ROUTE_ARGS}"
 	else
-		print_result "explicit empty PR labels do not refetch labels" 0
+		print_result "empty PR labels refresh current metadata before review routing" 0
 	fi
 	teardown_test_env
 	return 0
@@ -964,7 +968,7 @@ main() {
 	test_changes_requested_unknown_routes_before_mergeable_skip
 	test_rest_missing_review_decision_refreshes_before_ci_route
 	test_coderabbit_nits_ok_dismissed_once_before_late_gate
-	test_changes_requested_explicit_empty_labels_skip_refetch
+	test_changes_requested_empty_labels_refresh_current_metadata
 	test_ci_repair_dedupes_identical_evidence_for_same_head
 	test_ci_repair_dedupes_changed_evidence_for_same_head
 	test_ci_repair_respects_live_legacy_lease

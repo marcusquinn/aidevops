@@ -252,7 +252,7 @@ test_ruleset_violation_enables_auto_merge_without_admin() {
 	setup_test_env
 	define_function_under_test || { teardown_test_env; return 0; }
 
-	local pr_obj='{"number":77,"mergeable":"MERGEABLE","reviewDecision":"APPROVED","author":{"login":"owner"},"title":"test","headRefOid":"head-current"}'
+	local pr_obj='{"number":77,"state":"OPEN","mergeable":"MERGEABLE","reviewDecision":"APPROVED","author":{"login":"owner"},"title":"test","headRefOid":"head-current"}'
 	local result=0
 	_process_single_ready_pr "owner/repo" "$pr_obj" || result=$?
 
@@ -295,7 +295,7 @@ test_ruleset_violation_skips_native_auto_merge_when_disabled() {
 		return 0
 	}
 
-	local pr_obj='{"number":77,"mergeable":"MERGEABLE","reviewDecision":"APPROVED","author":{"login":"owner"},"title":"test","headRefOid":"head-current"}'
+	local pr_obj='{"number":77,"state":"OPEN","mergeable":"MERGEABLE","reviewDecision":"APPROVED","author":{"login":"owner"},"title":"test","headRefOid":"head-current"}'
 	local result=0
 	_process_single_ready_pr "owner/repo" "$pr_obj" || result=$?
 
@@ -319,7 +319,7 @@ test_green_behind_update_defers_before_merge_attempts() {
 	setup_test_env
 	define_function_under_test || { teardown_test_env; unset GREEN_BEHIND_UPDATE_RC; return 0; }
 
-	local pr_obj='{"number":77,"mergeable":"MERGEABLE","reviewDecision":"APPROVED","author":{"login":"owner"},"title":"test"}'
+	local pr_obj='{"number":77,"state":"OPEN","mergeable":"MERGEABLE","reviewDecision":"APPROVED","author":{"login":"owner"},"title":"test"}'
 	local result=0
 	_process_single_ready_pr "owner/repo" "$pr_obj" || result=$?
 
@@ -348,7 +348,7 @@ test_draft_pr_without_origin_labels_skips_merge_write() {
 	setup_test_env
 	define_function_under_test || { teardown_test_env; return 0; }
 
-	local pr_obj='{"number":88,"mergeable":"MERGEABLE","reviewDecision":"APPROVED","author":{"login":"owner"},"title":"draft test","labels":[],"isDraft":true}'
+	local pr_obj='{"number":88,"state":"OPEN","mergeable":"MERGEABLE","reviewDecision":"APPROVED","author":{"login":"owner"},"title":"draft test","labels":[],"isDraft":true}'
 	local result=0
 	_process_single_ready_pr "owner/repo" "$pr_obj" || result=$?
 
@@ -372,12 +372,34 @@ test_draft_pr_without_origin_labels_skips_merge_write() {
 	return 0
 }
 
+test_non_open_pr_skips_before_merge_pipeline() {
+	unset GH_STUB_MODE
+	setup_test_env
+	define_function_under_test || { teardown_test_env; return 0; }
+
+	local pr_obj='{"number":89,"state":"CLOSED","mergeable":"MERGEABLE","reviewDecision":"APPROVED","author":{"login":"owner"},"title":"closed test","labels":[],"isDraft":false}'
+	local result=0
+	_process_single_ready_pr "owner/repo" "$pr_obj" || result=$?
+
+	if [[ "$result" -ne 1 ]]; then
+		print_result "non-OPEN PR skips merge pipeline" 1 "Expected 1, got ${result}; log: $(<"$LOGFILE")"
+	elif [[ -s "$GH_LOG" ]]; then
+		print_result "non-OPEN PR makes no GitHub calls" 1 "gh log: $(<"$GH_LOG")"
+	elif ! grep -qF 'state=CLOSED is not OPEN (GH#28279)' "$LOGFILE"; then
+		print_result "non-OPEN PR writes skip audit log" 1 "pulse log: $(<"$LOGFILE")"
+	else
+		print_result "non-OPEN PR is blocked before merge pipeline" 0
+	fi
+	teardown_test_env
+	return 0
+}
+
 test_expected_required_check_updates_branch_and_defers() {
 	GH_STUB_MODE="expected-check"
 	setup_test_env
 	define_function_under_test || { teardown_test_env; unset GH_STUB_MODE; return 0; }
 
-	local pr_obj='{"number":77,"mergeable":"MERGEABLE","reviewDecision":"APPROVED","author":{"login":"owner"},"title":"test"}'
+	local pr_obj='{"number":77,"state":"OPEN","mergeable":"MERGEABLE","reviewDecision":"APPROVED","author":{"login":"owner"},"title":"test"}'
 	local result=0
 	_process_single_ready_pr "owner/repo" "$pr_obj" || result=$?
 
@@ -413,7 +435,7 @@ test_pending_required_check_updates_branch_and_defers() {
 	setup_test_env
 	define_function_under_test || { teardown_test_env; unset GH_STUB_MODE; return 0; }
 
-	local pr_obj='{"number":77,"mergeable":"MERGEABLE","reviewDecision":"APPROVED","author":{"login":"owner"},"title":"test"}'
+	local pr_obj='{"number":77,"state":"OPEN","mergeable":"MERGEABLE","reviewDecision":"APPROVED","author":{"login":"owner"},"title":"test"}'
 	local result=0
 	_process_single_ready_pr "owner/repo" "$pr_obj" || result=$?
 
@@ -443,7 +465,7 @@ test_stale_cache_401_retries_admin_merge_once() {
 	prepare_stale_cache_fixture
 	define_function_under_test || { teardown_test_env; unset GH_STUB_MODE; return 0; }
 
-	local pr_obj='{"number":77,"mergeable":"MERGEABLE","reviewDecision":"APPROVED","author":{"login":"owner"},"title":"test"}'
+	local pr_obj='{"number":77,"state":"OPEN","mergeable":"MERGEABLE","reviewDecision":"APPROVED","author":{"login":"owner"},"title":"test"}'
 	local result=0
 	_process_single_ready_pr "owner/repo" "$pr_obj" || result=$?
 
@@ -507,7 +529,7 @@ test_ruleset_fallback_failure_preserves_admin_conversation_context() {
 	setup_test_env
 	define_function_under_test || { teardown_test_env; unset GH_STUB_MODE; return 0; }
 
-	local pr_obj='{"number":77,"mergeable":"MERGEABLE","reviewDecision":"APPROVED","author":{"login":"owner"},"title":"test"}'
+	local pr_obj='{"number":77,"state":"OPEN","mergeable":"MERGEABLE","reviewDecision":"APPROVED","author":{"login":"owner"},"title":"test"}'
 	local result=0
 	_process_single_ready_pr "owner/repo" "$pr_obj" || result=$?
 
@@ -559,7 +581,7 @@ test_final_preflight_thread_blocker_dispatches_before_merge() {
 	FINAL_GATE_RC=1
 	FINAL_GATE_BLOCKER_KIND="required-review-threads"
 
-	local pr_obj='{"number":77,"mergeable":"MERGEABLE","reviewDecision":"APPROVED","author":{"login":"owner"},"title":"test","headRefOid":"head-current"}'
+	local pr_obj='{"number":77,"state":"OPEN","mergeable":"MERGEABLE","reviewDecision":"APPROVED","author":{"login":"owner"},"title":"test","headRefOid":"head-current"}'
 	local result=0
 	_process_single_ready_pr "owner/repo" "$pr_obj" || result=$?
 
@@ -585,6 +607,7 @@ main() {
 	test_ruleset_violation_skips_native_auto_merge_when_disabled
 	test_green_behind_update_defers_before_merge_attempts
 	test_draft_pr_without_origin_labels_skips_merge_write
+	test_non_open_pr_skips_before_merge_pipeline
 	test_expected_required_check_updates_branch_and_defers
 	test_pending_required_check_updates_branch_and_defers
 	test_final_preflight_thread_blocker_dispatches_before_merge

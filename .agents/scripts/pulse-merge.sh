@@ -1198,7 +1198,7 @@ _process_single_ready_pr() {
 	local pr_obj="$2"
 	local timing_prefix="${3:-}"
 
-	local pr_number="" pr_mergeable="" pr_review="" pr_author="" pr_title="" pr_updated_at="" pr_head_ref_oid="" pr_head_ref_name="" pr_base_ref_name="" pr_labels="" pr_is_draft="false"
+	local pr_number="" pr_state="" pr_mergeable="" pr_review="" pr_author="" pr_title="" pr_updated_at="" pr_head_ref_oid="" pr_head_ref_name="" pr_base_ref_name="" pr_labels="" pr_is_draft="false"
 	local _mergeability_start="" _branch_protection_start="" _ruleset_start=""
 	# Consolidate into a single jq pass to reduce process-spawn overhead.
 	# CRITICAL: use non-whitespace delimiter (ASCII 0x1E record separator)
@@ -1209,15 +1209,19 @@ _process_single_ready_pr() {
 	# caused pr_author to receive the PR title, breaking the collaborator
 	# check and blocking ALL merges across every repo (observed downstream).
 	local _RS=$'\x1e'
-	IFS="$_RS" read -r pr_number pr_mergeable pr_review pr_author pr_title pr_updated_at pr_head_ref_oid pr_head_ref_name pr_base_ref_name pr_labels pr_is_draft < <(
+	IFS="$_RS" read -r pr_number pr_state pr_mergeable pr_review pr_author pr_title pr_updated_at pr_head_ref_oid pr_head_ref_name pr_base_ref_name pr_labels pr_is_draft < <(
 		printf '%s' "$pr_obj" | jq -r --arg unknown "$PULSE_UNKNOWN_STATE" \
-			'"\(.number // "")\u001e\(.mergeable // $unknown)\u001e\(if ((has("reviewDecision") | not) or .reviewDecision == null or (.reviewDecision | tostring | length) == 0) then $unknown else .reviewDecision end)\u001e\(.author.login // "unknown")\u001e\(.title // "")\u001e\(.updatedAt // "")\u001e\(.headRefOid // "")\u001e\(.headRefName // "")\u001e\(.baseRefName // "")\u001e\([(.labels // [])[].name] | join(","))\u001e\(.isDraft // false | tostring)"'
+			'"\(.number // "")\u001e\(.state // "")\u001e\(.mergeable // $unknown)\u001e\(if ((has("reviewDecision") | not) or .reviewDecision == null or (.reviewDecision | tostring | length) == 0) then $unknown else .reviewDecision end)\u001e\(.author.login // "unknown")\u001e\(.title // "")\u001e\(.updatedAt // "")\u001e\(.headRefOid // "")\u001e\(.headRefName // "")\u001e\(.baseRefName // "")\u001e\([(.labels // [])[].name] | join(","))\u001e\(.isDraft // false | tostring)"'
 	)
 	_pmp_normalize_mergeable_state_into pr_mergeable "$pr_mergeable"
 	_pmp_normalize_review_decision_into pr_review "$pr_review"
 	[[ -n "$timing_prefix" ]] && _mergeability_start=$(_pmp_now_epoch)
 
 	[[ "$pr_number" =~ ^[0-9]+$ ]] || return 1
+	if [[ "$pr_state" != "OPEN" ]]; then
+		echo "[pulse-wrapper] Merge pass: skipping PR #${pr_number} in ${repo_slug} — state=${pr_state:-missing} is not OPEN (GH#28279)" >>"$LOGFILE"
+		return 1
+	fi
 	if [[ "$pr_is_draft" == "true" ]]; then
 		echo "[pulse-wrapper] Merge pass: skipping PR #${pr_number} in ${repo_slug} — draft PR not eligible for auto-merge (GH#23525)" >>"$LOGFILE"
 		return 1
