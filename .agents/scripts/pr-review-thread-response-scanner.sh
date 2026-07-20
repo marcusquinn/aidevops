@@ -30,6 +30,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 LOGFILE="${LOGFILE:-${HOME}/.aidevops/logs/pr-review-thread-response-scanner.log}"
 STATE_DIR="${AIDEVOPS_PR_REVIEW_THREAD_RESPONSE_STATE_DIR:-${HOME}/.aidevops/.agent-workspace/pr-review-thread-response}"
 HEADLESS_RUNTIME_HELPER="${HEADLESS_RUNTIME_HELPER:-${SCRIPT_DIR}/headless-runtime-helper.sh}"
+PR_REVIEW_THREAD_RESPONSE_WORKTREE_HELPER="${PR_REVIEW_THREAD_RESPONSE_WORKTREE_HELPER:-${SCRIPT_DIR}/worktree-helper.sh}"
+PR_REVIEW_THREAD_RESPONSE_WORKTREE_BASE_DIR="${PR_REVIEW_THREAD_RESPONSE_WORKTREE_BASE_DIR:-${AIDEVOPS_WORKTREE_BASE_DIR:-${HOME}/Git/_worktrees}}"
 
 PR_REVIEW_THREAD_RESPONSE_PR_LIMIT="${PR_REVIEW_THREAD_RESPONSE_PR_LIMIT:-50}"
 PR_REVIEW_THREAD_RESPONSE_MAX_PER_REPO="${PR_REVIEW_THREAD_RESPONSE_MAX_PER_REPO:-2}"
@@ -43,6 +45,10 @@ PR_REVIEW_THREAD_RESPONSE_INCLUDE_HUMAN="${PR_REVIEW_THREAD_RESPONSE_INCLUDE_HUM
 PRRTS_BOOL_TRUE="true"
 PRRTS_BOOL_FALSE="false"
 PRRTS_RC_GRAPHQL_EXHAUSTED=75
+PRRTS_BLOCKED_BY_CODE="code"
+PRRTS_BLOCKED_BY_INFRASTRUCTURE="infrastructure"
+PRRTS_WORKTREE_FAILURE_BLOCKED_BY="$PRRTS_BLOCKED_BY_INFRASTRUCTURE"
+PRRTS_WORKTREE_FAILURE_REASON="review_worktree_preparation_failed"
 
 _prrts_ensure_dirs() {
 	local log_dir=""
@@ -145,8 +151,8 @@ _prrts_state_value_line() {
 _prrts_normalise_blocked_by() {
 	local blocked_by="$1"
 	case "$blocked_by" in
-		maintainer|infrastructure|decision|code|none) printf '%s\n' "$blocked_by" ;;
-		*) printf 'decision\n' ;;
+	maintainer | infrastructure | decision | code | none) printf '%s\n' "$blocked_by" ;;
+	*) printf 'decision\n' ;;
 	esac
 	return 0
 }
@@ -1032,6 +1038,160 @@ PROMPT_EOF
 	return 0
 }
 
+_prrts_worktree_path_for_branch() {
+	local repo_path="$1"
+	local head_ref="$2"
+	local line="" worktree_path=""
+
+	while IFS= read -r line || [[ -n "$line" ]]; do
+		case "$line" in
+		"worktree "*) worktree_path="${line#worktree }" ;;
+		"branch refs/heads/${head_ref}")
+			[[ -n "$worktree_path" ]] || return 1
+			printf '%s' "$worktree_path"
+			return 0
+			;;
+		"") worktree_path="" ;;
+		esac
+	done < <(git -C "$repo_path" worktree list --porcelain 2>/dev/null)
+	return 1
+}
+
+_prrts_validate_worker_head() {
+	local repo_slug="$1"
+	local repo_path="$2"
+	local pr_number="$3"
+	local head_ref="$4"
+	local head_oid="$5"
+	local is_cross_repository=""
+
+	[[ -n "$head_ref" ]] || {
+		_prrts_log "dispatch: ${repo_slug}#${pr_number} skipped — PR head branch is unavailable"
+		PRRTS_WORKTREE_FAILURE_BLOCKED_BY="$PRRTS_BLOCKED_BY_CODE"
+		PRRTS_WORKTREE_FAILURE_REASON="pr_head_branch_unavailable"
+		return 1
+	}
+	if ! git -C "$repo_path" check-ref-format --branch "$head_ref" >/dev/null 2>&1; then
+		_prrts_log "dispatch: ${repo_slug}#${pr_number} skipped — PR head branch is invalid"
+		PRRTS_WORKTREE_FAILURE_BLOCKED_BY="$PRRTS_BLOCKED_BY_CODE"
+		PRRTS_WORKTREE_FAILURE_REASON="pr_head_branch_invalid"
+		return 1
+	fi
+	if [[ ! "$head_oid" =~ ^([0-9a-fA-F]{40}|[0-9a-fA-F]{64})$ ]]; then
+		_prrts_log "dispatch: ${repo_slug}#${pr_number} skipped — PR head SHA is unavailable or invalid"
+		PRRTS_WORKTREE_FAILURE_BLOCKED_BY="$PRRTS_BLOCKED_BY_CODE"
+		PRRTS_WORKTREE_FAILURE_REASON="pr_head_sha_invalid"
+		return 1
+	fi
+	is_cross_repository=$(gh pr view "$pr_number" --repo "$repo_slug" --json isCrossRepository \
+		--jq '.isCrossRepository | tostring' 2>/dev/null) || {
+		_prrts_log "dispatch: ${repo_slug}#${pr_number} skipped — could not verify PR head repository"
+		PRRTS_WORKTREE_FAILURE_REASON="pr_head_repository_unverified"
+		return 1
+	}
+	if [[ "$is_cross_repository" == "$PRRTS_BOOL_TRUE" ]]; then
+		_prrts_log "dispatch: ${repo_slug}#${pr_number} skipped — fork PR head is not writable through the base repository remote"
+		PRRTS_WORKTREE_FAILURE_BLOCKED_BY="$PRRTS_BLOCKED_BY_CODE"
+		PRRTS_WORKTREE_FAILURE_REASON="cross_repository_head_unwritable"
+		return 1
+	fi
+	if [[ "$is_cross_repository" != "$PRRTS_BOOL_FALSE" ]]; then
+		_prrts_log "dispatch: ${repo_slug}#${pr_number} skipped — PR head repository response was indeterminate"
+		PRRTS_WORKTREE_FAILURE_REASON="pr_head_repository_unverified"
+		return 1
+	fi
+	return 0
+}
+
+_prrts_fetch_exact_worker_head() {
+	local repo_slug="$1"
+	local repo_path="$2"
+	local pr_number="$3"
+	local head_ref="$4"
+	local head_oid="$5"
+	local remote_head=""
+
+	if ! git -C "$repo_path" fetch --no-tags --quiet origin \
+		"+refs/heads/${head_ref}:refs/remotes/origin/${head_ref}" >/dev/null 2>&1; then
+		_prrts_log "dispatch: ${repo_slug}#${pr_number} skipped — PR head branch is unavailable from the base repository remote"
+		PRRTS_WORKTREE_FAILURE_BLOCKED_BY="$PRRTS_BLOCKED_BY_CODE"
+		PRRTS_WORKTREE_FAILURE_REASON="pr_head_branch_unavailable"
+		return 1
+	fi
+	remote_head=$(git -C "$repo_path" rev-parse "refs/remotes/origin/${head_ref}" 2>/dev/null) || remote_head=""
+	if [[ "$remote_head" != "$head_oid" ]]; then
+		_prrts_log "dispatch: ${repo_slug}#${pr_number} skipped — PR head changed during dispatch (expected ${head_oid}, got ${remote_head:-unknown})"
+		PRRTS_WORKTREE_FAILURE_REASON="pr_head_changed_during_dispatch"
+		return 1
+	fi
+	if ! git -C "$repo_path" cat-file -e "${head_oid}^{commit}" 2>/dev/null; then
+		_prrts_log "dispatch: ${repo_slug}#${pr_number} skipped — exact PR head commit is unavailable locally"
+		PRRTS_WORKTREE_FAILURE_REASON="pr_head_commit_unavailable"
+		return 1
+	fi
+	return 0
+}
+
+_prrts_prepare_worker_worktree() {
+	local repo_slug="$1"
+	local repo_path="$2"
+	local pr_number="$3"
+	local head_ref="$4"
+	local head_oid="$5"
+	local output_var="$6"
+	local existing_path="" repo_name="" safe_ref="" worktree_path="" resolved_path=""
+	local actual_head=""
+
+	PRRTS_WORKTREE_FAILURE_BLOCKED_BY="$PRRTS_BLOCKED_BY_INFRASTRUCTURE"
+	PRRTS_WORKTREE_FAILURE_REASON="review_worktree_preparation_failed"
+	_prrts_validate_worker_head "$repo_slug" "$repo_path" "$pr_number" "$head_ref" "$head_oid" || return 1
+	if existing_path="$(_prrts_worktree_path_for_branch "$repo_path" "$head_ref")" && [[ -d "$existing_path" ]]; then
+		if [[ "$(cd "$existing_path" 2>/dev/null && pwd -P)" == "$(cd "$repo_path" 2>/dev/null && pwd -P)" ]]; then
+			_prrts_log "dispatch: ${repo_slug}#${pr_number} skipped — PR branch ${head_ref} is checked out in the canonical repository"
+			PRRTS_WORKTREE_FAILURE_BLOCKED_BY="$PRRTS_BLOCKED_BY_CODE"
+			PRRTS_WORKTREE_FAILURE_REASON="pr_head_checked_out_in_canonical"
+			return 1
+		fi
+		actual_head=$(git -C "$existing_path" rev-parse HEAD 2>/dev/null) || actual_head=""
+		if [[ "$actual_head" != "$head_oid" ]]; then
+			_prrts_log "dispatch: ${repo_slug}#${pr_number} skipped — existing review worktree head mismatch (expected ${head_oid}, got ${actual_head:-unknown})"
+			PRRTS_WORKTREE_FAILURE_REASON="existing_review_worktree_head_mismatch"
+			return 1
+		fi
+		printf -v "$output_var" '%s' "$existing_path"
+		return 0
+	fi
+
+	if [[ ! -x "$PR_REVIEW_THREAD_RESPONSE_WORKTREE_HELPER" ]]; then
+		_prrts_log "dispatch: worktree-helper missing or not executable: ${PR_REVIEW_THREAD_RESPONSE_WORKTREE_HELPER}"
+		return 1
+	fi
+	repo_name="$(basename "$repo_path")"
+	safe_ref="$(printf '%s' "$head_ref" | tr -c '[:alnum:].-' '-')"
+	worktree_path="${PR_REVIEW_THREAD_RESPONSE_WORKTREE_BASE_DIR}/${repo_name}-pr${pr_number}-review-${safe_ref}-${head_oid:0:12}"
+	mkdir -p "$PR_REVIEW_THREAD_RESPONSE_WORKTREE_BASE_DIR" 2>/dev/null || return 1
+	if [[ -e "$worktree_path" ]]; then
+		_prrts_log "dispatch: ${repo_slug}#${pr_number} skipped — expected review worktree path already exists but is not registered (${worktree_path})"
+		return 1
+	fi
+	_prrts_fetch_exact_worker_head "$repo_slug" "$repo_path" "$pr_number" "$head_ref" "$head_oid" || return 1
+	if ! (cd "$repo_path" && AIDEVOPS_SKIP_AUTO_CLAIM=1 AIDEVOPS_WORKTREE_BASE_DIR="$PR_REVIEW_THREAD_RESPONSE_WORKTREE_BASE_DIR" \
+		"$PR_REVIEW_THREAD_RESPONSE_WORKTREE_HELPER" add "$head_ref" "$worktree_path" --base "$head_oid" --issue "$pr_number") >>"$LOGFILE" 2>&1; then
+		_prrts_log "dispatch: ${repo_slug}#${pr_number} skipped — could not create linked worktree for ${head_ref}"
+		return 1
+	fi
+	resolved_path="$(_prrts_worktree_path_for_branch "$repo_path" "$head_ref")" || resolved_path="$worktree_path"
+	actual_head=$(git -C "$resolved_path" rev-parse HEAD 2>/dev/null) || actual_head=""
+	if [[ ! -d "$resolved_path" || "$actual_head" != "$head_oid" || "$(cd "$resolved_path" 2>/dev/null && pwd -P)" == "$(cd "$repo_path" 2>/dev/null && pwd -P)" ]]; then
+		_prrts_log "dispatch: ${repo_slug}#${pr_number} skipped — linked worktree verification failed for ${head_ref}"
+		(cd "$repo_path" && "$PR_REVIEW_THREAD_RESPONSE_WORKTREE_HELPER" remove "$resolved_path" --force) >>"$LOGFILE" 2>&1 || true
+		PRRTS_WORKTREE_FAILURE_REASON="review_worktree_exact_head_verification_failed"
+		return 1
+	fi
+	printf -v "$output_var" '%s' "$resolved_path"
+	return 0
+}
+
 _prrts_dispatch_worker() {
 	local repo_slug="$1"
 	local repo_path="$2"
@@ -1040,27 +1200,37 @@ _prrts_dispatch_worker() {
 	local thread_count="$5"
 	local fingerprint="$6"
 	local preview="$7"
-	local prompt_file="" session_key="" model=""
+	local head_ref="$8"
+	local head_oid="$9"
+	local prompt_file="" session_key="" model="" worker_worktree_path=""
 	local -a cmd
 
+	PRRTS_WORKTREE_FAILURE_BLOCKED_BY="$PRRTS_BLOCKED_BY_INFRASTRUCTURE"
+	PRRTS_WORKTREE_FAILURE_REASON="review_worker_launch_failed"
 	if [[ ! -x "$HEADLESS_RUNTIME_HELPER" ]]; then
 		_prrts_log "dispatch: headless-runtime-helper missing or not executable: ${HEADLESS_RUNTIME_HELPER}"
 		return 1
 	fi
-	prompt_file="$(_prrts_write_prompt_file "$repo_slug" "$repo_path" "$pr_number" "$title" "$thread_count" "$fingerprint" "$preview")"
+	if ! _prrts_prepare_worker_worktree "$repo_slug" "$repo_path" "$pr_number" "$head_ref" "$head_oid" worker_worktree_path; then
+		return 1
+	fi
+	prompt_file="$(_prrts_write_prompt_file "$repo_slug" "$worker_worktree_path" "$pr_number" "$title" "$thread_count" "$fingerprint" "$preview")"
 	session_key="$(_prrts_session_key "$repo_slug" "$pr_number")"
 	cmd=("$HEADLESS_RUNTIME_HELPER" run
 		--role worker
 		--session-key "$session_key"
-		--dir "$repo_path"
+		--dir "$worker_worktree_path"
 		--title "PR #${pr_number}: review-thread response"
 		--prompt-file "$prompt_file")
 	model="$PR_REVIEW_THREAD_RESPONSE_MODEL"
 	if [[ -n "$model" ]]; then
 		cmd+=(--model "$model")
 	fi
-	"${cmd[@]}" </dev/null >>"$LOGFILE" 2>&1 &
-	_prrts_log "dispatch: launched response worker for ${repo_slug}#${pr_number} session_key=${session_key} pid=$!"
+	HEADLESS=1 WORKER_ISSUE_NUMBER="$pr_number" WORKER_REPO_SLUG="$repo_slug" WORKER_WORKTREE_PATH="$worker_worktree_path" \
+		GITHUB_REPOSITORY="$repo_slug" WORKER_NO_EXIT_PUSH=1 AIDEVOPS_ALLOW_WORKER_WORKTREE_OWNER_TRANSFER=1 \
+		AIDEVOPS_PR_REPAIR_NUMBER="$pr_number" AIDEVOPS_PR_REPAIR_HEAD_SHA="$head_oid" AIDEVOPS_PR_REPAIR_HEAD_REF="$head_ref" \
+		"${cmd[@]}" </dev/null >>"$LOGFILE" 2>&1 &
+	_prrts_log "dispatch: launched response worker for ${repo_slug}#${pr_number} in ${worker_worktree_path} session_key=${session_key} pid=$!"
 	return 0
 }
 
@@ -1108,7 +1278,10 @@ _prrts_dispatch_guarded() {
 		_prrts_remove_lock_dir "$lock_dir"
 		return 0
 	fi
-	if ! _prrts_dispatch_worker "$repo_slug" "$repo_path" "$pr_number" "$title" "$thread_count" "$fingerprint" "$preview"; then
+	if ! _prrts_dispatch_worker "$repo_slug" "$repo_path" "$pr_number" "$title" "$thread_count" "$fingerprint" "$preview" "$head_ref" "$head_oid"; then
+		_prrts_write_state "$repo_slug" "$pr_number" "$fingerprint" "$thread_count" "$now_epoch" "$attempt_count" "$PRRTS_BOOL_FALSE" "$head_oid"
+		_prrts_write_analysis_state "$repo_slug" "$pr_number" "$PRRTS_BOOL_TRUE" \
+			"$PRRTS_WORKTREE_FAILURE_BLOCKED_BY" "$PRRTS_BOOL_TRUE" "$PRRTS_WORKTREE_FAILURE_REASON"
 		_prrts_remove_lock_dir "$lock_dir"
 		return 1
 	fi
