@@ -287,10 +287,11 @@ function handleToolBefore(ctx, log, input, output) {
     "aidevops.runtime": "opencode",
   }).catch(() => {});
 
-  if (isBashTool(input.tool) && output.args) {
-    const bashCwd = output.args?.workdir || output.args?.cwd || process.cwd();
-    output.args.command = checkCanonicalGitSafetyGate(
-      output.args?.command || "",
+  if (isBashTool(input.tool)) {
+    const bashArgs = output.args ?? {};
+    const bashCwd = bashArgs.workdir || bashArgs.cwd || process.cwd();
+    bashArgs.command = checkCanonicalGitSafetyGate(
+      bashArgs.command || "",
       ctx.scriptsDir,
       bashCwd,
       {
@@ -300,7 +301,7 @@ function handleToolBefore(ctx, log, input, output) {
     );
     // t2685: pass scriptsDir + output so the hook can repair (mutate
     // output.args.command) or block (throw) as appropriate.
-    checkSignatureFooterGate(output.args?.command || "", log, ctx.scriptsDir, output);
+    checkSignatureFooterGate(bashArgs.command || "", log, ctx.scriptsDir, output);
   }
 
   checkSecretReadGate(input.tool, output.args || {}, log);
