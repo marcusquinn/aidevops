@@ -259,19 +259,60 @@ _archive_interrupt() {
 
 # --- Schema creation in archive DB -------------------------------------------
 
-_archive_add_column_if_missing() {
-	local archive_db="$1"
-	local table_name="$2"
-	local column_name="$3"
-	local column_definition="$4"
-	local column_count=""
+_archive_column_list_has() {
+	local column_list="$1"
+	local column_name="$2"
 
-	column_count=$(sqlite3 "$archive_db" \
-		"SELECT COUNT(*) FROM pragma_table_info('${table_name}') WHERE name='${column_name}';") || return 1
-	if [[ "$column_count" -eq 0 ]]; then
-		sqlite3 "$archive_db" "ALTER TABLE \`${table_name}\` ADD COLUMN \`${column_name}\` ${column_definition};" || return 1
-		print_info "Migrated archive.${table_name} schema: added ${column_name} column"
-	fi
+	[[ ",${column_list}," == *",${column_name},"* ]]
+	return $?
+}
+
+_archive_migrate_schema_columns() {
+	local archive_db="$1"
+	local project_columns=""
+	local session_columns=""
+	local table_name=""
+	local column_name=""
+	local column_definition=""
+	local table_columns=""
+	local migration_sql=""
+	local migrated_columns=""
+
+	project_columns=$(opencode_db_table_columns "$archive_db" project) || return 1
+	session_columns=$(opencode_db_table_columns "$archive_db" "$SESSION_TABLE_NAME") || return 1
+	while IFS='|' read -r table_name column_name column_definition; do
+		[[ -n "$table_name" && -n "$column_name" && -n "$column_definition" ]] || continue
+		case "$table_name" in
+		project) table_columns="$project_columns" ;;
+		"$SESSION_TABLE_NAME") table_columns="$session_columns" ;;
+		*) return 1 ;;
+		esac
+		if ! _archive_column_list_has "$table_columns" "$column_name"; then
+			migration_sql="${migration_sql}ALTER TABLE ${table_name} ADD COLUMN ${column_name} ${column_definition};"
+			migrated_columns="${migrated_columns}${migrated_columns:+,}${table_name}.${column_name}"
+		fi
+	done <<MIGRATION_COLUMNS
+project|icon_url_override|${ARCHIVE_TEXT_COLUMN_DEFINITION}
+${SESSION_TABLE_NAME}|path|${ARCHIVE_TEXT_COLUMN_DEFINITION}
+${SESSION_TABLE_NAME}|agent|${ARCHIVE_TEXT_COLUMN_DEFINITION}
+${SESSION_TABLE_NAME}|model|${ARCHIVE_TEXT_COLUMN_DEFINITION}
+${SESSION_TABLE_NAME}|cost|real DEFAULT 0 NOT NULL
+${SESSION_TABLE_NAME}|tokens_input|${ARCHIVE_INTEGER_COLUMN_DEFINITION}
+${SESSION_TABLE_NAME}|tokens_output|${ARCHIVE_INTEGER_COLUMN_DEFINITION}
+${SESSION_TABLE_NAME}|tokens_reasoning|${ARCHIVE_INTEGER_COLUMN_DEFINITION}
+${SESSION_TABLE_NAME}|tokens_cache_read|${ARCHIVE_INTEGER_COLUMN_DEFINITION}
+${SESSION_TABLE_NAME}|tokens_cache_write|${ARCHIVE_INTEGER_COLUMN_DEFINITION}
+${SESSION_TABLE_NAME}|metadata|${ARCHIVE_TEXT_COLUMN_DEFINITION}
+MIGRATION_COLUMNS
+
+	[[ -n "$migration_sql" ]] || return 0
+	sqlite3 "$archive_db" <<MIGRATION_SQL
+.bail on
+BEGIN IMMEDIATE;
+${migration_sql}
+COMMIT;
+MIGRATION_SQL
+	print_info "Migrated archive schema columns: ${migrated_columns}"
 	return 0
 }
 
@@ -439,17 +480,7 @@ SCHEMA_SQL
 	# CREATE TABLE IF NOT EXISTS does not evolve persisted archives. Add columns
 	# in canonical order so legacy archives converge on the OpenCode 1.18.3
 	# contract without rebuilding or discarding archived rows.
-	_archive_add_column_if_missing "$archive_db" project icon_url_override "$ARCHIVE_TEXT_COLUMN_DEFINITION" || return 1
-	_archive_add_column_if_missing "$archive_db" "$SESSION_TABLE_NAME" path "$ARCHIVE_TEXT_COLUMN_DEFINITION" || return 1
-	_archive_add_column_if_missing "$archive_db" "$SESSION_TABLE_NAME" agent "$ARCHIVE_TEXT_COLUMN_DEFINITION" || return 1
-	_archive_add_column_if_missing "$archive_db" "$SESSION_TABLE_NAME" model "$ARCHIVE_TEXT_COLUMN_DEFINITION" || return 1
-	_archive_add_column_if_missing "$archive_db" "$SESSION_TABLE_NAME" cost "real DEFAULT 0 NOT NULL" || return 1
-	_archive_add_column_if_missing "$archive_db" "$SESSION_TABLE_NAME" tokens_input "$ARCHIVE_INTEGER_COLUMN_DEFINITION" || return 1
-	_archive_add_column_if_missing "$archive_db" "$SESSION_TABLE_NAME" tokens_output "$ARCHIVE_INTEGER_COLUMN_DEFINITION" || return 1
-	_archive_add_column_if_missing "$archive_db" "$SESSION_TABLE_NAME" tokens_reasoning "$ARCHIVE_INTEGER_COLUMN_DEFINITION" || return 1
-	_archive_add_column_if_missing "$archive_db" "$SESSION_TABLE_NAME" tokens_cache_read "$ARCHIVE_INTEGER_COLUMN_DEFINITION" || return 1
-	_archive_add_column_if_missing "$archive_db" "$SESSION_TABLE_NAME" tokens_cache_write "$ARCHIVE_INTEGER_COLUMN_DEFINITION" || return 1
-	_archive_add_column_if_missing "$archive_db" "$SESSION_TABLE_NAME" metadata "$ARCHIVE_TEXT_COLUMN_DEFINITION" || return 1
+	_archive_migrate_schema_columns "$archive_db" || return 1
 
 	return 0
 }
@@ -537,53 +568,55 @@ _archive_session_insert_columns() {
 _archive_session_select_columns() {
 	local base_columns="id, project_id, parent_id, slug, directory, title, version, share_url, summary_additions, summary_deletions, summary_files, summary_diffs, revert, permission, time_created, time_updated, time_compacting, time_archived, workspace_id"
 	local select_columns="$base_columns"
+	local session_columns=""
 
-	if _sqlite_has_column "$ACTIVE_DB" "$SESSION_TABLE_NAME" "path"; then
+	session_columns=$(opencode_db_table_columns "$ACTIVE_DB" "$SESSION_TABLE_NAME") || return 1
+	if _archive_column_list_has "$session_columns" path; then
 		select_columns="${select_columns}, path"
 	else
 		select_columns="${select_columns}, NULL AS path"
 	fi
-	if _sqlite_has_column "$ACTIVE_DB" "$SESSION_TABLE_NAME" "agent"; then
+	if _archive_column_list_has "$session_columns" agent; then
 		select_columns="${select_columns}, agent"
 	else
 		select_columns="${select_columns}, NULL AS agent"
 	fi
-	if _sqlite_has_column "$ACTIVE_DB" "$SESSION_TABLE_NAME" "model"; then
+	if _archive_column_list_has "$session_columns" model; then
 		select_columns="${select_columns}, model"
 	else
 		select_columns="${select_columns}, NULL AS model"
 	fi
-	if _sqlite_has_column "$ACTIVE_DB" "$SESSION_TABLE_NAME" "cost"; then
+	if _archive_column_list_has "$session_columns" cost; then
 		select_columns="${select_columns}, cost"
 	else
 		select_columns="${select_columns}, 0 AS cost"
 	fi
-	if _sqlite_has_column "$ACTIVE_DB" "$SESSION_TABLE_NAME" "tokens_input"; then
+	if _archive_column_list_has "$session_columns" tokens_input; then
 		select_columns="${select_columns}, tokens_input"
 	else
 		select_columns="${select_columns}, 0 AS tokens_input"
 	fi
-	if _sqlite_has_column "$ACTIVE_DB" "$SESSION_TABLE_NAME" "tokens_output"; then
+	if _archive_column_list_has "$session_columns" tokens_output; then
 		select_columns="${select_columns}, tokens_output"
 	else
 		select_columns="${select_columns}, 0 AS tokens_output"
 	fi
-	if _sqlite_has_column "$ACTIVE_DB" "$SESSION_TABLE_NAME" "tokens_reasoning"; then
+	if _archive_column_list_has "$session_columns" tokens_reasoning; then
 		select_columns="${select_columns}, tokens_reasoning"
 	else
 		select_columns="${select_columns}, 0 AS tokens_reasoning"
 	fi
-	if _sqlite_has_column "$ACTIVE_DB" "$SESSION_TABLE_NAME" "tokens_cache_read"; then
+	if _archive_column_list_has "$session_columns" tokens_cache_read; then
 		select_columns="${select_columns}, tokens_cache_read"
 	else
 		select_columns="${select_columns}, 0 AS tokens_cache_read"
 	fi
-	if _sqlite_has_column "$ACTIVE_DB" "$SESSION_TABLE_NAME" "tokens_cache_write"; then
+	if _archive_column_list_has "$session_columns" tokens_cache_write; then
 		select_columns="${select_columns}, tokens_cache_write"
 	else
 		select_columns="${select_columns}, 0 AS tokens_cache_write"
 	fi
-	if _sqlite_has_column "$ACTIVE_DB" "$SESSION_TABLE_NAME" "metadata"; then
+	if _archive_column_list_has "$session_columns" metadata; then
 		select_columns="${select_columns}, metadata"
 	else
 		select_columns="${select_columns}, NULL AS metadata"
