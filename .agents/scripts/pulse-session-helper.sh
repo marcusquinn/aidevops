@@ -263,7 +263,7 @@ get_last_pulse_time() {
 		fi
 	fi
 
-	local candidate_log last_line timestamp
+	local candidate_log="" last_line="" timestamp=""
 	for candidate_log in "$WRAPPER_LOGFILE" "$LOGFILE"; do
 		if [[ -f "$candidate_log" ]]; then
 			last_line=$(grep 'Starting pulse at' "$candidate_log" | tail -1 || true)

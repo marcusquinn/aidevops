@@ -96,6 +96,34 @@ class CanonicalWritePolicyTests(unittest.TestCase):
         self.assertIsNone(self._check(self.repo, outside_target))
         self.assertIsNone(self._check(self.repo, self.linked / "new-file.md"))
 
+    def test_cross_repository_linked_target_is_denied(self):
+        foreign_repo = self.root / "foreign-repo"
+        foreign_linked = self.root / "foreign-linked"
+        foreign_repo.mkdir()
+        self._git(foreign_repo, "init", "-q", "-b", "main")
+        self._git(foreign_repo, "config", "user.name", "Test")
+        self._git(foreign_repo, "config", "user.email", "test@example.invalid")
+        self._git(foreign_repo, "config", "commit.gpgsign", "false")
+        (foreign_repo / "README.md").write_text("foreign\n", encoding="utf-8")
+        self._git(foreign_repo, "add", "README.md")
+        self._git(foreign_repo, "commit", "-q", "-m", "foreign seed")
+        self._git(
+            foreign_repo,
+            "worktree",
+            "add",
+            "-q",
+            "-b",
+            "feature/foreign",
+            str(foreign_linked),
+        )
+
+        for cwd in (self.repo, self.linked):
+            with self.subTest(cwd=cwd):
+                denial = self._check(cwd, foreign_linked / "README.md")
+                self.assertIsNotNone(denial)
+                reason = denial["hookSpecificOutput"]["permissionDecisionReason"]
+                self.assertIn("different repository", reason)
+
     def test_linked_context_cannot_target_canonical_checkout(self):
         denial = self._check(self.linked, self.repo / "README.md")
         self.assertIsNotNone(denial)

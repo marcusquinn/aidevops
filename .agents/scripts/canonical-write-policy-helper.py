@@ -150,6 +150,13 @@ def check_write(cwd: str, file_path: str) -> dict[str, Any]:
     elif target.classification == "canonical":
         decision = "deny"
         reason = "canonical checkouts are read-only session mirrors"
+    elif (
+        target.classification == "linked"
+        and context.inside_git
+        and target.common_dir != context.common_dir
+    ):
+        decision = "deny"
+        reason = "linked worktree target belongs to a different repository"
     else:
         decision = "allow"
         reason = (

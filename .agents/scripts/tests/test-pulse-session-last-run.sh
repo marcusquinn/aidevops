@@ -92,12 +92,16 @@ _test_portable_date_fallback() {
 _test_status_summary_uses_marker() {
 	_reset_sources
 	printf '%s\n' "1704067200" >"$WRAPPER_LAST_RUN_FILE"
-	get_pulse_repo_count() {
-		printf '%s\n' "0"
-		return 0
-	}
-	local output
-	output=$(_status_print_workers_summary 0)
+	local output=""
+	output=$(
+		# Keep this sourced-function mock inside the command-substitution
+		# subshell so later tests cannot inherit it.
+		get_pulse_repo_count() {
+			printf '%s\n' "0"
+			return 0
+		}
+		_status_print_workers_summary 0
+	)
 	if [[ "$output" == *"Last pulse:  2024-01-01T00:00:00Z"* ]]; then
 		_assert_equal "present" "present" "status displays deterministic wrapper timestamp"
 	else
@@ -112,8 +116,10 @@ main() {
 	_test_portable_date_fallback
 	_test_status_summary_uses_marker
 	printf '1..%d\n' "$_TESTS_RUN"
-	[[ "$_TESTS_FAILED" -eq 0 ]]
-	return $?
+	if [[ "$_TESTS_FAILED" -ne 0 ]]; then
+		return 1
+	fi
+	return 0
 }
 
 main "$@"
