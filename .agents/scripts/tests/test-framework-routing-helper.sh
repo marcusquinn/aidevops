@@ -280,6 +280,30 @@ else
 	echo "  FAIL: informational create output succeeds"
 fi
 
+diagnostic_url_output="${TMP_DIR}/diagnostic-url.out"
+diagnostic_url_error="${TMP_DIR}/diagnostic-url.err"
+diagnostic_url_home="${TMP_DIR}/home-diagnostic-url"
+diagnostic_url_fixture="https://github.com/cli/cli/issues/new
+https://github.com/example/project/issues/42
+https://github.com/marcusquinn/aidevops/issues/9106"
+if run_log_framework_issue_case "[]" "$diagnostic_url_output" "${TMP_DIR}/diagnostic-url.trace" \
+	"$diagnostic_url_home" "${TMP_DIR}/stub-diagnostic-url" "$diagnostic_url_fixture" "$diagnostic_url_error"; then
+	diagnostic_url_text=$(<"$diagnostic_url_output")
+	diagnostic_url_diagnostics=$(<"$diagnostic_url_error")
+	if [[ "$diagnostic_url_text" == "https://github.com/marcusquinn/aidevops/issues/9106" ]]; then
+		PASS=$((PASS + 1))
+		echo "  PASS: unrelated diagnostic issue URLs do not hide the created issue URL"
+	else
+		FAIL=$((FAIL + 1))
+		echo "  FAIL: unrelated diagnostic issue URLs hid the created issue URL: $diagnostic_url_text"
+	fi
+	assert_contains "$diagnostic_url_diagnostics" "https://github.com/cli/cli/issues/new" "non-numeric diagnostic issue URL is preserved"
+	assert_contains "$diagnostic_url_diagnostics" "https://github.com/example/project/issues/42" "other-repository diagnostic issue URL is preserved"
+else
+	FAIL=$((FAIL + 1))
+	echo "  FAIL: unrelated diagnostic issue URLs allow the created issue URL"
+fi
+
 mixed_case_output="${TMP_DIR}/mixed-case.out"
 mixed_case_home="${TMP_DIR}/home-mixed-case"
 mixed_case_fixture="https://github.com/MarcusQuinn/Aidevops/issues/9106"
