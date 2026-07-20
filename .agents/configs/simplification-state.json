@@ -2364,9 +2364,9 @@
       "pr": 18705
     },
     ".agents/scripts/opencode-db-archive.sh": {
-      "at": "2026-07-18T15:45:39Z",
-      "hash": "0eb463440fac8ec579a22c1a207fac9dcc6843bf",
-      "passes": 10,
+      "at": "2026-07-20T15:42:06Z",
+      "hash": "4f9e58665627f2b1f2d8690355b80e410fccbc3f",
+      "passes": 11,
       "pr": 17584
     },
     ".agents/scripts/opencode-github-setup-helper.sh": {
@@ -7486,15 +7486,15 @@
       "pr": 15490
     },
     "aidevops.sh": {
-      "at": "2026-07-20T04:19:05Z",
-      "hash": "f871ed59e54a380696543b995f7a594a3b597775",
-      "passes": 281,
+      "at": "2026-07-20T15:44:49Z",
+      "hash": "c2c4990a0225a33f3afa62cd45ee9beba005474c",
+      "passes": 282,
       "pr": 19029
     },
     "setup.sh": {
-      "at": "2026-07-20T04:19:05Z",
-      "hash": "b6c8146fc4436232089889e51d63d78ef3dec8ba",
-      "passes": 277,
+      "at": "2026-07-20T15:44:49Z",
+      "hash": "3f8f8530161eb7e0fbf6921b40fc44f5426f868f",
+      "passes": 278,
       "pr": 15470
     },
     "todo/tasks/GH#15363-brief.md": {
@@ -8050,10 +8050,10 @@
       "passes": 3
     },
     ".agents/scripts/headless-runtime-worker.sh": {
-      "hash": "1f91974acc9e3d9797193dc64baaaa0e036f8454",
-      "at": "2026-07-20T14:35:13Z",
+      "hash": "0cd2f849d2993f98513d0ae0c6acdf87c0eca4ac",
+      "at": "2026-07-20T15:42:05Z",
       "pr": 26521,
-      "passes": 10
+      "passes": 11
     },
     ".agents/scripts/install-hooks-helper.sh": {
       "hash": "0fa74195f7243ea22d952d156e4faccb1bbc2125",

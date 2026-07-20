@@ -29,6 +29,7 @@ fail() {
 extract_function() {
 	local function_name="$1"
 	local output_file="$2"
+	local source_file="${3:-$REPO_ROOT/aidevops.sh}"
 	awk -v function_name="$function_name" '
 		$0 ~ "^" function_name "\\(\\)[[:space:]]*\\{" { capturing = 1 }
 		capturing {
@@ -40,7 +41,7 @@ extract_function() {
 			depth += open_count - close_count
 			if (depth == 0) exit
 		}
-	' "$REPO_ROOT/aidevops.sh" >"$output_file"
+	' "$source_file" >"$output_file"
 	[[ -s "$output_file" ]]
 	return 0
 }
@@ -50,6 +51,10 @@ for function_name in _update_verify_deployment_state _run_update_setup_transacti
 	# shellcheck source=/dev/null
 	source "$TEST_ROOT/$function_name.sh"
 done
+extract_function _update_fetch_main "$TEST_ROOT/_update_fetch_main.sh" \
+	"$REPO_ROOT/.agents/scripts/aidevops-cli/aidevops-update-lib.sh"
+# shellcheck source=/dev/null
+source "$TEST_ROOT/_update_fetch_main.sh"
 
 print_error() {
 	local message="$1"
@@ -64,6 +69,13 @@ print_info() {
 }
 
 git() {
+	local arg=""
+	for arg in "$@"; do
+		if [[ "$arg" == "fetch" || "$arg" == "merge" ]]; then
+			printf 'BLOCKED by canonical Git guard: canonical mutation via git %s\n' "$arg" >&2
+			return 42
+		fi
+	done
 	/usr/bin/git "$@"
 	return $?
 }
@@ -191,6 +203,7 @@ INTEGRATION_REMOTE="$TEST_ROOT/integration.git"
 INTEGRATION_REPO="$TEST_ROOT/integration-repo"
 INTEGRATION_PEER="$TEST_ROOT/integration-peer"
 SETUP_CALLS="$TEST_ROOT/setup-calls"
+CANONICAL_HELPER_CALLS="$TEST_ROOT/canonical-helper-calls"
 /usr/bin/git init -q --bare -b main "$INTEGRATION_REMOTE"
 /usr/bin/git init -q -b main "$INTEGRATION_REPO"
 /usr/bin/git -C "$INTEGRATION_REPO" config user.email test@example.invalid
@@ -210,6 +223,27 @@ printf 'updated\n' >"$INTEGRATION_PEER/runtime.txt"
 /usr/bin/git -C "$INTEGRATION_PEER" push -q origin main
 REMOTE_SHA=$(/usr/bin/git -C "$INTEGRATION_PEER" rev-parse HEAD)
 
+mkdir -p "$INTEGRATION_REPO/.agents/scripts"
+cat >"$INTEGRATION_REPO/.agents/scripts/canonical-recovery-helper.sh" <<'EOF'
+#!/usr/bin/env bash
+# Supports: --reason aidevops-update
+set -euo pipefail
+printf '%s\n' "$*" >>"$CANONICAL_HELPER_CALLS"
+repo=""
+branch=""
+while [[ $# -gt 0 ]]; do
+	case "$1" in
+	--repo) repo="$2"; shift 2 ;;
+	--branch) branch="$2"; shift 2 ;;
+	*) shift ;;
+	esac
+done
+/usr/bin/git -C "$repo" fetch origin "$branch" --tags --quiet
+/usr/bin/git -C "$repo" merge --ff-only "origin/$branch" --quiet
+EOF
+chmod +x "$INTEGRATION_REPO/.agents/scripts/canonical-recovery-helper.sh"
+export CANONICAL_HELPER_CALLS
+
 INSTALL_DIR="$INTEGRATION_REPO"
 SETUP_RC=0
 SETUP_SHA="$REMOTE_SHA"
@@ -226,14 +260,49 @@ AGENTS_DIR="$HOME/.aidevops/agents"
 AIDEVOPS_SKIP_PULSE_RESTART=1
 _AIDEVOPS_UPDATE_TRUE=true
 
+INTEGRATION_LINKED="$TEST_ROOT/integration-linked"
+/usr/bin/git -C "$INTEGRATION_REPO" worktree add -q -b linked-update-test "$INTEGRATION_LINKED"
+INSTALL_DIR="$INTEGRATION_LINKED"
+if AIDEVOPS_REAL_GIT_BIN=/usr/bin/git _update_fetch_main main &&
+	[[ "$(/usr/bin/git -C "$INTEGRATION_LINKED" rev-parse refs/remotes/origin/main)" == "$REMOTE_SHA" ]]; then
+	pass "linked checkout fetch bypasses the canonical Git guard shim"
+else
+	fail "linked checkout fetch bypasses the canonical Git guard shim" "fetch did not use the resolved Git binary"
+fi
+INSTALL_DIR="$INTEGRATION_REPO"
+
 if integration_output=$(cmd_update --skip-project-sync --compact) &&
 	[[ "$(/usr/bin/git -C "$INTEGRATION_REPO" rev-parse HEAD)" == "$REMOTE_SHA" ]] &&
+	grep -q -- '--reason aidevops-update' "$CANONICAL_HELPER_CALLS" &&
 	[[ -s "$SETUP_CALLS" ]] &&
 	[[ "$integration_output" == *"t18162: task-prefixed update"* ]] &&
 	[[ "$integration_output" == *"agents deployed"* ]]; then
-	pass "task-prefixed fast-forward reaches setup and verifies activation"
+	pass "shim-safe audited canonical fast-forward reaches setup and verifies activation"
 else
-	fail "task-prefixed fast-forward reaches setup and verifies activation" "$integration_output"
+	fail "shim-safe audited canonical fast-forward reaches setup and verifies activation" "$integration_output"
+fi
+
+printf 'dirty update fixture\n' >>"$INTEGRATION_REPO/runtime.txt"
+helper_calls_before=$(wc -l <"$CANONICAL_HELPER_CALLS")
+if dirty_output=$(cmd_update --skip-project-sync --compact 2>&1); then
+	fail "dirty canonical checkout remains non-destructive" "unexpected success"
+elif [[ "$dirty_output" == *"tracked local changes exist"* ]] &&
+	[[ "$(wc -l <"$CANONICAL_HELPER_CALLS")" -eq "$helper_calls_before" ]] &&
+	[[ "$(/usr/bin/git -C "$INTEGRATION_REPO" rev-parse HEAD)" == "$REMOTE_SHA" ]]; then
+	pass "dirty canonical checkout remains non-destructive"
+else
+	fail "dirty canonical checkout remains non-destructive" "$dirty_output"
+fi
+/usr/bin/git -C "$INTEGRATION_REPO" checkout -q -- runtime.txt
+
+rm "$INTEGRATION_REPO/.agents/scripts/canonical-recovery-helper.sh"
+if missing_helper_output=$(_update_fetch_main main 2>&1); then
+	fail "missing canonical helper fails with stable-path guidance" "unexpected success"
+elif [[ "$missing_helper_output" == *"$HOME/.aidevops/agents/scripts/canonical-recovery-helper.sh"* ]] &&
+	[[ "$missing_helper_output" == *"Reinstall aidevops"* ]]; then
+	pass "missing canonical helper fails with stable-path guidance"
+else
+	fail "missing canonical helper fails with stable-path guidance" "$missing_helper_output"
 fi
 
 printf '%s passed, %s failed\n' "$PASS_COUNT" "$FAIL_COUNT"
