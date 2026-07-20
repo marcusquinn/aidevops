@@ -10,6 +10,7 @@ _init_update_project_operations_context() {
 	local block_file="${agents_md}.project-context-block.$$"
 	local tmp_file="${agents_md}.project-context.$$"
 	local line_format="%s\n"
+	local command_status=0
 	[[ -f "$agents_md" ]] || return 0
 
 	{
@@ -17,20 +18,45 @@ _init_update_project_operations_context() {
 		[[ -f "$project_root/.aidevops/deployments.yaml" ]] && printf "$line_format" "- Deployment manifest: \`.aidevops/deployments.yaml\`"
 		[[ -f "$project_root/.aidevops/wordpress.yaml" ]] && printf "$line_format" "- WordPress manifest: \`.aidevops/wordpress.yaml\`"
 		printf "$line_format" "$end"
-	} >"$block_file"
+	} >"$block_file" || {
+		rm -f "$block_file"
+		return 1
+	}
 
-	if grep -qF "$start" "$agents_md" 2>/dev/null; then
-		awk -v start="$start" -v end="$end" -v block="$block_file" 'function emit(){while((getline line < block)>0) print line; close(block)} index($0,start)==1 {if(!inserted){emit(); inserted=1}; managed=1; next} managed && index($0,end)==1 {managed=0; next} !managed {print}' "$agents_md" >"$tmp_file"
+	grep -qF "$start" "$agents_md" || command_status=$?
+	if [[ "$command_status" -eq 0 ]]; then
+		awk -v start="$start" -v end="$end" -v block="$block_file" 'function emit(){while((getline line < block)>0) print line; close(block)} index($0,start)==1 {if(!inserted){emit(); inserted=1}; managed=1; next} managed && index($0,end)==1 {managed=0; next} !managed {print}' "$agents_md" >"$tmp_file" || {
+			rm -f "$block_file" "$tmp_file"
+			return 1
+		}
+	elif [[ "$command_status" -eq 1 ]]; then
+		cp "$agents_md" "$tmp_file" &&
+			{ [[ ! -s "$tmp_file" ]] || printf "\n" >>"$tmp_file"; } &&
+			cat "$block_file" >>"$tmp_file" || {
+			rm -f "$block_file" "$tmp_file"
+			return 1
+		}
 	else
-		cp "$agents_md" "$tmp_file"
-		[[ ! -s "$tmp_file" ]] || printf "\n" >>"$tmp_file"
-		cat "$block_file" >>"$tmp_file"
+		rm -f "$block_file" "$tmp_file"
+		return 1
 	fi
 	rm -f "$block_file"
-	if cmp -s "$agents_md" "$tmp_file"; then
+	[[ -s "$tmp_file" ]] || {
 		rm -f "$tmp_file"
+		return 1
+	}
+	command_status=0
+	cmp -s "$agents_md" "$tmp_file" || command_status=$?
+	if [[ "$command_status" -eq 0 ]]; then
+		rm -f "$tmp_file"
+	elif [[ "$command_status" -eq 1 ]]; then
+		mv "$tmp_file" "$agents_md" || {
+			rm -f "$tmp_file"
+			return 1
+		}
 	else
-		mv "$tmp_file" "$agents_md"
+		rm -f "$tmp_file"
+		return 1
 	fi
 	return 0
 }
