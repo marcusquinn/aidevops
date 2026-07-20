@@ -343,13 +343,71 @@ def _is_non_string_yaml_list_item(value: str) -> bool:
     value = value.strip()
     if not value or value.startswith(("{", "[")):
         return True
-    if value[0] in ("'", '"'):
+    if re.fullmatch(r"'(?:[^']|'')*'", value) or re.fullmatch(
+        r'"(?:[^"\\]|\\.)*"', value
+    ):
         return False
-    if re.match(r"^[^:]+:(?:\s|$)", value):
+    if re.search(r":(?:\s|$)", value):
         return True
     if value.lower() in {"null", "true", "false", "~"}:
         return True
     return bool(re.fullmatch(r"[-+]?(?:\d[\d_]*)(?:\.\d[\d_]*)?", value))
+
+
+def _find_block_arg_type_issues(
+    lines: list[str],
+    start: int,
+    end: int,
+    expected_indent: int,
+    profile_name: str,
+) -> list[ProfileArgTypeIssue]:
+    """Find non-string list entries in one block-style ``args`` value."""
+    issues: list[ProfileArgTypeIssue] = []
+    for line_index in range(start, end):
+        line = lines[line_index]
+        if _line_indent_len(line) != expected_indent:
+            continue
+        item_match = re.match(r"^\s*-\s*(?P<value>.*)$", line)
+        if not item_match:
+            continue
+        value = item_match.group("value").strip()
+        if not _is_non_string_yaml_list_item(value):
+            continue
+        issues.append(ProfileArgTypeIssue(profile_name, line_index + 1, value))
+    return issues
+
+
+def _find_profile_arg_type_issues(
+    lines: list[str], profile_start: int, profile_end: int, profile_name: str
+) -> list[ProfileArgTypeIssue]:
+    """Find invalid ``args`` entries inside one Tabby profile block."""
+    issues: list[ProfileArgTypeIssue] = []
+    index = profile_start + 1
+    while index < profile_end:
+        args_match = re.match(r"^(?P<indent>\s*)args:\s*(?P<value>.*)$", lines[index])
+        if not args_match:
+            index += 1
+            continue
+
+        inline_value = args_match.group("value").strip()
+        if inline_value and "{" in inline_value:
+            issues.append(ProfileArgTypeIssue(profile_name, index + 1, inline_value))
+            index += 1
+            continue
+
+        args_indent_len = len(args_match.group("indent"))
+        args_end = _block_end(lines, index, args_indent_len)
+        issues.extend(
+            _find_block_arg_type_issues(
+                lines,
+                index + 1,
+                args_end,
+                args_indent_len + 2,
+                profile_name,
+            )
+        )
+        index = args_end
+    return issues
 
 
 def find_profile_arg_type_issues(config_text: str) -> list[ProfileArgTypeIssue]:
@@ -371,39 +429,9 @@ def find_profile_arg_type_issues(config_text: str) -> list[ProfileArgTypeIssue]:
 
         profile_name = _normalise_yaml_scalar(profile_match.group("name"))
         profile_end = _profile_block_end(lines, i)
-        j = i + 1
-        while j < profile_end:
-            args_match = re.match(r"^(?P<indent>\s*)args:\s*(?P<value>.*)$", lines[j])
-            if not args_match:
-                j += 1
-                continue
-
-            inline_value = args_match.group("value").strip()
-            if inline_value and "{" in inline_value:
-                issues.append(
-                    ProfileArgTypeIssue(profile_name, j + 1, inline_value)
-                )
-                j += 1
-                continue
-
-            args_indent_len = len(args_match.group("indent"))
-            args_end = _block_end(lines, j, args_indent_len)
-            for line_index in range(j + 1, args_end):
-                line = lines[line_index]
-                if _line_indent_len(line) != args_indent_len + 2:
-                    continue
-                item_match = re.match(r"^\s*-\s*(?P<value>.*)$", line)
-                if item_match and _is_non_string_yaml_list_item(
-                    item_match.group("value")
-                ):
-                    issues.append(
-                        ProfileArgTypeIssue(
-                            profile_name,
-                            line_index + 1,
-                            item_match.group("value").strip(),
-                        )
-                    )
-            j = args_end
+        issues.extend(
+            _find_profile_arg_type_issues(lines, i, profile_end, profile_name)
+        )
         i = profile_end
     return issues
 

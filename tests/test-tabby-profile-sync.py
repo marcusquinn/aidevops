@@ -447,6 +447,42 @@ class TestProfileArgTypeValidation(unittest.TestCase):
             [],
         )
 
+    def test_mapping_with_quoted_key_or_later_separator_is_rejected(self):
+        config = """profiles:
+  - name: site.local
+    options:
+      command: open
+      args:
+        - 'op': '&&'
+        - http://localhost: 3000
+"""
+
+        issues = tabby_profile_sync.find_profile_arg_type_issues(config)
+
+        self.assertEqual(
+            [issue.profile_name for issue in issues],
+            ["site.local", "site.local"],
+        )
+        self.assertEqual(
+            [issue.value for issue in issues],
+            ["'op': '&&'", "http://localhost: 3000"],
+        )
+
+    def test_fully_quoted_mapping_like_values_are_valid_strings(self):
+        config = """profiles:
+  - name: site.local
+    options:
+      command: /bin/zsh
+      args:
+        - 'label: value'
+        - "url: http://localhost: 3000"
+"""
+
+        self.assertEqual(
+            tabby_profile_sync.find_profile_arg_type_issues(config),
+            [],
+        )
+
     def test_report_groups_operator_lines_by_profile(self):
         config = """profiles:
   - name: site.local
