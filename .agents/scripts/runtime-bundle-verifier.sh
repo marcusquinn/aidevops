@@ -34,6 +34,18 @@ _runtime_bundle_verify_manifest_value() {
 	return 1
 }
 
+_runtime_bundle_verify_first_line() {
+	local file="$1"
+	local value=""
+
+	[[ -r "$file" ]] || return 1
+	if ! IFS= read -r value <"$file" && [[ -z "$value" ]]; then
+		return 1
+	fi
+	printf '%s' "$value"
+	return 0
+}
+
 _runtime_bundle_verify_sha256_file() {
 	local file="$1"
 	local digest=""
@@ -194,9 +206,7 @@ _runtime_bundle_verify_version_and_stamp() {
 	local deployed_sha=""
 
 	repo_version=$(git -C "$repo_dir" show "${expected_sha}:VERSION" 2>/dev/null) || repo_version=""
-	if [[ -r "$active_root/VERSION" ]]; then
-		IFS= read -r active_version <"$active_root/VERSION" || active_version=""
-	fi
+	active_version=$(_runtime_bundle_verify_first_line "$active_root/VERSION" 2>/dev/null) || active_version=""
 	if [[ -z "$repo_version" || "$repo_version" != "$active_version" || "$repo_version" != "$_AIDEVOPS_RUNTIME_VERIFY_MANIFEST_VERSION" ]]; then
 		_runtime_bundle_verify_emit_error "Runtime bundle convergence failed: source version=${repo_version:-missing}, active version=${active_version:-missing}, manifest version=${_AIDEVOPS_RUNTIME_VERIFY_MANIFEST_VERSION:-missing}"
 		return 1

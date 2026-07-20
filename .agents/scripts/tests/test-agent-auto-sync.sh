@@ -71,7 +71,8 @@ if [[ "${MOCK_DEPLOY_MODE:-current}" == "stale-active" ]]; then
 elif [[ "${MOCK_DEPLOY_MODE:-current}" == "stale-stamp" ]]; then
 	stamp_sha="1111111111111111111111111111111111111111"
 fi
-IFS= read -r framework_version <"$repo_root/VERSION"
+framework_version=""
+IFS= read -r framework_version <"$repo_root/VERSION" || [[ -n "$framework_version" ]]
 bundle_id="${framework_version}-${bundle_sha:0:12}-fixture"
 bundle_root="$HOME/.aidevops/runtime-bundles/$bundle_id/agents"
 rm -rf "${bundle_root%/agents}"
@@ -259,6 +260,23 @@ test_release_sync_propagates_deploy_failure() {
 	return 0
 }
 
+test_release_sync_accepts_version_without_trailing_newline() {
+	: >"$TEST_DIR/sync.log"
+	local repo_path
+	local output=""
+	repo_path=$(create_fake_repo "release-version-no-newline" "https://github.com/marcusquinn/aidevops.git")
+	printf '9.9.9' >"$repo_path/VERSION"
+	PATH=/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin git -C "$repo_path" add VERSION
+	PATH=/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin git -C "$repo_path" commit -qm "remove version trailing newline"
+
+	if output=$(invoke_release_sync "$repo_path" 2>&1); then
+		print_result "release sync accepts VERSION without a trailing newline" 0
+	else
+		print_result "release sync accepts VERSION without a trailing newline" 1 "Unterminated VERSION was rejected: $output"
+	fi
+	return 0
+}
+
 test_release_sync_rejects_stale_active_bundle() {
 	: >"$TEST_DIR/sync.log"
 	local repo_path
@@ -331,6 +349,7 @@ main() {
 	test_release_sync_explicit_full
 	test_release_sync_skips_other_remotes
 	test_release_sync_propagates_deploy_failure
+	test_release_sync_accepts_version_without_trailing_newline
 	test_release_sync_rejects_stale_active_bundle
 	test_release_sync_rejects_stale_deployed_sha
 	test_release_sync_rejects_stale_sentinel
