@@ -246,6 +246,27 @@ _storage_opencode_residual_measurement() {
 	return 0
 }
 
+_storage_emit_unavailable_opencode_records() {
+	local unavailable_measure="${STORAGE_JSON_NULL}|unavailable|home-unavailable"
+	local unavailable_reason="OpenCode data root is unavailable because HOME is unset"
+	local unavailable_action="Set HOME or AIDEVOPS_OPENCODE_DATA_DIR to inventory OpenCode storage"
+	local label_prefix=OpenCode
+
+	_storage_emit_measured_record "opencode-active-db" "$STORAGE_PRODUCER_OPENCODE" "${label_prefix} active database" "$STORAGE_JOINT" \
+		"$STORAGE_UNKNOWN" "logical session retention is OpenCode-owned" "$STORAGE_UNKNOWN" "$unavailable_reason" "$unavailable_action" "$unavailable_measure"
+	_storage_emit_measured_record "opencode-active-wal" "$STORAGE_PRODUCER_OPENCODE" "${label_prefix} active WAL/SHM" "$STORAGE_JOINT" \
+		"$STORAGE_UNKNOWN" "checkpoint and VACUUM only after idle-holder evidence" "$STORAGE_UNKNOWN" "$unavailable_reason" "$unavailable_action" "$unavailable_measure"
+	_storage_emit_measured_record "opencode-archive" "aidevops-opencode-archive" "${label_prefix} archive database" "$STORAGE_JOINT" \
+		"$STORAGE_UNKNOWN" "archive data is retained; no generic deletion contract" "$STORAGE_UNKNOWN" "$unavailable_reason" "$unavailable_action" "$unavailable_measure"
+	_storage_emit_measured_record "opencode-legacy" "$STORAGE_PRODUCER_OPENCODE" "${label_prefix} legacy storage" "$STORAGE_UNKNOWN" \
+		"$STORAGE_UNKNOWN" "legacy format lifecycle is owned upstream" "$STORAGE_UNKNOWN" "$unavailable_reason" "$unavailable_action" "$unavailable_measure"
+	_storage_emit_measured_record "opencode-tool-output" "$STORAGE_PRODUCER_OPENCODE" "${label_prefix} tool output" "$STORAGE_UNKNOWN" \
+		"$STORAGE_UNKNOWN" "tool-output lifecycle is owned upstream" "$STORAGE_UNKNOWN" "$unavailable_reason" "$unavailable_action" "$unavailable_measure"
+	_storage_emit_measured_record "opencode-unclassified" "$STORAGE_PRODUCER_OPENCODE" "Other ${label_prefix} application data" "$STORAGE_UNKNOWN" \
+		"$STORAGE_UNKNOWN" "future and unclassified formats fail closed" "$STORAGE_UNKNOWN" "$unavailable_reason" "$unavailable_action" "$unavailable_measure"
+	return 0
+}
+
 _storage_opencode_records() {
 	local data_root="${AIDEVOPS_OPENCODE_DATA_DIR:-${HOME:+$HOME/.local/share/opencode}}"
 	local active_db="${AIDEVOPS_OPENCODE_DB_PATH:-${OPENCODE_DB_PATH:-${OPENCODE_DB:-${data_root}/opencode.db}}}"
@@ -266,107 +287,71 @@ _storage_opencode_records() {
 	local active_class="$STORAGE_ACTIVE"
 	local active_disposition="$STORAGE_PROTECTED"
 	local active_reason="OpenCode-owned logical sessions and live SQLite pages are never cleanup candidates"
-	local active_action="Use aidevops opencode-db report; do not select sessions by age or size"
-	local wal_class="$STORAGE_ACTIVE"
-	local wal_disposition="$STORAGE_PROTECTED"
 	local archive_class="$STORAGE_ARCHIVE"
 	local archive_disposition="$STORAGE_PROTECTED"
 	local archive_reason="archive retention and integrity require explicit OpenCode-aware verification"
-	local archive_action="Inspect with aidevops opencode-db sessions --include-archive"
 	local wal_reason="idle snapshot only; maintenance still requires holder and checkpoint evidence"
-	local wal_action="Close OpenCode holders, then use aidevops opencode-db maintain"
-	local legacy_reason="legacy format ownership or migration state is unproved"
-	local legacy_action="Use an upstream OpenCode migration/export path; leave data untouched"
-	local tool_reason="tool output may be referenced by logical sessions"
-	local tool_action="Use OpenCode-owned controls; no aidevops cleanup is available"
-	local residual_reason="unclassified OpenCode bytes have no proved mutation contract"
-	local residual_action="Review with current OpenCode documentation and leave untouched"
-	local unavailable_measure="${STORAGE_JSON_NULL}|unavailable|home-unavailable"
-	local unavailable_reason="OpenCode data root is unavailable because HOME is unset"
-	local unavailable_action="Set HOME or AIDEVOPS_OPENCODE_DATA_DIR to inventory OpenCode storage"
 
 	if [[ -z "$data_root" ]]; then
-		active_measure="$unavailable_measure"
-		wal_measure="$unavailable_measure"
-		archive_measure="$unavailable_measure"
-		legacy_measure="$unavailable_measure"
-		tool_measure="$unavailable_measure"
-		residual_measure="$unavailable_measure"
+		_storage_emit_unavailable_opencode_records
+		return 0
+	fi
+
+	if [[ "$active_dir" == "$active_db" ]]; then
+		active_dir="."
+	fi
+	archive_db="${AIDEVOPS_OPENCODE_ARCHIVE_DB:-${OPENCODE_ARCHIVE_DB:-${active_dir}/opencode-archive.db}}"
+	active_measure=$(_storage_measure_group "$active_db")
+	wal_measure=$(_storage_measure_group "${active_db}-wal" "${active_db}-shm")
+	archive_measure=$(_storage_measure_group "$archive_db" "${archive_db}-wal" "${archive_db}-shm")
+	legacy_measure=$(_storage_measure_group "$legacy_path")
+	tool_measure=$(_storage_measure_group "$tool_path")
+	residual_measure=$(_storage_opencode_residual_measurement "$data_root" \
+		"$active_db" "${active_db}-wal" "${active_db}-shm" \
+		"$archive_db" "${archive_db}-wal" "${archive_db}-shm" "$legacy_path" "$tool_path")
+
+	if [[ "$OPENCODE_STORAGE_PROBES_AVAILABLE" -eq 1 ]]; then
+		active_schema=$(opencode_db_schema_state "$active_db")
+		archive_schema=$(opencode_db_schema_state "$archive_db")
+		holder_count=$(opencode_db_holder_count "$active_db" "${AIDEVOPS_STORAGE_LSOF_COMMAND:-lsof}")
+		wal_state=$(opencode_db_wal_state "$active_db" "${AIDEVOPS_STORAGE_WAL_SAMPLE_DELAY_SECONDS:-0.1}")
+	fi
+	if [[ "$active_schema" == "$STORAGE_UNKNOWN" ]]; then
 		active_class="$STORAGE_UNKNOWN"
 		active_disposition="$STORAGE_UNKNOWN"
-		active_reason="$unavailable_reason"
-		active_action="$unavailable_action"
-		wal_class="$STORAGE_UNKNOWN"
-		wal_disposition="$STORAGE_UNKNOWN"
-		wal_reason="$unavailable_reason"
-		wal_action="$unavailable_action"
+		active_reason="active database schema is unavailable; all bytes remain unknown and untouched"
+	fi
+	if [[ "$archive_schema" == "$STORAGE_UNKNOWN" ]]; then
 		archive_class="$STORAGE_UNKNOWN"
 		archive_disposition="$STORAGE_UNKNOWN"
-		archive_reason="$unavailable_reason"
-		archive_action="$unavailable_action"
-		legacy_reason="$unavailable_reason"
-		legacy_action="$unavailable_action"
-		tool_reason="$unavailable_reason"
-		tool_action="$unavailable_action"
-		residual_reason="$unavailable_reason"
-		residual_action="$unavailable_action"
-	else
-		if [[ "$active_dir" == "$active_db" ]]; then
-			active_dir="."
-		fi
-		archive_db="${AIDEVOPS_OPENCODE_ARCHIVE_DB:-${OPENCODE_ARCHIVE_DB:-${active_dir}/opencode-archive.db}}"
-		active_measure=$(_storage_measure_group "$active_db")
-		wal_measure=$(_storage_measure_group "${active_db}-wal" "${active_db}-shm")
-		archive_measure=$(_storage_measure_group "$archive_db" "${archive_db}-wal" "${archive_db}-shm")
-		legacy_measure=$(_storage_measure_group "$legacy_path")
-		tool_measure=$(_storage_measure_group "$tool_path")
-		residual_measure=$(_storage_opencode_residual_measurement "$data_root" \
-			"$active_db" "${active_db}-wal" "${active_db}-shm" \
-			"$archive_db" "${archive_db}-wal" "${archive_db}-shm" "$legacy_path" "$tool_path")
-
-		if [[ "$OPENCODE_STORAGE_PROBES_AVAILABLE" -eq 1 ]]; then
-			active_schema=$(opencode_db_schema_state "$active_db")
-			archive_schema=$(opencode_db_schema_state "$archive_db")
-			holder_count=$(opencode_db_holder_count "$active_db" "${AIDEVOPS_STORAGE_LSOF_COMMAND:-lsof}")
-			wal_state=$(opencode_db_wal_state "$active_db" "${AIDEVOPS_STORAGE_WAL_SAMPLE_DELAY_SECONDS:-0.1}")
-		fi
-		if [[ "$active_schema" == "$STORAGE_UNKNOWN" ]]; then
-			active_class="$STORAGE_UNKNOWN"
-			active_disposition="$STORAGE_UNKNOWN"
-			active_reason="active database schema is unavailable; all bytes remain unknown and untouched"
-		fi
-		if [[ "$archive_schema" == "$STORAGE_UNKNOWN" ]]; then
-			archive_class="$STORAGE_UNKNOWN"
-			archive_disposition="$STORAGE_UNKNOWN"
-			archive_reason="archive schema is unavailable; all bytes remain unknown and untouched"
-		fi
-		if [[ "$holder_count" =~ ^[0-9]+$ && "$holder_count" -gt 0 ]]; then
-			wal_reason="active database holder detected; WAL and shared-memory bytes are protected"
-		elif [[ "$wal_state" == "changing" ]]; then
-			wal_reason="WAL changed during observation; active SQLite state is protected"
-		elif [[ "$holder_count" == "$STORAGE_UNKNOWN" || "$wal_state" == "$STORAGE_UNKNOWN" ]]; then
-			wal_reason="holder or WAL state is unavailable; active SQLite bytes are protected"
-		fi
+		archive_reason="archive schema is unavailable; all bytes remain unknown and untouched"
+	fi
+	if [[ "$holder_count" =~ ^[0-9]+$ && "$holder_count" -gt 0 ]]; then
+		wal_reason="active database holder detected; WAL and shared-memory bytes are protected"
+	elif [[ "$wal_state" == "changing" ]]; then
+		wal_reason="WAL changed during observation; active SQLite state is protected"
+	elif [[ "$holder_count" == "$STORAGE_UNKNOWN" || "$wal_state" == "$STORAGE_UNKNOWN" ]]; then
+		wal_reason="holder or WAL state is unavailable; active SQLite bytes are protected"
 	fi
 
 	_storage_emit_measured_record "opencode-active-db" "$STORAGE_PRODUCER_OPENCODE" "OpenCode active database" "$STORAGE_JOINT" \
 		"$active_class" "logical session retention is OpenCode-owned" "$active_disposition" "$active_reason" \
-		"$active_action" "$active_measure"
+		"Use aidevops opencode-db report; do not select sessions by age or size" "$active_measure"
 	_storage_emit_measured_record "opencode-active-wal" "$STORAGE_PRODUCER_OPENCODE" "OpenCode active WAL/SHM" "$STORAGE_JOINT" \
-		"$wal_class" "checkpoint and VACUUM only after idle-holder evidence" "$wal_disposition" "$wal_reason" \
-		"$wal_action" "$wal_measure"
+		"$STORAGE_ACTIVE" "checkpoint and VACUUM only after idle-holder evidence" "$STORAGE_PROTECTED" "$wal_reason" \
+		"Close OpenCode holders, then use aidevops opencode-db maintain" "$wal_measure"
 	_storage_emit_measured_record "opencode-archive" "aidevops-opencode-archive" "OpenCode archive database" "$STORAGE_JOINT" \
 		"$archive_class" "archive data is retained; no generic deletion contract" "$archive_disposition" "$archive_reason" \
-		"$archive_action" "$archive_measure"
+		"Inspect with aidevops opencode-db sessions --include-archive" "$archive_measure"
 	_storage_emit_measured_record "opencode-legacy" "$STORAGE_PRODUCER_OPENCODE" "OpenCode legacy storage" "$STORAGE_UNKNOWN" \
-		"$STORAGE_UNKNOWN" "legacy format lifecycle is owned upstream" "$STORAGE_UNKNOWN" "$legacy_reason" \
-		"$legacy_action" "$legacy_measure"
+		"$STORAGE_UNKNOWN" "legacy format lifecycle is owned upstream" "$STORAGE_UNKNOWN" "legacy format ownership or migration state is unproved" \
+		"Use an upstream OpenCode migration/export path; leave data untouched" "$legacy_measure"
 	_storage_emit_measured_record "opencode-tool-output" "$STORAGE_PRODUCER_OPENCODE" "OpenCode tool output" "$STORAGE_UNKNOWN" \
-		"$STORAGE_UNKNOWN" "tool-output lifecycle is owned upstream" "$STORAGE_UNKNOWN" "$tool_reason" \
-		"$tool_action" "$tool_measure"
+		"$STORAGE_UNKNOWN" "tool-output lifecycle is owned upstream" "$STORAGE_UNKNOWN" "tool output may be referenced by logical sessions" \
+		"Use OpenCode-owned controls; no aidevops cleanup is available" "$tool_measure"
 	_storage_emit_measured_record "opencode-unclassified" "$STORAGE_PRODUCER_OPENCODE" "Other OpenCode application data" "$STORAGE_UNKNOWN" \
-		"$STORAGE_UNKNOWN" "future and unclassified formats fail closed" "$STORAGE_UNKNOWN" "$residual_reason" \
-		"$residual_action" "$residual_measure"
+		"$STORAGE_UNKNOWN" "future and unclassified formats fail closed" "$STORAGE_UNKNOWN" "unclassified OpenCode bytes have no proved mutation contract" \
+		"Review with current OpenCode documentation and leave untouched" "$residual_measure"
 	return 0
 }
 
