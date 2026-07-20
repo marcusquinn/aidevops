@@ -27,6 +27,20 @@ fi
 
   assert.equal(state.recovery?.status, "recovering");
   assert.equal(state.recovery?.remaining, "Verify checkpoint recovery");
+
+  for (const [name, payload] of [
+    ["null", null],
+    ["array", [{ status: "recovering" }]],
+    ["primitive", "recovering"],
+    ["inactive", { status: "none" }],
+  ]) {
+    const ignoredGuard = createSessionContinuationGuard({
+      repository,
+      checkpointAdapter: { load: () => payload },
+    });
+    const ignoredState = ignoredGuard.getState({ sessionID: `ignored-${name}` });
+    assert.equal(ignoredState.recovery, null, `${name} checkpoint payload should be ignored`);
+  }
 } finally {
   rmSync(fixtureDir, { recursive: true, force: true });
 }
