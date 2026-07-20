@@ -1186,6 +1186,166 @@ test_worker_worktree_claim_reclaims_dispatch_precreate_owner() {
 	return 0
 }
 
+test_worker_worktree_claim_transfers_dispatch_precreate_task_state() {
+	local state_kind="" worktree_dir="" expected_head="" actual_head=""
+	local preserved_status="" ahead_count="" owner_created_at="" transfer_args=""
+	local live_pid="$$" claim_calls=0 transfer_calls=0 unregister_calls=0 status=0
+
+	claim_worktree_ownership() {
+		local claim_path="$1"
+		local claim_branch="$2"
+		shift 2
+		claim_calls=$((claim_calls + 1))
+		[[ -n "$claim_path" && -n "$claim_branch" ]] || return 1
+		[[ "$claim_calls" -gt 1 ]] && return 0
+		return 1
+	}
+	check_worktree_owner() {
+		local check_path="$1"
+		[[ -n "$check_path" ]] || return 1
+		printf '%s|%s|%s|%s|%s\n' "$live_pid" "dispatch-precreate-22438" "batch-7" "22438" "$owner_created_at"
+		return 0
+	}
+	unregister_worktree() {
+		local unregister_path="$1"
+		[[ -n "$unregister_path" ]] || return 1
+		unregister_calls=$((unregister_calls + 1))
+		return 0
+	}
+	transfer_worktree_ownership_if_expected() {
+		local transfer_path="$1"
+		local transfer_branch="$2"
+		shift 2
+		[[ -n "$transfer_path" && -n "$transfer_branch" ]] || return 1
+		transfer_calls=$((transfer_calls + 1))
+		transfer_args="$*"
+		return 0
+	}
+
+	for state_kind in dirty ahead; do
+		worktree_dir="${TEST_ROOT}/claim-dispatch-precreate-${state_kind}"
+		mkdir -p "$worktree_dir"
+		init_git_worktree "$worktree_dir"
+		expected_head=$(git -C "$worktree_dir" rev-parse HEAD)
+		if [[ "$state_kind" == "dirty" ]]; then
+			printf 'preserve me\n' >"${worktree_dir}/precreate-task-state.txt"
+			owner_created_at="2026-07-18T00:00:05Z"
+		else
+			git -C "$worktree_dir" -c user.name="aidevops-test" -c user.email="aidevops-test@example.invalid" \
+				commit --allow-empty -q -m "precreate checkpoint"
+			expected_head=$(git -C "$worktree_dir" rev-parse HEAD)
+			owner_created_at="2026-07-18T00:00:06Z"
+		fi
+
+		export WORKER_ISSUE_NUMBER="22438"
+		claim_calls=0
+		transfer_calls=0
+		unregister_calls=0
+		transfer_args=""
+		status=0
+		_hrw_claim_worker_worktree "issue-22438" "$worktree_dir" >/dev/null || status=$?
+		preserved_status=$(git -C "$worktree_dir" status --porcelain 2>/dev/null || true)
+		actual_head=$(git -C "$worktree_dir" rev-parse HEAD 2>/dev/null || true)
+		ahead_count=$(git -C "$worktree_dir" rev-list --count origin/main..HEAD 2>/dev/null || true)
+
+		local state_preserved=0
+		if [[ "$state_kind" == "dirty" && "$preserved_status" == *"precreate-task-state.txt"* &&
+			"$actual_head" == "$expected_head" && "$ahead_count" == "0" ]]; then
+			state_preserved=1
+		elif [[ "$state_kind" == "ahead" && -z "$preserved_status" &&
+			"$actual_head" == "$expected_head" && "$ahead_count" == "1" ]]; then
+			state_preserved=1
+		fi
+
+		if [[ "$status" -eq 0 && "$claim_calls" -eq 2 && "$transfer_calls" -eq 1 &&
+			"$unregister_calls" -eq 0 && "$state_preserved" -eq 1 &&
+			"$transfer_args" == *"--expected-session dispatch-precreate-22438"* &&
+			"$transfer_args" == *"--expected-batch batch-7"* &&
+			"$transfer_args" == *"--expected-task 22438"* ]]; then
+			print_result "${state_kind} dispatch-precreate state transfers atomically without data loss" 0
+		else
+			print_result "${state_kind} dispatch-precreate state transfers atomically without data loss" 1 \
+				"status=$status claims=$claim_calls transfers=$transfer_calls unregisters=$unregister_calls preserved=$state_preserved args=${transfer_args:-<empty>}"
+		fi
+	done
+
+	unset -f claim_worktree_ownership check_worktree_owner unregister_worktree \
+		transfer_worktree_ownership_if_expected 2>/dev/null || true
+	unset WORKER_ISSUE_NUMBER _WORKER_PRELAUNCH_FAILURE_REASON 2>/dev/null || true
+	return 0
+}
+
+test_worker_worktree_claim_rejects_dispatch_precreate_task_mismatch() {
+	local worktree_dir="${TEST_ROOT}/claim-dispatch-precreate-task-mismatch"
+	mkdir -p "$worktree_dir"
+	export WORKER_ISSUE_NUMBER="22438"
+	local live_pid="$$" transfer_calls=0
+
+	claim_worktree_ownership() {
+		return 1
+	}
+	check_worktree_owner() {
+		local check_path="$1"
+		[[ -n "$check_path" ]] || return 1
+		printf '%s|%s|%s|%s|%s\n' "$live_pid" "dispatch-precreate-99999" "batch-7" "99999" "2026-07-18T00:00:10Z"
+		return 0
+	}
+	transfer_worktree_ownership_if_expected() {
+		transfer_calls=$((transfer_calls + 1))
+		return 0
+	}
+
+	local status=0 reason=""
+	_hrw_claim_worker_worktree "issue-22438" "$worktree_dir" >/dev/null 2>&1 || status=$?
+	reason="${_WORKER_PRELAUNCH_FAILURE_REASON:-}"
+	unset -f claim_worktree_ownership check_worktree_owner transfer_worktree_ownership_if_expected 2>/dev/null || true
+	unset WORKER_ISSUE_NUMBER _WORKER_PRELAUNCH_FAILURE_REASON 2>/dev/null || true
+
+	if [[ "$status" -ne 0 && "$transfer_calls" -eq 0 && "$reason" == "worker_worktree_live_owner" ]]; then
+		print_result "dispatch-precreate transfer rejects a different task owner" 0
+		return 0
+	fi
+	print_result "dispatch-precreate transfer rejects a different task owner" 1 \
+		"status=$status transfer_calls=$transfer_calls reason=${reason:-<empty>}"
+	return 0
+}
+
+test_worker_worktree_claim_classifies_dispatch_precreate_concurrent_mutation() {
+	local worktree_dir="${TEST_ROOT}/claim-dispatch-precreate-concurrent-mutation"
+	mkdir -p "$worktree_dir"
+	export WORKER_ISSUE_NUMBER="22438"
+	local live_pid="$$" transfer_calls=0
+
+	claim_worktree_ownership() {
+		return 1
+	}
+	check_worktree_owner() {
+		local check_path="$1"
+		[[ -n "$check_path" ]] || return 1
+		printf '%s|%s|%s|%s|%s\n' "$live_pid" "dispatch-precreate-22438" "batch-7" "22438" "2026-07-18T00:00:11Z"
+		return 0
+	}
+	transfer_worktree_ownership_if_expected() {
+		transfer_calls=$((transfer_calls + 1))
+		return 1
+	}
+
+	local status=0 reason=""
+	_hrw_claim_worker_worktree "issue-22438" "$worktree_dir" >/dev/null 2>&1 || status=$?
+	reason="${_WORKER_PRELAUNCH_FAILURE_REASON:-}"
+	unset -f claim_worktree_ownership check_worktree_owner transfer_worktree_ownership_if_expected 2>/dev/null || true
+	unset WORKER_ISSUE_NUMBER _WORKER_PRELAUNCH_FAILURE_REASON 2>/dev/null || true
+
+	if [[ "$status" -ne 0 && "$transfer_calls" -eq 1 &&
+		"$reason" == "worker_worktree_owner_concurrent_mutation" ]]; then
+		print_result "dispatch-precreate transfer rejects concurrent owner mutation" 0
+		return 0
+	fi
+	print_result "dispatch-precreate transfer rejects concurrent owner mutation" 1 \
+		"status=$status transfer_calls=$transfer_calls reason=${reason:-<empty>}"
+	return 0
+}
+
 set_continuation_transfer_env() {
 	local owner_pid="$1"
 	local owner_session="$2"
@@ -4685,6 +4845,9 @@ run_worker_worktree_ownership_tests() {
 	test_worker_worktree_claim_transfers_to_runtime_pid
 	test_worker_worktree_claim_reclaims_stale_live_same_task_owner
 	test_worker_worktree_claim_reclaims_dispatch_precreate_owner
+	test_worker_worktree_claim_transfers_dispatch_precreate_task_state
+	test_worker_worktree_claim_rejects_dispatch_precreate_task_mismatch
+	test_worker_worktree_claim_classifies_dispatch_precreate_concurrent_mutation
 	test_worker_worktree_continuation_transfers_dirty_same_task_owner
 	test_worker_worktree_continuation_transfers_ahead_same_task_owner
 	test_worker_worktree_continuation_classifies_task_mismatch

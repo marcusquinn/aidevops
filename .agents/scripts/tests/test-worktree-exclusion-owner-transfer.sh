@@ -187,13 +187,17 @@ test_legacy_marker_allows_safe_owner_transfer() {
 	export WORKER_ISSUE_NUMBER="27164"
 	local claim_calls=0
 	local unregister_calls=0
+	local transfer_calls=0
 	claim_worktree_ownership() {
 		local claim_path="$1"
 		local claim_branch="$2"
 		shift 2
 		claim_calls=$((claim_calls + 1))
 		[[ -n "$claim_path" && -n "$claim_branch" ]] || return 1
-		[[ "$claim_calls" -gt 1 ]]
+		if [[ "$claim_calls" -gt 1 ]]; then
+			return 0
+		fi
+		return 1
 	}
 	check_worktree_owner() {
 		local check_path="$1"
@@ -207,18 +211,26 @@ test_legacy_marker_allows_safe_owner_transfer() {
 		unregister_calls=$((unregister_calls + 1))
 		return 0
 	}
+	transfer_worktree_ownership_if_expected() {
+		local transfer_path="$1"
+		local transfer_branch="$2"
+		[[ -n "$transfer_path" && -n "$transfer_branch" ]] || return 1
+		transfer_calls=$((transfer_calls + 1))
+		return 0
+	}
 
 	local result=0
 	_hrw_claim_worker_worktree "issue-27164" "$FIXTURE_WORKTREE" >/dev/null || result=1
 	local status_output=""
 	status_output=$(git -C "$FIXTURE_WORKTREE" status --porcelain)
-	if [[ "$claim_calls" -ne 2 || "$unregister_calls" -ne 1 || -n "$status_output" ]]; then
+	if [[ "$claim_calls" -ne 2 || "$transfer_calls" -ne 1 || "$unregister_calls" -ne 0 || -n "$status_output" ]]; then
 		result=1
 	fi
-	unset -f claim_worktree_ownership check_worktree_owner unregister_worktree
+	unset -f claim_worktree_ownership check_worktree_owner unregister_worktree \
+		transfer_worktree_ownership_if_expected
 	unset WORKER_ISSUE_NUMBER
 	print_result "legacy marker is healed before dispatch ownership transfer" "$result" \
-		"claims=${claim_calls} unregisters=${unregister_calls} status=${status_output:-<clean>}"
+		"claims=${claim_calls} transfers=${transfer_calls} unregisters=${unregister_calls} status=${status_output:-<clean>}"
 	return 0
 }
 
