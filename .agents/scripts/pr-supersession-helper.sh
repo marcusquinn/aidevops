@@ -107,6 +107,12 @@ _psh_delete_temp_refs() {
 	return 0
 }
 
+_psh_cleanup_temp_refs() {
+	# Bash's dynamic scope exposes the caller's local values to RETURN cleanup.
+	_psh_delete_temp_refs "$repo_path" "$ref_prefix"
+	return 0
+}
+
 _psh_diff_files_json() {
 	local repo_path="$1"
 	local base_ref="$2"
@@ -130,6 +136,9 @@ _psh_diff_files_json() {
 			return 1
 		}
 		ref_prefix="refs/aidevops/pr-supersession/${pr_number}-$$"
+		_save_cleanup_scope
+		trap '_run_cleanups' RETURN
+		push_cleanup _psh_cleanup_temp_refs
 		if ! git -C "$repo_path" fetch --quiet origin \
 			"+refs/heads/${base_ref}:${ref_prefix}/base" 2>/dev/null; then
 			_psh_delete_temp_refs "$repo_path" "$ref_prefix"

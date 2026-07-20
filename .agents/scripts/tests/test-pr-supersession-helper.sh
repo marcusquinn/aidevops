@@ -185,6 +185,16 @@ got=$(classify_fixture "$pr_needed" "${ROOT}/missing-repository")
 	&& print_result "unavailable git comparison is unknown, never an empty diff" 0 \
 	|| print_result "unavailable git comparison is unknown, never an empty diff" 1 "got=$got"
 
+cleanup_contract=$(bash -c 'source "$1"; declare -f _psh_diff_files_json' _ "$HELPER")
+if [[ "$cleanup_contract" == *"_save_cleanup_scope"* \
+	&& "$cleanup_contract" == *"trap '_run_cleanups' RETURN"* \
+	&& "$cleanup_contract" == *"push_cleanup _psh_cleanup_temp_refs"* \
+	&& "$cleanup_contract" == *"_psh_delete_temp_refs \"\$repo_path\" \"\$ref_prefix\""* ]]; then
+	print_result "temporary PR refs have return-trap and fast-path cleanup" 0
+else
+	print_result "temporary PR refs have return-trap and fast-path cleanup" 1 "cleanup contract missing"
+fi
+
 if [[ "$TESTS_FAILED" -eq 0 ]]; then
 	printf '\nAll %s pr-supersession tests passed.\n' "$TESTS_RUN"
 	exit 0
