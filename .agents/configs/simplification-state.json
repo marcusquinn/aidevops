@@ -2298,9 +2298,9 @@
       "pr": 13021
     },
     ".agents/scripts/headless-runtime-helper.sh": {
-      "at": "2026-07-20T14:35:13Z",
-      "hash": "28751100fc4d72e849e2ba54963686f1be8fe831",
-      "passes": 71,
+      "at": "2026-07-20T18:20:07Z",
+      "hash": "75ec6ccb98415dc106516a3e311e5bf5fa97c68d",
+      "passes": 72,
       "pr": 15086
     },
     ".agents/scripts/headless-runtime-lib.sh": {
@@ -2442,9 +2442,9 @@
       "pr": 18690
     },
     ".agents/scripts/pulse-merge.sh": {
-      "at": "2026-07-20T04:18:19Z",
-      "hash": "57b647e9bfabee9138357a67cde63d5a8623bff5",
-      "passes": 69,
+      "at": "2026-07-20T18:20:10Z",
+      "hash": "01702fe1bc01f61c354fa54ac5019c823e332754",
+      "passes": 70,
       "pr": 18829
     },
     ".agents/scripts/pulse-prefetch.sh": {
@@ -4050,9 +4050,9 @@
       "pr": 11804
     },
     ".agents/services/hosting/local-hosting.md": {
-      "at": "2026-07-18T16:08:47Z",
-      "hash": "4c432e7d4079d63e0223349aba1e55a64599e746",
-      "passes": 2,
+      "at": "2026-07-20T18:20:29Z",
+      "hash": "16f3be461b2a8a6be4999572e519eb2d9a6ee0a7",
+      "passes": 3,
       "pr": 12026
     },
     ".agents/services/hosting/proxmox-full-skill.md": {
@@ -7486,15 +7486,15 @@
       "pr": 15490
     },
     "aidevops.sh": {
-      "at": "2026-07-20T15:44:49Z",
-      "hash": "c2c4990a0225a33f3afa62cd45ee9beba005474c",
-      "passes": 282,
+      "at": "2026-07-20T18:21:02Z",
+      "hash": "8554f77d3ea7a83c6c325d9512b1cdf6d050add5",
+      "passes": 283,
       "pr": 19029
     },
     "setup.sh": {
-      "at": "2026-07-20T15:44:49Z",
-      "hash": "3f8f8530161eb7e0fbf6921b40fc44f5426f868f",
-      "passes": 278,
+      "at": "2026-07-20T18:21:02Z",
+      "hash": "d4afb7475be86a008aa8fb6aab06dade6ffb5d42",
+      "passes": 279,
       "pr": 15470
     },
     "todo/tasks/GH#15363-brief.md": {
