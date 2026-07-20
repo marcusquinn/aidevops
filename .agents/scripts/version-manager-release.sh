@@ -358,6 +358,7 @@ validate_release_deployment_readiness() {
 run_post_release_agent_sync() {
 	local sync_repo_root="${AIDEVOPS_SYNC_REPO_ROOT:-$REPO_ROOT}"
 	local remote_url
+	local release_sha=""
 	remote_url=$(git -C "$sync_repo_root" remote get-url origin 2>/dev/null || echo "")
 
 	if [[ "$remote_url" != *"marcusquinn/aidevops"* ]]; then
@@ -380,6 +381,10 @@ run_post_release_agent_sync() {
 		return 1
 	fi
 	validate_release_deployment_readiness || return 1
+	release_sha=$(git -C "$sync_repo_root" rev-parse HEAD 2>/dev/null) || {
+		print_error "Post-release deployment gate cannot resolve the release checkout commit"
+		return 1
+	}
 
 	print_info "Running post-release aidevops agent sync..."
 	local sync_output=""
@@ -388,13 +393,21 @@ run_post_release_agent_sync() {
 		AIDEVOPS_DEPLOY_TARGET="$HOME/.aidevops/agents" \
 		bash "$deploy_script" "${deploy_args[@]}" 2>&1) || sync_exit=$?
 
-	if [[ "$sync_exit" -eq 0 ]]; then
-		print_success "Post-release aidevops deployment and CLI convergence completed"
-		return 0
+	if [[ "$sync_exit" -ne 0 ]]; then
+		print_error "Post-release aidevops deployment or CLI convergence failed: $sync_output"
+		return 1
+	fi
+	if ! verify_aidevops_runtime_bundle_convergence \
+		"$sync_repo_root" \
+		"$release_sha" \
+		"$HOME/.aidevops/agents" \
+		"$HOME/.aidevops/.deployed-sha"; then
+		print_error "Post-release deployment helper exited successfully, but runtime bundle provenance did not converge"
+		return 1
 	fi
 
-	print_error "Post-release aidevops deployment or CLI convergence failed: $sync_output"
-	return 1
+	print_success "Post-release aidevops deployment and CLI convergence completed"
+	return 0
 }
 
 run_post_publication_gates() {

@@ -122,10 +122,26 @@ if [[ -d "$SETUP_MODULES_DIR" ]]; then
 	source "$SETUP_MODULES_DIR/_worktree_exclusions.sh"
 fi
 
-print_info() { local _m="$1"; echo -e "${BLUE}[INFO]${NC} $_m"; return 0; }
-print_success() { local _m="$1"; echo -e "${GREEN}[SUCCESS]${NC} $_m"; return 0; }
-print_warning() { local _m="$1"; echo -e "${YELLOW}[WARNING]${NC} $_m"; return 0; }
-print_error() { local _m="$1"; echo -e "${RED}[ERROR]${NC} $_m"; return 0; }
+print_info() {
+	local _m="$1"
+	echo -e "${BLUE}[INFO]${NC} $_m"
+	return 0
+}
+print_success() {
+	local _m="$1"
+	echo -e "${GREEN}[SUCCESS]${NC} $_m"
+	return 0
+}
+print_warning() {
+	local _m="$1"
+	echo -e "${YELLOW}[WARNING]${NC} $_m"
+	return 0
+}
+print_error() {
+	local _m="$1"
+	echo -e "${RED}[ERROR]${NC} $_m"
+	return 0
+}
 
 # Source shared-constants for config support (is_feature_enabled / config_enabled)
 # Try repo-local first, then deployed location
@@ -333,6 +349,8 @@ unset _setup_script_dir
 # helpers loaded early by the root entrypoint; normal setup implementation
 # modules live under modules/ so the repository root has no module directory.
 SETUP_IMPL_MODULES_DIR="${SETUP_MODULES_DIR}/modules"
+# shellcheck source=.agents/scripts/runtime-bundle-verifier.sh
+source "${INSTALL_DIR}/.agents/scripts/runtime-bundle-verifier.sh"
 # shellcheck disable=SC1091  # Dynamic path via $SETUP_IMPL_MODULES_DIR
 source "${SETUP_IMPL_MODULES_DIR}/core.sh"
 # shellcheck disable=SC1091
@@ -802,7 +820,7 @@ _setup_lock_pid_is_noninteractive_setup() {
 	[[ "$pid" =~ ^[0-9]+$ ]] || return 1
 	owner_args=$(ps -p "$pid" -o args= 2>/dev/null || true)
 	[[ -n "$owner_args" ]] || return 0
-	[[ "$owner_args" == *"setup.sh"* && ( "$owner_args" == *"--non-interactive"* || "$owner_args" == *"--stage"* ) ]]
+	[[ "$owner_args" == *"setup.sh"* && ("$owner_args" == *"--non-interactive"* || "$owner_args" == *"--stage"*) ]]
 	return $?
 }
 
@@ -837,7 +855,7 @@ _setup_lock_started_age_seconds() {
 	local now_epoch=""
 	if [[ -r "$lock_dir/started_at" ]]; then
 		started_str=$(tr -d '[:space:]' <"$lock_dir/started_at" 2>/dev/null || true)
-		started_epoch=$(date -d "$started_str" +%s 2>/dev/null || \
+		started_epoch=$(date -d "$started_str" +%s 2>/dev/null ||
 			date -u -jf '%Y-%m-%dT%H:%M:%SZ' "$started_str" +%s 2>/dev/null || true)
 		now_epoch=$(date +%s 2>/dev/null || true)
 		if [[ "$started_epoch" =~ ^[0-9]+$ && "$now_epoch" =~ ^[0-9]+$ && "$now_epoch" -ge "$started_epoch" ]]; then
@@ -954,7 +972,7 @@ _setup_run_noncritical_stage_bounded() {
 	pid=$!
 	_setup_register_child_pid "$pid"
 	while _setup_lock_pid_alive "$pid"; do
-		if (( SECONDS - start_s >= timeout_s )); then
+		if ((SECONDS - start_s >= timeout_s)); then
 			_setup_kill_pid_tree TERM "$pid"
 			sleep "${AIDEVOPS_SETUP_CHILD_TERM_GRACE_S:-2}" 2>/dev/null || true
 			_setup_kill_pid_tree KILL "$pid"
@@ -1032,9 +1050,9 @@ _setup_command_key_looks_secret() {
 	key="${key#--}"
 	key="${key#-}"
 	case "$key" in
-		*password*|*passwd*|*secret*|*token*|*credential*|*api-key*|*api_key*|*apikey*|*access-key*|*access_key*|*private-key*|*private_key*|bearer)
-			return 0
-			;;
+	*password* | *passwd* | *secret* | *token* | *credential* | *api-key* | *api_key* | *apikey* | *access-key* | *access_key* | *private-key* | *private_key* | bearer)
+		return 0
+		;;
 	esac
 	return 1
 }
@@ -1177,7 +1195,7 @@ _setup_acquire_noninteractive_setup_lock() {
 		# Emit diagnostics on first block and every diagnostic interval thereafter.
 		if [[ "$waited" -eq 0 ]]; then
 			print_info "Another setup.sh --non-interactive is running (pid ${owner_pid}, age ${owner_age}s${_diag_stage}${owner_cmd:+, command: ${owner_cmd}}). Waiting up to ${wait_ceiling}s (AIDEVOPS_SETUP_WAIT_TIMEOUT_S). Diagnose: ${_diag_stl}"
-		elif [[ $(( waited % _diag_interval_s )) -eq 0 ]]; then
+		elif [[ $((waited % _diag_interval_s)) -eq 0 ]]; then
 			print_info "Still waiting for setup lock (owner pid ${owner_pid}, age ${owner_age}s${_diag_stage}${owner_cmd:+, command: ${owner_cmd}}, waited ${waited}s of ${wait_ceiling}s max). Diagnose: ${_diag_stl}"
 		fi
 
@@ -1331,68 +1349,14 @@ _setup_git_checkout_available() {
 	return 0
 }
 
-_setup_bundle_manifest_value() {
-	local manifest_file="$1"
-	local key="$2"
-	local value=""
-	value=$(grep -m 1 "^${key}=" "$manifest_file" 2>/dev/null) || return 1
-	printf '%s' "${value#*=}"
-	return 0
-}
-
 _setup_ai_session_verify_deploy() {
 	local expected_sha="$1"
-	local active_link="$HOME/.aidevops/agents"
-	local active_root=""
-	local manifest_file=""
-	local manifest_status=""
-	local manifest_version=""
-	local manifest_sha=""
-	local repo_version=""
-	local deployed_version=""
-	local deployed_sha=""
-
-	if [[ ! -L "$active_link" ]]; then
-		print_warning "AI-session incremental verification failed: active agents path is not an activation symlink"
-		return 1
-	fi
-	active_root=$(resolve_aidevops_runtime_bundle_root "$active_link") || {
-		print_warning "AI-session incremental verification failed: active agents symlink cannot be resolved"
-		return 1
-	}
-	manifest_file="$active_root/.bundle-manifest"
-	if [[ ! -r "$manifest_file" ]]; then
-		print_warning "AI-session incremental verification failed: active bundle manifest is missing"
-		return 1
-	fi
-	manifest_status=$(_setup_bundle_manifest_value "$manifest_file" status) || manifest_status=""
-	manifest_version=$(_setup_bundle_manifest_value "$manifest_file" framework_version) || manifest_version=""
-	manifest_sha=$(_setup_bundle_manifest_value "$manifest_file" git_sha) || manifest_sha=""
-
-	if [[ -f "$INSTALL_DIR/VERSION" ]]; then
-		repo_version=$(tr -d '[:space:]' <"$INSTALL_DIR/VERSION" 2>/dev/null) || repo_version=""
-	fi
-	if [[ -f "$active_root/VERSION" ]]; then
-		deployed_version=$(tr -d '[:space:]' <"$active_root/VERSION" 2>/dev/null) || deployed_version=""
-	fi
-	if [[ -f "$HOME/.aidevops/.deployed-sha" ]]; then
-		deployed_sha=$(tr -d '[:space:]' <"$HOME/.aidevops/.deployed-sha" 2>/dev/null) || deployed_sha=""
-	fi
-
-	if [[ "$manifest_status" != "validated" ]]; then
-		print_warning "AI-session incremental verification failed: active bundle manifest status=${manifest_status:-missing}"
-		return 1
-	fi
-	if [[ -z "$repo_version" || "$repo_version" != "$deployed_version" || "$repo_version" != "$manifest_version" ]]; then
-		print_warning "AI-session incremental verification failed: repo version=${repo_version:-unknown}, active=${deployed_version:-none}, manifest=${manifest_version:-none}"
-		return 1
-	fi
-	if [[ -z "$deployed_sha" || "$deployed_sha" != "$expected_sha" || "$manifest_sha" != "$expected_sha" ]]; then
-		print_warning "AI-session incremental verification failed: stamp SHA=${deployed_sha:-none}, manifest SHA=${manifest_sha:-none}, expected=${expected_sha:0:12}"
-		return 1
-	fi
-
-	return 0
+	verify_aidevops_runtime_bundle_convergence \
+		"$INSTALL_DIR" \
+		"$expected_sha" \
+		"$HOME/.aidevops/agents" \
+		"$HOME/.aidevops/.deployed-sha"
+	return $?
 }
 
 _setup_run_ai_session_incremental() {
@@ -1543,7 +1507,8 @@ _setup_run_non_interactive() {
 	_time_step "backfill_issue_relationships" backfill_issue_relationships
 	_time_step "cleanup_deprecated_mcps" cleanup_deprecated_mcps
 	_time_step "cleanup_stale_bun_opencode" cleanup_stale_bun_opencode
-	_time_step "cleanup_stale_health_issue_caches" cleanup_stale_health_issue_caches; _time_step "cleanup_legacy_aidevops_temp_artifacts" cleanup_legacy_aidevops_temp_artifacts
+	_time_step "cleanup_stale_health_issue_caches" cleanup_stale_health_issue_caches
+	_time_step "cleanup_legacy_aidevops_temp_artifacts" cleanup_legacy_aidevops_temp_artifacts
 	_time_step "cleanup_worktree_entries_in_repos_json" cleanup_worktree_entries_in_repos_json
 	_time_step "_cleanup_legacy_model_config" _cleanup_legacy_model_config
 	_time_step "cleanup_legacy_dashboard_launchagent" cleanup_legacy_dashboard_launchagent
@@ -1719,11 +1684,18 @@ _setup_run_interactive() {
 	confirm_step "Cleanup deprecated MCP entries (hetzner, serper, etc.)" && cleanup_deprecated_mcps
 	confirm_step "Cleanup stale bun opencode install" && cleanup_stale_bun_opencode
 	# Silent one-shot migrations (idempotent, flag-guarded — no prompt needed).
-	cleanup_stale_health_issue_caches; cleanup_legacy_aidevops_temp_artifacts; cleanup_worktree_entries_in_repos_json; _cleanup_legacy_model_config; cleanup_legacy_dashboard_launchagent
+	cleanup_stale_health_issue_caches
+	cleanup_legacy_aidevops_temp_artifacts
+	cleanup_worktree_entries_in_repos_json
+	_cleanup_legacy_model_config
+	cleanup_legacy_dashboard_launchagent
 	confirm_step "Validate and repair OpenCode config schema" && validate_opencode_config
 	confirm_step "Extract OpenCode prompts" && extract_opencode_prompts
 	confirm_step "Check OpenCode prompt drift" && check_opencode_prompt_drift
-	confirm_step "Deploy aidevops agents to ~/.aidevops/agents/" && { deploy_aidevops_agents; _deploy_hotfix_config; }
+	confirm_step "Deploy aidevops agents to ~/.aidevops/agents/" && {
+		deploy_aidevops_agents
+		_deploy_hotfix_config
+	}
 	# Launcher verification reads the deployed VERSION, so it must follow agent
 	# deployment on first-run interactive setup as it already does non-interactively.
 	confirm_step "Install and verify aidevops CLI command" && install_aidevops_cli
