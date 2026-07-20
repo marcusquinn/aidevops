@@ -2442,9 +2442,9 @@
       "pr": 18690
     },
     ".agents/scripts/pulse-merge.sh": {
-      "at": "2026-07-20T18:20:10Z",
-      "hash": "01702fe1bc01f61c354fa54ac5019c823e332754",
-      "passes": 70,
+      "at": "2026-07-20T19:27:34Z",
+      "hash": "7c262f4e12b6296da2c122c97f804f62e96a7411",
+      "passes": 71,
       "pr": 18829
     },
     ".agents/scripts/pulse-prefetch.sh": {
@@ -7606,10 +7606,10 @@
       "passes": 2
     },
     ".agents/scripts/pulse-merge-feedback.sh": {
-      "hash": "de6bf5b31605ab2f3e6f2978d6e5848f3a575c44",
-      "at": "2026-07-18T15:46:20Z",
+      "hash": "2c02006c622681420d05bdc14cea392985c1e6b6",
+      "at": "2026-07-20T19:27:33Z",
       "pr": 20057,
-      "passes": 21
+      "passes": 22
     },
     ".agents/reference/hot-deploy.md": {
       "hash": "3a66b934462bb8f144f83d2522d569068d4898d1",
@@ -7642,10 +7642,10 @@
       "passes": 5
     },
     ".agents/scripts/pulse-merge-conflict.sh": {
-      "hash": "00705d00e17d9c58d7c47ba4a2b23e7087f0e6f1",
-      "at": "2026-07-18T15:46:15Z",
+      "hash": "ac588059922ead6ab30f941678641ef14a9524e7",
+      "at": "2026-07-20T19:27:33Z",
       "pr": 20060,
-      "passes": 13
+      "passes": 14
     },
     ".agents/reference/review-bot-gate.md": {
       "hash": "1896a19b58322dcc8e6557c46b9a778851b49871",
@@ -7966,10 +7966,10 @@
       "passes": 5
     },
     ".agents/scripts/tests/test-gh-wrapper-rest-fallback.sh": {
-      "hash": "7f770290d756b118447334b0aebb3b4a1762e6e7",
-      "at": "2026-07-19T02:53:29Z",
+      "hash": "e7f3dbb333f493b684d88fdc8d499ee16fac44f8",
+      "at": "2026-07-20T19:27:39Z",
       "pr": 25929,
-      "passes": 4
+      "passes": 5
     },
     ".agents/scripts/tests/test-launchd-install-if-changed.sh": {
       "hash": "ac88f853d1ca8f2370f410e1b260704a2ecb2b7d",
