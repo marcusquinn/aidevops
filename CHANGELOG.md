@@ -10,6 +10,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.32.159] - 2026-07-20
+
+### Changed
+
+- Tests: configure convergence fixture remote with git (#28342)
+- Documentation: clarify WP-CLI precise mode (#28341)
+- Maintenance: update simplification state registry
+
+### Fixed
+
+- make canonical updates shim-safe (#28333)
+- archive OpenCode 1.18.3 session graph (#28332)
+- transfer dispatch precreate ownership atomically (#28331)
+
 ## [3.32.158] - 2026-07-20
 
 ### Changed
