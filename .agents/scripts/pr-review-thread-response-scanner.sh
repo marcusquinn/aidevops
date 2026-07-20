@@ -30,6 +30,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 LOGFILE="${LOGFILE:-${HOME}/.aidevops/logs/pr-review-thread-response-scanner.log}"
 STATE_DIR="${AIDEVOPS_PR_REVIEW_THREAD_RESPONSE_STATE_DIR:-${HOME}/.aidevops/.agent-workspace/pr-review-thread-response}"
 HEADLESS_RUNTIME_HELPER="${HEADLESS_RUNTIME_HELPER:-${SCRIPT_DIR}/headless-runtime-helper.sh}"
+PR_REVIEW_THREAD_RESPONSE_WORKTREE_HELPER="${PR_REVIEW_THREAD_RESPONSE_WORKTREE_HELPER:-${SCRIPT_DIR}/worktree-helper.sh}"
+PR_REVIEW_THREAD_RESPONSE_WORKTREE_BASE_DIR="${PR_REVIEW_THREAD_RESPONSE_WORKTREE_BASE_DIR:-${AIDEVOPS_WORKTREE_BASE_DIR:-${HOME}/Git/_worktrees}}"
 
 PR_REVIEW_THREAD_RESPONSE_PR_LIMIT="${PR_REVIEW_THREAD_RESPONSE_PR_LIMIT:-50}"
 PR_REVIEW_THREAD_RESPONSE_MAX_PER_REPO="${PR_REVIEW_THREAD_RESPONSE_MAX_PER_REPO:-2}"
@@ -145,8 +147,8 @@ _prrts_state_value_line() {
 _prrts_normalise_blocked_by() {
 	local blocked_by="$1"
 	case "$blocked_by" in
-		maintainer|infrastructure|decision|code|none) printf '%s\n' "$blocked_by" ;;
-		*) printf 'decision\n' ;;
+	maintainer | infrastructure | decision | code | none) printf '%s\n' "$blocked_by" ;;
+	*) printf 'decision\n' ;;
 	esac
 	return 0
 }
@@ -1032,6 +1034,72 @@ PROMPT_EOF
 	return 0
 }
 
+_prrts_worktree_path_for_branch() {
+	local repo_path="$1"
+	local head_ref="$2"
+	local line="" worktree_path=""
+
+	while IFS= read -r line || [[ -n "$line" ]]; do
+		case "$line" in
+		"worktree "*) worktree_path="${line#worktree }" ;;
+		"branch refs/heads/${head_ref}")
+			[[ -n "$worktree_path" ]] || return 1
+			printf '%s' "$worktree_path"
+			return 0
+			;;
+		"") worktree_path="" ;;
+		esac
+	done < <(git -C "$repo_path" worktree list --porcelain 2>/dev/null)
+	return 1
+}
+
+_prrts_prepare_worker_worktree() {
+	local repo_slug="$1"
+	local repo_path="$2"
+	local pr_number="$3"
+	local head_ref="$4"
+	local output_var="$5"
+	local existing_path="" repo_name="" safe_ref="" worktree_path="" resolved_path=""
+
+	[[ -n "$head_ref" ]] || {
+		_prrts_log "dispatch: ${repo_slug}#${pr_number} skipped — PR head branch is unavailable"
+		return 1
+	}
+	if existing_path="$(_prrts_worktree_path_for_branch "$repo_path" "$head_ref")" && [[ -d "$existing_path" ]]; then
+		if [[ "$(cd "$existing_path" 2>/dev/null && pwd -P)" == "$(cd "$repo_path" 2>/dev/null && pwd -P)" ]]; then
+			_prrts_log "dispatch: ${repo_slug}#${pr_number} skipped — PR branch ${head_ref} is checked out in the canonical repository"
+			return 1
+		fi
+		printf -v "$output_var" '%s' "$existing_path"
+		return 0
+	fi
+
+	if [[ ! -x "$PR_REVIEW_THREAD_RESPONSE_WORKTREE_HELPER" ]]; then
+		_prrts_log "dispatch: worktree-helper missing or not executable: ${PR_REVIEW_THREAD_RESPONSE_WORKTREE_HELPER}"
+		return 1
+	fi
+	repo_name="$(basename "$repo_path")"
+	safe_ref="$(printf '%s' "$head_ref" | tr -c '[:alnum:].-' '-')"
+	worktree_path="${PR_REVIEW_THREAD_RESPONSE_WORKTREE_BASE_DIR}/${repo_name}-pr${pr_number}-review-${safe_ref}"
+	mkdir -p "$PR_REVIEW_THREAD_RESPONSE_WORKTREE_BASE_DIR" 2>/dev/null || return 1
+	if [[ -e "$worktree_path" ]]; then
+		_prrts_log "dispatch: ${repo_slug}#${pr_number} skipped — expected review worktree path already exists but is not registered (${worktree_path})"
+		return 1
+	fi
+	if ! (cd "$repo_path" && AIDEVOPS_SKIP_AUTO_CLAIM=1 AIDEVOPS_WORKTREE_BASE_DIR="$PR_REVIEW_THREAD_RESPONSE_WORKTREE_BASE_DIR" \
+		"$PR_REVIEW_THREAD_RESPONSE_WORKTREE_HELPER" add "$head_ref" "$worktree_path" --base "origin/${head_ref}") >>"$LOGFILE" 2>&1; then
+		_prrts_log "dispatch: ${repo_slug}#${pr_number} skipped — could not create linked worktree for ${head_ref}"
+		return 1
+	fi
+	resolved_path="$(_prrts_worktree_path_for_branch "$repo_path" "$head_ref")" || resolved_path="$worktree_path"
+	if [[ ! -d "$resolved_path" || "$(cd "$resolved_path" 2>/dev/null && pwd -P)" == "$(cd "$repo_path" 2>/dev/null && pwd -P)" ]]; then
+		_prrts_log "dispatch: ${repo_slug}#${pr_number} skipped — linked worktree verification failed for ${head_ref}"
+		return 1
+	fi
+	printf -v "$output_var" '%s' "$resolved_path"
+	return 0
+}
+
 _prrts_dispatch_worker() {
 	local repo_slug="$1"
 	local repo_path="$2"
@@ -1040,27 +1108,32 @@ _prrts_dispatch_worker() {
 	local thread_count="$5"
 	local fingerprint="$6"
 	local preview="$7"
-	local prompt_file="" session_key="" model=""
+	local head_ref="$8"
+	local prompt_file="" session_key="" model="" worker_worktree_path=""
 	local -a cmd
 
 	if [[ ! -x "$HEADLESS_RUNTIME_HELPER" ]]; then
 		_prrts_log "dispatch: headless-runtime-helper missing or not executable: ${HEADLESS_RUNTIME_HELPER}"
 		return 1
 	fi
-	prompt_file="$(_prrts_write_prompt_file "$repo_slug" "$repo_path" "$pr_number" "$title" "$thread_count" "$fingerprint" "$preview")"
+	if ! _prrts_prepare_worker_worktree "$repo_slug" "$repo_path" "$pr_number" "$head_ref" worker_worktree_path; then
+		return 1
+	fi
+	prompt_file="$(_prrts_write_prompt_file "$repo_slug" "$worker_worktree_path" "$pr_number" "$title" "$thread_count" "$fingerprint" "$preview")"
 	session_key="$(_prrts_session_key "$repo_slug" "$pr_number")"
 	cmd=("$HEADLESS_RUNTIME_HELPER" run
 		--role worker
 		--session-key "$session_key"
-		--dir "$repo_path"
+		--dir "$worker_worktree_path"
 		--title "PR #${pr_number}: review-thread response"
 		--prompt-file "$prompt_file")
 	model="$PR_REVIEW_THREAD_RESPONSE_MODEL"
 	if [[ -n "$model" ]]; then
 		cmd+=(--model "$model")
 	fi
-	"${cmd[@]}" </dev/null >>"$LOGFILE" 2>&1 &
-	_prrts_log "dispatch: launched response worker for ${repo_slug}#${pr_number} session_key=${session_key} pid=$!"
+	HEADLESS=1 WORKER_REPO_SLUG="$repo_slug" WORKER_WORKTREE_PATH="$worker_worktree_path" GITHUB_REPOSITORY="$repo_slug" \
+		"${cmd[@]}" </dev/null >>"$LOGFILE" 2>&1 &
+	_prrts_log "dispatch: launched response worker for ${repo_slug}#${pr_number} in ${worker_worktree_path} session_key=${session_key} pid=$!"
 	return 0
 }
 
@@ -1108,7 +1181,7 @@ _prrts_dispatch_guarded() {
 		_prrts_remove_lock_dir "$lock_dir"
 		return 0
 	fi
-	if ! _prrts_dispatch_worker "$repo_slug" "$repo_path" "$pr_number" "$title" "$thread_count" "$fingerprint" "$preview"; then
+	if ! _prrts_dispatch_worker "$repo_slug" "$repo_path" "$pr_number" "$title" "$thread_count" "$fingerprint" "$preview" "$head_ref"; then
 		_prrts_remove_lock_dir "$lock_dir"
 		return 1
 	fi
