@@ -1006,7 +1006,7 @@ _worker_post_pr_handoff_confirmed() {
 	[[ -n "$branch_name" && -n "$local_head" ]] || return 1
 	local handoff_state=""
 	handoff_state=$(_pr_handoff_state_for_branch_or_issue \
-		"$branch_name" "$issue_number" "$repo_slug" "head-only" "$local_head" "1")
+		"$branch_name" "$issue_number" "$repo_slug" "head-only" "$local_head" "1") || return 1
 	[[ "${handoff_state%%|*}" == "ready" ]]
 	return $?
 }
