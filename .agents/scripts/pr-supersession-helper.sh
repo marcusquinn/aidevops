@@ -109,6 +109,8 @@ _psh_delete_temp_refs() {
 
 _psh_cleanup_temp_refs() {
 	# Bash's dynamic scope exposes the caller's local values to RETURN cleanup.
+	local repo_path="${1:-${repo_path:-}}"
+	local ref_prefix="${2:-${ref_prefix:-}}"
 	_psh_delete_temp_refs "$repo_path" "$ref_prefix"
 	return 0
 }
