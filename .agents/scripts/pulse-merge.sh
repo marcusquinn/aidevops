@@ -143,6 +143,25 @@ _pulse_merge_maybe_dispatch_review_thread_remediation() {
 	return 0
 }
 
+_pulse_merge_maybe_dispatch_preflight_remediation() {
+	local pr_number="$1"
+	local repo_slug="$2"
+	local blocker_kind="${_PULSE_MERGE_PREFLIGHT_BLOCKER_KIND:-}"
+	local reason=""
+
+	# Consume the marker before any dispatch attempt so a failed or deduplicated
+	# repair cannot leak into an unrelated later final-gate failure.
+	_PULSE_MERGE_PREFLIGHT_BLOCKER_KIND=""
+	[[ "${DRY_RUN:-0}" != "1" ]] || return 0
+	case "$blocker_kind" in
+	"$PMRC_BLOCKER_REVIEW_BOT_THREADS") reason="after unresolved review-bot thread preflight blocker" ;;
+	"$PMRC_BLOCKER_REQUIRED_REVIEW_THREADS") reason="after required unresolved review-thread preflight blocker" ;;
+	*) return 0 ;;
+	esac
+	_pulse_merge_dispatch_review_thread_remediation "$pr_number" "$repo_slug" "$reason" || true
+	return 0
+}
+
 _pulse_merge_changes_requested_thread_remediation_first_enabled() {
 	[[ "${AIDEVOPS_CHANGES_REQUESTED_THREAD_REMEDIATION_FIRST:-0}" == "1" ]] || return 1
 	return 0
@@ -528,6 +547,7 @@ _pulse_merge_final_trust_gate() {
 	local repo_slug="$2"
 	local expected_head_sha="$3"
 
+	_PULSE_MERGE_PREFLIGHT_BLOCKER_KIND=""
 	_pulse_merge_admin_safety_check "$pr_number" "$repo_slug" "$expected_head_sha" || return 1
 	_pulse_merge_refresh_review_gate_evidence "$pr_number" "$repo_slug" "$expected_head_sha" || return 1
 	_pulse_merge_preflight_snapshot_gate "$repo_slug" "$pr_number" "$expected_head_sha" || return 1
@@ -1454,6 +1474,7 @@ _process_single_ready_pr() {
 	# #aidevops:trust-boundary — the combined final gate revalidates external
 	# authority, typed review evidence, and the terminal current-head snapshot.
 	if ! _pulse_merge_final_trust_gate "$pr_number" "$repo_slug" "$pr_head_ref_oid"; then
+		_pulse_merge_maybe_dispatch_preflight_remediation "$pr_number" "$repo_slug"
 		if [[ "${_PULSE_MERGE_PREFLIGHT_BLOCKING_CHECKS_JSON:-[]}" != "[]" ]]; then
 			_route_pr_to_fix_worker "$pr_number" "$repo_slug" "$linked_issue" "ci" \
 				"$pr_labels" "" "$pr_updated_at" "$pr_head_ref_oid" \
@@ -1481,6 +1502,7 @@ _process_single_ready_pr() {
 			;;
 	esac
 	if ! _pulse_merge_final_trust_gate "$pr_number" "$repo_slug" "$pr_head_ref_oid"; then
+		_pulse_merge_maybe_dispatch_preflight_remediation "$pr_number" "$repo_slug"
 		return 1
 	fi
 
@@ -1498,6 +1520,7 @@ _process_single_ready_pr() {
 	if [[ $_merge_exit -ne 0 ]] && gh_merge_remediate_stale_auth_cache "$merge_output" "pulse merge PR #${pr_number} in ${repo_slug}" "$LOGFILE"; then
 		local _merge_original_output="$merge_output"
 		if ! _pulse_merge_final_trust_gate "$pr_number" "$repo_slug" "$pr_head_ref_oid"; then
+			_pulse_merge_maybe_dispatch_preflight_remediation "$pr_number" "$repo_slug"
 			return 1
 		fi
 		merge_output=$(gh pr merge "$pr_number" --repo "$repo_slug" --squash --admin --match-head-commit "$pr_head_ref_oid" 2>&1)
@@ -1538,6 +1561,7 @@ ${_missing_check_update_output}"
 			_auto_merge_exit=1
 		else
 			if ! _pulse_merge_final_trust_gate "$pr_number" "$repo_slug" "$pr_head_ref_oid"; then
+				_pulse_merge_maybe_dispatch_preflight_remediation "$pr_number" "$repo_slug"
 				return 1
 			fi
 			_auto_merge_output=$(gh pr merge "$pr_number" --repo "$repo_slug" --auto --squash --match-head-commit "$pr_head_ref_oid" 2>&1)
@@ -1553,6 +1577,7 @@ ${_missing_check_update_output}"
 ${_auto_merge_output}"
 		echo "[pulse-wrapper] Deterministic merge: native auto-merge fallback unavailable or failed for PR #${pr_number} in ${repo_slug}; retrying direct merge without --admin (GH#23087): ${_auto_merge_output}" >>"$LOGFILE"
 		if ! _pulse_merge_final_trust_gate "$pr_number" "$repo_slug" "$pr_head_ref_oid"; then
+			_pulse_merge_maybe_dispatch_preflight_remediation "$pr_number" "$repo_slug"
 			return 1
 		fi
 		merge_output=$(gh pr merge "$pr_number" --repo "$repo_slug" --squash --match-head-commit "$pr_head_ref_oid" 2>&1)
@@ -1560,6 +1585,7 @@ ${_auto_merge_output}"
 		if [[ $_merge_exit -ne 0 ]] && gh_merge_remediate_stale_auth_cache "$merge_output" "pulse direct merge PR #${pr_number} in ${repo_slug}" "$LOGFILE"; then
 			local _direct_merge_original_output="$merge_output"
 			if ! _pulse_merge_final_trust_gate "$pr_number" "$repo_slug" "$pr_head_ref_oid"; then
+				_pulse_merge_maybe_dispatch_preflight_remediation "$pr_number" "$repo_slug"
 				return 1
 			fi
 			merge_output=$(gh pr merge "$pr_number" --repo "$repo_slug" --squash --match-head-commit "$pr_head_ref_oid" 2>&1)
