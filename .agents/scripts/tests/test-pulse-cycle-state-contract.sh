@@ -79,6 +79,16 @@ source "${SOURCE_DIR}/pulse-logging.sh"
 # shellcheck source=../pulse-wrapper-cycle-gates.sh
 source "${SOURCE_DIR}/pulse-wrapper-cycle-gates.sh"
 
+_LOCK_OWNED=false
+acquire_instance_lock() {
+	_LOCK_OWNED=true
+	return 0
+}
+release_instance_lock() {
+	_LOCK_OWNED=false
+	return 0
+}
+
 _pulse_cycle_state_start
 write_pulse_health_file
 assert_health "real health writer emits additive running lifecycle state" '
@@ -209,6 +219,20 @@ if [[ ! -e "${HOME}/.aidevops/logs/pulse-cycle-state.json" ]]; then
 	pass "lifecycle state does not create a parallel runtime artifact"
 else
 	fail "lifecycle state does not create a parallel runtime artifact"
+fi
+
+_pulse_cycle_state_start
+write_pulse_health_file
+_pulse_cycle_state_finalize idle '[]'
+_PULSE_LEGACY_CYCLE_OUTCOME_PENDING=1
+cp "$PULSE_HEALTH_FILE" "${TMP_DIR}/health-before-missing-lock-terminal.json"
+unset -f acquire_instance_lock release_instance_lock
+_pulse_cycle_state_write_terminal_if_current
+if cmp -s "$PULSE_HEALTH_FILE" "${TMP_DIR}/health-before-missing-lock-terminal.json" \
+	&& [[ "$_PULSE_LEGACY_CYCLE_OUTCOME_PENDING" -eq 1 ]]; then
+	pass "terminal publication fails closed when lock functions are unavailable"
+else
+	fail "terminal publication fails closed when lock functions are unavailable"
 fi
 
 _pulse_cycle_state_start

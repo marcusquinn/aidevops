@@ -336,21 +336,22 @@ _pulse_cycle_state_commit_legacy_outcome() {
 }
 
 _pulse_cycle_state_write_terminal_if_current() {
-	local reacquired_lock=0
 	[[ "${_PULSE_CYCLE_STATE_TERMINAL:-0}" == "1" ]] || return 1
 	if [[ "${_LOCK_OWNED:-false}" == "true" ]]; then
 		_pulse_cycle_state_commit_legacy_outcome
 		write_pulse_health_file
 		return $?
 	fi
-	if declare -F acquire_instance_lock >/dev/null 2>&1 \
-		&& declare -F release_instance_lock >/dev/null 2>&1; then
-		if ! acquire_instance_lock; then
-			printf '[pulse-wrapper] Cycle state: skipped terminal publish for cycle %s because a newer cycle owns the instance lock\n' \
-				"${_PULSE_CYCLE_ID:-unknown}" >>"${WRAPPER_LOGFILE:-/dev/null}"
-			return 0
-		fi
-		reacquired_lock=1
+	if ! declare -F acquire_instance_lock >/dev/null 2>&1 \
+		|| ! declare -F release_instance_lock >/dev/null 2>&1; then
+		printf '[pulse-wrapper] Cycle state: skipped terminal publish for cycle %s because instance lock functions are unavailable\n' \
+			"${_PULSE_CYCLE_ID:-unknown}" >>"${WRAPPER_LOGFILE:-/dev/null}"
+		return 0
+	fi
+	if ! acquire_instance_lock; then
+		printf '[pulse-wrapper] Cycle state: skipped terminal publish for cycle %s because a newer cycle owns the instance lock\n' \
+			"${_PULSE_CYCLE_ID:-unknown}" >>"${WRAPPER_LOGFILE:-/dev/null}"
+		return 0
 	fi
 	if _pulse_cycle_state_health_is_current; then
 		_pulse_cycle_state_commit_legacy_outcome
@@ -359,9 +360,7 @@ _pulse_cycle_state_write_terminal_if_current() {
 		printf '[pulse-wrapper] Cycle state: skipped stale terminal publish for cycle %s because current health belongs to another cycle\n' \
 			"${_PULSE_CYCLE_ID:-unknown}" >>"${WRAPPER_LOGFILE:-/dev/null}"
 	fi
-	if [[ "$reacquired_lock" -eq 1 ]]; then
-		release_instance_lock
-	fi
+	release_instance_lock
 	return 0
 }
 

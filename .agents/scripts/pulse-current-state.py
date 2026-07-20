@@ -162,10 +162,9 @@ def build_cycle_state(path):
     state = health.get('cycle_state')
     if state is None:
         return unavailable_cycle_state('unavailable')
-    if not isinstance(state, dict):
-        return unavailable_cycle_state('malformed', 'cycle-state-object')
-    if not valid_cycle_state_contract(state):
-        return unavailable_cycle_state('malformed', 'cycle-state-contract')
+    if not isinstance(state, dict) or not valid_cycle_state_contract(state):
+        reason = 'cycle-state-object' if not isinstance(state, dict) else 'cycle-state-contract'
+        return unavailable_cycle_state('malformed', reason)
     progress = state['progress']
     blocker = state['blocker']
     return {
