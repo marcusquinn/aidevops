@@ -99,6 +99,50 @@ test_scaffold_and_idempotency() {
 	return 0
 }
 
+test_agents_context_write_failures_preserve_original() {
+	local repo="$TEST_ROOT/write-failures"
+	local agents_md="$repo/.agents/AGENTS.md"
+	local original
+	mkdir -p "$repo/.agents" "$repo/.aidevops"
+	printf "before\n<!-- aidevops:project-operations-context:start -->\nold\n<!-- aidevops:project-operations-context:end -->\nafter\n" >"$agents_md"
+	original=$(cksum "$agents_md")
+
+	awk() { return 1; }
+	if _init_update_project_operations_context "$repo"; then
+		assert_equal failure success "awk failure is reported"
+	else
+		assert_equal failure failure "awk failure is reported"
+	fi
+	unset -f awk
+	assert_equal "$original" "$(cksum "$agents_md")" "awk failure preserves AGENTS.md"
+	assert_equal false "$(compgen -G "${agents_md}.project-context*" >/dev/null && printf true || printf false)" "awk failure removes temporary files"
+
+	printf "before\n" >"$agents_md"
+	original=$(cksum "$agents_md")
+	cp() { return 1; }
+	if _init_update_project_operations_context "$repo"; then
+		assert_equal failure success "cp failure is reported"
+	else
+		assert_equal failure failure "cp failure is reported"
+	fi
+	unset -f cp
+	assert_equal "$original" "$(cksum "$agents_md")" "cp failure preserves AGENTS.md"
+	assert_equal false "$(compgen -G "${agents_md}.project-context*" >/dev/null && printf true || printf false)" "cp failure removes temporary files"
+
+	printf "before\n" >"$agents_md"
+	original=$(cksum "$agents_md")
+	cat() { return 1; }
+	if _init_update_project_operations_context "$repo"; then
+		assert_equal failure success "cat failure is reported"
+	else
+		assert_equal failure failure "cat failure is reported"
+	fi
+	unset -f cat
+	assert_equal "$original" "$(cksum "$agents_md")" "cat failure preserves AGENTS.md"
+	assert_equal false "$(compgen -G "${agents_md}.project-context*" >/dev/null && printf true || printf false)" "cat failure removes temporary files"
+	return 0
+}
+
 test_config_booleans() {
 	local config="$TEST_ROOT/config.json"
 	_init_write_project_config "$config" 9.9.9 minimal false false false false false false false false false false true true
@@ -148,6 +192,7 @@ main() {
 	trap cleanup EXIT
 	test_feature_parsing
 	test_scaffold_and_idempotency
+	test_agents_context_write_failures_preserve_original
 	local full_repo="$TEST_ROOT/full-rerun"
 	mkdir -p "$full_repo"
 	scaffold_agents_md "$full_repo"
