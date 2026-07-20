@@ -149,6 +149,9 @@ _pulse_merge_maybe_dispatch_preflight_remediation() {
 	local blocker_kind="${_PULSE_MERGE_PREFLIGHT_BLOCKER_KIND:-}"
 	local reason=""
 
+	if [[ -n "$blocker_kind" ]] && declare -F _pulse_cycle_state_note_blocker >/dev/null 2>&1; then
+		_pulse_cycle_state_note_blocker "$blocker_kind" "$repo_slug" "$pr_number" || true
+	fi
 	# Consume the marker before any dispatch attempt so a failed or deduplicated
 	# repair cannot leak into an unrelated later final-gate failure.
 	_PULSE_MERGE_PREFLIGHT_BLOCKER_KIND=""
@@ -548,8 +551,14 @@ _pulse_merge_final_trust_gate() {
 	local expected_head_sha="$3"
 
 	_PULSE_MERGE_PREFLIGHT_BLOCKER_KIND=""
-	_pulse_merge_admin_safety_check "$pr_number" "$repo_slug" "$expected_head_sha" || return 1
-	_pulse_merge_refresh_review_gate_evidence "$pr_number" "$repo_slug" "$expected_head_sha" || return 1
+	if ! _pulse_merge_admin_safety_check "$pr_number" "$repo_slug" "$expected_head_sha"; then
+		_PULSE_MERGE_PREFLIGHT_BLOCKER_KIND="$PMRC_BLOCKER_MERGE_AUTHORITY"
+		return 1
+	fi
+	if ! _pulse_merge_refresh_review_gate_evidence "$pr_number" "$repo_slug" "$expected_head_sha"; then
+		_PULSE_MERGE_PREFLIGHT_BLOCKER_KIND="$PMRC_BLOCKER_REVIEW_GATE"
+		return 1
+	fi
 	_pulse_merge_preflight_snapshot_gate "$repo_slug" "$pr_number" "$expected_head_sha" || return 1
 	return 0
 }

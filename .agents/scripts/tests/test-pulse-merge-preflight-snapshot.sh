@@ -292,8 +292,10 @@ assert_human_review_thread_rules() {
 	assert_gate_blocker "unresolved human thread passes when effective rules do not require resolution" human_not_required 0 ""
 	assert_gate_blocker "required human thread supports slash-containing base branches" \
 		human_required_slash 1 "$PMRC_BLOCKER_REQUIRED_REVIEW_THREADS"
-	assert_gate_blocker "effective-rules API failure with unresolved human thread fails closed" human_rules_error 1 ""
-	assert_gate_blocker "malformed effective-rules response with unresolved human thread fails closed" human_rules_malformed 1 ""
+	assert_gate_blocker "effective-rules API failure with unresolved human thread fails closed" \
+		human_rules_error 1 "$PMRC_BLOCKER_SNAPSHOT_UNAVAILABLE"
+	assert_gate_blocker "malformed effective-rules response with unresolved human thread fails closed" \
+		human_rules_malformed 1 "$PMRC_BLOCKER_SNAPSHOT_UNAVAILABLE"
 	return 0
 }
 
@@ -375,7 +377,8 @@ assert_review_and_head_snapshot_cases() {
 	fi
 	TESTS_RUN=$((TESTS_RUN + 1))
 	assert_gate_blocker "unresolved late inline finding blocks merge" unresolved 1 "$PMRC_BLOCKER_REVIEW_BOT_THREADS"
-	assert_gate_blocker "paginated review-thread snapshot fails closed without actionable remediation" review_threads_paginated 1 ""
+	assert_gate_blocker "paginated review-thread snapshot fails closed without actionable remediation" \
+		review_threads_paginated 1 "$PMRC_BLOCKER_SNAPSHOT_UNAVAILABLE"
 	assert_human_review_thread_rules
 	assert_gate "late review activity invalidates stale gate success" stale_gate 1
 	set_live_evidence PASS sha-reviewed trusted true 2026-01-01T00:00:50Z
