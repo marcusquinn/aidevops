@@ -82,7 +82,9 @@ _ci_check_url_has_infra_failure_log() {
 }
 
 stub_review_threads() {
-	if [[ "$SNAPSHOT_MODE" == "unresolved" ]]; then
+	if [[ "$SNAPSHOT_MODE" == "review_threads_paginated" ]]; then
+		printf '%s\n' '{"data":{"repository":{"pullRequest":{"reviewThreads":{"pageInfo":{"hasNextPage":true},"nodes":[{"isResolved":false,"comments":{"nodes":[{"author":{"login":"gemini-code-assist[bot]"}}]}}]}}}}}'
+	elif [[ "$SNAPSHOT_MODE" == "unresolved" ]]; then
 		printf '%s\n' '{"data":{"repository":{"pullRequest":{"reviewThreads":{"pageInfo":{"hasNextPage":false},"nodes":[{"isResolved":false,"comments":{"nodes":[{"author":{"login":"gemini-code-assist[bot]"}}]}}]}}}}}'
 	elif [[ "$SNAPSHOT_MODE" == human_* ]]; then
 		printf '%s\n' '{"data":{"repository":{"pullRequest":{"reviewThreads":{"pageInfo":{"hasNextPage":false},"nodes":[{"isResolved":false,"comments":{"nodes":[{"author":{"login":"human-reviewer"}}]}}]}}}}}'
@@ -228,6 +230,24 @@ assert_gate() {
 	return 0
 }
 
+assert_gate_blocker() {
+	local description="$1"
+	local mode="$2"
+	local expected_rc="$3"
+	local expected_blocker="$4"
+
+	assert_gate "$description" "$mode" "$expected_rc"
+	TESTS_RUN=$((TESTS_RUN + 1))
+	if [[ "${_PULSE_MERGE_PREFLIGHT_BLOCKER_KIND:-}" == "$expected_blocker" ]]; then
+		printf 'PASS %s exports blocker %s\n' "$description" "${expected_blocker:-<none>}"
+		return 0
+	fi
+	printf 'FAIL %s exported blocker %s (expected %s)\n' \
+		"$description" "${_PULSE_MERGE_PREFLIGHT_BLOCKER_KIND:-<none>}" "${expected_blocker:-<none>}"
+	TESTS_FAILED=$((TESTS_FAILED + 1))
+	return 0
+}
+
 assert_gate_logged() {
 	local description="$1"
 	local mode="$2"
@@ -260,7 +280,8 @@ assert_snapshot_acquisition_failures_are_audited() {
 }
 
 assert_human_review_thread_rules() {
-	assert_gate "unresolved human thread blocks when effective rules require resolution" human_required 1
+	assert_gate_blocker "unresolved human thread blocks when effective rules require resolution" \
+		human_required 1 "$PMRC_BLOCKER_REQUIRED_REVIEW_THREADS"
 	if grep -q "requires thread resolution" "$LOGFILE"; then
 		printf 'PASS required human thread blocker is audited\n'
 	else
@@ -268,10 +289,11 @@ assert_human_review_thread_rules() {
 		TESTS_FAILED=$((TESTS_FAILED + 1))
 	fi
 	TESTS_RUN=$((TESTS_RUN + 1))
-	assert_gate "unresolved human thread passes when effective rules do not require resolution" human_not_required 0
-	assert_gate "required human thread supports slash-containing base branches" human_required_slash 1
-	assert_gate "effective-rules API failure with unresolved human thread fails closed" human_rules_error 1
-	assert_gate "malformed effective-rules response with unresolved human thread fails closed" human_rules_malformed 1
+	assert_gate_blocker "unresolved human thread passes when effective rules do not require resolution" human_not_required 0 ""
+	assert_gate_blocker "required human thread supports slash-containing base branches" \
+		human_required_slash 1 "$PMRC_BLOCKER_REQUIRED_REVIEW_THREADS"
+	assert_gate_blocker "effective-rules API failure with unresolved human thread fails closed" human_rules_error 1 ""
+	assert_gate_blocker "malformed effective-rules response with unresolved human thread fails closed" human_rules_malformed 1 ""
 	return 0
 }
 
@@ -352,7 +374,8 @@ assert_review_and_head_snapshot_cases() {
 		TESTS_FAILED=$((TESTS_FAILED + 1))
 	fi
 	TESTS_RUN=$((TESTS_RUN + 1))
-	assert_gate "unresolved late inline finding blocks merge" unresolved 1
+	assert_gate_blocker "unresolved late inline finding blocks merge" unresolved 1 "$PMRC_BLOCKER_REVIEW_BOT_THREADS"
+	assert_gate_blocker "paginated review-thread snapshot fails closed without actionable remediation" review_threads_paginated 1 ""
 	assert_human_review_thread_rules
 	assert_gate "late review activity invalidates stale gate success" stale_gate 1
 	set_live_evidence PASS sha-reviewed trusted true 2026-01-01T00:00:50Z

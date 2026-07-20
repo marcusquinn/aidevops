@@ -15,7 +15,10 @@ PMRC_MAINTAINER_GATE_DISPLAY="Maintainer Review & Assignee Gate"
 PMRC_MAINTAINER_GATE_WORKFLOW="gate / Maintainer Review & Assignee Gate"
 PMRC_SUBJECT_HEAD_PREFIX="head "
 PMRC_SUBJECT_PR_PREFIX="PR #"
+PMRC_BLOCKER_REVIEW_BOT_THREADS="review-bot-threads"
+PMRC_BLOCKER_REQUIRED_REVIEW_THREADS="required-review-threads"
 : "${_PULSE_MERGE_PREFLIGHT_BLOCKING_CHECKS_JSON:=[]}"
+: "${_PULSE_MERGE_PREFLIGHT_BLOCKER_KIND:=}"
 
 _pmrc_gh_read() {
 	local rc=0
@@ -270,12 +273,14 @@ _pmrc_snapshot_review_threads_clear() {
 	bot_count=$(jq -r '.bots' <<<"$counts") || return 1
 	[[ "$total_count" =~ ^[0-9]+$ && "$bot_count" =~ ^[0-9]+$ ]] || return 1
 	if [[ "$bot_count" -gt 0 ]]; then
+		_PULSE_MERGE_PREFLIGHT_BLOCKER_KIND="$PMRC_BLOCKER_REVIEW_BOT_THREADS"
 		echo "[pulse-merge] pre-merge snapshot: PR #${pr_number} in ${repo_slug} has ${bot_count} unresolved review-bot thread(s) — merge blocked until resolved or classified (GH#27137)" >>"$LOGFILE"
 		return 1
 	fi
 	[[ "$total_count" -gt 0 ]] || return 0
 	resolution_required=$(_pmrc_review_thread_resolution_required "$repo_slug" "$base_branch") || return 1
 	if [[ "$resolution_required" == "$PMRC_BOOL_TRUE" ]]; then
+		_PULSE_MERGE_PREFLIGHT_BLOCKER_KIND="$PMRC_BLOCKER_REQUIRED_REVIEW_THREADS"
 		echo "[pulse-merge] pre-merge snapshot: PR #${pr_number} in ${repo_slug} has ${total_count} unresolved review thread(s), and branch ${base_branch} requires thread resolution — merge blocked (GH#28130)" >>"$LOGFILE"
 		return 1
 	fi
@@ -573,6 +578,7 @@ _pulse_merge_preflight_snapshot_gate() {
 	local live_gate_evidence="${_PULSE_REVIEW_GATE_EVIDENCE:-}"
 	local pr_json="" pr_coordinates="" current_head_sha="" base_branch="" required_contexts="" checks_json="" activity_json=""
 	_PULSE_MERGE_PREFLIGHT_BLOCKING_CHECKS_JSON="[]"
+	_PULSE_MERGE_PREFLIGHT_BLOCKER_KIND=""
 
 	pr_json=$(_pmrc_gh_read gh api "repos/${repo_slug}/pulls/${pr_number}" 2>/dev/null) || {
 		_pmrc_snapshot_log_failure "$repo_slug" "${PMRC_SUBJECT_PR_PREFIX}${pr_number}" "pull-request fetch"
