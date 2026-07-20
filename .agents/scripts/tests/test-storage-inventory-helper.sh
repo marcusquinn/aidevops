@@ -78,6 +78,10 @@ after_checksum=$(fixture_checksum)
 [[ "$(printf '%s' "$report" | jq -r '.stores[] | select(.store_id == "opencode-active-db") | .safety_class')" == "unknown" ]] || fail "unavailable OpenCode schema did not fail closed"
 [[ "$(printf '%s' "$report" | jq '[.stores[] | select(.store_id | startswith("opencode-")) | .reclaimable_bytes] | add')" == "0" ]] || fail "OpenCode report exposed cleanup candidates"
 
+home_unset_report=$(env -u HOME bash "$HELPER" json)
+[[ "$(printf '%s' "$home_unset_report" | jq '.stores | length')" == "15" ]] || fail "HOME-unset inventory did not return every store"
+[[ "$(printf '%s' "$home_unset_report" | jq -r '[.stores[] | select(.store_id | startswith("opencode-")) | .error == "home-unavailable"] | all')" == "true" ]] || fail "HOME-unset OpenCode stores did not fail closed"
+
 report=$(BACKUP_KEEP_COUNT=1 AIDEVOPS_WORKER_EXCERPT_KEEP_COUNT=1 bash "$HELPER" json)
 [[ "$(printf '%s' "$report" | jq -r '.stores[] | select(.store_id == "agent-backups") | .reclaimable_bytes > 0')" == "true" ]] || fail "backup dry-run candidates were not reported"
 [[ "$(printf '%s' "$report" | jq -r '.stores[] | select(.store_id == "worker-failure-excerpts") | .reclaimable_bytes > 0')" == "true" ]] || fail "worker excerpt dry-run candidates were not reported"
