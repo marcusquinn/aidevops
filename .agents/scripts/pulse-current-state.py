@@ -154,7 +154,7 @@ def build_cycle_state(path):
         with open(path, encoding='utf-8') as handle:
             health = json.load(handle)
     except FileNotFoundError:
-        return unavailable_cycle_state('unavailable')
+        health = {}
     except (OSError, json.JSONDecodeError, TypeError):
         return unavailable_cycle_state('malformed', 'health-json')
     if not isinstance(health, dict):
