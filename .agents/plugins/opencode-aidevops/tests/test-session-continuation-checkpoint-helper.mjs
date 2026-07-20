@@ -32,6 +32,7 @@ fi
     ["null", null],
     ["array", [{ status: "recovering" }]],
     ["primitive", "recovering"],
+    ["non-string-status", { status: 1 }],
     ["inactive", { status: "none" }],
   ]) {
     const ignoredGuard = createSessionContinuationGuard({

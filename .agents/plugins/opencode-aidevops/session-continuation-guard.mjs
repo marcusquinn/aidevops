@@ -78,7 +78,7 @@ function loadRecovery(state, scope) {
   const loaded = state.adapter.load?.();
   const isObject = loaded !== null && typeof loaded === "object";
   const isRecord = isObject && !Array.isArray(loaded);
-  const status = isRecord ? loaded.status : null;
+  const status = isRecord && typeof loaded.status === "string" ? loaded.status : null;
   if (status && status !== "none") {
     state.recoveries.set(scope, loaded);
   }
