@@ -76,7 +76,10 @@ function loadRecovery(state, scope) {
   if (state.loadedScopes.has(scope)) return state.recoveries.get(scope) || null;
   state.loadedScopes.add(scope);
   const loaded = state.adapter.load?.();
-  if (loaded && typeof loaded === "object" && !Array.isArray(loaded) && loaded.status && loaded.status !== "none") {
+  const isObject = loaded !== null && typeof loaded === "object";
+  const isRecord = isObject && !Array.isArray(loaded);
+  const status = isRecord && typeof loaded.status === "string" ? loaded.status : null;
+  if (status && status !== "none") {
     state.recoveries.set(scope, loaded);
   }
   capMap(state.recoveries, state.maxScopes);
