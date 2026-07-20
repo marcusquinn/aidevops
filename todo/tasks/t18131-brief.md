@@ -56,11 +56,11 @@ Final leaf task. Its PR closes this child. It may close parent t18124 only when 
 ## Seeded Draft PR
 
 - **Decision:** Skipped
-- **Rationale:** Final report fields, feature flags, and cleanup surfaces do not exist until t18125–t18130 merge.
-- **Status:** `active`
-- **Freshness evidence:** Current telemetry, sweep budget config, webhook config, and test conventions were checked at `313548fc6`.
-- **Verification run:** Brief readiness only; benchmark is unrun.
-- **Stale-assumption warning:** Before implementation, discover every flag/schema/default added by the six preceding PRs and update this issue's exact scope if necessary.
+- **Rationale:** Skipped at planning time because final report fields, feature flags, and cleanup surfaces did not exist before t18125–t18130 merged.
+- **Status:** `not-created`; interactive implementation is active.
+- **Freshness evidence:** Telemetry, shim, benchmark, reference, and test surfaces were rechecked against `659cd3d8f` on 2026-07-20.
+- **Verification run:** Quota instrumentation/shim suites, benchmark/evidence fixtures, ShellCheck, changed lint, and complexity regressions pass; official comparable live evidence remains pending.
+- **Scope refresh:** Direct REST quota attribution paths were added before implementation; ambiguous and GraphQL costs remain fail-closed.
 
 ## How (Approach)
 
@@ -144,19 +144,19 @@ python3 -m json.tool .agents/configs/pulse-sweep-budget.json >/dev/null
 
 ### Recoverability Checkpoint
 
-- [ ] Focused tests pass: benchmark fixtures plus every changed flag owner's focused suite
-- [ ] WIP commit created before broad gates: `wip: benchmark GitHub API efficiency rollout`
-- [ ] Evidence-triggered broad verification then run: `.agents/scripts/linters-local.sh --changed` and final bounded canary
+- [x] Focused tests pass: quota instrumentation/shim suites plus benchmark/evidence fixtures
+- [x] WIP commit created before post-rebase broad gates: `b9e981fd4`
+- [ ] Evidence-triggered broad verification: changed lint passes; final bounded canary remains pending
 
 ### Safety-Stop Recovery
 
 - **Original objective:** Prove and safely finalise lower GitHub API use without correctness or freshness regression.
 - **Preserved user directions:** Compare real baseline/canary evidence, tune incrementally, and let Pulse complete the chain.
 - **Trigger and evidence:** Not triggered at brief creation.
-- **Completed and verified:** Current report/config surfaces and observation requirements identified.
-- **Remaining acceptance criteria:** Final implementation, canary, cleanup, and parent closeout criteria below.
+- **Completed and verified:** Benchmark/report tooling and bounded exact direct REST quota attribution are implemented with focused and changed-file gates passing.
+- **Remaining acceptance criteria:** Comparable live windows, complete sidecars/guardrails, evidence-led tuning or control retention, and parent closeout criteria below.
 - **Unsafe route not to repeat:** Do not compare unequal retained windows, hide unknown quota cost, or delete rollback flags before canary success.
-- **Next safe route:** Produce an inconclusive report, collect a new fixed window, and rerun without closing the task.
+- **Next safe route:** Merge and deploy bounded attribution, collect a new fixed window, and rerun the fail-closed benchmark without closing the task prematurely.
 - **Resume condition:** Dependency met; complete comparable baseline/canary telemetry remains required for final tuning and closeout.
 - **Owner and status:** Build+ `tier:standard`; active and evidence-gated.
 
