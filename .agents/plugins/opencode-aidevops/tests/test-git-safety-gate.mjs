@@ -243,6 +243,15 @@ test("allows the repository full-loop commit-and-pr wrapper only from a linked w
       ),
       /unclassified nested Git invocation/,
     );
+    assert.throws(
+      () => checkCanonicalGitSafetyGate(
+        `${activeWrapper} commit-and-pr --issue 123 && ${join(rotatedScriptsDir, "full-loop-helper.sh")} commit-and-pr --issue 123`,
+        scriptsDir,
+        linked,
+        { activeScriptsDir, activeScriptsDirBinding },
+      ),
+      /unclassified nested Git invocation/,
+    );
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
