@@ -514,7 +514,7 @@ register_repo() {
 			'(.initialized_repos[] | select(.path == $path)) |= (
 				. + {path: $path, version: $version, features: ($features | split(",")), updated: (now | strftime("%Y-%m-%dT%H:%M:%SZ"))}
 				| if $slug != "" then .slug = $slug else . end
-				| if $local_only then .local_only = true else . end
+				| if $local_only then .local_only = true else del(.local_only) end
 				| if .pulse == null then .pulse = (if $local_only then false else $pulse_default end) else . end
 				| if (.priority == null or .priority == "") and $priority_default != "" then .priority = $priority_default else . end
 				| if (.maintainer == null or .maintainer == "") and $maintainer != "" then .maintainer = $maintainer else . end

@@ -60,9 +60,25 @@ test("classifies every apply-patch target instead of trusting linked cwd", () =>
     assert.doesNotThrow(
       () => checkCanonicalWriteSafetyGate("", scriptsDir, linked, linkedPatch),
     );
+    const absoluteLinkedPatch = `*** Begin Patch\n*** Add File: ${join(linked, "absolute-linked.md")}\n+safe\n*** End Patch\n`;
+    assert.doesNotThrow(
+      () => checkCanonicalWriteSafetyGate("", scriptsDir, repo, absoluteLinkedPatch),
+      "an absolute linked-worktree target must not inherit the canonical workspace classification",
+    );
     const canonicalPatch = `*** Begin Patch\n*** Update File: ${join(repo, "README.md")}\n@@\n-seed\n+unsafe\n*** End Patch\n`;
     assert.throws(
       () => checkCanonicalWriteSafetyGate("", scriptsDir, linked, canonicalPatch),
+      /canonical write policy.*read-only session mirrors/,
+    );
+    const traversalPatch = `*** Begin Patch\n*** Update File: ${join(linked, "..", "repo", "README.md")}\n@@\n-seed\n+unsafe\n*** End Patch\n`;
+    assert.throws(
+      () => checkCanonicalWriteSafetyGate("", scriptsDir, repo, traversalPatch),
+      /canonical write policy.*read-only session mirrors/,
+    );
+    symlinkSync(repo, join(linked, "canonical-link"));
+    const symlinkPatch = `*** Begin Patch\n*** Update File: ${join(linked, "canonical-link", "README.md")}\n@@\n-seed\n+unsafe\n*** End Patch\n`;
+    assert.throws(
+      () => checkCanonicalWriteSafetyGate("", scriptsDir, repo, symlinkPatch),
       /canonical write policy.*read-only session mirrors/,
     );
     assert.throws(
@@ -72,6 +88,17 @@ test("classifies every apply-patch target instead of trusting linked cwd", () =>
     assert.throws(
       () => checkCanonicalWriteSafetyGate("", scriptsDir, linked, { invalid: true }),
       /targets could not be classified/,
+    );
+
+    const outsideTarget = join(root, "aidevops-issue-body.md");
+    const outsidePatch = `*** Begin Patch\n*** Add File: ${outsideTarget}\n+safe\n*** End Patch\n`;
+    assert.doesNotThrow(
+      () => checkCanonicalWriteSafetyGate("", scriptsDir, repo, outsidePatch),
+    );
+    const mixedPatch = `*** Begin Patch\n*** Add File: ${outsideTarget}\n+safe\n*** Update File: ${join(repo, "README.md")}\n@@\n-seed\n+unsafe\n*** End Patch\n`;
+    assert.throws(
+      () => checkCanonicalWriteSafetyGate("", scriptsDir, repo, mixedPatch),
+      /canonical write policy.*read-only session mirrors/,
     );
   } finally {
     rmSync(root, { recursive: true, force: true });
@@ -115,7 +142,25 @@ test("blocks every canonical direct write and preserves linked-worktree writes",
       () => checkCanonicalWriteSafetyGate(join(linked, "README.md"), scriptsDir, linked),
     );
     assert.doesNotThrow(
+      () => checkCanonicalWriteSafetyGate(join(linked, "README.md"), scriptsDir, repo),
+    );
+    assert.doesNotThrow(
       () => checkCanonicalWriteSafetyGate("new-file.md", scriptsDir, linked),
+    );
+    const bodyDir = join(root, ".aidevops", ".agent-workspace", "tmp");
+    mkdirSync(bodyDir, { recursive: true });
+    assert.doesNotThrow(
+      () => checkCanonicalWriteSafetyGate(join(bodyDir, "issue-body.md"), scriptsDir, repo),
+    );
+    assert.doesNotThrow(
+      () => checkCanonicalWriteSafetyGate(join(linked, "from-canonical.md"), scriptsDir, repo),
+    );
+
+    const canonicalAlias = join(root, "canonical-alias");
+    symlinkSync(repo, canonicalAlias, "dir");
+    assert.throws(
+      () => checkCanonicalWriteSafetyGate(join(canonicalAlias, "README.md"), scriptsDir, repo),
+      /canonical write policy.*read-only session mirrors/,
     );
   } finally {
     rmSync(root, { recursive: true, force: true });

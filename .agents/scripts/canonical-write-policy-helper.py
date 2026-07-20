@@ -139,24 +139,31 @@ def _target_probe(cwd: str, file_path: str) -> str:
 def check_write(cwd: str, file_path: str) -> dict[str, Any]:
     """Return one fail-closed direct-file-write decision."""
     context = classify_location(cwd)
-    target = classify_location(_target_probe(cwd, file_path))
-    classifications = (context, target)
-    unknown = next(
-        (item for item in classifications if item.classification == "unknown"), None
-    )
-    canonical = next(
-        (item for item in classifications if item.classification == "canonical"), None
-    )
+    if not file_path:
+        target = Classification("unknown", False, reason="write target is empty")
+    else:
+        target = classify_location(_target_probe(cwd, file_path))
 
-    if unknown is not None:
+    if target.classification == "unknown":
         decision = "deny"
-        reason = f"worktree classification failed closed: {unknown.reason}"
-    elif canonical is not None:
+        reason = f"write target classification failed closed: {target.reason}"
+    elif target.classification == "canonical":
         decision = "deny"
         reason = "canonical checkouts are read-only session mirrors"
+    elif (
+        target.classification == "linked"
+        and context.inside_git
+        and target.common_dir != context.common_dir
+    ):
+        decision = "deny"
+        reason = "linked worktree target belongs to a different repository"
     else:
         decision = "allow"
-        reason = "write target and process context are outside canonical worktrees"
+        reason = (
+            "write target resolves inside an allowed linked worktree"
+            if target.classification == "linked"
+            else "write target is outside canonical worktrees"
+        )
 
     return {
         "policy": POLICY_VERSION,
@@ -185,13 +192,11 @@ def _patch_paths(patch_text: str) -> list[str]:
 
 def check_patch(cwd: str, patch_text: str) -> dict[str, Any]:
     """Return one fail-closed decision for every target in an apply patch."""
-    context_decision = check_write(cwd, "")
-    if context_decision["decision"] != "allow":
-        return context_decision
     paths = _patch_paths(patch_text)
     if not paths:
+        empty_decision = check_write(cwd, "")
         return {
-            **context_decision,
+            **empty_decision,
             "decision": "deny",
             "reason": "apply-patch targets could not be classified safely",
             "action": "repair_or_use_linked_worktree",
@@ -201,7 +206,7 @@ def check_patch(cwd: str, patch_text: str) -> dict[str, Any]:
         decision = check_write(cwd, path)
         if decision["decision"] != "allow":
             return {**decision, "patch_paths": paths}
-    return {**context_decision, "patch_paths": paths}
+    return {**decision, "patch_paths": paths}
 
 
 def resolve_canonical_branch(cwd: str) -> dict[str, str]:

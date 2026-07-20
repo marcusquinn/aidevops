@@ -525,7 +525,11 @@ _sandbox_spawn_child() {
 	# this gracefully (returns early on empty/missing files).
 	if command -v setsid &>/dev/null; then
 		if [[ "${stream_stdout:-false}" == "true" ]]; then
-			setsid "$@" 2>"$sc_stderr_file" &
+			if [[ "${private_output:-false}" == "true" ]]; then
+				setsid "$@" 2>&1 &
+			else
+				setsid "$@" 2>"$sc_stderr_file" &
+			fi
 		else
 			setsid "$@" >"$sc_stdout_file" 2>"$sc_stderr_file" &
 		fi
@@ -540,7 +544,11 @@ _sandbox_spawn_child() {
 		fi
 	else
 		if [[ "${stream_stdout:-false}" == "true" ]]; then
-			"$@" 2>"$sc_stderr_file" &
+			if [[ "${private_output:-false}" == "true" ]]; then
+				"$@" 2>&1 &
+			else
+				"$@" 2>"$sc_stderr_file" &
+			fi
 		else
 			"$@" >"$sc_stdout_file" 2>"$sc_stderr_file" &
 		fi
@@ -1172,6 +1180,7 @@ _sandbox_run_post_exec() {
 #   $4 - timeout_secs
 #   $5 - block_network (true|false)
 #   $6 - extra_passthrough
+#   $7 - audit-safe command text
 _sandbox_run_check_secret_guard() {
 	local secret_io_guard="$1"
 	local allow_secret_io="$2"
@@ -1179,13 +1188,14 @@ _sandbox_run_check_secret_guard() {
 	local timeout_secs="$4"
 	local block_network="$5"
 	local extra_passthrough="$6"
+	local audit_cmd_str="${7:-$cmd_str}"
 
 	if [[ "$secret_io_guard" == "true" ]] && [[ "$allow_secret_io" != "true" ]]; then
 		local block_reason
 		if block_reason="$(_sandbox_secret_block_reason "$cmd_str")"; then
 			log_sandbox "$SANDBOX_ERROR_LEVEL" "Blocked command due to secret leak risk: ${block_reason}"
 			log_sandbox "$SANDBOX_ERROR_LEVEL" "Use --allow-secret-io only for explicit user-approved local operations"
-			log_execution "$cmd_str" 126 0 "$timeout_secs" "$block_network" "$extra_passthrough"
+			log_execution "$audit_cmd_str" 126 0 "$timeout_secs" "$block_network" "$extra_passthrough"
 			return 126
 		fi
 	fi
@@ -1265,6 +1275,11 @@ _sandbox_run_parse_args() {
 			stream_stdout=true
 			shift
 			;;
+		--private-output)
+			private_output=true
+			stream_stdout=true
+			shift
+			;;
 		--)
 			shift
 			cmd_args=("$@")
@@ -1276,6 +1291,15 @@ _sandbox_run_parse_args() {
 			;;
 		esac
 	done
+	return 0
+}
+
+_sandbox_validate_private_output_mode() {
+	local private_output_value="$1"
+	if [[ "$private_output_value" == "true" && "${AIDEVOPS_PRIVATE_WORKLOAD:-0}" != "1" ]]; then
+		log_sandbox "$SANDBOX_ERROR_LEVEL" "Private output requires an active private workload"
+		return 2
+	fi
 	return 0
 }
 
@@ -1297,6 +1321,10 @@ sandbox_run() {
 	# activity watchdog) to monitor output as it's produced. Stderr is still
 	# captured. Post-exec stdout emission is skipped (already streamed).
 	local stream_stdout=false
+	# Private output mode streams both stdout and stderr to the caller without
+	# writing either stream to the sandbox temp directory. The caller must apply
+	# a non-content filter before persistence.
+	local private_output=false
 	# cmd_args is an array — preserves spaces, avoids bash -c eval risks
 	local -a cmd_args=()
 
@@ -1306,6 +1334,7 @@ sandbox_run() {
 		log_sandbox "$SANDBOX_ERROR_LEVEL" "No command provided"
 		return 1
 	fi
+	_sandbox_validate_private_output_mode "$private_output" || return $?
 	case "$egress_mode" in
 	off | auto | required) ;;
 	*)
@@ -1318,14 +1347,18 @@ sandbox_run() {
 	argv_json="$(_sandbox_argv_json "${cmd_args[@]}")" || return 126
 	local cmd_str=""
 	cmd_str="$(_sandbox_argv_display "${cmd_args[@]}")" || return 126
+	local audit_cmd_str="$cmd_str"
+	if [[ "$private_output" == "true" ]]; then
+		audit_cmd_str="[private workload command suppressed]"
+	fi
 	local heuristic_text=""
 	heuristic_text="$(_sandbox_argv_heuristic_text "${cmd_args[@]}")" || return 126
 
 	_sandbox_run_check_secret_guard \
 		"$secret_io_guard" "$allow_secret_io" "$heuristic_text" \
-		"$timeout_secs" "$block_network" "$extra_passthrough" || return $?
+		"$timeout_secs" "$block_network" "$extra_passthrough" "$audit_cmd_str" || return $?
 	if ! _sandbox_check_command_policy "$argv_json" "$worker_id"; then
-		log_execution "$cmd_str" 126 0 "$timeout_secs" "$block_network" "$extra_passthrough"
+		log_execution "$audit_cmd_str" 126 0 "$timeout_secs" "$block_network" "$extra_passthrough"
 		return 126
 	fi
 
@@ -1339,7 +1372,7 @@ sandbox_run() {
 	_sandbox_build_env_args "$exec_tmpdir" "$extra_passthrough"
 	local egress_policy_file="${exec_tmpdir}/egress-policy.json"
 	if ! _sandbox_prepare_worker_egress "$egress_mode" "$egress_policy_file" "$worker_id"; then
-		log_execution "$cmd_str" 126 0 "$timeout_secs" "$block_network" "$extra_passthrough" "unavailable" "none"
+		log_execution "$audit_cmd_str" 126 0 "$timeout_secs" "$block_network" "$extra_passthrough" "unavailable" "none"
 		rm -rf "$exec_tmpdir"
 		return 126
 	fi
@@ -1348,7 +1381,7 @@ sandbox_run() {
 	local stderr_file="${exec_tmpdir}/stderr"
 	local command_tainted
 	command_tainted="$(_sandbox_run_pre_exec \
-		"$cmd_str" "$timeout_secs" "$block_network" "$network_tiering" "$heuristic_text" \
+		"$audit_cmd_str" "$timeout_secs" "$block_network" "$network_tiering" "$heuristic_text" \
 		"$egress_state" "$egress_backend_id")"
 
 	local start_time exit_code=0
@@ -1366,7 +1399,7 @@ sandbox_run() {
 
 	_sandbox_run_post_exec \
 		"$exit_code" "$timeout_secs" "$stdout_file" "$stderr_file" \
-		"$command_tainted" "$cmd_str" "$duration" "$block_network" "$extra_passthrough" \
+		"$command_tainted" "$audit_cmd_str" "$duration" "$block_network" "$extra_passthrough" \
 		"$egress_state" "$egress_backend_id"
 
 	return "$exit_code"

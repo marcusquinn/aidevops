@@ -445,15 +445,19 @@ record_provider_backoff() {
 		backoff_key="$model"
 	fi
 
-	details=$(
-		python3 - "$details_file" <<'PY'
+	if _headless_private_workload_enabled; then
+		details="private workload details suppressed"
+	else
+		details=$(
+			python3 - "$details_file" <<'PY'
 from pathlib import Path
 import sys
 text = Path(sys.argv[1]).read_text(errors="ignore")
 text = " ".join(text.split())
 print(text[:400])
 PY
-	)
+		)
+	fi
 	auth_signature=$(get_auth_signature "$provider")
 	retry_seconds=$(parse_retry_after_seconds "$details_file" "$provider")
 	if [[ "$retry_seconds" -le 0 ]]; then

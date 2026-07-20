@@ -135,26 +135,36 @@ _pulse_mark_rate_limited() {
 }
 
 #######################################
-# Check if a repo's cached issues contain any items with a given label.
-# Used by NMR and needs-info scans to skip repos with 0 matching items.
+# Check whether a complete repo cache proves that no issue has a given label.
+# Used by NMR and needs-info scans to skip only proven-zero repositories.
 #
 # Arguments:
 #   $1 - repo slug
 #   $2 - label name to check for
 # Returns:
-#   0 if cached count > 0 or no cache available (proceed with live query)
-#   1 if cached count == 0 (safe to skip)
+#   0 if a valid complete cache has exactly 0 matches (safe to skip)
+#   1 if matches exist or cache evidence is absent, invalid, or incomplete
 #######################################
 _prefetch_cached_label_count_is_zero() {
 	local slug="$1"
 	local label="$2"
-	local cache_entry cached_count
-	cache_entry=$(_prefetch_cache_get "$slug" 2>/dev/null) || cache_entry=""
-	[[ -n "$cache_entry" ]] || return 0 # no cache = proceed
-	cached_count=$(echo "$cache_entry" | jq --arg l "$label" \
-		'[.issues // [] | .[] | select(.labels | map(.name) | index($l))] | length' 2>/dev/null) || return 0
-	[[ "$cached_count" == "0" ]] && return 1
-	return 0
+	local cache_entry=""
+	local cached_count=""
+
+	[[ -n "$slug" && -n "$label" ]] || return 1
+	cache_entry=$(_prefetch_cache_get "$slug" 2>/dev/null) || return 1
+	[[ -n "$cache_entry" ]] || return 1
+	cached_count=$(printf '%s\n' "$cache_entry" | jq -er --arg label "$label" '
+		"object" as $object_type | "array" as $array_type | "string" as $string_type
+		| select(type == $object_type and .snapshot_complete == true)
+		| .issues
+		| select(type == $array_type and all(.[];
+			type == $object_type and (.labels | type) == $array_type
+			and all(.labels[]; type == $object_type and (.name | type) == $string_type)))
+		| [.[] | select(.labels | map(.name) | index($label))] | length
+	' 2>/dev/null) || return 1
+	[[ "$cached_count" == "0" ]] && return 0
+	return 1
 }
 
 # =============================================================================

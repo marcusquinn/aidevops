@@ -7,14 +7,16 @@
 # Asserts that `_check_linked_issue_gate` in `.agents/scripts/full-loop-helper-state.sh`
 # inherits the pulse-side structural dispatch gates via
 # `_linked_issue_structural_blocker_reasons`, which calls `dispatch-dedup-helper.sh
-# enumerate-blockers` and translates PARENT_TASK_BLOCKED, NO_AUTO_DISPATCH_BLOCKED,
-# and HOLD_FOR_REVIEW_BLOCKED signals into hard blocks.
+# enumerate-blockers` and translates PARENT_TASK_BLOCKED and HOLD_FOR_REVIEW_BLOCKED
+# into hard blocks. NO_AUTO_DISPATCH_BLOCKED remains a worker-dispatch hold, but an
+# explicitly marked interactive implementation may proceed without removing it.
 #
 # Background: pre-t2890, the interactive `/full-loop` path only checked
 # needs-maintainer-review + missing assignee. The pulse meanwhile honored
 # parent-task and no-auto-dispatch via dispatch-dedup-helper.sh. A user typing
-# /full-loop on a parent-task, no-auto-dispatch, or hold-for-review issue would bypass those
-# gates entirely. This test prevents accidental regression of the wiring.
+# /full-loop on a parent-task or hold-for-review issue would bypass those gates
+# entirely, while issue-started interactive work was incorrectly blocked by a
+# worker-only no-auto-dispatch hold. This test prevents either asymmetry.
 #
 # This is a static structural check — runtime behaviour is verified at install
 # time via the smoke flow documented in todo/tasks/t2890-brief.md. CI is the
@@ -60,6 +62,7 @@ print_result "helper file exists" 0
 # assertions only see the function we care about.
 GATE_BODY=$(awk '/^_check_linked_issue_gate\(\) \{/,/^}/' "$HELPER_FILE")
 STRUCTURAL_HELPER_BODY=$(awk '/^_linked_issue_structural_blocker_reasons\(\) \{/,/^}/' "$HELPER_FILE")
+AUTO_CLAIM_BODY=$(awk '/^_auto_claim_interactive\(\) \{/,/^}/' "$HELPER_FILE")
 
 if [[ -z "$GATE_BODY" ]]; then
 	print_result "extract _check_linked_issue_gate function body" 1 "function not found in $HELPER_FILE"
@@ -74,6 +77,13 @@ if [[ -z "$STRUCTURAL_HELPER_BODY" ]]; then
 	exit 1
 fi
 print_result "extract _linked_issue_structural_blocker_reasons function body" 0
+
+if [[ -z "$AUTO_CLAIM_BODY" ]]; then
+	print_result "extract _auto_claim_interactive function body" 1 "function not found in $HELPER_FILE"
+	printf '\n%d tests run, %d failed\n' "$TESTS_RUN" "$TESTS_FAILED"
+	exit 1
+fi
+print_result "extract _auto_claim_interactive function body" 0
 
 assert_in_gate() {
 	local pattern="$1" label="$2"
@@ -91,6 +101,16 @@ assert_in_structural_helper() {
 		print_result "$label" 0
 	else
 		print_result "$label" 1 "pattern '${pattern}' not found in _linked_issue_structural_blocker_reasons body"
+	fi
+	return 0
+}
+
+assert_in_auto_claim() {
+	local pattern="$1" label="$2"
+	if printf '%s\n' "$AUTO_CLAIM_BODY" | grep -qE -- "$pattern"; then
+		print_result "$label" 0
+	else
+		print_result "$label" 1 "pattern '${pattern}' not found in _auto_claim_interactive body"
 	fi
 	return 0
 }
@@ -119,7 +139,8 @@ assert_in_structural_helper \
 	"structural blocker helper mentions parent-task label in user-facing message"
 
 # -------------------------------------------------------------------
-# Assertion C: NO_AUTO_DISPATCH_BLOCKED case translates to a block
+# Assertion C: NO_AUTO_DISPATCH_BLOCKED remains a worker hold but explicitly
+# marked interactive implementation bypasses that one signal only.
 # -------------------------------------------------------------------
 assert_in_structural_helper \
 	'NO_AUTO_DISPATCH_BLOCKED' \
@@ -127,6 +148,21 @@ assert_in_structural_helper \
 assert_in_structural_helper \
 	'no-auto-dispatch' \
 	"structural blocker helper mentions no-auto-dispatch label in user-facing message"
+assert_in_structural_helper \
+	'AIDEVOPS_INTERACTIVE_ISSUE_IMPLEMENTATION' \
+	"structural blocker helper recognizes explicit interactive implementation"
+assert_in_structural_helper \
+	'! is_headless' \
+	"structural blocker helper keeps no-auto-dispatch enforced for headless workers"
+
+# The second claim performed by full-loop must preserve the same explicit
+# implementation authority as interactive-start-helper.sh's first claim.
+assert_in_auto_claim \
+	'AIDEVOPS_INTERACTIVE_ISSUE_IMPLEMENTATION' \
+	"auto claim reads the interactive implementation marker"
+assert_in_auto_claim \
+	'--implementing' \
+	"auto claim forwards --implementing for issue-started work"
 
 # -------------------------------------------------------------------
 # Assertion C2: HOLD_FOR_REVIEW_BLOCKED case translates to a block

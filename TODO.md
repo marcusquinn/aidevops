@@ -4670,7 +4670,7 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [x] t18156 Fix OpenCode Tabby status lifecycle across idle and permission waits #bug ref:GH#28140 pr:#28144 completed:2026-07-17
 
-- [ ] t18157 Block reads of credential-bearing runtime configuration #security ref:GH#28141
+- [x] t18157 Block reads of credential-bearing runtime configuration #security ref:GH#28141 pr:#28315 completed:2026-07-20
 
 - [ ] t18158 Add fail-closed cross-store storage inventory reporting #enhancement ref:GH#28149
 
@@ -4683,3 +4683,5 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [ ] t18161 Coordinate retention for agent backups logs and worker failure evidence #enhancement ref:GH#28152
 
 - [x] t18163 Fix same-task scheduler ownership transfer for preserved worktrees #auto-dispatch #bug #reliability ref:GH#28203 pr:#28246 completed:2026-07-19
+
+- [ ] t18164 Add durable one-shot scheduling and completion-aware routine logging #auto-dispatch #enhancement #framework ref:GH#28313

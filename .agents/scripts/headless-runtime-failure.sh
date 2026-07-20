@@ -899,6 +899,9 @@ _hrff_finalize_exit_trap() {
 	_release_dispatch_claim "$session_key" "$reason" "$exit_status" "$session_count"
 	_release_session_lock "$session_key"
 	_update_dispatch_ledger "$session_key" "fail"
+	if declare -F aidevops_runtime_bundle_lease_release >/dev/null 2>&1; then
+		aidevops_runtime_bundle_lease_release || print_warning "Failed to release the worker runtime bundle lease"
+	fi
 	if [[ "$force_nonzero_exit" -eq 1 ]]; then
 		trap - EXIT
 		exit "$exit_status"

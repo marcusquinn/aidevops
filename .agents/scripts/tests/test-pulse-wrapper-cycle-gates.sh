@@ -108,10 +108,19 @@ else
 	fail "idle-work query excludes NMR-held issues" "query=$(<"$GH_QUERY_FILE")"
 fi
 
-if [[ "$(<"$TIMEOUT_CALL_FILE")" == "30" ]]; then
+if grep -q -- '-label:infrastructure' "$GH_QUERY_FILE"; then
+	pass "idle-work query excludes infrastructure advisory issues"
+else
+	fail "idle-work query excludes infrastructure advisory issues" "query=$(<"$GH_QUERY_FILE")"
+fi
+
+timeout_value=$(<"$TIMEOUT_CALL_FILE")
+if grep -q 'AIDEVOPS_PULSE_IDLE_AVAILABLE_WORK_TIMEOUT:-30' "$SOURCE_SCRIPT" && \
+	[[ "$timeout_value" =~ ^[0-9]+$ ]] && \
+	[[ "$timeout_value" -ge 1 && "$timeout_value" -le 30 ]]; then
 	pass "idle-work query uses bounded default timeout"
 else
-	fail "idle-work query uses bounded default timeout" "timeout=$(<"$TIMEOUT_CALL_FILE")"
+	fail "idle-work query uses bounded default timeout" "timeout=$timeout_value"
 fi
 
 export TIMEOUT_MODE="timeout"

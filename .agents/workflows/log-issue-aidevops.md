@@ -297,23 +297,19 @@ documented in GH#20322. Do not skip it even if Step 3 returned no results.
 
 ### Step 6: Create the Issue
 
-First Bash tool call: create and sign an absolute body file.
+First, use the runtime Write tool—not Bash, a heredoc, or shell redirection—to
+create `aidevops-issue-body.md` at a fully resolved absolute path beneath
+`${AIDEVOPS_TEMP_DIR:-$HOME/.aidevops/.agent-workspace/tmp}`. Write only the
+approved `BODY_CONTENT`; the managed GitHub wrapper signs a private copy before
+posting.
 
-```bash
-BODY_FILE="${AIDEVOPS_TEMP_DIR:-$HOME/.aidevops/.agent-workspace/tmp}/aidevops-issue-body.md"
-cat <<'EOF' > "$BODY_FILE"
-BODY_CONTENT
-EOF
-~/.aidevops/agents/scripts/gh-signature-helper.sh footer >> "$BODY_FILE"
-```
-
-Second Bash tool call: post the already-created file. Do not combine body-file
-creation and the `gh issue create` write in the same Bash tool call.
+Then use a separate Bash tool call to post the already-created file. Do not
+combine body-file creation and the `gh issue create` write in one call.
 
 ```bash
 gh issue create -R marcusquinn/aidevops \
   --title "TITLE" \
-  --body-file "$BODY_FILE" \
+  --body-file "/absolute/path/to/aidevops-issue-body.md" \
   --label "LABEL"
 ```
 

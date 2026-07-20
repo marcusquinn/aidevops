@@ -91,9 +91,66 @@ class CanonicalWritePolicyTests(unittest.TestCase):
     def test_linked_worktree_write_is_allowed(self):
         self.assertIsNone(self._check(self.linked, self.linked / "new-file.md"))
 
+    def test_canonical_context_allows_structurally_safe_targets(self):
+        outside_target = self.root / "aidevops-issue-body.md"
+        self.assertIsNone(self._check(self.repo, outside_target))
+        self.assertIsNone(self._check(self.repo, self.linked / "new-file.md"))
+
+    def test_cross_repository_linked_target_is_denied(self):
+        foreign_repo = self.root / "foreign-repo"
+        foreign_linked = self.root / "foreign-linked"
+        foreign_repo.mkdir()
+        self._git(foreign_repo, "init", "-q", "-b", "main")
+        self._git(foreign_repo, "config", "user.name", "Test")
+        self._git(foreign_repo, "config", "user.email", "test@example.invalid")
+        self._git(foreign_repo, "config", "commit.gpgsign", "false")
+        (foreign_repo / "README.md").write_text("foreign\n", encoding="utf-8")
+        self._git(foreign_repo, "add", "README.md")
+        self._git(foreign_repo, "commit", "-q", "-m", "foreign seed")
+        self._git(
+            foreign_repo,
+            "worktree",
+            "add",
+            "-q",
+            "-b",
+            "feature/foreign",
+            str(foreign_linked),
+        )
+
+        for cwd in (self.repo, self.linked):
+            with self.subTest(cwd=cwd):
+                denial = self._check(cwd, foreign_linked / "README.md")
+                self.assertIsNotNone(denial)
+                reason = denial["hookSpecificOutput"]["permissionDecisionReason"]
+                self.assertIn("different repository", reason)
+
     def test_linked_context_cannot_target_canonical_checkout(self):
         denial = self._check(self.linked, self.repo / "README.md")
         self.assertIsNotNone(denial)
+
+    def test_outside_git_write_reports_outside_reason(self):
+        decision = canonical_write_policy.check_write(
+            str(self.root), str(self.root / "outside.txt")
+        )
+        self.assertEqual(decision["decision"], "allow")
+        self.assertEqual(
+            decision["reason"],
+            "write target is outside canonical worktrees",
+        )
+
+    def test_empty_target_fails_closed(self):
+        denial = self._check(self.repo)
+        self.assertIsNotNone(denial)
+        reason = denial["hookSpecificOutput"]["permissionDecisionReason"]
+        self.assertIn("write target is empty", reason)
+
+    def test_outside_symlink_into_canonical_checkout_is_denied(self):
+        alias = self.root / "canonical-alias"
+        alias.symlink_to(self.repo, target_is_directory=True)
+        denial = self._check(self.repo, alias / "README.md")
+        self.assertIsNotNone(denial)
+        reason = denial["hookSpecificOutput"]["permissionDecisionReason"]
+        self.assertIn("read-only session mirrors", reason)
 
     def test_missing_policy_helper_fails_closed(self):
         with mock.patch.object(
@@ -180,6 +237,12 @@ class CanonicalWritePolicyTests(unittest.TestCase):
 *** End Patch
 """
         self.assertIsNone(self._check(self.linked, patch_text=linked_patch))
+        absolute_linked_patch = f"""*** Begin Patch
+*** Add File: {self.linked / 'absolute-linked.md'}
++safe
+*** End Patch
+"""
+        self.assertIsNone(self._check(self.repo, patch_text=absolute_linked_patch))
         canonical_patch = f"""*** Begin Patch
 *** Update File: {self.repo / 'README.md'}
 @@
@@ -188,6 +251,29 @@ class CanonicalWritePolicyTests(unittest.TestCase):
 *** End Patch
 """
         denial = self._check(self.linked, patch_text=canonical_patch)
+        self.assertIsNotNone(denial)
+        self.assertIn(
+            "read-only session mirrors",
+            denial["hookSpecificOutput"]["permissionDecisionReason"],
+        )
+
+        outside_patch = f"""*** Begin Patch
+*** Add File: {self.root / 'aidevops-issue-body.md'}
++safe
+*** End Patch
+"""
+        self.assertIsNone(self._check(self.repo, patch_text=outside_patch))
+
+        mixed_patch = f"""*** Begin Patch
+*** Add File: {self.root / 'aidevops-issue-body.md'}
++safe
+*** Update File: {self.repo / 'README.md'}
+@@
+-seed
++unsafe
+*** End Patch
+"""
+        denial = self._check(self.repo, patch_text=mixed_patch)
         self.assertIsNotNone(denial)
         self.assertIn(
             "read-only session mirrors",

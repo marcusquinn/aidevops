@@ -30,6 +30,8 @@
 #   5. Previously-covered prefix still works (AIDEVOPS_FOO) — regression guard
 #   6. Canonical worker-origin env is passed through while legacy generic
 #      headless markers are not required past the clean-env boundary.
+#   7. Minimal worker identity crosses the sandbox without allowing arbitrary
+#      WORKER_* variables.
 #
 # Cross-references: t2184 (plugin duration_ms/metadata capture), t2177
 # (OTEL enrichment module), GH#19648 (t2184 issue).
@@ -172,6 +174,34 @@ if [[ ",${csv_out}," == *",AIDEVOPS_SESSION_ORIGIN,"* ]] && \
 	pass "canonical worker-origin env passes through without broad legacy passthrough"
 else
 	fail "canonical worker-origin env passes through without broad legacy passthrough" \
+		"got CSV: ${csv_out}"
+fi
+
+# -----------------------------------------------------------------------------
+# Test 7 — Minimal worker identity is available to sandboxed permission tooling
+# -----------------------------------------------------------------------------
+csv_out=$(run_with_env \
+	WORKER_ISSUE_NUMBER="123" \
+	WORKER_REPO_SLUG="owner/repo" \
+	DISPATCH_REPO_SLUG="owner/repo" \
+	WORKER_SESSION_KEY="issue-123" \
+	WORKER_WORKTREE_PATH="/workspace/repo-123" \
+	WORKER_GITHUB_LOGIN="worker-login" \
+	WORKER_UNRELATED_SECRET="must-not-pass" \
+	bash "$HELPER" passthrough-csv 2>/dev/null)
+
+worker_identity_ok=1
+for required_name in WORKER_ISSUE_NUMBER WORKER_REPO_SLUG DISPATCH_REPO_SLUG \
+	WORKER_SESSION_KEY WORKER_WORKTREE_PATH WORKER_GITHUB_LOGIN; do
+	if [[ ",${csv_out}," != *",${required_name},"* ]]; then
+		worker_identity_ok=0
+	fi
+done
+if [[ "$worker_identity_ok" -eq 1 ]] && \
+	[[ ",${csv_out}," != *",WORKER_UNRELATED_SECRET,"* ]]; then
+	pass "minimal worker identity passes without broad WORKER_* passthrough"
+else
+	fail "minimal worker identity passes without broad WORKER_* passthrough" \
 		"got CSV: ${csv_out}"
 fi
 
