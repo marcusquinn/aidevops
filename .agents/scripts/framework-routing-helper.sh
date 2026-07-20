@@ -324,15 +324,20 @@ _lfi_extract_created_issue_url() {
 	local issue_output="$1"
 	local slug="$2"
 	local expected_prefix="https://github.com/${slug}/issues/"
+	local expected_prefix_lower=""
 	local issue_url=""
 	local issue_url_count=0
-	local line
+	local line=""
+	local line_lower=""
+	local issue_number=""
+	expected_prefix_lower=$(printf '%s' "$expected_prefix" | tr '[:upper:]' '[:lower:]')
 
 	while IFS= read -r line; do
 		if [[ "$line" =~ ^https://github\.com/[^/[:space:]]+/[^/[:space:]]+/issues/[^/[:space:]]+$ ]]; then
 			issue_url_count=$((issue_url_count + 1))
-			if [[ "$line" == "${expected_prefix}"* ]]; then
-				local issue_number="${line#"$expected_prefix"}"
+			line_lower=$(printf '%s' "$line" | tr '[:upper:]' '[:lower:]')
+			if [[ "$line_lower" == "${expected_prefix_lower}"* ]]; then
+				issue_number="${line_lower#"$expected_prefix_lower"}"
 				if [[ "$issue_number" =~ ^[1-9][0-9]*$ ]]; then
 					issue_url="$line"
 				fi

@@ -280,6 +280,26 @@ else
 	echo "  FAIL: informational create output succeeds"
 fi
 
+mixed_case_output="${TMP_DIR}/mixed-case.out"
+mixed_case_home="${TMP_DIR}/home-mixed-case"
+mixed_case_fixture="https://github.com/MarcusQuinn/Aidevops/issues/9106"
+if run_log_framework_issue_case "[]" "$mixed_case_output" "${TMP_DIR}/mixed-case.trace" \
+	"$mixed_case_home" "${TMP_DIR}/stub-mixed-case" "$mixed_case_fixture"; then
+	mixed_case_text=$(<"$mixed_case_output")
+	mixed_case_fingerprint=$(<"${mixed_case_home}/.aidevops/state/log-issue-fingerprints.jsonl")
+	if [[ "$mixed_case_text" == "$mixed_case_fixture" ]]; then
+		PASS=$((PASS + 1))
+		echo "  PASS: mixed-case repository URL preserves canonical output"
+	else
+		FAIL=$((FAIL + 1))
+		echo "  FAIL: mixed-case repository URL was not preserved: $mixed_case_text"
+	fi
+	assert_contains "$mixed_case_fingerprint" '"issue":9106' "mixed-case repository URL records numeric fingerprint"
+else
+	FAIL=$((FAIL + 1))
+	echo "  FAIL: mixed-case repository URL matches configured slug"
+fi
+
 invalid_create_fixtures=(
 	"create completed without a URL"
 	"https://github.com/marcusquinn/aidevops/issues/not-a-number"
