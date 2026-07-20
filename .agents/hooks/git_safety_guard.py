@@ -4,8 +4,8 @@
 """Claude Code adapter for shared command and direct-write safety.
 
 Shell-command decisions are delegated to command-policy-helper.py. Direct file
-mutations are delegated to canonical-write-policy-helper.py so every canonical
-checkout is read-only regardless of branch name or target path.
+mutations are delegated to canonical-write-policy-helper.py so canonical
+checkout targets stay read-only while explicit linked-worktree targets work.
 
 This hook runs before Bash/Edit/Write tool calls execute. It is registered under
 both the Bash and direct-file-tool PreToolUse matchers.

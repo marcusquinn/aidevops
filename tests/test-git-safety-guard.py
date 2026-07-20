@@ -91,6 +91,30 @@ class CanonicalWritePolicyTests(unittest.TestCase):
     def test_linked_worktree_write_is_allowed(self):
         self.assertIsNone(self._check(self.linked, self.linked / "new-file.md"))
 
+    def test_canonical_context_may_target_same_repository_linked_absolute_path(self):
+        self.assertIsNone(self._check(self.repo, self.linked / "new-file.md"))
+
+    def test_canonical_context_denies_relative_path_that_resolves_into_linked(self):
+        target = Path("..") / self.linked.name / "new-file.md"
+        self.assertIsNotNone(self._check(self.repo, target))
+
+    def test_canonical_context_denies_linked_target_from_different_repository(self):
+        context = canonical_write_policy.Classification(
+            "canonical", True, common_dir="/primary/.git"
+        )
+        target = canonical_write_policy.Classification(
+            "linked", True, common_dir="/foreign/.git"
+        )
+        with mock.patch.object(
+            canonical_write_policy,
+            "classify_location",
+            side_effect=(context, target),
+        ):
+            decision = canonical_write_policy.check_write(
+                "/primary", "/foreign/linked/README.md"
+            )
+        self.assertEqual(decision["decision"], "deny")
+
     def test_linked_context_cannot_target_canonical_checkout(self):
         denial = self._check(self.linked, self.repo / "README.md")
         self.assertIsNotNone(denial)
@@ -188,6 +212,31 @@ class CanonicalWritePolicyTests(unittest.TestCase):
 *** End Patch
 """
         denial = self._check(self.linked, patch_text=canonical_patch)
+        self.assertIsNotNone(denial)
+        self.assertIn(
+            "read-only session mirrors",
+            denial["hookSpecificOutput"]["permissionDecisionReason"],
+        )
+        target_led_patch = f"""*** Begin Patch
+*** Update File: {self.linked / 'README.md'}
+@@
+-seed
++safe
+*** End Patch
+"""
+        self.assertIsNone(self._check(self.repo, patch_text=target_led_patch))
+        mixed_patch = f"""*** Begin Patch
+*** Update File: {self.linked / 'README.md'}
+@@
+-seed
++safe
+*** Update File: {self.repo / 'README.md'}
+@@
+-seed
++unsafe
+*** End Patch
+"""
+        denial = self._check(self.repo, patch_text=mixed_patch)
         self.assertIsNotNone(denial)
         self.assertIn(
             "read-only session mirrors",

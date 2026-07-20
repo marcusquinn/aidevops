@@ -13,7 +13,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
 import {
@@ -72,6 +72,15 @@ test("classifies every apply-patch target instead of trusting linked cwd", () =>
       () => checkCanonicalWriteSafetyGate("", scriptsDir, linked, { invalid: true }),
       /targets could not be classified/,
     );
+    const targetLedPatch = `*** Begin Patch\n*** Update File: ${join(linked, "README.md")}\n@@\n-seed\n+safe\n*** End Patch\n`;
+    assert.doesNotThrow(
+      () => checkCanonicalWriteSafetyGate("", scriptsDir, repo, targetLedPatch),
+    );
+    const mixedPatch = `*** Begin Patch\n*** Update File: ${join(linked, "README.md")}\n@@\n-seed\n+safe\n*** Update File: ${join(repo, "README.md")}\n@@\n-seed\n+unsafe\n*** End Patch\n`;
+    assert.throws(
+      () => checkCanonicalWriteSafetyGate("", scriptsDir, repo, mixedPatch),
+      /canonical write policy.*read-only session mirrors/,
+    );
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -95,7 +104,7 @@ test("fails closed when canonical policy returns a non-object payload", () => {
   }
 });
 
-test("blocks every canonical direct write and preserves linked-worktree writes", () => {
+test("uses explicit same-repository linked targets without weakening canonical writes", () => {
   const { root, repo, linked } = setupRepo();
   try {
     assert.throws(
@@ -111,6 +120,13 @@ test("blocks every canonical direct write and preserves linked-worktree writes",
       /canonical write policy/,
     );
     assert.doesNotThrow(
+      () => checkCanonicalWriteSafetyGate(join(linked, "new-file.md"), scriptsDir, repo),
+    );
+    assert.throws(
+      () => checkCanonicalWriteSafetyGate(relative(repo, join(linked, "new-file.md")), scriptsDir, repo),
+      /canonical write policy/,
+    );
+    assert.doesNotThrow(
       () => checkCanonicalWriteSafetyGate(join(linked, "README.md"), scriptsDir, linked),
     );
     assert.doesNotThrow(
@@ -118,6 +134,20 @@ test("blocks every canonical direct write and preserves linked-worktree writes",
     );
   } finally {
     rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("rejects an absolute linked target from a different repository", () => {
+  const primary = setupRepo();
+  const foreign = setupRepo();
+  try {
+    assert.throws(
+      () => checkCanonicalWriteSafetyGate(join(foreign.linked, "README.md"), scriptsDir, primary.repo),
+      /canonical write policy.*read-only session mirrors/,
+    );
+  } finally {
+    rmSync(primary.root, { recursive: true, force: true });
+    rmSync(foreign.root, { recursive: true, force: true });
   }
 });
 

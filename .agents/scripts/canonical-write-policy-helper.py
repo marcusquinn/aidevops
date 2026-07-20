@@ -147,16 +147,28 @@ def check_write(cwd: str, file_path: str) -> dict[str, Any]:
     canonical = next(
         (item for item in classifications if item.classification == "canonical"), None
     )
+    target_led_linked_write = (
+        bool(file_path)
+        and Path(file_path).is_absolute()
+        and context.classification == "canonical"
+        and target.classification == "linked"
+        and bool(context.common_dir)
+        and context.common_dir == target.common_dir
+    )
 
     if unknown is not None:
         decision = "deny"
         reason = f"worktree classification failed closed: {unknown.reason}"
-    elif canonical is not None:
+    elif canonical is not None and not target_led_linked_write:
         decision = "deny"
         reason = "canonical checkouts are read-only session mirrors"
     else:
         decision = "allow"
-        reason = "write target and process context are outside canonical worktrees"
+        reason = (
+            "explicit absolute target is a linked worktree in the canonical repository"
+            if target_led_linked_write
+            else "write target and process context are outside canonical worktrees"
+        )
 
     return {
         "policy": POLICY_VERSION,
@@ -185,11 +197,9 @@ def _patch_paths(patch_text: str) -> list[str]:
 
 def check_patch(cwd: str, patch_text: str) -> dict[str, Any]:
     """Return one fail-closed decision for every target in an apply patch."""
-    context_decision = check_write(cwd, "")
-    if context_decision["decision"] != "allow":
-        return context_decision
     paths = _patch_paths(patch_text)
     if not paths:
+        context_decision = check_write(cwd, "")
         return {
             **context_decision,
             "decision": "deny",
@@ -197,11 +207,14 @@ def check_patch(cwd: str, patch_text: str) -> dict[str, Any]:
             "action": "repair_or_use_linked_worktree",
             "patch_paths": [],
         }
-    for path in paths:
+    allowed_decision = check_write(cwd, paths[0])
+    if allowed_decision["decision"] != "allow":
+        return {**allowed_decision, "patch_paths": paths}
+    for path in paths[1:]:
         decision = check_write(cwd, path)
         if decision["decision"] != "allow":
             return {**decision, "patch_paths": paths}
-    return {**context_decision, "patch_paths": paths}
+    return {**allowed_decision, "patch_paths": paths}
 
 
 def resolve_canonical_branch(cwd: str) -> dict[str, str]:
