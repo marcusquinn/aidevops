@@ -4,8 +4,8 @@ name: Review Bot Gate (reusable)
 # See: .agents/templates/workflows/review-bot-gate-caller.yml
 # See: .agents/reference/reusable-workflows.md
 #
-# The caller declares the triggers (pull_request / pull_request_review / issue_comment)
-# and the concurrency group. All gate logic lives here; the framework helper
+# The caller declares the triggers, eligibility guard, and job-level concurrency
+# group. This workflow repeats eligibility as defence-in-depth; the framework helper
 # is fetched at runtime via the coupled aidevops_repository/aidevops_ref inputs.
 #
 # GH#20727: migrated from vendored full-copy (SHA-pinned checkout) to
@@ -65,7 +65,8 @@ jobs:
     # Only run on PRs (issue_comment fires for PR comments too).
     # GH#27137: bot review submissions and inline comments must re-evaluate the
     # gate. Human replies cannot change AI-review evidence and must not replace
-    # a successful exact-head check with an API-quota failure.
+    # a successful exact-head check with an API-quota failure. Keep this matrix
+    # identical to both callers; tests enforce parity (GH#28316).
     if: >
       (
         github.event_name == 'pull_request' ||
