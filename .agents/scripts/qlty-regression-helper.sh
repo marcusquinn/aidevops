@@ -28,8 +28,8 @@
 #   2 — invocation or environment error
 #
 # Design notes:
-# - Uses standalone shared clones for isolated refs. Unlike linked worktrees,
-#   these retain a .git directory, matching the authoritative CI checkout.
+# - Uses standalone shared clones for both refs. Unlike linked worktrees, these
+#   retain equivalent .git directories and prevent topology-sensitive findings.
 # - Total-count diff (not SARIF fingerprint diff) because qlty's
 #   fingerprints are not stable across line shifts.
 
@@ -43,7 +43,6 @@ QLTY_BIN=""
 QLTY_VERSION=""
 GIT_BIN=""
 UNKNOWN_VALUE="unknown"
-DIRECT_SCAN_MODE="direct-checkout"
 
 cleanup() {
 	if [ -n "$TMP_DIR" ] && [ -d "$TMP_DIR" ]; then
@@ -102,7 +101,6 @@ resolve_git() {
 run_qlty_sarif() {
 	local _dir="$1"
 	local _out="$2"
-	local _mode="${3:-isolated-clone}"
 	local _cache_key=""
 	local _cache_dir=""
 	_cache_key=$(basename "$_out" .sarif)
@@ -382,8 +380,8 @@ if [ "$DRY_RUN" -eq 1 ]; then
 	QLTY_VERSION=$("$QLTY_BIN" --version 2>/dev/null) || QLTY_VERSION="$UNKNOWN_VALUE"
 	_head_sarif="$TMP_DIR/head.sarif"
 	log "dry-run: scanning current tree"
-	run_qlty_sarif "." "$_head_sarif" "$DIRECT_SCAN_MODE"
-	emit_scan_metadata "head" "." "$_head_sarif" "$DIRECT_SCAN_MODE"
+	run_qlty_sarif "." "$_head_sarif"
+	emit_scan_metadata "head" "." "$_head_sarif" "current-tree"
 	_count=$(count_smells "$_head_sarif")
 	printf 'Total smells: %s\n' "$_count"
 	if [ -n "$SARIF_HEAD" ]; then
@@ -436,22 +434,15 @@ else
 	emit_scan_metadata "base" "$BASE_WORKTREE" "$_base_sarif" "isolated-clone"
 fi
 
-# Prefer the authoritative direct checkout when it has the requested tree.
-# GitHub's synthetic merge commit and PR head can have different commits but
-# the same tree; scanning the direct checkout preserves absolute-gate parity.
-CURRENT_TREE=$(git rev-parse 'HEAD^{tree}')
-WORKTREE_STATUS=$(git status --porcelain --untracked-files=normal)
-if [ "$CURRENT_TREE" = "$HEAD_TREE" ] && [ -z "$WORKTREE_STATUS" ]; then
-	HEAD_SCAN_DIR="$REPO_ROOT"
-	HEAD_SCAN_MODE="$DIRECT_SCAN_MODE"
-else
-	HEAD_WORKTREE="$TMP_DIR/head-worktree"
-	HEAD_SCAN_DIR="$HEAD_WORKTREE"
-	HEAD_SCAN_MODE="isolated-clone"
-	log "creating head scan clone at $HEAD_SHA"
-	if ! create_scan_clone "$HEAD_WORKTREE" "$HEAD_SHA" "$REPO_ROOT"; then
-		die "failed to create head scan clone for $HEAD_SHA"
-	fi
+# Scan the head in the same standalone-clone topology as the base. Qlty 0.635.0
+# can otherwise report similar-code findings only in one topology even when the
+# affected files are byte-identical across the compared trees.
+HEAD_WORKTREE="$TMP_DIR/head-worktree"
+HEAD_SCAN_DIR="$HEAD_WORKTREE"
+HEAD_SCAN_MODE="isolated-clone"
+log "creating head scan clone at $HEAD_SHA"
+if ! create_scan_clone "$HEAD_WORKTREE" "$HEAD_SHA" "$REPO_ROOT"; then
+	die "failed to create head scan clone for $HEAD_SHA"
 fi
 
 log "scanning head ($HEAD_SHA)"

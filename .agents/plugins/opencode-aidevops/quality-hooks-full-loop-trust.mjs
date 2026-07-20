@@ -17,6 +17,40 @@ function shellQuote(value) {
   return `'${value.replaceAll("'", `'"'"'`)}'`;
 }
 
+function resolveWrapperPath(wrapper, scriptsDir, cwd) {
+  if (wrapper === "full-loop-helper.sh") {
+    return resolve(scriptsDir, "full-loop-helper.sh");
+  }
+  if (wrapper.startsWith("~/")) return resolve(homedir(), wrapper.slice(2));
+  if (wrapper.startsWith("$PWD/")) return resolve(cwd, wrapper.slice(5));
+  return resolve(cwd, wrapper);
+}
+
+function classifyWrapperPath(
+  wrapper,
+  scriptsDir,
+  cwd,
+  activeScriptsDir,
+  activeScriptsDirBinding,
+) {
+  const deployedPath = resolve(scriptsDir, "full-loop-helper.sh");
+  const repositoryPath = resolve(cwd, ".agents", "scripts", "full-loop-helper.sh");
+  const candidatePath = resolveWrapperPath(wrapper, scriptsDir, cwd);
+  if ([deployedPath, repositoryPath].includes(candidatePath)) {
+    return { deployedPath, trusted: existsSync(candidatePath), rewrite: false };
+  }
+
+  const activeDeployedPath = resolve(activeScriptsDir, "full-loop-helper.sh");
+  if (candidatePath !== activeDeployedPath || !existsSync(deployedPath)) {
+    return { deployedPath, trusted: false, rewrite: false };
+  }
+  if (resolvesTo(candidatePath, deployedPath)) {
+    return { deployedPath, trusted: true, rewrite: false };
+  }
+  const bound = activeScriptsDirBinding?.activeScriptsDir === resolve(activeScriptsDir);
+  return { deployedPath, trusted: bound, rewrite: bound };
+}
+
 export function bindActiveScriptsDir(activeScriptsDir, scriptsDir) {
   const activeHelper = resolve(activeScriptsDir, "full-loop-helper.sh");
   const pinnedHelper = resolve(scriptsDir, "full-loop-helper.sh");
@@ -37,37 +71,25 @@ export function classifyFullLoopCommitAndPr(
   )];
   if (wrapperMatches.length === 0) return { command, trusted: false };
 
-  const deployedPath = resolve(scriptsDir, "full-loop-helper.sh");
-  const activeDeployedPath = resolve(activeScriptsDir, "full-loop-helper.sh");
-  const repositoryPath = resolve(cwd, ".agents", "scripts", "full-loop-helper.sh");
   let normalisedCommand = command;
   for (const wrapperMatch of wrapperMatches.reverse()) {
     const wrapper = wrapperMatch.groups.wrapper;
-    let candidatePath;
-    if (wrapper === "full-loop-helper.sh") candidatePath = deployedPath;
-    else if (wrapper.startsWith("~/")) candidatePath = resolve(homedir(), wrapper.slice(2));
-    else if (wrapper.startsWith("$PWD/")) candidatePath = resolve(cwd, wrapper.slice(5));
-    else candidatePath = resolve(cwd, wrapper);
-    if ([deployedPath, repositoryPath].includes(candidatePath)) {
-      if (!existsSync(candidatePath)) return { command, trusted: false };
-      continue;
-    }
-    if (candidatePath !== activeDeployedPath || !existsSync(deployedPath)) {
-      return { command, trusted: false };
-    }
-    const aliasStillPinned = resolvesTo(candidatePath, deployedPath);
-    if (!aliasStillPinned
-      && activeScriptsDirBinding?.activeScriptsDir !== resolve(activeScriptsDir)) {
-      return { command, trusted: false };
-    }
-    if (aliasStillPinned) continue;
+    const classification = classifyWrapperPath(
+      wrapper,
+      scriptsDir,
+      cwd,
+      activeScriptsDir,
+      activeScriptsDirBinding,
+    );
+    if (!classification.trusted) return { command, trusted: false };
+    if (!classification.rewrite) continue;
 
     // The activation link may rotate after OpenCode pins its immutable runtime
     // bundle. Keep the sanctioned deployed alias bound to that pinned helper
     // instead of either rejecting it or executing a newer bundle in-process.
     const wrapperStart = wrapperMatch.index + wrapperMatch[0].indexOf(wrapper);
     normalisedCommand = normalisedCommand.slice(0, wrapperStart)
-      + shellQuote(deployedPath)
+      + shellQuote(classification.deployedPath)
       + normalisedCommand.slice(wrapperStart + wrapper.length);
   }
   return { command: normalisedCommand, trusted: true };
