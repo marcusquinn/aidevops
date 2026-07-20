@@ -38,6 +38,117 @@ def parse_time(value):
         return 0.0
 
 
+def unavailable_cycle_state(availability, reason=None):
+    state = {
+        'availability': availability,
+        'schema': None,
+        'cycle_id': None,
+        'phase': None,
+        'outcome': None,
+        'heartbeat_at': None,
+        'progress': None,
+        'blocker': None,
+    }
+    if reason:
+        state['reason'] = reason
+    return state
+
+
+def valid_cycle_fingerprint(value):
+    if not isinstance(value, str):
+        return False
+    if value.startswith('sha256:'):
+        digest = value[len('sha256:'):]
+        return len(digest) == 64 and all(char in '0123456789abcdef' for char in digest)
+    if value.startswith('cksum:'):
+        return value[len('cksum:'):].isdigit()
+    return False
+
+
+def build_cycle_state(path):
+    try:
+        with open(path, encoding='utf-8') as handle:
+            health = json.load(handle)
+    except FileNotFoundError:
+        return unavailable_cycle_state('unavailable')
+    except (OSError, json.JSONDecodeError, TypeError):
+        return unavailable_cycle_state('malformed', 'health-json')
+    if not isinstance(health, dict):
+        return unavailable_cycle_state('malformed', 'health-object')
+    state = health.get('cycle_state')
+    if state is None:
+        return unavailable_cycle_state('unavailable')
+    if not isinstance(state, dict):
+        return unavailable_cycle_state('malformed', 'cycle-state-object')
+
+    phases = {'admitted', 'preflight', 'deterministic', 'supervising', 'completed'}
+    outcomes = {'running', 'progressed', 'idle', 'blocked', 'interrupted'}
+    progress_kinds = {'pr-merged', 'pr-closed-conflicting', 'worker-dispatched'}
+    blocker_kinds = {
+        'none', 'session-gate', 'dedup', 'preflight-failed', 'stop-requested',
+        'dispatch-no-work-rate', 'runner-health', 'merge-authority', 'review-gate',
+        'review-bot-threads', 'required-review-threads', 'checks-active',
+        'checks-failed', 'quiet-period', 'snapshot-unavailable', 'head-changed',
+        'interrupted',
+    }
+    progress = state.get('progress')
+    blocker = state.get('blocker')
+    no_progress = progress.get('consecutive_no_progress_cycles') if isinstance(progress, dict) else None
+    same_blocker = blocker.get('consecutive_same_cycles') if isinstance(blocker, dict) else None
+    kinds = progress.get('kinds') if isinstance(progress, dict) else None
+    blocker_kind = blocker.get('kind') if isinstance(blocker, dict) else None
+    fingerprint = blocker.get('fingerprint') if isinstance(blocker, dict) else None
+    last_at = progress.get('last_at') if isinstance(progress, dict) else None
+    invalid = (
+        state.get('schema') != 'aidevops.pulse-cycle-state/v1'
+        or not isinstance(state.get('cycle_id'), str)
+        or not state.get('cycle_id')
+        or state.get('phase') not in phases
+        or state.get('outcome') not in outcomes
+        or parse_time(state.get('heartbeat_at')) <= 0
+        or not isinstance(progress, dict)
+        or not isinstance(kinds, list)
+        or any(kind not in progress_kinds for kind in kinds)
+        or isinstance(no_progress, bool)
+        or not isinstance(no_progress, int)
+        or no_progress < 0
+        or (last_at is not None and parse_time(last_at) <= 0)
+        or not isinstance(blocker, dict)
+        or blocker_kind not in blocker_kinds
+        or isinstance(same_blocker, bool)
+        or not isinstance(same_blocker, int)
+        or same_blocker < 0
+        or (blocker_kind == 'none' and (fingerprint is not None or same_blocker != 0))
+        or (blocker_kind != 'none' and not valid_cycle_fingerprint(fingerprint))
+        or (state.get('outcome') == 'running' and state.get('phase') == 'completed')
+        or (state.get('outcome') != 'running' and state.get('phase') != 'completed')
+        or (state.get('outcome') == 'progressed' and (not kinds or last_at is None or no_progress != 0))
+        or (state.get('outcome') == 'blocked' and blocker_kind == 'none')
+        or (state.get('outcome') == 'interrupted' and blocker_kind == 'none')
+        or (state.get('outcome') == 'idle' and blocker_kind != 'none')
+    )
+    if invalid:
+        return unavailable_cycle_state('malformed', 'cycle-state-contract')
+    return {
+        'availability': 'available',
+        'schema': state['schema'],
+        'cycle_id': state['cycle_id'],
+        'phase': state['phase'],
+        'outcome': state['outcome'],
+        'heartbeat_at': state['heartbeat_at'],
+        'progress': {
+            'last_at': last_at,
+            'kinds': kinds,
+            'consecutive_no_progress_cycles': no_progress,
+        },
+        'blocker': {
+            'kind': blocker_kind,
+            'fingerprint': fingerprint,
+            'consecutive_same_cycles': same_blocker,
+        },
+    }
+
+
 def parse_stage(line):
     parts = line.split('\t')
     if not parts:
@@ -409,6 +520,7 @@ prefetch_cache = {
     'conditional_misses': 0,
 }
 health_path = os.path.join(log_dir, 'pulse-health.json')
+cycle_state = build_cycle_state(health_path)
 if os.path.exists(health_path):
     try:
         with open(health_path, encoding='utf-8') as health_file:
@@ -497,6 +609,7 @@ result = {
     'top_graphql_consumers': api_consumers,
     'api_call_pressure': api_pressure,
     'prefetch_cache': prefetch_cache,
+    'cycle_state': cycle_state,
     'review_thread_attention': review_thread_attention,
     'objective_reconciliation': objective_reconciliation,
 }
@@ -518,6 +631,7 @@ runtime_state = {
     'dispatch_stage_counts': dict(stage_counts),
     'graphql_budget': graphql_budget,
     'prefetch_cache': prefetch_cache,
+    'cycle_state': cycle_state,
     'pre_launch_blockers': pre_launch_blockers,
     'pulse_counter_hits': counter_hits,
     'pulse_gauges': gauge_values,
@@ -555,6 +669,7 @@ else:
     print(f'- Pulse counter hits: {json.dumps(counter_hits, sort_keys=True)}')
     print(f'- GraphQL budget: {graphql_budget_status}')
     print(f'- Prefetch cache: {json.dumps(prefetch_cache, sort_keys=True)}')
+    print(f'- Cycle state: {json.dumps(cycle_state, sort_keys=True)}')
     print(f'- Dispatch API blocked by GraphQL: {str(dispatch_api_blocked).lower()}')
     print(f'- Active worker processes: {active_worker_processes if active_worker_processes is not None else "unknown"}')
     if api_consumers:

@@ -17,6 +17,13 @@ PMRC_SUBJECT_HEAD_PREFIX="head "
 PMRC_SUBJECT_PR_PREFIX="PR #"
 PMRC_BLOCKER_REVIEW_BOT_THREADS="review-bot-threads"
 PMRC_BLOCKER_REQUIRED_REVIEW_THREADS="required-review-threads"
+PMRC_BLOCKER_MERGE_AUTHORITY="merge-authority"
+PMRC_BLOCKER_REVIEW_GATE="review-gate"
+PMRC_BLOCKER_CHECKS_ACTIVE="checks-active"
+PMRC_BLOCKER_CHECKS_FAILED="checks-failed"
+PMRC_BLOCKER_QUIET_PERIOD="quiet-period"
+PMRC_BLOCKER_SNAPSHOT_UNAVAILABLE="snapshot-unavailable"
+PMRC_BLOCKER_HEAD_CHANGED="head-changed"
 : "${_PULSE_MERGE_PREFLIGHT_BLOCKING_CHECKS_JSON:=[]}"
 : "${_PULSE_MERGE_PREFLIGHT_BLOCKER_KIND:=}"
 
@@ -493,6 +500,11 @@ _pmrc_snapshot_checks_acceptable() {
 		' <<<"$checks_json" 2>/dev/null) || _PULSE_MERGE_PREFLIGHT_BLOCKING_CHECKS_JSON="[]"
 	fi
 	if [[ "$pending" -gt 0 || "$blockers" -gt 0 ]]; then
+		if [[ "$blockers" -gt 0 ]]; then
+			_PULSE_MERGE_PREFLIGHT_BLOCKER_KIND="$PMRC_BLOCKER_CHECKS_FAILED"
+		else
+			_PULSE_MERGE_PREFLIGHT_BLOCKER_KIND="$PMRC_BLOCKER_CHECKS_ACTIVE"
+		fi
 		echo "[pulse-merge] pre-merge snapshot: PR #${pr_number} in ${repo_slug} not ready (active=${pending}, blocking_failures=${blockers}, advisory_failures=${advisory}) (GH#27137)" >>"$LOGFILE"
 		return 1
 	fi
@@ -581,38 +593,61 @@ _pulse_merge_preflight_snapshot_gate() {
 	_PULSE_MERGE_PREFLIGHT_BLOCKER_KIND=""
 
 	pr_json=$(_pmrc_gh_read gh api "repos/${repo_slug}/pulls/${pr_number}" 2>/dev/null) || {
+		_PULSE_MERGE_PREFLIGHT_BLOCKER_KIND="$PMRC_BLOCKER_SNAPSHOT_UNAVAILABLE"
 		_pmrc_snapshot_log_failure "$repo_slug" "${PMRC_SUBJECT_PR_PREFIX}${pr_number}" "pull-request fetch"
 		return 1
 	}
 	if [[ -z "$pr_json" ]]; then
+		_PULSE_MERGE_PREFLIGHT_BLOCKER_KIND="$PMRC_BLOCKER_SNAPSHOT_UNAVAILABLE"
 		_pmrc_snapshot_log_failure "$repo_slug" "${PMRC_SUBJECT_PR_PREFIX}${pr_number}" "pull-request parse"
 		return 1
 	fi
 	pr_coordinates=$(jq -r '[(.head.sha // ""), (.base.ref // "")] | join("\u001f")' <<<"$pr_json") || {
+		_PULSE_MERGE_PREFLIGHT_BLOCKER_KIND="$PMRC_BLOCKER_SNAPSHOT_UNAVAILABLE"
 		_pmrc_snapshot_log_failure "$repo_slug" "${PMRC_SUBJECT_PR_PREFIX}${pr_number}" "pull-request parse"
 		return 1
 	}
 	IFS=$'\x1f' read -r current_head_sha base_branch <<<"$pr_coordinates"
 	if [[ -z "$current_head_sha" || "$current_head_sha" != "$expected_head_sha" ]]; then
+		_PULSE_MERGE_PREFLIGHT_BLOCKER_KIND="$PMRC_BLOCKER_HEAD_CHANGED"
 		echo "[pulse-merge] pre-merge snapshot: head changed for PR #${pr_number} in ${repo_slug} (expected=${expected_head_sha:-unknown}, current=${current_head_sha:-unknown}) — prior gate state revoked (GH#27137)" >>"$LOGFILE"
 		return 1
 	fi
 	required_contexts=$(_required_contexts_for_default_branch "$repo_slug") || {
+		_PULSE_MERGE_PREFLIGHT_BLOCKER_KIND="$PMRC_BLOCKER_SNAPSHOT_UNAVAILABLE"
 		_pmrc_snapshot_log_failure "$repo_slug" "${PMRC_SUBJECT_PR_PREFIX}${pr_number}" "required-context lookup"
 		return 1
 	}
-	checks_json=$(_pmrc_snapshot_checks_json "$repo_slug" "$current_head_sha") || return 1
-	activity_json=$(_pmrc_snapshot_bot_activity_json "$repo_slug" "$pr_number") || return 1
+	checks_json=$(_pmrc_snapshot_checks_json "$repo_slug" "$current_head_sha") || {
+		_PULSE_MERGE_PREFLIGHT_BLOCKER_KIND="$PMRC_BLOCKER_SNAPSHOT_UNAVAILABLE"
+		return 1
+	}
+	activity_json=$(_pmrc_snapshot_bot_activity_json "$repo_slug" "$pr_number") || {
+		_PULSE_MERGE_PREFLIGHT_BLOCKER_KIND="$PMRC_BLOCKER_SNAPSHOT_UNAVAILABLE"
+		return 1
+	}
 	_pmrc_review_evidence_permits_advisory "$live_gate_evidence" "$repo_slug" "$pr_number" "$current_head_sha" || live_gate_evidence=""
-	_pmrc_snapshot_review_gate_fresh "$repo_slug" "$pr_number" "$checks_json" "$activity_json" "$live_gate_evidence" || return 1
-	_pmrc_snapshot_review_threads_clear "$repo_slug" "$pr_number" "$base_branch" || return 1
+	if ! _pmrc_snapshot_review_gate_fresh "$repo_slug" "$pr_number" "$checks_json" "$activity_json" "$live_gate_evidence"; then
+		_PULSE_MERGE_PREFLIGHT_BLOCKER_KIND="$PMRC_BLOCKER_REVIEW_GATE"
+		return 1
+	fi
+	if ! _pmrc_snapshot_review_threads_clear "$repo_slug" "$pr_number" "$base_branch"; then
+		[[ -n "$_PULSE_MERGE_PREFLIGHT_BLOCKER_KIND" ]] || \
+			_PULSE_MERGE_PREFLIGHT_BLOCKER_KIND="$PMRC_BLOCKER_SNAPSHOT_UNAVAILABLE"
+		return 1
+	fi
 	if ! _pmrc_snapshot_checks_acceptable \
 		"$repo_slug" "$pr_number" "$checks_json" "$required_contexts" \
 		"$live_gate_evidence" "$current_head_sha"; then
+		[[ -n "$_PULSE_MERGE_PREFLIGHT_BLOCKER_KIND" ]] || \
+			_PULSE_MERGE_PREFLIGHT_BLOCKER_KIND="$PMRC_BLOCKER_CHECKS_FAILED"
 		_pmrc_record_preflight_check_mismatch
 		return 1
 	fi
-	_pmrc_snapshot_quiet_period_passes "$repo_slug" "$pr_number" "$checks_json" "$activity_json" || return 1
+	if ! _pmrc_snapshot_quiet_period_passes "$repo_slug" "$pr_number" "$checks_json" "$activity_json"; then
+		_PULSE_MERGE_PREFLIGHT_BLOCKER_KIND="$PMRC_BLOCKER_QUIET_PERIOD"
+		return 1
+	fi
 	echo "[pulse-merge] pre-merge snapshot: current head ${current_head_sha:0:12}, fresh review gate, merge-policy-compatible review threads, terminal checks, and quiet period verified for PR #${pr_number} in ${repo_slug} (GH#27137)" >>"$LOGFILE"
 	return 0
 }

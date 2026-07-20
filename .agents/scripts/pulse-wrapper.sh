@@ -1198,29 +1198,20 @@ source "${SCRIPT_DIR}/pulse-wrapper-cycle-gates.sh"
 # _pulse_run_deterministic_pipeline
 #
 # Deterministic cycle stages: merge pass, dependency graph, blocked-status
-# refresh, fill floor, routine evaluation, health snapshot, cycle index, and
-# instance lock release. Extracted from main() (GH#18689) to reduce function
-# length below the 100-line threshold.
-#
-# Arguments:
-#   $1 — cycle_start_epoch (seconds since epoch, captured in main())
-#   $2 — ledger_count_before (snapshot at cycle start, used by t3027 outcome
-#        detection — defaults to 0 if not supplied for back-compat)
+# refresh, fill floor, routine evaluation, and instance lock release. Extracted
+# from main() (GH#18689) to reduce function length below the 100-line threshold.
 #
 # Side effects:
 #   - merges ready PRs across all repos
-#   - writes health snapshot and cycle index JSONL record
 #   - releases the instance lock so the LLM session runs lock-free
-#   - records cycle outcome to pulse-idle-backoff-helper.sh (t3027)
 #
 # Exit code: always 0
 # ---------------------------------------------------------------------------
 _pulse_run_deterministic_pipeline() {
-	local cycle_start_epoch="$1"
-	local _ledger_before="${2:-0}"
-	[[ "$_ledger_before" =~ ^[0-9]+$ ]] || _ledger_before=0
-
 	_pulse_drain_prefetch_counters # t3027: bridge subshell counters
+	if [[ -f "$STOP_FLAG" ]]; then
+		_pulse_cycle_state_note_blocker stop-requested pulse-wrapper stop-flag || true
+	fi
 
 	# GH#21604 (t3035): Orphan worker reaper — runs at the start of every cycle
 	# to detect workers that survived a pulse restart (no ledger entry) and
@@ -1292,12 +1283,15 @@ _pulse_run_deterministic_pipeline() {
 	# updates are lost. Read the temp file it writes and accumulate here.
 	local _merge_health_file="${TMPDIR:-/tmp}/pulse-health-merge-$$.tmp"
 	if [[ -f "$_merge_health_file" ]]; then
-		local _mhf_merged=0 _mhf_closed=0
-		read -r _mhf_merged _mhf_closed <"$_merge_health_file" || true
+		local _mhf_merged=0 _mhf_closed=0 _mhf_blocker_kind="none" _mhf_blocker_fingerprint="-"
+		read -r _mhf_merged _mhf_closed _mhf_blocker_kind _mhf_blocker_fingerprint <"$_merge_health_file" || true
 		[[ "$_mhf_merged" =~ ^[0-9]+$ ]] || _mhf_merged=0
 		[[ "$_mhf_closed" =~ ^[0-9]+$ ]] || _mhf_closed=0
 		_PULSE_HEALTH_PRS_MERGED=$((_PULSE_HEALTH_PRS_MERGED + _mhf_merged))
 		_PULSE_HEALTH_PRS_CLOSED_CONFLICTING=$((_PULSE_HEALTH_PRS_CLOSED_CONFLICTING + _mhf_closed))
+		if [[ "$_mhf_blocker_kind" != "none" && "$_mhf_blocker_fingerprint" != "-" ]]; then
+			_pulse_cycle_state_set_blocker "$_mhf_blocker_kind" "$_mhf_blocker_fingerprint" || true
+		fi
 		rm -f "$_merge_health_file" || true
 	fi
 
@@ -1359,8 +1353,10 @@ _pulse_run_deterministic_pipeline() {
 		fi
 		if [[ "$_nw_rc" -eq 1 ]]; then
 			echo "[pulse-wrapper] Dispatch_max skipped: no_work rate circuit breaker tripped (t2770)" >>"$LOGFILE"
+			_pulse_cycle_state_note_blocker dispatch-no-work-rate pulse-wrapper no-work-rate || true
 		elif [[ "$_rh_rc" -eq 0 ]]; then
 			echo "[pulse-wrapper] Dispatch_max skipped: runner-health circuit breaker tripped (t2897)" >>"$LOGFILE"
+			_pulse_cycle_state_note_blocker runner-health pulse-wrapper runner-health || true
 			if declare -F pulse_stats_increment >/dev/null 2>&1; then
 				pulse_stats_increment "pulse_dispatch_runner_health_breaker_tripped" 2>/dev/null || true
 				pulse_stats_increment "dispatch_candidate_failed" 2>/dev/null || true
@@ -1421,17 +1417,6 @@ _pulse_run_deterministic_pipeline() {
 		run_stage_with_timeout "dashboard_freshness_check" "$PRE_RUN_STAGE_TIMEOUT" \
 			bash "$_dfc_script" scan || true
 	fi
-
-	# Write structured health snapshot for instant diagnosis (GH#15107)
-	write_pulse_health_file || true
-
-	# Append one JSONL record to the cycle index (t1886)
-	local _cycle_end_epoch
-	_cycle_end_epoch=$(date +%s)
-	local _cycle_duration=$((_cycle_end_epoch - cycle_start_epoch))
-	append_cycle_index "$_cycle_duration" || true
-
-	_pulse_record_cycle_outcome "$_ledger_before" # t3027: drives next-cycle backoff
 
 	# Release the instance lock BEFORE the LLM session so the next 2-min
 	# cycle can run deterministic ops (merge pass + fill floor) concurrently.
@@ -1651,7 +1636,7 @@ main() {
 	# Register EXIT trap BEFORE acquiring the lock so the lock is always
 	# released on exit — including set -e aborts, SIGTERM, and return paths.
 	# SIGKILL cannot be trapped; stale-lock detection handles that case.
-	trap '_pulse_efficiency_cycle_finish; release_instance_lock; aidevops_runtime_bundle_lease_release' EXIT
+	trap '_pulse_cycle_state_finish_if_needed interrupted; _pulse_efficiency_cycle_finish; release_instance_lock; aidevops_runtime_bundle_lease_release' EXIT
 
 	if ! acquire_instance_lock; then
 		return 0
@@ -1695,6 +1680,7 @@ main() {
 		push_cleanup 'aidevops_runtime_bundle_lease_release'
 		push_cleanup 'release_instance_lock'
 		push_cleanup '_pulse_efficiency_cycle_finish'
+		push_cleanup '_pulse_cycle_state_finish_if_needed interrupted'
 		# GH#23728: keep EXIT (not RETURN) for SIGTERM/set -e lock safety, but
 		# register release_instance_lock before replacing the direct EXIT trap.
 		trap '_run_cleanups' EXIT
@@ -1715,6 +1701,7 @@ main() {
 			push_cleanup 'aidevops_runtime_bundle_lease_release'
 			push_cleanup 'release_instance_lock'
 			push_cleanup '_pulse_efficiency_cycle_finish'
+			push_cleanup '_pulse_cycle_state_finish_if_needed interrupted'
 			# GH#23728: keep EXIT (not RETURN) for SIGTERM/set -e lock safety, but
 			# register release_instance_lock before replacing the direct EXIT trap.
 			trap '_run_cleanups' EXIT
@@ -1747,6 +1734,10 @@ main() {
 		printf 'canary: ok (sourcing + _pulse_handle_self_check + acquire_instance_lock passed)\n'
 		return 0
 	fi
+	if [[ "${PULSE_DRY_RUN:-0}" != "1" ]]; then
+		_pulse_cycle_state_start
+		write_pulse_health_file || true
+	fi
 
 	# GH#22631: `circuit-breaker-helper.sh status` can report an overdue
 	# supervisor breaker until `check` is invoked. Refresh once per real pulse
@@ -1754,10 +1745,14 @@ main() {
 	_pulse_refresh_supervisor_circuit_breaker || true
 
 	if ! check_session_gate; then
+		_pulse_cycle_state_note_blocker session-gate pulse-wrapper session-gate || true
+		_pulse_cycle_state_finish_if_needed blocked
 		return 0
 	fi
 
 	if ! check_dedup; then
+		_pulse_cycle_state_note_blocker dedup pulse-wrapper dedup || true
+		_pulse_cycle_state_finish_if_needed blocked
 		return 0
 	fi
 
@@ -1847,6 +1842,9 @@ main() {
 	# unexpected set -e exits publish a conservative partial cycle rather than
 	# silently dropping the observation window.
 	_pulse_efficiency_cycle_start
+	local _cycle_dispatch_before
+	_cycle_dispatch_before=$(_pulse_capture_dispatch_total)
+	_pulse_cycle_state_publish preflight || true
 
 	# t3068: drain any pending approval-trigger records before the regular
 	# cycle. Backstop for the dedicated 60s --merge-only plist; if an
@@ -1857,6 +1855,9 @@ main() {
 
 	# Run pre-flight stages (cleanup, prefetch, normalization)
 	if ! _run_preflight_stages; then
+		_pulse_cycle_state_note_blocker preflight-failed pulse-wrapper preflight || true
+		_pulse_record_cycle_outcome "$_cycle_dispatch_before"
+		write_pulse_health_file || true
 		_pulse_efficiency_cycle_finish idle
 		return 0
 	fi
@@ -1865,30 +1866,34 @@ main() {
 	# been issued during the prefetch/cleanup phase above (t2943)
 	if [[ -f "$STOP_FLAG" ]]; then
 		echo "[pulse-wrapper] Stop flag appeared during setup — aborting before run_pulse()" >>"$LOGFILE"
+		_pulse_cycle_state_note_blocker stop-requested pulse-wrapper stop-flag || true
+		_pulse_record_cycle_outcome "$_cycle_dispatch_before"
+		write_pulse_health_file || true
 		_pulse_efficiency_cycle_finish idle
 		return 0
 	fi
 
-	# t3027: snapshot ledger for idle/active outcome detection.
-	local _cycle_ledger_before
-	_cycle_ledger_before=$(_pulse_capture_ledger_count)
-
-	# Run deterministic pipeline: merge pass, dep graph, blocked-status
-	# refresh, fill floor, routine evaluation, health snapshot, cycle index,
-	# and instance lock release. GH#18689: extracted to helper.
-	_pulse_run_deterministic_pipeline "$_cycle_start_epoch" "$_cycle_ledger_before"
+	# Run deterministic pipeline: merge pass, dep graph, blocked-status refresh,
+	# fill floor, routine evaluation, and instance lock release. GH#18689:
+	# extracted to helper.
+	_pulse_cycle_state_publish deterministic || true
+	_pulse_run_deterministic_pipeline
 
 	# Run LLM supervisor if stall/daily-sweep/force conditions are met.
 	# GH#18689: extracted to _pulse_maybe_run_llm_supervisor().
+	_pulse_cycle_state_publish supervising || true
 	_pulse_run_optional_stage "llm_supervisor" _pulse_maybe_run_llm_supervisor || true
 
-	# t3032: post-LLM health snapshot — captures workers dispatched by the
-	# LLM supervisor session, which runs after the deterministic pipeline's
-	# own health write (in _pulse_run_deterministic_pipeline). Without this
-	# second write, the health file would reflect pre-LLM state (often 0
-	# workers) until the NEXT cycle, even when the LLM supervisor launched
-	# 9-25 workers. Non-fatal — failures are silently ignored.
+	# GH#28361: compute one terminal typed outcome after both deterministic and
+	# LLM dispatch paths, then project it through the existing health/index
+	# contracts. A cumulative registration count detects launches even when a
+	# different worker completes during the same cycle.
+	_pulse_record_cycle_outcome "$_cycle_dispatch_before"
 	write_pulse_health_file || true
+	local _cycle_end_epoch
+	_cycle_end_epoch=$(date +%s)
+	local _cycle_duration=$((_cycle_end_epoch - _cycle_start_epoch))
+	append_cycle_index "$_cycle_duration" || true
 
 	# t3033: self-respawn when source file was modified during this cycle.
 	#

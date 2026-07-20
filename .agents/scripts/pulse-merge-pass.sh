@@ -458,7 +458,11 @@ merge_ready_prs_all_repos() {
 	# direct updates to _PULSE_HEALTH_* variables are lost on return.
 	# The parent process reads this file after the stage completes.
 	local _health_delta_file="${TMPDIR:-/tmp}/pulse-health-merge-$$.tmp"
-	printf '%s %s\n' "$total_merged" "$total_closed" >"$_health_delta_file" || true
+	printf '%s %s %s %s\n' \
+		"$total_merged" "$total_closed" \
+		"${_PULSE_CYCLE_BLOCKER_KIND:-none}" \
+		"${_PULSE_CYCLE_BLOCKER_FINGERPRINT:--}" \
+		>"$_health_delta_file" || true
 	local _mr_pass_total_s=0
 	_pmp_add_elapsed_seconds _mr_pass_total_s "$_mr_pass_start"
 	echo "[pulse-wrapper] deterministic_merge_pass timing: total_s=${_mr_pass_total_s} merged=${total_merged} closed_conflicting=${total_closed} failed=${total_failed} eligible_unmerged=${total_eligible_unmerged}" >>"$_mr_logfile"
