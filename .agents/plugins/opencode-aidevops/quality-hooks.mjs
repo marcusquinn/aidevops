@@ -14,6 +14,7 @@ import { qualityLog, runFileQualityGate } from "./quality-logging.mjs";
 import { enrichActiveSpan, detectTaskId, detectSessionOrigin } from "./otel-enrichment.mjs";
 import { checkSecretReadGate, isReadTool } from "./quality-hooks-secret-read.mjs";
 import {
+  bindActiveScriptsDir,
   checkCanonicalGitSafetyGate,
   checkCanonicalWriteSafetyGate,
   isApplyPatchMutationTool,
@@ -261,11 +262,6 @@ function handleToolBefore(ctx, log, input, output) {
   ctx.continuationGuard?.beforeTool(input, output);
   enforceDirectFileMutationSafety(ctx, input, output);
 
-  if (isBashTool(input.tool)) {
-    const bashCwd = output.args?.workdir || output.args?.cwd || process.cwd();
-    checkCanonicalGitSafetyGate(output.args?.command || "", ctx.scriptsDir, bashCwd);
-  }
-
   const callID = input.callID || "";
   let intent = "";
   if (callID && output.args) {
@@ -292,6 +288,16 @@ function handleToolBefore(ctx, log, input, output) {
   }).catch(() => {});
 
   if (isBashTool(input.tool)) {
+    const bashCwd = output.args?.workdir || output.args?.cwd || process.cwd();
+    output.args.command = checkCanonicalGitSafetyGate(
+      output.args?.command || "",
+      ctx.scriptsDir,
+      bashCwd,
+      {
+        activeScriptsDir: ctx.activeScriptsDir,
+        activeScriptsDirBinding: ctx.activeScriptsDirBinding,
+      },
+    );
     // t2685: pass scriptsDir + output so the hook can repair (mutate
     // output.args.command) or block (throw) as appropriate.
     checkSignatureFooterGate(output.args?.command || "", log, ctx.scriptsDir, output);
@@ -360,6 +366,8 @@ function handleToolAfter(ctx, log, scriptsDir, input, output) {
 
 export function createQualityHooks(deps) {
   const { scriptsDir, logsDir, continuationGuard } = deps;
+  const activeScriptsDir = deps.activeScriptsDir ?? scriptsDir;
+  const activeScriptsDirBinding = bindActiveScriptsDir(activeScriptsDir, scriptsDir);
   const qualityLogPath = join(logsDir, "quality-hooks.log");
   // t2120: qualityDetailLog (in quality-logging.mjs) reads ctx.detailLogPath
   // and ctx.detailMaxBytes. Previously these were never populated here, so
@@ -374,6 +382,8 @@ export function createQualityHooks(deps) {
   const detailMaxBytes = 5 * 1024 * 1024; // 5MB before rotation
   const ctx = {
     scriptsDir,
+    activeScriptsDir,
+    activeScriptsDirBinding,
     logsDir,
     qualityLogPath,
     detailLogPath,

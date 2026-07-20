@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 #
-# Regression tests for deterministic direct/isolated Qlty scans (GH#28162).
+# Regression tests for deterministic isolated-clone Qlty scans (GH#28162).
 
 set -u
 
@@ -41,7 +41,7 @@ resolve_git() {
 	local _candidate=""
 	while IFS= read -r _candidate; do
 		case "$_candidate" in
-		*/.aidevops/*/agents/scripts/git | */.aidevops/bin/git | */.agents/scripts/git) continue ;;
+		*/.aidevops/*/agents/scripts/git | */.aidevops/agents/scripts/git | */.aidevops/bin/git | */.agents/scripts/git) continue ;;
 		esac
 		printf '%s\n' "$_candidate"
 		return 0
@@ -68,11 +68,11 @@ if [ "${QLTY_STUB_MODE:-parity}" = "base-fail" ] && [ "$(basename "$PWD")" = "ba
 	printf 'simulated base failure\n' >&2
 	exit 2
 fi
-if [ "${QLTY_STUB_MODE:-parity}" = "mismatch" ] && [ "$(basename "$PWD")" = "repo" ]; then
+if [ "${QLTY_STUB_MODE:-parity}" = "mismatch" ] && [ "$(basename "$PWD")" = "head-worktree" ]; then
 	printf '%s\n' '{"runs":[{"results":[{"ruleId":"qlty:similar-code","locations":[{"physicalLocation":{"artifactLocation":{"uri":"a.sh"}}}]},{"ruleId":"qlty:similar-code","locations":[{"physicalLocation":{"artifactLocation":{"uri":"b.sh"}}}]}]}]}'
 	exit 0
 fi
-if [ "${QLTY_STUB_MODE:-parity}" = "head-fail" ] && [ "$(basename "$PWD")" = "repo" ]; then
+if [ "${QLTY_STUB_MODE:-parity}" = "head-fail" ] && [ "$(basename "$PWD")" = "head-worktree" ]; then
 	printf 'simulated head failure\n' >&2
 	exit 2
 fi
@@ -84,6 +84,14 @@ if [ "${QLTY_STUB_MODE:-parity}" = "cache-sensitive" ]; then
 	if [ ! -f "$XDG_CACHE_HOME/warmed" ]; then
 		: >"$XDG_CACHE_HOME/warmed"
 		printf '%s\n' '{"runs":[{"results":[{"ruleId":"qlty:similar-code","locations":[{"physicalLocation":{"artifactLocation":{"uri":"cold-a.sh"}}}]},{"ruleId":"qlty:similar-code","locations":[{"physicalLocation":{"artifactLocation":{"uri":"cold-b.sh"}}}]},{"ruleId":"qlty:similar-code","locations":[{"physicalLocation":{"artifactLocation":{"uri":"cold-c.sh"}}}]},{"ruleId":"qlty:similar-code","locations":[{"physicalLocation":{"artifactLocation":{"uri":"a.sh"}}}]}]}]}'
+	else
+		printf '%s\n' '{"runs":[{"results":[{"ruleId":"qlty:similar-code","locations":[{"physicalLocation":{"artifactLocation":{"uri":"a.sh"}}}]}]}]}'
+	fi
+	exit 0
+fi
+if [ "${QLTY_STUB_MODE:-parity}" = "topology-sensitive" ]; then
+	if [ "$(basename "$PWD")" = "repo" ]; then
+		printf '%s\n' '{"runs":[{"results":[{"ruleId":"qlty:similar-code","locations":[{"physicalLocation":{"artifactLocation":{"uri":"direct-only.sh"}}}]}]}]}'
 	else
 		printf '%s\n' '{"runs":[{"results":[{"ruleId":"qlty:similar-code","locations":[{"physicalLocation":{"artifactLocation":{"uri":"a.sh"}}}]}]}]}'
 	fi
@@ -118,9 +126,10 @@ QLTY_STUB_MODE=parity
 export QLTY_STUB_MODE
 parity_output=$(cd "$REPO" && "$HELPER" --base HEAD --head HEAD 2>&1)
 parity_rc=$?
-assert_rc "same tree passes with direct and standalone-clone scans" "0" "$parity_rc"
+assert_rc "same tree passes with equivalent standalone-clone scans" "0" "$parity_rc"
 assert_contains "base metadata identifies isolated clone" "mode=isolated-clone" "$parity_output"
-assert_contains "head metadata identifies direct checkout" "mode=direct-checkout" "$parity_output"
+assert_contains "head metadata identifies isolated clone" "head metadata: version=qlty 0.635.0 linux-x64" "$parity_output"
+assert_contains "head metadata records equivalent scan mode" "mode=isolated-clone" "$parity_output"
 assert_contains "same-tree identity parity is explicit" "identical normalized SARIF identities" "$parity_output"
 assert_contains "resolved Qlty version is logged" "version=qlty 0.635.0 linux-x64" "$parity_output"
 assert_contains "per-rule counts are logged" $'1\tqlty:similar-code' "$parity_output"
@@ -131,6 +140,13 @@ cache_sensitive_output=$(cd "$REPO" && "$HELPER" --base HEAD --head HEAD 2>&1)
 cache_sensitive_rc=$?
 assert_rc "cold-cache-only similar-code findings do not affect same-tree scans" "0" "$cache_sensitive_rc"
 assert_contains "both authoritative scans use warm-cache counts" "base: 1  head: 1  delta: 0" "$cache_sensitive_output"
+
+QLTY_STUB_MODE=topology-sensitive
+export QLTY_STUB_MODE
+topology_sensitive_output=$(cd "$REPO" && "$HELPER" --base HEAD --head HEAD 2>&1)
+topology_sensitive_rc=$?
+assert_rc "topology-sensitive findings cannot skew same-tree comparisons" "0" "$topology_sensitive_rc"
+assert_contains "both refs use equivalent topology" "base: 1  head: 1  delta: 0" "$topology_sensitive_output"
 
 printf 'metadata only\n' >"$REPO/VERSION"
 (cd "$REPO" && "$GIT_PATH" add VERSION && "$GIT_PATH" commit --quiet -m "metadata fixture") || exit 1
