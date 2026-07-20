@@ -495,6 +495,12 @@ invalid_evidence_status=0
 gh_record_efficiency_evidence "Invalid Name" 1 || invalid_evidence_status=$?
 assert_eq "invalid evidence identifiers are rejected" "1" "$invalid_evidence_status"
 
+# --- Test 12e: CLI reports the actual custom aggregate destination -----------
+custom_report="$TMPDIR/custom-report.json"
+custom_report_message=$("${PARENT_DIR}/gh-api-instrument.sh" report "$custom_report" 60 2>&1 >/dev/null)
+assert_file_exists "CLI custom report is created" "$custom_report"
+assert_eq "CLI reports the custom output path" "Wrote $custom_report" "$custom_report_message"
+
 # --- Test 13: time/line/byte retention is atomic and bounded -------------
 export AIDEVOPS_GH_API_LOG_MAX_LINES=3
 export AIDEVOPS_GH_API_LOG_MAX_BYTES=10000

@@ -681,7 +681,7 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
 		;;
 	report | aggregate)
 		gh_aggregate_calls "$@"
-		printf 'Wrote %s\n' "$GH_API_REPORT" >&2
+		printf 'Wrote %s\n' "${1:-$GH_API_REPORT}" >&2
 		;;
 	trim)
 		gh_trim_log
