@@ -108,6 +108,12 @@ else
 	fail "idle-work query excludes NMR-held issues" "query=$(<"$GH_QUERY_FILE")"
 fi
 
+if grep -q -- '-label:infrastructure' "$GH_QUERY_FILE"; then
+	pass "idle-work query excludes infrastructure advisory issues"
+else
+	fail "idle-work query excludes infrastructure advisory issues" "query=$(<"$GH_QUERY_FILE")"
+fi
+
 if [[ "$(<"$TIMEOUT_CALL_FILE")" == "30" ]]; then
 	pass "idle-work query uses bounded default timeout"
 else

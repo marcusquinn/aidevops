@@ -1719,6 +1719,9 @@ _hrw_finish_cleanup() {
 	if declare -F _cleanup_headless_runtime_temp_paths >/dev/null 2>&1; then
 		_cleanup_headless_runtime_temp_paths
 	fi
+	if declare -F aidevops_runtime_bundle_lease_release >/dev/null 2>&1; then
+		aidevops_runtime_bundle_lease_release || print_warning "Failed to release the worker runtime bundle lease"
+	fi
 	trap - EXIT
 	return 0
 }
@@ -1857,7 +1860,7 @@ _cmd_run_prepare() {
 	# instead of emitting a fixed 'process_exit' reason for all abnormal exits.
 	# SC2064: session_key is intentionally baked in at trap-set time.
 	# shellcheck disable=SC2064
-	trap "_exit_trap_handler '$session_key'" EXIT
+	trap "_exit_trap_handler '$session_key'; if declare -F aidevops_runtime_bundle_lease_release >/dev/null 2>&1; then aidevops_runtime_bundle_lease_release; fi" EXIT
 
 	# GH#20564: Record worker start time in milliseconds for exit trap classifier.
 	# classify_worker_exit uses this to distinguish crash_during_startup (no

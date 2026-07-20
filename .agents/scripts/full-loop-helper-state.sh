@@ -386,8 +386,14 @@ _linked_issue_structural_blocker_reasons() {
 			printf 'Issue #%s carries the %s label (decomposition tracker, not a worker target). Decompose into child phase issues, or remove the label if this is no longer a parent.\n' "$issue_num" "\`parent-task\`"
 			;;
 		*NO_AUTO_DISPATCH_BLOCKED*)
+			# no-auto-dispatch is a worker-routing hold, not a prohibition on
+			# explicitly authorized interactive implementation. Keep the hold intact
+			# so Pulse cannot dispatch a parallel worker while local work proceeds.
+			if [[ "${AIDEVOPS_INTERACTIVE_ISSUE_IMPLEMENTATION:-0}" == "1" ]] && ! is_headless; then
+				continue
+			fi
 			found=true
-			printf 'Issue #%s carries the %s label (explicit hold). Remove the label if you intentionally want worker dispatch, or work on this issue operationally (post comments, post analysis) without /full-loop.\n' "$issue_num" "\`no-auto-dispatch\`"
+			printf 'Issue #%s carries the %s label (explicit worker-dispatch hold). Remove the label only if you intentionally want worker dispatch, or use the interactive issue-start implementation path.\n' "$issue_num" "\`no-auto-dispatch\`"
 			;;
 		*HOLD_FOR_REVIEW_BLOCKED*)
 			found=true
@@ -406,10 +412,10 @@ _linked_issue_structural_blocker_reasons() {
 # a missing assignee (GH#17810). Interactive maintainer sessions may self-claim
 # an unassigned issue supplied directly in the prompt (GH#22854). Then inherits
 # the pulse-side structural dispatch gates via
-# dispatch-dedup-helper.sh::is-assigned so /full-loop honors parent-task
-# and no-auto-dispatch blocks the same way the pulse does — closing the
-# entry-point asymmetry where /full-loop bypassed gates the pulse refused
-# (t2890). Mirrors the logic in .github/workflows/maintainer-gate.yml.
+# dispatch-dedup-helper.sh::enumerate-blockers so /full-loop honors hard
+# structural holds. no-auto-dispatch remains enforced for workers while the
+# explicit interactive issue-start path may implement locally without removing
+# the worker-routing hold. Mirrors .github/workflows/maintainer-gate.yml.
 #
 # Returns:
 #   0 — gate passes (safe to start)
@@ -556,7 +562,11 @@ _auto_claim_interactive() {
 	# claim comment internally. External upstream repos skip the claim path.
 	local helper="${SCRIPT_DIR}/interactive-session-helper.sh"
 	if [[ -x "$helper" ]]; then
-		"$helper" claim "$issue_num" "$repo" --worktree "$(pwd)" || true
+		local -a claim_args=(claim "$issue_num" "$repo" --worktree "$(pwd)")
+		if [[ "${AIDEVOPS_INTERACTIVE_ISSUE_IMPLEMENTATION:-0}" == "1" ]]; then
+			claim_args+=(--implementing)
+		fi
+		"$helper" "${claim_args[@]}" || true
 		print_info "Interactive claim checked: #${issue_num} in ${repo}"
 	else
 		print_warning "interactive-session-helper.sh not found — skipping interactive claim"
