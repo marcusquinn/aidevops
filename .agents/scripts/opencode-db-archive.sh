@@ -50,6 +50,9 @@ readonly DEFAULT_RETENTION_DAYS=30
 readonly DEFAULT_BATCH_SIZE=500
 readonly DEFAULT_MAX_DURATION=60
 readonly EVENT_TABLE_NAME="event"
+readonly SESSION_TABLE_NAME="session"
+readonly ARCHIVE_TEXT_COLUMN_DEFINITION="text"
+readonly ARCHIVE_INTEGER_COLUMN_DEFINITION="integer DEFAULT 0 NOT NULL"
 
 ARCHIVE_BATCH_SIZE="${OPENCODE_DB_ARCHIVE_BATCH_SIZE:-$DEFAULT_BATCH_SIZE}"
 ARCHIVE_BATCH_DELAY_SECONDS="${OPENCODE_DB_ARCHIVE_BATCH_DELAY_SECONDS:-0}"
@@ -196,8 +199,11 @@ _db_holder_count() {
 }
 
 _archive_validate_active_schema() {
+	local diagnostic=""
+
 	if ! opencode_archive_schema_supported "$ACTIVE_DB" optional; then
-		print_error "Unsupported or unavailable OpenCode session schema; active data was left untouched."
+		diagnostic=$(opencode_archive_schema_diagnostic)
+		print_error "Unsupported or unavailable OpenCode session schema: ${diagnostic}; active data was left untouched."
 		return 1
 	fi
 	return 0
@@ -253,10 +259,71 @@ _archive_interrupt() {
 
 # --- Schema creation in archive DB -------------------------------------------
 
+_archive_column_list_has() {
+	local column_list="$1"
+	local column_name="$2"
+
+	[[ ",${column_list}," == *",${column_name},"* ]]
+	return $?
+}
+
+_archive_migrate_schema_columns() {
+	local archive_db="$1"
+	local project_columns=""
+	local session_columns=""
+	local table_name=""
+	local column_name=""
+	local column_definition=""
+	local table_columns=""
+	local migration_sql=""
+	local migrated_columns=""
+
+	project_columns=$(opencode_db_table_columns "$archive_db" project) || return 1
+	session_columns=$(opencode_db_table_columns "$archive_db" "$SESSION_TABLE_NAME") || return 1
+	while IFS='|' read -r table_name column_name column_definition; do
+		[[ -n "$table_name" && -n "$column_name" && -n "$column_definition" ]] || continue
+		case "$table_name" in
+		project) table_columns="$project_columns" ;;
+		"$SESSION_TABLE_NAME") table_columns="$session_columns" ;;
+		*) return 1 ;;
+		esac
+		if ! _archive_column_list_has "$table_columns" "$column_name"; then
+			migration_sql="${migration_sql}ALTER TABLE ${table_name} ADD COLUMN ${column_name} ${column_definition};"
+			migrated_columns="${migrated_columns}${migrated_columns:+,}${table_name}.${column_name}"
+		fi
+	done <<MIGRATION_COLUMNS
+project|icon_url_override|${ARCHIVE_TEXT_COLUMN_DEFINITION}
+${SESSION_TABLE_NAME}|path|${ARCHIVE_TEXT_COLUMN_DEFINITION}
+${SESSION_TABLE_NAME}|agent|${ARCHIVE_TEXT_COLUMN_DEFINITION}
+${SESSION_TABLE_NAME}|model|${ARCHIVE_TEXT_COLUMN_DEFINITION}
+${SESSION_TABLE_NAME}|cost|real DEFAULT 0 NOT NULL
+${SESSION_TABLE_NAME}|tokens_input|${ARCHIVE_INTEGER_COLUMN_DEFINITION}
+${SESSION_TABLE_NAME}|tokens_output|${ARCHIVE_INTEGER_COLUMN_DEFINITION}
+${SESSION_TABLE_NAME}|tokens_reasoning|${ARCHIVE_INTEGER_COLUMN_DEFINITION}
+${SESSION_TABLE_NAME}|tokens_cache_read|${ARCHIVE_INTEGER_COLUMN_DEFINITION}
+${SESSION_TABLE_NAME}|tokens_cache_write|${ARCHIVE_INTEGER_COLUMN_DEFINITION}
+${SESSION_TABLE_NAME}|metadata|${ARCHIVE_TEXT_COLUMN_DEFINITION}
+MIGRATION_COLUMNS
+
+	[[ -n "$migration_sql" ]] || return 0
+	sqlite3 "$archive_db" <<MIGRATION_SQL
+.bail on
+BEGIN IMMEDIATE;
+${migration_sql}
+COMMIT;
+MIGRATION_SQL
+	print_info "Migrated archive schema columns: ${migrated_columns}"
+	return 0
+}
+
 create_archive_schema() {
 	local archive_db="$1"
 
 	sqlite3 "$archive_db" <<'SCHEMA_SQL'
+.bail on
+PRAGMA journal_mode=WAL;
+BEGIN IMMEDIATE;
+
 -- Mirror the active DB schema for archived data
 CREATE TABLE IF NOT EXISTS `project` (
 	`id` text PRIMARY KEY,
@@ -294,6 +361,15 @@ CREATE TABLE IF NOT EXISTS `session` (
 	`time_archived` integer,
 	`workspace_id` text,
 	`path` text,
+	`agent` text,
+	`model` text,
+	`cost` real DEFAULT 0 NOT NULL,
+	`tokens_input` integer DEFAULT 0 NOT NULL,
+	`tokens_output` integer DEFAULT 0 NOT NULL,
+	`tokens_reasoning` integer DEFAULT 0 NOT NULL,
+	`tokens_cache_read` integer DEFAULT 0 NOT NULL,
+	`tokens_cache_write` integer DEFAULT 0 NOT NULL,
+	`metadata` text,
 	CONSTRAINT `fk_session_project_id_project_id_fk` FOREIGN KEY (`project_id`) REFERENCES `project`(`id`) ON DELETE CASCADE
 );
 CREATE INDEX IF NOT EXISTS `session_project_idx` ON `session` (`project_id`);
@@ -345,6 +421,49 @@ CREATE TABLE IF NOT EXISTS `session_share` (
 	CONSTRAINT `fk_session_share_session_id_session_id_fk` FOREIGN KEY (`session_id`) REFERENCES `session`(`id`) ON DELETE CASCADE
 );
 
+CREATE TABLE IF NOT EXISTS `session_message` (
+	`id` text PRIMARY KEY,
+	`session_id` text NOT NULL,
+	`type` text NOT NULL,
+	`time_created` integer NOT NULL,
+	`time_updated` integer NOT NULL,
+	`data` text NOT NULL,
+	`seq` integer NOT NULL,
+	CONSTRAINT `fk_session_message_session_id_session_id_fk` FOREIGN KEY (`session_id`) REFERENCES `session`(`id`) ON DELETE CASCADE
+);
+CREATE UNIQUE INDEX IF NOT EXISTS `session_message_session_seq_idx` ON `session_message` (`session_id`,`seq`);
+CREATE INDEX IF NOT EXISTS `session_message_session_time_created_id_idx` ON `session_message` (`session_id`,`time_created`,`id`);
+CREATE INDEX IF NOT EXISTS `session_message_session_type_seq_idx` ON `session_message` (`session_id`,`type`,`seq`);
+CREATE INDEX IF NOT EXISTS `session_message_time_created_idx` ON `session_message` (`time_created`);
+
+CREATE TABLE IF NOT EXISTS `session_input` (
+	`id` text PRIMARY KEY,
+	`session_id` text NOT NULL,
+	`prompt` text NOT NULL,
+	`delivery` text NOT NULL,
+	`admitted_seq` integer NOT NULL,
+	`promoted_seq` integer,
+	`time_created` integer NOT NULL,
+	CONSTRAINT `fk_session_input_session_id_session_id_fk` FOREIGN KEY (`session_id`) REFERENCES `session`(`id`) ON DELETE CASCADE
+);
+CREATE UNIQUE INDEX IF NOT EXISTS `session_input_session_admitted_seq_idx` ON `session_input` (`session_id`,`admitted_seq`);
+CREATE INDEX IF NOT EXISTS `session_input_session_pending_delivery_seq_idx` ON `session_input` (`session_id`,`promoted_seq`,`delivery`,`admitted_seq`);
+CREATE UNIQUE INDEX IF NOT EXISTS `session_input_session_promoted_seq_idx` ON `session_input` (`session_id`,`promoted_seq`);
+
+CREATE TABLE IF NOT EXISTS `session_context_epoch` (
+	`session_id` text PRIMARY KEY,
+	`baseline` text NOT NULL,
+	`snapshot` text NOT NULL,
+	`baseline_seq` integer NOT NULL,
+	CONSTRAINT `fk_session_context_epoch_session_id_session_id_fk` FOREIGN KEY (`session_id`) REFERENCES `session`(`id`) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS `event_sequence` (
+	`aggregate_id` text PRIMARY KEY,
+	`seq` integer NOT NULL,
+	`owner_id` text
+);
+
 CREATE TABLE IF NOT EXISTS `event` (
 	`id` text PRIMARY KEY,
 	`aggregate_id` text NOT NULL,
@@ -355,31 +474,13 @@ CREATE TABLE IF NOT EXISTS `event` (
 CREATE UNIQUE INDEX IF NOT EXISTS `event_aggregate_seq_idx` ON `event` (`aggregate_id`,`seq`);
 CREATE INDEX IF NOT EXISTS `event_aggregate_type_seq_idx` ON `event` (`aggregate_id`,`type`,`seq`);
 
--- WAL mode for the archive too (better read concurrency)
-PRAGMA journal_mode=WAL;
+COMMIT;
 SCHEMA_SQL
 
-	# Migrate existing archive DBs that predate the icon_url_override column.
-	# CREATE TABLE IF NOT EXISTS won't update an already-existing table, so we
-	# use ALTER TABLE ADD COLUMN guarded by a column-existence check.
-	local has_icon_url_override
-	has_icon_url_override=$(sqlite3 "$archive_db" \
-		"SELECT COUNT(*) FROM pragma_table_info('project') WHERE name='icon_url_override';")
-	if [[ "$has_icon_url_override" -eq 0 ]]; then
-		sqlite3 "$archive_db" "ALTER TABLE project ADD COLUMN icon_url_override text;"
-		print_info "Migrated archive.project schema: added icon_url_override column"
-	fi
-
-	# Migrate existing archive DBs that predate OpenCode's session.path column.
-	# Without this, INSERT ... SELECT across active/archive schemas fails with:
-	# "table archive.session has 19 columns but 20 values were supplied".
-	local has_session_path
-	has_session_path=$(sqlite3 "$archive_db" \
-		"SELECT COUNT(*) FROM pragma_table_info('session') WHERE name='path';")
-	if [[ "$has_session_path" -eq 0 ]]; then
-		sqlite3 "$archive_db" "ALTER TABLE session ADD COLUMN path text;"
-		print_info "Migrated archive.session schema: added path column"
-	fi
+	# CREATE TABLE IF NOT EXISTS does not evolve persisted archives. Add columns
+	# in canonical order so legacy archives converge on the OpenCode 1.18.3
+	# contract without rebuilding or discarding archived rows.
+	_archive_migrate_schema_columns "$archive_db" || return 1
 
 	return 0
 }
@@ -460,18 +561,67 @@ _archive_project_select_columns() {
 }
 
 _archive_session_insert_columns() {
-	printf '%s\n' "id, project_id, parent_id, slug, directory, title, version, share_url, summary_additions, summary_deletions, summary_files, summary_diffs, revert, permission, time_created, time_updated, time_compacting, time_archived, workspace_id, path"
+	printf '%s\n' "id, project_id, parent_id, slug, directory, title, version, share_url, summary_additions, summary_deletions, summary_files, summary_diffs, revert, permission, time_created, time_updated, time_compacting, time_archived, workspace_id, path, agent, model, cost, tokens_input, tokens_output, tokens_reasoning, tokens_cache_read, tokens_cache_write, metadata"
 	return 0
 }
 
 _archive_session_select_columns() {
 	local base_columns="id, project_id, parent_id, slug, directory, title, version, share_url, summary_additions, summary_deletions, summary_files, summary_diffs, revert, permission, time_created, time_updated, time_compacting, time_archived, workspace_id"
+	local select_columns="$base_columns"
+	local session_columns=""
 
-	if _sqlite_has_column "$ACTIVE_DB" "session" "path"; then
-		printf '%s\n' "${base_columns}, path"
+	session_columns=$(opencode_db_table_columns "$ACTIVE_DB" "$SESSION_TABLE_NAME") || return 1
+	if _archive_column_list_has "$session_columns" path; then
+		select_columns="${select_columns}, path"
 	else
-		printf '%s\n' "${base_columns}, NULL AS path"
+		select_columns="${select_columns}, NULL AS path"
 	fi
+	if _archive_column_list_has "$session_columns" agent; then
+		select_columns="${select_columns}, agent"
+	else
+		select_columns="${select_columns}, NULL AS agent"
+	fi
+	if _archive_column_list_has "$session_columns" model; then
+		select_columns="${select_columns}, model"
+	else
+		select_columns="${select_columns}, NULL AS model"
+	fi
+	if _archive_column_list_has "$session_columns" cost; then
+		select_columns="${select_columns}, cost"
+	else
+		select_columns="${select_columns}, 0 AS cost"
+	fi
+	if _archive_column_list_has "$session_columns" tokens_input; then
+		select_columns="${select_columns}, tokens_input"
+	else
+		select_columns="${select_columns}, 0 AS tokens_input"
+	fi
+	if _archive_column_list_has "$session_columns" tokens_output; then
+		select_columns="${select_columns}, tokens_output"
+	else
+		select_columns="${select_columns}, 0 AS tokens_output"
+	fi
+	if _archive_column_list_has "$session_columns" tokens_reasoning; then
+		select_columns="${select_columns}, tokens_reasoning"
+	else
+		select_columns="${select_columns}, 0 AS tokens_reasoning"
+	fi
+	if _archive_column_list_has "$session_columns" tokens_cache_read; then
+		select_columns="${select_columns}, tokens_cache_read"
+	else
+		select_columns="${select_columns}, 0 AS tokens_cache_read"
+	fi
+	if _archive_column_list_has "$session_columns" tokens_cache_write; then
+		select_columns="${select_columns}, tokens_cache_write"
+	else
+		select_columns="${select_columns}, 0 AS tokens_cache_write"
+	fi
+	if _archive_column_list_has "$session_columns" metadata; then
+		select_columns="${select_columns}, metadata"
+	else
+		select_columns="${select_columns}, NULL AS metadata"
+	fi
+	printf '%s\n' "$select_columns"
 	return 0
 }
 
@@ -750,18 +900,47 @@ cmd_archive() {
 	fi
 
 	print_info "Found $total_eligible sessions eligible for archiving"
+	local has_session_message_table=0
+	local has_session_input_table=0
+	local has_session_context_epoch_table=0
+	local has_event_sequence_table=0
+	local has_event_table=0
+	if _sqlite_has_table "$ACTIVE_DB" session_message; then
+		has_session_message_table=1
+	fi
+	if _sqlite_has_table "$ACTIVE_DB" session_input; then
+		has_session_input_table=1
+	fi
+	if _sqlite_has_table "$ACTIVE_DB" session_context_epoch; then
+		has_session_context_epoch_table=1
+	fi
+	if _sqlite_has_table "$ACTIVE_DB" event_sequence; then
+		has_event_sequence_table=1
+	fi
+	if _sqlite_has_table "$ACTIVE_DB" "$EVENT_TABLE_NAME"; then
+		has_event_table=1
+	fi
 
 	if ((dry_run)); then
 		# Show what would be archived
 		local msg_count part_count todo_count share_count event_count event_bytes
-		local has_event_table=0
-		if _sqlite_has_table "$ACTIVE_DB" "$EVENT_TABLE_NAME"; then
-			has_event_table=1
-		fi
+		local session_message_count=0 session_input_count=0 context_epoch_count=0 event_sequence_count=0
 		msg_count=$(sqlite3 "$ACTIVE_DB" "SELECT COUNT(*) FROM message WHERE session_id IN (SELECT id FROM session WHERE $candidate_filter);")
 		part_count=$(sqlite3 "$ACTIVE_DB" "SELECT COUNT(*) FROM part WHERE session_id IN (SELECT id FROM session WHERE $candidate_filter);")
 		todo_count=$(sqlite3 "$ACTIVE_DB" "SELECT COUNT(*) FROM todo WHERE session_id IN (SELECT id FROM session WHERE $candidate_filter);")
 		share_count=$(sqlite3 "$ACTIVE_DB" "SELECT COUNT(*) FROM session_share WHERE session_id IN (SELECT id FROM session WHERE $candidate_filter);")
+		if ((has_session_message_table)); then
+			session_message_count=$(sqlite3 "$ACTIVE_DB" "SELECT COUNT(*) FROM session_message WHERE session_id IN (SELECT id FROM session WHERE $candidate_filter);")
+		fi
+		if ((has_session_input_table)); then
+			session_input_count=$(sqlite3 "$ACTIVE_DB" "SELECT COUNT(*) FROM session_input WHERE session_id IN (SELECT id FROM session WHERE $candidate_filter);")
+		fi
+		if ((has_session_context_epoch_table)); then
+			context_epoch_count=$(sqlite3 "$ACTIVE_DB" "SELECT COUNT(*) FROM session_context_epoch WHERE session_id IN (SELECT id FROM session WHERE $candidate_filter);")
+		fi
+		if ((has_event_sequence_table)); then
+			event_sequence_count=$(sqlite3 "$ACTIVE_DB" "SELECT COUNT(*) FROM event_sequence WHERE aggregate_id IN (SELECT id FROM session WHERE $candidate_filter);")
+		fi
 		event_count=$(sqlite3 "$ACTIVE_DB" "$(_archive_event_count_sql "$candidate_filter" "$has_event_table")")
 		event_bytes=$(sqlite3 "$ACTIVE_DB" "$(_archive_event_bytes_sql "$candidate_filter" "$has_event_table")")
 
@@ -772,6 +951,10 @@ cmd_archive() {
 		echo "  Parts:          $part_count"
 		echo "  Todos:          $todo_count"
 		echo "  Session shares: $share_count"
+		echo "  Session msgs:   $session_message_count"
+		echo "  Session inputs: $session_input_count"
+		echo "  Context epochs: $context_epoch_count"
+		echo "  Event sequences: $event_sequence_count"
 		echo "  Events:         $event_count ($(format_bytes "$event_bytes"))"
 		echo ""
 		print_info "Run without --dry-run to proceed."
@@ -781,20 +964,18 @@ cmd_archive() {
 	# Create archive DB and schema
 	create_archive_schema "$ARCHIVE_DB"
 	if ! opencode_archive_schema_supported "$ARCHIVE_DB" required; then
-		print_error "Archive schema is unavailable or unsupported; active data was left untouched."
+		local archive_schema_diagnostic=""
+		archive_schema_diagnostic=$(opencode_archive_schema_diagnostic)
+		print_error "Archive schema is unavailable or unsupported: ${archive_schema_diagnostic}; active data was left untouched."
 		return 3
 	fi
 
 	local project_insert_columns project_select_columns
 	local session_insert_columns session_select_columns
-	local has_event_table=0
 	project_insert_columns=$(_archive_project_insert_columns)
 	project_select_columns=$(_archive_project_select_columns)
 	session_insert_columns=$(_archive_session_insert_columns)
 	session_select_columns=$(_archive_session_select_columns)
-	if _sqlite_has_table "$ACTIVE_DB" "$EVENT_TABLE_NAME"; then
-		has_event_table=1
-	fi
 
 	local size_before
 	size_before=$(file_size_bytes "$ACTIVE_DB")
@@ -848,7 +1029,27 @@ cmd_archive() {
 		local in_clause=""
 		in_clause=$(printf '%s\n' "$session_ids" | sed "s/.*/'&'/" | tr '\n' ',' | sed 's/,$//')
 
+		local session_message_copy_sql="" session_message_delete_sql=""
+		local session_input_copy_sql="" session_input_delete_sql=""
+		local context_epoch_copy_sql="" context_epoch_delete_sql=""
+		local event_sequence_copy_sql="" event_sequence_delete_sql=""
 		local event_copy_sql="" event_delete_sql=""
+		if ((has_session_message_table)); then
+			session_message_copy_sql="INSERT OR IGNORE INTO archive.session_message SELECT * FROM session_message WHERE session_id IN ($in_clause);"
+			session_message_delete_sql="DELETE FROM session_message WHERE session_id IN ($in_clause);"
+		fi
+		if ((has_session_input_table)); then
+			session_input_copy_sql="INSERT OR IGNORE INTO archive.session_input SELECT * FROM session_input WHERE session_id IN ($in_clause);"
+			session_input_delete_sql="DELETE FROM session_input WHERE session_id IN ($in_clause);"
+		fi
+		if ((has_session_context_epoch_table)); then
+			context_epoch_copy_sql="INSERT OR IGNORE INTO archive.session_context_epoch SELECT * FROM session_context_epoch WHERE session_id IN ($in_clause);"
+			context_epoch_delete_sql="DELETE FROM session_context_epoch WHERE session_id IN ($in_clause);"
+		fi
+		if ((has_event_sequence_table)); then
+			event_sequence_copy_sql="INSERT OR IGNORE INTO archive.event_sequence SELECT * FROM event_sequence WHERE aggregate_id IN ($in_clause);"
+			event_sequence_delete_sql="DELETE FROM event_sequence WHERE aggregate_id IN ($in_clause);"
+		fi
 		if ((has_event_table)); then
 			event_copy_sql="INSERT OR IGNORE INTO archive.event SELECT * FROM event WHERE aggregate_id IN ($in_clause);"
 			event_delete_sql="DELETE FROM event WHERE aggregate_id IN ($in_clause);"
@@ -858,8 +1059,11 @@ cmd_archive() {
 		# ATTACH and DETACH are within the same sqlite3 invocation — the attachment
 		# is released automatically when the process exits. The trap above ensures
 		# the archive WAL is checkpointed on any exit path between batches.
-		# Note: FK enforcement is OFF in opencode.db, so we must delete child rows manually.
+		# Foreign-key mode is connection-local. Enable it explicitly and still use
+		# dependency-safe manual deletes so behavior never depends on OpenCode's
+		# separate connection configuration.
 		sqlite3 "$ACTIVE_DB" <<BATCH_SQL
+PRAGMA foreign_keys = ON;
 ATTACH DATABASE '$ARCHIVE_DB' AS archive;
 
 BEGIN IMMEDIATE;
@@ -889,6 +1093,14 @@ SELECT * FROM todo WHERE session_id IN ($in_clause);
 INSERT OR IGNORE INTO archive.session_share
 SELECT * FROM session_share WHERE session_id IN ($in_clause);
 
+-- Copy OpenCode 1.18.3 session-owned rows when present.
+${session_message_copy_sql}
+${session_input_copy_sql}
+${context_epoch_copy_sql}
+
+-- Copy event sequence parents before their event rows.
+${event_sequence_copy_sql}
+
 -- Copy event stream rows when the active DB has OpenCode's event table.
 -- OpenCode stores session-scoped event history with aggregate_id=session.id.
 -- This table is often the largest object in opencode.db, so leaving it behind
@@ -899,8 +1111,12 @@ ${event_copy_sql}
 DELETE FROM part WHERE session_id IN ($in_clause);
 DELETE FROM todo WHERE session_id IN ($in_clause);
 DELETE FROM session_share WHERE session_id IN ($in_clause);
+${session_message_delete_sql}
+${session_input_delete_sql}
+${context_epoch_delete_sql}
 DELETE FROM message WHERE session_id IN ($in_clause);
 ${event_delete_sql}
+${event_sequence_delete_sql}
 DELETE FROM session WHERE id IN ($in_clause);
 
 COMMIT;
