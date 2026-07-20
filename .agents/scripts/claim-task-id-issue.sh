@@ -705,7 +705,7 @@ _converge_created_issue_ref() {
 		_ensure_todo_entry_written \
 			"$task_id" "$issue_num" "$title" "$labels" "$repo_path" || true
 		if _todo_entry_has_gh_ref "$task_id" "$issue_num" "$todo_file"; then
-			if [[ -z "$repo" ]] || ! declare -F require_task_issue_mapping >/dev/null 2>&1; then
+			if [[ -z "$repo" ]]; then
 				return 0
 			fi
 			if require_task_issue_mapping "$task_id" "$todo_file" "$repo" "$issue_num"; then

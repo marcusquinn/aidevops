@@ -33,6 +33,7 @@
 #   9. Existing entry with a different GH ref returns failure
 #   10. issue-sync no-number + duplicate recovery stamps TODO ref
 #   11. bare fallback recovers partial ref persistence without duplicates
+#   12. delegated creation reports mapping persistence failure
 
 set -u
 
@@ -446,6 +447,37 @@ test_bare_fallback_partial_persistence_recovery() {
 	return 0
 }
 test_bare_fallback_partial_persistence_recovery
+
+# ---------------------------------------------------------------------------
+# Test 12 — delegated creation must not report success after the issue exists
+# when durable task mapping convergence fails.
+# ---------------------------------------------------------------------------
+test_delegated_creation_mapping_failure() {
+	local name="12: delegated creation reports mapping persistence failure"
+	local tmpdir
+	tmpdir=$(mktemp -d)
+	# shellcheck disable=SC2064
+	trap "rm -rf '$tmpdir'" RETURN
+	printf '# Project TODO\n' >"${tmpdir}/TODO.md"
+
+	_try_issue_sync_delegation() { printf '9390\n'; return 0; }
+	_auto_assign_issue() { return 0; }
+	_interactive_session_auto_claim_new_task() { return 0; }
+	_lock_maintainer_issue_at_creation() { return 0; }
+	_link_parent_issue_post_create() { return 0; }
+	_converge_created_issue_ref() { return 1; }
+
+	local output="" rc=0
+	output=$(create_github_issue "t9390: delegated recovery" "worker-ready body" \
+		"bug,auto-dispatch" "$tmpdir") || rc=$?
+	if [[ $rc -ne 0 && -z "$output" ]]; then
+		pass "$name"
+	else
+		fail "$name" "expected non-zero with no reported issue number; rc=${rc} output=${output:-<empty>}"
+	fi
+	return 0
+}
+test_delegated_creation_mapping_failure
 
 # ---------------------------------------------------------------------------
 # Summary

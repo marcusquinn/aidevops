@@ -544,8 +544,11 @@ create_github_issue() {
 		# issue-sync-helper.sh _push_process_task silently returns SKIPPED
 		# when the task line is absent from TODO.md — issue is created but
 		# TODO never written. This call closes that gap idempotently.
-		_converge_created_issue_ref \
-			"$_task_id_for_todo" "$issue_num" "$title" "$labels" "$repo_path"
+		if ! _converge_created_issue_ref \
+			"$_task_id_for_todo" "$issue_num" "$title" "$labels" "$repo_path"; then
+			log_warn "Delegated issue #${issue_num}, but failed to persist task mapping for ${_task_id_for_todo}"
+			return 1
+		fi
 		# t2442: warn if parent-task label applied but body has no markers.
 		# The delegation path creates the issue via issue-sync-helper.sh
 		# cmd_push which ALREADY fires this warn — so we skip here to
