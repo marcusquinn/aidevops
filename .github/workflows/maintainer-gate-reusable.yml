@@ -699,6 +699,46 @@ jobs:
             return 0
           }
 
+          post_maintainer_gate_status_with_retry() {
+            local state="$1"
+            local description="$2"
+
+            post_maintainer_gate_status_once "$state" "$description" 2>/dev/null \
+              || { sleep 5 && post_maintainer_gate_status_once "$state" "$description"; }
+            return $?
+          }
+
+          rerun_maintainer_gate_with_retry() {
+            local run_id="$1"
+            local pr_number="$2"
+            local attempt=1
+            local max_attempts=3
+
+            while [[ "$attempt" -le "$max_attempts" ]]; do
+              if gh api "repos/${REPO}/actions/runs/${run_id}/rerun" \
+                --method POST >/dev/null 2>&1; then
+                echo "Job 1 rerun accepted for PR #$pr_number on attempt $attempt"
+                return 0
+              fi
+              echo "::warning::Job 1 rerun attempt $attempt/$max_attempts was not accepted for PR #$pr_number"
+              attempt=$((attempt + 1))
+              [[ "$attempt" -le "$max_attempts" ]] && sleep 5
+            done
+            return 1
+          }
+
+          mark_rerun_scheduling_failure() {
+            local pr_number="$1"
+            local description="$2"
+
+            echo "::error::${description}"
+            if ! post_maintainer_gate_status_with_retry error "$description"; then
+              echo "::error::Unable to publish terminal maintainer-gate scheduling error for PR #$pr_number"
+            fi
+            RERUN_SCHEDULING_FAILED=true
+            return 0
+          }
+
           pr_author_has_maintainer_authority() {
             local author_association="$1"
             local pr_author="$2"
@@ -777,12 +817,26 @@ jobs:
 
           echo "Found PRs referencing issue #$ISSUE_NUMBER: $OPEN_PRS"
 
+          RERUN_SCHEDULING_FAILED=false
           for PR_NUM in $OPEN_PRS; do
             echo "=== Triggering Job 1 rerun for PR #$PR_NUM ==="
 
-            HEAD_SHA=$(gh pr view "$PR_NUM" --repo "$REPO" --json headRefOid --jq '.headRefOid' 2>/dev/null || true)
+            #aidevops:trust-boundary GH#17671/GH#28317: use authenticated REST
+            # metadata for labels, author association, login, and exact head.
+            # Unsupported gh GraphQL projections must not silently erase trust
+            # metadata or turn an exemption into an indefinite pending status.
+            PR_INFO=""
+            if ! PR_INFO=$(gh api "repos/${REPO}/pulls/${PR_NUM}" \
+              --jq '{labels: [.labels[].name], assoc: .author_association, author: .user.login, head_sha: .head.sha}' \
+              2>/dev/null); then
+              echo "::error::Could not read REST metadata for PR #$PR_NUM"
+              RERUN_SCHEDULING_FAILED=true
+              continue
+            fi
+            HEAD_SHA=$(printf '%s' "$PR_INFO" | jq -r '.head_sha // empty' 2>/dev/null || true)
             if [[ -z "$HEAD_SHA" ]]; then
-              echo "::warning::Could not get HEAD SHA for PR #$PR_NUM — skipping"
+              echo "::error::Could not get HEAD SHA for PR #$PR_NUM from REST metadata"
+              RERUN_SCHEDULING_FAILED=true
               continue
             fi
 
@@ -800,20 +854,16 @@ jobs:
             # string-only exemption because the fallback verifies repo
             # permission before returning success.
             # -----------------------------------------------------------------
-            PR_INFO=$(gh pr view "$PR_NUM" --repo "$REPO" \
-              --json labels,authorAssociation,author \
-              --jq '{labels: [.labels[].name], assoc: .authorAssociation, author: .author.login}' \
-              2>/dev/null || true)
             PR_LABELS_J3=$(printf '%s' "$PR_INFO" | jq -r '.labels[]' 2>/dev/null || true)
             PR_AUTHOR_ASSOC_J3=$(printf '%s' "$PR_INFO" | jq -r '.assoc' 2>/dev/null || true)
             PR_AUTHOR_J3=$(printf '%s' "$PR_INFO" | jq -r '.author // empty' 2>/dev/null || true)
             if printf '%s' "$PR_LABELS_J3" | grep -q 'origin:interactive'; then
               if pr_author_has_maintainer_authority "$PR_AUTHOR_ASSOC_J3" "$PR_AUTHOR_J3"; then
                 echo "SKIP rerun: PR #$PR_NUM has origin:interactive and author is maintainer ($PR_AUTHOR_ASSOC_J3) — posting success, no Job 1 rerun needed"
-                post_maintainer_gate_status_once \
+                post_maintainer_gate_status_with_retry \
                   success \
                   "origin:interactive by maintainer — implied approval (Job 3 exemption)" \
-                  2>/dev/null || true
+                  || RERUN_SCHEDULING_FAILED=true
                 continue
               fi
             fi
@@ -849,10 +899,10 @@ jobs:
                 fi
                 if [[ "$ISSUE_TRUSTED_J3" == "true" ]]; then
                   echo "SKIP rerun: PR #$PR_NUM has origin:worker, trusted issue author ($ISSUE_AUTHOR_J3), no non-maintainer comments — posting success, no Job 1 rerun needed (t2451)"
-                  post_maintainer_gate_status_once \
+                  post_maintainer_gate_status_with_retry \
                     success \
                     "origin:worker on trusted issue — implied approval (Job 3 exemption, t2451)" \
-                    2>/dev/null || true
+                    || RERUN_SCHEDULING_FAILED=true
                   continue
                 fi
               fi
@@ -860,10 +910,13 @@ jobs:
 
             # Post pending status while Job 1 re-evaluates
             # t2037: Job 3 is pure plumbing — gate evaluation is Job 1's sole responsibility
-            post_maintainer_gate_status_once \
+            if ! post_maintainer_gate_status_with_retry \
               pending \
-              "Refreshing via Job 1 rerun..." \
-              2>/dev/null || true
+              "Refreshing via Job 1 rerun..."; then
+              echo "::error::Could not publish pending maintainer-gate status for PR #$PR_NUM"
+              RERUN_SCHEDULING_FAILED=true
+              continue
+            fi
 
             # -----------------------------------------------------------------
             # t2018 + t2037: Trigger Job 1 rerun so it re-evaluates gate
@@ -880,28 +933,34 @@ jobs:
             # Jobs 2-5 are gated on `github.event_name == 'issues'` and are
             # skipped, so only Job 1 runs in the rerun. No infinite loop risk.
             # -----------------------------------------------------------------
-            RUN_LOOKUP=$(gh api \
+            RUN_LOOKUP=""
+            if ! RUN_LOOKUP=$(gh api \
               "repos/${REPO}/actions/workflows/maintainer-gate.yml/runs?head_sha=${HEAD_SHA}&event=pull_request_target&per_page=1" \
               --jq '.workflow_runs[0] | [.id, .conclusion] | @tsv' \
-              2>/dev/null || true)
+              2>/dev/null); then
+              mark_rerun_scheduling_failure "$PR_NUM" "Maintainer-gate refresh lookup failed"
+              continue
+            fi
 
             if [[ -z "$RUN_LOOKUP" ]]; then
-              echo "No prior maintainer-gate run found for PR #$PR_NUM at $HEAD_SHA — pending status posted; will resolve on next PR push"
+              mark_rerun_scheduling_failure "$PR_NUM" "No prior maintainer-gate run found for refresh"
             else
               RUN_ID=$(printf '%s' "$RUN_LOOKUP" | cut -f1)
               if [[ -z "$RUN_ID" || "$RUN_ID" == "null" ]]; then
-                echo "::warning::Could not parse run id for PR #$PR_NUM — pending status posted"
+                mark_rerun_scheduling_failure "$PR_NUM" "Could not parse maintainer-gate run id for refresh"
               else
                 RUN_CONCLUSION=$(printf '%s' "$RUN_LOOKUP" | cut -f2)
                 echo "Triggering Job 1 rerun (run_id=$RUN_ID, prior=$RUN_CONCLUSION) for PR #$PR_NUM"
-                gh api \
-                  "repos/${REPO}/actions/runs/${RUN_ID}/rerun" \
-                  --method POST \
-                  2>/dev/null \
-                  || echo "::warning::Failed to re-run Job 1 for PR #$PR_NUM — pending status remains until next PR push"
+                if ! rerun_maintainer_gate_with_retry "$RUN_ID" "$PR_NUM"; then
+                  mark_rerun_scheduling_failure "$PR_NUM" "Maintainer-gate refresh scheduling failed after bounded retries"
+                fi
               fi
             fi
           done
+
+          if [[ "$RERUN_SCHEDULING_FAILED" == "true" ]]; then
+            exit 1
+          fi
 
   # =========================================================================
   # Job 4: Protect PR labels — re-apply needs-maintainer-review if removed
