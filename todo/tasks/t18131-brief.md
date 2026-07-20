@@ -156,9 +156,18 @@ python3 -m json.tool .agents/configs/pulse-sweep-budget.json >/dev/null
 - **Completed and verified:** Benchmark/report tooling and bounded exact direct REST quota attribution are implemented with focused and changed-file gates passing.
 - **Remaining acceptance criteria:** Comparable live windows, complete sidecars/guardrails, evidence-led tuning or control retention, and parent closeout criteria below.
 - **Unsafe route not to repeat:** Do not compare unequal retained windows, hide unknown quota cost, or delete rollback flags before canary success.
-- **Next safe route:** Merge and deploy bounded attribution, collect a new fixed window, and rerun the fail-closed benchmark without closing the task prematurely.
+- **Next safe route:** Let long-lived pre-attribution runtimes drain, collect a completed fixed window, and rerun the fail-closed benchmark without closing the task prematurely.
 - **Resume condition:** Dependency met; complete comparable baseline/canary telemetry remains required for final tuning and closeout.
 - **Owner and status:** Build+ `tier:standard`; active and evidence-gated.
+
+### Post-release evidence (2026-07-20)
+
+- Exact direct REST attribution shipped in `v3.32.160`; `v3.32.161` subsequently became the active release without changing the attribution contract.
+- The first fully post-release `297s` window recorded 525 attempts, 371 known quota points, and 154 unknown-cost attempts. The unknowns split into 108 GraphQL attempts and 46 REST attempts; 66 of the GraphQL attempts were explicit REST-translator fallbacks.
+- A later `299s` `v3.32.161` window recorded 634 attempts, 490 known quota points, and 130 unknown-cost attempts. Its 48 GraphQL attempts remained unknown by policy; 48 of 82 unknown REST attempts failed, so success did not prove whether GitHub charged them.
+- Both windows contained long-lived pre-attribution producers alongside current runtimes. In the later window, the same explicit-pagination route produced 101 known and 16 unknown successful page costs, confirming mixed producer generations rather than a current classifier failure. These windows are observations, not comparable canaries.
+- The provisional benchmark returned `INCONCLUSIVE` with 47 decision reasons. The canary sidecar was incomplete, quota remained unknown, and webhook/guardrail coverage remains deliberately unowned as documented in `.agents/reference/github-api-efficiency.md`.
+- Decision: retain every rollout and rollback control. Do not tune defaults, retire flags, or close this task until a homogeneous completed-cycle window and all required evidence groups pass.
 
 ### Files Scope
 
@@ -195,7 +204,7 @@ python3 -m json.tool .agents/configs/pulse-sweep-budget.json >/dev/null
 - Path-level deterministic budgets complement, but do not replace, real aggregate observation.
 - Inconclusive evidence keeps flags and parent open; it is not a failure to be hidden.
 - Exact universal GraphQL cost attribution is unavailable from cumulative response headers under concurrency; unknown costs remain unknown rather than being estimated or promoted to zero.
-- Publication/release remains outside this task unless separately authorised.
+- Release `v3.32.160` was separately authorised and completed; any further publication still requires separate authorisation.
 
 ## Relevant Files
 
