@@ -64,6 +64,9 @@ setup_test_env() {
 	mkdir -p "${TEST_ROOT}/config/aidevops"
 	export PATH="${TEST_ROOT}/bin:${PATH}"
 	export HOME="${TEST_ROOT}"
+	# This suite exercises the legacy direct-query classifiers with narrow gh
+	# stubs. Snapshot request counts and freshness have a dedicated regression.
+	export REVIEW_GATE_EVIDENCE_SNAPSHOT_DISABLE=1
 	mkdir -p "${TEST_ROOT}/.config/aidevops"
 
 	# Minimal repos.json for resolver tests
@@ -1306,7 +1309,7 @@ test_status_json_allows_trusted_skip() {
 		return 0
 	}
 	gh() {
-		printf '%s\n' '{"head":{"sha":"head-123"},"user":{"login":"maintainer"},"author_association":"MEMBER"}'
+		printf '%s\n' '{"head":{"sha":"head-123"},"user":{"login":"maintainer"},"author_association":"MEMBER","labels":[{"name":"skip-review-gate"}]}'
 		return 0
 	}
 	local output=""
@@ -1315,6 +1318,35 @@ test_status_json_allows_trusted_skip() {
 		print_result "status-json permits trusted current-head skip" 0
 	else
 		print_result "status-json permits trusted current-head skip" 1 "output=${output}"
+	fi
+	return 0
+}
+
+test_status_json_denies_skip_removed_during_decision() {
+	do_check() {
+		printf 'SKIP\n'
+		return 0
+	}
+	local gh_count_file="${TEST_ROOT}/status-json-skip-gh-count"
+	printf '0\n' >"$gh_count_file"
+	gh() {
+		local gh_calls=0
+		IFS= read -r gh_calls <"$gh_count_file" || gh_calls=0
+		gh_calls=$((gh_calls + 1))
+		printf '%s\n' "$gh_calls" >"$gh_count_file"
+		if [[ "$gh_calls" -eq 1 ]]; then
+			printf '%s\n' '{"head":{"sha":"head-123"},"user":{"login":"maintainer"},"author_association":"MEMBER","labels":[{"name":"skip-review-gate"}]}'
+		else
+			printf '%s\n' '{"head":{"sha":"head-123"},"user":{"login":"maintainer"},"author_association":"MEMBER","labels":[]}'
+		fi
+		return 0
+	}
+	local output=""
+	output=$(do_status_json 123 'testorg/otherrepo')
+	if jq -e '.status == "SKIP" and .author.class == "trusted" and .permitted == false and .merge_gate == "blocked"' <<<"$output" >/dev/null; then
+		print_result "status-json denies a skip label removed during the decision" 0
+	else
+		print_result "status-json denies a skip label removed during the decision" 1 "output=${output}"
 	fi
 	return 0
 }
@@ -1339,6 +1371,16 @@ run_completion_requirement_tests() {
 	test_trusted_default_does_not_require_completed_review
 	test_trusted_strict_repo_requires_completed_review
 	test_external_default_requires_completed_review
+	return 0
+}
+
+run_status_json_tests() {
+	test_status_json_denies_external_rate_limit_grace
+	test_status_json_allows_trusted_advisory_default
+	test_status_json_denies_external_advisory_default
+	test_status_json_allows_trusted_skip
+	test_status_json_denies_skip_removed_during_decision
+	test_status_json_fails_closed_without_pr_metadata
 	return 0
 }
 
@@ -1432,11 +1474,7 @@ main() {
 
 	echo ""
 	echo "=== Typed current-head evidence ==="
-	test_status_json_denies_external_rate_limit_grace
-	test_status_json_allows_trusted_advisory_default
-	test_status_json_denies_external_advisory_default
-	test_status_json_allows_trusted_skip
-	test_status_json_fails_closed_without_pr_metadata
+	run_status_json_tests
 
 	echo ""
 	echo "Tests run: ${TESTS_RUN}, failed: ${TESTS_FAILED}"
