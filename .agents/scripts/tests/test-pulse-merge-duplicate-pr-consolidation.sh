@@ -109,6 +109,12 @@ install_stubs() {
 		printf 'verify %s %s %s\n' "$linked_issue" "$superseding_pr" "$repo_slug" >>"$GH_CALL_LOG"
 		return "$TEST_VERIFY_RC"
 	}
+	_pulse_merge_invalidate_pr_list_cache() {
+		local repo_slug="$1"
+		local reason="$2"
+		printf 'invalidate %s %s\n' "$repo_slug" "$reason" >>"$GH_CALL_LOG"
+		return 0
+	}
 	return 0
 }
 
@@ -281,6 +287,7 @@ test_close_is_comment_only_and_keeps_branch() {
 	]'
 	_pmp_consolidate_duplicate_pr_groups "owner/repo" "$pr_json"
 	assert_log_contains "$GH_CALL_LOG" "pr close 701" "superseded PR close command is used"
+	assert_log_contains "$GH_CALL_LOG" "invalidate owner/repo closed duplicate PR #701" "successful duplicate close invalidates repository PR-list caches"
 	assert_log_contains "$GH_CALL_LOG" "--comment" "superseded close carries evidence comment"
 	assert_log_not_contains "$GH_CALL_LOG" "--delete-branch" "superseded close does not delete branches"
 	assert_log_not_contains "$GH_CALL_LOG" "issue close" "superseded duplicate consolidation never closes issues"

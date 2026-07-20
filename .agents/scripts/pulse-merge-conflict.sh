@@ -1055,10 +1055,14 @@ _close_conflicting_pr_comment_landed() {
 	if [[ -n "$merging_pr" ]]; then
 		landed_via=" (via PR #${merging_pr})"
 	fi
-	gh pr close "$pr_number" --repo "$repo_slug" \
+	if gh pr close "$pr_number" --repo "$repo_slug" \
 		--comment "Closing — this PR has merge conflicts with the base branch. The work for this task (\`${task_id}\`) has already landed on ${base_branch}${landed_via}, so no re-attempt is needed.
 
-_Closed by deterministic merge pass (pulse-wrapper.sh, GH#17574)._" 2>/dev/null || true
+_Closed by deterministic merge pass (pulse-wrapper.sh, GH#17574)._" 2>/dev/null; then
+		if declare -F _pulse_merge_invalidate_pr_list_cache >/dev/null 2>&1; then
+			_pulse_merge_invalidate_pr_list_cache "$repo_slug" "closed conflicting PR #${pr_number}"
+		fi
+	fi
 
 	# GH#17642: Do NOT auto-close the linked issue. Closing a
 	# conflicting PR is safe (PRs are cheap), but closing the ISSUE
@@ -1098,10 +1102,14 @@ _close_conflicting_pr_comment_not_landed() {
 
 	# Use standard message but without the misleading
 	# "remains open for re-attempt" phrasing (GH#17574).
-	gh pr close "$pr_number" --repo "$repo_slug" \
+	if gh pr close "$pr_number" --repo "$repo_slug" \
 		--comment "Closing — this PR has merge conflicts with the base branch. If the linked issue is still open, a worker will be dispatched to re-attempt with a fresh branch.
 
-_Closed by deterministic merge pass (pulse-wrapper.sh)._" 2>/dev/null || true
+_Closed by deterministic merge pass (pulse-wrapper.sh)._" 2>/dev/null; then
+		if declare -F _pulse_merge_invalidate_pr_list_cache >/dev/null 2>&1; then
+			_pulse_merge_invalidate_pr_list_cache "$repo_slug" "closed conflicting PR #${pr_number}"
+		fi
+	fi
 
 	echo "[pulse-wrapper] Deterministic merge: closed conflicting PR #${pr_number} in ${repo_slug}: ${pr_title}" >>"$LOGFILE"
 	return 0
