@@ -117,7 +117,7 @@ _worktree_proc_entry_is_provably_foreign_uid() {
 	local process_uid=""
 
 	[[ "$current_uid" =~ ^[0-9]+$ && -r "$proc_dir/status" ]] || return 1
-	while read -r field real_uid effective_uid saved_uid filesystem_uid _; do
+	while IFS=$' \t' read -r field real_uid effective_uid saved_uid filesystem_uid _; do
 		[[ "$field" == "Uid:" ]] || continue
 		for process_uid in "$real_uid" "$effective_uid" "$saved_uid" "$filesystem_uid"; do
 			[[ "$process_uid" =~ ^[0-9]+$ ]] || return 1
