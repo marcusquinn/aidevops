@@ -120,6 +120,14 @@ GHEOF
 	return 0
 }
 
+# Production routes issue body writes through the GraphQL/REST-safe wrapper.
+# Keep this focused fixture forwarding to the local gh binary stub so the test
+# still observes the exact body passed by _carry_forward_pr_diff.
+gh_issue_edit_safe() {
+	gh issue edit "$@"
+	return $?
+}
+
 # Extract _carry_forward_pr_diff from pulse-merge.sh and eval into this shell.
 define_helper_under_test() {
 	local helper_src

@@ -1163,15 +1163,59 @@ _pm_close_superseded_duplicate_pr_if_issue_solved() {
 	superseding_pr=$(_psh_find_merged_closer_for_closed_issue "$repo_slug" "$linked_issue" "$pr_number" 2>/dev/null) || superseding_pr=""
 	[[ "$superseding_pr" =~ ^[0-9]+$ ]] || return 1
 
-	_gh_with_timeout write gh pr close "$pr_number" --repo "$repo_slug" \
+	if _gh_with_timeout write gh pr close "$pr_number" --repo "$repo_slug" \
 		--comment "Closing as superseded: linked issue #${linked_issue} is already closed by merged PR #${superseding_pr}. This worker PR uses a closing keyword for the same issue, so merging it would duplicate an already-terminal fix.
 
 Intentional follow-ups should use For #${linked_issue} / Ref #${linked_issue} or an explicit follow-up/protection label instead of a closing keyword.
 
-_Closed by deterministic merge pass (GH#24399)._" 2>/dev/null || true
+_Closed by deterministic merge pass (GH#24399)._" 2>/dev/null; then
+		if declare -F _pulse_merge_invalidate_pr_list_cache >/dev/null 2>&1; then
+			_pulse_merge_invalidate_pr_list_cache "$repo_slug" "closed superseded duplicate PR #${pr_number}"
+		fi
+	fi
 	unlock_issue_after_worker "$pr_number" "$repo_slug"
 	echo "[pulse-wrapper] Merge pass: closed superseded duplicate PR #${pr_number} in ${repo_slug} — issue #${linked_issue} already closed by merged PR #${superseding_pr} (GH#24399)" >>"$LOGFILE"
 	return 0
+}
+
+#######################################
+# Invalidate repository-scoped PR-list caches after a confirmed terminal PR
+# mutation. Invalidation is best-effort and never changes merge/close outcomes.
+# Args: $1 = repository slug, $2 = audit reason
+#######################################
+_pulse_merge_invalidate_pr_list_cache() {
+	local repo_slug="$1"
+	local reason="$2"
+	declare -F pulse_pr_list_cache_invalidate_repo >/dev/null 2>&1 || return 0
+	if pulse_pr_list_cache_invalidate_repo "$repo_slug"; then
+		echo "[pulse-wrapper] PR-list cache invalidated for ${repo_slug} after ${reason} (GH#28280)" >>"$LOGFILE"
+	else
+		echo "[pulse-wrapper] PR-list cache invalidation failed for ${repo_slug} after ${reason}; fresh terminal-state guards remain active (GH#28280)" >>"$LOGFILE"
+	fi
+	return 0
+}
+
+#######################################
+# Re-read PR state without wrapper caches after a merge failure. A definitive
+# CLOSED/MERGED result proves that the cached open-list entry is stale, so evict
+# the repository cache and suppress failure remediation for terminal work.
+# Args: $1 = PR number, $2 = repository slug
+# Returns: 0 when terminal, 1 when OPEN/unknown/read failure
+#######################################
+_pulse_merge_failure_is_terminal() {
+	local pr_number="$1"
+	local repo_slug="$2"
+	local current_state=""
+	current_state=$(AIDEVOPS_GH_PR_VIEW_CACHE_DISABLE=1 gh pr view "$pr_number" --repo "$repo_slug" \
+		--json state --jq '.state // ""' 2>/dev/null) || current_state=""
+	case "$current_state" in
+	CLOSED | closed | MERGED | merged)
+		_pulse_merge_invalidate_pr_list_cache "$repo_slug" "fresh terminal state ${current_state} for PR #${pr_number}"
+		echo "[pulse-wrapper] Deterministic merge: suppressing failed merge remediation for PR #${pr_number} in ${repo_slug} — fresh state=${current_state} is terminal (GH#28280)" >>"$LOGFILE"
+		return 0
+		;;
+	esac
+	return 1
 }
 
 #######################################
@@ -1611,6 +1655,9 @@ ${merge_output}"
 
 	if [[ $_merge_exit -eq 0 ]]; then
 		echo "[pulse-wrapper] Deterministic merge: merged PR #${pr_number} in ${repo_slug}" >>"$LOGFILE"
+		if declare -F _pulse_merge_invalidate_pr_list_cache >/dev/null 2>&1; then
+			_pulse_merge_invalidate_pr_list_cache "$repo_slug" "merged PR #${pr_number}"
+		fi
 		_pmp_record_deterministic_progress_now 1 0
 	fi
 
@@ -1639,6 +1686,10 @@ ${merge_output}"
 		_handle_post_merge_actions "$pr_number" "$repo_slug" "$linked_issue" "$merge_summary" "$_ipr_labels" "$pr_base_ref_name"
 		return $?
 	else
+		if declare -F _pulse_merge_failure_is_terminal >/dev/null 2>&1 \
+			&& _pulse_merge_failure_is_terminal "$pr_number" "$repo_slug"; then
+			return 1
+		fi
 		local final_merge_output="$merge_output"
 		[[ -n "$merge_failure_context" ]] && final_merge_output="$merge_failure_context"
 		echo "[pulse-wrapper] Deterministic merge: FAILED PR #${pr_number} in ${repo_slug}: ${final_merge_output}" >>"$LOGFILE"

@@ -22,6 +22,7 @@ TEST_ROOT=""
 GH_LOG=""
 REMEDIATION_LOG=""
 MERGE_EVENT_LOG=""
+CACHE_INVALIDATION_LOG=""
 _OW_LABEL_PAT=",origin:worker,"
 
 print_result() {
@@ -41,25 +42,7 @@ print_result() {
 	return 0
 }
 
-setup_test_env() {
-	TEST_ROOT=$(mktemp -d)
-	mkdir -p "${TEST_ROOT}/bin"
-	export PATH="${TEST_ROOT}/bin:${PATH}"
-	export GH_STUB_MODE="${GH_STUB_MODE:-ruleset}"
-	export LOGFILE="${TEST_ROOT}/pulse.log"
-	: >"$LOGFILE"
-	GH_LOG="${TEST_ROOT}/gh-calls.log"
-	: >"$GH_LOG"
-	REMEDIATION_LOG="${TEST_ROOT}/remediation.log"
-	: >"$REMEDIATION_LOG"
-	MERGE_EVENT_LOG="${TEST_ROOT}/merge-events.log"
-	: >"$MERGE_EVENT_LOG"
-	export TEST_ROOT GH_LOG REMEDIATION_LOG MERGE_EVENT_LOG
-	FINAL_GATE_RC=0
-	FINAL_GATE_BLOCKER_KIND=""
-	PREFLIGHT_REMEDIATION_CALLS=0
-	_PULSE_MERGE_PREFLIGHT_BLOCKER_KIND=""
-
+_install_ruleset_gh_stub() {
 cat >"${TEST_ROOT}/bin/gh" <<'GHEOF'
 #!/usr/bin/env bash
 printf '%s\n' "gh $*" >>"${GH_LOG:-/dev/null}"
@@ -83,6 +66,16 @@ if [[ "$mode" == "stale-cache-401" && "$1" == "pr" && "$2" == "merge" && "$*" ==
 		printf '%s\n' 'non-200 OK status code: 401 Unauthorized body: "{ \"message\": \"Requires authentication\" }"' >&2
 		exit 1
 	fi
+	exit 0
+fi
+
+if [[ "$mode" == "terminal-closed" && "$1" == "pr" && "$2" == "merge" ]]; then
+	printf '%s\n' 'X Pull request owner/repo#77 is not mergeable: the pull request is closed.' >&2
+	exit 1
+fi
+
+if [[ "$mode" == "terminal-closed" && "$1" == "pr" && "$2" == "view" && "$*" == *"--json state"* ]]; then
+	printf '%s\n' 'CLOSED'
 	exit 0
 fi
 
@@ -136,6 +129,30 @@ GHEOF
 	return 0
 }
 
+setup_test_env() {
+	TEST_ROOT=$(mktemp -d)
+	mkdir -p "${TEST_ROOT}/bin"
+	export PATH="${TEST_ROOT}/bin:${PATH}"
+	export GH_STUB_MODE="${GH_STUB_MODE:-ruleset}"
+	export LOGFILE="${TEST_ROOT}/pulse.log"
+	: >"$LOGFILE"
+	GH_LOG="${TEST_ROOT}/gh-calls.log"
+	: >"$GH_LOG"
+	REMEDIATION_LOG="${TEST_ROOT}/remediation.log"
+	: >"$REMEDIATION_LOG"
+	MERGE_EVENT_LOG="${TEST_ROOT}/merge-events.log"
+	: >"$MERGE_EVENT_LOG"
+	CACHE_INVALIDATION_LOG="${TEST_ROOT}/cache-invalidations.log"
+	: >"$CACHE_INVALIDATION_LOG"
+	export TEST_ROOT GH_LOG REMEDIATION_LOG MERGE_EVENT_LOG CACHE_INVALIDATION_LOG
+	FINAL_GATE_RC=0
+	FINAL_GATE_BLOCKER_KIND=""
+	PREFLIGHT_REMEDIATION_CALLS=0
+	_PULSE_MERGE_PREFLIGHT_BLOCKER_KIND=""
+	_install_ruleset_gh_stub
+	return 0
+}
+
 teardown_test_env() {
 	if [[ -n "$TEST_ROOT" && -d "$TEST_ROOT" ]]; then
 		rm -rf "$TEST_ROOT"
@@ -144,16 +161,28 @@ teardown_test_env() {
 }
 
 define_function_under_test() {
+	local src_invalidate
+	local src_terminal
 	local src_process
+	src_invalidate=$(awk '
+		/^_pulse_merge_invalidate_pr_list_cache\(\) \{/,/^\}$/ { print }
+	' "$MERGE_SCRIPT")
+	src_terminal=$(awk '
+		/^_pulse_merge_failure_is_terminal\(\) \{/,/^\}$/ { print }
+	' "$MERGE_SCRIPT")
 	src_process=$(awk '
 		/^_process_single_ready_pr\(\) \{/,/^\}$/ { print }
 	' "$MERGE_SCRIPT")
-	if [[ -z "$src_process" ]]; then
-		printf 'ERROR: could not extract _process_single_ready_pr from %s\n' "$MERGE_SCRIPT" >&2
+	if [[ -z "$src_invalidate" || -z "$src_terminal" || -z "$src_process" ]]; then
+		printf 'ERROR: could not extract cache invalidation, terminal-state, or process helper from %s\n' "$MERGE_SCRIPT" >&2
 		return 1
 	fi
 	# shellcheck disable=SC1090
 	source "${SCRIPT_DIR}/../gh-merge-cache-remediation-lib.sh"
+	# shellcheck disable=SC1090
+	eval "$src_invalidate"
+	# shellcheck disable=SC1090
+	eval "$src_terminal"
 	# shellcheck disable=SC1090
 	eval "$src_process"
 	return 0
@@ -214,6 +243,12 @@ _handle_post_merge_actions() {
 	return 0
 }
 gh_pr_view() { printf '{"labels":[]}'; return 0; }
+
+pulse_pr_list_cache_invalidate_repo() {
+	local repo_slug="$1"
+	printf '%s\n' "$repo_slug" >>"${CACHE_INVALIDATION_LOG:?}"
+	return 0
+}
 
 _pulse_merge_maybe_dispatch_review_thread_remediation() {
 	local pr_number="$1"
@@ -495,6 +530,14 @@ test_stale_cache_401_retries_admin_merge_once() {
 		return 0
 	fi
 	print_result "successful merge records recovery before interruptible post-merge work" 0
+	if [[ "$(<"$CACHE_INVALIDATION_LOG")" != "owner/repo" ]]; then
+		print_result "successful merge invalidates repository PR-list caches" 1 \
+			"invalidations=$(tr '\n' ';' <"$CACHE_INVALIDATION_LOG")"
+		teardown_test_env
+		unset GH_STUB_MODE
+		return 0
+	fi
+	print_result "successful merge invalidates repository PR-list caches" 0
 
 	if [[ -f "${HOME}/.cache/gh/graphql-401.cache" ]] || \
 		! find "${HOME}/.cache/gh" -path '*/aidevops-quarantine-*/*graphql-401.cache*' -type f | grep -q .; then
@@ -519,6 +562,38 @@ test_stale_cache_401_retries_admin_merge_once() {
 	fi
 
 	print_result "stale cache 401 retries admin merge once and succeeds" 0
+	teardown_test_env
+	unset GH_STUB_MODE
+	return 0
+}
+
+test_terminal_merge_failure_refreshes_state_and_invalidates_cache() {
+	GH_STUB_MODE="terminal-closed"
+	setup_test_env
+	define_function_under_test || { teardown_test_env; unset GH_STUB_MODE; return 0; }
+
+	local pr_obj='{"number":77,"state":"OPEN","mergeable":"MERGEABLE","reviewDecision":"APPROVED","author":{"login":"owner"},"title":"test","headRefOid":"head-current"}'
+	local result=0
+	_process_single_ready_pr "owner/repo" "$pr_obj" || result=$?
+
+	if [[ "$result" -ne 1 ]]; then
+		print_result "terminal merge failure becomes a stale-cache skip" 1 \
+			"Expected 1, got ${result}; log: $(tr '\n' ';' <"$LOGFILE")"
+	elif ! grep -qE '^gh pr view 77 --repo owner/repo --json state --jq ' "$GH_LOG"; then
+		print_result "terminal merge failure performs uncached state refresh" 1 \
+			"gh log: $(tr '\n' ';' <"$GH_LOG")"
+	elif [[ "$(<"$CACHE_INVALIDATION_LOG")" != "owner/repo" ]]; then
+		print_result "terminal merge failure invalidates repository PR-list caches" 1 \
+			"invalidations=$(tr '\n' ';' <"$CACHE_INVALIDATION_LOG")"
+	elif [[ -s "$REMEDIATION_LOG" ]]; then
+		print_result "terminal merge failure suppresses stale remediation" 1 \
+			"remediation=$(tr '\n' ';' <"$REMEDIATION_LOG")"
+	elif ! grep -qF 'fresh state=CLOSED is terminal (GH#28280)' "$LOGFILE"; then
+		print_result "terminal merge failure writes stale-cache audit log" 1 \
+			"pulse log: $(tr '\n' ';' <"$LOGFILE")"
+	else
+		print_result "terminal merge failure refreshes state, invalidates cache, and skips remediation" 0
+	fi
 	teardown_test_env
 	unset GH_STUB_MODE
 	return 0
@@ -612,6 +687,7 @@ main() {
 	test_pending_required_check_updates_branch_and_defers
 	test_final_preflight_thread_blocker_dispatches_before_merge
 	test_stale_cache_401_retries_admin_merge_once
+	test_terminal_merge_failure_refreshes_state_and_invalidates_cache
 	test_ruleset_fallback_failure_preserves_admin_conversation_context
 
 	printf '\n=================================\n'

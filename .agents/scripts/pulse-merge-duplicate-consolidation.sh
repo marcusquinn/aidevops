@@ -187,13 +187,17 @@ _pmp_close_superseded_sibling_pr() {
 	[[ "$superseded_pr" =~ ^[0-9]+$ && "$candidate_pr" =~ ^[0-9]+$ ]] || return 0
 	[[ "$superseded_pr" != "$candidate_pr" ]] || return 0
 
-	gh pr close "$superseded_pr" --repo "$repo_slug" \
+	if gh pr close "$superseded_pr" --repo "$repo_slug" \
 		--comment "Closing as superseded by PR #${candidate_pr} for issue #${issue_number}.
 
 Pulse selected PR #${candidate_pr} as the newest/healthiest verified worker-owned candidate for this duplicate PR group. Evidence required before this close: same linked issue (#${issue_number}), worker-owned origin labels on both PRs, no maintainer/security gate on the linked issue, and verify-issue-close-helper confirmation that PR #${candidate_pr} matches the issue scope.
 
 _Closed by deterministic merge pass duplicate-PR consolidation (m-20260508-0e27c3 task 2.4)._" \
-		2>/dev/null || true
+		2>/dev/null; then
+		if declare -F _pulse_merge_invalidate_pr_list_cache >/dev/null 2>&1; then
+			_pulse_merge_invalidate_pr_list_cache "$repo_slug" "closed duplicate PR #${superseded_pr}"
+		fi
+	fi
 	echo "[pulse-wrapper] Duplicate PR consolidation: closed PR #${superseded_pr} in ${repo_slug} as superseded by verified candidate PR #${candidate_pr} for issue #${issue_number}" >>"$LOGFILE"
 	return 0
 }

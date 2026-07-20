@@ -1314,6 +1314,30 @@ unset AIDEVOPS_GH_PR_LIST_CACHE_DIR AIDEVOPS_GH_PR_LIST_CACHE_TTL
 : >"$GH_CALLS"
 : >"$GH_INFO_OUTPUT"
 : >"$AIDEVOPS_GH_API_LOG"
+export AIDEVOPS_GH_PR_LIST_CACHE_DIR="$TMP/pr-list-repo-invalidation-cache"
+export AIDEVOPS_GH_PR_LIST_CACHE_TTL=30
+gh_pr_list --repo "owner/repo" --state open --json number --limit 200 >/dev/null 2>&1 || true
+gh_pr_list --repo "owner/repo" --state open --json number --limit 200 >/dev/null 2>&1 || true
+gh_pr_list --repo "owner/other" --state open --json number --limit 200 >/dev/null 2>&1 || true
+gh_pr_list --repo "owner/other" --state open --json number --limit 200 >/dev/null 2>&1 || true
+gh_pr_list_cache_invalidate_repo "owner/repo"
+gh_pr_list --repo "owner/repo" --state open --json number --limit 200 >/dev/null 2>&1 || true
+gh_pr_list --repo "owner/other" --state open --json number --limit 200 >/dev/null 2>&1 || true
+
+invalidated_repo_calls=$(grep -cE '^api /repos/owner/repo/pulls\?' "$GH_CALLS" 2>/dev/null || true)
+preserved_repo_calls=$(grep -cE '^api /repos/owner/other/pulls\?' "$GH_CALLS" 2>/dev/null || true)
+list_invalidation_events=$(grep -c $'gh_pr_list_cache\tother\tunknown\tother\tinvalidate' "$AIDEVOPS_GH_API_LOG" 2>/dev/null || true)
+if [[ "$invalidated_repo_calls" == "2" && "$preserved_repo_calls" == "1" && "$list_invalidation_events" == "1" ]]; then
+	pass "gh_pr_list repo invalidation evicts only the mutated repository"
+else
+	fail "gh_pr_list repo invalidation evicts only the mutated repository" \
+		"invalidated_repo_calls=${invalidated_repo_calls} preserved_repo_calls=${preserved_repo_calls} invalidations=${list_invalidation_events} GH_CALLS=$(cat "$GH_CALLS") API_LOG=$(cat "$AIDEVOPS_GH_API_LOG")"
+fi
+unset AIDEVOPS_GH_PR_LIST_CACHE_DIR AIDEVOPS_GH_PR_LIST_CACHE_TTL
+
+: >"$GH_CALLS"
+: >"$GH_INFO_OUTPUT"
+: >"$AIDEVOPS_GH_API_LOG"
 unset AIDEVOPS_GH_REST_FIRST_READS
 export AIDEVOPS_GH_PR_LIST_CACHE_DIR="$TMP/pr-list-empty-cache"
 export AIDEVOPS_GH_PR_LIST_CACHE_TTL=30

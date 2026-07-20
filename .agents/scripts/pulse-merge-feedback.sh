@@ -236,8 +236,12 @@ _close_and_label_feedback_pr() {
 	local close_comment="$3"
 	local label="$4"
 
-	gh pr close "$pr_number" --repo "$repo_slug" \
-		--comment "$close_comment" >/dev/null 2>&1 || true
+	if gh pr close "$pr_number" --repo "$repo_slug" \
+		--comment "$close_comment" >/dev/null 2>&1; then
+		if declare -F _pulse_merge_invalidate_pr_list_cache >/dev/null 2>&1; then
+			_pulse_merge_invalidate_pr_list_cache "$repo_slug" "closed feedback-routed PR #${pr_number}"
+		fi
+	fi
 	gh pr edit "$pr_number" --repo "$repo_slug" \
 		--add-label "$label" >/dev/null 2>&1 || true
 	return 0

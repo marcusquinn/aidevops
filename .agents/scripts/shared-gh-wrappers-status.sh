@@ -111,6 +111,35 @@ _gh_pr_list_snapshot_key() {
 }
 
 #######################################
+# Build the repository prefix used by PR-list snapshot cache files. Keeping the
+# repository hash outside the exact-argv hash allows terminal PR mutations to
+# evict every cached open-list shape for one repository without flushing other
+# repositories from the shared cache.
+# Args: gh-style argv
+# Stdout: repository cache key
+#######################################
+_gh_pr_list_snapshot_repo_key() {
+	local _repo_slug=""
+	local _arg=""
+	local _expect_repo=0
+	for _arg in "$@"; do
+		if [[ "$_expect_repo" -eq 1 ]]; then
+			_repo_slug="$_arg"
+			_expect_repo=0
+			continue
+		fi
+		case "$_arg" in
+		--repo | -R) _expect_repo=1 ;;
+		--repo=*) _repo_slug="${_arg#--repo=}" ;;
+		-R?*) _repo_slug="${_arg#-R}" ;;
+		esac
+	done
+	[[ -n "$_repo_slug" ]] || _repo_slug="_implicit"
+	_gh_pr_list_snapshot_key "$_repo_slug"
+	return $?
+}
+
+#######################################
 # Record one lightweight telemetry event for the exact gh_pr_list argv shape.
 # The shape key is the same full-argv hash used by the exact-output caches, so
 # repeated counts identify only semantics-preserving candidates for migration.
@@ -161,9 +190,10 @@ _gh_pr_list_snapshot_get() {
 	[[ "${AIDEVOPS_GH_PR_LIST_CACHE_DISABLE:-0}" == "1" ]] && return 1
 	[[ "$_ttl" =~ ^[0-9]+$ && "$_ttl" -gt 0 ]] || return 1
 	_gh_pr_list_snapshot_cacheable "$@" || { _gh_read_cache_record gh_pr_list_cache bypass; return 1; }
-	local _key _path _now _mtime _age
+	local _repo_key _key _path _now _mtime _age
+	_repo_key="$(_gh_pr_list_snapshot_repo_key "$@")" || return 1
 	_key="$(_gh_pr_list_snapshot_key "$@")"
-	_path="${AIDEVOPS_GH_PR_LIST_CACHE_DIR:-${HOME}/.aidevops/cache/gh-pr-list-snapshots}/${_key}.json"
+	_path="${AIDEVOPS_GH_PR_LIST_CACHE_DIR:-${HOME}/.aidevops/cache/gh-pr-list-snapshots}/${_repo_key}-${_key}.json"
 	[[ -f "$_path" ]] || { _gh_read_cache_record gh_pr_list_cache miss; return 1; }
 	_now=$(date +%s 2>/dev/null || printf '0')
 	_mtime=$(perl -e 'print((stat($ARGV[0]))[9] || 0)' "$_path" 2>/dev/null || printf '0')
@@ -189,16 +219,40 @@ _gh_pr_list_snapshot_put() {
 	[[ "${AIDEVOPS_GH_PR_LIST_CACHE_DISABLE:-0}" == "1" ]] && return 0
 	[[ "$_ttl" =~ ^[0-9]+$ && "$_ttl" -gt 0 ]] || return 0
 	_gh_pr_list_snapshot_cacheable "$@" || return 0
-	local _dir _key _path _tmp
+	local _dir _repo_key _key _path _tmp
 	_dir="${AIDEVOPS_GH_PR_LIST_CACHE_DIR:-${HOME}/.aidevops/cache/gh-pr-list-snapshots}"
 	mkdir -p "$_dir" 2>/dev/null || return 0
+	_repo_key="$(_gh_pr_list_snapshot_repo_key "$@")" || return 0
 	_key="$(_gh_pr_list_snapshot_key "$@")"
-	_path="${_dir}/${_key}.json"
+	_path="${_dir}/${_repo_key}-${_key}.json"
 	_tmp=$(mktemp "${_dir}/.pr-list-${_key}.XXXXXX" 2>/dev/null) || return 0
 	printf '%s' "$_body" >"$_tmp" 2>/dev/null || { rm -f "$_tmp"; return 0; }
 	mv "$_tmp" "$_path" 2>/dev/null || rm -f "$_tmp"
 	_gh_read_cache_record gh_pr_list_cache store
 	return 0
+}
+
+#######################################
+# Invalidate all cached open-PR list shapes for one repository. Terminal merge
+# and close paths call this after GitHub confirms that a PR is no longer open.
+# Args: $1 = repository slug
+#######################################
+gh_pr_list_cache_invalidate_repo() {
+	local _repo_slug="$1"
+	[[ -n "$_repo_slug" ]] || return 1
+	local _dir="${AIDEVOPS_GH_PR_LIST_CACHE_DIR:-${HOME}/.aidevops/cache/gh-pr-list-snapshots}"
+	local _repo_key=""
+	local _path=""
+	local _rc=0
+	_repo_key="$(_gh_pr_list_snapshot_key "$_repo_slug")" || return 1
+	if [[ -d "$_dir" ]]; then
+		for _path in "${_dir}/${_repo_key}-"*.json; do
+			[[ -f "$_path" ]] || continue
+			rm -f -- "$_path" 2>/dev/null || _rc=1
+		done
+	fi
+	_gh_read_cache_record gh_pr_list_cache invalidate
+	return "$_rc"
 }
 
 #######################################
