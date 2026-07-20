@@ -10,9 +10,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.32.157] - 2026-07-20
+
 ### Added
 
-- add opt-in deployment and WordPress project context scaffolding (#28298)
+- scaffold deployment and WordPress contexts (#28300)
+
+### Changed
+
+- Maintenance: ratchet QLTY_SMELL_THRESHOLD 54→53 (-1) [skip ci]
+- Refactor: simplify recovery payload validation (#28299)
+- Maintenance: sync ref:GH#28313 to TODO.md [skip ci]
+- Maintenance: mark t18163 complete (pr:#28246 completed:2026-07-19) [skip ci]
+- Maintenance: ratchet QLTY_SMELL_THRESHOLD 56→54 (-2) [skip ci]
+- Refactor: simplify session continuation guard (#28288)
+- Maintenance: update simplification state registry
+
+### Fixed
+
+- restore exact-zero prefetch predicate (#28312)
+- classify unreadable proc cwd owners (#28308)
+- authorize linked-worktree patch targets (#28305)
+- clear stale local-only repo state (#28311)
+- label routine tracking issues at creation (#28266)
+- stabilize Qlty cache-sensitive scans (#28268)
+- persist pulse merge recovery before watchdog timeout (#28286)
+- preserve cross-user inventory leases (#28277)
+- harden simplification branch fallback (#28275)
 
 ## [3.32.156] - 2026-07-19
 
