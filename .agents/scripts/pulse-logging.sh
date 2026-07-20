@@ -28,6 +28,9 @@
 _PULSE_LOGGING_LOADED=1
 
 PULSE_CYCLE_STATE_SCHEMA="aidevops.pulse-cycle-state/v1"
+PULSE_CYCLE_STATE_ARRAY_TYPE="array"
+PULSE_CYCLE_STATE_BLOCKER_NONE="none"
+PULSE_CYCLE_STATE_OBJECT_TYPE="object"
 _PULSE_CYCLE_STATE_INITIALIZED=0
 _PULSE_CYCLE_STATE_TERMINAL=0
 _PULSE_CYCLE_ID=""
@@ -37,13 +40,13 @@ _PULSE_CYCLE_HEARTBEAT_AT=""
 _PULSE_CYCLE_PROGRESS_LAST_AT=""
 _PULSE_CYCLE_PROGRESS_KINDS_JSON="[]"
 _PULSE_CYCLE_NO_PROGRESS_CYCLES=0
-_PULSE_CYCLE_BLOCKER_KIND="none"
+_PULSE_CYCLE_BLOCKER_KIND="$PULSE_CYCLE_STATE_BLOCKER_NONE"
 _PULSE_CYCLE_BLOCKER_FINGERPRINT=""
 _PULSE_CYCLE_SAME_BLOCKER_CYCLES=0
 _PULSE_CYCLE_PRIOR_PROGRESS_LAST_AT=""
 _PULSE_CYCLE_PRIOR_PROGRESS_KINDS_JSON="[]"
 _PULSE_CYCLE_PRIOR_NO_PROGRESS_CYCLES=0
-_PULSE_CYCLE_PRIOR_BLOCKER_KIND="none"
+_PULSE_CYCLE_PRIOR_BLOCKER_KIND="$PULSE_CYCLE_STATE_BLOCKER_NONE"
 _PULSE_CYCLE_PRIOR_BLOCKER_FINGERPRINT=""
 _PULSE_CYCLE_PRIOR_SAME_BLOCKER_CYCLES=0
 
@@ -55,7 +58,7 @@ _pulse_cycle_state_now() {
 _pulse_cycle_state_blocker_is_valid() {
 	local kind="$1"
 	case "$kind" in
-	none | session-gate | dedup | preflight-failed | stop-requested | \
+	"$PULSE_CYCLE_STATE_BLOCKER_NONE" | session-gate | dedup | preflight-failed | stop-requested | \
 		dispatch-no-work-rate | runner-health | merge-authority | review-gate | \
 		review-bot-threads | required-review-threads | checks-active | \
 		checks-failed | quiet-period | snapshot-unavailable | head-changed | interrupted)
@@ -89,22 +92,24 @@ _pulse_cycle_state_start() {
 	local prior_progress_last_at=""
 	local prior_progress_kinds_json="[]"
 	local prior_no_progress="0"
-	local prior_blocker_kind="none"
+	local prior_blocker_kind="$PULSE_CYCLE_STATE_BLOCKER_NONE"
 	local prior_blocker_fingerprint=""
 	local prior_same_blocker="0"
 	now=$(_pulse_cycle_state_now)
 	if [[ -f "${PULSE_HEALTH_FILE:-}" ]]; then
-		previous_fields=$(jq -r --arg schema "$PULSE_CYCLE_STATE_SCHEMA" '
+		previous_fields=$(jq -r --arg schema "$PULSE_CYCLE_STATE_SCHEMA" \
+			--arg array_type "$PULSE_CYCLE_STATE_ARRAY_TYPE" \
+			--arg object_type "$PULSE_CYCLE_STATE_OBJECT_TYPE" '
 			.cycle_state as $state
 			| select(
-				($state | type) == "object"
+				($state | type) == $object_type
 				and $state.schema == $schema
-				and ($state.progress | type) == "object"
-				and ($state.progress.kinds | type) == "array"
+				and ($state.progress | type) == $object_type
+				and ($state.progress.kinds | type) == $array_type
 				and all($state.progress.kinds[]; type == "string")
 				and ($state.progress.consecutive_no_progress_cycles | type) == "number"
 				and $state.progress.consecutive_no_progress_cycles >= 0
-				and ($state.blocker | type) == "object"
+				and ($state.blocker | type) == $object_type
 				and ($state.blocker.kind | type) == "string"
 				and ($state.blocker.consecutive_same_cycles | type) == "number"
 				and $state.blocker.consecutive_same_cycles >= 0
@@ -125,19 +130,21 @@ _pulse_cycle_state_start() {
 			prior_no_progress prior_blocker_kind prior_blocker_fingerprint \
 			prior_same_blocker <<<"$previous_fields"
 	fi
-	printf '%s' "$prior_progress_kinds_json" | jq -e 'type == "array"' >/dev/null 2>&1 || prior_progress_kinds_json="[]"
+	printf '%s' "$prior_progress_kinds_json" \
+		| jq -e --arg array_type "$PULSE_CYCLE_STATE_ARRAY_TYPE" 'type == $array_type' \
+			>/dev/null 2>&1 || prior_progress_kinds_json="[]"
 	[[ "$prior_no_progress" =~ ^[0-9]+$ ]] || prior_no_progress=0
 	[[ "$prior_same_blocker" =~ ^[0-9]+$ ]] || prior_same_blocker=0
 	if ! _pulse_cycle_state_blocker_is_valid "$prior_blocker_kind"; then
-		prior_blocker_kind="none"
+		prior_blocker_kind="$PULSE_CYCLE_STATE_BLOCKER_NONE"
 		prior_blocker_fingerprint=""
 		prior_same_blocker=0
 	fi
-	if [[ "$prior_blocker_kind" == "none" ]]; then
+	if [[ "$prior_blocker_kind" == "$PULSE_CYCLE_STATE_BLOCKER_NONE" ]]; then
 		prior_blocker_fingerprint=""
 		prior_same_blocker=0
 	elif [[ ! "$prior_blocker_fingerprint" =~ ^(sha256:[0-9a-f]{64}|cksum:[0-9]+)$ ]]; then
-		prior_blocker_kind="none"
+		prior_blocker_kind="$PULSE_CYCLE_STATE_BLOCKER_NONE"
 		prior_blocker_fingerprint=""
 		prior_same_blocker=0
 	fi
@@ -157,7 +164,7 @@ _pulse_cycle_state_start() {
 	_PULSE_CYCLE_PROGRESS_LAST_AT="$prior_progress_last_at"
 	_PULSE_CYCLE_PROGRESS_KINDS_JSON="$prior_progress_kinds_json"
 	_PULSE_CYCLE_NO_PROGRESS_CYCLES="$prior_no_progress"
-	_PULSE_CYCLE_BLOCKER_KIND="none"
+	_PULSE_CYCLE_BLOCKER_KIND="$PULSE_CYCLE_STATE_BLOCKER_NONE"
 	_PULSE_CYCLE_BLOCKER_FINGERPRINT=""
 	_PULSE_CYCLE_SAME_BLOCKER_CYCLES=0
 	return 0
@@ -183,15 +190,16 @@ _pulse_cycle_state_set_blocker() {
 	local candidate=""
 	local current=""
 	_pulse_cycle_state_blocker_is_valid "$kind" || return 1
-	if [[ "$kind" == "none" ]]; then
-		_PULSE_CYCLE_BLOCKER_KIND="none"
+	if [[ "$kind" == "$PULSE_CYCLE_STATE_BLOCKER_NONE" ]]; then
+		_PULSE_CYCLE_BLOCKER_KIND="$PULSE_CYCLE_STATE_BLOCKER_NONE"
 		_PULSE_CYCLE_BLOCKER_FINGERPRINT=""
 		return 0
 	fi
 	[[ "$fingerprint" =~ ^(sha256:[0-9a-f]{64}|cksum:[0-9]+)$ ]] || return 1
 	candidate="${kind}:${fingerprint}"
-	current="${_PULSE_CYCLE_BLOCKER_KIND:-none}:${_PULSE_CYCLE_BLOCKER_FINGERPRINT:-}"
-	if [[ "${_PULSE_CYCLE_BLOCKER_KIND:-none}" == "none" || "$candidate" < "$current" ]]; then
+	current="${_PULSE_CYCLE_BLOCKER_KIND:-$PULSE_CYCLE_STATE_BLOCKER_NONE}:${_PULSE_CYCLE_BLOCKER_FINGERPRINT:-}"
+	if [[ "${_PULSE_CYCLE_BLOCKER_KIND:-$PULSE_CYCLE_STATE_BLOCKER_NONE}" == "$PULSE_CYCLE_STATE_BLOCKER_NONE" \
+		|| "$candidate" < "$current" ]]; then
 		_PULSE_CYCLE_BLOCKER_KIND="$kind"
 		_PULSE_CYCLE_BLOCKER_FINGERPRINT="$fingerprint"
 	fi
@@ -218,8 +226,9 @@ _pulse_cycle_state_finalize() {
 	progressed | idle | blocked | interrupted) ;;
 	*) return 1 ;;
 	esac
-	printf '%s' "$progress_kinds_json" | jq -e '
-		type == "array"
+	printf '%s' "$progress_kinds_json" | jq -e \
+		--arg array_type "$PULSE_CYCLE_STATE_ARRAY_TYPE" '
+		type == $array_type
 		and all(.[]; . == "pr-merged" or . == "pr-closed-conflicting" or . == "worker-dispatched")
 	' >/dev/null 2>&1 || return 1
 	now=$(_pulse_cycle_state_now)
@@ -227,7 +236,7 @@ _pulse_cycle_state_finalize() {
 		_PULSE_CYCLE_PROGRESS_LAST_AT="$now"
 		_PULSE_CYCLE_PROGRESS_KINDS_JSON="$progress_kinds_json"
 		_PULSE_CYCLE_NO_PROGRESS_CYCLES=0
-		_PULSE_CYCLE_BLOCKER_KIND="none"
+		_PULSE_CYCLE_BLOCKER_KIND="$PULSE_CYCLE_STATE_BLOCKER_NONE"
 		_PULSE_CYCLE_BLOCKER_FINGERPRINT=""
 		_PULSE_CYCLE_SAME_BLOCKER_CYCLES=0
 	else
@@ -235,7 +244,7 @@ _pulse_cycle_state_finalize() {
 		_PULSE_CYCLE_PROGRESS_KINDS_JSON="${_PULSE_CYCLE_PRIOR_PROGRESS_KINDS_JSON:-[]}"
 		_PULSE_CYCLE_NO_PROGRESS_CYCLES=$((${_PULSE_CYCLE_PRIOR_NO_PROGRESS_CYCLES:-0} + 1))
 		if [[ "$outcome" == "blocked" || "$outcome" == "interrupted" ]]; then
-			if [[ "${_PULSE_CYCLE_BLOCKER_KIND:-none}" == "${_PULSE_CYCLE_PRIOR_BLOCKER_KIND:-none}" \
+			if [[ "${_PULSE_CYCLE_BLOCKER_KIND:-$PULSE_CYCLE_STATE_BLOCKER_NONE}" == "${_PULSE_CYCLE_PRIOR_BLOCKER_KIND:-$PULSE_CYCLE_STATE_BLOCKER_NONE}" \
 				&& "${_PULSE_CYCLE_BLOCKER_FINGERPRINT:-}" == "${_PULSE_CYCLE_PRIOR_BLOCKER_FINGERPRINT:-}" ]]; then
 				same_blocker=$((${_PULSE_CYCLE_PRIOR_SAME_BLOCKER_CYCLES:-0} + 1))
 			else
@@ -243,7 +252,7 @@ _pulse_cycle_state_finalize() {
 			fi
 			_PULSE_CYCLE_SAME_BLOCKER_CYCLES="$same_blocker"
 		else
-			_PULSE_CYCLE_BLOCKER_KIND="none"
+			_PULSE_CYCLE_BLOCKER_KIND="$PULSE_CYCLE_STATE_BLOCKER_NONE"
 			_PULSE_CYCLE_BLOCKER_FINGERPRINT=""
 			_PULSE_CYCLE_SAME_BLOCKER_CYCLES=0
 		fi
@@ -259,7 +268,8 @@ _pulse_cycle_state_json() {
 	if [[ "${_PULSE_CYCLE_STATE_INITIALIZED:-0}" != "1" ]]; then
 		if [[ -f "${PULSE_HEALTH_FILE:-}" ]]; then
 			jq -ce --arg schema "$PULSE_CYCLE_STATE_SCHEMA" \
-				'.cycle_state | select(type == "object" and .schema == $schema)' \
+				--arg object_type "$PULSE_CYCLE_STATE_OBJECT_TYPE" \
+				'.cycle_state | select(type == $object_type and .schema == $schema)' \
 				"$PULSE_HEALTH_FILE" 2>/dev/null && return 0
 		fi
 		printf 'null\n'
@@ -308,8 +318,9 @@ _pulse_cycle_state_health_is_current() {
 	local current_cycle_id=""
 	[[ "${_PULSE_CYCLE_STATE_INITIALIZED:-0}" == "1" ]] || return 1
 	[[ -f "${PULSE_HEALTH_FILE:-}" ]] || return 1
-	current_cycle_id=$(jq -r --arg schema "$PULSE_CYCLE_STATE_SCHEMA" '
-		if (.cycle_state | type) == "object" and .cycle_state.schema == $schema
+	current_cycle_id=$(jq -r --arg schema "$PULSE_CYCLE_STATE_SCHEMA" \
+		--arg object_type "$PULSE_CYCLE_STATE_OBJECT_TYPE" '
+		if (.cycle_state | type) == $object_type and .cycle_state.schema == $schema
 		then .cycle_state.cycle_id // ""
 		else ""
 		end
@@ -349,7 +360,8 @@ _pulse_cycle_state_finish_if_needed() {
 	local outcome="${1:-interrupted}"
 	[[ "${_PULSE_CYCLE_STATE_INITIALIZED:-0}" == "1" ]] || return 0
 	[[ "${_PULSE_CYCLE_STATE_TERMINAL:-0}" != "1" ]] || return 0
-	if [[ "$outcome" == "interrupted" && "${_PULSE_CYCLE_BLOCKER_KIND:-none}" == "none" ]]; then
+	if [[ "$outcome" == "interrupted" \
+		&& "${_PULSE_CYCLE_BLOCKER_KIND:-$PULSE_CYCLE_STATE_BLOCKER_NONE}" == "$PULSE_CYCLE_STATE_BLOCKER_NONE" ]]; then
 		_pulse_cycle_state_note_blocker interrupted pulse-wrapper exit || true
 	fi
 	_pulse_cycle_state_finalize "$outcome" "[]" || return 0
@@ -602,9 +614,9 @@ append_cycle_index() {
 write_pulse_health_file() {
 	local ts
 	ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-	local cycle_state_json="null"
-	cycle_state_json=$(_pulse_cycle_state_json) || cycle_state_json="null"
-	printf '%s' "$cycle_state_json" | jq empty >/dev/null 2>&1 || cycle_state_json="null"
+	local cycle_state_json=null
+	cycle_state_json=$(_pulse_cycle_state_json) || cycle_state_json=null
+	printf '%s' "$cycle_state_json" | jq empty >/dev/null 2>&1 || cycle_state_json=null
 
 	# t3032: declare ledger helper once — used for both workers reconciliation
 	# and issues_dispatched. The ledger is written synchronously at dispatch
