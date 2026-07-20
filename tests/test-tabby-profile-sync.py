@@ -10,11 +10,13 @@ leakage (the string-heuristic failing on names with dots like
 """
 
 import importlib.util
+import io
 import os
 import subprocess
 import sys
 import tempfile
 import unittest
+from contextlib import redirect_stderr
 from pathlib import Path
 
 SCRIPTS_DIR = Path(__file__).parent.parent / ".agents" / "scripts"
@@ -398,6 +400,73 @@ terminal:
         self.assertIn("terminal:\n", repaired)
         self.assertIn("    regex: opencode", repaired)
         self.assertTrue(repaired.endswith("    regex: opencode\n"))
+
+
+class TestProfileArgTypeValidation(unittest.TestCase):
+    """Regression coverage for shell operators saved as YAML mappings."""
+
+    def test_shell_quote_operator_mapping_is_rejected(self):
+        config = """profiles:
+  - name: site.local
+    options:
+      command: open
+      args:
+        - '-a'
+        - OrbStack
+        - op: '&&'
+        - until
+        - docker
+        - info
+        - op: '>'
+        - /dev/null
+"""
+
+        issues = tabby_profile_sync.find_profile_arg_type_issues(config)
+
+        self.assertEqual(
+            [issue.profile_name for issue in issues],
+            ["site.local", "site.local"],
+        )
+        self.assertEqual([issue.value for issue in issues], ["op: '&&'", "op: '>'"])
+
+    def test_quoted_shell_command_is_valid_string_arg(self):
+        config = """profiles:
+  - name: site.local
+    options:
+      command: /bin/zsh
+      args:
+        - '-l'
+        - '-c'
+        - >-
+          open -a OrbStack && until docker info >/dev/null 2>&1; do sleep 1;
+          done && pnpm dev:web
+"""
+
+        self.assertEqual(
+            tabby_profile_sync.find_profile_arg_type_issues(config),
+            [],
+        )
+
+    def test_report_groups_operator_lines_by_profile(self):
+        config = """profiles:
+  - name: site.local
+    options:
+      command: open
+      args:
+        - op: '&&'
+        - op: ';'
+"""
+        stderr = io.StringIO()
+
+        with redirect_stderr(stderr):
+            found = tabby_profile_sync.report_profile_arg_type_issues(config)
+
+        self.assertTrue(found)
+        self.assertIn(
+            "site.local: non-string argument at line(s) 6, 7",
+            stderr.getvalue(),
+        )
+        self.assertIn("full quoted /bin/zsh -l -c", stderr.getvalue())
 
 
 if __name__ == "__main__":

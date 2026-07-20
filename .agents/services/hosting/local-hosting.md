@@ -107,6 +107,45 @@ localdev-helper.sh serve --port 3100 \
 - `--lock` is optional and must resolve inside `--root`. It is removed only after the port is confirmed unused and the launch lock is held.
 - An owned but unhealthy listener is not restarted implicitly. Stop it explicitly, diagnose it, then retry.
 
+### Saved terminal profiles (Tabby)
+
+Keep saved-profile commands thin: call a versioned project command that delegates
+listener ownership, health checks, and stale-lock handling to
+`localdev-helper.sh serve`. Do not put port-killing or unconditional lock removal
+in a terminal profile.
+
+Tabby's combined command-line field must receive the complete quoted shell
+invocation, not only its inner command:
+
+```bash
+/bin/zsh -l -c 'cd "$HOME/Git/myapp" && pnpm dev:web; exec zsh'
+```
+
+For projects that must also start the local container engine and shared proxy:
+
+```bash
+/bin/zsh -l -c 'open -a OrbStack && until docker info >/dev/null 2>&1; do printf "%s\n" "waiting for OrbStack engine..."; sleep 1; done && cd "$HOME/.local-dev-proxy" && docker compose up -d && cd "$HOME/Git/myapp" && pnpm dev:web; exec zsh'
+```
+
+This must persist as an executable plus string-only arguments:
+
+```yaml
+command: /bin/zsh
+args:
+  - '-l'
+  - '-c'
+  - 'cd "$HOME/Git/myapp" && pnpm dev:web; exec zsh'
+```
+
+Tabby's command editor represents unquoted shell operators such as `&&`, `;`,
+and `>` as object-valued arguments when only the inner command is pasted. Its
+PTY launcher accepts `string[]`; launching the malformed profile can leave the
+renderer unresponsive. `tabby-helper.sh status` detects this persisted shape and
+exits nonzero. Repair the profile before launch, then restart Tabby so it reloads
+`config.yaml`. For long or project-specific bootstrap sequences, prefer a
+versioned wrapper script and make the profile invoke that script through the
+same three-argument shell shape.
+
 **add / rm**
 
 ```bash

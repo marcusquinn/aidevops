@@ -20,8 +20,10 @@ import json
 import os
 import re
 import subprocess
+import sys
 import uuid
 from pathlib import Path
+from typing import NamedTuple
 
 from tabby_colour_utils import generate_tab_colour, find_closest_scheme
 from tabby_yaml_helpers import (
@@ -37,6 +39,14 @@ TABBY_OPENCODE_LAUNCH = "aidevops opencode; exec zsh"
 TABBY_COMMAND_FIELD_OPENCODE = f"/bin/zsh -l -c '{TABBY_OPENCODE_LAUNCH}'"
 LEGACY_TABBY_OPENCODE_LAUNCH = "opencode; exec zsh"
 LEGACY_TABBY_COMMAND_FIELD_OPENCODE = "/bin/zsh -l -c 'opencode; exec zsh'"
+
+
+class ProfileArgTypeIssue(NamedTuple):
+    """A non-string value persisted in a Tabby profile's ``options.args``."""
+
+    profile_name: str
+    line_number: int
+    value: str
 
 
 def is_linked_worktree(repo_path: str) -> bool:
@@ -326,6 +336,105 @@ def _profile_mentions_opencode_launch(profile_lines: list[str]) -> bool:
 def _profile_block_end(lines: list[str], start: int) -> int:
     """Return the first line after the Tabby profile block at ``start``."""
     return _block_end(lines, start, 2)
+
+
+def _is_non_string_yaml_list_item(value: str) -> bool:
+    """Return True when a simple YAML list item is not a string scalar."""
+    value = value.strip()
+    if not value or value.startswith(("{", "[")):
+        return True
+    if value[0] in ("'", '"'):
+        return False
+    if re.match(r"^[^:]+:(?:\s|$)", value):
+        return True
+    if value.lower() in {"null", "true", "false", "~"}:
+        return True
+    return bool(re.fullmatch(r"[-+]?(?:\d[\d_]*)(?:\.\d[\d_]*)?", value))
+
+
+def find_profile_arg_type_issues(config_text: str) -> list[ProfileArgTypeIssue]:
+    """Find profile args that Tabby cannot pass to its PTY as ``string[]``.
+
+    Tabby's command-line editor uses ``shell-quote``. Pasting an unwrapped shell
+    pipeline makes the parser persist control operators as mappings such as
+    ``- op: '&&'``. The local PTY contract only accepts strings, so attempting
+    to open that profile can leave its renderer unresponsive.
+    """
+    lines = config_text.split("\n")
+    issues: list[ProfileArgTypeIssue] = []
+    i = 0
+    while i < len(lines):
+        profile_match = re.match(r"^  - name:\s*(?P<name>.+?)\s*$", lines[i])
+        if not profile_match:
+            i += 1
+            continue
+
+        profile_name = _normalise_yaml_scalar(profile_match.group("name"))
+        profile_end = _profile_block_end(lines, i)
+        j = i + 1
+        while j < profile_end:
+            args_match = re.match(r"^(?P<indent>\s*)args:\s*(?P<value>.*)$", lines[j])
+            if not args_match:
+                j += 1
+                continue
+
+            inline_value = args_match.group("value").strip()
+            if inline_value and "{" in inline_value:
+                issues.append(
+                    ProfileArgTypeIssue(profile_name, j + 1, inline_value)
+                )
+                j += 1
+                continue
+
+            args_indent_len = len(args_match.group("indent"))
+            args_end = _block_end(lines, j, args_indent_len)
+            for line_index in range(j + 1, args_end):
+                line = lines[line_index]
+                if _line_indent_len(line) != args_indent_len + 2:
+                    continue
+                item_match = re.match(r"^\s*-\s*(?P<value>.*)$", line)
+                if item_match and _is_non_string_yaml_list_item(
+                    item_match.group("value")
+                ):
+                    issues.append(
+                        ProfileArgTypeIssue(
+                            profile_name,
+                            line_index + 1,
+                            item_match.group("value").strip(),
+                        )
+                    )
+            j = args_end
+        i = profile_end
+    return issues
+
+
+def report_profile_arg_type_issues(config_text: str) -> bool:
+    """Print actionable profile-schema errors and return whether any exist."""
+    issues = find_profile_arg_type_issues(config_text)
+    if not issues:
+        return False
+
+    locations: dict[str, list[int]] = {}
+    for issue in issues:
+        locations.setdefault(issue.profile_name, []).append(issue.line_number)
+
+    print(
+        "Invalid Tabby profile configuration: options.args must contain only strings.",
+        file=sys.stderr,
+    )
+    for profile_name, line_numbers in locations.items():
+        lines_text = ", ".join(str(line_number) for line_number in line_numbers)
+        print(
+            f"  - {profile_name}: non-string argument at line(s) {lines_text}",
+            file=sys.stderr,
+        )
+    print(
+        "Do not launch the listed profiles. In Tabby's command-line field, paste "
+        "the full quoted /bin/zsh -l -c '<command>' invocation so shell operators "
+        "remain inside one string argument.",
+        file=sys.stderr,
+    )
+    return True
 
 
 def _enable_dynamic_title(profile_text: str) -> tuple[str, bool]:
@@ -647,6 +756,10 @@ def sync_profiles(args: argparse.Namespace) -> None:
     config_text = load_yaml_simple(args.tabby_config)
     existing_cwds = extract_existing_cwds(config_text)
 
+    # Preserve custom profiles byte-for-byte, but make their invalid runtime
+    # types visible instead of silently leaving a profile that can freeze Tabby.
+    report_profile_arg_type_issues(config_text)
+
     config_text, repaired_count = repair_broken_opencode_launch_profiles(config_text)
 
     config_text, group_id = ensure_group(config_text)
@@ -684,6 +797,8 @@ def main() -> None:
 
     if args.status_only:
         show_status(repos, existing_cwds)
+        if report_profile_arg_type_issues(config_text):
+            raise SystemExit(2)
         return
 
     sync_profiles(args)
