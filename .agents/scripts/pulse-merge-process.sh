@@ -254,6 +254,46 @@ _pmp_refresh_unknown_review_decision_into() {
 	return 0
 }
 
+# Resolve unknown review decisions once before backlog logging and sorting.
+# Both consumers classify the full PR list, so network refreshes inside the
+# classifier would otherwise run twice per unknown PR in one merge pass.
+# Args: $1=repo slug, $2=PR JSON array
+_pmp_enrich_prs_with_review_decisions() {
+	local repo_slug="$1"
+	local pr_json="$2"
+	local enriched_json="$pr_json"
+	local pr_count=""
+	local i=0
+
+	pr_count=$(printf '%s' "$pr_json" | jq 'length' 2>/dev/null) || pr_count=0
+	[[ "$pr_count" =~ ^[0-9]+$ ]] || pr_count=0
+	if [[ -z "$repo_slug" || "$pr_count" -eq 0 ]]; then
+		printf '%s' "$pr_json"
+		return 0
+	fi
+
+	while [[ "$i" -lt "$pr_count" ]]; do
+		local pr_obj="" number="" review_decision=""
+		pr_obj=$(printf '%s' "$enriched_json" | jq -c --argjson index "$i" '.[$index]' 2>/dev/null) || pr_obj=""
+		if [[ -n "$pr_obj" ]]; then
+			number=$(printf '%s' "$pr_obj" | jq -r '.number // ""' 2>/dev/null) || number=""
+			review_decision=$(printf '%s' "$pr_obj" | jq -r 'if ((has("reviewDecision") | not) or .reviewDecision == null or (.reviewDecision | tostring | length) == 0) then "UNKNOWN" else .reviewDecision end' 2>/dev/null) || review_decision="UNKNOWN"
+			_pmp_normalize_review_decision_into review_decision "$review_decision"
+			if [[ "$number" =~ ^[0-9]+$ ]] && _pmp_review_decision_is_unknown "$review_decision"; then
+				_pmp_refresh_unknown_review_decision_into review_decision "$number" "$repo_slug" "$review_decision"
+				enriched_json=$(printf '%s' "$enriched_json" | jq --argjson index "$i" --arg review "$review_decision" '.[$index].reviewDecision = $review' 2>/dev/null) || {
+					printf '%s' "$pr_json"
+					return 0
+				}
+			fi
+		fi
+		i=$((i + 1))
+	done
+
+	printf '%s' "$enriched_json"
+	return 0
+}
+
 #######################################
 # Classify one PR object into a scheduling/observability backlog bucket.
 # This is intentionally advisory: it never decides merge eligibility. The
@@ -280,11 +320,9 @@ _pmp_classify_pr_backlog_state() {
 
 	[[ "$failed_count" =~ ^[0-9]+$ ]] || failed_count=0
 	[[ "$pending_count" =~ ^[0-9]+$ ]] || pending_count=0
-	if [[ "$failed_count" -gt 0 && -n "$repo_slug" && "$number" =~ ^[0-9]+$ ]] && _pmp_review_decision_is_unknown "$review_decision"; then
-		_pmp_refresh_unknown_review_decision_into review_decision "$number" "$repo_slug" "$review_decision"
-	fi
 
-	if [[ "$is_draft" == "true" || ",${labels}," == *",hold-for-review,"* || "$review_decision" == "CHANGES_REQUESTED" ]]; then
+	if [[ "$is_draft" == "true" || ",${labels}," == *",hold-for-review,"* || "$review_decision" == "CHANGES_REQUESTED" ]] ||
+		_pmp_review_decision_is_unknown "$review_decision"; then
 		printf '%s' "$_PMP_BACKLOG_HUMAN_APPROVAL_NEEDED"
 		return 0
 	fi
@@ -493,6 +531,7 @@ _merge_ready_prs_for_repo() {
 	fi
 
 	pr_json=$(_pmp_enrich_prs_with_rest_check_status "$repo_slug" "$pr_json")
+	pr_json=$(_pmp_enrich_prs_with_review_decisions "$repo_slug" "$pr_json")
 
 	_pmp_log_pr_backlog_counts "$repo_slug" "$pr_json"
 	pr_json=$(_pmp_sort_prs_by_backlog_priority "$pr_json" "$repo_slug")

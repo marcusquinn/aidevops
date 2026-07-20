@@ -978,12 +978,13 @@ _derive_worker_failure_evidence() {
 #
 # This guards worker-failure metrics before the later claim-release recovery path
 # runs. A watchdog hard-kill after PR creation is a monitoring handoff when the
-# PR has no terminal check failures; it must not advertise redispatch_worker.
+# canonical lifecycle classifier confirms the exact-head durable PR. CI state
+# determines later monitoring/repair; it does not redefine handoff existence.
 #
 # Args:
 #   $1 - session key
 #   $2 - work dir
-# Returns: 0 when an open PR exists and checks are absent/pending/success-only.
+# Returns: 0 when an exact-head, non-draft open PR has a merge summary.
 #######################################
 _worker_post_pr_handoff_confirmed() {
 	local session_key="$1"
@@ -991,6 +992,7 @@ _worker_post_pr_handoff_confirmed() {
 	local repo_slug="${DISPATCH_REPO_SLUG:-}"
 	local branch_name
 	local local_head
+	local issue_number="${session_key#issue-}"
 
 	[[ "$session_key" == issue-* ]] || return 1
 	[[ -n "$repo_slug" ]] || return 1
@@ -1002,24 +1004,11 @@ _worker_post_pr_handoff_confirmed() {
 	fi
 
 	[[ -n "$branch_name" && -n "$local_head" ]] || return 1
-	local pr_json=""
-	local pr_number=""
-	# shellcheck disable=SC2016 # $head is a jq variable supplied with --arg.
-	local safe_pr_jq='map(select((.isDraft // false | not) and .headRefOid == $head and ([.statusCheckRollup[]? | (.conclusion // .status // empty) | ascii_upcase] | any(. == "FAILURE" or . == "ERROR" or . == "CANCELLED" or . == "TIMED_OUT" or . == "ACTION_REQUIRED" or . == "STALE") | not))) | first | .number // empty'
-	pr_json=$(gh pr list --repo "$repo_slug" --head "$branch_name" --state open \
-		--json number,isDraft,headRefOid,statusCheckRollup 2>/dev/null || true)
-	pr_number=$(printf '%s' "$pr_json" | jq -r --arg head "$local_head" "$safe_pr_jq" 2>/dev/null || true)
-	[[ "$pr_number" =~ ^[0-9]+$ ]] || return 1
-
-	local comments_json=""
-	local summary_count=""
-	comments_json=$(gh api --paginate --slurp \
-		"repos/${repo_slug}/issues/${pr_number}/comments?per_page=100" 2>/dev/null || true)
-	summary_count=$(printf '%s' "$comments_json" | jq -r \
-		'[.[][] | select(.body | test("<!-- MERGE_SUMMARY -->"))] | length' 2>/dev/null || true)
-	[[ "$summary_count" =~ ^[0-9]+$ && "$summary_count" -gt 0 ]] && return 0
-
-	return 1
+	local handoff_state=""
+	handoff_state=$(_pr_handoff_state_for_branch_or_issue \
+		"$branch_name" "$issue_number" "$repo_slug" "head-only" "$local_head" "1")
+	[[ "${handoff_state%%|*}" == "ready" ]]
+	return $?
 }
 
 #######################################

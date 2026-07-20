@@ -3734,6 +3734,57 @@ test_cmd_run_finish_rejects_unverified_post_pr_handoff() {
 	return 0
 }
 
+test_cmd_run_finish_accepts_verified_post_pr_handoff() {
+	local work_dir="${TEST_ROOT}/repo-finish-verified-handoff"
+	local capture_file="${TEST_ROOT}/verified-handoff.capture"
+	local release_file="${TEST_ROOT}/verified-handoff.release"
+	local ledger_file="${TEST_ROOT}/verified-handoff.ledger"
+	local result_file="${TEST_ROOT}/verified-handoff.result"
+	local fast_fail_file="${TEST_ROOT}/verified-handoff.fast-fail"
+	_setup_test_git_repo "$work_dir" 1
+
+	(
+		_run_result_label="post_pr_handoff"
+		_run_failure_reason=""
+		_release_dispatch_claim() { printf '%s' "$2" >"$release_file"; return 0; }
+		_report_failure_to_fast_fail() { : >"$fast_fail_file"; return 0; }
+		_update_dispatch_ledger() { printf '%s' "$2" >"$ledger_file"; return 0; }
+		_release_session_lock() { return 0; }
+		_hrw_record_terminal_outcome() { return 0; }
+		_emit_worker_runtime_event() { return 0; }
+		_worker_post_pr_handoff_confirmed() { return 0; }
+		_worker_produced_output() { printf 'pr_exists'; return 0; }
+		_hrw_record_reconciled_outcome() {
+			local session_key="$1"
+			local raw_result="$2"
+			local outcome="$3"
+			local status="$4"
+			local classification="$5"
+			printf '%s|%s|%s|%s|%s\n' "$session_key" "$raw_result" "$outcome" "$status" "$classification" >"$capture_file"
+			return 0
+		}
+		set +e
+		_cmd_run_finish "issue-99999" "complete" "$work_dir"
+		printf '%s' "$?" >"$result_file"
+		set -e
+	)
+
+	local captured="" release_reason="" ledger_status="" finish_result=""
+	[[ -s "$capture_file" ]] && captured=$(<"$capture_file")
+	[[ -s "$release_file" ]] && release_reason=$(<"$release_file")
+	[[ -s "$ledger_file" ]] && ledger_status=$(<"$ledger_file")
+	[[ -s "$result_file" ]] && finish_result=$(<"$result_file")
+	if [[ "$captured" == "issue-99999|post_pr_handoff|success|post_pr_handoff|" ]] &&
+		[[ "$release_reason" == "worker_complete" && "$ledger_status" == "complete" && "$finish_result" == "0" ]] &&
+		[[ ! -e "$fast_fail_file" ]]; then
+		print_result "verified POST_PR_HANDOFF records success without failure escalation" 0
+	else
+		print_result "verified POST_PR_HANDOFF records success without failure escalation" 1 \
+			"captured=${captured:-<empty>} release=${release_reason:-<empty>} ledger=${ledger_status:-<empty>} result=${finish_result:-<empty>}"
+	fi
+	return 0
+}
+
 test_permission_finish_failure_recovers_draft_and_runs_cleanup() {
 	local result=""
 	result=$(
@@ -4440,8 +4491,8 @@ test_post_pr_handoff_detects_open_pending_pr() {
 
 	gh() {
 		local args="$*"
-		if [[ "$args" == *"pr list"* && "$args" == *"--state open"* && "$args" == *"--head feature/auto-test-issue-99999"* ]]; then
-			printf '[{"number":123,"isDraft":false,"headRefOid":"%s","statusCheckRollup":[]}]' "$expected_head"
+		if [[ "$args" == *"pr list"* && "$args" == *"--state all"* && "$args" == *"--head feature/auto-test-issue-99999"* ]]; then
+			printf '[{"number":123,"state":"OPEN","isDraft":false,"mergedAt":null,"headRefOid":"%s","labels":[{"name":"origin:worker"}],"statusCheckRollup":[]}]' "$expected_head"
 			return 0
 		fi
 		if [[ "$args" == *"api --paginate"* && "$args" == *"/issues/123/comments"* ]]; then
@@ -4464,6 +4515,50 @@ test_post_pr_handoff_detects_open_pending_pr() {
 	return 0
 }
 
+test_post_pr_handoff_treats_ci_as_monitoring_state() {
+	local work_dir="${TEST_ROOT}/repo-post-pr-handoff-ci-state"
+	mkdir -p "$work_dir"
+	init_git_worktree "$work_dir"
+	git -C "$work_dir" checkout -q -b "feature/auto-test-issue-99999"
+	DISPATCH_REPO_SLUG="test-owner/test-repo"
+	local expected_head=""
+	expected_head=$(git -C "$work_dir" rev-parse HEAD)
+	local rollup_json=""
+	local fixture_label=""
+
+	gh() {
+		local args="$*"
+		if [[ "$args" == *"pr list"* ]]; then
+			printf '[{"number":126,"state":"OPEN","isDraft":false,"mergedAt":null,"headRefOid":"%s","labels":[{"name":"origin:worker"}],"statusCheckRollup":%s}]' "$expected_head" "$rollup_json"
+			return 0
+		fi
+		if [[ "$args" == *"api --paginate"* && "$args" == *"/issues/126/comments"* ]]; then
+			printf '%s' '[[{"body":"<!-- MERGE_SUMMARY -->"}]]'
+			return 0
+		fi
+		printf '[]'
+		return 0
+	}
+
+	while IFS=$'\t' read -r fixture_label rollup_json; do
+		[[ -n "$fixture_label" ]] || continue
+		if _worker_post_pr_handoff_confirmed "issue-99999" "$work_dir"; then
+			print_result "post-PR handoff accepts ${fixture_label} as durable monitoring state" 0
+		else
+			print_result "post-PR handoff accepts ${fixture_label} as durable monitoring state" 1
+		fi
+	done <<'EOF'
+cancelled plus success	[{"name":"gate","status":"COMPLETED","conclusion":"CANCELLED"},{"name":"gate","status":"COMPLETED","conclusion":"SUCCESS"}]
+failure plus success	[{"name":"tests","status":"COMPLETED","conclusion":"FAILURE"},{"name":"tests","status":"COMPLETED","conclusion":"SUCCESS"}]
+terminal failure only	[{"name":"tests","status":"COMPLETED","conclusion":"FAILURE"}]
+pending only	[{"name":"tests","status":"IN_PROGRESS","conclusion":null}]
+EOF
+
+	unset DISPATCH_REPO_SLUG 2>/dev/null || true
+	unset -f gh 2>/dev/null || true
+	return 0
+}
+
 test_post_pr_handoff_rejects_mismatched_head_or_missing_summary() {
 	local work_dir="${TEST_ROOT}/repo-post-pr-incomplete"
 	mkdir -p "$work_dir"
@@ -4474,11 +4569,12 @@ test_post_pr_handoff_rejects_mismatched_head_or_missing_summary() {
 	expected_head=$(git -C "$work_dir" rev-parse HEAD)
 	local remote_head="different-head"
 	local summary_count=1
+	local remote_is_draft="false"
 
 	gh() {
 		local args="$*"
 		if [[ "$args" == *"pr list"* ]]; then
-			printf '[{"number":125,"isDraft":false,"headRefOid":"%s","statusCheckRollup":[]}]' "$remote_head"
+			printf '[{"number":125,"state":"OPEN","isDraft":%s,"mergedAt":null,"headRefOid":"%s","labels":[{"name":"origin:worker"}],"statusCheckRollup":[]}]' "$remote_is_draft" "$remote_head"
 			return 0
 		fi
 		if [[ "$args" == *"api --paginate"* ]]; then
@@ -4504,6 +4600,13 @@ test_post_pr_handoff_rejects_mismatched_head_or_missing_summary() {
 		print_result "post-PR watchdog handoff rejects missing MERGE_SUMMARY" 1
 	else
 		print_result "post-PR watchdog handoff rejects missing MERGE_SUMMARY" 0
+	fi
+	summary_count=1
+	remote_is_draft="true"
+	if _worker_post_pr_handoff_confirmed "issue-99999" "$work_dir"; then
+		print_result "post-PR watchdog handoff rejects draft PR" 1
+	else
+		print_result "post-PR watchdog handoff rejects draft PR" 0
 	fi
 
 	unset DISPATCH_REPO_SLUG 2>/dev/null || true
@@ -4710,8 +4813,8 @@ test_post_pr_handoff_overrides_watchdog_next_action() {
 
 	gh() {
 		local args="$*"
-		if [[ "$args" == *"pr list"* && "$args" == *"--state open"* ]]; then
-			printf '[{"number":124,"isDraft":false,"headRefOid":"%s","statusCheckRollup":[]}]' "$expected_head"
+		if [[ "$args" == *"pr list"* && "$args" == *"--state all"* ]]; then
+			printf '[{"number":124,"state":"OPEN","isDraft":false,"mergedAt":null,"headRefOid":"%s","labels":[{"name":"origin:worker"}],"statusCheckRollup":[]}]' "$expected_head"
 			return 0
 		fi
 		if [[ "$args" == *"api --paginate"* && "$args" == *"/issues/124/comments"* ]]; then
@@ -4765,6 +4868,7 @@ test_completion_infrastructure_resumes_without_implementation_penalty() {
 
 test_pr_checkpoint_lifecycle_cases() {
 	test_post_pr_handoff_detects_open_pending_pr
+	test_post_pr_handoff_treats_ci_as_monitoring_state
 	test_post_pr_handoff_rejects_mismatched_head_or_missing_summary
 	test_failed_worker_draft_checkpoint_escalates_without_completion
 	test_failed_worker_draft_retains_claim_when_block_not_visible
@@ -4820,6 +4924,7 @@ run_worker_finish_tests() {
 	test_cmd_run_finish_emits_complete_for_real_output
 	test_cmd_run_finish_appends_reconciled_attempt_outcome
 	test_cmd_run_finish_rejects_unverified_post_pr_handoff
+	test_cmd_run_finish_accepts_verified_post_pr_handoff
 	test_permission_finish_failure_recovers_draft_and_runs_cleanup
 	test_permission_finish_failure_without_output_releases_and_cleans_up
 	test_begin_worker_runtime_run_refreshes_run_id

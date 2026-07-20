@@ -55,6 +55,10 @@ setup_test_env() {
 	MERGE_EVENT_LOG="${TEST_ROOT}/merge-events.log"
 	: >"$MERGE_EVENT_LOG"
 	export TEST_ROOT GH_LOG REMEDIATION_LOG MERGE_EVENT_LOG
+	FINAL_GATE_RC=0
+	FINAL_GATE_BLOCKER_KIND=""
+	PREFLIGHT_REMEDIATION_CALLS=0
+	_PULSE_MERGE_PREFLIGHT_BLOCKER_KIND=""
 
 cat >"${TEST_ROOT}/bin/gh" <<'GHEOF'
 #!/usr/bin/env bash
@@ -185,7 +189,11 @@ _check_ruleset_required_reviews_passing() { return 0; }
 _extract_merge_summary() { printf 'summary'; return 0; }
 _retarget_stacked_children() { return 0; }
 _pulse_merge_admin_safety_check() { return 0; }
-_pulse_merge_final_trust_gate() { _PULSE_FINAL_REQUIRES_SYNCHRONOUS_MERGE=0; return 0; }
+_pulse_merge_final_trust_gate() {
+	_PULSE_FINAL_REQUIRES_SYNCHRONOUS_MERGE=0
+	_PULSE_MERGE_PREFLIGHT_BLOCKER_KIND="${FINAL_GATE_BLOCKER_KIND:-}"
+	return "${FINAL_GATE_RC:-0}"
+}
 _set_native_auto_merge_or_skip() { return 1; }
 _repo_allows_auto_merge() { return "${REPO_ALLOWS_AUTO_MERGE_RC:-0}"; }
 _attempt_existing_auto_merge_behind_update_branch() { return 1; }
@@ -212,6 +220,16 @@ _pulse_merge_maybe_dispatch_review_thread_remediation() {
 	local repo_slug="$2"
 	local merge_output="$3"
 	printf 'pr=%s repo=%s\n%s\n' "$pr_number" "$repo_slug" "$merge_output" >>"${REMEDIATION_LOG:?}"
+	return 0
+}
+
+_pulse_merge_maybe_dispatch_preflight_remediation() {
+	local pr_number="$1"
+	local repo_slug="$2"
+	PREFLIGHT_REMEDIATION_CALLS=$((PREFLIGHT_REMEDIATION_CALLS + 1))
+	printf 'preflight pr=%s repo=%s blocker=%s\n' \
+		"$pr_number" "$repo_slug" "${_PULSE_MERGE_PREFLIGHT_BLOCKER_KIND:-}" >>"${REMEDIATION_LOG:?}"
+	_PULSE_MERGE_PREFLIGHT_BLOCKER_KIND=""
 	return 0
 }
 
@@ -532,6 +550,36 @@ test_ruleset_fallback_failure_preserves_admin_conversation_context() {
 	return 0
 }
 
+test_final_preflight_thread_blocker_dispatches_before_merge() {
+	setup_test_env
+	define_function_under_test || {
+		teardown_test_env
+		return 0
+	}
+	FINAL_GATE_RC=1
+	FINAL_GATE_BLOCKER_KIND="required-review-threads"
+
+	local pr_obj='{"number":77,"mergeable":"MERGEABLE","reviewDecision":"APPROVED","author":{"login":"owner"},"title":"test","headRefOid":"head-current"}'
+	local result=0
+	_process_single_ready_pr "owner/repo" "$pr_obj" || result=$?
+
+	if [[ "$result" -ne 1 ]]; then
+		print_result "final preflight thread blocker defers merge" 1 \
+			"Expected 1, got ${result}; log: $(tr '\n' ';' <"$LOGFILE")"
+	elif [[ "$PREFLIGHT_REMEDIATION_CALLS" -ne 1 ]] ||
+		! grep -qF 'preflight pr=77 repo=owner/repo blocker=required-review-threads' "$REMEDIATION_LOG"; then
+		print_result "final preflight thread blocker dispatches remediation" 1 \
+			"calls=${PREFLIGHT_REMEDIATION_CALLS}; remediation=$(tr '\n' ';' <"$REMEDIATION_LOG")"
+	elif grep -qE '^gh pr merge ' "$GH_LOG"; then
+		print_result "final preflight thread blocker prevents merge write" 1 \
+			"gh log: $(tr '\n' ';' <"$GH_LOG")"
+	else
+		print_result "final preflight thread blocker dispatches before merge write" 0
+	fi
+	teardown_test_env
+	return 0
+}
+
 main() {
 	test_ruleset_violation_enables_auto_merge_without_admin
 	test_ruleset_violation_skips_native_auto_merge_when_disabled
@@ -539,6 +587,7 @@ main() {
 	test_draft_pr_without_origin_labels_skips_merge_write
 	test_expected_required_check_updates_branch_and_defers
 	test_pending_required_check_updates_branch_and_defers
+	test_final_preflight_thread_blocker_dispatches_before_merge
 	test_stale_cache_401_retries_admin_merge_once
 	test_ruleset_fallback_failure_preserves_admin_conversation_context
 
