@@ -683,6 +683,40 @@ _ensure_todo_entry_written() {
 	return 1
 }
 
+# Converge the mutable TODO projection and repository-bound immutable mapping
+# after an issue number has been recovered or created. A writer can complete
+# the TODO append but return a partial/failing status while another reconciler
+# is touching the file; independently verify the ref and retry idempotently.
+_converge_created_issue_ref() {
+	local task_id="$1"
+	local issue_num="$2"
+	local title="$3"
+	local labels="$4"
+	local repo_path="$5"
+	local todo_file="${repo_path}/TODO.md"
+	local repo=""
+	local attempt=1
+
+	[[ -f "$todo_file" ]] || return 0
+	[[ -n "$task_id" && "$issue_num" =~ ^[1-9][0-9]*$ ]] || return 1
+	repo=$(_extract_github_slug "$repo_path" "${REMOTE_NAME:-origin}" 2>/dev/null || true)
+
+	while [[ $attempt -le 3 ]]; do
+		_ensure_todo_entry_written \
+			"$task_id" "$issue_num" "$title" "$labels" "$repo_path" || true
+		if _todo_entry_has_gh_ref "$task_id" "$issue_num" "$todo_file"; then
+			if [[ -z "$repo" ]] || ! declare -F require_task_issue_mapping >/dev/null 2>&1; then
+				return 0
+			fi
+			if require_task_issue_mapping "$task_id" "$todo_file" "$repo" "$issue_num"; then
+				return 0
+			fi
+		fi
+		attempt=$((attempt + 1))
+	done
+	return 1
+}
+
 # _todo_entry_has_gh_ref TASK_ID ISSUE_NUM TODO_FILE
 # Verify a task line outside code fences contains the expected GH ref.
 _todo_entry_has_gh_ref() {

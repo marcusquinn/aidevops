@@ -32,6 +32,7 @@
 #   8. Empty task_id or issue_num → silent no-op (non-fatal)
 #   9. Existing entry with a different GH ref returns failure
 #   10. issue-sync no-number + duplicate recovery stamps TODO ref
+#   11. bare fallback recovers partial ref persistence without duplicates
 
 set -u
 
@@ -378,6 +379,73 @@ EOF
 	return 0
 }
 test_issue_sync_no_number_duplicate_recovery_stamps_ref
+
+# ---------------------------------------------------------------------------
+# Test 11 — issue-sync emits no number, bare fallback creates one issue, and a
+# partial first TODO persistence result converges on retry. A second invocation
+# recovers the same issue rather than creating a duplicate.
+# ---------------------------------------------------------------------------
+test_bare_fallback_partial_persistence_recovery() {
+	local name="11: bare fallback converges partial persistence without duplicate"
+	local tmpdir
+	tmpdir=$(mktemp -d)
+	# shellcheck disable=SC2064
+	trap "rm -rf '$tmpdir'" RETURN
+	printf '# Project TODO\n\n## Backlog\n\n' >"${tmpdir}/TODO.md"
+
+	_try_issue_sync_delegation() { return 1; }
+	_extract_github_slug() { printf 'owner/repo\n'; return 0; }
+	_auto_assign_issue() { return 0; }
+	_interactive_session_auto_claim_new_task() { return 0; }
+	_lock_maintainer_issue_at_creation() { return 0; }
+	_link_parent_issue_post_create() { return 0; }
+	_check_duplicate_issue() {
+		if [[ -f "${tmpdir}/created" ]]; then
+			printf '9290\n'
+			return 0
+		fi
+		return 1
+	}
+	gh_create_issue() {
+		printf 'created\n' >>"${tmpdir}/created"
+		printf 'https://github.com/owner/repo/issues/9290\n'
+		return 0
+	}
+	_ensure_todo_entry_written() {
+		local task_id="$1" issue_num="$2" title="$3" labels="$4" repo_path="$5"
+		if ! _todo_entry_has_gh_ref "$task_id" "$issue_num" "${repo_path}/TODO.md"; then
+			_insert_todo_line "${repo_path}/TODO.md" \
+				"- [ ] ${task_id} ${title#"${task_id}: "} #${labels%%,*} ref:GH#${issue_num}"
+			return 1
+		fi
+		return 0
+	}
+	require_task_issue_mapping() {
+		local task_id="$1" todo_file="$2" repo="$3" issue_num="$4"
+		_todo_entry_has_gh_ref "$task_id" "$issue_num" "$todo_file" || return 1
+		printf '%s|%s|%s\n' "$task_id" "$repo" "$issue_num" >"${tmpdir}/mapping"
+		return 0
+	}
+
+	local first second rc=0
+	first=$(create_github_issue "t9290: fallback recovery" "worker-ready body" \
+		"bug,auto-dispatch" "$tmpdir") || rc=$?
+	second=$(create_github_issue "t9290: fallback recovery" "worker-ready body" \
+		"bug,auto-dispatch" "$tmpdir") || rc=$?
+	local issue_count todo_count
+	issue_count=$(wc -l <"${tmpdir}/created")
+	todo_count=$(grep -c '^[[:space:]]*- \[ \] t9290 ' "${tmpdir}/TODO.md" || true)
+
+	if [[ $rc -eq 0 && "$first" == "9290" && "$second" == "9290" && \
+		"$issue_count" -eq 1 && "$todo_count" -eq 1 ]] && \
+		grep -q '^t9290|owner/repo|9290$' "${tmpdir}/mapping"; then
+		pass "$name"
+	else
+		fail "$name" "rc=${rc} first=${first:-none} second=${second:-none} issues=${issue_count} todos=${todo_count}"
+	fi
+	return 0
+}
+test_bare_fallback_partial_persistence_recovery
 
 # ---------------------------------------------------------------------------
 # Summary

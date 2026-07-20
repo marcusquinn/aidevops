@@ -544,7 +544,7 @@ create_github_issue() {
 		# issue-sync-helper.sh _push_process_task silently returns SKIPPED
 		# when the task line is absent from TODO.md — issue is created but
 		# TODO never written. This call closes that gap idempotently.
-		_ensure_todo_entry_written \
+		_converge_created_issue_ref \
 			"$_task_id_for_todo" "$issue_num" "$title" "$labels" "$repo_path"
 		# t2442: warn if parent-task label applied but body has no markers.
 		# The delegation path creates the issue via issue-sync-helper.sh
@@ -561,9 +561,9 @@ create_github_issue() {
 		# parseable number. The duplicate lookup then recovers the issue number;
 		# stamp/verify TODO.md before reporting success so dispatchability sees
 		# the same state as the returned issue number.
-		if ! _ensure_todo_entry_written \
+		if ! _converge_created_issue_ref \
 			"$_task_id_for_todo" "$issue_num" "$title" "$labels" "$repo_path"; then
-			log_warn "Recovered issue #${issue_num}, but failed to write TODO ref for ${_task_id_for_todo}"
+			log_warn "Recovered issue #${issue_num}, but failed to persist task mapping for ${_task_id_for_todo}"
 			return 1
 		fi
 		echo "$issue_num"
@@ -680,9 +680,9 @@ create_github_issue() {
 	# through issue-sync-helper.sh, so _push_process_task never runs and
 	# the TODO entry is never written. This call closes that gap idempotently.
 	# GH#21473: pass $title (one-liner), not $description (full body).
-	if ! _ensure_todo_entry_written \
+	if ! _converge_created_issue_ref \
 		"$_task_id_for_todo" "$issue_num" "$title" "$labels" "$repo_path"; then
-		log_warn "Created issue #${issue_num}, but failed to write TODO ref for ${_task_id_for_todo}"
+		log_warn "Created issue #${issue_num}, but failed to persist task mapping for ${_task_id_for_todo}"
 		return 1
 	fi
 
