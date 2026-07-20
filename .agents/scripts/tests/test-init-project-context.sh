@@ -11,6 +11,9 @@ CONFIG_DIR="${HOME}/.config/aidevops"
 TEST_ROOT=""
 PASSED=0
 FAILED=0
+RESOLVED_GIT=""
+RESOLVED_GIT=$(command -p -v git 2>/dev/null || command -v git 2>/dev/null) || RESOLVED_GIT=""
+GIT_BIN="${AIDEVOPS_TEST_GIT_BIN:-${RESOLVED_GIT:-git}}"
 
 print_info() { return 0; }
 print_success() { return 0; }
@@ -21,7 +24,7 @@ print_error() { return 0; }
 source "$INSTALL_DIR/.agents/scripts/aidevops-cli/aidevops-init-lib.sh"
 _init_print_summary() { return 0; }
 git() {
-	/usr/bin/git "$@"
+	"$GIT_BIN" "$@"
 	return $?
 }
 
@@ -86,15 +89,15 @@ test_scaffold_and_idempotency() {
 	assert_equal "user deployment content" "$(tr -d "\n" <"$repo/.aidevops/deployments.yaml")" "existing deployment manifest preserved"
 	assert_equal "user WordPress content" "$(tr -d "\n" <"$repo/.aidevops/wordpress.yaml")" "existing WordPress manifest preserved"
 	assert_equal "$before" "$(cksum "$repo/.agents/AGENTS.md")" "rerun is byte-stable"
-	assert_equal 1 "$(grep -c "aidevops:project-operations-context:start" "$repo/.agents/AGENTS.md")" "marker block appears once"
-	assert_equal 1 "$(grep -c "before" "$repo/.agents/AGENTS.md")" "content before marker preserved"
-	assert_equal 1 "$(grep -c "after" "$repo/.agents/AGENTS.md")" "content after marker preserved"
+	assert_equal 1 "$(grep -c "aidevops:project-operations-context:start" "$repo/.agents/AGENTS.md" || true)" "marker block appears once"
+	assert_equal 1 "$(grep -c "before" "$repo/.agents/AGENTS.md" || true)" "content before marker preserved"
+	assert_equal 1 "$(grep -c "after" "$repo/.agents/AGENTS.md" || true)" "content after marker preserved"
 
 	local deployment_only="$TEST_ROOT/deployment-only"
 	mkdir -p "$deployment_only/.agents"
 	printf "# Context\n" >"$deployment_only/.agents/AGENTS.md"
 	_init_scaffold_project_context "$deployment_only" true false
-	assert_equal 1 "$(grep -c "deployments.yaml" "$deployment_only/.agents/AGENTS.md")" "pointer lists existing deployment manifest"
+	assert_equal 1 "$(grep -c "deployments.yaml" "$deployment_only/.agents/AGENTS.md" || true)" "pointer lists existing deployment manifest"
 	assert_equal 0 "$(grep -c "wordpress.yaml" "$deployment_only/.agents/AGENTS.md" || true)" "pointer omits absent WordPress manifest"
 	return 0
 }
@@ -115,12 +118,12 @@ test_secret_reference_contract() {
 	local closte_guide="$INSTALL_DIR/.agents/services/hosting/closte.md"
 	local deployment_template="$AGENTS_DIR/templates/project-context/deployments.yaml"
 	assert_equal 0 "$(grep -c "aidevops secret get" "$closte_guide" || true)" "Closte guide never retrieves secret values"
-	assert_equal 2 "$(grep -c "aidevops secret SITE_SSH_HOST SITE_SSH_PORT SITE_SSH_USER SITE_SSH_PASSWORD -- sh -c" "$closte_guide")" "Closte commands inject the four site SSH secrets"
-	assert_equal 4 "$(grep -c "aidevops secret set SITE_SSH_" "$closte_guide")" "Closte guide stores four site SSH secrets interactively"
-	assert_equal 9 "$(grep -c "_secret_name:" "$deployment_template")" "deployment manifest exposes only connection secret-name fields"
-	assert_equal 2 "$(grep -c "port_secret_name:" "$deployment_template")" "deployment manifest references SSH and database port secret names"
-	assert_equal 2 "$(grep -c "username_secret_name:" "$deployment_template")" "deployment manifest references SSH and database user secret names"
-	assert_equal 2 "$(grep -c "password_secret_name:" "$deployment_template")" "deployment manifest references SSH and database password secret names"
+	assert_equal 2 "$(grep -c "aidevops secret SITE_SSH_HOST SITE_SSH_PORT SITE_SSH_USER SITE_SSH_PASSWORD -- sh -c" "$closte_guide" || true)" "Closte commands inject the four site SSH secrets"
+	assert_equal 4 "$(grep -c "aidevops secret set SITE_SSH_" "$closte_guide" || true)" "Closte guide stores four site SSH secrets interactively"
+	assert_equal 9 "$(grep -c "_secret_name:" "$deployment_template" || true)" "deployment manifest exposes only connection secret-name fields"
+	assert_equal 2 "$(grep -c "port_secret_name:" "$deployment_template" || true)" "deployment manifest references SSH and database port secret names"
+	assert_equal 2 "$(grep -c "username_secret_name:" "$deployment_template" || true)" "deployment manifest references SSH and database user secret names"
+	assert_equal 2 "$(grep -c "password_secret_name:" "$deployment_template" || true)" "deployment manifest references SSH and database password secret names"
 	assert_equal 0 "$(grep -Ec "^      (host|port|name|username|password|credential_secret):" "$deployment_template" || true)" "deployment manifest contains no inline SSH connection values"
 	return 0
 }
@@ -157,7 +160,7 @@ main() {
 	scaffold_agents_md "$full_repo"
 	_init_scaffold_project_context "$full_repo" true true
 	assert_equal "$full_before" "$(cksum "$full_repo/.agents/AGENTS.md")" "generated AGENTS.md rerun is byte-stable"
-	assert_equal 1 "$(grep -c "aidevops:project-operations-context:start" "$full_repo/.agents/AGENTS.md")" "generated AGENTS.md marker appears once"
+	assert_equal 1 "$(grep -c "aidevops:project-operations-context:start" "$full_repo/.agents/AGENTS.md" || true)" "generated AGENTS.md marker appears once"
 
 	test_config_booleans
 	test_secret_reference_contract
