@@ -159,7 +159,11 @@ def check_write(cwd: str, file_path: str) -> dict[str, Any]:
         reason = "canonical checkouts are read-only session mirrors"
     else:
         decision = "allow"
-        reason = "write target resolves inside an allowed linked worktree"
+        reason = (
+            "write target resolves inside an allowed linked worktree"
+            if target.classification == "linked"
+            else "write target and process context are outside canonical worktrees"
+        )
 
     return {
         "policy": POLICY_VERSION,

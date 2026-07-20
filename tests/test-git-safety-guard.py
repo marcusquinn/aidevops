@@ -98,6 +98,16 @@ class CanonicalWritePolicyTests(unittest.TestCase):
         denial = self._check(self.linked, self.repo / "README.md")
         self.assertIsNotNone(denial)
 
+    def test_outside_git_write_reports_outside_reason(self):
+        decision = canonical_write_policy.check_write(
+            str(self.root), str(self.root / "outside.txt")
+        )
+        self.assertEqual(decision["decision"], "allow")
+        self.assertEqual(
+            decision["reason"],
+            "write target and process context are outside canonical worktrees",
+        )
+
     def test_missing_policy_helper_fails_closed(self):
         with mock.patch.object(
             git_safety_guard, "_resolve_policy_helper", return_value=""
