@@ -4515,6 +4515,26 @@ test_post_pr_handoff_detects_open_pending_pr() {
 	return 0
 }
 
+test_post_pr_handoff_propagates_classifier_failure() {
+	local work_dir="${TEST_ROOT}/repo-post-pr-handoff-classifier-failure"
+	mkdir -p "$work_dir"
+	init_git_worktree "$work_dir"
+	git -C "$work_dir" checkout -q -b "feature/auto-test-issue-99999"
+
+	if (
+		DISPATCH_REPO_SLUG="test-owner/test-repo"
+		gh() { return 0; }
+		_pr_handoff_state_for_branch_or_issue() { printf 'ready|123'; return 1; }
+		_worker_post_pr_handoff_confirmed "issue-99999" "$work_dir"
+	); then
+		print_result "post-PR handoff propagates classifier failure" 1 \
+			"Expected classifier failure to override its ready-looking output"
+	else
+		print_result "post-PR handoff propagates classifier failure" 0
+	fi
+	return 0
+}
+
 test_post_pr_handoff_treats_ci_as_monitoring_state() {
 	local work_dir="${TEST_ROOT}/repo-post-pr-handoff-ci-state"
 	mkdir -p "$work_dir"
@@ -4868,6 +4888,7 @@ test_completion_infrastructure_resumes_without_implementation_penalty() {
 
 test_pr_checkpoint_lifecycle_cases() {
 	test_post_pr_handoff_detects_open_pending_pr
+	test_post_pr_handoff_propagates_classifier_failure
 	test_post_pr_handoff_treats_ci_as_monitoring_state
 	test_post_pr_handoff_rejects_mismatched_head_or_missing_summary
 	test_failed_worker_draft_checkpoint_escalates_without_completion
