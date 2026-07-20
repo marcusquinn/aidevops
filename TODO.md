@@ -4685,3 +4685,5 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [x] t18163 Fix same-task scheduler ownership transfer for preserved worktrees #auto-dispatch #bug #reliability ref:GH#28203 pr:#28246 completed:2026-07-19
 
 - [ ] t18164 Add durable one-shot scheduling and completion-aware routine logging #auto-dispatch #enhancement #framework ref:GH#28313
+
+- [ ] t18165 Unify typed Pulse outcomes and heartbeat-progress state #enhancement #framework #observability #pulse ref:GH#28361
