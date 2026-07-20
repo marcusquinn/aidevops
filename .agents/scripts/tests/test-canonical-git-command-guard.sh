@@ -122,6 +122,9 @@ assert_allowed "allows canonical branch listing" "$REPO" "git branch -vv --no-ab
 assert_allowed "allows canonical branch pattern listing" "$REPO" "git branch --list 'feature/*'"
 assert_allowed "allows canonical branch containment query" "$REPO" "git branch --contains main"
 assert_allowed "allows canonical ls-remote query" "$REPO" "git ls-remote origin refs/heads/main"
+assert_allowed "allows canonical rev-list tag query" "$REPO" "git rev-list -n 1 HEAD"
+assert_allowed "allows canonical rev-list count query" "$REPO" "git rev-list --count HEAD"
+assert_allowed "allows canonical rev-list root query" "$REPO" "git rev-list --max-parents=0 HEAD"
 assert_allowed "allows canonical symbolic-ref query" "$REPO" "git symbolic-ref refs/remotes/origin/HEAD"
 assert_allowed "allows canonical short symbolic-ref query" "$REPO" "git symbolic-ref --short refs/remotes/origin/HEAD"
 assert_allowed "allows reordered canonical symbolic-ref query flags" "$REPO" "git symbolic-ref refs/remotes/origin/HEAD --quiet --short"
@@ -129,6 +132,7 @@ assert_allowed "allows canonical non-recursive symbolic-ref query" "$REPO" "git 
 assert_allowed "allows canonical worktree creation" "$REPO" "git worktree add '$LINKED' -b feature/example"
 git -C "$REPO" worktree add -q -b feature/example "$LINKED"
 assert_allowed "allows normal Git mutation in linked worktree" "$LINKED" "git switch -c feature/linked-child"
+assert_allowed "allows rev-list query in linked worktree" "$LINKED" "git rev-list --count HEAD"
 
 git -C "$REPO" symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/develop
 DEFAULT_BRANCH=$(
