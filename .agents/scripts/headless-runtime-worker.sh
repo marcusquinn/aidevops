@@ -1297,7 +1297,22 @@ _hrw_reclaim_stale_worker_worktree_owner() {
 	# process before the detached worker starts. That owner is intentionally
 	# short-lived and transferable; otherwise every worker sees a live owner,
 	# exits immediately, and pulse retries the same issue forever.
-	if _hrw_is_dispatch_precreate_owner "$owner_session" || [[ "${AIDEVOPS_ALLOW_WORKER_WORKTREE_OWNER_TRANSFER:-0}" == "1" ]]; then
+	if _hrw_is_dispatch_precreate_owner "$owner_session"; then
+		# Heal only the exact legacy infrastructure marker when possible, but
+		# never make task-state cleanliness a prerequisite for transferring the
+		# dispatcher's same-task placeholder owner.
+		_hrw_worktree_task_status "$work_dir" >/dev/null 2>&1 || true
+		if ! _hrw_transfer_worktree_owner_snapshot "$session_key" "$work_dir" "$branch" \
+			"$owner_pid" "$owner_session" "$owner_batch" "$owner_task" "$created_at"; then
+			_WORKER_PRELAUNCH_FAILURE_REASON="$_HRW_REASON_WORKTREE_OWNER_CONCURRENT_MUTATION"
+			return 1
+		fi
+		print_info "[lifecycle] worker_worktree_reclaimed_dispatch_precreate_owner session=${session_key} branch=${branch} path=${work_dir} previous_pid=${owner_pid} previous_session=${owner_session}"
+		unset _WORKER_PRELAUNCH_FAILURE_REASON 2>/dev/null || true
+		return 0
+	fi
+
+	if [[ "${AIDEVOPS_ALLOW_WORKER_WORKTREE_OWNER_TRANSFER:-0}" == "1" ]]; then
 		if ! _hrw_worktree_clean_for_owner_reclaim "$work_dir"; then
 			_WORKER_PRELAUNCH_FAILURE_REASON="$_HRW_REASON_WORKTREE_CONTINUATION_STATE_REJECTED"
 			return 1
@@ -1307,7 +1322,7 @@ _hrw_reclaim_stale_worker_worktree_owner() {
 			_WORKER_PRELAUNCH_FAILURE_REASON="$_HRW_REASON_WORKTREE_OWNER_CONCURRENT_MUTATION"
 			return 1
 		fi
-		print_info "[lifecycle] worker_worktree_reclaimed_dispatch_precreate_owner session=${session_key} branch=${branch} path=${work_dir} previous_pid=${owner_pid} previous_session=${owner_session}"
+		print_info "[lifecycle] worker_worktree_reclaimed_authorized_owner session=${session_key} branch=${branch} path=${work_dir} previous_pid=${owner_pid} previous_session=${owner_session}"
 		unset _WORKER_PRELAUNCH_FAILURE_REASON 2>/dev/null || true
 		return 0
 	fi
