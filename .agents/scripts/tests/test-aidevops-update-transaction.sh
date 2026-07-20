@@ -260,6 +260,17 @@ AGENTS_DIR="$HOME/.aidevops/agents"
 AIDEVOPS_SKIP_PULSE_RESTART=1
 _AIDEVOPS_UPDATE_TRUE=true
 
+INTEGRATION_LINKED="$TEST_ROOT/integration-linked"
+/usr/bin/git -C "$INTEGRATION_REPO" worktree add -q -b linked-update-test "$INTEGRATION_LINKED"
+INSTALL_DIR="$INTEGRATION_LINKED"
+if AIDEVOPS_REAL_GIT_BIN=/usr/bin/git _update_fetch_main main &&
+	[[ "$(/usr/bin/git -C "$INTEGRATION_LINKED" rev-parse refs/remotes/origin/main)" == "$REMOTE_SHA" ]]; then
+	pass "linked checkout fetch bypasses the canonical Git guard shim"
+else
+	fail "linked checkout fetch bypasses the canonical Git guard shim" "fetch did not use the resolved Git binary"
+fi
+INSTALL_DIR="$INTEGRATION_REPO"
+
 if integration_output=$(cmd_update --skip-project-sync --compact) &&
 	[[ "$(/usr/bin/git -C "$INTEGRATION_REPO" rev-parse HEAD)" == "$REMOTE_SHA" ]] &&
 	grep -q -- '--reason aidevops-update' "$CANONICAL_HELPER_CALLS" &&

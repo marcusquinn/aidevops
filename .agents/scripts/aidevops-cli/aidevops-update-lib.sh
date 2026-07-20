@@ -42,7 +42,7 @@ _update_fetch_main() {
 	git_dir=$("$real_git" -C "$INSTALL_DIR" rev-parse --git-dir 2>/dev/null || true)
 	common_dir=$("$real_git" -C "$INSTALL_DIR" rev-parse --git-common-dir 2>/dev/null || true)
 	if [[ -z "$git_dir" || "$git_dir" != "$common_dir" ]]; then
-		git fetch origin "$branch" --tags --quiet
+		"$real_git" -C "$INSTALL_DIR" fetch origin "$branch" --tags --quiet
 		return $?
 	fi
 
