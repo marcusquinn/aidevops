@@ -15,6 +15,7 @@
 - **Created:** 2026-07-20
 - **Session:** OpenCode:interactive-2026-07-20-gh27777
 - **Created by:** ai-interactive at maintainer request
+- **Issue:** GH#28313
 - **Parent task:** none
 - **Blocked by:** none
 - **Conversation context:** During the post-reset evidence observation for #27777, a request to wait 13 hours and resume autonomously required a bespoke detached scheduler. The routines stack supports recurring jobs but lacks one coherent path for exact one-shot continuation, restart recovery, issue-worker setup, and terminal completion logging.
