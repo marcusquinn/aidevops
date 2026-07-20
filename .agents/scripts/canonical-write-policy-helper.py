@@ -136,6 +136,19 @@ def _target_probe(cwd: str, file_path: str) -> str:
     return str(target.resolve(strict=False))
 
 
+def _is_target_led_linked_write(
+    file_path: str, context: Classification, target: Classification
+) -> bool:
+    """Return whether a canonical context names a trusted linked target."""
+    if not file_path or not Path(file_path).is_absolute():
+        return False
+    if context.classification != "canonical":
+        return False
+    if target.classification != "linked" or not context.common_dir:
+        return False
+    return context.common_dir == target.common_dir
+
+
 def check_write(cwd: str, file_path: str) -> dict[str, Any]:
     """Return one fail-closed direct-file-write decision."""
     context = classify_location(cwd)
@@ -147,14 +160,7 @@ def check_write(cwd: str, file_path: str) -> dict[str, Any]:
     canonical = next(
         (item for item in classifications if item.classification == "canonical"), None
     )
-    target_led_linked_write = (
-        bool(file_path)
-        and Path(file_path).is_absolute()
-        and context.classification == "canonical"
-        and target.classification == "linked"
-        and bool(context.common_dir)
-        and context.common_dir == target.common_dir
-    )
+    target_led_linked_write = _is_target_led_linked_write(file_path, context, target)
 
     if unknown is not None:
         decision = "deny"
