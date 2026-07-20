@@ -109,11 +109,13 @@ assert_eq "1c.5: failed review refresh preserves UNKNOWN state" \
 	"UNKNOWN" "$(printf '%s' "$enriched_review_pr" | jq -r '.reviewDecision')"
 REFRESH_SHOULD_FAIL=0
 : >"${TEST_TMPDIR}/review-refresh.log"
-enriched_review_json=$(_pmp_enrich_prs_with_review_decisions "owner/repo" "[$unknown_review_failed_pr,$unknown_review_passing_pr]")
+enriched_review_json=$(_pmp_enrich_prs_with_review_decisions "owner/repo" "[$merge_ready_pr,$unknown_review_failed_pr,$unknown_review_passing_pr]")
 _pmp_log_pr_backlog_counts "owner/repo" "$enriched_review_json"
 _pmp_sort_prs_by_backlog_priority "$enriched_review_json" "owner/repo" >/dev/null
 assert_eq "1c.6: log plus sort do not repeat per-pass authoritative refreshes" \
 	"2" "$(wc -l <"${TEST_TMPDIR}/review-refresh.log" | tr -d '[:space:]')"
+assert_eq "1c.7: enrichment preserves an existing known review decision" \
+	"APPROVED" "$(printf '%s' "$enriched_review_json" | jq -r '.[0].reviewDecision')"
 assert_eq "1d: conflicting PR classifies as dirty-conflicted" \
 	"dirty-conflicted" "$(_pmp_classify_pr_backlog_state "$dirty_pr")"
 assert_eq "1e: changes requested classifies as human-approval-needed" \
