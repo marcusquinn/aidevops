@@ -307,8 +307,7 @@ if [[ ! -f "$RBG_REUSABLE_WF" || ! -f "$RBG_SELF_CALLER_WF" || ! -f "$RBG_DOWNST
 elif ! command -v python3 >/dev/null 2>&1 || ! python3 -c "import yaml" 2>/dev/null; then
 	_skip "review-bot eligibility and job concurrency matrix" "python3 or pyyaml unavailable"
 else
-	eligibility_result="$(
-		python3 - "$RBG_SELF_CALLER_WF" "$RBG_DOWNSTREAM_TEMPLATE" "$RBG_REUSABLE_WF" <<'PYEOF' 2>&1
+	if python3 - "$RBG_SELF_CALLER_WF" "$RBG_DOWNSTREAM_TEMPLATE" "$RBG_REUSABLE_WF" <<'PYEOF'
 import re
 import sys
 import yaml
@@ -420,13 +419,12 @@ status_steps = [
 if len(status_steps) != 1 or status_steps[0].get("if") != "always()":
     print("FAIL: eligible evaluator does not retain an always-run exact-head status publisher")
     sys.exit(1)
-print("OK")
 PYEOF
-	)"
-	if [[ "$eligibility_result" == "OK" ]]; then
+	then
 		_pass "review-bot eligibility precedes durable per-PR job concurrency"
 	else
-		_fail "review-bot eligibility precedes durable per-PR job concurrency" "$eligibility_result"
+		_fail "review-bot eligibility precedes durable per-PR job concurrency" \
+			"matrix fixture failed; see Python output above"
 	fi
 fi
 
