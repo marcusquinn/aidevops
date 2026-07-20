@@ -179,6 +179,10 @@ _metric_failure_excerpt_candidate_path() {
 	local retention_tmp_dir="${AIDEVOPS_TEMP_DIR:-${HOME}/.aidevops/.agent-workspace/tmp}"
 	local safe_key=""
 	local candidate_path=""
+	if declare -F _headless_private_workload_enabled >/dev/null 2>&1 && \
+		_headless_private_workload_enabled; then
+		return 0
+	fi
 	[[ -n "$output_file" && -f "$output_file" ]] || return 0
 	safe_key=$(printf '%s' "$session_key" | tr -c 'A-Za-z0-9._-' '_')
 	mkdir -p "$retention_tmp_dir" 2>/dev/null || return 0
@@ -217,6 +221,12 @@ _metric_failure_excerpt_path() {
 	local retention_tmp_dir=""
 	local plan_file=""
 
+	# Protected workloads must never persist transcript-derived diagnostics,
+	# including otherwise bounded failure excerpts.
+	if declare -F _headless_private_workload_enabled >/dev/null 2>&1 && \
+		_headless_private_workload_enabled; then
+		return 0
+	fi
 	[[ -n "$output_file" && -f "$output_file" ]] || return 0
 	mkdir -p "$excerpt_dir" 2>/dev/null || return 0
 	safe_key=$(printf '%s' "$session_key" | tr -c 'A-Za-z0-9._-' '_')
