@@ -7480,9 +7480,9 @@
       "pr": 16415
     },
     "TODO.md": {
-      "at": "2026-07-20T04:19:05Z",
-      "hash": "ef9a3c967a55b138cc98cf7ed63efdaafcd5a194",
-      "passes": 189,
+      "at": "2026-07-20T20:41:44Z",
+      "hash": "1246b118d009235649e4056a2ecdd59209a7b313",
+      "passes": 190,
       "pr": 15490
     },
     "aidevops.sh": {
@@ -7756,10 +7756,10 @@
       "passes": 7
     },
     ".agents/scripts/shared-gh-wrappers-rest-fallback.sh": {
-      "hash": "386f01e5b59bf30ec7005e237b7984e19dcddff9",
-      "at": "2026-07-19T02:53:27Z",
+      "hash": "52f547b7ccaf73157a010840f63cbf0ab17db614",
+      "at": "2026-07-20T20:40:15Z",
       "pr": 20552,
-      "passes": 27
+      "passes": 28
     },
     ".agents/scripts/pulse-dirty-pr-sweep.sh": {
       "hash": "589c8488f5347dc981605eaf79d9e38468d552df",
@@ -7798,10 +7798,10 @@
       "passes": 1
     },
     ".agents/scripts/framework-routing-helper.sh": {
-      "hash": "a4c1a12ac6f5bbeccc05d77dd6c05b835a549c37",
-      "at": "2026-05-20T08:48:13Z",
+      "hash": "8e66e795a56366c11166bbf1d14970480d5fe8c2",
+      "at": "2026-07-20T20:40:04Z",
       "pr": 20876,
-      "passes": 4
+      "passes": 5
     },
     ".agents/scripts/upstream-watch-helper.sh": {
       "hash": "1b2034466ffc2433d1f95cb5fea8fbe1c71fcf85",
@@ -7966,10 +7966,10 @@
       "passes": 5
     },
     ".agents/scripts/tests/test-gh-wrapper-rest-fallback.sh": {
-      "hash": "e7f3dbb333f493b684d88fdc8d499ee16fac44f8",
-      "at": "2026-07-20T19:27:39Z",
+      "hash": "386117d315c69e062d599a6a05e0155df6bab229",
+      "at": "2026-07-20T20:40:17Z",
       "pr": 25929,
-      "passes": 5
+      "passes": 6
     },
     ".agents/scripts/tests/test-launchd-install-if-changed.sh": {
       "hash": "ac88f853d1ca8f2370f410e1b260704a2ecb2b7d",
@@ -8026,10 +8026,10 @@
       "passes": 1
     },
     ".agents/scripts/review-bot-gate-helper.sh": {
-      "hash": "d87044ca5193684d715e609177560e0561b09aef",
-      "at": "2026-07-18T15:47:17Z",
+      "hash": "430567b1d83804f0cc8d153a809a93979224237c",
+      "at": "2026-07-20T20:40:12Z",
       "pr": 26251,
-      "passes": 3
+      "passes": 4
     },
     ".agents/scripts/pulse-canonical-recovery.sh": {
       "hash": "834616a8c8f83d14b57e4029ec39ec0d364754e8",
