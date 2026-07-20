@@ -72,7 +72,8 @@ assert_allowed() {
 assert_blocked "blocks canonical detached switch" "git switch --detach main"
 GUIDANCE_OUTPUT=$(python3 "$GUARD" --cwd "$REPO" --command "git pull --ff-only origin main" 2>&1)
 RECOVERY_HELPER="${SCRIPT_DIR}/canonical-recovery-helper.sh"
-if [[ "$GUIDANCE_OUTPUT" == *"${RECOVERY_HELPER} fast-forward-current"* && -x "$RECOVERY_HELPER" ]]; then
+QUOTED_RECOVERY_HELPER=$(python3 -c 'import shlex, sys; print(shlex.quote(sys.argv[1]))' "$RECOVERY_HELPER")
+if [[ "$GUIDANCE_OUTPUT" == *"${QUOTED_RECOVERY_HELPER} fast-forward-current"* && -x "$RECOVERY_HELPER" ]]; then
 	pass "blocked canonical pull points to an executable audited fast-forward workflow"
 else
 	fail "blocked canonical pull omits executable audited fast-forward guidance"
