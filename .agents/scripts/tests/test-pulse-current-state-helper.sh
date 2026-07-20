@@ -232,4 +232,14 @@ malformed_cycle_json="$TMP_DIR/malformed-cycle-state.json"
 jq -e '.cycle_state.availability == "malformed" and .cycle_state.reason == "cycle-state-contract"' \
 	"$malformed_cycle_json" >/dev/null
 
+jq '.cycle_state.blocker = {
+	kind: "review-gate",
+	fingerprint: "cksum:123",
+	consecutive_same_cycles: 1
+}' "$TMP_DIR/pulse-health.json" >"$missing_dir/pulse-health.json"
+inconsistent_cycle_json="$TMP_DIR/inconsistent-cycle-state.json"
+"$HELPER" --log-dir "$missing_dir" --repo-path "$PWD" --window 15m --json >"$inconsistent_cycle_json"
+jq -e '.cycle_state.availability == "malformed" and .cycle_state.reason == "cycle-state-contract"' \
+	"$inconsistent_cycle_json" >/dev/null
+
 printf 'PASS pulse-current-state-helper\n'

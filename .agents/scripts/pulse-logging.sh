@@ -328,10 +328,18 @@ _pulse_cycle_state_health_is_current() {
 	[[ -n "$current_cycle_id" && "$current_cycle_id" == "${_PULSE_CYCLE_ID:-}" ]]
 }
 
+_pulse_cycle_state_commit_legacy_outcome() {
+	if declare -F _pulse_commit_legacy_cycle_outcome >/dev/null 2>&1; then
+		_pulse_commit_legacy_cycle_outcome || true
+	fi
+	return 0
+}
+
 _pulse_cycle_state_write_terminal_if_current() {
 	local reacquired_lock=0
 	[[ "${_PULSE_CYCLE_STATE_TERMINAL:-0}" == "1" ]] || return 1
 	if [[ "${_LOCK_OWNED:-false}" == "true" ]]; then
+		_pulse_cycle_state_commit_legacy_outcome
 		write_pulse_health_file
 		return $?
 	fi
@@ -345,6 +353,7 @@ _pulse_cycle_state_write_terminal_if_current() {
 		reacquired_lock=1
 	fi
 	if _pulse_cycle_state_health_is_current; then
+		_pulse_cycle_state_commit_legacy_outcome
 		write_pulse_health_file || true
 	else
 		printf '[pulse-wrapper] Cycle state: skipped stale terminal publish for cycle %s because current health belongs to another cycle\n' \

@@ -14,6 +14,17 @@ from collections import Counter, defaultdict, deque
 log_dir, repo_path, window_s, as_json, script_dir, review_thread_state_dir = sys.argv[1], sys.argv[2], int(sys.argv[3]), sys.argv[4] == '1', sys.argv[5], sys.argv[6]
 now = time.time()
 since = now - window_s
+CYCLE_STATE_SCHEMA = 'aidevops.pulse-cycle-state/v1'
+CYCLE_STATE_PHASES = {'admitted', 'preflight', 'deterministic', 'supervising', 'completed'}
+CYCLE_STATE_OUTCOMES = {'running', 'progressed', 'idle', 'blocked', 'interrupted'}
+CYCLE_STATE_PROGRESS_KINDS = {'pr-merged', 'pr-closed-conflicting', 'worker-dispatched'}
+CYCLE_STATE_BLOCKER_KINDS = {
+    'none', 'session-gate', 'dedup', 'preflight-failed', 'stop-requested',
+    'dispatch-no-work-rate', 'runner-health', 'merge-authority', 'review-gate',
+    'review-bot-threads', 'required-review-threads', 'checks-active',
+    'checks-failed', 'quiet-period', 'snapshot-unavailable', 'head-changed',
+    'interrupted',
+}
 
 
 def recent_lines(path, limit=2000):
@@ -65,6 +76,79 @@ def valid_cycle_fingerprint(value):
     return False
 
 
+def valid_nonnegative_int(value):
+    return isinstance(value, int) and not isinstance(value, bool) and value >= 0
+
+
+def valid_optional_cycle_time(value):
+    if value is None:
+        return True
+    return parse_time(value) > 0
+
+
+def valid_cycle_progress(progress):
+    if not isinstance(progress, dict):
+        return False
+    kinds = progress.get('kinds')
+    if not isinstance(kinds, list):
+        return False
+    return all((
+        all(kind in CYCLE_STATE_PROGRESS_KINDS for kind in kinds),
+        valid_nonnegative_int(progress.get('consecutive_no_progress_cycles')),
+        valid_optional_cycle_time(progress.get('last_at')),
+    ))
+
+
+def valid_cycle_blocker(blocker):
+    if not isinstance(blocker, dict):
+        return False
+    kind = blocker.get('kind')
+    streak = blocker.get('consecutive_same_cycles')
+    fingerprint = blocker.get('fingerprint')
+    if kind not in CYCLE_STATE_BLOCKER_KINDS or not valid_nonnegative_int(streak):
+        return False
+    if kind == 'none':
+        return fingerprint is None and streak == 0
+    return valid_cycle_fingerprint(fingerprint)
+
+
+def valid_terminal_cycle_state(state, progress, blocker):
+    if state.get('phase') != 'completed':
+        return False
+    outcome = state.get('outcome')
+    no_progress = progress['consecutive_no_progress_cycles']
+    if outcome == 'progressed':
+        return all((
+            progress['kinds'], progress['last_at'], no_progress == 0,
+            blocker['kind'] == 'none',
+        ))
+    if no_progress < 1:
+        return False
+    if outcome in {'blocked', 'interrupted'}:
+        return blocker['kind'] != 'none' and blocker['consecutive_same_cycles'] >= 1
+    return outcome == 'idle' and blocker['kind'] == 'none'
+
+
+def valid_cycle_state_contract(state):
+    progress = state.get('progress')
+    blocker = state.get('blocker')
+    cycle_id = state.get('cycle_id')
+    if not all((
+        state.get('schema') == CYCLE_STATE_SCHEMA,
+        isinstance(cycle_id, str),
+        bool(cycle_id),
+        state.get('phase') in CYCLE_STATE_PHASES,
+        state.get('outcome') in CYCLE_STATE_OUTCOMES,
+        parse_time(state.get('heartbeat_at')) > 0,
+        valid_cycle_progress(progress),
+        valid_cycle_blocker(blocker),
+    )):
+        return False
+    if state.get('outcome') == 'running':
+        return state.get('phase') != 'completed'
+    return valid_terminal_cycle_state(state, progress, blocker)
+
+
 def build_cycle_state(path):
     try:
         with open(path, encoding='utf-8') as handle:
@@ -80,55 +164,10 @@ def build_cycle_state(path):
         return unavailable_cycle_state('unavailable')
     if not isinstance(state, dict):
         return unavailable_cycle_state('malformed', 'cycle-state-object')
-
-    phases = {'admitted', 'preflight', 'deterministic', 'supervising', 'completed'}
-    outcomes = {'running', 'progressed', 'idle', 'blocked', 'interrupted'}
-    progress_kinds = {'pr-merged', 'pr-closed-conflicting', 'worker-dispatched'}
-    blocker_kinds = {
-        'none', 'session-gate', 'dedup', 'preflight-failed', 'stop-requested',
-        'dispatch-no-work-rate', 'runner-health', 'merge-authority', 'review-gate',
-        'review-bot-threads', 'required-review-threads', 'checks-active',
-        'checks-failed', 'quiet-period', 'snapshot-unavailable', 'head-changed',
-        'interrupted',
-    }
-    progress = state.get('progress')
-    blocker = state.get('blocker')
-    no_progress = progress.get('consecutive_no_progress_cycles') if isinstance(progress, dict) else None
-    same_blocker = blocker.get('consecutive_same_cycles') if isinstance(blocker, dict) else None
-    kinds = progress.get('kinds') if isinstance(progress, dict) else None
-    blocker_kind = blocker.get('kind') if isinstance(blocker, dict) else None
-    fingerprint = blocker.get('fingerprint') if isinstance(blocker, dict) else None
-    last_at = progress.get('last_at') if isinstance(progress, dict) else None
-    invalid = (
-        state.get('schema') != 'aidevops.pulse-cycle-state/v1'
-        or not isinstance(state.get('cycle_id'), str)
-        or not state.get('cycle_id')
-        or state.get('phase') not in phases
-        or state.get('outcome') not in outcomes
-        or parse_time(state.get('heartbeat_at')) <= 0
-        or not isinstance(progress, dict)
-        or not isinstance(kinds, list)
-        or any(kind not in progress_kinds for kind in kinds)
-        or isinstance(no_progress, bool)
-        or not isinstance(no_progress, int)
-        or no_progress < 0
-        or (last_at is not None and parse_time(last_at) <= 0)
-        or not isinstance(blocker, dict)
-        or blocker_kind not in blocker_kinds
-        or isinstance(same_blocker, bool)
-        or not isinstance(same_blocker, int)
-        or same_blocker < 0
-        or (blocker_kind == 'none' and (fingerprint is not None or same_blocker != 0))
-        or (blocker_kind != 'none' and not valid_cycle_fingerprint(fingerprint))
-        or (state.get('outcome') == 'running' and state.get('phase') == 'completed')
-        or (state.get('outcome') != 'running' and state.get('phase') != 'completed')
-        or (state.get('outcome') == 'progressed' and (not kinds or last_at is None or no_progress != 0))
-        or (state.get('outcome') == 'blocked' and blocker_kind == 'none')
-        or (state.get('outcome') == 'interrupted' and blocker_kind == 'none')
-        or (state.get('outcome') == 'idle' and blocker_kind != 'none')
-    )
-    if invalid:
+    if not valid_cycle_state_contract(state):
         return unavailable_cycle_state('malformed', 'cycle-state-contract')
+    progress = state['progress']
+    blocker = state['blocker']
     return {
         'availability': 'available',
         'schema': state['schema'],
@@ -137,14 +176,14 @@ def build_cycle_state(path):
         'outcome': state['outcome'],
         'heartbeat_at': state['heartbeat_at'],
         'progress': {
-            'last_at': last_at,
-            'kinds': kinds,
-            'consecutive_no_progress_cycles': no_progress,
+            'last_at': progress['last_at'],
+            'kinds': progress['kinds'],
+            'consecutive_no_progress_cycles': progress['consecutive_no_progress_cycles'],
         },
         'blocker': {
-            'kind': blocker_kind,
-            'fingerprint': fingerprint,
-            'consecutive_same_cycles': same_blocker,
+            'kind': blocker['kind'],
+            'fingerprint': blocker['fingerprint'],
+            'consecutive_same_cycles': blocker['consecutive_same_cycles'],
         },
     }
 

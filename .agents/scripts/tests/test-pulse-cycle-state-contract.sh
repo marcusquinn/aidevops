@@ -118,12 +118,18 @@ assert_health "actual dispatch registration produces typed progress" '
 	and .cycle_state.progress.consecutive_no_progress_cycles == 0
 	and .cycle_state.blocker.kind == "none"
 '
+if [[ "${_PULSE_LEGACY_CYCLE_OUTCOME_PENDING:-1}" -eq 0 ]]; then
+	pass "current terminal publication commits the legacy outcome once"
+else
+	fail "current terminal publication commits the legacy outcome once"
+fi
 last_progress_at=$(jq -r '.cycle_state.progress.last_at' "$PULSE_HEALTH_FILE")
 
 _pulse_cycle_state_start
+write_pulse_health_file
 _pulse_cycle_state_note_blocker review-gate owner/repo 7
 _pulse_record_cycle_outcome 1
-write_pulse_health_file
+_pulse_cycle_state_write_terminal_if_current
 assert_health "first typed blocker starts both no-progress streaks" '
 	.cycle_state.outcome == "blocked"
 	and .cycle_state.progress.consecutive_no_progress_cycles == 1
@@ -138,9 +144,10 @@ else
 fi
 
 _pulse_cycle_state_start
+write_pulse_health_file
 _pulse_cycle_state_note_blocker review-gate owner/repo 7
 _pulse_record_cycle_outcome 1
-write_pulse_health_file
+_pulse_cycle_state_write_terminal_if_current
 assert_health "repeated blocker increments stable streak without moving progress" "
 	.cycle_state.progress.last_at == \"${last_progress_at}\"
 	and .cycle_state.progress.consecutive_no_progress_cycles == 2
@@ -148,9 +155,10 @@ assert_health "repeated blocker increments stable streak without moving progress
 "
 
 _pulse_cycle_state_start
+write_pulse_health_file
 _pulse_cycle_state_note_blocker head-changed owner/repo 7
 _pulse_record_cycle_outcome 1
-write_pulse_health_file
+_pulse_cycle_state_write_terminal_if_current
 assert_health "changed blocker restarts only blocker streak" '
 	.cycle_state.progress.consecutive_no_progress_cycles == 3
 	and .cycle_state.blocker.kind == "head-changed"
@@ -158,9 +166,10 @@ assert_health "changed blocker restarts only blocker streak" '
 '
 
 _pulse_cycle_state_start
+write_pulse_health_file
 _PULSE_HEALTH_PRS_MERGED=1
 _pulse_record_cycle_outcome 1
-write_pulse_health_file
+_pulse_cycle_state_write_terminal_if_current
 assert_health "meaningful progress resets blocker and no-progress streaks" '
 	.cycle_state.outcome == "progressed"
 	and .cycle_state.progress.kinds == ["pr-merged"]
@@ -205,6 +214,7 @@ fi
 _pulse_cycle_state_start
 write_pulse_health_file
 _pulse_cycle_state_finalize idle '[]'
+_PULSE_LEGACY_CYCLE_OUTCOME_PENDING=1
 LOCK_ACQUIRE_CALLS=0
 LOCK_RELEASE_CALLS=0
 _LOCK_OWNED=false
@@ -224,7 +234,8 @@ cp "$PULSE_HEALTH_FILE" "${TMP_DIR}/health-before-stale-terminal.json"
 _pulse_cycle_state_write_terminal_if_current
 if cmp -s "$PULSE_HEALTH_FILE" "${TMP_DIR}/health-before-stale-terminal.json" \
 	&& [[ "$LOCK_ACQUIRE_CALLS" -eq 1 && "$LOCK_RELEASE_CALLS" -eq 1 \
-		&& "$_LOCK_OWNED" == "false" ]]; then
+		&& "$_LOCK_OWNED" == "false" \
+		&& "$_PULSE_LEGACY_CYCLE_OUTCOME_PENDING" -eq 1 ]]; then
 	pass "older terminal publication cannot overwrite newer cycle health"
 else
 	fail "older terminal publication cannot overwrite newer cycle health"

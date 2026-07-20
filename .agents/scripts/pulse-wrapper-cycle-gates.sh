@@ -35,6 +35,7 @@ fi
 _PULSE_EFFICIENCY_CYCLE_STARTED=0
 _PULSE_EFFICIENCY_CYCLE_START_MS=0
 _PULSE_EFFICIENCY_CYCLE_OUTCOME=idle
+_PULSE_LEGACY_CYCLE_OUTCOME_PENDING=0
 
 _pulse_efficiency_record() {
 	local name="$1"
@@ -366,9 +367,9 @@ _pulse_run_fix_the_fixer_detector_if_stale() {
 # ---------------------------------------------------------------------------
 # _pulse_record_cycle_outcome (t3027 / GH#21584 / GH#28361)
 #
-# Computes one typed terminal outcome from durable queue-changing evidence,
-# projects it to the legacy active/idle contract, and records the latter with
-# pulse-idle-backoff-helper.sh. Heartbeats never participate in this decision.
+# Computes one typed terminal outcome from durable queue-changing evidence and
+# stages its legacy active/idle projection. The projection is committed only
+# while this cycle still owns current state. Heartbeats never participate.
 #
 # Active definition (any one suffices):
 #   - merged ≥ 1 PR (_PULSE_HEALTH_PRS_MERGED)
@@ -384,7 +385,6 @@ _pulse_run_fix_the_fixer_detector_if_stale() {
 _pulse_record_cycle_outcome() {
 	local _dispatch_before="${1:-0}"
 	[[ "$_dispatch_before" =~ ^[0-9]+$ ]] || _dispatch_before=0
-	local _ib_helper="${SCRIPT_DIR}/pulse-idle-backoff-helper.sh"
 	local _dispatch_after=0
 	local _dispatch_delta=0
 	local _merged="${_PULSE_HEALTH_PRS_MERGED:-0}"
@@ -416,13 +416,22 @@ _pulse_record_cycle_outcome() {
 	fi
 	_PULSE_TYPED_CYCLE_OUTCOME="$_typed_outcome"
 	_PULSE_EFFICIENCY_CYCLE_OUTCOME="$_legacy_outcome"
+	_PULSE_LEGACY_CYCLE_OUTCOME_PENDING=1
 	if declare -F _pulse_cycle_state_finalize >/dev/null 2>&1; then
 		_pulse_cycle_state_finalize "$_typed_outcome" "$_progress_kinds" || true
 	fi
+	echo "[pulse-wrapper] Cycle outcome: typed=${_typed_outcome} legacy=${_legacy_outcome} (merged=${_merged} closed=${_closed} dispatch_registrations=${_dispatch_before}→${_dispatch_after}) (GH#28361)" >>"${LOGFILE:-/dev/null}"
+	return 0
+}
+
+_pulse_commit_legacy_cycle_outcome() {
+	local _ib_helper="${SCRIPT_DIR}/pulse-idle-backoff-helper.sh"
+	local _legacy_outcome="${_PULSE_EFFICIENCY_CYCLE_OUTCOME:-idle}"
+	[[ "${_PULSE_LEGACY_CYCLE_OUTCOME_PENDING:-0}" == "1" ]] || return 0
+	_PULSE_LEGACY_CYCLE_OUTCOME_PENDING=0
 	if [[ -x "$_ib_helper" ]]; then
 		"$_ib_helper" record-cycle "$_legacy_outcome" >/dev/null 2>&1 || true
 	fi
-	echo "[pulse-wrapper] Cycle outcome: typed=${_typed_outcome} legacy=${_legacy_outcome} (merged=${_merged} closed=${_closed} dispatch_registrations=${_dispatch_before}→${_dispatch_after}) (GH#28361)" >>"${LOGFILE:-/dev/null}"
 	return 0
 }
 
@@ -442,25 +451,5 @@ _pulse_capture_dispatch_total() {
 	fi
 	[[ "$_total" =~ ^[0-9]+$ ]] || _total=0
 	printf '%s\n' "$_total"
-	return 0
-}
-
-# ---------------------------------------------------------------------------
-# _pulse_capture_ledger_count (t3027 / GH#21584)
-#
-# Returns current dispatch ledger count via stdout. Caller captures with $().
-# Used by main() to snapshot ledger state at cycle start for outcome detection.
-# ---------------------------------------------------------------------------
-_pulse_capture_ledger_count() {
-	local _ledger_helper="${SCRIPT_DIR}/dispatch-ledger-helper.sh"
-	if [[ -x "$_ledger_helper" ]]; then
-		local _lc
-		_lc=$("$_ledger_helper" count 2>/dev/null || echo "0")
-		if [[ "$_lc" =~ ^[0-9]+$ ]]; then
-			printf '%d\n' "$_lc"
-			return 0
-		fi
-	fi
-	printf '0\n'
 	return 0
 }
