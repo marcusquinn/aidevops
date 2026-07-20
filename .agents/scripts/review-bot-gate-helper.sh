@@ -571,7 +571,7 @@ _rbg_prepare_evidence_snapshot() {
 _rbg_evidence_snapshot_matches() {
 	local pr_number="$1"
 	local repo="$2"
-	if [[ "$_RBG_EVIDENCE_SNAPSHOT_READY" -eq 1 && "$_RBG_EVIDENCE_SNAPSHOT_KEY" == "${repo}#${pr_number}" ]]; then
+	if [[ "$_RBG_EVIDENCE_SNAPSHOT_READY" == "1" && "$_RBG_EVIDENCE_SNAPSHOT_KEY" == "${repo}#${pr_number}" ]]; then
 		return 0
 	fi
 	return 1

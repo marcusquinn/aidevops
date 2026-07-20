@@ -182,7 +182,7 @@ test_preloaded_metadata_avoids_duplicate_lookups() {
 	printf '%s\n' real >"$SCENARIO_FILE"
 	: >"$CALL_LOG"
 	if REVIEW_GATE_EXPECTED_HEAD_SHA=head-123 REVIEW_GATE_EVIDENCE_SNAPSHOT_DISABLE=0 \
-		do_check 123 'testorg/testrepo' "$pr_metadata" >"$output_file" 2>/dev/null; then
+		do_check 123 'testorg/testrepo' "$pr_metadata" >"$output_file"; then
 		status=0
 	else
 		status=$?
