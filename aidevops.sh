@@ -337,12 +337,12 @@ cmd_update() {
 				return 1
 			fi
 		fi
-		if ! git fetch origin main --tags --quiet; then
+		local local_hash
+		local_hash=$(git rev-parse HEAD) || return 1
+		if ! _update_fetch_main main; then
 			print_error "Failed to fetch origin/main; no update was applied."
 			return 1
 		fi
-		local local_hash
-		local_hash=$(git rev-parse HEAD) || return 1
 		local remote_hash
 		remote_hash=$(git rev-parse origin/main) || return 1
 		if [[ "$local_hash" != "$remote_hash" ]] && git merge-base --is-ancestor "$remote_hash" "$local_hash" 2>/dev/null; then
@@ -396,8 +396,10 @@ cmd_update() {
 		else
 			print_info "Applying latest changes..."
 			local old_hash
-			old_hash=$(git rev-parse HEAD)
-			if git merge --ff-only "$remote_hash" --quiet; then
+			old_hash="$local_hash"
+			if [[ "${_AIDEVOPS_UPDATE_CANONICAL_FAST_FORWARDED:-false}" == "true" ]]; then
+				:
+			elif git merge --ff-only "$remote_hash" --quiet; then
 				:
 			else
 				print_error "Fast-forward update failed; preserving local history."
@@ -1587,6 +1589,7 @@ _cmd_email() {
 
 # Route 'aidevops client-format [subcommand]' to appropriate helpers
 _cmd_client_format() {
+	local canary_helper="cch-canary.sh"
 	case "${1:-status}" in
 	extract | refresh)
 		_dispatch_helper "cch-extract.sh" "cch-extract.sh" --cache
@@ -1596,14 +1599,14 @@ _cmd_client_format() {
 		;;
 	canary | test)
 		shift || true
-		_dispatch_helper "cch-canary.sh" "cch-canary.sh" --verbose "$@"
+		_dispatch_helper "$canary_helper" "$canary_helper" --verbose "$@"
 		;;
 	monitor)
 		shift || true
 		_dispatch_helper "cch-traffic-monitor.sh" "cch-traffic-monitor.sh" "$@"
 		;;
 	install-canary)
-		_dispatch_helper "cch-canary.sh" "cch-canary.sh" --install
+		_dispatch_helper "$canary_helper" "$canary_helper" --install
 		;;
 	status | "")
 		echo ""
@@ -1817,15 +1820,17 @@ main() {
 		# P4 asset binary: asset → campaign-asset-helper.sh
 		# P2+P6: all other subcommands → campaign-helper.sh
 		local _camp_cmd="${1:-help}"
+		local _camp_helper="campaign-helper.sh"
+		local _camp_provision_helper="campaigns-provision-helper.sh"
 		case "$_camp_cmd" in
 		init | provision | ls)
-			_dispatch_helper "campaigns-provision-helper.sh" "campaigns-provision-helper.sh" "$@"
+			_dispatch_helper "$_camp_provision_helper" "$_camp_provision_helper" "$@"
 			;;
 		status)
 			if [[ $# -le 1 || -d "${2:-}" || "${2:-}" == .* || "${2:-}" == /* || "${2:-}" == ~* ]]; then
-				_dispatch_helper "campaigns-provision-helper.sh" "campaigns-provision-helper.sh" "$@"
+				_dispatch_helper "$_camp_provision_helper" "$_camp_provision_helper" "$@"
 			else
-				_dispatch_helper "campaign-helper.sh" "campaign-helper.sh" "$@"
+				_dispatch_helper "$_camp_helper" "$_camp_helper" "$@"
 			fi
 			;;
 		asset | assets)
@@ -1833,7 +1838,7 @@ main() {
 			_dispatch_helper "campaign-asset-helper.sh" "campaign-asset-helper.sh" "$@"
 			;;
 		*)
-			_dispatch_helper "campaign-helper.sh" "campaign-helper.sh" "$@"
+			_dispatch_helper "$_camp_helper" "$_camp_helper" "$@"
 			;;
 		esac
 		;;

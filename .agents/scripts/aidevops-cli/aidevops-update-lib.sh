@@ -19,6 +19,7 @@ _AIDEVOPS_UPDATE_LIB_LOADED=1
 
 _update_lib_dir="${BASH_SOURCE[0]%/*}"
 [[ "$_update_lib_dir" == "${BASH_SOURCE[0]}" ]] && _update_lib_dir="."
+_AIDEVOPS_UPDATE_HELPER_DIR="$(cd "${_update_lib_dir}/.." && pwd)"
 # shellcheck source=aidevops-project-config-lib.sh
 source "${_update_lib_dir}/aidevops-project-config-lib.sh"
 unset _update_lib_dir
@@ -31,6 +32,48 @@ if [[ -z "${SCRIPT_DIR:-}" ]]; then
 fi
 
 _AIDEVOPS_UPDATE_TRUE=true
+
+_update_fetch_main() {
+	local branch="$1"
+	_AIDEVOPS_UPDATE_CANONICAL_FAST_FORWARDED=false
+	local real_git="${AIDEVOPS_REAL_GIT_BIN:-/usr/bin/git}"
+	local git_dir=""
+	local common_dir=""
+	git_dir=$("$real_git" -C "$INSTALL_DIR" rev-parse --path-format=absolute --git-dir 2>/dev/null || true)
+	common_dir=$("$real_git" -C "$INSTALL_DIR" rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)
+	if [[ -z "$git_dir" || "$git_dir" != "$common_dir" ]]; then
+		git fetch origin "$branch" --tags --quiet
+		return $?
+	fi
+
+	local helper=""
+	local candidate=""
+	local bundled_helper="${_AIDEVOPS_UPDATE_HELPER_DIR:-}/canonical-recovery-helper.sh"
+	local source_helper="${INSTALL_DIR}/.agents/scripts/canonical-recovery-helper.sh"
+	local stable_helper="${HOME}/.aidevops/agents/scripts/canonical-recovery-helper.sh"
+	for candidate in "$bundled_helper" "$source_helper" "$stable_helper"; do
+		[[ -f "$candidate" ]] || continue
+		if grep -q -- '--reason aidevops-update' "$candidate" 2>/dev/null; then
+			helper="$candidate"
+			break
+		fi
+	done
+	if [[ -z "$helper" ]]; then
+		print_error "A compatible canonical update helper is unavailable (stable path: $stable_helper)"
+		print_info "Reinstall aidevops to restore a helper with aidevops-update maintenance support, then rerun aidevops update."
+		return 1
+	fi
+
+	print_info "Using audited canonical fast-forward for the source checkout..."
+	if ! AIDEVOPS_REAL_GIT_BIN="$real_git" bash "$helper" fast-forward-current \
+		--repo "$INSTALL_DIR" --branch "$branch" --reason aidevops-update \
+		--confirm FAST_FORWARD_CANONICAL_BRANCH; then
+		print_error "Audited canonical fast-forward failed; no update was deployed."
+		return 1
+	fi
+	_AIDEVOPS_UPDATE_CANONICAL_FAST_FORWARDED=true
+	return 0
+}
 
 # Tracked project config is repository-owned policy. Framework updates may read
 # it to refresh local registration metadata, but must not create working-tree
