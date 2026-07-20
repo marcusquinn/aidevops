@@ -83,6 +83,14 @@ else
 	exit 1
 fi
 
+if AIDEVOPS_REAL_GIT_BIN=/usr/bin/git bash "$HELPER" fast-forward-current --repo "$REPO" --branch develop --reason aidevops-update --confirm FAST_FORWARD_CANONICAL_BRANCH >/dev/null &&
+	grep -q '"reason":"aidevops-update"' "$HOME/.aidevops/logs/canonical-recovery-audit.jsonl"; then
+	printf 'PASS routine update fast-forward records an audited reason without an invented issue number\n'
+else
+	printf 'FAIL routine update fast-forward did not record its maintenance reason\n'
+	exit 1
+fi
+
 develop_local_tip=$(/usr/bin/git -C "$REPO" rev-parse HEAD)
 mkdir "${REPO}/.git/aidevops-canonical-recovery.lock"
 if AIDEVOPS_REAL_GIT_BIN=/usr/bin/git bash "$HELPER" fast-forward-current --repo "$REPO" --branch develop --issue 28032 --confirm FAST_FORWARD_CANONICAL_BRANCH >/dev/null 2>&1; then

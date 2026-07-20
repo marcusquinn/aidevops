@@ -12,6 +12,7 @@ usage() {
 		'Usage:' \
 		'  canonical-recovery-helper.sh restore-default --repo PATH --issue N --confirm RESTORE_CANONICAL_DEFAULT' \
 		"  canonical-recovery-helper.sh ${FAST_FORWARD_CMD} --repo PATH --branch BRANCH --issue N --confirm FAST_FORWARD_CANONICAL_BRANCH" \
+		"  canonical-recovery-helper.sh ${FAST_FORWARD_CMD} --repo PATH --branch BRANCH --reason aidevops-update --confirm FAST_FORWARD_CANONICAL_BRANCH" \
 		"  canonical-recovery-helper.sh ${SYNC_MIRROR_CMD} --repo PATH --issue N --confirm SYNCHRONIZE_CANONICAL_MIRROR"
 	return 0
 }
@@ -20,6 +21,7 @@ cmd="${1:-}"
 shift || true
 repo_path=""
 issue_number=""
+maintenance_reason=""
 confirmation=""
 expected_branch=""
 while [[ $# -gt 0 ]]; do
@@ -30,6 +32,10 @@ while [[ $# -gt 0 ]]; do
 		;;
 	--issue)
 		issue_number="${2:-}"
+		shift 2
+		;;
+	--reason)
+		maintenance_reason="${2:-}"
 		shift 2
 		;;
 	--confirm)
@@ -74,10 +80,18 @@ restore-default)
 	exit 2
 	;;
 esac
-[[ -d "$repo_path" && "$issue_number" =~ ^[0-9]+$ ]] || {
+[[ -d "$repo_path" ]] || {
 	usage
 	exit 2
 }
+if [[ "$issue_number" =~ ^[0-9]+$ && -z "$maintenance_reason" ]]; then
+	audit_reference="issue ${issue_number}"
+elif [[ -z "$issue_number" && "$cmd" == "$FAST_FORWARD_CMD" && "$maintenance_reason" == "aidevops-update" ]]; then
+	audit_reference="reason ${maintenance_reason}"
+else
+	usage
+	exit 2
+fi
 repo_path=$(cd "$repo_path" && pwd -P) || exit 2
 [[ "$confirmation" == "$expected_confirmation" ]] || {
 	printf 'BLOCKED: exact recovery confirmation is required\n' >&2
@@ -261,7 +275,7 @@ audit_message="Canonical default-branch recovery authorized"
 [[ "$cmd" == "$FAST_FORWARD_CMD" ]] && audit_message="Canonical current-branch fast-forward authorized"
 [[ "$cmd" == "$SYNC_MIRROR_CMD" ]] && audit_message="Canonical mirror synchronization authorized"
 AUDIT_LOG_FILE="$recovery_audit_file" AUDIT_QUIET=true "$audit_helper" log operation.verify "$audit_message" \
-	--detail "issue=${issue_number}" --detail "repo=${repo_path}" \
+	--detail "issue=${issue_number:-none}" --detail "reason=${maintenance_reason:-none}" --detail "repo=${repo_path}" \
 	--detail "operation=${cmd}" --detail "target=${target_branch}" --detail "target_source=${target_branch_source}" \
 	--detail "target_sha=${target_sha}" --detail "local_sha=${local_sha}" \
 	--detail "preservation_ref=${preservation_ref:-none}" --detail "backup_id=${sync_backup_id:-none}" >/dev/null || {
@@ -323,7 +337,7 @@ if [[ "$cmd" == "$FAST_FORWARD_CMD" || "$cmd" == "$SYNC_MIRROR_CMD" ]]; then
 		"update ${local_ref} ${target_sha} ${local_sha}" \
 		'prepare' \
 		'commit' | "$REAL_GIT" -C "$repo_path" update-ref \
-		-m "${fast_forward_reflog} for issue ${issue_number}" --stdin >/dev/null; then
+		-m "${fast_forward_reflog} for ${audit_reference}" --stdin >/dev/null; then
 		printf 'BLOCKED: canonical local or origin ref changed during fast-forward\n' >&2
 		exit 1
 	fi
