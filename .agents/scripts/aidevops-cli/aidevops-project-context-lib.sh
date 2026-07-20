@@ -23,7 +23,7 @@ _init_update_project_operations_context() {
 		return 1
 	}
 
-	grep -qF "$start" "$agents_md" || command_status=$?
+	grep -qF -- "$start" "$agents_md" || command_status=$?
 	if [[ "$command_status" -eq 0 ]]; then
 		awk -v start="$start" -v end="$end" -v block="$block_file" 'function emit(){while((getline line < block)>0) print line; close(block)} index($0,start)==1 {if(!inserted){emit(); inserted=1}; managed=1; next} managed && index($0,end)==1 {managed=0; next} !managed {print}' "$agents_md" >"$tmp_file" || {
 			rm -f "$block_file" "$tmp_file"
