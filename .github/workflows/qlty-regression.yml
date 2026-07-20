@@ -100,7 +100,7 @@ jobs:
     name: Qlty Smell Regression
     runs-on: ubuntu-latest
     env:
-      QLTY_CLI_VERSION: "0.635.0"
+      QLTY_CLI_VERSION: "0.636.0"
     needs: detect-scope
     if: needs.detect-scope.outputs.should_scan == 'true'
     steps:
