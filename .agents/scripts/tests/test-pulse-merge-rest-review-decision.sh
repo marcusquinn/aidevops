@@ -16,6 +16,7 @@ readonly TEST_RESET='\033[0m'
 TESTS_RUN=0
 TESTS_FAILED=0
 TEST_ROOT=""
+TIMEOUT_LOG=""
 
 print_result() {
 	local test_name="$1"
@@ -34,11 +35,31 @@ print_result() {
 
 setup_test_env() {
 	TEST_ROOT=$(mktemp -d)
+	TIMEOUT_LOG="${TEST_ROOT}/timeout.log"
+	export TIMEOUT_LOG
+	: >"$TIMEOUT_LOG"
+	unset TEST_TIMEOUT_FAIL
 	mkdir -p "${TEST_ROOT}/bin"
 	export PATH="${TEST_ROOT}/bin:${PATH}"
 	write_gh_mock
 	# shellcheck source=/dev/null
 	source "$MERGE_PROCESS_SCRIPT"
+	return 0
+}
+
+_gh_with_timeout() {
+	local operation="$1"
+	shift
+	printf '%s %s\n' "$operation" "$*" >>"$TIMEOUT_LOG"
+	if [[ "${TEST_TIMEOUT_FAIL:-false}" == "true" ]]; then
+		return 124
+	fi
+	"$@"
+	return $?
+}
+
+gh_pr_view() {
+	printf ''
 	return 0
 }
 
@@ -94,12 +115,41 @@ assert_review_decision() {
 	return 0
 }
 
+test_review_fetch_uses_bounded_read() {
+	: >"$TIMEOUT_LOG"
+	assert_review_decision "REST fallback still derives active review state" "123" "CHANGES_REQUESTED"
+	if grep -Fqx 'read gh api --paginate repos/owner/repo/pulls/123/reviews' "$TIMEOUT_LOG"; then
+		print_result "REST fallback wraps paginated reviews in a bounded read" 0
+	else
+		print_result "REST fallback wraps paginated reviews in a bounded read" 1 \
+			"timeout calls=$(tr '\n' ';' <"$TIMEOUT_LOG")"
+	fi
+	return 0
+}
+
+test_timeout_failure_preserves_unknown_decision() {
+	: >"$TIMEOUT_LOG"
+	export TEST_TIMEOUT_FAIL="true"
+	local decision=""
+	_pmp_refresh_unknown_review_decision_into decision "125" "owner/repo" "UNKNOWN"
+	unset TEST_TIMEOUT_FAIL
+	if [[ "$decision" == "UNKNOWN" ]] &&
+		grep -Fqx 'read gh api --paginate repos/owner/repo/pulls/125/reviews' "$TIMEOUT_LOG"; then
+		print_result "timed-out REST review fetch returns UNKNOWN without blocking" 0
+	else
+		print_result "timed-out REST review fetch returns UNKNOWN without blocking" 1 \
+			"decision=${decision}, timeout calls=$(tr '\n' ';' <"$TIMEOUT_LOG")"
+	fi
+	return 0
+}
+
 main() {
 	setup_test_env
 	trap cleanup_test_env EXIT
 
-	assert_review_decision "COMMENTED review does not clear active changes requested" "123" "CHANGES_REQUESTED"
+	test_review_fetch_uses_bounded_read
 	assert_review_decision "DISMISSED review clears prior changes requested" "124" "NONE"
+	test_timeout_failure_preserves_unknown_decision
 
 	printf '\nTests run: %s, failed: %s\n' "$TESTS_RUN" "$TESTS_FAILED"
 	[[ "$TESTS_FAILED" -eq 0 ]]

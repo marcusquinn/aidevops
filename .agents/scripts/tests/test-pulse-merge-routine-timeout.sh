@@ -111,36 +111,52 @@ else
 fi
 
 # =============================================================================
-# Test 1c: cmd_run wraps merge_ready_prs_all_repos via _pmr_run_with_timeout
+# Test 1c: cmd_run wraps the merge scope via _pmr_run_with_timeout
 # =============================================================================
 # Use awk to find _pmr_run_with_timeout invocation within cmd_run() body.
 if awk '
 	BEGIN { in_cmd_run=0; found=0 }
 	/^cmd_run\(\)/ { in_cmd_run=1; next }
 	in_cmd_run && /^\}/ { in_cmd_run=0 }
-	in_cmd_run && /_pmr_run_with_timeout.*merge_ready_prs_all_repos/ { found=1; exit }
+	in_cmd_run && /_pmr_run_with_timeout.*_pmr_run_merge_scope/ { found=1; exit }
 	END { exit (found) ? 0 : 1 }
 ' "$ROUTINE_FILE"; then
-	pass "1c: cmd_run wraps merge_ready_prs_all_repos via _pmr_run_with_timeout"
+	pass "1c: cmd_run wraps the merge scope via _pmr_run_with_timeout"
 else
-	fail "1c: cmd_run wraps merge_ready_prs_all_repos via _pmr_run_with_timeout" \
-		"cmd_run body does not invoke '_pmr_run_with_timeout ... merge_ready_prs_all_repos'"
+	fail "1c: cmd_run wraps the merge scope via _pmr_run_with_timeout" \
+		"cmd_run body does not invoke '_pmr_run_with_timeout ... _pmr_run_merge_scope'"
 fi
 
 # =============================================================================
-# Test 1d: cmd_dry_run wraps merge_ready_prs_all_repos via _pmr_run_with_timeout
+# Test 1d: cmd_dry_run wraps the merge scope via _pmr_run_with_timeout
 # =============================================================================
 if awk '
 	BEGIN { in_cmd=0; found=0 }
 	/^cmd_dry_run\(\)/ { in_cmd=1; next }
 	in_cmd && /^\}/ { in_cmd=0 }
-	in_cmd && /_pmr_run_with_timeout.*merge_ready_prs_all_repos/ { found=1; exit }
+	in_cmd && /_pmr_run_with_timeout.*_pmr_run_merge_scope/ { found=1; exit }
 	END { exit (found) ? 0 : 1 }
 ' "$ROUTINE_FILE"; then
-	pass "1d: cmd_dry_run wraps merge_ready_prs_all_repos via _pmr_run_with_timeout"
+	pass "1d: cmd_dry_run wraps the merge scope via _pmr_run_with_timeout"
 else
-	fail "1d: cmd_dry_run wraps merge_ready_prs_all_repos via _pmr_run_with_timeout" \
-		"cmd_dry_run body does not invoke '_pmr_run_with_timeout ... merge_ready_prs_all_repos'"
+	fail "1d: cmd_dry_run wraps the merge scope via _pmr_run_with_timeout" \
+		"cmd_dry_run body does not invoke '_pmr_run_with_timeout ... _pmr_run_merge_scope'"
+fi
+
+# The wrapped scope must still delegate the normal, non-targeted path to the
+# full repository merge pass; otherwise the wrapper checks above could pass
+# while protecting an empty or unrelated function.
+if awk '
+	BEGIN { in_scope=0; found=0 }
+	/^_pmr_run_merge_scope\(\)/ { in_scope=1; next }
+	in_scope && /^\}/ { in_scope=0 }
+	in_scope && /merge_ready_prs_all_repos/ { found=1; exit }
+	END { exit (found) ? 0 : 1 }
+' "$ROUTINE_FILE"; then
+	pass "1d2: bounded merge scope delegates the normal path to the full merge pass"
+else
+	fail "1d2: bounded merge scope delegates the normal path to the full merge pass" \
+		"_pmr_run_merge_scope does not invoke merge_ready_prs_all_repos"
 fi
 
 # =============================================================================
