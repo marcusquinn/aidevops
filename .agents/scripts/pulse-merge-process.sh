@@ -215,7 +215,8 @@ _pmp_rest_review_decision_from_reviews() {
 	local repo_slug="$2"
 	local reviews_json=""
 
-	reviews_json=$(gh api --paginate "repos/${repo_slug}/pulls/${pr_number}/reviews" 2>/dev/null) || return 1
+	reviews_json=$(_gh_with_timeout read gh api --paginate \
+		"repos/${repo_slug}/pulls/${pr_number}/reviews" 2>/dev/null) || return 1
 	printf '%s' "$reviews_json" | jq -rs '
 		flatten
 		| map(select((.user.login // "") != "" and (.state == "APPROVED" or .state == "CHANGES_REQUESTED" or .state == "DISMISSED")))

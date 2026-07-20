@@ -42,11 +42,13 @@ setup_test_env() {
 	TEST_ROOT=$(mktemp -d)
 	export LOGFILE="${TEST_ROOT}/pulse.log"
 	export GH_CALL_LOG="${TEST_ROOT}/gh-calls.log"
+	export TIMEOUT_CALL_LOG="${TEST_ROOT}/timeout-calls.log"
 	export SOLVED_LABEL_LOG="${TEST_ROOT}/solved-labels.log"
 	export TEST_PR_COMMENTS_FILE="${TEST_ROOT}/pr-comments.json"
 	export TEST_PR_SNAPSHOT_QUEUE_FILE="${TEST_ROOT}/pr-comment-snapshots.ndjson"
 	: >"$LOGFILE"
 	: >"$GH_CALL_LOG"
+	: >"$TIMEOUT_CALL_LOG"
 	: >"$SOLVED_LABEL_LOG"
 	: >"$TEST_PR_SNAPSHOT_QUEUE_FILE"
 	printf '[]\n' >"$TEST_PR_COMMENTS_FILE"
@@ -214,7 +216,7 @@ install_helper_stubs() {
 	_gh_with_timeout() {
 		local access_mode="$1"
 		shift
-		: "$access_mode"
+		printf '%s %s\n' "$access_mode" "$*" >>"$TIMEOUT_CALL_LOG"
 		"$@"
 		return $?
 	}
@@ -356,6 +358,7 @@ test_closing_comment_defaults_to_main_for_legacy_callers() {
 
 test_pr_closeout_reuses_merge_summary_comment() {
 	: >"$GH_CALL_LOG"
+	: >"$TIMEOUT_CALL_LOG"
 	set_pr_comments '[{"id":101,"created_at":"2026-07-13T16:00:00Z","body":"<!-- MERGE_SUMMARY --> original"}]'
 
 	_handle_post_merge_actions "755" "marcusquinn/aidevops" "" "merged" "origin:worker"
@@ -368,6 +371,15 @@ test_pr_closeout_reuses_merge_summary_comment() {
 		"PR closeout does not append when MERGE_SUMMARY exists"
 	assert_completion_candidate_count 1 755 \
 		"MERGE_SUMMARY upsert leaves exactly one completion candidate"
+	local bounded_read_count=""
+	bounded_read_count=$(grep -cF 'read gh api repos/marcusquinn/aidevops/issues/755/comments?per_page=100 --paginate --slurp' \
+		"$TIMEOUT_CALL_LOG" 2>/dev/null || true)
+	if [[ "$bounded_read_count" -ge 3 ]]; then
+		pass "PR closeout initial and reconciliation pagination reads are bounded"
+	else
+		fail "PR closeout initial and reconciliation pagination reads are bounded" \
+			"Expected at least 3 bounded reads, found ${bounded_read_count}"
+	fi
 	return 0
 }
 

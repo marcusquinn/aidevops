@@ -677,7 +677,7 @@ _pm_reconcile_pr_closeout_comments() {
 
 	while ((attempt < max_attempts)); do
 		attempt=$((attempt + 1))
-		comments_json=$(gh api "repos/${repo_slug}/issues/${pr_number}/comments?per_page=100" \
+		comments_json=$(_gh_with_timeout read gh api "repos/${repo_slug}/issues/${pr_number}/comments?per_page=100" \
 			--paginate --slurp 2>/dev/null) || comments_json=""
 		if [[ -z "$comments_json" ]]; then
 			((attempt < max_attempts)) && sleep 1
@@ -784,7 +784,7 @@ _pm_upsert_pr_closing_comment() {
 
 	marked_comment="<!-- PULSE_MERGE_CLOSEOUT:PR#${pr_number} -->
 ${closing_comment}"
-	comments_json=$(gh api "repos/${repo_slug}/issues/${pr_number}/comments?per_page=100" \
+	comments_json=$(_gh_with_timeout read gh api "repos/${repo_slug}/issues/${pr_number}/comments?per_page=100" \
 		--paginate --slurp 2>/dev/null) || comments_json=""
 	if [[ -n "$comments_json" ]]; then
 		existing_comment_id=$(_pm_select_pr_closeout_comment_id "$comments_json" "$pr_number")
