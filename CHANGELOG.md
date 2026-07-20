@@ -10,6 +10,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.32.158] - 2026-07-20
+
+### Changed
+
+- Maintenance: update simplification state registry
+- Maintenance: update simplification state registry
+
+### Fixed
+
+- preserve pinned full-loop wrapper trust (#28310)
+- allow canonical rev-list queries (#28321)
+
 ## [3.32.157] - 2026-07-20
 
 ### Added
