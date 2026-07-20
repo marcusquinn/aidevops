@@ -1982,9 +1982,9 @@
       "pr": 15514
     },
     ".agents/scripts/commands/log-issue-aidevops.md": {
-      "at": "2026-07-13T22:54:01Z",
-      "hash": "5afdc3525e417a0bf4bbc56a54b2542c0551cda8",
-      "passes": 16,
+      "at": "2026-07-20T14:35:10Z",
+      "hash": "80a66ac17df8867828a2715393b3e7576a983789",
+      "passes": 17,
       "pr": 11007
     },
     ".agents/scripts/commands/memory-log.md": {
@@ -2298,15 +2298,15 @@
       "pr": 13021
     },
     ".agents/scripts/headless-runtime-helper.sh": {
-      "at": "2026-07-20T04:18:16Z",
-      "hash": "150418e312351d149e1b85237470604037b27fda",
-      "passes": 70,
+      "at": "2026-07-20T14:35:13Z",
+      "hash": "28751100fc4d72e849e2ba54963686f1be8fe831",
+      "passes": 71,
       "pr": 15086
     },
     ".agents/scripts/headless-runtime-lib.sh": {
-      "at": "2026-07-20T04:18:16Z",
-      "hash": "87e3fabbcc116eb891d012a3cf20b7bf50b388b3",
-      "passes": 59,
+      "at": "2026-07-20T14:35:13Z",
+      "hash": "f7aca3a8cfd869cd26881379b3a3ae14a2ea9a7f",
+      "passes": 60,
       "pr": 18707
     },
     ".agents/scripts/interactive-session-helper.sh": {
@@ -7223,9 +7223,9 @@
       "pr": 18318
     },
     ".agents/workflows/log-issue-aidevops.md": {
-      "at": "2026-07-13T22:54:59Z",
-      "hash": "5afdc3525e417a0bf4bbc56a54b2542c0551cda8",
-      "passes": 13,
+      "at": "2026-07-20T14:35:55Z",
+      "hash": "80a66ac17df8867828a2715393b3e7576a983789",
+      "passes": 14,
       "pr": 18148
     },
     ".agents/workflows/memory-log.md": {
@@ -8050,10 +8050,10 @@
       "passes": 3
     },
     ".agents/scripts/headless-runtime-worker.sh": {
-      "hash": "facb8a3fe0f1ea5d0c6b69297c659a8eedf86ca1",
-      "at": "2026-07-20T04:18:16Z",
+      "hash": "1f91974acc9e3d9797193dc64baaaa0e036f8454",
+      "at": "2026-07-20T14:35:13Z",
       "pr": 26521,
-      "passes": 9
+      "passes": 10
     },
     ".agents/scripts/install-hooks-helper.sh": {
       "hash": "0fa74195f7243ea22d952d156e4faccb1bbc2125",
