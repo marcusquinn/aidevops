@@ -207,6 +207,7 @@ DEBUG=mcp-local-wp ./.agents/scripts/localhost-helper.sh start-mcp
 
 | Topic | File |
 |-------|------|
+| Production clone to LocalWP | `workflows/wordpress-local-clone.md` |
 | WordPress development | `workflows/wp-dev.md` |
 | WordPress admin | `workflows/wp-admin.md` |
 | Local development | `localhost.md` |
