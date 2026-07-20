@@ -53,8 +53,12 @@ print_result() {
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
 WORKFLOW_FILE="${REPO_ROOT}/.github/workflows/maintainer-gate-reusable.yml"
-TEST_TMP_ROOT=$(mktemp -d "${TMPDIR:-/tmp}/test-maintainer-gate-job3-XXXXXX")
-trap 'rm -rf "$TEST_TMP_ROOT"' EXIT
+TEST_TMP_ROOT=""
+if ! TEST_TMP_ROOT=$(mktemp -d "${TMPDIR:-/tmp}/test-maintainer-gate-job3-XXXXXX"); then
+	printf 'ERROR: failed to create temporary directory\n' >&2
+	exit 1
+fi
+trap '[[ -n "${TEST_TMP_ROOT:-}" ]] && rm -rf -- "$TEST_TMP_ROOT"' EXIT
 
 if [[ ! -f "$WORKFLOW_FILE" ]]; then
 	print_result "workflow file exists" 1 "not found: $WORKFLOW_FILE"
@@ -200,9 +204,16 @@ run_job3_fixture() {
 		export FIXTURE_LOOKUP_MODE="$lookup_mode" FIXTURE_STATUS_FILE="$status_file"
 		export FIXTURE_RERUN_FILE="$rerun_file"
 		gh() {
-			local command="${1:-}"
-			local subcommand="${2:-}"
-			shift 2 2>/dev/null || true
+			local command=""
+			local subcommand=""
+			if [[ $# -gt 0 ]]; then
+				command="$1"
+				shift
+			fi
+			if [[ $# -gt 0 ]]; then
+				subcommand="$1"
+				shift
+			fi
 			local args="$*"
 			if [[ "$command" == "pr" && "$subcommand" == "list" ]]; then
 				printf '%s\n' '[{"number":101,"body":"Resolves #42","title":"fixture"}]'
