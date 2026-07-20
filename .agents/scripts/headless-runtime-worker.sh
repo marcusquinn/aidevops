@@ -1747,17 +1747,9 @@ _cmd_run_finish() {
 	local external_terminal_confirmed="${4:-0}"
 	local finish_status=0
 	if _headless_private_workload_enabled; then
-		if declare -F _cleanup_headless_runtime_temp_paths >/dev/null 2>&1; then
-			_cleanup_headless_runtime_temp_paths || true
-		fi
-		_release_session_lock "$session_key" || true
-		if [[ -n "${_PRIVATE_WORKLOAD_LOCK_KEY:-}" ]]; then
-			_release_private_workload_lock "$_PRIVATE_WORKLOAD_LOCK_KEY" || true
-			_PRIVATE_WORKLOAD_LOCK_KEY=""
-		fi
+		_private_workload_exit_trap "$session_key" "${_PRIVATE_WORKLOAD_LOCK_KEY:-}"
 		_WORKER_WORKTREE_PATH=""
 		WORKER_TARGET_BRANCH=""
-		trap - EXIT
 		return 0
 	fi
 	_HRW_FINAL_RUNTIME_EVENT="worker.completed"
@@ -1847,6 +1839,7 @@ _hrw_prepare_private_workload() {
 	local expected_agent="$4"
 	local expected_profile_sha256="$5"
 	local workload_lock_key=""
+	_private_workload_session_key_is_opaque "$session_key" || return 1
 	_WORKER_WORKTREE_PATH=""
 	WORKER_TARGET_BRANCH=""
 	export WORKER_NO_EXIT_PUSH=1

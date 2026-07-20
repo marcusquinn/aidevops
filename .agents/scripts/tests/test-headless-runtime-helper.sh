@@ -413,7 +413,7 @@ _private_profile_rejection_statuses() {
 
 test_private_workload_arguments_are_fail_closed() {
 	local AIDEVOPS_HEADLESS_PROVIDER_ALLOWLIST="openai"
-	local role="triage" session_key="private-test" work_dir="${TEST_ROOT}/private-profile"
+	local role="triage" session_key="private-0123456789abcdef0123456789abcdef" work_dir="${TEST_ROOT}/private-profile"
 	local title="Private workload" prompt="$PRIVATE_WORKLOAD_PROMPT" prompt_file=""
 	local model_override="openai/gpt-5.6-sol" initial_model="" tier_override=""
 	local variant_override="" agent_name="provisional-adjudicator" headless_runtime="opencode"
@@ -431,6 +431,10 @@ test_private_workload_arguments_are_fail_closed() {
 	local valid_status=0
 	local valid_output=""
 	valid_output=$(_validate_private_workload_args 2>&1) || valid_status=$?
+	local descriptive_session_status=0
+	session_key="private-client-case"
+	_validate_private_workload_args >/dev/null 2>&1 || descriptive_session_status=$?
+	session_key="private-0123456789abcdef0123456789abcdef"
 
 	local fixture_statuses=""
 	local generated_profile_status=0 generated_profile_removed=0
@@ -476,7 +480,7 @@ test_private_workload_arguments_are_fail_closed() {
 	IFS='|' read -r unsafe_profile_status unexpected_permission_status \
 		unexpected_config_status description_status steps_status <<<"$rejection_statuses"
 
-	if [[ "$private_workload" -eq 1 && "$valid_status" -eq 0 && \
+	if [[ "$private_workload" -eq 1 && "$valid_status" -eq 0 && "$descriptive_session_status" -eq 1 && \
 		"$generated_profile_status" -eq 0 && "$generated_profile_removed" -eq 1 && \
 		"$unexpected_profile_entry_status" -eq 1 && "$unexpected_instruction_status" -eq 1 && \
 		"$invalid_extra_status" -eq 1 && "$missing_profile_hash_status" -eq 1 && \
@@ -495,7 +499,7 @@ test_private_workload_arguments_are_fail_closed() {
 	fi
 
 	print_result "private workload arguments enforce the non-content boundary" 1 \
-		"private=${private_workload} valid=${valid_status} generated=${generated_profile_status}:${generated_profile_removed} profile_entry=${unexpected_profile_entry_status} instruction=${unexpected_instruction_status} extra=${invalid_extra_status} hash=${missing_profile_hash_status}:${mismatched_profile_hash_status} prompt=${invalid_prompt_status} provider=${invalid_provider_status}:${missing_allowlist_status} profile=${unsafe_profile_status} permission=${unexpected_permission_status} unexpected=${unexpected_config_status} exact=${description_status}:${steps_status} output=${valid_output:-<empty>}"
+		"private=${private_workload} valid=${valid_status} descriptive_session=${descriptive_session_status} generated=${generated_profile_status}:${generated_profile_removed} profile_entry=${unexpected_profile_entry_status} instruction=${unexpected_instruction_status} extra=${invalid_extra_status} hash=${missing_profile_hash_status}:${mismatched_profile_hash_status} prompt=${invalid_prompt_status} provider=${invalid_provider_status}:${missing_allowlist_status} profile=${unsafe_profile_status} permission=${unexpected_permission_status} unexpected=${unexpected_config_status} exact=${description_status}:${steps_status} output=${valid_output:-<empty>}"
 	return 0
 }
 
@@ -510,7 +514,7 @@ test_private_workload_uses_minimal_lifecycle() {
 		local WORKER_TARGET_BRANCH="private-branch-must-not-persist"
 		local WORKER_NO_EXIT_PUSH=0
 		local acquired=0 released=0 workload_acquired=0 workload_released=0
-		local cleaned=0 registered=0 updated=0 claimed=0
+		local cleaned=0 lease_released=0 registered=0 updated=0 claimed=0
 		local lifecycle_order=""
 		_acquire_session_lock() { acquired=$((acquired + 1)); return 0; }
 		_release_session_lock() { released=$((released + 1)); lifecycle_order="${lifecycle_order}session,"; return 0; }
@@ -518,24 +522,27 @@ test_private_workload_uses_minimal_lifecycle() {
 		_release_private_workload_lock() { workload_released=$((workload_released + 1)); lifecycle_order="${lifecycle_order}workload,"; return 0; }
 		_validate_private_workload_profile() { return 0; }
 		_cleanup_headless_runtime_temp_paths() { cleaned=$((cleaned + 1)); lifecycle_order="${lifecycle_order}cleanup,"; return 0; }
+		aidevops_runtime_bundle_lease_release() { lease_released=$((lease_released + 1)); lifecycle_order="${lifecycle_order}lease,"; return 0; }
 		_register_dispatch_ledger() { registered=$((registered + 1)); return 0; }
 		_update_dispatch_ledger() { updated=$((updated + 1)); return 0; }
 		_hrw_claim_worker_worktree() { claimed=$((claimed + 1)); return 0; }
 
+		local invalid_prepare_status=0
+		_cmd_run_prepare "private-client-case" "$TEST_ROOT" || invalid_prepare_status=$?
 		local prepare_status=0
-		_cmd_run_prepare "private-lifecycle-test" "$TEST_ROOT" || prepare_status=$?
+		_cmd_run_prepare "private-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" "$TEST_ROOT" || prepare_status=$?
 		local prepared_path="${_WORKER_WORKTREE_PATH:-}"
 		local prepared_branch="${WORKER_TARGET_BRANCH:-}"
 		local finish_status=0
-		_cmd_run_finish "private-lifecycle-test" "complete" "$TEST_ROOT" || finish_status=$?
-		printf '%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s' \
-			"$prepare_status" "$finish_status" "$prepared_path" "$prepared_branch" \
+		_cmd_run_finish "private-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" "complete" "$TEST_ROOT" || finish_status=$?
+		printf '%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s' \
+			"$invalid_prepare_status" "$prepare_status" "$finish_status" "$prepared_path" "$prepared_branch" \
 			"$WORKER_NO_EXIT_PUSH" "$acquired" "$released" "$workload_acquired" \
-			"$workload_released" "$cleaned" "$registered" "$updated:$claimed" \
+			"$workload_released" "$cleaned" "$lease_released" "$registered" "$updated:$claimed" \
 			"$lifecycle_order"
 	)
 
-	if [[ "$lifecycle_state" == "0|0|||1|1|1|1|1|1|0|0:0|cleanup,session,workload," ]]; then
+	if [[ "$lifecycle_state" == "1|0|0|||1|1|1|1|1|1|1|0|0:0|cleanup,session,workload,lease," ]]; then
 		print_result "private workloads bypass persistent worker lifecycle state" 0
 		return 0
 	fi
@@ -609,23 +616,26 @@ test_private_workload_directory_lock_blocks_distinct_sessions() {
 	local model="openai/gpt-5.6-sol"
 	local agent="provisional-adjudicator"
 	local profile_sha256=""
+	local first_session="private-11111111111111111111111111111111"
+	local second_session="private-22222222222222222222222222222222"
+	local third_session="private-33333333333333333333333333333333"
 	init_state_db
 	setup_private_workload_profile_fixture "$work_dir"
 	profile_sha256=$(private_workload_profile_sha256 "$work_dir") || return 1
 
 	local first_status=0 second_status=0 third_status=0
-	_hrw_prepare_private_workload "private-directory-first" "$work_dir" "$model" "$agent" \
+	_hrw_prepare_private_workload "$first_session" "$work_dir" "$model" "$agent" \
 		"$profile_sha256" \
 		>/dev/null 2>&1 || first_status=$?
 	local workload_lock_key="${_PRIVATE_WORKLOAD_LOCK_KEY:-}"
-	_hrw_prepare_private_workload "private-directory-second" "$work_dir" "$model" "$agent" \
+	_hrw_prepare_private_workload "$second_session" "$work_dir" "$model" "$agent" \
 		"$profile_sha256" \
 		>/dev/null 2>&1 || second_status=$?
-	_cmd_run_finish "private-directory-first" "complete" "$work_dir" >/dev/null 2>&1
-	_hrw_prepare_private_workload "private-directory-third" "$work_dir" "$model" "$agent" \
+	_cmd_run_finish "$first_session" "complete" "$work_dir" >/dev/null 2>&1
+	_hrw_prepare_private_workload "$third_session" "$work_dir" "$model" "$agent" \
 		"$profile_sha256" \
 		>/dev/null 2>&1 || third_status=$?
-	_cmd_run_finish "private-directory-third" "complete" "$work_dir" >/dev/null 2>&1
+	_cmd_run_finish "$third_session" "complete" "$work_dir" >/dev/null 2>&1
 	local remaining_lock_count=""
 	remaining_lock_count=$(sqlite3_with_timeout "$STATE_DB" \
 		"SELECT COUNT(*) FROM private_workload_locks WHERE lock_key = '${workload_lock_key}';" \

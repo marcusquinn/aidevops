@@ -478,6 +478,9 @@ _private_workload_exit_trap() {
 		_release_private_workload_lock "$workload_lock_key" || true
 	fi
 	_PRIVATE_WORKLOAD_LOCK_KEY=""
+	if declare -F aidevops_runtime_bundle_lease_release >/dev/null 2>&1; then
+		aidevops_runtime_bundle_lease_release || true
+	fi
 	trap - EXIT
 	return 0
 }

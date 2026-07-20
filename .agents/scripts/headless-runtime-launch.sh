@@ -253,6 +253,12 @@ _private_provider_is_allowlisted() {
 	return 1
 }
 
+_private_workload_session_key_is_opaque() {
+	local session_key_value="$1"
+	[[ "$session_key_value" =~ ^private-([a-f0-9]{32}|[a-f0-9]{64})$ ]]
+	return $?
+}
+
 _validate_private_workload_args() {
 	[[ "${private_workload:-0}" == "1" ]] || return 0
 	if [[ ! "${private_profile_sha256:-}" =~ ^[a-f0-9]{64}$ ]]; then
@@ -263,8 +269,8 @@ _validate_private_workload_args() {
 		print_error "--private-workload requires --role triage"
 		return 1
 	fi
-	if [[ ! "${session_key:-}" =~ ^private-[A-Za-z0-9._-]{1,80}$ ]]; then
-		print_error "--private-workload requires a private-* session key"
+	if ! _private_workload_session_key_is_opaque "${session_key:-}"; then
+		print_error "--private-workload requires an opaque private- session key with 32 or 64 lowercase hex characters"
 		return 1
 	fi
 	if [[ "${title:-}" != "Private workload" ]]; then
