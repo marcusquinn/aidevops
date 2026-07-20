@@ -23,6 +23,8 @@
 #  12.  .agents/templates/workflows/review-bot-gate-caller.yml exists
 #  13.  Downstream caller template references marcusquinn/aidevops reusable path
 #  14.  Reusable workflow uses __aidevops/ path (runtime-fetched, no SHA pin)
+#  GH#28316-A. Both callers and the reusable workflow share one eligibility matrix
+#  GH#28316-B. Concurrency applies only to eligible caller jobs, preserving queued evaluators
 #
 # Strategy: Parse YAML + grep for structural invariants. No network calls, no GitHub API.
 # Skips gracefully if python3 / yaml module missing.
@@ -294,6 +296,136 @@ if [[ -f "$RBG_REUSABLE_WF" ]]; then
 	_pass "review-bot-gate reusable workflow file exists"
 else
 	_fail "review-bot-gate reusable workflow file exists" "missing: $RBG_REUSABLE_WF"
+fi
+
+# ---------------------------------------------------------------------------
+# Review gate eligibility/concurrency matrix (GH#28316)
+# ---------------------------------------------------------------------------
+
+if [[ ! -f "$RBG_REUSABLE_WF" || ! -f "$RBG_SELF_CALLER_WF" || ! -f "$RBG_DOWNSTREAM_TEMPLATE" ]]; then
+	_skip "review-bot eligibility and job concurrency matrix" "workflow file missing"
+elif ! command -v python3 >/dev/null 2>&1 || ! python3 -c "import yaml" 2>/dev/null; then
+	_skip "review-bot eligibility and job concurrency matrix" "python3 or pyyaml unavailable"
+else
+	if python3 - "$RBG_SELF_CALLER_WF" "$RBG_DOWNSTREAM_TEMPLATE" "$RBG_REUSABLE_WF" <<'PYEOF'
+import re
+import sys
+import yaml
+
+
+def load(path):
+    with open(path) as stream:
+        return yaml.safe_load(stream)
+
+
+def normalize(expression):
+    return re.sub(r"\s+", " ", expression or "").strip()
+
+
+self_caller, downstream, reusable = [load(path) for path in sys.argv[1:]]
+callers = (("self", self_caller), ("downstream", downstream))
+caller_expressions = []
+for name, workflow in callers:
+    if "concurrency" in workflow:
+        print(f"FAIL: {name} caller retains workflow-level concurrency")
+        sys.exit(1)
+    gate = (workflow.get("jobs") or {}).get("gate") or {}
+    concurrency = gate.get("concurrency") or {}
+    if concurrency.get("cancel-in-progress") is not False:
+        print(f"FAIL: {name} caller gate must preserve active evaluators")
+        sys.exit(1)
+    if "review-bot-gate-" not in (concurrency.get("group") or ""):
+        print(f"FAIL: {name} caller gate lacks per-PR concurrency")
+        sys.exit(1)
+    caller_expressions.append(normalize(gate.get("if")))
+
+reusable_job = (reusable.get("jobs") or {}).get("review-bot-gate") or {}
+expressions = caller_expressions + [normalize(reusable_job.get("if"))]
+if not expressions[0] or len(set(expressions)) != 1:
+    print("FAIL: self, downstream, and reusable eligibility expressions drifted")
+    sys.exit(1)
+
+expression = expressions[0]
+supported_actors = [
+    "coderabbitai",
+    "coderabbitai[bot]",
+    "gemini-code-assist",
+    "gemini-code-assist[bot]",
+    "augment-code",
+    "augment-code[bot]",
+    "augmentcode",
+    "augmentcode[bot]",
+    "copilot",
+    "copilot[bot]",
+    "github-actions[bot]",
+]
+fixtures = [
+    ("pull_request", "human", True, None, True),
+    ("pull_request_review", "human", True, None, False),
+    ("pull_request_review_comment", "copilot[bot]", True, 99, False),
+    ("issue_comment", "gemini-code-assist[bot]", False, None, False),
+    ("issue_comment", "human", True, None, False),
+]
+for actor in supported_actors:
+    fixtures.extend([
+        ("pull_request_review", actor, True, None, True),
+        ("pull_request_review_comment", actor, True, None, True),
+        ("pull_request_review_comment", actor, True, 99, False),
+        ("issue_comment", actor, True, None, True),
+    ])
+
+
+def evaluate(event_name, actor, is_pr, reply_id):
+    candidate = expression
+    replacements = {
+        "github.event.comment.in_reply_to_id": repr(reply_id),
+        "github.event.issue.pull_request": repr(is_pr),
+        "github.event_name": repr(event_name),
+        "github.actor": repr(actor),
+        "null": "None",
+        "&&": "and",
+        "||": "or",
+    }
+    for source, target in replacements.items():
+        candidate = candidate.replace(source, target)
+    if re.search(r"[^A-Za-z0-9_\s\[\]'\"().=-]", candidate):
+        raise ValueError(f"unsupported eligibility token: {candidate}")
+    return bool(eval(candidate, {"__builtins__": {}}, {}))
+
+
+for fixture in fixtures:
+    actual = evaluate(*fixture[:4])
+    if actual is not fixture[4]:
+        print(f"FAIL: eligibility fixture {fixture[:4]} => {actual}, expected {fixture[4]}")
+        sys.exit(1)
+
+# GitHub permits one active and one pending run per concurrency group. Simulate
+# an eligible evaluator followed by replacement noise ending in an inline reply:
+# only the evaluator may enter the job-level group, so it remains able to publish
+# the exact-head status from the reusable workflow's always() status step.
+burst = [
+    ("pull_request", "human", True, None, True),
+    ("issue_comment", "human", True, None, False),
+    ("pull_request_review_comment", "copilot[bot]", True, 99, False),
+]
+admitted = [fixture for fixture in burst if evaluate(*fixture[:4])]
+if len(admitted) != 1 or admitted[0] != burst[0]:
+    print(f"FAIL: replacement burst admitted ineligible events: {admitted}")
+    sys.exit(1)
+status_steps = [
+    step for step in (reusable_job.get("steps") or [])
+    if step.get("name") == "Post review-bot-gate commit status"
+]
+if len(status_steps) != 1 or status_steps[0].get("if") != "always()":
+    print("FAIL: eligible evaluator does not retain an always-run exact-head status publisher")
+    sys.exit(1)
+PYEOF
+	then
+		_pass "review-bot eligibility precedes durable per-PR job concurrency"
+	else
+		_fail "review-bot eligibility precedes durable per-PR job concurrency" \
+			"matrix fixture failed; see Python output above"
+	fi
 fi
 
 # ---------------------------------------------------------------------------

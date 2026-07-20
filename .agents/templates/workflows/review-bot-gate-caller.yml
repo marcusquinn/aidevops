@@ -49,17 +49,44 @@ on:
     # on the Phase 2 edit that makes the placeholder a real review.
     types: [created, edited]
 
-# Do NOT cancel in-progress runs. When cancel-in-progress was true, the initial
-# pull_request:opened run was cancelled by the issue_comment:created event (fired
-# when a bot posted). The cancelled run left a permanent stale CANCELLED check on
-# the PR, making mergeStateStatus UNSTABLE even though the re-triggered run passed.
-# With cancel-in-progress: false, both runs complete. GH#2973.
-concurrency:
-  group: review-bot-gate-${{ github.event.pull_request.number || github.event.issue.number }}
-  cancel-in-progress: false
-
 jobs:
   gate:
+    # Apply the complete event matrix before concurrency admission. GitHub keeps
+    # only one pending run per group, so a skipped inline reply must never replace
+    # the sole queued evaluator. The reusable job repeats this as defence-in-depth.
+    if: >
+      (
+        github.event_name == 'pull_request' ||
+        (
+          (
+            github.event_name == 'pull_request_review' ||
+            (
+              github.event_name == 'pull_request_review_comment' &&
+              github.event.comment.in_reply_to_id == null
+            ) ||
+            (github.event_name == 'issue_comment' && github.event.issue.pull_request)
+          ) &&
+          (
+            github.actor == 'coderabbitai' ||
+            github.actor == 'coderabbitai[bot]' ||
+            github.actor == 'gemini-code-assist' ||
+            github.actor == 'gemini-code-assist[bot]' ||
+            github.actor == 'augment-code' ||
+            github.actor == 'augment-code[bot]' ||
+            github.actor == 'augmentcode' ||
+            github.actor == 'augmentcode[bot]' ||
+            github.actor == 'copilot' ||
+            github.actor == 'copilot[bot]' ||
+            github.actor == 'github-actions[bot]'
+          )
+        )
+      )
+    # Do not cancel an active evaluator (GH#2973). Job-level placement is
+    # required: ineligible workflow events skip before entering this group and
+    # therefore cannot displace its one pending eligible run (GH#28316).
+    concurrency:
+      group: review-bot-gate-${{ github.event.pull_request.number || github.event.issue.number }}
+      cancel-in-progress: false
     uses: marcusquinn/aidevops/.github/workflows/review-bot-gate-reusable.yml@main
     with:
       # Keep this equal to the ref on `uses:` so helper code is pinned with the reusable YAML.
