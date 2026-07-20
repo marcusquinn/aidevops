@@ -25,6 +25,7 @@ READ_ONLY = {
     "ls-files",
     "ls-remote",
     "ls-tree",
+    "rev-list",
     "merge-base",
     "describe",
     "grep",
