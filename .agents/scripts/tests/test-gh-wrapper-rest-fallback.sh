@@ -178,6 +178,7 @@ _stub_print_fixture_with_jq() {
 _stub_gh_api_issues_list() {
 	local jq_filter=""
 	local fixture='[{"number":22430,"state":"open","title":"Reduce GraphQL list-call pressure","html_url":"https://github.com/owner/repo/issues/22430","updated_at":"2026-05-02T17:52:48Z","labels":[{"name":"auto-dispatch"}],"assignees":[{"login":"worker"}],"user":{"login":"maintainer"}}]'
+	fixture="${STUB_ISSUE_LIST_FIXTURE:-$fixture}"
 	jq_filter="$(_stub_jq_filter_arg 3 "$@")"
 	_stub_print_fixture_with_jq "$fixture" "$jq_filter" -c
 	return $?
@@ -205,12 +206,19 @@ _stub_gh_api_pr_list() {
 }
 _stub_gh_api_search_issues() {
 	local option="$1"
+	local path="${2:-$1}"
 	local fixture='{"items":[{"number":22430,"state":"open","title":"Reduce GraphQL list-call pressure"}]}'
 	if [[ -n "${STUB_SEARCH_RAW_RESPONSE:-}" ]]; then
 		printf '%s' "$STUB_SEARCH_RAW_RESPONSE"
 		return 0
 	fi
-	fixture="${STUB_SEARCH_FIXTURE:-$fixture}"
+	if [[ "${STUB_SEARCH_PAGINATED:-0}" == "1" && "$path" == *"page=1" ]]; then
+		fixture=$(jq -cn '{items: [range(1; 101) | {number: ., state: "open", title: "PR", user: {login: "alice"}, pull_request: {merged_at: null}}]}')
+	elif [[ "${STUB_SEARCH_PAGINATED:-0}" == "1" && "$path" == *"page=2" ]]; then
+		fixture=$(jq -cn '{items: [range(101; 151) | {number: ., state: "open", title: "PR", user: {login: "alice"}, pull_request: {merged_at: null}}]}')
+	else
+		fixture="${STUB_SEARCH_FIXTURE:-$fixture}"
+	fi
 	if [[ "$option" == "-i" ]]; then
 		printf 'HTTP/2 200\r\nX-RateLimit-Remaining: 29\r\nX-RateLimit-Resource: search\r\nX-GitHub-Request-Id: SEARCH-REQ\r\n\r\n%s\n' "$fixture"
 		return 0
@@ -233,7 +241,7 @@ _stub_gh_api() {
 		return 0
 	fi
 	if [[ "$subcommand" == "user" ]]; then
-		printf '"testuser"\n'
+		printf 'testuser\n'
 		return 0
 	fi
 	if [[ "$subcommand" == "-i" && "$path" =~ ^/repos/[^/]+/[^/]+/collaborators/[^/]+/permission$ ]]; then
@@ -257,7 +265,7 @@ _stub_gh_api() {
 		return $?
 	fi
 	if [[ "$subcommand" =~ ^/search/issues || ( "$subcommand" == "-i" && "$path" =~ ^/search/issues ) ]]; then
-		_stub_gh_api_search_issues "$subcommand"
+		_stub_gh_api_search_issues "$subcommand" "$path"
 		return 0
 	fi
 	if [[ "$subcommand" =~ ^/repos/[^/]+/[^/]+$ ]]; then
@@ -880,10 +888,10 @@ fi
 STUB_SEARCH_RAW_RESPONSE=$'HTTP/2 204\r\nX-RateLimit-Remaining: 29\r\n\r\n'
 search_output=$(_rest_issue_search --repo "owner/repo" --search "fallback" --state open --json number --jq '.[0].number')
 unset STUB_SEARCH_RAW_RESPONSE
-if [[ "$search_output" == "[]" ]] && grep -qE '^api -i /search/issues\?' "$GH_CALLS" 2>/dev/null; then
-	pass "_rest_issue_search emits an empty JSON array for empty response bodies"
+if [[ "$search_output" == "null" ]] && grep -qE '^api -i /search/issues\?' "$GH_CALLS" 2>/dev/null; then
+	pass "_rest_issue_search applies caller jq to an empty result array"
 else
-	fail "_rest_issue_search emits an empty JSON array for empty response bodies" \
+	fail "_rest_issue_search applies caller jq to an empty result array" \
 		"output=${search_output} GH_CALLS=$(cat "$GH_CALLS") | INFO=$(cat "$GH_INFO_OUTPUT")"
 fi
 
@@ -985,6 +993,123 @@ else
 	fail "gh_issue_list REST fallback preserves compact --json/--jq shape" \
 		"output=${issue_list_title} GH_CALLS=$(cat "$GH_CALLS") | INFO=$(cat "$GH_INFO_OUTPUT")"
 fi
+
+# =============================================================================
+# Test 23d: issue author filters map exactly to the REST creator parameter
+# =============================================================================
+: >"$GH_CALLS"
+: >"$GH_INFO_OUTPUT"
+export STUB_RATE_LIMIT_REMAINING=0
+export STUB_ISSUE_LIST_FIXTURE='[{"number":22431,"state":"open","title":"Authored issue","html_url":"https://github.com/owner/repo/issues/22431","user":{"login":"alice"}}]'
+
+issue_author=$(gh_issue_list --repo "owner/repo" --state all --author alice \
+	--json number,author --jq '.[0].author.login' 2>/dev/null || true)
+
+if [[ "$issue_author" == "alice" ]] &&
+	grep -qE '^api /repos/owner/repo/issues\?state=all&per_page=30&creator=alice&page=1' "$GH_CALLS" 2>/dev/null &&
+	! grep -qE '^issue list' "$GH_CALLS" 2>/dev/null; then
+	pass "gh_issue_list preserves --author with REST creator filtering"
+else
+	fail "gh_issue_list preserves --author with REST creator filtering" \
+		"output=${issue_author} GH_CALLS=$(cat "$GH_CALLS")"
+fi
+unset STUB_ISSUE_LIST_FIXTURE
+
+# =============================================================================
+# Test 23e: issue author @me resolves before the creator request
+# =============================================================================
+: >"$GH_CALLS"
+: >"$GH_INFO_OUTPUT"
+export STUB_ISSUE_LIST_FIXTURE='[{"number":22432,"state":"open","title":"Own issue","html_url":"https://github.com/owner/repo/issues/22432","user":{"login":"testuser"}}]'
+
+issue_author=$(gh_issue_list --repo "owner/repo" --state all --author @me \
+	--json number,author --jq '.[0].author.login' 2>/dev/null || true)
+
+if [[ "$issue_author" == "testuser" ]] && grep -qE '^api user --jq ' "$GH_CALLS" 2>/dev/null &&
+	grep -qE 'creator=testuser' "$GH_CALLS" 2>/dev/null; then
+	pass "gh_issue_list resolves --author @me before REST routing"
+else
+	fail "gh_issue_list resolves --author @me before REST routing" \
+		"output=${issue_author} GH_CALLS=$(cat "$GH_CALLS")"
+fi
+unset STUB_ISSUE_LIST_FIXTURE
+
+# =============================================================================
+# Test 23f: PR author filters route through exact Search API qualifiers
+# =============================================================================
+: >"$GH_CALLS"
+: >"$GH_INFO_OUTPUT"
+export STUB_SEARCH_FIXTURE='{"items":[{"number":22433,"state":"closed","title":"Authored PR","html_url":"https://github.com/owner/repo/pull/22433","user":{"login":"alice"},"pull_request":{"merged_at":"2026-05-20T00:00:00Z"}}]}'
+
+pr_author=$(gh_pr_list --repo "owner/repo" --state merged --author alice --limit 30 \
+	--json number,state,author,mergedAt --jq '.[0].author.login + ":" + .[0].state' 2>/dev/null || true)
+
+if [[ "$pr_author" == "alice:MERGED" ]] && grep -qE '^api -i /search/issues\?' "$GH_CALLS" 2>/dev/null &&
+	grep -q 'author%3Aalice' "$GH_CALLS" 2>/dev/null && grep -q 'is%3Amerged' "$GH_CALLS" 2>/dev/null &&
+	! grep -qE '^pr list' "$GH_CALLS" 2>/dev/null; then
+	pass "gh_pr_list preserves --author through Search API qualifiers"
+else
+	fail "gh_pr_list preserves --author through Search API qualifiers" \
+		"output=${pr_author} GH_CALLS=$(cat "$GH_CALLS")"
+fi
+unset STUB_SEARCH_FIXTURE
+
+# =============================================================================
+# Test 23g: PR author @me resolves before Search API routing
+# =============================================================================
+: >"$GH_CALLS"
+: >"$GH_INFO_OUTPUT"
+export STUB_SEARCH_FIXTURE='{"items":[{"number":22434,"state":"open","title":"Own PR","html_url":"https://github.com/owner/repo/pull/22434","user":{"login":"testuser"},"pull_request":{"merged_at":null}}]}'
+
+pr_author=$(gh_pr_list --repo "owner/repo" --state all --author @me --limit 30 \
+	--json number,author --jq '.[0].author.login' 2>/dev/null || true)
+
+if [[ "$pr_author" == "testuser" ]] && grep -qE '^api user --jq ' "$GH_CALLS" 2>/dev/null &&
+	grep -q 'author%3Atestuser' "$GH_CALLS" 2>/dev/null; then
+	pass "gh_pr_list resolves --author @me before Search API routing"
+else
+	fail "gh_pr_list resolves --author @me before Search API routing" \
+		"output=${pr_author} GH_CALLS=$(cat "$GH_CALLS")"
+fi
+unset STUB_SEARCH_FIXTURE
+
+# =============================================================================
+# Test 23h: PR Search pagination reaches the requested matching result count
+# =============================================================================
+: >"$GH_CALLS"
+: >"$GH_INFO_OUTPUT"
+export STUB_SEARCH_PAGINATED=1
+
+pr_author_count=$(_rest_pr_search --repo "owner/repo" --state all --author alice \
+	--limit 150 --json number --jq 'length' 2>/dev/null || true)
+pr_author_pages=$(grep -cE '^api -i /search/issues\?' "$GH_CALLS" 2>/dev/null || true)
+
+if [[ "$pr_author_count" == "150" && "$pr_author_pages" == "2" ]]; then
+	pass "_rest_pr_search paginates to the requested matching result count"
+else
+	fail "_rest_pr_search paginates to the requested matching result count" \
+		"count=${pr_author_count} pages=${pr_author_pages} GH_CALLS=$(cat "$GH_CALLS")"
+fi
+unset STUB_SEARCH_PAGINATED
+
+# =============================================================================
+# Test 23i: unsupported low-budget filters fail closed after GraphQL failure
+# =============================================================================
+: >"$GH_CALLS"
+: >"$GH_INFO_OUTPUT"
+export STUB_PRIMARY_FAIL=1
+
+gh_issue_list --repo "owner/repo" --state open --milestone future --json number >/dev/null 2>&1
+unsupported_rc=$?
+
+if [[ "$unsupported_rc" -ne 0 ]] && grep -qE '^issue list' "$GH_CALLS" 2>/dev/null &&
+	! grep -qE '^api (/repos/.+/issues\?|(-i )?/search/issues\?)' "$GH_CALLS" 2>/dev/null; then
+	pass "gh_issue_list fails closed when REST cannot preserve an unknown filter"
+else
+	fail "gh_issue_list fails closed when REST cannot preserve an unknown filter" \
+		"rc=${unsupported_rc} GH_CALLS=$(cat "$GH_CALLS")"
+fi
+unset STUB_PRIMARY_FAIL
 
 # =============================================================================
 # Test 24: gh_pr_list keeps --search on GraphQL path when budget is low
@@ -1114,7 +1239,7 @@ unset AIDEVOPS_GH_PR_VIEW_CACHE
 unset AIDEVOPS_GH_PR_VIEW_CACHE_DIR
 
 # =============================================================================
-# Test 25f: REST PR view marks unavailable reviewDecision as null, not empty
+# Test 25f: unavailable reviewDecision remains on GraphQL and fails closed
 # =============================================================================
 : >"$GH_CALLS"
 : >"$GH_INFO_OUTPUT"
@@ -1122,19 +1247,22 @@ export STUB_RATE_LIMIT_REMAINING=0
 export STUB_PR_VIEW_FIXTURE='{"number":123,"title":"review state unavailable from REST"}'
 export STUB_PRIMARY_FAIL=1
 
-pr_view_review_decision=$(gh_pr_view 123 --repo "owner/repo" --json reviewDecision --jq '.reviewDecision == null' 2>/dev/null || true)
+pr_view_review_decision_rc=0
+pr_view_review_decision=$(gh_pr_view 123 --repo "owner/repo" --json reviewDecision --jq '.reviewDecision == null' 2>/dev/null) || pr_view_review_decision_rc=$?
 unset STUB_PRIMARY_FAIL
 
-if [[ "$pr_view_review_decision" == "true" ]]; then
-	pass "gh_pr_view REST fallback leaves GraphQL-only reviewDecision null"
+if [[ "$pr_view_review_decision_rc" -ne 0 && -z "$pr_view_review_decision" ]] &&
+	grep -qE '^pr view 123 .*--json reviewDecision' "$GH_CALLS" 2>/dev/null &&
+	! grep -qE '^api /repos/owner/repo/pulls/123$' "$GH_CALLS" 2>/dev/null; then
+	pass "gh_pr_view fails closed instead of fabricating reviewDecision"
 else
-	fail "gh_pr_view REST fallback leaves GraphQL-only reviewDecision null" \
-		"output=${pr_view_review_decision} GH_CALLS=$(cat "$GH_CALLS")"
+	fail "gh_pr_view fails closed instead of fabricating reviewDecision" \
+		"rc=${pr_view_review_decision_rc} output=${pr_view_review_decision} GH_CALLS=$(cat "$GH_CALLS")"
 fi
 unset STUB_PR_VIEW_FIXTURE
 
 # =============================================================================
-# Test 25c: REST PR list normalizes REST boolean mergeable to gh GraphQL enum
+# Test 25c: mergeable stays on GraphQL because list REST omits reliable values
 # =============================================================================
 : >"$GH_CALLS"
 : >"$GH_INFO_OUTPUT"
@@ -1143,16 +1271,17 @@ export STUB_PR_LIST_FIXTURE='[{"number":22337,"mergeable":false,"state":"open","
 
 pr_list_mergeable=$(gh_pr_list --repo "owner/repo" --state open --json mergeable --jq '.[0].mergeable' 2>/dev/null || true)
 
-if [[ "$pr_list_mergeable" == "CONFLICTING" || "$pr_list_mergeable" == '"CONFLICTING"' ]]; then
-	pass "gh_pr_list REST fallback normalizes mergeable=false to CONFLICTING"
+if grep -qE '^pr list .*--json mergeable' "$GH_CALLS" 2>/dev/null &&
+	! grep -qE '^api /repos/owner/repo/pulls\?' "$GH_CALLS" 2>/dev/null; then
+	pass "gh_pr_list keeps mergeable on GraphQL instead of fabricating REST state"
 else
-	fail "gh_pr_list REST fallback normalizes mergeable=false to CONFLICTING" \
+	fail "gh_pr_list keeps mergeable on GraphQL instead of fabricating REST state" \
 		"output=${pr_list_mergeable} GH_CALLS=$(cat "$GH_CALLS")"
 fi
 unset STUB_PR_LIST_FIXTURE
 
 # =============================================================================
-# Test 25e: REST PR list normalizes missing mergeable to UNKNOWN
+# Test 25e: missing REST mergeable still stays on GraphQL
 # =============================================================================
 : >"$GH_CALLS"
 : >"$GH_INFO_OUTPUT"
@@ -1161,16 +1290,17 @@ export STUB_PR_LIST_FIXTURE='[{"number":22337,"state":"open","merged_at":null,"h
 
 pr_list_mergeable=$(gh_pr_list --repo "owner/repo" --state open --json mergeable --jq '.[0].mergeable' 2>/dev/null || true)
 
-if [[ "$pr_list_mergeable" == "UNKNOWN" || "$pr_list_mergeable" == '"UNKNOWN"' ]]; then
-	pass "gh_pr_list REST fallback normalizes missing mergeable to UNKNOWN"
+if grep -qE '^pr list .*--json mergeable' "$GH_CALLS" 2>/dev/null &&
+	! grep -qE '^api /repos/owner/repo/pulls\?' "$GH_CALLS" 2>/dev/null; then
+	pass "gh_pr_list does not translate unavailable mergeable fields"
 else
-	fail "gh_pr_list REST fallback normalizes missing mergeable to UNKNOWN" \
+	fail "gh_pr_list does not translate unavailable mergeable fields" \
 		"output=${pr_list_mergeable} GH_CALLS=$(cat "$GH_CALLS")"
 fi
 unset STUB_PR_LIST_FIXTURE
 
 # =============================================================================
-# Test 25g: REST PR list marks unavailable reviewDecision as null, not empty
+# Test 25g: reviewDecision stays on GraphQL instead of becoming synthetic null
 # =============================================================================
 : >"$GH_CALLS"
 : >"$GH_INFO_OUTPUT"
@@ -1179,10 +1309,11 @@ export STUB_PR_LIST_FIXTURE='[{"number":22337,"state":"open","merged_at":null,"h
 
 pr_list_review_decision=$(gh_pr_list --repo "owner/repo" --state open --json number,reviewDecision --jq '.[0].reviewDecision == null' 2>/dev/null || true)
 
-if [[ "$pr_list_review_decision" == "true" ]]; then
-	pass "gh_pr_list REST fallback leaves GraphQL-only reviewDecision null"
+if grep -qE '^pr list .*--json number,reviewDecision' "$GH_CALLS" 2>/dev/null &&
+	! grep -qE '^api /repos/owner/repo/pulls\?' "$GH_CALLS" 2>/dev/null; then
+	pass "gh_pr_list keeps reviewDecision on GraphQL"
 else
-	fail "gh_pr_list REST fallback leaves GraphQL-only reviewDecision null" \
+	fail "gh_pr_list keeps reviewDecision on GraphQL" \
 		"output=${pr_list_review_decision} GH_CALLS=$(cat "$GH_CALLS")"
 fi
 unset STUB_PR_LIST_FIXTURE
@@ -1479,13 +1610,32 @@ else
 		"rc=${unsupported_fallback_rc} output=${unsupported_fallback_output} rest_calls=${unsupported_fallback_rest_calls} graphql_calls=${unsupported_fallback_graphql_calls} GH_CALLS=$(cat "$GH_CALLS")"
 fi
 
-if grep -q 'stable-within-cycle' "${SCRIPTS_DIR}/shared-gh-wrappers-rest-fallback.sh" 2>/dev/null &&
-	grep -q 'fields like mergeable' "${SCRIPTS_DIR}/shared-gh-wrappers-rest-fallback.sh" 2>/dev/null &&
-	grep -q 'GraphQL-only fields' "${SCRIPTS_DIR}/shared-gh-wrappers-rest-fallback.sh" 2>/dev/null; then
-	pass "gh_pr_view freshness classes document stable, volatile, and GraphQL-only fields"
+: >"$GH_CALLS"
+: >"$GH_INFO_OUTPUT"
+export STUB_RATE_LIMIT_REMAINING=0
+export STUB_PRIMARY_FAIL=1
+unsupported_view_arg_rc=0
+gh_pr_view 123 --repo "owner/repo" --web --json number >/dev/null 2>&1 || unsupported_view_arg_rc=$?
+unset STUB_PRIMARY_FAIL
+export STUB_RATE_LIMIT_REMAINING=5000
+
+if [[ "$unsupported_view_arg_rc" -ne 0 ]] &&
+	grep -qE '^pr view 123 .*--web --json number' "$GH_CALLS" 2>/dev/null &&
+	! grep -qE '^api /repos/owner/repo/pulls/123$' "$GH_CALLS" 2>/dev/null; then
+	pass "gh_pr_view never rewrites unknown semantic flags to REST"
 else
-	fail "gh_pr_view freshness classes document stable, volatile, and GraphQL-only fields" \
-		"missing freshness class comments in shared-gh-wrappers-rest-fallback.sh"
+	fail "gh_pr_view never rewrites unknown semantic flags to REST" \
+		"rc=${unsupported_view_arg_rc} GH_CALLS=$(cat "$GH_CALLS")"
+fi
+
+if _rest_pr_view_can_preserve_args 123 --repo "owner/repo" --json title &&
+	! _rest_pr_view_can_preserve_args 123 --repo "owner/repo" --json mergeable &&
+	_rest_pr_view_can_emergency_fallback_args 123 --repo "owner/repo" --json mergeable &&
+	! _rest_pr_view_can_emergency_fallback_args 123 --repo "owner/repo" --json reviewDecision; then
+	pass "gh_pr_view validators distinguish stable, volatile, and GraphQL-only fields"
+else
+	fail "gh_pr_view validators distinguish stable, volatile, and GraphQL-only fields" \
+		"unexpected proactive or emergency field classification"
 fi
 
 : >"$GH_CALLS"

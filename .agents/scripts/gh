@@ -821,9 +821,10 @@ if [[ -n "$_SHIM_READ_REWRITE" ]]; then
 		# issue/pr list/view fields onto gh-shaped output, and REST-first mode may
 		# use them while GraphQL is healthy when the args are semantically safe.
 		case "$_SHIM_READ_REWRITE" in
-		pr:list) _rest_pr_list_can_preserve_args "$@" || return 1 ;;
-		pr:view) _rest_pr_view_can_preserve_args "$@" || return 1 ;;
-		issue:list | issue:view) ;;
+		pr:list) _rest_pr_list_can_preserve_args "${@:3}" || return 1 ;;
+		pr:view) _rest_pr_view_can_preserve_args "${@:3}" || return 1 ;;
+		issue:list) _rest_issue_list_can_preserve_args "${@:3}" || return 1 ;;
+		issue:view) _rest_issue_view_can_preserve_args "${@:3}" || return 1 ;;
 		*)
 			_shim_read_has_json_flag "$@" && return 1
 			;;
@@ -840,20 +841,19 @@ if [[ -n "$_SHIM_READ_REWRITE" ]]; then
 		# Record the call as REST under the original gh operation. The REST
 		# translator records its own _rest_* label too; this shadow record keeps
 		# before/after ratios visible for the original high-frequency command.
-		gh_record_call rest "$(_shim_caller_label "${1:-}" "${2:-}")" 2>/dev/null || true
+		local _route_path="rest"
+		if { [[ "$_SHIM_READ_REWRITE" == "pr:list" ]] && _rest_args_have_author "${_SHIM_REST_ARGS[@]}"; } ||
+			{ [[ "$_SHIM_READ_REWRITE" == "issue:list" ]] && _rest_args_have_search "${_SHIM_REST_ARGS[@]}"; }; then
+			_route_path="search-rest"
+		fi
+		gh_record_call "$_route_path" "$(_shim_caller_label "${1:-}" "${2:-}")" 2>/dev/null || true
 
 		# Dispatch to the appropriate REST translator.
 		case "$_SHIM_READ_REWRITE" in
 		pr:view)    _rest_pr_view "${_SHIM_REST_ARGS[@]}" --repo "$_SHIM_REPO" ;;
 		issue:view) _rest_issue_view "${_SHIM_REST_ARGS[@]}" --repo "$_SHIM_REPO" ;;
-		pr:list)    _rest_pr_list "${_SHIM_REST_ARGS[@]}" --repo "$_SHIM_REPO" ;;
-		issue:list)
-			if _rest_args_have_search "${_SHIM_REST_ARGS[@]}"; then
-				_rest_issue_search "${_SHIM_REST_ARGS[@]}" --repo "$_SHIM_REPO"
-			else
-				_rest_issue_list "${_SHIM_REST_ARGS[@]}" --repo "$_SHIM_REPO"
-			fi
-			;;
+		pr:list)    _rest_pr_list_dispatch "${_SHIM_REST_ARGS[@]}" --repo "$_SHIM_REPO" ;;
+		issue:list) _rest_issue_list_dispatch "${_SHIM_REST_ARGS[@]}" --repo "$_SHIM_REPO" ;;
 		*) return 1 ;;
 		esac
 		return $?
