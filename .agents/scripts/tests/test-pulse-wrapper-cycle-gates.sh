@@ -201,6 +201,62 @@ else
 	fail "active cycle records completed-action latency"
 fi
 
+FINAL_TYPED_OUTCOME=""
+FINAL_PROGRESS_KINDS="[]"
+_pulse_cycle_state_finalize() {
+	local outcome="$1"
+	local progress_kinds="$2"
+	FINAL_TYPED_OUTCOME="$outcome"
+	FINAL_PROGRESS_KINDS="$progress_kinds"
+	return 0
+}
+
+export AIDEVOPS_DISPATCH_LEDGER_FILE="${TMP}/dispatch-ledger.jsonl"
+printf '%s\n' \
+	'{"lease_phase":"prelaunch","dispatched_at":"2026-01-01T00:00:00Z"}' \
+	'{malformed' \
+	'{"lease_phase":"ready","dispatched_at":"2026-01-01T00:00:01Z"}' \
+	'{"lease_phase":"prelaunch","dispatched_at":"2026-01-01T00:00:02Z"}' \
+	>"$AIDEVOPS_DISPATCH_LEDGER_FILE"
+if [[ "$(_pulse_capture_dispatch_total)" == "2" ]]; then
+	pass "dispatch total counts successful registrations and ignores malformed rows"
+else
+	fail "dispatch total counts successful registrations and ignores malformed rows"
+fi
+
+_PULSE_HEALTH_PRS_MERGED=0
+_PULSE_HEALTH_PRS_CLOSED_CONFLICTING=0
+_PULSE_CYCLE_BLOCKER_KIND="none"
+_PULSE_EFFICIENCY_CYCLE_OUTCOME="idle"
+_pulse_record_cycle_outcome 1
+if [[ "$FINAL_TYPED_OUTCOME" == "progressed" \
+	&& "$_PULSE_EFFICIENCY_CYCLE_OUTCOME" == "active" ]] \
+	&& printf '%s' "$FINAL_PROGRESS_KINDS" | jq -e '. == ["worker-dispatched"]' >/dev/null; then
+	pass "worker registration maps to typed progress and legacy active"
+else
+	fail "worker registration maps to typed progress and legacy active"
+fi
+
+_PULSE_CYCLE_BLOCKER_KIND="review-gate"
+_pulse_record_cycle_outcome 2
+if [[ "$FINAL_TYPED_OUTCOME" == "blocked" \
+	&& "$_PULSE_EFFICIENCY_CYCLE_OUTCOME" == "idle" \
+	&& "$FINAL_PROGRESS_KINDS" == "[]" ]]; then
+	pass "typed blocker maps to blocked and legacy idle"
+else
+	fail "typed blocker maps to blocked and legacy idle"
+fi
+
+_PULSE_CYCLE_BLOCKER_KIND="none"
+_pulse_record_cycle_outcome 2
+if [[ "$FINAL_TYPED_OUTCOME" == "idle" \
+	&& "$_PULSE_EFFICIENCY_CYCLE_OUTCOME" == "idle" \
+	&& "$FINAL_PROGRESS_KINDS" == "[]" ]]; then
+	pass "no durable evidence maps to typed and legacy idle"
+else
+	fail "no durable evidence maps to typed and legacy idle"
+fi
+
 PREFETCH_INFRA="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/pulse-prefetch-infra.sh"
 # shellcheck disable=SC1090
 source "$PREFETCH_INFRA"
