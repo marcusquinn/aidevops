@@ -326,19 +326,23 @@ Initialize **[aidevops](https://aidevops.sh)** features in any git repository:
 
 ```bash
 cd ~/your-project
-aidevops init                         # Enable all features
+aidevops init                         # Enable the default feature set
 aidevops init planning                # Enable only planning
 aidevops init planning,time-tracking  # Enable specific features
+aidevops init deployment-context   # Scaffold a deployment manifest
+aidevops init wordpress-context    # Scaffold WordPress + deployment manifests
 ```
 
 This creates:
 - `.aidevops.json` - Configuration with enabled features
-- `.agents` symlink → `~/.aidevops/agents/`
+- `.agents/AGENTS.md` - Project-specific agent context
 - `TODO.md` - Quick task tracking with time estimates
 - `todo/PLANS.md` - Complex execution plans
 - `.beads/` - Task graph database (if beads enabled)
+- `.aidevops/deployments.yaml` - Deployment instance inventory (opt-in)
+- `.aidevops/wordpress.yaml` - WordPress and LocalWP context (opt-in)
 
-**Available features:** `planning`, `git-workflow`, `code-quality`, `time-tracking`, `beads`
+**Available features:** `planning`, `git-workflow`, `code-quality`, `time-tracking`, `database`, `beads`, `sops`, `security`, `deployment-context`, `wordpress-context`. `hosting-context` is an alias for `deployment-context`; `wordpress-context` implies deployment context. The default `all` set intentionally excludes both project-instance context features.
 
 ### Per-repo platform setup
 
