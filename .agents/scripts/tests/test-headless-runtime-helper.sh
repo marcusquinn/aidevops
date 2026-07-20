@@ -705,7 +705,8 @@ test_private_workload_skips_persistent_failure_output() {
 	printf '%s\n' "$secret_marker" >"$output_file"
 	printf 'HTTP 503 service unavailable: %s\n' "$secret_marker" >"$details_file"
 
-	local excerpt_path
+	local candidate_path excerpt_path
+	candidate_path=$(_metric_failure_excerpt_candidate_path "$output_file" "private-test")
 	excerpt_path=$(_metric_failure_excerpt_path "$output_file" "private-test")
 	_preserve_no_activity_output "$output_file" "private-test" "openai/gpt-5.6-sol"
 	record_provider_backoff "openai" "provider_error" "$details_file" "openai/private-test"
@@ -713,7 +714,7 @@ test_private_workload_skips_persistent_failure_output() {
 	stored_details=$(db_query "SELECT details FROM provider_backoff WHERE provider = 'openai/private-test';")
 	clear_provider_backoff "openai/private-test"
 
-	if [[ -z "$excerpt_path" && ! -f "$output_file" && \
+	if [[ -z "$candidate_path" && -z "$excerpt_path" && ! -f "$output_file" && \
 		"$stored_details" == "private workload details suppressed" && \
 		! -d "${HOME}/.aidevops/logs/worker-failure-excerpts" && \
 		! -d "${HOME}/.aidevops/logs/worker-no-activity" ]]; then
@@ -722,7 +723,7 @@ test_private_workload_skips_persistent_failure_output() {
 	fi
 
 	print_result "private workloads do not persist transcript-derived diagnostics" 1 \
-		"excerpt=${excerpt_path:-<empty>} output_exists=$([[ -f "$output_file" ]] && printf yes || printf no) details=${stored_details:-<empty>}"
+		"candidate=${candidate_path:-<empty>} excerpt=${excerpt_path:-<empty>} output_exists=$([[ -f "$output_file" ]] && printf yes || printf no) details=${stored_details:-<empty>}"
 	return 0
 }
 
