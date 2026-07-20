@@ -4690,4 +4690,4 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [ ] t18166 Make Pulse cycle-health fixtures time-stable #auto-dispatch #bug #pulse #testing ref:GH#28376
 
-- [ ] t18167 Keep test evidence and compaction aligned with session aims #enhancement ref:GH#28382
+- [x] t18167 Keep test evidence and compaction aligned with session aims #enhancement ref:GH#28382 pr:#28384 completed:2026-07-20
