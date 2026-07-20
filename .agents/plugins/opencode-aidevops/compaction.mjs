@@ -351,15 +351,24 @@ export async function compactingHook(deps, _input, output, directory) {
     getMailboxState(scriptsDir),
   ].filter(Boolean);
 
-  if (sections.length === 0) return;
-
   output.context.push(
     [
       "# aidevops Framework Context",
-      "Include the following state in your compaction summary so the next session can continue seamlessly:",
       "",
-      ...sections,
+      "## Session Aim Continuity — Highest Priority",
+      "Begin the compaction summary with exactly `## Session aims`.",
+      "- Preserve the initiating user aim plus every later added, clarified, corrected, or adapted aim. Mark each as active, satisfied, superseded, or blocked; retain material constraints and success criteria. Do not substitute the most recent task for the session aim.",
+      "- Preserve causal alignment: state why each unresolved task or method serves an active aim and what decision or acceptance criterion remains.",
+      "- Tests, checks, logs, plans, and tooling are methods or evidence—not standalone aims. If the user requested one as a deliverable, preserve the outcome or risk it serves; do not let it replace that aim. Preserve what each materially established; do not resume it merely because it was last active.",
+      "- After rollover, reassess the best available route to the session's active aims—fast, reliable, safe, time-efficient, and cost-efficient—using all available evidence, including live usage/observability. Avoid busy-work and stop gathering evidence when it no longer changes a reasoned decision, while preserving required gates.",
       "",
+      ...(sections.length > 0 ? [
+        "## Operational State",
+        "Include the following state in your compaction summary so the next session can continue seamlessly:",
+        "",
+        ...sections,
+        "",
+      ] : []),
       "## Critical Rules to Preserve",
       "- File discovery: use `git ls-files` not Glob",
       "- Git workflow: run pre-edit-check.sh before any file modifications",

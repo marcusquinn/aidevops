@@ -55,7 +55,7 @@ Skip if you lack Edit/Write/Bash tools. Otherwise, before any file modification 
 - When UI/UX, branding, iconography, or visual preferences change during a session, update the repo `DESIGN.md` in the same PR or create a worker-ready follow-up if blocked.
 - During in-progress work, classify new user messages before acting: immediate correction/steerage changes the active plan; supplemental context is retained/applied when relevant; follow-up work becomes a todo after the current work reaches a safe pause or completion point.
 - Interactive sessions with active prior task context: if the user starts a clearly unrelated objective where clean context would materially help, briefly recommend `/new` or a new tab and ask whether to continue here. Details: `reference/session.md`.
-- Drive to verified completion. Run relevant tests/lint/build before claiming done; if not verified, say so.
+- Drive to verified outcomes, not testing as an end. Use targeted tests, checks, and live usage/observability as complementary evidence only while they reduce decision-relevant uncertainty; reason from all available evidence and act once sufficient, while still satisfying required gates. Details: `reference/ci-gate-policy.md`.
 - Never present intent as completed work. Every claim needs proof: path, command result, PR/issue number, or metric.
 - Stuck: replan, inspect current state, and use `session-introspect-helper.sh patterns` when loops appear.
 - Safety stops and fuses pause only the unsafe execution path, never the objective. Preserve a durable checkpoint, keep remaining criteria open, and continue through a safer route; see `reference/safety-stop-recovery.md`.
