@@ -139,22 +139,15 @@ def _target_probe(cwd: str, file_path: str) -> str:
 def check_write(cwd: str, file_path: str) -> dict[str, Any]:
     """Return one fail-closed direct-file-write decision."""
     context = classify_location(cwd)
-    target = classify_location(_target_probe(cwd, file_path))
-    classifications = (context, target)
-    unknown = next(
-        (item for item in classifications if item.classification == "unknown"), None
-    )
+    if not file_path:
+        target = Classification("unknown", False, reason="write target is empty")
+    else:
+        target = classify_location(_target_probe(cwd, file_path))
 
-    if unknown is not None:
+    if target.classification == "unknown":
         decision = "deny"
-        reason = f"worktree classification failed closed: {unknown.reason}"
+        reason = f"write target classification failed closed: {target.reason}"
     elif target.classification == "canonical":
-        decision = "deny"
-        reason = "canonical checkouts are read-only session mirrors"
-    elif context.classification == "canonical" and not (
-        target.classification == "linked"
-        and target.common_dir == context.common_dir
-    ):
         decision = "deny"
         reason = "canonical checkouts are read-only session mirrors"
     else:
@@ -162,7 +155,7 @@ def check_write(cwd: str, file_path: str) -> dict[str, Any]:
         reason = (
             "write target resolves inside an allowed linked worktree"
             if target.classification == "linked"
-            else "write target and process context are outside canonical worktrees"
+            else "write target is outside canonical worktrees"
         )
 
     return {
@@ -194,9 +187,9 @@ def check_patch(cwd: str, patch_text: str) -> dict[str, Any]:
     """Return one fail-closed decision for every target in an apply patch."""
     paths = _patch_paths(patch_text)
     if not paths:
-        context_decision = check_write(cwd, "")
+        empty_decision = check_write(cwd, "")
         return {
-            **context_decision,
+            **empty_decision,
             "decision": "deny",
             "reason": "apply-patch targets could not be classified safely",
             "action": "repair_or_use_linked_worktree",

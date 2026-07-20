@@ -37,6 +37,7 @@ readonly SESSION_FLAG="${HOME}/.aidevops/logs/pulse-session.flag"
 readonly STOP_FLAG="${HOME}/.aidevops/logs/pulse-session.stop"
 readonly LOGFILE="${HOME}/.aidevops/logs/pulse.log"
 readonly WRAPPER_LOGFILE="${HOME}/.aidevops/logs/pulse-wrapper.log"
+readonly WRAPPER_LAST_RUN_FILE="${HOME}/.aidevops/logs/pulse-wrapper-last-run.ts"
 readonly PIDFILE="${HOME}/.aidevops/logs/pulse.pid"
 readonly MAX_WORKERS_FILE="${HOME}/.aidevops/logs/pulse-max-workers"
 readonly REPOS_JSON="${HOME}/.config/aidevops/repos.json"
@@ -226,20 +227,56 @@ get_scheduler_install_cmd() {
 }
 
 #######################################
-# Get last pulse timestamp from log
+# Convert a Unix epoch to an ISO 8601 UTC timestamp on GNU and BSD date.
+#######################################
+_pulse_epoch_to_iso() {
+	local epoch="$1"
+	local iso=""
+
+	iso=$(date -u -d "@${epoch}" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null) || true
+	if [[ -z "$iso" ]]; then
+		iso=$(date -u -r "$epoch" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null) || true
+	fi
+	if [[ -z "$iso" ]]; then
+		return 1
+	fi
+	printf '%s\n' "$iso"
+	return 0
+}
+
+#######################################
+# Get the last admitted deterministic Pulse timestamp. Fall back to the
+# historical optional LLM-cycle log marker for installations that predate the
+# wrapper marker file.
 #######################################
 get_last_pulse_time() {
-	local candidate_log last_line
-	for candidate_log in "$WRAPPER_LOGFILE" "$LOGFILE"; do
-		if [[ -f "$candidate_log" ]]; then
-			last_line=$(grep 'Starting pulse at' "$candidate_log" | tail -1)
-			if [[ -n "$last_line" ]]; then
-				echo "$last_line" | grep -oE '[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z' | tail -1
+	local marker_epoch=""
+	local marker_iso=""
+	if [[ -f "$WRAPPER_LAST_RUN_FILE" ]]; then
+		IFS= read -r marker_epoch <"$WRAPPER_LAST_RUN_FILE" || true
+		if [[ "$marker_epoch" =~ ^[1-9][0-9]*$ ]]; then
+			marker_iso=$(_pulse_epoch_to_iso "$marker_epoch") || marker_iso=""
+			if [[ -n "$marker_iso" ]]; then
+				printf '%s\n' "$marker_iso"
 				return 0
 			fi
 		fi
+	fi
+
+	local candidate_log last_line timestamp
+	for candidate_log in "$WRAPPER_LOGFILE" "$LOGFILE"; do
+		if [[ -f "$candidate_log" ]]; then
+			last_line=$(grep 'Starting pulse at' "$candidate_log" | tail -1 || true)
+			if [[ -n "$last_line" ]]; then
+				timestamp=$(printf '%s\n' "$last_line" | grep -oE '[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z' | tail -1 || true)
+				if [[ -n "$timestamp" ]]; then
+					printf '%s\n' "$timestamp"
+					return 0
+				fi
+			fi
+		fi
 	done
-	echo "never"
+	printf '%s\n' "never"
 	return 0
 }
 
