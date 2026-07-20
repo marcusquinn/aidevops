@@ -225,7 +225,14 @@ test_off_default_branch_in_linked_worktree_allowed() {
 	local output=""
 	local rc=0
 	for tool_name in Edit Write functions.apply_patch apply_patch; do
-		json=$(printf '{"tool_name":"%s","tool_input":{"filePath":"%s/src/foo.ts"}}' "$tool_name" "$worktree_path")
+		case "$tool_name" in
+		*apply_patch)
+			json=$(printf '{"tool_name":"%s","tool_input":{"patchText":"*** Begin Patch\\n*** Add File: %s/new-file.md\\n+safe\\n*** End Patch\\n"}}' "$tool_name" "$worktree_path")
+			;;
+		*)
+			json=$(printf '{"tool_name":"%s","tool_input":{"filePath":"%s/src/foo.ts"}}' "$tool_name" "$worktree_path")
+			;;
+		esac
 		output=$(run_hook "$worktree_path" "$json") || true
 		[[ -z "$output" ]] || rc=1
 	done
