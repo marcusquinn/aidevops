@@ -899,7 +899,8 @@ _create_github_issue() {
 
 	local issue_url
 	# t2115: Use gh_create_issue wrapper for origin label + signature auto-append.
-	if ! issue_url=$(gh_create_issue --repo "$repo_slug" --title "$title" --body "$body" --label "routines" 2>&1); then
+	if ! issue_url=$(gh_create_issue --repo "$repo_slug" --title "$title" --body "$body" \
+		--label "routines" --label "routine-tracking" 2>&1); then
 		_log_error "Failed to create issue: ${issue_url}"
 		return 1
 	fi
