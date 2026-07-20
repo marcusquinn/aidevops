@@ -160,11 +160,16 @@ else
 	fail "PATH shim left canonical symbolic ref changed"
 fi
 
-if (cd "$REPO" && PATH="${SCRIPT_DIR}:/usr/bin:/bin" "$SHIM" check-ref-format --branch feature/valid-ref >/dev/null) &&
-	! (cd "$REPO" && PATH="${SCRIPT_DIR}:/usr/bin:/bin" "$SHIM" check-ref-format --branch "invalid ref" >/dev/null 2>&1); then
+VALID_REF_RC=0
+INVALID_REF_RC=0
+NATIVE_INVALID_REF_RC=0
+git check-ref-format --branch "invalid ref" >/dev/null 2>&1 || NATIVE_INVALID_REF_RC=$?
+(cd "$REPO" && PATH="${SCRIPT_DIR}:/usr/bin:/bin" "$SHIM" check-ref-format --branch feature/valid-ref >/dev/null) || VALID_REF_RC=$?
+(cd "$REPO" && PATH="${SCRIPT_DIR}:/usr/bin:/bin" "$SHIM" check-ref-format --branch "invalid ref" >/dev/null 2>&1) || INVALID_REF_RC=$?
+if [[ "$VALID_REF_RC" -eq 0 && "$NATIVE_INVALID_REF_RC" -ne 0 && "$INVALID_REF_RC" -eq "$NATIVE_INVALID_REF_RC" ]]; then
 	pass "PATH shim preserves native ref format validation"
 else
-	fail "PATH shim preserves native ref format validation"
+	fail "PATH shim preserves native ref format validation (valid_rc=${VALID_REF_RC}, invalid_rc=${INVALID_REF_RC}, native_invalid_rc=${NATIVE_INVALID_REF_RC})"
 fi
 
 if (cd "$REPO" && PATH="${SCRIPT_DIR}:$PATH" "$SHIM" switch --detach main >/dev/null 2>&1); then
