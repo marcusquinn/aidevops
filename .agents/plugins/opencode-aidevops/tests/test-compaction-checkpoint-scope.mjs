@@ -123,6 +123,11 @@ test("compaction injects only the active repository checkpoint", async () => {
     const payload = output.context.join("\n");
     assert.match(payload, /## Operational State/);
     assert.match(payload, /TARGET_REPO_CHECKPOINT_STATE/);
+    assert.match(
+      payload,
+      /TARGET_REPO_CHECKPOINT_STATE\n\n## Repository Campaign Checkpoint/,
+      "operational state sections must have a blank line between them",
+    );
     assert.doesNotMatch(payload, /UNRELATED_LEGACY_CHECKPOINT_STATE/);
     assert.doesNotMatch(payload, /UNRELATED_SIBLING_CHECKPOINT_STATE/);
     assert.match(payload, /## Repository Campaign Checkpoint/);
