@@ -85,8 +85,35 @@ _classify_stale_recovery_crash_type() {
 		return 0
 	fi
 
-	# No PR, no branch — the worker died before producing any durable
-	# artifact. Classify as no_work so the cascade tier escalation
+	# GH#1214 / t2769 defence-in-depth: check the most recent ops comment for
+	# pre-launch abort evidence. When the last dispatch was a pre-launch abort
+	# (orphan branch hold, canary fail, worktree failure, etc.), the claim was
+	# deleted by t3549 but a prior dispatch claim still exists. Without this
+	# check, the stale-recovery classifier returns no_work and the fast-fail
+	# counter increments, eventually tripping the t2769 circuit breaker.
+	# Classify these as "prelaunch" so the caller can skip fast-fail accrual.
+	local _latest_ops_marker=""
+	_latest_ops_marker=$(gh api "repos/${repo_slug}/issues/${issue_number}/comments" \
+		--paginate --jq '
+		[.[] | select((.body // "") | test("<!-- ops:start"))
+		| {body: .body, created_at: .created_at}]
+		| sort_by(.created_at) | last
+		| .body // empty
+		' 2>/dev/null) || _latest_ops_marker=""
+	if [[ -n "$_latest_ops_marker" ]]; then
+		if [[ "$_latest_ops_marker" == *"worker-branch-orphan"* ]] ||
+			[[ "$_latest_ops_marker" == *"WORKER_BRANCH_ORPHAN"* ]] ||
+			[[ "$_latest_ops_marker" == *"canary preflight failed"* ]] ||
+			[[ "$_latest_ops_marker" == *"worktree pre-creation failed"* ]] ||
+			[[ "$_latest_ops_marker" == *"precreation failed"* ]] ||
+			[[ "$_latest_ops_marker" == *"pre-launch abort"* ]]; then
+			printf 'prelaunch'
+			return 0
+		fi
+	fi
+
+	# No PR, no branch, no pre-launch marker — the worker died before producing
+	# any durable artifact. Classify as no_work so the cascade tier escalation
 	# comment renders the "Likely infrastructure/transient failure" line.
 	printf 'no_work'
 	return 0
@@ -302,8 +329,17 @@ _dedup_layer6_assignee_and_stale() {
 			# instead of a bare "Reason: stale_timeout" with no signal.
 			local _stale_crash_type
 			_stale_crash_type=$(_classify_stale_recovery_crash_type "$issue_number" "$repo_slug")
-			echo "[pulse-wrapper] Dedup: stale recovery detected for #${issue_number} in ${repo_slug} crash_type=${_stale_crash_type} — recording fast-fail (t1927/t2042)" >>"$LOGFILE"
-			fast_fail_record "$issue_number" "$repo_slug" "stale_timeout" "" "$_stale_crash_type" || true
+			# GH#1214 / t2769 defence-in-depth: when the classifier finds
+			# pre-launch abort evidence (orphan, canary, worktree failure),
+			# it returns "prelaunch" instead of "no_work". Pre-launch aborts
+			# are not worker failures and must not accrue toward the t2769
+			# no_work circuit breaker. Skip fast-fail recording entirely.
+			if [[ "$_stale_crash_type" == "prelaunch" ]]; then
+				echo "[pulse-wrapper] Dedup: stale recovery for #${issue_number} in ${repo_slug} classified as prelaunch — skipping fast-fail record (GH#1214)" >>"$LOGFILE"
+			else
+				echo "[pulse-wrapper] Dedup: stale recovery detected for #${issue_number} in ${repo_slug} crash_type=${_stale_crash_type} — recording fast-fail (t1927/t2042)" >>"$LOGFILE"
+				fast_fail_record "$issue_number" "$repo_slug" "stale_timeout" "" "$_stale_crash_type" || true
+			fi
 		fi
 		if [[ "$assigned_output" == *STALE_BLOCKED_BY_DEPENDENCY* ]]; then
 			echo "[pulse-wrapper] Dedup: stale recovery for #${issue_number} in ${repo_slug} found unresolved blocked-by dependency — blocking re-dispatch (GH#23932)" >>"$LOGFILE"

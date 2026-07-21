@@ -60,6 +60,10 @@ if [[ "$cmd" == "is-assigned" ]]; then
 		printf '%s\n' 'STALE_RECOVERED: issue #2905 in exampleorg/examplerepo - unassigned runner (no dispatch claim comment found, worker canary preflight failed before worktree pre-creation; will retry next cycle)'
 		exit 1
 		;;
+	prelaunch_orphan)
+		printf '%s\n' 'STALE_RECOVERED: issue #2905 in exampleorg/examplerepo - unassigned runner (dispatch claim 900s old, last activity 900s old (threshold=600s, interactive=false))'
+		exit 1
+		;;
 	worker)
 		printf '%s\n' 'STALE_RECOVERED: issue #2905 in exampleorg/examplerepo - unassigned runner (dispatch claim 900s old, last activity 900s old (threshold=600s, interactive=false))'
 		exit 1
@@ -137,7 +141,11 @@ _classify_stale_recovery_crash_type() {
 	local repo_slug="$2"
 	: "$issue_number" "$repo_slug"
 	printf '%s|%s\n' "$issue_number" "$repo_slug" >>"$CLASSIFY_LOG"
-	printf 'no_work'
+	if [[ "${TEST_STALE_MODE:-no_worker}" == "prelaunch_orphan" ]]; then
+		printf 'prelaunch'
+	else
+		printf 'no_work'
+	fi
 	return 0
 }
 
@@ -279,8 +287,35 @@ test_terminal_pr_checkpoint_routes_existing_consolidation_guard() {
 	return 0
 }
 
+# GH#1214 / t2769 regression: a pre-launch abort (orphan branch hold) that
+# leaves a stale assignment with a prior dispatch claim should not record a
+# no_work fast-fail. The classifier detects the orphan ops marker and returns
+# "prelaunch", which the recording path skips.
+test_prelaunch_orphan_stale_recovery_skips_fast_fail() {
+	export TEST_STALE_MODE="prelaunch_orphan"
+	reset_observations
+	local rc=0
+	_dedup_layer6_assignee_and_stale "2905" "exampleorg/examplerepo" "runner" || rc=$?
+
+	if [[ "$rc" -ne 1 ]]; then
+		fail "prelaunch orphan stale recovery continues dispatch" "expected rc=1, got rc=${rc}"
+		return 0
+	fi
+	if [[ "$FAST_FAIL_CALLS" -ne 0 ]]; then
+		fail "prelaunch orphan stale recovery skips fast-fail" "fast_fail_record called ${FAST_FAIL_CALLS} time(s): ${LAST_FAST_FAIL}"
+		return 0
+	fi
+	if ! grep -q 'classified as prelaunch' "$LOGFILE" 2>/dev/null; then
+		fail "prelaunch orphan stale recovery logs prelaunch skip" "log: $(tr '\n' ' ' <"$LOGFILE")"
+		return 0
+	fi
+	pass "prelaunch orphan stale recovery skips no_work fast-fail (GH#1214)"
+	return 0
+}
+
 test_stale_recovery_without_claim_skips_fast_fail
 test_prelaunch_canary_stale_recovery_skips_fast_fail
+test_prelaunch_orphan_stale_recovery_skips_fast_fail
 test_stale_recovery_with_dispatch_claim_records_fast_fail
 test_stale_recovery_blocked_by_dependency_blocks_redispatch
 test_terminal_stale_recovery_routes_consolidation_and_blocks
