@@ -24,8 +24,10 @@
 #      crypto-approval, stale merged PR-list entries, and unknown authors that
 #      must not bypass the collaborator check) and keeps processing when GitHub
 #      returns a null PR author for deleted users.
-#   8. _detect_pattern_outage de-duplicates repeated PR observations.
-#   9. pulse-merge-stuck.sh and pulse-stats-helper.sh pass shellcheck.
+#   8. Effective preflight snapshots suppress superseded check-run failures.
+#   9. _detect_pattern_outage de-duplicates repeated PR observations and
+#      generated Markdown includes the final affected PR.
+#  10. pulse-merge-stuck.sh and pulse-stats-helper.sh pass shellcheck.
 #
 # The test never makes real network calls; functions that require gh API
 # (_classify_stuck_pr, _escalate_individual_stuck_pr, full pulse_merge_stuck_run_pass)
@@ -613,6 +615,7 @@ gh_pr_view() {
 	207) printf 'sha-legacy-error' ;;
 	208) printf '{"labels":[],"mergeable":"MERGEABLE","headRefOid":"sha-clean-ruleset"}' ;;
 	209) printf '{"labels":[],"mergeable":"MERGEABLE","headRefOid":"sha-clean-ruleset-fail"}' ;;
+	210) printf 'sha-superseded-failure' ;;
 	*) printf '{"labels":[],"mergeable":"MERGEABLE","headRefOid":"sha-clean"}' ;;
 	esac
 	return 0
@@ -627,6 +630,7 @@ gh_pr_check_runs_rest() {
 	sha-failing) printf '[{"name":"Format","conclusion":"failure","status":"completed"},{"name":"Lint","conclusion":"timed_out","status":"completed"}]' ;;
 	sha-legacy-failing) printf '[{"context":"legacy-ci","state":"failure"}]' ;;
 	sha-legacy-error) printf '[{"context":"legacy-error","state":"error"}]' ;;
+	sha-superseded-failure) printf '[{"name":"gate / Maintainer Review & Assignee Gate","conclusion":"cancelled","status":"completed"}]' ;;
 	*) printf '[]' ;;
 	esac
 	return 0
@@ -714,6 +718,18 @@ assert_eq "7i: ruleset helper failure reports branch-protection API error" \
 	"STUCK_BRANCHPROTECT_API_ERROR" "$got"
 assert_eq "7j: ruleset helper failure propagates helper exit code" \
 	"7" "$ruleset_fail_rc"
+
+_pmrc_snapshot_checks_json() {
+	local repo_slug="$1"
+	local head_sha="$2"
+	[[ -n "$repo_slug" && -n "$head_sha" ]] || return 1
+	printf '[{"name":"maintainer-gate","conclusion":"success","status":"completed"}]'
+	return 0
+}
+
+got=$(_pms_failure_fingerprint "210" "example/repo")
+assert_eq "7k: effective snapshot suppresses superseded check-run failure" "" "$got"
+unset -f _pmrc_snapshot_checks_json
 echo ""
 
 # ---------------------------------------------------------------------------
@@ -747,6 +763,10 @@ _detect_pattern_outage "example/repo" $'11\n11\n12\n'
 assert_eq "7a: duplicate PR observations counted once" \
 	"example/repo|2|E2E Shard 1/4,E2E Shard 2/4|11,12" \
 	"$PMS_TEST_OUTAGE_ARGS"
+
+got=$(_pms_format_pr_markdown_list "11,12,13")
+assert_eq "7b: affected-PR Markdown retains the final entry" \
+	$'- #11\n- #12\n- #13' "$got"
 echo ""
 
 # ---------------------------------------------------------------------------
