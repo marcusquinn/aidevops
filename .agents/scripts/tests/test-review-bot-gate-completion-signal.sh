@@ -664,6 +664,28 @@ test_trusted_default_does_not_require_completed_review() {
 	return 0
 }
 
+test_owner_rest_association_does_not_require_completed_review() {
+	gh() {
+		if [[ "${1:-}" == "api" && "${2:-}" == "repos/testorg/otherrepo/pulls/123" ]]; then
+			printf '%s\n' 'OWNER'
+			return 0
+		fi
+		return 2
+	}
+
+	local association=""
+	association=$(_resolve_pr_author_association 123 'testorg/otherrepo')
+	unset -f gh
+	if [[ "$association" == "OWNER" ]] &&
+		! REVIEW_GATE_AUTHOR_ASSOCIATION="$association" _review_gate_requires_completed_review 'testorg/otherrepo'; then
+		print_result "REST resolver restores trusted OWNER advisory behavior" 0
+	else
+		print_result "REST resolver restores trusted OWNER advisory behavior" 1 \
+			"association=${association:-<empty>}"
+	fi
+	return 0
+}
+
 test_trusted_strict_repo_requires_completed_review() {
 	if REVIEW_GATE_AUTHOR_ASSOCIATION=MEMBER _review_gate_requires_completed_review 'testorg/strictrepo'; then
 		print_result "trusted strict repo requires completed add-on review" 0
@@ -678,6 +700,41 @@ test_external_default_requires_completed_review() {
 		print_result "external author preserves completed-review trust boundary" 0
 	else
 		print_result "external author preserves completed-review trust boundary" 1
+	fi
+	return 0
+}
+
+test_untrusted_association_matrix_requires_completed_review() {
+	local association=""
+	local failures=""
+	for association in CONTRIBUTOR NONE FIRST_TIMER FIRST_TIME_CONTRIBUTOR FUTURE_ENUM ""; do
+		if ! REVIEW_GATE_AUTHOR_ASSOCIATION="$association" _review_gate_requires_completed_review 'testorg/otherrepo'; then
+			failures="${failures}${association:-<empty>} "
+		fi
+	done
+	if [[ -z "$failures" ]]; then
+		print_result "external, unknown, and empty associations fail closed" 0
+	else
+		print_result "external, unknown, and empty associations fail closed" 1 \
+			"unexpected advisory associations: ${failures}"
+	fi
+	return 0
+}
+
+test_malformed_metadata_and_rest_failure_fail_closed() {
+	gh() {
+		return 42
+	}
+
+	local association=""
+	association=$(_resolve_pr_author_association 123 'testorg/otherrepo' '{malformed-json')
+	unset -f gh
+	if [[ -z "$association" ]] &&
+		REVIEW_GATE_AUTHOR_ASSOCIATION="$association" _review_gate_requires_completed_review 'testorg/otherrepo'; then
+		print_result "malformed metadata plus REST failure remains unknown" 0
+	else
+		print_result "malformed metadata plus REST failure remains unknown" 1 \
+			"association=${association:-<empty>}"
 	fi
 	return 0
 }
@@ -1369,8 +1426,11 @@ test_status_json_fails_closed_without_pr_metadata() {
 
 run_completion_requirement_tests() {
 	test_trusted_default_does_not_require_completed_review
+	test_owner_rest_association_does_not_require_completed_review
 	test_trusted_strict_repo_requires_completed_review
 	test_external_default_requires_completed_review
+	test_untrusted_association_matrix_requires_completed_review
+	test_malformed_metadata_and_rest_failure_fail_closed
 	return 0
 }
 

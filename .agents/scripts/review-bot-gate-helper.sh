@@ -1043,6 +1043,35 @@ any_bot_has_success_status() {
 	return 1
 }
 
+_resolve_pr_author_association() {
+	local pr_number="$1"
+	local repo="$2"
+	local pr_metadata_json="${3:-}"
+	local association=""
+	local association_filter='if type == "object" and (.author_association | type == "string") then .author_association else empty end'
+	local pr_api=""
+
+	# Internal callers can pass the live REST pull payload they already fetched.
+	# Only the REST field is authoritative; login, labels, and runner identity do
+	# not establish author trust.
+	if [[ -n "$pr_metadata_json" ]] &&
+		association=$(jq -r "$association_filter" <<<"$pr_metadata_json" 2>/dev/null); then
+		if [[ -n "$association" ]]; then
+			printf '%s\n' "$association"
+			return 0
+		fi
+	fi
+
+	# GitHub CLI does not export authorAssociation through `gh pr view --json`.
+	# Reuse the canonical pull REST field and collapse all API/parse failures to
+	# unknown so the trust checks below continue to fail closed.
+	pr_api=$(printf 'repos/%s/pulls/%s' "$repo" "$pr_number")
+	association=$(gh api "$pr_api" \
+		--jq "$association_filter" 2>/dev/null) || association=""
+	printf '%s\n' "$association"
+	return 0
+}
+
 check_for_skip_label() {
 	local pr_number="$1"
 	local repo="$2"
@@ -1196,13 +1225,9 @@ do_check() {
 	local REVIEW_GATE_NON_REVIEW_BOTS=""
 	_rbg_reset_evidence_snapshot
 
-	if [[ -z "$REVIEW_GATE_AUTHOR_ASSOCIATION" && -n "$pr_metadata_json" ]]; then
-		REVIEW_GATE_AUTHOR_ASSOCIATION=$(jq -r '.author_association // .authorAssociation // empty' \
-			<<<"$pr_metadata_json" 2>/dev/null || true)
-	fi
 	if [[ -z "$REVIEW_GATE_AUTHOR_ASSOCIATION" ]]; then
-		REVIEW_GATE_AUTHOR_ASSOCIATION=$(gh pr view "$pr_number" --repo "$repo" \
-			--json authorAssociation --jq '.authorAssociation // empty' 2>/dev/null || true)
+		REVIEW_GATE_AUTHOR_ASSOCIATION=$(_resolve_pr_author_association \
+			"$pr_number" "$repo" "$pr_metadata_json")
 	fi
 
 	# #aidevops:trust-boundary — skip labels are an internal exception. Resolve
@@ -1301,14 +1326,14 @@ do_status_json() {
 	pr_api=$(printf 'repos/%s/pulls/%s' "$repo" "$pr_number")
 	pr_json_before=$(gh api "$pr_api" 2>/dev/null) || pr_json_before=""
 	head_sha_before=$(jq -r '.head.sha // ""' <<<"$pr_json_before" 2>/dev/null) || head_sha_before=""
-	author_association_before=$(jq -r '.author_association // ""' <<<"$pr_json_before" 2>/dev/null) || author_association_before=""
+	author_association_before=$(_resolve_pr_author_association "$pr_number" "$repo" "$pr_json_before")
 	output=$(REVIEW_GATE_EXPECTED_HEAD_SHA="$head_sha_before" REVIEW_GATE_AUTHOR_ASSOCIATION="$author_association_before" do_check "$pr_number" "$repo" "$pr_json_before" 2>/dev/null) || rc=$?
 	pr_json=$(gh api "$pr_api" 2>/dev/null) || pr_json=""
 	if [[ -n "$pr_json" ]]; then
 		head_sha=$(jq -r '.head.sha // ""' <<<"$pr_json" 2>/dev/null) || head_sha=""
 		author_login=$(jq -r '.user.login // ""' <<<"$pr_json" 2>/dev/null) || author_login=""
-		author_association=$(jq -r '.author_association // ""' <<<"$pr_json" 2>/dev/null) || author_association=""
 	fi
+	author_association=$(_resolve_pr_author_association "$pr_number" "$repo" "$pr_json")
 	if [[ -n "$head_sha_before" && "$head_sha_before" == "$head_sha" ]]; then
 		head_stable="true"
 	fi
