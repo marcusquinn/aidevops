@@ -859,18 +859,35 @@ _ch_parse_window_secs() {
 	return 0
 }
 
+# Return the current epoch, with a validated test-only clock override.
+_ch_now_epoch() {
+	local override="${PULSE_DIAGNOSE_NOW_EPOCH:-}"
+	local now_epoch
+	if [[ -n "$override" ]]; then
+		if [[ "$override" =~ ^[0-9]+$ ]]; then
+			printf '%s' "$override"
+			return 0
+		fi
+		printf 'warning: ignoring invalid PULSE_DIAGNOSE_NOW_EPOCH override\n' >&2
+	fi
+	now_epoch=$(date '+%s' 2>/dev/null) || now_epoch=0
+	[[ "$now_epoch" =~ ^[0-9]+$ ]] || now_epoch=0
+	printf '%s' "$now_epoch"
+	return 0
+}
+
 # Compute ISO 8601 UTC cutoff timestamp (window_secs ago from now).
-# Tries macOS date -v syntax first; falls back to GNU date -d.
+# Tries macOS date -r syntax first; falls back to GNU date -d.
 _ch_cutoff_ts() {
 	local window_secs="$1"
-	local ts
-	if ts=$(date -u -v"-${window_secs}S" '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null); then
+	local ts="" now_epoch="" cutoff_epoch=""
+	now_epoch=$(_ch_now_epoch)
+	cutoff_epoch=$(( now_epoch - window_secs ))
+	if ts=$(date -u -r "$cutoff_epoch" '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null); then
 		printf '%s' "$ts"
 		return 0
 	fi
-	local now_epoch
-	now_epoch=$(date '+%s' 2>/dev/null) || now_epoch=0
-	if ts=$(date -u -d "@$(( now_epoch - window_secs ))" '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null); then
+	if ts=$(date -u -d "@$cutoff_epoch" '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null); then
 		printf '%s' "$ts"
 		return 0
 	fi
@@ -885,7 +902,7 @@ _ch_ts_ago() {
 	local ts_epoch now_epoch diff
 	ts_epoch=$(date -u -j -f '%Y-%m-%dT%H:%M:%SZ' "$ts" '+%s' 2>/dev/null) ||
 		ts_epoch=$(date -u -d "$ts" '+%s' 2>/dev/null) || { printf '%s' "$ts"; return 0; }
-	now_epoch=$(date '+%s' 2>/dev/null) || { printf '%s' "$ts"; return 0; }
+	now_epoch=$(_ch_now_epoch) || { printf '%s' "$ts"; return 0; }
 	diff=$(( now_epoch - ts_epoch ))
 	if [[ "$diff" -lt 60 ]]; then
 		printf '%ds ago' "$diff"

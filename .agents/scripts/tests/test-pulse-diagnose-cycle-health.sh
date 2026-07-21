@@ -67,6 +67,8 @@ trap 'rm -rf "$TMPDIR_TEST"' EXIT
 
 FIXTURE_TIMINGS="${TMPDIR_TEST}/pulse-stage-timings.log"
 FIXTURE_WRAPPER="${TMPDIR_TEST}/pulse-wrapper.log"
+TEST_NOW_EPOCH=1782262800 # 2026-06-24T01:00:00Z
+export PULSE_DIAGNOSE_NOW_EPOCH="$TEST_NOW_EPOCH"
 
 # Build a fixture with two complete and two incomplete cycles.
 #
@@ -75,8 +77,7 @@ FIXTURE_WRAPPER="${TMPDIR_TEST}/pulse-wrapper.log"
 # Cycle 3 (PID 33333) — complete: reaches preflight_early_dispatch exit 0
 # Cycle 4 (PID 44444) — incomplete: cleanup_worktrees exits 124, stops (after last dispatch)
 #
-# All timestamps are recent enough that the default 1h window captures them.
-# We use a fixed reference point relative to "now" via env override + 24h window.
+# The test-only clock override makes the fixed fixture recent in the 24h window.
 
 cat > "$FIXTURE_TIMINGS" <<'TIMINGS'
 2026-06-24T00:00:01Z	cleanup_orphans	2	0	11111
