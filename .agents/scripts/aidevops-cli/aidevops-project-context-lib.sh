@@ -74,19 +74,34 @@ _init_scaffold_project_context() {
 		return 1
 	}
 
-	mkdir -p "$context_dir"
+	if ! mkdir -p "$context_dir"; then
+		print_error "Failed to create project context directory: $context_dir"
+		return 1
+	fi
 	if [[ ! -f "$context_dir/.gitignore" ]]; then
-		cp "$template_dir/gitignore" "$context_dir/.gitignore"
+		if ! cp "$template_dir/gitignore" "$context_dir/.gitignore"; then
+			print_error "Failed to create .aidevops/.gitignore"
+			return 1
+		fi
 		print_success "Created .aidevops/.gitignore"
 	fi
 	if [[ "$enable_deployment_context" == "$enabled_value" && ! -f "$context_dir/deployments.yaml" ]]; then
-		cp "$template_dir/deployments.yaml" "$context_dir/deployments.yaml"
+		if ! cp "$template_dir/deployments.yaml" "$context_dir/deployments.yaml"; then
+			print_error "Failed to create .aidevops/deployments.yaml"
+			return 1
+		fi
 		print_success "Created .aidevops/deployments.yaml"
 	fi
 	if [[ "$enable_wordpress_context" == "$enabled_value" && ! -f "$context_dir/wordpress.yaml" ]]; then
-		cp "$template_dir/wordpress.yaml" "$context_dir/wordpress.yaml"
+		if ! cp "$template_dir/wordpress.yaml" "$context_dir/wordpress.yaml"; then
+			print_error "Failed to create .aidevops/wordpress.yaml"
+			return 1
+		fi
 		print_success "Created .aidevops/wordpress.yaml"
 	fi
-	_init_update_project_operations_context "$project_root"
+	if ! _init_update_project_operations_context "$project_root"; then
+		print_error "Failed to update project operations context in .agents/AGENTS.md"
+		return 1
+	fi
 	return 0
 }

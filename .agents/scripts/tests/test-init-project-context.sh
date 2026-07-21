@@ -146,6 +146,29 @@ test_agents_context_write_failures_preserve_original() {
 	return 0
 }
 
+test_scaffold_failures_are_reported() {
+	local mkdir_repo="$TEST_ROOT/mkdir-failure"
+	local copy_repo="$TEST_ROOT/copy-failure"
+	mkdir() { return 1; }
+	if _init_scaffold_project_context "$mkdir_repo" true true; then
+		assert_equal failure success "context directory creation failure is reported"
+	else
+		assert_equal failure failure "context directory creation failure is reported"
+	fi
+	unset -f mkdir
+
+	mkdir -p "$copy_repo"
+	cp() { return 1; }
+	if _init_scaffold_project_context "$copy_repo" true true; then
+		assert_equal failure success "context template copy failure is reported"
+	else
+		assert_equal failure failure "context template copy failure is reported"
+	fi
+	unset -f cp
+	assert_equal false "$([[ -f "$copy_repo/.aidevops/.gitignore" ]] && printf true || printf false)" "failed context template copy is not reported as created"
+	return 0
+}
+
 test_config_booleans() {
 	local config="$TEST_ROOT/config.json"
 	_init_write_project_config "$config" 9.9.9 minimal false false false false false false false false false false true true
@@ -196,6 +219,7 @@ main() {
 	test_feature_parsing
 	test_scaffold_and_idempotency
 	test_agents_context_write_failures_preserve_original
+	test_scaffold_failures_are_reported
 	local full_repo="$TEST_ROOT/full-rerun"
 	mkdir -p "$full_repo"
 	scaffold_agents_md "$full_repo"
