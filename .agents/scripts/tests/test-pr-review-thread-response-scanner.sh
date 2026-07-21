@@ -264,8 +264,8 @@ mkdir -p "$path"
 printf '%s\t%s\t%s\n' "$path" "$branch" "${STUB_WORKTREE_ACTUAL_HEAD:-$base}" >>"${GIT_WORKTREE_REGISTRY}"
 if [[ "${STUB_WORKTREE_REGISTER_OWNER:-false}" == "true" ]]; then
 	source "${SHARED_CONSTANTS_PATH}"
-	register_worktree "$path" "$branch" --task "$issue" \
-		--session "${STUB_WORKTREE_OWNER_SESSION:-worktree-helper-created}" \
+	OPENCODE_SESSION_ID="" CLAUDE_SESSION_ID="" register_worktree "$path" "$branch" --task "$issue" \
+		--session "${STUB_WORKTREE_OWNER_SESSION-worktree-helper-created}" \
 		--owner-pid "${STUB_WORKTREE_OWNER_PID:-$$}"
 	check_worktree_owner "$path" >"${WORKTREE_CREATED_OWNER_CAPTURE}"
 fi
@@ -436,7 +436,7 @@ test_dispatch_registers_created_worktree_as_transferable_precreate_owner() {
 	setup_test_env
 	export STUB_WORKTREE_REGISTER_OWNER="true"
 	export STUB_WORKTREE_OWNER_PID="$$"
-	export STUB_WORKTREE_OWNER_SESSION="worktree-helper-created"
+	export STUB_WORKTREE_OWNER_SESSION=""
 	expected_path="${TEST_ROOT}/worktrees/repo-pr1-review-feature-review-${TEST_HEAD_OID_1:0:12}"
 	$SCANNER dispatch owner/repo "${TEST_ROOT}/repo"
 	wait_for_headless_log || true
@@ -444,7 +444,7 @@ test_dispatch_registers_created_worktree_as_transferable_precreate_owner() {
 	IFS='|' read -r initial_owner_pid initial_owner_session initial_owner_batch initial_owner_task initial_owner_created_at <<<"$initial_owner_info"
 	owner_info=$(read_test_worktree_owner "$expected_path" 2>/dev/null || true)
 	IFS='|' read -r owner_pid owner_session owner_batch owner_task owner_created_at <<<"$owner_info"
-	if [[ "$initial_owner_pid" == "$$" && "$initial_owner_session" == "worktree-helper-created" && "$initial_owner_task" == "1" && -n "$initial_owner_created_at" ]] &&
+	if [[ "$initial_owner_pid" == "$$" && -z "$initial_owner_session" && "$initial_owner_task" == "1" && -n "$initial_owner_created_at" ]] &&
 		[[ "$owner_pid" =~ ^[0-9]+$ && "$owner_pid" != "$initial_owner_pid" && "$owner_session" == "dispatch-precreate-1" && "$owner_task" == "1" && -n "$owner_created_at" ]] &&
 		grep -Fxq "AIDEVOPS_WORKTREE_EXPECTED_OWNER_PID=${owner_pid}" "$HEADLESS_ENV_CAPTURE" 2>/dev/null &&
 		grep -Fxq "AIDEVOPS_WORKTREE_EXPECTED_OWNER_CREATED_AT=${owner_created_at}" "$HEADLESS_ENV_CAPTURE" 2>/dev/null; then

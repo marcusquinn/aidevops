@@ -1359,6 +1359,9 @@ _prrts_prepare_created_worktree_owner() {
 		_prrts_claim_dispatch_precreate_owner "$repo_slug" "$pr_number" "$worktree_path" "$head_ref" || return 1
 		return 0
 	fi
+	# worktree-helper can register outside a runtime session. The exact PID,
+	# task, and timestamp still authorize this CAS; the resulting precreate
+	# snapshot captured below must have a non-empty session before worker launch.
 	if [[ -z "$owner_task" ]]; then
 		PRRTS_WORKTREE_FAILURE_REASON="$PRRTS_REASON_WORKTREE_OWNERSHIP_UNVERIFIED"
 	elif [[ "$owner_task" != "$pr_number" ]]; then
