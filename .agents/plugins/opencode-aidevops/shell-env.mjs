@@ -111,11 +111,15 @@ function shellSessionOrigin(env) {
   return headless ? "worker" : "interactive";
 }
 
-function prependScriptsPath(env, scriptsDir) {
-  if (!existsSync(scriptsDir)) return;
+function prependFrameworkPaths(env, scriptsDir, agentsDir) {
+  const binDir = agentsDir ? join(agentsDir, "bin") : "";
+  const preferredPaths = [scriptsDir, binDir].filter((path) => path && existsSync(path));
+  if (preferredPaths.length === 0) return;
   const currentPath = env.PATH || process.env.PATH || "";
-  const pathParts = currentPath.split(":").filter((part) => part && part !== scriptsDir);
-  env.PATH = [scriptsDir, ...pathParts].join(":");
+  const pathParts = currentPath
+    .split(":")
+    .filter((part) => part && !preferredPaths.includes(part));
+  env.PATH = [...preferredPaths, ...pathParts].join(":");
 }
 
 function projectWorkerLineage(env) {
@@ -189,7 +193,7 @@ function normalizeDependencies(deps) {
 }
 
 async function shellEnvHook(config, input, output) {
-  prependScriptsPath(output.env, config.scriptsDir);
+  prependFrameworkPaths(output.env, config.scriptsDir, config.agentsDir);
   projectFrameworkEnvironment(output.env, config);
   projectSessionIdentity(input, output.env);
   projectOtelEnvironment(output.env);
