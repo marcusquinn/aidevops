@@ -501,6 +501,31 @@ _PULSE_MERGE_PROCESS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${_PULSE_MERGE_PROCESS_DIR}/pulse-merge-duplicate-consolidation.sh"
 
 #######################################
+# Apply one processed PR result to pass counters and durable same-pass evidence.
+# Args: $1=repo, $2=PR number, $3=head SHA, $4=result code,
+#       $5=merged var, $6=closed var, $7=failed var
+#######################################
+_pmp_record_processed_pr_result() {
+	local repo_slug="$1"
+	local pr_number="$2"
+	local head_sha="$3"
+	local result_code="$4"
+	local merged_var="$5"
+	local closed_var="$6"
+	local failed_var="$7"
+	local outcome="blocked"
+
+	case "$result_code" in
+	0) _pmp_add_counter_var "$merged_var" 1 || return 1; outcome="merged" ;;
+	2) _pmp_add_counter_var "$closed_var" 1 || return 1; outcome="progress" ;;
+	3) _pmp_add_counter_var "$failed_var" 1 || return 1; outcome="eligible-unmerged" ;;
+	4) outcome="deferred" ;;
+	esac
+	_pmp_record_same_pass_pr_outcome "$repo_slug" "$pr_number" "$head_sha" "$outcome" || return 1
+	return 0
+}
+
+#######################################
 # Merge ready PRs for a single repo.
 #
 # Fetches the PR list for the repo, iterates, and delegates each PR
@@ -524,6 +549,7 @@ _merge_ready_prs_for_repo() {
 
 	local merged=0 closed=0 failed=0
 	local pr_json="" pr_merge_err="" _list_start="" pr_count=""
+	local pr_list_complete=1 outcomes_complete=1
 	_list_start=$(_pmp_now_epoch)
 	pr_merge_err=$(mktemp)
 	if declare -F pulse_pr_list_get >/dev/null 2>&1; then
@@ -540,11 +566,12 @@ _merge_ready_prs_for_repo() {
 		_pr_merge_err_msg=$(cat "$pr_merge_err" 2>/dev/null || echo "unknown error")
 		echo "[pulse-wrapper] _process_merge_batch: pulse_pr_list_get FAILED for ${repo_slug}: ${_pr_merge_err_msg}" >>"$LOGFILE"
 		pr_json="[]"
+		pr_list_complete=0
 	fi
 	rm -f "$pr_merge_err"
 	[[ -n "$_timing_prefix" ]] && _pmp_add_elapsed_seconds "${_timing_prefix}list_s" "$_list_start"
 
-	pr_count=$(printf '%s' "$pr_json" | jq 'length' 2>/dev/null) || pr_count=0
+	pr_count=$(printf '%s' "$pr_json" | jq 'length' 2>/dev/null) || { pr_count=0; pr_list_complete=0; }
 	[[ "$pr_count" =~ ^[0-9]+$ ]] || pr_count=0
 	if [[ -n "$_pr_count_var" ]]; then
 		[[ "$_pr_count_var" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || return 1
@@ -553,6 +580,7 @@ _merge_ready_prs_for_repo() {
 
 	if [[ "$pr_count" -eq 0 ]]; then
 		eval "${_merged_var}=0; ${_closed_var}=0; ${_failed_var}=0"
+		if [[ "$pr_list_complete" -eq 1 ]]; then _pmp_mark_same_pass_repo_complete "$repo_slug" 2>/dev/null || true; fi
 		return 0
 	fi
 
@@ -569,7 +597,7 @@ _merge_ready_prs_for_repo() {
 	_pmp_log_pr_backlog_counts "$repo_slug" "$pr_json"
 	pr_json=$(_pmp_sort_prs_by_backlog_priority "$pr_json" "$repo_slug")
 	_pmp_consolidate_duplicate_pr_groups "$repo_slug" "$pr_json" || true
-	pr_count=$(printf '%s' "$pr_json" | jq 'length' 2>/dev/null) || pr_count=0
+	pr_count=$(printf '%s' "$pr_json" | jq 'length' 2>/dev/null) || { pr_count=0; outcomes_complete=0; }
 	[[ "$pr_count" =~ ^[0-9]+$ ]] || pr_count=0
 
 	local i=0
@@ -589,26 +617,23 @@ _merge_ready_prs_for_repo() {
 		fi
 		local pr_obj
 		pr_obj=$(_pmp_pr_object_at_index "$pr_json" "$i")
-		local _cursor_last_pr="" _cursor_next_pr=""
+		local _cursor_last_pr="" _cursor_next_pr="" _pr_head_sha=""
 		_cursor_last_pr=$(printf '%s' "$pr_obj" | jq -r '.number // empty' 2>/dev/null) || _cursor_last_pr=""
+		_pr_head_sha=$(printf '%s' "$pr_obj" | jq -r '.headRefOid // empty' 2>/dev/null) || _pr_head_sha=""
 		i=$((i + 1))
 		_cursor_next_pr=$(_pmp_pr_number_at_index "$pr_json" "$i") || _cursor_next_pr=""
 		[[ -n "$pr_obj" ]] || continue
 
 		_process_single_ready_pr "$repo_slug" "$pr_obj" "$_timing_prefix"
 		local _pr_rc=$?
-		case "$_pr_rc" in
-		0) merged=$((merged + 1)) ;;
-		2) closed=$((closed + 1)) ;;
-		3) failed=$((failed + 1)) ;;
-		4) ;;
-		esac
+		_pmp_record_processed_pr_result "$repo_slug" "$_cursor_last_pr" "$_pr_head_sha" "$_pr_rc" merged closed failed || outcomes_complete=0
 		_pmp_write_merge_pr_cursor "$PULSE_MERGE_PR_CURSOR_FILE" "$repo_slug" "$i" "$_cursor_last_pr" "$_cursor_next_pr"
 	done
 	_pmp_clear_merge_pr_cursor "$PULSE_MERGE_PR_CURSOR_FILE"
 
 	[[ -n "$AIDEVOPS_PULSE_REQUIRED_CONTEXTS_CACHE_DIR" ]] && rm -rf -- "$AIDEVOPS_PULSE_REQUIRED_CONTEXTS_CACHE_DIR"
 	[[ -n "$AIDEVOPS_PULSE_AUTHOR_PERMISSION_CACHE_DIR" ]] && rm -rf -- "$AIDEVOPS_PULSE_AUTHOR_PERMISSION_CACHE_DIR"
+	if [[ "$pr_list_complete" -eq 1 && "$outcomes_complete" -eq 1 ]]; then _pmp_mark_same_pass_repo_complete "$repo_slug" 2>/dev/null || true; fi
 
 	eval "${_merged_var}=${merged}; ${_closed_var}=${closed}; ${_failed_var}=${failed}"
 	return 0
@@ -1635,6 +1660,7 @@ _required_contexts_for_default_branch() {
 _check_required_checks_passing() {
 	local repo_slug="$1"
 	local pr_number="$2"
+	local pr_sha="${3:-}"
 
 	# Resolve required contexts (delegates default-branch lookup + branch
 	# protection API + 404 distinction to the helper). Empty stdout + exit 0
@@ -1663,9 +1689,10 @@ _check_required_checks_passing() {
 	# PR, separate budget pool). check-runs is heavier than check-suites
 	# (~111KB/PR) but exposes per-context .name fields needed for matching
 	# branch-protection required_status_checks. Single-PR path → cost is fine.
-	local pr_sha=""
-	pr_sha=$(gh_pr_view "$pr_number" --repo "$repo_slug" \
-		--json headRefOid --jq '.headRefOid' 2>/dev/null) || pr_sha=""
+	if [[ -z "$pr_sha" ]]; then
+		pr_sha=$(gh_pr_view "$pr_number" --repo "$repo_slug" \
+			--json headRefOid --jq '.headRefOid' 2>/dev/null) || pr_sha=""
+	fi
 	if [[ -z "$pr_sha" ]]; then
 		echo "[pulse-merge] _check_required_checks_passing: headRefOid fetch failed for PR #${pr_number} in ${repo_slug} — failing closed (t2922, GH#21799)" >>"$LOGFILE"
 		return 1

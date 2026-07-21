@@ -172,7 +172,7 @@ MERGE_ON_REPO="org/two"
 PROCESSED_REPOS=""
 ZERO_PROGRESS_CALLS=""
 merge_ready_prs_all_repos
-assert_equals "interrupted pass records conclusive merge progress" "2:1:0 " "$ZERO_PROGRESS_CALLS"
+assert_equals "interrupted pass records conclusive merge progress without a partial denominator" "0:1:0 " "$ZERO_PROGRESS_CALLS"
 rm -f "$STOP_FLAG"
 
 if [[ "$TESTS_FAILED" -eq 0 ]]; then
