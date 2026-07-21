@@ -482,6 +482,20 @@ _pc_move_orphan_dir_to_trash_bucket() {
 # Safety: skips worktrees owned by active sessions (handled by
 # worktree-helper.sh ownership registry, t189).
 #######################################
+_pc_count_verified_worktree_removals() {
+	local clean_output="$1"
+	local completed_event="AIDEVOPS_WORKTREE_REMOVAL_COMPLETED=1"
+	local output_line=""
+	local completed_count=0
+
+	while IFS= read -r output_line; do
+		[[ "$output_line" == "$completed_event" ]] || continue
+		completed_count=$((completed_count + 1))
+	done <<<"$clean_output"
+	printf '%s\n' "$completed_count"
+	return 0
+}
+
 _cleanup_merged_prs_for_all_repos() {
 	# t2559 Layer 3: fail-loud when git is missing from PATH. This runs before
 	# we invoke worktree-helper.sh clean across every repo — if git isn't
@@ -539,7 +553,7 @@ _cleanup_merged_prs_for_all_repos() {
 			clean_result=$(cd "$repo_path" && bash "$helper" clean --auto --force-merged 2>&1) || true
 
 			local count
-			count=$(echo "$clean_result" | grep -c 'Removing') || count=0
+			count=$(_pc_count_verified_worktree_removals "$clean_result")
 			if [[ "$count" -gt 0 ]]; then
 				local repo_name
 				repo_name=$(basename "$repo_path")
@@ -558,7 +572,7 @@ _cleanup_merged_prs_for_all_repos() {
 		local clean_result
 		clean_result=$(bash "$helper" clean --auto --force-merged 2>&1) || true
 		local fallback_count
-		fallback_count=$(echo "$clean_result" | grep -c 'Removing') || fallback_count=0
+		fallback_count=$(_pc_count_verified_worktree_removals "$clean_result")
 		if [[ "$fallback_count" -gt 0 ]]; then
 			echo "[pulse-wrapper] Worktree cleanup: $fallback_count worktree(s) removed" >>"$LOGFILE"
 			total_removed=$((total_removed + fallback_count))

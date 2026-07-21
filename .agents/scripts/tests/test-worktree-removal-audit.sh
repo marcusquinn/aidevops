@@ -428,7 +428,7 @@ test_process_cwd_snapshot_failure_is_fail_closed() {
 	if worktree_removal_guard "$wt_path" "test.sh" "manual"; then
 		rc=1
 	fi
-	assert_file_contains "$log_file" "worktree-skipped.*active-cwd" || rc=1
+	assert_file_contains "$log_file" "worktree-skipped.*cwd-visibility-unusable" || rc=1
 	if ! worktree_removal_guard "$wt_path" "test.sh" "manual" ""; then
 		rc=1
 	fi
@@ -468,32 +468,88 @@ test_snapshot_backend_requires_visible_target() {
 }
 
 # =============================================================================
-# Test 14: a partially visible /proc snapshot is incomplete and fails closed.
+# The macOS lsof backend distinguishes complete output, partial/permission-
+# limited output, and empty unusable output. Absence-only output never proves a
+# candidate inactive.
 # =============================================================================
-test_proc_snapshot_rejects_partial_visibility() {
+test_lsof_snapshot_visibility_states() {
+	local output=""
+	local capture_status=0
+	local rc=0
+
+	if output=$(
+		lsof() { return 0; }
+		_capture_worktree_lsof_cwds
+	); then
+		capture_status=0
+	else
+		capture_status=$?
+	fi
+	[[ "$capture_status" -eq 1 && -z "$output" ]] || rc=1
+
+	if output=$(
+		lsof() {
+			printf 'p123\nn/visible-lsof-cwd\n'
+			return 1
+		}
+		_capture_worktree_lsof_cwds
+	); then
+		capture_status=0
+	else
+		capture_status=$?
+	fi
+	[[ "$capture_status" -eq "$_WT_CWD_CAPTURE_DEGRADED_RC" ]] || rc=1
+	[[ "$output" == "/visible-lsof-cwd" ]] || rc=1
+
+	if output=$(
+		lsof() {
+			printf 'p123\nn/complete-lsof-cwd\n'
+			return 0
+		}
+		_capture_worktree_lsof_cwds
+	); then
+		capture_status=0
+	else
+		capture_status=$?
+	fi
+	[[ "$capture_status" -eq 0 && "$output" == "/complete-lsof-cwd" ]] || rc=1
+	print_result "lsof_snapshot_visibility_states" "$rc" \
+		"Expected empty lsof to be unusable and partial lsof output to be degraded"
+	return 0
+}
+
+# =============================================================================
+# Test 14: a partially visible /proc snapshot preserves readable evidence and
+# reports degraded visibility instead of aliasing it to a total failure.
+# =============================================================================
+test_proc_snapshot_preserves_degraded_visibility() {
 	local proc_root="${TEST_DIR}/fake-proc"
+	local output=""
+	local capture_status=0
 	local rc=0
 	mkdir -p "${proc_root}/1" "${proc_root}/2"
 	ln -s /visible-cwd "${proc_root}/1/cwd"
 	ln -s /hidden-cwd "${proc_root}/2/cwd"
 
-	if (
+	if output=$(
 		readlink() {
 			local link_path="$1"
-			case "$link_path" in
-			*/1/cwd)
+			if [[ "$link_path" == */1/cwd ]]; then
 				printf '/visible-cwd\n'
 				return 0
-				;;
-			esac
+			fi
 			return 1
 		}
-		_capture_worktree_proc_cwds "$proc_root" >/dev/null
+		_capture_worktree_proc_cwds "$proc_root"
 	); then
-		rc=1
+		capture_status=0
+	else
+		capture_status=$?
 	fi
-	print_result "proc_snapshot_rejects_partial_visibility" "$rc" \
-		"Expected one unreadable persistent cwd link to invalidate the snapshot"
+	[[ "$capture_status" -eq "$_WT_CWD_CAPTURE_DEGRADED_RC" ]] || rc=1
+	[[ "$output" == "/visible-cwd" ]] || rc=1
+	print_result "proc_snapshot_preserves_degraded_visibility" "$rc" \
+		"Expected unreadable unknown ownership to preserve visible cwd evidence with degraded status"
 	return 0
 }
 
@@ -531,12 +587,14 @@ test_proc_snapshot_skips_foreign_uid_unreadable_entry() {
 }
 
 # =============================================================================
-# Same-UID unreadability remains fail-closed because the hidden cwd may be in a
-# candidate worktree.
+# Same-UID unreadability is explicitly degraded while preserving readable cwd
+# evidence for candidate-specific positive matching.
 # =============================================================================
-test_proc_snapshot_rejects_same_uid_unreadable_entry() {
+test_proc_snapshot_marks_same_uid_unreadable_entry_degraded() {
 	local proc_root="${TEST_DIR}/fake-proc-same-uid"
 	local current_uid=""
+	local output=""
+	local capture_status=0
 	local rc=0
 	current_uid=$(id -u)
 	mkdir -p "${proc_root}/1" "${proc_root}/2"
@@ -545,19 +603,59 @@ test_proc_snapshot_rejects_same_uid_unreadable_entry() {
 	printf 'Uid:\t%s\t%s\t%s\t%s\n' \
 		"$current_uid" "$current_uid" "$current_uid" "$current_uid" >"${proc_root}/2/status"
 
-	if (
+	if output=$(
 		readlink() {
 			local link_path="$1"
 			[[ "$link_path" == */1/cwd ]] || return 1
 			printf '/visible-cwd\n'
 			return 0
 		}
-		_capture_worktree_proc_cwds "$proc_root" >/dev/null
+		_capture_worktree_proc_cwds "$proc_root"
 	); then
-		rc=1
+		capture_status=0
+	else
+		capture_status=$?
 	fi
-	print_result "proc_snapshot_rejects_same_uid_unreadable_entry" "$rc" \
-		"Expected same-UID unreadability to invalidate the snapshot"
+	[[ "$capture_status" -eq "$_WT_CWD_CAPTURE_DEGRADED_RC" ]] || rc=1
+	[[ "$output" == "/visible-cwd" ]] || rc=1
+	print_result "proc_snapshot_marks_same_uid_unreadable_entry_degraded" "$rc" \
+		"Expected simulated same-UID EACCES to return degraded status with visible evidence intact"
+	return 0
+}
+
+# =============================================================================
+# Degraded visibility is candidate-specific: unrelated readable CWDs require a
+# recoverable path, while any readable target inside the candidate hard-blocks.
+# =============================================================================
+test_degraded_visibility_preserves_positive_candidate_match() {
+	local log_file="${TEST_DIR}/degraded-candidate-cleanup.log"
+	local wt_path="${TEST_DIR}/degraded-candidate"
+	local guard_status=0
+	local rc=0
+	export AIDEVOPS_CLEANUP_LOG="$log_file"
+	mkdir -p "$wt_path"
+
+	if worktree_removal_guard "$wt_path" "test.sh" "manual" "/unrelated-readable-cwd" \
+		"$_WT_CWD_VISIBILITY_DEGRADED"; then
+		guard_status=0
+	else
+		guard_status=$?
+	fi
+	[[ "$guard_status" -eq "$_WT_CWD_CAPTURE_DEGRADED_RC" ]] || rc=1
+	[[ "${WORKTREE_REMOVAL_GUARD_REASON:-}" == "$_WT_CWD_REASON_DEGRADED" ]] || rc=1
+
+	if worktree_removal_guard "$wt_path" "test.sh" "manual" "$wt_path/active-shell" \
+		"$_WT_CWD_VISIBILITY_DEGRADED"; then
+		guard_status=0
+	else
+		guard_status=$?
+	fi
+	[[ "$guard_status" -eq 1 ]] || rc=1
+	[[ "${WORKTREE_REMOVAL_GUARD_REASON:-}" == "active-cwd" ]] || rc=1
+	assert_file_contains "$log_file" "worktree-skipped.*cwd-visibility-degraded.*mode=recoverable-required" || rc=1
+	assert_file_contains "$log_file" "worktree-skipped.*active-cwd.*mode=skipped" || rc=1
+	print_result "degraded_visibility_preserves_positive_candidate_match" "$rc" \
+		"Expected unrelated denial to be recoverable-only and readable candidate CWD to hard-block"
 	return 0
 }
 
@@ -706,9 +804,11 @@ test_optional_guard_context_logged
 test_process_cwd_guard_refuses_empty_paths
 test_process_cwd_snapshot_failure_is_fail_closed
 test_snapshot_backend_requires_visible_target
-test_proc_snapshot_rejects_partial_visibility
+test_lsof_snapshot_visibility_states
+test_proc_snapshot_preserves_degraded_visibility
 test_proc_snapshot_skips_foreign_uid_unreadable_entry
-test_proc_snapshot_rejects_same_uid_unreadable_entry
+test_proc_snapshot_marks_same_uid_unreadable_entry_degraded
+test_degraded_visibility_preserves_positive_candidate_match
 test_proc_snapshot_requires_usable_evidence_after_foreign_skips
 test_proc_snapshot_ignores_vanished_entry
 test_guard_reason_is_machine_readable
