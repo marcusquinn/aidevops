@@ -2400,9 +2400,9 @@
       "pr": 18657
     },
     ".agents/scripts/pulse-cleanup.sh": {
-      "at": "2026-07-18T15:45:51Z",
-      "hash": "45c1772737c3887cbedca36f47bd7b225fb12870",
-      "passes": 38,
+      "at": "2026-07-21T20:49:14Z",
+      "hash": "cb59e3508b6cfdf20fbf466639c8c9b9715d2076",
+      "passes": 39,
       "pr": 18704
     },
     ".agents/scripts/pulse-dep-graph.sh": {
@@ -7858,10 +7858,10 @@
       "passes": 2
     },
     ".agents/scripts/worktree-clean-lib.sh": {
-      "hash": "0295cbb999872795e12289e5f259fa0a332f8923",
-      "at": "2026-07-11T03:17:45Z",
+      "hash": "f8723bbcb9ad23d9dbdb7b1da934d7efeaf07355",
+      "at": "2026-07-21T20:49:18Z",
       "pr": 26042,
-      "passes": 3
+      "passes": 4
     },
     ".agents/scripts/pulse-dispatch-lib.sh": {
       "hash": "b710db99d75fc1f365c123714e09f9e404a6353f",
