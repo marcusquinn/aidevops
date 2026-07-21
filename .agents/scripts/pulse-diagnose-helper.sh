@@ -880,7 +880,7 @@ _ch_now_epoch() {
 # Tries macOS date -r syntax first; falls back to GNU date -d.
 _ch_cutoff_ts() {
 	local window_secs="$1"
-	local ts now_epoch cutoff_epoch
+	local ts="" now_epoch="" cutoff_epoch=""
 	now_epoch=$(_ch_now_epoch)
 	cutoff_epoch=$(( now_epoch - window_secs ))
 	if ts=$(date -u -r "$cutoff_epoch" '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null); then
