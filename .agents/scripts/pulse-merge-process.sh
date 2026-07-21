@@ -288,33 +288,40 @@ _pmp_enrich_prs_with_review_decisions() {
 	local repo_slug="$1"
 	local pr_json="$2"
 	local enriched_json="$pr_json"
-	local pr_count=""
-	local i=0
+	local pr_rows=""
+	local _US=$'\x1f'
+	local i="" number="" review_decision=""
 
-	pr_count=$(printf '%s' "$pr_json" | jq 'length' 2>/dev/null) || pr_count=0
-	[[ "$pr_count" =~ ^[0-9]+$ ]] || pr_count=0
-	if [[ -z "$repo_slug" || "$pr_count" -eq 0 ]]; then
+	if [[ -z "$repo_slug" ]]; then
 		printf '%s' "$pr_json"
 		return 0
 	fi
 
-	while [[ "$i" -lt "$pr_count" ]]; do
-		local pr_obj="" number="" review_decision=""
-		pr_obj=$(printf '%s' "$enriched_json" | jq -c --argjson index "$i" '.[$index]' 2>/dev/null) || pr_obj=""
-		if [[ -n "$pr_obj" ]]; then
-			number=$(printf '%s' "$pr_obj" | jq -r '.number // ""' 2>/dev/null) || number=""
-			review_decision=$(printf '%s' "$pr_obj" | jq -r 'if ((has("reviewDecision") | not) or .reviewDecision == null or (.reviewDecision | tostring | length) == 0) then "UNKNOWN" else .reviewDecision end' 2>/dev/null) || review_decision="UNKNOWN"
-			_pmp_normalize_review_decision_into review_decision "$review_decision"
-			if [[ "$number" =~ ^[0-9]+$ ]] && _pmp_review_decision_is_unknown "$review_decision"; then
-				_pmp_refresh_unknown_review_decision_into review_decision "$number" "$repo_slug" "$review_decision"
-				enriched_json=$(printf '%s' "$enriched_json" | jq --argjson index "$i" --arg review "$review_decision" '.[$index].reviewDecision = $review' 2>/dev/null) || {
-					printf '%s' "$pr_json"
-					return 0
-				}
-			fi
+	pr_rows=$(printf '%s' "$pr_json" | jq -r '
+		if type != "array" then error("expected PR array")
+		else to_entries[] | [
+			(.key | tostring),
+			(if ((.value | has("number") | not) or .value.number == null or (.value.number | tostring | length) == 0)
+			 then "" else (.value.number | tostring) end),
+			(if ((.value | has("reviewDecision") | not) or .value.reviewDecision == null or (.value.reviewDecision | tostring | length) == 0)
+			 then "UNKNOWN" else .value.reviewDecision end)
+		] | join("\u001f")
+		end' 2>/dev/null) || {
+		printf '%s' "$pr_json"
+		return 0
+	}
+
+	while IFS="$_US" read -r i number review_decision; do
+		[[ -n "$i" ]] || continue
+		_pmp_normalize_review_decision_into review_decision "$review_decision"
+		if [[ "$number" =~ ^[0-9]+$ ]] && _pmp_review_decision_is_unknown "$review_decision"; then
+			_pmp_refresh_unknown_review_decision_into review_decision "$number" "$repo_slug" "$review_decision"
+			enriched_json=$(printf '%s' "$enriched_json" | jq --argjson index "$i" --arg review "$review_decision" '.[$index].reviewDecision = $review' 2>/dev/null) || {
+				printf '%s' "$pr_json"
+				return 0
+			}
 		fi
-		i=$((i + 1))
-	done
+	done <<<"$pr_rows"
 
 	printf '%s' "$enriched_json"
 	return 0
