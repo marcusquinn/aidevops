@@ -26,6 +26,18 @@ function update_fence(text, trimmed, marker_char, marker_len, remainder) {
 	return 0
 }
 
+# Remove only the GitHub HTML wrappers emitted by issue-sync composition.
+# Recompute the lowercase copy after each removal so matching remains portable
+# without IGNORECASE. Unknown tags stay visible to placeholder classification.
+function strip_generated_tags(text, lower) {
+	lower = tolower(text)
+	while (match(lower, /<\/?(details|summary|code)([[:space:]][^>]*)?>/)) {
+		text = substr(text, 1, RSTART - 1) substr(text, RSTART + RLENGTH)
+		lower = tolower(text)
+	}
+	return text
+}
+
 BEGIN {
 	if (mode == "section") {
 		target = tolower(target)
@@ -88,6 +100,7 @@ mode == "prose" {
 	if (in_fence) next
 	line = $0
 	gsub(/`[^`]*`/, "", line)
+	line = strip_generated_tags(line)
 	print line
 	next
 }
