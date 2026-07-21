@@ -11,7 +11,6 @@
         device: (if $device == "" then "legacy" else $device end),
         session: $session,
         claim_author: (.author // .user.login // ""),
-        claim_author_association: (.author_association // ""),
         lease_expires_at: ($expires | tonumber? // 0),
         created_at: .created_at,
         created_epoch: (.created_at | fromdateiso8601? // 0)

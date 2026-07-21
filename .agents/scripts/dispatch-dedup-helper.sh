@@ -2134,8 +2134,9 @@ _is_dispatch_comment_active() {
 # the comment stays for audit but no longer blocks — allowing a fresh
 # dispatch attempt.
 #
-# A completion or failure comment posted AFTER the dispatch comment
-# cancels the lock early — the worker is done, re-dispatch is safe.
+# A completion or failure comment posted by a trusted repository actor AFTER
+# the dispatch comment cancels the lock early — the worker is done and
+# re-dispatch is safe. Untrusted issue commenters cannot mutate dispatch state.
 # Recognised completion signals: "TASK_COMPLETE", "FULL_LOOP_COMPLETE",
 # "Worker failed", "Worker Watchdog Kill", "BLOCKED",
 # "Stale assignment recovered", "Kill signal sent", "gh pr merge",
@@ -2191,24 +2192,63 @@ _dd_opportunistic_peer_scan() {
 }
 
 #######################################
+# Fetch every issue-comment page and keep only comments posted by repository
+# actors trusted to mutate dispatch coordination state. GitHub supplies
+# author_association; issue-body text cannot forge it.
+# Args: issue number, repo slug
+# Returns: normalized JSON on stdout, 1 on fetch or parse failure
+#######################################
+_dd_fetch_trusted_issue_comments() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local raw_comments=""
+
+	raw_comments=$(gh api "repos/${repo_slug}/issues/${issue_number}/comments?per_page=100" \
+		--paginate --slurp 2>/dev/null) || return 1
+	printf '%s' "$raw_comments" | jq -c '
+		def trusted_association:
+			. == "OWNER" or . == "MEMBER" or . == "COLLABORATOR";
+		[ (
+			if (type == "array" and ((.[0]? | type) == "array")) then
+				.[]
+			else
+				.
+			end
+		)[]
+		| {
+			id: .id,
+			body: (.body // ""),
+			body_start: ((.body // "")[:300]),
+			author: .user.login,
+			author_association: (.author_association // ""),
+			created_at: .created_at
+		}
+		| select((.author_association // "") | trusted_association)]
+	' 2>/dev/null || return 1
+	return 0
+}
+
+#######################################
 # Check for a cryptographically-unpredictable lease token whose terminal
-# transition matches the original claim author, device, and session. Both the
-# claim and transition ordering must surround the deterministic dispatch
-# comment, so unrelated or forged terminal text cannot retire its dedup lock.
+# transition matches the trusted dispatch author, original claim author,
+# device, and session. Both the claim and transition ordering must surround the
+# deterministic dispatch comment, so unrelated or forged terminal text cannot
+# retire its dedup lock.
 #
-# Args: comments JSON, dispatch timestamp, dispatch comment ID
+# Args: comments JSON, dispatch timestamp, dispatch comment ID, dispatch author
 # Returns: 0 when a matching terminal lease supersedes dispatch; 1 otherwise
 #######################################
 _dd_has_matching_terminal_lease() {
 	local comments_json="$1"
 	local dispatch_created_at="$2"
 	local dispatch_id="$3"
+	local dispatch_author="$4"
 	local lease_filter="${SCRIPT_DIR}/dispatch-lease-claims.jq"
 	local claims_json="[]"
 	local parsed_claims="[]"
 	local now_epoch=""
 
-	[[ -r "$lease_filter" && -n "$dispatch_created_at" ]] || return 1
+	[[ -r "$lease_filter" && -n "$dispatch_created_at" && -n "$dispatch_author" ]] || return 1
 	[[ "$dispatch_id" =~ ^[0-9]+$ ]] || dispatch_id=0
 	claims_json=$(printf '%s' "$comments_json" | jq -c \
 		'[.[] | select((.body // "") | contains("DISPATCH_CLAIM nonce="))]' \
@@ -2221,11 +2261,48 @@ _dd_has_matching_terminal_lease() {
 		-f "$lease_filter" 2>/dev/null) || return 1
 
 	if printf '%s' "$parsed_claims" | jq -e \
-		--arg dispatch_ts "$dispatch_created_at" --argjson dispatch_id "$dispatch_id" '
+		--arg dispatch_ts "$dispatch_created_at" --argjson dispatch_id "$dispatch_id" \
+		--arg dispatch_author "$dispatch_author" '
 		any(.[];
 			.lease_phase == "terminal" and
+			.claim_author == $dispatch_author and
 			[.created_at, ((.id // 0) | tonumber? // 0)] <= [$dispatch_ts, $dispatch_id] and
 			[.lease_terminal_at, (.lease_terminal_id // 0)] > [$dispatch_ts, $dispatch_id]
+		)' >/dev/null 2>&1; then
+		return 0
+	fi
+	return 1
+}
+
+#######################################
+# Check for trusted completion evidence ordered after a dispatch comment.
+#
+# Args: comments JSON, dispatch timestamp, dispatch comment ID
+# Returns: 0 when trusted completion evidence supersedes dispatch; 1 otherwise
+#######################################
+_dd_has_trusted_completion_after_dispatch() {
+	local comments_json="$1"
+	local dispatch_created_at="$2"
+	local dispatch_id="$3"
+
+	[[ -n "$dispatch_created_at" ]] || return 1
+	[[ "$dispatch_id" =~ ^[0-9]+$ ]] || dispatch_id=0
+	if printf '%s' "$comments_json" | jq -e \
+		--arg dispatch_ts "$dispatch_created_at" --argjson dispatch_id "$dispatch_id" '
+		any(.[];
+			[.created_at, ((.id // 0) | tonumber? // 0)] > [$dispatch_ts, $dispatch_id] and (
+				(.body_start | test("TASK_COMPLETE"; "i")) or
+				(.body_start | test("FULL_LOOP_COMPLETE"; "i")) or
+				(.body_start | test("Worker failed"; "i")) or
+				(.body_start | test("Worker Watchdog Kill"; "i")) or
+				(.body_start | test("BLOCKED"; "i")) or
+				(.body_start | test("Kill signal sent"; "i")) or
+				(.body_start | test("Closes #"; "i")) or
+				(.body_start | test("gh pr merge"; "i")) or
+				(.body_start | test("MERGE_SUMMARY"; "i")) or
+				(.body_start | test("Stale assignment recovered"; "i")) or
+				(.body_start | test("CLAIM_RELEASED"; "i"))
+			)
 		)' >/dev/null 2>&1; then
 		return 0
 	fi
@@ -2235,7 +2312,8 @@ _dd_has_matching_terminal_lease() {
 has_dispatch_comment() {
 	local issue_number="$1"
 	local repo_slug="$2"
-	# $3 = self_login — unused since GH#15317 (all dispatch comments checked regardless of author)
+	# $3 = self_login — unused since GH#15317 (trusted dispatch comments from
+	# every repository actor are checked regardless of author identity)
 
 	if [[ ! "$issue_number" =~ ^[0-9]+$ ]] || [[ -z "$repo_slug" ]]; then
 		return 1
@@ -2250,19 +2328,10 @@ has_dispatch_comment() {
 	local now_epoch
 	now_epoch=$(date -u '+%s')
 
-	# Fetch ALL comments — we need both dispatch and completion signals.
-	# Extract type, author, and timestamp for each relevant comment.
+	# Fetch every comment page because fresh dispatch and terminal evidence on a
+	# long-running issue can be absent from GitHub's oldest-first default page.
 	local comments_json
-	comments_json=$(gh api "repos/${repo_slug}/issues/${issue_number}/comments" \
-		--jq '[.[] | {
-			id: .id,
-			body: (.body // ""),
-			body_start: (.body[:300]),
-			author: .user.login,
-			author_association: (.author_association // ""),
-			created_at: .created_at
-		}]' \
-		2>/dev/null) || comments_json="[]"
+	comments_json=$(_dd_fetch_trusted_issue_comments "$issue_number" "$repo_slug") || comments_json="[]"
 
 	if [[ -z "$comments_json" || "$comments_json" == "null" || "$comments_json" == "[]" ]]; then
 		return 1
@@ -2276,8 +2345,9 @@ has_dispatch_comment() {
 	# Find the most recent dispatch comment (newest first)
 	local last_dispatch_json
 	last_dispatch_json=$(printf '%s' "$comments_json" | jq -c '
-		[.[] | select((.body_start // "") | test("(^|\\n)Dispatching worker"))]
-		| sort_by(.created_at) | reverse | first // empty
+		[.[]
+		| select((.body_start // "") | test("(^|\\n)Dispatching worker"))]
+		| sort_by(.created_at, ((.id // 0) | tonumber? // 0)) | reverse | first // empty
 	' 2>/dev/null) || last_dispatch_json=""
 
 	if [[ -z "$last_dispatch_json" || "$last_dispatch_json" == "null" ]]; then
@@ -2288,6 +2358,7 @@ has_dispatch_comment() {
 	dispatch_created_at=$(printf '%s' "$last_dispatch_json" | jq -r '.created_at // ""' 2>/dev/null) || dispatch_created_at=""
 	dispatch_author=$(printf '%s' "$last_dispatch_json" | jq -r '.author // ""' 2>/dev/null) || dispatch_author=""
 	dispatch_id=$(printf '%s' "$last_dispatch_json" | jq -r '.id // 0' 2>/dev/null) || dispatch_id=0
+	[[ "$dispatch_id" =~ ^[0-9]+$ ]] || dispatch_id=0
 
 	# Check if the dispatch comment is within TTL
 	if ! _is_dispatch_comment_active "$dispatch_created_at" "$dispatch_author" "$issue_number" "$now_epoch" "$max_age" "${3:-}"; then
@@ -2297,32 +2368,13 @@ has_dispatch_comment() {
 	# A CLAIM_RELEASED write can fail after the worker has already emitted its
 	# structured terminal lease transition. Reconcile that authenticated
 	# transition as equivalent durable completion evidence (GH#28437).
-	if _dd_has_matching_terminal_lease "$comments_json" "$dispatch_created_at" "$dispatch_id"; then
+	if _dd_has_matching_terminal_lease "$comments_json" "$dispatch_created_at" "$dispatch_id" "$dispatch_author"; then
 		return 1
 	fi
 
-	# GH#17503: Check for completion/failure comments posted AFTER the dispatch.
-	# If found, the worker is done — the dispatch comment no longer blocks.
-	local has_completion
-	has_completion=$(printf '%s' "$comments_json" | jq -r --arg dispatch_ts "$dispatch_created_at" '
-		[.[] | select(
-			.created_at > $dispatch_ts and (
-				(.body_start | test("TASK_COMPLETE"; "i")) or
-				(.body_start | test("FULL_LOOP_COMPLETE"; "i")) or
-				(.body_start | test("Worker failed"; "i")) or
-				(.body_start | test("Worker Watchdog Kill"; "i")) or
-				(.body_start | test("BLOCKED"; "i")) or
-				(.body_start | test("Kill signal sent"; "i")) or
-				(.body_start | test("Closes #"; "i")) or
-				(.body_start | test("gh pr merge"; "i")) or
-				(.body_start | test("MERGE_SUMMARY"; "i")) or
-				(.body_start | test("Stale assignment recovered"; "i")) or
-			(.body_start | test("CLAIM_RELEASED"; "i"))
-			)
-		)] | length
-	' 2>/dev/null) || has_completion=0
-
-	if [[ "$has_completion" -gt 0 ]]; then
+	# GH#17503: trusted completion/failure evidence posted after dispatch retires
+	# the lock early; untrusted issue comments cannot mutate coordination state.
+	if _dd_has_trusted_completion_after_dispatch "$comments_json" "$dispatch_created_at" "$dispatch_id"; then
 		# Worker completed or failed — dispatch comment superseded, safe to re-dispatch
 		return 1
 	fi
