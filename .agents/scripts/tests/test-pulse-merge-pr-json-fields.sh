@@ -97,19 +97,23 @@ test_callers_use_shared_field_helper() {
 }
 
 test_process_pr_runtime_reuses_one_view() {
-	local helper_src process_src call_log payload_log log_file call_count payload failure=""
+	local helper_src normalize_src process_src call_log payload_log log_file call_count payload failure=""
 	helper_src=$(awk '
 		/^_pulse_merge_ready_pr_json_fields\(\) \{/,/^}$/ { print }
 	' "$MERGE_SCRIPT")
+	normalize_src=$(awk '
+		/^_pmp_normalize_pr_lifecycle_state_into\(\) \{/,/^}$/ { print }
+	' "$MERGE_PROCESS")
 	process_src=$(awk '
 		/^process_pr\(\) \{/,/^}$/ { print }
 	' "$MERGE_SCRIPT")
-	if [[ -z "$helper_src" || -z "$process_src" ]]; then
+	if [[ -z "$helper_src" || -z "$normalize_src" || -z "$process_src" ]]; then
 		print_result "process_pr runtime source exists" 1 "could not extract helper functions"
 		return 0
 	fi
 	# shellcheck disable=SC1090 # Test intentionally evaluates extracted functions.
 	eval "$helper_src"
+	eval "$normalize_src"
 	eval "$process_src"
 
 	call_log=$(mktemp)
@@ -117,16 +121,16 @@ test_process_pr_runtime_reuses_one_view() {
 	log_file=$(mktemp)
 	PROCESS_PR_TEST_CALL_LOG="$call_log"
 	PROCESS_PR_TEST_PAYLOAD_LOG="$payload_log"
-	PROCESS_PR_TEST_STATE="OPEN"
+	PROCESS_PR_TEST_STATE="open"
 	LOGFILE="$log_file"
 
 	if ! process_pr "owner/repo" "42"; then
-		failure="process_pr rejected an OPEN prefetched state"
+		failure="process_pr rejected a lowercase open prefetched state"
 	else
 		call_count=$(wc -l <"$call_log" | tr -d ' ')
 		payload=$(<"$payload_log")
 		[[ "$call_count" == "1" ]] || failure="gh_pr_view calls=${call_count}"
-		[[ "$payload" == *'"state":"OPEN"'* ]] || failure="prefetched state was not forwarded"
+		[[ "$payload" == *'"state":"open"'* ]] || failure="prefetched state was not forwarded"
 	fi
 	if [[ -z "$failure" ]]; then
 		: >"$call_log"

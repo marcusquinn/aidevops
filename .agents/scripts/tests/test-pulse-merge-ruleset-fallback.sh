@@ -11,6 +11,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 MERGE_SCRIPT="${SCRIPT_DIR}/../pulse-merge.sh"
+MERGE_PROCESS_SCRIPT="${SCRIPT_DIR}/../pulse-merge-process.sh"
 
 readonly TEST_RED='\033[0;31m'
 readonly TEST_GREEN='\033[0;32m'
@@ -162,19 +163,27 @@ teardown_test_env() {
 
 define_function_under_test() {
 	local src_invalidate
+	local src_normalize_pr_state
 	local src_terminal
 	local src_process
+	local src_webhook_process
 	src_invalidate=$(awk '
 		/^_pulse_merge_invalidate_pr_list_cache\(\) \{/,/^\}$/ { print }
 	' "$MERGE_SCRIPT")
+	src_normalize_pr_state=$(awk '
+		/^_pmp_normalize_pr_lifecycle_state_into\(\) \{/,/^\}$/ { print }
+	' "$MERGE_PROCESS_SCRIPT")
 	src_terminal=$(awk '
 		/^_pulse_merge_failure_is_terminal\(\) \{/,/^\}$/ { print }
 	' "$MERGE_SCRIPT")
 	src_process=$(awk '
 		/^_process_single_ready_pr\(\) \{/,/^\}$/ { print }
 	' "$MERGE_SCRIPT")
-	if [[ -z "$src_invalidate" || -z "$src_terminal" || -z "$src_process" ]]; then
-		printf 'ERROR: could not extract cache invalidation, terminal-state, or process helper from %s\n' "$MERGE_SCRIPT" >&2
+	src_webhook_process=$(awk '
+		/^process_pr\(\) \{/,/^\}$/ { print }
+	' "$MERGE_SCRIPT")
+	if [[ -z "$src_invalidate" || -z "$src_normalize_pr_state" || -z "$src_terminal" || -z "$src_process" || -z "$src_webhook_process" ]]; then
+		printf 'ERROR: could not extract merge helpers from %s and %s\n' "$MERGE_SCRIPT" "$MERGE_PROCESS_SCRIPT" >&2
 		return 1
 	fi
 	# shellcheck disable=SC1090
@@ -182,9 +191,13 @@ define_function_under_test() {
 	# shellcheck disable=SC1090
 	eval "$src_invalidate"
 	# shellcheck disable=SC1090
+	eval "$src_normalize_pr_state"
+	# shellcheck disable=SC1090
 	eval "$src_terminal"
 	# shellcheck disable=SC1090
 	eval "$src_process"
+	# shellcheck disable=SC1090
+	eval "$src_webhook_process"
 	return 0
 }
 
@@ -242,7 +255,22 @@ _handle_post_merge_actions() {
 	printf 'post-merge\n' >>"$MERGE_EVENT_LOG"
 	return 0
 }
-gh_pr_view() { printf '{"labels":[]}'; return 0; }
+_pulse_merge_ready_pr_json_fields() {
+	printf 'number,state,mergeable,reviewDecision,author,title,updatedAt,headRefOid,headRefName,baseRefName,labels,isDraft'
+	return 0
+}
+
+gh_pr_view() {
+	local pr_number="$1"
+	shift
+	if [[ -n "${PR_VIEW_STATE:-}" ]]; then
+		printf '{"number":%s,"state":"%s","mergeable":"MERGEABLE","reviewDecision":"APPROVED","author":{"login":"owner"},"title":"webhook test","headRefOid":"head-current"}' \
+			"$pr_number" "$PR_VIEW_STATE"
+		return 0
+	fi
+	printf '{"labels":[]}'
+	return 0
+}
 
 pulse_pr_list_cache_invalidate_repo() {
 	local repo_slug="$1"
@@ -407,12 +435,55 @@ test_draft_pr_without_origin_labels_skips_merge_write() {
 	return 0
 }
 
-test_non_open_pr_skips_before_merge_pipeline() {
+test_lowercase_open_pr_enters_merge_pipeline() {
+	setup_test_env
+	define_function_under_test || { teardown_test_env; return 0; }
+
+	local pr_obj='{"number":78,"state":"open","mergeable":"MERGEABLE","reviewDecision":"APPROVED","author":{"login":"owner"},"title":"lowercase open test","labels":[],"isDraft":false,"headRefOid":"head-current"}'
+	local result=0
+	_process_single_ready_pr "owner/repo" "$pr_obj" || result=$?
+
+	if [[ "$result" -ne 0 ]]; then
+		print_result "lowercase open PR enters batch merge pipeline" 1 "Expected 0, got ${result}; log: $(<"$LOGFILE")"
+	elif ! grep -qE 'gh pr merge 78 ' "$GH_LOG"; then
+		print_result "lowercase open PR enters batch merge pipeline" 1 "gh log: $(<"$GH_LOG")"
+	elif grep -qF 'state=open is not OPEN' "$LOGFILE"; then
+		print_result "lowercase open PR enters batch merge pipeline" 1 "pulse log: $(<"$LOGFILE")"
+	else
+		print_result "lowercase open PR enters batch merge pipeline" 0
+	fi
+	teardown_test_env
+	return 0
+}
+
+test_lowercase_open_pr_enters_webhook_merge_pipeline() {
+	PR_VIEW_STATE="open"
+	setup_test_env
+	define_function_under_test || { teardown_test_env; unset PR_VIEW_STATE; return 0; }
+
+	local result=0
+	process_pr "owner/repo" "79" || result=$?
+
+	if [[ "$result" -ne 0 ]]; then
+		print_result "lowercase open PR enters webhook merge pipeline" 1 "Expected 0, got ${result}; log: $(<"$LOGFILE")"
+	elif ! grep -qF 'webhook-triggered merge attempt for owner/repo#79' "$LOGFILE"; then
+		print_result "lowercase open PR enters webhook merge pipeline" 1 "pulse log: $(<"$LOGFILE")"
+	elif ! grep -qE 'gh pr merge 79 ' "$GH_LOG"; then
+		print_result "lowercase open PR enters webhook merge pipeline" 1 "gh log: $(<"$GH_LOG")"
+	else
+		print_result "lowercase open PR enters webhook merge pipeline" 0
+	fi
+	teardown_test_env
+	unset PR_VIEW_STATE
+	return 0
+}
+
+test_lowercase_closed_pr_skips_before_merge_pipeline() {
 	unset GH_STUB_MODE
 	setup_test_env
 	define_function_under_test || { teardown_test_env; return 0; }
 
-	local pr_obj='{"number":89,"state":"CLOSED","mergeable":"MERGEABLE","reviewDecision":"APPROVED","author":{"login":"owner"},"title":"closed test","labels":[],"isDraft":false}'
+	local pr_obj='{"number":89,"state":"closed","mergeable":"MERGEABLE","reviewDecision":"APPROVED","author":{"login":"owner"},"title":"closed test","labels":[],"isDraft":false}'
 	local result=0
 	_process_single_ready_pr "owner/repo" "$pr_obj" || result=$?
 
@@ -424,6 +495,32 @@ test_non_open_pr_skips_before_merge_pipeline() {
 		print_result "non-OPEN PR writes skip audit log" 1 "pulse log: $(<"$LOGFILE")"
 	else
 		print_result "non-OPEN PR is blocked before merge pipeline" 0
+	fi
+	teardown_test_env
+	return 0
+}
+
+test_unknown_and_missing_pr_states_skip_before_merge_pipeline() {
+	unset GH_STUB_MODE
+	setup_test_env
+	define_function_under_test || { teardown_test_env; return 0; }
+
+	local unknown_obj='{"number":90,"state":"unexpected","mergeable":"MERGEABLE","reviewDecision":"APPROVED","author":{"login":"owner"},"title":"unknown state test","labels":[],"isDraft":false}'
+	local missing_obj='{"number":91,"mergeable":"MERGEABLE","reviewDecision":"APPROVED","author":{"login":"owner"},"title":"missing state test","labels":[],"isDraft":false}'
+	local unknown_result=0
+	local missing_result=0
+	_process_single_ready_pr "owner/repo" "$unknown_obj" || unknown_result=$?
+	_process_single_ready_pr "owner/repo" "$missing_obj" || missing_result=$?
+
+	if [[ "$unknown_result" -ne 1 || "$missing_result" -ne 1 ]]; then
+		print_result "unknown and missing PR states remain blocked" 1 \
+			"unknown=${unknown_result} missing=${missing_result}; log: $(<"$LOGFILE")"
+	elif [[ -s "$GH_LOG" ]]; then
+		print_result "unknown and missing PR states remain blocked" 1 "gh log: $(<"$GH_LOG")"
+	elif ! grep -qF 'state=unexpected is not OPEN' "$LOGFILE" || ! grep -qF 'state=missing is not OPEN' "$LOGFILE"; then
+		print_result "unknown and missing PR states remain blocked" 1 "pulse log: $(<"$LOGFILE")"
+	else
+		print_result "unknown and missing PR states remain blocked" 0
 	fi
 	teardown_test_env
 	return 0
@@ -682,7 +779,10 @@ main() {
 	test_ruleset_violation_skips_native_auto_merge_when_disabled
 	test_green_behind_update_defers_before_merge_attempts
 	test_draft_pr_without_origin_labels_skips_merge_write
-	test_non_open_pr_skips_before_merge_pipeline
+	test_lowercase_open_pr_enters_merge_pipeline
+	test_lowercase_open_pr_enters_webhook_merge_pipeline
+	test_lowercase_closed_pr_skips_before_merge_pipeline
+	test_unknown_and_missing_pr_states_skip_before_merge_pipeline
 	test_expected_required_check_updates_branch_and_defers
 	test_pending_required_check_updates_branch_and_defers
 	test_final_preflight_thread_blocker_dispatches_before_merge
