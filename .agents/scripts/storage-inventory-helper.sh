@@ -55,6 +55,10 @@ _storage_measure_path() {
 	local kib=""
 	local ignored=""
 
+	if [[ -z "$path" ]]; then
+		printf 'null|unavailable|home-unavailable'
+		return 0
+	fi
 	if [[ ! -e "$path" && ! -L "$path" ]]; then
 		printf '0|exact|missing'
 		return 0
@@ -170,7 +174,7 @@ _storage_emit_record() {
 	local policy="$7"
 	local disposition="$8"
 	local protection_reason="$9"
-	local next_action="${10}"
+	local next_action="${10:-}"
 	local measured=""
 
 	measured=$(_storage_measure_path "$actual_path")
@@ -246,8 +250,29 @@ _storage_opencode_residual_measurement() {
 	return 0
 }
 
+_storage_emit_unavailable_opencode_records() {
+	local unavailable_measure="${STORAGE_JSON_NULL}|unavailable|home-unavailable"
+	local unavailable_reason="OpenCode data root is unavailable because HOME is unset"
+	local unavailable_action="Set HOME or AIDEVOPS_OPENCODE_DATA_DIR to inventory OpenCode storage"
+	local label_prefix=OpenCode
+
+	_storage_emit_measured_record "opencode-active-db" "$STORAGE_PRODUCER_OPENCODE" "${label_prefix} active database" "$STORAGE_JOINT" \
+		"$STORAGE_UNKNOWN" "logical session retention is OpenCode-owned" "$STORAGE_UNKNOWN" "$unavailable_reason" "$unavailable_action" "$unavailable_measure"
+	_storage_emit_measured_record "opencode-active-wal" "$STORAGE_PRODUCER_OPENCODE" "${label_prefix} active WAL/SHM" "$STORAGE_JOINT" \
+		"$STORAGE_UNKNOWN" "checkpoint and VACUUM only after idle-holder evidence" "$STORAGE_UNKNOWN" "$unavailable_reason" "$unavailable_action" "$unavailable_measure"
+	_storage_emit_measured_record "opencode-archive" "aidevops-opencode-archive" "${label_prefix} archive database" "$STORAGE_JOINT" \
+		"$STORAGE_UNKNOWN" "archive data is retained; no generic deletion contract" "$STORAGE_UNKNOWN" "$unavailable_reason" "$unavailable_action" "$unavailable_measure"
+	_storage_emit_measured_record "opencode-legacy" "$STORAGE_PRODUCER_OPENCODE" "${label_prefix} legacy storage" "$STORAGE_UNKNOWN" \
+		"$STORAGE_UNKNOWN" "legacy format lifecycle is owned upstream" "$STORAGE_UNKNOWN" "$unavailable_reason" "$unavailable_action" "$unavailable_measure"
+	_storage_emit_measured_record "opencode-tool-output" "$STORAGE_PRODUCER_OPENCODE" "${label_prefix} tool output" "$STORAGE_UNKNOWN" \
+		"$STORAGE_UNKNOWN" "tool-output lifecycle is owned upstream" "$STORAGE_UNKNOWN" "$unavailable_reason" "$unavailable_action" "$unavailable_measure"
+	_storage_emit_measured_record "opencode-unclassified" "$STORAGE_PRODUCER_OPENCODE" "Other ${label_prefix} application data" "$STORAGE_UNKNOWN" \
+		"$STORAGE_UNKNOWN" "future and unclassified formats fail closed" "$STORAGE_UNKNOWN" "$unavailable_reason" "$unavailable_action" "$unavailable_measure"
+	return 0
+}
+
 _storage_opencode_records() {
-	local data_root="${AIDEVOPS_OPENCODE_DATA_DIR:-${HOME}/.local/share/opencode}"
+	local data_root="${AIDEVOPS_OPENCODE_DATA_DIR:-${HOME:+$HOME/.local/share/opencode}}"
 	local active_db="${AIDEVOPS_OPENCODE_DB_PATH:-${OPENCODE_DB_PATH:-${OPENCODE_DB:-${data_root}/opencode.db}}}"
 	local active_dir="${active_db%/*}"
 	local archive_db=""
@@ -270,6 +295,11 @@ _storage_opencode_records() {
 	local archive_disposition="$STORAGE_PROTECTED"
 	local archive_reason="archive retention and integrity require explicit OpenCode-aware verification"
 	local wal_reason="idle snapshot only; maintenance still requires holder and checkpoint evidence"
+
+	if [[ -z "$data_root" ]]; then
+		_storage_emit_unavailable_opencode_records
+		return 0
+	fi
 
 	if [[ "$active_dir" == "$active_db" ]]; then
 		active_dir="."
@@ -364,7 +394,7 @@ _storage_bundle_lease_is_live() {
 }
 
 _storage_emit_runtime_bundle_record() {
-	local bundles_dir="${HOME}/.aidevops/runtime-bundles"
+	local bundles_dir="${HOME:+$HOME/.aidevops/runtime-bundles}"
 	local measured=""
 	local total_bytes="null"
 	local confidence="unavailable"
@@ -575,7 +605,7 @@ _storage_emit_retention_record() {
 _storage_observability_record() {
 	local home_label="~"
 	local display_path="${home_label}/.aidevops/.agent-workspace/observability"
-	local actual_path="${HOME}/.aidevops/.agent-workspace/observability"
+	local actual_path="${HOME:+$HOME/.aidevops/.agent-workspace/observability}"
 	local report=""
 	local measured=""
 	local total_bytes="$STORAGE_JSON_NULL"
@@ -592,7 +622,7 @@ _storage_observability_record() {
 		_storage_emit_record "observability" "opencode-aidevops" "$display_path" "$actual_path" \
 			"$STORAGE_OWNER_FRAMEWORK" "$STORAGE_UNKNOWN" "retention inventory unavailable" "$STORAGE_UNKNOWN" \
 			"classification unavailable" "Use observability-helper.sh storage --json" |
-			jq -c '.error = "retention-inventory-unavailable"'
+			jq -c '.error = (if .error == "home-unavailable" then .error else "retention-inventory-unavailable" end)'
 		return 0
 	fi
 
@@ -627,14 +657,14 @@ _storage_inventory_records() {
 	local pulse_producer="$STORAGE_PRODUCER_PULSE"
 	_storage_emit_runtime_bundle_record
 	_storage_observability_record
-	_storage_emit_retention_record "agent-backups" "setup-backup" "${home_label}/.aidevops/agents-backups" "${HOME}/.aidevops/agents-backups" "$STORAGE_SAFETY_MIXED" "10 snapshots, 180 days, and 4 GiB soft limits" "newest verified rollback and retention trash" "Setup computes a dry run before confirmed producer-owned rotation" "_backup_retention_plan"
-	_storage_emit_retention_record "worker-failure-excerpts" "headless-runtime" "${home_label}/.aidevops/logs/worker-failure-excerpts" "${HOME}/.aidevops/logs/worker-failure-excerpts" "$STORAGE_SAFETY_MIXED" "64 KiB per excerpt; 3 excerpts, 30 days, and 192 KiB per session soft limits" "newest unresolved recovery evidence per session" "Headless runtime computes a dry run after each preserved failure" "_storage_worker_excerpt_plan"
-	_storage_emit_record "pulse-hot-log" "$pulse_producer" "${home_label}/.aidevops/logs/pulse.log" "${HOME}/.aidevops/logs/pulse.log" "$framework_owner" "$active_class" "50 MiB active-file cap with gzip archive rotation" "$protected_disposition" "$active_writer_reason" "Use pulse-owned rotate_pulse_log; never unlink the active file"
-	_storage_emit_record "pulse-wrapper-log" "$pulse_producer" "${home_label}/.aidevops/logs/pulse-wrapper.log" "${HOME}/.aidevops/logs/pulse-wrapper.log" "$framework_owner" "$active_class" "50 MiB active-file cap with gzip archive rotation" "$protected_disposition" "$active_writer_reason" "Use pulse-owned rotate_pulse_log; never unlink the active file"
-	_storage_emit_record "pulse-stage-timings" "$pulse_producer" "${home_label}/.aidevops/logs/pulse-stage-timings.log" "${HOME}/.aidevops/logs/pulse-stage-timings.log" "$framework_owner" "$active_class" "1 MiB active-file cap with gzip archive rotation" "$protected_disposition" "$active_writer_reason" "Use pulse-owned rotate_pulse_log; never unlink the active file"
-	_storage_emit_record "pulse-log-archive" "$pulse_producer" "${home_label}/.aidevops/logs/pulse-archive" "${HOME}/.aidevops/logs/pulse-archive" "$framework_owner" "archive" "1 GiB combined cold archive cap; oldest archives first" "$protected_disposition" "archive already converged by producer" "Use pulse-owned rotate_pulse_log for archive pruning"
+	_storage_emit_retention_record "agent-backups" "setup-backup" "${home_label}/.aidevops/agents-backups" "${HOME:+$HOME/.aidevops/agents-backups}" "$STORAGE_SAFETY_MIXED" "10 snapshots, 180 days, and 4 GiB soft limits" "newest verified rollback and retention trash" "Setup computes a dry run before confirmed producer-owned rotation" "_backup_retention_plan"
+	_storage_emit_retention_record "worker-failure-excerpts" "headless-runtime" "${home_label}/.aidevops/logs/worker-failure-excerpts" "${HOME:+$HOME/.aidevops/logs/worker-failure-excerpts}" "$STORAGE_SAFETY_MIXED" "64 KiB per excerpt; 3 excerpts, 30 days, and 192 KiB per session soft limits" "newest unresolved recovery evidence per session" "Headless runtime computes a dry run after each preserved failure" "_storage_worker_excerpt_plan"
+	_storage_emit_record "pulse-hot-log" "$pulse_producer" "${home_label}/.aidevops/logs/pulse.log" "${HOME:+$HOME/.aidevops/logs/pulse.log}" "$framework_owner" "$active_class" "50 MiB active-file cap with gzip archive rotation" "$protected_disposition" "$active_writer_reason" "Use pulse-owned rotate_pulse_log; never unlink the active file"
+	_storage_emit_record "pulse-wrapper-log" "$pulse_producer" "${home_label}/.aidevops/logs/pulse-wrapper.log" "${HOME:+$HOME/.aidevops/logs/pulse-wrapper.log}" "$framework_owner" "$active_class" "50 MiB active-file cap with gzip archive rotation" "$protected_disposition" "$active_writer_reason" "Use pulse-owned rotate_pulse_log; never unlink the active file"
+	_storage_emit_record "pulse-stage-timings" "$pulse_producer" "${home_label}/.aidevops/logs/pulse-stage-timings.log" "${HOME:+$HOME/.aidevops/logs/pulse-stage-timings.log}" "$framework_owner" "$active_class" "1 MiB active-file cap with gzip archive rotation" "$protected_disposition" "$active_writer_reason" "Use pulse-owned rotate_pulse_log; never unlink the active file"
+	_storage_emit_record "pulse-log-archive" "$pulse_producer" "${home_label}/.aidevops/logs/pulse-archive" "${HOME:+$HOME/.aidevops/logs/pulse-archive}" "$framework_owner" "archive" "1 GiB combined cold archive cap; oldest archives first" "$protected_disposition" "archive already converged by producer" "Use pulse-owned rotate_pulse_log for archive pruning"
 	_storage_opencode_records
-	_storage_emit_record "npm-cache" "npm" "npm cache" "${AIDEVOPS_NPM_CACHE_DIR:-${HOME}/.npm}" "external" "cache" "package-manager owned; no aidevops cleanup authority" "protected" "external owner" "Use npm-owned diagnostics and cleanup explicitly"
+	_storage_emit_record "npm-cache" "npm" "npm cache" "${AIDEVOPS_NPM_CACHE_DIR:-${HOME:+$HOME/.npm}}" "external" "cache" "package-manager owned; no aidevops cleanup authority" "protected" "external owner" "Use npm-owned diagnostics and cleanup explicitly"
 	return 0
 }
 
