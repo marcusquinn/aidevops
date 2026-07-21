@@ -32,6 +32,31 @@ _der_task_refs() {
 	return 0
 }
 
+_der_todo_blocker_tokens_valid() {
+	local text="$1"
+	local marker=""
+	local value=""
+	local token=""
+	local marker_count=0
+
+	while IFS= read -r marker; do
+		[[ -n "$marker" ]] || continue
+		marker_count=$((marker_count + 1))
+		value="${marker#*blocked-by:}"
+		[[ -n "$value" ]] || return 1
+		while IFS= read -r token; do
+			[[ -n "$token" ]] || return 1
+			if [[ "$token" =~ ^#[0-9]+$ ]]; then
+				continue
+			fi
+			task_identity_validate "$token" || return 1
+		done <<<"${value//,/$'\n'}"
+	done < <(printf '%s\n' "$text" | grep -oE '(^|[[:space:]])blocked-by:[^[:space:]]+' || true)
+
+	[[ "$marker_count" -gt 0 ]] || return 1
+	return 0
+}
+
 _der_has_hold() {
 	local body="$1"
 	local comments="$2"
@@ -262,6 +287,21 @@ _der_native_blockers_closed() {
 		[[ "${blocker#*:}" == "$DER_STATE_CLOSED" ]] || return "$DER_NOT_READY"
 	done < <(printf '%s' "$result" | jq -r '.data.repository.issue.blockedBy.nodes[]? | "\(.number):\(.state)"' 2>/dev/null)
 	return 0
+}
+
+_der_completion_blockers_closed() {
+	local repo="$1"
+	local issue_number="$2"
+	local dependency_text="$3"
+	local candidate_json=""
+
+	[[ "$repo" == */* && "$issue_number" =~ ^[0-9]+$ ]] || return 1
+	_der_todo_blocker_tokens_valid "$dependency_text" || return 1
+	candidate_json=$(jq -cn --arg body "$dependency_text" \
+		'{body: $body, labels: {nodes: []}}') || return 1
+	_der_native_blockers_closed "$repo" "$issue_number" || return $?
+	_der_all_declared_blockers_closed "$repo" "$candidate_json"
+	return $?
 }
 
 _der_try_unblock() {
