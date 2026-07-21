@@ -207,13 +207,19 @@ printf '%s\n' "${WORKER_WORKTREE_PATH:-}" >"${HEADLESS_ENV_CAPTURE}"
 printf 'WORKER_ISSUE_NUMBER=%s\n' "${WORKER_ISSUE_NUMBER:-}" >>"${HEADLESS_ENV_CAPTURE}"
 printf 'WORKER_NO_EXIT_PUSH=%s\n' "${WORKER_NO_EXIT_PUSH:-}" >>"${HEADLESS_ENV_CAPTURE}"
 printf 'AIDEVOPS_ALLOW_WORKER_WORKTREE_OWNER_TRANSFER=%s\n' "${AIDEVOPS_ALLOW_WORKER_WORKTREE_OWNER_TRANSFER:-}" >>"${HEADLESS_ENV_CAPTURE}"
+printf 'AIDEVOPS_WORKTREE_OWNER_TRANSFER_MODE=%s\n' "${AIDEVOPS_WORKTREE_OWNER_TRANSFER_MODE:-}" >>"${HEADLESS_ENV_CAPTURE}"
+printf 'AIDEVOPS_WORKTREE_EXPECTED_OWNER_PID=%s\n' "${AIDEVOPS_WORKTREE_EXPECTED_OWNER_PID:-}" >>"${HEADLESS_ENV_CAPTURE}"
+printf 'AIDEVOPS_WORKTREE_EXPECTED_OWNER_SESSION=%s\n' "${AIDEVOPS_WORKTREE_EXPECTED_OWNER_SESSION:-}" >>"${HEADLESS_ENV_CAPTURE}"
+printf 'AIDEVOPS_WORKTREE_EXPECTED_OWNER_BATCH=%s\n' "${AIDEVOPS_WORKTREE_EXPECTED_OWNER_BATCH:-}" >>"${HEADLESS_ENV_CAPTURE}"
+printf 'AIDEVOPS_WORKTREE_EXPECTED_OWNER_TASK=%s\n' "${AIDEVOPS_WORKTREE_EXPECTED_OWNER_TASK:-}" >>"${HEADLESS_ENV_CAPTURE}"
+printf 'AIDEVOPS_WORKTREE_EXPECTED_OWNER_CREATED_AT=%s\n' "${AIDEVOPS_WORKTREE_EXPECTED_OWNER_CREATED_AT:-}" >>"${HEADLESS_ENV_CAPTURE}"
 printf 'AIDEVOPS_PR_REPAIR_NUMBER=%s\n' "${AIDEVOPS_PR_REPAIR_NUMBER:-}" >>"${HEADLESS_ENV_CAPTURE}"
 printf 'AIDEVOPS_PR_REPAIR_HEAD_SHA=%s\n' "${AIDEVOPS_PR_REPAIR_HEAD_SHA:-}" >>"${HEADLESS_ENV_CAPTURE}"
 printf 'AIDEVOPS_PR_REPAIR_HEAD_REF=%s\n' "${AIDEVOPS_PR_REPAIR_HEAD_REF:-}" >>"${HEADLESS_ENV_CAPTURE}"
-printf '%s\n' "${prompt_file}" >>"${HEADLESS_LOG}"
 if [[ -n "$prompt_file" && -f "$prompt_file" ]]; then
 	cp "$prompt_file" "${HEADLESS_PROMPT_CAPTURE}"
 fi
+printf '%s\n' "${prompt_file}" >>"${HEADLESS_LOG}"
 exit 0
 HEADLESS_STUB
 	chmod +x "${TEST_ROOT}/headless-runtime-helper.sh"
@@ -241,10 +247,14 @@ if [[ "${1:-}" != "add" || -z "$branch" || -z "$path" || "${STUB_WORKTREE_HELPER
 	exit 1
 fi
 base=""
+issue=""
 shift 3
 while [[ $# -gt 0 ]]; do
 	if [[ "$1" == "--base" ]]; then
 		base="${2:-}"
+		shift 2
+	elif [[ "$1" == "--issue" ]]; then
+		issue="${2:-}"
 		shift 2
 	else
 		shift
@@ -252,6 +262,13 @@ while [[ $# -gt 0 ]]; do
 done
 mkdir -p "$path"
 printf '%s\t%s\t%s\n' "$path" "$branch" "${STUB_WORKTREE_ACTUAL_HEAD:-$base}" >>"${GIT_WORKTREE_REGISTRY}"
+if [[ "${STUB_WORKTREE_REGISTER_OWNER:-false}" == "true" ]]; then
+	source "${SHARED_CONSTANTS_PATH}"
+	register_worktree "$path" "$branch" --task "$issue" \
+		--session "${STUB_WORKTREE_OWNER_SESSION:-worktree-helper-created}" \
+		--owner-pid "${STUB_WORKTREE_OWNER_PID:-$$}"
+	check_worktree_owner "$path" >"${WORKTREE_CREATED_OWNER_CAPTURE}"
+fi
 exit 0
 WORKTREE_STUB
 	chmod +x "${TEST_ROOT}/worktree-helper.sh"
@@ -262,6 +279,7 @@ setup_test_env() {
 	unset STUB_PR_LIST STUB_PR_VIEW STUB_THREADS_MODE STUB_CROSS_REPOSITORY STUB_REMOTE_HEAD
 	unset STUB_GIT_INVALID_BRANCH STUB_GIT_FETCH_FAIL STUB_GIT_CANONICAL_FETCH_FAIL
 	unset STUB_REMOTE_HEAD_INITIAL STUB_REMOTE_HEAD_AFTER_FETCH STUB_WORKTREE_ACTUAL_HEAD STUB_WORKTREE_HELPER_FAIL
+	unset STUB_WORKTREE_REGISTER_OWNER STUB_WORKTREE_OWNER_PID STUB_WORKTREE_OWNER_SESSION
 	unset PR_REVIEW_THREAD_RESPONSE_ESCALATE_AFTER
 	TEST_ROOT="$(mktemp -d -t prrts.XXXXXX)"
 	export HOME="${TEST_ROOT}/home"
@@ -272,10 +290,14 @@ setup_test_env() {
 	export HEADLESS_ENV_CAPTURE="${TEST_ROOT}/headless-env.txt"
 	export HEADLESS_PROMPT_CAPTURE="${TEST_ROOT}/prompt.md"
 	export WORKTREE_HELPER_LOG="${TEST_ROOT}/worktree-helper.log"
+	export WORKTREE_CREATED_OWNER_CAPTURE="${TEST_ROOT}/worktree-created-owner.txt"
 	export GIT_WORKTREE_REGISTRY="${TEST_ROOT}/git-worktrees.tsv"
 	export GIT_FETCH_CWD_LOG="${TEST_ROOT}/git-fetch-cwd.log"
 	export GIT_FETCHED_HEAD_STATE="${TEST_ROOT}/git-fetched-head.state"
 	export GIT_CANONICAL_REPO_PATH="${TEST_ROOT}/repo"
+	export WORKTREE_REGISTRY_DIR="${TEST_ROOT}/ownership-registry"
+	export WORKTREE_REGISTRY_DB="${WORKTREE_REGISTRY_DIR}/worktree-registry.db"
+	export SHARED_CONSTANTS_PATH="${TEST_SCRIPT_DIR}/../shared-constants.sh"
 	mkdir -p "${HOME}" "${TEST_ROOT}/bin" "${TEST_ROOT}/repo" "${AIDEVOPS_PR_REVIEW_THREAD_RESPONSE_STATE_DIR}"
 	mkdir -p "${TEST_ROOT}/fetch-worktree"
 	printf '%s\t%s\t%s\n' "${TEST_ROOT}/fetch-worktree" 'support/fetch' "$TEST_HEAD_OID_1" >"$GIT_WORKTREE_REGISTRY"
@@ -297,6 +319,30 @@ setup_test_env() {
 	: >"$HEADLESS_LOG"
 	: >"$GIT_FETCH_CWD_LOG"
 	rm -f "$GIT_FETCHED_HEAD_STATE"
+	return 0
+}
+
+register_test_worktree_owner() {
+	local worktree_path="$1"
+	local branch="$2"
+	local task_id="$3"
+	local session_id="$4"
+	local batch_id="${5:-}"
+	local owner_pid="$$"
+
+	if ! bash -c 'source "$1"; register_worktree "$2" "$3" --task "$4" --session "$5" --batch "$6" --owner-pid "$7"' \
+		_ "${TEST_SCRIPT_DIR}/../shared-constants.sh" "$worktree_path" "$branch" "$task_id" "$session_id" "$batch_id" "$owner_pid"; then
+		return 1
+	fi
+	return 0
+}
+
+read_test_worktree_owner() {
+	local worktree_path="$1"
+	if ! bash -c 'source "$1"; check_worktree_owner "$2"' \
+		_ "${TEST_SCRIPT_DIR}/../shared-constants.sh" "$worktree_path"; then
+		return 1
+	fi
 	return 0
 }
 
@@ -364,13 +410,130 @@ test_dispatch_exports_worktree_ownership_context() {
 	wait_for_headless_log || true
 	if grep -Fxq 'WORKER_ISSUE_NUMBER=1' "$HEADLESS_ENV_CAPTURE" 2>/dev/null &&
 		grep -Fxq 'WORKER_NO_EXIT_PUSH=1' "$HEADLESS_ENV_CAPTURE" 2>/dev/null &&
-		grep -Fxq 'AIDEVOPS_ALLOW_WORKER_WORKTREE_OWNER_TRANSFER=1' "$HEADLESS_ENV_CAPTURE" 2>/dev/null &&
+		grep -Fxq 'AIDEVOPS_ALLOW_WORKER_WORKTREE_OWNER_TRANSFER=' "$HEADLESS_ENV_CAPTURE" 2>/dev/null &&
+		grep -Fxq 'AIDEVOPS_WORKTREE_OWNER_TRANSFER_MODE=continuation' "$HEADLESS_ENV_CAPTURE" 2>/dev/null &&
+		grep -Eq '^AIDEVOPS_WORKTREE_EXPECTED_OWNER_PID=[0-9]+$' "$HEADLESS_ENV_CAPTURE" 2>/dev/null &&
+		grep -Fxq 'AIDEVOPS_WORKTREE_EXPECTED_OWNER_SESSION=dispatch-precreate-1' "$HEADLESS_ENV_CAPTURE" 2>/dev/null &&
+		grep -Fxq 'AIDEVOPS_WORKTREE_EXPECTED_OWNER_TASK=1' "$HEADLESS_ENV_CAPTURE" 2>/dev/null &&
+		grep -Eq '^AIDEVOPS_WORKTREE_EXPECTED_OWNER_CREATED_AT=.+$' "$HEADLESS_ENV_CAPTURE" 2>/dev/null &&
 		grep -Fxq 'AIDEVOPS_PR_REPAIR_NUMBER=1' "$HEADLESS_ENV_CAPTURE" 2>/dev/null &&
 		grep -Fxq "AIDEVOPS_PR_REPAIR_HEAD_SHA=${TEST_HEAD_OID_1}" "$HEADLESS_ENV_CAPTURE" 2>/dev/null &&
 		grep -Fxq 'AIDEVOPS_PR_REPAIR_HEAD_REF=feature/review' "$HEADLESS_ENV_CAPTURE" 2>/dev/null; then
-		print_result "dispatch exports worker ownership and exact-head context" 0
+		print_result "dispatch exports exact owner-transfer and exact-head context" 0
 	else
-		print_result "dispatch exports worker ownership and exact-head context" 1 "env=$(tr '\n' ';' <"$HEADLESS_ENV_CAPTURE" 2>/dev/null || printf '')"
+		print_result "dispatch exports exact owner-transfer and exact-head context" 1 "env=$(tr '\n' ';' <"$HEADLESS_ENV_CAPTURE" 2>/dev/null || printf '')"
+	fi
+	teardown_test_env
+	return 0
+}
+
+test_dispatch_registers_created_worktree_as_transferable_precreate_owner() {
+	local expected_path=""
+	local initial_owner_info="" owner_info=""
+	local initial_owner_pid="" initial_owner_session="" initial_owner_batch="" initial_owner_task="" initial_owner_created_at=""
+	local owner_pid="" owner_session="" owner_batch="" owner_task="" owner_created_at=""
+
+	setup_test_env
+	export STUB_WORKTREE_REGISTER_OWNER="true"
+	export STUB_WORKTREE_OWNER_PID="$$"
+	export STUB_WORKTREE_OWNER_SESSION="worktree-helper-created"
+	expected_path="${TEST_ROOT}/worktrees/repo-pr1-review-feature-review-${TEST_HEAD_OID_1:0:12}"
+	$SCANNER dispatch owner/repo "${TEST_ROOT}/repo"
+	wait_for_headless_log || true
+	initial_owner_info=$(<"$WORKTREE_CREATED_OWNER_CAPTURE")
+	IFS='|' read -r initial_owner_pid initial_owner_session initial_owner_batch initial_owner_task initial_owner_created_at <<<"$initial_owner_info"
+	owner_info=$(read_test_worktree_owner "$expected_path" 2>/dev/null || true)
+	IFS='|' read -r owner_pid owner_session owner_batch owner_task owner_created_at <<<"$owner_info"
+	if [[ "$initial_owner_pid" == "$$" && "$initial_owner_session" == "worktree-helper-created" && "$initial_owner_task" == "1" && -n "$initial_owner_created_at" ]] &&
+		[[ "$owner_pid" =~ ^[0-9]+$ && "$owner_pid" != "$initial_owner_pid" && "$owner_session" == "dispatch-precreate-1" && "$owner_task" == "1" && -n "$owner_created_at" ]] &&
+		grep -Fxq "AIDEVOPS_WORKTREE_EXPECTED_OWNER_PID=${owner_pid}" "$HEADLESS_ENV_CAPTURE" 2>/dev/null &&
+		grep -Fxq "AIDEVOPS_WORKTREE_EXPECTED_OWNER_CREATED_AT=${owner_created_at}" "$HEADLESS_ENV_CAPTURE" 2>/dev/null; then
+		print_result "dispatch atomically registers a created worktree as an exact transferable owner" 0
+	else
+		print_result "dispatch atomically registers a created worktree as an exact transferable owner" 1 \
+			"initial_owner=${initial_owner_info}, owner=${owner_info}, env=$(tr '\n' ';' <"$HEADLESS_ENV_CAPTURE" 2>/dev/null || printf '')"
+	fi
+	teardown_test_env
+	return 0
+}
+
+test_dispatch_preserves_reused_same_task_owner_snapshot() {
+	local existing_path=""
+	local owner_before="" owner_after=""
+	local owner_pid="" owner_session="" owner_batch="" owner_task="" owner_created_at=""
+
+	setup_test_env
+	existing_path="${TEST_ROOT}/existing-review-worktree"
+	mkdir -p "$existing_path"
+	printf '%s\t%s\t%s\n' "$existing_path" 'feature/review' "$TEST_HEAD_OID_1" >"$GIT_WORKTREE_REGISTRY"
+	register_test_worktree_owner "$existing_path" 'feature/review' '1' 'existing-review-session' 'existing-review-batch'
+	owner_before=$(read_test_worktree_owner "$existing_path")
+	IFS='|' read -r owner_pid owner_session owner_batch owner_task owner_created_at <<<"$owner_before"
+	$SCANNER dispatch owner/repo "${TEST_ROOT}/repo"
+	wait_for_headless_log || true
+	owner_after=$(read_test_worktree_owner "$existing_path")
+	if [[ "$owner_after" == "$owner_before" ]] &&
+		grep -Fxq 'AIDEVOPS_WORKTREE_OWNER_TRANSFER_MODE=continuation' "$HEADLESS_ENV_CAPTURE" 2>/dev/null &&
+		grep -Fxq "AIDEVOPS_WORKTREE_EXPECTED_OWNER_PID=${owner_pid}" "$HEADLESS_ENV_CAPTURE" 2>/dev/null &&
+		grep -Fxq "AIDEVOPS_WORKTREE_EXPECTED_OWNER_SESSION=${owner_session}" "$HEADLESS_ENV_CAPTURE" 2>/dev/null &&
+		grep -Fxq "AIDEVOPS_WORKTREE_EXPECTED_OWNER_BATCH=${owner_batch}" "$HEADLESS_ENV_CAPTURE" 2>/dev/null &&
+		grep -Fxq "AIDEVOPS_WORKTREE_EXPECTED_OWNER_TASK=${owner_task}" "$HEADLESS_ENV_CAPTURE" 2>/dev/null &&
+		grep -Fxq "AIDEVOPS_WORKTREE_EXPECTED_OWNER_CREATED_AT=${owner_created_at}" "$HEADLESS_ENV_CAPTURE" 2>/dev/null &&
+		! grep -q '^add ' "$WORKTREE_HELPER_LOG" 2>/dev/null; then
+		print_result "dispatch preserves a reused same-task owner for exact continuation transfer" 0
+	else
+		print_result "dispatch preserves a reused same-task owner for exact continuation transfer" 1 \
+			"before=${owner_before}, after=${owner_after}, env=$(tr '\n' ';' <"$HEADLESS_ENV_CAPTURE" 2>/dev/null || printf '')"
+	fi
+	teardown_test_env
+	return 0
+}
+
+test_dispatch_rejects_reused_other_task_owner() {
+	local existing_path=""
+	local owner_before="" owner_after=""
+	local state_file=""
+
+	setup_test_env
+	existing_path="${TEST_ROOT}/existing-review-worktree"
+	state_file="${AIDEVOPS_PR_REVIEW_THREAD_RESPONSE_STATE_DIR}/owner-repo-1.state"
+	mkdir -p "$existing_path"
+	printf '%s\t%s\t%s\n' "$existing_path" 'feature/review' "$TEST_HEAD_OID_1" >"$GIT_WORKTREE_REGISTRY"
+	register_test_worktree_owner "$existing_path" 'feature/review' '999' 'unrelated-session'
+	owner_before=$(read_test_worktree_owner "$existing_path")
+	$SCANNER dispatch owner/repo "${TEST_ROOT}/repo" || true
+	owner_after=$(read_test_worktree_owner "$existing_path")
+	if [[ ! -s "$HEADLESS_LOG" && "$owner_after" == "$owner_before" ]] &&
+		grep -q '^blocker_reason=review_worktree_owned_by_other_task$' "$state_file" 2>/dev/null; then
+		print_result "dispatch rejects a reused worktree owned by another task" 0
+	else
+		print_result "dispatch rejects a reused worktree owned by another task" 1 \
+			"before=${owner_before}, after=${owner_after}, state=$(tr '\n' ';' <"$state_file" 2>/dev/null || printf '')"
+	fi
+	teardown_test_env
+	return 0
+}
+
+test_dispatch_rejects_reused_unverified_owner() {
+	local existing_path=""
+	local owner_before="" owner_after=""
+	local state_file=""
+
+	setup_test_env
+	existing_path="${TEST_ROOT}/existing-review-worktree"
+	state_file="${AIDEVOPS_PR_REVIEW_THREAD_RESPONSE_STATE_DIR}/owner-repo-1.state"
+	mkdir -p "$existing_path"
+	printf '%s\t%s\t%s\n' "$existing_path" 'feature/review' "$TEST_HEAD_OID_1" >"$GIT_WORKTREE_REGISTRY"
+	register_test_worktree_owner "$existing_path" 'feature/review' '' 'unverified-session'
+	owner_before=$(read_test_worktree_owner "$existing_path")
+	$SCANNER dispatch owner/repo "${TEST_ROOT}/repo" || true
+	owner_after=$(read_test_worktree_owner "$existing_path")
+	if [[ ! -s "$HEADLESS_LOG" && "$owner_after" == "$owner_before" ]] &&
+		grep -q '^blocker_reason=review_worktree_ownership_unverified$' "$state_file" 2>/dev/null; then
+		print_result "dispatch rejects a reused worktree with unverified ownership" 0
+	else
+		print_result "dispatch rejects a reused worktree with unverified ownership" 1 \
+			"before=${owner_before}, after=${owner_after}, state=$(tr '\n' ';' <"$state_file" 2>/dev/null || printf '')"
 	fi
 	teardown_test_env
 	return 0
@@ -604,6 +767,9 @@ test_dispatch_prompt_uses_stable_deployed_scanner_path() {
 	local stable_scanner="${HOME}/.aidevops/agents/scripts/pr-review-thread-response-scanner.sh"
 	mkdir -p "$(dirname "$bundled_scanner")"
 	cp "$SCANNER" "$bundled_scanner"
+	cat >"$(dirname "$bundled_scanner")/shared-constants.sh" <<SHARED_CONSTANTS
+source "${TEST_SCRIPT_DIR}/../shared-constants.sh"
+SHARED_CONSTANTS
 	chmod +x "$bundled_scanner"
 	"$bundled_scanner" dispatch owner/repo "${TEST_ROOT}/repo"
 	wait_for_headless_log || true
@@ -1270,6 +1436,10 @@ main() {
 	test_dispatch_fetches_head_from_linked_worktree_context
 	test_dispatch_bootstraps_fetch_context_without_linked_worktree
 	test_dispatch_exports_worktree_ownership_context
+	test_dispatch_registers_created_worktree_as_transferable_precreate_owner
+	test_dispatch_preserves_reused_same_task_owner_snapshot
+	test_dispatch_rejects_reused_other_task_owner
+	test_dispatch_rejects_reused_unverified_owner
 	test_dispatch_blocks_cross_repository_head
 	test_dispatch_blocks_remote_head_drift
 	test_dispatch_blocks_existing_worktree_head_mismatch
