@@ -550,8 +550,8 @@ _pms_handle_classified_pr() {
 AIDEVOPS_MERGE_STUCK_AGE_MINUTES=1
 AIDEVOPS_MERGE_PATTERN_MIN_PRS=99
 pulse_merge_stuck_run_pass "example/repo" >/dev/null 2>&1
-shape_calls=$(grep -cF -- '--json number,mergeable,reviewDecision,isDraft,labels,author,updatedAt --limit 50' "$PMS_TEST_PR_LIST_CALLS" 2>/dev/null || true)
-assert_eq "6a.2: stuck scans share one provider-cache PR-list shape" "1" "$shape_calls"
+shape_calls=$(grep -cF -- '--json number,mergeable,reviewDecision,isDraft,labels,author,updatedAt,headRefOid --limit 50' "$PMS_TEST_PR_LIST_CALLS" 2>/dev/null || true)
+assert_eq "6a.3: stuck scans share one provider-cache PR-list shape" "1" "$shape_calls"
 AIDEVOPS_MERGE_PATTERN_MIN_PRS=3
 
 PMS_TEST_COUNT_AUTHORS_FILE="$TEST_TMPDIR/count-authors.log"

@@ -629,6 +629,9 @@ _pulse_merge_preflight_snapshot_gate() {
 		_PULSE_MERGE_PREFLIGHT_BLOCKER_KIND="$PMRC_BLOCKER_SNAPSHOT_UNAVAILABLE"
 		return 1
 	}
+	if declare -F _pmp_record_same_pass_check_evidence >/dev/null 2>&1; then
+		_pmp_record_same_pass_check_evidence "$repo_slug" "$current_head_sha" "$checks_json" || true
+	fi
 	activity_json=$(_pmrc_snapshot_bot_activity_json "$repo_slug" "$pr_number") || {
 		_PULSE_MERGE_PREFLIGHT_BLOCKER_KIND="$PMRC_BLOCKER_SNAPSHOT_UNAVAILABLE"
 		return 1
