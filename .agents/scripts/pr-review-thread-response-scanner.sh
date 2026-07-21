@@ -816,6 +816,12 @@ _prrts_retryable_prelaunch_failure_once() {
 	esac
 }
 
+_prrts_prelaunch_failure_needs_maintainer_attention() {
+	local blocked_by="$1"
+	[[ "$blocked_by" == "$PRRTS_BLOCKED_BY_CODE" ]]
+	return $?
+}
+
 _prrts_should_dispatch() {
 	local repo_slug="$1"
 	local pr_number="$2"
@@ -1520,6 +1526,7 @@ _prrts_dispatch_guarded() {
 	local author="${13:-}"
 	local lock_dir=""
 	local attempt_count="1" repeated_same_fingerprint="$PRRTS_BOOL_FALSE" same_head_sha="$PRRTS_BOOL_FALSE" maintainer_attention="$PRRTS_BOOL_FALSE"
+	local failure_maintainer_attention="$PRRTS_BOOL_FALSE"
 	if ! _prrts_acquire_dispatch_lock "$repo_slug" "$pr_number" lock_dir; then
 		return 1
 	fi
@@ -1549,9 +1556,12 @@ _prrts_dispatch_guarded() {
 		return 0
 	fi
 	if ! _prrts_dispatch_worker "$repo_slug" "$repo_path" "$pr_number" "$title" "$thread_count" "$fingerprint" "$preview" "$head_ref" "$head_oid"; then
+		if _prrts_prelaunch_failure_needs_maintainer_attention "$PRRTS_WORKTREE_FAILURE_BLOCKED_BY"; then
+			failure_maintainer_attention="$PRRTS_BOOL_TRUE"
+		fi
 		_prrts_write_state "$repo_slug" "$pr_number" "$fingerprint" "$thread_count" "$now_epoch" "$attempt_count" "$PRRTS_BOOL_FALSE" "$head_oid"
 		_prrts_write_analysis_state "$repo_slug" "$pr_number" "$PRRTS_BOOL_TRUE" \
-			"$PRRTS_WORKTREE_FAILURE_BLOCKED_BY" "$PRRTS_BOOL_TRUE" "$PRRTS_WORKTREE_FAILURE_REASON"
+			"$PRRTS_WORKTREE_FAILURE_BLOCKED_BY" "$failure_maintainer_attention" "$PRRTS_WORKTREE_FAILURE_REASON"
 		_prrts_remove_lock_dir "$lock_dir"
 		return 1
 	fi

@@ -544,10 +544,16 @@ test_dispatch_blocks_cross_repository_head() {
 	export STUB_CROSS_REPOSITORY="true"
 	$SCANNER dispatch owner/repo "${TEST_ROOT}/repo"
 	local state_file="${AIDEVOPS_PR_REVIEW_THREAD_RESPONSE_STATE_DIR}/owner-repo-1.state"
+	local old_epoch=""
+	old_epoch="$(($(date +%s) - 4000))"
+	expire_state_dispatch_time "$state_file" "$old_epoch"
+	$SCANNER dispatch owner/repo "${TEST_ROOT}/repo"
 	if [[ ! -s "$HEADLESS_LOG" ]] &&
 		grep -q '^analysis_complete=true$' "$state_file" 2>/dev/null &&
 		grep -q '^blocked_by=code$' "$state_file" 2>/dev/null &&
-		grep -q '^blocker_reason=cross_repository_head_unwritable$' "$state_file" 2>/dev/null; then
+		grep -q '^maintainer_attention=true$' "$state_file" 2>/dev/null &&
+		grep -q '^blocker_reason=cross_repository_head_unwritable$' "$state_file" 2>/dev/null &&
+		grep -q 'analysis complete and blocked by code' "$LOGFILE" 2>/dev/null; then
 		print_result "dispatch blocks an unwritable fork head without retrying" 0
 	else
 		print_result "dispatch blocks an unwritable fork head without retrying" 1 "state=$(tr '\n' ';' <"$state_file" 2>/dev/null || printf '')"
@@ -1075,6 +1081,36 @@ test_dispatch_retries_transient_head_fetch_failure_once() {
 	return 0
 }
 
+test_dispatch_retries_generic_infrastructure_launch_failure() {
+	setup_test_env
+	chmod -x "$HEADLESS_RUNTIME_HELPER"
+	$SCANNER dispatch owner/repo "${TEST_ROOT}/repo"
+	local state_file="${AIDEVOPS_PR_REVIEW_THREAD_RESPONSE_STATE_DIR}/owner-repo-1.state"
+	local first_failure_ok="false"
+	if grep -q '^analysis_complete=true$' "$state_file" 2>/dev/null &&
+		grep -q '^blocked_by=infrastructure$' "$state_file" 2>/dev/null &&
+		grep -q '^maintainer_attention=false$' "$state_file" 2>/dev/null &&
+		grep -q '^blocker_reason=review_worker_launch_failed$' "$state_file" 2>/dev/null; then
+		first_failure_ok="true"
+	fi
+	local old_epoch=""
+	old_epoch="$(($(date +%s) - 4000))"
+	expire_state_dispatch_time "$state_file" "$old_epoch"
+	chmod +x "$HEADLESS_RUNTIME_HELPER"
+	$SCANNER dispatch owner/repo "${TEST_ROOT}/repo"
+	wait_for_headless_log || true
+	if [[ "$first_failure_ok" == "true" && -s "$HEADLESS_LOG" ]] &&
+		grep -q '^attempt_count=2$' "$state_file" 2>/dev/null &&
+		! grep -q '^analysis_complete=' "$state_file" 2>/dev/null; then
+		print_result "dispatch retries a generic infrastructure launch failure" 0
+	else
+		print_result "dispatch retries a generic infrastructure launch failure" 1 \
+			"first_failure_ok=${first_failure_ok}, headless=$(wc -c <"$HEADLESS_LOG" 2>/dev/null || printf 0), state=$(tr '\n' ';' <"$state_file" 2>/dev/null || printf '')"
+	fi
+	teardown_test_env
+	return 0
+}
+
 test_dispatch_does_not_repeat_branch_validation_recovery() {
 	setup_test_env
 	local state_file="${AIDEVOPS_PR_REVIEW_THREAD_RESPONSE_STATE_DIR}/owner-repo-1.state"
@@ -1459,6 +1495,7 @@ main() {
 	test_dispatch_retries_stale_branch_validation_blocker_once
 	test_dispatch_retries_stale_branch_unavailable_blocker_once
 	test_dispatch_retries_transient_head_fetch_failure_once
+	test_dispatch_retries_generic_infrastructure_launch_failure
 	test_dispatch_does_not_repeat_branch_validation_recovery
 	test_no_marker_retry_behavior_is_preserved
 	test_old_state_file_without_completion_fields_still_retries
