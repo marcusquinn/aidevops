@@ -10,6 +10,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.32.162] - 2026-07-21
+
+### Changed
+
+- Maintenance: update simplification state registry
+- Documentation: review community asc skill refresh (#28417)
+- Maintenance: update simplification state registry
+- Maintenance: mark t18168 complete (pr:#28397 completed:2026-07-21) [skip ci]
+- Refactor: split pulse diagnose helpers (#28395)
+- Maintenance: sync ref:GH#28396 to TODO.md [skip ci]
+- Maintenance: mark t18166 complete (pr:#28388 completed:2026-07-21) [skip ci]
+- Maintenance: update simplification state registry
+
+### Fixed
+
+- fetch review heads outside canonical checkouts (#28421)
+- recover stuck review-thread remediation (#28414)
+- separate compaction operational sections (#28409)
+- preserve created claim issue refs (#28403)
+- classify complete validator branch ranges (#28405)
+- classify merge-stuck outage fingerprints (#28402)
+- normalize stuck merge checks and TODO guard baselines (#28390)
+- stabilize pulse cycle-health fixtures (#28388)
+- fail closed on issue-sync completion evidence (#28389)
+
 ## [3.32.161] - 2026-07-21
 
 ### Changed
