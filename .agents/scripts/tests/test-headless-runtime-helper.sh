@@ -1058,21 +1058,33 @@ test_worker_worktree_claim_transfers_to_runtime_pid() {
 	}
 
 	_hrw_claim_worker_worktree "issue-22438" "$worktree_dir" >/dev/null
+	local proof_pid="${AIDEVOPS_WORKTREE_OWNER_PID:-}"
+	local proof_session="${AIDEVOPS_WORKTREE_OWNER_SESSION:-}"
+	local proof_task="${AIDEVOPS_WORKTREE_OWNER_TASK:-}"
+	local proof_path="${AIDEVOPS_WORKTREE_OWNER_PATH:-}"
+	local expected_proof_path=""
+	expected_proof_path=$(cd "$worktree_dir" 2>/dev/null && pwd -P)
 
 	unset -f claim_worktree_ownership 2>/dev/null || true
-	unset WORKER_ISSUE_NUMBER 2>/dev/null || true
+	unset WORKER_ISSUE_NUMBER AIDEVOPS_WORKTREE_OWNER_PID \
+		AIDEVOPS_WORKTREE_OWNER_SESSION AIDEVOPS_WORKTREE_OWNER_TASK \
+		AIDEVOPS_WORKTREE_OWNER_PATH 2>/dev/null || true
 
 	if [[ "$claimed_path" == "$worktree_dir" ]] &&
 		[[ "$claimed_branch" == "detached" ]] &&
 		[[ "$claimed_session" == "issue-22438" ]] &&
 		[[ "$claimed_task" == "22438" ]] &&
-		[[ "$claimed_pid" == "$$" ]]; then
-		print_result "worker worktree claim transfers ownership to runtime PID" 0
+		[[ "$claimed_pid" == "$$" ]] &&
+		[[ "$proof_pid" == "$$" ]] &&
+		[[ "$proof_session" == "issue-22438" ]] &&
+		[[ "$proof_task" == "22438" ]] &&
+		[[ "$proof_path" == "$expected_proof_path" ]]; then
+		print_result "worker worktree claim exports exact wrapper ownership proof" 0
 		return 0
 	fi
 
-	print_result "worker worktree claim transfers ownership to runtime PID" 1 \
-		"path=$claimed_path branch=$claimed_branch session=$claimed_session task=$claimed_task pid=$claimed_pid"
+	print_result "worker worktree claim exports exact wrapper ownership proof" 1 \
+		"path=$claimed_path branch=$claimed_branch session=$claimed_session task=$claimed_task pid=$claimed_pid proof=${proof_pid}|${proof_session}|${proof_task}|${proof_path}"
 	return 0
 }
 

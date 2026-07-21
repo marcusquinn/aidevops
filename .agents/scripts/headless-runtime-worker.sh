@@ -1269,6 +1269,19 @@ _hrw_transfer_authorized_continuation_owner() {
 	return 0
 }
 
+_hrw_export_worker_worktree_owner_proof() {
+	local session_key="$1"
+	local work_dir="$2"
+	local resolved_work_dir=""
+	resolved_work_dir=$(cd "$work_dir" 2>/dev/null && pwd -P) || return 1
+
+	export AIDEVOPS_WORKTREE_OWNER_PID="$$"
+	export AIDEVOPS_WORKTREE_OWNER_SESSION="$session_key"
+	export AIDEVOPS_WORKTREE_OWNER_TASK="${WORKER_ISSUE_NUMBER:-}"
+	export AIDEVOPS_WORKTREE_OWNER_PATH="$resolved_work_dir"
+	return 0
+}
+
 _hrw_reclaim_stale_worker_worktree_owner() {
 	local session_key="$1"
 	local work_dir="$2"
@@ -1374,6 +1387,7 @@ _hrw_claim_worker_worktree() {
 			return 1
 		fi
 		if _hrw_transfer_authorized_continuation_owner "$session_key" "$work_dir" "$branch"; then
+			_hrw_export_worker_worktree_owner_proof "$session_key" "$work_dir" || return 1
 			print_info "[lifecycle] worker_worktree_claimed session=${session_key} branch=${branch} path=${work_dir} pid=$$ mode=continuation"
 			return 0
 		fi
@@ -1396,6 +1410,7 @@ _hrw_claim_worker_worktree() {
 				--session "$session_key" \
 				--task "${WORKER_ISSUE_NUMBER:-}" \
 				--owner-pid "$$"; then
+			_hrw_export_worker_worktree_owner_proof "$session_key" "$work_dir" || return 1
 			print_info "[lifecycle] worker_worktree_claimed session=${session_key} branch=${branch} path=${work_dir} pid=$$"
 			return 0
 		fi
@@ -1403,6 +1418,7 @@ _hrw_claim_worker_worktree() {
 		return 1
 	fi
 
+	_hrw_export_worker_worktree_owner_proof "$session_key" "$work_dir" || return 1
 	print_info "[lifecycle] worker_worktree_claimed session=${session_key} branch=${branch} path=${work_dir} pid=$$"
 	return 0
 }
