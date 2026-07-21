@@ -568,6 +568,43 @@ _handle_ownership_conflict() {
 	exit 1
 }
 
+# Verify that this pre-edit process is running below the exact headless wrapper
+# that owns the worktree registry row. Environment metadata narrows the claim to
+# one worktree/session/task, while process ancestry prevents an unrelated worker
+# from forging authority with copied environment values.
+# Arguments: $1=worktree_path, $2=owner_pid, $3=owner_session, $4=owner_task
+_headless_wrapper_owner_matches() {
+	local wt_path="$1"
+	local owner_pid="$2"
+	local owner_session="$3"
+	local owner_task="$4"
+	local proof_pid="${AIDEVOPS_WORKTREE_OWNER_PID:-}"
+	local proof_session="${AIDEVOPS_WORKTREE_OWNER_SESSION:-}"
+	local proof_task="${AIDEVOPS_WORKTREE_OWNER_TASK:-}"
+	local proof_path="${AIDEVOPS_WORKTREE_OWNER_PATH:-}"
+
+	[[ "${AIDEVOPS_SESSION_ORIGIN:-}" == "worker" ]] || return 1
+	[[ "${AIDEVOPS_HEADLESS:-}" == "true" || "${AIDEVOPS_HEADLESS:-}" == "1" ]] || return 1
+	[[ "$proof_pid" =~ ^[0-9]+$ && "$owner_pid" == "$proof_pid" ]] || return 1
+	[[ -n "$proof_session" && "$owner_session" == "$proof_session" ]] || return 1
+	[[ -n "$proof_task" && "$owner_task" == "$proof_task" ]] || return 1
+	[[ -n "$proof_path" ]] || return 1
+	[[ "$(_wt_normalize_path "$wt_path")" == "$(_wt_normalize_path "$proof_path")" ]] || return 1
+	kill -0 "$owner_pid" 2>/dev/null || return 1
+
+	local current_pid="$$"
+	local parent_pid=""
+	local depth=0
+	while [[ "$current_pid" =~ ^[0-9]+$ && "$current_pid" -gt 1 && "$depth" -lt 64 ]]; do
+		[[ "$current_pid" == "$owner_pid" ]] && return 0
+		parent_pid=$(_get_proc_ppid "$current_pid")
+		[[ "$parent_pid" =~ ^[0-9]+$ && "$parent_pid" -gt 0 && "$parent_pid" != "$current_pid" ]] || return 1
+		current_pid="$parent_pid"
+		depth=$((depth + 1))
+	done
+	return 1
+}
+
 # Handle the canonical repo directory being off the default branch.
 # This state is never writable; branch switching is not a recovery mechanism.
 _handle_main_repo_off_main() {
@@ -689,11 +726,14 @@ if declare -f claim_worktree_ownership >/dev/null 2>&1; then
 		owner_info=$(check_worktree_owner "$worktree_path" 2>/dev/null || true)
 		owner_pid="unknown"
 		owner_session=""
+		owner_task=""
 		owner_created=""
 		if [[ -n "$owner_info" ]]; then
-			IFS='|' read -r owner_pid owner_session _ _ owner_created <<<"$owner_info"
+			IFS='|' read -r owner_pid owner_session _ owner_task owner_created <<<"$owner_info"
 		fi
-		_handle_ownership_conflict "$worktree_path" "$owner_pid" "$owner_session" "$owner_created"
+		if ! _headless_wrapper_owner_matches "$worktree_path" "$owner_pid" "$owner_session" "$owner_task"; then
+			_handle_ownership_conflict "$worktree_path" "$owner_pid" "$owner_session" "$owner_created"
+		fi
 	fi
 fi
 

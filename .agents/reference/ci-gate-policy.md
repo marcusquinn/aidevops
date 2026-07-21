@@ -7,6 +7,30 @@ Use CI as a throughput control, not a progress trap. Required merge gates should
 match the risk of the target branch; slower integration checks should create
 feedback loops when they find defects.
 
+## Evidence-guided verification
+
+Tests and checks are evidence-gathering methods, not independent objectives.
+Even when the user requests a testing deliverable, tie it to the behaviour,
+decision, or risk it is intended to protect. Start from the session aim and the
+uncertainty blocking it.
+
+1. Before adding, running, or reviewing a test, identify what decision its
+   result can change or what material uncertainty it reduces. Do not create a
+   test for information already supported by sufficient existing evidence.
+2. Review each test against the outcome that justified it. Retain regression
+   coverage when it protects an important contract; narrow, update, or remove
+   tests whose signal no longer justifies their maintenance or execution cost.
+3. Treat observed behaviour, user reports, production and usage logs, existing
+   contracts, targeted reproductions, and tests as complementary evidence.
+   Compare provenance, freshness, relevance, and reliability; synthetic tests
+   do not automatically outrank live evidence.
+4. Stop gathering evidence and make the reasoned improvement once the available
+   information is sufficient for a safe decision. Still satisfy explicit
+   acceptance criteria and repository-required gates, and reconsider earlier
+   conclusions when material new evidence—whether or not from tests—appears.
+5. Report how verification supports the session aim and what uncertainty
+   remains. Passing tests alone do not prove the user-visible outcome.
+
 ## Default policy
 
 | Target | Required gates | E2E role | Merge posture |

@@ -110,6 +110,21 @@ stub_effective_rules() {
 	return 0
 }
 
+stub_inline_comments() {
+	if [[ "$SNAPSHOT_MODE" == "stale_gate" || "$SNAPSHOT_MODE" == "unresolved" ]]; then
+		printf '%s\n' '[[{"user":{"login":"gemini-code-assist[bot]"},"created_at":"2026-01-01T00:00:40Z","updated_at":"2026-01-01T00:00:40Z"}]]'
+	elif [[ "$SNAPSHOT_MODE" == "large_bot_activity" ]]; then
+		printf '[[{"user":{"login":"gemini-code-assist[bot]"},"created_at":"2026-01-01T00:00:40Z","body":"'
+		dd if=/dev/zero bs=1024 count=256 2>/dev/null | tr '\000' x
+		printf '"}]]\n'
+	elif [[ "$SNAPSHOT_MODE" == "activity_wrong_shape" ]]; then
+		printf '%s\n' '[{}]'
+	else
+		printf '%s\n' '[[]]'
+	fi
+	return 0
+}
+
 gh() {
 	local command="$1"
 	local endpoint="${2:-}"
@@ -198,11 +213,8 @@ gh() {
 		printf '%s\n' '[[]]'
 		;;
 	*pulls/7/comments*)
-		if [[ "$SNAPSHOT_MODE" == "stale_gate" || "$SNAPSHOT_MODE" == "unresolved" ]]; then
-			printf '%s\n' '[[{"user":{"login":"gemini-code-assist[bot]"},"created_at":"2026-01-01T00:00:40Z","updated_at":"2026-01-01T00:00:40Z"}]]'
-		else
-			printf '%s\n' '[[]]'
-		fi
+		stub_inline_comments
+		return $?
 		;;
 	*)
 		printf 'Unhandled gh endpoint: %s\n' "$endpoint" >&2
@@ -276,6 +288,26 @@ assert_snapshot_acquisition_failures_are_audited() {
 	assert_gate_logged "issue-comments fetch failure" issue_comments_error "issue-comments fetch failed"
 	assert_gate_logged "inline-comments fetch failure" inline_comments_error "inline-comments fetch failed"
 	assert_gate_logged "bot-activity parse failure" activity_parse_error "bot-activity parse failed"
+	assert_gate_logged "wrong-shaped bot-activity response" activity_wrong_shape "bot-activity parse failed"
+	return 0
+}
+
+assert_large_bot_activity_streams() {
+	local activity=""
+	local rc=0
+	SNAPSHOT_MODE="large_bot_activity"
+	: >"$LOGFILE"
+	activity=$(_pmrc_snapshot_bot_activity_json owner/repo 7) || rc=$?
+	TESTS_RUN=$((TESTS_RUN + 1))
+	if [[ "$rc" -eq 0 ]] && jq -e \
+		'.count == 2 and .latest_at == "2026-01-01T00:00:40Z"' \
+		<<<"$activity" >/dev/null; then
+		printf 'PASS oversized inline-comment payload contributes bot activity\n'
+		return 0
+	fi
+	printf 'FAIL oversized inline-comment payload did not produce expected activity (rc=%s, output=%s)\n' \
+		"$rc" "$activity"
+	TESTS_FAILED=$((TESTS_FAILED + 1))
 	return 0
 }
 
@@ -292,8 +324,10 @@ assert_human_review_thread_rules() {
 	assert_gate_blocker "unresolved human thread passes when effective rules do not require resolution" human_not_required 0 ""
 	assert_gate_blocker "required human thread supports slash-containing base branches" \
 		human_required_slash 1 "$PMRC_BLOCKER_REQUIRED_REVIEW_THREADS"
-	assert_gate_blocker "effective-rules API failure with unresolved human thread fails closed" human_rules_error 1 ""
-	assert_gate_blocker "malformed effective-rules response with unresolved human thread fails closed" human_rules_malformed 1 ""
+	assert_gate_blocker "effective-rules API failure with unresolved human thread fails closed" \
+		human_rules_error 1 "$PMRC_BLOCKER_SNAPSHOT_UNAVAILABLE"
+	assert_gate_blocker "malformed effective-rules response with unresolved human thread fails closed" \
+		human_rules_malformed 1 "$PMRC_BLOCKER_SNAPSHOT_UNAVAILABLE"
 	return 0
 }
 
@@ -375,7 +409,8 @@ assert_review_and_head_snapshot_cases() {
 	fi
 	TESTS_RUN=$((TESTS_RUN + 1))
 	assert_gate_blocker "unresolved late inline finding blocks merge" unresolved 1 "$PMRC_BLOCKER_REVIEW_BOT_THREADS"
-	assert_gate_blocker "paginated review-thread snapshot fails closed without actionable remediation" review_threads_paginated 1 ""
+	assert_gate_blocker "paginated review-thread snapshot fails closed without actionable remediation" \
+		review_threads_paginated 1 "$PMRC_BLOCKER_SNAPSHOT_UNAVAILABLE"
 	assert_human_review_thread_rules
 	assert_gate "late review activity invalidates stale gate success" stale_gate 1
 	set_live_evidence PASS sha-reviewed trusted true 2026-01-01T00:00:50Z
@@ -402,6 +437,8 @@ main() {
 	assert_infrastructure_rerun_unset_logfile_safe
 	assert_snapshot_acquisition_failures_are_audited
 	assert_gate "large paginated check payload streams without argument overflow" large_payload 0
+	assert_large_bot_activity_streams
+	assert_gate "large inline-comment payload streams through preflight" large_bot_activity 0
 	assert_gate "terminal checks with explicit baseline advisory pass" happy_advisory 0
 	if grep -q "IGNORED non-required baseline advisory failure 'Qlty Smell Threshold'" "$LOGFILE"; then
 		printf 'PASS ignored advisory failure is audited\n'

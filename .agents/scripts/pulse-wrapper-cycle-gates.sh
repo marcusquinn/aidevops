@@ -35,6 +35,8 @@ fi
 _PULSE_EFFICIENCY_CYCLE_STARTED=0
 _PULSE_EFFICIENCY_CYCLE_START_MS=0
 _PULSE_EFFICIENCY_CYCLE_OUTCOME=idle
+_PULSE_EFFICIENCY_CONTRACT_VERSION=2
+_PULSE_LEGACY_CYCLE_OUTCOME_PENDING=0
 
 _pulse_efficiency_record() {
 	local name="$1"
@@ -64,7 +66,7 @@ _pulse_efficiency_now_ms() {
 
 _pulse_efficiency_coverage_start_seconds() {
 	local now_seconds="$1"
-	local state_file="${AIDEVOPS_GH_API_EVIDENCE_COVERAGE_START_FILE:-${AIDEVOPS_STATE_DIR:-${HOME}/.aidevops/state}/github-api-efficiency-contract-v1.started-at}"
+	local state_file="${AIDEVOPS_GH_API_EVIDENCE_COVERAGE_START_FILE:-${AIDEVOPS_STATE_DIR:-${HOME}/.aidevops/state}/github-api-efficiency-contract-v${_PULSE_EFFICIENCY_CONTRACT_VERSION}.started-at}"
 	local state_dir="${state_file%/*}"
 	local existing=""
 	local temporary=""
@@ -113,6 +115,7 @@ _pulse_efficiency_cycle_start() {
 	local now_ms=""
 	local coverage_start=""
 	local group=""
+	unset AIDEVOPS_GH_API_EFFICIENCY_CYCLE_ID
 	now_seconds=$(_pulse_efficiency_now_seconds)
 	now_ms=$(_pulse_efficiency_now_ms) || now_ms=""
 	[[ "$now_seconds" =~ ^[0-9]+$ && "$now_seconds" -gt 0 ]] || return 0
@@ -122,10 +125,12 @@ _pulse_efficiency_cycle_start() {
 	_PULSE_EFFICIENCY_CYCLE_STARTED=1
 	_PULSE_EFFICIENCY_CYCLE_START_MS="$now_ms"
 	_PULSE_EFFICIENCY_CYCLE_OUTCOME=idle
-	_pulse_efficiency_record contract 1
+	AIDEVOPS_GH_API_EFFICIENCY_CYCLE_ID="$now_seconds"
+	export AIDEVOPS_GH_API_EFFICIENCY_CYCLE_ID
+	_pulse_efficiency_record contract "$_PULSE_EFFICIENCY_CONTRACT_VERSION"
 	_pulse_efficiency_record coverage-start "$coverage_start"
 	for group in population latency cache single_flight path_budgets; do
-		_pulse_efficiency_record "coverage.${group}" 1
+		_pulse_efficiency_record "coverage.${group}" "$_PULSE_EFFICIENCY_CONTRACT_VERSION"
 	done
 	return 0
 }
@@ -135,7 +140,10 @@ _pulse_efficiency_cycle_finish() {
 	local now_seconds=""
 	local now_ms=""
 	local elapsed_ms=0
-	[[ "${_PULSE_EFFICIENCY_CYCLE_STARTED:-0}" == "1" ]] || return 0
+	if [[ "${_PULSE_EFFICIENCY_CYCLE_STARTED:-0}" != "1" ]]; then
+		unset AIDEVOPS_GH_API_EFFICIENCY_CYCLE_ID
+		return 0
+	fi
 	now_seconds=$(_pulse_efficiency_now_seconds)
 	now_ms=$(_pulse_efficiency_now_ms) || now_ms=""
 	[[ "$now_seconds" =~ ^[0-9]+$ && "$now_seconds" -gt 0 ]] || now_seconds=0
@@ -161,6 +169,7 @@ _pulse_efficiency_cycle_finish() {
 		gh_trim_log 2>/dev/null || true
 	fi
 	_PULSE_EFFICIENCY_CYCLE_STARTED=0
+	unset AIDEVOPS_GH_API_EFFICIENCY_CYCLE_ID
 	return 0
 }
 
@@ -364,65 +373,91 @@ _pulse_run_fix_the_fixer_detector_if_stale() {
 }
 
 # ---------------------------------------------------------------------------
-# _pulse_record_cycle_outcome (t3027 / GH#21584)
+# _pulse_record_cycle_outcome (t3027 / GH#21584 / GH#28361)
 #
-# Determines whether this cycle was active (did meaningful work) or idle
-# (no merges, no closes, no new dispatches) and records the outcome with
-# pulse-idle-backoff-helper.sh. The helper accumulates consecutive_idle,
-# which the next cycle's _pulse_check_idle_backoff_gate consults.
+# Computes one typed terminal outcome from durable queue-changing evidence and
+# stages its legacy active/idle projection. The projection is committed only
+# while this cycle still owns current state. Heartbeats never participate.
 #
 # Active definition (any one suffices):
 #   - merged ≥ 1 PR (_PULSE_HEALTH_PRS_MERGED)
 #   - closed ≥ 1 conflicting PR (_PULSE_HEALTH_PRS_CLOSED_CONFLICTING)
-#   - dispatched ≥ 1 new worker (ledger_after > ledger_before)
+#   - dispatched ≥ 1 new worker (cumulative registrations increased)
 #
 # Workers completing without new dispatches counts as IDLE — bookkeeping
 # alone is not "useful work".
 #
 # Arguments:
-#   $1 — ledger_count_before (captured at cycle start)
+#   $1 — cumulative dispatch registrations before (captured at cycle start)
 # ---------------------------------------------------------------------------
 _pulse_record_cycle_outcome() {
-	local _ledger_before="${1:-0}"
-	[[ "$_ledger_before" =~ ^[0-9]+$ ]] || _ledger_before=0
+	local _dispatch_before="${1:-0}"
+	[[ "$_dispatch_before" =~ ^[0-9]+$ ]] || _dispatch_before=0
+	local _dispatch_after=0
+	local _dispatch_delta=0
+	local _merged="${_PULSE_HEALTH_PRS_MERGED:-0}"
+	local _closed="${_PULSE_HEALTH_PRS_CLOSED_CONFLICTING:-0}"
+	local _progress_kinds="[]"
+	local _typed_outcome="idle"
+	local _legacy_outcome="idle"
+	[[ "$_merged" =~ ^[0-9]+$ ]] || _merged=0
+	[[ "$_closed" =~ ^[0-9]+$ ]] || _closed=0
+	_dispatch_after=$(_pulse_capture_dispatch_total)
+	[[ "$_dispatch_after" =~ ^[0-9]+$ ]] || _dispatch_after=0
+	if [[ "$_dispatch_after" -gt "$_dispatch_before" ]]; then
+		_dispatch_delta=$((_dispatch_after - _dispatch_before))
+	fi
+	_progress_kinds=$(jq -cn \
+		--argjson merged "$_merged" \
+		--argjson closed "$_closed" \
+		--argjson dispatched "$_dispatch_delta" '
+		[
+			if $merged > 0 then "pr-merged" else empty end,
+			if $closed > 0 then "pr-closed-conflicting" else empty end,
+			if $dispatched > 0 then "worker-dispatched" else empty end
+		]') || _progress_kinds="[]"
+	if [[ "$(printf '%s' "$_progress_kinds" | jq 'length' 2>/dev/null || printf '0')" -gt 0 ]]; then
+		_typed_outcome="progressed"
+		_legacy_outcome="active"
+	elif [[ "${_PULSE_CYCLE_BLOCKER_KIND:-none}" != "none" ]]; then
+		_typed_outcome="blocked"
+	fi
+	_PULSE_TYPED_CYCLE_OUTCOME="$_typed_outcome"
+	_PULSE_EFFICIENCY_CYCLE_OUTCOME="$_legacy_outcome"
+	_PULSE_LEGACY_CYCLE_OUTCOME_PENDING=1
+	if declare -F _pulse_cycle_state_finalize >/dev/null 2>&1; then
+		_pulse_cycle_state_finalize "$_typed_outcome" "$_progress_kinds" || true
+	fi
+	echo "[pulse-wrapper] Cycle outcome: typed=${_typed_outcome} legacy=${_legacy_outcome} (merged=${_merged} closed=${_closed} dispatch_registrations=${_dispatch_before}→${_dispatch_after}) (GH#28361)" >>"${LOGFILE:-/dev/null}"
+	return 0
+}
+
+_pulse_commit_legacy_cycle_outcome() {
 	local _ib_helper="${SCRIPT_DIR}/pulse-idle-backoff-helper.sh"
-	local _ledger_helper="${SCRIPT_DIR}/dispatch-ledger-helper.sh"
-	local _ledger_after=0
-	if [[ -x "$_ledger_helper" ]]; then
-		local _lc
-		_lc=$("$_ledger_helper" count 2>/dev/null || echo "0")
-		[[ "$_lc" =~ ^[0-9]+$ ]] && _ledger_after="$_lc"
-	fi
-	local _outcome="idle"
-	if [[ "${_PULSE_HEALTH_PRS_MERGED:-0}" -gt 0 ]] \
-		|| [[ "${_PULSE_HEALTH_PRS_CLOSED_CONFLICTING:-0}" -gt 0 ]] \
-		|| [[ "$_ledger_after" -gt "$_ledger_before" ]]; then
-		_outcome="active"
-	fi
-	_PULSE_EFFICIENCY_CYCLE_OUTCOME="$_outcome"
+	local _legacy_outcome="${_PULSE_EFFICIENCY_CYCLE_OUTCOME:-idle}"
+	[[ "${_PULSE_LEGACY_CYCLE_OUTCOME_PENDING:-0}" == "1" ]] || return 0
+	_PULSE_LEGACY_CYCLE_OUTCOME_PENDING=0
 	if [[ -x "$_ib_helper" ]]; then
-		"$_ib_helper" record-cycle "$_outcome" >/dev/null 2>&1 || true
+		"$_ib_helper" record-cycle "$_legacy_outcome" >/dev/null 2>&1 || true
 	fi
-	echo "[pulse-wrapper] Cycle outcome: ${_outcome} (merged=${_PULSE_HEALTH_PRS_MERGED:-0} closed=${_PULSE_HEALTH_PRS_CLOSED_CONFLICTING:-0} ledger=${_ledger_before}→${_ledger_after}) (t3027)" >>"${LOGFILE:-/dev/null}"
 	return 0
 }
 
 # ---------------------------------------------------------------------------
-# _pulse_capture_ledger_count (t3027 / GH#21584)
+# _pulse_capture_dispatch_total (GH#28361)
 #
-# Returns current dispatch ledger count via stdout. Caller captures with $().
-# Used by main() to snapshot ledger state at cycle start for outcome detection.
+# Returns the cumulative number of successful worker registrations. Unlike the
+# live ledger count, this monotonic projection still detects a new dispatch
+# when another worker completes during the same cycle.
 # ---------------------------------------------------------------------------
-_pulse_capture_ledger_count() {
-	local _ledger_helper="${SCRIPT_DIR}/dispatch-ledger-helper.sh"
-	if [[ -x "$_ledger_helper" ]]; then
-		local _lc
-		_lc=$("$_ledger_helper" count 2>/dev/null || echo "0")
-		if [[ "$_lc" =~ ^[0-9]+$ ]]; then
-			printf '%d\n' "$_lc"
-			return 0
-		fi
+_pulse_capture_dispatch_total() {
+	local _ledger_file="${AIDEVOPS_DISPATCH_LEDGER_FILE:-${AIDEVOPS_DISPATCH_LEDGER_DIR:-${HOME}/.aidevops/.agent-workspace/tmp}/dispatch-ledger.jsonl}"
+	local _total=0
+	if [[ -s "$_ledger_file" ]]; then
+		_total=$(jq -Rsc '[split("\n")[] | fromjson? | select(.lease_phase == "prelaunch" and (.dispatched_at // "") != "")] | length' \
+			"$_ledger_file" 2>/dev/null) || _total=0
 	fi
-	printf '0\n'
+	[[ "$_total" =~ ^[0-9]+$ ]] || _total=0
+	printf '%s\n' "$_total"
 	return 0
 }

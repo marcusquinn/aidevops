@@ -125,16 +125,47 @@ if [[ "$*" == *"check-ref-format --branch"* ]]; then
 fi
 if [[ "$*" == *"worktree list --porcelain"* && -f "${GIT_WORKTREE_REGISTRY}" ]]; then
 	while IFS=$'\t' read -r path branch oid; do
-		printf 'worktree %s\nHEAD %s\nbranch refs/heads/%s\n\n' "$path" "${oid:-$TEST_HEAD_OID_1}" "$branch"
+		printf 'worktree %s\nHEAD %s\n' "$path" "${oid:-$TEST_HEAD_OID_1}"
+		if [[ "$branch" == "__DETACHED__" ]]; then
+			printf 'detached\n\n'
+		else
+			printf 'branch refs/heads/%s\n\n' "$branch"
+		fi
 	done <"${GIT_WORKTREE_REGISTRY}"
 	exit 0
 fi
+if [[ "$*" == *" worktree add -q --detach "* ]]; then
+	bootstrap_path="${7:-}"
+	mkdir -p "$bootstrap_path"
+	printf '%s\t%s\t%s\n' "$bootstrap_path" '__DETACHED__' "$TEST_HEAD_OID_1" >>"${GIT_WORKTREE_REGISTRY}"
+	exit 0
+fi
+if [[ "$*" == *" worktree remove --force "* ]]; then
+	bootstrap_path="${6:-}"
+	rm -rf "$bootstrap_path"
+	while IFS=$'\t' read -r path branch oid; do
+		[[ "$path" == "$bootstrap_path" ]] || printf '%s\t%s\t%s\n' "$path" "$branch" "$oid"
+	done <"${GIT_WORKTREE_REGISTRY}" >"${GIT_WORKTREE_REGISTRY}.tmp"
+	mv "${GIT_WORKTREE_REGISTRY}.tmp" "${GIT_WORKTREE_REGISTRY}"
+	exit 0
+fi
 if [[ "$*" == *" fetch --no-tags --quiet origin "* ]]; then
+	printf '%s\n' "${2:-}" >>"${GIT_FETCH_CWD_LOG}"
+	if [[ "${STUB_GIT_CANONICAL_FETCH_FAIL:-false}" == "true" && "${2:-}" == "${GIT_CANONICAL_REPO_PATH}" ]]; then
+		exit 1
+	fi
 	[[ "${STUB_GIT_FETCH_FAIL:-false}" == "true" ]] && exit 1
+	printf '%s\n' "${STUB_REMOTE_HEAD_AFTER_FETCH:-${STUB_REMOTE_HEAD:-$TEST_HEAD_OID_1}}" >"${GIT_FETCHED_HEAD_STATE}"
 	exit 0
 fi
 if [[ "$*" == *"rev-parse refs/remotes/origin/"* ]]; then
-	printf '%s\n' "${STUB_REMOTE_HEAD:-$TEST_HEAD_OID_1}"
+	if [[ -f "${GIT_FETCHED_HEAD_STATE}" ]]; then
+		cat "${GIT_FETCHED_HEAD_STATE}"
+		exit 0
+	fi
+	remote_head="${STUB_REMOTE_HEAD_INITIAL:-${STUB_REMOTE_HEAD:-$TEST_HEAD_OID_1}}"
+	[[ "$remote_head" == "missing" ]] && exit 1
+	printf '%s\n' "$remote_head"
 	exit 0
 fi
 if [[ "${1:-}" == "-C" && "${3:-}" == "rev-parse" && "${4:-}" == "HEAD" && -f "${GIT_WORKTREE_REGISTRY}" ]]; then
@@ -176,13 +207,19 @@ printf '%s\n' "${WORKER_WORKTREE_PATH:-}" >"${HEADLESS_ENV_CAPTURE}"
 printf 'WORKER_ISSUE_NUMBER=%s\n' "${WORKER_ISSUE_NUMBER:-}" >>"${HEADLESS_ENV_CAPTURE}"
 printf 'WORKER_NO_EXIT_PUSH=%s\n' "${WORKER_NO_EXIT_PUSH:-}" >>"${HEADLESS_ENV_CAPTURE}"
 printf 'AIDEVOPS_ALLOW_WORKER_WORKTREE_OWNER_TRANSFER=%s\n' "${AIDEVOPS_ALLOW_WORKER_WORKTREE_OWNER_TRANSFER:-}" >>"${HEADLESS_ENV_CAPTURE}"
+printf 'AIDEVOPS_WORKTREE_OWNER_TRANSFER_MODE=%s\n' "${AIDEVOPS_WORKTREE_OWNER_TRANSFER_MODE:-}" >>"${HEADLESS_ENV_CAPTURE}"
+printf 'AIDEVOPS_WORKTREE_EXPECTED_OWNER_PID=%s\n' "${AIDEVOPS_WORKTREE_EXPECTED_OWNER_PID:-}" >>"${HEADLESS_ENV_CAPTURE}"
+printf 'AIDEVOPS_WORKTREE_EXPECTED_OWNER_SESSION=%s\n' "${AIDEVOPS_WORKTREE_EXPECTED_OWNER_SESSION:-}" >>"${HEADLESS_ENV_CAPTURE}"
+printf 'AIDEVOPS_WORKTREE_EXPECTED_OWNER_BATCH=%s\n' "${AIDEVOPS_WORKTREE_EXPECTED_OWNER_BATCH:-}" >>"${HEADLESS_ENV_CAPTURE}"
+printf 'AIDEVOPS_WORKTREE_EXPECTED_OWNER_TASK=%s\n' "${AIDEVOPS_WORKTREE_EXPECTED_OWNER_TASK:-}" >>"${HEADLESS_ENV_CAPTURE}"
+printf 'AIDEVOPS_WORKTREE_EXPECTED_OWNER_CREATED_AT=%s\n' "${AIDEVOPS_WORKTREE_EXPECTED_OWNER_CREATED_AT:-}" >>"${HEADLESS_ENV_CAPTURE}"
 printf 'AIDEVOPS_PR_REPAIR_NUMBER=%s\n' "${AIDEVOPS_PR_REPAIR_NUMBER:-}" >>"${HEADLESS_ENV_CAPTURE}"
 printf 'AIDEVOPS_PR_REPAIR_HEAD_SHA=%s\n' "${AIDEVOPS_PR_REPAIR_HEAD_SHA:-}" >>"${HEADLESS_ENV_CAPTURE}"
 printf 'AIDEVOPS_PR_REPAIR_HEAD_REF=%s\n' "${AIDEVOPS_PR_REPAIR_HEAD_REF:-}" >>"${HEADLESS_ENV_CAPTURE}"
-printf '%s\n' "${prompt_file}" >>"${HEADLESS_LOG}"
 if [[ -n "$prompt_file" && -f "$prompt_file" ]]; then
 	cp "$prompt_file" "${HEADLESS_PROMPT_CAPTURE}"
 fi
+printf '%s\n' "${prompt_file}" >>"${HEADLESS_LOG}"
 exit 0
 HEADLESS_STUB
 	chmod +x "${TEST_ROOT}/headless-runtime-helper.sh"
@@ -210,10 +247,14 @@ if [[ "${1:-}" != "add" || -z "$branch" || -z "$path" || "${STUB_WORKTREE_HELPER
 	exit 1
 fi
 base=""
+issue=""
 shift 3
 while [[ $# -gt 0 ]]; do
 	if [[ "$1" == "--base" ]]; then
 		base="${2:-}"
+		shift 2
+	elif [[ "$1" == "--issue" ]]; then
+		issue="${2:-}"
 		shift 2
 	else
 		shift
@@ -221,6 +262,13 @@ while [[ $# -gt 0 ]]; do
 done
 mkdir -p "$path"
 printf '%s\t%s\t%s\n' "$path" "$branch" "${STUB_WORKTREE_ACTUAL_HEAD:-$base}" >>"${GIT_WORKTREE_REGISTRY}"
+if [[ "${STUB_WORKTREE_REGISTER_OWNER:-false}" == "true" ]]; then
+	source "${SHARED_CONSTANTS_PATH}"
+	OPENCODE_SESSION_ID="" CLAUDE_SESSION_ID="" register_worktree "$path" "$branch" --task "$issue" \
+		--session "${STUB_WORKTREE_OWNER_SESSION-worktree-helper-created}" \
+		--owner-pid "${STUB_WORKTREE_OWNER_PID:-$$}"
+	check_worktree_owner "$path" >"${WORKTREE_CREATED_OWNER_CAPTURE}"
+fi
 exit 0
 WORKTREE_STUB
 	chmod +x "${TEST_ROOT}/worktree-helper.sh"
@@ -229,7 +277,9 @@ WORKTREE_STUB
 
 setup_test_env() {
 	unset STUB_PR_LIST STUB_PR_VIEW STUB_THREADS_MODE STUB_CROSS_REPOSITORY STUB_REMOTE_HEAD
-	unset STUB_GIT_INVALID_BRANCH STUB_GIT_FETCH_FAIL STUB_WORKTREE_ACTUAL_HEAD STUB_WORKTREE_HELPER_FAIL
+	unset STUB_GIT_INVALID_BRANCH STUB_GIT_FETCH_FAIL STUB_GIT_CANONICAL_FETCH_FAIL
+	unset STUB_REMOTE_HEAD_INITIAL STUB_REMOTE_HEAD_AFTER_FETCH STUB_WORKTREE_ACTUAL_HEAD STUB_WORKTREE_HELPER_FAIL
+	unset STUB_WORKTREE_REGISTER_OWNER STUB_WORKTREE_OWNER_PID STUB_WORKTREE_OWNER_SESSION
 	unset PR_REVIEW_THREAD_RESPONSE_ESCALATE_AFTER
 	TEST_ROOT="$(mktemp -d -t prrts.XXXXXX)"
 	export HOME="${TEST_ROOT}/home"
@@ -240,8 +290,17 @@ setup_test_env() {
 	export HEADLESS_ENV_CAPTURE="${TEST_ROOT}/headless-env.txt"
 	export HEADLESS_PROMPT_CAPTURE="${TEST_ROOT}/prompt.md"
 	export WORKTREE_HELPER_LOG="${TEST_ROOT}/worktree-helper.log"
+	export WORKTREE_CREATED_OWNER_CAPTURE="${TEST_ROOT}/worktree-created-owner.txt"
 	export GIT_WORKTREE_REGISTRY="${TEST_ROOT}/git-worktrees.tsv"
+	export GIT_FETCH_CWD_LOG="${TEST_ROOT}/git-fetch-cwd.log"
+	export GIT_FETCHED_HEAD_STATE="${TEST_ROOT}/git-fetched-head.state"
+	export GIT_CANONICAL_REPO_PATH="${TEST_ROOT}/repo"
+	export WORKTREE_REGISTRY_DIR="${TEST_ROOT}/ownership-registry"
+	export WORKTREE_REGISTRY_DB="${WORKTREE_REGISTRY_DIR}/worktree-registry.db"
+	export SHARED_CONSTANTS_PATH="${TEST_SCRIPT_DIR}/../shared-constants.sh"
 	mkdir -p "${HOME}" "${TEST_ROOT}/bin" "${TEST_ROOT}/repo" "${AIDEVOPS_PR_REVIEW_THREAD_RESPONSE_STATE_DIR}"
+	mkdir -p "${TEST_ROOT}/fetch-worktree"
+	printf '%s\t%s\t%s\n' "${TEST_ROOT}/fetch-worktree" 'support/fetch' "$TEST_HEAD_OID_1" >"$GIT_WORKTREE_REGISTRY"
 	write_fake_gh_stub
 	write_fake_git_stub
 	write_fake_headless_stub
@@ -257,6 +316,33 @@ setup_test_env() {
 	: >"$GRAPHQL_MUTATIONS_LOG"
 	: >"$GRAPHQL_BODY_CAPTURE"
 	: >"$GRAPHQL_BODY_FLAG_CAPTURE"
+	: >"$HEADLESS_LOG"
+	: >"$GIT_FETCH_CWD_LOG"
+	rm -f "$GIT_FETCHED_HEAD_STATE"
+	return 0
+}
+
+register_test_worktree_owner() {
+	local worktree_path="$1"
+	local branch="$2"
+	local task_id="$3"
+	local session_id="$4"
+	local batch_id="${5:-}"
+	local owner_pid="$$"
+
+	if ! bash -c 'source "$1"; register_worktree "$2" "$3" --task "$4" --session "$5" --batch "$6" --owner-pid "$7"' \
+		_ "${TEST_SCRIPT_DIR}/../shared-constants.sh" "$worktree_path" "$branch" "$task_id" "$session_id" "$batch_id" "$owner_pid"; then
+		return 1
+	fi
+	return 0
+}
+
+read_test_worktree_owner() {
+	local worktree_path="$1"
+	if ! bash -c 'source "$1"; check_worktree_owner "$2"' \
+		_ "${TEST_SCRIPT_DIR}/../shared-constants.sh" "$worktree_path"; then
+		return 1
+	fi
 	return 0
 }
 
@@ -278,19 +364,176 @@ test_dispatch_uses_linked_pr_branch_worktree() {
 	return 0
 }
 
+test_dispatch_fetches_head_from_linked_worktree_context() {
+	local expected_fetch_cwd=""
+
+	setup_test_env
+	export STUB_REMOTE_HEAD_INITIAL="missing"
+	export STUB_GIT_CANONICAL_FETCH_FAIL="true"
+	expected_fetch_cwd=$(cd "${TEST_ROOT}/fetch-worktree" && pwd -P)
+	$SCANNER dispatch owner/repo "${TEST_ROOT}/repo"
+	wait_for_headless_log || true
+	if [[ -s "$HEADLESS_LOG" ]] &&
+		grep -Fxq "$expected_fetch_cwd" "$GIT_FETCH_CWD_LOG" 2>/dev/null &&
+		! grep -Fxq "$GIT_CANONICAL_REPO_PATH" "$GIT_FETCH_CWD_LOG" 2>/dev/null; then
+		print_result "dispatch fetches a missing PR head from linked-worktree context" 0
+	else
+		print_result "dispatch fetches a missing PR head from linked-worktree context" 1 \
+			"headless=$(wc -c <"$HEADLESS_LOG" 2>/dev/null || printf 0), fetch_cwds=$(tr '\n' ';' <"$GIT_FETCH_CWD_LOG" 2>/dev/null || printf '')"
+	fi
+	teardown_test_env
+	return 0
+}
+
+test_dispatch_bootstraps_fetch_context_without_linked_worktree() {
+	setup_test_env
+	export STUB_REMOTE_HEAD_INITIAL="missing"
+	rm -rf "${TEST_ROOT}/fetch-worktree"
+	: >"$GIT_WORKTREE_REGISTRY"
+	$SCANNER dispatch owner/repo "${TEST_ROOT}/repo"
+	wait_for_headless_log || true
+	if [[ -s "$HEADLESS_LOG" ]] &&
+		grep -Eq "${TEST_ROOT}/worktrees/\\.repo-fetch-[0-9]+" "$GIT_FETCH_CWD_LOG" 2>/dev/null &&
+		! compgen -G "${TEST_ROOT}/worktrees/.repo-fetch-*" >/dev/null; then
+		print_result "dispatch bootstraps and removes a linked fetch context" 0
+	else
+		print_result "dispatch bootstraps and removes a linked fetch context" 1 \
+			"headless=$(wc -c <"$HEADLESS_LOG" 2>/dev/null || printf 0), fetch_cwds=$(tr '\n' ';' <"$GIT_FETCH_CWD_LOG" 2>/dev/null || printf '')"
+	fi
+	teardown_test_env
+	return 0
+}
+
 test_dispatch_exports_worktree_ownership_context() {
 	setup_test_env
 	$SCANNER dispatch owner/repo "${TEST_ROOT}/repo"
 	wait_for_headless_log || true
 	if grep -Fxq 'WORKER_ISSUE_NUMBER=1' "$HEADLESS_ENV_CAPTURE" 2>/dev/null &&
 		grep -Fxq 'WORKER_NO_EXIT_PUSH=1' "$HEADLESS_ENV_CAPTURE" 2>/dev/null &&
-		grep -Fxq 'AIDEVOPS_ALLOW_WORKER_WORKTREE_OWNER_TRANSFER=1' "$HEADLESS_ENV_CAPTURE" 2>/dev/null &&
+		grep -Fxq 'AIDEVOPS_ALLOW_WORKER_WORKTREE_OWNER_TRANSFER=' "$HEADLESS_ENV_CAPTURE" 2>/dev/null &&
+		grep -Fxq 'AIDEVOPS_WORKTREE_OWNER_TRANSFER_MODE=continuation' "$HEADLESS_ENV_CAPTURE" 2>/dev/null &&
+		grep -Eq '^AIDEVOPS_WORKTREE_EXPECTED_OWNER_PID=[0-9]+$' "$HEADLESS_ENV_CAPTURE" 2>/dev/null &&
+		grep -Fxq 'AIDEVOPS_WORKTREE_EXPECTED_OWNER_SESSION=dispatch-precreate-1' "$HEADLESS_ENV_CAPTURE" 2>/dev/null &&
+		grep -Fxq 'AIDEVOPS_WORKTREE_EXPECTED_OWNER_TASK=1' "$HEADLESS_ENV_CAPTURE" 2>/dev/null &&
+		grep -Eq '^AIDEVOPS_WORKTREE_EXPECTED_OWNER_CREATED_AT=.+$' "$HEADLESS_ENV_CAPTURE" 2>/dev/null &&
 		grep -Fxq 'AIDEVOPS_PR_REPAIR_NUMBER=1' "$HEADLESS_ENV_CAPTURE" 2>/dev/null &&
 		grep -Fxq "AIDEVOPS_PR_REPAIR_HEAD_SHA=${TEST_HEAD_OID_1}" "$HEADLESS_ENV_CAPTURE" 2>/dev/null &&
 		grep -Fxq 'AIDEVOPS_PR_REPAIR_HEAD_REF=feature/review' "$HEADLESS_ENV_CAPTURE" 2>/dev/null; then
-		print_result "dispatch exports worker ownership and exact-head context" 0
+		print_result "dispatch exports exact owner-transfer and exact-head context" 0
 	else
-		print_result "dispatch exports worker ownership and exact-head context" 1 "env=$(tr '\n' ';' <"$HEADLESS_ENV_CAPTURE" 2>/dev/null || printf '')"
+		print_result "dispatch exports exact owner-transfer and exact-head context" 1 "env=$(tr '\n' ';' <"$HEADLESS_ENV_CAPTURE" 2>/dev/null || printf '')"
+	fi
+	teardown_test_env
+	return 0
+}
+
+test_dispatch_registers_created_worktree_as_transferable_precreate_owner() {
+	local expected_path=""
+	local initial_owner_info="" owner_info=""
+	local initial_owner_pid="" initial_owner_session="" initial_owner_batch="" initial_owner_task="" initial_owner_created_at=""
+	local owner_pid="" owner_session="" owner_batch="" owner_task="" owner_created_at=""
+
+	setup_test_env
+	export STUB_WORKTREE_REGISTER_OWNER="true"
+	export STUB_WORKTREE_OWNER_PID="$$"
+	export STUB_WORKTREE_OWNER_SESSION=""
+	expected_path="${TEST_ROOT}/worktrees/repo-pr1-review-feature-review-${TEST_HEAD_OID_1:0:12}"
+	$SCANNER dispatch owner/repo "${TEST_ROOT}/repo"
+	wait_for_headless_log || true
+	initial_owner_info=$(<"$WORKTREE_CREATED_OWNER_CAPTURE")
+	IFS='|' read -r initial_owner_pid initial_owner_session initial_owner_batch initial_owner_task initial_owner_created_at <<<"$initial_owner_info"
+	owner_info=$(read_test_worktree_owner "$expected_path" 2>/dev/null || true)
+	IFS='|' read -r owner_pid owner_session owner_batch owner_task owner_created_at <<<"$owner_info"
+	if [[ "$initial_owner_pid" == "$$" && -z "$initial_owner_session" && "$initial_owner_task" == "1" && -n "$initial_owner_created_at" ]] &&
+		[[ "$owner_pid" =~ ^[0-9]+$ && "$owner_pid" != "$initial_owner_pid" && "$owner_session" == "dispatch-precreate-1" && "$owner_task" == "1" && -n "$owner_created_at" ]] &&
+		grep -Fxq "AIDEVOPS_WORKTREE_EXPECTED_OWNER_PID=${owner_pid}" "$HEADLESS_ENV_CAPTURE" 2>/dev/null &&
+		grep -Fxq "AIDEVOPS_WORKTREE_EXPECTED_OWNER_CREATED_AT=${owner_created_at}" "$HEADLESS_ENV_CAPTURE" 2>/dev/null; then
+		print_result "dispatch atomically registers a created worktree as an exact transferable owner" 0
+	else
+		print_result "dispatch atomically registers a created worktree as an exact transferable owner" 1 \
+			"initial_owner=${initial_owner_info}, owner=${owner_info}, env=$(tr '\n' ';' <"$HEADLESS_ENV_CAPTURE" 2>/dev/null || printf '')"
+	fi
+	teardown_test_env
+	return 0
+}
+
+test_dispatch_preserves_reused_same_task_owner_snapshot() {
+	local existing_path=""
+	local owner_before="" owner_after=""
+	local owner_pid="" owner_session="" owner_batch="" owner_task="" owner_created_at=""
+
+	setup_test_env
+	existing_path="${TEST_ROOT}/existing-review-worktree"
+	mkdir -p "$existing_path"
+	printf '%s\t%s\t%s\n' "$existing_path" 'feature/review' "$TEST_HEAD_OID_1" >"$GIT_WORKTREE_REGISTRY"
+	register_test_worktree_owner "$existing_path" 'feature/review' '1' 'existing-review-session' 'existing-review-batch'
+	owner_before=$(read_test_worktree_owner "$existing_path")
+	IFS='|' read -r owner_pid owner_session owner_batch owner_task owner_created_at <<<"$owner_before"
+	$SCANNER dispatch owner/repo "${TEST_ROOT}/repo"
+	wait_for_headless_log || true
+	owner_after=$(read_test_worktree_owner "$existing_path")
+	if [[ "$owner_after" == "$owner_before" ]] &&
+		grep -Fxq 'AIDEVOPS_WORKTREE_OWNER_TRANSFER_MODE=continuation' "$HEADLESS_ENV_CAPTURE" 2>/dev/null &&
+		grep -Fxq "AIDEVOPS_WORKTREE_EXPECTED_OWNER_PID=${owner_pid}" "$HEADLESS_ENV_CAPTURE" 2>/dev/null &&
+		grep -Fxq "AIDEVOPS_WORKTREE_EXPECTED_OWNER_SESSION=${owner_session}" "$HEADLESS_ENV_CAPTURE" 2>/dev/null &&
+		grep -Fxq "AIDEVOPS_WORKTREE_EXPECTED_OWNER_BATCH=${owner_batch}" "$HEADLESS_ENV_CAPTURE" 2>/dev/null &&
+		grep -Fxq "AIDEVOPS_WORKTREE_EXPECTED_OWNER_TASK=${owner_task}" "$HEADLESS_ENV_CAPTURE" 2>/dev/null &&
+		grep -Fxq "AIDEVOPS_WORKTREE_EXPECTED_OWNER_CREATED_AT=${owner_created_at}" "$HEADLESS_ENV_CAPTURE" 2>/dev/null &&
+		! grep -q '^add ' "$WORKTREE_HELPER_LOG" 2>/dev/null; then
+		print_result "dispatch preserves a reused same-task owner for exact continuation transfer" 0
+	else
+		print_result "dispatch preserves a reused same-task owner for exact continuation transfer" 1 \
+			"before=${owner_before}, after=${owner_after}, env=$(tr '\n' ';' <"$HEADLESS_ENV_CAPTURE" 2>/dev/null || printf '')"
+	fi
+	teardown_test_env
+	return 0
+}
+
+test_dispatch_rejects_reused_other_task_owner() {
+	local existing_path=""
+	local owner_before="" owner_after=""
+	local state_file=""
+
+	setup_test_env
+	existing_path="${TEST_ROOT}/existing-review-worktree"
+	state_file="${AIDEVOPS_PR_REVIEW_THREAD_RESPONSE_STATE_DIR}/owner-repo-1.state"
+	mkdir -p "$existing_path"
+	printf '%s\t%s\t%s\n' "$existing_path" 'feature/review' "$TEST_HEAD_OID_1" >"$GIT_WORKTREE_REGISTRY"
+	register_test_worktree_owner "$existing_path" 'feature/review' '999' 'unrelated-session'
+	owner_before=$(read_test_worktree_owner "$existing_path")
+	$SCANNER dispatch owner/repo "${TEST_ROOT}/repo" || true
+	owner_after=$(read_test_worktree_owner "$existing_path")
+	if [[ ! -s "$HEADLESS_LOG" && "$owner_after" == "$owner_before" ]] &&
+		grep -q '^blocker_reason=review_worktree_owned_by_other_task$' "$state_file" 2>/dev/null; then
+		print_result "dispatch rejects a reused worktree owned by another task" 0
+	else
+		print_result "dispatch rejects a reused worktree owned by another task" 1 \
+			"before=${owner_before}, after=${owner_after}, state=$(tr '\n' ';' <"$state_file" 2>/dev/null || printf '')"
+	fi
+	teardown_test_env
+	return 0
+}
+
+test_dispatch_rejects_reused_unverified_owner() {
+	local existing_path=""
+	local owner_before="" owner_after=""
+	local state_file=""
+
+	setup_test_env
+	existing_path="${TEST_ROOT}/existing-review-worktree"
+	state_file="${AIDEVOPS_PR_REVIEW_THREAD_RESPONSE_STATE_DIR}/owner-repo-1.state"
+	mkdir -p "$existing_path"
+	printf '%s\t%s\t%s\n' "$existing_path" 'feature/review' "$TEST_HEAD_OID_1" >"$GIT_WORKTREE_REGISTRY"
+	register_test_worktree_owner "$existing_path" 'feature/review' '' 'unverified-session'
+	owner_before=$(read_test_worktree_owner "$existing_path")
+	$SCANNER dispatch owner/repo "${TEST_ROOT}/repo" || true
+	owner_after=$(read_test_worktree_owner "$existing_path")
+	if [[ ! -s "$HEADLESS_LOG" && "$owner_after" == "$owner_before" ]] &&
+		grep -q '^blocker_reason=review_worktree_ownership_unverified$' "$state_file" 2>/dev/null; then
+		print_result "dispatch rejects a reused worktree with unverified ownership" 0
+	else
+		print_result "dispatch rejects a reused worktree with unverified ownership" 1 \
+			"before=${owner_before}, after=${owner_after}, state=$(tr '\n' ';' <"$state_file" 2>/dev/null || printf '')"
 	fi
 	teardown_test_env
 	return 0
@@ -301,10 +544,16 @@ test_dispatch_blocks_cross_repository_head() {
 	export STUB_CROSS_REPOSITORY="true"
 	$SCANNER dispatch owner/repo "${TEST_ROOT}/repo"
 	local state_file="${AIDEVOPS_PR_REVIEW_THREAD_RESPONSE_STATE_DIR}/owner-repo-1.state"
+	local old_epoch=""
+	old_epoch="$(($(date +%s) - 4000))"
+	expire_state_dispatch_time "$state_file" "$old_epoch"
+	$SCANNER dispatch owner/repo "${TEST_ROOT}/repo"
 	if [[ ! -s "$HEADLESS_LOG" ]] &&
 		grep -q '^analysis_complete=true$' "$state_file" 2>/dev/null &&
 		grep -q '^blocked_by=code$' "$state_file" 2>/dev/null &&
-		grep -q '^blocker_reason=cross_repository_head_unwritable$' "$state_file" 2>/dev/null; then
+		grep -q '^maintainer_attention=true$' "$state_file" 2>/dev/null &&
+		grep -q '^blocker_reason=cross_repository_head_unwritable$' "$state_file" 2>/dev/null &&
+		grep -q 'analysis complete and blocked by code' "$LOGFILE" 2>/dev/null; then
 		print_result "dispatch blocks an unwritable fork head without retrying" 0
 	else
 		print_result "dispatch blocks an unwritable fork head without retrying" 1 "state=$(tr '\n' ';' <"$state_file" 2>/dev/null || printf '')"
@@ -482,6 +731,26 @@ test_dispatch_launches_worker_and_writes_state() {
 	return 0
 }
 
+test_dispatch_preserves_head_fields_when_labels_are_empty() {
+	setup_test_env
+	export STUB_PR_LIST=$'1\tFix active PR\tfalse\t\tfeature/review\t'"${TEST_HEAD_OID_1}"$'\tworker-bot'
+	$SCANNER dispatch owner/repo "${TEST_ROOT}/repo"
+	wait_for_headless_log || true
+	local state_file="${AIDEVOPS_PR_REVIEW_THREAD_RESPONSE_STATE_DIR}/owner-repo-1.state"
+	if [[ -s "$HEADLESS_LOG" ]] &&
+		grep -Fxq "AIDEVOPS_PR_REPAIR_HEAD_REF=feature/review" "$HEADLESS_ENV_CAPTURE" 2>/dev/null &&
+		grep -Fxq "AIDEVOPS_PR_REPAIR_HEAD_SHA=${TEST_HEAD_OID_1}" "$HEADLESS_ENV_CAPTURE" 2>/dev/null &&
+		grep -q "^last_head_sha=${TEST_HEAD_OID_1}$" "$state_file" 2>/dev/null &&
+		! grep -q 'PR head branch is invalid' "$LOGFILE" 2>/dev/null; then
+		print_result "dispatch preserves PR head metadata when labels are empty" 0
+	else
+		print_result "dispatch preserves PR head metadata when labels are empty" 1 \
+			"headless=$(wc -c <"$HEADLESS_LOG" 2>/dev/null || printf 0), state=$(tr '\n' ';' <"$state_file" 2>/dev/null || printf ''), log=$(tr '\n' ';' <"$LOGFILE" 2>/dev/null || printf '')"
+	fi
+	teardown_test_env
+	return 0
+}
+
 test_dispatch_prompt_includes_full_thread_command_signatures() {
 	setup_test_env
 	local stable_scanner="${HOME}/.aidevops/agents/scripts/pr-review-thread-response-scanner.sh"
@@ -504,6 +773,9 @@ test_dispatch_prompt_uses_stable_deployed_scanner_path() {
 	local stable_scanner="${HOME}/.aidevops/agents/scripts/pr-review-thread-response-scanner.sh"
 	mkdir -p "$(dirname "$bundled_scanner")"
 	cp "$SCANNER" "$bundled_scanner"
+	cat >"$(dirname "$bundled_scanner")/shared-constants.sh" <<SHARED_CONSTANTS
+source "${TEST_SCRIPT_DIR}/../shared-constants.sh"
+SHARED_CONSTANTS
 	chmod +x "$bundled_scanner"
 	"$bundled_scanner" dispatch owner/repo "${TEST_ROOT}/repo"
 	wait_for_headless_log || true
@@ -715,6 +987,159 @@ test_mark_blocked_skips_same_fingerprint_without_retry() {
 	return 0
 }
 
+test_dispatch_retries_stale_branch_validation_blocker_once() {
+	setup_test_env
+	local state_file="${AIDEVOPS_PR_REVIEW_THREAD_RESPONSE_STATE_DIR}/owner-repo-1.state"
+	local old_epoch=""
+	old_epoch="$(($(date +%s) - 4000))"
+	{
+		printf 'fingerprint=THREAD1:https://example.invalid/thread\n'
+		printf 'dispatched_at=%s\n' "$old_epoch"
+		printf 'thread_count=1\n'
+		printf 'attempt_count=1\n'
+		printf 'last_head_sha=%s\n' "$TEST_HEAD_OID_1"
+		printf 'analysis_complete=true\n'
+		printf 'blocked_by=code\n'
+		printf 'maintainer_attention=true\n'
+		printf 'attention_reason=pr_head_branch_invalid\n'
+		printf 'blocker_reason=pr_head_branch_invalid\n'
+	} >"$state_file"
+	$SCANNER dispatch owner/repo "${TEST_ROOT}/repo"
+	wait_for_headless_log || true
+	if [[ -s "$HEADLESS_LOG" ]] &&
+		grep -q '^attempt_count=2$' "$state_file" 2>/dev/null &&
+		! grep -q '^analysis_complete=' "$state_file" 2>/dev/null &&
+		grep -q 'retrying stale PR head validation failure once' "$LOGFILE" 2>/dev/null; then
+		print_result "dispatch retries a stale branch-validation blocker once" 0
+	else
+		print_result "dispatch retries a stale branch-validation blocker once" 1 \
+			"headless=$(wc -c <"$HEADLESS_LOG" 2>/dev/null || printf 0), state=$(tr '\n' ';' <"$state_file" 2>/dev/null || printf ''), log=$(tr '\n' ';' <"$LOGFILE" 2>/dev/null || printf '')"
+	fi
+	teardown_test_env
+	return 0
+}
+
+test_dispatch_retries_stale_branch_unavailable_blocker_once() {
+	setup_test_env
+	local state_file="${AIDEVOPS_PR_REVIEW_THREAD_RESPONSE_STATE_DIR}/owner-repo-1.state"
+	local old_epoch=""
+	old_epoch="$(($(date +%s) - 4000))"
+	{
+		printf 'fingerprint=THREAD1:https://example.invalid/thread\n'
+		printf 'dispatched_at=%s\n' "$old_epoch"
+		printf 'thread_count=1\n'
+		printf 'attempt_count=1\n'
+		printf 'last_head_sha=%s\n' "$TEST_HEAD_OID_1"
+		printf 'analysis_complete=true\n'
+		printf 'blocked_by=code\n'
+		printf 'maintainer_attention=true\n'
+		printf 'attention_reason=pr_head_branch_unavailable\n'
+		printf 'blocker_reason=pr_head_branch_unavailable\n'
+	} >"$state_file"
+	$SCANNER dispatch owner/repo "${TEST_ROOT}/repo"
+	wait_for_headless_log || true
+	if [[ -s "$HEADLESS_LOG" ]] &&
+		grep -q '^attempt_count=2$' "$state_file" 2>/dev/null &&
+		! grep -q '^analysis_complete=' "$state_file" 2>/dev/null &&
+		grep -q 'retrying stale PR head validation failure once (pr_head_branch_unavailable)' "$LOGFILE" 2>/dev/null; then
+		print_result "dispatch retries a stale branch-unavailable blocker once" 0
+	else
+		print_result "dispatch retries a stale branch-unavailable blocker once" 1 \
+			"headless=$(wc -c <"$HEADLESS_LOG" 2>/dev/null || printf 0), state=$(tr '\n' ';' <"$state_file" 2>/dev/null || printf ''), log=$(tr '\n' ';' <"$LOGFILE" 2>/dev/null || printf '')"
+	fi
+	teardown_test_env
+	return 0
+}
+
+test_dispatch_retries_transient_head_fetch_failure_once() {
+	setup_test_env
+	export STUB_REMOTE_HEAD_INITIAL="missing"
+	export STUB_GIT_FETCH_FAIL="true"
+	$SCANNER dispatch owner/repo "${TEST_ROOT}/repo"
+	local state_file="${AIDEVOPS_PR_REVIEW_THREAD_RESPONSE_STATE_DIR}/owner-repo-1.state"
+	local first_failure_ok="false"
+	if grep -q '^blocked_by=infrastructure$' "$state_file" 2>/dev/null &&
+		grep -q '^blocker_reason=pr_head_fetch_failed$' "$state_file" 2>/dev/null; then
+		first_failure_ok="true"
+	fi
+	local old_epoch=""
+	old_epoch="$(($(date +%s) - 4000))"
+	expire_state_dispatch_time "$state_file" "$old_epoch"
+	unset STUB_GIT_FETCH_FAIL
+	: >"$HEADLESS_LOG"
+	$SCANNER dispatch owner/repo "${TEST_ROOT}/repo"
+	wait_for_headless_log || true
+	if [[ "$first_failure_ok" == "true" && -s "$HEADLESS_LOG" ]] &&
+		grep -q '^attempt_count=2$' "$state_file" 2>/dev/null &&
+		! grep -q '^analysis_complete=' "$state_file" 2>/dev/null; then
+		print_result "dispatch retries a transient linked-worktree fetch failure once" 0
+	else
+		print_result "dispatch retries a transient linked-worktree fetch failure once" 1 \
+			"first_failure_ok=${first_failure_ok}, headless=$(wc -c <"$HEADLESS_LOG" 2>/dev/null || printf 0), state=$(tr '\n' ';' <"$state_file" 2>/dev/null || printf '')"
+	fi
+	teardown_test_env
+	return 0
+}
+
+test_dispatch_retries_generic_infrastructure_launch_failure() {
+	setup_test_env
+	chmod -x "$HEADLESS_RUNTIME_HELPER"
+	$SCANNER dispatch owner/repo "${TEST_ROOT}/repo"
+	local state_file="${AIDEVOPS_PR_REVIEW_THREAD_RESPONSE_STATE_DIR}/owner-repo-1.state"
+	local first_failure_ok="false"
+	if grep -q '^analysis_complete=true$' "$state_file" 2>/dev/null &&
+		grep -q '^blocked_by=infrastructure$' "$state_file" 2>/dev/null &&
+		grep -q '^maintainer_attention=false$' "$state_file" 2>/dev/null &&
+		grep -q '^blocker_reason=review_worker_launch_failed$' "$state_file" 2>/dev/null; then
+		first_failure_ok="true"
+	fi
+	local old_epoch=""
+	old_epoch="$(($(date +%s) - 4000))"
+	expire_state_dispatch_time "$state_file" "$old_epoch"
+	chmod +x "$HEADLESS_RUNTIME_HELPER"
+	$SCANNER dispatch owner/repo "${TEST_ROOT}/repo"
+	wait_for_headless_log || true
+	if [[ "$first_failure_ok" == "true" && -s "$HEADLESS_LOG" ]] &&
+		grep -q '^attempt_count=2$' "$state_file" 2>/dev/null &&
+		! grep -q '^analysis_complete=' "$state_file" 2>/dev/null; then
+		print_result "dispatch retries a generic infrastructure launch failure" 0
+	else
+		print_result "dispatch retries a generic infrastructure launch failure" 1 \
+			"first_failure_ok=${first_failure_ok}, headless=$(wc -c <"$HEADLESS_LOG" 2>/dev/null || printf 0), state=$(tr '\n' ';' <"$state_file" 2>/dev/null || printf '')"
+	fi
+	teardown_test_env
+	return 0
+}
+
+test_dispatch_does_not_repeat_branch_validation_recovery() {
+	setup_test_env
+	local state_file="${AIDEVOPS_PR_REVIEW_THREAD_RESPONSE_STATE_DIR}/owner-repo-1.state"
+	local old_epoch=""
+	old_epoch="$(($(date +%s) - 4000))"
+	{
+		printf 'fingerprint=THREAD1:https://example.invalid/thread\n'
+		printf 'dispatched_at=%s\n' "$old_epoch"
+		printf 'thread_count=1\n'
+		printf 'attempt_count=2\n'
+		printf 'last_head_sha=%s\n' "$TEST_HEAD_OID_1"
+		printf 'analysis_complete=true\n'
+		printf 'blocked_by=code\n'
+		printf 'maintainer_attention=true\n'
+		printf 'blocker_reason=pr_head_branch_invalid\n'
+	} >"$state_file"
+	$SCANNER dispatch owner/repo "${TEST_ROOT}/repo"
+	if [[ ! -s "$HEADLESS_LOG" ]] &&
+		grep -q '^attempt_count=2$' "$state_file" 2>/dev/null &&
+		grep -q 'analysis complete and blocked by code' "$LOGFILE" 2>/dev/null; then
+		print_result "dispatch does not repeat stale branch-validation recovery" 0
+	else
+		print_result "dispatch does not repeat stale branch-validation recovery" 1 \
+			"state=$(tr '\n' ';' <"$state_file" 2>/dev/null || printf ''), log=$(tr '\n' ';' <"$LOGFILE" 2>/dev/null || printf '')"
+	fi
+	teardown_test_env
+	return 0
+}
+
 test_no_marker_retry_behavior_is_preserved() {
 	setup_test_env
 	$SCANNER dispatch owner/repo "${TEST_ROOT}/repo"
@@ -779,16 +1204,35 @@ test_mark_blocked_sanitizes_reason_and_details() {
 test_dispatch_pr_skips_when_pr_lock_held() {
 	setup_test_env
 	local lock_dir="${AIDEVOPS_PR_REVIEW_THREAD_RESPONSE_STATE_DIR}/owner-repo-1.lock"
+	local dispatch_rc=0
 	mkdir -p "$lock_dir"
 	{
 		printf 'pid=%s\n' "$$"
 		printf 'created_at=%s\n' "$(date +%s)"
 	} >"${lock_dir}/metadata"
-	$SCANNER dispatch-pr owner/repo "${TEST_ROOT}/repo" 1
-	if [[ ! -s "$HEADLESS_LOG" ]]; then
-		print_result "dispatch-pr skips when repo PR lock is held" 0
+	$SCANNER dispatch-pr owner/repo "${TEST_ROOT}/repo" 1 || dispatch_rc=$?
+	if [[ "$dispatch_rc" -ne 0 && ! -s "$HEADLESS_LOG" ]]; then
+		print_result "dispatch-pr reports when repo PR lock is held" 0
 	else
-		print_result "dispatch-pr skips when repo PR lock is held" 1 "lock-held dispatch unexpectedly launched"
+		print_result "dispatch-pr reports when repo PR lock is held" 1 "rc=${dispatch_rc}, lock-held dispatch unexpectedly launched"
+	fi
+	teardown_test_env
+	return 0
+}
+
+test_dispatch_pr_reports_deduplicated_dispatch() {
+	setup_test_env
+	PR_REVIEW_THREAD_RESPONSE_INCLUDE_HUMAN=true $SCANNER dispatch-pr owner/repo "${TEST_ROOT}/repo" 1
+	wait_for_headless_log || true
+	: >"$HEADLESS_LOG"
+	local dispatch_rc=0
+	PR_REVIEW_THREAD_RESPONSE_INCLUDE_HUMAN=true $SCANNER dispatch-pr owner/repo "${TEST_ROOT}/repo" 1 || dispatch_rc=$?
+	if [[ "$dispatch_rc" -ne 0 && ! -s "$HEADLESS_LOG" ]] &&
+		grep -Eq 'dispatch state active|same thread fingerprint dispatched' "$LOGFILE" 2>/dev/null; then
+		print_result "dispatch-pr reports a deduplicated targeted dispatch" 0
+	else
+		print_result "dispatch-pr reports a deduplicated targeted dispatch" 1 \
+			"rc=${dispatch_rc}, headless=$(wc -c <"$HEADLESS_LOG" 2>/dev/null || printf 0), log=$(tr '\n' ';' <"$LOGFILE" 2>/dev/null || printf '')"
 	fi
 	teardown_test_env
 	return 0
@@ -1023,8 +1467,15 @@ main() {
 	test_scan_pr_excludes_human_threads_by_default
 	test_scan_pr_can_include_human_threads_with_opt_in
 	test_dispatch_launches_worker_and_writes_state
+	test_dispatch_preserves_head_fields_when_labels_are_empty
 	test_dispatch_uses_linked_pr_branch_worktree
+	test_dispatch_fetches_head_from_linked_worktree_context
+	test_dispatch_bootstraps_fetch_context_without_linked_worktree
 	test_dispatch_exports_worktree_ownership_context
+	test_dispatch_registers_created_worktree_as_transferable_precreate_owner
+	test_dispatch_preserves_reused_same_task_owner_snapshot
+	test_dispatch_rejects_reused_other_task_owner
+	test_dispatch_rejects_reused_unverified_owner
 	test_dispatch_blocks_cross_repository_head
 	test_dispatch_blocks_remote_head_drift
 	test_dispatch_blocks_existing_worktree_head_mismatch
@@ -1041,10 +1492,16 @@ main() {
 	test_dispatch_escalates_repeated_same_fingerprint_without_worker_loop
 	test_new_head_sha_resets_repeated_fingerprint_attempts
 	test_mark_blocked_skips_same_fingerprint_without_retry
+	test_dispatch_retries_stale_branch_validation_blocker_once
+	test_dispatch_retries_stale_branch_unavailable_blocker_once
+	test_dispatch_retries_transient_head_fetch_failure_once
+	test_dispatch_retries_generic_infrastructure_launch_failure
+	test_dispatch_does_not_repeat_branch_validation_recovery
 	test_no_marker_retry_behavior_is_preserved
 	test_old_state_file_without_completion_fields_still_retries
 	test_mark_blocked_sanitizes_reason_and_details
 	test_dispatch_pr_skips_when_pr_lock_held
+	test_dispatch_pr_reports_deduplicated_dispatch
 	test_dispatch_pr_reclaims_stale_lock
 	test_dispatch_reports_graphql_budget_exhaustion_when_scan_blind
 	test_dispatch_reports_fetch_errors_when_scan_blind

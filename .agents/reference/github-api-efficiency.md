@@ -61,10 +61,34 @@ The benchmark validates:
 Any unknown quota cost or unclassified transport attempt prevents `PASS`.
 Never derive a benchmark by reading the raw JSONL/log source directly.
 
+### Quota-cost attribution
+
+Quota cost is known only when the operation owns authoritative per-request
+evidence. An explicit operation-provided cost takes precedence. The `gh` shim
+can additionally attribute documented primary-rate cost after a successful,
+uncached, non-conditional direct `gh api` request to `github.com`:
+
+- REST requests cost `1` primary-rate point;
+- `GET /rate_limit` costs `0` primary-rate points.
+
+Failed requests without operation-owned cost evidence remain unknown because
+the exit status does not prove whether GitHub charged the request. Cached and
+conditional requests remain unknown because their result can cost either zero
+or one. Native opaque pagination, GitHub Enterprise hosts, unknown/future
+`gh api` options, GraphQL, and higher-level `gh` commands also remain unknown.
+Explicit REST pagination can record each successful page independently after
+the shim has proved that page boundary.
+
+Do not infer an operation's GraphQL cost by subtracting cumulative rate-limit
+headers: concurrent clients can change those values between observations. A
+GraphQL operation becomes exact only when it returns and owns its own
+`rateLimit { cost }` value. Partial REST attribution does not relax the
+benchmark's zero-unknown-cost comparability gate.
+
 ### Evidence sidecar
 
 Each transport aggregate has one sidecar using
-`aidevops-github-api-efficiency-evidence/v1`. `transport_sha256` binds the
+`aidevops-github-api-efficiency-evidence/v2`. `transport_sha256` binds the
 sidecar to the exact aggregate bytes. The result also records the sidecar's own
 SHA-256 digest.
 
@@ -87,7 +111,7 @@ The active transport log remains bounded at 48 hours, one million records, or
 authoritative: unusually high request volume can still exhaust a size bound
 before the requested observation duration and therefore cannot support `PASS`.
 
-Coverage contract `1` starts at a private persisted activation timestamp and is
+Coverage contract `2` starts at a private persisted activation timestamp and is
 re-emitted each cycle so a rolling window becomes bounded only after every
 retained attempt post-dates instrumentation activation. Population, latency,
 cache, single-flight, and path-budget ownership currently emit complete coverage
@@ -96,6 +120,14 @@ remain uncovered—and therefore `null`—until duplicate-action, recovery,
 stale-positive, and dispatch-dependency semantics have complete production
 ownership. Never promote absent events in an uncovered group to observed zero.
 
+Contract `2` also exports one private cycle scope to Pulse child processes. Check
+status evidence hashes that scope with each actionable head and counts physical
+aggregate fetches inside the same scope. This distinguishes duplicate fetches in
+one cycle from freshness-required refreshes of an unchanged head in later cycles.
+The contract uses a new `github-api-efficiency-contract-v2.started-at` activation
+file, so deployment starts a fresh bounded window automatically. Version-1
+sidecars remain immutable historical evidence and are not accepted as version 2.
+
 The following is an intentionally incomplete template. Replace every required
 `null` with a privacy-safe observed value and set `complete` to `true` only when
 the whole fixed window has been reconciled. The transport digest must be 64
@@ -103,7 +135,7 @@ lowercase hexadecimal characters.
 
 ```json
 {
-  "schema": "aidevops-github-api-efficiency-evidence/v1",
+  "schema": "aidevops-github-api-efficiency-evidence/v2",
   "transport_sha256": "<sha256-of-exact-transport-report>",
   "complete": false,
   "population": {
@@ -150,7 +182,9 @@ lowercase hexadecimal characters.
   "path_budgets": {
     "fingerprint_verification_list_calls": null,
     "fresh_empty_live_fallbacks": null,
-    "aggregate_check_fetches": null
+    "aggregate_check_fetches": null,
+    "cycle_scoped_aggregate_check_fetches": null,
+    "unique_cycle_scoped_actionable_heads": null
   }
 }
 ```
@@ -170,7 +204,7 @@ tokens, URLs, or raw log records in the sidecar.
 | `single_flight` | Leader, follower wait, takeover, and duplicate-leader counters. |
 | `webhook` | `pulse-merge-webhook-server.py` emits a protocol-v1 millisecond receive marker; `pulse-merge-webhook-receiver.sh` records successful invalidations, delivery-to-invalidation lag, and invalidations delegated to polling recovery. |
 | `guardrails` | Snapshot/check-cache freshness detections, forced live refreshes, and live required-check preflight mismatches. Unsupported stale-positive and dispatch-dependency fields remain unknown. |
-| `path_budgets` | Deterministic call-site counters from focused request-budget tests/telemetry. |
+| `path_budgets` | Deterministic call-site counters plus cycle-scoped opaque actionable-head/fetch telemetry. Total fetches remain observable while the decision gate compares only identities from the same freshness scope. |
 
 ## Comparability gate
 
@@ -224,7 +258,9 @@ The canary must also have:
 - zero duplicate single-flight leaders, duplicate webhook actions, and missed
   webhook recoveries;
 - zero fingerprint/verification list calls and fresh-empty live fallbacks;
-- no more than one aggregate check fetch per unique actionable head SHA.
+- no more than one cycle-scoped aggregate check fetch per unique
+  cycle-scoped actionable head. Total aggregate fetches remain a trend metric;
+  later-cycle TTL refreshes are not classified as same-cycle duplicates.
 
 Threshold options may make a comparison stricter. Any deliberate relaxation
 requires issue/PR rationale and another canary; do not weaken a threshold merely
@@ -247,15 +283,25 @@ to convert an observed regression into a pass.
 
 ## Current t18131 checkpoint
 
-The retained generation-8 baseline ends at `2026-07-18T06:04:10Z`. Its quota
-cost is unknown for all retained attempts. The later aggregate begins before
-t18130 merged at `2026-07-18T15:49:27Z` (`1784389767`) and also contains unknown
-quota costs. Neither report can produce `PASS`.
+The first homogeneous `v3.32.161` 12-hour aggregate retained 43,199 seconds and
+69,028 exact attempts. Its five owned evidence groups were bounded, but 20,135
+quota costs plus webhook and guardrail semantics remained unknown. The official
+comparison therefore returned `INCONCLUSIVE`.
 
-Therefore this implementation does not tune `.agents/configs/pulse-sweep-budget.json`,
-does not tune `.agents/configs/webhook-receiver.conf`, and removes no feature or
-rollback flag. A valid final comparison requires both a new exact baseline and
-a 12–24 hour post-rollout canary with complete sidecars.
+That window recorded 87 aggregate check fetches and 61 globally unique actionable
+head SHAs. Two adjacent completed six-hour diagnostics recorded `47/43` and
+`40/40` fetches/unique heads. Twenty-two heads occurred in both halves, and the
+cache evidence recorded zero duplicate leaders. The original full-window ratio
+therefore mixed legitimate later-cycle TTL refreshes with duplicate fan-out; it
+did not prove 26 redundant fetches.
+
+Evidence schema/coverage contract 2 corrects the scope mismatch without extending
+terminal or actionable TTLs. It keeps total physical fetches visible and adds a
+separate one-fetch-per-cycle/head gate. Deployment of this contract requires a
+fresh exact baseline and non-overlapping 12–24 hour canary. Until those windows
+and the remaining ownership gaps are complete, this implementation does not tune
+`.agents/configs/pulse-sweep-budget.json`, does not tune
+`.agents/configs/webhook-receiver.conf`, and removes no rollback control.
 
 ## Retained controls and rollback triggers
 
@@ -282,6 +328,7 @@ must not be removed by an efficiency-only canary.
 
 ```bash
 bash .agents/scripts/tests/test-gh-api-instrument.sh
+bash .agents/scripts/tests/test-gh-shim.sh
 bash .agents/scripts/tests/test-gh-request-singleflight.sh
 bash .agents/scripts/tests/test-gh-check-status-cache.sh
 bash .agents/scripts/tests/test-pulse-wrapper-cycle-gates.sh
@@ -291,7 +338,9 @@ bash .agents/scripts/tests/test-pulse-merge-preflight-snapshot.sh
 bash .agents/scripts/tests/test-github-api-efficiency-evidence.sh
 bash .agents/scripts/tests/test-github-api-efficiency-benchmark.sh
 shellcheck \
+  .agents/scripts/gh \
   .agents/scripts/gh-api-instrument.sh \
+  .agents/scripts/gh-quota-attribution-lib.sh \
   .agents/scripts/pulse-wrapper-cycle-gates.sh \
   .agents/scripts/pulse-batch-prefetch-helper.sh \
   .agents/scripts/pulse-merge-webhook-receiver.sh \

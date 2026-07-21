@@ -28,7 +28,7 @@ from github_api_efficiency_events import (
 from github_api_efficiency_io import AtomicWriteError, atomic_write_text
 
 
-CONTRACT_VERSION = "1"
+CONTRACT_VERSION = "2"
 _SHA256_RE = re.compile(r"^[a-f0-9]{64}$")
 _COVERAGE_GROUPS = tuple(("population", *EVIDENCE_GROUPS.keys()))
 
@@ -102,6 +102,24 @@ def _unique_actionable_heads(
     return unique
 
 
+def _unique_cycle_scoped_actionable_heads(
+    events: dict[str, Counter[str]], cycle_scoped_fetches: int
+) -> int | None:
+    failures = _sum_event(
+        events, "path_budgets.cycle_scoped_actionable_head_hash_failures"
+    )
+    if failures:
+        return None
+    tokens = events.get("path_budgets.cycle_scoped_actionable_head_token", {})
+    if any(not _SHA256_RE.fullmatch(token) for token in tokens):
+        raise EvidenceBuildError(
+            "cycle-scoped actionable head tokens must be lowercase SHA-256"
+        )
+    if tokens:
+        return len(tokens)
+    return None if cycle_scoped_fetches else 0
+
+
 def _sample_percentile(
     events: dict[str, Counter[str]], name: str, percent: int
 ) -> int | None:
@@ -132,14 +150,17 @@ def _window_is_bounded(
 def _coverage(
     events: dict[str, Counter[str]], meta: dict[str, Any]
 ) -> tuple[dict[str, bool], int | None, int | None]:
-    start = _extreme_int(events, "coverage-start", min)
+    start = _extreme_int(events, "coverage-start", max)
     end = _extreme_int(events, "coverage-end", max)
-    contract = _snapshot(events, "contract", str)
+    contract_values = _parsed_values(events, "contract", str)
+    contract = CONTRACT_VERSION if CONTRACT_VERSION in contract_values else None
     first = _non_negative_int(meta.get("first_retained_ts"), "first retained timestamp")
     last = _non_negative_int(meta.get("last_retained_ts"), "last retained timestamp")
     bounded = _window_is_bounded(contract, start, end, first, last)
     groups = {
-        group: bounded and _snapshot(events, f"coverage.{group}", str) == CONTRACT_VERSION
+        group: bounded
+        and CONTRACT_VERSION
+        in _parsed_values(events, f"coverage.{group}", str)
         for group in _COVERAGE_GROUPS
     }
     if _non_negative_int(
@@ -210,6 +231,21 @@ def _build_count_group(
     }
 
 
+def _build_path_budgets(
+    events: dict[str, Counter[str]], covered: bool
+) -> dict[str, int | None]:
+    payload = _build_count_group(events, "path_budgets", covered)
+    if not covered:
+        return payload
+    cycle_scoped_fetches = payload["cycle_scoped_aggregate_check_fetches"]
+    if cycle_scoped_fetches is None:
+        return payload
+    payload["unique_cycle_scoped_actionable_heads"] = (
+        _unique_cycle_scoped_actionable_heads(events, cycle_scoped_fetches)
+    )
+    return payload
+
+
 def _build_latency(
     events: dict[str, Counter[str]], meta: dict[str, Any], covered: bool
 ) -> dict[str, int | None]:
@@ -263,8 +299,12 @@ def build_sidecar(report: dict[str, Any], transport_sha256: str) -> dict[str, An
         ),
         "webhook": _build_webhook(events, covered["webhook"]),
     }
-    for group in ("guardrails", "path_budgets"):
-        payload[group] = _build_count_group(events, group, covered[group])
+    payload["guardrails"] = _build_count_group(
+        events, "guardrails", covered["guardrails"]
+    )
+    payload["path_budgets"] = _build_path_budgets(
+        events, covered["path_budgets"]
+    )
     missing = _missing_fields(payload)
     payload["complete"] = not missing and all(covered.values())
     payload["_meta"] = {

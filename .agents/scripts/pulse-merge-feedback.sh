@@ -1935,7 +1935,7 @@ _dispatch_pr_fix_worker() {
 
 	# --- Fetch bot/human reviews (substantive: CHANGES_REQUESTED or long body) ---
 	local reviews_json
-	reviews_json=$(gh api "repos/${repo_slug}/pulls/${pr_number}/reviews" \
+	reviews_json=$(_gh_with_timeout read gh api "repos/${repo_slug}/pulls/${pr_number}/reviews" \
 		--paginate \
 		--jq '[.[] | select(.state == "CHANGES_REQUESTED" or ((.body // "") | length) > 30)
 			| {author: (.user.login // "unknown"), state: .state,
@@ -1945,7 +1945,7 @@ _dispatch_pr_fix_worker() {
 
 	# --- Fetch inline review comments (file:line citations) ---
 	local inline_json
-	inline_json=$(gh api "repos/${repo_slug}/pulls/${pr_number}/comments" \
+	inline_json=$(_gh_with_timeout read gh api "repos/${repo_slug}/pulls/${pr_number}/comments" \
 		--paginate \
 		--jq '[.[] | {author: (.user.login // "unknown"),
 			path: (.path // ""),

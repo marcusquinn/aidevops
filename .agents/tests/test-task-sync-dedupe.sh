@@ -82,6 +82,44 @@ test_mark_done_completes_in_progress_entry() {
 	return 0
 }
 
+test_mark_done_rejects_malformed_proof() {
+	local tmpdir todo_file before
+	tmpdir=$(mktemp -d)
+	todo_file="${tmpdir}/TODO.md"
+	printf '%s\n' '- [ ] t18002 active task ref:GH#25539' >"$todo_file"
+	before=$(<"$todo_file")
+	if _mark_todo_done "t18002" "$todo_file" 'verified:https://docs.github.com/rest'; then
+		fail "expected malformed proof to fail"
+	fi
+	[[ "$(<"$todo_file")" == "$before" ]] || fail "malformed proof changed TODO content"
+	rm -rf "$tmpdir"
+	pass "mark done rejects malformed proof without mutation"
+	return 0
+}
+
+test_mark_done_propagates_sed_failure() {
+	local tmpdir todo_file before
+	tmpdir=$(mktemp -d)
+	todo_file="${tmpdir}/TODO.md"
+	printf '%s\n' '- [ ] t18002 active task ref:GH#25539' >"$todo_file"
+	before=$(<"$todo_file")
+	sed() {
+		local arg="$1"
+		: "$arg"
+		cp "$todo_file" "${todo_file}.bak"
+		return 1
+	}
+	if _mark_todo_done "t18002" "$todo_file" "pr:#25540"; then
+		fail "expected sed mutation failure to propagate"
+	fi
+	unset -f sed
+	[[ "$(<"$todo_file")" == "$before" ]] || fail "failed sed mutation changed TODO content"
+	[[ ! -e "${todo_file}.bak" ]] || fail "failed sed mutation left backup behind"
+	rm -rf "$tmpdir"
+	pass "mark done propagates sed failure and removes backup"
+	return 0
+}
+
 test_dedupe_ignores_markdown_fences() {
 	local tmpdir todo_file count fenced_count canonical_count
 	tmpdir=$(mktemp -d)
@@ -303,6 +341,8 @@ main() {
 	test_dedupe_preserves_canonical_brief_line
 	test_mark_done_dedupes_and_adds_verified_proof
 	test_mark_done_completes_in_progress_entry
+	test_mark_done_rejects_malformed_proof
+	test_mark_done_propagates_sed_failure
 	test_dedupe_ignores_markdown_fences
 	test_dedupe_scores_metadata_individually
 	test_status_counts_duplicate_task_rows_once

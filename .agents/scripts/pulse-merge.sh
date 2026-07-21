@@ -149,6 +149,9 @@ _pulse_merge_maybe_dispatch_preflight_remediation() {
 	local blocker_kind="${_PULSE_MERGE_PREFLIGHT_BLOCKER_KIND:-}"
 	local reason=""
 
+	if [[ -n "$blocker_kind" ]] && declare -F _pulse_cycle_state_note_blocker >/dev/null 2>&1; then
+		_pulse_cycle_state_note_blocker "$blocker_kind" "$repo_slug" "$pr_number" || true
+	fi
 	# Consume the marker before any dispatch attempt so a failed or deduplicated
 	# repair cannot leak into an unrelated later final-gate failure.
 	_PULSE_MERGE_PREFLIGHT_BLOCKER_KIND=""
@@ -548,8 +551,14 @@ _pulse_merge_final_trust_gate() {
 	local expected_head_sha="$3"
 
 	_PULSE_MERGE_PREFLIGHT_BLOCKER_KIND=""
-	_pulse_merge_admin_safety_check "$pr_number" "$repo_slug" "$expected_head_sha" || return 1
-	_pulse_merge_refresh_review_gate_evidence "$pr_number" "$repo_slug" "$expected_head_sha" || return 1
+	if ! _pulse_merge_admin_safety_check "$pr_number" "$repo_slug" "$expected_head_sha"; then
+		_PULSE_MERGE_PREFLIGHT_BLOCKER_KIND="$PMRC_BLOCKER_MERGE_AUTHORITY"
+		return 1
+	fi
+	if ! _pulse_merge_refresh_review_gate_evidence "$pr_number" "$repo_slug" "$expected_head_sha"; then
+		_PULSE_MERGE_PREFLIGHT_BLOCKER_KIND="$PMRC_BLOCKER_REVIEW_GATE"
+		return 1
+	fi
 	_pulse_merge_preflight_snapshot_gate "$repo_slug" "$pr_number" "$expected_head_sha" || return 1
 	return 0
 }
@@ -668,7 +677,7 @@ _pm_reconcile_pr_closeout_comments() {
 
 	while ((attempt < max_attempts)); do
 		attempt=$((attempt + 1))
-		comments_json=$(gh api "repos/${repo_slug}/issues/${pr_number}/comments?per_page=100" \
+		comments_json=$(_gh_with_timeout read gh api "repos/${repo_slug}/issues/${pr_number}/comments?per_page=100" \
 			--paginate --slurp 2>/dev/null) || comments_json=""
 		if [[ -z "$comments_json" ]]; then
 			((attempt < max_attempts)) && sleep 1
@@ -775,7 +784,7 @@ _pm_upsert_pr_closing_comment() {
 
 	marked_comment="<!-- PULSE_MERGE_CLOSEOUT:PR#${pr_number} -->
 ${closing_comment}"
-	comments_json=$(gh api "repos/${repo_slug}/issues/${pr_number}/comments?per_page=100" \
+	comments_json=$(_gh_with_timeout read gh api "repos/${repo_slug}/issues/${pr_number}/comments?per_page=100" \
 		--paginate --slurp 2>/dev/null) || comments_json=""
 	if [[ -n "$comments_json" ]]; then
 		existing_comment_id=$(_pm_select_pr_closeout_comment_id "$comments_json" "$pr_number")
@@ -1257,6 +1266,7 @@ _process_single_ready_pr() {
 		printf '%s' "$pr_obj" | jq -r --arg unknown "$PULSE_UNKNOWN_STATE" \
 			'"\(.number // "")\u001e\(.state // "")\u001e\(.mergeable // $unknown)\u001e\(if ((has("reviewDecision") | not) or .reviewDecision == null or (.reviewDecision | tostring | length) == 0) then $unknown else .reviewDecision end)\u001e\(.author.login // "unknown")\u001e\(.title // "")\u001e\(.updatedAt // "")\u001e\(.headRefOid // "")\u001e\(.headRefName // "")\u001e\(.baseRefName // "")\u001e\([(.labels // [])[].name] | join(","))\u001e\(.isDraft // false | tostring)"'
 	)
+	_pmp_normalize_pr_lifecycle_state_into pr_state "$pr_state"
 	_pmp_normalize_mergeable_state_into pr_mergeable "$pr_mergeable"
 	_pmp_normalize_review_decision_into pr_review "$pr_review"
 	[[ -n "$timing_prefix" ]] && _mergeability_start=$(_pmp_now_epoch)
@@ -1749,6 +1759,7 @@ process_pr() {
 	# Verify state is OPEN — closed/merged PRs should not be re-processed.
 	local pr_state
 	pr_state=$(printf '%s' "$pr_obj" | jq -r '.state // ""' 2>/dev/null) || pr_state=""
+	_pmp_normalize_pr_lifecycle_state_into pr_state "$pr_state"
 	if [[ "$pr_state" != "OPEN" ]]; then
 		echo "[pulse-merge] process_pr: PR ${repo_slug}#${pr_number} is not OPEN (state=${pr_state}) — skipping" >>"$LOGFILE"
 		return 1

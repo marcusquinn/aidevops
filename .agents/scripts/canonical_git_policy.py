@@ -22,6 +22,7 @@ READ_ONLY = {
     "show-ref",
     "for-each-ref",
     "cat-file",
+    "check-ref-format",
     "ls-files",
     "ls-remote",
     "ls-tree",

@@ -123,6 +123,7 @@ assert_allowed "allows canonical status" "$REPO" "git status --short"
 assert_allowed "allows canonical branch listing" "$REPO" "git branch -vv --no-abbrev"
 assert_allowed "allows canonical branch pattern listing" "$REPO" "git branch --list 'feature/*'"
 assert_allowed "allows canonical branch containment query" "$REPO" "git branch --contains main"
+assert_allowed "allows canonical ref format validation" "$REPO" "git check-ref-format --branch feature/valid-ref"
 assert_allowed "allows canonical ls-remote query" "$REPO" "git ls-remote origin refs/heads/main"
 assert_allowed "allows canonical rev-list tag query" "$REPO" "git rev-list -n 1 HEAD"
 assert_allowed "allows canonical rev-list count query" "$REPO" "git rev-list --count HEAD"
@@ -157,6 +158,18 @@ elif [[ "$(git -C "$REPO" symbolic-ref --short refs/remotes/origin/HEAD)" == "or
 	pass "PATH shim blocks symbolic-ref mutation before execution"
 else
 	fail "PATH shim left canonical symbolic ref changed"
+fi
+
+VALID_REF_RC=0
+INVALID_REF_RC=0
+NATIVE_INVALID_REF_RC=0
+git check-ref-format --branch "invalid ref" >/dev/null 2>&1 || NATIVE_INVALID_REF_RC=$?
+(cd "$REPO" && PATH="${SCRIPT_DIR}:/usr/bin:/bin" "$SHIM" check-ref-format --branch feature/valid-ref >/dev/null) || VALID_REF_RC=$?
+(cd "$REPO" && PATH="${SCRIPT_DIR}:/usr/bin:/bin" "$SHIM" check-ref-format --branch "invalid ref" >/dev/null 2>&1) || INVALID_REF_RC=$?
+if [[ "$VALID_REF_RC" -eq 0 && "$NATIVE_INVALID_REF_RC" -ne 0 && "$INVALID_REF_RC" -eq "$NATIVE_INVALID_REF_RC" ]]; then
+	pass "PATH shim preserves native ref format validation"
+else
+	fail "PATH shim preserves native ref format validation (valid_rc=${VALID_REF_RC}, invalid_rc=${INVALID_REF_RC}, native_invalid_rc=${NATIVE_INVALID_REF_RC})"
 fi
 
 if (cd "$REPO" && PATH="${SCRIPT_DIR}:$PATH" "$SHIM" switch --detach main >/dev/null 2>&1); then

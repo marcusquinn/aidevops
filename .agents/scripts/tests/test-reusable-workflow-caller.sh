@@ -377,12 +377,12 @@ for actor in supported_actors:
 
 def evaluate(event_name, actor, is_pr, reply_id):
     candidate = expression
+    candidate = re.sub(r"\bnull\b", "None", candidate)
     replacements = {
         "github.event.comment.in_reply_to_id": repr(reply_id),
         "github.event.issue.pull_request": repr(is_pr),
         "github.event_name": repr(event_name),
         "github.actor": repr(actor),
-        "null": "None",
         "&&": "and",
         "||": "or",
     }

@@ -44,7 +44,16 @@ _write_fake_gh() {
 set -euo pipefail
 
 if [[ "${1:-}" == "pr" && "${2:-}" == "list" ]]; then
-	printf '123\tReview thread fixture\tfalse\t\tfixture-branch\tcollaborator\n'
+	printf '123\tReview thread fixture\tfalse\t\tfixture-branch\t1111111111111111111111111111111111111111\tcollaborator\n'
+	exit 0
+fi
+
+if [[ "${1:-}" == "pr" && "${2:-}" == "view" ]]; then
+	if [[ "$*" == *"--json isCrossRepository"* ]]; then
+		printf 'false\n'
+	else
+		printf 'Review thread fixture\tfixture-branch\t1111111111111111111111111111111111111111\tcollaborator\n'
+	fi
 	exit 0
 fi
 
@@ -83,6 +92,30 @@ printf 'unexpected gh invocation: %s\n' "$*" >&2
 exit 2
 FAKE_GH
 	chmod +x "${fake_bin}/gh"
+	return 0
+}
+
+_write_fake_git() {
+	local fake_bin="$1"
+	cat >"${fake_bin}/git" <<'FAKE_GIT'
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ "$*" == *"check-ref-format --branch"* ]]; then
+	exit 0
+fi
+if [[ "$*" == *"worktree list --porcelain"* ]]; then
+	printf 'worktree %s\nHEAD %s\nbranch refs/heads/fixture-branch\n\n' \
+		"${FAKE_WORKTREE_PATH:?}" '1111111111111111111111111111111111111111'
+	exit 0
+fi
+if [[ "$*" == *"rev-parse HEAD"* ]]; then
+	printf '1111111111111111111111111111111111111111\n'
+	exit 0
+fi
+exit 1
+FAKE_GIT
+	chmod +x "${fake_bin}/git"
 	return 0
 }
 
@@ -178,8 +211,11 @@ test_dispatch_prompt_includes_thread_fingerprint() {
 	local fake_headless="${TEST_TMPDIR}/headless-runtime-helper.sh"
 	local state_dir="${TEST_TMPDIR}/state"
 	local prompt_file="${state_dir}/marcusquinn-aidevops-123-prompt.md"
+	local worker_path="${TEST_TMPDIR}/existing-review-worktree"
 	_write_fake_gh "$fake_bin"
+	_write_fake_git "$fake_bin"
 	mkdir -p "$(dirname "$fake_headless")"
+	mkdir -p "$worker_path"
 	cat >"$fake_headless" <<'FAKE_HEADLESS'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -188,6 +224,7 @@ FAKE_HEADLESS
 	chmod +x "$fake_headless"
 
 	if FAKE_GH_CAPTURE="$capture" \
+		FAKE_WORKTREE_PATH="$worker_path" \
 		AIDEVOPS_PR_REVIEW_THREAD_RESPONSE_STATE_DIR="$state_dir" \
 		HEADLESS_RUNTIME_HELPER="$fake_headless" \
 		PATH="${fake_bin}:$PATH" \

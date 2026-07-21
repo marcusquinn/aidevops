@@ -454,6 +454,7 @@ test_invalidation_fences_all_auth_scopes() {
 test_efficiency_evidence_tracks_exact_decisions() {
 	local result=""
 	: >"$EFFICIENCY_EVENTS"
+	export AIDEVOPS_GH_API_EFFICIENCY_CYCLE_ID=1100
 	CHECK_NOW=1100
 	CHECK_API_MODE=success
 	CHECK_SUITES_FIXTURE='{}'
@@ -474,15 +475,20 @@ test_efficiency_evidence_tracks_exact_decisions() {
 		"$(efficiency_event_total cache.invalidated)"
 	assert_eq "one leader transport records one aggregate check fetch" "1" \
 		"$(efficiency_event_total path_budgets.aggregate_check_fetches)"
+	assert_eq "one cycle leader records one cycle-scoped aggregate fetch" "1" \
+		"$(efficiency_event_total path_budgets.cycle_scoped_aggregate_check_fetches)"
 	assert_eq "each batch observation records one actionable change" "2" \
 		"$(efficiency_event_total population.actionable_changes)"
 	assert_eq "repeated actionable heads use one opaque token" "1" \
 		"$(efficiency_event_unique_values population.actionable_head_token)"
+	assert_eq "repeated heads in one cycle use one cycle-scoped token" "1" \
+		"$(efficiency_event_unique_values path_budgets.cycle_scoped_actionable_head_token)"
 	if grep -Fq "$SHA_K" "$EFFICIENCY_EVENTS"; then
 		printf 'FAIL: actionable evidence exposed a raw head SHA\n' >&2
 		return 1
 	fi
 	printf 'PASS: actionable evidence keeps head identities opaque\n'
+	unset AIDEVOPS_GH_API_EFFICIENCY_CYCLE_ID
 	return 0
 }
 

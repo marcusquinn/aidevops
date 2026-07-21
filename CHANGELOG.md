@@ -10,6 +10,61 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.32.162] - 2026-07-21
+
+### Changed
+
+- Maintenance: update simplification state registry
+- Documentation: review community asc skill refresh (#28417)
+- Maintenance: update simplification state registry
+- Maintenance: mark t18168 complete (pr:#28397 completed:2026-07-21) [skip ci]
+- Refactor: split pulse diagnose helpers (#28395)
+- Maintenance: sync ref:GH#28396 to TODO.md [skip ci]
+- Maintenance: mark t18166 complete (pr:#28388 completed:2026-07-21) [skip ci]
+- Maintenance: update simplification state registry
+
+### Fixed
+
+- fetch review heads outside canonical checkouts (#28421)
+- recover stuck review-thread remediation (#28414)
+- separate compaction operational sections (#28409)
+- preserve created claim issue refs (#28403)
+- classify complete validator branch ranges (#28405)
+- classify merge-stuck outage fingerprints (#28402)
+- normalize stuck merge checks and TODO guard baselines (#28390)
+- stabilize pulse cycle-health fixtures (#28388)
+- fail closed on issue-sync completion evidence (#28389)
+
+## [3.32.161] - 2026-07-21
+
+### Changed
+
+- Version bump and maintenance updates
+
+
+## [3.32.160] - 2026-07-21
+
+### Changed
+
+- Maintenance: mark t18167 complete (pr:#28384 completed:2026-07-20) [skip ci]
+- Maintenance: sync ref:GH#28382 to TODO.md [skip ci]
+- Maintenance: update simplification state registry
+- Maintenance: mark t18165 complete (pr:#28375 completed:2026-07-20) [skip ci]
+- Maintenance: sync ref:GH#28376 to TODO.md [skip ci]
+- Maintenance: update simplification state registry
+- Tests: harden maintainer gate fixtures (#28365)
+- Maintenance: sync ref:GH#28361 to TODO.md [skip ci]
+- Tests: harden init project context assertions (#28343)
+- Maintenance: update simplification state registry
+- Maintenance: update simplification state registry
+
+### Fixed
+
+- bound Pulse paginated API reads (#28323) (#28380)
+- propagate PR handoff classifier failures (#28373)
+- clean up supersession refs on return (#28345)
+- preserve project context on write failures (#28344)
+
 ## [3.32.159] - 2026-07-20
 
 ### Changed

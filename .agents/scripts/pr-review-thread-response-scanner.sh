@@ -44,11 +44,20 @@ PR_REVIEW_THREAD_RESPONSE_BOT_RE="${PR_REVIEW_THREAD_RESPONSE_BOT_RE:-coderabbit
 PR_REVIEW_THREAD_RESPONSE_INCLUDE_HUMAN="${PR_REVIEW_THREAD_RESPONSE_INCLUDE_HUMAN:-false}"
 PRRTS_BOOL_TRUE="true"
 PRRTS_BOOL_FALSE="false"
+PRRTS_TSV_FIELD_SEPARATOR=$'\034'
 PRRTS_RC_GRAPHQL_EXHAUSTED=75
 PRRTS_BLOCKED_BY_CODE="code"
 PRRTS_BLOCKED_BY_INFRASTRUCTURE="infrastructure"
+PRRTS_REASON_HEAD_FETCH_FAILED="pr_head_fetch_failed"
+PRRTS_REASON_WORKTREE_OWNERSHIP_UNVERIFIED="review_worktree_ownership_unverified"
 PRRTS_WORKTREE_FAILURE_BLOCKED_BY="$PRRTS_BLOCKED_BY_INFRASTRUCTURE"
 PRRTS_WORKTREE_FAILURE_REASON="review_worktree_preparation_failed"
+PRRTS_WORKTREE_TRANSFER_MODE=""
+PRRTS_WORKTREE_EXPECTED_OWNER_PID=""
+PRRTS_WORKTREE_EXPECTED_OWNER_SESSION=""
+PRRTS_WORKTREE_EXPECTED_OWNER_BATCH=""
+PRRTS_WORKTREE_EXPECTED_OWNER_TASK=""
+PRRTS_WORKTREE_EXPECTED_OWNER_CREATED_AT=""
 
 _prrts_ensure_dirs() {
 	local log_dir=""
@@ -454,14 +463,16 @@ cmd_scan_pr() {
 		--jq '[(.title // "" | gsub("[\t\r\n]"; " ")), (.headRefName // ""), (.headRefOid // ""), (.author.login // "")] | @tsv' \
 		2>/dev/null || true)
 	if [[ -n "$metadata" ]]; then
-		IFS=$'\t' read -r title head_ref head_oid author <<<"$metadata"
+		IFS="$PRRTS_TSV_FIELD_SEPARATOR" read -r title head_ref head_oid author \
+			<<<"${metadata//$'\t'/$PRRTS_TSV_FIELD_SEPARATOR}"
 	fi
 	summary="$(_prrts_review_thread_summary "$repo_slug" "$pr_number")" || rc=$?
 	if [[ "$rc" -ne 0 ]]; then
 		_prrts_log "scan-pr: ${repo_slug}#${pr_number} skipped — review-thread fetch failed"
 		return 0
 	fi
-	IFS=$'\t' read -r thread_count fingerprint preview <<<"$summary"
+	IFS="$PRRTS_TSV_FIELD_SEPARATOR" read -r thread_count fingerprint preview \
+		<<<"${summary//$'\t'/$PRRTS_TSV_FIELD_SEPARATOR}"
 	[[ "$thread_count" =~ ^[0-9]+$ ]] || thread_count=0
 	if [[ "$thread_count" -gt 0 ]]; then
 		printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
@@ -487,7 +498,7 @@ _prrts_scan_repo_to_files() {
 	local repo_slug="$1"
 	local candidates_file="$2"
 	local status_file="$3"
-	local pr_rows="" summary="" rc=0
+	local pr_rows="" pr_row="" summary="" rc=0
 	local pr_number="" title="" is_draft="" labels="" head_ref="" head_oid="" author=""
 	local thread_count="" fingerprint="" preview=""
 	local checked_count=0 fetch_error_count=0 graphql_exhausted_count=0
@@ -503,7 +514,9 @@ _prrts_scan_repo_to_files() {
 		return 0
 	}
 
-	while IFS=$'\t' read -r pr_number title is_draft labels head_ref head_oid author; do
+	while IFS= read -r pr_row; do
+		IFS="$PRRTS_TSV_FIELD_SEPARATOR" read -r pr_number title is_draft labels head_ref head_oid author \
+			<<<"${pr_row//$'\t'/$PRRTS_TSV_FIELD_SEPARATOR}"
 		[[ -n "$pr_number" ]] || continue
 		if [[ "$is_draft" == "$PRRTS_BOOL_TRUE" ]]; then
 			_prrts_log "scan: ${repo_slug}#${pr_number} skipped — draft PR"
@@ -527,7 +540,8 @@ _prrts_scan_repo_to_files() {
 			fi
 			continue
 		fi
-		IFS=$'\t' read -r thread_count fingerprint preview <<<"$summary"
+		IFS="$PRRTS_TSV_FIELD_SEPARATOR" read -r thread_count fingerprint preview \
+			<<<"${summary//$'\t'/$PRRTS_TSV_FIELD_SEPARATOR}"
 		[[ "$thread_count" =~ ^[0-9]+$ ]] || thread_count=0
 		if [[ "$thread_count" -gt 0 ]]; then
 			printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
@@ -741,11 +755,13 @@ _prrts_read_state() {
 	local blocked_by_var="${6:-}"
 	local maintainer_attention_var="${7:-}"
 	local head_sha_var="${8:-}"
+	local blocker_reason_var="${9:-}"
 	local key="" value=""
 	local state_fingerprint="" state_dispatched_at="0"
 	local state_attempt_count="0"
 	local state_last_head_sha=""
 	local state_analysis_complete="$PRRTS_BOOL_FALSE" state_blocked_by="" state_maintainer_attention="$PRRTS_BOOL_FALSE"
+	local state_blocker_reason=""
 	if [[ -f "$state_file" ]]; then
 		while IFS='=' read -r key value; do
 			case "$key" in
@@ -756,6 +772,8 @@ _prrts_read_state() {
 			analysis_complete) state_analysis_complete="$value" ;;
 			blocked_by) state_blocked_by="$value" ;;
 			maintainer_attention) state_maintainer_attention="$value" ;;
+			attention_reason) [[ -n "$state_blocker_reason" ]] || state_blocker_reason="$value" ;;
+			blocker_reason) state_blocker_reason="$value" ;;
 			esac
 		done <"$state_file"
 	fi
@@ -780,7 +798,28 @@ _prrts_read_state() {
 	if [[ -n "$head_sha_var" ]]; then
 		printf -v "$head_sha_var" '%s' "$state_last_head_sha"
 	fi
+	if [[ -n "$blocker_reason_var" ]]; then
+		printf -v "$blocker_reason_var" '%s' "$state_blocker_reason"
+	fi
 	return 0
+}
+
+_prrts_retryable_prelaunch_failure_once() {
+	local blocker_reason="$1"
+	case "$blocker_reason" in
+	pr_head_branch_invalid | pr_head_sha_invalid | pr_head_branch_unavailable | "$PRRTS_REASON_HEAD_FETCH_FAILED")
+		return 0
+		;;
+	*)
+		return 1
+		;;
+	esac
+}
+
+_prrts_prelaunch_failure_needs_maintainer_attention() {
+	local blocked_by="$1"
+	[[ "$blocked_by" == "$PRRTS_BLOCKED_BY_CODE" ]]
+	return $?
 }
 
 _prrts_should_dispatch() {
@@ -796,10 +835,11 @@ _prrts_should_dispatch() {
 	local last_attempt_count="0" next_attempt_count="1" state_repeated_same_fingerprint="$PRRTS_BOOL_FALSE"
 	local last_head_sha="" state_same_head_sha="$PRRTS_BOOL_FALSE"
 	local analysis_complete="$PRRTS_BOOL_FALSE" blocked_by="" maintainer_attention="$PRRTS_BOOL_FALSE"
+	local blocker_reason="" retry_stale_head_validation="$PRRTS_BOOL_FALSE"
 	state_file="$(_prrts_state_file "$repo_slug" "$pr_number")"
 	cooldown="$(_prrts_normalise_int "$PR_REVIEW_THREAD_RESPONSE_COOLDOWN" "3600" "60")"
 	inflight_ttl="$(_prrts_normalise_int "$PR_REVIEW_THREAD_RESPONSE_INFLIGHT_TTL" "300" "1")"
-	_prrts_read_state "$state_file" last_fingerprint dispatched_at last_attempt_count analysis_complete blocked_by maintainer_attention last_head_sha
+	_prrts_read_state "$state_file" last_fingerprint dispatched_at last_attempt_count analysis_complete blocked_by maintainer_attention last_head_sha blocker_reason
 	if [[ -n "$last_fingerprint" && "$fingerprint" == "$last_fingerprint" ]]; then
 		state_same_head_sha="$PRRTS_BOOL_TRUE"
 		if [[ -n "$last_head_sha" && -n "$current_head_sha" && "$current_head_sha" != "$last_head_sha" ]]; then
@@ -824,8 +864,12 @@ _prrts_should_dispatch() {
 		return 1
 	fi
 	if [[ "$state_repeated_same_fingerprint" == "$PRRTS_BOOL_TRUE" && "$analysis_complete" == "$PRRTS_BOOL_TRUE" && "$maintainer_attention" == "$PRRTS_BOOL_TRUE" ]]; then
-		_prrts_log "dispatch: ${repo_slug}#${pr_number} skipped — analysis complete and blocked by ${blocked_by:-decision}; maintainer attention pending"
-		return 1
+		if [[ "$last_attempt_count" -eq 1 ]] && _prrts_retryable_prelaunch_failure_once "$blocker_reason"; then
+			retry_stale_head_validation="$PRRTS_BOOL_TRUE"
+		else
+			_prrts_log "dispatch: ${repo_slug}#${pr_number} skipped — analysis complete and blocked by ${blocked_by:-decision}; maintainer attention pending"
+			return 1
+		fi
 	fi
 	age_seconds=$((now_epoch - dispatched_at))
 	if [[ "$dispatched_at" -gt 0 && "$age_seconds" -lt "$inflight_ttl" ]]; then
@@ -835,6 +879,9 @@ _prrts_should_dispatch() {
 	if [[ "$state_repeated_same_fingerprint" == "$PRRTS_BOOL_TRUE" && "$state_same_head_sha" == "$PRRTS_BOOL_TRUE" && "$age_seconds" -lt "$cooldown" ]]; then
 		_prrts_log "dispatch: ${repo_slug}#${pr_number} skipped — same thread fingerprint dispatched ${age_seconds}s ago"
 		return 1
+	fi
+	if [[ "$retry_stale_head_validation" == "$PRRTS_BOOL_TRUE" ]]; then
+		_prrts_log "dispatch: ${repo_slug}#${pr_number} retrying stale PR head validation failure once (${blocker_reason})"
 	fi
 	return 0
 }
@@ -1110,12 +1157,53 @@ _prrts_fetch_exact_worker_head() {
 	local head_ref="$4"
 	local head_oid="$5"
 	local remote_head=""
+	local canonical_root=""
+	local fetch_cwd=""
+	local worktree_line=""
+	local worktree_path=""
+	local resolved_path=""
+	local bootstrap_path=""
+	local repo_name=""
+	local fetch_rc=0
 
-	if ! git -C "$repo_path" fetch --no-tags --quiet origin \
-		"+refs/heads/${head_ref}:refs/remotes/origin/${head_ref}" >/dev/null 2>&1; then
-		_prrts_log "dispatch: ${repo_slug}#${pr_number} skipped — PR head branch is unavailable from the base repository remote"
-		PRRTS_WORKTREE_FAILURE_BLOCKED_BY="$PRRTS_BLOCKED_BY_CODE"
-		PRRTS_WORKTREE_FAILURE_REASON="pr_head_branch_unavailable"
+	canonical_root=$(cd "$repo_path" 2>/dev/null && pwd -P) || canonical_root=""
+	while IFS= read -r worktree_line || [[ -n "$worktree_line" ]]; do
+		case "$worktree_line" in
+		"worktree "*)
+			worktree_path="${worktree_line#worktree }"
+			[[ -d "$worktree_path" ]] || continue
+			resolved_path=$(cd "$worktree_path" 2>/dev/null && pwd -P) || resolved_path=""
+			[[ -n "$resolved_path" && "$resolved_path" != "$canonical_root" ]] || continue
+			fetch_cwd="$resolved_path"
+			break
+			;;
+		esac
+	done < <(git -C "$repo_path" worktree list --porcelain 2>/dev/null)
+
+	if [[ -z "$fetch_cwd" ]]; then
+		repo_name="$(basename "$repo_path")"
+		mkdir -p "$PR_REVIEW_THREAD_RESPONSE_WORKTREE_BASE_DIR" 2>/dev/null || {
+			PRRTS_WORKTREE_FAILURE_REASON="$PRRTS_REASON_HEAD_FETCH_FAILED"
+			return 1
+		}
+		bootstrap_path="${PR_REVIEW_THREAD_RESPONSE_WORKTREE_BASE_DIR}/.${repo_name}-fetch-$$"
+		if ! git -C "$repo_path" worktree add -q --detach "$bootstrap_path" HEAD >/dev/null 2>&1; then
+			_prrts_log "dispatch: ${repo_slug}#${pr_number} skipped — could not create a linked PR head fetch context"
+			PRRTS_WORKTREE_FAILURE_REASON="$PRRTS_REASON_HEAD_FETCH_FAILED"
+			return 1
+		fi
+		fetch_cwd="$bootstrap_path"
+	fi
+
+	git -C "$fetch_cwd" fetch --no-tags --quiet origin \
+		"+refs/heads/${head_ref}:refs/remotes/origin/${head_ref}" >/dev/null 2>&1 || fetch_rc=$?
+	if [[ -n "$bootstrap_path" ]]; then
+		git -C "$fetch_cwd" worktree remove --force "$bootstrap_path" >/dev/null 2>&1 || true
+	fi
+	if [[ "$fetch_rc" -ne 0 ]]; then
+		_prrts_log "dispatch: ${repo_slug}#${pr_number} skipped — PR head fetch failed from linked-worktree context"
+		PRRTS_WORKTREE_FAILURE_BLOCKED_BY="$PRRTS_BLOCKED_BY_INFRASTRUCTURE"
+		PRRTS_WORKTREE_FAILURE_REASON="$PRRTS_REASON_HEAD_FETCH_FAILED"
 		return 1
 	fi
 	remote_head=$(git -C "$repo_path" rev-parse "refs/remotes/origin/${head_ref}" 2>/dev/null) || remote_head=""
@@ -1132,6 +1220,185 @@ _prrts_fetch_exact_worker_head() {
 	return 0
 }
 
+_prrts_reset_worktree_transfer_context() {
+	PRRTS_WORKTREE_TRANSFER_MODE=""
+	PRRTS_WORKTREE_EXPECTED_OWNER_PID=""
+	PRRTS_WORKTREE_EXPECTED_OWNER_SESSION=""
+	PRRTS_WORKTREE_EXPECTED_OWNER_BATCH=""
+	PRRTS_WORKTREE_EXPECTED_OWNER_TASK=""
+	PRRTS_WORKTREE_EXPECTED_OWNER_CREATED_AT=""
+	return 0
+}
+
+_prrts_read_worktree_owner_snapshot() {
+	local worktree_path="$1"
+	local owner_pid_var="$2"
+	local owner_session_var="$3"
+	local owner_batch_var="$4"
+	local owner_task_var="$5"
+	local owner_created_at_var="$6"
+	local owner_info=""
+	local parsed_pid="" parsed_session="" parsed_batch="" parsed_task="" parsed_created_at=""
+
+	declare -F check_worktree_owner >/dev/null 2>&1 || return 1
+	owner_info=$(check_worktree_owner "$worktree_path" 2>/dev/null || true)
+	[[ -n "$owner_info" ]] || return 1
+	IFS='|' read -r parsed_pid parsed_session parsed_batch parsed_task parsed_created_at <<<"$owner_info"
+	printf -v "$owner_pid_var" '%s' "$parsed_pid"
+	printf -v "$owner_session_var" '%s' "$parsed_session"
+	printf -v "$owner_batch_var" '%s' "$parsed_batch"
+	printf -v "$owner_task_var" '%s' "$parsed_task"
+	printf -v "$owner_created_at_var" '%s' "$parsed_created_at"
+	return 0
+}
+
+_prrts_apply_expected_worktree_owner() {
+	local repo_slug="$1"
+	local pr_number="$2"
+	local worktree_path="$3"
+	local owner_pid="$4"
+	local owner_session="$5"
+	local owner_batch="$6"
+	local owner_task="$7"
+	local owner_created_at="$8"
+	local required_session="$9"
+
+	if [[ -z "$owner_task" ]]; then
+		PRRTS_WORKTREE_FAILURE_REASON="$PRRTS_REASON_WORKTREE_OWNERSHIP_UNVERIFIED"
+	elif [[ "$owner_task" != "$pr_number" ]]; then
+		PRRTS_WORKTREE_FAILURE_REASON="review_worktree_owned_by_other_task"
+	elif [[ ! "$owner_pid" =~ ^[0-9]+$ || -z "$owner_session" || -z "$owner_created_at" ]]; then
+		PRRTS_WORKTREE_FAILURE_REASON="$PRRTS_REASON_WORKTREE_OWNERSHIP_UNVERIFIED"
+	elif [[ -n "$required_session" && "$owner_session" != "$required_session" ]]; then
+		PRRTS_WORKTREE_FAILURE_REASON="$PRRTS_REASON_WORKTREE_OWNERSHIP_UNVERIFIED"
+	else
+		PRRTS_WORKTREE_TRANSFER_MODE="continuation"
+		PRRTS_WORKTREE_EXPECTED_OWNER_PID="$owner_pid"
+		PRRTS_WORKTREE_EXPECTED_OWNER_SESSION="$owner_session"
+		PRRTS_WORKTREE_EXPECTED_OWNER_BATCH="$owner_batch"
+		PRRTS_WORKTREE_EXPECTED_OWNER_TASK="$owner_task"
+		PRRTS_WORKTREE_EXPECTED_OWNER_CREATED_AT="$owner_created_at"
+		return 0
+	fi
+
+	_prrts_log "dispatch: ${repo_slug}#${pr_number} skipped — worktree ownership cannot be transferred safely (${PRRTS_WORKTREE_FAILURE_REASON}, path=${worktree_path})"
+	return 1
+}
+
+_prrts_capture_expected_worktree_owner() {
+	local repo_slug="$1"
+	local pr_number="$2"
+	local worktree_path="$3"
+	local required_session="${4:-}"
+	local owner_pid=""
+	local owner_session=""
+	local owner_batch=""
+	local owner_task=""
+	local owner_created_at=""
+
+	if ! _prrts_read_worktree_owner_snapshot "$worktree_path" owner_pid owner_session owner_batch owner_task owner_created_at; then
+		PRRTS_WORKTREE_FAILURE_REASON="$PRRTS_REASON_WORKTREE_OWNERSHIP_UNVERIFIED"
+		_prrts_log "dispatch: ${repo_slug}#${pr_number} skipped — worktree has no verifiable ownership record (${worktree_path})"
+		return 1
+	fi
+	_prrts_apply_expected_worktree_owner "$repo_slug" "$pr_number" "$worktree_path" \
+		"$owner_pid" "$owner_session" "$owner_batch" "$owner_task" "$owner_created_at" "$required_session" || return 1
+	return 0
+}
+
+_prrts_claim_dispatch_precreate_owner() {
+	local repo_slug="$1"
+	local pr_number="$2"
+	local worktree_path="$3"
+	local head_ref="$4"
+	local precreate_session="dispatch-precreate-${pr_number}"
+
+	if ! declare -F claim_worktree_ownership >/dev/null 2>&1; then
+		PRRTS_WORKTREE_FAILURE_REASON="$PRRTS_REASON_WORKTREE_OWNERSHIP_UNVERIFIED"
+		_prrts_log "dispatch: ${repo_slug}#${pr_number} skipped — atomic worktree ownership claim is unavailable"
+		return 1
+	fi
+	if ! claim_worktree_ownership "$worktree_path" "$head_ref" \
+		--task "$pr_number" --session "$precreate_session" --owner-pid "$$" 2>/dev/null; then
+		PRRTS_WORKTREE_FAILURE_REASON="review_worktree_ownership_conflict"
+		_prrts_log "dispatch: ${repo_slug}#${pr_number} skipped — atomic worktree ownership claim was rejected (${worktree_path})"
+		return 1
+	fi
+	_prrts_capture_expected_worktree_owner "$repo_slug" "$pr_number" "$worktree_path" "$precreate_session" || return 1
+	return 0
+}
+
+_prrts_prepare_reused_worktree_owner() {
+	local repo_slug="$1"
+	local pr_number="$2"
+	local worktree_path="$3"
+	local head_ref="$4"
+	local owner_pid=""
+	local owner_session=""
+	local owner_batch=""
+	local owner_task=""
+	local owner_created_at=""
+
+	if ! _prrts_read_worktree_owner_snapshot "$worktree_path" owner_pid owner_session owner_batch owner_task owner_created_at; then
+		_prrts_claim_dispatch_precreate_owner "$repo_slug" "$pr_number" "$worktree_path" "$head_ref" || return 1
+		return 0
+	fi
+	_prrts_apply_expected_worktree_owner "$repo_slug" "$pr_number" "$worktree_path" \
+		"$owner_pid" "$owner_session" "$owner_batch" "$owner_task" "$owner_created_at" "" || return 1
+	_prrts_log "dispatch: ${repo_slug}#${pr_number} preserved reused worktree owner for exact continuation transfer (${worktree_path})"
+	return 0
+}
+
+_prrts_prepare_created_worktree_owner() {
+	local repo_slug="$1"
+	local pr_number="$2"
+	local worktree_path="$3"
+	local head_ref="$4"
+	local precreate_session="dispatch-precreate-${pr_number}"
+	local owner_pid=""
+	local owner_session=""
+	local owner_batch=""
+	local owner_task=""
+	local owner_created_at=""
+
+	if ! _prrts_read_worktree_owner_snapshot "$worktree_path" owner_pid owner_session owner_batch owner_task owner_created_at; then
+		_prrts_claim_dispatch_precreate_owner "$repo_slug" "$pr_number" "$worktree_path" "$head_ref" || return 1
+		return 0
+	fi
+	# worktree-helper can register outside a runtime session. The exact PID,
+	# task, and timestamp still authorize this CAS; the resulting precreate
+	# snapshot captured below must have a non-empty session before worker launch.
+	if [[ -z "$owner_task" ]]; then
+		PRRTS_WORKTREE_FAILURE_REASON="$PRRTS_REASON_WORKTREE_OWNERSHIP_UNVERIFIED"
+	elif [[ "$owner_task" != "$pr_number" ]]; then
+		PRRTS_WORKTREE_FAILURE_REASON="review_worktree_owned_by_other_task"
+	elif [[ ! "$owner_pid" =~ ^[0-9]+$ || -z "$owner_created_at" ]]; then
+		PRRTS_WORKTREE_FAILURE_REASON="$PRRTS_REASON_WORKTREE_OWNERSHIP_UNVERIFIED"
+	else
+		PRRTS_WORKTREE_FAILURE_REASON=""
+	fi
+	if [[ -n "$PRRTS_WORKTREE_FAILURE_REASON" ]]; then
+		_prrts_log "dispatch: ${repo_slug}#${pr_number} skipped — created worktree ownership cannot be transferred safely (${PRRTS_WORKTREE_FAILURE_REASON}, path=${worktree_path})"
+		return 1
+	fi
+	if ! declare -F transfer_worktree_ownership_if_expected >/dev/null 2>&1; then
+		PRRTS_WORKTREE_FAILURE_REASON="$PRRTS_REASON_WORKTREE_OWNERSHIP_UNVERIFIED"
+		_prrts_log "dispatch: ${repo_slug}#${pr_number} skipped — atomic worktree ownership transfer is unavailable"
+		return 1
+	fi
+	if ! transfer_worktree_ownership_if_expected "$worktree_path" "$head_ref" \
+		--task "$pr_number" --session "$precreate_session" --owner-pid "$$" \
+		--expected-owner-pid "$owner_pid" --expected-session "$owner_session" \
+		--expected-batch "$owner_batch" --expected-task "$owner_task" \
+		--expected-created-at "$owner_created_at" 2>/dev/null; then
+		PRRTS_WORKTREE_FAILURE_REASON="review_worktree_ownership_concurrent_mutation"
+		_prrts_log "dispatch: ${repo_slug}#${pr_number} skipped — created worktree owner changed before transfer (${worktree_path})"
+		return 1
+	fi
+	_prrts_capture_expected_worktree_owner "$repo_slug" "$pr_number" "$worktree_path" "$precreate_session" || return 1
+	return 0
+}
+
 _prrts_prepare_worker_worktree() {
 	local repo_slug="$1"
 	local repo_path="$2"
@@ -1142,6 +1409,7 @@ _prrts_prepare_worker_worktree() {
 	local existing_path="" repo_name="" safe_ref="" worktree_path="" resolved_path=""
 	local actual_head=""
 
+	_prrts_reset_worktree_transfer_context
 	PRRTS_WORKTREE_FAILURE_BLOCKED_BY="$PRRTS_BLOCKED_BY_INFRASTRUCTURE"
 	PRRTS_WORKTREE_FAILURE_REASON="review_worktree_preparation_failed"
 	_prrts_validate_worker_head "$repo_slug" "$repo_path" "$pr_number" "$head_ref" "$head_oid" || return 1
@@ -1158,6 +1426,7 @@ _prrts_prepare_worker_worktree() {
 			PRRTS_WORKTREE_FAILURE_REASON="existing_review_worktree_head_mismatch"
 			return 1
 		fi
+		_prrts_prepare_reused_worktree_owner "$repo_slug" "$pr_number" "$existing_path" "$head_ref" || return 1
 		printf -v "$output_var" '%s' "$existing_path"
 		return 0
 	fi
@@ -1188,6 +1457,7 @@ _prrts_prepare_worker_worktree() {
 		PRRTS_WORKTREE_FAILURE_REASON="review_worktree_exact_head_verification_failed"
 		return 1
 	fi
+	_prrts_prepare_created_worktree_owner "$repo_slug" "$pr_number" "$resolved_path" "$head_ref" || return 1
 	printf -v "$output_var" '%s' "$resolved_path"
 	return 0
 }
@@ -1227,7 +1497,13 @@ _prrts_dispatch_worker() {
 		cmd+=(--model "$model")
 	fi
 	HEADLESS=1 WORKER_ISSUE_NUMBER="$pr_number" WORKER_REPO_SLUG="$repo_slug" WORKER_WORKTREE_PATH="$worker_worktree_path" \
-		GITHUB_REPOSITORY="$repo_slug" WORKER_NO_EXIT_PUSH=1 AIDEVOPS_ALLOW_WORKER_WORKTREE_OWNER_TRANSFER=1 \
+		GITHUB_REPOSITORY="$repo_slug" WORKER_NO_EXIT_PUSH=1 \
+		AIDEVOPS_WORKTREE_OWNER_TRANSFER_MODE="$PRRTS_WORKTREE_TRANSFER_MODE" \
+		AIDEVOPS_WORKTREE_EXPECTED_OWNER_PID="$PRRTS_WORKTREE_EXPECTED_OWNER_PID" \
+		AIDEVOPS_WORKTREE_EXPECTED_OWNER_SESSION="$PRRTS_WORKTREE_EXPECTED_OWNER_SESSION" \
+		AIDEVOPS_WORKTREE_EXPECTED_OWNER_BATCH="$PRRTS_WORKTREE_EXPECTED_OWNER_BATCH" \
+		AIDEVOPS_WORKTREE_EXPECTED_OWNER_TASK="$PRRTS_WORKTREE_EXPECTED_OWNER_TASK" \
+		AIDEVOPS_WORKTREE_EXPECTED_OWNER_CREATED_AT="$PRRTS_WORKTREE_EXPECTED_OWNER_CREATED_AT" \
 		AIDEVOPS_PR_REPAIR_NUMBER="$pr_number" AIDEVOPS_PR_REPAIR_HEAD_SHA="$head_oid" AIDEVOPS_PR_REPAIR_HEAD_REF="$head_ref" \
 		"${cmd[@]}" </dev/null >>"$LOGFILE" 2>&1 &
 	_prrts_log "dispatch: launched response worker for ${repo_slug}#${pr_number} in ${worker_worktree_path} session_key=${session_key} pid=$!"
@@ -1250,6 +1526,7 @@ _prrts_dispatch_guarded() {
 	local author="${13:-}"
 	local lock_dir=""
 	local attempt_count="1" repeated_same_fingerprint="$PRRTS_BOOL_FALSE" same_head_sha="$PRRTS_BOOL_FALSE" maintainer_attention="$PRRTS_BOOL_FALSE"
+	local failure_maintainer_attention="$PRRTS_BOOL_FALSE"
 	if ! _prrts_acquire_dispatch_lock "$repo_slug" "$pr_number" lock_dir; then
 		return 1
 	fi
@@ -1279,9 +1556,12 @@ _prrts_dispatch_guarded() {
 		return 0
 	fi
 	if ! _prrts_dispatch_worker "$repo_slug" "$repo_path" "$pr_number" "$title" "$thread_count" "$fingerprint" "$preview" "$head_ref" "$head_oid"; then
+		if _prrts_prelaunch_failure_needs_maintainer_attention "$PRRTS_WORKTREE_FAILURE_BLOCKED_BY"; then
+			failure_maintainer_attention="$PRRTS_BOOL_TRUE"
+		fi
 		_prrts_write_state "$repo_slug" "$pr_number" "$fingerprint" "$thread_count" "$now_epoch" "$attempt_count" "$PRRTS_BOOL_FALSE" "$head_oid"
 		_prrts_write_analysis_state "$repo_slug" "$pr_number" "$PRRTS_BOOL_TRUE" \
-			"$PRRTS_WORKTREE_FAILURE_BLOCKED_BY" "$PRRTS_BOOL_TRUE" "$PRRTS_WORKTREE_FAILURE_REASON"
+			"$PRRTS_WORKTREE_FAILURE_BLOCKED_BY" "$failure_maintainer_attention" "$PRRTS_WORKTREE_FAILURE_REASON"
 		_prrts_remove_lock_dir "$lock_dir"
 		return 1
 	fi
@@ -1294,7 +1574,7 @@ _prrts_dispatch_repo() {
 	local repo_slug="$1"
 	local repo_path="$2"
 	local dry_run="$3"
-	local candidates="" candidates_file="" status_file="" now_epoch="" max_per_repo="" dispatched=0
+	local candidates="" candidate_row="" candidates_file="" status_file="" now_epoch="" max_per_repo="" dispatched=0
 	local pr_number="" thread_count="" fingerprint="" title="" head_ref="" head_oid="" author="" preview=""
 	local checked_count=0 fetch_error_count=0 graphql_exhausted_count=0 list_failed=0
 	local status_key="" status_value=""
@@ -1345,7 +1625,9 @@ _prrts_dispatch_repo() {
 	if [[ -n "$cursor" ]]; then
 		_prrts_log "dispatch: ${repo_slug} rotated candidates after cursor PR #${cursor}"
 	fi
-	while IFS=$'\t' read -r pr_number thread_count fingerprint title head_ref head_oid author preview; do
+	while IFS= read -r candidate_row; do
+		IFS="$PRRTS_TSV_FIELD_SEPARATOR" read -r pr_number thread_count fingerprint title head_ref head_oid author preview \
+			<<<"${candidate_row//$'\t'/$PRRTS_TSV_FIELD_SEPARATOR}"
 		[[ -n "$pr_number" ]] || continue
 		last_considered="$pr_number"
 		if _prrts_dispatch_guarded "$repo_slug" "$repo_path" "$pr_number" "$title" "$thread_count" "$fingerprint" "$preview" "$now_epoch" "$dry_run" "dispatch" "$head_ref" "$head_oid" "$author"; then
@@ -1383,20 +1665,22 @@ _prrts_dispatch_pr() {
 
 	if [[ -z "$repo_path" || ! -d "${repo_path/#\~/$HOME}" || ! "$pr_number" =~ ^[0-9]+$ ]]; then
 		_prrts_log "dispatch-pr: ${repo_slug}#${pr_number} skipped — repo path missing/invalid or PR number invalid (${repo_path})"
-		return 0
+		return 1
 	fi
 	repo_path="${repo_path/#\~/$HOME}"
 	candidate="$(cmd_scan_pr "$repo_slug" "$pr_number")"
 	[[ -n "$candidate" ]] || {
 		_prrts_log "dispatch-pr: ${repo_slug}#${pr_number} has no unresolved review threads matching current filters"
-		return 0
+		return 1
 	}
 	now_epoch="$(date +%s)"
-	IFS=$'\t' read -r pr_number thread_count fingerprint title head_ref head_oid author preview <<<"$candidate"
-	if _prrts_dispatch_guarded "$repo_slug" "$repo_path" "$pr_number" "$title" "$thread_count" "$fingerprint" "$preview" "$now_epoch" "$dry_run" "dispatch-pr" "$head_ref" "$head_oid" "$author"; then
-		if [[ "$dry_run" != "$PRRTS_BOOL_TRUE" ]]; then
-			_prrts_log "dispatch-pr: ${repo_slug}#${pr_number} completed, dispatched=1, include_human=${PR_REVIEW_THREAD_RESPONSE_INCLUDE_HUMAN}"
-		fi
+	IFS="$PRRTS_TSV_FIELD_SEPARATOR" read -r pr_number thread_count fingerprint title head_ref head_oid author preview \
+		<<<"${candidate//$'\t'/$PRRTS_TSV_FIELD_SEPARATOR}"
+	if ! _prrts_dispatch_guarded "$repo_slug" "$repo_path" "$pr_number" "$title" "$thread_count" "$fingerprint" "$preview" "$now_epoch" "$dry_run" "dispatch-pr" "$head_ref" "$head_oid" "$author"; then
+		return 1
+	fi
+	if [[ "$dry_run" != "$PRRTS_BOOL_TRUE" ]]; then
+		_prrts_log "dispatch-pr: ${repo_slug}#${pr_number} completed, dispatched=1, include_human=${PR_REVIEW_THREAD_RESPONSE_INCLUDE_HUMAN}"
 	fi
 	return 0
 }
@@ -1428,7 +1712,9 @@ main() {
 			_prrts_usage >&2
 			return 2
 		fi
-		_prrts_dispatch_pr "$repo_slug" "$repo_path" "${4:-}" "$PRRTS_BOOL_FALSE"
+		if ! _prrts_dispatch_pr "$repo_slug" "$repo_path" "${4:-}" "$PRRTS_BOOL_FALSE"; then
+			return 1
+		fi
 		;;
 	dry-run)
 		if [[ -z "$repo_slug" ]]; then

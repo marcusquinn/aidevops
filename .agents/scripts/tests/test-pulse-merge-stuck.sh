@@ -24,8 +24,12 @@
 #      crypto-approval, stale merged PR-list entries, and unknown authors that
 #      must not bypass the collaborator check) and keeps processing when GitHub
 #      returns a null PR author for deleted users.
-#   8. _detect_pattern_outage de-duplicates repeated PR observations.
-#   9. pulse-merge-stuck.sh and pulse-stats-helper.sh pass shellcheck.
+#   8. Effective preflight snapshots suppress superseded check-run failures.
+#   9. _detect_pattern_outage excludes per-PR review/policy gates, preserves
+#      genuine shared CI failures, and de-duplicates repeated PR observations.
+#      Open and closed outage markers both deterministically suppress re-filing.
+#      Generated Markdown includes the final affected PR.
+#  10. pulse-merge-stuck.sh and pulse-stats-helper.sh pass shellcheck.
 #
 # The test never makes real network calls; functions that require gh API
 # (_classify_stuck_pr, _escalate_individual_stuck_pr, full pulse_merge_stuck_run_pass)
@@ -613,6 +617,7 @@ gh_pr_view() {
 	207) printf 'sha-legacy-error' ;;
 	208) printf '{"labels":[],"mergeable":"MERGEABLE","headRefOid":"sha-clean-ruleset"}' ;;
 	209) printf '{"labels":[],"mergeable":"MERGEABLE","headRefOid":"sha-clean-ruleset-fail"}' ;;
+	210) printf 'sha-superseded-failure' ;;
 	*) printf '{"labels":[],"mergeable":"MERGEABLE","headRefOid":"sha-clean"}' ;;
 	esac
 	return 0
@@ -627,6 +632,7 @@ gh_pr_check_runs_rest() {
 	sha-failing) printf '[{"name":"Format","conclusion":"failure","status":"completed"},{"name":"Lint","conclusion":"timed_out","status":"completed"}]' ;;
 	sha-legacy-failing) printf '[{"context":"legacy-ci","state":"failure"}]' ;;
 	sha-legacy-error) printf '[{"context":"legacy-error","state":"error"}]' ;;
+	sha-superseded-failure) printf '[{"name":"gate / Maintainer Review & Assignee Gate","conclusion":"cancelled","status":"completed"}]' ;;
 	*) printf '[]' ;;
 	esac
 	return 0
@@ -714,6 +720,18 @@ assert_eq "7i: ruleset helper failure reports branch-protection API error" \
 	"STUCK_BRANCHPROTECT_API_ERROR" "$got"
 assert_eq "7j: ruleset helper failure propagates helper exit code" \
 	"7" "$ruleset_fail_rc"
+
+_pmrc_snapshot_checks_json() {
+	local repo_slug="$1"
+	local head_sha="$2"
+	[[ -n "$repo_slug" && -n "$head_sha" ]] || return 1
+	printf '[{"name":"maintainer-gate","conclusion":"success","status":"completed"}]'
+	return 0
+}
+
+got=$(_pms_failure_fingerprint "210" "example/repo")
+assert_eq "7k: effective snapshot suppresses superseded check-run failure" "" "$got"
+unset -f _pmrc_snapshot_checks_json
 echo ""
 
 # ---------------------------------------------------------------------------
@@ -726,11 +744,17 @@ _pms_failure_fingerprint() {
 	local repo_slug="$2"
 	[[ -n "$repo_slug" ]] || return 1
 	case "$pr_number" in
-	11 | 12) printf 'E2E Shard 1/4,E2E Shard 2/4' ;;
+	11 | 12 | 13) printf 'E2E Shard 1/4,E2E Shard 2/4' ;;
+	21 | 22 | 23) printf 'CodeRabbit' ;;
+	31 | 32 | 33) printf 'gate / Maintainer Review & Assignee Gate' ;;
 	*) printf '' ;;
 	esac
 	return 0
 }
+
+# Preserve the production filing function before replacing it with the
+# lightweight detector spy below.
+eval "$(declare -f _pms_file_outage_issue | sed '1s/_pms_file_outage_issue/_pms_file_outage_issue_production/')"
 
 PMS_TEST_OUTAGE_ARGS=""
 _pms_file_outage_issue() {
@@ -742,11 +766,66 @@ _pms_file_outage_issue() {
 	return 0
 }
 
-AIDEVOPS_MERGE_PATTERN_MIN_PRS=2
-_detect_pattern_outage "example/repo" $'11\n11\n12\n'
-assert_eq "7a: duplicate PR observations counted once" \
-	"example/repo|2|E2E Shard 1/4,E2E Shard 2/4|11,12" \
+AIDEVOPS_MERGE_PATTERN_MIN_PRS=3
+_detect_pattern_outage "example/repo" $'11\n11\n12\n13\n'
+assert_eq "7a: genuine shared CI failure files one outage despite duplicate observations" \
+	"example/repo|3|E2E Shard 1/4,E2E Shard 2/4|11,12,13" \
 	"$PMS_TEST_OUTAGE_ARGS"
+
+PMS_TEST_OUTAGE_ARGS=""
+_detect_pattern_outage "example/repo" $'21\n22\n23\n'
+assert_eq "7b: CodeRabbit cluster does not file a broken-base outage" \
+	"" "$PMS_TEST_OUTAGE_ARGS"
+
+PMS_TEST_OUTAGE_ARGS=""
+_detect_pattern_outage "example/repo" $'31\n32\n33\n'
+assert_eq "7c: maintainer review and assignee gate cluster does not file an outage" \
+	"" "$PMS_TEST_OUTAGE_ARGS"
+
+assert_eq "7d: mixed policy and genuine CI fingerprint remains outage-eligible" \
+	"1" "$(_pms_is_per_pr_gate_fingerprint 'CodeRabbit,CI / build'; printf '%s' "$?")"
+
+got=$(_pms_format_pr_markdown_list "11,12,13")
+assert_eq "7e: affected-PR Markdown retains the final entry" \
+	$'- #11\n- #12\n- #13' "$got"
+
+PMS_TEST_EXISTING_STATE="OPEN"
+PMS_TEST_CLOSE_CALLS=0
+PMS_TEST_CREATE_CALLS=0
+gh() {
+	local command_name="$1"
+	local resource_name="${2:-}"
+	if [[ "$command_name" == "api" && "$resource_name" == "repos/example/repo" ]]; then
+		printf 'main'
+		return 0
+	fi
+	if [[ "$command_name" == "issue" && "$resource_name" == "list" ]]; then
+		printf '41\t%s' "$PMS_TEST_EXISTING_STATE"
+		return 0
+	fi
+	return 1
+}
+_pms_maybe_close_resolved_outage_issue() {
+	local repo_slug="$1" issue_number="$2" fingerprint="$3"
+	[[ -n "$repo_slug" && -n "$issue_number" && -n "$fingerprint" ]] || return 1
+	PMS_TEST_CLOSE_CALLS=$((PMS_TEST_CLOSE_CALLS + 1))
+	return 0
+}
+gh_create_issue() {
+	PMS_TEST_CREATE_CALLS=$((PMS_TEST_CREATE_CALLS + 1))
+	return 0
+}
+
+_pms_file_outage_issue_production "example/repo" "3" "CI / build" "11,12,13"
+assert_eq "7f: open marker suppresses filing and runs stale-resolution check" \
+	"1|0" "${PMS_TEST_CLOSE_CALLS}|${PMS_TEST_CREATE_CALLS}"
+
+PMS_TEST_EXISTING_STATE="CLOSED"
+PMS_TEST_CLOSE_CALLS=0
+PMS_TEST_CREATE_CALLS=0
+_pms_file_outage_issue_production "example/repo" "3" "CI / build" "11,12,13"
+assert_eq "7g: closed marker is a tombstone that suppresses re-filing" \
+	"0|0" "${PMS_TEST_CLOSE_CALLS}|${PMS_TEST_CREATE_CALLS}"
 echo ""
 
 # ---------------------------------------------------------------------------

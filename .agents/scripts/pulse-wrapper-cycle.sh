@@ -258,6 +258,25 @@ gathered by pulse-wrapper.sh BEFORE this session started."
 # run_pulse() with the appropriate trigger_mode. Records the run epoch and
 # kicks off the early-exit recycle loop on completion.
 # ---------------------------------------------------------------------------
+_PULSE_LLM_LOCKDIR_OWNED="${_PULSE_LLM_LOCKDIR_OWNED:-}"
+
+_pulse_release_llm_lock() {
+	local llm_lockdir="${_PULSE_LLM_LOCKDIR_OWNED:-}"
+	local lock_pid=""
+	[[ -n "$llm_lockdir" ]] || return 0
+	_PULSE_LLM_LOCKDIR_OWNED=""
+	if [[ -f "${llm_lockdir}/pid" ]]; then
+		read -r lock_pid <"${llm_lockdir}/pid" || lock_pid=""
+	fi
+	if [[ "$lock_pid" != "$$" ]]; then
+		printf '[pulse-wrapper] LLM lock cleanup skipped: owner changed from PID %s to %s\n' \
+			"$$" "${lock_pid:-unknown}" >>"${WRAPPER_LOGFILE:-/dev/null}"
+		return 0
+	fi
+	rm -rf "$llm_lockdir" 2>/dev/null || true
+	return 0
+}
+
 _pulse_record_llm_attempt() {
 	local trigger_mode="$1"
 	local attempt_epoch
@@ -312,13 +331,17 @@ _pulse_maybe_run_llm_supervisor() {
 			_llm_lock_acquired=1
 		fi
 	fi
+	if [[ "$_llm_lock_acquired" -eq 1 ]]; then
+		_PULSE_LLM_LOCKDIR_OWNED="$llm_lockdir"
+		printf '%s\n' "$$" >"${llm_lockdir}/pid" 2>/dev/null || true
+	fi
 
 	if [[ "$skip_llm" == "true" ]]; then
 		if [[ "$_llm_lock_acquired" -eq 1 ]]; then
 			# GH#26550: skip cycles only perform cleanup. _handle_stale_llm_lock
 			# re-acquires after clearing, so release the reclaimed LLM lock instead
 			# of leaving a self-created lock behind until the next eligible cycle.
-			rm -rf "$llm_lockdir" 2>/dev/null || true
+			_pulse_release_llm_lock
 		fi
 		return 0
 	fi
@@ -335,9 +358,8 @@ _pulse_maybe_run_llm_supervisor() {
 	fi
 
 	if [[ "$_llm_lock_acquired" -eq 1 ]]; then
-		echo "$$" >"${llm_lockdir}/pid" 2>/dev/null || true
-		# shellcheck disable=SC2064
-		trap "rm -rf '$llm_lockdir' 2>/dev/null; release_instance_lock" EXIT
+		_PULSE_LLM_LOCKDIR_OWNED="$llm_lockdir"
+		printf '%s\n' "$$" >"${llm_lockdir}/pid" 2>/dev/null || true
 
 		local underfill_output
 		underfill_output=$(_compute_initial_underfill)
@@ -360,7 +382,7 @@ _pulse_maybe_run_llm_supervisor() {
 		else
 			_pulse_record_llm_failure "$llm_trigger_mode" "$pulse_rc"
 		fi
-		rm -rf "$llm_lockdir" 2>/dev/null || true
+		_pulse_release_llm_lock
 	fi
 	return 0
 }
