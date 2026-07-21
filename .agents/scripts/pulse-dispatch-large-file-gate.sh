@@ -16,6 +16,7 @@
 #   - _large_file_gate_create_debt_issue
 #   - _large_file_gate_apply
 #   - _large_file_gate_clear_stale_label
+#   - _large_file_gate_issue_labels
 #   - _issue_targets_large_files
 
 [[ -n "${_PULSE_DISPATCH_LARGE_FILE_GATE_LOADED:-}" ]] && return 0
@@ -758,12 +759,26 @@ _Automated by \`_issue_targets_large_files()\` in pulse-wrapper.sh_"
 # so the original "Held from dispatch" comment doesn't mislead readers (t2042).
 #
 # Arguments: issue_number, repo_slug
+# Returns: 0=label removal confirmed, 1=removal failed or could not be verified
 #######################################
 _large_file_gate_clear_stale_label() {
 	local issue_number="$1"
 	local repo_slug="$2"
-	gh issue edit "$issue_number" --repo "$repo_slug" \
-		--remove-label "needs-simplification" >/dev/null 2>&1 || true
+	local current_labels=""
+	if ! gh issue edit "$issue_number" --repo "$repo_slug" \
+		--remove-label "needs-simplification" >/dev/null 2>&1; then
+		echo "[pulse-wrapper] WARN: failed to clear stale needs-simplification label for #${issue_number} (${repo_slug}); gate remains applied for retry" >>"$LOGFILE"
+		return 1
+	fi
+	if ! current_labels=$(gh_issue_view "$issue_number" --repo "$repo_slug" \
+		--json labels --jq '[.labels[].name] | join(",")' 2>/dev/null); then
+		echo "[pulse-wrapper] WARN: could not verify stale needs-simplification label removal for #${issue_number} (${repo_slug}); gate remains applied for retry" >>"$LOGFILE"
+		return 1
+	fi
+	if [[ ",$current_labels," == *",needs-simplification,"* ]]; then
+		echo "[pulse-wrapper] WARN: stale needs-simplification label still present after removal for #${issue_number} (${repo_slug}); gate remains applied for retry" >>"$LOGFILE"
+		return 1
+	fi
 	echo "[pulse-wrapper] Simplification gate cleared for #${issue_number} (${repo_slug}) — no large files after exclusion filter" >>"$LOGFILE"
 	# t2042: post follow-up "CLEARED" comment so the original
 	# "Held from dispatch" comment doesn't mislead readers. Helper
@@ -920,6 +935,41 @@ _large_file_gate_collect_large_files() {
 }
 
 #######################################
+# Resolve current issue labels while allowing callers to reuse prefetched
+# issue JSON. A prefetched positive gate is volatile, so refresh it before
+# dispatch and retain it fail-closed when GitHub cannot provide a snapshot.
+#
+# Arguments: issue_number, repo_slug, pre_fetched_json
+# Outputs: comma-joined issue labels
+#######################################
+_large_file_gate_issue_labels() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local pre_fetched_json="$3"
+	local issue_labels=""
+	local fresh_issue_labels=""
+
+	if [[ -n "$pre_fetched_json" ]] \
+		&& printf '%s' "$pre_fetched_json" | jq -e '.labels' >/dev/null 2>&1; then
+		issue_labels=$(printf '%s' "$pre_fetched_json" | jq -r '[.labels[].name] | join(",")' 2>/dev/null) || issue_labels=""
+		if [[ ",$issue_labels," == *",needs-simplification,"* ]]; then
+			if fresh_issue_labels=$(gh_issue_view "$issue_number" --repo "$repo_slug" \
+				--json labels --jq '[.labels[].name] | join(",")' 2>/dev/null); then
+				issue_labels="$fresh_issue_labels"
+			else
+				echo "[pulse-wrapper] WARN: could not refresh volatile simplification lifecycle for #${issue_number} (${repo_slug}); retaining prefetched gate state" >>"$LOGFILE"
+			fi
+		fi
+	else
+		issue_labels=$(gh_issue_view "$issue_number" --repo "$repo_slug" \
+			--json labels --jq '[.labels[].name] | join(",")' 2>/dev/null) || issue_labels=""
+	fi
+
+	printf '%s' "$issue_labels"
+	return 0
+}
+
+#######################################
 # Thin orchestrator for the large-file gate. Delegates label precheck,
 # path extraction, per-target evaluation, gate application, and stale-label
 # cleanup to the `_large_file_gate_*` helpers above. Byte-for-byte
@@ -959,14 +1009,8 @@ _issue_targets_large_files() {
 	[[ -n "$issue_body" ]] || return 1
 	[[ -d "$repo_path" ]] || return 1
 
-	local issue_labels
-	if [[ -n "$pre_fetched_json" ]] \
-		&& printf '%s' "$pre_fetched_json" | jq -e '.labels' >/dev/null 2>&1; then
-		issue_labels=$(printf '%s' "$pre_fetched_json" | jq -r '[.labels[].name] | join(",")' 2>/dev/null) || issue_labels=""
-	else
-		issue_labels=$(gh_issue_view "$issue_number" --repo "$repo_slug" \
-			--json labels --jq '[.labels[].name] | join(",")' 2>/dev/null) || issue_labels=""
-	fi
+	local issue_labels=""
+	issue_labels=$(_large_file_gate_issue_labels "$issue_number" "$repo_slug" "$pre_fetched_json")
 
 	local _precheck_rc=0
 	_large_file_gate_precheck_labels "$issue_number" "$repo_slug" "$issue_labels" "$force_recheck" || _precheck_rc=$?
@@ -987,7 +1031,7 @@ _issue_targets_large_files() {
 		# pulse restart confirmed the extractor fix worked but the stale label
 		# required human intervention to clear.
 		if [[ ",$issue_labels," == *",needs-simplification,"* ]]; then
-			_large_file_gate_clear_stale_label "$issue_number" "$repo_slug"
+			_large_file_gate_clear_stale_label "$issue_number" "$repo_slug" || return 0
 		fi
 		return 1
 	fi
@@ -1003,6 +1047,9 @@ _issue_targets_large_files() {
 	if _large_file_gate_check_surgical_brief \
 		"$_surgical_title" "$all_paths" "$repo_path"; then
 		echo "[pulse-wrapper] Large-file gate EXEMPTED for #${issue_number} (${repo_slug}): surgical brief with line ranges for ${_LFG_SURGICAL_EXEMPTED_FILES}" >>"$LOGFILE"
+		if [[ ",$issue_labels," == *",needs-simplification,"* ]]; then
+			_large_file_gate_clear_stale_label "$issue_number" "$repo_slug" || return 0
+		fi
 		return 1
 	fi
 
@@ -1018,7 +1065,7 @@ _issue_targets_large_files() {
 	# If was_already_labeled but no large files found (e.g., all files now
 	# excluded by skip pattern or simplified below threshold), auto-clear.
 	if [[ ",$issue_labels," == *",needs-simplification,"* ]]; then
-		_large_file_gate_clear_stale_label "$issue_number" "$repo_slug"
+		_large_file_gate_clear_stale_label "$issue_number" "$repo_slug" || return 0
 	fi
 
 	return 1

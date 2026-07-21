@@ -442,14 +442,31 @@ _hrff_post_claim_released_comment() {
 	local issue_number="$1"
 	local repo_slug="$2"
 	local comment_body="$3"
+	local attempts="${AIDEVOPS_CLAIM_RELEASE_POST_ATTEMPTS:-3}"
+	local retry_delay="${AIDEVOPS_CLAIM_RELEASE_POST_RETRY_DELAY:-1}"
+	local attempt=1
+	local post_error=""
 
-	gh api "repos/${repo_slug}/issues/${issue_number}/comments" \
-		--method POST \
-		--field body="$comment_body" \
-		>/dev/null 2>&1 || {
-		print_warning "Failed to post CLAIM_RELEASED on #${issue_number} (non-fatal)"
-	}
-	return 0
+	[[ "$attempts" =~ ^[1-9][0-9]*$ ]] || attempts=3
+	[[ "$retry_delay" =~ ^[0-9]+$ ]] || retry_delay=1
+	while [[ "$attempt" -le "$attempts" ]]; do
+		if post_error=$(gh api "repos/${repo_slug}/issues/${issue_number}/comments" \
+			--method POST \
+			--field body="$comment_body" \
+			2>&1 >/dev/null); then
+			return 0
+		fi
+		post_error="${post_error//$'\n'/ }"
+		post_error="${post_error:0:240}"
+		if [[ "$attempt" -lt "$attempts" ]]; then
+			print_warning "CLAIM_RELEASED persistence failed on #${issue_number} (attempt ${attempt}/${attempts}): ${post_error:-unknown}; retrying"
+			[[ "$retry_delay" -eq 0 ]] || sleep "$retry_delay"
+		fi
+		attempt=$((attempt + 1))
+	done
+
+	print_warning "Failed to post CLAIM_RELEASED on #${issue_number} after ${attempts} attempt(s): ${post_error:-unknown}"
+	return 1
 }
 
 #######################################
@@ -505,7 +522,10 @@ _release_dispatch_claim() {
 ${machine_readable_part}
 <!-- ops:end -->"
 
-	_hrff_post_claim_released_comment "$issue_number" "$repo_slug" "$comment_body"
+	if ! _hrff_post_claim_released_comment "$issue_number" "$repo_slug" "$comment_body"; then
+		print_warning "Claim release for #${issue_number} remains unpersisted and retryable; retaining issue lifecycle state"
+		return 1
+	fi
 	print_info "Released claim on #${issue_number} (reason: ${reason})"
 
 	# t2420: clear active-lifecycle status labels + worker assignment so the
@@ -870,12 +890,13 @@ _hrff_finalize_exit_trap() {
 	local exit_status="$3"
 	local session_count="$4"
 	local force_nonzero_exit="$5"
+	local checkpoint_reason="${_HRW_REASON_DRAFT_CHECKPOINT:-worker_draft_checkpoint}"
 
 	print_info "[exit-trap] session=$session_key exit=$exit_status reason=$reason session_count=$session_count"
 	_push_wip_commits_on_exit
 	if [[ "${_WORKER_DIRTY_WORK_PRESERVED:-0}" == "1" ]]; then
 		if _recover_dirty_worker_pr "$session_key"; then
-			reason="worker_complete"
+			reason="$checkpoint_reason"
 		else
 			reason="worker_dirty_work_preserved"
 		fi
@@ -883,6 +904,8 @@ _hrff_finalize_exit_trap() {
 	if declare -F _emit_worker_runtime_event >/dev/null 2>&1; then
 		if [[ "$reason" == "worker_complete" ]]; then
 			_emit_worker_runtime_event "worker.completed" "recovered" "$reason"
+		elif [[ "$reason" == "$checkpoint_reason" ]]; then
+			_emit_worker_runtime_event "worker.deferred" "checkpointed" "$reason"
 		else
 			_emit_worker_runtime_event "worker.failed" "failed" "$reason"
 		fi
@@ -891,17 +914,18 @@ _hrff_finalize_exit_trap() {
 		local terminal_outcome="failed"
 		local complete_reason="${_HRW_REASON_WORKER_COMPLETE:-worker_complete}"
 		[[ "$reason" == "$complete_reason" ]] && terminal_outcome="success"
+		[[ "$reason" == "$checkpoint_reason" ]] && terminal_outcome="deferred"
 		_hrw_record_terminal_outcome "$session_key" "$terminal_outcome" "$reason"
 	fi
 	if declare -F _cleanup_headless_runtime_temp_paths >/dev/null 2>&1; then
 		_cleanup_headless_runtime_temp_paths
 	fi
-	_release_dispatch_claim "$session_key" "$reason" "$exit_status" "$session_count"
+	if ! _release_dispatch_claim "$session_key" "$reason" "$exit_status" "$session_count"; then
+		print_warning "[exit-trap] claim release persistence remains retryable for session=${session_key} reason=${reason}"
+	fi
 	_release_session_lock "$session_key"
 	_update_dispatch_ledger "$session_key" "fail"
-	if declare -F aidevops_runtime_bundle_lease_release >/dev/null 2>&1; then
-		aidevops_runtime_bundle_lease_release || print_warning "Failed to release the worker runtime bundle lease"
-	fi
+	aidevops_runtime_bundle_lease_release || print_warning "Failed to release the worker runtime bundle lease"
 	if [[ "$force_nonzero_exit" -eq 1 ]]; then
 		trap - EXIT
 		exit "$exit_status"

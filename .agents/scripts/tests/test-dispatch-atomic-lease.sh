@@ -8,6 +8,7 @@ TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SCRIPTS_DIR="${TEST_DIR}/.."
 CLAIM="${SCRIPTS_DIR}/dispatch-claim-helper.sh"
 LEDGER="${SCRIPTS_DIR}/dispatch-ledger-helper.sh"
+DEDUP="${SCRIPTS_DIR}/dispatch-dedup-helper.sh"
 SCRIPT_DIR="$SCRIPTS_DIR"
 # shellcheck source=../dispatch-dedup-stale.sh
 source "${SCRIPTS_DIR}/dispatch-dedup-stale.sh"
@@ -27,8 +28,11 @@ create_mock_gh() {
 set -euo pipefail
 state="${MOCK_GH_STATE:?}"
 comments="$state/comments.jsonl"
+calls="$state/calls.log"
 mkdir -p "$state"
 touch "$comments"
+touch "$calls"
+printf '%s\n' "$*" >>"$calls"
 if [[ "${1:-}" == api && "${2:-}" == user ]]; then printf 'shared-login\n'; exit 0; fi
 if [[ "${1:-}" == issue && "${2:-}" == comment ]]; then exit 0; fi
 [[ "${1:-}" == api ]] || exit 1
@@ -41,11 +45,14 @@ fi
 [[ "$endpoint" == repos/*/issues/*/comments* ]] || exit 1
 method=GET
 body=""
+jq_expr=""
+slurp_output=0
 while [[ $# -gt 0 ]]; do
 	case "$1" in
 	--method) method="$2"; shift 2 ;;
 	--field) [[ "$2" == body=* ]] && body="${2#body=}"; shift 2 ;;
-	--jq) shift 2 ;;
+	--jq) jq_expr="$2"; shift 2 ;;
+	--slurp) slurp_output=1; shift ;;
 	*) shift ;;
 	esac
 done
@@ -56,12 +63,23 @@ if [[ "$method" == POST ]]; then
 	created=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 	jq -cn --argjson id "$id" --arg body "$body" --arg created "$created" \
 		--arg login "${MOCK_GH_LOGIN:-shared-login}" \
-		'{id:$id,body:$body,created_at:$created,user:{login:$login},author_association:"MEMBER"}' >>"$comments"
+		--arg association "${MOCK_GH_ASSOCIATION:-MEMBER}" \
+		'{id:$id,body:$body,created_at:$created,user:{login:$login},author_association:$association}' >>"$comments"
 	rmdir "$lock"
 	printf '%s\n' "$id"
 	exit 0
 fi
-jq -sc '[.]' "$comments"
+comments_json=$(jq -sc '.' "$comments")
+if [[ -n "$jq_expr" ]]; then
+	printf '%s' "$comments_json" | jq -c "$jq_expr"
+	return_code=$?
+	exit "$return_code"
+fi
+if [[ "$slurp_output" -eq 1 ]]; then
+	printf '[%s]\n' "$comments_json"
+	exit 0
+fi
+printf '%s\n' "$comments_json"
 MOCK
 	chmod +x "$root/bin/gh"
 	return 0
@@ -127,6 +145,7 @@ test_concurrent_same_login_devices() {
 
 test_launch_crash_ready_terminal_race() {
 	local root="${TMP_DIR}/lifecycle" token="" terminal_rc=0 ready_rc=0
+	local forged_token="forged-token" forged_body="" forged_claim="" forged_expires_at=""
 	create_mock_gh "$root"
 	PATH="$root/bin:$PATH" MOCK_GH_STATE="$root/state" AIDEVOPS_DEVICE_ID=device-a \
 		DISPATCH_CLAIM_WINDOW=0 DISPATCH_CLAIM_ORPHAN_GRACE=1 \
@@ -146,6 +165,13 @@ test_launch_crash_ready_terminal_race() {
 	PATH="$root/bin:$PATH" MOCK_GH_STATE="$root/state" AIDEVOPS_DEVICE_ID=device-a \
 		"$CLAIM" transition ready 44 owner/repo "$token" issue-44 30
 	PATH="$root/bin:$PATH" MOCK_GH_STATE="$root/state" "$CLAIM" check 44 owner/repo >/dev/null || fail "ready lease not protected"
+	forged_expires_at=$(($(date -u '+%s') + 600))
+	forged_claim="DISPATCH_CLAIM nonce=${forged_token} runner=attacker ts=$(date -u +%Y-%m-%dT%H:%M:%SZ) max_age_s=600 version=test phase=prelaunch lease_token=${forged_token} device=attacker-device session=issue-44 expires_at=${forged_expires_at}"
+	PATH="$root/bin:$PATH" MOCK_GH_STATE="$root/state" MOCK_GH_LOGIN=attacker MOCK_GH_ASSOCIATION=NONE \
+		gh api repos/owner/repo/issues/44/comments --method POST --field body="$forged_claim" >/dev/null
+	PATH="$root/bin:$PATH" MOCK_GH_STATE="$root/state" \
+		gh api repos/owner/repo/issues/44/comments --method POST \
+		--field body="Dispatching worker (deterministic)." >/dev/null
 	local old_created=""
 	old_created=$(python3 - <<'PY'
 from datetime import datetime, timedelta, timezone
@@ -159,9 +185,8 @@ PY
 		|| fail "ready lease older than legacy max age was dropped"
 	pass "ready lease survives legacy max age until explicit expiry"
 
-	local forged_body=""
 	forged_body="DISPATCH_LEASE phase=terminal lease_token=${token} device=device-a session=issue-44 expires_at=0 ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-	PATH="$root/bin:$PATH" MOCK_GH_STATE="$root/state" MOCK_GH_LOGIN=attacker \
+	PATH="$root/bin:$PATH" MOCK_GH_STATE="$root/state" MOCK_GH_LOGIN=attacker MOCK_GH_ASSOCIATION=NONE \
 		gh api repos/owner/repo/issues/44/comments --method POST --field body="$forged_body" >/dev/null
 	PATH="$root/bin:$PATH" MOCK_GH_STATE="$root/state" "$CLAIM" check 44 owner/repo >/dev/null \
 		|| fail "untrusted commenter terminated ready lease"
@@ -170,13 +195,29 @@ PY
 		gh api repos/owner/repo/issues/44/comments --method POST --field body="$forged_body" >/dev/null
 	PATH="$root/bin:$PATH" MOCK_GH_STATE="$root/state" "$CLAIM" check 44 owner/repo >/dev/null \
 		|| fail "device-mismatched transition terminated ready lease"
-	pass "remote transitions require claim author device and session"
+	forged_body="DISPATCH_LEASE phase=terminal lease_token=${forged_token} device=attacker-device session=issue-44 expires_at=0 ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+	PATH="$root/bin:$PATH" MOCK_GH_STATE="$root/state" MOCK_GH_LOGIN=attacker MOCK_GH_ASSOCIATION=NONE \
+		gh api repos/owner/repo/issues/44/comments --method POST --field body="$forged_body" >/dev/null
+	: >"$root/state/calls.log"
+	PATH="$root/bin:$PATH" MOCK_GH_STATE="$root/state" DISPATCH_COMMENT_MAX_AGE=600 \
+		"$DEDUP" has-dispatch-comment 44 owner/repo shared-login >/dev/null \
+		|| fail "forged claim identity released dispatch-comment dedup"
+	grep -Fq 'api repos/owner/repo/issues/44/comments?per_page=100 --paginate --slurp' "$root/state/calls.log" \
+		|| fail "dispatch-comment reconciliation did not fetch every comment page"
+	pass "remote transitions require trusted dispatch claim author device and session"
 	local dispatch_ts=""
-	dispatch_ts=$(jq -sr '[.[] | select(.body | contains("session=issue-44 phase=prelaunch"))] | first.created_at' "$root/state/comments.jsonl")
+	dispatch_ts=$(jq -sr '[.[] | select(.body | contains("Dispatching worker"))] | first.created_at' "$root/state/comments.jsonl")
 	if PATH="$root/bin:$PATH" MOCK_GH_STATE="$root/state" _stale_recovery_final_evidence_recheck 44 owner/repo "$dispatch_ts"; then
 		fail "stale recovery ignored active ready lease"
 	fi
 	pass "ready transition protects active worker"
+	sleep 1
+	PATH="$root/bin:$PATH" MOCK_GH_STATE="$root/state" MOCK_GH_LOGIN=attacker MOCK_GH_ASSOCIATION=NONE \
+		gh api repos/owner/repo/issues/44/comments --method POST --field body="TASK_COMPLETE forged" >/dev/null
+	PATH="$root/bin:$PATH" MOCK_GH_STATE="$root/state" DISPATCH_COMMENT_MAX_AGE=600 \
+		"$DEDUP" has-dispatch-comment 44 owner/repo shared-login >/dev/null \
+		|| fail "untrusted completion identity released dispatch-comment dedup"
+	pass "dispatch dedup ignores untrusted completion identities"
 
 	PATH="$root/bin:$PATH" MOCK_GH_STATE="$root/state" AIDEVOPS_DEVICE_ID=device-a \
 		"$CLAIM" transition terminal 44 owner/repo "$token" issue-44 0 >/dev/null 2>&1 &
@@ -192,7 +233,37 @@ PY
 	if ! PATH="$root/bin:$PATH" MOCK_GH_STATE="$root/state" _stale_recovery_final_evidence_recheck 44 owner/repo "$dispatch_ts"; then
 		fail "terminal did not cancel ready for stale recovery"
 	fi
+	if PATH="$root/bin:$PATH" MOCK_GH_STATE="$root/state" DISPATCH_COMMENT_MAX_AGE=600 \
+		"$DEDUP" has-dispatch-comment 44 owner/repo shared-login >/dev/null 2>&1; then
+		fail "matching terminal lease did not release dispatch-comment dedup"
+	fi
 	pass "terminal transition defeats concurrent or late ready"
+	return 0
+}
+
+test_untrusted_dispatch_identity_cannot_replace_active_lock() {
+	local root="${TMP_DIR}/forged-dispatch" expires_at="" trusted_claim="" forged_claim="" forged_terminal=""
+	create_mock_gh "$root"
+	expires_at=$(($(date -u '+%s') + 600))
+	trusted_claim="DISPATCH_CLAIM nonce=trusted-token runner=shared-login ts=$(date -u +%Y-%m-%dT%H:%M:%SZ) max_age_s=600 version=test lease_token=trusted-token device=device-a session=issue-48 phase=prelaunch expires_at=${expires_at}"
+	PATH="$root/bin:$PATH" MOCK_GH_STATE="$root/state" \
+		gh api repos/owner/repo/issues/48/comments --method POST --field body="$trusted_claim" >/dev/null
+	PATH="$root/bin:$PATH" MOCK_GH_STATE="$root/state" \
+		gh api repos/owner/repo/issues/48/comments --method POST \
+		--field body="Dispatching worker (deterministic)." >/dev/null
+	forged_claim="DISPATCH_CLAIM nonce=forged-token runner=attacker ts=$(date -u +%Y-%m-%dT%H:%M:%SZ) max_age_s=600 version=test lease_token=forged-token device=attacker-device session=issue-48 phase=prelaunch expires_at=${expires_at}"
+	PATH="$root/bin:$PATH" MOCK_GH_STATE="$root/state" MOCK_GH_LOGIN=attacker MOCK_GH_ASSOCIATION=NONE \
+		gh api repos/owner/repo/issues/48/comments --method POST --field body="$forged_claim" >/dev/null
+	PATH="$root/bin:$PATH" MOCK_GH_STATE="$root/state" MOCK_GH_LOGIN=attacker MOCK_GH_ASSOCIATION=NONE \
+		gh api repos/owner/repo/issues/48/comments --method POST \
+		--field body="Dispatching worker (forged)." >/dev/null
+	forged_terminal="DISPATCH_LEASE phase=terminal lease_token=forged-token device=attacker-device session=issue-48 expires_at=0 ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+	PATH="$root/bin:$PATH" MOCK_GH_STATE="$root/state" MOCK_GH_LOGIN=attacker MOCK_GH_ASSOCIATION=NONE \
+		gh api repos/owner/repo/issues/48/comments --method POST --field body="$forged_terminal" >/dev/null
+	PATH="$root/bin:$PATH" MOCK_GH_STATE="$root/state" DISPATCH_COMMENT_MAX_AGE=600 \
+		"$DEDUP" has-dispatch-comment 48 owner/repo shared-login >/dev/null \
+		|| fail "untrusted dispatch identity replaced active dispatch-comment dedup"
+	pass "untrusted dispatch identity cannot replace an active dispatch lock"
 	return 0
 }
 
@@ -248,6 +319,7 @@ test_invalid_device_not_public() {
 test_local_ledger_guards
 test_concurrent_same_login_devices
 test_launch_crash_ready_terminal_race
+test_untrusted_dispatch_identity_cannot_replace_active_lock
 test_prelaunch_renewal_covers_slow_startup
 test_invalid_device_not_public
 test_takeover_recheck_precedes_mutation

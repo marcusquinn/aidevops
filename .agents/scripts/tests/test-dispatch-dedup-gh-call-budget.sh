@@ -26,7 +26,8 @@
 #   3. `_issue_needs_consolidation` accepts an optional pre-fetched JSON
 #      argument and skips the gh call when it's provided.
 #   4. `_issue_targets_large_files` accepts an optional pre-fetched JSON
-#      argument and skips both its labels AND title gh calls when provided.
+#      argument, reuses its title and ordinary labels, and refreshes only a
+#      volatile positive `needs-simplification` gate before blocking dispatch.
 #   5. `_ensure_issue_body_has_brief` accepts an optional pre-fetched JSON
 #      argument and skips the gh call when it's provided.
 #   6. The total `gh issue view` count inside `_dispatch_dedup_check_layers`
@@ -191,28 +192,44 @@ test_issue_needs_consolidation_accepts_meta() {
 
 # ---------------------------------------------------------------------------
 # Test 5: _issue_targets_large_files accepts optional pre_fetched_json
-# (param 6) and skips BOTH labels AND title gh calls when provided.
+# (param 6), derives ordinary labels/title from it, and scopes the correctness-
+# sensitive fresh read to a prefetched `needs-simplification` label.
 # ---------------------------------------------------------------------------
 test_issue_targets_large_files_accepts_meta() {
-	local body
+	local body title_body labels_body
 	body=$(_extract_function_body "$LARGE_FILE_GATE_SH" "_issue_targets_large_files")
+	title_body=$(_extract_function_body "$LARGE_FILE_GATE_SH" "_large_file_gate_issue_title")
+	labels_body=$(_extract_function_body "$LARGE_FILE_GATE_SH" "_large_file_gate_issue_labels")
 	local ok=1
 	if ! printf '%s' "$body" | grep -qE 'pre_fetched_json="\$\{6:-\}"'; then
 		ok=0
 	fi
-	# Must extract labels from JSON when bundle is present.
-	if ! printf '%s' "$body" | grep -qE 'jq -r .*\.labels\[\]\.name'; then
+	# The labels helper must extract from JSON and receive the same bundle.
+	# shellcheck disable=SC2016 # Static source assertion intentionally matches literal variable names.
+	if ! printf '%s' "$labels_body" | grep -qE 'jq -r .*\.labels\[\]\.name' \
+		|| ! printf '%s' "$body" | grep -qF '_large_file_gate_issue_labels "$issue_number" "$repo_slug" "$pre_fetched_json"'; then
 		ok=0
 	fi
-	# Must extract title from JSON when bundle is present.
-	if ! printf '%s' "$body" | grep -qE 'jq -r .*\.title'; then
+	# The title helper must extract from JSON and receive the same bundle.
+	# Static source assertion intentionally matches literal variable names.
+	# shellcheck disable=SC2016
+	if ! printf '%s' "$title_body" | grep -qE 'jq -r .*\.title' \
+		|| ! printf '%s' "$body" | grep -qF '_large_file_gate_issue_title "$issue_number" "$repo_slug" "$pre_fetched_json"'; then
+		ok=0
+	fi
+	# A positive blocking label is volatile across triage/dispatch stages and
+	# therefore must be freshly revalidated before the early-return gate.
+	# Static source assertion intentionally matches literal variable names.
+	# shellcheck disable=SC2016
+	if ! printf '%s' "$labels_body" | grep -qF 'if [[ ",$issue_labels," == *",needs-simplification,"* ]]' \
+		|| ! printf '%s' "$labels_body" | grep -qE 'fresh_issue_labels=.*gh_issue_view'; then
 		ok=0
 	fi
 	if [[ "$ok" -eq 1 ]]; then
-		_print_result "_issue_targets_large_files accepts pre_fetched_json (param 6) + JSON-derives labels & title" 1
+		_print_result "_issue_targets_large_files reuses prefetched metadata and refreshes volatile gate state" 1
 	else
-		_print_result "_issue_targets_large_files accepts pre_fetched_json (param 6) + JSON-derives labels & title" 0 \
-			"expected 'local pre_fetched_json=\"\${6:-}\"' + jq labels + jq title inside the body"
+		_print_result "_issue_targets_large_files reuses prefetched metadata and refreshes volatile gate state" 0 \
+			"expected param-6 metadata reuse plus a scoped fresh read for needs-simplification"
 	fi
 }
 
