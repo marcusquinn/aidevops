@@ -99,6 +99,31 @@ readonly _PMP_BACKLOG_OTHER="other"
 # --- Functions ---
 
 #######################################
+# Normalize known PR lifecycle states from mixed GitHub API paths.
+#
+# GraphQL emits uppercase enums while REST and cached projections can emit
+# lowercase strings. Preserve unknown values so exact-state consumers still
+# fail closed instead of accepting an unrecognised lifecycle state (t18168).
+#
+# Args: $1=destination variable name, $2=raw lifecycle state
+#######################################
+_pmp_normalize_pr_lifecycle_state_into() {
+	local dest_var="$1"
+	local raw_state="$2"
+	local normalized_state=""
+
+	[[ "$dest_var" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || return 1
+	case "$raw_state" in
+	[Oo][Pp][Ee][Nn]) normalized_state="OPEN" ;;
+	[Cc][Ll][Oo][Ss][Ee][Dd]) normalized_state="CLOSED" ;;
+	[Mm][Ee][Rr][Gg][Ee][Dd]) normalized_state="MERGED" ;;
+	*) normalized_state="$raw_state" ;;
+	esac
+	printf -v "$dest_var" '%s' "$normalized_state"
+	return 0
+}
+
+#######################################
 # Normalize PR mergeable values from mixed GitHub API paths.
 #
 # gh GraphQL returns MERGEABLE/CONFLICTING/UNKNOWN, while REST fallback and
