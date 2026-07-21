@@ -263,6 +263,7 @@ main() {
 	: >"$PULSE_START_LOG"
 	export PULSE_START_LOG
 	export AIDEVOPS_PULSE_PROCESS_PATTERN="$PULSE_PATTERN"
+	export AIDEVOPS_PULSE_MERGE_PROCESS_PATTERN="${escaped_root}/runtime-bundles/.*/agents/scripts/pulse-merge-routine\\.sh"
 	export AIDEVOPS_PULSE_RESTART_WAIT=0
 	export AIDEVOPS_PULSE_SIGTERM_WAIT=1
 	export AIDEVOPS_PULSE_OS_NAME=Linux
