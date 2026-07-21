@@ -83,13 +83,16 @@ if [[ "$scenario" == "fail-once" && "$mode" == "snapshot" &&
 	: >"$failure_marker"
 	exit 42
 fi
+if [[ "$scenario" == "metadata-failure" && "$endpoint" == "repos/testorg/testrepo/pulls/123" ]]; then
+	exit 42
+fi
 
 emit_pages() {
 	local target_endpoint="$1"
 	local current_scenario="$2"
 	case "$target_endpoint" in
 	repos/testorg/testrepo/pulls/123/reviews | repos/testorg/testrepo/pulls/123/reviews?per_page=100)
-		if [[ "$current_scenario" == "empty" ]]; then
+		if [[ "$current_scenario" == "empty" || "$current_scenario" == "metadata-failure" ]]; then
 			printf '%s\n' '[]'
 		else
 			# Two pages prove that the snapshot collector preserves pagination.
@@ -142,6 +145,25 @@ run_check() {
 	RUN_STATUS=0
 	if REVIEW_GATE_AUTHOR_ASSOCIATION=MEMBER \
 		REVIEW_GATE_EVIDENCE_SNAPSHOT_DISABLE="$snapshot_disabled" \
+		do_check 123 'testorg/testrepo' >"$output_file" 2>"$error_file"; then
+		RUN_STATUS=0
+	else
+		RUN_STATUS=$?
+	fi
+	RUN_OUTPUT=""
+	IFS= read -r RUN_OUTPUT <"$output_file" || true
+	return 0
+}
+
+run_check_without_association() {
+	local scenario="$1"
+	local output_file="${TEST_ROOT}/check-output"
+	local error_file="${TEST_ROOT}/check-error"
+	printf '%s\n' "$scenario" >"$SCENARIO_FILE"
+	: >"$output_file"
+	: >"$error_file"
+	RUN_STATUS=0
+	if REVIEW_GATE_AUTHOR_ASSOCIATION='' REVIEW_GATE_EVIDENCE_SNAPSHOT_DISABLE=0 \
 		do_check 123 'testorg/testrepo' >"$output_file" 2>"$error_file"; then
 		RUN_STATUS=0
 	else
@@ -277,6 +299,40 @@ test_snapshot_failure_falls_back_without_losing_capability() {
 	return 0
 }
 
+test_missing_metadata_uses_rest_association_without_graphql_projection() {
+	: >"$CALL_LOG"
+	run_check_without_association real
+	local calls command_calls pull_metadata_calls
+	calls=$(call_count)
+	command_calls=$(matching_call_count 'command:')
+	pull_metadata_calls=$(exact_call_count 'direct:repos/testorg/testrepo/pulls/123')
+	if [[ "$RUN_STATUS" -eq 0 && "$RUN_OUTPUT" == "PASS" && "$calls" == "4" &&
+		"$command_calls" == "0" && "$pull_metadata_calls" == "1" ]]; then
+		print_result "missing association uses one REST pull lookup without gh pr projection" 0
+	else
+		print_result "missing association uses one REST pull lookup without gh pr projection" 1 \
+			"status=${RUN_STATUS} output=${RUN_OUTPUT} calls=${calls} command=${command_calls} pull=${pull_metadata_calls}"
+	fi
+	return 0
+}
+
+test_rest_association_failure_remains_blocked() {
+	: >"$CALL_LOG"
+	run_check_without_association metadata-failure
+	local calls command_calls pull_metadata_calls
+	calls=$(call_count)
+	command_calls=$(matching_call_count 'command:')
+	pull_metadata_calls=$(exact_call_count 'direct:repos/testorg/testrepo/pulls/123')
+	if [[ "$RUN_STATUS" -eq 1 && "$RUN_OUTPUT" == "WAITING" && "$calls" == "4" &&
+		"$command_calls" == "0" && "$pull_metadata_calls" == "1" ]]; then
+		print_result "REST association failure keeps unknown authors blocked" 0
+	else
+		print_result "REST association failure keeps unknown authors blocked" 1 \
+			"status=${RUN_STATUS} output=${RUN_OUTPUT} calls=${calls} command=${command_calls} pull=${pull_metadata_calls}"
+	fi
+	return 0
+}
+
 install_gh_stub
 load_helper_functions
 test_preloaded_metadata_avoids_duplicate_lookups
@@ -301,6 +357,8 @@ test_snapshot_reuses_three_paginated_collections
 test_snapshot_refreshes_between_decisions
 test_disable_toggle_restores_direct_queries
 test_snapshot_failure_falls_back_without_losing_capability
+test_missing_metadata_uses_rest_association_without_graphql_projection
+test_rest_association_failure_remains_blocked
 
 printf '\nTests run: %d, failed: %d\n' "$TESTS_RUN" "$TESTS_FAILED"
 if [[ "$TESTS_FAILED" -gt 0 ]]; then
