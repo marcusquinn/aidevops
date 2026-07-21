@@ -449,6 +449,31 @@ _create_orphan_recovery_pr() {
 }
 
 #######################################
+# Resolve the authoritative issue number for worker recovery metadata.
+#
+# The explicit worker contract wins. Session-key fallback is deliberately
+# limited to canonical `issue-N` keys because manual/validation session keys
+# can end in timestamps that are not GitHub issue numbers.
+#
+# Args: $1=session key
+# Outputs: issue number, or empty when identity is ambiguous
+#######################################
+_scl_worker_issue_number() {
+	local session_key="$1"
+
+	if [[ "${WORKER_ISSUE_NUMBER:-}" =~ ^[0-9]+$ ]]; then
+		printf '%s\n' "$WORKER_ISSUE_NUMBER"
+		return 0
+	fi
+	if [[ "$session_key" =~ ^issue-([0-9]+)$ ]]; then
+		printf '%s\n' "${BASH_REMATCH[1]}"
+		return 0
+	fi
+
+	return 0
+}
+
+#######################################
 # _attempt_orphan_recovery_pr — auto-recover a worker_branch_orphan (GH#20819)
 #
 # Called when a worker pushed a branch but exited without opening a PR.
@@ -469,7 +494,8 @@ _create_orphan_recovery_pr() {
 # worktree misclassifications so the recovery helper does not uselessly try to
 # create a duplicate PR or release the claim as worker_branch_orphan.
 #
-# On success: returns 0 (caller releases as worker_complete)
+# On success: returns 0 (caller records ready recovery as complete, or a draft
+# checkpoint as preserved/deferred according to recovery_mode)
 # On failure: returns 1 (caller releases as worker_branch_orphan)
 #
 # Args:
@@ -495,10 +521,12 @@ _attempt_orphan_recovery_pr() {
 		return 1
 	fi
 
-	# Derive issue number before branch guards so the existing-PR probe can
+	# Resolve issue identity before branch guards so the existing-PR probe can
 	# fall back to issue search when a cleaned worktree leaves branch_name empty.
+	# Never interpret arbitrary trailing digits as an issue: manual session keys
+	# commonly end in timestamps (GH#28437).
 	local issue_number=""
-	issue_number=$(printf '%s' "$session_key" | grep -oE '[0-9]+$' || true)
+	issue_number=$(_scl_worker_issue_number "$session_key")
 
 	# Pre-check (t3195/GH#21889): if a PR already exists for this branch
 	# (or issue), no recovery is needed. Caller releases as worker_complete.

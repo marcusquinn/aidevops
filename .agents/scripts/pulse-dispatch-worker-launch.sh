@@ -834,24 +834,17 @@ _dlw_node_modules_restore_release_lock() {
 	return 0
 }
 
-_dlw_restore_root_node_tool_links() {
+_dlw_remove_generated_root_node_tool_link() {
 	local worktree_path="$1"
 	local repo_path="$2"
-	[[ "${WORKTREE_NODE_MODULES_BIN_LINK_ENABLED:-1}" == "1" ]] || return 0
-
 	local _src_bin="${repo_path}/node_modules/.bin"
-	local _dst_nm="${worktree_path}/node_modules"
-	local _dst_bin="${_dst_nm}/.bin"
-	[[ -d "$_src_bin" ]] || return 0
-	if [[ -e "$_dst_bin" || -L "$_dst_bin" ]]; then
-		return 0
-	fi
-	if [[ -e "$_dst_nm" && ! -d "$_dst_nm" ]]; then
-		return 0
-	fi
-	mkdir -p "$_dst_nm" 2>/dev/null || return 0
-	ln -s "$_src_bin" "$_dst_bin" 2>/dev/null || return 0
-	echo "[dispatch_with_dedup] Linked root node_modules/.bin tooling for ${worktree_path} without copying root node_modules" >>"$LOGFILE"
+	local _dst_bin="${worktree_path}/node_modules/.bin"
+	local _link_target=""
+	[[ -L "$_dst_bin" ]] || return 0
+	_link_target=$(readlink "$_dst_bin" 2>/dev/null) || return 0
+	[[ "$_link_target" == "$_src_bin" ]] || return 0
+	rm -f "$_dst_bin" 2>/dev/null || return 0
+	echo "[dispatch_with_dedup] Removed generated cross-boundary node_modules/.bin link from ${worktree_path}" >>"$LOGFILE"
 	return 0
 }
 
@@ -888,7 +881,7 @@ _dlw_restore_worktree_deps() {
 		_rel_dir="${_dir#"$worktree_path"}" || continue
 		# _rel_dir is now e.g. "/.opencode" or "" (for root package.json)
 		if [[ -z "$_rel_dir" && "$_restore_root" != "1" ]]; then
-			_dlw_restore_root_node_tool_links "$worktree_path" "$repo_path"
+			_dlw_remove_generated_root_node_tool_link "$worktree_path" "$repo_path"
 			echo "[dispatch_with_dedup] Skipping root node_modules restore for ${worktree_path} (set WORKTREE_NODE_MODULES_RESTORE_ROOT_ENABLED=1 to enable)" >>"$LOGFILE"
 			continue
 		fi
@@ -1801,6 +1794,17 @@ _dlw_validate_worktree_for_launch() {
 	return 1
 }
 
+_dlw_append_node_tool_env() {
+	local repo_path="$1"
+	local node_tool_bin="${repo_path}/node_modules/.bin"
+	[[ -d "$node_tool_bin" && ! -L "$node_tool_bin" ]] || return 0
+	[[ "$node_tool_bin" != *:* && "$node_tool_bin" != *$'\n'* ]] || return 0
+	# Expose only executable package entrypoints through PATH. Do not place a
+	# canonical-checkout symlink inside the worktree or grant broad file access.
+	worker_cmd+=(PATH="${node_tool_bin}:${PATH:-/usr/bin:/bin}")
+	return 0
+}
+
 _dlw_append_trusted_release_env() {
 	local trusted_priority="${_DLW_TRUSTED_ISSUE_PRIORITY:-}"
 	local trusted_release_type="${_DLW_TRUSTED_RELEASE_TYPE:-}"
@@ -1892,6 +1896,7 @@ _dlw_nohup_launch() {
 		AIDEVOPS_DISPATCH_TIER="$dispatch_model_tier"
 		AIDEVOPS_DISPATCH_MODEL="$selected_model"
 	)
+	_dlw_append_node_tool_env "$repo_path"
 	_dlw_append_trusted_release_env
 	_dlw_append_worktree_transfer_env
 	if _dlw_min_worker_floor_active; then
@@ -1933,6 +1938,36 @@ _dlw_nohup_launch() {
 	fi
 
 	_dlw_exec_detached "$worker_log" "$issue_number" "${worker_cmd[@]}"
+	return 0
+}
+
+#######################################
+# Transition a durably registered live worker from queued to in-progress.
+#
+# Args: issue_number, repo_slug, self_login, worker_pid
+# Returns: 0=transition confirmed by mutation command, 1=worker/status unavailable
+#######################################
+_dlw_mark_worker_in_progress() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local self_login="$3"
+	local worker_pid="$4"
+
+	[[ "$worker_pid" =~ ^[0-9]+$ ]] || return 1
+	if ! kill -0 "$worker_pid" 2>/dev/null; then
+		echo "[dispatch_with_dedup] Worker registration for #${issue_number} has non-live PID ${worker_pid}; retaining status:queued for recovery" >>"$LOGFILE"
+		return 1
+	fi
+	if ! declare -F set_issue_status >/dev/null 2>&1; then
+		echo "[dispatch_with_dedup] Cannot transition #${issue_number} to status:in-progress: status helper unavailable" >>"$LOGFILE"
+		return 1
+	fi
+	if ! set_issue_status "$issue_number" "$repo_slug" "in-progress" \
+		--add-assignee "$self_login" >/dev/null 2>&1; then
+		echo "[dispatch_with_dedup] Failed to transition registered worker #${issue_number} to status:in-progress; retaining queued recovery signal" >>"$LOGFILE"
+		return 1
+	fi
+	echo "[dispatch_with_dedup] Registered live worker PID ${worker_pid} for #${issue_number}; transitioned status:queued to status:in-progress" >>"$LOGFILE"
 	return 0
 }
 
@@ -1980,13 +2015,23 @@ _dlw_post_launch_hooks() {
 
 	# Record in dispatch ledger (with tier telemetry)
 	local ledger_helper="${SCRIPT_DIR}/dispatch-ledger-helper.sh"
+	local ledger_registered=0
 	if [[ -x "$ledger_helper" ]]; then
-		"$ledger_helper" register --session-key "$session_key" \
+		if "$ledger_helper" register --session-key "$session_key" \
 			--issue "$issue_number" --repo "$repo_slug" \
 			--pid "$worker_pid" --tier "$dispatch_tier" \
 			--model "$selected_model" --lease-token "${_claim_lease_token:-}" \
 			--attempt-id "$attempt_id" \
-			--device-id "${_claim_lease_device:-}" --worktree "$worker_worktree_path" 2>/dev/null || true
+			--device-id "${_claim_lease_device:-}" --worktree "$worker_worktree_path" 2>/dev/null; then
+			ledger_registered=1
+		else
+			echo "[dispatch_with_dedup] Failed to register worker PID ${worker_pid} for #${issue_number}; retaining status:queued for recovery" >>"$LOGFILE"
+		fi
+	else
+		echo "[dispatch_with_dedup] Dispatch ledger helper unavailable for #${issue_number}; retaining status:queued for recovery" >>"$LOGFILE"
+	fi
+	if [[ "$ledger_registered" -eq 1 ]]; then
+		_dlw_mark_worker_in_progress "$issue_number" "$repo_slug" "$self_login" "$worker_pid" || true
 	fi
 
 	local dispatch_comment_body
