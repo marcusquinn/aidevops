@@ -100,7 +100,7 @@ from pathlib import Path
 import sys
 
 ROOT = Path(sys.argv[1])
-EVIDENCE_SCHEMA = "aidevops-github-api-efficiency-evidence/v1"
+EVIDENCE_SCHEMA = "aidevops-github-api-efficiency-evidence/v2"
 REPOSITORY_SET = "a" * 64
 
 
@@ -224,6 +224,8 @@ def evidence(*, p50, p95, burst, completed_p95, webhook_p95, complete=True):
             "fingerprint_verification_list_calls": 0,
             "fresh_empty_live_fallbacks": 0,
             "aggregate_check_fetches": 20,
+            "cycle_scoped_aggregate_check_fetches": 20,
+            "unique_cycle_scoped_actionable_heads": 20,
         },
     }
 
@@ -304,6 +306,8 @@ regression_evidence = evidence(
 regression_evidence["single_flight"]["duplicate_leaders"] = 1
 regression_evidence["webhook"]["duplicate_actions"] = 1
 regression_evidence["path_budgets"]["fingerprint_verification_list_calls"] = 1
+regression_evidence["path_budgets"]["aggregate_check_fetches"] = 21
+regression_evidence["path_budgets"]["cycle_scoped_aggregate_check_fetches"] = 21
 write_case("regression", regression_report, regression_evidence)
 
 incomplete_evidence = copy.deepcopy(PASS_EVIDENCE)
@@ -330,6 +334,8 @@ workload_evidence = copy.deepcopy(PASS_EVIDENCE)
 workload_evidence["population"]["unchanged_cycles"] = 100
 workload_evidence["population"]["actionable_changes"] = 0
 workload_evidence["population"]["unique_actionable_head_shas"] = 0
+workload_evidence["path_budgets"]["cycle_scoped_aggregate_check_fetches"] = 0
+workload_evidence["path_budgets"]["unique_cycle_scoped_actionable_heads"] = 0
 write_case("workload", PASS_REPORT, workload_evidence)
 
 invalid_population_evidence = copy.deepcopy(PASS_EVIDENCE)
@@ -456,6 +462,8 @@ test_regression() {
 		'.status == "REGRESSION" and (.reasons | length) >= 5' "$LAST_JSON"
 	assert_jq "path budget breach is explicit" \
 		'.reasons | any(contains("fingerprint_verification_list_calls"))' "$LAST_JSON"
+	assert_jq "cycle-scoped fetch budget breach is explicit" \
+		'.reasons | any(contains("cycle-scoped aggregate check fetches"))' "$LAST_JSON"
 	return 0
 }
 

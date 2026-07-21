@@ -19,7 +19,7 @@ from github_api_efficiency_metrics import (
 )
 
 
-EVIDENCE_SCHEMA = "aidevops-github-api-efficiency-evidence/v1"
+EVIDENCE_SCHEMA = "aidevops-github-api-efficiency-evidence/v2"
 TRANSPORT_SCHEMA_VERSION = 2
 _SHA256_RE = re.compile(r"^[a-f0-9]{64}$")
 _MAX_SAFE_INTEGER = 9_007_199_254_740_991
@@ -84,6 +84,8 @@ EVIDENCE_GROUPS = {
         "fingerprint_verification_list_calls",
         "fresh_empty_live_fallbacks",
         "aggregate_check_fetches",
+        "cycle_scoped_aggregate_check_fetches",
+        "unique_cycle_scoped_actionable_heads",
     ),
 }
 _MEASURED_EVIDENCE_FIELDS = frozenset(
@@ -211,22 +213,32 @@ def _validate_report(payload: dict[str, Any]) -> None:
             )
 
 
-def _validate_population_relationships(population: dict[str, Any]) -> None:
+def _validate_evidence_relationships(payload: dict[str, Any]) -> None:
+    population = payload["population"]
+    path_budgets = payload["path_budgets"]
     constraints = (
         (
-            "unchanged_cycles",
-            "pulse_cycles",
+            population["unchanged_cycles"],
+            population["pulse_cycles"],
             "evidence unchanged cycles exceed Pulse cycles",
         ),
         (
-            "unique_actionable_head_shas",
-            "actionable_changes",
+            population["unique_actionable_head_shas"],
+            population["actionable_changes"],
             "evidence unique actionable head SHAs exceed actionable changes",
         ),
+        (
+            path_budgets["cycle_scoped_aggregate_check_fetches"],
+            path_budgets["aggregate_check_fetches"],
+            "evidence cycle-scoped aggregate check fetches exceed total fetches",
+        ),
+        (
+            path_budgets["unique_cycle_scoped_actionable_heads"],
+            population["actionable_changes"],
+            "evidence cycle-scoped actionable heads exceed actionable observations",
+        ),
     )
-    for left_field, right_field, message in constraints:
-        left = population[left_field]
-        right = population[right_field]
+    for left, right, message in constraints:
         if None not in (left, right) and left > right:
             raise BenchmarkInputError(message)
 
@@ -241,7 +253,6 @@ def _validate_population(payload: dict[str, Any]) -> None:
             f"evidence.population.{field}",
             nullable=True,
         )
-    _validate_population_relationships(population)
     if "repository_set_sha256" not in population:
         raise BenchmarkInputError(
             "evidence.population.repository_set_sha256 is required"
@@ -288,6 +299,7 @@ def _validate_evidence(
         raise BenchmarkInputError("evidence.complete must be boolean")
     _validate_population(payload)
     _validate_evidence_groups(payload)
+    _validate_evidence_relationships(payload)
 
 
 def load_transport_report(

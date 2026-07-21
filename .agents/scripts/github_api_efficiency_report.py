@@ -342,15 +342,15 @@ def _budget_regression_reasons(canary: Window) -> list[str]:
             f"canary {group}.{field} is non-zero",
         )
     check_fetches = canary.evidence["path_budgets"][
-        "aggregate_check_fetches"
+        "cycle_scoped_aggregate_check_fetches"
     ]
-    unique_heads = canary.evidence["population"][
-        "unique_actionable_head_shas"
+    unique_heads = canary.evidence["path_budgets"][
+        "unique_cycle_scoped_actionable_heads"
     ]
     _flag(
         reasons,
         check_fetches > unique_heads,
-        "aggregate check fetches exceed unique actionable head SHAs",
+        "cycle-scoped aggregate check fetches exceed cycle-scoped actionable heads",
     )
     return reasons
 
