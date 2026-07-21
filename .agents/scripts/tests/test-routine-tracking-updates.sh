@@ -56,12 +56,25 @@ restore_scheduler_helper_mocks() {
 	print_info() { return 0; }
 	print_warning() { return 0; }
 	print_error() { return 0; }
-	_resolve_log_dir() { printf '%s\n' "$TEST_DIR/logs"; return 0; }
+	_resolve_log_dir() {
+		printf '%s\n' "$TEST_DIR/logs"
+		return 0
+	}
 	_install_scheduler_linux() { return 0; }
 	_uninstall_scheduler() { return 0; }
-	_resolve_modern_bash() { printf '%s\n' "/bin/bash"; return 0; }
-	_xml_escape() { local value="$1"; printf '%s' "$value"; return 0; }
-	aidevops_launchd_sanitized_path() { printf '%s\n' "/usr/bin:/bin"; return 0; }
+	_resolve_modern_bash() {
+		printf '%s\n' "/bin/bash"
+		return 0
+	}
+	_xml_escape() {
+		local value="$1"
+		printf '%s' "$value"
+		return 0
+	}
+	aidevops_launchd_sanitized_path() {
+		printf '%s\n' "/usr/bin:/bin"
+		return 0
+	}
 	_launchd_install_if_changed() { return 0; }
 	_launchd_has_agent() { return 1; }
 	return 0
@@ -115,7 +128,10 @@ test_linux_core_scheduler_commands_are_logged() {
 
 	# shellcheck source=/dev/null
 	source "$SCHEDULERS_SH"
-	uname() { printf 'Linux\n'; return 0; }
+	uname() {
+		printf 'Linux\n'
+		return 0
+	}
 	_SCHEDULER_CAPTURED_COMMAND=""
 	_install_scheduler_linux() {
 		local service_name="$1"
@@ -239,8 +255,8 @@ HELPER
 		attempts=$((attempts + 1))
 	done
 	captured=$(<"$capture_file")
-	if [[ "$captured" == update\ r778\ --status\ running*"marker=0"* && \
-		"$captured" == *"--status success"*"marker=1"* && \
+	if [[ "$captured" == update\ r778\ --status\ running*"marker=0"* &&
+		"$captured" == *"--status success"*"marker=1"* &&
 		"$(jq -r '.r778.last_status' "$ROUTINE_STATE_FILE")" == "success" ]]; then
 		print_result "agent routine records running before terminal completion" 0
 	else
@@ -290,7 +306,10 @@ test_opencode_archive_scheduler_is_daily_and_low_priority() {
 		captured_calendar="$on_calendar"
 		return 0
 	}
-	uname() { printf 'Linux\n'; return 0; }
+	uname() {
+		printf 'Linux\n'
+		return 0
+	}
 
 	local orig_home="$HOME"
 	HOME="$fake_home"
@@ -326,7 +345,10 @@ test_opencode_archive_scheduler_is_daily_and_low_priority() {
 
 test_opencode_archive_scheduler_tolerates_unset_home() {
 	local captured_warning=""
-	print_warning() { captured_warning="$1"; return 0; }
+	print_warning() {
+		captured_warning="$1"
+		return 0
+	}
 
 	local had_home="false"
 	local orig_home=""
@@ -367,9 +389,19 @@ test_opencode_archive_launchd_uses_safe_path_expansion() {
 		captured_plist="$content"
 		return 0
 	}
-	aidevops_launchd_sanitized_path() { local value="${1:-}"; printf '%s\n' "$value"; return $?; }
-	mkdir() { /bin/mkdir "$@"; return $?; }
-	uname() { printf 'Darwin\n'; return 0; }
+	aidevops_launchd_sanitized_path() {
+		local value="${1:-}"
+		printf '%s\n' "$value"
+		return $?
+	}
+	mkdir() {
+		/bin/mkdir "$@"
+		return $?
+	}
+	uname() {
+		printf 'Darwin\n'
+		return 0
+	}
 
 	local orig_home="${HOME:-}"
 	local orig_path="${PATH:-}"
@@ -415,9 +447,9 @@ test_nonterminal_lifecycle_does_not_require_tracking_issue() {
 		print_result "nonterminal lifecycle records without a tracking issue" 1 "$output"
 		return 0
 	}
-	if [[ -f "$lifecycle_file" && "$(jq -r '.status' "$lifecycle_file")" == "running" && \
-		"$(jq -r '.session_key' "$lifecycle_file")" == "routine-r799" && \
-		! -f "${fake_home}/.aidevops/.agent-workspace/cron/r799/routine-state.json" ]]; then
+	if [[ -f "$lifecycle_file" && "$(jq -r '.status' "$lifecycle_file")" == "running" &&
+	"$(jq -r '.session_key' "$lifecycle_file")" == "routine-r799" &&
+	! -f "${fake_home}/.aidevops/.agent-workspace/cron/r799/routine-state.json" ]]; then
 		print_result "nonterminal lifecycle records without a tracking issue" 0
 	else
 		print_result "nonterminal lifecycle records without a tracking issue" 1 "$output"

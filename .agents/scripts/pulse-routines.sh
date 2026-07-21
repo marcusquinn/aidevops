@@ -172,7 +172,7 @@ _routine_execute() {
 
 	if [[ -n "$run_script" ]]; then
 		local run_parts=()
-		IFS=' ' read -r -a run_parts <<< "$run_script"
+		IFS=' ' read -r -a run_parts <<<"$run_script"
 		local script_path="${agents_dir}/${run_parts[0]}"
 		local script_args=("${run_parts[@]:1}")
 		if [[ ! -x "$script_path" ]]; then

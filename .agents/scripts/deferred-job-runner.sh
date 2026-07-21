@@ -16,6 +16,11 @@ _DJ_RUN_HELPER=""
 _DJ_RUN_PROMPT_FILE=""
 _DJ_CHILD_PID=""
 _DJ_SUCCESS_OUTCOME="completed"
+_DJ_STATUS_QUEUED="queued"
+_DJ_STATUS_CLAIMED="claimed"
+_DJ_STATUS_RUNNING="running"
+_DJ_STATUS_SUCCESS="success"
+_DJ_STATUS_FAILURE="failure"
 
 _dj_recover_stale_jobs_locked() {
 	local now_epoch="$1"
@@ -40,10 +45,11 @@ _dj_recover_stale_jobs_locked() {
 		status=$(printf '%s\n' "$job_json" | jq -r '.status // ""')
 		lease_expires=$(printf '%s\n' "$job_json" | jq -r '.lease.expires_epoch // 0')
 		[[ "$lease_expires" =~ ^[0-9]+$ ]] || lease_expires=0
-		if [[ "$status" == "claimed" && "$lease_expires" -le "$now_epoch" ]]; then
+		if [[ "$status" == "$_DJ_STATUS_CLAIMED" && "$lease_expires" -le "$now_epoch" ]]; then
 			updated=$(printf '%s\n' "$job_json" | jq \
+				--arg status "$_DJ_STATUS_QUEUED" \
 				--arg recovered_at "$now_iso" \
-				'.status = "queued"
+				'.status = $status
 				 | .claimed_at = null
 				 | .lease = {id:null,expires_epoch:null}
 				 | .runner_pid = null
@@ -53,12 +59,13 @@ _dj_recover_stale_jobs_locked() {
 				 | .recovered_at = $recovered_at
 				 | .recovery_count = ((.recovery_count // 0) + 1)') || return 1
 			_dj_atomic_write_json "$job_file" "$updated" || return 1
-			_dj_append_event "$job_id" "queued" "claim_recovered" || true
-		elif [[ "$status" == "running" && "$lease_expires" -le "$now_epoch" ]]; then
+			_dj_append_event "$job_id" "$_DJ_STATUS_QUEUED" "claim_recovered" || true
+		elif [[ "$status" == "$_DJ_STATUS_RUNNING" && "$lease_expires" -le "$now_epoch" ]]; then
 			updated=$(printf '%s\n' "$job_json" | jq \
+				--arg status "$_DJ_STATUS_FAILURE" \
 				--arg finished_at "$now_iso" \
 				--argjson finished_epoch "$now_epoch" \
-				'.status = "failure"
+				'.status = $status
 				 | .finished_at = $finished_at
 				 | .finished_epoch = $finished_epoch
 				 | .lease = {id:null,expires_epoch:null}
@@ -67,7 +74,7 @@ _dj_recover_stale_jobs_locked() {
 				 | .outcome = "lease_expired_after_start"
 				 | .error = "runner_lost_before_terminal_write"') || return 1
 			_dj_atomic_write_json "$job_file" "$updated" || return 1
-			_dj_append_event "$job_id" "failure" "running_lease_expired" "not_replayed" || true
+			_dj_append_event "$job_id" "$_DJ_STATUS_FAILURE" "running_lease_expired" "not_replayed" || true
 		fi
 	done
 	return 0
@@ -108,15 +115,16 @@ _dj_claim_next_due() {
 		status=$(printf '%s\n' "$job_json" | jq -r '.status // ""')
 		due_epoch=$(printf '%s\n' "$job_json" | jq -r '.due_epoch // 0')
 		[[ "$due_epoch" =~ ^[0-9]+$ ]] || due_epoch=0
-		[[ "$status" == "queued" && "$due_epoch" -le "$now_epoch" ]] || continue
+		[[ "$status" == "$_DJ_STATUS_QUEUED" && "$due_epoch" -le "$now_epoch" ]] || continue
 		job_id=$(printf '%s\n' "$job_json" | jq -r '.id')
 		lease_id="lease-${job_id}-${now_epoch}-$$-${RANDOM}"
 		lease_expires=$((now_epoch + lease_seconds))
 		updated=$(printf '%s\n' "$job_json" | jq \
+			--arg status "$_DJ_STATUS_CLAIMED" \
 			--arg claimed_at "$now_iso" \
 			--arg lease_id "$lease_id" \
 			--argjson lease_expires "$lease_expires" \
-			'.status = "claimed"
+			'.status = $status
 			 | .claimed_at = $claimed_at
 			 | .attempt = ((.attempt // 0) + 1)
 			 | .lease = {id:$lease_id,expires_epoch:$lease_expires}
@@ -131,7 +139,7 @@ _dj_claim_next_due() {
 			_dj_release_lock
 			return 1
 		}
-		_dj_append_event "$job_id" "claimed" "due_claimed" || true
+		_dj_append_event "$job_id" "$_DJ_STATUS_CLAIMED" "due_claimed" || true
 		_DJ_CLAIMED_JOB_ID="$job_id"
 		_DJ_CLAIMED_LEASE_ID="$lease_id"
 		break
@@ -156,15 +164,16 @@ _dj_transition_claimed_to_running() {
 	job_json=$(_dj_read_job "$job_file" 2>/dev/null || true)
 	current_status=$(printf '%s\n' "$job_json" | jq -r '.status // ""' 2>/dev/null || true)
 	current_lease=$(printf '%s\n' "$job_json" | jq -r '.lease.id // ""' 2>/dev/null || true)
-	if [[ "$current_status" != "claimed" || "$current_lease" != "$lease_id" ]]; then
+	if [[ "$current_status" != "$_DJ_STATUS_CLAIMED" || "$current_lease" != "$lease_id" ]]; then
 		_dj_release_lock
 		return 1
 	fi
 	updated=$(printf '%s\n' "$job_json" | jq \
+		--arg status "$_DJ_STATUS_RUNNING" \
 		--arg started_at "$started_at" \
 		--argjson started_epoch "$started_epoch" \
 		--argjson runner_pid "$$" \
-		'.status = "running"
+		'.status = $status
 		 | .started_at = $started_at
 		 | .started_epoch = $started_epoch
 		 | .runner_pid = $runner_pid') || {
@@ -175,7 +184,7 @@ _dj_transition_claimed_to_running() {
 		_dj_release_lock
 		return 1
 	}
-	_dj_append_event "$job_id" "running" "dispatch_starting" || true
+	_dj_append_event "$job_id" "$_DJ_STATUS_RUNNING" "dispatch_starting" || true
 	_dj_release_lock
 	return 0
 }
@@ -190,8 +199,8 @@ _dj_set_child_pid() {
 	job_file=$(_dj_job_file "$job_id")
 	_dj_acquire_lock || return 1
 	job_json=$(_dj_read_job "$job_file" 2>/dev/null || true)
-	if [[ "$(printf '%s\n' "$job_json" | jq -r '.status // ""')" != "running" || \
-		"$(printf '%s\n' "$job_json" | jq -r '.lease.id // ""')" != "$lease_id" ]]; then
+	if [[ "$(printf '%s\n' "$job_json" | jq -r '.status // ""')" != "$_DJ_STATUS_RUNNING" ||
+	"$(printf '%s\n' "$job_json" | jq -r '.lease.id // ""')" != "$lease_id" ]]; then
 		_dj_release_lock
 		return 1
 	fi
@@ -222,8 +231,8 @@ _dj_renew_lease() {
 	job_file=$(_dj_job_file "$job_id")
 	_dj_acquire_lock || return 1
 	job_json=$(_dj_read_job "$job_file" 2>/dev/null || true)
-	if [[ "$(printf '%s\n' "$job_json" | jq -r '.status // ""')" != "running" || \
-		"$(printf '%s\n' "$job_json" | jq -r '.lease.id // ""')" != "$lease_id" ]]; then
+	if [[ "$(printf '%s\n' "$job_json" | jq -r '.status // ""')" != "$_DJ_STATUS_RUNNING" ||
+	"$(printf '%s\n' "$job_json" | jq -r '.lease.id // ""')" != "$lease_id" ]]; then
 		_dj_release_lock
 		return 1
 	fi
@@ -486,7 +495,7 @@ cmd_run_due() {
 	job_file=$(_dj_job_file "$job_id")
 	job_json=$(_dj_read_job "$job_file" 2>/dev/null || true)
 	if [[ -z "$job_json" ]] || ! _dj_preflight_job "$job_json"; then
-		_dj_finish_job "$job_id" "$lease_id" "claimed" "failure" "failed_preflight" "${_DJ_PREFLIGHT_ERROR:-invalid_job_state}" 0 || true
+		_dj_finish_job "$job_id" "$lease_id" "$_DJ_STATUS_CLAIMED" "$_DJ_STATUS_FAILURE" "failed_preflight" "${_DJ_PREFLIGHT_ERROR:-invalid_job_state}" 0 || true
 		printf 'Deferred job %s failed preflight: %s\n' "$job_id" "${_DJ_PREFLIGHT_ERROR:-invalid_job_state}" >&2
 		return 1
 	fi
@@ -496,7 +505,7 @@ cmd_run_due() {
 	fi
 	job_json=$(_dj_read_job "$job_file" 2>/dev/null || true)
 	if ! _dj_launch_job "$job_json"; then
-		_dj_finish_job "$job_id" "$lease_id" "running" "failure" "launch_failed" "launch_failed" 0 || true
+		_dj_finish_job "$job_id" "$lease_id" "$_DJ_STATUS_RUNNING" "$_DJ_STATUS_FAILURE" "launch_failed" "launch_failed" 0 || true
 		return 1
 	fi
 	_dj_set_child_pid "$job_id" "$lease_id" "$_DJ_CHILD_PID" || true
@@ -516,11 +525,11 @@ cmd_run_due() {
 	duration=$((ended_epoch - started_epoch))
 	[[ "$duration" -ge 0 ]] || duration=0
 	if [[ "$child_rc" -eq 0 ]]; then
-		_dj_finish_job "$job_id" "$lease_id" "running" "success" "$_DJ_SUCCESS_OUTCOME" "" "$duration" || return 1
+		_dj_finish_job "$job_id" "$lease_id" "$_DJ_STATUS_RUNNING" "$_DJ_STATUS_SUCCESS" "$_DJ_SUCCESS_OUTCOME" "" "$duration" || return 1
 		printf 'Deferred job %s completed\n' "$job_id"
 		return 0
 	fi
-	_dj_finish_job "$job_id" "$lease_id" "running" "failure" "runtime_exit_${child_rc}" "runtime_failed" "$duration" || return 1
+	_dj_finish_job "$job_id" "$lease_id" "$_DJ_STATUS_RUNNING" "$_DJ_STATUS_FAILURE" "runtime_exit_${child_rc}" "runtime_failed" "$duration" || return 1
 	printf 'Deferred job %s failed (exit %s)\n' "$job_id" "$child_rc" >&2
 	return "$child_rc"
 }

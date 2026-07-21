@@ -402,17 +402,17 @@ _dj_print_public_job() {
 
 cmd_status() {
 	local job_id=""
-	local json_output="false"
+	local json_output=0
 	local arg=""
 	local job_file=""
 	local job_json=""
 	local public_json=""
-	local first="true"
+	local first=1
 	while [[ $# -gt 0 ]]; do
 		arg="$1"
 		shift
 		case "$arg" in
-		--json) json_output="true" ;;
+		--json) json_output=1 ;;
 		--*)
 			printf 'ERROR: unknown status option: %s\n' "$arg" >&2
 			return 2
@@ -439,7 +439,7 @@ cmd_status() {
 			return 1
 		}
 		public_json=$(_dj_public_job_json "$job_json")
-		if [[ "$json_output" == "true" ]]; then
+		if [[ "$json_output" -eq 1 ]]; then
 			printf '%s\n' "$public_json"
 		else
 			printf 'ID\tNAME\tDUE (UTC)\tSTATUS\tOUTCOME\n'
@@ -447,7 +447,7 @@ cmd_status() {
 		fi
 		return 0
 	fi
-	if [[ "$json_output" == "true" ]]; then
+	if [[ "$json_output" -eq 1 ]]; then
 		printf '['
 	fi
 	for job_file in "$_DJ_JOBS_DIR"/*.json; do
@@ -455,21 +455,21 @@ cmd_status() {
 		job_json=$(_dj_read_job "$job_file" 2>/dev/null || true)
 		[[ -n "$job_json" ]] || continue
 		public_json=$(_dj_public_job_json "$job_json")
-		if [[ "$json_output" == "true" ]]; then
-			[[ "$first" == "true" ]] || printf ','
+		if [[ "$json_output" -eq 1 ]]; then
+			[[ "$first" -eq 1 ]] || printf ','
 			printf '%s' "$public_json"
-			first="false"
+			first=0
 		else
-			if [[ "$first" == "true" ]]; then
+			if [[ "$first" -eq 1 ]]; then
 				printf 'ID\tNAME\tDUE (UTC)\tSTATUS\tOUTCOME\n'
 			fi
 			_dj_print_public_job "$public_json"
-			first="false"
+			first=0
 		fi
 	done
-	if [[ "$json_output" == "true" ]]; then
+	if [[ "$json_output" -eq 1 ]]; then
 		printf ']\n'
-	elif [[ "$first" == "true" ]]; then
+	elif [[ "$first" -eq 1 ]]; then
 		printf 'No scheduled jobs.\n'
 	fi
 	return 0

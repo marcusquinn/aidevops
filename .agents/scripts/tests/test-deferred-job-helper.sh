@@ -123,10 +123,10 @@ test_queue_status_and_privacy() {
 	job_file="${STATE_DIR}/jobs/${job_id}.json"
 	prompt_file="${STATE_DIR}/prompts/${job_id}.prompt"
 	status_json=$(run_helper_at "$NOW_EPOCH" status "$job_id" --json)
-	if [[ "$(jq -r '.status' "$job_file")" == "queued" && \
-		"$(file_mode "$job_file")" == "600" && "$(file_mode "$prompt_file")" == "600" && \
-		"$status_json" != *"${TEST_ROOT}"* && "$status_json" != *"fixture prompt"* && \
-		"$(jq -r '.dispatch.prompt_ref' "$job_file")" == "prompts/${job_id}.prompt" ]]; then
+	if [[ "$(jq -r '.status' "$job_file")" == "queued" &&
+	"$(file_mode "$job_file")" == "600" && "$(file_mode "$prompt_file")" == "600" &&
+	"$status_json" != *"${TEST_ROOT}"* && "$status_json" != *"fixture prompt"* &&
+	"$(jq -r '.dispatch.prompt_ref' "$job_file")" == "prompts/${job_id}.prompt" ]]; then
 		result "queue stores private structured state and sanitized status" 0
 	else
 		result "queue stores private structured state and sanitized status" 1 "$status_json"
@@ -197,8 +197,8 @@ test_concurrent_ticks_do_not_double_launch() {
 	local pid2=$!
 	wait "$pid1" || rc1=$?
 	wait "$pid2" || rc2=$?
-	if [[ "$rc1" -eq 0 && "$rc2" -eq 0 && "$(dispatch_count)" -eq 1 && \
-		"$(run_helper_at "$((NOW_EPOCH + 20))" status "$job_id" --json | jq -r '.status')" == "success" ]]; then
+	if [[ "$rc1" -eq 0 && "$rc2" -eq 0 && "$(dispatch_count)" -eq 1 &&
+	"$(run_helper_at "$((NOW_EPOCH + 20))" status "$job_id" --json | jq -r '.status')" == "success" ]]; then
 		result "atomic claim fences concurrent due ticks" 0
 	else
 		result "atomic claim fences concurrent due ticks" 1 "rc1=$rc1 rc2=$rc2 count=$(dispatch_count)"
@@ -225,9 +225,9 @@ test_claim_recovery_and_running_fuse() {
 	jq '.status="running" | .lease={id:"old",expires_epoch:1} | .started_at="2026-07-21T00:00:00Z"' "$running_file" >"$tmp_file"
 	mv "$tmp_file" "$running_file"
 	run_helper_at "$((NOW_EPOCH + 20))" run-due >/dev/null
-	if [[ "$(jq -r '.status' "$claimed_file")" == "success" && "$(jq -r '.recovery_count' "$claimed_file")" -eq 1 && \
-		"$(jq -r '.status' "$running_file")" == "failure" && \
-		"$(jq -r '.outcome' "$running_file")" == "lease_expired_after_start" && "$(dispatch_count)" -eq 1 ]]; then
+	if [[ "$(jq -r '.status' "$claimed_file")" == "success" && "$(jq -r '.recovery_count' "$claimed_file")" -eq 1 &&
+	"$(jq -r '.status' "$running_file")" == "failure" &&
+	"$(jq -r '.outcome' "$running_file")" == "lease_expired_after_start" && "$(dispatch_count)" -eq 1 ]]; then
 		result "expired claims recover while ambiguous running work never replays" 0
 	else
 		result "expired claims recover while ambiguous running work never replays" 1
@@ -248,8 +248,8 @@ test_failed_preflight_is_durable() {
 	job_id=$(printf '%s\n' "$output" | awk '{print $2}')
 	rmdir "$gone_dir"
 	run_helper_at "$((NOW_EPOCH + 20))" run-due >/dev/null 2>&1 || rc=$?
-	if [[ "$rc" -ne 0 && "$(jq -r '.status' "${STATE_DIR}/jobs/${job_id}.json")" == "failure" && \
-		"$(jq -r '.outcome' "${STATE_DIR}/jobs/${job_id}.json")" == "failed_preflight" ]]; then
+	if [[ "$rc" -ne 0 && "$(jq -r '.status' "${STATE_DIR}/jobs/${job_id}.json")" == "failure" &&
+	"$(jq -r '.outcome' "${STATE_DIR}/jobs/${job_id}.json")" == "failed_preflight" ]]; then
 		result "missing dispatch inputs become durable failed preflight" 0
 	else
 		result "missing dispatch inputs become durable failed preflight" 1 "rc=$rc"
@@ -267,10 +267,10 @@ test_manual_issue_dispatch_and_scheduler_rendering() {
 	job_id=$(printf '%s\n' "$output" | awk '{print $2}')
 	run_helper_at "$((NOW_EPOCH + 20))" run-due >/dev/null
 	rendered=$(run_helper_at "$NOW_EPOCH" render-scheduler all)
-	if [[ "$(jq -r '.outcome' "${STATE_DIR}/jobs/${job_id}.json")" == "dispatched" && \
-		"$(<"$DISPATCH_LOG")" == *"manual dispatch 42 owner/repo"* && \
-		"$rendered" == *"StartInterval"* && "$rendered" == *"Persistent=true"* && \
-		"$rendered" == *"aidevops: deferred-jobs"* ]]; then
+	if [[ "$(jq -r '.outcome' "${STATE_DIR}/jobs/${job_id}.json")" == "dispatched" &&
+	"$(<"$DISPATCH_LOG")" == *"manual dispatch 42 owner/repo"* &&
+	"$rendered" == *"StartInterval"* && "$rendered" == *"Persistent=true"* &&
+	"$rendered" == *"aidevops: deferred-jobs"* ]]; then
 		result "issue work uses manual ceremony and one scheduler owner renders portably" 0
 	else
 		result "issue work uses manual ceremony and one scheduler owner renders portably" 1

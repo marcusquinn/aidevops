@@ -511,7 +511,7 @@ _parse_update_args() {
 	elif [[ -z "$_UPDATE_DURATION" ]]; then
 		_UPDATE_DURATION="0"
 	fi
-	if [[ ! "$_UPDATE_DURATION" =~ ^[0-9]+$ ]] || [[ ! "$_UPDATE_TOKENS" =~ ^[0-9]+$ ]] || \
+	if [[ ! "$_UPDATE_DURATION" =~ ^[0-9]+$ ]] || [[ ! "$_UPDATE_TOKENS" =~ ^[0-9]+$ ]] ||
 		[[ ! "$_UPDATE_COST" =~ ^[0-9]+([.][0-9]+)?$ ]]; then
 		_log_error "Duration and tokens must be non-negative integers; cost must be numeric"
 		return 1
