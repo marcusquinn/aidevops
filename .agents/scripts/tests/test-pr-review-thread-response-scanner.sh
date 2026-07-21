@@ -125,16 +125,47 @@ if [[ "$*" == *"check-ref-format --branch"* ]]; then
 fi
 if [[ "$*" == *"worktree list --porcelain"* && -f "${GIT_WORKTREE_REGISTRY}" ]]; then
 	while IFS=$'\t' read -r path branch oid; do
-		printf 'worktree %s\nHEAD %s\nbranch refs/heads/%s\n\n' "$path" "${oid:-$TEST_HEAD_OID_1}" "$branch"
+		printf 'worktree %s\nHEAD %s\n' "$path" "${oid:-$TEST_HEAD_OID_1}"
+		if [[ "$branch" == "__DETACHED__" ]]; then
+			printf 'detached\n\n'
+		else
+			printf 'branch refs/heads/%s\n\n' "$branch"
+		fi
 	done <"${GIT_WORKTREE_REGISTRY}"
 	exit 0
 fi
+if [[ "$*" == *" worktree add -q --detach "* ]]; then
+	bootstrap_path="${7:-}"
+	mkdir -p "$bootstrap_path"
+	printf '%s\t%s\t%s\n' "$bootstrap_path" '__DETACHED__' "$TEST_HEAD_OID_1" >>"${GIT_WORKTREE_REGISTRY}"
+	exit 0
+fi
+if [[ "$*" == *" worktree remove --force "* ]]; then
+	bootstrap_path="${6:-}"
+	rm -rf "$bootstrap_path"
+	while IFS=$'\t' read -r path branch oid; do
+		[[ "$path" == "$bootstrap_path" ]] || printf '%s\t%s\t%s\n' "$path" "$branch" "$oid"
+	done <"${GIT_WORKTREE_REGISTRY}" >"${GIT_WORKTREE_REGISTRY}.tmp"
+	mv "${GIT_WORKTREE_REGISTRY}.tmp" "${GIT_WORKTREE_REGISTRY}"
+	exit 0
+fi
 if [[ "$*" == *" fetch --no-tags --quiet origin "* ]]; then
+	printf '%s\n' "${2:-}" >>"${GIT_FETCH_CWD_LOG}"
+	if [[ "${STUB_GIT_CANONICAL_FETCH_FAIL:-false}" == "true" && "${2:-}" == "${GIT_CANONICAL_REPO_PATH}" ]]; then
+		exit 1
+	fi
 	[[ "${STUB_GIT_FETCH_FAIL:-false}" == "true" ]] && exit 1
+	printf '%s\n' "${STUB_REMOTE_HEAD_AFTER_FETCH:-${STUB_REMOTE_HEAD:-$TEST_HEAD_OID_1}}" >"${GIT_FETCHED_HEAD_STATE}"
 	exit 0
 fi
 if [[ "$*" == *"rev-parse refs/remotes/origin/"* ]]; then
-	printf '%s\n' "${STUB_REMOTE_HEAD:-$TEST_HEAD_OID_1}"
+	if [[ -f "${GIT_FETCHED_HEAD_STATE}" ]]; then
+		cat "${GIT_FETCHED_HEAD_STATE}"
+		exit 0
+	fi
+	remote_head="${STUB_REMOTE_HEAD_INITIAL:-${STUB_REMOTE_HEAD:-$TEST_HEAD_OID_1}}"
+	[[ "$remote_head" == "missing" ]] && exit 1
+	printf '%s\n' "$remote_head"
 	exit 0
 fi
 if [[ "${1:-}" == "-C" && "${3:-}" == "rev-parse" && "${4:-}" == "HEAD" && -f "${GIT_WORKTREE_REGISTRY}" ]]; then
@@ -229,7 +260,8 @@ WORKTREE_STUB
 
 setup_test_env() {
 	unset STUB_PR_LIST STUB_PR_VIEW STUB_THREADS_MODE STUB_CROSS_REPOSITORY STUB_REMOTE_HEAD
-	unset STUB_GIT_INVALID_BRANCH STUB_GIT_FETCH_FAIL STUB_WORKTREE_ACTUAL_HEAD STUB_WORKTREE_HELPER_FAIL
+	unset STUB_GIT_INVALID_BRANCH STUB_GIT_FETCH_FAIL STUB_GIT_CANONICAL_FETCH_FAIL
+	unset STUB_REMOTE_HEAD_INITIAL STUB_REMOTE_HEAD_AFTER_FETCH STUB_WORKTREE_ACTUAL_HEAD STUB_WORKTREE_HELPER_FAIL
 	unset PR_REVIEW_THREAD_RESPONSE_ESCALATE_AFTER
 	TEST_ROOT="$(mktemp -d -t prrts.XXXXXX)"
 	export HOME="${TEST_ROOT}/home"
@@ -241,7 +273,12 @@ setup_test_env() {
 	export HEADLESS_PROMPT_CAPTURE="${TEST_ROOT}/prompt.md"
 	export WORKTREE_HELPER_LOG="${TEST_ROOT}/worktree-helper.log"
 	export GIT_WORKTREE_REGISTRY="${TEST_ROOT}/git-worktrees.tsv"
+	export GIT_FETCH_CWD_LOG="${TEST_ROOT}/git-fetch-cwd.log"
+	export GIT_FETCHED_HEAD_STATE="${TEST_ROOT}/git-fetched-head.state"
+	export GIT_CANONICAL_REPO_PATH="${TEST_ROOT}/repo"
 	mkdir -p "${HOME}" "${TEST_ROOT}/bin" "${TEST_ROOT}/repo" "${AIDEVOPS_PR_REVIEW_THREAD_RESPONSE_STATE_DIR}"
+	mkdir -p "${TEST_ROOT}/fetch-worktree"
+	printf '%s\t%s\t%s\n' "${TEST_ROOT}/fetch-worktree" 'support/fetch' "$TEST_HEAD_OID_1" >"$GIT_WORKTREE_REGISTRY"
 	write_fake_gh_stub
 	write_fake_git_stub
 	write_fake_headless_stub
@@ -257,6 +294,9 @@ setup_test_env() {
 	: >"$GRAPHQL_MUTATIONS_LOG"
 	: >"$GRAPHQL_BODY_CAPTURE"
 	: >"$GRAPHQL_BODY_FLAG_CAPTURE"
+	: >"$HEADLESS_LOG"
+	: >"$GIT_FETCH_CWD_LOG"
+	rm -f "$GIT_FETCHED_HEAD_STATE"
 	return 0
 }
 
@@ -273,6 +313,46 @@ test_dispatch_uses_linked_pr_branch_worktree() {
 		print_result "dispatch creates and uses linked PR branch worktree" 0
 	else
 		print_result "dispatch creates and uses linked PR branch worktree" 1 "expected=${expected_path}"
+	fi
+	teardown_test_env
+	return 0
+}
+
+test_dispatch_fetches_head_from_linked_worktree_context() {
+	local expected_fetch_cwd=""
+
+	setup_test_env
+	export STUB_REMOTE_HEAD_INITIAL="missing"
+	export STUB_GIT_CANONICAL_FETCH_FAIL="true"
+	expected_fetch_cwd=$(cd "${TEST_ROOT}/fetch-worktree" && pwd -P)
+	$SCANNER dispatch owner/repo "${TEST_ROOT}/repo"
+	wait_for_headless_log || true
+	if [[ -s "$HEADLESS_LOG" ]] &&
+		grep -Fxq "$expected_fetch_cwd" "$GIT_FETCH_CWD_LOG" 2>/dev/null &&
+		! grep -Fxq "$GIT_CANONICAL_REPO_PATH" "$GIT_FETCH_CWD_LOG" 2>/dev/null; then
+		print_result "dispatch fetches a missing PR head from linked-worktree context" 0
+	else
+		print_result "dispatch fetches a missing PR head from linked-worktree context" 1 \
+			"headless=$(wc -c <"$HEADLESS_LOG" 2>/dev/null || printf 0), fetch_cwds=$(tr '\n' ';' <"$GIT_FETCH_CWD_LOG" 2>/dev/null || printf '')"
+	fi
+	teardown_test_env
+	return 0
+}
+
+test_dispatch_bootstraps_fetch_context_without_linked_worktree() {
+	setup_test_env
+	export STUB_REMOTE_HEAD_INITIAL="missing"
+	rm -rf "${TEST_ROOT}/fetch-worktree"
+	: >"$GIT_WORKTREE_REGISTRY"
+	$SCANNER dispatch owner/repo "${TEST_ROOT}/repo"
+	wait_for_headless_log || true
+	if [[ -s "$HEADLESS_LOG" ]] &&
+		grep -Eq "${TEST_ROOT}/worktrees/\\.repo-fetch-[0-9]+" "$GIT_FETCH_CWD_LOG" 2>/dev/null &&
+		! compgen -G "${TEST_ROOT}/worktrees/.repo-fetch-*" >/dev/null; then
+		print_result "dispatch bootstraps and removes a linked fetch context" 0
+	else
+		print_result "dispatch bootstraps and removes a linked fetch context" 1 \
+			"headless=$(wc -c <"$HEADLESS_LOG" 2>/dev/null || printf 0), fetch_cwds=$(tr '\n' ';' <"$GIT_FETCH_CWD_LOG" 2>/dev/null || printf '')"
 	fi
 	teardown_test_env
 	return 0
@@ -767,6 +847,68 @@ test_dispatch_retries_stale_branch_validation_blocker_once() {
 	return 0
 }
 
+test_dispatch_retries_stale_branch_unavailable_blocker_once() {
+	setup_test_env
+	local state_file="${AIDEVOPS_PR_REVIEW_THREAD_RESPONSE_STATE_DIR}/owner-repo-1.state"
+	local old_epoch=""
+	old_epoch="$(($(date +%s) - 4000))"
+	{
+		printf 'fingerprint=THREAD1:https://example.invalid/thread\n'
+		printf 'dispatched_at=%s\n' "$old_epoch"
+		printf 'thread_count=1\n'
+		printf 'attempt_count=1\n'
+		printf 'last_head_sha=%s\n' "$TEST_HEAD_OID_1"
+		printf 'analysis_complete=true\n'
+		printf 'blocked_by=code\n'
+		printf 'maintainer_attention=true\n'
+		printf 'attention_reason=pr_head_branch_unavailable\n'
+		printf 'blocker_reason=pr_head_branch_unavailable\n'
+	} >"$state_file"
+	$SCANNER dispatch owner/repo "${TEST_ROOT}/repo"
+	wait_for_headless_log || true
+	if [[ -s "$HEADLESS_LOG" ]] &&
+		grep -q '^attempt_count=2$' "$state_file" 2>/dev/null &&
+		! grep -q '^analysis_complete=' "$state_file" 2>/dev/null &&
+		grep -q 'retrying stale PR head validation failure once (pr_head_branch_unavailable)' "$LOGFILE" 2>/dev/null; then
+		print_result "dispatch retries a stale branch-unavailable blocker once" 0
+	else
+		print_result "dispatch retries a stale branch-unavailable blocker once" 1 \
+			"headless=$(wc -c <"$HEADLESS_LOG" 2>/dev/null || printf 0), state=$(tr '\n' ';' <"$state_file" 2>/dev/null || printf ''), log=$(tr '\n' ';' <"$LOGFILE" 2>/dev/null || printf '')"
+	fi
+	teardown_test_env
+	return 0
+}
+
+test_dispatch_retries_transient_head_fetch_failure_once() {
+	setup_test_env
+	export STUB_REMOTE_HEAD_INITIAL="missing"
+	export STUB_GIT_FETCH_FAIL="true"
+	$SCANNER dispatch owner/repo "${TEST_ROOT}/repo"
+	local state_file="${AIDEVOPS_PR_REVIEW_THREAD_RESPONSE_STATE_DIR}/owner-repo-1.state"
+	local first_failure_ok="false"
+	if grep -q '^blocked_by=infrastructure$' "$state_file" 2>/dev/null &&
+		grep -q '^blocker_reason=pr_head_fetch_failed$' "$state_file" 2>/dev/null; then
+		first_failure_ok="true"
+	fi
+	local old_epoch=""
+	old_epoch="$(($(date +%s) - 4000))"
+	expire_state_dispatch_time "$state_file" "$old_epoch"
+	unset STUB_GIT_FETCH_FAIL
+	: >"$HEADLESS_LOG"
+	$SCANNER dispatch owner/repo "${TEST_ROOT}/repo"
+	wait_for_headless_log || true
+	if [[ "$first_failure_ok" == "true" && -s "$HEADLESS_LOG" ]] &&
+		grep -q '^attempt_count=2$' "$state_file" 2>/dev/null &&
+		! grep -q '^analysis_complete=' "$state_file" 2>/dev/null; then
+		print_result "dispatch retries a transient linked-worktree fetch failure once" 0
+	else
+		print_result "dispatch retries a transient linked-worktree fetch failure once" 1 \
+			"first_failure_ok=${first_failure_ok}, headless=$(wc -c <"$HEADLESS_LOG" 2>/dev/null || printf 0), state=$(tr '\n' ';' <"$state_file" 2>/dev/null || printf '')"
+	fi
+	teardown_test_env
+	return 0
+}
+
 test_dispatch_does_not_repeat_branch_validation_recovery() {
 	setup_test_env
 	local state_file="${AIDEVOPS_PR_REVIEW_THREAD_RESPONSE_STATE_DIR}/owner-repo-1.state"
@@ -1125,6 +1267,8 @@ main() {
 	test_dispatch_launches_worker_and_writes_state
 	test_dispatch_preserves_head_fields_when_labels_are_empty
 	test_dispatch_uses_linked_pr_branch_worktree
+	test_dispatch_fetches_head_from_linked_worktree_context
+	test_dispatch_bootstraps_fetch_context_without_linked_worktree
 	test_dispatch_exports_worktree_ownership_context
 	test_dispatch_blocks_cross_repository_head
 	test_dispatch_blocks_remote_head_drift
@@ -1143,6 +1287,8 @@ main() {
 	test_new_head_sha_resets_repeated_fingerprint_attempts
 	test_mark_blocked_skips_same_fingerprint_without_retry
 	test_dispatch_retries_stale_branch_validation_blocker_once
+	test_dispatch_retries_stale_branch_unavailable_blocker_once
+	test_dispatch_retries_transient_head_fetch_failure_once
 	test_dispatch_does_not_repeat_branch_validation_recovery
 	test_no_marker_retry_behavior_is_preserved
 	test_old_state_file_without_completion_fields_still_retries

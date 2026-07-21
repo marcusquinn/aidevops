@@ -48,6 +48,7 @@ PRRTS_TSV_FIELD_SEPARATOR=$'\034'
 PRRTS_RC_GRAPHQL_EXHAUSTED=75
 PRRTS_BLOCKED_BY_CODE="code"
 PRRTS_BLOCKED_BY_INFRASTRUCTURE="infrastructure"
+PRRTS_REASON_HEAD_FETCH_FAILED="pr_head_fetch_failed"
 PRRTS_WORKTREE_FAILURE_BLOCKED_BY="$PRRTS_BLOCKED_BY_INFRASTRUCTURE"
 PRRTS_WORKTREE_FAILURE_REASON="review_worktree_preparation_failed"
 
@@ -796,6 +797,18 @@ _prrts_read_state() {
 	return 0
 }
 
+_prrts_retryable_prelaunch_failure_once() {
+	local blocker_reason="$1"
+	case "$blocker_reason" in
+	pr_head_branch_invalid | pr_head_sha_invalid | pr_head_branch_unavailable | "$PRRTS_REASON_HEAD_FETCH_FAILED")
+		return 0
+		;;
+	*)
+		return 1
+		;;
+	esac
+}
+
 _prrts_should_dispatch() {
 	local repo_slug="$1"
 	local pr_number="$2"
@@ -838,7 +851,7 @@ _prrts_should_dispatch() {
 		return 1
 	fi
 	if [[ "$state_repeated_same_fingerprint" == "$PRRTS_BOOL_TRUE" && "$analysis_complete" == "$PRRTS_BOOL_TRUE" && "$maintainer_attention" == "$PRRTS_BOOL_TRUE" ]]; then
-		if [[ "$last_attempt_count" -eq 1 && ("$blocker_reason" == "pr_head_branch_invalid" || "$blocker_reason" == "pr_head_sha_invalid") ]]; then
+		if [[ "$last_attempt_count" -eq 1 ]] && _prrts_retryable_prelaunch_failure_once "$blocker_reason"; then
 			retry_stale_head_validation="$PRRTS_BOOL_TRUE"
 		else
 			_prrts_log "dispatch: ${repo_slug}#${pr_number} skipped — analysis complete and blocked by ${blocked_by:-decision}; maintainer attention pending"
@@ -1131,12 +1144,53 @@ _prrts_fetch_exact_worker_head() {
 	local head_ref="$4"
 	local head_oid="$5"
 	local remote_head=""
+	local canonical_root=""
+	local fetch_cwd=""
+	local worktree_line=""
+	local worktree_path=""
+	local resolved_path=""
+	local bootstrap_path=""
+	local repo_name=""
+	local fetch_rc=0
 
-	if ! git -C "$repo_path" fetch --no-tags --quiet origin \
-		"+refs/heads/${head_ref}:refs/remotes/origin/${head_ref}" >/dev/null 2>&1; then
-		_prrts_log "dispatch: ${repo_slug}#${pr_number} skipped — PR head branch is unavailable from the base repository remote"
-		PRRTS_WORKTREE_FAILURE_BLOCKED_BY="$PRRTS_BLOCKED_BY_CODE"
-		PRRTS_WORKTREE_FAILURE_REASON="pr_head_branch_unavailable"
+	canonical_root=$(cd "$repo_path" 2>/dev/null && pwd -P) || canonical_root=""
+	while IFS= read -r worktree_line || [[ -n "$worktree_line" ]]; do
+		case "$worktree_line" in
+		"worktree "*)
+			worktree_path="${worktree_line#worktree }"
+			[[ -d "$worktree_path" ]] || continue
+			resolved_path=$(cd "$worktree_path" 2>/dev/null && pwd -P) || resolved_path=""
+			[[ -n "$resolved_path" && "$resolved_path" != "$canonical_root" ]] || continue
+			fetch_cwd="$resolved_path"
+			break
+			;;
+		esac
+	done < <(git -C "$repo_path" worktree list --porcelain 2>/dev/null)
+
+	if [[ -z "$fetch_cwd" ]]; then
+		repo_name="$(basename "$repo_path")"
+		mkdir -p "$PR_REVIEW_THREAD_RESPONSE_WORKTREE_BASE_DIR" 2>/dev/null || {
+			PRRTS_WORKTREE_FAILURE_REASON="$PRRTS_REASON_HEAD_FETCH_FAILED"
+			return 1
+		}
+		bootstrap_path="${PR_REVIEW_THREAD_RESPONSE_WORKTREE_BASE_DIR}/.${repo_name}-fetch-$$"
+		if ! git -C "$repo_path" worktree add -q --detach "$bootstrap_path" HEAD >/dev/null 2>&1; then
+			_prrts_log "dispatch: ${repo_slug}#${pr_number} skipped — could not create a linked PR head fetch context"
+			PRRTS_WORKTREE_FAILURE_REASON="$PRRTS_REASON_HEAD_FETCH_FAILED"
+			return 1
+		fi
+		fetch_cwd="$bootstrap_path"
+	fi
+
+	git -C "$fetch_cwd" fetch --no-tags --quiet origin \
+		"+refs/heads/${head_ref}:refs/remotes/origin/${head_ref}" >/dev/null 2>&1 || fetch_rc=$?
+	if [[ -n "$bootstrap_path" ]]; then
+		git -C "$fetch_cwd" worktree remove --force "$bootstrap_path" >/dev/null 2>&1 || true
+	fi
+	if [[ "$fetch_rc" -ne 0 ]]; then
+		_prrts_log "dispatch: ${repo_slug}#${pr_number} skipped — PR head fetch failed from linked-worktree context"
+		PRRTS_WORKTREE_FAILURE_BLOCKED_BY="$PRRTS_BLOCKED_BY_INFRASTRUCTURE"
+		PRRTS_WORKTREE_FAILURE_REASON="$PRRTS_REASON_HEAD_FETCH_FAILED"
 		return 1
 	fi
 	remote_head=$(git -C "$repo_path" rev-parse "refs/remotes/origin/${head_ref}" 2>/dev/null) || remote_head=""
