@@ -55,6 +55,10 @@ _storage_measure_path() {
 	local kib=""
 	local ignored=""
 
+	if [[ -z "$path" ]]; then
+		printf 'null|unavailable|home-unavailable'
+		return 0
+	fi
 	if [[ ! -e "$path" && ! -L "$path" ]]; then
 		printf '0|exact|missing'
 		return 0
@@ -618,7 +622,7 @@ _storage_observability_record() {
 		_storage_emit_record "observability" "opencode-aidevops" "$display_path" "$actual_path" \
 			"$STORAGE_OWNER_FRAMEWORK" "$STORAGE_UNKNOWN" "retention inventory unavailable" "$STORAGE_UNKNOWN" \
 			"classification unavailable" "Use observability-helper.sh storage --json" |
-			jq -c '.error = "retention-inventory-unavailable"'
+			jq -c '.error = (if .error == "home-unavailable" then .error else "retention-inventory-unavailable" end)'
 		return 0
 	fi
 
