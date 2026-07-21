@@ -8,6 +8,7 @@ TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SCRIPTS_DIR="${TEST_DIR}/.."
 CLAIM="${SCRIPTS_DIR}/dispatch-claim-helper.sh"
 LEDGER="${SCRIPTS_DIR}/dispatch-ledger-helper.sh"
+DEDUP="${SCRIPTS_DIR}/dispatch-dedup-helper.sh"
 SCRIPT_DIR="$SCRIPTS_DIR"
 # shellcheck source=../dispatch-dedup-stale.sh
 source "${SCRIPTS_DIR}/dispatch-dedup-stale.sh"
@@ -41,11 +42,14 @@ fi
 [[ "$endpoint" == repos/*/issues/*/comments* ]] || exit 1
 method=GET
 body=""
+jq_expr=""
+slurp_output=0
 while [[ $# -gt 0 ]]; do
 	case "$1" in
 	--method) method="$2"; shift 2 ;;
 	--field) [[ "$2" == body=* ]] && body="${2#body=}"; shift 2 ;;
-	--jq) shift 2 ;;
+	--jq) jq_expr="$2"; shift 2 ;;
+	--slurp) slurp_output=1; shift ;;
 	*) shift ;;
 	esac
 done
@@ -61,7 +65,17 @@ if [[ "$method" == POST ]]; then
 	printf '%s\n' "$id"
 	exit 0
 fi
-jq -sc '[.]' "$comments"
+comments_json=$(jq -sc '.' "$comments")
+if [[ -n "$jq_expr" ]]; then
+	printf '%s' "$comments_json" | jq -c "$jq_expr"
+	return_code=$?
+	exit "$return_code"
+fi
+if [[ "$slurp_output" -eq 1 ]]; then
+	printf '[%s]\n' "$comments_json"
+	exit 0
+fi
+printf '%s\n' "$comments_json"
 MOCK
 	chmod +x "$root/bin/gh"
 	return 0
@@ -146,6 +160,9 @@ test_launch_crash_ready_terminal_race() {
 	PATH="$root/bin:$PATH" MOCK_GH_STATE="$root/state" AIDEVOPS_DEVICE_ID=device-a \
 		"$CLAIM" transition ready 44 owner/repo "$token" issue-44 30
 	PATH="$root/bin:$PATH" MOCK_GH_STATE="$root/state" "$CLAIM" check 44 owner/repo >/dev/null || fail "ready lease not protected"
+	PATH="$root/bin:$PATH" MOCK_GH_STATE="$root/state" \
+		gh api repos/owner/repo/issues/44/comments --method POST \
+		--field body="Dispatching worker (deterministic)." >/dev/null
 	local old_created=""
 	old_created=$(python3 - <<'PY'
 from datetime import datetime, timedelta, timezone
@@ -170,9 +187,12 @@ PY
 		gh api repos/owner/repo/issues/44/comments --method POST --field body="$forged_body" >/dev/null
 	PATH="$root/bin:$PATH" MOCK_GH_STATE="$root/state" "$CLAIM" check 44 owner/repo >/dev/null \
 		|| fail "device-mismatched transition terminated ready lease"
+	PATH="$root/bin:$PATH" MOCK_GH_STATE="$root/state" DISPATCH_COMMENT_MAX_AGE=600 \
+		"$DEDUP" has-dispatch-comment 44 owner/repo shared-login >/dev/null \
+		|| fail "forged terminal lease released dispatch-comment dedup"
 	pass "remote transitions require claim author device and session"
 	local dispatch_ts=""
-	dispatch_ts=$(jq -sr '[.[] | select(.body | contains("session=issue-44 phase=prelaunch"))] | first.created_at' "$root/state/comments.jsonl")
+	dispatch_ts=$(jq -sr '[.[] | select(.body | contains("Dispatching worker"))] | first.created_at' "$root/state/comments.jsonl")
 	if PATH="$root/bin:$PATH" MOCK_GH_STATE="$root/state" _stale_recovery_final_evidence_recheck 44 owner/repo "$dispatch_ts"; then
 		fail "stale recovery ignored active ready lease"
 	fi
@@ -191,6 +211,10 @@ PY
 	fi
 	if ! PATH="$root/bin:$PATH" MOCK_GH_STATE="$root/state" _stale_recovery_final_evidence_recheck 44 owner/repo "$dispatch_ts"; then
 		fail "terminal did not cancel ready for stale recovery"
+	fi
+	if PATH="$root/bin:$PATH" MOCK_GH_STATE="$root/state" DISPATCH_COMMENT_MAX_AGE=600 \
+		"$DEDUP" has-dispatch-comment 44 owner/repo shared-login >/dev/null 2>&1; then
+		fail "matching terminal lease did not release dispatch-comment dedup"
 	fi
 	pass "terminal transition defeats concurrent or late ready"
 	return 0

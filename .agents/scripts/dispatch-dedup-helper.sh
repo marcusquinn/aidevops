@@ -2037,26 +2037,11 @@ enumerate_blockers() {
 # PR evidence dedup check functions are in dispatch-dedup-pr.sh (GH#18916).
 
 #######################################
-# Check whether a local process currently covers an issue.
-#######################################
-_dd_has_local_worker_for_issue() {
-	local issue_number="$1"
-	local running_keys=""
-	running_keys=$(list_running_keys 2>/dev/null || true)
-	if printf '%s\n' "$running_keys" | grep -Eq "\|(issue|ref)-${issue_number}$"; then
-		return 0
-	fi
-	return 1
-}
-
-#######################################
 # Check whether a single dispatch comment is still active.
 #
-# GH#16626: Process liveness check — if the comment is within TTL but no
-# worker process is running for this issue locally, the worker completed or
-# crashed without cleanup. Treat as stale and allow re-dispatch.
-# Grace period: comments <5 min old skip the liveness check to avoid racing
-# with worker startup (process may not be visible yet).
+# Local process absence is not completion evidence: the same GitHub login can
+# dispatch from another device. Durable terminal comments or a matching lease
+# transition retire the lock early; otherwise the extended worker TTL applies.
 #
 # Args:
 #   $1 = comment created_at (ISO 8601)
@@ -2064,7 +2049,7 @@ _dd_has_local_worker_for_issue() {
 #   $3 = issue number (for process search)
 #   $4 = now_epoch (seconds since epoch)
 #   $5 = max_age (seconds)
-#   $6 = self login (optional, for local stale-worker reconciliation)
+#   $6 = self login (retained for backward-compatible callers)
 # Returns: exit 0 if comment is active (blocks dispatch), exit 1 if stale/expired
 # Outputs: reason string on stdout when active
 #
@@ -2102,7 +2087,8 @@ _is_dispatch_comment_active() {
 	local issue_number="$3"
 	local now_epoch="$4"
 	local max_age="$5"
-	local self_login="${6:-}"
+	# $6 is intentionally unused: local process state cannot disprove a remote
+	# worker owned by the same GitHub login.
 	local active_worker_max_age="${DISPATCH_ACTIVE_WORKER_MAX_AGE:-7200}"
 	[[ "$active_worker_max_age" =~ ^[0-9]+$ ]] || active_worker_max_age=7200
 
@@ -2120,11 +2106,6 @@ _is_dispatch_comment_active() {
 	# non-terminal worker window expires; after that, a later claim path can emit
 	# an explicit stale-worker takeover reason instead of a bare DISPATCH_CLAIM.
 	if [[ "$age" -ge "$max_age" ]]; then
-		if [[ -n "$self_login" && "$author" == "$self_login" ]]; then
-			if ! _dd_has_local_worker_for_issue "$issue_number"; then
-				return 1
-			fi
-		fi
 		if [[ "$age" -lt "$active_worker_max_age" ]]; then
 			printf 'non-terminal dispatch comment by %s posted %ds ago on issue #%s (soft TTL expired; active-worker window: %ds remaining)\n' \
 				"$author" "$age" "$issue_number" "$((active_worker_max_age - age))"
@@ -2209,6 +2190,48 @@ _dd_opportunistic_peer_scan() {
 	return 0
 }
 
+#######################################
+# Check for a cryptographically-unpredictable lease token whose terminal
+# transition matches the original claim author, device, and session. Both the
+# claim and transition ordering must surround the deterministic dispatch
+# comment, so unrelated or forged terminal text cannot retire its dedup lock.
+#
+# Args: comments JSON, dispatch timestamp, dispatch comment ID
+# Returns: 0 when a matching terminal lease supersedes dispatch; 1 otherwise
+#######################################
+_dd_has_matching_terminal_lease() {
+	local comments_json="$1"
+	local dispatch_created_at="$2"
+	local dispatch_id="$3"
+	local lease_filter="${SCRIPT_DIR}/dispatch-lease-claims.jq"
+	local claims_json="[]"
+	local parsed_claims="[]"
+	local now_epoch=""
+
+	[[ -r "$lease_filter" && -n "$dispatch_created_at" ]] || return 1
+	[[ "$dispatch_id" =~ ^[0-9]+$ ]] || dispatch_id=0
+	claims_json=$(printf '%s' "$comments_json" | jq -c \
+		'[.[] | select((.body // "") | contains("DISPATCH_CLAIM nonce="))]' \
+		2>/dev/null) || return 1
+	[[ "$claims_json" != "[]" ]] || return 1
+	now_epoch=$(date -u '+%s')
+	parsed_claims=$(printf '%s' "$claims_json" | jq -c \
+		--argjson now "$now_epoch" --argjson max_age 2147483647 \
+		--argjson include_terminal true --argjson comments "$comments_json" \
+		-f "$lease_filter" 2>/dev/null) || return 1
+
+	if printf '%s' "$parsed_claims" | jq -e \
+		--arg dispatch_ts "$dispatch_created_at" --argjson dispatch_id "$dispatch_id" '
+		any(.[];
+			.lease_phase == "terminal" and
+			[.created_at, ((.id // 0) | tonumber? // 0)] <= [$dispatch_ts, $dispatch_id] and
+			[.lease_terminal_at, (.lease_terminal_id // 0)] > [$dispatch_ts, $dispatch_id]
+		)' >/dev/null 2>&1; then
+		return 0
+	fi
+	return 1
+}
+
 has_dispatch_comment() {
 	local issue_number="$1"
 	local repo_slug="$2"
@@ -2232,8 +2255,11 @@ has_dispatch_comment() {
 	local comments_json
 	comments_json=$(gh api "repos/${repo_slug}/issues/${issue_number}/comments" \
 		--jq '[.[] | {
+			id: .id,
+			body: (.body // ""),
 			body_start: (.body[:300]),
 			author: .user.login,
+			author_association: (.author_association // ""),
 			created_at: .created_at
 		}]' \
 		2>/dev/null) || comments_json="[]"
@@ -2258,12 +2284,20 @@ has_dispatch_comment() {
 		return 1
 	fi
 
-	local dispatch_created_at dispatch_author
+	local dispatch_created_at dispatch_author dispatch_id
 	dispatch_created_at=$(printf '%s' "$last_dispatch_json" | jq -r '.created_at // ""' 2>/dev/null) || dispatch_created_at=""
 	dispatch_author=$(printf '%s' "$last_dispatch_json" | jq -r '.author // ""' 2>/dev/null) || dispatch_author=""
+	dispatch_id=$(printf '%s' "$last_dispatch_json" | jq -r '.id // 0' 2>/dev/null) || dispatch_id=0
 
 	# Check if the dispatch comment is within TTL
 	if ! _is_dispatch_comment_active "$dispatch_created_at" "$dispatch_author" "$issue_number" "$now_epoch" "$max_age" "${3:-}"; then
+		return 1
+	fi
+
+	# A CLAIM_RELEASED write can fail after the worker has already emitted its
+	# structured terminal lease transition. Reconcile that authenticated
+	# transition as equivalent durable completion evidence (GH#28437).
+	if _dd_has_matching_terminal_lease "$comments_json" "$dispatch_created_at" "$dispatch_id"; then
 		return 1
 	fi
 

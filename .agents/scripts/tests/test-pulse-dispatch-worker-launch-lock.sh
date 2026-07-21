@@ -52,12 +52,14 @@ fi
 
 repo_dir="${TEST_TMP}/repo"
 wt_dir="${TEST_TMP}/worktree"
-mkdir -p "${repo_dir}/node_modules/example" "${repo_dir}/node_modules/.bin" "${repo_dir}/node_modules/prettier/bin" "$wt_dir" || fail "failed to create restore fixture dirs"
+mkdir -p "${repo_dir}/node_modules/example" "${repo_dir}/node_modules/.bin" "${repo_dir}/node_modules/prettier/bin" "${wt_dir}/node_modules" || fail "failed to create restore fixture dirs"
 printf '{}\n' >"${repo_dir}/package.json" || fail "failed to create repo package.json"
 printf '{}\n' >"${wt_dir}/package.json" || fail "failed to create worktree package.json"
 printf 'fixture\n' >"${repo_dir}/node_modules/example/file.txt" || fail "failed to create node_modules fixture"
-printf '#!/usr/bin/env node\n' >"${repo_dir}/node_modules/prettier/bin/prettier.cjs" || fail "failed to create prettier fixture"
+printf '#!/usr/bin/env bash\nprintf "fixture-tool\\n"\n' >"${repo_dir}/node_modules/prettier/bin/prettier.cjs" || fail "failed to create prettier fixture"
+chmod +x "${repo_dir}/node_modules/prettier/bin/prettier.cjs" || fail "failed to make prettier fixture executable"
 ln -s ../prettier/bin/prettier.cjs "${repo_dir}/node_modules/.bin/prettier" || fail "failed to create prettier bin symlink"
+ln -s "${repo_dir}/node_modules/.bin" "${wt_dir}/node_modules/.bin" || fail "failed to create stale dispatcher tooling link"
 
 LOGFILE="${TEST_TMP}/pulse.log" \
 	AIDEVOPS_WORKSPACE_DIR="$TEST_TMP" \
@@ -70,8 +72,22 @@ if [[ -d "${wt_dir}/node_modules/example" ]]; then
 	fail "root node_modules payload was copied"
 fi
 
-if [[ ! -L "${wt_dir}/node_modules/.bin" ]]; then
-	fail "root node_modules .bin tooling link was not created"
+if [[ -e "${wt_dir}/node_modules/.bin" || -L "${wt_dir}/node_modules/.bin" ]]; then
+	fail "dispatcher-created canonical node_modules .bin link was not removed"
+fi
+
+if ! declare -F _dlw_append_node_tool_env >/dev/null 2>&1; then
+	fail "worker launch does not provide a local command path for canonical Node tools"
+fi
+worker_cmd=(env)
+_dlw_append_node_tool_env "$repo_dir"
+expected_tool_path="PATH=${repo_dir}/node_modules/.bin:${PATH}"
+if [[ "${worker_cmd[1]:-}" != "$expected_tool_path" ]]; then
+	fail "worker launch did not prepend only the canonical node_modules .bin directory"
+fi
+tool_output=$("${worker_cmd[@]}" prettier) || fail "dispatcher-provided Node tool did not execute"
+if [[ "$tool_output" != "fixture-tool" ]]; then
+	fail "dispatcher-provided Node tool returned unexpected output"
 fi
 
 _dlw_zero_output_comment_count() {
@@ -235,7 +251,7 @@ fi
 
 printf 'PASS: stale non-empty node_modules restore lock is reclaimed\n'
 printf 'PASS: root node_modules payload is skipped by default\n'
-printf 'PASS: root node_modules .bin tooling is linked by default\n'
+printf 'PASS: root Node tooling uses PATH without a cross-boundary worktree link\n'
 printf 'PASS: precomputed zero-output evidence count skips redundant lookups\n'
 printf 'PASS: pulse worker launch forwards dispatching GitHub login\n'
 printf 'PASS: systemd PID resolver handles final unterminated property\n'

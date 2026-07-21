@@ -4066,6 +4066,50 @@ test_attempt_orphan_recovery_pr_calls_gh_create() {
 	return 0
 }
 
+test_attempt_orphan_recovery_pr_uses_authoritative_worker_issue() {
+	local work_dir="${TEST_ROOT}/repo-orphan-recovery-authoritative-issue"
+	_setup_test_git_repo "$work_dir" 1
+	git -C "$work_dir" push -q origin "feature/auto-test-issue-99999"
+	local WORKER_ISSUE_NUMBER="28313"
+	local gh_title="" gh_body="" gh_called=0 _last_flag=""
+
+	gh() {
+		local arg=""
+		for arg in "$@"; do
+			case "$_last_flag" in
+			"--title") gh_title="$arg" ;;
+			"--body") gh_body="$arg" ;;
+			esac
+			_last_flag="$arg"
+		done
+		if [[ "${*}" == *"pr list"* ]]; then
+			printf '0'
+		elif [[ "${*}" == *"issue view"* ]]; then
+			printf 'OPEN'
+		elif [[ "${*}" == *"repo view"* ]]; then
+			printf 'main'
+		elif [[ "${*}" == *"pr create"* ]]; then
+			gh_called=1
+		fi
+		return 0
+	}
+
+	_attempt_orphan_recovery_pr \
+		"manual-cli-28313-1784593858" "$work_dir" \
+		"feature/auto-test-issue-99999" "test-owner/test-repo" "draft"
+	unset -f gh 2>/dev/null || true
+
+	if [[ "$gh_called" -eq 1 && "$gh_title" == *"#28313"* && \
+		"$gh_body" == *"Resolves #28313"* && \
+		"$gh_title" != *"1784593858"* && "$gh_body" != *"#1784593858"* ]]; then
+		print_result "orphan recovery prefers authoritative worker issue over session timestamp" 0
+	else
+		print_result "orphan recovery prefers authoritative worker issue over session timestamp" 1 \
+			"called=${gh_called} title=${gh_title:-<empty>} body=${gh_body:-<empty>}"
+	fi
+	return 0
+}
+
 test_ensure_orphan_recovery_rejects_empty_branch() {
 	local work_dir="${TEST_ROOT}/repo-orphan-recovery-empty-branch"
 	_setup_test_git_repo "$work_dir" 1
@@ -4681,6 +4725,85 @@ test_failed_worker_draft_checkpoint_escalates_without_completion() {
 	return 0
 }
 
+test_dirty_worktree_checkpoint_is_deferred_not_complete() {
+	local result=""
+	result=$(
+		(
+			DISPATCH_REPO_SLUG="test-owner/test-repo"
+			WORKER_ISSUE_NUMBER="28313"
+			_HRW_TERMINAL_OUTCOME="unset"
+			_HRW_FINAL_RUNTIME_EVENT="unset"
+			_HRW_FINAL_RUNTIME_STATUS="unset"
+			_HRW_FINAL_RUNTIME_CLASSIFICATION="unset"
+			_HRW_RECOVERY_CLASSIFICATION=""
+			git() {
+				if [[ "${*}" == *"rev-parse --abbrev-ref HEAD"* ]]; then
+					printf 'feature/auto-test-issue-28313'
+				elif [[ "${*}" == *"status --short"* ]]; then
+					printf ' M changed-file.txt\n'
+				fi
+				return 0
+			}
+			runner_identity_key() { printf 'runner-fixture'; return 0; }
+			_push_wip_commits_on_exit() { return 0; }
+			_recover_dirty_worker_pr() { return 0; }
+			_release_dispatch_claim() { printf 'release=%s\n' "$2"; return 0; }
+
+			_handle_worker_dirty_worktree "manual-cli-28313-1784593858" "$TEST_ROOT"
+			printf 'terminal=%s|event=%s|status=%s|classification=%s|recovery=%s\n' \
+				"$_HRW_TERMINAL_OUTCOME" "$_HRW_FINAL_RUNTIME_EVENT" \
+				"$_HRW_FINAL_RUNTIME_STATUS" "$_HRW_FINAL_RUNTIME_CLASSIFICATION" \
+				"$_HRW_RECOVERY_CLASSIFICATION"
+		)
+	)
+
+	if [[ "$result" == *"release=worker_draft_checkpoint"* && \
+		"$result" == *"terminal=deferred|event=worker.deferred|status=checkpointed|classification=worker_draft_checkpoint|recovery=worker_draft_checkpoint"* && \
+		"$result" != *"release=worker_complete"* ]]; then
+		print_result "dirty-worktree checkpoint is deferred preserved progress, never completion" 0
+	else
+		print_result "dirty-worktree checkpoint is deferred preserved progress, never completion" 1 "$result"
+	fi
+	return 0
+}
+
+test_exit_trap_dirty_checkpoint_is_deferred_not_complete() {
+	local result=""
+	result=$(
+		(
+			_WORKER_DIRTY_WORK_PRESERVED=1
+			_push_wip_commits_on_exit() { return 0; }
+			_recover_dirty_worker_pr() { return 0; }
+			_emit_worker_runtime_event() {
+				printf 'event=%s|status=%s|classification=%s\n' "$1" "$2" "$3"
+				return 0
+			}
+			_hrw_record_terminal_outcome() {
+				printf 'terminal=%s|reason=%s\n' "$2" "$3"
+				return 0
+			}
+			_cleanup_headless_runtime_temp_paths() { return 0; }
+			_release_dispatch_claim() { printf 'release=%s\n' "$2"; return 0; }
+			_release_session_lock() { return 0; }
+			_update_dispatch_ledger() { return 0; }
+			aidevops_runtime_bundle_lease_release() { return 0; }
+
+			_hrff_finalize_exit_trap "manual-cli-28313-1784593858" \
+				"process_exit" "1" "0" "0"
+		)
+	)
+
+	if [[ "$result" == *"event=worker.deferred|status=checkpointed|classification=worker_draft_checkpoint"* && \
+		"$result" == *"terminal=deferred|reason=worker_draft_checkpoint"* && \
+		"$result" == *"release=worker_draft_checkpoint"* && \
+		"$result" != *"worker_complete"* ]]; then
+		print_result "exit-trap dirty checkpoint emits deferred preserved progress, never completion" 0
+	else
+		print_result "exit-trap dirty checkpoint emits deferred preserved progress, never completion" 1 "$result"
+	fi
+	return 0
+}
+
 test_failed_worker_draft_retains_claim_when_block_not_visible() {
 	local result=""
 	result=$(
@@ -4904,6 +5027,8 @@ test_pr_checkpoint_lifecycle_cases() {
 	test_post_pr_handoff_treats_ci_as_monitoring_state
 	test_post_pr_handoff_rejects_mismatched_head_or_missing_summary
 	test_failed_worker_draft_checkpoint_escalates_without_completion
+	test_dirty_worktree_checkpoint_is_deferred_not_complete
+	test_exit_trap_dirty_checkpoint_is_deferred_not_complete
 	test_failed_worker_draft_retains_claim_when_block_not_visible
 	test_protected_draft_is_not_mutated_or_completed
 	test_checkpoint_terminal_telemetry_is_failed_escalated
@@ -4965,6 +5090,7 @@ run_worker_finish_tests() {
 	test_reconciled_outcome_persistence_retries
 	test_cmd_run_finish_emits_complete_when_no_workdir
 	test_attempt_orphan_recovery_pr_calls_gh_create
+	test_attempt_orphan_recovery_pr_uses_authoritative_worker_issue
 	test_ensure_orphan_recovery_rejects_empty_branch
 	test_build_orphan_recovery_pr_body_tolerates_missing_publish_flag
 	test_cmd_run_finish_orphan_recovery_success_emits_worker_complete

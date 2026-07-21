@@ -574,7 +574,8 @@ _fetch_claims() {
 	# lack it and parse as "unknown".
 	local parsed
 	parsed=$(printf '%s' "$claims_only" | jq -c --argjson now "$now_epoch" \
-		--argjson max_age "$DISPATCH_CLAIM_MAX_AGE" --argjson comments "$comments_json" \
+		--argjson max_age "$DISPATCH_CLAIM_MAX_AGE" --argjson include_terminal false \
+		--argjson comments "$comments_json" \
 		-f "${DISPATCH_CLAIM_HELPER_DIR}/dispatch-lease-claims.jq" 2>/dev/null) || {
 		echo "Error: failed to parse claim comments" >&2
 		return 1

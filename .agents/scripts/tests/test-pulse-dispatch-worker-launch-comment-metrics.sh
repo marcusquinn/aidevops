@@ -127,8 +127,58 @@ if [[ "$sparse_context" != *"attempt_id: attempt-sparse"* || \
 	fail "sparse retry disposition shifted empty machine fields: ${sparse_context}"
 fi
 
+LEDGER_CALLS_FILE="${TEST_TMP}/ledger-calls"
+export LEDGER_CALLS_FILE
+cat >"${TEST_TMP}/dispatch-ledger-helper.sh" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"${LEDGER_CALLS_FILE:?}"
+exit "${TEST_LEDGER_RC:-0}"
+EOF
+chmod +x "${TEST_TMP}/dispatch-ledger-helper.sh" || fail "failed to make dispatch ledger stub executable"
+
+STATUS_MUTATIONS=""
+set_issue_status() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local status_name="$3"
+	shift 3
+	STATUS_MUTATIONS="${issue_number}|${repo_slug}|${status_name}|$*"
+	return 0
+}
+
+original_script_dir="$SCRIPT_DIR"
+SCRIPT_DIR="$TEST_TMP"
+_claim_comment_id=""
+PULSE_DISPATCH_STAGGER_SECONDS=0
+export TEST_LEDGER_RC=0
+LOGFILE="${TEST_TMP}/pulse.log" _dlw_post_launch_hooks \
+	"123" "owner/repo" "runner-a" "$$" "issue-123" "standard" "test-model" "${TEST_TMP}/worktree" "attempt-123"
+if [[ "$STATUS_MUTATIONS" != "123|owner/repo|in-progress|--add-assignee runner-a" ]]; then
+	fail "successful worker registration did not transition queued issue to in-progress: ${STATUS_MUTATIONS:-none}"
+fi
+
+STATUS_MUTATIONS=""
+export TEST_LEDGER_RC=1
+LOGFILE="${TEST_TMP}/pulse.log" _dlw_post_launch_hooks \
+	"123" "owner/repo" "runner-a" "$$" "issue-123-failed" "standard" "test-model" "${TEST_TMP}/worktree" "attempt-124"
+if [[ -n "$STATUS_MUTATIONS" ]]; then
+	fail "failed worker registration transitioned issue lifecycle: ${STATUS_MUTATIONS}"
+fi
+
+STATUS_MUTATIONS=""
+if LOGFILE="${TEST_TMP}/pulse.log" _dlw_mark_worker_in_progress \
+	"123" "owner/repo" "runner-a" "2147483647"; then
+	fail "dead worker PID transitioned issue lifecycle"
+fi
+if [[ -n "$STATUS_MUTATIONS" ]]; then
+	fail "dead worker PID emitted status mutation: ${STATUS_MUTATIONS}"
+fi
+SCRIPT_DIR="$original_script_dir"
+
 printf 'PASS: dispatch prompt reuses comment metrics for zero-output fallback\n'
 printf 'PASS: zero-output evidence detection uses one shared pattern\n'
 printf 'PASS: invalid clean-room snapshots cannot authorize implementation\n'
 printf 'PASS: retry context is bounded, deterministic, and excludes prior prose\n'
+printf 'PASS: registered live workers transition queued issues to in-progress\n'
+printf 'PASS: failed registrations and dead workers preserve queued lifecycle state\n'
 exit 0

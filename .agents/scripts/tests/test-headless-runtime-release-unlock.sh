@@ -68,6 +68,18 @@ gh() {
 			prev="$arg"
 		done
 		printf 'API method=%s path=%s body=%s\n' "$method" "$path" "$body" >>"$CALL_LOG"
+		if [[ "$path" == */comments && "$method" == "POST" ]]; then
+			local attempt_count=0
+			if [[ -f "${TMP_HOME}/comment-attempts" ]]; then
+				attempt_count=$(<"${TMP_HOME}/comment-attempts")
+			fi
+			attempt_count=$((attempt_count + 1))
+			printf '%s\n' "$attempt_count" >"${TMP_HOME}/comment-attempts"
+			if [[ "$attempt_count" -le "${GH_COMMENT_FAILURES_BEFORE_SUCCESS:-0}" ]]; then
+				printf 'temporary comment failure %s\n' "$attempt_count" >&2
+				return 1
+			fi
+		fi
 		printf '{}\n'
 		;;
 	issue)
@@ -128,6 +140,40 @@ if grep -q 'CLAIM_RELEASED reason=worker_noop' "$CALL_LOG" &&
 	printf 'PASS release posts claim, clears assigned GitHub login, and unlocks issue\n'
 else
 	printf 'FAIL release lifecycle missing expected calls\n'
+	sed 's/^/  /' "$CALL_LOG"
+	exit 1
+fi
+
+: >"$CALL_LOG"
+rm -f "${TMP_HOME}/comment-attempts"
+if GH_COMMENT_FAILURES_BEFORE_SUCCESS=2 AIDEVOPS_CLAIM_RELEASE_POST_ATTEMPTS=3 \
+	AIDEVOPS_CLAIM_RELEASE_POST_RETRY_DELAY=0 \
+	_release_dispatch_claim "issue-12345" "worker_noop" "0" "0" && \
+	[[ "$(<"${TMP_HOME}/comment-attempts")" == "3" ]] && \
+	grep -q 'CLEAR issue=12345 repo=owner/repo runner=assigned-bot' "$CALL_LOG" && \
+	grep -q 'UNLOCK issue=12345 repo=owner/repo' "$CALL_LOG"; then
+	printf 'PASS release comment retries transient persistence failures\n'
+else
+	printf 'FAIL release comment did not retry transient persistence failures\n'
+	sed 's/^/  /' "$CALL_LOG"
+	exit 1
+fi
+
+: >"$CALL_LOG"
+rm -f "${TMP_HOME}/comment-attempts"
+if GH_COMMENT_FAILURES_BEFORE_SUCCESS=5 AIDEVOPS_CLAIM_RELEASE_POST_ATTEMPTS=2 \
+	AIDEVOPS_CLAIM_RELEASE_POST_RETRY_DELAY=0 \
+	_release_dispatch_claim "issue-12345" "worker_noop" "0" "0"; then
+	printf 'FAIL exhausted release comment persistence was reported as successful\n'
+	sed 's/^/  /' "$CALL_LOG"
+	exit 1
+fi
+if [[ "$(<"${TMP_HOME}/comment-attempts")" == "2" ]] && \
+	grep -q 'WARN Failed to post CLAIM_RELEASED on #12345 after 2 attempt(s)' "$CALL_LOG" && \
+	! grep -q '^CLEAR ' "$CALL_LOG" && ! grep -q '^UNLOCK ' "$CALL_LOG"; then
+	printf 'PASS exhausted release comment persistence is surfaced and remains retryable\n'
+else
+	printf 'FAIL exhausted release comment persistence was not surfaced safely\n'
 	sed 's/^/  /' "$CALL_LOG"
 	exit 1
 fi

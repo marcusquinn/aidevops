@@ -22,15 +22,18 @@
 #   1. Empty extraction + labeled issue → label cleared, return 1
 #   2. Empty extraction + unlabeled issue → no clear, return 1
 #   3. Non-empty extraction + large file → gate applies (return 0)
+#   4. Stale prefetched gate label → fresh lifecycle state wins
+#   5. Label edit failure → gate remains applied, no false CLEARED comment
+#   6. Unconfirmed label removal → gate remains applied, no false CLEARED comment
 #
 #   SECONDARY (_reevaluate_stale_continuations):
-#   4. No gate comment → label preserved (safe fallback)
-#   5. Open continuation → label preserved (work in progress)
-#   6. Closed + simplification-incomplete → label cleared (no wc-l needed)
-#   7. Closed + file over threshold → label cleared (stale citation)
-#   8. Closed + file under threshold → label preserved (prior work effective)
-#   9. Multiple continuations, all stale → label cleared
-#   10. Multiple continuations, one open → label preserved (short-circuit)
+#   7. No gate comment → label preserved (safe fallback)
+#   8. Open continuation → label preserved (work in progress)
+#   9. Closed + simplification-incomplete → label cleared (no wc-l needed)
+#   10. Closed + file over threshold → label cleared (stale citation)
+#   11. Closed + file under threshold → label preserved (prior work effective)
+#   12. Multiple continuations, all stale → label cleared
+#   13. Multiple continuations, one open → label preserved (short-circuit)
 #
 # Cross-references: GH#19415 (stuck label), GH#19499/t2170 (this fix),
 #   t2164 (Fix A/B), t2169 (Fix D — simplification-incomplete label)
@@ -80,6 +83,8 @@ GH_CALLS_LOG="${TMP}/gh_calls.log"
 GH_LABEL_REMOVED=""
 GH_VIEW_JSON=""     # JSON for plain gh issue view (no --comments)
 GH_COMMENTS_JSON="" # JSON for gh issue view --comments ({"comments":[...]})
+GH_EDIT_RC=0
+GH_EDIT_KEEP_LABEL="false"
 
 # =============================================================================
 # Source gate first (defines _large_file_gate_* and _issue_targets_large_files)
@@ -101,7 +106,14 @@ gh() {
 	if [[ "$1" == "issue" && "$2" == "edit" ]]; then
 		local arg
 		for arg in "$@"; do
-			[[ "$arg" == "--remove-label" ]] && GH_LABEL_REMOVED="true" && return 0
+			if [[ "$arg" == "--remove-label" ]]; then
+				[[ "$GH_EDIT_RC" -eq 0 ]] || return "$GH_EDIT_RC"
+				GH_LABEL_REMOVED="true"
+				if [[ "$GH_EDIT_KEEP_LABEL" != "true" ]]; then
+					GH_VIEW_JSON=$(printf '%s' "$GH_VIEW_JSON" | jq -c '.labels = [.labels[]? | select(.name != "needs-simplification")]' 2>/dev/null) || true
+				fi
+				return 0
+			fi
 			[[ "$arg" == "--add-label" ]] && return 0
 		done
 		return 0
@@ -174,6 +186,20 @@ gh() {
 	return 0
 }
 
+gh_issue_view() {
+	gh issue view "$@"
+	return $?
+}
+
+gh_issue_list() {
+	if [[ "$*" == *"--json number,body,state"* ]]; then
+		printf '[]\n'
+		return 0
+	fi
+	gh issue list "$@"
+	return $?
+}
+
 gh_create_issue() {
 	printf '%s\n' "gh_create_issue $*" >>"$GH_CALLS_LOG"
 	return 0
@@ -212,6 +238,8 @@ reset_state() {
 	GH_LABEL_REMOVED=""
 	GH_VIEW_JSON=""
 	GH_COMMENTS_JSON=""
+	GH_EDIT_RC=0
+	GH_EDIT_KEEP_LABEL="false"
 	: >"$GH_CALLS_LOG"
 	: >"$LOGFILE"
 }
@@ -260,6 +288,46 @@ assert_eq \
 	"non-empty extraction + large file → returns 0 (gate applies)" \
 	"0" "$rc"
 
+# ---- Test 4: stale prefetched gate label is refreshed before blocking ----
+reset_state
+GH_VIEW_JSON='{"labels":[{"name":"status:queued"}],"title":"active worker"}'
+stale_meta='{"labels":[{"name":"needs-simplification"}],"title":"stale gate snapshot"}'
+rc=0
+_issue_targets_large_files "9996" "owner/repo" "$large_body" "$TMP" "false" "$stale_meta" || rc=$?
+assert_eq \
+	"stale prefetched needs-simplification label → fresh active lifecycle wins" \
+	"1" "$rc"
+
+# ---- Test 5: failed stale-label removal keeps the gate applied ----
+reset_state
+GH_VIEW_JSON='{"labels":[{"name":"needs-simplification"}]}'
+GH_EDIT_RC=1
+rc=0
+_issue_targets_large_files "9995" "owner/repo" "$empty_body" "$TMP" "true" || rc=$?
+assert_eq \
+	"failed stale-label removal → gate remains applied" \
+	"0" "$rc"
+if grep -qF '_post_simplification_gate_cleared_comment' "$GH_CALLS_LOG"; then
+	assert_eq "failed stale-label removal → no false CLEARED comment" "absent" "present"
+else
+	assert_eq "failed stale-label removal → no false CLEARED comment" "absent" "absent"
+fi
+
+# ---- Test 6: unconfirmed stale-label removal keeps the gate applied ----
+reset_state
+GH_VIEW_JSON='{"labels":[{"name":"needs-simplification"}]}'
+GH_EDIT_KEEP_LABEL="true"
+rc=0
+_issue_targets_large_files "9994" "owner/repo" "$empty_body" "$TMP" "true" || rc=$?
+assert_eq \
+	"unconfirmed stale-label removal → gate remains applied" \
+	"0" "$rc"
+if grep -qF '_post_simplification_gate_cleared_comment' "$GH_CALLS_LOG"; then
+	assert_eq "unconfirmed stale-label removal → no false CLEARED comment" "absent" "present"
+else
+	assert_eq "unconfirmed stale-label removal → no false CLEARED comment" "absent" "absent"
+fi
+
 # =============================================================================
 # SECONDARY fix tests: _reevaluate_stale_continuations
 # =============================================================================
@@ -277,7 +345,7 @@ make_gate_comments() {
 	jq -cn --arg body "$body" '{"comments":[{"body":$body}]}'
 }
 
-# ---- Test 4: no gate comment → label preserved ----
+# ---- Test 7: no gate comment → label preserved ----
 reset_state
 GH_COMMENTS_JSON='{"comments":[]}'
 GH_VIEW_JSON='{"state":"OPEN","labels":[],"title":"some issue"}'
@@ -290,7 +358,7 @@ assert_eq \
 	"no gate comment → label NOT removed" \
 	"" "${GH_LABEL_REMOVED}"
 
-# ---- Test 5: open continuation → label preserved ----
+# ---- Test 8: open continuation → label preserved ----
 reset_state
 GH_COMMENTS_JSON=$(make_gate_comments "#42 (recently-closed — continuation)")
 # gh issue view #42 returns state=OPEN
@@ -304,7 +372,7 @@ assert_eq \
 	"open continuation → label NOT removed" \
 	"" "${GH_LABEL_REMOVED}"
 
-# ---- Test 6: closed + simplification-incomplete → label cleared (no wc-l) ----
+# ---- Test 9: closed + simplification-incomplete → label cleared (no wc-l) ----
 reset_state
 GH_COMMENTS_JSON=$(make_gate_comments "#43 (recently-closed — continuation)")
 GH_VIEW_JSON='{"state":"CLOSED","labels":[{"name":"simplification-incomplete"}],"title":"file-size-debt: large-over.sh exceeds 2000 lines"}'
@@ -317,7 +385,7 @@ assert_eq \
 	"simplification-incomplete → label removed" \
 	"true" "${GH_LABEL_REMOVED:-false}"
 
-# ---- Test 7: closed + file over threshold → label cleared (stale citation) ----
+# ---- Test 10: closed + file over threshold → label cleared (stale citation) ----
 reset_state
 GH_COMMENTS_JSON=$(make_gate_comments "#44 (recently-closed — continuation)")
 GH_VIEW_JSON=$(jq -cn \
@@ -332,7 +400,7 @@ assert_eq \
 	"closed + file over threshold → label removed" \
 	"true" "${GH_LABEL_REMOVED:-false}"
 
-# ---- Test 8: closed + file under threshold → label preserved (work effective) ----
+# ---- Test 11: closed + file under threshold → label preserved (work effective) ----
 reset_state
 GH_COMMENTS_JSON=$(make_gate_comments "#45 (recently-closed — continuation)")
 GH_VIEW_JSON=$(jq -cn \
@@ -347,7 +415,7 @@ assert_eq \
 	"closed + file under threshold → label NOT removed" \
 	"" "${GH_LABEL_REMOVED}"
 
-# ---- Test 9: multiple continuations, all stale → label cleared ----
+# ---- Test 12: multiple continuations, all stale → label cleared ----
 reset_state
 OVER_BASENAME2="large-over2.sh"
 yes ":" 2>/dev/null | head -n 2050 >"${TMP}/${OVER_BASENAME2}"
@@ -484,7 +552,7 @@ gh() {
 	return 0
 }
 
-# ---- Test 10: one open continuation → label preserved (short-circuit) ----
+# ---- Test 13: one open continuation → label preserved (short-circuit) ----
 reset_state
 GH_COMMENTS_JSON=$(make_gate_comments "#48 (recently-closed — continuation), #49 (recently-closed — continuation)")
 # Both view calls return OPEN → first citation valid → should short-circuit
