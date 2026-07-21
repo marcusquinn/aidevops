@@ -151,18 +151,21 @@ fi
 : >"$AGGREGATE_FILE"
 : >"$TRIM_FILE"
 _pulse_efficiency_cycle_start
+efficiency_cycle_id="${AIDEVOPS_GH_API_EFFICIENCY_CYCLE_ID:-}"
 _PULSE_EFFICIENCY_CYCLE_START_MS=$((_PULSE_EFFICIENCY_CYCLE_START_MS - 25))
 _pulse_efficiency_cycle_finish idle
-if grep -q '^contract=1$' "$EVIDENCE_FILE" \
+if grep -q '^contract=2$' "$EVIDENCE_FILE" \
 	&& grep -q '^coverage-start=[0-9]' "$EVIDENCE_FILE" \
-	&& grep -q '^coverage.population=1$' "$EVIDENCE_FILE" \
-	&& grep -q '^coverage.latency=1$' "$EVIDENCE_FILE" \
-	&& grep -q '^coverage.cache=1$' "$EVIDENCE_FILE" \
-	&& grep -q '^coverage.single_flight=1$' "$EVIDENCE_FILE" \
-	&& grep -q '^coverage.path_budgets=1$' "$EVIDENCE_FILE" \
+	&& grep -q '^coverage.population=2$' "$EVIDENCE_FILE" \
+	&& grep -q '^coverage.latency=2$' "$EVIDENCE_FILE" \
+	&& grep -q '^coverage.cache=2$' "$EVIDENCE_FILE" \
+	&& grep -q '^coverage.single_flight=2$' "$EVIDENCE_FILE" \
+	&& grep -q '^coverage.path_budgets=2$' "$EVIDENCE_FILE" \
 	&& grep -q '^population.pulse_cycles=1$' "$EVIDENCE_FILE" \
 	&& grep -q '^population.unchanged_cycles=1$' "$EVIDENCE_FILE" \
 	&& grep -q '^coverage-end=[0-9]' "$EVIDENCE_FILE" \
+	&& [[ "$efficiency_cycle_id" =~ ^[0-9]+$ ]] \
+	&& [[ -z "${AIDEVOPS_GH_API_EFFICIENCY_CYCLE_ID:-}" ]] \
 	&& ! grep -q '^latency.completed_action_ms=' "$EVIDENCE_FILE"; then
 	pass "idle cycle publishes complete typed evidence"
 else

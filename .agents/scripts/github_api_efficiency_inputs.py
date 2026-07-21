@@ -19,7 +19,7 @@ from github_api_efficiency_metrics import (
 )
 
 
-EVIDENCE_SCHEMA = "aidevops-github-api-efficiency-evidence/v1"
+EVIDENCE_SCHEMA = "aidevops-github-api-efficiency-evidence/v2"
 TRANSPORT_SCHEMA_VERSION = 2
 _SHA256_RE = re.compile(r"^[a-f0-9]{64}$")
 _MAX_SAFE_INTEGER = 9_007_199_254_740_991
@@ -84,6 +84,8 @@ EVIDENCE_GROUPS = {
         "fingerprint_verification_list_calls",
         "fresh_empty_live_fallbacks",
         "aggregate_check_fetches",
+        "cycle_scoped_aggregate_check_fetches",
+        "unique_cycle_scoped_actionable_heads",
     ),
 }
 _MEASURED_EVIDENCE_FIELDS = frozenset(
@@ -275,6 +277,26 @@ def _validate_evidence_groups(payload: dict[str, Any]) -> None:
             )
 
 
+def _validate_path_budget_relationships(payload: dict[str, Any]) -> None:
+    path_budgets = payload["path_budgets"]
+    population = payload["population"]
+    relationships = (
+        (
+            path_budgets["cycle_scoped_aggregate_check_fetches"],
+            path_budgets["aggregate_check_fetches"],
+            "cycle-scoped aggregate check fetches exceed total fetches",
+        ),
+        (
+            path_budgets["unique_cycle_scoped_actionable_heads"],
+            population["actionable_changes"],
+            "cycle-scoped actionable heads exceed actionable observations",
+        ),
+    )
+    for left, right, message in relationships:
+        if None not in (left, right) and left > right:
+            raise BenchmarkInputError(f"evidence {message}")
+
+
 def _validate_evidence(
     payload: dict[str, Any], transport_sha256: str
 ) -> None:
@@ -288,6 +310,7 @@ def _validate_evidence(
         raise BenchmarkInputError("evidence.complete must be boolean")
     _validate_population(payload)
     _validate_evidence_groups(payload)
+    _validate_path_budget_relationships(payload)
 
 
 def load_transport_report(

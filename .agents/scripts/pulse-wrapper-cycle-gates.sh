@@ -35,6 +35,7 @@ fi
 _PULSE_EFFICIENCY_CYCLE_STARTED=0
 _PULSE_EFFICIENCY_CYCLE_START_MS=0
 _PULSE_EFFICIENCY_CYCLE_OUTCOME=idle
+_PULSE_EFFICIENCY_CONTRACT_VERSION=2
 _PULSE_LEGACY_CYCLE_OUTCOME_PENDING=0
 
 _pulse_efficiency_record() {
@@ -65,7 +66,7 @@ _pulse_efficiency_now_ms() {
 
 _pulse_efficiency_coverage_start_seconds() {
 	local now_seconds="$1"
-	local state_file="${AIDEVOPS_GH_API_EVIDENCE_COVERAGE_START_FILE:-${AIDEVOPS_STATE_DIR:-${HOME}/.aidevops/state}/github-api-efficiency-contract-v1.started-at}"
+	local state_file="${AIDEVOPS_GH_API_EVIDENCE_COVERAGE_START_FILE:-${AIDEVOPS_STATE_DIR:-${HOME}/.aidevops/state}/github-api-efficiency-contract-v${_PULSE_EFFICIENCY_CONTRACT_VERSION}.started-at}"
 	local state_dir="${state_file%/*}"
 	local existing=""
 	local temporary=""
@@ -114,6 +115,7 @@ _pulse_efficiency_cycle_start() {
 	local now_ms=""
 	local coverage_start=""
 	local group=""
+	unset AIDEVOPS_GH_API_EFFICIENCY_CYCLE_ID
 	now_seconds=$(_pulse_efficiency_now_seconds)
 	now_ms=$(_pulse_efficiency_now_ms) || now_ms=""
 	[[ "$now_seconds" =~ ^[0-9]+$ && "$now_seconds" -gt 0 ]] || return 0
@@ -123,10 +125,12 @@ _pulse_efficiency_cycle_start() {
 	_PULSE_EFFICIENCY_CYCLE_STARTED=1
 	_PULSE_EFFICIENCY_CYCLE_START_MS="$now_ms"
 	_PULSE_EFFICIENCY_CYCLE_OUTCOME=idle
-	_pulse_efficiency_record contract 1
+	AIDEVOPS_GH_API_EFFICIENCY_CYCLE_ID="$now_seconds"
+	export AIDEVOPS_GH_API_EFFICIENCY_CYCLE_ID
+	_pulse_efficiency_record contract "$_PULSE_EFFICIENCY_CONTRACT_VERSION"
 	_pulse_efficiency_record coverage-start "$coverage_start"
 	for group in population latency cache single_flight path_budgets; do
-		_pulse_efficiency_record "coverage.${group}" 1
+		_pulse_efficiency_record "coverage.${group}" "$_PULSE_EFFICIENCY_CONTRACT_VERSION"
 	done
 	return 0
 }
@@ -136,7 +140,10 @@ _pulse_efficiency_cycle_finish() {
 	local now_seconds=""
 	local now_ms=""
 	local elapsed_ms=0
-	[[ "${_PULSE_EFFICIENCY_CYCLE_STARTED:-0}" == "1" ]] || return 0
+	if [[ "${_PULSE_EFFICIENCY_CYCLE_STARTED:-0}" != "1" ]]; then
+		unset AIDEVOPS_GH_API_EFFICIENCY_CYCLE_ID
+		return 0
+	fi
 	now_seconds=$(_pulse_efficiency_now_seconds)
 	now_ms=$(_pulse_efficiency_now_ms) || now_ms=""
 	[[ "$now_seconds" =~ ^[0-9]+$ && "$now_seconds" -gt 0 ]] || now_seconds=0
@@ -162,6 +169,7 @@ _pulse_efficiency_cycle_finish() {
 		gh_trim_log 2>/dev/null || true
 	fi
 	_PULSE_EFFICIENCY_CYCLE_STARTED=0
+	unset AIDEVOPS_GH_API_EFFICIENCY_CYCLE_ID
 	return 0
 }
 
