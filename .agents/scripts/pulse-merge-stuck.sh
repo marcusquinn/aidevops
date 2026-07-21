@@ -127,6 +127,7 @@ readonly _PMS_COUNTER_QUEUE_SATURATION_EVENTS="pulse_actions_queue_saturation_ev
 readonly _PMS_GAUGE_ZERO_PROGRESS_CYCLES='pulse_merge_zero_progress_cycles'
 readonly _PMS_GAUGE_ZERO_PROGRESS_RECOVERY_CHECK_TS='pulse_merge_zero_progress_recovery_check_ts'
 readonly _PMS_JQ_NULL_GUARD="null"
+readonly _PMS_ISSUE_STATE_OPEN="OPEN"
 
 #######################################
 # Shared open-PR field shape for stuck-merge list scans.
@@ -625,6 +626,33 @@ _pms_format_pr_markdown_list() {
 }
 
 #######################################
+# Return success when every failed check in a fingerprint is a per-PR review,
+# authority, or policy gate. Those failures need remediation on each PR and
+# are not evidence that the shared base branch is broken. A mixed fingerprint
+# containing any ordinary CI check remains eligible for outage detection.
+# Args: $1=comma-separated failure fingerprint
+#######################################
+_pms_is_per_pr_gate_fingerprint() {
+	local fingerprint="$1"
+	local check_name="" normalized="" found=0
+
+	while IFS= read -r check_name; do
+		[[ -n "$check_name" ]] || continue
+		found=1
+		normalized=$(printf '%s' "$check_name" | tr '[:upper:]' '[:lower:]')
+		case "$normalized" in
+		*coderabbit* | *review-bot* | *"review bot"* | *"maintainer review"* | \
+			*"assignee gate"* | *"approval gate"* | *"authority gate"* | \
+			*"policy gate"* | *"cryptographic approval"* | *"crypto approval"*) ;;
+		*) return 1 ;;
+		esac
+	done < <(printf '%s\n' "$fingerprint" | tr ',' '\n')
+
+	[[ "$found" -eq 1 ]] || return 1
+	return 0
+}
+
+#######################################
 # Group all stuck PRs in the repo by failure fingerprint. If ≥ AIDEVOPS_MERGE_PATTERN_MIN_PRS
 # share an identical fingerprint, file ONE investigation issue per outage signature.
 # Dedup'd by the fingerprint hash so the same outage doesn't re-file every cycle.
@@ -650,6 +678,10 @@ _detect_pattern_outage() {
 		fp=$(_pms_failure_fingerprint "$pr_num" "$repo_slug")
 		# Skip PRs with no FAILURE entries — those aren't part of an outage cluster.
 		[[ -n "$fp" ]] || continue
+		if _pms_is_per_pr_gate_fingerprint "$fp"; then
+			echo "[pulse-merge-stuck] _detect_pattern_outage: skipping per-PR review/policy fingerprint for PR #${pr_num} in ${repo_slug}: ${fp}" >>"$LOGFILE"
+			continue
+		fi
 		printf '%s\t%s\n' "$fp" "$pr_num" >>"$tmp_lines"
 	done <<<"$stuck_prs"
 
@@ -688,6 +720,33 @@ _detect_pattern_outage() {
 	return 0
 }
 
+#######################################
+# Return success when an open investigation or closed tombstone already owns
+# the exact outage fingerprint marker. Open investigations retain the existing
+# stale-resolution check; closed markers prevent deterministic re-file churn.
+# Args: $1=repo_slug, $2=marker text, $3=fingerprint, $4=fingerprint hash
+#######################################
+_pms_outage_marker_exists() {
+	local repo_slug="$1"
+	local marker_text="$2"
+	local fingerprint="$3"
+	local fp_hash="$4"
+	local existing="" existing_state="" existing_record=""
+
+	existing_record=$(gh issue list --repo "$repo_slug" --state all --search "${marker_text}" \
+		--limit 100 --json number,state \
+		--jq "([.[] | select(.state == \"${_PMS_ISSUE_STATE_OPEN}\")][0] // .[0]) | [(.number // \"\"), (.state // \"\")] | @tsv" \
+		2>/dev/null) || existing_record=""
+	IFS=$'\t' read -r existing existing_state <<<"$existing_record"
+	[[ -n "$existing" && "$existing" != "$_PMS_JQ_NULL_GUARD" ]] || return 1
+
+	if [[ "$existing_state" == "$_PMS_ISSUE_STATE_OPEN" ]]; then
+		_pms_maybe_close_resolved_outage_issue "$repo_slug" "$existing" "$fingerprint" || true
+	fi
+	echo "[pulse-merge-stuck] _pms_file_outage_issue: outage marker ${fp_hash} already exists as ${existing_state:-UNKNOWN} issue #${existing} in ${repo_slug} — skipping" >>"$LOGFILE"
+	return 0
+}
+
 # Internal: file ONE outage investigation issue (or skip if dedup marker exists).
 _pms_file_outage_issue() {
 	local repo_slug="$1"
@@ -702,13 +761,8 @@ _pms_file_outage_issue() {
 	local default_branch
 	default_branch=$(_pms_default_branch "$repo_slug")
 
-	# Dedup: search for an OPEN issue with this marker. If one exists, skip.
-	local existing
-	existing=$(gh issue list --repo "$repo_slug" --state open --search "${marker_text}" \
-		--limit 1 --json number --jq '.[0].number' 2>/dev/null)
-	if [[ -n "$existing" && "$existing" != "$_PMS_JQ_NULL_GUARD" ]]; then
-		_pms_maybe_close_resolved_outage_issue "$repo_slug" "$existing" "$fingerprint" || true
-		echo "[pulse-merge-stuck] _pms_file_outage_issue: outage marker ${fp_hash} already filed as #${existing} in ${repo_slug} — skipping" >>"$LOGFILE"
+	# Dedup against open investigations and closed tombstones for exact hashes.
+	if _pms_outage_marker_exists "$repo_slug" "$marker_text" "$fingerprint" "$fp_hash"; then
 		return 0
 	fi
 
@@ -805,7 +859,7 @@ _pms_issue_prs_all_resolved_or_changed() {
 		if [[ "$state_rc" -ne 0 || -z "$state" ]]; then
 			return 1
 		fi
-		if [[ "$state" == "OPEN" ]]; then
+		if [[ "$state" == "$_PMS_ISSUE_STATE_OPEN" ]]; then
 			current_fp=$(_pms_failure_fingerprint "$pr" "$repo_slug") || current_fp=""
 			[[ -n "$current_fp" ]] || return 1
 			if [[ "$current_fp" == "$fingerprint" ]]; then
@@ -1259,7 +1313,7 @@ _pms_pr_counts_for_zero_progress() {
 		echo "[pulse-merge-stuck] _pms_count_eligible_unmerged_for_repo: retaining PR #${pr_number} in ${repo_slug} — current state is unavailable" >>"$LOGFILE"
 		return 0
 	fi
-	if [[ "$current_state" != "OPEN" ]]; then
+	if [[ "$current_state" != "$_PMS_ISSUE_STATE_OPEN" ]]; then
 		echo "[pulse-merge-stuck] _pms_count_eligible_unmerged_for_repo: excluding PR #${pr_number} in ${repo_slug} — current state is ${current_state}" >>"$LOGFILE"
 		return 1
 	fi
