@@ -534,12 +534,10 @@ test_proc_snapshot_preserves_degraded_visibility() {
 	if output=$(
 		readlink() {
 			local link_path="$1"
-			case "$link_path" in
-			*/1/cwd)
+			if [[ "$link_path" == */1/cwd ]]; then
 				printf '/visible-cwd\n'
 				return 0
-				;;
-			esac
+			fi
 			return 1
 		}
 		_capture_worktree_proc_cwds "$proc_root"

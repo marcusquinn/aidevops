@@ -129,7 +129,7 @@ _worktree_proc_entry_is_provably_foreign_uid() {
 		for process_uid in "$real_uid" "$effective_uid" "$saved_uid" "$filesystem_uid"; do
 			[[ "$process_uid" =~ ^[0-9]+$ ]] || return 1
 			[[ "$process_uid" != "$current_uid" ]] || return 1
-	done
+		done
 		return 0
 	done <"$proc_dir/status"
 	return 1
@@ -163,7 +163,7 @@ _capture_worktree_proc_cwds() {
 			printf '%s\n' "$cwd_target"
 			captured_count=$((captured_count + 1))
 		fi
-		done
+	done
 	if [[ "$visibility_degraded" -eq 1 ]]; then
 		return "$_WT_CWD_CAPTURE_DEGRADED_RC"
 	fi
