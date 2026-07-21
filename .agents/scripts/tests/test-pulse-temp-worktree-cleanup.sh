@@ -228,6 +228,31 @@ test_cleanup_bounds_fresh_snapshots() {
 	return 0
 }
 
+test_degraded_visibility_preserves_temp_candidate() {
+	teardown
+	setup_subject || return 1
+	local repo_path="${TEST_ROOT}/repo-degraded"
+	local remote_path="${TEST_ROOT}/remote-degraded.git"
+	local wt_path="${TEST_ROOT}/tmp.degraded-visibility"
+	local removed=0
+	local rc=0
+	create_repo_with_remote "$repo_path" "$remote_path" || return 1
+	git -C "$repo_path" worktree add -q --detach "$wt_path" origin/main || return 1
+	age_gitfile "$wt_path/.git" 2 || return 1
+	capture_worktree_process_cwds() {
+		printf '%s\n' "/unrelated-readable-cwd"
+		return "${_WT_CWD_CAPTURE_DEGRADED_RC:-2}"
+	}
+
+	removed=$(cleanup_stale_temp_worktrees) || rc=1
+	[[ "$removed" == "0" ]] || rc=1
+	[[ -d "$wt_path" ]] || rc=1
+	grep -q 'cwd-visibility-degraded' "$AIDEVOPS_CLEANUP_LOG" 2>/dev/null || rc=1
+	print_result "temp cleanup blocks degraded absence-only visibility" "$rc" \
+		"removed=$removed candidate_exists=$([[ -d "$wt_path" ]] && printf y || printf n)"
+	return 0
+}
+
 test_cleanup_lock_race_guards() {
 	teardown
 	setup_subject || return 1
@@ -365,6 +390,7 @@ run_test() {
 run_test test_fast_temp_cleanup_guards
 run_test test_local_only_repo_is_excluded
 run_test test_cleanup_bounds_fresh_snapshots
+run_test test_degraded_visibility_preserves_temp_candidate
 run_test test_cleanup_lock_race_guards
 run_test test_stale_local_main_uses_remote_default
 run_test test_path_classifier_rejects_normal_linked_worktree
