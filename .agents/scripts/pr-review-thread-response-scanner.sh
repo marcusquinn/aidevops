@@ -49,8 +49,15 @@ PRRTS_RC_GRAPHQL_EXHAUSTED=75
 PRRTS_BLOCKED_BY_CODE="code"
 PRRTS_BLOCKED_BY_INFRASTRUCTURE="infrastructure"
 PRRTS_REASON_HEAD_FETCH_FAILED="pr_head_fetch_failed"
+PRRTS_REASON_WORKTREE_OWNERSHIP_UNVERIFIED="review_worktree_ownership_unverified"
 PRRTS_WORKTREE_FAILURE_BLOCKED_BY="$PRRTS_BLOCKED_BY_INFRASTRUCTURE"
 PRRTS_WORKTREE_FAILURE_REASON="review_worktree_preparation_failed"
+PRRTS_WORKTREE_TRANSFER_MODE=""
+PRRTS_WORKTREE_EXPECTED_OWNER_PID=""
+PRRTS_WORKTREE_EXPECTED_OWNER_SESSION=""
+PRRTS_WORKTREE_EXPECTED_OWNER_BATCH=""
+PRRTS_WORKTREE_EXPECTED_OWNER_TASK=""
+PRRTS_WORKTREE_EXPECTED_OWNER_CREATED_AT=""
 
 _prrts_ensure_dirs() {
 	local log_dir=""
@@ -1207,6 +1214,185 @@ _prrts_fetch_exact_worker_head() {
 	return 0
 }
 
+_prrts_reset_worktree_transfer_context() {
+	PRRTS_WORKTREE_TRANSFER_MODE=""
+	PRRTS_WORKTREE_EXPECTED_OWNER_PID=""
+	PRRTS_WORKTREE_EXPECTED_OWNER_SESSION=""
+	PRRTS_WORKTREE_EXPECTED_OWNER_BATCH=""
+	PRRTS_WORKTREE_EXPECTED_OWNER_TASK=""
+	PRRTS_WORKTREE_EXPECTED_OWNER_CREATED_AT=""
+	return 0
+}
+
+_prrts_read_worktree_owner_snapshot() {
+	local worktree_path="$1"
+	local owner_pid_var="$2"
+	local owner_session_var="$3"
+	local owner_batch_var="$4"
+	local owner_task_var="$5"
+	local owner_created_at_var="$6"
+	local owner_info=""
+	local parsed_pid="" parsed_session="" parsed_batch="" parsed_task="" parsed_created_at=""
+
+	declare -F check_worktree_owner >/dev/null 2>&1 || return 1
+	owner_info=$(check_worktree_owner "$worktree_path" 2>/dev/null || true)
+	[[ -n "$owner_info" ]] || return 1
+	IFS='|' read -r parsed_pid parsed_session parsed_batch parsed_task parsed_created_at <<<"$owner_info"
+	printf -v "$owner_pid_var" '%s' "$parsed_pid"
+	printf -v "$owner_session_var" '%s' "$parsed_session"
+	printf -v "$owner_batch_var" '%s' "$parsed_batch"
+	printf -v "$owner_task_var" '%s' "$parsed_task"
+	printf -v "$owner_created_at_var" '%s' "$parsed_created_at"
+	return 0
+}
+
+_prrts_apply_expected_worktree_owner() {
+	local repo_slug="$1"
+	local pr_number="$2"
+	local worktree_path="$3"
+	local owner_pid="$4"
+	local owner_session="$5"
+	local owner_batch="$6"
+	local owner_task="$7"
+	local owner_created_at="$8"
+	local required_session="$9"
+
+	if [[ -z "$owner_task" ]]; then
+		PRRTS_WORKTREE_FAILURE_REASON="$PRRTS_REASON_WORKTREE_OWNERSHIP_UNVERIFIED"
+	elif [[ "$owner_task" != "$pr_number" ]]; then
+		PRRTS_WORKTREE_FAILURE_REASON="review_worktree_owned_by_other_task"
+	elif [[ ! "$owner_pid" =~ ^[0-9]+$ || -z "$owner_session" || -z "$owner_created_at" ]]; then
+		PRRTS_WORKTREE_FAILURE_REASON="$PRRTS_REASON_WORKTREE_OWNERSHIP_UNVERIFIED"
+	elif [[ -n "$required_session" && "$owner_session" != "$required_session" ]]; then
+		PRRTS_WORKTREE_FAILURE_REASON="$PRRTS_REASON_WORKTREE_OWNERSHIP_UNVERIFIED"
+	else
+		PRRTS_WORKTREE_TRANSFER_MODE="continuation"
+		PRRTS_WORKTREE_EXPECTED_OWNER_PID="$owner_pid"
+		PRRTS_WORKTREE_EXPECTED_OWNER_SESSION="$owner_session"
+		PRRTS_WORKTREE_EXPECTED_OWNER_BATCH="$owner_batch"
+		PRRTS_WORKTREE_EXPECTED_OWNER_TASK="$owner_task"
+		PRRTS_WORKTREE_EXPECTED_OWNER_CREATED_AT="$owner_created_at"
+		return 0
+	fi
+
+	_prrts_log "dispatch: ${repo_slug}#${pr_number} skipped — worktree ownership cannot be transferred safely (${PRRTS_WORKTREE_FAILURE_REASON}, path=${worktree_path})"
+	return 1
+}
+
+_prrts_capture_expected_worktree_owner() {
+	local repo_slug="$1"
+	local pr_number="$2"
+	local worktree_path="$3"
+	local required_session="${4:-}"
+	local owner_pid=""
+	local owner_session=""
+	local owner_batch=""
+	local owner_task=""
+	local owner_created_at=""
+
+	if ! _prrts_read_worktree_owner_snapshot "$worktree_path" owner_pid owner_session owner_batch owner_task owner_created_at; then
+		PRRTS_WORKTREE_FAILURE_REASON="$PRRTS_REASON_WORKTREE_OWNERSHIP_UNVERIFIED"
+		_prrts_log "dispatch: ${repo_slug}#${pr_number} skipped — worktree has no verifiable ownership record (${worktree_path})"
+		return 1
+	fi
+	_prrts_apply_expected_worktree_owner "$repo_slug" "$pr_number" "$worktree_path" \
+		"$owner_pid" "$owner_session" "$owner_batch" "$owner_task" "$owner_created_at" "$required_session" || return 1
+	return 0
+}
+
+_prrts_claim_dispatch_precreate_owner() {
+	local repo_slug="$1"
+	local pr_number="$2"
+	local worktree_path="$3"
+	local head_ref="$4"
+	local precreate_session="dispatch-precreate-${pr_number}"
+
+	if ! declare -F claim_worktree_ownership >/dev/null 2>&1; then
+		PRRTS_WORKTREE_FAILURE_REASON="$PRRTS_REASON_WORKTREE_OWNERSHIP_UNVERIFIED"
+		_prrts_log "dispatch: ${repo_slug}#${pr_number} skipped — atomic worktree ownership claim is unavailable"
+		return 1
+	fi
+	if ! claim_worktree_ownership "$worktree_path" "$head_ref" \
+		--task "$pr_number" --session "$precreate_session" --owner-pid "$$" 2>/dev/null; then
+		PRRTS_WORKTREE_FAILURE_REASON="review_worktree_ownership_conflict"
+		_prrts_log "dispatch: ${repo_slug}#${pr_number} skipped — atomic worktree ownership claim was rejected (${worktree_path})"
+		return 1
+	fi
+	_prrts_capture_expected_worktree_owner "$repo_slug" "$pr_number" "$worktree_path" "$precreate_session" || return 1
+	return 0
+}
+
+_prrts_prepare_reused_worktree_owner() {
+	local repo_slug="$1"
+	local pr_number="$2"
+	local worktree_path="$3"
+	local head_ref="$4"
+	local owner_pid=""
+	local owner_session=""
+	local owner_batch=""
+	local owner_task=""
+	local owner_created_at=""
+
+	if ! _prrts_read_worktree_owner_snapshot "$worktree_path" owner_pid owner_session owner_batch owner_task owner_created_at; then
+		_prrts_claim_dispatch_precreate_owner "$repo_slug" "$pr_number" "$worktree_path" "$head_ref" || return 1
+		return 0
+	fi
+	_prrts_apply_expected_worktree_owner "$repo_slug" "$pr_number" "$worktree_path" \
+		"$owner_pid" "$owner_session" "$owner_batch" "$owner_task" "$owner_created_at" "" || return 1
+	_prrts_log "dispatch: ${repo_slug}#${pr_number} preserved reused worktree owner for exact continuation transfer (${worktree_path})"
+	return 0
+}
+
+_prrts_prepare_created_worktree_owner() {
+	local repo_slug="$1"
+	local pr_number="$2"
+	local worktree_path="$3"
+	local head_ref="$4"
+	local precreate_session="dispatch-precreate-${pr_number}"
+	local owner_pid=""
+	local owner_session=""
+	local owner_batch=""
+	local owner_task=""
+	local owner_created_at=""
+
+	if ! _prrts_read_worktree_owner_snapshot "$worktree_path" owner_pid owner_session owner_batch owner_task owner_created_at; then
+		_prrts_claim_dispatch_precreate_owner "$repo_slug" "$pr_number" "$worktree_path" "$head_ref" || return 1
+		return 0
+	fi
+	# worktree-helper can register outside a runtime session. The exact PID,
+	# task, and timestamp still authorize this CAS; the resulting precreate
+	# snapshot captured below must have a non-empty session before worker launch.
+	if [[ -z "$owner_task" ]]; then
+		PRRTS_WORKTREE_FAILURE_REASON="$PRRTS_REASON_WORKTREE_OWNERSHIP_UNVERIFIED"
+	elif [[ "$owner_task" != "$pr_number" ]]; then
+		PRRTS_WORKTREE_FAILURE_REASON="review_worktree_owned_by_other_task"
+	elif [[ ! "$owner_pid" =~ ^[0-9]+$ || -z "$owner_created_at" ]]; then
+		PRRTS_WORKTREE_FAILURE_REASON="$PRRTS_REASON_WORKTREE_OWNERSHIP_UNVERIFIED"
+	else
+		PRRTS_WORKTREE_FAILURE_REASON=""
+	fi
+	if [[ -n "$PRRTS_WORKTREE_FAILURE_REASON" ]]; then
+		_prrts_log "dispatch: ${repo_slug}#${pr_number} skipped — created worktree ownership cannot be transferred safely (${PRRTS_WORKTREE_FAILURE_REASON}, path=${worktree_path})"
+		return 1
+	fi
+	if ! declare -F transfer_worktree_ownership_if_expected >/dev/null 2>&1; then
+		PRRTS_WORKTREE_FAILURE_REASON="$PRRTS_REASON_WORKTREE_OWNERSHIP_UNVERIFIED"
+		_prrts_log "dispatch: ${repo_slug}#${pr_number} skipped — atomic worktree ownership transfer is unavailable"
+		return 1
+	fi
+	if ! transfer_worktree_ownership_if_expected "$worktree_path" "$head_ref" \
+		--task "$pr_number" --session "$precreate_session" --owner-pid "$$" \
+		--expected-owner-pid "$owner_pid" --expected-session "$owner_session" \
+		--expected-batch "$owner_batch" --expected-task "$owner_task" \
+		--expected-created-at "$owner_created_at" 2>/dev/null; then
+		PRRTS_WORKTREE_FAILURE_REASON="review_worktree_ownership_concurrent_mutation"
+		_prrts_log "dispatch: ${repo_slug}#${pr_number} skipped — created worktree owner changed before transfer (${worktree_path})"
+		return 1
+	fi
+	_prrts_capture_expected_worktree_owner "$repo_slug" "$pr_number" "$worktree_path" "$precreate_session" || return 1
+	return 0
+}
+
 _prrts_prepare_worker_worktree() {
 	local repo_slug="$1"
 	local repo_path="$2"
@@ -1217,6 +1403,7 @@ _prrts_prepare_worker_worktree() {
 	local existing_path="" repo_name="" safe_ref="" worktree_path="" resolved_path=""
 	local actual_head=""
 
+	_prrts_reset_worktree_transfer_context
 	PRRTS_WORKTREE_FAILURE_BLOCKED_BY="$PRRTS_BLOCKED_BY_INFRASTRUCTURE"
 	PRRTS_WORKTREE_FAILURE_REASON="review_worktree_preparation_failed"
 	_prrts_validate_worker_head "$repo_slug" "$repo_path" "$pr_number" "$head_ref" "$head_oid" || return 1
@@ -1233,6 +1420,7 @@ _prrts_prepare_worker_worktree() {
 			PRRTS_WORKTREE_FAILURE_REASON="existing_review_worktree_head_mismatch"
 			return 1
 		fi
+		_prrts_prepare_reused_worktree_owner "$repo_slug" "$pr_number" "$existing_path" "$head_ref" || return 1
 		printf -v "$output_var" '%s' "$existing_path"
 		return 0
 	fi
@@ -1263,6 +1451,7 @@ _prrts_prepare_worker_worktree() {
 		PRRTS_WORKTREE_FAILURE_REASON="review_worktree_exact_head_verification_failed"
 		return 1
 	fi
+	_prrts_prepare_created_worktree_owner "$repo_slug" "$pr_number" "$resolved_path" "$head_ref" || return 1
 	printf -v "$output_var" '%s' "$resolved_path"
 	return 0
 }
@@ -1302,7 +1491,13 @@ _prrts_dispatch_worker() {
 		cmd+=(--model "$model")
 	fi
 	HEADLESS=1 WORKER_ISSUE_NUMBER="$pr_number" WORKER_REPO_SLUG="$repo_slug" WORKER_WORKTREE_PATH="$worker_worktree_path" \
-		GITHUB_REPOSITORY="$repo_slug" WORKER_NO_EXIT_PUSH=1 AIDEVOPS_ALLOW_WORKER_WORKTREE_OWNER_TRANSFER=1 \
+		GITHUB_REPOSITORY="$repo_slug" WORKER_NO_EXIT_PUSH=1 \
+		AIDEVOPS_WORKTREE_OWNER_TRANSFER_MODE="$PRRTS_WORKTREE_TRANSFER_MODE" \
+		AIDEVOPS_WORKTREE_EXPECTED_OWNER_PID="$PRRTS_WORKTREE_EXPECTED_OWNER_PID" \
+		AIDEVOPS_WORKTREE_EXPECTED_OWNER_SESSION="$PRRTS_WORKTREE_EXPECTED_OWNER_SESSION" \
+		AIDEVOPS_WORKTREE_EXPECTED_OWNER_BATCH="$PRRTS_WORKTREE_EXPECTED_OWNER_BATCH" \
+		AIDEVOPS_WORKTREE_EXPECTED_OWNER_TASK="$PRRTS_WORKTREE_EXPECTED_OWNER_TASK" \
+		AIDEVOPS_WORKTREE_EXPECTED_OWNER_CREATED_AT="$PRRTS_WORKTREE_EXPECTED_OWNER_CREATED_AT" \
 		AIDEVOPS_PR_REPAIR_NUMBER="$pr_number" AIDEVOPS_PR_REPAIR_HEAD_SHA="$head_oid" AIDEVOPS_PR_REPAIR_HEAD_REF="$head_ref" \
 		"${cmd[@]}" </dev/null >>"$LOGFILE" 2>&1 &
 	_prrts_log "dispatch: launched response worker for ${repo_slug}#${pr_number} in ${worker_worktree_path} session_key=${session_key} pid=$!"
