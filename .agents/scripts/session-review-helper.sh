@@ -41,6 +41,11 @@ readonly NET_DENIED_LOG="${HOME}/.aidevops/.agent-workspace/network/denied.jsonl
 readonly PG_ATTEMPTS_LOG="${HOME}/.aidevops/logs/prompt-guard/attempts.jsonl"
 readonly SESSION_CONTEXT_FILE="${HOME}/.aidevops/.agent-workspace/security/session-context.json"
 readonly QUARANTINE_LOG="${HOME}/.aidevops/.agent-workspace/security/quarantine.jsonl"
+readonly AUDIT_EVENT_RECOVER="system.recover"
+readonly AUDIT_INTEGRITY_BROKEN="BROKEN"
+readonly AUDIT_INTEGRITY_INTACT="INTACT"
+readonly AUDIT_INTEGRITY_NONE="NONE"
+readonly PROMPT_GUARD_BLOCK_PATTERN='"action":"BLOCK"'
 
 # Shared format strings for summary tables
 readonly FMT_COST_ROW="  %-35s %6s %10s %10s %10s %10s\n"
@@ -253,9 +258,9 @@ _security_audit_events() {
 	local audit_helper="${SCRIPT_DIR}/audit-log-helper.sh"
 	if [[ -x "$audit_helper" ]]; then
 		if "$audit_helper" verify --quiet 2>/dev/null; then
-			chain_status="INTACT"
+			chain_status="$AUDIT_INTEGRITY_INTACT"
 		else
-			chain_status="BROKEN"
+			chain_status="$AUDIT_INTEGRITY_BROKEN"
 		fi
 	fi
 	echo ""
@@ -346,7 +351,7 @@ _security_prompt_guard() {
 	total_entries=$(wc -l <"$PG_ATTEMPTS_LOG" | tr -d ' ')
 
 	local blocks=0 warns=0 sanitizes=0
-	blocks=$(safe_grep_count '"action":"BLOCK"' "$PG_ATTEMPTS_LOG")
+	blocks=$(safe_grep_count "$PROMPT_GUARD_BLOCK_PATTERN" "$PG_ATTEMPTS_LOG")
 	warns=$(safe_grep_count '"action":"WARN"' "$PG_ATTEMPTS_LOG")
 	sanitizes=$(safe_grep_count '"action":"SANITIZE"' "$PG_ATTEMPTS_LOG")
 
@@ -437,6 +442,86 @@ _security_quarantine() {
 	return 0
 }
 
+# Return success when a segment contains a durable broken-history declaration.
+# Arguments: $1 - audit segment path
+_security_audit_has_broken_history_marker() {
+	local segment="$1"
+	local line=""
+
+	if [[ ! -s "$segment" ]]; then
+		return 1
+	fi
+	if command -v jq &>/dev/null; then
+		if jq -se \
+			--arg event_type "$AUDIT_EVENT_RECOVER" \
+			--arg broken "$AUDIT_INTEGRITY_BROKEN" 'any(.[];
+			.type == $event_type and
+			.detail.recovery_schema == "1" and
+			.detail.archived_verification == $broken and
+			.detail.historical_integrity == $broken
+		)' "$segment" &>/dev/null; then
+			return 0
+		fi
+		return 1
+	fi
+
+	while IFS= read -r line; do
+		if [[ "$line" == *"\"type\":\"${AUDIT_EVENT_RECOVER}\""* ]] &&
+			[[ "$line" == *"\"archived_verification\":\"${AUDIT_INTEGRITY_BROKEN}\""* ]] &&
+			[[ "$line" == *"\"historical_integrity\":\"${AUDIT_INTEGRITY_BROKEN}\""* ]]; then
+			return 0
+		fi
+	done <"$segment"
+	return 1
+}
+
+# Collect active-chain health separately from archived historical integrity.
+# A recovery declaration remains authoritative even if its broken archive later
+# disappears; otherwise every archived sibling segment is verified directly.
+# Outputs shell-safe key=value pairs for eval by callers.
+_security_audit_integrity() {
+	local audit_helper="${SCRIPT_DIR}/audit-log-helper.sh"
+	local active_chain_intact="null"
+	local historical_integrity="$AUDIT_INTEGRITY_NONE"
+	local history_found="false"
+	local segment=""
+
+	if [[ ! -x "$audit_helper" ]]; then
+		printf 'chain_intact=null\nactive_chain_intact=null\nhistorical_integrity=%s\n' \
+			"$AUDIT_INTEGRITY_NONE"
+		return 0
+	fi
+
+	if [[ -f "$AUDIT_LOG" ]] && [[ -s "$AUDIT_LOG" ]]; then
+		if AUDIT_LOG_FILE="$AUDIT_LOG" "$audit_helper" verify --quiet 2>/dev/null; then
+			active_chain_intact="true"
+		else
+			active_chain_intact="false"
+		fi
+		if _security_audit_has_broken_history_marker "$AUDIT_LOG"; then
+			historical_integrity="$AUDIT_INTEGRITY_BROKEN"
+		fi
+	fi
+
+	for segment in "${AUDIT_LOG%.jsonl}".*.jsonl; do
+		[[ -f "$segment" ]] || continue
+		history_found="true"
+		if _security_audit_has_broken_history_marker "$segment"; then
+			historical_integrity="$AUDIT_INTEGRITY_BROKEN"
+		fi
+		if ! AUDIT_LOG_FILE="$segment" "$audit_helper" verify --quiet 2>/dev/null; then
+			historical_integrity="$AUDIT_INTEGRITY_BROKEN"
+		fi
+	done
+
+	if [[ "$history_found" == "true" && "$historical_integrity" != "$AUDIT_INTEGRITY_BROKEN" ]]; then
+		historical_integrity="$AUDIT_INTEGRITY_INTACT"
+	fi
+	printf 'chain_intact=%s\nactive_chain_intact=%s\nhistorical_integrity=%s\n' \
+		"$active_chain_intact" "$active_chain_intact" "$historical_integrity"
+	return 0
+}
+
 # Compute overall security posture from available data.
 # Accepts optional pre-computed counts to avoid redundant file processing.
 # Arguments:
@@ -444,7 +529,8 @@ _security_quarantine() {
 #   $2 - prompt-guard blocks count (optional)
 #   $3 - prompt-guard warns count (optional)
 #   $4 - flagged domains count (optional)
-#   $5 - audit chain intact: "true"/"false"/"" (optional, checked if empty)
+#   $5 - active audit chain intact: "true"/"false"/"" (optional)
+#   $6 - historical integrity: "NONE"/"INTACT"/"BROKEN"/"" (optional)
 # Returns: CLEAN, LOW, MEDIUM, HIGH, CRITICAL on stdout
 _security_posture() {
 	local denied_count="${1:-}"
@@ -452,6 +538,7 @@ _security_posture() {
 	local warns="${3:-}"
 	local flagged_count="${4:-}"
 	local chain_intact="${5:-}"
+	local historical_integrity="${6:-}"
 	local posture="CLEAN"
 
 	# Compute any counts not passed as arguments
@@ -461,7 +548,7 @@ _security_posture() {
 	denied_count="${denied_count:-0}"
 
 	if [[ -z "$blocks" || -z "$warns" ]] && [[ -f "$PG_ATTEMPTS_LOG" ]]; then
-		[[ -z "$blocks" ]] && blocks=$(safe_grep_count '"action":"BLOCK"' "$PG_ATTEMPTS_LOG")
+		[[ -z "$blocks" ]] && blocks=$(safe_grep_count "$PROMPT_GUARD_BLOCK_PATTERN" "$PG_ATTEMPTS_LOG")
 		[[ -z "$warns" ]] && warns=$(safe_grep_count '"action":"WARN"' "$PG_ATTEMPTS_LOG")
 	fi
 	blocks="${blocks:-0}"
@@ -489,18 +576,20 @@ _security_posture() {
 		posture="LOW"
 	fi
 
-	# Check audit chain integrity
-	if [[ -z "$chain_intact" ]]; then
-		local audit_helper="${SCRIPT_DIR}/audit-log-helper.sh"
-		if [[ -x "$audit_helper" ]] && [[ -f "$AUDIT_LOG" ]] && [[ -s "$AUDIT_LOG" ]]; then
-			if "$audit_helper" verify --quiet 2>/dev/null; then
-				chain_intact="true"
-			else
-				chain_intact="false"
-			fi
+	# Check active and historical audit integrity independently.
+	if [[ -z "$chain_intact" || -z "$historical_integrity" ]]; then
+		local computed_chain_intact="null"
+		local active_chain_intact="null"
+		local computed_historical_integrity="$AUDIT_INTEGRITY_NONE"
+		eval "$(_security_audit_integrity)"
+		computed_chain_intact="$active_chain_intact"
+		computed_historical_integrity="$historical_integrity"
+		if [[ -z "$chain_intact" ]]; then
+			chain_intact="$computed_chain_intact"
 		fi
+		historical_integrity="$computed_historical_integrity"
 	fi
-	if [[ "$chain_intact" == "false" ]]; then
+	if [[ "$chain_intact" == "false" || "$historical_integrity" == "$AUDIT_INTEGRITY_BROKEN" ]]; then
 		posture="CRITICAL"
 	fi
 
@@ -528,24 +617,19 @@ output_security_summary() {
 
 	# Pre-compute counts once for both posture calculation and display
 	# (mirrors the JSON path to avoid redundant file reads)
-	local _denied=0 _flagged=0 _blocks=0 _warns=0 _chain=""
+	local _denied=0 _flagged=0 _blocks=0 _warns=0
+	local chain_intact="null" active_chain_intact="null" historical_integrity="$AUDIT_INTEGRITY_NONE"
 	[[ -f "$NET_DENIED_LOG" ]] && _denied=$(wc -l <"$NET_DENIED_LOG" | tr -d ' ')
 	[[ -f "$NET_FLAGGED_LOG" ]] && _flagged=$(wc -l <"$NET_FLAGGED_LOG" | tr -d ' ')
 	if [[ -f "$PG_ATTEMPTS_LOG" ]]; then
-		_blocks=$(safe_grep_count '"action":"BLOCK"' "$PG_ATTEMPTS_LOG")
+		_blocks=$(safe_grep_count "$PROMPT_GUARD_BLOCK_PATTERN" "$PG_ATTEMPTS_LOG")
 		_warns=$(safe_grep_count '"action":"WARN"' "$PG_ATTEMPTS_LOG")
 	fi
-	local audit_helper="${SCRIPT_DIR}/audit-log-helper.sh"
-	if [[ -x "$audit_helper" ]] && [[ -f "$AUDIT_LOG" ]] && [[ -s "$AUDIT_LOG" ]]; then
-		if "$audit_helper" verify --quiet 2>/dev/null; then
-			_chain="true"
-		else
-			_chain="false"
-		fi
-	fi
+	eval "$(_security_audit_integrity)"
 
 	local posture
-	posture=$(_security_posture "$_denied" "$_blocks" "$_warns" "$_flagged" "$_chain")
+	posture=$(_security_posture "$_denied" "$_blocks" "$_warns" "$_flagged" \
+		"$active_chain_intact" "$historical_integrity")
 
 	local posture_color="$GREEN"
 	case "$posture" in
@@ -572,6 +656,13 @@ output_security_summary() {
 	# Section 2: Audit log events
 	echo -e "${CYAN}## Audit Events${NC}"
 	_security_audit_events "$session_filter"
+	local active_chain_label="NOT_AVAILABLE"
+	case "$active_chain_intact" in
+	true) active_chain_label="$AUDIT_INTEGRITY_INTACT" ;;
+	false) active_chain_label="$AUDIT_INTEGRITY_BROKEN" ;;
+	esac
+	echo "  Active chain:         ${active_chain_label}"
+	echo "  Historical integrity: ${historical_integrity}"
 	echo ""
 
 	# Section 3: Network access
@@ -610,7 +701,7 @@ _security_json_collect_counts() {
 	[[ -f "$NET_DENIED_LOG" ]] && net_denied=$(wc -l <"$NET_DENIED_LOG" | tr -d ' ')
 	if [[ -f "$PG_ATTEMPTS_LOG" ]]; then
 		pg_total=$(wc -l <"$PG_ATTEMPTS_LOG" | tr -d ' ')
-		pg_blocks=$(safe_grep_count '"action":"BLOCK"' "$PG_ATTEMPTS_LOG")
+		pg_blocks=$(safe_grep_count "$PROMPT_GUARD_BLOCK_PATTERN" "$PG_ATTEMPTS_LOG")
 		pg_warns=$(safe_grep_count '"action":"WARN"' "$PG_ATTEMPTS_LOG")
 		pg_sanitizes=$(safe_grep_count '"action":"SANITIZE"' "$PG_ATTEMPTS_LOG")
 	fi
@@ -622,20 +713,11 @@ _security_json_collect_counts() {
 	return 0
 }
 
-# Check audit chain integrity for JSON security summary.
-# Outputs key=value pair for eval by the caller.
+# Check active and historical audit integrity for JSON security summary.
+# Outputs key=value pairs for eval by the caller.
 # No arguments.
 _security_json_audit_chain() {
-	local chain_intact="null"
-	local audit_helper="${SCRIPT_DIR}/audit-log-helper.sh"
-	if [[ -x "$audit_helper" ]] && [[ -f "$AUDIT_LOG" ]] && [[ -s "$AUDIT_LOG" ]]; then
-		if "$audit_helper" verify --quiet 2>/dev/null; then
-			chain_intact="true"
-		else
-			chain_intact="false"
-		fi
-	fi
-	printf 'chain_intact=%s\n' "$chain_intact"
+	_security_audit_integrity
 	return 0
 }
 
@@ -753,12 +835,13 @@ _security_summary_json() {
 	eval "$(_security_json_collect_counts)"
 
 	# Audit chain integrity
-	local chain_intact="null"
+	local chain_intact="null" active_chain_intact="null" historical_integrity="$AUDIT_INTEGRITY_NONE"
 	eval "$(_security_json_audit_chain)"
 
 	# Compute posture using pre-computed counts (avoids redundant file reads)
 	local posture
-	posture=$(_security_posture "$net_denied" "$pg_blocks" "$pg_warns" "$net_flagged" "$chain_intact")
+	posture=$(_security_posture "$net_denied" "$pg_blocks" "$pg_warns" "$net_flagged" \
+		"$active_chain_intact" "$historical_integrity")
 
 	# Cost breakdown — query SQLite DB or JSONL for per-model cost data
 	local cost_json="[]"
@@ -798,6 +881,8 @@ _security_summary_json() {
 		--argjson cost_total "$cost_total" \
 		--argjson audit_count "$audit_count" \
 		--argjson chain_intact "$chain_intact" \
+		--argjson active_chain_intact "$active_chain_intact" \
+		--arg historical_integrity "$historical_integrity" \
 		--argjson net_access "$net_access" \
 		--argjson net_flagged "$net_flagged" \
 		--argjson net_denied "$net_denied" \
@@ -813,7 +898,12 @@ _security_summary_json() {
 			session_filter: $session_filter,
 			posture: $posture,
 			cost: { total: $cost_total, breakdown: $cost_breakdown },
-			audit: ({ total_events: $audit_count, chain_intact: $chain_intact } + if $session_mode then {global_only: true} else {} end),
+			audit: ({
+				total_events: $audit_count,
+				chain_intact: $chain_intact,
+				active_chain_intact: $active_chain_intact,
+				historical_integrity: $historical_integrity
+			} + if $session_mode then {global_only: true} else {} end),
 			network: ({ logged_access: $net_access, flagged: $net_flagged, denied: $net_denied } + if $session_mode then {global_only: true} else {} end),
 			prompt_guard: ({ total_detections: $pg_total, blocked: $pg_blocks, warned: $pg_warns, sanitized: $pg_sanitizes } + if $session_mode then {global_only: true} else {} end),
 			session_context: $session_context,
