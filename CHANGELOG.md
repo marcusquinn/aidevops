@@ -10,6 +10,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.32.163] - 2026-07-22
+
+### Changed
+
+- Maintenance: update simplification state registry
+- Maintenance: update simplification state registry
+- Maintenance: update simplification state registry
+
+### Fixed
+
+- pin Qlty installer version (#28455)
+- accept generated HTML in brief readiness (#28450)
+- resolve completion blockers semantically (#28448)
+- restore deployed wrapper shim discovery (#28445)
+- reconcile Pulse launchd replacements (#28441)
+- resolve safety policy checker fallbacks (#28435)
+- classify review scanner launch failures (#28432)
+- stream Pulse bot-activity snapshots (#28429)
+- resolve trusted review authors through REST (#28428)
+
 ## [3.32.162] - 2026-07-21
 
 ### Changed
