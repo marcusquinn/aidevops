@@ -647,10 +647,30 @@ check_secrets() {
 check_secret_policy() {
 	echo -e "${BLUE}Checking Secret Safety Policy...${NC}"
 
-	local policy_script=".agents/scripts/safety-policy-check.sh"
-	if [[ ! -x "$policy_script" ]]; then
-		print_error "Missing executable policy checker: $policy_script"
-		return 1
+	local project_policy_script=".agents/scripts/safety-policy-check.sh"
+	local deployed_policy_script="${SCRIPT_DIR}/safety-policy-check.sh"
+	local path_policy_script=""
+	local path_policy_type=""
+	local policy_script=""
+
+	if [[ -e "$project_policy_script" || -L "$project_policy_script" ]]; then
+		if [[ ! -f "$project_policy_script" || ! -x "$project_policy_script" ]]; then
+			print_error "Project policy checker is not an executable regular file: $project_policy_script"
+			return 1
+		fi
+		policy_script="$project_policy_script"
+	elif [[ -f "$deployed_policy_script" && -x "$deployed_policy_script" ]]; then
+		policy_script="$deployed_policy_script"
+	else
+		path_policy_type=$(builtin type -t safety-policy-check.sh 2>/dev/null || true)
+		if [[ "$path_policy_type" == "file" ]]; then
+			path_policy_script=$(command -v safety-policy-check.sh 2>/dev/null || true)
+		fi
+		if [[ -z "$path_policy_script" || ! -f "$path_policy_script" || ! -x "$path_policy_script" ]]; then
+			print_error "Missing executable policy checker: checked $project_policy_script, $deployed_policy_script, and PATH"
+			return 1
+		fi
+		policy_script="$path_policy_script"
 	fi
 
 	if bash "$policy_script"; then

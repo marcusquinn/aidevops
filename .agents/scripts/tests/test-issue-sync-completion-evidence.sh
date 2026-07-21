@@ -40,12 +40,24 @@ gh_find_merged_pr() {
 	return 0
 }
 gh() {
+	if [[ "$*" == *"issues/125/comments"* ]]; then
+		printf '%s\n' '{"message":"Not Found","documentation_url":"https://docs.github.com/rest","status":"404"}'
+		return 1
+	fi
+	if [[ "$*" == *"issues/126/comments"* ]]; then
+		printf '%s\n' 'not-a-timestamp'
+		return 0
+	fi
 	if [[ "$*" == *"issue view 123"* ]]; then
 		printf '%s\n' '{"state":"CLOSED","stateReason":"COMPLETED","closedAt":"2026-06-30T01:53:39Z","body":"Completed interactively.\n<!-- aidevops:sig -->","comments":[]}'
 		return 0
 	fi
 	if [[ "$*" == *"issue view 124"* ]]; then
 		printf '%s\n' '{"state":"CLOSED","stateReason":"COMPLETED","closedAt":"2026-06-30T01:53:39Z","body":"Closed without aidevops evidence.","comments":[]}'
+		return 0
+	fi
+	if [[ "$*" == *"issue view 127"* ]]; then
+		printf '%s\n' '{"state":"CLOSED","stateReason":"COMPLETED","closedAt":"not-a-timestamp","body":"<!-- aidevops:sig -->","comments":[]}'
 		return 0
 	fi
 	return 1
@@ -76,10 +88,25 @@ else
 fi
 
 blocked_task='- [ ] t9003 blocked implementation pr:#78 tier:standard blocked-by:t9002'
-if _has_evidence "$blocked_task" "t9003" "owner/repo"; then
-	fail "blocked-by marker vetoes otherwise explicit PR evidence"
+_der_completion_blockers_closed() {
+	local repo="$1"
+	local issue_number="$2"
+	local dependency_text="$3"
+	: "$repo" "$issue_number"
+	[[ "$dependency_text" == *"blocked-by:t9002"* ]]
+	return $?
+}
+if _has_evidence "$blocked_task" "t9003" "owner/repo" "9003"; then
+	pass "resolved blocked-by provenance permits explicit PR evidence"
 else
-	pass "blocked-by marker vetoes otherwise explicit PR evidence"
+	fail "resolved blocked-by provenance should not veto explicit PR evidence"
+fi
+
+open_blocked_task='- [ ] t9011 blocked implementation pr:#83 tier:standard blocked-by:t9999'
+if _has_evidence "$open_blocked_task" "t9011" "owner/repo" "9011"; then
+	fail "unresolved blocked-by marker must veto explicit PR evidence"
+else
+	pass "unresolved blocked-by marker still vetoes explicit PR evidence"
 fi
 
 historical_note_task='- [ ] t9004 fixed implementation pr:#79 tier:standard
@@ -125,9 +152,9 @@ fi
 
 precomputed_blocked_task_line='- [ ] t9009 fixed implementation pr:#82 tier:standard blocked-by:t9008'
 if _has_unresolved_blocker "- [ ] t9009 fixed implementation pr:#82 tier:standard" "t9009" "$precomputed_blocked_task_line"; then
-	pass "precomputed blocked task line still vetoes completion"
+	pass "precomputed blocked task line without resolution context fails closed"
 else
-	fail "precomputed blocked task line should veto completion"
+	fail "precomputed blocked task line without resolution context should fail closed"
 fi
 
 if completed_date=$(_closed_issue_aidevops_complete_date "owner/repo" "123"); then
@@ -145,6 +172,41 @@ if _closed_issue_aidevops_complete_date "owner/repo" "124" >/dev/null; then
 else
 	pass "closed issue without aidevops evidence is not completion evidence"
 fi
+
+if completed_date=$(_closed_issue_worker_complete_date "owner/repo" "125"); then
+	fail "failed GitHub lookup is not worker completion evidence"
+elif [[ -n "$completed_date" ]]; then
+	fail "failed GitHub lookup must not emit its JSON response body"
+else
+	pass "failed GitHub lookup emits no worker completion date"
+fi
+
+if _closed_issue_worker_complete_date "owner/repo" "126" >/dev/null; then
+	fail "malformed worker timestamp is not completion evidence"
+else
+	pass "malformed worker timestamp is rejected"
+fi
+
+if _closed_issue_aidevops_complete_date "owner/repo" "127" >/dev/null; then
+	fail "malformed issue close timestamp is not completion evidence"
+else
+	pass "malformed issue close timestamp is rejected"
+fi
+
+todo_file=$(mktemp)
+printf '%s\n' '- [ ] t9010 retry failed completion lookup ref:GH#125' >"$todo_file"
+todo_before=$(<"$todo_file")
+_reopen_find_merged_pr() {
+	return 1
+}
+if _reopen_mark_if_completed "owner/repo" "t9010" "125" "$todo_file"; then
+	fail "failed completion lookup does not mark reopened task complete"
+elif [[ "$(<"$todo_file")" != "$todo_before" ]]; then
+	fail "failed completion lookup changed reopened TODO content"
+else
+	pass "failed completion lookup leaves reopened TODO content unchanged"
+fi
+rm -f "$todo_file"
 
 if [[ "$FAIL" -eq 0 ]]; then
 	printf 'All %d tests passed\n' "$PASS"

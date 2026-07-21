@@ -25,6 +25,10 @@
 #   13. AIDEVOPS_SKIP_PULSE_RESTART=1 skips restart-if-running
 #   14. AIDEVOPS_SKIP_PULSE_RESTART=1 skips restart
 #   15. Missing pulse-wrapper.sh → start exits 2
+#   16. Reconciliation tolerates an immediate KeepAlive replacement
+#   17. Reconciliation retires a detached stale merge routine
+#   18. Genuine unkillable snapshot PIDs fail closed with PID evidence
+#   19. Managed replacement requires a new active-bundle PID lease
 #
 # No real pulse is touched. We use a unique mock filename and match pattern
 # on pulse-wrapper.sh which we control inside TEST_ROOT.
@@ -42,6 +46,10 @@ TESTS_RUN=0
 TESTS_FAILED=0
 TEST_ROOT=""
 MOCK_PIDS=()
+KEEPALIVE_SUPERVISOR_PID=""
+KEEPALIVE_STOP_FILE=""
+KEEPALIVE_PID_FILE=""
+LAST_MOCK_PID=""
 
 _print_result() {
 	local name="$1"
@@ -79,6 +87,12 @@ _setup() {
 while true; do sleep 10; done
 SH
 	chmod +x "${TEST_ROOT}/scripts/pulse-wrapper.sh"
+	cat >"${TEST_ROOT}/scripts/pulse-merge-routine.sh" <<'SH'
+#!/usr/bin/env bash
+# Mock standalone merge routine — retains its script argv while running.
+while true; do sleep 10; done
+SH
+	chmod +x "${TEST_ROOT}/scripts/pulse-merge-routine.sh"
 
 	# Point helper at our temp dir.
 	export AIDEVOPS_AGENTS_DIR="$TEST_ROOT"
@@ -91,6 +105,7 @@ SH
 	# is sufficient.
 	local _escaped_root="${TEST_ROOT//./\\.}"
 	export AIDEVOPS_PULSE_PROCESS_PATTERN="${_escaped_root}/scripts/pulse-wrapper\\.sh"
+	export AIDEVOPS_PULSE_MERGE_PROCESS_PATTERN="${_escaped_root}/scripts/pulse-merge-routine\\.sh"
 
 	# Ensure env overrides don't leak between tests.
 	unset AIDEVOPS_SKIP_PULSE_RESTART 2>/dev/null || true
@@ -100,9 +115,11 @@ SH
 }
 
 _teardown() {
+	_stop_keepalive_supervisor
 	# Kill any mock pulses this suite spawned.
 	if [[ -n "${TEST_ROOT:-}" ]]; then
 		pkill -f "${TEST_ROOT}/scripts/pulse-wrapper.sh" 2>/dev/null || true
+		pkill -f "${TEST_ROOT}/scripts/pulse-merge-routine.sh" 2>/dev/null || true
 	fi
 	# Also catch any residual mock PIDs we noted.
 	local _pid
@@ -111,6 +128,7 @@ _teardown() {
 	done
 	sleep 1
 	[[ -n "${TEST_ROOT:-}" && -d "$TEST_ROOT" ]] && rm -rf "$TEST_ROOT"
+	return 0
 }
 
 trap _teardown EXIT
@@ -146,8 +164,80 @@ _wait_for_no_mock_pulse() {
 }
 
 _kill_mocks() {
+	_stop_keepalive_supervisor
 	pkill -KILL -f "${TEST_ROOT}/scripts/pulse-wrapper.sh" 2>/dev/null || true
+	pkill -KILL -f "${TEST_ROOT}/scripts/pulse-merge-routine.sh" 2>/dev/null || true
 	_wait_for_no_mock_pulse 20 || true
+	return 0
+}
+
+_start_keepalive_supervisor() {
+	KEEPALIVE_STOP_FILE="${TEST_ROOT}/keepalive.stop"
+	KEEPALIVE_PID_FILE="${TEST_ROOT}/keepalive.pid"
+	rm -f "$KEEPALIVE_STOP_FILE"
+	rm -f "$KEEPALIVE_PID_FILE"
+	(
+		local _child_pid=""
+		trap 'exit 0' TERM INT
+		while [[ ! -f "$KEEPALIVE_STOP_FILE" ]]; do
+			if [[ ! "$_child_pid" =~ ^[0-9]+$ ]] || ! kill -0 "$_child_pid" 2>/dev/null; then
+				bash "${TEST_ROOT}/scripts/pulse-wrapper.sh" >/dev/null 2>&1 &
+				_child_pid=$!
+				printf '%s\n' "$_child_pid" >"$KEEPALIVE_PID_FILE"
+				disown "$_child_pid" 2>/dev/null || true
+			fi
+			sleep 0.05
+		done
+	) &
+	KEEPALIVE_SUPERVISOR_PID=$!
+	return 0
+}
+
+_stop_keepalive_supervisor() {
+	if [[ -n "${KEEPALIVE_STOP_FILE:-}" ]]; then
+		: >"$KEEPALIVE_STOP_FILE" 2>/dev/null || true
+	fi
+	if [[ "${KEEPALIVE_SUPERVISOR_PID:-}" =~ ^[0-9]+$ ]]; then
+		kill -TERM "$KEEPALIVE_SUPERVISOR_PID" 2>/dev/null || true
+		wait "$KEEPALIVE_SUPERVISOR_PID" 2>/dev/null || true
+	fi
+	KEEPALIVE_SUPERVISOR_PID=""
+	KEEPALIVE_STOP_FILE=""
+	KEEPALIVE_PID_FILE=""
+	return 0
+}
+
+_wait_for_keepalive_pid_change() {
+	local _previous_pid="$1"
+	local _tries="${2:-40}"
+	local _current_pid=""
+	while [[ "$_tries" -gt 0 ]]; do
+		if [[ -r "$KEEPALIVE_PID_FILE" ]]; then
+			IFS= read -r _current_pid <"$KEEPALIVE_PID_FILE" || true
+			if [[ "$_current_pid" =~ ^[0-9]+$ && "$_current_pid" != "$_previous_pid" ]] && kill -0 "$_current_pid" 2>/dev/null; then
+				printf '%s\n' "$_current_pid"
+				return 0
+			fi
+		fi
+		sleep 0.05
+		_tries=$((_tries - 1))
+	done
+	return 1
+}
+
+_spawn_detached_mock_merge_routine() {
+	nohup bash "${TEST_ROOT}/scripts/pulse-merge-routine.sh" run >/dev/null 2>&1 &
+	LAST_MOCK_PID=$!
+	MOCK_PIDS+=("$LAST_MOCK_PID")
+	return 0
+}
+
+_first_mock_pulse_pid() {
+	local _pids=""
+	_pids=$(pgrep -f "${TEST_ROOT}/scripts/pulse-wrapper.sh" 2>/dev/null || true)
+	[[ -n "$_pids" ]] || return 1
+	printf '%s\n' "${_pids%%$'\n'*}"
+	return 0
 }
 
 # _spawn_extra_mock_pulse: launch ONE additional mock pulse-wrapper.sh process
@@ -397,6 +487,197 @@ test_stop_idempotent_when_stopped() {
 	local rc=0
 	"$HELPER" stop >/dev/null 2>&1 || rc=$?
 	_assert_eq "stop idempotent when stopped" "0" "$rc"
+	return 0
+}
+
+test_reconciliation_tolerates_launchd_keepalive_respawn() {
+	_kill_mocks
+	_start_keepalive_supervisor
+	local first_pid=""
+	local replacement_pid=""
+	if ! first_pid=$(_wait_for_keepalive_pid_change ""); then
+		_print_result "reconcile tolerates launchd KeepAlive replacement (fixture did not start)" 0
+		_stop_keepalive_supervisor
+		return 0
+	fi
+	local output=""
+	local rc=0
+	output=$(
+		# shellcheck source=../pulse-lifecycle-helper.sh
+		source "$HELPER"
+		_stop_reconciliation_processes 2>&1
+	) || rc=$?
+	replacement_pid=$(_wait_for_keepalive_pid_change "$first_pid" 2>/dev/null || true)
+	_stop_keepalive_supervisor
+	if [[ "$rc" -eq 0 && -n "$first_pid" && -n "$replacement_pid" && "$replacement_pid" != "$first_pid" && "$output" != *"Failed to retire"* ]]; then
+		_print_result "reconcile tolerates launchd KeepAlive replacement PID" 1
+	else
+		_print_result "reconcile tolerates launchd KeepAlive replacement (first=$first_pid replacement=$replacement_pid rc=$rc output=$output)" 0
+	fi
+	_kill_mocks
+	return 0
+}
+
+test_reconciliation_retires_detached_merge_routine() {
+	_kill_mocks
+	_spawn_detached_mock_merge_routine
+	local merge_pid="$LAST_MOCK_PID"
+	local output=""
+	local rc=0
+	local tries=20
+	while ! kill -0 "$merge_pid" 2>/dev/null && [[ "$tries" -gt 0 ]]; do
+		sleep 0.1
+		tries=$((tries - 1))
+	done
+	output=$(
+		# shellcheck source=../pulse-lifecycle-helper.sh
+		source "$HELPER"
+		_stop_reconciliation_processes 2>&1
+	) || rc=$?
+	tries=20
+	while kill -0 "$merge_pid" 2>/dev/null && [[ "$tries" -gt 0 ]]; do
+		sleep 0.1
+		tries=$((tries - 1))
+	done
+	if [[ "$rc" -eq 0 ]] && ! kill -0 "$merge_pid" 2>/dev/null; then
+		_print_result "reconcile retires detached stale pulse-merge-routine" 1
+	else
+		_print_result "reconcile retires detached stale pulse-merge-routine (pid=$merge_pid rc=$rc output=$output)" 0
+	fi
+	wait "$merge_pid" 2>/dev/null || true
+	_kill_mocks
+	return 0
+}
+
+test_reconciliation_fails_closed_on_unkillable_snapshot() {
+	local output=""
+	local rc=0
+	output=$(
+		# shellcheck source=../pulse-lifecycle-helper.sh
+		source "$HELPER"
+		_pulse_reconciliation_identities() {
+			printf '424242\tstart-a\n'
+			return 0
+		}
+		_pulse_snapshot_survivors() {
+			local _identities="$1"
+			printf '%s\n' "$_identities"
+			return 0
+		}
+		_pulse_signal_snapshot() {
+			local _signal="$1"
+			local _identities="$2"
+			: "$_signal" "$_identities"
+			return 0
+		}
+		sleep() {
+			local _seconds="$1"
+			: "$_seconds"
+			return 0
+		}
+		_stop_reconciliation_processes 2>&1
+	) || rc=$?
+	if [[ "$rc" -eq 1 && "$output" == *"residual PIDs: 424242"* ]]; then
+		_print_result "reconcile fails closed on unkillable PID with evidence" 1
+	else
+		_print_result "reconcile fails closed on unkillable PID (rc=$rc output=$output)" 0
+	fi
+	return 0
+}
+
+test_reconciliation_skips_reused_snapshot_pid() {
+	local signal_log="${TEST_ROOT}/reused-identity-signals.log"
+	local signal_state=""
+	local rc=0
+	: >"$signal_log"
+	(
+		# shellcheck source=../pulse-lifecycle-helper.sh
+		source "$HELPER"
+		_pulse_process_start_token() {
+			local _pid="$1"
+			: "$_pid"
+			printf 'start-b\n'
+			return 0
+		}
+		kill() {
+			local _signal="$1"
+			local _pid="$2"
+			if [[ "$_signal" != "-0" ]]; then
+				printf '%s %s\n' "$_signal" "$_pid" >>"$signal_log"
+			fi
+			return 0
+		}
+		_pulse_signal_snapshot TERM $'424242\tstart-a'
+	) || rc=$?
+	signal_state=$(<"$signal_log")
+	if [[ "$rc" -eq 0 && -z "$signal_state" ]]; then
+		_print_result "reconcile skips a PID whose stable identity was reused" 1
+	else
+		_print_result "reconcile signalled a reused PID identity (rc=$rc signals=$signal_state)" 0
+	fi
+	return 0
+}
+
+test_managed_replacement_requires_new_active_bundle_lease() {
+	local bundles_root="${TEST_ROOT}/runtime-bundles"
+	local active_root="${bundles_root}/bundle-active/agents"
+	local stale_root="${bundles_root}/bundle-stale/agents"
+	local result=""
+	local rc=0
+	mkdir -p "$active_root" "$stale_root" \
+		"${bundles_root}/.leases/bundle-active" \
+		"${bundles_root}/.leases/bundle-stale"
+	active_root=$(cd "$active_root" && pwd -P)
+	stale_root=$(cd "$stale_root" && pwd -P)
+	printf '%s\n' "$stale_root" >"${bundles_root}/.leases/bundle-stale/101"
+	printf '%s\n' "$active_root" >"${bundles_root}/.leases/bundle-active/202"
+	result=$(
+		export AIDEVOPS_RUNTIME_BUNDLES_DIR="$bundles_root"
+		# shellcheck source=../pulse-lifecycle-helper.sh
+		source "$HELPER"
+		_PULSE_AGENTS_DIR="$active_root"
+		_pulse_pid_invokes_script() {
+			local candidate_pid="$1"
+			local script_path="$2"
+			: "$candidate_pid" "$script_path"
+			return 0
+		}
+		_pulse_pids() {
+			printf '101\n202\n'
+			return 0
+		}
+		_pulse_find_active_runtime_pid_since "101"
+	) || rc=$?
+	if [[ "$rc" -eq 0 && "$result" == "202" ]]; then
+		_print_result "managed replacement requires a new active-bundle PID lease" 1
+	else
+		_print_result "managed replacement active-bundle lease proof (rc=$rc result=$result)" 0
+	fi
+	return 0
+}
+
+test_active_runtime_proof_rejects_observer_argv() {
+	local observer_pid=""
+	local rc=0
+	bash -c 'while :; do sleep 1; done' pulse-observer "${TEST_ROOT}/scripts/pulse-wrapper.sh" &
+	observer_pid=$!
+	MOCK_PIDS+=("$observer_pid")
+	sleep 0.2
+	(
+		# shellcheck source=../pulse-lifecycle-helper.sh
+		source "$HELPER"
+		_PULSE_AGENTS_DIR="$TEST_ROOT"
+		_PULSE_SCRIPT="${TEST_ROOT}/scripts/pulse-wrapper.sh"
+		_PULSE_ACTIVE_AGENTS_LINK="$TEST_ROOT"
+		_pulse_pid_uses_active_runtime "$observer_pid"
+	) || rc=$?
+	if [[ "$rc" -eq 1 ]] && kill -0 "$observer_pid" 2>/dev/null; then
+		_print_result "active runtime proof rejects an observer that only mentions the wrapper" 1
+	else
+		_print_result "active runtime proof accepted an observer argv (pid=$observer_pid rc=$rc)" 0
+	fi
+	kill -KILL "$observer_pid" 2>/dev/null || true
+	wait "$observer_pid" 2>/dev/null || true
 	return 0
 }
 
@@ -896,6 +1177,12 @@ main() {
 	test_start_is_idempotent
 	test_stop_terminates_running
 	test_stop_idempotent_when_stopped
+	test_reconciliation_tolerates_launchd_keepalive_respawn
+	test_reconciliation_retires_detached_merge_routine
+	test_reconciliation_fails_closed_on_unkillable_snapshot
+	test_reconciliation_skips_reused_snapshot_pid
+	test_managed_replacement_requires_new_active_bundle_lease
+	test_active_runtime_proof_rejects_observer_argv
 	test_restart_if_running_noop_when_stopped
 	test_restart_if_running_replaces_pid
 	test_skip_env_honoured_in_restart_if_running

@@ -382,6 +382,8 @@ _ptwc_remove_candidate() {
 	local audit_context=""
 	local current_head=""
 	local cwd_snapshot=""
+	local cwd_capture_status=0
+	local cwd_visibility="${_WT_CWD_VISIBILITY_UNUSABLE:-unusable}"
 
 	[[ "$detached" == "1" ]] || return 1
 	_ptwc_is_temp_fixture_path "$wt_path" || return 1
@@ -403,9 +405,18 @@ _ptwc_remove_candidate() {
 	_worktree_owner_alive "$wt_path" "" && return 1
 	_ptwc_worktree_is_clean "$wt_path" || return 1
 	_ptwc_head_reachable_from_remote "$repo_path" "$current_head" || return 1
-	cwd_snapshot=$(capture_worktree_process_cwds) || return 1
+	if cwd_snapshot=$(capture_worktree_process_cwds); then
+		cwd_capture_status=0
+	else
+		cwd_capture_status=$?
+	fi
+	case "$cwd_capture_status" in
+	0) cwd_visibility="${_WT_CWD_VISIBILITY_COMPLETE:-complete}" ;;
+	"${_WT_CWD_CAPTURE_DEGRADED_RC:-2}") cwd_visibility="${_WT_CWD_VISIBILITY_DEGRADED:-degraded}" ;;
+	*) cwd_visibility="${_WT_CWD_VISIBILITY_UNUSABLE:-unusable}" ;;
+	esac
 	worktree_removal_guard "$wt_path" "pulse-temp-worktree-cleanup.sh" "$_PTWC_REASON" \
-		"$cwd_snapshot" || return 1
+		"$cwd_snapshot" "$cwd_visibility" || return 1
 	# Keep the post-snapshot window minimal while still proving HEAD did not move.
 	git -C "$wt_path" symbolic-ref --quiet HEAD >/dev/null 2>&1 && return 1
 	[[ "$(git -C "$wt_path" rev-parse --verify HEAD 2>/dev/null)" == "$current_head" ]] || return 1

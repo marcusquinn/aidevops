@@ -127,6 +127,7 @@ readonly _PMS_COUNTER_QUEUE_SATURATION_EVENTS="pulse_actions_queue_saturation_ev
 readonly _PMS_GAUGE_ZERO_PROGRESS_CYCLES='pulse_merge_zero_progress_cycles'
 readonly _PMS_GAUGE_ZERO_PROGRESS_RECOVERY_CHECK_TS='pulse_merge_zero_progress_recovery_check_ts'
 readonly _PMS_JQ_NULL_GUARD="null"
+readonly _PMS_ISSUE_STATE_OPEN="OPEN"
 
 #######################################
 # Shared open-PR field shape for stuck-merge list scans.
@@ -137,7 +138,21 @@ readonly _PMS_JQ_NULL_GUARD="null"
 # pulse_merge_stuck_run_pass, and the remaining fields gate eligibility.
 #######################################
 _pms_pr_list_json_fields() {
-	printf '%s' 'number,mergeable,reviewDecision,isDraft,labels,author,updatedAt'
+	printf '%s' 'number,mergeable,reviewDecision,isDraft,labels,author,updatedAt,headRefOid'
+	return 0
+}
+
+_pms_head_sha_from_pr_json() {
+	local pr_json="$1"
+	printf '%s' "$pr_json" | jq -r '.headRefOid // empty' 2>/dev/null || true
+	return 0
+}
+
+_pms_head_sha_for_pr() {
+	local pr_number="$1"
+	local repo_slug="$2"
+	gh_pr_view "$pr_number" --repo "$repo_slug" \
+		--json headRefOid --jq '.headRefOid // empty' 2>/dev/null || true
 	return 0
 }
 readonly _PMS_RUNNER_SATURATION_MARKER_TEXT="merge-stuck:runner-queue-saturation"
@@ -202,7 +217,7 @@ _pms_is_eligible_stuck() {
 }
 
 #######################################
-# Fetch normalized REST check-runs for a PR head SHA.
+# Fetch the effective normalized check set for a PR head SHA.
 # Args: $1 = repo_slug, $2 = head SHA
 # Stdout: JSON array, [] on missing helper/API failure
 #######################################
@@ -210,12 +225,40 @@ _pms_check_runs_for_head() {
 	local repo_slug="$1"
 	local head_sha="$2"
 	local runs=""
-	if [[ -n "$repo_slug" && -n "$head_sha" ]] && declare -F gh_pr_check_runs_rest >/dev/null 2>&1; then
-		runs=$(gh_pr_check_runs_rest "$repo_slug" "$head_sha" 2>/dev/null) || runs=""
+	local fetch_succeeded=0
+	if [[ -n "$repo_slug" && -n "$head_sha" ]] \
+		&& declare -F _pmp_same_pass_check_evidence_get >/dev/null 2>&1 \
+		&& runs=$(_pmp_same_pass_check_evidence_get "$repo_slug" "$head_sha" 2>/dev/null); then
+		printf '%s' "$runs"
+		return 0
 	fi
-	[[ -n "$runs" && "$runs" != "null" ]] || runs="[]"
+	# The merge preflight snapshot collapses superseded runs and logical aliases
+	# to their effective current-head result. Prefer it so an old cancelled or
+	# failed run cannot make a subsequently successful PR look broken forever.
+	# pulse-merge.sh is sourced before this module in production; the REST helper
+	# remains the standalone/test fallback.
+	if [[ -n "$repo_slug" && -n "$head_sha" ]] && declare -F _pmrc_snapshot_checks_json >/dev/null 2>&1; then
+		if runs=$(_pmrc_snapshot_checks_json "$repo_slug" "$head_sha" 2>/dev/null); then fetch_succeeded=1; fi
+	elif [[ -n "$repo_slug" && -n "$head_sha" ]] && declare -F gh_pr_check_runs_rest >/dev/null 2>&1; then
+		if runs=$(gh_pr_check_runs_rest "$repo_slug" "$head_sha" 2>/dev/null); then fetch_succeeded=1; fi
+	fi
+	if [[ -z "$runs" || "$runs" == "null" ]]; then
+		runs="[]"
+		fetch_succeeded=0
+	fi
+	if [[ "$fetch_succeeded" -eq 1 ]] && declare -F _pmp_record_same_pass_check_evidence >/dev/null 2>&1; then
+		_pmp_record_same_pass_check_evidence "$repo_slug" "$head_sha" "$runs" 2>/dev/null || true
+	fi
 	printf '%s' "$runs"
 	return 0
+}
+
+_pms_diagnostic_budget_exhausted() {
+	if declare -F _pmp_merge_diagnostics_budget_exhausted >/dev/null 2>&1; then
+		_pmp_merge_diagnostics_budget_exhausted
+		return $?
+	fi
+	return 1
 }
 
 #######################################
@@ -281,7 +324,7 @@ _pms_failing_check_bullets() {
 # is classified as STUCK_RUNNER_QUEUE_SATURATION (highest priority — the
 # QUEUED check would otherwise mask the actual cause).
 #
-# Args: $1 = pr_number, $2 = repo_slug, $3 = is_saturated (0|1, default 0)
+# Args: $1=pr_number, $2=repo_slug, $3=is_saturated, $4=optional PR metadata
 # Returns: 0 (always; classification is the stdout)
 #######################################
 _classify_stuck_pr() {
@@ -291,14 +334,16 @@ _classify_stuck_pr() {
 
 	# Cheap fast paths first. Fetch labels + mergeable + head SHA once. Check
 	# state comes from REST check-runs below, not GraphQL statusCheckRollup.
-	local pr_meta
-	pr_meta=$(gh_pr_view "$pr_number" --repo "$repo_slug" \
-		--json labels,mergeable,headRefOid 2>/dev/null) || pr_meta=""
+	local pr_meta="${4:-}"
+	if [[ -z "$pr_meta" ]]; then
+		pr_meta=$(gh_pr_view "$pr_number" --repo "$repo_slug" \
+			--json labels,mergeable,headRefOid 2>/dev/null) || pr_meta=""
+	fi
 
 	local mergeable="" labels="" head_sha="" check_runs=""
 	mergeable=$(printf '%s' "$pr_meta" | jq -r '.mergeable // "UNKNOWN"' 2>/dev/null)
 	labels=$(printf '%s' "$pr_meta" | jq -r '[.labels[].name] | join(",")' 2>/dev/null)
-	head_sha=$(printf '%s' "$pr_meta" | jq -r '.headRefOid // ""' 2>/dev/null)
+	head_sha=$(_pms_head_sha_from_pr_json "$pr_meta")
 	check_runs=$(_pms_check_runs_for_head "$repo_slug" "$head_sha")
 
 	# Runner queue saturation takes priority when the repo is saturated
@@ -388,9 +433,10 @@ _classify_stuck_pr() {
 _pms_failure_fingerprint() {
 	local pr_number="$1"
 	local repo_slug="$2"
-	local head_sha="" runs_json=""
-	head_sha=$(gh_pr_view "$pr_number" --repo "$repo_slug" \
-		--json headRefOid --jq '.headRefOid // ""' 2>/dev/null) || head_sha=""
+	local head_sha="${3:-}" runs_json=""
+	if [[ -z "$head_sha" ]]; then
+		head_sha=$(_pms_head_sha_for_pr "$pr_number" "$repo_slug")
+	fi
 	runs_json=$(_pms_check_runs_for_head "$repo_slug" "$head_sha")
 
 	# Extract names of failing checks, normalize, sort, join. Uses the shared
@@ -441,13 +487,15 @@ _pms_default_branch() {
 # escalatable outcome); pattern-cluster outages are handled separately by
 # _detect_pattern_outage.
 #
-# Args: $1=pr_number, $2=repo_slug, $3=classification, $4=linked_issue (may be empty)
+# Args: $1=pr_number, $2=repo_slug, $3=classification, $4=linked_issue,
+#       $5=optional current head SHA
 #######################################
 _escalate_individual_stuck_pr() {
 	local pr_number="$1"
 	local repo_slug="$2"
 	local classification="$3"
 	local linked_issue="$4"
+	local head_sha="${5:-}"
 
 	[[ "$pr_number" =~ ^[0-9]+$ && -n "$repo_slug" ]] || return 0
 
@@ -460,9 +508,10 @@ _escalate_individual_stuck_pr() {
 
 	# Fetch failing check names for the worker-ready guidance via REST check-runs
 	# to avoid GraphQL statusCheckRollup polling in every pulse cycle.
-	local failing_checks="" head_sha="" runs_json=""
-	head_sha=$(gh_pr_view "$pr_number" --repo "$repo_slug" \
-		--json headRefOid --jq '.headRefOid // ""' 2>/dev/null) || head_sha=""
+	local failing_checks="" runs_json=""
+	if [[ -z "$head_sha" ]]; then
+		head_sha=$(_pms_head_sha_for_pr "$pr_number" "$repo_slug")
+	fi
 	runs_json=$(_pms_check_runs_for_head "$repo_slug" "$head_sha")
 	failing_checks=$(_pms_failing_check_bullets "$runs_json")
 	[[ -n "$failing_checks" ]] || failing_checks="- (no FAILURE entries in rollup; check rollup manually)"
@@ -602,15 +651,59 @@ The existing rebase-nudge family (\`_post_rebase_nudge_on_interactive_conflictin
 # ── Pattern-cluster outage detector ─────────────────────────────────────────
 
 #######################################
+# Format a comma-separated PR list as Markdown bullets. The explicit trailing
+# newline ensures the final PR is consumed by read instead of disappearing at
+# EOF when the input has no trailing comma.
+# Args: $1=comma-separated PR numbers
+#######################################
+_pms_format_pr_markdown_list() {
+	local prs="$1"
+	local pr=""
+	printf '%s\n' "$prs" | tr ',' '\n' | while IFS= read -r pr; do
+		[[ "$pr" =~ ^[0-9]+$ ]] || continue
+		printf -- '- #%s\n' "$pr"
+	done
+	return 0
+}
+
+#######################################
+# Return success when every failed check in a fingerprint is a per-PR review,
+# authority, or policy gate. Those failures need remediation on each PR and
+# are not evidence that the shared base branch is broken. A mixed fingerprint
+# containing any ordinary CI check remains eligible for outage detection.
+# Args: $1=comma-separated failure fingerprint
+#######################################
+_pms_is_per_pr_gate_fingerprint() {
+	local fingerprint="$1"
+	local check_name="" normalized="" found=0
+
+	while IFS= read -r check_name; do
+		[[ -n "$check_name" ]] || continue
+		found=1
+		normalized=$(printf '%s' "$check_name" | tr '[:upper:]' '[:lower:]')
+		case "$normalized" in
+		*coderabbit* | *review-bot* | *"review bot"* | *"maintainer review"* | \
+			*"assignee gate"* | *"approval gate"* | *"authority gate"* | \
+			*"policy gate"* | *"cryptographic approval"* | *"crypto approval"*) ;;
+		*) return 1 ;;
+		esac
+	done < <(printf '%s\n' "$fingerprint" | tr ',' '\n')
+
+	[[ "$found" -eq 1 ]] || return 1
+	return 0
+}
+
+#######################################
 # Group all stuck PRs in the repo by failure fingerprint. If ≥ AIDEVOPS_MERGE_PATTERN_MIN_PRS
 # share an identical fingerprint, file ONE investigation issue per outage signature.
 # Dedup'd by the fingerprint hash so the same outage doesn't re-file every cycle.
 #
-# Args: $1=repo_slug, $2=newline-separated list of stuck PR numbers
+# Args: $1=repo_slug, $2=newline-separated stuck PR numbers, $3=optional PR list
 #######################################
 _detect_pattern_outage() {
 	local repo_slug="$1"
 	local stuck_prs="$2"
+	local pr_json="${3:-}"
 
 	[[ -z "$stuck_prs" ]] && return 0
 
@@ -623,10 +716,17 @@ _detect_pattern_outage() {
 
 	while IFS= read -r pr_num; do
 		[[ -n "$pr_num" ]] || continue
-		local fp
-		fp=$(_pms_failure_fingerprint "$pr_num" "$repo_slug")
+		local fp head_sha=""
+		if [[ -n "$pr_json" ]]; then
+			head_sha=$(printf '%s' "$pr_json" | jq -r --argjson number "$pr_num" '.[] | select(.number == $number) | .headRefOid // empty' 2>/dev/null) || head_sha=""
+		fi
+		fp=$(_pms_failure_fingerprint "$pr_num" "$repo_slug" "$head_sha")
 		# Skip PRs with no FAILURE entries — those aren't part of an outage cluster.
 		[[ -n "$fp" ]] || continue
+		if _pms_is_per_pr_gate_fingerprint "$fp"; then
+			echo "[pulse-merge-stuck] _detect_pattern_outage: skipping per-PR review/policy fingerprint for PR #${pr_num} in ${repo_slug}: ${fp}" >>"$LOGFILE"
+			continue
+		fi
 		printf '%s\t%s\n' "$fp" "$pr_num" >>"$tmp_lines"
 	done <<<"$stuck_prs"
 
@@ -665,6 +765,33 @@ _detect_pattern_outage() {
 	return 0
 }
 
+#######################################
+# Return success when an open investigation or closed tombstone already owns
+# the exact outage fingerprint marker. Open investigations retain the existing
+# stale-resolution check; closed markers prevent deterministic re-file churn.
+# Args: $1=repo_slug, $2=marker text, $3=fingerprint, $4=fingerprint hash
+#######################################
+_pms_outage_marker_exists() {
+	local repo_slug="$1"
+	local marker_text="$2"
+	local fingerprint="$3"
+	local fp_hash="$4"
+	local existing="" existing_state="" existing_record=""
+
+	existing_record=$(gh issue list --repo "$repo_slug" --state all --search "${marker_text}" \
+		--limit 100 --json number,state \
+		--jq "([.[] | select(.state == \"${_PMS_ISSUE_STATE_OPEN}\")][0] // .[0]) | [(.number // \"\"), (.state // \"\")] | @tsv" \
+		2>/dev/null) || existing_record=""
+	IFS=$'\t' read -r existing existing_state <<<"$existing_record"
+	[[ -n "$existing" && "$existing" != "$_PMS_JQ_NULL_GUARD" ]] || return 1
+
+	if [[ "$existing_state" == "$_PMS_ISSUE_STATE_OPEN" ]]; then
+		_pms_maybe_close_resolved_outage_issue "$repo_slug" "$existing" "$fingerprint" || true
+	fi
+	echo "[pulse-merge-stuck] _pms_file_outage_issue: outage marker ${fp_hash} already exists as ${existing_state:-UNKNOWN} issue #${existing} in ${repo_slug} — skipping" >>"$LOGFILE"
+	return 0
+}
+
 # Internal: file ONE outage investigation issue (or skip if dedup marker exists).
 _pms_file_outage_issue() {
 	local repo_slug="$1"
@@ -679,13 +806,8 @@ _pms_file_outage_issue() {
 	local default_branch
 	default_branch=$(_pms_default_branch "$repo_slug")
 
-	# Dedup: search for an OPEN issue with this marker. If one exists, skip.
-	local existing
-	existing=$(gh issue list --repo "$repo_slug" --state open --search "${marker_text}" \
-		--limit 1 --json number --jq '.[0].number' 2>/dev/null)
-	if [[ -n "$existing" && "$existing" != "$_PMS_JQ_NULL_GUARD" ]]; then
-		_pms_maybe_close_resolved_outage_issue "$repo_slug" "$existing" "$fingerprint" || true
-		echo "[pulse-merge-stuck] _pms_file_outage_issue: outage marker ${fp_hash} already filed as #${existing} in ${repo_slug} — skipping" >>"$LOGFILE"
+	# Dedup against open investigations and closed tombstones for exact hashes.
+	if _pms_outage_marker_exists "$repo_slug" "$marker_text" "$fingerprint" "$fp_hash"; then
 		return 0
 	fi
 
@@ -705,7 +827,7 @@ This is a broken-base outage signal — multiple unrelated PRs failing the same 
 
 ## Affected PRs
 
-$(printf '%s' "$prs" | tr ',' '\n' | while read -r p; do printf -- '- #%s\n' "$p"; done)
+$(_pms_format_pr_markdown_list "$prs")
 
 ## Why
 
@@ -782,7 +904,7 @@ _pms_issue_prs_all_resolved_or_changed() {
 		if [[ "$state_rc" -ne 0 || -z "$state" ]]; then
 			return 1
 		fi
-		if [[ "$state" == "OPEN" ]]; then
+		if [[ "$state" == "$_PMS_ISSUE_STATE_OPEN" ]]; then
 			current_fp=$(_pms_failure_fingerprint "$pr" "$repo_slug") || current_fp=""
 			[[ -n "$current_fp" ]] || return 1
 			if [[ "$current_fp" == "$fingerprint" ]]; then
@@ -858,7 +980,7 @@ Per-PR escalation comments are SUPPRESSED for these PRs while saturation persist
 
 ## Affected PRs
 
-$(printf '%s' "$affected_prs" | tr ',' '\n' | while read -r p; do [[ -n "$p" ]] && printf -- '- #%s\n' "$p"; done)
+$(_pms_format_pr_markdown_list "$affected_prs")
 
 ## Why
 
@@ -1152,12 +1274,13 @@ _pms_pr_counts_for_zero_progress() {
 	local pr_number="$2"
 	local labels_str="$3"
 	local pr_author="${4:-}"
+	local head_sha="${5:-}"
 
 	[[ -n "$repo_slug" && "$pr_number" =~ ^[0-9]+$ ]] || return 1
 	local labels_tokenized=",${labels_str},"
 
 	if declare -F _check_required_checks_passing >/dev/null 2>&1; then
-		if ! _check_required_checks_passing "$repo_slug" "$pr_number" >/dev/null 2>&1; then
+		if ! _check_required_checks_passing "$repo_slug" "$pr_number" "$head_sha" >/dev/null 2>&1; then
 			echo "[pulse-merge-stuck] _pms_count_eligible_unmerged_for_repo: excluding PR #${pr_number} in ${repo_slug} — required checks are not provably passing" >>"$LOGFILE"
 			return 1
 		fi
@@ -1236,7 +1359,7 @@ _pms_pr_counts_for_zero_progress() {
 		echo "[pulse-merge-stuck] _pms_count_eligible_unmerged_for_repo: retaining PR #${pr_number} in ${repo_slug} — current state is unavailable" >>"$LOGFILE"
 		return 0
 	fi
-	if [[ "$current_state" != "OPEN" ]]; then
+	if [[ "$current_state" != "$_PMS_ISSUE_STATE_OPEN" ]]; then
 		echo "[pulse-merge-stuck] _pms_count_eligible_unmerged_for_repo: excluding PR #${pr_number} in ${repo_slug} — current state is ${current_state}" >>"$LOGFILE"
 		return 1
 	fi
@@ -1247,6 +1370,14 @@ _pms_pr_counts_for_zero_progress() {
 _pms_count_eligible_unmerged_for_repo() {
 	local repo_slug="$1"
 	[[ -n "$repo_slug" ]] || { printf '0'; return 0; }
+	local same_pass_count=""
+	if declare -F _pmp_count_same_pass_eligible_unmerged >/dev/null 2>&1 \
+		&& same_pass_count=$(_pmp_count_same_pass_eligible_unmerged "$repo_slug" 2>/dev/null); then
+		[[ "$same_pass_count" =~ ^[0-9]+$ ]] || return 2
+		printf '%s' "$same_pass_count"
+		return 0
+	fi
+	[[ "${AIDEVOPS_PULSE_REQUIRE_SAME_PASS_OUTCOME:-0}" == "1" ]] && return 2
 
 	local pr_json
 	pr_json=$(pulse_pr_list_get --repo "$repo_slug" --state open \
@@ -1267,7 +1398,7 @@ _pms_count_eligible_unmerged_for_repo() {
 			and (.isDraft // false) == false
 			and (([.labels[]?.name] | index("hold-for-review")) == null)
 		  )
-		  | "\(.number // "")\u001e\([.labels[]?.name] | join(","))\u001e\(.author.login? // "unknown")"
+		  | "\(.number // "")\u001e\([.labels[]?.name] | join(","))\u001e\(.author.login? // "unknown")\u001e\(.headRefOid // "")"
 		] | .[]' 2>/dev/null) || candidates=""
 
 	local count=0
@@ -1275,9 +1406,10 @@ _pms_count_eligible_unmerged_for_repo() {
 	local pr_number=""
 	local labels_str=""
 	local pr_author=""
-	while IFS="$_RS" read -r pr_number labels_str pr_author; do
+	local head_sha=""
+	while IFS="$_RS" read -r pr_number labels_str pr_author head_sha; do
 		[[ -n "$pr_number" ]] || continue
-		if _pms_pr_counts_for_zero_progress "$repo_slug" "$pr_number" "$labels_str" "$pr_author"; then
+		if _pms_pr_counts_for_zero_progress "$repo_slug" "$pr_number" "$labels_str" "$pr_author" "$head_sha"; then
 			count=$((count + 1))
 		fi
 	done <<<"$candidates"
@@ -1353,11 +1485,14 @@ _pms_handle_classified_pr() {
 	local pr_num="$1"
 	local repo_slug="$2"
 	local is_saturated="$3"
+	local pr_meta="${4:-}"
+	local head_sha=""
+	head_sha=$(_pms_head_sha_from_pr_json "$pr_meta")
 
 	# Pass is_saturated so the classifier can recognise QUEUED checks
 	# during a runner outage.
 	local classification
-	classification=$(_classify_stuck_pr "$pr_num" "$repo_slug" "$is_saturated")
+	classification=$(_classify_stuck_pr "$pr_num" "$repo_slug" "$is_saturated" "$pr_meta")
 
 	# Fetch linked issue once for the escalation comment.
 	local linked_issue=""
@@ -1380,7 +1515,7 @@ _pms_handle_classified_pr() {
 			printf 'HANDLED'
 			;;
 		STUCK_CHECKS_FAILING|STUCK_BRANCHPROTECT_API_ERROR|STUCK_AUTH|STUCK_OTHER)
-			_escalate_individual_stuck_pr "$pr_num" "$repo_slug" "$classification" "$linked_issue"
+			_escalate_individual_stuck_pr "$pr_num" "$repo_slug" "$classification" "$linked_issue" "$head_sha"
 			printf 'HANDLED'
 			;;
 		*)
@@ -1390,11 +1525,84 @@ _pms_handle_classified_pr() {
 	return 0
 }
 
+#######################################
+# Classify the eligible-stuck subset while the separate diagnostic budget
+# remains available. Partial results are returned for observability only; the
+# caller suppresses aggregate writes unless the completion flag remains 1.
+# Args: $1=repo, $2=PR JSON, $3=count, $4=now, $5=age threshold,
+#       $6=saturated, $7-$11=eligible/stuck/saturation/count/complete vars
+#######################################
+_pms_classify_stuck_prs_within_budget() {
+	local repo_slug="$1"
+	local pr_json="$2"
+	local pr_count="$3"
+	local now_epoch="$4"
+	local age_threshold_secs="$5"
+	local is_saturated="$6"
+	local eligible_var="$7"
+	local stuck_numbers_var="$8"
+	local saturation_prs_var="$9"
+	local saturation_count_var="${10}"
+	local complete_var="${11}"
+	local output_var=""
+	local _classified_eligible=0 _classified_saturation_count=0 _classified_complete=1
+	local _classified_stuck_numbers="" _classified_saturation_prs=""
+	local i=0
+
+	for output_var in "$eligible_var" "$stuck_numbers_var" "$saturation_prs_var" "$saturation_count_var" "$complete_var"; do
+		[[ "$output_var" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || return 1
+	done
+	while [[ "$i" -lt "$pr_count" ]]; do
+		if _pms_diagnostic_budget_exhausted; then
+			_classified_complete=0
+			break
+		fi
+		local pr_obj="" pr_num="" pr_updated="" pr_age_secs=0 is_stuck=""
+		pr_obj=$(printf '%s' "$pr_json" | jq -c ".[$i]" 2>/dev/null)
+		i=$((i + 1))
+		[[ -n "$pr_obj" ]] || continue
+		pr_num=$(printf '%s' "$pr_obj" | jq -r '.number // empty' 2>/dev/null)
+		[[ "$pr_num" =~ ^[0-9]+$ ]] || continue
+		is_stuck=$(_pms_is_eligible_stuck "$pr_obj")
+		[[ "$is_stuck" == "1" ]] || continue
+		pr_updated=$(printf '%s' "$pr_obj" | jq -r '.updatedAt // empty' 2>/dev/null)
+		[[ -n "$pr_updated" ]] || continue
+		pr_age_secs=$((now_epoch - $(_pms_iso_to_epoch "$pr_updated")))
+		[[ "$pr_age_secs" -ge "$age_threshold_secs" ]] || continue
+		_classified_eligible=$((_classified_eligible + 1))
+		_classified_stuck_numbers="${_classified_stuck_numbers}${pr_num}\n"
+		local route=""
+		route=$(_pms_handle_classified_pr "$pr_num" "$repo_slug" "$is_saturated" "$pr_obj")
+		if [[ "$route" == "SATURATED" ]]; then
+			_classified_saturation_prs="${_classified_saturation_prs}${pr_num},"
+			_classified_saturation_count=$((_classified_saturation_count + 1))
+		fi
+	done
+	if _pms_diagnostic_budget_exhausted; then _classified_complete=0; fi
+	printf -v "$eligible_var" '%s' "$_classified_eligible"
+	printf -v "$stuck_numbers_var" '%s' "$_classified_stuck_numbers"
+	printf -v "$saturation_prs_var" '%s' "$_classified_saturation_prs"
+	printf -v "$saturation_count_var" '%s' "$_classified_saturation_count"
+	printf -v "$complete_var" '%s' "$_classified_complete"
+	return 0
+}
+
 pulse_merge_stuck_run_pass() {
 	local repo_slug="$1"
+	local completion_var="${2:-}"
+	local pass_complete=1
+	if [[ -n "$completion_var" && "$completion_var" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; then
+		printf -v "$completion_var" '%s' '1'
+	else
+		completion_var=""
+	fi
 
 	[[ -n "$repo_slug" ]] || return 0
 	[[ "$AIDEVOPS_MERGE_STUCK_ENABLED" == "1" ]] || return 0
+	if _pms_diagnostic_budget_exhausted; then
+		[[ -n "$completion_var" ]] && printf -v "$completion_var" '%s' '0'
+		return 0
+	fi
 
 	# Fetch open PRs with the fields the detector needs.
 	local pr_json
@@ -1423,46 +1631,24 @@ pulse_merge_stuck_run_pass() {
 	[[ "$sat_in_progress" =~ ^[0-9]+$ ]] || sat_in_progress=0
 	[[ "$sat_ratio" =~ ^[0-9]+$ ]] || sat_ratio=0
 	[[ "$is_saturated" == "1" ]] || is_saturated=0
+	if _pms_diagnostic_budget_exhausted; then
+		[[ -n "$completion_var" ]] && printf -v "$completion_var" '%s' '0'
+		return 0
+	fi
 
 	# Saturation-blocked PRs aggregated for the meta-issue body (t3211) —
 	# per-PR escalation comments are SUPPRESSED for these.
 	local eligible_stuck_count=0 saturation_blocked_count=0
 	local stuck_pr_numbers="" saturation_blocked_prs=""
 
-	# Iterate each PR — classify, escalate, accumulate fingerprints.
-	local i=0
-	while [[ "$i" -lt "$pr_count" ]]; do
-		local pr_obj="" pr_num="" pr_updated="" pr_age_secs=0 is_stuck=""
-		pr_obj=$(printf '%s' "$pr_json" | jq -c ".[$i]" 2>/dev/null)
-		i=$((i + 1))
-		[[ -n "$pr_obj" ]] || continue
-
-		pr_num=$(printf '%s' "$pr_obj" | jq -r '.number // empty' 2>/dev/null)
-		[[ "$pr_num" =~ ^[0-9]+$ ]] || continue
-
-		# Eligibility gate first (cheap)
-		is_stuck=$(_pms_is_eligible_stuck "$pr_obj")
-		[[ "$is_stuck" == "1" ]] || continue
-
-		# Age gate (also cheap — uses cached updatedAt)
-		pr_updated=$(printf '%s' "$pr_obj" | jq -r '.updatedAt // empty' 2>/dev/null)
-		[[ -n "$pr_updated" ]] || continue
-		pr_age_secs=$(( now_epoch - $(_pms_iso_to_epoch "$pr_updated") ))
-		[[ "$pr_age_secs" -ge "$age_threshold_secs" ]] || continue
-
-		eligible_stuck_count=$((eligible_stuck_count + 1))
-		stuck_pr_numbers="${stuck_pr_numbers}${pr_num}\n"
-
-		# Classify + route via the helper. SATURATED means we must
-		# aggregate the PR for the meta-issue; HANDLED means a per-PR
-		# handler already ran.
-		local route
-		route=$(_pms_handle_classified_pr "$pr_num" "$repo_slug" "$is_saturated")
-		if [[ "$route" == "SATURATED" ]]; then
-			saturation_blocked_prs="${saturation_blocked_prs}${pr_num},"
-			saturation_blocked_count=$((saturation_blocked_count + 1))
-		fi
-	done
+	_pms_classify_stuck_prs_within_budget "$repo_slug" "$pr_json" "$pr_count" "$now_epoch" \
+		"$age_threshold_secs" "$is_saturated" eligible_stuck_count stuck_pr_numbers \
+		saturation_blocked_prs saturation_blocked_count pass_complete || pass_complete=0
+	if [[ "$pass_complete" -ne 1 ]]; then
+		[[ -n "$completion_var" ]] && printf -v "$completion_var" '%s' '0'
+		echo "[pulse-merge-stuck] pulse_merge_stuck_run_pass: ${repo_slug} — separate diagnostic budget exhausted; remaining classification deferred" >>"$LOGFILE"
+		return 0
+	fi
 
 	# Update the gauge for this cycle's count.
 	pulse_stats_set_gauge "pulse_merge_eligible_stuck_pr_count" "$eligible_stuck_count"
@@ -1481,7 +1667,7 @@ pulse_merge_stuck_run_pass() {
 
 	# Pattern-cluster detector over the full stuck set.
 	if [[ "$eligible_stuck_count" -ge "$AIDEVOPS_MERGE_PATTERN_MIN_PRS" ]]; then
-		_detect_pattern_outage "$repo_slug" "$(printf '%b' "$stuck_pr_numbers")" || true
+		_detect_pattern_outage "$repo_slug" "$(printf '%b' "$stuck_pr_numbers")" "$pr_json" || true
 	fi
 
 	echo "[pulse-merge-stuck] pulse_merge_stuck_run_pass: ${repo_slug} — eligible_stuck=${eligible_stuck_count}, threshold=${AIDEVOPS_MERGE_STUCK_AGE_MINUTES}m, saturated=${is_saturated} (queued=${sat_queued}, in_progress=${sat_in_progress}, ratio=${sat_ratio}, blocked_by_saturation=${saturation_blocked_count})" >>"$LOGFILE"

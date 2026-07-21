@@ -92,12 +92,14 @@ test("interactive OpenCode shell overrides stale worker origin", async () => {
 test("shell env moves the Git guard scripts directory to PATH first", async () => {
   const root = mkdtempSync(join(tmpdir(), "aidevops-shell-path-"));
   const scriptsDir = join(root, "scripts");
+  const binDir = join(root, "bin");
   mkdirSync(scriptsDir);
+  mkdirSync(binDir);
   try {
     const hook = createShellEnvHook({ agentsDir: root, scriptsDir, workspaceDir: root });
-    const output = { env: { PATH: `/usr/bin:${scriptsDir}:/bin` } };
+    const output = { env: { PATH: `/usr/bin:${binDir}:${scriptsDir}:/bin` } };
     await hook({ sessionID: "path-test" }, output);
-    assert.equal(output.env.PATH, `${scriptsDir}:/usr/bin:/bin`);
+    assert.equal(output.env.PATH, `${scriptsDir}:${binDir}:/usr/bin:/bin`);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

@@ -49,11 +49,12 @@ _is_cancelled_or_deferred() {
 
 _has_evidence() {
 	local text="$1" task_id="$2" repo="$3"
+	local issue_number="${4:-}"
 	local task_line
 	task_line=$(_task_line_from_block "$text" "$task_id")
 	# Cancelled/deferred/declined tasks need no PR or verified: evidence
 	_is_cancelled_or_deferred "$task_line" && return 0
-	if _has_unresolved_blocker "$text" "$task_id" "$task_line"; then
+	if _has_unresolved_blocker "$text" "$task_id" "$task_line" "$repo" "$issue_number"; then
 		return 1
 	fi
 	echo "$text" | grep -qE 'verified:[0-9]{4}-[0-9]{2}-[0-9]{2}|pr:#[0-9]+' && return 0
@@ -78,10 +79,14 @@ _has_unresolved_blocker() {
 	local text="$1"
 	local task_id="${2:-}"
 	local task_line="${3:-}"
+	local repo="${4:-}"
+	local issue_number="${5:-}"
 	local candidate
 	candidate="${task_line:-$(_task_line_from_block "$text" "$task_id")}"
-	printf '%s\n' "$candidate" | grep -qE '(^|[[:space:]])blocked-by:[^[:space:]]+' && return 0
-	return 1
+	printf '%s\n' "$candidate" | grep -qE '(^|[[:space:]])blocked-by:[^[:space:]]+' || return 1
+	[[ -n "$repo" && "$issue_number" =~ ^[0-9]+$ ]] || return 0
+	_der_completion_blockers_closed "$repo" "$issue_number" "$candidate" && return 1
+	return 0
 }
 
 _find_closing_pr() {
@@ -193,6 +198,9 @@ _is_not_planned_state_reason() {
 _mark_todo_done() {
 	local task_id="$1" todo_file="$2" proof_log="${3:-}"
 	local task_id_ere
+	if [[ -n "$proof_log" && ! "$proof_log" =~ ^verified:[0-9]{4}-[0-9]{2}-[0-9]{2}$ && ! "$proof_log" =~ ^pr:#[0-9]+$ ]]; then
+		return 1
+	fi
 	task_id_ere=$(_escape_ere "$task_id")
 	local today
 	today=$(date -u +%Y-%m-%d)
@@ -202,7 +210,10 @@ _mark_todo_done() {
 	# Use [[:space:]] not \s for macOS sed compatibility (bash 3.2)
 	if grep -qE "^[[:space:]]*- \[[ >]\] ${task_id_ere} " "$todo_file" 2>/dev/null; then
 		# Flip checkbox and append completed: date
-		sed -i.bak -E "s/^([[:space:]]*- )\[[ >]\] (${task_id_ere} .*)/\1[x] \2${proof_log} completed:${today}/" "$todo_file"
+		if ! sed -i.bak -E "s/^([[:space:]]*- )\[[ >]\] (${task_id_ere} .*)/\1[x] \2${proof_log} completed:${today}/" "$todo_file"; then
+			rm -f "${todo_file}.bak"
+			return 1
+		fi
 		rm -f "${todo_file}.bak"
 		_dedupe_todo_task_lines "$task_id" "$todo_file" || true
 		log_verbose "Marked $task_id as [x] in TODO.md"
@@ -215,10 +226,8 @@ _closed_issue_worker_complete_date() {
 	local completed_at
 
 	completed_at=$(gh api "repos/${repo}/issues/${issue_number}/comments" \
-		--jq '[.[] | select((.body // "") | contains("CLAIM_RELEASED reason=worker_complete")) | .created_at][0] // ""' || true)
-	if [[ -z "$completed_at" ]]; then
-		return 1
-	fi
+		--jq '[.[] | select((.body // "") | contains("CLAIM_RELEASED reason=worker_complete")) | .created_at][0] // ""' 2>/dev/null) || return 1
+	[[ "$completed_at" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]] || return 1
 	printf '%s\n' "${completed_at%%T*}"
 	return 0
 }
@@ -234,6 +243,7 @@ _closed_issue_aidevops_complete_date() {
 	evidence=$(printf '%s' "$issue_json" | jq -r '[.body // "", (.comments[]?.body // "")] | join("\n---\n")' 2>/dev/null) || evidence=""
 
 	[[ "$state_reason" == "COMPLETED" ]] || return 1
+	[[ "$closed_at" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]] || return 1
 	if printf '%s' "$evidence" | grep -qE 'aidevops:sig|CLAIM_RELEASED reason=worker_complete|Task t[0-9]+(\.[0-9]+)* done in TODO\.md|Completed via (\[)?PR #[0-9]+'; then
 		printf '%s\n' "${closed_at%%T*}"
 		return 0
@@ -247,7 +257,7 @@ _mark_reopen_completed_task() {
 		print_info "[DRY-RUN] Would mark $tid [x] ($reason on #$ref_num)"
 		return 0
 	fi
-	_mark_todo_done "$tid" "$todo_file" "verified:${proof_date}"
+	_mark_todo_done "$tid" "$todo_file" "verified:${proof_date}" || return 1
 	log_verbose "#$ref_num ($tid) has $reason — marked TODO [x]"
 	return 0
 }
@@ -259,7 +269,7 @@ _mark_reopen_merged_pr_task() {
 		return 0
 	fi
 	add_pr_ref_to_todo "$tid" "$pr_num" "$todo_file" 2>/dev/null || true
-	_mark_todo_done "$tid" "$todo_file"
+	_mark_todo_done "$tid" "$todo_file" || return 1
 	log_verbose "#$ref_num ($tid) has merged PR #$pr_num — marked TODO [x]"
 	return 0
 }
@@ -311,20 +321,20 @@ _reopen_mark_if_completed() {
 	pr_info=$(_reopen_find_merged_pr "$repo" "$tid" "$ref_num" 2>/dev/null || true)
 	if [[ -n "$pr_info" ]]; then
 		local pr_num="${pr_info%%|*}"
-		_mark_reopen_merged_pr_task "$tid" "$todo_file" "$ref_num" "$pr_num"
+		_mark_reopen_merged_pr_task "$tid" "$todo_file" "$ref_num" "$pr_num" || return 1
 		return 0
 	fi
 
 	local completed_date
 	completed_date=$(_closed_issue_worker_complete_date "$repo" "$ref_num" || true)
 	if [[ -n "$completed_date" ]]; then
-		_mark_reopen_completed_task "$tid" "$todo_file" "$ref_num" "$completed_date" "worker_complete evidence"
+		_mark_reopen_completed_task "$tid" "$todo_file" "$ref_num" "$completed_date" "worker_complete evidence" || return 1
 		return 0
 	fi
 
 	completed_date=$(_closed_issue_aidevops_complete_date "$repo" "$ref_num" || true)
 	if [[ -n "$completed_date" ]]; then
-		_mark_reopen_completed_task "$tid" "$todo_file" "$ref_num" "$completed_date" "aidevops close evidence"
+		_mark_reopen_completed_task "$tid" "$todo_file" "$ref_num" "$completed_date" "aidevops close evidence" || return 1
 		return 0
 	fi
 	return 1
@@ -354,7 +364,7 @@ _do_close() {
 		print_info "Skipping #$issue_number ($task_id): parent-task label set — parent issues close via terminal-phase PR with explicit Closes #NNN, not TODO [x] (GH#20828)"
 		return 0
 	fi
-	if ! _is_cancelled_or_deferred "$task_line" && _has_unresolved_blocker "$task_line" "" "$task_line"; then
+	if ! _is_cancelled_or_deferred "$task_line" && _has_unresolved_blocker "$task_line" "" "$task_line" "$repo" "$issue_number"; then
 		print_info "Skipping #$issue_number ($task_id): unresolved blocked-by marker present — completion evidence must wait for dependencies (GH#23516)"
 		return 0
 	fi
@@ -372,7 +382,7 @@ _do_close() {
 	if [[ "$FORCE_CLOSE" == "true" ]]; then
 		print_info "FORCE_CLOSE active — bypassing evidence check for #$issue_number ($task_id) (GH#20146 audit)"
 	fi
-	if [[ "$FORCE_CLOSE" != "true" ]] && ! _has_evidence "$task_with_notes" "$task_id" "$repo"; then
+	if [[ "$FORCE_CLOSE" != "true" ]] && ! _has_evidence "$task_with_notes" "$task_id" "$repo" "$issue_number"; then
 		print_warning "Skipping #$issue_number ($task_id): no merged PR or verified: field"
 		return 1
 	fi

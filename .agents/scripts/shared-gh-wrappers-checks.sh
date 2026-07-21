@@ -102,6 +102,9 @@ _gh_pr_check_status_cache_record() {
 			;;
 		fetch)
 			gh_record_efficiency_evidence path_budgets.aggregate_check_fetches 1 2>/dev/null || true
+			if [[ "${AIDEVOPS_GH_API_EFFICIENCY_CYCLE_ID:-}" =~ ^[0-9]+$ ]]; then
+				gh_record_efficiency_evidence path_budgets.cycle_scoped_aggregate_check_fetches 1 2>/dev/null || true
+			fi
 			;;
 		publish-fenced | publish-invalidated)
 			gh_record_efficiency_evidence guardrails.stale_snapshot_detections 1 2>/dev/null || true
@@ -116,6 +119,8 @@ _gh_pr_check_status_record_actionable_head() {
 	local sha="$2"
 	local normalized_sha=""
 	local token=""
+	local cycle_id="${AIDEVOPS_GH_API_EFFICIENCY_CYCLE_ID:-}"
+	local cycle_token=""
 	_gh_pr_check_status_cache_identity_valid "$slug" "$sha" || return 0
 	declare -F gh_record_efficiency_evidence >/dev/null 2>&1 || return 0
 	gh_record_efficiency_evidence population.actionable_changes 1 2>/dev/null || true
@@ -127,6 +132,15 @@ _gh_pr_check_status_record_actionable_head() {
 		gh_record_efficiency_evidence population.actionable_head_token "$token" 2>/dev/null || true
 	else
 		gh_record_efficiency_evidence population.actionable_head_hash_failures 1 2>/dev/null || true
+	fi
+	[[ "$cycle_id" =~ ^[0-9]+$ ]] || return 0
+	if declare -F _ghrs_digest >/dev/null 2>&1; then
+		cycle_token=$(_ghrs_digest "${cycle_id}"$'\034'"${normalized_sha}") || cycle_token=""
+	fi
+	if [[ -n "$cycle_token" ]]; then
+		gh_record_efficiency_evidence path_budgets.cycle_scoped_actionable_head_token "$cycle_token" 2>/dev/null || true
+	else
+		gh_record_efficiency_evidence path_budgets.cycle_scoped_actionable_head_hash_failures 1 2>/dev/null || true
 	fi
 	return 0
 }

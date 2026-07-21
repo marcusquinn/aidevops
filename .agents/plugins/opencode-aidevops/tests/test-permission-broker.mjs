@@ -9,14 +9,33 @@ import { tmpdir } from "os";
 
 import { createPermissionBroker, sanitizePermissionText } from "../permission-broker.mjs";
 
+const WORKER_ENV_KEYS = [
+  "AIDEVOPS_PERMISSION_REQUEST_FILE",
+  "WORKER_ISSUE_NUMBER",
+  "WORKER_REPO_SLUG",
+  "WORKER_SESSION_KEY",
+];
+
+function preserveWorkerEnvironment() {
+  return Object.fromEntries(WORKER_ENV_KEYS.map((key) => [key, process.env[key]]));
+}
+
+function restoreWorkerEnvironment(previous) {
+  for (const key of WORKER_ENV_KEYS) {
+    if (previous[key] === undefined) delete process.env[key];
+    else process.env[key] = previous[key];
+  }
+}
+
 test("headless permission event is sanitized, persisted, and rejected", async () => {
   const root = mkdtempSync(join(tmpdir(), "aidevops-permission-broker-"));
   const requestFile = join(root, "request.json");
   const blockerLog = join(root, "blockers.jsonl");
-  const previous = process.env.AIDEVOPS_PERMISSION_REQUEST_FILE;
+  const previous = preserveWorkerEnvironment();
   process.env.AIDEVOPS_PERMISSION_REQUEST_FILE = requestFile;
   process.env.WORKER_ISSUE_NUMBER = "123";
   process.env.WORKER_REPO_SLUG = "owner/repo";
+  process.env.WORKER_SESSION_KEY = "issue-123";
   const replies = [];
   const broker = createPermissionBroker({
     client: { postSessionIdPermissionsPermissionId: async (value) => replies.push(value) },
@@ -44,9 +63,46 @@ test("headless permission event is sanitized, persisted, and rejected", async ()
   const blocker = JSON.parse(readFileSync(blockerLog, "utf8").trim());
   assert.equal(blocker.reason, "permission_required");
   assert.equal(blocker.blocking, true);
+  assert.equal(blocker.issue_number, 123);
+  assert.equal(blocker.repo_slug, "owner/repo");
+  assert.equal(blocker.session_key, "issue-123");
   assert.doesNotMatch(blocker.detail, /secret-value/);
-  if (previous === undefined) delete process.env.AIDEVOPS_PERMISSION_REQUEST_FILE;
-  else process.env.AIDEVOPS_PERMISSION_REQUEST_FILE = previous;
+  restoreWorkerEnvironment(previous);
+  rmSync(root, { recursive: true, force: true });
+});
+
+test("blocker events retain identity from an existing permission capture", async () => {
+  const root = mkdtempSync(join(tmpdir(), "aidevops-permission-broker-"));
+  const requestFile = join(root, "request.json");
+  const blockerLog = join(root, "blockers.jsonl");
+  const previous = preserveWorkerEnvironment();
+  process.env.AIDEVOPS_PERMISSION_REQUEST_FILE = requestFile;
+  delete process.env.WORKER_ISSUE_NUMBER;
+  delete process.env.WORKER_REPO_SLUG;
+  delete process.env.WORKER_SESSION_KEY;
+  writeFileSync(requestFile, `${JSON.stringify({
+    schema: "aidevops-permission-capture/v1",
+    issue: "321",
+    repo: "owner/repo",
+    worker_session: "issue-321",
+    requests: [],
+  })}\n`);
+  const broker = createPermissionBroker({
+    client: {},
+    isHeadless: () => true,
+    home: "/Users/example",
+    blockerLogPath: blockerLog,
+  });
+  await broker.permissionAsk({
+    id: "permission-existing-capture",
+    type: "external_directory",
+    pattern: "/Users/example/.cache/opencode/tool/**",
+  }, { status: "ask" });
+  const blocker = JSON.parse(readFileSync(blockerLog, "utf8").trim());
+  assert.equal(blocker.issue_number, 321);
+  assert.equal(blocker.repo_slug, "owner/repo");
+  assert.equal(blocker.session_key, "issue-321");
+  restoreWorkerEnvironment(previous);
   rmSync(root, { recursive: true, force: true });
 });
 

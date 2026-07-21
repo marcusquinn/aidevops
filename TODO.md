@@ -4688,6 +4688,8 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [x] t18165 Unify typed Pulse outcomes and heartbeat-progress state #enhancement #framework #observability #pulse ref:GH#28361 pr:#28375 completed:2026-07-20
 
-- [ ] t18166 Make Pulse cycle-health fixtures time-stable #auto-dispatch #bug #pulse #testing ref:GH#28376
+- [x] t18166 Make Pulse cycle-health fixtures time-stable #auto-dispatch #bug #pulse #testing ref:GH#28376 pr:#28388 completed:2026-07-21
 
 - [x] t18167 Keep test evidence and compaction aligned with session aims #enhancement ref:GH#28382 pr:#28384 completed:2026-07-20
+
+- [x] t18168 Harden Pulse PR lifecycle-state normalization at merge boundaries #bug ref:GH#28396 pr:#28397 completed:2026-07-21

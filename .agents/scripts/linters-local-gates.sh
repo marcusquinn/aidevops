@@ -604,6 +604,7 @@ check_targeted_tests() {
 		mapped_test=true
 		bash .agents/scripts/tests/test-linters-local-complexity-gates.sh || exit_code=1
 		bash .agents/scripts/tests/test-linters-local-changed-mode.sh || exit_code=1
+		bash .agents/scripts/tests/test-linters-local-policy-checker.sh || exit_code=1
 		bash .agents/scripts/tests/test-linters-local-cache.sh || exit_code=1
 		bash .agents/scripts/tests/test-linters-local-ratchet-timeout.sh || exit_code=1
 		bash .agents/scripts/tests/test-linters-local-shellcheck-batches.sh || exit_code=1

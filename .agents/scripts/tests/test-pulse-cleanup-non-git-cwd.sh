@@ -66,7 +66,43 @@ test_worktree_helper_skips_non_git_cwd() {
 	return 0
 }
 
+test_pulse_counts_only_verified_removal_events() {
+	local fixture_repo="${TEST_ROOT}/accounting-repo"
+	local helper_dir="${TEST_ROOT}/helper-bin"
+	local helper_path="${helper_dir}/worktree-helper.sh"
+	local output=""
+	mkdir -p "$fixture_repo" "$helper_dir"
+	git -C "$fixture_repo" init -q -b main
+	rm -f "${HOME}/.config/aidevops/repos.json"
+	_PULSE_CLEANUP_SCRIPT_DIR="$helper_dir"
+
+	cat >"$helper_path" <<'EOF'
+#!/usr/bin/env bash
+printf 'Removing feature/refused...\n'
+printf 'Skipped feature/refused - removal guard refused path\n'
+exit 1
+EOF
+	chmod +x "$helper_path"
+	output=$(cd "$fixture_repo" && _cleanup_merged_prs_for_all_repos)
+	[[ "$output" == "0" ]] || fail "progress-only refused removal counted as completed: $output"
+
+	cat >"$helper_path" <<'EOF'
+#!/usr/bin/env bash
+printf 'Removing feature/completed...\n'
+printf 'AIDEVOPS_WORKTREE_REMOVAL_COMPLETED=1\n'
+printf 'AIDEVOPS_WORKTREE_REMOVAL_COMPLETED=1 suffix-must-not-count\n'
+exit 0
+EOF
+	chmod +x "$helper_path"
+	output=$(cd "$fixture_repo" && _cleanup_merged_prs_for_all_repos)
+	[[ "$output" == "1" ]] || fail "verified completion event produced unexpected count: $output"
+	_PULSE_CLEANUP_SCRIPT_DIR="$SCRIPT_DIR"
+	pass "pulse cleanup counts only exact post-verification removal events"
+	return 0
+}
+
 test_pulse_fallback_skips_non_git_cwd
 test_worktree_helper_skips_non_git_cwd
+test_pulse_counts_only_verified_removal_events
 
 exit 0

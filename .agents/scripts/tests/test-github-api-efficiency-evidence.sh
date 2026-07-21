@@ -182,16 +182,16 @@ def transport(events):
 
 
 EVENTS = [
-    ("contract", "1", 1),
+    ("contract", "2", 1),
     ("coverage-start", "900", 1),
     ("coverage-end", "1100", 1),
-    ("coverage.population", "1", 1),
-    ("coverage.latency", "1", 1),
-    ("coverage.cache", "1", 1),
-    ("coverage.single_flight", "1", 1),
-    ("coverage.webhook", "1", 1),
-    ("coverage.guardrails", "1", 1),
-    ("coverage.path_budgets", "1", 1),
+    ("coverage.population", "2", 1),
+    ("coverage.latency", "2", 1),
+    ("coverage.cache", "2", 1),
+    ("coverage.single_flight", "2", 1),
+    ("coverage.webhook", "2", 1),
+    ("coverage.guardrails", "2", 1),
+    ("coverage.path_budgets", "2", 1),
     ("population.repository_count", "10", 1),
     ("population.repository_set_sha256", REPOSITORY_SET, 1),
     ("population.pulse_cycles", "4", 1),
@@ -213,11 +213,24 @@ EVENTS = [
     ("webhook.lag_ms", "30", 2),
     ("guardrails.stale_snapshot_detections", "1", 1),
     ("guardrails.forced_live_refreshes", "1", 1),
-    ("path_budgets.aggregate_check_fetches", "1", 1),
+    ("path_budgets.aggregate_check_fetches", "1", 2),
+    ("path_budgets.cycle_scoped_aggregate_check_fetches", "1", 2),
+    ("path_budgets.cycle_scoped_actionable_head_token", "d" * 64, 1),
+    ("path_budgets.cycle_scoped_actionable_head_token", "e" * 64, 2),
 ]
 
 complete = transport(EVENTS)
 write_json(ROOT / "complete-report.json", complete)
+
+mixed_contract_events = EVENTS + [
+    ("contract", "1", 1),
+    ("coverage-start", "800", 1),
+    *[(f"coverage.{group}", "1", 1) for group in (
+        "population", "latency", "cache", "single_flight", "webhook",
+        "guardrails", "path_budgets",
+    )],
+]
+write_json(ROOT / "mixed-contract-report.json", transport(mixed_contract_events))
 
 incomplete_events = [
     event for event in EVENTS if event[0] != "coverage.webhook"
@@ -232,6 +245,12 @@ head_hash_failure = transport(
     EVENTS + [("population.actionable_head_hash_failures", "1", 1)]
 )
 write_json(ROOT / "head-hash-failure-report.json", head_hash_failure)
+
+cycle_head_hash_failure = transport(
+    EVENTS
+    + [("path_budgets.cycle_scoped_actionable_head_hash_failures", "1", 1)]
+)
+write_json(ROOT / "cycle-head-hash-failure-report.json", cycle_head_hash_failure)
 
 bad_integer = transport(EVENTS)
 bad_integer["by_route_decision"]["evidence:cache.fresh_hits:bad"] = {
@@ -252,6 +271,31 @@ untyped["by_route_decision"]["evidence:cache.fresh_hits:3"][
 write_json(ROOT / "untyped-report.json", untyped)
 PY
 
+test_hash_failure_evidence() {
+    local head_output="${TEST_ROOT}/head-hash-failure-evidence.json"
+    local cycle_output="${TEST_ROOT}/cycle-head-hash-failure-evidence.json"
+
+    run_build "${TEST_ROOT}/head-hash-failure-report.json" "$head_output"
+    assert_eq "actionable head hash failure exits zero" "0" "$LAST_EXIT"
+    assert_contains "actionable head hash failure reports incomplete" "evidence sidecar: incomplete" "$LAST_OUTPUT"
+    assert_jq "actionable head hash failure stays unknown" '.complete == false and .population.actionable_changes == 3 and .population.unique_actionable_head_shas == null and (._meta.missing_fields | index("population.unique_actionable_head_shas")) != null' "$head_output"
+
+    run_build "${TEST_ROOT}/cycle-head-hash-failure-report.json" "$cycle_output"
+    assert_eq "cycle-scoped head hash failure exits zero" "0" "$LAST_EXIT"
+    assert_contains "cycle-scoped head hash failure reports incomplete" "evidence sidecar: incomplete" "$LAST_OUTPUT"
+    assert_jq "cycle-scoped head hash failure stays unknown" '.complete == false and .path_budgets.cycle_scoped_aggregate_check_fetches == 2 and .path_budgets.unique_cycle_scoped_actionable_heads == null and (._meta.missing_fields | index("path_budgets.unique_cycle_scoped_actionable_heads")) != null' "$cycle_output"
+    return 0
+}
+
+test_contract_migration_evidence() {
+    local output="${TEST_ROOT}/mixed-contract-evidence.json"
+    run_build "${TEST_ROOT}/mixed-contract-report.json" "$output"
+    assert_eq "mixed historical contract exits zero" "0" "$LAST_EXIT"
+    assert_contains "current contract survives historical markers" "evidence sidecar: complete" "$LAST_OUTPUT"
+    assert_jq "latest activation bounds migrated evidence" '._meta.contract_version == "2" and ._meta.coverage_start_ts == 900 and .complete == true' "$output"
+    return 0
+}
+
 main() {
     local complete_report="${TEST_ROOT}/complete-report.json"
     local complete_output="${TEST_ROOT}/complete-evidence.json"
@@ -265,9 +309,9 @@ main() {
     run_build "$complete_report" "$complete_output"
     assert_eq "complete evidence exits zero" "0" "$LAST_EXIT"
     assert_contains "complete evidence reports status" "evidence sidecar: complete" "$LAST_OUTPUT"
-    assert_jq "complete evidence populates every group" ".complete and .population.repository_count == 10 and .population.pulse_cycles == 4 and .population.unchanged_cycles == 3 and .population.actionable_changes == 3 and .population.unique_actionable_head_shas == 2 and .latency.p50_ms == 10 and .latency.p95_ms == 30 and .latency.peak_attempts_per_minute == 2 and .latency.completed_action_p95_ms == 200 and .cache.fresh_hits == 3 and .cache.fresh_empty_hits == 1 and .cache.misses == 2 and .cache.stale == 1 and .cache.invalidated == 1 and .single_flight.leaders == 2 and .single_flight.waits == 1 and .single_flight.takeovers == 0 and .single_flight.duplicate_leaders == 0 and .webhook.invalidations == 2 and .webhook.lag_p50_ms == 30 and .webhook.lag_p95_ms == 30 and .webhook.duplicate_actions == 0 and .webhook.missed_recoveries == 0 and (._meta.missing_fields | length) == 0" "$complete_output"
+    assert_jq "complete evidence populates every group" ".complete and .population.repository_count == 10 and .population.pulse_cycles == 4 and .population.unchanged_cycles == 3 and .population.actionable_changes == 3 and .population.unique_actionable_head_shas == 2 and .latency.p50_ms == 10 and .latency.p95_ms == 30 and .latency.peak_attempts_per_minute == 2 and .latency.completed_action_p95_ms == 200 and .cache.fresh_hits == 3 and .cache.fresh_empty_hits == 1 and .cache.misses == 2 and .cache.stale == 1 and .cache.invalidated == 1 and .single_flight.leaders == 2 and .single_flight.waits == 1 and .single_flight.takeovers == 0 and .single_flight.duplicate_leaders == 0 and .webhook.invalidations == 2 and .webhook.lag_p50_ms == 30 and .webhook.lag_p95_ms == 30 and .webhook.duplicate_actions == 0 and .webhook.missed_recoveries == 0 and .path_budgets.aggregate_check_fetches == 2 and .path_budgets.cycle_scoped_aggregate_check_fetches == 2 and .path_budgets.unique_cycle_scoped_actionable_heads == 2 and (._meta.missing_fields | length) == 0" "$complete_output"
     schema=$(jq -r .schema "$complete_output")
-    assert_eq "sidecar schema is versioned" "aidevops-github-api-efficiency-evidence/v1" "$schema"
+    assert_eq "sidecar schema is versioned" "aidevops-github-api-efficiency-evidence/v2" "$schema"
     repository_set=$(jq -r .population.repository_set_sha256 "$complete_output")
     assert_eq "repository population stays digest-only" "$(printf "a%.0s" {1..64})" "$repository_set"
     expected_digest=$(file_sha256 "$complete_report")
@@ -275,6 +319,8 @@ main() {
     assert_eq "sidecar binds exact transport bytes" "$expected_digest" "$actual_digest"
     mode=$(file_mode "$complete_output")
     assert_eq "sidecar output is private" "600" "$mode"
+
+    test_contract_migration_evidence
 
     cp "$complete_output" "$first_output"
     run_build "$complete_report" "$complete_output"
@@ -295,11 +341,7 @@ main() {
     assert_eq "unknown latency evidence exits zero" "0" "$LAST_EXIT"
     assert_jq "unknown latency invalidates only latency coverage" ".complete == false and .latency.p50_ms == null and .latency.p95_ms == null and .latency.peak_attempts_per_minute == null and .latency.completed_action_p95_ms == null and ._meta.coverage_groups.latency == false and (._meta.missing_fields | length) == 4" "$unknown_latency_output"
 
-    local head_hash_failure_output="${TEST_ROOT}/head-hash-failure-evidence.json"
-    run_build "${TEST_ROOT}/head-hash-failure-report.json" "$head_hash_failure_output"
-    assert_eq "actionable head hash failure exits zero" "0" "$LAST_EXIT"
-    assert_contains "actionable head hash failure reports incomplete" "evidence sidecar: incomplete" "$LAST_OUTPUT"
-    assert_jq "actionable head hash failure stays unknown" '.complete == false and .population.actionable_changes == 3 and .population.unique_actionable_head_shas == null and (._meta.missing_fields | index("population.unique_actionable_head_shas")) != null' "$head_hash_failure_output"
+    test_hash_failure_evidence
 
     local bad_output="${TEST_ROOT}/bad-evidence.json"
     run_build "${TEST_ROOT}/bad-integer-report.json" "$bad_output"

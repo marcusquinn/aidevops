@@ -178,6 +178,7 @@ test_failed_preflight_dispatch_stays_blocked_and_consumes_marker() {
 	_pulse_merge_maybe_dispatch_preflight_remediation 77 owner/repo
 
 	if grep -q 'review-thread remediation dispatch failed for PR #77 in owner/repo' "$LOGFILE" &&
+		! grep -q 'review-thread remediation queued for PR #77 in owner/repo' "$LOGFILE" &&
 		[[ -z "$_PULSE_MERGE_PREFLIGHT_BLOCKER_KIND" ]]; then
 		print_result "failed or deduplicated preflight dispatch consumes typed marker" 0
 	else

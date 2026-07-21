@@ -133,7 +133,10 @@ gh() {
 
 	# Rate limit endpoint — returns configured remaining value
 	if [[ "$1" == "api" && "$2" == "rate_limit" ]]; then
-		printf '%s\n' "${STUB_RATE_LIMIT_REMAINING:-5000}"
+		# Match the real endpoint projection consumed by the shared request-state
+		# cache; _rest_should_fallback extracts resources.graphql.remaining.
+		printf '{"resources":{"graphql":{"remaining":%s}}}\n' \
+			"${STUB_RATE_LIMIT_REMAINING:-5000}"
 		return 0
 	fi
 
@@ -179,7 +182,7 @@ printf '%sRunning claim-task-id REST routing tests (t3039 / GH#21627)%s\n' \
 
 # Test 1: gh_create_issue → REST when GraphQL exhausted AND primary fails
 : >"$GH_CALLS"
-STUB_PRIMARY_FAIL=1 STUB_RATE_LIMIT_REMAINING=0 \
+STUB_PRIMARY_FAIL=1 STUB_RATE_LIMIT_REMAINING=0 _GH_SHOULD_FALLBACK_OVERRIDE=1 \
 	gh_create_issue \
 		--repo "owner/repo" \
 		--title "t9991: rest-routing test" \
@@ -243,7 +246,7 @@ printf '%s\n' '- [ ] t9994 Test task ref:GH#0' >"$TODO_FILE"
 
 # Test 4: _push_create_issue falls back to REST when GraphQL exhausted + primary fails
 reset_push_state
-STUB_PRIMARY_FAIL=1 STUB_RATE_LIMIT_REMAINING=0 \
+STUB_PRIMARY_FAIL=1 STUB_RATE_LIMIT_REMAINING=0 _GH_SHOULD_FALLBACK_OVERRIDE=1 \
 	_push_create_issue \
 		"t9994" "owner/repo" "$TODO_FILE" \
 		"t9994: rest fallback test" \
