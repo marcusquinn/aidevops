@@ -138,9 +138,9 @@ _is_reserved_agent_namespace() {
 	local namespace="$1"
 
 	case "$namespace" in
-		AGENTS.md|VERSION|advisories|commands|configs|custom|draft|hooks|plugins|prompts|reference|scripts|services|tools|workflows)
-			return 0
-			;;
+	AGENTS.md | VERSION | advisories | commands | configs | custom | draft | hooks | plugins | prompts | reference | scripts | services | tools | workflows)
+		return 0
+		;;
 	esac
 
 	return 1
@@ -1307,6 +1307,37 @@ _write_deployed_agents_sha() {
 	return 0
 }
 
+_sync_agent_bin_shims() {
+	local target_dir="$1"
+	local user_bin_dir="${HOME}/.aidevops/bin"
+	local shim=""
+	local shim_name=""
+	local existing=""
+	local existing_target=""
+
+	[[ -n "$target_dir" ]] || return 1
+	mkdir -p "$user_bin_dir" || return 1
+
+	for existing in "$user_bin_dir"/*; do
+		[[ -L "$existing" ]] || continue
+		existing_target=$(readlink "$existing" 2>/dev/null || true)
+		case "$existing_target" in
+		"${target_dir}/bin/"*)
+			[[ -e "$existing_target" ]] || rm -f "$existing"
+			;;
+		esac
+	done
+
+	if [[ -d "${target_dir}/bin" ]]; then
+		for shim in "${target_dir}/bin/"*; do
+			[[ -f "$shim" ]] || continue
+			shim_name=$(basename "$shim")
+			ln -sfn "$shim" "${user_bin_dir}/${shim_name}" || return 1
+		done
+	fi
+	return 0
+}
+
 _install_canonical_git_guard_shim() {
 	local target_dir="$1"
 	local guard_shim="${target_dir}/scripts/git"
@@ -1349,6 +1380,7 @@ deploy_aidevops_agents() {
 
 	print_success "Deployed agents to $target_dir"
 	_install_canonical_git_guard_shim "$target_dir" || return 1
+	_sync_agent_bin_shims "$target_dir" || return 1
 
 	_write_deployed_agents_sha "$repo_dir"
 
