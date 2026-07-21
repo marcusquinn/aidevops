@@ -46,6 +46,11 @@ source "${SCRIPT_DIR}/shared-phase-filing.sh"
 # shellcheck disable=SC1091  # sub-library resolved at runtime via SCRIPT_DIR
 source "${SCRIPT_DIR}/gh-merge-cache-remediation-lib.sh"
 
+if [[ -f "${SCRIPT_DIR}/full-loop-cleanup-receipt.sh" ]]; then
+	# shellcheck source=./full-loop-cleanup-receipt.sh
+	source "${SCRIPT_DIR}/full-loop-cleanup-receipt.sh"
+fi
+
 # --- Repo Resolution ---
 
 # _merge_resolve_repo — resolve repo slug from argument or auto-detect from git remote.
@@ -750,7 +755,9 @@ _merge_cleanup_linked_worktree() {
 }
 
 _merge_record_deferred_cleanup_owner() {
-	local cleanup_plan="$1"
+	local pr_number="$1"
+	local repo="$2"
+	local cleanup_plan="$3"
 	local worktree_path="" branch_name="" canonical_dir=""
 	IFS=$'\t' read -r worktree_path branch_name canonical_dir <<<"$cleanup_plan"
 	[[ -n "$worktree_path" && -n "$branch_name" ]] || return 1
@@ -766,8 +773,17 @@ _merge_record_deferred_cleanup_owner() {
 	local marker_dir="${worktree_path}/.agents"
 	local marker_path="${marker_dir}/.full-loop-cleanup-deferred"
 	mkdir -p "$marker_dir" || return 1
+	# Keep the legacy marker during rollout so an older deployed cleanup
+	# supervisor still preserves the live owner. The external receipt below is
+	# the durable source of lifecycle truth and survives worktree removal.
 	printf '%s\n' "$owner_pid" >"${marker_path}.tmp.$$" || return 1
 	mv "${marker_path}.tmp.$$" "$marker_path" || return 1
+	local owner_session="${AIDEVOPS_SESSION_ID:-${OPENCODE_SESSION_ID:-${CLAUDE_SESSION_ID:-full-loop-merge}}}"
+	if ! declare -F full_loop_write_cleanup_deferred >/dev/null 2>&1; then
+		return 1
+	fi
+	full_loop_write_cleanup_deferred "$repo" "$pr_number" "$worktree_path" "$branch_name" \
+		"$owner_pid" "$owner_session" "pending" "FINALIZATION_PENDING" >/dev/null || return 1
 
 	if declare -F claim_worktree_ownership >/dev/null 2>&1; then
 		claim_worktree_ownership "$worktree_path" "$branch_name" \
@@ -819,10 +835,10 @@ _merge_finalize_post_merge() {
 
 	_merge_unlock_resources "$pr_number" "$repo"
 	if [[ "$has_auto" -eq 0 && -n "$cleanup_plan" ]]; then
-		if _merge_record_deferred_cleanup_owner "$cleanup_plan"; then
-			print_info "Post-merge worktree cleanup deferred until the parent runtime exits"
+		if _merge_record_deferred_cleanup_owner "$pr_number" "$repo" "$cleanup_plan"; then
+			print_info "LIFECYCLE_STATE=CLEANUP_DEFERRED; guarded cleanup ownership persisted outside the worktree"
 		else
-			print_warning "Post-merge worktree cleanup deferred, but parent-runtime marker could not be recorded"
+			print_warning "Post-merge worktree cleanup deferred, but durable handoff evidence could not be recorded"
 		fi
 	fi
 	return 0
