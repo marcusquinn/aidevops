@@ -37,6 +37,8 @@
 #   AIDEVOPS_ACTIVE_AGENTS_LINK=<path>
 #                                     activation link to resolve under the
 #                                     shared runtime transition lock.
+#   AIDEVOPS_PULSE_MERGE_PROCESS_PATTERN=<regex>
+#                                     test override for stale merge routines.
 #
 # Exit codes:
 #   0  Success (includes no-op cases)
@@ -60,6 +62,7 @@ _PULSE_ACTIVE_AGENTS_LINK="${AIDEVOPS_ACTIVE_AGENTS_LINK:-${HOME}/.aidevops/agen
 # isolate mock pulses from the live user pulse (the mock's path is embedded
 # in the pattern). See tests/test-pulse-lifecycle-helper.sh.
 _PULSE_PATTERN="${AIDEVOPS_PULSE_PROCESS_PATTERN:-(^|/)pulse-wrapper\\.sh( |\$)}"
+_PULSE_MERGE_PATTERN="${AIDEVOPS_PULSE_MERGE_PROCESS_PATTERN:-(^|/)pulse-merge-routine\\.sh( |\$)}"
 
 # Timing
 _PULSE_RESTART_WAIT="${AIDEVOPS_PULSE_RESTART_WAIT:-3}"
@@ -198,26 +201,37 @@ _pulse_start_managed() {
 	local pulse_label="${AIDEVOPS_PULSE_LAUNCHD_LABEL:-com.aidevops.aidevops-supervisor-pulse}"
 	local launchd_target=""
 	local launchd_wait_count=0
+	local baseline_pids=""
+	local active_pid=""
 	launchd_target="gui/$(id -u)/${pulse_label}"
 	if _pulse_launchd_supervisor_present; then
 		_pl_info "Requesting Pulse restart from launchd supervisor ${pulse_label}"
+		# KeepAlive may already have replaced the process stopped by reconciliation.
+		# Snapshot again immediately before kickstart so only a process created by
+		# this managed replacement can satisfy the activation proof below.
+		baseline_pids=$(_pulse_pids)
 		if ! launchctl kickstart -k "$launchd_target" >/dev/null 2>&1; then
 			_pl_err "launchd could not restart Pulse; refusing an unmanaged fallback"
 			return 1
 		fi
 		while [[ "$launchd_wait_count" -lt 5 ]]; do
-			if _is_running; then
-				_pl_ok "Pulse restarted by launchd"
+			if active_pid=$(_pulse_find_active_runtime_pid_since "$baseline_pids"); then
+				_pl_ok "Pulse restarted by launchd from the activated bundle (PID ${active_pid})"
 				return 0
 			fi
 			sleep 1
 			launchd_wait_count=$((launchd_wait_count + 1))
 		done
-		_pl_err "launchd accepted the Pulse restart but no managed process appeared"
+		_pl_err "launchd accepted the Pulse restart but no new activated-bundle process appeared"
 		return 1
 	fi
 	_start || return $?
-	return 0
+	if active_pid=$(_pulse_find_active_runtime_pid_since ""); then
+		_pl_ok "Pulse is running from the activated bundle (PID ${active_pid})"
+		return 0
+	fi
+	_pl_err "Pulse started but its activated runtime bundle could not be verified"
+	return 1
 }
 
 # _pulse_pids_raw: print ALL matching pulse PIDs including subshells of the
@@ -226,6 +240,250 @@ _pulse_start_managed() {
 _pulse_pids_raw() {
 	pgrep -f "$_PULSE_PATTERN" 2>/dev/null || true
 	return 0
+}
+
+# _pulse_merge_pids_raw: print standalone merge-routine PIDs. These routines
+# source the runtime once at startup just like pulse-wrapper.sh, so setup-time
+# reconciliation must retire pre-activation instances as well.
+_pulse_merge_pids_raw() {
+	pgrep -f "$_PULSE_MERGE_PATTERN" 2>/dev/null || true
+	return 0
+}
+
+_pulse_pid_list_contains() {
+	local _pids="$1"
+	local _wanted="$2"
+	local _pid=""
+	while IFS= read -r _pid; do
+		[[ -n "$_pid" && "$_pid" == "$_wanted" ]] && return 0
+	done <<<"$_pids"
+	return 1
+}
+
+# Snapshot every runtime process whose sourced code must be replaced. The
+# snapshot is deliberate: a launchd KeepAlive replacement created after this
+# point belongs to the activated bundle and is not a failed-stop residual.
+_pulse_reconciliation_pids_raw() {
+	local _wrapper_pids=""
+	local _merge_pids=""
+	local _emitted=""
+	local _pid=""
+	_wrapper_pids=$(_pulse_pids_raw)
+	_merge_pids=$(_pulse_merge_pids_raw)
+	while IFS= read -r _pid; do
+		[[ "$_pid" =~ ^[0-9]+$ ]] || continue
+		if ! _pulse_pid_list_contains "$_emitted" "$_pid"; then
+			printf '%s\n' "$_pid"
+			_emitted="${_emitted}${_emitted:+$'\n'}${_pid}"
+		fi
+	done <<<"$_wrapper_pids"
+	while IFS= read -r _pid; do
+		[[ "$_pid" =~ ^[0-9]+$ ]] || continue
+		if ! _pulse_pid_list_contains "$_emitted" "$_pid"; then
+			printf '%s\n' "$_pid"
+			_emitted="${_emitted}${_emitted:+$'\n'}${_pid}"
+		fi
+	done <<<"$_merge_pids"
+	return 0
+}
+
+_pulse_process_start_token() {
+	local _pid="$1"
+	local _stat_content=""
+	local _stat_after_comm=""
+	local _start_token=""
+	[[ "$_pid" =~ ^[0-9]+$ ]] || return 1
+	if [[ -r "/proc/${_pid}/stat" ]]; then
+		_stat_content=$(<"/proc/${_pid}/stat") || _stat_content=""
+		[[ -n "$_stat_content" ]] || return 1
+		_stat_after_comm="${_stat_content##*) }"
+		_start_token=$(printf '%s\n' "$_stat_after_comm" | awk '{print $20}') || _start_token=""
+	else
+		_start_token=$(LC_ALL=C ps -p "$_pid" -o lstart= 2>/dev/null | tr -s ' ') || _start_token=""
+		_start_token="${_start_token#"${_start_token%%[![:space:]]*}"}"
+		_start_token="${_start_token%"${_start_token##*[![:space:]]}"}"
+	fi
+	[[ -n "$_start_token" ]] || return 1
+	printf '%s\n' "$_start_token"
+	return 0
+}
+
+# Capture PID plus process start time before signalling. A numeric PID alone is
+# not a stable identity: a fast exit followed by PID reuse could otherwise let
+# reconciliation signal an unrelated process during the TERM/KILL windows.
+_pulse_reconciliation_identities() {
+	local _pids=""
+	local _pid=""
+	local _start_token=""
+	_pids=$(_pulse_reconciliation_pids_raw)
+	while IFS= read -r _pid; do
+		[[ "$_pid" =~ ^[0-9]+$ ]] || continue
+		if ! _start_token=$(_pulse_process_start_token "$_pid"); then
+			if kill -0 "$_pid" 2>/dev/null; then
+				_pl_err "Unable to capture stable identity for Pulse PID ${_pid}; refusing to signal it"
+				return 1
+			fi
+			continue
+		fi
+		printf '%s\t%s\n' "$_pid" "$_start_token"
+	done <<<"$_pids"
+	return 0
+}
+
+_pulse_identity_is_reconciliation_process() {
+	local _pid="$1"
+	local _expected_start="$2"
+	local _current_start=""
+	local _command=""
+	[[ "$_pid" =~ ^[0-9]+$ && -n "$_expected_start" ]] || return 1
+	kill -0 "$_pid" 2>/dev/null || return 1
+	_current_start=$(_pulse_process_start_token "$_pid") || return 1
+	[[ "$_current_start" == "$_expected_start" ]] || return 1
+	_command=$(ps -p "$_pid" -o command= 2>/dev/null || true)
+	[[ "$_command" =~ $_PULSE_PATTERN || "$_command" =~ $_PULSE_MERGE_PATTERN ]] || return 1
+	return 0
+}
+
+# Return only snapshot identities that are still alive, retain their original
+# process start time, and still identify as Pulse runtime processes.
+_pulse_snapshot_survivors() {
+	local _identities="$1"
+	local _pid=""
+	local _start_token=""
+	while IFS=$'\t' read -r _pid _start_token; do
+		[[ -n "$_pid" && -n "$_start_token" ]] || continue
+		if _pulse_identity_is_reconciliation_process "$_pid" "$_start_token"; then
+			printf '%s\t%s\n' "$_pid" "$_start_token"
+		fi
+	done <<<"$_identities"
+	return 0
+}
+
+_pulse_signal_snapshot() {
+	local _signal="$1"
+	local _identities="$2"
+	local _pid=""
+	local _start_token=""
+	while IFS=$'\t' read -r _pid _start_token; do
+		[[ -n "$_pid" && -n "$_start_token" ]] || continue
+		_pulse_identity_is_reconciliation_process "$_pid" "$_start_token" || continue
+		kill "-${_signal}" "$_pid" 2>/dev/null || true
+	done <<<"$_identities"
+	return 0
+}
+
+_pulse_identity_pids() {
+	local _identities="$1"
+	local _pid=""
+	local _start_token=""
+	while IFS=$'\t' read -r _pid _start_token; do
+		[[ -n "$_pid" && -n "$_start_token" ]] || continue
+		printf '%s\n' "$_pid"
+	done <<<"$_identities"
+	return 0
+}
+
+_pulse_pid_invokes_script() {
+	local _pid="$1"
+	local _script_path="$2"
+	local _command_line=""
+	local _command_arg=""
+	local _command_name=""
+	local _arg_index=0
+	local _options_done=false
+	[[ "$_pid" =~ ^[0-9]+$ && -n "$_script_path" ]] || return 1
+
+	if [[ -r "/proc/${_pid}/cmdline" ]]; then
+		while IFS= read -r -d '' _command_arg; do
+			if [[ "$_arg_index" -eq 0 ]]; then
+				[[ "$_command_arg" == "$_script_path" ]] && return 0
+				_command_name="${_command_arg##*/}"
+				case "$_command_name" in
+				bash | dash | ksh | sh | zsh) ;;
+				*) return 1 ;;
+				esac
+				_arg_index=1
+				continue
+			fi
+			if [[ "$_options_done" == "false" ]]; then
+				case "$_command_arg" in
+				--)
+					_options_done=true
+					continue
+					;;
+				-*c*) return 1 ;;
+				-*) continue ;;
+				esac
+			fi
+			[[ "$_command_arg" == "$_script_path" ]] && return 0
+			return 1
+		done <"/proc/${_pid}/cmdline"
+		return 1
+	fi
+
+	_command_line=$(ps -p "$_pid" -o command= 2>/dev/null) || _command_line=""
+	case "$_command_line" in
+	"$_script_path" | "$_script_path "*) return 0 ;;
+	esac
+	for _command_name in bash dash ksh sh zsh; do
+		case "$_command_line" in
+		"${_command_name} ${_script_path}" | "${_command_name} ${_script_path} "* | */"${_command_name} ${_script_path}" | */"${_command_name} ${_script_path} "*)
+			return 0
+			;;
+		esac
+	done
+	return 1
+}
+
+# Verify a candidate PID against the activated runtime. Immutable production
+# bundles expose an authoritative PID lease. All roots also require exact
+# script invocation so an observer that merely mentions the wrapper path cannot
+# satisfy setup's activated-runtime proof.
+_pulse_pid_uses_active_runtime() {
+	local _pid="$1"
+	local _active_root=""
+	local _bundles_root="${AIDEVOPS_RUNTIME_BUNDLES_DIR:-${HOME}/.aidevops/runtime-bundles}"
+	local _physical_bundles_root=""
+	local _bundle_dir=""
+	local _bundle_id=""
+	local _lease_file=""
+	local _lease_root=""
+	local _active_link_script="${_PULSE_ACTIVE_AGENTS_LINK%/}/scripts/pulse-wrapper.sh"
+	[[ "$_pid" =~ ^[0-9]+$ ]] || return 1
+	if ! _pulse_pid_invokes_script "$_pid" "$_PULSE_SCRIPT" &&
+		! _pulse_pid_invokes_script "$_pid" "$_active_link_script"; then
+		return 1
+	fi
+	_active_root=$(cd "$_PULSE_AGENTS_DIR" 2>/dev/null && pwd -P) || return 1
+	if [[ -d "$_bundles_root" ]]; then
+		_physical_bundles_root=$(cd "$_bundles_root" 2>/dev/null && pwd -P) || return 1
+		_bundle_dir="${_active_root%/agents}"
+		if [[ "$_bundle_dir" != "$_active_root" && "${_bundle_dir%/*}" == "$_physical_bundles_root" ]]; then
+			_bundle_id="${_bundle_dir##*/}"
+			_lease_file="${_physical_bundles_root}/.leases/${_bundle_id}/${_pid}"
+			[[ -r "$_lease_file" ]] || return 1
+			IFS= read -r _lease_root <"$_lease_file" || return 1
+			[[ "$_lease_root" == "$_active_root" ]] && return 0
+			return 1
+		fi
+	fi
+	return 0
+}
+
+_pulse_find_active_runtime_pid_since() {
+	local _baseline_pids="$1"
+	local _current_pids=""
+	local _pid=""
+	_current_pids=$(_pulse_pids)
+	while IFS= read -r _pid; do
+		[[ "$_pid" =~ ^[0-9]+$ ]] || continue
+		_pulse_pid_list_contains "$_baseline_pids" "$_pid" && continue
+		if _pulse_pid_uses_active_runtime "$_pid"; then
+			printf '%s\n' "$_pid"
+			return 0
+		fi
+	done <<<"$_current_pids"
+	return 1
 }
 
 # _pulse_emit_pid: print one PID while tolerating early-closing consumers.
@@ -382,6 +640,41 @@ _stop_all() {
 	return 0
 }
 
+# Stop only the processes present at the beginning of setup reconciliation.
+# Unlike _stop_all, the final check intentionally ignores later PIDs: launchd
+# KeepAlive may immediately create the intended active-bundle replacement.
+_stop_reconciliation_processes() {
+	local _identities=""
+	local _survivors=""
+	local _residual=""
+	local _display_pids=""
+	if ! _identities=$(_pulse_reconciliation_identities); then
+		return 1
+	fi
+	[[ -n "$_identities" ]] || return 0
+
+	_display_pids=$(_pulse_identity_pids "$_identities" | tr '\n' ' ')
+	_pl_info "Stopping pre-reconciliation Pulse process(es): ${_display_pids}"
+	_survivors=$(_pulse_snapshot_survivors "$_identities")
+	_pulse_signal_snapshot TERM "$_survivors"
+	sleep "$_PULSE_SIGTERM_WAIT"
+	_survivors=$(_pulse_snapshot_survivors "$_identities")
+	if [[ -n "$_survivors" ]]; then
+		_display_pids=$(_pulse_identity_pids "$_survivors" | tr '\n' ' ')
+		_pl_warn "SIGTERM timeout, escalating pre-reconciliation PIDs to SIGKILL: ${_display_pids}"
+		_pulse_signal_snapshot KILL "$_survivors"
+		sleep 1
+	fi
+
+	_residual=$(_pulse_snapshot_survivors "$_identities")
+	if [[ -n "$_residual" ]]; then
+		_display_pids=$(_pulse_identity_pids "$_residual" | tr '\n' ' ')
+		_pl_err "Failed to retire pre-reconciliation Pulse processes after SIGKILL — residual PIDs: ${_display_pids}"
+		return 1
+	fi
+	return 0
+}
+
 # _start: launch pulse in background via nohup. No-op if already running.
 _start() {
 	if _is_running; then
@@ -461,6 +754,7 @@ _reconcile_managed() {
 	local reconcile_rc=0
 	local bundle_id=""
 	local supervisor_disabled=false
+	local disabled_residual=""
 
 	if [[ ! -r "$runtime_module" ]]; then
 		_pl_err "Runtime transition support is missing from the activated bundle"
@@ -483,10 +777,15 @@ _reconcile_managed() {
 		_pl_err "Unable to resolve the active runtime bundle"
 		reconcile_rc=1
 	elif [[ "$supervisor_disabled" == "true" ]]; then
-		_stop_all || reconcile_rc=$?
+		_stop_reconciliation_processes || reconcile_rc=$?
+		disabled_residual=$(_pulse_reconciliation_pids_raw)
+		if [[ "$reconcile_rc" -eq 0 && -n "$disabled_residual" ]]; then
+			_pl_err "Pulse supervisor is disabled but runtime processes remain: $(printf '%s\n' "$disabled_residual" | tr '\n' ' ')"
+			reconcile_rc=1
+		fi
 		[[ "$reconcile_rc" -eq 0 ]] && _pl_info "Pulse remains stopped because its supervisor is disabled"
 	else
-		_stop_all || reconcile_rc=$?
+		_stop_reconciliation_processes || reconcile_rc=$?
 		if [[ "$reconcile_rc" -eq 0 ]]; then
 			sleep "$_PULSE_RESTART_WAIT"
 			if ! _pulse_refresh_active_runtime; then
@@ -625,6 +924,7 @@ Env:
   AIDEVOPS_AGENTS_DIR=<path>               Override ~/.aidevops/agents.
   AIDEVOPS_ACTIVE_AGENTS_LINK=<path>        Active runtime link for reconciliation.
   AIDEVOPS_PULSE_MANAGED_ENABLED=true       Allow reconcile-managed to start Pulse.
+  AIDEVOPS_PULSE_MERGE_PROCESS_PATTERN=...  Override merge-routine match (tests).
 
 Exit codes:
   0  Success
