@@ -193,6 +193,9 @@ _is_not_planned_state_reason() {
 _mark_todo_done() {
 	local task_id="$1" todo_file="$2" proof_log="${3:-}"
 	local task_id_ere
+	if [[ -n "$proof_log" && ! "$proof_log" =~ ^verified:[0-9]{4}-[0-9]{2}-[0-9]{2}$ && ! "$proof_log" =~ ^pr:#[0-9]+$ ]]; then
+		return 1
+	fi
 	task_id_ere=$(_escape_ere "$task_id")
 	local today
 	today=$(date -u +%Y-%m-%d)
@@ -202,7 +205,10 @@ _mark_todo_done() {
 	# Use [[:space:]] not \s for macOS sed compatibility (bash 3.2)
 	if grep -qE "^[[:space:]]*- \[[ >]\] ${task_id_ere} " "$todo_file" 2>/dev/null; then
 		# Flip checkbox and append completed: date
-		sed -i.bak -E "s/^([[:space:]]*- )\[[ >]\] (${task_id_ere} .*)/\1[x] \2${proof_log} completed:${today}/" "$todo_file"
+		if ! sed -i.bak -E "s/^([[:space:]]*- )\[[ >]\] (${task_id_ere} .*)/\1[x] \2${proof_log} completed:${today}/" "$todo_file"; then
+			rm -f "${todo_file}.bak"
+			return 1
+		fi
 		rm -f "${todo_file}.bak"
 		_dedupe_todo_task_lines "$task_id" "$todo_file" || true
 		log_verbose "Marked $task_id as [x] in TODO.md"
@@ -215,10 +221,8 @@ _closed_issue_worker_complete_date() {
 	local completed_at
 
 	completed_at=$(gh api "repos/${repo}/issues/${issue_number}/comments" \
-		--jq '[.[] | select((.body // "") | contains("CLAIM_RELEASED reason=worker_complete")) | .created_at][0] // ""' || true)
-	if [[ -z "$completed_at" ]]; then
-		return 1
-	fi
+		--jq '[.[] | select((.body // "") | contains("CLAIM_RELEASED reason=worker_complete")) | .created_at][0] // ""' 2>/dev/null) || return 1
+	[[ "$completed_at" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]] || return 1
 	printf '%s\n' "${completed_at%%T*}"
 	return 0
 }
@@ -234,6 +238,7 @@ _closed_issue_aidevops_complete_date() {
 	evidence=$(printf '%s' "$issue_json" | jq -r '[.body // "", (.comments[]?.body // "")] | join("\n---\n")' 2>/dev/null) || evidence=""
 
 	[[ "$state_reason" == "COMPLETED" ]] || return 1
+	[[ "$closed_at" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]] || return 1
 	if printf '%s' "$evidence" | grep -qE 'aidevops:sig|CLAIM_RELEASED reason=worker_complete|Task t[0-9]+(\.[0-9]+)* done in TODO\.md|Completed via (\[)?PR #[0-9]+'; then
 		printf '%s\n' "${closed_at%%T*}"
 		return 0
@@ -247,7 +252,7 @@ _mark_reopen_completed_task() {
 		print_info "[DRY-RUN] Would mark $tid [x] ($reason on #$ref_num)"
 		return 0
 	fi
-	_mark_todo_done "$tid" "$todo_file" "verified:${proof_date}"
+	_mark_todo_done "$tid" "$todo_file" "verified:${proof_date}" || return 1
 	log_verbose "#$ref_num ($tid) has $reason — marked TODO [x]"
 	return 0
 }
@@ -259,7 +264,7 @@ _mark_reopen_merged_pr_task() {
 		return 0
 	fi
 	add_pr_ref_to_todo "$tid" "$pr_num" "$todo_file" 2>/dev/null || true
-	_mark_todo_done "$tid" "$todo_file"
+	_mark_todo_done "$tid" "$todo_file" || return 1
 	log_verbose "#$ref_num ($tid) has merged PR #$pr_num — marked TODO [x]"
 	return 0
 }
@@ -311,20 +316,20 @@ _reopen_mark_if_completed() {
 	pr_info=$(_reopen_find_merged_pr "$repo" "$tid" "$ref_num" 2>/dev/null || true)
 	if [[ -n "$pr_info" ]]; then
 		local pr_num="${pr_info%%|*}"
-		_mark_reopen_merged_pr_task "$tid" "$todo_file" "$ref_num" "$pr_num"
+		_mark_reopen_merged_pr_task "$tid" "$todo_file" "$ref_num" "$pr_num" || return 1
 		return 0
 	fi
 
 	local completed_date
 	completed_date=$(_closed_issue_worker_complete_date "$repo" "$ref_num" || true)
 	if [[ -n "$completed_date" ]]; then
-		_mark_reopen_completed_task "$tid" "$todo_file" "$ref_num" "$completed_date" "worker_complete evidence"
+		_mark_reopen_completed_task "$tid" "$todo_file" "$ref_num" "$completed_date" "worker_complete evidence" || return 1
 		return 0
 	fi
 
 	completed_date=$(_closed_issue_aidevops_complete_date "$repo" "$ref_num" || true)
 	if [[ -n "$completed_date" ]]; then
-		_mark_reopen_completed_task "$tid" "$todo_file" "$ref_num" "$completed_date" "aidevops close evidence"
+		_mark_reopen_completed_task "$tid" "$todo_file" "$ref_num" "$completed_date" "aidevops close evidence" || return 1
 		return 0
 	fi
 	return 1
