@@ -377,6 +377,7 @@ for actor in supported_actors:
 
 def evaluate(event_name, actor, is_pr, reply_id):
     candidate = expression
+    candidate = re.sub(r"\bnull\b", "None", candidate)
     replacements = {
         "github.event.comment.in_reply_to_id": repr(reply_id),
         "github.event.issue.pull_request": repr(is_pr),
@@ -387,7 +388,6 @@ def evaluate(event_name, actor, is_pr, reply_id):
     }
     for source, target in replacements.items():
         candidate = candidate.replace(source, target)
-    candidate = re.sub(r"\bnull\b", "None", candidate)
     if re.search(r"[^A-Za-z0-9_\s\[\]'\"().=-]", candidate):
         raise ValueError(f"unsupported eligibility token: {candidate}")
     return bool(eval(candidate, {"__builtins__": {}}, {}))
