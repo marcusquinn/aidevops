@@ -482,6 +482,26 @@ test_dispatch_launches_worker_and_writes_state() {
 	return 0
 }
 
+test_dispatch_preserves_head_fields_when_labels_are_empty() {
+	setup_test_env
+	export STUB_PR_LIST=$'1\tFix active PR\tfalse\t\tfeature/review\t'"${TEST_HEAD_OID_1}"$'\tworker-bot'
+	$SCANNER dispatch owner/repo "${TEST_ROOT}/repo"
+	wait_for_headless_log || true
+	local state_file="${AIDEVOPS_PR_REVIEW_THREAD_RESPONSE_STATE_DIR}/owner-repo-1.state"
+	if [[ -s "$HEADLESS_LOG" ]] &&
+		grep -Fxq "AIDEVOPS_PR_REPAIR_HEAD_REF=feature/review" "$HEADLESS_ENV_CAPTURE" 2>/dev/null &&
+		grep -Fxq "AIDEVOPS_PR_REPAIR_HEAD_SHA=${TEST_HEAD_OID_1}" "$HEADLESS_ENV_CAPTURE" 2>/dev/null &&
+		grep -q "^last_head_sha=${TEST_HEAD_OID_1}$" "$state_file" 2>/dev/null &&
+		! grep -q 'PR head branch is invalid' "$LOGFILE" 2>/dev/null; then
+		print_result "dispatch preserves PR head metadata when labels are empty" 0
+	else
+		print_result "dispatch preserves PR head metadata when labels are empty" 1 \
+			"headless=$(wc -c <"$HEADLESS_LOG" 2>/dev/null || printf 0), state=$(tr '\n' ';' <"$state_file" 2>/dev/null || printf ''), log=$(tr '\n' ';' <"$LOGFILE" 2>/dev/null || printf '')"
+	fi
+	teardown_test_env
+	return 0
+}
+
 test_dispatch_prompt_includes_full_thread_command_signatures() {
 	setup_test_env
 	local stable_scanner="${HOME}/.aidevops/agents/scripts/pr-review-thread-response-scanner.sh"
@@ -715,6 +735,67 @@ test_mark_blocked_skips_same_fingerprint_without_retry() {
 	return 0
 }
 
+test_dispatch_retries_stale_branch_validation_blocker_once() {
+	setup_test_env
+	local state_file="${AIDEVOPS_PR_REVIEW_THREAD_RESPONSE_STATE_DIR}/owner-repo-1.state"
+	local old_epoch=""
+	old_epoch="$(($(date +%s) - 4000))"
+	{
+		printf 'fingerprint=THREAD1:https://example.invalid/thread\n'
+		printf 'dispatched_at=%s\n' "$old_epoch"
+		printf 'thread_count=1\n'
+		printf 'attempt_count=1\n'
+		printf 'last_head_sha=%s\n' "$TEST_HEAD_OID_1"
+		printf 'analysis_complete=true\n'
+		printf 'blocked_by=code\n'
+		printf 'maintainer_attention=true\n'
+		printf 'attention_reason=pr_head_branch_invalid\n'
+		printf 'blocker_reason=pr_head_branch_invalid\n'
+	} >"$state_file"
+	$SCANNER dispatch owner/repo "${TEST_ROOT}/repo"
+	wait_for_headless_log || true
+	if [[ -s "$HEADLESS_LOG" ]] &&
+		grep -q '^attempt_count=2$' "$state_file" 2>/dev/null &&
+		! grep -q '^analysis_complete=' "$state_file" 2>/dev/null &&
+		grep -q 'retrying stale PR head validation failure once' "$LOGFILE" 2>/dev/null; then
+		print_result "dispatch retries a stale branch-validation blocker once" 0
+	else
+		print_result "dispatch retries a stale branch-validation blocker once" 1 \
+			"headless=$(wc -c <"$HEADLESS_LOG" 2>/dev/null || printf 0), state=$(tr '\n' ';' <"$state_file" 2>/dev/null || printf ''), log=$(tr '\n' ';' <"$LOGFILE" 2>/dev/null || printf '')"
+	fi
+	teardown_test_env
+	return 0
+}
+
+test_dispatch_does_not_repeat_branch_validation_recovery() {
+	setup_test_env
+	local state_file="${AIDEVOPS_PR_REVIEW_THREAD_RESPONSE_STATE_DIR}/owner-repo-1.state"
+	local old_epoch=""
+	old_epoch="$(($(date +%s) - 4000))"
+	{
+		printf 'fingerprint=THREAD1:https://example.invalid/thread\n'
+		printf 'dispatched_at=%s\n' "$old_epoch"
+		printf 'thread_count=1\n'
+		printf 'attempt_count=2\n'
+		printf 'last_head_sha=%s\n' "$TEST_HEAD_OID_1"
+		printf 'analysis_complete=true\n'
+		printf 'blocked_by=code\n'
+		printf 'maintainer_attention=true\n'
+		printf 'blocker_reason=pr_head_branch_invalid\n'
+	} >"$state_file"
+	$SCANNER dispatch owner/repo "${TEST_ROOT}/repo"
+	if [[ ! -s "$HEADLESS_LOG" ]] &&
+		grep -q '^attempt_count=2$' "$state_file" 2>/dev/null &&
+		grep -q 'analysis complete and blocked by code' "$LOGFILE" 2>/dev/null; then
+		print_result "dispatch does not repeat stale branch-validation recovery" 0
+	else
+		print_result "dispatch does not repeat stale branch-validation recovery" 1 \
+			"state=$(tr '\n' ';' <"$state_file" 2>/dev/null || printf ''), log=$(tr '\n' ';' <"$LOGFILE" 2>/dev/null || printf '')"
+	fi
+	teardown_test_env
+	return 0
+}
+
 test_no_marker_retry_behavior_is_preserved() {
 	setup_test_env
 	$SCANNER dispatch owner/repo "${TEST_ROOT}/repo"
@@ -779,16 +860,35 @@ test_mark_blocked_sanitizes_reason_and_details() {
 test_dispatch_pr_skips_when_pr_lock_held() {
 	setup_test_env
 	local lock_dir="${AIDEVOPS_PR_REVIEW_THREAD_RESPONSE_STATE_DIR}/owner-repo-1.lock"
+	local dispatch_rc=0
 	mkdir -p "$lock_dir"
 	{
 		printf 'pid=%s\n' "$$"
 		printf 'created_at=%s\n' "$(date +%s)"
 	} >"${lock_dir}/metadata"
-	$SCANNER dispatch-pr owner/repo "${TEST_ROOT}/repo" 1
-	if [[ ! -s "$HEADLESS_LOG" ]]; then
-		print_result "dispatch-pr skips when repo PR lock is held" 0
+	$SCANNER dispatch-pr owner/repo "${TEST_ROOT}/repo" 1 || dispatch_rc=$?
+	if [[ "$dispatch_rc" -ne 0 && ! -s "$HEADLESS_LOG" ]]; then
+		print_result "dispatch-pr reports when repo PR lock is held" 0
 	else
-		print_result "dispatch-pr skips when repo PR lock is held" 1 "lock-held dispatch unexpectedly launched"
+		print_result "dispatch-pr reports when repo PR lock is held" 1 "rc=${dispatch_rc}, lock-held dispatch unexpectedly launched"
+	fi
+	teardown_test_env
+	return 0
+}
+
+test_dispatch_pr_reports_deduplicated_dispatch() {
+	setup_test_env
+	PR_REVIEW_THREAD_RESPONSE_INCLUDE_HUMAN=true $SCANNER dispatch-pr owner/repo "${TEST_ROOT}/repo" 1
+	wait_for_headless_log || true
+	: >"$HEADLESS_LOG"
+	local dispatch_rc=0
+	PR_REVIEW_THREAD_RESPONSE_INCLUDE_HUMAN=true $SCANNER dispatch-pr owner/repo "${TEST_ROOT}/repo" 1 || dispatch_rc=$?
+	if [[ "$dispatch_rc" -ne 0 && ! -s "$HEADLESS_LOG" ]] &&
+		grep -Eq 'dispatch state active|same thread fingerprint dispatched' "$LOGFILE" 2>/dev/null; then
+		print_result "dispatch-pr reports a deduplicated targeted dispatch" 0
+	else
+		print_result "dispatch-pr reports a deduplicated targeted dispatch" 1 \
+			"rc=${dispatch_rc}, headless=$(wc -c <"$HEADLESS_LOG" 2>/dev/null || printf 0), log=$(tr '\n' ';' <"$LOGFILE" 2>/dev/null || printf '')"
 	fi
 	teardown_test_env
 	return 0
@@ -1023,6 +1123,7 @@ main() {
 	test_scan_pr_excludes_human_threads_by_default
 	test_scan_pr_can_include_human_threads_with_opt_in
 	test_dispatch_launches_worker_and_writes_state
+	test_dispatch_preserves_head_fields_when_labels_are_empty
 	test_dispatch_uses_linked_pr_branch_worktree
 	test_dispatch_exports_worktree_ownership_context
 	test_dispatch_blocks_cross_repository_head
@@ -1041,10 +1142,13 @@ main() {
 	test_dispatch_escalates_repeated_same_fingerprint_without_worker_loop
 	test_new_head_sha_resets_repeated_fingerprint_attempts
 	test_mark_blocked_skips_same_fingerprint_without_retry
+	test_dispatch_retries_stale_branch_validation_blocker_once
+	test_dispatch_does_not_repeat_branch_validation_recovery
 	test_no_marker_retry_behavior_is_preserved
 	test_old_state_file_without_completion_fields_still_retries
 	test_mark_blocked_sanitizes_reason_and_details
 	test_dispatch_pr_skips_when_pr_lock_held
+	test_dispatch_pr_reports_deduplicated_dispatch
 	test_dispatch_pr_reclaims_stale_lock
 	test_dispatch_reports_graphql_budget_exhaustion_when_scan_blind
 	test_dispatch_reports_fetch_errors_when_scan_blind
