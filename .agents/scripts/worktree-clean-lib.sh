@@ -46,12 +46,31 @@ if [[ -z "${SCRIPT_DIR:-}" ]]; then
 	unset _lib_path
 fi
 
+if [[ -f "${SCRIPT_DIR}/full-loop-cleanup-receipt.sh" ]]; then
+	# shellcheck source=./full-loop-cleanup-receipt.sh
+	source "${SCRIPT_DIR}/full-loop-cleanup-receipt.sh"
+fi
+
 # --- Functions ---
 
 _clean_deferred_parent_alive() {
 	local wt_path="$1"
 	local marker_path="${wt_path}/${_WT_CLEAN_DEFERRED_MARKER}"
+	local receipt_path=""
 	_WT_CLEAN_DEFERRED_OWNER_PID=""
+	_WT_CLEAN_DEFERRED_RECEIPT=""
+	if declare -F full_loop_cleanup_receipt_for_worktree >/dev/null 2>&1; then
+		receipt_path=$(full_loop_cleanup_receipt_for_worktree "$wt_path" 2>/dev/null || true)
+	fi
+	if [[ -n "$receipt_path" && -f "$receipt_path" ]]; then
+		_WT_CLEAN_DEFERRED_RECEIPT="$receipt_path"
+		_WT_CLEAN_DEFERRED_OWNER_PID=$(jq -r '.owner.pid // empty' "$receipt_path" 2>/dev/null || true)
+		if full_loop_cleanup_owner_alive "$receipt_path"; then
+			return 0
+		fi
+		rm -f "$marker_path" 2>/dev/null || true
+		return 2
+	fi
 	[[ -f "$marker_path" ]] || return 1
 
 	local owner_pid=""
@@ -70,6 +89,14 @@ _clean_acquire_removal_lease() {
 	declare -F claim_worktree_ownership >/dev/null 2>&1 || return 1
 	claim_worktree_ownership "$wt_path" "$wt_branch" \
 		--owner-pid "$$" --session "cleanup:$$" --task "worktree-removal" >/dev/null 2>&1 || return 1
+	local receipt_path=""
+	if declare -F full_loop_cleanup_receipt_for_worktree >/dev/null 2>&1; then
+		receipt_path=$(full_loop_cleanup_receipt_for_worktree "$wt_path" 2>/dev/null || true)
+	fi
+	if [[ -n "$receipt_path" ]] && ! full_loop_transition_cleanup_receipt "$receipt_path" "$_FULL_LOOP_CLEANUP_LEASED" "$$"; then
+		unregister_worktree_if_owner_pid "$wt_path" "$$" 2>/dev/null || true
+		return 1
+	fi
 	return 0
 }
 
@@ -82,7 +109,7 @@ _clean_terminal_owner_blocks_cleanup() {
 		return 0
 	fi
 	if [[ "$deferred_parent_state" -eq 2 ]]; then
-		if [[ -n "$_WT_CLEAN_DEFERRED_OWNER_PID" ]] && \
+		if [[ -n "$_WT_CLEAN_DEFERRED_OWNER_PID" ]] &&
 			unregister_worktree_if_owner_pid "$wt_path" "$_WT_CLEAN_DEFERRED_OWNER_PID" 2>/dev/null; then
 			return 1
 		fi
@@ -299,7 +326,7 @@ _skip_cleanup_for_owner() {
 		_skip_cleanup_emit "$wt_branch" "$wt_path" "dead owner PID $owner_pid in cooldown since $owner_dead_seen_at" "owner-pid-dead"
 		return 0
 	fi
-		_skip_cleanup_emit "$wt_branch" "$wt_path" "owned by active session PID $owner_pid" "$_WT_CLEAN_REASON_OWNED_SKIP"
+	_skip_cleanup_emit "$wt_branch" "$wt_path" "owned by active session PID $owner_pid" "$_WT_CLEAN_REASON_OWNED_SKIP"
 	return 0
 }
 
@@ -785,8 +812,8 @@ _clean_select_merge_type() {
 	local merged_prs="$4"
 	local closed_prs="$5"
 
-	if git branch --merged "$default_br" 2>/dev/null | grep -q "^\s*$wt_branch$" \
-		&& ! branch_has_zero_commits_ahead "$wt_branch" "$default_br"; then
+	if git branch --merged "$default_br" 2>/dev/null | grep -q "^\s*$wt_branch$" &&
+		! branch_has_zero_commits_ahead "$wt_branch" "$default_br"; then
 		printf '%s\n' "merged"
 		return 0
 	fi
@@ -1115,6 +1142,9 @@ _clean_remove_classified_worktree() {
 		git branch -D "$worktree_branch" 2>/dev/null || true
 	fi
 	log_worktree_removal_event "$_WTAR_REMOVED" "$_WTAR_WH_CALLER" "$worktree_path" "$audit_reason" "$completed_mode" "$audit_context"
+	if declare -F full_loop_mark_cleanup_cleaned_for_worktree >/dev/null 2>&1; then
+		full_loop_mark_cleanup_cleaned_for_worktree "$worktree_path" || true
+	fi
 	printf '%s\n' "$_WT_CLEAN_COMPLETED_EVENT"
 	return 0
 }
@@ -1322,6 +1352,9 @@ cmd_clean() {
 	if ! main_worktree_path=$(_clean_preflight_main_worktree); then
 		return 1
 	fi
+	if declare -F full_loop_reconcile_cleanup_receipts >/dev/null 2>&1; then
+		full_loop_reconcile_cleanup_receipts
+	fi
 
 	echo -e "${BOLD}Checking for worktrees with merged branches...${NC}" >&2
 	echo "" >&2
@@ -1372,6 +1405,9 @@ cmd_clean() {
 	if [[ "$response" =~ ^[Yy]$ ]]; then
 		# Second pass: remove merged worktrees
 		_clean_remove_merged "$default_branch" "$main_worktree_path" "$remote_state_unknown" "$merged_pr_branches" "$open_pr_branches" "$force_merged" "$closed_pr_branches"
+		if declare -F full_loop_reconcile_cleanup_receipts >/dev/null 2>&1; then
+			full_loop_reconcile_cleanup_receipts
+		fi
 		echo -e "${GREEN}Cleanup complete${NC}" >&2
 	else
 		echo "Cancelled" >&2

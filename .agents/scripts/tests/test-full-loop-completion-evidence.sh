@@ -10,6 +10,7 @@ ROOT=$(mktemp -d)
 trap 'rm -rf "$ROOT"' EXIT
 mkdir -p "${ROOT}/bin"
 receipt_dir="${ROOT}/receipts"
+cleanup_receipt_dir="${ROOT}/cleanup-receipts"
 
 cat >"${ROOT}/bin/gh" <<'STUB'
 #!/usr/bin/env bash
@@ -53,6 +54,10 @@ chmod +x "$runner"
 removed_path="${ROOT}/removed-worktree"
 cleanup_log="${ROOT}/cleanup.log"
 printf '[2026-07-11T00:00:01Z] [test] worktree-removed: %s — branch-merged — mode=permanent\n' "$removed_path" >"$cleanup_log"
+export AIDEVOPS_FULL_LOOP_CLEANUP_DIR="$cleanup_receipt_dir"
+# shellcheck source=../full-loop-cleanup-receipt.sh
+source "${SCRIPTS_DIR}/full-loop-cleanup-receipt.sh"
+full_loop_write_cleanup_deferred testorg/repo 42 "$removed_path" feature/test-cleanup "$$" test-session not-requested >/dev/null
 
 record_runner="${ROOT}/record-runner.sh"
 cat >"$record_runner" <<RUNNER
@@ -179,14 +184,49 @@ if bash "$complete_runner" >/dev/null 2>&1; then
 fi
 printf 'PASS release:failed blocks cleanup before worktree removal\n'
 
+handoff_runner="${ROOT}/handoff-runner.sh"
+cat >"$handoff_runner" <<RUNNER
+#!/usr/bin/env bash
+set -euo pipefail
+SCRIPT_DIR='${SCRIPTS_DIR}'
+STATE_DIR='${ROOT}/handoff-state'
+STATE_FILE='${ROOT}/handoff-state/full-loop.state'
+DEFAULT_MAX_TASK_ITERATIONS=50
+DEFAULT_MAX_PREFLIGHT_ITERATIONS=5
+DEFAULT_MAX_PR_ITERATIONS=20
+HEADLESS=false
+source '${SCRIPTS_DIR}/shared-constants.sh'
+source '${SCRIPTS_DIR}/full-loop-helper-state.sh'
+CURRENT_PHASE=complete
+SAVED_PROMPT=test
+PR_NUMBER=43
+STARTED_AT=2026-07-11T00:00:00Z
+RELEASE_STATUS=not-requested
+save_state complete test 43 "\$STARTED_AT"
+cmd_complete
+cmd_status --json
+RUNNER
+chmod +x "$handoff_runner"
+handoff_output=$(AIDEVOPS_FULL_LOOP_REPO=testorg/repo AIDEVOPS_FULL_LOOP_CLEANUP_DIR="$cleanup_receipt_dir" bash "$handoff_runner")
+printf '%s\n' "$handoff_output" | grep -q '<promise>FULL_LOOP_CLEANUP_DEFERRED</promise>'
+handoff_json="${handoff_output##*$'\n'}"
+printf '%s' "$handoff_json" | jq -e \
+	'.executor_completion_state == "COMPLETE" and .resource_cleanup_state == "CLEANUP_DEFERRED"' >/dev/null
+jq -e '.executor_completion_state == "COMPLETE" and .release_status == "not-requested"' \
+	"${cleanup_receipt_dir}/testorg_repo-43.json" >/dev/null
+printf 'PASS interactive completion emits durable executor handoff and machine-readable cleanup state\n'
+
 AIDEVOPS_CLEANUP_LOG="$cleanup_log" PATH="${ROOT}/bin:/opt/homebrew/bin:/usr/bin:/bin" bash "$runner" 42 "$removed_path" testorg/repo >/dev/null || {
 	printf 'FAIL complete merged and cleaned evidence was rejected\n'
 	exit 1
 }
+jq -e '.resource_cleanup_state == "CLEANED" and .cleanup_lease.state == "released" and (.cleaned_at | length > 0)' \
+	"${cleanup_receipt_dir}/testorg_repo-42.json" >/dev/null
 printf 'PASS merged and cleaned evidence completes lifecycle\n'
 
 rm -f "${receipt_dir}/marcusquinn_aidevops-42.status"
 AIDEVOPS_FULL_LOOP_RECEIPT_DIR="$receipt_dir" PATH="${ROOT}/bin:/opt/homebrew/bin:/usr/bin:/bin" bash "$record_runner" 42 marcusquinn/aidevops >/dev/null
+full_loop_write_cleanup_deferred marcusquinn/aidevops 42 "$removed_path" feature/test-cleanup "$$" test-session not-requested >/dev/null
 AIDEVOPS_FULL_LOOP_RECEIPT_DIR="$receipt_dir" AIDEVOPS_CLEANUP_LOG="$cleanup_log" PATH="${ROOT}/bin:/opt/homebrew/bin:/usr/bin:/bin" bash "$runner" 42 "$removed_path" marcusquinn/aidevops >/dev/null || {
 	printf 'FAIL merge-only aidevops lifecycle did not complete with release:not-requested\n'
 	exit 1
