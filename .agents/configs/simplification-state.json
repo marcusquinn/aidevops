@@ -7486,15 +7486,15 @@
       "pr": 15490
     },
     "aidevops.sh": {
-      "at": "2026-07-20T23:56:05Z",
-      "hash": "38e35c6a25333d8f8eec16b4b4b8d5a69fca42e1",
-      "passes": 284,
+      "at": "2026-07-21T18:39:05Z",
+      "hash": "ae2781a15bab248755674109c01b6bb7e60090b4",
+      "passes": 285,
       "pr": 19029
     },
     "setup.sh": {
-      "at": "2026-07-20T23:56:05Z",
-      "hash": "d6466ab0b7290a281d739c4fdba8dba1ed4cc4b9",
-      "passes": 280,
+      "at": "2026-07-21T18:39:05Z",
+      "hash": "07c5bd99f59542c8ef5a7a3088e3496697a9de8c",
+      "passes": 281,
       "pr": 15470
     },
     "todo/tasks/GH#15363-brief.md": {
@@ -8026,10 +8026,10 @@
       "passes": 1
     },
     ".agents/scripts/review-bot-gate-helper.sh": {
-      "hash": "430567b1d83804f0cc8d153a809a93979224237c",
-      "at": "2026-07-20T20:40:12Z",
+      "hash": "bff23e7bc93c9a11fcb27e193bb92e6bb98279db",
+      "at": "2026-07-21T18:38:02Z",
       "pr": 26251,
-      "passes": 4
+      "passes": 5
     },
     ".agents/scripts/pulse-canonical-recovery.sh": {
       "hash": "834616a8c8f83d14b57e4029ec39ec0d364754e8",
@@ -8050,10 +8050,10 @@
       "passes": 3
     },
     ".agents/scripts/headless-runtime-worker.sh": {
-      "hash": "0cd2f849d2993f98513d0ae0c6acdf87c0eca4ac",
-      "at": "2026-07-20T15:42:05Z",
+      "hash": "ccfca6ce8c00ed25ca7044f62db39ad37852f9c4",
+      "at": "2026-07-21T18:37:57Z",
       "pr": 26521,
-      "passes": 11
+      "passes": 12
     },
     ".agents/scripts/install-hooks-helper.sh": {
       "hash": "0fa74195f7243ea22d952d156e4faccb1bbc2125",
