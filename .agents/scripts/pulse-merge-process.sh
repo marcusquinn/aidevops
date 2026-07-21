@@ -263,6 +263,7 @@ _pmp_enrich_prs_with_review_decisions() {
 	local pr_json="$2"
 	local enriched_json="$pr_json"
 	local pr_rows=""
+	local _US=$'\x1f'
 	local i="" number="" review_decision=""
 
 	if [[ -z "$repo_slug" ]]; then
@@ -273,17 +274,18 @@ _pmp_enrich_prs_with_review_decisions() {
 	pr_rows=$(printf '%s' "$pr_json" | jq -r '
 		if type != "array" then error("expected PR array")
 		else to_entries[] | [
-			.key,
-			(.value.number // ""),
+			(.key | tostring),
+			(if ((.value | has("number") | not) or .value.number == null or (.value.number | tostring | length) == 0)
+			 then "" else (.value.number | tostring) end),
 			(if ((.value | has("reviewDecision") | not) or .value.reviewDecision == null or (.value.reviewDecision | tostring | length) == 0)
 			 then "UNKNOWN" else .value.reviewDecision end)
-		] | @tsv
+		] | join("\u001f")
 		end' 2>/dev/null) || {
 		printf '%s' "$pr_json"
 		return 0
 	}
 
-	while IFS=$'\t' read -r i number review_decision; do
+	while IFS="$_US" read -r i number review_decision; do
 		[[ -n "$i" ]] || continue
 		_pmp_normalize_review_decision_into review_decision "$review_decision"
 		if [[ "$number" =~ ^[0-9]+$ ]] && _pmp_review_decision_is_unknown "$review_decision"; then

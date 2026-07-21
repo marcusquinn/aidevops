@@ -74,6 +74,7 @@ checks_in_progress_pr='{"number":2,"mergeable":"MERGEABLE","reviewDecision":"APP
 small_fix_pr='{"number":3,"mergeable":"MERGEABLE","reviewDecision":"APPROVED","isDraft":false,"labels":[{"name":"origin:worker"}],"statusCheckRollup":[{"status":"COMPLETED","conclusion":"FAILURE"}]}'
 unknown_review_failed_pr='{"number":7,"mergeable":"MERGEABLE","reviewDecision":null,"isDraft":false,"labels":[{"name":"origin:worker"}],"statusCheckRollup":[{"status":"COMPLETED","conclusion":"FAILURE"}]}'
 unknown_review_passing_pr='{"number":8,"mergeable":"MERGEABLE","reviewDecision":null,"isDraft":false,"labels":[],"statusCheckRollup":[{"status":"COMPLETED","conclusion":"SUCCESS"}]}'
+missing_number_pr='{"mergeable":"MERGEABLE","reviewDecision":"9","isDraft":false,"labels":[],"statusCheckRollup":[{"status":"COMPLETED","conclusion":"SUCCESS"}]}'
 dirty_pr='{"number":4,"mergeable":"CONFLICTING","reviewDecision":"APPROVED","isDraft":false,"labels":[],"statusCheckRollup":[]}'
 human_pr='{"number":5,"mergeable":"MERGEABLE","reviewDecision":"CHANGES_REQUESTED","isDraft":false,"labels":[],"statusCheckRollup":[{"status":"COMPLETED","conclusion":"SUCCESS"}]}'
 
@@ -94,6 +95,12 @@ assert_eq "1c.1: passing checks with refreshed CHANGES_REQUESTED classify as hum
 	"human-approval-needed" "$(_pmp_classify_pr_backlog_state "$enriched_review_pr")"
 assert_eq "1c.2: passing unknown reviewDecision performs one authoritative enrichment refresh" \
 	"1" "$(wc -l <"${TEST_TMPDIR}/review-refresh.log" | tr -d '[:space:]')"
+: >"${TEST_TMPDIR}/review-refresh.log"
+enriched_review_json=$(_pmp_enrich_prs_with_review_decisions "owner/repo" "[$missing_number_pr]")
+assert_eq "1c.2.1: missing PR number does not shift reviewDecision into the number field" \
+	"0" "$(wc -l <"${TEST_TMPDIR}/review-refresh.log" | tr -d '[:space:]')"
+assert_eq "1c.2.2: missing PR number preserves the original review decision" \
+	"9" "$(printf '%s' "$enriched_review_json" | jq -r '.[0].reviewDecision')"
 : >"${TEST_TMPDIR}/review-refresh.log"
 REFRESHED_REVIEW_DECISION="NONE"
 enriched_review_json=$(_pmp_enrich_prs_with_review_decisions "owner/repo" "[$unknown_review_passing_pr]")
