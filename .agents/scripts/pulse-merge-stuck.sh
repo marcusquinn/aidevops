@@ -202,7 +202,7 @@ _pms_is_eligible_stuck() {
 }
 
 #######################################
-# Fetch normalized REST check-runs for a PR head SHA.
+# Fetch the effective normalized check set for a PR head SHA.
 # Args: $1 = repo_slug, $2 = head SHA
 # Stdout: JSON array, [] on missing helper/API failure
 #######################################
@@ -210,7 +210,14 @@ _pms_check_runs_for_head() {
 	local repo_slug="$1"
 	local head_sha="$2"
 	local runs=""
-	if [[ -n "$repo_slug" && -n "$head_sha" ]] && declare -F gh_pr_check_runs_rest >/dev/null 2>&1; then
+	# The merge preflight snapshot collapses superseded runs and logical aliases
+	# to their effective current-head result. Prefer it so an old cancelled or
+	# failed run cannot make a subsequently successful PR look broken forever.
+	# pulse-merge.sh is sourced before this module in production; the REST helper
+	# remains the standalone/test fallback.
+	if [[ -n "$repo_slug" && -n "$head_sha" ]] && declare -F _pmrc_snapshot_checks_json >/dev/null 2>&1; then
+		runs=$(_pmrc_snapshot_checks_json "$repo_slug" "$head_sha" 2>/dev/null) || runs=""
+	elif [[ -n "$repo_slug" && -n "$head_sha" ]] && declare -F gh_pr_check_runs_rest >/dev/null 2>&1; then
 		runs=$(gh_pr_check_runs_rest "$repo_slug" "$head_sha" 2>/dev/null) || runs=""
 	fi
 	[[ -n "$runs" && "$runs" != "null" ]] || runs="[]"
@@ -602,6 +609,22 @@ The existing rebase-nudge family (\`_post_rebase_nudge_on_interactive_conflictin
 # ── Pattern-cluster outage detector ─────────────────────────────────────────
 
 #######################################
+# Format a comma-separated PR list as Markdown bullets. The explicit trailing
+# newline ensures the final PR is consumed by read instead of disappearing at
+# EOF when the input has no trailing comma.
+# Args: $1=comma-separated PR numbers
+#######################################
+_pms_format_pr_markdown_list() {
+	local prs="$1"
+	local pr=""
+	printf '%s\n' "$prs" | tr ',' '\n' | while IFS= read -r pr; do
+		[[ "$pr" =~ ^[0-9]+$ ]] || continue
+		printf -- '- #%s\n' "$pr"
+	done
+	return 0
+}
+
+#######################################
 # Group all stuck PRs in the repo by failure fingerprint. If ≥ AIDEVOPS_MERGE_PATTERN_MIN_PRS
 # share an identical fingerprint, file ONE investigation issue per outage signature.
 # Dedup'd by the fingerprint hash so the same outage doesn't re-file every cycle.
@@ -705,7 +728,7 @@ This is a broken-base outage signal — multiple unrelated PRs failing the same 
 
 ## Affected PRs
 
-$(printf '%s' "$prs" | tr ',' '\n' | while read -r p; do printf -- '- #%s\n' "$p"; done)
+$(_pms_format_pr_markdown_list "$prs")
 
 ## Why
 
@@ -858,7 +881,7 @@ Per-PR escalation comments are SUPPRESSED for these PRs while saturation persist
 
 ## Affected PRs
 
-$(printf '%s' "$affected_prs" | tr ',' '\n' | while read -r p; do [[ -n "$p" ]] && printf -- '- #%s\n' "$p"; done)
+$(_pms_format_pr_markdown_list "$affected_prs")
 
 ## Why
 
