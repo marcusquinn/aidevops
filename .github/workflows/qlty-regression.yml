@@ -1,5 +1,10 @@
 name: Qlty Regression Gate
 
+# qlty-action/install inherits QLTY_VERSION; keep it aligned with the
+# QLTY_CLI_VERSION contract validated by the helper below.
+env:
+  QLTY_VERSION: "0.636.0"
+
 # t2065: block PRs that increase the total qlty smell count.
 #
 # Runs `qlty smells --all --sarif` against (a) the PR merge-base and

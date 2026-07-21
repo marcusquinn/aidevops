@@ -1,5 +1,9 @@
 name: Code Quality Analysis
 
+# qlty-action/install otherwise resolves its moving `latest` release.
+env:
+  QLTY_VERSION: "0.636.0"
+
 on:
   push:
     branches: [ main, develop ]
