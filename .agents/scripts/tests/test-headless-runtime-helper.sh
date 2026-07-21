@@ -1062,6 +1062,8 @@ test_worker_worktree_claim_transfers_to_runtime_pid() {
 	local proof_session="${AIDEVOPS_WORKTREE_OWNER_SESSION:-}"
 	local proof_task="${AIDEVOPS_WORKTREE_OWNER_TASK:-}"
 	local proof_path="${AIDEVOPS_WORKTREE_OWNER_PATH:-}"
+	local expected_proof_path=""
+	expected_proof_path=$(cd "$worktree_dir" 2>/dev/null && pwd -P)
 
 	unset -f claim_worktree_ownership 2>/dev/null || true
 	unset WORKER_ISSUE_NUMBER AIDEVOPS_WORKTREE_OWNER_PID \
@@ -1076,7 +1078,7 @@ test_worker_worktree_claim_transfers_to_runtime_pid() {
 		[[ "$proof_pid" == "$$" ]] &&
 		[[ "$proof_session" == "issue-22438" ]] &&
 		[[ "$proof_task" == "22438" ]] &&
-		[[ "$proof_path" == "$worktree_dir" ]]; then
+		[[ "$proof_path" == "$expected_proof_path" ]]; then
 		print_result "worker worktree claim exports exact wrapper ownership proof" 0
 		return 0
 	fi
