@@ -90,6 +90,13 @@ if full_loop_transition_cleanup_receipt "$receipt_one" "$_FULL_LOOP_CLEANUP_DEFE
 fi
 printf 'PASS CLEANED transition is idempotent and irreversible\n'
 
+sleep 1
+newest_receipt=$(full_loop_write_cleanup_deferred example/repo 103 "${TEST_ROOT}/worktree-one" feature/reused \
+	"$OWNER_PID" session-reused not-requested)
+selected_receipt=$(full_loop_cleanup_receipt_for_worktree "${TEST_ROOT}/worktree-one")
+[[ "$selected_receipt" == "$newest_receipt" ]]
+printf 'PASS reused worktree paths select the newest lifecycle receipt\n'
+
 receipt_two=$(full_loop_write_cleanup_deferred example/repo 102 "${TEST_ROOT}/worktree-two" feature/two \
 	"$OWNER_PID" session-two not-requested)
 full_loop_transition_cleanup_receipt "$receipt_two" "$_FULL_LOOP_CLEANUP_LEASED" "$$"

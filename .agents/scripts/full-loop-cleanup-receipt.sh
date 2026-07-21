@@ -84,6 +84,9 @@ full_loop_cleanup_receipt_for_worktree() {
 	local worktree="$1"
 	local receipt_dir=""
 	local receipt_path=""
+	local selected_path=""
+	local selected_created_at=""
+	local candidate_created_at=""
 
 	[[ -n "$worktree" ]] || return 1
 	receipt_dir=$(_full_loop_cleanup_receipt_dir) || return 1
@@ -91,11 +94,16 @@ full_loop_cleanup_receipt_for_worktree() {
 	for receipt_path in "$receipt_dir"/*.json; do
 		[[ -f "$receipt_path" ]] || continue
 		if jq -e --arg worktree "$worktree" '.worktree == $worktree' "$receipt_path" >/dev/null 2>&1; then
-			printf '%s\n' "$receipt_path"
-			return 0
+			candidate_created_at=$(jq -r '.created_at // empty' "$receipt_path" 2>/dev/null || true)
+			if [[ -z "$selected_path" || "$candidate_created_at" > "$selected_created_at" ]]; then
+				selected_path="$receipt_path"
+				selected_created_at="$candidate_created_at"
+			fi
 		fi
 	done
-	return 1
+	[[ -n "$selected_path" ]] || return 1
+	printf '%s\n' "$selected_path"
+	return 0
 }
 
 full_loop_cleanup_owner_alive() {
