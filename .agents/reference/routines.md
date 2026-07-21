@@ -3,7 +3,21 @@
 
 # Routines Reference
 
-Recurring operational jobs live in `TODO.md` under `## Routines`. Git-tracked, `r`-prefixed IDs distinguish them from one-off `t`-prefixed tasks. Use `/routine` to design, dry-run, and install scheduler entries.
+Recurring operational jobs live in `TODO.md` under `## Routines`. Git-tracked, `r`-prefixed IDs distinguish them from one-off `t`-prefixed tasks. Use `/routine` to design, dry-run, and install recurring scheduler entries.
+
+Route by trigger:
+
+- Recurring calendar work → `/routine` and a `repeat:` definition in `TODO.md`
+- One delayed execution → `aidevops schedule once`; private state lives outside Git
+- Condition-driven queue work → Pulse, not a fake calendar interval
+
+One-shot jobs accept either an exact UTC `--at` timestamp or a relative
+`--after` duration. `aidevops schedule status [JOB_ID]` reports the lifecycle,
+and `aidevops schedule cancel JOB_ID` cancels work that has not started. The
+versioned state machine is `queued → claimed → running →
+success|failure|cancelled`. A single platform scheduler calls `run-due`, so
+queued jobs survive reboot without one service or sleeper per job. Prompt
+material, dispatch paths, and logs remain private with restrictive modes.
 
 ## Format
 
@@ -48,6 +62,7 @@ Use `run:` for scripts, exports, health checks. Use `agent:` when judgment or su
 ## Anti-patterns
 
 - Separate routine registry outside `TODO.md`
+- Fake recurring entries or sleeping processes for one-shot work
 - One-off task entries for routine execution history
 - Running deterministic scripts through an LLM agent
 - Schedule semantics outside version control

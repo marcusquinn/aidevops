@@ -6,7 +6,7 @@
 # Script-only shows $0 cost. Detailed logs stay local. (t1926)
 #
 # Usage:
-#   routine-log-helper.sh update <routine-id> --status success|failure --duration SECONDS [--tokens N] [--cost AMOUNT]
+#   routine-log-helper.sh update <routine-id> --status queued|claimed|running|success|failure|cancelled [--duration SECONDS] [--tokens N] [--cost AMOUNT] [--job-id ID] [--session-key KEY]
 #   routine-log-helper.sh notable <routine-id> --event "description"
 #   routine-log-helper.sh create-issue <routine-id> --repo SLUG --title "rNNN: Title" [--schedule EXPR] [--type TYPE]
 #   routine-log-helper.sh status
@@ -429,11 +429,11 @@ EOF
 # =============================================================================
 
 # Parse and validate arguments for the update subcommand.
-# Sets variables in caller scope: routine_id, status, duration, tokens, cost.
+# Sets module-scope _UPDATE_* variables for the caller.
 # Returns 1 on invalid input.
 _parse_update_args() {
 	if [[ $# -lt 1 ]]; then
-		_log_error "Usage: routine-log-helper.sh update <routine-id> --status success|failure --duration SECONDS [--tokens N] [--cost AMOUNT]"
+		_log_error "Usage: routine-log-helper.sh update <routine-id> --status queued|claimed|running|success|failure|cancelled [--duration SECONDS] [--tokens N] [--cost AMOUNT] [--job-id ID] [--session-key KEY]"
 		return 1
 	fi
 	# shellcheck disable=SC2034
@@ -444,9 +444,17 @@ _parse_update_args() {
 	_UPDATE_DURATION=""
 	_UPDATE_TOKENS="0"
 	_UPDATE_COST="0.00"
+	_UPDATE_JOB_ID=""
+	_UPDATE_SESSION_KEY=""
+	_UPDATE_OUTCOME=""
 
 	while [[ $# -gt 0 ]]; do
-		case "$1" in
+		local option="$1"
+		if [[ "$option" == --* && $# -lt 2 ]]; then
+			_log_error "$option requires a value"
+			return 1
+		fi
+		case "$option" in
 		--status)
 			_UPDATE_STATUS="$2"
 			shift 2
@@ -463,23 +471,80 @@ _parse_update_args() {
 			_UPDATE_COST="$2"
 			shift 2
 			;;
+		--job-id)
+			_UPDATE_JOB_ID="$2"
+			shift 2
+			;;
+		--session-key)
+			_UPDATE_SESSION_KEY="$2"
+			shift 2
+			;;
+		--outcome)
+			_UPDATE_OUTCOME="$2"
+			shift 2
+			;;
 		*)
-			_log_error "Unknown option: $1"
+			_log_error "Unknown option: $option"
 			return 1
 			;;
 		esac
 	done
 
-	if [[ -z "$_UPDATE_STATUS" ]] || [[ -z "$_UPDATE_DURATION" ]]; then
-		_log_error "Both --status and --duration are required"
+	if [[ -z "$_UPDATE_STATUS" ]]; then
+		_log_error "--status is required"
 		return 1
 	fi
 
-	if [[ "$_UPDATE_STATUS" != "success" ]] && [[ "$_UPDATE_STATUS" != "failure" ]]; then
-		_log_error "Status must be 'success' or 'failure'"
+	case "$_UPDATE_STATUS" in
+	queued | claimed | running | success | failure | cancelled) ;;
+	*)
+		_log_error "Status must be queued, claimed, running, success, failure, or cancelled"
+		return 1
+		;;
+	esac
+
+	if [[ "$_UPDATE_STATUS" == "success" || "$_UPDATE_STATUS" == "failure" ]]; then
+		if [[ -z "$_UPDATE_DURATION" ]]; then
+			_log_error "--duration is required for success and failure"
+			return 1
+		fi
+	elif [[ -z "$_UPDATE_DURATION" ]]; then
+		_UPDATE_DURATION="0"
+	fi
+	if [[ ! "$_UPDATE_DURATION" =~ ^[0-9]+$ ]] || [[ ! "$_UPDATE_TOKENS" =~ ^[0-9]+$ ]] || \
+		[[ ! "$_UPDATE_COST" =~ ^[0-9]+([.][0-9]+)?$ ]]; then
+		_log_error "Duration and tokens must be non-negative integers; cost must be numeric"
 		return 1
 	fi
 
+	return 0
+}
+
+_append_lifecycle_log() {
+	local routine_id="$1"
+	local status="$2"
+	local duration="$3"
+	local tokens="$4"
+	local cost="$5"
+	local job_id="$6"
+	local session_key="$7"
+	local outcome="$8"
+	local timestamp=""
+	local lifecycle_file=""
+	local record=""
+	timestamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+	lifecycle_file="$(_state_dir "$routine_id")/lifecycle.jsonl"
+	record=$(jq -cn \
+		--arg timestamp "$timestamp" --arg status "$status" \
+		--argjson duration "$duration" --argjson tokens "$tokens" \
+		--arg cost "$cost" --arg job_id "$job_id" \
+		--arg session_key "$session_key" --arg outcome "$outcome" \
+		'{timestamp:$timestamp,status:$status,duration_seconds:$duration,tokens:$tokens,cost:$cost,
+		  job_id:(if $job_id == "" then null else $job_id end),
+		  session_key:(if $session_key == "" then null else $session_key end),
+		  outcome:(if $outcome == "" then null else $outcome end)}') || return 1
+	printf '%s\n' "$record" >>"$lifecycle_file"
+	chmod 600 "$lifecycle_file"
 	return 0
 }
 
@@ -606,9 +671,26 @@ cmd_update() {
 	local duration="$_UPDATE_DURATION"
 	local tokens="$_UPDATE_TOKENS"
 	local cost="$_UPDATE_COST"
+	local job_id="$_UPDATE_JOB_ID"
+	local session_key="$_UPDATE_SESSION_KEY"
+	local outcome="$_UPDATE_OUTCOME"
+
+	if ! command -v jq &>/dev/null; then
+		_log_error "jq not found"
+		return 1
+	fi
+	_ensure_state_dir "$routine_id"
+	chmod 700 "$(_state_dir "$routine_id")"
+	_append_lifecycle_log "$routine_id" "$status" "$duration" "$tokens" "$cost" "$job_id" "$session_key" "$outcome" || return 1
+
+	# Launch and cancellation records are lifecycle evidence only. They must not
+	# increment totals, streaks, costs, or completed-run summaries.
+	if [[ "$status" != "success" && "$status" != "failure" ]]; then
+		_log_success "Recorded ${status} lifecycle for ${routine_id}"
+		return 0
+	fi
 
 	_check_prerequisites || return 1
-	_ensure_state_dir "$routine_id"
 
 	# Load and validate state
 	local state
@@ -1070,9 +1152,9 @@ cmd_help() {
 routine-log-helper.sh — Routine execution tracking via GitHub issue descriptions
 
 Usage:
-  routine-log-helper.sh update <routine-id> --status success|failure --duration SECONDS [--tokens N] [--cost AMOUNT]
-    Update the tracking issue description with latest execution metrics.
-    Appends to local execution log. Updates streak counter.
+  routine-log-helper.sh update <routine-id> --status queued|claimed|running|success|failure|cancelled [options]
+    Append lifecycle evidence locally. Only success and failure update execution
+    metrics, the tracking issue, streaks, and cost totals.
     Script-only routines (run:) always show $0.00 cost.
 
   routine-log-helper.sh notable <routine-id> --event "description"
@@ -1096,10 +1178,13 @@ Usage:
     Show this help message.
 
 Options:
-  --status success|failure    Execution result (required for update)
-  --duration SECONDS          Execution duration in seconds (required for update)
+  --status STATUS             Lifecycle state (required for update)
+  --duration SECONDS          Required for success/failure; defaults to 0 otherwise
   --tokens N                  Token count (optional, default 0)
   --cost AMOUNT               Cost in dollars (optional, default 0.00)
+  --job-id ID                 Optional deferred-job correlation ID
+  --session-key KEY           Optional headless runtime session key
+  --outcome OUTCOME           Optional structured terminal outcome
   --event "description"       Notable event description (required for notable)
   --repo SLUG                 GitHub repo slug owner/repo (required for create-issue)
   --title "rNNN: Title"       Issue title (required for create-issue)
@@ -1124,6 +1209,7 @@ Examples:
 
 State:
   Local logs:  ~/.aidevops/.agent-workspace/cron/<routine-id>/logs/executions.jsonl
+  Lifecycle:   ~/.aidevops/.agent-workspace/cron/<routine-id>/lifecycle.jsonl
   State file:  ~/.aidevops/.agent-workspace/cron/<routine-id>/routine-state.json
 HELP
 	return 0

@@ -38,12 +38,27 @@ _load_init_routines_helper() {
 	return 0
 }
 
+_install_deferred_job_scheduler() {
+	local helper_path=""
+	helper_path="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../deferred-job-helper.sh"
+	if [[ ! -f "$helper_path" ]]; then
+		print_warning "deferred-job-helper.sh not found at: $helper_path"
+		return 1
+	fi
+	if ! bash "$helper_path" install; then
+		print_warning "Deferred-job scheduler installation failed"
+		return 1
+	fi
+	return 0
+}
+
 # setup_routines — called from setup.sh in both interactive and non-interactive flows
 # Non-interactive (update): scaffolds local repo + creates personal GH remote only
 # Interactive: creates personal repo + prompts for org repos
 # Falls back to local-only if gh CLI is unavailable (idempotent)
 setup_routines() {
 	print_info "Setting up routines repo..."
+	_install_deferred_job_scheduler || true
 
 	if ! _load_init_routines_helper; then
 		print_warning "Skipping routines setup — helper not available"

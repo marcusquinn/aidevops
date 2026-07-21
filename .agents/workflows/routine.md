@@ -16,7 +16,10 @@ Canonical format: define recurring routines in `TODO.md` under `## Routines`. Fi
 ## Route by work type
 
 - Code changes or PR traceability needed → `/full-loop`
-- Operational execution only → direct commands with `opencode run`
+- Recurring operational execution → `/routine`
+- One delayed execution → `aidevops schedule once`
+- Condition-driven work → Pulse
+- Immediate operational execution → direct command through `headless-runtime-helper.sh`
 
 ## Routine dimensions (keep independent)
 
@@ -48,11 +51,12 @@ Pick or create a command that runs once for one target. Prefer deterministic hel
 
 ### Step 3: Validate quality and safety
 
-Run ad hoc before scheduling:
+Run ad hoc before scheduling through the canonical headless wrapper:
 
 ```bash
-opencode run --dir ~/Git/<repo> --agent SEO --title "Routine dry run" \
-  "/seo-export --account client-a --format summary"
+headless-runtime-helper.sh run --role worker --session-key routine-dry-run \
+  --dir ~/Git/<repo> --agent SEO --title "Routine dry run" \
+  --prompt "/seo-export --account client-a --format summary"
 ```
 
 Verify: output format stable and client-safe, no cross-client data leakage, retry/timeout behavior acceptable, human review exists for outbound communication.
@@ -73,15 +77,15 @@ Roll out in order: internal/self → single client → small cohort → full tar
   --prompt "/seo-export --account client-a --format summary"
 ```
 
-Raw cron wrapper style:
+For a single delayed execution, keep it out of `TODO.md`:
 
 ```bash
-# aidevops: weekly client rankings
-opencode run --dir ~/Git/<repo> --agent SEO --title "Weekly rankings" \
-  "/seo-export --account client-a --format summary"
+aidevops schedule once --after 13h --name "Continue evidence review" \
+  --dir ~/Git/<repo> --prompt-file ~/.config/aidevops/prompts/review.md \
+  --agent Build+ --tier thinking
 ```
 
-`TODO.md` is the source of truth even when the scheduler expands the routine into launchd or cron. Queue-driven work → `/pulse`. Fixed-time → scheduler entries.
+`TODO.md` is the source of truth for recurring definitions even when the scheduler expands a routine into launchd, systemd, or cron. One-shot state is private and separately inspectable with `aidevops schedule status`.
 
 ## Example: GH Failure Miner routine
 
