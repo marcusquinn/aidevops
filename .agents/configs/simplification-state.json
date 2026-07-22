@@ -2054,9 +2054,9 @@
       "pr": 13117
     },
     ".agents/scripts/commands/readme.md": {
-      "at": "2026-06-30T20:18:25Z",
-      "hash": "01692823fb0ebb510bd88604efc7e5fd8ff4612b",
-      "passes": 3,
+      "at": "2026-07-22T14:36:58Z",
+      "hash": "3fe4f7faad026b1ea19174e6181007794ac9acbd",
+      "passes": 4,
       "pr": 17278
     },
     ".agents/scripts/commands/recall.md": {
@@ -7348,9 +7348,9 @@
       "pr": 11789
     },
     ".agents/workflows/readme-create-update.md": {
-      "at": "2026-06-30T21:43:47Z",
-      "hash": "d625ef945a834f4d7ca88786de661b6df4f5312f",
-      "passes": 3,
+      "at": "2026-07-22T14:37:47Z",
+      "hash": "494e52e10ebc18891fdb97da45367a88efc22bcc",
+      "passes": 4,
       "pr": 12038
     },
     ".agents/workflows/release.md": {
@@ -7486,15 +7486,15 @@
       "pr": 15490
     },
     "aidevops.sh": {
-      "at": "2026-07-22T03:08:03Z",
-      "hash": "4769a3dd2326dfb0a0238c58934da0241e872f69",
-      "passes": 287,
+      "at": "2026-07-22T14:37:49Z",
+      "hash": "60d06f7ceb4249441ff8e9a48eecf81f08c15980",
+      "passes": 288,
       "pr": 19029
     },
     "setup.sh": {
-      "at": "2026-07-22T03:08:03Z",
-      "hash": "52fa378d19608902e8901c8c1f8cc9c56e2d2475",
-      "passes": 284,
+      "at": "2026-07-22T14:37:49Z",
+      "hash": "20b64f43a9d9de90e228ac1f4780e20d341231e5",
+      "passes": 285,
       "pr": 15470
     },
     "todo/tasks/GH#15363-brief.md": {
