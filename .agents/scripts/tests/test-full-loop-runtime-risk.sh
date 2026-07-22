@@ -8,6 +8,8 @@ set -uo pipefail
 SCRIPT_DIR_TEST="$(cd "$(dirname "$0")/.." && pwd)" || exit 1
 TESTS_RUN=0
 TESTS_FAILED=0
+TEST_ROOT=$(mktemp -d)
+trap 'rm -rf "$TEST_ROOT"' EXIT
 
 print_error() {
 	local message="$1"
@@ -29,6 +31,19 @@ assert_contains() {
 	return 0
 }
 
+assert_rejected() {
+	local name="$1"
+	shift
+	TESTS_RUN=$((TESTS_RUN + 1))
+	if "$@" >/dev/null 2>&1; then
+		printf 'FAIL %s\n' "$name"
+		TESTS_FAILED=$((TESTS_FAILED + 1))
+	else
+		printf 'PASS %s\n' "$name"
+	fi
+	return 0
+}
+
 # shellcheck source=../full-loop-helper-risk.sh
 source "${SCRIPT_DIR_TEST}/full-loop-helper-risk.sh"
 # shellcheck source=../full-loop-helper-commit.sh
@@ -46,31 +61,79 @@ assert_contains "High fixture records runtime evidence" "$high_body" "**Verifica
 assert_contains "closing keyword remains compatible" "$high_body" "Resolves #28466"
 assert_contains "signature remains compatible" "$high_body" "<!-- aidevops:sig -->"
 
-TESTS_RUN=$((TESTS_RUN + 1))
-if _build_pr_body "1" "API endpoint" "unit tests pass" "src/api.sh" "" >/dev/null 2>&1; then
-	printf 'FAIL High without runtime evidence is rejected\n'
-	TESTS_FAILED=$((TESTS_FAILED + 1))
-else
-	printf 'PASS High without runtime evidence is rejected\n'
-fi
-
-TESTS_RUN=$((TESTS_RUN + 1))
-if _build_pr_body "2" "Credential rotation" "self-assessed" "src/auth.sh" "" "Resolves" "Critical" "self-assessed" >/dev/null 2>&1; then
-	printf 'FAIL Critical without runtime evidence is rejected\n'
-	TESTS_FAILED=$((TESTS_FAILED + 1))
-else
-	printf 'PASS Critical without runtime evidence is rejected\n'
-fi
+assert_rejected "High without runtime evidence is rejected" \
+	_build_pr_body "1" "API endpoint" "unit tests pass" "src/api.sh" ""
+assert_rejected "Critical without runtime evidence is rejected" \
+	_build_pr_body "2" "Credential rotation" "self-assessed" "src/auth.sh" "" "Resolves" "Critical" "self-assessed"
+assert_rejected "explicit Low cannot bypass Critical runtime evidence" \
+	_build_pr_body "2" "Delete data" "self-assessed" "src/storage.sh" "" "Resolves" "Low" "self-assessed"
+assert_rejected "bare runtime marker is not evidence" \
+	_build_pr_body "2" "Credential rotation" "runtime-verified" "src/auth.sh" ""
+assert_rejected "explicit runtime level still requires evidence" \
+	_build_pr_body "2" "Credential rotation" "" "src/auth.sh" "" "Resolves" "Critical" "runtime-verified"
 
 low_body=$(_build_pr_body \
 	"3" \
-	"Update documentation and tests" \
+	"Document credential and polling-loop behavior" \
 	"focused tests pass" \
-	"docs/runtime.md, .agents/scripts/tests/test-docs.sh" \
+	"docs/runtime.md, .agents/scripts/tests/test-docs.sh, .qlty/qlty.toml, stubs/client.pyi" \
 	"" \
 	"Resolves")
-assert_contains "docs and tests remain Low" "$low_body" "**Risk level:** Low"
+assert_contains "non-runtime files remain Low despite policy terms" "$low_body" "**Risk level:** Low"
 assert_contains "Low fixture is self-assessed" "$low_body" "**Verification:** self-assessed"
+
+author_body=$(_build_pr_body \
+	"4" \
+	"Update author metadata" \
+	"focused tests pass" \
+	"src/metadata.sh" \
+	"" \
+	"Resolves")
+assert_contains "author does not false-match auth" "$author_body" "**Risk level:** Medium"
+
+critical_body=$(_build_pr_body \
+	"5" \
+	"Change credential rotation" \
+	"runtime-verified with a credential rotation fixture" \
+	"src/auth.sh" \
+	"" \
+	"Resolves" \
+	"Low")
+assert_contains "explicit Low cannot downgrade Critical" "$critical_body" "**Risk level:** Critical"
+
+raised_body=$(_build_pr_body \
+	"6" \
+	"Change ambiguous runtime behavior" \
+	"runtime-verified with an integration fixture" \
+	"src/worker.sh" \
+	"" \
+	"Resolves" \
+	"High")
+assert_contains "explicit risk can raise an ambiguous change" "$raised_body" "**Risk level:** High"
+
+COMMENT_REPO="${TEST_ROOT}/comment-repo"
+mkdir -p "${COMMENT_REPO}/src"
+/usr/bin/git -C "$COMMENT_REPO" init -q
+/usr/bin/git -C "$COMMENT_REPO" config user.name "Runtime Risk Test"
+/usr/bin/git -C "$COMMENT_REPO" config user.email "runtime-risk@example.invalid"
+printf '#!/usr/bin/env bash\nprintf "ok\\n"\n# Old credential comment.\n' >"${COMMENT_REPO}/src/app.sh"
+/usr/bin/git -C "$COMMENT_REPO" add src/app.sh
+/usr/bin/git -C "$COMMENT_REPO" commit -qm "fixture: add runtime file"
+comment_base=$(/usr/bin/git -C "$COMMENT_REPO" rev-parse HEAD)
+printf '#!/usr/bin/env bash\nprintf "ok\\n"\n# New credential comment.\n' >"${COMMENT_REPO}/src/app.sh"
+/usr/bin/git -C "$COMMENT_REPO" add src/app.sh
+/usr/bin/git -C "$COMMENT_REPO" commit -qm "docs: update source comment"
+comment_body=$(cd "$COMMENT_REPO" && _build_pr_body \
+	"7" \
+	"Update a source comment" \
+	"diff reviewed" \
+	"src/app.sh" \
+	"" \
+	"Resolves" \
+	"" \
+	"" \
+	"$comment_base")
+assert_contains "comment-only source change remains Low" "$comment_body" "**Risk level:** Low"
 
 runtime_risk=""
 testing_level=""

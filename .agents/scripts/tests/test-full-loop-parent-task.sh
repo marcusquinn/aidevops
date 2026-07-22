@@ -143,9 +143,9 @@ print_success() {
 # Extract _issue_has_parent_task_label from the helper
 eval "$(sed -n '/_issue_has_parent_task_label()/,/^}/p' "${TEST_SCRIPTS_DIR}/full-loop-helper-commit.sh")"
 
-# Extract _build_pr_body from the helper
-eval "$(sed -n '/_derive_runtime_risk()/,/^}/p' "${TEST_SCRIPTS_DIR}/full-loop-helper-risk.sh")"
-eval "$(sed -n '/_resolve_runtime_testing_level()/,/^}/p' "${TEST_SCRIPTS_DIR}/full-loop-helper-risk.sh")"
+# Load the runtime-risk library and extract _build_pr_body from the commit helper.
+# shellcheck source=../full-loop-helper-risk.sh
+source "${TEST_SCRIPTS_DIR}/full-loop-helper-risk.sh"
 eval "$(sed -n '/_build_pr_body()/,/^}/p' "${TEST_SCRIPTS_DIR}/full-loop-helper-commit.sh")"
 
 # =============================================================================
