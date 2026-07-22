@@ -104,6 +104,25 @@ def _run_policy_helper(helper: str, arguments: list, input_text=None):
     return result.returncode, payload
 
 
+def _process_identity(pid: int) -> str:
+    """Return the portable process-generation token used by lifecycle locks."""
+    ps_binary = "/bin/ps" if os.path.isfile("/bin/ps") else "ps"
+    try:
+        result = subprocess.run(  # nosec B603 -- fixed system process viewer
+            [ps_binary, "-p", str(pid), "-o", "lstart="],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+            env={**os.environ, "LC_ALL": "C", "TZ": "UTC"},
+        )
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    if result.returncode != 0:
+        return ""
+    return " ".join(result.stdout.split())
+
+
 def _direct_write_deny(reason: str) -> dict:
     """Build the Claude Code deny payload for a direct file mutation."""
     return {
@@ -170,6 +189,17 @@ def _check_command_policy(command: str) -> "dict | None":
             "--command",
             command,
         ]
+        # #aidevops:trust-boundary — the hook's parent is the current Claude
+        # runtime launcher; command-local environment text cannot alter it.
+        runtime_pid = os.getppid()
+        helper_args.extend(
+            [
+                "--runtime-pid",
+                str(runtime_pid),
+                "--runtime-process-identity",
+                _process_identity(runtime_pid),
+            ]
+        )
         if _is_worker_context():
             helper_args.extend(
                 [

@@ -88,6 +88,12 @@ def _validate_policy_guards(guards: Any) -> None:
         raise PolicyError("command policy requires exactly one canonical Git guard")
     if not _has_required_guard(guards, "worker_network", "network-tier-helper.sh"):
         raise PolicyError("command policy requires exactly one worker network guard")
+    if not _has_required_guard(
+        guards, "process_termination", "process-termination-guard.py"
+    ):
+        raise PolicyError(
+            "command policy requires exactly one process-termination guard"
+        )
     _validate_account_mutation_guard(guards)
 
 

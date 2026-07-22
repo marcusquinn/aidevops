@@ -183,6 +183,10 @@ def _check_action(
         args.network_helper,
         args.account_mutation_authorization,
         authorization_source,
+        args.process_termination_guard,
+        args.runtime_pid,
+        args.runtime_process_identity,
+        args.process_table_fixture,
     )
     print(json.dumps(result, sort_keys=True))
     return 0 if result["decision"] == "allow" else FORBID_EXIT

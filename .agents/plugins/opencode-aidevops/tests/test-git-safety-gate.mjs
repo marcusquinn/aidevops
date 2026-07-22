@@ -348,6 +348,39 @@ test("blocks generic destructive commands through shared policy", () => {
   );
 });
 
+test("blocks current runtime termination while allowing a detached sandbox group", () => {
+  const root = mkdtempSync(join(tmpdir(), "aidevops-process-termination-"));
+  const fixture = join(root, "processes.json");
+  writeFileSync(fixture, JSON.stringify({
+    processes: [
+      { pid: 1, ppid: 0, pgid: 1, start: "init-a", comm: "launchd", args: "launchd" },
+      { pid: 100, ppid: 1, pgid: 100, start: "terminal-a", comm: "terminal", args: "terminal" },
+      { pid: 200, ppid: 100, pgid: 100, start: "runtime-a", comm: "opencode", args: "opencode serve" },
+      { pid: 400, ppid: 200, pgid: 400, start: "child-a", comm: "sandbox-worker", args: "sandbox-worker task" },
+    ],
+  }));
+  const options = {
+    runtimePid: 200,
+    runtimeProcessIdentity: "runtime-a",
+    processTableFixture: fixture,
+  };
+  try {
+    assert.throws(
+      () => checkCommandSafetyGate("kill -TERM -- -100", scriptsDir, process.cwd(), options),
+      /process\.runtime-self-preservation.*process group/,
+    );
+    assert.throws(
+      () => checkCommandSafetyGate("bash -lc 'kill 200'", scriptsDir, process.cwd(), options),
+      /process\.runtime-self-preservation.*runtime host/,
+    );
+    assert.doesNotThrow(
+      () => checkCommandSafetyGate("kill -TERM -- -400", scriptsDir, process.cwd(), options),
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("blocks account mutations unless inherited authorization matches exactly", () => {
   const cwd = process.cwd();
   const helper = join(scriptsDir, "command-policy-helper.py");

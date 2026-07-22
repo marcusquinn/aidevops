@@ -15,6 +15,12 @@ from command_policy_launcher_options import (
     _unwrap_command,
     _unwrap_exec,
 )
+from command_policy_process_wrappers import (
+    _unwrap_nice,
+    _unwrap_setsid,
+    _unwrap_stdbuf,
+    _unwrap_timeout,
+)
 from command_policy_wrapper_options import (
     _consume_option,
     _is_attached_value_option,
@@ -41,9 +47,13 @@ __all__ = [
     "_unwrap_command",
     "_unwrap_env",
     "_unwrap_exec",
+    "_unwrap_nice",
+    "_unwrap_setsid",
     "_unwrap_simple_wrapper",
+    "_unwrap_stdbuf",
     "_unwrap_sudo",
     "_unwrap_time",
+    "_unwrap_timeout",
 ]
 
 SHELLS = {"bash", "dash", "ksh", "sh", "zsh"}
@@ -115,7 +125,15 @@ def _reject_dynamic_launcher(argv: list[str], executable: str) -> None:
 
 
 def _unwrap_simple_wrapper(argv: list[str], executable: str) -> list[str] | None:
-    wrappers = {"env": _unwrap_env, "sudo": _unwrap_sudo, "time": _unwrap_time}
+    wrappers = {
+        "env": _unwrap_env,
+        "nice": _unwrap_nice,
+        "setsid": _unwrap_setsid,
+        "stdbuf": _unwrap_stdbuf,
+        "sudo": _unwrap_sudo,
+        "time": _unwrap_time,
+        "timeout": _unwrap_timeout,
+    }
     if executable in wrappers:
         return wrappers[executable](argv)
     if executable != "nohup":
