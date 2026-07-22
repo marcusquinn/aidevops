@@ -6,11 +6,30 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit 1
 FAST_FORWARD_CMD="fast-forward-current"
 SYNC_MIRROR_CMD="sync-mirror"
+CLEAR_STALE_REBASE_CMD="clear-stale-rebase"
+HEAD_COMMIT_EXPR='HEAD^{commit}'
+
+rebase_state_fingerprint() {
+	local state_dir="$1"
+	local entry=""
+	local entry_hash=""
+	local entry_name=""
+	local manifest=""
+	for entry in "$state_dir"/*; do
+		[[ -f "$entry" ]] || return 1
+		entry_name=${entry##*/}
+		entry_hash=$("$REAL_GIT" hash-object "$entry") || return 1
+		manifest="${manifest}${entry_name} ${entry_hash}"$'\n'
+	done
+	printf '%s' "$manifest" | "$REAL_GIT" hash-object --stdin
+	return 0
+}
 
 usage() {
 	printf '%s\n' \
 		'Usage:' \
 		'  canonical-recovery-helper.sh restore-default --repo PATH --issue N --confirm RESTORE_CANONICAL_DEFAULT' \
+		"  canonical-recovery-helper.sh ${CLEAR_STALE_REBASE_CMD} --repo PATH --issue N --confirm CLEAR_CONVERGED_STALE_REBASE" \
 		"  canonical-recovery-helper.sh ${FAST_FORWARD_CMD} --repo PATH --branch BRANCH --issue N --confirm FAST_FORWARD_CANONICAL_BRANCH" \
 		"  canonical-recovery-helper.sh ${FAST_FORWARD_CMD} --repo PATH --branch BRANCH --reason aidevops-update --confirm FAST_FORWARD_CANONICAL_BRANCH" \
 		"  canonical-recovery-helper.sh ${SYNC_MIRROR_CMD} --repo PATH --issue N --confirm SYNCHRONIZE_CANONICAL_MIRROR"
@@ -56,6 +75,13 @@ done
 case "$cmd" in
 restore-default)
 	expected_confirmation="RESTORE_CANONICAL_DEFAULT"
+	[[ -z "$expected_branch" ]] || {
+		usage
+		exit 2
+	}
+	;;
+"$CLEAR_STALE_REBASE_CMD")
+	expected_confirmation="CLEAR_CONVERGED_STALE_REBASE"
 	[[ -z "$expected_branch" ]] || {
 		usage
 		exit 2
@@ -122,7 +148,7 @@ target_branch_source=$(python3 "$policy_helper" resolve-branch --cwd "$repo_path
 	exit 1
 }
 
-if [[ "$cmd" != "restore-default" ]]; then
+if [[ "$cmd" != "restore-default" && "$cmd" != "$CLEAR_STALE_REBASE_CMD" ]]; then
 	current_branch=$("$REAL_GIT" -C "$repo_path" symbolic-ref --quiet --short HEAD 2>/dev/null || true)
 	[[ -n "$current_branch" ]] || {
 		printf 'BLOCKED: canonical worktree is detached\n' >&2
@@ -176,6 +202,66 @@ local_sha=$("$REAL_GIT" -C "$repo_path" rev-parse --verify "${local_ref}^{commit
 	printf 'BLOCKED: local %s tip cannot be resolved\n' "$target_branch" >&2
 	exit 1
 }
+
+stale_rebase_dir=""
+stale_rebase_fingerprint=""
+stale_rebase_preservation_dir=""
+stale_head_sha=""
+stale_index_tree=""
+if [[ "$cmd" == "$CLEAR_STALE_REBASE_CMD" ]]; then
+	rebase_merge_dir=$("$REAL_GIT" -C "$repo_path" rev-parse --path-format=absolute --git-path rebase-merge)
+	rebase_apply_dir=$("$REAL_GIT" -C "$repo_path" rev-parse --path-format=absolute --git-path rebase-apply)
+	rebase_head_path=$("$REAL_GIT" -C "$repo_path" rev-parse --path-format=absolute --git-path REBASE_HEAD)
+	[[ -d "$rebase_merge_dir" && ! -e "$rebase_apply_dir" ]] || {
+		printf 'BLOCKED: exactly one supported interactive rebase state is required\n' >&2
+		exit 1
+	}
+	for required_file in "head-name" "onto" "orig-head" "git-rebase-todo" "done" "msgnum" "end"; do
+		[[ -f "${rebase_merge_dir}/${required_file}" ]] || {
+			printf 'BLOCKED: stale rebase metadata is malformed or incomplete\n' >&2
+			exit 1
+		}
+	done
+	rebase_head_name=$(<"${rebase_merge_dir}/head-name")
+	rebase_onto=$(<"${rebase_merge_dir}/onto")
+	rebase_orig_head=$(<"${rebase_merge_dir}/orig-head")
+	rebase_msgnum=$(<"${rebase_merge_dir}/msgnum")
+	rebase_end=$(<"${rebase_merge_dir}/end")
+	[[ "$rebase_head_name" == "$local_ref" ]] || {
+		printf 'BLOCKED: stale rebase belongs to a different branch\n' >&2
+		exit 1
+	}
+	[[ "$rebase_msgnum" =~ ^[0-9]+$ && "$rebase_end" =~ ^[0-9]+$ && "$rebase_msgnum" == "$rebase_end" ]] || {
+		printf 'BLOCKED: rebase sequence is active or malformed\n' >&2
+		exit 1
+	}
+	[[ ! -s "${rebase_merge_dir}/git-rebase-todo" && -s "${rebase_merge_dir}/done" ]] || {
+		printf 'BLOCKED: rebase sequence still has active work\n' >&2
+		exit 1
+	}
+	[[ ! -e "$rebase_head_path" && ! -e "${rebase_merge_dir}/stopped-sha" ]] || {
+		printf 'BLOCKED: rebase is stopped on an active commit\n' >&2
+		exit 1
+	}
+	"$REAL_GIT" -C "$repo_path" rev-parse --verify "${rebase_onto}^{commit}" >/dev/null 2>&1 &&
+		"$REAL_GIT" -C "$repo_path" rev-parse --verify "${rebase_orig_head}^{commit}" >/dev/null 2>&1 || {
+		printf 'BLOCKED: stale rebase commit metadata is invalid\n' >&2
+		exit 1
+	}
+	[[ -z "$("$REAL_GIT" -C "$repo_path" diff --name-only --diff-filter=U)" ]] || {
+		printf 'BLOCKED: rebase has unresolved index entries\n' >&2
+		exit 1
+	}
+	stale_head_sha=$("$REAL_GIT" -C "$repo_path" rev-parse --verify "$HEAD_COMMIT_EXPR")
+	[[ "$stale_head_sha" == "$local_sha" && "$local_sha" == "$target_sha" ]] || {
+		printf 'BLOCKED: HEAD, local default, and pinned origin default have not converged\n' >&2
+		exit 1
+	}
+	stale_index_tree=$("$REAL_GIT" -C "$repo_path" write-tree)
+	stale_rebase_dir="$rebase_merge_dir"
+	stale_rebase_fingerprint=$(rebase_state_fingerprint "$stale_rebase_dir")
+	stale_rebase_preservation_dir="${AIDEVOPS_CANONICAL_RECOVERY_ROOT:-${HOME}/.aidevops/.agent-workspace/recovery/canonical}/${issue_number}/stale-rebase-${stale_head_sha}"
+fi
 
 sync_backup_id=""
 sync_backup_dir=""
@@ -274,11 +360,14 @@ AUDIT_LOG_FILE="$recovery_audit_file" "$audit_helper" verify --quiet || {
 audit_message="Canonical default-branch recovery authorized"
 [[ "$cmd" == "$FAST_FORWARD_CMD" ]] && audit_message="Canonical current-branch fast-forward authorized"
 [[ "$cmd" == "$SYNC_MIRROR_CMD" ]] && audit_message="Canonical mirror synchronization authorized"
+[[ "$cmd" == "$CLEAR_STALE_REBASE_CMD" ]] && audit_message="Converged stale rebase cleanup authorized"
 AUDIT_LOG_FILE="$recovery_audit_file" AUDIT_QUIET=true "$audit_helper" log operation.verify "$audit_message" \
 	--detail "issue=${issue_number:-none}" --detail "reason=${maintenance_reason:-none}" --detail "repo=${repo_path}" \
 	--detail "operation=${cmd}" --detail "target=${target_branch}" --detail "target_source=${target_branch_source}" \
 	--detail "target_sha=${target_sha}" --detail "local_sha=${local_sha}" \
-	--detail "preservation_ref=${preservation_ref:-none}" --detail "backup_id=${sync_backup_id:-none}" >/dev/null || {
+	--detail "preservation_ref=${preservation_ref:-none}" --detail "backup_id=${sync_backup_id:-none}" \
+	--detail "stale_rebase_fingerprint=${stale_rebase_fingerprint:-none}" \
+	--detail "stale_rebase_preservation=${stale_rebase_preservation_dir:-none}" >/dev/null || {
 	printf 'BLOCKED: recovery audit record could not be written\n' >&2
 	exit 1
 }
@@ -291,6 +380,72 @@ AUDIT_LOG_FILE="$recovery_audit_file" AUDIT_QUIET=true "$audit_helper" log opera
 	printf 'BLOCKED: local %s tip changed during recovery\n' "$target_branch" >&2
 	exit 1
 }
+if [[ "$cmd" == "$CLEAR_STALE_REBASE_CMD" ]]; then
+	preservation_parent=${stale_rebase_preservation_dir%/*}
+	mkdir -p "$preservation_parent"
+	if [[ -d "$stale_rebase_preservation_dir" ]]; then
+		[[ "$(rebase_state_fingerprint "$stale_rebase_preservation_dir")" == "$stale_rebase_fingerprint" ]] || {
+			printf 'BLOCKED: existing stale rebase preservation evidence differs\n' >&2
+			exit 1
+		}
+	else
+		preservation_temp="${stale_rebase_preservation_dir}.tmp.$$"
+		mkdir "$preservation_temp"
+		cp -R "${stale_rebase_dir}/." "$preservation_temp/"
+		[[ "$(rebase_state_fingerprint "$preservation_temp")" == "$stale_rebase_fingerprint" ]] || {
+			printf 'BLOCKED: stale rebase metadata copy could not be verified\n' >&2
+			rm -rf "$preservation_temp"
+			exit 1
+		}
+		mv "$preservation_temp" "$stale_rebase_preservation_dir"
+	fi
+	while IFS= read -r metadata_line; do
+		for metadata_word in $metadata_line; do
+			if [[ "$metadata_word" =~ ^[0-9a-fA-F]{40}$ ]] &&
+				metadata_commit=$("$REAL_GIT" -C "$repo_path" rev-parse --verify "${metadata_word}^{commit}" 2>/dev/null); then
+				metadata_ref="refs/aidevops/canonical-recovery/issue-${issue_number}/stale-rebase/${metadata_commit}"
+				existing_metadata_commit=$("$REAL_GIT" -C "$repo_path" rev-parse --verify "${metadata_ref}^{commit}" 2>/dev/null || true)
+				[[ -z "$existing_metadata_commit" || "$existing_metadata_commit" == "$metadata_commit" ]] || {
+					printf 'BLOCKED: stale rebase preservation ref points elsewhere\n' >&2
+					exit 1
+				}
+				[[ -n "$existing_metadata_commit" ]] || "$REAL_GIT" -C "$repo_path" update-ref "$metadata_ref" "$metadata_commit" \
+					"0000000000000000000000000000000000000000"
+			fi
+		done
+	done < <(
+		printf '%s\n' "$stale_head_sha" "$rebase_onto" "$rebase_orig_head"
+		cat "${stale_rebase_dir}/done" "${stale_rebase_dir}/rewritten-list" 2>/dev/null || true
+	)
+	if [[ -n "${AIDEVOPS_CANONICAL_BEFORE_REBASE_CLEANUP_HOOK:-}" ]]; then
+		"$AIDEVOPS_CANONICAL_BEFORE_REBASE_CLEANUP_HOOK" "$repo_path" "$stale_rebase_dir" || {
+			printf 'BLOCKED: canonical pre-rebase-cleanup hook failed\n' >&2
+			exit 1
+		}
+	fi
+	[[ "$(rebase_state_fingerprint "$stale_rebase_dir")" == "$stale_rebase_fingerprint" ]] &&
+		[[ "$("$REAL_GIT" -C "$repo_path" rev-parse --verify "$HEAD_COMMIT_EXPR")" == "$stale_head_sha" ]] &&
+		[[ "$("$REAL_GIT" -C "$repo_path" rev-parse --verify "${local_ref}^{commit}")" == "$local_sha" ]] &&
+		[[ "$("$REAL_GIT" -C "$repo_path" rev-parse --verify "${remote_ref}^{commit}")" == "$target_sha" ]] &&
+		[[ "$("$REAL_GIT" -C "$repo_path" write-tree)" == "$stale_index_tree" ]] &&
+		[[ -z "$("$REAL_GIT" -C "$repo_path" status --porcelain)" ]] || {
+		printf 'BLOCKED: canonical or rebase state changed before cleanup\n' >&2
+		exit 1
+	}
+	rm -rf "$stale_rebase_dir"
+	[[ ! -e "$stale_rebase_dir" && ! -e "$rebase_apply_dir" && ! -e "$rebase_head_path" ]] &&
+		[[ "$("$REAL_GIT" -C "$repo_path" rev-parse --verify "$HEAD_COMMIT_EXPR")" == "$stale_head_sha" ]] &&
+		[[ "$("$REAL_GIT" -C "$repo_path" rev-parse --verify "${local_ref}^{commit}")" == "$local_sha" ]] &&
+		[[ "$("$REAL_GIT" -C "$repo_path" rev-parse --verify "${remote_ref}^{commit}")" == "$target_sha" ]] &&
+		[[ "$("$REAL_GIT" -C "$repo_path" write-tree)" == "$stale_index_tree" ]] &&
+		[[ -z "$("$REAL_GIT" -C "$repo_path" status --porcelain)" ]] || {
+		printf 'CRITICAL: stale rebase cleanup changed canonical repository state\n' >&2
+		exit 1
+	}
+	printf 'CLEARED_CONVERGED_STALE_REBASE=true\n'
+	printf 'PRESERVED_REBASE_DIR=%s\n' "$stale_rebase_preservation_dir"
+	exit 0
+fi
 if [[ "$cmd" == "$SYNC_MIRROR_CMD" && -n "$preservation_ref" ]]; then
 	existing_preservation_sha=$("$REAL_GIT" -C "$repo_path" rev-parse --verify "${preservation_ref}^{commit}" 2>/dev/null || true)
 	if [[ -n "$existing_preservation_sha" && "$existing_preservation_sha" != "$local_sha" ]]; then
@@ -381,7 +536,7 @@ if [[ "$cmd" == "$FAST_FORWARD_CMD" || "$cmd" == "$SYNC_MIRROR_CMD" ]]; then
 		if [[ "$post_update_branch" == "$target_branch" ]]; then
 			restore_worktree_sha="$local_sha"
 		else
-			restore_worktree_sha=$("$REAL_GIT" -C "$repo_path" rev-parse --verify "HEAD^{commit}" 2>/dev/null || true)
+			restore_worktree_sha=$("$REAL_GIT" -C "$repo_path" rev-parse --verify "$HEAD_COMMIT_EXPR" 2>/dev/null || true)
 		fi
 		if ! "$REAL_GIT" -C "$repo_path" update-ref \
 			-m "${fast_forward_reflog} rollback for issue ${issue_number}" \
@@ -395,7 +550,7 @@ if [[ "$cmd" == "$FAST_FORWARD_CMD" || "$cmd" == "$SYNC_MIRROR_CMD" ]]; then
 			printf 'CRITICAL: canonical ref was rolled back but the concurrent branch worktree could not be restored\n' >&2
 			exit 1
 		fi
-		current_head_sha=$("$REAL_GIT" -C "$repo_path" rev-parse --verify "HEAD^{commit}" 2>/dev/null || true)
+		current_head_sha=$("$REAL_GIT" -C "$repo_path" rev-parse --verify "$HEAD_COMMIT_EXPR" 2>/dev/null || true)
 		if [[ "$current_head_sha" != "$restore_worktree_sha" ]] ||
 			[[ -n "$("$REAL_GIT" -C "$repo_path" status --porcelain)" ]]; then
 			printf 'CRITICAL: canonical ref was rolled back but the concurrent branch remains inconsistent\n' >&2
