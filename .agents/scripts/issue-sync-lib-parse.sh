@@ -216,6 +216,23 @@ _task_dependency_value() {
 	return 0
 }
 
+_task_parent_value() {
+	local line="$1"
+	local value=""
+	local matched=""
+	local remainder=""
+	if [[ "$line" =~ (^|[[:space:]])parent:([^[:space:]]+) ]]; then
+		matched="${BASH_REMATCH[0]}"
+		value="${BASH_REMATCH[2]}"
+		remainder="${line#*"$matched"}"
+		[[ ! "$remainder" =~ (^|[[:space:]])parent: ]] || return 1
+	fi
+	[[ -n "$value" ]] || return 0
+	task_identity_validate "$value" || return 1
+	printf '%s\n' "$value"
+	return 0
+}
+
 # Find project root (contains TODO.md)
 find_project_root() {
 	local dir="$PWD"
@@ -256,7 +273,7 @@ parse_task_line() {
 	local task_id_ere=""
 	task_id_ere=$(task_identity_escape_ere "$task_id" 2>/dev/null || true)
 	description=$(echo "$line" | sed -E "s/^[[:space:]]*- \\[.\\] ${task_id_ere} //" |
-		sed -E 's/ (#[a-z]|~[0-9]|→ |logged:|started:|completed:|ref:|actual:|blocked-by:|blocks:|assignee:|verified:).*//' ||
+		sed -E 's/ (#[a-z]|~[0-9]|→ |logged:|started:|completed:|ref:|actual:|blocked-by:|blocks:|parent:|assignee:|verified:).*//' ||
 		echo "")
 
 	# Extract tags
@@ -303,6 +320,10 @@ parse_task_line() {
 	local blocks
 	blocks=$(_task_dependency_value "$line" "blocks") || return 1
 
+	# Extract singular parent hierarchy metadata (not a blocking dependency)
+	local parent
+	parent=$(_task_parent_value "$line") || return 1
+
 	# Extract verified date
 	local verified
 	verified=$(echo "$line" | sed -nE 's/.*verified:([0-9-]+).*/\1/p' | head -1 || echo "")
@@ -321,6 +342,7 @@ parse_task_line() {
 	echo "actual=$actual"
 	echo "blocked_by=$blocked_by"
 	echo "blocks=$blocks"
+	echo "parent=$parent"
 	echo "verified=$verified"
 	return 0
 }

@@ -804,9 +804,8 @@ _is_parent_tagged_task() {
 }
 
 # Sync parent-child (sub-issue) relationships for a task.
-# Detects parent-child via two mechanisms:
-#   1. Dot-notation: t1873.2 → parent t1873
-#   2. blocked-by a #parent-tagged task: blocked-by:t2010 where t2010 has #parent tag
+# Detects hierarchy through explicit parent metadata, dot notation, or a legacy
+# blocked-by edge to a parent-tagged task. Distinct candidates fail closed.
 # Arguments:
 #   $1 - task_id
 #   $2 - todo_file path
@@ -815,57 +814,74 @@ _is_parent_tagged_task() {
 _sync_subtask_hierarchy_for_task() {
 	local task_id="$1" todo_file="$2" repo="$3"
 	local rels_set=0 retryable_errors=0
-	local key="" value="" dep_task_id=""
-
-	# Method 1: Dot-notation (t1873.2 → parent t1873)
+	local key="" value="" dep_task_id="" explicit_parent="" blocked_by=""
+	local parent_candidates="" parent_id="" candidate_count=0
 	local dot_parent
 	dot_parent=$(detect_parent_task_id "$task_id")
-	if [[ -n "$dot_parent" ]]; then
-		if _relationship_deadline_expired; then
-			_relationship_record_outcome "$_REL_OUTCOME_DEFERRED_DEADLINE"
-			retryable_errors=$((retryable_errors + 1))
-		elif _link_sub_issue_pair "$task_id" "$dot_parent" "$todo_file" "$repo"; then
-			rels_set=$((rels_set + 1))
-		else
-			retryable_errors=$((retryable_errors + 1))
-		fi
-	fi
-
-	# Method 2: blocked-by a #parent-tagged task
 	local task_line
 	task_line=$(_relationship_task_line "$task_id" "$todo_file")
 	if [[ -n "$task_line" ]]; then
-		local blocked_by=""
 		local parsed
-		parsed=$(parse_task_line "$task_line")
-		while IFS='=' read -r key value; do
-			[[ "$key" == "blocked_by" ]] && blocked_by="$value"
-		done <<<"$parsed"
-
-		if [[ -n "$blocked_by" ]]; then
-			local _saved_ifs="$IFS"
-			IFS=','
-			for dep_task_id in $blocked_by; do
-				if _relationship_deadline_expired; then
-					_relationship_record_outcome "$_REL_OUTCOME_DEFERRED_DEADLINE"
-					retryable_errors=$((retryable_errors + 1))
-					break
-				fi
-				dep_task_id="${dep_task_id// /}"
-				[[ -z "$dep_task_id" ]] && continue
-				# Skip if this is already the dot-notation parent (avoid duplicate)
-				[[ "$dep_task_id" == "$dot_parent" ]] && continue
-				# Only create sub-issue if the dependency is a parent-tagged task
-				if _is_parent_tagged_task "$dep_task_id" "$todo_file"; then
-					if _link_sub_issue_pair "$task_id" "$dep_task_id" "$todo_file" "$repo"; then
-						rels_set=$((rels_set + 1))
-					else
-						retryable_errors=$((retryable_errors + 1))
-					fi
-				fi
-			done
-			IFS="$_saved_ifs"
+		if ! parsed=$(parse_task_line "$task_line"); then
+			print_warning "$task_id: invalid parent or dependency metadata"
+			_relationship_record_outcome "$_REL_OUTCOME_FAILED_RESOLUTION"
+			echo "$_RELATIONSHIP_RETRY_RESULT"
+			return 0
 		fi
+		while IFS='=' read -r key value; do
+			case "$key" in
+			blocked_by) blocked_by="$value" ;;
+			parent) explicit_parent="$value" ;;
+			esac
+		done <<<"$parsed"
+	fi
+
+	for parent_id in "$explicit_parent" "$dot_parent"; do
+		[[ -n "$parent_id" ]] || continue
+		if ! printf '%s' "$parent_candidates" | grep -Fxq -- "$parent_id"; then
+			parent_candidates="${parent_candidates}${parent_id}"$'\n'
+		fi
+	done
+
+	if [[ -n "$blocked_by" ]]; then
+		local saved_ifs="$IFS"
+		IFS=','
+		for dep_task_id in $blocked_by; do
+			dep_task_id="${dep_task_id// /}"
+			[[ -n "$dep_task_id" ]] || continue
+			if _is_parent_tagged_task "$dep_task_id" "$todo_file" &&
+				! printf '%s' "$parent_candidates" | grep -Fxq -- "$dep_task_id"; then
+				parent_candidates="${parent_candidates}${dep_task_id}"$'\n'
+			fi
+		done
+		IFS="$saved_ifs"
+	fi
+
+	candidate_count=$(printf '%s' "$parent_candidates" | grep -cE '.+' || true)
+	if [[ "$candidate_count" -gt 1 ]]; then
+		print_warning "$task_id: conflicting parent declarations"
+		_relationship_record_outcome "$_REL_OUTCOME_FAILED_RESOLUTION"
+		echo "$_RELATIONSHIP_RETRY_RESULT"
+		return 0
+	fi
+	parent_id=$(printf '%s' "$parent_candidates" | grep -E '.+' | head -1 || true)
+	[[ -n "$parent_id" ]] || {
+		echo "RELS:0 RETRYABLE:0"
+		return 0
+	}
+	if [[ "$parent_id" == "$task_id" ]]; then
+		print_warning "$task_id: parent declaration is self-referential"
+		_relationship_record_outcome "$_REL_OUTCOME_FAILED_RESOLUTION"
+		echo "$_RELATIONSHIP_RETRY_RESULT"
+		return 0
+	fi
+	if _relationship_deadline_expired; then
+		_relationship_record_outcome "$_REL_OUTCOME_DEFERRED_DEADLINE"
+		retryable_errors=$((retryable_errors + 1))
+	elif _link_sub_issue_pair "$task_id" "$parent_id" "$todo_file" "$repo"; then
+		rels_set=$((rels_set + 1))
+	else
+		retryable_errors=$((retryable_errors + 1))
 	fi
 
 	echo "RELS:$rels_set RETRYABLE:$retryable_errors"
@@ -915,7 +931,7 @@ sync_relationships_for_task() {
 }
 
 # Bulk relationship sync command.
-# Scans TODO.md for all tasks with blocked-by:/blocks: or subtask patterns,
+# Scans TODO.md for tasks with relationship metadata or subtask patterns,
 # resolves to GitHub node IDs, and sets relationships via GraphQL.
 # Arguments:
 #   $1 - optional target task_id (if empty, processes all)
@@ -928,14 +944,14 @@ cmd_relationships() {
 	if [[ -n "$target_task" ]]; then
 		tasks=("$target_task")
 	else
-		# Collect tasks with blocked-by:, blocks:, or subtask IDs (contain a dot)
+		# Collect tasks with relationship metadata or subtask IDs (contain a dot)
 		while IFS= read -r line; do
 			local tid
-			tid=$(echo "$line" | grep -oE 't[0-9]+(\.[0-9]+)*' | head -1 || echo "")
+			tid=$(_task_id_from_todo_line "$line" 2>/dev/null || true)
 			[[ -z "$tid" ]] && continue
-			# Include if it has dependencies or is a subtask
+			# Include if it has dependencies, an explicit parent, or is a subtask
 			local dominated=false
-			echo "$line" | grep -qE 'blocked-by:|blocks:' && dominated=true
+			echo "$line" | grep -qE 'blocked-by:|blocks:|parent:' && dominated=true
 			[[ "$tid" == *"."* ]] && dominated=true
 			[[ "$dominated" == "true" ]] && tasks+=("$tid")
 		done < <(strip_code_fences <"$todo_file" | grep -E '^\s*- \[.\] t[0-9]+.*ref:GH#[0-9]+' || true)
