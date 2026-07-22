@@ -7750,10 +7750,10 @@
       "passes": 8
     },
     ".agents/scripts/issue-sync-relationships.sh": {
-      "hash": "748ad28ccbda795b94b83423cc8203262e52c0be",
-      "at": "2026-07-18T15:45:29Z",
+      "hash": "ef1fc5c2a9adbbc5b9121e374b27c7fa40140ed5",
+      "at": "2026-07-22T22:03:18Z",
       "pr": 20524,
-      "passes": 7
+      "passes": 8
     },
     ".agents/scripts/shared-gh-wrappers-rest-fallback.sh": {
       "hash": "52f547b7ccaf73157a010840f63cbf0ab17db614",
