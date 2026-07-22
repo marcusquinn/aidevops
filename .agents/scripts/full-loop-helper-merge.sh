@@ -16,6 +16,7 @@
 #   - shared-claim-lifecycle.sh (release_interactive_claim_on_merge)
 #   - shared-phase-filing.sh (auto_file_next_phase)
 #   - full-loop-helper-commit.sh (cmd_pre_merge_gate)
+#   - full-loop-helper-evidence.sh (fresh merged-PR evidence)
 #   - Globals: SCRIPT_DIR
 #
 # Part of aidevops framework: https://aidevops.sh
@@ -50,6 +51,10 @@ if [[ -f "${SCRIPT_DIR}/full-loop-cleanup-receipt.sh" ]]; then
 	# shellcheck source=./full-loop-cleanup-receipt.sh
 	source "${SCRIPT_DIR}/full-loop-cleanup-receipt.sh"
 fi
+
+# shellcheck source=./full-loop-helper-evidence.sh
+# shellcheck disable=SC1091  # sub-library resolved at runtime via SCRIPT_DIR
+source "${SCRIPT_DIR}/full-loop-helper-evidence.sh"
 
 # --- Repo Resolution ---
 
@@ -535,17 +540,7 @@ _merge_verify_completed_state() {
 	local pr_number="$1"
 	local repo="$2"
 	local pr_json=""
-	pr_json=$(gh pr view "$pr_number" --repo "$repo" \
-		--json state,mergedAt,mergeCommit 2>/dev/null) || return 1
-
-	if ! printf '%s' "$pr_json" | jq -e '
-		def present: ((. // "") | length > 0);
-		(.state == "MERGED")
-		and (.mergedAt | present)
-		and (.mergeCommit | type == "object" and (.oid | present))
-	' >/dev/null; then
-		return 1
-	fi
+	pr_json=$(_full_loop_read_fresh_merged_pr_json "$pr_number" "$repo") || return 1
 
 	FULL_LOOP_MERGE_SHA=$(printf '%s' "$pr_json" | jq -r '.mergeCommit.oid')
 	export FULL_LOOP_MERGE_SHA

@@ -12,6 +12,7 @@
 #
 # Dependencies:
 #   - shared-constants.sh (print_error, print_info, print_success, print_warning, etc.)
+#   - full-loop-helper-evidence.sh (fresh merged-PR evidence)
 #   - Globals: STATE_DIR, STATE_FILE, DEFAULT_MAX_*, HEADLESS, _FG_PID_FILE
 #   - Functions: is_headless, print_phase (defined in orchestrator before sourcing)
 #
@@ -47,6 +48,10 @@ if [[ -f "${SCRIPT_DIR}/full-loop-cleanup-receipt.sh" ]]; then
 	# shellcheck source=./full-loop-cleanup-receipt.sh
 	source "${SCRIPT_DIR}/full-loop-cleanup-receipt.sh"
 fi
+
+# shellcheck source=./full-loop-helper-evidence.sh
+# shellcheck disable=SC1091  # sub-library resolved at runtime via SCRIPT_DIR
+source "${SCRIPT_DIR}/full-loop-helper-evidence.sh"
 
 # --- State Management ---
 
@@ -1155,13 +1160,7 @@ _full_loop_resolve_repo() {
 _full_loop_verify_merged_pr() {
 	local pr_number="$1"
 	local repo="$2"
-	local pr_json=""
-	pr_json=$(gh pr view "$pr_number" --repo "$repo" --json state,mergedAt,mergeCommit 2>/dev/null) || return 1
-	printf '%s' "$pr_json" | jq -e '
-		(.state == "MERGED")
-		and ((.mergedAt // "") != "")
-		and (.mergeCommit | type == "object" and ((.oid // "") != ""))
-	' >/dev/null
+	_full_loop_read_fresh_merged_pr_json "$pr_number" "$repo" >/dev/null
 	return $?
 }
 
