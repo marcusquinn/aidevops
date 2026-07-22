@@ -1954,9 +1954,9 @@ _ensure_issue_body_has_brief() {
 	dedup_helper="${BASH_SOURCE[0]%/*}/dispatch-dedup-helper.sh"
 	if [[ -x "$dedup_helper" ]]; then
 		local _dedup_out=""
-		# GH#19922: pass AIDEVOPS_SESSION_USER as self_login so the runner
-		# does not block its own enrichment via the self-login exemption.
-		_dedup_out=$("$dedup_helper" is-assigned "$issue_number" "$repo_slug" "${AIDEVOPS_SESSION_USER:-}" 2>/dev/null) || true
+		# GH#19922/GH#28498: preserve the self-login exemption while using the
+		# read-only guard so enrichment cannot stale-recover active ownership.
+		_dedup_out=$("$dedup_helper" is-assigned-read-only "$issue_number" "$repo_slug" "${AIDEVOPS_SESSION_USER:-}" 2>/dev/null) || true
 		if [[ -n "$_dedup_out" ]]; then
 			echo "[dispatch_with_dedup] GH#19856: skipping force-enrich for #${issue_number} — active claim: ${_dedup_out}" >>"$LOGFILE"
 			return 0

@@ -395,15 +395,16 @@ _enrich_check_active_claim() {
 	local num="$1" repo="$2" task_id="$3" pre_fetched_json="${4:-}"
 	local _dedup_helper="${SCRIPT_DIR}/dispatch-dedup-helper.sh"
 	if [[ -x "$_dedup_helper" ]]; then
-		# GH#19922: resolve runner login so is-assigned can apply the self-login
+		# GH#19922: resolve runner login so the assignment guard can apply the self-login
 		# exemption — without it the runner blocks its own enrichment when it is
 		# also an assignee (e.g. single-user setups).
 		local _user="${AIDEVOPS_SESSION_USER:-}"
 		[[ -z "$_user" ]] && _user=$(gh api user --jq '.login // ""' 2>/dev/null || echo "")
 		local _dedup_result=""
 		# GH#19922: pass pre-fetched JSON via ISSUE_META_JSON env var to avoid
-		# a redundant gh issue view call inside is_assigned().
-		_dedup_result=$(ISSUE_META_JSON="$pre_fetched_json" "$_dedup_helper" is-assigned "$num" "$repo" "$_user" 2>/dev/null) || true
+		# a redundant metadata read. GH#28498: inspection must never invoke stale
+		# recovery, which can mutate a live interactive owner's claim.
+		_dedup_result=$(ISSUE_META_JSON="$pre_fetched_json" "$_dedup_helper" is-assigned-read-only "$num" "$repo" "$_user" 2>/dev/null) || true
 		if [[ -n "$_dedup_result" ]]; then
 			print_warning "Skipping enrich for #$num ($task_id) — active claim detected: $_dedup_result (GH#19856)"
 			return 0

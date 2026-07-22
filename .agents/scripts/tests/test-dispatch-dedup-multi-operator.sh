@@ -92,13 +92,13 @@ teardown_test_env() {
 #   $2 = comma-separated label names (or "" for none)
 #   $3 = issue state (default OPEN)
 #
-# The stub returns a recent "Dispatching worker" comment to prevent the
-# stale-assignment recovery path from firing during tests.
+# The stub returns a recent issue creation time and "Dispatching worker"
+# comment to prevent stale-assignment recovery during active-claim tests.
 create_gh_stub() {
 	local assignees_csv="$1"
 	local labels_csv="${2:-}"
 	local state="${3:-OPEN}"
-	local assignees_json labels_json recent_ts
+	local assignees_json labels_json recent_ts issue_created_ts
 
 	assignees_json=$(
 		ASSIGNEES_CSV="$assignees_csv" python3 - <<'PY'
@@ -115,13 +115,14 @@ print(json.dumps([{"name": i} for i in items]))
 PY
 	)
 	recent_ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+	issue_created_ts=$(date -u -v-120S +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -d '120 seconds ago' +%Y-%m-%dT%H:%M:%SZ)
 
 	cat >"${TEST_ROOT}/bin/gh" <<GHEOF
 #!/usr/bin/env bash
 set -euo pipefail
 
 if [[ "\${1:-}" == "issue" && "\${2:-}" == "view" ]]; then
-	printf '%s\n' '{"state":"${state}","assignees":${assignees_json},"labels":${labels_json}}'
+	printf '%s\n' '{"state":"${state}","assignees":${assignees_json},"labels":${labels_json},"createdAt":"${issue_created_ts}"}'
 	exit 0
 fi
 
@@ -377,19 +378,19 @@ test_interactive_on_worker_origin_blocks() {
 #
 # GH#18956 / t2091 — The classic single-user failure mode.
 #
-# Scenario: an interactive session filed issue #100 with origin:interactive
-# and self-assigned it (user=testorg=repo owner). The pulse runner is ALSO
+# Scenario: an interactive session owns issue #100 with origin:interactive,
+# status:in-review, and a self-assignment (user=testorg=repo owner). Pulse is ALSO
 # authenticated as testorg (single-user setup). The old code's self-login
 # exemption fired first → blocking_assignees was empty → pulse dispatched a
 # duplicate worker.
 #
 # Fix (t2091): the self-login exemption is skipped when active_claim=="true".
-# origin:interactive is an active claim signal, so the issue must block
-# dispatch even when assignee==self_login.
+# The lifecycle status keeps the claim active even when auto-dispatch remains
+# present, so the issue must block dispatch when assignee==self_login.
 test_single_user_interactive_self_assigned_blocks() {
 	# Interactive session: owner self-assigned, origin:interactive present.
 	# Pulse runner login == owner (single-user setup).
-	create_gh_stub "testorg" "origin:interactive,auto-dispatch,tier:standard"
+	create_gh_stub "testorg" "origin:interactive,status:in-review,auto-dispatch,tier:standard"
 
 	local output=""
 	# Pulse calls is_assigned() with self_login=testorg (same as assignee)
