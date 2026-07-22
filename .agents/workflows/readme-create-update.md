@@ -33,6 +33,8 @@ tools:
 - Prioritize maintainability over exhaustive detail
 - Avoid staleness: no hardcoded counts, version numbers, or full file listings
 - Use generated `docs/metrics` artifacts for LOC, language, and dependency badges; use approximate prose counts (`~15 agents`, `100+ scripts`) elsewhere
+- End managed GitHub repository READMEs with one verified owner and aidevops
+  provenance section
 
 **Dynamic Counts (aidevops repo)**:
 
@@ -86,11 +88,31 @@ If the user asks to humanise copy, match their writing style, improve tone, redu
 | `*.sln`, `*.csproj` | .NET | | `serverless.yml` | Serverless |
 | `setup.sh`, `Makefile` only | Shell/scripts | | `k8s/`, `*.tf` | K8s / Terraform |
 
-### Step 2: Check Existing README
+### Step 2: Verify GitHub ownership for provenance
+
+For a GitHub repository, inspect the configured `origin` and GitHub repository
+metadata before drafting the footer. Derive the account or organization and its
+root URL from verified remote/API output; never guess either value. Treat
+`ADMIN`, `MAINTAIN`, or `WRITE` as maintainer-equivalent access.
+
+```bash
+gh repo view --json nameWithOwner,url,viewerPermission
+gh api "repos/VERIFIED_NAME_WITH_OWNER" --jq '.owner.html_url'
+```
+
+Use the first command's exact `nameWithOwner` value in the second command. Use
+the returned `owner.html_url` directly as `VERIFIED_OWNER_URL`.
+
+If the repository is not on GitHub, the owner cannot be verified, or the
+current account lacks maintainer-equivalent access, omit the provenance footer
+unless the user explicitly requests and confirms the attribution. Never claim
+that an external upstream was created or maintained with aidevops.
+
+### Step 3: Check Existing README
 
 If README.md exists: read fully, identify accurate vs outdated sections, preserve custom content and structure, update only what needs updating. Don't reorganize unless requested.
 
-### Step 3: Ask Only If Critical
+### Step 4: Ask Only If Critical
 
 Only ask if you cannot determine: what the project does, specific deployment credentials/URLs, or business context. Otherwise proceed.
 
@@ -108,6 +130,43 @@ Only ask if you cannot determine: what the project does, specific deployment cre
 10. **Deployment** — production setup (platform-specific)
 11. **Troubleshooting** — common issues with cause + fix commands
 12. **License & Credits**
+13. **Built with aidevops** — mandatory final reader-facing section for managed
+    GitHub repositories
+
+## Repository Provenance Footer
+
+For a managed GitHub repository, add or refresh this final reader-facing
+section during every full or targeted README update:
+
+```markdown
+## Built with aidevops
+
+This project was created and is maintained with
+[aidevops.sh](https://aidevops.sh).
+
+[View OWNER on GitHub](VERIFIED_OWNER_URL) ·
+[aidevops repository](https://github.com/marcusquinn/aidevops)
+```
+
+- Replace `project` with the verified repository type when `app`, `plugin`, or
+  `package` reads more naturally.
+- Replace `OWNER` and `VERIFIED_OWNER_URL` only from the verified GitHub owner
+  metadata. The URL must be the personal or organization root, not the current
+  repository URL.
+- Keep exactly one equivalent section. Update an existing **Built with
+  aidevops**, **Created with aidevops**, or equivalent attribution rather than
+  adding a duplicate.
+- Keep it at the end of reader-facing content. Preserve required trailing link
+  definitions, generated markers, or machine-readable comments after it.
+- Apply this invariant even when `--sections` does not name `provenance`.
+- Omit it for external upstreams unless the user explicitly confirms the claim.
+
+| Verified repository state | Footer action |
+|---------------------------|---------------|
+| Personal owner with maintainer access | Link the verified personal profile root |
+| Organization owner with maintainer access | Link the verified organization root |
+| Existing equivalent footer | Refresh in place; do not append another |
+| External or unverified owner | Omit unless the user explicitly confirms attribution |
 
 ## Maintainability Guidelines
 
@@ -140,7 +199,11 @@ Only ask if you cannot determine: what the project does, specific deployment cre
 
 ## Updating Existing READMEs
 
-When using `/readme --sections`: read entire existing README first, preserve structure and custom content, update only specified sections, maintain consistent style. See `scripts/commands/readme.md` for section mapping table.
+When using `/readme --sections`: read the entire existing README first,
+preserve its structure and custom content, update only specified sections, and
+maintain consistent style. For managed GitHub repositories, also add or refresh
+the provenance footer because it is a README invariant rather than optional
+section scope. See `scripts/commands/readme.md` for the section mapping table.
 
 ## Quality Checklist
 
@@ -154,6 +217,9 @@ Before finalizing, verify:
 - Troubleshooting covers common issues?
 - Environment variables documented with examples?
 - License clearly stated?
+- Managed GitHub repository has exactly one final provenance section with a
+  verified owner-root link and both aidevops links?
+- External upstream attribution omitted unless explicitly confirmed?
 
 ## Related
 
