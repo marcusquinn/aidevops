@@ -44,7 +44,7 @@ readonly SANDBOX_DIR="${HOME}/.aidevops/.agent-workspace/sandbox"
 readonly SANDBOX_LOG="${SANDBOX_DIR}/executions.jsonl"
 readonly SANDBOX_TMP_BASE="${SANDBOX_DIR}/tmp"
 readonly SANDBOX_DEFAULT_TIMEOUT=120
-readonly SANDBOX_MAX_TIMEOUT=3600
+readonly SANDBOX_MAX_TIMEOUT=21600
 readonly SANDBOX_MAX_OUTPUT_BYTES=10485760 # 10MB per stream
 readonly SECRET_IO_GUARD_DEFAULT="true"
 readonly SANDBOX_ERROR_LEVEL="ERROR"
@@ -1485,7 +1485,10 @@ Commands:
   help                       Show this help
 
 Run options:
-  --timeout N                Timeout in seconds (default: 120, max: 3600)
+HELP
+	printf '  --timeout N                Timeout in seconds (default: %ss, max: %ss)\n' \
+		"$SANDBOX_DEFAULT_TIMEOUT" "$SANDBOX_MAX_TIMEOUT"
+	cat <<'HELP'
   --no-network               Block network access (macOS only, uses seatbelt)
   --network-tiering          Compatibility flag; enforcement is enabled by default
   --egress-mode MODE         Whole-process backend mode: off|auto|required
