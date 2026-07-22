@@ -13,6 +13,7 @@ trap 'rm -rf "$test_root"' EXIT
 capture_file="${test_root}/capture.json"
 export AIDEVOPS_WORKER_BLOCKER_LOG_FILE="${test_root}/blockers.jsonl"
 gh_call_log="${test_root}/gh-calls.log"
+posted_comment="${test_root}/permission-comment.md"
 
 cat >"$capture_file" <<'JSON'
 {
@@ -47,6 +48,21 @@ if [[ "$envelope" == *"$PWD"* ]]; then
 	printf 'permission envelope exposed the local worktree path\n' >&2
 	exit 1
 fi
+envelope_file="${test_root}/envelope.json"
+printf '%s\n' "$envelope" >"$envelope_file"
+rendered_capabilities=$(permission_render_capabilities "$envelope_file")
+capability_marker="- **external_directory** via \`read\`"
+target_marker="**Target:** \`owner/repo#123\`"
+session_marker="**Worker session:** \`issue-123\`"
+if [[ "$rendered_capabilities" != *"$capability_marker"* ]]; then
+	printf 'permission capability summary was empty or incomplete\n' >&2
+	exit 1
+fi
+printf '{invalid-json\n' >"${test_root}/invalid-envelope.json"
+if permission_render_capabilities "${test_root}/invalid-envelope.json" >/dev/null 2>&1; then
+	printf 'permission capability rendering hid a jq failure\n' >&2
+	exit 1
+fi
 
 jq '.requests[0].patterns = ["/Users/private/.ssh/id_ed25519"]' "$capture_file" >"${capture_file}.unsafe"
 if permission_validate_capture "${capture_file}.unsafe" 123 owner/repo; then
@@ -66,7 +82,10 @@ gh_issue_view() {
 	return 0
 }
 gh_issue_comment() {
-	return 0
+	local body_file="${5:-}"
+	[[ -f "$body_file" ]] || return 1
+	cp "$body_file" "$posted_comment"
+	return $?
 }
 gh_issue_edit_safe() {
 	return 0
@@ -87,12 +106,25 @@ if ! grep -Fq -- '[.[] | select' "$gh_call_log"; then
 	printf 'permission comment lookup did not use page-local jq input\n' >&2
 	exit 1
 fi
+if ! grep -Fq -- "$capability_marker" "$posted_comment"; then
+	printf 'permission comment omitted the human-readable capability summary\n' >&2
+	exit 1
+fi
+if ! grep -Fq -- "$target_marker" "$posted_comment"; then
+	printf 'permission comment omitted the correlated issue target\n' >&2
+	exit 1
+fi
+if ! grep -Fq -- "$session_marker" "$posted_comment"; then
+	printf 'permission comment omitted the correlated worker session\n' >&2
+	exit 1
+fi
 git_dir=$(git -C "$repo_dir" rev-parse --absolute-git-dir)
 if [[ ! -f "${git_dir}/aidevops-permission-pending" ]]; then
 	printf 'permission pending marker was not written to the target repository git directory\n' >&2
 	exit 1
 fi
-jq -e 'select(.event == "permission_awaiting_approval" and .reason == "needs_maintainer_permissions" and .blocking == true)' \
+jq -e 'select(.event == "permission_awaiting_approval" and .reason == "needs_maintainer_permissions" and .blocking == true
+  and .issue_number == 123 and .repo_slug == "owner/repo" and .session_key == "issue-123")' \
 	"$AIDEVOPS_WORKER_BLOCKER_LOG_FILE" >/dev/null
 
 printf 'worker permission helper tests passed\n'

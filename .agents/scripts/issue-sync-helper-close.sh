@@ -49,11 +49,12 @@ _is_cancelled_or_deferred() {
 
 _has_evidence() {
 	local text="$1" task_id="$2" repo="$3"
+	local issue_number="${4:-}"
 	local task_line
 	task_line=$(_task_line_from_block "$text" "$task_id")
 	# Cancelled/deferred/declined tasks need no PR or verified: evidence
 	_is_cancelled_or_deferred "$task_line" && return 0
-	if _has_unresolved_blocker "$text" "$task_id" "$task_line"; then
+	if _has_unresolved_blocker "$text" "$task_id" "$task_line" "$repo" "$issue_number"; then
 		return 1
 	fi
 	echo "$text" | grep -qE 'verified:[0-9]{4}-[0-9]{2}-[0-9]{2}|pr:#[0-9]+' && return 0
@@ -78,10 +79,14 @@ _has_unresolved_blocker() {
 	local text="$1"
 	local task_id="${2:-}"
 	local task_line="${3:-}"
+	local repo="${4:-}"
+	local issue_number="${5:-}"
 	local candidate
 	candidate="${task_line:-$(_task_line_from_block "$text" "$task_id")}"
-	printf '%s\n' "$candidate" | grep -qE '(^|[[:space:]])blocked-by:[^[:space:]]+' && return 0
-	return 1
+	printf '%s\n' "$candidate" | grep -qE '(^|[[:space:]])blocked-by:[^[:space:]]+' || return 1
+	[[ -n "$repo" && "$issue_number" =~ ^[0-9]+$ ]] || return 0
+	_der_completion_blockers_closed "$repo" "$issue_number" "$candidate" && return 1
+	return 0
 }
 
 _find_closing_pr() {
@@ -359,7 +364,7 @@ _do_close() {
 		print_info "Skipping #$issue_number ($task_id): parent-task label set — parent issues close via terminal-phase PR with explicit Closes #NNN, not TODO [x] (GH#20828)"
 		return 0
 	fi
-	if ! _is_cancelled_or_deferred "$task_line" && _has_unresolved_blocker "$task_line" "" "$task_line"; then
+	if ! _is_cancelled_or_deferred "$task_line" && _has_unresolved_blocker "$task_line" "" "$task_line" "$repo" "$issue_number"; then
 		print_info "Skipping #$issue_number ($task_id): unresolved blocked-by marker present — completion evidence must wait for dependencies (GH#23516)"
 		return 0
 	fi
@@ -377,7 +382,7 @@ _do_close() {
 	if [[ "$FORCE_CLOSE" == "true" ]]; then
 		print_info "FORCE_CLOSE active — bypassing evidence check for #$issue_number ($task_id) (GH#20146 audit)"
 	fi
-	if [[ "$FORCE_CLOSE" != "true" ]] && ! _has_evidence "$task_with_notes" "$task_id" "$repo"; then
+	if [[ "$FORCE_CLOSE" != "true" ]] && ! _has_evidence "$task_with_notes" "$task_id" "$repo" "$issue_number"; then
 		print_warning "Skipping #$issue_number ($task_id): no merged PR or verified: field"
 		return 1
 	fi

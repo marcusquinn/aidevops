@@ -60,7 +60,7 @@ The result: an AI operations platform that manages projects across every busines
 [![Copyright](https://img.shields.io/badge/Copyright-Marcus%20Quinn%202025--2026-blue.svg)](https://github.com/marcusquinn)
 
 <!-- Release & Version Info -->
-[![Version](https://img.shields.io/badge/Version-3.32.161-blue.svg)](https://github.com/marcusquinn/aidevops/releases)
+[![Version](https://img.shields.io/badge/Version-3.32.163-blue.svg)](https://github.com/marcusquinn/aidevops/releases)
 [![npm version](https://img.shields.io/npm/v/aidevops)](https://www.npmjs.com/package/aidevops)
 [![Homebrew](https://img.shields.io/badge/homebrew-marcusquinn%2Ftap-orange)](https://github.com/marcusquinn/homebrew-tap)
 [![GitHub repository](https://img.shields.io/badge/github-repository-181717.svg?logo=github)](https://github.com/marcusquinn/aidevops)
@@ -988,7 +988,8 @@ Run multiple AI sessions concurrently with isolated contexts. Named **runners** 
 
 | Feature | Description |
 |---------|-------------|
-| **Headless dispatch** | `opencode run` for one-shot tasks, `opencode serve` + `--attach` for warm server |
+| **Headless dispatch** | `headless-runtime-helper.sh run` provides canonical model routing, retries, and session isolation |
+| **Durable one-shot scheduling** | `aidevops schedule once` queues private, restart-safe delayed work without fake recurring jobs or sleeper processes |
 | **Runners** | Named agent instances with per-runner AGENTS.md, config, and run logs (`runner-helper.sh`) |
 | **Self-hosted runner runbooks** | GitHub runner storage, lifecycle, Docker foreground mode, timer freshness, and cleanup-race guidance (`.agents/reference/github-self-hosted-runners.md`) |
 | **Session management** | Resume sessions with `-s <id>` or `-c`, fork with SDK |
@@ -1002,6 +1003,11 @@ runner-helper.sh create code-reviewer --description "Reviews code for security a
 
 # Dispatch a task (one-shot)
 runner-helper.sh run code-reviewer "Review src/auth/ for vulnerabilities"
+
+# Queue one delayed execution and inspect its lifecycle
+aidevops schedule once --after 2h --name "Review authentication" \
+  --dir ~/Git/example --prompt-file ~/.config/aidevops/prompts/auth-review.md
+aidevops schedule status
 
 # Dispatch against warm server (faster, no MCP cold boot)
 opencode serve --port 4096 &

@@ -233,6 +233,7 @@ Commands:
                                  gh CLI level; if both are given, --admin wins and
                                   --auto is dropped (GH#19310).
   record-no-release <PR> [REPO]  Verify merged evidence and record release:not-requested.
+  complete                       Persist CLEANUP_DEFERRED and hand cleanup to a supervisor.
   complete-after-cleanup <PR> <removed-worktree-path> [REPO]
                                  Verify merged, released/deployed, and cleaned evidence.
   help                          Show this help
@@ -266,6 +267,7 @@ main() {
 	wait-checks) cmd_wait_checks "$@" ;;
 	merge) cmd_merge "$@" ;;
 	record-no-release) cmd_record_no_release "$@" ;;
+	complete) cmd_complete "$@" ;;
 	complete-after-cleanup) cmd_complete_after_cleanup "$@" ;;
 	help | --help | -h) show_help ;;
 	*)

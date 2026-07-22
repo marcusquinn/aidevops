@@ -46,12 +46,31 @@ if [[ -z "${SCRIPT_DIR:-}" ]]; then
 	unset _lib_path
 fi
 
+if [[ -f "${SCRIPT_DIR}/full-loop-cleanup-receipt.sh" ]]; then
+	# shellcheck source=./full-loop-cleanup-receipt.sh
+	source "${SCRIPT_DIR}/full-loop-cleanup-receipt.sh"
+fi
+
 # --- Functions ---
 
 _clean_deferred_parent_alive() {
 	local wt_path="$1"
 	local marker_path="${wt_path}/${_WT_CLEAN_DEFERRED_MARKER}"
+	local receipt_path=""
 	_WT_CLEAN_DEFERRED_OWNER_PID=""
+	_WT_CLEAN_DEFERRED_RECEIPT=""
+	if declare -F full_loop_cleanup_receipt_for_worktree >/dev/null 2>&1; then
+		receipt_path=$(full_loop_cleanup_receipt_for_worktree "$wt_path" 2>/dev/null || true)
+	fi
+	if [[ -n "$receipt_path" && -f "$receipt_path" ]]; then
+		_WT_CLEAN_DEFERRED_RECEIPT="$receipt_path"
+		_WT_CLEAN_DEFERRED_OWNER_PID=$(jq -r '.owner.pid // empty' "$receipt_path" 2>/dev/null || true)
+		if full_loop_cleanup_owner_alive "$receipt_path"; then
+			return 0
+		fi
+		rm -f "$marker_path" 2>/dev/null || true
+		return 2
+	fi
 	[[ -f "$marker_path" ]] || return 1
 
 	local owner_pid=""
@@ -70,6 +89,14 @@ _clean_acquire_removal_lease() {
 	declare -F claim_worktree_ownership >/dev/null 2>&1 || return 1
 	claim_worktree_ownership "$wt_path" "$wt_branch" \
 		--owner-pid "$$" --session "cleanup:$$" --task "worktree-removal" >/dev/null 2>&1 || return 1
+	local receipt_path=""
+	if declare -F full_loop_cleanup_receipt_for_worktree >/dev/null 2>&1; then
+		receipt_path=$(full_loop_cleanup_receipt_for_worktree "$wt_path" 2>/dev/null || true)
+	fi
+	if [[ -n "$receipt_path" ]] && ! full_loop_transition_cleanup_receipt "$receipt_path" "$_FULL_LOOP_CLEANUP_LEASED" "$$"; then
+		unregister_worktree_if_owner_pid "$wt_path" "$$" 2>/dev/null || true
+		return 1
+	fi
 	return 0
 }
 
@@ -82,7 +109,7 @@ _clean_terminal_owner_blocks_cleanup() {
 		return 0
 	fi
 	if [[ "$deferred_parent_state" -eq 2 ]]; then
-		if [[ -n "$_WT_CLEAN_DEFERRED_OWNER_PID" ]] && \
+		if [[ -n "$_WT_CLEAN_DEFERRED_OWNER_PID" ]] &&
 			unregister_worktree_if_owner_pid "$wt_path" "$_WT_CLEAN_DEFERRED_OWNER_PID" 2>/dev/null; then
 			return 1
 		fi
@@ -299,7 +326,7 @@ _skip_cleanup_for_owner() {
 		_skip_cleanup_emit "$wt_branch" "$wt_path" "dead owner PID $owner_pid in cooldown since $owner_dead_seen_at" "owner-pid-dead"
 		return 0
 	fi
-		_skip_cleanup_emit "$wt_branch" "$wt_path" "owned by active session PID $owner_pid" "$_WT_CLEAN_REASON_OWNED_SKIP"
+	_skip_cleanup_emit "$wt_branch" "$wt_path" "owned by active session PID $owner_pid" "$_WT_CLEAN_REASON_OWNED_SKIP"
 	return 0
 }
 
@@ -614,6 +641,8 @@ _WT_CLEAN_TYPE_CLOSED_ISSUE_ARCHIVE="closed issue branch archive"
 _WT_CLEAN_MODE_SKIPPED="skipped"
 _WT_CLEAN_MODE_BRANCH_PRESERVED="branch-preserved"
 _WT_CLEAN_MODE_PERMANENT="permanent"
+_WT_CLEAN_MODE_RECOVERABLE="recoverable-trash"
+_WT_CLEAN_COMPLETED_EVENT="AIDEVOPS_WORKTREE_REMOVAL_COMPLETED=1"
 _WT_CLEAN_BOOL_TRUE=true
 _WT_CLEAN_BOOL_FALSE=false
 _WT_CLEAN_LAST_PRESERVE_BRANCH="${_WT_CLEAN_LAST_PRESERVE_BRANCH:-$_WT_CLEAN_BOOL_FALSE}"
@@ -783,8 +812,8 @@ _clean_select_merge_type() {
 	local merged_prs="$4"
 	local closed_prs="$5"
 
-	if git branch --merged "$default_br" 2>/dev/null | grep -q "^\s*$wt_branch$" \
-		&& ! branch_has_zero_commits_ahead "$wt_branch" "$default_br"; then
+	if git branch --merged "$default_br" 2>/dev/null | grep -q "^\s*$wt_branch$" &&
+		! branch_has_zero_commits_ahead "$wt_branch" "$default_br"; then
 		printf '%s\n' "merged"
 		return 0
 	fi
@@ -947,27 +976,147 @@ _clean_scan_merged() {
 	return 1
 }
 
+_clean_move_worktree_to_trash_bucket() {
+	local worktree_path="$1"
+	local trash_root="$2"
+	local trash_bucket=""
+	local worktree_basename=""
+
+	worktree_basename=$(basename "$worktree_path") || return 1
+	[[ -n "$worktree_basename" && "$worktree_basename" != "." && "$worktree_basename" != "/" ]] || return 1
+	trash_bucket="${trash_root}/aidevops-worktree-cleanup-$(date -u '+%Y%m%dT%H%M%SZ')-$$"
+	mkdir -p "$trash_bucket" 2>/dev/null || return 1
+	mv "$worktree_path" "$trash_bucket/$worktree_basename" 2>/dev/null || return 1
+	[[ ! -e "$worktree_path" ]] || return 1
+	return 0
+}
+
+# Move a worktree to recoverable trash without any rm -rf fallback. This is the
+# only physical-removal primitive permitted when process-CWD visibility is
+# degraded, so a false absence inference remains recoverable.
+_clean_move_worktree_recoverably() {
+	local worktree_path="$1"
+	local trash_root="${AIDEVOPS_WORKTREE_TRASH_ROOT:-${AIDEVOPS_ORPHAN_TRASH_ROOT:-}}"
+
+	[[ -n "$worktree_path" ]] || return 1
+	[[ -e "$worktree_path" ]] || return 1
+	if [[ -n "$trash_root" ]]; then
+		_clean_move_worktree_to_trash_bucket "$worktree_path" "$trash_root"
+		return $?
+	fi
+	if command -v trash >/dev/null 2>&1; then
+		trash "$worktree_path" 2>/dev/null || return 1
+		[[ ! -e "$worktree_path" ]] || return 1
+		return 0
+	fi
+	if command -v gio >/dev/null 2>&1; then
+		gio trash "$worktree_path" 2>/dev/null || return 1
+		[[ ! -e "$worktree_path" ]] || return 1
+		return 0
+	fi
+	_clean_move_worktree_to_trash_bucket "$worktree_path" "${HOME}/.Trash"
+	return $?
+}
+
+_clean_merge_type_has_terminal_pr_state() {
+	local merge_type="$1"
+	case "$merge_type" in
+	"$_WT_CLEAN_TYPE_SQUASH_MERGED_PR" | "$_WT_CLEAN_TYPE_CLOSED_PR") return 0 ;;
+	esac
+	return 1
+}
+
+# A degraded process snapshot can authorize only a candidate-local recoverable
+# move. Every mutable predicate is rechecked after the cleanup lease is held.
+_clean_degraded_visibility_fallback_allowed() {
+	local worktree_path="$1"
+	local worktree_branch="$2"
+	local merge_type="$3"
+	local merged_prs="$4"
+	local closed_prs="$5"
+	local open_prs="$6"
+	local audit_context="$7"
+
+	[[ "${WORKTREE_REMOVAL_GUARD_REASON:-}" == "${_WT_CWD_REASON_DEGRADED:-cwd-visibility-degraded}" ]] || return 1
+	if worktree_has_changes "$worktree_path"; then
+		log_worktree_removal_event "$_WTAR_SKIPPED" "$_WTAR_WH_CALLER" "$worktree_path" "degraded-cwd-dirty-skip" "$_WT_CLEAN_MODE_SKIPPED" "$audit_context"
+		return 1
+	fi
+	if _branch_has_active_interactive_claim "$worktree_path" "$worktree_branch"; then
+		log_worktree_removal_event "$_WTAR_SKIPPED" "$_WTAR_WH_CALLER" "$worktree_path" "active-claim" "$_WT_CLEAN_MODE_SKIPPED" "$audit_context"
+		return 1
+	fi
+	if is_worktree_owned_by_others "$worktree_path"; then
+		log_worktree_removal_event "$_WTAR_SKIPPED" "$_WTAR_WH_CALLER" "$worktree_path" "$_WT_CLEAN_REASON_OWNED_SKIP" "$_WT_CLEAN_MODE_SKIPPED" "$audit_context"
+		return 1
+	fi
+	if _clean_branch_list_contains_exact "$worktree_branch" "$open_prs"; then
+		log_worktree_removal_event "$_WTAR_SKIPPED" "$_WTAR_WH_CALLER" "$worktree_path" "open-pr" "$_WT_CLEAN_MODE_SKIPPED" "$audit_context"
+		return 1
+	fi
+	if worktree_is_in_grace_period "$worktree_path"; then
+		log_worktree_removal_event "$_WTAR_SKIPPED" "$_WTAR_WH_CALLER" "$worktree_path" "grace-period" "$_WT_CLEAN_MODE_SKIPPED" "$audit_context"
+		return 1
+	fi
+	if _clean_merge_type_has_terminal_pr_state "$merge_type" ||
+		_clean_branch_has_terminal_pr_proof "$worktree_branch" "$merged_prs" "$closed_prs"; then
+		return 0
+	fi
+	log_worktree_removal_event "$_WTAR_SKIPPED" "$_WTAR_WH_CALLER" "$worktree_path" "degraded-cwd-pr-proof-required" "$_WT_CLEAN_MODE_SKIPPED" "$audit_context"
+	return 1
+}
+
 _clean_remove_classified_worktree() {
 	local worktree_path="$1"
 	local worktree_branch="$2"
 	local force_merged="$3"
 	local preserve_branch="$4"
 	local audit_context="$5"
+	local repo_context="$6"
+	local removal_mode="${7:-$_WT_CLEAN_MODE_PERMANENT}"
+	local recovery_authorized="${8:-$_WT_CLEAN_BOOL_FALSE}"
 	local use_force="$_WT_CLEAN_BOOL_FALSE"
 	local removed="$_WT_CLEAN_BOOL_FALSE"
+	local guard_status=0
+	local audit_reason="$_WT_CLEAN_REASON_BRANCH_MERGED"
+	local completed_mode="$_WT_CLEAN_MODE_PERMANENT"
+
+	if worktree_removal_guard "$worktree_path" "$_WTAR_WH_CALLER" "$_WT_CLEAN_REASON_BRANCH_MERGED"; then
+		guard_status=0
+	else
+		guard_status=$?
+	fi
+	if [[ "$removal_mode" == "$_WT_CLEAN_MODE_RECOVERABLE" ]]; then
+		[[ "$recovery_authorized" == "$_WT_CLEAN_BOOL_TRUE" ]] || return 1
+		if [[ "$guard_status" -ne 0 && "$guard_status" -ne "${_WT_CWD_CAPTURE_DEGRADED_RC:-2}" ]]; then
+			return 1
+		fi
+		worktree_has_changes "$worktree_path" && return 1
+		_branch_has_active_interactive_claim "$worktree_path" "$worktree_branch" && return 1
+		is_worktree_owned_by_others "$worktree_path" && return 1
+	elif [[ "$guard_status" -ne 0 ]]; then
+		return "$guard_status"
+	fi
 
 	if worktree_has_changes "$worktree_path" && [[ "$force_merged" == "$_WT_CLEAN_BOOL_TRUE" ]]; then
 		use_force="$_WT_CLEAN_BOOL_TRUE"
 	fi
-	if [[ "$preserve_branch" == "$_WT_CLEAN_BOOL_TRUE" ]]; then
+	if [[ "$removal_mode" == "$_WT_CLEAN_MODE_RECOVERABLE" ]]; then
+		if _clean_move_worktree_recoverably "$worktree_path"; then
+			removed="$_WT_CLEAN_BOOL_TRUE"
+			completed_mode="$_WT_CLEAN_MODE_RECOVERABLE"
+		else
+			log_worktree_removal_event "$_WTAR_SKIPPED" "$_WTAR_WH_CALLER" "$worktree_path" "recoverable-move-failed" "$_WT_CLEAN_MODE_SKIPPED" "$audit_context"
+			return 1
+		fi
+	elif [[ "$preserve_branch" == "$_WT_CLEAN_BOOL_TRUE" ]]; then
 		_clean_archive_dirty_worktree_stash "$worktree_path" "$worktree_branch" || return 1
 		if git worktree remove --force "$worktree_path" 2>/dev/null; then
-			git worktree prune 2>/dev/null || true
-			log_worktree_removal_event "$_WTAR_REMOVED" "$_WTAR_WH_CALLER" "$worktree_path" "$_WT_CLEAN_REASON_CLOSED_ISSUE_ARCHIVE" "$_WT_CLEAN_MODE_BRANCH_PRESERVED" "$audit_context"
 			removed="$_WT_CLEAN_BOOL_TRUE"
+			audit_reason="$_WT_CLEAN_REASON_CLOSED_ISSUE_ARCHIVE"
+			completed_mode="$_WT_CLEAN_MODE_BRANCH_PRESERVED"
 		fi
-	elif remove_worktree_path_permanently "$worktree_path" "$_WTAR_WH_CALLER" "$_WT_CLEAN_REASON_BRANCH_MERGED" "$audit_context"; then
-		git worktree prune 2>/dev/null || true
+	elif rm -rf "$worktree_path" 2>/dev/null; then
 		removed="$_WT_CLEAN_BOOL_TRUE"
 	else
 		local remove_flag
@@ -976,7 +1125,6 @@ _clean_remove_classified_worktree() {
 		fi
 		# shellcheck disable=SC2086
 		if git worktree remove $remove_flag "$worktree_path" 2>/dev/null; then
-			log_worktree_removal_event "$_WTAR_REMOVED" "$_WTAR_WH_CALLER" "$worktree_path" "$_WT_CLEAN_REASON_BRANCH_MERGED" "$_WT_CLEAN_MODE_PERMANENT" "$audit_context"
 			removed="$_WT_CLEAN_BOOL_TRUE"
 		fi
 	fi
@@ -984,12 +1132,66 @@ _clean_remove_classified_worktree() {
 		echo -e "${RED}Failed to remove $worktree_branch - may have uncommitted changes${NC}" >&2
 		return 1
 	fi
+	if ! prune_missing_worktree_metadata "$repo_context" "$worktree_path"; then
+		log_worktree_removal_event "$_WTAR_SKIPPED" "$_WTAR_WH_CALLER" "$worktree_path" "metadata-prune-failed" "partial-cleanup" "$audit_context"
+		return 1
+	fi
 	unregister_worktree "$worktree_path"
 	if [[ "$preserve_branch" != "$_WT_CLEAN_BOOL_TRUE" ]]; then
 		localdev_auto_branch_rm "$worktree_branch"
 		git branch -D "$worktree_branch" 2>/dev/null || true
 	fi
+	log_worktree_removal_event "$_WTAR_REMOVED" "$_WTAR_WH_CALLER" "$worktree_path" "$audit_reason" "$completed_mode" "$audit_context"
+	if declare -F full_loop_mark_cleanup_cleaned_for_worktree >/dev/null 2>&1; then
+		full_loop_mark_cleanup_cleaned_for_worktree "$worktree_path" || true
+	fi
+	printf '%s\n' "$_WT_CLEAN_COMPLETED_EVENT"
 	return 0
+}
+
+_clean_remove_candidate_after_lease() {
+	local worktree_path="$1"
+	local worktree_branch="$2"
+	local force_merged="$3"
+	local preserve_branch="$4"
+	local audit_context="$5"
+	local main_wt_path="$6"
+	local merge_type="$7"
+	local merged_prs="$8"
+	local closed_prs="$9"
+	local open_prs="${10}"
+	local guard_status=0
+	local removal_status=0
+	local removal_mode="$_WT_CLEAN_MODE_PERMANENT"
+	local recovery_authorized="$_WT_CLEAN_BOOL_FALSE"
+
+	if worktree_removal_guard "$worktree_path" "$_WTAR_WH_CALLER" "$_WT_CLEAN_REASON_BRANCH_MERGED"; then
+		guard_status=0
+	else
+		guard_status=$?
+	fi
+	if [[ "$guard_status" -eq "${_WT_CWD_CAPTURE_DEGRADED_RC:-2}" ]] &&
+		_clean_degraded_visibility_fallback_allowed "$worktree_path" "$worktree_branch" "$merge_type" "$merged_prs" "$closed_prs" "$open_prs" "$audit_context"; then
+		removal_mode="$_WT_CLEAN_MODE_RECOVERABLE"
+		recovery_authorized="$_WT_CLEAN_BOOL_TRUE"
+	elif [[ "$guard_status" -ne 0 ]]; then
+		unregister_worktree_if_owner_pid "$worktree_path" "$$" 2>/dev/null || true
+		echo -e "${YELLOW}Skipped $worktree_branch - removal guard refused path${NC}" >&2
+		return 1
+	fi
+
+	if _clean_remove_classified_worktree "$worktree_path" "$worktree_branch" "$force_merged" "$preserve_branch" "$audit_context" "$main_wt_path" "$removal_mode" "$recovery_authorized"; then
+		return 0
+	else
+		removal_status=$?
+	fi
+	if [[ "$removal_status" -eq "${_WT_CWD_CAPTURE_DEGRADED_RC:-2}" ]] &&
+		_clean_degraded_visibility_fallback_allowed "$worktree_path" "$worktree_branch" "$merge_type" "$merged_prs" "$closed_prs" "$open_prs" "$audit_context" &&
+		_clean_remove_classified_worktree "$worktree_path" "$worktree_branch" "$force_merged" "$preserve_branch" "$audit_context" "$main_wt_path" "$_WT_CLEAN_MODE_RECOVERABLE" "$_WT_CLEAN_BOOL_TRUE"; then
+		return 0
+	fi
+	unregister_worktree_if_owner_pid "$worktree_path" "$$" 2>/dev/null || true
+	return 1
 }
 
 # Remove worktrees that are eligible for cleanup (second pass after user confirmation).
@@ -1054,21 +1256,8 @@ _clean_remove_merged() {
 						worktree_branch=""
 						continue
 					fi
-					if ! worktree_removal_guard "$worktree_path" "$_WTAR_WH_CALLER" "$_WT_CLEAN_REASON_BRANCH_MERGED"; then
-						unregister_worktree_if_owner_pid "$worktree_path" "$$" 2>/dev/null || true
-						echo -e "${YELLOW}Skipped $worktree_branch - removal guard refused path${NC}" >&2
-						worktree_path=""
-						worktree_branch=""
-						continue
-					fi
-					# Clean up heavy reproducible directories first to speed up removal
-					# (node_modules, .next, .turbo can have 100k+ files — rm -rf is faster than trash)
-					rm -rf "$worktree_path/node_modules" 2>/dev/null || true
-					rm -rf "$worktree_path/.next" 2>/dev/null || true
-					rm -rf "$worktree_path/.turbo" 2>/dev/null || true
-					if ! _clean_remove_classified_worktree "$worktree_path" "$worktree_branch" "$force_merged" "$preserve_branch" "$audit_context"; then
-						unregister_worktree_if_owner_pid "$worktree_path" "$$" 2>/dev/null || true
-					fi
+					_clean_remove_candidate_after_lease "$worktree_path" "$worktree_branch" "$force_merged" "$preserve_branch" \
+						"$audit_context" "$main_wt_path" "$merge_type" "$merged_prs" "$closed_prs" "$open_prs" || true
 				fi
 			fi
 			worktree_path=""
@@ -1163,6 +1352,9 @@ cmd_clean() {
 	if ! main_worktree_path=$(_clean_preflight_main_worktree); then
 		return 1
 	fi
+	if declare -F full_loop_reconcile_cleanup_receipts >/dev/null 2>&1; then
+		full_loop_reconcile_cleanup_receipts
+	fi
 
 	echo -e "${BOLD}Checking for worktrees with merged branches...${NC}" >&2
 	echo "" >&2
@@ -1213,6 +1405,9 @@ cmd_clean() {
 	if [[ "$response" =~ ^[Yy]$ ]]; then
 		# Second pass: remove merged worktrees
 		_clean_remove_merged "$default_branch" "$main_worktree_path" "$remote_state_unknown" "$merged_pr_branches" "$open_pr_branches" "$force_merged" "$closed_pr_branches"
+		if declare -F full_loop_reconcile_cleanup_receipts >/dev/null 2>&1; then
+			full_loop_reconcile_cleanup_receipts
+		fi
 		echo -e "${GREEN}Cleanup complete${NC}" >&2
 	else
 		echo "Cancelled" >&2

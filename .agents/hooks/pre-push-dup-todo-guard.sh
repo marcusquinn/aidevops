@@ -4,8 +4,10 @@
 #
 # pre-push-dup-todo-guard.sh — git pre-push hook (t2745).
 #
-# Blocks a push when TODO.md on the pushed commit contains two or more
-# checkbox lines with the same task ID.
+# Blocks a push when TODO.md on the pushed commit introduces a duplicate task
+# ID or increases the occurrence count of a duplicate already present in the
+# remote baseline. Pre-existing duplicates therefore do not block unrelated
+# branches, while any regression remains fail-closed.
 # Example duplicate: two lines starting with "- [ ] t2743 " or "- [x] t2743 ".
 #
 # Root cause this catches: _seed_orphan_todo_line (issue-sync) appends a
@@ -54,12 +56,50 @@ _dbg() {
 	return 0
 }
 
+_compute_baseline() {
+	local _remote="$1"
+	local _local_sha="$2"
+	local _remote_sha="$3"
+	local _candidate
+	local _default_remote_head=""
+	local _baseline=""
+
+	if [[ -n "$_remote_sha" ]] && ! [[ "$_remote_sha" =~ $_zero_sha_pattern ]]; then
+		if git cat-file -e "${_remote_sha}^{commit}" 2>/dev/null; then
+			printf '%s\n' "$_remote_sha"
+			return 0
+		fi
+	fi
+
+	[[ -n "$_remote" ]] || _remote="origin"
+	_default_remote_head=$(git symbolic-ref "refs/remotes/${_remote}/HEAD" 2>/dev/null \
+		| sed "s@^refs/remotes/${_remote}/@@")
+	if [[ -n "$_default_remote_head" ]]; then
+		_default_remote_head="${_remote}/${_default_remote_head}"
+	else
+		for _candidate in "${_remote}/main" "${_remote}/master"; do
+			if git rev-parse --verify "$_candidate" >/dev/null 2>&1; then
+				_default_remote_head="$_candidate"
+				break
+			fi
+		done
+	fi
+
+	[[ -n "$_default_remote_head" ]] || return 1
+	_baseline=$(git merge-base "$_local_sha" "$_default_remote_head" 2>/dev/null) || return 1
+	[[ -n "$_baseline" ]] || return 1
+	printf '%s\n' "$_baseline"
+	return 0
+}
+
 if [[ "${DUP_TODO_GUARD_DISABLE:-0}" == "1" ]]; then
 	_log WARN "DUP_TODO_GUARD_DISABLE=1 — bypassing duplicate TODO check (audit trail: override active)"
 	exit 0
 fi
 
 _exit_code=0
+
+_remote_name="${1:-origin}"
 
 # Pattern for zero-SHA (branch deletion). Use a variable so [[ =~ ]] works
 # consistently across Bash 3.2 (macOS default) and later versions.
@@ -111,9 +151,49 @@ while IFS=' ' read -r _local_ref _local_sha _remote_ref _remote_sha; do
 		continue
 	fi
 
+	# Compare duplicate occurrence counts with the remote baseline. This is a
+	# ratchet: unchanged legacy duplicates are tolerated, but a new duplicate
+	# or an increased count remains blocking. If no baseline can be resolved,
+	# retain the original fail-closed full-snapshot behaviour.
+	_base_task_ids=""
+	_base_sha=""
+	if _base_sha=$(_compute_baseline "$_remote_name" "$_local_sha" "${_remote_sha:-}"); then
+		if git cat-file -e "${_base_sha}:TODO.md" 2>/dev/null; then
+			_base_content=$(git show "${_base_sha}:TODO.md" 2>/dev/null) || _base_content=""
+			if [[ -n "$_base_content" ]]; then
+				_base_task_ids=$(printf '%s\n' "$_base_content" \
+					| grep -E '^[[:space:]]*- \[.\] t[0-9]+(\.[0-9]+)*([[:space:]]|$)' \
+					| sed 's/^[[:space:]]*- \[.\] \(t[0-9][0-9.]*\).*/\1/')
+			fi
+		fi
+		_dbg "baseline for ${_local_ref}: ${_base_sha}"
+	else
+		_dbg "no baseline resolved for ${_local_ref} — enforcing full duplicate scan"
+	fi
+
+	_increased_duplicates=""
+	while IFS= read -r _dup_id; do
+		[[ -n "$_dup_id" ]] || continue
+		_head_count=$(printf '%s\n' "$_task_ids" | grep -Fxc "$_dup_id" || true)
+		_base_count=0
+		if [[ -n "$_base_task_ids" ]]; then
+			_base_count=$(printf '%s\n' "$_base_task_ids" | grep -Fxc "$_dup_id" || true)
+		fi
+		if [[ "$_head_count" -gt "$_base_count" ]]; then
+			_increased_duplicates="${_increased_duplicates}${_increased_duplicates:+$'\n'}${_dup_id}"
+		else
+			_dbg "grandfathering unchanged duplicate ${_dup_id} (${_head_count} occurrences)"
+		fi
+	done <<<"$_duplicates"
+
+	if [[ -z "$_increased_duplicates" ]]; then
+		continue
+	fi
+	_duplicates="$_increased_duplicates"
+
 	# Found duplicates — block and report line numbers for each.
 	_exit_code=1
-	printf '\n[%s][BLOCK] Push blocked: duplicate task IDs in TODO.md\n\n' "$GUARD_NAME" >&2
+	printf '\n[%s][BLOCK] Push blocked: new or increased duplicate task IDs in TODO.md\n\n' "$GUARD_NAME" >&2
 
 	printf '%s\n' "$_duplicates" | while IFS= read -r _dup_id; do
 		[[ -z "$_dup_id" ]] && continue

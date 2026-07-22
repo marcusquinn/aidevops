@@ -11,13 +11,13 @@ Task/Prompt: $ARGUMENTS
 
 ## Lifecycle Gate (t5096 + GH#5317 — MANDATORY)
 
-`WORKTREE → LOCAL_VERIFIED → PR_OPEN → REMOTE_VERIFIED → {CONTRIBUTION_READY | MERGED → LOCAL_BASE_SYNCED | MERGED → [RELEASED → DEPLOYED]} → CLEANED`
+`WORKTREE → LOCAL_VERIFIED → PR_OPEN → REMOTE_VERIFIED → {CONTRIBUTION_READY | MERGED → LOCAL_BASE_SYNCED | MERGED → [RELEASED → DEPLOYED]} → CLEANUP_DEFERRED → CLEANED`
 
 The terminal path is authority-aware. External contributions stop at a verified ready PR; maintained non-aidevops repositories merge and safely synchronize the local canonical checkout's merged PR base branch; aidevops may continue through release/deploy only with explicit publication intent. Generic full-loop, merge, or "ship the PR" consent is not publication consent. Interactive publication requires explicit trusted release intent in the current issue-started session. Headless publication additionally requires explicit trusted brief scope and trusted `priority:high` or `priority:critical` metadata.
 
 Fatal modes: **GH#5317** (exits without PR), **GH#5096** (exits after PR). Do NOT skip any step:
 
-**Interactive continuity (MANDATORY):** A user's full-loop instruction assigns this entire lifecycle to the primary conversation that received it. Keep the critical path in that session through `FULL_LOOP_COMPLETE`; do not launch a background worker or delegate completion unless the user explicitly requests background execution. Continue autonomously from the current stage and do not stop after setup, implementation, PR creation, merge, or release merely to report progress. Pause only for a material blocker requiring user input. Progress reports must name the last verified stage and current action.
+**Interactive continuity (MANDATORY):** A user's full-loop instruction assigns the executor lifecycle to the primary conversation that received it. Keep the critical path in that session through either observed `FULL_LOOP_COMPLETE` or a durable `CLEANUP_DEFERRED` handoff; do not launch a background worker or delegate implementation, verification, review, or merge unless the user explicitly requests background execution. `CLEANUP_DEFERRED` is terminal for the interactive executor only: a guarded cleanup supervisor owns the remaining resource transition and `FULL_LOOP_COMPLETE` remains reserved for observed `CLEANED`. Continue autonomously from the current stage and do not stop after setup, implementation, PR creation, merge, or release merely to report progress. Pause only for a material blocker requiring user input. Progress reports must name the last verified stage and current action.
 
 **Dual-mode executor contract:** Interactive and headless runs share persisted lifecycle transitions and terminal evidence. Foreground is the interactive default. Explicit `start --background` stays local to the authorizing session and reports `FULL_LOOP_START_RESULT=running` only for a live executor, otherwise `FULL_LOOP_START_RESULT=initialized-only`; it is not permission for remote/headless dispatch. Headless runs never prompt and resume within their brief and budgets. Custom adapters receive `AIDEVOPS_FULL_LOOP_RUN_ID` and `AIDEVOPS_FULL_LOOP_HEARTBEAT_FILE`; `status --json` is authoritative.
 
@@ -46,7 +46,8 @@ For a maintained non-aidevops repo, resolve the synchronization branch from the 
 | 6 | Maintained non-aidevops only — audited local PR-base fast-forward | `LOCAL_BASE_SYNCED` |
 | 7 | Authorized aidevops release/postflight/deploy only | `release:published` or `release:failed` |
 | 8 | Managed closing comments or external upstream hand-off | |
-| 9 | Guarded cleanup after the owner exits | `FULL_LOOP_COMPLETE` |
+| 9 | Persist external cleanup receipt and transfer ownership | `FULL_LOOP_CLEANUP_DEFERRED` |
+| 10 | Supervisor cleanup after owner exit | `FULL_LOOP_COMPLETE` |
 
 ---
 
@@ -218,7 +219,7 @@ Check gate without merging: `full-loop-helper.sh pre-merge-gate "$PR_NUMBER" "$R
 
 **4.9 Conditional Postflight + Deploy:** only after `release:published`, verify the tag, GitHub release, required checks, and deployed agent version. Reuse `deploy-agents-on-merge.sh`; incremental is default and `--full` is explicit only. `release:not-requested` skips these stages and still completes closing/cleanup. `release:failed` keeps the lifecycle open.
 
-**4.10 Worktree Cleanup (GH#6740 — MANDATORY):** Immediate merges defer current-worktree removal until the parent runtime exits. External worktrees may be cleaned after the ready PR head is verified and pushed. Never force-remove an actively owned worktree. Confirm guarded cleanup once, then emit `<promise>FULL_LOOP_COMPLETE</promise>` with terminal authority and PR state.
+**4.10 Worktree Cleanup (GH#6740/GH#28440 — MANDATORY):** Immediate merges persist an external `CLEANUP_DEFERRED` receipt before deferring current-worktree removal until the parent runtime exits. The receipt records PR/release state, worktree, branch, PID plus process identity, session owner, and pending cleanup lease. `status --json` exposes executor completion separately from resource-cleanup state. The interactive executor may terminate after `<promise>FULL_LOOP_CLEANUP_DEFERRED</promise>`; this is an auditable ownership transfer, not a claim that the worktree is gone. Pulse or another guarded supervisor may acquire the lease only after owner identity is no longer live, remove the worktree, preserve removal-audit evidence, and idempotently transition the receipt to `CLEANED`. Never force-remove an actively owned worktree. Emit `<promise>FULL_LOOP_COMPLETE</promise>` only after absent-worktree, removal-audit, merged-PR, release, and durable `CLEANED` evidence are all observed.
 
 ---
 

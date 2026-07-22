@@ -68,13 +68,14 @@ SCRIPTS_DIR="$(cd "${TEST_SCRIPT_DIR}/.." && pwd)" || exit 1
 LIB="${SCRIPTS_DIR}/issue-sync-lib.sh"
 CLAIM="${SCRIPTS_DIR}/claim-task-id.sh"
 HELPER="${SCRIPTS_DIR}/issue-sync-helper.sh"
+READINESS_HELPER="${SCRIPTS_DIR}/brief-readiness-helper.sh"
 
 # Sourced libraries use SCRIPT_DIR to resolve sibling scripts. Keep that value
 # pointed at .agents/scripts rather than this tests/ directory.
 SCRIPT_DIR="$SCRIPTS_DIR"
 export SCRIPT_DIR
 
-for f in "$LIB" "$CLAIM" "$HELPER"; do
+for f in "$LIB" "$CLAIM" "$HELPER" "$READINESS_HELPER"; do
 	if [[ ! -f "$f" ]]; then
 		printf 'test harness cannot find %s\n' "$f" >&2
 		exit 1
@@ -277,12 +278,34 @@ else
 	fail "A5 incomplete schema-v2 promotion gate" "expected unchanged body"
 fi
 
-# Test A6: no brief file → returns input unchanged
+# Test A6: composed related-file HTML remains schema-v2 worker-ready
+composed_body=$(
+	(
+		find_related_files() {
+			printf '%s\n' "$TMP/related-plan.md"
+			return 0
+		}
+		extract_file_summary() {
+			printf '%s\n' "Related architecture context remains available to the worker."
+			return 0
+		}
+		_compose_issue_related_files "$(<"$TMP/brief-schema-v2.md")" "t9005" "$TMP"
+	)
+)
+readiness_output=$("$READINESS_HELPER" check --body "$composed_body" 2>/dev/null)
+readiness_rc=$?
+if [[ $readiness_rc -eq 0 && "$composed_body" == *"<details><summary><code>related-plan.md</code></summary>"* && "$readiness_output" == *"WORKER_READY=true"* && "$readiness_output" == *"VALIDATION_ERRORS=none"* ]]; then
+	pass "A6 composed related-file HTML round trip remains worker-ready"
+else
+	fail "A6 composed schema-v2 readiness round trip" "exit=$readiness_rc output=$readiness_output"
+fi
+
+# Test A7: no brief file → returns input unchanged
 result=$(_compose_issue_worker_guidance "base body" "$TMP/nonexistent.md")
 if [[ "$result" == "base body" ]]; then
-	pass "A6 no brief file returns input body unchanged"
+	pass "A7 no brief file returns input body unchanged"
 else
-	fail "A6 no brief file" "expected 'base body', got '$result'"
+	fail "A7 no brief file" "expected 'base body', got '$result'"
 fi
 
 # =============================================================================

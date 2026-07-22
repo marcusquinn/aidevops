@@ -44,10 +44,12 @@ _HRW_REASON_UNVERIFIED_HANDOFF="worker_post_pr_handoff_unverified"
 _HRW_REASON_WORKTREE_CONTINUATION_STATE_REJECTED="worker_worktree_continuation_state_rejected"
 _HRW_REASON_WORKTREE_OWNER_CONCURRENT_MUTATION="worker_worktree_owner_concurrent_mutation"
 _HRW_EVENT_FAILED="worker.failed"
+_HRW_EVENT_DEFERRED="worker.deferred"
 _HRW_NMR_LABEL="needs-maintainer-review"
 _HRW_PERMISSION_PERSISTENCE_FAILED="permission_request_persistence_failed"
 _HRW_SPOTLIGHT_MARKER=".metadata_never_index"
 _HRW_RECOVERY_CLASSIFICATION=""
+_HRW_CLAIM_RELEASE_PERSISTENCE_FAILED=0
 
 # Defensive SCRIPT_DIR fallback (test harnesses may not set it)
 if [[ -z "${SCRIPT_DIR:-}" ]]; then
@@ -59,6 +61,26 @@ fi
 
 # shellcheck source=shared-runner-identity.sh
 source "${SCRIPT_DIR}/shared-runner-identity.sh"
+
+#######################################
+# Release a claim without allowing a GitHub comment persistence failure to
+# bypass later terminal-lease emission and local cleanup. The underlying
+# helper still returns non-zero to direct callers so the write is observable
+# and retryable; worker lifecycle callers record the failure and continue.
+#######################################
+_hrw_release_dispatch_claim() {
+	local session_key="$1"
+	local reason="${2:-worker_failed}"
+	local exit_code_arg="${3:-}"
+	local session_count_arg="${4:-}"
+
+	if _release_dispatch_claim "$session_key" "$reason" "$exit_code_arg" "$session_count_arg"; then
+		return 0
+	fi
+	_HRW_CLAIM_RELEASE_PERSISTENCE_FAILED=1
+	print_warning "[lifecycle] claim_release_persistence_failed session=${session_key} reason=${reason}; terminal lease/event cleanup remains active"
+	return 0
+}
 
 # =============================================================================
 # Runtime invocation support — auth rotation & rate-limit monitoring
@@ -659,7 +681,7 @@ _escalate_worker_pr_checkpoint() {
 		return 0
 	fi
 
-	_release_dispatch_claim "$session_key" "$release_reason"
+	_hrw_release_dispatch_claim "$session_key" "$release_reason"
 	_HRW_RECOVERY_CLASSIFICATION="$release_reason"
 	print_warning "[lifecycle] worker_pr_checkpoint_escalated session=${session_key} state=${lifecycle_state} — maintainer review required"
 	return 0
@@ -765,11 +787,11 @@ _handle_worker_branch_orphan() {
 
 	if _attempt_orphan_recovery_pr "$session_key" "$work_dir" "$branch_name" "$repo_slug"; then
 		print_info "[lifecycle] Orphan PR auto-created for session=${session_key}"
-		_release_dispatch_claim "$session_key" "$_HRW_REASON_WORKER_COMPLETE"
+		_hrw_release_dispatch_claim "$session_key" "$_HRW_REASON_WORKER_COMPLETE"
 		_HRW_TERMINAL_OUTCOME="$_HRW_TELEMETRY_SUCCESS"
 	else
 		print_info "[lifecycle] Orphan recovery failed for session=${session_key}"
-		_release_dispatch_claim "$session_key" "worker_branch_orphan"
+		_hrw_release_dispatch_claim "$session_key" "worker_branch_orphan"
 		_HRW_TERMINAL_OUTCOME="$_HRW_TELEMETRY_FAILED"
 		# Post structured ops comment so the next dispatch knows what happened
 		if [[ -n "$issue_number" && -n "$repo_slug" && -n "$branch_name" ]]; then
@@ -837,11 +859,11 @@ _handle_worker_local_branch_unpushed() {
 	if _attempt_orphan_recovery_pr "$session_key" "$work_dir" "$branch_name" "$repo_slug"; then
 		print_info "[lifecycle] Local branch pushed and recovery PR auto-created for session=${session_key}"
 		local complete_reason="worker_"
-		_release_dispatch_claim "$session_key" "${complete_reason}complete"
+		_hrw_release_dispatch_claim "$session_key" "${complete_reason}complete"
 		_HRW_TERMINAL_OUTCOME="$_HRW_TELEMETRY_SUCCESS"
 	else
 		print_info "[lifecycle] Local branch recovery failed for session=${session_key}"
-		_release_dispatch_claim "$session_key" "worker_local_branch_unpushed"
+		_hrw_release_dispatch_claim "$session_key" "worker_local_branch_unpushed"
 		_HRW_TERMINAL_OUTCOME="$_HRW_TELEMETRY_FAILED"
 		if [[ -n "$issue_number" && -n "$repo_slug" && -n "$branch_name" ]]; then
 			local _ops_comment
@@ -880,7 +902,9 @@ _handle_worker_dirty_worktree() {
 	local work_dir="$2"
 	local repo_slug="${DISPATCH_REPO_SLUG:-}"
 	local issue_number=""
-	issue_number=$(printf '%s' "$session_key" | grep -oE '[0-9]+$' || true)
+	if declare -F _scl_worker_issue_number >/dev/null 2>&1; then
+		issue_number=$(_scl_worker_issue_number "$session_key")
+	fi
 
 	local branch_name=""
 	branch_name=$(git -C "$work_dir" rev-parse --abbrev-ref HEAD 2>/dev/null || true)
@@ -934,13 +958,17 @@ _handle_worker_dirty_worktree() {
 				--changed-paths "$status_summary" \
 				--recoverability "checkpointed" 2>/dev/null || true
 		fi
-		_release_dispatch_claim "$session_key" "$_HRW_REASON_WORKER_COMPLETE"
-		_HRW_TERMINAL_OUTCOME="$_HRW_TELEMETRY_SUCCESS"
+		_hrw_release_dispatch_claim "$session_key" "$_HRW_REASON_DRAFT_CHECKPOINT"
+		_HRW_RECOVERY_CLASSIFICATION="$_HRW_REASON_DRAFT_CHECKPOINT"
+		_HRW_TERMINAL_OUTCOME="$_HRW_TELEMETRY_DEFERRED"
+		_HRW_FINAL_RUNTIME_EVENT="$_HRW_EVENT_DEFERRED"
+		_HRW_FINAL_RUNTIME_STATUS="checkpointed"
+		_HRW_FINAL_RUNTIME_CLASSIFICATION="$_HRW_REASON_DRAFT_CHECKPOINT"
 		print_info "[lifecycle] worker_dirty_worktree_checkpointed session=${session_key} branch=${branch_name:-<none>}"
 		return 0
 	fi
 
-	_release_dispatch_claim "$session_key" "worker_dirty_worktree"
+	_hrw_release_dispatch_claim "$session_key" "worker_dirty_worktree"
 	_HRW_TERMINAL_OUTCOME="$_HRW_TELEMETRY_FAILED"
 
 	if [[ -n "$issue_number" && -n "$repo_slug" ]]; then
@@ -1006,7 +1034,7 @@ _recover_worker_output_on_failure() {
 		local pr_state="${pr_handoff%%|*}"
 		if [[ "$pr_state" == "ready" || "$pr_state" == "merged" ]]; then
 			print_info "[lifecycle] worker_failure_recovered_existing_pr session=${session_key} branch=${branch_name}"
-			_release_dispatch_claim "$session_key" "$_HRW_REASON_WORKER_COMPLETE"
+			_hrw_release_dispatch_claim "$session_key" "$_HRW_REASON_WORKER_COMPLETE"
 			_HRW_RECOVERY_CLASSIFICATION="$_HRW_REASON_WORKER_COMPLETE"
 			return 0
 		fi
@@ -1269,6 +1297,19 @@ _hrw_transfer_authorized_continuation_owner() {
 	return 0
 }
 
+_hrw_export_worker_worktree_owner_proof() {
+	local session_key="$1"
+	local work_dir="$2"
+	local resolved_work_dir=""
+	resolved_work_dir=$(cd "$work_dir" 2>/dev/null && pwd -P) || return 1
+
+	export AIDEVOPS_WORKTREE_OWNER_PID="$$"
+	export AIDEVOPS_WORKTREE_OWNER_SESSION="$session_key"
+	export AIDEVOPS_WORKTREE_OWNER_TASK="${WORKER_ISSUE_NUMBER:-}"
+	export AIDEVOPS_WORKTREE_OWNER_PATH="$resolved_work_dir"
+	return 0
+}
+
 _hrw_reclaim_stale_worker_worktree_owner() {
 	local session_key="$1"
 	local work_dir="$2"
@@ -1374,6 +1415,7 @@ _hrw_claim_worker_worktree() {
 			return 1
 		fi
 		if _hrw_transfer_authorized_continuation_owner "$session_key" "$work_dir" "$branch"; then
+			_hrw_export_worker_worktree_owner_proof "$session_key" "$work_dir" || return 1
 			print_info "[lifecycle] worker_worktree_claimed session=${session_key} branch=${branch} path=${work_dir} pid=$$ mode=continuation"
 			return 0
 		fi
@@ -1396,6 +1438,7 @@ _hrw_claim_worker_worktree() {
 				--session "$session_key" \
 				--task "${WORKER_ISSUE_NUMBER:-}" \
 				--owner-pid "$$"; then
+			_hrw_export_worker_worktree_owner_proof "$session_key" "$work_dir" || return 1
 			print_info "[lifecycle] worker_worktree_claimed session=${session_key} branch=${branch} path=${work_dir} pid=$$"
 			return 0
 		fi
@@ -1403,6 +1446,7 @@ _hrw_claim_worker_worktree() {
 		return 1
 	fi
 
+	_hrw_export_worker_worktree_owner_proof "$session_key" "$work_dir" || return 1
 	print_info "[lifecycle] worker_worktree_claimed session=${session_key} branch=${branch} path=${work_dir} pid=$$"
 	return 0
 }
@@ -1458,12 +1502,12 @@ _hrw_finish_failed_run() {
 
 	if [[ "$external_terminal_confirmed" -eq 1 ]] || \
 		_worker_external_terminal_complete "$session_key" "$work_dir"; then
-		_release_dispatch_claim "$session_key" "$_HRW_REASON_WORKER_COMPLETE"
+		_hrw_release_dispatch_claim "$session_key" "$_HRW_REASON_WORKER_COMPLETE"
 		failure_recovered=1
 	elif _recover_worker_output_on_failure "$session_key" "$work_dir"; then
 		failure_recovered=1
 	else
-		_release_dispatch_claim "$session_key" "worker_failed"
+		_hrw_release_dispatch_claim "$session_key" "worker_failed"
 	fi
 	if [[ "$failure_recovered" -eq 1 && "${_HRW_RECOVERY_CLASSIFICATION:-$_HRW_REASON_WORKER_COMPLETE}" == "$_HRW_REASON_WORKER_COMPLETE" ]]; then
 		_HRW_TERMINAL_OUTCOME="$_HRW_TELEMETRY_SUCCESS"
@@ -1516,7 +1560,7 @@ _hrw_finish_rate_limit_fast_run() {
 	# (Anthropic 429/overload), not a model capability failure. NMR backoff would
 	# incorrectly penalise the issue for an infrastructure blip. Metric already
 	# recorded by _execute_run_attempt with result=rate_limit_fast.
-	_release_dispatch_claim "$session_key" "rate_limit_transient"
+	_hrw_release_dispatch_claim "$session_key" "rate_limit_transient"
 	return 0
 }
 
@@ -1557,8 +1601,8 @@ _hrw_finish_permission_required_run() {
 		_hrw_mark_failed_terminal_state "$_HRW_STATUS_FAILED" "$_HRW_PERMISSION_PERSISTENCE_FAILED"
 		return 1
 	fi
-	_release_dispatch_claim "$session_key" "$permission_status"
-	_HRW_FINAL_RUNTIME_EVENT="worker.deferred"
+	_hrw_release_dispatch_claim "$session_key" "$permission_status"
+	_HRW_FINAL_RUNTIME_EVENT="$_HRW_EVENT_DEFERRED"
 	_HRW_FINAL_RUNTIME_STATUS="$permission_status"
 	_HRW_FINAL_RUNTIME_CLASSIFICATION="awaiting_maintainer_permission"
 	_HRW_TERMINAL_OUTCOME="$_HRW_TELEMETRY_DEFERRED"
@@ -1648,7 +1692,7 @@ _hrw_finish_success_run() {
 		(! declare -F _worker_post_pr_handoff_confirmed >/dev/null 2>&1 ||
 			! _worker_post_pr_handoff_confirmed "$session_key" "$work_dir"); then
 		print_warning "[lifecycle] ${_HRW_REASON_UNVERIFIED_HANDOFF} session=${session_key} — exact-head non-draft PR handoff could not be verified; routing as failure"
-		_release_dispatch_claim "$session_key" "$_HRW_REASON_UNVERIFIED_HANDOFF"
+		_hrw_release_dispatch_claim "$session_key" "$_HRW_REASON_UNVERIFIED_HANDOFF"
 		_report_failure_to_fast_fail "$session_key" "$_HRW_REASON_UNVERIFIED_HANDOFF" "$_HRW_CRASH_OVERWHELMED"
 		release_needed=0
 		finish_status=1
@@ -1674,7 +1718,7 @@ _hrw_finish_success_run() {
 		case "$output_class" in
 		noop)
 			print_info "[lifecycle] worker_noop session=$session_key — zero commits, no pushed branch, no PR"
-			_release_dispatch_claim "$session_key" "worker_noop"
+			_hrw_release_dispatch_claim "$session_key" "worker_noop"
 			_report_failure_to_fast_fail "$session_key" "worker_noop_zero_output" "$_HRW_CRASH_NO_WORK"
 			release_needed=0
 			_hrw_mark_failed_terminal_state "$_HRW_STATUS_FAILED" "$_HRW_CRASH_NO_WORK"
@@ -1702,7 +1746,7 @@ _hrw_finish_success_run() {
 			;;
 		closed_unmerged)
 			print_warning "[lifecycle] ${_HRW_REASON_CLOSED_UNMERGED} session=${session_key} — closed PR is not completion evidence"
-			_release_dispatch_claim "$session_key" "$_HRW_REASON_CLOSED_UNMERGED"
+			_hrw_release_dispatch_claim "$session_key" "$_HRW_REASON_CLOSED_UNMERGED"
 			_report_failure_to_fast_fail "$session_key" "$_HRW_REASON_CLOSED_UNMERGED" "$_HRW_CRASH_OVERWHELMED"
 			release_needed=0
 			_hrw_mark_failed_terminal_state "$_HRW_STATUS_FAILED" "$_HRW_REASON_CLOSED_UNMERGED"
@@ -1720,7 +1764,7 @@ _hrw_finish_success_run() {
 		# pr_exists or fail-open: normal success path. Post CLAIM_RELEASED with
 		# reason=worker_complete so the audit trail shows the full lifecycle even
 		# when no PR was created.
-		_release_dispatch_claim "$session_key" "$_HRW_REASON_WORKER_COMPLETE"
+		_hrw_release_dispatch_claim "$session_key" "$_HRW_REASON_WORKER_COMPLETE"
 		_HRW_TERMINAL_OUTCOME="$_HRW_TELEMETRY_SUCCESS"
 	fi
 	if [[ "$_HRW_TERMINAL_OUTCOME" == "$_HRW_TELEMETRY_SUCCESS" ]]; then
@@ -1742,9 +1786,7 @@ _hrw_finish_cleanup() {
 	if declare -F _cleanup_headless_runtime_temp_paths >/dev/null 2>&1; then
 		_cleanup_headless_runtime_temp_paths
 	fi
-	if declare -F aidevops_runtime_bundle_lease_release >/dev/null 2>&1; then
-		aidevops_runtime_bundle_lease_release || print_warning "Failed to release the worker runtime bundle lease"
-	fi
+	aidevops_runtime_bundle_lease_release || print_warning "Failed to release the worker runtime bundle lease"
 	trap - EXIT
 	return 0
 }
@@ -1791,7 +1833,7 @@ _cmd_run_finish() {
 		_hrw_finish_failed_run "$session_key" "$work_dir" "$external_terminal_confirmed"
 	elif [[ "$ledger_status" == "rate_limit_fast" ]]; then
 		_hrw_finish_rate_limit_fast_run "$session_key"
-		_HRW_FINAL_RUNTIME_EVENT="worker.deferred"
+		_HRW_FINAL_RUNTIME_EVENT="$_HRW_EVENT_DEFERRED"
 		_HRW_FINAL_RUNTIME_STATUS="rate_limit_fast"
 		_HRW_FINAL_RUNTIME_CLASSIFICATION="rate_limit"
 		_HRW_TERMINAL_OUTCOME="$_HRW_TELEMETRY_DEFERRED"
@@ -1941,7 +1983,7 @@ _cmd_run_prepare() {
 	# instead of emitting a fixed 'process_exit' reason for all abnormal exits.
 	# SC2064: session_key is intentionally baked in at trap-set time.
 	# shellcheck disable=SC2064
-	trap "_exit_trap_handler '$session_key'; if declare -F aidevops_runtime_bundle_lease_release >/dev/null 2>&1; then aidevops_runtime_bundle_lease_release; fi" EXIT
+	trap "_exit_trap_handler '$session_key'; aidevops_runtime_bundle_lease_release" EXIT
 
 	# GH#20564: Record worker start time in milliseconds for exit trap classifier.
 	# classify_worker_exit uses this to distinguish crash_during_startup (no

@@ -182,10 +182,17 @@ _pmrc_snapshot_bot_activity_json() {
 		_pmrc_snapshot_log_failure "$repo_slug" "${PMRC_SUBJECT_PR_PREFIX}${pr_number}" "inline-comments fetch"
 		return 1
 	}
-	activity=$(jq -n --argjson reviews "$reviews" --argjson issues "$issue_comments" \
-		--argjson inline "$inline_comments" --arg bots "$bot_re" '
+	# Stream all three paginated API documents over stdin. Review histories can
+	# exceed Linux MAX_ARG_STRLEN, so none of these payloads may enter jq argv.
+	activity=$(printf '%s\n%s\n%s\n' "$reviews" "$issue_comments" "$inline_comments" | jq -s \
+		--arg bots "$bot_re" --arg array_type "$PMRC_JSON_ARRAY" '
+		if length != 3
+			or any(.[]; type != $array_type)
+			or any(.[][]; type != $array_type)
+		then error("invalid paginated bot-activity response")
+		else . end |
 		[
-			$reviews[][]?, $issues[][]?, $inline[][]?
+			.[0][][]?, .[1][][]?, .[2][][]?
 			| select((.user.login // "") | test($bots; "i"))
 			| (.updated_at // .submitted_at // .created_at // "")
 			| select(. != "")
@@ -622,6 +629,9 @@ _pulse_merge_preflight_snapshot_gate() {
 		_PULSE_MERGE_PREFLIGHT_BLOCKER_KIND="$PMRC_BLOCKER_SNAPSHOT_UNAVAILABLE"
 		return 1
 	}
+	if declare -F _pmp_record_same_pass_check_evidence >/dev/null 2>&1; then
+		_pmp_record_same_pass_check_evidence "$repo_slug" "$current_head_sha" "$checks_json" || true
+	fi
 	activity_json=$(_pmrc_snapshot_bot_activity_json "$repo_slug" "$pr_number") || {
 		_PULSE_MERGE_PREFLIGHT_BLOCKER_KIND="$PMRC_BLOCKER_SNAPSHOT_UNAVAILABLE"
 		return 1

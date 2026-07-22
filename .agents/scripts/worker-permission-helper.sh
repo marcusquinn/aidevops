@@ -182,8 +182,9 @@ permission_render_capabilities() {
 		+ (if (.patterns | length) == 0 then "(no pattern supplied)" else (.patterns | map(tojson | safe) | join(", ")) end)
 		+ "\n  - Reason: " + (if .intent == "" then "No additional model rationale was available." else (.intent | safe) end)
 		+ "\n  - Risk: **" + .risk.level + "** — " + (.risk.reason | safe)
-		+ (if .risk.grantable then "" else "\n  - **Not grantable:** sensitive scope requires an alternative approach." end)'
-	return 0
+		+ (if .risk.grantable then "" else "\n  - **Not grantable:** sensitive scope requires an alternative approach." end)' \
+		"$envelope_file"
+	return $?
 }
 
 permission_post_request() {
@@ -192,7 +193,7 @@ permission_post_request() {
 	local repo_slug="$3"
 	local session_key="$4"
 	local work_dir="$5"
-	local envelope_file comment_file request_id capability_text changed_text branch resume_json
+	local envelope_file comment_file request_id capability_text changed_text branch resume_json target worker_session
 	envelope_file=$(mktemp)
 	comment_file=$(mktemp)
 	resume_json=$(permission_issue_resume_json "$issue_number" "$repo_slug")
@@ -203,9 +204,18 @@ permission_post_request() {
 		printf '%s\n' "$request_id"
 		return 0
 	fi
-	capability_text=$(permission_render_capabilities "$envelope_file")
+	if ! capability_text=$(permission_render_capabilities "$envelope_file"); then
+		rm -f "$envelope_file" "$comment_file"
+		return 1
+	fi
+	if [[ -z "$capability_text" ]]; then
+		rm -f "$envelope_file" "$comment_file"
+		return 1
+	fi
 	changed_text=$(jq -r 'if (.context.changed_files | length) == 0 then "- No uncommitted repository files detected." else (.context.changed_files[] | "- " + tojson) end' "$envelope_file")
 	branch=$(jq -r '(.worker.branch // "") | tojson' "$envelope_file")
+	target=$(jq -r '.target.repository + "#" + (.target.number | tostring)' "$envelope_file")
+	worker_session=$(jq -r '.worker.session // "not available"' "$envelope_file")
 	cat >"$comment_file" <<EOF
 ${PERMISSION_REQUEST_MARKER}
 ## Maintainer permission required
@@ -213,6 +223,10 @@ ${PERMISSION_REQUEST_MARKER}
 Background work paused instead of waiting indefinitely for an unavailable interactive permission response.
 
 **Request:** ${request_id}
+
+**Target:** \`${target}\`
+
+**Worker session:** \`${worker_session}\`
 
 **Worker stage:** tool execution
 

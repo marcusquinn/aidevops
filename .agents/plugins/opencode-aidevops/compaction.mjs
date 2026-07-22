@@ -366,7 +366,7 @@ export async function compactingHook(deps, _input, output, directory) {
         "## Operational State",
         "Include the following state in your compaction summary so the next session can continue seamlessly:",
         "",
-        ...sections,
+        sections.join("\n\n"),
         "",
       ] : []),
       "## Critical Rules to Preserve",

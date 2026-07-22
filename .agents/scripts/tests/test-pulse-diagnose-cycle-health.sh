@@ -10,6 +10,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 HELPER="${SCRIPT_DIR}/../pulse-diagnose-helper.sh"
+CYCLE_HEALTH_LIB="${SCRIPT_DIR}/../pulse-diagnose-cycle-health.sh"
 PASS=0
 FAIL=0
 TOTAL=0
@@ -290,6 +291,32 @@ printf '\nTest 13: unknown option returns non-zero exit\n'
 rc=0
 "$HELPER" cycle-health --invalid-flag 2>/dev/null || rc=$?
 assert_exit_code "unknown option exits non-zero" 1 "$rc"
+
+# --- Test 14: cutoff helper defaults a missing window safely ---
+printf '\nTest 14: cutoff helper defaults a missing window\n'
+rc=0
+output=$(
+	unset SCRIPT_DIR
+	# shellcheck source=../pulse-diagnose-cycle-health.sh
+	source "$CYCLE_HEALTH_LIB"
+	_ch_cutoff_ts
+) || rc=$?
+assert_exit_code "missing cutoff window exits 0" 0 "$rc"
+assert_contains "missing cutoff window defaults to one hour" "2026-06-24T00:00:00Z" "$output"
+
+# --- Test 15: wrapper churn accepts a leading-dash filename ---
+printf '\nTest 15: wrapper churn accepts a leading-dash filename\n'
+cp "$FIXTURE_WRAPPER" "${TMPDIR_TEST}/-wrapper.log"
+rc=0
+output=$(
+	cd "$TMPDIR_TEST"
+	unset SCRIPT_DIR
+	# shellcheck source=../pulse-diagnose-cycle-health.sh
+	source "$CYCLE_HEALTH_LIB"
+	_ch_wrapper_churn "-wrapper.log"
+) || rc=$?
+assert_exit_code "leading-dash wrapper filename exits 0" 0 "$rc"
+assert_contains "leading-dash wrapper filename is counted" "acquired=4" "$output"
 
 # =============================================================================
 # Summary

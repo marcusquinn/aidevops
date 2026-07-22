@@ -88,10 +88,25 @@ else
 fi
 
 blocked_task='- [ ] t9003 blocked implementation pr:#78 tier:standard blocked-by:t9002'
-if _has_evidence "$blocked_task" "t9003" "owner/repo"; then
-	fail "blocked-by marker vetoes otherwise explicit PR evidence"
+_der_completion_blockers_closed() {
+	local repo="$1"
+	local issue_number="$2"
+	local dependency_text="$3"
+	: "$repo" "$issue_number"
+	[[ "$dependency_text" == *"blocked-by:t9002"* ]]
+	return $?
+}
+if _has_evidence "$blocked_task" "t9003" "owner/repo" "9003"; then
+	pass "resolved blocked-by provenance permits explicit PR evidence"
 else
-	pass "blocked-by marker vetoes otherwise explicit PR evidence"
+	fail "resolved blocked-by provenance should not veto explicit PR evidence"
+fi
+
+open_blocked_task='- [ ] t9011 blocked implementation pr:#83 tier:standard blocked-by:t9999'
+if _has_evidence "$open_blocked_task" "t9011" "owner/repo" "9011"; then
+	fail "unresolved blocked-by marker must veto explicit PR evidence"
+else
+	pass "unresolved blocked-by marker still vetoes explicit PR evidence"
 fi
 
 historical_note_task='- [ ] t9004 fixed implementation pr:#79 tier:standard
@@ -137,9 +152,9 @@ fi
 
 precomputed_blocked_task_line='- [ ] t9009 fixed implementation pr:#82 tier:standard blocked-by:t9008'
 if _has_unresolved_blocker "- [ ] t9009 fixed implementation pr:#82 tier:standard" "t9009" "$precomputed_blocked_task_line"; then
-	pass "precomputed blocked task line still vetoes completion"
+	pass "precomputed blocked task line without resolution context fails closed"
 else
-	fail "precomputed blocked task line should veto completion"
+	fail "precomputed blocked task line without resolution context should fail closed"
 fi
 
 if completed_date=$(_closed_issue_aidevops_complete_date "owner/repo" "123"); then

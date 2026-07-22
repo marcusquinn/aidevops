@@ -1266,6 +1266,7 @@ _process_single_ready_pr() {
 		printf '%s' "$pr_obj" | jq -r --arg unknown "$PULSE_UNKNOWN_STATE" \
 			'"\(.number // "")\u001e\(.state // "")\u001e\(.mergeable // $unknown)\u001e\(if ((has("reviewDecision") | not) or .reviewDecision == null or (.reviewDecision | tostring | length) == 0) then $unknown else .reviewDecision end)\u001e\(.author.login // "unknown")\u001e\(.title // "")\u001e\(.updatedAt // "")\u001e\(.headRefOid // "")\u001e\(.headRefName // "")\u001e\(.baseRefName // "")\u001e\([(.labels // [])[].name] | join(","))\u001e\(.isDraft // false | tostring)"'
 	)
+	_pmp_normalize_pr_lifecycle_state_into pr_state "$pr_state"
 	_pmp_normalize_mergeable_state_into pr_mergeable "$pr_mergeable"
 	_pmp_normalize_review_decision_into pr_review "$pr_review"
 	[[ -n "$timing_prefix" ]] && _mergeability_start=$(_pmp_now_epoch)
@@ -1758,6 +1759,7 @@ process_pr() {
 	# Verify state is OPEN — closed/merged PRs should not be re-processed.
 	local pr_state
 	pr_state=$(printf '%s' "$pr_obj" | jq -r '.state // ""' 2>/dev/null) || pr_state=""
+	_pmp_normalize_pr_lifecycle_state_into pr_state "$pr_state"
 	if [[ "$pr_state" != "OPEN" ]]; then
 		echo "[pulse-merge] process_pr: PR ${repo_slug}#${pr_number} is not OPEN (state=${pr_state}) — skipping" >>"$LOGFILE"
 		return 1

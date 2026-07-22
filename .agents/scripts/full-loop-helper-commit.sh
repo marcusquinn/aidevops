@@ -535,6 +535,21 @@ _finalize_wip_history() {
 #   _run_node_auto_fix            — format/lint auto-fix + amend
 #   _run_node_typecheck           — typecheck check-only
 
+# Print every file changed between the remote default branch and HEAD.
+# The merge-base range keeps classification aligned with the complete PR diff
+# even when lifecycle synchronization adds a docs-only commit at HEAD.
+_validator_changed_files() {
+	local base_branch=""
+	local base_ref=""
+	base_branch=$(_resolve_remote_default_branch origin) || return 1
+	printf -v base_ref 'origin/%s' "$base_branch"
+	if ! git diff --name-only "${base_ref}...HEAD" 2>/dev/null; then
+		print_error "[validators] cannot inspect changed files relative to ${base_ref}"
+		return 1
+	fi
+	return 0
+}
+
 # Returns 0 if validators should run, 1 if any bypass condition applies.
 # Prints the bypass reason on info as appropriate.
 # Args: $1=skip_hooks (0|1)
@@ -547,8 +562,13 @@ _validators_should_run() {
 		print_info "[validators] AIDEVOPS_SKIP_PROJECT_VALIDATORS=1, skipping"
 		return 1
 	fi
+	local changed_files=""
+	if ! changed_files=$(_validator_changed_files); then
+		print_warning "[validators] changed-file classification failed; running validators fail-closed"
+		return 0
+	fi
 	local non_docs_count
-	non_docs_count=$(git show --name-only --format='' HEAD 2>/dev/null |
+	non_docs_count=$(printf '%s\n' "$changed_files" |
 		grep -cvE '\.(md|txt|rst)$|^LICENSE|^COPYING|^\.gitignore$|^$' || true)
 	# safe_grep_count guard (t2763): zero-match path may emit "0\n0"
 	[[ "$non_docs_count" =~ ^[0-9]+$ ]] || non_docs_count=0
@@ -559,10 +579,15 @@ _validators_should_run() {
 	return 0
 }
 
-# Returns 0 when HEAD changes files that should be covered by Node validators.
+# Returns 0 when the PR range changes files covered by Node validators.
 # This keeps shell-only commits from failing on missing local Node dependencies
 # while preserving fail-closed typecheck behaviour for JS/TS/package changes.
 _commit_touches_node_files() {
+	local changed_files=""
+	if ! changed_files=$(_validator_changed_files); then
+		print_warning "[validators] Node changed-file classification failed; running Node validators fail-closed"
+		return 0
+	fi
 	local changed_file
 	while IFS= read -r changed_file; do
 		case "$changed_file" in
@@ -580,7 +605,7 @@ _commit_touches_node_files() {
 			esac
 			;;
 		esac
-	done < <(git show --name-only --format='' HEAD 2>/dev/null)
+	done <<<"$changed_files"
 	return 1
 }
 

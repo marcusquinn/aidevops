@@ -1501,7 +1501,7 @@ _rollback_prelaunch_ownership() {
 	fi
 
 	local issue_meta_json=""
-	issue_meta_json=$(gh issue view "$issue_number" --repo "$repo_slug" \
+	issue_meta_json=$(gh_issue_view "$issue_number" --repo "$repo_slug" \
 		--json state,labels,assignees,locked 2>/dev/null) || return 1
 	local owns_queued=""
 	owns_queued=$(printf '%s' "$issue_meta_json" | jq -r --arg self "$self_login" '
@@ -1520,7 +1520,7 @@ _rollback_prelaunch_ownership() {
 		unlock_issue_after_worker "$issue_number" "$repo_slug" || return 1
 	fi
 
-	issue_meta_json=$(gh issue view "$issue_number" --repo "$repo_slug" \
+	issue_meta_json=$(gh_issue_view "$issue_number" --repo "$repo_slug" \
 		--json state,labels,assignees,locked 2>/dev/null) || return 1
 	if ! printf '%s' "$issue_meta_json" | jq -e --arg self "$self_login" '
 		.state == "OPEN" and

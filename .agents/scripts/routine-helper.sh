@@ -17,7 +17,7 @@ readonly DEFAULT_TITLE="Scheduled routine"
 
 print_usage() {
 	cat <<'EOF'
-routine-helper.sh - Plan and install scheduled opencode routines
+routine-helper.sh - Plan and install scheduled headless routines
 
 Usage:
   routine-helper.sh plan --name NAME --schedule "CRON" --dir PATH --prompt "..." [options]
@@ -36,7 +36,7 @@ Subcommands:
 Options:
   --name NAME       Routine name (used in labels/markers)
   --schedule CRON   Cron schedule expression (five fields)
-  --dir PATH        Repository working directory for opencode run
+  --dir PATH        Repository working directory for the headless run
   --prompt TEXT     Command/prompt to execute (non-code ops should NOT use /full-loop)
   --agent NAME      Agent name (default: Build+)
   --title TEXT      Session title (default: Scheduled routine)
@@ -130,15 +130,35 @@ shell_quote() {
 	return 0
 }
 
-build_opencode_command() {
-	local dir="$1"
+routine_prompt_file_path() {
+	local routine_name="$1"
+	printf '%s/.aidevops/.agent-workspace/cron/scheduler-prompts/%s.prompt\n' "$HOME" "$routine_name"
+	return 0
+}
+
+write_routine_prompt_file() {
+	local routine_name="$1"
 	local prompt="$2"
-	local agent="$3"
-	local title="$4"
-	local model="$5"
+	local prompt_file=""
+	prompt_file=$(routine_prompt_file_path "$routine_name")
+	mkdir -p "${prompt_file%/*}"
+	chmod 700 "${prompt_file%/*}"
+	printf '%s\n' "$prompt" >"$prompt_file"
+	chmod 600 "$prompt_file"
+	return 0
+}
+
+build_headless_command() {
+	local routine_name="$1"
+	local dir="$2"
+	local prompt_file="$3"
+	local agent="$4"
+	local title="$5"
+	local model="$6"
+	local helper_path="${HOME}/.aidevops/agents/scripts/headless-runtime-helper.sh"
 
 	local cmd
-	cmd="opencode run --dir $(shell_quote "$dir")"
+	cmd="$(shell_quote "$helper_path") run --role worker --session-key $(shell_quote "routine-${routine_name}") --dir $(shell_quote "$dir")"
 	if [[ -n "$agent" ]]; then
 		cmd+=" --agent $(shell_quote "$agent")"
 	fi
@@ -148,7 +168,7 @@ build_opencode_command() {
 	if [[ -n "$model" ]]; then
 		cmd+=" --model $(shell_quote "$model")"
 	fi
-	cmd+=" $(shell_quote "$prompt")"
+	cmd+=" --prompt-file $(shell_quote "$prompt_file")"
 
 	printf '%s\n' "$cmd"
 	return 0
@@ -285,7 +305,7 @@ cmd_plan() {
 	}
 
 	local command
-	command=$(build_opencode_command "$ROUTINE_DIR" "$ROUTINE_PROMPT" "$ROUTINE_AGENT" "$ROUTINE_TITLE" "$ROUTINE_MODEL")
+	command=$(build_headless_command "$ROUTINE_NAME" "$ROUTINE_DIR" "$(routine_prompt_file_path "$ROUTINE_NAME")" "$ROUTINE_AGENT" "$ROUTINE_TITLE" "$ROUTINE_MODEL")
 
 	local launchd_schedule_xml=""
 	launchd_schedule_xml=$(parse_cron_to_launchd_xml "$ROUTINE_SCHEDULE" 2>/dev/null || true)
@@ -316,7 +336,7 @@ cmd_install_cron() {
 	}
 
 	local command
-	command=$(build_opencode_command "$ROUTINE_DIR" "$ROUTINE_PROMPT" "$ROUTINE_AGENT" "$ROUTINE_TITLE" "$ROUTINE_MODEL")
+	command=$(build_headless_command "$ROUTINE_NAME" "$ROUTINE_DIR" "$(routine_prompt_file_path "$ROUTINE_NAME")" "$ROUTINE_AGENT" "$ROUTINE_TITLE" "$ROUTINE_MODEL")
 
 	mkdir -p "$HOME/.aidevops/logs"
 	local marker="# aidevops: routine-${ROUTINE_NAME}"
@@ -329,6 +349,7 @@ cmd_install_cron() {
 		die "Cron entry already exists for routine '${ROUTINE_NAME}'"
 		return 1
 	fi
+	write_routine_prompt_file "$ROUTINE_NAME" "$ROUTINE_PROMPT"
 
 	(
 		printf '%s\n' "$current"
@@ -346,10 +367,11 @@ cmd_install_launchd() {
 	}
 
 	local command
-	command=$(build_opencode_command "$ROUTINE_DIR" "$ROUTINE_PROMPT" "$ROUTINE_AGENT" "$ROUTINE_TITLE" "$ROUTINE_MODEL")
+	command=$(build_headless_command "$ROUTINE_NAME" "$ROUTINE_DIR" "$(routine_prompt_file_path "$ROUTINE_NAME")" "$ROUTINE_AGENT" "$ROUTINE_TITLE" "$ROUTINE_MODEL")
 
 	local launchd_schedule_xml
 	launchd_schedule_xml=$(parse_cron_to_launchd_xml "$ROUTINE_SCHEDULE") || return 1
+	write_routine_prompt_file "$ROUTINE_NAME" "$ROUTINE_PROMPT"
 	# launchd_schedule_xml is generated from validated numeric/* cron tokens only
 	# and emits fixed XML tags, so this block is already XML-safe.
 
@@ -416,10 +438,11 @@ cmd_install_systemd() {
 	}
 
 	local command
-	command=$(build_opencode_command "$ROUTINE_DIR" "$ROUTINE_PROMPT" "$ROUTINE_AGENT" "$ROUTINE_TITLE" "$ROUTINE_MODEL")
+	command=$(build_headless_command "$ROUTINE_NAME" "$ROUTINE_DIR" "$(routine_prompt_file_path "$ROUTINE_NAME")" "$ROUTINE_AGENT" "$ROUTINE_TITLE" "$ROUTINE_MODEL")
 
 	local on_calendar
 	on_calendar=$(parse_cron_to_oncalendar "$ROUTINE_SCHEDULE") || return 1
+	write_routine_prompt_file "$ROUTINE_NAME" "$ROUTINE_PROMPT"
 
 	local service_name="sh.aidevops.routine-${ROUTINE_NAME}"
 	local service_dir="$HOME/.config/systemd/user"

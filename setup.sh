@@ -17,7 +17,7 @@ fi
 # AI Assistant Server Access Framework Setup Script
 # Helps developers set up the framework for their infrastructure
 #
-# Version: 3.32.161
+# Version: 3.32.163
 #
 # Quick Install:
 #   npm install -g aidevops && aidevops update          (recommended)
@@ -1904,13 +1904,16 @@ _setup_restart_pulse_if_running() {
 		activated_root="$current_root"
 	fi
 	if [[ -z "$activated_root" ]]; then
-		print_warning "Pulse restart skipped because the activated runtime bundle could not be resolved"
-		return 0
+		print_error "Pulse reconciliation failed because the activated runtime bundle could not be resolved"
+		return 1
 	fi
-	_restart_pulse_if_running \
+	if ! _restart_pulse_if_running \
 		"$activated_root" \
 		"$managed_enabled" \
-		"${HOME}/.aidevops/agents" || print_warning "Pulse reconciliation failed (non-fatal)"
+		"${HOME}/.aidevops/agents"; then
+		print_error "Pulse reconciliation failed; setup cannot verify the activated runtime bundle"
+		return 1
+	fi
 	return 0
 }
 

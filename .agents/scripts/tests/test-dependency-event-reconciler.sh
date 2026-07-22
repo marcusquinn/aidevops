@@ -149,6 +149,25 @@ assert_eq "$namespaced" "$(_der_task_refs "Blocked by: ${namespaced}")" "namespa
 NATIVE_DIRECT=true CLOSED_TITLE="${namespaced}: blocker" BODY20="blocked-by:${namespaced}" EDIT_COUNT=0 REREAD_LABELS="status:blocked"
 assert_eq 1 "$(run_reconcile)" "namespaced task declaration resolves through exact title lookup"
 
+NATIVE_STATE="CLOSED" CLOSED_TITLE="t10: blocker"
+completion_status=0
+_der_completion_blockers_closed "owner/repo" 20 "- [ ] t20 delivered blocked-by:t10" || completion_status=$?
+assert_eq 0 "$completion_status" "completion accepts a positively closed task dependency"
+
+completion_status=0
+_der_completion_blockers_closed "owner/repo" 20 "- [ ] t20 delivered blocked-by:#10,#11" || completion_status=$?
+assert_eq "$DER_NOT_READY" "$completion_status" "completion preserves a mixed closed and open dependency set"
+
+completion_status=0
+_der_completion_blockers_closed "owner/repo" 20 "- [ ] t20 delivered blocked-by:t10,not-a-task" || completion_status=$?
+assert_eq 1 "$completion_status" "completion fails closed on malformed dependency tokens"
+
+NATIVE_STATE="OPEN"
+completion_status=0
+_der_completion_blockers_closed "owner/repo" 20 "- [ ] t20 delivered blocked-by:t10" || completion_status=$?
+assert_eq "$DER_NOT_READY" "$completion_status" "completion preserves an open native dependency"
+NATIVE_STATE="CLOSED"
+
 EDIT_COUNT=0 REREAD_LABELS="status:blocked" BODY20="Blocked by #10" COMMENTS='[[]]'
 reconcile_stale_blocked_issues owner/repo >/dev/null 2>&1 || true
 assert_eq 1 "$EDIT_COUNT" "periodic stale sweep releases issue after missed close event"

@@ -51,6 +51,13 @@ _AUDIT_WORKTREE_REMOVAL_HELPER_LOADED=1
 _WTAR_REMOVED="removed"
 _WTAR_SKIPPED="skipped"
 _WTAR_FIXTURE_REMOVED="fixture-removed"
+_WT_CWD_VISIBILITY_COMPLETE="complete"
+_WT_CWD_VISIBILITY_DEGRADED="degraded"
+_WT_CWD_VISIBILITY_UNUSABLE="unusable"
+_WT_CWD_CAPTURE_DEGRADED_RC=2
+_WT_CWD_MATCH_UNUSABLE_RC=3
+_WT_CWD_REASON_DEGRADED="cwd-visibility-degraded"
+_WT_CWD_REASON_UNUSABLE="cwd-visibility-unusable"
 
 # =============================================================================
 # log_worktree_removal_event — write one structured log line per event
@@ -134,6 +141,7 @@ _capture_worktree_proc_cwds() {
 	local cwd_target=""
 	local captured_count=0
 	local current_uid=""
+	local visibility_degraded=0
 	local proc_dir=""
 
 	current_uid=$(id -u 2>/dev/null) || current_uid=""
@@ -143,29 +151,62 @@ _capture_worktree_proc_cwds() {
 		if ! cwd_target=$(readlink "$cwd_link" 2>/dev/null); then
 			# Vanished processes are harmless. Linux commonly denies cwd reads for
 			# other users, so skip only entries whose four status UIDs prove they
-			# are foreign; same-user and unknown ownership still fail closed.
+			# are foreign. Persistent same-user or unknown-ownership denials make
+			# visibility degraded without discarding readable cwd evidence.
 			[[ -L "$cwd_link" || -e "$cwd_link" ]] || continue
 			proc_dir="${cwd_link%/cwd}"
 			_worktree_proc_entry_is_provably_foreign_uid "$proc_dir" "$current_uid" && continue
-			return 1
+			visibility_degraded=1
+			continue
 		fi
 		if [[ -n "$cwd_target" ]]; then
 			printf '%s\n' "$cwd_target"
 			captured_count=$((captured_count + 1))
 		fi
 	done
+	if [[ "$visibility_degraded" -eq 1 ]]; then
+		return "$_WT_CWD_CAPTURE_DEGRADED_RC"
+	fi
 	[[ "$captured_count" -gt 0 ]] || return 1
 	return 0
 }
 
-# Capture every visible live-process cwd. Callers may supply the resulting
-# snapshot to the guard so one safety check performs only one platform scan.
-capture_worktree_process_cwds() {
+_capture_worktree_lsof_cwds() {
 	local cwd_target=""
 	local captured_count=0
 	local lsof_line=""
 	local lsof_output=""
+	local lsof_status=0
 
+	if lsof_output=$(lsof -n -F n -d cwd 2>/dev/null); then
+		lsof_status=0
+	else
+		lsof_status=$?
+	fi
+	while IFS= read -r lsof_line; do
+		case "$lsof_line" in
+		n*)
+			cwd_target="${lsof_line#n}"
+			if [[ -n "$cwd_target" ]]; then
+				printf '%s\n' "$cwd_target"
+				captured_count=$((captured_count + 1))
+			fi
+			;;
+		esac
+	done <<<"$lsof_output"
+	[[ "$captured_count" -gt 0 ]] || return 1
+	if [[ "$lsof_status" -ne 0 ]]; then
+		return "$_WT_CWD_CAPTURE_DEGRADED_RC"
+	fi
+	return 0
+}
+
+# Capture every visible live-process cwd. stdout always preserves readable
+# targets. Return 0 for complete visibility, 2 for degraded visibility with
+# same-UID/unknown denials, and 1 when no usable snapshot can be established.
+# Callers may supply the resulting snapshot and visibility to the guard so one
+# safety check performs only one platform scan.
+capture_worktree_process_cwds() {
 	if [[ -d /proc ]]; then
 		_capture_worktree_proc_cwds /proc
 		return $?
@@ -174,22 +215,9 @@ capture_worktree_process_cwds() {
 	if command -v lsof >/dev/null 2>&1; then
 		# macOS lacks /proc, but `lsof +D <worktree>` recursively walks the
 		# whole tree (including node_modules). Query only cwd descriptors once.
-		lsof_output=$(lsof -n -F n -d cwd 2>/dev/null) || return 1
-		while IFS= read -r lsof_line; do
-			case "$lsof_line" in
-			n*)
-				cwd_target="${lsof_line#n}"
-				if [[ -n "$cwd_target" ]]; then
-					printf '%s\n' "$cwd_target"
-					captured_count=$((captured_count + 1))
-				fi
-				;;
-			esac
-		done <<<"$lsof_output"
-		[[ "$captured_count" -gt 0 ]] || return 1
-		return 0
+		_capture_worktree_lsof_cwds
+		return $?
 	fi
-
 	return 1
 }
 
@@ -221,15 +249,24 @@ _worktree_has_process_cwd() {
 	local wt_path="$1"
 	local wt_path_real="$2"
 	local cwd_snapshot=""
+	local capture_status=0
 
 	if [[ -z "$wt_path" || -z "$wt_path_real" ]]; then
 		return 1
 	fi
-	# Fail closed when the platform cannot provide a process-CWD snapshot.
-	# Returning 0 means "unsafe to remove" to this predicate's callers.
-	cwd_snapshot=$(capture_worktree_process_cwds) || return 0
-	_worktree_cwd_snapshot_contains_path "$wt_path" "$wt_path_real" "$cwd_snapshot"
-	return $?
+	if cwd_snapshot=$(capture_worktree_process_cwds); then
+		capture_status=0
+	else
+		capture_status=$?
+	fi
+	if _worktree_cwd_snapshot_contains_path "$wt_path" "$wt_path_real" "$cwd_snapshot"; then
+		return 0
+	fi
+	case "$capture_status" in
+	0) return 1 ;;
+	"$_WT_CWD_CAPTURE_DEGRADED_RC") return "$_WT_CWD_CAPTURE_DEGRADED_RC" ;;
+	*) return "$_WT_CWD_MATCH_UNUSABLE_RC" ;;
+	esac
 }
 
 # =============================================================================
@@ -240,20 +277,25 @@ _worktree_has_process_cwd() {
 #   $2  caller   — audit caller constant
 #   $3  reason   — reason to log on skip
 #   $4  cwd_snapshot — optional newline-separated live-process cwd snapshot
+#   $5  cwd_visibility — complete, degraded, or unusable (default: complete)
 #
 # Refuses registered canonical repos, the caller's current working directory,
 # and worktrees that still have any live process cwd inside them. On refusal,
 # WORKTREE_REMOVAL_GUARD_REASON contains the short audit reason for callers that
 # opt into a user-facing diagnostic. The guard itself remains silent.
-# Returns 0 when callers may continue, 1 when removal must be skipped.
+# Returns 0 for complete no-match, 2 for degraded no-match (recoverable path
+# required), and 1 for every hard refusal or unusable snapshot.
 # =============================================================================
 worktree_removal_guard() {
 	local wt_path="$1"
 	local caller="$2"
 	local reason="$3"
 	local cwd_snapshot="${4:-}"
+	local cwd_visibility="${5:-$_WT_CWD_VISIBILITY_COMPLETE}"
 	local cwd_snapshot_provided=0
+	local cwd_match_status=0
 	WORKTREE_REMOVAL_GUARD_REASON=""
+	WORKTREE_REMOVAL_GUARD_VISIBILITY=""
 	[[ "$#" -ge 4 ]] && cwd_snapshot_provided=1
 
 	if [[ -z "$wt_path" ]]; then
@@ -287,14 +329,42 @@ worktree_removal_guard() {
 		esac
 	fi
 
-	if { [[ "$cwd_snapshot_provided" -eq 1 ]] &&
-		_worktree_cwd_snapshot_contains_path "$wt_path" "$wt_path_real" "$cwd_snapshot"; } ||
-		{ [[ "$cwd_snapshot_provided" -eq 0 ]] && _worktree_has_process_cwd "$wt_path" "$wt_path_real"; }; then
+	if [[ "$cwd_snapshot_provided" -eq 1 ]]; then
+		if _worktree_cwd_snapshot_contains_path "$wt_path" "$wt_path_real" "$cwd_snapshot"; then
+			cwd_match_status=0
+		else
+			case "$cwd_visibility" in
+			"$_WT_CWD_VISIBILITY_COMPLETE") cwd_match_status=1 ;;
+			"$_WT_CWD_VISIBILITY_DEGRADED") cwd_match_status="$_WT_CWD_CAPTURE_DEGRADED_RC" ;;
+			*) cwd_match_status="$_WT_CWD_MATCH_UNUSABLE_RC" ;;
+			esac
+		fi
+	elif _worktree_has_process_cwd "$wt_path" "$wt_path_real"; then
+		cwd_match_status=0
+	else
+		cwd_match_status=$?
+	fi
+
+	if [[ "$cwd_match_status" -eq 0 ]]; then
+		WORKTREE_REMOVAL_GUARD_VISIBILITY="$cwd_visibility"
 		WORKTREE_REMOVAL_GUARD_REASON="active-cwd"
 		log_worktree_removal_event "$_WTAR_SKIPPED" "$caller" "$wt_path" "active-cwd" "skipped"
 		return 1
 	fi
+	if [[ "$cwd_match_status" -eq "$_WT_CWD_CAPTURE_DEGRADED_RC" ]]; then
+		WORKTREE_REMOVAL_GUARD_VISIBILITY="$_WT_CWD_VISIBILITY_DEGRADED"
+		WORKTREE_REMOVAL_GUARD_REASON="$_WT_CWD_REASON_DEGRADED"
+		log_worktree_removal_event "$_WTAR_SKIPPED" "$caller" "$wt_path" "$_WT_CWD_REASON_DEGRADED" "recoverable-required"
+		return "$_WT_CWD_CAPTURE_DEGRADED_RC"
+	fi
+	if [[ "$cwd_match_status" -eq "$_WT_CWD_MATCH_UNUSABLE_RC" ]]; then
+		WORKTREE_REMOVAL_GUARD_VISIBILITY="$_WT_CWD_VISIBILITY_UNUSABLE"
+		WORKTREE_REMOVAL_GUARD_REASON="$_WT_CWD_REASON_UNUSABLE"
+		log_worktree_removal_event "$_WTAR_SKIPPED" "$caller" "$wt_path" "$_WT_CWD_REASON_UNUSABLE" "skipped"
+		return 1
+	fi
 
+	WORKTREE_REMOVAL_GUARD_VISIBILITY="$_WT_CWD_VISIBILITY_COMPLETE"
 	: "$reason"
 	return 0
 }

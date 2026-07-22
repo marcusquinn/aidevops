@@ -229,6 +229,120 @@ test_blocks_when_linked_worktree_owned_by_another_live_process() {
 	return 0
 }
 
+test_allows_headless_child_of_exact_wrapper_owner() {
+	local worktree_path="${TEST_ROOT}/wrapper-owned-worktree"
+	"$GIT_BIN" -C "$TEST_ROOT" worktree add "$worktree_path" -b bugfix/wrapper-owned-worktree >/dev/null 2>&1
+
+	ensure_registry_schema
+	sqlite3 "$TEST_REGISTRY_DB" "
+        INSERT OR REPLACE INTO worktree_owners
+            (worktree_path, branch, owner_pid, owner_session, task_id)
+        VALUES
+            ('$worktree_path', 'bugfix/wrapper-owned-worktree', $$, 'issue-28426', '28426');
+    " >/dev/null 2>&1
+
+	local output=""
+	local exit_code=0
+	output=$(AIDEVOPS_SESSION_ORIGIN=worker AIDEVOPS_HEADLESS=true \
+		AIDEVOPS_WORKTREE_OWNER_PID="$$" \
+		AIDEVOPS_WORKTREE_OWNER_SESSION="issue-28426" \
+		AIDEVOPS_WORKTREE_OWNER_TASK="28426" \
+		AIDEVOPS_WORKTREE_OWNER_PATH="$worktree_path" \
+		PRE_EDIT_OWNER_PID="$BASHPID" run_helper "$worktree_path" 2>&1) || exit_code=$?
+
+	if [[ "$exit_code" -eq 0 && "$output" == *"OK"* && "$output" != *"WORKTREE_OWNERSHIP_CONFLICT=true"* ]]; then
+		print_result "allows headless child of exact live wrapper owner" 0
+		return 0
+	fi
+
+	print_result "allows headless child of exact live wrapper owner" 1 "exit=${exit_code} output=${output}"
+	return 0
+}
+
+test_headless_wrapper_owner_proof_fails_closed() {
+	local worktree_path="${TEST_ROOT}/wrapper-proof-mismatch-worktree"
+	"$GIT_BIN" -C "$TEST_ROOT" worktree add "$worktree_path" -b bugfix/wrapper-proof-mismatch >/dev/null 2>&1
+
+	ensure_registry_schema
+	sqlite3 "$TEST_REGISTRY_DB" "
+        INSERT OR REPLACE INTO worktree_owners
+            (worktree_path, branch, owner_pid, owner_session, task_id)
+        VALUES
+            ('$worktree_path', 'bugfix/wrapper-proof-mismatch', $$, 'issue-28426', '28426');
+    " >/dev/null 2>&1
+
+	local proof_case=""
+	local proof_pid=""
+	local proof_session=""
+	local proof_task=""
+	local proof_path=""
+	local output=""
+	local exit_code=0
+	for proof_case in missing mismatched-session mismatched-task mismatched-path non-ancestor-pid; do
+		proof_pid="$$"
+		proof_session="issue-28426"
+		proof_task="28426"
+		proof_path="$worktree_path"
+		case "$proof_case" in
+		missing) proof_pid="" ;;
+		mismatched-session) proof_session="issue-99999" ;;
+		mismatched-task) proof_task="99999" ;;
+		mismatched-path) proof_path="$TEST_ROOT" ;;
+		non-ancestor-pid) proof_pid="1" ;;
+		esac
+
+		output=""
+		exit_code=0
+		output=$(AIDEVOPS_SESSION_ORIGIN=worker AIDEVOPS_HEADLESS=true \
+			AIDEVOPS_WORKTREE_OWNER_PID="$proof_pid" \
+			AIDEVOPS_WORKTREE_OWNER_SESSION="$proof_session" \
+			AIDEVOPS_WORKTREE_OWNER_TASK="$proof_task" \
+			AIDEVOPS_WORKTREE_OWNER_PATH="$proof_path" \
+			PRE_EDIT_OWNER_PID="$BASHPID" run_helper "$worktree_path" 2>&1) || exit_code=$?
+		if [[ "$exit_code" -eq 2 && "$output" == *"WORKTREE_OWNERSHIP_CONFLICT=true"* ]]; then
+			print_result "headless wrapper proof fails closed: ${proof_case}" 0
+		else
+			print_result "headless wrapper proof fails closed: ${proof_case}" 1 "exit=${exit_code} output=${output}"
+		fi
+	done
+	return 0
+}
+
+test_rejects_forged_proof_for_unrelated_live_owner() {
+	local worktree_path="${TEST_ROOT}/unrelated-live-owner-worktree"
+	"$GIT_BIN" -C "$TEST_ROOT" worktree add "$worktree_path" -b bugfix/unrelated-live-owner >/dev/null 2>&1
+
+	local unrelated_pid=""
+	sleep 30 >/dev/null 2>&1 &
+	unrelated_pid=$!
+	ensure_registry_schema
+	sqlite3 "$TEST_REGISTRY_DB" "
+        INSERT OR REPLACE INTO worktree_owners
+            (worktree_path, branch, owner_pid, owner_session, task_id)
+        VALUES
+            ('$worktree_path', 'bugfix/unrelated-live-owner', $unrelated_pid, 'issue-28426', '28426');
+    " >/dev/null 2>&1
+
+	local output=""
+	local exit_code=0
+	output=$(AIDEVOPS_SESSION_ORIGIN=worker AIDEVOPS_HEADLESS=true \
+		AIDEVOPS_WORKTREE_OWNER_PID="$unrelated_pid" \
+		AIDEVOPS_WORKTREE_OWNER_SESSION="issue-28426" \
+		AIDEVOPS_WORKTREE_OWNER_TASK="28426" \
+		AIDEVOPS_WORKTREE_OWNER_PATH="$worktree_path" \
+		PRE_EDIT_OWNER_PID="$BASHPID" run_helper "$worktree_path" 2>&1) || exit_code=$?
+	kill "$unrelated_pid" >/dev/null 2>&1 || true
+	wait "$unrelated_pid" 2>/dev/null || true
+
+	if [[ "$exit_code" -eq 2 && "$output" == *"WORKTREE_OWNERSHIP_CONFLICT=true"* ]]; then
+		print_result "rejects copied proof for unrelated live owner process" 0
+		return 0
+	fi
+
+	print_result "rejects copied proof for unrelated live owner process" 1 "exit=${exit_code} output=${output}"
+	return 0
+}
+
 test_allows_same_opencode_session_pid_rollover() {
 	local worktree_path="${TEST_ROOT}/same-session-worktree"
 	"$GIT_BIN" -C "$TEST_ROOT" worktree add "$worktree_path" -b bugfix/same-session-worktree >/dev/null 2>&1
@@ -388,6 +502,9 @@ main() {
 	test_worker_env_does_not_bypass_canonical_guard
 	test_warns_when_canonical_repo_is_off_main
 	test_blocks_when_linked_worktree_owned_by_another_live_process
+	test_allows_headless_child_of_exact_wrapper_owner
+	test_headless_wrapper_owner_proof_fails_closed
+	test_rejects_forged_proof_for_unrelated_live_owner
 	test_allows_same_opencode_session_pid_rollover
 	test_headless_planning_path_requires_worktree
 	test_interactive_allowlisted_path_still_requires_worktree

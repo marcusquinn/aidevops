@@ -179,11 +179,13 @@ _pc_filter_relevant_issues_test() {
 if ! command -v jq >/dev/null 2>&1; then
 	printf 'SKIP Cases 7-9: jq not available\n'
 else
+	recent_created_at=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
 	# -------------------------------------------------------------------------
 	# Case 7: recent open issue with matching keywords surfaces in output
 	# -------------------------------------------------------------------------
 	printf 'Case 7: recent issue with matching keywords surfaces in filter output\n'
-	mock_json='[{"number":21760,"title":"claim-task-id phantom number from stderr","state":"OPEN","createdAt":"2026-04-29T00:00:00Z"}]'
+	mock_json=$(jq -cn --arg created_at "$recent_created_at" \
+		'[{number:21760,title:"claim-task-id phantom number from stderr",state:"OPEN",createdAt:$created_at}]')
 	mock_keywords=$(printf 'claim\nphantom')
 	result=$(_pc_filter_relevant_issues_test "$mock_json" "$mock_keywords" 14)
 	if printf '%s' "$result" | grep -q '#21760 \[ISSUE\]'; then
@@ -209,7 +211,8 @@ else
 	# Case 9: issue with fewer than 2 keyword overlaps is filtered out
 	# -------------------------------------------------------------------------
 	printf 'Case 9: issue with <2 keyword overlaps is filtered\n'
-	mock_json='[{"number":200,"title":"claim-task-id ssh key rotation","state":"OPEN","createdAt":"2026-04-29T00:00:00Z"}]'
+	mock_json=$(jq -cn --arg created_at "$recent_created_at" \
+		'[{number:200,title:"claim-task-id ssh key rotation",state:"OPEN",createdAt:$created_at}]')
 	mock_keywords=$(printf 'phantom\nnumber')
 	result=$(_pc_filter_relevant_issues_test "$mock_json" "$mock_keywords" 14)
 	if [[ -z "$result" ]]; then
