@@ -11,6 +11,7 @@ SELF_CALLER="${REPO_ROOT}/.github/workflows/issue-sync.yml"
 CALLER_TEMPLATE="${REPO_ROOT}/.agents/templates/workflows/issue-sync-caller.yml"
 HELPER="${SCRIPT_DIR}/../forge-event-helper.sh"
 STATE_HELPER="${SCRIPT_DIR}/../forge-coordinator-state-helper.sh"
+PROJECTION_REDUCER="${SCRIPT_DIR}/../task-projection-reducer.mjs"
 
 python3 - "$WORKFLOW" <<'PY'
 import sys, yaml
@@ -36,6 +37,24 @@ for caller in "$SELF_CALLER" "$CALLER_TEMPLATE"; do
 	grep -q 'cursor:' "$caller"
 	grep -q 'task_id:' "$caller"
 done
+
+# Projection reduction is byte-targeted, idempotent, and atomic when any
+# transition in a coalesced batch cannot resolve exactly one task row.
+projection_root=$(mktemp -d)
+printf '# Tasks\n- [ ] t42 mapped task\n- [ ] t42.1 child task\n' >"${projection_root}/TODO.md"
+projection_result=$(node "$PROJECTION_REDUCER" --repository-path "$projection_root" <<<'[{"kind":"task.completed","taskId":"t42"}]')
+[[ "$(jq -r '.changed' <<<"$projection_result")" == "true" ]]
+[[ "$(<"${projection_root}/TODO.md")" == $'# Tasks\n- [x] t42 mapped task\n- [ ] t42.1 child task' ]]
+projection_before=$(cksum "${projection_root}/TODO.md")
+projection_result=$(node "$PROJECTION_REDUCER" --repository-path "$projection_root" <<<'[{"kind":"task.completed","taskId":"t42"}]')
+[[ "$(jq -r '.changed' <<<"$projection_result")" == "false" ]]
+if node "$PROJECTION_REDUCER" --repository-path "$projection_root" \
+	<<<'[{"kind":"task.available","taskId":"t42"},{"kind":"task.completed","taskId":"t99"}]' >/dev/null 2>&1; then
+	printf 'FAIL unresolved coalesced transition changed a partial projection\n' >&2
+	exit 1
+fi
+[[ "$(cksum "${projection_root}/TODO.md")" == "$projection_before" ]]
+rm -rf "$projection_root"
 
 test_root=$(mktemp -d)
 trap 'rm -rf "$test_root"' EXIT

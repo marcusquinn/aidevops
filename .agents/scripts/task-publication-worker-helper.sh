@@ -6,12 +6,14 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit 1
 COORDINATOR="${SCRIPT_DIR}/task-coordinator.mjs"
+PROJECTION_REDUCER="${SCRIPT_DIR}/task-projection-reducer.mjs"
 # shellcheck source=./planning-publisher.sh
 source "${SCRIPT_DIR}/planning-publisher.sh"
 
 PUBLICATION_MAX_CONCURRENCY="${AIDEVOPS_PUBLICATION_MAX_CONCURRENCY:-4}"
 PUBLICATION_LEASE_SECONDS="${AIDEVOPS_PUBLICATION_LEASE_SECONDS:-120}"
 PUBLICATION_MAX_BACKOFF="${AIDEVOPS_PUBLICATION_MAX_BACKOFF:-300}"
+PUBLICATION_TRANSITION_RESULT="none"
 
 _publication_evidence() {
 	local result="$1"
@@ -90,6 +92,26 @@ _publication_install_remote_fence() {
 	return 0
 }
 
+_publication_reduce_transitions() {
+	local lease="$1"
+	local repo_path="$2"
+	local transitions="" transition_count=0 reduction=""
+	PUBLICATION_TRANSITION_RESULT="none"
+	transitions=$(jq -ce '[.batch[].payload.transition? // empty]' <<<"$lease") || return 1
+	transition_count=$(jq -r 'length' <<<"$transitions") || return 1
+	[[ "$transition_count" -gt 0 ]] || return 0
+	reduction=$(node "$PROJECTION_REDUCER" --repository-path "$repo_path" <<<"$transitions") || {
+		PUBLICATION_TRANSITION_RESULT="conflict"
+		return 1
+	}
+	if [[ "$(jq -r '.changed' <<<"$reduction")" == "true" ]]; then
+		PUBLICATION_TRANSITION_RESULT="changed"
+	else
+		PUBLICATION_TRANSITION_RESULT="idempotent"
+	fi
+	return 0
+}
+
 _publication_process_lease() {
 	local lease="$1"
 	local owner_id="$2"
@@ -110,10 +132,32 @@ _publication_process_lease() {
 	_publication_install_remote_fence "$lease" "$owner_id" "$repo_path" "$remote_name" "$branch_name" || return 1
 	_publication_heartbeat "$lease" "$owner_id" &
 	heartbeat_pid=$!
-	AIDEVOPS_PLANNING_PUSH_GUARD=_publication_push_guard planning_publish "$repo_path" "plan: publish queued task projections" "$remote_name" "$branch_name" "$paths" || rc=$?
+	_publication_reduce_transitions "$lease" "$repo_path" || rc=$?
+	if [[ "$PUBLICATION_TRANSITION_RESULT" == "conflict" ]]; then
+		kill "$heartbeat_pid" >/dev/null 2>&1 || true
+		wait "$heartbeat_pid" 2>/dev/null || true
+		evidence=$(_publication_evidence "transition_conflict" "$PLANNING_PUBLICATION_ID")
+		_publication_finish "$lease" "$owner_id" terminal "$evidence" || return 1
+		return 0
+	fi
+	if [[ "$PUBLICATION_TRANSITION_RESULT" == "idempotent" ]]; then
+		kill "$heartbeat_pid" >/dev/null 2>&1 || true
+		wait "$heartbeat_pid" 2>/dev/null || true
+		evidence=$(_publication_evidence "idempotent_transition" "$PLANNING_PUBLICATION_ID")
+		_publication_finish "$lease" "$owner_id" terminal "$evidence" || return 1
+		return 0
+	fi
+	if [[ $rc -eq 0 ]]; then
+		AIDEVOPS_PLANNING_PUSH_GUARD=_publication_push_guard planning_publish "$repo_path" "plan: publish queued task projections" "$remote_name" "$branch_name" "$paths" || rc=$?
+	fi
 	kill "$heartbeat_pid" >/dev/null 2>&1 || true
 	wait "$heartbeat_pid" 2>/dev/null || true
 	if [[ $rc -eq 0 ]]; then
+		if [[ "$PUBLICATION_TRANSITION_RESULT" == "changed" && "$PLANNING_PUBLISH_RESULT" == "noop" ]]; then
+			evidence=$(_publication_evidence "idempotent_remote_transition" "$PLANNING_PUBLICATION_ID")
+			_publication_finish "$lease" "$owner_id" terminal "$evidence" || return 1
+			return 0
+		fi
 		commit_sha="$PLANNING_PUBLISHED_COMMIT"
 		evidence=$(_publication_evidence "${PLANNING_PUBLISH_RESULT:-published}" "$PLANNING_PUBLICATION_ID" "$commit_sha")
 		_publication_finish "$lease" "$owner_id" published "$evidence" || return 1

@@ -79,6 +79,32 @@ if node "$COORDINATOR" allocate --operation-id too-large --payload "{\"value\":\
 	exit 1
 fi
 
+# Existing legacy TODO identities are adopted atomically and remain bound to
+# one immutable repository identity across duplicate and conflicting intake.
+legacy_adoption=$(node "$COORDINATOR" adopt-legacy-task --operation-id adopt-28465 --task-id t28465 \
+	--repository-id R_adopt --repository-slug owner/adopt --issue-id I_adopt --display-number 28465)
+[[ "$(jq -r '.taskId' <<<"$legacy_adoption")" == "t28465" ]]
+[[ "$(jq -r '.status' <<<"$legacy_adoption")" == "accepted" ]]
+[[ "$(node "$COORDINATOR" adopt-legacy-task --operation-id adopt-28465 --task-id t28465 --repository-id R_adopt --repository-slug owner/adopt --issue-id I_adopt --display-number 28465)" == "$legacy_adoption" ]]
+if node "$COORDINATOR" adopt-legacy-task --operation-id adopt-28465 --task-id t28465 --repository-id R_other \
+	--repository-slug owner/other --issue-id I_adopt --display-number 28465 >/dev/null 2>&1; then
+	printf 'FAIL changed legacy adoption reused an operation ID\n' >&2
+	exit 1
+fi
+if node "$COORDINATOR" adopt-legacy-task --operation-id adopt-cross-repo --task-id t28465 --repository-id R_other \
+	--repository-slug owner/other --issue-id I_other --display-number 28465 >/dev/null 2>&1; then
+	printf 'FAIL legacy task adoption crossed repository identities\n' >&2
+	exit 1
+fi
+if node "$COORDINATOR" adopt-legacy-task --operation-id adopt-issue-conflict --task-id t28465 --repository-id R_adopt \
+	--repository-slug owner/adopt --issue-id I_other --display-number 28466 >/dev/null 2>&1; then
+	printf 'FAIL legacy task adoption replaced immutable issue identity\n' >&2
+	exit 1
+fi
+[[ "$(sqlite3 "$AIDEVOPS_TASK_COORDINATOR_DB" "SELECT COUNT(*) FROM tasks WHERE task_id='t28465';")" == "1" ]]
+[[ "$(sqlite3 "$AIDEVOPS_TASK_COORDINATOR_DB" "SELECT status FROM operations WHERE operation_id='adopt-cross-repo';")" == "conflict" ]]
+[[ "$(sqlite3 "$AIDEVOPS_TASK_COORDINATOR_DB" "SELECT status FROM operations WHERE operation_id='adopt-issue-conflict';")" == "conflict" ]]
+
 # Independent reinstall/clone state creates a new CSPRNG origin at the same sequence.
 origin_one=$(node "$COORDINATOR" status | jq -r '.origin_id')
 AIDEVOPS_TASK_COORDINATOR_DB="${TEST_ROOT}/clone.db" node "$COORDINATOR" allocate --operation-id clone >/dev/null
@@ -117,9 +143,9 @@ inode_after=$(stat -f '%i' "$AIDEVOPS_TASK_COORDINATOR_DB" 2>/dev/null || stat -
 # A real v1 schema migrates through every version only after verified backups.
 migration_db="${TEST_ROOT}/migration.db"
 AIDEVOPS_TASK_COORDINATOR_DB="$migration_db" node "$COORDINATOR" status >/dev/null
-sqlite3 "$migration_db" "DROP TABLE issue_mappings; DROP TABLE forge_event_cursors; ALTER TABLE restore_controls DROP COLUMN backup_high_water; UPDATE coordinator_meta SET value='1' WHERE key='schema_version'; DELETE FROM migration_history; INSERT INTO migration_history VALUES(1,'2026-01-01T00:00:00Z',NULL,'ok');"
+sqlite3 "$migration_db" "DROP TABLE legacy_task_adoptions; DROP TABLE issue_mappings; DROP TABLE forge_event_cursors; ALTER TABLE restore_controls DROP COLUMN backup_high_water; UPDATE coordinator_meta SET value='1' WHERE key='schema_version'; DELETE FROM migration_history; INSERT INTO migration_history VALUES(1,'2026-01-01T00:00:00Z',NULL,'ok');"
 AIDEVOPS_TASK_COORDINATOR_DB="$migration_db" node "$COORDINATOR" status >/dev/null
-[[ "$(sqlite3 "$migration_db" "SELECT value FROM coordinator_meta WHERE key='schema_version';")" == "6" ]]
+[[ "$(sqlite3 "$migration_db" "SELECT value FROM coordinator_meta WHERE key='schema_version';")" == "7" ]]
 [[ "$(sqlite3 "$migration_db" "SELECT COUNT(*) FROM pragma_table_info('operations') WHERE name='result_hash';")" == "0" ]]
 [[ -n "$(ls "${TEST_ROOT}"/migration.db-backup-*-pre-migrate-v2.db)" ]]
 [[ -n "$(ls "${TEST_ROOT}"/migration.db-backup-*-pre-migrate-v3.db)" ]]
@@ -127,11 +153,11 @@ AIDEVOPS_TASK_COORDINATOR_DB="$migration_db" node "$COORDINATOR" status >/dev/nu
 # An untouched v2 database is backed up before any v3 table is applied.
 v2_db="${TEST_ROOT}/v2.db"
 AIDEVOPS_TASK_COORDINATOR_DB="$v2_db" node "$COORDINATOR" status >/dev/null
-sqlite3 "$v2_db" "DROP TABLE issue_mappings; DROP TABLE forge_event_cursors; ALTER TABLE operations ADD COLUMN result_hash TEXT NOT NULL DEFAULT 'unchecked'; UPDATE coordinator_meta SET value='2' WHERE key='schema_version'; DELETE FROM migration_history WHERE version>2; INSERT OR IGNORE INTO migration_history VALUES(2,'2026-01-01T00:00:00Z',NULL,'ok');"
+sqlite3 "$v2_db" "DROP TABLE legacy_task_adoptions; DROP TABLE issue_mappings; DROP TABLE forge_event_cursors; ALTER TABLE operations ADD COLUMN result_hash TEXT NOT NULL DEFAULT 'unchecked'; UPDATE coordinator_meta SET value='2' WHERE key='schema_version'; DELETE FROM migration_history WHERE version>2; INSERT OR IGNORE INTO migration_history VALUES(2,'2026-01-01T00:00:00Z',NULL,'ok');"
 AIDEVOPS_TASK_COORDINATOR_DB="$v2_db" node "$COORDINATOR" status >/dev/null
 v2_backup=$(ls "${TEST_ROOT}"/v2.db-backup-*-pre-migrate-v3.db)
 [[ "$(sqlite3 "$v2_backup" "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='issue_mappings';")" == "0" ]]
-[[ "$(sqlite3 "$v2_db" "SELECT value FROM coordinator_meta WHERE key='schema_version';")" == "6" ]]
+[[ "$(sqlite3 "$v2_db" "SELECT value FROM coordinator_meta WHERE key='schema_version';")" == "7" ]]
 
 # Immutable task/repository identities isolate equal display numbers and allow
 # one task to retain home, implementation, and upstream issue projections.
