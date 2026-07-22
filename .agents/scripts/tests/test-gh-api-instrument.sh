@@ -475,7 +475,41 @@ future_cutoff_status=$?
 set -e
 assert_eq "future report cutoff is rejected" "1" "$future_cutoff_status"
 
-# --- Test 12d: typed evidence and latency completeness stay explicit --------
+# --- Test 12d: completed marker timestamp survives a second rollover --------
+# Freeze the recorder one second after the cycle cutoff. The bounded override
+# must place the marker at the captured cutoff while a later attempt remains
+# outside the fixed aggregate. Future overrides still fail closed (GH#28493).
+gh_clear_log
+rollover_cutoff=$((now - 2))
+rollover_append_now=$((rollover_cutoff + 1))
+_gh_now_seconds() {
+	printf '%s\n' "$rollover_append_now"
+	return 0
+}
+printf "%s\tpre-cycle-caller\trest\tgh-pat\trest-core\trest-selected\t4999\tv2\tattempt\tlogical-pre-cycle\tattempt-before-boundary\t1\t0\tsuccess\t200\t10\t1\n" \
+	"$rollover_cutoff" >>"$AIDEVOPS_GH_API_LOG"
+gh_record_efficiency_evidence coverage-end "$rollover_cutoff" "$rollover_cutoff"
+gh_record_attempt rest rollover-caller logical-rollover attempt-after-cycle 1 0 success 200 10 1 gh-pat rest-core rest-selected 4999
+marker_record_ts=$(awk -F'\t' -v decision="evidence:coverage-end:${rollover_cutoff}" '$6 == decision { print $1 }' "$AIDEVOPS_GH_API_LOG")
+assert_eq "explicit evidence timestamp matches completed cutoff" "$rollover_cutoff" "$marker_record_ts"
+gh_aggregate_calls "$AIDEVOPS_GH_API_REPORT" 60 "$rollover_cutoff"
+assert_eq "rollover report retains the aligned coverage marker" "1" "$(jq -r --arg key "evidence:coverage-end:${rollover_cutoff}" '.by_route_decision[$key].evidence_events' "$AIDEVOPS_GH_API_REPORT")"
+assert_eq "rollover report excludes post-cycle attempts" "1" "$(jq -r '._meta.attempted_requests' "$AIDEVOPS_GH_API_REPORT")"
+assert_eq "rollover report omits the post-cycle caller" "0" "$(jq -r '(.by_caller["rollover-caller"].attempted_requests // 0)' "$AIDEVOPS_GH_API_REPORT")"
+assert_eq "rollover report ends at the completed cutoff" "$rollover_cutoff" "$(jq -r '._meta.last_retained_ts' "$AIDEVOPS_GH_API_REPORT")"
+set +e
+gh_record_efficiency_evidence coverage-end "$((rollover_append_now + 1))" "$((rollover_append_now + 1))"
+future_evidence_status=$?
+set -e
+assert_eq "future evidence timestamp is rejected" "1" "$future_evidence_status"
+assert_eq "rejected future evidence is not appended" "3" "$(wc -l <"$AIDEVOPS_GH_API_LOG" | tr -d ' ')"
+
+# Restore the production clock implementation for the remaining tests.
+unset _GH_API_INSTRUMENT_LOADED
+# shellcheck source=../gh-api-instrument.sh
+source "${PARENT_DIR}/gh-api-instrument.sh"
+
+# --- Test 12e: typed evidence and latency completeness stay explicit --------
 gh_clear_log
 latency_ts=$((now - 5))
 gh_record_efficiency_evidence cache.fresh_hits 1
@@ -495,7 +529,7 @@ invalid_evidence_status=0
 gh_record_efficiency_evidence "Invalid Name" 1 || invalid_evidence_status=$?
 assert_eq "invalid evidence identifiers are rejected" "1" "$invalid_evidence_status"
 
-# --- Test 12e: CLI reports the actual custom aggregate destination -----------
+# --- Test 12f: CLI reports the actual custom aggregate destination -----------
 custom_report="$TMPDIR/custom-report.json"
 custom_report_message=$("${PARENT_DIR}/gh-api-instrument.sh" report "$custom_report" 60 2>&1 >/dev/null)
 assert_file_exists "CLI custom report is created" "$custom_report"

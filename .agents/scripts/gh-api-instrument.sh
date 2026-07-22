@@ -331,9 +331,16 @@ _gh_append_v2() {
 	local elapsed_ms="$1"
 	shift
 	local quota_cost="$1"
+	shift
+	local recorded_at="${1:-}"
 	local ts=""
 	local record=""
-	ts=$(_gh_now_seconds) || return 0
+	if [[ -n "$recorded_at" ]]; then
+		[[ "$recorded_at" =~ ^[1-9][0-9]*$ ]] || return 1
+		ts="$recorded_at"
+	else
+		ts=$(_gh_now_seconds) || return 0
+	fi
 	caller=$(_gh_resolve_caller "$caller")
 	path=$(_gh_safe_text "$path" other)
 	auth_mode=$(_gh_safe_text "$auth_mode" unknown)
@@ -398,14 +405,18 @@ gh_record_call() {
 	return 0
 }
 
-# --- gh_record_efficiency_evidence <name> [value] -----------------------
+# --- gh_record_efficiency_evidence <name> [value] [recorded_at] ---------
 # Append a typed, privacy-safe benchmark evidence event. Names and values are
 # restricted to bounded identifiers; repository names, URLs, payloads, and
-# credentials are never accepted. Returns 1 for an invalid event.
+# credentials are never accepted. The optional epoch aligns a completed-cycle
+# boundary's record timestamp with its already-captured inclusive cutoff and is
+# rejected if it is in the future. Returns 1 for an invalid event.
 gh_record_efficiency_evidence() {
 	[[ "${AIDEVOPS_GH_API_INSTRUMENT_DISABLE:-0}" == "1" ]] && return 0
 	local name="$1"
 	local value="${2:-1}"
+	local recorded_at="${3:-}"
+	local current_now=""
 	local decision=""
 	if [[ ! "$name" =~ ^[a-z][a-z0-9_.-]{0,95}$ ]]; then
 		return 1
@@ -413,10 +424,15 @@ gh_record_efficiency_evidence() {
 	if [[ ! "$value" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$ ]]; then
 		return 1
 	fi
+	if [[ -n "$recorded_at" ]]; then
+		[[ "$recorded_at" =~ ^[1-9][0-9]*$ ]] || return 1
+		current_now=$(_gh_now_seconds) || return 1
+		[[ "$recorded_at" -le "$current_now" ]] || return 1
+	fi
 	decision="evidence:${name}:${value}"
 	_gh_append_v2 evidence github-api-efficiency other unknown other "$decision" \
-		"" "" "" "" "" "" "" "" ""
-	return 0
+		"" "" "" "" "" "" "" "" "" "$recorded_at"
+	return $?
 }
 
 # --- gh_record_attempt ---------------------------------------------------

@@ -41,8 +41,9 @@ _PULSE_LEGACY_CYCLE_OUTCOME_PENDING=0
 _pulse_efficiency_record() {
 	local name="$1"
 	local value="${2:-1}"
+	local recorded_at="${3:-}"
 	if declare -F gh_record_efficiency_evidence >/dev/null 2>&1; then
-		gh_record_efficiency_evidence "$name" "$value" 2>/dev/null || true
+		gh_record_efficiency_evidence "$name" "$value" "$recorded_at" 2>/dev/null || true
 	fi
 	return 0
 }
@@ -157,7 +158,10 @@ _pulse_efficiency_cycle_finish() {
 	else
 		_pulse_efficiency_record population.unchanged_cycles 1
 	fi
-	[[ "$now_seconds" -gt 0 ]] && _pulse_efficiency_record coverage-end "$now_seconds"
+	# Use the completed-cycle cutoff for both the marker value and its outer
+	# record timestamp. A second rollover inside the recorder must not place the
+	# marker outside the exact inclusive aggregate it bounds (GH#28493).
+	[[ "$now_seconds" -gt 0 ]] && _pulse_efficiency_record coverage-end "$now_seconds" "$now_seconds"
 	if declare -F gh_aggregate_calls >/dev/null 2>&1; then
 		if [[ "$now_seconds" -gt 0 ]]; then
 			gh_aggregate_calls "${GH_API_REPORT:-}" 86400 "$now_seconds" 2>/dev/null || true
