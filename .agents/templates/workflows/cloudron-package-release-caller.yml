@@ -13,6 +13,6 @@ jobs:
   release:
     permissions:
       contents: write
-    uses: marcusquinn/aidevops/.github/workflows/cloudron-package-release-reusable.yml@main
+    uses: marcusquinn/aidevops/.github/workflows/cloudron-package-release-reusable.yml@22a6b4b29087ce2fcf3857596a40ff7b2c436482
     with:
-      aidevops_ref: main
+      aidevops_ref: 22a6b4b29087ce2fcf3857596a40ff7b2c436482

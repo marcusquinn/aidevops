@@ -7,6 +7,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit 1
 INSTALL_DIR="$(cd "${SCRIPT_DIR}/../../.." && pwd)" || exit 1
 AGENTS_DIR="${INSTALL_DIR}/.agents"
+CLOUDRON_CALLER_FRAMEWORK_REF="22a6b4b29087ce2fcf3857596a40ff7b2c436482"
 TEST_ROOT=""
 PASSED=0
 FAILED=0
@@ -48,6 +49,11 @@ test_cloudron_workflow_scaffolding() {
 	local workflow="${repo_dir}/.github/workflows/cloudron-package-release.yml"
 	assert_equal true "$([[ -f "$workflow" ]] && printf true || printf false)" "Cloudron caller scaffolded"
 	assert_equal "$(cksum "${AGENTS_DIR}/templates/workflows/cloudron-package-release-caller.yml" | awk '{ print $1, $2 }')" "$(cksum "$workflow" | awk '{ print $1, $2 }')" "caller matches managed template"
+	assert_equal true "$(grep -Fq "cloudron-package-release-reusable.yml@${CLOUDRON_CALLER_FRAMEWORK_REF}" "$workflow" && printf true || printf false)" "caller pins reusable workflow commit"
+	assert_equal true "$(grep -Fq "aidevops_ref: ${CLOUDRON_CALLER_FRAMEWORK_REF}" "$workflow" && printf true || printf false)" "caller pins validator commit"
+	assert_equal false "$(grep -Eq '@main|aidevops_ref:[[:space:]]+main' "$workflow" && printf true || printf false)" "caller contains no mutable main ref"
+	assert_equal true "$(git -C "$INSTALL_DIR" cat-file -e "${CLOUDRON_CALLER_FRAMEWORK_REF}:.github/workflows/cloudron-package-release-reusable.yml" 2>/dev/null && printf true || printf false)" "pinned commit contains reusable workflow"
+	assert_equal true "$(git -C "$INSTALL_DIR" cat-file -e "${CLOUDRON_CALLER_FRAMEWORK_REF}:.agents/scripts/cloudron-package-helper.sh" 2>/dev/null && printf true || printf false)" "pinned commit contains release validator"
 	local before=""
 	before=$(cksum "$workflow")
 	_init_scaffold_cloudron_release_workflow "$repo_dir"
