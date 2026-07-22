@@ -10,6 +10,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.32.165] - 2026-07-22
+
+### Changed
+
+- Maintenance: update simplification state registry
+- Maintenance: mark t18169 complete (pr:#28488 completed:2026-07-22) [skip ci]
+- Maintenance: sync ref:GH#28487 to TODO.md [skip ci]
+- Maintenance: update simplification state registry
+- Maintenance: update simplification state registry
+- Tests: split headless runtime test suite (#28478)
+- Refactor: split worker preparation helpers (#28479)
+- Maintenance: update simplification state registry
+
+### Fixed
+
+- bound issue sync list reads (#28490)
+- make generated Markdown default-lint clean (#28488)
+- handle init help and missing gitignore (#28486)
+- isolate full-loop merge test fixtures (#28480)
+- extend checkpoint-safe headless sandbox timeout (#28475)
+
 ## [3.32.164] - 2026-07-22
 
 ### Changed
