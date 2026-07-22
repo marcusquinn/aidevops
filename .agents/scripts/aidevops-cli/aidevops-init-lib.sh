@@ -1391,6 +1391,75 @@ SOPSEOF
 	return 0
 }
 
+_init_update_gitignore() {
+	local project_root="$1"
+	local enable_beads="$2"
+	# Add aidevops runtime artifacts to .gitignore
+	# Note: .agents/ itself is NOT ignored — it contains committed project-specific agents.
+	# Only runtime artifacts (loop state, tmp, memory) are ignored.
+	local gitignore="$project_root/.gitignore"
+	if [[ ! -f "$gitignore" ]]; then
+		cat >"$gitignore" <<'GITIGNOREEOF' || return 1
+# aidevops runtime artifacts
+.agents/loop-state/
+.agents/tmp/
+.agents/memory/
+.aidevops.json
+GITIGNOREEOF
+		if [[ "$enable_beads" == "true" ]]; then
+			printf '.beads\n' >>"$gitignore" || return 1
+		fi
+		print_success "Created .gitignore with aidevops runtime artifact ignores"
+		return 0
+	fi
+
+	local gitignore_updated=false
+	if grep -qFx ".agents" "$gitignore" 2>/dev/null; then
+		sed -i '' '/^\.agents$/d' "$gitignore" 2>/dev/null ||
+			sed -i '/^\.agents$/d' "$gitignore" 2>/dev/null || true
+		sed -i '' '/^# aidevops$/{ N; /^# aidevops\n$/d; }' "$gitignore" 2>/dev/null || true
+		print_info "Removed legacy bare .agents from .gitignore (now tracked)"
+		gitignore_updated=true
+	fi
+	if grep -qFx ".agent" "$gitignore" 2>/dev/null; then
+		sed -i '' '/^\.agent$/d' "$gitignore" 2>/dev/null ||
+			sed -i '/^\.agent$/d' "$gitignore" 2>/dev/null || true
+		gitignore_updated=true
+	fi
+
+	local needs_runtime_entries=false
+	local runtime_entry
+	for runtime_entry in ".agents/loop-state/" ".agents/tmp/" ".agents/memory/"; do
+		grep -qFx "$runtime_entry" "$gitignore" 2>/dev/null || needs_runtime_entries=true
+	done
+	if [[ "$needs_runtime_entries" == "true" ]]; then
+		ensure_trailing_newline "$gitignore"
+		if ! grep -qFx "# aidevops runtime artifacts" "$gitignore" 2>/dev/null; then
+			[[ ! -s "$gitignore" ]] || printf '\n' >>"$gitignore"
+			printf '# aidevops runtime artifacts\n' >>"$gitignore" || return 1
+		fi
+		for runtime_entry in ".agents/loop-state/" ".agents/tmp/" ".agents/memory/"; do
+			grep -qFx "$runtime_entry" "$gitignore" 2>/dev/null || printf '%s\n' "$runtime_entry" >>"$gitignore" || return 1
+		done
+		print_success "Added .agents/ runtime artifact ignores to .gitignore"
+		gitignore_updated=true
+	fi
+
+	if ! grep -qFx ".aidevops.json" "$gitignore" 2>/dev/null; then
+		ensure_trailing_newline "$gitignore"
+		printf '.aidevops.json\n' >>"$gitignore" || return 1
+		gitignore_updated=true
+	fi
+	if [[ "$enable_beads" == "true" ]] && ! grep -qFx ".beads" "$gitignore" 2>/dev/null; then
+		ensure_trailing_newline "$gitignore"
+		printf '.beads\n' >>"$gitignore" || return 1
+		print_success "Added .beads to .gitignore"
+		gitignore_updated=true
+	fi
+	[[ "$gitignore_updated" != "true" ]] || print_info "Updated .gitignore"
+	return 0
+}
+
 _init_git_metadata() {
 
 	# Ensure .gitattributes has ai-training=false (opt out of AI model training)
@@ -1417,70 +1486,7 @@ GITATTRSEOF
 		print_success "Created .gitattributes with ai-training=false"
 	fi
 
-	# Add aidevops runtime artifacts to .gitignore
-	# Note: .agents/ itself is NOT ignored — it contains committed project-specific agents.
-	# Only runtime artifacts (loop state, tmp, memory) are ignored.
-	local gitignore="$project_root/.gitignore"
-	if [[ -f "$gitignore" ]]; then
-		local gitignore_updated=false
-
-		# Remove legacy bare ".agents" entry if present (was added by older versions)
-		if grep -q "^\.agents$" "$gitignore" 2>/dev/null; then
-			sed -i '' '/^\.agents$/d' "$gitignore" 2>/dev/null ||
-				sed -i '/^\.agents$/d' "$gitignore" 2>/dev/null || true
-			# Also remove the "# aidevops" comment if it's now orphaned
-			sed -i '' '/^# aidevops$/{ N; /^# aidevops\n$/d; }' "$gitignore" 2>/dev/null || true
-			print_info "Removed legacy bare .agents from .gitignore (now tracked)"
-			gitignore_updated=true
-		fi
-
-		# Remove legacy bare ".agent" entry if present
-		if grep -q "^\.agent$" "$gitignore" 2>/dev/null; then
-			sed -i '' '/^\.agent$/d' "$gitignore" 2>/dev/null ||
-				sed -i '/^\.agent$/d' "$gitignore" 2>/dev/null || true
-			gitignore_updated=true
-		fi
-
-		# Add runtime artifact ignores
-		if ! grep -q "^\.agents/loop-state/" "$gitignore" 2>/dev/null; then
-			# Ensure trailing newline before appending (prevents malformed entries like *.zip.agents/loop-state/)
-			ensure_trailing_newline "$gitignore"
-			{
-				echo ""
-				echo "# aidevops runtime artifacts"
-				echo ".agents/loop-state/"
-				echo ".agents/tmp/"
-				echo ".agents/memory/"
-			} >>"$gitignore"
-			print_success "Added .agents/ runtime artifact ignores to .gitignore"
-			gitignore_updated=true
-		fi
-
-		# Add .aidevops.json to gitignore (local config, not committed).
-		# Tracked legacy configs are migrated earlier only in linked worktrees.
-		# Canonical checkouts receive a worker-ready repair plan and remain untouched.
-		if ! grep -q "^\.aidevops\.json$" "$gitignore" 2>/dev/null; then
-			# Ensure trailing newline before appending
-			ensure_trailing_newline "$gitignore"
-			echo ".aidevops.json" >>"$gitignore"
-			gitignore_updated=true
-		fi
-
-		# Add .beads if beads is enabled
-		if [[ "$enable_beads" == "true" ]]; then
-			if ! grep -q "^\.beads$" "$gitignore" 2>/dev/null; then
-				# Ensure trailing newline before appending
-				ensure_trailing_newline "$gitignore"
-				echo ".beads" >>"$gitignore"
-				print_success "Added .beads to .gitignore"
-				gitignore_updated=true
-			fi
-		fi
-
-		if [[ "$gitignore_updated" == "true" ]]; then
-			print_info "Updated .gitignore"
-		fi
-	fi
+	_init_update_gitignore "$project_root" "$enable_beads" || return 1
 
 	_init_optional_scaffolding || return 1
 	return 0
@@ -1740,9 +1746,37 @@ _init_print_summary() {
 	return 0
 }
 
+# Print init-specific usage before repository validation or project writes.
+_init_print_help() {
+	cat <<'INITHELPEOF'
+Usage: aidevops init [FEATURES]
+
+Initialize aidevops in the current Git repository.
+
+FEATURES may be `all` (the default standard set), one feature, or a
+comma-separated list of features:
+  planning, git-workflow, code-quality, time-tracking, database, beads,
+  sops, security, deployment-context, hosting-context, wordpress-context
+
+Examples:
+  aidevops init
+  aidevops init planning
+  aidevops init planning,git-workflow,code-quality
+
+Run `aidevops features` for feature descriptions.
+INITHELPEOF
+	return 0
+}
+
 # Init command - initialize aidevops in a project
 cmd_init() {
 	local features="${1:-all}"
+	case "$features" in
+	-h | --help | help)
+		_init_print_help
+		return 0
+		;;
+	esac
 
 	print_header "Initialize AI DevOps in Project"
 	echo ""
