@@ -69,16 +69,20 @@ EOF
 chmod +x "${SCRIPT_DIR}/pulse-idle-backoff-helper.sh"
 
 EVIDENCE_FILE="${TMP}/evidence.log"
+EVIDENCE_TIMESTAMP_FILE="${TMP}/evidence-timestamps.log"
 AGGREGATE_FILE="${TMP}/aggregate.log"
 TRIM_FILE="${TMP}/trim.log"
 : >"$EVIDENCE_FILE"
+: >"$EVIDENCE_TIMESTAMP_FILE"
 : >"$AGGREGATE_FILE"
 : >"$TRIM_FILE"
 
 gh_record_efficiency_evidence() {
 	local name="$1"
 	local value="$2"
+	local recorded_at="${3:-${EVIDENCE_APPEND_NOW:-}}"
 	printf '%s=%s\n' "$name" "$value" >>"$EVIDENCE_FILE"
+	printf '%s=%s\n' "$name" "$recorded_at" >>"$EVIDENCE_TIMESTAMP_FILE"
 	return 0
 }
 
@@ -148,6 +152,7 @@ else
 fi
 
 : >"$EVIDENCE_FILE"
+: >"$EVIDENCE_TIMESTAMP_FILE"
 : >"$AGGREGATE_FILE"
 : >"$TRIM_FILE"
 _pulse_efficiency_cycle_start
@@ -179,6 +184,37 @@ if grep -q -- "^|86400|${coverage_end_value}$" "$AGGREGATE_FILE"; then
 else
 	fail "cycle aggregate uses the completed coverage cutoff" "args=$(<"$AGGREGATE_FILE")"
 fi
+
+# Simulate the recorder entering the next second after cycle finish captured its
+# cutoff. The explicit record timestamp must stay aligned with the marker value
+# and aggregate cutoff instead of widening the completed window (GH#28493).
+: >"$EVIDENCE_FILE"
+: >"$EVIDENCE_TIMESTAMP_FILE"
+: >"$AGGREGATE_FILE"
+: >"$TRIM_FILE"
+EVIDENCE_APPEND_NOW=2001
+_pulse_efficiency_now_seconds() {
+	printf '2000\n'
+	return 0
+}
+_pulse_efficiency_cycle_start
+_pulse_efficiency_cycle_finish idle
+rollover_marker=$(grep '^coverage-end=' "$EVIDENCE_FILE")
+rollover_record_ts=$(grep '^coverage-end=' "$EVIDENCE_TIMESTAMP_FILE")
+rollover_aggregate=$(<"$AGGREGATE_FILE")
+if [[ "$rollover_marker" == "coverage-end=2000" \
+	&& "$rollover_record_ts" == "coverage-end=2000" \
+	&& "$rollover_aggregate" == "|86400|2000" ]]; then
+	pass "second rollover keeps coverage marker inside completed cutoff"
+else
+	fail "second rollover keeps coverage marker inside completed cutoff" \
+		"marker=${rollover_marker} record=${rollover_record_ts} aggregate=${rollover_aggregate} append_now=${EVIDENCE_APPEND_NOW}"
+fi
+unset EVIDENCE_APPEND_NOW
+_pulse_efficiency_now_seconds() {
+	date +%s 2>/dev/null || printf '0\n'
+	return 0
+}
 
 _pulse_efficiency_cycle_finish idle
 if [[ "$(wc -l <"$AGGREGATE_FILE" | tr -d ' ')" == "1" ]] \
