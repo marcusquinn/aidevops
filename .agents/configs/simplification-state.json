@@ -1952,9 +1952,9 @@
       "pr": 16797
     },
     ".agents/scripts/commands/full-loop.md": {
-      "at": "2026-07-18T15:41:32Z",
-      "hash": "520051d44f0417e586b4028b8c7b0414d5672055",
-      "passes": 34,
+      "at": "2026-07-22T00:01:16Z",
+      "hash": "b3a13fc7e4a12f0ce810906a02a92e9ab57fe706",
+      "passes": 35,
       "pr": 14590
     },
     ".agents/scripts/commands/init-routines.md": {
@@ -2262,9 +2262,9 @@
       "pr": 12145
     },
     ".agents/scripts/full-loop-helper.sh": {
-      "at": "2026-07-19T02:53:08Z",
-      "hash": "adf8eca7cf16f7b3f72a5ffe9aaad64b375c8c2b",
-      "passes": 35,
+      "at": "2026-07-22T00:01:19Z",
+      "hash": "432fc1c79653ca60ab74e62c7efd70616013b804",
+      "passes": 36,
       "pr": 19046
     },
     ".agents/scripts/generate-claude-commands.sh": {
@@ -7193,9 +7193,9 @@
       "pr": 13065
     },
     ".agents/workflows/full-loop.md": {
-      "at": "2026-07-18T16:12:37Z",
-      "hash": "520051d44f0417e586b4028b8c7b0414d5672055",
-      "passes": 23,
+      "at": "2026-07-22T00:02:11Z",
+      "hash": "b3a13fc7e4a12f0ce810906a02a92e9ab57fe706",
+      "passes": 24,
       "pr": 19047
     },
     ".agents/workflows/git-workflow.md": {
@@ -7486,15 +7486,15 @@
       "pr": 15490
     },
     "aidevops.sh": {
-      "at": "2026-07-21T18:39:05Z",
-      "hash": "ae2781a15bab248755674109c01b6bb7e60090b4",
-      "passes": 285,
+      "at": "2026-07-22T00:02:13Z",
+      "hash": "203514b51756714b53aed307a24e0af4430ca3f9",
+      "passes": 286,
       "pr": 19029
     },
     "setup.sh": {
-      "at": "2026-07-21T22:55:57Z",
-      "hash": "713fff1759402e392f64d4bc6e93bc9395c9c1ef",
-      "passes": 282,
+      "at": "2026-07-22T00:02:13Z",
+      "hash": "1a0184e05790ef79870ddf42132d84d792dad36c",
+      "passes": 283,
       "pr": 15470
     },
     "todo/tasks/GH#15363-brief.md": {
@@ -7858,10 +7858,10 @@
       "passes": 2
     },
     ".agents/scripts/worktree-clean-lib.sh": {
-      "hash": "f8723bbcb9ad23d9dbdb7b1da934d7efeaf07355",
-      "at": "2026-07-21T20:49:18Z",
+      "hash": "968307a130994a4d5f26d942f6d5af26996f5c59",
+      "at": "2026-07-22T00:01:26Z",
       "pr": 26042,
-      "passes": 4
+      "passes": 5
     },
     ".agents/scripts/pulse-dispatch-lib.sh": {
       "hash": "b710db99d75fc1f365c123714e09f9e404a6353f",
