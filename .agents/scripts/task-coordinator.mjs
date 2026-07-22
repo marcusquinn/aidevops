@@ -9,12 +9,13 @@ import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { canonicalizeSqliteDbPath, sqlEscape } from "./sqlite-process.mjs";
 
-const SCHEMA_VERSION = 6;
+const SCHEMA_VERSION = 7;
 const PAYLOAD_MAX_BYTES = 64 * 1024;
 const EVIDENCE_MAX_BYTES = 64 * 1024;
 const CROCKFORD = "0123456789abcdefghjkmnpqrstvwxyz";
 const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 const LEGACY_ID = /^t[1-9][0-9]{0,17}$/;
+const LEGACY_TASK_ID = /^t[1-9][0-9]{0,17}(?:\.[1-9][0-9]{0,17}){0,8}$/;
 const TASK_ID = /^(?:t[1-9][0-9]{0,17}(?:\.[1-9][0-9]{0,17})*|to[0-7][0-9a-hjkmnp-tv-z]{25}-[1-9][0-9]{0,17}(?:\.[1-9][0-9]{0,17})*)$/;
 const STATES = new Set(["active", "read-only", "redirected", "retired", "quarantined"]);
 const RESULTS = new Set(["published", "retryable", "indeterminate", "terminal", "conflict"]);
@@ -92,6 +93,10 @@ CREATE TABLE IF NOT EXISTS issue_mappings (
   UNIQUE(forge, repository_id, issue_id),
   UNIQUE(forge, repository_id, display_number),
   CHECK(forge IN ('github')), CHECK(role IN ('home','implementation','upstream'))
+);
+CREATE TABLE IF NOT EXISTS legacy_task_adoptions (
+  task_id TEXT PRIMARY KEY REFERENCES tasks(task_id), repository_id TEXT NOT NULL,
+  adopted_operation_id TEXT NOT NULL REFERENCES operations(operation_id), adopted_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS forge_event_cursors (
   forge TEXT NOT NULL, repository_id TEXT NOT NULL, subject_kind TEXT NOT NULL, subject_id TEXT NOT NULL,
@@ -223,6 +228,15 @@ INSERT INTO migration_history(version,applied_at,backup_path,integrity_result) V
 COMMIT;`);
   if (sqlite(path, "PRAGMA integrity_check;\n") !== "ok") throw new Error("migration integrity verification failed");
 }
+function migrateV6ToV7(path) {
+  const copy = backup(path, "pre-migrate-v7");
+  sqlite(path, `BEGIN IMMEDIATE;
+${SCHEMA}
+UPDATE coordinator_meta SET value='7' WHERE key='schema_version';
+INSERT INTO migration_history(version,applied_at,backup_path,integrity_result) VALUES (7,${sqlEscape(now())},${sqlEscape(copy)},'ok');
+COMMIT;`);
+  if (sqlite(path, "PRAGMA integrity_check;\n") !== "ok") throw new Error("migration integrity verification failed");
+}
 function migrate(path, version) {
   if (version === 1) {
     migrateV1ToV2(path);
@@ -230,19 +244,26 @@ function migrate(path, version) {
     migrateV3ToV4(path);
     migrateV4ToV5(path);
     migrateV5ToV6(path);
+    migrateV6ToV7(path);
   } else if (version === 2) {
     migrateV2ToV3(path);
     migrateV3ToV4(path);
     migrateV4ToV5(path);
     migrateV5ToV6(path);
+    migrateV6ToV7(path);
   } else if (version === 3) {
     migrateV3ToV4(path);
     migrateV4ToV5(path);
     migrateV5ToV6(path);
+    migrateV6ToV7(path);
   } else if (version === 4) {
     migrateV4ToV5(path);
     migrateV5ToV6(path);
-  } else if (version === 5) migrateV5ToV6(path);
+    migrateV6ToV7(path);
+  } else if (version === 5) {
+    migrateV5ToV6(path);
+    migrateV6ToV7(path);
+  } else if (version === 6) migrateV6ToV7(path);
   else if (version !== SCHEMA_VERSION) throw new Error(`unsupported coordinator schema ${version}`);
 }
 function bootstrap(path) {
@@ -391,6 +412,56 @@ INSERT INTO terminal_evidence(operation_id,result_state,evidence_json,occurred_a
   }
   maybeCrash("after-commit");
   return operationResult(path, operationId, payloadHash);
+}
+function durableAdoptionResult(path, operationId, payloadHash) {
+  const result = operationResult(path, operationId, payloadHash);
+  return result ? { ...result, ok: result.status !== "conflict" } : null;
+}
+function adoptLegacyTask(input = {}, path = initialise()) {
+  const value = issueMappingInput({ ...input, role: "home" });
+  const taskId = value.taskId;
+  if (!LEGACY_TASK_ID.test(taskId)) throw new TypeError("task_id is not a canonical legacy identity");
+  const identityText = jsonText({ displayNumber: value.displayNumber, forge: value.forge, issueId: value.issueId, repositoryId: value.repositoryId, role: value.role, taskId }, "legacy adoption identity");
+  const operationId = input.operationId || `legacy-adopt-${createHash("sha256").update(identityText).digest("hex")}`;
+  validId(operationId, "operation_id");
+  const payloadText = identityText;
+  const payloadHash = hashText(payloadText);
+  const prior = durableAdoptionResult(path, operationId, payloadHash);
+  if (prior) return prior;
+  const timestamp = now();
+  try {
+    sqlite(path, `PRAGMA foreign_keys=ON; BEGIN IMMEDIATE;
+CREATE TEMP TABLE adoption_decision(status TEXT NOT NULL CHECK(status IN ('accepted','conflict')));
+INSERT INTO adoption_decision SELECT CASE
+  WHEN EXISTS (SELECT 1 FROM legacy_task_adoptions WHERE task_id=${sqlEscape(taskId)} AND repository_id<>${sqlEscape(value.repositoryId)}) THEN 'conflict'
+  WHEN EXISTS (SELECT 1 FROM issue_mappings WHERE task_id=${sqlEscape(taskId)} AND role='home'
+    AND (forge<>${sqlEscape(value.forge)} OR repository_id<>${sqlEscape(value.repositoryId)} OR issue_id<>${sqlEscape(value.issueId)} OR display_number<>${value.displayNumber})) THEN 'conflict'
+  WHEN EXISTS (SELECT 1 FROM issue_mappings WHERE forge=${sqlEscape(value.forge)} AND repository_id=${sqlEscape(value.repositoryId)}
+    AND (issue_id=${sqlEscape(value.issueId)} OR display_number=${value.displayNumber}) AND task_id<>${sqlEscape(taskId)}) THEN 'conflict'
+  ELSE 'accepted' END;
+INSERT INTO operations(operation_id,kind,task_id,payload_hash,payload_json,status,result_json,created_at,updated_at)
+SELECT ${sqlEscape(operationId)},'task.adopt',${sqlEscape(taskId)},${sqlEscape(payloadHash)},${sqlEscape(payloadText)},CASE WHEN status='accepted' THEN 'terminal' ELSE 'conflict' END,'null',${sqlEscape(timestamp)},${sqlEscape(timestamp)} FROM adoption_decision;
+UPDATE origins SET sequence=sequence+1 WHERE origin_id=(SELECT origin_id FROM origins WHERE state='active' ORDER BY created_at DESC LIMIT 1)
+AND NOT EXISTS (SELECT 1 FROM tasks WHERE task_id=${sqlEscape(taskId)}) AND (SELECT status FROM adoption_decision)='accepted';
+INSERT INTO tasks(task_id,origin_id,sequence,parent_task_id,created_operation_id,payload_hash,payload_json,created_at)
+SELECT ${sqlEscape(taskId)},origin_id,sequence,NULL,${sqlEscape(operationId)},${sqlEscape(payloadHash)},${sqlEscape(payloadText)},${sqlEscape(timestamp)}
+FROM origins WHERE state='active' AND NOT EXISTS (SELECT 1 FROM tasks WHERE task_id=${sqlEscape(taskId)})
+AND (SELECT status FROM adoption_decision)='accepted' ORDER BY created_at DESC LIMIT 1;
+INSERT INTO legacy_task_adoptions(task_id,repository_id,adopted_operation_id,adopted_at)
+SELECT ${sqlEscape(taskId)},${sqlEscape(value.repositoryId)},${sqlEscape(operationId)},${sqlEscape(timestamp)} FROM adoption_decision WHERE status='accepted' ON CONFLICT(task_id) DO NOTHING;
+INSERT INTO issue_mappings(task_id,forge,repository_id,repository_slug,role,issue_id,project_id,display_number,state_cursor,sync_metadata_json,created_at,updated_at)
+SELECT ${sqlEscape(taskId)},${sqlEscape(value.forge)},${sqlEscape(value.repositoryId)},${sqlEscape(value.repositorySlug)},'home',${sqlEscape(value.issueId)},${sqlEscape(value.projectId)},${value.displayNumber},${sqlEscape(value.stateCursor)},${sqlEscape(value.syncMetadataText)},${sqlEscape(timestamp)},${sqlEscape(timestamp)}
+FROM adoption_decision WHERE status='accepted' ON CONFLICT(task_id,forge,repository_id) DO NOTHING;
+UPDATE operations SET result_json=(SELECT json_object('adopted',status='accepted','operationId',${sqlEscape(operationId)},'repositoryId',${sqlEscape(value.repositoryId)},'status',status,'taskId',${sqlEscape(taskId)}) FROM adoption_decision) WHERE operation_id=${sqlEscape(operationId)};
+INSERT INTO terminal_evidence(operation_id,result_state,evidence_json,occurred_at)
+SELECT ${sqlEscape(operationId)},CASE WHEN status='accepted' THEN 'terminal' ELSE 'conflict' END,json_object('adoption',status,'issueId',${sqlEscape(value.issueId)},'repositoryId',${sqlEscape(value.repositoryId)}),${sqlEscape(timestamp)} FROM adoption_decision;
+DROP TABLE adoption_decision; COMMIT;`);
+  } catch (error) {
+    const raced = durableAdoptionResult(path, operationId, payloadHash);
+    if (!raced) throw new Error("legacy task adoption conflict", { cause: error });
+    return raced;
+  }
+  return durableAdoptionResult(path, operationId, payloadHash);
 }
 function publication({ operationId, taskId, repositoryId, repositoryPath, remoteName = "origin", branchName = "main", coalesceKey = "planning", maxAttempts = 5, payload = {} }, path = initialise()) {
   validId(operationId, "operation_id");
@@ -551,6 +622,12 @@ function bindIssue(input, path = initialise()) {
   const timestamp = now();
   try {
     sqlite(path, `BEGIN IMMEDIATE;
+CREATE TEMP TABLE assert_home_repository(value INTEGER CHECK(value=1));
+INSERT INTO assert_home_repository SELECT CASE WHEN ${sqlEscape(value.role)}<>'home' THEN 1
+  WHEN EXISTS (SELECT 1 FROM legacy_task_adoptions WHERE task_id=${sqlEscape(value.taskId)} AND repository_id<>${sqlEscape(value.repositoryId)}) THEN 0
+  WHEN EXISTS (SELECT 1 FROM issue_mappings WHERE task_id=${sqlEscape(value.taskId)} AND role='home' AND repository_id<>${sqlEscape(value.repositoryId)}) THEN 0
+  ELSE 1 END;
+DROP TABLE assert_home_repository;
 INSERT INTO issue_mappings(task_id,forge,repository_id,repository_slug,role,issue_id,project_id,display_number,state_cursor,sync_metadata_json,created_at,updated_at)
 VALUES (${sqlEscape(value.taskId)},${sqlEscape(value.forge)},${sqlEscape(value.repositoryId)},${sqlEscape(value.repositorySlug)},${sqlEscape(value.role)},${sqlEscape(value.issueId)},${sqlEscape(value.projectId)},${value.displayNumber},${sqlEscape(value.stateCursor)},${sqlEscape(value.syncMetadataText)},${sqlEscape(timestamp)},${sqlEscape(timestamp)})
 ON CONFLICT(task_id,forge,repository_id) DO UPDATE SET repository_slug=excluded.repository_slug,project_id=COALESCE(excluded.project_id,issue_mappings.project_id),state_cursor=COALESCE(excluded.state_cursor,issue_mappings.state_cursor),sync_metadata_json=CASE WHEN excluded.state_cursor>issue_mappings.state_cursor OR issue_mappings.state_cursor IS NULL THEN excluded.sync_metadata_json ELSE issue_mappings.sync_metadata_json END,updated_at=excluded.updated_at
@@ -720,6 +797,7 @@ function parseJson(value = "{}") { return JSON.parse(value); }
 function option(args, name, fallback = "") { const index = args.indexOf(name); return index >= 0 && index + 1 < args.length ? args[index + 1] : fallback; }
 const COMMAND_HANDLERS = {
   allocate: (args, path) => allocate({ operationId: option(args, "--operation-id") || randomUUID(), count: Number(option(args, "--count", "1")), legacyId: option(args, "--legacy-id"), payload: parseJson(option(args, "--payload", "{}")) }, path),
+  "adopt-legacy-task": (args, path) => adoptLegacyTask({ operationId: option(args, "--operation-id"), taskId: option(args, "--task-id"), forge: option(args, "--forge", "github"), repositoryId: option(args, "--repository-id"), repositorySlug: option(args, "--repository-slug"), issueId: option(args, "--issue-id"), projectId: option(args, "--project-id"), displayNumber: option(args, "--display-number"), stateCursor: option(args, "--state-cursor"), syncMetadata: parseJson(option(args, "--sync-metadata", "{}")) }, path),
   "publication-intent": (args, path) => publication({ operationId: option(args, "--operation-id"), taskId: option(args, "--task-id"), repositoryId: option(args, "--repository-id"), repositoryPath: option(args, "--repository-path"), remoteName: option(args, "--remote", "origin"), branchName: option(args, "--branch", "main"), coalesceKey: option(args, "--coalesce-key", "planning"), maxAttempts: Number(option(args, "--max-attempts", "5")), payload: parseJson(option(args, "--payload", "{}")) }, path),
   "lease-next": (args, path) => leaseNext({ ownerId: option(args, "--owner-id"), leaseSeconds: Number(option(args, "--lease-seconds", "60")), maxActive: Number(option(args, "--max-active", "4")) }, path),
   "lease-check": (args, path) => checkLease({ ownerId: option(args, "--owner-id"), repositoryId: option(args, "--repository-id"), fencingToken: Number(option(args, "--fencing-token")) }, path),
@@ -739,7 +817,7 @@ const COMMAND_HANDLERS = {
 };
 export function run(args = process.argv.slice(2)) {
   const command = args[0] || "help";
-  if (["help", "--help", "-h"].includes(command)) { process.stdout.write("Usage: task-coordinator.mjs allocate|publication-intent|lease-next|lease-check|lease-renew|lease-finish|publication-metrics|attempt|transition|bind-issue|resolve-issue|forge-event|restore|verify|status\n"); return 0; }
+  if (["help", "--help", "-h"].includes(command)) { process.stdout.write("Usage: task-coordinator.mjs allocate|adopt-legacy-task|publication-intent|lease-next|lease-check|lease-renew|lease-finish|publication-metrics|attempt|transition|bind-issue|resolve-issue|forge-event|restore|verify|status\n"); return 0; }
   const handler = COMMAND_HANDLERS[command];
   const path = initialise();
   if (!handler) throw new TypeError(`unknown task-coordinator command: ${command}`);
@@ -752,4 +830,4 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   try { process.exitCode = run(); } catch (error) { process.stderr.write(`task-coordinator: ${error.message}\n`); process.exitCode = 1; }
 }
 
-export { allocate, backup, bindIssue, forgeEvent, hashPayload, initialise, leaseNext, publicationMetrics, resolveIssue, restore, verify };
+export { adoptLegacyTask, allocate, backup, bindIssue, forgeEvent, hashPayload, initialise, leaseNext, publicationMetrics, resolveIssue, restore, verify };

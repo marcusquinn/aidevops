@@ -11,7 +11,7 @@ main() {
 	local event_kind="${EVENT_NAME:-}"
 	local number="${EVENT_DISPLAY_NUMBER:-}"
 	local subject_id="${EVENT_SUBJECT_ID:-}"
-	local task_id="" issue_json="" issue_id="" issue_number="" issue_state="" issue_cursor=""
+	local task_id="" issue_json="" issue_id="" issue_number="" issue_state="" issue_cursor="" sync_metadata=""
 	[[ "$event_kind" == "issues" ]] || return 0
 	[[ "$number" =~ ^[1-9][0-9]*$ && -n "$subject_id" ]] || return 1
 	task_id=$(grep -E "^[[:space:]]*- \[[ x]\] t[1-9][0-9]*(\.[1-9][0-9]*)* .*ref:GH#${number}([[:space:]]|$)" TODO.md 2>/dev/null |
@@ -23,9 +23,13 @@ main() {
 	issue_state=$(jq -r '.state // empty' <<<"$issue_json")
 	issue_cursor=$(jq -r '.updatedAt // empty' <<<"$issue_json")
 	[[ "$issue_id" == "$subject_id" && "$issue_number" == "$number" ]] || return 1
+	sync_metadata=$(jq -cn --arg state "$issue_state" --arg source event-ref-backfill '{state:$state,source:$source}') || return 1
+	node "$COORDINATOR" adopt-legacy-task --task-id "$task_id" --forge github --repository-id "${REPOSITORY_ID:?}" \
+		--repository-slug "$REPOSITORY_SLUG" --issue-id "$issue_id" --display-number "$issue_number" \
+		--state-cursor "$issue_cursor" --sync-metadata "$sync_metadata" >/dev/null || return 1
 	node "$COORDINATOR" bind-issue --task-id "$task_id" --forge github --repository-id "${REPOSITORY_ID:?}" \
 		--repository-slug "$REPOSITORY_SLUG" --role home --issue-id "$issue_id" --display-number "$issue_number" \
-		--state-cursor "$issue_cursor" --sync-metadata "$(jq -cn --arg state "$issue_state" --arg source event-ref-backfill '{state:$state,source:$source}')" >/dev/null || return 1
+		--state-cursor "$issue_cursor" --sync-metadata "$sync_metadata" >/dev/null || return 1
 	return 0
 }
 

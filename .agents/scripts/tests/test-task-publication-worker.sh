@@ -142,7 +142,7 @@ git_root="${TEST_ROOT}/git"
 mkdir -p "$git_root"
 git init --bare --initial-branch=main "${git_root}/remote.git" >/dev/null 2>&1 || git init --bare "${git_root}/remote.git" >/dev/null 2>&1
 git clone "${git_root}/remote.git" "${git_root}/work" >/dev/null 2>&1
-printf '# Tasks\n' >"${git_root}/work/TODO.md"
+printf '# Tasks\n- [ ] %s mapped transition ref:GH#77\n- [ ] %s.1 child remains open\n' "$task_id" "$task_id" >"${git_root}/work/TODO.md"
 printf 'base\n' >"${git_root}/work/README.md"
 git -C "${git_root}/work" add TODO.md README.md
 GIT_AUTHOR_NAME=Test GIT_AUTHOR_EMAIL=test@example.invalid GIT_COMMITTER_NAME=Test GIT_COMMITTER_EMAIL=test@example.invalid \
@@ -195,6 +195,34 @@ if git -C "${git_root}/work" push --atomic \
 fi
 [[ "$(git --git-dir="${git_root}/remote.git" rev-parse main)" == "$after_recovery" ]]
 [[ "$(git --git-dir="${git_root}/remote.git" rev-parse "$fence_ref")" == "$recovered_fence" ]]
+
+# Forge-event transitions are reduced into the repository projection before
+# publication and change only the exact mapped TODO row.
+node "$COORDINATOR" bind-issue --task-id "$task_id" --repository-id repo-git --repository-slug owner/repo \
+	--role home --issue-id I_transition --display-number 77 --state-cursor 2026-07-12T12:00:00Z >/dev/null
+node "$COORDINATOR" forge-event --operation-id transition-closed --delivery-id transition-closed \
+	--cursor-tiebreaker run-closed --repository-id repo-git --repository-slug owner/repo \
+	--repository-path "${git_root}/work" --event-kind issue --action closed --subject-id I_transition \
+	--cursor 2026-07-12T13:00:00Z >/dev/null
+AIDEVOPS_PLANNING_VALIDATOR=/usr/bin/true "$WORKER" once
+projected_todo=$(git --git-dir="${git_root}/remote.git" show main:TODO.md)
+expected_todo=$(printf '# Tasks\n- [x] %s mapped transition ref:GH#77\n- [ ] %s.1 child remains open\n- [ ] t001 worker publication\n- [ ] t002 stale publication' "$task_id" "$task_id")
+[[ "$projected_todo" == "$expected_todo" ]]
+closed_sha=$(git --git-dir="${git_root}/remote.git" rev-parse main)
+node "$COORDINATOR" forge-event --operation-id transition-duplicate-closed --delivery-id transition-duplicate-closed \
+	--cursor-tiebreaker run-duplicate-closed --repository-id repo-git --repository-slug owner/repo \
+	--repository-path "${git_root}/work" --event-kind issue --action closed --subject-id I_transition \
+	--cursor 2026-07-12T13:30:00Z >/dev/null
+AIDEVOPS_PLANNING_VALIDATOR=/usr/bin/true "$WORKER" once
+[[ "$(git --git-dir="${git_root}/remote.git" rev-parse main)" == "$closed_sha" ]]
+[[ "$(sqlite3 "$AIDEVOPS_TASK_COORDINATOR_DB" "SELECT status FROM publication_intents WHERE operation_id='transition-duplicate-closed';")" == "terminal" ]]
+[[ "$(sqlite3 "$AIDEVOPS_TASK_COORDINATOR_DB" "SELECT json_extract(evidence_json,'$.result') FROM terminal_evidence WHERE operation_id='transition-duplicate-closed' ORDER BY id DESC LIMIT 1;")" == "idempotent_transition" ]]
+node "$COORDINATOR" forge-event --operation-id transition-reopened --delivery-id transition-reopened \
+	--cursor-tiebreaker run-reopened --repository-id repo-git --repository-slug owner/repo \
+	--repository-path "${git_root}/work" --event-kind issue --action reopened --subject-id I_transition \
+	--cursor 2026-07-12T14:00:00Z >/dev/null
+AIDEVOPS_PLANNING_VALIDATOR=/usr/bin/true "$WORKER" once
+[[ "$(git --git-dir="${git_root}/remote.git" show main:TODO.md)" == "${expected_todo/\[x\]/[ ]}" ]]
 
 # Active initialization lock ownership is never stolen based on age alone.
 mkdir "${AIDEVOPS_TASK_COORDINATOR_DB}.init-lock"
