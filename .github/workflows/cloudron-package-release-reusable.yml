@@ -1,0 +1,65 @@
+name: Cloudron Package Release (reusable)
+
+on:
+  workflow_call:
+    inputs:
+      aidevops_repository:
+        description: 'Repository containing the shared Cloudron release validator'
+        required: false
+        type: string
+        default: 'marcusquinn/aidevops'
+      aidevops_ref:
+        description: 'aidevops ref containing the shared validator'
+        required: false
+        type: string
+        default: 'main'
+      runner:
+        description: 'Runner label override'
+        required: false
+        type: string
+        default: 'ubuntu-latest'
+
+jobs:
+  validate-and-release:
+    name: Validate and publish GitHub release
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    concurrency:
+      group: cloudron-package-release-${{ github.ref }}
+      cancel-in-progress: false
+
+    steps:
+      - name: Checkout package tag
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 0
+          path: package
+
+      - name: Checkout aidevops release validator
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          repository: ${{ inputs.aidevops_repository }}
+          ref: ${{ inputs.aidevops_ref }}
+          fetch-depth: 1
+          path: __aidevops
+
+      - name: Validate Cloudron package release
+        working-directory: package
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: bash ../__aidevops/.agents/scripts/cloudron-package-helper.sh check-release "$RELEASE_TAG"
+
+      - name: Publish GitHub release for existing tag
+        working-directory: package
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            echo "GitHub release already exists for $RELEASE_TAG"
+            exit 0
+          fi
+          gh release create "$RELEASE_TAG" --verify-tag --generate-notes --title "$RELEASE_TAG"

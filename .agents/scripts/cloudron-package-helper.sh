@@ -16,10 +16,15 @@
 #   debug-off [app]       Disable debug mode
 #   test [app]            Run validation checklist
 #   scaffold [type]       Generate boilerplate (php|node|python|go|static|multi-process)
+#   prepare-release       Update manifest/changelog without publishing
+#   check-release         Validate manifest/changelog/tag release invariants
+#   check-compatibility   Audit manifest and final Cloudron base image
 #   status                Show current package status
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 source "${SCRIPT_DIR}/shared-constants.sh"
+# shellcheck source=cloudron-package-release-lib.sh
+source "${SCRIPT_DIR}/cloudron-package-release-lib.sh"
 
 set -euo pipefail
 
@@ -1012,6 +1017,27 @@ cmd_status() {
 	[[ -f "start.sh" ]] && echo "  [x] start.sh" || echo "  [ ] start.sh"
 	[[ -f "logo.png" ]] && echo "  [x] logo.png" || echo "  [ ] logo.png (recommended)"
 	echo ""
+	return 0
+}
+
+cmd_prepare_release() {
+	cloudron_package_prepare_release "$@"
+	return $?
+}
+
+cmd_check_release() {
+	cloudron_package_check_release "$@"
+	return $?
+}
+
+cmd_check_compatibility() {
+	local findings=""
+	if findings=$(cloudron_package_compatibility_findings "."); then
+		printf 'Cloudron package compatibility validation passed.\n'
+		return 0
+	fi
+	printf '%s\n' "$findings" >&2
+	return 1
 }
 
 # Show help
@@ -1033,6 +1059,10 @@ Commands:
   debug-off [app]       Disable debug mode
   test [app]            Show validation checklist
   scaffold <type>       Generate boilerplate (php|node|python|go|static|multi-process)
+  prepare-release <package-version> <upstream-version> <notes-file>
+                        Update manifest/changelog without publishing
+  check-release <tag>   Validate package, changelog, and vX.Y.Z tag
+  check-compatibility   Audit manifest and final pinned Cloudron base image
   status                Show current package status
   help                  Show this help
 
@@ -1044,6 +1074,8 @@ Examples:
   cloudron-package-helper.sh install testapp
   cloudron-package-helper.sh update
   cloudron-package-helper.sh logs testapp
+  cloudron-package-helper.sh prepare-release 1.2.0 4.5.6 release-notes.md
+  cloudron-package-helper.sh check-release v1.2.0
 
 Documentation:
   https://docs.cloudron.io/packaging/
@@ -1091,6 +1123,15 @@ main() {
 	scaffold)
 		cmd_scaffold "$@"
 		;;
+	prepare-release)
+		cmd_prepare_release "$@"
+		;;
+	check-release)
+		cmd_check_release "$@"
+		;;
+	check-compatibility)
+		cmd_check_compatibility "$@"
+		;;
 	status)
 		cmd_status "$@"
 		;;
@@ -1103,6 +1144,7 @@ main() {
 		return 1
 		;;
 	esac
+	return $?
 }
 
 main "$@"
