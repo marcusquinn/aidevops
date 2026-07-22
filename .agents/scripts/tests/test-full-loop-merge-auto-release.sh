@@ -137,6 +137,13 @@ export -f gh
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "${SCRIPT_DIR}/shared-claim-lifecycle.sh"
 
+# Production reads now use the shared gh_pr_view wrapper. Route those reads
+# back through this test's controlled gh fixture instead of live/cache state.
+gh_pr_view() {
+	gh pr view "$@"
+	return $?
+}
+
 printf '%sRunning shared-claim-lifecycle / full-loop merge auto-release tests (t2429)%s\n' \
 	"$TEST_BLUE" "$TEST_NC"
 
@@ -265,7 +272,7 @@ release_interactive_claim_on_merge "54" "marcusquinn/aidevops" "8805"
 release_interactive_claim_on_merge "54" "marcusquinn/aidevops" "8805"
 
 # Count release calls — should be exactly 1 (second call short-circuits on missing stamp)
-CALL_COUNT=$(grep -c "release 8805" "$RELEASE_CALLS" 2>/dev/null || printf '0')
+CALL_COUNT=$(grep -c "release 8805" "$RELEASE_CALLS" 2>/dev/null || true)
 if [[ "$CALL_COUNT" -eq 1 ]]; then
 	pass "idempotency: release called exactly once on double invocation"
 else

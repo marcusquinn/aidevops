@@ -8,6 +8,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 AGENTS_SCRIPTS_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
 TEST_ROOT=""
+FIXTURE_GIT_BIN=""
 TESTS_RUN=0
 TESTS_FAILED=0
 
@@ -28,7 +29,22 @@ print_result() {
 
 teardown() {
 	if [[ -n "$TEST_ROOT" && -d "$TEST_ROOT" ]]; then
+		if [[ "$PWD" == "$TEST_ROOT" || "$PWD" == "$TEST_ROOT/"* ]]; then
+			cd "$AGENTS_SCRIPTS_DIR" || return 1
+		fi
 		rm -rf "$TEST_ROOT"
+	fi
+	return 0
+}
+
+resolve_fixture_git() {
+	FIXTURE_GIT_BIN="${AIDEVOPS_TEST_GIT_BIN:-}"
+	if [[ -z "$FIXTURE_GIT_BIN" ]]; then
+		FIXTURE_GIT_BIN=$(command -p -v git 2>/dev/null || true)
+	fi
+	if [[ -z "$FIXTURE_GIT_BIN" || ! -x "$FIXTURE_GIT_BIN" ]]; then
+		printf 'ERROR: real Git executable unavailable for disposable fixture\n' >&2
+		return 1
 	fi
 	return 0
 }
@@ -149,16 +165,28 @@ install_subject_stubs() {
 		return 0
 	}
 
+	_merge_capture_session_distill_provenance() { return 0; }
+	_merge_reconcile_closing_issues() { return 0; }
+
 	return 0
 }
 
 setup_subject() {
+	if [[ -n "$TEST_ROOT" && -d "$TEST_ROOT" ]]; then
+		teardown || return 1
+	fi
 	TEST_ROOT=$(mktemp -d)
 	trap teardown EXIT
 	export HOME="${TEST_ROOT}/home"
 	export AIDEVOPS_SKIP_AUTO_CLAIM=1
 	export AIDEVOPS_FULL_LOOP_CLEANUP_DIR="${TEST_ROOT}/cleanup-receipts"
 	mkdir -p "$HOME" "${TEST_ROOT}/bin"
+	export AIDEVOPS_TEST_REAL_GIT="$FIXTURE_GIT_BIN"
+	cat >"${TEST_ROOT}/bin/git" <<'GIT'
+#!/usr/bin/env bash
+exec "${AIDEVOPS_TEST_REAL_GIT:?}" "$@"
+GIT
+	chmod +x "${TEST_ROOT}/bin/git"
 	cat >"${TEST_ROOT}/bin/trash" <<'TRASH'
 #!/usr/bin/env bash
 exit 1
@@ -305,6 +333,7 @@ test_refresh_canonical_reports_pending_without_mutation() {
 }
 
 main() {
+	resolve_fixture_git
 	setup_subject
 	test_refresh_canonical_reports_pending_without_mutation
 	test_cmd_merge_defers_current_linked_worktree
