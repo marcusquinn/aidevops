@@ -10,6 +10,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.32.164] - 2026-07-22
+
+### Changed
+
+- Maintenance: mark t18164 complete (pr:#28393 completed:2026-07-22) [skip ci]
+- Maintenance: update simplification state registry
+
+### Fixed
+
+- reuse semantic blocker resolution in merge workflow (#28470)
+- recover broken audit chains without rewriting evidence (#28392)
+- repair targeted forge event projections (#28468)
+
 ## [3.32.163] - 2026-07-22
 
 ### Changed
