@@ -795,7 +795,7 @@ _init_scaffold_scope_gated_files() {
 	# Collaborator pointer files — require standard scope
 	if _scope_includes "$init_scope" "standard"; then
 		local pointer_content="Read AGENTS.md for all project context and instructions."
-		local pointer_files=(".cursorrules" ".windsurfrules" ".clinerules" ".github/copilot-instructions.md")
+		local pointer_files=(".cursorrules" ".windsurfrules" ".clinerules")
 		local pointer_created=0
 		local pf
 		for pf in "${pointer_files[@]}"; do
@@ -806,6 +806,17 @@ _init_scaffold_scope_gated_files() {
 				((++pointer_created))
 			fi
 		done
+
+		local copilot_path="$project_root/.github/copilot-instructions.md"
+		if [[ ! -f "$copilot_path" ]]; then
+			mkdir -p "$(dirname "$copilot_path")"
+			cat >"$copilot_path" <<'EOF'
+# GitHub Copilot instructions
+
+Read [AGENTS.md](../AGENTS.md) for all project context and instructions.
+EOF
+			((++pointer_created))
+		fi
 		if [[ $pointer_created -gt 0 ]]; then
 			print_success "Created $pointer_created collaborator pointer file(s) (.cursorrules, etc.)"
 		else

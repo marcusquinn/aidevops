@@ -101,7 +101,7 @@ def render_markdown(metrics: dict[str, Any]) -> str:
         "## Summary",
         "",
         "| Metric | Value |",
-        "|---|---:|",
+        "| --- | ---: |",
         f"| Source files | {summary['source_files']:,} |",
         f"| Lines of code | {summary['code']:,} |",
         f"| Comment lines | {summary['comments']:,} |",
@@ -113,13 +113,21 @@ def render_markdown(metrics: dict[str, Any]) -> str:
         "## Languages",
         "",
         "| Language | Code lines | Files | Share |",
-        "|---|---:|---:|---:|",
+        "| --- | ---: | ---: | ---: |",
     ]
     for item in metrics["languages"]:
         lines.append(
             f"| {item['name']} | {int(item['code']):,} | {int(item['files']):,} | {float(item['percentage']):.1f}% |"
         )
-    lines.extend(["", "## Dependency manifests", "", "| Ecosystem | Manifest | Direct | Locked |", "|---|---|---:|---:|"])
+    lines.extend(
+        [
+            "",
+            "## Dependency manifests",
+            "",
+            "| Ecosystem | Manifest | Direct | Locked |",
+            "| --- | --- | ---: | ---: |",
+        ]
+    )
     if deps["manifests"]:
         for item in deps["manifests"]:
             lines.append(
@@ -130,7 +138,9 @@ def render_markdown(metrics: dict[str, Any]) -> str:
     lines.extend(
         [
             "",
-            "Refresh policy: run locally when needed, or use the managed weekly/24h-fresh workflow. The scanner uses git-tracked/unignored files and does not contact external services by default.",
+            "Refresh policy: run locally when needed, or use the managed weekly/24h-fresh",
+            "workflow. The scanner uses git-tracked/unignored files and does not contact",
+            "external services by default.",
             "<!-- aidevops:repo-metrics:end -->",
             "",
         ]
