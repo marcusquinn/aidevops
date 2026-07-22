@@ -14,7 +14,18 @@ cleanup_receipt_dir="${ROOT}/cleanup-receipts"
 
 cat >"${ROOT}/bin/gh" <<'STUB'
 #!/usr/bin/env bash
-if [[ "${COMPLETION_PR_STATE:-MERGED}" == "MERGED" ]]; then
+call_count=1
+if [[ -n "${COMPLETION_PR_STATE_CALLS:-}" ]]; then
+	[[ -f "$COMPLETION_PR_STATE_CALLS" ]] && call_count=$(( $(<"$COMPLETION_PR_STATE_CALLS") + 1 ))
+	printf '%s\n' "$call_count" >"$COMPLETION_PR_STATE_CALLS"
+fi
+if [[ -n "${COMPLETION_PR_CACHE_CALLS:-}" ]]; then
+	printf '%s\n' "${AIDEVOPS_GH_PR_VIEW_CACHE_DISABLE:-0}" >>"$COMPLETION_PR_CACHE_CALLS"
+fi
+if [[ "${COMPLETION_PR_STATE:-MERGED}" == "API_FAILURE" ]]; then
+	exit 70
+elif [[ "${COMPLETION_PR_STATE:-MERGED}" == "MERGED" ]] ||
+	[[ "${COMPLETION_PR_STATE:-MERGED}" == "STALE_THEN_MERGED" && "$call_count" -gt 1 ]]; then
 	printf '%s\n' '{"state":"MERGED","mergedAt":"2026-07-11T00:00:00Z","mergeCommit":{"oid":"merge123"}}'
 else
 	printf '%s\n' '{"state":"OPEN","mergedAt":null,"mergeCommit":null}'
@@ -55,6 +66,8 @@ removed_path="${ROOT}/removed-worktree"
 cleanup_log="${ROOT}/cleanup.log"
 printf '[2026-07-11T00:00:01Z] [test] worktree-removed: %s — branch-merged — mode=permanent\n' "$removed_path" >"$cleanup_log"
 export AIDEVOPS_FULL_LOOP_CLEANUP_DIR="$cleanup_receipt_dir"
+export FULL_LOOP_MERGED_EVIDENCE_ATTEMPTS=2
+export FULL_LOOP_MERGED_EVIDENCE_DELAY_SECONDS=0
 # shellcheck source=../full-loop-cleanup-receipt.sh
 source "${SCRIPTS_DIR}/full-loop-cleanup-receipt.sh"
 full_loop_write_cleanup_deferred testorg/repo 42 "$removed_path" feature/test-cleanup "$$" test-session not-requested >/dev/null
@@ -81,6 +94,28 @@ AIDEVOPS_FULL_LOOP_RECEIPT_DIR="$receipt_dir" PATH="${ROOT}/bin:/opt/homebrew/bi
 grep -qx 'not-requested' "${receipt_dir}/marcusquinn_aidevops-42.status"
 AIDEVOPS_FULL_LOOP_RECEIPT_DIR="$receipt_dir" PATH="${ROOT}/bin:/opt/homebrew/bin:/usr/bin:/bin" bash "$record_runner" 42 marcusquinn/aidevops >/dev/null
 printf 'PASS direct merge-only lifecycle records idempotent no-release evidence\n'
+
+rm -f "${receipt_dir}/marcusquinn_aidevops-42.status"
+stale_calls="${ROOT}/stale-evidence-calls.txt"
+cache_calls="${ROOT}/stale-evidence-cache-control.txt"
+COMPLETION_PR_STATE=STALE_THEN_MERGED \
+	COMPLETION_PR_STATE_CALLS="$stale_calls" \
+	COMPLETION_PR_CACHE_CALLS="$cache_calls" \
+	AIDEVOPS_FULL_LOOP_RECEIPT_DIR="$receipt_dir" \
+	PATH="${ROOT}/bin:/opt/homebrew/bin:/usr/bin:/bin" \
+	bash "$record_runner" 42 marcusquinn/aidevops >/dev/null
+grep -qx 'not-requested' "${receipt_dir}/marcusquinn_aidevops-42.status"
+[[ "$(<"$stale_calls")" == "2" ]]
+[[ "$(grep -c '^1$' "$cache_calls")" == "2" ]]
+printf 'PASS no-release recovers stale evidence through bounded cache-disabled reads\n'
+
+rm -f "${receipt_dir}/marcusquinn_aidevops-42.status"
+if COMPLETION_PR_STATE=API_FAILURE AIDEVOPS_FULL_LOOP_RECEIPT_DIR="$receipt_dir" PATH="${ROOT}/bin:/opt/homebrew/bin:/usr/bin:/bin" bash "$record_runner" 42 marcusquinn/aidevops >/dev/null 2>&1; then
+	printf 'FAIL API-indeterminate evidence created no-release evidence\n'
+	exit 1
+fi
+[[ ! -e "${receipt_dir}/marcusquinn_aidevops-42.status" ]]
+printf 'PASS API-indeterminate evidence cannot create no-release evidence\n'
 
 rm -f "${receipt_dir}/marcusquinn_aidevops-42.status"
 if COMPLETION_PR_STATE=OPEN AIDEVOPS_FULL_LOOP_RECEIPT_DIR="$receipt_dir" PATH="${ROOT}/bin:/opt/homebrew/bin:/usr/bin:/bin" bash "$record_runner" 42 marcusquinn/aidevops >/dev/null 2>&1; then
