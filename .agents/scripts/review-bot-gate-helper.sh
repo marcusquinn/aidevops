@@ -108,12 +108,15 @@ RATE_LIMIT_PATTERNS=(
 # messages were observed false-positive-classifying as real reviews.
 # t2799: split from RATE_LIMIT_PATTERNS; built as union so the two stay
 # consistent.
+# GH#28481: Gemini Code Assist retirement notices are provider status, not
+# review evidence.
 NON_REVIEW_PATTERNS=(
 	"${RATE_LIMIT_PATTERNS[@]}"
 	"Review failed"
 	"Review skipped"
 	"closed or merged during review"
 	"Auto reviews are limited"
+	"code review activity has officially ceased"
 )
 
 # Bots that post a Phase 1 placeholder and later edit it with real review

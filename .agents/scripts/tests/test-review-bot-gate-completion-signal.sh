@@ -9,12 +9,13 @@
 #   2. "Review failed" notices (closed-during-review)
 #   3. "Review skipped" notices (auto-review label config)
 #   4. "closed or merged during review" patterns
-#   5. Empty bodies
+#   5. Provider retirement notices with no review content
+#   6. Empty bodies
 #
 # And accepts:
-#   6. Comments edited > min_lag after creation (Phase 2 settled)
-#   7. Comments older than min_lag (no edit needed — bot had time to finish)
-#   8. Real review content with no non-review-pattern match
+#   7. Comments edited > min_lag after creation (Phase 2 settled)
+#   8. Comments older than min_lag (no edit needed — bot had time to finish)
+#   9. Real review content with no non-review-pattern match
 #
 # Plus unit tests on _comment_is_settled, is_non_review_comment, and
 # _get_min_edit_lag direct invocations (no gh stubbing needed).
@@ -34,6 +35,7 @@ fi
 readonly TEST_RED='\033[0;31m'
 readonly TEST_GREEN='\033[0;32m'
 readonly TEST_RESET='\033[0m'
+readonly GEMINI_SUNSET_NOTICE='The consumer version of Gemini Code Assist on GitHub has been sunset. All code review activity has officially ceased.'
 
 TESTS_RUN=0
 TESTS_FAILED=0
@@ -186,6 +188,15 @@ test_is_non_review_comment_matches_closed_during_review() {
 	return 0
 }
 
+test_is_non_review_comment_matches_gemini_sunset_notice() {
+	if is_non_review_comment "$GEMINI_SUNSET_NOTICE"; then
+		print_result "is_non_review_comment matches Gemini Code Assist sunset notice" 0
+	else
+		print_result "is_non_review_comment matches Gemini Code Assist sunset notice" 1
+	fi
+	return 0
+}
+
 test_is_non_review_comment_rejects_real_review() {
 	local body="## Walkthrough
 
@@ -244,6 +255,24 @@ test_event_check_rejects_bot_failure_notice() {
 		print_result "event-check rejects bot failure notices" 0
 	else
 		print_result "event-check rejects bot failure notices" 1 "status=${status} output=${output}"
+	fi
+	return 0
+}
+
+test_event_check_rejects_bot_sunset_notice() {
+	local output="" status=0
+	output=$(REVIEW_GATE_EVENT_NAME=pull_request_review_comment \
+		REVIEW_GATE_EVENT_ACTION=created \
+		REVIEW_GATE_EVENT_ACTOR='gemini-code-assist[bot]' \
+		REVIEW_GATE_EVENT_BODY="$GEMINI_SUNSET_NOTICE" \
+		REVIEW_GATE_EVIDENCE_HEAD_SHA='head-123' \
+		REVIEW_GATE_EXPECTED_HEAD_SHA='head-123' \
+		do_event_check) || status=$?
+	if [[ "$status" -eq 1 && "$output" == "NOT_APPLICABLE" ]]; then
+		print_result "event-check rejects Gemini Code Assist sunset notices" 0
+	else
+		print_result "event-check rejects Gemini Code Assist sunset notices" 1 \
+			"status=${status} output=${output}"
 	fi
 	return 0
 }
@@ -355,6 +384,15 @@ test_is_rate_limit_only_rejects_review_skipped() {
 		print_result "is_rate_limit_only_comment rejects 'Review skipped'" 0
 	else
 		print_result "is_rate_limit_only_comment rejects 'Review skipped'" 1
+	fi
+	return 0
+}
+
+test_is_rate_limit_only_rejects_gemini_sunset_notice() {
+	if ! is_rate_limit_only_comment "$GEMINI_SUNSET_NOTICE"; then
+		print_result "is_rate_limit_only_comment rejects Gemini Code Assist sunset notice" 0
+	else
+		print_result "is_rate_limit_only_comment rejects Gemini Code Assist sunset notice" 1
 	fi
 	return 0
 }
@@ -1459,10 +1497,12 @@ main() {
 	test_is_non_review_comment_matches_review_failed
 	test_is_non_review_comment_matches_review_skipped
 	test_is_non_review_comment_matches_closed_during_review
+	test_is_non_review_comment_matches_gemini_sunset_notice
 	test_is_non_review_comment_rejects_real_review
 	test_event_check_accepts_trusted_inline_bot_review
 	test_event_check_rejects_human_inline_reply
 	test_event_check_rejects_bot_failure_notice
+	test_event_check_rejects_bot_sunset_notice
 	test_event_check_rejects_stale_head_evidence
 	test_self_caller_uses_pr_head_helper_ref
 	test_callers_expose_explicit_ci_strict_opt_in
@@ -1472,6 +1512,7 @@ main() {
 	test_is_rate_limit_only_matches_rate_limit
 	test_is_rate_limit_only_rejects_review_failed
 	test_is_rate_limit_only_rejects_review_skipped
+	test_is_rate_limit_only_rejects_gemini_sunset_notice
 	test_is_rate_limit_only_rejects_real_review
 
 	echo ""
