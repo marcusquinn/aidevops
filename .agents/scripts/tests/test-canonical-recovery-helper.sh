@@ -238,6 +238,88 @@ else
 	exit 1
 fi
 
+STALE_REPO="${ROOT}/stale-repo"
+STALE_REMOTE="${ROOT}/stale-remote.git"
+STALE_RECOVERY="${ROOT}/stale-recovery"
+mkdir -p "$STALE_REPO"
+/usr/bin/git init -q --bare "$STALE_REMOTE"
+/usr/bin/git -C "$STALE_REPO" init -q -b main
+/usr/bin/git -C "$STALE_REPO" config user.name Test
+/usr/bin/git -C "$STALE_REPO" config user.email test@example.invalid
+/usr/bin/git -C "$STALE_REPO" config commit.gpgsign false
+printf 'stale seed\n' >"${STALE_REPO}/README.md"
+/usr/bin/git -C "$STALE_REPO" add README.md
+/usr/bin/git -C "$STALE_REPO" commit -q -m seed
+/usr/bin/git -C "$STALE_REPO" remote add origin "$STALE_REMOTE"
+/usr/bin/git -C "$STALE_REPO" push -q -u origin main
+/usr/bin/git -C "$STALE_REMOTE" symbolic-ref HEAD refs/heads/main
+/usr/bin/git -C "$STALE_REPO" remote set-head origin main
+stale_tip=$(/usr/bin/git -C "$STALE_REPO" rev-parse HEAD)
+/usr/bin/git -C "$STALE_REPO" switch -q --detach "$stale_tip"
+stale_metadata="${STALE_REPO}/.git/rebase-merge"
+mkdir "$stale_metadata"
+printf 'refs/heads/main\n' >"${stale_metadata}/head-name"
+printf '%s\n' "$stale_tip" >"${stale_metadata}/onto"
+printf '%s\n' "$stale_tip" >"${stale_metadata}/orig-head"
+: >"${stale_metadata}/git-rebase-todo"
+printf 'pick %s seed\n' "$stale_tip" >"${stale_metadata}/done"
+printf '1\n' >"${stale_metadata}/msgnum"
+printf '1\n' >"${stale_metadata}/end"
+stale_index_tree=$(/usr/bin/git -C "$STALE_REPO" write-tree)
+stale_output=""
+if stale_output=$(AIDEVOPS_CANONICAL_RECOVERY_ROOT="$STALE_RECOVERY" AIDEVOPS_REAL_GIT_BIN=/usr/bin/git \
+	bash "$HELPER" clear-stale-rebase --repo "$STALE_REPO" --issue 28503 \
+	--confirm CLEAR_CONVERGED_STALE_REBASE) &&
+	[[ "$stale_output" == *"CLEARED_CONVERGED_STALE_REBASE=true"* ]] &&
+	[[ ! -e "$stale_metadata" ]] &&
+	[[ "$(/usr/bin/git -C "$STALE_REPO" rev-parse HEAD)" == "$stale_tip" ]] &&
+	[[ "$(/usr/bin/git -C "$STALE_REPO" rev-parse main)" == "$stale_tip" ]] &&
+	[[ "$(/usr/bin/git -C "$STALE_REPO" write-tree)" == "$stale_index_tree" ]] &&
+	[[ -z "$(/usr/bin/git -C "$STALE_REPO" status --porcelain)" ]] &&
+	[[ "$(/usr/bin/git -C "$STALE_REPO" rev-parse "refs/aidevops/canonical-recovery/issue-28503/stale-rebase/${stale_tip}")" == "$stale_tip" ]] &&
+	AIDEVOPS_REAL_GIT_BIN=/usr/bin/git bash "$HELPER" restore-default --repo "$STALE_REPO" --issue 28503 --confirm RESTORE_CANONICAL_DEFAULT >/dev/null &&
+	[[ "$(/usr/bin/git -C "$STALE_REPO" branch --show-current)" == "main" ]]; then
+	printf 'PASS converged stale rebase is preserved, cleared without tree changes, and restore-default succeeds\n'
+else
+	printf 'FAIL converged stale rebase recovery did not preserve invariant state\n'
+	exit 1
+fi
+
+cp -R "${STALE_RECOVERY}/28503/stale-rebase-${stale_tip}" "$stale_metadata"
+printf 'pick %s still-active\n' "$stale_tip" >"${stale_metadata}/git-rebase-todo"
+if AIDEVOPS_CANONICAL_RECOVERY_ROOT="$STALE_RECOVERY" AIDEVOPS_REAL_GIT_BIN=/usr/bin/git \
+	bash "$HELPER" clear-stale-rebase --repo "$STALE_REPO" --issue 28503 \
+	--confirm CLEAR_CONVERGED_STALE_REBASE >/dev/null 2>&1; then
+	printf 'FAIL stale rebase cleanup accepted active todo entries\n'
+	exit 1
+elif [[ -s "${stale_metadata}/git-rebase-todo" ]] &&
+	[[ "$(/usr/bin/git -C "$STALE_REPO" rev-parse HEAD)" == "$stale_tip" ]]; then
+	printf 'PASS stale rebase cleanup rejects active state without mutation\n'
+else
+	printf 'FAIL active stale rebase refusal changed repository state\n'
+	exit 1
+fi
+rm -rf "$stale_metadata"
+cp -R "${STALE_RECOVERY}/28503/stale-rebase-${stale_tip}" "$stale_metadata"
+stale_race_hook="${ROOT}/mutate-stale-rebase.sh"
+# Generated hook expands its own positional argument.
+# shellcheck disable=SC2016
+printf '%s\n' '#!/usr/bin/env bash' 'printf "2\n" >"$2/msgnum"' >"$stale_race_hook"
+chmod +x "$stale_race_hook"
+if AIDEVOPS_CANONICAL_BEFORE_REBASE_CLEANUP_HOOK="$stale_race_hook" \
+	AIDEVOPS_CANONICAL_RECOVERY_ROOT="$STALE_RECOVERY" AIDEVOPS_REAL_GIT_BIN=/usr/bin/git \
+	bash "$HELPER" clear-stale-rebase --repo "$STALE_REPO" --issue 28503 \
+	--confirm CLEAR_CONVERGED_STALE_REBASE >/dev/null 2>&1; then
+	printf 'FAIL stale rebase cleanup accepted concurrently changing metadata\n'
+	exit 1
+elif [[ -d "$stale_metadata" ]] && [[ "$(<"${stale_metadata}/msgnum")" == "2" ]] &&
+	[[ "$(/usr/bin/git -C "$STALE_REPO" rev-parse HEAD)" == "$stale_tip" ]]; then
+	printf 'PASS stale rebase cleanup rejects concurrent metadata changes without cleanup\n'
+else
+	printf 'FAIL concurrent stale rebase refusal removed or changed canonical state\n'
+	exit 1
+fi
+
 SYNC_REPO="${ROOT}/sync-repo"
 SYNC_REMOTE="${ROOT}/sync-remote.git"
 SYNC_UPDATER="${ROOT}/sync-updater"
