@@ -123,6 +123,11 @@ def _validate_account_mutation_guard(guards: Any) -> None:
         )
     guard = matches[0]
     command_paths = guard.get("command_paths")
+    required_paths = {
+        ("repo", "create"),
+        ("repo", "fork"),
+        ("repo", "new"),
+    }
     valid_paths = (
         isinstance(command_paths, list)
         and bool(command_paths)
@@ -137,8 +142,10 @@ def _validate_account_mutation_guard(guards: Any) -> None:
         guard.get("decision") != "forbid"
         or guard.get("authorization_env")
         != "AIDEVOPS_ACCOUNT_MUTATION_AUTHORIZATION"
+        or guard.get("workspace_root_env")
+        != "AIDEVOPS_ACCOUNT_MUTATION_WORKSPACE_ROOT"
         or not valid_paths
-        or ["repo", "fork"] not in command_paths
+        or not required_paths.issubset(map(tuple, command_paths))
     ):
         raise PolicyError("trusted account-mutation guard is malformed")
 

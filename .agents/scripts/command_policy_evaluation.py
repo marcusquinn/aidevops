@@ -5,18 +5,22 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 import os
-import secrets
 import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from command_policy_account_mutation import (
+    _AccountMutationContext,
+    _account_mutation_guard as _account_mutation_guard,
+    _evaluate_account_mutation,
+    account_mutation_authorization as account_mutation_authorization,
+)
 from command_policy_config import _decision
-from command_policy_matchers import _matches, _matches_gh_command_path
+from command_policy_matchers import _matches
 from command_policy_process_termination import (
     _evaluate_process_termination,
     _process_termination_guard_path,
@@ -37,6 +41,7 @@ class _EvaluationOptions:
     runtime_pid: int = 0
     runtime_process_identity: str = ""
     process_table_fixture: str = ""
+    account_mutation_workspace_root: str | None = None
 
 
 def _evaluate_static(
@@ -192,70 +197,6 @@ def _evaluate_worker_network(
     )
 
 
-def _account_mutation_guard(policy: dict[str, Any]) -> dict[str, Any]:
-    return next(
-        guard
-        for guard in policy["dynamic_guards"]
-        if guard["kind"] == "trusted_account_mutation"
-    )
-
-
-def account_mutation_authorization(
-    argv: list[str], cwd: str, source: dict[str, Any] | None = None
-) -> str:
-    payload = {
-        "argv": argv,
-        "cwd": os.path.realpath(cwd),
-        "schema": "aidevops-command-authorization/v1",
-        "source": source or {"kind": "invocations", "value": [argv]},
-    }
-    canonical = json.dumps(
-        payload, ensure_ascii=False, separators=(",", ":"), sort_keys=True
-    ).encode("utf-8")
-    return f"sha256:{hashlib.sha256(canonical).hexdigest()}"
-
-
-def _evaluate_account_mutation(
-    invocations: list[list[str]],
-    cwd: str,
-    policy: dict[str, Any],
-    authorization: str,
-    source: dict[str, Any] | None,
-) -> dict[str, Any]:
-    guard = _account_mutation_guard(policy)
-    mutations = [
-        argv
-        for argv in invocations
-        if _matches_gh_command_path(argv, guard["command_paths"])
-    ]
-    if not mutations:
-        return _decision(
-            "allow",
-            "github.no-account-mutation",
-            "No protected GitHub account mutation detected",
-        )
-    if len(invocations) != 1 or len(mutations) != 1:
-        return _decision(
-            "forbid",
-            guard["id"],
-            "Protected GitHub account mutations must be authorized as one exact command",
-        )
-    expected = account_mutation_authorization(mutations[0], cwd, source)
-    # #aidevops:trust-boundary — only an authorization inherited by the policy
-    # process can cross this gate; command-local attempts are rejected while parsing.
-    if authorization and secrets.compare_digest(authorization, expected):
-        return _decision(
-            "allow",
-            "github.account-mutation-authorized",
-            "Exact GitHub account mutation matches trusted authorization",
-        )
-    return _decision(
-        "forbid",
-        guard["id"],
-        "GitHub account mutation requires exact trusted authorization",
-    )
-
-
 def evaluate_invocations(
     invocations: list[list[str]],
     cwd: str,
@@ -276,8 +217,11 @@ def evaluate_invocations(
             invocations,
             cwd,
             policy,
-            options.account_mutation_authorization,
-            options.account_mutation_source,
+            _AccountMutationContext(
+                authorization=options.account_mutation_authorization,
+                source=options.account_mutation_source,
+                workspace_root=options.account_mutation_workspace_root,
+            ),
         ),
         _evaluate_process_termination(
             invocations,
@@ -315,6 +259,7 @@ def _evaluation_options(
         "runtime_pid",
         "runtime_process_identity",
         "process_table_fixture",
+        "account_mutation_workspace_root",
     )
     if len(legacy_options) > len(names):
         maximum_arguments = len(names) + 3

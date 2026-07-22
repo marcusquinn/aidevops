@@ -386,12 +386,14 @@ test("blocks account mutations unless inherited authorization matches exactly", 
   const helper = join(scriptsDir, "command-policy-helper.py");
   const command = "gh repo fork owner/source --clone=false";
   const previousAuthorization = process.env.AIDEVOPS_ACCOUNT_MUTATION_AUTHORIZATION;
-  const authorization = execFileSync(
-    "python3",
-    [helper, "authorization-digest", "--cwd", cwd, "--command", command],
-    { encoding: "utf8" },
-  ).trim();
+  const previousWorkspaceRoot = process.env.AIDEVOPS_ACCOUNT_MUTATION_WORKSPACE_ROOT;
   try {
+    process.env.AIDEVOPS_ACCOUNT_MUTATION_WORKSPACE_ROOT = "";
+    const authorization = execFileSync(
+      "python3",
+      [helper, "authorization-digest", "--cwd", cwd, "--command", command],
+      { encoding: "utf8" },
+    ).trim();
     delete process.env.AIDEVOPS_ACCOUNT_MUTATION_AUTHORIZATION;
     assert.throws(
       () => checkCommandSafetyGate(command, scriptsDir, cwd),
@@ -431,6 +433,70 @@ test("blocks account mutations unless inherited authorization matches exactly", 
     } else {
       process.env.AIDEVOPS_ACCOUNT_MUTATION_AUTHORIZATION = previousAuthorization;
     }
+    if (previousWorkspaceRoot === undefined) {
+      delete process.env.AIDEVOPS_ACCOUNT_MUTATION_WORKSPACE_ROOT;
+    } else {
+      process.env.AIDEVOPS_ACCOUNT_MUTATION_WORKSPACE_ROOT = previousWorkspaceRoot;
+    }
+  }
+});
+
+test("scopes remote-only account mutation authorization to the projects workspace", () => {
+  const root = mkdtempSync(join(tmpdir(), "aidevops-account-workspace-"));
+  const workspace = join(root, "projects");
+  const repoA = join(workspace, "repo-a");
+  const repoB = join(workspace, "repo-b");
+  const outside = join(root, "outside");
+  const escape = join(workspace, "escape");
+  const helper = join(scriptsDir, "command-policy-helper.py");
+  const command = "gh repo fork owner/source --clone=false";
+  const previousAuthorization = process.env.AIDEVOPS_ACCOUNT_MUTATION_AUTHORIZATION;
+  const previousWorkspaceRoot = process.env.AIDEVOPS_ACCOUNT_MUTATION_WORKSPACE_ROOT;
+  mkdirSync(repoA, { recursive: true });
+  mkdirSync(repoB, { recursive: true });
+  mkdirSync(outside, { recursive: true });
+  symlinkSync(outside, escape);
+  try {
+    process.env.AIDEVOPS_ACCOUNT_MUTATION_WORKSPACE_ROOT = workspace;
+    const authorization = execFileSync(
+      "python3",
+      [helper, "authorization-digest", "--cwd", repoA, "--command", command],
+      { encoding: "utf8" },
+    ).trim();
+    process.env.AIDEVOPS_ACCOUNT_MUTATION_AUTHORIZATION = authorization;
+    assert.doesNotThrow(() => checkCommandSafetyGate(command, scriptsDir, repoB));
+    assert.throws(
+      () => checkCommandSafetyGate(command, scriptsDir, outside),
+      /github\.account-mutation/,
+    );
+    assert.throws(
+      () => checkCommandSafetyGate(command, scriptsDir, escape),
+      /github\.account-mutation/,
+    );
+
+    const localCommand = "gh repo fork owner/source";
+    process.env.AIDEVOPS_ACCOUNT_MUTATION_AUTHORIZATION = execFileSync(
+      "python3",
+      [helper, "authorization-digest", "--cwd", repoA, "--command", localCommand],
+      { encoding: "utf8" },
+    ).trim();
+    assert.doesNotThrow(() => checkCommandSafetyGate(localCommand, scriptsDir, repoA));
+    assert.throws(
+      () => checkCommandSafetyGate(localCommand, scriptsDir, repoB),
+      /github\.account-mutation/,
+    );
+  } finally {
+    if (previousAuthorization === undefined) {
+      delete process.env.AIDEVOPS_ACCOUNT_MUTATION_AUTHORIZATION;
+    } else {
+      process.env.AIDEVOPS_ACCOUNT_MUTATION_AUTHORIZATION = previousAuthorization;
+    }
+    if (previousWorkspaceRoot === undefined) {
+      delete process.env.AIDEVOPS_ACCOUNT_MUTATION_WORKSPACE_ROOT;
+    } else {
+      process.env.AIDEVOPS_ACCOUNT_MUTATION_WORKSPACE_ROOT = previousWorkspaceRoot;
+    }
+    rmSync(root, { recursive: true, force: true });
   }
 });
 
