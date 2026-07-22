@@ -50,7 +50,19 @@ readonly OPENCODE_BIN_DEFAULT="${OPENCODE_BIN:-opencode}"
 readonly SANDBOX_EXEC_HELPER="${SCRIPT_DIR}/sandbox-exec-helper.sh"
 readonly DISPATCH_LEDGER_HELPER="${SCRIPT_DIR}/dispatch-ledger-helper.sh"
 readonly OAUTH_POOL_HELPER="${SCRIPT_DIR}/oauth-pool-helper.sh"
-readonly HEADLESS_SANDBOX_TIMEOUT_DEFAULT="${AIDEVOPS_HEADLESS_SANDBOX_TIMEOUT:-3600}"
+# Full-loop workers checkpoint after 120 minutes. The three-hour default leaves
+# one hour for a graceful handoff, while the six-hour cap stays aligned with the
+# detached lifecycle observer's final safety fuse.
+readonly HEADLESS_SANDBOX_TIMEOUT_BASE_DEFAULT=10800
+readonly HEADLESS_SANDBOX_TIMEOUT_MAX=21600
+_headless_sandbox_timeout_resolved="${AIDEVOPS_HEADLESS_SANDBOX_TIMEOUT:-$HEADLESS_SANDBOX_TIMEOUT_BASE_DEFAULT}"
+if [[ ! "$_headless_sandbox_timeout_resolved" =~ ^[1-9][0-9]*$ ]]; then
+	_headless_sandbox_timeout_resolved="$HEADLESS_SANDBOX_TIMEOUT_BASE_DEFAULT"
+elif ((_headless_sandbox_timeout_resolved > HEADLESS_SANDBOX_TIMEOUT_MAX)); then
+	_headless_sandbox_timeout_resolved="$HEADLESS_SANDBOX_TIMEOUT_MAX"
+fi
+readonly HEADLESS_SANDBOX_TIMEOUT_DEFAULT="$_headless_sandbox_timeout_resolved"
+unset _headless_sandbox_timeout_resolved
 readonly OPENCODE_AUTH_FILE="${HOME}/.local/share/opencode/auth.json"
 readonly LOCK_DIR="${STATE_DIR}/locks"
 readonly METRICS_DIR="${HOME}/.aidevops/logs"

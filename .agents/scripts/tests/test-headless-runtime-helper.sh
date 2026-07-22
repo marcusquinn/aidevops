@@ -1988,6 +1988,88 @@ test_headless_activity_timeout_default_matches_watchdog() {
 	return 0
 }
 
+test_headless_sandbox_timeout_budget() {
+	local explicit_timeout=""
+	local capped_timeout=""
+	local invalid_timeout=""
+	explicit_timeout=$(
+		AIDEVOPS_HEADLESS_SANDBOX_TIMEOUT=14400 \
+			bash -c 'source "$1" help >/dev/null 2>&1; printf "%s" "$HEADLESS_SANDBOX_TIMEOUT_DEFAULT"' _ "$HELPER_SCRIPT"
+	)
+	capped_timeout=$(
+		AIDEVOPS_HEADLESS_SANDBOX_TIMEOUT=86400 \
+			bash -c 'source "$1" help >/dev/null 2>&1; printf "%s" "$HEADLESS_SANDBOX_TIMEOUT_DEFAULT"' _ "$HELPER_SCRIPT"
+	)
+	invalid_timeout=$(
+		AIDEVOPS_HEADLESS_SANDBOX_TIMEOUT=invalid \
+			bash -c 'source "$1" help >/dev/null 2>&1; printf "%s" "$HEADLESS_SANDBOX_TIMEOUT_DEFAULT"' _ "$HELPER_SCRIPT"
+	)
+
+	if [[ "$HEADLESS_SANDBOX_TIMEOUT_BASE_DEFAULT" == "10800" &&
+		"$HEADLESS_SANDBOX_TIMEOUT_DEFAULT" == "10800" &&
+		"$HEADLESS_SANDBOX_TIMEOUT_MAX" == "21600" &&
+		"$explicit_timeout" == "14400" &&
+		"$capped_timeout" == "21600" &&
+		"$invalid_timeout" == "10800" ]]; then
+		print_result "headless sandbox timeout exceeds checkpoint budget and remains bounded" 0
+		return 0
+	fi
+
+	print_result "headless sandbox timeout exceeds checkpoint budget and remains bounded" 1 \
+		"base=$HEADLESS_SANDBOX_TIMEOUT_BASE_DEFAULT resolved=$HEADLESS_SANDBOX_TIMEOUT_DEFAULT max=$HEADLESS_SANDBOX_TIMEOUT_MAX explicit=$explicit_timeout capped=$capped_timeout invalid=$invalid_timeout"
+	return 0
+}
+
+test_claude_bare_paths_use_resolved_sandbox_timeout() {
+	local timeout_log="${TEST_ROOT}/claude-bare-timeout.log"
+	local direct_output="${TEST_ROOT}/claude-bare-direct.out"
+	local direct_exit="${TEST_ROOT}/claude-bare-direct.exit"
+	local stdin_output="${TEST_ROOT}/claude-bare-stdin.out"
+	local stdin_exit="${TEST_ROOT}/claude-bare-stdin.exit"
+	local stdin_file="${TEST_ROOT}/claude-bare.stdin"
+	local AIDEVOPS_HEADLESS_SANDBOX_DISABLED="1"
+	local AIDEVOPS_WORKER_EGRESS_MODE="off"
+
+	timeout() {
+		local timeout_seconds="$1"
+		shift
+		printf '%s\n' "$timeout_seconds" >>"$timeout_log"
+		"$@"
+		return $?
+	}
+
+	_HEADLESS_CLAUDE_STDIN_FILE=""
+	_invoke_claude "$direct_output" "$direct_exit" "" bash -c 'printf "direct-output\n"' >/dev/null 2>&1
+	printf 'stdin-output\n' >"$stdin_file"
+	_HEADLESS_CLAUDE_STDIN_FILE="$stdin_file"
+	# shellcheck disable=SC2016 # The nested bash expands $line after reading stdin.
+	_invoke_claude "$stdin_output" "$stdin_exit" "" bash -c 'IFS= read -r line; printf "%s\n" "$line"' >/dev/null 2>&1
+
+	local timeout_values=""
+	local direct_status=""
+	local stdin_status=""
+	local direct_value=""
+	local stdin_value=""
+	timeout_values=$(<"$timeout_log")
+	direct_status=$(<"$direct_exit")
+	stdin_status=$(<"$stdin_exit")
+	direct_value=$(<"$direct_output")
+	stdin_value=$(<"$stdin_output")
+	unset -f timeout
+	unset _HEADLESS_CLAUDE_STDIN_FILE
+
+	if [[ "$timeout_values" == $'10800\n10800' &&
+		"$direct_status" == "0" && "$stdin_status" == "0" &&
+		"$direct_value" == "direct-output" && "$stdin_value" == "stdin-output" ]]; then
+		print_result "Claude bare execution paths use the resolved headless timeout" 0
+		return 0
+	fi
+
+	print_result "Claude bare execution paths use the resolved headless timeout" 1 \
+		"timeouts=${timeout_values//$'\n'/,} direct_status=$direct_status stdin_status=$stdin_status direct=$direct_value stdin=$stdin_value"
+	return 0
+}
+
 test_activity_watchdog_classifiers_detect_rate_limit_and_ci_wait() {
 	local output_file="${TEST_ROOT}/activity-classifier.out"
 
@@ -5159,6 +5241,8 @@ main() {
 	test_post_pr_handoff_records_distinct_result_label
 	test_missing_context_blocked_requests_brief_recovery
 	test_headless_activity_timeout_default_matches_watchdog
+	test_headless_sandbox_timeout_budget
+	test_claude_bare_paths_use_resolved_sandbox_timeout
 	test_activity_watchdog_classifiers_detect_rate_limit_and_ci_wait
 	test_failure_classifier_records_provenance
 	test_failure_classifier_distinguishes_quota_exhaustion
