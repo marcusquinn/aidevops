@@ -176,6 +176,7 @@ spec = importlib.util.spec_from_file_location("command_policy_helper", helper_pa
 module = importlib.util.module_from_spec(spec)
 sys.modules[spec.name] = module
 spec.loader.exec_module(module)
+evaluation = sys.modules["command_policy_evaluation"]
 policy = module._load_policy(policy_path)
 expected = module.evaluate_invocations([["printf", "safe"]], "/work", policy)
 positional = module.evaluate_invocations(
@@ -191,6 +192,11 @@ keyword = module.evaluate_invocations(
     network_helper="",
 )
 assert expected == positional == keyword
+assert evaluation.account_mutation_authorization(
+    ["gh", "repo", "fork", "owner/source", "--clone=false"],
+    "/work",
+    workspace_root="",
+).startswith("sha256:")
 PY
 		pass "evaluate_invocations preserves positional and keyword interfaces"
 	else

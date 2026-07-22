@@ -17,7 +17,7 @@ from command_policy_account_mutation import (
     _AccountMutationContext,
     _account_mutation_guard as _account_mutation_guard,
     _evaluate_account_mutation,
-    account_mutation_authorization as account_mutation_authorization,
+    account_mutation_authorization as _account_mutation_authorization,
 )
 from command_policy_config import _decision
 from command_policy_matchers import _matches
@@ -27,6 +27,16 @@ from command_policy_process_termination import (
 )
 
 DECISION_RANK = {"allow": 0, "forbid": 1}
+
+
+def account_mutation_authorization(
+    argv: list[str],
+    cwd: str,
+    source: dict[str, Any] | None = None,
+    workspace_root: str | None = None,
+) -> str:
+    """Preserve the original command-policy evaluation import surface."""
+    return _account_mutation_authorization(argv, cwd, source, workspace_root)
 
 
 @dataclass(frozen=True)
