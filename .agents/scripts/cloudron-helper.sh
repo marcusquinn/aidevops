@@ -13,6 +13,9 @@ source "${SCRIPT_DIR}/shared-constants.sh"
 # String literal constants
 readonly ERROR_SERVER_NAME_REQUIRED="Server name is required"
 readonly ERROR_SERVER_NOT_FOUND="Server not found in configuration"
+readonly HELP_SHOW_MESSAGE="Show this help"
+readonly USAGE_COMMAND_OPTIONS="Usage: $0 [command] [options]"
+readonly HELP_USAGE_INFO="Use '$0 help' for usage information"
 
 # Error message constants
 # readonly USAGE_PREFIX="Usage:"  # Currently unused
@@ -436,9 +439,9 @@ uninstall_app() {
 # Main function
 main() {
 	local command="${1:-help}"
-	local param2="$2"
-	local param3="$3"
-	local param4="$4"
+	local param2="${2:-}"
+	local param3="${3:-}"
+	local param4="${4:-}"
 
 	local server_name="$param2"
 	local command_to_run="$param3"
