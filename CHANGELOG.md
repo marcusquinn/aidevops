@@ -10,6 +10,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.32.167] - 2026-07-22
+
+### Added
+
+- add managed Cloudron package lifecycle automation (#28500)
+
+### Changed
+
+- Maintenance: update simplification state registry
+- Maintenance: update simplification state registry
+- Maintenance: update simplification state registry
+
+### Fixed
+
+- tighten DNS scanning and parent sync (#28512)
+- recover converged stale canonical rebases (#28510)
+- make enrichment assignment guards read-only (#28509)
+- distinguish relationship sync outcomes (#28504)
+- pin generated Cloudron release caller (#28502)
+
 ## [3.32.166] - 2026-07-22
 
 ### Changed
