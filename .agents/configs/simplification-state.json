@@ -5193,9 +5193,9 @@
       "pr": 0
     },
     ".agents/tools/deployment/cloudron-app-packaging.md": {
-      "at": "2026-05-21T21:30:16Z",
-      "hash": "6eaf9218df821a92437e3c4f560c92549339197e",
-      "passes": 3,
+      "at": "2026-07-22T20:57:16Z",
+      "hash": "2260abfa0463a2966b9a7cc4266a72903b514efc",
+      "passes": 4,
       "pr": 11344
     },
     ".agents/tools/deployment/cloudron-app-publishing-skill.md": {
@@ -7726,10 +7726,10 @@
       "passes": 8
     },
     ".agents/reference/repos-json-fields.md": {
-      "hash": "b28c3b2968f5346c30ab554df5d41ac53aa2fd45",
-      "at": "2026-07-18T15:39:20Z",
+      "hash": "b898b61decf86a0e3e53359e7d96bbdb08312bdb",
+      "at": "2026-07-22T20:56:41Z",
       "pr": 20440,
-      "passes": 13
+      "passes": 14
     },
     ".agents/reference/progressive-disclosure.md": {
       "hash": "222cc0b8477a4947c750e5a735585efb2b1dd546",
@@ -8104,10 +8104,10 @@
       "passes": 3
     },
     ".agents/scripts/aidevops-cli/aidevops-init-lib.sh": {
-      "hash": "ba659ef41b2caeef1ae62d2cd32cb6f5d3af6b0a",
-      "at": "2026-07-22T06:30:41Z",
+      "hash": "d39977b77f3db94e9503a12f5d9a58f9418dad39",
+      "at": "2026-07-22T20:56:42Z",
       "pr": 27277,
-      "passes": 4
+      "passes": 5
     }
   },
   "setup-modules/agent-deploy.sh": {
