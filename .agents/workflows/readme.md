@@ -22,7 +22,10 @@ Use `--sections` for targeted updates (adding a feature, changing install/config
 1. **Load guidance** — read `workflows/readme-create-update.md`
 2. **Load voice guidance when relevant** — if the request mentions humanise, writing style, tone, voice, less AI writing, or marketing/intro copy, read `content/humanise.md`
 3. **Explore codebase** — detect project type, deployment platform, existing README, key info
-4. **Generate/update** — follow workflow section order; preserve structure for partial updates; use local `docs/metrics` badges for LOC/languages/dependencies
+4. **Generate/update** — follow workflow section order; preserve structure for
+   partial updates; use local `docs/metrics` badges for
+   LOC/languages/dependencies; add or refresh the final aidevops provenance
+   section for managed GitHub repositories
 5. **Confirm changes** — present diff and ask before writing (interactive only)
 
 ## Section Mapping
@@ -36,7 +39,12 @@ Use `--sections` for targeted updates (adding a feature, changing install/config
 | `troubleshooting` | Troubleshooting |
 | `deployment` | Deployment, Production Setup |
 | `badges` | Badge section only |
+| `provenance` | Final owner and aidevops credit section |
 | `all` | Full regeneration (same as no flag) |
+
+The provenance section is a managed-repository invariant: full and targeted
+updates keep exactly one copy at the end. Ownership, URL derivation, and
+external-upstream exceptions are defined in `workflows/readme-create-update.md`.
 
 **Dynamic counts (aidevops repo):** `readme-helper.sh check|update|update --apply`
 **Repo metrics (all repos):** `repo-metrics-helper.sh generate` or `aidevops metrics generate`
