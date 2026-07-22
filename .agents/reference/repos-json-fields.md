@@ -87,6 +87,36 @@ Global equivalent: `orchestration.interactive_pr_auto_merge` in `~/.config/aidev
 | `app_type` | string | FOSS repo type: `wordpress-plugin`, `php-composer`, `node`, `python`, `go`, `macos-app`, `browser-extension`, `cli-tool`, `electron`, `cloudron-package`, `generic` |
 | `foss_config` | object | Per-repo FOSS controls (see below) |
 
+### `cloudron_package` object fields
+
+When `CloudronManifest.json` exists, `aidevops init` safely defaults
+`app_type` to `cloudron-package` and adds lifecycle metadata without replacing
+explicit values. Package slugs and paths remain local to `repos.json`.
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `manifest` | `CloudronManifest.json` | Manifest path relative to the registered repository root. Absolute paths and `..` are rejected by monitors. |
+| `release_workflow` | `.github/workflows/cloudron-package-release.yml` | Thin tag-triggered caller scaffolded by `aidevops init`; existing files are never overwritten. |
+| `upstream_slug` | unset | Upstream GitHub `owner/repo` used for stable-release comparison. Monitoring stays disabled until this is explicitly configured. |
+| `monitor_upstream` | `true` when `upstream_slug` is set; otherwise `false` | Include the package in the daily upstream-release routine. |
+| `monitor_compatibility` | `true` | Include the package in the weekly manifest and pinned-base audit. |
+
+```json
+{
+  "app_type": "cloudron-package",
+  "cloudron_package": {
+    "manifest": "CloudronManifest.json",
+    "upstream_slug": "exampleorg/example-upstream",
+    "monitor_upstream": true,
+    "monitor_compatibility": true
+  }
+}
+```
+
+The monitors file deduplicated findings only in the package repository and only
+with `ADMIN` or `MAINTAIN` authority. They never build, tag, publish, deploy, or
+mutate package source. See `tools/deployment/cloudron-app-packaging.md`.
+
 ### `foss_config` object fields
 
 | Key | Default | Description |

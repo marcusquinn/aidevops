@@ -1511,6 +1511,7 @@ _init_optional_scaffolding() {
 	_init_scaffold_scope_gated_files "$project_root" "$init_scope" "$repo_name" "$has_interface"
 
 	_init_configure_coderabbit_abort_on_close "$project_root" "$enable_code_quality"
+	_init_scaffold_cloudron_release_workflow "$project_root" || return 1
 
 	# ─── Badge + local repo metrics initialization (t2975) ───────────────────
 	# Seed the canonical README badge block, generate local metrics artifacts,
@@ -1586,6 +1587,25 @@ _init_optional_scaffolding() {
 	fi
 
 	_init_security_and_registration || return 1
+	return 0
+}
+
+_init_scaffold_cloudron_release_workflow() {
+	local target_root="$1"
+	[[ -f "${target_root}/CloudronManifest.json" ]] || return 0
+	local template_path="${AGENTS_DIR}/templates/workflows/cloudron-package-release-caller.yml"
+	local workflow_path="${target_root}/.github/workflows/cloudron-package-release.yml"
+	if [[ -f "$workflow_path" ]]; then
+		print_info ".github/workflows/cloudron-package-release.yml already present"
+		return 0
+	fi
+	if [[ ! -f "$template_path" ]]; then
+		print_warning "Cloudron package release caller template is unavailable"
+		return 1
+	fi
+	mkdir -p "${target_root}/.github/workflows"
+	cp "$template_path" "$workflow_path"
+	print_success "Installed .github/workflows/cloudron-package-release.yml"
 	return 0
 }
 

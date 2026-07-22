@@ -161,7 +161,7 @@ write_cache_to_repos_json() {
 
 	# Check if slug exists in repos.json
 	local existing
-	existing="$(jq -r --arg slug "$slug" '.[] | select(.slug == $slug) | .slug' "$repos_json" 2>/dev/null || echo "")"
+	existing="$(jq -r --arg slug "$slug" '.initialized_repos[]? | select(.slug == $slug) | .slug' "$repos_json" 2>/dev/null || echo "")"
 	if [[ -z "$existing" ]]; then
 		printf '%s\n' "Info: slug $slug not found in repos.json — skipping cache write" >&2
 		return 0
@@ -169,10 +169,13 @@ write_cache_to_repos_json() {
 
 	# Write app_type into the matching entry
 	local tmp_file
-	tmp_file="$(mktemp)"
+	local mode=""
+	tmp_file="$(mktemp "${repos_json}.tmp.XXXXXX")"
 	if jq --arg slug "$slug" --arg app_type "$app_type" \
-		'map(if .slug == $slug then . + {"app_type": $app_type} else . end)' \
+		'(.initialized_repos[] | select(.slug == $slug)) |= (. + {"app_type": $app_type})' \
 		"$repos_json" >"$tmp_file" && jq empty "$tmp_file" 2>/dev/null; then
+		mode=$(stat -f '%Lp' "$repos_json" 2>/dev/null || stat -c '%a' "$repos_json" 2>/dev/null || true)
+		[[ -z "$mode" ]] || chmod "$mode" "$tmp_file"
 		mv "$tmp_file" "$repos_json"
 	else
 		echo "ERROR: repos.json write produced invalid JSON — aborting (GH#16746)" >&2
