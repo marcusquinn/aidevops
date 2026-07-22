@@ -9,6 +9,7 @@
 #
 # Sub-libraries (sourced below):
 #   full-loop-helper-state.sh   -- state persistence, phase emitters, lifecycle commands
+#   full-loop-helper-risk.sh    -- PR runtime-risk and testing-evidence classification
 #   full-loop-helper-commit.sh  -- staging, validators, PR creation, merge summary
 #   full-loop-helper-merge.sh   -- merge execution, admin fallback, resource unlocking
 
@@ -41,6 +42,10 @@ print_phase() {
 # shellcheck disable=SC1091  # sub-library resolved at runtime via $SCRIPT_DIR
 source "${SCRIPT_DIR}/full-loop-helper-state.sh"
 
+# shellcheck source=./full-loop-helper-risk.sh
+# shellcheck disable=SC1091  # sub-library resolved at runtime via $SCRIPT_DIR
+source "${SCRIPT_DIR}/full-loop-helper-risk.sh"
+
 # shellcheck source=./full-loop-helper-commit.sh
 # shellcheck disable=SC1091  # sub-library resolved at runtime via $SCRIPT_DIR
 source "${SCRIPT_DIR}/full-loop-helper-commit.sh"
@@ -58,7 +63,7 @@ source "${SCRIPT_DIR}/full-loop-helper-merge.sh"
 # Collapses full-loop steps 4.1-4.2.1 into a single deterministic call.
 # Workers and interactive sessions both use this — no parallel logic.
 #
-# Usage: full-loop-helper.sh commit-and-pr|create-pr --issue <N> --message <msg> [--title <title>] [--summary <what>] [--testing <how>] [--decisions <notes>] [--label <label>...] [--allow-parent-close] [--skip-hooks] [--no-rebase]
+# Usage: full-loop-helper.sh commit-and-pr|create-pr --issue <N> --message <msg> [--title <title>] [--summary <what>] [--testing <how>] [--risk-level <level>] [--testing-level <level>] [--decisions <notes>] [--label <label>...] [--allow-parent-close] [--skip-hooks] [--no-rebase]
 # Exit codes: 0 = PR created (prints PR number to stdout), 1 = failure
 # --allow-parent-close: skip the parent-task keyword guard (final-phase PR only)
 # --skip-hooks: pass --no-verify to git push (bypasses pre-push hooks). Use for doc-only PRs
@@ -71,6 +76,7 @@ source "${SCRIPT_DIR}/full-loop-helper-merge.sh"
 # can create the PR manually.
 cmd_commit_and_pr() {
 	local issue_number="" commit_message="" pr_title="" summary_what="" summary_testing="" summary_decisions=""
+	local runtime_risk="" testing_level=""
 	local -a extra_labels=()
 	local allow_parent_close=0
 	local skip_hooks=0 skip_rebase=0
@@ -135,7 +141,7 @@ cmd_commit_and_pr() {
 	fi
 
 	local pr_body=""
-	pr_body=$(_build_pr_body "$issue_number" "$summary_what" "$summary_testing" "$files_changed" "$sig_footer" "$closing_keyword")
+	pr_body=$(_build_pr_body "$issue_number" "$summary_what" "$summary_testing" "$files_changed" "$sig_footer" "$closing_keyword" "$runtime_risk" "$testing_level" "$base_ref") || return 1
 
 	# t2046: parent-task keyword guard — prevent Resolves/Closes/Fixes on
 	# parent-task issues. The parent must stay open until all phase children merge.

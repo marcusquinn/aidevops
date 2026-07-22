@@ -251,57 +251,81 @@ cmd_pre_merge_gate() {
 
 # Parse commit-and-pr arguments into caller-scoped variables.
 # Expects the caller to have declared: issue_number, commit_message, pr_title,
-# summary_what, summary_testing, summary_decisions, skip_rebase, extra_labels (array).
+# summary_what, summary_testing, summary_decisions, runtime_risk, testing_level,
+# skip_rebase, extra_labels (array).
 # Returns 1 on unknown argument.
 _parse_commit_and_pr_args() {
-	while [[ $# -gt 0 ]]; do
-		case "$1" in
+	local -a args=("$@")
+	local index=0
+	local arg=""
+	local value=""
+	while [[ "$index" -lt "${#args[@]}" ]]; do
+		arg="${args[$index]}"
+		case "$arg" in
+		--issue | --message | --title | --summary | --testing | --risk-level | --testing-level | --decisions | --label)
+			if [[ $((index + 1)) -ge ${#args[@]} ]]; then
+				print_error "${arg} requires a value"
+				return 1
+			fi
+			value="${args[$((index + 1))]}"
+			;;
+		esac
+
+		case "$arg" in
 		--issue)
-			issue_number="$2"
-			shift 2
+			issue_number="$value"
+			index=$((index + 2))
 			;;
 		--message)
-			commit_message="$2"
-			shift 2
+			commit_message="$value"
+			index=$((index + 2))
 			;;
 		--title)
-			pr_title="$2"
-			shift 2
+			pr_title="$value"
+			index=$((index + 2))
 			;;
 		--summary)
-			summary_what="$2"
-			shift 2
+			summary_what="$value"
+			index=$((index + 2))
 			;;
 		--testing)
-			summary_testing="$2"
-			shift 2
+			summary_testing="$value"
+			index=$((index + 2))
+			;;
+		--risk-level)
+			runtime_risk="$value"
+			index=$((index + 2))
+			;;
+		--testing-level)
+			testing_level="$value"
+			index=$((index + 2))
 			;;
 		--decisions)
-			summary_decisions="$2"
-			shift 2
+			summary_decisions="$value"
+			index=$((index + 2))
 			;;
 		--label)
-			extra_labels+=("$2")
-			shift 2
+			extra_labels+=("$value")
+			index=$((index + 2))
 			;;
 		--allow-parent-close)
 			allow_parent_close=1
-			shift
+			index=$((index + 1))
 			;;
 		--skip-hooks)
 			# Pass --no-verify to git push. Use for doc-only PRs when hooks
 			# have been manually verified clean. See GH#20138.
 			skip_hooks=1
-			shift
+			index=$((index + 1))
 			;;
 		--no-rebase)
 			# GH#26627: explicit recovery mode after a failed/aborted rebase.
 			# Pushes only after clean-state and ahead-of-base checks pass.
 			skip_rebase=1
-			shift
+			index=$((index + 1))
 			;;
 		*)
-			print_error "Unknown argument: $1"
+			print_error "Unknown argument: $arg"
 			return 1
 			;;
 		esac
@@ -893,10 +917,10 @@ _rebase_and_push() {
 		local branch_counter="" base_counter=""
 		branch_counter=$(tr -d '[:space:]' <.task-counter 2>/dev/null) || true
 		base_counter=$(git show "${base_ref}:.task-counter" 2>/dev/null | tr -d '[:space:]') || true
-		if [[ -n "$branch_counter" && -n "$base_counter" ]] \
-			&& [[ "$branch_counter" =~ ^[0-9]+$ ]] \
-			&& [[ "$base_counter" =~ ^[0-9]+$ ]] \
-			&& [[ "$((10#$branch_counter))" -lt "$((10#$base_counter))" ]]; then
+		if [[ -n "$branch_counter" && -n "$base_counter" ]] &&
+			[[ "$branch_counter" =~ ^[0-9]+$ ]] &&
+			[[ "$base_counter" =~ ^[0-9]+$ ]] &&
+			[[ "$((10#$branch_counter))" -lt "$((10#$base_counter))" ]]; then
 			print_info "Auto-resetting .task-counter: ${branch_counter} → ${base_counter} (base drifted during rebase)"
 			printf '%s\n' "$base_counter" >.task-counter
 			git add .task-counter
@@ -971,11 +995,20 @@ _issue_has_parent_task_label() {
 
 # Build the PR body string and print it to stdout.
 # Arguments: issue_number, summary_what, summary_testing, files_changed,
-#            sig_footer, closing_keyword (default: Resolves)
+#            sig_footer, closing_keyword (default: Resolves), requested_risk,
+#            requested_testing_level, base_ref
 _build_pr_body() {
 	local issue_number="$1" summary_what="$2" summary_testing="$3"
 	local files_changed="$4" sig_footer="$5"
 	local closing_keyword="${6:-Resolves}"
+	local requested_risk="${7:-}"
+	local requested_testing_level="${8:-}"
+	local base_ref="${9:-}"
+	local runtime_risk=""
+	local testing_level=""
+
+	runtime_risk=$(_derive_runtime_risk "$requested_risk" "$files_changed" "$summary_what" "$base_ref") || return 1
+	testing_level=$(_resolve_runtime_testing_level "$runtime_risk" "$requested_testing_level" "$summary_testing") || return 1
 
 	printf '%s\n' "## Summary
 
@@ -987,8 +1020,8 @@ ${files_changed:-See diff}
 
 ## Runtime Testing
 
-- **Risk level:** Low (agent prompts / infrastructure scripts)
-- **Verification:** ${summary_testing:-shellcheck clean, self-assessed}
+- **Risk level:** ${runtime_risk}
+- **Verification:** ${testing_level} — ${summary_testing:-no additional evidence supplied}
 
 ${closing_keyword} #${issue_number}
 
@@ -1117,11 +1150,11 @@ _derive_pr_title_prefix() {
 	# Match "- [ ] tNNN ... ref:GH#<issue_number>" with a non-digit or EOL
 	# boundary after the number so ref:GH#123 doesn't match ref:GH#12345.
 	local task_id=""
-	task_id=$(grep -E "^- \[[ x]\] t[0-9]+ .*ref:GH#${issue_number}([^0-9]|\$)" "$todo_file" 2>/dev/null \
-		| head -1 \
-		| grep -oE '^- \[[ x]\] t[0-9]+' \
-		| grep -oE 't[0-9]+$' \
-		|| true)
+	task_id=$(grep -E "^- \[[ x]\] t[0-9]+ .*ref:GH#${issue_number}([^0-9]|\$)" "$todo_file" 2>/dev/null |
+		head -1 |
+		grep -oE '^- \[[ x]\] t[0-9]+' |
+		grep -oE 't[0-9]+$' ||
+		true)
 
 	if [[ -n "$task_id" ]]; then
 		printf '%s\n' "$task_id"

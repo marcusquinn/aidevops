@@ -120,19 +120,33 @@ if [[ -z "${NC+x}" ]]; then
 fi
 
 # Stub the print functions that full-loop-helper.sh uses
-print_info() { printf '[INFO] %s\n' "$*" >&2; return 0; }
-print_error() { printf '[ERROR] %s\n' "$*" >&2; return 0; }
-print_warning() { printf '[WARN] %s\n' "$*" >&2; return 0; }
-print_success() { printf '[OK] %s\n' "$*" >&2; return 0; }
+print_info() {
+	printf '[INFO] %s\n' "$*" >&2
+	return 0
+}
+print_error() {
+	printf '[ERROR] %s\n' "$*" >&2
+	return 0
+}
+print_warning() {
+	printf '[WARN] %s\n' "$*" >&2
+	return 0
+}
+print_success() {
+	printf '[OK] %s\n' "$*" >&2
+	return 0
+}
 
 # We need to extract and eval just the functions we're testing.
 # Source the functions by extracting them directly.
 
 # Extract _issue_has_parent_task_label from the helper
-eval "$(sed -n '/_issue_has_parent_task_label()/,/^}/p' "${TEST_SCRIPTS_DIR}/full-loop-helper.sh")"
+eval "$(sed -n '/_issue_has_parent_task_label()/,/^}/p' "${TEST_SCRIPTS_DIR}/full-loop-helper-commit.sh")"
 
 # Extract _build_pr_body from the helper
-eval "$(sed -n '/_build_pr_body()/,/^}/p' "${TEST_SCRIPTS_DIR}/full-loop-helper.sh")"
+eval "$(sed -n '/_derive_runtime_risk()/,/^}/p' "${TEST_SCRIPTS_DIR}/full-loop-helper-risk.sh")"
+eval "$(sed -n '/_resolve_runtime_testing_level()/,/^}/p' "${TEST_SCRIPTS_DIR}/full-loop-helper-risk.sh")"
+eval "$(sed -n '/_build_pr_body()/,/^}/p' "${TEST_SCRIPTS_DIR}/full-loop-helper-commit.sh")"
 
 # =============================================================================
 # Case 1 — parent-task issue → _build_pr_body with "For" keyword
