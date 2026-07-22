@@ -244,7 +244,7 @@ _dj_lock_observed_epoch() {
 		IFS= read -r observed_epoch <"${lock_dir}/epoch" || observed_epoch=""
 	fi
 	if [[ ! "$observed_epoch" =~ ^[0-9]{1,12}$ ]]; then
-		observed_epoch=$(stat -f '%m' "$lock_dir" 2>/dev/null || stat -c '%Y' "$lock_dir" 2>/dev/null || true)
+		observed_epoch=$(_file_mtime_epoch "$lock_dir" 2>/dev/null || true)
 	fi
 	[[ "$observed_epoch" =~ ^[0-9]{1,12}$ ]] || return 1
 	printf '%s\n' "$observed_epoch"
