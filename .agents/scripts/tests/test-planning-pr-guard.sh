@@ -5,7 +5,8 @@
 # test-planning-pr-guard.sh — GH#19782 / t2252 regression guard.
 #
 # Validates the two code paths that protect planning-only PRs from
-# incorrectly marking issues as status:done or TODO entries as [x]:
+# incorrectly marking issues as status:done or TODO entries as [x], while
+# allowing blocker provenance after every declared dependency is closed:
 #
 #   Path 1 — Title-fallback (issue labeling):
 #     Fixed in t2219 (PR #19820). When the PR body uses For/Ref #NNN
@@ -86,24 +87,55 @@ should_skip_prooflog() {
 	local linked_issues="$1"
 	local for_ref_issues="$2"
 	local task_line="${3:-}"
+	local repo="${4:-owner/repo}"
+	local task_id="${5:-t900}"
+	local issue_task_pairs="${6-19778:t900}"
+	local issue_task_pair="" mapped_issue_num="" mapping_count=0 blocker_status=0
 	if [[ -z "${linked_issues:-}" ]]; then
-		return 0  # skip (no explicit closing intent)
+		return 0 # skip (no explicit closing intent)
 	fi
 	if echo "$task_line" | grep -qE '(^|[[:space:]])blocked-by:[^[:space:]]+'; then
-		return 0  # skip (blocked task)
+		for issue_task_pair in $issue_task_pairs; do
+			if [[ "${issue_task_pair#*:}" == "$task_id" ]]; then
+				mapped_issue_num="${issue_task_pair%%:*}"
+				mapping_count=$((mapping_count + 1))
+			fi
+		done
+		[[ "$mapping_count" -eq 1 && "$mapped_issue_num" =~ ^[0-9]+$ ]] || return 0
+		_der_completion_blockers_closed "$repo" "$mapped_issue_num" "$task_line" || blocker_status=$?
+		[[ "$blocker_status" -eq 0 ]] || return 0
 	fi
 	if [[ -z "${linked_issues:-}" ]] && [[ -n "${for_ref_issues:-}" ]]; then
-		return 0  # skip (planning-only)
+		return 0 # skip (planning-only)
 	fi
-	return 1  # proceed
+	return 1 # proceed
 }
 
 should_skip_closing_hygiene_for_task() {
 	local task_line="$1"
+	local repo="${2:-owner/repo}"
+	local issue_num="${3:-19778}"
+	local blocker_status=0
 	if echo "$task_line" | grep -qE '^[[:space:]]*- \[ \] .*blocked-by:[^[:space:]]+'; then
-		return 0
+		_der_completion_blockers_closed "$repo" "$issue_num" "$task_line" || blocker_status=$?
+		[[ "$blocker_status" -eq 0 ]] || return 0
 	fi
 	return 1
+}
+
+BLOCKER_RESULT="resolved"
+LAST_BLOCKER_CALL=""
+_der_completion_blockers_closed() {
+	local repo="$1"
+	local issue_num="$2"
+	local task_line="$3"
+	LAST_BLOCKER_CALL="${repo}|${issue_num}|${task_line}"
+	case "$BLOCKER_RESULT" in
+	resolved) return 0 ;;
+	open) return 2 ;;
+	malformed | api-ambiguous | cross-repository) return 1 ;;
+	*) return 1 ;;
+	esac
 }
 
 header "Path 2: TODO.md proof-log guard (t2252)"
@@ -136,17 +168,18 @@ else
 	fail "4. No references → should skip metadata-only title but proceeded"
 fi
 
-# Test 4b: Explicit Closes but TODO task remains blocked
+# Test 4b: Explicit Closes and positively closed blocker provenance
+BLOCKER_RESULT="resolved"
 if should_skip_prooflog "19778" "" "- [ ] t900 blocked task tier:standard blocked-by:t899"; then
-	pass "4b. Explicit close + blocked-by TODO marker → proof-log skipped"
+	fail "4b. Positively closed blocker → proof-log should proceed"
 else
-	fail "4b. Explicit close + blocked-by TODO marker → should skip but proceeded"
+	pass "4b. Positively closed blocker → proof-log proceeds"
 fi
 
 if should_skip_closing_hygiene_for_task "- [ ] t900 blocked task tier:standard blocked-by:t899"; then
-	pass "4c. Current TODO task-line blocked-by marker → closing hygiene skipped"
+	fail "4c. Positively closed blocker → closing hygiene should proceed"
 else
-	fail "4c. Current TODO task-line blocked-by marker → should skip closing hygiene"
+	pass "4c. Positively closed blocker → closing hygiene proceeds"
 fi
 
 issue_body_example='Issue reproducer mentions blocked-by:t899 in prose, not on the current TODO task line.'
@@ -154,6 +187,62 @@ if should_skip_closing_hygiene_for_task "$issue_body_example"; then
 	fail "4d. Issue-body prose blocked-by mention → should not skip closing hygiene"
 else
 	pass "4d. Issue-body prose blocked-by mention → closing hygiene proceeds"
+fi
+
+for blocker_case in open malformed api-ambiguous cross-repository; do
+	BLOCKER_RESULT="$blocker_case"
+	if should_skip_prooflog "19778" "" "- [ ] t900 blocked task tier:standard blocked-by:t899"; then
+		pass "4e. ${blocker_case} blocker result → proof-log fails closed"
+	else
+		fail "4e. ${blocker_case} blocker result → proof-log should skip"
+	fi
+	if should_skip_closing_hygiene_for_task "- [ ] t900 blocked task tier:standard blocked-by:t899"; then
+		pass "4f. ${blocker_case} blocker result → closing hygiene fails closed"
+	else
+		fail "4f. ${blocker_case} blocker result → closing hygiene should skip"
+	fi
+done
+
+BLOCKER_RESULT="resolved"
+if should_skip_prooflog "19779" "" "- [ ] t901 second task tier:standard blocked-by:t899" \
+	"owner/repo" "t901" "19778:t900 19779:t901"; then
+	fail "4g. Multiple task/issue pairs → canonical second mapping should proceed"
+elif [[ "$LAST_BLOCKER_CALL" == "owner/repo|19779|"* ]]; then
+	pass "4g. Multiple task/issue pairs → canonical second mapping proceeds"
+else
+	fail "4g. Multiple task/issue pairs → wrong canonical issue passed to resolver"
+fi
+
+if should_skip_prooflog "19778" "" "- [ ] t900 blocked task tier:standard blocked-by:t899" \
+	"owner/repo" "t900" ""; then
+	pass "4h. Missing task/issue mapping → proof-log fails closed"
+else
+	fail "4h. Missing task/issue mapping → proof-log should skip"
+fi
+if should_skip_prooflog "19778" "" "- [ ] t900 blocked task tier:standard blocked-by:t899" \
+	"owner/repo" "t900" "19778:t900 19779:t900"; then
+	pass "4i. Ambiguous task/issue mapping → proof-log fails closed"
+else
+	fail "4i. Ambiguous task/issue mapping → proof-log should skip"
+fi
+
+WORKFLOW_FILE="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)/.github/workflows/issue-sync-reusable.yml"
+if python3 - "$WORKFLOW_FILE" <<'PY'; then
+import sys
+from pathlib import Path
+
+text = Path(sys.argv[1]).read_text(encoding="utf-8")
+closing = text[text.index("- name: Apply closing hygiene to linked issues"):text.index("- name: Nudge parent-task issues with remaining phases")]
+proof = text[text.index("- name: Update TODO.md proof-log"):text.index("- name: Sync PLANS.md status")]
+assert "source __aidevops/.agents/scripts/dependency-event-reconciler.sh" in closing
+assert '_der_completion_blockers_closed "$REPO" "$ISSUE_NUM" "$TASK_LINE"' in closing
+assert "ISSUE_TASK_PAIRS:" in proof and "REPO:" in proof
+assert "source __aidevops/.agents/scripts/dependency-event-reconciler.sh" in proof
+assert '_der_completion_blockers_closed "$REPO" "$MAPPED_ISSUE_NUM" "$TASK_LINE"' in proof
+PY
+	pass "4j. Both workflow completion consumers use the shared semantic resolver"
+else
+	fail "4j. Workflow completion consumers are not wired to the shared resolver"
 fi
 
 # -------------------------------------------------------------------
@@ -170,12 +259,12 @@ should_skip_title_fallback() {
 	local found="$1"
 	local for_ref_issues="$2"
 	if [[ -n "$found" ]]; then
-		return 0  # skip: title-only fallback is metadata, not completion intent
+		return 0 # skip: title-only fallback is metadata, not completion intent
 	fi
 	if [[ " $for_ref_issues " == *" $found "* ]]; then
-		return 0  # skip
+		return 0 # skip
 	fi
-	return 1  # proceed
+	return 1 # proceed
 }
 
 header "Path 1: Title-fallback guard (t2219)"
