@@ -46,6 +46,10 @@
 #     GH#10521: Ignores repo owner (from slug) and maintainer (from repos.json).
 #     Exit 0 = assigned to another runner (do NOT dispatch), exit 1 = safe to dispatch.
 #
+#   dispatch-dedup-helper.sh is-assigned-read-only <issue> <slug> [self-login]
+#     Run the same assignment guard without stale-assignment recovery writes.
+#     Exit 0 = assignment/guard blocks, exit 1 = no assignment/guard block.
+#
 #   dispatch-dedup-helper.sh list-running-keys
 #     List dedup keys for all currently running workers.
 #
@@ -1831,10 +1835,11 @@ _is_assigned_pre_assignee_guard_blocks() {
 	return 1
 }
 
-is_assigned() {
+_is_assigned_impl() {
 	local issue_number="$1"
 	local repo_slug="$2"
 	local self_login="${3:-}"
+	local allow_stale_recovery="${4:-1}"
 
 	if [[ -z "$issue_number" || -z "$repo_slug" ]]; then
 		# Missing args — cannot check, allow dispatch
@@ -1920,12 +1925,42 @@ is_assigned() {
 	# permanent deadlock where 0 workers run despite available slots and
 	# open issues. This was observed in production with 370 issues and 0
 	# active workers — 100% dispatch failure rate.
-	if _is_stale_assignment "$issue_number" "$repo_slug" "$blocking_assignees"; then
+	if [[ "$allow_stale_recovery" == "1" ]] \
+		&& _is_stale_assignment "$issue_number" "$repo_slug" "$blocking_assignees"; then
 		return 1
 	fi
 
 	printf 'ASSIGNED: issue #%s in %s is assigned to %s\n' "$issue_number" "$repo_slug" "$blocking_assignees"
 	return 0
+}
+
+#######################################
+# Dispatch assignment guard with stale recovery enabled.
+# Args: $1 = issue number, $2 = repo slug, $3 = self login (optional)
+# Returns: 0 when blocked, 1 when safe to dispatch
+#######################################
+is_assigned() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local self_login="${3:-}"
+
+	_is_assigned_impl "$issue_number" "$repo_slug" "$self_login" 1
+	return $?
+}
+
+#######################################
+# Read-only assignment guard for inspection-only callers such as enrichment.
+# Reuses all fail-closed and active-claim logic but never invokes stale recovery.
+# Args: $1 = issue number, $2 = repo slug, $3 = self login (optional)
+# Returns: 0 when blocked, 1 when no assignment/guard block exists
+#######################################
+is_assigned_read_only() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local self_login="${3:-}"
+
+	_is_assigned_impl "$issue_number" "$repo_slug" "$self_login" 0
+	return $?
 }
 
 #######################################
@@ -2601,6 +2636,7 @@ Usage:
                                                      Check for recent "Dispatching worker" comment (exit 0=found, 1=none)
   dispatch-dedup-helper.sh is-assigned <issue> <slug> [self-login]
                                                        Check if assigned to another login (exit 0=blocked, 1=free)
+  dispatch-dedup-helper.sh is-assigned-read-only <issue> <slug> [self-login]  Inspect without recovery writes
   dispatch-dedup-helper.sh enumerate-blockers <issue> <slug> [runner]
                                                        Report ALL structural label blockers (exit 0=blocked, 1=none)
                                                        Emits newline-separated tokens: PARENT_TASK_BLOCKED,
@@ -2625,7 +2661,6 @@ Usage:
   dispatch-dedup-helper.sh list-running-keys        List keys for all running workers
   dispatch-dedup-helper.sh normalize <title>        Normalize a title for comparison
   dispatch-dedup-helper.sh help                     Show this help
-
 Examples:
   # Extract keys from various title formats
   dispatch-dedup-helper.sh extract-keys "Issue #2300: t1337 Simplify infra scripts"
@@ -2730,12 +2765,19 @@ _ddh_main_simple_command() {
 
 _ddh_main_issue_command() {
 	local command_name="$1"
+	local assignment_usage="<issue-number> <repo-slug> [self-login]"
 	shift || true
 	case "$command_name" in
 	is-assigned)
-		_require_args is-assigned 2 "$#" "<issue-number> <repo-slug> [self-login]" || return 1
+		_require_args is-assigned 2 "$#" "$assignment_usage" || return 1
 		local assigned_issue="$1" assigned_repo="$2" assigned_runner="${3:-}"
 		is_assigned "$assigned_issue" "$assigned_repo" "$assigned_runner"
+		return $?
+		;;
+	is-assigned-read-only)
+		_require_args is-assigned-read-only 2 "$#" "$assignment_usage" || return 1
+		local readonly_issue="$1" readonly_repo="$2" readonly_runner="${3:-}"
+		is_assigned_read_only "$readonly_issue" "$readonly_repo" "$readonly_runner"
 		return $?
 		;;
 	enumerate-blockers)
@@ -2865,7 +2907,7 @@ main() {
 		_ddh_main_simple_command "$command" "$@"
 		return $?
 		;;
-	is-assigned | enumerate-blockers | check-cost-budget | sum-issue-token-spend | has-dispatch-comment | has-open-pr)
+	is-assigned | is-assigned-read-only | enumerate-blockers | check-cost-budget | sum-issue-token-spend | has-dispatch-comment | has-open-pr)
 		_ddh_main_issue_command "$command" "$@"
 		return $?
 		;;
