@@ -13,6 +13,7 @@ source "${REPO_ROOT}/.agents/scripts/shared-constants.sh"
 
 TEST_ROOT=""
 TEST_HOME=""
+TEST_AGENTS_DIR=""
 STATE_DIR=""
 PROMPT_FILE=""
 TESTS_RUN=0
@@ -39,11 +40,15 @@ teardown() {
 }
 
 setup_suite() {
+	local repo_version=""
 	TEST_ROOT=$(mktemp -d)
 	TEST_HOME="${TEST_ROOT}/home"
+	TEST_AGENTS_DIR="${TEST_ROOT}/agents"
 	STATE_DIR="${TEST_ROOT}/scheduled"
 	PROMPT_FILE="${TEST_ROOT}/prompt.md"
-	mkdir -p "$TEST_HOME" "${TEST_ROOT}/work"
+	mkdir -p "$TEST_HOME" "$TEST_AGENTS_DIR" "${TEST_ROOT}/work"
+	IFS= read -r repo_version <"${REPO_ROOT}/VERSION"
+	printf '%s\n' "$repo_version" >"${TEST_AGENTS_DIR}/VERSION"
 	printf 'scheduled fixture\n' >"$PROMPT_FILE"
 	trap teardown EXIT
 	return 0
@@ -51,6 +56,7 @@ setup_suite() {
 
 run_cli() {
 	HOME="$TEST_HOME" AIDEVOPS_DEFERRED_JOB_DIR="$STATE_DIR" \
+		AIDEVOPS_AGENTS_DIR="$TEST_AGENTS_DIR" \
 		AIDEVOPS_DEFERRED_NOW_EPOCH=1784678400 bash "$AIDEVOPS_SH" "$@"
 	return $?
 }
