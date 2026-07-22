@@ -37,8 +37,20 @@ fi
 
 gh_list_issues() {
 	local repo="$1" state="$2" limit="$3"
-	gh issue list --repo "$repo" --state "$state" --limit "$limit" \
-		--json number,title,assignees,state,labels 2>/dev/null || echo "[]"
+	local -a args=(
+		--repo "$repo" --state "$state" --limit "$limit"
+		--json "number,title,assignees,state,labels"
+	)
+	if declare -F gh_issue_list >/dev/null 2>&1; then
+		gh_issue_list "${args[@]}" 2>/dev/null
+		return $?
+	fi
+	if declare -F _gh_with_timeout >/dev/null 2>&1; then
+		_gh_with_timeout read gh issue list "${args[@]}" 2>/dev/null
+		return $?
+	fi
+	print_error "gh_list_issues requires the shared GitHub timeout wrappers"
+	return 127
 }
 
 _gh_edit_labels() {
