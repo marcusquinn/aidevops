@@ -56,16 +56,26 @@ _NODE_ID_RATE_LIMITED_FILE=""
 # helpers are commonly called through command substitutions; file writes
 # survive those subshell boundaries while Bash variables do not.
 _RELATIONSHIP_EDGE_SEEN_FILE=""
+_RELATIONSHIP_RESULT_FILE=""
 _RELATIONSHIP_RETRY_RESULT="RELS:0 RETRYABLE:1"
 _RELATIONSHIP_SYNC_SCOPE_ACTIVE=0
 _RELATIONSHIP_SYNC_DEADLINE_EPOCH=
+_REL_OUTCOME_CREATED="created"
+_REL_OUTCOME_ALREADY_PRESENT="already-present"
+_REL_OUTCOME_FAILED_RESOLUTION="failed:resolution"
+_REL_OUTCOME_FAILED_UNKNOWN="failed:unknown"
+_REL_OUTCOME_DEFERRED_DEADLINE="deferred:deadline"
 
 _init_relationship_sync_state() {
 	_init_node_id_cache
 	if [[ -z "$_RELATIONSHIP_EDGE_SEEN_FILE" ]]; then
 		_RELATIONSHIP_EDGE_SEEN_FILE=$(mktemp "${TMPDIR:-/tmp}/aidevops-relationship-edges.XXXXXX") || return 1
 	fi
+	if [[ -z "$_RELATIONSHIP_RESULT_FILE" ]]; then
+		_RELATIONSHIP_RESULT_FILE=$(mktemp "${TMPDIR:-/tmp}/aidevops-relationship-results.XXXXXX") || return 1
+	fi
 	: >"$_RELATIONSHIP_EDGE_SEEN_FILE"
+	: >"$_RELATIONSHIP_RESULT_FILE"
 	return 0
 }
 
@@ -73,6 +83,10 @@ _cleanup_relationship_sync_state() {
 	if [[ -n "$_RELATIONSHIP_EDGE_SEEN_FILE" ]]; then
 		rm -f "$_RELATIONSHIP_EDGE_SEEN_FILE"
 		_RELATIONSHIP_EDGE_SEEN_FILE=""
+	fi
+	if [[ -n "$_RELATIONSHIP_RESULT_FILE" ]]; then
+		rm -f "$_RELATIONSHIP_RESULT_FILE"
+		_RELATIONSHIP_RESULT_FILE=""
 	fi
 	return 0
 }
@@ -101,6 +115,81 @@ _end_relationship_sync_scope() {
 
 _register_relationship_sync_cleanup() {
 	push_cleanup "rm -f '${_RELATIONSHIP_EDGE_SEEN_FILE}'"
+	push_cleanup "rm -f '${_RELATIONSHIP_RESULT_FILE}'"
+	return 0
+}
+
+_relationship_record_outcome() {
+	local outcome="$1"
+	case "$outcome" in
+	"$_REL_OUTCOME_CREATED" | "$_REL_OUTCOME_ALREADY_PRESENT" | failed:auth | failed:graphql | "$_REL_OUTCOME_FAILED_RESOLUTION" | failed:timeout-uncertain | failed:transport | "$_REL_OUTCOME_FAILED_UNKNOWN" | deferred:cooldown | "$_REL_OUTCOME_DEFERRED_DEADLINE") ;;
+	*) return 1 ;;
+	esac
+	[[ -f "${_RELATIONSHIP_RESULT_FILE:-}" ]] || return 0
+	printf '%s\n' "$outcome" >>"$_RELATIONSHIP_RESULT_FILE"
+	return 0
+}
+
+_relationship_record_mutation_failure() {
+	local mutation_rc="$1"
+	local result="$2"
+	if [[ "$mutation_rc" -eq 75 ]] || printf '%s' "$result" | grep -qiE 'secondary rate limit|abuse detection|retry-after|cooldown'; then
+		_relationship_record_outcome "deferred:cooldown"
+	elif [[ "$mutation_rc" -eq 124 ]] || printf '%s' "$result" | grep -qiE 'timed out|timeout'; then
+		_relationship_record_outcome "failed:timeout-uncertain"
+	elif printf '%s' "$result" | grep -qiE 'HTTP (401|403)|authentication|bad credentials'; then
+		_relationship_record_outcome "failed:auth"
+	elif printf '%s' "$result" | grep -qiE 'connection|network|TLS|unexpected EOF'; then
+		_relationship_record_outcome "failed:transport"
+	elif printf '%s' "$result" | grep -qiE 'graphql|"errors"|could not resolve'; then
+		_relationship_record_outcome "failed:graphql"
+	else
+		_relationship_record_outcome "$_REL_OUTCOME_FAILED_UNKNOWN"
+	fi
+	return 0
+}
+
+_relationship_outcome_count() {
+	local outcome_prefix="$1"
+	local count="0"
+	[[ -f "${_RELATIONSHIP_RESULT_FILE:-}" ]] || { printf '0\n'; return 0; }
+	count=$(grep -cE "^${outcome_prefix}(:|$)" "$_RELATIONSHIP_RESULT_FILE" 2>/dev/null || true)
+	[[ "$count" =~ ^[0-9]+$ ]] || count=0
+	printf '%s\n' "$count"
+	return 0
+}
+
+_relationship_first_incomplete_outcome() {
+	local outcome=""
+	[[ -f "${_RELATIONSHIP_RESULT_FILE:-}" ]] || { printf 'none\n'; return 0; }
+	outcome=$(grep -E '^(failed|deferred):' "$_RELATIONSHIP_RESULT_FILE" 2>/dev/null | head -1 || true)
+	printf '%s\n' "${outcome:-none}"
+	return 0
+}
+
+_relationship_print_summary() {
+	local attempted="$1" complete="$2" total="$3" retryable_total="$4" deadline_exhausted="$5"
+	local created already_present failed deferred first_incomplete
+	created=$(_relationship_outcome_count "$_REL_OUTCOME_CREATED")
+	already_present=$(_relationship_outcome_count "$_REL_OUTCOME_ALREADY_PRESENT")
+	failed=$(_relationship_outcome_count "failed")
+	deferred=$(_relationship_outcome_count "deferred")
+	first_incomplete=$(_relationship_first_incomplete_outcome)
+	printf '\n=== Relationships Sync ===\nEdges: created=%d already-present=%d failed=%d deferred=%d\n' \
+		"$created" "$already_present" "$failed" "$deferred"
+	printf 'Tasks: attempted=%d complete=%d/%d | Retryable: %d | Deadline exhausted: %s\n' \
+		"$attempted" "$complete" "$total" "$retryable_total" "$deadline_exhausted"
+	printf 'Failure: %s\n' "$first_incomplete"
+	[[ "$retryable_total" -eq 0 ]] || printf 'Recovery: rerun .agents/scripts/issue-sync-helper.sh relationships\n'
+	return 0
+}
+
+_relationship_print_progress() {
+	local attempted="$1"
+	local total="$2"
+	if [[ $((attempted % 25)) -eq 0 || "$attempted" -eq "$total" ]]; then
+		printf "\r  Progress: %d/%d tasks..." "$attempted" "$total" >&2
+	fi
 	return 0
 }
 
@@ -216,25 +305,28 @@ _cached_node_id() {
 # Arguments:
 #   $1 - blocked_node_id (the issue that IS blocked)
 #   $2 - blocking_node_id (the issue that BLOCKS)
-# Returns: 0=success/already-exists, 1=error
+# Returns: 0=success/already-exists, 1=error. The invocation ledger retains
+# whether this call created, observed, failed, or deferred the edge.
 _gh_add_blocked_by() {
 	local blocked_id="$1" blocking_id="$2"
-	local result
+	local result mutation_rc=0
 	result=$(_gh_with_timeout write gh api graphql -f query='
 mutation($blocked:ID!,$blocking:ID!) {
   addBlockedBy(input: {issueId:$blocked, blockingIssueId:$blocking}) {
     issue { number }
   }
-}' -f blocked="$blocked_id" -f blocking="$blocking_id" 2>&1)
+}' -f blocked="$blocked_id" -f blocking="$blocking_id" 2>&1) || mutation_rc=$?
 
-	# Success or already-exists are both fine
 	if echo "$result" | grep -q '"number"'; then
+		_relationship_record_outcome "$_REL_OUTCOME_CREATED"
 		return 0
 	fi
 	if echo "$result" | grep -qi 'already been taken'; then
 		log_verbose "  blocked-by relationship already exists"
+		_relationship_record_outcome "$_REL_OUTCOME_ALREADY_PRESENT"
 		return 0
 	fi
+	_relationship_record_mutation_failure "$mutation_rc" "$result"
 	log_verbose "  addBlockedBy error: ${result:0:200}"
 	return 1
 }
@@ -448,21 +540,24 @@ _dependency_cycle_should_skip_edge() {
 # Returns: 0=success/already-exists, 1=error
 _gh_add_sub_issue() {
 	local parent_id="$1" child_id="$2"
-	local result
+	local result mutation_rc=0
 	result=$(_gh_with_timeout write gh api graphql -f query='
 mutation($parent:ID!,$child:ID!) {
   addSubIssue(input: {issueId:$parent, subIssueId:$child}) {
     issue { number }
   }
-}' -f parent="$parent_id" -f child="$child_id" 2>&1)
+}' -f parent="$parent_id" -f child="$child_id" 2>&1) || mutation_rc=$?
 
 	if echo "$result" | grep -q '"number"'; then
+		_relationship_record_outcome "$_REL_OUTCOME_CREATED"
 		return 0
 	fi
 	if echo "$result" | grep -qi 'duplicate sub-issues\|only have one parent'; then
 		log_verbose "  sub-issue relationship already exists"
+		_relationship_record_outcome "$_REL_OUTCOME_ALREADY_PRESENT"
 		return 0
 	fi
+	_relationship_record_mutation_failure "$mutation_rc" "$result"
 	log_verbose "  addSubIssue error: ${result:0:200}"
 	return 1
 }
@@ -475,6 +570,7 @@ _sync_declared_blocked_by_edges() {
 	IFS=','
 	for dep_task_id in $blocked_by; do
 			if _relationship_deadline_expired; then
+				_relationship_record_outcome "$_REL_OUTCOME_DEFERRED_DEADLINE"
 				retryable_errors=$((retryable_errors + 1))
 				break
 			fi
@@ -488,6 +584,7 @@ _sync_declared_blocked_by_edges() {
 			dep_gh_num=$(resolve_task_gh_number "$dep_task_id" "$todo_file" "$repo" || true)
 			[[ -z "$dep_gh_num" ]] && {
 				log_verbose "$task_id: blocked-by $dep_task_id has no ref:GH#"
+				_relationship_record_outcome "$_REL_OUTCOME_FAILED_RESOLUTION"
 				retryable_errors=$((retryable_errors + 1))
 				continue
 			}
@@ -502,6 +599,7 @@ _sync_declared_blocked_by_edges() {
 			local dep_node_id
 			dep_node_id=$(_cached_node_id "$dep_gh_num" "$repo")
 			if [[ -z "$dep_node_id" ]]; then
+				_relationship_record_outcome "$_REL_OUTCOME_FAILED_RESOLUTION"
 				retryable_errors=$((retryable_errors + 1))
 				continue
 			fi
@@ -510,6 +608,7 @@ _sync_declared_blocked_by_edges() {
 				if [[ "$DRY_RUN" == "true" ]]; then
 					print_info "[DRY-RUN] Would remove circular #$this_gh_num blocked-by #$dep_gh_num ($task_id <- $dep_task_id)"
 				elif ! _gh_remove_blocked_by "$this_node_id" "$dep_node_id"; then
+					_relationship_record_outcome "$_REL_OUTCOME_FAILED_UNKNOWN"
 					retryable_errors=$((retryable_errors + 1))
 				else
 					log_verbose "$task_id (#$this_gh_num): normalized circular native edge to $dep_task_id (#$dep_gh_num)"
@@ -537,6 +636,7 @@ _sync_declared_blocks_edges() {
 	IFS=','
 	for dep_task_id in $blocks; do
 			if _relationship_deadline_expired; then
+				_relationship_record_outcome "$_REL_OUTCOME_DEFERRED_DEADLINE"
 				retryable_errors=$((retryable_errors + 1))
 				break
 			fi
@@ -550,6 +650,7 @@ _sync_declared_blocks_edges() {
 			dep_gh_num=$(resolve_task_gh_number "$dep_task_id" "$todo_file" "$repo" || true)
 			[[ -z "$dep_gh_num" ]] && {
 				log_verbose "$task_id: blocks $dep_task_id has no ref:GH#"
+				_relationship_record_outcome "$_REL_OUTCOME_FAILED_RESOLUTION"
 				retryable_errors=$((retryable_errors + 1))
 				continue
 			}
@@ -561,6 +662,7 @@ _sync_declared_blocks_edges() {
 			local dep_node_id
 			dep_node_id=$(_cached_node_id "$dep_gh_num" "$repo")
 			if [[ -z "$dep_node_id" ]]; then
+				_relationship_record_outcome "$_REL_OUTCOME_FAILED_RESOLUTION"
 				retryable_errors=$((retryable_errors + 1))
 				_hold_dependency_sync_retry "$dep_gh_num" "$repo" "blocking_node_unresolved"
 				continue
@@ -570,6 +672,7 @@ _sync_declared_blocks_edges() {
 				if [[ "$DRY_RUN" == "true" ]]; then
 					print_info "[DRY-RUN] Would remove circular #$dep_gh_num blocked-by #$this_gh_num ($dep_task_id <- $task_id)"
 				elif ! _gh_remove_blocked_by "$dep_node_id" "$this_node_id"; then
+					_relationship_record_outcome "$_REL_OUTCOME_FAILED_UNKNOWN"
 					retryable_errors=$((retryable_errors + 1))
 					_hold_dependency_sync_retry "$dep_gh_num" "$repo" "circular_native_edge_remove_failed"
 				else
@@ -613,6 +716,7 @@ _sync_blocked_by_for_task() {
 	this_node_id=$(_cached_node_id "$this_gh_num" "$repo")
 	if [[ -z "$this_node_id" ]]; then
 		log_verbose "$task_id: could not resolve node ID for #$this_gh_num"
+		_relationship_record_outcome "$_REL_OUTCOME_FAILED_RESOLUTION"
 		_hold_dependency_sync_retry "$this_gh_num" "$repo" "blocked_issue_node_unresolved"
 		echo "RELS:0 RETRYABLE:1"
 		return 0
@@ -651,21 +755,23 @@ _link_sub_issue_pair() {
 	child_gh_num=$(resolve_task_gh_number "$child_id" "$todo_file" "$repo" || true)
 	[[ -z "$child_gh_num" ]] && {
 		log_verbose "$child_id: no ref:GH# — skipping sub-issue"
+		_relationship_record_outcome "$_REL_OUTCOME_FAILED_RESOLUTION"
 		return 1
 	}
 	local parent_gh_num
 	parent_gh_num=$(resolve_task_gh_number "$parent_id" "$todo_file" "$repo" || true)
 	[[ -z "$parent_gh_num" ]] && {
 		log_verbose "$child_id: parent $parent_id has no ref:GH# — skipping sub-issue"
+		_relationship_record_outcome "$_REL_OUTCOME_FAILED_RESOLUTION"
 		return 1
 	}
 
 	local child_node_id
 	child_node_id=$(_cached_node_id "$child_gh_num" "$repo")
-	[[ -z "$child_node_id" ]] && return 1
+	[[ -z "$child_node_id" ]] && { _relationship_record_outcome "$_REL_OUTCOME_FAILED_RESOLUTION"; return 1; }
 	local parent_node_id
 	parent_node_id=$(_cached_node_id "$parent_gh_num" "$repo")
-	[[ -z "$parent_node_id" ]] && return 1
+	[[ -z "$parent_node_id" ]] && { _relationship_record_outcome "$_REL_OUTCOME_FAILED_RESOLUTION"; return 1; }
 
 	if [[ "$DRY_RUN" == "true" ]]; then
 		print_info "[DRY-RUN] Would set #$child_gh_num as sub-issue of #$parent_gh_num ($child_id -> $parent_id)"
@@ -716,6 +822,7 @@ _sync_subtask_hierarchy_for_task() {
 	dot_parent=$(detect_parent_task_id "$task_id")
 	if [[ -n "$dot_parent" ]]; then
 		if _relationship_deadline_expired; then
+			_relationship_record_outcome "$_REL_OUTCOME_DEFERRED_DEADLINE"
 			retryable_errors=$((retryable_errors + 1))
 		elif _link_sub_issue_pair "$task_id" "$dot_parent" "$todo_file" "$repo"; then
 			rels_set=$((rels_set + 1))
@@ -740,6 +847,7 @@ _sync_subtask_hierarchy_for_task() {
 			IFS=','
 			for dep_task_id in $blocked_by; do
 				if _relationship_deadline_expired; then
+					_relationship_record_outcome "$_REL_OUTCOME_DEFERRED_DEADLINE"
 					retryable_errors=$((retryable_errors + 1))
 					break
 				fi
@@ -794,6 +902,7 @@ sync_relationships_for_task() {
 		count=$(echo "$result" | grep -oE 'RETRYABLE:[0-9]+' | head -1 | sed 's/RETRYABLE://' || echo "0")
 		retryable_total=$((retryable_total + count))
 	else
+		_relationship_record_outcome "$_REL_OUTCOME_DEFERRED_DEADLINE"
 		retryable_total=$((retryable_total + 1))
 	fi
 	if [[ "$retryable_total" -gt 0 ]] || _relationship_deadline_expired; then
@@ -864,18 +973,17 @@ cmd_relationships() {
 	local total="${#unique_tasks[@]}"
 	print_info "Syncing relationships for $total task(s) in $repo"
 
-	local blocked_set=0 sub_set=0 processed=0 retryable_total=0 deadline_exhausted=false
+	local blocked_set=0 sub_set=0 attempted=0 complete=0 retryable_total=0 deadline_exhausted=false
 	for task_id in "${unique_tasks[@]}"; do
 		if _relationship_deadline_expired; then
 			deadline_exhausted=true
+			_relationship_record_outcome "$_REL_OUTCOME_DEFERRED_DEADLINE"
 			retryable_total=$((retryable_total + 1))
 			break
 		fi
-		processed=$((processed + 1))
-		# Progress indicator every 25 tasks
-		if [[ $((processed % 25)) -eq 0 || $processed -eq $total ]]; then
-			printf "\r  Progress: %d/%d tasks..." "$processed" "$total" >&2
-		fi
+		attempted=$((attempted + 1))
+		local task_retryable=0
+		_relationship_print_progress "$attempted" "$total"
 
 		local result
 
@@ -886,23 +994,27 @@ cmd_relationships() {
 		blocked_set=$((blocked_set + n))
 		n=$(echo "$result" | grep -oE 'RETRYABLE:[0-9]+' | head -1 | sed 's/RETRYABLE://' || echo "0")
 		retryable_total=$((retryable_total + n))
+		task_retryable=$((task_retryable + n))
 
 		# Sub-issue hierarchy
 		if _relationship_deadline_expired; then
 			deadline_exhausted=true
+			_relationship_record_outcome "$_REL_OUTCOME_DEFERRED_DEADLINE"
 			retryable_total=$((retryable_total + 1))
+			task_retryable=$((task_retryable + 1))
 		else
 			result=$(_sync_subtask_hierarchy_for_task "$task_id" "$todo_file" "$repo" 2>/dev/null || echo "$_RELATIONSHIP_RETRY_RESULT")
 			n=$(echo "$result" | grep -oE 'RELS:[0-9]+' | head -1 | sed 's/RELS://' || echo "0")
 			sub_set=$((sub_set + n))
 			n=$(echo "$result" | grep -oE 'RETRYABLE:[0-9]+' | head -1 | sed 's/RETRYABLE://' || echo "0")
 			retryable_total=$((retryable_total + n))
+			task_retryable=$((task_retryable + n))
 		fi
+		[[ "$task_retryable" -ne 0 ]] || complete=$((complete + 1))
 	done
 	[[ $total -gt 25 ]] && printf "\n" >&2
 
-	printf "\n=== Relationships Sync ===\nBlocked-by: %d | Sub-issues: %d | Tasks processed: %d/%d | Retryable: %d | Deadline exhausted: %s\n" \
-		"$blocked_set" "$sub_set" "$processed" "${#unique_tasks[@]}" "$retryable_total" "$deadline_exhausted"
+	_relationship_print_summary "$attempted" "$complete" "${#unique_tasks[@]}" "$retryable_total" "$deadline_exhausted"
 	[[ "$owns_scope" -eq 0 ]] || _end_relationship_sync_scope
 	[[ "$retryable_total" -eq 0 ]] || return 1
 	return 0
