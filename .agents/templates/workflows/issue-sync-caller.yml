@@ -35,7 +35,7 @@ on:
       - 'todo/PLANS.md'
       - 'todo/tasks/**'
   pull_request:
-    types: [opened, edited, closed, reopened]
+    types: [closed]
   issues:
     types: [opened, edited, assigned, closed, reopened]
   workflow_dispatch:

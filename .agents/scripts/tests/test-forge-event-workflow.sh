@@ -28,11 +28,18 @@ assert "forge-coordinator-state-helper.sh" in normal
 assert "upload-artifact" in normal
 ingest = next(step for step in jobs["forge-event"]["steps"] if step.get("name") == "Ingest event and execute publication queue")
 assert ingest["env"]["GH_TOKEN"] == "${{ secrets.GITHUB_TOKEN }}"
+projection = next(step for step in jobs["forge-event"]["steps"] if step.get("name") == "Checkout repository projection")
+assert projection["with"]["ref"] == "${{ github.event.repository.default_branch }}"
+assert projection["with"]["token"] == "${{ secrets.GITHUB_TOKEN }}"
 PY
 
 for caller in "$SELF_CALLER" "$CALLER_TEMPLATE"; do
 	grep -q 'types: \[opened, edited, assigned, closed, reopened\]' "$caller"
-	grep -q 'types: \[opened, edited, closed, reopened\]' "$caller"
+	grep -q 'types: \[closed\]' "$caller"
+	if grep -q 'types: \[opened, edited, closed, reopened\]' "$caller"; then
+		printf 'FAIL unsupported pull-request actions remain canonical in %s\n' "$caller" >&2
+		exit 1
+	fi
 	grep -q 'subject_id:' "$caller"
 	grep -q 'cursor:' "$caller"
 	grep -q 'task_id:' "$caller"

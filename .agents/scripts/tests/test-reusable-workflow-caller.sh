@@ -162,12 +162,13 @@ if [[ -f "$DOWNSTREAM_TEMPLATE" ]]; then
 			"expected 'uses: marcusquinn/aidevops/.github/workflows/issue-sync-reusable.yml@<ref>' in $DOWNSTREAM_TEMPLATE"
 	fi
 
-	# Also check secrets: inherit (otherwise SYNC_PAT won't propagate)
-	if grep -Eq "secrets:\s*inherit" "$DOWNSTREAM_TEMPLATE"; then
-		_pass "downstream template uses 'secrets: inherit'"
+	# Cross-account callers must forward write credentials explicitly; secrets:
+	# inherit does not propagate caller-repository secrets across accounts/orgs.
+	if grep -Eq '^[[:space:]]+SYNC_PAT:[[:space:]]*\$\{\{ secrets\.SYNC_PAT \}\}' "$DOWNSTREAM_TEMPLATE"; then
+		_pass "downstream template explicitly forwards SYNC_PAT"
 	else
-		_fail "downstream template uses 'secrets: inherit'" \
-			"missing 'secrets: inherit' — SYNC_PAT won't reach the reusable workflow"
+		_fail "downstream template explicitly forwards SYNC_PAT" \
+			"missing explicit SYNC_PAT mapping — cross-account callers cannot inherit it"
 	fi
 fi
 
