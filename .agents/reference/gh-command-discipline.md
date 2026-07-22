@@ -18,8 +18,26 @@ For prompt-economy reasons these rules live here rather than in always-on AGENTS
 
 Generic Bash permission does not authorize GitHub account or repository resource
 creation. The shared command policy denies protected commands such as `gh repo
-fork` and `gh repo create` before execution unless the runtime process inherits an
-authorization digest for that exact parsed argv and working directory.
+fork`, `gh repo create`, and the `gh repo new` alias before execution unless the
+runtime process inherits an authorization digest for that exact parsed argv and
+location binding.
+
+The location binding is workspace-scoped only for CWD-independent forms:
+
+- `gh repo fork <owner>/<repo> --clone=false`, with only allowlisted remote
+  options.
+- `gh repo create|new <name> --public|--private|--internal`, with only allowlisted
+  API options and no local source, clone, push, or remote setup.
+
+For those forms, the digest binds to the canonical projects root from
+`AIDEVOPS_ACCOUNT_MUTATION_WORKSPACE_ROOT`, defaulting to `~/Git`, and the same
+exact command may run from another real directory beneath that root. Realpath and
+path-component containment prevent symlink escapes and sibling-prefix matches.
+All other protected forms remain bound to the exact canonical working directory.
+An empty workspace-root value explicitly selects exact-CWD mode; root, home, and
+nonexistent workspace roots fail safely back to exact-CWD binding. Existing v1
+digests remain exact-CWD-bound during compatibility migration. Help-only forms do
+not require authorization.
 
 Generate the digest without executing the command:
 
@@ -29,11 +47,14 @@ python3 ~/.aidevops/agents/scripts/command-policy-helper.py \
 ```
 
 The trusted operator or dispatcher may then set the returned value as
-`AIDEVOPS_ACCOUNT_MUTATION_AUTHORIZATION` when launching the runtime. Never add
-that assignment to the Bash command being authorized: command-local attempts are
-rejected as a parse error. Any argv, quoting result, command chain, or working
-directory change requires a new authorization. Read-only `gh` commands and the
-normal issue/PR implementation workflow retain their existing behavior.
+`AIDEVOPS_ACCOUNT_MUTATION_AUTHORIZATION` when launching the runtime and may set
+`AIDEVOPS_ACCOUNT_MUTATION_WORKSPACE_ROOT` to the trusted projects root. Never
+add either assignment to the Bash command being authorized: command-local
+attempts are rejected as parse errors. Any argv, quoting result, or command chain
+change requires a new authorization. A working-directory change also requires a
+new authorization unless the command qualifies for the same workspace binding.
+Read-only `gh` commands and the normal issue/PR implementation workflow retain
+their existing behavior.
 
 ## Signature footer hallucination (t2685)
 

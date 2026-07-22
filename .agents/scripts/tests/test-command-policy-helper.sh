@@ -110,10 +110,11 @@ assert_authorized_decision() {
 	local expected_status="$4"
 	local expected_pattern="$5"
 	local cwd="${6:-/work}"
+	local workspace_root="${7-}"
 	local output=""
 	local status=0
 
-	output="$(AIDEVOPS_ACCOUNT_MUTATION_AUTHORIZATION="$authorization" python3 "$HELPER" check-command --cwd "$cwd" --command "$command_text")" || status=$?
+	output="$(AIDEVOPS_ACCOUNT_MUTATION_AUTHORIZATION="$authorization" AIDEVOPS_ACCOUNT_MUTATION_WORKSPACE_ROOT="$workspace_root" python3 "$HELPER" check-command --cwd "$cwd" --command "$command_text")" || status=$?
 	if [[ "$status" -eq "$expected_status" && "$output" == *"$expected_pattern"* ]]; then
 		pass "$name"
 	else
@@ -175,6 +176,7 @@ spec = importlib.util.spec_from_file_location("command_policy_helper", helper_pa
 module = importlib.util.module_from_spec(spec)
 sys.modules[spec.name] = module
 spec.loader.exec_module(module)
+evaluation = sys.modules["command_policy_evaluation"]
 policy = module._load_policy(policy_path)
 expected = module.evaluate_invocations([["printf", "safe"]], "/work", policy)
 positional = module.evaluate_invocations(
@@ -190,6 +192,11 @@ keyword = module.evaluate_invocations(
     network_helper="",
 )
 assert expected == positional == keyword
+assert evaluation.account_mutation_authorization(
+    ["gh", "repo", "fork", "owner/source", "--clone=false"],
+    "/work",
+    workspace_root="",
+).startswith("sha256:")
 PY
 		pass "evaluate_invocations preserves positional and keyword interfaces"
 	else
@@ -209,15 +216,22 @@ test_account_mutation_authorization() {
 	assert_decision "blocks shell-launched repository fork" "bash -lc 'gh repo fork owner/source --clone=false'" forbid github.account-mutation 20 "/work"
 	assert_argv_decision "blocks path-qualified repository fork" forbid github.account-mutation 20 "/work" /usr/local/bin/gh repo fork owner/source --clone=false
 	assert_decision "blocks equivalent repository creation" "gh repo create owner/new-repo --public" forbid github.account-mutation 20 "/work"
+	assert_decision "blocks repository new alias" "gh repo new owner/new-repo --public" forbid github.account-mutation 20 "/work"
 	assert_decision "allows read-only repository view" "gh repo view owner/source" allow command.default-allow 0 "/work"
 	assert_decision "allows read-only issue view" "gh issue view 123" allow command.default-allow 0 "/work"
 	assert_decision "allows read-only pull request view" "gh pr view 456" allow command.default-allow 0 "/work"
+	assert_decision "allows repository fork help" "gh repo fork --help" allow command.default-allow 0 "/work"
+	assert_decision "allows repository create help" "gh repo create --help" allow command.default-allow 0 "/work"
+	assert_decision "allows repository new help" "gh repo new --help" allow command.default-allow 0 "/work"
+	assert_decision "does not mistake an option value for help-only invocation" "gh repo create owner/new-repo --description --help --public" forbid github.account-mutation 20 "/work"
 	assert_decision "fails closed on malformed repository fork" "gh repo fork 'owner/source" forbid command.parse-error 20 "/work"
 	assert_decision "rejects inline authorization injection" "AIDEVOPS_ACCOUNT_MUTATION_AUTHORIZATION=sha256:fake gh repo fork owner/source" forbid command.parse-error 20 "/work"
 	assert_decision "rejects wrapped authorization injection" "env AIDEVOPS_ACCOUNT_MUTATION_AUTHORIZATION=sha256:fake gh repo fork owner/source" forbid command.parse-error 20 "/work"
+	assert_decision "rejects inline workspace-root override" "AIDEVOPS_ACCOUNT_MUTATION_WORKSPACE_ROOT=/tmp gh repo fork owner/source --clone=false" forbid command.parse-error 20 "/work"
+	assert_decision "rejects wrapped workspace-root override" "env AIDEVOPS_ACCOUNT_MUTATION_WORKSPACE_ROOT=/tmp gh repo fork owner/source --clone=false" forbid command.parse-error 20 "/work"
 	assert_decision "rejects GitHub target environment override" "GH_REPO=other/target gh repo fork owner/source" forbid command.parse-error 20 "/work"
 
-	authorization="$(python3 "$HELPER" authorization-digest --cwd /work --command "$command_text")" || status=$?
+	authorization="$(AIDEVOPS_ACCOUNT_MUTATION_WORKSPACE_ROOT="" python3 "$HELPER" authorization-digest --cwd /work --command "$command_text")" || status=$?
 	if [[ "$status" -eq 0 && "$authorization" =~ ^sha256:[a-f0-9]{64}$ ]]; then
 		pass "generates a content-bound account-mutation authorization"
 	else
@@ -231,6 +245,129 @@ test_account_mutation_authorization() {
 	assert_authorized_decision "authorization remains bound to the approved working directory" "$authorization" "$command_text" 20 "github.account-mutation" "/different"
 	assert_authorized_decision "fork authorization does not grant another account write" "$authorization" "gh repo create owner/new-repo --public" 20 "github.account-mutation"
 	assert_authorized_decision "authorization cannot widen a compound command" "$authorization" "$command_text && printf done" 20 "github.account-mutation"
+	return 0
+}
+
+test_account_mutation_workspace_authorization() {
+	local workspace="${TEST_ROOT}/projects"
+	local repo_a="${workspace}/repo-a"
+	local repo_b="${workspace}/repo-b"
+	local outside="${TEST_ROOT}/outside"
+	local sibling="${workspace}-sibling"
+	local escape="${workspace}/escape"
+	local command_text="gh repo fork owner/source --clone=false"
+	local authorization=""
+	local exact_authorization=""
+	local legacy_authorization=""
+
+	mkdir -p "$repo_a" "$repo_b" "$outside" "$sibling"
+	ln -s "$outside" "$escape"
+
+	if env -u AIDEVOPS_ACCOUNT_MUTATION_WORKSPACE_ROOT python3 - "$SCRIPT_DIR" <<'PY'; then
+import sys
+from pathlib import Path
+
+sys.path.insert(0, sys.argv[1])
+from command_policy_account_mutation import account_mutation_workspace_root_from_environment
+
+assert account_mutation_workspace_root_from_environment() == str(Path.home() / "Git")
+PY
+		pass "defaults account-mutation workspace to the projects root"
+	else
+		fail "defaults account-mutation workspace to the projects root"
+	fi
+
+	authorization="$(AIDEVOPS_ACCOUNT_MUTATION_WORKSPACE_ROOT="$workspace" python3 "$HELPER" authorization-digest --cwd "$repo_a" --command "$command_text")"
+	assert_authorized_decision "workspace authorization permits the same remote-only fork from a sibling repository" "$authorization" "$command_text" 0 '"decision": "allow"' "$repo_b" "$workspace"
+	assert_authorized_decision "workspace authorization rejects a directory outside the root" "$authorization" "$command_text" 20 "github.account-mutation" "$outside" "$workspace"
+	assert_authorized_decision "workspace authorization rejects a sibling-prefix directory" "$authorization" "$command_text" 20 "github.account-mutation" "$sibling" "$workspace"
+	assert_authorized_decision "workspace authorization rejects a symlink escape" "$authorization" "$command_text" 20 "github.account-mutation" "$escape" "$workspace"
+
+	local create_command="gh repo create owner/new-repo --public"
+	authorization="$(AIDEVOPS_ACCOUNT_MUTATION_WORKSPACE_ROOT="$workspace" python3 "$HELPER" authorization-digest --cwd "$repo_a" --command "$create_command")"
+	assert_authorized_decision "workspace authorization permits explicit remote-only repository creation" "$authorization" "$create_command" 0 '"decision": "allow"' "$repo_b" "$workspace"
+
+	local new_command="gh repo new owner/new-alias --private"
+	authorization="$(AIDEVOPS_ACCOUNT_MUTATION_WORKSPACE_ROOT="$workspace" python3 "$HELPER" authorization-digest --cwd "$repo_a" --command "$new_command")"
+	assert_authorized_decision "workspace authorization permits the repository new alias" "$authorization" "$new_command" 0 '"decision": "allow"' "$repo_b" "$workspace"
+
+	local template_command="gh repo create owner/from-template --private --template owner/base"
+	authorization="$(AIDEVOPS_ACCOUNT_MUTATION_WORKSPACE_ROOT="$workspace" python3 "$HELPER" authorization-digest --cwd "$repo_a" --command "$template_command")"
+	assert_authorized_decision "workspace authorization permits an explicit remote template" "$authorization" "$template_command" 0 '"decision": "allow"' "$repo_b" "$workspace"
+
+	local local_template_command="gh repo create owner/from-local --private --template ."
+	exact_authorization="$(AIDEVOPS_ACCOUNT_MUTATION_WORKSPACE_ROOT="$workspace" python3 "$HELPER" authorization-digest --cwd "$repo_a" --command "$local_template_command")"
+	assert_authorized_decision "ambiguous repository templates remain exact-CWD-bound" "$exact_authorization" "$local_template_command" 20 "github.account-mutation" "$repo_b" "$workspace"
+
+	local local_fork_command="gh repo fork owner/source"
+	exact_authorization="$(AIDEVOPS_ACCOUNT_MUTATION_WORKSPACE_ROOT="$workspace" python3 "$HELPER" authorization-digest --cwd "$repo_a" --command "$local_fork_command")"
+	assert_authorized_decision "exact authorization permits a clone-capable fork only in its original directory" "$exact_authorization" "$local_fork_command" 0 '"decision": "allow"' "$repo_a" "$workspace"
+	assert_authorized_decision "clone-capable fork authorization remains exact-CWD-bound" "$exact_authorization" "$local_fork_command" 20 "github.account-mutation" "$repo_b" "$workspace"
+
+	local local_create_command="gh repo create owner/local-source --public --source=."
+	exact_authorization="$(AIDEVOPS_ACCOUNT_MUTATION_WORKSPACE_ROOT="$workspace" python3 "$HELPER" authorization-digest --cwd "$repo_a" --command "$local_create_command")"
+	assert_authorized_decision "source-based repository creation remains exact-CWD-bound" "$exact_authorization" "$local_create_command" 20 "github.account-mutation" "$repo_b" "$workspace"
+
+	local false_visibility_command="gh repo create owner/ambiguous --public=false"
+	exact_authorization="$(AIDEVOPS_ACCOUNT_MUTATION_WORKSPACE_ROOT="$workspace" python3 "$HELPER" authorization-digest --cwd "$repo_a" --command "$false_visibility_command")"
+	assert_authorized_decision "false visibility does not qualify for workspace scope" "$exact_authorization" "$false_visibility_command" 20 "github.account-mutation" "$repo_b" "$workspace"
+
+	local url_fork_command="gh repo fork https://github.com/owner/source --clone=false"
+	exact_authorization="$(AIDEVOPS_ACCOUNT_MUTATION_WORKSPACE_ROOT="$workspace" python3 "$HELPER" authorization-digest --cwd "$repo_a" --command "$url_fork_command")"
+	assert_authorized_decision "non-owner-repository fork targets remain exact-CWD-bound" "$exact_authorization" "$url_fork_command" 20 "github.account-mutation" "$repo_b" "$workspace"
+
+	local invalid_root="${TEST_ROOT}/missing-projects"
+	for invalid_root in "" "/" "$HOME" "${TEST_ROOT}/missing-projects"; do
+		exact_authorization="$(AIDEVOPS_ACCOUNT_MUTATION_WORKSPACE_ROOT="$invalid_root" python3 "$HELPER" authorization-digest --cwd "$repo_a" --command "$command_text")"
+		assert_authorized_decision "invalid or disabled workspace root preserves exact-CWD binding: ${invalid_root:-empty}" "$exact_authorization" "$command_text" 20 "github.account-mutation" "$repo_b" "$invalid_root"
+	done
+
+	legacy_authorization="$(
+		python3 - "$SCRIPT_DIR" "$command_text" "$repo_a" <<'PY'
+import sys
+
+script_dir, command, cwd = sys.argv[1:]
+sys.path.insert(0, script_dir)
+from command_policy_account_mutation import _legacy_account_mutation_authorization
+
+argv = ["gh", "repo", "fork", "owner/source", "--clone=false"]
+source = {"kind": "command", "value": command}
+print(_legacy_account_mutation_authorization(argv, cwd, source))
+PY
+	)"
+	assert_authorized_decision "legacy v1 authorization remains valid in its original directory" "$legacy_authorization" "$command_text" 0 '"decision": "allow"' "$repo_a" "$workspace"
+	assert_authorized_decision "legacy v1 authorization does not gain workspace scope" "$legacy_authorization" "$command_text" 20 "github.account-mutation" "$repo_b" "$workspace"
+	return 0
+}
+
+test_account_mutation_guard_validation() {
+	local malformed_guard="${TEST_ROOT}/malformed-account-guard.json"
+	local output=""
+	local status=0
+
+	python3 - "$POLICY" "$malformed_guard" <<'PY'
+import json
+import sys
+
+source, target = sys.argv[1:]
+with open(source, encoding="utf-8") as handle:
+    candidate = json.load(handle)
+candidate["dynamic_guards"] = [dict(guard) for guard in candidate["dynamic_guards"]]
+account_guard = next(
+    guard
+    for guard in candidate["dynamic_guards"]
+    if guard.get("kind") == "trusted_account_mutation"
+)
+account_guard.pop("workspace_root_env")
+with open(target, "w", encoding="utf-8") as handle:
+    json.dump(candidate, handle)
+PY
+	output="$(python3 "$HELPER" check-command --policy "$malformed_guard" --command "printf safe")" || status=$?
+	if [[ "$status" -eq 21 && "$output" == *policy.invalid* && "$output" == *account-mutation* ]]; then
+		pass "malformed account-mutation workspace guard fails closed"
+	else
+		fail "malformed account-mutation workspace guard fails closed" "status=${status} output=${output}"
+	fi
 	return 0
 }
 
@@ -638,6 +775,8 @@ main() {
 	test_process_table_parser
 	test_process_termination_policy
 	test_account_mutation_authorization
+	test_account_mutation_workspace_authorization
+	test_account_mutation_guard_validation
 	test_canonical_delegation
 	test_worker_network_policy
 	test_policy_fail_closed
