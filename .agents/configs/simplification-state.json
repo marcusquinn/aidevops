@@ -1766,9 +1766,9 @@
       "pr": 15301
     },
     ".agents/reference/routines.md": {
-      "at": "2026-07-02T02:46:15Z",
-      "hash": "ee3bc48b33ec61844b8c1a133bba42b002c1a3a0",
-      "passes": 3,
+      "at": "2026-07-22T03:06:48Z",
+      "hash": "07a43f0c6a0956a07ea4d7a59e66d9c8c5700112",
+      "passes": 4,
       "pr": 17783
     },
     ".agents/reference/secret-handling.md": {
@@ -2078,9 +2078,9 @@
       "pr": 14604
     },
     ".agents/scripts/commands/routine.md": {
-      "at": "2026-04-11T05:05:49Z",
-      "hash": "827b42666786545fbfc5c59a1a2d6160645d9288",
-      "passes": 4,
+      "at": "2026-07-22T03:06:53Z",
+      "hash": "62218c635aa2a85c4ee5ea75e017873c5b056302",
+      "passes": 5,
       "pr": 14509
     },
     ".agents/scripts/commands/runners-check.md": {
@@ -2262,9 +2262,9 @@
       "pr": 12145
     },
     ".agents/scripts/full-loop-helper.sh": {
-      "at": "2026-07-22T00:01:19Z",
-      "hash": "432fc1c79653ca60ab74e62c7efd70616013b804",
-      "passes": 36,
+      "at": "2026-07-22T03:06:56Z",
+      "hash": "c7e3cf4f5c44fb13d69669a715293a40675dfcdd",
+      "passes": 37,
       "pr": 19046
     },
     ".agents/scripts/generate-claude-commands.sh": {
@@ -2298,9 +2298,9 @@
       "pr": 13021
     },
     ".agents/scripts/headless-runtime-helper.sh": {
-      "at": "2026-07-20T22:48:42Z",
-      "hash": "dd17775225feb36b7e81db176162a7fc308c83fd",
-      "passes": 73,
+      "at": "2026-07-22T03:06:56Z",
+      "hash": "bae3740ff518067a7a4a49f98abe9510b27b6241",
+      "passes": 74,
       "pr": 15086
     },
     ".agents/scripts/headless-runtime-lib.sh": {
@@ -2502,9 +2502,9 @@
       "pr": 19004
     },
     ".agents/scripts/routine-log-helper.sh": {
-      "at": "2026-07-20T04:18:20Z",
-      "hash": "0751a94b314eca4cfa2155f14d7d676024c4a0f8",
-      "passes": 8,
+      "at": "2026-07-22T03:07:02Z",
+      "hash": "b5d046b7a65db5cf15f3fb77a7b92957947f05bd",
+      "passes": 9,
       "pr": 17786
     },
     ".agents/scripts/schema-validator-helper.sh": {
@@ -7372,9 +7372,9 @@
       "pr": 12308
     },
     ".agents/workflows/routine.md": {
-      "at": "2026-04-11T05:06:05Z",
-      "hash": "827b42666786545fbfc5c59a1a2d6160645d9288",
-      "passes": 1,
+      "at": "2026-07-22T03:08:02Z",
+      "hash": "62218c635aa2a85c4ee5ea75e017873c5b056302",
+      "passes": 2,
       "pr": 18144
     },
     ".agents/workflows/runners-check.md": {
@@ -7480,21 +7480,21 @@
       "pr": 16415
     },
     "TODO.md": {
-      "at": "2026-07-21T03:06:34Z",
-      "hash": "9c5e281f434e09e401fba3b4fd80c175175645f7",
-      "passes": 193,
+      "at": "2026-07-22T03:08:03Z",
+      "hash": "5f18834b67573647d6b4661525472252e37a634e",
+      "passes": 194,
       "pr": 15490
     },
     "aidevops.sh": {
-      "at": "2026-07-22T00:02:13Z",
-      "hash": "203514b51756714b53aed307a24e0af4430ca3f9",
-      "passes": 286,
+      "at": "2026-07-22T03:08:03Z",
+      "hash": "4769a3dd2326dfb0a0238c58934da0241e872f69",
+      "passes": 287,
       "pr": 19029
     },
     "setup.sh": {
-      "at": "2026-07-22T00:02:13Z",
-      "hash": "1a0184e05790ef79870ddf42132d84d792dad36c",
-      "passes": 283,
+      "at": "2026-07-22T03:08:03Z",
+      "hash": "52fa378d19608902e8901c8c1f8cc9c56e2d2475",
+      "passes": 284,
       "pr": 15470
     },
     "todo/tasks/GH#15363-brief.md": {
@@ -7702,10 +7702,10 @@
       "passes": 19
     },
     ".agents/scripts/pulse-routines.sh": {
-      "hash": "f58c7f5a42143ddae6babbfcc4f952dfdccf871c",
-      "at": "2026-07-13T01:29:58Z",
+      "hash": "8d51d05c2cfb248587c5902a56b7efcb029c6bbc",
+      "at": "2026-07-22T03:07:01Z",
       "pr": 20413,
-      "passes": 4
+      "passes": 5
     },
     ".agents/reference/parent-task-lifecycle.md": {
       "hash": "22efe86478b893a46c39c64761651d6cfc916a6e",
@@ -7960,10 +7960,10 @@
       "passes": 1
     },
     ".agents/scripts/tests/test-full-loop-merge.sh": {
-      "hash": "5549d49a77344edca3c2438a27aac419aa1e12ab",
-      "at": "2026-07-18T15:55:01Z",
+      "hash": "b0d82bbb91cd4dd0fb6ffbda1bc2825c0ec94526",
+      "at": "2026-07-22T03:07:04Z",
       "pr": 25930,
-      "passes": 5
+      "passes": 6
     },
     ".agents/scripts/tests/test-gh-wrapper-rest-fallback.sh": {
       "hash": "386117d315c69e062d599a6a05e0155df6bab229",
@@ -8050,10 +8050,10 @@
       "passes": 3
     },
     ".agents/scripts/headless-runtime-worker.sh": {
-      "hash": "74e3dfc40709e161ac781e996d9bea9b0e0aba00",
-      "at": "2026-07-21T22:55:04Z",
+      "hash": "c2974b405ced91ff4ef8425855b32b403513ddd6",
+      "at": "2026-07-22T03:06:57Z",
       "pr": 26521,
-      "passes": 13
+      "passes": 14
     },
     ".agents/scripts/install-hooks-helper.sh": {
       "hash": "0fa74195f7243ea22d952d156e4faccb1bbc2125",
