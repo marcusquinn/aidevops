@@ -264,6 +264,9 @@ Track version in `/app/data/.app_version`; compare on start to run per-version m
 `.github/workflows/cloudron-package-release.yml` caller when no file already
 exists. Configure `cloudron_package.upstream_slug` locally to enable daily
 stable-release comparison; compatibility monitoring is enabled by default.
+The generated caller pins both the reusable workflow and checked-out validator
+to the same full framework commit. Updating that revision is an explicit,
+reviewed package change; repeated init never overwrites an existing caller.
 
 Prepare and validate releases without publishing:
 
