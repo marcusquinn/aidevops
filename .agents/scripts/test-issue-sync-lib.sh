@@ -414,6 +414,26 @@ else
 	pass "parse_task_line: malformed dependency fails closed"
 fi
 
+parsed_parent=$(parse_task_line '- [ ] t7 child task parent:t6 ref:GH#100')
+if printf '%s\n' "$parsed_parent" | grep -qx 'description=child task' &&
+	printf '%s\n' "$parsed_parent" | grep -qx 'parent=t6'; then
+	pass "parse_task_line: preserves singular parent hierarchy metadata"
+else
+	fail "parse_task_line: omitted parent hierarchy metadata"
+fi
+
+if parse_task_line '- [ ] t7 malformed parent parent:t01' >/dev/null 2>&1; then
+	fail "parse_task_line: accepted malformed parent metadata"
+else
+	pass "parse_task_line: malformed parent fails closed"
+fi
+
+if parse_task_line '- [ ] t7 conflicting parents parent:t5 parent:t6' >/dev/null 2>&1; then
+	fail "parse_task_line: accepted multiple parent declarations"
+else
+	pass "parse_task_line: multiple parent declarations fail closed"
+fi
+
 mkdir -p "$TMP/project/todo"
 cat >"$TMP/project/todo/PLANS.md" <<'EOF'
 ### Root plan

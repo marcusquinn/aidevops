@@ -190,9 +190,9 @@ HIGH|delimiter_injection|XML system tags|<system>|</system>|<\/?system_prompt>|<
 HIGH|delimiter_injection|ChatML injection|<\|im_start\|>|<\|im_end\|>|<\|endoftext\|>
 HIGH|data_exfiltration|Exfiltrate via URL|([Ss]end|[Pp]ost|[Tt]ransmit|[Ee]xfiltrate|[Ll]eak)\s+(the\s+)?(data|information|content|secrets?|keys?|tokens?|credentials?)\s+(to|via|through|using)\s+(https?://|a\s+URL|an?\s+endpoint)
 HIGH|data_exfiltration|Encode and send|([Ee]ncode|[Bb]ase64|[Hh]ex)\s+(and\s+)?(send|transmit|post|include\s+in)
-CRITICAL|data_exfiltration_dns|DNS exfil: dig with command substitution|(?i)\bdig\s+.*(\$\(|\$\{|`)[^)}`]*(\)|`|\})
-CRITICAL|data_exfiltration_dns|DNS exfil: nslookup with command substitution|(?i)\bnslookup\s+.*(\$\(|\$\{|`)[^)}`]*(\)|`|\})
-CRITICAL|data_exfiltration_dns|DNS exfil: host with command substitution|(?i)\bhost\s+.*(\$\(|\$\{|`)[^)}`]*(\)|`|\})
+CRITICAL|data_exfiltration_dns|DNS exfil: dig with command substitution|(?im)(^|[;&|]\s*|:\s*|`{1,2}\s*|\b(run|execute|use)\s+)(sudo\s+|env\s+)?\bdig\s+.*(\$\(|\$\{|`)[^)}`\r\n]*(\)|`|\})
+CRITICAL|data_exfiltration_dns|DNS exfil: nslookup with command substitution|(?im)(^|[;&|]\s*|:\s*|`{1,2}\s*|\b(run|execute|use)\s+)(sudo\s+|env\s+)?\bnslookup\s+.*(\$\(|\$\{|`)[^)}`\r\n]*(\)|`|\})
+CRITICAL|data_exfiltration_dns|DNS exfil: host with command substitution|(?im)(^|[;&|]\s*|:\s*|`{1,2}\s*|\b(run|execute|use)\s+)(sudo\s+|env\s+)?\bhost\s+.*(\$\(|\$\{|`)[^)}`\r\n]*(\)|`|\})
 CRITICAL|data_exfiltration_dns|DNS exfil: base64 data piped to DNS tool|(?i)\bbase64\b.*\|.*\b(dig|nslookup|host)\b
 HIGH|data_exfiltration_dns|DNS exfil: variable interpolation with trailing dot|(?i)\b(dig|nslookup|host)\s+.*\$[A-Za-z_{].*\.\s*$
 HIGH|data_exfiltration_dns|DNS exfil: encoded data piped to DNS tool|(?i)\b(xxd|od\s+-[AaxX]|hexdump)\b.*\|\s*(dig|nslookup|host)\b
