@@ -58,6 +58,32 @@ operation IDs reuse matching evidence rather than overwriting it. A failed
 compare-and-swap rolls the local ref back. Never bypass the helper with direct
 `git pull`, reset, or clean.
 
+## Converged stale rebase recovery
+
+When a clean canonical checkout has completed an interactive rebase but stale
+metadata still blocks `restore-default`, use the separately confirmed cleanup:
+
+```bash
+.agents/scripts/canonical-recovery-helper.sh clear-stale-rebase \
+  --repo /path/to/canonical-checkout \
+  --issue 123 \
+  --confirm CLEAR_CONVERGED_STALE_REBASE
+```
+
+Under the canonical recovery lock, the helper fetches and pins the configured
+default branch, verifies the audit chain, and requires `HEAD`, the local default
+ref, and the pinned remote tip to be identical. It accepts only a completed,
+clean, structurally valid `rebase-merge` state for that default branch. Active,
+dirty, divergent, branch-mismatched, malformed, or changing state fails closed.
+
+Before cleanup, the helper copies and fingerprints all rebase metadata under
+`~/.aidevops/.agent-workspace/recovery/canonical/` and creates durable
+`refs/aidevops/canonical-recovery/issue-<N>/stale-rebase/<sha>` refs for commit
+IDs found in that metadata. It then proves cleanup did not change HEAD, local or
+remote refs, the index tree, or worktree content. Run `restore-default` with its
+own confirmation token after this command succeeds. Never use direct
+`git rebase --quit`, reset, clean, or metadata deletion on a canonical checkout.
+
 Restore preserved state only to a clean checkout on the recorded branch:
 
 ```bash
