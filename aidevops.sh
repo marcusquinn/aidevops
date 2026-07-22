@@ -959,6 +959,7 @@ _help_commands() {
 	echo "  update             Update aidevops to the latest version (alias: upgrade)"
 	echo "  upgrade            Alias for update"
 	echo "  pulse <cmd>        Session-based pulse control (start/stop/status)"
+	echo "  schedule <cmd>     Durable one-shot jobs (once/status/cancel)"
 	echo "  launch-worker      Manually launch headless workers for GitHub issues"
 	echo "  worktree <cmd>     Manage safe linked worktrees (add/list/remove/status/switch/clean) (alias: wt)"
 	echo "  auto-update <cmd>  Manage automatic update polling (enable/disable/status)"
@@ -1662,6 +1663,7 @@ main() {
 	sources | agent-sources) _dispatch_helper "agent-sources-helper.sh" "agent-sources-helper.sh" "$@" ;;
 	plugin | plugins) cmd_plugin "$@" ;;
 	pulse) _dispatch_helper "pulse-session-helper.sh" "pulse-session-helper.sh" "$@" ;;
+	schedule) _dispatch_helper "deferred-job-helper.sh" "deferred-job-helper.sh" "$@" ;;
 	launch-worker | launch_worker) cmd_launch_worker "$@" ;;
 	check-workflows | workflows) _dispatch_helper "check-workflows-helper.sh" "check-workflows-helper.sh" "$@" ;;
 	sync-workflows) _dispatch_helper "sync-workflows-helper.sh" "sync-workflows-helper.sh" "$@" ;;

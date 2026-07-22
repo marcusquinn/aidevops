@@ -56,12 +56,25 @@ restore_scheduler_helper_mocks() {
 	print_info() { return 0; }
 	print_warning() { return 0; }
 	print_error() { return 0; }
-	_resolve_log_dir() { printf '%s\n' "$TEST_DIR/logs"; return 0; }
+	_resolve_log_dir() {
+		printf '%s\n' "$TEST_DIR/logs"
+		return 0
+	}
 	_install_scheduler_linux() { return 0; }
 	_uninstall_scheduler() { return 0; }
-	_resolve_modern_bash() { printf '%s\n' "/bin/bash"; return 0; }
-	_xml_escape() { local value="$1"; printf '%s' "$value"; return 0; }
-	aidevops_launchd_sanitized_path() { printf '%s\n' "/usr/bin:/bin"; return 0; }
+	_resolve_modern_bash() {
+		printf '%s\n' "/bin/bash"
+		return 0
+	}
+	_xml_escape() {
+		local value="$1"
+		printf '%s' "$value"
+		return 0
+	}
+	aidevops_launchd_sanitized_path() {
+		printf '%s\n' "/usr/bin:/bin"
+		return 0
+	}
 	_launchd_install_if_changed() { return 0; }
 	_launchd_has_agent() { return 1; }
 	return 0
@@ -115,7 +128,10 @@ test_linux_core_scheduler_commands_are_logged() {
 
 	# shellcheck source=/dev/null
 	source "$SCHEDULERS_SH"
-	uname() { printf 'Linux\n'; return 0; }
+	uname() {
+		printf 'Linux\n'
+		return 0
+	}
 	_SCHEDULER_CAPTURED_COMMAND=""
 	_install_scheduler_linux() {
 		local service_name="$1"
@@ -199,6 +215,56 @@ HELPER
 	return 0
 }
 
+test_agent_routine_waits_for_terminal_result() {
+	local capture_file="$TEST_DIR/agent-routine-lifecycle.args"
+	local done_file="$TEST_DIR/agent-routine.done"
+	local helper_stub="$TEST_DIR/bin/agent-headless-runtime-helper.sh"
+	local log_stub="$TEST_DIR/bin/agent-routine-log-helper.sh"
+	local attempts=0
+	local captured=""
+	cat >"$helper_stub" <<'HELPER'
+#!/usr/bin/env bash
+sleep 0.2
+: >"$ROUTINE_AGENT_DONE"
+exit 0
+HELPER
+	cat >"$log_stub" <<'HELPER'
+#!/usr/bin/env bash
+marker=0
+[[ ! -f "$ROUTINE_AGENT_DONE" ]] || marker=1
+printf '%s | marker=%s\n' "$*" "$marker" >>"$ROUTINE_LOG_CAPTURE"
+exit 0
+HELPER
+	chmod +x "$helper_stub" "$log_stub"
+	: >"$capture_file"
+	rm -f "$done_file"
+	ROUTINE_AGENT_DONE="$done_file"
+	ROUTINE_LOG_CAPTURE="$capture_file"
+	export ROUTINE_AGENT_DONE ROUTINE_LOG_CAPTURE
+	HEADLESS_RUNTIME_HELPER="$helper_stub"
+	ROUTINE_LOG_HELPER="$log_stub"
+	ROUTINE_STATE_FILE="$TEST_DIR/agent-state.json"
+	LOGFILE="$TEST_DIR/agent-pulse.log"
+	PULSE_DIR="$TEST_DIR"
+
+	_routine_execute "r778" "agent sample" "" "Build+" "$TEST_DIR"
+	while [[ "$attempts" -lt 100 ]]; do
+		captured=$(<"$capture_file")
+		[[ "$captured" == *"--status success"* ]] && break
+		sleep 0.05
+		attempts=$((attempts + 1))
+	done
+	captured=$(<"$capture_file")
+	if [[ "$captured" == update\ r778\ --status\ running*"marker=0"* &&
+		"$captured" == *"--status success"*"marker=1"* &&
+		"$(jq -r '.r778.last_status' "$ROUTINE_STATE_FILE")" == "success" ]]; then
+		print_result "agent routine records running before terminal completion" 0
+	else
+		print_result "agent routine records running before terminal completion" 1 "$captured"
+	fi
+	return 0
+}
+
 test_opencode_archive_scheduler_is_daily_and_low_priority() {
 	local fake_home="$TEST_DIR/archive-home"
 	mkdir -p "$fake_home/.aidevops/agents/scripts"
@@ -240,7 +306,10 @@ test_opencode_archive_scheduler_is_daily_and_low_priority() {
 		captured_calendar="$on_calendar"
 		return 0
 	}
-	uname() { printf 'Linux\n'; return 0; }
+	uname() {
+		printf 'Linux\n'
+		return 0
+	}
 
 	local orig_home="$HOME"
 	HOME="$fake_home"
@@ -276,7 +345,10 @@ test_opencode_archive_scheduler_is_daily_and_low_priority() {
 
 test_opencode_archive_scheduler_tolerates_unset_home() {
 	local captured_warning=""
-	print_warning() { captured_warning="$1"; return 0; }
+	print_warning() {
+		captured_warning="$1"
+		return 0
+	}
 
 	local had_home="false"
 	local orig_home=""
@@ -317,9 +389,19 @@ test_opencode_archive_launchd_uses_safe_path_expansion() {
 		captured_plist="$content"
 		return 0
 	}
-	aidevops_launchd_sanitized_path() { local value="${1:-}"; printf '%s\n' "$value"; return $?; }
-	mkdir() { /bin/mkdir "$@"; return $?; }
-	uname() { printf 'Darwin\n'; return 0; }
+	aidevops_launchd_sanitized_path() {
+		local value="${1:-}"
+		printf '%s\n' "$value"
+		return $?
+	}
+	mkdir() {
+		/bin/mkdir "$@"
+		return $?
+	}
+	uname() {
+		printf 'Darwin\n'
+		return 0
+	}
 
 	local orig_home="${HOME:-}"
 	local orig_path="${PATH:-}"
@@ -352,6 +434,26 @@ test_pulse_preflight_does_not_launch_opencode_archive() {
 		return 0
 	fi
 	print_result "pulse preflight does not launch opencode archive" 0
+	return 0
+}
+
+test_nonterminal_lifecycle_does_not_require_tracking_issue() {
+	local fake_home="$TEST_DIR/lifecycle-home"
+	local lifecycle_file="${fake_home}/.aidevops/.agent-workspace/cron/r799/lifecycle.jsonl"
+	local output=""
+	mkdir -p "$fake_home"
+	output=$(HOME="$fake_home" "$ROUTINE_LOG_HELPER_SH" update r799 --status running \
+		--session-key routine-r799 --job-id deferred-fixture 2>&1) || {
+		print_result "nonterminal lifecycle records without a tracking issue" 1 "$output"
+		return 0
+	}
+	if [[ -f "$lifecycle_file" && "$(jq -r '.status' "$lifecycle_file")" == "running" &&
+	"$(jq -r '.session_key' "$lifecycle_file")" == "routine-r799" &&
+	! -f "${fake_home}/.aidevops/.agent-workspace/cron/r799/routine-state.json" ]]; then
+		print_result "nonterminal lifecycle records without a tracking issue" 0
+	else
+		print_result "nonterminal lifecycle records without a tracking issue" 1 "$output"
+	fi
 	return 0
 }
 
@@ -388,10 +490,12 @@ main() {
 	test_core_routine_shell_quote_escapes_single_quotes
 	test_linux_core_scheduler_commands_are_logged
 	test_pulse_routine_update_uses_flags_and_duration
+	test_agent_routine_waits_for_terminal_result
 	test_opencode_archive_scheduler_is_daily_and_low_priority
 	test_opencode_archive_scheduler_tolerates_unset_home
 	test_opencode_archive_launchd_uses_safe_path_expansion
 	test_pulse_preflight_does_not_launch_opencode_archive
+	test_nonterminal_lifecycle_does_not_require_tracking_issue
 	test_routine_issue_creation_includes_tracking_label
 	printf '\n%d/%d tests passed\n' "$TESTS_PASSED" "$TESTS_RUN"
 	[[ "$TESTS_FAILED" -eq 0 ]]
