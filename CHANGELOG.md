@@ -10,6 +10,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.32.166] - 2026-07-22
+
+### Changed
+
+- Maintenance: update simplification state registry
+- Documentation: add README provenance footer guidance (#28492)
+
+### Fixed
+
+- align Pulse evidence cutoff timestamps (#28495)
+
 ## [3.32.165] - 2026-07-22
 
 ### Changed
