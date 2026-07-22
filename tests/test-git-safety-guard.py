@@ -230,6 +230,35 @@ class CanonicalWritePolicyTests(unittest.TestCase):
             denial["hookSpecificOutput"]["permissionDecisionReason"],
         )
 
+    def test_claude_adapter_passes_authoritative_runtime_identity(self):
+        captured = {}
+
+        def fake_policy(_helper, arguments, _input_text=None):
+            captured["arguments"] = arguments
+            return 0, {"decision": "allow", "rule_id": "command.default-allow"}
+
+        with (
+            mock.patch.object(
+                git_safety_guard, "_resolve_policy_helper", return_value="/policy/helper"
+            ),
+            mock.patch.object(git_safety_guard.os, "getppid", return_value=4242),
+            mock.patch.object(
+                git_safety_guard,
+                "_process_identity",
+                return_value="runtime-generation-a",
+            ),
+            mock.patch.object(
+                git_safety_guard, "_run_policy_helper", side_effect=fake_policy
+            ),
+        ):
+            self.assertIsNone(git_safety_guard._check_command_policy("printf safe"))
+
+        arguments = captured["arguments"]
+        pid_index = arguments.index("--runtime-pid")
+        identity_index = arguments.index("--runtime-process-identity")
+        self.assertEqual(arguments[pid_index + 1], "4242")
+        self.assertEqual(arguments[identity_index + 1], "runtime-generation-a")
+
     def test_apply_patch_targets_are_classified_individually(self):
         linked_patch = """*** Begin Patch
 *** Add File: linked-only.md

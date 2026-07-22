@@ -23,6 +23,12 @@
       "decision": "forbid"
     },
     {
+      "id": "process.runtime-self-preservation",
+      "kind": "process_termination",
+      "helper": "process-termination-guard.py",
+      "decision": "forbid"
+    },
+    {
       "id": "github.account-mutation",
       "kind": "trusted_account_mutation",
       "authorization_env": "AIDEVOPS_ACCOUNT_MUTATION_AUTHORIZATION",

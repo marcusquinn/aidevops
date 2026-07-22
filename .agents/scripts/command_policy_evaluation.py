@@ -17,6 +17,10 @@ from typing import Any
 
 from command_policy_config import _decision
 from command_policy_matchers import _matches, _matches_gh_command_path
+from command_policy_process_termination import (
+    _evaluate_process_termination,
+    _process_termination_guard_path,
+)
 
 DECISION_RANK = {"allow": 0, "forbid": 1}
 
@@ -29,6 +33,10 @@ class _EvaluationOptions:
     network_helper: str = ""
     account_mutation_authorization: str = ""
     account_mutation_source: dict[str, Any] | None = None
+    process_termination_guard: str = ""
+    runtime_pid: int = 0
+    runtime_process_identity: str = ""
+    process_table_fixture: str = ""
 
 
 def _evaluate_static(
@@ -271,6 +279,15 @@ def evaluate_invocations(
             options.account_mutation_authorization,
             options.account_mutation_source,
         ),
+        _evaluate_process_termination(
+            invocations,
+            _process_termination_guard_path(
+                policy, options.process_termination_guard, script_dir
+            ),
+            options.runtime_pid,
+            options.runtime_process_identity,
+            options.process_table_fixture,
+        ),
     ]
     if options.worker:
         decisions.append(
@@ -294,10 +311,15 @@ def _evaluation_options(
         "network_helper",
         "account_mutation_authorization",
         "account_mutation_source",
+        "process_termination_guard",
+        "runtime_pid",
+        "runtime_process_identity",
+        "process_table_fixture",
     )
     if len(legacy_options) > len(names):
+        maximum_arguments = len(names) + 3
         raise TypeError(
-            f"evaluate_invocations() takes from 3 to 9 positional arguments "
+            f"evaluate_invocations() takes from 3 to {maximum_arguments} positional arguments "
             f"but {len(legacy_options) + 3} were given"
         )
     values: dict[str, Any] = dict(zip(names, legacy_options))
