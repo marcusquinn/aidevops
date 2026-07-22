@@ -149,6 +149,76 @@ test_schedule_validation() {
 	return 0
 }
 
+test_duration_overflow_is_rejected() {
+	reset_fixture duration
+	local prompt_file="${TEST_ROOT}/duration.prompt"
+	local after_rc=0
+	local at_rc=0
+	printf 'safe fixture\n' >"$prompt_file"
+	run_helper_at "$NOW_EPOCH" once --after 999999999999999999d --name invalid-duration \
+		--dir "${TEST_ROOT}/work" --prompt-file "$prompt_file" >/dev/null 2>&1 || after_rc=$?
+	run_helper_at "$NOW_EPOCH" once --at 2037-07-22T00:00:00Z --name unbounded-at \
+		--dir "${TEST_ROOT}/work" --prompt-file "$prompt_file" >/dev/null 2>&1 || at_rc=$?
+	if [[ "$after_rc" -eq 2 && "$at_rc" -eq 2 ]]; then
+		result "once rejects overflowing or unbounded future schedules" 0
+	else
+		result "once rejects overflowing or unbounded future schedules" 1 "after_rc=$after_rc at_rc=$at_rc"
+	fi
+	return 0
+}
+
+test_storage_refuses_unowned_root() {
+	reset_fixture unowned
+	local rc=0
+	local mode_before=""
+	mkdir "$STATE_DIR"
+	printf 'preserve me\n' >"${STATE_DIR}/operator-note.txt"
+	mode_before=$(file_mode "$STATE_DIR")
+	run_helper_at "$NOW_EPOCH" status >/dev/null 2>&1 || rc=$?
+	if [[ "$rc" -ne 0 && -f "${STATE_DIR}/operator-note.txt" && ! -e "${STATE_DIR}/jobs" &&
+		! -e "${STATE_DIR}/.aidevops-deferred-job-root" && "$(file_mode "$STATE_DIR")" == "$mode_before" ]]; then
+		result "storage initialization refuses to adopt an existing unowned root" 0
+	else
+		result "storage initialization refuses to adopt an existing unowned root" 1 "rc=$rc"
+	fi
+	return 0
+}
+
+test_lock_recovery_preserves_live_owner() {
+	reset_fixture locks
+	local prompt_file="${TEST_ROOT}/locks.prompt"
+	local rc=0
+	local token_after=""
+	local stale_job_id=""
+	printf 'safe fixture\n' >"$prompt_file"
+	run_helper_at "$NOW_EPOCH" status >/dev/null
+	mkdir "${STATE_DIR}/queue.lock"
+	printf '%s\n' "$((NOW_EPOCH - 60))" >"${STATE_DIR}/queue.lock/epoch"
+	printf '%s\n' "$$" >"${STATE_DIR}/queue.lock/pid"
+	printf '%s\n' "live-owner" >"${STATE_DIR}/queue.lock/token"
+	HOME="$TEST_HOME" AIDEVOPS_DEFERRED_JOB_DIR="$STATE_DIR" AIDEVOPS_DEFERRED_NOW_EPOCH="$NOW_EPOCH" \
+		AIDEVOPS_DEFERRED_LOCK_ATTEMPTS=2 "$HELPER" once --after 1m --name live-lock \
+		--dir "${TEST_ROOT}/work" --prompt-file "$prompt_file" >/dev/null 2>&1 || rc=$?
+	IFS= read -r token_after <"${STATE_DIR}/queue.lock/token" || token_after=""
+	rm -rf "${STATE_DIR}/queue.lock"
+	mkdir "${STATE_DIR}/queue.lock"
+	printf '%s\n' "$((NOW_EPOCH - 60))" >"${STATE_DIR}/queue.lock/epoch"
+	printf '%s\n' "99999999" >"${STATE_DIR}/queue.lock/pid"
+	printf '%s\n' "stale-owner" >"${STATE_DIR}/queue.lock/token"
+	mkdir "${STATE_DIR}/queue.lock.reclaim"
+	printf '%s\n' "$((NOW_EPOCH - 60))" >"${STATE_DIR}/queue.lock.reclaim/epoch"
+	printf '%s\n' "99999999" >"${STATE_DIR}/queue.lock.reclaim/pid"
+	stale_job_id=$(queue_prompt_job stale-lock 1m)
+	if [[ "$rc" -ne 0 && "$token_after" == "live-owner" && "$stale_job_id" == dj-* &&
+		! -e "${STATE_DIR}/queue.lock.reclaim" ]]; then
+		result "lock recovery preserves live owners and reclaims abandoned locks and guards" 0
+	else
+		result "lock recovery preserves live owners and reclaims abandoned locks and guards" 1 \
+			"rc=$rc token=$token_after stale_job=$stale_job_id"
+	fi
+	return 0
+}
+
 test_cancel_prevents_launch() {
 	reset_fixture cancel
 	local job_id=""
@@ -278,16 +348,36 @@ test_manual_issue_dispatch_and_scheduler_rendering() {
 	return 0
 }
 
+test_purge_removes_only_owned_state() {
+	reset_fixture purge
+	local job_id=""
+	local sentinel="${STATE_DIR}/operator-note.txt"
+	job_id=$(queue_prompt_job purge 1h)
+	printf 'preserve me\n' >"$sentinel"
+	run_helper_at "$NOW_EPOCH" uninstall --purge >/dev/null
+	if [[ -f "$sentinel" && ! -e "${STATE_DIR}/jobs" && ! -e "${STATE_DIR}/prompts" &&
+		! -e "${STATE_DIR}/logs" && ! -e "${STATE_DIR}/.aidevops-deferred-job-root" && "$job_id" == dj-* ]]; then
+		result "purge removes owned state without deleting unrelated root contents" 0
+	else
+		result "purge removes owned state without deleting unrelated root contents" 1
+	fi
+	return 0
+}
+
 main() {
 	setup_suite
 	test_queue_status_and_privacy
 	test_schedule_validation
+	test_duration_overflow_is_rejected
+	test_storage_refuses_unowned_root
+	test_lock_recovery_preserves_live_owner
 	test_cancel_prevents_launch
 	test_overdue_runs_once
 	test_concurrent_ticks_do_not_double_launch
 	test_claim_recovery_and_running_fuse
 	test_failed_preflight_is_durable
 	test_manual_issue_dispatch_and_scheduler_rendering
+	test_purge_removes_only_owned_state
 	printf '\n%s/%s tests passed.\n' "$((TESTS_RUN - TESTS_FAILED))" "$TESTS_RUN"
 	[[ "$TESTS_FAILED" -eq 0 ]]
 	return $?

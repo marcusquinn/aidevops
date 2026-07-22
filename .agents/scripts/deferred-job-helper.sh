@@ -49,7 +49,7 @@ Usage:
 
 Options for once:
   --at ISO-UTC       Exact UTC timestamp, for example 2026-07-22T08:30:00Z
-  --after DURATION   Relative delay using s, m, h, or d, for example 30m or 13h
+  --after DURATION   Relative delay using s, m, h, or d, up to 3650d
   --name NAME        Private operator label shown by status
   --dir PATH         Dispatch working directory
   --prompt-file PATH Copy prompt into private state; prompt text is never stored in job JSON
@@ -231,6 +231,11 @@ _dj_resolve_due_time() {
 	local now_epoch="$1"
 	local due_epoch=0
 	local delay_seconds=0
+	local future_seconds=0
+	if [[ ! "$now_epoch" =~ ^[0-9]{1,12}$ ]]; then
+		printf 'ERROR: deferred-job clock returned an invalid epoch\n' >&2
+		return 1
+	fi
 	if [[ -n "$_DJ_ARG_AT" ]]; then
 		due_epoch=$(_dj_iso_to_epoch "$_DJ_ARG_AT" 2>/dev/null || true)
 		if [[ -z "$due_epoch" ]]; then
@@ -244,6 +249,11 @@ _dj_resolve_due_time() {
 			return 2
 		fi
 		due_epoch=$((now_epoch + delay_seconds))
+	fi
+	future_seconds=$((due_epoch - now_epoch))
+	if [[ "$future_seconds" -le 0 || "$future_seconds" -gt "$_DJ_MAX_DELAY_SECONDS" ]]; then
+		printf 'ERROR: scheduled time must be in the future and no more than 3650 days away\n' >&2
+		return 2
 	fi
 	printf '%s\n' "$due_epoch"
 	return 0

@@ -291,19 +291,42 @@ _dj_uninstall_systemd() {
 }
 
 _dj_purge_storage() {
+	local marker_value=""
 	case "$DEFERRED_JOB_ROOT" in
 	"" | "/" | "$HOME" | "${HOME}/.aidevops" | "${HOME}/.aidevops/.agent-workspace")
 		printf 'ERROR: refusing unsafe deferred-job purge path\n' >&2
 		return 1
 		;;
 	esac
-	rm -rf "$DEFERRED_JOB_ROOT"
+	[[ -d "$DEFERRED_JOB_ROOT" ]] || return 0
+	if [[ -L "$DEFERRED_JOB_ROOT" || -L "$_DJ_OWNER_MARKER" || ! -f "$_DJ_OWNER_MARKER" ]]; then
+		printf 'ERROR: refusing to purge unowned deferred-job state root\n' >&2
+		return 1
+	fi
+	IFS= read -r marker_value <"$_DJ_OWNER_MARKER" || marker_value=""
+	if [[ "$marker_value" != "$_DJ_OWNER_MARKER_VALUE" ]]; then
+		printf 'ERROR: refusing to purge deferred-job state with an unknown ownership marker\n' >&2
+		return 1
+	fi
+	_dj_acquire_lock || return 1
+	if ! rm -rf "$_DJ_JOBS_DIR" "$_DJ_PROMPTS_DIR" "$_DJ_LOGS_DIR"; then
+		_dj_release_lock
+		return 1
+	fi
+	_dj_release_lock
+	rm -f "$_DJ_OWNER_MARKER" || return 1
+	# Preserve an overridden root when it contains files not owned by aidevops.
+	rmdir "$DEFERRED_JOB_ROOT" 2>/dev/null || true
 	return 0
 }
 
 cmd_uninstall_scheduler() {
 	local purge="false"
 	local arg="${1:-}"
+	if [[ $# -gt 1 ]]; then
+		printf 'ERROR: uninstall accepts only --purge\n' >&2
+		return 2
+	fi
 	if [[ -n "$arg" && "$arg" != "--purge" ]]; then
 		printf 'ERROR: uninstall accepts only --purge\n' >&2
 		return 2

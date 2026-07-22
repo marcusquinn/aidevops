@@ -336,7 +336,6 @@ cmd_install_cron() {
 	}
 
 	local command
-	write_routine_prompt_file "$ROUTINE_NAME" "$ROUTINE_PROMPT"
 	command=$(build_headless_command "$ROUTINE_NAME" "$ROUTINE_DIR" "$(routine_prompt_file_path "$ROUTINE_NAME")" "$ROUTINE_AGENT" "$ROUTINE_TITLE" "$ROUTINE_MODEL")
 
 	mkdir -p "$HOME/.aidevops/logs"
@@ -350,6 +349,7 @@ cmd_install_cron() {
 		die "Cron entry already exists for routine '${ROUTINE_NAME}'"
 		return 1
 	fi
+	write_routine_prompt_file "$ROUTINE_NAME" "$ROUTINE_PROMPT"
 
 	(
 		printf '%s\n' "$current"
@@ -367,11 +367,11 @@ cmd_install_launchd() {
 	}
 
 	local command
-	write_routine_prompt_file "$ROUTINE_NAME" "$ROUTINE_PROMPT"
 	command=$(build_headless_command "$ROUTINE_NAME" "$ROUTINE_DIR" "$(routine_prompt_file_path "$ROUTINE_NAME")" "$ROUTINE_AGENT" "$ROUTINE_TITLE" "$ROUTINE_MODEL")
 
 	local launchd_schedule_xml
 	launchd_schedule_xml=$(parse_cron_to_launchd_xml "$ROUTINE_SCHEDULE") || return 1
+	write_routine_prompt_file "$ROUTINE_NAME" "$ROUTINE_PROMPT"
 	# launchd_schedule_xml is generated from validated numeric/* cron tokens only
 	# and emits fixed XML tags, so this block is already XML-safe.
 
@@ -438,11 +438,11 @@ cmd_install_systemd() {
 	}
 
 	local command
-	write_routine_prompt_file "$ROUTINE_NAME" "$ROUTINE_PROMPT"
 	command=$(build_headless_command "$ROUTINE_NAME" "$ROUTINE_DIR" "$(routine_prompt_file_path "$ROUTINE_NAME")" "$ROUTINE_AGENT" "$ROUTINE_TITLE" "$ROUTINE_MODEL")
 
 	local on_calendar
 	on_calendar=$(parse_cron_to_oncalendar "$ROUTINE_SCHEDULE") || return 1
+	write_routine_prompt_file "$ROUTINE_NAME" "$ROUTINE_PROMPT"
 
 	local service_name="sh.aidevops.routine-${ROUTINE_NAME}"
 	local service_dir="$HOME/.config/systemd/user"
