@@ -209,6 +209,8 @@ ln -s "${SCRIPT_DIR}/canonical_git_policy.py" "${OLD_BUNDLE}/canonical_git_polic
 ln -s "${SCRIPT_DIR}/canonical_git_policy.py" "${NEW_BUNDLE}/canonical_git_policy.py"
 ln -s "${SCRIPT_DIR}/canonical_git_readonly.py" "${OLD_BUNDLE}/canonical_git_readonly.py"
 ln -s "${SCRIPT_DIR}/canonical_git_readonly.py" "${NEW_BUNDLE}/canonical_git_readonly.py"
+ln -s "${SCRIPT_DIR}/canonical_git_ref_queries.py" "${OLD_BUNDLE}/canonical_git_ref_queries.py"
+ln -s "${SCRIPT_DIR}/canonical_git_ref_queries.py" "${NEW_BUNDLE}/canonical_git_ref_queries.py"
 ln -s "${SCRIPT_DIR}/canonical_shell_parser.py" "${OLD_BUNDLE}/canonical_shell_parser.py"
 ln -s "${SCRIPT_DIR}/canonical_shell_parser.py" "${NEW_BUNDLE}/canonical_shell_parser.py"
 if (cd "$REPO" && env PATH="${OLD_BUNDLE}:${NEW_BUNDLE}:/usr/bin:/bin" "${OLD_BUNDLE}/git" status --short >/dev/null); then
