@@ -10,6 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.32.172] - 2026-07-23
+
+### Changed
+
+- Maintenance: update simplification state registry
+
 ## [3.32.171] - 2026-07-23
 
 ### Changed
