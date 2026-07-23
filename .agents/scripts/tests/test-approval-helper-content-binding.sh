@@ -261,36 +261,7 @@ directory_is_empty() {
 	return 0
 }
 
-main() {
-	install_gh_stub
-	write_baseline_fixtures
-	test_snapshot_temp_permissions
-	test_large_snapshots_avoid_argv_limits
-	ssh-keygen -t ed25519 -N '' -f "${TEST_ROOT}/approval.key" -q
-	cp "${TEST_ROOT}/approval.key.pub" "${TEST_ROOT}/approval.pub"
-
-	reset_and_sign issue 41
-	assert_verify "unchanged issue V2 snapshot verifies" issue 41 VERIFIED 0
-	jq '.[0][-1].body = ("audit\tcontext\n" + .[0][-1].body)' "${FIXTURES}/comments-41.json" >"${FIXTURES}/comments.tmp" && mv "${FIXTURES}/comments.tmp" "${FIXTURES}/comments-41.json"
-	assert_verify "approval body preserves tabs and newlines" issue 41 VERIFIED 0
-	jq '.body = "changed issue body"' "${FIXTURES}/issue-41.json" >"${FIXTURES}/issue.tmp"
-	mv "${FIXTURES}/issue.tmp" "${FIXTURES}/issue-41.json"
-	assert_verify "issue body drift is stale" issue 41 STALE_APPROVAL 4
-
-	reset_and_sign pr 42
-	assert_verify "unchanged PR V2 snapshot verifies exact head" pr 42 VERIFIED 0 "$PR_HEAD"
-	local original_digest="" repeated_payload="" repeated_digest=""
-	original_digest=$(jq -r '.snapshot_sha256' "${TEST_ROOT}/payload-42.json")
-	repeated_payload=$(PATH="${TEST_ROOT}/bin:$PATH" FIXTURES="$FIXTURES" approval_snapshot_v2_payload pr 42 owner/repo "2026-01-01T00:06:00Z")
-	repeated_digest=$(jq -r '.snapshot_sha256' <<<"$repeated_payload")
-	if [[ "$original_digest" != "$repeated_digest" ]]; then
-		print_result "existing human approval comments remain content-bound" 0
-	else
-		print_result "existing human approval comments remain content-bound" 1
-	fi
-	append_signed_comment pr 42 "2026-01-01T00:06:00Z" 4300
-	assert_verify "repeat approval verifies against the newest exact snapshot" pr 42 VERIFIED 0 "$PR_HEAD"
-
+test_trusted_lifecycle_comments() {
 	reset_and_sign pr 42
 	local audit_marker="<!-- aidevops-signed-approval -->
 <!-- stale-recovery-tick:0 (reset: auto-approved by maintainer — cryptographic approval verified) -->
@@ -322,6 +293,39 @@ Auto-approved: cryptographic approval verified. Stale recovery tick reset."
 extra trusted commentary" '.[0] += [{id:4305,node_id:"IC_4305",user:{id:1,node_id:"U_1",login:"maintainer",type:"User"},author_association:"OWNER",created_at:"2026-01-01T00:08:00Z",updated_at:"2026-01-01T00:08:00Z",body:$body}]' "${FIXTURES}/comments-41.json")
 	printf '%s\n' "$claim_comments" >"${FIXTURES}/comments-41.json"
 	assert_verify "trusted claim lookalike remains content-bound" issue 41 STALE_APPROVAL 4
+	return 0
+}
+
+main() {
+	install_gh_stub
+	write_baseline_fixtures
+	test_snapshot_temp_permissions
+	test_large_snapshots_avoid_argv_limits
+	ssh-keygen -t ed25519 -N '' -f "${TEST_ROOT}/approval.key" -q
+	cp "${TEST_ROOT}/approval.key.pub" "${TEST_ROOT}/approval.pub"
+
+	reset_and_sign issue 41
+	assert_verify "unchanged issue V2 snapshot verifies" issue 41 VERIFIED 0
+	jq '.[0][-1].body = ("audit\tcontext\n" + .[0][-1].body)' "${FIXTURES}/comments-41.json" >"${FIXTURES}/comments.tmp" && mv "${FIXTURES}/comments.tmp" "${FIXTURES}/comments-41.json"
+	assert_verify "approval body preserves tabs and newlines" issue 41 VERIFIED 0
+	jq '.body = "changed issue body"' "${FIXTURES}/issue-41.json" >"${FIXTURES}/issue.tmp"
+	mv "${FIXTURES}/issue.tmp" "${FIXTURES}/issue-41.json"
+	assert_verify "issue body drift is stale" issue 41 STALE_APPROVAL 4
+
+	reset_and_sign pr 42
+	assert_verify "unchanged PR V2 snapshot verifies exact head" pr 42 VERIFIED 0 "$PR_HEAD"
+	local original_digest="" repeated_payload="" repeated_digest=""
+	original_digest=$(jq -r '.snapshot_sha256' "${TEST_ROOT}/payload-42.json")
+	repeated_payload=$(PATH="${TEST_ROOT}/bin:$PATH" FIXTURES="$FIXTURES" approval_snapshot_v2_payload pr 42 owner/repo "2026-01-01T00:06:00Z")
+	repeated_digest=$(jq -r '.snapshot_sha256' <<<"$repeated_payload")
+	if [[ "$original_digest" != "$repeated_digest" ]]; then
+		print_result "existing human approval comments remain content-bound" 0
+	else
+		print_result "existing human approval comments remain content-bound" 1
+	fi
+	append_signed_comment pr 42 "2026-01-01T00:06:00Z" 4300
+	assert_verify "repeat approval verifies against the newest exact snapshot" pr 42 VERIFIED 0 "$PR_HEAD"
+	test_trusted_lifecycle_comments
 
 	reset_and_sign pr 42
 	local marker_drift="<!-- aidevops-signed-approval --> unsigned external drift"
