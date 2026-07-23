@@ -10,6 +10,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.32.169] - 2026-07-23
+
+### Added
+
+- generate static star history chart (#28525)
+
+### Changed
+
+- Maintenance: update simplification state registry
+- Documentation: replace broken Star History chart (#28520)
+
+### Fixed
+
+- harden worker activity stats parsing (#28523)
+
 ## [3.32.168] - 2026-07-23
 
 ### Fixed
