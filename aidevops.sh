@@ -66,6 +66,14 @@ elif [[ -n "$_AIDEVOPS_SOURCE_DIR" && -f "$_AIDEVOPS_SOURCE_DIR/scripts/aidevops
 	# canonical checkout.
 	_AIDEVOPS_CLI_ROOT="$_AIDEVOPS_SOURCE_DIR"
 	_AIDEVOPS_CLI_MODULES_SUBDIR="scripts/aidevops-cli"
+elif [[ -n "${AIDEVOPS_SHARE:-}" &&
+	-f "$AIDEVOPS_SHARE/.agents/scripts/aidevops-cli/aidevops-repos-lib.sh" &&
+	-f "$AIDEVOPS_SHARE/.agents/scripts/runtime-bundle-verifier.sh" &&
+	-f "$AIDEVOPS_SHARE/VERSION" ]]; then
+	# Homebrew installs the coherent package snapshot under share/aidevops and
+	# exports AIDEVOPS_SHARE from its wrapper. Keep repository operations pointed
+	# at INSTALL_DIR while loading packaged CLI modules and VERSION from there.
+	_AIDEVOPS_CLI_ROOT="$AIDEVOPS_SHARE"
 fi
 unset _AIDEVOPS_SOURCE_PATH _AIDEVOPS_SOURCE_DIR _AIDEVOPS_LINK_TARGET _AIDEVOPS_LINK_DIR
 AGENTS_DIR="${AIDEVOPS_AGENTS_DIR:-$_AIDEVOPS_REAL_HOME/.aidevops/agents}"

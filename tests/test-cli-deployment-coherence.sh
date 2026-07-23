@@ -53,6 +53,41 @@ result=$(cd "$TEST_HOME" && HOME="$TEST_HOME" PATH="$TEST_HOME/bin:$PATH" bash "
 	exit 1
 }
 
+# Exercise the Homebrew package layout without relying on post_install to clone
+# a canonical checkout. The formula places the launcher in libexec and exports
+# a separate share/aidevops tree containing .agents and VERSION.
+BREW_HOME="$TEST_HOME/brew-home"
+BREW_LIBEXEC="$TEST_HOME/brew/libexec"
+BREW_SHARE="$TEST_HOME/brew/share/aidevops"
+mkdir -p "$BREW_HOME" "$BREW_LIBEXEC" "$BREW_SHARE"
+cp "$REPO_DIR/aidevops.sh" "$BREW_LIBEXEC/aidevops.sh"
+cp -R "$REPO_DIR/.agents" "$BREW_SHARE/.agents"
+cp "$REPO_DIR/VERSION" "$BREW_SHARE/VERSION"
+result=$(HOME="$BREW_HOME" AIDEVOPS_SHARE="$BREW_SHARE" bash "$BREW_LIBEXEC/aidevops.sh" --version)
+[[ "$result" == "aidevops $(tr -d '\n' <"$REPO_DIR/VERSION")" ]] || {
+	printf 'FAIL: Homebrew package root selected %s\n' "$result" >&2
+	exit 1
+}
+
+# An incomplete package root must not become a source location merely because
+# it carries one expected module. This keeps the package trust boundary fail
+# closed before any partial snapshot can execute.
+INVALID_SHARE="$TEST_HOME/brew/invalid-share"
+mkdir -p "$INVALID_SHARE/.agents/scripts/aidevops-cli"
+cat >"$INVALID_SHARE/.agents/scripts/aidevops-cli/aidevops-repos-lib.sh" <<'EOF'
+#!/usr/bin/env bash
+printf 'FAIL: incomplete Homebrew package root was sourced\n' >&2
+exit 42
+EOF
+invalid_share_output=""
+invalid_share_rc=0
+invalid_share_output=$(HOME="$BREW_HOME" AIDEVOPS_SHARE="$INVALID_SHARE" \
+	bash "$BREW_LIBEXEC/aidevops.sh" --version 2>&1) || invalid_share_rc=$?
+if [[ "$invalid_share_rc" -eq 0 || "$invalid_share_output" == *"incomplete Homebrew package root was sourced"* ]]; then
+	printf 'FAIL: incomplete Homebrew package root was accepted: %s\n' "$invalid_share_output" >&2
+	exit 1
+fi
+
 MOCK_BIN="$TEST_HOME/mock-bin"
 REAL_USER_HOME="$TEST_HOME/real-user"
 mkdir -p "$MOCK_BIN" "$REAL_USER_HOME/.aidevops/agents"
