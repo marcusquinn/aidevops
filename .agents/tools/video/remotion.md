@@ -37,28 +37,28 @@ Programmatic video creation using React with frame-by-frame control.
 
 ## Chapter Files
 
-Detailed patterns and code in `tools/video/remotion/`:
+Paths below are relative to the active agent root (`~/.aidevops/agents/` by default; source checkout: `.agents/`):
 
 **Core animation & timing:**
-`animations.md` | `timing.md` | `sequencing.md` | `trimming.md` | `transitions.md`
+`tools/video/remotion-animations.md` | `tools/video/remotion-timing.md` | `tools/video/remotion-sequencing.md` | `tools/video/remotion-trimming.md` | `tools/video/remotion-transitions.md`
 
 **Compositions & metadata:**
-`compositions.md` | `calculate-metadata.md`
+`tools/video/remotion-compositions.md` | `tools/video/remotion-calculate-metadata.md`
 
 **Media embedding:**
-`videos.md` | `audio.md` | `images.md` | `assets.md` | `fonts.md` | `gifs.md`
+`tools/video/remotion-videos.md` | `tools/video/remotion-audio.md` | `tools/video/remotion-images.md` | `tools/video/remotion-assets.md` | `tools/video/remotion-fonts.md` | `tools/video/remotion-gifs.md`
 
 **Text & data visualization:**
-`text-animations.md` | `charts.md` | `lottie.md` | `3d.md`
+`tools/video/remotion-text-animations.md` | `tools/video/remotion-charts.md` | `tools/video/remotion-lottie.md` | `tools/video/remotion-3d.md`
 
 **Captions & subtitles:**
-`transcribe-captions.md` | `display-captions.md` | `import-srt-captions.md`
+`tools/video/remotion-transcribe-captions.md` | `tools/video/remotion-display-captions.md` | `tools/video/remotion-import-srt-captions.md`
 
 **Utilities:**
-`can-decode.md` | `extract-frames.md` | `get-audio-duration.md` | `get-video-duration.md` | `get-video-dimensions.md` | `measuring-dom-nodes.md` | `measuring-text.md`
+`tools/video/remotion-can-decode.md` | `tools/video/remotion-extract-frames.md` | `tools/video/remotion-get-audio-duration.md` | `tools/video/remotion-get-video-duration.md` | `tools/video/remotion-get-video-dimensions.md` | `tools/video/remotion-measuring-dom-nodes.md` | `tools/video/remotion-measuring-text.md`
 
 **Setup:**
-`tailwind.md`
+`tools/video/remotion-tailwind.md`
 
 ## CLI Commands
 
