@@ -111,6 +111,14 @@ audit-log-helper.sh log operation.verify "Force push verified by cross-provider 
 
 Run `audit-log-helper.sh verify` before log rotation, during security audits, or when investigating suspicious activity. Exit: 0 = intact, 1 = broken (tampered/corrupted).
 
+Verification streams the segment through one Python standard-library process,
+so runtime and process count scale linearly without spawning `jq`, `sed`, and
+SHA-256 commands per entry. Canonicalization matches the compact UTF-8 JSON used
+by the writer. If Python or the deployed verifier is unavailable, the helper
+warns and falls back to the slower shell verifier without weakening the verdict.
+Recovery keeps the writer lock across verification, byte-identical archival,
+successor activation, and rollback; the bounded verifier minimizes that lock hold.
+
 If verification reports a historical break, preserve the affected file as forensic evidence. Do not rewrite or truncate it. After investigation and explicit operator approval, rotate/archive the broken segment and begin a new chain; the rotation event records the prior segment hash.
 
 ## Log Rotation

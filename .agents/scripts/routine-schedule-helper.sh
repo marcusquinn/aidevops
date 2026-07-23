@@ -4,7 +4,7 @@
 # routine-schedule-helper.sh — Deterministic schedule parser for routine evaluation
 #
 # Supports: daily(@HH:MM), weekly(day@HH:MM), monthly(N@HH:MM), cron(5-field-expr), persistent
-# Pure bash date arithmetic, no external deps beyond `date`.
+# Calendar arithmetic uses the host `date` implementation on macOS and Linux.
 #
 # Commands:
 #   is-due <expression> <last-run-epoch>  → exit 0 if due, exit 1 if not
@@ -17,6 +17,8 @@ set -euo pipefail
 readonly SCHEDULE_ERROR_PREFIX="ERROR"
 readonly SCHEDULE_TYPE_PERSISTENT="per""sistent"
 readonly SCHEDULE_UNKNOWN_TYPE_MESSAGE="unknown schedule type"
+readonly SCHEDULE_BOUNDARY_LATEST="latest"
+readonly SCHEDULE_BOUNDARY_NEXT="next"
 
 #######################################
 # Day name to cron weekday number (0=Sun, 1=Mon, ..., 6=Sat)
@@ -46,10 +48,27 @@ _day_to_number() {
 }
 
 #######################################
-# Get current epoch (UTC)
+# Resolve the scheduler timezone. An explicit IANA timezone is optional; when
+# omitted, date(1) uses the host-local timezone consistently.
+#######################################
+_schedule_timezone() {
+	printf '%s' "${AIDEVOPS_SCHEDULE_TIMEZONE:-${TZ:-}}"
+	return 0
+}
+
+#######################################
+# Get current epoch. Tests may inject a fixed epoch explicitly.
 #######################################
 _now_epoch() {
-	date -u +%s
+	if [[ -n "${AIDEVOPS_SCHEDULE_NOW_EPOCH:-}" ]]; then
+		[[ "$AIDEVOPS_SCHEDULE_NOW_EPOCH" =~ ^[0-9]+$ ]] || {
+			printf '%s: %s\n' "$SCHEDULE_ERROR_PREFIX" "invalid injected scheduler epoch" >&2
+			return 1
+		}
+		printf '%s' "$AIDEVOPS_SCHEDULE_NOW_EPOCH"
+		return 0
+	fi
+	date +%s
 	return 0
 }
 
@@ -95,34 +114,115 @@ _epoch_to_iso() {
 }
 
 #######################################
-# Get current hour and minute as integers
+# Format an epoch in the scheduler timezone.
 #######################################
-_current_hm() {
-	local hour minute
-	hour=$(date -u +%H)
-	minute=$(date -u +%M)
-	# Strip leading zeros for arithmetic
-	hour=$((10#$hour))
-	minute=$((10#$minute))
-	printf '%d %d' "$hour" "$minute"
+_calendar_at_epoch() {
+	local epoch="$1"
+	local format="$2"
+	local timezone=""
+	local output=""
+	timezone=$(_schedule_timezone)
+	output=$(TZ="$timezone" date -d "@${epoch}" "+${format}" 2>/dev/null) || true
+	if [[ -z "$output" ]]; then
+		output=$(TZ="$timezone" date -r "$epoch" "+${format}" 2>/dev/null) || true
+	fi
+	[[ -n "$output" ]] || {
+		printf '%s: %s\n' "$SCHEDULE_ERROR_PREFIX" "cannot format epoch '${epoch}' in timezone '${timezone:-host-local}'" >&2
+		return 1
+	}
+	printf '%s' "$output"
 	return 0
 }
 
 #######################################
-# Get current day of week (0=Sun, 1=Mon, ..., 6=Sat)
+# Convert a scheduler-local date/time to epoch and reject DST normalization.
 #######################################
-_current_dow() {
-	date -u +%w
+_calendar_local_to_epoch() {
+	local local_date="$1"
+	local local_time="$2"
+	local timezone=""
+	local epoch=""
+	local round_trip=""
+	timezone=$(_schedule_timezone)
+	if [[ -n "$timezone" ]] && command -v python3 >/dev/null 2>&1; then
+		epoch=$(
+			python3 - "$local_date" "$local_time" "$timezone" <<'PY'
+import datetime as dt
+import sys
+from zoneinfo import ZoneInfo
+
+try:
+    naive = dt.datetime.strptime(f"{sys.argv[1]} {sys.argv[2]}", "%Y-%m-%d %H:%M:%S")
+    zone = ZoneInfo(sys.argv[3])
+except (ValueError, OSError, KeyError):
+    raise SystemExit(1)
+
+# fold=0 is the explicit contract for a repeated fall-back hour: the first
+# occurrence owns the boundary. A round trip rejects nonexistent spring times.
+aware = naive.replace(tzinfo=zone, fold=0)
+epoch = int(aware.timestamp())
+if dt.datetime.fromtimestamp(epoch, zone).replace(tzinfo=None) != naive:
+    raise SystemExit(1)
+print(epoch)
+PY
+		) || epoch=""
+	fi
+	if [[ -z "$epoch" ]]; then
+		epoch=$(TZ="$timezone" date -d "${local_date} ${local_time}" +%s 2>/dev/null) || true
+		if [[ -z "$epoch" ]]; then
+			epoch=$(TZ="$timezone" date -j -f "%Y-%m-%d %H:%M:%S" "${local_date} ${local_time}" +%s 2>/dev/null) || true
+		fi
+	fi
+	[[ "$epoch" =~ ^[0-9]+$ ]] || {
+		printf '%s: %s\n' "$SCHEDULE_ERROR_PREFIX" "cannot resolve local time '${local_date} ${local_time}' in timezone '${timezone:-host-local}'" >&2
+		return 1
+	}
+	round_trip=$(_calendar_at_epoch "$epoch" '%Y-%m-%d %H:%M:%S') || return 1
+	[[ "$round_trip" == "${local_date} ${local_time}" ]] || {
+		printf '%s: %s\n' "$SCHEDULE_ERROR_PREFIX" "nonexistent or normalized local time '${local_date} ${local_time}' in timezone '${timezone:-host-local}'" >&2
+		return 1
+	}
+	printf '%s' "$epoch"
 	return 0
 }
 
 #######################################
-# Get current day of month
+# Shift a scheduler-local calendar date without assuming 86400-second days.
 #######################################
-_current_dom() {
-	local dom
-	dom=$(date -u +%d)
-	printf '%d' "$((10#$dom))"
+_calendar_shift_date() {
+	local local_date="$1"
+	local day_delta="$2"
+	local timezone=""
+	local shifted=""
+	local bsd_delta="$day_delta"
+	[[ "$day_delta" -lt 0 ]] || bsd_delta="+${day_delta}"
+	timezone=$(_schedule_timezone)
+	shifted=$(TZ="$timezone" date -d "${local_date} ${day_delta} day" +%Y-%m-%d 2>/dev/null) || true
+	if [[ -z "$shifted" ]]; then
+		shifted=$(TZ="$timezone" date -j -v"${bsd_delta}"d -f "%Y-%m-%d" "$local_date" +%Y-%m-%d 2>/dev/null) || true
+	fi
+	[[ -n "$shifted" ]] || return 1
+	printf '%s' "$shifted"
+	return 0
+}
+
+#######################################
+# Shift a YYYY-MM month key while preserving calendar month boundaries.
+#######################################
+_calendar_shift_month() {
+	local year_month="$1"
+	local month_delta="$2"
+	local timezone=""
+	local shifted=""
+	local bsd_delta="$month_delta"
+	[[ "$month_delta" -lt 0 ]] || bsd_delta="+${month_delta}"
+	timezone=$(_schedule_timezone)
+	shifted=$(TZ="$timezone" date -d "${year_month}-01 ${month_delta} month" +%Y-%m 2>/dev/null) || true
+	if [[ -z "$shifted" ]]; then
+		shifted=$(TZ="$timezone" date -j -v"${bsd_delta}"m -f "%Y-%m-%d" "${year_month}-01" +%Y-%m 2>/dev/null) || true
+	fi
+	[[ -n "$shifted" ]] || return 1
+	printf '%s' "$shifted"
 	return 0
 }
 
@@ -423,22 +523,22 @@ _cron_field_matches() {
 }
 
 #######################################
-# Check if a cron expression matches the current time
+# Check if a cron expression matches one scheduler-local minute.
 #######################################
-_cron_matches_now() {
+_cron_matches_epoch() {
 	local cron_expr="$1"
+	local epoch="$2"
 	local cron_minute cron_hour cron_dom cron_month cron_dow
 	# shellcheck disable=SC2086
 	read -r cron_minute cron_hour cron_dom cron_month cron_dow <<<"$cron_expr"
 
-	local now_hour now_minute
-	read -r now_hour now_minute <<<"$(_current_hm)"
-	local now_dow
-	now_dow=$(_current_dow)
-	local now_dom
-	now_dom=$(_current_dom)
-	local now_month
-	now_month=$(date -u +%m)
+	local calendar_fields=""
+	local now_hour now_minute now_dow now_dom now_month
+	calendar_fields=$(_calendar_at_epoch "$epoch" '%H %M %w %d %m') || return 2
+	read -r now_hour now_minute now_dow now_dom now_month <<<"$calendar_fields"
+	now_hour=$((10#$now_hour))
+	now_minute=$((10#$now_minute))
+	now_dom=$((10#$now_dom))
 	now_month=$((10#$now_month))
 
 	_cron_field_matches "$cron_minute" "$now_minute" || return 1
@@ -451,22 +551,167 @@ _cron_matches_now() {
 }
 
 #######################################
-# Calculate the interval in seconds for a schedule type
-# Used to determine if enough time has passed since last run
+# Find the latest matching cron minute after the last run. A single Python
+# process bounds the search without spawning date/jq processes per minute.
 #######################################
-_schedule_interval_seconds() {
-	local sched_type="$1"
+_cron_latest_boundary() {
+	local cron_expr="$1"
+	local last_run_epoch="$2"
+	local now_epoch="$3"
+	local mode="${4:-$SCHEDULE_BOUNDARY_LATEST}"
+	local timezone=""
+	timezone=$(_schedule_timezone)
+	command -v python3 >/dev/null 2>&1 || {
+		printf '%s: %s\n' "$SCHEDULE_ERROR_PREFIX" "python3 is required for bounded cron catch-up evaluation" >&2
+		return 2
+	}
+	python3 - "$cron_expr" "$last_run_epoch" "$now_epoch" "$timezone" "$mode" \
+		"$SCHEDULE_BOUNDARY_LATEST" "$SCHEDULE_BOUNDARY_NEXT" <<'PY'
+import datetime as dt
+import sys
+
+try:
+    from zoneinfo import ZoneInfo
+except ImportError:
+    ZoneInfo = None
+
+expression, last_text, now_text, timezone, mode, latest_mode, next_mode = sys.argv[1:]
+fields = expression.split()
+if len(fields) != 5:
+    raise SystemExit(2)
+
+try:
+    last_run = int(last_text)
+    now_epoch = int(now_text)
+    candidate = now_epoch // 60 * 60
+    zone = ZoneInfo(timezone) if timezone and ZoneInfo else None
+except (ValueError, TypeError, OSError):
+    raise SystemExit(2)
+
+if mode == next_mode:
+    candidate += 60
+    step = 60
+elif mode == latest_mode:
+    step = -60
+else:
+    raise SystemExit(2)
+
+def matches(field, value):
+    if field == "*":
+        return True
+    if field.startswith("*/"):
+        try:
+            step = int(field[2:])
+        except ValueError:
+            return False
+        return step > 0 and value % step == 0
+    for item in field.split(","):
+        if "-" in item:
+            try:
+                start, end = (int(part) for part in item.split("-", 1))
+            except ValueError:
+                return False
+            if start <= value <= end:
+                return True
+        else:
+            try:
+                if int(item) == value:
+                    return True
+            except ValueError:
+                return False
+    return False
+
+limit = 527040  # one leap-year of minute boundaries
+for _ in range(limit):
+    if mode == latest_mode and candidate <= last_run:
+        raise SystemExit(1)
+    instant = dt.datetime.fromtimestamp(candidate, zone) if zone else dt.datetime.fromtimestamp(candidate).astimezone()
+    cron_dow = (instant.weekday() + 1) % 7
+    values = (instant.minute, instant.hour, instant.day, instant.month, cron_dow)
+    if all(matches(field, value) for field, value in zip(fields, values)):
+        print(candidate)
+        raise SystemExit(0)
+    candidate += step
+raise SystemExit(2)
+PY
+	return 0
+}
+
+#######################################
+# Calculate the latest or next calendar boundary for parsed daily/weekly/monthly
+# schedules using scheduler-local calendar dates.
+#######################################
+_calendar_boundary_epoch() {
+	local parsed="$1"
+	local mode="$2"
+	local now_epoch="$3"
+	local sched_type sched_hour sched_minute sched_value
+	read -r sched_type sched_hour sched_minute sched_value <<<"$parsed"
+	local local_time=""
+	local today=""
+	local candidate_date=""
+	local candidate_epoch=""
+	local delta=0
+	local attempts=0
+	local_time=$(printf '%02d:%02d:00' "$sched_hour" "$sched_minute")
+	today=$(_calendar_at_epoch "$now_epoch" '%Y-%m-%d') || return 2
 
 	case "$sched_type" in
-	daily) printf '%d' 86400 ;;        # 24 hours
-	weekly) printf '%d' 604800 ;;      # 7 days
-	monthly) printf '%d' 2592000 ;;    # 30 days (approximate)
-	cron) printf '%d' 60 ;;            # 1 minute (cron granularity)
-	persistent) printf '%d' 2147483647 ;; # max int — never due via interval check
-	*)
-		printf '%d' 86400
+	daily)
+		candidate_date="$today"
+		candidate_epoch=$(_calendar_local_to_epoch "$candidate_date" "$local_time") || return 2
+		if [[ "$mode" == "$SCHEDULE_BOUNDARY_LATEST" && "$candidate_epoch" -gt "$now_epoch" ]]; then
+			candidate_date=$(_calendar_shift_date "$candidate_date" -1) || return 2
+			candidate_epoch=$(_calendar_local_to_epoch "$candidate_date" "$local_time") || return 2
+		elif [[ "$mode" == "$SCHEDULE_BOUNDARY_NEXT" && "$candidate_epoch" -le "$now_epoch" ]]; then
+			candidate_date=$(_calendar_shift_date "$candidate_date" 1) || return 2
+			candidate_epoch=$(_calendar_local_to_epoch "$candidate_date" "$local_time") || return 2
+		fi
 		;;
+	weekly)
+		local now_dow=""
+		now_dow=$(_calendar_at_epoch "$now_epoch" '%w') || return 2
+		delta=$(((10#$now_dow - sched_value + 7) % 7))
+		candidate_date=$(_calendar_shift_date "$today" "$((-delta))") || return 2
+		candidate_epoch=$(_calendar_local_to_epoch "$candidate_date" "$local_time") || return 2
+		if [[ "$mode" == "$SCHEDULE_BOUNDARY_LATEST" && "$candidate_epoch" -gt "$now_epoch" ]]; then
+			candidate_date=$(_calendar_shift_date "$candidate_date" -7) || return 2
+			candidate_epoch=$(_calendar_local_to_epoch "$candidate_date" "$local_time") || return 2
+		elif [[ "$mode" == "$SCHEDULE_BOUNDARY_NEXT" && "$candidate_epoch" -le "$now_epoch" ]]; then
+			candidate_date=$(_calendar_shift_date "$candidate_date" 7) || return 2
+			candidate_epoch=$(_calendar_local_to_epoch "$candidate_date" "$local_time") || return 2
+		fi
+		;;
+	monthly)
+		local year_month=""
+		year_month=$(_calendar_at_epoch "$now_epoch" '%Y-%m') || return 2
+		delta=0
+		while [[ "$attempts" -lt 24 ]]; do
+			local target_month=""
+			target_month=$(_calendar_shift_month "$year_month" "$delta") || return 2
+			candidate_date=$(printf '%s-%02d' "$target_month" "$sched_value")
+			candidate_epoch=$(_calendar_local_to_epoch "$candidate_date" "$local_time" 2>/dev/null) || candidate_epoch=""
+			if [[ -n "$candidate_epoch" ]]; then
+				if [[ "$mode" == "$SCHEDULE_BOUNDARY_LATEST" && "$candidate_epoch" -le "$now_epoch" ]]; then
+					break
+				fi
+				if [[ "$mode" == "$SCHEDULE_BOUNDARY_NEXT" && "$candidate_epoch" -gt "$now_epoch" ]]; then
+					break
+				fi
+			fi
+			if [[ "$mode" == "$SCHEDULE_BOUNDARY_LATEST" ]]; then
+				delta=$((delta - 1))
+			else
+				delta=$((delta + 1))
+			fi
+			attempts=$((attempts + 1))
+		done
+		[[ -n "$candidate_epoch" && "$attempts" -lt 24 ]] || return 2
+		;;
+	*) return 2 ;;
 	esac
+
+	printf '%s' "$candidate_epoch"
 	return 0
 }
 
@@ -497,81 +742,32 @@ cmd_is_due() {
 		return 1
 	fi
 
-	local now_epoch
-	now_epoch=$(_now_epoch)
+	local now_epoch=""
+	now_epoch=$(_now_epoch) || return 2
 
 	# If never run (epoch 0), it's always due
 	if [[ "$last_run_epoch" -eq 0 ]]; then
 		return 0
 	fi
 
-	local interval
-	interval=$(_schedule_interval_seconds "$sched_type")
-
-	# Minimum interval check: don't re-run if less than 90% of the interval
-	# has passed. This prevents double-runs when the pulse fires slightly
-	# before and after the scheduled time.
-	local min_elapsed=$((interval * 90 / 100))
-	local elapsed=$((now_epoch - last_run_epoch))
-	if [[ "$elapsed" -lt "$min_elapsed" ]]; then
+	if [[ ! "$last_run_epoch" =~ ^[0-9]+$ ]] || [[ "$last_run_epoch" -gt "$now_epoch" ]]; then
 		return 1
 	fi
 
 	case "$sched_type" in
-	daily)
-		local sched_hour sched_minute
-		sched_hour=$(printf '%s' "$parsed" | awk '{print $2}')
-		sched_minute=$(printf '%s' "$parsed" | awk '{print $3}')
-		local now_hour now_minute
-		read -r now_hour now_minute <<<"$(_current_hm)"
-		# Due if current time is at or past the scheduled time
-		if [[ "$now_hour" -gt "$sched_hour" ]] ||
-			{ [[ "$now_hour" -eq "$sched_hour" ]] && [[ "$now_minute" -ge "$sched_minute" ]]; }; then
-			return 0
-		fi
-		return 1
-		;;
-	weekly)
-		local sched_hour sched_minute sched_dow
-		sched_hour=$(printf '%s' "$parsed" | awk '{print $2}')
-		sched_minute=$(printf '%s' "$parsed" | awk '{print $3}')
-		sched_dow=$(printf '%s' "$parsed" | awk '{print $4}')
-		local now_dow
-		now_dow=$(_current_dow)
-		local now_hour now_minute
-		read -r now_hour now_minute <<<"$(_current_hm)"
-		if [[ "$now_dow" -eq "$sched_dow" ]]; then
-			if [[ "$now_hour" -gt "$sched_hour" ]] ||
-				{ [[ "$now_hour" -eq "$sched_hour" ]] && [[ "$now_minute" -ge "$sched_minute" ]]; }; then
-				return 0
-			fi
-		fi
-		return 1
-		;;
-	monthly)
-		local sched_hour sched_minute sched_dom
-		sched_hour=$(printf '%s' "$parsed" | awk '{print $2}')
-		sched_minute=$(printf '%s' "$parsed" | awk '{print $3}')
-		sched_dom=$(printf '%s' "$parsed" | awk '{print $4}')
-		local now_dom
-		now_dom=$(_current_dom)
-		local now_hour now_minute
-		read -r now_hour now_minute <<<"$(_current_hm)"
-		if [[ "$now_dom" -eq "$sched_dom" ]]; then
-			if [[ "$now_hour" -gt "$sched_hour" ]] ||
-				{ [[ "$now_hour" -eq "$sched_hour" ]] && [[ "$now_minute" -ge "$sched_minute" ]]; }; then
-				return 0
-			fi
-		fi
-		return 1
+	daily | weekly | monthly)
+		local latest_boundary=""
+		latest_boundary=$(_calendar_boundary_epoch "$parsed" "$SCHEDULE_BOUNDARY_LATEST" "$now_epoch") || return 2
+		[[ "$last_run_epoch" -lt "$latest_boundary" ]]
+		return $?
 		;;
 	cron)
 		local cron_expr
 		cron_expr=$(printf '%s' "$parsed" | sed 's/^cron //')
-		if _cron_matches_now "$cron_expr"; then
-			return 0
-		fi
-		return 1
+		local cron_boundary=""
+		cron_boundary=$(_cron_latest_boundary "$cron_expr" "$last_run_epoch" "$now_epoch") || return $?
+		[[ "$cron_boundary" =~ ^[0-9]+$ ]]
+		return $?
 		;;
 	*)
 		printf '%s: %s %s\n' "$SCHEDULE_ERROR_PREFIX" "$SCHEDULE_UNKNOWN_TYPE_MESSAGE" "$sched_type" >&2
@@ -588,99 +784,6 @@ cmd_is_due() {
 #
 # Output: ISO timestamp of next scheduled run
 #######################################
-_next_run_daily() {
-	local parsed="$1"
-	local now_epoch="$2"
-	local sched_hour sched_minute
-	sched_hour=$(printf '%s' "$parsed" | awk '{print $2}')
-	sched_minute=$(printf '%s' "$parsed" | awk '{print $3}')
-
-	local today_date
-	today_date=$(date -u +%Y-%m-%d)
-	local sched_iso
-	sched_iso="${today_date}T$(printf '%02d:%02d:00Z' "$sched_hour" "$sched_minute")"
-	local sched_epoch
-	sched_epoch=$(_iso_to_epoch "$sched_iso") || return 2
-
-	if [[ "$now_epoch" -lt "$sched_epoch" ]]; then
-		_epoch_to_iso "$sched_epoch"
-	else
-		_epoch_to_iso $((sched_epoch + 86400))
-	fi
-	printf '\n'
-	return 0
-}
-
-_next_run_weekly() {
-	local parsed="$1"
-	local now_epoch="$2"
-	local sched_hour sched_minute sched_dow
-	sched_hour=$(printf '%s' "$parsed" | awk '{print $2}')
-	sched_minute=$(printf '%s' "$parsed" | awk '{print $3}')
-	sched_dow=$(printf '%s' "$parsed" | awk '{print $4}')
-	local now_dow
-	now_dow=$(_current_dow)
-
-	local days_ahead=$(((sched_dow - now_dow + 7) % 7))
-	if [[ "$days_ahead" -eq 0 ]]; then
-		local now_hour now_minute
-		read -r now_hour now_minute <<<"$(_current_hm)"
-		if [[ "$now_hour" -gt "$sched_hour" ]] ||
-			{ [[ "$now_hour" -eq "$sched_hour" ]] && [[ "$now_minute" -ge "$sched_minute" ]]; }; then
-			days_ahead=7
-		fi
-	fi
-
-	local next_epoch=$((now_epoch + days_ahead * 86400))
-	local next_date
-	next_date=$(_epoch_to_iso "$next_epoch") || return 2
-	next_date="${next_date%%T*}"
-	local next_iso
-	next_iso="${next_date}T$(printf '%02d:%02d:00Z' "$sched_hour" "$sched_minute")"
-	printf '%s\n' "$next_iso"
-	return 0
-}
-
-_next_run_monthly() {
-	local parsed="$1"
-	local sched_hour sched_minute sched_dom
-	sched_hour=$(printf '%s' "$parsed" | awk '{print $2}')
-	sched_minute=$(printf '%s' "$parsed" | awk '{print $3}')
-	sched_dom=$(printf '%s' "$parsed" | awk '{print $4}')
-
-	local now_dom
-	now_dom=$(_current_dom)
-	local now_year now_month_num
-	now_year=$(date -u +%Y)
-	now_month_num=$(date -u +%m)
-	now_month_num=$((10#$now_month_num))
-
-	local target_year="$now_year"
-	local target_month="$now_month_num"
-
-	if [[ "$now_dom" -gt "$sched_dom" ]]; then
-		target_month=$((target_month + 1))
-		if [[ "$target_month" -gt 12 ]]; then
-			target_month=1
-			target_year=$((target_year + 1))
-		fi
-	elif [[ "$now_dom" -eq "$sched_dom" ]]; then
-		local now_hour now_minute
-		read -r now_hour now_minute <<<"$(_current_hm)"
-		if [[ "$now_hour" -gt "$sched_hour" ]] ||
-			{ [[ "$now_hour" -eq "$sched_hour" ]] && [[ "$now_minute" -ge "$sched_minute" ]]; }; then
-			target_month=$((target_month + 1))
-			if [[ "$target_month" -gt 12 ]]; then
-				target_month=1
-				target_year=$((target_year + 1))
-			fi
-		fi
-	fi
-
-	printf '%04d-%02d-%02dT%02d:%02d:00Z\n' "$target_year" "$target_month" "$sched_dom" "$sched_hour" "$sched_minute"
-	return 0
-}
-
 cmd_next_run() {
 	local expression="$1"
 
@@ -691,16 +794,21 @@ cmd_next_run() {
 	sched_type=$(printf '%s' "$parsed" | awk '{print $1}')
 
 	local now_epoch
-	now_epoch=$(_now_epoch)
+	now_epoch=$(_now_epoch) || return 2
 
 	case "$sched_type" in
-	daily) _next_run_daily "$parsed" "$now_epoch" ;;
-	weekly) _next_run_weekly "$parsed" "$now_epoch" ;;
-	monthly) _next_run_monthly "$parsed" ;;
+	daily | weekly | monthly)
+		local next_boundary=""
+		next_boundary=$(_calendar_boundary_epoch "$parsed" "$SCHEDULE_BOUNDARY_NEXT" "$now_epoch") || return 2
+		_epoch_to_iso "$next_boundary"
+		printf '\n'
+		;;
 	cron)
-		# For cron, report "next minute" as approximation
-		local next_epoch=$((now_epoch + 60 - (now_epoch % 60)))
-		_epoch_to_iso "$next_epoch"
+		local cron_expr=""
+		local next_boundary=""
+		cron_expr=$(printf '%s' "$parsed" | sed 's/^cron //')
+		next_boundary=$(_cron_latest_boundary "$cron_expr" "$now_epoch" "$now_epoch" "$SCHEDULE_BOUNDARY_NEXT") || return 2
+		_epoch_to_iso "$next_boundary"
 		printf '\n'
 		;;
 	persistent)

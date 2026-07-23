@@ -67,9 +67,10 @@ Fields:
 
 ## Core Routines (framework-managed)
 
-<!-- These routines are managed by aidevops setup. They reflect the launchd
-     jobs installed by setup.sh. Edit the enabled/disabled state here;
-     the schedule and script are authoritative in the launchd plist. -->
+<!-- These routines are managed by aidevops setup. Enabled state, repeat:
+     expressions, and scripts are version controlled here. Pulse evaluates
+     most entries; routines documented as persistent may use a dedicated
+     launchd or systemd unit. Edit only the enabled/disabled state here. -->
 
 TODOEOF
 

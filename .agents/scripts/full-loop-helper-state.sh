@@ -1261,6 +1261,79 @@ cmd_record_no_release() {
 	return 0
 }
 
+_full_loop_terminal_release_status() {
+	local repo="$1"
+	local pr_number="$2"
+	local receipt_path=""
+	local release_status=""
+	receipt_path=$(_full_loop_release_receipt_path "$repo" "$pr_number") || return 1
+	[[ -f "$receipt_path" ]] || return 1
+	IFS= read -r release_status <"$receipt_path" || return 1
+	[[ "$release_status" == "$_FULL_LOOP_RELEASE_PUBLISHED" || "$release_status" == "$_FULL_LOOP_RELEASE_NOT_REQUESTED" ]] || return 1
+	printf '%s\n' "$release_status"
+	return 0
+}
+
+cmd_finalize_receipt() {
+	local pr_number="${1:-}"
+	local repo=""
+	local release_status=""
+	[[ $# -ge 1 && $# -le 2 && "$pr_number" =~ ^[0-9]+$ ]] || {
+		print_error "Usage: full-loop-helper.sh finalize-receipt <PR> [REPO]"
+		return 1
+	}
+	repo=$(_full_loop_resolve_repo "${2:-}") || return 1
+	_full_loop_verify_merged_pr "$pr_number" "$repo" || {
+		print_error "Finalization blocked: PR #${pr_number} lacks merged evidence"
+		return 1
+	}
+	release_status=$(_full_loop_terminal_release_status "$repo" "$pr_number") || {
+		print_error "Finalization blocked: terminal release evidence is missing"
+		return 1
+	}
+	full_loop_finalize_cleanup_receipt "$repo" "$pr_number" "$release_status" || {
+		print_error "Finalization blocked: cleanup receipt is missing or conflicts with terminal evidence"
+		return 1
+	}
+	print_success "Cleanup receipt finalized for merged PR #${pr_number} (release:${release_status})"
+	return 0
+}
+
+cmd_migrate_repository_receipt() {
+	local pr_number="${1:-}"
+	local old_repo="${2:-}"
+	local new_repo="${3:-}"
+	local source_release=""
+	local destination_release=""
+	local release_status=""
+	if [[ $# -ne 3 || ! "$pr_number" =~ ^[0-9]+$ || "$old_repo" != */* || "$new_repo" != */* || "$old_repo" == "$new_repo" ]]; then
+		print_error "Usage: full-loop-helper.sh migrate-repository-receipt <PR> <OLD_REPO> <NEW_REPO>"
+		return 1
+	fi
+	_full_loop_verify_merged_pr "$pr_number" "$new_repo" || {
+		print_error "Migration blocked: PR #${pr_number} lacks merged evidence in ${new_repo}"
+		return 1
+	}
+	source_release=$(_full_loop_release_receipt_path "$old_repo" "$pr_number") || return 1
+	destination_release=$(_full_loop_release_receipt_path "$new_repo" "$pr_number") || return 1
+	if [[ -f "$source_release" ]]; then
+		IFS= read -r release_status <"$source_release" || true
+	elif [[ -f "$destination_release" ]]; then
+		IFS= read -r release_status <"$destination_release" || true
+	fi
+	[[ "$release_status" == "$_FULL_LOOP_RELEASE_PUBLISHED" || "$release_status" == "$_FULL_LOOP_RELEASE_NOT_REQUESTED" ]] || {
+		print_error "Migration blocked: terminal release evidence is missing"
+		return 1
+	}
+	full_loop_migrate_cleanup_receipt "$old_repo" "$new_repo" "$pr_number" \
+		"$source_release" "$destination_release" "$release_status" || {
+		print_error "Migration blocked: source evidence is missing or destination evidence conflicts"
+		return 1
+	}
+	print_success "Migrated full-loop receipts from ${old_repo} to ${new_repo} for PR #${pr_number}"
+	return 0
+}
+
 _full_loop_verify_aidevops_release_deploy() {
 	local repo="$1"
 	local pr_number="$2"
