@@ -247,6 +247,20 @@ _RPL_AGENT=""
 _RPL_DESC=""
 
 #######################################
+# Return success when a routine run target would invoke the supervisor that is
+# currently evaluating routines. This protects existing generated TODO files
+# that still carry the pre-GH#28544 cron-form r901 entry.
+#######################################
+_routine_targets_supervisor() {
+	local run_script="$1"
+	local run_command="${run_script%% *}"
+	if [[ "$run_command" == "scripts/pulse-wrapper.sh" ]]; then
+		return 0
+	fi
+	return 1
+}
+
+#######################################
 # Parse a single routine TODO line into its component fields.
 #
 # Extracts routine_id, repeat expression, run script, agent name, and
@@ -359,6 +373,14 @@ evaluate_routines() {
 		local line
 		while IFS= read -r line; do
 			if ! _routine_parse_line "$line"; then
+				continue
+			fi
+
+			# The supervisor is launched by launchd/systemd and must never be
+			# invoked synchronously from its own evaluator. Keep this runtime
+			# guard for stale generated TODO files that predate GH#28544.
+			if _routine_targets_supervisor "$_RPL_RUN"; then
+				echo "[pulse-wrapper] routine ${_RPL_ID}: skipping self-recursive supervisor target ${_RPL_RUN%% *} (GH#28544)" >>"$LOGFILE"
 				continue
 			fi
 

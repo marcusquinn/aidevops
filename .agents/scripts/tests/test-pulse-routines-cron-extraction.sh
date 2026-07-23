@@ -59,7 +59,7 @@ extract_repeat_expr() {
 # ─── Tests ────────────────────────────────────────────────────────────────────
 
 test_cron_multi_space() {
-	local line="- [x] r901 Supervisor pulse — dispatch tasks across repos repeat:cron(*/2 * * * *) ~1m run:scripts/pulse-wrapper.sh"
+	local line="- [x] r904 Worker watchdog repeat:cron(*/2 * * * *) ~10s run:scripts/worker-watchdog.sh --check"
 	local got
 	got=$(extract_repeat_expr "$line")
 	assert_eq "cron(*/2 * * * *): full expression captured (regression t2160)" \
