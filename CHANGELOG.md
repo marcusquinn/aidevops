@@ -10,6 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.32.174] - 2026-07-23
+
+### Fixed
+
+- allow canonical diff-files queries (#28539)
+
 ## [3.32.173] - 2026-07-23
 
 ### Changed
