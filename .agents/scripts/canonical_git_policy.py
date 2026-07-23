@@ -16,6 +16,7 @@ BLOCK_EXIT = 42
 READ_ONLY = {
     "status",
     "diff",
+    "diff-files",
     "log",
     "show",
     "rev-parse",
