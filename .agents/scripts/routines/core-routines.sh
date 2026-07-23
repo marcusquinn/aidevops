@@ -16,7 +16,7 @@
 # ---------------------------------------------------------------------------
 get_core_routine_entries() {
 	cat <<'ENTRIES'
-r901|x|Supervisor pulse — dispatch tasks across repos|repeat:cron(*/2 * * * *)|~1m|scripts/pulse-wrapper.sh|script
+r901|x|Supervisor pulse — dispatch tasks across repos|repeat:persistent|~1m|scripts/pulse-wrapper.sh|script
 r902|x|Auto-update — check for framework updates|repeat:cron(*/10 * * * *)|~30s|bin/aidevops-auto-update|script
 r903|x|Process guard — kill runaway processes|repeat:cron(*/1 * * * *)|~5s|scripts/process-guard-helper.sh kill-runaways|script
 r904|x|Worker watchdog — monitor headless workers|repeat:cron(*/2 * * * *)|~10s|scripts/worker-watchdog.sh --check|script

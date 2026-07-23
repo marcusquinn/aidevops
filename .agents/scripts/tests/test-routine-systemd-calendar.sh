@@ -143,9 +143,9 @@ test_pulse_step_minutes_supported() {
 	output=$("${REPO_SCRIPTS_DIR}/routine-schedule-helper.sh" systemd-calendar 'cron(*/2 * * * *)')
 
 	if [[ "$output" == '*-*-* *:0/2:00' ]]; then
-		print_result "r901 cron step maps to systemd calendar" 0
+		print_result "two-minute cron step maps to systemd calendar" 0
 	else
-		print_result "r901 cron step maps to systemd calendar" 1 \
+		print_result "two-minute cron step maps to systemd calendar" 1 \
 			"Expected *-*-* *:0/2:00, got: $output"
 	fi
 	return 0

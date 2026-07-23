@@ -18,9 +18,9 @@
 #   routine IDs and their neighbour text passed to the schedule parser.
 #   Observed error: ERROR: unrecognised schedule expression '([^[:space:]]+)`'
 #
-# Bug 2 (t2175) — persistent unsupported: r912 in aidevops-routines/TODO.md
-#   carries repeat:persistent (launchd-supervised daemon). The schedule parser
-#   and the pulse evaluator both rejected this keyword.
+# Bug 2 (t2175) — persistent unsupported: externally supervised services such
+#   as r901 and r912 carry repeat:persistent. The schedule parser and the pulse
+#   evaluator both rejected this keyword.
 #   Observed error: ERROR: unrecognised schedule expression 'persistent'
 #
 # Fixes verified here:
@@ -41,11 +41,15 @@
 #      with distinct error message, no "unrecognised schedule expression"
 #   6. (t2423 Phase D) Full discovery simulation: mixed TODO with t-prefix false-match
 #      lines produces zero "unrecognised schedule expression" errors on stderr
+#   7. (GH#28544) A stale cron-form r901 cannot invoke pulse-wrapper.sh and a
+#      later due routine still executes in the same evaluator pass
 
 set -u
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit 1
 SCHEDULE_HELPER="${SCRIPT_DIR}/../routine-schedule-helper.sh"
+PULSE_ROUTINES="${SCRIPT_DIR}/../pulse-routines.sh"
+CORE_ROUTINES="${SCRIPT_DIR}/../routines/core-routines.sh"
 
 RED=$'\033[0;31m'
 GREEN=$'\033[0;32m'
@@ -99,7 +103,10 @@ _test_selector_cases() {
 	_make_todo "$tmpdir" \
 		"- [x] t2160 fix: \`repeat:([^[:space:]]+)\` (r901, r902) ref:GH#19465"
 	# grep -c prints 0 even on no match; no || fallback needed.
-	count=$(grep -cE "$SELECTOR" "${tmpdir}/TODO.md" 2>/dev/null; true)
+	count=$(
+		grep -cE "$SELECTOR" "${tmpdir}/TODO.md" 2>/dev/null
+		true
+	)
 	if [[ "$count" -eq 0 ]]; then
 		pass "Case 1: t-prefix false-match prevented by tightened selector"
 	else
@@ -107,10 +114,13 @@ _test_selector_cases() {
 	fi
 
 	# Case 2: r-prefix with repeat:persistent — selector matches, is-due skips.
-	# Mirrors r912 in aidevops-routines/TODO.md (launchd-supervised daemon).
+	# Mirrors r901, which is launched by launchd/systemd rather than by Pulse.
 	_make_todo "$tmpdir" \
-		"- [x] r912 Dashboard server repeat:persistent ~0s run:server/index.ts"
-	count=$(grep -cE "$SELECTOR" "${tmpdir}/TODO.md" 2>/dev/null; true)
+		"- [x] r901 Supervisor pulse repeat:persistent ~1m run:scripts/pulse-wrapper.sh"
+	count=$(
+		grep -cE "$SELECTOR" "${tmpdir}/TODO.md" 2>/dev/null
+		true
+	)
 	local is_due_exit is_due_output
 	is_due_output=$("$SCHEDULE_HELPER" is-due "persistent" "0" 2>&1)
 	is_due_exit=$?
@@ -123,8 +133,11 @@ _test_selector_cases() {
 
 	# Case 3: r-prefix with cron schedule — selector matches, no parse error.
 	_make_todo "$tmpdir" \
-		"- [x] r901 Supervisor pulse repeat:cron(*/2 * * * *) ~0s agent:Build+"
-	count=$(grep -cE "$SELECTOR" "${tmpdir}/TODO.md" 2>/dev/null; true)
+		"- [x] r904 Worker watchdog repeat:cron(*/2 * * * *) ~10s run:scripts/worker-watchdog.sh --check"
+	count=$(
+		grep -cE "$SELECTOR" "${tmpdir}/TODO.md" 2>/dev/null
+		true
+	)
 	local cron_output
 	cron_output=$("$SCHEDULE_HELPER" is-due "cron(*/2 * * * *)" "0" 2>&1 >/dev/null)
 	if [[ "$count" -eq 1 ]] && [[ "$cron_output" != *"ERROR"* ]]; then
@@ -137,9 +150,12 @@ _test_selector_cases() {
 	# Case 4: Mixed TODO — selector finds exactly 2 r-prefix entries, excludes t-prefix.
 	_make_todo "$tmpdir" \
 		"- [x] t2160 fix: \`repeat:([^[:space:]]+)\` (r901, r902) ref:GH#19465" \
-		"- [x] r901 Supervisor pulse repeat:cron(*/2 * * * *) ~0s agent:Build+" \
-		"- [x] r912 Dashboard server repeat:persistent ~0s run:server/index.ts"
-	count=$(grep -cE "$SELECTOR" "${tmpdir}/TODO.md" 2>/dev/null; true)
+		"- [x] r904 Worker watchdog repeat:cron(*/2 * * * *) ~10s run:scripts/worker-watchdog.sh --check" \
+		"- [x] r901 Supervisor pulse repeat:persistent ~1m run:scripts/pulse-wrapper.sh"
+	count=$(
+		grep -cE "$SELECTOR" "${tmpdir}/TODO.md" 2>/dev/null
+		true
+	)
 	if [[ "$count" -eq 2 ]]; then
 		pass "Case 4: mixed TODO — 2 r-prefix routines matched, t-prefix excluded"
 	else
@@ -158,7 +174,7 @@ _test_metachar_guard() {
 	local meta_exit meta_stderr
 	meta_stderr=$("$SCHEDULE_HELPER" is-due '([^[:space:]]+)`' '0' 2>&1 >/dev/null)
 	meta_exit=$?
-	if [[ "$meta_exit" -eq 2 ]] && [[ "$meta_stderr" == *"regex metacharacters"* ]] && \
+	if [[ "$meta_exit" -eq 2 ]] && [[ "$meta_stderr" == *"regex metacharacters"* ]] &&
 		[[ "$meta_stderr" != *"unrecognised schedule expression"* ]]; then
 		pass "Case 5 (t2423 Phase C): metachar guard fires for regex pattern input"
 	else
@@ -180,8 +196,8 @@ _test_e2e_discovery() {
 	_make_todo "$tmpdir" \
 		"- [x] t2160 fix: \`repeat:([^[:space:]]+)\` (r901, r902) ref:GH#19465" \
 		"- [x] t2423 guard: routine-schedule-helper.sh regex metachar guard" \
-		"- [x] r901 Supervisor pulse repeat:cron(*/2 * * * *) ~0s agent:Build+" \
-		"- [x] r912 Dashboard server repeat:persistent ~0s run:server/index.ts"
+		"- [x] r904 Worker watchdog repeat:cron(*/2 * * * *) ~10s run:scripts/worker-watchdog.sh --check" \
+		"- [x] r901 Supervisor pulse repeat:persistent ~1m run:scripts/pulse-wrapper.sh"
 
 	# Store regex in variable — avoids bash misparsing the literal ')' inline.
 	local re_repeat='repeat:(cron\([^)]*\)|[^[:space:]]+)'
@@ -213,15 +229,88 @@ _test_e2e_discovery() {
 	return 0
 }
 
+# _test_supervisor_self_recursion_guard: case 7 — production evaluator path.
+_test_supervisor_self_recursion_guard() {
+	local tmpdir="$1"
+	local guard_root="${tmpdir}/self-recursion"
+	local test_home="${guard_root}/home"
+	local repo_dir="${guard_root}/routines-repo"
+	local fake_scripts="${test_home}/.aidevops/agents/scripts"
+	local schedule_helper="${guard_root}/always-due.sh"
+	local self_marker="${guard_root}/self-invoked"
+	local downstream_marker="${guard_root}/downstream-invoked"
+	local log_file="${guard_root}/pulse.log"
+	local repos_json="${guard_root}/repos.json"
+	local state_file="${guard_root}/routine-state.json"
+
+	mkdir -p "$fake_scripts" "$repo_dir"
+	cat >"${fake_scripts}/pulse-wrapper.sh" <<'SELF_SCRIPT'
+#!/usr/bin/env bash
+: >"${ROUTINE_SELF_MARKER:?}"
+exit 0
+SELF_SCRIPT
+	cat >"${fake_scripts}/downstream.sh" <<'DOWNSTREAM_SCRIPT'
+#!/usr/bin/env bash
+: >"${ROUTINE_DOWNSTREAM_MARKER:?}"
+exit 0
+DOWNSTREAM_SCRIPT
+	cat >"$schedule_helper" <<'SCHEDULE_SCRIPT'
+#!/usr/bin/env bash
+[[ "${1:-}" == "is-due" ]] || exit 2
+exit 0
+SCHEDULE_SCRIPT
+	chmod +x "${fake_scripts}/pulse-wrapper.sh" "${fake_scripts}/downstream.sh" "$schedule_helper"
+
+	_make_todo "$repo_dir" \
+		"- [x] r901 Supervisor pulse repeat:cron(*/2 * * * *) ~1m run:scripts/pulse-wrapper.sh" \
+		"- [x] r916 Downstream monitor repeat:daily(@07:10) ~1m run:scripts/downstream.sh"
+	printf '{"initialized_repos":[{"slug":"example/routines","path":"%s","pulse":true,"local_only":false}]}\n' \
+		"$repo_dir" >"$repos_json"
+
+	if (
+		export HOME="$test_home"
+		export ROUTINE_SELF_MARKER="$self_marker"
+		export ROUTINE_DOWNSTREAM_MARKER="$downstream_marker"
+		ROUTINE_SCHEDULE_HELPER="$schedule_helper"
+		ROUTINE_STATE_FILE="$state_file"
+		ROUTINE_LOG_HELPER="${guard_root}/missing-routine-log-helper.sh"
+		HEADLESS_RUNTIME_HELPER="${guard_root}/missing-headless-helper.sh"
+		REPOS_JSON="$repos_json"
+		LOGFILE="$log_file"
+		PULSE_DIR="$guard_root"
+		unset _PULSE_ROUTINES_LOADED
+		# shellcheck source=../pulse-routines.sh
+		source "$PULSE_ROUTINES"
+		# shellcheck source=../routines/core-routines.sh
+		source "$CORE_ROUTINES"
+		get_core_routine_entries | grep -q '^r901|x|.*|repeat:persistent|.*|scripts/pulse-wrapper.sh|script$' &&
+			evaluate_routines &&
+			[[ ! -e "$self_marker" ]] &&
+			[[ -e "$downstream_marker" ]] &&
+			jq -e '.r916.last_status == "success" and (.r901 | not)' "$state_file" >/dev/null &&
+			grep -q 'routine r901: skipping self-recursive supervisor target scripts/pulse-wrapper.sh (GH#28544)' "$log_file"
+	); then
+		pass "Case 7 (GH#28544): stale r901 self-invocation skipped; later routine executes"
+	else
+		fail "Case 7 (GH#28544): stale r901 self-invocation skipped; later routine executes" \
+			"self_marker=$([[ -e "$self_marker" ]] && printf present || printf absent) downstream_marker=$([[ -e "$downstream_marker" ]] && printf present || printf absent)"
+	fi
+	return 0
+}
+
 main() {
 	local tmpdir
-	tmpdir=$(mktemp -d) || { printf 'FATAL: mktemp failed\n' >&2; exit 1; }
+	tmpdir=$(mktemp -d) || {
+		printf 'FATAL: mktemp failed\n' >&2
+		exit 1
+	}
 	# shellcheck disable=SC2064
 	trap "rm -rf '$tmpdir'" EXIT
 
 	_test_selector_cases "$tmpdir"
 	_test_metachar_guard
 	_test_e2e_discovery "$tmpdir"
+	_test_supervisor_self_recursion_guard "$tmpdir"
 
 	# === Summary ===
 	printf '\nResults: %d passed, %d failed\n' "$PASS" "$FAIL"
