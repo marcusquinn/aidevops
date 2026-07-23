@@ -68,6 +68,33 @@ print_info() {
 	return 0
 }
 
+VERIFY_RC=0
+VERIFY_ERROR=""
+VERIFY_REPO=""
+VERIFY_SHA=""
+VERIFY_ACTIVE_LINK=""
+VERIFY_STAMP_FILE=""
+stub_verify_aidevops_runtime_bundle_convergence() {
+	local repo_dir="$1"
+	local expected_sha="$2"
+	local active_link="$3"
+	local stamp_file="$4"
+	VERIFY_REPO="$repo_dir"
+	VERIFY_SHA="$expected_sha"
+	VERIFY_ACTIVE_LINK="$active_link"
+	VERIFY_STAMP_FILE="$stamp_file"
+	if [[ "$VERIFY_RC" -ne 0 ]]; then
+		print_error "$VERIFY_ERROR"
+		return "$VERIFY_RC"
+	fi
+	return 0
+}
+
+verify_aidevops_runtime_bundle_convergence() {
+	stub_verify_aidevops_runtime_bundle_convergence "$@"
+	return $?
+}
+
 git() {
 	local arg=""
 	for arg in "$@"; do
@@ -113,20 +140,124 @@ fi
 
 SETUP_RC=0
 SETUP_SHA="stale-sha"
+VERIFY_RC=1
+VERIFY_ERROR="Runtime bundle convergence failed: deployed SHA stale-sha does not match release commit expected-sha"
 if stale_output=$(_run_update_setup_transaction compact expected-sha); then
 	fail "stale activated SHA returns nonzero" "unexpected success"
-elif [[ "$stale_output" == *"does not match repository HEAD"* ]]; then
+elif [[ "$stale_output" == *"does not match release commit"* ]]; then
 	pass "equal versions cannot hide stale activated SHA"
 else
 	fail "equal versions cannot hide stale activated SHA" "$stale_output"
 fi
 
 SETUP_SHA="expected-sha"
+VERIFY_RC=0
 if _run_update_setup_transaction compact expected-sha >/dev/null; then
 	pass "matching version and activated SHA succeed"
 else
 	fail "matching version and activated SHA succeed" "transaction failed"
 fi
+if [[ "$VERIFY_REPO" == "$INSTALL_DIR" &&
+	"$VERIFY_SHA" == "expected-sha" &&
+	"$VERIFY_ACTIVE_LINK" == "$HOME/.aidevops/agents" &&
+	"$VERIFY_STAMP_FILE" == "$HOME/.aidevops/.deployed-sha" ]]; then
+	pass "updater delegates verification to the stable active deployment"
+else
+	fail "updater delegates verification to the stable active deployment" \
+		"repo=$VERIFY_REPO sha=$VERIFY_SHA active=$VERIFY_ACTIVE_LINK stamp=$VERIFY_STAMP_FILE"
+fi
+
+# Replace the transaction stub with the authoritative implementation and model
+# the production launcher: the parent stays pinned to OLD while setup switches
+# the stable activation link to NEW.
+# shellcheck source=../runtime-bundle-verifier.sh
+source "$REPO_ROOT/.agents/scripts/runtime-bundle-verifier.sh"
+VERIFY_FIXTURE_REPO="$TEST_ROOT/verifier-repo"
+VERIFY_FIXTURE_HOME="$TEST_ROOT/verifier-home"
+VERIFY_OLD_ROOT="$VERIFY_FIXTURE_HOME/.aidevops/runtime-bundles/0.9.0-old-fixture/agents"
+mkdir -p "$VERIFY_FIXTURE_REPO/.agents/scripts/setup/modules" "$VERIFY_OLD_ROOT"
+/usr/bin/git init -q -b main "$VERIFY_FIXTURE_REPO"
+/usr/bin/git -C "$VERIFY_FIXTURE_REPO" config user.email test@example.invalid
+/usr/bin/git -C "$VERIFY_FIXTURE_REPO" config user.name Test
+printf '1.0.0\n' >"$VERIFY_FIXTURE_REPO/VERSION"
+printf '#!/usr/bin/env bash\n' >"$VERIFY_FIXTURE_REPO/aidevops.sh"
+printf 'release helper\n' >"$VERIFY_FIXTURE_REPO/.agents/scripts/version-manager-release.sh"
+printf 'deploy helper\n' >"$VERIFY_FIXTURE_REPO/.agents/scripts/deploy-agents-on-merge.sh"
+printf 'verifier helper\n' >"$VERIFY_FIXTURE_REPO/.agents/scripts/runtime-bundle-verifier.sh"
+printf 'agent deploy helper\n' >"$VERIFY_FIXTURE_REPO/.agents/scripts/setup/modules/agent-deploy.sh"
+/usr/bin/git -C "$VERIFY_FIXTURE_REPO" add .
+/usr/bin/git -C "$VERIFY_FIXTURE_REPO" commit -qm "fixture"
+VERIFY_FIXTURE_SHA=$(/usr/bin/git -C "$VERIFY_FIXTURE_REPO" rev-parse HEAD)
+VERIFY_BUNDLE_ID="1.0.0-${VERIFY_FIXTURE_SHA:0:12}-fixture"
+VERIFY_NEW_ROOT="$VERIFY_FIXTURE_HOME/.aidevops/runtime-bundles/$VERIFY_BUNDLE_ID/agents"
+mkdir -p "$VERIFY_NEW_ROOT/scripts/setup/modules"
+cp "$VERIFY_FIXTURE_REPO/aidevops.sh" "$VERIFY_NEW_ROOT/aidevops.sh"
+cp "$VERIFY_FIXTURE_REPO/.agents/scripts/version-manager-release.sh" "$VERIFY_NEW_ROOT/scripts/version-manager-release.sh"
+cp "$VERIFY_FIXTURE_REPO/.agents/scripts/deploy-agents-on-merge.sh" "$VERIFY_NEW_ROOT/scripts/deploy-agents-on-merge.sh"
+cp "$VERIFY_FIXTURE_REPO/.agents/scripts/runtime-bundle-verifier.sh" "$VERIFY_NEW_ROOT/scripts/runtime-bundle-verifier.sh"
+cp "$VERIFY_FIXTURE_REPO/.agents/scripts/setup/modules/agent-deploy.sh" "$VERIFY_NEW_ROOT/scripts/setup/modules/agent-deploy.sh"
+cp "$VERIFY_FIXTURE_REPO/VERSION" "$VERIFY_NEW_ROOT/VERSION"
+VERIFY_CLI_SHA=$(_runtime_bundle_verify_sha256_file "$VERIFY_NEW_ROOT/aidevops.sh")
+{
+	printf 'schema=1\n'
+	printf 'status=validated\n'
+	printf 'bundle_id=%s\n' "$VERIFY_BUNDLE_ID"
+	printf 'framework_version=1.0.0\n'
+	printf 'git_sha=%s\n' "$VERIFY_FIXTURE_SHA"
+	printf 'cli_sha256=%s\n' "$VERIFY_CLI_SHA"
+} >"$VERIFY_NEW_ROOT/.bundle-manifest"
+printf '0.9.0\n' >"$VERIFY_OLD_ROOT/VERSION"
+ln -s "$VERIFY_OLD_ROOT" "$VERIFY_FIXTURE_HOME/.aidevops/agents"
+printf '%s\n' "$VERIFY_FIXTURE_SHA" >"$VERIFY_FIXTURE_HOME/.aidevops/.deployed-sha"
+VERIFY_LINK_TMP="$VERIFY_FIXTURE_HOME/.aidevops/agents.next"
+ln -s "$VERIFY_NEW_ROOT" "$VERIFY_LINK_TMP"
+if [[ "$(uname -s)" == "Darwin" ]]; then
+	mv -f -h "$VERIFY_LINK_TMP" "$VERIFY_FIXTURE_HOME/.aidevops/agents"
+else
+	mv -Tf "$VERIFY_LINK_TMP" "$VERIFY_FIXTURE_HOME/.aidevops/agents"
+fi
+
+INSTALL_DIR="$VERIFY_FIXTURE_REPO"
+HOME="$VERIFY_FIXTURE_HOME"
+_AIDEVOPS_REAL_HOME="$VERIFY_FIXTURE_HOME"
+AGENTS_DIR="$VERIFY_OLD_ROOT"
+if _update_verify_deployment_state "$VERIFY_FIXTURE_SHA" >/dev/null &&
+	[[ "$(tr -d '[:space:]' <"$AGENTS_DIR/VERSION")" == "0.9.0" ]] &&
+	[[ "$(tr -d '[:space:]' <"$HOME/.aidevops/agents/VERSION")" == "1.0.0" ]]; then
+	pass "parent verifies NEW through the stable link while remaining pinned to OLD"
+else
+	fail "parent verifies NEW through the stable link while remaining pinned to OLD" "verification failed"
+fi
+
+rm -f "$HOME/.aidevops/agents"
+ln -s "$VERIFY_OLD_ROOT" "$HOME/.aidevops/agents"
+if stale_link_output=$(_update_verify_deployment_state "$VERIFY_FIXTURE_SHA" 2>&1); then
+	fail "authoritative updater verification rejects a stale active link" "unexpected success"
+elif [[ "$stale_link_output" == *"active bundle manifest is missing"* ]]; then
+	pass "authoritative updater verification rejects a stale active link"
+else
+	fail "authoritative updater verification rejects a stale active link" "$stale_link_output"
+fi
+rm -f "$HOME/.aidevops/agents"
+ln -s "$VERIFY_NEW_ROOT" "$HOME/.aidevops/agents"
+
+printf 'stale-sha\n' >"$HOME/.aidevops/.deployed-sha"
+if stale_stamp_output=$(_update_verify_deployment_state "$VERIFY_FIXTURE_SHA" 2>&1); then
+	fail "authoritative updater verification rejects a stale deployment stamp" "unexpected success"
+elif [[ "$stale_stamp_output" == *"deployed SHA stale-sha does not match release commit"* ]]; then
+	pass "authoritative updater verification rejects a stale deployment stamp"
+else
+	fail "authoritative updater verification rejects a stale deployment stamp" "$stale_stamp_output"
+fi
+
+HOME="$TEST_ROOT/home"
+_AIDEVOPS_REAL_HOME="$HOME"
+INSTALL_DIR="$TEST_ROOT/repo"
+AGENTS_DIR="$HOME/.aidevops/agents"
+verify_aidevops_runtime_bundle_convergence() {
+	stub_verify_aidevops_runtime_bundle_convergence "$@"
+	return $?
+}
 
 /usr/bin/git init -q -b main "$INSTALL_DIR"
 /usr/bin/git -C "$INSTALL_DIR" config user.email test@example.invalid

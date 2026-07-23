@@ -196,6 +196,7 @@ ensure_trailing_newline() {
 # tree selected above. The launcher executes the deployed orchestrator as a
 # regular file, while local development and package snapshots use .agents/.
 AIDEVOPS_CLI_MODULES_DIR="${_AIDEVOPS_CLI_ROOT}/${_AIDEVOPS_CLI_MODULES_SUBDIR}"
+AIDEVOPS_RUNTIME_BUNDLE_VERIFIER="${AIDEVOPS_CLI_MODULES_DIR%/aidevops-cli}/runtime-bundle-verifier.sh"
 unset _AIDEVOPS_CLI_ROOT _AIDEVOPS_CLI_MODULES_SUBDIR
 # shellcheck source=.agents/scripts/aidevops-cli/aidevops-repos-lib.sh
 # shellcheck disable=SC1091  # module path resolved at runtime via $INSTALL_DIR
@@ -215,6 +216,9 @@ source "${AIDEVOPS_CLI_MODULES_DIR}/aidevops-update-lib.sh"
 # shellcheck source=.agents/scripts/aidevops-cli/aidevops-upgrade-planning-lib.sh
 # shellcheck disable=SC1091
 source "${AIDEVOPS_CLI_MODULES_DIR}/aidevops-upgrade-planning-lib.sh"
+# shellcheck source=.agents/scripts/runtime-bundle-verifier.sh
+# shellcheck disable=SC1091
+source "$AIDEVOPS_RUNTIME_BUNDLE_VERIFIER"
 
 _run_update_setup() {
 	local output_mode="${1:-${AIDEVOPS_OUTPUT_MODE:-auto}}"
@@ -249,24 +253,15 @@ _run_update_setup() {
 
 _update_verify_deployment_state() {
 	local expected_sha="$1"
-	local repo_version=""
-	local deployed_version=""
-	local deployed_sha=""
+	local active_link="$_AIDEVOPS_REAL_HOME/.aidevops/agents"
 	local stamp_file="$_AIDEVOPS_REAL_HOME/.aidevops/.deployed-sha"
-	repo_version=$(cat "$INSTALL_DIR/VERSION" 2>/dev/null || echo "unknown")
-	deployed_version=$(cat "$AGENTS_DIR/VERSION" 2>/dev/null || echo "none")
-	if [[ -f "$stamp_file" ]]; then
-		deployed_sha=$(tr -d '[:space:]' <"$stamp_file" 2>/dev/null) || deployed_sha=""
-	fi
-	if [[ "$repo_version" != "$deployed_version" ]]; then
-		print_error "Agent deployment failed: repo version $repo_version, deployed version $deployed_version"
-		return 1
-	fi
-	if [[ -z "$deployed_sha" || "$deployed_sha" != "$expected_sha" ]]; then
-		print_error "Agent deployment failed: activated SHA ${deployed_sha:-none} does not match repository HEAD $expected_sha"
-		return 1
-	fi
-	return 0
+
+	verify_aidevops_runtime_bundle_convergence \
+		"$INSTALL_DIR" \
+		"$expected_sha" \
+		"$active_link" \
+		"$stamp_file"
+	return $?
 }
 
 _run_update_setup_transaction() {
