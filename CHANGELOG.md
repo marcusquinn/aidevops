@@ -10,6 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.32.168] - 2026-07-23
+
+### Fixed
+
+- repair Remotion chapter references (#28518)
+
 ## [3.32.167] - 2026-07-22
 
 ### Added
