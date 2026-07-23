@@ -7486,15 +7486,15 @@
       "pr": 15490
     },
     "aidevops.sh": {
-      "at": "2026-07-23T17:16:46Z",
-      "hash": "be73728933801f2598a85194094b5e5f6c6698f8",
-      "passes": 293,
+      "at": "2026-07-23T18:23:19Z",
+      "hash": "203b0fde124a01e40d196753e2d7e24d809db341",
+      "passes": 294,
       "pr": 19029
     },
     "setup.sh": {
-      "at": "2026-07-23T17:16:46Z",
-      "hash": "39b8990245da48d6b87a2d8e470d0b2d66bedf8e",
-      "passes": 290,
+      "at": "2026-07-23T18:23:19Z",
+      "hash": "3f05c93691e7db86df3a35cee98de1a4d9543763",
+      "passes": 291,
       "pr": 15470
     },
     "todo/tasks/GH#15363-brief.md": {
@@ -7858,10 +7858,10 @@
       "passes": 2
     },
     ".agents/scripts/worktree-clean-lib.sh": {
-      "hash": "968307a130994a4d5f26d942f6d5af26996f5c59",
-      "at": "2026-07-22T00:01:26Z",
+      "hash": "2b03e0bb9f7a1f493c9c70968f920c5e174acc40",
+      "at": "2026-07-23T18:21:55Z",
       "pr": 26042,
-      "passes": 5
+      "passes": 6
     },
     ".agents/scripts/pulse-dispatch-lib.sh": {
       "hash": "b710db99d75fc1f365c123714e09f9e404a6353f",
