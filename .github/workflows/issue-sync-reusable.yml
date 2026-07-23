@@ -73,8 +73,11 @@ jobs:
       - name: Checkout repository projection
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
+          # Forge mapping/projection reads canonical TODO.md state. Never let
+          # pull_request events infer GitHub's synthetic refs/pull/*/merge ref.
+          ref: ${{ github.event.repository.default_branch }}
           fetch-depth: 1
-          token: ${{ secrets.SYNC_PAT || secrets.GITHUB_TOKEN }}
+          token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Checkout coordinator scripts
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
