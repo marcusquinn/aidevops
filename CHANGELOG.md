@@ -10,6 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.32.177] - 2026-07-24
+
+### Fixed
+
+- prevent recursive supervisor routine (#28545)
+
 ## [3.32.176] - 2026-07-24
 
 ### Changed
