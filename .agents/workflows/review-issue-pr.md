@@ -234,6 +234,12 @@ For interactive maintainer review, complete the full checklist and post the stru
 3. Post the review using the format below so the decision has durable evidence.
 4. Only after an `Approve` recommendation is posted, state that cryptographic approval is appropriate and provide the approval command if the user requests it.
 
+Before claiming approval is missing or asking the maintainer to approve again,
+query the authoritative current state with
+`approval-helper.sh verify issue <number> <owner/repo>`. Never infer approval
+state from local `sudo` availability, an earlier label snapshot, or a failed
+attempt to invoke the signing command.
+
 Do not expose an approval command as the next action merely because a dispatch helper reports `needs-maintainer-review`; that gate identifies missing authority, not review quality. If review evidence is incomplete, recommend investigation rather than approval.
 
 Assessment language describes a recommendation, not an exercised authority action. Use `Recommendation: Approve`, never `Approved`, until a trusted maintainer actually performs the approval step. Apply the same distinction in the task-tool result and user-facing summary.

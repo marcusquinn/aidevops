@@ -41,6 +41,9 @@
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 source "${SCRIPT_DIR}/shared-constants.sh"
 
+# shellcheck source=./disk-capacity-lib.sh
+source "${SCRIPT_DIR}/disk-capacity-lib.sh"
+
 # t2559: canonical-guard-helper.sh provides is_registered_canonical,
 # assert_git_available, assert_main_worktree_sane. Sourced after
 # shared-constants.sh so its fallback colour vars are available if this

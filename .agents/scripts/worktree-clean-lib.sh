@@ -1009,25 +1009,39 @@ _clean_move_worktree_to_trash_bucket() {
 _clean_move_worktree_recoverably() {
 	local worktree_path="$1"
 	local trash_root="${AIDEVOPS_WORKTREE_TRASH_ROOT:-${AIDEVOPS_ORPHAN_TRASH_ROOT:-}}"
+	local backend_failures=""
+	_WT_CLEAN_RECOVERABLE_FAILURE_DETAIL=""
 
 	[[ -n "$worktree_path" ]] || return 1
 	[[ -e "$worktree_path" ]] || return 1
 	if [[ -n "$trash_root" ]]; then
-		_clean_move_worktree_to_trash_bucket "$worktree_path" "$trash_root"
-		return $?
+		if _clean_move_worktree_to_trash_bucket "$worktree_path" "$trash_root"; then
+			return 0
+		fi
+		_WT_CLEAN_RECOVERABLE_FAILURE_DETAIL="configured-trash-root-failed"
+		return 1
 	fi
 	if command -v trash >/dev/null 2>&1; then
-		trash "$worktree_path" 2>/dev/null || return 1
-		[[ ! -e "$worktree_path" ]] || return 1
-		return 0
+		if trash "$worktree_path" 2>/dev/null && [[ ! -e "$worktree_path" ]]; then
+			return 0
+		fi
+		backend_failures="trash-failed"
+	else
+		backend_failures="trash-unavailable"
 	fi
 	if command -v gio >/dev/null 2>&1; then
-		gio trash "$worktree_path" 2>/dev/null || return 1
-		[[ ! -e "$worktree_path" ]] || return 1
+		if gio trash "$worktree_path" 2>/dev/null && [[ ! -e "$worktree_path" ]]; then
+			return 0
+		fi
+		backend_failures="${backend_failures},gio-failed"
+	else
+		backend_failures="${backend_failures},gio-unavailable"
+	fi
+	if _clean_move_worktree_to_trash_bucket "$worktree_path" "${HOME}/.Trash"; then
 		return 0
 	fi
-	_clean_move_worktree_to_trash_bucket "$worktree_path" "${HOME}/.Trash"
-	return $?
+	_WT_CLEAN_RECOVERABLE_FAILURE_DETAIL="${backend_failures},home-trash-bucket-failed"
+	return 1
 }
 
 _clean_merge_type_has_terminal_pr_state() {
@@ -1118,7 +1132,7 @@ _clean_remove_classified_worktree() {
 			removed="$_WT_CLEAN_BOOL_TRUE"
 			completed_mode="$_WT_CLEAN_MODE_RECOVERABLE"
 		else
-			log_worktree_removal_event "$_WTAR_SKIPPED" "$_WTAR_WH_CALLER" "$worktree_path" "recoverable-move-failed" "$_WT_CLEAN_MODE_SKIPPED" "$audit_context"
+			log_worktree_removal_event "$_WTAR_SKIPPED" "$_WTAR_WH_CALLER" "$worktree_path" "recoverable-move-failed" "$_WT_CLEAN_MODE_SKIPPED" "$audit_context recoverable_backends=${_WT_CLEAN_RECOVERABLE_FAILURE_DETAIL:-unknown}"
 			return 1
 		fi
 	elif [[ "$preserve_branch" == "$_WT_CLEAN_BOOL_TRUE" ]]; then
