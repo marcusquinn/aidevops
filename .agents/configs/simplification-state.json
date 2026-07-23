@@ -1952,9 +1952,9 @@
       "pr": 16797
     },
     ".agents/scripts/commands/full-loop.md": {
-      "at": "2026-07-23T21:30:35Z",
-      "hash": "48a0281b16ebb98f2f08addcfdca337d2251f940",
-      "passes": 36,
+      "at": "2026-07-23T23:46:00Z",
+      "hash": "4d0e98de771b4f272c4f56f45946685c7114219e",
+      "passes": 37,
       "pr": 14590
     },
     ".agents/scripts/commands/init-routines.md": {
@@ -2412,9 +2412,9 @@
       "pr": 18796
     },
     ".agents/scripts/pulse-dispatch-core.sh": {
-      "at": "2026-07-23T02:09:31Z",
-      "hash": "617ddb72bdf8a7c7fd6582177bd0138296e0127d",
-      "passes": 52,
+      "at": "2026-07-23T23:46:06Z",
+      "hash": "5bcde2aada280035eb3a0f9c096611ff5f3b7aeb",
+      "passes": 53,
       "pr": 18832
     },
     ".agents/scripts/pulse-dispatch-engine.sh": {
@@ -2627,9 +2627,9 @@
       "pr": 17393
     },
     ".agents/scripts/worktree-helper.sh": {
-      "at": "2026-06-28T21:32:30Z",
-      "hash": "3d8c2e261e7127ad4ffc39f75feccd49796b9f37",
-      "passes": 17,
+      "at": "2026-07-23T23:46:11Z",
+      "hash": "ffe3d6a58a92b34d93b0448a944f4e305d4ca810",
+      "passes": 18,
       "pr": 19087
     },
     ".agents/seo.md": {
@@ -5175,9 +5175,9 @@
       "pr": 16540
     },
     ".agents/tools/deployment/cloudron-app-packaging-skill.md": {
-      "at": "2026-05-21T21:30:15Z",
-      "hash": "b0313eb393024c11f2ef32a9121dbbafc05519bb",
-      "passes": 5,
+      "at": "2026-07-23T23:46:39Z",
+      "hash": "2fb52140922969e9935638caa8410d38c3ac0466",
+      "passes": 6,
       "pr": 14880
     },
     ".agents/tools/deployment/cloudron-app-packaging-skill/addons-ref.md": {
@@ -5193,15 +5193,15 @@
       "pr": 0
     },
     ".agents/tools/deployment/cloudron-app-packaging.md": {
-      "at": "2026-07-22T20:57:16Z",
-      "hash": "2260abfa0463a2966b9a7cc4266a72903b514efc",
-      "passes": 4,
+      "at": "2026-07-23T23:46:39Z",
+      "hash": "c274a1a97797ab17ca152d1d38cbda1826b02daf",
+      "passes": 5,
       "pr": 11344
     },
     ".agents/tools/deployment/cloudron-app-publishing-skill.md": {
-      "at": "2026-05-03T12:52:47Z",
-      "hash": "017981f2116ffd35ba6f29cde0288272e3fc699b",
-      "passes": 3,
+      "at": "2026-07-23T23:46:40Z",
+      "hash": "185763474b7391c7e01a00dd68d9edb88592f008",
+      "passes": 4,
       "pr": 15497
     },
     ".agents/tools/deployment/cloudron-git-reference.md": {
@@ -7193,9 +7193,9 @@
       "pr": 13065
     },
     ".agents/workflows/full-loop.md": {
-      "at": "2026-07-23T21:31:52Z",
-      "hash": "48a0281b16ebb98f2f08addcfdca337d2251f940",
-      "passes": 25,
+      "at": "2026-07-23T23:47:03Z",
+      "hash": "4d0e98de771b4f272c4f56f45946685c7114219e",
+      "passes": 26,
       "pr": 19047
     },
     ".agents/workflows/git-workflow.md": {
@@ -7366,9 +7366,9 @@
       "pr": 18242
     },
     ".agents/workflows/review-issue-pr.md": {
-      "at": "2026-07-18T16:12:40Z",
-      "hash": "1f51c91c6f19979a4eb3c5967e233ac0f71d67dc",
-      "passes": 12,
+      "at": "2026-07-23T23:47:05Z",
+      "hash": "0f49d3c87af293553ac33939f3e01822b038ec60",
+      "passes": 13,
       "pr": 12308
     },
     ".agents/workflows/routine.md": {
@@ -7480,21 +7480,21 @@
       "pr": 16415
     },
     "TODO.md": {
-      "at": "2026-07-22T06:31:44Z",
-      "hash": "d97e643f7643b71dc92e8805f65d9a616fdb4b23",
-      "passes": 195,
+      "at": "2026-07-23T23:47:06Z",
+      "hash": "a0620a5db49cf4a8fc926f3df6e8f84779ed5e25",
+      "passes": 196,
       "pr": 15490
     },
     "aidevops.sh": {
-      "at": "2026-07-23T22:40:23Z",
-      "hash": "42527d798a56b4488817622f5c849d272a5f250f",
-      "passes": 296,
+      "at": "2026-07-23T23:47:06Z",
+      "hash": "76394c2a886d5cde04815f732a38ee746616dd59",
+      "passes": 297,
       "pr": 19029
     },
     "setup.sh": {
-      "at": "2026-07-23T22:40:23Z",
-      "hash": "9e3b84c26fcdc6ac6089765cbad0b5245cbecd04",
-      "passes": 293,
+      "at": "2026-07-23T23:47:07Z",
+      "hash": "7003de9f370d169fbc4f950a093cad2ef420ca4b",
+      "passes": 294,
       "pr": 15470
     },
     "todo/tasks/GH#15363-brief.md": {
@@ -7702,10 +7702,10 @@
       "passes": 19
     },
     ".agents/scripts/pulse-routines.sh": {
-      "hash": "da82022bf91ecfae9b3a9a361bc7d599b2a78304",
-      "at": "2026-07-23T21:30:43Z",
+      "hash": "e0a2ff8349081fa6a0a51764a9e888cb0402a0ef",
+      "at": "2026-07-23T23:46:07Z",
       "pr": 20413,
-      "passes": 6
+      "passes": 7
     },
     ".agents/reference/parent-task-lifecycle.md": {
       "hash": "22efe86478b893a46c39c64761651d6cfc916a6e",
@@ -7858,10 +7858,10 @@
       "passes": 2
     },
     ".agents/scripts/worktree-clean-lib.sh": {
-      "hash": "2b03e0bb9f7a1f493c9c70968f920c5e174acc40",
-      "at": "2026-07-23T18:21:55Z",
+      "hash": "421bd0d0add7976f541d5b90d5a54460ae3289e7",
+      "at": "2026-07-23T23:46:11Z",
       "pr": 26042,
-      "passes": 6
+      "passes": 7
     },
     ".agents/scripts/pulse-dispatch-lib.sh": {
       "hash": "b710db99d75fc1f365c123714e09f9e404a6353f",
