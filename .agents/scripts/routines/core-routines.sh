@@ -114,6 +114,38 @@ _scheduler_row_calendar() {
 }
 
 # ---------------------------------------------------------------------------
+# _scheduler_row_pulse <repeat_expression>
+# Outputs the scheduler row for routines evaluated by the supervisor Pulse.
+# ---------------------------------------------------------------------------
+_scheduler_row_pulse() {
+	local repeat_expression="$1"
+	echo "| Scheduler | Supervisor Pulse evaluates version-controlled \`${repeat_expression}\` |"
+	return 0
+}
+
+# ---------------------------------------------------------------------------
+# _pulse_diag_commands <os>
+# Outputs diagnostics for the real shared Pulse scheduler and routine state.
+# ---------------------------------------------------------------------------
+_pulse_diag_commands() {
+	local os="$1"
+	if _is_darwin_os "$os"; then
+		cat <<'EOF'
+- `launchctl print "gui/${UID}/com.aidevops.aidevops-supervisor-pulse"` — shared Pulse service health
+EOF
+	else
+		cat <<'EOF'
+- `systemctl --user status sh.aidevops.pulse` — shared Pulse service health
+EOF
+	fi
+	cat <<'EOF'
+- `jq '.r916, .r917' ~/.aidevops/.agent-workspace/pulse/routine-state.json` — last-run state
+- `aidevops status` — framework and supervisor overview
+EOF
+	return 0
+}
+
+# ---------------------------------------------------------------------------
 # _diag_commands <os> <plist_label> <systemd_unit>
 # Outputs OS-specific diagnostic commands.
 # ---------------------------------------------------------------------------
@@ -903,13 +935,17 @@ New releases become deduplicated, worker-ready issues in the package repository.
 | Type | script |
 | Expected duration | ~2 minutes |
 | Script | \`scripts/cloudron-package-monitor-helper.sh upstream --apply\` |
-$(_scheduler_row_calendar "$os" "StartCalendarInterval: Hour=7, Minute=10" "sh.aidevops.cloudron-package-upstream" "sh.aidevops.cloudron-package-upstream")
+$(_scheduler_row_pulse "repeat:daily(@07:10)")
+
+Pulse reads the enabled routine from registered \`TODO.md\` files and evaluates
+the version-controlled \`repeat:\` expression; r916 has no dedicated platform unit.
 
 ## Safety rails
 
 - Reads only registrations with \`app_type: cloudron-package\` and explicit upstream metadata.
 - Requires ADMIN or MAINTAIN authority before creating a target-local issue.
 - Never changes package source, tags, releases, catalogs, images, or deployments.
+$(_pulse_diag_commands "$os")
 $(_platform_footnote "$os")
 EOF
 	return 0
@@ -934,13 +970,17 @@ Stable finding fingerprints prevent repeated issues for an already handled audit
 | Type | script |
 | Expected duration | ~5 minutes |
 | Script | \`scripts/cloudron-package-monitor-helper.sh compatibility --apply\` |
-$(_scheduler_row_calendar "$os" "StartCalendarInterval: Weekday=0, Hour=7, Minute=40" "sh.aidevops.cloudron-package-compatibility" "sh.aidevops.cloudron-package-compatibility")
+$(_scheduler_row_pulse "repeat:weekly(sun@07:40)")
+
+Pulse reads the enabled routine from registered \`TODO.md\` files and evaluates
+the version-controlled \`repeat:\` expression; r917 has no dedicated platform unit.
 
 ## Safety rails
 
 - Audits local package files without building or executing upstream content.
 - Creates issues only after target-local deduplication and authority checks.
 - Never acknowledges a finding when GitHub/API operations fail.
+$(_pulse_diag_commands "$os")
 $(_platform_footnote "$os")
 EOF
 	return 0

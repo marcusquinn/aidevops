@@ -213,6 +213,14 @@ Check gate without merging: `full-loop-helper.sh pre-merge-gate "$PR_NUMBER" "$R
 
 **4.6 Conditional Detached Release (aidevops only):** Without explicit trusted release intent, run `full-loop-helper.sh record-no-release "$PR_NUMBER" "$REPO"` after verified merge to record `release:not-requested`, then continue directly to closing and guarded cleanup. The command verifies merged evidence, is idempotent, and refuses to replace `release:published` or `release:failed`. Authorized releases use a fresh detached release worktree at `origin/main`; omitted type defaults to patch and omitted deployment scope defaults to incremental. Major/minor and full deployment must be selected explicitly. Record terminal publication as `release:published` or `release:failed`; do not repeat publication gates after publication succeeds.
 
+Direct merge-wrapper flows without local lifecycle state use
+`full-loop-helper.sh finalize-receipt <PR> [REPO]` after terminal release evidence
+exists. The command re-verifies merged evidence and idempotently changes only the
+receipt's executor finalization fields. After an explicit repository rename, use
+`migrate-repository-receipt <PR> <OLD_REPO> <NEW_REPO>`; it verifies the PR at the
+new identity and migrates cleanup plus release receipts while preserving owner,
+lease, worktree, branch, creation time, and irreversible cleanup state.
+
 **4.7 Maintained-App Local Base Synchronization (MANDATORY):** After a maintained non-aidevops merge, read the merged PR's verified `baseRefName`, resolve the registered canonical checkout, and use the clean `fast-forward-current` or lossless `sync-mirror` operation documented in `workflows/git-workflow.md`. Full-loop consent authorizes this guarded synchronization. Verify local `HEAD` equals `origin/<baseRefName>` before recording `LOCAL_BASE_SYNCED`.
 
 **4.8 Closing Comments:** Managed repos receive structured issue and PR closing comments with the normal pre-close verification. External sessions do not close the upstream issue; follow upstream conventions and leave at most one concise issue comment linking the PR when useful.

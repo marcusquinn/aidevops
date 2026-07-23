@@ -781,10 +781,10 @@ _audit_verify_entry() {
 	return "$entry_errors"
 }
 
-# Verify the integrity of one audit log file.
+# Verify the integrity of one audit log file with the legacy shell path.
 # Arguments: $1=log_file $2=quiet (true|false)
 # Returns: 0 if chain is valid, 1 if tampered/broken
-_audit_verify_file() {
+_audit_verify_file_legacy() {
 	local log_file="$1"
 	local quiet="$2"
 
@@ -839,6 +839,34 @@ _audit_verify_file() {
 	fi
 
 	return 0
+}
+
+# Verify one segment in a bounded single process. The legacy verifier remains a
+# correctness-preserving fallback when Python or the deployed helper is absent.
+_audit_verify_file() {
+	local log_file="$1"
+	local quiet="$2"
+	local verifier="${SCRIPT_DIR}/audit-log-verify-helper.py"
+
+	if [[ ! -f "$log_file" ]]; then
+		_audit_info "No audit log found — nothing to verify"
+		return 0
+	fi
+	if [[ ! -s "$log_file" ]]; then
+		_audit_info "Audit log is empty — nothing to verify"
+		return 0
+	fi
+	if [[ "${AUDIT_FORCE_LEGACY_VERIFIER:-false}" == "true" ]]; then
+		_audit_verify_file_legacy "$log_file" "$quiet"
+		return $?
+	fi
+	if command -v python3 >/dev/null 2>&1 && [[ -f "$verifier" ]]; then
+		python3 "$verifier" "$log_file" "$AUDIT_GENESIS_HASH" "$quiet"
+		return $?
+	fi
+	_audit_warn "Single-process audit verifier unavailable; using the slower fail-closed legacy verifier"
+	_audit_verify_file_legacy "$log_file" "$quiet"
+	return $?
 }
 
 # Verify the integrity of the active audit log hash chain.

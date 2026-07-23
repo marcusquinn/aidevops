@@ -89,11 +89,127 @@ cmd_record_no_release "\$@"
 RUNNER
 chmod +x "$record_runner"
 
+finalize_runner="${ROOT}/finalize-runner.sh"
+cat >"$finalize_runner" <<RUNNER
+#!/usr/bin/env bash
+set -euo pipefail
+SCRIPT_DIR='${SCRIPTS_DIR}'
+STATE_DIR='${ROOT}/state'
+STATE_FILE='${ROOT}/state/full-loop.state'
+DEFAULT_MAX_TASK_ITERATIONS=50
+DEFAULT_MAX_PREFLIGHT_ITERATIONS=5
+DEFAULT_MAX_PR_ITERATIONS=20
+HEADLESS=false
+source '${SCRIPTS_DIR}/shared-constants.sh'
+source '${SCRIPTS_DIR}/full-loop-helper-state.sh'
+cmd_finalize_receipt "\$@"
+RUNNER
+chmod +x "$finalize_runner"
+
+migration_runner="${ROOT}/migration-runner.sh"
+cat >"$migration_runner" <<RUNNER
+#!/usr/bin/env bash
+set -euo pipefail
+SCRIPT_DIR='${SCRIPTS_DIR}'
+STATE_DIR='${ROOT}/state'
+STATE_FILE='${ROOT}/state/full-loop.state'
+DEFAULT_MAX_TASK_ITERATIONS=50
+DEFAULT_MAX_PREFLIGHT_ITERATIONS=5
+DEFAULT_MAX_PR_ITERATIONS=20
+HEADLESS=false
+source '${SCRIPTS_DIR}/shared-constants.sh'
+source '${SCRIPTS_DIR}/full-loop-helper-state.sh'
+cmd_migrate_repository_receipt "\$@"
+RUNNER
+chmod +x "$migration_runner"
+
 rm -f "${receipt_dir}/marcusquinn_aidevops-42.status"
 AIDEVOPS_FULL_LOOP_RECEIPT_DIR="$receipt_dir" PATH="${ROOT}/bin:/opt/homebrew/bin:/usr/bin:/bin" bash "$record_runner" 42 marcusquinn/aidevops >/dev/null
 grep -qx 'not-requested' "${receipt_dir}/marcusquinn_aidevops-42.status"
 AIDEVOPS_FULL_LOOP_RECEIPT_DIR="$receipt_dir" PATH="${ROOT}/bin:/opt/homebrew/bin:/usr/bin:/bin" bash "$record_runner" 42 marcusquinn/aidevops >/dev/null
 printf 'PASS direct merge-only lifecycle records idempotent no-release evidence\n'
+
+direct_worktree="${ROOT}/direct-merge-worktree"
+mkdir -p "$direct_worktree"
+direct_receipt=$(full_loop_write_cleanup_deferred marcusquinn/aidevops 42 "$direct_worktree" feature/direct \
+	"$$" direct-session pending FINALIZATION_PENDING)
+AIDEVOPS_FULL_LOOP_RECEIPT_DIR="$receipt_dir" AIDEVOPS_FULL_LOOP_CLEANUP_DIR="$cleanup_receipt_dir" \
+	PATH="${ROOT}/bin:/opt/homebrew/bin:/usr/bin:/bin" bash "$finalize_runner" 42 marcusquinn/aidevops >/dev/null
+jq -e '.executor_completion_state == "COMPLETE" and .release_status == "not-requested"' "$direct_receipt" >/dev/null
+AIDEVOPS_FULL_LOOP_RECEIPT_DIR="$receipt_dir" AIDEVOPS_FULL_LOOP_CLEANUP_DIR="$cleanup_receipt_dir" \
+	PATH="${ROOT}/bin:/opt/homebrew/bin:/usr/bin:/bin" bash "$finalize_runner" 42 marcusquinn/aidevops >/dev/null
+printf 'PASS direct merge-only receipt finalizes idempotently without local lifecycle state\n'
+
+cp "$direct_receipt" "${ROOT}/direct-receipt-before.json"
+if COMPLETION_PR_STATE=OPEN AIDEVOPS_FULL_LOOP_RECEIPT_DIR="$receipt_dir" \
+	AIDEVOPS_FULL_LOOP_CLEANUP_DIR="$cleanup_receipt_dir" \
+	PATH="${ROOT}/bin:/opt/homebrew/bin:/usr/bin:/bin" \
+	bash "$finalize_runner" 42 marcusquinn/aidevops >/dev/null 2>&1; then
+	printf 'FAIL open PR finalized a direct-merge receipt\n'
+	exit 1
+fi
+cmp -s "$direct_receipt" "${ROOT}/direct-receipt-before.json"
+printf 'PASS rejected finalization leaves cleanup evidence unchanged\n'
+
+migration_worktree="${ROOT}/migration-worktree"
+mkdir -p "$migration_worktree"
+migration_receipt=$(full_loop_write_cleanup_deferred example/old-repo 44 "$migration_worktree" feature/migrate \
+	"$$" migration-session not-requested FINALIZATION_PENDING)
+full_loop_transition_cleanup_receipt "$migration_receipt" "$_FULL_LOOP_CLEANUP_LEASED" "$$"
+migration_created=$(jq -r '.created_at' "$migration_receipt")
+mkdir -p "$receipt_dir"
+printf '%s\n' not-requested >"${receipt_dir}/example_old-repo-44.status"
+AIDEVOPS_FULL_LOOP_RECEIPT_DIR="$receipt_dir" AIDEVOPS_FULL_LOOP_CLEANUP_DIR="$cleanup_receipt_dir" \
+	PATH="${ROOT}/bin:/opt/homebrew/bin:/usr/bin:/bin" \
+	bash "$migration_runner" 44 example/old-repo example/renamed-repo >/dev/null
+migrated_receipt="${cleanup_receipt_dir}/example_renamed-repo-44.json"
+[[ ! -e "${cleanup_receipt_dir}/example_old-repo-44.json" ]]
+[[ ! -e "${receipt_dir}/example_old-repo-44.status" ]]
+grep -qx 'not-requested' "${receipt_dir}/example_renamed-repo-44.status"
+jq -e --arg created "$migration_created" --argjson lease_pid "$$" '
+	.repository == "example/renamed-repo"
+	and .created_at == $created
+	and .owner.session == "migration-session"
+	and .resource_cleanup_state == "CLEANUP_LEASED"
+	and .cleanup_lease.pid == $lease_pid
+	and .migration.from_repository == "example/old-repo"
+' "$migrated_receipt" >/dev/null
+full_loop_cleanup_owner_alive "$migrated_receipt"
+AIDEVOPS_FULL_LOOP_RECEIPT_DIR="$receipt_dir" AIDEVOPS_FULL_LOOP_CLEANUP_DIR="$cleanup_receipt_dir" \
+	PATH="${ROOT}/bin:/opt/homebrew/bin:/usr/bin:/bin" \
+	bash "$migration_runner" 44 example/old-repo example/renamed-repo >/dev/null
+printf 'PASS repository migration preserves owner, lease, creation, cleanup, and release evidence idempotently\n'
+
+successor_worktree="${ROOT}/successor-worktree"
+mkdir -p "$successor_worktree"
+full_loop_write_cleanup_deferred example/old-repo 44 "$successor_worktree" feature/successor \
+	"$$" successor-session pending FINALIZATION_PENDING >/dev/null
+selected_predecessor=$(full_loop_cleanup_receipt_for_worktree "$migration_worktree")
+[[ "$selected_predecessor" == "$migrated_receipt" ]]
+AIDEVOPS_FULL_LOOP_RECEIPT_DIR="$receipt_dir" AIDEVOPS_FULL_LOOP_CLEANUP_DIR="$cleanup_receipt_dir" \
+	PATH="${ROOT}/bin:/opt/homebrew/bin:/usr/bin:/bin" \
+	bash "$migration_runner" 44 example/old-repo example/renamed-repo >/dev/null
+[[ -f "${cleanup_receipt_dir}/example_old-repo-44.json" ]]
+printf 'PASS old-slug reuse cannot associate the predecessor worktree with the successor receipt\n'
+
+conflict_source_worktree="${ROOT}/conflict-source"
+conflict_destination_worktree="${ROOT}/conflict-destination"
+mkdir -p "$conflict_source_worktree" "$conflict_destination_worktree"
+full_loop_write_cleanup_deferred example/conflict-old 45 "$conflict_source_worktree" feature/conflict-old \
+	"$$" conflict-old-session not-requested FINALIZATION_PENDING >/dev/null
+full_loop_write_cleanup_deferred example/conflict-new 45 "$conflict_destination_worktree" feature/conflict-new \
+	"$$" conflict-new-session not-requested FINALIZATION_PENDING >/dev/null
+printf '%s\n' not-requested >"${receipt_dir}/example_conflict-old-45.status"
+if AIDEVOPS_FULL_LOOP_RECEIPT_DIR="$receipt_dir" AIDEVOPS_FULL_LOOP_CLEANUP_DIR="$cleanup_receipt_dir" \
+	PATH="${ROOT}/bin:/opt/homebrew/bin:/usr/bin:/bin" \
+	bash "$migration_runner" 45 example/conflict-old example/conflict-new >/dev/null 2>&1; then
+	printf 'FAIL repository migration accepted conflicting destination evidence\n'
+	exit 1
+fi
+[[ -f "${cleanup_receipt_dir}/example_conflict-old-45.json" ]]
+[[ -f "${cleanup_receipt_dir}/example_conflict-new-45.json" ]]
+[[ -f "${receipt_dir}/example_conflict-old-45.status" ]]
+printf 'PASS repository migration fails closed and preserves conflicting source and destination evidence\n'
 
 rm -f "${receipt_dir}/marcusquinn_aidevops-42.status"
 stale_calls="${ROOT}/stale-evidence-calls.txt"

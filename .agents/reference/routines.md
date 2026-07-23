@@ -50,6 +50,17 @@ material, dispatch paths, and logs remain private with restrictive modes.
 | `monthly(N@HH:MM)` | `monthly(1@09:00)` | Day N of each month |
 | `cron(expr)` | `cron(15 2 * * *)` | Complex schedules only |
 
+Calendar expressions use the host-local timezone by default. Set
+`AIDEVOPS_SCHEDULE_TIMEZONE` to an IANA timezone when a fleet needs an explicit
+shared contract. `is-due` and `next-run` use the same local-calendar boundaries:
+a run is due when its last successful/terminal run predates the latest boundary.
+This catches up missed slots and prevents an off-slot bootstrap or manual run from
+suppressing the next boundary. Repeated fall-back hours belong to their first
+occurrence; nonexistent spring-forward local times fail closed with a diagnostic.
+Only successful runs advance `last_run`. Active runs remain blocked for up to six
+hours, and failures retry after 15 minutes by default
+(`AIDEVOPS_ROUTINE_FAILURE_RETRY_SECONDS`) rather than waiting a full period.
+
 ## Dispatch rules
 
 1. `run:` present → execute script directly (deterministic-first)
@@ -58,6 +69,17 @@ material, dispatch paths, and logs remain private with restrictive modes.
 4. Neither → try `custom/scripts/{routine_id}.sh` (e.g. `r001.sh`), else `agent:Build+`
 
 Use `run:` for scripts, exports, health checks. Use `agent:` when judgment or summarisation is needed.
+
+## Scheduler ownership
+
+Enabled `repeat:` routines in registered repositories are normally evaluated by
+the shared supervisor Pulse. Their schedule definition and enabled state live in
+the repository `TODO.md`; they do not receive a dedicated launchd or systemd unit.
+Check the Pulse service plus the routine state file when diagnosing a missed run.
+
+Only routines explicitly documented as persistent or externally scheduled use a
+dedicated platform unit. Generated routine descriptions name that unit when one
+exists; do not derive a service label from the routine title or ID.
 
 ## Anti-patterns
 

@@ -59,6 +59,56 @@ create_broken_log() {
 	return 0
 }
 
+create_large_broken_log() {
+	local log_file="$1"
+	local count="$2"
+	python3 - "$log_file" "$count" <<'PY'
+import hashlib
+import json
+import sys
+
+path, count_text = sys.argv[1:]
+count = int(count_text)
+previous = "0" * 64
+with open(path, "w", encoding="utf-8") as stream:
+    for index in range(1, count + 1):
+        entry = {
+            "seq": index,
+            "ts": "2026-07-23T00:00:00Z",
+            "type": "operation.verify",
+            "msg": f"large fixture {index} — café",
+            "detail": {"nested": {"index": str(index)}, "escaped": "line\\nvalue"},
+            "actor": "test",
+            "host": "fixture",
+            "prev_hash": "f" * 64 if count > 2 and index == count // 2 else previous,
+        }
+        canonical = json.dumps(entry, ensure_ascii=False, separators=(",", ":"))
+        entry["hash"] = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+        stream.write(json.dumps(entry, ensure_ascii=False, separators=(",", ":")) + "\n")
+        previous = entry["hash"]
+PY
+	return $?
+}
+
+assert_verifier_parity() {
+	local description="$1"
+	local log_file="$2"
+	local fast_rc=0
+	local legacy_rc=0
+	local fast_output=""
+	local legacy_output=""
+	fast_output=$(AUDIT_LOG_FILE="$log_file" AUDIT_QUIET=true "$AUDIT_HELPER" verify --quiet 2>&1) || fast_rc=$?
+	legacy_output=$(AUDIT_FORCE_LEGACY_VERIFIER=true AUDIT_LOG_FILE="$log_file" AUDIT_QUIET=true \
+		"$AUDIT_HELPER" verify --quiet 2>&1) || legacy_rc=$?
+	if [[ "$fast_rc" -eq "$legacy_rc" ]] &&
+		[[ "$fast_output" == *"Entry "* || "$legacy_output" != *"Entry "* || "$fast_rc" -eq 0 ]]; then
+		pass "$description"
+	else
+		fail "${description}: fast_rc=${fast_rc} legacy_rc=${legacy_rc}"
+	fi
+	return 0
+}
+
 assert_chain_intact() {
 	local description="$1"
 	local log_file="$2"
@@ -253,6 +303,18 @@ else
 	fail "recovery changed or accepted an intact chain"
 fi
 
+PARITY_VALID_LOG="${TEST_ROOT}/parity-valid.jsonl"
+create_large_broken_log "$PARITY_VALID_LOG" 2
+assert_verifier_parity "single-process verifier matches legacy valid Unicode/nested verdict" "$PARITY_VALID_LOG"
+
+PARITY_BROKEN_LOG="${TEST_ROOT}/parity-broken.jsonl"
+create_broken_log "$PARITY_BROKEN_LOG"
+assert_verifier_parity "single-process verifier matches legacy broken-link diagnostics" "$PARITY_BROKEN_LOG"
+
+PARITY_MALFORMED_LOG="${TEST_ROOT}/parity-malformed.jsonl"
+printf '{"broken":true}\nnot-json\n' >"$PARITY_MALFORMED_LOG"
+assert_verifier_parity "single-process verifier matches legacy malformed verdict" "$PARITY_MALFORMED_LOG"
+
 AMBIGUOUS_LOG="${TEST_ROOT}/ambiguous.jsonl"
 printf '{"broken":true}\n' >"$AMBIGUOUS_LOG"
 ambiguous_sha256="$(sha256_file "$AMBIGUOUS_LOG")"
@@ -265,6 +327,31 @@ if [[ "$ambiguous_rc" -ne 0 && "$(sha256_file "$AMBIGUOUS_LOG")" == "$ambiguous_
 else
 	fail "recovery changed or accepted ambiguous evidence"
 fi
+
+LARGE_LOG="${TEST_ROOT}/large.jsonl"
+create_large_broken_log "$LARGE_LOG" 30000
+large_source_sha256="$(sha256_file "$LARGE_LOG")"
+SECONDS=0
+large_verify_rc=0
+AUDIT_LOG_FILE="$LARGE_LOG" AUDIT_QUIET=true "$AUDIT_HELPER" verify --quiet >/dev/null 2>&1 || large_verify_rc=$?
+large_verify_seconds=$SECONDS
+if [[ "$large_verify_rc" -ne 0 && "$large_verify_seconds" -lt 30 ]]; then
+	pass "30,000-entry verification is bounded below 30 seconds"
+else
+	fail "30,000-entry verification exceeded the bound or accepted the broken chain"
+fi
+SECONDS=0
+AUDIT_LOG_FILE="$LARGE_LOG" AUDIT_QUIET=true "$AUDIT_HELPER" recover --reason "large bounded fixture"
+large_recovery_seconds=$SECONDS
+large_archive="$(first_archive "$LARGE_LOG")"
+if [[ "$large_recovery_seconds" -lt 30 ]] &&
+	[[ "$(sha256_file "$large_archive")" == "$large_source_sha256" ]] &&
+	[[ ! -w "$large_archive" ]]; then
+	pass "30,000-entry recovery preserves byte-identical read-only evidence below 30 seconds"
+else
+	fail "30,000-entry recovery violated performance or forensic guarantees"
+fi
+assert_chain_intact "large recovery activates an independently verifying successor" "$LARGE_LOG"
 
 CONCURRENT_LOG="${TEST_ROOT}/concurrent.jsonl"
 create_broken_log "$CONCURRENT_LOG"
