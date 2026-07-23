@@ -18,6 +18,9 @@ DIRTY_LINKED="${TEST_ROOT}/dirty-linked"
 OWNERSHIP_LINKED="${TEST_ROOT}/ownership-linked"
 INTEGRATION_LINKED="${TEST_ROOT}/integration-linked"
 RECOVERABLE_TRASH="${TEST_ROOT}/recoverable-trash"
+RECOVERABLE_FALLBACK_SOURCE="${TEST_ROOT}/recoverable-fallback-source"
+RECOVERABLE_FALLBACK_HOME="${TEST_ROOT}/recoverable-fallback-home"
+RECOVERABLE_FALLBACK_BIN="${TEST_ROOT}/recoverable-fallback-bin"
 SHIM_BIN="${TEST_ROOT}/bin"
 TEST_PATH="${SHIM_BIN}:/usr/bin:/bin:/usr/sbin:/sbin"
 FAILING_GIT="${TEST_ROOT}/failing-git"
@@ -266,6 +269,31 @@ compgen -G "${RECOVERABLE_TRASH}/*/recoverable-linked" >/dev/null || {
 	exit 1
 }
 printf 'PASS degraded cleanup emits completion only after recoverable move and exact metadata absence\n'
+
+mkdir -p "$RECOVERABLE_FALLBACK_SOURCE" "$RECOVERABLE_FALLBACK_HOME" "$RECOVERABLE_FALLBACK_BIN"
+printf 'recoverable fixture\n' >"${RECOVERABLE_FALLBACK_SOURCE}/fixture.txt"
+for backend in trash gio; do
+	cat >"${RECOVERABLE_FALLBACK_BIN}/${backend}" <<'EOF'
+#!/usr/bin/env bash
+exit 1
+EOF
+	chmod +x "${RECOVERABLE_FALLBACK_BIN}/${backend}"
+done
+if ! HOME="$RECOVERABLE_FALLBACK_HOME" PATH="$RECOVERABLE_FALLBACK_BIN:/usr/bin:/bin" \
+	_clean_move_worktree_recoverably "$RECOVERABLE_FALLBACK_SOURCE"; then
+	printf 'FAIL recoverable cleanup stopped after trash and gio backend failures: %s\n' \
+		"${_WT_CLEAN_RECOVERABLE_FAILURE_DETAIL:-unknown}"
+	exit 1
+fi
+[[ ! -e "$RECOVERABLE_FALLBACK_SOURCE" ]] || {
+	printf 'FAIL recoverable cleanup fallback left the source path in place\n'
+	exit 1
+}
+compgen -G "${RECOVERABLE_FALLBACK_HOME}/.Trash/aidevops-worktree-cleanup-*/recoverable-fallback-source" >/dev/null || {
+	printf 'FAIL recoverable cleanup did not fall through to the home trash bucket\n'
+	exit 1
+}
+printf 'PASS failed trash and gio backends fall through to the home trash bucket\n'
 
 move_failure_output=""
 if move_failure_output=$(

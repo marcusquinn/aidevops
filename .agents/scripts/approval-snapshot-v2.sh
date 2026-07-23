@@ -61,6 +61,10 @@ _approval_snapshot_v2_comments_json() {
 			and ((.body // $empty) | contains(") -->\nAuto-approved: "))
 			and ((.body // $empty) | contains(". Stale recovery tick reset."))
 		) | not)
+		| select((
+			((.author_association // $empty) == "OWNER" or (.author_association // $empty) == "MEMBER" or (.author_association // $empty) == "COLLABORATOR")
+			and ((.body // $empty) | test("^<!-- ops:start -->\\n> Interactive session claimed by @[^\\n]+ on [^\\n]+\\.\\n> Pulse dispatch blocked via `status:in-review` \\+ self-assignment\\.\\n<!-- ops:end -->\\n<!-- aidevops:sig -->\\n---\\n[^\\n]+\\n?$"))
+		) | not)
 		| {
 			source: $source,
 			id: .id,

@@ -300,6 +300,29 @@ Auto-approved: cryptographic approval verified. Stale recovery tick reset."
 	printf '%s\n' "$audit_comments" >"${FIXTURES}/comments-42.json"
 	assert_verify "trusted deterministic lifecycle audit comment is excluded" pr 42 VERIFIED 0 "$PR_HEAD"
 
+	reset_and_sign issue 41
+	local claim_marker="<!-- ops:start -->
+> Interactive session claimed by @maintainer on Linux.
+> Pulse dispatch blocked via \`status:in-review\` + self-assignment.
+<!-- ops:end -->
+<!-- aidevops:sig -->
+---
+[aidevops.sh](https://aidevops.sh) v3.32.175 automated scan."
+	local claim_comments=""
+	claim_comments=$(jq -c --arg body "$claim_marker" '.[0] += [{id:4303,node_id:"IC_4303",user:{id:1,node_id:"U_1",login:"maintainer",type:"User"},author_association:"OWNER",created_at:"2026-01-01T00:06:00Z",updated_at:"2026-01-01T00:06:00Z",body:$body}]' "${FIXTURES}/comments-41.json")
+	printf '%s\n' "$claim_comments" >"${FIXTURES}/comments-41.json"
+	assert_verify "trusted interactive claim audit does not stale issue approval" issue 41 VERIFIED 0
+
+	claim_comments=$(jq -c --arg body "$claim_marker" '.[0] += [{id:4304,node_id:"IC_4304",user:{id:105,node_id:"U_105",login:"external-author",type:"User"},author_association:"CONTRIBUTOR",created_at:"2026-01-01T00:07:00Z",updated_at:"2026-01-01T00:07:00Z",body:$body}]' "${FIXTURES}/comments-41.json")
+	printf '%s\n' "$claim_comments" >"${FIXTURES}/comments-41.json"
+	assert_verify "external claim-shaped comment still stales issue approval" issue 41 STALE_APPROVAL 4
+
+	reset_and_sign issue 41
+	claim_comments=$(jq -c --arg body "${claim_marker}
+extra trusted commentary" '.[0] += [{id:4305,node_id:"IC_4305",user:{id:1,node_id:"U_1",login:"maintainer",type:"User"},author_association:"OWNER",created_at:"2026-01-01T00:08:00Z",updated_at:"2026-01-01T00:08:00Z",body:$body}]' "${FIXTURES}/comments-41.json")
+	printf '%s\n' "$claim_comments" >"${FIXTURES}/comments-41.json"
+	assert_verify "trusted claim lookalike remains content-bound" issue 41 STALE_APPROVAL 4
+
 	reset_and_sign pr 42
 	local marker_drift="<!-- aidevops-signed-approval --> unsigned external drift"
 	local marker_comments=""
