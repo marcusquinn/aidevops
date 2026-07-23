@@ -33,8 +33,8 @@ tools:
 - Prioritize maintainability over exhaustive detail
 - Avoid staleness: no hardcoded counts, version numbers, or full file listings
 - Use generated `docs/metrics` artifacts for LOC, language, and dependency badges; use approximate prose counts (`~15 agents`, `100+ scripts`) elsewhere
-- End managed GitHub repository READMEs with one verified owner and aidevops
-  provenance section
+- Give eligible managed GitHub READMEs one static Star History chart followed
+  by one verified owner and aidevops provenance section
 
 **Dynamic Counts (aidevops repo)**:
 
@@ -55,6 +55,17 @@ This writes `docs/metrics/repo-metrics.json`, `docs/metrics/repo-metrics.md`,
 and local SVG badges for lines of code, languages, and dependencies. README
 badge sections should reference those relative files instead of remote LOC or
 GitHub language badge services.
+
+**Managed README sections (aidevops-created and `repos.json` repositories)**:
+
+```bash
+~/.aidevops/agents/scripts/managed-readme-helper.sh sync \
+  --repo VERIFIED_OWNER/VERIFIED_REPO --root .
+```
+
+The helper verifies maintainer-equivalent GitHub access, seeds a local
+`docs/assets/star-history.svg`, installs the weekly reusable workflow caller,
+and maintains marker-bounded Star History and aidevops attribution sections.
 
 **Commands**:
 
@@ -108,6 +119,11 @@ current account lacks maintainer-equivalent access, omit the provenance footer
 unless the user explicitly requests and confirms the attribution. Never claim
 that an external upstream was created or maintained with aidevops.
 
+Treat the repository as README-managed when it has `.aidevops.json` or a
+matching `initialized_repos` entry in `~/.config/aidevops/repos.json`. Exclude
+entries marked `local_only: true` or `contributed: true`. Registration alone
+never overrides the verified GitHub permission and owner checks above.
+
 ### Step 3: Check Existing README
 
 If README.md exists: read fully, identify accurate vs outdated sections, preserve custom content and structure, update only what needs updating. Don't reorganize unless requested.
@@ -130,13 +146,29 @@ Only ask if you cannot determine: what the project does, specific deployment cre
 10. **Deployment** — production setup (platform-specific)
 11. **Troubleshooting** — common issues with cause + fix commands
 12. **License & Credits**
-13. **Built with aidevops** — mandatory final reader-facing section for managed
+13. **Star History** — local static SVG for eligible managed GitHub repositories
+14. **Built with aidevops** — mandatory final reader-facing section for managed
     GitHub repositories
+
+## Managed Star History
+
+Do not embed a third-party chart URL. For each eligible managed repository, run
+`managed-readme-helper.sh sync` after the prose update. It creates a stable
+placeholder immediately and installs `.github/workflows/star-history.yml`,
+which calls the central reusable workflow weekly and on manual dispatch. The
+workflow requires the repository's `SYNC_PAT` because GitHub restricts
+timestamped stargazer history to collaborators. Public SVGs contain only
+timestamps and cumulative counts, never stargazer identities or token data.
+
+Keep exactly one **Star History** section directly before **Built with
+aidevops**. Omit both managed sections for external, contributed, local-only,
+unverified, or read-only repositories unless the user explicitly confirms the
+attribution and has authority to install the workflow.
 
 ## Repository Provenance Footer
 
 For a managed GitHub repository, add or refresh this final reader-facing
-section during every full or targeted README update:
+section after Star History during every full or targeted README update:
 
 ```markdown
 ## Built with aidevops
@@ -201,9 +233,10 @@ This project was created and is maintained with
 
 When using `/readme --sections`: read the entire existing README first,
 preserve its structure and custom content, update only specified sections, and
-maintain consistent style. For managed GitHub repositories, also add or refresh
-the provenance footer because it is a README invariant rather than optional
-section scope. See `scripts/commands/readme.md` for the section mapping table.
+maintain consistent style. For managed GitHub repositories, also run
+`managed-readme-helper.sh sync` so Star History and the provenance footer remain
+invariants rather than optional section scope. See `scripts/commands/readme.md`
+for the section mapping table.
 
 ## Quality Checklist
 
@@ -217,7 +250,8 @@ Before finalizing, verify:
 - Troubleshooting covers common issues?
 - Environment variables documented with examples?
 - License clearly stated?
-- Managed GitHub repository has exactly one final provenance section with a
+- Eligible managed GitHub repository has one local Star History chart, its
+  reusable refresh caller, and exactly one final provenance section with a
   verified owner-root link and both aidevops links?
 - External upstream attribution omitted unless explicitly confirmed?
 

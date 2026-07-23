@@ -12,13 +12,14 @@ usage() {
 	printf '%s\n' 'Usage:'
 	printf '%s\n' '  star-history-helper.sh fetch --repo OWNER/REPO --output FILE'
 	printf '%s\n' '  star-history-helper.sh render --repo OWNER/REPO --input FILE --output FILE'
+	printf '%s\n' '  star-history-helper.sh seed --repo OWNER/REPO --output FILE'
 	return 0
 }
 
 main() {
 	local command="${1:-}"
 	case "$command" in
-	fetch | render)
+	fetch | render | seed)
 		shift
 		;;
 	help | --help | -h)

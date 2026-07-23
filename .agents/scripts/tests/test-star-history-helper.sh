@@ -9,6 +9,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit 1
 REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)" || exit 1
 HELPER="$REPO_ROOT/.agents/scripts/star-history-helper.sh"
 WORKFLOW="$REPO_ROOT/.github/workflows/update-star-history.yml"
+REUSABLE_WORKFLOW="$REPO_ROOT/.github/workflows/star-history-reusable.yml"
+CALLER_TEMPLATE="$REPO_ROOT/.agents/templates/workflows/star-history-caller.yml"
 DOCS_WORKFLOW="$REPO_ROOT/.github/workflows/update-website-docs.yml"
 TESTS_RUN=0
 TESTS_FAILED=0
@@ -84,6 +86,9 @@ test_empty_and_single_point() {
 	bash "$HELPER" render --repo marcusquinn/aidevops --input "$single" --output "$single_svg"
 	assert_contains "empty input renders a stable placeholder" "$empty_svg" "No star history available"
 	assert_contains "single point renders without division errors" "$single_svg" "1 star"
+	local seeded_svg="$temp_dir/seeded.svg"
+	bash "$HELPER" seed --repo exampleorg/example --output "$seeded_svg"
+	assert_contains "seed command creates an immediate placeholder" "$seeded_svg" "No star history available"
 	return 0
 }
 
@@ -103,9 +108,15 @@ test_safe_input_handling() {
 test_workflow_contract() {
 	# shellcheck disable=SC2016 # GitHub expression is an intentional literal contract.
 	local token_contract='GH_TOKEN: ${{ secrets.SYNC_PAT }}'
+	# shellcheck disable=SC2016 # GitHub expression is an intentional literal contract.
+	local caller_token_contract='SYNC_PAT: ${{ secrets.SYNC_PAT }}'
 	assert_contains "workflow has a weekly schedule" "$WORKFLOW" "cron: '17 3 * * 0'"
 	assert_contains "workflow requires owner-authorised token" "$WORKFLOW" "$token_contract"
 	assert_contains "workflow generates only the static asset" "$WORKFLOW" "docs/assets/star-history.svg"
+	assert_contains "reusable workflow uses caller repository identity" "$REUSABLE_WORKFLOW" 'GITHUB_REPOSITORY'
+	assert_contains "reusable workflow requires SYNC_PAT" "$REUSABLE_WORKFLOW" 'required: true'
+	assert_contains "caller schedules weekly refresh" "$CALLER_TEMPLATE" "cron: '17 3 * * 0'"
+	assert_contains "caller maps owner-authorised token" "$CALLER_TEMPLATE" "$caller_token_contract"
 	assert_contains "docs sync watches chart updates" "$DOCS_WORKFLOW" "'docs/assets/star-history.svg'"
 	assert_contains "docs conversion uses the published website asset" "$DOCS_WORKFLOW" "'](/star-history.svg)'"
 	assert_contains "docs sync publishes chart asset" "$DOCS_WORKFLOW" "cp docs/assets/star-history.svg website/star-history.svg"
