@@ -7,6 +7,7 @@ on:
     branches: [main]
     paths:
       - 'README.md'
+      - 'docs/assets/star-history.svg'
   workflow_dispatch:
 
 concurrency:
@@ -43,11 +44,17 @@ jobs:
           });
 
           let readme = fs.readFileSync('README.md', 'utf8');
+
+          // The generated docs site publishes this local README asset at its root.
+          readme = readme.replace(
+            /\]\(docs\/assets\/star-history\.svg\)/g,
+            '](/star-history.svg)'
+          );
           
           // Convert relative links to absolute GitHub URLs
           // Matches markdown links like [text](.agents/file.md) or [text](LICENSE)
           const repoBase = 'https://github.com/marcusquinn/aidevops/blob/main/';
-          readme = readme.replace(/\]\((?!http|#|mailto:)([^)]+)\)/g, (match, path) => {
+          readme = readme.replace(/\]\((?!https?:|#|mailto:|\/)([^)]+)\)/g, (match, path) => {
             return `](${repoBase}${path})`;
           });
           
@@ -212,18 +219,19 @@ jobs:
           COMMIT_SHA: ${{ github.sha }}
         run: |
           cp docs.html website/docs.html
+          cp docs/assets/star-history.svg website/star-history.svg
           cd website
           
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           
           # Check if there are changes
-          if git diff --quiet docs.html 2>/dev/null; then
-            echo "No changes to docs.html"
+          if git diff --quiet docs.html star-history.svg 2>/dev/null; then
+            echo "No changes to docs.html or star-history.svg"
             exit 0
           fi
           
-          git add docs.html
+          git add docs.html star-history.svg
           git commit -m "docs: sync from aidevops README.md
 
           Auto-generated from marcusquinn/aidevops README.md

@@ -2900,8 +2900,4 @@ bash <(curl -fsSL https://aidevops.sh/install)
 
 ## Star History
 
-[View the aidevops star history on Star History](https://star-history.com/#marcusquinn/aidevops&Date).
-
-> GitHub now restricts historical stargazer data to repository collaborators,
-> so Star History requires an authorised GitHub session instead of supporting a
-> public README chart.
+![aidevops stars over time](docs/assets/star-history.svg)

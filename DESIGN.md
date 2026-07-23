@@ -299,6 +299,7 @@ Do:
 - Use semantic tokens from this file before adding new hex values.
 - Keep dashboards compact, structured, and border-defined.
 - For chart-heavy operational dashboards, prefer OpenPanel-style space efficiency and Bklit-style compact chart cards: KPI header, tiny delta, bar/sparkline combination, and dense legends that keep Pulse and worker health scannable at a glance.
+- Public repository charts should use the GitHub-dark console palette, support matching light and dark surfaces, include accessible SVG titles/descriptions, and remain legible at README width without interaction.
 - Use green for safe primary operations and red only for destructive/error states.
 - Preserve high contrast and readable 12px+ metadata.
 - Keep generated reports and brand handoffs free of private local paths, secrets, raw transcripts, and unrelated repo names.
