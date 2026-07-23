@@ -10,6 +10,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.32.176] - 2026-07-24
+
+### Changed
+
+- Documentation: standardize Cloudron community publishing (#28547)
+- Maintenance: sync ref:GH#28546 to TODO.md [skip ci]
+- Maintenance: update simplification state registry
+
 ## [3.32.175] - 2026-07-23
 
 ### Changed
