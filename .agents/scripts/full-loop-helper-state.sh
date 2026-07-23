@@ -311,6 +311,15 @@ _full_loop_invoke_authorized_release() {
 		print_error "Authorized release requires a persisted PR number"
 		return 1
 	}
+	local reconciliation_status=0
+	_full_loop_reconcile_detached_publication_receipt || reconciliation_status=$?
+	case "$reconciliation_status" in
+	0) return 0 ;;
+	2)
+		print_error "release:published receipt could not be reconciled into lifecycle state"
+		return 1
+		;;
+	esac
 	local runner="${AIDEVOPS_FULL_LOOP_RELEASE_RUNNER:-${SCRIPT_DIR}/full-loop-release-helper.sh}"
 	[[ -x "$runner" ]] || {
 		print_error "Authorized release runner is unavailable: $runner"
@@ -1094,6 +1103,40 @@ cmd_logs() {
 	tail -n "$lines" "$log_file"
 }
 
+_full_loop_reconcile_published_release_receipt() {
+	local repo="$1"
+	local pr_number="$2"
+	local receipt_path=""
+	local receipt_status=""
+	local previous_status="${RELEASE_STATUS:-}"
+	receipt_path=$(_full_loop_release_receipt_path "$repo" "$pr_number") || return 1
+	[[ -f "$receipt_path" ]] || return 1
+	IFS= read -r receipt_status <"$receipt_path" || return 1
+	[[ "$receipt_status" == "$_FULL_LOOP_RELEASE_PUBLISHED" ]] || return 1
+	RELEASE_STATUS="$_FULL_LOOP_RELEASE_PUBLISHED"
+	if ! save_state "${CURRENT_PHASE:-${PHASE:-complete}}" "$SAVED_PROMPT" "$pr_number" \
+		"${STARTED_AT:-$(date -u '+%Y-%m-%dT%H:%M:%SZ')}"; then
+		RELEASE_STATUS="$previous_status"
+		return 1
+	fi
+	return 0
+}
+
+_full_loop_reconcile_detached_publication_receipt() {
+	local receipt_repo=""
+	local receipt_path=""
+	local receipt_status=""
+	[[ "${PR_NUMBER:-}" =~ ^[0-9]+$ ]] || return 1
+	receipt_repo=$(_full_loop_resolve_repo "${AIDEVOPS_FULL_LOOP_REPO:-}" 2>/dev/null || true)
+	[[ -n "$receipt_repo" ]] || return 1
+	receipt_path=$(_full_loop_release_receipt_path "$receipt_repo" "$PR_NUMBER") || return 1
+	[[ -f "$receipt_path" ]] || return 1
+	IFS= read -r receipt_status <"$receipt_path" || return 1
+	[[ "$receipt_status" == "$_FULL_LOOP_RELEASE_PUBLISHED" ]] || return 1
+	_full_loop_reconcile_published_release_receipt "$receipt_repo" "$PR_NUMBER" || return 2
+	return 0
+}
+
 cmd_complete() {
 	load_state 2>/dev/null || {
 		print_error "Cannot complete full loop without persisted lifecycle state"
@@ -1102,6 +1145,17 @@ cmd_complete() {
 	if [[ ! "${PR_NUMBER:-}" =~ ^[0-9]+$ ]]; then
 		print_error "Cannot complete full loop without a verified PR number"
 		return 1
+	fi
+	local repo=""
+	repo=$(_full_loop_resolve_repo "${AIDEVOPS_FULL_LOOP_REPO:-}") || {
+		print_error "Cannot resolve repository for deferred cleanup handoff"
+		return 1
+	}
+	if [[ "${RELEASE_STATUS:-}" == "authorized" ]]; then
+		_full_loop_reconcile_published_release_receipt "$repo" "$PR_NUMBER" || {
+			print_error "Cleanup blocked: release:${RELEASE_STATUS} is not terminal-success"
+			return 1
+		}
 	fi
 	case "${RELEASE_STATUS:-$_FULL_LOOP_RELEASE_NOT_REQUESTED}" in
 	failed | authorized)
@@ -1117,14 +1171,9 @@ cmd_complete() {
 	local current_root=""
 	current_root=$(git rev-parse --show-toplevel 2>/dev/null || true)
 	local current_branch=""
-	local repo=""
 	local owner_pid=""
 	local owner_session="${AIDEVOPS_SESSION_ID:-${OPENCODE_SESSION_ID:-${CLAUDE_SESSION_ID:-full-loop-complete}}}"
 	current_branch=$(git branch --show-current 2>/dev/null || true)
-	repo=$(_full_loop_resolve_repo "${AIDEVOPS_FULL_LOOP_REPO:-}") || {
-		print_error "Cannot resolve repository for deferred cleanup handoff"
-		return 1
-	}
 	owner_pid="${PPID:-}"
 	if declare -F _resolve_worktree_owner_pid >/dev/null 2>&1; then
 		owner_pid=$(_resolve_worktree_owner_pid "" 2>/dev/null || printf '%s' "${PPID:-}")

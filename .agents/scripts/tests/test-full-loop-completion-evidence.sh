@@ -155,7 +155,9 @@ print_info() { return 0; }
 print_warning() { return 0; }
 print_success() { return 0; }
 print_phase() { return 0; }
-is_headless() { return 1; }
+is_headless() {
+	return 1
+}
 source '${SCRIPTS_DIR}/shared-constants.sh'
 source '${SCRIPTS_DIR}/full-loop-helper-state.sh'
 mkdir -p "\$STATE_DIR"
@@ -174,6 +176,7 @@ printf '%s\n' "\$RELEASE_STATUS"
 RUNNER
 chmod +x "$state_runner"
 
+rm -f "${receipt_dir}/marcusquinn_aidevops-42.status"
 : >"${ROOT}/release-calls.log"
 flow_env=(AIDEVOPS_FULL_LOOP_RECEIPT_DIR="$receipt_dir" AIDEVOPS_FULL_LOOP_REPO=marcusquinn/aidevops AIDEVOPS_FULL_LOOP_RELEASE_RUNNER="${ROOT}/release-runner.sh" RELEASE_CALL_LOG="${ROOT}/release-calls.log")
 output=$(env "${flow_env[@]}" TEST_RELEASE_TYPE=minor TEST_DEPLOYMENT_SCOPE=full bash "$state_runner")
@@ -182,6 +185,12 @@ status="${output##*$'\n'}"
 grep -qx 'minor 42 full' "${ROOT}/release-calls.log"
 grep -qx 'published' "${receipt_dir}/marcusquinn_aidevops-42.status"
 printf 'PASS authorized lifecycle invokes release and persists published status\n'
+
+: >"${ROOT}/release-calls.log"
+output=$(env "${flow_env[@]}" bash "$state_runner")
+status="${output##*$'\n'}"
+[[ "$status" == "published" && ! -s "${ROOT}/release-calls.log" ]]
+printf 'PASS published detached-release receipt prevents duplicate publication\n'
 
 : >"${ROOT}/release-calls.log"
 output=$(env "${flow_env[@]}" TEST_RELEASE_INTENT=false TEST_RELEASE_STATUS=not-requested bash "$state_runner")
@@ -234,10 +243,10 @@ source '${SCRIPTS_DIR}/shared-constants.sh'
 source '${SCRIPTS_DIR}/full-loop-helper-state.sh'
 CURRENT_PHASE=complete
 SAVED_PROMPT=test
-PR_NUMBER=43
+PR_NUMBER="\${TEST_PR_NUMBER:-43}"
 STARTED_AT=2026-07-11T00:00:00Z
-RELEASE_STATUS=not-requested
-save_state complete test 43 "\$STARTED_AT"
+RELEASE_STATUS="\${TEST_RELEASE_STATUS:-not-requested}"
+save_state complete test "\$PR_NUMBER" "\$STARTED_AT"
 cmd_complete
 cmd_status --json
 RUNNER
@@ -250,6 +259,33 @@ printf '%s' "$handoff_json" | jq -e \
 jq -e '.executor_completion_state == "COMPLETE" and .release_status == "not-requested"' \
 	"${cleanup_receipt_dir}/testorg_repo-43.json" >/dev/null
 printf 'PASS interactive completion emits durable executor handoff and machine-readable cleanup state\n'
+
+printf '%s\n' published >"${receipt_dir}/marcusquinn_aidevops-44.status"
+published_handoff_output=$(AIDEVOPS_FULL_LOOP_REPO=marcusquinn/aidevops \
+	AIDEVOPS_FULL_LOOP_RECEIPT_DIR="$receipt_dir" AIDEVOPS_FULL_LOOP_CLEANUP_DIR="$cleanup_receipt_dir" \
+	TEST_PR_NUMBER=44 TEST_RELEASE_STATUS=authorized bash "$handoff_runner")
+printf '%s\n' "$published_handoff_output" | grep -q '<promise>FULL_LOOP_CLEANUP_DEFERRED</promise>'
+grep -q '^release_status: published$' "${ROOT}/handoff-state/full-loop.state"
+jq -e '.executor_completion_state == "COMPLETE" and .release_status == "published"' \
+	"${cleanup_receipt_dir}/marcusquinn_aidevops-44.json" >/dev/null
+printf 'PASS matching published receipt atomically promotes stale authorized lifecycle state\n'
+
+for invalid_case in missing failed mismatched; do
+	invalid_pr=45
+	rm -f "${receipt_dir}/marcusquinn_aidevops-45.status"
+	case "$invalid_case" in
+	failed) printf '%s\n' failed >"${receipt_dir}/marcusquinn_aidevops-45.status" ;;
+	mismatched) printf '%s\n' published >"${receipt_dir}/other_repo-45.status" ;;
+	esac
+	if AIDEVOPS_FULL_LOOP_REPO=marcusquinn/aidevops AIDEVOPS_FULL_LOOP_RECEIPT_DIR="$receipt_dir" \
+		AIDEVOPS_FULL_LOOP_CLEANUP_DIR="$cleanup_receipt_dir" TEST_PR_NUMBER="$invalid_pr" \
+		TEST_RELEASE_STATUS=authorized bash "$handoff_runner" >/dev/null 2>&1; then
+		printf 'FAIL %s release receipt allowed stale authorized lifecycle completion\n' "$invalid_case"
+		exit 1
+	fi
+	grep -q '^release_status: authorized$' "${ROOT}/handoff-state/full-loop.state"
+done
+printf 'PASS missing failed and mismatched receipts keep authorized lifecycle blocked\n'
 
 AIDEVOPS_CLEANUP_LOG="$cleanup_log" PATH="${ROOT}/bin:/opt/homebrew/bin:/usr/bin:/bin" bash "$runner" 42 "$removed_path" testorg/repo >/dev/null || {
 	printf 'FAIL complete merged and cleaned evidence was rejected\n'
