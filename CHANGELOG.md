@@ -10,6 +10,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.32.170] - 2026-07-23
+
+### Added
+
+- manage README star history and attribution (#28530)
+
+### Changed
+
+- Maintenance: update simplification state registry
+
+### Fixed
+
+- verify updater against active runtime bundle (#28529)
+
 ## [3.32.169] - 2026-07-23
 
 ### Added
