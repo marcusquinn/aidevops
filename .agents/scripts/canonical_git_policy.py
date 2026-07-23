@@ -10,12 +10,14 @@ import re
 import shutil
 import subprocess
 from pathlib import Path
-from typing import Callable
+
+from canonical_git_readonly import CANONICAL_CHECKS
 
 BLOCK_EXIT = 42
 READ_ONLY = {
     "status",
-    "diff", "diff-files",
+    "diff",
+    "diff-files",
     "log",
     "show",
     "rev-parse",
@@ -123,111 +125,6 @@ def _split_invocation(
             continue
         return prefix, base_cwd, arg, argv[index + 1 :]
     return prefix, base_cwd, "", argv[index:]
-
-
-def _branch_is_read_only(args: list[str]) -> bool:
-    if not args:
-        return True
-    mutating = {
-        "-d",
-        "-D",
-        "-m",
-        "-M",
-        "-c",
-        "-C",
-        "-f",
-        "--delete",
-        "--move",
-        "--copy",
-        "--force",
-        "--edit-description",
-        "--set-upstream-to",
-        "--unset-upstream",
-    }
-    if any(
-        arg in mutating or arg.startswith(("--move=", "--copy=", "--set-upstream-to="))
-        for arg in args
-    ):
-        return False
-    listing = any(
-        arg in {"--list", "--contains", "--merged", "--no-merged", "--points-at"}
-        or arg.startswith(("--contains=", "--merged=", "--no-merged=", "--points-at="))
-        for arg in args
-    )
-    return listing or all(arg.startswith("-") or arg in {"HEAD", "@"} for arg in args)
-
-
-def _config_is_read_only(args: list[str]) -> bool:
-    read_flags = {
-        "--get",
-        "--get-all",
-        "--get-regexp",
-        "--get-urlmatch",
-        "--list",
-        "-l",
-        "--show-origin",
-        "--show-scope",
-        "--name-only",
-        "--includes",
-        "--null",
-        "-z",
-    }
-    write_flags = {
-        "--add",
-        "--unset",
-        "--unset-all",
-        "--rename-section",
-        "--remove-section",
-        "--replace-all",
-    }
-    return (
-        bool(args)
-        and any(arg in read_flags for arg in args)
-        and not any(arg in write_flags for arg in args)
-    )
-
-
-def _clean_is_read_only(args: list[str]) -> bool:
-    return any(
-        arg == "--dry-run"
-        or (arg.startswith("-") and not arg.startswith("--") and "n" in arg[1:])
-        for arg in args
-    )
-
-
-def _remote_is_read_only(args: list[str]) -> bool:
-    return not args or args[0] in {"-v", "--verbose", "get-url", "show"}
-
-
-def _worktree_is_allowed(args: list[str]) -> bool:
-    return bool(args) and args[0] in {"list", "add"}
-
-
-def _tag_is_read_only(args: list[str]) -> bool:
-    return not args or any(
-        arg in {"-l", "--list", "--contains", "--points-at"}
-        or arg.startswith(("--contains=", "--points-at="))
-        for arg in args
-    )
-
-
-def _symbolic_ref_is_read_only(args: list[str]) -> bool:
-    read_flags = {"-q", "--quiet", "--short", "--recurse", "--no-recurse"}
-    return (
-        sum(arg not in read_flags for arg in args) == 1
-        and all(arg in read_flags or not arg.startswith("-") for arg in args)
-    )
-
-
-CANONICAL_CHECKS: dict[str, Callable[[list[str]], bool]] = {
-    "branch": _branch_is_read_only,
-    "config": _config_is_read_only,
-    "clean": _clean_is_read_only,
-    "remote": _remote_is_read_only,
-    "symbolic-ref": _symbolic_ref_is_read_only,
-    "worktree": _worktree_is_allowed,
-    "tag": _tag_is_read_only,
-}
 
 
 def _is_allowed_canonical(subcommand: str, args: list[str]) -> bool:
