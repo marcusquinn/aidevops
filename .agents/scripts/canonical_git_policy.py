@@ -15,8 +15,7 @@ from typing import Callable
 BLOCK_EXIT = 42
 READ_ONLY = {
     "status",
-    "diff",
-    "diff-files",
+    "diff", "diff-files",
     "log",
     "show",
     "rev-parse",
