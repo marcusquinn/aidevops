@@ -22,10 +22,14 @@ trap teardown EXIT
 export HOME="${TEST_ROOT}/home"
 export AIDEVOPS_FULL_LOOP_CLEANUP_DIR="${TEST_ROOT}/cleanup-receipts"
 export AIDEVOPS_CLEANUP_LOG="${TEST_ROOT}/cleanup.log"
+export WORKTREE_REGISTRY_DIR="${TEST_ROOT}/registry"
+export WORKTREE_REGISTRY_DB="${WORKTREE_REGISTRY_DIR}/worktree-registry.db"
 mkdir -p "$HOME" "${TEST_ROOT}/worktree-one" "${TEST_ROOT}/worktree-two"
 
 # shellcheck source=../full-loop-cleanup-receipt.sh
 source "${SCRIPTS_DIR}/full-loop-cleanup-receipt.sh"
+# shellcheck source=../shared-worktree-registry.sh
+source "${SCRIPTS_DIR}/shared-worktree-registry.sh"
 
 sleep 30 &
 OWNER_PID=$!
@@ -48,9 +52,6 @@ _WTAR_WH_CALLER="test"
 _WT_CLEAN_MODE_SKIPPED="skipped"
 _WT_CLEAN_REASON_OWNED_SKIP="owned-skip"
 log_worktree_removal_event() { return 0; }
-claim_worktree_ownership() { return 0; }
-unregister_worktree_if_owner_pid() { return 0; }
-is_worktree_owned_by_others() { return 1; }
 # shellcheck source=../worktree-clean-lib.sh
 source "${SCRIPTS_DIR}/worktree-clean-lib.sh"
 _clean_deferred_parent_alive "${TEST_ROOT}/worktree-one"
@@ -71,11 +72,21 @@ printf 'PASS guarded cleanup treats PID reuse as an expired owner generation\n'
 
 receipt_one=$(full_loop_write_cleanup_deferred example/repo 101 "${TEST_ROOT}/worktree-one" feature/one \
 	"$OWNER_PID" session-one not-requested)
+export OPENCODE_PID="$OWNER_PID"
 _clean_acquire_removal_lease "${TEST_ROOT}/worktree-one" feature/one
+if _clean_removal_lease_owned_by_others "${TEST_ROOT}/worktree-one"; then
+	printf 'FAIL cleanup exact-PID owner check rejected its own registry lease\n'
+	exit 1
+fi
+if ! is_worktree_owned_by_others "${TEST_ROOT}/worktree-one"; then
+	printf 'FAIL generic stable-runtime owner check unexpectedly matched the leaf cleanup lease\n'
+	exit 1
+fi
 jq -e --argjson lease_pid "$$" \
 	'.resource_cleanup_state == "CLEANUP_LEASED" and .cleanup_lease.state == "acquired" and .cleanup_lease.pid == $lease_pid' \
 	"$receipt_one" >/dev/null
 printf 'PASS cleanup supervisor acquires a durable lease\n'
+printf 'PASS cleanup lease survives a real registry round trip with distinct runtime and leaf PIDs\n'
 
 printf '[2026-07-21T00:00:00Z] [test] worktree-removed: %s — branch-merged — mode=permanent\n' \
 	"${TEST_ROOT}/worktree-one" >>"$AIDEVOPS_CLEANUP_LOG"
