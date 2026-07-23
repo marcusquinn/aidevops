@@ -4695,3 +4695,5 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [x] t18168 Harden Pulse PR lifecycle-state normalization at merge boundaries #bug ref:GH#28396 pr:#28397 completed:2026-07-21
 
 - [x] t18169 Fix init-generated Markdown for default markdownlint #bug ref:GH#28487 pr:#28488 completed:2026-07-22
+
+- [ ] t18170 Standardize Cloudron community publishing lifecycle #bug ref:GH#28546
