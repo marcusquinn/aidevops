@@ -37,7 +37,7 @@ tools:
 6. Read env vars fresh on every start (values change across restarts) — never cache at startup
 7. Health check path must return HTTP 200 unauthenticated
 
-**File Structure**: `CloudronManifest.json`, `Dockerfile`, `start.sh`, `logo.png` (256x256).
+**File Structure**: `CloudronManifest.json`, `Dockerfile`, `start.sh`, `logo.png` (256×256). Independently distributed packages also keep `CloudronVersions.json`, a Cloudron-format changelog, a publishing runbook, and at least one privacy-reviewed screenshot or 3:1 hero; follow `cloudron-app-publishing-skill.md`.
 
 **CLI Workflow**:
 
@@ -320,4 +320,11 @@ actions and require explicit authorization.
 
 ## Publishing
 
-Fork https://git.cloudron.io/cloudron/appstore, add your app directory with manifest and icon, submit a merge request. See: https://docs.cloudron.io/packaging/publishing/
+Independent/community packages publish registry images through a hosted
+`CloudronVersions.json`; they are not submitted by forking the official app
+store. Before considering a package complete, initialize the catalog, add the
+required `iconUrl`/packager/media metadata, keep a local 256×256 icon and a
+privacy-reviewed screenshot or 3:1 hero, and document the release workflow.
+Follow `cloudron-app-publishing-skill.md` for testing-state promotion,
+append-only catalog maintenance, revocation, public hosting, and optional
+listing on [Cloudron Community Apps](https://ca.cloudron.io).
