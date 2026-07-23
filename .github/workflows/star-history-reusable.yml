@@ -1,0 +1,88 @@
+name: Star History (reusable) — generate static README chart
+
+on:
+  workflow_call:
+    inputs:
+      aidevops_repository:
+        description: Repository containing the shared chart generator
+        required: false
+        type: string
+        default: marcusquinn/aidevops
+      aidevops_ref:
+        description: Ref containing the shared chart generator
+        required: false
+        type: string
+        default: main
+      runner:
+        description: Runner label
+        required: false
+        type: string
+        default: ubuntu-latest
+    secrets:
+      SYNC_PAT:
+        description: Owner-authorised token for stargazer history and protected pushes
+        required: true
+
+jobs:
+  update:
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 10
+    concurrency:
+      group: star-history-${{ github.repository }}
+      cancel-in-progress: false
+    permissions:
+      contents: write
+    steps:
+      - name: Require owner-authorised repository token
+        env:
+          SYNC_PAT_PRESENT: ${{ secrets.SYNC_PAT != '' && 'true' || '' }}
+        run: |
+          if [[ -z "${SYNC_PAT_PRESENT:-}" ]]; then
+            echo "::error::SYNC_PAT is required because GitHub restricts timestamped stargazer history to repository collaborators."
+            exit 1
+          fi
+
+      - name: Checkout repository
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          token: ${{ secrets.SYNC_PAT }}
+          fetch-depth: 1
+
+      - name: Checkout aidevops chart generator
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          repository: ${{ inputs.aidevops_repository }}
+          ref: ${{ inputs.aidevops_ref }}
+          path: __aidevops
+          fetch-depth: 1
+
+      - name: Generate static Star History chart
+        env:
+          GH_TOKEN: ${{ secrets.SYNC_PAT }}
+        run: |
+          bash __aidevops/.agents/scripts/star-history-helper.sh fetch \
+            --repo "$GITHUB_REPOSITORY" \
+            --output docs/assets/star-history.svg
+
+      - name: Commit changed chart
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          set -euo pipefail
+          if git diff --quiet -- docs/assets/star-history.svg; then
+            echo "Star History chart is already current"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add docs/assets/star-history.svg
+          git commit -m "docs: refresh static star history"
+          for attempt in 1 2 3; do
+            git pull --rebase origin "$DEFAULT_BRANCH"
+            if git push origin "HEAD:$DEFAULT_BRANCH"; then
+              exit 0
+            fi
+            sleep $((attempt * 3))
+          done
+          echo "::error::Unable to push the refreshed Star History chart"
+          exit 1

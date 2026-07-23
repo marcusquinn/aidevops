@@ -225,7 +225,7 @@ def write_if_changed(path: Path, content: str) -> bool:
 def parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Generate a static repository star-history SVG")
     subparsers = parser.add_subparsers(dest="command", required=True)
-    for command in ("fetch", "render"):
+    for command in ("fetch", "render", "seed"):
         subparser = subparsers.add_parser(command)
         subparser.add_argument("--repo", required=True, help="repository slug (owner/name)")
         subparser.add_argument("--output", required=True, help="SVG output path")
@@ -239,9 +239,11 @@ def main(argv: list[str]) -> int:
     try:
         if args.command == "fetch":
             timestamps = fetch_timestamps(args.repo)
-        else:
+        elif args.command == "render":
             payload = json.loads(Path(args.input).read_text(encoding="utf-8"))
             timestamps = extract_timestamps(payload)
+        else:
+            timestamps = []
         changed = write_if_changed(Path(args.output), render_svg(args.repo, timestamps))
     except (OSError, RuntimeError, ValueError, json.JSONDecodeError) as exc:
         print(f"star-history: {exc}", file=sys.stderr)

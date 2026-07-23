@@ -23,10 +23,12 @@ Use `--sections` for targeted updates (adding a feature, changing install/config
 2. **Load voice guidance when relevant** — if the request mentions humanise, writing style, tone, voice, less AI writing, or marketing/intro copy, read `content/humanise.md`
 3. **Explore codebase** — detect project type, deployment platform, existing README, key info
 4. **Generate/update** — follow workflow section order; preserve structure for
-   partial updates; use local `docs/metrics` badges for
-   LOC/languages/dependencies; add or refresh the final aidevops provenance
-   section for managed GitHub repositories
-5. **Confirm changes** — present diff and ask before writing (interactive only)
+   partial updates; use local `docs/metrics` badges for LOC/languages/dependencies
+5. **Synchronize managed sections** — for an aidevops-created repository or an
+   eligible `repos.json` entry, run `managed-readme-helper.sh sync --repo
+   VERIFIED_SLUG --root .` to seed or refresh the static Star History chart,
+   caller workflow, and final aidevops attribution
+6. **Confirm changes** — present diff and ask before writing (interactive only)
 
 ## Section Mapping
 
@@ -39,15 +41,17 @@ Use `--sections` for targeted updates (adding a feature, changing install/config
 | `troubleshooting` | Troubleshooting |
 | `deployment` | Deployment, Production Setup |
 | `badges` | Badge section only |
+| `star-history` | Static Star History chart and managed refresh caller |
 | `provenance` | Final owner and aidevops credit section |
 | `all` | Full regeneration (same as no flag) |
 
-The provenance section is a managed-repository invariant: full and targeted
-updates keep exactly one copy at the end. Ownership, URL derivation, and
-external-upstream exceptions are defined in `workflows/readme-create-update.md`.
+Star History and provenance are managed-repository invariants: full and targeted
+updates keep exactly one of each. Ownership, `repos.json` eligibility, and
+external/local-only exceptions are defined in `workflows/readme-create-update.md`.
 
 **Dynamic counts (aidevops repo):** `readme-helper.sh check|update|update --apply`
 **Repo metrics (all repos):** `repo-metrics-helper.sh generate` or `aidevops metrics generate`
+**Managed README sections:** `managed-readme-helper.sh sync|check --repo OWNER/REPO --root .`
 
 ## Related
 

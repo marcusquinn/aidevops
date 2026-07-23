@@ -1519,6 +1519,7 @@ _init_optional_scaffolding() {
 	# references relative docs/metrics assets, so freshly initialised READMEs do
 	# not depend on remote badge services or a delayed GitHub Actions commit.
 	local _badges_helper="$AGENTS_DIR/scripts/readme-badges-helper.sh"
+	local _managed_readme_helper="$AGENTS_DIR/scripts/managed-readme-helper.sh"
 	local _metrics_helper="$AGENTS_DIR/scripts/repo-metrics-helper.sh"
 	local _label_sync_helper="$AGENTS_DIR/scripts/label-sync-helper.sh"
 	local _wf_template="$AGENTS_DIR/templates/workflows/loc-badge-caller.yml"
@@ -1553,6 +1554,19 @@ _init_optional_scaffolding() {
 			print_info "No README.md found — skipping badge block injection (create README.md first)"
 		fi
 
+		# Seed the managed Star History chart, weekly caller, and verified
+		# Built with aidevops section. Authentication or metadata failures are
+		# fail-soft so initialization never invents ownership or emits a broken embed.
+		if [[ "$_is_local_only" != "true" && -f "$_managed_readme_helper" && -f "$_readme_path" ]]; then
+			if bash "$_managed_readme_helper" sync --repo "$repo_slug" --root "$project_root"; then
+				print_success "Seeded managed Star History and aidevops README sections"
+			else
+				print_warning "Managed README sections skipped — verify GitHub ownership, then run: managed-readme-helper.sh sync --repo $repo_slug --root $project_root"
+			fi
+		elif [[ "$_is_local_only" == "true" ]]; then
+			print_info "Skipping managed Star History and aidevops attribution for local-only repo"
+		fi
+
 		# Generate committed local metrics after README injection so LOC/language
 		# numbers include the final README badge block.
 		if [[ -f "$_metrics_helper" ]]; then
@@ -1582,7 +1596,7 @@ _init_optional_scaffolding() {
 
 		# Remind about SYNC_PAT if the repo has a remote and isn't local_only
 		if [[ "$_is_local_only" != "true" ]]; then
-			print_info "Reminder: set SYNC_PAT secret so GitHub Actions can refresh repo metrics — see: aidevops --help sync-pat"
+			print_info "Reminder: set SYNC_PAT so GitHub Actions can refresh repo metrics and Star History — see: aidevops --help sync-pat"
 		fi
 	fi
 
