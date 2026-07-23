@@ -24,8 +24,13 @@ FAILING_GIT="${TEST_ROOT}/failing-git"
 QUERY_FAILING_GIT="${TEST_ROOT}/query-failing-git"
 POST_PRUNE_QUERY_FAILING_GIT="${TEST_ROOT}/post-prune-query-failing-git"
 POST_PRUNE_QUERY_STATE="${TEST_ROOT}/post-prune-query-state"
+RUNTIME_PID=""
 
 teardown() {
+	if [[ "$RUNTIME_PID" =~ ^[0-9]+$ ]]; then
+		kill "$RUNTIME_PID" 2>/dev/null || true
+		wait "$RUNTIME_PID" 2>/dev/null || true
+	fi
 	rm -rf "$TEST_ROOT"
 	return 0
 }
@@ -375,6 +380,17 @@ if (
 	exit 1
 fi
 printf 'PASS degraded cleanup requires terminal PR proof\n'
+
+# Replace the focused ownership stubs with the production registry before the
+# integrated pass. A distinct stable runtime PID forces cleanup to prove that
+# both post-acquisition checks use the exact leaf-PID lease it just claimed.
+export WORKTREE_REGISTRY_DIR="${TEST_ROOT}/registry"
+export WORKTREE_REGISTRY_DB="${WORKTREE_REGISTRY_DIR}/worktree-registry.db"
+sleep 30 &
+RUNTIME_PID=$!
+export OPENCODE_PID="$RUNTIME_PID"
+# shellcheck source=../shared-worktree-registry.sh
+source "${SCRIPT_DIR}/shared-worktree-registry.sh"
 
 integration_output=$(
 	cd "$REPO" || exit 1

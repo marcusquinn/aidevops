@@ -309,12 +309,12 @@ main() {
 	printf 'Running worktree registry dead-owner tests\n'
 	test_dead_owner_first_pass_quarantines
 	test_dead_owner_within_cooldown_keeps_skip
-test_dead_owner_after_cooldown_unregisters
-test_owner_pid_override_rejects_sql_payload
-test_stale_live_pid_comm_mismatch_unregisters
-test_recent_live_pid_without_comm_still_blocks
-test_explicit_cleanup_lease_identity
-test_legacy_registry_schema_migrates_on_owner_check
+	test_dead_owner_after_cooldown_unregisters
+	test_owner_pid_override_rejects_sql_payload
+	test_stale_live_pid_comm_mismatch_unregisters
+	test_recent_live_pid_without_comm_still_blocks
+	test_explicit_cleanup_lease_identity
+	test_legacy_registry_schema_migrates_on_owner_check
 	test_should_skip_cleanup_branch_merged_within_grace
 	printf 'Results: %s/%s passed, %s failed\n' "$((TESTS_RUN - TESTS_FAILED))" "$TESTS_RUN" "$TESTS_FAILED"
 	[[ "$TESTS_FAILED" -eq 0 ]] && return 0

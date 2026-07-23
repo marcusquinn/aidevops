@@ -1021,6 +1021,7 @@ is_worktree_owned_by_others() {
 # Returns: 0 if owned by another process (or input is invalid), 1 if this exact
 #          PID owns the lease or no blocking owner remains
 is_worktree_owned_by_others_for_pid() {
+	[[ $# -eq 2 ]] || return 0
 	local wt_path="$1"
 	local expected_owner_pid="$2"
 	[[ "$expected_owner_pid" =~ ^[0-9]+$ ]] || return 0
