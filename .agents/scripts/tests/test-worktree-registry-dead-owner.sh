@@ -212,6 +212,31 @@ test_recent_live_pid_without_comm_still_blocks() {
 	return 0
 }
 
+test_explicit_cleanup_lease_identity() {
+	local wt_path
+	wt_path=$(make_worktree_dir "explicit-cleanup-lease")
+	local distinct_live_pid
+	sleep 30 &
+	distinct_live_pid=$!
+	claim_worktree_ownership "$wt_path" "feature/explicit-cleanup-lease" \
+		--owner-pid "$$" --session "cleanup:$$" --task "worktree-removal"
+
+	local rc=0
+	if is_worktree_owned_by_others_for_pid "$wt_path" "$$" >/dev/null 2>&1; then
+		rc=1
+	fi
+	if ! is_worktree_owned_by_others_for_pid "$wt_path" "$distinct_live_pid" >/dev/null 2>&1; then
+		rc=1
+	fi
+	if ! is_worktree_owned_by_others_for_pid "$wt_path" "invalid" >/dev/null 2>&1; then
+		rc=1
+	fi
+	kill "$distinct_live_pid" 2>/dev/null || true
+	wait "$distinct_live_pid" 2>/dev/null || true
+	print_result "explicit cleanup lease distinguishes exact holder and other runtimes" "$rc"
+	return 0
+}
+
 test_legacy_registry_schema_migrates_on_owner_check() {
 	local wt_path
 	wt_path=$(make_worktree_dir "legacy-schema-owner-check")
@@ -284,11 +309,12 @@ main() {
 	printf 'Running worktree registry dead-owner tests\n'
 	test_dead_owner_first_pass_quarantines
 	test_dead_owner_within_cooldown_keeps_skip
-	test_dead_owner_after_cooldown_unregisters
-	test_owner_pid_override_rejects_sql_payload
-	test_stale_live_pid_comm_mismatch_unregisters
-	test_recent_live_pid_without_comm_still_blocks
-	test_legacy_registry_schema_migrates_on_owner_check
+test_dead_owner_after_cooldown_unregisters
+test_owner_pid_override_rejects_sql_payload
+test_stale_live_pid_comm_mismatch_unregisters
+test_recent_live_pid_without_comm_still_blocks
+test_explicit_cleanup_lease_identity
+test_legacy_registry_schema_migrates_on_owner_check
 	test_should_skip_cleanup_branch_merged_within_grace
 	printf 'Results: %s/%s passed, %s failed\n' "$((TESTS_RUN - TESTS_FAILED))" "$TESTS_RUN" "$TESTS_FAILED"
 	[[ "$TESTS_FAILED" -eq 0 ]] && return 0

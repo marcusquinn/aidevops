@@ -100,6 +100,18 @@ _clean_acquire_removal_lease() {
 	return 0
 }
 
+_clean_removal_lease_owned_by_others() {
+	local wt_path="$1"
+	if declare -F is_worktree_owned_by_others_for_pid >/dev/null 2>&1; then
+		is_worktree_owned_by_others_for_pid "$wt_path" "$$"
+		return $?
+	fi
+	# Compatibility for focused tests and older embedders that stub only the
+	# generic ownership API. Production registry loads always use the exact PID.
+	is_worktree_owned_by_others "$wt_path"
+	return $?
+}
+
 _clean_terminal_owner_blocks_cleanup() {
 	local wt_path="$1"
 	local deferred_parent_state=0
@@ -1046,7 +1058,7 @@ _clean_degraded_visibility_fallback_allowed() {
 		log_worktree_removal_event "$_WTAR_SKIPPED" "$_WTAR_WH_CALLER" "$worktree_path" "active-claim" "$_WT_CLEAN_MODE_SKIPPED" "$audit_context"
 		return 1
 	fi
-	if is_worktree_owned_by_others "$worktree_path"; then
+	if _clean_removal_lease_owned_by_others "$worktree_path"; then
 		log_worktree_removal_event "$_WTAR_SKIPPED" "$_WTAR_WH_CALLER" "$worktree_path" "$_WT_CLEAN_REASON_OWNED_SKIP" "$_WT_CLEAN_MODE_SKIPPED" "$audit_context"
 		return 1
 	fi
@@ -1093,7 +1105,7 @@ _clean_remove_classified_worktree() {
 		fi
 		worktree_has_changes "$worktree_path" && return 1
 		_branch_has_active_interactive_claim "$worktree_path" "$worktree_branch" && return 1
-		is_worktree_owned_by_others "$worktree_path" && return 1
+		_clean_removal_lease_owned_by_others "$worktree_path" && return 1
 	elif [[ "$guard_status" -ne 0 ]]; then
 		return "$guard_status"
 	fi

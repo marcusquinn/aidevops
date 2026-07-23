@@ -948,13 +948,10 @@ _wt_owner_live_pid_reused_or_untrusted() {
 	return 1
 }
 
-# Check if a worktree is owned by a DIFFERENT process or quarantined stale owner.
-# Arguments:
-#   $1 - worktree path
-# Returns: 0 if owned by another live process or within stale-owner cooldown,
-#          1 if safe to remove
-is_worktree_owned_by_others() {
+# Compare a registry owner against an already-resolved caller PID.
+_wt_is_worktree_owned_by_others_for_resolved_pid() {
 	local wt_path="$1"
+	local my_pid="$2"
 
 	[[ ! -f "$WORKTREE_REGISTRY_DB" ]] && return 1
 	_init_registry_db
@@ -969,13 +966,6 @@ is_worktree_owned_by_others() {
 	# No owner registered
 	[[ -z "$owner_pid" ]] && return 1
 
-	# We own it — use the same PID resolution as register_worktree so that
-	# transient bash subprocess PIDs ($$) match the stored stable AI runtime PID.
-	# GH#21740: previously compared against raw $$ which is always a transient
-	# bash subprocess PID in AI runtime sessions (OpenCode, Claude Code), and
-	# can never match the OPENCODE_PID/grandparent PID stored at registration.
-	local my_pid
-	my_pid=$(_resolve_worktree_owner_pid "")
 	[[ "$owner_pid" == "$my_pid" ]] && return 1
 
 	# Owner process is dead. Keep the ownership row quarantined for a cooldown
@@ -1005,6 +995,37 @@ is_worktree_owned_by_others() {
 
 	# Owner process is alive and it's not us — NOT safe to remove
 	return 0
+}
+
+# Check if a worktree is owned by a DIFFERENT process or quarantined stale owner.
+# Generic callers use the stable runtime identity so transient shell subprocesses
+# match registrations created by the same interactive runtime (GH#21740).
+# Arguments:
+#   $1 - worktree path
+# Returns: 0 if owned by another live process or within stale-owner cooldown,
+#          1 if safe to remove
+is_worktree_owned_by_others() {
+	local wt_path="$1"
+	local my_pid=""
+	my_pid=$(_resolve_worktree_owner_pid "")
+	_wt_is_worktree_owned_by_others_for_resolved_pid "$wt_path" "$my_pid"
+	return $?
+}
+
+# Check ownership against an explicit short-lived lease holder. Destructive
+# cleanup uses this capability-aware path after claiming a lease under its leaf
+# executor PID; generic interactive ownership resolution remains unchanged.
+# Arguments:
+#   $1 - worktree path
+#   $2 - exact expected lease-holder PID
+# Returns: 0 if owned by another process (or input is invalid), 1 if this exact
+#          PID owns the lease or no blocking owner remains
+is_worktree_owned_by_others_for_pid() {
+	local wt_path="$1"
+	local expected_owner_pid="$2"
+	[[ "$expected_owner_pid" =~ ^[0-9]+$ ]] || return 0
+	_wt_is_worktree_owned_by_others_for_resolved_pid "$wt_path" "$expected_owner_pid"
+	return $?
 }
 
 # Delete registry paths in one sqlite transaction.
