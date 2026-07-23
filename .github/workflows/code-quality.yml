@@ -38,7 +38,7 @@ jobs:
 
     steps:
     - name: Checkout code
-      uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
     - name: Install ShellCheck (macOS)
       if: runner.os == 'macOS'
@@ -117,7 +117,7 @@ jobs:
 
     steps:
     - name: Checkout code
-      uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       with:
         fetch-depth: 0
 
@@ -221,7 +221,7 @@ jobs:
 
     steps:
     - name: Checkout code
-      uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       with:
         # Fetch enough history for merge-base detection in safety-policy-check.sh.
         # Without this, stale PR branches that predate new policy markers cause
@@ -440,7 +440,7 @@ jobs:
 
     steps:
     - name: Checkout code
-      uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       with:
         fetch-depth: 0
 
@@ -818,7 +818,7 @@ jobs:
 
     steps:
     - name: Checkout code
-      uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       with:
         fetch-depth: 0
 
@@ -853,7 +853,7 @@ jobs:
 
     steps:
     - name: Checkout code
-      uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       with:
         # Match qlty-regression.yml so git-aware similar-code results are stable.
         fetch-depth: 0
@@ -883,7 +883,7 @@ jobs:
 
     steps:
     - name: Checkout code
-      uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       with:
         fetch-depth: 0  # Shallow clones should be disabled for better analysis
 
@@ -949,7 +949,7 @@ jobs:
 
     steps:
     - name: Checkout code
-      uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       with:
         fetch-depth: 0
 
@@ -1027,7 +1027,7 @@ jobs:
 
     steps:
     - name: Checkout code
-      uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       with:
         fetch-depth: 0
 
