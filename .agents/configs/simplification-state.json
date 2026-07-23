@@ -2054,9 +2054,9 @@
       "pr": 13117
     },
     ".agents/scripts/commands/readme.md": {
-      "at": "2026-07-22T14:36:58Z",
-      "hash": "3fe4f7faad026b1ea19174e6181007794ac9acbd",
-      "passes": 4,
+      "at": "2026-07-23T15:09:58Z",
+      "hash": "bf5f625d02895e83b83869e6dc53e6766a235f89",
+      "passes": 5,
       "pr": 17278
     },
     ".agents/scripts/commands/recall.md": {
@@ -7348,9 +7348,9 @@
       "pr": 11789
     },
     ".agents/workflows/readme-create-update.md": {
-      "at": "2026-07-22T14:37:47Z",
-      "hash": "494e52e10ebc18891fdb97da45367a88efc22bcc",
-      "passes": 4,
+      "at": "2026-07-23T15:11:01Z",
+      "hash": "7d33f37fd26924acdb7d0e44e37f1686021e3ff2",
+      "passes": 5,
       "pr": 12038
     },
     ".agents/workflows/release.md": {
@@ -7486,15 +7486,15 @@
       "pr": 15490
     },
     "aidevops.sh": {
-      "at": "2026-07-23T14:04:12Z",
-      "hash": "d748984402c55de94442690dff70fb78c47703b1",
-      "passes": 291,
+      "at": "2026-07-23T15:11:02Z",
+      "hash": "cb6ede38fd112b37a3bb232bea58d024f117faf4",
+      "passes": 292,
       "pr": 19029
     },
     "setup.sh": {
-      "at": "2026-07-23T14:04:12Z",
-      "hash": "727e70a6f69d5d3c7dae6091d16fc386fad4d37b",
-      "passes": 288,
+      "at": "2026-07-23T15:11:02Z",
+      "hash": "b7a243713a9471d5472382d55031e47e7c3f7e56",
+      "passes": 289,
       "pr": 15470
     },
     "todo/tasks/GH#15363-brief.md": {
@@ -8104,10 +8104,10 @@
       "passes": 3
     },
     ".agents/scripts/aidevops-cli/aidevops-init-lib.sh": {
-      "hash": "d39977b77f3db94e9503a12f5d9a58f9418dad39",
-      "at": "2026-07-22T20:56:42Z",
+      "hash": "6abd839a0b3f4d945257f33cca01b4a9c43585fe",
+      "at": "2026-07-23T15:09:55Z",
       "pr": 27277,
-      "passes": 5
+      "passes": 6
     }
   },
   "setup-modules/agent-deploy.sh": {
