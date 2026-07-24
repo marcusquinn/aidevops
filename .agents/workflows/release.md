@@ -17,15 +17,15 @@ tools:
 
 # Release Workflow
 
-**MANDATORY**: Use this single command for ALL aidevops releases:
+**MANDATORY**: Use this single authorized full-loop entry point for ALL aidevops releases:
 
 ```bash
-./.agents/scripts/version-manager.sh release [major|minor|patch] --source-pr <merged-pr-number>
+./.agents/scripts/full-loop-release-helper.sh [patch|minor|major] <merged-pr-number> [incremental|full]
 ```
 
-**Flags**: `--force` bypasses only the empty-changelog check. It cannot bypass linked-worktree, canonical-sync, source-PR, or remote-SHA provenance. `--skip-preflight` and `--allow-dirty` are recovery flags and do not satisfy a standard full-loop release.
+The helper creates the fresh detached `origin/main` worktree, invokes `version-manager.sh release --source-pr`, and atomically persists the per-PR `release:published` receipt only after every publication and deployment gate succeeds. Repeating it with an existing published receipt reconciles success without another version bump or publication. A failed or skipped release cannot create or replace published evidence.
 
-Requires a fresh detached release worktree at synchronized `origin/main`, verifies the source PR is merged and its merge SHA is reachable, then atomically checks the tree → bumps and validates version files → commits → tags → pushes → creates the GitHub release → runs deploy sync. Publication or deployment failure is a failed release, not warning-only success.
+The underlying version manager verifies the source PR is merged and its merge SHA is reachable, then atomically checks the tree → bumps and validates version files → commits → tags → pushes → creates the GitHub release → runs deploy sync. Publication or deployment failure is a failed release, not warning-only success. Direct `version-manager.sh release` execution is not a full-loop release because it cannot persist terminal per-PR lifecycle evidence.
 
 **DO NOT** run separate bump/tag/push commands. **Prerequisites**: terminal-success PR checks/reviews, observed merged state/SHA, clean synchronized canonical `main`, fresh detached release worktree, authenticated `gh`, and unreleased changelog content (or changelog-only `--force`).
 

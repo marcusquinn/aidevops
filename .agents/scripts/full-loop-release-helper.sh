@@ -24,6 +24,29 @@ main() {
 	case "$release_type" in patch | minor | major) ;; *) return 1 ;; esac
 	case "$deployment_scope" in incremental | full) ;; *) return 1 ;; esac
 	[[ "$source_pr" =~ ^[0-9]+$ ]] || return 1
+	local repo=""
+	local receipt_path=""
+	local release_status=""
+	repo=$(_full_loop_resolve_repo "${AIDEVOPS_FULL_LOOP_REPO:-}") || return 1
+	receipt_path=$(_full_loop_release_receipt_path "$repo" "$source_pr") || return 1
+	if [[ -f "$receipt_path" ]]; then
+		IFS= read -r release_status <"$receipt_path" || return 1
+	fi
+	case "$release_status" in
+	"$_FULL_LOOP_RELEASE_PUBLISHED")
+		printf 'release:published already recorded for PR #%s; skipping duplicate publication\n' "$source_pr"
+		return 0
+		;;
+	"$_FULL_LOOP_RELEASE_NOT_REQUESTED")
+		printf 'Cannot replace terminal release:not-requested evidence for PR #%s\n' "$source_pr" >&2
+		return 1
+		;;
+	"" | "$_FULL_LOOP_PHASE_FAILED") ;;
+	*)
+		printf 'Cannot replace unknown release:%s evidence for PR #%s\n' "$release_status" "$source_pr" >&2
+		return 1
+		;;
+	esac
 
 	local worktree_base="${AIDEVOPS_WORKTREE_BASE_DIR:-${HOME}/Git/_worktrees}"
 	local release_path="${worktree_base}/aidevops-release-${source_pr}-$$"
@@ -46,8 +69,6 @@ main() {
 	); then
 		return 1
 	fi
-	local repo=""
-	repo=$(_full_loop_resolve_repo "${AIDEVOPS_FULL_LOOP_REPO:-}") || return 1
 	_full_loop_write_release_receipt "$repo" "$source_pr" "$_FULL_LOOP_RELEASE_PUBLISHED"
 	return $?
 }
