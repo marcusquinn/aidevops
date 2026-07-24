@@ -1952,9 +1952,9 @@
       "pr": 16797
     },
     ".agents/scripts/commands/full-loop.md": {
-      "at": "2026-07-23T23:46:00Z",
-      "hash": "4d0e98de771b4f272c4f56f45946685c7114219e",
-      "passes": 37,
+      "at": "2026-07-24T00:52:07Z",
+      "hash": "2c197c70a909da3e2305e07c495ae69c754b2135",
+      "passes": 38,
       "pr": 14590
     },
     ".agents/scripts/commands/init-routines.md": {
@@ -7193,9 +7193,9 @@
       "pr": 13065
     },
     ".agents/workflows/full-loop.md": {
-      "at": "2026-07-23T23:47:03Z",
-      "hash": "4d0e98de771b4f272c4f56f45946685c7114219e",
-      "passes": 26,
+      "at": "2026-07-24T00:53:01Z",
+      "hash": "2c197c70a909da3e2305e07c495ae69c754b2135",
+      "passes": 27,
       "pr": 19047
     },
     ".agents/workflows/git-workflow.md": {
@@ -7354,9 +7354,9 @@
       "pr": 12038
     },
     ".agents/workflows/release.md": {
-      "at": "2026-07-13T01:30:48Z",
-      "hash": "35935d5dd38f2af614208b7c1d362d2fce910a0f",
-      "passes": 8,
+      "at": "2026-07-24T00:53:03Z",
+      "hash": "b22df5ca0f86e40835e8ec586ed1ab7d76de7fa3",
+      "passes": 9,
       "pr": 13318
     },
     ".agents/workflows/remember.md": {
