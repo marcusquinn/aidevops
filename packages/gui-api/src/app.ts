@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import * as readline from "node:readline";
-import { Hono } from "hono";
+import { type Context, Hono } from "hono";
 import { APP_ACTION_ROUTE_MANIFEST, APP_ACTION_STATUS_ROUTE_MANIFEST, BANNED_ROUTE_PATTERNS, createEnvelope, FILE_EXPLORER_ROUTE_MANIFEST, type GuiAppActionId, type GuiAppActionJobSummary, type GuiPulseWorkerActionId, type GuiPulseWorkerActionJobSummary, PULSE_WORKERS_ACTION_ROUTE_MANIFEST, PULSE_WORKERS_ACTION_STATUS_ROUTE_MANIFEST, STATUS_ROUTE_MANIFEST, TAMBO_PROVIDER_CONFIG, TAMBO_PROXY_ROUTE_MANIFEST, VAULT_STATUS_ROUTE_MANIFEST } from "../../gui-shared/src";
 import { readFileExplorer } from "./file-adapter";
 import { readStatus, readVaultStatus } from "./status-adapter";
@@ -46,155 +46,137 @@ const pulseWorkerActionJobs = new Map<string, GuiPulseWorkerActionJobSummary>();
 export function createGuiApiApp() {
   const app = new Hono();
 
-  app.get("/api/health", (context) => {
-    return context.json(createEnvelope({
+  app.get("/api/health", (context) => context.json(createEnvelope({
       operation_id: "capabilities.read",
       source: { surface: "health", authority: "in-process readiness probe", path_refs: [] },
       data: { status: "ok", service: "aidevops-gui-api" },
-    }));
-  });
+    })));
 
-  app.get(STATUS_ROUTE_MANIFEST.route, (context) => {
-    return context.json(readStatus());
-  });
+  app.get(STATUS_ROUTE_MANIFEST.route, (context) => context.json(readStatus()));
 
-  app.get(VAULT_STATUS_ROUTE_MANIFEST.route, (context) => {
-    return context.json(readVaultStatus());
-  });
+  app.get(VAULT_STATUS_ROUTE_MANIFEST.route, (context) => context.json(readVaultStatus()));
 
-  app.get(TAMBO_PROXY_ROUTE_MANIFEST.route, (context) => {
-    const tenantRef = threadScopeRef(context.req.query("tenant_ref") ?? "local");
-    const workspaceRef = threadScopeRef(context.req.query("workspace_ref") ?? "aidevops");
-    const sessionRef = context.req.query("session_ref") ?? "conversation:local";
-
-    return context.json(createEnvelope({
+  app.get(TAMBO_PROXY_ROUTE_MANIFEST.route, (context) => context.json(createEnvelope({
       operation_id: TAMBO_PROXY_ROUTE_MANIFEST.operation_id,
       source: { surface: "conversations", authority: "server-side Tambo proxy metadata", path_refs: ["packages/gui-shared/src/tambo.ts"] },
       data: {
         ...TAMBO_PROVIDER_CONFIG,
-        thread_key_ref: `${tenantRef}:${workspaceRef}:${sessionRef}`,
+        thread_key_ref: `${threadScopeRef(context.req.query("tenant_ref") ?? "local")}:${threadScopeRef(context.req.query("workspace_ref") ?? "aidevops")}:${context.req.query("session_ref") ?? "conversation:local"}`,
       },
       warnings: ["Tambo provider secrets stay server-side; this route exposes component metadata and scoped thread keys only."],
-    }));
-  });
+    })));
 
-  app.post(APP_ACTION_ROUTE_MANIFEST.route, (context) => {
-    const appId = context.req.param("appId");
-    const action = context.req.param("action") as GuiAppActionId;
-    const command = appActionCommands[appId]?.[action];
+  app.post(APP_ACTION_ROUTE_MANIFEST.route, handleAppAction);
+  app.get(APP_ACTION_STATUS_ROUTE_MANIFEST.route, handleAppActionStatus);
+  app.post(PULSE_WORKERS_ACTION_ROUTE_MANIFEST.route, handlePulseWorkerAction);
+  app.get(PULSE_WORKERS_ACTION_STATUS_ROUTE_MANIFEST.route, handlePulseWorkerActionStatus);
 
-    if (command === undefined) {
-      return context.json(createEnvelope({
-        operation_id: APP_ACTION_ROUTE_MANIFEST.operation_id,
-        source: { surface: "apps", authority: "allowlisted local command runner", path_refs: [] },
-        data: rejectedJob(appId, action, "No allowlisted command for this app action."),
-        errors: ["action_not_allowlisted"],
-      }), 400);
-    }
-
-    const job = startAppActionJob(appId, action, command);
-    return context.json(createEnvelope({
-      operation_id: APP_ACTION_ROUTE_MANIFEST.operation_id,
-      source: { surface: "apps", authority: "allowlisted local command runner", path_refs: ["setup.sh", "aidevops.sh"] },
-      data: job,
-      warnings: ["Command runs locally in the background. Output is retained in memory for this GUI API process only."],
-    }), 202);
-  });
-
-  app.get(APP_ACTION_STATUS_ROUTE_MANIFEST.route, (context) => {
-    const jobId = context.req.param("jobId");
-    const job = appActionJobs.get(jobId);
-    if (job === undefined) {
-      return context.json(createEnvelope({
-        operation_id: APP_ACTION_STATUS_ROUTE_MANIFEST.operation_id,
-        source: { surface: "apps", authority: "background job store", path_refs: [] },
-        data: rejectedJob("unknown", "install", "Unknown job."),
-        errors: ["unknown_job"],
-      }), 404);
-    }
-
-    return context.json(createEnvelope({
-      operation_id: APP_ACTION_STATUS_ROUTE_MANIFEST.operation_id,
-      source: { surface: "apps", authority: "background job store", path_refs: [] },
-      data: job,
-    }));
-  });
-
-  app.post(PULSE_WORKERS_ACTION_ROUTE_MANIFEST.route, (context) => {
-    const action = context.req.param("action") as GuiPulseWorkerActionId;
-
-    if (!Object.hasOwn(pulseWorkerActionCommands, action)) {
-      return context.json(createEnvelope({
-        operation_id: PULSE_WORKERS_ACTION_ROUTE_MANIFEST.operation_id,
-        source: { surface: "pulse_workers", authority: "allowlisted local command runner", path_refs: [] },
-        data: rejectedPulseWorkerJob(action, "No allowlisted command for this Pulse & Workers action."),
-        errors: ["action_not_allowlisted"],
-      }), 400);
-    }
-
-    const actionCommand = pulseWorkerActionCommands[action];
-    const job = startPulseWorkerActionJob(action, actionCommand.command, actionCommand.target_ref, actionCommand.audit_ref);
-    return context.json(createEnvelope({
-      operation_id: PULSE_WORKERS_ACTION_ROUTE_MANIFEST.operation_id,
-      source: { surface: "pulse_workers", authority: "allowlisted local command runner", path_refs: [".agents/scripts", "packages/gui-api/src/app.ts"] },
-      data: job,
-      warnings: ["Command runs locally in the background through an explicit allowlist. Output is redacted and retained in memory for this GUI API process only."],
-    }), 202);
-  });
-
-  app.get(PULSE_WORKERS_ACTION_STATUS_ROUTE_MANIFEST.route, (context) => {
-    const jobId = context.req.param("jobId");
-    const job = pulseWorkerActionJobs.get(jobId);
-    if (job === undefined) {
-      return context.json(createEnvelope({
-        operation_id: PULSE_WORKERS_ACTION_STATUS_ROUTE_MANIFEST.operation_id,
-        source: { surface: "pulse_workers", authority: "background job store", path_refs: [] },
-        data: rejectedPulseWorkerJob("diagnose", "Unknown Pulse & Workers job."),
-        errors: ["unknown_job"],
-      }), 404);
-    }
-
-    return context.json(createEnvelope({
-      operation_id: PULSE_WORKERS_ACTION_STATUS_ROUTE_MANIFEST.operation_id,
-      source: { surface: "pulse_workers", authority: "background job store", path_refs: [] },
-      data: job,
-    }));
-  });
-
-  app.get(FILE_EXPLORER_ROUTE_MANIFEST.route, (context) => {
-    const root = context.req.param("root");
-    const path = context.req.query("path") ?? "";
-    const response = readFileExplorer(root, path);
-    const status = response.ok ? 200 : response.errors.includes("unknown_file_root") ? 404 : 400;
-
-    return context.json(response, status);
-  });
+  app.get(FILE_EXPLORER_ROUTE_MANIFEST.route, (context) => context.json(
+    ...fileExplorerResult(context.req.param("root"), context.req.query("path") ?? ""),
+  ));
 
   for (const route of BANNED_ROUTE_PATTERNS) {
-    app.post(route, (context) => {
-      return context.json(
+    app.post(route, (context) => context.json(
         {
           ok: false,
           operation_id: "capabilities.read",
           errors: ["write_actions_disabled"],
         },
         405,
-      );
-    });
+      ));
   }
 
-  app.notFound((context) => {
-    return context.json(
+  app.notFound((context) => context.json(
       {
         ok: false,
         operation_id: "capabilities.read",
         errors: ["unknown_route"],
       },
       404,
-    );
-  });
+    ));
 
   return app;
+}
+
+function handleAppAction(context: Context) {
+  const appId = context.req.param("appId");
+  const action = context.req.param("action") as GuiAppActionId;
+  const command = appActionCommands[appId]?.[action];
+  if (command === undefined) {
+    return context.json(createEnvelope({
+      operation_id: APP_ACTION_ROUTE_MANIFEST.operation_id,
+      source: { surface: "apps", authority: "allowlisted local command runner", path_refs: [] },
+      data: rejectedJob(appId, action, "No allowlisted command for this app action."),
+      errors: ["action_not_allowlisted"],
+    }), 400);
+  }
+  const job = startAppActionJob(appId, action, command);
+  return context.json(createEnvelope({
+    operation_id: APP_ACTION_ROUTE_MANIFEST.operation_id,
+    source: { surface: "apps", authority: "allowlisted local command runner", path_refs: ["setup.sh", "aidevops.sh"] },
+    data: job,
+    warnings: ["Command runs locally in the background. Output is retained in memory for this GUI API process only."],
+  }), 202);
+}
+
+function handleAppActionStatus(context: Context) {
+  const job = appActionJobs.get(context.req.param("jobId"));
+  if (job === undefined) {
+    return context.json(createEnvelope({
+      operation_id: APP_ACTION_STATUS_ROUTE_MANIFEST.operation_id,
+      source: { surface: "apps", authority: "background job store", path_refs: [] },
+      data: rejectedJob("unknown", "install", "Unknown job."),
+      errors: ["unknown_job"],
+    }), 404);
+  }
+  return context.json(createEnvelope({
+    operation_id: APP_ACTION_STATUS_ROUTE_MANIFEST.operation_id,
+    source: { surface: "apps", authority: "background job store", path_refs: [] },
+    data: job,
+  }));
+}
+
+function handlePulseWorkerAction(context: Context) {
+  const action = context.req.param("action") as GuiPulseWorkerActionId;
+  if (!Object.hasOwn(pulseWorkerActionCommands, action)) {
+    return context.json(createEnvelope({
+      operation_id: PULSE_WORKERS_ACTION_ROUTE_MANIFEST.operation_id,
+      source: { surface: "pulse_workers", authority: "allowlisted local command runner", path_refs: [] },
+      data: rejectedPulseWorkerJob(action, "No allowlisted command for this Pulse & Workers action."),
+      errors: ["action_not_allowlisted"],
+    }), 400);
+  }
+  const actionCommand = pulseWorkerActionCommands[action];
+  const job = startPulseWorkerActionJob(action, actionCommand.command, actionCommand.target_ref, actionCommand.audit_ref);
+  return context.json(createEnvelope({
+    operation_id: PULSE_WORKERS_ACTION_ROUTE_MANIFEST.operation_id,
+    source: { surface: "pulse_workers", authority: "allowlisted local command runner", path_refs: [".agents/scripts", "packages/gui-api/src/app.ts"] },
+    data: job,
+    warnings: ["Command runs locally in the background through an explicit allowlist. Output is redacted and retained in memory for this GUI API process only."],
+  }), 202);
+}
+
+function handlePulseWorkerActionStatus(context: Context) {
+  const job = pulseWorkerActionJobs.get(context.req.param("jobId"));
+  if (job === undefined) {
+    return context.json(createEnvelope({
+      operation_id: PULSE_WORKERS_ACTION_STATUS_ROUTE_MANIFEST.operation_id,
+      source: { surface: "pulse_workers", authority: "background job store", path_refs: [] },
+      data: rejectedPulseWorkerJob("diagnose", "Unknown Pulse & Workers job."),
+      errors: ["unknown_job"],
+    }), 404);
+  }
+  return context.json(createEnvelope({
+    operation_id: PULSE_WORKERS_ACTION_STATUS_ROUTE_MANIFEST.operation_id,
+    source: { surface: "pulse_workers", authority: "background job store", path_refs: [] },
+    data: job,
+  }));
+}
+
+function fileExplorerResult(root: string, path: string) {
+  const response = readFileExplorer(root, path);
+  const status = response.ok ? 200 : response.errors.includes("unknown_file_root") ? 404 : 400;
+  return [response, status] as const;
 }
 
 function startAppActionJob(appId: string, action: GuiAppActionId, command: string[]): GuiAppActionJobSummary {
