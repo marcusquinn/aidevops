@@ -84,6 +84,36 @@ remote refs, the index tree, or worktree content. Run `restore-default` with its
 own confirmation token after this command succeeds. Never use direct
 `git rebase --quit`, reset, clean, or metadata deletion on a canonical checkout.
 
+## Abandoned active rebase recovery
+
+Use the distinct abandoned-state operation only when a clean canonical mirror
+is detached at the pinned remote default tip but old interactive-rebase markers
+still describe an incomplete stopped sequence:
+
+```bash
+.agents/scripts/canonical-recovery-helper.sh clear-abandoned-rebase \
+  --repo /path/to/canonical-checkout \
+  --issue 123 \
+  --confirm CLEAR_ABANDONED_STALE_REBASE
+```
+
+This command does not relax `clear-stale-rebase`. It requires complete stopped
+`rebase-merge` metadata for the configured default branch, a matching
+`REBASE_HEAD` and `stopped-sha`, metadata whose newest marker is at least 24
+hours old, HEAD at the exact pinned remote tip and beyond the stopped commit,
+and a local default ref that remains an ancestor of that tip. Fresh, attached,
+dirty, divergent, malformed, ambiguous, or changing state fails closed.
+
+Before removal, the helper copies and fingerprints the complete metadata plus
+`REBASE_HEAD`. It resolves full or abbreviated commit IDs from todo, done,
+backup, stopped, and rewritten metadata and creates durable issue-scoped refs
+for every reference. After a final HEAD/ref/index/worktree check, it
+compare-deletes only the expected `REBASE_HEAD`, quarantines the metadata,
+re-fingerprints the quarantined snapshot, and restores it if concurrent state
+appears. After success, run the separately confirmed `restore-default`
+operation to attach and fast-forward the configured default branch. Never
+substitute `git rebase --quit` or manual `.git` deletion.
+
 Restore preserved state only to a clean checkout on the recorded branch:
 
 ```bash

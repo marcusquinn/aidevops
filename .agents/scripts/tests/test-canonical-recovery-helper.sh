@@ -320,6 +320,371 @@ else
 	exit 1
 fi
 
+age_rebase_state_fixture() {
+	local metadata_path="$1"
+	local rebase_head_path="$2"
+	python3 - "$metadata_path" "$rebase_head_path" <<'PY'
+import os
+import sys
+import time
+
+old = time.time() - 172800
+for root_path in sys.argv[1:]:
+    paths = [root_path]
+    if os.path.isdir(root_path):
+        for root, dirs, files in os.walk(root_path):
+            paths.extend(os.path.join(root, name) for name in dirs)
+            paths.extend(os.path.join(root, name) for name in files)
+    for path in paths:
+        os.utime(path, (old, old))
+PY
+	return 0
+}
+
+rebase_fixture_snapshot() {
+	local repo="$1"
+	local metadata_path="$2"
+	local rebase_head_path="$3"
+	local content_fingerprint=""
+	local current_head_ref=""
+	content_fingerprint=$(
+		python3 - "$repo" "$metadata_path" "$rebase_head_path" <<'PY'
+import hashlib
+import os
+import stat
+import sys
+
+repo, metadata_path, rebase_head_path = sys.argv[1:]
+digest = hashlib.sha256()
+
+
+def add_field(value):
+    data = value.encode("utf-8", "surrogateescape")
+    digest.update(len(data).to_bytes(8, "big"))
+    digest.update(data)
+
+
+def add_file(path, label):
+    entry_stat = os.lstat(path)
+    if not stat.S_ISREG(entry_stat.st_mode):
+        raise RuntimeError("fixture contains a non-regular file")
+    digest.update(b"F")
+    add_field(label)
+    digest.update(entry_stat.st_size.to_bytes(8, "big"))
+    with open(path, "rb") as handle:
+        for chunk in iter(lambda: handle.read(65536), b""):
+            digest.update(chunk)
+
+
+def add_tree(root, label, excluded_roots=()):
+    for current, dirs, files in os.walk(root):
+        if current == root:
+            dirs[:] = sorted(name for name in dirs if name not in excluded_roots)
+        else:
+            dirs.sort()
+        files.sort()
+        relative_root = os.path.relpath(current, root)
+        for name in files:
+            relative = name if relative_root == "." else os.path.join(relative_root, name)
+            add_file(os.path.join(current, name), os.path.join(label, relative))
+
+
+add_tree(repo, "worktree", (".git",))
+add_tree(metadata_path, "rebase-merge")
+add_file(rebase_head_path, "REBASE_HEAD")
+print(digest.hexdigest())
+PY
+	) || return 1
+	current_head_ref=$(/usr/bin/git -C "$repo" symbolic-ref --quiet HEAD 2>/dev/null || true)
+	printf '%s\n%s\n%s\n%s\n%s\n%s\n' \
+		"$content_fingerprint" \
+		"$(/usr/bin/git -C "$repo" rev-parse HEAD)" \
+		"${current_head_ref:-detached}" \
+		"$(/usr/bin/git -C "$repo" rev-parse main)" \
+		"$(/usr/bin/git -C "$repo" rev-parse origin/main)" \
+		"$(/usr/bin/git -C "$repo" write-tree)"
+	return 0
+}
+
+ABANDONED_REPO="${ROOT}/abandoned-repo"
+ABANDONED_REMOTE="${ROOT}/abandoned-remote.git"
+ABANDONED_UPDATER="${ROOT}/abandoned-updater"
+ABANDONED_RECOVERY="${ROOT}/abandoned-recovery"
+mkdir -p "$ABANDONED_REPO"
+/usr/bin/git init -q --bare "$ABANDONED_REMOTE"
+/usr/bin/git -C "$ABANDONED_REPO" init -q -b main
+/usr/bin/git -C "$ABANDONED_REPO" config user.name Test
+/usr/bin/git -C "$ABANDONED_REPO" config user.email test@example.invalid
+/usr/bin/git -C "$ABANDONED_REPO" config commit.gpgsign false
+printf 'abandoned seed\n' >"${ABANDONED_REPO}/README.md"
+/usr/bin/git -C "$ABANDONED_REPO" add README.md
+/usr/bin/git -C "$ABANDONED_REPO" commit -q -m seed
+/usr/bin/git -C "$ABANDONED_REPO" remote add origin "$ABANDONED_REMOTE"
+/usr/bin/git -C "$ABANDONED_REPO" push -q -u origin main
+/usr/bin/git -C "$ABANDONED_REMOTE" symbolic-ref HEAD refs/heads/main
+/usr/bin/git -C "$ABANDONED_REPO" remote set-head origin main
+abandoned_local_tip=$(/usr/bin/git -C "$ABANDONED_REPO" rev-parse main)
+/usr/bin/git -C "$ABANDONED_REPO" switch -q -c abandoned-sequence
+printf 'stopped sequence\n' >"${ABANDONED_REPO}/sequence.txt"
+/usr/bin/git -C "$ABANDONED_REPO" add sequence.txt
+/usr/bin/git -C "$ABANDONED_REPO" commit -q -m 'stopped sequence'
+abandoned_stopped_sha=$(/usr/bin/git -C "$ABANDONED_REPO" rev-parse HEAD)
+printf 'remaining sequence\n' >"${ABANDONED_REPO}/remaining.txt"
+/usr/bin/git -C "$ABANDONED_REPO" add remaining.txt
+/usr/bin/git -C "$ABANDONED_REPO" commit -q -m 'remaining sequence'
+abandoned_todo_sha=$(/usr/bin/git -C "$ABANDONED_REPO" rev-parse HEAD)
+abandoned_todo_abbrev=$(/usr/bin/git -C "$ABANDONED_REPO" rev-parse --short "$abandoned_todo_sha")
+/usr/bin/git -C "$ABANDONED_REPO" switch -q main
+/usr/bin/git clone -q "$ABANDONED_REMOTE" "$ABANDONED_UPDATER"
+/usr/bin/git -C "$ABANDONED_UPDATER" config user.name Test
+/usr/bin/git -C "$ABANDONED_UPDATER" config user.email test@example.invalid
+printf 'remote recovery tip\n' >>"${ABANDONED_UPDATER}/README.md"
+/usr/bin/git -C "$ABANDONED_UPDATER" commit -q -am 'remote recovery tip'
+/usr/bin/git -C "$ABANDONED_UPDATER" push -q origin main
+/usr/bin/git -C "$ABANDONED_REPO" fetch -q origin main
+abandoned_target_sha=$(/usr/bin/git -C "$ABANDONED_REPO" rev-parse origin/main)
+/usr/bin/git -C "$ABANDONED_REPO" switch -q --detach "$abandoned_target_sha"
+abandoned_index_tree=$(/usr/bin/git -C "$ABANDONED_REPO" write-tree)
+abandoned_rewritten_sha=$(printf 'rewritten sequence\n' |
+	/usr/bin/git -C "$ABANDONED_REPO" commit-tree "$abandoned_index_tree" -p "$abandoned_local_tip")
+abandoned_amend_sha=$(printf 'amend sequence\n' |
+	/usr/bin/git -C "$ABANDONED_REPO" commit-tree "$abandoned_index_tree" -p "$abandoned_local_tip")
+abandoned_squash_sha=$(printf 'squash sequence\n' |
+	/usr/bin/git -C "$ABANDONED_REPO" commit-tree "$abandoned_index_tree" -p "$abandoned_local_tip")
+abandoned_update_ref_sha=$(printf 'update-ref sequence\n' |
+	/usr/bin/git -C "$ABANDONED_REPO" commit-tree "$abandoned_index_tree" -p "$abandoned_local_tip")
+abandoned_fixup_sha=$(printf 'current fixup sequence\n' |
+	/usr/bin/git -C "$ABANDONED_REPO" commit-tree "$abandoned_index_tree" -p "$abandoned_local_tip")
+abandoned_metadata="${ABANDONED_REPO}/.git/rebase-merge"
+abandoned_rebase_head="${ABANDONED_REPO}/.git/REBASE_HEAD"
+mkdir "$abandoned_metadata"
+printf 'refs/heads/main\n' >"${abandoned_metadata}/head-name"
+printf '%s\n' "$abandoned_local_tip" >"${abandoned_metadata}/onto"
+printf '%s\n' "$abandoned_stopped_sha" >"${abandoned_metadata}/orig-head"
+printf 'pick %s remaining-sequence\n' "$abandoned_todo_abbrev" >"${abandoned_metadata}/git-rebase-todo"
+cp "${abandoned_metadata}/git-rebase-todo" "${abandoned_metadata}/git-rebase-todo.backup"
+printf 'pick %s stopped-sequence\n' "$abandoned_stopped_sha" >"${abandoned_metadata}/done"
+printf '%s %s\n' "$abandoned_stopped_sha" "$abandoned_rewritten_sha" >"${abandoned_metadata}/rewritten-list"
+printf '%s\n' "$abandoned_amend_sha" >"${abandoned_metadata}/amend"
+printf '%s\n' "$abandoned_squash_sha" >"${abandoned_metadata}/squash-onto"
+printf 'refs/heads/example\n%s\n%s\n' "$abandoned_local_tip" "$abandoned_update_ref_sha" >"${abandoned_metadata}/update-refs"
+printf 'fixup %s subject dead cafe\n' "$abandoned_fixup_sha" >"${abandoned_metadata}/current-fixups"
+printf 'hidden marker\n' >"${abandoned_metadata}/.hidden-marker"
+printf '1\n' >"${abandoned_metadata}/msgnum"
+printf '2\n' >"${abandoned_metadata}/end"
+printf '%s\n' "$abandoned_stopped_sha" >"${abandoned_metadata}/stopped-sha"
+printf '%s\n' "$abandoned_stopped_sha" >"$abandoned_rebase_head"
+
+fresh_abandoned_snapshot=$(rebase_fixture_snapshot "$ABANDONED_REPO" "$abandoned_metadata" "$abandoned_rebase_head")
+if AIDEVOPS_CANONICAL_RECOVERY_ROOT="$ABANDONED_RECOVERY" AIDEVOPS_REAL_GIT_BIN=/usr/bin/git \
+	bash "$HELPER" clear-abandoned-rebase --repo "$ABANDONED_REPO" --issue 28549 \
+	--confirm CLEAR_ABANDONED_STALE_REBASE >/dev/null 2>&1; then
+	printf 'FAIL abandoned rebase cleanup accepted fresh active metadata\n'
+	exit 1
+elif [[ -d "$abandoned_metadata" ]] && [[ -f "$abandoned_rebase_head" ]] &&
+	[[ "$(rebase_fixture_snapshot "$ABANDONED_REPO" "$abandoned_metadata" "$abandoned_rebase_head")" == "$fresh_abandoned_snapshot" ]]; then
+	printf 'PASS abandoned rebase cleanup rejects fresh active metadata without mutation\n'
+else
+	printf 'FAIL fresh abandoned rebase refusal changed repository state\n'
+	exit 1
+fi
+
+age_rebase_state_fixture "$abandoned_metadata" "$abandoned_rebase_head"
+
+/usr/bin/git -C "$ABANDONED_REPO" update-ref refs/heads/ambiguous-recovery "$abandoned_target_sha"
+/usr/bin/git -C "$ABANDONED_REPO" symbolic-ref HEAD refs/heads/ambiguous-recovery
+attached_abandoned_snapshot=$(rebase_fixture_snapshot "$ABANDONED_REPO" "$abandoned_metadata" "$abandoned_rebase_head")
+if AIDEVOPS_CANONICAL_RECOVERY_ROOT="$ABANDONED_RECOVERY" AIDEVOPS_REAL_GIT_BIN=/usr/bin/git \
+	bash "$HELPER" clear-abandoned-rebase --repo "$ABANDONED_REPO" --issue 28549 \
+	--confirm CLEAR_ABANDONED_STALE_REBASE >/dev/null 2>&1; then
+	printf 'FAIL abandoned rebase cleanup accepted an attached non-default HEAD\n'
+	exit 1
+elif [[ -d "$abandoned_metadata" ]] &&
+	[[ "$(rebase_fixture_snapshot "$ABANDONED_REPO" "$abandoned_metadata" "$abandoned_rebase_head")" == "$attached_abandoned_snapshot" ]]; then
+	printf 'PASS abandoned rebase cleanup rejects ambiguous attached HEAD state\n'
+else
+	printf 'FAIL attached-HEAD refusal changed abandoned rebase state\n'
+	exit 1
+fi
+/usr/bin/git -C "$ABANDONED_REPO" update-ref --no-deref HEAD "$abandoned_target_sha"
+/usr/bin/git -C "$ABANDONED_REPO" update-ref -d refs/heads/ambiguous-recovery "$abandoned_target_sha"
+
+printf '%s\n' "$abandoned_target_sha" >"$abandoned_rebase_head"
+age_rebase_state_fixture "$abandoned_metadata" "$abandoned_rebase_head"
+malformed_abandoned_snapshot=$(rebase_fixture_snapshot "$ABANDONED_REPO" "$abandoned_metadata" "$abandoned_rebase_head")
+if AIDEVOPS_CANONICAL_RECOVERY_ROOT="$ABANDONED_RECOVERY" AIDEVOPS_REAL_GIT_BIN=/usr/bin/git \
+	bash "$HELPER" clear-abandoned-rebase --repo "$ABANDONED_REPO" --issue 28549 \
+	--confirm CLEAR_ABANDONED_STALE_REBASE >/dev/null 2>&1; then
+	printf 'FAIL abandoned rebase cleanup accepted mismatched stopped commit metadata\n'
+	exit 1
+elif [[ -d "$abandoned_metadata" ]] &&
+	[[ "$(rebase_fixture_snapshot "$ABANDONED_REPO" "$abandoned_metadata" "$abandoned_rebase_head")" == "$malformed_abandoned_snapshot" ]]; then
+	printf 'PASS abandoned rebase cleanup rejects malformed stopped commit metadata\n'
+else
+	printf 'FAIL malformed-metadata refusal changed abandoned rebase state\n'
+	exit 1
+fi
+printf '%s\n' "$abandoned_stopped_sha" >"$abandoned_rebase_head"
+age_rebase_state_fixture "$abandoned_metadata" "$abandoned_rebase_head"
+
+abandoned_output=""
+abandoned_output=$(AIDEVOPS_CANONICAL_RECOVERY_ROOT="$ABANDONED_RECOVERY" AIDEVOPS_REAL_GIT_BIN=/usr/bin/git \
+	bash "$HELPER" clear-abandoned-rebase --repo "$ABANDONED_REPO" --issue 28549 \
+	--confirm CLEAR_ABANDONED_STALE_REBASE)
+abandoned_preserved_dir="${ABANDONED_RECOVERY}/28549/abandoned-rebase-${abandoned_target_sha}"
+abandoned_ref_base="refs/aidevops/canonical-recovery/issue-28549/abandoned-rebase"
+if [[ "$abandoned_output" == *"CLEARED_ABANDONED_STALE_REBASE=true"* ]] &&
+	[[ ! -e "$abandoned_metadata" && ! -e "$abandoned_rebase_head" ]] &&
+	[[ -d "${abandoned_preserved_dir}/rebase-merge" && -f "${abandoned_preserved_dir}/REBASE_HEAD" ]] &&
+	[[ "$(<"${abandoned_preserved_dir}/rebase-merge/.hidden-marker")" == "hidden marker" ]] &&
+	[[ "$(/usr/bin/git -C "$ABANDONED_REPO" rev-parse HEAD)" == "$abandoned_target_sha" ]] &&
+	[[ "$(/usr/bin/git -C "$ABANDONED_REPO" rev-parse main)" == "$abandoned_local_tip" ]] &&
+	[[ "$(/usr/bin/git -C "$ABANDONED_REPO" write-tree)" == "$abandoned_index_tree" ]] &&
+	[[ -z "$(/usr/bin/git -C "$ABANDONED_REPO" status --porcelain)" ]] &&
+	[[ "$(/usr/bin/git -C "$ABANDONED_REPO" rev-parse "${abandoned_ref_base}/${abandoned_local_tip}")" == "$abandoned_local_tip" ]] &&
+	[[ "$(/usr/bin/git -C "$ABANDONED_REPO" rev-parse "${abandoned_ref_base}/${abandoned_target_sha}")" == "$abandoned_target_sha" ]] &&
+	[[ "$(/usr/bin/git -C "$ABANDONED_REPO" rev-parse "${abandoned_ref_base}/${abandoned_stopped_sha}")" == "$abandoned_stopped_sha" ]] &&
+	[[ "$(/usr/bin/git -C "$ABANDONED_REPO" rev-parse "${abandoned_ref_base}/${abandoned_todo_sha}")" == "$abandoned_todo_sha" ]] &&
+	[[ "$(/usr/bin/git -C "$ABANDONED_REPO" rev-parse "${abandoned_ref_base}/${abandoned_rewritten_sha}")" == "$abandoned_rewritten_sha" ]] &&
+	[[ "$(/usr/bin/git -C "$ABANDONED_REPO" rev-parse "${abandoned_ref_base}/${abandoned_amend_sha}")" == "$abandoned_amend_sha" ]] &&
+	[[ "$(/usr/bin/git -C "$ABANDONED_REPO" rev-parse "${abandoned_ref_base}/${abandoned_squash_sha}")" == "$abandoned_squash_sha" ]] &&
+	[[ "$(/usr/bin/git -C "$ABANDONED_REPO" rev-parse "${abandoned_ref_base}/${abandoned_update_ref_sha}")" == "$abandoned_update_ref_sha" ]] &&
+	[[ "$(/usr/bin/git -C "$ABANDONED_REPO" rev-parse "${abandoned_ref_base}/${abandoned_fixup_sha}")" == "$abandoned_fixup_sha" ]] &&
+	grep -q 'Abandoned stale rebase cleanup authorized' "$HOME/.aidevops/logs/canonical-recovery-audit.jsonl" &&
+	AIDEVOPS_REAL_GIT_BIN=/usr/bin/git bash "$HELPER" restore-default --repo "$ABANDONED_REPO" --issue 28549 --confirm RESTORE_CANONICAL_DEFAULT >/dev/null &&
+	[[ "$(/usr/bin/git -C "$ABANDONED_REPO" branch --show-current)" == "main" ]] &&
+	[[ "$(/usr/bin/git -C "$ABANDONED_REPO" rev-parse HEAD)" == "$abandoned_target_sha" ]]; then
+	printf 'PASS abandoned active rebase is preserved, cleared without tree changes, and restored\n'
+else
+	printf 'FAIL abandoned active rebase recovery violated preservation invariants\n'
+	exit 1
+fi
+
+/usr/bin/git -C "$ABANDONED_REPO" switch -q --detach "$abandoned_target_sha"
+mkdir "$abandoned_metadata"
+cp -R "${abandoned_preserved_dir}/rebase-merge/." "$abandoned_metadata/"
+cp "${abandoned_preserved_dir}/REBASE_HEAD" "$abandoned_rebase_head"
+age_rebase_state_fixture "$abandoned_metadata" "$abandoned_rebase_head"
+printf 'dirty\n' >"${ABANDONED_REPO}/DIRTY.md"
+dirty_abandoned_snapshot=$(rebase_fixture_snapshot "$ABANDONED_REPO" "$abandoned_metadata" "$abandoned_rebase_head")
+if AIDEVOPS_CANONICAL_RECOVERY_ROOT="$ABANDONED_RECOVERY" AIDEVOPS_REAL_GIT_BIN=/usr/bin/git \
+	bash "$HELPER" clear-abandoned-rebase --repo "$ABANDONED_REPO" --issue 28549 \
+	--confirm CLEAR_ABANDONED_STALE_REBASE >/dev/null 2>&1; then
+	printf 'FAIL abandoned rebase cleanup accepted a dirty canonical worktree\n'
+	exit 1
+elif [[ "$(rebase_fixture_snapshot "$ABANDONED_REPO" "$abandoned_metadata" "$abandoned_rebase_head")" != "$dirty_abandoned_snapshot" ]]; then
+	printf 'FAIL dirty-worktree refusal changed abandoned rebase state\n'
+	exit 1
+fi
+rm "${ABANDONED_REPO}/DIRTY.md"
+printf 'PASS abandoned rebase cleanup rejects a dirty canonical worktree\n'
+
+abandoned_diverged_tip=$(printf 'local divergence\n' |
+	/usr/bin/git -C "$ABANDONED_REPO" commit-tree "$abandoned_index_tree" -p "$abandoned_target_sha")
+/usr/bin/git -C "$ABANDONED_REPO" update-ref refs/heads/main "$abandoned_diverged_tip" "$abandoned_target_sha"
+diverged_abandoned_snapshot=$(rebase_fixture_snapshot "$ABANDONED_REPO" "$abandoned_metadata" "$abandoned_rebase_head")
+if AIDEVOPS_CANONICAL_RECOVERY_ROOT="$ABANDONED_RECOVERY" AIDEVOPS_REAL_GIT_BIN=/usr/bin/git \
+	bash "$HELPER" clear-abandoned-rebase --repo "$ABANDONED_REPO" --issue 28549 \
+	--confirm CLEAR_ABANDONED_STALE_REBASE >/dev/null 2>&1; then
+	printf 'FAIL abandoned rebase cleanup accepted local default divergence\n'
+	exit 1
+elif [[ -d "$abandoned_metadata" ]] &&
+	[[ "$(rebase_fixture_snapshot "$ABANDONED_REPO" "$abandoned_metadata" "$abandoned_rebase_head")" == "$diverged_abandoned_snapshot" ]]; then
+	printf 'PASS abandoned rebase cleanup rejects local default divergence without mutation\n'
+else
+	printf 'FAIL divergence refusal changed abandoned rebase state\n'
+	exit 1
+fi
+/usr/bin/git -C "$ABANDONED_REPO" update-ref refs/heads/main "$abandoned_target_sha" "$abandoned_diverged_tip"
+
+abandoned_race_hook="${ROOT}/mutate-abandoned-rebase.sh"
+# Generated hook expands its own positional argument.
+# shellcheck disable=SC2016
+printf '%s\n' '#!/usr/bin/env bash' 'printf "2\n" >"$2/msgnum"' >"$abandoned_race_hook"
+chmod +x "$abandoned_race_hook"
+if AIDEVOPS_CANONICAL_BEFORE_REBASE_CLEANUP_HOOK="$abandoned_race_hook" \
+	AIDEVOPS_CANONICAL_RECOVERY_ROOT="$ABANDONED_RECOVERY" AIDEVOPS_REAL_GIT_BIN=/usr/bin/git \
+	bash "$HELPER" clear-abandoned-rebase --repo "$ABANDONED_REPO" --issue 28549 \
+	--confirm CLEAR_ABANDONED_STALE_REBASE >/dev/null 2>&1; then
+	printf 'FAIL abandoned rebase cleanup accepted concurrently changing metadata\n'
+	exit 1
+elif [[ -d "$abandoned_metadata" ]] && [[ "$(<"${abandoned_metadata}/msgnum")" == "2" ]] &&
+	[[ "$(/usr/bin/git -C "$ABANDONED_REPO" rev-parse HEAD)" == "$abandoned_target_sha" ]]; then
+	printf 'PASS abandoned rebase cleanup rejects concurrent metadata changes without cleanup\n'
+else
+	printf 'FAIL concurrent abandoned rebase refusal changed repository state\n'
+	exit 1
+fi
+
+printf '1\n' >"${abandoned_metadata}/msgnum"
+age_rebase_state_fixture "$abandoned_metadata" "$abandoned_rebase_head"
+abandoned_quarantine_race_hook="${ROOT}/mutate-quarantined-abandoned-rebase.sh"
+# Generated hook expands its own positional argument.
+# shellcheck disable=SC2016
+printf '%s\n' '#!/usr/bin/env bash' 'printf "changed after validation\n" >"$2/.hidden-marker"' \
+	>"$abandoned_quarantine_race_hook"
+chmod +x "$abandoned_quarantine_race_hook"
+if AIDEVOPS_CANONICAL_BEFORE_REBASE_QUARANTINE_HOOK="$abandoned_quarantine_race_hook" \
+	AIDEVOPS_CANONICAL_RECOVERY_ROOT="$ABANDONED_RECOVERY" AIDEVOPS_REAL_GIT_BIN=/usr/bin/git \
+	bash "$HELPER" clear-abandoned-rebase --repo "$ABANDONED_REPO" --issue 28549 \
+	--confirm CLEAR_ABANDONED_STALE_REBASE >/dev/null 2>&1; then
+	printf 'FAIL abandoned rebase cleanup accepted a post-validation metadata race\n'
+	exit 1
+fi
+abandoned_quarantine_count=0
+for abandoned_quarantine_path in "${abandoned_metadata}.aidevops-quarantine."* \
+	"${abandoned_rebase_head}.aidevops-quarantine."*; do
+	[[ -e "$abandoned_quarantine_path" ]] || continue
+	abandoned_quarantine_count=$((abandoned_quarantine_count + 1))
+done
+if [[ -d "$abandoned_metadata" && -f "$abandoned_rebase_head" ]] &&
+	[[ "$(<"${abandoned_metadata}/.hidden-marker")" == "changed after validation" ]] &&
+	[[ "$abandoned_quarantine_count" -eq 0 ]] &&
+	[[ "$(/usr/bin/git -C "$ABANDONED_REPO" rev-parse HEAD)" == "$abandoned_target_sha" ]] &&
+	[[ "$(/usr/bin/git -C "$ABANDONED_REPO" rev-parse main)" == "$abandoned_target_sha" ]] &&
+	[[ "$(/usr/bin/git -C "$ABANDONED_REPO" rev-parse origin/main)" == "$abandoned_target_sha" ]] &&
+	[[ "$(/usr/bin/git -C "$ABANDONED_REPO" write-tree)" == "$abandoned_index_tree" ]] &&
+	[[ -z "$(/usr/bin/git -C "$ABANDONED_REPO" status --porcelain)" ]]; then
+	printf 'PASS post-validation metadata races are quarantined, detected, and restored\n'
+else
+	printf 'FAIL post-validation race recovery lost or changed canonical state\n'
+	exit 1
+fi
+
+printf 'hidden marker\n' >"${abandoned_metadata}/.hidden-marker"
+age_rebase_state_fixture "$abandoned_metadata" "$abandoned_rebase_head"
+abandoned_inter_move_hook="${ROOT}/replace-rebase-head-before-directory-quarantine.sh"
+# Generated hook expands its own positional arguments.
+# shellcheck disable=SC2016
+printf '%s\n' '#!/usr/bin/env bash' 'printf "%s\n" "$4" >"$3"' >"$abandoned_inter_move_hook"
+chmod +x "$abandoned_inter_move_hook"
+if AIDEVOPS_CANONICAL_BEFORE_REBASE_DIRECTORY_QUARANTINE_HOOK="$abandoned_inter_move_hook" \
+	AIDEVOPS_CANONICAL_RECOVERY_ROOT="$ABANDONED_RECOVERY" AIDEVOPS_REAL_GIT_BIN=/usr/bin/git \
+	bash "$HELPER" clear-abandoned-rebase --repo "$ABANDONED_REPO" --issue 28549 \
+	--confirm CLEAR_ABANDONED_STALE_REBASE >/dev/null 2>&1; then
+	printf 'FAIL abandoned rebase cleanup accepted a replacement REBASE_HEAD race\n'
+	exit 1
+fi
+abandoned_quarantine_count=0
+for abandoned_quarantine_path in "${abandoned_metadata}.aidevops-quarantine."* \
+	"${abandoned_rebase_head}.aidevops-quarantine."*; do
+	[[ -e "$abandoned_quarantine_path" ]] || continue
+	abandoned_quarantine_count=$((abandoned_quarantine_count + 1))
+done
+if [[ -d "$abandoned_metadata" && -f "$abandoned_rebase_head" ]] &&
+	[[ "$(<"$abandoned_rebase_head")" == "$abandoned_target_sha" ]] &&
+	[[ "$abandoned_quarantine_count" -eq 0 ]] &&
+	[[ "$(/usr/bin/git -C "$ABANDONED_REPO" rev-parse HEAD)" == "$abandoned_target_sha" ]] &&
+	[[ "$(/usr/bin/git -C "$ABANDONED_REPO" rev-parse main)" == "$abandoned_target_sha" ]] &&
+	[[ "$(/usr/bin/git -C "$ABANDONED_REPO" rev-parse origin/main)" == "$abandoned_target_sha" ]] &&
+	[[ "$(/usr/bin/git -C "$ABANDONED_REPO" write-tree)" == "$abandoned_index_tree" ]] &&
+	[[ -z "$(/usr/bin/git -C "$ABANDONED_REPO" status --porcelain)" ]]; then
+	printf 'PASS replacement REBASE_HEAD races are preserved without marker theft\n'
+else
+	printf 'FAIL replacement REBASE_HEAD race lost concurrent canonical state\n'
+	exit 1
+fi
+
 SYNC_REPO="${ROOT}/sync-repo"
 SYNC_REMOTE="${ROOT}/sync-remote.git"
 SYNC_UPDATER="${ROOT}/sync-updater"
