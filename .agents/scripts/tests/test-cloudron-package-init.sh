@@ -102,11 +102,19 @@ GITCONFIG
 	return 0
 }
 
+test_cloudron_publishing_command_syntax() {
+	local publishing_skill="${AGENTS_DIR}/tools/deployment/cloudron-app-publishing-skill.md"
+	assert_equal true "$(grep -Fq 'cloudron versions update --version=1.0.0 --state=published' "$publishing_skill" && printf true || printf false)" "publishing guidance uses equals-form options"
+	assert_equal false "$(grep -Fq 'cloudron versions update --version ' "$publishing_skill" && printf true || printf false)" "publishing guidance avoids global version flag collision"
+	return 0
+}
+
 main() {
 	TEST_ROOT=$(mktemp -d)
 	trap cleanup EXIT
 	test_cloudron_workflow_scaffolding
 	test_cloudron_registration_metadata
+	test_cloudron_publishing_command_syntax
 	printf '\nRan %d tests, %d failed.\n' "$((PASSED + FAILED))" "$FAILED"
 	[[ "$FAILED" -eq 0 ]] || return 1
 	return 0
