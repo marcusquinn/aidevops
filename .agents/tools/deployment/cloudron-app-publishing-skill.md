@@ -33,7 +33,7 @@ Distribute Cloudron apps independently using a `CloudronVersions.json` version c
 cloudron versions init  # creates CloudronVersions.json + DESCRIPTION.md, CHANGELOG, POSTINSTALL.md (edit all placeholders)
 cloudron build          # build and push image (first run prompts for Docker repository, e.g. registry/username/myapp)
 cloudron versions add --state testing  # add the registry image without exposing it as stable
-cloudron versions update --version 1.0.0 --state published
+cloudron versions update --version=1.0.0 --state=published
 # host CloudronVersions.json at a public URL
 ```
 
@@ -80,7 +80,7 @@ Build behavior depends on whether a build service is configured:
 |---------|---------|
 | `cloudron versions add` | Add current version (reads manifest + last built image) |
 | `cloudron versions list` | List all versions with date, image, and publish state |
-| `cloudron versions update --version 1.0.0 --state published` | Change publish state |
+| `cloudron versions update --version=1.0.0 --state=published` | Change publish state |
 | `cloudron versions revoke` | Mark latest published version as revoked |
 
 **Rules:** Do not change the manifest or image of a published version. Treat catalog entries as append-only release records. To ship changes: revoke only when necessary, bump the package version, rebuild, and add a new entry. Never copy a Docker tag or digest into the catalog by hand.
@@ -99,7 +99,7 @@ cloudron versions add --state testing
 cloudron versions list
 
 # 5. Promote the exact tested entry
-cloudron versions update --version 1.1.0 --state published
+cloudron versions update --version=1.1.0 --state=published
 
 # 6. Commit and push CloudronVersions.json to hosting
 git add CloudronVersions.json && git commit -m "release 1.1.0" && git push
