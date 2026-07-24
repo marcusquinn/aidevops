@@ -1093,6 +1093,56 @@ test_notice_category_propagates_api_failure() {
 
 # ---------- Integration tests: do_check decision buckets (GH#22802) ----------
 
+test_do_check_resolves_trusted_author_via_rest() {
+	check_for_skip_label() { return 1; }
+	get_all_bot_commenters() { return 0; }
+	_get_success_status_contexts() { return 1; }
+	gh() {
+		if [[ "${1:-}" == "api" && "${2:-}" == "repos/testorg/otherrepo/pulls/123" ]]; then
+			printf '%s\n' 'MEMBER'
+			return 0
+		fi
+		return 1
+	}
+
+	local output status
+	if output=$(do_check 123 'testorg/otherrepo' 2>/dev/null); then
+		status=0
+	else
+		status=$?
+	fi
+
+	if [[ "$status" -eq 0 && "$output" == "PASS_ADVISORY" ]]; then
+		print_result "do_check resolves trusted author association through REST" 0
+	else
+		print_result "do_check resolves trusted author association through REST" 1 \
+			"status=${status} output=${output}"
+	fi
+	return 0
+}
+
+test_do_check_fails_closed_when_author_lookup_fails() {
+	check_for_skip_label() { return 1; }
+	get_all_bot_commenters() { return 0; }
+	_get_success_status_contexts() { return 1; }
+	gh() { return 1; }
+
+	local output status
+	if output=$(do_check 123 'testorg/otherrepo' 2>/dev/null); then
+		status=0
+	else
+		status=$?
+	fi
+
+	if [[ "$status" -eq 1 && "$output" == "WAITING" ]]; then
+		print_result "do_check fails closed when author association is unavailable" 0
+	else
+		print_result "do_check fails closed when author association is unavailable" 1 \
+			"status=${status} output=${output}"
+	fi
+	return 0
+}
+
 test_do_check_passes_true_rate_limit_only() {
 	check_for_skip_label() { return 1; }
 	get_all_bot_commenters() {
@@ -1572,6 +1622,10 @@ main() {
 	test_do_check_fetches_success_status_contexts_once
 	test_do_check_honors_skip_for_trusted_author
 	test_do_check_denies_skip_for_external_author
+
+	printf '\n=== Author association compatibility ===\n'
+	test_do_check_resolves_trusted_author_via_rest
+	test_do_check_fails_closed_when_author_lookup_fails
 
 	echo ""
 	echo "=== Typed current-head evidence ==="

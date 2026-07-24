@@ -171,6 +171,41 @@ _RBG_EVIDENCE_SNAPSHOT_READY=0
 
 # --- Functions ---
 
+_get_pr_rest_field() {
+	local pr_number="$1"
+	local repo="$2"
+	local jq_filter="$3"
+
+	if gh api "repos/${repo}/pulls/${pr_number}" --jq "$jq_filter" 2>/dev/null; then
+		return 0
+	fi
+	return 1
+}
+
+_resolve_pr_author_association() {
+	local pr_number="$1"
+	local repo="$2"
+	local pr_metadata_json="${3:-}"
+	local author_association=""
+
+	if [[ -n "$pr_metadata_json" ]]; then
+		author_association=$(jq -r '.author_association // .authorAssociation // empty' \
+			<<<"$pr_metadata_json" 2>/dev/null || true)
+	fi
+
+	if [[ -z "$author_association" ]]; then
+		# #aidevops:trust-boundary — author association controls whether missing
+		# add-on review evidence is advisory or mandatory. Resolve it from the REST
+		# pull-request shape, which exposes author_association across gh versions;
+		# missing or malformed evidence remains empty and therefore fails closed.
+		author_association=$(_get_pr_rest_field \
+			"$pr_number" "$repo" '.author_association // empty' || true)
+	fi
+
+	printf '%s' "$author_association"
+	return 0
+}
+
 usage() {
 	echo "Usage: $(basename "$0") {check|event-check|classify-infra-rate-limit|wait|list|request-retry|status-json|batch-retry} <PR_NUMBER> [REPO] [MAX_WAIT]"
 	echo ""
@@ -493,8 +528,7 @@ get_pr_age_seconds() {
 	if [[ -z "$created_at" ]]; then
 		# GH#4361: GraphQL rate-limited — fall back to REST API which has a
 		# separate rate limit and is typically available when GraphQL is exhausted.
-		created_at=$(gh api "repos/${repo}/pulls/${pr_number}" \
-			--jq '.created_at' 2>/dev/null || echo "")
+		created_at=$(_get_pr_rest_field "$pr_number" "$repo" '.created_at' || echo "")
 	fi
 	if [[ -z "$created_at" ]]; then
 		echo "0"
@@ -938,8 +972,7 @@ _get_success_status_contexts() {
 	fi
 	if [[ -z "$head_sha" ]]; then
 		# GH#4361: GraphQL rate-limited — fall back to REST API.
-		head_sha=$(gh api "repos/${repo}/pulls/${pr_number}" \
-			--jq '.head.sha' 2>/dev/null || echo "")
+		head_sha=$(_get_pr_rest_field "$pr_number" "$repo" '.head.sha' || echo "")
 	fi
 	if [[ -z "$head_sha" ]]; then
 		return 1
