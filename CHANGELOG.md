@@ -10,6 +10,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.32.178] - 2026-07-24
+
+### Changed
+
+- Maintenance: sync ref:GH#28556 to TODO.md [skip ci]
+- Maintenance: update simplification state registry
+- CI: migrate actions to Node.js 24 runtimes (#28553)
+- Maintenance: update simplification state registry
+
+### Fixed
+
+- use parse-safe Cloudron promotion options (#28557)
+- persist detached release receipts (#28552)
+
 ## [3.32.177] - 2026-07-24
 
 ### Fixed
