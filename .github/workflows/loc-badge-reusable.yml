@@ -115,14 +115,14 @@ jobs:
 
       - name: Checkout repository
         if: steps.check-author.outputs.skip != 'true'
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 1
           token: ${{ secrets.SYNC_PAT || secrets.GITHUB_TOKEN }}
 
       - name: Checkout aidevops framework scripts
         if: steps.check-author.outputs.skip != 'true'
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           repository: ${{ inputs.aidevops_repository || 'marcusquinn/aidevops' }}
           path: __aidevops
