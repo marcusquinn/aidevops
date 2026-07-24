@@ -4703,3 +4703,5 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [ ] t18170 Standardize Cloudron community publishing lifecycle #bug ref:GH#28546
 
 - [ ] t18171 Fix Cloudron 7.0.4 versions update option parsing #bug ref:GH#28556
+
+- [ ] t18172 Document Cloudron package repository metadata #documentation ref:GH#28559
