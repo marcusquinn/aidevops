@@ -36,6 +36,7 @@ _PULSE_EFFICIENCY_CYCLE_STARTED=0
 _PULSE_EFFICIENCY_CYCLE_START_MS=0
 _PULSE_EFFICIENCY_CYCLE_OUTCOME=idle
 _PULSE_EFFICIENCY_CONTRACT_VERSION=2
+_PULSE_EFFICIENCY_COVERAGE_GENERATION=2
 _PULSE_LEGACY_CYCLE_OUTCOME_PENDING=0
 
 _pulse_efficiency_record() {
@@ -67,7 +68,7 @@ _pulse_efficiency_now_ms() {
 
 _pulse_efficiency_coverage_start_seconds() {
 	local now_seconds="$1"
-	local state_file="${AIDEVOPS_GH_API_EVIDENCE_COVERAGE_START_FILE:-${AIDEVOPS_STATE_DIR:-${HOME}/.aidevops/state}/github-api-efficiency-contract-v${_PULSE_EFFICIENCY_CONTRACT_VERSION}.started-at}"
+	local state_file="${AIDEVOPS_GH_API_EVIDENCE_COVERAGE_START_FILE:-${AIDEVOPS_STATE_DIR:-${HOME}/.aidevops/state}/github-api-efficiency-contract-v${_PULSE_EFFICIENCY_CONTRACT_VERSION}-coverage-${_PULSE_EFFICIENCY_COVERAGE_GENERATION}.started-at}"
 	local state_dir="${state_file%/*}"
 	local existing=""
 	local temporary=""
@@ -130,7 +131,7 @@ _pulse_efficiency_cycle_start() {
 	export AIDEVOPS_GH_API_EFFICIENCY_CYCLE_ID
 	_pulse_efficiency_record contract "$_PULSE_EFFICIENCY_CONTRACT_VERSION"
 	_pulse_efficiency_record coverage-start "$coverage_start"
-	for group in population latency cache single_flight path_budgets; do
+	for group in population latency cache single_flight webhook guardrails path_budgets; do
 		_pulse_efficiency_record "coverage.${group}" "$_PULSE_EFFICIENCY_CONTRACT_VERSION"
 	done
 	return 0

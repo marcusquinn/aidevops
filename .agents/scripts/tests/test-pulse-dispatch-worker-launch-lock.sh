@@ -166,11 +166,66 @@ is_blocked_by_unresolved() {
 	return 0
 }
 
+EVIDENCE_LOG="${TEST_TMP}/efficiency-evidence.log"
+gh_record_efficiency_evidence() {
+	local name="$1"
+	local value="${2:-1}"
+	printf '%s=%s\n' "$name" "$value" >>"$EVIDENCE_LOG"
+	return 0
+}
+
 if ! LOGFILE="${TEST_TMP}/pulse.log" _dlw_blocked_by_hard_stop "123" "owner/repo" '{"body":"blocked-body"}'; then
 	fail "worker launch hard-stop did not block unresolved blocked-by dependency"
 fi
 
+: >"$EVIDENCE_LOG"
+if LOGFILE="${TEST_TMP}/pulse.log" _dlw_final_dependency_attestation \
+	"123" "owner/repo" '{"body":"blocked-body"}' "$repo_dir"; then
+	fail "final dependency attestation accepted a newly unresolved blocker"
+fi
+if ! grep -q '^guardrails.stale_positive_decisions=1$' "$EVIDENCE_LOG"; then
+	fail "final dependency recheck did not record stale-positive evidence"
+fi
+
+is_blocked_by_unresolved() {
+	local issue_body="$1"
+	local repo_slug="$2"
+	local issue_number="$3"
+	: "$issue_body" "$repo_slug" "$issue_number"
+	return 1
+}
+if ! LOGFILE="${TEST_TMP}/pulse.log" _dlw_final_dependency_attestation \
+	"123" "owner/repo" '{"body":"clear-body"}' "$repo_dir"; then
+	fail "final dependency attestation rejected a positively clear dependency state"
+fi
+
 unset -f is_blocked_by_unresolved
+if ! LOGFILE="${TEST_TMP}/pulse.log" _dlw_blocked_by_hard_stop \
+	"123" "owner/repo" '{"body":"clear-body"}' "$repo_dir"; then
+	fail "missing dependency verifier did not fail closed"
+fi
+if [[ "${_DLW_HARD_STOP_REASON:-}" != "dependency-verifier-unavailable" ]]; then
+	fail "missing dependency verifier did not expose a classified hard-stop reason"
+fi
+
+: >"$EVIDENCE_LOG"
+if LOGFILE="${TEST_TMP}/pulse.log" _dlw_require_dependency_attestation 0 "123" "owner/repo"; then
+	fail "worker action boundary accepted a missing dependency attestation"
+fi
+if ! grep -q '^guardrails.dispatch_dependency_violations=1$' "$EVIDENCE_LOG"; then
+	fail "missing dependency attestation did not emit violation evidence"
+fi
+if ! LOGFILE="${TEST_TMP}/pulse.log" _dlw_require_dependency_attestation 1 "123" "owner/repo"; then
+	fail "worker action boundary rejected a valid dependency attestation"
+fi
+
+final_recheck_line=$(grep -n '_dlw_final_worker_spawn_gates.*issue_number' "${SCRIPTS_DIR}/pulse-dispatch-worker-launch.sh" | cut -d: -f1)
+worker_spawn_line=$(grep -n 'worker_pid=.*_dlw_nohup_launch' "${SCRIPTS_DIR}/pulse-dispatch-worker-launch.sh" | cut -d: -f1)
+if [[ ! "$final_recheck_line" =~ ^[0-9]+$ || ! "$worker_spawn_line" =~ ^[0-9]+$ \
+	|| "$final_recheck_line" -ge "$worker_spawn_line" ]]; then
+	fail "final dependency attestation is not immediately upstream of worker spawn"
+fi
+
 # shellcheck source=../pulse-dep-graph.sh
 source "${SCRIPTS_DIR}/pulse-dep-graph.sh"
 
@@ -258,6 +313,11 @@ printf 'PASS: systemd PID resolver handles final unterminated property\n'
 printf 'PASS: systemd stability poll duration rejects invalid configuration\n'
 printf 'PASS: systemd launch state streams intact to the worker log\n'
 printf 'PASS: worker launch hard-stops unresolved blocked-by dependencies\n'
+printf 'PASS: final dependency recheck records stale-positive evidence\n'
+printf 'PASS: final dependency attestation accepts only positively clear state\n'
+printf 'PASS: missing dependency verifier fails closed with a classified reason\n'
+printf 'PASS: unverified worker action boundary emits dependency-violation evidence\n'
+printf 'PASS: final dependency attestation remains upstream of worker spawn\n'
 printf 'PASS: native blockedBy lookup failure remains fail-closed with classified reason\n'
 printf 'PASS: bundle defaults route unlabeled worker model selection\n'
 printf 'PASS: explicit tier labels override bundle model defaults\n'

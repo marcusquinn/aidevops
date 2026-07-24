@@ -481,8 +481,10 @@ gh_record_attempt() {
 }
 
 # --- gh_run_transport_attempt <path> <caller> <logical> <page> <retry> -- cmd
-# Execute one native transport command with unmodified stdio and status, then
-# append exactly one attempt record. Telemetry failures remain fail-open.
+# Execute one native transport command with unmodified stdout and status. Normal
+# mode appends one process-level attempt; exact capture may append one record per
+# response frame or none for a proven local-only command. Telemetry failures
+# remain fail-open.
 gh_run_transport_attempt() {
 	local path="$1"
 	shift
@@ -499,9 +501,22 @@ gh_run_transport_attempt() {
 	local end_ms=""
 	local elapsed_ms=""
 	local rc=0
+	local capture_rc=0
 	local outcome="success"
 	local quota_cost="${AIDEVOPS_GH_QUOTA_COST:-}"
 	local success_quota_cost="${AIDEVOPS_GH_QUOTA_COST_ON_SUCCESS:-}"
+	if declare -F _ghqa_run_transport_attempt >/dev/null 2>&1 \
+		&& [[ "${AIDEVOPS_GH_EXACT_QUOTA_CAPTURE:-0}" == "1" ]]; then
+		_GHQA_TRANSPORT_HANDLED=0
+		if _ghqa_run_transport_attempt "$path" "$caller" "$logical_id" "$page" "$retry" -- "$@"; then
+			capture_rc=0
+		else
+			capture_rc=$?
+		fi
+		if [[ "${_GHQA_TRANSPORT_HANDLED:-0}" == "1" ]]; then
+			return "$capture_rc"
+		fi
+	fi
 	start_ms=$(_gh_now_ms) || start_ms=""
 	if "$@"; then
 		rc=0

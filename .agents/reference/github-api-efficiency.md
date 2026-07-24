@@ -71,19 +71,29 @@ uncached, non-conditional direct `gh api` request to `github.com`:
 - REST requests cost `1` primary-rate point;
 - `GET /rate_limit` costs `0` primary-rate points.
 
-Failed requests without operation-owned cost evidence remain unknown because
-the exit status does not prove whether GitHub charged the request. Cached and
-conditional requests remain unknown because their result can cost either zero
-or one. Native opaque pagination, GitHub Enterprise hosts, unknown/future
-`gh api` options, GraphQL, and higher-level `gh` commands also remain unknown.
-Explicit REST pagination can record each successful page independently after
-the shim has proved that page boundary.
+Set `AIDEVOPS_GH_EXACT_QUOTA_CAPTURE=1` for a controlled observation process to
+enable response-framed attribution. The shim serializes native `gh` requests by
+a SHA-256 fingerprint of the active credential and host, bootstraps private
+counter state with the documented zero-cost `/rate_limit` endpoint, and extracts
+only numeric status/resource/used/remaining/reset headers from `GH_DEBUG=api`.
+Request headers, queries, response bodies, tokens, and repository data remain in
+a mode-600 temporary file that is deleted before telemetry is appended; normal
+diagnostics outside the debug frame are replayed. Use
+`AIDEVOPS_GH_QUOTA_STATE_DIR` to isolate counter state for a controlled run.
 
-Do not infer an operation's GraphQL cost by subtracting cumulative rate-limit
-headers: concurrent clients can change those values between observations. A
-GraphQL operation becomes exact only when it returns and owns its own
-`rateLimit { cost }` value. Partial REST attribution does not relax the
-benchmark's zero-unknown-cost comparability gate.
+A same-resource, same-reset counter delta of exactly one is authoritative for a
+single response because every charged REST, Search, or GraphQL request consumes
+at least one primary point; any concurrent charge would make the delta larger.
+The capture records each complete native response frame separately, including
+failed responses. Counter gaps, deltas above one, malformed or changed debug
+framing, missing headers, unknown hosts, and unproved cached outcomes remain
+unknown. Operation-owned costs and the documented successful direct-REST costs
+remain authoritative when available.
+
+Do not assign a larger GraphQL cost by subtracting cumulative rate-limit
+headers: a delta above one cannot distinguish the operation from another client.
+Partial attribution does not relax the benchmark's zero-unknown-cost
+comparability gate.
 
 ### Evidence sidecar
 
@@ -111,22 +121,25 @@ The active transport log remains bounded at 48 hours, one million records, or
 authoritative: unusually high request volume can still exhaust a size bound
 before the requested observation duration and therefore cannot support `PASS`.
 
-Coverage contract `2` starts at a private persisted activation timestamp and is
-re-emitted each cycle so a rolling window becomes bounded only after every
-retained attempt post-dates instrumentation activation. Population, latency,
-cache, single-flight, and path-budget ownership currently emit complete coverage
-markers. Webhook and guardrail events are collected, but those groups deliberately
-remain uncovered—and therefore `null`—until duplicate-action, recovery,
-stale-positive, and dispatch-dependency semantics have complete production
-ownership. Never promote absent events in an uncovered group to observed zero.
+Coverage contract `2`, generation `2`, starts at a private persisted activation
+timestamp and is re-emitted each cycle so a rolling window becomes bounded only
+after every retained attempt post-dates complete instrumentation activation.
+Population, latency, cache, single-flight, webhook, guardrail, and path-budget
+ownership emit coverage markers. Webhook duplicate actions are prevented by the
+durable delivery ledger; an invalidation that cannot hand off safely to the
+polling backstop is conservatively a missed recovery. Merge and dispatch action
+boundaries record stale-positive mismatches, and worker spawn requires a final
+positive dependency attestation. Never promote absent events to observed zero
+without the matching bounded coverage marker.
 
 Contract `2` also exports one private cycle scope to Pulse child processes. Check
 status evidence hashes that scope with each actionable head and counts physical
 aggregate fetches inside the same scope. This distinguishes duplicate fetches in
 one cycle from freshness-required refreshes of an unchanged head in later cycles.
-The contract uses a new `github-api-efficiency-contract-v2.started-at` activation
-file, so deployment starts a fresh bounded window automatically. Version-1
-sidecars remain immutable historical evidence and are not accepted as version 2.
+The generation uses
+`github-api-efficiency-contract-v2-coverage-2.started-at`, so deployment starts a
+fresh bounded window automatically. Version-1 sidecars and earlier contract-2
+coverage windows remain immutable historical evidence.
 
 The following is an intentionally incomplete template. Replace every required
 `null` with a privacy-safe observed value and set `complete` to `true` only when
@@ -202,8 +215,8 @@ tokens, URLs, or raw log records in the sidecar.
 | `latency` | Aggregate request and completed-action histograms plus peak minute count. |
 | `cache` | Canonical snapshot/check-cache decision counters. |
 | `single_flight` | Leader, follower wait, takeover, and duplicate-leader counters. |
-| `webhook` | `pulse-merge-webhook-server.py` emits a protocol-v1 millisecond receive marker; `pulse-merge-webhook-receiver.sh` records successful invalidations, delivery-to-invalidation lag, and invalidations delegated to polling recovery. |
-| `guardrails` | Snapshot/check-cache freshness detections, forced live refreshes, and live required-check preflight mismatches. Unsupported stale-positive and dispatch-dependency fields remain unknown. |
+| `webhook` | `pulse-merge-webhook-server.py` emits a protocol-v1 millisecond receive marker and atomically suppresses duplicate delivery ownership; `pulse-merge-webhook-receiver.sh` records successful invalidations, delivery-to-invalidation lag, and invalidation failures that cannot prove polling recovery handoff. |
+| `guardrails` | Snapshot/check-cache freshness detections and forced live refreshes; final merge preflight mismatches record stale-positive decisions, while final worker dependency attestation blocks and records any unverified action-boundary crossing. |
 | `path_budgets` | Deterministic call-site counters plus cycle-scoped opaque actionable-head/fetch telemetry. Total fetches remain observable while the decision gate compares only identities from the same freshness scope. |
 
 ## Comparability gate
@@ -283,24 +296,17 @@ to convert an observed regression into a pass.
 
 ## Current t18131 checkpoint
 
-The first homogeneous `v3.32.161` 12-hour aggregate retained 43,199 seconds and
-69,028 exact attempts. Its five owned evidence groups were bounded, but 20,135
-quota costs plus webhook and guardrail semantics remained unknown. The official
-comparison therefore returned `INCONCLUSIVE`.
+The latest matched 17-repository baseline and canary each retained exactly 43,200
+seconds. They recorded 67,574 and 64,073 attempts respectively, but the canary
+still contained 19,910 unknown quota costs and the official comparator returned
+`INCONCLUSIVE` with 25 reasons. Equal duration and cohort therefore did not cure
+the missing ownership or workload-comparability evidence.
 
-That window recorded 87 aggregate check fetches and 61 globally unique actionable
-head SHAs. Two adjacent completed six-hour diagnostics recorded `47/43` and
-`40/40` fetches/unique heads. Twenty-two heads occurred in both halves, and the
-cache evidence recorded zero duplicate leaders. The original full-window ratio
-therefore mixed legitimate later-cycle TTL refreshes with duplicate fan-out; it
-did not prove 26 redundant fetches.
-
-Evidence schema/coverage contract 2 corrects the scope mismatch without extending
-terminal or actionable TTLs. It keeps total physical fetches visible and adds a
-separate one-fetch-per-cycle/head gate. Deployment of this contract requires a
-fresh exact baseline and non-overlapping 12–24 hour canary. Until those windows
-and the remaining ownership gaps are complete, this implementation does not tune
-`.agents/configs/pulse-sweep-budget.json`, does not tune
+Coverage generation 2 adds response-framed unit-cost attribution plus complete
+webhook and guardrail action-boundary ownership without extending terminal or
+actionable TTLs. Deployment requires a fresh controlled rollback baseline and a
+non-overlapping 12–24 hour canary. Until those windows pass, this implementation
+does not tune `.agents/configs/pulse-sweep-budget.json`, does not tune
 `.agents/configs/webhook-receiver.conf`, and removes no rollback control.
 
 ## Retained controls and rollback triggers

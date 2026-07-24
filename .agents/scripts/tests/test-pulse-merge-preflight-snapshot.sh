@@ -451,10 +451,11 @@ main() {
 	: >"$EVIDENCE_LOG"
 	assert_gate "active broad check blocks merge" pending 1
 	TESTS_RUN=$((TESTS_RUN + 1))
-	if [[ "$(grep -c '^guardrails.required_check_merge_preflight_mismatches=1$' "$EVIDENCE_LOG")" == "1" ]]; then
-		printf 'PASS live preflight mismatch emits typed guardrail evidence\n'
+	if [[ "$(grep -c '^guardrails.required_check_merge_preflight_mismatches=1$' "$EVIDENCE_LOG")" == "1" \
+		&& "$(grep -c '^guardrails.stale_positive_decisions=1$' "$EVIDENCE_LOG")" == "1" ]]; then
+		printf 'PASS live preflight mismatch emits typed guardrail and stale-positive evidence\n'
 	else
-		printf 'FAIL live preflight mismatch did not emit typed guardrail evidence\n'
+		printf 'FAIL live preflight mismatch did not emit both guardrail events\n'
 		TESTS_FAILED=$((TESTS_FAILED + 1))
 	fi
 	assert_gate "terminal failed required check blocks merge" required_fail 1
