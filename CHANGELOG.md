@@ -10,6 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.32.179] - 2026-07-24
+
+### Fixed
+
+- use package names in Cloudron update issues (#28558)
+
 ## [3.32.178] - 2026-07-24
 
 ### Changed
