@@ -29,6 +29,8 @@
 # verify idempotency.
 [[ -n "${_PULSE_ROUTINES_LOADED:-}" ]] && return 0
 _PULSE_ROUTINES_LOADED=1
+_ROUTINE_STATUS_SUCCESS="success"
+_ROUTINE_STATUS_FAILURE="failure"
 
 #######################################
 # Read last-run epoch for a routine ID from state file
@@ -76,8 +78,10 @@ _routine_update_state() {
 
 	local tmp_file
 	tmp_file=$(mktemp "$(dirname "$ROUTINE_STATE_FILE")/.routine-state.XXXXXX")
-	if echo "$existing" | jq --arg id "$routine_id" --arg ts "$now_iso" --arg st "$status" \
-		'.[$id] = {"last_run": $ts, "last_status": $st}' >"$tmp_file" 2>/dev/null; then
+	if echo "$existing" | jq --arg id "$routine_id" --arg ts "$now_iso" --arg st "$status" --arg success "$_ROUTINE_STATUS_SUCCESS" '
+		.[$id] = ((.[$id] // {}) + {"last_attempt": $ts, "last_status": $st})
+		| if $st == $success then .[$id].last_run = $ts else . end
+	' >"$tmp_file" 2>/dev/null; then
 		mv "$tmp_file" "$ROUTINE_STATE_FILE"
 	else
 		rm -f "$tmp_file"
@@ -87,13 +91,104 @@ _routine_update_state() {
 }
 
 #######################################
-# Execute a single routine
-# Arguments:
-#   $1 - routine ID (e.g., r001)
-#   $2 - description
-#   $3 - run: value (script path, relative to ~/.aidevops/agents/)
-#   $4 - agent: value
-#   $5 - repo path (for agent dispatch context)
+# Block duplicate active executions and apply an explicit short failure retry
+# cooldown without moving the successful calendar boundary marker.
+#######################################
+_routine_retry_blocked() {
+	local routine_id="$1"
+	local retry_seconds="${AIDEVOPS_ROUTINE_FAILURE_RETRY_SECONDS:-900}"
+	local running_seconds="${AIDEVOPS_ROUTINE_RUNNING_TIMEOUT_SECONDS:-21600}"
+	local status=""
+	local attempt_iso=""
+	local attempt_epoch=0
+	local now_epoch=0
+	[[ "$retry_seconds" =~ ^[0-9]+$ ]] || retry_seconds=900
+	[[ "$running_seconds" =~ ^[0-9]+$ ]] || running_seconds=21600
+	[[ -f "$ROUTINE_STATE_FILE" ]] || return 1
+	status=$(jq -r --arg id "$routine_id" '.[$id].last_status // empty' "$ROUTINE_STATE_FILE" 2>/dev/null || true)
+	attempt_iso=$(jq -r --arg id "$routine_id" '.[$id].last_attempt // empty' "$ROUTINE_STATE_FILE" 2>/dev/null || true)
+	[[ -n "$attempt_iso" ]] || return 1
+	attempt_epoch=$(date -d "$attempt_iso" +%s 2>/dev/null) || attempt_epoch=$(TZ=UTC date -j -f "%Y-%m-%dT%H:%M:%SZ" "$attempt_iso" +%s 2>/dev/null) || return 1
+	now_epoch=$(date +%s)
+	case "$status" in
+	running) [[ $((now_epoch - attempt_epoch)) -lt "$running_seconds" ]] ;;
+	failure) [[ $((now_epoch - attempt_epoch)) -lt "$retry_seconds" ]] ;;
+	*) return 1 ;;
+	esac
+	return $?
+}
+
+_routine_record_lifecycle() {
+	local routine_id="$1"
+	local status="$2"
+	local duration="$3"
+	local session_key="${4:-}"
+	local -a args=(update "$routine_id" --status "$status" --duration "$duration")
+	[[ -z "$session_key" ]] || args+=(--session-key "$session_key")
+	if [[ -x "$ROUTINE_LOG_HELPER" ]]; then
+		"$ROUTINE_LOG_HELPER" "${args[@]}" 2>/dev/null || true
+	fi
+	return 0
+}
+
+_routine_finalize_terminal() {
+	local routine_id="$1"
+	local status="$2"
+	local started_epoch="$3"
+	local session_key="${4:-}"
+	local ended_epoch=0
+	local duration=0
+	ended_epoch=$(date +%s)
+	duration=$((ended_epoch - started_epoch))
+	[[ "$duration" -ge 0 ]] || duration=0
+	_routine_update_state "$routine_id" "$status"
+	_routine_record_lifecycle "$routine_id" "$status" "$duration" "$session_key"
+	return 0
+}
+
+_routine_dispatch_agent() {
+	local routine_id="$1"
+	local description="$2"
+	local agent_name="$3"
+	local dispatch_dir="$4"
+	local session_key="routine-${routine_id}"
+	local started_epoch=0
+	[[ -n "$agent_name" ]] || agent_name="Build+"
+	started_epoch=$(date +%s)
+	_routine_update_state "$routine_id" "running"
+	_routine_record_lifecycle "$routine_id" "running" 0 "$session_key"
+	if [[ ! -x "$HEADLESS_RUNTIME_HELPER" ]]; then
+		echo "[pulse-wrapper] routine ${routine_id}: headless runtime helper unavailable" >>"$LOGFILE"
+		_routine_finalize_terminal "$routine_id" "$_ROUTINE_STATUS_FAILURE" "$started_epoch" "$session_key"
+		return 1
+	fi
+	echo "[pulse-wrapper] routine ${routine_id}: dispatching agent '${agent_name}' for '${description}'" >>"$LOGFILE"
+	(
+		local exit_code=0
+		local status="$_ROUTINE_STATUS_SUCCESS"
+		"$HEADLESS_RUNTIME_HELPER" run \
+			--role worker \
+			--session-key "$session_key" \
+			--dir "$dispatch_dir" \
+			--agent "$agent_name" \
+			--title "Routine ${routine_id}: ${description}" \
+			--prompt "Execute routine ${routine_id}: ${description}" >>"$LOGFILE" 2>&1 || exit_code=$?
+		if [[ "$exit_code" -ne 0 ]]; then
+			status="$_ROUTINE_STATUS_FAILURE"
+			echo "[pulse-wrapper] routine ${routine_id}: agent exited with code ${exit_code}" >>"$LOGFILE"
+		else
+			echo "[pulse-wrapper] routine ${routine_id}: agent completed successfully" >>"$LOGFILE"
+		fi
+		_routine_finalize_terminal "$routine_id" "$status" "$started_epoch" "$session_key"
+		return 0
+	) &
+	return 0
+}
+
+#######################################
+# Execute a single routine. Script routines finish synchronously; agent
+# routines detach a wrapper that waits for the headless process before logging
+# a terminal result.
 #######################################
 _routine_execute() {
 	local routine_id="$1"
@@ -101,91 +196,45 @@ _routine_execute() {
 	local run_script="$3"
 	local agent_name="$4"
 	local repo_path="$5"
-
 	local agents_dir="${HOME}/.aidevops/agents"
-	local status="success"
-	local started_epoch
+	local status="$_ROUTINE_STATUS_SUCCESS"
+	local started_epoch=0
+	local exit_code=0
 	started_epoch=$(date +%s)
 
 	if [[ -n "$run_script" ]]; then
-		# Script-only dispatch — zero LLM tokens.
-		# Split run_script into the executable path and optional space-separated
-		# arguments (e.g. "scripts/process-guard-helper.sh kill-runaways" becomes
-		# script_path=".../process-guard-helper.sh" script_args=("kill-runaways")).
-		# Using an array avoids word-splitting issues and safely passes args.
 		local run_parts=()
-		IFS=' ' read -r -a run_parts <<< "$run_script"
+		IFS=' ' read -r -a run_parts <<<"$run_script"
 		local script_path="${agents_dir}/${run_parts[0]}"
 		local script_args=("${run_parts[@]:1}")
 		if [[ ! -x "$script_path" ]]; then
 			echo "[pulse-wrapper] routine ${routine_id}: script not found or not executable: ${script_path}" >>"$LOGFILE"
-			_routine_update_state "$routine_id" "failure"
-			if [[ -x "$ROUTINE_LOG_HELPER" ]]; then
-				local ended_epoch
-				ended_epoch=$(date +%s)
-				local duration=$(( ${ended_epoch:-0} - ${started_epoch:-0} ))
-				"$ROUTINE_LOG_HELPER" update "$routine_id" --status failure --duration "$duration" 2>/dev/null || true
-			fi
+			_routine_finalize_terminal "$routine_id" "$_ROUTINE_STATUS_FAILURE" "$started_epoch"
 			return 1
 		fi
-		if [[ ${#script_args[@]} -gt 0 ]]; then
-			echo "[pulse-wrapper] routine ${routine_id}: executing script ${script_path} ${script_args[*]}" >>"$LOGFILE"
-		else
-			echo "[pulse-wrapper] routine ${routine_id}: executing script ${script_path}" >>"$LOGFILE"
-		fi
-		local exit_code=0
+		echo "[pulse-wrapper] routine ${routine_id}: executing script ${script_path} ${script_args[*]}" >>"$LOGFILE"
 		"$script_path" "${script_args[@]}" >>"$LOGFILE" 2>&1 || exit_code=$?
 		if [[ "$exit_code" -ne 0 ]]; then
-			status="failure"
+			status="$_ROUTINE_STATUS_FAILURE"
 			echo "[pulse-wrapper] routine ${routine_id}: script exited with code ${exit_code}" >>"$LOGFILE"
 		else
 			echo "[pulse-wrapper] routine ${routine_id}: script completed successfully" >>"$LOGFILE"
 		fi
-	elif [[ -n "$agent_name" ]]; then
-		# LLM dispatch via headless runtime
-		echo "[pulse-wrapper] routine ${routine_id}: dispatching agent '${agent_name}' for '${description}'" >>"$LOGFILE"
-		local dispatch_dir="${repo_path:-$PULSE_DIR}"
-		"$HEADLESS_RUNTIME_HELPER" run \
-			--role worker \
-			--session-key "routine-${routine_id}" \
-			--dir "$dispatch_dir" \
-			--agent "$agent_name" \
-			--title "Routine ${routine_id}: ${description}" \
-			--prompt "Execute routine ${routine_id}: ${description}" &
-		# Don't wait — let it run in background like a worker
-	else
-		# Fallback: check for custom script
-		local custom_script="${agents_dir}/custom/scripts/${routine_id}.sh"
-		if [[ -x "$custom_script" ]]; then
-			echo "[pulse-wrapper] routine ${routine_id}: executing custom script ${custom_script}" >>"$LOGFILE"
-			local exit_code=0
-			"$custom_script" >>"$LOGFILE" 2>&1 || exit_code=$?
-			if [[ "$exit_code" -ne 0 ]]; then
-				status="failure"
-			fi
-		else
-			# Default to agent:Build+
-			echo "[pulse-wrapper] routine ${routine_id}: no run: or agent: — dispatching Build+ default" >>"$LOGFILE"
-			"$HEADLESS_RUNTIME_HELPER" run \
-				--role worker \
-				--session-key "routine-${routine_id}" \
-				--dir "${repo_path:-$PULSE_DIR}" \
-				--title "Routine ${routine_id}: ${description}" \
-				--prompt "Execute routine ${routine_id}: ${description}" &
-		fi
+		_routine_finalize_terminal "$routine_id" "$status" "$started_epoch"
+		return 0
 	fi
 
-	_routine_update_state "$routine_id" "$status"
-
-	# Call routine-log-helper.sh if available (t1926)
-	if [[ -x "$ROUTINE_LOG_HELPER" ]]; then
-		local ended_epoch
-		ended_epoch=$(date +%s)
-		local duration=$(( ${ended_epoch:-0} - ${started_epoch:-0} ))
-		"$ROUTINE_LOG_HELPER" update "$routine_id" --status "$status" --duration "$duration" 2>/dev/null || true
+	local custom_script="${agents_dir}/custom/scripts/${routine_id}.sh"
+	if [[ -z "$agent_name" && -x "$custom_script" ]]; then
+		echo "[pulse-wrapper] routine ${routine_id}: executing custom script ${custom_script}" >>"$LOGFILE"
+		"$custom_script" >>"$LOGFILE" 2>&1 || exit_code=$?
+		[[ "$exit_code" -eq 0 ]] || status="$_ROUTINE_STATUS_FAILURE"
+		_routine_finalize_terminal "$routine_id" "$status" "$started_epoch"
+		return 0
 	fi
 
-	return 0
+	_routine_dispatch_agent "$routine_id" "$description" "${agent_name:-Build+}" "${repo_path:-$PULSE_DIR}"
+	return $?
 }
 
 # Module-scope variables set by _routine_parse_line (prefixed to avoid collision).
@@ -196,6 +245,20 @@ _RPL_REPEAT=""
 _RPL_RUN=""
 _RPL_AGENT=""
 _RPL_DESC=""
+
+#######################################
+# Return success when a routine run target would invoke the supervisor that is
+# currently evaluating routines. This protects existing generated TODO files
+# that still carry the pre-GH#28544 cron-form r901 entry.
+#######################################
+_routine_targets_supervisor() {
+	local run_script="$1"
+	local run_command="${run_script%% *}"
+	if [[ "$run_command" == "scripts/pulse-wrapper.sh" ]]; then
+		return 0
+	fi
+	return 1
+}
 
 #######################################
 # Parse a single routine TODO line into its component fields.
@@ -310,6 +373,20 @@ evaluate_routines() {
 		local line
 		while IFS= read -r line; do
 			if ! _routine_parse_line "$line"; then
+				continue
+			fi
+
+			# The supervisor is launched by launchd/systemd and must never be
+			# invoked synchronously from its own evaluator. Keep this runtime
+			# guard for stale generated TODO files that predate GH#28544.
+			if _routine_targets_supervisor "$_RPL_RUN"; then
+				echo "[pulse-wrapper] routine ${_RPL_ID}: skipping self-recursive supervisor target ${_RPL_RUN%% *} (GH#28544)" >>"$LOGFILE"
+				continue
+			fi
+
+			# Active runs and recent failures have their own bounded retry policy;
+			# only successful runs advance the calendar boundary marker.
+			if _routine_retry_blocked "$_RPL_ID"; then
 				continue
 			fi
 

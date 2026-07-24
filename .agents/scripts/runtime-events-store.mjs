@@ -71,6 +71,38 @@ BEFORE DELETE ON runtime_events
 BEGIN
   SELECT RAISE(ABORT, 'runtime_events is append-only');
 END;
+
+CREATE TABLE IF NOT EXISTS runtime_event_archives (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  partition_id TEXT NOT NULL UNIQUE,
+  schema_version INTEGER NOT NULL CHECK(schema_version = 1),
+  created_at TEXT NOT NULL,
+  cutoff_at TEXT NOT NULL,
+  source_first_id INTEGER NOT NULL,
+  source_last_id INTEGER NOT NULL,
+  source_row_count INTEGER NOT NULL CHECK(source_row_count > 0),
+  protected_row_count INTEGER NOT NULL CHECK(protected_row_count >= 0),
+  compacted_row_count INTEGER NOT NULL CHECK(compacted_row_count >= 0),
+  archive_record_count INTEGER NOT NULL CHECK(archive_record_count > 0),
+  source_payload_bytes INTEGER NOT NULL CHECK(source_payload_bytes >= 0),
+  archive_bytes INTEGER NOT NULL CHECK(archive_bytes > 0),
+  source_sha256 TEXT NOT NULL CHECK(length(source_sha256) = 64),
+  archive_sha256 TEXT NOT NULL CHECK(length(archive_sha256) = 64),
+  archive_file TEXT NOT NULL CHECK(instr(archive_file, '/') = 0),
+  CHECK(source_row_count = protected_row_count + compacted_row_count)
+);
+
+CREATE TRIGGER IF NOT EXISTS runtime_event_archives_reject_update
+BEFORE UPDATE ON runtime_event_archives
+BEGIN
+  SELECT RAISE(ABORT, 'runtime_event_archives is append-only');
+END;
+
+CREATE TRIGGER IF NOT EXISTS runtime_event_archives_reject_delete
+BEFORE DELETE ON runtime_event_archives
+BEGIN
+  SELECT RAISE(ABORT, 'runtime_event_archives is append-only');
+END;
 `;
 
 function queryJsonRows(sql, { executeSync = sqliteExecSync } = {}) {
@@ -93,12 +125,16 @@ function runtimeEventSchemaReady() {
     SELECT type, name FROM sqlite_master
     WHERE name IN (
       'runtime_events_reject_update', 'runtime_events_reject_delete',
-      'idx_runtime_events_subject_state_version', 'idx_runtime_events_worker_lineage'
+      'runtime_event_archives_reject_update', 'runtime_event_archives_reject_delete',
+      'runtime_event_archives', 'idx_runtime_events_subject_state_version',
+      'idx_runtime_events_worker_lineage'
     );
   `);
   const names = new Set(objects.map((row) => row.name));
   return [
     "runtime_events_reject_update", "runtime_events_reject_delete",
+    "runtime_event_archives_reject_update", "runtime_event_archives_reject_delete",
+    "runtime_event_archives",
     "idx_runtime_events_subject_state_version", "idx_runtime_events_worker_lineage",
   ].every((name) => names.has(name));
 }
@@ -196,7 +232,9 @@ function runtimeStoreIsValid(result) {
   return [
     result.quickCheck === "ok",
     result.missingColumns.length === 0,
+    result.archiveManifestReady,
     result.triggerCount === 2,
+    result.archiveTriggerCount === 2,
     result.invalidPayloadRows === 0,
     result.invalidStateSubjects.length === 0,
   ].every(Boolean);
@@ -213,6 +251,14 @@ export function verifyRuntimeEventStore() {
   const triggerCount = Number(sqliteExecSync(`
     SELECT COUNT(*) FROM sqlite_master WHERE type = 'trigger'
     AND name IN ('runtime_events_reject_update', 'runtime_events_reject_delete');
+  `, 15000) || 0);
+  const archiveManifestReady = Number(sqliteExecSync(`
+    SELECT COUNT(*) FROM sqlite_master
+    WHERE type = 'table' AND name = 'runtime_event_archives';
+  `, 15000) || 0) === 1;
+  const archiveTriggerCount = Number(sqliteExecSync(`
+    SELECT COUNT(*) FROM sqlite_master WHERE type = 'trigger'
+    AND name IN ('runtime_event_archives_reject_update', 'runtime_event_archives_reject_delete');
   `, 15000) || 0);
   const invalidPayloadRows = Number(sqliteExecSync(`
     SELECT COUNT(*) FROM runtime_events
@@ -232,6 +278,8 @@ export function verifyRuntimeEventStore() {
     }
   }
   const result = {
+    archiveManifestReady,
+    archiveTriggerCount,
     invalidPayloadRows,
     invalidStateSubjects,
     missingColumns,

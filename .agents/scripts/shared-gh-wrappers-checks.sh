@@ -53,6 +53,401 @@
 [[ -n "${_SHARED_GH_WRAPPERS_CHECKS_LIB_LOADED:-}" ]] && return 0
 _SHARED_GH_WRAPPERS_CHECKS_LIB_LOADED=1
 
+_gh_checks_lib_dir="${BASH_SOURCE[0]%/*}"
+[[ "$_gh_checks_lib_dir" == "${BASH_SOURCE[0]}" ]] && _gh_checks_lib_dir="."
+if ! declare -F gh_request_state_singleflight_begin >/dev/null 2>&1 && [[ -f "${_gh_checks_lib_dir}/shared-gh-request-state.sh" ]]; then
+	# shellcheck source=./shared-gh-request-state.sh
+	# shellcheck disable=SC1091
+	source "${_gh_checks_lib_dir}/shared-gh-request-state.sh"
+fi
+unset _gh_checks_lib_dir
+
+_GH_PR_CHECK_STATUS_SCHEMA="aidevops-gh-pr-check-status/v1"
+_GH_PR_CHECK_STATUS_PROJECTION="check-suites-aggregate/v1"
+_GH_PR_CHECK_STATUS_SOURCE="rest-check-suites"
+_GH_PR_CHECK_STATUS_NONE=none
+_GH_PR_CHECK_STATUS_CACHE_PUT_OK=0
+_GH_PR_CHECK_STATUS_FETCH_INVALIDATED=0
+_GH_PR_CHECK_STATUS_INVALIDATION_INITIAL="${_GHRS_INVALIDATION_INITIAL:-0000000000000000000000000000000000000000000000000000000000000000}"
+
+#######################################
+# Record an observational check-status cache decision without counting an HTTP
+# attempt. The transport wrapper records actual REST attempts separately.
+# Args: $1=decision
+#######################################
+_gh_pr_check_status_cache_record() {
+	local decision="$1"
+	if declare -F gh_record_call >/dev/null 2>&1; then
+		gh_record_call other gh_pr_check_status_cache unknown other "$decision" "" cache 2>/dev/null || true
+	fi
+	if declare -F gh_record_efficiency_evidence >/dev/null 2>&1; then
+		case "$decision" in
+		hit-empty)
+			gh_record_efficiency_evidence cache.fresh_empty_hits 1 2>/dev/null || true
+			;;
+		hit-*)
+			gh_record_efficiency_evidence cache.fresh_hits 1 2>/dev/null || true
+			;;
+		miss | bypass | bypass-disabled)
+			gh_record_efficiency_evidence cache.misses 1 2>/dev/null || true
+			;;
+		invalid | invalid-* | refresh-*)
+			gh_record_efficiency_evidence cache.misses 1 2>/dev/null || true
+			gh_record_efficiency_evidence cache.stale 1 2>/dev/null || true
+			gh_record_efficiency_evidence guardrails.stale_snapshot_detections 1 2>/dev/null || true
+			gh_record_efficiency_evidence guardrails.forced_live_refreshes 1 2>/dev/null || true
+			;;
+		invalidate)
+			gh_record_efficiency_evidence cache.invalidated 1 2>/dev/null || true
+			;;
+		fetch)
+			gh_record_efficiency_evidence path_budgets.aggregate_check_fetches 1 2>/dev/null || true
+			if [[ "${AIDEVOPS_GH_API_EFFICIENCY_CYCLE_ID:-}" =~ ^[0-9]+$ ]]; then
+				gh_record_efficiency_evidence path_budgets.cycle_scoped_aggregate_check_fetches 1 2>/dev/null || true
+			fi
+			;;
+		publish-fenced | publish-invalidated)
+			gh_record_efficiency_evidence guardrails.stale_snapshot_detections 1 2>/dev/null || true
+			;;
+		esac
+	fi
+	return 0
+}
+
+_gh_pr_check_status_record_actionable_head() {
+	local slug="$1"
+	local sha="$2"
+	local normalized_sha=""
+	local token=""
+	local cycle_id="${AIDEVOPS_GH_API_EFFICIENCY_CYCLE_ID:-}"
+	local cycle_token=""
+	_gh_pr_check_status_cache_identity_valid "$slug" "$sha" || return 0
+	declare -F gh_record_efficiency_evidence >/dev/null 2>&1 || return 0
+	gh_record_efficiency_evidence population.actionable_changes 1 2>/dev/null || true
+	normalized_sha=$(printf '%s' "$sha" | tr '[:upper:]' '[:lower:]')
+	if declare -F _ghrs_digest >/dev/null 2>&1; then
+		token=$(_ghrs_digest "$normalized_sha") || token=""
+	fi
+	if [[ -n "$token" ]]; then
+		gh_record_efficiency_evidence population.actionable_head_token "$token" 2>/dev/null || true
+	else
+		gh_record_efficiency_evidence population.actionable_head_hash_failures 1 2>/dev/null || true
+	fi
+	[[ "$cycle_id" =~ ^[0-9]+$ ]] || return 0
+	if declare -F _ghrs_digest >/dev/null 2>&1; then
+		cycle_token=$(_ghrs_digest "${cycle_id}"$'\034'"${normalized_sha}") || cycle_token=""
+	fi
+	if [[ -n "$cycle_token" ]]; then
+		gh_record_efficiency_evidence path_budgets.cycle_scoped_actionable_head_token "$cycle_token" 2>/dev/null || true
+	else
+		gh_record_efficiency_evidence path_budgets.cycle_scoped_actionable_head_hash_failures 1 2>/dev/null || true
+	fi
+	return 0
+}
+
+#######################################
+# Resolve the non-secret auth identity used to isolate cache entries.
+#######################################
+_gh_pr_check_status_cache_auth_scope() {
+	printf '%s|%s' "${AIDEVOPS_GH_CHECK_STATUS_CACHE_AUTH_SCOPE:-${GH_HOST:-github.com}|${AIDEVOPS_GH_AUTH_MODE:-gh}|${AIDEVOPS_GH_AUTH_PRINCIPAL:-default}}" "${AIDEVOPS_GH_API_POOL:-default}"
+	return 0
+}
+
+#######################################
+# Emit the current epoch. Kept as a seam for deterministic TTL tests.
+#######################################
+_gh_pr_check_status_cache_now() {
+	date +%s 2>/dev/null || printf '0\n'
+	return 0
+}
+
+#######################################
+# Validate the immutable cache identity. GitHub currently returns full
+# 40-character hex OIDs; 64-character OIDs are accepted for SHA-256 repositories.
+# Args: $1=repo slug, $2=full head SHA
+#######################################
+_gh_pr_check_status_cache_identity_valid() {
+	local slug="$1"
+	local sha="$2"
+	[[ "$slug" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || return 1
+	[[ "$sha" =~ ^[A-Fa-f0-9]{40}$ || "$sha" =~ ^[A-Fa-f0-9]{64}$ ]] || return 1
+	return 0
+}
+
+#######################################
+# Classify aggregate states for bounded expiry.
+# Args: $1=PASS|FAIL|PENDING|none
+# Stdout: terminal|actionable
+#######################################
+_gh_pr_check_status_cache_class() {
+	local check_state="$1"
+	case "$check_state" in
+	PASS | FAIL) printf 'terminal\n' ;;
+	PENDING | none) printf 'actionable\n' ;;
+	*) return 1 ;;
+	esac
+	return 0
+}
+
+#######################################
+# Resolve a validated bounded TTL. Terminal observations default to six hours
+# (maximum seven days); pending/none observations default to 30 seconds
+# (maximum five minutes) so actionable changes refresh promptly.
+# Args: $1=terminal|actionable
+#######################################
+_gh_pr_check_status_cache_ttl() {
+	local expiry_class="$1"
+	local ttl="" default_ttl="" max_ttl=""
+	case "$expiry_class" in
+	terminal)
+		default_ttl=21600
+		max_ttl=604800
+		ttl="${AIDEVOPS_GH_CHECK_STATUS_CACHE_TERMINAL_TTL:-$default_ttl}"
+		;;
+	actionable)
+		default_ttl=30
+		max_ttl=300
+		ttl="${AIDEVOPS_GH_CHECK_STATUS_CACHE_ACTIONABLE_TTL:-$default_ttl}"
+		;;
+	*) return 1 ;;
+	esac
+	if [[ ! "$ttl" =~ ^[0-9]+$ || "$ttl" -le 0 || "$ttl" -gt "$max_ttl" ]]; then
+		ttl="$default_ttl"
+	fi
+	printf '%s\n' "$ttl"
+	return 0
+}
+
+#######################################
+# Build a collision-resistant cache key from auth scope, repository, exact full
+# head SHA, and aggregate projection version.
+# Args: $1=repo slug, $2=full head SHA
+#######################################
+_gh_pr_check_status_cache_key() {
+	local slug="$1"
+	local sha="$2"
+	local auth_scope="" material="" key=""
+	_gh_pr_check_status_cache_identity_valid "$slug" "$sha" || return 1
+	auth_scope="$(_gh_pr_check_status_cache_auth_scope)"
+	material="${auth_scope}"$'\034'"${slug}"$'\034'"${sha}"$'\034'"${_GH_PR_CHECK_STATUS_PROJECTION}"
+	if command -v shasum >/dev/null 2>&1; then
+		key=$(printf '%s' "$material" | shasum -a 256 | awk '{print $1}')
+	elif command -v openssl >/dev/null 2>&1; then
+		key=$(printf '%s' "$material" | openssl dgst -sha256 | awk '{print $NF}')
+	else
+		return 1
+	fi
+	[[ -n "$key" ]] || return 1
+	printf '%s\n' "$key"
+	return 0
+}
+
+_gh_pr_check_status_request_key() {
+	local slug="$1"
+	local sha="$2"
+	declare -F gh_request_state_request_key >/dev/null 2>&1 || return 1
+	gh_request_state_request_key "$slug" check-suites-aggregate \
+		"$_GH_PR_CHECK_STATUS_PROJECTION" "$sha" rest-core
+	return $?
+}
+
+_gh_pr_check_status_invalidation_key() {
+	local slug="$1"
+	local sha="$2"
+	declare -F gh_request_state_invalidation_key >/dev/null 2>&1 || return 1
+	gh_request_state_invalidation_key "$slug" check-suites-aggregate \
+		"$_GH_PR_CHECK_STATUS_PROJECTION" "$sha"
+	return $?
+}
+
+_gh_pr_check_status_invalidation_generation() {
+	local slug="$1"
+	local sha="$2"
+	local request_key=""
+	if ! declare -F gh_request_state_invalidation_generation_get >/dev/null 2>&1; then
+		printf '%s\n' "$_GH_PR_CHECK_STATUS_INVALIDATION_INITIAL"
+		return 0
+	fi
+	request_key="$(_gh_pr_check_status_invalidation_key "$slug" "$sha")" || return 1
+	gh_request_state_invalidation_generation_get "$request_key"
+	return $?
+}
+
+_gh_pr_check_status_invalidation_generation_is_current() {
+	local slug="$1"
+	local sha="$2"
+	local generation="$3"
+	local invalidation_key=""
+	invalidation_key="$(_gh_pr_check_status_invalidation_key "$slug" "$sha")" || return 1
+	gh_request_state_invalidation_generation_is_current "$invalidation_key" "$generation"
+	return $?
+}
+
+#######################################
+# Resolve a private disposable cache path.
+# Args: $1=repo slug, $2=full head SHA
+#######################################
+_gh_pr_check_status_cache_path() {
+	local slug="$1"
+	local sha="$2"
+	local dir="${AIDEVOPS_GH_CHECK_STATUS_CACHE_DIR:-${HOME}/.aidevops/cache/gh-pr-check-status}"
+	local key=""
+	key="$(_gh_pr_check_status_cache_key "$slug" "$sha")" || return 1
+	mkdir -p "$dir" 2>/dev/null || return 1
+	chmod 700 "$dir" 2>/dev/null || return 1
+	printf '%s/entry-%s.json\n' "$dir" "$key"
+	return 0
+}
+
+#######################################
+# Emit a fresh validated aggregate state from cache.
+# Args: $1=repo slug, $2=full head SHA
+# Returns: 0=hit, 1=miss/stale/invalid/disabled
+#######################################
+_gh_pr_check_status_cache_get() {
+	local slug="$1"
+	local sha="$2"
+	if [[ "${AIDEVOPS_GH_CHECK_STATUS_CACHE_DISABLE:-0}" == "1" ]]; then
+		_gh_pr_check_status_cache_record bypass-disabled
+		return 1
+	fi
+	if ! _gh_pr_check_status_cache_identity_valid "$slug" "$sha"; then
+		_gh_pr_check_status_cache_record bypass-invalid-identity
+		return 1
+	fi
+
+	local path="" auth_scope="" entry="" invalidation_generation=""
+	path="$(_gh_pr_check_status_cache_path "$slug" "$sha")" || {
+		_gh_pr_check_status_cache_record bypass
+		return 1
+	}
+	[[ -s "$path" ]] || {
+		_gh_pr_check_status_cache_record miss
+		return 1
+	}
+	auth_scope="$(_gh_pr_check_status_cache_auth_scope)"
+	invalidation_generation="$(_gh_pr_check_status_invalidation_generation "$slug" "$sha")" || {
+		_gh_pr_check_status_cache_record invalid-invalidation-marker
+		return 1
+	}
+	entry=$(jq -er --arg schema "$_GH_PR_CHECK_STATUS_SCHEMA" \
+		--arg repository "$slug" --arg head_sha "$sha" \
+		--arg projection "$_GH_PR_CHECK_STATUS_PROJECTION" \
+		--arg auth_scope "$auth_scope" --arg source "$_GH_PR_CHECK_STATUS_SOURCE" \
+		--arg none_state "$_GH_PR_CHECK_STATUS_NONE" \
+		--arg invalidation_generation "$invalidation_generation" \
+		--arg invalidation_initial "$_GH_PR_CHECK_STATUS_INVALIDATION_INITIAL" '
+		select(
+			.schema == $schema and .repository == $repository and
+			.head_sha == $head_sha and .projection == $projection and
+			.auth_scope == $auth_scope and .source == $source and
+			(.invalidation_generation // $invalidation_initial) == $invalidation_generation and
+			.validation == "validated" and
+			(.fetched_at | type == "number" and floor == .) and
+			(
+				((.state == "PASS" or .state == "FAIL") and .expiry_class == "terminal") or
+				((.state == "PENDING" or .state == $none_state) and .expiry_class == "actionable")
+			)
+		) |
+		[.state, (.fetched_at | tostring), .expiry_class] | @tsv' "$path" 2>/dev/null) || entry=""
+	if [[ -z "$entry" ]]; then
+		_gh_pr_check_status_cache_record invalid
+		return 1
+	fi
+
+	local check_state="" fetched_at="" expiry_class="" ttl="" now="" age=0
+	IFS=$'\t' read -r check_state fetched_at expiry_class <<<"$entry"
+	ttl="$(_gh_pr_check_status_cache_ttl "$expiry_class")" || return 1
+	now="$(_gh_pr_check_status_cache_now)"
+	if [[ ! "$now" =~ ^[0-9]+$ || ! "$fetched_at" =~ ^[0-9]+$ ]]; then
+		_gh_pr_check_status_cache_record invalid-time
+		return 1
+	fi
+	age=$((now - fetched_at))
+	if [[ "$age" -lt 0 || "$age" -gt "$ttl" ]]; then
+		_gh_pr_check_status_cache_record "refresh-${expiry_class}"
+		return 1
+	fi
+	if [[ "$check_state" == "$_GH_PR_CHECK_STATUS_NONE" ]]; then
+		_gh_pr_check_status_cache_record hit-empty
+	else
+		_gh_pr_check_status_cache_record "hit-${expiry_class}"
+	fi
+	printf '%s\n' "$check_state"
+	return 0
+}
+
+#######################################
+# Atomically store one validated aggregate observation. Concurrent writers use
+# unique temp files; last-writer-wins is safe for the same immutable identity.
+# Args: $1=repo slug, $2=full head SHA, $3=aggregate state,
+#       $4=request invalidation generation (optional)
+#######################################
+_gh_pr_check_status_cache_put() {
+	local slug="$1"
+	local sha="$2"
+	local check_state="$3"
+	local invalidation_generation="${4:-}"
+	_GH_PR_CHECK_STATUS_CACHE_PUT_OK=0
+	[[ "${AIDEVOPS_GH_CHECK_STATUS_CACHE_DISABLE:-0}" != "1" ]] || return 0
+	_gh_pr_check_status_cache_identity_valid "$slug" "$sha" || return 0
+	local expiry_class="" path="" dir="" tmp="" now="" auth_scope=""
+	expiry_class="$(_gh_pr_check_status_cache_class "$check_state")" || return 0
+	if [[ -z "$invalidation_generation" ]]; then
+		invalidation_generation="$(_gh_pr_check_status_invalidation_generation "$slug" "$sha")" || return 0
+	fi
+	path="$(_gh_pr_check_status_cache_path "$slug" "$sha")" || return 0
+	dir="${path%/*}"
+	now="$(_gh_pr_check_status_cache_now)"
+	[[ "$now" =~ ^[0-9]+$ ]] || return 0
+	auth_scope="$(_gh_pr_check_status_cache_auth_scope)"
+	tmp=$(mktemp "${dir}/.pr-check-status.XXXXXX" 2>/dev/null) || return 0
+	chmod 600 "$tmp" 2>/dev/null || {
+		rm -f "$tmp"
+		return 0
+	}
+	if ! jq -n --arg schema "$_GH_PR_CHECK_STATUS_SCHEMA" \
+		--arg repository "$slug" --arg head_sha "$sha" \
+		--arg projection "$_GH_PR_CHECK_STATUS_PROJECTION" \
+		--arg auth_scope "$auth_scope" --arg state "$check_state" \
+		--arg expiry_class "$expiry_class" --arg source "$_GH_PR_CHECK_STATUS_SOURCE" \
+		--arg invalidation_generation "$invalidation_generation" \
+		--argjson fetched_at "$now" \
+		'{schema:$schema,repository:$repository,head_sha:$head_sha,projection:$projection,
+		auth_scope:$auth_scope,state:$state,fetched_at:$fetched_at,
+		expiry_class:$expiry_class,source:$source,validation:"validated",
+		invalidation_generation:$invalidation_generation}' >"$tmp"; then
+		rm -f "$tmp"
+		return 0
+	fi
+	if mv "$tmp" "$path" 2>/dev/null; then
+		_GH_PR_CHECK_STATUS_CACHE_PUT_OK=1
+		_gh_pr_check_status_cache_record "store-${expiry_class}"
+	else
+		rm -f "$tmp"
+	fi
+	return 0
+}
+
+#######################################
+# Idempotently invalidate one repository/full-head/projection/auth entry. This
+# interface is intentionally webhook-agnostic for the later invalidation phase.
+# Args: $1=repo slug, $2=full head SHA
+#######################################
+gh_pr_check_status_cache_invalidate() {
+	local slug="$1"
+	local sha="$2"
+	local path=""
+	local request_key=""
+	request_key="$(_gh_pr_check_status_invalidation_key "$slug" "$sha")" || return 1
+	declare -F gh_request_state_invalidate >/dev/null 2>&1 || return 1
+	gh_request_state_invalidate "$request_key" || return 1
+	path="$(_gh_pr_check_status_cache_path "$slug" "$sha")" || return 0
+	rm -f "$path" || return 1
+	_gh_pr_check_status_cache_record invalidate
+	return 0
+}
+
 #######################################
 # Internal: invoke a read-only `gh api` request with a wall-clock cap.
 #
@@ -97,35 +492,172 @@ _gh_checks_api_read() {
 #   $1 - repo slug (owner/repo)
 #   $2 - commit SHA (PR's headRefOid)
 #
-# Output (stdout): one of "PASS", "FAIL", "PENDING", "none"
+# Output (stdout): one of "PASS", "FAIL", "PENDING", "none". Valid aggregate
+# observations are cached by repository/auth/full-head/projection identity.
 # Returns: 0 always (returns "none" on missing args / API error — fail-open
 #          since callers treat "none" as "no checks recorded yet")
 #######################################
-gh_pr_check_status_rest() {
+_gh_pr_check_status_rest_fetch() {
 	local slug="$1"
 	local sha="$2"
-
-	if [[ -z "$slug" || -z "$sha" ]]; then
-		echo "none"
-		return 0
-	fi
-
 	# NOTE: variable is `_check_state` not `status` — zsh treats `status` as a
 	# read-only special variable, which would silently fail under zsh-sourced
 	# interactive use even though the script declares `#!/usr/bin/env bash`.
 	local _check_state=""
 	# shellcheck disable=SC2016 # jq program uses $active as a jq variable.
-	_check_state=$(_gh_checks_api_read "repos/${slug}/commits/${sha}/check-suites" --jq '
+	if ! _check_state=$(_gh_checks_api_read "repos/${slug}/commits/${sha}/check-suites" --jq '
 		((.check_suites // []) | map(select(.conclusion != null or .status != "queued"))) as $active |
 		if ($active | length) == 0 then "none"
 		elif ($active | all(.conclusion == "success" or .conclusion == "skipped" or .conclusion == "neutral")) then "PASS"
 		elif ($active | any(.conclusion == "failure" or .conclusion == "timed_out" or .conclusion == "cancelled")) then "FAIL"
 		else "PENDING"
-		end' 2>/dev/null) || _check_state=""
-
-	_check_state="${_check_state:-none}"
-	echo "$_check_state"
+		end' 2>/dev/null); then
+		return 1
+	fi
+	_gh_pr_check_status_cache_class "$_check_state" >/dev/null || return 1
+	printf '%s\n' "$_check_state"
 	return 0
+}
+
+#######################################
+# Fetch and publish one aggregate observation. A coordinated leader must still
+# own its generation immediately before the cache write.
+# Args: $1=repo slug, $2=full head SHA, $3=request key (optional),
+#       $4=lease generation (optional), $5=invalidation generation (optional)
+#######################################
+_gh_pr_check_status_fetch_and_cache() {
+	local slug="$1"
+	local sha="$2"
+	local request_key="${3:-}"
+	local generation="${4:-}"
+	local invalidation_generation="${5:-}"
+	local check_state=""
+	_GH_PR_CHECK_STATUS_FETCH_INVALIDATED=0
+	if [[ -z "$request_key" ]]; then
+		request_key="$(_gh_pr_check_status_request_key "$slug" "$sha")" || return 1
+	fi
+	if [[ -z "$invalidation_generation" ]]; then
+		invalidation_generation=$(_gh_pr_check_status_invalidation_generation "$slug" "$sha") || return 1
+	fi
+	_gh_pr_check_status_cache_record fetch
+	if ! check_state="$(_gh_pr_check_status_rest_fetch "$slug" "$sha")"; then
+		_gh_pr_check_status_cache_record fetch-failed
+		return 1
+	fi
+	if [[ -n "$request_key" && -n "$generation" ]] && ! gh_request_state_singleflight_is_owner "$request_key" "$generation"; then
+		_gh_pr_check_status_cache_record publish-fenced
+		return 1
+	fi
+	if ! _gh_pr_check_status_invalidation_generation_is_current "$slug" "$sha" "$invalidation_generation"; then
+		_GH_PR_CHECK_STATUS_FETCH_INVALIDATED=1
+		_gh_pr_check_status_cache_record publish-invalidated
+		return 1
+	fi
+	if [[ "${AIDEVOPS_GH_CHECK_STATUS_CACHE_DISABLE:-0}" == "1" ]]; then
+		printf '%s\n' "$check_state"
+		return 0
+	fi
+	_gh_pr_check_status_cache_put "$slug" "$sha" "$check_state" "$invalidation_generation"
+	if [[ -n "$request_key" && "$_GH_PR_CHECK_STATUS_CACHE_PUT_OK" != "1" ]]; then
+		_gh_pr_check_status_cache_record publish-failed
+		return 1
+	fi
+	if ! _gh_pr_check_status_invalidation_generation_is_current "$slug" "$sha" "$invalidation_generation"; then
+		_GH_PR_CHECK_STATUS_FETCH_INVALIDATED=1
+		_gh_pr_check_status_cache_record publish-invalidated
+		return 1
+	fi
+	printf '%s\n' "$check_state"
+	return 0
+}
+
+#######################################
+# Coordinate only the exact-SHA aggregate check-suites cache miss. Named check
+# runs remain deliberately outside this path because they have different output
+# and freshness semantics.
+# Args: $1=repo slug, $2=full head SHA
+#######################################
+_gh_pr_check_status_singleflight() {
+	local slug="$1"
+	local sha="$2"
+	local request_key=""
+	local generation=""
+	local invalidation_generation=""
+	local check_state=""
+	local attempts=0
+	if [[ "${AIDEVOPS_GH_CHECK_STATUS_CACHE_DISABLE:-0}" == "1" ]] || ! declare -F gh_request_state_singleflight_begin >/dev/null 2>&1; then
+		_gh_pr_check_status_fetch_and_cache "$slug" "$sha" || printf 'none\n'
+		return 0
+	fi
+	request_key="$(_gh_pr_check_status_request_key "$slug" "$sha")" || {
+		_gh_pr_check_status_fetch_and_cache "$slug" "$sha" || printf 'none\n'
+		return 0
+	}
+	while [[ "$attempts" -lt 2 ]]; do
+		attempts=$((attempts + 1))
+		gh_request_state_singleflight_begin "$request_key"
+		generation="$_GHRS_BEGIN_GENERATION"
+		case "$_GHRS_BEGIN_ROLE" in
+	leader)
+		if check_state="$(_gh_pr_check_status_cache_get "$slug" "$sha")"; then
+			gh_request_state_singleflight_finish "$request_key" "$generation" success || true
+			printf '%s\n' "$check_state"
+			return 0
+		fi
+		invalidation_generation=$(_gh_pr_check_status_invalidation_generation "$slug" "$sha") || invalidation_generation=""
+		if [[ -n "$invalidation_generation" ]] && \
+			_gh_pr_check_status_fetch_and_cache "$slug" "$sha" "$request_key" "$generation" "$invalidation_generation"; then
+			gh_request_state_singleflight_finish "$request_key" "$generation" success || true
+			return 0
+		fi
+		gh_request_state_singleflight_finish "$request_key" "$generation" failure || true
+		if [[ "$_GH_PR_CHECK_STATUS_FETCH_INVALIDATED" == "1" && "$attempts" -lt 2 ]]; then
+			continue
+		fi
+		printf 'none\n'
+		return 0
+		;;
+	follower-success)
+		_gh_pr_check_status_cache_record coalesced
+		if _gh_pr_check_status_cache_get "$slug" "$sha"; then
+			return 0
+		fi
+		[[ "$attempts" -lt 2 ]] && continue
+		printf 'none\n'
+		return 0
+		;;
+	follower-failure | timeout)
+		_gh_pr_check_status_cache_record "coalesced-${_GHRS_BEGIN_ROLE}"
+		printf 'none\n'
+		return 0
+		;;
+	bypass)
+		_gh_pr_check_status_fetch_and_cache "$slug" "$sha" || printf 'none\n'
+		return 0
+		;;
+		esac
+	done
+	printf 'none\n'
+	return 0
+}
+
+gh_pr_check_status_rest() {
+	local slug="$1"
+	local sha="$2"
+
+	if [[ -z "$slug" || -z "$sha" ]]; then
+		printf 'none\n'
+		return 0
+	fi
+
+	local _check_state=""
+	if _check_state="$(_gh_pr_check_status_cache_get "$slug" "$sha")"; then
+		printf '%s\n' "$_check_state"
+		return 0
+	fi
+
+	_gh_pr_check_status_singleflight "$slug" "$sha"
+	return $?
 }
 
 #######################################
@@ -227,10 +759,9 @@ gh_pr_check_runs_rest() {
 #######################################
 # Batch-enrich a PR list with aggregated REST check status.
 #
-# Loops `gh_pr_check_status_rest` over each PR in the input list and
-# returns a JSON array of {number, status} pairs. Sequential per-PR calls
-# are acceptable here because each REST call is ~1.3KB (much faster than
-# the previous ~21KB GraphQL field per PR, and the REST pool is separate).
+# Resolves each unique full head SHA once, reusing fresh aggregate cache entries
+# and fetching only missing/expired/actionable identities. It then fans the
+# state back out to every input PR in original order.
 #
 # Args:
 #   $1 - repo slug (owner/repo)
@@ -258,21 +789,37 @@ gh_pr_check_status_rest_batch() {
 		return 0
 	fi
 
-	# Build result array. Use a tmpfile rather than a subshell-piped `while`
-	# loop to avoid losing accumulated lines under bash 3.2 (subshell vars
-	# don't propagate out of the pipe).
-	local tmp
-	tmp=$(mktemp)
+	local unique_shas=""
+	unique_shas=$(printf '%s\n' "$pairs" | awk -F '\t' 'NF >= 2 && !seen[$2]++ {print $2}')
+	[[ -n "$unique_shas" ]] || {
+		printf '[]\n'
+		return 0
+	}
+
+	# Build one SHA→state map. A tmpfile avoids bash 3.2 pipeline-subshell
+	# variable loss while keeping duplicate identities transport-free.
+	local tmp=""
+	tmp=$(mktemp 2>/dev/null) || {
+		printf '[]\n'
+		return 0
+	}
 	# NOTE: see gh_pr_check_status_rest above — `status` is read-only in zsh.
-	local pr_num="" pr_sha="" _check_state=""
-	while IFS=$'\t' read -r pr_num pr_sha; do
-		[[ -n "$pr_num" && -n "$pr_sha" ]] || continue
+	local pr_sha="" _check_state=""
+	while IFS= read -r pr_sha; do
+		[[ -n "$pr_sha" ]] || continue
+		_gh_pr_check_status_record_actionable_head "$slug" "$pr_sha"
 		_check_state=$(gh_pr_check_status_rest "$slug" "$pr_sha")
-		printf '{"number":%s,"status":"%s"}\n' "$pr_num" "$_check_state" >>"$tmp"
-	done <<<"$pairs"
+		printf '%s\t%s\n' "$pr_sha" "$_check_state" >>"$tmp"
+	done <<<"$unique_shas"
 
 	local result=""
-	result=$(jq -s '.' <"$tmp" 2>/dev/null) || result="[]"
+	result=$(jq -n --argjson prs "$pr_json" --rawfile states "$tmp" \
+		--arg none_state "$_GH_PR_CHECK_STATUS_NONE" '
+		($states | split("\n") |
+			map(select(length > 0) | split("\t") | select(length == 2) | {(.[0]): .[1]}) |
+			add // {}) as $state_map |
+		[$prs[] | select(.number and .headRefOid) |
+			{number: .number, status: ($state_map[.headRefOid] // $none_state)}]' 2>/dev/null) || result="[]"
 	rm -f "$tmp"
 	[[ -n "$result" && "$result" != "null" ]] || result="[]"
 

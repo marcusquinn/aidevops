@@ -47,6 +47,8 @@ setup_test_repo() {
 	}
 	"$GIT_BIN" -C "$TEST_ROOT" config user.name "Aidevops Test"
 	"$GIT_BIN" -C "$TEST_ROOT" config user.email "test@example.com"
+	"$GIT_BIN" -C "$TEST_ROOT" config core.hooksPath /dev/null
+	"$GIT_BIN" -C "$TEST_ROOT" config commit.gpgsign false
 	printf 'test\n' >"${TEST_ROOT}/README.md"
 	"$GIT_BIN" -C "$TEST_ROOT" add README.md
 	"$GIT_BIN" -C "$TEST_ROOT" commit -m "test: seed repo" >/dev/null 2>&1
@@ -93,7 +95,7 @@ test_blocks_headless_edits_on_main_with_worktree_guidance() {
 	local exit_code=0
 	output=$(FULL_LOOP_HEADLESS=true run_helper "$TEST_ROOT" 2>&1) || exit_code=$?
 
-	if [[ "$exit_code" -eq 2 ]] && [[ "$output" == *"Canonical repo directory is on protected 'main'; move code edits into a linked worktree."* ]] && [[ "$output" == *"HEADLESS_BLOCKED=true"* ]] && [[ "$output" == *"ACTION_REQUIRED=create_worktree"* ]]; then
+	if [[ "$exit_code" -eq 2 ]] && [[ "$output" == *"canonical checkouts are read-only session mirrors"* ]] && [[ "$output" == *"CANONICAL_WORKTREE=true"* ]] && [[ "$output" == *"ACTION_REQUIRED=create_or_use_linked_worktree"* ]]; then
 		print_result "blocks headless edits on main with worktree guidance" 0
 		return 0
 	fi
@@ -164,7 +166,7 @@ test_worker_env_does_not_bypass_canonical_guard() {
 	output=$(WORKER_WORKTREE_PATH="$TEST_ROOT" WORKER_WORKTREE_BRANCH="forged/worker" \
 		FULL_LOOP_HEADLESS=true run_helper "$TEST_ROOT" 2>&1) || exit_code=$?
 
-	if [[ "$exit_code" -eq 2 ]] && [[ "$output" == *"HEADLESS_BLOCKED=true"* ]]; then
+	if [[ "$exit_code" -eq 2 ]] && [[ "$output" == *"CANONICAL_WORKTREE=true"* ]] && [[ "$output" == *"ACTION_REQUIRED=create_or_use_linked_worktree"* ]]; then
 		print_result "worker environment cannot bypass canonical worktree guard" 0
 		return 0
 	fi
@@ -174,18 +176,23 @@ test_worker_env_does_not_bypass_canonical_guard() {
 }
 
 test_warns_when_canonical_repo_is_off_main() {
-	"$GIT_BIN" -C "$TEST_ROOT" switch -c bugfix/off-main >/dev/null 2>&1
+	"$GIT_BIN" -C "$TEST_ROOT" switch -c develop >/dev/null 2>&1
+	"$GIT_BIN" -C "$TEST_ROOT" symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/develop
 
 	local output=""
 	local exit_code=0
 	output=$(run_helper "$TEST_ROOT" 2>&1) || exit_code=$?
+	local canonical_rows=0
+	if [[ -f "$TEST_REGISTRY_DB" ]]; then
+		canonical_rows=$(sqlite3 "$TEST_REGISTRY_DB" "SELECT COUNT(*) FROM worktree_owners WHERE worktree_path = '$TEST_ROOT';")
+	fi
 
-	if [[ "$exit_code" -eq 2 ]] && [[ "$output" == *"CANONICAL_STATE_INVALID=true"* ]] && [[ "$output" == *"ACTION_REQUIRED=create_or_use_linked_worktree"* ]]; then
-		print_result "blocks when canonical repo directory is off main" 0
+	if [[ "$exit_code" -eq 2 ]] && [[ "$output" == *"CANONICAL_WORKTREE=true"* ]] && [[ "$output" == *"ACTION_REQUIRED=create_or_use_linked_worktree"* ]] && [[ "$canonical_rows" -eq 0 ]]; then
+		print_result "blocks canonical origin-default develop before ownership claim" 0
 		return 0
 	fi
 
-	print_result "blocks when canonical repo directory is off main" 1 "exit=${exit_code} output=${output}"
+	print_result "blocks canonical origin-default develop before ownership claim" 1 "exit=${exit_code} rows=${canonical_rows} output=${output}"
 	return 0
 }
 
@@ -219,6 +226,120 @@ test_blocks_when_linked_worktree_owned_by_another_live_process() {
 	fi
 
 	print_result "blocks linked worktree edits when owned by another live process" 1 "exit=${exit_code} output=${output}"
+	return 0
+}
+
+test_allows_headless_child_of_exact_wrapper_owner() {
+	local worktree_path="${TEST_ROOT}/wrapper-owned-worktree"
+	"$GIT_BIN" -C "$TEST_ROOT" worktree add "$worktree_path" -b bugfix/wrapper-owned-worktree >/dev/null 2>&1
+
+	ensure_registry_schema
+	sqlite3 "$TEST_REGISTRY_DB" "
+        INSERT OR REPLACE INTO worktree_owners
+            (worktree_path, branch, owner_pid, owner_session, task_id)
+        VALUES
+            ('$worktree_path', 'bugfix/wrapper-owned-worktree', $$, 'issue-28426', '28426');
+    " >/dev/null 2>&1
+
+	local output=""
+	local exit_code=0
+	output=$(AIDEVOPS_SESSION_ORIGIN=worker AIDEVOPS_HEADLESS=true \
+		AIDEVOPS_WORKTREE_OWNER_PID="$$" \
+		AIDEVOPS_WORKTREE_OWNER_SESSION="issue-28426" \
+		AIDEVOPS_WORKTREE_OWNER_TASK="28426" \
+		AIDEVOPS_WORKTREE_OWNER_PATH="$worktree_path" \
+		PRE_EDIT_OWNER_PID="$BASHPID" run_helper "$worktree_path" 2>&1) || exit_code=$?
+
+	if [[ "$exit_code" -eq 0 && "$output" == *"OK"* && "$output" != *"WORKTREE_OWNERSHIP_CONFLICT=true"* ]]; then
+		print_result "allows headless child of exact live wrapper owner" 0
+		return 0
+	fi
+
+	print_result "allows headless child of exact live wrapper owner" 1 "exit=${exit_code} output=${output}"
+	return 0
+}
+
+test_headless_wrapper_owner_proof_fails_closed() {
+	local worktree_path="${TEST_ROOT}/wrapper-proof-mismatch-worktree"
+	"$GIT_BIN" -C "$TEST_ROOT" worktree add "$worktree_path" -b bugfix/wrapper-proof-mismatch >/dev/null 2>&1
+
+	ensure_registry_schema
+	sqlite3 "$TEST_REGISTRY_DB" "
+        INSERT OR REPLACE INTO worktree_owners
+            (worktree_path, branch, owner_pid, owner_session, task_id)
+        VALUES
+            ('$worktree_path', 'bugfix/wrapper-proof-mismatch', $$, 'issue-28426', '28426');
+    " >/dev/null 2>&1
+
+	local proof_case=""
+	local proof_pid=""
+	local proof_session=""
+	local proof_task=""
+	local proof_path=""
+	local output=""
+	local exit_code=0
+	for proof_case in missing mismatched-session mismatched-task mismatched-path non-ancestor-pid; do
+		proof_pid="$$"
+		proof_session="issue-28426"
+		proof_task="28426"
+		proof_path="$worktree_path"
+		case "$proof_case" in
+		missing) proof_pid="" ;;
+		mismatched-session) proof_session="issue-99999" ;;
+		mismatched-task) proof_task="99999" ;;
+		mismatched-path) proof_path="$TEST_ROOT" ;;
+		non-ancestor-pid) proof_pid="1" ;;
+		esac
+
+		output=""
+		exit_code=0
+		output=$(AIDEVOPS_SESSION_ORIGIN=worker AIDEVOPS_HEADLESS=true \
+			AIDEVOPS_WORKTREE_OWNER_PID="$proof_pid" \
+			AIDEVOPS_WORKTREE_OWNER_SESSION="$proof_session" \
+			AIDEVOPS_WORKTREE_OWNER_TASK="$proof_task" \
+			AIDEVOPS_WORKTREE_OWNER_PATH="$proof_path" \
+			PRE_EDIT_OWNER_PID="$BASHPID" run_helper "$worktree_path" 2>&1) || exit_code=$?
+		if [[ "$exit_code" -eq 2 && "$output" == *"WORKTREE_OWNERSHIP_CONFLICT=true"* ]]; then
+			print_result "headless wrapper proof fails closed: ${proof_case}" 0
+		else
+			print_result "headless wrapper proof fails closed: ${proof_case}" 1 "exit=${exit_code} output=${output}"
+		fi
+	done
+	return 0
+}
+
+test_rejects_forged_proof_for_unrelated_live_owner() {
+	local worktree_path="${TEST_ROOT}/unrelated-live-owner-worktree"
+	"$GIT_BIN" -C "$TEST_ROOT" worktree add "$worktree_path" -b bugfix/unrelated-live-owner >/dev/null 2>&1
+
+	local unrelated_pid=""
+	sleep 30 >/dev/null 2>&1 &
+	unrelated_pid=$!
+	ensure_registry_schema
+	sqlite3 "$TEST_REGISTRY_DB" "
+        INSERT OR REPLACE INTO worktree_owners
+            (worktree_path, branch, owner_pid, owner_session, task_id)
+        VALUES
+            ('$worktree_path', 'bugfix/unrelated-live-owner', $unrelated_pid, 'issue-28426', '28426');
+    " >/dev/null 2>&1
+
+	local output=""
+	local exit_code=0
+	output=$(AIDEVOPS_SESSION_ORIGIN=worker AIDEVOPS_HEADLESS=true \
+		AIDEVOPS_WORKTREE_OWNER_PID="$unrelated_pid" \
+		AIDEVOPS_WORKTREE_OWNER_SESSION="issue-28426" \
+		AIDEVOPS_WORKTREE_OWNER_TASK="28426" \
+		AIDEVOPS_WORKTREE_OWNER_PATH="$worktree_path" \
+		PRE_EDIT_OWNER_PID="$BASHPID" run_helper "$worktree_path" 2>&1) || exit_code=$?
+	kill "$unrelated_pid" >/dev/null 2>&1 || true
+	wait "$unrelated_pid" 2>/dev/null || true
+
+	if [[ "$exit_code" -eq 2 && "$output" == *"WORKTREE_OWNERSHIP_CONFLICT=true"* ]]; then
+		print_result "rejects copied proof for unrelated live owner process" 0
+		return 0
+	fi
+
+	print_result "rejects copied proof for unrelated live owner process" 1 "exit=${exit_code} output=${output}"
 	return 0
 }
 
@@ -278,7 +399,7 @@ test_interactive_allowlisted_path_still_requires_worktree() {
 	local exit_code=0
 	output=$(run_helper "$TEST_ROOT" --file "README.md" 2>&1) || exit_code=$?
 
-	if [[ "$exit_code" -eq 2 ]] && [[ "$output" == *"ACTION_REQUIRED=create_worktree"* ]]; then
+	if [[ "$exit_code" -eq 2 ]] && [[ "$output" == *"ACTION_REQUIRED=create_or_use_linked_worktree"* ]]; then
 		print_result "interactive allowlisted path still requires a linked worktree" 0
 		return 0
 	fi
@@ -349,6 +470,8 @@ test_auto_creates_git_path_worktree_from_ansi_helper_output() {
 	}
 	"$GIT_BIN" -C "$repo_path" config user.name "Aidevops Test"
 	"$GIT_BIN" -C "$repo_path" config user.email "test@example.com"
+	"$GIT_BIN" -C "$repo_path" config core.hooksPath /dev/null
+	"$GIT_BIN" -C "$repo_path" config commit.gpgsign false
 	printf 'test\n' >"${repo_path}/README.md"
 	"$GIT_BIN" -C "$repo_path" add README.md
 	"$GIT_BIN" -C "$repo_path" commit -m "test: seed ansi repo" >/dev/null 2>&1
@@ -379,6 +502,9 @@ main() {
 	test_worker_env_does_not_bypass_canonical_guard
 	test_warns_when_canonical_repo_is_off_main
 	test_blocks_when_linked_worktree_owned_by_another_live_process
+	test_allows_headless_child_of_exact_wrapper_owner
+	test_headless_wrapper_owner_proof_fails_closed
+	test_rejects_forged_proof_for_unrelated_live_owner
 	test_allows_same_opencode_session_pid_rollover
 	test_headless_planning_path_requires_worktree
 	test_interactive_allowlisted_path_still_requires_worktree

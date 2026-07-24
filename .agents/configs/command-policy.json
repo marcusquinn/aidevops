@@ -23,12 +23,20 @@
       "decision": "forbid"
     },
     {
+      "id": "process.runtime-self-preservation",
+      "kind": "process_termination",
+      "helper": "process-termination-guard.py",
+      "decision": "forbid"
+    },
+    {
       "id": "github.account-mutation",
       "kind": "trusted_account_mutation",
       "authorization_env": "AIDEVOPS_ACCOUNT_MUTATION_AUTHORIZATION",
+      "workspace_root_env": "AIDEVOPS_ACCOUNT_MUTATION_WORKSPACE_ROOT",
       "command_paths": [
         ["repo", "create"],
-        ["repo", "fork"]
+        ["repo", "fork"],
+        ["repo", "new"]
       ],
       "decision": "forbid"
     }

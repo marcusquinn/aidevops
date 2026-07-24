@@ -31,8 +31,6 @@ get_mcp_command() {
 	"nextjs-devtools") echo "npx next-devtools-mcp@latest" ;;
 	"google-search-console") echo "npx mcp-server-gsc@latest" ;;
 	"pagespeed-insights") echo "npx mcp-pagespeed-server@latest" ;;
-	# grep-vercel - REMOVED: Use @github-search subagent (CLI-based, zero tokens)
-	"grep-vercel") echo "" ;;
 	"claude-code-mcp") echo "npx -y github:marcusquinn/claude-code-mcp" ;;
 	"stagehand") echo "node ${HOME}/.aidevops/stagehand/examples/basic-example.js" ;;
 	"stagehand-python") echo "${HOME}/.aidevops/stagehand-python/.venv/bin/python ${HOME}/.aidevops/stagehand-python/examples/basic_example.py" ;;
@@ -57,7 +55,6 @@ MCP_LIST=(
 	"nextjs-devtools"
 	"google-search-console"
 	"pagespeed-insights"
-	"grep-vercel"
 	"claude-code-mcp"
 	"stagehand"
 	"stagehand-python"
@@ -224,16 +221,6 @@ _install_pagespeed_insights() {
 
 	print_success "PageSpeed Insights MCP setup complete!"
 	print_info "Use: ./.agents/scripts/pagespeed-helper.sh for CLI access"
-	return 0
-}
-
-_install_grep_vercel() {
-	print_info "Grep by Vercel MCP (grep.app) is no longer installed by aidevops"
-	print_info "Use @github-search subagent instead (CLI-based, zero token overhead)"
-	print_info "If you have Oh-My-OpenCode, it provides grep_app MCP"
-	echo
-	print_info "Usage: @github-search 'search pattern'"
-	print_info "Or directly: gh search code 'pattern' --language typescript"
 	return 0
 }
 
@@ -445,7 +432,6 @@ install_mcp() {
 	"nextjs-devtools") _install_nextjs_devtools "$mcp_command" ;;
 	"google-search-console") _install_google_search_console "$mcp_command" ;;
 	"pagespeed-insights") _install_pagespeed_insights "$mcp_command" ;;
-	"grep-vercel") _install_grep_vercel ;;
 	"claude-code-mcp") _install_claude_code_mcp "$mcp_command" ;;
 	"stagehand") _install_stagehand ;;
 	"stagehand-python") _install_stagehand_python ;;

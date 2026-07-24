@@ -55,14 +55,44 @@ _pulse_pr_list_cache_key() {
 }
 
 #######################################
+# Build the repository prefix used by provider cache files. The prefix lets a
+# terminal PR mutation evict every exact-output list shape for one repository
+# while preserving cached reads for unrelated repositories.
+# Args: gh_pr_list-style argv
+# Stdout: repository cache key
+#######################################
+_pulse_pr_list_cache_repo_key() {
+	local repo_slug=""
+	local arg=""
+	local expect_repo=0
+	for arg in "$@"; do
+		if [[ "$expect_repo" -eq 1 ]]; then
+			repo_slug="$arg"
+			expect_repo=0
+			continue
+		fi
+		case "$arg" in
+		--repo | -R) expect_repo=1 ;;
+		--repo=*) repo_slug="${arg#--repo=}" ;;
+		-R?*) repo_slug="${arg#-R}" ;;
+		esac
+	done
+	[[ -n "$repo_slug" ]] || repo_slug="_implicit"
+	_pulse_pr_list_cache_key "$repo_slug"
+	return $?
+}
+
+#######################################
 # Resolve the cache path for an exact gh_pr_list argv shape.
 #######################################
 _pulse_pr_list_cache_path() {
 	local dir="${PULSE_PR_LIST_PROVIDER_CACHE_DIR:-${TMPDIR:-/tmp}/aidevops-pulse-pr-list-provider-${$}}"
+	local repo_key=""
 	local key=""
 	mkdir -p "$dir" 2>/dev/null || return 1
+	repo_key="$(_pulse_pr_list_cache_repo_key "$@")" || return 1
 	key="$(_pulse_pr_list_cache_key "$@")" || return 1
-	printf '%s/pr-list-%s.out' "$dir" "$key"
+	printf '%s/pr-list-%s-%s.out' "$dir" "$repo_key" "$key"
 	return 0
 }
 
@@ -107,6 +137,33 @@ _pulse_pr_list_cache_put() {
 	mv "$tmp" "$path" 2>/dev/null || rm -f "$tmp"
 	_pulse_pr_list_cache_record store
 	return 0
+}
+
+#######################################
+# Invalidate every provider and shared-wrapper open-PR list shape for one
+# repository. This is intentionally repository-scoped: a terminal mutation in
+# one repo must not discard reusable snapshots for unrelated repositories.
+# Args: $1 = repository slug
+#######################################
+pulse_pr_list_cache_invalidate_repo() {
+	local repo_slug="$1"
+	[[ -n "$repo_slug" ]] || return 1
+	local dir="${PULSE_PR_LIST_PROVIDER_CACHE_DIR:-${TMPDIR:-/tmp}/aidevops-pulse-pr-list-provider-${$}}"
+	local repo_key=""
+	local path=""
+	local rc=0
+	repo_key="$(_pulse_pr_list_cache_key "$repo_slug")" || return 1
+	if [[ -d "$dir" ]]; then
+		for path in "${dir}/pr-list-${repo_key}-"*.out; do
+			[[ -f "$path" ]] || continue
+			rm -f -- "$path" 2>/dev/null || rc=1
+		done
+	fi
+	_pulse_pr_list_cache_record invalidate
+	if declare -F gh_pr_list_cache_invalidate_repo >/dev/null 2>&1; then
+		gh_pr_list_cache_invalidate_repo "$repo_slug" || rc=1
+	fi
+	return "$rc"
 }
 
 #######################################

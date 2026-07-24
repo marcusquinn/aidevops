@@ -91,7 +91,7 @@ print_result() {
 # A sandboxed HOME prevents lock directory collisions with a live pulse and
 # ensures the test is fully isolated.
 test_canary_exits_zero() {
-	local sandbox rc output
+	local sandbox rc output lock_retained=0
 	sandbox=$(mktemp -d)
 	mkdir -p "${sandbox}/home"
 	# t3016: seed canonical defaults so bootstrap's _load_config succeeds
@@ -103,14 +103,17 @@ test_canary_exits_zero() {
 			timeout 60 bash "$WRAPPER_SCRIPT" --canary 2>&1
 	)
 	rc=$?
+	if [[ -d "${sandbox}/home/.aidevops/logs/pulse-wrapper.lockdir" ]]; then
+		lock_retained=1
+	fi
 	rm -rf "$sandbox"
 
-	if [[ "$rc" -eq 0 ]]; then
-		print_result "--canary exits 0 (sourcing + self-check + lock passed)" 0
+	if [[ "$rc" -eq 0 && "$lock_retained" -eq 0 ]]; then
+		print_result "--canary exits 0 and releases its instance lock" 0
 		return 0
 	fi
-	print_result "--canary exits 0 (sourcing + self-check + lock passed)" 1 \
-		"Expected exit 0, got $rc. Output: ${output}"
+	print_result "--canary exits 0 and releases its instance lock" 1 \
+		"Expected exit 0 and no retained lock, got rc=$rc lock_retained=$lock_retained. Output: ${output}"
 	return 0
 }
 

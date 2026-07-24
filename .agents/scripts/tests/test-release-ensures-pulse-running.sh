@@ -64,7 +64,9 @@ run_restart_helper_with_stub() {
 	local pulse_enabled="$2"
 	local pulse_consent="$3"
 	local output_dir="$4"
+	local restart_rc="${5:-0}"
 	local log_path="${output_dir}/pulse-helper.log"
+	local helper_rc=0
 	mkdir -p "${output_dir}/.aidevops/agents/scripts"
 
 	(
@@ -76,6 +78,7 @@ run_restart_helper_with_stub() {
 			PULSE_ENABLED="$pulse_enabled"
 		fi
 		print_warning() { printf 'warning: %s\n' "$*"; return 0; }
+		print_error() { printf 'error: %s\n' "$*" >&2; return 0; }
 		_resolve_pulse_consent() { printf '%s' "$pulse_consent"; return 0; }
 		resolve_aidevops_runtime_bundle_root() {
 			local requested_root="$1"
@@ -87,16 +90,16 @@ run_restart_helper_with_stub() {
 			local managed_enabled="$2"
 			local active_link="$3"
 			printf '%s|%s|%s\n' "$activated_root" "$managed_enabled" "$active_link" >>"$log_path"
-			return 0
+			return "$restart_rc"
 		}
 		load_setup_restart_helper
 		_setup_restart_pulse_if_running
-	)
+	) || helper_rc=$?
 
 	if [[ -f "$log_path" ]]; then
 		tr '\n' ' ' <"$log_path"
 	fi
-	return 0
+	return "$helper_rc"
 }
 
 test_release_path_starts_stopped_pulse() {
@@ -151,6 +154,20 @@ test_skip_flag_suppresses_restart_and_start() {
 	return 0
 }
 
+test_reconciliation_failure_blocks_setup_success() {
+	local output=""
+	local rc=0
+	output="$(run_restart_helper_with_stub "0" "true" "" "${TEST_DIR}/failure" "1")" || rc=$?
+
+	if [[ "$rc" -eq 1 && "$output" == *"|true|"* ]]; then
+		print_result "release deploy fails closed when Pulse runtime proof fails" 0
+		return 0
+	fi
+
+	print_result "release deploy fails closed when Pulse runtime proof fails" 1 "rc=${rc} helper calls=${output}"
+	return 0
+}
+
 main() {
 	TEST_DIR="$(mktemp -d)"
 	trap cleanup EXIT
@@ -159,6 +176,7 @@ main() {
 	test_disabled_supervisor_is_forwarded_to_reconcile
 	test_scoped_deploy_resolves_existing_consent
 	test_skip_flag_suppresses_restart_and_start
+	test_reconciliation_failure_blocks_setup_success
 
 	printf '\nRan %s tests, %s failed\n' "$TESTS_RUN" "$TESTS_FAILED"
 	if [[ "$TESTS_FAILED" -ne 0 ]]; then

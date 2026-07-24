@@ -138,9 +138,9 @@ _is_reserved_agent_namespace() {
 	local namespace="$1"
 
 	case "$namespace" in
-		AGENTS.md|VERSION|advisories|commands|configs|custom|draft|hooks|plugins|prompts|reference|scripts|services|tools|workflows)
-			return 0
-			;;
+	AGENTS.md | VERSION | advisories | commands | configs | custom | draft | hooks | plugins | prompts | reference | scripts | services | tools | workflows)
+		return 0
+		;;
 	esac
 
 	return 1
@@ -313,7 +313,12 @@ _verify_deployed_core_plugin_freshness() {
 	local source_file
 	local target_file
 	local -a core_plugin_files=(
+		"hooks/git_safety_guard.py"
 		"plugins/opencode-aidevops/model-limits.mjs"
+		"plugins/opencode-aidevops/quality-hooks-git-safety.mjs"
+		"plugins/opencode-aidevops/quality-hooks.mjs"
+		"scripts/canonical_branch_policy.py"
+		"scripts/canonical-write-policy-helper.py"
 	)
 
 	for rel_path in "${core_plugin_files[@]}"; do
@@ -617,6 +622,100 @@ _runtime_bundle_write_manifest() {
 	return 0
 }
 
+_runtime_bundle_manifest_value() {
+	local manifest_file="$1"
+	local key="$2"
+	local line=""
+
+	[[ -r "$manifest_file" ]] || return 1
+	while IFS= read -r line || [[ -n "$line" ]]; do
+		case "$line" in
+		"${key}="*)
+			printf '%s' "${line#*=}"
+			return 0
+			;;
+		esac
+	done <"$manifest_file"
+	return 1
+}
+
+_runtime_bundle_compare_versions() {
+	local left="$1"
+	local right="$2"
+	local left_major="" left_minor="" left_patch=""
+	local right_major="" right_minor="" right_patch=""
+
+	left="${left#v}"
+	right="${right#v}"
+	[[ "$left" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || return 1
+	[[ "$right" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || return 1
+	IFS='.' read -r left_major left_minor left_patch <<<"$left"
+	IFS='.' read -r right_major right_minor right_patch <<<"$right"
+
+	if ((10#$left_major < 10#$right_major)); then
+		printf '%s' '-1'
+		return 0
+	fi
+	if ((10#$left_major > 10#$right_major)); then
+		printf '%s' '1'
+		return 0
+	fi
+	if ((10#$left_minor < 10#$right_minor)); then
+		printf '%s' '-1'
+		return 0
+	fi
+	if ((10#$left_minor > 10#$right_minor)); then
+		printf '%s' '1'
+		return 0
+	fi
+	if ((10#$left_patch < 10#$right_patch)); then
+		printf '%s' '-1'
+		return 0
+	fi
+	if ((10#$left_patch > 10#$right_patch)); then
+		printf '%s' '1'
+		return 0
+	fi
+	printf '%s' '0'
+	return 0
+}
+
+# Print a reason when setup is attempting to activate a candidate that is older
+# than the active global runtime. Missing comparison evidence intentionally
+# prints nothing. Explicit rollback tooling uses its own audited link transition
+# and does not route through setup activation.
+_runtime_bundle_stale_candidate_reason() {
+	local bundle_dir="$1"
+	local active_root="$2"
+	local candidate_manifest="$bundle_dir/manifest"
+	local active_manifest="$active_root/.bundle-manifest"
+	local candidate_version="" active_version="" version_relation=""
+	local candidate_sha="" active_sha=""
+	local repo_dir="${INSTALL_DIR:-}"
+
+	candidate_version=$(_runtime_bundle_manifest_value "$candidate_manifest" framework_version 2>/dev/null || :)
+	active_version=$(_runtime_bundle_manifest_value "$active_manifest" framework_version 2>/dev/null || :)
+	if [[ -n "$candidate_version" && -n "$active_version" ]]; then
+		version_relation=$(_runtime_bundle_compare_versions "$candidate_version" "$active_version" 2>/dev/null || :)
+		if [[ "$version_relation" == "-1" ]]; then
+			printf 'candidate version %s is older than active version %s' "$candidate_version" "$active_version"
+			return 0
+		fi
+	fi
+
+	candidate_sha=$(_runtime_bundle_manifest_value "$candidate_manifest" git_sha 2>/dev/null || :)
+	active_sha=$(_runtime_bundle_manifest_value "$active_manifest" git_sha 2>/dev/null || :)
+	[[ -n "$repo_dir" && "$candidate_sha" != "$active_sha" ]] || return 0
+	[[ "$candidate_sha" =~ ^[0-9a-fA-F]{7,64}$ ]] || return 0
+	[[ "$active_sha" =~ ^[0-9a-fA-F]{7,64}$ ]] || return 0
+	git -C "$repo_dir" cat-file -e "${candidate_sha}^{commit}" 2>/dev/null || return 0
+	git -C "$repo_dir" cat-file -e "${active_sha}^{commit}" 2>/dev/null || return 0
+	if git -C "$repo_dir" merge-base --is-ancestor "$candidate_sha" "$active_sha" 2>/dev/null; then
+		printf 'candidate source %.12s is an ancestor of active source %.12s' "$candidate_sha" "$active_sha"
+	fi
+	return 0
+}
+
 _runtime_bundle_validate() {
 	local bundle_dir="$1"
 	local source_dir="$2"
@@ -738,53 +837,108 @@ _runtime_bundle_switch_link() {
 	return 0
 }
 
+_runtime_bundle_size_bytes() {
+	local bundle_dir="$1"
+	local size_kib=""
+	size_kib=$(LC_ALL=C du -sk "$bundle_dir" 2>/dev/null | cut -f1) || return 1
+	case "$size_kib" in
+	'' | *[!0-9]*) return 1 ;;
+	esac
+	printf '%s' "$((size_kib * 1024))"
+	return 0
+}
+
+_runtime_bundle_has_live_lease() {
+	local lease_dir="$1"
+	local lease_file=""
+	local lease_pid=""
+	local has_live_lease=false
+	[[ -d "$lease_dir" ]] || return 1
+	for lease_file in "$lease_dir"/*; do
+		[[ -f "$lease_file" ]] || continue
+		lease_pid="${lease_file##*/}"
+		case "$lease_pid" in
+		'' | *[!0-9]*) rm -f "$lease_file" ;;
+		*)
+			# kill -0 can report EPERM for a live process owned by another user.
+			if kill -0 "$lease_pid" 2>/dev/null || [[ -d "/proc/$lease_pid" ]] || ps -p "$lease_pid" >/dev/null 2>&1; then
+				has_live_lease=true
+			else
+				rm -f "$lease_file"
+			fi
+			;;
+		esac
+	done
+	rmdir "$lease_dir" 2>/dev/null || true
+	[[ "$has_live_lease" == "true" ]]
+}
+
+_runtime_bundle_numeric_limit() {
+	local value="$1"
+	local fallback="$2"
+	case "$value" in
+	'' | *[!0-9]*) printf '%s' "$fallback" ;;
+	*) printf '%s' "$value" ;;
+	esac
+	return 0
+}
+
 _runtime_bundle_prune() {
 	local bundles_dir="$1"
 	local active_root="$2"
 	local previous_root="$3"
 	local candidate_dir=""
+	local candidate_agents_root=""
 	local bundle_id=""
-	local lease_dir=""
-	local lease_file=""
-	local lease_pid=""
-	local has_live_lease=false
-	local retention_seconds="${AIDEVOPS_RUNTIME_BUNDLE_RETENTION_SECONDS:-2592000}"
+	local retention_seconds=""
+	local max_count=""
+	local max_bytes=""
 	local now=""
 	local modified=""
+	local bundle_bytes=""
+	local candidate_rows=""
+	local total_count=0
+	local total_bytes=0
+	local bytes_known=1
+	local should_remove=0
 
-	case "$retention_seconds" in
-	'' | *[!0-9]*) retention_seconds=2592000 ;;
-	esac
+	retention_seconds=$(_runtime_bundle_numeric_limit "${AIDEVOPS_RUNTIME_BUNDLE_RETENTION_SECONDS:-2592000}" 2592000)
+	max_count=$(_runtime_bundle_numeric_limit "${AIDEVOPS_RUNTIME_BUNDLE_MAX_COUNT:-30}" 30)
+	max_bytes=$(_runtime_bundle_numeric_limit "${AIDEVOPS_RUNTIME_BUNDLE_MAX_BYTES:-8589934592}" 8589934592)
 	now=$(date +%s) || return 1
 
 	for candidate_dir in "$bundles_dir"/*; do
 		[[ -d "$candidate_dir/agents" ]] || continue
-		[[ "$candidate_dir/agents" == "$active_root" || "$candidate_dir/agents" == "$previous_root" ]] && continue
-		bundle_id="${candidate_dir##*/}"
-		lease_dir="$bundles_dir/.leases/$bundle_id"
-		has_live_lease=false
-		if [[ -d "$lease_dir" ]]; then
-			for lease_file in "$lease_dir"/*; do
-				[[ -f "$lease_file" ]] || continue
-				lease_pid="${lease_file##*/}"
-				case "$lease_pid" in
-				'' | *[!0-9]*) rm -f "$lease_file" ;;
-				*)
-					if kill -0 "$lease_pid" 2>/dev/null; then
-						has_live_lease=true
-					else
-						rm -f "$lease_file"
-					fi
-					;;
-				esac
-			done
-			rmdir "$lease_dir" 2>/dev/null || true
+		candidate_agents_root=$(cd "$candidate_dir/agents" 2>/dev/null && pwd -P) || continue
+		total_count=$((total_count + 1))
+		if bundle_bytes=$(_runtime_bundle_size_bytes "$candidate_dir"); then
+			total_bytes=$((total_bytes + bundle_bytes))
+		else
+			bundle_bytes=0
+			bytes_known=0
 		fi
-		[[ "$has_live_lease" == "true" ]] && continue
+		[[ "$candidate_agents_root" == "$active_root" || "$candidate_agents_root" == "$previous_root" ]] && continue
+		bundle_id="${candidate_dir##*/}"
+		if _runtime_bundle_has_live_lease "$bundles_dir/.leases/$bundle_id"; then
+			continue
+		fi
 		modified=$(_file_mtime_epoch "$candidate_dir")
-		[[ $((now - modified)) -lt "$retention_seconds" ]] && continue
-		rm -rf "$candidate_dir"
+		candidate_rows+="${modified}"$'\t'"${bundle_bytes}"$'\t'"${candidate_dir}"$'\n'
 	done
+
+	while IFS=$'\t' read -r modified bundle_bytes candidate_dir; do
+		[[ -n "$candidate_dir" ]] || continue
+		should_remove=0
+		if [[ $((now - modified)) -ge "$retention_seconds" ]] || [[ "$total_count" -gt "$max_count" ]]; then
+			should_remove=1
+		elif [[ "$bytes_known" -eq 1 && "$total_bytes" -gt "$max_bytes" ]]; then
+			should_remove=1
+		fi
+		[[ "$should_remove" -eq 1 ]] || continue
+		rm -rf "$candidate_dir" || return 1
+		total_count=$((total_count - 1))
+		total_bytes=$((total_bytes - bundle_bytes))
+	done < <(printf '%s' "$candidate_rows" | LC_ALL=C sort -n -k1,1)
 	rmdir "$bundles_dir/.leases" 2>/dev/null || true
 	return 0
 }
@@ -798,10 +952,16 @@ _runtime_bundle_activate_locked() {
 	local previous_link="$parent_dir/previous-runtime-bundle"
 	local previous_root=""
 	local legacy_dir=""
+	local stale_reason=""
 	agents_root=$(_runtime_bundle_resolve_root "$bundle_dir/agents") || return 1
 	bundles_dir=$(cd "${bundle_dir%/*}" && pwd -P) || return 1
 
 	if previous_root=$(_runtime_bundle_resolve_root "$target_dir" 2>/dev/null); then
+		stale_reason=$(_runtime_bundle_stale_candidate_reason "$bundle_dir" "$previous_root")
+		if [[ -n "$stale_reason" ]]; then
+			print_error "Refusing stale runtime bundle activation: ${stale_reason}. Use a dedicated audited rollback operation instead of setup."
+			return 1
+		fi
 		_AIDEVOPS_PREVIOUS_BUNDLE_ROOT="$previous_root"
 	fi
 	if [[ -d "$target_dir" && ! -L "$target_dir" ]]; then
@@ -1147,6 +1307,37 @@ _write_deployed_agents_sha() {
 	return 0
 }
 
+_sync_agent_bin_shims() {
+	local target_dir="$1"
+	local user_bin_dir="${HOME}/.aidevops/bin"
+	local shim=""
+	local shim_name=""
+	local existing=""
+	local existing_target=""
+
+	[[ -n "$target_dir" ]] || return 1
+	mkdir -p "$user_bin_dir" || return 1
+
+	for existing in "$user_bin_dir"/*; do
+		[[ -L "$existing" ]] || continue
+		existing_target=$(readlink "$existing" 2>/dev/null || true)
+		case "$existing_target" in
+		"${target_dir}/bin/"*)
+			[[ -e "$existing_target" ]] || rm -f "$existing"
+			;;
+		esac
+	done
+
+	if [[ -d "${target_dir}/bin" ]]; then
+		for shim in "${target_dir}/bin/"*; do
+			[[ -f "$shim" ]] || continue
+			shim_name=$(basename "$shim")
+			ln -sfn "$shim" "${user_bin_dir}/${shim_name}" || return 1
+		done
+	fi
+	return 0
+}
+
 _install_canonical_git_guard_shim() {
 	local target_dir="$1"
 	local guard_shim="${target_dir}/scripts/git"
@@ -1182,9 +1373,14 @@ deploy_aidevops_agents() {
 	fi
 	_runtime_bundle_activate "$target_dir" "$_AIDEVOPS_STAGED_BUNDLE_DIR" || return 1
 	_verify_agents_deploy_or_restore "$source_dir" "$target_dir" || return 1
+	pin_aidevops_active_runtime_bundle_root || {
+		print_error "Unable to bind setup to the activated runtime bundle"
+		return 1
+	}
 
 	print_success "Deployed agents to $target_dir"
 	_install_canonical_git_guard_shim "$target_dir" || return 1
+	_sync_agent_bin_shims "$target_dir" || return 1
 
 	_write_deployed_agents_sha "$repo_dir"
 

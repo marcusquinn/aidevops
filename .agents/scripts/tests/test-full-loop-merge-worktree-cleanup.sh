@@ -8,6 +8,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 AGENTS_SCRIPTS_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
 TEST_ROOT=""
+FIXTURE_GIT_BIN=""
 TESTS_RUN=0
 TESTS_FAILED=0
 
@@ -28,7 +29,22 @@ print_result() {
 
 teardown() {
 	if [[ -n "$TEST_ROOT" && -d "$TEST_ROOT" ]]; then
+		if [[ "$PWD" == "$TEST_ROOT" || "$PWD" == "$TEST_ROOT/"* ]]; then
+			cd "$AGENTS_SCRIPTS_DIR" || return 1
+		fi
 		rm -rf "$TEST_ROOT"
+	fi
+	return 0
+}
+
+resolve_fixture_git() {
+	FIXTURE_GIT_BIN="${AIDEVOPS_TEST_GIT_BIN:-}"
+	if [[ -z "$FIXTURE_GIT_BIN" ]]; then
+		FIXTURE_GIT_BIN=$(command -p -v git 2>/dev/null || true)
+	fi
+	if [[ -z "$FIXTURE_GIT_BIN" || ! -x "$FIXTURE_GIT_BIN" ]]; then
+		printf 'ERROR: real Git executable unavailable for disposable fixture\n' >&2
+		return 1
 	fi
 	return 0
 }
@@ -149,15 +165,28 @@ install_subject_stubs() {
 		return 0
 	}
 
+	_merge_capture_session_distill_provenance() { return 0; }
+	_merge_reconcile_closing_issues() { return 0; }
+
 	return 0
 }
 
 setup_subject() {
+	if [[ -n "$TEST_ROOT" && -d "$TEST_ROOT" ]]; then
+		teardown || return 1
+	fi
 	TEST_ROOT=$(mktemp -d)
 	trap teardown EXIT
 	export HOME="${TEST_ROOT}/home"
 	export AIDEVOPS_SKIP_AUTO_CLAIM=1
+	export AIDEVOPS_FULL_LOOP_CLEANUP_DIR="${TEST_ROOT}/cleanup-receipts"
 	mkdir -p "$HOME" "${TEST_ROOT}/bin"
+	export AIDEVOPS_TEST_REAL_GIT="$FIXTURE_GIT_BIN"
+	cat >"${TEST_ROOT}/bin/git" <<'GIT'
+#!/usr/bin/env bash
+exec "${AIDEVOPS_TEST_REAL_GIT:?}" "$@"
+GIT
+	chmod +x "${TEST_ROOT}/bin/git"
 	cat >"${TEST_ROOT}/bin/trash" <<'TRASH'
 #!/usr/bin/env bash
 exit 1
@@ -212,6 +241,9 @@ test_cmd_merge_defers_current_linked_worktree() {
 	local rc=0
 	local marker_path="${worktree_path}/.agents/.full-loop-cleanup-deferred"
 	local marker_pid=""
+	local receipt_path="${AIDEVOPS_FULL_LOOP_CLEANUP_DIR}/example_repo-123.json"
+	local receipt_worktree=""
+	receipt_worktree=$(git -C "$worktree_path" rev-parse --show-toplevel)
 	git -C "$canonical_repo" worktree list --porcelain | grep -q "$worktree_path" || rc=1
 	[[ -d "$worktree_path" ]] || rc=1
 	git -C "$canonical_repo" show-ref --verify --quiet refs/heads/feature/full-loop-cleanup || rc=1
@@ -219,6 +251,12 @@ test_cmd_merge_defers_current_linked_worktree() {
 	IFS= read -r marker_pid <"$marker_path" || rc=1
 	[[ "$marker_pid" =~ ^[0-9]+$ ]] || rc=1
 	kill -0 "$marker_pid" 2>/dev/null || rc=1
+	[[ -f "$receipt_path" ]] || rc=1
+	jq -e --arg worktree "$receipt_worktree" --arg branch "feature/full-loop-cleanup" \
+		'.resource_cleanup_state == "CLEANUP_DEFERRED" and .executor_completion_state == "FINALIZATION_PENDING"
+		 and .cleanup_lease.state == "pending" and .worktree == $worktree and .branch == $branch
+		 and (.owner.pid | type == "number") and (.owner.process_identity | length > 0)' \
+		"$receipt_path" >/dev/null || rc=1
 	if [[ "$(git -C "$canonical_repo" branch --show-current)" != "feature/active" ]]; then
 		rc=1
 	fi
@@ -228,7 +266,7 @@ test_cmd_merge_defers_current_linked_worktree() {
 	# Cleanup is deferred before canonical refresh because the parent runtime may
 	# still use this logical project directory.
 	if [[ "$(git -C "$canonical_repo" rev-parse main)" == "$remote_main" ]]; then rc=1; fi
-	print_result "cmd_merge defers current linked worktree until parent runtime exits" "$rc"
+	print_result "cmd_merge persists external deferred-cleanup ownership" "$rc"
 	return 0
 }
 
@@ -295,6 +333,7 @@ test_refresh_canonical_reports_pending_without_mutation() {
 }
 
 main() {
+	resolve_fixture_git
 	setup_subject
 	test_refresh_canonical_reports_pending_without_mutation
 	test_cmd_merge_defers_current_linked_worktree

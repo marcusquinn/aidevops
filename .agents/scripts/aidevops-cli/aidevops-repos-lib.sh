@@ -447,6 +447,46 @@ _repo_registration_maintainer() {
 	return 0
 }
 
+_repo_registration_update_existing() {
+	local repo_path="$1"
+	local version="$2"
+	local features="$3"
+	local slug="$4"
+	local is_local_only="$5"
+	local maintainer="$6"
+	local default_pulse="$7"
+	local default_priority="$8"
+	local default_init_scope="$9"
+	local has_interface="${10}"
+	local app_type_default="${11}"
+	local cloudron_defaults="${12}"
+	local cloudron_app_type="${13}"
+	local temp_file="${REPOS_FILE}.tmp"
+	jq --arg path "$repo_path" --arg version "$version" --arg features "$features" \
+		--arg slug "$slug" --argjson local_only "$is_local_only" --arg maintainer "$maintainer" \
+		--argjson pulse_default "$default_pulse" --arg priority_default "$default_priority" \
+		--arg init_scope_default "$default_init_scope" --arg has_interface "$has_interface" \
+		--arg app_type_default "$app_type_default" --argjson cloudron_defaults "$cloudron_defaults" \
+		--arg cloudron_app_type "$cloudron_app_type" \
+		'(.initialized_repos[] | select(.path == $path)) |= (
+			. + {path: $path, version: $version, features: ($features | split(",")), updated: (now | strftime("%Y-%m-%dT%H:%M:%SZ"))}
+			| if $slug != "" then .slug = $slug else . end
+			| if $local_only then .local_only = true else del(.local_only) end
+			| if .pulse == null then .pulse = (if $local_only then false else $pulse_default end) else . end
+			| if (.priority == null or .priority == "") and $priority_default != "" then .priority = $priority_default else . end
+			| if (.maintainer == null or .maintainer == "") and $maintainer != "" then .maintainer = $maintainer else . end
+			| if (.init_scope == null or .init_scope == "") then .init_scope = $init_scope_default else . end
+			| if $has_interface == "true" then .has_interface = true elif $has_interface == "false" then .has_interface = false else . end
+			| if (.app_type == null or .app_type == "") and $app_type_default != "" then .app_type = $app_type_default else . end
+			| if .app_type == $cloudron_app_type and $app_type_default == $cloudron_app_type then
+				.cloudron_package = ($cloudron_defaults + (if (.cloudron_package | type) == "object" then .cloudron_package else {} end))
+				| if .cloudron_package.monitor_upstream == null then .cloudron_package.monitor_upstream = ((.cloudron_package.upstream_slug // "") != "") else . end
+			  else . end
+		)' \
+		"$REPOS_FILE" >"$temp_file" && mv "$temp_file" "$REPOS_FILE"
+	return $?
+}
+
 # Register a repo in repos.json
 # Usage: register_repo <path> <version> <features>
 register_repo() {
@@ -504,30 +544,26 @@ register_repo() {
 
 	local has_interface
 	has_interface=$(_repo_config_has_interface_value "$repo_path")
+	local cloudron_app_type="cloudron-package"
+	local app_type_default=""
+	local cloudron_defaults='{}'
+	if [[ -f "${repo_path}/CloudronManifest.json" ]]; then
+		app_type_default="$cloudron_app_type"
+		cloudron_defaults='{"manifest":"CloudronManifest.json","release_workflow":".github/workflows/cloudron-package-release.yml","monitor_compatibility":true}'
+	fi
 
 	if jq -e --arg path "$repo_path" '.initialized_repos[] | select(.path == $path)' "$REPOS_FILE" &>/dev/null; then
-		local temp_file="${REPOS_FILE}.tmp"
-		jq --arg path "$repo_path" --arg version "$version" --arg features "$features" \
-			--arg slug "$slug" --argjson local_only "$is_local_only" --arg maintainer "$maintainer" \
-			--argjson pulse_default "$DEFAULT_PULSE" --arg priority_default "$DEFAULT_PRIORITY" \
-			--arg init_scope_default "$default_init_scope" --arg has_interface "$has_interface" \
-			'(.initialized_repos[] | select(.path == $path)) |= (
-				. + {path: $path, version: $version, features: ($features | split(",")), updated: (now | strftime("%Y-%m-%dT%H:%M:%SZ"))}
-				| if $slug != "" then .slug = $slug else . end
-				| if $local_only then .local_only = true else . end
-				| if .pulse == null then .pulse = (if $local_only then false else $pulse_default end) else . end
-				| if (.priority == null or .priority == "") and $priority_default != "" then .priority = $priority_default else . end
-				| if (.maintainer == null or .maintainer == "") and $maintainer != "" then .maintainer = $maintainer else . end
-				| if (.init_scope == null or .init_scope == "") then .init_scope = $init_scope_default else . end
-				| if $has_interface == "true" then .has_interface = true elif $has_interface == "false" then .has_interface = false else . end
-			)' \
-			"$REPOS_FILE" >"$temp_file" && mv "$temp_file" "$REPOS_FILE"
+		_repo_registration_update_existing "$repo_path" "$version" "$features" "$slug" \
+			"$is_local_only" "$maintainer" "$DEFAULT_PULSE" "$DEFAULT_PRIORITY" \
+			"$default_init_scope" "$has_interface" "$app_type_default" "$cloudron_defaults" "$cloudron_app_type" || return 1
 	else
 		local temp_file="${REPOS_FILE}.tmp"
 		jq --arg path "$repo_path" --arg version "$version" --arg features "$features" \
 			--arg slug "$slug" --arg maintainer "$maintainer" \
 			--argjson local_only "$is_local_only" --argjson pulse_default "$DEFAULT_PULSE" \
 			--arg priority_default "$DEFAULT_PRIORITY" --arg init_scope "$default_init_scope" --arg has_interface "$has_interface" \
+			--arg app_type_default "$app_type_default" --argjson cloudron_defaults "$cloudron_defaults" \
+			--arg cloudron_app_type "$cloudron_app_type" \
 			'.initialized_repos += [(
 				{
 					path: $path,
@@ -542,6 +578,10 @@ register_repo() {
 				| if $local_only then . + {local_only: true, pulse: false} else . end
 				| if $priority_default != "" then . + {priority: $priority_default} else . end
 				| if $has_interface == "true" then . + {has_interface: true} elif $has_interface == "false" then . + {has_interface: false} else . end
+				| if $app_type_default != "" then . + {app_type: $app_type_default} else . end
+				| if $app_type_default == $cloudron_app_type then
+					.cloudron_package = ($cloudron_defaults + {monitor_upstream: false})
+				  else . end
 			)]' \
 			"$REPOS_FILE" >"$temp_file" && mv "$temp_file" "$REPOS_FILE"
 	fi

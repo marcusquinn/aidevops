@@ -236,8 +236,12 @@ _close_and_label_feedback_pr() {
 	local close_comment="$3"
 	local label="$4"
 
-	gh pr close "$pr_number" --repo "$repo_slug" \
-		--comment "$close_comment" >/dev/null 2>&1 || true
+	if gh pr close "$pr_number" --repo "$repo_slug" \
+		--comment "$close_comment" >/dev/null 2>&1; then
+		if declare -F _pulse_merge_invalidate_pr_list_cache >/dev/null 2>&1; then
+			_pulse_merge_invalidate_pr_list_cache "$repo_slug" "closed feedback-routed PR #${pr_number}"
+		fi
+	fi
 	gh pr edit "$pr_number" --repo "$repo_slug" \
 		--add-label "$label" >/dev/null 2>&1 || true
 	return 0
@@ -367,6 +371,11 @@ _ci_actionable_failed_checks_markdown() {
 		link=$(printf '%s' "$checks_json" | jq -r --argjson i "$idx" '.[$i].link // empty' 2>/dev/null) || link=""
 		if _ci_check_url_has_infra_failure_log "$repo_slug" "$link"; then
 			echo "[pulse-wrapper] _dispatch_ci_fix_worker: PR #${pr_number} check '${name}' classified as infrastructure failure from failed log — skipping code redispatch" >>"$LOGFILE"
+			if ! declare -F _pmrc_rerun_infrastructure_check >/dev/null 2>&1; then
+				echo "[pulse-wrapper] _dispatch_ci_fix_worker: bounded infrastructure rerun helper unavailable for PR #${pr_number} check '${name}' — preserving PR for a later merge pass" >>"$LOGFILE"
+			elif ! _pmrc_rerun_infrastructure_check "$repo_slug" "$pr_number" "$name" "$link"; then
+				echo "[pulse-wrapper] _dispatch_ci_fix_worker: bounded infrastructure rerun unavailable for PR #${pr_number} check '${name}' — preserving PR for a later merge pass" >>"$LOGFILE"
+			fi
 		else
 			printf -- '- **%s**: %s — [check URL](%s)\n' "$name" "$conclusion" "$link"
 		fi
@@ -493,11 +502,13 @@ _dispatch_ci_fix_worker() {
 
 	local fallback_reason=""
 	if [[ -z "$pr_head_sha" || -z "$pr_head_ref" ]]; then
-		fallback_reason="current PR head branch metadata is unavailable"
+		echo "[pulse-wrapper] _dispatch_ci_fix_worker: current branch metadata unavailable for PR #${pr_number} in ${repo_slug} — preserving PR for a later repair pass" >>"$LOGFILE"
+		return 0
 	elif [[ "$is_cross_repo" == "true" ]]; then
 		fallback_reason="the PR head is in a fork and is not an owned repair branch"
 	elif ! declare -F _pulse_merge_repo_path_for_slug >/dev/null 2>&1; then
-		fallback_reason="the repository-path resolver is unavailable"
+		echo "[pulse-wrapper] _dispatch_ci_fix_worker: repository-path resolver unavailable for PR #${pr_number} in ${repo_slug} — preserving PR for a later repair pass" >>"$LOGFILE"
+		return 0
 	elif _dispatch_ci_repair_session "$pr_number" "$repo_slug" "$linked_issue" \
 		"$pr_head_sha" "$pr_head_ref" "$failure_fingerprint" "$failing_checks"; then
 		if [[ "${_CI_REPAIR_DISPATCH_RESULT:-}" == "active" ]]; then
@@ -509,9 +520,11 @@ _dispatch_ci_fix_worker() {
 	elif [[ "${_CI_REPAIR_DISPATCH_RESULT:-}" == "exhausted" ]]; then
 		fallback_reason="the bounded PR-branch repair session exhausted its retry budget"
 	else
-		fallback_reason="the bounded PR-branch repair session could not be launched"
+		echo "[pulse-wrapper] _dispatch_ci_fix_worker: retryable in-place repair launch failure for PR #${pr_number} head ${pr_head_sha} in ${repo_slug} (result=${_CI_REPAIR_DISPATCH_RESULT:-unknown}) — preserving PR for a later bounded attempt" >>"$LOGFILE"
+		return 0
 	fi
 
+	echo "[pulse-wrapper] _dispatch_ci_fix_worker: durable fallback authorized for PR #${pr_number} in ${repo_slug}: ${fallback_reason}" >>"$LOGFILE"
 	_route_ci_repair_fallback "$pr_number" "$repo_slug" "$linked_issue" "$pr_head_sha" \
 		"$pr_head_ref" "$failure_fingerprint" "$fallback_reason" "$feedback_section" "$failing_checks"
 	return 0
@@ -714,6 +727,11 @@ _ci_repair_result_active() {
 
 _ci_repair_result_exhausted() {
 	printf 'exhausted'
+	return 0
+}
+
+_ci_repair_result_retryable() {
+	printf 'retryable'
 	return 0
 }
 
@@ -1169,11 +1187,13 @@ _dispatch_ci_repair_session() {
 	local launch_payload=""
 	local active_result=""
 	local exhausted_result=""
+	local retryable_result=""
 	local dispatched_status=""
-	_CI_REPAIR_DISPATCH_RESULT="failed"
 	active_result=$(_ci_repair_result_active)
 	exhausted_result=$(_ci_repair_result_exhausted)
+	retryable_result=$(_ci_repair_result_retryable)
 	dispatched_status=$(_ci_repair_status_dispatched)
+	_CI_REPAIR_DISPATCH_RESULT="$retryable_result"
 
 	repo_path=$(_pulse_merge_repo_path_for_slug "$repo_slug" 2>/dev/null) || repo_path=""
 	helper="${AIDEVOPS_HEADLESS_RUNTIME_HELPER:-${_PULSE_MERGE_DIR:-${BASH_SOURCE[0]%/*}}/headless-runtime-helper.sh}"
@@ -1931,7 +1951,7 @@ _dispatch_pr_fix_worker() {
 
 	# --- Fetch bot/human reviews (substantive: CHANGES_REQUESTED or long body) ---
 	local reviews_json
-	reviews_json=$(gh api "repos/${repo_slug}/pulls/${pr_number}/reviews" \
+	reviews_json=$(_gh_with_timeout read gh api "repos/${repo_slug}/pulls/${pr_number}/reviews" \
 		--paginate \
 		--jq '[.[] | select(.state == "CHANGES_REQUESTED" or ((.body // "") | length) > 30)
 			| {author: (.user.login // "unknown"), state: .state,
@@ -1941,7 +1961,7 @@ _dispatch_pr_fix_worker() {
 
 	# --- Fetch inline review comments (file:line citations) ---
 	local inline_json
-	inline_json=$(gh api "repos/${repo_slug}/pulls/${pr_number}/comments" \
+	inline_json=$(_gh_with_timeout read gh api "repos/${repo_slug}/pulls/${pr_number}/comments" \
 		--paginate \
 		--jq '[.[] | {author: (.user.login // "unknown"),
 			path: (.path // ""),

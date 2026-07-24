@@ -99,6 +99,31 @@ readonly _PMP_BACKLOG_OTHER="other"
 # --- Functions ---
 
 #######################################
+# Normalize known PR lifecycle states from mixed GitHub API paths.
+#
+# GraphQL emits uppercase enums while REST and cached projections can emit
+# lowercase strings. Preserve unknown values so exact-state consumers still
+# fail closed instead of accepting an unrecognised lifecycle state (t18168).
+#
+# Args: $1=destination variable name, $2=raw lifecycle state
+#######################################
+_pmp_normalize_pr_lifecycle_state_into() {
+	local dest_var="$1"
+	local raw_state="$2"
+	local normalized_state=""
+
+	[[ "$dest_var" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || return 1
+	case "$raw_state" in
+	[Oo][Pp][Ee][Nn]) normalized_state="OPEN" ;;
+	[Cc][Ll][Oo][Ss][Ee][Dd]) normalized_state="CLOSED" ;;
+	[Mm][Ee][Rr][Gg][Ee][Dd]) normalized_state="MERGED" ;;
+	*) normalized_state="$raw_state" ;;
+	esac
+	printf -v "$dest_var" '%s' "$normalized_state"
+	return 0
+}
+
+#######################################
 # Normalize PR mergeable values from mixed GitHub API paths.
 #
 # gh GraphQL returns MERGEABLE/CONFLICTING/UNKNOWN, while REST fallback and
@@ -215,7 +240,8 @@ _pmp_rest_review_decision_from_reviews() {
 	local repo_slug="$2"
 	local reviews_json=""
 
-	reviews_json=$(gh api --paginate "repos/${repo_slug}/pulls/${pr_number}/reviews" 2>/dev/null) || return 1
+	reviews_json=$(_gh_with_timeout read gh api --paginate \
+		"repos/${repo_slug}/pulls/${pr_number}/reviews" 2>/dev/null) || return 1
 	printf '%s' "$reviews_json" | jq -rs '
 		flatten
 		| map(select((.user.login // "") != "" and (.state == "APPROVED" or .state == "CHANGES_REQUESTED" or .state == "DISMISSED")))
@@ -254,6 +280,53 @@ _pmp_refresh_unknown_review_decision_into() {
 	return 0
 }
 
+# Resolve unknown review decisions once before backlog logging and sorting.
+# Both consumers classify the full PR list, so network refreshes inside the
+# classifier would otherwise run twice per unknown PR in one merge pass.
+# Args: $1=repo slug, $2=PR JSON array
+_pmp_enrich_prs_with_review_decisions() {
+	local repo_slug="$1"
+	local pr_json="$2"
+	local enriched_json="$pr_json"
+	local pr_rows=""
+	local _US=$'\x1f'
+	local i="" number="" review_decision=""
+
+	if [[ -z "$repo_slug" ]]; then
+		printf '%s' "$pr_json"
+		return 0
+	fi
+
+	pr_rows=$(printf '%s' "$pr_json" | jq -r '
+		if type != "array" then error("expected PR array")
+		else to_entries[] | [
+			(.key | tostring),
+			(if ((.value | has("number") | not) or .value.number == null or (.value.number | tostring | length) == 0)
+			 then "" else (.value.number | tostring) end),
+			(if ((.value | has("reviewDecision") | not) or .value.reviewDecision == null or (.value.reviewDecision | tostring | length) == 0)
+			 then "UNKNOWN" else .value.reviewDecision end)
+		] | join("\u001f")
+		end' 2>/dev/null) || {
+		printf '%s' "$pr_json"
+		return 0
+	}
+
+	while IFS="$_US" read -r i number review_decision; do
+		[[ -n "$i" ]] || continue
+		_pmp_normalize_review_decision_into review_decision "$review_decision"
+		if [[ "$number" =~ ^[0-9]+$ ]] && _pmp_review_decision_is_unknown "$review_decision"; then
+			_pmp_refresh_unknown_review_decision_into review_decision "$number" "$repo_slug" "$review_decision"
+			enriched_json=$(printf '%s' "$enriched_json" | jq --argjson index "$i" --arg review "$review_decision" '.[$index].reviewDecision = $review' 2>/dev/null) || {
+				printf '%s' "$pr_json"
+				return 0
+			}
+		fi
+	done <<<"$pr_rows"
+
+	printf '%s' "$enriched_json"
+	return 0
+}
+
 #######################################
 # Classify one PR object into a scheduling/observability backlog bucket.
 # This is intentionally advisory: it never decides merge eligibility. The
@@ -280,11 +353,9 @@ _pmp_classify_pr_backlog_state() {
 
 	[[ "$failed_count" =~ ^[0-9]+$ ]] || failed_count=0
 	[[ "$pending_count" =~ ^[0-9]+$ ]] || pending_count=0
-	if [[ "$failed_count" -gt 0 && -n "$repo_slug" && "$number" =~ ^[0-9]+$ ]] && _pmp_review_decision_is_unknown "$review_decision"; then
-		_pmp_refresh_unknown_review_decision_into review_decision "$number" "$repo_slug" "$review_decision"
-	fi
 
-	if [[ "$is_draft" == "true" || ",${labels}," == *",hold-for-review,"* || "$review_decision" == "CHANGES_REQUESTED" ]]; then
+	if [[ "$is_draft" == "true" || ",${labels}," == *",hold-for-review,"* || "$review_decision" == "CHANGES_REQUESTED" ]] ||
+		_pmp_review_decision_is_unknown "$review_decision"; then
 		printf '%s' "$_PMP_BACKLOG_HUMAN_APPROVAL_NEEDED"
 		return 0
 	fi
@@ -430,6 +501,31 @@ _PULSE_MERGE_PROCESS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${_PULSE_MERGE_PROCESS_DIR}/pulse-merge-duplicate-consolidation.sh"
 
 #######################################
+# Apply one processed PR result to pass counters and durable same-pass evidence.
+# Args: $1=repo, $2=PR number, $3=head SHA, $4=result code,
+#       $5=merged var, $6=closed var, $7=failed var
+#######################################
+_pmp_record_processed_pr_result() {
+	local repo_slug="$1"
+	local pr_number="$2"
+	local head_sha="$3"
+	local result_code="$4"
+	local merged_var="$5"
+	local closed_var="$6"
+	local failed_var="$7"
+	local outcome="blocked"
+
+	case "$result_code" in
+	0) _pmp_add_counter_var "$merged_var" 1 || return 1; outcome="merged" ;;
+	2) _pmp_add_counter_var "$closed_var" 1 || return 1; outcome="progress" ;;
+	3) _pmp_add_counter_var "$failed_var" 1 || return 1; outcome="eligible-unmerged" ;;
+	4) outcome="deferred" ;;
+	esac
+	_pmp_record_same_pass_pr_outcome "$repo_slug" "$pr_number" "$head_sha" "$outcome" || return 1
+	return 0
+}
+
+#######################################
 # Merge ready PRs for a single repo.
 #
 # Fetches the PR list for the repo, iterates, and delegates each PR
@@ -453,6 +549,7 @@ _merge_ready_prs_for_repo() {
 
 	local merged=0 closed=0 failed=0
 	local pr_json="" pr_merge_err="" _list_start="" pr_count=""
+	local pr_list_complete=1 outcomes_complete=1
 	_list_start=$(_pmp_now_epoch)
 	pr_merge_err=$(mktemp)
 	if declare -F pulse_pr_list_get >/dev/null 2>&1; then
@@ -469,11 +566,12 @@ _merge_ready_prs_for_repo() {
 		_pr_merge_err_msg=$(cat "$pr_merge_err" 2>/dev/null || echo "unknown error")
 		echo "[pulse-wrapper] _process_merge_batch: pulse_pr_list_get FAILED for ${repo_slug}: ${_pr_merge_err_msg}" >>"$LOGFILE"
 		pr_json="[]"
+		pr_list_complete=0
 	fi
 	rm -f "$pr_merge_err"
 	[[ -n "$_timing_prefix" ]] && _pmp_add_elapsed_seconds "${_timing_prefix}list_s" "$_list_start"
 
-	pr_count=$(printf '%s' "$pr_json" | jq 'length' 2>/dev/null) || pr_count=0
+	pr_count=$(printf '%s' "$pr_json" | jq 'length' 2>/dev/null) || { pr_count=0; pr_list_complete=0; }
 	[[ "$pr_count" =~ ^[0-9]+$ ]] || pr_count=0
 	if [[ -n "$_pr_count_var" ]]; then
 		[[ "$_pr_count_var" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || return 1
@@ -482,6 +580,7 @@ _merge_ready_prs_for_repo() {
 
 	if [[ "$pr_count" -eq 0 ]]; then
 		eval "${_merged_var}=0; ${_closed_var}=0; ${_failed_var}=0"
+		if [[ "$pr_list_complete" -eq 1 ]]; then _pmp_mark_same_pass_repo_complete "$repo_slug" 2>/dev/null || true; fi
 		return 0
 	fi
 
@@ -493,11 +592,12 @@ _merge_ready_prs_for_repo() {
 	fi
 
 	pr_json=$(_pmp_enrich_prs_with_rest_check_status "$repo_slug" "$pr_json")
+	pr_json=$(_pmp_enrich_prs_with_review_decisions "$repo_slug" "$pr_json")
 
 	_pmp_log_pr_backlog_counts "$repo_slug" "$pr_json"
 	pr_json=$(_pmp_sort_prs_by_backlog_priority "$pr_json" "$repo_slug")
 	_pmp_consolidate_duplicate_pr_groups "$repo_slug" "$pr_json" || true
-	pr_count=$(printf '%s' "$pr_json" | jq 'length' 2>/dev/null) || pr_count=0
+	pr_count=$(printf '%s' "$pr_json" | jq 'length' 2>/dev/null) || { pr_count=0; outcomes_complete=0; }
 	[[ "$pr_count" =~ ^[0-9]+$ ]] || pr_count=0
 
 	local i=0
@@ -517,26 +617,23 @@ _merge_ready_prs_for_repo() {
 		fi
 		local pr_obj
 		pr_obj=$(_pmp_pr_object_at_index "$pr_json" "$i")
-		local _cursor_last_pr="" _cursor_next_pr=""
+		local _cursor_last_pr="" _cursor_next_pr="" _pr_head_sha=""
 		_cursor_last_pr=$(printf '%s' "$pr_obj" | jq -r '.number // empty' 2>/dev/null) || _cursor_last_pr=""
+		_pr_head_sha=$(printf '%s' "$pr_obj" | jq -r '.headRefOid // empty' 2>/dev/null) || _pr_head_sha=""
 		i=$((i + 1))
 		_cursor_next_pr=$(_pmp_pr_number_at_index "$pr_json" "$i") || _cursor_next_pr=""
 		[[ -n "$pr_obj" ]] || continue
 
 		_process_single_ready_pr "$repo_slug" "$pr_obj" "$_timing_prefix"
 		local _pr_rc=$?
-		case "$_pr_rc" in
-		0) merged=$((merged + 1)) ;;
-		2) closed=$((closed + 1)) ;;
-		3) failed=$((failed + 1)) ;;
-		4) ;;
-		esac
+		_pmp_record_processed_pr_result "$repo_slug" "$_cursor_last_pr" "$_pr_head_sha" "$_pr_rc" merged closed failed || outcomes_complete=0
 		_pmp_write_merge_pr_cursor "$PULSE_MERGE_PR_CURSOR_FILE" "$repo_slug" "$i" "$_cursor_last_pr" "$_cursor_next_pr"
 	done
 	_pmp_clear_merge_pr_cursor "$PULSE_MERGE_PR_CURSOR_FILE"
 
 	[[ -n "$AIDEVOPS_PULSE_REQUIRED_CONTEXTS_CACHE_DIR" ]] && rm -rf -- "$AIDEVOPS_PULSE_REQUIRED_CONTEXTS_CACHE_DIR"
 	[[ -n "$AIDEVOPS_PULSE_AUTHOR_PERMISSION_CACHE_DIR" ]] && rm -rf -- "$AIDEVOPS_PULSE_AUTHOR_PERMISSION_CACHE_DIR"
+	if [[ "$pr_list_complete" -eq 1 && "$outcomes_complete" -eq 1 ]]; then _pmp_mark_same_pass_repo_complete "$repo_slug" 2>/dev/null || true; fi
 
 	eval "${_merged_var}=${merged}; ${_closed_var}=${closed}; ${_failed_var}=${failed}"
 	return 0
@@ -879,6 +976,39 @@ _attempt_green_behind_update_branch() {
 	return 1
 }
 
+_dispatch_pr_repair_by_kind() {
+	local kind="$1"
+	local pr_number="$2"
+	local repo_slug="$3"
+	local linked_issue="$4"
+	local pr_title="$5"
+	local checks_json="$6"
+	case "$kind" in
+		review) _dispatch_pr_fix_worker "$pr_number" "$repo_slug" "$linked_issue" || true ;;
+		conflict) _dispatch_conflict_fix_worker "$pr_number" "$repo_slug" "$linked_issue" "$pr_title" || true ;;
+		ci) _dispatch_ci_fix_worker "$pr_number" "$repo_slug" "$linked_issue" "$checks_json" || true ;;
+	esac
+	return 0
+}
+
+_route_issue_origin_is_trusted() {
+	local pr_number="$1"
+	local repo_slug="$2"
+	local linked_issue="$3"
+	local fallback_pr_author=""
+	fallback_pr_author=$(gh_pr_view "$pr_number" --repo "$repo_slug" \
+		--json author --jq '.author.login // ""' 2>/dev/null) || fallback_pr_author=""
+	#aidevops:trust-boundary — issue-origin fallback is only for same-repo collaborator PRs whose PR labels lost origin metadata.
+	if [[ -z "$fallback_pr_author" ]] \
+		|| ! declare -F _is_collaborator_author >/dev/null 2>&1 \
+		|| ! _is_collaborator_author "$fallback_pr_author" "$repo_slug"; then
+		echo "[pulse-wrapper] _route_pr_to_fix_worker: PR #${pr_number} in ${repo_slug} linked issue #${linked_issue} has origin:worker but PR author trust could not be confirmed" >>"$LOGFILE"
+		return 1
+	fi
+	echo "[pulse-wrapper] _route_pr_to_fix_worker: PR #${pr_number} in ${repo_slug} using linked issue #${linked_issue} origin:worker fallback" >>"$LOGFILE"
+	return 0
+}
+
 #######################################
 # Route a PR to the appropriate fix worker based on origin label and kind.
 #
@@ -916,15 +1046,21 @@ _route_pr_to_fix_worker() {
 	local checks_json="${9:-}"
 	local issue_labels=""
 	local issue_has_worker_origin=0
+	local label_list=""
+	local takeover_pattern=",origin:worker-takeover,"
 
 	# No linked issue → nothing to route to
 	[[ -z "$linked_issue" ]] && return 1
 
 	# Fetch labels if not provided by caller
 	if [[ -z "$pr_labels" ]]; then
-		pr_labels=$(gh_pr_view "$pr_number" --repo "$repo_slug" \
-			--json labels --jq '[.labels[].name] | join(",")' 2>/dev/null) || pr_labels=""
+		if ! pr_labels=$(gh_pr_view "$pr_number" --repo "$repo_slug" \
+			--json labels --jq '[.labels[].name] | join(",")' 2>/dev/null); then
+			echo "[pulse-wrapper] _route_pr_to_fix_worker: current labels unavailable for PR #${pr_number} in ${repo_slug} — refusing destructive routing" >>"$LOGFILE"
+			return 1
+		fi
 	fi
+	label_list=",${pr_labels},"
 
 	# Kind-specific "already routed" exclusion label
 	local routed_label
@@ -939,60 +1075,54 @@ _route_pr_to_fix_worker() {
 	esac
 
 	# Check exclusion labels — already routed or no-takeover
-	if [[ ",${pr_labels}," == *",${routed_label},"* ]] \
-		|| [[ ",${pr_labels}," == *",no-takeover,"* ]]; then
+	if [[ "$label_list" == *",${routed_label},"* ]] \
+		|| [[ "$label_list" == *",no-takeover,"* ]]; then
 		return 1
 	fi
 
 	# Review gate has an additional exclusion for external contributors
-	if [[ "$kind" == "review" ]] && [[ ",${pr_labels}," == *",external-contributor,"* ]]; then
+	if [[ "$kind" == "review" ]] && [[ "$label_list" == *",external-contributor,"* ]]; then
 		return 1
 	fi
 
-	if [[ ",${pr_labels}," != *",origin:worker,"* \
-		&& ",${pr_labels}," != *",origin:worker-takeover,"* \
-		&& ",${pr_labels}," != *",origin:interactive,"* ]]; then
-		issue_labels=$(gh api "repos/${repo_slug}/issues/${linked_issue}" \
-			--jq '[.labels[].name] | join(",")' 2>/dev/null) || issue_labels=""
+	if [[ "$label_list" != *",origin:worker,"* \
+		&& "$label_list" != *"$takeover_pattern"* \
+		&& "$label_list" != *",origin:interactive,"* ]]; then
+		if ! issue_labels=$(gh api "repos/${repo_slug}/issues/${linked_issue}" \
+			--jq '[.labels[].name] | join(",")' 2>/dev/null); then
+			echo "[pulse-wrapper] _route_pr_to_fix_worker: linked issue #${linked_issue} metadata unavailable for PR #${pr_number} in ${repo_slug} — refusing destructive routing" >>"$LOGFILE"
+			return 1
+		fi
 		if [[ ",${issue_labels}," == *",origin:worker,"* ]]; then
 			issue_has_worker_origin=1
 		fi
 	fi
 
 	# Worker-origin PRs: dispatch directly
-	if [[ ( -n "${_OW_LABEL_PAT:-}" && ",${pr_labels}," == *"${_OW_LABEL_PAT:-}"* ) ]] \
-		|| [[ ",${pr_labels}," == *",origin:worker-takeover,"* ]] \
+	if [[ ( -n "${_OW_LABEL_PAT:-}" && "$label_list" == *"${_OW_LABEL_PAT:-}"* ) ]] \
+		|| [[ "$label_list" == *"$takeover_pattern"* ]] \
 		|| [[ "$issue_has_worker_origin" -eq 1 ]]; then
-		if [[ "$issue_has_worker_origin" -eq 1 ]]; then
-			local fallback_pr_author=""
-			fallback_pr_author=$(gh_pr_view "$pr_number" --repo "$repo_slug" \
-				--json author --jq '.author.login // ""' 2>/dev/null) || fallback_pr_author=""
-			#aidevops:trust-boundary — issue-origin fallback is only for same-repo collaborator PRs whose PR labels lost origin metadata.
-			if [[ -z "$fallback_pr_author" ]] \
-				|| ! declare -F _is_collaborator_author >/dev/null 2>&1 \
-				|| ! _is_collaborator_author "$fallback_pr_author" "$repo_slug"; then
-				echo "[pulse-wrapper] _route_pr_to_fix_worker: PR #${pr_number} in ${repo_slug} linked issue #${linked_issue} has origin:worker but PR author trust could not be confirmed" >>"$LOGFILE"
-				return 1
-			fi
-			echo "[pulse-wrapper] _route_pr_to_fix_worker: PR #${pr_number} in ${repo_slug} using linked issue #${linked_issue} origin:worker fallback" >>"$LOGFILE"
-		fi
-		case "$kind" in
-			review)   _dispatch_pr_fix_worker "$pr_number" "$repo_slug" "$linked_issue" || true ;;
-			conflict) _dispatch_conflict_fix_worker "$pr_number" "$repo_slug" "$linked_issue" "$pr_title" || true ;;
-			ci)       _dispatch_ci_fix_worker "$pr_number" "$repo_slug" "$linked_issue" "$checks_json" || true ;;
-		esac
+		[[ "$issue_has_worker_origin" -eq 0 ]] \
+			|| _route_issue_origin_is_trusted "$pr_number" "$repo_slug" "$linked_issue" \
+			|| return 1
+		_dispatch_pr_repair_by_kind "$kind" "$pr_number" "$repo_slug" "$linked_issue" "$pr_title" "$checks_json"
 		return 0
 	fi
 
 	# Stale interactive PRs: handover first, then dispatch
-	if [[ ",${pr_labels}," == *",origin:interactive,"* ]] \
+	if [[ "$label_list" == *",origin:interactive,"* ]] \
 		&& _interactive_pr_is_stale "$pr_number" "$repo_slug" "$updated_at" "$head_ref_oid"; then
-		_interactive_pr_trigger_handover "$pr_number" "$repo_slug" || true
-		case "$kind" in
-			review)   _dispatch_pr_fix_worker "$pr_number" "$repo_slug" "$linked_issue" || true ;;
-			conflict) _dispatch_conflict_fix_worker "$pr_number" "$repo_slug" "$linked_issue" "$pr_title" || true ;;
-			ci)       _dispatch_ci_fix_worker "$pr_number" "$repo_slug" "$linked_issue" "$checks_json" || true ;;
-		esac
+		if ! _interactive_pr_trigger_handover "$pr_number" "$repo_slug"; then
+			echo "[pulse-wrapper] _route_pr_to_fix_worker: interactive handover was not confirmed for PR #${pr_number} in ${repo_slug} — refusing destructive routing" >>"$LOGFILE"
+			return 1
+		fi
+		if ! pr_labels=$(gh_pr_view "$pr_number" --repo "$repo_slug" \
+			--json labels --jq '[.labels[].name] | join(",")' 2>/dev/null) \
+			|| [[ ",${pr_labels}," != *"$takeover_pattern"* ]]; then
+			echo "[pulse-wrapper] _route_pr_to_fix_worker: origin:worker-takeover not confirmed for PR #${pr_number} in ${repo_slug} — refusing destructive routing" >>"$LOGFILE"
+			return 1
+		fi
+		_dispatch_pr_repair_by_kind "$kind" "$pr_number" "$repo_slug" "$linked_issue" "$pr_title" "$checks_json"
 		return 0
 	fi
 
@@ -1530,6 +1660,7 @@ _required_contexts_for_default_branch() {
 _check_required_checks_passing() {
 	local repo_slug="$1"
 	local pr_number="$2"
+	local pr_sha="${3:-}"
 
 	# Resolve required contexts (delegates default-branch lookup + branch
 	# protection API + 404 distinction to the helper). Empty stdout + exit 0
@@ -1558,9 +1689,10 @@ _check_required_checks_passing() {
 	# PR, separate budget pool). check-runs is heavier than check-suites
 	# (~111KB/PR) but exposes per-context .name fields needed for matching
 	# branch-protection required_status_checks. Single-PR path → cost is fine.
-	local pr_sha=""
-	pr_sha=$(gh_pr_view "$pr_number" --repo "$repo_slug" \
-		--json headRefOid --jq '.headRefOid' 2>/dev/null) || pr_sha=""
+	if [[ -z "$pr_sha" ]]; then
+		pr_sha=$(gh_pr_view "$pr_number" --repo "$repo_slug" \
+			--json headRefOid --jq '.headRefOid' 2>/dev/null) || pr_sha=""
+	fi
 	if [[ -z "$pr_sha" ]]; then
 		echo "[pulse-merge] _check_required_checks_passing: headRefOid fetch failed for PR #${pr_number} in ${repo_slug} — failing closed (t2922, GH#21799)" >>"$LOGFILE"
 		return 1

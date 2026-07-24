@@ -82,6 +82,13 @@ CREATE TABLE IF NOT EXISTS provider_startup_failures (
     updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
     PRIMARY KEY (provider, model)
 );
+
+CREATE TABLE IF NOT EXISTS private_workload_locks (
+    lock_key        TEXT PRIMARY KEY,
+    owner_pid       INTEGER NOT NULL,
+    owner_argv_hash TEXT NOT NULL DEFAULT '',
+    updated_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+);
 SQL
 	return 0
 }
@@ -671,32 +678,39 @@ build_sandbox_passthrough_csv() {
 	local name
 
 	while IFS='=' read -r name _; do
+		if _headless_private_workload_enabled; then
+			case "$name" in
+			XDG_CACHE_HOME | XDG_CONFIG_HOME | XDG_DATA_HOME | XDG_STATE_HOME)
+				names+=("$name")
+				;;
+			esac
+			continue
+		fi
 		case "$name" in
 		# Session-bound OpenCode env makes isolated canary/worker runs attach to
 		# the parent TUI session and fail with "Session not found" (GH#23065).
-		AIDEVOPS_OPENCODE_SESSION_ID | OPENCODE_SESSION_ID | OPENCODE_PID | OPENCODE_RUN_ID | OPENCODE_PROCESS_ROLE | OPENCODE | OPENCODE_SERVER_PASSWORD) ;;
+		AIDEVOPS_OPENCODE_SESSION_ID | OPENCODE_SESSION_ID | OPENCODE_PID | OPENCODE_RUN_ID | OPENCODE_PROCESS_ROLE | OPENCODE | OPENCODE_SERVER_PASSWORD) continue ;;
 		OPENAI_* | ANTHROPIC_* | GOOGLE_* | CLAUDE_*)
 			if [[ -n "$provider" ]] && ! _headless_provider_env_allowed "$provider" "$name"; then
 				continue
 			fi
-			if [[ "$seen_names" == *" ${name} "* ]]; then
-				continue
-			fi
-			seen_names+="${name} "
-			names+=("$name")
 			;;
+		# Permission and blocker tooling needs this bounded worker identity set.
+		# Keep it explicit: arbitrary WORKER_* values may carry unrelated runtime
+		# configuration and must not cross the clean sandbox boundary.
+		WORKER_ISSUE_NUMBER | WORKER_REPO_SLUG | DISPATCH_REPO_SLUG | WORKER_SESSION_KEY | WORKER_WORKTREE_PATH | WORKER_GITHUB_LOGIN) ;;
 		# OTEL_* is passed through so headless workers under the sandbox
 		# can export OTLP traces when OTEL_EXPORTER_OTLP_ENDPOINT is set.
 		# Without this, opencode never initialises its OTLP exporter and
 		# all aidevops.* plugin span enrichment is silently dropped (t2186).
-		AIDEVOPS_* | PULSE_* | GH_* | GITHUB_* | OPENCODE_* | XDG_* | OTEL_* | REAL_HOME | TMPDIR | TMP | TEMP | RTK_* | VERIFY_*)
-			if [[ "$seen_names" == *" ${name} "* ]]; then
-				continue
-			fi
-			seen_names+="${name} "
-			names+=("$name")
-			;;
+		AIDEVOPS_* | PULSE_* | GH_* | GITHUB_* | OPENCODE_* | XDG_* | OTEL_* | REAL_HOME | TMPDIR | TMP | TEMP | RTK_* | VERIFY_*) ;;
+		*) continue ;;
 		esac
+		if [[ "$seen_names" == *" ${name} "* ]]; then
+			continue
+		fi
+		seen_names+="${name} "
+		names+=("$name")
 	done < <(env)
 
 	local IFS=,
@@ -1277,6 +1291,56 @@ _opencode_db_graph_schema_matches() {
 }
 
 #######################################
+# Return destination-ordered quoted columns shared by a SQLite table in two DBs.
+# Destination-only NOT NULL/primary-key columns without defaults are incompatible.
+# Args: $1 = source DB, $2 = destination DB, $3 = table name.
+#######################################
+_opencode_db_named_column_list() {
+	local source_db="$1"
+	local destination_db="$2"
+	local table_name="$3"
+	local source_db_sql table_name_sql result columns missing_required
+	source_db_sql=$(sql_escape "$source_db")
+	table_name_sql=$(sql_escape "$table_name")
+	result=$(sqlite3_with_timeout "$destination_db" "
+ATTACH DATABASE '${source_db_sql}' AS source_schema;
+SELECT COALESCE((
+  SELECT group_concat(quoted_name, ',') FROM (
+    SELECT '\"' || replace(destination_column.name, '\"', '\"\"') || '\"' AS quoted_name
+    FROM pragma_table_info('${table_name_sql}') AS destination_column
+    JOIN pragma_table_info('${table_name_sql}', 'source_schema') AS source_column
+      ON source_column.name = destination_column.name
+    ORDER BY destination_column.cid
+  )
+), '') || '|' || COALESCE((
+  SELECT group_concat(destination_column.name, ',')
+  FROM pragma_table_info('${table_name_sql}') AS destination_column
+  LEFT JOIN pragma_table_info('${table_name_sql}', 'source_schema') AS source_column
+    ON source_column.name = destination_column.name
+  WHERE source_column.name IS NULL
+    AND (destination_column.pk > 0 OR (destination_column.\"notnull\" = 1 AND destination_column.dflt_value IS NULL))
+), '');
+" 2>/dev/null) || return 1
+	columns="${result%%|*}"
+	missing_required="${result#*|}"
+	if [[ -z "$columns" || -n "$missing_required" ]]; then
+		print_warning "[lifecycle] db_schema_incompatible table=${table_name} missing_required=${missing_required:-none}"
+		return 1
+	fi
+	printf '%s' "$columns"
+	return 0
+}
+
+_opencode_db_quote_identifier() {
+	local identifier="$1"
+	local destination_var="$2"
+	[[ "$destination_var" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || return 1
+	identifier="${identifier//\"/\"\"}"
+	printf -v "$destination_var" '"%s"' "$identifier"
+	return 0
+}
+
+#######################################
 # Initialise a data-empty worker DB from the current shared schema.
 # Args: $1 = worker DB path, $2 = shared DB path.
 #######################################
@@ -1308,8 +1372,9 @@ _merge_worker_db() {
 	local isolated_dir="$1"
 	local worker_db="${isolated_dir}/opencode/opencode.db"
 	local shared_db="${HOME}/.local/share/opencode/opencode.db"
-	local worker_db_sql session_tables table_name table_identifier
+	local worker_db_sql session_tables project_tables table_name table_identifier column_list
 	local delete_session_sql="" copy_session_sql=""
+	local delete_project_sql="" copy_project_sql=""
 	local delete_event_sequence_sql="" copy_event_sequence_sql=""
 	local delete_event_sql="" copy_event_sql=""
 
@@ -1323,40 +1388,60 @@ _merge_worker_db() {
 	session_tables=$(_opencode_db_tables_with_column "$shared_db" session_id) || return 1
 	while IFS= read -r table_name; do
 		[[ -n "$table_name" && "$table_name" != "session" ]] || continue
-		table_identifier="${table_name//\"/\"\"}"
-		printf -v table_identifier '"%s"' "$table_identifier"
+		_opencode_db_quote_identifier "$table_name" table_identifier || return 1
 		delete_session_sql="${delete_session_sql}DELETE FROM main.${table_identifier} WHERE session_id IN (SELECT id FROM worker.session);"$'\n'
-		copy_session_sql="${copy_session_sql}INSERT OR REPLACE INTO main.${table_identifier} SELECT * FROM worker.${table_identifier} WHERE session_id IN (SELECT id FROM worker.session);"$'\n'
+		column_list=$(_opencode_db_named_column_list "$worker_db" "$shared_db" "$table_name") || return 1
+		copy_session_sql="${copy_session_sql}INSERT OR REPLACE INTO main.${table_identifier} (${column_list}) SELECT ${column_list} FROM worker.${table_identifier} WHERE session_id IN (SELECT id FROM worker.session);"$'\n'
 	done <<-TABLES
 		${session_tables}
 	TABLES
+	project_tables=$(_opencode_db_tables_with_column "$shared_db" project_id) || return 1
+	while IFS= read -r table_name; do
+		case "$table_name" in project | session | "") continue ;; esac
+		_opencode_db_quote_identifier "$table_name" table_identifier || return 1
+		delete_project_sql="${delete_project_sql}DELETE FROM main.${table_identifier} WHERE project_id IN (SELECT project_id FROM worker.session);"$'\n'
+		column_list=$(_opencode_db_named_column_list "$worker_db" "$shared_db" "$table_name") || return 1
+		copy_project_sql="${copy_project_sql}INSERT OR REPLACE INTO main.${table_identifier} (${column_list}) SELECT ${column_list} FROM worker.${table_identifier} WHERE project_id IN (SELECT project_id FROM worker.session);"$'\n'
+	done <<-TABLES
+		${project_tables}
+	TABLES
 	if _opencode_db_has_table "$shared_db" "event_sequence"; then
+		column_list=$(_opencode_db_named_column_list "$worker_db" "$shared_db" event_sequence) || return 1
 		delete_event_sequence_sql="DELETE FROM main.event_sequence WHERE aggregate_id IN (SELECT id FROM worker.session);"
-		copy_event_sequence_sql="INSERT OR REPLACE INTO main.event_sequence SELECT * FROM worker.event_sequence WHERE aggregate_id IN (SELECT id FROM worker.session);"
+		copy_event_sequence_sql="INSERT OR REPLACE INTO main.event_sequence (${column_list}) SELECT ${column_list} FROM worker.event_sequence WHERE aggregate_id IN (SELECT id FROM worker.session);"
 	fi
 	if _opencode_db_has_table "$shared_db" "event"; then
+		column_list=$(_opencode_db_named_column_list "$worker_db" "$shared_db" event) || return 1
 		delete_event_sql="DELETE FROM main.event WHERE aggregate_id IN (SELECT id FROM worker.session);"
-		copy_event_sql="INSERT OR REPLACE INTO main.event SELECT * FROM worker.event WHERE aggregate_id IN (SELECT id FROM worker.session);"
+		copy_event_sql="INSERT OR REPLACE INTO main.event (${column_list}) SELECT ${column_list} FROM worker.event WHERE aggregate_id IN (SELECT id FROM worker.session);"
 	fi
+	local project_columns session_columns merge_error=""
+	project_columns=$(_opencode_db_named_column_list "$worker_db" "$shared_db" project) || return 1
+	session_columns=$(_opencode_db_named_column_list "$worker_db" "$shared_db" session) || return 1
 
 	worker_db_sql=$(sql_escape "$worker_db")
-	if ! sqlite3 "$shared_db" <<-SQL >/dev/null 2>&1; then
+	if ! merge_error=$(sqlite3 "$shared_db" 2>&1 >/dev/null <<-SQL
 		.bail on
 		.timeout 5000
 		ATTACH DATABASE '${worker_db_sql}' AS worker;
 		BEGIN IMMEDIATE;
 		${delete_session_sql}
+		${delete_project_sql}
 		${delete_event_sql}
 		${delete_event_sequence_sql}
-		INSERT OR IGNORE INTO main.project SELECT * FROM worker.project
+		INSERT OR IGNORE INTO main.project (${project_columns}) SELECT ${project_columns} FROM worker.project
 			WHERE id IN (SELECT project_id FROM worker.session);
-		INSERT OR REPLACE INTO main.session SELECT * FROM worker.session;
+		${copy_project_sql}
+		INSERT OR REPLACE INTO main.session (${session_columns}) SELECT ${session_columns} FROM worker.session;
 		${copy_session_sql}
 		${copy_event_sequence_sql}
 		${copy_event_sql}
 		COMMIT;
 		DETACH DATABASE worker;
 	SQL
+	); then
+		merge_error="${merge_error//$'\n'/ }"
+		print_warning "[lifecycle] db_merge_sql_error detail=${merge_error:0:500}"
 		return 1
 	fi
 	return 0
@@ -1387,6 +1472,181 @@ _preserve_failed_worker_db() {
 	return 0
 }
 
+_opencode_db_scoped_table_counts_match() {
+	local source_db="$1"
+	local destination_db="$2"
+	local table_name="$3"
+	local scope_column="$4"
+	local scope_query="$5"
+	local source_db_sql table_identifier scope_identifier result
+	source_db_sql=$(sql_escape "$source_db")
+	_opencode_db_quote_identifier "$table_name" table_identifier || return 1
+	_opencode_db_quote_identifier "$scope_column" scope_identifier || return 1
+	result=$(sqlite3_with_timeout "$destination_db" "
+ATTACH DATABASE '${source_db_sql}' AS source_schema;
+SELECT (SELECT COUNT(*) FROM source_schema.${table_identifier} WHERE ${scope_identifier} IN (${scope_query}))
+     = (SELECT COUNT(*) FROM main.${table_identifier} WHERE ${scope_identifier} IN (${scope_query}));
+" 2>/dev/null) || return 1
+	[[ "$result" == "1" ]]
+}
+
+#######################################
+# Verify that every source session/project graph row is visible after merge.
+# Args: $1 = source worker DB, $2 = destination shared DB.
+#######################################
+_verify_worker_db_merge() {
+	local source_db="$1"
+	local destination_db="$2"
+	local table_name session_tables project_tables
+	local session_scope_query="SELECT id FROM source_schema.session"
+	_opencode_db_graph_schema_matches "$source_db" "$destination_db" || return 1
+	_opencode_db_scoped_table_counts_match "$source_db" "$destination_db" session id \
+		"$session_scope_query" || return 1
+	_opencode_db_scoped_table_counts_match "$source_db" "$destination_db" project id \
+		"SELECT project_id FROM source_schema.session" || return 1
+	session_tables=$(_opencode_db_tables_with_column "$source_db" session_id) || return 1
+	while IFS= read -r table_name; do
+		case "$table_name" in session | "") continue ;; esac
+		_opencode_db_scoped_table_counts_match "$source_db" "$destination_db" "$table_name" session_id \
+			"$session_scope_query" || return 1
+	done <<-TABLES
+		${session_tables}
+	TABLES
+	project_tables=$(_opencode_db_tables_with_column "$source_db" project_id) || return 1
+	while IFS= read -r table_name; do
+		case "$table_name" in project | session | "") continue ;; esac
+		_opencode_db_scoped_table_counts_match "$source_db" "$destination_db" "$table_name" project_id \
+			"SELECT project_id FROM source_schema.session" || return 1
+	done <<-TABLES
+		${project_tables}
+	TABLES
+	for table_name in event_sequence event; do
+		_opencode_db_has_table "$source_db" "$table_name" || continue
+		_opencode_db_scoped_table_counts_match "$source_db" "$destination_db" "$table_name" aggregate_id \
+			"$session_scope_query" || return 1
+	done
+	return 0
+}
+
+#######################################
+# Read the owner PID from a worker DB replay lock.
+# Args: $1 = replay lock directory.
+#######################################
+_read_worker_db_replay_lock_pid() {
+	local replay_lock="$1"
+	local locking_pid=""
+	if [[ -f "${replay_lock}/pid" ]]; then
+		IFS= read -r locking_pid 2>/dev/null <"${replay_lock}/pid" || locking_pid=""
+	fi
+	printf '%s' "$locking_pid"
+	return 0
+}
+
+#######################################
+# Acquire a PID-owned replay lock, reclaiming dead or incomplete stale locks.
+# Args: $1 = replay lock directory.
+# Returns: 0 when acquired, 1 when another owner is live or acquisition fails.
+#######################################
+_acquire_worker_db_replay_lock() {
+	local replay_lock="$1"
+	local locking_pid=""
+	local wait_attempt=0
+	local acquire_attempt=0
+
+	while [[ "$acquire_attempt" -lt 2 ]]; do
+		acquire_attempt=$((acquire_attempt + 1))
+		locking_pid=""
+		wait_attempt=0
+		if mkdir "$replay_lock" 2>/dev/null; then
+			if printf '%s\n' "$$" >"${replay_lock}/pid" 2>/dev/null; then
+				return 0
+			fi
+			rm -rf "$replay_lock"
+			return 1
+		fi
+
+		# The owner writes its PID immediately after mkdir. Give that write up to one
+		# second to become visible before treating a PID-less directory as stale.
+		while [[ "$wait_attempt" -lt 10 ]]; do
+			locking_pid=$(_read_worker_db_replay_lock_pid "$replay_lock")
+			[[ -n "$locking_pid" ]] && break
+			wait_attempt=$((wait_attempt + 1))
+			sleep 0.1
+		done
+		if [[ "$locking_pid" =~ ^[0-9]+$ ]] && kill -0 "$locking_pid" 2>/dev/null; then
+			return 1
+		fi
+
+		# Serialize stale cleanup inside the existing directory. If the owner
+		# released it between the liveness check and this mkdir, retry acquisition.
+		if ! mkdir "${replay_lock}/.reclaim" 2>/dev/null; then
+			[[ ! -d "$replay_lock" ]] && continue
+			return 1
+		fi
+		locking_pid=$(_read_worker_db_replay_lock_pid "$replay_lock")
+		if [[ "$locking_pid" =~ ^[0-9]+$ ]] && kill -0 "$locking_pid" 2>/dev/null; then
+			rm -rf "${replay_lock}/.reclaim"
+			return 1
+		fi
+		rm -rf "$replay_lock" || return 1
+		mkdir "$replay_lock" 2>/dev/null || return 1
+		if ! printf '%s\n' "$$" >"${replay_lock}/pid" 2>/dev/null; then
+			rm -rf "$replay_lock"
+			return 1
+		fi
+		return 0
+	done
+	return 1
+}
+
+#######################################
+# Release a worker DB replay lock only when this process still owns it.
+# Args: $1 = replay lock directory.
+#######################################
+_release_worker_db_replay_lock() {
+	local replay_lock="$1"
+	local locking_pid=""
+	locking_pid=$(_read_worker_db_replay_lock_pid "$replay_lock")
+	if [[ "$locking_pid" == "$$" ]]; then
+		rm -rf "$replay_lock"
+	fi
+	return 0
+}
+
+#######################################
+# Replay retained worker DBs. Artifacts are deleted only after graph verification.
+# Returns 0 when every attempted artifact merged or no artifacts exist.
+#######################################
+_replay_preserved_worker_dbs() {
+	local recovery_root="${AIDEVOPS_WORKER_DB_RECOVERY_DIR:-${HOME}/.aidevops/.agent-workspace/work/worker-db-recovery}"
+	local shared_db="${HOME}/.local/share/opencode/opencode.db"
+	local replay_lock="${recovery_root}/.replay.lock"
+	local recovery_db recovery_dir replay_dir replay_failed=0
+	[[ -d "$recovery_root" && -f "$shared_db" ]] || return 0
+	_acquire_worker_db_replay_lock "$replay_lock" || return 0
+	for recovery_db in "$recovery_root"/*/opencode.db; do
+		[[ -f "$recovery_db" ]] || continue
+		recovery_dir="${recovery_db%/opencode.db}"
+		replay_dir=$(mktemp -d "${recovery_root}/.replay-XXXXXX") || { replay_failed=1; continue; }
+		if ! ln -s "$recovery_dir" "${replay_dir}/opencode" 2>/dev/null; then
+			rm -rf "$replay_dir"
+			replay_failed=1
+			continue
+		fi
+		if _merge_worker_db "$replay_dir" && _verify_worker_db_merge "$recovery_db" "$shared_db"; then
+			rm -f "$recovery_db" "${recovery_db}-wal" "${recovery_db}-shm"
+			rmdir "$recovery_dir" 2>/dev/null || true
+			print_info "[lifecycle] db_merge_recovery_replayed path=${recovery_db}"
+		else
+			replay_failed=1
+			print_warning "[lifecycle] db_merge_recovery_retained path=${recovery_db}"
+		fi
+		rm -rf "$replay_dir"
+	done
+	_release_worker_db_replay_lock "$replay_lock"
+	[[ "$replay_failed" -eq 0 ]]
+}
+
 #######################################
 # Seed a continuation session into a worker's isolated OpenCode DB.
 # Called before `opencode run --session <id> --continue` so retries launched
@@ -1401,7 +1661,7 @@ _seed_worker_db_session_context() {
 	local current_work_dir="${3:-}"
 	local worker_db="${isolated_dir}/opencode/opencode.db"
 	local shared_db="${HOME}/.local/share/opencode/opencode.db"
-	local shared_db_sql session_id_sql current_work_dir_sql="" session_exists
+	local shared_db_sql session_id_sql current_work_dir_sql="" session_exists column_list
 	local session_tables project_tables table_name table_identifier
 	local clear_session_sql="" copy_session_sql=""
 	local clear_project_sql="" copy_project_sql=""
@@ -1435,10 +1695,10 @@ _seed_worker_db_session_context() {
 	project_tables=$(_opencode_db_tables_with_column "$shared_db" "project_id") || return 1
 	while IFS= read -r table_name; do
 		[[ -n "$table_name" && "$table_name" != "session" ]] || continue
-		table_identifier="${table_name//\"/\"\"}"
-		printf -v table_identifier '"%s"' "$table_identifier"
+		_opencode_db_quote_identifier "$table_name" table_identifier || return 1
 		clear_session_sql="${clear_session_sql}DELETE FROM main.${table_identifier};"$'\n'
-		copy_session_sql="${copy_session_sql}INSERT OR REPLACE INTO main.${table_identifier} SELECT * FROM shared.${table_identifier} WHERE session_id = '${session_id_sql}';"$'\n'
+		column_list=$(_opencode_db_named_column_list "$shared_db" "$worker_db" "$table_name") || return 1
+		copy_session_sql="${copy_session_sql}INSERT OR REPLACE INTO main.${table_identifier} (${column_list}) SELECT ${column_list} FROM shared.${table_identifier} WHERE session_id = '${session_id_sql}';"$'\n'
 	done <<-TABLES
 		${session_tables}
 	TABLES
@@ -1446,21 +1706,26 @@ _seed_worker_db_session_context() {
 		case "$table_name" in
 		project | session | "") continue ;;
 		esac
-		table_identifier="${table_name//\"/\"\"}"
-		printf -v table_identifier '"%s"' "$table_identifier"
+		_opencode_db_quote_identifier "$table_name" table_identifier || return 1
 		clear_project_sql="${clear_project_sql}DELETE FROM main.${table_identifier};"$'\n'
-		copy_project_sql="${copy_project_sql}INSERT OR REPLACE INTO main.${table_identifier} SELECT * FROM shared.${table_identifier} WHERE project_id IN (SELECT project_id FROM shared.session WHERE id = '${session_id_sql}');"$'\n'
+		column_list=$(_opencode_db_named_column_list "$shared_db" "$worker_db" "$table_name") || return 1
+		copy_project_sql="${copy_project_sql}INSERT OR REPLACE INTO main.${table_identifier} (${column_list}) SELECT ${column_list} FROM shared.${table_identifier} WHERE project_id IN (SELECT project_id FROM shared.session WHERE id = '${session_id_sql}');"$'\n'
 	done <<-TABLES
 		${project_tables}
 	TABLES
 	if _opencode_db_has_table "$shared_db" "event_sequence"; then
+		column_list=$(_opencode_db_named_column_list "$shared_db" "$worker_db" event_sequence) || return 1
 		clear_event_sequence_sql="DELETE FROM main.event_sequence;"
-		copy_event_sequence_sql="INSERT OR REPLACE INTO main.event_sequence SELECT * FROM shared.event_sequence WHERE aggregate_id = '${session_id_sql}';"
+		copy_event_sequence_sql="INSERT OR REPLACE INTO main.event_sequence (${column_list}) SELECT ${column_list} FROM shared.event_sequence WHERE aggregate_id = '${session_id_sql}';"
 	fi
 	if _opencode_db_has_table "$shared_db" "event"; then
+		column_list=$(_opencode_db_named_column_list "$shared_db" "$worker_db" event) || return 1
 		clear_event_sql="DELETE FROM main.event;"
-		copy_event_sql="INSERT OR REPLACE INTO main.event SELECT * FROM shared.event WHERE aggregate_id = '${session_id_sql}';"
+		copy_event_sql="INSERT OR REPLACE INTO main.event (${column_list}) SELECT ${column_list} FROM shared.event WHERE aggregate_id = '${session_id_sql}';"
 	fi
+	local project_columns session_columns
+	project_columns=$(_opencode_db_named_column_list "$shared_db" "$worker_db" project) || return 1
+	session_columns=$(_opencode_db_named_column_list "$shared_db" "$worker_db" session) || return 1
 	if ! sqlite3 "$worker_db" <<-SQL >/dev/null 2>&1; then
 		.bail on
 		.timeout 5000
@@ -1472,10 +1737,10 @@ _seed_worker_db_session_context() {
 		${clear_project_sql}
 		DELETE FROM main.session;
 		DELETE FROM main.project;
-		INSERT OR IGNORE INTO project SELECT * FROM shared.project
+		INSERT OR IGNORE INTO project (${project_columns}) SELECT ${project_columns} FROM shared.project
 			WHERE id IN (SELECT project_id FROM shared.session WHERE id = '${session_id_sql}');
 		${copy_project_sql}
-		INSERT OR REPLACE INTO session SELECT * FROM shared.session WHERE id = '${session_id_sql}';
+		INSERT OR REPLACE INTO session (${session_columns}) SELECT ${session_columns} FROM shared.session WHERE id = '${session_id_sql}';
 		${copy_session_sql}
 		${copy_event_sequence_sql}
 		${copy_event_sql}
@@ -1629,12 +1894,64 @@ _release_session_lock() {
 	local lock_file="${LOCK_DIR}/${safe_key}.pid"
 
 	if [[ -f "$lock_file" ]]; then
-		local stored_pid
-		stored_pid=$(cat "$lock_file" 2>/dev/null) || stored_pid=""
+		local stored_raw stored_pid
+		stored_raw=$(cat "$lock_file" 2>/dev/null) || stored_raw=""
+		stored_pid="${stored_raw%%|*}"
 		if [[ "$stored_pid" == "$$" ]]; then
 			rm -f "$lock_file"
 		fi
 	fi
+	return 0
+}
+
+_acquire_private_workload_lock() {
+	local workload_lock_key="$1"
+	local owner_hash=""
+	local acquire_result=""
+	local existing_raw=""
+	local existing_pid=""
+	local existing_hash=""
+	local takeover_result=""
+
+	[[ "$workload_lock_key" =~ ^private-workload-dir-[a-f0-9]{64}$ ]] || return 1
+	owner_hash=$(_compute_argv_hash "$$" 2>/dev/null || printf '')
+	[[ "$owner_hash" =~ ^[a-f0-9]{12}$ ]] || return 1
+
+	acquire_result=$(sqlite3_with_timeout "$STATE_DB" \
+		"BEGIN IMMEDIATE; INSERT OR IGNORE INTO private_workload_locks (lock_key, owner_pid, owner_argv_hash) VALUES ('${workload_lock_key}', $$, '${owner_hash}'); SELECT changes(); COMMIT;" \
+		2>/dev/null) || return 1
+	if [[ "$acquire_result" == "1" ]]; then
+		return 0
+	fi
+
+	existing_raw=$(sqlite3_with_timeout "$STATE_DB" \
+		"SELECT owner_pid || '|' || owner_argv_hash FROM private_workload_locks WHERE lock_key = '${workload_lock_key}' LIMIT 1;" \
+		2>/dev/null) || return 1
+	existing_pid="${existing_raw%%|*}"
+	existing_hash="${existing_raw#*|}"
+	if [[ ! "$existing_pid" =~ ^[0-9]+$ || ! "$existing_hash" =~ ^[a-f0-9]{12}$ ]]; then
+		return 1
+	fi
+	if [[ "$existing_pid" == "$$" ]] || \
+		_is_process_alive_and_matches "$existing_pid" "${FRAMEWORK_PROCESS_PATTERN:-}" "$existing_hash"; then
+		print_warning "Duplicate private workload blocked: directory already has an active worker"
+		return 1
+	fi
+
+	takeover_result=$(sqlite3_with_timeout "$STATE_DB" \
+		"BEGIN IMMEDIATE; DELETE FROM private_workload_locks WHERE lock_key = '${workload_lock_key}' AND owner_pid = ${existing_pid} AND owner_argv_hash = '${existing_hash}'; INSERT OR IGNORE INTO private_workload_locks (lock_key, owner_pid, owner_argv_hash) VALUES ('${workload_lock_key}', $$, '${owner_hash}'); SELECT CASE WHEN owner_pid = $$ AND owner_argv_hash = '${owner_hash}' THEN 1 ELSE 0 END FROM private_workload_locks WHERE lock_key = '${workload_lock_key}'; COMMIT;" \
+		2>/dev/null) || return 1
+	[[ "$takeover_result" == "1" ]] || return 1
+	return 0
+}
+
+_release_private_workload_lock() {
+	local workload_lock_key="$1"
+
+	[[ "$workload_lock_key" =~ ^private-workload-dir-[a-f0-9]{64}$ ]] || return 1
+	sqlite3_with_timeout "$STATE_DB" \
+		"DELETE FROM private_workload_locks WHERE lock_key = '${workload_lock_key}' AND owner_pid = $$;" \
+		>/dev/null 2>&1 || return 1
 	return 0
 }
 

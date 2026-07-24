@@ -10,6 +10,521 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.32.180] - 2026-07-24
+
+### Changed
+
+- Maintenance: mark t18172 complete (pr:#28561 completed:2026-07-24) [skip ci]
+- Documentation: clarify Cloudron package repository links (#28561)
+- Maintenance: update simplification state registry
+- Maintenance: sync ref:GH#28559 to TODO.md [skip ci]
+
+## [3.32.179] - 2026-07-24
+
+### Fixed
+
+- use package names in Cloudron update issues (#28558)
+
+## [3.32.178] - 2026-07-24
+
+### Changed
+
+- Maintenance: sync ref:GH#28556 to TODO.md [skip ci]
+- Maintenance: update simplification state registry
+- CI: migrate actions to Node.js 24 runtimes (#28553)
+- Maintenance: update simplification state registry
+
+### Fixed
+
+- use parse-safe Cloudron promotion options (#28557)
+- persist detached release receipts (#28552)
+
+## [3.32.177] - 2026-07-24
+
+### Fixed
+
+- prevent recursive supervisor routine (#28545)
+
+## [3.32.176] - 2026-07-24
+
+### Changed
+
+- Documentation: standardize Cloudron community publishing (#28547)
+- Maintenance: sync ref:GH#28546 to TODO.md [skip ci]
+- Maintenance: update simplification state registry
+
+## [3.32.175] - 2026-07-23
+
+### Changed
+
+- Maintenance: update simplification state registry
+
+## [3.32.174] - 2026-07-23
+
+### Fixed
+
+- allow canonical diff-files queries (#28539)
+
+## [3.32.173] - 2026-07-23
+
+### Changed
+
+- Maintenance: update simplification state registry
+
+### Fixed
+
+- harden lifecycle evidence and routine scheduling (#28537)
+- reconcile published release receipts (#28536)
+
+## [3.32.172] - 2026-07-23
+
+### Changed
+
+- Maintenance: update simplification state registry
+
+## [3.32.171] - 2026-07-23
+
+### Changed
+
+- Maintenance: update simplification state registry
+
+### Fixed
+
+- load Homebrew packaged CLI modules (#28533)
+
+## [3.32.170] - 2026-07-23
+
+### Added
+
+- manage README star history and attribution (#28530)
+
+### Changed
+
+- Maintenance: update simplification state registry
+
+### Fixed
+
+- verify updater against active runtime bundle (#28529)
+
+## [3.32.169] - 2026-07-23
+
+### Added
+
+- generate static star history chart (#28525)
+
+### Changed
+
+- Maintenance: update simplification state registry
+- Documentation: replace broken Star History chart (#28520)
+
+### Fixed
+
+- harden worker activity stats parsing (#28523)
+
+## [3.32.168] - 2026-07-23
+
+### Fixed
+
+- repair Remotion chapter references (#28518)
+
+## [3.32.167] - 2026-07-22
+
+### Added
+
+- add managed Cloudron package lifecycle automation (#28500)
+
+### Changed
+
+- Maintenance: update simplification state registry
+- Maintenance: update simplification state registry
+- Maintenance: update simplification state registry
+
+### Fixed
+
+- tighten DNS scanning and parent sync (#28512)
+- recover converged stale canonical rebases (#28510)
+- make enrichment assignment guards read-only (#28509)
+- distinguish relationship sync outcomes (#28504)
+- pin generated Cloudron release caller (#28502)
+
+## [3.32.166] - 2026-07-22
+
+### Changed
+
+- Maintenance: update simplification state registry
+- Documentation: add README provenance footer guidance (#28492)
+
+### Fixed
+
+- align Pulse evidence cutoff timestamps (#28495)
+
+## [3.32.165] - 2026-07-22
+
+### Changed
+
+- Maintenance: update simplification state registry
+- Maintenance: mark t18169 complete (pr:#28488 completed:2026-07-22) [skip ci]
+- Maintenance: sync ref:GH#28487 to TODO.md [skip ci]
+- Maintenance: update simplification state registry
+- Maintenance: update simplification state registry
+- Tests: split headless runtime test suite (#28478)
+- Refactor: split worker preparation helpers (#28479)
+- Maintenance: update simplification state registry
+
+### Fixed
+
+- bound issue sync list reads (#28490)
+- make generated Markdown default-lint clean (#28488)
+- handle init help and missing gitignore (#28486)
+- isolate full-loop merge test fixtures (#28480)
+- extend checkpoint-safe headless sandbox timeout (#28475)
+
+## [3.32.164] - 2026-07-22
+
+### Changed
+
+- Maintenance: mark t18164 complete (pr:#28393 completed:2026-07-22) [skip ci]
+- Maintenance: update simplification state registry
+
+### Fixed
+
+- reuse semantic blocker resolution in merge workflow (#28470)
+- recover broken audit chains without rewriting evidence (#28392)
+- repair targeted forge event projections (#28468)
+
+## [3.32.163] - 2026-07-22
+
+### Changed
+
+- Maintenance: update simplification state registry
+- Maintenance: update simplification state registry
+- Maintenance: update simplification state registry
+
+### Fixed
+
+- pin Qlty installer version (#28455)
+- accept generated HTML in brief readiness (#28450)
+- resolve completion blockers semantically (#28448)
+- restore deployed wrapper shim discovery (#28445)
+- reconcile Pulse launchd replacements (#28441)
+- resolve safety policy checker fallbacks (#28435)
+- classify review scanner launch failures (#28432)
+- stream Pulse bot-activity snapshots (#28429)
+- resolve trusted review authors through REST (#28428)
+
+## [3.32.162] - 2026-07-21
+
+### Changed
+
+- Maintenance: update simplification state registry
+- Documentation: review community asc skill refresh (#28417)
+- Maintenance: update simplification state registry
+- Maintenance: mark t18168 complete (pr:#28397 completed:2026-07-21) [skip ci]
+- Refactor: split pulse diagnose helpers (#28395)
+- Maintenance: sync ref:GH#28396 to TODO.md [skip ci]
+- Maintenance: mark t18166 complete (pr:#28388 completed:2026-07-21) [skip ci]
+- Maintenance: update simplification state registry
+
+### Fixed
+
+- fetch review heads outside canonical checkouts (#28421)
+- recover stuck review-thread remediation (#28414)
+- separate compaction operational sections (#28409)
+- preserve created claim issue refs (#28403)
+- classify complete validator branch ranges (#28405)
+- classify merge-stuck outage fingerprints (#28402)
+- normalize stuck merge checks and TODO guard baselines (#28390)
+- stabilize pulse cycle-health fixtures (#28388)
+- fail closed on issue-sync completion evidence (#28389)
+
+## [3.32.161] - 2026-07-21
+
+### Changed
+
+- Version bump and maintenance updates
+
+
+## [3.32.160] - 2026-07-21
+
+### Changed
+
+- Maintenance: mark t18167 complete (pr:#28384 completed:2026-07-20) [skip ci]
+- Maintenance: sync ref:GH#28382 to TODO.md [skip ci]
+- Maintenance: update simplification state registry
+- Maintenance: mark t18165 complete (pr:#28375 completed:2026-07-20) [skip ci]
+- Maintenance: sync ref:GH#28376 to TODO.md [skip ci]
+- Maintenance: update simplification state registry
+- Tests: harden maintainer gate fixtures (#28365)
+- Maintenance: sync ref:GH#28361 to TODO.md [skip ci]
+- Tests: harden init project context assertions (#28343)
+- Maintenance: update simplification state registry
+- Maintenance: update simplification state registry
+
+### Fixed
+
+- bound Pulse paginated API reads (#28323) (#28380)
+- propagate PR handoff classifier failures (#28373)
+- clean up supersession refs on return (#28345)
+- preserve project context on write failures (#28344)
+
+## [3.32.159] - 2026-07-20
+
+### Changed
+
+- Tests: configure convergence fixture remote with git (#28342)
+- Documentation: clarify WP-CLI precise mode (#28341)
+- Maintenance: update simplification state registry
+
+### Fixed
+
+- make canonical updates shim-safe (#28333)
+- archive OpenCode 1.18.3 session graph (#28332)
+- transfer dispatch precreate ownership atomically (#28331)
+
+## [3.32.158] - 2026-07-20
+
+### Changed
+
+- Maintenance: update simplification state registry
+- Maintenance: update simplification state registry
+
+### Fixed
+
+- preserve pinned full-loop wrapper trust (#28310)
+- allow canonical rev-list queries (#28321)
+
+## [3.32.157] - 2026-07-20
+
+### Added
+
+- scaffold deployment and WordPress contexts (#28300)
+
+### Changed
+
+- Maintenance: ratchet QLTY_SMELL_THRESHOLD 54→53 (-1) [skip ci]
+- Refactor: simplify recovery payload validation (#28299)
+- Maintenance: sync ref:GH#28313 to TODO.md [skip ci]
+- Maintenance: mark t18163 complete (pr:#28246 completed:2026-07-19) [skip ci]
+- Maintenance: ratchet QLTY_SMELL_THRESHOLD 56→54 (-2) [skip ci]
+- Refactor: simplify session continuation guard (#28288)
+- Maintenance: update simplification state registry
+
+### Fixed
+
+- restore exact-zero prefetch predicate (#28312)
+- classify unreadable proc cwd owners (#28308)
+- authorize linked-worktree patch targets (#28305)
+- clear stale local-only repo state (#28311)
+- label routine tracking issues at creation (#28266)
+- stabilize Qlty cache-sensitive scans (#28268)
+- persist pulse merge recovery before watchdog timeout (#28286)
+- preserve cross-user inventory leases (#28277)
+- harden simplification branch fallback (#28275)
+
+## [3.32.156] - 2026-07-19
+
+### Changed
+
+- Maintenance: update simplification state registry
+
+### Fixed
+
+- localize headless runtime test mock parameters (#28274)
+- preserve merged issue completion evidence (#28267)
+
+## [3.32.155] - 2026-07-19
+
+### Added
+
+- add GitHub API efficiency evidence sidecars (#28261)
+
+### Changed
+
+- Maintenance: ratchet QLTY_SMELL_THRESHOLD 57→56 (-1) [skip ci]
+
+### Fixed
+
+- enforce signed merge summary posting (#28259)
+- harden pulse prefetch JSON parsing (#28258)
+- guard pulse snapshot command argument (#28257)
+
+## [3.32.154] - 2026-07-19
+
+### Changed
+
+- Maintenance: update simplification state registry
+
+### Fixed
+
+- guard standalone pulse mocks against unset args (#28255)
+- parse pulse PR coordinates once (#28256)
+
+## [3.32.153] - 2026-07-19
+
+### Changed
+
+- Maintenance: update simplification state registry
+- Maintenance: update simplification state registry
+- Maintenance: update simplification state registry
+- Documentation: adopt serve-sim preview launch options (#28236)
+- Documentation: adopt asc cli resolution center release (#28232)
+- Documentation: review App Store Connect community skills refresh (#28230)
+
+### Fixed
+
+- recover worker finalization and clarify shell policy (#28244)
+- scope compaction quality gates to repositories (#28233)
+- load standalone pulse merge dependencies (#28240)
+- publish simplification state checkout-free (#28228)
+- use stable review scanner path (#28224)
+
+## [3.32.152] - 2026-07-18
+
+### Fixed
+
+- reject stale runtime bundles and recover idle tabs (#28217)
+
+## [3.32.151] - 2026-07-18
+
+### Changed
+
+- Refactor: simplify compaction event handling (#28098)
+
+### Fixed
+
+- audit pulse snapshot failures (#28215)
+- use portable linked issue whitespace matching (#28193)
+- guard MCP health test sandbox path (#28085)
+- make qlty scan counts deterministic (#28181)
+- handle missing HOME in runtime status (#28118)
+
+## [3.32.150] - 2026-07-18
+
+### Changed
+
+- Maintenance: sync ref:GH#28203 to TODO.md [skip ci]
+
+### Fixed
+
+- recover pulse merge progress signals (#28205)
+- handle CRLF supersedes markers (#28194)
+
+## [3.32.149] - 2026-07-18
+
+### Added
+
+- bound unreferenced runtime bundle storage (#28158)
+- add fail-closed storage inventory reporting (#28156)
+
+### Changed
+
+- Tests: clarify pulse merge metadata fixtures (#28146)
+- Documentation: define bounded storage lifecycle architecture (#28154)
+- Maintenance: sync ref:GH#28152 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#28151 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#28150 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#28149 to TODO.md [skip ci]
+- Maintenance: mark t18155 complete (pr:#28143 completed:2026-07-18) [skip ci]
+
+### Fixed
+
+- recover stale worker DB replay locks (#28182)
+- harden autoagent metric fallbacks (#28180)
+- tolerate unset autoagent test cleanup root (#28179)
+- normalize OpenCode temporary roots (#28159)
+- block merges on required human threads (#28157)
+- keep bundle detection cache outside repositories (#28148)
+- merge worker SQLite graphs by column name (#28147)
+- harden autoagent experiment reliability (#28143)
+
+## [3.32.148] - 2026-07-18
+
+### Changed
+
+- Maintenance: mark t18156 complete (pr:#28144 completed:2026-07-17) [skip ci]
+- Maintenance: sync ref:GH#28141 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#28140 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#28139 to TODO.md [skip ci]
+- Maintenance: mark t18154 complete (pr:#28137 completed:2026-07-17) [skip ci]
+- Tests: follow split helper ownership paths (#28137)
+- Maintenance: sync ref:GH#28133 to TODO.md [skip ci]
+
+### Fixed
+
+- restore OpenCode tab status lifecycle (#28144)
+- fail closed on ambiguous PR repair routing (#28142)
+- avoid large approval JSON in argv (#28138)
+- preserve host process temp directories (#28136)
+- reset review escalation after new commits (#28132)
+- escape routine systemd commands correctly (#28131)
+- classify Ruby changes in complexity gate (#28129)
+- record portable audit lock owner pid (#28126)
+- retain issue identity in worktree ownership (#28120)
+- exclude native preflight failures from transport counts (#28117)
+
+## [3.32.147] - 2026-07-17
+
+### Fixed
+
+- reject temporary OpenCode shim targets (#28115)
+
+## [3.32.146] - 2026-07-17
+
+### Changed
+
+- Maintenance: sync ref:GH#28112 to TODO.md [skip ci]
+- Documentation: clarify empty JSON parameter defaults (#28106)
+
+### Fixed
+
+- enforce active runtime bundle convergence (#28103)
+- bound Pulse idle available-work queries (#28083)
+- harden localdev proxy generation (#28078)
+
+## [3.32.145] - 2026-07-17
+
+### Changed
+
+- Maintenance: ratchet QLTY_SMELL_THRESHOLD 59→57 (-2) [skip ci]
+- Refactor: simplify shell environment projection (#28077)
+- Maintenance: ratchet QLTY_SMELL_THRESHOLD 61→59 (-2) [skip ci]
+
+### Fixed
+
+- harden worker launch evidence (#28067)
+
+## [3.32.144] - 2026-07-17
+
+### Changed
+
+- Refactor: simplify session status event dispatch (#28072)
+
+## [3.32.143] - 2026-07-17
+
+### Added
+
+- start active tab status on first message (#28069)
+
+## [3.32.142] - 2026-07-17
+
+### Changed
+
+- Tests: deduplicate authorization assertions (#28058)
+
+### Fixed
+
+- harden PR origin label readback (#28053)
+
+## [3.32.141] - 2026-07-17
+
+### Changed
+
+- Maintenance: mark t18152 complete (pr:#28045 completed:2026-07-17) [skip ci]
+
+### Fixed
+
+- preserve dispatch identity during REST outages (#28057)
+
 ## [3.32.140] - 2026-07-16
 
 ### Added

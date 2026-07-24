@@ -35,6 +35,8 @@ _init_lib_dir="${BASH_SOURCE[0]%/*}"
 [[ "$_init_lib_dir" == "${BASH_SOURCE[0]}" ]] && _init_lib_dir="."
 # shellcheck source=aidevops-project-config-lib.sh
 source "${_init_lib_dir}/aidevops-project-config-lib.sh"
+# shellcheck source=aidevops-project-context-lib.sh
+source "${_init_lib_dir}/aidevops-project-context-lib.sh"
 unset _init_lib_dir
 
 _AGENT_SOURCE_TEMPLATE_VERSION="1"
@@ -66,6 +68,8 @@ _init_write_project_config() {
 	local enable_beads="$2"
 	local enable_sops="$3"
 	local enable_security="$4"
+	local enable_deployment_context="$5"
+	local enable_wordpress_context="$6"
 	local desired_file merged_file
 	_init_load_repo_verify_lib || return 1
 	_repo_verify_lock_acquire "$config_file" || return 1
@@ -89,8 +93,9 @@ _init_write_project_config() {
 		--argjson git_workflow "$enable_git_workflow" --argjson code_quality "$enable_code_quality" \
 		--argjson time_tracking "$enable_time_tracking" --argjson database "$enable_database" \
 		--argjson beads "$enable_beads" --argjson sops "$enable_sops" --argjson security "$enable_security" \
+		--argjson deployment_context "$enable_deployment_context" --argjson wordpress_context "$enable_wordpress_context" \
 		'{version:$version,initialized:$initialized,init_scope:$init_scope,has_interface:$has_interface,agent_source:$agent_source,
-		features:{planning:$planning,git_workflow:$git_workflow,code_quality:$code_quality,time_tracking:$time_tracking,database:$database,beads:$beads,sops:$sops,security:$security},
+		features:{planning:$planning,git_workflow:$git_workflow,code_quality:$code_quality,time_tracking:$time_tracking,database:$database,beads:$beads,sops:$sops,security:$security,deployment_context:$deployment_context,wordpress_context:$wordpress_context},
 		time_tracking:{enabled:$time_tracking,prompt_on_commit:true,auto_record_branch_start:true},
 		database:{enabled:$database,schema_path:"schemas",migrations_path:"migrations",seeds_path:"seeds",auto_generate_migration:true},
 		beads:{enabled:$beads,sync_on_commit:false,auto_ready_check:true},
@@ -569,9 +574,9 @@ _update_agents_md_worktrees() {
 			continue
 		fi
 		if [[ "$in_section" == "true" ]]; then
-			if [[ "$line" == "## "* ]]; then
+			if [[ "$line" == "## "* || "$line" == "<!-- aidevops:"*":start -->" ]]; then
 				in_section=false
-				printf '%s\n' "$line" >>"$tmp_file"
+				printf '\n%s\n' "$line" >>"$tmp_file"
 			fi
 			continue
 		fi
@@ -612,9 +617,9 @@ _update_agents_md_security() {
 
 		if [[ "$in_security" == "true" ]]; then
 			# Check if we've hit the next ## heading (end of Security section)
-			if [[ "$line" == "## "* ]]; then
+			if [[ "$line" == "## "* || "$line" == "<!-- aidevops:"*":start -->" ]]; then
 				in_security=false
-				printf '%s\n' "$line" >>"$tmp_file"
+				printf '\n%s\n' "$line" >>"$tmp_file"
 			fi
 			# Skip lines within the old Security section
 			continue
@@ -641,6 +646,8 @@ _init_parse_features() {
 	planning) echo "planning" ;; git-workflow) echo "git_workflow" ;; code-quality) echo "code_quality" ;;
 	time-tracking) echo "time_tracking planning" ;; database) echo "database" ;;
 	beads) echo "beads planning" ;; sops) echo "sops" ;; security) echo "security" ;;
+	deployment-context | hosting-context) echo "deployment_context" ;;
+	wordpress-context) echo "wordpress_context deployment_context" ;;
 	*)
 		local result=""
 		IFS=',' read -ra FL <<<"$features"
@@ -650,6 +657,8 @@ _init_parse_features() {
 			code-quality) result="$result code_quality" ;; time-tracking) result="$result time_tracking planning" ;;
 			database) result="$result database" ;; beads) result="$result beads planning" ;;
 			sops) result="$result sops" ;; security) result="$result security" ;;
+			deployment-context | hosting-context) result="$result deployment_context" ;;
+			wordpress-context) result="$result wordpress_context deployment_context" ;;
 			esac
 		done
 		echo "$result"
@@ -786,7 +795,7 @@ _init_scaffold_scope_gated_files() {
 	# Collaborator pointer files — require standard scope
 	if _scope_includes "$init_scope" "standard"; then
 		local pointer_content="Read AGENTS.md for all project context and instructions."
-		local pointer_files=(".cursorrules" ".windsurfrules" ".clinerules" ".github/copilot-instructions.md")
+		local pointer_files=(".cursorrules" ".windsurfrules" ".clinerules")
 		local pointer_created=0
 		local pf
 		for pf in "${pointer_files[@]}"; do
@@ -797,6 +806,17 @@ _init_scaffold_scope_gated_files() {
 				((++pointer_created))
 			fi
 		done
+
+		local copilot_path="$project_root/.github/copilot-instructions.md"
+		if [[ ! -f "$copilot_path" ]]; then
+			mkdir -p "$(dirname "$copilot_path")"
+			cat >"$copilot_path" <<'EOF'
+# GitHub Copilot instructions
+
+Read [AGENTS.md](../AGENTS.md) for all project context and instructions.
+EOF
+			((++pointer_created))
+		fi
 		if [[ $pointer_created -gt 0 ]]; then
 			print_success "Created $pointer_created collaborator pointer file(s) (.cursorrules, etc.)"
 		else
@@ -934,7 +954,8 @@ _init_run_workflow() {
 	parsed=$(_init_parse_features "$features")
 	local enable_planning=false enable_git_workflow=false enable_code_quality=false
 	local enable_time_tracking=false enable_database=false enable_beads=false
-	local enable_sops=false enable_security=false
+	local enable_sops=false enable_security=false enable_deployment_context=false
+	local enable_wordpress_context=false
 	local _f
 	for _f in $parsed; do
 		case "$_f" in
@@ -942,6 +963,8 @@ _init_run_workflow() {
 		code_quality) enable_code_quality=true ;; time_tracking) enable_time_tracking=true ;;
 		database) enable_database=true ;; beads) enable_beads=true ;;
 		sops) enable_sops=true ;; security) enable_security=true ;;
+		deployment_context) enable_deployment_context=true ;;
+		wordpress_context) enable_wordpress_context=true ;;
 		esac
 	done
 
@@ -977,7 +1000,8 @@ _init_prepare_project_config() {
 	fi
 	_init_write_project_config "$config_file" "$aidevops_version" "$init_scope" "$has_interface" "$is_agent_source" \
 		"$enable_planning" "$enable_git_workflow" "$enable_code_quality" "$enable_time_tracking" \
-		"$enable_database" "$enable_beads" "$enable_sops" "$enable_security" || {
+		"$enable_database" "$enable_beads" "$enable_sops" "$enable_security" \
+		"$enable_deployment_context" "$enable_wordpress_context" || {
 		print_error "Failed to write .aidevops.json"
 		return 1
 	}
@@ -1075,6 +1099,7 @@ _init_config_and_agents() {
 			print_success "Created .agents/AGENTS.md"
 		fi
 	fi
+	_init_scaffold_project_context "$project_root" "$enable_deployment_context" "$enable_wordpress_context" || return 1
 
 	_init_root_agents_file || return 1
 	return 0
@@ -1377,6 +1402,75 @@ SOPSEOF
 	return 0
 }
 
+_init_update_gitignore() {
+	local project_root="$1"
+	local enable_beads="$2"
+	# Add aidevops runtime artifacts to .gitignore
+	# Note: .agents/ itself is NOT ignored — it contains committed project-specific agents.
+	# Only runtime artifacts (loop state, tmp, memory) are ignored.
+	local gitignore="$project_root/.gitignore"
+	if [[ ! -f "$gitignore" ]]; then
+		cat >"$gitignore" <<'GITIGNOREEOF' || return 1
+# aidevops runtime artifacts
+.agents/loop-state/
+.agents/tmp/
+.agents/memory/
+.aidevops.json
+GITIGNOREEOF
+		if [[ "$enable_beads" == "true" ]]; then
+			printf '.beads\n' >>"$gitignore" || return 1
+		fi
+		print_success "Created .gitignore with aidevops runtime artifact ignores"
+		return 0
+	fi
+
+	local gitignore_updated=false
+	if grep -qFx ".agents" "$gitignore" 2>/dev/null; then
+		sed -i '' '/^\.agents$/d' "$gitignore" 2>/dev/null ||
+			sed -i '/^\.agents$/d' "$gitignore" 2>/dev/null || true
+		sed -i '' '/^# aidevops$/{ N; /^# aidevops\n$/d; }' "$gitignore" 2>/dev/null || true
+		print_info "Removed legacy bare .agents from .gitignore (now tracked)"
+		gitignore_updated=true
+	fi
+	if grep -qFx ".agent" "$gitignore" 2>/dev/null; then
+		sed -i '' '/^\.agent$/d' "$gitignore" 2>/dev/null ||
+			sed -i '/^\.agent$/d' "$gitignore" 2>/dev/null || true
+		gitignore_updated=true
+	fi
+
+	local needs_runtime_entries=false
+	local runtime_entry
+	for runtime_entry in ".agents/loop-state/" ".agents/tmp/" ".agents/memory/"; do
+		grep -qFx "$runtime_entry" "$gitignore" 2>/dev/null || needs_runtime_entries=true
+	done
+	if [[ "$needs_runtime_entries" == "true" ]]; then
+		ensure_trailing_newline "$gitignore"
+		if ! grep -qFx "# aidevops runtime artifacts" "$gitignore" 2>/dev/null; then
+			[[ ! -s "$gitignore" ]] || printf '\n' >>"$gitignore"
+			printf '# aidevops runtime artifacts\n' >>"$gitignore" || return 1
+		fi
+		for runtime_entry in ".agents/loop-state/" ".agents/tmp/" ".agents/memory/"; do
+			grep -qFx "$runtime_entry" "$gitignore" 2>/dev/null || printf '%s\n' "$runtime_entry" >>"$gitignore" || return 1
+		done
+		print_success "Added .agents/ runtime artifact ignores to .gitignore"
+		gitignore_updated=true
+	fi
+
+	if ! grep -qFx ".aidevops.json" "$gitignore" 2>/dev/null; then
+		ensure_trailing_newline "$gitignore"
+		printf '.aidevops.json\n' >>"$gitignore" || return 1
+		gitignore_updated=true
+	fi
+	if [[ "$enable_beads" == "true" ]] && ! grep -qFx ".beads" "$gitignore" 2>/dev/null; then
+		ensure_trailing_newline "$gitignore"
+		printf '.beads\n' >>"$gitignore" || return 1
+		print_success "Added .beads to .gitignore"
+		gitignore_updated=true
+	fi
+	[[ "$gitignore_updated" != "true" ]] || print_info "Updated .gitignore"
+	return 0
+}
+
 _init_git_metadata() {
 
 	# Ensure .gitattributes has ai-training=false (opt out of AI model training)
@@ -1403,70 +1497,7 @@ GITATTRSEOF
 		print_success "Created .gitattributes with ai-training=false"
 	fi
 
-	# Add aidevops runtime artifacts to .gitignore
-	# Note: .agents/ itself is NOT ignored — it contains committed project-specific agents.
-	# Only runtime artifacts (loop state, tmp, memory) are ignored.
-	local gitignore="$project_root/.gitignore"
-	if [[ -f "$gitignore" ]]; then
-		local gitignore_updated=false
-
-		# Remove legacy bare ".agents" entry if present (was added by older versions)
-		if grep -q "^\.agents$" "$gitignore" 2>/dev/null; then
-			sed -i '' '/^\.agents$/d' "$gitignore" 2>/dev/null ||
-				sed -i '/^\.agents$/d' "$gitignore" 2>/dev/null || true
-			# Also remove the "# aidevops" comment if it's now orphaned
-			sed -i '' '/^# aidevops$/{ N; /^# aidevops\n$/d; }' "$gitignore" 2>/dev/null || true
-			print_info "Removed legacy bare .agents from .gitignore (now tracked)"
-			gitignore_updated=true
-		fi
-
-		# Remove legacy bare ".agent" entry if present
-		if grep -q "^\.agent$" "$gitignore" 2>/dev/null; then
-			sed -i '' '/^\.agent$/d' "$gitignore" 2>/dev/null ||
-				sed -i '/^\.agent$/d' "$gitignore" 2>/dev/null || true
-			gitignore_updated=true
-		fi
-
-		# Add runtime artifact ignores
-		if ! grep -q "^\.agents/loop-state/" "$gitignore" 2>/dev/null; then
-			# Ensure trailing newline before appending (prevents malformed entries like *.zip.agents/loop-state/)
-			ensure_trailing_newline "$gitignore"
-			{
-				echo ""
-				echo "# aidevops runtime artifacts"
-				echo ".agents/loop-state/"
-				echo ".agents/tmp/"
-				echo ".agents/memory/"
-			} >>"$gitignore"
-			print_success "Added .agents/ runtime artifact ignores to .gitignore"
-			gitignore_updated=true
-		fi
-
-		# Add .aidevops.json to gitignore (local config, not committed).
-		# Tracked legacy configs are migrated earlier only in linked worktrees.
-		# Canonical checkouts receive a worker-ready repair plan and remain untouched.
-		if ! grep -q "^\.aidevops\.json$" "$gitignore" 2>/dev/null; then
-			# Ensure trailing newline before appending
-			ensure_trailing_newline "$gitignore"
-			echo ".aidevops.json" >>"$gitignore"
-			gitignore_updated=true
-		fi
-
-		# Add .beads if beads is enabled
-		if [[ "$enable_beads" == "true" ]]; then
-			if ! grep -q "^\.beads$" "$gitignore" 2>/dev/null; then
-				# Ensure trailing newline before appending
-				ensure_trailing_newline "$gitignore"
-				echo ".beads" >>"$gitignore"
-				print_success "Added .beads to .gitignore"
-				gitignore_updated=true
-			fi
-		fi
-
-		if [[ "$gitignore_updated" == "true" ]]; then
-			print_info "Updated .gitignore"
-		fi
-	fi
+	_init_update_gitignore "$project_root" "$enable_beads" || return 1
 
 	_init_optional_scaffolding || return 1
 	return 0
@@ -1480,6 +1511,7 @@ _init_optional_scaffolding() {
 	_init_scaffold_scope_gated_files "$project_root" "$init_scope" "$repo_name" "$has_interface"
 
 	_init_configure_coderabbit_abort_on_close "$project_root" "$enable_code_quality"
+	_init_scaffold_cloudron_release_workflow "$project_root" || return 1
 
 	# ─── Badge + local repo metrics initialization (t2975) ───────────────────
 	# Seed the canonical README badge block, generate local metrics artifacts,
@@ -1487,6 +1519,7 @@ _init_optional_scaffolding() {
 	# references relative docs/metrics assets, so freshly initialised READMEs do
 	# not depend on remote badge services or a delayed GitHub Actions commit.
 	local _badges_helper="$AGENTS_DIR/scripts/readme-badges-helper.sh"
+	local _managed_readme_helper="$AGENTS_DIR/scripts/managed-readme-helper.sh"
 	local _metrics_helper="$AGENTS_DIR/scripts/repo-metrics-helper.sh"
 	local _label_sync_helper="$AGENTS_DIR/scripts/label-sync-helper.sh"
 	local _wf_template="$AGENTS_DIR/templates/workflows/loc-badge-caller.yml"
@@ -1521,6 +1554,19 @@ _init_optional_scaffolding() {
 			print_info "No README.md found — skipping badge block injection (create README.md first)"
 		fi
 
+		# Seed the managed Star History chart, weekly caller, and verified
+		# Built with aidevops section. Authentication or metadata failures are
+		# fail-soft so initialization never invents ownership or emits a broken embed.
+		if [[ "$_is_local_only" != "true" && -f "$_managed_readme_helper" && -f "$_readme_path" ]]; then
+			if bash "$_managed_readme_helper" sync --repo "$repo_slug" --root "$project_root"; then
+				print_success "Seeded managed Star History and aidevops README sections"
+			else
+				print_warning "Managed README sections skipped — verify GitHub ownership, then run: managed-readme-helper.sh sync --repo $repo_slug --root $project_root"
+			fi
+		elif [[ "$_is_local_only" == "true" ]]; then
+			print_info "Skipping managed Star History and aidevops attribution for local-only repo"
+		fi
+
 		# Generate committed local metrics after README injection so LOC/language
 		# numbers include the final README badge block.
 		if [[ -f "$_metrics_helper" ]]; then
@@ -1550,11 +1596,30 @@ _init_optional_scaffolding() {
 
 		# Remind about SYNC_PAT if the repo has a remote and isn't local_only
 		if [[ "$_is_local_only" != "true" ]]; then
-			print_info "Reminder: set SYNC_PAT secret so GitHub Actions can refresh repo metrics — see: aidevops --help sync-pat"
+			print_info "Reminder: set SYNC_PAT so GitHub Actions can refresh repo metrics and Star History — see: aidevops --help sync-pat"
 		fi
 	fi
 
 	_init_security_and_registration || return 1
+	return 0
+}
+
+_init_scaffold_cloudron_release_workflow() {
+	local target_root="$1"
+	[[ -f "${target_root}/CloudronManifest.json" ]] || return 0
+	local template_path="${AGENTS_DIR}/templates/workflows/cloudron-package-release-caller.yml"
+	local workflow_path="${target_root}/.github/workflows/cloudron-package-release.yml"
+	if [[ -f "$workflow_path" ]]; then
+		print_info ".github/workflows/cloudron-package-release.yml already present"
+		return 0
+	fi
+	if [[ ! -f "$template_path" ]]; then
+		print_warning "Cloudron package release caller template is unavailable"
+		return 1
+	fi
+	mkdir -p "${target_root}/.github/workflows"
+	cp "$template_path" "$workflow_path"
+	print_success "Installed .github/workflows/cloudron-package-release.yml"
 	return 0
 }
 
@@ -1587,6 +1652,8 @@ _init_security_and_registration() {
 	[[ "$enable_beads" == "true" ]] && features_list="${features_list}beads,"
 	[[ "$enable_sops" == "true" ]] && features_list="${features_list}sops,"
 	[[ "$enable_security" == "true" ]] && features_list="${features_list}security,"
+	[[ "$enable_deployment_context" == "true" ]] && features_list="${features_list}deployment-context,"
+	[[ "$enable_wordpress_context" == "true" ]] && features_list="${features_list}wordpress-context,"
 	features_list="${features_list%,}" # Remove trailing comma
 
 	# Register the *main* repo path (not the worktree path) in repos.json.
@@ -1617,6 +1684,9 @@ _init_commit_files() {
 	[[ -f "$project_root/.gitattributes" ]] && init_files+=(".gitattributes")
 	[[ -f "$project_root/.gitignore" ]] && init_files+=(".gitignore")
 	[[ -d "$project_root/.agents" ]] && init_files+=(".agents/")
+	[[ -f "$project_root/.aidevops/.gitignore" ]] && init_files+=(".aidevops/.gitignore")
+	[[ -f "$project_root/.aidevops/deployments.yaml" ]] && init_files+=(".aidevops/deployments.yaml")
+	[[ -f "$project_root/.aidevops/wordpress.yaml" ]] && init_files+=(".aidevops/wordpress.yaml")
 	[[ -f "$project_root/AGENTS.md" ]] && init_files+=("AGENTS.md")
 	[[ -f "$project_root/DESIGN.md" ]] && init_files+=("DESIGN.md")
 	[[ -f "$project_root/TODO.md" ]] && init_files+=("TODO.md")
@@ -1670,6 +1740,8 @@ _init_print_summary() {
 	[[ "$enable_beads" == "true" ]] && echo "  ✓ Beads (task graph visualization)"
 	[[ "$enable_sops" == "true" ]] && echo "  ✓ SOPS (encrypted config files with age backend)"
 	[[ "$enable_security" == "true" ]] && echo "  ✓ Security (per-repo posture assessment)"
+	[[ "$enable_deployment_context" == "true" ]] && echo "  ✓ Deployment context (.aidevops/deployments.yaml)"
+	[[ "$enable_wordpress_context" == "true" ]] && echo "  ✓ WordPress context (.aidevops/wordpress.yaml)"
 	[[ -f "$project_root/MODELS.md" ]] && echo "  ✓ MODELS.md (per-repo model performance leaderboard)"
 	echo ""
 	# When init ran inside a worktree (check_protected_branch created one),
@@ -1719,9 +1791,37 @@ _init_print_summary() {
 	return 0
 }
 
+# Print init-specific usage before repository validation or project writes.
+_init_print_help() {
+	cat <<'INITHELPEOF'
+Usage: aidevops init [FEATURES]
+
+Initialize aidevops in the current Git repository.
+
+FEATURES may be `all` (the default standard set), one feature, or a
+comma-separated list of features:
+  planning, git-workflow, code-quality, time-tracking, database, beads,
+  sops, security, deployment-context, hosting-context, wordpress-context
+
+Examples:
+  aidevops init
+  aidevops init planning
+  aidevops init planning,git-workflow,code-quality
+
+Run `aidevops features` for feature descriptions.
+INITHELPEOF
+	return 0
+}
+
 # Init command - initialize aidevops in a project
 cmd_init() {
 	local features="${1:-all}"
+	case "$features" in
+	-h | --help | help)
+		_init_print_help
+		return 0
+		;;
+	esac
 
 	print_header "Initialize AI DevOps in Project"
 	echo ""

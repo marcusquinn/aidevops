@@ -33,6 +33,18 @@ if [[ "${1:-}" == "api" && "${2:-}" == "repos/owner/repo/issues/204/comments" ]]
 	printf '{"message":"server error"}\n'
 	exit 0
 fi
+if [[ "${1:-}" == "api" && "${2:-}" == "graphql" ]]; then
+	case "$*" in
+	*"number=205"*)
+		printf '%s\n' '{"data":{"repository":{"nameWithOwner":"owner/repo","issue":{"closedByPullRequestsReferences":{"nodes":[{"number":27347,"url":"https://github.com/owner/repo/pull/27347","state":"MERGED","mergedAt":"2026-07-12T14:55:46Z","repository":{"nameWithOwner":"owner/repo"}}],"pageInfo":{"hasNextPage":false}}}}}}'
+		exit 0
+		;;
+	*"number=206"*)
+		printf '%s\n' '{"data":{"repository":{"nameWithOwner":"owner/repo","issue":{"closedByPullRequestsReferences":{"nodes":[],"pageInfo":{"hasNextPage":true}}}}}}'
+		exit 0
+		;;
+	esac
+fi
 printf 'unexpected gh call: %s\n' "$*" >&2
 exit 1
 STUB
@@ -78,6 +90,22 @@ check_failure() {
 	return 0
 }
 
+check_output() {
+	local label="$1"
+	local expected="$2"
+	shift 2
+	local actual=""
+	actual=$("$@" 2>/dev/null || true)
+	if [[ "$actual" == "$expected" ]]; then
+		PASS=$((PASS + 1))
+		printf 'PASS: %s\n' "$label"
+	else
+		FAIL=$((FAIL + 1))
+		printf 'FAIL: %s (expected %s, got %s)\n' "$label" "$expected" "$actual"
+	fi
+	return 0
+}
+
 check_success "PR refs are identified before reopen" _reopen_ref_is_pull_request "owner/repo" "200"
 check_failure "plain issue refs are not treated as PRs" _reopen_ref_is_pull_request "owner/repo" "201"
 check_success "prefetched PR refs skip redundant API calls" _reopen_ref_is_pull_request "owner/repo" "999" '{"number":999,"pull_request":{}}'
@@ -90,6 +118,23 @@ check_success "REST not_planned reason is skipped" _is_not_planned_state_reason 
 check_success "hyphenated not-planned reason is skipped" _is_not_planned_state_reason "not-planned"
 check_failure "completed reason is not treated as not planned" _is_not_planned_state_reason "COMPLETED"
 check_failure "missing close reason is not treated as not planned" _is_not_planned_state_reason
+
+gh_find_merged_pr() {
+	local repo="$1"
+	local task_id="$2"
+	[[ "$repo" == "owner/repo" && "$task_id" == "t-title-match" ]] || return 1
+	printf '%s\n' '42|https://github.com/owner/repo/pull/42'
+	return 0
+}
+
+check_output "task-title merged PR remains the first reopen proof" \
+	"42|https://github.com/owner/repo/pull/42" \
+	_reopen_find_merged_pr "owner/repo" "t-title-match" "999"
+check_output "structural closing PR prevents false reopen when title omits task ID" \
+	"27347|https://github.com/owner/repo/pull/27347" \
+	_reopen_find_merged_pr "owner/repo" "t18109" "205"
+check_failure "truncated structural closing relationships fail closed" _reopen_find_merged_pr "owner/repo" "t18109" "206"
+check_failure "invalid issue coordinates fail closed" _reopen_find_merged_pr "owner/repo" "t18109" "not-a-number"
 
 printf '\nResults: %s passed, %s failed\n' "$PASS" "$FAIL"
 if [[ "$FAIL" -gt 0 ]]; then

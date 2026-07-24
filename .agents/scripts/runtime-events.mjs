@@ -35,6 +35,12 @@ import {
   sqliteExecSync,
   sqlEscape,
 } from "./sqlite-process.mjs";
+import {
+  archiveRuntimeEvents,
+  isProtectedRuntimeEvent,
+  runtimeEventRetentionInventory,
+  verifyRuntimeEventArchive,
+} from "./runtime-events-retention.mjs";
 
 export const RUNTIME_EVENT_ENVELOPE_VERSION = 1;
 export {
@@ -49,6 +55,10 @@ export {
   reconstructRuntimeState,
   resolveRuntimeEventsDbPath,
   verifyRuntimeEventStore,
+  archiveRuntimeEvents,
+  isProtectedRuntimeEvent,
+  runtimeEventRetentionInventory,
+  verifyRuntimeEventArchive,
 };
 
 function normaliseOccurredAt(value) {

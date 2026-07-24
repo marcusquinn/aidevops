@@ -16,6 +16,7 @@
 #   - shared-claim-lifecycle.sh (release_interactive_claim_on_merge)
 #   - shared-phase-filing.sh (auto_file_next_phase)
 #   - full-loop-helper-commit.sh (cmd_pre_merge_gate)
+#   - full-loop-helper-evidence.sh (fresh merged-PR evidence)
 #   - Globals: SCRIPT_DIR
 #
 # Part of aidevops framework: https://aidevops.sh
@@ -45,6 +46,15 @@ source "${SCRIPT_DIR}/shared-phase-filing.sh"
 # shellcheck source=./gh-merge-cache-remediation-lib.sh
 # shellcheck disable=SC1091  # sub-library resolved at runtime via SCRIPT_DIR
 source "${SCRIPT_DIR}/gh-merge-cache-remediation-lib.sh"
+
+if [[ -f "${SCRIPT_DIR}/full-loop-cleanup-receipt.sh" ]]; then
+	# shellcheck source=./full-loop-cleanup-receipt.sh
+	source "${SCRIPT_DIR}/full-loop-cleanup-receipt.sh"
+fi
+
+# shellcheck source=./full-loop-helper-evidence.sh
+# shellcheck disable=SC1091  # sub-library resolved at runtime via SCRIPT_DIR
+source "${SCRIPT_DIR}/full-loop-helper-evidence.sh"
 
 # --- Repo Resolution ---
 
@@ -413,9 +423,15 @@ _merge_resolve_match_head() {
 	local repo="$2"
 	local pre_merge_head_sha=""
 	pre_merge_head_sha=$(_merge_fetch_head_sha_rest "$pr_number" "$repo" || true)
-	if [[ -n "${FULL_LOOP_VERIFIED_PR_HEAD_SHA:-}" && "$pre_merge_head_sha" != "$FULL_LOOP_VERIFIED_PR_HEAD_SHA" ]]; then
-		print_error "PR #${pr_number} head changed after remote verification; refusing merge"
-		return 1
+	if [[ -n "${FULL_LOOP_VERIFIED_PR_HEAD_SHA:-}" ]]; then
+		if [[ -z "$pre_merge_head_sha" ]]; then
+			print_error "Could not retrieve PR #${pr_number} head SHA for verification; refusing merge"
+			return 1
+		fi
+		if [[ "$pre_merge_head_sha" != "$FULL_LOOP_VERIFIED_PR_HEAD_SHA" ]]; then
+			print_error "PR #${pr_number} head changed after remote verification; refusing merge"
+			return 1
+		fi
 	fi
 	local match_head_sha="${FULL_LOOP_VERIFIED_PR_HEAD_SHA:-$pre_merge_head_sha}"
 	[[ -n "$match_head_sha" ]] || return 1
@@ -524,17 +540,7 @@ _merge_verify_completed_state() {
 	local pr_number="$1"
 	local repo="$2"
 	local pr_json=""
-	pr_json=$(gh pr view "$pr_number" --repo "$repo" \
-		--json state,mergedAt,mergeCommit 2>/dev/null) || return 1
-
-	if ! printf '%s' "$pr_json" | jq -e '
-		def present: ((. // "") | length > 0);
-		(.state == "MERGED")
-		and (.mergedAt | present)
-		and (.mergeCommit.oid | present)
-	' >/dev/null; then
-		return 1
-	fi
+	pr_json=$(_full_loop_read_fresh_merged_pr_json "$pr_number" "$repo") || return 1
 
 	FULL_LOOP_MERGE_SHA=$(printf '%s' "$pr_json" | jq -r '.mergeCommit.oid')
 	export FULL_LOOP_MERGE_SHA
@@ -744,7 +750,9 @@ _merge_cleanup_linked_worktree() {
 }
 
 _merge_record_deferred_cleanup_owner() {
-	local cleanup_plan="$1"
+	local pr_number="$1"
+	local repo="$2"
+	local cleanup_plan="$3"
 	local worktree_path="" branch_name="" canonical_dir=""
 	IFS=$'\t' read -r worktree_path branch_name canonical_dir <<<"$cleanup_plan"
 	[[ -n "$worktree_path" && -n "$branch_name" ]] || return 1
@@ -760,8 +768,17 @@ _merge_record_deferred_cleanup_owner() {
 	local marker_dir="${worktree_path}/.agents"
 	local marker_path="${marker_dir}/.full-loop-cleanup-deferred"
 	mkdir -p "$marker_dir" || return 1
+	# Keep the legacy marker during rollout so an older deployed cleanup
+	# supervisor still preserves the live owner. The external receipt below is
+	# the durable source of lifecycle truth and survives worktree removal.
 	printf '%s\n' "$owner_pid" >"${marker_path}.tmp.$$" || return 1
 	mv "${marker_path}.tmp.$$" "$marker_path" || return 1
+	local owner_session="${AIDEVOPS_SESSION_ID:-${OPENCODE_SESSION_ID:-${CLAUDE_SESSION_ID:-full-loop-merge}}}"
+	if ! declare -F full_loop_write_cleanup_deferred >/dev/null 2>&1; then
+		return 1
+	fi
+	full_loop_write_cleanup_deferred "$repo" "$pr_number" "$worktree_path" "$branch_name" \
+		"$owner_pid" "$owner_session" "pending" "FINALIZATION_PENDING" >/dev/null || return 1
 
 	if declare -F claim_worktree_ownership >/dev/null 2>&1; then
 		claim_worktree_ownership "$worktree_path" "$branch_name" \
@@ -813,10 +830,10 @@ _merge_finalize_post_merge() {
 
 	_merge_unlock_resources "$pr_number" "$repo"
 	if [[ "$has_auto" -eq 0 && -n "$cleanup_plan" ]]; then
-		if _merge_record_deferred_cleanup_owner "$cleanup_plan"; then
-			print_info "Post-merge worktree cleanup deferred until the parent runtime exits"
+		if _merge_record_deferred_cleanup_owner "$pr_number" "$repo" "$cleanup_plan"; then
+			print_info "LIFECYCLE_STATE=CLEANUP_DEFERRED; guarded cleanup ownership persisted outside the worktree"
 		else
-			print_warning "Post-merge worktree cleanup deferred, but parent-runtime marker could not be recorded"
+			print_warning "Post-merge worktree cleanup deferred, but durable handoff evidence could not be recorded"
 		fi
 	fi
 	return 0

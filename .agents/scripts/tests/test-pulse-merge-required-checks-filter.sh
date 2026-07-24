@@ -79,6 +79,12 @@ print_result() {
 #      status, and the current head's maintainer-gate CheckRun is successful
 #   pr_checks_empty_failure — PR-level required checks exits non-zero with no JSON
 #   ruleset_review_malformed_optional — ruleset detail has unexpected shapes
+#   ruleset_review_latest_changes_requested — latest review revokes approval
+#   ruleset_review_paginated_approved — later REST page restores approval
+#   ruleset_review_author_only — only the PR author approved
+#   ruleset_review_malformed_response — REST reviews payload is not page arrays
+#   ruleset_review_malformed_element — a REST reviews page contains a non-object
+#   ruleset_review_fetch_error — REST reviews endpoint fails
 #   error           — branch-protection API exits non-zero
 setup_test_env() {
 	TEST_ROOT=$(mktemp -d)
@@ -119,7 +125,7 @@ apply_jq() {
 
 if [[ "$1" == "api" && "$2" == repos/* && "$*" == *"/rulesets/"* ]]; then
 	case "${MOCK_GH_MODE:-all_pass}" in
-	ruleset_review_only_missing | ruleset_review_only_approved)
+	ruleset_review_only_missing | ruleset_review_only_approved | ruleset_review_latest_changes_requested | ruleset_review_paginated_approved | ruleset_review_author_only | ruleset_review_malformed_response | ruleset_review_malformed_element | ruleset_review_fetch_error)
 		apply_jq '{"conditions":{"ref_name":{"include":["refs/heads/main"]}},"rules":[{"type":"pull_request","parameters":{"required_approving_review_count":1}}]}' "$@"
 		;;
 	ruleset_mixed_review_status)
@@ -140,11 +146,42 @@ fi
 
 if [[ "$1" == "api" && "$2" == repos/* && "$*" == *"/rulesets"* ]]; then
 	case "${MOCK_GH_MODE:-all_pass}" in
-	ruleset_review_only_missing | ruleset_review_only_approved | ruleset_mixed_review_status | ruleset_review_zero | ruleset_review_malformed_optional)
+	ruleset_review_only_missing | ruleset_review_only_approved | ruleset_mixed_review_status | ruleset_review_zero | ruleset_review_malformed_optional | ruleset_review_latest_changes_requested | ruleset_review_paginated_approved | ruleset_review_author_only | ruleset_review_malformed_response | ruleset_review_malformed_element | ruleset_review_fetch_error)
 		apply_jq '[{"id":101,"enforcement":"active"}]' "$@"
 		;;
 	*)
 		apply_jq '[]' "$@"
+		;;
+	esac
+	exit 0
+fi
+
+if [[ "$1" == "api" && "$2" == repos/*/pulls/*/reviews* ]]; then
+	case "${MOCK_GH_MODE:-all_pass}" in
+	ruleset_review_only_approved | ruleset_mixed_review_status)
+		printf '%s\n' '[[{"id":1,"state":"APPROVED","submitted_at":"2026-06-01T00:00:00Z","user":{"login":"reviewer"}}]]'
+		;;
+	ruleset_review_latest_changes_requested)
+		printf '%s\n' '[[{"id":1,"state":"APPROVED","submitted_at":"2026-06-01T00:00:00Z","user":{"login":"reviewer"}}],[{"id":2,"state":"CHANGES_REQUESTED","submitted_at":"2026-06-02T00:00:00Z","user":{"login":"reviewer"}}]]'
+		;;
+	ruleset_review_paginated_approved)
+		printf '%s\n' '[[{"id":1,"state":"CHANGES_REQUESTED","submitted_at":"2026-06-01T00:00:00Z","user":{"login":"reviewer"}}],[{"id":2,"state":"APPROVED","submitted_at":"2026-06-02T00:00:00Z","user":{"login":"reviewer"}}]]'
+		;;
+	ruleset_review_author_only)
+		printf '%s\n' '[[{"id":1,"state":"APPROVED","submitted_at":"2026-06-01T00:00:00Z","user":{"login":"author"}}]]'
+		;;
+	ruleset_review_malformed_response)
+		printf '%s\n' '{"reviews":[]}'
+		;;
+	ruleset_review_malformed_element)
+		printf '%s\n' '[[{"id":1,"state":"APPROVED","submitted_at":"2026-06-01T00:00:00Z","user":{"login":"reviewer"}},null]]'
+		;;
+	ruleset_review_fetch_error)
+		printf 'gh: mock reviews endpoint error\n' >&2
+		exit 1
+		;;
+	*)
+		printf '%s\n' '[[]]'
 		;;
 	esac
 	exit 0
@@ -175,18 +212,6 @@ fi
 
 if [[ "$1" == "pr" && "$2" == "view" && "$*" == *"headRefOid"* ]]; then
 	apply_jq '{"headRefOid":"abc123def456789000000000000000000000abcd"}' "$@"
-	exit 0
-fi
-
-if [[ "$1" == "pr" && "$2" == "view" && "$*" == *"reviews"* ]]; then
-	case "${MOCK_GH_MODE:-all_pass}" in
-	ruleset_review_only_approved | ruleset_mixed_review_status)
-		apply_jq '{"reviews":[{"state":"APPROVED","submittedAt":"2026-06-01T00:00:00Z","author":{"login":"reviewer"}}]}' "$@"
-		;;
-	*)
-		apply_jq '{"reviews":[]}' "$@"
-		;;
-	esac
 	exit 0
 fi
 
@@ -312,9 +337,9 @@ test_required_checks_gh_reads_are_timeout_wrapped() {
 		return 0
 	fi
 
-	if { awk '{ if (sub(/\\$/, "")) { printf "%s", $0 } else { print } }' "$required_checks_script" \
-		| sed -E 's/_pmrc_gh_read[[:space:]]+gh[[:space:]]+(api|pr[[:space:]]+checks)//g' \
-		| grep -nE '^[[:space:]]*[^#]*(^|[[:space:]])gh[[:space:]]+(api|pr[[:space:]]+checks)([[:space:]]|$)'; } >/dev/null 2>&1; then
+	if { awk '{ if (sub(/\\$/, "")) { printf "%s", $0 } else { print } }' "$required_checks_script" |
+		sed -E 's/_pmrc_gh_read[[:space:]]+gh[[:space:]]+(api|pr[[:space:]]+checks)//g' |
+		grep -nE '^[[:space:]]*[^#]*(^|[[:space:]])gh[[:space:]]+(api|pr[[:space:]]+checks)([[:space:]]|$)'; } >/dev/null 2>&1; then
 		print_result "required-check gh reads use timeout wrapper" 1
 	else
 		print_result "required-check gh reads use timeout wrapper" 0
@@ -356,6 +381,10 @@ define_function_under_test() {
 	fi
 	# shellcheck disable=SC1090  # dynamic source from sibling lib
 	source "$checks_lib"
+	# Load the required-check module constants before evaluating selected
+	# functions in isolation; extracted functions reference the PMRC_* contract.
+	# shellcheck disable=SC1090  # dynamic source from sibling lib
+	source "$REQUIRED_CHECKS_SCRIPT"
 	gh_pr_view() {
 		if gh pr view "$@"; then
 			return 0
@@ -452,6 +481,17 @@ assert_gh_call_absent() {
 		print_result "$label" 1 "Unexpected gh invocation: $pattern"
 	else
 		print_result "$label" 0
+	fi
+	return 0
+}
+
+assert_gh_call_contains() {
+	local pattern="$1"
+	local label="$2"
+	if grep -Fq -- "$pattern" "$GH_CALL_LOG" 2>/dev/null; then
+		print_result "$label" 0
+	else
+		print_result "$label" 1 "Expected gh invocation containing: $pattern"
 	fi
 	return 0
 }
@@ -696,6 +736,66 @@ test_ruleset_review_only_approved_allows_merge() {
 	assert_ruleset_review_gate_returns 0 "ruleset-only satisfied approval → merge allowed (GH#24577)"
 	assert_log_contains "satisfies 1/1 ruleset-required approval" \
 		"ruleset-only satisfied approval: pass logged"
+	assert_gh_call_contains "pulls/19023/reviews?per_page=100 --paginate --slurp" \
+		"ruleset approval gate uses paginated REST reviews endpoint"
+	assert_gh_call_absent "pr view 19023 --repo marcusquinn/aidevops --json reviews" \
+		"ruleset approval gate avoids GraphQL review fetch"
+	return 0
+}
+
+test_ruleset_latest_review_state_controls_approval() {
+	: >"$GH_CALL_LOG"
+	: >"$LOGFILE"
+	export MOCK_GH_MODE="ruleset_review_latest_changes_requested"
+	assert_ruleset_review_gate_returns 1 "latest CHANGES_REQUESTED revokes prior approval"
+	assert_log_contains "0/1 ruleset-required approval" \
+		"latest review state: revoked approval logged"
+	return 0
+}
+
+test_ruleset_paginated_latest_approval_allows_merge() {
+	: >"$GH_CALL_LOG"
+	: >"$LOGFILE"
+	export MOCK_GH_MODE="ruleset_review_paginated_approved"
+	assert_ruleset_review_gate_returns 0 "later REST page approval supersedes prior change request"
+	return 0
+}
+
+test_ruleset_author_approval_does_not_count() {
+	: >"$GH_CALL_LOG"
+	: >"$LOGFILE"
+	export MOCK_GH_MODE="ruleset_review_author_only"
+	assert_ruleset_review_gate_returns 1 "PR author approval does not satisfy ruleset"
+	return 0
+}
+
+test_ruleset_malformed_reviews_fail_closed() {
+	: >"$GH_CALL_LOG"
+	: >"$LOGFILE"
+	export MOCK_GH_MODE="ruleset_review_malformed_response"
+	assert_ruleset_review_gate_returns 1 "malformed REST review pages fail closed"
+	assert_log_contains "review parse failed" \
+		"malformed REST review pages: parse failure logged"
+	return 0
+}
+
+test_ruleset_malformed_review_element_fails_closed() {
+	: >"$GH_CALL_LOG"
+	: >"$LOGFILE"
+	export MOCK_GH_MODE="ruleset_review_malformed_element"
+	assert_ruleset_review_gate_returns 1 "non-object REST review element fails closed"
+	assert_log_contains "review parse failed" \
+		"non-object REST review element: parse failure logged"
+	return 0
+}
+
+test_ruleset_review_fetch_error_fails_closed() {
+	: >"$GH_CALL_LOG"
+	: >"$LOGFILE"
+	export MOCK_GH_MODE="ruleset_review_fetch_error"
+	assert_ruleset_review_gate_returns 1 "REST review fetch error fails closed"
+	assert_log_contains "review fetch failed" \
+		"REST review fetch error: failure logged"
 	return 0
 }
 
@@ -767,6 +867,12 @@ main() {
 	test_ruleset_review_only_missing_blocks_merge
 	test_ruleset_review_count_accepts_prefetched_rulesets_json
 	test_ruleset_review_only_approved_allows_merge
+	test_ruleset_latest_review_state_controls_approval
+	test_ruleset_paginated_latest_approval_allows_merge
+	test_ruleset_author_approval_does_not_count
+	test_ruleset_malformed_reviews_fail_closed
+	test_ruleset_malformed_review_element_fails_closed
+	test_ruleset_review_fetch_error_fails_closed
 	test_ruleset_mixed_review_status_preserves_both_gates
 	test_ruleset_review_zero_does_not_require_approval
 	test_ruleset_review_malformed_optional_does_not_fail_parse

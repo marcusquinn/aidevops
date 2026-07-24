@@ -7,6 +7,29 @@
 _APPROVAL_SNAPSHOT_V2_LOADED=1
 APPROVAL_TARGET_ISSUE="issue"
 
+_approval_snapshot_v2_create_temp_dir() {
+	local root="${AIDEVOPS_TEMP_DIR:-${HOME:?}/.aidevops/.agent-workspace/tmp}"
+	local temp_dir=""
+	(umask 077 && mkdir -p "$root") || return 1
+	chmod 700 "$root" 2>/dev/null || return 1
+	temp_dir=$(mktemp -d "$root/approval-snapshot-v2.XXXXXX") || return 1
+	chmod 700 "$temp_dir" 2>/dev/null || {
+		rm -rf "$temp_dir"
+		return 1
+	}
+	printf '%s\n' "$temp_dir"
+	return 0
+}
+
+_approval_snapshot_v2_write_json_file() {
+	local path="$1"
+	local json="$2"
+	(umask 077 && printf '%s' "$json" >"$path") || return 1
+	chmod 600 "$path" 2>/dev/null || return 1
+	jq -e . "$path" >/dev/null 2>&1 || return 1
+	return 0
+}
+
 _approval_snapshot_v2_fetch_pages() {
 	local endpoint="$1"
 	local pages=""
@@ -37,6 +60,10 @@ _approval_snapshot_v2_comments_json() {
 			and ((.body // $empty) | startswith("<!-- aidevops-signed-approval -->\n<!-- stale-recovery-tick:0 (reset: auto-approved by maintainer — "))
 			and ((.body // $empty) | contains(") -->\nAuto-approved: "))
 			and ((.body // $empty) | contains(". Stale recovery tick reset."))
+		) | not)
+		| select((
+			((.author_association // $empty) == "OWNER" or (.author_association // $empty) == "MEMBER" or (.author_association // $empty) == "COLLABORATOR")
+			and ((.body // $empty) | test("^<!-- ops:start -->\\n> Interactive session claimed by @[^\\n]+ on [^\\n]+\\.\\n> Pulse dispatch blocked via `status:in-review` \\+ self-assignment\\.\\n<!-- ops:end -->\\n<!-- aidevops:sig -->\\n---\\n[^\\n]+\\n?$"))
 		) | not)
 		| {
 			source: $source,
@@ -137,13 +164,14 @@ _approval_snapshot_v2_reviews_json() {
 	return $?
 }
 
-approval_snapshot_v2_build() {
+approval_snapshot_v2_build() (
 	local target_type="$1"
 	local target_number="$2"
 	local slug="$3"
 	local excluded_comment_id="${4:-}"
 	local issue_json="" comments_pages="" comments_json="" timeline_pages="" linked_references_json="" normalized_slug=""
 	local empty_string=""
+	local temp_dir=""
 
 	[[ "$target_type" == "$APPROVAL_TARGET_ISSUE" || "$target_type" == "pr" ]] || return 1
 	[[ "$target_number" =~ ^[0-9]+$ && "$slug" == */* ]] || return 1
@@ -161,11 +189,17 @@ approval_snapshot_v2_build() {
 	comments_json=$(_approval_snapshot_v2_comments_json "$comments_pages" "$excluded_comment_id" "conversation") || return 1
 	timeline_pages=$(_approval_snapshot_v2_fetch_pages "repos/${slug}/issues/${target_number}/timeline?per_page=100") || return 1
 	linked_references_json=$(_approval_snapshot_v2_linked_references_json "$timeline_pages") || return 1
+	temp_dir=$(_approval_snapshot_v2_create_temp_dir) || return 1
+	trap 'rm -rf "$temp_dir"' EXIT
+	_approval_snapshot_v2_write_json_file "$temp_dir/issue.json" "$issue_json" || return 1
+	_approval_snapshot_v2_write_json_file "$temp_dir/comments.json" "$comments_json" || return 1
+	_approval_snapshot_v2_write_json_file "$temp_dir/linked-references.json" "$linked_references_json" || return 1
 
 	if [[ "$target_type" == "$APPROVAL_TARGET_ISSUE" ]]; then
 		jq -cS -n --arg repo "$normalized_slug" --arg empty "$empty_string" --arg issue_kind "$APPROVAL_TARGET_ISSUE" --argjson number "$target_number" \
-			--argjson issue "$issue_json" --argjson comments "$comments_json" \
-			--argjson linked_references "$linked_references_json" '
+			--slurpfile issue_input "$temp_dir/issue.json" --slurpfile comments_input "$temp_dir/comments.json" \
+			--slurpfile linked_references_input "$temp_dir/linked-references.json" '
+			($issue_input[0]) as $issue |
 			{
 				schema: "aidevops-approval-snapshot/v2",
 				target: {kind: $issue_kind, repository: $repo, number: $number, id: $issue.id, node_id: $issue.node_id},
@@ -177,8 +211,8 @@ approval_snapshot_v2_build() {
 				created_at: ($issue.created_at // $empty),
 				title: ($issue.title // $empty),
 				body: ($issue.body // $empty),
-				comments: $comments,
-				linked_references: $linked_references
+				comments: $comments_input[0],
+				linked_references: $linked_references_input[0]
 			}
 		'
 		return $?
@@ -191,11 +225,15 @@ approval_snapshot_v2_build() {
 	review_comments_json=$(_approval_snapshot_v2_comments_json "$review_comment_pages" "" "review") || return 1
 	review_pages=$(_approval_snapshot_v2_fetch_pages "repos/${slug}/pulls/${target_number}/reviews?per_page=100") || return 1
 	reviews_json=$(_approval_snapshot_v2_reviews_json "$review_pages") || return 1
+	_approval_snapshot_v2_write_json_file "$temp_dir/pr.json" "$pr_json" || return 1
+	_approval_snapshot_v2_write_json_file "$temp_dir/review-comments.json" "$review_comments_json" || return 1
+	_approval_snapshot_v2_write_json_file "$temp_dir/reviews.json" "$reviews_json" || return 1
 
 	jq -cS -n --arg repo "$normalized_slug" --arg empty "$empty_string" --argjson number "$target_number" \
-		--argjson issue "$issue_json" --argjson pr "$pr_json" \
-		--argjson comments "$comments_json" --argjson review_comments "$review_comments_json" \
-		--argjson reviews "$reviews_json" --argjson linked_references "$linked_references_json" '
+		--slurpfile issue_input "$temp_dir/issue.json" --slurpfile pr_input "$temp_dir/pr.json" \
+		--slurpfile comments_input "$temp_dir/comments.json" --slurpfile review_comments_input "$temp_dir/review-comments.json" \
+		--slurpfile reviews_input "$temp_dir/reviews.json" --slurpfile linked_references_input "$temp_dir/linked-references.json" '
+		($issue_input[0]) as $issue | ($pr_input[0]) as $pr |
 		{
 			schema: "aidevops-approval-snapshot/v2",
 			target: {kind: "pr", repository: $repo, number: $number, id: $pr.id, node_id: $pr.node_id, issue_id: $issue.id},
@@ -215,14 +253,14 @@ approval_snapshot_v2_build() {
 				ref: $pr.base.ref,
 				repository_id: ($pr.base.repo.id // null), repository: (($pr.base.repo.full_name // $repo) | ascii_downcase)
 			},
-			comments: $comments,
-			review_comments: $review_comments,
-			reviews: $reviews,
-			linked_references: $linked_references
+			comments: $comments_input[0],
+			review_comments: $review_comments_input[0],
+			reviews: $reviews_input[0],
+			linked_references: $linked_references_input[0]
 		}
 	'
 	return $?
-}
+)
 
 approval_snapshot_v2_digest() {
 	local snapshot_json="$1"
@@ -240,19 +278,24 @@ approval_snapshot_v2_digest() {
 	return 0
 }
 
-approval_snapshot_v2_payload() {
+approval_snapshot_v2_payload() (
 	local target_type="$1"
 	local target_number="$2"
 	local slug="$3"
 	local issued_at="$4"
 	local excluded_comment_id="${5:-}"
 	local snapshot_json="" digest="" normalized_slug=""
+	local temp_dir=""
 
 	snapshot_json=$(approval_snapshot_v2_build "$target_type" "$target_number" "$slug" "$excluded_comment_id") || return 1
 	digest=$(approval_snapshot_v2_digest "$snapshot_json") || return 1
 	normalized_slug=$(printf '%s' "$slug" | tr '[:upper:]' '[:lower:]')
+	temp_dir=$(_approval_snapshot_v2_create_temp_dir) || return 1
+	trap 'rm -rf "$temp_dir"' EXIT
+	_approval_snapshot_v2_write_json_file "$temp_dir/snapshot.json" "$snapshot_json" || return 1
 	jq -cS -n --arg type "$target_type" --arg repo "$normalized_slug" --argjson number "$target_number" \
-		--arg issued "$issued_at" --arg digest "$digest" --argjson snapshot "$snapshot_json" '
+		--arg issued "$issued_at" --arg digest "$digest" --slurpfile snapshot_input "$temp_dir/snapshot.json" '
+		($snapshot_input[0]) as $snapshot |
 		{
 			schema: "aidevops-approval/v2",
 			authority: (if $type == "pr" then "merge" else "development" end),
@@ -269,4 +312,4 @@ approval_snapshot_v2_payload() {
 		}
 	'
 	return $?
-}
+)

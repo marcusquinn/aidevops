@@ -5,7 +5,7 @@
 # AI DevOps Framework CLI
 # Usage: aidevops <command> [options]
 #
-# Version: 3.32.140
+# Version: 3.32.180
 
 set -euo pipefail
 
@@ -66,6 +66,14 @@ elif [[ -n "$_AIDEVOPS_SOURCE_DIR" && -f "$_AIDEVOPS_SOURCE_DIR/scripts/aidevops
 	# canonical checkout.
 	_AIDEVOPS_CLI_ROOT="$_AIDEVOPS_SOURCE_DIR"
 	_AIDEVOPS_CLI_MODULES_SUBDIR="scripts/aidevops-cli"
+elif [[ -n "${AIDEVOPS_SHARE:-}" &&
+	-f "$AIDEVOPS_SHARE/.agents/scripts/aidevops-cli/aidevops-repos-lib.sh" &&
+	-f "$AIDEVOPS_SHARE/.agents/scripts/runtime-bundle-verifier.sh" &&
+	-f "$AIDEVOPS_SHARE/VERSION" ]]; then
+	# Homebrew installs the coherent package snapshot under share/aidevops and
+	# exports AIDEVOPS_SHARE from its wrapper. Keep repository operations pointed
+	# at INSTALL_DIR while loading packaged CLI modules and VERSION from there.
+	_AIDEVOPS_CLI_ROOT="$AIDEVOPS_SHARE"
 fi
 unset _AIDEVOPS_SOURCE_PATH _AIDEVOPS_SOURCE_DIR _AIDEVOPS_LINK_TARGET _AIDEVOPS_LINK_DIR
 AGENTS_DIR="${AIDEVOPS_AGENTS_DIR:-$_AIDEVOPS_REAL_HOME/.aidevops/agents}"
@@ -196,6 +204,7 @@ ensure_trailing_newline() {
 # tree selected above. The launcher executes the deployed orchestrator as a
 # regular file, while local development and package snapshots use .agents/.
 AIDEVOPS_CLI_MODULES_DIR="${_AIDEVOPS_CLI_ROOT}/${_AIDEVOPS_CLI_MODULES_SUBDIR}"
+AIDEVOPS_RUNTIME_BUNDLE_VERIFIER="${AIDEVOPS_CLI_MODULES_DIR%/aidevops-cli}/runtime-bundle-verifier.sh"
 unset _AIDEVOPS_CLI_ROOT _AIDEVOPS_CLI_MODULES_SUBDIR
 # shellcheck source=.agents/scripts/aidevops-cli/aidevops-repos-lib.sh
 # shellcheck disable=SC1091  # module path resolved at runtime via $INSTALL_DIR
@@ -215,6 +224,9 @@ source "${AIDEVOPS_CLI_MODULES_DIR}/aidevops-update-lib.sh"
 # shellcheck source=.agents/scripts/aidevops-cli/aidevops-upgrade-planning-lib.sh
 # shellcheck disable=SC1091
 source "${AIDEVOPS_CLI_MODULES_DIR}/aidevops-upgrade-planning-lib.sh"
+# shellcheck source=.agents/scripts/runtime-bundle-verifier.sh
+# shellcheck disable=SC1091
+source "$AIDEVOPS_RUNTIME_BUNDLE_VERIFIER"
 
 _run_update_setup() {
 	local output_mode="${1:-${AIDEVOPS_OUTPUT_MODE:-auto}}"
@@ -245,6 +257,50 @@ _run_update_setup() {
 	fi
 	bash "$setup_script" --stage ai-session
 	return $?
+}
+
+_update_verify_deployment_state() {
+	local expected_sha="$1"
+	local active_link="$_AIDEVOPS_REAL_HOME/.aidevops/agents"
+	local stamp_file="$_AIDEVOPS_REAL_HOME/.aidevops/.deployed-sha"
+
+	verify_aidevops_runtime_bundle_convergence \
+		"$INSTALL_DIR" \
+		"$expected_sha" \
+		"$active_link" \
+		"$stamp_file"
+	return $?
+}
+
+_run_update_setup_transaction() {
+	local output_mode="$1"
+	local expected_sha="$2"
+	local setup_exit=0
+	_run_update_setup "$output_mode" || setup_exit=$?
+	if [[ "$setup_exit" -ne 0 ]]; then
+		print_error "Agent deployment failed: setup exited with code $setup_exit"
+		return 1
+	fi
+	_update_verify_deployment_state "$expected_sha" || return 1
+	return 0
+}
+
+_update_render_changelog() {
+	local old_hash="$1"
+	local new_hash="$2"
+	local current_version="$3"
+	local total_commits=0
+	total_commits=$(git -C "$INSTALL_DIR" rev-list --count "$old_hash..$new_hash" 2>/dev/null || echo "0")
+	if [[ "$total_commits" -eq 0 ]]; then
+		return 0
+	fi
+	echo ""
+	print_info "Changes since $current_version ($total_commits commits):"
+	git -C "$INSTALL_DIR" log --oneline --max-count=20 "$old_hash..$new_hash" || true
+	if [[ "$total_commits" -gt 20 ]]; then
+		echo "  ... and more (run 'git log --oneline' in $INSTALL_DIR for full list)"
+	fi
+	return 0
 }
 
 # Update/upgrade command
@@ -284,12 +340,12 @@ cmd_update() {
 				return 1
 			fi
 		fi
-		if ! git fetch origin main --tags --quiet; then
+		local local_hash
+		local_hash=$(git rev-parse HEAD) || return 1
+		if ! _update_fetch_main main; then
 			print_error "Failed to fetch origin/main; no update was applied."
 			return 1
 		fi
-		local local_hash
-		local_hash=$(git rev-parse HEAD) || return 1
 		local remote_hash
 		remote_hash=$(git rev-parse origin/main) || return 1
 		if [[ "$local_hash" != "$remote_hash" ]] && git merge-base --is-ancestor "$remote_hash" "$local_hash" 2>/dev/null; then
@@ -305,7 +361,7 @@ cmd_update() {
 			if [[ "$repo_version" != "$deployed_version" ]]; then
 				print_warning "Deployed agents ($deployed_version) don't match repo ($repo_version)"
 				print_info "Re-running incremental setup to sync agents..."
-				_run_update_setup "$update_output_mode"
+				_run_update_setup_transaction "$update_output_mode" "$local_hash" || return 1
 			else
 				# t2706: VERSION matches but .deployed-sha may lag HEAD when
 				# fixes land between releases. Detect and redeploy on framework
@@ -330,7 +386,7 @@ cmd_update() {
 						if [[ "$has_code_drift" -eq 1 ]]; then
 							print_warning "Deployed scripts drifted (${deployed_sha:0:7}→${local_hash:0:7})"
 							print_info "Re-running incremental setup to deploy latest scripts..."
-							_run_update_setup "$update_output_mode"
+							_run_update_setup_transaction "$update_output_mode" "$local_hash" || return 1
 						fi
 						# GH#21735: workflow templates can change between
 						# releases without triggering has_code_drift (templates
@@ -343,8 +399,10 @@ cmd_update() {
 		else
 			print_info "Applying latest changes..."
 			local old_hash
-			old_hash=$(git rev-parse HEAD)
-			if git merge --ff-only "$remote_hash" --quiet; then
+			old_hash="$local_hash"
+			if [[ "${_AIDEVOPS_UPDATE_CANONICAL_FAST_FORWARDED:-false}" == "true" ]]; then
+				:
+			elif git merge --ff-only "$remote_hash" --quiet; then
 				:
 			else
 				print_error "Fast-forward update failed; preserving local history."
@@ -360,14 +418,7 @@ cmd_update() {
 			fi
 			if [[ "$old_hash" != "$new_hash" ]]; then
 				if _update_repo_verify_files_changed "$old_hash" "$new_hash"; then reconcile_repo_verify=true; fi
-				local total_commits
-				total_commits=$(git rev-list --count "$old_hash..$new_hash" 2>/dev/null || echo "0")
-				if [[ "$total_commits" -gt 0 ]]; then
-					echo ""
-					print_info "Changes since $current_version ($total_commits commits):"
-					git log --oneline "$old_hash..$new_hash" | grep -E '^[a-f0-9]+ (feat|fix|refactor|perf|docs):' | head -20
-					[[ "$total_commits" -gt 20 ]] && echo "  ... and more (run 'git log --oneline' in $INSTALL_DIR for full list)"
-				fi
+				_update_render_changelog "$old_hash" "$new_hash" "$current_version"
 				# GH#21735: surface workflow template drift so the
 				# operator can resync downstream callers before CI bites.
 				_update_check_workflow_drift "$old_hash" "$new_hash"
@@ -377,16 +428,8 @@ cmd_update() {
 			_update_verify_signature
 			echo ""
 			print_info "Running incremental setup to apply changes (falls back to full setup if needed)..."
-			local setup_exit=0
-			_run_update_setup "$update_output_mode" || setup_exit=$?
-			local repo_version deployed_version
-			repo_version=$(cat "$INSTALL_DIR/VERSION" 2>/dev/null || echo "unknown")
-			deployed_version=$(cat "$HOME/.aidevops/agents/VERSION" 2>/dev/null || echo "none")
-			[[ "$setup_exit" -ne 0 ]] && print_warning "Setup exited with code $setup_exit"
-			if [[ "$repo_version" != "$deployed_version" ]]; then
-				print_warning "Agent deployment incomplete: repo=$repo_version, deployed=$deployed_version"
-				print_info "Run 'bash $INSTALL_DIR/setup.sh' manually to deploy agents"
-			else print_success "Updated to version $new_version (agents deployed)"; fi
+			_run_update_setup_transaction "$update_output_mode" "$new_hash" || return 1
+			print_success "Updated to version $new_version (agents deployed)"
 		fi
 	else
 		_update_fresh_install || return 1
@@ -581,6 +624,14 @@ cmd_features() {
 	echo "                 - Collaborator access audit"
 	echo "                 - Re-run anytime: aidevops security audit"
 	echo ""
+	echo "  deployment-context  Tracked project deployment inventory"
+	echo "                      - Creates .aidevops/deployments.yaml"
+	echo "                      - Alias: hosting-context"
+	echo ""
+	echo "  wordpress-context   Tracked WordPress and LocalWP project context"
+	echo "                      - Creates both project context manifests"
+	echo "                      - Includes deployment-context automatically"
+	echo ""
 	echo "Extensibility:"
 	echo ""
 	echo "  plugins        Third-party agent plugins (configured in .aidevops.json)"
@@ -590,12 +641,14 @@ cmd_features() {
 	echo "                 - See: .agents/aidevops/plugins.md"
 	echo ""
 	echo "Usage:"
-	echo "  aidevops init                    # Enable all features (except sops)"
+	echo "  aidevops init                    # Enable default features (except sops and project contexts)"
 	echo "  aidevops init planning           # Enable only planning"
 	echo "  aidevops init sops               # Enable SOPS encryption"
 	echo "  aidevops init security           # Enable security posture checks"
 	echo "  aidevops init beads              # Enable beads (includes planning)"
 	echo "  aidevops init database           # Enable only database"
+	echo "  aidevops init deployment-context # Scaffold deployment inventory"
+	echo "  aidevops init wordpress-context  # Scaffold WordPress + deployment context"
 	echo "  aidevops init planning,security  # Enable multiple"
 	echo ""
 }
@@ -909,6 +962,7 @@ _help_commands() {
 	echo "  update             Update aidevops to the latest version (alias: upgrade)"
 	echo "  upgrade            Alias for update"
 	echo "  pulse <cmd>        Session-based pulse control (start/stop/status)"
+	echo "  schedule <cmd>     Durable one-shot jobs (once/status/cancel)"
 	echo "  launch-worker      Manually launch headless workers for GitHub issues"
 	echo "  worktree <cmd>     Manage safe linked worktrees (add/list/remove/status/switch/clean) (alias: wt)"
 	echo "  auto-update <cmd>  Manage automatic update polling (enable/disable/status)"
@@ -1539,6 +1593,7 @@ _cmd_email() {
 
 # Route 'aidevops client-format [subcommand]' to appropriate helpers
 _cmd_client_format() {
+	local canary_helper="cch-canary.sh"
 	case "${1:-status}" in
 	extract | refresh)
 		_dispatch_helper "cch-extract.sh" "cch-extract.sh" --cache
@@ -1548,14 +1603,14 @@ _cmd_client_format() {
 		;;
 	canary | test)
 		shift || true
-		_dispatch_helper "cch-canary.sh" "cch-canary.sh" --verbose "$@"
+		_dispatch_helper "$canary_helper" "$canary_helper" --verbose "$@"
 		;;
 	monitor)
 		shift || true
 		_dispatch_helper "cch-traffic-monitor.sh" "cch-traffic-monitor.sh" "$@"
 		;;
 	install-canary)
-		_dispatch_helper "cch-canary.sh" "cch-canary.sh" --install
+		_dispatch_helper "$canary_helper" "$canary_helper" --install
 		;;
 	status | "")
 		echo ""
@@ -1611,6 +1666,7 @@ main() {
 	sources | agent-sources) _dispatch_helper "agent-sources-helper.sh" "agent-sources-helper.sh" "$@" ;;
 	plugin | plugins) cmd_plugin "$@" ;;
 	pulse) _dispatch_helper "pulse-session-helper.sh" "pulse-session-helper.sh" "$@" ;;
+	schedule) _dispatch_helper "deferred-job-helper.sh" "deferred-job-helper.sh" "$@" ;;
 	launch-worker | launch_worker) cmd_launch_worker "$@" ;;
 	check-workflows | workflows) _dispatch_helper "check-workflows-helper.sh" "check-workflows-helper.sh" "$@" ;;
 	sync-workflows) _dispatch_helper "sync-workflows-helper.sh" "sync-workflows-helper.sh" "$@" ;;
@@ -1769,15 +1825,17 @@ main() {
 		# P4 asset binary: asset → campaign-asset-helper.sh
 		# P2+P6: all other subcommands → campaign-helper.sh
 		local _camp_cmd="${1:-help}"
+		local _camp_helper="campaign-helper.sh"
+		local _camp_provision_helper="campaigns-provision-helper.sh"
 		case "$_camp_cmd" in
 		init | provision | ls)
-			_dispatch_helper "campaigns-provision-helper.sh" "campaigns-provision-helper.sh" "$@"
+			_dispatch_helper "$_camp_provision_helper" "$_camp_provision_helper" "$@"
 			;;
 		status)
 			if [[ $# -le 1 || -d "${2:-}" || "${2:-}" == .* || "${2:-}" == /* || "${2:-}" == ~* ]]; then
-				_dispatch_helper "campaigns-provision-helper.sh" "campaigns-provision-helper.sh" "$@"
+				_dispatch_helper "$_camp_provision_helper" "$_camp_provision_helper" "$@"
 			else
-				_dispatch_helper "campaign-helper.sh" "campaign-helper.sh" "$@"
+				_dispatch_helper "$_camp_helper" "$_camp_helper" "$@"
 			fi
 			;;
 		asset | assets)
@@ -1785,7 +1843,7 @@ main() {
 			_dispatch_helper "campaign-asset-helper.sh" "campaign-asset-helper.sh" "$@"
 			;;
 		*)
-			_dispatch_helper "campaign-helper.sh" "campaign-helper.sh" "$@"
+			_dispatch_helper "$_camp_helper" "$_camp_helper" "$@"
 			;;
 		esac
 		;;

@@ -895,11 +895,21 @@ cmd_add() {
 		return 1
 	fi
 
+	local capacity_rc=0
+	aidevops_worktree_capacity_check "$path" || capacity_rc=$?
+	if [[ "$capacity_rc" -ne 0 ]]; then
+		echo -e "${RED}Error: Refusing to create a worktree because filesystem capacity is unsafe.${NC}" >&2
+		echo "Capacity reason: ${AIDEVOPS_DISK_CAPACITY_REASON}; available=${AIDEVOPS_DISK_CAPACITY_AVAILABLE_KB}KB (${AIDEVOPS_DISK_CAPACITY_AVAILABLE_PERCENT}%); minimum=${AIDEVOPS_MIN_WORKTREE_FREE_KB:-5242880}KB and ${AIDEVOPS_MIN_WORKTREE_FREE_PERCENT:-5}%." >&2
+		echo "Free disk space before creating another worktree." >&2
+		return 1
+	fi
+
 	# Create worktree (existing branch → simple checkout; new branch → base-ref dance).
 	_cmd_add_create_worktree "$branch" "$path" "$explicit_base" || return 1
 
-	# Register ownership (t189)
-	register_worktree "$path" "$branch"
+	# Register ownership (t189). Preserve the explicit issue identity so a
+	# same-task headless continuation can safely reclaim this worktree.
+	register_worktree "$path" "$branch" --task "$explicit_issue"
 
 	# Restore gitignored dependencies (node_modules) from canonical repo.
 	local _repo_root=""

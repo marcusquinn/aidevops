@@ -1,5 +1,10 @@
 name: Qlty Regression Gate
 
+# qlty-action/install inherits QLTY_VERSION; keep it aligned with the
+# QLTY_CLI_VERSION contract validated by the helper below.
+env:
+  QLTY_VERSION: "0.636.0"
+
 # t2065: block PRs that increase the total qlty smell count.
 #
 # Runs `qlty smells --all --sarif` against (a) the PR merge-base and
@@ -51,7 +56,7 @@ jobs:
       should_scan: ${{ steps.scope.outputs.should_scan }}
     steps:
       - name: Checkout code
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 0
 
@@ -99,11 +104,13 @@ jobs:
   qlty-diff:
     name: Qlty Smell Regression
     runs-on: ubuntu-latest
+    env:
+      QLTY_CLI_VERSION: "0.636.0"
     needs: detect-scope
     if: needs.detect-scope.outputs.should_scan == 'true'
     steps:
       - name: Checkout code
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 0
 

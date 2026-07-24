@@ -163,7 +163,7 @@ AI DevOps is a developer-operations framework and OpenCode plugin. Its interface
 Design goals:
 
 - Keep operational state obvious: running, stopped, error, authenticated, last update, and command actions should scan quickly.
-- Use compact terminal-only status glyphs: ⚪ for active OpenCode turns, 🔴 while retrying after errors, 🟡 when a permission decision is required, and 🟢 when the root session is awaiting input. Retain the descriptive title and opt-out so colour is never the only essential status affordance; keep glyphs out of stored session titles so issue/PR prefixes remain first in search results.
+- Use compact terminal-only status glyphs: show ⚪ from the first submitted root-session message and preserve it through descriptive title generation, 🔴 while retrying after errors, 🟡 when a permission decision is required, and 🟢 when the root session is awaiting input. Retain the descriptive title and opt-out so colour is never the only essential status affordance; keep glyphs out of stored session titles so issue/PR prefixes remain first in search results.
 - Preserve developer trust with native system typography, code-friendly contrast, visible borders, and restrained motion.
 - Use compact density for dashboards and sidebars, but keep controls at least 44px high when touch use is plausible.
 - Prefer semantic tokens over one-off values so generated reports, OpenCode UI surfaces, and dashboard screens stay consistent.
@@ -299,6 +299,7 @@ Do:
 - Use semantic tokens from this file before adding new hex values.
 - Keep dashboards compact, structured, and border-defined.
 - For chart-heavy operational dashboards, prefer OpenPanel-style space efficiency and Bklit-style compact chart cards: KPI header, tiny delta, bar/sparkline combination, and dense legends that keep Pulse and worker health scannable at a glance.
+- Public repository charts should use the GitHub-dark console palette, support matching light and dark surfaces, include accessible SVG titles/descriptions, and remain legible at README width without interaction.
 - Use green for safe primary operations and red only for destructive/error states.
 - Preserve high contrast and readable 12px+ metadata.
 - Keep generated reports and brand handoffs free of private local paths, secrets, raw transcripts, and unrelated repo names.

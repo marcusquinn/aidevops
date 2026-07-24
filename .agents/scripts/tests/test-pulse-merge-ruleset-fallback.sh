@@ -11,6 +11,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 MERGE_SCRIPT="${SCRIPT_DIR}/../pulse-merge.sh"
+MERGE_PROCESS_SCRIPT="${SCRIPT_DIR}/../pulse-merge-process.sh"
 
 readonly TEST_RED='\033[0;31m'
 readonly TEST_GREEN='\033[0;32m'
@@ -21,6 +22,8 @@ TESTS_FAILED=0
 TEST_ROOT=""
 GH_LOG=""
 REMEDIATION_LOG=""
+MERGE_EVENT_LOG=""
+CACHE_INVALIDATION_LOG=""
 _OW_LABEL_PAT=",origin:worker,"
 
 print_result() {
@@ -40,19 +43,7 @@ print_result() {
 	return 0
 }
 
-setup_test_env() {
-	TEST_ROOT=$(mktemp -d)
-	mkdir -p "${TEST_ROOT}/bin"
-	export PATH="${TEST_ROOT}/bin:${PATH}"
-	export GH_STUB_MODE="${GH_STUB_MODE:-ruleset}"
-	export LOGFILE="${TEST_ROOT}/pulse.log"
-	: >"$LOGFILE"
-	GH_LOG="${TEST_ROOT}/gh-calls.log"
-	: >"$GH_LOG"
-	REMEDIATION_LOG="${TEST_ROOT}/remediation.log"
-	: >"$REMEDIATION_LOG"
-	export TEST_ROOT GH_LOG REMEDIATION_LOG
-
+_install_ruleset_gh_stub() {
 cat >"${TEST_ROOT}/bin/gh" <<'GHEOF'
 #!/usr/bin/env bash
 printf '%s\n' "gh $*" >>"${GH_LOG:-/dev/null}"
@@ -76,6 +67,16 @@ if [[ "$mode" == "stale-cache-401" && "$1" == "pr" && "$2" == "merge" && "$*" ==
 		printf '%s\n' 'non-200 OK status code: 401 Unauthorized body: "{ \"message\": \"Requires authentication\" }"' >&2
 		exit 1
 	fi
+	exit 0
+fi
+
+if [[ "$mode" == "terminal-closed" && "$1" == "pr" && "$2" == "merge" ]]; then
+	printf '%s\n' 'X Pull request owner/repo#77 is not mergeable: the pull request is closed.' >&2
+	exit 1
+fi
+
+if [[ "$mode" == "terminal-closed" && "$1" == "pr" && "$2" == "view" && "$*" == *"--json state"* ]]; then
+	printf '%s\n' 'CLOSED'
 	exit 0
 fi
 
@@ -129,6 +130,30 @@ GHEOF
 	return 0
 }
 
+setup_test_env() {
+	TEST_ROOT=$(mktemp -d)
+	mkdir -p "${TEST_ROOT}/bin"
+	export PATH="${TEST_ROOT}/bin:${PATH}"
+	export GH_STUB_MODE="${GH_STUB_MODE:-ruleset}"
+	export LOGFILE="${TEST_ROOT}/pulse.log"
+	: >"$LOGFILE"
+	GH_LOG="${TEST_ROOT}/gh-calls.log"
+	: >"$GH_LOG"
+	REMEDIATION_LOG="${TEST_ROOT}/remediation.log"
+	: >"$REMEDIATION_LOG"
+	MERGE_EVENT_LOG="${TEST_ROOT}/merge-events.log"
+	: >"$MERGE_EVENT_LOG"
+	CACHE_INVALIDATION_LOG="${TEST_ROOT}/cache-invalidations.log"
+	: >"$CACHE_INVALIDATION_LOG"
+	export TEST_ROOT GH_LOG REMEDIATION_LOG MERGE_EVENT_LOG CACHE_INVALIDATION_LOG
+	FINAL_GATE_RC=0
+	FINAL_GATE_BLOCKER_KIND=""
+	PREFLIGHT_REMEDIATION_CALLS=0
+	_PULSE_MERGE_PREFLIGHT_BLOCKER_KIND=""
+	_install_ruleset_gh_stub
+	return 0
+}
+
 teardown_test_env() {
 	if [[ -n "$TEST_ROOT" && -d "$TEST_ROOT" ]]; then
 		rm -rf "$TEST_ROOT"
@@ -137,18 +162,42 @@ teardown_test_env() {
 }
 
 define_function_under_test() {
+	local src_invalidate
+	local src_normalize_pr_state
+	local src_terminal
 	local src_process
+	local src_webhook_process
+	src_invalidate=$(awk '
+		/^_pulse_merge_invalidate_pr_list_cache\(\) \{/,/^\}$/ { print }
+	' "$MERGE_SCRIPT")
+	src_normalize_pr_state=$(awk '
+		/^_pmp_normalize_pr_lifecycle_state_into\(\) \{/,/^\}$/ { print }
+	' "$MERGE_PROCESS_SCRIPT")
+	src_terminal=$(awk '
+		/^_pulse_merge_failure_is_terminal\(\) \{/,/^\}$/ { print }
+	' "$MERGE_SCRIPT")
 	src_process=$(awk '
 		/^_process_single_ready_pr\(\) \{/,/^\}$/ { print }
 	' "$MERGE_SCRIPT")
-	if [[ -z "$src_process" ]]; then
-		printf 'ERROR: could not extract _process_single_ready_pr from %s\n' "$MERGE_SCRIPT" >&2
+	src_webhook_process=$(awk '
+		/^process_pr\(\) \{/,/^\}$/ { print }
+	' "$MERGE_SCRIPT")
+	if [[ -z "$src_invalidate" || -z "$src_normalize_pr_state" || -z "$src_terminal" || -z "$src_process" || -z "$src_webhook_process" ]]; then
+		printf 'ERROR: could not extract merge helpers from %s and %s\n' "$MERGE_SCRIPT" "$MERGE_PROCESS_SCRIPT" >&2
 		return 1
 	fi
 	# shellcheck disable=SC1090
 	source "${SCRIPT_DIR}/../gh-merge-cache-remediation-lib.sh"
 	# shellcheck disable=SC1090
+	eval "$src_invalidate"
+	# shellcheck disable=SC1090
+	eval "$src_normalize_pr_state"
+	# shellcheck disable=SC1090
+	eval "$src_terminal"
+	# shellcheck disable=SC1090
 	eval "$src_process"
+	# shellcheck disable=SC1090
+	eval "$src_webhook_process"
 	return 0
 }
 
@@ -182,19 +231,68 @@ _check_ruleset_required_reviews_passing() { return 0; }
 _extract_merge_summary() { printf 'summary'; return 0; }
 _retarget_stacked_children() { return 0; }
 _pulse_merge_admin_safety_check() { return 0; }
-_pulse_merge_final_trust_gate() { _PULSE_FINAL_REQUIRES_SYNCHRONOUS_MERGE=0; return 0; }
+_pulse_merge_final_trust_gate() {
+	_PULSE_FINAL_REQUIRES_SYNCHRONOUS_MERGE=0
+	_PULSE_MERGE_PREFLIGHT_BLOCKER_KIND="${FINAL_GATE_BLOCKER_KIND:-}"
+	return "${FINAL_GATE_RC:-0}"
+}
 _set_native_auto_merge_or_skip() { return 1; }
 _repo_allows_auto_merge() { return "${REPO_ALLOWS_AUTO_MERGE_RC:-0}"; }
 _attempt_existing_auto_merge_behind_update_branch() { return 1; }
 _attempt_green_behind_update_branch() { return "${GREEN_BEHIND_UPDATE_RC:-1}"; }
-_handle_post_merge_actions() { return 0; }
-gh_pr_view() { printf '{"labels":[]}'; return 0; }
+sleep() {
+	local seconds="$1"
+	printf 'sleep:%s\n' "$seconds" >>"$MERGE_EVENT_LOG"
+	return 0
+}
+_pmp_record_deterministic_progress_now() {
+	local merged_count="$1"
+	local progress_count="$2"
+	printf 'progress:%s:%s\n' "$merged_count" "$progress_count" >>"$MERGE_EVENT_LOG"
+	return 0
+}
+_handle_post_merge_actions() {
+	printf 'post-merge\n' >>"$MERGE_EVENT_LOG"
+	return 0
+}
+_pulse_merge_ready_pr_json_fields() {
+	printf 'number,state,mergeable,reviewDecision,author,title,updatedAt,headRefOid,headRefName,baseRefName,labels,isDraft'
+	return 0
+}
+
+gh_pr_view() {
+	local pr_number="$1"
+	shift
+	if [[ -n "${PR_VIEW_STATE:-}" ]]; then
+		printf '{"number":%s,"state":"%s","mergeable":"MERGEABLE","reviewDecision":"APPROVED","author":{"login":"owner"},"title":"webhook test","headRefOid":"head-current"}' \
+			"$pr_number" "$PR_VIEW_STATE"
+		return 0
+	fi
+	printf '{"labels":[]}'
+	return 0
+}
+
+pulse_pr_list_cache_invalidate_repo() {
+	local repo_slug="$1"
+	printf '%s\n' "$repo_slug" >>"${CACHE_INVALIDATION_LOG:?}"
+	return 0
+}
 
 _pulse_merge_maybe_dispatch_review_thread_remediation() {
 	local pr_number="$1"
 	local repo_slug="$2"
 	local merge_output="$3"
 	printf 'pr=%s repo=%s\n%s\n' "$pr_number" "$repo_slug" "$merge_output" >>"${REMEDIATION_LOG:?}"
+	return 0
+}
+
+_pulse_merge_maybe_dispatch_preflight_remediation() {
+	local pr_number="$1"
+	local repo_slug="$2"
+	PREFLIGHT_REMEDIATION_CALLS=$((PREFLIGHT_REMEDIATION_CALLS + 1))
+	printf 'preflight pr=%s repo=%s blocker=%s\n' \
+		"$pr_number" "$repo_slug" "${_PULSE_MERGE_PREFLIGHT_BLOCKER_KIND:-}" >>"${REMEDIATION_LOG:?}"
+	_PULSE_MERGE_PREFLIGHT_BLOCKER_KIND=""
 	return 0
 }
 
@@ -217,7 +315,7 @@ test_ruleset_violation_enables_auto_merge_without_admin() {
 	setup_test_env
 	define_function_under_test || { teardown_test_env; return 0; }
 
-	local pr_obj='{"number":77,"mergeable":"MERGEABLE","reviewDecision":"APPROVED","author":{"login":"owner"},"title":"test","headRefOid":"head-current"}'
+	local pr_obj='{"number":77,"state":"OPEN","mergeable":"MERGEABLE","reviewDecision":"APPROVED","author":{"login":"owner"},"title":"test","headRefOid":"head-current"}'
 	local result=0
 	_process_single_ready_pr "owner/repo" "$pr_obj" || result=$?
 
@@ -260,7 +358,7 @@ test_ruleset_violation_skips_native_auto_merge_when_disabled() {
 		return 0
 	}
 
-	local pr_obj='{"number":77,"mergeable":"MERGEABLE","reviewDecision":"APPROVED","author":{"login":"owner"},"title":"test","headRefOid":"head-current"}'
+	local pr_obj='{"number":77,"state":"OPEN","mergeable":"MERGEABLE","reviewDecision":"APPROVED","author":{"login":"owner"},"title":"test","headRefOid":"head-current"}'
 	local result=0
 	_process_single_ready_pr "owner/repo" "$pr_obj" || result=$?
 
@@ -284,7 +382,7 @@ test_green_behind_update_defers_before_merge_attempts() {
 	setup_test_env
 	define_function_under_test || { teardown_test_env; unset GREEN_BEHIND_UPDATE_RC; return 0; }
 
-	local pr_obj='{"number":77,"mergeable":"MERGEABLE","reviewDecision":"APPROVED","author":{"login":"owner"},"title":"test"}'
+	local pr_obj='{"number":77,"state":"OPEN","mergeable":"MERGEABLE","reviewDecision":"APPROVED","author":{"login":"owner"},"title":"test"}'
 	local result=0
 	_process_single_ready_pr "owner/repo" "$pr_obj" || result=$?
 
@@ -313,7 +411,7 @@ test_draft_pr_without_origin_labels_skips_merge_write() {
 	setup_test_env
 	define_function_under_test || { teardown_test_env; return 0; }
 
-	local pr_obj='{"number":88,"mergeable":"MERGEABLE","reviewDecision":"APPROVED","author":{"login":"owner"},"title":"draft test","labels":[],"isDraft":true}'
+	local pr_obj='{"number":88,"state":"OPEN","mergeable":"MERGEABLE","reviewDecision":"APPROVED","author":{"login":"owner"},"title":"draft test","labels":[],"isDraft":true}'
 	local result=0
 	_process_single_ready_pr "owner/repo" "$pr_obj" || result=$?
 
@@ -337,12 +435,103 @@ test_draft_pr_without_origin_labels_skips_merge_write() {
 	return 0
 }
 
+test_lowercase_open_pr_enters_merge_pipeline() {
+	setup_test_env
+	define_function_under_test || { teardown_test_env; return 0; }
+
+	local pr_obj='{"number":78,"state":"open","mergeable":"MERGEABLE","reviewDecision":"APPROVED","author":{"login":"owner"},"title":"lowercase open test","labels":[],"isDraft":false,"headRefOid":"head-current"}'
+	local result=0
+	_process_single_ready_pr "owner/repo" "$pr_obj" || result=$?
+
+	if [[ "$result" -ne 0 ]]; then
+		print_result "lowercase open PR enters batch merge pipeline" 1 "Expected 0, got ${result}; log: $(<"$LOGFILE")"
+	elif ! grep -qE 'gh pr merge 78 ' "$GH_LOG"; then
+		print_result "lowercase open PR enters batch merge pipeline" 1 "gh log: $(<"$GH_LOG")"
+	elif grep -qF 'state=open is not OPEN' "$LOGFILE"; then
+		print_result "lowercase open PR enters batch merge pipeline" 1 "pulse log: $(<"$LOGFILE")"
+	else
+		print_result "lowercase open PR enters batch merge pipeline" 0
+	fi
+	teardown_test_env
+	return 0
+}
+
+test_lowercase_open_pr_enters_webhook_merge_pipeline() {
+	PR_VIEW_STATE="open"
+	setup_test_env
+	define_function_under_test || { teardown_test_env; unset PR_VIEW_STATE; return 0; }
+
+	local result=0
+	process_pr "owner/repo" "79" || result=$?
+
+	if [[ "$result" -ne 0 ]]; then
+		print_result "lowercase open PR enters webhook merge pipeline" 1 "Expected 0, got ${result}; log: $(<"$LOGFILE")"
+	elif ! grep -qF 'webhook-triggered merge attempt for owner/repo#79' "$LOGFILE"; then
+		print_result "lowercase open PR enters webhook merge pipeline" 1 "pulse log: $(<"$LOGFILE")"
+	elif ! grep -qE 'gh pr merge 79 ' "$GH_LOG"; then
+		print_result "lowercase open PR enters webhook merge pipeline" 1 "gh log: $(<"$GH_LOG")"
+	else
+		print_result "lowercase open PR enters webhook merge pipeline" 0
+	fi
+	teardown_test_env
+	unset PR_VIEW_STATE
+	return 0
+}
+
+test_lowercase_closed_pr_skips_before_merge_pipeline() {
+	unset GH_STUB_MODE
+	setup_test_env
+	define_function_under_test || { teardown_test_env; return 0; }
+
+	local pr_obj='{"number":89,"state":"closed","mergeable":"MERGEABLE","reviewDecision":"APPROVED","author":{"login":"owner"},"title":"closed test","labels":[],"isDraft":false}'
+	local result=0
+	_process_single_ready_pr "owner/repo" "$pr_obj" || result=$?
+
+	if [[ "$result" -ne 1 ]]; then
+		print_result "non-OPEN PR skips merge pipeline" 1 "Expected 1, got ${result}; log: $(<"$LOGFILE")"
+	elif [[ -s "$GH_LOG" ]]; then
+		print_result "non-OPEN PR makes no GitHub calls" 1 "gh log: $(<"$GH_LOG")"
+	elif ! grep -qF 'state=CLOSED is not OPEN (GH#28279)' "$LOGFILE"; then
+		print_result "non-OPEN PR writes skip audit log" 1 "pulse log: $(<"$LOGFILE")"
+	else
+		print_result "non-OPEN PR is blocked before merge pipeline" 0
+	fi
+	teardown_test_env
+	return 0
+}
+
+test_unknown_and_missing_pr_states_skip_before_merge_pipeline() {
+	unset GH_STUB_MODE
+	setup_test_env
+	define_function_under_test || { teardown_test_env; return 0; }
+
+	local unknown_obj='{"number":90,"state":"unexpected","mergeable":"MERGEABLE","reviewDecision":"APPROVED","author":{"login":"owner"},"title":"unknown state test","labels":[],"isDraft":false}'
+	local missing_obj='{"number":91,"mergeable":"MERGEABLE","reviewDecision":"APPROVED","author":{"login":"owner"},"title":"missing state test","labels":[],"isDraft":false}'
+	local unknown_result=0
+	local missing_result=0
+	_process_single_ready_pr "owner/repo" "$unknown_obj" || unknown_result=$?
+	_process_single_ready_pr "owner/repo" "$missing_obj" || missing_result=$?
+
+	if [[ "$unknown_result" -ne 1 || "$missing_result" -ne 1 ]]; then
+		print_result "unknown and missing PR states remain blocked" 1 \
+			"unknown=${unknown_result} missing=${missing_result}; log: $(<"$LOGFILE")"
+	elif [[ -s "$GH_LOG" ]]; then
+		print_result "unknown and missing PR states remain blocked" 1 "gh log: $(<"$GH_LOG")"
+	elif ! grep -qF 'state=unexpected is not OPEN' "$LOGFILE" || ! grep -qF 'state=missing is not OPEN' "$LOGFILE"; then
+		print_result "unknown and missing PR states remain blocked" 1 "pulse log: $(<"$LOGFILE")"
+	else
+		print_result "unknown and missing PR states remain blocked" 0
+	fi
+	teardown_test_env
+	return 0
+}
+
 test_expected_required_check_updates_branch_and_defers() {
 	GH_STUB_MODE="expected-check"
 	setup_test_env
 	define_function_under_test || { teardown_test_env; unset GH_STUB_MODE; return 0; }
 
-	local pr_obj='{"number":77,"mergeable":"MERGEABLE","reviewDecision":"APPROVED","author":{"login":"owner"},"title":"test"}'
+	local pr_obj='{"number":77,"state":"OPEN","mergeable":"MERGEABLE","reviewDecision":"APPROVED","author":{"login":"owner"},"title":"test"}'
 	local result=0
 	_process_single_ready_pr "owner/repo" "$pr_obj" || result=$?
 
@@ -378,7 +567,7 @@ test_pending_required_check_updates_branch_and_defers() {
 	setup_test_env
 	define_function_under_test || { teardown_test_env; unset GH_STUB_MODE; return 0; }
 
-	local pr_obj='{"number":77,"mergeable":"MERGEABLE","reviewDecision":"APPROVED","author":{"login":"owner"},"title":"test"}'
+	local pr_obj='{"number":77,"state":"OPEN","mergeable":"MERGEABLE","reviewDecision":"APPROVED","author":{"login":"owner"},"title":"test"}'
 	local result=0
 	_process_single_ready_pr "owner/repo" "$pr_obj" || result=$?
 
@@ -408,7 +597,7 @@ test_stale_cache_401_retries_admin_merge_once() {
 	prepare_stale_cache_fixture
 	define_function_under_test || { teardown_test_env; unset GH_STUB_MODE; return 0; }
 
-	local pr_obj='{"number":77,"mergeable":"MERGEABLE","reviewDecision":"APPROVED","author":{"login":"owner"},"title":"test"}'
+	local pr_obj='{"number":77,"state":"OPEN","mergeable":"MERGEABLE","reviewDecision":"APPROVED","author":{"login":"owner"},"title":"test"}'
 	local result=0
 	_process_single_ready_pr "owner/repo" "$pr_obj" || result=$?
 
@@ -427,6 +616,25 @@ test_stale_cache_401_retries_admin_merge_once() {
 		unset GH_STUB_MODE
 		return 0
 	fi
+
+	local merge_events=""
+	merge_events=$(tr '\n' ' ' <"$MERGE_EVENT_LOG")
+	if [[ "$merge_events" != "progress:1:0 sleep:1 post-merge " ]]; then
+		print_result "successful merge records recovery before interruptible post-merge work" 1 \
+			"event order: ${merge_events:-none}"
+		teardown_test_env
+		unset GH_STUB_MODE
+		return 0
+	fi
+	print_result "successful merge records recovery before interruptible post-merge work" 0
+	if [[ "$(<"$CACHE_INVALIDATION_LOG")" != "owner/repo" ]]; then
+		print_result "successful merge invalidates repository PR-list caches" 1 \
+			"invalidations=$(tr '\n' ';' <"$CACHE_INVALIDATION_LOG")"
+		teardown_test_env
+		unset GH_STUB_MODE
+		return 0
+	fi
+	print_result "successful merge invalidates repository PR-list caches" 0
 
 	if [[ -f "${HOME}/.cache/gh/graphql-401.cache" ]] || \
 		! find "${HOME}/.cache/gh" -path '*/aidevops-quarantine-*/*graphql-401.cache*' -type f | grep -q .; then
@@ -456,12 +664,44 @@ test_stale_cache_401_retries_admin_merge_once() {
 	return 0
 }
 
+test_terminal_merge_failure_refreshes_state_and_invalidates_cache() {
+	GH_STUB_MODE="terminal-closed"
+	setup_test_env
+	define_function_under_test || { teardown_test_env; unset GH_STUB_MODE; return 0; }
+
+	local pr_obj='{"number":77,"state":"OPEN","mergeable":"MERGEABLE","reviewDecision":"APPROVED","author":{"login":"owner"},"title":"test","headRefOid":"head-current"}'
+	local result=0
+	_process_single_ready_pr "owner/repo" "$pr_obj" || result=$?
+
+	if [[ "$result" -ne 1 ]]; then
+		print_result "terminal merge failure becomes a stale-cache skip" 1 \
+			"Expected 1, got ${result}; log: $(tr '\n' ';' <"$LOGFILE")"
+	elif ! grep -qE '^gh pr view 77 --repo owner/repo --json state --jq ' "$GH_LOG"; then
+		print_result "terminal merge failure performs uncached state refresh" 1 \
+			"gh log: $(tr '\n' ';' <"$GH_LOG")"
+	elif [[ "$(<"$CACHE_INVALIDATION_LOG")" != "owner/repo" ]]; then
+		print_result "terminal merge failure invalidates repository PR-list caches" 1 \
+			"invalidations=$(tr '\n' ';' <"$CACHE_INVALIDATION_LOG")"
+	elif [[ -s "$REMEDIATION_LOG" ]]; then
+		print_result "terminal merge failure suppresses stale remediation" 1 \
+			"remediation=$(tr '\n' ';' <"$REMEDIATION_LOG")"
+	elif ! grep -qF 'fresh state=CLOSED is terminal (GH#28280)' "$LOGFILE"; then
+		print_result "terminal merge failure writes stale-cache audit log" 1 \
+			"pulse log: $(tr '\n' ';' <"$LOGFILE")"
+	else
+		print_result "terminal merge failure refreshes state, invalidates cache, and skips remediation" 0
+	fi
+	teardown_test_env
+	unset GH_STUB_MODE
+	return 0
+}
+
 test_ruleset_fallback_failure_preserves_admin_conversation_context() {
 	GH_STUB_MODE="conversation-chain"
 	setup_test_env
 	define_function_under_test || { teardown_test_env; unset GH_STUB_MODE; return 0; }
 
-	local pr_obj='{"number":77,"mergeable":"MERGEABLE","reviewDecision":"APPROVED","author":{"login":"owner"},"title":"test"}'
+	local pr_obj='{"number":77,"state":"OPEN","mergeable":"MERGEABLE","reviewDecision":"APPROVED","author":{"login":"owner"},"title":"test"}'
 	local result=0
 	_process_single_ready_pr "owner/repo" "$pr_obj" || result=$?
 
@@ -504,14 +744,50 @@ test_ruleset_fallback_failure_preserves_admin_conversation_context() {
 	return 0
 }
 
+test_final_preflight_thread_blocker_dispatches_before_merge() {
+	setup_test_env
+	define_function_under_test || {
+		teardown_test_env
+		return 0
+	}
+	FINAL_GATE_RC=1
+	FINAL_GATE_BLOCKER_KIND="required-review-threads"
+
+	local pr_obj='{"number":77,"state":"OPEN","mergeable":"MERGEABLE","reviewDecision":"APPROVED","author":{"login":"owner"},"title":"test","headRefOid":"head-current"}'
+	local result=0
+	_process_single_ready_pr "owner/repo" "$pr_obj" || result=$?
+
+	if [[ "$result" -ne 1 ]]; then
+		print_result "final preflight thread blocker defers merge" 1 \
+			"Expected 1, got ${result}; log: $(tr '\n' ';' <"$LOGFILE")"
+	elif [[ "$PREFLIGHT_REMEDIATION_CALLS" -ne 1 ]] ||
+		! grep -qF 'preflight pr=77 repo=owner/repo blocker=required-review-threads' "$REMEDIATION_LOG"; then
+		print_result "final preflight thread blocker dispatches remediation" 1 \
+			"calls=${PREFLIGHT_REMEDIATION_CALLS}; remediation=$(tr '\n' ';' <"$REMEDIATION_LOG")"
+	elif grep -qE '^gh pr merge ' "$GH_LOG"; then
+		print_result "final preflight thread blocker prevents merge write" 1 \
+			"gh log: $(tr '\n' ';' <"$GH_LOG")"
+	else
+		print_result "final preflight thread blocker dispatches before merge write" 0
+	fi
+	teardown_test_env
+	return 0
+}
+
 main() {
 	test_ruleset_violation_enables_auto_merge_without_admin
 	test_ruleset_violation_skips_native_auto_merge_when_disabled
 	test_green_behind_update_defers_before_merge_attempts
 	test_draft_pr_without_origin_labels_skips_merge_write
+	test_lowercase_open_pr_enters_merge_pipeline
+	test_lowercase_open_pr_enters_webhook_merge_pipeline
+	test_lowercase_closed_pr_skips_before_merge_pipeline
+	test_unknown_and_missing_pr_states_skip_before_merge_pipeline
 	test_expected_required_check_updates_branch_and_defers
 	test_pending_required_check_updates_branch_and_defers
+	test_final_preflight_thread_blocker_dispatches_before_merge
 	test_stale_cache_401_retries_admin_merge_once
+	test_terminal_merge_failure_refreshes_state_and_invalidates_cache
 	test_ruleset_fallback_failure_preserves_admin_conversation_context
 
 	printf '\n=================================\n'

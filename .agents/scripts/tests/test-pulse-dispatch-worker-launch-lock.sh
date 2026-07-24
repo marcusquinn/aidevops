@@ -52,12 +52,14 @@ fi
 
 repo_dir="${TEST_TMP}/repo"
 wt_dir="${TEST_TMP}/worktree"
-mkdir -p "${repo_dir}/node_modules/example" "${repo_dir}/node_modules/.bin" "${repo_dir}/node_modules/prettier/bin" "$wt_dir" || fail "failed to create restore fixture dirs"
+mkdir -p "${repo_dir}/node_modules/example" "${repo_dir}/node_modules/.bin" "${repo_dir}/node_modules/prettier/bin" "${wt_dir}/node_modules" || fail "failed to create restore fixture dirs"
 printf '{}\n' >"${repo_dir}/package.json" || fail "failed to create repo package.json"
 printf '{}\n' >"${wt_dir}/package.json" || fail "failed to create worktree package.json"
 printf 'fixture\n' >"${repo_dir}/node_modules/example/file.txt" || fail "failed to create node_modules fixture"
-printf '#!/usr/bin/env node\n' >"${repo_dir}/node_modules/prettier/bin/prettier.cjs" || fail "failed to create prettier fixture"
+printf '#!/usr/bin/env bash\nprintf "fixture-tool\\n"\n' >"${repo_dir}/node_modules/prettier/bin/prettier.cjs" || fail "failed to create prettier fixture"
+chmod +x "${repo_dir}/node_modules/prettier/bin/prettier.cjs" || fail "failed to make prettier fixture executable"
 ln -s ../prettier/bin/prettier.cjs "${repo_dir}/node_modules/.bin/prettier" || fail "failed to create prettier bin symlink"
+ln -s "${repo_dir}/node_modules/.bin" "${wt_dir}/node_modules/.bin" || fail "failed to create stale dispatcher tooling link"
 
 LOGFILE="${TEST_TMP}/pulse.log" \
 	AIDEVOPS_WORKSPACE_DIR="$TEST_TMP" \
@@ -70,8 +72,22 @@ if [[ -d "${wt_dir}/node_modules/example" ]]; then
 	fail "root node_modules payload was copied"
 fi
 
-if [[ ! -L "${wt_dir}/node_modules/.bin" ]]; then
-	fail "root node_modules .bin tooling link was not created"
+if [[ -e "${wt_dir}/node_modules/.bin" || -L "${wt_dir}/node_modules/.bin" ]]; then
+	fail "dispatcher-created canonical node_modules .bin link was not removed"
+fi
+
+if ! declare -F _dlw_append_node_tool_env >/dev/null 2>&1; then
+	fail "worker launch does not provide a local command path for canonical Node tools"
+fi
+worker_cmd=(env)
+_dlw_append_node_tool_env "$repo_dir"
+expected_tool_path="PATH=${repo_dir}/node_modules/.bin:${PATH}"
+if [[ "${worker_cmd[1]:-}" != "$expected_tool_path" ]]; then
+	fail "worker launch did not prepend only the canonical node_modules .bin directory"
+fi
+tool_output=$("${worker_cmd[@]}" prettier) || fail "dispatcher-provided Node tool did not execute"
+if [[ "$tool_output" != "fixture-tool" ]]; then
+	fail "dispatcher-provided Node tool returned unexpected output"
 fi
 
 _dlw_zero_output_comment_count() {
@@ -150,11 +166,66 @@ is_blocked_by_unresolved() {
 	return 0
 }
 
+EVIDENCE_LOG="${TEST_TMP}/efficiency-evidence.log"
+gh_record_efficiency_evidence() {
+	local name="$1"
+	local value="${2:-1}"
+	printf '%s=%s\n' "$name" "$value" >>"$EVIDENCE_LOG"
+	return 0
+}
+
 if ! LOGFILE="${TEST_TMP}/pulse.log" _dlw_blocked_by_hard_stop "123" "owner/repo" '{"body":"blocked-body"}'; then
 	fail "worker launch hard-stop did not block unresolved blocked-by dependency"
 fi
 
+: >"$EVIDENCE_LOG"
+if LOGFILE="${TEST_TMP}/pulse.log" _dlw_final_dependency_attestation \
+	"123" "owner/repo" '{"body":"blocked-body"}' "$repo_dir"; then
+	fail "final dependency attestation accepted a newly unresolved blocker"
+fi
+if ! grep -q '^guardrails.stale_positive_decisions=1$' "$EVIDENCE_LOG"; then
+	fail "final dependency recheck did not record stale-positive evidence"
+fi
+
+is_blocked_by_unresolved() {
+	local issue_body="$1"
+	local repo_slug="$2"
+	local issue_number="$3"
+	: "$issue_body" "$repo_slug" "$issue_number"
+	return 1
+}
+if ! LOGFILE="${TEST_TMP}/pulse.log" _dlw_final_dependency_attestation \
+	"123" "owner/repo" '{"body":"clear-body"}' "$repo_dir"; then
+	fail "final dependency attestation rejected a positively clear dependency state"
+fi
+
 unset -f is_blocked_by_unresolved
+if ! LOGFILE="${TEST_TMP}/pulse.log" _dlw_blocked_by_hard_stop \
+	"123" "owner/repo" '{"body":"clear-body"}' "$repo_dir"; then
+	fail "missing dependency verifier did not fail closed"
+fi
+if [[ "${_DLW_HARD_STOP_REASON:-}" != "dependency-verifier-unavailable" ]]; then
+	fail "missing dependency verifier did not expose a classified hard-stop reason"
+fi
+
+: >"$EVIDENCE_LOG"
+if LOGFILE="${TEST_TMP}/pulse.log" _dlw_require_dependency_attestation 0 "123" "owner/repo"; then
+	fail "worker action boundary accepted a missing dependency attestation"
+fi
+if ! grep -q '^guardrails.dispatch_dependency_violations=1$' "$EVIDENCE_LOG"; then
+	fail "missing dependency attestation did not emit violation evidence"
+fi
+if ! LOGFILE="${TEST_TMP}/pulse.log" _dlw_require_dependency_attestation 1 "123" "owner/repo"; then
+	fail "worker action boundary rejected a valid dependency attestation"
+fi
+
+final_recheck_line=$(grep -n '_dlw_final_worker_spawn_gates.*issue_number' "${SCRIPTS_DIR}/pulse-dispatch-worker-launch.sh" | cut -d: -f1)
+worker_spawn_line=$(grep -n 'worker_pid=.*_dlw_nohup_launch' "${SCRIPTS_DIR}/pulse-dispatch-worker-launch.sh" | cut -d: -f1)
+if [[ ! "$final_recheck_line" =~ ^[0-9]+$ || ! "$worker_spawn_line" =~ ^[0-9]+$ \
+	|| "$final_recheck_line" -ge "$worker_spawn_line" ]]; then
+	fail "final dependency attestation is not immediately upstream of worker spawn"
+fi
+
 # shellcheck source=../pulse-dep-graph.sh
 source "${SCRIPTS_DIR}/pulse-dep-graph.sh"
 
@@ -235,13 +306,18 @@ fi
 
 printf 'PASS: stale non-empty node_modules restore lock is reclaimed\n'
 printf 'PASS: root node_modules payload is skipped by default\n'
-printf 'PASS: root node_modules .bin tooling is linked by default\n'
+printf 'PASS: root Node tooling uses PATH without a cross-boundary worktree link\n'
 printf 'PASS: precomputed zero-output evidence count skips redundant lookups\n'
 printf 'PASS: pulse worker launch forwards dispatching GitHub login\n'
 printf 'PASS: systemd PID resolver handles final unterminated property\n'
 printf 'PASS: systemd stability poll duration rejects invalid configuration\n'
 printf 'PASS: systemd launch state streams intact to the worker log\n'
 printf 'PASS: worker launch hard-stops unresolved blocked-by dependencies\n'
+printf 'PASS: final dependency recheck records stale-positive evidence\n'
+printf 'PASS: final dependency attestation accepts only positively clear state\n'
+printf 'PASS: missing dependency verifier fails closed with a classified reason\n'
+printf 'PASS: unverified worker action boundary emits dependency-violation evidence\n'
+printf 'PASS: final dependency attestation remains upstream of worker spawn\n'
 printf 'PASS: native blockedBy lookup failure remains fail-closed with classified reason\n'
 printf 'PASS: bundle defaults route unlabeled worker model selection\n'
 printf 'PASS: explicit tier labels override bundle model defaults\n'

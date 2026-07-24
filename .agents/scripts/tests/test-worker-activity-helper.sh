@@ -36,6 +36,20 @@ assert_contains() {
 	return 0
 }
 
+assert_not_contains() {
+	local label="$1" needle="$2" haystack="$3"
+	TESTS_RUN=$((TESTS_RUN + 1))
+	if ! printf '%s' "$haystack" | grep -qF -- "$needle" 2>/dev/null; then
+		echo "${TEST_GREEN}PASS${TEST_NC}: $label"
+	else
+		TESTS_FAILED=$((TESTS_FAILED + 1))
+		echo "${TEST_RED}FAIL${TEST_NC}: $label"
+		echo "  expected not to find: $(printf '%q' "$needle")"
+		echo "  in output:            $(printf '%q' "${haystack:0:300}")"
+	fi
+	return 0
+}
+
 assert_eq() {
 	local label="$1" expected="$2" actual="$3"
 	TESTS_RUN=$((TESTS_RUN + 1))
@@ -362,6 +376,31 @@ assert_eq "4c: missing stats → counter=0" "0" \
 	"$(printf '%s' "$JSON" | jq -r '.pulse_stats.pulse_dispatch_circuit_broken')"
 assert_eq "4d: missing blocker log → active=0" "0" \
 	"$(printf '%s' "$JSON" | jq -r '.progress_blockers.active_total')"
+
+# A concurrent or interrupted writer can leave valid JSON followed by malformed
+# trailing data. jq may print a valid count before returning failure; the helper
+# must discard that partial output and emit one safe zero.
+printf 'malformed-trailing-data\n' >>"$STATS"
+OUT=$(env "${RUN_ENV[@]}" "$HELPER" summary --since 24h --no-pr-check 2>&1)
+RC=$?
+assert_rc "4e: malformed trailing stats exits 0" 0 "$RC"
+assert_contains "4f: malformed trailing stats counter falls back to 0" \
+	"pulse_dispatch_circuit_broken:           0" "$OUT"
+assert_not_contains "4g: malformed trailing stats has no invalid-number diagnostic" \
+	"invalid number" "$OUT"
+
+# Restore the fixture for later sections that assert the valid counters.
+cat >"$STATS" <<EOF
+{
+  "counters": {
+    "pulse_dispatch_circuit_broken": [$T_5MIN_AGO, $T_2H_AGO, $T_25H_AGO],
+    "pulse_cycle_skipped_graphql_low": [$T_2H_AGO],
+    "dispatch_backoff_skipped": [],
+    "pulse_dispatch_no_work_breaker_tripped": [$T_5MIN_AGO]
+  },
+  "invocation_sources": {}
+}
+EOF
 
 # ---------------------------------------------------------------------------
 # Section 5: human-output legibility.

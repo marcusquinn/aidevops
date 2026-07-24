@@ -14,7 +14,7 @@
 #   review-bot-gate-helper.sh batch-retry   [REPO]
 #
 # Commands:
-#   check          — Check once, return PASS/PASS_RATE_LIMITED/WAITING/SKIP
+#   check          — Check once, return PASS/PASS_ADVISORY/PASS_RATE_LIMITED/WAITING/SKIP
 #   event-check    — Accept trusted bot review evidence from the Actions event
 #   classify-infra-rate-limit — Classify API exhaustion from immutable event trust
 #   wait           — Poll until a bot posts or timeout (default 600s)
@@ -28,8 +28,9 @@
 #
 # Output values for check/wait:
 #   PASS              — At least one bot posted a real review
+#   PASS_ADVISORY     — No completed review; default policy defers late feedback
 #   PASS_RATE_LIMITED  — Bots are rate-limited but grace period exceeded (GH#3827)
-#   WAITING           — No real reviews yet, still within grace period
+#   WAITING           — Explicit strict/wait policy requires more review evidence
 #   SKIP              — PR has skip-review-gate label
 #
 # Exit codes:
@@ -48,11 +49,13 @@
 #                              { "review_gate": { "rate_limit_behavior": "pass",
 #                                "tools": { "coderabbitai": { "rate_limit_behavior": "wait" } } } }
 #   REVIEW_GATE_COMPLETION_BEHAVIOR — Global default for bot completion:
-#                              "fast" (default, accept settled comments) or
-#                              "strict" (require bot success status when needed).
+#                              "fast" (default, add-ons are advisory) or
+#                              "strict" (require completed review evidence).
 #                              Override per-repo or per-tool in repos.json:
 #                              { "review_gate": { "completion_behavior": "strict",
 #                                "tools": { "coderabbitai": { "completion_behavior": "fast" } } } }
+#   REVIEW_GATE_EVIDENCE_SNAPSHOT_DISABLE — Set to 1 to disable per-check reuse
+#                              of the three review/comment API collections.
 #
 # t1382: https://github.com/marcusquinn/aidevops/issues/2735
 # GH#3827: Rate-limit grace period — pass gate after timeout when bots are
@@ -76,8 +79,10 @@ KNOWN_BOTS=(
 	"copilot"
 )
 REVIEW_GATE_STATUS_PASS="$(printf 'P%s' 'ASS')"
+RBG_PASS_ADVISORY="PASS_ADVISORY"
 RBG_PASS_RATE_LIMITED="PASS_RATE_LIMITED"
 RBG_FALSE="false"
+RBG_COMPLETION_STRICT="strict"
 
 # Rate-limit / quota notice patterns — entries that indicate the bot tried to
 # review but was capacity-constrained. Used by grace-period logic
@@ -103,12 +108,15 @@ RATE_LIMIT_PATTERNS=(
 # messages were observed false-positive-classifying as real reviews.
 # t2799: split from RATE_LIMIT_PATTERNS; built as union so the two stay
 # consistent.
+# GH#28481: Gemini Code Assist retirement notices are provider status, not
+# review evidence.
 NON_REVIEW_PATTERNS=(
 	"${RATE_LIMIT_PATTERNS[@]}"
 	"Review failed"
 	"Review skipped"
 	"closed or merged during review"
 	"Auto reviews are limited"
+	"code review activity has officially ceased"
 )
 
 # Bots that post a Phase 1 placeholder and later edit it with real review
@@ -134,7 +142,8 @@ RATE_LIMIT_GRACE_SECONDS="${RATE_LIMIT_GRACE_SECONDS:-1800}"
 REVIEW_GATE_RATE_LIMIT_BEHAVIOR="${REVIEW_GATE_RATE_LIMIT_BEHAVIOR:-pass}"
 
 # GH#23066: Global default for completion evidence behavior.
-# Values: "fast" keeps high-throughput settled-comment semantics; "strict"
+# Values: "fast" keeps add-on review advisory so required CI controls merge
+# readiness; "strict" requires completed review evidence before merge and also
 # requires bot-specific terminal success evidence for two-phase bots such as
 # CodeRabbit. Override per-repo or per-tool via repos.json review_gate config.
 REVIEW_GATE_COMPLETION_BEHAVIOR="${REVIEW_GATE_COMPLETION_BEHAVIOR:-fast}"
@@ -150,15 +159,25 @@ REVIEW_GATE_COMPLETION_BEHAVIOR="${REVIEW_GATE_COMPLETION_BEHAVIOR:-fast}"
 #     "tools": { "coderabbitai": { "min_edit_lag_seconds": 60 } } } }
 REVIEW_BOT_MIN_EDIT_LAG_SECONDS="${REVIEW_BOT_MIN_EDIT_LAG_SECONDS:-30}"
 
+# One fresh snapshot per check avoids repeatedly downloading the same reviews,
+# issue comments, and inline comments while classifying multiple bots. The
+# snapshot never survives a new do_check invocation, so polling still observes
+# newly posted or edited reviews without a TTL or cross-cycle stale window.
+_RBG_EVIDENCE_SNAPSHOT_KEY=""
+_RBG_EVIDENCE_REVIEWS_JSON="[]"
+_RBG_EVIDENCE_ISSUE_COMMENTS_JSON="[]"
+_RBG_EVIDENCE_REVIEW_COMMENTS_JSON="[]"
+_RBG_EVIDENCE_SNAPSHOT_READY=0
+
 # --- Functions ---
 
 usage() {
 	echo "Usage: $(basename "$0") {check|event-check|classify-infra-rate-limit|wait|list|request-retry|status-json|batch-retry} <PR_NUMBER> [REPO] [MAX_WAIT]"
 	echo ""
 	echo "Commands:"
-	echo "  check          Check once for bot reviews (returns PASS/PASS_RATE_LIMITED/WAITING/SKIP)"
+	echo "  check          Check once for bot reviews (returns PASS/PASS_ADVISORY/PASS_RATE_LIMITED/WAITING/SKIP)"
 	echo "  event-check    Check trusted bot review evidence from REVIEW_GATE_EVENT_* variables"
-	echo "  classify-infra-rate-limit  Resolve trusted/default-pass API exhaustion without another API call"
+	echo "  classify-infra-rate-limit  Resolve trusted/default-advisory API exhaustion without another API call"
 	echo "  wait           Poll until bot reviews appear or timeout"
 	echo "  list           List all bot comments found"
 	echo "  request-retry  Request review retry if bots were rate-limited (idempotent)"
@@ -185,15 +204,15 @@ classify_infra_rate_limit() {
 	completion_behavior=$(_get_completion_behavior "$repo_slug" "")
 	repos_json="${HOME}/.config/aidevops/repos.json"
 	if [[ -f "$repos_json" ]] && command -v jq >/dev/null 2>&1; then
-		strict_tool_override=$(jq -r --arg slug "$repo_slug" '
+		strict_tool_override=$(jq -r --arg slug "$repo_slug" --arg strict "$RBG_COMPLETION_STRICT" '
 			[first(.initialized_repos[]? | select(.slug == $slug)).review_gate.tools[]?
-			| select(.rate_limit_behavior == "wait" or .completion_behavior == "strict")]
-			| if length > 0 then "true" else "false" end
+			| select(.rate_limit_behavior == "wait" or .completion_behavior == $strict)]
+			| if length > 0 then "true" else (false | tostring) end
 		' "$repos_json" 2>/dev/null) || strict_tool_override="true"
 	fi
 
 	if [[ "$rate_limit_behavior" == "pass" && "$completion_behavior" == "fast" && "$strict_tool_override" != "true" ]]; then
-		printf '%s\n' "$RBG_PASS_RATE_LIMITED"
+		printf '%s\n' "$RBG_PASS_ADVISORY"
 		return 0
 	fi
 
@@ -279,6 +298,54 @@ _get_completion_behavior() {
 	return 0
 }
 
+_review_gate_requires_completed_review() {
+	# Add-on review is advisory by default. Explicit strict completion is the
+	# single opt-in that turns missing/incomplete provider evidence into a merge
+	# wait. Preserve the GH#17671 external-contributor defence independently of
+	# user preference: untrusted/unknown authors still require review evidence.
+	local repo_slug="$1"
+	local author_association="${REVIEW_GATE_AUTHOR_ASSOCIATION:-}"
+	local behavior=""
+	local repos_json="${HOME}/.config/aidevops/repos.json"
+	local strict_tool_override="$RBG_FALSE"
+
+	#aidevops:trust-boundary
+	case "$author_association" in
+	OWNER | MEMBER | COLLABORATOR) ;;
+	*) return 0 ;;
+	esac
+
+	behavior=$(_get_completion_behavior "$repo_slug" "")
+	[[ "$behavior" == "$RBG_COMPLETION_STRICT" ]] && return 0
+
+	if [[ -f "$repos_json" ]] && command -v jq >/dev/null 2>&1; then
+		strict_tool_override=$(jq -r --arg slug "$repo_slug" --arg strict "$RBG_COMPLETION_STRICT" '
+			[first(.initialized_repos[]? | select(.slug == $slug)).review_gate.tools[]?
+			| select(.completion_behavior == $strict)]
+			| if length > 0 then "true" else (false | tostring) end
+		' "$repos_json" 2>/dev/null) || strict_tool_override="true"
+	fi
+	[[ "$strict_tool_override" == "true" ]] && return 0
+	return 1
+}
+
+_emit_advisory_or_wait() {
+	local repo_slug="$1"
+	local detail="$2"
+
+	if _review_gate_requires_completed_review "$repo_slug"; then
+		echo "WAITING"
+		echo "${detail}" >&2
+		echo "Review completion is required by explicit strict policy or the external-contributor trust boundary." >&2
+		return 1
+	fi
+
+	echo "$RBG_PASS_ADVISORY"
+	echo "${detail}" >&2
+	echo "Advisory default: required CI controls merge readiness; late add-on feedback is handled by the post-merge sweep." >&2
+	return 0
+}
+
 _requires_success_status_completion() {
 	# GH#23066: Strict completion is opt-in so high-throughput repos keep the
 	# existing fast path by default. Limit the stricter requirement to two-phase
@@ -287,7 +354,7 @@ _requires_success_status_completion() {
 	local bot_login="$2"
 	local behavior
 	behavior=$(_get_completion_behavior "$repo_slug" "$bot_login")
-	[[ "$behavior" != "strict" ]] && return 1
+	[[ "$behavior" != "$RBG_COMPLETION_STRICT" ]] && return 1
 	_is_two_phase_bot "$bot_login" && return 0
 	return 1
 }
@@ -444,6 +511,100 @@ get_pr_age_seconds() {
 	return 0
 }
 
+_rbg_evidence_endpoint() {
+	local pr_number="$1"
+	local repo="$2"
+	local source="$3"
+
+	case "$source" in
+	reviews) printf 'repos/%s/pulls/%s/reviews\n' "$repo" "$pr_number" ;;
+	issue-comments) printf 'repos/%s/issues/%s/comments\n' "$repo" "$pr_number" ;;
+	review-comments) printf 'repos/%s/pulls/%s/comments\n' "$repo" "$pr_number" ;;
+	*) return 1 ;;
+	esac
+	return 0
+}
+
+_rbg_reset_evidence_snapshot() {
+	_RBG_EVIDENCE_SNAPSHOT_KEY=""
+	_RBG_EVIDENCE_REVIEWS_JSON="[]"
+	_RBG_EVIDENCE_ISSUE_COMMENTS_JSON="[]"
+	_RBG_EVIDENCE_REVIEW_COMMENTS_JSON="[]"
+	_RBG_EVIDENCE_SNAPSHOT_READY=0
+	return 0
+}
+
+_rbg_fetch_evidence_collection() {
+	local pr_number="$1"
+	local repo="$2"
+	local source="$3"
+	local endpoint=""
+	local paginated_endpoint=""
+	local records_json=""
+
+	endpoint=$(_rbg_evidence_endpoint "$pr_number" "$repo" "$source") || return 1
+	paginated_endpoint="${endpoint}?per_page=100"
+	if ! records_json=$(gh api "$paginated_endpoint" --paginate | jq -sce \
+		'[.[] | if type == "array" then .[] else error("review evidence page must be an array") end]'); then
+		return 1
+	fi
+	printf '%s\n' "$records_json"
+	return 0
+}
+
+_rbg_prepare_evidence_snapshot() {
+	local pr_number="$1"
+	local repo="$2"
+	local reviews_json=""
+	local issue_comments_json=""
+	local review_comments_json=""
+
+	reviews_json=$(_rbg_fetch_evidence_collection "$pr_number" "$repo" reviews) || return $?
+	issue_comments_json=$(_rbg_fetch_evidence_collection "$pr_number" "$repo" issue-comments) || return $?
+	review_comments_json=$(_rbg_fetch_evidence_collection "$pr_number" "$repo" review-comments) || return $?
+
+	_RBG_EVIDENCE_REVIEWS_JSON="$reviews_json"
+	_RBG_EVIDENCE_ISSUE_COMMENTS_JSON="$issue_comments_json"
+	_RBG_EVIDENCE_REVIEW_COMMENTS_JSON="$review_comments_json"
+	_RBG_EVIDENCE_SNAPSHOT_KEY="${repo}#${pr_number}"
+	_RBG_EVIDENCE_SNAPSHOT_READY=1
+	return 0
+}
+
+_rbg_evidence_snapshot_matches() {
+	local pr_number="$1"
+	local repo="$2"
+	if [[ "$_RBG_EVIDENCE_SNAPSHOT_READY" == "1" && "$_RBG_EVIDENCE_SNAPSHOT_KEY" == "${repo}#${pr_number}" ]]; then
+		return 0
+	fi
+	return 1
+}
+
+_rbg_query_evidence_collection() {
+	local pr_number="$1"
+	local repo="$2"
+	local source="$3"
+	local jq_filter="$4"
+	local records_json=""
+	local endpoint=""
+
+	if [[ "${REVIEW_GATE_EVIDENCE_SNAPSHOT_DISABLE:-0}" != "1" ]] &&
+		_rbg_evidence_snapshot_matches "$pr_number" "$repo"; then
+		case "$source" in
+		reviews) records_json="$_RBG_EVIDENCE_REVIEWS_JSON" ;;
+		issue-comments) records_json="$_RBG_EVIDENCE_ISSUE_COMMENTS_JSON" ;;
+		review-comments) records_json="$_RBG_EVIDENCE_REVIEW_COMMENTS_JSON" ;;
+		*) return 1 ;;
+		esac
+		printf '%s\n' "$records_json" | jq -r "$jq_filter"
+		return $?
+	fi
+
+	endpoint=$(_rbg_evidence_endpoint "$pr_number" "$repo" "$source") || return 1
+	gh api "$endpoint" --paginate --jq "$jq_filter"
+	return $?
+}
+
 get_all_bot_commenters() {
 	local pr_number="$1"
 	local repo="$2"
@@ -451,22 +612,23 @@ get_all_bot_commenters() {
 	# Collect reviewers from three sources:
 	# 1. PR reviews (formal GitHub reviews)
 	local reviews
-	reviews=$(gh api "repos/${repo}/pulls/${pr_number}/reviews" \
-		--paginate --jq '.[].user.login' || echo "")
+	reviews=$(_rbg_query_evidence_collection "$pr_number" "$repo" reviews \
+		'.[].user.login' || echo "")
 
 	# 2. Issue comments (some bots post as comments, not reviews)
 	local comments
-	comments=$(gh api "repos/${repo}/issues/${pr_number}/comments" \
-		--paginate --jq '.[].user.login' || echo "")
+	comments=$(_rbg_query_evidence_collection "$pr_number" "$repo" issue-comments \
+		'.[].user.login' || echo "")
 
 	# 3. Review comments (inline code comments)
 	local review_comments
-	review_comments=$(gh api "repos/${repo}/pulls/${pr_number}/comments" \
-		--paginate --jq '.[].user.login' || echo "")
+	review_comments=$(_rbg_query_evidence_collection "$pr_number" "$repo" review-comments \
+		'.[].user.login' || echo "")
 
 	# Combine, deduplicate, lowercase
 	echo -e "${reviews}\n${comments}\n${review_comments}" |
 		tr '[:upper:]' '[:lower:]' | sort -u | grep -v '^$' || true
+	return 0
 }
 
 is_non_review_comment() {
@@ -572,15 +734,10 @@ bot_has_rate_limit_notice() {
 	local jq_filter
 	jq_filter=$(bot_body_base64_jq_filter "$bot_login")
 
-	local api_endpoints=(
-		"repos/${repo}/pulls/${pr_number}/reviews"
-		"repos/${repo}/issues/${pr_number}/comments"
-		"repos/${repo}/pulls/${pr_number}/comments"
-	)
-
-	local endpoint records encoded body
-	for endpoint in "${api_endpoints[@]}"; do
-		records=$(gh api "$endpoint" --paginate --jq "$jq_filter" || echo "")
+	local sources=(reviews issue-comments review-comments)
+	local source records encoded body
+	for source in "${sources[@]}"; do
+		records=$(_rbg_query_evidence_collection "$pr_number" "$repo" "$source" "$jq_filter" || echo "")
 		[[ -z "$records" ]] && continue
 		while IFS= read -r encoded; do
 			[[ -z "$encoded" ]] && continue
@@ -605,15 +762,10 @@ bot_has_non_rate_limit_non_review_notice() {
 	local jq_filter
 	jq_filter=$(bot_body_base64_jq_filter "$bot_login")
 
-	local api_endpoints=(
-		"repos/${repo}/pulls/${pr_number}/reviews"
-		"repos/${repo}/issues/${pr_number}/comments"
-		"repos/${repo}/pulls/${pr_number}/comments"
-	)
-
-	local endpoint records encoded body
-	for endpoint in "${api_endpoints[@]}"; do
-		records=$(gh api "$endpoint" --paginate --jq "$jq_filter" || echo "")
+	local sources=(reviews issue-comments review-comments)
+	local source records encoded body
+	for source in "${sources[@]}"; do
+		records=$(_rbg_query_evidence_collection "$pr_number" "$repo" "$source" "$jq_filter" || echo "")
 		[[ -z "$records" ]] && continue
 		while IFS= read -r encoded; do
 			[[ -z "$encoded" ]] && continue
@@ -639,16 +791,11 @@ bot_get_notice_category() {
 	local jq_filter
 	jq_filter=$(bot_body_base64_jq_filter "$bot_login")
 
-	local api_endpoints=(
-		"repos/${repo}/pulls/${pr_number}/reviews"
-		"repos/${repo}/issues/${pr_number}/comments"
-		"repos/${repo}/pulls/${pr_number}/comments"
-	)
-
 	local category="none"
-	local endpoint records rc encoded body
-	for endpoint in "${api_endpoints[@]}"; do
-		if records=$(gh api "$endpoint" --paginate --jq "$jq_filter"); then
+	local sources=(reviews issue-comments review-comments)
+	local source records rc encoded body
+	for source in "${sources[@]}"; do
+		if records=$(_rbg_query_evidence_collection "$pr_number" "$repo" "$source" "$jq_filter"); then
 			:
 		else
 			rc=$?
@@ -709,15 +856,10 @@ bot_has_real_review() {
 	fi
 	jq_filter="${jq_filter} | [(.created_at // .submitted_at // \"\"), (.updated_at // .submitted_at // .created_at // \"\"), (.body // \"\" | @base64)] | @tsv"
 
-	local api_endpoints=(
-		"repos/${repo}/pulls/${pr_number}/reviews"
-		"repos/${repo}/issues/${pr_number}/comments"
-		"repos/${repo}/pulls/${pr_number}/comments"
-	)
-
-	local endpoint records created_at updated_at encoded body
-	for endpoint in "${api_endpoints[@]}"; do
-		records=$(gh api "$endpoint" --paginate --jq "$jq_filter" || echo "")
+	local sources=(reviews issue-comments review-comments)
+	local source records created_at updated_at encoded body
+	for source in "${sources[@]}"; do
+		records=$(_rbg_query_evidence_collection "$pr_number" "$repo" "$source" "$jq_filter" || echo "")
 		[[ -z "$records" ]] && continue
 		while IFS=$'\t' read -r created_at updated_at encoded; do
 			[[ -z "$encoded" ]] && continue
@@ -787,9 +929,13 @@ _get_success_status_contexts() {
 	local pr_number="$1"
 	local repo="$2"
 
-	local head_sha
-	head_sha=$(gh pr view "$pr_number" --repo "$repo" \
-		--json headRefOid -q '.headRefOid' 2>/dev/null || echo "")
+	# status-json already resolves and later revalidates the expected head. Reuse
+	# that typed value instead of spending another GraphQL request on the same SHA.
+	local head_sha="${REVIEW_GATE_EXPECTED_HEAD_SHA:-}"
+	if [[ -z "$head_sha" ]]; then
+		head_sha=$(gh pr view "$pr_number" --repo "$repo" \
+			--json headRefOid -q '.headRefOid' 2>/dev/null || echo "")
+	fi
 	if [[ -z "$head_sha" ]]; then
 		# GH#4361: GraphQL rate-limited — fall back to REST API.
 		head_sha=$(gh api "repos/${repo}/pulls/${pr_number}" \
@@ -900,13 +1046,48 @@ any_bot_has_success_status() {
 	return 1
 }
 
+_resolve_pr_author_association() {
+	local pr_number="$1"
+	local repo="$2"
+	local pr_metadata_json="${3:-}"
+	local association=""
+	local association_filter='if type == "object" and (.author_association | type == "string") then .author_association else empty end'
+	local pr_api=""
+
+	# Internal callers can pass the live REST pull payload they already fetched.
+	# Only the REST field is authoritative; login, labels, and runner identity do
+	# not establish author trust.
+	if [[ -n "$pr_metadata_json" ]] &&
+		association=$(jq -r "$association_filter" <<<"$pr_metadata_json" 2>/dev/null); then
+		if [[ -n "$association" ]]; then
+			printf '%s\n' "$association"
+			return 0
+		fi
+	fi
+
+	# GitHub CLI does not export authorAssociation through `gh pr view --json`.
+	# Reuse the canonical pull REST field and collapse all API/parse failures to
+	# unknown so the trust checks below continue to fail closed.
+	pr_api=$(printf 'repos/%s/pulls/%s' "$repo" "$pr_number")
+	association=$(gh api "$pr_api" \
+		--jq "$association_filter" 2>/dev/null) || association=""
+	printf '%s\n' "$association"
+	return 0
+}
+
 check_for_skip_label() {
 	local pr_number="$1"
 	local repo="$2"
+	local pr_metadata_json="${3:-}"
 
-	local labels
-	labels=$(gh pr view "$pr_number" --repo "$repo" \
-		--json labels -q '.labels[].name' || echo "")
+	local labels=""
+	if [[ -n "$pr_metadata_json" ]] &&
+		labels=$(jq -r '.labels[]?.name // empty' <<<"$pr_metadata_json" 2>/dev/null); then
+		:
+	else
+		labels=$(gh pr view "$pr_number" --repo "$repo" \
+			--json labels -q '.labels[].name' || echo "")
+	fi
 
 	if echo "$labels" | grep -q "$SKIP_LABEL"; then
 		return 0
@@ -989,14 +1170,12 @@ _emit_review_gate_check_result() {
 		echo "Status check fallback: bots posted non-review states but have SUCCESS status checks" >&2
 		return 0
 	elif [[ -n "$REVIEW_GATE_NON_REVIEW_BOTS" ]]; then
-		# GH#22802: Failed/skipped/placeholder bot states are not capacity
-		# constraints and must not inherit the user preference for true rate
-		# limits. Keep waiting so a follow-up issue or human decision can happen
-		# from the actual non-review state instead of silently merging.
-		echo "WAITING"
-		echo "Bots posted non-review states that are not rate limits: ${REVIEW_GATE_NON_REVIEW_BOTS}" >&2
-		echo "Gate will keep polling; review_gate.rate_limit_behavior only applies to true rate-limit notices." >&2
-		return 1
+		# Failed/skipped/placeholder states are not real reviews. They remain
+		# distinct from rate limits for diagnostics, but only explicit strict
+		# completion turns their absence into a merge wait.
+		_emit_advisory_or_wait "$repo" \
+			"Bots posted non-review states that are not rate limits: ${REVIEW_GATE_NON_REVIEW_BOTS}"
+		return $?
 	elif [[ -n "$REVIEW_GATE_RATE_LIMITED_BOTS" ]] && any_bot_has_success_status "$pr_number" "$repo" "$prepared_status_contexts" true; then
 		# GH#3005: All bots are rate-limited in comments, but at least one
 		# posted a SUCCESS commit status check. Treat as reviewed.
@@ -1012,7 +1191,11 @@ _emit_review_gate_check_result() {
 		# stops). The daily quality sweep provides codebase-level coverage.
 		# Configure per-tool or per-repo via repos.json review_gate, or globally
 		# via REVIEW_GATE_RATE_LIMIT_BEHAVIOR env var.
-		if _should_pass_rate_limited "$repo" "$REVIEW_GATE_RATE_LIMITED_BOTS"; then
+		if _review_gate_requires_completed_review "$repo"; then
+			echo "WAITING"
+			echo "Bots are rate-limited and completed review evidence is explicitly required: ${REVIEW_GATE_RATE_LIMITED_BOTS}" >&2
+			return 1
+		elif _should_pass_rate_limited "$repo" "$REVIEW_GATE_RATE_LIMITED_BOTS"; then
 			echo "$RBG_PASS_RATE_LIMITED"
 			echo "Bots are rate-limited (tried but capacity-constrained): ${REVIEW_GATE_RATE_LIMITED_BOTS}" >&2
 			echo "Passing gate — configured to pass on rate limit (review_gate.rate_limit_behavior=pass)." >&2
@@ -1024,15 +1207,17 @@ _emit_review_gate_check_result() {
 			return 1
 		fi
 	else
-		echo "WAITING"
-		echo "No review bots found yet. Known bots: ${KNOWN_BOTS[*]}" >&2
-		return 1
+		_emit_advisory_or_wait "$repo" "No review bots found yet. Known bots: ${KNOWN_BOTS[*]}"
+		return $?
 	fi
 }
 
 do_check() {
 	local pr_number="$1"
 	local repo="$2"
+	local pr_metadata_json="${3:-}"
+	local REVIEW_GATE_AUTHOR_ASSOCIATION="${REVIEW_GATE_AUTHOR_ASSOCIATION:-}"
+	local result_rc=0
 	# These caller-local accumulators are populated/read by helpers through Bash
 	# dynamic scoping; keep targeted ShellCheck suppressions beside each local.
 	# shellcheck disable=SC2034
@@ -1041,11 +1226,33 @@ do_check() {
 	local REVIEW_GATE_RATE_LIMITED_BOTS=""
 	# shellcheck disable=SC2034
 	local REVIEW_GATE_NON_REVIEW_BOTS=""
+	_rbg_reset_evidence_snapshot
 
-	# Check skip label first
-	if check_for_skip_label "$pr_number" "$repo"; then
-		echo "SKIP"
-		return 0
+	if [[ -z "$REVIEW_GATE_AUTHOR_ASSOCIATION" ]]; then
+		REVIEW_GATE_AUTHOR_ASSOCIATION=$(_resolve_pr_author_association \
+			"$pr_number" "$repo" "$pr_metadata_json")
+	fi
+
+	# #aidevops:trust-boundary — skip labels are an internal exception. Resolve
+	# immutable author trust before honoring one so every caller, not only the
+	# reusable workflow, fails closed for external or unknown authors.
+	if check_for_skip_label "$pr_number" "$repo" "$pr_metadata_json"; then
+		case "$REVIEW_GATE_AUTHOR_ASSOCIATION" in
+		OWNER | MEMBER | COLLABORATOR)
+			echo "SKIP"
+			return 0
+			;;
+		esac
+		echo "WAITING"
+		echo "skip-review-gate denied for external or unknown author association." >&2
+		return 1
+	fi
+
+	if [[ "${REVIEW_GATE_EVIDENCE_SNAPSHOT_DISABLE:-0}" != "1" ]]; then
+		if ! _rbg_prepare_evidence_snapshot "$pr_number" "$repo"; then
+			echo "Review evidence snapshot unavailable for PR #${pr_number}; falling back to direct endpoint queries." >&2
+			_rbg_reset_evidence_snapshot
+		fi
 	fi
 
 	local all_commenters
@@ -1058,9 +1265,16 @@ do_check() {
 		prepared_status_contexts=$(_prepare_success_status_contexts "$status_contexts" || true)
 	fi
 
-	_collect_review_gate_bot_states "$pr_number" "$repo" "$all_commenters" "$prepared_status_contexts" || return $?
-	_emit_review_gate_check_result "$pr_number" "$repo" "$prepared_status_contexts"
-	return $?
+	if _collect_review_gate_bot_states "$pr_number" "$repo" "$all_commenters" "$prepared_status_contexts"; then
+		:
+	else
+		result_rc=$?
+		_rbg_reset_evidence_snapshot
+		return "$result_rc"
+	fi
+	_emit_review_gate_check_result "$pr_number" "$repo" "$prepared_status_contexts" || result_rc=$?
+	_rbg_reset_evidence_snapshot
+	return "$result_rc"
 }
 
 do_wait() {
@@ -1087,7 +1301,7 @@ do_wait() {
 		local result
 		result=$(do_check "$pr_number" "$repo") || true
 
-		if [[ "$result" == "$REVIEW_GATE_STATUS_PASS" || "$result" == "$RBG_PASS_RATE_LIMITED" || "$result" == "SKIP" ]]; then
+		if [[ "$result" == "$REVIEW_GATE_STATUS_PASS" || "$result" == "$RBG_PASS_ADVISORY" || "$result" == "$RBG_PASS_RATE_LIMITED" || "$result" == "SKIP" ]]; then
 			echo "$result"
 			return 0
 		fi
@@ -1105,36 +1319,33 @@ do_wait() {
 do_status_json() {
 	local pr_number="$1"
 	local repo="$2"
-	local output=""
-	local rc=0
-	local state="waiting"
-	local blocked_prefix="bloc"
-	local merge_gate="${blocked_prefix}ked"
-	local status_pass
-	local pr_json_before="" pr_json="" head_sha_before="" head_sha="" author_login="" author_association="" author_class="external"
-	local head_stable="$RBG_FALSE"
-	local permitted="$RBG_FALSE" reason="outcome_not_permitted"
+	local output="" rc=0 state="waiting" blocked_prefix="bloc" status_pass="" pr_api=""
+	local merge_gate=""
+	local pr_json_before="" pr_json="" head_sha_before="" head_sha="" author_login="" author_association_before="" author_association="" author_class="external"
+	local head_stable="$RBG_FALSE" skip_label_present_after="$RBG_FALSE" permitted="$RBG_FALSE" reason="outcome_not_permitted"
+	merge_gate="${blocked_prefix}ked"
 	status_pass=$(printf 'P%s' 'ASS')
 
-	local pr_api=""
 	pr_api=$(printf 'repos/%s/pulls/%s' "$repo" "$pr_number")
 	pr_json_before=$(gh api "$pr_api" 2>/dev/null) || pr_json_before=""
 	head_sha_before=$(jq -r '.head.sha // ""' <<<"$pr_json_before" 2>/dev/null) || head_sha_before=""
-	output=$(REVIEW_GATE_EXPECTED_HEAD_SHA="$head_sha_before" do_check "$pr_number" "$repo" 2>/dev/null) || rc=$?
+	author_association_before=$(_resolve_pr_author_association "$pr_number" "$repo" "$pr_json_before")
+	output=$(REVIEW_GATE_EXPECTED_HEAD_SHA="$head_sha_before" REVIEW_GATE_AUTHOR_ASSOCIATION="$author_association_before" do_check "$pr_number" "$repo" "$pr_json_before" 2>/dev/null) || rc=$?
 	pr_json=$(gh api "$pr_api" 2>/dev/null) || pr_json=""
 	if [[ -n "$pr_json" ]]; then
 		head_sha=$(jq -r '.head.sha // ""' <<<"$pr_json" 2>/dev/null) || head_sha=""
 		author_login=$(jq -r '.user.login // ""' <<<"$pr_json" 2>/dev/null) || author_login=""
-		author_association=$(jq -r '.author_association // ""' <<<"$pr_json" 2>/dev/null) || author_association=""
 	fi
+	author_association=$(_resolve_pr_author_association "$pr_number" "$repo" "$pr_json")
 	if [[ -n "$head_sha_before" && "$head_sha_before" == "$head_sha" ]]; then
 		head_stable="true"
 	fi
+	jq -e --arg label "$SKIP_LABEL" '[.labels[]?.name] | index($label) != null' <<<"$pr_json" >/dev/null 2>&1 && skip_label_present_after="true"
 	case "$author_association" in
 	OWNER | MEMBER | COLLABORATOR) author_class="trusted" ;;
 	esac
 
-	# #aidevops:trust-boundary — SKIP and rate-limit grace are trusted-author
+	# #aidevops:trust-boundary — SKIP, advisory completion, and rate-limit grace are trusted-author
 	# policy outcomes. External contributors require a real PASS; malformed or
 	# metadata-less evidence can never authorize an advisory merge decision.
 	case "$output" in
@@ -1145,7 +1356,7 @@ do_status_json() {
 		fi
 		;;
 	SKIP)
-		if [[ "$author_class" == "trusted" && "$head_stable" == "true" ]]; then
+		if [[ "$author_class" == "trusted" && "$head_stable" == "true" && "$skip_label_present_after" == "true" ]]; then
 			permitted="true"
 			reason="trusted_skip"
 		else
@@ -1160,10 +1371,18 @@ do_status_json() {
 			reason="external_rate_limit_grace_denied"
 		fi
 		;;
+	P[A]SS_ADVISORY)
+		if [[ "$author_class" == "trusted" && "$head_stable" == "true" ]]; then
+			permitted="true"
+			reason="trusted_advisory_default"
+		else
+			reason="external_advisory_denied"
+		fi
+		;;
 	esac
 
 	case "$output:$permitted" in
-	"$status_pass:true" | P[A]SS_RATE_LIMITED:true | SKIP:true)
+	"$status_pass:true" | P[A]SS_ADVISORY:true | P[A]SS_RATE_LIMITED:true | SKIP:true)
 		state="pass"
 		merge_gate="clear"
 		;;
@@ -1216,16 +1435,11 @@ _classify_bot_state() {
 	local jq_filter
 	jq_filter=".[] | select(.user.login | ascii_downcase | test(\"${bot_login}\")) | [(.created_at // .submitted_at // \"\"), (.updated_at // .submitted_at // .created_at // \"\"), (.body // \"\" | @base64)] | @tsv"
 
-	local api_endpoints=(
-		"repos/${repo}/pulls/${pr_number}/reviews"
-		"repos/${repo}/issues/${pr_number}/comments"
-		"repos/${repo}/pulls/${pr_number}/comments"
-	)
-
 	local saw_any=0 saw_non_review=0 saw_placeholder=0
-	local endpoint records created_at updated_at encoded body
-	for endpoint in "${api_endpoints[@]}"; do
-		records=$(gh api "$endpoint" --paginate --jq "$jq_filter" || echo "")
+	local sources=(reviews issue-comments review-comments)
+	local source records created_at updated_at encoded body
+	for source in "${sources[@]}"; do
+		records=$(_rbg_query_evidence_collection "$pr_number" "$repo" "$source" "$jq_filter" || echo "")
 		[[ -z "$records" ]] && continue
 		while IFS=$'\t' read -r created_at updated_at encoded; do
 			[[ -z "$encoded" ]] && continue
@@ -1330,8 +1544,8 @@ has_retry_comment() {
 
 	local marker="<!-- review-bot-retry-requested -->"
 	local comments
-	comments=$(gh api "repos/${repo}/issues/${pr_number}/comments" \
-		--paginate --jq '.[].body' || echo "")
+	comments=$(_rbg_query_evidence_collection "$pr_number" "$repo" issue-comments \
+		'.[].body' || echo "")
 	if echo "$comments" | grep -qF "$marker"; then
 		return 0
 	fi

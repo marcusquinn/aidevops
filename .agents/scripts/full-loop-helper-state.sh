@@ -12,6 +12,7 @@
 #
 # Dependencies:
 #   - shared-constants.sh (print_error, print_info, print_success, print_warning, etc.)
+#   - full-loop-helper-evidence.sh (fresh merged-PR evidence)
 #   - Globals: STATE_DIR, STATE_FILE, DEFAULT_MAX_*, HEADLESS, _FG_PID_FILE
 #   - Functions: is_headless, print_phase (defined in orchestrator before sourcing)
 #
@@ -26,10 +27,12 @@ _FULL_LOOP_STATE_LIB_LOADED=1
 _FULL_LOOP_RELEASE_NOT_REQUESTED="not-requested"
 _FULL_LOOP_RELEASE_PUBLISHED="published"
 _FULL_LOOP_EXECUTOR_INITIALIZED="initialized-only"
+_FULL_LOOP_EXECUTOR_IN_PROGRESS="in-progress"
 _FULL_LOOP_PHASE_FAILED="failed"
 _FULL_LOOP_PHASE_RUNNING="running"
 _FULL_LOOP_PHASE_WAITING="waiting"
 _FULL_LOOP_PHASE_TASK="task"
+_FULL_LOOP_RESOURCE_NONE="none"
 FULL_LOOP_TRANSITION_LOCK_TOKEN=""
 FULL_LOOP_TRANSITION_LOCK_DEPTH=0
 
@@ -41,6 +44,15 @@ if [[ -z "${SCRIPT_DIR:-}" ]]; then
 	unset _lib_path
 fi
 
+if [[ -f "${SCRIPT_DIR}/full-loop-cleanup-receipt.sh" ]]; then
+	# shellcheck source=./full-loop-cleanup-receipt.sh
+	source "${SCRIPT_DIR}/full-loop-cleanup-receipt.sh"
+fi
+
+# shellcheck source=./full-loop-helper-evidence.sh
+# shellcheck disable=SC1091  # sub-library resolved at runtime via SCRIPT_DIR
+source "${SCRIPT_DIR}/full-loop-helper-evidence.sh"
+
 # --- State Management ---
 
 save_state() {
@@ -49,7 +61,7 @@ save_state() {
 	now="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
 	local tmp_file="${STATE_FILE}.tmp.$$"
 	RUN_ID="${RUN_ID:-run-$(date -u '+%Y%m%dT%H%M%SZ')-$$}"
-	STATE_REVISION=$(( ${STATE_REVISION:-0} + 1 ))
+	STATE_REVISION=$((${STATE_REVISION:-0} + 1))
 	mkdir -p "$STATE_DIR"
 	cat >"$tmp_file" <<EOF
 ---
@@ -299,6 +311,15 @@ _full_loop_invoke_authorized_release() {
 		print_error "Authorized release requires a persisted PR number"
 		return 1
 	}
+	local reconciliation_status=0
+	_full_loop_reconcile_detached_publication_receipt || reconciliation_status=$?
+	case "$reconciliation_status" in
+	0) return 0 ;;
+	2)
+		print_error "release:published receipt could not be reconciled into lifecycle state"
+		return 1
+		;;
+	esac
 	local runner="${AIDEVOPS_FULL_LOOP_RELEASE_RUNNER:-${SCRIPT_DIR}/full-loop-release-helper.sh}"
 	[[ -x "$runner" ]] || {
 		print_error "Authorized release runner is unavailable: $runner"
@@ -386,8 +407,14 @@ _linked_issue_structural_blocker_reasons() {
 			printf 'Issue #%s carries the %s label (decomposition tracker, not a worker target). Decompose into child phase issues, or remove the label if this is no longer a parent.\n' "$issue_num" "\`parent-task\`"
 			;;
 		*NO_AUTO_DISPATCH_BLOCKED*)
+			# no-auto-dispatch is a worker-routing hold, not a prohibition on
+			# explicitly authorized interactive implementation. Keep the hold intact
+			# so Pulse cannot dispatch a parallel worker while local work proceeds.
+			if [[ "${AIDEVOPS_INTERACTIVE_ISSUE_IMPLEMENTATION:-0}" == "1" ]] && ! is_headless; then
+				continue
+			fi
 			found=true
-			printf 'Issue #%s carries the %s label (explicit hold). Remove the label if you intentionally want worker dispatch, or work on this issue operationally (post comments, post analysis) without /full-loop.\n' "$issue_num" "\`no-auto-dispatch\`"
+			printf 'Issue #%s carries the %s label (explicit worker-dispatch hold). Remove the label only if you intentionally want worker dispatch, or use the interactive issue-start implementation path.\n' "$issue_num" "\`no-auto-dispatch\`"
 			;;
 		*HOLD_FOR_REVIEW_BLOCKED*)
 			found=true
@@ -406,10 +433,10 @@ _linked_issue_structural_blocker_reasons() {
 # a missing assignee (GH#17810). Interactive maintainer sessions may self-claim
 # an unassigned issue supplied directly in the prompt (GH#22854). Then inherits
 # the pulse-side structural dispatch gates via
-# dispatch-dedup-helper.sh::is-assigned so /full-loop honors parent-task
-# and no-auto-dispatch blocks the same way the pulse does — closing the
-# entry-point asymmetry where /full-loop bypassed gates the pulse refused
-# (t2890). Mirrors the logic in .github/workflows/maintainer-gate.yml.
+# dispatch-dedup-helper.sh::enumerate-blockers so /full-loop honors hard
+# structural holds. no-auto-dispatch remains enforced for workers while the
+# explicit interactive issue-start path may implement locally without removing
+# the worker-routing hold. Mirrors .github/workflows/maintainer-gate.yml.
 #
 # Returns:
 #   0 — gate passes (safe to start)
@@ -556,7 +583,11 @@ _auto_claim_interactive() {
 	# claim comment internally. External upstream repos skip the claim path.
 	local helper="${SCRIPT_DIR}/interactive-session-helper.sh"
 	if [[ -x "$helper" ]]; then
-		"$helper" claim "$issue_num" "$repo" --worktree "$(pwd)" || true
+		local -a claim_args=(claim "$issue_num" "$repo" --worktree "$(pwd)")
+		if [[ "${AIDEVOPS_INTERACTIVE_ISSUE_IMPLEMENTATION:-0}" == "1" ]]; then
+			claim_args+=(--implementing)
+		fi
+		"$helper" "${claim_args[@]}" || true
 		print_info "Interactive claim checked: #${issue_num} in ${repo}"
 	else
 		print_warning "interactive-session-helper.sh not found — skipping interactive claim"
@@ -635,14 +666,22 @@ _parse_start_options() {
 			;;
 		--release-type)
 			RELEASE_TYPE="${2:-}"
-			case "$RELEASE_TYPE" in patch | minor | major) ;; *) print_error "Invalid release type: $RELEASE_TYPE"; return 1 ;; esac
+			case "$RELEASE_TYPE" in patch | minor | major) ;; *)
+				print_error "Invalid release type: $RELEASE_TYPE"
+				return 1
+				;;
+			esac
 			RELEASE_INTENT=true
 			RELEASE_STATUS=authorized
 			shift 2
 			;;
 		--deployment-scope)
 			DEPLOYMENT_SCOPE="${2:-}"
-			case "$DEPLOYMENT_SCOPE" in incremental | full) ;; *) print_error "Invalid deployment scope: $DEPLOYMENT_SCOPE"; return 1 ;; esac
+			case "$DEPLOYMENT_SCOPE" in incremental | full) ;; *)
+				print_error "Invalid deployment scope: $DEPLOYMENT_SCOPE"
+				return 1
+				;;
+			esac
 			shift 2
 			;;
 		--headless)
@@ -962,7 +1001,7 @@ _full_loop_record_merged_pr() {
 cmd_status() {
 	is_loop_active || {
 		if [[ "${1:-}" == "--json" ]]; then
-			printf '{"active":false,"executor_status":"inactive"}\n'
+			printf '{"active":false,"executor_status":"inactive","executor_completion_state":"inactive","resource_cleanup_state":"%s"}\n' "$_FULL_LOOP_RESOURCE_NONE"
 			return 0
 		fi
 		echo "No active full loop"
@@ -970,6 +1009,10 @@ cmd_status() {
 	}
 	load_state
 	local observed_status="$EXECUTOR_STATUS"
+	local executor_completion_state="$_FULL_LOOP_EXECUTOR_IN_PROGRESS"
+	local resource_cleanup_state="$_FULL_LOOP_RESOURCE_NONE"
+	local cleanup_worktree=""
+	local cleanup_receipt=""
 	if [[ "$observed_status" == "$_FULL_LOOP_PHASE_RUNNING" ]]; then
 		local observed_command=""
 		local heartbeat_file="${STATE_DIR}/full-loop.heartbeat"
@@ -980,24 +1023,38 @@ cmd_status() {
 		now_epoch=$(date +%s)
 		[[ "$max_heartbeat_age" =~ ^[1-9][0-9]*$ ]] || max_heartbeat_age=120
 		[[ "$EXECUTOR_PID" =~ ^[0-9]+$ ]] && observed_command=$(ps -p "$EXECUTOR_PID" -o command= 2>/dev/null || true)
-		if [[ ! "$EXECUTOR_PID" =~ ^[0-9]+$ ]] || ! kill -0 "$EXECUTOR_PID" 2>/dev/null || \
-			[[ -z "$EXECUTOR_IDENTITY" || "$observed_command" != *"$EXECUTOR_IDENTITY"* || "$heartbeat_run" != "$RUN_ID" ]] || \
+		if [[ ! "$EXECUTOR_PID" =~ ^[0-9]+$ ]] || ! kill -0 "$EXECUTOR_PID" 2>/dev/null ||
+			[[ -z "$EXECUTOR_IDENTITY" || "$observed_command" != *"$EXECUTOR_IDENTITY"* || "$heartbeat_run" != "$RUN_ID" ]] ||
 			[[ "$heartbeat_epoch" -eq 0 || $((now_epoch - heartbeat_epoch)) -gt "$max_heartbeat_age" ]]; then
 			observed_status="stale"
 		fi
 	fi
+	if [[ "${PR_NUMBER:-}" =~ ^[0-9]+$ ]]; then
+		local status_repo=""
+		status_repo=$(_full_loop_resolve_repo "${AIDEVOPS_FULL_LOOP_REPO:-}" 2>/dev/null || true)
+		if [[ -n "$status_repo" ]] && declare -F _full_loop_cleanup_receipt_path >/dev/null 2>&1; then
+			cleanup_receipt=$(_full_loop_cleanup_receipt_path "$status_repo" "$PR_NUMBER" 2>/dev/null || true)
+		fi
+	fi
+	if [[ -n "$cleanup_receipt" && -f "$cleanup_receipt" ]]; then
+		executor_completion_state=$(jq -r --arg fallback "$_FULL_LOOP_EXECUTOR_IN_PROGRESS" '.executor_completion_state // $fallback' "$cleanup_receipt" 2>/dev/null || printf '%s' "$_FULL_LOOP_EXECUTOR_IN_PROGRESS")
+		resource_cleanup_state=$(jq -r --arg fallback "$_FULL_LOOP_RESOURCE_NONE" '.resource_cleanup_state // $fallback' "$cleanup_receipt" 2>/dev/null || printf '%s' "$_FULL_LOOP_RESOURCE_NONE")
+		cleanup_worktree=$(jq -r '.worktree // empty' "$cleanup_receipt" 2>/dev/null || true)
+	fi
 	if [[ "${1:-}" == "--json" ]]; then
 		jq -cn --arg run_id "$RUN_ID" --arg phase "$CURRENT_PHASE" --arg phase_status "$PHASE_STATUS" \
 			--arg executor_status "$observed_status" --arg next_action "$NEXT_ACTION" --arg pr_number "${PR_NUMBER:-}" \
+			--arg executor_completion_state "$executor_completion_state" --arg resource_cleanup_state "$resource_cleanup_state" \
+			--arg cleanup_worktree "$cleanup_worktree" \
 			--arg heartbeat_at "${heartbeat_timestamp:-${HEARTBEAT_AT:-}}" \
 			--argjson revision "$STATE_REVISION" --argjson attempts "$PHASE_ATTEMPT" --argjson manual_resumes "$MANUAL_RESUME_COUNT" \
-			'{run_id:$run_id,phase:$phase,phase_status:$phase_status,executor_status:$executor_status,heartbeat_at:$heartbeat_at,next_action:$next_action,pr_number:$pr_number,state_revision:$revision,phase_attempts:$attempts,manual_resumes:$manual_resumes}'
+			'{run_id:$run_id,phase:$phase,phase_status:$phase_status,executor_status:$executor_status,executor_completion_state:$executor_completion_state,resource_cleanup_state:$resource_cleanup_state,cleanup_worktree:$cleanup_worktree,heartbeat_at:$heartbeat_at,next_action:$next_action,pr_number:$pr_number,state_revision:$revision,phase_attempts:$attempts,manual_resumes:$manual_resumes}'
 		return 0
 	fi
 	printf "\n${BOLD}Full Loop Status${NC}\nPhase: ${CYAN}%s${NC} | Started: %s | PR: %s | Headless: %s\nPrompt: %s\n\n" \
 		"$CURRENT_PHASE" "$STARTED_AT" "${PR_NUMBER:-none}" "$HEADLESS" "$(echo "$SAVED_PROMPT" | head -3)"
-	printf 'Executor: %s | Phase status: %s | Attempts: %s | Next: %s\n' \
-		"$observed_status" "$PHASE_STATUS" "$PHASE_ATTEMPT" "$NEXT_ACTION"
+	printf 'Executor: %s (%s) | Resource cleanup: %s | Phase status: %s | Attempts: %s | Next: %s\n' \
+		"$observed_status" "$executor_completion_state" "$resource_cleanup_state" "$PHASE_STATUS" "$PHASE_ATTEMPT" "$NEXT_ACTION"
 	return 0
 }
 
@@ -1046,6 +1103,40 @@ cmd_logs() {
 	tail -n "$lines" "$log_file"
 }
 
+_full_loop_reconcile_published_release_receipt() {
+	local repo="$1"
+	local pr_number="$2"
+	local receipt_path=""
+	local receipt_status=""
+	local previous_status="${RELEASE_STATUS:-}"
+	receipt_path=$(_full_loop_release_receipt_path "$repo" "$pr_number") || return 1
+	[[ -f "$receipt_path" ]] || return 1
+	IFS= read -r receipt_status <"$receipt_path" || return 1
+	[[ "$receipt_status" == "$_FULL_LOOP_RELEASE_PUBLISHED" ]] || return 1
+	RELEASE_STATUS="$_FULL_LOOP_RELEASE_PUBLISHED"
+	if ! save_state "${CURRENT_PHASE:-${PHASE:-complete}}" "$SAVED_PROMPT" "$pr_number" \
+		"${STARTED_AT:-$(date -u '+%Y-%m-%dT%H:%M:%SZ')}"; then
+		RELEASE_STATUS="$previous_status"
+		return 1
+	fi
+	return 0
+}
+
+_full_loop_reconcile_detached_publication_receipt() {
+	local receipt_repo=""
+	local receipt_path=""
+	local receipt_status=""
+	[[ "${PR_NUMBER:-}" =~ ^[0-9]+$ ]] || return 1
+	receipt_repo=$(_full_loop_resolve_repo "${AIDEVOPS_FULL_LOOP_REPO:-}" 2>/dev/null || true)
+	[[ -n "$receipt_repo" ]] || return 1
+	receipt_path=$(_full_loop_release_receipt_path "$receipt_repo" "$PR_NUMBER") || return 1
+	[[ -f "$receipt_path" ]] || return 1
+	IFS= read -r receipt_status <"$receipt_path" || return 1
+	[[ "$receipt_status" == "$_FULL_LOOP_RELEASE_PUBLISHED" ]] || return 1
+	_full_loop_reconcile_published_release_receipt "$receipt_repo" "$PR_NUMBER" || return 2
+	return 0
+}
+
 cmd_complete() {
 	load_state 2>/dev/null || {
 		print_error "Cannot complete full loop without persisted lifecycle state"
@@ -1054,6 +1145,17 @@ cmd_complete() {
 	if [[ ! "${PR_NUMBER:-}" =~ ^[0-9]+$ ]]; then
 		print_error "Cannot complete full loop without a verified PR number"
 		return 1
+	fi
+	local repo=""
+	repo=$(_full_loop_resolve_repo "${AIDEVOPS_FULL_LOOP_REPO:-}") || {
+		print_error "Cannot resolve repository for deferred cleanup handoff"
+		return 1
+	}
+	if [[ "${RELEASE_STATUS:-}" == "authorized" ]]; then
+		_full_loop_reconcile_published_release_receipt "$repo" "$PR_NUMBER" || {
+			print_error "Cleanup blocked: release:${RELEASE_STATUS} is not terminal-success"
+			return 1
+		}
 	fi
 	case "${RELEASE_STATUS:-$_FULL_LOOP_RELEASE_NOT_REQUESTED}" in
 	failed | authorized)
@@ -1068,9 +1170,28 @@ cmd_complete() {
 	esac
 	local current_root=""
 	current_root=$(git rev-parse --show-toplevel 2>/dev/null || true)
-	print_warning "LIFECYCLE_STATE=DEPLOYED cleanup remains pending for ${current_root:-unknown-worktree}"
-	print_info "After guarded cleanup, run: full-loop-helper.sh complete-after-cleanup ${PR_NUMBER} '${current_root}'"
-	return 1
+	local current_branch=""
+	local owner_pid=""
+	local owner_session="${AIDEVOPS_SESSION_ID:-${OPENCODE_SESSION_ID:-${CLAUDE_SESSION_ID:-full-loop-complete}}}"
+	current_branch=$(git branch --show-current 2>/dev/null || true)
+	owner_pid="${PPID:-}"
+	if declare -F _resolve_worktree_owner_pid >/dev/null 2>&1; then
+		owner_pid=$(_resolve_worktree_owner_pid "" 2>/dev/null || printf '%s' "${PPID:-}")
+	fi
+	if [[ -n "$current_root" && -n "$current_branch" ]] && declare -F full_loop_write_cleanup_deferred >/dev/null 2>&1; then
+		full_loop_write_cleanup_deferred "$repo" "$PR_NUMBER" "$current_root" "$current_branch" \
+			"$owner_pid" "$owner_session" "${RELEASE_STATUS:-$_FULL_LOOP_RELEASE_NOT_REQUESTED}" >/dev/null || {
+			print_error "Cannot persist durable deferred-cleanup handoff"
+			return 1
+		}
+	else
+		print_error "Cannot persist durable deferred-cleanup handoff without worktree and branch evidence"
+		return 1
+	fi
+	print_warning "LIFECYCLE_STATE=CLEANUP_DEFERRED worktree=${current_root}"
+	print_info "Executor complete; guarded cleanup supervisor owns the remaining CLEANED transition"
+	echo "<promise>FULL_LOOP_CLEANUP_DEFERRED</promise>"
+	return 0
 }
 
 _full_loop_resolve_repo() {
@@ -1088,13 +1209,7 @@ _full_loop_resolve_repo() {
 _full_loop_verify_merged_pr() {
 	local pr_number="$1"
 	local repo="$2"
-	local pr_json=""
-	pr_json=$(gh pr view "$pr_number" --repo "$repo" --json state,mergedAt,mergeCommit 2>/dev/null) || return 1
-	printf '%s' "$pr_json" | jq -e '
-		(.state == "MERGED")
-		and ((.mergedAt // "") != "")
-		and ((.mergeCommit.oid // "") != "")
-	' >/dev/null
+	_full_loop_read_fresh_merged_pr_json "$pr_number" "$repo" >/dev/null
 	return $?
 }
 
@@ -1122,6 +1237,9 @@ cmd_record_no_release() {
 	fi
 	case "$release_status" in
 	"$_FULL_LOOP_RELEASE_NOT_REQUESTED")
+		if declare -F full_loop_update_cleanup_release_status >/dev/null 2>&1; then
+			full_loop_update_cleanup_release_status "$repo" "$pr_number" "$_FULL_LOOP_RELEASE_NOT_REQUESTED" || return 1
+		fi
 		print_info "release:not-requested already recorded for PR #${pr_number}"
 		return 0
 		;;
@@ -1136,7 +1254,83 @@ cmd_record_no_release() {
 		;;
 	esac
 	_full_loop_write_release_receipt "$repo" "$pr_number" "$_FULL_LOOP_RELEASE_NOT_REQUESTED" || return 1
+	if declare -F full_loop_update_cleanup_release_status >/dev/null 2>&1; then
+		full_loop_update_cleanup_release_status "$repo" "$pr_number" "$_FULL_LOOP_RELEASE_NOT_REQUESTED" || return 1
+	fi
 	print_success "release:not-requested recorded for merged PR #${pr_number}"
+	return 0
+}
+
+_full_loop_terminal_release_status() {
+	local repo="$1"
+	local pr_number="$2"
+	local receipt_path=""
+	local release_status=""
+	receipt_path=$(_full_loop_release_receipt_path "$repo" "$pr_number") || return 1
+	[[ -f "$receipt_path" ]] || return 1
+	IFS= read -r release_status <"$receipt_path" || return 1
+	[[ "$release_status" == "$_FULL_LOOP_RELEASE_PUBLISHED" || "$release_status" == "$_FULL_LOOP_RELEASE_NOT_REQUESTED" ]] || return 1
+	printf '%s\n' "$release_status"
+	return 0
+}
+
+cmd_finalize_receipt() {
+	local pr_number="${1:-}"
+	local repo=""
+	local release_status=""
+	[[ $# -ge 1 && $# -le 2 && "$pr_number" =~ ^[0-9]+$ ]] || {
+		print_error "Usage: full-loop-helper.sh finalize-receipt <PR> [REPO]"
+		return 1
+	}
+	repo=$(_full_loop_resolve_repo "${2:-}") || return 1
+	_full_loop_verify_merged_pr "$pr_number" "$repo" || {
+		print_error "Finalization blocked: PR #${pr_number} lacks merged evidence"
+		return 1
+	}
+	release_status=$(_full_loop_terminal_release_status "$repo" "$pr_number") || {
+		print_error "Finalization blocked: terminal release evidence is missing"
+		return 1
+	}
+	full_loop_finalize_cleanup_receipt "$repo" "$pr_number" "$release_status" || {
+		print_error "Finalization blocked: cleanup receipt is missing or conflicts with terminal evidence"
+		return 1
+	}
+	print_success "Cleanup receipt finalized for merged PR #${pr_number} (release:${release_status})"
+	return 0
+}
+
+cmd_migrate_repository_receipt() {
+	local pr_number="${1:-}"
+	local old_repo="${2:-}"
+	local new_repo="${3:-}"
+	local source_release=""
+	local destination_release=""
+	local release_status=""
+	if [[ $# -ne 3 || ! "$pr_number" =~ ^[0-9]+$ || "$old_repo" != */* || "$new_repo" != */* || "$old_repo" == "$new_repo" ]]; then
+		print_error "Usage: full-loop-helper.sh migrate-repository-receipt <PR> <OLD_REPO> <NEW_REPO>"
+		return 1
+	fi
+	_full_loop_verify_merged_pr "$pr_number" "$new_repo" || {
+		print_error "Migration blocked: PR #${pr_number} lacks merged evidence in ${new_repo}"
+		return 1
+	}
+	source_release=$(_full_loop_release_receipt_path "$old_repo" "$pr_number") || return 1
+	destination_release=$(_full_loop_release_receipt_path "$new_repo" "$pr_number") || return 1
+	if [[ -f "$source_release" ]]; then
+		IFS= read -r release_status <"$source_release" || true
+	elif [[ -f "$destination_release" ]]; then
+		IFS= read -r release_status <"$destination_release" || true
+	fi
+	[[ "$release_status" == "$_FULL_LOOP_RELEASE_PUBLISHED" || "$release_status" == "$_FULL_LOOP_RELEASE_NOT_REQUESTED" ]] || {
+		print_error "Migration blocked: terminal release evidence is missing"
+		return 1
+	}
+	full_loop_migrate_cleanup_receipt "$old_repo" "$new_repo" "$pr_number" \
+		"$source_release" "$destination_release" "$release_status" || {
+		print_error "Migration blocked: source evidence is missing or destination evidence conflicts"
+		return 1
+	}
+	print_success "Migrated full-loop receipts from ${old_repo} to ${new_repo} for PR #${pr_number}"
 	return 0
 }
 
@@ -1166,7 +1360,7 @@ _full_loop_verify_aidevops_release_deploy() {
 	[[ -f "${HOME}/.aidevops/agents/VERSION" ]] && IFS= read -r deployed_version <"${HOME}/.aidevops/agents/VERSION"
 	[[ "$deployed_version" == "$version" ]] || return 1
 	local postflight="${SCRIPT_DIR}/postflight-check.sh"
-	[[ -x "$postflight" ]] || return 1
+	[[ -f "$postflight" ]] || return 1
 	bash "$postflight" --quick --sha "$release_sha" >/dev/null 2>&1 || return 1
 	return 0
 }
@@ -1199,6 +1393,12 @@ cmd_complete_after_cleanup() {
 		print_error "Completion blocked: no removal audit evidence for ${removed_worktree}"
 		return 1
 	}
+	if declare -F full_loop_mark_cleanup_cleaned_for_worktree >/dev/null 2>&1; then
+		full_loop_mark_cleanup_cleaned_for_worktree "$removed_worktree" || {
+			print_error "Completion blocked: durable cleanup receipt is not CLEANED for ${removed_worktree}"
+			return 1
+		}
+	fi
 	_full_loop_verify_merged_pr "$pr_number" "$repo" || {
 		print_error "Completion blocked: PR #${pr_number} lacks merged evidence"
 		return 1

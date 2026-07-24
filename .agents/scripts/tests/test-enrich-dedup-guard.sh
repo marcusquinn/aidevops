@@ -5,7 +5,7 @@
 # test-enrich-dedup-guard.sh — GH#19856 regression guard.
 #
 # Asserts that the enrich path in issue-sync-helper.sh respects the
-# dispatch-dedup-helper.sh is-assigned guard before modifying issue
+# dispatch-dedup-helper.sh read-only assignment guard before modifying issue
 # labels, title, or body. Also verifies that coordination-signal labels
 # are protected by _is_protected_label.
 #
@@ -32,6 +32,7 @@ print_result() {
 		printf '%sFAIL%s %s %s\n' "$TEST_RED" "$TEST_RESET" "$name" "$extra"
 		TESTS_FAILED=$((TESTS_FAILED + 1))
 	fi
+	return 0
 }
 
 # Sandbox HOME so sourcing is side-effect-free
@@ -89,32 +90,43 @@ for lbl in "bug" "enhancement" "simplification" "architecture"; do
 done
 
 # =============================================================================
-# Part 2 — dispatch-dedup-helper.sh is-assigned blocks on active claims
+# Part 2 — read-only assignment inspection blocks on active claims
 # =============================================================================
 # Stub the `gh` CLI to return synthetic issue payloads.
 STUB_DIR="${TEST_ROOT}/bin"
 mkdir -p "$STUB_DIR"
+GH_WRITE_LOG="${TEST_ROOT}/gh-writes.log"
+: >"$GH_WRITE_LOG"
+export GH_WRITE_LOG
 
 write_stub_gh() {
 	local payload="$1"
+	local fail_reads="${2:-false}"
 	cat >"${STUB_DIR}/gh" <<STUB
 #!/usr/bin/env bash
 # Stub gh for test — returns pre-configured JSON for issue view
 _main() {
 	local cmd="\$1" sub="\$2"
+	if [[ "\$cmd" == "issue" && ("\$sub" == "edit" || "\$sub" == "comment") ]]; then
+		printf '%s\n' "\$*" >>"\${GH_WRITE_LOG}"
+		return 0
+	fi
 	if [[ "\$cmd" == "issue" && "\$sub" == "view" ]]; then
+		[[ "${fail_reads}" == "true" ]] && return 1
 		echo '${payload}'
-		exit 0
+		return 0
 	fi
 	if [[ "\$cmd" == "api" ]]; then
+		[[ "${fail_reads}" == "true" ]] && return 1
 		echo '{"login": "testbot"}'
-		exit 0
+		return 0
 	fi
-	exit 1
+	return 1
 }
 _main "\$@"
 STUB
 	chmod +x "${STUB_DIR}/gh"
+	return 0
 }
 
 # Prepend stub dir so our stub shadows the real gh
@@ -122,7 +134,7 @@ export PATH="${STUB_DIR}:${PATH}"
 
 # Test: issue with status:in-review + assignee should block (return 0)
 write_stub_gh '{"state":"OPEN","assignees":[{"login":"runnerA"}],"labels":[{"name":"status:in-review"}]}'
-_dedup_result=$("${TEST_SCRIPTS_DIR}/dispatch-dedup-helper.sh" is-assigned 123 "test/repo" "runnerB" 2>/dev/null) || true
+_dedup_result=$("${TEST_SCRIPTS_DIR}/dispatch-dedup-helper.sh" is-assigned-read-only 123 "test/repo" "runnerB" 2>/dev/null) || true
 if [[ -n "$_dedup_result" ]]; then
 	print_result "is-assigned blocks when status:in-review + other assignee" 0
 else
@@ -131,7 +143,7 @@ fi
 
 # Test: issue with origin:interactive + assignee should block
 write_stub_gh '{"state":"OPEN","assignees":[{"login":"maintainer"}],"labels":[{"name":"origin:interactive"}]}'
-_dedup_result=$("${TEST_SCRIPTS_DIR}/dispatch-dedup-helper.sh" is-assigned 123 "test/repo" "runnerB" 2>/dev/null) || true
+_dedup_result=$("${TEST_SCRIPTS_DIR}/dispatch-dedup-helper.sh" is-assigned-read-only 123 "test/repo" "runnerB" 2>/dev/null) || true
 if [[ -n "$_dedup_result" ]]; then
 	print_result "is-assigned blocks when origin:interactive + assignee" 0
 else
@@ -140,7 +152,7 @@ fi
 
 # Test: issue with status:claimed + assignee should block
 write_stub_gh '{"state":"OPEN","assignees":[{"login":"runnerA"}],"labels":[{"name":"status:claimed"}]}'
-_dedup_result=$("${TEST_SCRIPTS_DIR}/dispatch-dedup-helper.sh" is-assigned 123 "test/repo" "runnerB" 2>/dev/null) || true
+_dedup_result=$("${TEST_SCRIPTS_DIR}/dispatch-dedup-helper.sh" is-assigned-read-only 123 "test/repo" "runnerB" 2>/dev/null) || true
 if [[ -n "$_dedup_result" ]]; then
 	print_result "is-assigned blocks when status:claimed + other assignee" 0
 else
@@ -149,7 +161,7 @@ fi
 
 # Test: issue with no active labels + no assignee should pass (return 1)
 write_stub_gh '{"state":"OPEN","assignees":[],"labels":[{"name":"bug"}]}'
-_dedup_result=$("${TEST_SCRIPTS_DIR}/dispatch-dedup-helper.sh" is-assigned 123 "test/repo" "runnerB" 2>/dev/null) || true
+_dedup_result=$("${TEST_SCRIPTS_DIR}/dispatch-dedup-helper.sh" is-assigned-read-only 123 "test/repo" "runnerB" 2>/dev/null) || true
 if [[ -z "$_dedup_result" ]]; then
 	print_result "is-assigned allows when no claim + no assignee" 0
 else
@@ -159,28 +171,44 @@ fi
 # =============================================================================
 # Part 3 — _enrich_process_task aborts when dedup guard fires
 # =============================================================================
-# This is a structural check: verify the guard code exists in the function body.
-# A live test would require too much scaffolding (TODO.md, brief files, etc.).
 # Check that the extracted helper function exists
-if grep -q '_enrich_check_active_claim()' "${TEST_SCRIPTS_DIR}/issue-sync-helper.sh"; then
+if grep -q '_enrich_check_active_claim()' "${TEST_SCRIPTS_DIR}/issue-sync-helper-enrich.sh"; then
 	print_result "_enrich_check_active_claim function exists (GH#19856)" 0
 else
 	print_result "_enrich_check_active_claim function exists (GH#19856)" 1 "(function not found)"
 fi
 
 # Check that _enrich_process_task calls the guard
-if grep -q '_enrich_check_active_claim' "${TEST_SCRIPTS_DIR}/issue-sync-helper.sh" | grep -v '^_enrich_check_active_claim()' >/dev/null 2>&1; then
-	# Fallback: just check the function is called somewhere in the file besides its own definition
-	true
-fi
-if grep -c '_enrich_check_active_claim' "${TEST_SCRIPTS_DIR}/issue-sync-helper.sh" | grep -q '^[2-9]'; then
+if grep -q 'if _enrich_check_active_claim' "${TEST_SCRIPTS_DIR}/issue-sync-helper.sh"; then
 	print_result "_enrich_process_task calls GH#19856 dedup guard" 0
 else
 	print_result "_enrich_process_task calls GH#19856 dedup guard" 1 "(guard call not found in _enrich_process_task)"
 fi
 
+# Exercise the real enrich guard with an old interactive claim. The read-only
+# path must block enrichment without edit/comment recovery writes (GH#28498).
+: >"$GH_WRITE_LOG"
+export AIDEVOPS_SESSION_USER="runnerB"
+active_claim_json='{"state":"OPEN","assignees":[{"login":"runnerA"}],"labels":[{"name":"origin:interactive"},{"name":"status:in-review"}]}'
+if _enrich_check_active_claim 123 "test/repo" "t28498" "$active_claim_json" >/dev/null 2>&1 \
+	&& [[ ! -s "$GH_WRITE_LOG" ]]; then
+	print_result "enrich guard blocks active interactive claim with zero GitHub writes" 0
+else
+	print_result "enrich guard blocks active interactive claim with zero GitHub writes" 1 "(guard passed or emitted a write)"
+fi
+
+# Metadata uncertainty must also fail closed without trying recovery writes.
+: >"$GH_WRITE_LOG"
+write_stub_gh '{}' true
+if _enrich_check_active_claim 123 "test/repo" "t28498" "" >/dev/null 2>&1 \
+	&& [[ ! -s "$GH_WRITE_LOG" ]]; then
+	print_result "enrich guard fails closed on uncertain metadata with zero GitHub writes" 0
+else
+	print_result "enrich guard fails closed on uncertain metadata with zero GitHub writes" 1 "(guard passed or emitted a write)"
+fi
+
 # Part 3b — _ensure_issue_body_has_brief also has the guard
-if grep -q 'GH#19856.*skipping force-enrich' "${TEST_SCRIPTS_DIR}/pulse-dispatch-core.sh"; then
+if grep -q 'is-assigned-read-only' "${TEST_SCRIPTS_DIR}/pulse-dispatch-core.sh"; then
 	print_result "_ensure_issue_body_has_brief contains GH#19856 dedup guard" 0
 else
 	print_result "_ensure_issue_body_has_brief contains GH#19856 dedup guard" 1 "(guard code not found)"

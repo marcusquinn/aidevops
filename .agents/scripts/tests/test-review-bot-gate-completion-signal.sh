@@ -9,12 +9,13 @@
 #   2. "Review failed" notices (closed-during-review)
 #   3. "Review skipped" notices (auto-review label config)
 #   4. "closed or merged during review" patterns
-#   5. Empty bodies
+#   5. Provider retirement notices with no review content
+#   6. Empty bodies
 #
 # And accepts:
-#   6. Comments edited > min_lag after creation (Phase 2 settled)
-#   7. Comments older than min_lag (no edit needed — bot had time to finish)
-#   8. Real review content with no non-review-pattern match
+#   7. Comments edited > min_lag after creation (Phase 2 settled)
+#   8. Comments older than min_lag (no edit needed — bot had time to finish)
+#   9. Real review content with no non-review-pattern match
 #
 # Plus unit tests on _comment_is_settled, is_non_review_comment, and
 # _get_min_edit_lag direct invocations (no gh stubbing needed).
@@ -34,6 +35,7 @@ fi
 readonly TEST_RED='\033[0;31m'
 readonly TEST_GREEN='\033[0;32m'
 readonly TEST_RESET='\033[0m'
+readonly GEMINI_SUNSET_NOTICE='The consumer version of Gemini Code Assist on GitHub has been sunset. All code review activity has officially ceased.'
 
 TESTS_RUN=0
 TESTS_FAILED=0
@@ -64,6 +66,9 @@ setup_test_env() {
 	mkdir -p "${TEST_ROOT}/config/aidevops"
 	export PATH="${TEST_ROOT}/bin:${PATH}"
 	export HOME="${TEST_ROOT}"
+	# This suite exercises the legacy direct-query classifiers with narrow gh
+	# stubs. Snapshot request counts and freshness have a dedicated regression.
+	export REVIEW_GATE_EVIDENCE_SNAPSHOT_DISABLE=1
 	mkdir -p "${TEST_ROOT}/.config/aidevops"
 
 	# Minimal repos.json for resolver tests
@@ -183,6 +188,15 @@ test_is_non_review_comment_matches_closed_during_review() {
 	return 0
 }
 
+test_is_non_review_comment_matches_gemini_sunset_notice() {
+	if is_non_review_comment "$GEMINI_SUNSET_NOTICE"; then
+		print_result "is_non_review_comment matches Gemini Code Assist sunset notice" 0
+	else
+		print_result "is_non_review_comment matches Gemini Code Assist sunset notice" 1
+	fi
+	return 0
+}
+
 test_is_non_review_comment_rejects_real_review() {
 	local body="## Walkthrough
 
@@ -245,6 +259,24 @@ test_event_check_rejects_bot_failure_notice() {
 	return 0
 }
 
+test_event_check_rejects_bot_sunset_notice() {
+	local output="" status=0
+	output=$(REVIEW_GATE_EVENT_NAME=pull_request_review_comment \
+		REVIEW_GATE_EVENT_ACTION=created \
+		REVIEW_GATE_EVENT_ACTOR='gemini-code-assist[bot]' \
+		REVIEW_GATE_EVENT_BODY="$GEMINI_SUNSET_NOTICE" \
+		REVIEW_GATE_EVIDENCE_HEAD_SHA='head-123' \
+		REVIEW_GATE_EXPECTED_HEAD_SHA='head-123' \
+		do_event_check) || status=$?
+	if [[ "$status" -eq 1 && "$output" == "NOT_APPLICABLE" ]]; then
+		print_result "event-check rejects Gemini Code Assist sunset notices" 0
+	else
+		print_result "event-check rejects Gemini Code Assist sunset notices" 1 \
+			"status=${status} output=${output}"
+	fi
+	return 0
+}
+
 test_event_check_rejects_stale_head_evidence() {
 	local output="" status=0
 	output=$(REVIEW_GATE_EVENT_NAME=pull_request_review_comment \
@@ -272,13 +304,25 @@ test_self_caller_uses_pr_head_helper_ref() {
 	return 0
 }
 
+test_callers_expose_explicit_ci_strict_opt_in() {
+	local caller="${SCRIPT_DIR}/../../../.github/workflows/review-bot-gate.yml"
+	local template="${SCRIPT_DIR}/../../templates/workflows/review-bot-gate-caller.yml"
+	local policy_line="completion_behavior: \${{ vars.AIDEVOPS_REVIEW_GATE_COMPLETION_BEHAVIOR || 'fast' }}"
+	if grep -Fq "$policy_line" "$caller" && grep -Fq "$policy_line" "$template"; then
+		print_result "review-gate callers expose explicit CI strict opt-in" 0
+	else
+		print_result "review-gate callers expose explicit CI strict opt-in" 1
+	fi
+	return 0
+}
+
 test_infra_rate_limit_passes_trusted_default_policy() {
 	local output
 	output=$(classify_infra_rate_limit "MEMBER" "testorg/otherrepo")
-	if [[ "$output" == "PASS_RATE_LIMITED" ]]; then
-		print_result "API exhaustion passes for trusted default policy" 0
+	if [[ "$output" == "PASS_ADVISORY" ]]; then
+		print_result "API exhaustion delegates to trusted advisory-default policy" 0
 	else
-		print_result "API exhaustion passes for trusted default policy" 1 "output=${output}"
+		print_result "API exhaustion delegates to trusted advisory-default policy" 1 "output=${output}"
 	fi
 	return 0
 }
@@ -340,6 +384,15 @@ test_is_rate_limit_only_rejects_review_skipped() {
 		print_result "is_rate_limit_only_comment rejects 'Review skipped'" 0
 	else
 		print_result "is_rate_limit_only_comment rejects 'Review skipped'" 1
+	fi
+	return 0
+}
+
+test_is_rate_limit_only_rejects_gemini_sunset_notice() {
+	if ! is_rate_limit_only_comment "$GEMINI_SUNSET_NOTICE"; then
+		print_result "is_rate_limit_only_comment rejects Gemini Code Assist sunset notice" 0
+	else
+		print_result "is_rate_limit_only_comment rejects Gemini Code Assist sunset notice" 1
 	fi
 	return 0
 }
@@ -636,6 +689,90 @@ test_get_completion_behavior_defaults_fast() {
 	else
 		print_result "completion_behavior defaults to fast throughput mode" 1 \
 			"got '${behavior}', expected 'fast'"
+	fi
+	return 0
+}
+
+test_trusted_default_does_not_require_completed_review() {
+	if REVIEW_GATE_AUTHOR_ASSOCIATION=MEMBER _review_gate_requires_completed_review 'testorg/otherrepo'; then
+		print_result "trusted fast default keeps add-on review advisory" 1
+	else
+		print_result "trusted fast default keeps add-on review advisory" 0
+	fi
+	return 0
+}
+
+test_owner_rest_association_does_not_require_completed_review() {
+	gh() {
+		if [[ "${1:-}" == "api" && "${2:-}" == "repos/testorg/otherrepo/pulls/123" ]]; then
+			printf '%s\n' 'OWNER'
+			return 0
+		fi
+		return 2
+	}
+
+	local association=""
+	association=$(_resolve_pr_author_association 123 'testorg/otherrepo')
+	unset -f gh
+	if [[ "$association" == "OWNER" ]] &&
+		! REVIEW_GATE_AUTHOR_ASSOCIATION="$association" _review_gate_requires_completed_review 'testorg/otherrepo'; then
+		print_result "REST resolver restores trusted OWNER advisory behavior" 0
+	else
+		print_result "REST resolver restores trusted OWNER advisory behavior" 1 \
+			"association=${association:-<empty>}"
+	fi
+	return 0
+}
+
+test_trusted_strict_repo_requires_completed_review() {
+	if REVIEW_GATE_AUTHOR_ASSOCIATION=MEMBER _review_gate_requires_completed_review 'testorg/strictrepo'; then
+		print_result "trusted strict repo requires completed add-on review" 0
+	else
+		print_result "trusted strict repo requires completed add-on review" 1
+	fi
+	return 0
+}
+
+test_external_default_requires_completed_review() {
+	if REVIEW_GATE_AUTHOR_ASSOCIATION=CONTRIBUTOR _review_gate_requires_completed_review 'testorg/otherrepo'; then
+		print_result "external author preserves completed-review trust boundary" 0
+	else
+		print_result "external author preserves completed-review trust boundary" 1
+	fi
+	return 0
+}
+
+test_untrusted_association_matrix_requires_completed_review() {
+	local association=""
+	local failures=""
+	for association in CONTRIBUTOR NONE FIRST_TIMER FIRST_TIME_CONTRIBUTOR FUTURE_ENUM ""; do
+		if ! REVIEW_GATE_AUTHOR_ASSOCIATION="$association" _review_gate_requires_completed_review 'testorg/otherrepo'; then
+			failures="${failures}${association:-<empty>} "
+		fi
+	done
+	if [[ -z "$failures" ]]; then
+		print_result "external, unknown, and empty associations fail closed" 0
+	else
+		print_result "external, unknown, and empty associations fail closed" 1 \
+			"unexpected advisory associations: ${failures}"
+	fi
+	return 0
+}
+
+test_malformed_metadata_and_rest_failure_fail_closed() {
+	gh() {
+		return 42
+	}
+
+	local association=""
+	association=$(_resolve_pr_author_association 123 'testorg/otherrepo' '{malformed-json')
+	unset -f gh
+	if [[ -z "$association" ]] &&
+		REVIEW_GATE_AUTHOR_ASSOCIATION="$association" _review_gate_requires_completed_review 'testorg/otherrepo'; then
+		print_result "malformed metadata plus REST failure remains unknown" 0
+	else
+		print_result "malformed metadata plus REST failure remains unknown" 1 \
+			"association=${association:-<empty>}"
 	fi
 	return 0
 }
@@ -971,7 +1108,7 @@ test_do_check_passes_true_rate_limit_only() {
 	any_bot_has_success_status() { return 1; }
 
 	local output status
-	if output=$(do_check 123 'testorg/otherrepo' 2>/dev/null); then
+	if output=$(REVIEW_GATE_AUTHOR_ASSOCIATION=MEMBER do_check 123 'testorg/otherrepo' 2>/dev/null); then
 		status=0
 	else
 		status=$?
@@ -986,7 +1123,7 @@ test_do_check_passes_true_rate_limit_only() {
 	return 0
 }
 
-test_do_check_blocks_non_rate_limit_non_review_states() {
+test_do_check_advises_non_rate_limit_non_review_states_by_default() {
 	check_for_skip_label() { return 1; }
 	get_all_bot_commenters() {
 		printf '%s\n' 'coderabbitai'
@@ -1001,17 +1138,130 @@ test_do_check_blocks_non_rate_limit_non_review_states() {
 	any_bot_has_success_status() { return 1; }
 
 	local output status
-	if output=$(do_check 123 'testorg/otherrepo' 2>/dev/null); then
+	if output=$(REVIEW_GATE_AUTHOR_ASSOCIATION=MEMBER do_check 123 'testorg/otherrepo' 2>/dev/null); then
+		status=0
+	else
+		status=$?
+	fi
+
+	if [[ "$status" -eq 0 && "$output" == "PASS_ADVISORY" ]]; then
+		print_result "do_check treats non-review provider states as advisory by default" 0
+	else
+		print_result "do_check treats non-review provider states as advisory by default" 1 \
+			"status=${status} output=${output}"
+	fi
+	return 0
+}
+
+test_do_check_blocks_non_review_states_in_strict_mode() {
+	check_for_skip_label() { return 1; }
+	get_all_bot_commenters() {
+		printf '%s\n' 'coderabbitai'
+		return 0
+	}
+	_get_success_status_contexts() { return 1; }
+	bot_has_real_review() { return 1; }
+	bot_get_notice_category() {
+		echo "non-rate-limit"
+		return 0
+	}
+	any_bot_has_success_status() { return 1; }
+
+	local output status
+	if output=$(REVIEW_GATE_AUTHOR_ASSOCIATION=MEMBER do_check 123 'testorg/strictrepo' 2>/dev/null); then
 		status=0
 	else
 		status=$?
 	fi
 
 	if [[ "$status" -eq 1 && "$output" == "WAITING" ]]; then
-		print_result "do_check blocks non-rate-limit non-review states" 0
+		print_result "do_check blocks non-review states after strict opt-in" 0
 	else
-		print_result "do_check blocks non-rate-limit non-review states" 1 \
+		print_result "do_check blocks non-review states after strict opt-in" 1 \
 			"status=${status} output=${output}"
+	fi
+	return 0
+}
+
+test_do_check_blocks_external_non_review_states() {
+	check_for_skip_label() { return 1; }
+	get_all_bot_commenters() {
+		printf '%s\n' 'coderabbitai'
+		return 0
+	}
+	_get_success_status_contexts() { return 1; }
+	bot_has_real_review() { return 1; }
+	bot_get_notice_category() {
+		echo "non-rate-limit"
+		return 0
+	}
+	any_bot_has_success_status() { return 1; }
+
+	local output status
+	if output=$(REVIEW_GATE_AUTHOR_ASSOCIATION=CONTRIBUTOR do_check 123 'testorg/otherrepo' 2>/dev/null); then
+		status=0
+	else
+		status=$?
+	fi
+
+	if [[ "$status" -eq 1 && "$output" == "WAITING" ]]; then
+		print_result "do_check preserves external-author review trust boundary" 0
+	else
+		print_result "do_check preserves external-author review trust boundary" 1 \
+			"status=${status} output=${output}"
+	fi
+	return 0
+}
+
+test_do_check_advises_when_no_bots_are_present() {
+	check_for_skip_label() { return 1; }
+	get_all_bot_commenters() { return 0; }
+	_get_success_status_contexts() { return 1; }
+
+	local output status
+	if output=$(REVIEW_GATE_AUTHOR_ASSOCIATION=MEMBER do_check 123 'testorg/otherrepo' 2>/dev/null); then
+		status=0
+	else
+		status=$?
+	fi
+
+	if [[ "$status" -eq 0 && "$output" == "PASS_ADVISORY" ]]; then
+		print_result "do_check does not wait for an absent add-on under default policy" 0
+	else
+		print_result "do_check does not wait for an absent add-on under default policy" 1 \
+			"status=${status} output=${output}"
+	fi
+	return 0
+}
+
+test_do_check_honors_skip_for_trusted_author() {
+	check_for_skip_label() { return 0; }
+	local output status
+	if output=$(REVIEW_GATE_AUTHOR_ASSOCIATION=MEMBER do_check 123 'testorg/otherrepo' 2>/dev/null); then
+		status=0
+	else
+		status=$?
+	fi
+	if [[ "$status" -eq 0 && "$output" == "SKIP" ]]; then
+		print_result "do_check honors skip label for trusted author" 0
+	else
+		print_result "do_check honors skip label for trusted author" 1 "status=${status} output=${output}"
+	fi
+	return 0
+}
+
+test_do_check_denies_skip_for_external_author() {
+	check_for_skip_label() { return 0; }
+	local output status
+	if output=$(REVIEW_GATE_AUTHOR_ASSOCIATION=CONTRIBUTOR do_check 123 'testorg/otherrepo' 2>/dev/null); then
+		status=0
+	else
+		status=$?
+	fi
+	if [[ "$status" -eq 1 && "$output" == "WAITING" ]]; then
+		print_result "do_check denies skip label for external author" 0
+	else
+		print_result "do_check denies skip label for external author" 1 "status=${status} output=${output}"
 	fi
 	return 0
 }
@@ -1110,9 +1360,9 @@ test_status_json_denies_external_rate_limit_grace() {
 	return 0
 }
 
-test_status_json_allows_trusted_skip() {
+test_status_json_allows_trusted_advisory_default() {
 	do_check() {
-		printf 'SKIP\n'
+		printf 'PASS_ADVISORY\n'
 		return 0
 	}
 	gh() {
@@ -1121,10 +1371,77 @@ test_status_json_allows_trusted_skip() {
 	}
 	local output=""
 	output=$(do_status_json 123 'testorg/otherrepo')
+	if jq -e '.status == "PASS_ADVISORY" and .head_sha == "head-123" and .author.class == "trusted" and .permitted == true and .reason == "trusted_advisory_default" and .merge_gate == "clear"' <<<"$output" >/dev/null; then
+		print_result "status-json permits trusted current-head advisory default" 0
+	else
+		print_result "status-json permits trusted current-head advisory default" 1 "output=${output}"
+	fi
+	return 0
+}
+
+test_status_json_denies_external_advisory_default() {
+	do_check() {
+		printf 'PASS_ADVISORY\n'
+		return 0
+	}
+	gh() {
+		printf '%s\n' '{"head":{"sha":"head-123"},"user":{"login":"external"},"author_association":"CONTRIBUTOR"}'
+		return 0
+	}
+	local output=""
+	output=$(do_status_json 123 'testorg/otherrepo')
+	if jq -e '.status == "PASS_ADVISORY" and .author.class == "external" and .permitted == false and .reason == "external_advisory_denied" and .merge_gate == "blocked"' <<<"$output" >/dev/null; then
+		print_result "status-json denies external advisory outcome" 0
+	else
+		print_result "status-json denies external advisory outcome" 1 "output=${output}"
+	fi
+	return 0
+}
+
+test_status_json_allows_trusted_skip() {
+	do_check() {
+		printf 'SKIP\n'
+		return 0
+	}
+	gh() {
+		printf '%s\n' '{"head":{"sha":"head-123"},"user":{"login":"maintainer"},"author_association":"MEMBER","labels":[{"name":"skip-review-gate"}]}'
+		return 0
+	}
+	local output=""
+	output=$(do_status_json 123 'testorg/otherrepo')
 	if jq -e '.status == "SKIP" and .head_sha == "head-123" and .author.class == "trusted" and .permitted == true and .merge_gate == "clear"' <<<"$output" >/dev/null; then
 		print_result "status-json permits trusted current-head skip" 0
 	else
 		print_result "status-json permits trusted current-head skip" 1 "output=${output}"
+	fi
+	return 0
+}
+
+test_status_json_denies_skip_removed_during_decision() {
+	do_check() {
+		printf 'SKIP\n'
+		return 0
+	}
+	local gh_count_file="${TEST_ROOT}/status-json-skip-gh-count"
+	printf '0\n' >"$gh_count_file"
+	gh() {
+		local gh_calls=0
+		IFS= read -r gh_calls <"$gh_count_file" || gh_calls=0
+		gh_calls=$((gh_calls + 1))
+		printf '%s\n' "$gh_calls" >"$gh_count_file"
+		if [[ "$gh_calls" -eq 1 ]]; then
+			printf '%s\n' '{"head":{"sha":"head-123"},"user":{"login":"maintainer"},"author_association":"MEMBER","labels":[{"name":"skip-review-gate"}]}'
+		else
+			printf '%s\n' '{"head":{"sha":"head-123"},"user":{"login":"maintainer"},"author_association":"MEMBER","labels":[]}'
+		fi
+		return 0
+	}
+	local output=""
+	output=$(do_status_json 123 'testorg/otherrepo')
+	if jq -e '.status == "SKIP" and .author.class == "trusted" and .permitted == false and .merge_gate == "blocked"' <<<"$output" >/dev/null; then
+		print_result "status-json denies a skip label removed during the decision" 0
+	else
+		print_result "status-json denies a skip label removed during the decision" 1 "output=${output}"
 	fi
 	return 0
 }
@@ -1145,6 +1462,26 @@ test_status_json_fails_closed_without_pr_metadata() {
 	return 0
 }
 
+run_completion_requirement_tests() {
+	test_trusted_default_does_not_require_completed_review
+	test_owner_rest_association_does_not_require_completed_review
+	test_trusted_strict_repo_requires_completed_review
+	test_external_default_requires_completed_review
+	test_untrusted_association_matrix_requires_completed_review
+	test_malformed_metadata_and_rest_failure_fail_closed
+	return 0
+}
+
+run_status_json_tests() {
+	test_status_json_denies_external_rate_limit_grace
+	test_status_json_allows_trusted_advisory_default
+	test_status_json_denies_external_advisory_default
+	test_status_json_allows_trusted_skip
+	test_status_json_denies_skip_removed_during_decision
+	test_status_json_fails_closed_without_pr_metadata
+	return 0
+}
+
 # ---------- Run ----------
 
 main() {
@@ -1160,18 +1497,22 @@ main() {
 	test_is_non_review_comment_matches_review_failed
 	test_is_non_review_comment_matches_review_skipped
 	test_is_non_review_comment_matches_closed_during_review
+	test_is_non_review_comment_matches_gemini_sunset_notice
 	test_is_non_review_comment_rejects_real_review
 	test_event_check_accepts_trusted_inline_bot_review
 	test_event_check_rejects_human_inline_reply
 	test_event_check_rejects_bot_failure_notice
+	test_event_check_rejects_bot_sunset_notice
 	test_event_check_rejects_stale_head_evidence
 	test_self_caller_uses_pr_head_helper_ref
+	test_callers_expose_explicit_ci_strict_opt_in
 	test_infra_rate_limit_passes_trusted_default_policy
 	test_infra_rate_limit_blocks_external_author
 	test_infra_rate_limit_blocks_explicit_wait_or_strict_policy
 	test_is_rate_limit_only_matches_rate_limit
 	test_is_rate_limit_only_rejects_review_failed
 	test_is_rate_limit_only_rejects_review_skipped
+	test_is_rate_limit_only_rejects_gemini_sunset_notice
 	test_is_rate_limit_only_rejects_real_review
 
 	echo ""
@@ -1201,6 +1542,7 @@ main() {
 	echo "=== Opt-in strict completion (GH#23066) ==="
 	test_get_completion_behavior_strict_repo
 	test_get_completion_behavior_defaults_fast
+	run_completion_requirement_tests
 	test_strict_coderabbit_pending_status_blocks_edited_comment
 	test_strict_coderabbit_success_status_passes_edited_comment
 	test_any_bot_success_status_reuses_provided_contexts
@@ -1222,15 +1564,18 @@ main() {
 	echo ""
 	echo "=== do_check decision buckets (GH#22802) ==="
 	test_do_check_passes_true_rate_limit_only
-	test_do_check_blocks_non_rate_limit_non_review_states
+	test_do_check_advises_non_rate_limit_non_review_states_by_default
+	test_do_check_blocks_non_review_states_in_strict_mode
+	test_do_check_blocks_external_non_review_states
+	test_do_check_advises_when_no_bots_are_present
 	test_do_check_accepts_non_review_with_success_status
 	test_do_check_fetches_success_status_contexts_once
+	test_do_check_honors_skip_for_trusted_author
+	test_do_check_denies_skip_for_external_author
 
 	echo ""
 	echo "=== Typed current-head evidence ==="
-	test_status_json_denies_external_rate_limit_grace
-	test_status_json_allows_trusted_skip
-	test_status_json_fails_closed_without_pr_metadata
+	run_status_json_tests
 
 	echo ""
 	echo "Tests run: ${TESTS_RUN}, failed: ${TESTS_FAILED}"

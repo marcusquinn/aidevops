@@ -115,6 +115,45 @@ expired_result=$(_sync_declared_blocked_by_edges t1 "${TMP_DIR}/TODO.md" example
 [[ "$expired_result" == "0:1" ]] || fail "expired edge loop did not stop with retryable state: $expired_result"
 pass "edge loop stops with retryable state after aggregate exhaustion"
 
+: >"$_RELATIONSHIP_RESULT_FILE"
+MUTATION_FIXTURE=""
+_gh_with_timeout() {
+	local operation="$1"
+	: "$operation"
+	case "$MUTATION_FIXTURE" in
+	created)
+		printf '{"data":{"issue":{"number":101}}}\n'
+		return 0
+		;;
+	already-present)
+		printf 'already been taken\n'
+		return 1
+		;;
+	failed)
+		printf '{"errors":[{"message":"SECRET_PAYLOAD"}]}\n'
+		return 1
+		;;
+	esac
+	return 1
+}
+DRY_RUN=false
+MUTATION_FIXTURE="created"
+_gh_add_blocked_by NODE_101 NODE_102 || fail "created mutation fixture failed"
+MUTATION_FIXTURE="already-present"
+_gh_add_blocked_by NODE_101 NODE_103 || fail "already-present mutation fixture failed"
+MUTATION_FIXTURE="failed"
+mutation_rc=0
+_gh_add_blocked_by NODE_101 NODE_104 || mutation_rc=$?
+[[ "$mutation_rc" -eq 1 ]] || fail "failed mutation fixture did not fail"
+_relationship_record_outcome "deferred:deadline"
+mixed_summary=$(_relationship_print_summary 1 0 1 2 true)
+[[ "$mixed_summary" == *"Edges: created=1 already-present=1 failed=1 deferred=1"* ]] || fail "mixed outcomes were not distinguished: $mixed_summary"
+[[ "$mixed_summary" == *"Tasks: attempted=1 complete=0/1"* ]] || fail "partial task was presented as complete: $mixed_summary"
+[[ "$mixed_summary" == *"Failure: failed:graphql"* ]] || fail "sanitized failure class was not retained: $mixed_summary"
+[[ "$mixed_summary" != *"SECRET_PAYLOAD"* ]] || fail "raw GraphQL payload leaked into summary"
+[[ "$mixed_summary" == *"Recovery: rerun"* ]] || fail "partial summary omitted recovery command"
+pass "mixed relationship outcomes remain actionable and sanitized"
+
 _sync_blocked_by_for_task() {
 	printf 'RELS:0 RETRYABLE:0\n'
 	return 0

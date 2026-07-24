@@ -11,6 +11,8 @@
 #   5. Review-gate failures prevent both CLI merge and REST fallback
 #   6. Interactive --auto review-policy blocks fall through to --admin only
 #      after PR readiness and maintainer-review gates pass
+#   7. Post-merge verification retries cache-disabled reads without replaying
+#      the irreversible merge mutation
 #
 # Strategy: stub gh, audit-log-helper.sh, and gh-signature-helper.sh in a temp
 # directory prepended to PATH, then source the merge sub-library.
@@ -145,6 +147,23 @@ write_gh_stub_pr_issue_views() {
 
 	if [[ "\$_gh_cmd" == "pr" && "\$_gh_sub" == "view" ]]; then
 	if [[ "\$*" == *"--json state,mergedAt,mergeCommit"* ]]; then
+		_evidence_count=0
+		if [[ -f "${TEST_ROOT}/logs/evidence-count.txt" ]]; then
+			_evidence_count=\$(<"${TEST_ROOT}/logs/evidence-count.txt")
+		fi
+		_evidence_count=\$((_evidence_count + 1))
+		printf '%s\n' "\$_evidence_count" >"${TEST_ROOT}/logs/evidence-count.txt"
+		printf '%s\n' "\${AIDEVOPS_GH_PR_VIEW_CACHE_DISABLE:-0}" >>"${TEST_ROOT}/logs/evidence-cache-control.txt"
+		case "$mode" in
+		post-merge-api-failure) exit 70 ;;
+		post-merge-unmerged) echo '{"state":"OPEN","mergedAt":null,"mergeCommit":null}'; exit 0 ;;
+		post-merge-stale)
+			if [[ "\$_evidence_count" -eq 1 ]]; then
+				echo '{"state":"OPEN","mergedAt":null,"mergeCommit":null}'
+				exit 0
+			fi
+			;;
+		esac
 		echo '{"state":"MERGED","mergedAt":"2026-07-11T00:00:00Z","mergeCommit":{"oid":"merged123sha"}}'
 		exit 0
 	fi
@@ -212,6 +231,10 @@ if [[ "\$_gh_cmd" == "api" ]]; then
 		exit 0
 	fi
 	if [[ "\$*" == *"repos/testorg/testrepo/pulls/42"* ]]; then
+		if [[ "$mode" == "head-fetch-failure" ]]; then
+			echo 'transient pull lookup failure' >&2
+			exit 1
+		fi
 		echo 'abc123headsha'
 		exit 0
 	fi
@@ -294,6 +317,7 @@ RUNNER_EOF
 	env PATH="${TEST_ROOT}/bin:${scripts_dir}:${PATH}" \
 		HOME="${TEST_ROOT}/home" \
 		FULL_LOOP_HEADLESS="${FULL_LOOP_HEADLESS:-}" \
+		FULL_LOOP_VERIFIED_PR_HEAD_SHA="${FULL_LOOP_VERIFIED_PR_HEAD_SHA:-}" \
 		AIDEVOPS_HEADLESS= \
 		Claude_HEADLESS= \
 		GITHUB_ACTIONS= \
@@ -330,6 +354,45 @@ RUNNER_EOF
 	env PATH="${TEST_ROOT}/bin:${scripts_dir}:${PATH}" \
 		HOME="${TEST_ROOT}/home" \
 		FULL_LOOP_HEADLESS="${FULL_LOOP_HEADLESS:-}" \
+		AIDEVOPS_MODEL="test-model" \
+		bash "$tmp_runner" 2>&1 || rc=$?
+	rm -f "$tmp_runner"
+	return $rc
+}
+
+# Run cmd_merge with a counted finalizer and bounded evidence retries.
+# Args: pr_number repo
+run_cmd_merge_for_evidence() {
+	local pr_number="$1"
+	local repo="$2"
+	local scripts_dir="${SCRIPT_DIR}/.."
+	local tmp_runner=""
+	tmp_runner=$(mktemp)
+	cat >"$tmp_runner" <<RUNNER_EOF
+#!/usr/bin/env bash
+set -euo pipefail
+SCRIPT_DIR='${scripts_dir}'
+source '${scripts_dir}/shared-constants.sh'
+source '${scripts_dir}/full-loop-helper-merge.sh'
+cmd_pre_merge_gate() { return 0; }
+_retarget_stacked_children_interactive() { return 0; }
+_merge_report_canonical_sync_state() { return 0; }
+_merge_finalize_post_merge() {
+	local count=0
+	[[ -f '${TEST_ROOT}/logs/finalize-count.txt' ]] && count=\$(<'${TEST_ROOT}/logs/finalize-count.txt')
+	count=\$((count + 1))
+	printf '%s\n' "\$count" >'${TEST_ROOT}/logs/finalize-count.txt'
+	return 0
+}
+cmd_merge '$pr_number' '$repo'
+RUNNER_EOF
+	chmod +x "$tmp_runner"
+
+	local rc=0
+	env PATH="${TEST_ROOT}/bin:${scripts_dir}:${PATH}" \
+		HOME="${TEST_ROOT}/home" \
+		FULL_LOOP_MERGED_EVIDENCE_ATTEMPTS=2 \
+		FULL_LOOP_MERGED_EVIDENCE_DELAY_SECONDS=0 \
 		AIDEVOPS_MODEL="test-model" \
 		bash "$tmp_runner" 2>&1 || rc=$?
 	rm -f "$tmp_runner"
@@ -733,6 +796,83 @@ RUNNER_EOF
 	return 0
 }
 
+# Test 12: A failed head lookup is reported as unavailable evidence, not drift.
+test_verified_head_lookup_failure_is_not_reported_as_drift() {
+	rm -f "${TEST_ROOT}/logs/"*.txt
+	create_gh_stub "head-fetch-failure"
+
+	local output=""
+	local rc=0
+	output=$(FULL_LOOP_VERIFIED_PR_HEAD_SHA="verified123" run_merge_execute \
+		"42" "testorg/testrepo" "--squash" "0" "0") || rc=$?
+	print_result "verified head lookup failure: merge remains blocked" "$((rc == 0 ? 1 : 0))"
+
+	local reports_retrieval_failure=0
+	[[ "$output" == *"Could not retrieve PR #42 head SHA for verification"* ]] && reports_retrieval_failure=1
+	print_result "verified head lookup failure: retrieval error is explicit" "$((1 - reports_retrieval_failure))"
+
+	local reports_false_drift=0
+	[[ "$output" == *"head changed after remote verification"* ]] && reports_false_drift=1
+	print_result "verified head lookup failure: no false drift diagnosis" "$reports_false_drift"
+	return 0
+}
+
+# Test 13: stale post-merge evidence converges without replaying the mutation.
+test_post_merge_stale_evidence_retries_fresh_read() {
+	rm -f "${TEST_ROOT}/logs/"*.txt
+	create_gh_stub "post-merge-stale"
+
+	local output=""
+	local rc=0
+	output=$(run_cmd_merge_for_evidence "42" "testorg/testrepo") || rc=$?
+	print_result "post-merge evidence: stale first read converges" "$rc" "output=$output"
+
+	local merge_calls=0 evidence_calls=0 cache_disabled_calls=0 finalize_count=0
+	merge_calls=$(grep -c '^gh pr merge' "${TEST_ROOT}/logs/gh-calls.txt" || true)
+	evidence_calls=$(<"${TEST_ROOT}/logs/evidence-count.txt")
+	cache_disabled_calls=$(grep -c '^1$' "${TEST_ROOT}/logs/evidence-cache-control.txt" || true)
+	[[ -f "${TEST_ROOT}/logs/finalize-count.txt" ]] && finalize_count=$(<"${TEST_ROOT}/logs/finalize-count.txt")
+	print_result "post-merge evidence: mutation executes exactly once" "$((merge_calls == 1 ? 0 : 1))" "merge_calls=$merge_calls"
+	print_result "post-merge evidence: retry reads are cache-disabled" "$((evidence_calls == 2 && cache_disabled_calls == 2 ? 0 : 1))" "evidence_calls=$evidence_calls cache_disabled_calls=$cache_disabled_calls"
+	print_result "post-merge evidence: finalizer executes exactly once" "$((finalize_count == 1 ? 0 : 1))" "finalize_count=$finalize_count"
+	print_result "post-merge evidence: lifecycle reports merge SHA" "$([[ "$output" == *"LIFECYCLE_STATE=MERGED merge_sha=merged123sha"* ]] && printf '0' || printf '1')" "output=$output"
+	return 0
+}
+
+# Test 14: persistently unmerged evidence fails closed after bounded reads.
+test_post_merge_unmerged_evidence_fails_closed() {
+	rm -f "${TEST_ROOT}/logs/"*.txt
+	create_gh_stub "post-merge-unmerged"
+
+	local rc=0
+	run_cmd_merge_for_evidence "42" "testorg/testrepo" >/dev/null 2>&1 || rc=$?
+	local merge_calls=0 evidence_calls=0 finalize_count=0
+	merge_calls=$(grep -c '^gh pr merge' "${TEST_ROOT}/logs/gh-calls.txt" || true)
+	evidence_calls=$(<"${TEST_ROOT}/logs/evidence-count.txt")
+	[[ -f "${TEST_ROOT}/logs/finalize-count.txt" ]] && finalize_count=$(<"${TEST_ROOT}/logs/finalize-count.txt")
+	print_result "post-merge evidence: persistent OPEN fails closed" "$((rc == 0 ? 1 : 0))"
+	print_result "post-merge evidence: persistent OPEN does not replay merge" "$((merge_calls == 1 && evidence_calls == 2 ? 0 : 1))" "merge_calls=$merge_calls evidence_calls=$evidence_calls"
+	print_result "post-merge evidence: persistent OPEN skips finalizer" "$((finalize_count == 0 ? 0 : 1))" "finalize_count=$finalize_count"
+	return 0
+}
+
+# Test 15: API-indeterminate evidence fails closed without replaying the mutation.
+test_post_merge_api_indeterminate_fails_closed() {
+	rm -f "${TEST_ROOT}/logs/"*.txt
+	create_gh_stub "post-merge-api-failure"
+
+	local rc=0
+	run_cmd_merge_for_evidence "42" "testorg/testrepo" >/dev/null 2>&1 || rc=$?
+	local merge_calls=0 evidence_calls=0 finalize_count=0
+	merge_calls=$(grep -c '^gh pr merge' "${TEST_ROOT}/logs/gh-calls.txt" || true)
+	evidence_calls=$(<"${TEST_ROOT}/logs/evidence-count.txt")
+	[[ -f "${TEST_ROOT}/logs/finalize-count.txt" ]] && finalize_count=$(<"${TEST_ROOT}/logs/finalize-count.txt")
+	print_result "post-merge evidence: API-indeterminate state fails closed" "$((rc == 0 ? 1 : 0))"
+	print_result "post-merge evidence: API failure does not replay merge" "$((merge_calls == 1 && evidence_calls == 2 ? 0 : 1))" "merge_calls=$merge_calls evidence_calls=$evidence_calls"
+	print_result "post-merge evidence: API failure skips finalizer" "$((finalize_count == 0 ? 0 : 1))" "finalize_count=$finalize_count"
+	return 0
+}
+
 main() {
 	trap teardown_test_env EXIT
 	setup_test_env
@@ -754,6 +894,10 @@ main() {
 	test_auth_401_detection_avoids_numeric_false_positives
 	test_pr_ready_accepts_prefetched_json
 	test_pr_ready_blocks_nonpassing_rollup
+	test_verified_head_lookup_failure_is_not_reported_as_drift
+	test_post_merge_stale_evidence_retries_fresh_read
+	test_post_merge_unmerged_evidence_fails_closed
+	test_post_merge_api_indeterminate_fails_closed
 
 	printf '\nRan %s tests, %s failed.\n' "$TESTS_RUN" "$TESTS_FAILED"
 	if [[ "$TESTS_FAILED" -gt 0 ]]; then

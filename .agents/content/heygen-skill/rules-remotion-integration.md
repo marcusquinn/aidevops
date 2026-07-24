@@ -166,7 +166,7 @@ WebM doesn't support `circle` style — use `normal`/`closeUp` with CSS circular
 
 ## Dynamic Duration
 
-Use `calculateMetadata` to set composition duration from the avatar video. See `tools/video/remotion/calculate-metadata.md` for full patterns.
+Use `calculateMetadata` to set composition duration from the avatar video. See `tools/video/remotion-calculate-metadata.md` for full patterns.
 
 ```tsx
 import { CalculateMetadataFunction } from "remotion";

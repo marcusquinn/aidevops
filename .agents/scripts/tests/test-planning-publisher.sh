@@ -8,6 +8,7 @@ PATH="/usr/bin:/bin:/usr/sbin:/sbin"
 export PATH
 SCRIPT_DIR_TEST="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit 1
 PUBLISHER="${SCRIPT_DIR_TEST}/../planning-publisher.sh"
+STATE_SCRIPT="${SCRIPT_DIR_TEST}/../pulse-simplification-state.sh"
 PASS=0
 FAIL=0
 
@@ -65,6 +66,20 @@ run_publish() {
 	return $?
 }
 
+run_simplification_publish() {
+	local repo="$1"
+	local hook="${2:-}"
+	(
+		LOGFILE="/dev/null"
+		# shellcheck source=../pulse-simplification-state.sh
+		source "$STATE_SCRIPT"
+		AIDEVOPS_PLANNING_VALIDATOR=/usr/bin/true \
+			AIDEVOPS_PLANNING_BEFORE_PUSH_HOOK="$hook" \
+			_simplification_state_push "$repo"
+	)
+	return $?
+}
+
 test_git_binary_availability_is_validated() {
 	local name="rejects an unavailable Git command with a controlled error"
 	local output="" rc=0
@@ -111,6 +126,122 @@ test_state_allowlist_and_idempotence() {
 	if [[ "$before" == "$after" && "$first_remote" == "$second_remote" && "$count" -eq 1 ]] &&
 		git --git-dir="${root}/remote.git" show main:TODO.md | grep -q t001 &&
 		[[ "$(git --git-dir="${root}/remote.git" show main:README.md)" == "base" ]]; then pass "$name"; else fail "$name" invariant; fi
+	rm -rf "$root"
+	return 0
+}
+
+test_simplification_state_scope_preserves_checkout() {
+	local name="publishes only simplification state without changing the source checkout"
+	local root="" repo="" before="" after="" first_remote="" second_remote="" rejected_rc=0 count=""
+	root=$(mktemp -d) || return 0
+	setup_repo "$root" || {
+		fail "$name" setup
+		return 0
+	}
+	repo="${root}/work"
+	mkdir -p "${repo}/.agents/configs" || return 0
+	printf '%s\n' '{"files":{"example.sh":{"passes":1}}}' >"${repo}/.agents/configs/simplification-state.json"
+	printf 'local-only\n' >>"${repo}/README.md"
+	git -C "$repo" add README.md
+	before=$(state_digest "$repo")
+	(
+		SCRIPT_DIR="$(dirname "$PUBLISHER")"
+		# shellcheck source=../planning-publisher.sh
+		source "$PUBLISHER"
+		AIDEVOPS_PLANNING_VALIDATOR=/usr/bin/true \
+			planning_publish "$repo" "reject state without scope" origin main \
+			".agents/configs/simplification-state.json"
+	) >/dev/null 2>&1 || rejected_rc=$?
+	run_simplification_publish "$repo" || {
+		fail "$name" publish
+		return 0
+	}
+	after=$(state_digest "$repo")
+	first_remote=$(git --git-dir="${root}/remote.git" rev-parse main)
+	run_simplification_publish "$repo" || {
+		fail "$name" replay
+		return 0
+	}
+	second_remote=$(git --git-dir="${root}/remote.git" rev-parse main)
+	count=$(git --git-dir="${root}/remote.git" log --format=%B main | grep -c 'Planning-Publication-ID:' || true)
+	if [[ "$rejected_rc" -ne 0 && "$before" == "$after" && "$first_remote" == "$second_remote" && "$count" -eq 1 ]] &&
+		git --git-dir="${root}/remote.git" show main:.agents/configs/simplification-state.json | grep -q 'example.sh' &&
+		[[ "$(git --git-dir="${root}/remote.git" show main:README.md)" == "base" ]]; then
+		pass "$name"
+	else
+		fail "$name" "scope or checkout invariant failed (reject_rc=$rejected_rc count=$count)"
+	fi
+	rm -rf "$root"
+	return 0
+}
+
+test_simplification_state_defaults_to_main_without_origin_head() {
+	local name="defaults simplification-state publication to main when origin/HEAD is unavailable"
+	local root="" repo="" remote_state="" publish_rc=0
+	root=$(mktemp -d) || return 0
+	setup_repo "$root" || {
+		fail "$name" setup
+		return 0
+	}
+	repo="${root}/work"
+	mkdir -p "${repo}/.agents/configs" || return 0
+	printf '%s\n' '{"files":{"fallback.sh":{"passes":1}}}' >"${repo}/.agents/configs/simplification-state.json"
+	git -C "$repo" symbolic-ref --delete refs/remotes/origin/HEAD 2>/dev/null || true
+	LOGFILE=/dev/null AIDEVOPS_PLANNING_VALIDATOR=/usr/bin/true \
+		bash -c 'set -eo pipefail; source "$1"; _simplification_state_push "$2"' \
+		_ "$STATE_SCRIPT" "$repo"
+	publish_rc=$?
+	if [[ "$publish_rc" -ne 0 ]]; then
+		fail "$name" publish
+		rm -rf "$root"
+		return 0
+	fi
+	remote_state=$(git --git-dir="${root}/remote.git" show main:.agents/configs/simplification-state.json 2>/dev/null) || remote_state=""
+	if [[ "$remote_state" == *"fallback.sh"* ]]; then
+		pass "$name"
+	else
+		fail "$name" "fallback publication did not reach main"
+	fi
+	rm -rf "$root"
+	return 0
+}
+
+test_simplification_state_conflict_is_retryable() {
+	local name="simplification-state contention fails retryably without overwriting remote state"
+	local root="" repo="" hook="" before="" after="" rc=0 remote_state=""
+	root=$(mktemp -d) || return 0
+	setup_repo "$root" || {
+		fail "$name" setup
+		return 0
+	}
+	repo="${root}/work"
+	mkdir -p "${repo}/.agents/configs" || return 0
+	printf '%s\n' '{"files":{"local.sh":{"passes":1}}}' >"${repo}/.agents/configs/simplification-state.json"
+	hook="${root}/state-rival.sh"
+	cat >"$hook" <<'HOOK'
+#!/usr/bin/env bash
+repo="$1"; remote="$2"; branch="$3"; attempt="$6"
+[[ "$attempt" == "1" ]] || exit 0
+tmp=$(mktemp -d)
+git clone -q "$(git -C "$repo" remote get-url "$remote")" "$tmp/work"
+mkdir -p "$tmp/work/.agents/configs"
+printf '%s\n' '{"files":{"rival.sh":{"passes":2}}}' >"$tmp/work/.agents/configs/simplification-state.json"
+git -C "$tmp/work" add .agents/configs/simplification-state.json
+GIT_AUTHOR_NAME=Rival GIT_AUTHOR_EMAIL=rival@example.invalid GIT_COMMITTER_NAME=Rival GIT_COMMITTER_EMAIL=rival@example.invalid git -C "$tmp/work" -c commit.gpgsign=false commit -qm rival
+git -C "$tmp/work" push -q origin "$branch"
+rm -rf "$tmp"
+exit 0
+HOOK
+	chmod +x "$hook"
+	before=$(state_digest "$repo")
+	run_simplification_publish "$repo" "$hook" || rc=$?
+	after=$(state_digest "$repo")
+	remote_state=$(git --git-dir="${root}/remote.git" show main:.agents/configs/simplification-state.json)
+	if [[ "$rc" -eq 2 && "$before" == "$after" && "$remote_state" == *"rival.sh"* && "$remote_state" != *"local.sh"* ]]; then
+		pass "$name"
+	else
+		fail "$name" "conflict invariant failed (rc=$rc)"
+	fi
 	rm -rf "$root"
 	return 0
 }
@@ -441,6 +572,9 @@ test_explicit_git_capability_preserves_guarded_checkout() {
 main() {
 	test_git_binary_availability_is_validated
 	test_state_allowlist_and_idempotence
+	test_simplification_state_scope_preserves_checkout
+	test_simplification_state_defaults_to_main_without_origin_head
+	test_simplification_state_conflict_is_retryable
 	test_validation_failure_pushes_nothing
 	test_contention_replay_and_conflict
 	test_crash_replay_is_single_publication

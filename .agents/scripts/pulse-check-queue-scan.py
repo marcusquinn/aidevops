@@ -31,6 +31,7 @@ BLOCKING_LABELS = frozenset({
     "needs-maintainer-review",
     "needs-maintainer-permissions",
     "no-auto-dispatch",
+    "infrastructure",
     "hold-for-review",
     "blocked",
     "status:blocked",
@@ -60,6 +61,7 @@ def _empty_aggregate() -> dict[str, int]:
         "parent_task": 0,
         "nmr": 0,
         "no_auto_dispatch": 0,
+        "infrastructure": 0,
         GH_ERRORS_KEY: 0,
     }
 
@@ -180,6 +182,7 @@ def _count_issue(
     aggregate["parent_task"] += int("parent-task" in labels)
     aggregate["nmr"] += int("needs-maintainer-review" in labels)
     aggregate["no_auto_dispatch"] += int("no-auto-dispatch" in labels)
+    aggregate["infrastructure"] += int("infrastructure" in labels)
     available = "status:available" in labels and not assigned and not blocked and not dependency_inconsistent
     if available:
         aggregate["available_unassigned"] += 1

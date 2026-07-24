@@ -55,6 +55,8 @@ SCRIPT_NAME=$(basename "$0")
 TMP_DIR=""
 BASE_WORKTREE=""
 HEAD_WORKTREE=""
+COMPLEXITY_APPLICABLE_EXTENSIONS="sh py rb md"
+COMPLEXITY_APPLICABLE_EXTENSION_REGEX="\\.(${COMPLEXITY_APPLICABLE_EXTENSIONS// /|})$"
 
 cleanup() {
 	if [ -n "$BASE_WORKTREE" ] && [ -d "$BASE_WORKTREE" ]; then
@@ -200,6 +202,19 @@ _filter_to_abs_paths() {
 	done <<<"$_filter"
 
 	[ -n "$_output" ] && printf '%s\n' "$_output"
+	return 0
+}
+
+applicable_extensions_markdown() {
+	local _extension
+	local _output=""
+	for _extension in $COMPLEXITY_APPLICABLE_EXTENSIONS; do
+		if [ -n "$_output" ]; then
+			_output="${_output}/"
+		fi
+		_output="${_output}\`.${_extension}\`"
+	done
+	printf '%s' "$_output"
 	return 0
 }
 
@@ -967,11 +982,11 @@ _check_dry_run() {
 # Scan base+head via worktrees, compute diff, optionally write report.
 # Exits 0 (no regression), 1 (regression), or 2 (error).
 #
-# Diff-scoped optimisation (t2827): computes the list of .sh/.py/.md files that
-# changed between base and head and passes it to scan_dir so each worktree
+# Diff-scoped optimisation (t2827): computes applicable source and Markdown
+# files changed between base and head and passes them to scan_dir so each worktree
 # scan covers only those files instead of the full repo. This reduces
 # wall-clock time from ~98s to <10s for a 2-file diff (949 .sh files → 2).
-# If no .sh/.py/.md files changed, exits 0 immediately without creating worktrees.
+# If no applicable files changed, exits 0 immediately without creating worktrees.
 # The `scan` subcommand (CI full-repo path) is unaffected.
 # ---------------------------------------------------------------------------
 _check_regression() {
@@ -988,23 +1003,23 @@ _check_regression() {
 		_changed_source=$({
 			git diff --name-only "$_base_sha" -- 2>/dev/null || true
 			git ls-files --others --exclude-standard 2>/dev/null || true
-		} | grep -E '\.(sh|py|md)$' | sort -u || true)
+		} | grep -E "$COMPLEXITY_APPLICABLE_EXTENSION_REGEX" | sort -u || true)
 	else
-		_changed_source=$(git diff --name-only "$_base_sha" "$_head_sha" 2>/dev/null \
-			| grep -E '\.(sh|py|md)$' || true)
+		_changed_source=$(git diff --name-only "$_base_sha" "$_head_sha" 2>/dev/null |
+			grep -E "$COMPLEXITY_APPLICABLE_EXTENSION_REGEX" || true)
 	fi
 	if [ -z "$_changed_source" ]; then
 		log "[$_metric] no applicable changes between ${_base_sha:0:7}..${_head_sha:0:7} — skipping"
 		# Write a clean "no applicable changes" report so any previously-posted
-		# stale report (from a prior run with .sh/.py/.md changes that were later
+		# stale report (from a prior run with applicable changes that were later
 		# reverted back to doc-only) is replaced via the CI upsert path.
 		if [ -n "$_output_md" ]; then
-			local _title_str
+			local _title_str _extensions_markdown
 			_title_str=$(metric_title "$_metric")
+			_extensions_markdown=$(applicable_extensions_markdown)
 			{
 				printf '## %s Regression Gate\n\n' "$_title_str"
-				# shellcheck disable=SC2016
-				printf '✅ **No applicable changes** — no `.sh`/`.py`/`.md` files changed in this PR.\n\n'
+				printf '✅ **No applicable changes** — no %s files changed in this PR.\n\n' "$_extensions_markdown"
 				printf '<!-- complexity-regression-gate:%s -->\n' "$_metric"
 			} >"$_output_md"
 			log "[$_metric] wrote no-changes report to $_output_md"

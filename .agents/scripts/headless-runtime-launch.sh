@@ -42,11 +42,17 @@ _HEADLESS_RUNTIME_TEMP_PATHS=""
 _HEADLESS_RUN_PROMPT_ARG=""
 _HEADLESS_RUN_PROMPT_FILE=""
 _HEADLESS_CLAUDE_STDIN_FILE=""
+readonly PRIVATE_WORKLOAD_PROMPT="Execute the private workload instructions configured in this directory."
+
+_headless_private_workload_enabled() {
+	[[ "${AIDEVOPS_PRIVATE_WORKLOAD:-0}" == "1" ]]
+	return $?
+}
 
 _create_headless_runtime_temp_file() {
 	local temp_root="${AIDEVOPS_TEMP_DIR:-${HOME:?}/.aidevops/.agent-workspace/tmp}"
 	mkdir -p "$temp_root" || return 1
-	mktemp "${temp_root}/aidevops-headless-runtime.XXXXXX" || return 1
+	(umask 077 && mktemp "${temp_root}/aidevops-headless-runtime.XXXXXX") || return 1
 	return 0
 }
 
@@ -61,10 +67,11 @@ _register_headless_runtime_temp_path() {
 _cleanup_headless_runtime_temp_paths() {
 	local path=""
 	local tmp_root="${TMPDIR:-/tmp}"
+	local managed_temp_root="${AIDEVOPS_TEMP_DIR:-${HOME:?}/.aidevops/.agent-workspace/tmp}"
 	while IFS= read -r path; do
 		[[ -n "$path" ]] || continue
 		case "$path" in
-		"$tmp_root"/aidevops-* | /tmp/aidevops-* | /var/folders/*/T/*/aidevops-*)
+		"$managed_temp_root"/aidevops-headless-runtime.* | "$tmp_root"/aidevops-* | /tmp/aidevops-* | /var/folders/*/T/*/aidevops-*)
 			rm -rf "$path" 2>/dev/null || true
 			;;
 		*)
@@ -119,7 +126,8 @@ _prepare_runtime_prompt_transport() {
 
 # _parse_run_args: parse cmd_run flags into caller-scoped variables.
 # Caller must declare: role session_key work_dir title prompt prompt_file
-#                      model_override initial_model tier_override variant_override agent_name extra_args
+#                      model_override initial_model tier_override variant_override agent_name
+#                      private_workload private_profile_sha256 extra_args
 # Returns 1 on unknown flag.
 _parse_run_args() {
 	local -a run_args=("$@")
@@ -182,6 +190,14 @@ _parse_run_args() {
 			extra_args+=("$value")
 			run_args=("${run_args[@]:2}")
 			;;
+		--private-workload)
+			private_workload=1
+			run_args=("${run_args[@]:1}")
+			;;
+		--private-profile-sha256)
+			private_profile_sha256="$value"
+			run_args=("${run_args[@]:2}")
+			;;
 		--detach)
 			detach=1
 			run_args=("${run_args[@]:1}")
@@ -192,6 +208,117 @@ _parse_run_args() {
 			;;
 		esac
 	done
+	return 0
+}
+
+_validate_private_workload_profile() {
+	local work_dir_value="$1"
+	local expected_model="$2"
+	local expected_agent="$3"
+	local expected_profile_sha256="$4"
+	local expected_provider="${expected_model%%/*}"
+	local config_path="${work_dir_value}/.opencode/opencode.json"
+	local profile_validator="${SCRIPT_DIR}/headless-private-profile-validator.py"
+
+	if [[ ! -f "$config_path" || -L "$config_path" ]]; then
+		print_error "--private-workload requires a regular .opencode/opencode.json profile"
+		return 1
+	fi
+	if [[ ! -f "$profile_validator" ]] || ! command -v python3 >/dev/null 2>&1 || \
+		! python3 "$profile_validator" "$work_dir_value" "$expected_model" \
+			"$expected_agent" "$expected_provider" "$expected_profile_sha256" \
+			>/dev/null 2>&1; then
+		print_error "--private-workload requires a private, fixed restricted profile"
+		return 1
+	fi
+
+	return 0
+}
+
+_private_provider_is_allowlisted() {
+	local expected_provider="$1"
+	local allowlist_raw="${AIDEVOPS_HEADLESS_PROVIDER_ALLOWLIST:-}"
+	local allowed_provider=""
+	local -a allowed_providers=()
+
+	[[ -n "$allowlist_raw" ]] || return 1
+	IFS=',' read -r -a allowed_providers <<<"$allowlist_raw"
+	for allowed_provider in "${allowed_providers[@]}"; do
+		allowed_provider="${allowed_provider#"${allowed_provider%%[![:space:]]*}"}"
+		allowed_provider="${allowed_provider%"${allowed_provider##*[![:space:]]}"}"
+		if [[ "$allowed_provider" == "$expected_provider" ]]; then
+			return 0
+		fi
+	done
+	return 1
+}
+
+_private_workload_session_key_is_opaque() {
+	local session_key_value="$1"
+	[[ "$session_key_value" =~ ^private-([a-f0-9]{32}|[a-f0-9]{64})$ ]]
+	return $?
+}
+
+_validate_private_workload_args() {
+	[[ "${private_workload:-0}" == "1" ]] || return 0
+	if [[ ! "${private_profile_sha256:-}" =~ ^[a-f0-9]{64}$ ]]; then
+		print_error "--private-workload requires an exact --private-profile-sha256"
+		return 1
+	fi
+	if [[ "${role:-}" != "triage" ]]; then
+		print_error "--private-workload requires --role triage"
+		return 1
+	fi
+	if ! _private_workload_session_key_is_opaque "${session_key:-}"; then
+		print_error "--private-workload requires an opaque private- session key with 32 or 64 lowercase hex characters"
+		return 1
+	fi
+	if [[ "${title:-}" != "Private workload" ]]; then
+		print_error "--private-workload requires --title 'Private workload'"
+		return 1
+	fi
+	if [[ -n "${prompt_file:-}" || "${prompt:-}" != "$PRIVATE_WORKLOAD_PROMPT" ]]; then
+		print_error "--private-workload requires the documented non-content prompt"
+		return 1
+	fi
+	if [[ -n "${headless_runtime:-}" && "${headless_runtime:-}" != "opencode" ]]; then
+		print_error "--private-workload currently supports only the OpenCode runtime"
+		return 1
+	fi
+	if [[ "${detach:-0}" -eq 1 ]]; then
+		print_error "--private-workload cannot be detached"
+		return 1
+	fi
+	if [[ ! "${model_override:-}" =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ ]]; then
+		print_error "--private-workload requires an explicit --model"
+		return 1
+	fi
+	local expected_provider="${model_override%%/*}"
+	if ! _private_provider_is_allowlisted "$expected_provider"; then
+		print_error "--private-workload requires its provider in AIDEVOPS_HEADLESS_PROVIDER_ALLOWLIST"
+		return 1
+	fi
+	if [[ ! "${agent_name:-}" =~ ^[A-Za-z0-9_-]+$ ]]; then
+		print_error "--private-workload requires an explicit --agent"
+		return 1
+	fi
+	if [[ -n "${variant_override:-}" ]]; then
+		print_error "--private-workload does not permit a model variant override"
+		return 1
+	fi
+	local pure_count=0
+	local extra_arg=""
+	for extra_arg in "${extra_args[@]+"${extra_args[@]}"}"; do
+		if [[ "$extra_arg" != "--pure" ]]; then
+			print_error "--private-workload permits only --opencode-arg --pure"
+			return 1
+		fi
+		pure_count=$((pure_count + 1))
+	done
+	if [[ "$pure_count" -ne 1 ]]; then
+		print_error "--private-workload requires exactly one --opencode-arg --pure"
+		return 1
+	fi
 	return 0
 }
 
@@ -241,7 +368,11 @@ _ensure_valid_launch_cwd() {
 
 	if [[ -n "$work_dir_value" && -d "$work_dir_value" ]]; then
 		if cd "$work_dir_value" 2>/dev/null; then
-			print_warning "Recovered deleted launch cwd by switching to worker directory: $work_dir_value"
+			local display_work_dir="$work_dir_value"
+			if _headless_private_workload_enabled; then
+				display_work_dir="[private]"
+			fi
+			print_warning "Recovered deleted launch cwd by switching to worker directory: $display_work_dir"
 			return 0
 		fi
 	fi
@@ -361,13 +492,17 @@ _recover_deleted_cwd_before_launch() {
 		print_error "[lifecycle] deleted_cwd_recovery_failed reason=$reason_value target=none"
 		return 1
 	fi
+	local display_recovery_dir="$recovery_dir"
+	if _headless_private_workload_enabled; then
+		display_recovery_dir="[private]"
+	fi
 
 	if ! cd "$recovery_dir"; then
-		print_error "[lifecycle] deleted_cwd_recovery_failed reason=$reason_value target=$recovery_dir"
+		print_error "[lifecycle] deleted_cwd_recovery_failed reason=$reason_value target=$display_recovery_dir"
 		return 1
 	fi
 
-	print_warning "[lifecycle] recovered_deleted_cwd reason=$reason_value dir=$recovery_dir"
+	print_warning "[lifecycle] recovered_deleted_cwd reason=$reason_value dir=$display_recovery_dir"
 	return 0
 }
 

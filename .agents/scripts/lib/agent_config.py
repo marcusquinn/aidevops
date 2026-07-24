@@ -76,7 +76,6 @@ def managed_external_directories():
 # MCP On-Demand Loading Strategy:
 # The following MCPs are DISABLED globally to reduce context token usage:
 #   - playwriter_*: ~3K tokens - enable via @playwriter subagent
-#   - gh_grep_*: ~600 tokens - replaced by @github-search subagent (uses rg/bash)
 #   - google-analytics-mcp_*: ~800 tokens - enable via @google-analytics subagent
 #   - context7_*: ~800 tokens - enable via @context7 subagent (library docs lookup)
 #   - openapi-search_*: ~500 tokens - enabled for Build+, AI-DevOps, Research only

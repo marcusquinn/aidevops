@@ -115,7 +115,7 @@ function recordPermissionToolCall(toolCalls, isHeadless, home, input, output) {
   while (toolCalls.size > 100) toolCalls.delete(toolCalls.keys().next().value);
 }
 
-function recordPermissionBlocker({ loggedEvents, home, blockerLogPath, request, event, reason, detail }) {
+function recordPermissionBlocker({ loggedEvents, home, blockerLogPath, capture, request, event, reason, detail }) {
   const dedupeKey = `${event}:${request?.request_id || "unknown"}`;
   if (loggedEvents.has(dedupeKey)) return;
   loggedEvents.add(dedupeKey);
@@ -126,6 +126,9 @@ function recordPermissionBlocker({ loggedEvents, home, blockerLogPath, request, 
     reason,
     blocking: true,
     source: "opencode-permission-broker",
+    issue_number: capture?.issue || process.env.WORKER_ISSUE_NUMBER || "",
+    repo_slug: capture?.repo || process.env.WORKER_REPO_SLUG || process.env.DISPATCH_REPO_SLUG || "",
+    session_key: capture?.worker_session || process.env.WORKER_SESSION_KEY || "",
     request_id: request?.request_id || "",
     permission: request?.permission || "",
     tool: request?.tool || "",
@@ -168,7 +171,7 @@ function capturePermissionRequest(toolCalls, loggedEvents, home, blockerLogPath,
   request.request_id = stableRequestID({ ...request, issue: capture.issue, repo: capture.repo });
   if (!requestFile) {
     recordPermissionBlocker({
-      loggedEvents, home, blockerLogPath, request, event: "permission_capture_failed",
+      loggedEvents, home, blockerLogPath, capture, request, event: "permission_capture_failed",
       reason: "request_file_unset", detail: "Headless permission request capture path was unavailable",
     });
     return request;
@@ -180,17 +183,17 @@ function capturePermissionRequest(toolCalls, loggedEvents, home, blockerLogPath,
   const written = writeCaptureFile(requestFile, capture);
   if (!written) {
     recordPermissionBlocker({
-      loggedEvents, home, blockerLogPath, request, event: "permission_capture_failed",
+      loggedEvents, home, blockerLogPath, capture, request, event: "permission_capture_failed",
       reason: "capture_file_write_failed", detail: "Permission request could not be persisted",
     });
   } else if (request.risk.grantable) {
     recordPermissionBlocker({
-      loggedEvents, home, blockerLogPath, request, event: "permission_request_captured",
+      loggedEvents, home, blockerLogPath, capture, request, event: "permission_request_captured",
       reason: "permission_required", detail: request.risk.reason,
     });
   } else {
     recordPermissionBlocker({
-      loggedEvents, home, blockerLogPath, request, event: "permission_request_non_grantable",
+      loggedEvents, home, blockerLogPath, capture, request, event: "permission_request_non_grantable",
       reason: "permission_non_grantable", detail: request.risk.reason,
     });
   }

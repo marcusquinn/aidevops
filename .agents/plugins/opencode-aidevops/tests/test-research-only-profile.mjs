@@ -13,7 +13,24 @@ test("research-only profile overrides permissive config and fails closed", () =>
   const agentsDir = mkdtempSync(join(tmpdir(), "aidevops-research-only-"));
   const sourceDir = join(agentsDir, "tools", "ai-assistants");
   mkdirSync(sourceDir, { recursive: true });
-  writeFileSync(join(sourceDir, "research-only.md"), "---\nmode: subagent\n---\n\nCanonical research prompt.\n");
+  writeFileSync(join(sourceDir, "research-only.md"), `---
+name: research-only
+description: Canonical research profile
+mode: subagent
+tools:
+  "*": false
+  read: true
+  bash: false
+permission:
+  "*": deny
+  read:
+    "*": allow
+    "*.env": deny
+  bash: deny
+---
+
+Canonical research prompt.
+`);
 
   try {
     const config = {
@@ -29,34 +46,37 @@ test("research-only profile overrides permissive config and fails closed", () =>
     assert.equal(registerResearchOnlyAgent(config, agentsDir), 1);
     const profile = config.agent["research-only"];
 
+    assert.equal(profile.description, "Canonical research profile");
     assert.equal(profile.mode, "subagent");
     assert.equal(profile.prompt, "Canonical research prompt.");
     assert.deepEqual(profile.tools, {
       "*": false,
       read: true,
-      grep: true,
-      glob: true,
-      webfetch: true,
-      websearch: true,
-      write: false,
-      edit: false,
-      apply_patch: false,
       bash: false,
-      task: false,
-      todowrite: false,
-      skill: false,
     });
     assert.equal(profile.permission["*"], "deny");
     assert.equal(profile.permission.bash, "deny");
-    assert.equal(profile.permission.task, "deny");
-    assert.equal(profile.permission.edit, "deny");
-    assert.equal(profile.permission.write, "deny");
-    assert.equal(profile.permission.apply_patch, "deny");
-    assert.equal(profile.permission.external_directory, "deny");
     assert.equal(profile.permission.read["*"], "allow");
     assert.equal(profile.permission.read["*.env"], "deny");
-    assert.equal(profile.permission.webfetch, "allow");
+    assert.equal(profile.name, undefined);
     assert.equal(config.tools["playwriter_*"], true);
+  } finally {
+    rmSync(agentsDir, { recursive: true, force: true });
+  }
+});
+
+test("research-only profile fails closed when canonical frontmatter is invalid", () => {
+  const agentsDir = mkdtempSync(join(tmpdir(), "aidevops-research-only-"));
+  const sourceDir = join(agentsDir, "tools", "ai-assistants");
+  mkdirSync(sourceDir, { recursive: true });
+  writeFileSync(join(sourceDir, "research-only.md"), "---\ndescription: Broken\n tools:\n---\nUnsafe prompt.\n");
+
+  try {
+    const config = { agent: {} };
+    assert.equal(registerResearchOnlyAgent(config, agentsDir), 1);
+    assert.deepEqual(config.agent["research-only"].tools, { "*": false });
+    assert.equal(config.agent["research-only"].permission, "deny");
+    assert.equal(config.agent["research-only"].disable, true);
   } finally {
     rmSync(agentsDir, { recursive: true, force: true });
   }

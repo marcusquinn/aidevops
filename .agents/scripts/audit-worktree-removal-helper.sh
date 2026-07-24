@@ -51,6 +51,13 @@ _AUDIT_WORKTREE_REMOVAL_HELPER_LOADED=1
 _WTAR_REMOVED="removed"
 _WTAR_SKIPPED="skipped"
 _WTAR_FIXTURE_REMOVED="fixture-removed"
+_WT_CWD_VISIBILITY_COMPLETE="complete"
+_WT_CWD_VISIBILITY_DEGRADED="degraded"
+_WT_CWD_VISIBILITY_UNUSABLE="unusable"
+_WT_CWD_CAPTURE_DEGRADED_RC=2
+_WT_CWD_MATCH_UNUSABLE_RC=3
+_WT_CWD_REASON_DEGRADED="cwd-visibility-degraded"
+_WT_CWD_REASON_UNUSABLE="cwd-visibility-unusable"
 
 # =============================================================================
 # log_worktree_removal_event — write one structured log line per event
@@ -106,6 +113,134 @@ log_worktree_removal_event() {
 	return 0
 }
 
+_worktree_proc_entry_is_provably_foreign_uid() {
+	local proc_dir="$1"
+	local current_uid="$2"
+	local field=""
+	local real_uid=""
+	local effective_uid=""
+	local saved_uid=""
+	local filesystem_uid=""
+	local process_uid=""
+
+	[[ "$current_uid" =~ ^[0-9]+$ && -r "$proc_dir/status" ]] || return 1
+	while IFS=$' \t' read -r field real_uid effective_uid saved_uid filesystem_uid _; do
+		[[ "$field" == "Uid:" ]] || continue
+		for process_uid in "$real_uid" "$effective_uid" "$saved_uid" "$filesystem_uid"; do
+			[[ "$process_uid" =~ ^[0-9]+$ ]] || return 1
+			[[ "$process_uid" != "$current_uid" ]] || return 1
+		done
+		return 0
+	done <"$proc_dir/status"
+	return 1
+}
+
+_capture_worktree_proc_cwds() {
+	local proc_root="$1"
+	local cwd_link=""
+	local cwd_target=""
+	local captured_count=0
+	local current_uid=""
+	local visibility_degraded=0
+	local proc_dir=""
+
+	current_uid=$(id -u 2>/dev/null) || current_uid=""
+
+	for cwd_link in "$proc_root"/[0-9]*/cwd; do
+		[[ -L "$cwd_link" || -e "$cwd_link" ]] || continue
+		if ! cwd_target=$(readlink "$cwd_link" 2>/dev/null); then
+			# Vanished processes are harmless. Linux commonly denies cwd reads for
+			# other users, so skip only entries whose four status UIDs prove they
+			# are foreign. Persistent same-user or unknown-ownership denials make
+			# visibility degraded without discarding readable cwd evidence.
+			[[ -L "$cwd_link" || -e "$cwd_link" ]] || continue
+			proc_dir="${cwd_link%/cwd}"
+			_worktree_proc_entry_is_provably_foreign_uid "$proc_dir" "$current_uid" && continue
+			visibility_degraded=1
+			continue
+		fi
+		if [[ -n "$cwd_target" ]]; then
+			printf '%s\n' "$cwd_target"
+			captured_count=$((captured_count + 1))
+		fi
+	done
+	if [[ "$visibility_degraded" -eq 1 ]]; then
+		return "$_WT_CWD_CAPTURE_DEGRADED_RC"
+	fi
+	[[ "$captured_count" -gt 0 ]] || return 1
+	return 0
+}
+
+_capture_worktree_lsof_cwds() {
+	local cwd_target=""
+	local captured_count=0
+	local lsof_line=""
+	local lsof_output=""
+	local lsof_status=0
+
+	if lsof_output=$(lsof -n -F n -d cwd 2>/dev/null); then
+		lsof_status=0
+	else
+		lsof_status=$?
+	fi
+	while IFS= read -r lsof_line; do
+		case "$lsof_line" in
+		n*)
+			cwd_target="${lsof_line#n}"
+			if [[ -n "$cwd_target" ]]; then
+				printf '%s\n' "$cwd_target"
+				captured_count=$((captured_count + 1))
+			fi
+			;;
+		esac
+	done <<<"$lsof_output"
+	[[ "$captured_count" -gt 0 ]] || return 1
+	if [[ "$lsof_status" -ne 0 ]]; then
+		return "$_WT_CWD_CAPTURE_DEGRADED_RC"
+	fi
+	return 0
+}
+
+# Capture every visible live-process cwd. stdout always preserves readable
+# targets. Return 0 for complete visibility, 2 for degraded visibility with
+# same-UID/unknown denials, and 1 when no usable snapshot can be established.
+# Callers may supply the resulting snapshot and visibility to the guard so one
+# safety check performs only one platform scan.
+capture_worktree_process_cwds() {
+	if [[ -d /proc ]]; then
+		_capture_worktree_proc_cwds /proc
+		return $?
+	fi
+
+	if command -v lsof >/dev/null 2>&1; then
+		# macOS lacks /proc, but `lsof +D <worktree>` recursively walks the
+		# whole tree (including node_modules). Query only cwd descriptors once.
+		_capture_worktree_lsof_cwds
+		return $?
+	fi
+	return 1
+}
+
+# Return 0 when a captured cwd is inside the candidate worktree.
+_worktree_cwd_snapshot_contains_path() {
+	local wt_path="$1"
+	local wt_path_real="$2"
+	local cwd_snapshot="$3"
+	local cwd_target=""
+
+	if [[ -z "$wt_path" || -z "$wt_path_real" || -z "$cwd_snapshot" ]]; then
+		return 1
+	fi
+	while IFS= read -r cwd_target; do
+		case "$cwd_target" in
+		"$wt_path" | "$wt_path"/* | "$wt_path_real" | "$wt_path_real"/*)
+			return 0
+			;;
+		esac
+	done <<<"$cwd_snapshot"
+	return 1
+}
+
 # Return 0 when any live process has its current working directory inside the
 # candidate worktree. `pgrep -f "$path"` only sees argv; commands such as
 # linters often run with cwd inside the worktree while their argv contains no
@@ -113,49 +248,25 @@ log_worktree_removal_event() {
 _worktree_has_process_cwd() {
 	local wt_path="$1"
 	local wt_path_real="$2"
+	local cwd_snapshot=""
+	local capture_status=0
 
 	if [[ -z "$wt_path" || -z "$wt_path_real" ]]; then
 		return 1
 	fi
-
-	if [[ -d /proc ]]; then
-		local cwd_link=""
-		local cwd_target=""
-		for cwd_link in /proc/[0-9]*/cwd; do
-			[[ -e "$cwd_link" ]] || continue
-			cwd_target=$(readlink "$cwd_link" 2>/dev/null || true)
-			[[ -n "$cwd_target" ]] || continue
-			case "$cwd_target" in
-			"$wt_path" | "$wt_path"/* | "$wt_path_real" | "$wt_path_real"/*)
-				return 0
-				;;
-			esac
-		done
+	if cwd_snapshot=$(capture_worktree_process_cwds); then
+		capture_status=0
+	else
+		capture_status=$?
 	fi
-
-	if command -v lsof >/dev/null 2>&1; then
-		local lsof_line=""
-		local lsof_cwd_target=""
-
-		# macOS lacks /proc, but `lsof +D <worktree>` recursively walks the
-		# whole tree (including node_modules) for every removal candidate. Query
-		# only process cwd descriptors instead; this preserves the safety gate
-		# without filesystem-wide scans.
-		while IFS= read -r lsof_line; do
-			case "$lsof_line" in
-			n*)
-				lsof_cwd_target="${lsof_line#n}"
-				case "$lsof_cwd_target" in
-				"$wt_path" | "$wt_path"/* | "$wt_path_real" | "$wt_path_real"/*)
-					return 0
-					;;
-				esac
-				;;
-			esac
-		done < <(lsof -n -F n -d cwd 2>/dev/null || true)
+	if _worktree_cwd_snapshot_contains_path "$wt_path" "$wt_path_real" "$cwd_snapshot"; then
+		return 0
 	fi
-
-	return 1
+	case "$capture_status" in
+	0) return 1 ;;
+	"$_WT_CWD_CAPTURE_DEGRADED_RC") return "$_WT_CWD_CAPTURE_DEGRADED_RC" ;;
+	*) return "$_WT_CWD_MATCH_UNUSABLE_RC" ;;
+	esac
 }
 
 # =============================================================================
@@ -165,23 +276,37 @@ _worktree_has_process_cwd() {
 #   $1  wt_path  — absolute path candidate
 #   $2  caller   — audit caller constant
 #   $3  reason   — reason to log on skip
+#   $4  cwd_snapshot — optional newline-separated live-process cwd snapshot
+#   $5  cwd_visibility — complete, degraded, or unusable (default: complete)
 #
 # Refuses registered canonical repos, the caller's current working directory,
-# and worktrees that still have any live process cwd inside them.
-# Returns 0 when callers may continue, 1 when removal must be skipped.
+# and worktrees that still have any live process cwd inside them. On refusal,
+# WORKTREE_REMOVAL_GUARD_REASON contains the short audit reason for callers that
+# opt into a user-facing diagnostic. The guard itself remains silent.
+# Returns 0 for complete no-match, 2 for degraded no-match (recoverable path
+# required), and 1 for every hard refusal or unusable snapshot.
 # =============================================================================
 worktree_removal_guard() {
 	local wt_path="$1"
 	local caller="$2"
 	local reason="$3"
+	local cwd_snapshot="${4:-}"
+	local cwd_visibility="${5:-$_WT_CWD_VISIBILITY_COMPLETE}"
+	local cwd_snapshot_provided=0
+	local cwd_match_status=0
+	WORKTREE_REMOVAL_GUARD_REASON=""
+	WORKTREE_REMOVAL_GUARD_VISIBILITY=""
+	[[ "$#" -ge 4 ]] && cwd_snapshot_provided=1
 
 	if [[ -z "$wt_path" ]]; then
+		WORKTREE_REMOVAL_GUARD_REASON="empty-path"
 		log_worktree_removal_event "$_WTAR_SKIPPED" "$caller" "$wt_path" "empty-path" "skipped"
 		return 1
 	fi
 
 	if command -v is_registered_canonical >/dev/null 2>&1; then
 		if is_registered_canonical "$wt_path"; then
+			WORKTREE_REMOVAL_GUARD_REASON="canonical-skip"
 			log_worktree_removal_event "$_WTAR_SKIPPED" "$caller" "$wt_path" "canonical-skip" "skipped"
 			return 1
 		fi
@@ -197,17 +322,49 @@ worktree_removal_guard() {
 	if [[ -n "$current_dir" ]]; then
 		case "$current_dir" in
 		"$wt_path" | "$wt_path"/* | "$wt_path_real" | "$wt_path_real"/*)
+			WORKTREE_REMOVAL_GUARD_REASON="current-worktree"
 			log_worktree_removal_event "$_WTAR_SKIPPED" "$caller" "$wt_path" "current-worktree" "skipped"
 			return 1
 			;;
 		esac
 	fi
 
-	if _worktree_has_process_cwd "$wt_path" "$wt_path_real"; then
+	if [[ "$cwd_snapshot_provided" -eq 1 ]]; then
+		if _worktree_cwd_snapshot_contains_path "$wt_path" "$wt_path_real" "$cwd_snapshot"; then
+			cwd_match_status=0
+		else
+			case "$cwd_visibility" in
+			"$_WT_CWD_VISIBILITY_COMPLETE") cwd_match_status=1 ;;
+			"$_WT_CWD_VISIBILITY_DEGRADED") cwd_match_status="$_WT_CWD_CAPTURE_DEGRADED_RC" ;;
+			*) cwd_match_status="$_WT_CWD_MATCH_UNUSABLE_RC" ;;
+			esac
+		fi
+	elif _worktree_has_process_cwd "$wt_path" "$wt_path_real"; then
+		cwd_match_status=0
+	else
+		cwd_match_status=$?
+	fi
+
+	if [[ "$cwd_match_status" -eq 0 ]]; then
+		WORKTREE_REMOVAL_GUARD_VISIBILITY="$cwd_visibility"
+		WORKTREE_REMOVAL_GUARD_REASON="active-cwd"
 		log_worktree_removal_event "$_WTAR_SKIPPED" "$caller" "$wt_path" "active-cwd" "skipped"
 		return 1
 	fi
+	if [[ "$cwd_match_status" -eq "$_WT_CWD_CAPTURE_DEGRADED_RC" ]]; then
+		WORKTREE_REMOVAL_GUARD_VISIBILITY="$_WT_CWD_VISIBILITY_DEGRADED"
+		WORKTREE_REMOVAL_GUARD_REASON="$_WT_CWD_REASON_DEGRADED"
+		log_worktree_removal_event "$_WTAR_SKIPPED" "$caller" "$wt_path" "$_WT_CWD_REASON_DEGRADED" "recoverable-required"
+		return "$_WT_CWD_CAPTURE_DEGRADED_RC"
+	fi
+	if [[ "$cwd_match_status" -eq "$_WT_CWD_MATCH_UNUSABLE_RC" ]]; then
+		WORKTREE_REMOVAL_GUARD_VISIBILITY="$_WT_CWD_VISIBILITY_UNUSABLE"
+		WORKTREE_REMOVAL_GUARD_REASON="$_WT_CWD_REASON_UNUSABLE"
+		log_worktree_removal_event "$_WTAR_SKIPPED" "$caller" "$wt_path" "$_WT_CWD_REASON_UNUSABLE" "skipped"
+		return 1
+	fi
 
+	WORKTREE_REMOVAL_GUARD_VISIBILITY="$_WT_CWD_VISIBILITY_COMPLETE"
 	: "$reason"
 	return 0
 }

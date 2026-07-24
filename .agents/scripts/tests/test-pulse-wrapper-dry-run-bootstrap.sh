@@ -22,6 +22,8 @@
 #   2. The dry-run output line confirms the expected short-circuit fired
 #   3. Static check: include guard exists in pulse-stats-helper.sh
 #   4. Static check: dry-run short-circuit exists in pulse-wrapper.sh
+#   5. Static check: supervisor circuit-breaker refresh remains wired
+#   6. Static check: idle backoff's available-work bypass remains wired
 #
 # What is NOT exercised:
 #   - GitHub API calls (no network)
@@ -34,6 +36,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit 1
 WRAPPER_SCRIPT="${SCRIPT_DIR}/../pulse-wrapper.sh"
+CYCLE_GATES_SCRIPT="${SCRIPT_DIR}/../pulse-wrapper-cycle-gates.sh"
 STATS_HELPER="${SCRIPT_DIR}/../pulse-stats-helper.sh"
 DEFAULTS_SOURCE="${SCRIPT_DIR}/../../configs/aidevops.defaults.jsonc"
 
@@ -196,13 +199,14 @@ test_supervisor_circuit_breaker_refresh_present() {
 
 # Test 6: Static check — idle backoff observes eligible auto-dispatch work.
 test_idle_backoff_available_work_bypass_present() {
-	if grep -q '_pulse_available_auto_dispatch_work_exists' "$WRAPPER_SCRIPT" && \
-		grep -q 'AIDEVOPS_PULSE_IDLE_AVAILABLE_WORK' "$WRAPPER_SCRIPT"; then
-		print_result "idle backoff available-work bypass present in pulse-wrapper.sh" 0
+	if grep -q 'pulse-wrapper-cycle-gates.sh' "$WRAPPER_SCRIPT" &&
+		grep -q '_pulse_available_auto_dispatch_work_exists' "$CYCLE_GATES_SCRIPT" &&
+		grep -q 'AIDEVOPS_PULSE_IDLE_AVAILABLE_WORK' "$CYCLE_GATES_SCRIPT"; then
+		print_result "idle backoff available-work bypass present in pulse cycle gates" 0
 		return 0
 	fi
-	print_result "idle backoff available-work bypass present in pulse-wrapper.sh" 1 \
-		"Expected available-work check and env bridge in $WRAPPER_SCRIPT"
+	print_result "idle backoff available-work bypass present in pulse cycle gates" 1 \
+		"Expected wrapper source plus available-work check and env bridge in $CYCLE_GATES_SCRIPT"
 	return 0
 }
 

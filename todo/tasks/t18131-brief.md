@@ -20,7 +20,7 @@ Parent: t18124
 - **Session:** OpenCode interactive GitHub API efficiency planning
 - **Created by:** ai-interactive under maintainer direction
 - **Parent task:** t18124
-- **Blocked by:** t18130 through a native GitHub blocked-by relationship
+- **Prerequisite:** t18130 closed on 2026-07-18; remaining progress is evidence-gated, not dependency-blocked.
 - **Conversation context:** The final phase must compare equivalent baseline and canary windows using t18125 transport evidence, verify that request savings did not hide stale or incorrect decisions, tune bounded TTLs/limits, and remove temporary rollout flags only after the data supports doing so.
 
 ## What
@@ -56,11 +56,11 @@ Final leaf task. Its PR closes this child. It may close parent t18124 only when 
 ## Seeded Draft PR
 
 - **Decision:** Skipped
-- **Rationale:** Final report fields, feature flags, and cleanup surfaces do not exist until t18125–t18130 merge.
-- **Status:** `blocked`
-- **Freshness evidence:** Current telemetry, sweep budget config, webhook config, and test conventions were checked at `313548fc6`.
-- **Verification run:** Brief readiness only; benchmark is unrun.
-- **Stale-assumption warning:** Before implementation, discover every flag/schema/default added by the six preceding PRs and update this issue's exact scope if necessary.
+- **Rationale:** Skipped at planning time because final report fields, feature flags, and cleanup surfaces did not exist before t18125–t18130 merged.
+- **Status:** `not-created`; interactive implementation is active.
+- **Freshness evidence:** Telemetry, shim, benchmark, reference, and test surfaces were rechecked against `659cd3d8f` on 2026-07-20.
+- **Verification run:** Quota instrumentation/shim suites, benchmark/evidence fixtures, ShellCheck, changed lint, and complexity regressions pass; official comparable live evidence remains pending.
+- **Scope refresh:** Direct REST quota attribution paths were added before implementation; ambiguous and GraphQL costs remain fail-closed.
 
 ## How (Approach)
 
@@ -84,7 +84,10 @@ rg -n 'AIDEVOPS_.*(CACHE|SNAPSHOT|SINGLE|WEBHOOK|GH_API)|feature.flag|rollout|co
 - `NEW: .agents/scripts/github-api-efficiency-benchmark.sh` — validate and compare baseline/canary telemetry with machine-readable and Markdown output.
 - `NEW: .agents/scripts/tests/test-github-api-efficiency-benchmark.sh` — fixtures for comparable, incomplete, unequal-window, regression, and pass outcomes.
 - `NEW: .agents/reference/github-api-efficiency.md` — metric definitions, request budgets, rollout defaults, rollback thresholds, and operator commands.
+- `NEW: .agents/scripts/gh-quota-attribution-lib.sh` — classify only documented exact primary-cost outcomes for direct REST requests; preserve unknown evidence for GraphQL and ambiguous transports.
+- `EDIT: .agents/scripts/gh` — pass defensible direct REST success costs into transport instrumentation without changing command output or status.
 - `EDIT: .agents/scripts/gh-api-instrument.sh` — add only a thin benchmark/report dispatch if needed; do not duplicate aggregation logic.
+- `EDIT: .agents/scripts/tests/test-gh-shim.sh` and `.agents/scripts/tests/test-gh-api-instrument.sh` — cover fixed REST costs, documented zero-cost requests, and fail-closed ambiguous/failure paths.
 - `EDIT: .agents/configs/pulse-sweep-budget.json` — remove obsolete verification settings and tune surviving bounded polling defaults when evidence supports it.
 - `EDIT: .agents/configs/webhook-receiver.conf` — tune ledger/event defaults only from canary evidence; retain secure loopback and bounded limits.
 - `EDIT: exact flag-owning files from t18125–t18130 manifests` — not yet knowable because those flags do not exist; update issue/brief scope with concrete paths before dispatch if they fall outside the paths above.
@@ -93,7 +96,7 @@ rg -n 'AIDEVOPS_.*(CACHE|SNAPSHOT|SINGLE|WEBHOOK|GH_API)|feature.flag|rollout|co
 
 - **Callers/readers:** Operators/CI invoke `.agents/scripts/github-api-efficiency-benchmark.sh`; parent closeout reads its Markdown/JSON result and phase modules read tuned configs.
 - **Writers/mutation paths:** `.agents/scripts/github-api-efficiency-benchmark.sh` writes reports atomically without runtime mutation; cleanup edits only paths discovered in merged child manifests.
-- **Tests/fixtures:** `.agents/scripts/tests/test-github-api-efficiency-benchmark.sh` supplies deterministic telemetry windows with known attempts, points, retries, latency, cache events, errors, and guardrails.
+- **Tests/fixtures:** `.agents/scripts/tests/test-github-api-efficiency-benchmark.sh` supplies deterministic telemetry windows with known attempts, points, retries, latency, cache events, errors, and guardrails; shim/instrument fixtures prove that only authoritative direct REST costs become known.
 - **Schemas/config:** `.agents/reference/github-api-efficiency.md` defines versioned input/output and `.agents/configs/pulse-sweep-budget.json` plus webhook config retain validated fields.
 - **Generated/deployed mirrors:** `.agents/scripts/github-api-efficiency-benchmark.sh`, `.agents/configs/`, and `.agents/reference/github-api-efficiency.md` deploy through setup; reports remain local artifacts.
 - **Migrations/backfills:** `.agents/scripts/github-api-efficiency-benchmark.sh` never rewrites telemetry; incompatible/legacy windows are noncomparable and compatibility readers retain an explicit removal task/date.
@@ -108,6 +111,7 @@ rg -n 'AIDEVOPS_.*(CACHE|SNAPSHOT|SINGLE|WEBHOOK|GH_API)|feature.flag|rollout|co
 5. Compare path-level budgets: no fingerprint/verification list calls, no live fallback after fresh empty hit, at most one aggregate check fetch per unique actionable SHA, one leader per identical concurrent read, and no duplicate webhook actions.
 6. Tune only bounded TTL/limits supported by canary evidence. Remove obsolete flags/dead branches and stale config fields; retain uncertain controls with rationale, owner, and expiry. Run all owning phase tests after cleanup.
 7. Attach a privacy-safe summary to the child/parent, list exact rollback triggers and retained flags, and close the parent only if every criterion is evidenced.
+8. Attribute documented primary cost only for successful direct `github.com` REST calls. Keep cached, conditional, failed, enterprise, opaque-pagination, and GraphQL calls unknown unless their own operation supplies authoritative cost evidence; never use concurrent cumulative-header differencing.
 
 ### Hazards and Compatibility
 
@@ -116,6 +120,7 @@ rg -n 'AIDEVOPS_.*(CACHE|SNAPSHOT|SINGLE|WEBHOOK|GH_API)|feature.flag|rollout|co
 - **Mixed-version/backward compatibility:** Do not compare mixed schemas as equivalent. Retain legacy readers until the observed fleet is converged or document a separate cleanup task.
 - **Idempotency/retry:** Re-running with identical inputs/options yields byte-stable metrics apart from an explicitly separated generation timestamp; source cleanup is independently testable.
 - **Partial failure/recovery:** Missing windows, unknown quota cost, incomplete retention, or failed guardrails yield `INCONCLUSIVE`/`REGRESSION`, never a fabricated pass. Keep the parent open and resume after new observation.
+- **Quota attribution:** REST has documented fixed request charges and zero-cost exceptions, but arbitrary GraphQL and higher-level `gh` operations expose no concurrency-safe per-operation cost. Partial attribution must reduce unknowns without relaxing the benchmark's zero-unknown gate.
 
 ### Complexity Impact
 
@@ -139,29 +144,42 @@ python3 -m json.tool .agents/configs/pulse-sweep-budget.json >/dev/null
 
 ### Recoverability Checkpoint
 
-- [ ] Focused tests pass: benchmark fixtures plus every changed flag owner's focused suite
-- [ ] WIP commit created before broad gates: `wip: benchmark GitHub API efficiency rollout`
-- [ ] Evidence-triggered broad verification then run: `.agents/scripts/linters-local.sh --changed` and final bounded canary
+- [x] Focused tests pass: quota instrumentation/shim suites plus benchmark/evidence fixtures
+- [x] WIP commit created before post-rebase broad gates: `GH#27777: attribute exact direct REST quota cost`
+- [ ] Evidence-triggered broad verification: changed lint passes; final bounded canary remains pending
 
 ### Safety-Stop Recovery
 
 - **Original objective:** Prove and safely finalise lower GitHub API use without correctness or freshness regression.
 - **Preserved user directions:** Compare real baseline/canary evidence, tune incrementally, and let Pulse complete the chain.
 - **Trigger and evidence:** Not triggered at brief creation.
-- **Completed and verified:** Current report/config surfaces and observation requirements identified.
-- **Remaining acceptance criteria:** Final implementation, canary, cleanup, and parent closeout criteria below.
+- **Completed and verified:** Benchmark/report tooling and bounded exact direct REST quota attribution are implemented with focused and changed-file gates passing.
+- **Remaining acceptance criteria:** Comparable live windows, complete sidecars/guardrails, evidence-led tuning or control retention, and parent closeout criteria below.
 - **Unsafe route not to repeat:** Do not compare unequal retained windows, hide unknown quota cost, or delete rollback flags before canary success.
-- **Next safe route:** Produce an inconclusive report, collect a new fixed window, and rerun without closing the task.
-- **Resume condition:** t18130 is closed and complete baseline/canary telemetry is available.
-- **Owner and status:** Build+ `tier:standard`; blocked by t18130.
+- **Next safe route:** Let long-lived pre-attribution runtimes drain, collect a completed fixed window, and rerun the fail-closed benchmark without closing the task prematurely.
+- **Resume condition:** Dependency met; complete comparable baseline/canary telemetry remains required for final tuning and closeout.
+- **Owner and status:** Build+ `tier:standard`; active and evidence-gated.
+
+### Post-release evidence (2026-07-20)
+
+- Exact direct REST attribution shipped in `v3.32.160`; `v3.32.161` subsequently became the active release without changing the attribution contract.
+- The first fully post-release `297s` window recorded 525 attempts, 371 known quota points, and 154 unknown-cost attempts. The unknowns split into 108 GraphQL attempts and 46 REST attempts; 66 of the GraphQL attempts were explicit REST-translator fallbacks.
+- A later `299s` `v3.32.161` window recorded 634 attempts, 490 known quota points, and 130 unknown-cost attempts. Its 48 GraphQL attempts remained unknown by policy; 48 of 82 unknown REST attempts failed, so success did not prove whether GitHub charged them.
+- Both windows contained long-lived pre-attribution producers alongside current runtimes. In the later window, the same explicit-pagination route produced 101 known and 16 unknown successful page costs, confirming mixed producer generations rather than a current classifier failure. These windows are observations, not comparable canaries.
+- The provisional benchmark returned `INCONCLUSIVE` with 47 decision reasons. The canary sidecar was incomplete, quota remained unknown, and webhook/guardrail coverage remains deliberately unowned as documented in `.agents/reference/github-api-efficiency.md`.
+- Decision: retain every rollout and rollback control. Do not tune defaults, retire flags, or close this task until a homogeneous completed-cycle window and all required evidence groups pass.
 
 ### Files Scope
 
 - `.agents/scripts/github-api-efficiency-benchmark.sh`
 - `.agents/scripts/tests/test-github-api-efficiency-benchmark.sh`
 - `.agents/reference/github-api-efficiency.md`
+- `.agents/scripts/gh-quota-attribution-lib.sh`
+- `.agents/scripts/gh`
 - `.agents/scripts/gh-api-instrument.sh`
 - `.agents/scripts/gh-api-aggregate.awk`
+- `.agents/scripts/tests/test-gh-shim.sh`
+- `.agents/scripts/tests/test-gh-api-instrument.sh`
 - `.agents/configs/pulse-sweep-budget.json`
 - `.agents/configs/webhook-receiver.conf`
 - `.agents/scripts/pulse-batch-prefetch-helper.sh`
@@ -185,11 +203,13 @@ python3 -m json.tool .agents/configs/pulse-sweep-budget.json >/dev/null
 - Comparable effective windows matter more than configured window labels.
 - Path-level deterministic budgets complement, but do not replace, real aggregate observation.
 - Inconclusive evidence keeps flags and parent open; it is not a failure to be hidden.
-- Publication/release remains outside this task unless separately authorised.
+- Exact universal GraphQL cost attribution is unavailable from cumulative response headers under concurrency; unknown costs remain unknown rather than being estimated or promoted to zero.
+- Release `v3.32.160` was separately authorised and completed; any further publication still requires separate authorisation.
 
 ## Relevant Files
 
 - `.agents/scripts/gh-api-instrument.sh:178-251` — source telemetry and retained-window contract.
+- `.agents/scripts/gh:387-436` — native transport boundary where direct REST cost provenance can be attached without changing command output.
 - `.agents/scripts/gh-api-aggregate.awk:72-130` — machine-readable aggregate source.
 - `.agents/configs/pulse-sweep-budget.json` — current polling/cache defaults and obsolete verification field candidate.
 - `.agents/configs/webhook-receiver.conf` — webhook event/ledger defaults after t18130.
@@ -197,7 +217,7 @@ python3 -m json.tool .agents/configs/pulse-sweep-budget.json >/dev/null
 
 ## Dependencies
 
-- **Blocked by:** t18130.
+- **Blocked by:** No open task dependency; t18130 is closed.
 - **Blocks:** Final closeout of parent t18124.
 - **External:** Fixed baseline/canary observation windows; no paid service or new credential.
 

@@ -125,6 +125,20 @@ load_helper_functions() {
 stub_gates() {
 	# Make pre-merge-gate always pass.
 	cmd_pre_merge_gate() { return 0; }
+	# Keep this flag-focused test independent from the exact-head, post-merge
+	# evidence, canonical-sync, and lifecycle finalization contracts.
+	_retarget_stacked_children_interactive() { return 0; }
+	_merge_guard_admin_merge_maintainer_review() { return 0; }
+	_merge_resolve_match_head() {
+		printf '%s\n' "fixture-head-sha"
+		return 0
+	}
+	_merge_verify_completed_state() {
+		FULL_LOOP_MERGE_SHA="fixture-merge-sha"
+		return 0
+	}
+	_merge_report_canonical_sync_state() { return 0; }
+	_merge_finalize_post_merge() { return 0; }
 	# Make resource unlock a no-op.
 	_merge_unlock_resources() { return 0; }
 	# Resolve repo unconditionally to the test slug.

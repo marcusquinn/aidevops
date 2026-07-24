@@ -111,6 +111,35 @@ _gh_pr_list_snapshot_key() {
 }
 
 #######################################
+# Build the repository prefix used by PR-list snapshot cache files. Keeping the
+# repository hash outside the exact-argv hash allows terminal PR mutations to
+# evict every cached open-list shape for one repository without flushing other
+# repositories from the shared cache.
+# Args: gh-style argv
+# Stdout: repository cache key
+#######################################
+_gh_pr_list_snapshot_repo_key() {
+	local _repo_slug=""
+	local _arg=""
+	local _expect_repo=0
+	for _arg in "$@"; do
+		if [[ "$_expect_repo" -eq 1 ]]; then
+			_repo_slug="$_arg"
+			_expect_repo=0
+			continue
+		fi
+		case "$_arg" in
+		--repo | -R) _expect_repo=1 ;;
+		--repo=*) _repo_slug="${_arg#--repo=}" ;;
+		-R?*) _repo_slug="${_arg#-R}" ;;
+		esac
+	done
+	[[ -n "$_repo_slug" ]] || _repo_slug="_implicit"
+	_gh_pr_list_snapshot_key "$_repo_slug"
+	return $?
+}
+
+#######################################
 # Record one lightweight telemetry event for the exact gh_pr_list argv shape.
 # The shape key is the same full-argv hash used by the exact-output caches, so
 # repeated counts identify only semantics-preserving candidates for migration.
@@ -161,9 +190,10 @@ _gh_pr_list_snapshot_get() {
 	[[ "${AIDEVOPS_GH_PR_LIST_CACHE_DISABLE:-0}" == "1" ]] && return 1
 	[[ "$_ttl" =~ ^[0-9]+$ && "$_ttl" -gt 0 ]] || return 1
 	_gh_pr_list_snapshot_cacheable "$@" || { _gh_read_cache_record gh_pr_list_cache bypass; return 1; }
-	local _key _path _now _mtime _age
+	local _repo_key _key _path _now _mtime _age
+	_repo_key="$(_gh_pr_list_snapshot_repo_key "$@")" || return 1
 	_key="$(_gh_pr_list_snapshot_key "$@")"
-	_path="${AIDEVOPS_GH_PR_LIST_CACHE_DIR:-${HOME}/.aidevops/cache/gh-pr-list-snapshots}/${_key}.json"
+	_path="${AIDEVOPS_GH_PR_LIST_CACHE_DIR:-${HOME}/.aidevops/cache/gh-pr-list-snapshots}/${_repo_key}-${_key}.json"
 	[[ -f "$_path" ]] || { _gh_read_cache_record gh_pr_list_cache miss; return 1; }
 	_now=$(date +%s 2>/dev/null || printf '0')
 	_mtime=$(perl -e 'print((stat($ARGV[0]))[9] || 0)' "$_path" 2>/dev/null || printf '0')
@@ -189,16 +219,40 @@ _gh_pr_list_snapshot_put() {
 	[[ "${AIDEVOPS_GH_PR_LIST_CACHE_DISABLE:-0}" == "1" ]] && return 0
 	[[ "$_ttl" =~ ^[0-9]+$ && "$_ttl" -gt 0 ]] || return 0
 	_gh_pr_list_snapshot_cacheable "$@" || return 0
-	local _dir _key _path _tmp
+	local _dir _repo_key _key _path _tmp
 	_dir="${AIDEVOPS_GH_PR_LIST_CACHE_DIR:-${HOME}/.aidevops/cache/gh-pr-list-snapshots}"
 	mkdir -p "$_dir" 2>/dev/null || return 0
+	_repo_key="$(_gh_pr_list_snapshot_repo_key "$@")" || return 0
 	_key="$(_gh_pr_list_snapshot_key "$@")"
-	_path="${_dir}/${_key}.json"
+	_path="${_dir}/${_repo_key}-${_key}.json"
 	_tmp=$(mktemp "${_dir}/.pr-list-${_key}.XXXXXX" 2>/dev/null) || return 0
 	printf '%s' "$_body" >"$_tmp" 2>/dev/null || { rm -f "$_tmp"; return 0; }
 	mv "$_tmp" "$_path" 2>/dev/null || rm -f "$_tmp"
 	_gh_read_cache_record gh_pr_list_cache store
 	return 0
+}
+
+#######################################
+# Invalidate all cached open-PR list shapes for one repository. Terminal merge
+# and close paths call this after GitHub confirms that a PR is no longer open.
+# Args: $1 = repository slug
+#######################################
+gh_pr_list_cache_invalidate_repo() {
+	local _repo_slug="$1"
+	[[ -n "$_repo_slug" ]] || return 1
+	local _dir="${AIDEVOPS_GH_PR_LIST_CACHE_DIR:-${HOME}/.aidevops/cache/gh-pr-list-snapshots}"
+	local _repo_key=""
+	local _path=""
+	local _rc=0
+	_repo_key="$(_gh_pr_list_snapshot_key "$_repo_slug")" || return 1
+	if [[ -d "$_dir" ]]; then
+		for _path in "${_dir}/${_repo_key}-"*.json; do
+			[[ -f "$_path" ]] || continue
+			rm -f -- "$_path" 2>/dev/null || _rc=1
+		done
+	fi
+	_gh_read_cache_record gh_pr_list_cache invalidate
+	return "$_rc"
 }
 
 #######################################
@@ -545,12 +599,14 @@ set_issue_status() {
 #######################################
 gh_issue_view() {
 	local _first_num="${1:-}"
-	if _rest_read_first_enabled; then
+	local _rest_capable=0
+	_rest_issue_view_can_preserve_args "$@" && _rest_capable=1
+	if [[ $_rest_capable -eq 1 ]] && _rest_read_first_enabled; then
 		print_info "[INFO] gh-wrapper: REST-first read mode, routing issue view #${_first_num} to REST"
 		_rest_issue_view "$@"
 		return $?
 	fi
-	if { command -v github_app_should_route_rest >/dev/null 2>&1 && github_app_should_route_rest rest-core gh_issue_view; } || _rest_should_fallback; then
+	if [[ $_rest_capable -eq 1 ]] && { { command -v github_app_should_route_rest >/dev/null 2>&1 && github_app_should_route_rest rest-core gh_issue_view; } || _rest_should_fallback; }; then
 		print_info "[INFO] gh-wrapper: GraphQL budget low, routing issue view #${_first_num} to REST"
 		_rest_issue_view "$@"
 		return $?
@@ -558,7 +614,7 @@ gh_issue_view() {
 	gh_record_call graphql gh_issue_view 2>/dev/null || true
 	_gh_with_timeout read gh issue view "$@"
 	local rc=$?
-	if [[ $rc -ne 0 ]] && _rest_should_fallback; then
+	if [[ $rc -ne 0 && $_rest_capable -eq 1 ]] && _rest_should_fallback; then
 		print_info "[INFO] gh-wrapper: GraphQL exhausted, falling back to REST for issue view #${_first_num}"
 		_rest_issue_view "$@"
 		rc=$?
@@ -570,9 +626,9 @@ gh_issue_view() {
 # gh_pr_list — drop-in replacement for gh pr list.  (t2772)
 # Routes directly to REST (`gh api GET /repos/{owner}/{repo}/pulls`) when
 # GraphQL remaining is below the fallback threshold, and still falls back to
-# REST if the primary call fails during an exhaustion window. Supports --state,
-# --head, --base, --limit, --json, --jq, -q. --search remains GraphQL-only
-# because the REST pulls endpoint has no equivalent search semantics.
+# REST if the primary call fails during an exhaustion window. Direct list reads
+# use /pulls; --author reads use pagination-complete Search API qualifiers.
+# Unsupported argument or JSON-field shapes remain on native GraphQL.
 #
 #   gh_pr_list --repo owner/repo --state open --json number,title
 #   gh_pr_list --repo owner/repo --state open --limit 200 --json number --jq 'length'
@@ -581,8 +637,14 @@ gh_issue_view() {
 # when both paths ran).
 #######################################
 gh_pr_list() {
-	local _has_search=1
-	_rest_args_have_search "$@" || _has_search=0
+	local _rest_capable=0
+	local _uses_search=0
+	local _pool="rest-core"
+	_rest_pr_list_can_preserve_args "$@" && _rest_capable=1
+	if _rest_args_have_author "$@"; then
+		_uses_search=1
+		_pool="rest-search"
+	fi
 	_gh_pr_list_shape_record "$@"
 	local _cached_output=""
 	if _cached_output=$(_gh_pr_list_snapshot_get "$@" 2>/dev/null); then
@@ -590,9 +652,13 @@ gh_pr_list() {
 		return 0
 	fi
 	local _out="" _rc=0
-	if [[ $_has_search -eq 0 ]] && _rest_read_first_enabled && _rest_pr_list_can_preserve_args "$@"; then
-		print_info "[INFO] gh-wrapper: REST-first read mode, routing pr list to REST"
-		_out=$(_rest_pr_list "$@")
+	if [[ $_rest_capable -eq 1 ]] && _rest_read_first_enabled; then
+		if [[ $_uses_search -eq 1 ]]; then
+			print_info "[INFO] gh-wrapper: REST-first read mode, routing author-filtered pr list to /search/issues"
+		else
+			print_info "[INFO] gh-wrapper: REST-first read mode, routing pr list to REST"
+		fi
+		_out=$(_rest_pr_list_dispatch "$@")
 		_rc=$?
 		if [[ $_rc -eq 0 ]]; then
 			_gh_pr_list_snapshot_put "$_out" "$@"
@@ -600,9 +666,13 @@ gh_pr_list() {
 		fi
 		return $_rc
 	fi
-	if [[ $_has_search -eq 0 ]] && { { command -v github_app_should_route_rest >/dev/null 2>&1 && github_app_should_route_rest rest-core gh_pr_list; } || _rest_should_fallback; }; then
-		print_info "[INFO] gh-wrapper: GraphQL budget low, routing pr list to REST"
-		_out=$(_rest_pr_list "$@")
+	if [[ $_rest_capable -eq 1 ]] && { { command -v github_app_should_route_rest >/dev/null 2>&1 && github_app_should_route_rest "$_pool" gh_pr_list; } || _rest_should_fallback; }; then
+		if [[ $_uses_search -eq 1 ]]; then
+			print_info "[INFO] gh-wrapper: GraphQL budget low, routing author-filtered pr list to /search/issues"
+		else
+			print_info "[INFO] gh-wrapper: GraphQL budget low, routing pr list to REST"
+		fi
+		_out=$(_rest_pr_list_dispatch "$@")
 		_rc=$?
 		if [[ $_rc -eq 0 ]]; then
 			_gh_pr_list_snapshot_put "$_out" "$@"
@@ -613,9 +683,13 @@ gh_pr_list() {
 	gh_record_call graphql gh_pr_list 2>/dev/null || true
 	_out=$(_gh_with_timeout read gh pr list "$@")
 	local rc=$?
-	if [[ $rc -ne 0 && $_has_search -eq 0 ]] && _rest_should_fallback; then
-		print_info "[INFO] gh-wrapper: GraphQL exhausted, falling back to REST for pr list"
-		_out=$(_rest_pr_list "$@")
+	if [[ $rc -ne 0 && $_rest_capable -eq 1 ]] && _rest_should_fallback; then
+		if [[ $_uses_search -eq 1 ]]; then
+			print_info "[INFO] gh-wrapper: GraphQL exhausted, falling back to /search/issues for author-filtered pr list"
+		else
+			print_info "[INFO] gh-wrapper: GraphQL exhausted, falling back to REST for pr list"
+		fi
+		_out=$(_rest_pr_list_dispatch "$@")
 		rc=$?
 	fi
 	if [[ $rc -eq 0 ]]; then
@@ -641,13 +715,15 @@ gh_pr_list() {
 #######################################
 gh_pr_view() {
 	local _first_num="${1:-}"
+	local _rest_shape_valid=0
+	_rest_pr_view_args_supported structural "$@" && _rest_shape_valid=1
 	local _cached_output=""
 	if _cached_output=$(_gh_pr_view_snapshot_get "$@" 2>/dev/null); then
 		printf '%s' "$_cached_output"
 		return 0
 	fi
 	local _out="" _rc=0
-	if _out=$(_gh_pr_view_try_mixed_split "$@" 2>/dev/null); then
+	if [[ $_rest_shape_valid -eq 1 ]] && _out=$(_gh_pr_view_try_mixed_split "$@" 2>/dev/null); then
 		_gh_pr_view_snapshot_put "$_out" "$@"
 		printf '%s' "$_out"
 		return 0
@@ -675,7 +751,7 @@ gh_pr_view() {
 	gh_record_call graphql gh_pr_view 2>/dev/null || true
 	_out=$(_gh_with_timeout read gh pr view "$@")
 	local rc=$?
-	if [[ $rc -ne 0 ]] && _rest_should_fallback; then
+	if [[ $rc -ne 0 ]] && _rest_pr_view_can_emergency_fallback_args "$@" && _rest_should_fallback; then
 		print_info "[INFO] gh-wrapper: GraphQL exhausted, falling back to REST for pr view #${_first_num}"
 		_out=$(_rest_pr_view "$@")
 		rc=$?
@@ -692,8 +768,8 @@ gh_pr_view() {
 # Routes directly to REST when GraphQL remaining is below the fallback threshold,
 # and still falls back to REST if the primary call fails during an exhaustion
 # window.
-# Supports --state, --label (multiple), --assignee, --limit, --json, --jq,
-# --search.
+# Supports --state, --label (multiple), --assignee, --author, --limit, --json,
+# --jq, and --search when their complete argument shape can be preserved.
 #
 # Routing (t2995):
 #   - --search non-empty → _rest_issue_search uses /search/issues?q=...
@@ -714,42 +790,40 @@ gh_pr_view() {
 gh_issue_list() {
 	local _has_search=1
 	_rest_args_have_search "$@" || _has_search=0
+	local _rest_capable=0
+	_rest_issue_list_can_preserve_args "$@" && _rest_capable=1
 	local _pool="rest-core"
 	[[ $_has_search -eq 1 ]] && _pool="rest-search"
-	if _rest_read_first_enabled; then
+	if [[ $_rest_capable -eq 1 ]] && _rest_read_first_enabled; then
 		if [[ $_has_search -eq 1 ]]; then
 			print_info "[INFO] gh-wrapper: REST-first read mode, routing issue list to /search/issues (--search preserved, t2995)"
-			_rest_issue_search "$@"
 		else
 			print_info "[INFO] gh-wrapper: REST-first read mode, routing issue list to REST"
-			_rest_issue_list "$@"
 		fi
+		_rest_issue_list_dispatch "$@"
 		return $?
 	fi
-	if { command -v github_app_should_route_rest >/dev/null 2>&1 && github_app_should_route_rest "$_pool" gh_issue_list; } || _rest_should_fallback; then
+	if [[ $_rest_capable -eq 1 ]] && { { command -v github_app_should_route_rest >/dev/null 2>&1 && github_app_should_route_rest "$_pool" gh_issue_list; } || _rest_should_fallback; }; then
 		if [[ $_has_search -eq 1 ]]; then
 			print_info "[INFO] gh-wrapper: GraphQL budget low, routing issue list to /search/issues (--search preserved, t2995)"
-			_rest_issue_search "$@"
 		else
 			print_info "[INFO] gh-wrapper: GraphQL budget low, routing issue list to REST"
-			_rest_issue_list "$@"
 		fi
+		_rest_issue_list_dispatch "$@"
 		return $?
 	fi
 	gh_record_call graphql gh_issue_list 2>/dev/null || true
 	_gh_with_timeout read gh issue list "$@"
 	local rc=$?
-	if [[ $rc -ne 0 ]] && _rest_should_fallback; then
+	if [[ $rc -ne 0 && $_rest_capable -eq 1 ]] && _rest_should_fallback; then
 		# t2995: use search-aware REST fallback when --search is supplied.
 		if [[ $_has_search -eq 1 ]]; then
 			print_info "[INFO] gh-wrapper: GraphQL exhausted, falling back to /search/issues for issue list (--search preserved, t2995)"
-			_rest_issue_search "$@"
-			rc=$?
 		else
 			print_info "[INFO] gh-wrapper: GraphQL exhausted, falling back to REST for issue list"
-			_rest_issue_list "$@"
-			rc=$?
 		fi
+		_rest_issue_list_dispatch "$@"
+		rc=$?
 	fi
 	return $rc
 }

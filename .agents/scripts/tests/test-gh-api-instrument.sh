@@ -31,6 +31,8 @@ trap 'rm -rf "$TMPDIR"' EXIT
 
 export AIDEVOPS_GH_API_LOG="$TMPDIR/gh-api-calls.log"
 export AIDEVOPS_GH_API_REPORT="$TMPDIR/report.json"
+export AIDEVOPS_GH_API_EVIDENCE="$TMPDIR/evidence.json"
+unset AIDEVOPS_GH_QUOTA_COST AIDEVOPS_GH_QUOTA_COST_ON_SUCCESS
 
 assert_eq() {
 	local label="$1"
@@ -85,6 +87,8 @@ assert_eq "log has 6 lines" "6" "$line_count"
 gh_aggregate_calls
 
 assert_file_exists "report file created" "$AIDEVOPS_GH_API_REPORT"
+report_mode=$(stat -f '%Lp' "$AIDEVOPS_GH_API_REPORT" 2>/dev/null || stat -c '%a' "$AIDEVOPS_GH_API_REPORT" 2>/dev/null)
+assert_eq "atomic report is private" "600" "$report_mode"
 
 if ! jq -e '.' "$AIDEVOPS_GH_API_REPORT" >/dev/null 2>&1; then
 	echo "  FAIL: report is not valid JSON"
@@ -145,6 +149,13 @@ if [[ -f "$AIDEVOPS_GH_API_REPORT" ]]; then
 	FAIL=$((FAIL + 1))
 else
 	echo "  PASS: clear removed report"
+	PASS=$((PASS + 1))
+fi
+if [[ -f "$AIDEVOPS_GH_API_EVIDENCE" ]]; then
+	echo "  FAIL: clear left evidence behind: $AIDEVOPS_GH_API_EVIDENCE"
+	FAIL=$((FAIL + 1))
+else
+	echo "  PASS: clear removed evidence"
 	PASS=$((PASS + 1))
 fi
 
@@ -211,7 +222,7 @@ PATH="$FAKE_BIN:$PATH" HOME='' TMPDIR="$FALLBACK_TMP" USER="ghapitest" bash -c '
 	# shellcheck source=../gh-api-instrument.sh
 	source "$1"
 	gh_record_call rest fallback-test
-	mode=$(stat -f %Lp "$TMPDIR/aidevops-$USER" 2>/dev/null || stat -c %a "$TMPDIR/aidevops-$USER")
+	mode=$(stat -c '%a' "$TMPDIR/aidevops-$USER" 2>/dev/null || stat -f '%Lp' "$TMPDIR/aidevops-$USER")
 	[[ "$mode" == "700" ]]
 	[[ -f "$TMPDIR/aidevops-$USER/.aidevops/logs/gh-api-calls.log" ]]
 ' _ "${PARENT_DIR}/gh-api-instrument.sh"
@@ -255,12 +266,19 @@ assert_eq "missing lock tools stay silent" "0" "$lock_stderr_bytes"
 # --- Test 10b: abandoned empty locks recover instead of wedging telemetry --
 export AIDEVOPS_GH_API_LOG="$TMPDIR/stale-lock-calls.log"
 export AIDEVOPS_GH_API_REPORT="$TMPDIR/stale-lock-report.json"
+export AIDEVOPS_GH_API_EMPTY_LOCK_GRACE_TRIES=0
 unset _GH_API_INSTRUMENT_LOADED
 # shellcheck source=../gh-api-instrument.sh
 source "${PARENT_DIR}/gh-api-instrument.sh"
+assert_eq "empty lock grace accepts an environment override" "0" "$_GH_API_EMPTY_LOCK_GRACE_TRIES"
+invalid_grace=$(AIDEVOPS_GH_API_EMPTY_LOCK_GRACE_TRIES=invalid bash -c '
+	# shellcheck source=/dev/null
+	source "$1"
+	printf "%s\n" "$_GH_API_EMPTY_LOCK_GRACE_TRIES"
+' _ "${PARENT_DIR}/gh-api-instrument.sh")
+assert_eq "invalid empty lock grace uses the default" "100" "$invalid_grace"
 gh_clear_log
 mkdir "${GH_API_LOG}.lock"
-_GH_API_EMPTY_LOCK_GRACE_TRIES=0
 gh_record_call rest stale-empty-lock-test
 assert_eq "stale empty lock permits the next record" "1" "$(wc -l <"$GH_API_LOG" | tr -d ' ')"
 if [[ -d "${GH_API_LOG}.lock" ]]; then
@@ -273,6 +291,10 @@ fi
 
 mkdir "${GH_API_LOG}.lock"
 printf '%s\n' 'not-a-pid' >"${GH_API_LOG}.lock/pid"
+_GH_API_EMPTY_LOCK_GRACE_TRIES=100
+malformed_lock_status=0
+_gh_log_lock_reclaim "${GH_API_LOG}.lock" 0 || malformed_lock_status=$?
+assert_eq "malformed PID lock is reclaimed without the empty-lock grace" "0" "$malformed_lock_status"
 gh_record_call rest stale-malformed-lock-test
 assert_eq "stale malformed lock permits the next record" "2" "$(wc -l <"$GH_API_LOG" | tr -d ' ')"
 
@@ -307,6 +329,7 @@ assert_eq "issue sync preserves framework gh shim precedence" "$issue_sync_scrip
 # Restore per-test overrides for summary diagnostics if future tests append.
 export AIDEVOPS_GH_API_LOG="$TMPDIR/gh-api-calls.log"
 export AIDEVOPS_GH_API_REPORT="$TMPDIR/report.json"
+unset AIDEVOPS_GH_API_EMPTY_LOCK_GRACE_TRIES
 
 # --- Test 11: exact replay separates events, attempts, pages, and retries --
 unset _GH_API_INSTRUMENT_LOADED
@@ -363,6 +386,22 @@ gh_aggregate_calls
 assert_eq "success and failure attempts recorded" "2" "$(jq -r '._meta.attempted_requests' "$AIDEVOPS_GH_API_REPORT")"
 assert_eq "failed outcome recorded" "1" "$(jq -r '._meta.failed_attempts' "$AIDEVOPS_GH_API_REPORT")"
 
+# --- Test 11b: inferred quota is recorded only after transport success -------
+gh_clear_log
+AIDEVOPS_GH_QUOTA_COST_ON_SUCCESS=1 \
+	gh_run_transport_attempt rest quota-caller logical-quota 1 0 -- true
+set +e
+AIDEVOPS_GH_QUOTA_COST_ON_SUCCESS=1 \
+	gh_run_transport_attempt rest quota-caller logical-quota 1 1 -- false
+inferred_failure_status=$?
+set -e
+AIDEVOPS_GH_QUOTA_COST=3 AIDEVOPS_GH_QUOTA_COST_ON_SUCCESS=1 \
+	gh_run_transport_attempt rest quota-caller logical-quota 1 0 -- true
+assert_eq "inferred-cost transport failure status preserved" "1" "$inferred_failure_status"
+gh_aggregate_calls
+assert_eq "successful inferred and explicit costs reconcile" "4" "$(jq -r '._meta.known_quota_cost' "$AIDEVOPS_GH_API_REPORT")"
+assert_eq "failed inferred cost remains unknown" "1" "$(jq -r '._meta.unknown_quota_cost_attempts' "$AIDEVOPS_GH_API_REPORT")"
+
 # --- Test 12: effective window comes from retained attempt timestamps -----
 gh_clear_log
 first_ts=$((now - 30))
@@ -374,18 +413,127 @@ assert_eq "requested window retained separately" "3600" "$(jq -r '._meta.request
 assert_eq "first retained attempt timestamp" "$first_ts" "$(jq -r '._meta.first_retained_ts' "$AIDEVOPS_GH_API_REPORT")"
 assert_eq "last retained attempt timestamp" "$last_ts" "$(jq -r '._meta.last_retained_ts' "$AIDEVOPS_GH_API_REPORT")"
 assert_eq "effective window uses observed range" "20" "$(jq -r '._meta.effective_window_seconds' "$AIDEVOPS_GH_API_REPORT")"
+assert_file_exists "digest-bound evidence sidecar created" "$AIDEVOPS_GH_API_EVIDENCE"
+report_digest=$(python3 -c 'import hashlib,sys;print(hashlib.sha256(open(sys.argv[1], "rb").read()).hexdigest())' "$AIDEVOPS_GH_API_REPORT")
+evidence_digest=$(jq -r '.transport_sha256' "$AIDEVOPS_GH_API_EVIDENCE")
+assert_eq "evidence sidecar is bound to report bytes" "$report_digest" "$evidence_digest"
+assert_eq "incomplete production evidence fails closed" "false" "$(jq -r '.complete' "$AIDEVOPS_GH_API_EVIDENCE")"
+evidence_mode=$(stat -f '%Lp' "$AIDEVOPS_GH_API_EVIDENCE" 2>/dev/null || stat -c '%a' "$AIDEVOPS_GH_API_EVIDENCE" 2>/dev/null)
+assert_eq "evidence sidecar is private" "600" "$evidence_mode"
+rm -f "$AIDEVOPS_GH_API_LOG"
+gh_record_call rest invalid-window-caller
+gh_aggregate_calls
+if [[ -f "$AIDEVOPS_GH_API_EVIDENCE" ]]; then
+	echo "  FAIL: invalid aggregate left a stale evidence sidecar"
+	FAIL=$((FAIL + 1))
+else
+	echo "  PASS: invalid aggregate removed stale evidence sidecar"
+	PASS=$((PASS + 1))
+fi
 
 # --- Test 12b: retained opaque history does not poison a fresh window -------
 gh_clear_log
 outside_ts=$((now - 120))
 inside_ts=$((now - 10))
-printf '%s\topaque-caller\trest\tgh-pat\trest-core\tnative-pagination-opaque\t\tv2\tattempt\tlogical-old\tattempt-old\t0\t0\tsuccess\t200\t10\t\n' "$outside_ts" >>"$AIDEVOPS_GH_API_LOG"
-printf '%s\texact-caller\trest\tgh-pat\trest-core\trest-selected\t\tv2\tattempt\tlogical-new\tattempt-new\t1\t0\tsuccess\t200\t10\t\n' "$inside_ts" >>"$AIDEVOPS_GH_API_LOG"
+inside_last_ts=$((now - 5))
+printf '%s\topaque-caller\trest\tgh-pat\trest-core\tnative-pagination-opaque\t\tv2\tattempt\tlogical-old\tattempt-shared\t0\t0\tsuccess\t200\t10\t\n' "$outside_ts" >>"$AIDEVOPS_GH_API_LOG"
+printf '%s\texact-caller\trest\tgh-pat\trest-core\trest-selected\t\tv2\tattempt\tlogical-new\tattempt-shared\t1\t0\tsuccess\t200\t10\t\n' "$inside_ts" >>"$AIDEVOPS_GH_API_LOG"
+printf '%s\texact-caller\trest\tgh-pat\trest-core\trest-selected\t\tv2\tattempt\tlogical-new\tattempt-new\t2\t0\tsuccess\t200\t20\t\n' "$inside_last_ts" >>"$AIDEVOPS_GH_API_LOG"
 gh_aggregate_calls "$AIDEVOPS_GH_API_REPORT" 60
 assert_eq "fresh window excludes retained unknown pages" "0" "$(jq -r '._meta.unknown_page_attempts' "$AIDEVOPS_GH_API_REPORT")"
 assert_eq "retained unknown page remains auditable" "1" "$(jq -r '._meta.retained_unknown_page_attempts' "$AIDEVOPS_GH_API_REPORT")"
+assert_eq "old duplicate ID does not poison fresh attempts" "2" "$(jq -r '._meta.attempted_requests' "$AIDEVOPS_GH_API_REPORT")"
+assert_eq "retained duplicate remains auditable" "1" "$(jq -r '._meta.retained_duplicate_attempt_ids' "$AIDEVOPS_GH_API_REPORT")"
+assert_eq "fresh window duplicate count stays scoped" "0" "$(jq -r '._meta.duplicate_attempt_ids' "$AIDEVOPS_GH_API_REPORT")"
 assert_eq "fresh exact window ignores old opaque call" "0" "$(jq -r '._meta.opaque_paginated_attempts' "$AIDEVOPS_GH_API_REPORT")"
+assert_eq "fresh window first timestamp excludes history" "$inside_ts" "$(jq -r '._meta.first_retained_ts' "$AIDEVOPS_GH_API_REPORT")"
+assert_eq "fresh window last timestamp excludes history" "$inside_last_ts" "$(jq -r '._meta.last_retained_ts' "$AIDEVOPS_GH_API_REPORT")"
+assert_eq "fresh effective window excludes history" "5" "$(jq -r '._meta.effective_window_seconds' "$AIDEVOPS_GH_API_REPORT")"
 assert_eq "fresh window exactness is true" "true" "$(jq -r '._meta.attempts_exact' "$AIDEVOPS_GH_API_REPORT")"
+
+# --- Test 12c: fixed cutoffs exclude concurrent post-cycle appends ----------
+gh_clear_log
+fixed_end_ts=$((now - 5))
+post_cycle_ts=$((fixed_end_ts + 1))
+printf "%s\tfixed-caller\trest\tgh-pat\trest-core\trest-selected\t4999\tv2\tattempt\tlogical-fixed\tattempt-fixed-1\t1\t0\tsuccess\t200\t10\t1\n" "$fixed_end_ts" >>"$AIDEVOPS_GH_API_LOG"
+printf "%s\tfuture-caller\trest\tgh-pat\trest-core\trest-selected\t4998\tv2\tattempt\tlogical-future\tattempt-future-1\t1\t0\tsuccess\t200\t10\t1\n" "$post_cycle_ts" >>"$AIDEVOPS_GH_API_LOG"
+gh_aggregate_calls "$AIDEVOPS_GH_API_REPORT" 60 "$fixed_end_ts"
+assert_eq "explicit cutoff becomes report timestamp" "$fixed_end_ts" "$(jq -r "._meta.generated_at_ts" "$AIDEVOPS_GH_API_REPORT")"
+assert_eq "post-cutoff attempt is excluded" "1" "$(jq -r "._meta.attempted_requests" "$AIDEVOPS_GH_API_REPORT")"
+assert_eq "post-cutoff attempt is excluded from retained audit" "1" "$(jq -r "._meta.retained_records" "$AIDEVOPS_GH_API_REPORT")"
+assert_eq "fixed report ends at the completed cutoff" "$fixed_end_ts" "$(jq -r "._meta.last_retained_ts" "$AIDEVOPS_GH_API_REPORT")"
+if compgen -G "${AIDEVOPS_GH_API_REPORT}.source.*" >/dev/null; then
+	echo "  FAIL: aggregate left a private source snapshot behind"
+	FAIL=$((FAIL + 1))
+else
+	echo "  PASS: aggregate removed its private source snapshot"
+	PASS=$((PASS + 1))
+fi
+set +e
+gh_aggregate_calls "$AIDEVOPS_GH_API_REPORT" 60 "$((now + 60))"
+future_cutoff_status=$?
+set -e
+assert_eq "future report cutoff is rejected" "1" "$future_cutoff_status"
+
+# --- Test 12d: completed marker timestamp survives a second rollover --------
+# Freeze the recorder one second after the cycle cutoff. The bounded override
+# must place the marker at the captured cutoff while a later attempt remains
+# outside the fixed aggregate. Future overrides still fail closed (GH#28493).
+gh_clear_log
+rollover_cutoff=$((now - 2))
+rollover_append_now=$((rollover_cutoff + 1))
+_gh_now_seconds() {
+	printf '%s\n' "$rollover_append_now"
+	return 0
+}
+printf "%s\tpre-cycle-caller\trest\tgh-pat\trest-core\trest-selected\t4999\tv2\tattempt\tlogical-pre-cycle\tattempt-before-boundary\t1\t0\tsuccess\t200\t10\t1\n" \
+	"$rollover_cutoff" >>"$AIDEVOPS_GH_API_LOG"
+gh_record_efficiency_evidence coverage-end "$rollover_cutoff" "$rollover_cutoff"
+gh_record_attempt rest rollover-caller logical-rollover attempt-after-cycle 1 0 success 200 10 1 gh-pat rest-core rest-selected 4999
+marker_record_ts=$(awk -F'\t' -v decision="evidence:coverage-end:${rollover_cutoff}" '$6 == decision { print $1 }' "$AIDEVOPS_GH_API_LOG")
+assert_eq "explicit evidence timestamp matches completed cutoff" "$rollover_cutoff" "$marker_record_ts"
+gh_aggregate_calls "$AIDEVOPS_GH_API_REPORT" 60 "$rollover_cutoff"
+assert_eq "rollover report retains the aligned coverage marker" "1" "$(jq -r --arg key "evidence:coverage-end:${rollover_cutoff}" '.by_route_decision[$key].evidence_events' "$AIDEVOPS_GH_API_REPORT")"
+assert_eq "rollover report excludes post-cycle attempts" "1" "$(jq -r '._meta.attempted_requests' "$AIDEVOPS_GH_API_REPORT")"
+assert_eq "rollover report omits the post-cycle caller" "0" "$(jq -r '(.by_caller["rollover-caller"].attempted_requests // 0)' "$AIDEVOPS_GH_API_REPORT")"
+assert_eq "rollover report ends at the completed cutoff" "$rollover_cutoff" "$(jq -r '._meta.last_retained_ts' "$AIDEVOPS_GH_API_REPORT")"
+set +e
+gh_record_efficiency_evidence coverage-end "$((rollover_append_now + 1))" "$((rollover_append_now + 1))"
+future_evidence_status=$?
+set -e
+assert_eq "future evidence timestamp is rejected" "1" "$future_evidence_status"
+assert_eq "rejected future evidence is not appended" "3" "$(wc -l <"$AIDEVOPS_GH_API_LOG" | tr -d ' ')"
+
+# Restore the production clock implementation for the remaining tests.
+unset _GH_API_INSTRUMENT_LOADED
+# shellcheck source=../gh-api-instrument.sh
+source "${PARENT_DIR}/gh-api-instrument.sh"
+
+# --- Test 12e: typed evidence and latency completeness stay explicit --------
+gh_clear_log
+latency_ts=$((now - 5))
+gh_record_efficiency_evidence cache.fresh_hits 1
+printf '%s\tlatency-caller\trest\tgh-pat\trest-core\trest-selected\t\tv2\tattempt\tlogical-latency\tattempt-latency-1\t1\t0\tsuccess\t200\t10\t\n' "$latency_ts" >>"$AIDEVOPS_GH_API_LOG"
+printf '%s\tlatency-caller\trest\tgh-pat\trest-core\trest-selected\t\tv2\tattempt\tlogical-latency\tattempt-latency-2\t2\t0\tsuccess\t200\t30\t\n' "$latency_ts" >>"$AIDEVOPS_GH_API_LOG"
+printf '%s\tlatency-caller\trest\tgh-pat\trest-core\trest-selected\t\tv2\tattempt\tlogical-latency\tattempt-latency-3\t3\t0\tsuccess\t200\t20\t\n' "$latency_ts" >>"$AIDEVOPS_GH_API_LOG"
+printf '%s\tlatency-caller\trest\tgh-pat\trest-core\trest-selected\t\tv2\tattempt\tlogical-latency\tattempt-latency-4\t4\t0\tsuccess\t200\t\t\n' "$latency_ts" >>"$AIDEVOPS_GH_API_LOG"
+gh_aggregate_calls "$AIDEVOPS_GH_API_REPORT" 60
+assert_eq "typed evidence is not a logical call" "0" "$(jq -r '._meta.total_calls' "$AIDEVOPS_GH_API_REPORT")"
+assert_eq "typed evidence event is counted" "1" "$(jq -r '._meta.evidence_events' "$AIDEVOPS_GH_API_REPORT")"
+assert_eq "typed evidence route remains parseable" "1" "$(jq -r '.by_route_decision["evidence:cache.fresh_hits:1"].evidence_events' "$AIDEVOPS_GH_API_REPORT")"
+assert_eq "nearest-rank request p50 uses known samples" "20" "$(jq -r '._meta.request_p50_ms' "$AIDEVOPS_GH_API_REPORT")"
+assert_eq "nearest-rank request p95 uses known samples" "30" "$(jq -r '._meta.request_p95_ms' "$AIDEVOPS_GH_API_REPORT")"
+assert_eq "missing elapsed values stay explicit" "1" "$(jq -r '._meta.unknown_elapsed_attempts' "$AIDEVOPS_GH_API_REPORT")"
+assert_eq "peak attempts per minute uses transport attempts" "4" "$(jq -r '._meta.peak_attempts_per_minute' "$AIDEVOPS_GH_API_REPORT")"
+invalid_evidence_status=0
+gh_record_efficiency_evidence "Invalid Name" 1 || invalid_evidence_status=$?
+assert_eq "invalid evidence identifiers are rejected" "1" "$invalid_evidence_status"
+
+# --- Test 12f: CLI reports the actual custom aggregate destination -----------
+custom_report="$TMPDIR/custom-report.json"
+custom_report_message=$("${PARENT_DIR}/gh-api-instrument.sh" report "$custom_report" 60 2>&1 >/dev/null)
+assert_file_exists "CLI custom report is created" "$custom_report"
+assert_eq "CLI reports the custom output path" "Wrote $custom_report" "$custom_report_message"
 
 # --- Test 13: time/line/byte retention is atomic and bounded -------------
 export AIDEVOPS_GH_API_LOG_MAX_LINES=3
@@ -462,9 +610,16 @@ printf '%s\n' "$@" >>"$NATIVE_ATTEMPT_LOG"
 page=1
 jq_requested=0
 expect_jq=0
+slurp_requested=0
+template_requested=0
+expect_template=0
 for arg in "$@"; do
 	if [[ "$expect_jq" -eq 1 ]]; then
 		expect_jq=0
+		continue
+	fi
+	if [[ "$expect_template" -eq 1 ]]; then
+		expect_template=0
 		continue
 	fi
 	case "$arg" in
@@ -472,6 +627,13 @@ for arg in "$@"; do
 		jq_requested=1
 		expect_jq=1
 		;;
+	--jq=* | -q*) jq_requested=1 ;;
+	--slurp) slurp_requested=1 ;;
+	--template | -t)
+		template_requested=1
+		expect_template=1
+		;;
+	--template=* | -t*) template_requested=1 ;;
 	*)
 		if [[ "$arg" =~ (^|[?\&])page=([0-9]+)($|\&) ]]; then
 			page="${BASH_REMATCH[2]}"
@@ -479,6 +641,11 @@ for arg in "$@"; do
 		;;
 	esac
 done
+if [[ "${NATIVE_REJECT_SLURP_FILTERS:-0}" == "1" && "$slurp_requested" -eq 1 \
+	&& ("$jq_requested" -eq 1 || "$template_requested" -eq 1) ]]; then
+	printf 'the --slurp option is not supported with --jq or --template\n' >&2
+	exit "${NATIVE_PREFLIGHT_STATUS:-1}"
+fi
 if [[ "${NATIVE_PAGINATED_RESPONSE:-0}" == "1" ]]; then
 	printf 'HTTP/2.0 200 OK\r\n'
 	if [[ "$page" -eq 1 ]]; then
@@ -552,6 +719,38 @@ PATH="$NATIVE_FIXTURE:/usr/bin:/bin" AIDEVOPS_GH_SHIM_NO_REST_REWRITE=1 \
 "${PARENT_DIR}/gh-api-instrument.sh" report "$AIDEVOPS_GH_API_REPORT" >/dev/null 2>&1
 assert_eq "pagination rollback retains native flag" "1" "$(grep -c -- '^--paginate$' "$NATIVE_ATTEMPT_LOG")"
 assert_eq "pagination rollback remains honestly opaque" "1" "$(jq -r '._meta.opaque_paginated_attempts' "$AIDEVOPS_GH_API_REPORT")"
+
+# Native gh rejects --slurp combined with --jq or --template before issuing an
+# HTTP request. Preserve that CLI validation result without misclassifying the
+# native process invocation as an opaque transport attempt.
+rm -f "$AIDEVOPS_GH_API_LOG" "$NATIVE_ATTEMPT_LOG"
+preflight_jq_rc=0
+preflight_jq_output=$(PATH="$NATIVE_FIXTURE:/usr/bin:/bin" AIDEVOPS_GH_SHIM_NO_REST_REWRITE=1 \
+	NATIVE_REJECT_SLURP_FILTERS=1 \
+	"$SHIM_FIXTURE/gh" api --method GET --paginate \
+	'/repos/private-owner/private-repo/issues?per_page=100' -f state=open \
+	--slurp --jq '.' 2>&1) || preflight_jq_rc=$?
+preflight_template_rc=0
+preflight_template_output=$(PATH="$NATIVE_FIXTURE:/usr/bin:/bin" AIDEVOPS_GH_SHIM_NO_REST_REWRITE=1 \
+	NATIVE_REJECT_SLURP_FILTERS=1 \
+	"$SHIM_FIXTURE/gh" api --paginate \
+	'/repos/private-owner/private-repo/issues?per_page=100' --slurp --template '{{.}}' 2>&1) || preflight_template_rc=$?
+"${PARENT_DIR}/gh-api-instrument.sh" report "$AIDEVOPS_GH_API_REPORT" >/dev/null 2>&1
+assert_eq "slurp/jq native preflight exit is preserved" "1" "$preflight_jq_rc"
+assert_eq "slurp/template native preflight exit is preserved" "1" "$preflight_template_rc"
+assert_eq "native CLI still validates both invalid invocations" "2" "$(grep -c '^api$' "$NATIVE_ATTEMPT_LOG")"
+assert_eq "invalid pagination combinations retain logical events" "2" "$(awk -F'\t' '$9 == "logical" { count++ } END { print count + 0 }' "$AIDEVOPS_GH_API_LOG")"
+assert_eq "invalid pagination combinations record zero transport attempts" "0" "$(jq -r '._meta.attempted_requests' "$AIDEVOPS_GH_API_REPORT")"
+assert_eq "invalid pagination combinations create no opaque attempts" "0" "$(jq -r '._meta.opaque_paginated_attempts' "$AIDEVOPS_GH_API_REPORT")"
+assert_eq "invalid pagination combinations preserve exactness" "true" "$(jq -r '._meta.attempts_exact' "$AIDEVOPS_GH_API_REPORT")"
+if [[ "$preflight_jq_output" == *"not supported with --jq or --template"* &&
+	"$preflight_template_output" == *"not supported with --jq or --template"* ]]; then
+	echo "  PASS: native preflight diagnostics are preserved"
+	PASS=$((PASS + 1))
+else
+	echo "  FAIL: native preflight diagnostics changed"
+	FAIL=$((FAIL + 1))
+fi
 
 # Streaming jq remains page-local, matching native gh pagination semantics.
 rm -f "$AIDEVOPS_GH_API_LOG" "$NATIVE_ATTEMPT_LOG"

@@ -571,6 +571,26 @@ test_has_open_pr_blocks_superseded_consolidated_issue() {
 	return 0
 }
 
+test_has_open_pr_blocks_crlf_superseded_consolidated_issue() {
+	set_gh_fixtures 'marcusquinn/aidevops|merged|#26241|[{"number":26266,"title":"For #26241: split mixed PR view fields","body":"For #26241. Implements the fix."}]'
+	export ISSUE_META_JSON='{"body":"_Supersedes #26241 — this issue is the consolidated spec._\r\n\r\nImplement the remaining phase."}'
+
+	local output=""
+	if output=$("$HELPER_SCRIPT" has-open-pr 26274 marcusquinn/aidevops 'consolidated: split mixed gh_pr_view REST/GQL fields'); then
+		unset ISSUE_META_JSON
+		case "$output" in
+		*'merged PR #26266 references superseded issue #26241 for consolidated issue #26274'*)
+			print_result "has-open-pr accepts CRLF supersedes marker" 0
+			return 0
+			;;
+		esac
+	fi
+
+	unset ISSUE_META_JSON
+	print_result "has-open-pr accepts CRLF supersedes marker" 1 "Unexpected output: ${output}"
+	return 0
+}
+
 test_has_open_pr_ignores_planning_only_superseded_reference() {
 	set_gh_fixtures 'marcusquinn/aidevops|merged|#26241|[{"number":26260,"title":"For #26241: planning brief","body":"Files the brief for the follow-up. Pure planning, no code changes.\n\nFor #26241"}]'
 	export ISSUE_META_JSON='{"body":"_Supersedes #26241 — this issue is the consolidated spec._"}'
@@ -701,6 +721,7 @@ main() {
 	test_has_open_pr_ignores_embedded_bare_sibling_reference
 	test_has_open_pr_ignores_adjacent_issue_number_sibling_reference
 	test_has_open_pr_blocks_superseded_consolidated_issue
+	test_has_open_pr_blocks_crlf_superseded_consolidated_issue
 	test_has_open_pr_ignores_planning_only_superseded_reference
 	test_has_open_pr_ignores_dependency_bump_superseded_references
 	test_has_open_pr_preserves_non_bot_bump_implementation

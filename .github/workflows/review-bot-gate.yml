@@ -9,8 +9,9 @@ name: Review Bot Gate
 # fetched at runtime from marcusquinn/aidevops@main rather than being pinned
 # to a hard-coded SHA that silently drifts after helper changes.
 #
-# To enforce: add "review-bot-gate" as a required status check in
-# GitHub branch protection settings for each repo.
+# The status may remain required for compatibility, but missing/late add-on
+# review passes under the permanent fast/advisory default. Strict blocking is
+# an explicit completion_behavior opt-in.
 #
 # Rate-limit behaviour: controlled by `review_gate.rate_limit_behavior` in
 # ~/.config/aidevops/repos.json. Default: "pass". See:
@@ -31,38 +32,50 @@ on:
     # not on the Phase 2 edit that makes the placeholder a real review.
     types: [created, edited]
 
-# Do NOT cancel in-progress runs. When cancel-in-progress was true, the initial
-# pull_request:opened run was cancelled by the issue_comment:created event (fired
-# when a bot posted). The cancelled run left a permanent stale CANCELLED check on
-# the PR, making mergeStateStatus UNSTABLE even though the re-triggered run passed.
-# With cancel-in-progress: false, both runs complete — the first passes early
-# (PR too young) and the second confirms the bot posted. GH#2973.
-concurrency:
-  group: review-bot-gate-${{ github.event.pull_request.number || github.event.issue.number }}
-  cancel-in-progress: false
-
 jobs:
   gate:
-    # issue_comment fires for every PR comment/edit. Only bot review comments can
-    # change this gate's verdict; maintainer/user discussion should be skipped
-    # before the reusable workflow starts so it does not create mobile run noise.
+    # Apply the complete event matrix before concurrency admission. GitHub keeps
+    # only one pending run per group, so a skipped inline reply must never replace
+    # the sole queued evaluator. The reusable job repeats this as defence-in-depth.
     if: >
-      github.event_name != 'issue_comment' ||
       (
-        github.event.issue.pull_request &&
+        github.event_name == 'pull_request' ||
         (
-          github.actor == 'coderabbitai' ||
-          github.actor == 'gemini-code-assist[bot]' ||
-          github.actor == 'augment-code[bot]' ||
-          github.actor == 'augmentcode[bot]' ||
-          github.actor == 'copilot[bot]' ||
-          github.actor == 'github-actions[bot]'
+          (
+            github.event_name == 'pull_request_review' ||
+            (
+              github.event_name == 'pull_request_review_comment' &&
+              github.event.comment.in_reply_to_id == null
+            ) ||
+            (github.event_name == 'issue_comment' && github.event.issue.pull_request)
+          ) &&
+          (
+            github.actor == 'coderabbitai' ||
+            github.actor == 'coderabbitai[bot]' ||
+            github.actor == 'gemini-code-assist' ||
+            github.actor == 'gemini-code-assist[bot]' ||
+            github.actor == 'augment-code' ||
+            github.actor == 'augment-code[bot]' ||
+            github.actor == 'augmentcode' ||
+            github.actor == 'augmentcode[bot]' ||
+            github.actor == 'copilot' ||
+            github.actor == 'copilot[bot]' ||
+            github.actor == 'github-actions[bot]'
+          )
         )
       )
+    # Do not cancel an active evaluator (GH#2973). Job-level placement is
+    # required: ineligible workflow events skip before entering this group and
+    # therefore cannot displace its one pending eligible run (GH#28316).
+    concurrency:
+      group: review-bot-gate-${{ github.event.pull_request.number || github.event.issue.number }}
+      cancel-in-progress: false
     uses: ./.github/workflows/review-bot-gate-reusable.yml
     # Self-modifying gate PRs must exercise their own helper revision. Without
     # this, the reusable workflow fetches main and cannot validate a new helper
     # command until after the PR that needs that command has merged.
     with:
       aidevops_ref: ${{ github.event.pull_request.head.sha || 'main' }}
+      # Explicit CI opt-in: set this Actions variable to strict when required.
+      completion_behavior: ${{ vars.AIDEVOPS_REVIEW_GATE_COMPLETION_BEHAVIOR || 'fast' }}
     secrets: inherit

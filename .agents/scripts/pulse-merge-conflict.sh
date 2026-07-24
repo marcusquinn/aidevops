@@ -386,19 +386,19 @@ _interactive_pr_is_stale() {
 #   off | detect: no-op (caller is expected to guard too, but belt+braces)
 #   enforce:      apply label + post comment
 #
-# Fail-open: all gh failures are logged, never propagate. A failed label
-# application just means the routing gate won't pick up this PR — next
-# pulse cycle retries.
+# Fail closed: return success only when worker-takeover metadata was already
+# present or is confirmed after application. Callers must not route otherwise.
 #
 # Args: $1 = pr_number, $2 = repo_slug
-# Returns: 0 always
+# Returns: 0 if takeover is confirmed, 1 otherwise
 #######################################
 _interactive_pr_trigger_handover() {
 	local pr_number="$1"
 	local repo_slug="$2"
 	local mode="${AIDEVOPS_INTERACTIVE_PR_HANDOVER_MODE:-detect}"
-	[[ "$mode" != "enforce" ]] && return 0
-	[[ "$pr_number" =~ ^[0-9]+$ && -n "$repo_slug" ]] || return 0
+	local takeover_label="origin:worker-takeover"
+	[[ "$mode" == "enforce" ]] || return 1
+	[[ "$pr_number" =~ ^[0-9]+$ && -n "$repo_slug" ]] || return 1
 
 	# Idempotence short-circuit: label already present → nothing to do
 	# Fail CLOSED on label fetch failure — if we can't verify labels, we might
@@ -409,11 +409,11 @@ _interactive_pr_trigger_handover() {
 		--jq '[.labels[].name]' 2>/dev/null) || label_fetch_rc=$?
 	if [[ $label_fetch_rc -ne 0 ]]; then
 		echo "[pulse-wrapper] _interactive_pr_trigger_handover: failed to fetch labels for PR #${pr_number} in ${repo_slug} (exit ${label_fetch_rc}) — skipping handover to honor potential no-takeover label (t2383)" >>"$LOGFILE"
-		return 0
+		return 1
 	fi
 	[[ -n "$pr_labels_json" ]] || pr_labels_json="[]"
 
-	if printf '%s' "$pr_labels_json" | jq -e 'index("origin:worker-takeover")' >/dev/null 2>&1; then
+	if printf '%s' "$pr_labels_json" | jq -e --arg label "$takeover_label" 'index($label)' >/dev/null 2>&1; then
 		return 0
 	fi
 
@@ -422,13 +422,20 @@ _interactive_pr_trigger_handover() {
 	# any time. The routing gates will skip it." — enforce that promise here.
 	if printf '%s' "$pr_labels_json" | jq -e 'index("no-takeover")' >/dev/null 2>&1; then
 		echo "[pulse-wrapper] _interactive_pr_trigger_handover: PR #${pr_number} in ${repo_slug} has no-takeover label — skipping handover (t2383)" >>"$LOGFILE"
-		return 0
+		return 1
 	fi
 
-	# Apply label (fail-open — log if it fails)
+	# Apply the label, then prove the remote metadata reflects the transition.
 	if ! gh issue edit "$pr_number" --repo "$repo_slug" \
-		--add-label "origin:worker-takeover" >/dev/null 2>&1; then
-		echo "[pulse-wrapper] _interactive_pr_trigger_handover: failed to add origin:worker-takeover on PR #${pr_number} in ${repo_slug}" >>"$LOGFILE"
+		--add-label "$takeover_label" >/dev/null 2>&1; then
+		echo "[pulse-wrapper] _interactive_pr_trigger_handover: failed to add ${takeover_label} on PR #${pr_number} in ${repo_slug}" >>"$LOGFILE"
+		return 1
+	fi
+	if ! pr_labels_json=$(gh pr view "$pr_number" --repo "$repo_slug" --json labels \
+		--jq '[.labels[].name]' 2>/dev/null) \
+		|| ! printf '%s' "$pr_labels_json" | jq -e --arg label "$takeover_label" 'index($label)' >/dev/null 2>&1; then
+		echo "[pulse-wrapper] _interactive_pr_trigger_handover: ${takeover_label} was not confirmed after update for PR #${pr_number} in ${repo_slug}" >>"$LOGFILE"
+		return 1
 	fi
 
 	# Post one-time handover comment via _gh_idempotent_comment
@@ -1048,10 +1055,14 @@ _close_conflicting_pr_comment_landed() {
 	if [[ -n "$merging_pr" ]]; then
 		landed_via=" (via PR #${merging_pr})"
 	fi
-	gh pr close "$pr_number" --repo "$repo_slug" \
+	if gh pr close "$pr_number" --repo "$repo_slug" \
 		--comment "Closing — this PR has merge conflicts with the base branch. The work for this task (\`${task_id}\`) has already landed on ${base_branch}${landed_via}, so no re-attempt is needed.
 
-_Closed by deterministic merge pass (pulse-wrapper.sh, GH#17574)._" 2>/dev/null || true
+_Closed by deterministic merge pass (pulse-wrapper.sh, GH#17574)._" 2>/dev/null; then
+		if declare -F _pulse_merge_invalidate_pr_list_cache >/dev/null 2>&1; then
+			_pulse_merge_invalidate_pr_list_cache "$repo_slug" "closed conflicting PR #${pr_number}"
+		fi
+	fi
 
 	# GH#17642: Do NOT auto-close the linked issue. Closing a
 	# conflicting PR is safe (PRs are cheap), but closing the ISSUE
@@ -1091,10 +1102,14 @@ _close_conflicting_pr_comment_not_landed() {
 
 	# Use standard message but without the misleading
 	# "remains open for re-attempt" phrasing (GH#17574).
-	gh pr close "$pr_number" --repo "$repo_slug" \
+	if gh pr close "$pr_number" --repo "$repo_slug" \
 		--comment "Closing — this PR has merge conflicts with the base branch. If the linked issue is still open, a worker will be dispatched to re-attempt with a fresh branch.
 
-_Closed by deterministic merge pass (pulse-wrapper.sh)._" 2>/dev/null || true
+_Closed by deterministic merge pass (pulse-wrapper.sh)._" 2>/dev/null; then
+		if declare -F _pulse_merge_invalidate_pr_list_cache >/dev/null 2>&1; then
+			_pulse_merge_invalidate_pr_list_cache "$repo_slug" "closed conflicting PR #${pr_number}"
+		fi
+	fi
 
 	echo "[pulse-wrapper] Deterministic merge: closed conflicting PR #${pr_number} in ${repo_slug}: ${pr_title}" >>"$LOGFILE"
 	return 0

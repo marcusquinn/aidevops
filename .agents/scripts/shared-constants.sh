@@ -953,7 +953,9 @@ _SC_SELF="${BASH_SOURCE[0]:-${0:-}}"
 # retry keeps scheduled helpers self-healing without masking persistent install
 # corruption.
 _source_shared_module_with_retry() {
-	local module_path="$1"
+	# `module_path` is a special zsh array used by zmodload. Shadowing it while
+	# evaluating the regex guards below breaks lazy loading of zsh/regex.
+	local module_file="$1"
 	local attempts="${AIDEVOPS_SHARED_SOURCE_ATTEMPTS:-5}"
 	local interval="${AIDEVOPS_SHARED_SOURCE_INTERVAL:-1}"
 	local attempt=1
@@ -963,9 +965,9 @@ _source_shared_module_with_retry() {
 	[[ "$attempts" -gt 0 ]] || attempts=1
 
 	while [[ "$attempt" -le "$attempts" ]]; do
-		if [[ -f "$module_path" ]]; then
+		if [[ -f "$module_file" ]]; then
 			# shellcheck source=/dev/null
-			source "$module_path"
+			source "$module_file"
 			return $?
 		fi
 		if [[ "$attempt" -lt "$attempts" && "$interval" -gt 0 ]]; then
@@ -974,7 +976,7 @@ _source_shared_module_with_retry() {
 		attempt=$((attempt + 1))
 	done
 
-	printf '[ERROR] shared module missing after %s attempt(s): %s\n' "$attempts" "$module_path" >&2
+	printf '[ERROR] shared module missing after %s attempt(s): %s\n' "$attempts" "$module_file" >&2
 	return 1
 }
 
@@ -1147,7 +1149,14 @@ _run_cleanups() {
 		done <<<"$_CLEANUP_CMDS"
 		while IFS= read -r line; do
 			[[ -z "$line" ]] && continue
-			bash -c "$line" 2>/dev/null || true
+			# Bare function names must run in the current shell so cleanup can
+			# update process-local ownership state before removing resources.
+			# Compound commands remain isolated in a child shell.
+			if [[ "$line" =~ ^[a-zA-Z_][a-zA-Z0-9_]*$ ]] && declare -F "$line" >/dev/null 2>&1; then
+				"$line" 2>/dev/null || true
+			else
+				bash -c "$line" 2>/dev/null || true
+			fi
 		done <<<"$reversed"
 	fi
 	# Restore parent scope (pop from save stack)

@@ -80,15 +80,19 @@ head has a terminal required-check failure that a base refresh can plausibly fix
 | Merge | `--merge` | Preserve full commit history |
 | Rebase | `--rebase` | Linear history, no merge commits |
 
-### Pre-Merge: Review Bot Gate (t1382)
+### Pre-Merge: Review Add-on Check (t1382)
 
 ```bash
-~/.aidevops/agents/scripts/review-bot-gate-helper.sh check 123   # PASS/WAITING/SKIP
-~/.aidevops/agents/scripts/review-bot-gate-helper.sh wait 123    # Wait up to 10 min
+~/.aidevops/agents/scripts/review-bot-gate-helper.sh check 123   # PASS/PASS_ADVISORY/PASS_RATE_LIMITED/WAITING/SKIP
+~/.aidevops/agents/scripts/review-bot-gate-helper.sh wait 123    # Polls only when strict/trust policy returns WAITING
 ~/.aidevops/agents/scripts/review-bot-gate-helper.sh list 123    # List bot activity
 ```
 
-Add `skip-review-gate` label to bypass for docs-only PRs or repos without bots.
+The permanent default is advisory: required project CI controls merge readiness,
+and late add-on feedback is handled after merge. Set `completion_behavior: strict`
+only for repositories that explicitly require review-before-merge. The
+`skip-review-gate` label is a trusted-internal exception and is denied for
+external or unknown authors.
 
 **Merge**: `gh pr merge 123 --squash [--auto] [--delete-branch]` | GitLab: `glab mr merge 123 --squash [--when-pipeline-succeeds]`
 
@@ -124,7 +128,7 @@ Report structure: `## PR Review: #NNN - Title` with sections: **Quality Checks**
 1. Add `pr:NNN` to task line, move to `## In Review`; on merge mark `[x]`, add `completed:` timestamp, move to `## Done`
 2. Sync: `~/.aidevops/agents/scripts/beads-sync-helper.sh push`
 3. Delete branch: `git branch -d feature/xyz && git push origin --delete feature/xyz`
-4. Leave the human canonical checkout unchanged; create the next linked worktree from freshly fetched `origin/main`.
+4. Leave the human canonical checkout unchanged by default. Authority-aware full-loop is the exception: after merging a maintained non-aidevops PR, use the audited canonical fast-forward in `workflows/git-workflow.md` for the PR's verified base branch; never pull directly or switch the canonical checkout.
 5. Create release if applicable: see `workflows/release.md`
 
 ## Fork Workflow (Non-Owner Repositories)

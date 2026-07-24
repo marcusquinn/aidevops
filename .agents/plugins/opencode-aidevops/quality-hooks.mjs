@@ -13,7 +13,13 @@ import { recordToolStart, consumeToolDuration } from "./timing-tracing.mjs";
 import { qualityLog, runFileQualityGate } from "./quality-logging.mjs";
 import { enrichActiveSpan, detectTaskId, detectSessionOrigin } from "./otel-enrichment.mjs";
 import { checkSecretReadGate, isReadTool } from "./quality-hooks-secret-read.mjs";
-import { checkCanonicalGitSafetyGate } from "./quality-hooks-git-safety.mjs";
+import {
+  bindActiveScriptsDir,
+  checkCanonicalGitSafetyGate,
+  checkCanonicalWriteSafetyGate,
+  isApplyPatchMutationTool,
+  isDirectFileMutationTool,
+} from "./quality-hooks-git-safety.mjs";
 
 // Re-export for consumers that import from this module
 export { scanForSecrets } from "./quality-logging.mjs";
@@ -113,7 +119,7 @@ function scrubToolOutput(output) {
  * @returns {boolean}
  */
 function isWriteOrEditTool(tool) {
-  return tool === "Write" || tool === "Edit" || tool === "write" || tool === "edit";
+  return isDirectFileMutationTool(tool);
 }
 
 /**
@@ -241,13 +247,20 @@ function recordChildSubagent(taskId, scriptsDir, log) {
  * @param {object} input - Tool input
  * @param {object} output - Tool output
  */
+function enforceDirectFileMutationSafety(ctx, input, output) {
+  if (!isDirectFileMutationTool(input.tool)) return;
+  const writeCwd = output.args?.workdir || output.args?.cwd || process.cwd();
+  const filePath = output.args?.filePath || output.args?.file_path || output.args?.path || "";
+  const rawPatchText = output.args?.patchText || output.args?.patch_text || "";
+  const patchText = isApplyPatchMutationTool(input.tool)
+    ? (typeof rawPatchText === "string" ? rawPatchText : "")
+    : null;
+  checkCanonicalWriteSafetyGate(filePath, ctx.scriptsDir, writeCwd, patchText);
+}
+
 function handleToolBefore(ctx, log, input, output) {
   ctx.continuationGuard?.beforeTool(input, output);
-
-  if (isBashTool(input.tool)) {
-    const bashCwd = output.args?.workdir || output.args?.cwd || process.cwd();
-    checkCanonicalGitSafetyGate(output.args?.command || "", ctx.scriptsDir, bashCwd);
-  }
+  enforceDirectFileMutationSafety(ctx, input, output);
 
   const callID = input.callID || "";
   let intent = "";
@@ -275,9 +288,20 @@ function handleToolBefore(ctx, log, input, output) {
   }).catch(() => {});
 
   if (isBashTool(input.tool)) {
+    const bashArgs = output.args ?? {};
+    const bashCwd = bashArgs.workdir || bashArgs.cwd || process.cwd();
+    bashArgs.command = checkCanonicalGitSafetyGate(
+      bashArgs.command || "",
+      ctx.scriptsDir,
+      bashCwd,
+      {
+        activeScriptsDir: ctx.activeScriptsDir,
+        activeScriptsDirBinding: ctx.activeScriptsDirBinding,
+      },
+    );
     // t2685: pass scriptsDir + output so the hook can repair (mutate
     // output.args.command) or block (throw) as appropriate.
-    checkSignatureFooterGate(output.args?.command || "", log, ctx.scriptsDir, output);
+    checkSignatureFooterGate(bashArgs.command || "", log, ctx.scriptsDir, output);
   }
 
   checkSecretReadGate(input.tool, output.args || {}, log);
@@ -343,6 +367,8 @@ function handleToolAfter(ctx, log, scriptsDir, input, output) {
 
 export function createQualityHooks(deps) {
   const { scriptsDir, logsDir, continuationGuard } = deps;
+  const activeScriptsDir = deps.activeScriptsDir ?? scriptsDir;
+  const activeScriptsDirBinding = bindActiveScriptsDir(activeScriptsDir, scriptsDir);
   const qualityLogPath = join(logsDir, "quality-hooks.log");
   // t2120: qualityDetailLog (in quality-logging.mjs) reads ctx.detailLogPath
   // and ctx.detailMaxBytes. Previously these were never populated here, so
@@ -357,6 +383,8 @@ export function createQualityHooks(deps) {
   const detailMaxBytes = 5 * 1024 * 1024; // 5MB before rotation
   const ctx = {
     scriptsDir,
+    activeScriptsDir,
+    activeScriptsDirBinding,
     logsDir,
     qualityLogPath,
     detailLogPath,

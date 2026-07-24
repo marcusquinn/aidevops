@@ -7,6 +7,7 @@ on:
     branches: [main]
     paths:
       - 'README.md'
+      - 'docs/assets/star-history.svg'
   workflow_dispatch:
 
 concurrency:
@@ -19,10 +20,10 @@ jobs:
     
     steps:
       - name: Checkout aidevops repo
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Setup Bun
-        uses: oven-sh/setup-bun@ecf28ddc73e819eb6fa29df6b34ef8921c743461 # v2
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
           bun-version: latest
 
@@ -43,11 +44,17 @@ jobs:
           });
 
           let readme = fs.readFileSync('README.md', 'utf8');
+
+          // The generated docs site publishes this local README asset at its root.
+          readme = readme.replace(
+            /\]\(docs\/assets\/star-history\.svg\)/g,
+            '](/star-history.svg)'
+          );
           
           // Convert relative links to absolute GitHub URLs
           // Matches markdown links like [text](.agents/file.md) or [text](LICENSE)
           const repoBase = 'https://github.com/marcusquinn/aidevops/blob/main/';
-          readme = readme.replace(/\]\((?!http|#|mailto:)([^)]+)\)/g, (match, path) => {
+          readme = readme.replace(/\]\((?!https?:|#|mailto:|\/)([^)]+)\)/g, (match, path) => {
             return `](${repoBase}${path})`;
           });
           
@@ -200,7 +207,7 @@ jobs:
           FOOTER
 
       - name: Checkout website repo
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           repository: marcusquinn/aidevops.sh
           path: website
@@ -212,18 +219,19 @@ jobs:
           COMMIT_SHA: ${{ github.sha }}
         run: |
           cp docs.html website/docs.html
+          cp docs/assets/star-history.svg website/star-history.svg
           cd website
           
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           
           # Check if there are changes
-          if git diff --quiet docs.html 2>/dev/null; then
-            echo "No changes to docs.html"
+          if git diff --quiet docs.html star-history.svg 2>/dev/null; then
+            echo "No changes to docs.html or star-history.svg"
             exit 0
           fi
           
-          git add docs.html
+          git add docs.html star-history.svg
           git commit -m "docs: sync from aidevops README.md
 
           Auto-generated from marcusquinn/aidevops README.md

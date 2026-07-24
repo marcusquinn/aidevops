@@ -10,11 +10,13 @@ leakage (the string-heuristic failing on names with dots like
 """
 
 import importlib.util
+import io
 import os
 import subprocess
 import sys
 import tempfile
 import unittest
+from contextlib import redirect_stderr
 from pathlib import Path
 
 SCRIPTS_DIR = Path(__file__).parent.parent / ".agents" / "scripts"
@@ -398,6 +400,103 @@ terminal:
         self.assertIn("terminal:\n", repaired)
         self.assertIn("    regex: opencode", repaired)
         self.assertTrue(repaired.endswith("    regex: opencode\n"))
+
+
+class TestProfileArgTypeValidation(unittest.TestCase):
+    """Regression coverage for shell operators saved as YAML mappings."""
+
+    @staticmethod
+    def _profile_config(args: str, command: str = "/bin/zsh") -> str:
+        """Build a minimal Tabby profile with the supplied argument lines."""
+        return (
+            "profiles:\n"
+            "  - name: site.local\n"
+            "    options:\n"
+            f"      command: {command}\n"
+            "      args:\n"
+            f"{args}"
+        )
+
+    def _assert_arg_issues(
+        self, args: str, expected_values: list[str], command: str = "open"
+    ) -> None:
+        """Assert that argument lines are reported as non-string values."""
+        config = self._profile_config(args, command)
+        issues = tabby_profile_sync.find_profile_arg_type_issues(config)
+
+        self.assertEqual(
+            [issue.profile_name for issue in issues],
+            ["site.local"] * len(expected_values),
+        )
+        self.assertEqual([issue.value for issue in issues], expected_values)
+
+    def test_shell_quote_operator_mapping_is_rejected(self):
+        self._assert_arg_issues(
+            """        - '-a'
+        - OrbStack
+        - op: '&&'
+        - until
+        - docker
+        - info
+        - op: '>'
+        - /dev/null
+""",
+            ["op: '&&'", "op: '>'"],
+        )
+
+    def test_quoted_shell_command_is_valid_string_arg(self):
+        config = self._profile_config(
+            """        - '-l'
+        - '-c'
+        - >-
+          open -a OrbStack && until docker info >/dev/null 2>&1; do sleep 1;
+          done && pnpm dev:web
+"""
+        )
+
+        self.assertEqual(
+            tabby_profile_sync.find_profile_arg_type_issues(config),
+            [],
+        )
+
+    def test_mapping_with_quoted_key_or_later_separator_is_rejected(self):
+        self._assert_arg_issues(
+            """        - 'op': '&&'
+        - http://localhost: 3000
+""",
+            ["'op': '&&'", "http://localhost: 3000"],
+        )
+
+    def test_fully_quoted_mapping_like_values_are_valid_strings(self):
+        config = self._profile_config(
+            """        - 'label: value'
+        - "url: http://localhost: 3000"
+"""
+        )
+
+        self.assertEqual(
+            tabby_profile_sync.find_profile_arg_type_issues(config),
+            [],
+        )
+
+    def test_report_groups_operator_lines_by_profile(self):
+        config = self._profile_config(
+            """        - op: '&&'
+        - op: ';'
+""",
+            command="open",
+        )
+        stderr = io.StringIO()
+
+        with redirect_stderr(stderr):
+            found = tabby_profile_sync.report_profile_arg_type_issues(config)
+
+        self.assertTrue(found)
+        self.assertIn(
+            "site.local: non-string argument at line(s) 6, 7",
+            stderr.getvalue(),
+        )
+        self.assertIn("full quoted /bin/zsh -l -c", stderr.getvalue())
 
 
 if __name__ == "__main__":

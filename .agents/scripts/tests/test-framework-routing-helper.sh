@@ -78,6 +78,8 @@ run_log_framework_issue_case() {
 	local trace_file="$3"
 	local tmp_home="$4"
 	local stub_dir="$5"
+	local create_output="${6:-https://github.com/marcusquinn/aidevops/issues/9104}"
+	local error_file="${7:-${output_file}.stderr}"
 
 	mkdir -p "$stub_dir"
 	cat >"${stub_dir}/gh" <<'EOF'
@@ -99,7 +101,7 @@ if [[ "${1:-}" == "issue" && "${2:-}" == "list" ]]; then
 fi
 
 if [[ "${1:-}" == "issue" && "${2:-}" == "create" ]]; then
-	printf '%s\n' "https://github.com/marcusquinn/aidevops/issues/9104"
+	printf '%s\n' "${TEST_CREATE_OUTPUT}"
 	exit 0
 fi
 
@@ -120,12 +122,13 @@ EOF
 	if HOME="$tmp_home" \
 		PATH="${stub_dir}:$PATH" \
 		TEST_DUPLICATE_VALUE="$duplicate_value" \
+		TEST_CREATE_OUTPUT="$create_output" \
 		TEST_GH_TRACE="$trace_file" \
 		LOG_ISSUE_DEDUP_FILE="${tmp_home}/dedup.jsonl" \
 		"$HELPER" log-framework-issue \
-			--title "fix: no result dedup" \
-			--body "body" \
-			--labels "bug" >"$output_file" 2>&1; then
+		--title "fix: no result dedup" \
+		--body "body" \
+		--labels "bug" >"$output_file" 2>"$error_file"; then
 		return 0
 	fi
 
@@ -251,6 +254,102 @@ else
 	echo "  FAIL: null issue-list result creates issue"
 	cat "$null_output" 2>/dev/null || true
 fi
+
+informational_output="${TMP_DIR}/informational.out"
+informational_error="${TMP_DIR}/informational.err"
+informational_home="${TMP_DIR}/home-informational"
+informational_fixture="[INFO] auto-dispatch label present — skipping self-assignment
+[INFO] Privacy scan passed
+https://github.com/marcusquinn/aidevops/issues/9105"
+if run_log_framework_issue_case "[]" "$informational_output" "${TMP_DIR}/informational.trace" \
+	"$informational_home" "${TMP_DIR}/stub-informational" "$informational_fixture" "$informational_error"; then
+	informational_text=$(<"$informational_output")
+	informational_diagnostics=$(<"$informational_error")
+	informational_fingerprint=$(<"${informational_home}/.aidevops/state/log-issue-fingerprints.jsonl")
+	if [[ "$informational_text" == "https://github.com/marcusquinn/aidevops/issues/9105" ]]; then
+		PASS=$((PASS + 1))
+		echo "  PASS: informational create output returns one clean URL on stdout"
+	else
+		FAIL=$((FAIL + 1))
+		echo "  FAIL: informational create output did not return one clean URL: $informational_text"
+	fi
+	assert_contains "$informational_diagnostics" "Privacy scan passed" "informational create diagnostics are preserved on stderr"
+	assert_contains "$informational_fingerprint" '"issue":9105' "informational create output records numeric fingerprint"
+else
+	FAIL=$((FAIL + 1))
+	echo "  FAIL: informational create output succeeds"
+fi
+
+diagnostic_url_output="${TMP_DIR}/diagnostic-url.out"
+diagnostic_url_error="${TMP_DIR}/diagnostic-url.err"
+diagnostic_url_home="${TMP_DIR}/home-diagnostic-url"
+diagnostic_url_fixture="https://github.com/cli/cli/issues/new
+https://github.com/example/project/issues/42
+https://github.com/marcusquinn/aidevops/issues/9106"
+if run_log_framework_issue_case "[]" "$diagnostic_url_output" "${TMP_DIR}/diagnostic-url.trace" \
+	"$diagnostic_url_home" "${TMP_DIR}/stub-diagnostic-url" "$diagnostic_url_fixture" "$diagnostic_url_error"; then
+	diagnostic_url_text=$(<"$diagnostic_url_output")
+	diagnostic_url_diagnostics=$(<"$diagnostic_url_error")
+	if [[ "$diagnostic_url_text" == "https://github.com/marcusquinn/aidevops/issues/9106" ]]; then
+		PASS=$((PASS + 1))
+		echo "  PASS: unrelated diagnostic issue URLs do not hide the created issue URL"
+	else
+		FAIL=$((FAIL + 1))
+		echo "  FAIL: unrelated diagnostic issue URLs hid the created issue URL: $diagnostic_url_text"
+	fi
+	assert_contains "$diagnostic_url_diagnostics" "https://github.com/cli/cli/issues/new" "non-numeric diagnostic issue URL is preserved"
+	assert_contains "$diagnostic_url_diagnostics" "https://github.com/example/project/issues/42" "other-repository diagnostic issue URL is preserved"
+else
+	FAIL=$((FAIL + 1))
+	echo "  FAIL: unrelated diagnostic issue URLs allow the created issue URL"
+fi
+
+mixed_case_output="${TMP_DIR}/mixed-case.out"
+mixed_case_home="${TMP_DIR}/home-mixed-case"
+mixed_case_fixture="https://github.com/MarcusQuinn/Aidevops/issues/9106"
+if run_log_framework_issue_case "[]" "$mixed_case_output" "${TMP_DIR}/mixed-case.trace" \
+	"$mixed_case_home" "${TMP_DIR}/stub-mixed-case" "$mixed_case_fixture"; then
+	mixed_case_text=$(<"$mixed_case_output")
+	mixed_case_fingerprint=$(<"${mixed_case_home}/.aidevops/state/log-issue-fingerprints.jsonl")
+	if [[ "$mixed_case_text" == "$mixed_case_fixture" ]]; then
+		PASS=$((PASS + 1))
+		echo "  PASS: mixed-case repository URL preserves canonical output"
+	else
+		FAIL=$((FAIL + 1))
+		echo "  FAIL: mixed-case repository URL was not preserved: $mixed_case_text"
+	fi
+	assert_contains "$mixed_case_fingerprint" '"issue":9106' "mixed-case repository URL records numeric fingerprint"
+else
+	FAIL=$((FAIL + 1))
+	echo "  FAIL: mixed-case repository URL matches configured slug"
+fi
+
+invalid_create_fixtures=(
+	"create completed without a URL"
+	"https://github.com/marcusquinn/aidevops/issues/not-a-number"
+	$'https://github.com/marcusquinn/aidevops/issues/9106\nhttps://github.com/marcusquinn/aidevops/issues/9107'
+	"https://github.com/example/project/issues/9108"
+)
+invalid_create_descriptions=("missing" "malformed" "multiple" "wrong-repository")
+for index in "${!invalid_create_fixtures[@]}"; do
+	case_home="${TMP_DIR}/home-invalid-${index}"
+	if run_log_framework_issue_case "[]" "${TMP_DIR}/invalid-${index}.out" \
+		"${TMP_DIR}/invalid-${index}.trace" "$case_home" "${TMP_DIR}/stub-invalid-${index}" \
+		"${invalid_create_fixtures[$index]}" "${TMP_DIR}/invalid-${index}.err"; then
+		FAIL=$((FAIL + 1))
+		echo "  FAIL: ${invalid_create_descriptions[$index]} issue URL output fails closed"
+	else
+		PASS=$((PASS + 1))
+		echo "  PASS: ${invalid_create_descriptions[$index]} issue URL output fails closed"
+	fi
+	if [[ -s "${case_home}/.aidevops/state/log-issue-fingerprints.jsonl" ]]; then
+		FAIL=$((FAIL + 1))
+		echo "  FAIL: ${invalid_create_descriptions[$index]} issue URL output recorded a fingerprint"
+	else
+		PASS=$((PASS + 1))
+		echo "  PASS: ${invalid_create_descriptions[$index]} issue URL output does not record a fingerprint"
+	fi
+done
 
 echo ""
 

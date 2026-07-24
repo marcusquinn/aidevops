@@ -44,12 +44,13 @@ _ddpr_issue_body_from_meta() {
 _ddpr_superseded_issue_refs() {
 	local issue_body="$1"
 	local line="" ref=""
+	local marker_regex='^_Supersedes #([0-9]+) (—|-) this issue is the consolidated spec\._$'
 	while IFS= read -r line; do
-		if ! printf '%s\n' "$line" | grep -qE '^_Supersedes #[0-9]+ (—|-) this issue is the consolidated spec\._$'; then
-			continue
+		line="${line%$'\r'}"
+		if [[ "$line" =~ $marker_regex ]]; then
+			ref="${BASH_REMATCH[1]:-}"
+			printf '%s\n' "$ref"
 		fi
-		ref=$(printf '%s\n' "$line" | grep -oE '^_Supersedes #[0-9]+' | grep -oE '[0-9]+' || true)
-		[[ -n "$ref" ]] && printf '%s\n' "$ref"
 	done <<<"$issue_body"
 	return 0
 }

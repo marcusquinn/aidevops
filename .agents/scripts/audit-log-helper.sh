@@ -2,14 +2,14 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # audit-log-helper.sh — Tamper-evident audit logging with hash chaining (t1412.8)
-# Commands: log | verify | tail | status | rotate | help
+# Commands: log | verify | tail | status | rotate | recover | help
 # Docs: tools/security/tamper-evident-audit.md
 #
 # Append-only JSONL log with SHA-256 hash chaining. Each entry includes the
 # hash of the previous entry, creating a chain. Modifying or deleting any
 # entry breaks the chain, making tampering detectable via `verify`.
 #
-# Event types (16 — must match AUDIT_EVENT_TYPES array below):
+# Event types (17 — must match AUDIT_EVENT_TYPES array below):
 #   worker.dispatch    — Worker spawned by pulse/supervisor
 #   worker.complete    — Worker finished (success or failure)
 #   worker.error       — Worker encountered an error
@@ -25,6 +25,7 @@
 #   system.startup     — Framework startup
 #   system.update      — Framework update
 #   system.rotate      — Audit log rotation
+#   system.recover     — Broken audit segment preserved and succeeded explicitly
 #   testing.runtime    — Runtime test execution (pass/fail/skip with structured detail)
 #
 # Usage:
@@ -33,6 +34,7 @@
 #   audit-log-helper.sh tail [N]
 #   audit-log-helper.sh status
 #   audit-log-helper.sh rotate [--max-size MB]
+#   audit-log-helper.sh recover --reason <reason>
 #   audit-log-helper.sh help
 #
 # Environment:
@@ -62,6 +64,8 @@ readonly AUDIT_MAX_DETAIL_LEN=8192
 readonly AUDIT_DEFAULT_ROTATE_MB=50
 readonly AUDIT_DEFAULT_LOCK_TIMEOUT_SECONDS=10
 readonly AUDIT_DEFAULT_LOCK_ORPHAN_AGE_SECONDS=60
+readonly AUDIT_EVENT_RECOVER="system.recover"
+readonly AUDIT_INTEGRITY_BROKEN="BROKEN"
 
 # Mutable state for the process-local lock owner and the most recent append.
 _AUDIT_HELD_LOCK_DIR=""
@@ -85,6 +89,7 @@ readonly -a AUDIT_EVENT_TYPES=(
 	"system.startup"
 	"system.update"
 	"system.rotate"
+	"$AUDIT_EVENT_RECOVER"
 	"testing.runtime"
 )
 
@@ -148,6 +153,22 @@ _audit_sha256() {
 	return 0
 }
 
+# Compute the SHA-256 hash of a file without loading its contents into memory.
+# Arguments: $1 — file path
+# Output: hex digest on stdout
+_audit_sha256_file() {
+	local file="$1"
+	if command -v shasum &>/dev/null; then
+		shasum -a 256 "$file" | cut -d' ' -f1 || return 1
+	elif command -v sha256sum &>/dev/null; then
+		sha256sum "$file" | cut -d' ' -f1 || return 1
+	else
+		_audit_error "No SHA-256 tool found (need shasum or sha256sum)"
+		return 1
+	fi
+	return 0
+}
+
 # Get the hash of the last entry in the audit log.
 # Arguments: $1 — audit log file path
 # Output: hash on stdout (genesis hash if log is empty)
@@ -183,6 +204,38 @@ _audit_last_hash() {
 	fi
 
 	echo "$hash"
+	return 0
+}
+
+# Read a non-empty segment's stored terminal hash without a genesis fallback.
+# Recovery uses this stricter contract so malformed terminal evidence is refused.
+# Arguments: $1 — audit log file path
+# Output: terminal hash on stdout
+_audit_terminal_hash() {
+	local log_file="$1"
+	local last_line=""
+	local terminal_hash=""
+
+	if [[ ! -s "$log_file" ]]; then
+		return 1
+	fi
+	last_line="$(tail -1 "$log_file" 2>/dev/null || true)"
+	if [[ -z "$last_line" ]]; then
+		return 1
+	fi
+	if command -v jq &>/dev/null; then
+		terminal_hash="$(printf '%s' "$last_line" | jq -er \
+			'.hash | select(type == "string" and test("^[a-f0-9]{64}$"))' 2>/dev/null || true)"
+	else
+		local hash_field_pattern='"hash":"([a-f0-9]{64})"'
+		if [[ "$last_line" =~ $hash_field_pattern ]]; then
+			terminal_hash="${BASH_REMATCH[1]}"
+		fi
+	fi
+	if [[ ! "$terminal_hash" =~ ^[a-f0-9]{64}$ ]]; then
+		return 1
+	fi
+	printf '%s\n' "$terminal_hash"
 	return 0
 }
 
@@ -360,7 +413,21 @@ _audit_acquire_lock() {
 		sleep 0.1
 	done
 
-	local owner_pid="${BASHPID:-$$}"
+	local owner_pid="${BASHPID:-}"
+	if [[ -z "$owner_pid" ]]; then
+		# Bash 3.2 has no BASHPID. Run the fallback as the command-substitution
+		# process itself so the child shell sees this lock holder as its PPID;
+		# without exec it can report an intermediate command-substitution PID.
+		owner_pid="$(exec sh -c 'printf "%s" "$PPID"')" || {
+			_audit_remove_lock_dir "$lock_dir" || true
+			return 1
+		}
+	fi
+	if [[ ! "$owner_pid" =~ ^[0-9]+$ ]]; then
+		_audit_remove_lock_dir "$lock_dir" || true
+		_audit_error "Could not determine audit log lock owner PID"
+		return 1
+	fi
 	local created_at=""
 	created_at="$(date '+%s')" || {
 		_audit_remove_lock_dir "$lock_dir" || true
@@ -714,26 +781,12 @@ _audit_verify_entry() {
 	return "$entry_errors"
 }
 
-# Verify the integrity of the audit log hash chain.
-#
-# Checks:
-#   1. Each entry is valid JSON
-#   2. Each entry's hash matches SHA-256(entry without hash field)
-#   3. Each entry's prev_hash matches the previous entry's hash
-#   4. First entry's prev_hash is the genesis hash
-#
-# Arguments:
-#   --quiet — suppress per-entry output, only show result
-#
+# Verify the integrity of one audit log file with the legacy shell path.
+# Arguments: $1=log_file $2=quiet (true|false)
 # Returns: 0 if chain is valid, 1 if tampered/broken
-cmd_verify() {
-	local quiet="false"
-	if [[ "${1:-}" == "--quiet" ]]; then
-		quiet="true"
-	fi
-
-	local log_file
-	log_file="$(_audit_log_path)"
+_audit_verify_file_legacy() {
+	local log_file="$1"
+	local quiet="$2"
 
 	if [[ ! -f "$log_file" ]]; then
 		_audit_info "No audit log found — nothing to verify"
@@ -786,6 +839,380 @@ cmd_verify() {
 	fi
 
 	return 0
+}
+
+# Verify one segment in a bounded single process. The legacy verifier remains a
+# correctness-preserving fallback when Python or the deployed helper is absent.
+_audit_verify_file() {
+	local log_file="$1"
+	local quiet="$2"
+	local verifier="${SCRIPT_DIR}/audit-log-verify-helper.py"
+
+	if [[ ! -f "$log_file" ]]; then
+		_audit_info "No audit log found — nothing to verify"
+		return 0
+	fi
+	if [[ ! -s "$log_file" ]]; then
+		_audit_info "Audit log is empty — nothing to verify"
+		return 0
+	fi
+	if [[ "${AUDIT_FORCE_LEGACY_VERIFIER:-false}" == "true" ]]; then
+		_audit_verify_file_legacy "$log_file" "$quiet"
+		return $?
+	fi
+	if command -v python3 >/dev/null 2>&1 && [[ -f "$verifier" ]]; then
+		python3 "$verifier" "$log_file" "$AUDIT_GENESIS_HASH" "$quiet"
+		return $?
+	fi
+	_audit_warn "Single-process audit verifier unavailable; using the slower fail-closed legacy verifier"
+	_audit_verify_file_legacy "$log_file" "$quiet"
+	return $?
+}
+
+# Verify the integrity of the active audit log hash chain.
+#
+# Checks:
+#   1. Each entry is valid JSON
+#   2. Each entry's hash matches SHA-256(entry without hash field)
+#   3. Each entry's prev_hash matches the previous entry's hash
+#   4. First entry's prev_hash is the genesis hash
+#
+# Arguments:
+#   --quiet — suppress per-entry output, only show result
+#
+# Returns: 0 if chain is valid, 1 if tampered/broken
+cmd_verify() {
+	local quiet="false"
+	if [[ "${1:-}" == "--quiet" ]]; then
+		quiet="true"
+	fi
+
+	local log_file
+	log_file="$(_audit_log_path)"
+	_audit_verify_file "$log_file" "$quiet"
+	return $?
+}
+
+# Return success when the active segment is already a valid recovery successor.
+# Arguments: $1 — log file path
+_audit_is_recovery_successor() {
+	local log_file="$1"
+	local first_line=""
+
+	if [[ ! -s "$log_file" ]]; then
+		return 1
+	fi
+	IFS= read -r first_line <"$log_file" || return 1
+
+	if command -v jq &>/dev/null; then
+		if printf '%s' "$first_line" | jq -e \
+			--arg event_type "$AUDIT_EVENT_RECOVER" \
+			--arg broken "$AUDIT_INTEGRITY_BROKEN" '
+			.type == $event_type and
+			.detail.recovery_schema == "1" and
+			.detail.archived_verification == $broken and
+			.detail.historical_integrity == $broken
+		' &>/dev/null; then
+			return 0
+		fi
+		return 1
+	fi
+
+	if [[ "$first_line" == *"\"type\":\"${AUDIT_EVENT_RECOVER}\""* ]] &&
+		[[ "$first_line" == *'"recovery_schema":"1"'* ]] &&
+		[[ "$first_line" == *"\"archived_verification\":\"${AUDIT_INTEGRITY_BROKEN}\""* ]] &&
+		[[ "$first_line" == *"\"historical_integrity\":\"${AUDIT_INTEGRITY_BROKEN}\""* ]]; then
+		return 0
+	fi
+	return 1
+}
+
+# Write and verify the private successor segment before replacing the active log.
+# Arguments: $1=file $2=detail_json $3=timestamp $4=actor $5=host
+_audit_write_recovery_successor() {
+	local successor_file="$1"
+	local detail_json="$2"
+	local ts="$3"
+	local actor="$4"
+	local host="$5"
+	local entry_no_hash=""
+	local entry_hash=""
+	local entry=""
+
+	entry_no_hash="$(_audit_build_entry_no_hash \
+		1 "$ts" "$AUDIT_EVENT_RECOVER" "Audit chain recovery declared" \
+		"$detail_json" "$actor" "$host" "$AUDIT_GENESIS_HASH")" || return 1
+	entry_hash="$(_audit_sha256 "$entry_no_hash")" || return 1
+	if command -v jq &>/dev/null; then
+		entry="$(printf '%s' "$entry_no_hash" | jq -c --arg hash "$entry_hash" '. + {hash: $hash}')" || return 1
+	else
+		entry="${entry_no_hash%\}},\"hash\":\"${entry_hash}\"}"
+	fi
+
+	if ! (umask 077 && printf '%s\n' "$entry" >"$successor_file"); then
+		_audit_error "Could not create recovery successor"
+		return 1
+	fi
+	chmod 600 "$successor_file" || {
+		_audit_error "Could not secure recovery successor permissions"
+		return 1
+	}
+	if ! _audit_verify_file "$successor_file" "true" 2>/dev/null; then
+		_audit_error "Recovery successor failed verification"
+		return 1
+	fi
+	return 0
+}
+
+# Restore the archived bytes atomically if successor verification ever fails.
+# Arguments: $1=archive $2=active_log $3=expected_sha256
+_audit_restore_recovery_archive() {
+	local archived_file="$1"
+	local log_file="$2"
+	local expected_sha256="$3"
+	local restore_file="${log_file}.restore.${BASHPID:-$$}.${RANDOM}.tmp"
+	local restored_sha256=""
+
+	if ! (umask 077 && cp "$archived_file" "$restore_file"); then
+		_audit_error "Could not stage the preserved audit segment for restoration"
+		return 1
+	fi
+	chmod 600 "$restore_file" || {
+		rm -f "$restore_file"
+		return 1
+	}
+	restored_sha256="$(_audit_sha256_file "$restore_file")" || {
+		rm -f "$restore_file"
+		return 1
+	}
+	if [[ "$restored_sha256" != "$expected_sha256" ]]; then
+		rm -f "$restore_file"
+		_audit_error "Refusing recovery rollback because the preserved bytes changed"
+		return 1
+	fi
+	if ! mv -f "$restore_file" "$log_file"; then
+		rm -f "$restore_file"
+		_audit_error "Could not restore the original audit segment"
+		return 1
+	fi
+	return 0
+}
+
+# Copy the invalid segment to a read-only archive and prove byte identity.
+# Arguments: $1=active_log $2=archive_tmp $3=archive $4=source_sha256
+# Output: archived SHA-256 on stdout
+_audit_preserve_recovery_archive() {
+	local log_file="$1"
+	local archive_tmp="$2"
+	local archived_file="$3"
+	local source_sha256="$4"
+	local archived_sha256=""
+
+	if ! (umask 077 && cp "$log_file" "$archive_tmp"); then
+		_audit_error "Could not preserve the broken audit segment"
+		return 1
+	fi
+	archived_sha256="$(_audit_sha256_file "$archive_tmp")" || {
+		rm -f "$archive_tmp"
+		return 1
+	}
+	if [[ "$archived_sha256" != "$source_sha256" ]]; then
+		rm -f "$archive_tmp"
+		_audit_error "Recovery aborted: archived bytes do not match the active segment"
+		return 1
+	fi
+	chmod 400 "$archive_tmp" || {
+		rm -f "$archive_tmp"
+		_audit_error "Could not make the preserved audit segment read-only"
+		return 1
+	}
+	if ! mv "$archive_tmp" "$archived_file"; then
+		rm -f "$archive_tmp"
+		_audit_error "Could not finalize the preserved audit segment"
+		return 1
+	fi
+	printf '%s\n' "$archived_sha256"
+	return 0
+}
+
+# Build the durable recovery declaration without including archived event data.
+# Arguments: $1=name $2=sha256 $3=entries $4=terminal_hash $5=reason $6=timestamp
+_audit_build_recovery_details() {
+	local archived_name="$1"
+	local archived_sha256="$2"
+	local archived_entries="$3"
+	local terminal_hash="$4"
+	local recovery_reason="$5"
+	local recovered_at="$6"
+
+	_audit_parse_details \
+		--detail "recovery_schema=1" \
+		--detail "archived_segment=${archived_name}" \
+		--detail "archived_sha256=${archived_sha256}" \
+		--detail "archived_entries=${archived_entries}" \
+		--detail "archived_terminal_hash=${terminal_hash}" \
+		--detail "archived_verification=${AUDIT_INTEGRITY_BROKEN}" \
+		--detail "historical_integrity=${AUDIT_INTEGRITY_BROKEN}" \
+		--detail "recovery_reason=${recovery_reason}" \
+		--detail "recovered_at=${recovered_at}"
+	return $?
+}
+
+# Atomically activate and verify a prepared successor, restoring evidence on
+# the unexpected post-rename verification failure path.
+# Arguments: $1=active $2=archive $3=successor_tmp $4=details $5=timestamp $6=source_sha256
+_audit_activate_recovery_successor() {
+	local log_file="$1"
+	local archived_file="$2"
+	local successor_tmp="$3"
+	local detail_json="$4"
+	local recovered_at="$5"
+	local source_sha256="$6"
+	local actor="${AIDEVOPS_SESSION_ID:-${USER:-unknown}}"
+	local host=""
+
+	host="$(hostname -s 2>/dev/null || echo "unknown")"
+	if ! _audit_write_recovery_successor "$successor_tmp" "$detail_json" "$recovered_at" "$actor" "$host"; then
+		rm -f "$successor_tmp" "$archived_file"
+		return 1
+	fi
+	# The active file remains untouched until this same-directory atomic rename.
+	if ! mv -f "$successor_tmp" "$log_file"; then
+		rm -f "$successor_tmp" "$archived_file"
+		_audit_error "Could not activate the recovery successor; original log remains active"
+		return 1
+	fi
+	chmod 600 "$log_file" || _audit_warn "Could not set recovery successor permissions to 600"
+	if ! _audit_verify_file "$log_file" "true" 2>/dev/null; then
+		if _audit_restore_recovery_archive "$archived_file" "$log_file" "$source_sha256"; then
+			rm -f "$archived_file"
+		fi
+		_audit_error "Recovery successor verification failed; restored the original segment when possible"
+		return 1
+	fi
+	return 0
+}
+
+# Recover a broken chain while writers are excluded by preserving every byte of
+# the invalid segment and atomically replacing it with a declared successor.
+# Arguments: $1=log_file $2=recovery_reason
+_audit_recover_locked() {
+	local log_file="$1"
+	local recovery_reason="$2"
+	local lock_dir="${log_file}.lock.d"
+	local source_sha256=""
+	local archived_sha256=""
+	local terminal_hash=""
+	local archived_entries=""
+	local archive_ts=""
+	local recovered_at=""
+	local archived_prefix=""
+	local archived_file=""
+	local archived_name=""
+	local archive_tmp=""
+	local successor_tmp=""
+	local collision=0
+
+	_audit_acquire_lock "$lock_dir" || return 1
+	_audit_arm_lock_cleanup
+	if [[ ! -f "$log_file" ]] || [[ ! -s "$log_file" ]]; then
+		_audit_finish_lock || true
+		_audit_error "Recovery requires a non-empty active audit log"
+		return 1
+	fi
+
+	if _audit_verify_file "$log_file" "true" 2>/dev/null; then
+		if _audit_is_recovery_successor "$log_file"; then
+			_audit_finish_lock || return 1
+			_audit_info "Audit log already has a valid recovery successor; no changes made"
+			return 0
+		fi
+		_audit_finish_lock || true
+		_audit_error "Recovery refused: the active audit chain is intact"
+		return 1
+	fi
+
+	terminal_hash="$(_audit_terminal_hash "$log_file")" || {
+		_audit_finish_lock || true
+		_audit_error "Recovery refused: the broken segment has no unambiguous terminal hash"
+		return 1
+	}
+	source_sha256="$(_audit_sha256_file "$log_file")" || {
+		_audit_finish_lock || true
+		return 1
+	}
+	archived_entries="$(wc -l <"$log_file" | tr -d ' ')"
+	archive_ts="$(date -u '+%Y%m%dT%H%M%SZ' 2>/dev/null || date '+%Y%m%dT%H%M%SZ')"
+	recovered_at="$(date -u '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || date '+%Y-%m-%dT%H:%M:%SZ')"
+	archived_prefix="${log_file%.jsonl}.broken.${archive_ts}"
+	archived_file="${archived_prefix}.jsonl"
+	while [[ -e "$archived_file" ]]; do
+		collision=$((collision + 1))
+		archived_file="${archived_prefix}.${BASHPID:-$$}.${collision}.jsonl"
+	done
+	archived_name="$(basename "$archived_file")"
+	archive_tmp="${archived_file}.tmp.${BASHPID:-$$}.${RANDOM}"
+	successor_tmp="${log_file}.recover.${BASHPID:-$$}.${RANDOM}.tmp"
+
+	archived_sha256="$(_audit_preserve_recovery_archive \
+		"$log_file" "$archive_tmp" "$archived_file" "$source_sha256")" || {
+		_audit_finish_lock || true
+		return 1
+	}
+
+	local detail_json=""
+	detail_json="$(_audit_build_recovery_details \
+		"$archived_name" "$archived_sha256" "$archived_entries" \
+		"$terminal_hash" "$recovery_reason" "$recovered_at")" || {
+		rm -f "$archived_file"
+		_audit_finish_lock || true
+		return 1
+	}
+	if ! _audit_activate_recovery_successor \
+		"$log_file" "$archived_file" "$successor_tmp" "$detail_json" \
+		"$recovered_at" "$source_sha256"; then
+		_audit_finish_lock || true
+		return 1
+	fi
+
+	_audit_finish_lock || return 1
+	_audit_info "Preserved broken segment as ${archived_name}; activated a verified recovery successor"
+	return 0
+}
+
+# Explicitly recover a broken active audit chain without rewriting evidence.
+# Arguments: --reason <operator reason>
+cmd_recover() {
+	local recovery_reason=""
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+		--reason)
+			if [[ $# -lt 2 ]]; then
+				_audit_error "--reason requires a non-empty value"
+				return 1
+			fi
+			recovery_reason="$2"
+			shift 2
+			;;
+		*)
+			_audit_error "Unknown recovery argument: $1"
+			return 1
+			;;
+		esac
+	done
+	if [[ -z "$recovery_reason" ]]; then
+		_audit_error "Recovery requires --reason <reason>"
+		return 1
+	fi
+	if [[ ${#recovery_reason} -gt $AUDIT_MAX_MESSAGE_LEN ]]; then
+		_audit_error "Recovery reason exceeds ${AUDIT_MAX_MESSAGE_LEN} characters"
+		return 1
+	fi
+
+	local log_file=""
+	log_file="$(_audit_log_path)"
+	_audit_recover_locked "$log_file" "$recovery_reason"
+	return $?
 }
 
 # Show the last N entries from the audit log.
@@ -904,9 +1331,11 @@ _audit_rotate_locked() {
 		return 0
 	fi
 
-	# Verify the exact segment being rotated while writers are excluded.
-	if ! cmd_verify --quiet 2>/dev/null; then
-		_audit_warn "Chain verification failed before rotation — rotating anyway but chain is already broken"
+	# Broken segments require explicit recovery so their verdict cannot be lost.
+	if ! _audit_verify_file "$log_file" "true" 2>/dev/null; then
+		_audit_finish_lock || true
+		_audit_error "Refusing to rotate a broken audit chain; run 'audit-log-helper.sh recover --reason <reason>'"
+		return 1
 	fi
 
 	# Rotate: rename with timestamp
@@ -1033,6 +1462,7 @@ Commands:
   tail [N]                                   Show last N entries (default: 10)
   status                                     Show log status and statistics
   rotate [--max-size MB]                     Rotate log if over size threshold
+  recover --reason <reason>                  Preserve a broken segment and start a declared successor
   help                                       Show this help
 
 Event types:
@@ -1051,6 +1481,7 @@ Event types:
   system.startup      Framework startup
   system.update       Framework update
   system.rotate       Audit log rotation
+  system.recover      Broken segment recovery declaration
   testing.runtime     Runtime test execution (pass/fail/skip)
 
 Examples:
@@ -1064,6 +1495,9 @@ Examples:
 
   # Verify the audit chain
   audit-log-helper.sh verify
+
+  # Preserve a broken segment and establish a declared successor
+  audit-log-helper.sh recover --reason "duplicate historical append"
 
   # Show recent events
   audit-log-helper.sh tail 20
@@ -1086,7 +1520,7 @@ HELP
 # =============================================================================
 
 # Entry point — dispatch to subcommand based on first argument.
-# Arguments: $1 — command name (log|verify|tail|status|rotate|help)
+# Arguments: $1 — command name (log|verify|tail|status|rotate|recover|help)
 #            $2+ — command-specific arguments
 main() {
 	local command="${1:-help}"
@@ -1107,6 +1541,9 @@ main() {
 		;;
 	rotate)
 		cmd_rotate "$@"
+		;;
+	recover)
+		cmd_recover "$@"
 		;;
 	help | --help | -h)
 		cmd_help

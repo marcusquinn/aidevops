@@ -66,6 +66,9 @@ _PULSE_DISPATCH_ELIGIBILITY_STAGE="eligibility_gate"
 # is sourced outside the pulse-wrapper.sh bootstrap context.
 : "${LOGFILE:=${HOME}/.aidevops/logs/pulse.log}"
 
+# shellcheck source=disk-capacity-lib.sh
+source "${BASH_SOURCE[0]%/*}/disk-capacity-lib.sh"
+
 # Extracted modules — sourced in load order.
 # shellcheck source=pulse-dispatch-dedup-layers.sh
 source "${BASH_SOURCE[0]%/*}/pulse-dispatch-dedup-layers.sh"
@@ -1247,15 +1250,14 @@ _dispatch_dedup_check_layers() {
 	fi
 	_ds_record "$issue_number" "$repo_slug" "dedup.interactive_hold" "$_dss_t0"
 
-	# GH#18987: Disk-space pre-check — refuse dispatch if /home filesystem
-	# has less than 5 GB available. Prevents cascading failures where workers
-	# create worktrees + node_modules that fill the volume entirely.
-	# Uses $HOME as the reference path (portable; covers Linux /home mounts).
+	# GH#18987/GH#28543: refuse dispatch when the worktree filesystem has less
+	# than 5 GiB or 5% available. The same fail-closed policy runs at the actual
+	# worktree creation boundary, covering interactive and non-Pulse callers.
 	_dss_t0=$(_ds_now_ns)
-	local _avail_kb
-	_avail_kb=$(df "$HOME" 2>/dev/null | awk 'NR==2{print $4}')
-	if [[ -n "$_avail_kb" ]] && [[ "$_avail_kb" -lt 5242880 ]]; then
-		echo "[dispatch_with_dedup] Dispatch blocked for #${issue_number} in ${repo_slug}: disk space critical (${_avail_kb}KB avail on \$HOME filesystem, need 5242880KB/5G). Run: worktree-helper.sh clean --auto --force-merged" >>"$LOGFILE"
+	local _capacity_rc=0
+	aidevops_worktree_capacity_check "${AIDEVOPS_WORKTREE_BASE_DIR:-$HOME}" || _capacity_rc=$?
+	if [[ "$_capacity_rc" -ne 0 ]]; then
+		echo "[dispatch_with_dedup] Dispatch blocked for #${issue_number} in ${repo_slug}: disk space critical (reason=${AIDEVOPS_DISK_CAPACITY_REASON}, available=${AIDEVOPS_DISK_CAPACITY_AVAILABLE_KB}KB/${AIDEVOPS_DISK_CAPACITY_AVAILABLE_PERCENT}%, require at least ${AIDEVOPS_MIN_WORKTREE_FREE_KB:-5242880}KB and ${AIDEVOPS_MIN_WORKTREE_FREE_PERCENT:-5}%). Run: worktree-helper.sh clean --auto --force-merged" >>"$LOGFILE"
 		_ds_record "$issue_number" "$repo_slug" "dedup.disk_space" "$_dss_t0"
 		return 1
 	fi
@@ -1501,7 +1503,7 @@ _rollback_prelaunch_ownership() {
 	fi
 
 	local issue_meta_json=""
-	issue_meta_json=$(gh issue view "$issue_number" --repo "$repo_slug" \
+	issue_meta_json=$(gh_issue_view "$issue_number" --repo "$repo_slug" \
 		--json state,labels,assignees,locked 2>/dev/null) || return 1
 	local owns_queued=""
 	owns_queued=$(printf '%s' "$issue_meta_json" | jq -r --arg self "$self_login" '
@@ -1520,7 +1522,7 @@ _rollback_prelaunch_ownership() {
 		unlock_issue_after_worker "$issue_number" "$repo_slug" || return 1
 	fi
 
-	issue_meta_json=$(gh issue view "$issue_number" --repo "$repo_slug" \
+	issue_meta_json=$(gh_issue_view "$issue_number" --repo "$repo_slug" \
 		--json state,labels,assignees,locked 2>/dev/null) || return 1
 	if ! printf '%s' "$issue_meta_json" | jq -e --arg self "$self_login" '
 		.state == "OPEN" and
@@ -1954,9 +1956,9 @@ _ensure_issue_body_has_brief() {
 	dedup_helper="${BASH_SOURCE[0]%/*}/dispatch-dedup-helper.sh"
 	if [[ -x "$dedup_helper" ]]; then
 		local _dedup_out=""
-		# GH#19922: pass AIDEVOPS_SESSION_USER as self_login so the runner
-		# does not block its own enrichment via the self-login exemption.
-		_dedup_out=$("$dedup_helper" is-assigned "$issue_number" "$repo_slug" "${AIDEVOPS_SESSION_USER:-}" 2>/dev/null) || true
+		# GH#19922/GH#28498: preserve the self-login exemption while using the
+		# read-only guard so enrichment cannot stale-recover active ownership.
+		_dedup_out=$("$dedup_helper" is-assigned-read-only "$issue_number" "$repo_slug" "${AIDEVOPS_SESSION_USER:-}" 2>/dev/null) || true
 		if [[ -n "$_dedup_out" ]]; then
 			echo "[dispatch_with_dedup] GH#19856: skipping force-enrich for #${issue_number} — active claim: ${_dedup_out}" >>"$LOGFILE"
 			return 0

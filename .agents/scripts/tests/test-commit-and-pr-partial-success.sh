@@ -228,12 +228,20 @@ export -f _gh_recover_pr_if_exists
 GH_EXISTING_MERGE_SUMMARY_COUNT=0
 # Control variable: set to 1 to simulate only malformed plain-text MERGE_SUMMARY existing
 GH_MALFORMED_MERGE_SUMMARY_ONLY=0
+# Control variables for direct origin-label readback tests.
+ORIGIN_API_FAIL=0
+ORIGIN_API_LABELS='["origin:worker"]'
 
 # Stub: gh — handles the gh api call for MERGE_SUMMARY check, plus pr comment
 gh() {
 	printf 'gh %s\n' "$*" >>"$STUB_LOG"
 	# Handle: gh api repos/.../issues/.../comments --jq '...'
 	if [[ "${1:-}" == "api" ]]; then
+		if [[ "$*" == *'startswith("origin:")'* ]]; then
+			[[ "$ORIGIN_API_FAIL" -eq 0 ]] || return 1
+			printf '%s\n' "$ORIGIN_API_LABELS"
+			return 0
+		fi
 		if [[ "$*" == *'<!-- MERGE_SUMMARY -->'* ]]; then
 			printf '%s\n' "$GH_EXISTING_MERGE_SUMMARY_COUNT"
 			return 0
@@ -250,9 +258,71 @@ gh() {
 }
 export -f gh
 
-# Stub: gh_pr_comment — records call, returns 0
+_gh_with_timeout() {
+	local op_class="$1"
+	shift
+	printf '_gh_with_timeout class=%s command=%s\n' "$op_class" "$*" >>"$STUB_LOG"
+	"$@"
+	return $?
+}
+export -f _gh_with_timeout
+
+# The production readback must use the bounded GitHub wrapper and normalize a
+# transient read failure to an empty result before enforcing the postcondition.
+: >"$STUB_LOG"
+ORIGIN_API_FAIL=0
+if _verify_pr_origin_label 999 "owner/repo" worker &&
+	grep -q '_gh_with_timeout class=read command=gh api repos/owner/repo/issues/999' "$STUB_LOG"; then
+	pass "origin readback: uses bounded GitHub wrapper"
+else
+	fail "origin readback: uses bounded GitHub wrapper" "stub log: $(cat "$STUB_LOG" 2>/dev/null)"
+fi
+
+: >"$STUB_LOG"
+ORIGIN_API_FAIL=1
+origin_readback_rc=0
+_verify_pr_origin_label 999 "owner/repo" worker || origin_readback_rc=$?
+if [[ "$origin_readback_rc" -eq 2 ]]; then
+	pass "origin readback: transient API failure becomes unavailable postcondition"
+else
+	fail "origin readback: transient API failure becomes unavailable postcondition" \
+		"expected exit 2, got ${origin_readback_rc}"
+fi
+ORIGIN_API_FAIL=0
+
+# Stub: gh_pr_comment — records body-file use and can simulate policy failure.
+GH_PR_COMMENT_FAIL=0
 gh_pr_comment() {
-	printf 'gh_pr_comment pr=%s\n' "${1:-}" >>"$STUB_LOG"
+	local pr_number="${1:-}"
+	local body_file=""
+	shift || return 1
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+		--body-file)
+			body_file="${2:-}"
+			shift 2 || return 1
+			;;
+		--body-file=*)
+			body_file="${1#--body-file=}"
+			shift
+			;;
+		*) shift ;;
+		esac
+	done
+	printf 'gh_pr_comment pr=%s body_file=%s\n' "$pr_number" "$body_file" >>"$STUB_LOG"
+	if [[ "$GH_PR_COMMENT_FAIL" -eq 1 ]]; then
+		printf 'signature gate: comments require --body-file\n' >&2
+		return 1
+	fi
+	if [[ -z "$body_file" || ! -r "$body_file" ]]; then
+		printf 'missing readable merge summary body file\n' >&2
+		return 1
+	fi
+	if ! grep -q '<!-- MERGE_SUMMARY -->' "$body_file"; then
+		printf 'missing canonical merge summary marker\n' >&2
+		return 1
+	fi
+	GH_EXISTING_MERGE_SUMMARY_COUNT=1
 	return 0
 }
 export -f gh_pr_comment
@@ -274,6 +344,7 @@ set_origin_label() {
 		printf 'GraphQL: Resource not accessible by integration\n' >&2
 		return 1
 	fi
+	printf 'https://github.com/%s/pull/%s\n' "$repo_slug" "$issue_num"
 	return 0
 }
 export -f set_origin_label
@@ -444,15 +515,15 @@ for readback_labels in '[]' '["origin:interactive"]' '["origin:worker","origin:i
 done
 ORIGIN_READBACK_LABELS='["origin:worker"]'
 
-# Readback API failure must remain distinct from a label mismatch.
+# Readback API failure is normalized to an unavailable postcondition.
 : >"$STUB_LOG"
 ORIGIN_READBACK_FAIL=1
 readback_api_rc=0
 _create_pr "owner/repo" "t2767: test" "body text" "origin:worker" >/dev/null 2>&1 || readback_api_rc=$?
-if [[ "$readback_api_rc" -ne 0 ]] && grep -q "Could not read back origin labels" "$STUB_LOG" 2>/dev/null; then
-	pass "origin readback API failure: classified diagnostic emitted"
+if [[ "$readback_api_rc" -ne 0 ]] && grep -q "reconcile unavailable, missing, wrong, or dual origin labels" "$STUB_LOG" 2>/dev/null; then
+	pass "origin readback API failure: unavailable postcondition diagnostic emitted"
 else
-	fail "origin readback API failure: classified diagnostic emitted" \
+	fail "origin readback API failure: unavailable postcondition diagnostic emitted" \
 		"rc=${readback_api_rc}; stub log: $(cat "$STUB_LOG" 2>/dev/null)"
 fi
 ORIGIN_READBACK_FAIL=0
@@ -661,6 +732,44 @@ else
 	fail "first post: gh_pr_comment IS called when no MERGE_SUMMARY exists" \
 		"gh_pr_comment was NOT called; stub log: $(cat "$STUB_LOG" 2>/dev/null)"
 fi
+
+if grep -q 'gh_pr_comment pr=999 body_file=' "$STUB_LOG" 2>/dev/null; then
+	pass "first post: canonical merge summary is posted through --body-file"
+else
+	fail "first post: canonical merge summary is posted through --body-file" \
+		"body-file call missing; stub log: $(cat "$STUB_LOG" 2>/dev/null)"
+fi
+
+# =============================================================================
+# Test 6: posting failure is a lifecycle failure with preserved diagnostics
+# The signature gate rejects the write. Expected: _post_merge_summary returns 1,
+# keeps the gate's stderr visible, and cmd_commit_and_pr propagates the failure.
+# =============================================================================
+: >"$STUB_LOG"
+GH_EXISTING_MERGE_SUMMARY_COUNT=0
+GH_PR_COMMENT_FAIL=1
+post_failure_rc=0
+post_failure_stderr=""
+post_failure_stderr=$(_post_merge_summary "999" "owner/repo" "42" "impl" "file.sh" "shellcheck" "none" 2>&1) || post_failure_rc=$?
+
+if [[ "$post_failure_rc" -eq 1 ]]; then
+	pass "post failure: _post_merge_summary returns non-success"
+else
+	fail "post failure: _post_merge_summary returns non-success" "got exit ${post_failure_rc}"
+fi
+
+if [[ "$post_failure_stderr" == *"signature gate: comments require --body-file"* ]]; then
+	pass "post failure: policy diagnostics remain visible"
+else
+	fail "post failure: policy diagnostics remain visible" "stderr: ${post_failure_stderr}"
+fi
+
+if grep -q '_post_merge_summary .* || return 1' "${SCRIPTS_DIR}/full-loop-helper.sh"; then
+	pass "post failure: commit-and-pr propagates merge-summary failure"
+else
+	fail "post failure: commit-and-pr propagates merge-summary failure"
+fi
+GH_PR_COMMENT_FAIL=0
 
 # =============================================================================
 # Summary

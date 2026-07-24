@@ -180,6 +180,35 @@ When both modes are provided, the archive uses the conservative intersection:
 recently updated sessions are preserved if they are within either the last-update
 age window or the most-recently-updated session budget.
 
+Archive mutation is also fail-closed. Before selecting or moving rows, the helper
+requires positive evidence that no process holds the active DB, the WAL remains
+stable across two observations, and the complete session-linked schema matches
+the supported archive contract. Missing holder tooling, a changing WAL,
+unavailable schema, new columns, or unknown session-linked tables leave the
+active database untouched. The async runner records these as protected or
+unsupported skips and does not advance its successful-run marker.
+
+After committed archive batches, SQLite compaction is independent of logical
+retention. VACUUM runs only when free pages exist and a second idle-holder plus
+stable-WAL check succeeds. A truncating checkpoint runs before and after VACUUM,
+then both active and archive databases are checked for queryability. An
+interrupted batch rolls back atomically; previously committed batches remain in
+the verified archive.
+
+## Unified storage report
+
+`aidevops status` reports OpenCode storage as separate ownership-aware records:
+
+- active database and logical-session bytes (`joint`, active or unknown);
+- active WAL/shared-memory bytes (`joint`, protected);
+- the aidevops-coordinated archive (`joint`, archive or unknown);
+- legacy formats, tool output, and unclassified future formats (`unknown`).
+
+The report never reads session content, never marks an OpenCode component
+reclaimable, and never infers logical-session retention from age or file size.
+Unavailable schemas and unknown future formats remain visible and untouched with
+an upstream/manual next action.
+
 ## Disruptive maintenance window
 
 `opencode-db-maintenance-helper.sh maintenance-window` is for explicit off-hours

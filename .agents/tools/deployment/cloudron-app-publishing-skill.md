@@ -24,6 +24,7 @@ Distribute Cloudron apps independently using a `CloudronVersions.json` version c
 - **Upstream skill**: [git.cloudron.io/docs/skills](https://git.cloudron.io/docs/skills) (`cloudron-app-publishing`)
 - **Prerequisite**: App must be built with `cloudron build` (local or build service) — on-server builds cannot be published
 - **Key file**: `CloudronVersions.json` — version catalog hosted at a public URL
+- **Listing**: [Cloudron Community Apps](https://ca.cloudron.io) accepts a public versions URL after the catalog contains a tested release; listing is optional
 - **Forum**: [App Packaging & Development](https://forum.cloudron.io/category/96/app-packaging-development)
 
 ## Workflow
@@ -31,15 +32,26 @@ Distribute Cloudron apps independently using a `CloudronVersions.json` version c
 ```bash
 cloudron versions init  # creates CloudronVersions.json + DESCRIPTION.md, CHANGELOG, POSTINSTALL.md (edit all placeholders)
 cloudron build          # build and push image (first run prompts for Docker repository, e.g. registry/username/myapp)
-cloudron versions add   # add version to catalog
+cloudron versions add --state testing  # add the registry image without exposing it as stable
+cloudron versions update --version=1.0.0 --state=published
 # host CloudronVersions.json at a public URL
 ```
 
 `cloudron versions init` also adds missing publishing fields to `CloudronManifest.json` with placeholder values. Edit all placeholders and scaffolded files before adding a version.
 
-## Required Manifest Fields
+## Repository Baseline
 
-`id`, `title`, `author`, `tagline`, `version`, `website`, `contactEmail`, `iconUrl`, `packagerName`, `packagerUrl`, `tags` (array), `mediaLinks` (array), `description` (`file://DESCRIPTION.md`), `changelog` (`file://CHANGELOG`), `postInstallMessage` (`file://POSTINSTALL.md`), `minBoxVersion` (e.g. `9.1.0`).
+Commit these before the first registry build:
+
+- `CloudronVersions.json` initialized as `{ "stable": true, "versions": {} }`; never fabricate an entry before `cloudron build` records a real registry image.
+- `CloudronManifest.json` publishing metadata: `id`, `title`, `author`, `description`, `tagline`, `version`, `website`, `contactEmail`, `iconUrl`, `packagerName`, `packagerUrl`, non-empty `tags`, non-empty `mediaLinks`, `changelog`, and `minBoxVersion` of at least `9.1.0`. Add `packageUrl` when the listing must link to the package source repository; this requires `minBoxVersion` 10.0.0.
+- A local square 256×256 PNG icon (`icon` normally points to it) and at least one privacy-reviewed product screenshot or hero. `mediaLinks` must use public HTTPS URLs; Cloudron recommends 3:1 images such as 1200×400.
+- A Cloudron-format changelog file when using `file://`: each release heading must be exactly `[X.Y.Z]`, because `cloudron versions add` does not parse Keep a Changelog headings such as `## [X.Y.Z]`.
+- A short publishing runbook that records the canonical catalog URL, registry/repository ownership, asset provenance, test install, rollback, and Community Apps listing steps without storing credentials.
+
+`packageUrl` controls the package-source link in Community Apps and should point to the package repository. It requires `minBoxVersion` 10.0.0. Keep `packagerUrl` pointed at the package maintainer; do not repurpose it as the repository link. Packages that need Cloudron 9.1 compatibility should omit `packageUrl`, while packages that require a repository link should raise the minimum explicitly. `author` and `contactEmail` are deprecated in the manifest reference but are still required by the current CLI version-catalog validator.
+
+Use package-controlled, stable asset URLs where possible. If an upstream asset is used temporarily, preserve a reviewed local copy and replace the remote reference before the upstream URL becomes unstable. Check every URL for an HTTPS 200 response and an image content type before publishing.
 
 ## Build Commands
 
@@ -68,10 +80,10 @@ Build behavior depends on whether a build service is configured:
 |---------|---------|
 | `cloudron versions add` | Add current version (reads manifest + last built image) |
 | `cloudron versions list` | List all versions with date, image, and publish state |
-| `cloudron versions update --version 1.0.0 --state published` | Change publish state |
+| `cloudron versions update --version=1.0.0 --state=published` | Change publish state |
 | `cloudron versions revoke` | Mark latest published version as revoked |
 
-**Rules:** Do not change the manifest or image of a published version. To ship changes: revoke, bump version in `CloudronManifest.json`, rebuild, `cloudron versions add`.
+**Rules:** Do not change the manifest or image of a published version. Treat catalog entries as append-only release records. To ship changes: revoke only when necessary, bump the package version, rebuild, and add a new entry. Never copy a Docker tag or digest into the catalog by hand.
 
 Typical release cycle:
 
@@ -80,17 +92,26 @@ Typical release cycle:
 # 2. Build and push
 cloudron build
 
-# 3. Add to catalog
-cloudron versions add
+# 3. Add to catalog as a test candidate
+cloudron versions add --state testing
 
-# 4. Commit and push CloudronVersions.json to hosting
+# 4. Host the catalog and test a clean install/upgrade via its public URL
+cloudron versions list
+
+# 5. Promote the exact tested entry
+cloudron versions update --version=1.1.0 --state=published
+
+# 6. Commit and push CloudronVersions.json to hosting
 git add CloudronVersions.json && git commit -m "release 1.1.0" && git push
 ```
+
+Before promotion, verify fresh install, upgrade from the previous published version, restart, backup/restore, health checks, and the public icon/media URLs. Image push, catalog promotion, catalog hosting, and Community Apps submission are publication actions and require explicit authorization.
 
 ## Distribution
 
 - **Dashboard**: add `CloudronVersions.json` URL under Community apps in dashboard settings — updates appear automatically
 - **CLI**: `cloudron install --versions-url <url>`
+- **Community listing**: sign in to [Cloudron Community Apps](https://ca.cloudron.io), open the publisher's apps, add the same versions URL, and confirm the imported title, icon, screenshot, changelog, and install URL. The listing is optional and does not host the catalog.
 
 ## Community Packages (9.1+)
 

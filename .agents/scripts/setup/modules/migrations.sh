@@ -24,10 +24,65 @@ _legacy_temp_artifact_is_active() {
 	return $?
 }
 
+_legacy_opencode_native_is_attributable() {
+	local path="$1"
+	local symbols=""
+	command -v nm >/dev/null 2>&1 || return 1
+	symbols=$(nm -D -g "$path" 2>/dev/null) || return 1
+	grep -Eq '(^|[[:space:]])fff_create_instance2?$' <<<"$symbols" || return 1
+	grep -Eq '(^|[[:space:]])fff_destroy$' <<<"$symbols" || return 1
+	grep -Eq '(^|[[:space:]])fff_search$' <<<"$symbols" || return 1
+	return 0
+}
+
+_legacy_opencode_native_has_no_holder() {
+	local path="$1"
+	local lsof_status=0
+	command -v lsof >/dev/null 2>&1 || return 1
+	lsof "$path" >/dev/null 2>&1 || lsof_status=$?
+	[[ "$lsof_status" -eq 1 ]] || return 1
+	return 0
+}
+
+_cleanup_legacy_opencode_native_artifacts() {
+	local workspace_root="${AIDEVOPS_WORKSPACE_DIR:-${HOME:?}/.aidevops/.agent-workspace}"
+	local root="${AIDEVOPS_TEMP_DIR:-${workspace_root}/tmp}"
+	[[ -d "$root" ]] || return 0
+	root=$(cd "$root" && pwd -P) || return 0
+
+	local now=""
+	now=$(date +%s)
+	local max_age="${AIDEVOPS_TEMP_MAX_AGE_SECONDS:-604800}"
+	[[ "$max_age" =~ ^[0-9]+$ ]] || max_age=604800
+	local uid=""
+	uid=$(id -u)
+	local cleaned=0
+	local candidate=""
+	for candidate in "$root"/.*-00000000.so; do
+		[[ -f "$candidate" && ! -L "$candidate" ]] || continue
+		local owner=""
+		owner=$(stat -f '%u' "$candidate" 2>/dev/null) || owner=$(stat -c '%u' "$candidate" 2>/dev/null) || continue
+		[[ "$owner" == "$uid" ]] || continue
+		local mtime=""
+		mtime=$(_file_mtime_epoch "$candidate") || continue
+		((now - mtime > max_age)) || continue
+		_legacy_opencode_native_is_attributable "$candidate" || continue
+		_legacy_opencode_native_has_no_holder "$candidate" || continue
+		rm -f -- "$candidate" || continue
+		((++cleaned))
+	done
+
+	if ((cleaned > 0)); then
+		print_info "Cleaned $cleaned stale OpenCode FFF native temporary artifact(s)"
+	fi
+	return 0
+}
+
 # Remove only directly attributable aidevops artifacts from the macOS per-user
 # temporary root. Generic tmp.* entries are intentionally excluded because
 # their ownership cannot be proven after creation.
 cleanup_legacy_aidevops_temp_artifacts() {
+	_cleanup_legacy_opencode_native_artifacts
 	local root="${AIDEVOPS_LEGACY_TEMP_ROOT:-}"
 	if [[ -z "$root" ]]; then
 		[[ "$(uname -s 2>/dev/null || true)" == "$MIGRATION_PLATFORM_DARWIN" ]] || return 0
@@ -815,11 +870,13 @@ _remove_deprecated_mcp_entries() {
 		"hostinger-api"
 		"shadcn"
 		"repomix"
+		"gh_grep"
 	)
 
 	# Tool rules to remove (for MCPs that no longer exist)
 	local auggie_tool="auggie-mcp_*"
 	local augment_tool="augment-context-engine_*"
+	local gh_grep_tool="gh_grep_*"
 	local deprecated_tools=(
 		"$auggie_tool"
 		"$augment_tool"
@@ -830,6 +887,7 @@ _remove_deprecated_mcp_entries() {
 		"serper_*"
 		"shadcn_*"
 		"repomix_*"
+		"$gh_grep_tool"
 	)
 
 	for mcp in "${deprecated_mcps[@]}"; do
@@ -998,7 +1056,6 @@ cleanup_deprecated_mcps() {
 # Disable MCPs globally that should only be enabled on-demand via subagents
 # This reduces session startup context by disabling rarely-used MCPs
 # - playwriter: ~3K tokens - enable via @playwriter subagent
-# - gh_grep: ~600 tokens - replaced by @github-search subagent (uses rg/bash)
 # - google-analytics-mcp: ~800 tokens - enable via @google-analytics subagent
 # - context7: ~800 tokens - enable via @context7 subagent (for library docs lookup)
 disable_ondemand_mcps() {
@@ -1019,7 +1076,6 @@ disable_ondemand_mcps() {
 	local -a ondemand_mcps=(
 		"cloudflare-api"
 		"context7"
-		"gh_grep"
 		"google-analytics-mcp"
 		"grep_app"
 		"playwright"
@@ -1156,8 +1212,8 @@ validate_opencode_config() {
 	fi
 
 	# Check 2: tools entries must be booleans, not objects
-	# Invalid: {"tools": {"gh_grep": {}}}
-	# Valid:   {"tools": {"gh_grep": true}}
+	# Invalid: {"tools": {"example_tool": {}}}
+	# Valid:   {"tools": {"example_tool": true}}
 	local tools_as_objects
 	tools_as_objects=$(jq -r '.tools // {} | to_entries[] | select(.value | type == "object") | .key' "$opencode_config" 2>/dev/null | head -5)
 	if [[ -n "$tools_as_objects" ]]; then

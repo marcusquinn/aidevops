@@ -37,7 +37,7 @@ tools:
 6. Read env vars fresh on every start (values change across restarts) — never cache at startup
 7. Health check path must return HTTP 200 unauthenticated
 
-**File Structure**: `CloudronManifest.json`, `Dockerfile`, `start.sh`, `logo.png` (256x256).
+**File Structure**: `CloudronManifest.json`, `Dockerfile`, `start.sh`, `logo.png` (256×256). Independently distributed packages also keep `CloudronVersions.json`, a Cloudron-format changelog, a publishing runbook, and at least one privacy-reviewed screenshot or 3:1 hero; follow `cloudron-app-publishing-skill.md`.
 
 **CLI Workflow**:
 
@@ -257,6 +257,44 @@ RUN curl -fsSL https://packagecloud.io/cloudamqp/lavinmq/gpgkey | gpg --dearmor 
 
 Track version in `/app/data/.app_version`; compare on start to run per-version migration blocks. Migrations MUST be idempotent — use framework migration tracking (Laravel, Django, Rails) or raw SQL with `CREATE TABLE IF NOT EXISTS`, `ADD COLUMN IF NOT EXISTS`.
 
+## Managed Package Lifecycle
+
+`aidevops init` detects `CloudronManifest.json`, records
+`app_type: cloudron-package` in local `repos.json`, and installs the thin
+`.github/workflows/cloudron-package-release.yml` caller when no file already
+exists. Configure `cloudron_package.upstream_slug` locally to enable daily
+stable-release comparison; compatibility monitoring is enabled by default.
+The generated caller pins both the reusable workflow and checked-out validator
+to the same full framework commit. Updating that revision is an explicit,
+reviewed package change; repeated init never overwrites an existing caller.
+
+Prepare and validate releases without publishing:
+
+```bash
+cloudron-package-helper.sh prepare-release 1.2.0 4.5.6 release-notes.md
+cloudron-package-helper.sh check-compatibility
+cloudron-package-helper.sh check-release v1.2.0
+```
+
+`prepare-release` validates first, then updates `CloudronManifest.json` and
+inserts a non-empty `CHANGELOG.md` section with rollback on a partial write.
+`check-release` requires a matching `vX.Y.Z` tag, valid manifest, non-empty
+changelog entry, and the exact pinned final Cloudron base image.
+
+Core routines provide ongoing reporting:
+
+- `r916` runs `cloudron-package-monitor-helper.sh upstream --apply` daily.
+- `r917` runs `cloudron-package-monitor-helper.sh compatibility --apply` weekly.
+
+Both routines deduplicate package-local issues, require maintainer-equivalent
+issue authority, and fail closed on GitHub/API errors. They never execute
+upstream instructions or modify package source.
+
+**Publication boundary:** pushing a `vX.Y.Z` tag is the explicit trigger for the
+managed caller to validate and create a GitHub release. Tag creation, image
+pushes, Cloudron catalog publication, and deployment remain separate operator
+actions and require explicit authorization.
+
 ## Troubleshooting
 
 | Issue | Solution |
@@ -282,4 +320,11 @@ Track version in `/app/data/.app_version`; compare on start to run per-version m
 
 ## Publishing
 
-Fork https://git.cloudron.io/cloudron/appstore, add your app directory with manifest and icon, submit a merge request. See: https://docs.cloudron.io/packaging/publishing/
+Independent/community packages publish registry images through a hosted
+`CloudronVersions.json`; they are not submitted by forking the official app
+store. Before considering a package complete, initialize the catalog, add the
+required `iconUrl`/packager/media metadata, keep a local 256×256 icon and a
+privacy-reviewed screenshot or 3:1 hero, and document the release workflow.
+Follow `cloudron-app-publishing-skill.md` for testing-state promotion,
+append-only catalog maintenance, revocation, public hosting, and optional
+listing on [Cloudron Community Apps](https://ca.cloudron.io).

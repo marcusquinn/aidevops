@@ -1182,6 +1182,24 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [ ] t18149 Require trusted authorization for account-level GitHub CLI mutations #auto-dispatch #security ~2h tier:thinking ref:GH#27994 logged:2026-07-16 -> [todo/tasks/t18149-brief.md]
 
+- [ ] t18153 Clarify authority-aware full-loop lifecycle ref:GH#28112
+
+- [x] t18154 Repair stale test source paths after helper module splits #bug #framework #reliability #auto-dispatch ~45m tier:standard ref:GH#28133 logged:2026-07-17 -> [todo/tasks/t18154-brief.md] pr:#28137 completed:2026-07-17
+
+- [ ] t18158 Add fail-closed cross-store storage inventory reporting #feat ref:GH#28149
+
+- [ ] t18159 Bound runtime-bundle growth without weakening leases or rollback #feat ref:GH#28150
+
+- [ ] t18160 Bound observability growth while preserving append-only audit evidence #feat ref:GH#28151
+
+- [ ] t18161 Coordinate retention for agent backups logs and worker failure evidence #feat ref:GH#28152
+
+- [ ] t18162 Report and maintain OpenCode storage through ownership-aware contracts #feat ref:GH#28153
+
+- [ ] t18170 Standardize Cloudron community publishing lifecycle ref:GH#28546
+
+- [ ] t18171 Fix Cloudron 7.0.4 versions update option parsing ref:GH#28556
+
 ## In Progress
 
 - [x] t2744 raise GraphQL throttle defaults and reduce pulse/stats cycle pressure — circuit breaker default `0.05`→`0.30` (trips at 1500 remaining instead of 250), REST fallback default `10`→`1000` (REST takes over earlier, GraphQL kept in reserve), pulse interval default `120s`→`180s`, stats-wrapper interval `900s`→`3600s`. Also fixes macOS launchd path that ignored `supervisor.pulse_interval_seconds` from settings. Evidence: GraphQL=0/5000 vs REST=4044/5000 with 21 EXHAUSTED events in current pulse log; per-cycle cost (~400-700 pts) × 30 cycles/hr × 14 repos exceeds 5000/hr ceiling by 2-4×. All env-overridable, fully backwards-compatible. See `todo/tasks/t2744-brief.md`. #framework #pulse #interactive ~1h ref:GH#20482 started:2026-04-22 pr:#20483 completed:2026-04-22
@@ -4648,4 +4666,42 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [x] t18151 Add audited canonical branch fast-forward workflow #bug ref:GH#28032 pr:#28037 completed:2026-07-16
 
-- [ ] t18152 Restore Pulse temporary-worktree capacity and adaptive timeout recovery #bug ref:GH#28044
+- [x] t18152 Restore Pulse temporary-worktree capacity and adaptive timeout recovery #bug ref:GH#28044 pr:#28045 completed:2026-07-17
+
+- [ ] t18153 Clarify authority-aware full-loop lifecycle #bug ref:GH#28112
+
+- [x] t18155 fix: harden autoagent experiment reliability #enhancement #research #self-improvement ref:GH#28139 pr:#28143 completed:2026-07-18
+
+- [x] t18156 Fix OpenCode Tabby status lifecycle across idle and permission waits #bug ref:GH#28140 pr:#28144 completed:2026-07-17
+
+- [x] t18157 Block reads of credential-bearing runtime configuration #security ref:GH#28141 pr:#28315 completed:2026-07-20
+
+- [ ] t18158 Add fail-closed cross-store storage inventory reporting #enhancement ref:GH#28149
+
+- [ ] t18159 Bound runtime-bundle growth without weakening leases or rollback #enhancement ref:GH#28150
+
+- [ ] t18160 Bound observability growth while preserving append-only audit evidence #enhancement ref:GH#28151
+
+- [ ] t18162 Report and maintain OpenCode storage through ownership-aware contracts #enhancement ref:GH#28153
+
+- [ ] t18161 Coordinate retention for agent backups logs and worker failure evidence #enhancement ref:GH#28152
+
+- [x] t18163 Fix same-task scheduler ownership transfer for preserved worktrees #auto-dispatch #bug #reliability ref:GH#28203 pr:#28246 completed:2026-07-19
+
+- [x] t18164 Add durable one-shot scheduling and completion-aware routine logging #auto-dispatch #enhancement #framework ref:GH#28313 pr:#28393 completed:2026-07-22
+
+- [x] t18165 Unify typed Pulse outcomes and heartbeat-progress state #enhancement #framework #observability #pulse ref:GH#28361 pr:#28375 completed:2026-07-20
+
+- [x] t18166 Make Pulse cycle-health fixtures time-stable #auto-dispatch #bug #pulse #testing ref:GH#28376 pr:#28388 completed:2026-07-21
+
+- [x] t18167 Keep test evidence and compaction aligned with session aims #enhancement ref:GH#28382 pr:#28384 completed:2026-07-20
+
+- [x] t18168 Harden Pulse PR lifecycle-state normalization at merge boundaries #bug ref:GH#28396 pr:#28397 completed:2026-07-21
+
+- [x] t18169 Fix init-generated Markdown for default markdownlint #bug ref:GH#28487 pr:#28488 completed:2026-07-22
+
+- [ ] t18170 Standardize Cloudron community publishing lifecycle #bug ref:GH#28546
+
+- [ ] t18171 Fix Cloudron 7.0.4 versions update option parsing #bug ref:GH#28556
+
+- [x] t18172 Document Cloudron package repository metadata #documentation ref:GH#28559 pr:#28561 completed:2026-07-24

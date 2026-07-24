@@ -13,6 +13,11 @@ from typing import Any
 SCRIPT_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(SCRIPT_DIR))
 
+from command_policy_account_mutation import (
+    _account_mutation_guard,
+    _is_protected_account_mutation,
+    account_mutation_authorization,
+)
 from command_policy_config import (
     PolicyError,
     _default_policy_path,
@@ -21,11 +26,8 @@ from command_policy_config import (
 )
 from command_policy_evaluation import (
     _evaluate_static,
-    _account_mutation_guard,
-    account_mutation_authorization,
     evaluate_invocations,
 )
-from command_policy_matchers import _matches_gh_command_path
 from command_policy_dispatch import (
     CommandParseError,
     _validate_argv,
@@ -144,7 +146,7 @@ def _authorization_action(
     authorization_source: dict[str, Any] | None,
 ) -> int:
     guard = _account_mutation_guard(policy)
-    if len(invocations) != 1 or not _matches_gh_command_path(
+    if len(invocations) != 1 or not _is_protected_account_mutation(
         invocations[0], guard["command_paths"]
     ):
         print(
@@ -158,7 +160,10 @@ def _authorization_action(
         return FORBID_EXIT
     print(
         account_mutation_authorization(
-            invocations[0], args.cwd, authorization_source
+            invocations[0],
+            args.cwd,
+            authorization_source,
+            args.account_mutation_workspace_root,
         )
     )
     return 0
@@ -183,6 +188,11 @@ def _check_action(
         args.network_helper,
         args.account_mutation_authorization,
         authorization_source,
+        args.process_termination_guard,
+        args.runtime_pid,
+        args.runtime_process_identity,
+        args.process_table_fixture,
+        args.account_mutation_workspace_root,
     )
     print(json.dumps(result, sort_keys=True))
     return 0 if result["decision"] == "allow" else FORBID_EXIT

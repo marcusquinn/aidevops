@@ -32,7 +32,15 @@ trap 'rm -rf "$TMP_DIR" 2>/dev/null || true' EXIT
 
 GH_CALLS="${TMP_DIR}/gh-calls.log"
 : >"$GH_CALLS"
+SHARED_INVALIDATIONS="${TMP_DIR}/shared-invalidations.log"
+: >"$SHARED_INVALIDATIONS"
 unset PULSE_PR_LIST_PROVIDER_CACHE_DISABLE
+
+gh_pr_list_cache_invalidate_repo() {
+	local repo_slug="$1"
+	printf '%s\n' "$repo_slug" >>"$SHARED_INVALIDATIONS"
+	return 0
+}
 
 gh_pr_list() {
 	printf '%s\n' "$*" >>"$GH_CALLS"
@@ -119,6 +127,27 @@ if [[ "$wrapper_disabled_calls" == "2" ]]; then
 else
 	fail "provider cache remains disabled when wrapper exports disable without cache dir" \
 		"wrapper_disabled_calls=${wrapper_disabled_calls} calls=$(<"$GH_CALLS")"
+fi
+
+: >"$GH_CALLS"
+: >"$SHARED_INVALIDATIONS"
+export PULSE_PR_LIST_PROVIDER_CACHE_DIR="${TMP_DIR}/invalidate-cache"
+export PULSE_PR_LIST_PROVIDER_CACHE_TTL=3600
+pulse_pr_list_get --repo owner/repo --state open --json number --limit 10 >/dev/null
+pulse_pr_list_get --repo owner/repo --state open --json number --limit 10 >/dev/null
+pulse_pr_list_get --repo owner/other --state open --json number --limit 10 >/dev/null
+pulse_pr_list_get --repo owner/other --state open --json number --limit 10 >/dev/null
+pulse_pr_list_cache_invalidate_repo "owner/repo"
+pulse_pr_list_get --repo owner/repo --state open --json number --limit 10 >/dev/null
+pulse_pr_list_get --repo owner/other --state open --json number --limit 10 >/dev/null
+repo_backend_calls=$(grep -cF -- '--repo owner/repo --state open --json number --limit 10' "$GH_CALLS" 2>/dev/null || true)
+other_backend_calls=$(grep -cF -- '--repo owner/other --state open --json number --limit 10' "$GH_CALLS" 2>/dev/null || true)
+shared_invalidation_calls=$(grep -cFx 'owner/repo' "$SHARED_INVALIDATIONS" 2>/dev/null || true)
+if [[ "$repo_backend_calls" == "2" && "$other_backend_calls" == "1" && "$shared_invalidation_calls" == "1" ]]; then
+	pass "provider invalidation evicts every shape for one repo and delegates to shared cache"
+else
+	fail "provider invalidation evicts every shape for one repo and delegates to shared cache" \
+		"repo_calls=${repo_backend_calls} other_calls=${other_backend_calls} shared_invalidations=${shared_invalidation_calls} calls=$(<"$GH_CALLS")"
 fi
 
 printf '\nRan %s tests, %s failed.\n' "$TESTS_RUN" "$TESTS_FAILED"

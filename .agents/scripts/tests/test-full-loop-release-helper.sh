@@ -68,6 +68,25 @@ if compgen -G "$ROOT/worktrees/aidevops-release-42-*" >/dev/null; then
 fi
 printf 'PASS detached release runner persists publication receipt after successful gates\n'
 
+cp "$ROOT/vm.log" "$ROOT/vm-after-publication.log"
+worktree_adds_before=$(grep -c 'worktree add --detach' "$ROOT/git.log")
+(
+	cd "$ROOT/repo/linked-branch"
+	PATH="$ROOT/bin:/usr/bin:/bin" \
+		GIT_CALL_LOG="$ROOT/git.log" \
+		VM_CALL_LOG="$ROOT/vm.log" \
+		FAKE_REPO_ROOT="$ROOT/repo" \
+		AIDEVOPS_WORKTREE_BASE_DIR="$ROOT/worktrees" \
+		AIDEVOPS_FULL_LOOP_VERSION_MANAGER="../../version-manager.sh" \
+		AIDEVOPS_FULL_LOOP_RECEIPT_DIR="$ROOT/receipts" \
+		AIDEVOPS_FULL_LOOP_REPO=marcusquinn/aidevops \
+		bash "$SCRIPT_DIR/full-loop-release-helper.sh" minor 42 full
+)
+cmp -s "$ROOT/vm.log" "$ROOT/vm-after-publication.log"
+worktree_adds_after=$(grep -c 'worktree add --detach' "$ROOT/git.log")
+[[ "$worktree_adds_after" -eq "$worktree_adds_before" ]]
+printf 'PASS repeated detached release reconciliation skips duplicate publication\n'
+
 if (
 	cd "$ROOT/repo/linked-branch"
 	PATH="$ROOT/bin:/usr/bin:/bin" \
@@ -89,5 +108,26 @@ if [[ -e "$ROOT/receipts/marcusquinn_aidevops-43.status" ]]; then
 	exit 1
 fi
 printf 'PASS failed release never persists publication receipt\n'
+
+printf '%s\n' not-requested >"$ROOT/receipts/marcusquinn_aidevops-44.status"
+cp "$ROOT/vm.log" "$ROOT/vm-before-skipped-release.log"
+if (
+	cd "$ROOT/repo/linked-branch"
+	PATH="$ROOT/bin:/usr/bin:/bin" \
+		GIT_CALL_LOG="$ROOT/git.log" \
+		VM_CALL_LOG="$ROOT/vm.log" \
+		FAKE_REPO_ROOT="$ROOT/repo" \
+		AIDEVOPS_WORKTREE_BASE_DIR="$ROOT/worktrees" \
+		AIDEVOPS_FULL_LOOP_VERSION_MANAGER="../../version-manager.sh" \
+		AIDEVOPS_FULL_LOOP_RECEIPT_DIR="$ROOT/receipts" \
+		AIDEVOPS_FULL_LOOP_REPO=marcusquinn/aidevops \
+		bash "$SCRIPT_DIR/full-loop-release-helper.sh" patch 44 incremental
+); then
+	printf 'FAIL skipped release evidence was replaced\n'
+	exit 1
+fi
+grep -qx 'not-requested' "$ROOT/receipts/marcusquinn_aidevops-44.status"
+cmp -s "$ROOT/vm.log" "$ROOT/vm-before-skipped-release.log"
+printf 'PASS skipped release evidence cannot trigger publication\n'
 
 exit 0

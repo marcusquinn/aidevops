@@ -71,13 +71,13 @@ jobs:
       cancel-in-progress: false
     steps:
       - name: Checkout repository projection
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 1
           token: ${{ secrets.SYNC_PAT || secrets.GITHUB_TOKEN }}
 
       - name: Checkout coordinator scripts
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           repository: ${{ inputs.aidevops_repository || 'marcusquinn/aidevops' }}
           path: __aidevops
@@ -199,7 +199,7 @@ jobs:
 
       - name: Checkout
         if: steps.check-author.outputs.skip != 'true'
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 1
           # t2166: prefer SYNC_PAT so `git push` of TODO.md updates bypasses
@@ -209,7 +209,7 @@ jobs:
           token: ${{ secrets.SYNC_PAT || secrets.GITHUB_TOKEN }}
 
       - name: Checkout aidevops framework scripts
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           repository: ${{ inputs.aidevops_repository || 'marcusquinn/aidevops' }}
           path: __aidevops
@@ -341,14 +341,14 @@ jobs:
 
       - name: Checkout
         if: steps.check-issue.outputs.sync == 'true'
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 1
           # t2166: prefer SYNC_PAT to bypass branch protection on push.
           token: ${{ secrets.SYNC_PAT || secrets.GITHUB_TOKEN }}
 
       - name: Checkout aidevops framework scripts
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           repository: ${{ inputs.aidevops_repository || 'marcusquinn/aidevops' }}
           path: __aidevops
@@ -418,7 +418,7 @@ jobs:
 
     steps:
       - name: Checkout aidevops framework scripts
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           repository: ${{ inputs.aidevops_repository || 'marcusquinn/aidevops' }}
           path: __aidevops
@@ -625,14 +625,14 @@ jobs:
           fi
 
       - name: Checkout
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 1
           # t2166: prefer SYNC_PAT to bypass branch protection on push.
           token: ${{ secrets.SYNC_PAT || secrets.GITHUB_TOKEN }}
 
       - name: Checkout aidevops framework scripts
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           repository: ${{ inputs.aidevops_repository || 'marcusquinn/aidevops' }}
           path: __aidevops
@@ -724,7 +724,7 @@ jobs:
       # only ran later in the job (gated by `if: steps.extract.outputs.task_id`)
       # which is too late for the comment-emitting steps.
       - name: Checkout aidevops framework scripts (early — for gh shim)
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           repository: ${{ inputs.aidevops_repository || 'marcusquinn/aidevops' }}
           path: __aidevops
@@ -811,7 +811,7 @@ jobs:
 
       - name: Checkout repo before closing-hygiene validation
         if: steps.extract.outputs.linked_issues != ''
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: main
           fetch-depth: 1
@@ -819,7 +819,7 @@ jobs:
 
       - name: Restore framework scripts before task resolution
         if: steps.extract.outputs.linked_issues != ''
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           repository: ${{ inputs.aidevops_repository || 'marcusquinn/aidevops' }}
           path: __aidevops
@@ -915,6 +915,10 @@ jobs:
             exit 0
           fi
 
+          # GH#28464: completion blockers use the shared semantic resolver.
+          # shellcheck source=/dev/null
+          source __aidevops/.agents/scripts/dependency-event-reconciler.sh
+
           echo "Processing issues: $ALL_ISSUES"
 
           COMMENT_FAILED=0
@@ -948,8 +952,12 @@ jobs:
             if [[ -n "$MAPPED_TASK_ID" ]]; then
               TASK_LINE=$(grep -E "^[[:space:]]*- \[ \] ${MAPPED_TASK_ID} " TODO.md | head -1 || true)
               if echo "$TASK_LINE" | grep -qE '(^|[[:space:]])blocked-by:[^[:space:]]+'; then
-                echo "Task $MAPPED_TASK_ID has unresolved blocked-by marker — skipping closing hygiene for #$ISSUE_NUM (GH#23516)"
-                continue
+                BLOCKER_STATUS=0
+                _der_completion_blockers_closed "$REPO" "$ISSUE_NUM" "$TASK_LINE" || BLOCKER_STATUS=$?
+                if [[ "$BLOCKER_STATUS" -ne 0 ]]; then
+                  echo "Task $MAPPED_TASK_ID blockers are not positively closed — skipping closing hygiene for #$ISSUE_NUM (GH#28464)"
+                  continue
+                fi
               fi
             fi
 
@@ -1165,6 +1173,8 @@ jobs:
         if: steps.resolve-tasks.outputs.task_backed == 'true' && steps.extract.outputs.range_syntax != 'true'
         env:
           TASK_IDS: ${{ steps.resolve-tasks.outputs.task_ids }}
+          ISSUE_TASK_PAIRS: ${{ steps.resolve-tasks.outputs.issue_task_pairs }}
+          REPO: ${{ github.repository }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           # GH#19782 / t2252: pass For/Ref and closing-keyword issue lists
           # so the proof-log step can distinguish planning-only PRs from
@@ -1241,6 +1251,11 @@ jobs:
             echo "::warning::SYNC_PAT not set — falling back to GITHUB_TOKEN, which will be rejected by branch protection (GH006). Fix: gh secret set SYNC_PAT --repo ${GITHUB_REPOSITORY:-REPO} --body \"<FINE_GRAINED_PAT>\" (Contents: Read and write)"
           fi
 
+          # GH#28464: use the same fail-closed completion predicate as direct
+          # issue closure rather than treating blocker provenance as unresolved.
+          # shellcheck source=/dev/null
+          source __aidevops/.agents/scripts/dependency-event-reconciler.sh
+
           TODAY=$(date +%Y-%m-%d)
           PROOF="pr:#${PR_NUMBER} completed:${TODAY}"
 
@@ -1248,8 +1263,24 @@ jobs:
           for RESOLVED_TASK_ID in $TASK_IDS; do
             TASK_LINE=$(grep -E "^[[:space:]]*- \[[ x]\] ${RESOLVED_TASK_ID} " TODO.md | head -1 || true)
             if echo "$TASK_LINE" | grep -qE '(^|[[:space:]])blocked-by:[^[:space:]]+'; then
-              echo "::notice::Task $RESOLVED_TASK_ID has unresolved blocked-by marker — skipping TODO.md proof-log (GH#23516)"
-              continue
+              MAPPED_ISSUE_NUM=""
+              MAPPING_COUNT=0
+              for ISSUE_TASK_PAIR in $ISSUE_TASK_PAIRS; do
+                if [[ "${ISSUE_TASK_PAIR#*:}" == "$RESOLVED_TASK_ID" ]]; then
+                  MAPPED_ISSUE_NUM="${ISSUE_TASK_PAIR%%:*}"
+                  MAPPING_COUNT=$((MAPPING_COUNT + 1))
+                fi
+              done
+              if [[ "$MAPPING_COUNT" -ne 1 || ! "$MAPPED_ISSUE_NUM" =~ ^[0-9]+$ ]]; then
+                echo "::notice::Task $RESOLVED_TASK_ID does not have one canonical issue mapping — skipping TODO.md proof-log (GH#28464)"
+                continue
+              fi
+              BLOCKER_STATUS=0
+              _der_completion_blockers_closed "$REPO" "$MAPPED_ISSUE_NUM" "$TASK_LINE" || BLOCKER_STATUS=$?
+              if [[ "$BLOCKER_STATUS" -ne 0 ]]; then
+                echo "::notice::Task $RESOLVED_TASK_ID blockers are not positively closed — skipping TODO.md proof-log (GH#28464)"
+                continue
+              fi
             fi
             if grep -qE "^[[:space:]]*- \[x\] ${RESOLVED_TASK_ID} .*pr:#${PR_NUMBER}" TODO.md; then
               echo "Task $RESOLVED_TASK_ID already has proof-log for PR #${PR_NUMBER}"

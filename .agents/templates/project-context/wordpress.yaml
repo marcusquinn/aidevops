@@ -1,0 +1,19 @@
+schema_version: 1
+wordpress:
+  deployment_id: "<DEPLOYMENT_ID>"
+  public_url: "<PUBLIC_URL>"
+  core_path: "<WORDPRESS_CORE_PATH>"
+  content_path: "<WP_CONTENT_PATH>"
+  table_prefix: "<TABLE_PREFIX>"
+  multisite:
+    enabled: false
+    primary_url: "<PRIMARY_SITE_URL>"
+  localwp:
+    site_name: "<LOCALWP_SITE_NAME>"
+    local_url: "<LOCAL_URL>"
+    site_path: "<LOCAL_SITE_PATH>"
+  clone:
+    uploads_strategy: "<COPY_OR_PLACEHOLDER>"
+    source_url: "<SOURCE_URL>"
+    target_url: "<TARGET_URL>"
+    sanitize_pii: true

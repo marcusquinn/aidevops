@@ -66,7 +66,11 @@ class SubagentCancellationReceipt {
           }
           if (result.evidence) result.reason = "";
         }
-      } catch {
+      } catch (error) {
+        this.ledger.safeLog(
+          "WARN",
+          `[subagent-cancellation] session abort failed: ${error?.message || error?.name || "Error"}`,
+        );
         result.reason = "abort_api_failed";
       }
     } else if (childID) {
@@ -121,7 +125,11 @@ class SubagentCancellationReceipt {
         childSessionID: childID,
         parentSessionID: String(input?.sessionID || ""),
       }));
-    } catch {
+    } catch (error) {
+      this.ledger.safeLog(
+        "WARN",
+        `[subagent-cancellation] receipt persistence failed: ${error?.message || error?.name || "Error"}`,
+      );
       recorded = false;
     }
     receipt.telemetry = recorded ? "recorded" : "unavailable";

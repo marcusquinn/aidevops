@@ -6,22 +6,22 @@
 #
 # Asserts the budget-aware LLM sweep primitives work:
 #
-#   Part 1 — _compute_repo_state_fingerprint produces:
+#   Part 1 — _compute_repo_state_fingerprint produces from canonical snapshots:
 #            * Stable output (identical input → identical hash)
-#            * Sensitive to label/assignee/updatedAt changes
+#            * Sensitive to label/assignee/updatedAt/head SHA changes
 #            * 16-char hex output
-#            * Empty string on gh failure (fail-open)
+#            * Empty string for incomplete/incompatible snapshot pairs
 #
-#   Part 2 — _verify_repo_state_unchanged:
-#            * Returns 0 when search returns zero results
-#            * Returns 1 when search returns any hits
-#            * Returns 1 on gh failure (fail-closed)
+#   Part 2 — canonical pair validation:
+#            * Accepts complete empty collections
+#            * Rejects generation/projection/completeness mismatches
 #
 #   Part 3 — _prefetch_detect_cache_hit:
-#            * Cache hit when fingerprint matches AND verification clean
+#            * Cache hit when canonical fingerprint and schema match
 #            * Cache miss when fingerprint differs
-#            * Cache miss when no cached fingerprint exists
+#            * Cache miss when no cached fingerprint schema exists
 #            * Always sets PREFETCH_CURRENT_FINGERPRINT
+#            * Makes no GitHub list calls
 #
 #   Part 4 — prefetch_hygiene_anomalies output:
 #            * "None — label invariants clean" when all counters zero
@@ -66,9 +66,7 @@ export PULSE_PREFETCH_CACHE_FILE="${TEST_ROOT}/prefetch-cache.json"
 STUB_DIR="${TEST_ROOT}/bin"
 mkdir -p "$STUB_DIR"
 
-# Each test may write GH_ISSUE_LIST_PAYLOAD / GH_SEARCH_LIST_PAYLOAD to
-# control what the stub returns. Empty = return []. GH_STUB_FAIL=1 makes
-# the stub exit non-zero.
+# The stub ledger proves local fingerprint/cache decisions make no GitHub calls.
 GH_CALLS_LOG="${TEST_ROOT}/gh-calls.log"
 export GH_CALLS_LOG
 
@@ -88,7 +86,7 @@ case "$1" in
 	issue|pr)
 		case "$2" in
 			list)
-				# Detect --search (verification query) vs plain list
+				# Keep search-shaped fixtures distinguishable if a regression calls them.
 				has_search="false"
 				for arg in "$@"; do
 					if [[ "$arg" == --search* || "$arg" == "--search" ]]; then
@@ -126,12 +124,35 @@ export PATH="${STUB_DIR}:${PATH}"
 # =============================================================================
 # Part 1 — _compute_repo_state_fingerprint
 # =============================================================================
-ISSUES_A='[{"number":1,"labels":[{"name":"tier:standard"}],"assignees":[{"login":"alice"}],"updatedAt":"2026-04-13T10:00:00Z"},{"number":2,"labels":[{"name":"tier:simple"}],"assignees":[],"updatedAt":"2026-04-13T11:00:00Z"}]'
+ISSUES_A='[{"number":1,"state":"open","labels":[{"name":"tier:standard"}],"assignees":[{"login":"alice"}],"updatedAt":"2026-04-13T10:00:00Z"},{"number":2,"state":"open","labels":[{"name":"tier:simple"}],"assignees":[],"updatedAt":"2026-04-13T11:00:00Z"}]'
+PRS_A='[{"number":7,"labels":[{"name":"ready"}],"assignees":[],"updatedAt":"2026-04-13T11:00:00Z","headRefOid":"abc123"}]'
 
-export GH_ISSUE_LIST_PAYLOAD="$ISSUES_A"
+make_snapshot() {
+	local kind="$1"
+	local items="$2"
+	local complete="${3:-true}"
+	local generation="${4:-generation-a}"
+	local projection=""
+	if [[ "$kind" == "issues" ]]; then
+		projection="$_PREFETCH_ISSUES_PROJECTION"
+	else
+		projection="$_PREFETCH_PRS_PROJECTION"
+	fi
+	jq -cn --arg schema "$_PREFETCH_SNAPSHOT_SCHEMA" --arg repo "test/repo" \
+		--arg kind "$kind" --arg projection "$projection" --arg generation "$generation" \
+		--argjson complete "$complete" --argjson items "$items" \
+		'{schema:$schema,repository:$repo,collection:$kind,projection:$projection,
+		  auth_scope:"github.com",generation:$generation,source:"fixture",
+		  fetched_at:"2026-04-13T10:00:00Z",
+		  complete:$complete,items:$items}'
+	return 0
+}
+
 : >"$GH_CALLS_LOG"
-fp1=$(_compute_repo_state_fingerprint "test/repo")
-fp2=$(_compute_repo_state_fingerprint "test/repo")
+issues_snapshot_a=$(make_snapshot issues "$ISSUES_A")
+prs_snapshot_a=$(make_snapshot prs "$PRS_A")
+fp1=$(_compute_repo_state_fingerprint "test/repo" "$issues_snapshot_a" "$prs_snapshot_a")
+fp2=$(_compute_repo_state_fingerprint "test/repo" "$issues_snapshot_a" "$prs_snapshot_a")
 
 if [[ -n "$fp1" && "$fp1" == "$fp2" ]]; then
 	print_result "fingerprint is deterministic (same input → same hash)" 0
@@ -147,9 +168,9 @@ else
 fi
 
 # Sensitivity: change a label → fingerprint changes
-ISSUES_B='[{"number":1,"labels":[{"name":"tier:thinking"}],"assignees":[{"login":"alice"}],"updatedAt":"2026-04-13T10:00:00Z"},{"number":2,"labels":[{"name":"tier:simple"}],"assignees":[],"updatedAt":"2026-04-13T11:00:00Z"}]'
-export GH_ISSUE_LIST_PAYLOAD="$ISSUES_B"
-fp3=$(_compute_repo_state_fingerprint "test/repo")
+ISSUES_B='[{"number":1,"state":"open","labels":[{"name":"tier:thinking"}],"assignees":[{"login":"alice"}],"updatedAt":"2026-04-13T10:00:00Z"},{"number":2,"state":"open","labels":[{"name":"tier:simple"}],"assignees":[],"updatedAt":"2026-04-13T11:00:00Z"}]'
+issues_snapshot_b=$(make_snapshot issues "$ISSUES_B")
+fp3=$(_compute_repo_state_fingerprint "test/repo" "$issues_snapshot_b" "$prs_snapshot_a")
 if [[ -n "$fp3" && "$fp3" != "$fp1" ]]; then
 	print_result "fingerprint changes when a label changes" 0
 else
@@ -158,9 +179,9 @@ else
 fi
 
 # Sensitivity: change updatedAt → fingerprint changes
-ISSUES_C='[{"number":1,"labels":[{"name":"tier:standard"}],"assignees":[{"login":"alice"}],"updatedAt":"2026-04-13T12:00:00Z"},{"number":2,"labels":[{"name":"tier:simple"}],"assignees":[],"updatedAt":"2026-04-13T11:00:00Z"}]'
-export GH_ISSUE_LIST_PAYLOAD="$ISSUES_C"
-fp4=$(_compute_repo_state_fingerprint "test/repo")
+ISSUES_C='[{"number":1,"state":"open","labels":[{"name":"tier:standard"}],"assignees":[{"login":"alice"}],"updatedAt":"2026-04-13T12:00:00Z"},{"number":2,"state":"open","labels":[{"name":"tier:simple"}],"assignees":[],"updatedAt":"2026-04-13T11:00:00Z"}]'
+issues_snapshot_c=$(make_snapshot issues "$ISSUES_C")
+fp4=$(_compute_repo_state_fingerprint "test/repo" "$issues_snapshot_c" "$prs_snapshot_a")
 if [[ -n "$fp4" && "$fp4" != "$fp1" ]]; then
 	print_result "fingerprint changes when updatedAt changes" 0
 else
@@ -170,12 +191,12 @@ fi
 
 # Order independence: labels in different order within a single issue
 # must yield the same fingerprint (we canonicalize via sort)
-ISSUES_D='[{"number":1,"labels":[{"name":"tier:standard"},{"name":"auto-dispatch"}],"assignees":[{"login":"alice"}],"updatedAt":"2026-04-13T10:00:00Z"}]'
-ISSUES_D_REORDERED='[{"number":1,"labels":[{"name":"auto-dispatch"},{"name":"tier:standard"}],"assignees":[{"login":"alice"}],"updatedAt":"2026-04-13T10:00:00Z"}]'
-export GH_ISSUE_LIST_PAYLOAD="$ISSUES_D"
-fp_d1=$(_compute_repo_state_fingerprint "test/repo")
-export GH_ISSUE_LIST_PAYLOAD="$ISSUES_D_REORDERED"
-fp_d2=$(_compute_repo_state_fingerprint "test/repo")
+ISSUES_D='[{"number":1,"state":"open","labels":[{"name":"tier:standard"},{"name":"auto-dispatch"}],"assignees":[{"login":"alice"}],"updatedAt":"2026-04-13T10:00:00Z"}]'
+ISSUES_D_REORDERED='[{"number":1,"state":"open","labels":[{"name":"auto-dispatch"},{"name":"tier:standard"}],"assignees":[{"login":"alice"}],"updatedAt":"2026-04-13T10:00:00Z"}]'
+issues_snapshot_d=$(make_snapshot issues "$ISSUES_D")
+issues_snapshot_d_reordered=$(make_snapshot issues "$ISSUES_D_REORDERED")
+fp_d1=$(_compute_repo_state_fingerprint "test/repo" "$issues_snapshot_d" "$prs_snapshot_a")
+fp_d2=$(_compute_repo_state_fingerprint "test/repo" "$issues_snapshot_d_reordered" "$prs_snapshot_a")
 if [[ -n "$fp_d1" && "$fp_d1" == "$fp_d2" ]]; then
 	print_result "fingerprint is label-order independent (sorted)" 0
 else
@@ -183,63 +204,60 @@ else
 		"(fp_d1='$fp_d1' fp_d2='$fp_d2')"
 fi
 
-# Fail-open: gh failure returns empty string
-export GH_STUB_FAIL=1
-fp_fail=$(_compute_repo_state_fingerprint "test/repo")
-unset GH_STUB_FAIL
-if [[ -z "$fp_fail" ]]; then
-	print_result "fingerprint returns empty string on gh failure (fail-open)" 0
+# Incomplete input forces the full-analysis path.
+issues_snapshot_incomplete=$(make_snapshot issues "$ISSUES_A" false)
+fp_incomplete=$(_compute_repo_state_fingerprint "test/repo" "$issues_snapshot_incomplete" "$prs_snapshot_a")
+if [[ -z "$fp_incomplete" ]]; then
+	print_result "fingerprint returns empty string for incomplete snapshots" 0
 else
-	print_result "fingerprint returns empty string on gh failure (fail-open)" 1 "(got: '$fp_fail')"
+	print_result "fingerprint returns empty string for incomplete snapshots" 1 "(got: '$fp_incomplete')"
 fi
 
 # =============================================================================
-# Part 2 — _verify_repo_state_unchanged
+# Part 2 — canonical pair validation
 # =============================================================================
-export GH_SEARCH_LIST_PAYLOAD="[]"
-if _verify_repo_state_unchanged "test/repo" "2026-04-13T10:00:00Z"; then
-	print_result "verify returns 0 on empty search result" 0
+empty_issues_snapshot=$(make_snapshot issues '[]')
+empty_prs_snapshot=$(make_snapshot prs '[]')
+empty_fp=$(_compute_repo_state_fingerprint "test/repo" "$empty_issues_snapshot" "$empty_prs_snapshot")
+if [[ "$empty_fp" =~ ^[0-9a-f]{16}$ ]]; then
+	print_result "complete empty snapshot pair produces a fingerprint" 0
 else
-	print_result "verify returns 0 on empty search result" 1
+	print_result "complete empty snapshot pair produces a fingerprint" 1
 fi
 
-export GH_SEARCH_LIST_PAYLOAD='[{"number":1}]'
-if ! _verify_repo_state_unchanged "test/repo" "2026-04-13T10:00:00Z"; then
-	print_result "verify returns 1 when search has hits" 0
+prs_generation_b=$(make_snapshot prs "$PRS_A" true generation-b)
+if ! _canonical_snapshot_pair_complete "test/repo" "$issues_snapshot_a" "$prs_generation_b"; then
+	print_result "canonical pair rejects mixed generations" 0
 else
-	print_result "verify returns 1 when search has hits" 1
+	print_result "canonical pair rejects mixed generations" 1
 fi
 
-if ! _verify_repo_state_unchanged "test/repo" ""; then
-	print_result "verify returns 1 on empty last_pass_iso" 0
+issues_wrong_projection=$(printf '%s' "$issues_snapshot_a" | jq '.projection = "narrow"')
+if ! _canonical_snapshot_pair_complete "test/repo" "$issues_wrong_projection" "$prs_snapshot_a"; then
+	print_result "canonical pair rejects incompatible projections" 0
 else
-	print_result "verify returns 1 on empty last_pass_iso" 1
+	print_result "canonical pair rejects incompatible projections" 1
 fi
 
-# Fail-closed: gh failure = miss
-export GH_STUB_FAIL=1
-if ! _verify_repo_state_unchanged "test/repo" "2026-04-13T10:00:00Z"; then
-	print_result "verify returns 1 on gh failure (fail-closed)" 0
+if ! _canonical_snapshot_pair_complete "test/repo" "$issues_snapshot_incomplete" "$prs_snapshot_a"; then
+	print_result "canonical pair rejects incomplete collections" 0
 else
-	print_result "verify returns 1 on gh failure (fail-closed)" 1
+	print_result "canonical pair rejects incomplete collections" 1
 fi
-unset GH_STUB_FAIL
 
 # =============================================================================
 # Part 3 — _prefetch_detect_cache_hit
 # =============================================================================
-export GH_ISSUE_LIST_PAYLOAD="$ISSUES_A"
-export GH_SEARCH_LIST_PAYLOAD="[]"
-# Compute the expected fingerprint for this state
-expected_fp=$(_compute_repo_state_fingerprint "test/repo")
+expected_fp=$(_compute_repo_state_fingerprint "test/repo" "$issues_snapshot_a" "$prs_snapshot_a")
 
-# Case A: cache has matching fingerprint + clean verification → hit
+# Case A: cache has matching canonical fingerprint/schema → hit
 cache_entry_a=$(jq -n --arg fp "$expected_fp" --arg ts "2026-04-13T10:00:00Z" \
-	'{state_fingerprint: $fp, last_prefetch: $ts, last_full_sweep: $ts, prs: [], issues: []}')
-if _prefetch_detect_cache_hit "test/repo" "$cache_entry_a"; then
-	print_result "cache hit when fingerprint matches and verification clean" 0
+	'{state_fingerprint: $fp, state_fingerprint_schema:"canonical-snapshot-v1",
+	  last_prefetch: $ts, last_full_sweep: $ts, prs: [], issues: []}')
+if _prefetch_detect_cache_hit "test/repo" "$cache_entry_a" "$issues_snapshot_a" "$prs_snapshot_a"; then
+	print_result "cache hit when canonical fingerprint and schema match" 0
 else
-	print_result "cache hit when fingerprint matches and verification clean" 1
+	print_result "cache hit when canonical fingerprint and schema match" 1
 fi
 
 # PREFETCH_CURRENT_FINGERPRINT must be set on the caller
@@ -252,8 +270,9 @@ fi
 
 # Case B: cache has different fingerprint → miss
 cache_entry_b=$(jq -n --arg fp "wrongfingerpr" --arg ts "2026-04-13T10:00:00Z" \
-	'{state_fingerprint: $fp, last_prefetch: $ts, last_full_sweep: $ts, prs: [], issues: []}')
-if ! _prefetch_detect_cache_hit "test/repo" "$cache_entry_b"; then
+	'{state_fingerprint: $fp, state_fingerprint_schema:"canonical-snapshot-v1",
+	  last_prefetch: $ts, last_full_sweep: $ts, prs: [], issues: []}')
+if ! _prefetch_detect_cache_hit "test/repo" "$cache_entry_b" "$issues_snapshot_a" "$prs_snapshot_a"; then
 	print_result "cache miss when fingerprint differs" 0
 else
 	print_result "cache miss when fingerprint differs" 1
@@ -261,18 +280,23 @@ fi
 
 # Case C: cache has no fingerprint field → miss
 cache_entry_c='{"last_prefetch":"2026-04-13T10:00:00Z","last_full_sweep":"2026-04-13T10:00:00Z","prs":[],"issues":[]}'
-if ! _prefetch_detect_cache_hit "test/repo" "$cache_entry_c"; then
-	print_result "cache miss when fingerprint field absent" 0
+if ! _prefetch_detect_cache_hit "test/repo" "$cache_entry_c" "$issues_snapshot_a" "$prs_snapshot_a"; then
+	print_result "cache miss when fingerprint schema is absent" 0
 else
-	print_result "cache miss when fingerprint field absent" 1
+	print_result "cache miss when fingerprint schema is absent" 1
 fi
 
-# Case D: fingerprint matches but verification fails → miss
-export GH_SEARCH_LIST_PAYLOAD='[{"number":42}]'
-if ! _prefetch_detect_cache_hit "test/repo" "$cache_entry_a"; then
-	print_result "cache miss when fingerprint matches but state changed" 0
+# Case D: matching cached value cannot authorize an incomplete current pair.
+if ! _prefetch_detect_cache_hit "test/repo" "$cache_entry_a" "$issues_snapshot_incomplete" "$prs_snapshot_a"; then
+	print_result "cache miss when current snapshot is incomplete" 0
 else
-	print_result "cache miss when fingerprint matches but state changed" 1
+	print_result "cache miss when current snapshot is incomplete" 1
+fi
+
+if [[ ! -s "$GH_CALLS_LOG" ]]; then
+	print_result "fingerprint and cache-hit decisions make zero GitHub calls" 0
+else
+	print_result "fingerprint and cache-hit decisions make zero GitHub calls" 1
 fi
 
 # =============================================================================

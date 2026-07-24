@@ -1,0 +1,107 @@
+#!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
+
+_init_update_project_operations_context() {
+	local project_root="$1"
+	local agents_md="$project_root/.agents/AGENTS.md"
+	local start="<!-- aidevops:project-operations-context:start -->"
+	local end="<!-- aidevops:project-operations-context:end -->"
+	local block_file="${agents_md}.project-context-block.$$"
+	local tmp_file="${agents_md}.project-context.$$"
+	local line_format="%s\n"
+	local command_status=0
+	[[ -f "$agents_md" ]] || return 0
+
+	{
+		printf "$line_format" "$start" "## Project Operations Context" ""
+		[[ -f "$project_root/.aidevops/deployments.yaml" ]] && printf "$line_format" "- Deployment manifest: \`.aidevops/deployments.yaml\`"
+		[[ -f "$project_root/.aidevops/wordpress.yaml" ]] && printf "$line_format" "- WordPress manifest: \`.aidevops/wordpress.yaml\`"
+		printf "$line_format" "$end"
+	} >"$block_file" || {
+		rm -f "$block_file"
+		return 1
+	}
+
+	grep -qF -- "$start" "$agents_md" || command_status=$?
+	if [[ "$command_status" -eq 0 ]]; then
+		awk -v start="$start" -v end="$end" -v block="$block_file" 'function emit(){while((getline line < block)>0) print line; close(block)} index($0,start)==1 {if(!inserted){emit(); inserted=1}; managed=1; next} managed && index($0,end)==1 {managed=0; next} !managed {print}' "$agents_md" >"$tmp_file" || {
+			rm -f "$block_file" "$tmp_file"
+			return 1
+		}
+	elif [[ "$command_status" -eq 1 ]]; then
+		cp "$agents_md" "$tmp_file" &&
+			{ [[ ! -s "$tmp_file" ]] || printf "\n" >>"$tmp_file"; } &&
+			cat "$block_file" >>"$tmp_file" || {
+			rm -f "$block_file" "$tmp_file"
+			return 1
+		}
+	else
+		rm -f "$block_file" "$tmp_file"
+		return 1
+	fi
+	rm -f "$block_file"
+	[[ -s "$tmp_file" ]] || {
+		rm -f "$tmp_file"
+		return 1
+	}
+	command_status=0
+	cmp -s "$agents_md" "$tmp_file" || command_status=$?
+	if [[ "$command_status" -eq 0 ]]; then
+		rm -f "$tmp_file"
+	elif [[ "$command_status" -eq 1 ]]; then
+		mv "$tmp_file" "$agents_md" || {
+			rm -f "$tmp_file"
+			return 1
+		}
+	else
+		rm -f "$tmp_file"
+		return 1
+	fi
+	return 0
+}
+
+_init_scaffold_project_context() {
+	local project_root="$1"
+	local enable_deployment_context="$2"
+	local enable_wordpress_context="$3"
+	local template_dir="$AGENTS_DIR/templates/project-context"
+	local context_dir="$project_root/.aidevops"
+	local enabled_value="true"
+	[[ "$enable_deployment_context" == "$enabled_value" || "$enable_wordpress_context" == "$enabled_value" ]] || return 0
+	[[ -d "$template_dir" ]] || {
+		print_warning "Project context templates not found: $template_dir"
+		return 1
+	}
+
+	if ! mkdir -p "$context_dir"; then
+		print_error "Failed to create project context directory: $context_dir"
+		return 1
+	fi
+	if [[ ! -f "$context_dir/.gitignore" ]]; then
+		if ! cp "$template_dir/gitignore" "$context_dir/.gitignore"; then
+			print_error "Failed to create .aidevops/.gitignore"
+			return 1
+		fi
+		print_success "Created .aidevops/.gitignore"
+	fi
+	if [[ "$enable_deployment_context" == "$enabled_value" && ! -f "$context_dir/deployments.yaml" ]]; then
+		if ! cp "$template_dir/deployments.yaml" "$context_dir/deployments.yaml"; then
+			print_error "Failed to create .aidevops/deployments.yaml"
+			return 1
+		fi
+		print_success "Created .aidevops/deployments.yaml"
+	fi
+	if [[ "$enable_wordpress_context" == "$enabled_value" && ! -f "$context_dir/wordpress.yaml" ]]; then
+		if ! cp "$template_dir/wordpress.yaml" "$context_dir/wordpress.yaml"; then
+			print_error "Failed to create .aidevops/wordpress.yaml"
+			return 1
+		fi
+		print_success "Created .aidevops/wordpress.yaml"
+	fi
+	if ! _init_update_project_operations_context "$project_root"; then
+		print_error "Failed to update project operations context in .agents/AGENTS.md"
+		return 1
+	fi
+	return 0
+}

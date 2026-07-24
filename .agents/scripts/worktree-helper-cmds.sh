@@ -101,6 +101,35 @@ cmd_list() {
 
 # --- cmd_remove helpers ---
 
+# Explain a shared removal-guard refusal to an explicit/manual caller without
+# exposing process details. Background cleanup callers do not call this helper.
+# Args: $1=path_to_remove, $2=machine-readable guard reason
+_remove_show_guard_error() {
+	local path_to_remove="$1"
+	local guard_reason="$2"
+
+	printf '%b\n' "${RED}Error: Worktree removal refused: ${path_to_remove}${NC}" >&2
+	case "$guard_reason" in
+	active-cwd)
+		printf '%s\n' "Reason: active-cwd — a live process has its current directory inside the target." >&2
+		printf '%s\n' "Recovery: close processes or terminal windows using the target, then retry. --force cannot bypass this protection." >&2
+		;;
+	current-worktree)
+		printf '%s\n' "Reason: current-worktree — this command is running from inside the target." >&2
+		printf '%s\n' "Recovery: change directory outside the target, then retry. --force cannot bypass this protection." >&2
+		;;
+	canonical-skip)
+		printf '%s\n' "Reason: canonical-skip — the target is a registered canonical checkout." >&2
+		printf '%s\n' "Recovery: preserve the canonical checkout and remove only an eligible linked worktree. --force cannot bypass this protection." >&2
+		;;
+	*)
+		printf '%s\n' "Reason: ${guard_reason:-guard-refused} — the shared safety guard did not authorize removal." >&2
+		printf '%s\n' "Recovery: inspect the cleanup audit log, resolve the safety condition, then retry." >&2
+		;;
+	esac
+	return 0
+}
+
 # Validate that a resolved worktree path is safe to remove.
 # Checks: shared non-overridable removal guard, then ownership.
 # Args: $1=path_to_remove
@@ -112,7 +141,10 @@ _remove_validate_path() {
 	# The shared guard blocks canonical repos, this shell's cwd, and every live
 	# process whose cwd is inside the target. --force may override ownership or
 	# dirty-state policy, but it must never override a live process cwd.
-	worktree_removal_guard "$path_to_remove" "$guard_caller" "$_WT_REMOVE_MODE_MANUAL" || return 1
+	if ! worktree_removal_guard "$path_to_remove" "$guard_caller" "$_WT_REMOVE_MODE_MANUAL"; then
+		_remove_show_guard_error "$path_to_remove" "${WORKTREE_REMOVAL_GUARD_REASON:-}"
+		return 1
+	fi
 
 	# Don't allow removing main worktree
 	# NOTE: avoid piping git worktree list through head — with set -o pipefail
@@ -170,7 +202,10 @@ _remove_cleanup_and_execute() {
 	# Close the validation/removal race as tightly as possible. A process may
 	# enter the worktree after cmd_remove validates it; recheck immediately
 	# before the directory is moved or deregistered.
-	worktree_removal_guard "$path_to_remove" "${SCRIPT_NAME:-worktree-helper.sh}" "$_WT_REMOVE_MODE_MANUAL" || return 1
+	if ! worktree_removal_guard "$path_to_remove" "${SCRIPT_NAME:-worktree-helper.sh}" "$_WT_REMOVE_MODE_MANUAL"; then
+		_remove_show_guard_error "$path_to_remove" "${WORKTREE_REMOVAL_GUARD_REASON:-}"
+		return 1
+	fi
 
 	echo -e "${BLUE}Removing worktree: $path_to_remove${NC}"
 	# Move the worktree directory to trash BEFORE git deregisters it.

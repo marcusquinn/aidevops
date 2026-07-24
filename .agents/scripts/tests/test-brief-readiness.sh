@@ -424,6 +424,24 @@ const record = { path: configPath, command: runCommand };
 \`\`\`
 "
 
+# Generated GitHub wrappers are prose structure, not unfinished placeholders.
+# Their inner text must remain available to normal readiness checks.
+BODY_V2_WITH_GENERATED_HTML="${BODY_V2_COMPLETE}
+
+<details open class=\"generated-context\"><summary data-kind=\"related-file\"><code dir=\"ltr\">src/related.sh</code></summary>
+Generated architecture context remains part of the composed issue body.
+<details><summary>Nested context</summary>Nested evidence remains visible.</details>
+</details>
+"
+
+BODY_V2_WITH_PATH_PLACEHOLDER="${BODY_V2_COMPLETE}
+
+The implementation still needs <path> before dispatch."
+
+BODY_V2_WITH_COMMAND_PLACEHOLDER="${BODY_V2_COMPLETE}
+
+<details><summary>Verification still required</summary>Run <command> before dispatch.</details>"
+
 # Short concrete paths remain substantive, and Bun is a supported verifier.
 # shellcheck disable=SC2016
 BODY_V2_SHORT_PATH_BUN=$(printf '%s\n' "$BODY_V2_COMPLETE" | sed \
@@ -801,6 +819,31 @@ if [[ "$output" == *"WORKER_READY=true"* && "$output" == *"SCHEMA=legacy"* ]]; t
 	pass "T28: fenced schema marker remains a legacy example"
 else
 	fail "T28: fence-aware schema marker detection" "output: $output"
+fi
+
+# --- Test 29: generated HTML wrappers, attributes, and nesting are accepted ---
+output=$("$HELPER" check --body "$BODY_V2_WITH_GENERATED_HTML" 2>/dev/null)
+rc=$?
+if [[ $rc -eq 0 && "$output" == *"WORKER_READY=true"* && "$output" == *"VALIDATION_ERRORS=none"* ]]; then
+	pass "T29: generated HTML wrappers are normalized without losing inner text"
+else
+	fail "T29: generated HTML wrapper normalization" "got exit $rc, output: $output"
+fi
+
+# --- Test 30: unknown path placeholders remain rejectable prose ---
+output=$("$HELPER" check --body "$BODY_V2_WITH_PATH_PLACEHOLDER" 2>/dev/null)
+if [[ "$output" == *"WORKER_READY=false"* && "$output" == *"placeholder:unfilled"* ]]; then
+	pass "T30: unknown <path> placeholder remains rejected"
+else
+	fail "T30: unknown path placeholder rejection" "output: $output"
+fi
+
+# --- Test 31: generated wrappers preserve unknown placeholders in inner prose ---
+output=$("$HELPER" check --body "$BODY_V2_WITH_COMMAND_PLACEHOLDER" 2>/dev/null)
+if [[ "$output" == *"WORKER_READY=false"* && "$output" == *"placeholder:unfilled"* ]]; then
+	pass "T31: generated wrappers preserve and reject inner <command> placeholders"
+else
+	fail "T31: generated wrapper inner-text preservation" "output: $output"
 fi
 
 # ---------------------------------------------------------------------------

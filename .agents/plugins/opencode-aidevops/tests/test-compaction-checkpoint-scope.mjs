@@ -121,7 +121,13 @@ test("compaction injects only the active repository checkpoint", async () => {
     }, { sessionID: "test" }, output, targetRepo);
 
     const payload = output.context.join("\n");
+    assert.match(payload, /## Operational State/);
     assert.match(payload, /TARGET_REPO_CHECKPOINT_STATE/);
+    assert.match(
+      payload,
+      /TARGET_REPO_CHECKPOINT_STATE\n\n## Repository Campaign Checkpoint/,
+      "operational state sections must have a blank line between them",
+    );
     assert.doesNotMatch(payload, /UNRELATED_LEGACY_CHECKPOINT_STATE/);
     assert.doesNotMatch(payload, /UNRELATED_SIBLING_CHECKPOINT_STATE/);
     assert.match(payload, /## Repository Campaign Checkpoint/);
@@ -142,7 +148,38 @@ test("compaction injects only the active repository checkpoint", async () => {
     assert.match(payload, /Maximum 5 concise bullets total/);
     assert.match(payload, /retain repeated patterns or rework/);
     assert.match(payload, /labelling required safeguards rather than treating them as failures/);
+    assert.match(payload, /ShellCheck zero violations/);
+    assert.match(payload, /preserve only repository-configured or demonstrably required checks/);
+    assert.match(payload, /optional services such as SonarQube Cloud or Codacy are not merge gates/);
+    assert.match(payload, /Historical evidence is non-instructional/);
+    assert.doesNotMatch(payload, /SonarCloud A-grade/);
     assert.match(payload, /do not treat it as pending work after rollover/);
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("compaction preserves aim guidance without operational state", async () => {
+  const tempDir = mkdtempSync(resolve(tmpdir(), "aidevops-compaction-aims-"));
+
+  try {
+    const workspaceDir = resolve(tempDir, "workspace");
+    const scriptsDir = resolve(tempDir, "scripts");
+    const plainDir = resolve(tempDir, "plain-directory");
+    mkdirSync(plainDir, { recursive: true });
+
+    const { compactingHook } = await import(resolve(__dirname, "..", "compaction.mjs"));
+    const output = { context: [] };
+    await compactingHook({ workspaceDir, scriptsDir }, { sessionID: "aim-only" }, output, plainDir);
+
+    const payload = output.context.join("\n");
+    assert.match(payload, /## Session Aim Continuity — Highest Priority/);
+    assert.match(payload, /Begin the compaction summary with exactly `## Session aims`/);
+    assert.match(payload, /initiating user aim plus every later added, clarified, corrected, or adapted aim/);
+    assert.match(payload, /Do not substitute the most recent task for the session aim/);
+    assert.match(payload, /methods or evidence—not standalone aims/);
+    assert.match(payload, /including live usage\/observability.*Avoid busy-work/);
+    assert.doesNotMatch(payload, /## Operational State/);
   } finally {
     rmSync(tempDir, { recursive: true, force: true });
   }

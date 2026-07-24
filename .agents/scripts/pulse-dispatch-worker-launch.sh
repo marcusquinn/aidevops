@@ -738,11 +738,13 @@ Next action: fix or wait out the worker/runtime failure family, then approve and
 
 #######################################
 # Pre-create a worker worktree so the worker can start coding immediately
-# instead of spending 5-8 tool calls on worktree setup. Populates two
-# module-level globals:
+# instead of spending 5-8 tool calls on worktree setup. Populates module-level
+# worktree and optional continuation-transfer globals:
 #   _DLW_WORKTREE_PATH    — absolute path on success, empty on failure
 #   _DLW_WORKTREE_BRANCH  — branch name on success, empty on failure
 #   _DLW_WORKTREE_REUSED  — 1 when an existing issue worktree was reused, else 0
+#   _DLW_WORKTREE_TRANSFER_MODE and _DLW_WORKTREE_EXPECTED_OWNER_* — exact
+#       registry owner snapshot for an explicitly validated continuation
 # All are reset on entry so the orchestrator always sees the fresh state.
 #
 # Issue-linked branch naming (GH#19042):
@@ -832,24 +834,17 @@ _dlw_node_modules_restore_release_lock() {
 	return 0
 }
 
-_dlw_restore_root_node_tool_links() {
+_dlw_remove_generated_root_node_tool_link() {
 	local worktree_path="$1"
 	local repo_path="$2"
-	[[ "${WORKTREE_NODE_MODULES_BIN_LINK_ENABLED:-1}" == "1" ]] || return 0
-
 	local _src_bin="${repo_path}/node_modules/.bin"
-	local _dst_nm="${worktree_path}/node_modules"
-	local _dst_bin="${_dst_nm}/.bin"
-	[[ -d "$_src_bin" ]] || return 0
-	if [[ -e "$_dst_bin" || -L "$_dst_bin" ]]; then
-		return 0
-	fi
-	if [[ -e "$_dst_nm" && ! -d "$_dst_nm" ]]; then
-		return 0
-	fi
-	mkdir -p "$_dst_nm" 2>/dev/null || return 0
-	ln -s "$_src_bin" "$_dst_bin" 2>/dev/null || return 0
-	echo "[dispatch_with_dedup] Linked root node_modules/.bin tooling for ${worktree_path} without copying root node_modules" >>"$LOGFILE"
+	local _dst_bin="${worktree_path}/node_modules/.bin"
+	local _link_target=""
+	[[ -L "$_dst_bin" ]] || return 0
+	_link_target=$(readlink "$_dst_bin" 2>/dev/null) || return 0
+	[[ "$_link_target" == "$_src_bin" ]] || return 0
+	rm -f "$_dst_bin" 2>/dev/null || return 0
+	echo "[dispatch_with_dedup] Removed generated cross-boundary node_modules/.bin link from ${worktree_path}" >>"$LOGFILE"
 	return 0
 }
 
@@ -886,7 +881,7 @@ _dlw_restore_worktree_deps() {
 		_rel_dir="${_dir#"$worktree_path"}" || continue
 		# _rel_dir is now e.g. "/.opencode" or "" (for root package.json)
 		if [[ -z "$_rel_dir" && "$_restore_root" != "1" ]]; then
-			_dlw_restore_root_node_tool_links "$worktree_path" "$repo_path"
+			_dlw_remove_generated_root_node_tool_link "$worktree_path" "$repo_path"
 			echo "[dispatch_with_dedup] Skipping root node_modules restore for ${worktree_path} (set WORKTREE_NODE_MODULES_RESTORE_ROOT_ENABLED=1 to enable)" >>"$LOGFILE"
 			continue
 		fi
@@ -908,6 +903,12 @@ _dlw_restore_worktree_deps() {
 _dlw_prepare_existing_worktree() {
 	local existing_path="$1"
 	local repo_path="$2"
+	local preserve_owner_state="${3:-0}"
+	if [[ "$preserve_owner_state" == "1" ]]; then
+		echo "[dispatch_with_dedup] Preserving reused worktree until its expected continuation owner transfers: ${existing_path}" >>"$LOGFILE"
+		return 0
+	fi
+
 	local existing_status=""
 	existing_status=$(git -C "$existing_path" status --porcelain 2>/dev/null || true)
 	if [[ -n "$existing_status" ]]; then
@@ -917,12 +918,61 @@ _dlw_prepare_existing_worktree() {
 		return 0
 	fi
 
-	# Clean retries restart from the latest default branch.
+	local main_branch=""
+	main_branch=$(git -C "$repo_path" symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's|refs/remotes/origin/||' || true)
+	main_branch="${main_branch:-main}"
+	local ahead_count=""
+	ahead_count=$(git -C "$existing_path" rev-list --count "origin/${main_branch}..HEAD" 2>/dev/null || true)
+	if [[ ! "$ahead_count" =~ ^[0-9]+$ ]]; then
+		echo "[dispatch_with_dedup] Preserving existing worktree because ahead state is unverified: ${existing_path}" >>"$LOGFILE"
+		return 0
+	fi
+	if [[ "$ahead_count" -gt 0 ]]; then
+		echo "[dispatch_with_dedup] Preserving ahead existing worktree for same-runner resume: ${existing_path} (ahead=${ahead_count})" >>"$LOGFILE"
+		return 0
+	fi
+
+	# Only clean, verified zero-ahead retries restart from the default branch.
 	git -C "$existing_path" checkout -- . 2>/dev/null || true
 	git -C "$existing_path" clean -fd 2>/dev/null || true
-	local main_branch=""
-	main_branch=$(git -C "$repo_path" symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's|refs/remotes/origin/||') || main_branch="main"
 	git -C "$existing_path" reset --hard "origin/${main_branch}" 2>/dev/null || true
+	return 0
+}
+
+_dlw_capture_reused_worktree_owner() {
+	local issue_number="$1"
+	local worktree_path="$2"
+	declare -F check_worktree_owner >/dev/null 2>&1 || return 1
+
+	local owner_info=""
+	owner_info=$(check_worktree_owner "$worktree_path" 2>/dev/null || true)
+	[[ -n "$owner_info" ]] || return 1
+
+	IFS='|' read -r _DLW_WORKTREE_EXPECTED_OWNER_PID \
+		_DLW_WORKTREE_EXPECTED_OWNER_SESSION \
+		_DLW_WORKTREE_EXPECTED_OWNER_BATCH \
+		_DLW_WORKTREE_EXPECTED_OWNER_TASK \
+		_DLW_WORKTREE_EXPECTED_OWNER_CREATED_AT <<<"$owner_info"
+	_DLW_WORKTREE_TRANSFER_MODE="continuation"
+	echo "[dispatch_with_dedup] Captured expected registry owner for #${issue_number} continuation without replacing it: ${worktree_path}" >>"$LOGFILE"
+	return 0
+}
+
+_dlw_claim_unowned_reused_worktree() {
+	local issue_number="$1"
+	local worktree_path="$2"
+	local branch="$3"
+	local session_id="dispatch-precreate-${issue_number}"
+
+	if ! declare -F claim_worktree_ownership >/dev/null 2>&1; then
+		echo "[dispatch_with_dedup] Refusing reused worktree without an atomic owner claim for #${issue_number}: ${worktree_path}" >>"$LOGFILE"
+		return 1
+	fi
+	if ! claim_worktree_ownership "$worktree_path" "$branch" \
+		--task "$issue_number" --session "$session_id" 2>/dev/null; then
+		echo "[dispatch_with_dedup] Atomic owner claim rejected for reused worktree #${issue_number}: ${worktree_path}" >>"$LOGFILE"
+		return 1
+	fi
 	return 0
 }
 
@@ -932,6 +982,12 @@ _dlw_precreate_worktree() {
 	_DLW_WORKTREE_PATH=""
 	_DLW_WORKTREE_BRANCH=""
 	_DLW_WORKTREE_REUSED=0
+	_DLW_WORKTREE_TRANSFER_MODE=""
+	_DLW_WORKTREE_EXPECTED_OWNER_PID=""
+	_DLW_WORKTREE_EXPECTED_OWNER_SESSION=""
+	_DLW_WORKTREE_EXPECTED_OWNER_BATCH=""
+	_DLW_WORKTREE_EXPECTED_OWNER_TASK=""
+	_DLW_WORKTREE_EXPECTED_OWNER_CREATED_AT=""
 	local _precreate_session="dispatch-precreate-${issue_number}"
 
 	local _wt_helper="${SCRIPT_DIR}/worktree-helper.sh"
@@ -958,15 +1014,16 @@ _dlw_precreate_worktree() {
 	done < <(git -C "$repo_path" worktree list 2>/dev/null)
 
 	if [[ -n "$_existing_path" ]]; then
-		_dlw_prepare_existing_worktree "$_existing_path" "$repo_path"
 		_DLW_WORKTREE_PATH="$_existing_path"
 		_DLW_WORKTREE_BRANCH="$_existing_branch"
 		_DLW_WORKTREE_REUSED=1
-		if declare -F register_worktree >/dev/null 2>&1; then
-			register_worktree "$_DLW_WORKTREE_PATH" "$_DLW_WORKTREE_BRANCH" \
-				--task "$issue_number" \
-				--session "$_precreate_session" 2>/dev/null || true
+		local _has_continuation_owner=0
+		if _dlw_capture_reused_worktree_owner "$issue_number" "$_DLW_WORKTREE_PATH"; then
+			_has_continuation_owner=1
+		elif ! _dlw_claim_unowned_reused_worktree "$issue_number" "$_DLW_WORKTREE_PATH" "$_DLW_WORKTREE_BRANCH"; then
+			return 1
 		fi
+		_dlw_prepare_existing_worktree "$_existing_path" "$repo_path" "$_has_continuation_owner"
 		# Restore gitignored deps that git clean -fd just wiped
 		_dlw_restore_worktree_deps "$_DLW_WORKTREE_PATH" "$repo_path"
 		echo "[dispatch_with_dedup] Reusing existing worktree for #${issue_number}: ${_DLW_WORKTREE_PATH} (branch: ${_DLW_WORKTREE_BRANCH})" >>"$LOGFILE"
@@ -1668,6 +1725,10 @@ _dlw_spawn_lifecycle_observer() {
 #   $10 - selected_model (may be empty for auto-select)
 #   $11 - worker_worktree_path (may be empty)
 #   $12 - worker_worktree_branch (may be empty)
+#   $13 - attempt_id (optional)
+#   $14 - attempt_started_at (optional)
+#   $15 - worktree transfer mode (empty|continuation)
+#   $16-$20 - expected owner PID, session, batch, task, and created_at
 # Stdout: worker PID
 #######################################
 _dlw_build_worker_title() {
@@ -1733,6 +1794,17 @@ _dlw_validate_worktree_for_launch() {
 	return 1
 }
 
+_dlw_append_node_tool_env() {
+	local repo_path="$1"
+	local node_tool_bin="${repo_path}/node_modules/.bin"
+	[[ -d "$node_tool_bin" && ! -L "$node_tool_bin" ]] || return 0
+	[[ "$node_tool_bin" != *:* && "$node_tool_bin" != *$'\n'* ]] || return 0
+	# Expose only executable package entrypoints through PATH. Do not place a
+	# canonical-checkout symlink inside the worktree or grant broad file access.
+	worker_cmd+=(PATH="${node_tool_bin}:${PATH:-/usr/bin:/bin}")
+	return 0
+}
+
 _dlw_append_trusted_release_env() {
 	local trusted_priority="${_DLW_TRUSTED_ISSUE_PRIORITY:-}"
 	local trusted_release_type="${_DLW_TRUSTED_RELEASE_TYPE:-}"
@@ -1741,6 +1813,26 @@ _dlw_append_trusted_release_env() {
 	if [[ -n "$trusted_release_type" ]]; then
 		worker_cmd+=(AIDEVOPS_RELEASE_INTENT_TRUSTED=1 AIDEVOPS_RELEASE_TYPE="$trusted_release_type" AIDEVOPS_RELEASE_DEPLOY_SCOPE="${trusted_deploy_scope:-incremental}")
 	fi
+	return 0
+}
+
+_dlw_append_worktree_transfer_env() {
+	local transfer_mode="${_DLW_WORKTREE_TRANSFER_MODE:-}"
+	local expected_owner_pid="${_DLW_WORKTREE_EXPECTED_OWNER_PID:-}"
+	local expected_owner_session="${_DLW_WORKTREE_EXPECTED_OWNER_SESSION:-}"
+	local expected_owner_batch="${_DLW_WORKTREE_EXPECTED_OWNER_BATCH:-}"
+	local expected_owner_task="${_DLW_WORKTREE_EXPECTED_OWNER_TASK:-}"
+	local expected_owner_created_at="${_DLW_WORKTREE_EXPECTED_OWNER_CREATED_AT:-}"
+	[[ "$transfer_mode" == "continuation" ]] || return 0
+
+	worker_cmd+=(
+		AIDEVOPS_WORKTREE_OWNER_TRANSFER_MODE="$transfer_mode"
+		AIDEVOPS_WORKTREE_EXPECTED_OWNER_PID="$expected_owner_pid"
+		AIDEVOPS_WORKTREE_EXPECTED_OWNER_SESSION="$expected_owner_session"
+		AIDEVOPS_WORKTREE_EXPECTED_OWNER_BATCH="$expected_owner_batch"
+		AIDEVOPS_WORKTREE_EXPECTED_OWNER_TASK="$expected_owner_task"
+		AIDEVOPS_WORKTREE_EXPECTED_OWNER_CREATED_AT="$expected_owner_created_at"
+	)
 	return 0
 }
 
@@ -1803,9 +1895,10 @@ _dlw_nohup_launch() {
 		AIDEVOPS_DISPATCH_LEASE_DEVICE="${_claim_lease_device:-}"
 		AIDEVOPS_DISPATCH_TIER="$dispatch_model_tier"
 		AIDEVOPS_DISPATCH_MODEL="$selected_model"
-		AIDEVOPS_ALLOW_WORKER_WORKTREE_OWNER_TRANSFER=1
 	)
+	_dlw_append_node_tool_env "$repo_path"
 	_dlw_append_trusted_release_env
+	_dlw_append_worktree_transfer_env
 	if _dlw_min_worker_floor_active; then
 		worker_cmd+=(
 			AIDEVOPS_MIN_WORKER_FLOOR_BYPASS_ACTIVE=1
@@ -1845,6 +1938,36 @@ _dlw_nohup_launch() {
 	fi
 
 	_dlw_exec_detached "$worker_log" "$issue_number" "${worker_cmd[@]}"
+	return 0
+}
+
+#######################################
+# Transition a durably registered live worker from queued to in-progress.
+#
+# Args: issue_number, repo_slug, self_login, worker_pid
+# Returns: 0=transition confirmed by mutation command, 1=worker/status unavailable
+#######################################
+_dlw_mark_worker_in_progress() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local self_login="$3"
+	local worker_pid="$4"
+
+	[[ "$worker_pid" =~ ^[0-9]+$ ]] || return 1
+	if ! kill -0 "$worker_pid" 2>/dev/null; then
+		echo "[dispatch_with_dedup] Worker registration for #${issue_number} has non-live PID ${worker_pid}; retaining status:queued for recovery" >>"$LOGFILE"
+		return 1
+	fi
+	if ! declare -F set_issue_status >/dev/null 2>&1; then
+		echo "[dispatch_with_dedup] Cannot transition #${issue_number} to status:in-progress: status helper unavailable" >>"$LOGFILE"
+		return 1
+	fi
+	if ! set_issue_status "$issue_number" "$repo_slug" "in-progress" \
+		--add-assignee "$self_login" >/dev/null 2>&1; then
+		echo "[dispatch_with_dedup] Failed to transition registered worker #${issue_number} to status:in-progress; retaining queued recovery signal" >>"$LOGFILE"
+		return 1
+	fi
+	echo "[dispatch_with_dedup] Registered live worker PID ${worker_pid} for #${issue_number}; transitioned status:queued to status:in-progress" >>"$LOGFILE"
 	return 0
 }
 
@@ -1892,13 +2015,23 @@ _dlw_post_launch_hooks() {
 
 	# Record in dispatch ledger (with tier telemetry)
 	local ledger_helper="${SCRIPT_DIR}/dispatch-ledger-helper.sh"
+	local ledger_registered=0
 	if [[ -x "$ledger_helper" ]]; then
-		"$ledger_helper" register --session-key "$session_key" \
+		if "$ledger_helper" register --session-key "$session_key" \
 			--issue "$issue_number" --repo "$repo_slug" \
 			--pid "$worker_pid" --tier "$dispatch_tier" \
 			--model "$selected_model" --lease-token "${_claim_lease_token:-}" \
 			--attempt-id "$attempt_id" \
-			--device-id "${_claim_lease_device:-}" --worktree "$worker_worktree_path" 2>/dev/null || true
+			--device-id "${_claim_lease_device:-}" --worktree "$worker_worktree_path" 2>/dev/null; then
+			ledger_registered=1
+		else
+			echo "[dispatch_with_dedup] Failed to register worker PID ${worker_pid} for #${issue_number}; retaining status:queued for recovery" >>"$LOGFILE"
+		fi
+	else
+		echo "[dispatch_with_dedup] Dispatch ledger helper unavailable for #${issue_number}; retaining status:queued for recovery" >>"$LOGFILE"
+	fi
+	if [[ "$ledger_registered" -eq 1 ]]; then
+		_dlw_mark_worker_in_progress "$issue_number" "$repo_slug" "$self_login" "$worker_pid" || true
 	fi
 
 	local dispatch_comment_body
@@ -2190,18 +2323,64 @@ _dlw_blocked_by_hard_stop() {
 	local repo_slug="$2"
 	local issue_meta_json="$3"
 	local repo_path="${4:-}"
+	_DLW_HARD_STOP_REASON=""
 
 	if [[ "$(type -t is_blocked_by_unresolved 2>/dev/null)" != "function" ]]; then
-		return 1
+		_DLW_HARD_STOP_REASON="dependency-verifier-unavailable"
+		echo "[dispatch_with_dedup] Hard-stop before worker bootstrap for #${issue_number} in ${repo_slug}: dependency verifier unavailable" >>"$LOGFILE"
+		return 0
 	fi
 
 	local issue_body=""
 	issue_body=$(printf '%s' "$issue_meta_json" | jq -r '.body // ""' 2>/dev/null) || issue_body=""
 	if PULSE_DEP_GRAPH_REPO_PATH="$repo_path" is_blocked_by_unresolved "$issue_body" "$repo_slug" "$issue_number"; then
+		_DLW_HARD_STOP_REASON="dependency-unresolved"
 		echo "[dispatch_with_dedup] Hard-stop before worker bootstrap for #${issue_number} in ${repo_slug}: unresolved blocked-by dependency (GH#23932)" >>"$LOGFILE"
 		return 0
 	fi
 
+	_DLW_HARD_STOP_REASON="clear"
+	return 1
+}
+
+_dlw_record_efficiency_guardrail() {
+	local name="$1"
+	case "$name" in
+	guardrails.stale_positive_decisions | guardrails.dispatch_dependency_violations) ;;
+	*) return 1 ;;
+	esac
+	if declare -F gh_record_efficiency_evidence >/dev/null 2>&1; then
+		gh_record_efficiency_evidence "$name" 1 2>/dev/null || true
+	fi
+	return 0
+}
+
+_dlw_final_dependency_attestation() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local issue_meta_json="$3"
+	local repo_path="$4"
+	if _dlw_blocked_by_hard_stop "$issue_number" "$repo_slug" "$issue_meta_json" "$repo_path"; then
+		if [[ "${_DLW_HARD_STOP_REASON:-}" == "dependency-unresolved" ]]; then
+			# The prebootstrap dependency decision was positive, but the live
+			# action-boundary recheck now blocks. Record that stale positive while
+			# still preventing the worker process from starting.
+			_dlw_record_efficiency_guardrail guardrails.stale_positive_decisions
+		fi
+		return 1
+	fi
+	return 0
+}
+
+_dlw_require_dependency_attestation() {
+	local attested="$1"
+	local issue_number="$2"
+	local repo_slug="$3"
+	if [[ "$attested" == "1" ]]; then
+		return 0
+	fi
+	_dlw_record_efficiency_guardrail guardrails.dispatch_dependency_violations
+	echo "[dispatch_with_dedup] Worker spawn blocked for #${issue_number} in ${repo_slug}: final dependency attestation missing" >>"$LOGFILE"
 	return 1
 }
 
@@ -2299,6 +2478,31 @@ _dlw_pre_runtime_failure() {
 	return "$return_code"
 }
 
+_dlw_final_worker_spawn_gates() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local worker_worktree_branch="$3"
+	local worker_worktree_reused="$4"
+	local todo_path="$5"
+	local worker_worktree_path="$6"
+	local issue_meta_json="$7"
+	local repo_path="$8"
+	local dependency_attested=0
+
+	if _dlw_check_worker_branch_orphan_loop "$issue_number" "$repo_slug" "$worker_worktree_branch" \
+		"$worker_worktree_reused" "$todo_path" "$worker_worktree_path"; then
+		_dlw_pre_runtime_failure "$issue_number" "$repo_slug" "worker_branch_orphan_hold" 2 || return $?
+	fi
+	if ! _dlw_final_dependency_attestation "$issue_number" "$repo_slug" "$issue_meta_json" "$repo_path"; then
+		_dlw_pre_runtime_failure "$issue_number" "$repo_slug" "final_dependency_recheck" 2 || return $?
+	fi
+	dependency_attested=1
+	if ! _dlw_require_dependency_attestation "$dependency_attested" "$issue_number" "$repo_slug"; then
+		_dlw_pre_runtime_failure "$issue_number" "$repo_slug" "dependency_attestation_missing" 2 || return $?
+	fi
+	return 0
+}
+
 DLW_STAGE_CANARY_PREFLIGHT="canary_preflight"
 
 #######################################
@@ -2393,9 +2597,8 @@ _dispatch_launch_worker() {
 	fi
 	_ds_record "$issue_number" "$repo_slug" "precreate_worktree" "$_ds_t0"
 	local worker_worktree_path="$_DLW_WORKTREE_PATH" worker_worktree_branch="$_DLW_WORKTREE_BRANCH" worker_worktree_reused="${_DLW_WORKTREE_REUSED:-0}"
-	if _dlw_check_worker_branch_orphan_loop "$issue_number" "$repo_slug" "$worker_worktree_branch" "$worker_worktree_reused" "${repo_path}/TODO.md" "$worker_worktree_path"; then
-		_dlw_pre_runtime_failure "$issue_number" "$repo_slug" "worker_branch_orphan_hold" 2 || return $?
-	fi
+	_dlw_final_worker_spawn_gates "$issue_number" "$repo_slug" "$worker_worktree_branch" "$worker_worktree_reused" \
+		"${repo_path}/TODO.md" "$worker_worktree_path" "$issue_meta_json" "$repo_path" || return $?
 
 	_ds_t0=$(_ds_now_ns)
 	local worker_pid attempt_id="" attempt_started_at=""

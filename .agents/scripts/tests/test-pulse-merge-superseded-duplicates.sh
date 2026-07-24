@@ -159,6 +159,18 @@ install_stubs() {
 		printf '%s %s %s %s\n' "$pr_number" "$repo_slug" "$linked_issue" "$kind" >>"$ROUTE_LOG"
 		return 0
 	}
+	_get_pr_branch_refs_for_conflict_comment() {
+		local pr_number="$1"
+		printf 'feature/pr-%s\tmain\n' "$pr_number"
+		return 0
+	}
+	_gh_with_timeout() {
+		local operation_class="$1"
+		shift
+		[[ -n "$operation_class" ]] || return 1
+		"$@"
+		return $?
+	}
 	_post_rebase_nudge_on_worker_conflicting() { return 0; }
 	_carry_forward_pr_diff() { return 0; }
 	set_solved_label() {

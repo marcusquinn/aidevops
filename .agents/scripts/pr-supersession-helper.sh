@@ -59,7 +59,7 @@ _psh_fetch_pr_json() {
 	local pr_number="$2"
 
 	gh pr view "$pr_number" --repo "$repo_slug" \
-		--json number,title,body,baseRefName,headRefName,files,author,url \
+		--json number,title,body,baseRefName,headRefName,baseRefOid,headRefOid,files,author,url \
 		2>/dev/null
 	return $?
 }
@@ -91,34 +91,102 @@ _psh_original_files_json() {
 	return 0
 }
 
+_psh_git_repo_available() {
+	local repo_path="$1"
+	[[ -n "$repo_path" ]] || return 1
+	git -C "$repo_path" rev-parse --is-inside-work-tree >/dev/null 2>&1
+	return $?
+}
+
+_psh_delete_temp_refs() {
+	local repo_path="$1"
+	local ref_prefix="$2"
+	[[ -n "$ref_prefix" ]] || return 0
+	git -C "$repo_path" update-ref -d "${ref_prefix}/base" 2>/dev/null || true
+	git -C "$repo_path" update-ref -d "${ref_prefix}/head" 2>/dev/null || true
+	return 0
+}
+
+_psh_cleanup_temp_refs() {
+	# Bash's dynamic scope exposes the caller's local values to RETURN cleanup.
+	local repo_path="${1:-${repo_path:-}}"
+	local ref_prefix="${2:-${ref_prefix:-}}"
+	_psh_delete_temp_refs "$repo_path" "$ref_prefix"
+	return 0
+}
+
 _psh_diff_files_json() {
 	local repo_path="$1"
 	local base_ref="$2"
 	local head_ref="$3"
+	local pr_number="${4:-}"
+	local expected_head_oid="${5:-}"
+	local base=""
+	local head=""
+	local candidate=""
+	local ref_prefix=""
+	local diff_lines=""
 
-	if [[ -z "$repo_path" || ! -d "$repo_path/.git" ]]; then
+	if ! _psh_git_repo_available "$repo_path"; then
 		printf '[]\n'
 		return 1
 	fi
 
-	git -C "$repo_path" fetch --quiet origin "$base_ref" 2>/dev/null || true
-	git -C "$repo_path" fetch --quiet origin "$head_ref" 2>/dev/null || true
+	if git -C "$repo_path" remote get-url origin >/dev/null 2>&1; then
+		[[ "$pr_number" =~ ^[0-9]+$ ]] || {
+			printf '[]\n'
+			return 1
+		}
+		ref_prefix="refs/aidevops/pr-supersession/${pr_number}-$$"
+		_save_cleanup_scope
+		trap '_run_cleanups' RETURN
+		push_cleanup _psh_cleanup_temp_refs
+		if ! git -C "$repo_path" fetch --quiet origin \
+			"+refs/heads/${base_ref}:${ref_prefix}/base" 2>/dev/null; then
+			_psh_delete_temp_refs "$repo_path" "$ref_prefix"
+			printf '[]\n'
+			return 1
+		fi
+		if ! git -C "$repo_path" fetch --quiet origin \
+			"+refs/pull/${pr_number}/head:${ref_prefix}/head" 2>/dev/null; then
+			_psh_delete_temp_refs "$repo_path" "$ref_prefix"
+			printf '[]\n'
+			return 1
+		fi
+		base=$(git -C "$repo_path" rev-parse "${ref_prefix}/base^{commit}" 2>/dev/null) || base=""
+		head=$(git -C "$repo_path" rev-parse "${ref_prefix}/head^{commit}" 2>/dev/null) || head=""
+		if [[ -z "$base" || -z "$head" ]] || \
+			[[ -n "$expected_head_oid" && "$head" != "$expected_head_oid" ]]; then
+			_psh_delete_temp_refs "$repo_path" "$ref_prefix"
+			printf '[]\n'
+			return 1
+		fi
+	else
+		for candidate in "origin/${base_ref}" "$base_ref"; do
+			if git -C "$repo_path" rev-parse --verify "${candidate}^{commit}" >/dev/null 2>&1; then
+				base="$candidate"
+				break
+			fi
+		done
+		for candidate in "origin/${head_ref}" "$head_ref"; do
+			if git -C "$repo_path" rev-parse --verify "${candidate}^{commit}" >/dev/null 2>&1; then
+				head="$candidate"
+				break
+			fi
+		done
+		if [[ -z "$base" || -z "$head" ]]; then
+			printf '[]\n'
+			return 1
+		fi
+	fi
 
-	local base="origin/${base_ref}"
-	local head="origin/${head_ref}"
-	if ! git -C "$repo_path" rev-parse --verify "$base" >/dev/null 2>&1; then
+	if ! diff_lines=$(git -C "$repo_path" diff --name-only "${base}...${head}" 2>/dev/null); then
+		_psh_delete_temp_refs "$repo_path" "$ref_prefix"
 		printf '[]\n'
 		return 1
 	fi
-	if ! git -C "$repo_path" rev-parse --verify "$head" >/dev/null 2>&1; then
-		head="$head_ref"
-	fi
-	if ! git -C "$repo_path" rev-parse --verify "$head" >/dev/null 2>&1; then
-		printf '[]\n'
-		return 1
-	fi
-
-	git -C "$repo_path" diff --name-only "${base}...${head}" 2>/dev/null | _psh_compact_lines_json
+	_psh_delete_temp_refs "$repo_path" "$ref_prefix"
+	printf '%s\n' "$diff_lines" | _psh_compact_lines_json
 	return 0
 }
 
@@ -140,19 +208,32 @@ _psh_base_term_hits_json() {
 	local repo_path="$1"
 	local base_ref="$2"
 	local terms_json="$3"
-
-	local base="origin/${base_ref}"
+	local expected_base_oid="${4:-}"
+	local base="$expected_base_oid"
+	local candidate=""
 	local terms_count
 	terms_count=$(printf '%s' "$terms_json" | jq 'length' 2>/dev/null) || terms_count=0
 	[[ "$terms_count" =~ ^[0-9]+$ ]] || terms_count=0
-	if [[ "$terms_count" -eq 0 || -z "$repo_path" || ! -d "$repo_path/.git" ]]; then
+	if [[ "$terms_count" -eq 0 ]]; then
 		printf '[]\n'
 		return 0
 	fi
-	git -C "$repo_path" fetch --quiet origin "$base_ref" 2>/dev/null || true
-	if ! git -C "$repo_path" rev-parse --verify "$base" >/dev/null 2>&1; then
+	if ! _psh_git_repo_available "$repo_path"; then
 		printf '[]\n'
-		return 0
+		return 1
+	fi
+	if [[ -z "$base" ]] || ! git -C "$repo_path" rev-parse --verify "${base}^{commit}" >/dev/null 2>&1; then
+		base=""
+		for candidate in "origin/${base_ref}" "$base_ref"; do
+			if git -C "$repo_path" rev-parse --verify "${candidate}^{commit}" >/dev/null 2>&1; then
+				base="$candidate"
+				break
+			fi
+		done
+	fi
+	if [[ -z "$base" ]]; then
+		printf '[]\n'
+		return 1
 	fi
 
 	local tmp
@@ -182,14 +263,19 @@ _psh_build_comment() {
 	local pr_number="$2"
 	local base_ref="$3"
 	local rationale="$4"
+	local suggested_action="retain this PR until the remaining diff is reviewed"
 
+	case "$classification" in
+	fully_superseded | stale_baseline_only)
+		suggested_action="close this PR only after a maintainer verifies the fetched \`${base_ref}\` comparison represents the intended deliverable"
+		;;
+	esac
 	cat <<EOF
 Supersession check for PR #${pr_number}: **${classification}**.
 
 Rationale: ${rationale}
 
-Suggested action: close this PR as superseded only after a maintainer verifies the current \
-\`${base_ref}\` branch contains the intended deliverable. This helper is advisory and did not close anything.
+Suggested action: ${suggested_action}. This helper is advisory and did not close anything.
 EOF
 	return 0
 }
@@ -249,41 +335,46 @@ _psh_classify_json() {
 	local repo_path="$2"
 	local as_json="$3"
 
-	local pr_number title base_ref head_ref original_files diff_files terms hits
+	local pr_number title base_ref head_ref base_oid head_oid original_files diff_files terms hits
+	local comparison_available=1
 	pr_number=$(printf '%s' "$pr_json" | jq -r '.number // empty')
 	title=$(printf '%s' "$pr_json" | jq -r '.title // empty')
 	base_ref=$(printf '%s' "$pr_json" | jq -r '.baseRefName // empty')
 	head_ref=$(printf '%s' "$pr_json" | jq -r '.headRefName // empty')
+	base_oid=$(printf '%s' "$pr_json" | jq -r '.baseRefOid // empty')
+	head_oid=$(printf '%s' "$pr_json" | jq -r '.headRefOid // empty')
 	original_files=$(_psh_original_files_json "$pr_json")
 	terms=$(_psh_extract_deliverable_terms_json "$pr_json")
-	diff_files=$(_psh_diff_files_json "$repo_path" "$base_ref" "$head_ref" 2>/dev/null) || diff_files="[]"
-	hits=$(_psh_base_term_hits_json "$repo_path" "$base_ref" "$terms")
+	if ! diff_files=$(_psh_diff_files_json "$repo_path" "$base_ref" "$head_ref" \
+		"$pr_number" "$head_oid" 2>/dev/null); then
+		diff_files="[]"
+		comparison_available=0
+	fi
+	hits=$(_psh_base_term_hits_json "$repo_path" "$base_ref" "$terms" "$base_oid" 2>/dev/null) || hits="[]"
 
-	local original_count diff_count terms_count hit_count overlap_count classification rationale comment
+	local original_count diff_count overlap_count classification rationale comment
 	original_count=$(printf '%s' "$original_files" | jq 'length')
 	diff_count=$(printf '%s' "$diff_files" | jq 'length')
-	terms_count=$(printf '%s' "$terms" | jq 'length')
-	hit_count=$(printf '%s' "$hits" | jq 'length')
 	overlap_count=$(_psh_intersection_count "$original_files" "$diff_files")
 
 	classification="still_needed"
-	rationale="base does not yet contain enough deliverable signals, or the current diff still overlaps the PR deliverable"
+	rationale="the exact current PR diff still carries files from the original deliverable"
 
 	if [[ -z "$base_ref" || -z "$head_ref" ]]; then
 		classification="unknown"
 		rationale="PR metadata did not include base/head refs"
-	elif [[ "$diff_count" -eq 0 && "$hit_count" -gt 0 ]]; then
+	elif [[ "$comparison_available" -eq 0 ]]; then
+		classification="unknown"
+		rationale="the exact current PR head could not be compared with its base; an unavailable comparison is not evidence of an empty diff"
+	elif [[ "$diff_count" -eq 0 ]]; then
 		classification="fully_superseded"
-		rationale="current branch has no diff against origin/${base_ref}, and base contains ${hit_count}/${terms_count} deliverable term(s)"
-	elif [[ "$original_count" -gt 0 && "$diff_count" -gt 0 && "$overlap_count" -eq 0 && "$hit_count" -gt 0 ]]; then
+		rationale="the exact fetched PR head has no diff against the fetched ${base_ref} base"
+	elif [[ "$original_count" -gt 0 && "$overlap_count" -eq 0 ]]; then
 		classification="stale_baseline_only"
-		rationale="current diff no longer overlaps the PR's original files, while base contains ${hit_count}/${terms_count} deliverable term(s)"
-	elif [[ "$terms_count" -gt 0 && "$hit_count" -gt 0 && "$hit_count" -lt "$terms_count" ]]; then
+		rationale="the exact current PR diff no longer overlaps any of the PR's original changed files"
+	elif [[ "$original_count" -gt 0 && "$overlap_count" -gt 0 && "$overlap_count" -lt "$original_count" ]]; then
 		classification="partially_superseded"
-		rationale="base contains ${hit_count}/${terms_count} deliverable term(s), but some signals or file overlap remain unresolved"
-	elif [[ "$terms_count" -gt 0 && "$hit_count" -ge "$terms_count" && "$overlap_count" -eq 0 ]]; then
-		classification="fully_superseded"
-		rationale="base contains all deliverable terms and the current diff no longer overlaps original PR files"
+		rationale="the exact PR diff retains ${overlap_count}/${original_count} original changed file(s)"
 	fi
 
 	comment=$(_psh_build_comment "$classification" "$pr_number" "$base_ref" "$rationale")
@@ -294,12 +385,15 @@ _psh_classify_json() {
 			--arg rationale "$rationale" \
 			--arg comment "$comment" \
 			--arg title "$title" \
+			--arg base_oid_at_query "$base_oid" \
+			--arg head_oid "$head_oid" \
 			--argjson pr "${pr_number:-0}" \
+			--argjson comparison_available "$comparison_available" \
 			--argjson original_files "$original_files" \
 			--argjson diff_files "$diff_files" \
 			--argjson deliverable_terms "$terms" \
 			--argjson base_hits "$hits" \
-			'{classification:$classification, rationale:$rationale, suggested_close_comment:$comment, pr:$pr, title:$title, original_files:$original_files, current_diff_files:$diff_files, deliverable_terms:$deliverable_terms, base_hits:$base_hits}'
+			'{classification:$classification, rationale:$rationale, suggested_close_comment:$comment, pr:$pr, title:$title, comparison_available:($comparison_available == 1), base_oid_at_query:$base_oid_at_query, compared_head_oid:$head_oid, original_files:$original_files, current_diff_files:$diff_files, deliverable_terms:$deliverable_terms, base_hits:$base_hits}'
 	else
 		printf 'classification=%s\n' "$classification"
 		printf 'rationale=%s\n' "$rationale"

@@ -14,6 +14,17 @@ from collections import Counter, defaultdict, deque
 log_dir, repo_path, window_s, as_json, script_dir, review_thread_state_dir = sys.argv[1], sys.argv[2], int(sys.argv[3]), sys.argv[4] == '1', sys.argv[5], sys.argv[6]
 now = time.time()
 since = now - window_s
+CYCLE_STATE_SCHEMA = 'aidevops.pulse-cycle-state/v1'
+CYCLE_STATE_PHASES = {'admitted', 'preflight', 'deterministic', 'supervising', 'completed'}
+CYCLE_STATE_OUTCOMES = {'running', 'progressed', 'idle', 'blocked', 'interrupted'}
+CYCLE_STATE_PROGRESS_KINDS = {'pr-merged', 'pr-closed-conflicting', 'worker-dispatched'}
+CYCLE_STATE_BLOCKER_KINDS = {
+    'none', 'session-gate', 'dedup', 'preflight-failed', 'stop-requested',
+    'dispatch-no-work-rate', 'runner-health', 'merge-authority', 'review-gate',
+    'review-bot-threads', 'required-review-threads', 'checks-active',
+    'checks-failed', 'quiet-period', 'snapshot-unavailable', 'head-changed',
+    'interrupted',
+}
 
 
 def recent_lines(path, limit=2000):
@@ -36,6 +47,144 @@ def parse_time(value):
         return datetime.datetime.fromisoformat(value.replace('Z', '+00:00')).timestamp()
     except ValueError:
         return 0.0
+
+
+def unavailable_cycle_state(availability, reason=None):
+    state = {
+        'availability': availability,
+        'schema': None,
+        'cycle_id': None,
+        'phase': None,
+        'outcome': None,
+        'heartbeat_at': None,
+        'progress': None,
+        'blocker': None,
+    }
+    if reason:
+        state['reason'] = reason
+    return state
+
+
+def valid_cycle_fingerprint(value):
+    if not isinstance(value, str):
+        return False
+    if value.startswith('sha256:'):
+        digest = value[len('sha256:'):]
+        return len(digest) == 64 and all(char in '0123456789abcdef' for char in digest)
+    if value.startswith('cksum:'):
+        return value[len('cksum:'):].isdigit()
+    return False
+
+
+def valid_nonnegative_int(value):
+    return isinstance(value, int) and not isinstance(value, bool) and value >= 0
+
+
+def valid_optional_cycle_time(value):
+    if value is None:
+        return True
+    return parse_time(value) > 0
+
+
+def valid_cycle_progress(progress):
+    if not isinstance(progress, dict):
+        return False
+    kinds = progress.get('kinds')
+    if not isinstance(kinds, list):
+        return False
+    return all((
+        all(kind in CYCLE_STATE_PROGRESS_KINDS for kind in kinds),
+        valid_nonnegative_int(progress.get('consecutive_no_progress_cycles')),
+        valid_optional_cycle_time(progress.get('last_at')),
+    ))
+
+
+def valid_cycle_blocker(blocker):
+    if not isinstance(blocker, dict):
+        return False
+    kind = blocker.get('kind')
+    streak = blocker.get('consecutive_same_cycles')
+    fingerprint = blocker.get('fingerprint')
+    if kind not in CYCLE_STATE_BLOCKER_KINDS or not valid_nonnegative_int(streak):
+        return False
+    if kind == 'none':
+        return fingerprint is None and streak == 0
+    return valid_cycle_fingerprint(fingerprint)
+
+
+def valid_terminal_cycle_state(state, progress, blocker):
+    if state.get('phase') != 'completed':
+        return False
+    outcome = state.get('outcome')
+    no_progress = progress['consecutive_no_progress_cycles']
+    if outcome == 'progressed':
+        return all((
+            progress['kinds'], progress['last_at'], no_progress == 0,
+            blocker['kind'] == 'none',
+        ))
+    if no_progress < 1:
+        return False
+    if outcome in {'blocked', 'interrupted'}:
+        return blocker['kind'] != 'none' and blocker['consecutive_same_cycles'] >= 1
+    return outcome == 'idle' and blocker['kind'] == 'none'
+
+
+def valid_cycle_state_contract(state):
+    progress = state.get('progress')
+    blocker = state.get('blocker')
+    cycle_id = state.get('cycle_id')
+    if not all((
+        state.get('schema') == CYCLE_STATE_SCHEMA,
+        isinstance(cycle_id, str),
+        bool(cycle_id),
+        state.get('phase') in CYCLE_STATE_PHASES,
+        state.get('outcome') in CYCLE_STATE_OUTCOMES,
+        parse_time(state.get('heartbeat_at')) > 0,
+        valid_cycle_progress(progress),
+        valid_cycle_blocker(blocker),
+    )):
+        return False
+    if state.get('outcome') == 'running':
+        return state.get('phase') != 'completed'
+    return valid_terminal_cycle_state(state, progress, blocker)
+
+
+def build_cycle_state(path):
+    try:
+        with open(path, encoding='utf-8') as handle:
+            health = json.load(handle)
+    except FileNotFoundError:
+        health = {}
+    except (OSError, json.JSONDecodeError, TypeError):
+        return unavailable_cycle_state('malformed', 'health-json')
+    if not isinstance(health, dict):
+        return unavailable_cycle_state('malformed', 'health-object')
+    state = health.get('cycle_state')
+    if state is None:
+        return unavailable_cycle_state('unavailable')
+    if not isinstance(state, dict) or not valid_cycle_state_contract(state):
+        reason = 'cycle-state-object' if not isinstance(state, dict) else 'cycle-state-contract'
+        return unavailable_cycle_state('malformed', reason)
+    progress = state['progress']
+    blocker = state['blocker']
+    return {
+        'availability': 'available',
+        'schema': state['schema'],
+        'cycle_id': state['cycle_id'],
+        'phase': state['phase'],
+        'outcome': state['outcome'],
+        'heartbeat_at': state['heartbeat_at'],
+        'progress': {
+            'last_at': progress['last_at'],
+            'kinds': progress['kinds'],
+            'consecutive_no_progress_cycles': progress['consecutive_no_progress_cycles'],
+        },
+        'blocker': {
+            'kind': blocker['kind'],
+            'fingerprint': blocker['fingerprint'],
+            'consecutive_same_cycles': blocker['consecutive_same_cycles'],
+        },
+    }
 
 
 def parse_stage(line):
@@ -362,25 +511,26 @@ if os.path.exists(api_report):
         read_caller_names = {'gh_issue_list', 'gh_pr_list', 'gh_issue_view', 'gh_pr_view'}
         rest_read_caller_names = {'_rest_issue_list', '_rest_pr_list', '_rest_issue_view', '_rest_pr_view'}
         for caller, data in (report.get('by_caller') or {}).items():
-            if isinstance(data, dict):
-                gql = int(data.get('graphql_calls') or 0) + int(data.get('search_graphql_calls') or 0)
-                if gql > 0:
-                    api_consumers.append({'caller': caller, 'graphql_calls': gql})
-                graphql_calls = int(data.get('graphql_calls') or 0)
-                rest_calls = int(data.get('rest_calls') or 0)
-                search_graphql_calls = int(data.get('search_graphql_calls') or 0)
-                search_rest_calls = int(data.get('search_rest_calls') or 0)
-                if caller in read_caller_names:
-                    api_pressure['graphql_read_calls'] += graphql_calls
-                    api_pressure['rest_read_calls'] += rest_calls
-                    if graphql_calls > 0:
-                        read_graphql_callers.append({'caller': caller, 'graphql_calls': graphql_calls})
-                elif caller in rest_read_caller_names:
-                    api_pressure['rest_read_calls'] += rest_calls
-                else:
-                    api_pressure['graphql_other_calls'] += graphql_calls
-                api_pressure['graphql_search_calls'] += search_graphql_calls
-                api_pressure['rest_search_calls'] += search_rest_calls
+            if not isinstance(data, dict):
+                continue
+            gql = int(data.get('graphql_calls') or 0) + int(data.get('search_graphql_calls') or 0)
+            if gql > 0:
+                api_consumers.append({'caller': caller, 'graphql_calls': gql})
+            graphql_calls = int(data.get('graphql_calls') or 0)
+            rest_calls = int(data.get('rest_calls') or 0)
+            search_graphql_calls = int(data.get('search_graphql_calls') or 0)
+            search_rest_calls = int(data.get('search_rest_calls') or 0)
+            if caller in read_caller_names:
+                api_pressure['graphql_read_calls'] += graphql_calls
+                api_pressure['rest_read_calls'] += rest_calls
+                if graphql_calls > 0:
+                    read_graphql_callers.append({'caller': caller, 'graphql_calls': graphql_calls})
+            elif caller in rest_read_caller_names:
+                api_pressure['rest_read_calls'] += rest_calls
+            else:
+                api_pressure['graphql_other_calls'] += graphql_calls
+            api_pressure['graphql_search_calls'] += search_graphql_calls
+            api_pressure['rest_search_calls'] += search_rest_calls
         api_consumers = sorted(api_consumers, key=lambda item: item['graphql_calls'], reverse=True)[:5]
         read_total = api_pressure['graphql_read_calls'] + api_pressure['rest_read_calls']
         if read_total > 0:
@@ -408,6 +558,7 @@ prefetch_cache = {
     'conditional_misses': 0,
 }
 health_path = os.path.join(log_dir, 'pulse-health.json')
+cycle_state = build_cycle_state(health_path)
 if os.path.exists(health_path):
     try:
         with open(health_path, encoding='utf-8') as health_file:
@@ -496,6 +647,7 @@ result = {
     'top_graphql_consumers': api_consumers,
     'api_call_pressure': api_pressure,
     'prefetch_cache': prefetch_cache,
+    'cycle_state': cycle_state,
     'review_thread_attention': review_thread_attention,
     'objective_reconciliation': objective_reconciliation,
 }
@@ -517,6 +669,7 @@ runtime_state = {
     'dispatch_stage_counts': dict(stage_counts),
     'graphql_budget': graphql_budget,
     'prefetch_cache': prefetch_cache,
+    'cycle_state': cycle_state,
     'pre_launch_blockers': pre_launch_blockers,
     'pulse_counter_hits': counter_hits,
     'pulse_gauges': gauge_values,
@@ -554,6 +707,7 @@ else:
     print(f'- Pulse counter hits: {json.dumps(counter_hits, sort_keys=True)}')
     print(f'- GraphQL budget: {graphql_budget_status}')
     print(f'- Prefetch cache: {json.dumps(prefetch_cache, sort_keys=True)}')
+    print(f'- Cycle state: {json.dumps(cycle_state, sort_keys=True)}')
     print(f'- Dispatch API blocked by GraphQL: {str(dispatch_api_blocked).lower()}')
     print(f'- Active worker processes: {active_worker_processes if active_worker_processes is not None else "unknown"}')
     if api_consumers:

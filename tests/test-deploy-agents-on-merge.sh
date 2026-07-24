@@ -57,13 +57,24 @@ assert_contains() {
 
 create_base_repo() {
 	local dir="$1"
-	git init "$dir" >/dev/null 2>&1
-	git -C "$dir" checkout -b main >/dev/null 2>&1 || true
+	/usr/bin/git init "$dir" >/dev/null 2>&1
+	/usr/bin/git -C "$dir" checkout -b main >/dev/null 2>&1 || true
+	/usr/bin/git -C "$dir" config user.email test@example.invalid
+	/usr/bin/git -C "$dir" config user.name Test
+	/usr/bin/git -C "$dir" config commit.gpgsign false
 	mkdir -p "$dir/.agents/scripts"
 	echo "echo ok" >"$dir/.agents/scripts/example.sh"
 	echo "2.0.0" >"$dir/VERSION"
-	git -C "$dir" add . >/dev/null 2>&1
-	git -C "$dir" commit -m "initial" >/dev/null 2>&1
+	cat >"$dir/setup.sh" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+printf 'setup:%s\n' "$*"
+[[ -z "${AIDEVOPS_AGENTS_DIR+x}" && -z "${AGENTS_DIR+x}" ]]
+exit "${MOCK_SETUP_EXIT_CODE:-0}"
+EOF
+	chmod +x "$dir/setup.sh"
+	/usr/bin/git -C "$dir" add . >/dev/null 2>&1
+	/usr/bin/git -C "$dir" commit -m "initial" >/dev/null 2>&1
 	return 0
 }
 
@@ -76,6 +87,8 @@ run_script() {
 
 TMP_DIR="$(mktemp -d)"
 trap 'rm -rf "$TMP_DIR"' EXIT
+export HOME="$TMP_DIR/home"
+mkdir -p "$HOME"
 
 # Test 1: Invalid commit should fail fast (exit 1)
 TEST_REPO_INVALID="$TMP_DIR/repo-invalid"
@@ -131,8 +144,8 @@ TEST_REPO_CHANGED="$TMP_DIR/repo-changed"
 create_base_repo "$TEST_REPO_CHANGED"
 
 echo "echo updated" >"$TEST_REPO_CHANGED/.agents/scripts/example.sh"
-git -C "$TEST_REPO_CHANGED" add .agents/scripts/example.sh >/dev/null 2>&1
-git -C "$TEST_REPO_CHANGED" commit -m "update script" >/dev/null 2>&1
+/usr/bin/git -C "$TEST_REPO_CHANGED" add .agents/scripts/example.sh >/dev/null 2>&1
+/usr/bin/git -C "$TEST_REPO_CHANGED" commit -m "update script" >/dev/null 2>&1
 
 set +e
 changed_output="$(run_script "$TEST_REPO_CHANGED" --diff HEAD~1)"
@@ -141,6 +154,7 @@ set -e
 
 assert_eq "$changed_status" "0" "Changed script deploy exits with status 0"
 assert_contains "$changed_output" "using fast scripts-only deploy" "Changed script deploy selects scripts-only path"
+assert_contains "$changed_output" "setup:--stage ai-session" "Changed script deploy routes through transactional setup"
 
 # Test 4: Full deploy must isolate immutable session pins from setup.sh
 TEST_REPO_FULL="$TMP_DIR/repo-full"

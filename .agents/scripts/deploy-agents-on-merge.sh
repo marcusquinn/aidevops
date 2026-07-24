@@ -6,18 +6,18 @@ set -euo pipefail
 # deploy-agents-on-merge.sh - Fast targeted agent deployment after PR merge
 #
 # Called by the supervisor after merging PRs that modify .agents/ files.
-# Much faster than full setup.sh --non-interactive because it only syncs
-# changed agent files instead of running all migrations and optional steps.
+# Uses setup's changed-stage planner, immutable runtime-bundle staging, and
+# atomic activation without running unrelated optional setup steps.
 #
 # Usage:
 #   deploy-agents-on-merge.sh [options]
 #
 # Options:
 #   --repo <path>       Path to the aidevops repo (default: ~/Git/aidevops)
-#   --scripts-only      Only deploy .agents/scripts/ (fastest)
+#   --scripts-only      Compatibility hint for a scripts-only change set
 #   --full              Run full setup.sh --non-interactive instead
 #   --dry-run           Show what would be deployed without doing it
-#   --diff <commit>     Only deploy files changed since <commit>
+#   --diff <commit>     Validate/detect agent changes since <commit>
 #   --quiet             Suppress non-error output
 #   --help              Show this help
 #
@@ -254,6 +254,38 @@ regenerate_runtime_config() {
 		return 1
 	fi
 	log_success "Derived runtime configuration regenerated"
+	return 0
+}
+
+# Route every mutating incremental deployment through setup's transactional
+# runtime-bundle stage. This preserves the previous immutable bundle and only
+# changes the stable agents path via atomic activation after validation.
+run_transactional_incremental_deploy() {
+	local setup_script="$REPO_DIR/setup.sh"
+	local setup_exit=0
+
+	if [[ ! -f "$setup_script" || ! -r "$setup_script" ]]; then
+		log_error "Transactional deployment requires a readable setup helper: $setup_script"
+		return 1
+	fi
+	if [[ "$DRY_RUN" == "true" ]]; then
+		log_info "[dry-run] Would stage and atomically activate a runtime bundle via setup.sh --stage ai-session"
+		return 0
+	fi
+
+	log_info "Staging and atomically activating an immutable runtime bundle..."
+	env -u AIDEVOPS_AGENTS_DIR -u AGENTS_DIR \
+		AIDEVOPS_NON_INTERACTIVE=true \
+		AIDEVOPS_DEPLOY_TARGET="$TARGET_DIR" \
+		bash "$setup_script" --stage ai-session || setup_exit=$?
+	if [[ "$setup_exit" -eq 75 ]]; then
+		log_warn "setup.sh --stage ai-session is locked by another deployment (exit 75)"
+	fi
+	if [[ "$setup_exit" -ne 0 ]]; then
+		log_error "Transactional runtime bundle deployment failed (exit $setup_exit)"
+		return "$setup_exit"
+	fi
+	log_success "Transactional runtime bundle deployment completed"
 	return 0
 }
 
@@ -555,61 +587,68 @@ deploy_changed_files() {
 	return 0
 }
 
-main() {
-	parse_args "$@" || return 1
-	validate_repo || return 1
-	validate_stable_target || return 1
-	collect_plugin_namespaces || return 1
+_run_full_deploy() {
+	local full_exit=0
 
-	# Full deploy: delegate to setup.sh
-	if [[ "$FULL_DEPLOY" == "true" ]]; then
-		log_info "Running full deploy via setup.sh --non-interactive..."
-		if [[ "$DRY_RUN" == "true" ]]; then
-			log_info "[dry-run] Would run: AIDEVOPS_NON_INTERACTIVE=true $REPO_DIR/setup.sh --non-interactive"
-			return 0
-		fi
-		env -u AIDEVOPS_AGENTS_DIR -u AGENTS_DIR \
-			AIDEVOPS_NON_INTERACTIVE=true \
-			AIDEVOPS_DEPLOY_TARGET="$TARGET_DIR" \
-			bash "$REPO_DIR/setup.sh" --non-interactive
-		local _full_rc=$?
-		if [[ "$_full_rc" -eq 75 ]]; then
-			log_warn "setup.sh --non-interactive is locked by another process (exit 75). The lightweight deploy path (deploy-agents-on-merge.sh without --full) is unaffected — re-run without --full for an immediate agent sync while the full setup completes."
-		fi
-		return "$_full_rc"
+	log_info "Running full deploy via setup.sh --non-interactive..."
+	if [[ "$DRY_RUN" == "true" ]]; then
+		log_info "[dry-run] Would run: AIDEVOPS_NON_INTERACTIVE=true $REPO_DIR/setup.sh --non-interactive"
+		return 0
 	fi
+	env -u AIDEVOPS_AGENTS_DIR -u AGENTS_DIR \
+		AIDEVOPS_NON_INTERACTIVE=true \
+		AIDEVOPS_DEPLOY_TARGET="$TARGET_DIR" \
+		bash "$REPO_DIR/setup.sh" --non-interactive || full_exit=$?
+	if [[ "$full_exit" -eq 75 ]]; then
+		log_warn "setup.sh --non-interactive is locked by another deployment (exit 75). Re-run after the active transactional deployment completes."
+	fi
+	return "$full_exit"
+}
 
-	# Pull latest (only if on main)
-	pull_latest
+_validate_transactional_diff() {
+	local changed=""
+	local change_count=0
+	local non_script_count=0
 
-	# Scripts-only deploy
+	changed=$(detect_changes "$DIFF_COMMIT") || return 1
+	if [[ -z "$changed" ]]; then
+		log_info "No agent changes since $DIFF_COMMIT"
+		return 2
+	fi
+	change_count=$(printf '%s\n' "$changed" | wc -l | tr -d ' ')
+	if ! non_script_count=$(printf '%s\n' "$changed" | grep -cEv '^\.agents/scripts/'); then
+		non_script_count=0
+	fi
+	if [[ "$non_script_count" -eq 0 ]]; then
+		log_info "Only scripts changed — using fast scripts-only deploy through atomic setup"
+	else
+		log_info "Deploying $change_count changed agent files through atomic setup"
+	fi
+	return 0
+}
+
+_run_dry_run_deploy() {
+	local changed=""
+	local change_count=0
+	local non_script_changes=0
+
 	if [[ "$SCRIPTS_ONLY" == "true" ]]; then
 		deploy_scripts_only
 		return $?
 	fi
 
-	# Diff-based deploy
 	if [[ -n "$DIFF_COMMIT" ]]; then
-		local changed
-		if ! changed=$(detect_changes "$DIFF_COMMIT"); then
-			return 1
-		fi
+		changed=$(detect_changes "$DIFF_COMMIT") || return 1
 		if [[ -z "$changed" ]]; then
 			log_info "No agent changes since $DIFF_COMMIT"
 			return 2
 		fi
-
-		# If many files changed, do a full agent sync instead of file-by-file
-		local change_count
 		change_count=$(echo "$changed" | wc -l | tr -d ' ')
 		if [[ "$change_count" -gt 50 ]]; then
 			log_info "Large changeset ($change_count files) — doing full agent sync"
 			deploy_all_agents
 			return $?
 		fi
-
-		# Check if only scripts changed
-		local non_script_changes
 		if ! non_script_changes=$(printf '%s\n' "$changed" | grep -cEv '^\.agents/scripts/'); then
 			non_script_changes=0
 		fi
@@ -623,17 +662,36 @@ main() {
 		return $?
 	fi
 
-	# Default: version-based detection
-	local changed
-	if ! changed=$(detect_changes ""); then
-		return 1
-	fi
+	changed=$(detect_changes "") || return 1
 	if [[ -z "$changed" ]]; then
 		return 2
 	fi
-
-	# Version mismatch detected — full agent sync
 	deploy_all_agents
+	return $?
+}
+
+main() {
+	local diff_exit=0
+
+	parse_args "$@" || return 1
+	validate_repo || return 1
+	validate_stable_target || return 1
+	collect_plugin_namespaces || return 1
+	if [[ "$FULL_DEPLOY" == "true" ]]; then
+		_run_full_deploy
+		return $?
+	fi
+
+	pull_latest
+	if [[ "$DRY_RUN" == "true" ]]; then
+		_run_dry_run_deploy
+		return $?
+	fi
+	if [[ -n "$DIFF_COMMIT" ]]; then
+		_validate_transactional_diff || diff_exit=$?
+		[[ "$diff_exit" -eq 0 ]] || return "$diff_exit"
+	fi
+	run_transactional_incremental_deploy
 	return $?
 }
 

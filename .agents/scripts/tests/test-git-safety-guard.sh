@@ -4,8 +4,8 @@
 #
 # test-git-safety-guard.sh
 # Tests for git_safety_guard.py covering GH#21814 changes:
-#   - Dynamic default-branch detection (replaces hardcoded "main"/"master")
-#   - Off-default-branch canonical-workspace protection (t1990)
+#   - Structural canonical-versus-linked worktree detection
+#   - Canonical protection independent of branch names
 #   - environment variables cannot bypass canonical protection
 #   - shared command-policy destructive checks (regression)
 #
@@ -177,10 +177,10 @@ test_default_branch_detection_from_origin_head() {
 	local output=""
 	output=$(run_hook "$TEST_ROOT" "$json") || true
 
-	if hook_is_deny "$output" "t1712" && hook_is_deny "$output" "develop"; then
-		print_result "default-branch detection from origin/HEAD (develop denied with t1712)" 0
+	if hook_is_deny "$output" "canonical write policy" && hook_is_deny "$output" "read-only session mirrors"; then
+		print_result "origin-default develop canonical checkout is read-only" 0
 	else
-		print_result "default-branch detection from origin/HEAD (develop denied with t1712)" 1 "output=${output}"
+		print_result "origin-default develop canonical checkout is read-only" 1 "output=${output}"
 	fi
 
 	# Cleanup: back to main
@@ -202,10 +202,10 @@ test_off_default_branch_canonical_denied() {
 	local output=""
 	output=$(run_hook "$TEST_ROOT" "$json") || true
 
-	if hook_is_deny "$output" "t1990" && hook_is_deny "$output" "feature/test-off-default"; then
-		print_result "off-default-branch in canonical workspace is denied (t1990)" 0
+	if hook_is_deny "$output" "canonical write policy"; then
+		print_result "off-default-branch in canonical workspace is denied structurally" 0
 	else
-		print_result "off-default-branch in canonical workspace is denied (t1990)" 1 "output=${output}"
+		print_result "off-default-branch in canonical workspace is denied structurally" 1 "output=${output}"
 	fi
 
 	git -C "$TEST_ROOT" checkout main >/dev/null 2>&1 || true
@@ -220,17 +220,23 @@ test_off_default_branch_in_linked_worktree_allowed() {
 	local worktree_path="${TEST_ROOT}/linked-wt"
 	git -C "$TEST_ROOT" worktree add "$worktree_path" -b feature/linked-test >/dev/null 2>&1
 
-	local json
-	json=$(printf '{"tool_name":"Edit","tool_input":{"filePath":"%s/src/foo.ts"}}' "$worktree_path")
-
+	local tool_name=""
+	local json=""
 	local output=""
-	output=$(run_hook "$worktree_path" "$json") || true
-
-	if [[ -z "$output" ]]; then
-		print_result "off-default-branch edit in linked worktree is allowed (no output)" 0
-	else
-		print_result "off-default-branch edit in linked worktree is allowed (no output)" 1 "output=${output}"
-	fi
+	local rc=0
+	for tool_name in Edit Write functions.apply_patch apply_patch; do
+		case "$tool_name" in
+		*apply_patch)
+			json=$(printf '{"tool_name":"%s","tool_input":{"patchText":"*** Begin Patch\\n*** Add File: %s/new-file.md\\n+safe\\n*** End Patch\\n"}}' "$tool_name" "$worktree_path")
+			;;
+		*)
+			json=$(printf '{"tool_name":"%s","tool_input":{"filePath":"%s/src/foo.ts"}}' "$tool_name" "$worktree_path")
+			;;
+		esac
+		output=$(run_hook "$worktree_path" "$json") || true
+		[[ -z "$output" ]] || rc=1
+	done
+	print_result "all direct file mutation tools are allowed in linked worktrees" "$rc" "output=${output}"
 
 	git -C "$TEST_ROOT" worktree remove "$worktree_path" 2>/dev/null || rm -rf "$worktree_path"
 	git -C "$TEST_ROOT" branch -D feature/linked-test 2>/dev/null || true
@@ -238,9 +244,9 @@ test_off_default_branch_in_linked_worktree_allowed() {
 }
 
 # =============================================================================
-# Test 4: Default-branch allowlist preserved (README.md, TODO.md, todo/*)
+# Test 4: Planning files have no canonical write exception
 # =============================================================================
-test_default_branch_allowlisted_paths_allowed() {
+test_default_branch_planning_paths_denied() {
 	# Repo is on main (default branch)
 	local passed=0
 
@@ -251,20 +257,20 @@ test_default_branch_allowlisted_paths_allowed() {
 		local output=""
 		output=$(run_hook "$TEST_ROOT" "$json") || true
 
-		if [[ -n "$output" ]]; then
-			print_result "allowlisted path '${allowed_path}' allowed on default branch" 1 "output=${output}"
+		if ! hook_is_deny "$output" "canonical write policy"; then
+			print_result "planning path '${allowed_path}' denied on canonical default branch" 1 "output=${output}"
 			passed=1
 		fi
 	done
 
 	if [[ "$passed" -eq 0 ]]; then
-		print_result "allowlisted paths (README.md, TODO.md, todo/*) allowed on default branch" 0
+		print_result "planning paths (README.md, TODO.md, todo/*) require linked worktrees" 0
 	fi
 	return 0
 }
 
 # =============================================================================
-# Test 5: Default-branch non-allowlisted path → denied with t1712 reason
+# Test 5: Direct code and namespaced patch tools are denied canonically
 # =============================================================================
 test_default_branch_non_allowlisted_denied() {
 	local json
@@ -273,10 +279,22 @@ test_default_branch_non_allowlisted_denied() {
 	local output=""
 	output=$(run_hook "$TEST_ROOT" "$json") || true
 
-	if hook_is_deny "$output" "t1712"; then
-		print_result "non-allowlisted path denied on default branch (t1712)" 0
+	if hook_is_deny "$output" "canonical write policy"; then
+		print_result "code path denied in canonical default checkout" 0
 	else
-		print_result "non-allowlisted path denied on default branch (t1712)" 1 "output=${output}"
+		print_result "code path denied in canonical default checkout" 1 "output=${output}"
+	fi
+	return 0
+}
+
+test_namespaced_apply_patch_denied_canonically() {
+	local json='{"tool_name":"functions.apply_patch","tool_input":{"patchText":"test"}}'
+	local output=""
+	output=$(run_hook "$TEST_ROOT" "$json") || true
+	if hook_is_deny "$output" "canonical write policy"; then
+		print_result "namespaced functions.apply_patch is denied in canonical checkout" 0
+	else
+		print_result "namespaced functions.apply_patch is denied in canonical checkout" 1 "output=${output}"
 	fi
 	return 0
 }
@@ -416,7 +434,7 @@ test_linked_worktree_branch_switch_allowed() {
 }
 
 # =============================================================================
-# Test 9: Repo without origin/HEAD → fallback to init.defaultBranch then "main"
+# Test 9: Structural protection does not depend on origin/HEAD
 # =============================================================================
 test_no_origin_head_falls_back_to_main() {
 	# Fresh temp repo with no remotes — falls back to "main"
@@ -436,7 +454,7 @@ test_no_origin_head_falls_back_to_main() {
 	git -C "$fresh_root" add .
 	git -C "$fresh_root" commit -m "test: seed" >/dev/null 2>&1
 
-	# On main (default), edit a non-allowlisted file — should get t1712 deny (not crash)
+	# On main without a remote, direct writes are still denied structurally.
 	local json
 	json=$(printf '{"tool_name":"Edit","tool_input":{"filePath":"%s/src/app.ts"}}' "$fresh_root")
 
@@ -444,10 +462,10 @@ test_no_origin_head_falls_back_to_main() {
 	local exit_code=0
 	output=$(run_hook "$fresh_root" "$json") || exit_code=$?
 
-	if [[ "$exit_code" -eq 0 ]] && hook_is_deny "$output" "t1712"; then
-		print_result "no origin/HEAD: falls back cleanly, enforces t1712 on main" 0
+	if [[ "$exit_code" -eq 0 ]] && hook_is_deny "$output" "canonical write policy"; then
+		print_result "no origin/HEAD: canonical checkout remains read-only" 0
 	else
-		print_result "no origin/HEAD: falls back cleanly, enforces t1712 on main" 1 "exit=${exit_code} output=${output}"
+		print_result "no origin/HEAD: canonical checkout remains read-only" 1 "exit=${exit_code} output=${output}"
 	fi
 
 	rm -rf "$fresh_root"
@@ -477,15 +495,15 @@ test_canonical_guard_skip_env_var() {
 
 	local passed=0
 
-	if ! hook_is_deny "$output_default" "t1990"; then
+	if ! hook_is_deny "$output_default" "canonical write policy"; then
 		print_result "canonical guard: off-default-branch denied without env override" 1 "output=${output_default}"
 		passed=1
 	fi
-	if ! hook_is_deny "$output_headless" "t1990"; then
+	if ! hook_is_deny "$output_headless" "canonical write policy"; then
 		print_result "canonical guard: FULL_LOOP_HEADLESS=1 alone does NOT bypass deny" 1 "output=${output_headless}"
 		passed=1
 	fi
-	if ! hook_is_deny "$output_skip" "t1990"; then
+	if ! hook_is_deny "$output_skip" "canonical write policy"; then
 		print_result "canonical guard: former skip variable does not bypass deny" 1 "output=${output_skip}"
 		passed=1
 	fi
@@ -539,8 +557,9 @@ main() {
 	test_default_branch_detection_from_origin_head
 	test_off_default_branch_canonical_denied
 	test_off_default_branch_in_linked_worktree_allowed
-	test_default_branch_allowlisted_paths_allowed
+	test_default_branch_planning_paths_denied
 	test_default_branch_non_allowlisted_denied
+	test_namespaced_apply_patch_denied_canonically
 	test_bash_destructive_commands_blocked
 	test_canonical_branch_switch_always_blocked
 	test_linked_worktree_branch_switch_allowed

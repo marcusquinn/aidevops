@@ -573,6 +573,7 @@ function registerAgents(config, agentsDir) {
 }
 
 const RESEARCH_ONLY_AGENT_NAME = "research-only";
+const UNSAFE_FRONTMATTER_KEYS = new Set(["__proto__", "constructor", "prototype"]);
 const RESEARCH_ONLY_FALLBACK_PROMPT = `# Research-only subagent
 
 Gather evidence from the assigned repository and read-only web sources. Return
@@ -580,10 +581,67 @@ findings, citations, uncertainty, and recommendations. Never modify local or
 external state, invoke another agent, access credentials, or perform Git,
 account, network-write, or worktree operations.`;
 
-function researchOnlyPrompt(agentsDir) {
+function parseFrontmatterScalar(value) {
+  const booleans = { true: true, false: false };
+  if (Object.hasOwn(booleans, value)) return booleans[value];
+  return value.startsWith('"') ? JSON.parse(value) : value;
+}
+
+function parseFrontmatterEntry(line) {
+  if (!line.trim() || line.trimStart().startsWith("#")) return null;
+  const entry = line.match(/^( *)(?:"([^"]+)"|([A-Za-z0-9_.-]+)):\s*(.*)$/);
+  if (!entry || entry[1].length % 2 !== 0) throw new Error("Invalid agent frontmatter entry");
+  return entry;
+}
+
+function assignFrontmatterEntry(stack, entry) {
+  const indent = entry[1].length;
+  while (stack.at(-1).indent >= indent) stack.pop();
+  if (indent > stack.at(-1).indent + 2) throw new Error("Invalid agent frontmatter indentation");
+
+  const key = entry[2] || entry[3];
+  const parent = stack.at(-1).value;
+  if (UNSAFE_FRONTMATTER_KEYS.has(key) || Object.hasOwn(parent, key)) {
+    throw new Error("Unsafe or duplicate agent frontmatter key");
+  }
+  parent[key] = entry[4] ? parseFrontmatterScalar(entry[4]) : {};
+  if (!entry[4]) stack.push({ indent, value: parent[key] });
+}
+
+function parseAgentFrontmatter(source) {
+  try {
+    const match = source.match(/^---\n([\s\S]*?)\n---\n?([\s\S]*)$/);
+    if (!match) throw new Error("Agent frontmatter is missing");
+
+    const profile = {};
+    const stack = [{ indent: -1, value: profile }];
+    for (const line of match[1].split("\n")) {
+      const entry = parseFrontmatterEntry(line);
+      if (entry) assignFrontmatterEntry(stack, entry);
+    }
+    return { profile, prompt: match[2].trim() };
+  } catch {
+    return null;
+  }
+}
+
+function researchOnlyProfile(agentsDir) {
   const source = readIfExists(join(agentsDir, "tools", "ai-assistants", "research-only.md"));
-  if (!source) return RESEARCH_ONLY_FALLBACK_PROMPT;
-  return source.replace(/^---\n[\s\S]*?\n---\n?/, "").trim();
+  const parsed = source ? parseAgentFrontmatter(source) : null;
+  if (!parsed || typeof parsed.profile.description !== "string") {
+    return {
+      description: "Research-only profile unavailable",
+      mode: "subagent",
+      disable: true,
+      prompt: RESEARCH_ONLY_FALLBACK_PROMPT,
+      tools: { "*": false },
+      permission: "deny",
+    };
+  }
+
+  const profile = { ...parsed.profile };
+  delete profile.name;
+  return { ...profile, prompt: parsed.prompt || RESEARCH_ONLY_FALLBACK_PROMPT };
 }
 
 /**
@@ -595,45 +653,7 @@ function researchOnlyPrompt(agentsDir) {
  */
 export function registerResearchOnlyAgent(config, agentsDir) {
   if (!config.agent) config.agent = {};
-  config.agent[RESEARCH_ONLY_AGENT_NAME] = {
-    description: "Non-mutating repository and web research with a fail-closed capability envelope",
-    mode: "subagent",
-    prompt: researchOnlyPrompt(agentsDir),
-    tools: {
-      "*": false,
-      read: true,
-      grep: true,
-      glob: true,
-      webfetch: true,
-      websearch: true,
-      write: false,
-      edit: false,
-      apply_patch: false,
-      bash: false,
-      task: false,
-      todowrite: false,
-      skill: false,
-    },
-    permission: {
-      "*": "deny",
-      read: {
-        "*": "allow",
-        "*.env": "deny",
-        "*.env.*": "deny",
-        "*.env.example": "allow",
-      },
-      grep: "allow",
-      glob: "allow",
-      webfetch: "allow",
-      websearch: "allow",
-      write: "deny",
-      edit: "deny",
-      apply_patch: "deny",
-      bash: "deny",
-      task: "deny",
-      external_directory: "deny",
-    },
-  };
+  config.agent[RESEARCH_ONLY_AGENT_NAME] = researchOnlyProfile(agentsDir);
   return 1;
 }
 

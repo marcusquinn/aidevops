@@ -59,6 +59,16 @@ _test "Cleanup stack executes in LIFO order" "third second first " "$actual_orde
 _test "Cleanup stack reversal emits no stderr" "" "$actual_stderr"
 _test "Cleanup stack is empty after execution" "" "$_CLEANUP_CMDS"
 
+cleanup_function_probe() {
+	CLEANUP_FUNCTION_PROBE="ran"
+	return 0
+}
+
+CLEANUP_FUNCTION_PROBE="pending"
+push_cleanup 'cleanup_function_probe'
+_run_cleanups
+_test "Bare cleanup function executes in the current shell" "ran" "$CLEANUP_FUNCTION_PROBE"
+
 printf '\nResults: %s passed, %s failed, %s total\n' "$PASS" "$FAIL" "$TESTS"
 
 if [[ $FAIL -gt 0 ]]; then

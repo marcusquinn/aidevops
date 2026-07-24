@@ -8,7 +8,10 @@ mode: subagent
 
 Project task tracking with time estimates, dependencies, and TOON-enhanced parsing.
 
-Compatible with [todo-md](https://github.com/todo-md/todo-md), [todomd](https://github.com/todomd/todo.md), [taskell](https://github.com/smallhadroncollider/taskell), and [Beads](https://github.com/steveyegge/beads).
+Compatible with [todo-md](https://github.com/todo-md/todo-md),
+[todomd](https://github.com/todomd/todo.md),
+[taskell](https://github.com/smallhadroncollider/taskell), and
+[Beads](https://github.com/steveyegge/beads).
 
 ## Format
 
@@ -26,23 +29,28 @@ Compatible with [todo-md](https://github.com/todo-md/todo-md), [todomd](https://
 Format: `- [ ] tNNN Description @owner #tag ~estimate risk:level logged:date`
 
 **Task IDs:**
+
 - `t001` - Top-level task
 - `t001.1` - Subtask of t001
 - `t001.1.1` - Sub-subtask
 
 **Dependencies:**
+
 - `blocked-by:t001` - This task waits for t001
 - `blocked-by:t001,t002` - Waits for multiple tasks
 - `blocks:t003` - This task blocks t003
 
 **Time fields:**
-- `~estimate` - AI-assisted execution time (~15m trivial, ~30m small, ~1h medium, ~2h large, ~4h major — see `reference/planning-detail.md`)
+
+- `~estimate` - AI-assisted execution time (~15m trivial, ~30m small, ~1h
+  medium, ~2h large, ~4h major — see `reference/planning-detail.md`)
 - `actual:` - Actual active time spent (from session-time-helper.sh)
 - `logged:` - When task was added
 - `started:` - When branch was created
 - `completed:` - When task was marked done
 
 **Risk (human oversight needed):**
+
 - `risk:low` - Autonomous: fire-and-forget, review PR after
 - `risk:med` - Supervised: check in mid-task, review before merge
 - `risk:high` - Engaged: stay present, test thoroughly, potential regressions

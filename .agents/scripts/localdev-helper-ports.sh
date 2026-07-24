@@ -356,7 +356,7 @@ generate_cert() {
 
 	# mkcert generates files named after the first domain arg
 	# Output: {domain}+1.pem and {domain}+1-key.pem (wildcard is second arg)
-	(cd "$CERTS_DIR" && mkcert "$domain" "$wildcard")
+	(cd "$CERTS_DIR" && run_stable_mkcert "$domain" "$wildcard")
 
 	# Verify cert was created
 	local cert_file="$CERTS_DIR/${domain}+1.pem"

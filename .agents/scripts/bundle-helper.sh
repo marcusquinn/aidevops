@@ -95,6 +95,7 @@ _resolve_bundles_dir() {
 
 REPOS_JSON="${HOME}/.config/aidevops/repos.json"
 FALLBACK_BUNDLE="cli-tool"
+BUNDLE_CACHE_DIR="${AIDEVOPS_BUNDLE_CACHE_DIR:-${HOME}/.aidevops/cache/bundle}"
 
 # =============================================================================
 # Internal Utilities
@@ -149,60 +150,77 @@ _read_project_config_bundle() {
 	fi
 }
 
-# Read the cached detected bundle from .aidevops.json.
+_bundle_cache_file() {
+	local project_path="$1"
+	local path_digest=""
+	if command -v sha256sum >/dev/null 2>&1; then
+		path_digest=$(printf '%s' "$project_path" | sha256sum | awk '{print $1}') || return 1
+	elif command -v shasum >/dev/null 2>&1; then
+		path_digest=$(printf '%s' "$project_path" | shasum -a 256 | awk '{print $1}') || return 1
+	else
+		print_warning "Could not hash project path for bundle cache"
+		return 1
+	fi
+	printf '%s/%s.json' "$BUNDLE_CACHE_DIR" "$path_digest"
+	return 0
+}
+
+# Read an explicitly committed legacy detection, then the user-local cache.
 # Arguments:
 #   $1 - absolute project path
 # Output: cached bundle name(s) to stdout, empty if not cached
 _read_cached_detection() {
 	local project_path="$1"
 	local config_file="${project_path}/.aidevops.json"
+	local cached="" cache_file=""
 
 	if [[ -f "$config_file" ]]; then
-		jq -r '.detected_bundle // empty' "$config_file" 2>/dev/null || true
+		cached=$(jq -r '.detected_bundle // empty' "$config_file" 2>/dev/null) || cached=""
+		if [[ -n "$cached" ]]; then
+			printf '%s' "$cached"
+			return 0
+		fi
 	fi
+	cache_file=$(_bundle_cache_file "$project_path") || return 0
+	[[ -f "$cache_file" ]] || return 0
+	jq -r '.detected_bundle // empty' "$cache_file" 2>/dev/null || true
+	return 0
 }
 
-# Write detected bundle to .aidevops.json cache.
-# Creates the file if it doesn't exist; merges if it does.
+# Write detected bundle to a user-local cache outside the project checkout.
 # Arguments:
 #   $1 - absolute project path
 #   $2 - detected bundle name(s), comma-separated
 _write_cached_detection() {
 	local project_path="$1"
 	local detected="$2"
-	local config_file="${project_path}/.aidevops.json"
+	local cache_file=""
 	local timestamp
 	timestamp="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+	cache_file=$(_bundle_cache_file "$project_path") || return 0
+	mkdir -p "$BUNDLE_CACHE_DIR" 2>/dev/null || {
+		print_warning "Could not create bundle cache directory ${BUNDLE_CACHE_DIR}"
+		return 0
+	}
+	chmod 700 "$BUNDLE_CACHE_DIR" 2>/dev/null || true
 
 	# Use atomic write (mktemp + mv) to prevent race conditions
 	local tmpfile
-	tmpfile=$(mktemp "${config_file}.XXXXXX") || {
-		print_warning "Could not create temp file for ${config_file}"
+	tmpfile=$(mktemp "${cache_file}.XXXXXX") || {
+		print_warning "Could not create temp file for ${cache_file}"
+		return 0
+	}
+	chmod 600 "$tmpfile" 2>/dev/null || true
+	jq -n --arg d "$detected" --arg t "$timestamp" \
+		'{detected_bundle: $d, detected_bundle_at: $t}' >"$tmpfile" 2>/dev/null || {
+		rm -f "$tmpfile"
+		print_warning "Could not create cache file ${cache_file}"
 		return 0
 	}
 
-	if [[ -f "$config_file" ]]; then
-		# Merge into existing file
-		jq --arg d "$detected" --arg t "$timestamp" \
-			'.detected_bundle = $d | .detected_bundle_at = $t' \
-			"$config_file" >"$tmpfile" 2>/dev/null || {
-			rm -f "$tmpfile"
-			print_warning "Could not update cache in ${config_file}"
-			return 0
-		}
-	else
-		# Create new file
-		jq -n --arg d "$detected" --arg t "$timestamp" \
-			'{detected_bundle: $d, detected_bundle_at: $t}' >"$tmpfile" 2>/dev/null || {
-			rm -f "$tmpfile"
-			print_warning "Could not create cache file ${config_file}"
-			return 0
-		}
-	fi
-
-	mv -f "$tmpfile" "$config_file" || {
+	mv -f "$tmpfile" "$cache_file" || {
 		rm -f "$tmpfile"
-		print_warning "Could not write cache file ${config_file}"
+		print_warning "Could not write cache file ${cache_file}"
 		return 0
 	}
 

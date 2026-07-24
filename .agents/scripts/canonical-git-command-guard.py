@@ -7,11 +7,21 @@ import argparse
 import json
 import os
 import re
+import shlex
 import sys
+from pathlib import Path
 from typing import Optional
 
 from canonical_git_policy import BLOCK_EXIT, classify_git_argv, real_git
 from canonical_shell_parser import git_invocations
+
+
+SCRIPT_DIR = Path(__file__).resolve().parent
+
+
+def _recovery_helper_command() -> str:
+    helper = SCRIPT_DIR / "canonical-recovery-helper.sh"
+    return shlex.quote(str(helper))
 
 
 def _parse_invocations(
@@ -84,10 +94,12 @@ def main() -> int:
         allowed, reason = classify_command(args.command, args.cwd, real_git_path)
     if allowed:
         return 0
+    recovery_helper = _recovery_helper_command()
     print(
         f"BLOCKED by canonical Git guard: {reason}. Use a linked worktree for edits. "
         "For an explicitly authorized clean canonical fast-forward, use "
-        "canonical-recovery-helper.sh fast-forward-current; direct canonical Git mutation remains prohibited.",
+        f"{recovery_helper} fast-forward-current; use sync-mirror when "
+        "verified preservation is required. Direct canonical Git mutation remains prohibited.",
         file=sys.stderr,
     )
     return BLOCK_EXIT

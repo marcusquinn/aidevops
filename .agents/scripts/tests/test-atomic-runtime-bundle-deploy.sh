@@ -28,6 +28,8 @@ source "$REPO_ROOT/.agents/scripts/setup/modules/agent-deploy.sh"
 source "$REPO_ROOT/.agents/scripts/setup/modules/agent-runtime.sh"
 # shellcheck source=../setup/modules/schedulers-pulse.sh
 source "$REPO_ROOT/.agents/scripts/setup/modules/schedulers-pulse.sh"
+# shellcheck source=../runtime-bundle-lease.sh
+source "$REPO_ROOT/.agents/scripts/runtime-bundle-lease.sh"
 
 _xml_escape() { local value="$1"; printf '%s' "$value"; return 0; }
 
@@ -100,6 +102,60 @@ write_fake_plugin_dependencies() {
 stage_revision() {
 	local target_dir="$1"
 	_runtime_bundle_stage "$FAKE_REPO" "$FAKE_REPO/.agents" "$target_dir" "$TEST_ROOT/plugins.json" || return 1
+	return 0
+}
+
+set_bundle_manifest_sha() {
+	local bundle_dir="$1"
+	local git_sha="$2"
+	local manifest_file=""
+	local manifest_tmp=""
+	local line=""
+
+	for manifest_file in "$bundle_dir/manifest" "$bundle_dir/agents/.bundle-manifest"; do
+		manifest_tmp="${manifest_file}.tmp"
+		while IFS= read -r line || [[ -n "$line" ]]; do
+			if [[ "$line" == git_sha=* ]]; then
+				printf 'git_sha=%s\n' "$git_sha"
+			else
+				printf '%s\n' "$line"
+			fi
+		done <"$manifest_file" >"$manifest_tmp"
+		mv "$manifest_tmp" "$manifest_file"
+	done
+	return 0
+}
+
+install_mock_ancestor_git() {
+	git() {
+		local first_arg="$1"
+		local third_arg="${3:-}"
+		local fourth_arg="${4:-}"
+		local fifth_arg="${5:-}"
+		local sixth_arg="${6:-}"
+		if [[ "$first_arg" == "-C" && "$third_arg" == "cat-file" ]]; then
+			case "$fifth_arg" in
+			"1111111111111111111111111111111111111111^{commit}" | "2222222222222222222222222222222222222222^{commit}") return 0 ;;
+			esac
+			return 1
+		fi
+		if [[ "$first_arg" == "-C" && "$third_arg" == "merge-base" ]]; then
+			[[ "$fourth_arg" == "--is-ancestor" &&
+				"$fifth_arg" == "1111111111111111111111111111111111111111" &&
+				"$sixth_arg" == "2222222222222222222222222222222222222222" ]]
+			return $?
+		fi
+		return 1
+	}
+	return 0
+}
+
+test_manifest_value_reads_unterminated_final_line() {
+	local manifest_file="$TEST_ROOT/manifest-without-trailing-newline"
+
+	printf 'schema=1\nframework_version=15.0.0' >"$manifest_file"
+	assert_eq "15.0.0" "$(_runtime_bundle_manifest_value "$manifest_file" framework_version)" \
+		"manifest reader accepts an unterminated final line"
 	return 0
 }
 
@@ -177,15 +233,24 @@ test_process_pin_survives_activation() {
 	return 0
 }
 
+test_setup_rebinds_stale_process_pin_to_active_bundle() {
+	local target_dir="$HOME/.aidevops/agents"
+	local stale_root="$AIDEVOPS_AGENTS_DIR"
+	local active_root=""
+	active_root=$(_runtime_bundle_resolve_root "$target_dir")
+	[[ "$stale_root" != "$active_root" ]] || fail "fixture process pin is not stale"
+	pin_aidevops_active_runtime_bundle_root || fail "setup could not resolve active bundle"
+	assert_eq "$active_root" "$AIDEVOPS_AGENTS_DIR" "setup re-resolves a stale inherited AIDEVOPS_AGENTS_DIR"
+	assert_eq "$active_root" "$AGENTS_DIR" "setup re-resolves a stale inherited AGENTS_DIR"
+	return 0
+}
+
 test_live_bundle_lease_survives_three_updates() {
 	local target_dir="$HOME/.aidevops/agents"
 	local leased_root=""
-	local leased_bundle=""
 	local version=""
 	leased_root=$(_runtime_bundle_resolve_root "$target_dir")
-	leased_bundle="${leased_root%/agents}"
-	mkdir -p "$HOME/.aidevops/runtime-bundles/.leases/${leased_bundle##*/}"
-	printf '%s\n' "$leased_root" >"$HOME/.aidevops/runtime-bundles/.leases/${leased_bundle##*/}/$$"
+	aidevops_runtime_bundle_lease_acquire "$leased_root" || fail "runtime process could not acquire its bundle lease"
 
 	for version in 5.0.0 6.0.0 7.0.0; do
 		write_fake_revision "$version" "update-$version"
@@ -194,6 +259,44 @@ test_live_bundle_lease_survives_three_updates() {
 	done
 	[[ -x "$leased_root/scripts/helper.sh" ]] || fail "live first bundle helper survives three updates"
 	pass "live first bundle helper survives three updates"
+	aidevops_runtime_bundle_lease_release || fail "runtime process could not release its bundle lease"
+	return 0
+}
+
+test_permission_denied_signal_check_preserves_live_lease() {
+	local lease_dir="$HOME/.aidevops/runtime-bundles/.leases/permission-denied"
+	local lease_file="$lease_dir/$$"
+	mkdir -p "$lease_dir"
+	printf 'live\n' >"$lease_file"
+
+	(
+		kill() { return 1; }
+		_runtime_bundle_has_live_lease "$lease_dir"
+	) || fail "ps fallback did not recognize the live lease process"
+	[[ -f "$lease_file" ]] || fail "permission-denied signal check removed a live lease"
+	rm -rf "$lease_dir"
+	pass "permission-denied signal check preserves a live lease"
+	return 0
+}
+
+test_proc_fallback_preserves_live_lease_without_ps() {
+	local lease_dir="$HOME/.aidevops/runtime-bundles/.leases/proc-fallback"
+	local lease_file="$lease_dir/$$"
+	if [[ ! -d "/proc/$$" ]]; then
+		print_skip "/proc lease fallback requires Linux"
+		return 0
+	fi
+	mkdir -p "$lease_dir"
+	printf 'live\n' >"$lease_file"
+
+	(
+		kill() { return 1; }
+		ps() { return 127; }
+		_runtime_bundle_has_live_lease "$lease_dir"
+	) || fail "/proc fallback did not recognize the live lease process"
+	[[ -f "$lease_file" ]] || fail "/proc fallback removed a live lease"
+	rm -rf "$lease_dir"
+	pass "/proc fallback preserves a live lease without ps"
 	return 0
 }
 
@@ -208,6 +311,67 @@ test_stale_lease_and_old_bundle_are_pruned() {
 		"$HOME/.aidevops/runtime-bundles" "$(_runtime_bundle_resolve_root "$target_dir")" ""
 	[[ ! -d "$stale_bundle" ]] || fail "crashed process lease does not retain an old bundle"
 	pass "crashed process lease does not retain an old bundle"
+	return 0
+}
+
+test_count_and_byte_pressure_preserve_protected_bundles() {
+	local target_dir="$HOME/.aidevops/agents"
+	local bundles_dir="$HOME/.aidevops/runtime-bundles"
+	local previous_bundle="$bundles_dir/pressure-previous"
+	local active_root=""
+	local previous_root=""
+	local live_bundle="$bundles_dir/pressure-live"
+	local before_checksum=""
+	local after_checksum=""
+	active_root=$(_runtime_bundle_resolve_root "$target_dir")
+	mkdir -p "$previous_bundle/agents/scripts"
+	printf '#!/usr/bin/env bash\n' >"$previous_bundle/agents/scripts/helper.sh"
+	previous_root=$(cd "$previous_bundle/agents" && pwd -P)
+	rm -f "$HOME/.aidevops/previous-runtime-bundle"
+	ln -s "$previous_root" "$HOME/.aidevops/previous-runtime-bundle"
+	mkdir -p "$live_bundle/agents" "$bundles_dir/.leases/pressure-live"
+	printf 'live\n' >"$live_bundle/agents/marker"
+	printf '%s\n' "$live_bundle/agents" >"$bundles_dir/.leases/pressure-live/$$"
+	mkdir -p "$bundles_dir/pressure-count-a/agents" "$bundles_dir/pressure-count-b/agents"
+	printf 'candidate-a\n' >"$bundles_dir/pressure-count-a/agents/marker"
+	printf 'candidate-b\n' >"$bundles_dir/pressure-count-b/agents/marker"
+	before_checksum=$(cksum "$active_root/scripts/helper.sh" "$previous_root/scripts/helper.sh" "$live_bundle/agents/marker")
+
+	AIDEVOPS_RUNTIME_BUNDLE_RETENTION_SECONDS=999999999 \
+		AIDEVOPS_RUNTIME_BUNDLE_MAX_COUNT=3 \
+		AIDEVOPS_RUNTIME_BUNDLE_MAX_BYTES=999999999999 \
+		_runtime_bundle_prune "$bundles_dir" "$active_root" "$previous_root"
+	[[ ! -d "$bundles_dir/pressure-count-a" && ! -d "$bundles_dir/pressure-count-b" ]] || fail "count pressure did not converge unprotected bundles"
+	[[ -d "$active_root" && -d "$previous_root" && -d "$live_bundle" ]] || fail "count pressure removed a protected bundle"
+
+	mkdir -p "$bundles_dir/pressure-bytes/agents"
+	printf 'byte-pressure-candidate\n' >"$bundles_dir/pressure-bytes/agents/marker"
+	AIDEVOPS_RUNTIME_BUNDLE_RETENTION_SECONDS=999999999 \
+		AIDEVOPS_RUNTIME_BUNDLE_MAX_COUNT=999 \
+		AIDEVOPS_RUNTIME_BUNDLE_MAX_BYTES=1 \
+		_runtime_bundle_prune "$bundles_dir" "$active_root" "$previous_root"
+	[[ ! -d "$bundles_dir/pressure-bytes" ]] || fail "byte pressure did not prune the unprotected candidate"
+	after_checksum=$(cksum "$active_root/scripts/helper.sh" "$previous_root/scripts/helper.sh" "$live_bundle/agents/marker")
+	assert_eq "$before_checksum" "$after_checksum" "count and byte pressure preserve protected bundle byte identity"
+	return 0
+}
+
+test_runtime_bundle_inventory_explains_protection() {
+	local bundles_dir="$HOME/.aidevops/runtime-bundles"
+	local report_candidate="$bundles_dir/report-candidate"
+	local report=""
+	local before_checksum=""
+	local after_checksum=""
+	mkdir -p "$report_candidate/agents"
+	printf 'reclaimable-candidate\n' >"$report_candidate/agents/marker"
+	before_checksum=$(cksum "$report_candidate/agents/marker")
+	report=$(bash "$REPO_ROOT/.agents/scripts/storage-inventory-helper.sh" json)
+	after_checksum=$(cksum "$report_candidate/agents/marker")
+	assert_eq "$before_checksum" "$after_checksum" "runtime bundle inventory is read-only"
+	[[ "$(printf '%s' "$report" | jq -r '.stores[] | select(.store_id == "runtime-bundles") | .protected_bytes > 0')" == "true" ]] || fail "runtime inventory omitted protected bytes"
+	[[ "$(printf '%s' "$report" | jq -r '.stores[] | select(.store_id == "runtime-bundles") | .reclaimable_bytes > 0')" == "true" ]] || fail "runtime inventory omitted unreferenced reclaimable bytes"
+	[[ "$(printf '%s' "$report" | jq -r '.stores[] | select(.store_id == "runtime-bundles") | .unknown_bytes')" == "0" ]] || fail "runtime inventory left classified bundles unknown"
+	pass "runtime inventory explains protected and reclaimable bundle bytes"
 	return 0
 }
 
@@ -360,6 +524,61 @@ test_plist_override_survives_two_bundle_activations() {
 	return 0
 }
 
+test_serialized_older_version_refuses_global_activation() {
+	local target_dir="$HOME/.aidevops/agents"
+	local stale_bundle=""
+	local current_bundle=""
+	local active_before=""
+	local active_after=""
+
+	write_fake_revision "12.0.0" "serialized-stale-version"
+	stage_revision "$target_dir"
+	stale_bundle="$_AIDEVOPS_STAGED_BUNDLE_DIR"
+	write_fake_revision "13.0.0" "serialized-current-version"
+	stage_revision "$target_dir"
+	current_bundle="$_AIDEVOPS_STAGED_BUNDLE_DIR"
+	_runtime_bundle_activate "$target_dir" "$current_bundle"
+	active_before=$(_runtime_bundle_resolve_root "$target_dir")
+
+	if _runtime_bundle_activate "$target_dir" "$stale_bundle"; then
+		fail "serialized older candidate unexpectedly replaced the active bundle"
+	fi
+	active_after=$(_runtime_bundle_resolve_root "$target_dir")
+	assert_eq "$active_before" "$active_after" "serialized older candidate preserves the active bundle"
+	assert_eq "13.0.0" "$(tr -d '[:space:]' <"$target_dir/VERSION")" "serialized activation cannot move the global version backwards"
+	return 0
+}
+
+test_same_version_ancestor_refuses_global_activation() {
+	local target_dir="$HOME/.aidevops/agents"
+	local stale_bundle=""
+	local current_bundle=""
+	local active_before=""
+	local active_after=""
+
+	write_fake_revision "14.0.0" "same-version-ancestor"
+	stage_revision "$target_dir"
+	stale_bundle="$_AIDEVOPS_STAGED_BUNDLE_DIR"
+	set_bundle_manifest_sha "$stale_bundle" "1111111111111111111111111111111111111111"
+	write_fake_revision "14.0.0" "same-version-descendant"
+	stage_revision "$target_dir"
+	current_bundle="$_AIDEVOPS_STAGED_BUNDLE_DIR"
+	set_bundle_manifest_sha "$current_bundle" "2222222222222222222222222222222222222222"
+	_runtime_bundle_activate "$target_dir" "$current_bundle"
+	active_before=$(_runtime_bundle_resolve_root "$target_dir")
+
+	install_mock_ancestor_git
+	if _runtime_bundle_activate "$target_dir" "$stale_bundle"; then
+		unset -f git
+		fail "same-version ancestor unexpectedly replaced its active descendant"
+	fi
+	unset -f git
+	active_after=$(_runtime_bundle_resolve_root "$target_dir")
+	assert_eq "$active_before" "$active_after" "same-version ancestor candidate preserves the active descendant"
+	assert_file_contains "$target_dir/scripts/helper.sh" 'same-version-descendant' "same-version ancestry guard preserves active source content"
+	return 0
+}
+
 main() {
 	TEST_ROOT=$(mktemp -d)
 	trap cleanup EXIT
@@ -373,18 +592,26 @@ main() {
 	AIDEVOPS_AGENT_DEPLOY_MIN_FILES=1
 	export AIDEVOPS_AGENT_DEPLOY_MIN_FILES
 
+	test_manifest_value_reads_unterminated_final_line
 	test_initial_activation_and_manifest
 	test_interrupted_staging_preserves_active
 	test_failed_activation_rolls_back
 	test_process_pin_survives_activation
+	test_setup_rebinds_stale_process_pin_to_active_bundle
 	test_live_bundle_lease_survives_three_updates
+	test_permission_denied_signal_check_preserves_live_lease
+	test_proc_fallback_preserves_live_lease_without_ps
 	test_stale_lease_and_old_bundle_are_pruned
+	test_count_and_byte_pressure_preserve_protected_bundles
+	test_runtime_bundle_inventory_explains_protection
 	test_macos_and_linux_link_paths
 	test_plugin_dependency_smoke_check
 	install_mock_plugin_dependency_hooks
 	test_dependency_install_recovery_activates_candidate
 	test_dependency_install_failure_preserves_active_bundle
 	test_plist_override_survives_two_bundle_activations
+	test_serialized_older_version_refuses_global_activation
+	test_same_version_ancestor_refuses_global_activation
 
 	printf 'Results: %s checks passed\n' "$TESTS_RUN"
 	return 0

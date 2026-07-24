@@ -25,10 +25,12 @@
 #      (regression guard for the t2105 incident)
 #   2. "Resolves #NNN" body + GH#NNN title → issue number
 #      (normal leaf close path still works)
-#   3. "Closes #99999" body + GH#19042 title → 19042
-#      (title disambiguates when body references a different issue)
+#   3. "Closes #99999" body + GH#19042 title → empty
+#      (mismatched identities fail closed)
 #   4. "Ref #NNN" body (no closing keyword) + tNNN title → empty
 #      (tNNN: title format has no GH# — both gates fail)
+#   5. Multiple distinct closing identities → empty
+#   6. Failed title/body metadata reads → empty
 
 set -euo pipefail
 
@@ -73,6 +75,7 @@ setup_test_env() {
 	export LOGFILE="${TEST_ROOT}/pulse.log"
 	export TEST_PR_TITLE=""
 	export TEST_PR_BODY=""
+	export TEST_FAIL_METADATA=""
 	: >"$LOGFILE"
 
 	cat >"${TEST_ROOT}/bin/gh" <<'EOF'
@@ -82,12 +85,14 @@ setup_test_env() {
 
 # gh pr view NNN --repo SLUG --json title --jq '.title // empty'
 if [[ "$1" == "pr" && "$2" == "view" && "$*" == *"--json title"* ]]; then
+	[[ "${TEST_FAIL_METADATA:-}" == "title" ]] && exit 1
 	printf '%s\n' "${TEST_PR_TITLE:-}"
 	exit 0
 fi
 
 # gh pr view NNN --repo SLUG --json body --jq '.body // empty'
 if [[ "$1" == "pr" && "$2" == "view" && "$*" == *"--json body"* ]]; then
+	[[ "${TEST_FAIL_METADATA:-}" == "body" ]] && exit 1
 	printf '%s\n' "${TEST_PR_BODY:-}"
 	exit 0
 fi
@@ -101,7 +106,7 @@ EOF
 
 gh_pr_view() {
 	gh pr view "$@"
-	return 0
+	return $?
 }
 
 teardown_test_env() {
@@ -130,8 +135,8 @@ define_function_under_test() {
 assert_returns() {
 	local expected="$1"
 	local label="$2"
-	local actual
-	actual=$(_extract_linked_issue "1" "owner/repo")
+	local actual=""
+	actual=$(_extract_linked_issue "1" "owner/repo") || actual=""
 	if [[ "$actual" == "$expected" ]]; then
 		print_result "$label" 0
 	else
@@ -163,16 +168,41 @@ test_resolves_body_returns_issue() {
 	return 0
 }
 
-# Scenario 3: "Closes #99999" body + GH#19042 title → 19042
-# Title disambiguates when the body's closing keyword references a different
-# issue number (historical behaviour preserved: title is the primary identifier).
-test_title_disambiguates_when_body_has_different_issue() {
+test_closing_keyword_accepts_tab_whitespace() {
+	export TEST_PR_TITLE="GH#19042: fix bug"
+	export TEST_PR_BODY="Resolves"$'\t'"#19042"
+	assert_returns "19042" \
+		"scenario2b: closing keyword with tab whitespace returns issue number"
+	return 0
+}
+
+# Scenario 3: title/body mismatch is ambiguous and must not select either issue.
+test_title_mismatch_returns_empty() {
 	export TEST_PR_TITLE="GH#19042: cross-issue"
 	export TEST_PR_BODY="Closes #99999
 
 Also references #19042."
-	assert_returns "19042" \
-		"scenario3: title issue number preferred when body has closing keyword"
+	assert_returns "" \
+		"scenario3: mismatched title and closing issue return empty"
+	return 0
+}
+
+test_multiple_closing_issues_return_empty() {
+	export TEST_PR_TITLE="GH#19042: cross-issue"
+	export TEST_PR_BODY="Resolves #19042 and closes #99999"
+	assert_returns "" \
+		"scenario5: multiple closing issue identities return empty"
+	return 0
+}
+
+test_metadata_failure_returns_empty() {
+	export TEST_PR_TITLE="GH#19042: fix bug"
+	export TEST_PR_BODY="Resolves #19042"
+	export TEST_FAIL_METADATA="title"
+	assert_returns "" "scenario6a: failed title metadata read returns empty"
+	export TEST_FAIL_METADATA="body"
+	assert_returns "" "scenario6b: failed body metadata read returns empty"
+	export TEST_FAIL_METADATA=""
 	return 0
 }
 
@@ -200,8 +230,11 @@ main() {
 
 	test_for_ref_body_no_close_returns_empty
 	test_resolves_body_returns_issue
-	test_title_disambiguates_when_body_has_different_issue
+	test_closing_keyword_accepts_tab_whitespace
+	test_title_mismatch_returns_empty
 	test_ref_body_tnnn_title_returns_empty
+	test_multiple_closing_issues_return_empty
+	test_metadata_failure_returns_empty
 
 	printf '\nRan %s tests, %s failed.\n' "$TESTS_RUN" "$TESTS_FAILED"
 	if [[ "$TESTS_FAILED" -gt 0 ]]; then

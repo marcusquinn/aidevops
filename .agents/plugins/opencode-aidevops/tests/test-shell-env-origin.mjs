@@ -92,12 +92,14 @@ test("interactive OpenCode shell overrides stale worker origin", async () => {
 test("shell env moves the Git guard scripts directory to PATH first", async () => {
   const root = mkdtempSync(join(tmpdir(), "aidevops-shell-path-"));
   const scriptsDir = join(root, "scripts");
+  const binDir = join(root, "bin");
   mkdirSync(scriptsDir);
+  mkdirSync(binDir);
   try {
     const hook = createShellEnvHook({ agentsDir: root, scriptsDir, workspaceDir: root });
-    const output = { env: { PATH: `/usr/bin:${scriptsDir}:/bin` } };
+    const output = { env: { PATH: `/usr/bin:${binDir}:${scriptsDir}:/bin` } };
     await hook({ sessionID: "path-test" }, output);
-    assert.equal(output.env.PATH, `${scriptsDir}:/usr/bin:/bin`);
+    assert.equal(output.env.PATH, `${scriptsDir}:${binDir}:/usr/bin:/bin`);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -147,6 +149,37 @@ test("shell env preserves framework identity and publishes its OpenCode mapping"
 
   assert.equal(output.env.AIDEVOPS_SESSION_ID, "framework-session");
   assert.equal(output.env.AIDEVOPS_OPENCODE_SESSION_ID, "opencode-session");
+});
+
+test("shell env derives the signature model without replacing an explicit value", async () => {
+  const hook = makeHook();
+  const derived = { env: { PATH: "/usr/bin:/bin" } };
+  await hook({ model: { providerID: "openai", modelID: "gpt-5.6-sol" } }, derived);
+  assert.equal(derived.env.AIDEVOPS_SIG_MODEL, "openai/gpt-5.6-sol");
+
+  const explicit = { env: { PATH: "/usr/bin:/bin", AIDEVOPS_SIG_MODEL: "configured/model" } };
+  await hook({ model: { providerID: "openai", modelID: "other-model" } }, explicit);
+  assert.equal(explicit.env.AIDEVOPS_SIG_MODEL, "configured/model");
+});
+
+test("shell env forwards OTEL values without replacing shell-specific values", async () => {
+  const keys = ["OTEL_EXPORTER_OTLP_ENDPOINT", "OTEL_SERVICE_NAME"];
+  const saved = Object.fromEntries(keys.map((key) => [key, process.env[key]]));
+  try {
+    process.env.OTEL_EXPORTER_OTLP_ENDPOINT = "test-endpoint";
+    process.env.OTEL_SERVICE_NAME = "parent-service";
+    const output = { env: { PATH: "/usr/bin:/bin", OTEL_SERVICE_NAME: "shell-service" } };
+
+    await makeHook()({ sessionID: "otel-session" }, output);
+
+    assert.equal(output.env.OTEL_EXPORTER_OTLP_ENDPOINT, "test-endpoint");
+    assert.equal(output.env.OTEL_SERVICE_NAME, "shell-service");
+  } finally {
+    for (const key of keys) {
+      if (saved[key] === undefined) delete process.env[key];
+      else process.env[key] = saved[key];
+    }
+  }
 });
 
 test("headless shell preserves explicit worker lineage", async () => {

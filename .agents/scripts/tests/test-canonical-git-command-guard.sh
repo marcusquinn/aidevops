@@ -71,10 +71,12 @@ assert_allowed() {
 
 assert_blocked "blocks canonical detached switch" "git switch --detach main"
 GUIDANCE_OUTPUT=$(python3 "$GUARD" --cwd "$REPO" --command "git pull --ff-only origin main" 2>&1)
-if [[ "$GUIDANCE_OUTPUT" == *"canonical-recovery-helper.sh fast-forward-current"* ]]; then
-	pass "blocked canonical pull points to the audited fast-forward workflow"
+RECOVERY_HELPER="${SCRIPT_DIR}/canonical-recovery-helper.sh"
+QUOTED_RECOVERY_HELPER=$(python3 -c 'import shlex, sys; print(shlex.quote(sys.argv[1]))' "$RECOVERY_HELPER")
+if [[ "$GUIDANCE_OUTPUT" == *"${QUOTED_RECOVERY_HELPER} fast-forward-current"* && -x "$RECOVERY_HELPER" ]]; then
+	pass "blocked canonical pull points to an executable audited fast-forward workflow"
 else
-	fail "blocked canonical pull omits audited fast-forward guidance"
+	fail "blocked canonical pull omits executable audited fast-forward guidance"
 fi
 assert_blocked "blocks canonical branch rename" "git branch -m main safety/example"
 assert_blocked "blocks canonical branch creation with reflog flag" "git branch -l feature/new"
@@ -118,10 +120,15 @@ else
 fi
 
 assert_allowed "allows canonical status" "$REPO" "git status --short"
+assert_allowed "allows canonical diff-files query" "$REPO" "git diff-files --name-only"
 assert_allowed "allows canonical branch listing" "$REPO" "git branch -vv --no-abbrev"
 assert_allowed "allows canonical branch pattern listing" "$REPO" "git branch --list 'feature/*'"
 assert_allowed "allows canonical branch containment query" "$REPO" "git branch --contains main"
+assert_allowed "allows canonical ref format validation" "$REPO" "git check-ref-format --branch feature/valid-ref"
 assert_allowed "allows canonical ls-remote query" "$REPO" "git ls-remote origin refs/heads/main"
+assert_allowed "allows canonical rev-list tag query" "$REPO" "git rev-list -n 1 HEAD"
+assert_allowed "allows canonical rev-list count query" "$REPO" "git rev-list --count HEAD"
+assert_allowed "allows canonical rev-list root query" "$REPO" "git rev-list --max-parents=0 HEAD"
 assert_allowed "allows canonical symbolic-ref query" "$REPO" "git symbolic-ref refs/remotes/origin/HEAD"
 assert_allowed "allows canonical short symbolic-ref query" "$REPO" "git symbolic-ref --short refs/remotes/origin/HEAD"
 assert_allowed "allows reordered canonical symbolic-ref query flags" "$REPO" "git symbolic-ref refs/remotes/origin/HEAD --quiet --short"
@@ -129,6 +136,7 @@ assert_allowed "allows canonical non-recursive symbolic-ref query" "$REPO" "git 
 assert_allowed "allows canonical worktree creation" "$REPO" "git worktree add '$LINKED' -b feature/example"
 git -C "$REPO" worktree add -q -b feature/example "$LINKED"
 assert_allowed "allows normal Git mutation in linked worktree" "$LINKED" "git switch -c feature/linked-child"
+assert_allowed "allows rev-list query in linked worktree" "$LINKED" "git rev-list --count HEAD"
 
 git -C "$REPO" symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/develop
 DEFAULT_BRANCH=$(
@@ -151,6 +159,18 @@ elif [[ "$(git -C "$REPO" symbolic-ref --short refs/remotes/origin/HEAD)" == "or
 	pass "PATH shim blocks symbolic-ref mutation before execution"
 else
 	fail "PATH shim left canonical symbolic ref changed"
+fi
+
+VALID_REF_RC=0
+INVALID_REF_RC=0
+NATIVE_INVALID_REF_RC=0
+git check-ref-format --branch "invalid ref" >/dev/null 2>&1 || NATIVE_INVALID_REF_RC=$?
+(cd "$REPO" && PATH="${SCRIPT_DIR}:/usr/bin:/bin" "$SHIM" check-ref-format --branch feature/valid-ref >/dev/null) || VALID_REF_RC=$?
+(cd "$REPO" && PATH="${SCRIPT_DIR}:/usr/bin:/bin" "$SHIM" check-ref-format --branch "invalid ref" >/dev/null 2>&1) || INVALID_REF_RC=$?
+if [[ "$VALID_REF_RC" -eq 0 && "$NATIVE_INVALID_REF_RC" -ne 0 && "$INVALID_REF_RC" -eq "$NATIVE_INVALID_REF_RC" ]]; then
+	pass "PATH shim preserves native ref format validation"
+else
+	fail "PATH shim preserves native ref format validation (valid_rc=${VALID_REF_RC}, invalid_rc=${INVALID_REF_RC}, native_invalid_rc=${NATIVE_INVALID_REF_RC})"
 fi
 
 if (cd "$REPO" && PATH="${SCRIPT_DIR}:$PATH" "$SHIM" switch --detach main >/dev/null 2>&1); then
@@ -187,6 +207,14 @@ ln -s "$GUARD" "${OLD_BUNDLE}/canonical-git-command-guard.py"
 ln -s "$GUARD" "${NEW_BUNDLE}/canonical-git-command-guard.py"
 ln -s "${SCRIPT_DIR}/canonical_git_policy.py" "${OLD_BUNDLE}/canonical_git_policy.py"
 ln -s "${SCRIPT_DIR}/canonical_git_policy.py" "${NEW_BUNDLE}/canonical_git_policy.py"
+ln -s "${SCRIPT_DIR}/canonical_git_invocation.py" "${OLD_BUNDLE}/canonical_git_invocation.py"
+ln -s "${SCRIPT_DIR}/canonical_git_invocation.py" "${NEW_BUNDLE}/canonical_git_invocation.py"
+ln -s "${SCRIPT_DIR}/canonical_git_readonly.py" "${OLD_BUNDLE}/canonical_git_readonly.py"
+ln -s "${SCRIPT_DIR}/canonical_git_readonly.py" "${NEW_BUNDLE}/canonical_git_readonly.py"
+ln -s "${SCRIPT_DIR}/canonical_git_ref_queries.py" "${OLD_BUNDLE}/canonical_git_ref_queries.py"
+ln -s "${SCRIPT_DIR}/canonical_git_ref_queries.py" "${NEW_BUNDLE}/canonical_git_ref_queries.py"
+ln -s "${SCRIPT_DIR}/canonical_git_repository.py" "${OLD_BUNDLE}/canonical_git_repository.py"
+ln -s "${SCRIPT_DIR}/canonical_git_repository.py" "${NEW_BUNDLE}/canonical_git_repository.py"
 ln -s "${SCRIPT_DIR}/canonical_shell_parser.py" "${OLD_BUNDLE}/canonical_shell_parser.py"
 ln -s "${SCRIPT_DIR}/canonical_shell_parser.py" "${NEW_BUNDLE}/canonical_shell_parser.py"
 if (cd "$REPO" && env PATH="${OLD_BUNDLE}:${NEW_BUNDLE}:/usr/bin:/bin" "${OLD_BUNDLE}/git" status --short >/dev/null); then

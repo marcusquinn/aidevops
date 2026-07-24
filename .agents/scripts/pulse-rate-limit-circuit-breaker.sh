@@ -46,15 +46,20 @@
 #   `pulse_dispatch_circuit_broken` in ~/.aidevops/logs/pulse-stats.json
 #   (via pulse-stats-helper.sh). Surfaced by `aidevops status`.
 #
-# Multi-runner: Each runner polls `gh api rate_limit` independently. All runners
-# share the same GitHub token and see the same budget — per-runner polling is
-# correct without shared state files.
+# Multi-runner: concurrent local runners share a short-lived, auth-scoped rate
+# snapshot and single-flight probe. Remote runners retain independent local state.
 #
 # Cost: `gh api rate_limit` is a free endpoint (not counted against quotas).
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit 1
+
+# shellcheck source=./shared-gh-request-state.sh
+if [[ -f "${SCRIPT_DIR}/shared-gh-request-state.sh" ]]; then
+	# shellcheck disable=SC1091
+	source "${SCRIPT_DIR}/shared-gh-request-state.sh"
+fi
 
 # Source pulse-stats-helper.sh for counter support (optional — fail-open if missing).
 # shellcheck source=pulse-stats-helper.sh
@@ -121,6 +126,14 @@ _cb_gh_read() {
 }
 
 #######################################
+# Fetch the full rate-limit projection through the circuit breaker's timeout.
+#######################################
+_cb_rate_limit_transport() {
+	_cb_gh_read gh api rate_limit
+	return $?
+}
+
+#######################################
 # Read GitHub rate-limit state with a short TTL cache.
 #
 # Args:
@@ -130,33 +143,15 @@ _cb_gh_read() {
 #######################################
 _cb_rate_limit_json() {
 	local mode="${1:-normal}"
-	local now="" cached_ts="" age="" rate_json="" tmp=""
-	now=$(date +%s 2>/dev/null) || now=0
-
-	if [[ -f "$_CB_RL_CACHE_FILE" ]]; then
-		cached_ts=$(jq -r '.ts // 0' "$_CB_RL_CACHE_FILE" 2>/dev/null) || cached_ts=0
-		[[ "$cached_ts" =~ ^[0-9]+$ ]] || cached_ts=0
-		age=$((now - cached_ts))
-		if [[ "$mode" == "$_CB_RL_MODE_CACHED_ONLY" ]] || { [[ "$_CB_RL_CACHE_TTL" =~ ^[0-9]+$ ]] && [[ "$age" -ge 0 ]] && [[ "$age" -lt "$_CB_RL_CACHE_TTL" ]]; }; then
-			rate_json=$(jq -c '.rate // empty' "$_CB_RL_CACHE_FILE" 2>/dev/null) || rate_json=""
-			if [[ -n "$rate_json" && "$rate_json" != "null" ]]; then
-				printf '%s\n' "$rate_json"
-				return 0
-			fi
-		fi
+	local ttl="$_CB_RL_CACHE_TTL"
+	[[ "$ttl" =~ ^[0-9]+$ ]] || ttl=20
+	if declare -F gh_request_state_rate_json >/dev/null 2>&1; then
+		gh_request_state_rate_json "$mode" "$ttl" _cb_rate_limit_transport
+		return $?
 	fi
-
 	[[ "$mode" == "$_CB_RL_MODE_CACHED_ONLY" ]] && return 1
-
-	rate_json=$(_cb_gh_read gh api rate_limit 2>/dev/null) || return 1
-	[[ -n "$rate_json" ]] || return 1
-	mkdir -p "${_CB_RL_CACHE_FILE%/*}" 2>/dev/null || true
-	tmp=$(mktemp "${_CB_RL_CACHE_FILE}.XXXXXX" 2>/dev/null) || tmp=""
-	if [[ -n "$tmp" ]]; then
-		printf '{"ts":%s,"rate":%s}\n' "$now" "$rate_json" >"$tmp" 2>/dev/null && mv "$tmp" "$_CB_RL_CACHE_FILE" 2>/dev/null || rm -f "$tmp" 2>/dev/null || true
-	fi
-	printf '%s\n' "$rate_json"
-	return 0
+	_cb_rate_limit_transport
+	return $?
 }
 
 #######################################

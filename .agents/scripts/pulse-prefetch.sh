@@ -97,6 +97,9 @@ prefetch_state() {
 		return 1
 	fi
 
+	# GH#27777: record only count + deterministic digest, never raw repo names.
+	_prefetch_record_efficiency_population "$repo_entries"
+
 	# GH#19963: Batch prefetch via org-level gh search (L3 cache layer).
 	_prefetch_batch_refresh
 

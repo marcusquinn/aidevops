@@ -51,6 +51,7 @@ setup_test_env() {
 	export TEST_WORKER_SLEEP_SECONDS="2"
 	unset TEST_INITIAL_PR_HEAD_SHA
 	unset TEST_INITIAL_PR_HEAD_EMPTY
+	unset TEST_WORKTREE_ADD_FAIL
 	export AIDEVOPS_CI_REPAIR_STATE_DIR="${TEST_ROOT}/repair-state"
 	export AIDEVOPS_CI_REPAIR_WORKTREE_BASE_DIR="${TEST_ROOT}/worktrees"
 	export AIDEVOPS_HEADLESS_RUNTIME_DIR="${TEST_ROOT}/headless-runtime"
@@ -78,6 +79,10 @@ case "$action" in
 add)
 	branch="${1:-}"
 	path="${2:-}"
+	if [[ "${TEST_WORKTREE_ADD_FAIL:-0}" == "1" ]]; then
+		printf 'worktree add failed %s %s\n' "$branch" "$path" >>"${GH_LOG}"
+		exit 1
+	fi
 	shift 2
 	base=""
 	while [[ $# -gt 0 ]]; do
@@ -259,6 +264,7 @@ define_process_helper() {
 	[[ -n "$review_gate_src" && -n "$fn_src" ]] || return 1
 
 	_OW_LABEL_PAT=",origin:worker,"
+	PULSE_UNKNOWN_STATE="UNKNOWN"
 	PULSE_MERGE_CLOSE_CONFLICTING=false
 	DRY_RUN=0
 	GATE_CALLS=0
@@ -279,6 +285,7 @@ define_process_helper() {
 
 	_resolve_pr_mergeable_status() { local pr_number="$1" repo_slug="$2" mergeable="$3"; [[ -n "$pr_number$repo_slug$mergeable" ]]; RESOLVE_CALLS=$((RESOLVE_CALLS + 1)); return 0; }
 	_pmp_refresh_unknown_mergeable_state_into() { local dest_var="$1" pr_number="$2" repo_slug="$3" mergeable="$4"; [[ -n "$pr_number$repo_slug$mergeable" ]]; printf -v "$dest_var" '%s' "$REFRESHED_MERGEABLE"; return 0; }
+	_pmp_normalize_pr_lifecycle_state_into() { local dest_var="$1"; local raw_state="$2"; local normalized_state=""; case "$raw_state" in [Oo][Pp][Ee][Nn]) normalized_state="OPEN" ;; [Cc][Ll][Oo][Ss][Ee][Dd]) normalized_state="CLOSED" ;; [Mm][Ee][Rr][Gg][Ee][Dd]) normalized_state="MERGED" ;; *) normalized_state="$raw_state" ;; esac; printf -v "$dest_var" '%s' "$normalized_state"; return 0; }
 	_pmp_normalize_review_decision_into() { local dest_var="$1" raw_decision="$2" normalized_decision=""; case "$raw_decision" in CHANGES_REQUESTED|APPROVED|REVIEW_REQUIRED|NONE) normalized_decision="$raw_decision" ;; ''|null|NULL|UNKNOWN|unknown) normalized_decision="UNKNOWN" ;; *) normalized_decision="$raw_decision" ;; esac; printf -v "$dest_var" '%s' "$normalized_decision"; return 0; }
 	_pmp_review_decision_is_unknown() { local raw_decision="$1" _test_normalized_decision=""; _pmp_normalize_review_decision_into _test_normalized_decision "$raw_decision"; [[ "$_test_normalized_decision" == "UNKNOWN" ]]; return $?; }
 	_pmp_refresh_unknown_review_decision_into() { local dest_var="$1" pr_number="$2" repo_slug="$3" review_decision="$4"; [[ -n "$pr_number$repo_slug$review_decision" ]]; REVIEW_REFRESH_CALLS=$((REVIEW_REFRESH_CALLS + 1)); printf -v "$dest_var" '%s' "$REFRESHED_REVIEW_DECISION"; return 0; }
@@ -302,9 +309,12 @@ define_process_helper() {
 	_set_native_auto_merge_or_skip() { return 0; }
 	_pulse_merge_changes_requested_thread_remediation_first_enabled() { return 1; }
 	_pulse_merge_preflight_snapshot_gate() { _PULSE_MERGE_PREFLIGHT_BLOCKING_CHECKS_JSON="$PREFLIGHT_EVIDENCE"; return "$PREFLIGHT_RC"; }
+	_pulse_merge_final_trust_gate() { _PULSE_FINAL_REQUIRES_SYNCHRONOUS_MERGE=0; _PULSE_MERGE_PREFLIGHT_BLOCKING_CHECKS_JSON="$PREFLIGHT_EVIDENCE"; return "$PREFLIGHT_RC"; }
+	_pulse_merge_maybe_dispatch_preflight_remediation() { return 0; }
 	_close_conflicting_pr() { return 0; }
 	_pmp_normalize_mergeable_state_into() { return 0; }
-	printf -v PR_OBJECT '%s' '{"number":100,"mergeable":"MERGEABLE","reviewDecision":"","author":{"login":"worker-bot"},"title":"t1: fix"}'
+	gh_pr_view() { gh pr view "$@"; return $?; }
+	printf -v PR_OBJECT '%s' '{"number":100,"state":"OPEN","mergeable":"MERGEABLE","reviewDecision":"","author":{"login":"worker-bot"},"title":"t1: fix"}'
 
 	# shellcheck disable=SC1090
 	eval "$review_gate_src"
@@ -333,6 +343,7 @@ define_feedback_helpers() {
 		_ci_repair_status_dispatched
 		_ci_repair_result_active
 		_ci_repair_result_exhausted
+		_ci_repair_result_retryable
 		_ci_repair_claim_next_attempt
 		_ci_repair_latest_archive
 		_ci_repair_prepare_attempt
@@ -363,6 +374,7 @@ exit 0
 EOF
 	chmod +x "${TEST_ROOT}/bin/git"
 	gh_issue_edit_safe() { gh issue edit "$@"; return $?; }
+	_pmrc_rerun_infrastructure_check() { local repo_slug="$1"; local pr_number="$2"; local check_name="$3"; local check_url="$4"; printf '%s|%s|%s|%s\n' "$repo_slug" "$pr_number" "$check_name" "$check_url" >>"${TEST_ROOT}/infra-rerun-calls.log"; return 0; }
 	_emit_ci_failure_guidance_blocks() { return 0; }
 	_classify_ci_failures_by_pattern() { local failing_names="$1"; printf '%s' "$failing_names" >"${TEST_ROOT}/classified-names.txt"; return 0; }
 	_pulse_merge_repo_path_for_slug() { local repo_slug="$1"; [[ -n "$repo_slug" ]]; printf '%s\n' "${TEST_ROOT}/repo"; return 0; }
@@ -444,7 +456,7 @@ test_changes_requested_unknown_routes_before_mergeable_skip() {
 	define_process_helper || { print_result "defines process helper for review routing" 1 "could not extract _process_single_ready_pr or review gate"; teardown_test_env; return 0; }
 
 	local pr_object rc=0
-	printf -v pr_object '%s' '{"number":554,"mergeable":"UNKNOWN","reviewDecision":"CHANGES_REQUESTED","author":{"login":"worker-bot"},"title":"GH#500: fix","updatedAt":"2026-06-21T00:00:00Z","headRefOid":"sha554","headRefName":"fix/review","baseRefName":"main","labels":[{"name":"origin:worker"},{"name":"status:in-review"}],"isDraft":false}'
+	printf -v pr_object '%s' '{"number":554,"state":"OPEN","mergeable":"UNKNOWN","reviewDecision":"CHANGES_REQUESTED","author":{"login":"worker-bot"},"title":"GH#500: fix","updatedAt":"2026-06-21T00:00:00Z","headRefOid":"sha554","headRefName":"fix/review","baseRefName":"main","labels":[{"name":"origin:worker"},{"name":"status:in-review"}],"isDraft":false}'
 	_process_single_ready_pr "owner/repo" "$pr_object" || rc=$?
 
 	if [[ "$rc" -ne 1 ]]; then
@@ -466,7 +478,7 @@ test_rest_missing_review_decision_refreshes_before_ci_route() {
 
 	local pr_object rc=0
 	REFRESHED_REVIEW_DECISION="CHANGES_REQUESTED"
-	printf -v pr_object '%s' '{"number":557,"mergeable":"MERGEABLE","reviewDecision":null,"author":{"login":"worker-bot"},"title":"GH#502: fix","updatedAt":"2026-06-21T00:00:00Z","headRefOid":"sha557","headRefName":"fix/rest-review","baseRefName":"main","labels":[{"name":"origin:worker"},{"name":"status:in-review"}],"isDraft":false}'
+	printf -v pr_object '%s' '{"number":557,"state":"OPEN","mergeable":"MERGEABLE","reviewDecision":null,"author":{"login":"worker-bot"},"title":"GH#502: fix","updatedAt":"2026-06-21T00:00:00Z","headRefOid":"sha557","headRefName":"fix/rest-review","baseRefName":"main","labels":[{"name":"origin:worker"},{"name":"status:in-review"}],"isDraft":false}'
 	_process_single_ready_pr "owner/repo" "$pr_object" || rc=$?
 
 	if [[ "$rc" -ne 1 ]]; then
@@ -491,7 +503,7 @@ test_coderabbit_nits_ok_dismissed_once_before_late_gate() {
 	local pr_object rc=0
 	DRY_RUN=0
 	PR_REQUIRED_CHECKS_RC=0
-	printf -v pr_object '%s' '{"number":555,"mergeable":"UNKNOWN","reviewDecision":"CHANGES_REQUESTED","author":{"login":"worker-bot"},"title":"GH#501: fix","updatedAt":"2026-06-21T00:00:00Z","headRefOid":"sha555","headRefName":"fix/nits","baseRefName":"main","labels":[{"name":"origin:worker"},{"name":"status:in-review"},{"name":"coderabbit-nits-ok"}],"isDraft":false}'
+	printf -v pr_object '%s' '{"number":555,"state":"OPEN","mergeable":"UNKNOWN","reviewDecision":"CHANGES_REQUESTED","author":{"login":"worker-bot"},"title":"GH#501: fix","updatedAt":"2026-06-21T00:00:00Z","headRefOid":"sha555","headRefName":"fix/nits","baseRefName":"main","labels":[{"name":"origin:worker"},{"name":"status:in-review"},{"name":"coderabbit-nits-ok"}],"isDraft":false}'
 	_process_single_ready_pr "owner/repo" "$pr_object" || rc=$?
 
 	if [[ "$rc" -ne 4 ]]; then
@@ -509,7 +521,7 @@ test_coderabbit_nits_ok_dismissed_once_before_late_gate() {
 	return 0
 }
 
-test_changes_requested_explicit_empty_labels_skip_refetch() {
+test_changes_requested_empty_labels_refresh_current_metadata() {
 	setup_test_env
 	define_process_helper || { print_result "defines process helper for explicit empty labels" 1 "could not extract review gate"; teardown_test_env; return 0; }
 
@@ -519,12 +531,12 @@ test_changes_requested_explicit_empty_labels_skip_refetch() {
 	local label_fetch_count=0
 	label_fetch_count=$(grep -c -- '--json labels' "$GH_LOG" || true)
 	[[ "$label_fetch_count" =~ ^[0-9]+$ ]] || label_fetch_count=0
-	if [[ "$label_fetch_count" -ne 0 ]]; then
-		print_result "explicit empty PR labels do not refetch labels" 1 "label_fetch_count=${label_fetch_count}"
+	if [[ "$label_fetch_count" -ne 1 ]]; then
+		print_result "empty PR labels refresh current metadata once" 1 "label_fetch_count=${label_fetch_count}"
 	elif [[ "$ROUTE_CALLS" -ne 1 || "$ROUTE_ARGS" != "556|owner/repo|42|review" ]]; then
-		print_result "explicit empty PR labels do not refetch labels" 1 "route_calls=${ROUTE_CALLS}, route_args=${ROUTE_ARGS}"
+		print_result "refreshed empty PR labels preserve review routing" 1 "route_calls=${ROUTE_CALLS}, route_args=${ROUTE_ARGS}"
 	else
-		print_result "explicit empty PR labels do not refetch labels" 0
+		print_result "empty PR labels refresh current metadata before review routing" 0
 	fi
 	teardown_test_env
 	return 0
@@ -832,8 +844,34 @@ test_ci_feedback_skips_github_api_rate_limit_failure() {
 		print_result "GitHub API rate limit does not dispatch code repair" 1 "Dispatch log: $(cat "$GH_LOG")"
 	elif ! grep -qF 'classified as infrastructure failure' "$LOGFILE"; then
 		print_result "GitHub API rate limit records infrastructure classification" 1 "Log: $(cat "$LOGFILE")"
+	elif ! grep -qF 'owner/repo|100|Lint|https://github.com/owner/repo/actions/runs/123/job/456' "${TEST_ROOT}/infra-rerun-calls.log" 2>/dev/null; then
+		print_result "GitHub API rate limit requests bounded infrastructure rerun" 1 "Rerun calls missing or incorrect"
 	else
-		print_result "GitHub API installation limit is classified as infrastructure" 0
+		print_result "GitHub API installation limit requests bounded infrastructure rerun" 0
+	fi
+	teardown_test_env
+	return 0
+}
+
+test_ci_repair_preserves_pr_until_launch_retries_exhausted() {
+	setup_test_env
+	export TEST_WORKTREE_ADD_FAIL="1"
+	define_feedback_helpers || { print_result "defines feedback helpers for retryable launch failures" 1 "could not extract feedback helpers"; teardown_test_env; return 0; }
+
+	local first_close_count=0 second_close_count=0 final_close_count=0
+	_dispatch_ci_fix_worker "100" "owner/repo" "42"
+	first_close_count=$(grep -cF 'gh pr close 100' "$GH_LOG" || true)
+	_dispatch_ci_fix_worker "100" "owner/repo" "42"
+	second_close_count=$(grep -cF 'gh pr close 100' "$GH_LOG" || true)
+	_dispatch_ci_fix_worker "100" "owner/repo" "42"
+	final_close_count=$(grep -cF 'gh pr close 100' "$GH_LOG" || true)
+
+	if [[ "$first_close_count" -ne 0 || "$second_close_count" -ne 0 ]]; then
+		print_result "retryable CI repair failures preserve the PR" 1 "close counts before exhaustion: first=${first_close_count}, second=${second_close_count}"
+	elif [[ "$final_close_count" -ne 1 ]]; then
+		print_result "exhausted CI repair failures take one durable fallback" 1 "final close count=${final_close_count}; GH log: $(cat "$GH_LOG")"
+	else
+		print_result "CI repair preserves the PR until bounded launch retries exhaust" 0
 	fi
 	teardown_test_env
 	return 0
@@ -964,7 +1002,7 @@ main() {
 	test_changes_requested_unknown_routes_before_mergeable_skip
 	test_rest_missing_review_decision_refreshes_before_ci_route
 	test_coderabbit_nits_ok_dismissed_once_before_late_gate
-	test_changes_requested_explicit_empty_labels_skip_refetch
+	test_changes_requested_empty_labels_refresh_current_metadata
 	test_ci_repair_dedupes_identical_evidence_for_same_head
 	test_ci_repair_dedupes_changed_evidence_for_same_head
 	test_ci_repair_respects_live_legacy_lease
@@ -981,6 +1019,7 @@ main() {
 	test_ci_feedback_skips_registry_rate_limit_failure
 	test_ci_feedback_skips_dockerhub_pull_rate_limit_failure
 	test_ci_feedback_skips_github_api_rate_limit_failure
+	test_ci_repair_preserves_pr_until_launch_retries_exhausted
 	test_ci_repair_recovers_one_stale_lease_then_exhausts
 	test_ci_repair_consumes_abandoned_append_only_claim
 	test_ci_repair_waits_for_prelock_startup_before_retry

@@ -8,7 +8,10 @@ mode: subagent
 
 Complex, multi-session work requiring research, design decisions, and detailed tracking.
 
-Based on [OpenAI's PLANS.md](https://cookbook.openai.com/articles/codex_exec_plans) with TOON-enhanced parsing and [Beads](https://github.com/steveyegge/beads) integration for dependency visualization.
+Based on [OpenAI's PLANS.md](https://cookbook.openai.com/articles/codex_exec_plans)
+with TOON-enhanced parsing and
+[Beads](https://github.com/steveyegge/beads) integration
+for dependency visualization.
 
 <!--TOON:meta{version,format,updated}:
 1.0,plans-md+toon,{{DATE}}
@@ -17,6 +20,7 @@ Based on [OpenAI's PLANS.md](https://cookbook.openai.com/articles/codex_exec_pla
 ## Format
 
 Each plan includes:
+
 - **Plan ID**: `p001`, `p002`, etc. (for cross-referencing)
 - **Status**: Planning / In Progress (Phase X/Y) / Blocked / Completed
 - **Time Estimate**: `~2w (ai:1w test:0.5w read:0.5w)`
@@ -30,13 +34,16 @@ Each plan includes:
 
 ### Linkage (The Pin)
 
-Based on [Loom's spec-as-lookup-table pattern](https://ghuntley.com/ralph/), each plan should include a Linkage section that functions as a lookup table for AI search:
+Based on [Loom's spec-as-lookup-table pattern](https://ghuntley.com/ralph/),
+each plan should include a Linkage section that functions as a lookup table for
+AI search:
 
 | Concept | Files | Lines | Synonyms |
-|---------|-------|-------|----------|
+| --------- | ------- | ------- | ---------- |
 | {concept} | {file path} | {line range} | {related terms} |
 
 **Why this matters:**
+
 - Reduces hallucination by providing explicit anchors
 - Improves search hit-rate with synonyms
 - Points to exact file hunks for context
@@ -93,7 +100,7 @@ Brief description of why this work matters.
 | Language/runtime | e.g. Python 3.12, Node 20 |
 | Venv/install | e.g. `python3 -m venv .venv && pip install -e ".[dev]"` |
 | Tests | e.g. `source .venv/bin/activate && pytest` |
-| Do NOT | e.g. install globally; run `pip install -e` from worktree using canonical venv |
+| Do NOT | e.g. install globally; use the canonical worktree venv |
 
 #### Linkage (The Pin)
 

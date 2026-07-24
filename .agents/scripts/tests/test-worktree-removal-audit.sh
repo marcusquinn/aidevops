@@ -31,6 +31,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 AUDIT_HELPER="${SCRIPT_DIR}/../audit-worktree-removal-helper.sh"
+COMMANDS_HELPER="${SCRIPT_DIR}/../worktree-helper-cmds.sh"
 
 TESTS_RUN=0
 TESTS_PASSED=0
@@ -192,11 +193,17 @@ test_should_skip_cleanup_owned_skip_logs() {
 	(
 		RED='' NC=''
 		is_worktree_owned_by_others() { return 0; }
-		check_worktree_owner()         { echo "99999|session-stub"; return 0; }
-		worktree_is_in_grace_period()  { return 1; }
-		get_validated_grace_hours()    { echo "4"; return 0; }
-		worktree_has_changes()         { return 1; }
-		branch_has_zero_commits_ahead(){ return 1; }
+		check_worktree_owner() {
+			echo "99999|session-stub"
+			return 0
+		}
+		worktree_is_in_grace_period() { return 1; }
+		get_validated_grace_hours() {
+			echo "4"
+			return 0
+		}
+		worktree_has_changes() { return 1; }
+		branch_has_zero_commits_ahead() { return 1; }
 
 		export AIDEVOPS_CLEANUP_LOG="$log_file"
 		unset _AUDIT_WORKTREE_REMOVAL_HELPER_LOADED 2>/dev/null || true
@@ -247,7 +254,7 @@ test_idempotent_sourcing() {
 	# shellcheck source=../audit-worktree-removal-helper.sh
 	source "$AUDIT_HELPER"
 	# shellcheck source=../audit-worktree-removal-helper.sh
-	source "$AUDIT_HELPER"  # second source — guard makes this a no-op
+	source "$AUDIT_HELPER" # second source — guard makes this a no-op
 
 	log_worktree_removal_event "$_WTAR_REMOVED" "test.sh" "/wt" "manual" "trash"
 
@@ -345,7 +352,13 @@ test_permanent_helper_removes_and_logs() {
 	source "$AUDIT_HELPER"
 
 	local rc=0
-	remove_worktree_path_permanently "$wt_path" "test.sh" "age-eligible" || rc=$?
+	(
+		capture_worktree_process_cwds() {
+			printf '/\n'
+			return 0
+		}
+		remove_worktree_path_permanently "$wt_path" "test.sh" "age-eligible"
+	) || rc=$?
 	[[ ! -e "$wt_path" ]] || rc=1
 	assert_file_contains "$log_file" "worktree-removed.*age-eligible.*mode=permanent" || rc=1
 	print_result "permanent_helper_removes_and_logs" "$rc" \
@@ -398,6 +411,379 @@ test_process_cwd_guard_refuses_empty_paths() {
 }
 
 # =============================================================================
+# Test 12: snapshot collection failures block removal, while an explicitly
+# supplied empty successful snapshot avoids a second platform scan.
+# =============================================================================
+test_process_cwd_snapshot_failure_is_fail_closed() {
+	local log_file="${TEST_DIR}/t12-cleanup.log"
+	local wt_path="${TEST_DIR}/snapshot-failure-wt"
+	local rc=0
+	export AIDEVOPS_CLEANUP_LOG="$log_file"
+	mkdir -p "$wt_path"
+
+	unset _AUDIT_WORKTREE_REMOVAL_HELPER_LOADED 2>/dev/null || true
+	# shellcheck source=../audit-worktree-removal-helper.sh
+	source "$AUDIT_HELPER"
+	capture_worktree_process_cwds() { return 1; }
+	if worktree_removal_guard "$wt_path" "test.sh" "manual"; then
+		rc=1
+	fi
+	assert_file_contains "$log_file" "worktree-skipped.*cwd-visibility-unusable" || rc=1
+	if ! worktree_removal_guard "$wt_path" "test.sh" "manual" ""; then
+		rc=1
+	fi
+	print_result "process_cwd_snapshot_failure_is_fail_closed" "$rc" \
+		"Expected collection failure to block and explicit empty snapshot to pass"
+	return 0
+}
+
+# =============================================================================
+# Test 13: each platform backend fails closed when it cannot publish any cwd
+# target instead of treating an empty snapshot as authoritative.
+# =============================================================================
+test_snapshot_backend_requires_visible_target() {
+	local rc=0
+	unset _AUDIT_WORKTREE_REMOVAL_HELPER_LOADED 2>/dev/null || true
+	# shellcheck source=../audit-worktree-removal-helper.sh
+	source "$AUDIT_HELPER"
+
+	if [[ -d /proc ]]; then
+		if (
+			readlink() { return 1; }
+			capture_worktree_process_cwds >/dev/null
+		); then
+			rc=1
+		fi
+	else
+		if (
+			lsof() { return 0; }
+			capture_worktree_process_cwds >/dev/null
+		); then
+			rc=1
+		fi
+	fi
+	print_result "snapshot_backend_requires_visible_target" "$rc" \
+		"Expected an empty process-cwd backend result to fail closed"
+	return 0
+}
+
+# =============================================================================
+# The macOS lsof backend distinguishes complete output, partial/permission-
+# limited output, and empty unusable output. Absence-only output never proves a
+# candidate inactive.
+# =============================================================================
+test_lsof_snapshot_visibility_states() {
+	local output=""
+	local capture_status=0
+	local rc=0
+
+	if output=$(
+		lsof() { return 0; }
+		_capture_worktree_lsof_cwds
+	); then
+		capture_status=0
+	else
+		capture_status=$?
+	fi
+	[[ "$capture_status" -eq 1 && -z "$output" ]] || rc=1
+
+	if output=$(
+		lsof() {
+			printf 'p123\nn/visible-lsof-cwd\n'
+			return 1
+		}
+		_capture_worktree_lsof_cwds
+	); then
+		capture_status=0
+	else
+		capture_status=$?
+	fi
+	[[ "$capture_status" -eq "$_WT_CWD_CAPTURE_DEGRADED_RC" ]] || rc=1
+	[[ "$output" == "/visible-lsof-cwd" ]] || rc=1
+
+	if output=$(
+		lsof() {
+			printf 'p123\nn/complete-lsof-cwd\n'
+			return 0
+		}
+		_capture_worktree_lsof_cwds
+	); then
+		capture_status=0
+	else
+		capture_status=$?
+	fi
+	[[ "$capture_status" -eq 0 && "$output" == "/complete-lsof-cwd" ]] || rc=1
+	print_result "lsof_snapshot_visibility_states" "$rc" \
+		"Expected empty lsof to be unusable and partial lsof output to be degraded"
+	return 0
+}
+
+# =============================================================================
+# Test 14: a partially visible /proc snapshot preserves readable evidence and
+# reports degraded visibility instead of aliasing it to a total failure.
+# =============================================================================
+test_proc_snapshot_preserves_degraded_visibility() {
+	local proc_root="${TEST_DIR}/fake-proc"
+	local output=""
+	local capture_status=0
+	local rc=0
+	mkdir -p "${proc_root}/1" "${proc_root}/2"
+	ln -s /visible-cwd "${proc_root}/1/cwd"
+	ln -s /hidden-cwd "${proc_root}/2/cwd"
+
+	if output=$(
+		readlink() {
+			local link_path="$1"
+			if [[ "$link_path" == */1/cwd ]]; then
+				printf '/visible-cwd\n'
+				return 0
+			fi
+			return 1
+		}
+		_capture_worktree_proc_cwds "$proc_root"
+	); then
+		capture_status=0
+	else
+		capture_status=$?
+	fi
+	[[ "$capture_status" -eq "$_WT_CWD_CAPTURE_DEGRADED_RC" ]] || rc=1
+	[[ "$output" == "/visible-cwd" ]] || rc=1
+	print_result "proc_snapshot_preserves_degraded_visibility" "$rc" \
+		"Expected unreadable unknown ownership to preserve visible cwd evidence with degraded status"
+	return 0
+}
+
+# =============================================================================
+# Linux /proc entries that are unreadable but provably foreign do not invalidate
+# otherwise usable evidence.
+# =============================================================================
+test_proc_snapshot_skips_foreign_uid_unreadable_entry() {
+	local proc_root="${TEST_DIR}/fake-proc-foreign"
+	local current_uid=""
+	local foreign_uid=""
+	local output=""
+	local rc=0
+	current_uid=$(id -u)
+	foreign_uid=$((current_uid + 1))
+	mkdir -p "${proc_root}/1" "${proc_root}/2"
+	ln -s /visible-cwd "${proc_root}/1/cwd"
+	ln -s /foreign-cwd "${proc_root}/2/cwd"
+	printf 'Uid:\t%s\t%s\t%s\t%s\n' \
+		"$foreign_uid" "$foreign_uid" "$foreign_uid" "$foreign_uid" >"${proc_root}/2/status"
+
+	output=$(
+		readlink() {
+			local link_path="$1"
+			[[ "$link_path" == */1/cwd ]] || return 1
+			printf '/visible-cwd\n'
+			return 0
+		}
+		_capture_worktree_proc_cwds "$proc_root"
+	) || rc=1
+	[[ "$output" == "/visible-cwd" ]] || rc=1
+	print_result "proc_snapshot_skips_foreign_uid_unreadable_entry" "$rc" \
+		"Expected foreign unreadable cwd to be skipped without hiding visible evidence"
+	return 0
+}
+
+# =============================================================================
+# Same-UID unreadability is explicitly degraded while preserving readable cwd
+# evidence for candidate-specific positive matching.
+# =============================================================================
+test_proc_snapshot_marks_same_uid_unreadable_entry_degraded() {
+	local proc_root="${TEST_DIR}/fake-proc-same-uid"
+	local current_uid=""
+	local output=""
+	local capture_status=0
+	local rc=0
+	current_uid=$(id -u)
+	mkdir -p "${proc_root}/1" "${proc_root}/2"
+	ln -s /visible-cwd "${proc_root}/1/cwd"
+	ln -s /same-user-cwd "${proc_root}/2/cwd"
+	printf 'Uid:\t%s\t%s\t%s\t%s\n' \
+		"$current_uid" "$current_uid" "$current_uid" "$current_uid" >"${proc_root}/2/status"
+
+	if output=$(
+		readlink() {
+			local link_path="$1"
+			[[ "$link_path" == */1/cwd ]] || return 1
+			printf '/visible-cwd\n'
+			return 0
+		}
+		_capture_worktree_proc_cwds "$proc_root"
+	); then
+		capture_status=0
+	else
+		capture_status=$?
+	fi
+	[[ "$capture_status" -eq "$_WT_CWD_CAPTURE_DEGRADED_RC" ]] || rc=1
+	[[ "$output" == "/visible-cwd" ]] || rc=1
+	print_result "proc_snapshot_marks_same_uid_unreadable_entry_degraded" "$rc" \
+		"Expected simulated same-UID EACCES to return degraded status with visible evidence intact"
+	return 0
+}
+
+# =============================================================================
+# Degraded visibility is candidate-specific: unrelated readable CWDs require a
+# recoverable path, while any readable target inside the candidate hard-blocks.
+# =============================================================================
+test_degraded_visibility_preserves_positive_candidate_match() {
+	local log_file="${TEST_DIR}/degraded-candidate-cleanup.log"
+	local wt_path="${TEST_DIR}/degraded-candidate"
+	local guard_status=0
+	local rc=0
+	export AIDEVOPS_CLEANUP_LOG="$log_file"
+	mkdir -p "$wt_path"
+
+	if worktree_removal_guard "$wt_path" "test.sh" "manual" "/unrelated-readable-cwd" \
+		"$_WT_CWD_VISIBILITY_DEGRADED"; then
+		guard_status=0
+	else
+		guard_status=$?
+	fi
+	[[ "$guard_status" -eq "$_WT_CWD_CAPTURE_DEGRADED_RC" ]] || rc=1
+	[[ "${WORKTREE_REMOVAL_GUARD_REASON:-}" == "$_WT_CWD_REASON_DEGRADED" ]] || rc=1
+
+	if worktree_removal_guard "$wt_path" "test.sh" "manual" "$wt_path/active-shell" \
+		"$_WT_CWD_VISIBILITY_DEGRADED"; then
+		guard_status=0
+	else
+		guard_status=$?
+	fi
+	[[ "$guard_status" -eq 1 ]] || rc=1
+	[[ "${WORKTREE_REMOVAL_GUARD_REASON:-}" == "active-cwd" ]] || rc=1
+	assert_file_contains "$log_file" "worktree-skipped.*cwd-visibility-degraded.*mode=recoverable-required" || rc=1
+	assert_file_contains "$log_file" "worktree-skipped.*active-cwd.*mode=skipped" || rc=1
+	print_result "degraded_visibility_preserves_positive_candidate_match" "$rc" \
+		"Expected unrelated denial to be recoverable-only and readable candidate CWD to hard-block"
+	return 0
+}
+
+# =============================================================================
+# Foreign skips alone are not usable evidence: an empty snapshot still blocks
+# destructive cleanup.
+# =============================================================================
+test_proc_snapshot_requires_usable_evidence_after_foreign_skips() {
+	local proc_root="${TEST_DIR}/fake-proc-foreign-only"
+	local current_uid=""
+	local foreign_uid=""
+	local rc=0
+	current_uid=$(id -u)
+	foreign_uid=$((current_uid + 1))
+	mkdir -p "${proc_root}/1"
+	ln -s /foreign-cwd "${proc_root}/1/cwd"
+	printf 'Uid:\t%s\t%s\t%s\t%s\n' \
+		"$foreign_uid" "$foreign_uid" "$foreign_uid" "$foreign_uid" >"${proc_root}/1/status"
+
+	if (
+		readlink() { return 1; }
+		_capture_worktree_proc_cwds "$proc_root" >/dev/null
+	); then
+		rc=1
+	fi
+	print_result "proc_snapshot_requires_usable_evidence_after_foreign_skips" "$rc" \
+		"Expected zero captured cwd targets to remain fail-closed"
+	return 0
+}
+
+# =============================================================================
+# A process that vanishes during readlink is ignored when other usable evidence
+# remains in the snapshot.
+# =============================================================================
+test_proc_snapshot_ignores_vanished_entry() {
+	local proc_root="${TEST_DIR}/fake-proc-vanished"
+	local output=""
+	local rc=0
+	mkdir -p "${proc_root}/1" "${proc_root}/2"
+	ln -s /visible-cwd "${proc_root}/1/cwd"
+	ln -s /vanished-cwd "${proc_root}/2/cwd"
+
+	output=$(
+		readlink() {
+			local link_path="$1"
+			if [[ "$link_path" == */1/cwd ]]; then
+				printf '/visible-cwd\n'
+				return 0
+			fi
+			rm -f "$link_path"
+			return 1
+		}
+		_capture_worktree_proc_cwds "$proc_root"
+	) || rc=1
+	[[ "$output" == "/visible-cwd" ]] || rc=1
+	print_result "proc_snapshot_ignores_vanished_entry" "$rc" \
+		"Expected a vanished process to be ignored without losing visible evidence"
+	return 0
+}
+
+# =============================================================================
+# Guard refusals expose a machine-readable reason without changing the
+# exactly-once audit contract.
+# =============================================================================
+test_guard_reason_is_machine_readable() {
+	local log_file="${TEST_DIR}/t15-cleanup.log"
+	local wt_path="${TEST_DIR}/reason-wt"
+	local rc=0
+	export AIDEVOPS_CLEANUP_LOG="$log_file"
+	mkdir -p "$wt_path"
+
+	unset _AUDIT_WORKTREE_REMOVAL_HELPER_LOADED 2>/dev/null || true
+	# shellcheck source=../audit-worktree-removal-helper.sh
+	source "$AUDIT_HELPER"
+	if worktree_removal_guard "$wt_path" "test.sh" "manual" "$wt_path"; then
+		rc=1
+	fi
+	[[ "${WORKTREE_REMOVAL_GUARD_REASON:-}" == "active-cwd" ]] || rc=1
+	assert_line_count "$log_file" 1 || rc=1
+	print_result "guard_reason_is_machine_readable" "$rc" \
+		"Expected active-cwd reason and exactly one audit row"
+	return 0
+}
+
+# =============================================================================
+# Test 16: manual removal renders safe actionable diagnostics for each shared
+# guard reason. The guard remains the sole audit writer.
+# =============================================================================
+test_manual_guard_refusal_diagnostics() {
+	local output_file="${TEST_DIR}/t16-output.log"
+	local log_file="${TEST_DIR}/t16-cleanup.log"
+	local rc=0
+	local reason=""
+	local guard_reason_to_test=""
+	export AIDEVOPS_CLEANUP_LOG="$log_file"
+
+	unset _WORKTREE_CMDS_LIB_LOADED 2>/dev/null || true
+	RED=""
+	NC=""
+	# shellcheck source=../worktree-helper-cmds.sh
+	source "$COMMANDS_HELPER"
+	worktree_removal_guard() {
+		local path_to_remove="$1"
+		local caller="$2"
+		local removal_mode="$3"
+		WORKTREE_REMOVAL_GUARD_REASON="$guard_reason_to_test"
+		log_worktree_removal_event "$_WTAR_SKIPPED" "$caller" "$path_to_remove" \
+			"$guard_reason_to_test" "skipped"
+		: "$removal_mode"
+		return 1
+	}
+	for reason in active-cwd current-worktree canonical-skip; do
+		guard_reason_to_test="$reason"
+		if _remove_validate_path "/safe/example-worktree" 2>>"$output_file"; then
+			rc=1
+		fi
+	done
+	assert_file_contains "$output_file" "Reason: active-cwd.*live process" || rc=1
+	assert_file_contains "$output_file" "Reason: current-worktree.*inside the target" || rc=1
+	assert_file_contains "$output_file" "Reason: canonical-skip.*canonical checkout" || rc=1
+	assert_file_contains "$output_file" "cannot bypass this protection" || rc=1
+	assert_line_count "$log_file" 3 || rc=1
+	print_result "manual_guard_refusal_diagnostics" "$rc" \
+		"Expected safe diagnostics and exactly one audit row per refusal"
+	return 0
+}
+
+# =============================================================================
 # Main
 # =============================================================================
 
@@ -416,6 +802,17 @@ test_guard_refuses_other_process_cwd
 test_permanent_helper_removes_and_logs
 test_optional_guard_context_logged
 test_process_cwd_guard_refuses_empty_paths
+test_process_cwd_snapshot_failure_is_fail_closed
+test_snapshot_backend_requires_visible_target
+test_lsof_snapshot_visibility_states
+test_proc_snapshot_preserves_degraded_visibility
+test_proc_snapshot_skips_foreign_uid_unreadable_entry
+test_proc_snapshot_marks_same_uid_unreadable_entry_degraded
+test_degraded_visibility_preserves_positive_candidate_match
+test_proc_snapshot_requires_usable_evidence_after_foreign_skips
+test_proc_snapshot_ignores_vanished_entry
+test_guard_reason_is_machine_readable
+test_manual_guard_refusal_diagnostics
 
 echo ""
 echo "Results: ${TESTS_PASSED}/${TESTS_RUN} passed, ${TESTS_FAILED} failed."

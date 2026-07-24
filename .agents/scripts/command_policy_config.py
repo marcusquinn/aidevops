@@ -88,6 +88,12 @@ def _validate_policy_guards(guards: Any) -> None:
         raise PolicyError("command policy requires exactly one canonical Git guard")
     if not _has_required_guard(guards, "worker_network", "network-tier-helper.sh"):
         raise PolicyError("command policy requires exactly one worker network guard")
+    if not _has_required_guard(
+        guards, "process_termination", "process-termination-guard.py"
+    ):
+        raise PolicyError(
+            "command policy requires exactly one process-termination guard"
+        )
     _validate_account_mutation_guard(guards)
 
 
@@ -117,6 +123,19 @@ def _validate_account_mutation_guard(guards: Any) -> None:
         )
     guard = matches[0]
     command_paths = guard.get("command_paths")
+    required_paths = {
+        ("repo", "create"),
+        ("repo", "fork"),
+        ("repo", "new"),
+    }
+    required_values = {
+        "decision": "forbid",
+        "authorization_env": "AIDEVOPS_ACCOUNT_MUTATION_AUTHORIZATION",
+        "workspace_root_env": "AIDEVOPS_ACCOUNT_MUTATION_WORKSPACE_ROOT",
+    }
+    valid_values = all(
+        guard.get(key) == expected for key, expected in required_values.items()
+    )
     valid_paths = (
         isinstance(command_paths, list)
         and bool(command_paths)
@@ -127,13 +146,10 @@ def _validate_account_mutation_guard(guards: Any) -> None:
             for path in command_paths
         )
     )
-    if (
-        guard.get("decision") != "forbid"
-        or guard.get("authorization_env")
-        != "AIDEVOPS_ACCOUNT_MUTATION_AUTHORIZATION"
-        or not valid_paths
-        or ["repo", "fork"] not in command_paths
-    ):
+    has_required_paths = valid_paths and required_paths.issubset(
+        map(tuple, command_paths)
+    )
+    if not valid_values or not has_required_paths:
         raise PolicyError("trusted account-mutation guard is malformed")
 
 

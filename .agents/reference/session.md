@@ -42,7 +42,7 @@ Context compaction drops operational state unless written to disk. Use `/checkpo
 
 - Before edits: run the pre-edit check from `AGENTS.md`.
 - After branch creation: check `TODO.md` for matching tasks, record `started:`, and set a long, descriptive session title. With issue/PR context, use `Issue #123: <complete issue title> — <action context>` or `PR #456: <complete PR title> — <action context>`; never use a bare number or impose an arbitrary character limit. Otherwise use a full task summary, then read `workflows/git-workflow.md`. Use `session-rename_sync_branch` only when no meaningful task context exists.
-- Dirty canonical `main`/`master` that appears unrelated to your task: preserve with `dirty-worktree-backup-helper.sh backup`, notify via mailbox/checkpoint if possible, then continue only from a clean linked worktree or wait for owner cleanup. Details: `reference/dirty-worktree-preservation.md`.
+- Canonical checkout with unexpected state: keep implementation in a linked worktree; never stash/reset/clean it directly. Explicit mirror synchronization uses the verified preserve-clean-sync route in `reference/dirty-worktree-preservation.md`.
 
 Worktrees are preferred for parallel work:
 

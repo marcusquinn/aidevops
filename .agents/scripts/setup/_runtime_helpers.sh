@@ -388,59 +388,7 @@ confirm_step() {
 	done
 }
 
-# Backup rotation settings
-BACKUP_KEEP_COUNT=10
-
-# Create a backup with rotation (keeps last N backups)
-# Usage: create_backup_with_rotation <source_path> <backup_name>
-# Example: create_backup_with_rotation "$target_dir" "agents"
-# Creates: ~/.aidevops/agents-backups/20251221_123456/
-create_backup_with_rotation() {
-	local source_path="$1"
-	local backup_name="$2"
-	local backup_base="$HOME/.aidevops/${backup_name}-backups"
-	local backup_dir
-	backup_dir="$backup_base/$(date +%Y%m%d_%H%M%S)"
-
-	# Create backup directory
-	mkdir -p "$backup_dir"
-
-	# Copy source to backup (tolerant of broken symlinks / missing entries)
-	if [[ -d "$source_path" ]]; then
-		if command -v rsync >/dev/null 2>&1 && rsync --help 2>&1 | grep -q -- '--ignore-missing-args'; then
-			# rsync >= 3.1.0: --ignore-missing-args skips missing/broken entries gracefully
-			if ! rsync -a --ignore-missing-args "$source_path/" "$backup_dir/$(basename "$source_path")/" 2>/dev/null; then
-				print_warning "Backup had partial failures (broken symlinks?), continuing"
-			fi
-		else
-			# Fallback: cp -R may fail on broken symlinks under set -e,
-			# so run in a subshell that tolerates errors
-			if ! (cp -R "$source_path" "$backup_dir/" 2>/dev/null); then
-				print_warning "Backup had partial failures (broken symlinks?), continuing"
-			fi
-		fi
-	elif [[ -f "$source_path" ]]; then
-		cp "$source_path" "$backup_dir/"
-	else
-		print_warning "Source path does not exist: $source_path"
-		return 1
-	fi
-
-	print_info "Backed up to $backup_dir"
-
-	# Rotate old backups (keep last N)
-	local backup_count
-	backup_count=$(find "$backup_base" -maxdepth 1 -type d -name "20*" 2>/dev/null | wc -l | tr -d ' ')
-
-	if [[ $backup_count -gt $BACKUP_KEEP_COUNT ]]; then
-		local to_delete=$((backup_count - BACKUP_KEEP_COUNT))
-		print_info "Rotating backups: removing $to_delete old backup(s), keeping last $BACKUP_KEEP_COUNT"
-
-		# Delete oldest backups (sorted by name = sorted by date)
-		find "$backup_base" -maxdepth 1 -type d -name "20*" 2>/dev/null | sort | head -n "$to_delete" | while read -r old_backup; do
-			rm -rf "$old_backup"
-		done
-	fi
-
-	return 0
-}
+# Backup creation and retention are owned by the focused setup module so tests
+# and the setup entrypoint execute one implementation.
+# shellcheck source=./_backup.sh
+source "${BASH_SOURCE[0]%/*}/_backup.sh"

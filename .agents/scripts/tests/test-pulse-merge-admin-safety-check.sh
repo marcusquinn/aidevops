@@ -324,7 +324,6 @@ test_case_o_malformed_pr_metadata_is_logged() {
 	printf '%s' '{not-json' >"${TEST_ROOT}/labels.json"
 	local result=0
 	_pulse_merge_admin_safety_check "942" "owner/repo" "head-current" || result=$?
-	set_fixture '[{"name":"bug"}]' 'false' '## Summary\n\nResolves #942' 'VERIFIED'
 	if [[ "$result" -eq 1 ]] && grep -qF "gh pr view returned malformed metadata for PR #942 in owner/repo — failing closed" "$LOGFILE"; then
 		print_result "Case O: malformed PR metadata is logged" 0
 		return 0
@@ -338,7 +337,6 @@ test_case_p_missing_pr_identity_is_logged() {
 	printf '%s' '{"author":null,"labels":[],"isCrossRepository":false,"headRefOid":""}' >"${TEST_ROOT}/labels.json"
 	local result=0
 	_pulse_merge_admin_safety_check "943" "owner/repo" "head-current" || result=$?
-	set_fixture '[{"name":"bug"}]' 'false' '## Summary\n\nResolves #943' 'VERIFIED'
 	if [[ "$result" -eq 1 ]] && grep -qF "missing head SHA or author for PR #943 in owner/repo — failing closed" "$LOGFILE"; then
 		print_result "Case P: missing PR identity is logged" 0
 		return 0
@@ -355,6 +353,7 @@ test_case_q_linked_issue_extraction_failure_is_logged() {
 	}
 	local result=0
 	_pulse_merge_admin_safety_check "944" "owner/repo" "head-current" || result=$?
+	define_helpers_under_test >/dev/null
 	if [[ "$result" -eq 1 ]] && grep -qF "linked issue extraction failed for PR #944 in owner/repo — failing closed" "$LOGFILE"; then
 		print_result "Case Q: linked issue extraction failure is logged" 0
 		return 0
@@ -523,13 +522,14 @@ test_case_k_final_gate_refreshes_current_review_evidence() {
 		'## Summary\n\nResolves #920' 'VERIFIED' 'VERIFIED' 'trusted-contributor'
 	_PULSE_REVIEW_GATE_EVIDENCE='{"schema":"aidevops.review-gate-evidence/v1","repo":"owner/repo","pr":"920","head_sha":"old-head","status":"PASS","author":{"login":"trusted-contributor","association":"MEMBER","class":"trusted"},"permitted":true,"reason":"stale","state":"pass","merge_gate":"clear","exit_code":0}'
 	_PULSE_PREFLIGHT_CALLS=0
-	local result=0
+	local result=0 evidence_observed_at=""
 	_pulse_merge_final_trust_gate "920" "owner/repo" "head-current" || result=$?
-	if [[ "$result" -eq 0 && "$_PULSE_PREFLIGHT_CALLS" -eq 1 ]]; then
+	evidence_observed_at=$(jq -r '.observed_at // ""' <<<"${_PULSE_REVIEW_GATE_EVIDENCE:-}" 2>/dev/null) || evidence_observed_at=""
+	if [[ "$result" -eq 0 && "$_PULSE_PREFLIGHT_CALLS" -eq 1 && -n "$evidence_observed_at" ]]; then
 		print_result "Case K: final gate refreshes exact-head review evidence" 0
 		return 0
 	fi
-	print_result "Case K: current review evidence reaches preflight" 1 "rc=${result}; preflight_calls=${_PULSE_PREFLIGHT_CALLS}"
+	print_result "Case K: current timestamped review evidence reaches preflight" 1 "rc=${result}; preflight_calls=${_PULSE_PREFLIGHT_CALLS}; observed_at=${evidence_observed_at:-missing}"
 	return 0
 }
 

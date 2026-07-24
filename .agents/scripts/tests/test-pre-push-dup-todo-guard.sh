@@ -4,7 +4,7 @@
 #
 # test-pre-push-dup-todo-guard.sh — Unit tests for pre-push-dup-todo-guard.sh (t2745).
 #
-# Tests 9 fixtures:
+# Tests 11 fixtures:
 #   1. Clean TODO.md (no duplicates)               → exit 0
 #   2. Single duplicate (t2743 twice)              → exit 1, cites lines
 #   3. Multiple duplicates (t2743 AND t2742)       → exit 1, cites both IDs
@@ -14,6 +14,8 @@
 #   7. --no-verify bypass documentation            → informational (git-level bypass)
 #   8. Hierarchical ID duplicate (t1271.1 twice)   → exit 1, cites lines
 #   9. Indented subtask duplicate                  → exit 1, cites lines
+#  10. Unchanged pre-existing duplicate            → exit 0
+#  11. Increased pre-existing duplicate count      → exit 1
 #
 # Usage: bash .agents/scripts/tests/test-pre-push-dup-todo-guard.sh
 # Exit 0 = all tests passed. Exit 1 = one or more tests failed.
@@ -50,6 +52,7 @@ fi
 _TESTS_PASSED=0
 _TESTS_FAILED=0
 _TEST_TMPDIR=""
+_BASE_SHA=""
 
 _setup_git_repo() {
 	_TEST_TMPDIR=$(mktemp -d)
@@ -66,6 +69,7 @@ _setup_git_repo() {
 	touch TODO.md
 	git add TODO.md
 	git commit -q -m "init"
+	_BASE_SHA=$(git rev-parse HEAD)
 	return 0
 }
 
@@ -73,6 +77,7 @@ _teardown_git_repo() {
 	cd / 2>/dev/null || true
 	[[ -n "${_TEST_TMPDIR:-}" && -d "$_TEST_TMPDIR" ]] && rm -rf "$_TEST_TMPDIR"
 	_TEST_TMPDIR=""
+	_BASE_SHA=""
 	return 0
 }
 
@@ -92,14 +97,23 @@ _commit_todo() {
 _run_hook() {
 	local _sha="$1"
 	local _extra_env="${2:-}"
+	local _remote_sha="${3:-$_BASE_SHA}"
 	local _stdin
-	_stdin="refs/heads/test ${_sha} refs/heads/main 0000000000000000000000000000000000000000"
+	_stdin="refs/heads/test ${_sha} refs/heads/main ${_remote_sha}"
 	if [[ -n "$_extra_env" ]]; then
 		env "$_extra_env" bash "$HOOK" origin "https://github.com/test/repo" <<<"$_stdin"
 	else
 		bash "$HOOK" origin "https://github.com/test/repo" <<<"$_stdin"
 	fi
 	return $?
+}
+
+_commit_unrelated() {
+	printf 'unrelated\n' >"$_TEST_TMPDIR/unrelated.txt"
+	git add unrelated.txt
+	git commit -q -m "unrelated change"
+	git rev-parse HEAD
+	return 0
 }
 
 _pass() {
@@ -420,6 +434,73 @@ test_indented_subtask_duplicate() {
 }
 
 # ---------------------------------------------------------------------------
+# Test 10: an unchanged duplicate already present in the baseline → exit 0
+# ---------------------------------------------------------------------------
+test_unchanged_preexisting_duplicate() {
+	local _name="test_10_unchanged_preexisting_duplicate"
+	_setup_git_repo || { _fail "$_name" "git repo setup failed"; return 0; }
+
+	local _content
+	_content="## Ready
+- [ ] t2743 First entry ref:GH#20480
+
+## Backlog
+- [ ] t2743 Existing duplicate ref:GH#20480"
+
+	local _duplicate_base _sha
+	_duplicate_base=$(_commit_todo "$_content")
+	_sha=$(_commit_unrelated)
+	_run_hook "$_sha" "" "$_duplicate_base" 2>/dev/null
+	local _rc=$?
+
+	_teardown_git_repo
+
+	if [[ "$_rc" -eq 0 ]]; then
+		_pass "$_name"
+	else
+		_fail "$_name" "expected exit 0 for unchanged baseline duplicate, got exit $_rc"
+	fi
+	return 0
+}
+
+# ---------------------------------------------------------------------------
+# Test 11: increasing a duplicate count relative to the baseline → exit 1
+# ---------------------------------------------------------------------------
+test_increased_preexisting_duplicate() {
+	local _name="test_11_increased_preexisting_duplicate"
+	_setup_git_repo || { _fail "$_name" "git repo setup failed"; return 0; }
+
+	local _base_content _head_content
+	_base_content="## Ready
+- [ ] t2743 First entry ref:GH#20480
+
+## Backlog
+- [ ] t2743 Existing duplicate ref:GH#20480"
+	_head_content="${_base_content}
+- [ ] t2743 Newly added third entry ref:GH#20480"
+
+	local _duplicate_base _sha
+	_duplicate_base=$(_commit_todo "$_base_content")
+	_sha=$(_commit_todo "$_head_content")
+	local _stderr
+	_stderr=$(_run_hook "$_sha" "" "$_duplicate_base" 2>&1 1>/dev/null)
+	local _rc=$?
+
+	_teardown_git_repo
+
+	if [[ "$_rc" -ne 1 ]]; then
+		_fail "$_name" "expected exit 1 for increased duplicate count, got exit $_rc"
+		return 0
+	fi
+	if printf '%s\n' "$_stderr" | grep -q "t2743"; then
+		_pass "$_name"
+	else
+		_fail "$_name" "error message did not mention t2743; stderr: $_stderr"
+	fi
+	return 0
+}
+
+# ---------------------------------------------------------------------------
 # Run all tests
 # ---------------------------------------------------------------------------
 main() {
@@ -434,6 +515,8 @@ main() {
 	test_no_verify_documentation
 	test_hierarchical_id_duplicate
 	test_indented_subtask_duplicate
+	test_unchanged_preexisting_duplicate
+	test_increased_preexisting_duplicate
 
 	printf '\n'
 	printf 'Results: %d passed, %d failed\n' "$_TESTS_PASSED" "$_TESTS_FAILED"

@@ -456,15 +456,21 @@ _wah_provider_usage_json() {
 _wah_count_stats_counter() {
 	local key="$1" cutoff_epoch="$2"
 	local file="$WAH_PULSE_STATS_FILE"
+	local count=""
 
 	if [[ ! -f "$file" ]]; then
 		printf '0\n'
 		return 0
 	fi
 
-	jq -r --arg key "$key" --argjson cutoff "$cutoff_epoch" \
+	if count=$(jq -r --arg key "$key" --argjson cutoff "$cutoff_epoch" \
 		'(.counters[$key] // []) | map(select(. >= $cutoff)) | length' \
-		"$file" 2>/dev/null || printf '0\n'
+		"$file" 2>/dev/null) && [[ "$count" =~ ^[0-9]+$ ]]; then
+		printf '%s\n' "$count"
+	else
+		printf '0\n'
+	fi
+	return 0
 }
 
 #######################################

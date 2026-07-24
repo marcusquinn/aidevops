@@ -439,18 +439,20 @@ data_exfiltration:
 # ================================================================
 data_exfiltration_dns:
   # --- Command substitution in DNS tool arguments ---
+  # Require shell-command context so prose such as "host facts ... `.gov`"
+  # cannot bridge an English noun to a later Markdown code span.
   # Catches: dig $(cmd).domain, dig `cmd`.domain, dig "$(cmd)".domain
   - severity: CRITICAL
     description: "DNS exfil: dig with command substitution"
-    pattern: '(?i)\bdig\s+.*(\$\(|\$\{|`)[^)}`]*(\)|`|\})'
+    pattern: '(?im)(^|[;&|]\s*|:\s*|`{1,2}\s*|\b(run|execute|use)\s+)(sudo\s+|env\s+)?\bdig\s+.*(\$\(|\$\{|`)[^)}`\r\n]*(\)|`|\})'
 
   - severity: CRITICAL
     description: "DNS exfil: nslookup with command substitution"
-    pattern: '(?i)\bnslookup\s+.*(\$\(|\$\{|`)[^)}`]*(\)|`|\})'
+    pattern: '(?im)(^|[;&|]\s*|:\s*|`{1,2}\s*|\b(run|execute|use)\s+)(sudo\s+|env\s+)?\bnslookup\s+.*(\$\(|\$\{|`)[^)}`\r\n]*(\)|`|\})'
 
   - severity: CRITICAL
     description: "DNS exfil: host with command substitution"
-    pattern: '(?i)\bhost\s+.*(\$\(|\$\{|`)[^)}`]*(\)|`|\})'
+    pattern: '(?im)(^|[;&|]\s*|:\s*|`{1,2}\s*|\b(run|execute|use)\s+)(sudo\s+|env\s+)?\bhost\s+.*(\$\(|\$\{|`)[^)}`\r\n]*(\)|`|\})'
 
   # --- Base64-encoded data piped to DNS tools ---
   # Catches: cat file | base64 | xargs dig, echo $SECRET | base64 | ... | dig

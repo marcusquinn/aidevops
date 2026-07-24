@@ -111,9 +111,131 @@ test_directory_backup_tolerates_rsync_vanished_entries() {
 	return 0
 }
 
+make_snapshot_fixture() {
+	local backup_root="$1"
+	local snapshot_name="$2"
+	mkdir -p "${backup_root}/${snapshot_name}"
+	printf '%s\n' "$snapshot_name" >"${backup_root}/${snapshot_name}/data"
+	return 0
+}
+
+test_retention_plan_combines_limits_and_preserves_newest() {
+	local test_home=""
+	local backup_root=""
+	local plan=""
+	test_home="$(mktemp -d)"
+	backup_root="${test_home}/.aidevops/agents-backups"
+	make_snapshot_fixture "$backup_root" "20260101_000001"
+	make_snapshot_fixture "$backup_root" "20260102_000001"
+	make_snapshot_fixture "$backup_root" "20260103_000001"
+	make_snapshot_fixture "$backup_root" "20260104_000001"
+
+	BACKUP_KEEP_COUNT=2
+	BACKUP_MAX_AGE_DAYS=99999
+	BACKUP_MAX_BYTES=4294967296
+	plan=$(_backup_retention_plan "$backup_root")
+	if [[ "$(printf '%s\n' "$plan" | wc -l | tr -d ' ')" == "2" ]] &&
+		[[ "$plan" == *"20260101_000001"* ]] &&
+		[[ "$plan" == *"20260102_000001"* ]] &&
+		[[ "$plan" != *"20260104_000001"* ]]; then
+		print_result "retention plan applies count limit and protects newest" 0
+	else
+		print_result "retention plan applies count limit and protects newest" 1 "$plan"
+	fi
+
+	BACKUP_KEEP_COUNT=10
+	BACKUP_MAX_BYTES=1
+	plan=$(_backup_retention_plan "$backup_root")
+	if [[ "$plan" == *"bytes"* ]] && [[ "$plan" != *"20260104_000001"* ]]; then
+		print_result "retention plan applies byte limit and protects newest" 0
+	else
+		print_result "retention plan applies byte limit and protects newest" 1 "$plan"
+	fi
+
+	rm -rf "$test_home"
+	return 0
+}
+
+test_retention_fails_closed_and_stages_before_delete() {
+	local test_home=""
+	local backup_root=""
+	local plan_file=""
+	local forged_plan=""
+	local newest_size=""
+	local staged_match=""
+	test_home="$(mktemp -d)"
+	backup_root="${test_home}/.aidevops/agents-backups"
+	make_snapshot_fixture "$backup_root" "20260101_000001"
+	make_snapshot_fixture "$backup_root" "20260102_000001"
+	BACKUP_KEEP_COUNT=1
+	BACKUP_MAX_AGE_DAYS=99999
+	BACKUP_MAX_BYTES=4294967296
+	plan_file="${test_home}/plan.tsv"
+	_backup_retention_plan "$backup_root" >"$plan_file"
+
+	if _backup_retention_apply "$backup_root" "$plan_file" "wrong-token"; then
+		print_result "retention apply rejects missing confirmation" 1 "unexpected success"
+	elif [[ -d "${backup_root}/20260101_000001" ]]; then
+		print_result "retention apply rejects missing confirmation" 0
+	else
+		print_result "retention apply rejects missing confirmation" 1 "candidate changed"
+	fi
+	forged_plan="${test_home}/forged-plan.tsv"
+	newest_size=$(_backup_snapshot_size_bytes "${backup_root}/20260102_000001")
+	printf '%s\t%s\t%s\n' "${backup_root}/20260102_000001" "$newest_size" "count" >"$forged_plan"
+	if _backup_retention_apply "$backup_root" "$forged_plan" "$BACKUP_RETENTION_CONFIRMATION"; then
+		print_result "apply-time classification protects newest backup" 1 "forged plan succeeded"
+	elif [[ -d "${backup_root}/20260102_000001" ]]; then
+		print_result "apply-time classification protects newest backup" 0
+	else
+		print_result "apply-time classification protects newest backup" 1 "newest backup changed"
+	fi
+
+	if AIDEVOPS_RETENTION_TEST_INTERRUPT_AFTER_STAGE=1 \
+		_backup_retention_apply "$backup_root" "$plan_file" "$BACKUP_RETENTION_CONFIRMATION"; then
+		print_result "interrupted retention leaves recoverable trash" 1 "unexpected success"
+	else
+		for staged_match in "${backup_root}/.retention-trash"/20260101_000001-*; do
+			if [[ -d "$staged_match" && -d "${backup_root}/20260102_000001" ]]; then
+				print_result "interrupted retention leaves recoverable trash" 0
+				rm -rf "$test_home"
+				return 0
+			fi
+		done
+		print_result "interrupted retention leaves recoverable trash" 1 "staged candidate missing"
+	fi
+
+	rm -rf "$test_home"
+	return 0
+}
+
+test_retention_unknown_snapshot_fails_closed() {
+	local test_home=""
+	local backup_root=""
+	local plan=""
+	test_home="$(mktemp -d)"
+	backup_root="${test_home}/.aidevops/agents-backups"
+	make_snapshot_fixture "$backup_root" "20260101_000001"
+	make_snapshot_fixture "$backup_root" "20260102_000001"
+	ln -s "${backup_root}/20260101_000001" "${backup_root}/20260103_000001"
+	BACKUP_KEEP_COUNT=1
+	if plan=$(_backup_retention_plan "$backup_root"); then
+		print_result "unknown backup entry fails closed" 1 "classification unexpectedly succeeded: $plan"
+	elif [[ -z "$plan" ]]; then
+		print_result "unknown backup entry fails closed" 0
+	else
+		print_result "unknown backup entry fails closed" 1 "$plan"
+	fi
+	rm -rf "$test_home"
+	return 0
+}
+
 main() {
 	test_directory_backup_uses_basename_target
 	test_directory_backup_tolerates_rsync_vanished_entries
+	test_retention_plan_combines_limits_and_preserves_newest
+	test_retention_fails_closed_and_stages_before_delete
+	test_retention_unknown_snapshot_fails_closed
 
 	printf '\nRan %s tests, %s failed\n' "$TESTS_RUN" "$TESTS_FAILED"
 	if [[ "$TESTS_FAILED" -ne 0 ]]; then

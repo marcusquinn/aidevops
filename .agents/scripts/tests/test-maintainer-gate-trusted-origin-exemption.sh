@@ -23,9 +23,8 @@
 #   G. GH#24546/GH#24958 private-org CONTRIBUTOR/COLLABORATOR fallback uses authenticated
 #      collaborator permission metadata and fails closed.
 #
-# Workflow execution cannot be tested locally — this is a static shape
-# check that prevents accidental regressions to the exemption logic
-# during refactoring. CI is the authoritative runtime test.
+# Static shape checks cover the shared trust rules. Job 3's inline shell is also
+# executed below with mocked REST metadata, status publication, and rerun APIs.
 #
 # NOTE: not using `set -e` — assertions capture non-zero exits.
 
@@ -54,6 +53,12 @@ print_result() {
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
 WORKFLOW_FILE="${REPO_ROOT}/.github/workflows/maintainer-gate-reusable.yml"
+TEST_TMP_ROOT=""
+if ! TEST_TMP_ROOT=$(mktemp -d "${TMPDIR:-/tmp}/test-maintainer-gate-job3-XXXXXX"); then
+	printf 'ERROR: failed to create temporary directory\n' >&2
+	exit 1
+fi
+trap '[[ -n "${TEST_TMP_ROOT:-}" ]] && rm -rf -- "$TEST_TMP_ROOT"' EXIT
 
 if [[ ! -f "$WORKFLOW_FILE" ]]; then
 	print_result "workflow file exists" 1 "not found: $WORKFLOW_FILE"
@@ -155,8 +160,136 @@ assert_contains "#aidevops:trust-boundary GH#24546" \
 	"trust-boundary marker documents authenticated fallback"
 assert_contains "GH#24546/GH#24958" \
 	"trust-boundary marker covers maintainer-operated collaborator fallback"
-assert_contains "authorAssociation,author" \
-	"Job 3 fetches PR author login with author association"
+assert_contains "pulls/.*PR_NUM" \
+	"Job 3 reads PR metadata from the REST pulls endpoint"
+assert_contains "author_association.*user.login.*head.sha" \
+	"Job 3 projects REST author association, login, and exact head metadata"
+if grep -q 'authorAssociation' "$WORKFLOW_FILE" 2>/dev/null; then
+	print_result "Job 3 avoids unsupported gh authorAssociation projection" 1
+else
+	print_result "Job 3 avoids unsupported gh authorAssociation projection" 0
+fi
+assert_contains "rerun_maintainer_gate_with_retry" \
+	"Job 3 defines bounded rerun scheduling"
+assert_contains "post_maintainer_gate_status_with_retry error" \
+	"Job 3 replaces unresolved pending with terminal error"
+
+# -------------------------------------------------------------------
+# Check H: execute Job 3 inline shell against mocked API fixtures
+# -------------------------------------------------------------------
+JOB3_RUN_SCRIPT=$(python3 -c 'import sys,yaml; data=yaml.safe_load(open(sys.argv[1])); print(data["jobs"]["retrigger-pr-checks"]["steps"][0]["run"])' "$WORKFLOW_FILE" 2>/dev/null || true)
+
+run_job3_fixture() {
+	local fixture_name="$1"
+	local association="$2"
+	local labels_json="$3"
+	local permission="$4"
+	local rerun_failures="$5"
+	local lookup_mode="$6"
+	local expected_rc="$7"
+	local expected_statuses="$8"
+	local expected_reruns="$9"
+	local fixture_dir="${TEST_TMP_ROOT}/${fixture_name//[^A-Za-z0-9]/-}"
+	local status_file="${fixture_dir}/statuses"
+	local rerun_file="${fixture_dir}/reruns"
+	local fixture_rc=0
+
+	rm -rf "$fixture_dir"
+	mkdir -p "$fixture_dir"
+	printf '0' >"$rerun_file"
+	(
+		export ISSUE_NUMBER=42 REPO="owner/repo" REPO_OWNER="owner"
+		export FIXTURE_ASSOCIATION="$association" FIXTURE_LABELS_JSON="$labels_json"
+		export FIXTURE_PERMISSION="$permission" FIXTURE_RERUN_FAILURES="$rerun_failures"
+		export FIXTURE_LOOKUP_MODE="$lookup_mode" FIXTURE_STATUS_FILE="$status_file"
+		export FIXTURE_RERUN_FILE="$rerun_file"
+		gh() {
+			local command=""
+			local subcommand=""
+			if [[ $# -gt 0 ]]; then
+				command="$1"
+				shift
+			fi
+			if [[ $# -gt 0 ]]; then
+				subcommand="$1"
+				shift
+			fi
+			local args="$*"
+			if [[ "$command" == "pr" && "$subcommand" == "list" ]]; then
+				printf '%s\n' '[{"number":101,"body":"Resolves #42","title":"fixture"}]'
+				return 0
+			fi
+			if [[ "$command" == "api" && "$subcommand" == "repos/owner/repo/pulls/101" ]]; then
+				printf '{"labels":%s,"assoc":"%s","author":"fixture-author","head_sha":"fixture-head"}\n' \
+					"$FIXTURE_LABELS_JSON" "$FIXTURE_ASSOCIATION"
+				return 0
+			fi
+			if [[ "$command" == "api" && "$subcommand" == "repos/owner/repo/collaborators/fixture-author/permission" ]]; then
+				printf '%s\n' "$FIXTURE_PERMISSION"
+				return 0
+			fi
+			if [[ "$command" == "api" && "$subcommand" == repos/owner/repo/statuses/* ]]; then
+				local status=""
+				case "$args" in
+				*"state=success"*) status="success" ;;
+				*"state=pending"*) status="pending" ;;
+				*"state=error"*) status="error" ;;
+				esac
+				[[ -n "$status" ]] && printf '%s\n' "$status" >>"$FIXTURE_STATUS_FILE"
+				return 0
+			fi
+			if [[ "$command" == "api" && "$subcommand" == repos/owner/repo/actions/workflows/maintainer-gate.yml/runs* ]]; then
+				if [[ "$FIXTURE_LOOKUP_MODE" == "missing" ]]; then
+					return 0
+				fi
+				printf '501\tcompleted\n'
+				return 0
+			fi
+			if [[ "$command" == "api" && "$subcommand" == "repos/owner/repo/actions/runs/501/rerun" ]]; then
+				local rerun_count=0
+				rerun_count=$(<"$FIXTURE_RERUN_FILE")
+				rerun_count=$((rerun_count + 1))
+				printf '%s' "$rerun_count" >"$FIXTURE_RERUN_FILE"
+				[[ "$rerun_count" -gt "$FIXTURE_RERUN_FAILURES" ]]
+				return $?
+			fi
+			return 1
+		}
+		sleep() {
+			local seconds="$1"
+			[[ -n "$seconds" ]]
+			return 0
+		}
+		export -f gh sleep
+		bash -c "$JOB3_RUN_SCRIPT"
+	) >/dev/null 2>&1 || fixture_rc=$?
+
+	local actual_statuses=""
+	local actual_reruns=0
+	[[ -s "$status_file" ]] && actual_statuses=$(sort -u "$status_file" | tr '\n' ',' | sed 's/,$//')
+	[[ -s "$rerun_file" ]] && actual_reruns=$(<"$rerun_file")
+	if [[ "$fixture_rc" -eq "$expected_rc" && "$actual_statuses" == "$expected_statuses" && "$actual_reruns" -eq "$expected_reruns" ]]; then
+		print_result "Job 3 fixture: $fixture_name" 0
+	else
+		print_result "Job 3 fixture: $fixture_name" 1 \
+			"rc=$fixture_rc statuses=${actual_statuses:-<empty>} reruns=$actual_reruns"
+	fi
+	rm -rf "$fixture_dir"
+	return 0
+}
+
+if [[ -z "$JOB3_RUN_SCRIPT" ]]; then
+	print_result "extracts Job 3 executable shell" 1
+else
+	print_result "extracts Job 3 executable shell" 0
+	run_job3_fixture "OWNER exemption" "OWNER" '["origin:interactive"]' "" 0 "found" 0 "success" 0
+	run_job3_fixture "MEMBER exemption" "MEMBER" '["origin:interactive"]' "" 0 "found" 0 "success" 0
+	run_job3_fixture "COLLABORATOR write exemption" "COLLABORATOR" '["origin:interactive"]' "write" 0 "found" 0 "success" 0
+	run_job3_fixture "accepted rerun" "NONE" '[]' "" 0 "found" 0 "pending" 1
+	run_job3_fixture "already-running bounded retry" "NONE" '[]' "" 2 "found" 0 "pending" 3
+	run_job3_fixture "exhausted rerun becomes terminal" "NONE" '[]' "" 3 "found" 1 "error,pending" 3
+	run_job3_fixture "missing run becomes terminal" "NONE" '[]' "" 0 "missing" 1 "error,pending" 0
+fi
 
 # -------------------------------------------------------------------
 # Summary

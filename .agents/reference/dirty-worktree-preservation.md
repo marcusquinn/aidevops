@@ -3,40 +3,125 @@
 
 # Dirty Canonical Worktree Preservation
 
-Use when canonical `main`/`master` is dirty with unrelated files while another
-session may still be active, especially before release, setup, cleanup, or PR
-merge work.
+Use when a canonical checkout contains unexpected tracked, staged, untracked,
+or local-commit state. Canonical checkouts are read-only service mirrors on any
+branch name; implementation sessions belong in linked worktrees.
 
 ## Safety rule
 
-Do not stash, reset, clean, or include unrelated files in the current PR just to
-make progress. Those actions can hide or remove another live session's work.
+Do not stash, reset, clean, or include unexpected files in another PR. Process
+cwd does not make a canonical checkout session-owned. Preserve and verify every
+byte before removing only the matching state.
 
-## Progress path
+## Preserve without mutation
 
-1. Preserve first:
+```bash
+.agents/scripts/dirty-worktree-backup-helper.sh backup \
+  --repo /path/to/repo \
+  --reason "unexpected canonical mirror state" \
+  --issue <issue-if-known> \
+  --task <task-id-if-known>
+```
 
-   ```bash
-   .agents/scripts/dirty-worktree-backup-helper.sh backup \
-     --repo /path/to/repo \
-     --reason "release blocked by unrelated dirty canonical worktree" \
-     --pr <current-pr-if-any> \
-     --task <task-id-if-known>
-   ```
+The backup command does not mutate the checkout. It records the original HEAD,
+index tree, full worktree tree, status fingerprint, binary patches, copied
+untracked files, and stable `refs/aidevops/dirty-worktree-backups/<id>` commits.
+It prints the backup ID and exact restore command. Use `verify` and `matches`
+before any explicit `clean` operation.
 
-2. Notify/coordinate with the likely owner using the mailbox when available:
+## Audited mirror synchronization
 
-   ```bash
-   .agents/scripts/mail-helper.sh send --type request --to broadcast \
-     --subject "Dirty canonical worktree needs owner checkpoint" \
-     --body "Please checkpoint/commit/clear <safe summary>; backup recorded locally."
-   ```
+An explicit request to synchronize the canonical mirror authorizes this route:
 
-3. Continue only from a clean linked worktree, or wait until canonical `main` is
-   clean before release/setup commands that must run from canonical.
+```bash
+.agents/scripts/canonical-recovery-helper.sh sync-mirror \
+  --repo /path/to/canonical-checkout \
+  --issue 123 \
+  --confirm SYNCHRONIZE_CANONICAL_MIRROR
+```
 
-4. If the dirty files are complete and intentional, commit them in a separate
-   task/PR. Do not mix them into an unrelated PR/release.
+The helper structurally refuses linked worktrees. It resolves the allowed branch
+from registered repository config, committed `HEAD:.aidevops.json`, or
+`origin/HEAD`; an untracked/modified project config and arbitrary `--branch`
+cannot select the target. Under the canonical recovery lock it:
+
+1. fetches and pins the exact allowed `origin/<branch>` tip;
+2. creates and verifies a lossless backup before cleaning matching noise;
+3. removes only structurally canonical ownership rows without signalling PIDs;
+4. preserves divergent/local-only commits at an audited recovery ref;
+5. compare-and-swaps the local ref and updates the worktree to the pinned tip;
+6. verifies branch, HEAD, remote ref, worktree cleanliness, and the audit chain.
+
+If synchronization stops after cleanup, the old ref remains unchanged and the
+printed backup ID/restore command remains valid. Retry the same command: stable
+operation IDs reuse matching evidence rather than overwriting it. A failed
+compare-and-swap rolls the local ref back. Never bypass the helper with direct
+`git pull`, reset, or clean.
+
+## Converged stale rebase recovery
+
+When a clean canonical checkout has completed an interactive rebase but stale
+metadata still blocks `restore-default`, use the separately confirmed cleanup:
+
+```bash
+.agents/scripts/canonical-recovery-helper.sh clear-stale-rebase \
+  --repo /path/to/canonical-checkout \
+  --issue 123 \
+  --confirm CLEAR_CONVERGED_STALE_REBASE
+```
+
+Under the canonical recovery lock, the helper fetches and pins the configured
+default branch, verifies the audit chain, and requires `HEAD`, the local default
+ref, and the pinned remote tip to be identical. It accepts only a completed,
+clean, structurally valid `rebase-merge` state for that default branch. Active,
+dirty, divergent, branch-mismatched, malformed, or changing state fails closed.
+
+Before cleanup, the helper copies and fingerprints all rebase metadata under
+`~/.aidevops/.agent-workspace/recovery/canonical/` and creates durable
+`refs/aidevops/canonical-recovery/issue-<N>/stale-rebase/<sha>` refs for commit
+IDs found in that metadata. It then proves cleanup did not change HEAD, local or
+remote refs, the index tree, or worktree content. Run `restore-default` with its
+own confirmation token after this command succeeds. Never use direct
+`git rebase --quit`, reset, clean, or metadata deletion on a canonical checkout.
+
+## Abandoned active rebase recovery
+
+Use the distinct abandoned-state operation only when a clean canonical mirror
+is detached at the pinned remote default tip but old interactive-rebase markers
+still describe an incomplete stopped sequence:
+
+```bash
+.agents/scripts/canonical-recovery-helper.sh clear-abandoned-rebase \
+  --repo /path/to/canonical-checkout \
+  --issue 123 \
+  --confirm CLEAR_ABANDONED_STALE_REBASE
+```
+
+This command does not relax `clear-stale-rebase`. It requires complete stopped
+`rebase-merge` metadata for the configured default branch, a matching
+`REBASE_HEAD` and `stopped-sha`, metadata whose newest marker is at least 24
+hours old, HEAD at the exact pinned remote tip and beyond the stopped commit,
+and a local default ref that remains an ancestor of that tip. Fresh, attached,
+dirty, divergent, malformed, ambiguous, or changing state fails closed.
+
+Before removal, the helper copies and fingerprints the complete metadata plus
+`REBASE_HEAD`. It resolves full or abbreviated commit IDs from todo, done,
+backup, stopped, and rewritten metadata and creates durable issue-scoped refs
+for every reference. After a final HEAD/ref/index/worktree check, it
+compare-deletes only the expected `REBASE_HEAD`, quarantines the metadata,
+re-fingerprints the quarantined snapshot, and restores it if concurrent state
+appears. After success, run the separately confirmed `restore-default`
+operation to attach and fast-forward the configured default branch. Never
+substitute `git rebase --quit` or manual `.git` deletion.
+
+Restore preserved state only to a clean checkout on the recorded branch:
+
+```bash
+.agents/scripts/dirty-worktree-backup-helper.sh restore \
+  --repo /path/to/repo \
+  --backup <backup-id> \
+  --confirm RESTORE_DIRTY_WORKTREE_BACKUP
+```
 
 ## Backup retention
 
@@ -46,14 +131,15 @@ Backups live under:
 ~/.aidevops/.agent-workspace/tmp/dirty-main-backups/
 ```
 
-Each backup contains tracked/staged patches, copied untracked files, status, and
-`manifest.tsv` metadata. The async cleanup pass prunes backups whose linked PR is
-closed/merged, and stale backups after the retention window. Use `.keep` inside a
-backup directory to preserve it manually.
+Open backups are never pruned automatically, including when a linked PR closes.
+Only explicitly acknowledged or restored evidence becomes eligible for terminal
+PR/age pruning. Use `.keep` inside a backup directory for indefinite retention.
 
 Manual prune:
 
 ```bash
 .agents/scripts/dirty-worktree-backup-helper.sh prune --dry-run
+.agents/scripts/dirty-worktree-backup-helper.sh acknowledge \
+  --backup <backup-id> --confirm ACKNOWLEDGE_DIRTY_WORKTREE_BACKUP
 .agents/scripts/dirty-worktree-backup-helper.sh prune --force
 ```

@@ -27,9 +27,9 @@ tools:
 - **Project pin**: `asc init --app-id <id>` (saves `.asc/project.json`, auto-used by all commands)
 - **Verify**: `asc auth check` | **Multi-account**: `asc auth use <name>`
 - **Context resolution**: explicit `--app-id` > `.asc/project.json` > prompt user to `asc init` (CI must use `--app-id` or pre-run `asc init`)
-- **GitHub**: https://github.com/tddworks/asc-cli (MIT, Swift, 130+ commands; v0.18.1 adds review-submission item drill-down, sales-report rollups/schema selection, and an app-availability territory-limit fix; checked at `04fde49`, whose post-0.18.1 delta only refreshes homepage app-wall metadata for BetaReels and related app listings)
+- **GitHub**: https://github.com/tddworks/asc-cli (MIT, Swift, 130+ commands; v0.18.2 adds Resolution Center rejection details and attachment downloads through cookie-authenticated iris APIs; checked at release commit `97a60af`)
 - **Website**: https://asccli.app | **Web apps**: [Command Center](https://asccli.app/command-center), [Console](https://asccli.app/console), [Screenshot Studio](https://asccli.app/editor)
-- **Skills**: [Official](https://github.com/tddworks/asc-cli-skills) (27 command-group skills, checked at `6465c10feb89`) | [Community](https://github.com/rudrankriyam/app-store-connect-cli-skills) (23 workflow skills, checked at `0ae3da2`)
+- **Skills**: [Official](https://github.com/tddworks/asc-cli-skills) (27 command-group skills, checked at `6465c10feb89`) | [Community](https://github.com/rorkai/app-store-connect-cli-skills) (23 workflow skills for the separate community CLI, checked at `e30039a`)
 - **Requirements**: macOS 13+, App Store Connect API key, `jq` (workflow scripts use `jq -r`)
 
 **Dependency check**: Before any `asc` command:
@@ -49,7 +49,7 @@ command -v jq >/dev/null || { brew install jq || exit 1; }
 
 | Group | Commands | Purpose |
 |-------|----------|---------|
-| **versions** / **review-submissions** | `list`, `create`, `set-build`, `check-readiness`, `submit`; `review-submissions get`, `review-submissions items list` | Versions, submissions, and per-item review-state inspection |
+| **versions** / **review-submissions** | `list`, `create`, `set-build`, `check-readiness`, `submit`; `review-submissions get`, `review-submissions items list` | Versions, submissions, and per-item review-state inspection; rejected items expose a `getResolutionDetails` affordance in v0.18.2+ |
 | **builds** | `list`, `archive`, `upload`, `add-beta-group`, `update-beta-notes` | Build management |
 | **testflight** | `groups list`, `testers add/remove/import/export` | Beta distribution |
 | **version-localizations** | `list`, `create`, `update` | What's New, description, keywords per locale |
@@ -64,7 +64,7 @@ command -v jq >/dev/null || { brew install jq || exit 1; }
 | **users** / **user-invitations** | `list`, `update`, `remove`, `invite`, `cancel` | Team management |
 | **xcode-cloud** | `products`, `workflows`, `builds` | Xcode Cloud CI/CD |
 | **Apple Ads** | `ads auth`, `ads me`, `ads acls`, `ads campaigns`, `ads ad-groups`, `ads reports`, `ads api request` | Apple Ads auth, user profile, org lookup, campaign/ad-group management, reports, and raw v5 API calls |
-| **Other** | `apps list`, `app-tags`, `game-center`, `perf-metrics`, `diagnostics`, `iris`, `plugins`, `search`, `schema`, `capabilities`, `tui`, `web` | Apps, discoverability tags, Game Center, performance, private API, plugins, discovery, TUI, web-session gaps |
+| **Other** | `apps list`, `app-tags`, `game-center`, `perf-metrics`, `diagnostics`, `iris resolution-center`, `plugins`, `search`, `schema`, `capabilities`, `tui`, `web` | Apps, discoverability tags, Game Center, performance, private API, plugins, discovery, TUI, web-session gaps |
 
 **Discover**: `asc --help`, `asc <cmd> --help`, `asc search "upload build"`, `asc schema --pretty "GET /v1/apps"`, `asc capabilities --area release --output table` | **Output**: `--output json` (default), `--output table`, `--output markdown`, `--pretty`
 
@@ -99,6 +99,10 @@ asc versions submit --version-id "$VERSION_ID"
 SUBMISSION_ID=$(asc review-submissions list --app-id APP_ID | jq -r '.data[0].id // ""')
 asc review-submissions get --submission-id "$SUBMISSION_ID" --output json
 asc review-submissions items list --submission-id "$SUBMISSION_ID" --state REJECTED --output json
+# v0.18.2+: read App Review's message and structured rejection reasons via iris cookie auth
+asc iris resolution-center get --submission-id "$SUBMISSION_ID" --plain-text --output json
+# Optionally download message attachments after inspecting their Apple/CDN URLs
+asc iris resolution-center get --submission-id "$SUBMISSION_ID" --plain-text --out ./resolution-center
 
 # Web-only gap: attach non-renewing IAPs to next app version review when the public API rejects review items
 asc web review iaps attach --app-id APP_ID --iap-id IAP_ID --confirm
@@ -167,7 +171,7 @@ Run `asc web-server` to start the local API bridge (ports 8420 HTTP, 8421 HTTPS)
 
 ## Agent Skills
 
-Install on-demand (not pre-loaded): **Official** `asc skills install --all` (per-command reference) | **Community** `asc install-skills` or `npx skills add rudrankriyam/app-store-connect-cli-skills` (workflow orchestration: releases, ASO, localization, RevenueCat, crash triage, Apple Ads). These upstream skill packs are tracked for review but intentionally remain on-demand until aidevops has a multi-skill import strategy for repositories containing dozens of `SKILL.md` files. Latest reviewed official skill change adds build export-compliance handling; latest community refresh (`0ae3da2`) keeps the Apple Ads auth/org/campaign/reporting/raw-API guidance, safe live-testing guardrails, Apple Ads command-usage notes, profile-expiration caveat, nested `asc review items add` examples, and the ID-resolver correction to use `asc apps list --paginate` instead of the invalid `asc apps --paginate` form, while renaming the former experimental web guidance to authenticated web-session fallback guidance for availability, release, and submission-health workflows. It also adopts the metadata review-artifact flow and the RevenueCat catalog readiness gates available in `asc` 2.8.2: subscription setup materializes and verifies the complete equalized price matrix independently of sales territories, `--repair` rebuilds stale matrices, the removed `asc subscriptions prices ...` path is avoided in favor of `asc subscriptions pricing ...`, subscription validation JSON is retained, and a clean strict `asc validate iap` result is required before creating or attaching RevenueCat products.
+Install on-demand (not pre-loaded): **Official** `asc skills install --all` (per-command reference) | **Community** `asc install-skills` or `npx skills add rorkai/app-store-connect-cli-skills` (workflow orchestration: releases, ASO, localization, RevenueCat, crash triage, Apple Ads). The community pack targets the separate [rorkai/App-Store-Connect-CLI](https://github.com/rorkai/App-Store-Connect-CLI), not the primary `tddworks/asc-cli` documented above, so verify its CLI version before following its commands. These upstream skill packs remain on-demand rather than being imported into aidevops. Latest reviewed official skill change adds build export-compliance handling. Latest community refresh (`e30039a`) is compatible with community CLI 3.1.1 and separates healthy release execution from submission diagnosis and repair: release workflows now use explicit readiness, staging, dry-run, confirmation, and multi-item submission phases, while submission-health workflows preserve and reuse matching review drafts instead of creating duplicates. It also packages the 23 skills as Claude Code and Codex plugins; direct installation remains on-demand.
 
 ## Blitz MCP Server (Optional)
 

@@ -21,7 +21,7 @@ tools:
 
 ## Quick Reference
 
-- **Principle**: Every change, including a release, happens in a linked worktree. Never switch, detach, create, rename, or delete branches/refs in the canonical repository.
+- **Principle**: Every change, including a release, happens in a linked worktree. Canonical checkouts are read-only service mirrors, regardless of branch name.
 - **CRITICAL**: With parallel sessions, ALWAYS verify worktree/ref state before ANY file operation
 
 **Pre-Edit Gate** (MANDATORY before ANY file edit/write/create):
@@ -41,7 +41,7 @@ git log --oneline HEAD..origin/$(git branch --show-current) 2>/dev/null
 
 Inside an existing linked worktree, refresh and rebase before editing. From the canonical checkout, let `worktree-helper.sh add` refresh `origin/<default>` while creating the linked worktree. Preserve unrelated uncommitted work; never stash/reset/clean another session's changes.
 
-**Canonical fast-forward after a merge (explicit user request only):** direct `git pull`, `fetch`, and `merge` remain blocked in canonical checkouts. When the user asks to update a local canonical checkout—including a project-designated non-default branch—use the audited helper instead:
+**Canonical synchronization after a merge (explicit authorization only):** direct `git pull`, `fetch`, reset, clean, and merge remain blocked in canonical checkouts. A full-loop request for a maintained non-aidevops repository authorizes synchronization of the merged PR base; a standalone request to update a canonical checkout has the same narrow scope. For a clean, non-diverged mirror, use:
 
 ```bash
 ${AIDEVOPS_DIR:-$HOME/.aidevops}/agents/scripts/canonical-recovery-helper.sh fast-forward-current \
@@ -49,7 +49,27 @@ ${AIDEVOPS_DIR:-$HOME/.aidevops}/agents/scripts/canonical-recovery-helper.sh fas
   --confirm FAST_FORWARD_CANONICAL_BRANCH
 ```
 
-Use the branch currently checked out and the issue linked to the merged PR. The helper refuses linked worktrees, dirty or detached checkouts, branch mismatches, divergence, concurrent recovery, stale local/remote refs, and audit failures. It never switches branches, compare-and-swaps the named local ref against its verified old commit, and verifies the exact `origin/<branch>` tip after updating the worktree. Use `restore-default` only to recover a canonical checkout that is on the wrong branch; routine synchronization must use `fast-forward-current`.
+The asserted branch must equal the branch resolved from registered config,
+committed project config, or `origin/HEAD`. The helper refuses arbitrary branch
+names, linked/detached checkouts, divergence, concurrent recovery, stale refs,
+and audit failures.
+
+If unexpected tracked, staged, untracked, or local-commit state exists, use the
+lossless route instead of waiting, stashing, resetting, or cleaning:
+
+```bash
+${AIDEVOPS_DIR:-$HOME/.aidevops}/agents/scripts/canonical-recovery-helper.sh sync-mirror \
+  --repo /path/to/canonical-checkout --issue 123 \
+  --confirm SYNCHRONIZE_CANONICAL_MIRROR
+```
+
+`sync-mirror` pins the allowed remote tip, verifies a restorable backup before
+removing only matching noise, clears invalid canonical ownership rows without
+signalling their PIDs, preserves local-only commits at an audited ref, and
+compare-and-swaps the mirror to the exact pinned tip. Interrupted runs retain a
+backup ID and restore command and are safe to retry. Use `restore-default` only
+when the canonical checkout is on the wrong branch. Full details:
+`reference/dirty-worktree-preservation.md`.
 
 **Worktrees** (DEFAULT for all feature work):
 
@@ -153,7 +173,7 @@ git remote prune origin
 
 ## Override Handling
 
-Canonical editing and branch switching have no conversational override. Redirect implementation to a linked worktree because changing canonical branch state can corrupt parallel sessions. An explicit request to synchronize a clean canonical checkout authorizes only the audited `fast-forward-current` helper path described above; it never permits direct Git mutation or divergence recovery. Use the separate audited `restore-default` path when the canonical checkout is on the wrong branch.
+Canonical editing and branch switching have no conversational override. Redirect implementation to a linked worktree because changing canonical branch state can corrupt parallel sessions. Explicit synchronization authorizes only the audited `fast-forward-current` or lossless `sync-mirror` path described above; it never permits direct Git mutation. Use the separate audited `restore-default` path when the canonical checkout is on the wrong branch.
 
 ## Database Schema Changes
 

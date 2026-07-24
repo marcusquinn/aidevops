@@ -14,12 +14,9 @@
 #   _rest_pr_comment, _rest_issue_edit, _rest_pr_create.
 # Read translators (t2689, t2772): _rest_issue_view, _rest_issue_list, _rest_pr_list.
 #
-# Note on field mapping (_rest_issue_view): `gh issue view --json id` returns
-# the GraphQL node_id (e.g. I_kgDO...). The REST endpoint stores this in the
-# `node_id` field, not `id`. Callers that need the node_id for GraphQL mutations
-# should note that those mutations will also fail during GraphQL exhaustion, so
-# the discrepancy is benign in practice. All other fields (state, title, body,
-# labels, assignees, createdAt) map directly between gh and REST responses.
+# Read rewrites are guarded by operation-specific argument and JSON-field
+# validators. Shapes without an exact REST equivalent remain on native gh and
+# never reach the permissive translator path.
 #
 # Loaded by shared-gh-wrappers.sh. Do not source directly.
 #
@@ -28,6 +25,24 @@
 # Include guard
 [[ -n "${_SHARED_GH_WRAPPERS_REST_FALLBACK_LOADED:-}" ]] && return 0
 _SHARED_GH_WRAPPERS_REST_FALLBACK_LOADED=1
+
+_gh_rest_fallback_dir="${_SHARED_GH_WRAPPERS_DIR:-}"
+if [[ -z "$_gh_rest_fallback_dir" && -n "${BASH_SOURCE[0]:-}" ]]; then
+	_gh_rest_fallback_dir="${BASH_SOURCE[0]%/*}"
+	[[ "$_gh_rest_fallback_dir" == "${BASH_SOURCE[0]}" ]] && _gh_rest_fallback_dir="."
+elif [[ -z "$_gh_rest_fallback_dir" && -n "${ZSH_VERSION:-}" && -f "${0:-}" ]]; then
+	_gh_rest_fallback_dir="${0%/*}"
+	[[ "$_gh_rest_fallback_dir" == "$0" ]] && _gh_rest_fallback_dir="."
+fi
+if ! declare -F gh_request_state_rate_json >/dev/null 2>&1 && [[ -f "${_gh_rest_fallback_dir}/shared-gh-request-state.sh" ]]; then
+	# shellcheck source=./shared-gh-request-state.sh
+	# shellcheck disable=SC1091
+	source "${_gh_rest_fallback_dir}/shared-gh-request-state.sh"
+fi
+# shellcheck source=./shared-gh-wrappers-rest-read-semantics.sh
+# shellcheck disable=SC1091
+source "${_gh_rest_fallback_dir}/shared-gh-wrappers-rest-read-semantics.sh"
+unset _gh_rest_fallback_dir
 
 # Threshold below which we route reads/writes through REST instead of GraphQL.
 # Env override: AIDEVOPS_GH_REST_FALLBACK_THRESHOLD
@@ -60,8 +75,6 @@ _SHARED_GH_WRAPPERS_REST_FALLBACK_LOADED=1
 #                         this only shifts supported read/list/search translators
 #                         to the REST core bucket earlier.
 _GH_REST_FALLBACK_THRESHOLD="${AIDEVOPS_GH_REST_FALLBACK_THRESHOLD:-3000}"
-_GH_REST_FALLBACK_RATE_LIMIT_CACHE=""
-_GH_REST_FALLBACK_RATE_LIMIT_CACHE_TS=0
 _GH_LAST_GRAPHQL_REMAINING=""
 _GH_REST_PR_VIEW_CACHE_DIR=""
 
@@ -290,11 +303,22 @@ _rest_split_csv() {
 }
 
 #######################################
+# Fetch the full rate-limit projection for shared, auth-scoped persistence.
+#######################################
+_rest_rate_limit_json_fetch() {
+	if declare -F _gh_with_timeout >/dev/null 2>&1; then
+		_gh_with_timeout read gh api rate_limit
+		return $?
+	fi
+	gh api rate_limit
+	return $?
+}
+
+#######################################
 # Return 0 (true) when GraphQL rate limit remaining is <= threshold.
 # `gh api rate_limit` is a free endpoint (does not count against quotas).
-# Fail-safe: if the response is unparseable (network error, gh auth missing),
-# return 1 (false) so the caller sees the original error rather than triggering
-# an unnecessary REST retry that may also fail.
+# Fail-safe: an unavailable or malformed rate projection does not trigger a
+# second transport path. Callers retain the original GitHub CLI failure.
 #
 # Optional arg: $1=pre-computed remaining count (integer string).
 # When provided, skips the `gh api rate_limit` call — callers that already
@@ -311,28 +335,20 @@ _rest_should_fallback() {
 	[[ "${AIDEVOPS_GH_FORCE_REST_READS:-0}" == "1" ]] && return 0
 	local remaining="${1:-}"
 	if [[ -z "$remaining" ]]; then
-		local _now=0
 		local _ttl="${AIDEVOPS_GH_REST_FALLBACK_CACHE_TTL:-20}"
-		if [[ "${AIDEVOPS_GH_REST_FALLBACK_DISABLE_CACHE:-0}" != "1" && "$_ttl" =~ ^[0-9]+$ && "$_ttl" -gt 0 ]]; then
-			_now=$(date +%s 2>/dev/null || printf '0')
-			if [[ "$_GH_REST_FALLBACK_RATE_LIMIT_CACHE" =~ ^[0-9]+$ && "$_now" -gt 0 && $((_now - _GH_REST_FALLBACK_RATE_LIMIT_CACHE_TS)) -le "$_ttl" ]]; then
-				remaining="$_GH_REST_FALLBACK_RATE_LIMIT_CACHE"
-			else
-				remaining=$(gh api rate_limit --jq '.resources.graphql.remaining' 2>/dev/null)
-				if [[ "$remaining" =~ ^[0-9]+$ ]]; then
-					_GH_REST_FALLBACK_RATE_LIMIT_CACHE="$remaining"
-					_GH_REST_FALLBACK_RATE_LIMIT_CACHE_TS="$_now"
-				fi
+		[[ "$_ttl" =~ ^[0-9]+$ ]] || _ttl=20
+		[[ "${AIDEVOPS_GH_REST_FALLBACK_DISABLE_CACHE:-0}" != "1" ]] || _ttl=0
+		if declare -F gh_request_state_rate_json >/dev/null 2>&1; then
+			local rate_json=""
+			if ! rate_json=$(gh_request_state_rate_json normal "$_ttl" _rest_rate_limit_json_fetch 2>/dev/null); then
+				return 1
 			fi
+			remaining=$(printf '%s' "$rate_json" | jq -r '.resources.graphql.remaining // ""' 2>/dev/null) || remaining=""
 		else
 			remaining=$(gh api rate_limit --jq '.resources.graphql.remaining' 2>/dev/null)
 		fi
 	fi
-	# When the rate_limit query itself fails, remaining is empty. Treat that as
-	# exhausted so supported calls can move to REST instead of skipping fallback.
-	if [[ -z "$remaining" ]]; then
-		return 0
-	fi
+	[[ -n "$remaining" ]] || return 1
 	[[ "$remaining" =~ ^[0-9]+$ ]] || return 1
 	_GH_LAST_GRAPHQL_REMAINING="$remaining"
 	if [[ "$remaining" -le "$_GH_REST_FALLBACK_THRESHOLD" ]]; then
@@ -349,7 +365,7 @@ _rest_args_have_search() {
 	local _arg
 	for _arg in "$@"; do
 		case "$_arg" in
-		--search|--search=*) return 0 ;;
+		--search|--search=*|-S) return 0 ;;
 		esac
 	done
 	return 1
@@ -379,48 +395,6 @@ _rest_args_json_fields() {
 		*) shift ;;
 		esac
 	done
-	return 0
-}
-
-#######################################
-# Return 0 when gh pr list argv is safe to translate to REST proactively.
-# Search and GraphQL-only fields stay on GraphQL unless budget exhaustion forces
-# legacy fallback, preserving workflow correctness over read redistribution.
-# Args: gh-style argv
-#######################################
-_rest_pr_list_can_preserve_args() {
-	_rest_args_have_search "$@" && return 1
-	local fields
-	fields="$(_rest_args_json_fields "$@")"
-	[[ -z "$fields" ]] && return 0
-	local field
-	while IFS= read -r field; do
-		case "$field" in
-		mergeable|reviewDecision|statusCheckRollup|reviews|latestReviews|comments|autoMergeRequest|mergeStateStatus) return 1 ;;
-		*) ;;
-		esac
-	done < <(_rest_split_csv "$fields")
-	return 0
-}
-
-#######################################
-# Return 0 when gh pr view argv is safe to translate to REST proactively.
-# Field classes: stable-within-cycle REST fields may use repo#PR cache; volatile
-# fields like mergeable need caller refetch after mutation; GraphQL-only fields
-# below never use REST projection.
-# Args: gh-style argv
-#######################################
-_rest_pr_view_can_preserve_args() {
-	local fields
-	fields="$(_rest_args_json_fields "$@")"
-	[[ -z "$fields" ]] && return 0
-	local field
-	while IFS= read -r field; do
-		case "$field" in
-		mergeable|statusCheckRollup|reviews|latestReviews|reviewThreads|commits|files|reviewDecision|autoMergeRequest|mergeStateStatus) return 1 ;;
-		*) ;;
-		esac
-	done < <(_rest_split_csv "$fields")
 	return 0
 }
 
@@ -971,8 +945,7 @@ _rest_pr_create() {
 # proactive REST-first routing can preserve compact gh-shaped output. Field
 # names align with `gh issue view --json` for common fields (state, title,
 # body, labels, assignees, createdAt).
-# Exception: `id` maps to the numeric issue id in REST, not the GraphQL
-# node_id — see the file header for the benign impact of this discrepancy.
+# Fields without an exact projection, including GraphQL `id`, remain native.
 #
 # Returns the underlying gh api exit code.
 #######################################
@@ -992,17 +965,17 @@ _rest_issue_view() {
 	while [[ $# -gt 0 ]]; do
 		local _arg="$1"
 		case "$_arg" in
-		--repo) repo="${2:-}"; shift 2 ;;
+		--repo | -R) [[ $# -ge 2 ]] || return 2; repo="${2:-}"; shift 2 ;;
 		--repo=*) repo="${_arg#--repo=}"; shift ;;
-		--json) json_fields="${2:-}"; shift 2 ;;
+		--json) [[ $# -ge 2 ]] || return 2; json_fields="${2:-}"; shift 2 ;;
 		--json=*) json_fields="${_arg#--json=}"; shift ;;
 		# t3027: accept -q as gh's documented shorthand for --jq. Without this,
 		# callers using `gh issue view ... -q '.field'` (the idiomatic gh form)
 		# silently lost the jq filter on REST fallback and got the full issue
 		# object, breaking downstream string assignments.
-		--jq | -q) jq_expr="${2:-}"; shift 2 ;;
+		--jq | -q) [[ $# -ge 2 ]] || return 2; jq_expr="${2:-}"; shift 2 ;;
 		--jq=* | -q=*) jq_expr="${_arg#*=}"; shift ;;
-		*) shift ;;
+		*) printf '_rest_issue_view: unsupported argument: %s\n' "$_arg" >&2; return 2 ;;
 		esac
 	done
 
@@ -1013,15 +986,23 @@ _rest_issue_view() {
 		printf '_rest_issue_view: issue number and --repo are required\n' >&2
 		return 1
 	fi
+	if ! _rest_repo_slug_supported "$repo"; then
+		printf '_rest_issue_view: invalid --repo value: %s\n' "$repo" >&2
+		return 1
+	fi
 	if [[ ! "$num" =~ ^[0-9]+$ ]]; then
 		printf '_rest_issue_view: invalid issue number: %s\n' "$num" >&2
 		return 1
+	fi
+	if [[ -n "$json_fields" ]] && ! _rest_issue_view_fields_supported "$json_fields"; then
+		printf '_rest_issue_view: unsupported JSON field set: %s\n' "$json_fields" >&2
+		return 2
 	fi
 
 	local _path="/repos/${repo}/issues/${num}"
 	local _gh_cmd=(gh api "$_path")
 	if [[ -n "$json_fields" ]]; then
-		jq_expr="$(_rest_issue_object_json_jq "$json_fields" "$jq_expr")"
+		jq_expr="$(_rest_issue_object_json_jq "$json_fields" "$jq_expr")" || return 1
 	fi
 	[[ -n "$jq_expr" ]] && _gh_cmd+=(--jq "$jq_expr")
 	_rest_api_call read "${_gh_cmd[@]}"
@@ -1033,22 +1014,29 @@ _rest_issue_object_json_jq() {
 	local user_jq="$2"
 	local projection=""
 	local field=""
+	local actor_projection=""
+	local assignees_projection=""
+	local labels_projection=""
+	actor_projection="$(_rest_jq_actor_projection)"
+	assignees_projection="$(_rest_jq_assignees_projection)"
+	labels_projection="$(_rest_jq_labels_projection)"
 	while IFS= read -r field; do
 		[[ -z "$field" ]] && continue
 		case "$field" in
 		number) projection="${projection}${projection:+,}number: .number" ;;
-		state) projection="${projection}${projection:+,}state: .state" ;;
+		state) projection="${projection}${projection:+,}state: (.state | ascii_upcase)" ;;
 		url) projection="${projection}${projection:+,}url: .html_url" ;;
 		title) projection="${projection}${projection:+,}title: (.title // \"\")" ;;
 		body) projection="${projection}${projection:+,}body: (.body // \"\")" ;;
 		createdAt) projection="${projection}${projection:+,}createdAt: .created_at" ;;
 		updatedAt) projection="${projection}${projection:+,}updatedAt: .updated_at" ;;
 		closedAt) projection="${projection}${projection:+,}closedAt: .closed_at" ;;
-		labels) projection="${projection}${projection:+,}labels: (.labels // [])" ;;
-		assignees) projection="${projection}${projection:+,}assignees: (.assignees // [])" ;;
-		author) projection="${projection}${projection:+,}author: (.user // {})" ;;
-		comments) projection="${projection}${projection:+,}comments: .comments" ;;
-		*) projection="${projection}${projection:+,}${field}: .${field}" ;;
+		labels) projection="${projection}${projection:+,}labels: ((.labels // []) | ${labels_projection})" ;;
+		assignees) projection="${projection}${projection:+,}assignees: ((.assignees // []) | ${assignees_projection})" ;;
+		author) projection="${projection}${projection:+,}author: (.user | ${actor_projection})" ;;
+		stateReason) projection="${projection}${projection:+,}stateReason: (if .state_reason == null then null else (.state_reason | ascii_upcase) end)" ;;
+		closed) projection="${projection}${projection:+,}closed: (.state == \"closed\")" ;;
+		*) return 1 ;;
 		esac
 	done < <(_rest_split_csv "$fields")
 	[[ -z "$projection" ]] && projection="number: .number"
@@ -1075,13 +1063,13 @@ _rest_pr_view() {
 	while [[ $# -gt 0 ]]; do
 		local _arg="$1"
 		case "$_arg" in
-		--repo) repo="${2:-}"; shift 2 ;;
+		--repo | -R) [[ $# -ge 2 ]] || return 2; repo="${2:-}"; shift 2 ;;
 		--repo=*) repo="${_arg#--repo=}"; shift ;;
-		--json) json_fields="${2:-}"; shift 2 ;;
+		--json) [[ $# -ge 2 ]] || return 2; json_fields="${2:-}"; shift 2 ;;
 		--json=*) json_fields="${_arg#--json=}"; shift ;;
-		--jq | -q) jq_expr="${2:-}"; shift 2 ;;
+		--jq | -q) [[ $# -ge 2 ]] || return 2; jq_expr="${2:-}"; shift 2 ;;
 		--jq=* | -q=*) jq_expr="${_arg#*=}"; shift ;;
-		*) shift ;;
+		*) printf '_rest_pr_view: unsupported argument: %s\n' "$_arg" >&2; return 2 ;;
 		esac
 	done
 
@@ -1092,9 +1080,17 @@ _rest_pr_view() {
 		printf '_rest_pr_view: PR number and --repo are required\n' >&2
 		return 1
 	fi
+	if ! _rest_repo_slug_supported "$repo"; then
+		printf '_rest_pr_view: invalid --repo value: %s\n' "$repo" >&2
+		return 1
+	fi
 	if [[ ! "$num" =~ ^[0-9]+$ ]]; then
 		printf '_rest_pr_view: invalid PR number: %s\n' "$num" >&2
 		return 1
+	fi
+	if [[ -n "$json_fields" ]] && ! _rest_pr_view_fields_supported emergency "$json_fields"; then
+		printf '_rest_pr_view: unsupported JSON field set: %s\n' "$json_fields" >&2
+		return 2
 	fi
 
 	local cache_path=""
@@ -1144,7 +1140,7 @@ _rest_pr_view() {
 		return $?
 	fi
 	if [[ -n "$json_fields" ]]; then
-		jq_expr="$(_rest_pr_object_json_jq "$json_fields" "$jq_expr")"
+		jq_expr="$(_rest_pr_object_json_jq "$json_fields" "$jq_expr")" || return 1
 	fi
 	[[ -n "$jq_expr" ]] && _gh_cmd+=(--jq "$jq_expr")
 	_rest_api_call read "${_gh_cmd[@]}"
@@ -1156,6 +1152,10 @@ _rest_pr_object_json_jq() {
 	local user_jq="$2"
 	local projection=""
 	local field=""
+	local actor_projection=""
+	local labels_projection=""
+	actor_projection="$(_rest_jq_actor_projection)"
+	labels_projection="$(_rest_jq_labels_projection)"
 	while IFS= read -r field; do
 		[[ -z "$field" ]] && continue
 		case "$field" in
@@ -1165,12 +1165,11 @@ _rest_pr_object_json_jq() {
 		mergedAt) projection="${projection}${projection:+,}mergedAt: .merged_at" ;;
 		closedAt) projection="${projection}${projection:+,}closedAt: .closed_at" ;;
 		mergeCommit) projection="${projection}${projection:+,}mergeCommit: (if (.merge_commit_sha // \"\") != \"\" then {oid: .merge_commit_sha} else null end)" ;;
-		mergedBy) projection="${projection}${projection:+,}mergedBy: .merged_by" ;;
+		mergedBy) projection="${projection}${projection:+,}mergedBy: (.merged_by | ${actor_projection})" ;;
 		mergeable) projection="${projection}${projection:+,}mergeable: (.mergeable | if . == true then \"MERGEABLE\" elif . == false then \"CONFLICTING\" else (. // \"UNKNOWN\") end)" ;;
-		reviewDecision) projection="${projection}${projection:+,}reviewDecision: null" ;;
 		isDraft) projection="${projection}${projection:+,}isDraft: (.draft // false)" ;;
-		labels) projection="${projection}${projection:+,}labels: (.labels // [])" ;;
-		author) projection="${projection}${projection:+,}author: (.user // {})" ;;
+		labels) projection="${projection}${projection:+,}labels: ((.labels // []) | ${labels_projection})" ;;
+		author) projection="${projection}${projection:+,}author: (.user | ${actor_projection})" ;;
 		title) projection="${projection}${projection:+,}title: (.title // \"\")" ;;
 		body) projection="${projection}${projection:+,}body: (.body // \"\")" ;;
 		url) projection="${projection}${projection:+,}url: .html_url" ;;
@@ -1179,9 +1178,7 @@ _rest_pr_object_json_jq() {
 		baseRefName) projection="${projection}${projection:+,}baseRefName: (.base.ref // \"\")" ;;
 		headRefName) projection="${projection}${projection:+,}headRefName: (.head.ref // \"\")" ;;
 		headRefOid) projection="${projection}${projection:+,}headRefOid: (.head.sha // \"\")" ;;
-		autoMergeRequest) projection="${projection}${projection:+,}autoMergeRequest: (.autoMergeRequest // null)" ;;
-		mergeStateStatus) projection="${projection}${projection:+,}mergeStateStatus: (.mergeStateStatus // \"\")" ;;
-		*) projection="${projection}${projection:+,}${field}: .${field}" ;;
+		*) return 1 ;;
 		esac
 	done < <(_rest_split_csv "$fields")
 	[[ -z "$projection" ]] && projection="number: .number"
@@ -1197,10 +1194,9 @@ _rest_pr_object_json_jq() {
 # --json, --jq, -q) and returns a JSON array or jq-filtered output.
 # Mirrors `gh pr list` for state/head/base filtering.
 #
-# The --search flag is not supported by the REST pulls endpoint. The wrapper
-# keeps PR search on the GraphQL path instead of silently degrading semantics.
-# --json FIELDS is accepted for parity but ignored (the REST endpoint
-# returns the full object; use --jq/-q to select).
+# Search-only filters are handled by the sibling read-semantics translator or
+# rejected here. JSON fields are projected to gh-compatible names; unsupported
+# fields fail before any API request.
 #
 # Returns the underlying gh api exit code.
 #######################################
@@ -1210,27 +1206,32 @@ _rest_pr_list_json_jq() {
 	local source_filter="${3:-.}"
 	local projection=""
 	local field=""
+	local actor_projection=""
+	local assignees_projection=""
+	local labels_projection=""
+	actor_projection="$(_rest_jq_actor_projection)"
+	assignees_projection="$(_rest_jq_assignees_projection)"
+	labels_projection="$(_rest_jq_labels_projection)"
 	while IFS= read -r field; do
 		[[ -z "$field" ]] && continue
 		case "$field" in
 		number) projection="${projection}${projection:+,}number: .number" ;;
-		state) projection="${projection}${projection:+,}state: (if .merged_at != null then \"MERGED\" else .state end)" ;;
-		mergeable) projection="${projection}${projection:+,}mergeable: (.mergeable | if . == true then \"MERGEABLE\" elif . == false then \"CONFLICTING\" else (. // \"UNKNOWN\") end)" ;;
-		reviewDecision) projection="${projection}${projection:+,}reviewDecision: null" ;;
+		state) projection="${projection}${projection:+,}state: (if .merged_at != null then \"MERGED\" else (.state | ascii_upcase) end)" ;;
 		isDraft) projection="${projection}${projection:+,}isDraft: (.draft // false)" ;;
-		labels) projection="${projection}${projection:+,}labels: (.labels // [])" ;;
+		labels) projection="${projection}${projection:+,}labels: ((.labels // []) | ${labels_projection})" ;;
 		mergedAt) projection="${projection}${projection:+,}mergedAt: .merged_at" ;;
 		url) projection="${projection}${projection:+,}url: .html_url" ;;
 		title) projection="${projection}${projection:+,}title: .title" ;;
-		body) projection="${projection}${projection:+,}body: .body" ;;
+		body) projection="${projection}${projection:+,}body: (.body // \"\")" ;;
 		createdAt) projection="${projection}${projection:+,}createdAt: .created_at" ;;
 		updatedAt) projection="${projection}${projection:+,}updatedAt: .updated_at" ;;
 		closedAt) projection="${projection}${projection:+,}closedAt: .closed_at" ;;
 		baseRefName) projection="${projection}${projection:+,}baseRefName: .base.ref" ;;
 		headRefName) projection="${projection}${projection:+,}headRefName: .head.ref" ;;
 		headRefOid) projection="${projection}${projection:+,}headRefOid: .head.sha" ;;
-		author) projection="${projection}${projection:+,}author: (.user // {})" ;;
-		*) projection="${projection}${projection:+,}${field}: .${field}" ;;
+		author) projection="${projection}${projection:+,}author: (.user | ${actor_projection})" ;;
+		assignees) projection="${projection}${projection:+,}assignees: ((.assignees // []) | ${assignees_projection})" ;;
+		*) return 1 ;;
 		esac
 	done < <(_rest_split_csv "$fields")
 	[[ -z "$projection" ]] && projection="number: .number"
@@ -1250,71 +1251,77 @@ _rest_pr_list() {
 	local head_branch=""
 	local base_branch=""
 	local rest_state=""
-	local source_filter="."
 
 	while [[ $# -gt 0 ]]; do
 		local _arg="$1"
 		case "$_arg" in
-		--repo) repo="${2:-}"; shift 2 ;;
+		--repo | -R) [[ $# -ge 2 ]] || return 2; repo="${2:-}"; shift 2 ;;
 		--repo=*) repo="${_arg#--repo=}"; shift ;;
-		--state) state="${2:-}"; shift 2 ;;
+		--state | -s) [[ $# -ge 2 ]] || return 2; state="${2:-}"; shift 2 ;;
 		--state=*) state="${_arg#--state=}"; shift ;;
-		--head) head_branch="${2:-}"; shift 2 ;;
+		--head | -H) [[ $# -ge 2 ]] || return 2; head_branch="${2:-}"; shift 2 ;;
 		--head=*) head_branch="${_arg#--head=}"; shift ;;
-		--base) base_branch="${2:-}"; shift 2 ;;
+		--base | -B) [[ $# -ge 2 ]] || return 2; base_branch="${2:-}"; shift 2 ;;
 		--base=*) base_branch="${_arg#--base=}"; shift ;;
-		--limit) limit="${2:-}"; shift 2 ;;
+		--limit | -L) [[ $# -ge 2 ]] || return 2; limit="${2:-}"; shift 2 ;;
 		--limit=*) limit="${_arg#--limit=}"; shift ;;
-		--json) json_fields="${2:-}"; shift 2 ;;
+		--json) [[ $# -ge 2 ]] || return 2; json_fields="${2:-}"; shift 2 ;;
 		--json=*) json_fields="${_arg#--json=}"; shift ;;
-		--jq) jq_expr="${2:-}"; shift 2 ;;
-		--jq=*) jq_expr="${_arg#--jq=}"; shift ;;
-		-q) jq_expr="${2:-}"; shift 2 ;;
-		--search|--search=*) printf '_rest_pr_list: --search is not supported by REST fallback\n' >&2; return 2 ;;
-		*) shift ;;
+		--jq | -q) [[ $# -ge 2 ]] || return 2; jq_expr="${2:-}"; shift 2 ;;
+		--jq=* | -q=*) jq_expr="${_arg#*=}"; shift ;;
+		--author | -A | --author=* | --assignee | -a | --assignee=* | --label | -l | --label=* | --search | -S | --search=* | --draft | -d)
+			printf '_rest_pr_list: argument requires Search API routing: %s\n' "$_arg" >&2
+			return 2
+			;;
+		*) printf '_rest_pr_list: unsupported argument: %s\n' "$_arg" >&2; return 2 ;;
 		esac
 	done
 
-	if [[ -z "$repo" ]]; then
-		printf '_rest_pr_list: --repo is required\n' >&2
+	if [[ -z "$repo" || ! "$limit" =~ ^[1-9][0-9]*$ ]] || ! _rest_repo_slug_supported "$repo"; then
+		printf '_rest_pr_list: --repo and a positive --limit are required\n' >&2
 		return 1
 	fi
-
-	rest_state="$state"
-	if [[ "$state" == "merged" ]]; then
-		rest_state="closed"
-		source_filter='map(select(.merged_at != null))'
+	if [[ -n "$json_fields" ]] && ! _rest_pr_list_fields_supported direct "$json_fields"; then
+		printf '_rest_pr_list: unsupported JSON field set: %s\n' "$json_fields" >&2
+		return 2
 	fi
 
-	local _query="state=${rest_state}&per_page=${limit}"
+	case "$state" in
+	open | all) rest_state="$state" ;;
+	closed | merged) rest_state="closed" ;;
+	*) printf '_rest_pr_list: unsupported state: %s\n' "$state" >&2; return 2 ;;
+	esac
+
+	local page_size="$limit"
+	[[ "$page_size" -le 100 ]] || page_size=100
+	local _query="state=${rest_state}&per_page=${page_size}"
 	if [[ -n "$head_branch" ]]; then
 		local _head_encoded
 		if [[ "$head_branch" != *:* ]]; then
 			head_branch="${repo%%/*}:${head_branch}"
 		fi
-		_head_encoded=$(jq -rn --arg v "$head_branch" '$v | @uri')
+		_head_encoded=$(jq -rn --arg v "$head_branch" '$v | @uri') || return 1
 		_query="${_query}&head=${_head_encoded}"
 	fi
 	if [[ -n "$base_branch" ]]; then
 		local _base_encoded
-		_base_encoded=$(jq -rn --arg v "$base_branch" '$v | @uri')
+		_base_encoded=$(jq -rn --arg v "$base_branch" '$v | @uri') || return 1
 		_query="${_query}&base=${_base_encoded}"
 	fi
 
-	local _path="/repos/${repo}/pulls?${_query}"
-	local _gh_cmd=(gh api "$_path")
+	local result=""
+	result="$(_rest_pr_list_collect_pages "$repo" "$_query" "$state" "$limit" "$page_size")" || return 1
 	if [[ -n "$json_fields" ]]; then
-		jq_expr="$(_rest_pr_list_json_jq "$json_fields" "$jq_expr" "$source_filter")"
-	elif [[ "$source_filter" != "." ]]; then
-		if [[ -n "$jq_expr" ]]; then
-			jq_expr="${source_filter} | ${jq_expr}"
-		else
-			jq_expr="$source_filter"
-		fi
+		local projection=""
+		projection="$(_rest_pr_list_json_jq "$json_fields" "" ".")" || return 1
+		result=$(printf '%s' "$result" | jq -c "$projection") || return 1
 	fi
-	[[ -n "$jq_expr" ]] && _gh_cmd+=(--jq "$jq_expr")
-	_rest_api_call read "${_gh_cmd[@]}"
-	return $?
+	if [[ -n "$jq_expr" ]]; then
+		printf '%s' "$result" | jq -r "$jq_expr"
+		return $?
+	fi
+	printf '%s\n' "$result"
+	return 0
 }
 
 #######################################
@@ -1325,11 +1332,9 @@ _rest_pr_list() {
 #
 # Multiple --label flags are collected and joined into a comma-separated
 # `?labels=` query parameter (GitHub REST AND semantics — same as gh CLI).
-# The --search flag is not supported by this REST translator and is silently
-# skipped; callers that require full-text search semantics must use the
-# GraphQL / Search API path. --json FIELDS maps common gh field names onto
-# REST field names so low-budget list polling can avoid GraphQL without
-# breaking compact JSON callers.
+# Search is handled by the sibling Search API translator. Unknown flags and
+# unsupported JSON fields fail before any API request rather than broadening the
+# result set.
 #
 # Returns the underlying gh api exit code.
 #######################################
@@ -1338,22 +1343,29 @@ _rest_issue_list_json_jq() {
 	local user_jq="$2"
 	local projection=""
 	local field=""
+	local actor_projection=""
+	local assignees_projection=""
+	local labels_projection=""
+	actor_projection="$(_rest_jq_actor_projection)"
+	assignees_projection="$(_rest_jq_assignees_projection)"
+	labels_projection="$(_rest_jq_labels_projection)"
 	while IFS= read -r field; do
 		[[ -z "$field" ]] && continue
 		case "$field" in
 		number) projection="${projection}${projection:+,}number: .number" ;;
-		state) projection="${projection}${projection:+,}state: .state" ;;
+		state) projection="${projection}${projection:+,}state: (.state | ascii_upcase)" ;;
 		url) projection="${projection}${projection:+,}url: .html_url" ;;
 		title) projection="${projection}${projection:+,}title: .title" ;;
-		body) projection="${projection}${projection:+,}body: .body" ;;
+		body) projection="${projection}${projection:+,}body: (.body // \"\")" ;;
 		createdAt) projection="${projection}${projection:+,}createdAt: .created_at" ;;
 		updatedAt) projection="${projection}${projection:+,}updatedAt: .updated_at" ;;
 		closedAt) projection="${projection}${projection:+,}closedAt: .closed_at" ;;
-		labels) projection="${projection}${projection:+,}labels: (.labels // [])" ;;
-		assignees) projection="${projection}${projection:+,}assignees: (.assignees // [])" ;;
-		author) projection="${projection}${projection:+,}author: (.user // {})" ;;
-		comments) projection="${projection}${projection:+,}comments: .comments" ;;
-		*) projection="${projection}${projection:+,}${field}: .${field}" ;;
+		labels) projection="${projection}${projection:+,}labels: ((.labels // []) | ${labels_projection})" ;;
+		assignees) projection="${projection}${projection:+,}assignees: ((.assignees // []) | ${assignees_projection})" ;;
+		author) projection="${projection}${projection:+,}author: (.user | ${actor_projection})" ;;
+		stateReason) projection="${projection}${projection:+,}stateReason: (if .state_reason == null then null else (.state_reason | ascii_upcase) end)" ;;
+		closed) projection="${projection}${projection:+,}closed: (.state == \"closed\")" ;;
+		*) return 1 ;;
 		esac
 	done < <(_rest_split_csv "$fields")
 	[[ -z "$projection" ]] && projection="number: .number"
@@ -1375,6 +1387,7 @@ _rest_issue_list() {
 	local user_jq=""
 	local json_fields=""
 	local assignee=""
+	local author=""
 	local -a labels
 	local _tok
 	labels=()
@@ -1382,33 +1395,42 @@ _rest_issue_list() {
 	while [[ $# -gt 0 ]]; do
 		local _arg="$1"
 		case "$_arg" in
-		--repo) repo="${2:-}"; shift 2 ;;
+		--repo | -R) [[ $# -ge 2 ]] || return 2; repo="${2:-}"; shift 2 ;;
 		--repo=*) repo="${_arg#--repo=}"; shift ;;
-		--state) state="${2:-}"; shift 2 ;;
+		--state | -s) [[ $# -ge 2 ]] || return 2; state="${2:-}"; shift 2 ;;
 		--state=*) state="${_arg#--state=}"; shift ;;
-		--label) while IFS= read -r _tok; do [[ -n "$_tok" ]] && labels+=("$_tok"); done < <(_rest_split_csv "${2:-}"); shift 2 ;;
+		--label | -l) [[ $# -ge 2 ]] || return 2; while IFS= read -r _tok; do [[ -n "$_tok" ]] && labels+=("$_tok"); done < <(_rest_split_csv "${2:-}"); shift 2 ;;
 		--label=*) while IFS= read -r _tok; do [[ -n "$_tok" ]] && labels+=("$_tok"); done < <(_rest_split_csv "${_arg#--label=}"); shift ;;
-		--assignee) assignee="${2:-}"; shift 2 ;;
+		--assignee | -a) [[ $# -ge 2 ]] || return 2; assignee="${2:-}"; shift 2 ;;
 		--assignee=*) assignee="${_arg#--assignee=}"; shift ;;
-		--limit) limit="${2:-}"; shift 2 ;;
+		--author | -A) [[ $# -ge 2 ]] || return 2; author="${2:-}"; shift 2 ;;
+		--author=*) author="${_arg#--author=}"; shift ;;
+		--limit | -L) [[ $# -ge 2 ]] || return 2; limit="${2:-}"; shift 2 ;;
 		--limit=*) limit="${_arg#--limit=}"; shift ;;
-		--json) json_fields="${2:-}"; shift 2 ;;
+		--json) [[ $# -ge 2 ]] || return 2; json_fields="${2:-}"; shift 2 ;;
 		--json=*) json_fields="${_arg#--json=}"; shift ;;
-		--jq) jq_expr="${2:-}"; shift 2 ;;
-		--jq=*) jq_expr="${_arg#--jq=}"; shift ;;
-		-q) jq_expr="${2:-}"; shift 2 ;;
-		-q=*) jq_expr="${_arg#*=}"; shift ;;
-		--search) shift 2 ;;
-		--search=*) shift ;;
-		*) shift ;;
+		--jq | -q) [[ $# -ge 2 ]] || return 2; jq_expr="${2:-}"; shift 2 ;;
+		--jq=* | -q=*) jq_expr="${_arg#*=}"; shift ;;
+		--search | -S | --search=*) printf '_rest_issue_list: --search requires Search API routing\n' >&2; return 2 ;;
+		*) printf '_rest_issue_list: unsupported argument: %s\n' "$_arg" >&2; return 2 ;;
 		esac
 	done
 	user_jq="$jq_expr"
 
-	if [[ -z "$repo" ]]; then
-		printf '_rest_issue_list: --repo is required\n' >&2
+	if [[ -z "$repo" || ! "$limit" =~ ^[1-9][0-9]*$ ]] || ! _rest_repo_slug_supported "$repo"; then
+		printf '_rest_issue_list: --repo and a positive --limit are required\n' >&2
 		return 1
 	fi
+	if [[ -n "$json_fields" ]] && ! _rest_issue_list_fields_supported "$json_fields"; then
+		printf '_rest_issue_list: unsupported JSON field set: %s\n' "$json_fields" >&2
+		return 2
+	fi
+	case "$state" in
+	open | closed | all) ;;
+	*) printf '_rest_issue_list: unsupported state: %s\n' "$state" >&2; return 2 ;;
+	esac
+	[[ -z "$author" ]] || author="$(_rest_resolve_actor_filter "$author")" || return 1
+	[[ -z "$assignee" ]] || assignee="$(_rest_resolve_actor_filter "$assignee")" || return 1
 
 	local page_size="$limit"
 	if [[ "$page_size" -gt 100 ]]; then
@@ -1420,39 +1442,27 @@ _rest_issue_list() {
 		local _label
 		for _label in "${labels[@]}"; do
 			local _enc
-			_enc=$(jq -rn --arg v "$_label" '$v | @uri')
+			_enc=$(jq -rn --arg v "$_label" '$v | @uri') || return 1
 			_labels_encoded="${_labels_encoded:+${_labels_encoded}%2C}${_enc}"
 		done
 		_query="${_query}&labels=${_labels_encoded}"
 	fi
 	if [[ -n "$assignee" ]]; then
 		local _assignee_encoded
-		_assignee_encoded=$(jq -rn --arg v "$assignee" '$v | @uri')
+		_assignee_encoded=$(jq -rn --arg v "$assignee" '$v | @uri') || return 1
 		_query="${_query}&assignee=${_assignee_encoded}"
 	fi
+	if [[ -n "$author" ]]; then
+		local _author_encoded
+		_author_encoded=$(jq -rn --arg v "$author" '$v | @uri') || return 1
+		_query="${_query}&creator=${_author_encoded}"
+	fi
 
-	local page=1
-	local raw_page=""
-	local raw_count=0
-	local issue_count=0
-	local combined='[]'
-	while [[ "$issue_count" -lt "$limit" ]]; do
-		local _path="/repos/${repo}/issues?${_query}&page=${page}"
-		if ! raw_page=$(_rest_api_call read gh api "$_path"); then
-			return 1
-		fi
-		raw_count=$(printf '%s' "$raw_page" | jq 'length' 2>/dev/null) || return 1
-		combined=$(printf '%s\n%s\n' "$combined" "$raw_page" | jq -sc \
-			'.[0] + [.[1][] | select(.pull_request == null)]') || return 1
-		issue_count=$(printf '%s' "$combined" | jq 'length' 2>/dev/null) || return 1
-		if [[ "$raw_count" -lt "$page_size" ]]; then
-			break
-		fi
-		page=$((page + 1))
-	done
+	local combined=""
+	combined="$(_rest_issue_list_collect_pages "$repo" "$_query" "$limit" "$page_size")" || return 1
 
 	if [[ -n "$json_fields" ]]; then
-		jq_expr="$(_rest_issue_list_json_jq "$json_fields" "")"
+		jq_expr="$(_rest_issue_list_json_jq "$json_fields" "")" || return 1
 	else
 		jq_expr='[.[] | select(.pull_request == null)]'
 	fi
@@ -1463,105 +1473,5 @@ _rest_issue_list() {
 	else
 		printf '%s\n' "$result"
 	fi
-	return $?
-}
-
-#######################################
-# _rest_issue_search: GET /search/issues?q=...  (t2995)
-# REST-side equivalent of `gh issue list --search`; preserves full-text search
-# semantics because /repos/{owner}/{repo}/issues does not support --search.
-#
-# Translation:
-#   gh issue list --repo OWNER/REPO --state open \
-#     --label LABEL --search QUERY --json number --jq '.[0].number'
-# becomes:
-#   gh api /search/issues?q=QUERY+repo:OWNER/REPO+is:issue+is:open+label:LABEL \
-#     --jq '.items[0].number'
-#
-# Notes: Search has its own quota; caller jq expressions are applied to `.items`.
-#
-# Returns the underlying gh api exit code.
-#######################################
-_rest_issue_search() {
-	gh_record_call search-rest _rest_issue_search 2>/dev/null || true
-	local repo=""
-	local state=""
-	local search=""
-	local limit=30
-	local jq_expr=""
-	local -a labels
-	local _tok
-	labels=()
-
-	while [[ $# -gt 0 ]]; do
-		local _arg="$1"
-		case "$_arg" in
-		--repo) repo="${2:-}"; shift 2 ;;
-		--repo=*) repo="${_arg#--repo=}"; shift ;;
-		--state) state="${2:-}"; shift 2 ;;
-		--state=*) state="${_arg#--state=}"; shift ;;
-		--label) while IFS= read -r _tok; do [[ -n "$_tok" ]] && labels+=("$_tok"); done < <(_rest_split_csv "${2:-}"); shift 2 ;;
-		--label=*) while IFS= read -r _tok; do [[ -n "$_tok" ]] && labels+=("$_tok"); done < <(_rest_split_csv "${_arg#--label=}"); shift ;;
-		--limit) limit="${2:-}"; shift 2 ;;
-		--limit=*) limit="${_arg#--limit=}"; shift ;;
-		--search) search="${2:-}"; shift 2 ;;
-		--search=*) search="${_arg#--search=}"; shift ;;
-		--json) shift 2 ;;
-		--json=*) shift ;;
-		--jq) jq_expr="${2:-}"; shift 2 ;;
-		--jq=*) jq_expr="${_arg#--jq=}"; shift ;;
-		*) shift ;;
-		esac
-	done
-
-	if [[ -z "$repo" || -z "$search" ]]; then
-		printf '_rest_issue_search: --repo and --search are required\n' >&2
-		return 1
-	fi
-
-	# Build the q= parameter. Each token is URI-encoded individually then
-	# joined with `+`. The repo:/is:issue/state qualifiers go AFTER the
-	# user-supplied search to preserve the user's term ordering.
-	local _q
-	_q=$(jq -rn --arg v "$search" '$v | @uri')
-	local _repo_enc
-	_repo_enc=$(jq -rn --arg v "$repo" '$v | @uri')
-	_q="${_q}+repo:${_repo_enc}+is:issue"
-	if [[ -n "$state" && "$state" != "all" ]]; then
-		# /search/issues uses `is:open` / `is:closed`, not `state:`.
-		_q="${_q}+is:${state}"
-	fi
-	local _label
-	for _label in "${labels[@]}"; do
-		local _label_enc
-		_label_enc=$(jq -rn --arg v "$_label" '$v | @uri')
-		_q="${_q}+label:%22${_label_enc}%22"
-	done
-
-	local _path="/search/issues?q=${_q}&per_page=${limit}"
-
-	# Translate caller's jq (which expects a flat array) into one that
-	# operates on .items. If no --jq, just return .items as a JSON array.
-	local _final_jq
-	if [[ -n "$jq_expr" ]]; then
-		_final_jq=".items | ${jq_expr}"
-	else
-		_final_jq=".items"
-	fi
-
-	local _raw_response=""
-	local _body=""
-	local _rc=0
-	local _gh_cmd=(gh api -i "$_path")
-	_raw_response="$(_rest_api_call read "${_gh_cmd[@]}")"
-	_rc=$?
-	if [[ "$_rc" -ne 0 ]]; then
-		return "$_rc"
-	fi
-
-	_body="$(awk 'BEGIN { body = 0 } { line = $0; sub(/\r$/, "", line); if (body) { print; next } if (line == "") { body = 1 } }' <<<"$_raw_response")"
-	[[ -z "$_body" && "$_raw_response" != HTTP/* ]] && _body="$_raw_response"
-	[[ -z "$_body" ]] && { printf '[]\n'; return 0; }
-	printf '%s\n' "$_body" | jq -r "$_final_jq"
 	return $?
 }

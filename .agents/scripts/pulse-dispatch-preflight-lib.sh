@@ -81,6 +81,14 @@ _preflight_cleanup_and_ledger() {
 	if declare -F sweep_closed_auto_dispatch_issues >/dev/null 2>&1; then
 		run_stage_with_timeout "sweep_closed_auto_dispatch_issues" "$PRE_RUN_STAGE_TIMEOUT" sweep_closed_auto_dispatch_issues || true
 	fi
+	# Fast API-free recovery runs synchronously before the long async cleanup.
+	# This prevents a stale async lock from leaving the dispatch worktree cap
+	# saturated by abandoned detached linter/regression fixtures.
+	if declare -F cleanup_stale_temp_worktrees >/dev/null 2>&1; then
+		local _temp_cleanup_timeout="${TEMP_WORKTREE_CLEANUP_TIMEOUT:-60}"
+		[[ "$_temp_cleanup_timeout" =~ ^[0-9]+$ ]] || _temp_cleanup_timeout=60
+		run_stage_with_timeout "cleanup_stale_temp_worktrees" "$_temp_cleanup_timeout" cleanup_stale_temp_worktrees || true
+	fi
 	# GH#20554: Worktree cleanup is moved to an async background job so a slow
 	# cleanup (20+ worktrees × 2-5s gh API calls each) never hits a hard timeout
 	# and blocks the pulse cycle. The helper enforces a single-runner lock and

@@ -11,7 +11,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)" || exit
 REPO_DIR="$(cd "${SCRIPT_DIR}/../../.." && pwd)" || exit
-DEPLOYMENT_MODULE="${REPO_DIR}/.agents/scripts/setup/_deployment.sh"
+DEPLOYMENT_MODULE="${REPO_DIR}/.agents/scripts/setup/modules/agent-deploy.sh"
 
 PASS=0
 FAIL=0

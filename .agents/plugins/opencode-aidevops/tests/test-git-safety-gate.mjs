@@ -17,8 +17,11 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
 import {
+  bindActiveScriptsDir,
   checkCanonicalGitSafetyGate,
+  checkCanonicalWriteSafetyGate,
   checkCommandSafetyGate,
+  isDirectFileMutationTool,
 } from "../quality-hooks-git-safety.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -40,6 +43,129 @@ function setupRepo() {
   execFileSync(realGit, ["worktree", "add", "-q", "-b", "feature/test", linked], { cwd: repo });
   return { root, repo, linked };
 }
+
+test("classifies built-in and namespaced direct file mutation tools", () => {
+  for (const tool of ["Write", "write_file", "edit", "edit_file", "write", "functions.apply_patch", "namespace/Edit", "tools::apply-patch"]) {
+    assert.equal(isDirectFileMutationTool(tool), true, tool);
+  }
+  for (const tool of ["Bash", "read", "functions.read", "glob"]) {
+    assert.equal(isDirectFileMutationTool(tool), false, tool);
+  }
+});
+
+test("classifies every apply-patch target instead of trusting linked cwd", () => {
+  const { root, repo, linked } = setupRepo();
+  try {
+    const linkedPatch = "*** Begin Patch\n*** Add File: linked-only.md\n+safe\n*** End Patch\n";
+    assert.doesNotThrow(
+      () => checkCanonicalWriteSafetyGate("", scriptsDir, linked, linkedPatch),
+    );
+    const absoluteLinkedPatch = `*** Begin Patch\n*** Add File: ${join(linked, "absolute-linked.md")}\n+safe\n*** End Patch\n`;
+    assert.doesNotThrow(
+      () => checkCanonicalWriteSafetyGate("", scriptsDir, repo, absoluteLinkedPatch),
+      "an absolute linked-worktree target must not inherit the canonical workspace classification",
+    );
+    const canonicalPatch = `*** Begin Patch\n*** Update File: ${join(repo, "README.md")}\n@@\n-seed\n+unsafe\n*** End Patch\n`;
+    assert.throws(
+      () => checkCanonicalWriteSafetyGate("", scriptsDir, linked, canonicalPatch),
+      /canonical write policy.*read-only session mirrors/,
+    );
+    const traversalPatch = `*** Begin Patch\n*** Update File: ${join(linked, "..", "repo", "README.md")}\n@@\n-seed\n+unsafe\n*** End Patch\n`;
+    assert.throws(
+      () => checkCanonicalWriteSafetyGate("", scriptsDir, repo, traversalPatch),
+      /canonical write policy.*read-only session mirrors/,
+    );
+    symlinkSync(repo, join(linked, "canonical-link"));
+    const symlinkPatch = `*** Begin Patch\n*** Update File: ${join(linked, "canonical-link", "README.md")}\n@@\n-seed\n+unsafe\n*** End Patch\n`;
+    assert.throws(
+      () => checkCanonicalWriteSafetyGate("", scriptsDir, repo, symlinkPatch),
+      /canonical write policy.*read-only session mirrors/,
+    );
+    assert.throws(
+      () => checkCanonicalWriteSafetyGate("", scriptsDir, linked, ""),
+      /targets could not be classified/,
+    );
+    assert.throws(
+      () => checkCanonicalWriteSafetyGate("", scriptsDir, linked, { invalid: true }),
+      /targets could not be classified/,
+    );
+
+    const outsideTarget = join(root, "aidevops-issue-body.md");
+    const outsidePatch = `*** Begin Patch\n*** Add File: ${outsideTarget}\n+safe\n*** End Patch\n`;
+    assert.doesNotThrow(
+      () => checkCanonicalWriteSafetyGate("", scriptsDir, repo, outsidePatch),
+    );
+    const mixedPatch = `*** Begin Patch\n*** Add File: ${outsideTarget}\n+safe\n*** Update File: ${join(repo, "README.md")}\n@@\n-seed\n+unsafe\n*** End Patch\n`;
+    assert.throws(
+      () => checkCanonicalWriteSafetyGate("", scriptsDir, repo, mixedPatch),
+      /canonical write policy.*read-only session mirrors/,
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("fails closed when canonical policy returns a non-object payload", () => {
+  const root = mkdtempSync(join(tmpdir(), "aidevops-canonical-policy-"));
+  const isolatedScripts = join(root, "scripts");
+  mkdirSync(isolatedScripts);
+  try {
+    writeFileSync(
+      join(isolatedScripts, "canonical-write-policy-helper.py"),
+      "print('null')\n",
+    );
+    assert.throws(
+      () => checkCanonicalWriteSafetyGate("README.md", isolatedScripts),
+      /malformed output/,
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("blocks every canonical direct write and preserves linked-worktree writes", () => {
+  const { root, repo, linked } = setupRepo();
+  try {
+    assert.throws(
+      () => checkCanonicalWriteSafetyGate(join(repo, "README.md"), scriptsDir, repo),
+      /canonical write policy.*read-only session mirrors/,
+    );
+    assert.throws(
+      () => checkCanonicalWriteSafetyGate("", scriptsDir, repo),
+      /canonical write policy/,
+    );
+    assert.throws(
+      () => checkCanonicalWriteSafetyGate(join(repo, "new-file.md"), scriptsDir, linked),
+      /canonical write policy/,
+    );
+    assert.doesNotThrow(
+      () => checkCanonicalWriteSafetyGate(join(linked, "README.md"), scriptsDir, linked),
+    );
+    assert.doesNotThrow(
+      () => checkCanonicalWriteSafetyGate(join(linked, "README.md"), scriptsDir, repo),
+    );
+    assert.doesNotThrow(
+      () => checkCanonicalWriteSafetyGate("new-file.md", scriptsDir, linked),
+    );
+    const bodyDir = join(root, ".aidevops", ".agent-workspace", "tmp");
+    mkdirSync(bodyDir, { recursive: true });
+    assert.doesNotThrow(
+      () => checkCanonicalWriteSafetyGate(join(bodyDir, "issue-body.md"), scriptsDir, repo),
+    );
+    assert.doesNotThrow(
+      () => checkCanonicalWriteSafetyGate(join(linked, "from-canonical.md"), scriptsDir, repo),
+    );
+
+    const canonicalAlias = join(root, "canonical-alias");
+    symlinkSync(repo, canonicalAlias, "dir");
+    assert.throws(
+      () => checkCanonicalWriteSafetyGate(join(canonicalAlias, "README.md"), scriptsDir, repo),
+      /canonical write policy.*read-only session mirrors/,
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
 
 test("blocks canonical branch mutation before execution", () => {
   const { root, repo } = setupRepo();
@@ -101,12 +227,13 @@ test("allows the repository full-loop commit-and-pr wrapper only from a linked w
       /canonical worktree mutation/,
     );
     const activeWrapper = join(activeScriptsDir, "full-loop-helper.sh");
-    assert.doesNotThrow(() => checkCanonicalGitSafetyGate(
+    const activeScriptsDirBinding = bindActiveScriptsDir(activeScriptsDir, scriptsDir);
+    assert.equal(checkCanonicalGitSafetyGate(
       `PR_NUMBER=$(${activeWrapper} commit-and-pr --issue 123 --message 'fix: example')`,
       scriptsDir,
       linked,
       { activeScriptsDir },
-    ));
+    ), `PR_NUMBER=$(${activeWrapper} commit-and-pr --issue 123 --message 'fix: example')`);
     assert.throws(
       () => checkCanonicalGitSafetyGate(
         `${activeWrapper} commit-and-pr --issue 123`,
@@ -131,6 +258,45 @@ test("allows the repository full-loop commit-and-pr wrapper only from a linked w
         linked,
       ));
     }
+
+    const rotatedScriptsDir = join(root, "rotated", "agents", "scripts");
+    mkdirSync(rotatedScriptsDir, { recursive: true });
+    writeFileSync(join(rotatedScriptsDir, "full-loop-helper.sh"), "#!/bin/sh\n");
+    rmSync(activeScriptsDir);
+    symlinkSync(rotatedScriptsDir, activeScriptsDir, "dir");
+    const rotatedCommand = `PR_NUMBER=$(${activeWrapper} commit-and-pr --issue 123 --message 'fix: example')`;
+    assert.equal(
+      checkCanonicalGitSafetyGate(rotatedCommand, scriptsDir, linked, {
+        activeScriptsDir,
+        activeScriptsDirBinding,
+      }),
+      `PR_NUMBER=$('${join(scriptsDir, "full-loop-helper.sh")}' commit-and-pr --issue 123 --message 'fix: example')`,
+    );
+    assert.throws(
+      () => checkCanonicalGitSafetyGate(rotatedCommand, scriptsDir, repo, {
+        activeScriptsDir,
+        activeScriptsDirBinding,
+      }),
+      /canonical worktree mutation/,
+    );
+    assert.throws(
+      () => checkCanonicalGitSafetyGate(
+        `${join(rotatedScriptsDir, "full-loop-helper.sh")} commit-and-pr --issue 123`,
+        scriptsDir,
+        linked,
+        { activeScriptsDir },
+      ),
+      /unclassified nested Git invocation/,
+    );
+    assert.throws(
+      () => checkCanonicalGitSafetyGate(
+        `${activeWrapper} commit-and-pr --issue 123 && ${join(rotatedScriptsDir, "full-loop-helper.sh")} commit-and-pr --issue 123`,
+        scriptsDir,
+        linked,
+        { activeScriptsDir, activeScriptsDirBinding },
+      ),
+      /unclassified nested Git invocation/,
+    );
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -182,17 +348,52 @@ test("blocks generic destructive commands through shared policy", () => {
   );
 });
 
+test("blocks current runtime termination while allowing a detached sandbox group", () => {
+  const root = mkdtempSync(join(tmpdir(), "aidevops-process-termination-"));
+  const fixture = join(root, "processes.json");
+  writeFileSync(fixture, JSON.stringify({
+    processes: [
+      { pid: 1, ppid: 0, pgid: 1, start: "init-a", comm: "launchd", args: "launchd" },
+      { pid: 100, ppid: 1, pgid: 100, start: "terminal-a", comm: "terminal", args: "terminal" },
+      { pid: 200, ppid: 100, pgid: 100, start: "runtime-a", comm: "opencode", args: "opencode serve" },
+      { pid: 400, ppid: 200, pgid: 400, start: "child-a", comm: "sandbox-worker", args: "sandbox-worker task" },
+    ],
+  }));
+  const options = {
+    runtimePid: 200,
+    runtimeProcessIdentity: "runtime-a",
+    processTableFixture: fixture,
+  };
+  try {
+    assert.throws(
+      () => checkCommandSafetyGate("kill -TERM -- -100", scriptsDir, process.cwd(), options),
+      /process\.runtime-self-preservation.*process group/,
+    );
+    assert.throws(
+      () => checkCommandSafetyGate("bash -lc 'kill 200'", scriptsDir, process.cwd(), options),
+      /process\.runtime-self-preservation.*runtime host/,
+    );
+    assert.doesNotThrow(
+      () => checkCommandSafetyGate("kill -TERM -- -400", scriptsDir, process.cwd(), options),
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("blocks account mutations unless inherited authorization matches exactly", () => {
   const cwd = process.cwd();
   const helper = join(scriptsDir, "command-policy-helper.py");
   const command = "gh repo fork owner/source --clone=false";
   const previousAuthorization = process.env.AIDEVOPS_ACCOUNT_MUTATION_AUTHORIZATION;
-  const authorization = execFileSync(
-    "python3",
-    [helper, "authorization-digest", "--cwd", cwd, "--command", command],
-    { encoding: "utf8" },
-  ).trim();
+  const previousWorkspaceRoot = process.env.AIDEVOPS_ACCOUNT_MUTATION_WORKSPACE_ROOT;
   try {
+    process.env.AIDEVOPS_ACCOUNT_MUTATION_WORKSPACE_ROOT = "";
+    const authorization = execFileSync(
+      "python3",
+      [helper, "authorization-digest", "--cwd", cwd, "--command", command],
+      { encoding: "utf8" },
+    ).trim();
     delete process.env.AIDEVOPS_ACCOUNT_MUTATION_AUTHORIZATION;
     assert.throws(
       () => checkCommandSafetyGate(command, scriptsDir, cwd),
@@ -232,6 +433,70 @@ test("blocks account mutations unless inherited authorization matches exactly", 
     } else {
       process.env.AIDEVOPS_ACCOUNT_MUTATION_AUTHORIZATION = previousAuthorization;
     }
+    if (previousWorkspaceRoot === undefined) {
+      delete process.env.AIDEVOPS_ACCOUNT_MUTATION_WORKSPACE_ROOT;
+    } else {
+      process.env.AIDEVOPS_ACCOUNT_MUTATION_WORKSPACE_ROOT = previousWorkspaceRoot;
+    }
+  }
+});
+
+test("scopes remote-only account mutation authorization to the projects workspace", () => {
+  const root = mkdtempSync(join(tmpdir(), "aidevops-account-workspace-"));
+  const workspace = join(root, "projects");
+  const repoA = join(workspace, "repo-a");
+  const repoB = join(workspace, "repo-b");
+  const outside = join(root, "outside");
+  const escape = join(workspace, "escape");
+  const helper = join(scriptsDir, "command-policy-helper.py");
+  const command = "gh repo fork owner/source --clone=false";
+  const previousAuthorization = process.env.AIDEVOPS_ACCOUNT_MUTATION_AUTHORIZATION;
+  const previousWorkspaceRoot = process.env.AIDEVOPS_ACCOUNT_MUTATION_WORKSPACE_ROOT;
+  mkdirSync(repoA, { recursive: true });
+  mkdirSync(repoB, { recursive: true });
+  mkdirSync(outside, { recursive: true });
+  symlinkSync(outside, escape);
+  try {
+    process.env.AIDEVOPS_ACCOUNT_MUTATION_WORKSPACE_ROOT = workspace;
+    const authorization = execFileSync(
+      "python3",
+      [helper, "authorization-digest", "--cwd", repoA, "--command", command],
+      { encoding: "utf8" },
+    ).trim();
+    process.env.AIDEVOPS_ACCOUNT_MUTATION_AUTHORIZATION = authorization;
+    assert.doesNotThrow(() => checkCommandSafetyGate(command, scriptsDir, repoB));
+    assert.throws(
+      () => checkCommandSafetyGate(command, scriptsDir, outside),
+      /github\.account-mutation/,
+    );
+    assert.throws(
+      () => checkCommandSafetyGate(command, scriptsDir, escape),
+      /github\.account-mutation/,
+    );
+
+    const localCommand = "gh repo fork owner/source";
+    process.env.AIDEVOPS_ACCOUNT_MUTATION_AUTHORIZATION = execFileSync(
+      "python3",
+      [helper, "authorization-digest", "--cwd", repoA, "--command", localCommand],
+      { encoding: "utf8" },
+    ).trim();
+    assert.doesNotThrow(() => checkCommandSafetyGate(localCommand, scriptsDir, repoA));
+    assert.throws(
+      () => checkCommandSafetyGate(localCommand, scriptsDir, repoB),
+      /github\.account-mutation/,
+    );
+  } finally {
+    if (previousAuthorization === undefined) {
+      delete process.env.AIDEVOPS_ACCOUNT_MUTATION_AUTHORIZATION;
+    } else {
+      process.env.AIDEVOPS_ACCOUNT_MUTATION_AUTHORIZATION = previousAuthorization;
+    }
+    if (previousWorkspaceRoot === undefined) {
+      delete process.env.AIDEVOPS_ACCOUNT_MUTATION_WORKSPACE_ROOT;
+    } else {
+      process.env.AIDEVOPS_ACCOUNT_MUTATION_WORKSPACE_ROOT = previousWorkspaceRoot;
+    }
+    rmSync(root, { recursive: true, force: true });
   }
 });
 
@@ -280,6 +545,24 @@ test("fails closed when required policy is malformed", () => {
     assert.throws(
       () => checkCommandSafetyGate("printf safe", isolatedScripts, process.cwd()),
       /policy\.invalid.*malformed/,
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("fails closed when command policy exits nonzero with an allow payload", () => {
+  const root = mkdtempSync(join(tmpdir(), "aidevops-command-policy-exit-"));
+  const isolatedScripts = join(root, "scripts");
+  mkdirSync(isolatedScripts);
+  try {
+    writeFileSync(
+      join(isolatedScripts, "command-policy-helper.py"),
+      "import sys\nprint('{\"decision\":\"allow\"}')\nsys.exit(1)\n",
+    );
+    assert.throws(
+      () => checkCommandSafetyGate("printf safe", isolatedScripts, process.cwd()),
+      /shared command policy \(allow/,
     );
   } finally {
     rmSync(root, { recursive: true, force: true });

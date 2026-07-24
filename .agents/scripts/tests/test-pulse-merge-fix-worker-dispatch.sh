@@ -26,6 +26,7 @@ TESTS_RUN=0
 TESTS_FAILED=0
 TEST_ROOT=""
 GH_LOG=""
+TIMEOUT_CALL_LOG=""
 
 print_result() {
 	local test_name="$1"
@@ -49,6 +50,8 @@ print_result() {
 # Mock state that each test resets before running.
 reset_mock_state() {
 	: >"$GH_LOG"
+	: >"$TIMEOUT_CALL_LOG"
+	unset TEST_TIMEOUT_FAIL_PATTERN
 	: >"${TEST_ROOT}/issue-body.txt"
 	: >"${TEST_ROOT}/reviews.json"
 	: >"${TEST_ROOT}/comments.json"
@@ -69,9 +72,22 @@ setup_test_paths() {
 	export LOGFILE="${TEST_ROOT}/pulse.log"
 	: >"$LOGFILE"
 	GH_LOG="${TEST_ROOT}/gh-calls.log"
+	TIMEOUT_CALL_LOG="${TEST_ROOT}/timeout-calls.log"
 	: >"$GH_LOG"
-	export TEST_ROOT GH_LOG
+	: >"$TIMEOUT_CALL_LOG"
+	export TEST_ROOT GH_LOG TIMEOUT_CALL_LOG
 	return 0
+}
+
+_gh_with_timeout() {
+	local operation="$1"
+	shift
+	printf '%s %s\n' "$operation" "$*" >>"$TIMEOUT_CALL_LOG"
+	if [[ -n "${TEST_TIMEOUT_FAIL_PATTERN:-}" && "$*" == *"$TEST_TIMEOUT_FAIL_PATTERN"* ]]; then
+		return 124
+	fi
+	"$@"
+	return $?
 }
 
 write_gh_mock_command_cases() {
@@ -359,6 +375,35 @@ test_dispatch_appends_to_issue_body_and_closes_pr() {
 	return 0
 }
 
+test_dispatch_wraps_paginated_feedback_reads() {
+	reset_mock_state
+	_dispatch_pr_fix_worker "100" "owner/repo" "42"
+	if grep -Fq 'read gh api repos/owner/repo/pulls/100/reviews --paginate' "$TIMEOUT_CALL_LOG" &&
+		grep -Fq 'read gh api repos/owner/repo/pulls/100/comments --paginate' "$TIMEOUT_CALL_LOG"; then
+		print_result "dispatch wraps paginated review and inline-comment reads" 0
+	else
+		print_result "dispatch wraps paginated review and inline-comment reads" 1 \
+			"timeout calls=$(tr '\n' ';' <"$TIMEOUT_CALL_LOG")"
+	fi
+	return 0
+}
+
+test_dispatch_timeout_fails_open_without_routing_empty_feedback() {
+	reset_mock_state
+	export TEST_TIMEOUT_FAIL_PATTERN="repos/owner/repo/pulls/100/"
+	_dispatch_pr_fix_worker "100" "owner/repo" "42"
+	unset TEST_TIMEOUT_FAIL_PATTERN
+	if [[ "$(<"${TEST_ROOT}/issue-body.txt")" == "Original issue body." ]] &&
+		! grep -qF 'gh pr close 100' "$GH_LOG" &&
+		[[ "$(grep -c '^read gh api repos/owner/repo/pulls/100/' "$TIMEOUT_CALL_LOG" 2>/dev/null || true)" == "2" ]]; then
+		print_result "timed-out feedback reads fail open without closing the PR" 0
+	else
+		print_result "timed-out feedback reads fail open without closing the PR" 1 \
+			"gh=$(tr '\n' ';' <"$GH_LOG"), timeout=$(tr '\n' ';' <"$TIMEOUT_CALL_LOG")"
+	fi
+	return 0
+}
+
 test_dispatch_idempotent_when_marker_already_present() {
 	reset_mock_state
 	# Pre-seed the issue body with the marker.
@@ -587,6 +632,8 @@ main() {
 	test_build_section_includes_marker_and_citations
 	test_build_section_empty_when_no_content
 	test_dispatch_appends_to_issue_body_and_closes_pr
+	test_dispatch_wraps_paginated_feedback_reads
+	test_dispatch_timeout_fails_open_without_routing_empty_feedback
 	test_dispatch_idempotent_when_marker_already_present
 	test_dispatch_noop_when_no_substantive_feedback
 	test_dispatch_noop_on_invalid_inputs

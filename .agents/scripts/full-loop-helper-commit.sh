@@ -24,6 +24,7 @@
 [[ -n "${_FULL_LOOP_COMMIT_LIB_LOADED:-}" ]] && return 0
 _FULL_LOOP_COMMIT_LIB_LOADED=1
 _FULL_LOOP_CHECK_PENDING="pending"
+_FULL_LOOP_CHECK_INDETERMINATE="indeterminate"
 
 # Defensive SCRIPT_DIR fallback
 if [[ -z "${SCRIPT_DIR:-}" ]]; then
@@ -65,6 +66,50 @@ _full_loop_persist_pr_check_evidence() {
 	return 0
 }
 
+_full_loop_query_required_checks() {
+	local pr_number="$1"
+	local repo="$2"
+	local pr_head_ref="$3"
+	local required_checks=""
+	local required_rc=0
+	local required_checks_stderr=""
+	local required_checks_stderr_file=""
+	local minimum_check_count=1
+	local expected_no_required_checks="no required checks reported on the '${pr_head_ref}' branch"
+
+	FULL_LOOP_REQUIRED_CHECKS_JSON=""
+	FULL_LOOP_REQUIRED_CHECKS_ERROR_EVIDENCE="unavailable"
+	FULL_LOOP_REQUIRED_CHECKS_ERROR_DETAIL="gh exit ${required_rc}"
+	FULL_LOOP_REQUIRED_CHECKS_SUCCESS_EVIDENCE="required-checks-pass"
+	FULL_LOOP_REQUIRED_CHECKS_SUCCESS_SUMMARY="required checks are terminal-success"
+
+	required_checks_stderr_file=$(mktemp "${TMPDIR:-/tmp}/aidevops-full-loop-required-checks.XXXXXX") || {
+		FULL_LOOP_REQUIRED_CHECKS_ERROR_EVIDENCE="stderr-capture-unavailable"
+		FULL_LOOP_REQUIRED_CHECKS_ERROR_DETAIL="cannot capture gh stderr"
+		return 1
+	}
+	required_checks=$(gh pr checks "$pr_number" --repo "$repo" \
+		--required --json name,state,bucket 2>"$required_checks_stderr_file") || required_rc=$?
+	required_checks_stderr=$(<"$required_checks_stderr_file")
+	rm -f "$required_checks_stderr_file"
+	FULL_LOOP_REQUIRED_CHECKS_ERROR_DETAIL="gh exit ${required_rc}"
+
+	if [[ "$required_rc" -eq 1 && -z "$required_checks" && -n "$pr_head_ref" && "$required_checks_stderr" == "$expected_no_required_checks" ]]; then
+		required_checks="[]"
+		minimum_check_count=0
+		FULL_LOOP_REQUIRED_CHECKS_SUCCESS_EVIDENCE="no-required-checks"
+		FULL_LOOP_REQUIRED_CHECKS_SUCCESS_SUMMARY="no required checks are configured"
+	elif [[ -n "$required_checks_stderr" || ("$required_rc" -ne 0 && "$required_rc" -ne 1 && "$required_rc" -ne 8) ]]; then
+		return 1
+	fi
+	if [[ -z "$required_checks" ]] || ! printf '%s' "$required_checks" | jq -e --argjson minimum "$minimum_check_count" \
+		'type == "array" and length >= $minimum' >/dev/null 2>&1; then
+		return 1
+	fi
+	FULL_LOOP_REQUIRED_CHECKS_JSON="$required_checks"
+	return 0
+}
+
 _full_loop_verify_pr_readiness() {
 	local pr_number="$1"
 	local repo="$2"
@@ -88,22 +133,22 @@ _full_loop_verify_pr_readiness() {
 	fi
 	local verified_head=""
 	verified_head=$(printf '%s' "$pr_json" | jq -r '.headRefOid // empty')
+	local pr_head_ref=""
+	pr_head_ref=$(printf '%s' "$pr_json" | jq -r '.headRefName // empty')
 
 	local required_checks=""
-	local required_rc=0
-	required_checks=$(gh pr checks "$pr_number" --repo "$repo" \
-		--required --json name,state,bucket 2>/dev/null) || required_rc=$?
-	if [[ -z "$required_checks" ]] || ! printf '%s' "$required_checks" | jq -e 'type == "array"' >/dev/null; then
-		FULL_LOOP_PR_CHECK_STATUS="indeterminate"
+	_full_loop_query_required_checks "$pr_number" "$repo" "$pr_head_ref" || {
+		FULL_LOOP_PR_CHECK_STATUS="$_FULL_LOOP_CHECK_INDETERMINATE"
 		export FULL_LOOP_PR_CHECK_STATUS
-		_full_loop_persist_pr_check_evidence "$FULL_LOOP_PR_CHECK_STATUS" "$verified_head" "unavailable" || true
-		print_error "PR #${pr_number} required-check evidence is indeterminate (gh exit ${required_rc})"
+		_full_loop_persist_pr_check_evidence "$FULL_LOOP_PR_CHECK_STATUS" "$verified_head" "$FULL_LOOP_REQUIRED_CHECKS_ERROR_EVIDENCE" || true
+		print_error "PR #${pr_number} required-check evidence is indeterminate (${FULL_LOOP_REQUIRED_CHECKS_ERROR_DETAIL})"
 		return 1
-	fi
+	}
+	required_checks="$FULL_LOOP_REQUIRED_CHECKS_JSON"
 	local post_checks_head=""
 	post_checks_head=$(gh pr view "$pr_number" --repo "$repo" --json headRefOid --jq '.headRefOid // empty' 2>/dev/null) || true
 	if [[ -z "$post_checks_head" || "$post_checks_head" != "$verified_head" ]]; then
-		FULL_LOOP_PR_CHECK_STATUS="indeterminate"
+		FULL_LOOP_PR_CHECK_STATUS="$_FULL_LOOP_CHECK_INDETERMINATE"
 		export FULL_LOOP_PR_CHECK_STATUS
 		_full_loop_persist_pr_check_evidence "$FULL_LOOP_PR_CHECK_STATUS" "$post_checks_head" "head-drift-during-check-query" || true
 		print_error "PR #${pr_number} head changed while required checks were queried; refresh exact-head evidence"
@@ -130,8 +175,6 @@ _full_loop_verify_pr_readiness() {
 	fi
 	FULL_LOOP_PR_CHECK_STATUS="terminal-success"
 	export FULL_LOOP_PR_CHECK_STATUS
-	local pr_head_ref=""
-	pr_head_ref=$(printf '%s' "$pr_json" | jq -r '.headRefName // empty')
 	local local_branch=""
 	local_branch=$(git branch --show-current 2>/dev/null || true)
 	if [[ -n "$local_branch" && "$local_branch" == "$pr_head_ref" ]]; then
@@ -142,11 +185,11 @@ _full_loop_verify_pr_readiness() {
 			return 1
 		fi
 	fi
-	_full_loop_persist_pr_check_evidence "$FULL_LOOP_PR_CHECK_STATUS" "$verified_head" "required-checks-pass" || true
+	_full_loop_persist_pr_check_evidence "$FULL_LOOP_PR_CHECK_STATUS" "$verified_head" "$FULL_LOOP_REQUIRED_CHECKS_SUCCESS_EVIDENCE" || true
 
 	FULL_LOOP_VERIFIED_PR_HEAD_SHA="$verified_head"
 	export FULL_LOOP_VERIFIED_PR_HEAD_SHA
-	print_success "Remote PR evidence verified at head ${verified_head}; required checks are terminal-success"
+	print_success "Remote PR evidence verified at head ${verified_head}; ${FULL_LOOP_REQUIRED_CHECKS_SUCCESS_SUMMARY}"
 	return 0
 }
 
@@ -189,10 +232,10 @@ cmd_pre_merge_gate() {
 	rbg_result=$(bash "$rbg_helper" check "$pr_number" "$repo" 2>&1) || true
 
 	local rbg_status=""
-	rbg_status=$(printf '%s' "$rbg_result" | grep -oE '(PASS|SKIP|WAITING|PASS_RATE_LIMITED)' | tail -1)
+	rbg_status=$(printf '%s' "$rbg_result" | grep -oE '(PASS_RATE_LIMITED|PASS_ADVISORY|PASS|SKIP|WAITING)' | tail -1)
 
 	case "$rbg_status" in
-	PASS | SKIP | PASS_RATE_LIMITED)
+	PASS | PASS_ADVISORY | SKIP | PASS_RATE_LIMITED)
 		print_success "Review bot gate: ${rbg_status} — safe to merge PR #${pr_number}"
 		return 0
 		;;
@@ -208,57 +251,81 @@ cmd_pre_merge_gate() {
 
 # Parse commit-and-pr arguments into caller-scoped variables.
 # Expects the caller to have declared: issue_number, commit_message, pr_title,
-# summary_what, summary_testing, summary_decisions, skip_rebase, extra_labels (array).
+# summary_what, summary_testing, summary_decisions, runtime_risk, testing_level,
+# skip_rebase, extra_labels (array).
 # Returns 1 on unknown argument.
 _parse_commit_and_pr_args() {
-	while [[ $# -gt 0 ]]; do
-		case "$1" in
+	local -a args=("$@")
+	local index=0
+	local arg=""
+	local value=""
+	while [[ "$index" -lt "${#args[@]}" ]]; do
+		arg="${args[$index]}"
+		case "$arg" in
+		--issue | --message | --title | --summary | --testing | --risk-level | --testing-level | --decisions | --label)
+			if [[ $((index + 1)) -ge ${#args[@]} ]]; then
+				print_error "${arg} requires a value"
+				return 1
+			fi
+			value="${args[$((index + 1))]}"
+			;;
+		esac
+
+		case "$arg" in
 		--issue)
-			issue_number="$2"
-			shift 2
+			issue_number="$value"
+			index=$((index + 2))
 			;;
 		--message)
-			commit_message="$2"
-			shift 2
+			commit_message="$value"
+			index=$((index + 2))
 			;;
 		--title)
-			pr_title="$2"
-			shift 2
+			pr_title="$value"
+			index=$((index + 2))
 			;;
 		--summary)
-			summary_what="$2"
-			shift 2
+			summary_what="$value"
+			index=$((index + 2))
 			;;
 		--testing)
-			summary_testing="$2"
-			shift 2
+			summary_testing="$value"
+			index=$((index + 2))
+			;;
+		--risk-level)
+			runtime_risk="$value"
+			index=$((index + 2))
+			;;
+		--testing-level)
+			testing_level="$value"
+			index=$((index + 2))
 			;;
 		--decisions)
-			summary_decisions="$2"
-			shift 2
+			summary_decisions="$value"
+			index=$((index + 2))
 			;;
 		--label)
-			extra_labels+=("$2")
-			shift 2
+			extra_labels+=("$value")
+			index=$((index + 2))
 			;;
 		--allow-parent-close)
 			allow_parent_close=1
-			shift
+			index=$((index + 1))
 			;;
 		--skip-hooks)
 			# Pass --no-verify to git push. Use for doc-only PRs when hooks
 			# have been manually verified clean. See GH#20138.
 			skip_hooks=1
-			shift
+			index=$((index + 1))
 			;;
 		--no-rebase)
 			# GH#26627: explicit recovery mode after a failed/aborted rebase.
 			# Pushes only after clean-state and ahead-of-base checks pass.
 			skip_rebase=1
-			shift
+			index=$((index + 1))
 			;;
 		*)
-			print_error "Unknown argument: $1"
+			print_error "Unknown argument: $arg"
 			return 1
 			;;
 		esac
@@ -492,6 +559,21 @@ _finalize_wip_history() {
 #   _run_node_auto_fix            — format/lint auto-fix + amend
 #   _run_node_typecheck           — typecheck check-only
 
+# Print every file changed between the remote default branch and HEAD.
+# The merge-base range keeps classification aligned with the complete PR diff
+# even when lifecycle synchronization adds a docs-only commit at HEAD.
+_validator_changed_files() {
+	local base_branch=""
+	local base_ref=""
+	base_branch=$(_resolve_remote_default_branch origin) || return 1
+	printf -v base_ref 'origin/%s' "$base_branch"
+	if ! git diff --name-only "${base_ref}...HEAD" 2>/dev/null; then
+		print_error "[validators] cannot inspect changed files relative to ${base_ref}"
+		return 1
+	fi
+	return 0
+}
+
 # Returns 0 if validators should run, 1 if any bypass condition applies.
 # Prints the bypass reason on info as appropriate.
 # Args: $1=skip_hooks (0|1)
@@ -504,8 +586,13 @@ _validators_should_run() {
 		print_info "[validators] AIDEVOPS_SKIP_PROJECT_VALIDATORS=1, skipping"
 		return 1
 	fi
+	local changed_files=""
+	if ! changed_files=$(_validator_changed_files); then
+		print_warning "[validators] changed-file classification failed; running validators fail-closed"
+		return 0
+	fi
 	local non_docs_count
-	non_docs_count=$(git show --name-only --format='' HEAD 2>/dev/null |
+	non_docs_count=$(printf '%s\n' "$changed_files" |
 		grep -cvE '\.(md|txt|rst)$|^LICENSE|^COPYING|^\.gitignore$|^$' || true)
 	# safe_grep_count guard (t2763): zero-match path may emit "0\n0"
 	[[ "$non_docs_count" =~ ^[0-9]+$ ]] || non_docs_count=0
@@ -516,10 +603,15 @@ _validators_should_run() {
 	return 0
 }
 
-# Returns 0 when HEAD changes files that should be covered by Node validators.
+# Returns 0 when the PR range changes files covered by Node validators.
 # This keeps shell-only commits from failing on missing local Node dependencies
 # while preserving fail-closed typecheck behaviour for JS/TS/package changes.
 _commit_touches_node_files() {
+	local changed_files=""
+	if ! changed_files=$(_validator_changed_files); then
+		print_warning "[validators] Node changed-file classification failed; running Node validators fail-closed"
+		return 0
+	fi
 	local changed_file
 	while IFS= read -r changed_file; do
 		case "$changed_file" in
@@ -537,7 +629,7 @@ _commit_touches_node_files() {
 			esac
 			;;
 		esac
-	done < <(git show --name-only --format='' HEAD 2>/dev/null)
+	done <<<"$changed_files"
 	return 1
 }
 
@@ -825,10 +917,10 @@ _rebase_and_push() {
 		local branch_counter="" base_counter=""
 		branch_counter=$(tr -d '[:space:]' <.task-counter 2>/dev/null) || true
 		base_counter=$(git show "${base_ref}:.task-counter" 2>/dev/null | tr -d '[:space:]') || true
-		if [[ -n "$branch_counter" && -n "$base_counter" ]] \
-			&& [[ "$branch_counter" =~ ^[0-9]+$ ]] \
-			&& [[ "$base_counter" =~ ^[0-9]+$ ]] \
-			&& [[ "$((10#$branch_counter))" -lt "$((10#$base_counter))" ]]; then
+		if [[ -n "$branch_counter" && -n "$base_counter" ]] &&
+			[[ "$branch_counter" =~ ^[0-9]+$ ]] &&
+			[[ "$base_counter" =~ ^[0-9]+$ ]] &&
+			[[ "$((10#$branch_counter))" -lt "$((10#$base_counter))" ]]; then
 			print_info "Auto-resetting .task-counter: ${branch_counter} → ${base_counter} (base drifted during rebase)"
 			printf '%s\n' "$base_counter" >.task-counter
 			git add .task-counter
@@ -903,11 +995,20 @@ _issue_has_parent_task_label() {
 
 # Build the PR body string and print it to stdout.
 # Arguments: issue_number, summary_what, summary_testing, files_changed,
-#            sig_footer, closing_keyword (default: Resolves)
+#            sig_footer, closing_keyword (default: Resolves), requested_risk,
+#            requested_testing_level, base_ref
 _build_pr_body() {
 	local issue_number="$1" summary_what="$2" summary_testing="$3"
 	local files_changed="$4" sig_footer="$5"
 	local closing_keyword="${6:-Resolves}"
+	local requested_risk="${7:-}"
+	local requested_testing_level="${8:-}"
+	local base_ref="${9:-}"
+	local runtime_risk=""
+	local testing_level=""
+
+	runtime_risk=$(_derive_runtime_risk "$requested_risk" "$files_changed" "$summary_what" "$base_ref") || return 1
+	testing_level=$(_resolve_runtime_testing_level "$runtime_risk" "$requested_testing_level" "$summary_testing") || return 1
 
 	printf '%s\n' "## Summary
 
@@ -919,8 +1020,8 @@ ${files_changed:-See diff}
 
 ## Runtime Testing
 
-- **Risk level:** Low (agent prompts / infrastructure scripts)
-- **Verification:** ${summary_testing:-shellcheck clean, self-assessed}
+- **Risk level:** ${runtime_risk}
+- **Verification:** ${testing_level} — ${summary_testing:-no additional evidence supplied}
 
 ${closing_keyword} #${issue_number}
 
@@ -1049,11 +1150,11 @@ _derive_pr_title_prefix() {
 	# Match "- [ ] tNNN ... ref:GH#<issue_number>" with a non-digit or EOL
 	# boundary after the number so ref:GH#123 doesn't match ref:GH#12345.
 	local task_id=""
-	task_id=$(grep -E "^- \[[ x]\] t[0-9]+ .*ref:GH#${issue_number}([^0-9]|\$)" "$todo_file" 2>/dev/null \
-		| head -1 \
-		| grep -oE '^- \[[ x]\] t[0-9]+' \
-		| grep -oE 't[0-9]+$' \
-		|| true)
+	task_id=$(grep -E "^- \[[ x]\] t[0-9]+ .*ref:GH#${issue_number}([^0-9]|\$)" "$todo_file" 2>/dev/null |
+		head -1 |
+		grep -oE '^- \[[ x]\] t[0-9]+' |
+		grep -oE 't[0-9]+$' ||
+		true)
 
 	if [[ -n "$task_id" ]]; then
 		printf '%s\n' "$task_id"
@@ -1127,14 +1228,14 @@ _compose_pr_title() {
 # immutable session origin. REST readback is deliberate: a successful mutation
 # exit code is not proof that GitHub reached the required postcondition.
 # Arguments: PR number, repository slug, expected origin name (without prefix).
-# Returns: 0=verified, 1=read failure, 2=missing/wrong/dual origin labels.
+# Returns: 0=verified, 2=missing/wrong/dual/unavailable origin labels.
 _verify_pr_origin_label() {
 	local pr_number="$1"
 	local repo="$2"
 	local origin_name="$3"
 	local origin_labels=""
-	origin_labels=$(gh api "repos/${repo}/issues/${pr_number}" \
-		--jq '[.labels[].name | select(startswith("origin:"))]' 2>/dev/null) || return 1
+	origin_labels=$(_gh_with_timeout read gh api "repos/${repo}/issues/${pr_number}" \
+		--jq '[.labels[].name | select(startswith("origin:"))]' 2>/dev/null) || origin_labels="[]"
 	if printf '%s' "$origin_labels" |
 		jq -e --arg expected "origin:${origin_name}" \
 			'length == 1 and .[0] == $expected' >/dev/null 2>&1; then
@@ -1152,8 +1253,10 @@ _reconcile_pr_origin_label() {
 	local repo="$2"
 	local origin_name="$3"
 	local origin_error=""
-	origin_error=$(mktemp -t aidevops-pr-origin-error.XXXXXX) || return 1
-	if ! set_origin_label "$pr_number" "$repo" "$origin_name" --pr 2>"$origin_error"; then
+	origin_error=$(mktemp) || return 1
+	# set_origin_label may print the PR URL after a successful REST mutation.
+	# _create_pr is a machine-output function, so keep that status off stdout.
+	if ! set_origin_label "$pr_number" "$repo" "$origin_name" --pr >/dev/null 2>"$origin_error"; then
 		local failure_kind="GitHub label write failed"
 		if grep -qiE 'permission|forbidden|Resource not accessible|HTTP 403' "$origin_error" 2>/dev/null; then
 			failure_kind="credential lacks PR label permission"
@@ -1170,12 +1273,8 @@ _reconcile_pr_origin_label() {
 	_verify_pr_origin_label "$pr_number" "$repo" "$origin_name" || verify_rc=$?
 	case "$verify_rc" in
 	0) return 0 ;;
-	1)
-		print_error "Could not read back origin labels on PR #${pr_number}; retry commit-and-pr after GitHub reads recover"
-		return 1
-		;;
 	*)
-		print_error "PR #${pr_number} did not reach the exact origin:${origin_name} postcondition; retry commit-and-pr to reconcile missing, wrong, or dual origin labels"
+		print_error "PR #${pr_number} did not reach the exact origin:${origin_name} postcondition; retry commit-and-pr to reconcile unavailable, missing, wrong, or dual origin labels"
 		return 1
 		;;
 	esac
@@ -1281,28 +1380,67 @@ _post_merge_summary() {
 	# Counter safety: validate result is a number before comparing (t2763).
 	local _existing_count=0
 	local _tmp_count=""
-	_tmp_count=$(gh api "repos/${repo}/issues/${pr_number}/comments" \
-		--jq '[.[] | select(.body | test("<!-- MERGE_SUMMARY -->"))] | length' 2>/dev/null || true)
-	[[ "$_tmp_count" =~ ^[0-9]+$ ]] && _existing_count="$_tmp_count"
-	if [[ "$_existing_count" -gt 0 ]]; then
+	if ! _tmp_count=$(gh api "repos/${repo}/issues/${pr_number}/comments" \
+		--jq '[.[] | select(.body | test("<!-- MERGE_SUMMARY -->"))] | length'); then
+		print_error "Could not verify existing merge summary comments on PR #${pr_number}; refusing a potentially duplicate post"
+		return 1
+	fi
+	if [[ ! "$_tmp_count" =~ ^[0-9]+$ ]]; then
+		print_error "Invalid merge summary count for PR #${pr_number}: ${_tmp_count:-empty}"
+		return 1
+	fi
+	_existing_count="$_tmp_count"
+	if [[ "$_existing_count" -eq 1 ]]; then
 		print_info "Merge summary comment already exists on PR #${pr_number} — skipping duplicate (t2767)"
 		return 0
 	fi
+	if [[ "$_existing_count" -gt 1 ]]; then
+		print_error "PR #${pr_number} has ${_existing_count} canonical merge summary comments; expected exactly one"
+		return 1
+	fi
 
-	local merge_summary="<!-- MERGE_SUMMARY -->
+	local temp_root="${AIDEVOPS_TEMP_DIR:-${HOME}/.aidevops/.agent-workspace/tmp}"
+	local merge_summary_file=""
+	if ! mkdir -p "$temp_root"; then
+		print_error "Could not create merge summary workspace: ${temp_root}"
+		return 1
+	fi
+	if ! merge_summary_file=$(mktemp "${temp_root}/aidevops-merge-summary.XXXXXX"); then
+		print_error "Could not create merge summary body file in ${temp_root}"
+		return 1
+	fi
+	if ! printf '%s\n' "<!-- MERGE_SUMMARY -->
 ## Completion Summary
 
 - **What**: ${summary_what:-Implementation for issue #${issue_number}}
 - **Issue**: #${issue_number}
 - **Files changed**: ${files_changed:-see diff}
 - **Testing**: ${summary_testing:-shellcheck clean, self-assessed}
-- **Key decisions**: ${summary_decisions:-none}"
-
-	if gh_pr_comment "$pr_number" --repo "$repo" --body "$merge_summary" >/dev/null 2>&1; then
-		print_success "Merge summary comment posted on PR #${pr_number}"
-	else
-		print_warning "Failed to post merge summary comment — post it manually"
+- **Key decisions**: ${summary_decisions:-none}" >"$merge_summary_file"; then
+		print_error "Could not write merge summary body file for PR #${pr_number}"
+		rm -f "$merge_summary_file"
+		return 1
 	fi
+
+	# gh_pr_comment signs a private copy of --body-file before posting. Keep
+	# stderr visible so policy or GitHub failures retain actionable diagnostics.
+	if ! gh_pr_comment "$pr_number" --repo "$repo" --body-file "$merge_summary_file" >/dev/null; then
+		print_error "Failed to post signed merge summary comment on PR #${pr_number}"
+		rm -f "$merge_summary_file"
+		return 1
+	fi
+	rm -f "$merge_summary_file"
+
+	_tmp_count=$(gh api "repos/${repo}/issues/${pr_number}/comments" \
+		--jq '[.[] | select(.body | test("<!-- MERGE_SUMMARY -->"))] | length') || {
+		print_error "Merge summary posted on PR #${pr_number}, but verification failed"
+		return 1
+	}
+	if [[ "$_tmp_count" != "1" ]]; then
+		print_error "Merge summary postcondition failed on PR #${pr_number}: expected 1 canonical comment, found ${_tmp_count:-unknown}"
+		return 1
+	fi
+	print_success "Signed merge summary comment posted and verified on PR #${pr_number}"
 	return 0
 }
 
