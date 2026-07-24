@@ -252,7 +252,7 @@ _pmrc_snapshot_review_threads_clear() {
 	local pr_number="$2"
 	local base_branch="$3"
 	local owner="${repo_slug%%/*}" name="${repo_slug##*/}" response="" counts="" has_next=""
-	local total_count="" bot_count="" resolution_required=""
+	local total_count="" bot_count="" resolution_required="" log_target="${LOGFILE:-/dev/stderr}"
 	local bot_re="coderabbitai|gemini-code-assist|augment-code|augmentcode|copilot"
 
 	# shellcheck disable=SC2016
@@ -268,34 +268,34 @@ _pmrc_snapshot_review_threads_clear() {
 			}
 		}
 	' 2>/dev/null) || return 1
+	[[ -n "$response" ]] || return 1
 	if ! printf '%s' "$response" | jq -e 'try (.data.repository.pullRequest != null) catch false' >/dev/null; then
 		return 1
 	fi
 	has_next=$(printf '%s' "$response" | jq -r '.data.repository.pullRequest.reviewThreads.pageInfo.hasNextPage // false') || return 1
 	[[ "$has_next" == "false" ]] || return 1
-	counts=$(printf '%s' "$response" | jq -c --arg bots "$bot_re" '
+	counts=$(printf '%s' "$response" | jq -r --arg bots "$bot_re" '
 		[.data.repository.pullRequest.reviewThreads.nodes[]?
 		| select((.isResolved // false) == false)] as $unresolved
-		| {
-			total: ($unresolved | length),
-			bots: ([$unresolved[]
+		| [
+			($unresolved | length),
+			([$unresolved[]
 				| select((.comments.nodes[0].author.login // "") | test($bots; "i"))
 			] | length)
-		}
+		] | @tsv
 	') || return 1
-	total_count=$(jq -r '.total' <<<"$counts") || return 1
-	bot_count=$(jq -r '.bots' <<<"$counts") || return 1
+	IFS=$'\t' read -r total_count bot_count <<<"$counts"
 	[[ "$total_count" =~ ^[0-9]+$ && "$bot_count" =~ ^[0-9]+$ ]] || return 1
 	if [[ "$bot_count" -gt 0 ]]; then
 		_PULSE_MERGE_PREFLIGHT_BLOCKER_KIND="$PMRC_BLOCKER_REVIEW_BOT_THREADS"
-		echo "[pulse-merge] pre-merge snapshot: PR #${pr_number} in ${repo_slug} has ${bot_count} unresolved review-bot thread(s) — merge blocked until resolved or classified (GH#27137)" >>"$LOGFILE"
+		echo "[pulse-merge] pre-merge snapshot: PR #${pr_number} in ${repo_slug} has ${bot_count} unresolved review-bot thread(s) — merge blocked until resolved or classified (GH#27137)" >>"$log_target"
 		return 1
 	fi
 	[[ "$total_count" -gt 0 ]] || return 0
 	resolution_required=$(_pmrc_review_thread_resolution_required "$repo_slug" "$base_branch") || return 1
 	if [[ "$resolution_required" == "$PMRC_BOOL_TRUE" ]]; then
 		_PULSE_MERGE_PREFLIGHT_BLOCKER_KIND="$PMRC_BLOCKER_REQUIRED_REVIEW_THREADS"
-		echo "[pulse-merge] pre-merge snapshot: PR #${pr_number} in ${repo_slug} has ${total_count} unresolved review thread(s), and branch ${base_branch} requires thread resolution — merge blocked (GH#28130)" >>"$LOGFILE"
+		echo "[pulse-merge] pre-merge snapshot: PR #${pr_number} in ${repo_slug} has ${total_count} unresolved review thread(s), and branch ${base_branch} requires thread resolution — merge blocked (GH#28130)" >>"$log_target"
 		return 1
 	fi
 	return 0
