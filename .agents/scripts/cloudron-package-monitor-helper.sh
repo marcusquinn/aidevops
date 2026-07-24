@@ -167,6 +167,10 @@ _cloudron_monitor_upstream_entry() {
 	repo_path="${repo_path/#\~/$HOME}"
 	local manifest_path="${repo_path}/${manifest_rel}"
 	[[ -f "$manifest_path" ]] || _cloudron_monitor_error "Manifest missing for registered Cloudron package $slug." || return 1
+	local package_title=""
+	if ! package_title=$(jq -er '.title | select(type == "string" and test("\\S"))' "$manifest_path"); then
+		_cloudron_monitor_error "Manifest title is missing or blank for registered Cloudron package $slug." || return 1
+	fi
 	local latest_tag=""
 	latest_tag=$(gh api "repos/${upstream_slug}/releases/latest" --jq '.tag_name') || return 1
 	local latest_version="${latest_tag#v}"
@@ -177,7 +181,7 @@ _cloudron_monitor_upstream_entry() {
 		return 0
 	fi
 	local fingerprint="upstream-v${latest_version}"
-	local title="Cloudron upstream v${latest_version} is available"
+	local title="${package_title} upstream v${latest_version} is available"
 	local summary=""
 	local verification=""
 	printf -v summary "Upstream package \`%s\` released \`v%s\`; the manifest currently records \`%s\`." \

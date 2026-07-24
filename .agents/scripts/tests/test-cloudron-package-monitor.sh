@@ -67,14 +67,17 @@ GH
 set -euo pipefail
 repo=""
 body_file=""
+title=""
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --repo) repo="${2:-}"; shift 2 ;;
         --body-file) body_file="${2:-}"; shift 2 ;;
+        --title) title="${2:-}"; shift 2 ;;
         *) shift ;;
     esac
 done
 printf 'CALL %s\n' "$repo" >>"${MONITOR_TEST_LOG}"
+printf 'TITLE %s\n' "$title" >>"${MONITOR_TEST_LOG}"
 while IFS= read -r line || [[ -n "$line" ]]; do
     printf '%s\n' "$line" >>"${MONITOR_TEST_LOG}"
 done <"$body_file"
@@ -131,6 +134,7 @@ test_monitor_deduplicates_and_preserves_source() {
 	HOME="$home_dir" PATH="${bin_dir}:$PATH" MONITOR_TEST_LOG="$log_file" CLOUDRON_PACKAGE_ISSUE_WRAPPER="${bin_dir}/gh_create_issue" bash "$HELPER" upstream --apply >/dev/null
 	HOME="$home_dir" PATH="${bin_dir}:$PATH" MONITOR_TEST_LOG="$log_file" CLOUDRON_PACKAGE_ISSUE_WRAPPER="${bin_dir}/gh_create_issue" bash "$HELPER" upstream --apply >/dev/null
 	assert_equal 1 "$(grep -c '^CALL exampleorg/example-package$' "$log_file")" "new upstream release creates one target-local issue"
+	assert_equal 1 "$(grep -c '^TITLE Example Package upstream v2.0.0 is available$' "$log_file")" "upstream issue title uses package manifest title"
 	grep -Fq 'upstream-v2.0.0' "$log_file" && assert_equal true true "upstream issue carries stable fingerprint" || assert_equal true false "upstream issue carries stable fingerprint"
 	assert_equal "$manifest_before" "$(cksum "${repo_dir}/CloudronManifest.json")" "upstream monitor does not mutate manifest"
 
@@ -146,10 +150,34 @@ test_monitor_deduplicates_and_preserves_source() {
 	return 0
 }
 
+test_monitor_rejects_blank_package_title() {
+	local home_dir="${TEST_ROOT}/blank-title-home"
+	local repo_dir="${TEST_ROOT}/blank-title-package"
+	local bin_dir="${TEST_ROOT}/blank-title-bin"
+	local log_file="${TEST_ROOT}/blank-title-issues.log"
+	local manifest_tmp="${TEST_ROOT}/blank-title-manifest.json"
+	write_fake_commands "$bin_dir"
+	write_fixture "$home_dir" "$repo_dir"
+	jq '.title = ""' "${repo_dir}/CloudronManifest.json" >"$manifest_tmp"
+	mv "$manifest_tmp" "${repo_dir}/CloudronManifest.json"
+	local output=""
+	local rc=0
+	if output=$(HOME="$home_dir" PATH="${bin_dir}:$PATH" MONITOR_TEST_LOG="$log_file" CLOUDRON_PACKAGE_ISSUE_WRAPPER="${bin_dir}/gh_create_issue" bash "$HELPER" upstream --apply 2>&1); then
+		rc=0
+	else
+		rc=$?
+	fi
+	assert_equal 1 "$rc" "blank package title fails closed"
+	[[ "$output" == *"Manifest title is missing or blank for registered Cloudron package exampleorg/example-package."* ]] && assert_equal true true "blank package title reports actionable error" || assert_equal true false "blank package title reports actionable error"
+	[[ ! -f "$log_file" ]] && assert_equal true true "blank package title creates no issue" || assert_equal true false "blank package title creates no issue"
+	return 0
+}
+
 main() {
 	TEST_ROOT=$(mktemp -d)
 	trap cleanup EXIT
 	test_monitor_deduplicates_and_preserves_source
+	test_monitor_rejects_blank_package_title
 	printf '\nRan %d tests, %d failed.\n' "$((PASSED + FAILED))" "$FAILED"
 	[[ "$FAILED" -eq 0 ]] || return 1
 	return 0
