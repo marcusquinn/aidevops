@@ -2323,18 +2323,64 @@ _dlw_blocked_by_hard_stop() {
 	local repo_slug="$2"
 	local issue_meta_json="$3"
 	local repo_path="${4:-}"
+	_DLW_HARD_STOP_REASON=""
 
 	if [[ "$(type -t is_blocked_by_unresolved 2>/dev/null)" != "function" ]]; then
-		return 1
+		_DLW_HARD_STOP_REASON="dependency-verifier-unavailable"
+		echo "[dispatch_with_dedup] Hard-stop before worker bootstrap for #${issue_number} in ${repo_slug}: dependency verifier unavailable" >>"$LOGFILE"
+		return 0
 	fi
 
 	local issue_body=""
 	issue_body=$(printf '%s' "$issue_meta_json" | jq -r '.body // ""' 2>/dev/null) || issue_body=""
 	if PULSE_DEP_GRAPH_REPO_PATH="$repo_path" is_blocked_by_unresolved "$issue_body" "$repo_slug" "$issue_number"; then
+		_DLW_HARD_STOP_REASON="dependency-unresolved"
 		echo "[dispatch_with_dedup] Hard-stop before worker bootstrap for #${issue_number} in ${repo_slug}: unresolved blocked-by dependency (GH#23932)" >>"$LOGFILE"
 		return 0
 	fi
 
+	_DLW_HARD_STOP_REASON="clear"
+	return 1
+}
+
+_dlw_record_efficiency_guardrail() {
+	local name="$1"
+	case "$name" in
+	guardrails.stale_positive_decisions | guardrails.dispatch_dependency_violations) ;;
+	*) return 1 ;;
+	esac
+	if declare -F gh_record_efficiency_evidence >/dev/null 2>&1; then
+		gh_record_efficiency_evidence "$name" 1 2>/dev/null || true
+	fi
+	return 0
+}
+
+_dlw_final_dependency_attestation() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local issue_meta_json="$3"
+	local repo_path="$4"
+	if _dlw_blocked_by_hard_stop "$issue_number" "$repo_slug" "$issue_meta_json" "$repo_path"; then
+		if [[ "${_DLW_HARD_STOP_REASON:-}" == "dependency-unresolved" ]]; then
+			# The prebootstrap dependency decision was positive, but the live
+			# action-boundary recheck now blocks. Record that stale positive while
+			# still preventing the worker process from starting.
+			_dlw_record_efficiency_guardrail guardrails.stale_positive_decisions
+		fi
+		return 1
+	fi
+	return 0
+}
+
+_dlw_require_dependency_attestation() {
+	local attested="$1"
+	local issue_number="$2"
+	local repo_slug="$3"
+	if [[ "$attested" == "1" ]]; then
+		return 0
+	fi
+	_dlw_record_efficiency_guardrail guardrails.dispatch_dependency_violations
+	echo "[dispatch_with_dedup] Worker spawn blocked for #${issue_number} in ${repo_slug}: final dependency attestation missing" >>"$LOGFILE"
 	return 1
 }
 
@@ -2432,6 +2478,31 @@ _dlw_pre_runtime_failure() {
 	return "$return_code"
 }
 
+_dlw_final_worker_spawn_gates() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local worker_worktree_branch="$3"
+	local worker_worktree_reused="$4"
+	local todo_path="$5"
+	local worker_worktree_path="$6"
+	local issue_meta_json="$7"
+	local repo_path="$8"
+	local dependency_attested=0
+
+	if _dlw_check_worker_branch_orphan_loop "$issue_number" "$repo_slug" "$worker_worktree_branch" \
+		"$worker_worktree_reused" "$todo_path" "$worker_worktree_path"; then
+		_dlw_pre_runtime_failure "$issue_number" "$repo_slug" "worker_branch_orphan_hold" 2 || return $?
+	fi
+	if ! _dlw_final_dependency_attestation "$issue_number" "$repo_slug" "$issue_meta_json" "$repo_path"; then
+		_dlw_pre_runtime_failure "$issue_number" "$repo_slug" "final_dependency_recheck" 2 || return $?
+	fi
+	dependency_attested=1
+	if ! _dlw_require_dependency_attestation "$dependency_attested" "$issue_number" "$repo_slug"; then
+		_dlw_pre_runtime_failure "$issue_number" "$repo_slug" "dependency_attestation_missing" 2 || return $?
+	fi
+	return 0
+}
+
 DLW_STAGE_CANARY_PREFLIGHT="canary_preflight"
 
 #######################################
@@ -2526,9 +2597,8 @@ _dispatch_launch_worker() {
 	fi
 	_ds_record "$issue_number" "$repo_slug" "precreate_worktree" "$_ds_t0"
 	local worker_worktree_path="$_DLW_WORKTREE_PATH" worker_worktree_branch="$_DLW_WORKTREE_BRANCH" worker_worktree_reused="${_DLW_WORKTREE_REUSED:-0}"
-	if _dlw_check_worker_branch_orphan_loop "$issue_number" "$repo_slug" "$worker_worktree_branch" "$worker_worktree_reused" "${repo_path}/TODO.md" "$worker_worktree_path"; then
-		_dlw_pre_runtime_failure "$issue_number" "$repo_slug" "worker_branch_orphan_hold" 2 || return $?
-	fi
+	_dlw_final_worker_spawn_gates "$issue_number" "$repo_slug" "$worker_worktree_branch" "$worker_worktree_reused" \
+		"${repo_path}/TODO.md" "$worker_worktree_path" "$issue_meta_json" "$repo_path" || return $?
 
 	_ds_t0=$(_ds_now_ns)
 	local worker_pid attempt_id="" attempt_started_at=""

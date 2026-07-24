@@ -61,6 +61,11 @@ _pmrc_snapshot_log_failure() {
 _pmrc_record_preflight_check_mismatch() {
 	if declare -F gh_record_efficiency_evidence >/dev/null 2>&1; then
 		gh_record_efficiency_evidence guardrails.required_check_merge_preflight_mismatches 1 2>/dev/null || true
+		# This live action-boundary snapshot runs only after the earlier merge
+		# readiness path was positive. A new blocker therefore proves that stale
+		# positive evidence reached the final preflight, even though the merge is
+		# correctly stopped here.
+		gh_record_efficiency_evidence guardrails.stale_positive_decisions 1 2>/dev/null || true
 	fi
 	return 0
 }

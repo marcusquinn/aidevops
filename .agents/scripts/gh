@@ -39,6 +39,7 @@
 #   AIDEVOPS_GH_SHIM_DISABLE=1 gh …          # skip entire shim
 #   AIDEVOPS_GH_SHIM_NO_REST_REWRITE=1 gh …  # skip read-rewrite only (t3037)
 #   AIDEVOPS_GH_EXPLICIT_PAGINATION_DISABLE=1 # retain native opaque pagination
+#   AIDEVOPS_GH_EXACT_QUOTA_CAPTURE=1         # private response-framed quota evidence
 #
 # Ops/audit comments
 # ------------------
