@@ -5187,9 +5187,9 @@
       "pr": 12844
     },
     ".agents/tools/deployment/cloudron-app-packaging-skill/manifest-ref.md": {
-      "at": "2026-05-03T12:52:46Z",
-      "hash": "3e3999f72ce863acdd239186c54502f7cef27c66",
-      "passes": 2,
+      "at": "2026-07-24T06:06:18Z",
+      "hash": "e43a2d8611f3b9388e46d9c01adddac4cc4e26ab",
+      "passes": 3,
       "pr": 0
     },
     ".agents/tools/deployment/cloudron-app-packaging.md": {
@@ -5199,9 +5199,9 @@
       "pr": 11344
     },
     ".agents/tools/deployment/cloudron-app-publishing-skill.md": {
-      "at": "2026-07-24T01:58:39Z",
-      "hash": "1dcdd81614171f475d9d837d4efcb398eeb09a87",
-      "passes": 5,
+      "at": "2026-07-24T06:06:18Z",
+      "hash": "d04a8d6596c0cdc097d3946244e3f241961a7628",
+      "passes": 6,
       "pr": 15497
     },
     ".agents/tools/deployment/cloudron-git-reference.md": {
@@ -7480,21 +7480,21 @@
       "pr": 16415
     },
     "TODO.md": {
-      "at": "2026-07-24T01:59:06Z",
-      "hash": "5618744457c04e251ea897a09e08fc747f2648db",
-      "passes": 197,
+      "at": "2026-07-24T06:06:41Z",
+      "hash": "4e23a7534a80d7b723404f448741222808cf6c18",
+      "passes": 198,
       "pr": 15490
     },
     "aidevops.sh": {
-      "at": "2026-07-24T01:59:06Z",
-      "hash": "158c27c82f7300fb2a96f50763ab4f245064a7cb",
-      "passes": 298,
+      "at": "2026-07-24T06:06:41Z",
+      "hash": "343e94c62aa221a8f8a961542b91df739eebe1bc",
+      "passes": 299,
       "pr": 19029
     },
     "setup.sh": {
-      "at": "2026-07-24T01:59:07Z",
-      "hash": "b8bb17945b6b3c39726eed16cd7d77e84fe97290",
-      "passes": 295,
+      "at": "2026-07-24T06:06:41Z",
+      "hash": "5b49385a47800bcbf4b39988c796d4d95aa9ae0d",
+      "passes": 296,
       "pr": 15470
     },
     "todo/tasks/GH#15363-brief.md": {
@@ -7768,10 +7768,10 @@
       "passes": 8
     },
     ".agents/scripts/pulse-dispatch-worker-launch.sh": {
-      "hash": "3a3c7d3d4667ca24c47216c80f2d14c6979b9b64",
-      "at": "2026-07-21T22:55:07Z",
+      "hash": "d3f4e38e62fea5610d123f59c7562f4e25290d4c",
+      "at": "2026-07-24T06:05:38Z",
       "pr": 20617,
-      "passes": 44
+      "passes": 45
     },
     ".agents/reference/dispatch-blockers.md": {
       "hash": "a474d553d1a257317c034d9071bf0b1ae4358725",
