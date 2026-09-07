@@ -22,6 +22,7 @@ from gh_transport_capacity import capacity_wait
 from gh_transport_identity import quota_owner
 from gh_transport_reconcile import reconcile_scope as _reconcile_scope
 from gh_transport_recovery import admission_status, mark_dead_reservations, probe_recovers, reserve_probe_allowed
+from gh_transport_schema import ensure_schema
 
 
 class Deferred(Exception):
@@ -80,36 +81,6 @@ def process_birth(pid: int) -> str:
 
 
 class Budget:
-    SCHEMA_VERSION = 1
-    SCHEMA_STATEMENTS = (
-        """CREATE TABLE IF NOT EXISTS quota (
-            scope TEXT NOT NULL, resource TEXT NOT NULL,
-            remaining INTEGER NOT NULL, reset REAL NOT NULL,
-            observed REAL NOT NULL, blocked_until REAL NOT NULL DEFAULT 0,
-            quota_limit INTEGER NOT NULL,
-            PRIMARY KEY(scope, resource))""",
-        """CREATE TABLE IF NOT EXISTS reservation (
-            id TEXT PRIMARY KEY, scope TEXT NOT NULL, resource TEXT NOT NULL,
-            started REAL NOT NULL, pid INTEGER NOT NULL,
-            birth TEXT NOT NULL, credential TEXT NOT NULL,
-            uncertain INTEGER NOT NULL DEFAULT 0)""",
-        "CREATE TABLE IF NOT EXISTS binding (credential TEXT PRIMARY KEY, scope TEXT NOT NULL)",
-        "CREATE TABLE IF NOT EXISTS alias (scope TEXT PRIMARY KEY, target TEXT NOT NULL)",
-        """CREATE TABLE IF NOT EXISTS revalidation (
-            scope TEXT NOT NULL, resource TEXT NOT NULL, started REAL NOT NULL,
-            reservation_id TEXT NOT NULL,
-            PRIMARY KEY(scope, resource))""",
-        """CREATE TABLE IF NOT EXISTS admission_history (
-            scope TEXT NOT NULL, resource TEXT NOT NULL, started REAL NOT NULL)""",
-        "CREATE INDEX IF NOT EXISTS admission_history_scope ON admission_history(scope, resource, started)",
-        """CREATE TABLE IF NOT EXISTS pacing (
-            scope TEXT NOT NULL, resource TEXT NOT NULL, reset REAL NOT NULL,
-            retry_at REAL NOT NULL, remaining INTEGER NOT NULL,
-            PRIMARY KEY(scope, resource))""",
-        """CREATE TABLE IF NOT EXISTS reconciliation (
-            source TEXT PRIMARY KEY, owner TEXT NOT NULL, reconciled REAL NOT NULL)""",
-    )
-
     def __init__(self, directory: Path, scope: str, credential: str | None = None,
                  *, attributed: bool = False):
         private_directory(directory)
@@ -141,29 +112,7 @@ class Budget:
         self.attributed = attributed and self.scope == requested_scope
 
     def _ensure_schema(self) -> None:
-        version = self.db.execute("PRAGMA user_version").fetchone()[0]
-        if version == self.SCHEMA_VERSION:
-            return
-
-        # Schema migration is the exceptional write path. Give an existing
-        # initializer a bounded opportunity to finish, then re-check under the
-        # same write lock so concurrent first opens do not replay every DDL.
-        self.db.execute("PRAGMA busy_timeout=10000")
-        try:
-            self.db.execute("BEGIN IMMEDIATE")
-            version = self.db.execute("PRAGMA user_version").fetchone()[0]
-            if version < self.SCHEMA_VERSION:
-                for statement in self.SCHEMA_STATEMENTS:
-                    self.db.execute(statement)
-                self.db.execute(f"PRAGMA user_version={self.SCHEMA_VERSION}")
-            elif version > self.SCHEMA_VERSION:
-                raise ValueError("transport state schema is newer than this runtime")
-            self.db.execute("COMMIT")
-        except BaseException:
-            self.db.rollback()
-            raise
-        finally:
-            self.db.execute("PRAGMA busy_timeout=2000")
+        ensure_schema(self.db)
 
     def _root(self, scope: str) -> str:
         for _ in range(256):
