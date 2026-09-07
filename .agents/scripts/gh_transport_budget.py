@@ -61,10 +61,10 @@ def credential_identity(executable: str, host: str) -> tuple[str, bool, dict[str
             token = "anonymous"
     authenticated = bool(token and token != "anonymous")
     environment = os.environ.copy()
-    if authenticated:
-        # Pin only the native child, not a long-lived wrapper or worker parent.
-        # The hashed identity and the request must use exactly the same token.
-        environment["GH_TOKEN"] = token
+    # Pin only the native child, not a long-lived wrapper or worker parent.
+    # Callers reject anonymous identity before execution; authenticated requests
+    # hash and execute with exactly the same token.
+    environment["GH_TOKEN"] = token
     return hashlib.sha256(f"{host}\0{token}".encode()).hexdigest(), authenticated, environment
 
 
