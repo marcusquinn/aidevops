@@ -220,8 +220,13 @@ run_suggestion_fence_regressions() {
 	return 0
 }
 
+run_scope_generation_regressions() {
+	test_generated_issue_has_valid_files_scope
+	test_unsafe_path_does_not_gain_dispatch_authority
+}
+
 main() {
-	source "$HELPER"
+	source "$HELPER"; gh_create_issue() { gh issue create "$@"; }
 
 	echo "Running quality-debt security classification tests (GH#22429)"
 	test_quality_debt_security_labels_for_security_review_feedback
@@ -232,7 +237,7 @@ main() {
 	echo "Running quality-feedback main-branch verification tests"
 	test_skips_resolved_finding_when_snippet_missing
 	test_skips_resolved_embedded_inline_problem_snippet
-	test_creates_issue_when_snippet_still_exists
+	test_creates_issue_when_snippet_still_exists; run_scope_generation_regressions
 	test_skips_deleted_file
 	test_handles_diff_fence_without_false_positive
 	test_handles_suggestion_fence_and_comments
