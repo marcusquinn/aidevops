@@ -1362,16 +1362,18 @@ test_status_sidecar_only_reports_not_running() {
 test_default_pattern_ignores_foreign_user_pulse() {
 	_kill_mocks
 	local foreign_root="${TEST_ROOT}-foreign-user"
+	local active_link="${TEST_ROOT}-active"
+	ln -s "$TEST_ROOT" "$active_link"
 	mkdir -p "${foreign_root}/scripts"
 	cp "${TEST_ROOT}/scripts/pulse-wrapper.sh" "${foreign_root}/scripts/pulse-wrapper.sh"
 	cp "${TEST_ROOT}/scripts/pulse-merge-routine.sh" "${foreign_root}/scripts/pulse-merge-routine.sh"
 	chmod +x "${foreign_root}/scripts/pulse-wrapper.sh"
 	chmod +x "${foreign_root}/scripts/pulse-merge-routine.sh"
-	bash "${TEST_ROOT}/scripts/pulse-wrapper.sh" >/dev/null 2>&1 &
+	bash "${active_link}/scripts/pulse-wrapper.sh" >/dev/null 2>&1 &
 	local current_pid=$!
 	bash "${foreign_root}/scripts/pulse-wrapper.sh" >/dev/null 2>&1 &
 	local foreign_pid=$!
-	bash "${TEST_ROOT}/scripts/pulse-merge-routine.sh" >/dev/null 2>&1 &
+	bash "${active_link}/scripts/pulse-merge-routine.sh" >/dev/null 2>&1 &
 	local current_merge_pid=$!
 	bash "${foreign_root}/scripts/pulse-merge-routine.sh" >/dev/null 2>&1 &
 	local foreign_merge_pid=$!
@@ -1379,6 +1381,7 @@ test_default_pattern_ignores_foreign_user_pulse() {
 
 	local out="" rc=0
 	out=$(env -u AIDEVOPS_PULSE_PROCESS_PATTERN AIDEVOPS_AGENTS_DIR="$TEST_ROOT" \
+		AIDEVOPS_ACTIVE_AGENTS_LINK="$active_link" \
 		AIDEVOPS_RUNTIME_BUNDLES_DIR="${TEST_ROOT}/runtime-bundles" \
 		"$HELPER" status 2>&1) || rc=$?
 	_assert_eq "default pattern: current-user Pulse status exits 0" "0" "$rc"
@@ -1392,6 +1395,7 @@ test_default_pattern_ignores_foreign_user_pulse() {
 	# shellcheck disable=SC2016
 	merge_pids=$(env -u AIDEVOPS_PULSE_MERGE_PROCESS_PATTERN \
 		AIDEVOPS_AGENTS_DIR="$TEST_ROOT" \
+		AIDEVOPS_ACTIVE_AGENTS_LINK="$active_link" \
 		AIDEVOPS_RUNTIME_BUNDLES_DIR="${TEST_ROOT}/runtime-bundles" \
 		bash -c 'source "$1"; _pulse_merge_pids_raw' _ "$HELPER")
 	if [[ "$merge_pids" == *"${current_merge_pid}"* && "$merge_pids" != *"${foreign_merge_pid}"* ]]; then
@@ -1402,6 +1406,7 @@ test_default_pattern_ignores_foreign_user_pulse() {
 
 	kill -KILL "$current_pid" "$foreign_pid" "$current_merge_pid" "$foreign_merge_pid" 2>/dev/null || true
 	wait "$current_pid" "$foreign_pid" "$current_merge_pid" "$foreign_merge_pid" 2>/dev/null || true
+	rm "$active_link"
 	rm -rf "$foreign_root"
 	return 0
 }
