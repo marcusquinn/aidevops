@@ -368,9 +368,9 @@ _isc_scan_stampless_phase() {
 # scan-stale Phase 1 helper (t2414) — stamp-based stale claim detection.
 # -----------------------------------------------------------------------------
 # Iterates $CLAIM_STAMP_DIR. For each local-hostname stamp with a verifiably
-# dead PID and missing worktree: either auto-releases (when
-# auto_release_flag==1) or prints a report advisory. Live owners, existing
-# worktrees, lockdown labels, and unverifiable metadata fail closed.
+# dead PID and no recoverable worktree progress: either auto-releases (when
+# auto_release_flag==1) or prints a report advisory. Live owners, worktrees with
+# progress, lockdown labels, and unverifiable metadata fail closed.
 # Extracted from _isc_cmd_scan_stale to keep the coordinator under the
 # 100-line function cap (Complexity Analysis CI gate).
 #
@@ -379,6 +379,22 @@ _isc_scan_stampless_phase() {
 #   $2 stamp_limit       — max stamp files to examine; "0" means unbounded
 #
 # Exit: 0 always.
+_isc_worktree_has_recoverable_progress() {
+	local worktree="$1"
+	local status_output=""
+	local default_ref=""
+	local ahead_count=""
+	[[ -n "$worktree" && -d "$worktree" ]] || return 1
+	status_output=$(git -C "$worktree" status --porcelain 2>/dev/null) || return 2
+	[[ -z "$status_output" ]] || return 0
+	default_ref=$(git -C "$worktree" symbolic-ref refs/remotes/origin/HEAD 2>/dev/null) || return 2
+	[[ -n "$default_ref" ]] || return 2
+	ahead_count=$(git -C "$worktree" rev-list --count "${default_ref}..HEAD" 2>/dev/null) || return 2
+	[[ "$ahead_count" =~ ^[0-9]+$ ]] || return 2
+	[[ "$ahead_count" -gt 0 ]] && return 0
+	return 1
+}
+
 _isc_scan_dead_stamps_phase() {
 	local auto_release_flag="${1:-0}"
 	local stamp_limit="${2:-0}"
@@ -408,9 +424,6 @@ _isc_scan_dead_stamps_phase() {
 			# Only consider current-hostname stamps — cross-machine stamps
 			# can't have their PID verified and must not be surfaced as stale.
 			[[ "$hostname" == "$local_host" ]] || continue
-			# A surviving worktree may contain in-progress work even when the
-			# recorded process has exited. Preserve it for explicit recovery.
-			[[ -n "$worktree" && -d "$worktree" ]] && continue
 			# Missing owner metadata cannot prove that a claim is abandoned.
 			[[ "$pid" =~ ^[0-9]+$ ]] || continue
 
@@ -424,6 +437,11 @@ _isc_scan_dead_stamps_phase() {
 			fi
 
 			if [[ $pid_alive -eq 0 ]]; then
+				local progress_rc=0
+				_isc_worktree_has_recoverable_progress "$worktree" || progress_rc=$?
+				# Dirty/ahead work is a durable recovery checkpoint. Unknown Git
+				# state also fails closed rather than releasing possible work.
+				[[ "$progress_rc" -eq 0 || "$progress_rc" -eq 2 ]] && continue
 				if [[ "$auto_release_flag" == "1" ]]; then
 					local label_rc=0
 					_isc_has_label "$issue" "$slug" "no-auto-dispatch" || label_rc=$?
@@ -517,8 +535,14 @@ _isc_cmd_scan_stale() {
 	while [[ $# -gt 0 ]]; do
 		local _arg="$1"
 		case "$_arg" in
-		--auto-release) auto_release_flag=1 ; shift ;;
-		--no-auto-release) auto_release_flag=0 ; shift ;;
+		--auto-release)
+			auto_release_flag=1
+			shift
+			;;
+		--no-auto-release)
+			auto_release_flag=0
+			shift
+			;;
 		*) shift ;;
 		esac
 	done

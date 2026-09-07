@@ -10,6 +10,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- scope Pulse lifecycle discovery to the current user on shared hosts
+- avoid false systemd watchdog revivals while the Pulse process is alive
+- release dead interactive claims whose preserved worktrees contain no progress
+
+### Changed
+
+- track OpenCode compatibility through 1.18.29
+
 ## [3.32.335] - 2026-09-07
 
 ### Changed

@@ -5,7 +5,7 @@
 # test-scan-stale-auto-release.sh — stale interactive claim regression guard.
 #
 # Asserts that `_isc_cmd_scan_stale` Phase 1 auto-releases only verifiably dead
-# claims without a surviving worktree or no-auto-dispatch lockdown.
+# claims without recoverable worktree progress or a no-auto-dispatch lockdown.
 #
 # Background (GH#20012, t2414):
 #   scan-stale Phase 1 previously ONLY reported dead stamps, requiring N manual
@@ -44,6 +44,8 @@
 #   17. direct pulse reaper preserves a surviving worktree.
 #   18. direct pulse reaper enforces its per-cycle stamp cap.
 #   19. direct pulse reaper preserves stamps with invalid target metadata.
+#   20. direct pulse reaper releases a dead claim with a clean, unchanged worktree.
+#   21. direct pulse reaper preserves a dead claim with dirty worktree progress.
 #
 # Stub strategy: override `_isc_release_claim_by_stamp_path` as a shell function
 # after sourcing the helper to capture auto-release calls without real gh ops.
@@ -103,7 +105,7 @@ LOCAL_HOST=$(hostname 2>/dev/null || echo "unknown")
 
 # Write a stamp file with given PID and worktree path.
 write_stamp() {
-	local filename="$1"   # e.g. owner-repo-42.json
+	local filename="$1" # e.g. owner-repo-42.json
 	local s_pid="$2"
 	local s_worktree="$3"
 	local s_issue="${4:-42}"
@@ -124,11 +126,26 @@ write_stamp() {
 # =============================================================================
 # Source helper with stubs to suppress side-effects
 # =============================================================================
-print_info() { :; return 0; }
-print_warning() { :; return 0; }
-print_error() { :; return 0; }
-print_success() { :; return 0; }
-log_verbose() { :; return 0; }
+print_info() {
+	:
+	return 0
+}
+print_warning() {
+	:
+	return 0
+}
+print_error() {
+	:
+	return 0
+}
+print_success() {
+	:
+	return 0
+}
+log_verbose() {
+	:
+	return 0
+}
 export -f print_info print_warning print_error print_success log_verbose
 
 # Override WORKER_PROCESS_PATTERN so the test bash process matches when we
@@ -172,10 +189,16 @@ _isc_release_claim_by_stamp_path() {
 export -f _isc_release_claim_by_stamp_path
 
 # Phase 1a and Phase 2 are not under test here — suppress them.
-_isc_scan_stampless_phase() { :; return 0; }
+_isc_scan_stampless_phase() {
+	:
+	return 0
+}
 export -f _isc_scan_stampless_phase
 
-_isc_scan_closed_pr_orphans() { printf '0'; return 0; }
+_isc_scan_closed_pr_orphans() {
+	printf '0'
+	return 0
+}
 export -f _isc_scan_closed_pr_orphans
 
 # Override CLAIM_STAMP_DIR to the test sandbox.
@@ -434,7 +457,7 @@ write_stamp "owner-repo-111.json" "99999" "$EXISTING_WORKTREE" "111" "owner/repo
 
 REPORT_OUTPUT=$(_isc_cmd_scan_stale --no-auto-release 2>/dev/null || true)
 
-if [[ -f "${STAMP_DIR}/owner-repo-111.json" ]] && \
+if [[ -f "${STAMP_DIR}/owner-repo-111.json" ]] &&
 	[[ "$REPORT_OUTPUT" != *"#111 in owner/repo"* ]]; then
 	pass "report-only scan preserves and ignores an existing worktree"
 else
@@ -481,7 +504,10 @@ rm -f "${STAMP_DIR}/owner-repo-119.json"
 # =============================================================================
 # Test 15 — stamps bind to the durable runtime owner, not the helper shell
 # =============================================================================
-_resolve_worktree_owner_pid() { printf '4242'; return 0; }
+_resolve_worktree_owner_pid() {
+	printf '4242'
+	return 0
+}
 _compute_argv_hash() {
 	local pid="$1"
 	printf 'hash-%s' "$pid"
@@ -490,7 +516,7 @@ _compute_argv_hash() {
 CLAIM_STAMP_DIR="$STAMP_DIR"
 _isc_write_stamp "118" "owner/repo" "/nonexistent/path/118" "owner"
 DURABLE_STAMP="${STAMP_DIR}/owner-repo-118.json"
-if [[ "$(jq -r '.pid' "$DURABLE_STAMP")" == "4242" ]] && \
+if [[ "$(jq -r '.pid' "$DURABLE_STAMP")" == "4242" ]] &&
 	[[ "$(jq -r '.owner_argv_hash' "$DURABLE_STAMP")" == "hash-4242" ]]; then
 	pass "claim stamp records the durable runtime owner"
 else
@@ -531,8 +557,8 @@ rm -f "${STAMP_DIR}/outside-repos-121.json"
 write_stamp "a-repo-122.json" "99999" "/nonexistent/path/122" "122" "a/repo"
 write_stamp "b-repo-123.json" "99999" "/nonexistent/path/123" "123" "b/repo"
 AIDEVOPS_DEAD_STAMP_REAP_LIMIT=1 _isc_cmd_reap_dead_stamps >/dev/null 2>/dev/null || true
-if [[ ! -f "${STAMP_DIR}/a-repo-122.json" ]] && \
-	[[ -f "${STAMP_DIR}/b-repo-123.json" ]] && \
+if [[ ! -f "${STAMP_DIR}/a-repo-122.json" ]] &&
+	[[ -f "${STAMP_DIR}/b-repo-123.json" ]] &&
 	[[ "$(wc -l <"$RELEASE_LOG" | tr -d ' ')" -eq 1 ]]; then
 	pass "direct pulse reaper enforces its per-cycle stamp cap"
 else
@@ -547,14 +573,49 @@ rm -f "${STAMP_DIR}/a-repo-122.json" "${STAMP_DIR}/b-repo-123.json"
 write_stamp "invalid-issue.json" "99999" "/nonexistent/path/124" "0" "owner/repo"
 write_stamp "invalid-slug.json" "99999" "/nonexistent/path/125" "125" "owner/repo/extra"
 _isc_cmd_reap_dead_stamps >/dev/null 2>/dev/null || true
-if [[ -f "${STAMP_DIR}/invalid-issue.json" ]] && \
-	[[ -f "${STAMP_DIR}/invalid-slug.json" ]] && \
+if [[ -f "${STAMP_DIR}/invalid-issue.json" ]] &&
+	[[ -f "${STAMP_DIR}/invalid-slug.json" ]] &&
 	[[ ! -s "$RELEASE_LOG" ]]; then
 	pass "direct pulse reaper preserves stamps with invalid target metadata"
 else
 	fail "direct pulse reaper preserves stamps with invalid target metadata"
 fi
 rm -f "${STAMP_DIR}/invalid-issue.json" "${STAMP_DIR}/invalid-slug.json"
+
+# =============================================================================
+# Tests 20-21 — a surviving worktree blocks only when it contains progress
+# =============================================================================
+CLEAN_WORKTREE="${TMP}/clean-git-worktree"
+mkdir -p "$CLEAN_WORKTREE"
+git -C "$CLEAN_WORKTREE" init -q
+git -C "$CLEAN_WORKTREE" config user.name "Aidevops Test"
+git -C "$CLEAN_WORKTREE" config user.email "test@example.invalid"
+printf 'baseline\n' >"${CLEAN_WORKTREE}/baseline.txt"
+git -C "$CLEAN_WORKTREE" add baseline.txt
+git -C "$CLEAN_WORKTREE" commit -qm "baseline"
+git -C "$CLEAN_WORKTREE" branch -M main
+git -C "$CLEAN_WORKTREE" update-ref refs/remotes/origin/main HEAD
+git -C "$CLEAN_WORKTREE" symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/main
+
+: >"$RELEASE_LOG"
+write_stamp "outside-repos-126.json" "99999" "$CLEAN_WORKTREE" "126" "outside/repo"
+_isc_cmd_reap_dead_stamps >/dev/null 2>/dev/null || true
+if [[ ! -f "${STAMP_DIR}/outside-repos-126.json" ]] && [[ "$(wc -l <"$RELEASE_LOG" | tr -d ' ')" -eq 1 ]]; then
+	pass "direct pulse reaper releases dead claim with unchanged worktree"
+else
+	fail "direct pulse reaper releases dead claim with unchanged worktree"
+fi
+
+: >"$RELEASE_LOG"
+printf 'recoverable progress\n' >"${CLEAN_WORKTREE}/progress.txt"
+write_stamp "outside-repos-127.json" "99999" "$CLEAN_WORKTREE" "127" "outside/repo"
+_isc_cmd_reap_dead_stamps >/dev/null 2>/dev/null || true
+if [[ -f "${STAMP_DIR}/outside-repos-127.json" ]] && [[ ! -s "$RELEASE_LOG" ]]; then
+	pass "direct pulse reaper preserves dead claim with dirty worktree progress"
+else
+	fail "direct pulse reaper preserves dead claim with dirty worktree progress"
+fi
+rm -f "${STAMP_DIR}/outside-repos-127.json"
 
 # =============================================================================
 # Summary

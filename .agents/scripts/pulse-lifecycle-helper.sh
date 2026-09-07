@@ -84,12 +84,35 @@ unset _PULSE_BOOTSTRAP_SCRIPT_DIR _PULSE_RUNTIME_PIN_HELPER _PULSE_PINNED_ROOT _
 _PULSE_SCRIPT="${_PULSE_AGENTS_DIR}/scripts/pulse-wrapper.sh"
 _PULSE_LOG="${HOME}/.aidevops/logs/pulse-wrapper.log"
 
-# Process-match pattern for pgrep. The production default matches any
-# pulse-wrapper.sh script regardless of path. Tests may override this to
-# isolate mock pulses from the live user pulse (the mock's path is embedded
-# in the pattern). See tests/test-pulse-lifecycle-helper.sh.
-_PULSE_PATTERN="${AIDEVOPS_PULSE_PROCESS_PATTERN:-(^|/)pulse-wrapper\\.sh( |\$)}"
-_PULSE_MERGE_PATTERN="${AIDEVOPS_PULSE_MERGE_PROCESS_PATTERN:-(^|/)pulse-merge-routine\\.sh( |\$)}"
+# Process-match pattern for pgrep. Scope the production default to this user's
+# deployed or immutable runtime paths so another local user's Pulse cannot
+# satisfy lifecycle checks on a shared host. Tests may still provide an exact
+# override to isolate mock processes.
+_pulse_escape_ere() {
+	local _value="$1"
+	local _escaped=""
+	local _character=""
+	local _index=0
+	while [[ "$_index" -lt "${#_value}" ]]; do
+		_character="${_value:$_index:1}"
+		case "$_character" in
+		"\\" | "." | "[" | "]" | "^" | '$' | "*" | "+" | "?" | "{" | "}" | "|" | "(" | ")")
+			_escaped="${_escaped}\\${_character}"
+			;;
+		*) _escaped="${_escaped}${_character}" ;;
+		esac
+		_index=$((_index + 1))
+	done
+	printf '%s' "$_escaped"
+	return 0
+}
+_PULSE_DEPLOYED_ROOT=$(_pulse_escape_ere "${AIDEVOPS_AGENTS_DIR:-${HOME}/.aidevops/agents}")
+_PULSE_ACTIVE_ROOT=$(_pulse_escape_ere "$_PULSE_AGENTS_DIR")
+_PULSE_BUNDLES_ROOT=$(_pulse_escape_ere "${AIDEVOPS_RUNTIME_BUNDLES_DIR:-${HOME}/.aidevops/runtime-bundles}")
+_PULSE_DEFAULT_PATTERN="(${_PULSE_DEPLOYED_ROOT}|${_PULSE_ACTIVE_ROOT}|${_PULSE_BUNDLES_ROOT}/[^/]+/agents)/scripts/pulse-wrapper\\.sh( |\$)"
+_PULSE_DEFAULT_MERGE_PATTERN="(${_PULSE_DEPLOYED_ROOT}|${_PULSE_ACTIVE_ROOT}|${_PULSE_BUNDLES_ROOT}/[^/]+/agents)/scripts/pulse-merge-routine\\.sh( |\$)"
+_PULSE_PATTERN="${AIDEVOPS_PULSE_PROCESS_PATTERN:-$_PULSE_DEFAULT_PATTERN}"
+_PULSE_MERGE_PATTERN="${AIDEVOPS_PULSE_MERGE_PROCESS_PATTERN:-$_PULSE_DEFAULT_MERGE_PATTERN}"
 
 # Timing
 _PULSE_RESTART_WAIT="${AIDEVOPS_PULSE_RESTART_WAIT:-3}"
