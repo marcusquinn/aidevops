@@ -144,8 +144,6 @@ class Budget:
         version = self.db.execute("PRAGMA user_version").fetchone()[0]
         if version == self.SCHEMA_VERSION:
             return
-        if version > self.SCHEMA_VERSION:
-            raise ValueError("transport state schema is newer than this runtime")
 
         # Schema migration is the exceptional write path. Give an existing
         # initializer a bounded opportunity to finish, then re-check under the
