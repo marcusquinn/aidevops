@@ -392,8 +392,10 @@ _post_launch_recovery_claim_released() {
 	local repo_slug="$2"
 	local self_login="$3"
 	local failure_reason="$4"
+	local claim_id="${5:-}"
+	local claim_nonce="${6:-}"
 
-	local body
+	local body claim_binding=""
 	local aidevops_version="$AIDEVOPS_UNKNOWN_VERSION" opencode_version="$AIDEVOPS_UNKNOWN_VERSION"
 	if declare -F aidevops_find_version >/dev/null 2>&1; then
 		aidevops_version=$(aidevops_find_version 2>/dev/null || printf '%s' "$AIDEVOPS_UNKNOWN_VERSION")
@@ -402,8 +404,11 @@ _post_launch_recovery_claim_released() {
 		opencode_version=$(_detect_opencode_version 2>/dev/null || printf '%s' "")
 		opencode_version="${opencode_version:-$AIDEVOPS_UNKNOWN_VERSION}"
 	fi
+	if [[ "$claim_id" =~ ^[1-9][0-9]*$ && "$claim_nonce" =~ ^[A-Za-z0-9_-]+$ ]]; then
+		claim_binding=" claim_id=${claim_id} nonce=${claim_nonce}"
+	fi
 	body="<!-- ops:start — workers: skip this comment, it is audit trail not implementation context -->
-CLAIM_RELEASED reason=launch_recovery:${failure_reason} runner=${self_login} ts=$(date -u +%Y-%m-%dT%H:%M:%SZ) aidevops_version=${aidevops_version} opencode_version=${opencode_version}"
+CLAIM_RELEASED reason=launch_recovery:${failure_reason} runner=${self_login}${claim_binding} ts=$(date -u +%Y-%m-%dT%H:%M:%SZ) aidevops_version=${aidevops_version} opencode_version=${opencode_version}"
 
 	# t2814: append worker-log tail when available so the failure is
 	# diagnosable from the audit trail alone (no log-file forensics needed).
@@ -552,12 +557,13 @@ _verify_launch_recovery_state() {
 # latest durable dispatch marker must agree on every generated identity field,
 # and the registered PID/start-token pair must no longer identify a live
 # process. Queued issues retain their established recovery path.
-# Args: issue number, repo slug, ledger entry JSON
+# Args: issue number, repo slug, ledger entry JSON, current login
 #######################################
 _launch_recovery_owns_registered_attempt() {
 	local issue_number="$1"
 	local repo_slug="$2"
 	local ledger_entry="$3"
+	local self_login="$4"
 	local fields="" session_key="" attempt_id="" lease_token="" runner_device=""
 	local worker_pid="" owner_process_start="" ledger_status="" lease_phase=""
 
@@ -575,12 +581,26 @@ _launch_recovery_owns_registered_attempt() {
 
 	local comments_endpoint="" latest_dispatch=""
 	comments_endpoint=$(printf 'repos/%s/issues/%s/comments' "$repo_slug" "$issue_number")
-	latest_dispatch=$(gh api "$comments_endpoint" --paginate --jq \
-		'[.[] | select(.body | contains("<!-- aidevops:dispatch "))] | last | .body // ""' 2>/dev/null) || return 1
+	latest_dispatch=$(gh api "$comments_endpoint" --paginate --slurp --jq \
+		'[.[][] | select(.body | contains("<!-- aidevops:dispatch "))] | last | .body // ""' 2>/dev/null) || return 1
 	[[ "$latest_dispatch" == *"lease_token=${lease_token} "* ]] || return 1
 	[[ "$latest_dispatch" == *"device=${runner_device} "* ]] || return 1
 	[[ "$latest_dispatch" == *"session=${session_key} "* ]] || return 1
 	[[ "$latest_dispatch" == *"attempt_id=${attempt_id} "* ]] || return 1
+	local claim_id="" claim_json="" claim_nonce=""
+	claim_id="${latest_dispatch#* claim_id=}"
+	claim_id="${claim_id%% *}"
+	[[ "$claim_id" =~ ^[1-9][0-9]*$ ]] || return 1
+	claim_json=$(gh api "repos/${repo_slug}/issues/comments/${claim_id}" 2>/dev/null) || return 1
+	claim_nonce=$(printf '%s' "$claim_json" | jq -r --arg runner "$self_login" '
+		select(.author_association == "OWNER" or .author_association == "MEMBER" or .author_association == "COLLABORATOR")
+		| select((.user.login // "") == $runner)
+		| (.body // "")
+		| capture("(^|[[:space:]])DISPATCH_CLAIM[[:space:]]+nonce=(?<nonce>[A-Za-z0-9_-]+)").nonce
+	' 2>/dev/null) || return 1
+	[[ "$claim_nonce" =~ ^[A-Za-z0-9_-]+$ ]] || return 1
+	_LAUNCH_RECOVERY_CLAIM_ID="$claim_id"
+	_LAUNCH_RECOVERY_CLAIM_NONCE="$claim_nonce"
 	return 0
 }
 
@@ -589,6 +609,8 @@ recover_failed_launch_state() {
 	local repo_slug="$2"
 	local failure_reason="${3:-launch_validation_failed}"
 	local crash_type="${4:-}"
+	_LAUNCH_RECOVERY_CLAIM_ID=""
+	_LAUNCH_RECOVERY_CLAIM_NONCE=""
 
 	if [[ ! "$issue_number" =~ ^[0-9]+$ ]] || [[ -z "$repo_slug" ]]; then
 		return 0
@@ -643,7 +665,7 @@ recover_failed_launch_state() {
 		return 0
 	fi
 	if [[ "$has_queued" != "true" ]]; then
-		if [[ "$has_in_progress" != "true" ]] || ! _launch_recovery_owns_registered_attempt "$issue_number" "$repo_slug" "$ledger_entry"; then
+		if [[ "$has_in_progress" != "true" ]] || ! _launch_recovery_owns_registered_attempt "$issue_number" "$repo_slug" "$ledger_entry" "$self_login"; then
 			echo "[pulse-wrapper] Launch recovery skipped for #${issue_number} (${repo_slug}): in-progress ownership does not match the failed registered attempt" >>"$LOGFILE"
 			return 0
 		fi
@@ -674,22 +696,25 @@ recover_failed_launch_state() {
 		"$ledger_helper" "${fail_args[@]}" >/dev/null 2>&1 || true
 	fi
 
-	_record_released_launch_failure "$issue_number" "$repo_slug" "$self_login" "$failure_reason" "$crash_type"
+	_record_released_launch_failure "$issue_number" "$repo_slug" "$self_login" "$failure_reason" "$crash_type" \
+		"$_LAUNCH_RECOVERY_CLAIM_ID" "$_LAUNCH_RECOVERY_CLAIM_NONCE"
 	return 0
 }
 
 # Record recovery side effects only after ownership release has been verified
 # and the exact ledger attempt has been marked failed.
-# Args: issue number, repo slug, self login, failure reason, crash type
+# Args: issue number, repo slug, self login, failure reason, crash type, claim ID, claim nonce
 _record_released_launch_failure() {
 	local issue_number="$1"
 	local repo_slug="$2"
 	local self_login="$3"
 	local failure_reason="$4"
 	local crash_type="$5"
+	local claim_id="${6:-}"
+	local claim_nonce="${7:-}"
 
 	# t2394: Invalidate stale cross-runner claims immediately (see helper below).
-	_post_launch_recovery_claim_released "$issue_number" "$repo_slug" "$self_login" "$failure_reason"
+	_post_launch_recovery_claim_released "$issue_number" "$repo_slug" "$self_login" "$failure_reason" "$claim_id" "$claim_nonce"
 	# t3197: Write a per-issue dispatch cooldown marker so other runners
 	# (and this one) skip redispatch for the configured cooldown window.
 	# Only fires for `no_worker_process` — the recurring no-spawn failure mode.

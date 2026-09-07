@@ -246,10 +246,21 @@ def run(metadata: Path, executable: str, args: list[str]) -> int:
         retry = f" retry_at={exc.retry_at:.3f}" if exc.retry_at else ""
         print(f"[gh-transport] deferred: {exc}{retry}", file=sys.stderr)
         return 75
-    except (OSError, ValueError, sqlite3.Error):
+    except (OSError, ValueError, sqlite3.Error) as exc:
         # Metadata failure after execution is not permission to retry a
         # successful mutation. Keep the observed native status when available.
-        print("[gh-transport] safe REST transport state unavailable", file=sys.stderr)
+        failure = {"attempted": False, "deferred_by": "local_state", "reason": type(exc).__name__}
+        sqlite_name = getattr(exc, "sqlite_errorname", "")
+        if sqlite_name:
+            failure["sqlite_error"] = sqlite_name
+        if rc is None:
+            try:
+                metadata.write_text(json.dumps(failure), encoding="utf-8")
+            except OSError:
+                pass
+        detail = f"/{sqlite_name}" if sqlite_name else ""
+        print(f"[gh-transport] safe REST transport state unavailable: {type(exc).__name__}{detail}",
+              file=sys.stderr)
         return _exit_status(rc) if rc is not None else 75
     finally:
         _finish_budget(budget, reservation, resource, headers, started)

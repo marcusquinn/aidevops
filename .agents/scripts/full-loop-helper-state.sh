@@ -103,6 +103,7 @@ duplicate_work_avoided: ${DUPLICATE_WORK_AVOIDED:-0}
 started_at: "${started_at}"
 updated_at: "${now}"
 pr_number: "${pr_number}"
+repository: "${REPOSITORY:-}"
 max_task_iterations: ${MAX_TASK_ITERATIONS:-$DEFAULT_MAX_TASK_ITERATIONS}
 max_preflight_iterations: ${MAX_PREFLIGHT_ITERATIONS:-$DEFAULT_MAX_PREFLIGHT_ITERATIONS}
 max_pr_iterations: ${MAX_PR_ITERATIONS:-$DEFAULT_MAX_PR_ITERATIONS}
@@ -171,6 +172,7 @@ load_state() {
 	STARTED_AT="unknown"
 	UPDATED_AT=""
 	PR_NUMBER=""
+	REPOSITORY=""
 	MAX_TASK_ITERATIONS="$DEFAULT_MAX_TASK_ITERATIONS"
 	MAX_PREFLIGHT_ITERATIONS="$DEFAULT_MAX_PREFLIGHT_ITERATIONS"
 	MAX_PR_ITERATIONS="$DEFAULT_MAX_PR_ITERATIONS"
@@ -199,7 +201,7 @@ load_state() {
 			MANUAL_RESUME_COUNT | REUSED_SUBAGENT_UNITS | DUPLICATE_WORK_AVOIDED | \
 			MAX_TASK_ITERATIONS | MAX_PREFLIGHT_ITERATIONS | \
 			MAX_PR_ITERATIONS | SKIP_PREFLIGHT | SKIP_POSTFLIGHT | SKIP_RUNTIME_TESTING | \
-			NO_AUTO_PR | NO_AUTO_DEPLOY | RELEASE_INTENT | RELEASE_TYPE | DEPLOYMENT_SCOPE | RELEASE_EXPECTED_SOURCES | RELEASE_STATUS | HEADLESS | PR_NUMBER)
+			NO_AUTO_PR | NO_AUTO_DEPLOY | RELEASE_INTENT | RELEASE_TYPE | DEPLOYMENT_SCOPE | RELEASE_EXPECTED_SOURCES | RELEASE_STATUS | HEADLESS | PR_NUMBER | REPOSITORY)
 			printf -v "$_key" '%s' "$_val"
 			;;
 		esac
@@ -1842,7 +1844,13 @@ cmd_status() {
 		fi
 	fi
 	if [[ "${PR_NUMBER:-}" =~ ^[0-9]+$ ]]; then
-		status_repo=$(_full_loop_resolve_repo "${AIDEVOPS_FULL_LOOP_REPO:-}" 2>/dev/null || true)
+		if [[ -n "${AIDEVOPS_FULL_LOOP_REPO:-}" ]]; then
+			status_repo=$(_full_loop_resolve_repo "$AIDEVOPS_FULL_LOOP_REPO" 2>/dev/null || true)
+		elif [[ "${REPOSITORY:-}" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]]; then
+			status_repo="$REPOSITORY"
+		else
+			status_repo=$(_full_loop_resolve_repo "" 2>/dev/null || true)
+		fi
 		if [[ -n "$status_repo" ]] && declare -F _full_loop_cleanup_receipt_path >/dev/null 2>&1; then
 			cleanup_receipt=$(_full_loop_cleanup_receipt_path "$status_repo" "$PR_NUMBER" 2>/dev/null || true)
 		fi
@@ -2053,6 +2061,11 @@ cmd_complete() {
 		fi
 	else
 		print_error "Cannot persist durable deferred-cleanup handoff without worktree and branch evidence"
+		return 1
+	fi
+	REPOSITORY="$repo"
+	if ! save_state "${CURRENT_PHASE:-complete}" "$SAVED_PROMPT" "$PR_NUMBER" "$STARTED_AT"; then
+		print_error "Cannot persist repository identity for deferred cleanup status"
 		return 1
 	fi
 	print_warning "LIFECYCLE_STATE=CLEANUP_DEFERRED worktree=${current_root}"

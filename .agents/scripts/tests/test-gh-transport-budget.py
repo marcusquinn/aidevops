@@ -7,6 +7,7 @@ import importlib.util
 import io
 import json
 import os
+import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -54,6 +55,28 @@ class AdmissionTests(unittest.TestCase):
                 other.acquire("core", now=1002)
         finally:
             other.close()
+
+    def test_initialized_open_does_not_replay_schema_writes(self):
+        self.assertEqual(self.budget.db.execute("PRAGMA user_version").fetchone()[0], 1)
+        self.budget.db.execute("BEGIN IMMEDIATE")
+        try:
+            other = Budget.__new__(Budget)
+            other.db = sqlite3.connect(self.directory / "admission.sqlite3", timeout=0.1,
+                                       isolation_level=None)
+            other._ensure_schema()
+            other.db.close()
+        finally:
+            self.budget.db.execute("ROLLBACK")
+
+    def test_future_schema_fails_closed(self):
+        self.budget.close()
+        connection = sqlite3.connect(self.directory / "admission.sqlite3")
+        connection.execute("PRAGMA user_version=2")
+        connection.close()
+        with self.assertRaisesRegex(ValueError, "schema is newer"):
+            Budget(self.directory, "owner-one")
+        self.budget = Budget.__new__(Budget)
+        self.budget.close = lambda: None
 
     def test_stale_and_missing_state_allow_only_one_observation(self):
         self.budget.acquire("core", now=1000)
