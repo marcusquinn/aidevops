@@ -2076,11 +2076,12 @@ cmd_complete() {
 _full_loop_resolve_repo() {
 	local repo_arg="${1:-}"
 	if [[ -n "$repo_arg" ]]; then
+		[[ "$repo_arg" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || return 1
 		printf '%s\n' "$repo_arg"
 		return 0
 	fi
 	repo_arg=$(gh repo view --json nameWithOwner --jq '.nameWithOwner' 2>/dev/null || true)
-	[[ -n "$repo_arg" ]] || return 1
+	[[ "$repo_arg" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || return 1
 	printf '%s\n' "$repo_arg"
 	return 0
 }
