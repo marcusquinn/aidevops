@@ -36,6 +36,7 @@ issue_assigned="true"
 worker_checks=0
 dispatch_identity='<!-- aidevops:dispatch lease_token=lease-30029 device=runner-device session=issue-30029 attempt_id=attempt-30029 claim_id=77 -->'
 old_dispatch_identity='<!-- aidevops:dispatch lease_token=lease-old device=runner-device session=issue-old attempt_id=attempt-old claim_id=66 -->'
+claim_issue_number=30029
 gh() {
 	local command_name="$1"
 	shift
@@ -45,9 +46,13 @@ gh() {
 	fi
 	if [[ "$command_name" == "api" && "$1" == "repos/owner/repo/issues/30029/comments" ]]; then
 		if [[ " $* " == *" --slurp "* ]]; then
-			printf '%s\n' "$dispatch_identity"
+			jq -cn --arg body "$dispatch_identity" \
+				'{body:$body,author_association:"MEMBER",login:"runner-a"}'
 		else
-			printf '%s\n%s\n' "$old_dispatch_identity" "$dispatch_identity"
+			jq -cn --arg body "$old_dispatch_identity" \
+				'{body:$body,author_association:"MEMBER",login:"runner-a"}'
+			jq -cn --arg body "$dispatch_identity" \
+				'{body:$body,author_association:"MEMBER",login:"runner-a"}'
 		fi
 		return 0
 	fi
@@ -56,7 +61,8 @@ gh() {
 		return 0
 	fi
 	if [[ "$command_name" == "api" && "$1" == "repos/owner/repo/issues/comments/77" ]]; then
-		printf '%s\n' '{"id":77,"body":"DISPATCH_CLAIM nonce=nonce-30029 runner=runner-a","author_association":"MEMBER","user":{"login":"runner-a"}}'
+		jq -cn --arg issue "$claim_issue_number" \
+			'{id:77,issue_url:("https://api.github.test/repos/owner/repo/issues/" + $issue),body:"DISPATCH_CLAIM nonce=nonce-30029 runner=runner-a",author_association:"MEMBER",user:{login:"runner-a"}}'
 		return 0
 	fi
 	if [[ "$command_name" == "issue" && "$1" == "view" ]]; then
@@ -119,6 +125,20 @@ grep -q 'Launch recovery reset #30029' "$LOGFILE" || {
 
 issue_status="in-progress"
 issue_assigned="true"
+claim_issue_number=99999
+recover_failed_launch_state 30029 owner/repo no_worker_process
+[[ "$issue_status" == "in-progress" && "$issue_assigned" == "true" ]] || {
+	printf 'FAIL: cross-issue claim identity disturbed ownership\n' >&2
+	exit 1
+}
+[[ "$(wc -l <"$RELEASE_ARGS_FILE" | tr -d '[:space:]')" == "1" ]] || {
+	printf 'FAIL: cross-issue claim identity emitted a generation release\n' >&2
+	exit 1
+}
+
+issue_status="in-progress"
+issue_assigned="true"
+claim_issue_number=30029
 dispatch_identity='<!-- aidevops:dispatch lease_token=lease-late device=runner-device session=issue-30029 attempt_id=attempt-late claim_id=78 -->'
 recover_failed_launch_state 30029 owner/repo no_worker_process
 [[ "$issue_status" == "in-progress" && "$issue_assigned" == "true" ]] || {

@@ -579,10 +579,17 @@ _launch_recovery_owns_registered_attempt() {
 		[[ -n "$current_start" && "$current_start" != "$owner_process_start" ]] || return 1
 	fi
 
-	local comments_endpoint="" latest_dispatch=""
+	local comments_endpoint="" latest_dispatch="" latest_dispatch_json=""
 	comments_endpoint=$(printf 'repos/%s/issues/%s/comments' "$repo_slug" "$issue_number")
-	latest_dispatch=$(gh api "$comments_endpoint" --paginate --slurp --jq \
-		'[.[][] | select(.body | contains("<!-- aidevops:dispatch "))] | last | .body // ""' 2>/dev/null) || return 1
+	latest_dispatch_json=$(gh api "$comments_endpoint" --paginate --slurp --jq \
+		'[.[][] | select(.body | contains("<!-- aidevops:dispatch "))] | last \
+		| {body:(.body // ""), author_association:(.author_association // ""), login:(.user.login // "")}' \
+		2>/dev/null) || return 1
+	latest_dispatch=$(printf '%s' "$latest_dispatch_json" | jq -r --arg runner "$self_login" '
+		select(.author_association == "OWNER" or .author_association == "MEMBER" or .author_association == "COLLABORATOR")
+		| select(.login == $runner)
+		| .body
+	' 2>/dev/null) || return 1
 	[[ "$latest_dispatch" == *"lease_token=${lease_token} "* ]] || return 1
 	[[ "$latest_dispatch" == *"device=${runner_device} "* ]] || return 1
 	[[ "$latest_dispatch" == *"session=${session_key} "* ]] || return 1
@@ -592,8 +599,11 @@ _launch_recovery_owns_registered_attempt() {
 	claim_id="${claim_id%% *}"
 	[[ "$claim_id" =~ ^[1-9][0-9]*$ ]] || return 1
 	claim_json=$(gh api "repos/${repo_slug}/issues/comments/${claim_id}" 2>/dev/null) || return 1
-	claim_nonce=$(printf '%s' "$claim_json" | jq -r --arg runner "$self_login" '
-		select(.author_association == "OWNER" or .author_association == "MEMBER" or .author_association == "COLLABORATOR")
+	claim_nonce=$(printf '%s' "$claim_json" | jq -r --arg runner "$self_login" --arg repo "$repo_slug" \
+		--argjson issue "$issue_number" --argjson claim_id "$claim_id" '
+		select(.id == $claim_id)
+		| select((.issue_url // "") | endswith("/repos/\($repo)/issues/\($issue)"))
+		| select(.author_association == "OWNER" or .author_association == "MEMBER" or .author_association == "COLLABORATOR")
 		| select((.user.login // "") == $runner)
 		| (.body // "")
 		| capture("(^|[[:space:]])DISPATCH_CLAIM[[:space:]]+nonce=(?<nonce>[A-Za-z0-9_-]+)").nonce

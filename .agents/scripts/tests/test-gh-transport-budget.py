@@ -78,6 +78,15 @@ class AdmissionTests(unittest.TestCase):
         self.budget = Budget.__new__(Budget)
         self.budget.close = lambda: None
 
+    def test_open_budget_fails_closed_after_concurrent_schema_upgrade(self):
+        connection = sqlite3.connect(self.directory / "admission.sqlite3")
+        connection.execute("PRAGMA user_version=2")
+        connection.close()
+        with self.assertRaisesRegex(ValueError, "schema changed"):
+            with self.budget.transaction():
+                pass
+        self.budget.db.execute("PRAGMA user_version=1")
+
     def test_stale_and_missing_state_allow_only_one_observation(self):
         self.budget.acquire("core", now=1000)
         with self.assertRaises(Deferred):

@@ -22,7 +22,7 @@ from gh_transport_capacity import capacity_wait
 from gh_transport_identity import quota_owner
 from gh_transport_reconcile import reconcile_scope as _reconcile_scope
 from gh_transport_recovery import admission_status, mark_dead_reservations, probe_recovers, reserve_probe_allowed
-from gh_transport_schema import ensure_schema
+from gh_transport_schema import SCHEMA_VERSION, ensure_schema
 
 
 class Deferred(Exception):
@@ -170,6 +170,8 @@ class Budget:
     def transaction(self):
         self.db.execute("BEGIN IMMEDIATE")
         try:
+            if self.db.execute("PRAGMA user_version").fetchone()[0] != SCHEMA_VERSION:
+                raise ValueError("transport state schema changed after initialization")
             self.scope = self._root(self.scope)
             yield
             self.db.execute("COMMIT")

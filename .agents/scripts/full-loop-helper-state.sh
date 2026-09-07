@@ -2040,26 +2040,7 @@ cmd_complete() {
 	if declare -F _resolve_worktree_owner_pid >/dev/null 2>&1; then
 		owner_pid=$(_resolve_worktree_owner_pid "" 2>/dev/null || printf '%s' "${PPID:-}")
 	fi
-	if [[ -n "$current_root" && -n "$current_branch" ]] && declare -F full_loop_write_cleanup_deferred >/dev/null 2>&1; then
-		receipt_path=$(_full_loop_cleanup_receipt_path "$repo" "$PR_NUMBER") || return 1
-		if [[ -f "$receipt_path" ]]; then
-			full_loop_finalize_cleanup_receipt "$repo" "$PR_NUMBER" \
-				"${RELEASE_STATUS:-$_FULL_LOOP_RELEASE_NOT_REQUESTED}" "$current_root" "$current_branch" \
-				"$owner_pid" "$owner_session" || {
-				print_error "Cannot finalize durable deferred-cleanup handoff"
-				return 1
-			}
-		elif ! full_loop_write_cleanup_deferred "$repo" "$PR_NUMBER" "$current_root" "$current_branch" \
-			"$owner_pid" "$owner_session" "${RELEASE_STATUS:-$_FULL_LOOP_RELEASE_NOT_REQUESTED}" >/dev/null; then
-			# A merge process may have created the receipt after the existence check.
-			full_loop_finalize_cleanup_receipt "$repo" "$PR_NUMBER" \
-				"${RELEASE_STATUS:-$_FULL_LOOP_RELEASE_NOT_REQUESTED}" "$current_root" "$current_branch" \
-				"$owner_pid" "$owner_session" || {
-				print_error "Cannot persist durable deferred-cleanup handoff"
-				return 1
-			}
-		fi
-	else
+	if [[ -z "$current_root" || -z "$current_branch" ]] || ! declare -F full_loop_write_cleanup_deferred >/dev/null 2>&1; then
 		print_error "Cannot persist durable deferred-cleanup handoff without worktree and branch evidence"
 		return 1
 	fi
@@ -2067,6 +2048,24 @@ cmd_complete() {
 	if ! save_state "${CURRENT_PHASE:-complete}" "$SAVED_PROMPT" "$PR_NUMBER" "$STARTED_AT"; then
 		print_error "Cannot persist repository identity for deferred cleanup status"
 		return 1
+	fi
+	receipt_path=$(_full_loop_cleanup_receipt_path "$repo" "$PR_NUMBER") || return 1
+	if [[ -f "$receipt_path" ]]; then
+		full_loop_finalize_cleanup_receipt "$repo" "$PR_NUMBER" \
+			"${RELEASE_STATUS:-$_FULL_LOOP_RELEASE_NOT_REQUESTED}" "$current_root" "$current_branch" \
+			"$owner_pid" "$owner_session" || {
+			print_error "Cannot finalize durable deferred-cleanup handoff"
+			return 1
+		}
+	elif ! full_loop_write_cleanup_deferred "$repo" "$PR_NUMBER" "$current_root" "$current_branch" \
+		"$owner_pid" "$owner_session" "${RELEASE_STATUS:-$_FULL_LOOP_RELEASE_NOT_REQUESTED}" >/dev/null; then
+		# A merge process may have created the receipt after the existence check.
+		full_loop_finalize_cleanup_receipt "$repo" "$PR_NUMBER" \
+			"${RELEASE_STATUS:-$_FULL_LOOP_RELEASE_NOT_REQUESTED}" "$current_root" "$current_branch" \
+			"$owner_pid" "$owner_session" || {
+			print_error "Cannot persist durable deferred-cleanup handoff"
+			return 1
+		}
 	fi
 	print_warning "LIFECYCLE_STATE=CLEANUP_DEFERRED worktree=${current_root}"
 	print_info "Executor complete; guarded cleanup supervisor owns the remaining CLEANED transition"
