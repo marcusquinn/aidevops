@@ -137,6 +137,50 @@ test_dead_owner_lock_is_reclaimed() {
 	[[ ! -e "${fixture}/recovery.lock.d" ]] || fail "reclaimed recovery lock remains after completion"
 }
 
+test_external_convergence_reconciles_stale_state() {
+	local fixture="${TEST_ROOT}/external-convergence"
+	local repo="" home="" canonical_sha=""
+	new_fixture external-convergence
+	IFS= read -r repo <"${fixture}/repo.path"
+	IFS= read -r home <"${fixture}/home.path"
+	canonical_sha=$(git -C "$repo" rev-parse HEAD)
+	mkdir -p "${home}/.aidevops"
+	printf '%s\n' "$canonical_sha" >"${home}/.aidevops/.deployed-sha"
+	jq -n --arg canonical "$canonical_sha" \
+		'{schema:"aidevops-pulse-runtime-recovery/v1",status:"attempting",reason:"safe_canonical_deployment",canonical_sha:$canonical,deployed_sha:"old",recorded_epoch:1}' \
+		>"${fixture}/state.json"
+
+	HOME="$home" \
+		AIDEVOPS_REPO_PATH="$repo" \
+		AIDEVOPS_DEPLOYED_SHA_FILE="${home}/.aidevops/.deployed-sha" \
+		AIDEVOPS_PULSE_RUNTIME_RECOVERY_STATE_FILE="${fixture}/state.json" \
+		AIDEVOPS_PULSE_RUNTIME_RECOVERY_LOCK_DIR="${fixture}/recovery.lock.d" \
+		AIDEVOPS_PULSE_RUNTIME_RECOVERY_NO_REEXEC=1 \
+		pulse_runtime_recover_if_safe
+
+	assert_eq "recovered" "$(jq -r '.status' "${fixture}/state.json")" "external convergence closes a stale recovery attempt"
+	assert_eq "activation_converged_externally" "$(jq -r '.reason' "${fixture}/state.json")" "external convergence records an exact reason"
+	assert_eq "$canonical_sha" "$(jq -r '.canonical_sha' "${fixture}/state.json")" "external convergence records authoritative SHA evidence"
+}
+
+test_external_convergence_reconciles_key_value_state_without_jq() {
+	local state_file="${TEST_ROOT}/fallback-convergence-state"
+	local fake_bin="${TEST_ROOT}/fallback-bin"
+	local command_name=""
+	local status=""
+	mkdir -p "$fake_bin"
+	for command_name in date mkdir mv rm; do
+		ln -s "$(command -v "$command_name")" "${fake_bin}/${command_name}"
+	done
+	printf 'status=attempting\nreason=safe_canonical_deployment\nrecorded_epoch=1\n' >"$state_file"
+	PATH="$fake_bin" AIDEVOPS_PULSE_RUNTIME_RECOVERY_STATE_FILE="$state_file" \
+		_pulse_runtime_recovery_reconcile_converged abc1234 abc1234
+	while IFS='=' read -r command_name status; do
+		[[ "$command_name" != "status" ]] || break
+	done <"$state_file"
+	assert_eq "recovered" "$status" "external convergence closes key-value state without jq"
+}
+
 main() {
 	TEST_ROOT=$(mktemp -d)
 	trap cleanup EXIT
@@ -145,6 +189,8 @@ main() {
 	test_non_exact_main_is_preserved
 	test_key_value_cooldown_state
 	test_dead_owner_lock_is_reclaimed
+	test_external_convergence_reconciles_stale_state
+	test_external_convergence_reconciles_key_value_state_without_jq
 	printf 'Results: %s checks passed\n' "$TESTS_RUN"
 }
 

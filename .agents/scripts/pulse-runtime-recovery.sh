@@ -67,6 +67,34 @@ _pulse_runtime_recovery_last_attempt_epoch() {
 	return 0
 }
 
+_pulse_runtime_recovery_reconcile_converged() {
+	local canonical_sha="$1"
+	local deployed_sha="$2"
+	local state_file="${AIDEVOPS_PULSE_RUNTIME_RECOVERY_STATE_FILE:-${HOME}/.aidevops/cache/pulse-runtime-recovery.json}"
+	local status=""
+	local key="" value=""
+
+	[[ -f "$state_file" ]] || return 0
+	if command -v jq >/dev/null 2>&1; then
+		status=$(jq -er '
+			select(.schema == "aidevops-pulse-runtime-recovery/v1")
+			| select(.status == "attempting" or .status == "blocked" or .status == "deferred")
+			| .status
+		' "$state_file" 2>/dev/null || true)
+	fi
+	if [[ -z "$status" ]]; then
+		while IFS='=' read -r key value; do
+			if [[ "$key" == "status" && "$value" =~ ^(attempting|blocked|deferred)$ ]]; then
+				status="$value"
+				break
+			fi
+		done <"$state_file"
+	fi
+	[[ -n "$status" ]] || return 0
+	_pulse_runtime_recovery_record "recovered" "activation_converged_externally" "$canonical_sha" "$deployed_sha"
+	return 0
+}
+
 _pulse_runtime_recovery_run_setup() {
 	local setup_script="$1"
 	local timeout_seconds="${AIDEVOPS_PULSE_RUNTIME_RECOVERY_TIMEOUT_SECONDS:-240}"
@@ -152,7 +180,10 @@ pulse_runtime_recover_if_safe() {
 	IFS= read -r deployed_sha <"$stamp_file" || deployed_sha=""
 	deployed_sha="${deployed_sha//[[:space:]]/}"
 	[[ "$canonical_sha" =~ ^[0-9a-fA-F]{7,64}$ && "$deployed_sha" =~ ^[0-9a-fA-F]{7,64}$ ]] || return 0
-	[[ "$canonical_sha" != "$deployed_sha" ]] || return 0
+	if [[ "$canonical_sha" == "$deployed_sha" ]]; then
+		_pulse_runtime_recovery_reconcile_converged "$canonical_sha" "$deployed_sha"
+		return 0
+	fi
 
 	branch=$(git -C "$repo_path" symbolic-ref --quiet --short HEAD 2>/dev/null || true)
 	if [[ "$branch" != "main" ]]; then

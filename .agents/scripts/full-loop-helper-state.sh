@@ -103,6 +103,7 @@ duplicate_work_avoided: ${DUPLICATE_WORK_AVOIDED:-0}
 started_at: "${started_at}"
 updated_at: "${now}"
 pr_number: "${pr_number}"
+repository: "${REPOSITORY:-}"
 max_task_iterations: ${MAX_TASK_ITERATIONS:-$DEFAULT_MAX_TASK_ITERATIONS}
 max_preflight_iterations: ${MAX_PREFLIGHT_ITERATIONS:-$DEFAULT_MAX_PREFLIGHT_ITERATIONS}
 max_pr_iterations: ${MAX_PR_ITERATIONS:-$DEFAULT_MAX_PR_ITERATIONS}
@@ -171,6 +172,7 @@ load_state() {
 	STARTED_AT="unknown"
 	UPDATED_AT=""
 	PR_NUMBER=""
+	REPOSITORY=""
 	MAX_TASK_ITERATIONS="$DEFAULT_MAX_TASK_ITERATIONS"
 	MAX_PREFLIGHT_ITERATIONS="$DEFAULT_MAX_PREFLIGHT_ITERATIONS"
 	MAX_PR_ITERATIONS="$DEFAULT_MAX_PR_ITERATIONS"
@@ -199,7 +201,7 @@ load_state() {
 			MANUAL_RESUME_COUNT | REUSED_SUBAGENT_UNITS | DUPLICATE_WORK_AVOIDED | \
 			MAX_TASK_ITERATIONS | MAX_PREFLIGHT_ITERATIONS | \
 			MAX_PR_ITERATIONS | SKIP_PREFLIGHT | SKIP_POSTFLIGHT | SKIP_RUNTIME_TESTING | \
-			NO_AUTO_PR | NO_AUTO_DEPLOY | RELEASE_INTENT | RELEASE_TYPE | DEPLOYMENT_SCOPE | RELEASE_EXPECTED_SOURCES | RELEASE_STATUS | HEADLESS | PR_NUMBER)
+			NO_AUTO_PR | NO_AUTO_DEPLOY | RELEASE_INTENT | RELEASE_TYPE | DEPLOYMENT_SCOPE | RELEASE_EXPECTED_SOURCES | RELEASE_STATUS | HEADLESS | PR_NUMBER | REPOSITORY)
 			printf -v "$_key" '%s' "$_val"
 			;;
 		esac
@@ -1842,7 +1844,13 @@ cmd_status() {
 		fi
 	fi
 	if [[ "${PR_NUMBER:-}" =~ ^[0-9]+$ ]]; then
-		status_repo=$(_full_loop_resolve_repo "${AIDEVOPS_FULL_LOOP_REPO:-}" 2>/dev/null || true)
+		if [[ -n "${AIDEVOPS_FULL_LOOP_REPO:-}" ]]; then
+			status_repo=$(_full_loop_resolve_repo "$AIDEVOPS_FULL_LOOP_REPO" 2>/dev/null || true)
+		elif [[ "${REPOSITORY:-}" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]]; then
+			status_repo="$REPOSITORY"
+		else
+			status_repo=$(_full_loop_resolve_repo "" 2>/dev/null || true)
+		fi
 		if [[ -n "$status_repo" ]] && declare -F _full_loop_cleanup_receipt_path >/dev/null 2>&1; then
 			cleanup_receipt=$(_full_loop_cleanup_receipt_path "$status_repo" "$PR_NUMBER" 2>/dev/null || true)
 		fi
@@ -2032,28 +2040,32 @@ cmd_complete() {
 	if declare -F _resolve_worktree_owner_pid >/dev/null 2>&1; then
 		owner_pid=$(_resolve_worktree_owner_pid "" 2>/dev/null || printf '%s' "${PPID:-}")
 	fi
-	if [[ -n "$current_root" && -n "$current_branch" ]] && declare -F full_loop_write_cleanup_deferred >/dev/null 2>&1; then
-		receipt_path=$(_full_loop_cleanup_receipt_path "$repo" "$PR_NUMBER") || return 1
-		if [[ -f "$receipt_path" ]]; then
-			full_loop_finalize_cleanup_receipt "$repo" "$PR_NUMBER" \
-				"${RELEASE_STATUS:-$_FULL_LOOP_RELEASE_NOT_REQUESTED}" "$current_root" "$current_branch" \
-				"$owner_pid" "$owner_session" || {
-				print_error "Cannot finalize durable deferred-cleanup handoff"
-				return 1
-			}
-		elif ! full_loop_write_cleanup_deferred "$repo" "$PR_NUMBER" "$current_root" "$current_branch" \
-			"$owner_pid" "$owner_session" "${RELEASE_STATUS:-$_FULL_LOOP_RELEASE_NOT_REQUESTED}" >/dev/null; then
-			# A merge process may have created the receipt after the existence check.
-			full_loop_finalize_cleanup_receipt "$repo" "$PR_NUMBER" \
-				"${RELEASE_STATUS:-$_FULL_LOOP_RELEASE_NOT_REQUESTED}" "$current_root" "$current_branch" \
-				"$owner_pid" "$owner_session" || {
-				print_error "Cannot persist durable deferred-cleanup handoff"
-				return 1
-			}
-		fi
-	else
+	if [[ -z "$current_root" || -z "$current_branch" ]] || ! declare -F full_loop_write_cleanup_deferred >/dev/null 2>&1; then
 		print_error "Cannot persist durable deferred-cleanup handoff without worktree and branch evidence"
 		return 1
+	fi
+	REPOSITORY="$repo"
+	if ! save_state "${CURRENT_PHASE:-complete}" "$SAVED_PROMPT" "$PR_NUMBER" "$STARTED_AT"; then
+		print_error "Cannot persist repository identity for deferred cleanup status"
+		return 1
+	fi
+	receipt_path=$(_full_loop_cleanup_receipt_path "$repo" "$PR_NUMBER") || return 1
+	if [[ -f "$receipt_path" ]]; then
+		full_loop_finalize_cleanup_receipt "$repo" "$PR_NUMBER" \
+			"${RELEASE_STATUS:-$_FULL_LOOP_RELEASE_NOT_REQUESTED}" "$current_root" "$current_branch" \
+			"$owner_pid" "$owner_session" || {
+			print_error "Cannot finalize durable deferred-cleanup handoff"
+			return 1
+		}
+	elif ! full_loop_write_cleanup_deferred "$repo" "$PR_NUMBER" "$current_root" "$current_branch" \
+		"$owner_pid" "$owner_session" "${RELEASE_STATUS:-$_FULL_LOOP_RELEASE_NOT_REQUESTED}" >/dev/null; then
+		# A merge process may have created the receipt after the existence check.
+		full_loop_finalize_cleanup_receipt "$repo" "$PR_NUMBER" \
+			"${RELEASE_STATUS:-$_FULL_LOOP_RELEASE_NOT_REQUESTED}" "$current_root" "$current_branch" \
+			"$owner_pid" "$owner_session" || {
+			print_error "Cannot persist durable deferred-cleanup handoff"
+			return 1
+		}
 	fi
 	print_warning "LIFECYCLE_STATE=CLEANUP_DEFERRED worktree=${current_root}"
 	print_info "Executor complete; guarded cleanup supervisor owns the remaining CLEANED transition"
@@ -2064,11 +2076,12 @@ cmd_complete() {
 _full_loop_resolve_repo() {
 	local repo_arg="${1:-}"
 	if [[ -n "$repo_arg" ]]; then
+		[[ "$repo_arg" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || return 1
 		printf '%s\n' "$repo_arg"
 		return 0
 	fi
 	repo_arg=$(gh repo view --json nameWithOwner --jq '.nameWithOwner' 2>/dev/null || true)
-	[[ -n "$repo_arg" ]] || return 1
+	[[ "$repo_arg" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || return 1
 	printf '%s\n' "$repo_arg"
 	return 0
 }

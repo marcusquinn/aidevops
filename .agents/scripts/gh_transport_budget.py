@@ -22,6 +22,7 @@ from gh_transport_capacity import capacity_wait
 from gh_transport_identity import quota_owner
 from gh_transport_reconcile import reconcile_scope as _reconcile_scope
 from gh_transport_recovery import admission_status, mark_dead_reservations, probe_recovers, reserve_probe_allowed
+from gh_transport_schema import SCHEMA_VERSION, ensure_schema
 
 
 class Deferred(Exception):
@@ -61,10 +62,10 @@ def credential_identity(executable: str, host: str) -> tuple[str, bool, dict[str
             token = "anonymous"
     authenticated = bool(token and token != "anonymous")
     environment = os.environ.copy()
-    if authenticated:
-        # Pin only the native child, not a long-lived wrapper or worker parent.
-        # The hashed identity and the request must use exactly the same token.
-        environment["GH_TOKEN"] = token
+    # Pin only the native child, not a long-lived wrapper or worker parent.
+    # Callers reject anonymous identity before execution; authenticated requests
+    # hash and execute with exactly the same token.
+    environment["GH_TOKEN"] = token
     return hashlib.sha256(f"{host}\0{token}".encode()).hexdigest(), authenticated, environment
 
 
@@ -99,39 +100,19 @@ class Budget:
         self.credential = credential or scope
         self.attributed = False
         self.birth = process_birth(os.getpid())
-        self.db.executescript("""
-            CREATE TABLE IF NOT EXISTS quota (
-                scope TEXT NOT NULL, resource TEXT NOT NULL,
-                remaining INTEGER NOT NULL, reset REAL NOT NULL,
-                observed REAL NOT NULL, blocked_until REAL NOT NULL DEFAULT 0,
-                quota_limit INTEGER NOT NULL,
-                PRIMARY KEY(scope, resource));
-            CREATE TABLE IF NOT EXISTS reservation (
-                id TEXT PRIMARY KEY, scope TEXT NOT NULL, resource TEXT NOT NULL,
-                started REAL NOT NULL, pid INTEGER NOT NULL,
-                birth TEXT NOT NULL, credential TEXT NOT NULL,
-                uncertain INTEGER NOT NULL DEFAULT 0);
-            CREATE TABLE IF NOT EXISTS binding (credential TEXT PRIMARY KEY, scope TEXT NOT NULL);
-            CREATE TABLE IF NOT EXISTS alias (scope TEXT PRIMARY KEY, target TEXT NOT NULL);
-            CREATE TABLE IF NOT EXISTS revalidation (
-                scope TEXT NOT NULL, resource TEXT NOT NULL, started REAL NOT NULL,
-                reservation_id TEXT NOT NULL,
-                PRIMARY KEY(scope, resource));
-            CREATE TABLE IF NOT EXISTS admission_history (
-                scope TEXT NOT NULL, resource TEXT NOT NULL, started REAL NOT NULL);
-            CREATE INDEX IF NOT EXISTS admission_history_scope ON admission_history(scope, resource, started);
-            CREATE TABLE IF NOT EXISTS pacing (
-                scope TEXT NOT NULL, resource TEXT NOT NULL, reset REAL NOT NULL,
-                retry_at REAL NOT NULL, remaining INTEGER NOT NULL,
-                PRIMARY KEY(scope, resource));
-            CREATE TABLE IF NOT EXISTS reconciliation (
-                source TEXT PRIMARY KEY, owner TEXT NOT NULL, reconciled REAL NOT NULL);
-        """)
-        with self.transaction():
-            self._bind_scope()
+        try:
+            self._ensure_schema()
+            with self.transaction():
+                self._bind_scope()
+        except BaseException:
+            self.db.close()
+            raise
         # A configured owner is authoritative only after its requested scope is
         # canonical. A legacy owner->unresolved alias still needs reconciliation.
         self.attributed = attributed and self.scope == requested_scope
+
+    def _ensure_schema(self) -> None:
+        ensure_schema(self.db)
 
     def _root(self, scope: str) -> str:
         for _ in range(256):
@@ -189,6 +170,8 @@ class Budget:
     def transaction(self):
         self.db.execute("BEGIN IMMEDIATE")
         try:
+            if self.db.execute("PRAGMA user_version").fetchone()[0] != SCHEMA_VERSION:
+                raise ValueError("transport state schema changed after initialization")
             self.scope = self._root(self.scope)
             yield
             self.db.execute("COMMIT")

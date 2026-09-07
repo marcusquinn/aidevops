@@ -870,6 +870,34 @@ cmp -s "$handoff_receipt" "${ROOT}/handoff-receipt-valid.json"
 cmp -s "${ROOT}/handoff-state/full-loop.state" "${ROOT}/handoff-state-valid"
 printf 'PASS repeated terminal status reads are stable and side-effect free\n'
 
+mkdir -p "${ROOT}/failing-gh"
+cat >"${ROOT}/failing-gh/gh" <<'GH'
+#!/usr/bin/env bash
+exit 75
+GH
+chmod +x "${ROOT}/failing-gh/gh"
+offline_status=$(PATH="${ROOT}/failing-gh:${PATH}" AIDEVOPS_FULL_LOOP_CLEANUP_DIR="$cleanup_receipt_dir" bash "$status_runner")
+printf '%s' "$offline_status" | jq -e \
+	'.executor_completion_state == "COMPLETE"
+	and .resource_cleanup_state == "CLEANUP_DEFERRED"
+	and .next_action == "await-resource-cleanup"
+	and .phase_is_historical == true' >/dev/null
+printf 'PASS terminal status projects its exact receipt when live repository discovery fails\n'
+
+mkdir -p "${ROOT}/wrong-repo-gh"
+cat >"${ROOT}/wrong-repo-gh/gh" <<'GH'
+#!/usr/bin/env bash
+printf '%s\n' wrong/repo
+GH
+chmod +x "${ROOT}/wrong-repo-gh/gh"
+wrong_live_repo_status=$(PATH="${ROOT}/wrong-repo-gh:${PATH}" AIDEVOPS_FULL_LOOP_CLEANUP_DIR="$cleanup_receipt_dir" bash "$status_runner")
+printf '%s' "$wrong_live_repo_status" | jq -e \
+	'.executor_completion_state == "COMPLETE"
+	and .resource_cleanup_state == "CLEANUP_DEFERRED"
+	and .next_action == "await-resource-cleanup"
+	and .phase_is_historical == true' >/dev/null
+printf 'PASS persisted repository identity outranks unrelated live repository discovery\n'
+
 printf '{invalid\n' >"$handoff_receipt"
 malformed_status=$(AIDEVOPS_FULL_LOOP_REPO=testorg/repo AIDEVOPS_FULL_LOOP_CLEANUP_DIR="$cleanup_receipt_dir" bash "$status_runner")
 printf '%s' "$malformed_status" | jq -e \
