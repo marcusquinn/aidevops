@@ -204,8 +204,8 @@ test_simplification_body_authority() {
 
 test_quality_feedback_labels() {
 	local maintainer_labels external_labels
-	maintainer_labels=$(_build_quality_debt_labels "high" "true" "")
-	external_labels=$(_build_quality_debt_labels "medium" "false" "")
+	maintainer_labels=$(_build_quality_debt_labels "high" "true" "" ".agents/scripts/example.sh")
+	external_labels=$(_build_quality_debt_labels "medium" "false" "" ".agents/scripts/example.sh")
 	[[ "$maintainer_labels" == *"auto-dispatch"* ]] && print_result "quality labels include auto-dispatch" 0 || print_result "quality labels include auto-dispatch" 1 "$maintainer_labels"
 	[[ "$maintainer_labels" == *"origin:worker"* ]] && print_result "quality labels include worker origin" 0 || print_result "quality labels include worker origin" 1 "$maintainer_labels"
 	[[ "$maintainer_labels" == *"tier:standard"* ]] && print_result "quality labels include tier" 0 || print_result "quality labels include tier" 1 "$maintainer_labels"
