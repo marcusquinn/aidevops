@@ -31,6 +31,7 @@ GH_DELETED=""
 GH_LAST_CONTENT_ENDPOINT=""
 GH_ISSUE_CREATE_COUNT=0
 GH_CREATE_LOG=""
+GH_CREATE_BODY_LOG=""
 GH_API_LOG=""
 
 print_result() {
@@ -58,6 +59,7 @@ reset_mock_state() {
 	GH_LAST_CONTENT_ENDPOINT=""
 	GH_ISSUE_CREATE_COUNT=0
 	GH_CREATE_LOG=$(mktemp)
+	GH_CREATE_BODY_LOG=$(mktemp)
 	GH_API_LOG=$(mktemp)
 	_QF_DEFAULT_BRANCH=""
 	_QF_DEFAULT_BRANCH_REPO=""
@@ -169,9 +171,21 @@ _mock_gh_issue() {
 		return 0
 		;;
 	create)
+		local body=""
+		while [[ $# -gt 0 ]]; do
+			if [[ "$1" == "--body" ]]; then
+				body="$2"
+				shift 2
+				continue
+			fi
+			shift
+		done
 		GH_ISSUE_CREATE_COUNT=$((GH_ISSUE_CREATE_COUNT + 1))
 		if [[ -n "$GH_CREATE_LOG" ]]; then
 			echo "create" >>"$GH_CREATE_LOG"
+		fi
+		if [[ -n "$GH_CREATE_BODY_LOG" ]]; then
+			printf '%s' "$body" >"$GH_CREATE_BODY_LOG"
 		fi
 		echo "https://github.com/example/repo/issues/999"
 		return 0
@@ -222,6 +236,11 @@ run_suggestion_fence_regressions() {
 
 main() {
 	source "$HELPER"
+	# The unit fixture owns the GitHub boundary; avoid invoking public-write
+	# guards while exercising generated-body construction.
+	gh_create_issue() {
+		gh issue create "$@"
+	}
 
 	echo "Running quality-debt security classification tests (GH#22429)"
 	test_quality_debt_security_labels_for_security_review_feedback
@@ -233,6 +252,8 @@ main() {
 	test_skips_resolved_finding_when_snippet_missing
 	test_skips_resolved_embedded_inline_problem_snippet
 	test_creates_issue_when_snippet_still_exists
+	test_generated_issue_has_valid_files_scope
+	test_unsafe_path_does_not_gain_dispatch_authority
 	test_skips_deleted_file
 	test_handles_diff_fence_without_false_positive
 	test_handles_suggestion_fence_and_comments

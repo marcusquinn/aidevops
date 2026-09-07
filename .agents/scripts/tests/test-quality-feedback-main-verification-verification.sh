@@ -106,6 +106,43 @@ test_creates_issue_when_snippet_still_exists() {
 	return 0
 }
 
+test_generated_issue_has_valid_files_scope() {
+	reset_mock_state
+	GH_RAW_CONTENT=$'#!/usr/bin/env bash\nverification marker present\nreturn 1\n'
+
+	local findings
+	findings='[{"file":".agents/scripts/example.sh","line":42,"body_full":"```bash\nverification marker present\n```","reviewer":"coderabbit","reviewer_login":"coderabbitai","severity":"high","url":"https://example.test/comment"}]'
+
+	local out_file
+	out_file=$(mktemp)
+	_create_quality_debt_issues "owner/repo" "123" "$findings" >"$out_file"
+	rm -f "$out_file"
+
+	local body
+	body=$(<"$GH_CREATE_BODY_LOG")
+	if [[ "$body" == *$'## Files Scope\n\n- EDIT: `.agents/scripts/example.sh`'* ]]; then
+		print_result "generated quality-debt issue has dispatchable Files Scope" 0
+	else
+		print_result "generated quality-debt issue has dispatchable Files Scope" 1 "body=${body}"
+	fi
+	rm -f "$GH_CREATE_LOG" "$GH_CREATE_BODY_LOG" "$GH_API_LOG"
+	return 0
+}
+
+test_unsafe_path_does_not_gain_dispatch_authority() {
+	local labels
+	labels=$(_build_quality_debt_labels "medium" "true" "ordinary finding" "../unsafe/*.sh")
+	local body
+	body=$(_build_quality_debt_issue_body "123" "../unsafe/*.sh" "coderabbit" "1" "medium" "ordinary finding" "true")
+
+	if [[ ",$labels," != *",auto-dispatch,"* && "$body" != *"## Files Scope"* ]]; then
+		print_result "unsafe review paths do not gain generated dispatch authority" 0
+	else
+		print_result "unsafe review paths do not gain generated dispatch authority" 1 "labels=${labels} body=${body}"
+	fi
+	return 0
+}
+
 test_skips_deleted_file() {
 	reset_mock_state
 	GH_DELETED="1"
