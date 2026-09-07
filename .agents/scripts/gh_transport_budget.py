@@ -162,8 +162,7 @@ class Budget:
                 raise ValueError("transport state schema is newer than this runtime")
             self.db.execute("COMMIT")
         except BaseException:
-            if self.db.in_transaction:
-                self.db.execute("ROLLBACK")
+            self.db.rollback()
             raise
         finally:
             self.db.execute("PRAGMA busy_timeout=2000")

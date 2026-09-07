@@ -249,10 +249,9 @@ def run(metadata: Path, executable: str, args: list[str]) -> int:
     except (OSError, ValueError, sqlite3.Error) as exc:
         # Metadata failure after execution is not permission to retry a
         # successful mutation. Keep the observed native status when available.
-        failure = {"attempted": False, "deferred_by": "local_state", "reason": type(exc).__name__}
-        sqlite_name = getattr(exc, "sqlite_errorname", "")
-        if sqlite_name:
-            failure["sqlite_error"] = sqlite_name
+        sqlite_name = getattr(exc, "sqlite_errorname", "") or None
+        failure = {"attempted": False, "deferred_by": "local_state", "reason": type(exc).__name__,
+                   "sqlite_error": sqlite_name}
         if rc is None:
             try:
                 metadata.write_text(json.dumps(failure), encoding="utf-8")
