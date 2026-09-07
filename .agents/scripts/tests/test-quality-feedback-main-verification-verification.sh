@@ -109,7 +109,7 @@ test_creates_issue_when_snippet_still_exists() {
 test_generated_issue_has_valid_files_scope() {
 	local body
 	body=$(_build_quality_debt_issue_body "123" ".agents/scripts/example.sh" "coderabbit" "1" "high" "actionable finding" "true")
-	if [[ "$body" == *$'## Files Scope\n\n- EDIT: `.agents/scripts/example.sh`'* ]]; then
+	if bash "${HELPER%/*}/brief-readiness-helper.sh" scope-check "$body"; then
 		print_result "generated quality-debt issue has dispatchable Files Scope" 0
 	else
 		print_result "generated quality-debt issue has dispatchable Files Scope" 1 "body=${body}"
