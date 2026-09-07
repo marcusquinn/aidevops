@@ -10,6 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.32.337] - 2026-09-08
+
+### Fixed
+
+- match stable Pulse link during bundle activation
+
 ## [3.32.336] - 2026-09-07
 
 ### Fixed
