@@ -69,7 +69,7 @@ export function boundManifestIdentity(payload, context) {
     const proposed = proposal.entries[index];
     check(proposed?.path === entry.path && proposed.relative_path === entry.relative_path
       && proposed.content_sha256 === entry.content_sha256);
-    if (!context.authorizedApprovalId) checkIdentity(entry.path, proposed.identity, check);
+    if (!context.authorizedApprovalId && entry.path === context.canonicalPath) checkIdentity(entry.path, proposed.identity, check);
   }
   const id = createHash("sha256").update(context.canonicalReceiptPayload(proposal)).digest("hex");
   check(payload.proposal_id === id);

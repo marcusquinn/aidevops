@@ -14,8 +14,8 @@ import {
   renderApprovedSourceContent,
 } from "./source-access-manifest-approval.mjs";
 
-export const ROOT_BROKER = "/etc/aidevops/source-access/source-access-helper.py";
-const REQUEST_ID_PATTERN = /^[a-f0-9]{32,64}$/;
+export { ROOT_BROKER, applyApprovedRead, brokerMatchesCurrentRelease,
+  checkGateWithApprovalInstructions, requestApprovalId } from "./source-access-guidance.mjs";
 
 function provenanceKey(sessionId, filePath) {
   return `${sessionId}\0${resolve(filePath)}`;
@@ -28,6 +28,10 @@ function operationKey(sessionId, callId) {
 function sameIdentity(candidate, state) {
   return Boolean(candidate) && candidate.repoRoot === state.repoRoot &&
     candidate.relativePath === state.relativePath;
+}
+
+function sameFileIdentity(left, right) {
+  return Boolean(left && right) && left.device === right.device && left.inode === right.inode;
 }
 
 function completeMutationMatches(approval, snapshot, state, entry) {
@@ -68,7 +72,8 @@ class MutationProvenance {
     }
     if (!sameIdentity(approval, state)) return { denial: "invalid" };
     const snapshot = this.snapshot(filePath, this.git, this.gitRun);
-    if (!sameIdentity(snapshot, state) || snapshot.contentSha256 !== state.contentSha256) {
+    if (!sameIdentity(snapshot, state) || snapshot.contentSha256 !== state.contentSha256
+      || !sameFileIdentity(snapshot.fileIdentity, state.fileIdentity)) {
       return { denial: "drift" };
     }
     return { approval, snapshot };
@@ -80,7 +85,10 @@ class MutationProvenance {
     try {
       const content = readFileSync(approval.approvedPath);
       if (createHash("sha256").update(content).digest("hex") !== approval.contentSha256) return;
-      this.approvals.set(provenanceKey(sessionId, filePath), { ...approval, content });
+      const snapshot = this.snapshot(filePath, this.git, this.gitRun);
+      if (!sameIdentity(snapshot, approval) || snapshot.contentSha256 !== approval.contentSha256) return;
+      if (approval.fileIdentity && !sameFileIdentity(approval.fileIdentity, snapshot.fileIdentity)) return;
+      this.approvals.set(provenanceKey(sessionId, filePath), { ...approval, content, fileIdentity: snapshot.fileIdentity });
       this.denialReasons.delete(provenanceKey(sessionId, filePath));
     } catch {
       // The initial root-owned snapshot remains mandatory; never cache an unreadable path.
@@ -100,6 +108,18 @@ class MutationProvenance {
       args: { ...args }, content: Buffer.from(state.content),
     });
     return { ...result.approval, approvedPath: state.approvedPath };
+  }
+
+  observedReadProof({ sessionId, filePath, approvalId, repoRoot }) {
+    const state = this.approvals.get(provenanceKey(sessionId, filePath));
+    if (!state?.fileIdentity || state.approvalId !== approvalId || state.repoRoot !== repoRoot
+      || this.now() >= state.expiresAt) return null;
+    // Memory-only metadata: the CLI must independently check the signed receipt,
+    // revocation, lifetime and fresh file bytes/identity. Never return source text
+    // or run synchronous filesystem/signature work on the native IPC listener.
+    return { schema: "aidevops-source-observed-read/v1", approval_id: state.approvalId,
+      path: state.canonicalPath, content_sha256: state.contentSha256,
+      file_identity: state.fileIdentity, expires_at: state.expiresAt };
   }
 
   finishRead(sessionId, callId, output, succeeded) {
@@ -179,6 +199,7 @@ class MutationProvenance {
     }
     this.approvals.set(entry.key, {
       ...entry.state, content: Buffer.from(snapshot.content), contentSha256: snapshot.contentSha256,
+      fileIdentity: snapshot.fileIdentity,
     });
     this.denialReasons.delete(entry.key);
   }
@@ -221,81 +242,4 @@ export function finishObservedSourceAccess(context, input, output, classify) {
     reason: context.sourceAccessReason,
     sourceContextForPath: context.sourceContextForPath,
   });
-}
-
-function runSourceAccessHelper(helperArgs, run) {
-  return String(
-    run("/usr/bin/python3", ["-I", "-B", ROOT_BROKER, ...helperArgs], {
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "pipe"],
-      timeout: 15000,
-    }),
-  ).trim();
-}
-
-export function brokerMatchesCurrentRelease(brokerMatches, scriptsDir) {
-  try {
-    return brokerMatches({ scriptsDir });
-  } catch {
-    return false;
-  }
-}
-
-export function applyApprovedRead(args, approval, filePath, log) {
-  if (!approval?.approvedPath) return false;
-  if (Object.hasOwn(args, "filePath")) args.filePath = approval.approvedPath;
-  if (Object.hasOwn(args, "file_path")) args.file_path = approval.approvedPath;
-  log("INFO", `[source-access] verified session-bound read approval for ${filePath}`);
-  return true;
-}
-
-export function requestApprovalId({ brokerCurrent, filePath, reason, requestRun, sessionId }) {
-  if (!brokerCurrent) return "";
-  try {
-    const requestId = runSourceAccessHelper(
-      ["request", "--session", sessionId, "--path", filePath, "--reason", reason],
-      requestRun,
-    );
-    return REQUEST_ID_PATTERN.test(requestId) ? requestId : "";
-  } catch {
-    // Request generation is advisory; the original guard remains authoritative.
-    return "";
-  }
-}
-
-export function checkGateWithApprovalInstructions({
-  args,
-  brokerCurrent,
-  checkSecretReadGate,
-  filePath,
-  log,
-  requestId,
-  denialReason = "missing",
-  tool,
-}) {
-  try {
-    checkSecretReadGate(tool, args, log);
-  } catch (error) {
-    const originalMessage = error instanceof Error ? error.message : String(error);
-    if (!brokerCurrent) {
-      throw new Error(
-        `${originalMessage}\n\nThe root-owned source-access broker does not match this release. ` +
-          "Run aidevops setup --scope source-access from an interactive terminal to reconcile it.",
-      );
-    }
-    if (!requestId) throw error;
-    const explanation = {
-      drift: "The prior approval was invalidated by an unobserved content transition.",
-      expired: "The prior approval has expired.",
-      invalid: "The prior approval was revoked or its repository/worktree identity is no longer valid.",
-      missing: "No source-access approval exists for this exact path and session.",
-    }[denialReason] || "No valid source-access approval exists for this exact path and session.";
-    throw new Error(
-      `${originalMessage}\n\n${explanation}\n\nTo approve only this tracked source path for this session, run:\n` +
-        `sudo -k /usr/bin/python3 -I -B ${ROOT_BROKER} approve ${requestId} --ttl 12h\n\n` +
-        "For one approval covering several exact tracked paths, create one request with " +
-        "`aidevops source-access request --session <session> --reason 'secret-bearing basename' " +
-        "--path <path-1> --path <path-2> ...`, then approve the returned request ID.",
-    );
-  }
 }

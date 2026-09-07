@@ -5,15 +5,10 @@ import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
   chmodSync,
-  closeSync,
-  constants,
-  fstatSync,
   lstatSync,
   mkdirSync,
   mkdtempSync,
-  openSync,
   readFileSync,
-  readSync,
   readdirSync,
   realpathSync,
   rmSync,
@@ -21,9 +16,10 @@ import {
   writeFileSync,
 } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, isAbsolute, join, parse, relative, resolve, sep } from "node:path";
+import { dirname, isAbsolute, join, resolve, sep } from "node:path";
 import { validatedManifestReceipt } from "./source-access-manifest-approval.mjs";
-import { sourceAccessGit } from "./source-access-git.mjs";
+import { MAX_SOURCE_BYTES, hasSymlinkComponent, isGitTrackedFile, sourceDigestMatches,
+  trackedFileIdentity, trustedSourceSnapshot } from "./source-access-files.mjs";
 import {
   ROOT_BROKER,
   applyApprovedRead,
@@ -39,7 +35,6 @@ const PAYLOAD_SCHEMA = "aidevops-source-access-approval/v1";
 const SIGNATURE_NAMESPACE = "aidevops-source-access-v1";
 const SIGNER_IDENTITY = "source-access@aidevops.sh";
 const MAX_TTL_SECONDS = 12 * 60 * 60;
-const MAX_SOURCE_BYTES = 10 * 1024 * 1024;
 const DEFAULT_STATE_DIR = "/var/run/aidevops/source-access";
 const DEFAULT_PUBLIC_KEY = "/etc/aidevops/source-access/source-access.pub";
 const ROOT_BROKER_CORE = "/etc/aidevops/source-access/source_access_core.py";
@@ -135,53 +130,10 @@ export function sourceAccessBrokerMatches({
   return matches;
 }
 
-function hasSymlinkComponent(filePath) {
-  const absolute = resolve(filePath);
-  const root = parse(absolute).root;
-  let current = root;
-  for (const part of absolute.slice(root.length).split(sep).filter(Boolean)) {
-    current = join(current, part);
-    try {
-      if (lstatSync(current).isSymbolicLink()) return true;
-    } catch {
-      return false;
-    }
-  }
-  return false;
-}
-
 function approvalScopeId(sessionId, uid, filePath, reason) {
   return createHash("sha256")
     .update(`${sessionId}\0${uid}\0${filePath}\0${reason}`, "utf8")
     .digest("hex");
-}
-
-function trackedFileIdentity(filePath, git, run = execFileSync) {
-  try {
-    const gitRoot = realpathSync(
-      String(
-        sourceAccessGit(git, ["-C", dirname(filePath), "rev-parse", "--show-toplevel"], {
-          encoding: "utf8",
-          stdio: ["ignore", "pipe", "ignore"],
-          timeout: 15000,
-        }, run),
-      ).trim(),
-    );
-    const relativePath = relative(gitRoot, filePath);
-    if (!relativePath || relativePath.startsWith(`..${sep}`) || isAbsolute(relativePath)) return false;
-    sourceAccessGit(git, ["-C", gitRoot, "ls-files", "--error-unmatch", "--", relativePath], {
-      encoding: "utf8",
-      stdio: ["ignore", "ignore", "ignore"],
-      timeout: 15000,
-    }, run);
-    return { repoRoot: gitRoot, relativePath };
-  } catch {
-    return false;
-  }
-}
-
-function isGitTrackedFile(filePath, git, run = execFileSync) {
-  return Boolean(trackedFileIdentity(filePath, git, run));
 }
 
 function verificationTempRoot() {
@@ -198,60 +150,6 @@ function isManagedSnapshotPath(filePath) {
       return resolve(filePath).startsWith(`${resolve(snapshotRoot)}${sep}`);
     }
   });
-}
-
-function readStableSource(filePath) {
-  const descriptor = openSync(filePath, constants.O_RDONLY | (constants.O_NOFOLLOW || 0) | (constants.O_NONBLOCK || 0));
-  try {
-    const opened = fstatSync(descriptor, { bigint: true });
-    requireValidReceipt(opened.isFile() && opened.nlink === 1n && opened.size <= BigInt(MAX_SOURCE_BYTES));
-    const buffer = Buffer.alloc(Number(opened.size) + 1);
-    let used = 0;
-    while (used < buffer.length) {
-      const count = readSync(descriptor, buffer, used, buffer.length - used, null);
-      if (count === 0) break;
-      used += count;
-    }
-    const current = lstatSync(filePath, { bigint: true });
-    const final = fstatSync(descriptor, { bigint: true });
-    requireValidReceipt(used <= MAX_SOURCE_BYTES && current.isFile() && !current.isSymbolicLink());
-    requireValidReceipt(current.dev === opened.dev && current.ino === opened.ino);
-    requireValidReceipt(["dev", "ino", "uid", "mode", "nlink", "size", "mtimeNs", "ctimeNs"]
-      .every((key) => final[key] === opened[key]));
-    return buffer.subarray(0, used);
-  } finally {
-    closeSync(descriptor);
-  }
-}
-
-function sourceDigestMatches(filePath, expectedDigest) {
-  try {
-    return createHash("sha256").update(readStableSource(filePath)).digest("hex") === expectedDigest;
-  } catch {
-    return false;
-  }
-}
-
-function trustedSourceSnapshot(filePath, git = "/usr/bin/git", run = execFileSync) {
-  let result = false;
-  try {
-    requireValidReceipt(isAbsolute(filePath));
-    requireValidReceipt(!hasSymlinkComponent(filePath));
-    const canonicalPath = realpathSync(filePath);
-    requireValidReceipt(canonicalPath === resolve(filePath));
-    const content = readStableSource(canonicalPath);
-    const identity = trackedFileIdentity(canonicalPath, git, run);
-    requireValidReceipt(identity);
-    result = {
-      canonicalPath,
-      content,
-      contentSha256: createHash("sha256").update(content).digest("hex"),
-      ...identity,
-    };
-  } catch {
-    result = false;
-  }
-  return result;
 }
 
 function requireValidReceipt(condition) {
@@ -429,6 +327,10 @@ function verifyReceiptSignature(receiptData) {
       expiresAt: receiptData.expiresAt,
       repoRoot: receiptData.repoRoot,
       relativePath: receiptData.relativePath,
+      fileIdentity: (() => {
+        const entry = payload.proposal?.entries?.find((candidate) => candidate.path === receiptData.canonicalPath);
+        return entry?.identity ? { device: String(entry.identity.device), inode: String(entry.identity.inode) } : undefined;
+      })(),
     };
   } finally {
     rmSync(tempDir, { recursive: true, force: true });

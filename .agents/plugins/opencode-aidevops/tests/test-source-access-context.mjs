@@ -12,9 +12,46 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { createSourceAccessRuntime } from "../source-access-runtime.mjs";
 import { createShellEnvHook } from "../shell-env.mjs";
+import { canonicalReceiptPayload, sourceAccessBrokerMatches } from "../source-access-approval.mjs";
 import {
   createSourceContextResponder, listenSourceContext, SOURCE_CONTEXT_QUERY, sourceContextInstanceId,
 } from "../source-access-context.mjs";
+
+test("broker matching requires exact deployed helper and core bytes", () => {
+  const tempParent = join(homedir(), ".aidevops", ".agent-workspace", "tmp");
+  mkdirSync(tempParent, { recursive: true });
+  const root = mkdtempSync(join(tempParent, "source-access-broker-match-test-"));
+  const scriptsDir = join(root, "scripts");
+  const brokerDir = join(root, "broker");
+  const uid = typeof process.getuid === "function" ? process.getuid() : 0;
+  try {
+    mkdirSync(scriptsDir, { mode: 0o700 });
+    // Keep this fixture trusted regardless of the host's collaborative umask.
+    mkdirSync(brokerDir, { mode: 0o700 });
+    const expectedHelper = join(scriptsDir, "source-access-helper.py");
+    const expectedCore = join(scriptsDir, "source_access_core.py");
+    const brokerHelper = join(brokerDir, "source-access-helper.py");
+    const brokerCore = join(brokerDir, "source_access_core.py");
+    writeFileSync(expectedHelper, "helper-v1\n", { mode: 0o644 });
+    writeFileSync(expectedCore, "core-v1\n", { mode: 0o644 });
+    writeFileSync(brokerHelper, "helper-v1\n", { mode: 0o644 });
+    writeFileSync(brokerCore, "core-v1\n", { mode: 0o644 });
+    const options = { scriptsDir, trustUid: uid, brokerHelperPath: brokerHelper, brokerCorePath: brokerCore };
+    assert.equal(sourceAccessBrokerMatches(options), true);
+    writeFileSync(brokerCore, "core-v2\n", { mode: 0o644 });
+    assert.equal(sourceAccessBrokerMatches(options), false);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("canonical source payload matches the Python broker for Unicode paths", () => {
+  const payload = { path: "/repo/secret-\u00e9.py", marker: "\u007f", astral: "\ud834\udd1e" };
+  const expected = execFileSync("python3", ["-I", "-B", "-c",
+    'import json,sys; print(json.dumps(json.loads(sys.argv[1]),sort_keys=True,separators=(",",":")),end="")',
+    JSON.stringify(payload)], { encoding: "utf8" });
+  assert.equal(canonicalReceiptPayload(payload), expected);
+});
 
 function contextFixture() {
   const session = { id: "ses_context_fixture", projectID: "fixture", directory: "/repo",

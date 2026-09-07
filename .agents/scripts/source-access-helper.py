@@ -480,7 +480,19 @@ def verify_approval(config: Config, spec: VerificationSpec) -> bool:
         return False
 
 
-def _bound_manifest_scope(spec: VerificationSpec, payload: dict[str, Any], paths: list[str]) -> str:
+def _bound_read_proof(spec: VerificationSpec, payload: dict[str, Any], current: dict[str, Any], proof: Any) -> dict[str, Any] | None:
+    if proof is None:
+        return None
+    _require_valid_approval(isinstance(proof, dict) and proof.get("schema") == "aidevops-source-observed-read/v1")
+    _require_valid_approval(proof.get("approval_id") == payload.get("approval_id") and proof.get("path") == spec.path)
+    _require_valid_approval(proof.get("expires_at") == payload.get("expires_at"))
+    entry = next((entry for entry in current["entries"] if entry["path"] == spec.path), None)
+    _require_valid_approval(entry is not None and proof.get("content_sha256") == entry["content_sha256"])
+    _require_valid_approval(proof.get("file_identity") == {key: str(value) for key, value in entry["identity"].items()})
+    return proof
+
+
+def _bound_manifest_scope(spec: VerificationSpec, payload: dict[str, Any], paths: list[str]) -> tuple[str, dict[str, Any] | None]:
     """Verify V3 context through the native peer, never a CLI-supplied PID."""
     proposal = payload.get("proposal")
     _require_valid_approval(isinstance(proposal, dict))
@@ -489,7 +501,10 @@ def _bound_manifest_scope(spec: VerificationSpec, payload: dict[str, Any], paths
     recorded = proposal.get("runtime_context")
     _require_valid_approval(isinstance(recorded, dict) and bool(spec.context_socket))
     _require_valid_approval(recorded.get("socket_path") == spec.context_socket)
-    _SOURCE_CORE.revalidate_source_proposal_context(proposal, spec.uid)
+    context = _SOURCE_CORE.query_source_context(spec.context_socket, spec.session_id, payload["repo_root"], spec.uid,
+                                               source_read={"path": spec.path, "approval_id": payload.get("approval_id")})
+    proof = context.pop("source_read", None)
+    _require_valid_approval(context == recorded)
     current = _SOURCE_CORE._proposal_source_snapshot(ManifestRequestSpec(
         spec.session_id, spec.uid, Path.home(), tuple(paths), spec.reason,
     ))
@@ -502,8 +517,15 @@ def _bound_manifest_scope(spec: VerificationSpec, payload: dict[str, Any], paths
     for key, value in current["repository"].items():
         if key != "head":
             _require_valid_approval(repository.get(key) == value)
-    _require_valid_approval(proposal.get("entries") == current["entries"])
-    return _bound_proposal_id(proposal, payload)
+    proof = _bound_read_proof(spec, payload, current, proof)
+    proposed = proposal.get("entries")
+    _require_valid_approval(isinstance(proposed, list) and len(proposed) == len(payload["entries"]))
+    for original, signed, live in zip(proposed, payload["entries"], current["entries"]):
+        _require_valid_approval(isinstance(original, dict) and all(
+            original.get(key) == signed.get(key) for key in ("path", "relative_path", "content_sha256")))
+        if proof is None and signed["path"] == spec.path:
+            _require_valid_approval(original == live)
+    return _bound_proposal_id(proposal, payload), proof
 
 
 def _bound_proposal_id(proposal: dict[str, Any], payload: dict[str, Any]) -> str:
@@ -520,8 +542,8 @@ def _bound_proposal_id(proposal: dict[str, Any], payload: dict[str, Any]) -> str
     return proposal_id
 
 
-def _legacy_manifest_scope(spec: VerificationSpec, payload: dict[str, Any], paths: list[str]) -> str:
-    return manifest_scope_id(spec.session_id, spec.uid, payload["repo_root"], spec.reason, paths)
+def _legacy_manifest_scope(spec: VerificationSpec, payload: dict[str, Any], paths: list[str]) -> tuple[str, None]:
+    return manifest_scope_id(spec.session_id, spec.uid, payload["repo_root"], spec.reason, paths), None
 
 
 def _manifest_verification_policy(receipt: dict[str, Any], payload: Any) -> tuple[int, Any]:
@@ -551,6 +573,36 @@ def _manifest_storage(config: Config, spec: VerificationSpec, payload: dict[str,
         _require_valid_approval(_trusted_directory(revocations, config.trust_uid))
         _require_valid_approval(f"{approval_id}.json" not in {path.name for path in revocations.iterdir()})
     return atomic
+
+
+def _verify_manifest_contents(config: Config, spec: VerificationSpec, payload: dict[str, Any], context: dict[str, Any]) -> None:
+    """Validate live requested bytes and every immutable signed snapshot."""
+    total_bytes = 0
+    approval_id = payload["approval_id"]
+    continuation = context["continuation"]
+    for raw_entry, expected_entry in zip(payload["entries"], context["entries"]):
+        _require_valid_approval(raw_entry.get("path") == expected_entry["path"]
+                                and raw_entry.get("relative_path") == expected_entry["relative_path"])
+        content, content_sha256 = secure_source_content(expected_entry["path"])
+        total_bytes += len(content)
+        _require_valid_approval(total_bytes <= MAX_SOURCE_BYTES)
+        if continuation is None:
+            if payload.get("schema") != SCHEMA_BOUND_PAYLOAD or expected_entry["path"] == spec.path:
+                _require_valid_approval(raw_entry.get("content_sha256") == content_sha256)
+        elif expected_entry["path"] == spec.path:
+            _require_valid_approval(continuation["content_sha256"] == content_sha256)
+            identity = _SOURCE_CORE._proposal_file_identity(Path(spec.path))
+            _require_valid_approval(continuation["file_identity"] == {key: str(value) for key, value in identity.items()})
+        entry_id = hashlib.sha256(expected_entry["path"].encode("utf-8")).hexdigest()[:32]
+        snapshot_path = (
+            _SOURCE_CORE.atomic_bundle_directory(config, spec.uid, approval_id) / f"{entry_id}.source"
+            if context["atomic"] else config.state_dir / "snapshots" / str(spec.uid) / f"{approval_id}-{entry_id}.source"
+        )
+        _require_valid_approval(raw_entry.get("snapshot_path") == str(snapshot_path))
+        _require_valid_approval(_trusted_directory(snapshot_path.parent, config.trust_uid))
+        _require_valid_approval(_trusted_file(snapshot_path, config.trust_uid))
+        _require_valid_approval(snapshot_path.stat().st_size <= MAX_SOURCE_BYTES)
+        _require_valid_approval(hashlib.sha256(snapshot_path.read_bytes()).hexdigest() == raw_entry.get("content_sha256"))
 
 
 def _verify_manifest_approval(
@@ -593,34 +645,14 @@ def _verify_manifest_approval(
             )
             paths = [entry["path"] for entry in expected_entries]
             _require_valid_approval(len(paths) == len(set(paths)))
-            approval_id = identify_scope(spec, payload, paths)
+            approval_id, continuation = identify_scope(spec, payload, paths)
             _require_valid_approval(payload.get("approval_id") == approval_id)
             _require_valid_approval(payload.get("request_id") == approval_id)
             atomic_layout = _manifest_storage(config, spec, payload, receipt_path)
             _require_valid_approval(spec.path in paths)
             _require_valid_approval(len(raw_entries) == len(expected_entries))
-            total_bytes = 0
-            for raw_entry, expected_entry in zip(raw_entries, expected_entries):
-                _require_valid_approval(
-                    raw_entry.get("path") == expected_entry["path"]
-                    and raw_entry.get("relative_path") == expected_entry["relative_path"]
-                )
-                content, content_sha256 = secure_source_content(expected_entry["path"])
-                total_bytes += len(content)
-                _require_valid_approval(total_bytes <= MAX_SOURCE_BYTES)
-                _require_valid_approval(raw_entry.get("content_sha256") == content_sha256)
-                entry_id = hashlib.sha256(expected_entry["path"].encode("utf-8")).hexdigest()[:32]
-                snapshot_path = (
-                    _SOURCE_CORE.atomic_bundle_directory(config, spec.uid, approval_id) / f"{entry_id}.source"
-                    if atomic_layout else config.state_dir / "snapshots" / str(spec.uid) / f"{approval_id}-{entry_id}.source"
-                )
-                _require_valid_approval(raw_entry.get("snapshot_path") == str(snapshot_path))
-                _require_valid_approval(_trusted_directory(snapshot_path.parent, config.trust_uid))
-                _require_valid_approval(_trusted_file(snapshot_path, config.trust_uid))
-                _require_valid_approval(snapshot_path.stat().st_size <= MAX_SOURCE_BYTES)
-                _require_valid_approval(
-                    hashlib.sha256(snapshot_path.read_bytes()).hexdigest() == content_sha256
-                )
+            _verify_manifest_contents(config, spec, payload, {"entries": expected_entries,
+                                                               "atomic": atomic_layout, "continuation": continuation})
             issued_at = payload.get("issued_at")
             expires_at = payload.get("expires_at")
             _require_valid_approval(isinstance(issued_at, int) and not isinstance(issued_at, bool))
@@ -915,6 +947,8 @@ class _BundleApproval:
             with self.core.bundle_transaction_lock(self.config, self.spec.expected_uid, self.spec.request_id, "commit"):
                 current = self.load()
                 self.check(current is not None and current.get("state") == "ISSUE_VERIFIED", "bundle was cancelled or revoked")
+                self.check(not os.path.lexists(self.config.state_dir / "revocations" / str(self.spec.expected_uid) /
+                                              f'{row["approval_id"]}.json'), "bundle is revoked")
                 self.validate_source(row)
                 os.chmod(stage, 0o755)
                 os.replace(stage, destination)  # Receipt and every snapshot become visible together.
@@ -1017,10 +1051,33 @@ def _confirm_bundle(scope: dict[str, Any]) -> bool:
     return input("Type APPROVE ISSUE AND SOURCE to confirm: ") == "APPROVE ISSUE AND SOURCE"
 
 
+def _bundle_failure_stage(config: Config, uid: int, proposal_id: str) -> str:
+    if re.fullmatch(r"[a-f0-9]{64}", proposal_id) is None:
+        return ""
+    try:
+        path = config.config_dir / "transactions" / str(uid) / f"{proposal_id}.json"
+        row = _SOURCE_CORE._read_request_record(path, config.trust_uid)
+        _SOURCE_CORE._require_source(row.get("uid") == uid and row.get("proposal_id") == proposal_id,
+                                     "transaction identity mismatch")
+        if row.get("issue_comment_id"):
+            return "Issue acceptance was verified; source transaction completion is unconfirmed. "
+        if row.get("issue_signature"):
+            return "Issue publication may have succeeded; source transaction completion is unconfirmed. "
+    except (OSError, ValueError, SourceAccessError):
+        pass
+    return ""
+
+
 def _run_approve_bundle(args: argparse.Namespace, config: Config, uid: int, home: Path) -> int:
     _require_root_tty(config)
-    payload = approve_bundle(config, ApprovalSpec(args.proposal_id, home, uid, parse_ttl(args.ttl),
-                                                confirm=_confirm_bundle), args.repo, args.issue)
+    try:
+        payload = approve_bundle(config, ApprovalSpec(args.proposal_id, home, uid, parse_ttl(args.ttl),
+                                                    confirm=_confirm_bundle), args.repo, args.issue)
+    except (SourceAccessError, OSError, ValueError, _SOURCE_CORE.subprocess.SubprocessError) as error:
+        stage = _bundle_failure_stage(config, uid, args.proposal_id)
+        detail = str(error) if isinstance(error, SourceAccessError) else "Bundle operation did not complete."
+        detail = detail.replace("no authority was issued", "source completion was not verified")
+        raise SourceAccessError(stage + detail) from None
     print(f"Approved issue {args.repo}#{args.issue} and source capability: {payload['approval_id']}")
     print(f"Expires epoch: {payload['expires_at']}")
     return 0

@@ -27,7 +27,6 @@ import {
   canonicalReceiptPayload,
   checkSecretReadWithApproval,
   createSourceAccessMutationProvenance,
-  sourceAccessBrokerMatches,
   verifySourceAccessReceipt,
 } from "../source-access-approval.mjs";
 import { createQualityHooks } from "../quality-hooks.mjs";
@@ -277,40 +276,6 @@ test("a stale root broker fails closed without creating an approval request", ()
   assert.equal(helperCalls, 0);
 });
 
-test("broker matching requires exact deployed helper and core bytes", () => {
-  const tempParent = join(homedir(), ".aidevops", ".agent-workspace", "tmp");
-  mkdirSync(tempParent, { recursive: true });
-  const root = mkdtempSync(join(tempParent, "source-access-broker-match-test-"));
-  const scriptsDir = join(root, "scripts");
-  const brokerDir = join(root, "broker");
-  const uid = typeof process.getuid === "function" ? process.getuid() : 0;
-  try {
-    mkdirSync(scriptsDir, { mode: 0o700 });
-    // The broker matcher correctly rejects group-writable directories. Keep
-    // this fixture trusted regardless of the host's collaborative umask.
-    mkdirSync(brokerDir, { mode: 0o700 });
-    const expectedHelper = join(scriptsDir, "source-access-helper.py");
-    const expectedCore = join(scriptsDir, "source_access_core.py");
-    const brokerHelper = join(brokerDir, "source-access-helper.py");
-    const brokerCore = join(brokerDir, "source_access_core.py");
-    writeFileSync(expectedHelper, "helper-v1\n", { mode: 0o644 });
-    writeFileSync(expectedCore, "core-v1\n", { mode: 0o644 });
-    writeFileSync(brokerHelper, "helper-v1\n", { mode: 0o644 });
-    writeFileSync(brokerCore, "core-v1\n", { mode: 0o644 });
-    const options = {
-      scriptsDir,
-      trustUid: uid,
-      brokerHelperPath: brokerHelper,
-      brokerCorePath: brokerCore,
-    };
-    assert.equal(sourceAccessBrokerMatches(options), true);
-    writeFileSync(brokerCore, "core-v2\n", { mode: 0o644 });
-    assert.equal(sourceAccessBrokerMatches(options), false);
-  } finally {
-    rmSync(root, { recursive: true, force: true });
-  }
-});
-
 test("managed snapshot denial precedes read-tool classification", () => {
   let gateCalls = 0;
   assert.throws(
@@ -460,20 +425,12 @@ test("the loaded verifier accepts only the exact signed receipt", () => {
   }
 });
 
-test("canonical source payload matches the Python broker for Unicode paths", () => {
-  const payload = { path: "/repo/secret-\u00e9.py", marker: "\u007f", astral: "\ud834\udd1e" };
-  const expected = execFileSync("python3", ["-I", "-B", "-c",
-    'import json,sys; print(json.dumps(json.loads(sys.argv[1]),sort_keys=True,separators=(",",":")),end="")',
-    JSON.stringify(payload)], { encoding: "utf8" });
-  assert.equal(canonicalReceiptPayload(payload), expected);
-});
-
 function manifestFixtureProtocol(bound) {
   const version = bound ? "v3" : "v2";
   return {
     payloadSchema: `aidevops-source-access-approval/${version}`,
     receiptSchema: `aidevops-source-access-receipt/${version}`,
-    thirdPath: bound ? "secret-third-\u00e9.sh" : "secret-third.sh",
+    thirdPath: "tests/test-secret-helper-\u00e9.sh",
   };
 }
 
@@ -515,7 +472,7 @@ function manifestFixtureStorage(stateDir, uid, approvalId, atomic) {
   }[String(atomic)];
   mkdirSync(layout.snapshots, { recursive: true, mode: 0o755 });
   mkdirSync(layout.receipts, { recursive: true, mode: 0o755 });
-  if (atomic) mkdirSync(join(stateDir, "revocations", String(uid)), { recursive: true, mode: 0o755 });
+  mkdirSync(join(stateDir, "revocations", String(uid)), { recursive: true, mode: 0o755 });
   return {
     fields: layout.fields,
     receiptPath: join(layout.receipts, layout.name),
@@ -560,6 +517,29 @@ print(json.dumps(result))
   return JSON.parse(stdout);
 }
 
+async function exerciseManifestContinuity({ provenance, runtime, sessionId, repo, filePath, verifyCli, hooks }) {
+  const cycles = [
+    [{ kind: "write", content: "observed update\n" }, "observed update\n"],
+    [{ kind: "edit", oldString: "observed", newString: "edited", replaceAll: false }, "edited update\n"],
+    [{ kind: "apply_patch", patchText: "\n@@\n-edited update\n+patched update\n" }, "patched update\n"],
+  ];
+  for (const [mutation, expected] of cycles) {
+    const before = await runtime.resolve(sessionId, repo);
+    provenance.beginMutation({ sessionId, callId: mutation.kind, sourceContextForPath: () => before,
+      mutations: [{ filePath, ...mutation }] });
+    writeFileSync(filePath, expected);
+    const after = await runtime.resolve(sessionId, repo);
+    provenance.finishMutation({ sessionId, callId: mutation.kind, succeeded: true, sourceContextForPath: () => after });
+    await verifyCli(filePath);
+    const hookInput = { tool: "read", sessionID: sessionId, callID: `observed-${mutation.kind}` };
+    const hookOutput = { args: { filePath } };
+    await hooks.toolExecuteBefore(hookInput, hookOutput);
+    hookOutput.output = readFileSync(hookOutput.args.filePath, "utf8");
+    await hooks.toolExecuteAfter(hookInput, hookOutput);
+    assert.equal(hookOutput.output, expected);
+  }
+}
+
 async function checkSignedManifest(inLinkedWorktree, bound = false, atomic = false) {
   const protocol = manifestFixtureProtocol(bound);
   const tempParent = join(homedir(), ".aidevops", ".agent-workspace", "tmp");
@@ -592,6 +572,7 @@ async function checkSignedManifest(inLinkedWorktree, bound = false, atomic = fal
     const relativePaths = ["secret-helper.sh", "secret-other.sh", protocol.thirdPath];
     const paths = relativePaths.map((name, index) => {
       const filePath = join(repo, name);
+      mkdirSync(dirname(filePath), { recursive: true });
       writeFileSync(filePath, `source-${index}\n`);
       return filePath;
     });
@@ -704,6 +685,14 @@ async function checkSignedManifest(inLinkedWorktree, bound = false, atomic = fal
     const scriptsDir = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "scripts");
     const logsDir = join(root, "logs");
     mkdirSync(logsDir);
+    let activeProvenance;
+    if (runtime) {
+      const attach = runtime.attachSourceAccessProvenance.bind(runtime);
+      runtime.attachSourceAccessProvenance = (provenance) => {
+        activeProvenance = provenance;
+        attach(provenance);
+      };
+    }
     const hooks = createQualityHooks({
       scriptsDir,
       logsDir,
@@ -747,23 +736,19 @@ async function checkSignedManifest(inLinkedWorktree, bound = false, atomic = fal
       await assert.rejects(promisify(execFile)("python3", ["-I", "-B", "-c", recheck,
         helper, JSON.stringify(proposal)], { timeout: 10000 }), /proposal runtime changed/);
       session.time.created = 1000;
-      const provenance = createSourceAccessMutationProvenance({ repositoryDir: canonicalRepo,
-        now: () => now + 1, verify: (options) => verifySourceAccessReceipt({ ...baseArgs, ...options }) });
+      const provenance = activeProvenance;
       provenance.rememberApproval({ sessionId, filePath: paths[0],
         approval: verifySourceAccessReceipt({ ...baseArgs, filePath: paths[0] }) });
-      const before = await runtime.resolve(sessionId, repo);
-      provenance.beginMutation({ sessionId, callId: "bound-write", sourceContextForPath: () => before,
-        mutations: [{ filePath: paths[0], kind: "write", content: "observed update\n" }] });
-      writeFileSync(paths[0], "observed update\n");
-      const after = await runtime.resolve(sessionId, repo);
-      provenance.finishMutation({ sessionId, callId: "bound-write", succeeded: true, sourceContextForPath: () => after });
+      await exerciseManifestContinuity({ provenance, runtime, sessionId, repo, filePath: paths[0], verifyCli, hooks });
+      await verifyCli(paths[1]);
       const read = { sessionId, callId: "bound-read", filePath: paths[0], reason: SOURCE_ACCESS_REASON,
         args: { filePath: paths[0] }, sourceContext: await runtime.resolve(sessionId, repo) };
       assert.ok(provenance.authorizeRead(read));
       const output = { output: "original snapshot" };
       provenance.finishRead(sessionId, "bound-read", output, true);
-      assert.equal(output.output, "observed update\n");
+      assert.equal(output.output, "patched update\n");
       assert.equal(provenance.authorizeRead({ ...read, callId: "no-context", sourceContext: undefined }), false);
+      await assert.rejects(verifyCli(paths[0]), "changed bytes cannot borrow missing runtime provenance");
       writeFileSync(paths[0], "source-0\n");
     }
     if (inLinkedWorktree) {
@@ -798,7 +783,12 @@ async function checkSignedManifest(inLinkedWorktree, bound = false, atomic = fal
       false,
     );
     writeFileSync(paths[1], "altered\n");
-    assert.equal(verifySourceAccessReceipt({ ...baseArgs, filePath: paths[0] }), false);
+    assert.equal(Boolean(verifySourceAccessReceipt({ ...baseArgs, filePath: paths[0] })), bound);
+    assert.equal(verifySourceAccessReceipt({ ...baseArgs, filePath: paths[1] }), false);
+    if (bound) {
+      await verifyCli(paths[0]);
+      await assert.rejects(verifyCli(paths[1]));
+    }
     writeFileSync(paths[1], "source-1\n");
     revokeManifestFixture(stateDir, approvalId);
     assert.equal(existsSync(receiptPath), false);

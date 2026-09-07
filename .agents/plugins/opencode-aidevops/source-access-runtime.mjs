@@ -73,6 +73,7 @@ class SourceAccessRuntime {
   #starting;
   #closed = false;
   #pendingLookups = 0;
+  #provenance;
   #onExit = () => this.close();
 
   constructor({ enabled = true, ...config }) {
@@ -82,6 +83,7 @@ class SourceAccessRuntime {
       sameRepository: (sessionDirectory, root, signal) =>
         sameRepository(this.#config.directory, sessionDirectory, root, signal),
       verifyOwner: (root, sessionId, signal) => this.#verifyOwner(root, sessionId, signal),
+      readSourceProof: (request) => this.#provenance?.observedReadProof(request) ?? null,
     });
   }
 
@@ -132,9 +134,16 @@ class SourceAccessRuntime {
 
   close() {
     this.#closed = true;
+    this.#provenance = undefined;
     this.#endpoint?.close();
     this.#endpoint = undefined;
     process.removeListener("exit", this.#onExit);
+  }
+
+  attachSourceAccessProvenance(provenance) {
+    if (this.#closed || !this.#config.enabled || typeof provenance?.observedReadProof !== "function") return;
+    // A new hook instance replaces, rather than inherits, old mutation state.
+    this.#provenance = provenance;
   }
 
   async resolve(sessionId, repoRoot, signal = AbortSignal.timeout(4000)) {

@@ -99,6 +99,21 @@ Cancellation is durable for that proposal ID. Withdrawal and a fresh proposal
 are explicit new intent, not renewal of cancelled consent. Existing independent
 approval commands and receipt schemas retain their original semantics.
 
+## Observed edit/read continuity
+
+For V3, each requested path must still match its signed bytes and file identity,
+or the same live runtime must have observed the exact successful direct edit.
+An unchanged member remains usable when another member changes; this does not
+authorize reading the changed member. Legacy V1/V2 checks are not broadened.
+
+The hook retains completed-operation provenance in memory. Through the existing
+native challenge, the CLI may request only its digest, file identity, expiry and
+capability ID—never source text. The CLI still independently checks the root
+signature, immutable snapshots, revocation, lifetime, live context and current
+requested bytes/identity. Metadata alone is not permission. Failed/unobserved
+edits, inode substitution, a missing observer or a replaced runtime cannot supply
+continuity; no state file or environment variable substitutes for the live peer.
+
 ## Deployment boundary and verification
 
 The broker closure remains the two installed Python files provisioned from a
@@ -110,7 +125,8 @@ explicit human operation, separate from feature implementation or merge.
 
 Coverage: `tests/test-source-access-helper.py` exercises the transaction and
 recovery with generated keys and fake GitHub data; the existing atomic V3 Node
-fixture now calls the real issuer and native context IPC, then consumes that
-receipt through both CLI verification and the composed Read hook. Existing
-direct-edit provenance fixtures remain separate checks. Independent security
-review and configured CI are required before merge.
+fixture calls the real issuer and native context IPC, then consumes that receipt
+through both CLI verification and the composed Read hook, including Write, Edit
+and apply_patch/read cycles without another confirmation. The fixture includes a
+protected regression-test path. Independent security review and configured CI
+are required before merge.

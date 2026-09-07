@@ -1227,10 +1227,14 @@ def _context_timeout(deadline: float) -> float:
     return remaining
 
 
-def query_source_context(socket_path: str, session_id: str, repo_root: str, uid: int) -> dict[str, Any]:
+def query_source_context(socket_path: str, session_id: str, repo_root: str, uid: int,
+                         source_read: dict[str, Any] | None = None) -> dict[str, Any]:
     """Challenge a live peer. This metadata alone never authorizes source reads."""
     query = {"schema": "aidevops-source-context-query/v1", "nonce": secrets.token_hex(32),
              "session_id": _validate_session_id(session_id), "repo_root": repo_root}
+    if source_read is not None:
+        query["source_read"] = source_read
+    _require_source(len(canonical_json(query)) < 8192, "source context query is too large")
     path = Path(socket_path)
     try:
         identity = _source_context_socket(path, uid)
@@ -1253,6 +1257,8 @@ def query_source_context(socket_path: str, session_id: str, repo_root: str, uid:
             reply = json.loads(response.decode("utf-8"))
         _require_source(identity == _source_context_socket(path, uid), "source context socket changed")
         context = _validated_context_reply(reply, query, pid, peer_uid)
+        if source_read is not None:
+            context["source_read"] = reply.get("source_read")
         return {**context, "socket_path": str(path), "socket_identity": identity}
     except (OSError, ValueError, struct.error, RecursionError) as exc:
         raise SourceAccessError("source context is unavailable; no authority was issued") from exc

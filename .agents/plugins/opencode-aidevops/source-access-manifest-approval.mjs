@@ -126,7 +126,7 @@ function normalizedEntries(payload, context) {
     context.requireValidReceipt(/^[a-f0-9]{64}$/.test(entry.content_sha256 || ""));
     totalBytes += statSync(path).size;
     context.requireValidReceipt(totalBytes <= MAX_SOURCE_BYTES);
-    if (!context.authorizedApprovalId) {
+    if (!context.authorizedApprovalId && (payload.schema !== BOUND_PAYLOAD_SCHEMA || path === context.canonicalPath)) {
       context.requireValidReceipt(context.sourceDigestMatches(path, entry.content_sha256));
     }
     return { entry, path, relativePath: identity.relativePath };

@@ -544,6 +544,37 @@ class SourceAccessHelperTests(unittest.TestCase):
         self.assertEqual(HELPER.approve_bundle(self.config, spec, "fixture/repo", 123), payload)
         self.assertEqual(len(confirmations), 1)
         self.assertEqual(sum(comment["id"] == 99 for comment in evidence["comments"]), 1)
+        self._assert_legacy_issue_acceptance(evidence)
+
+    def _assert_legacy_issue_acceptance(self, evidence: dict) -> None:
+        # Reuse the content-binding shell suite's gh-stub/public-key pattern;
+        # exercise the real legacy verifier without credentials or network.
+        directory = self.root / "legacy-bin"
+        directory.mkdir()
+        state = self.root / "legacy-github.json"
+        state.write_text(json.dumps(evidence), encoding="utf-8")
+        stub = directory / "gh"
+        stub.write_text(f"#!{sys.executable}\n" + '''import json,os,sys
+data=json.load(open(os.environ["FIXTURE_API_STATE"]))
+if len(sys.argv)<3 or sys.argv[1]!="api": sys.exit(1)
+endpoint=sys.argv[2]
+if endpoint=="user": print("fixture")
+elif "/collaborators/" in endpoint: print("write")
+elif "/comments" in endpoint: print(json.dumps([data["comments"]]))
+elif "/timeline" in endpoint: print(json.dumps([data["timeline"]]))
+elif endpoint=="repos/fixture/repo/issues/123": print(json.dumps(data["issue"]))
+else: sys.exit(1)
+''', encoding="utf-8")
+        stub.chmod(0o700)
+        environment = {"HOME": str(self.home), "PATH": str(directory) + os.pathsep + os.environ["PATH"],
+                       "FIXTURE_API_STATE": str(state), "LC_ALL": "C", "AIDEVOPS_TEMP_DIR": str(self.root / "legacy-tmp"),
+                       "AIDEVOPS_APPROVAL_PUB": str(self.home / ".aidevops" / "approval-keys" / "private" / "approval.key.pub")}
+        result = subprocess.run(  # nosec B603 -- production verification against exclusively synthetic gh data/key
+            ["/usr/bin/env", "bash", str(SCRIPTS_DIR / "approval-helper.sh"), "verify", "issue", "123", "fixture/repo", "--require-authority"],
+            env=environment, capture_output=True, check=False, timeout=15,
+        )
+        self.assertEqual(result.returncode, 0, result.stdout.decode() + result.stderr.decode())
+        self.assertEqual(result.stdout.decode().strip(), "VERIFIED")
 
     def test_bundle_recovers_crash_after_atomic_publish_without_resigning(self) -> None:
         spec, evidence, confirmations = self._bundle_fixture()
@@ -632,6 +663,48 @@ class SourceAccessHelperTests(unittest.TestCase):
         with self.assertRaisesRegex(HELPER.SourceAccessError, "cancelled or revoked"):
             HELPER.approve_bundle(self.config, spec, "fixture/repo", 123)
 
+    def test_bundle_partial_signing_reports_issue_success_and_resumes_exact_source(self) -> None:
+        spec, evidence, _confirmations = self._bundle_fixture()
+        core = HELPER._SOURCE_CORE
+        original = core.descriptor_signature
+
+        def fail_source(config, descriptor, namespace, content):
+            if namespace == core.SIGNATURE_NAMESPACE:
+                raise HELPER.SourceAccessError("synthetic source signing failure")
+            return original(config, descriptor, namespace, content)
+
+        args = HELPER.build_parser().parse_args(["approve-bundle", spec.request_id,
+                                                "--repo", "fixture/repo", "--issue", "123", "--ttl", "1h"])
+        with (mock.patch.object(HELPER, "_require_root_tty"),
+              mock.patch.object(HELPER, "_confirm_bundle", return_value=True) as confirm,
+              mock.patch.object(HELPER.time, "time", return_value=self.now),
+              mock.patch.object(core, "descriptor_signature", side_effect=fail_source),
+              self.assertRaisesRegex(HELPER.SourceAccessError, "Issue acceptance was verified; source transaction")):
+            HELPER._run_approve_bundle(args, self.config, self.uid, self.home)
+        confirm.assert_called_once()
+        self.assertEqual(core.manifest_receipt_paths(self.config, self.uid), [])
+        self.assertEqual(sum(comment["id"] == 99 for comment in evidence["comments"]), 1)
+        with mock.patch.object(core, "github_issue_action") as mutate:
+            HELPER.approve_bundle(self.config, spec, "fixture/repo", 123)
+            mutate.assert_not_called()
+
+    def test_bound_read_metadata_must_match_exact_capability_bytes_and_identity(self) -> None:
+        spec, _evidence, _confirmations = self._bundle_fixture()
+        core = HELPER._SOURCE_CORE
+        payload = HELPER.approve_bundle(self.config, spec, "fixture/repo", 123)
+        path = payload["entries"][0]["path"]
+        verification = HELPER.VerificationSpec(self.session, self.uid, path, HELPER.OVERRIDABLE_REASON)
+        current = core._proposal_source_snapshot(HELPER.ManifestRequestSpec(
+            self.session, self.uid, self.home, (path,), HELPER.OVERRIDABLE_REASON, self.now))
+        proof = {"schema": "aidevops-source-observed-read/v1", "approval_id": payload["approval_id"],
+                 "path": path, "expires_at": payload["expires_at"], "content_sha256": current["entries"][0]["content_sha256"],
+                 "file_identity": {key: str(value) for key, value in current["entries"][0]["identity"].items()}}
+        self.assertEqual(HELPER._bound_read_proof(verification, payload, current, proof), proof)
+        for key, value in (("approval_id", "f" * 64), ("path", str(self.other_source)),
+                           ("content_sha256", "0" * 64), ("expires_at", self.now), ("file_identity", {})):
+            with self.subTest(field=key), self.assertRaises(HELPER.SourceAccessError):
+                HELPER._bound_read_proof(verification, payload, current, {**proof, key: value})
+
     def test_bundle_cancellation_during_confirmation_wins_over_stale_consent(self) -> None:
         spec, evidence, _confirmations = self._bundle_fixture()
 
@@ -683,7 +756,9 @@ class SourceAccessHelperTests(unittest.TestCase):
         directory.mkdir()
         regression = directory / f"test-{self.source.name}"
         regression.write_text("#!/bin/sh\ntest 1 = 1\n", encoding="utf-8")
-        subprocess.run(["/usr/bin/git", "-C", str(self.repo), "add", str(regression)], check=True)
+        subprocess.run(  # nosec B603 -- fixed system Git and exclusively fixture-owned repository/path
+            ["/usr/bin/git", "-C", str(self.repo), "add", str(regression)], check=True,
+        )
         spec = self._proposal_spec()
         _reader, evidence = self._issue_snapshot_fixture()
         args = ["propose", "--repo", "fixture/repo", "--issue", "123", "--session", self.session,
@@ -711,7 +786,7 @@ class SourceAccessHelperTests(unittest.TestCase):
                   '_approve_targets() { return 99; }; '
                   'cmd_issue_approved 123 fixture/repo --source-proposal "$3" --ttl 1h')
         result = subprocess.run(  # nosec B603 -- real command routing into a nonprivileged fixture bridge only
-            ["bash", "-c", script, "fixture", str(SCRIPTS_DIR / "approval-helper.sh"),
+            ["/usr/bin/env", "bash", "-c", script, "fixture", str(SCRIPTS_DIR / "approval-helper.sh"),
              str(directory), "a" * 64], capture_output=True, check=False, timeout=10,
         )
         self.assertEqual(result.returncode, 0, result.stderr.decode())

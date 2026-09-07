@@ -412,6 +412,7 @@ export function createQualityHooks(deps) {
     gitRun: deps.gitRun,
     now: deps.now,
   });
+  deps.sourceAccessRuntime?.attachSourceAccessProvenance?.(sourceAccessProvenance);
   // t2120: qualityDetailLog (in quality-logging.mjs) reads ctx.detailLogPath
   // and ctx.detailMaxBytes. Previously these were never populated here, so
   // every call to logQualityGateResult → qualityDetailLog threw
