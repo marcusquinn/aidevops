@@ -113,8 +113,14 @@ if ! _systemd_owns_pulse && [[ ! -x "$_LIFECYCLE_HELPER" ]]; then
 fi
 
 # Fast path: ask the owning scheduler before falling back to process discovery.
+# A systemd oneshot may report inactive after its launcher exits while the Pulse
+# process it started is still running. Confirm process liveness before declaring
+# that scheduler-owned Pulse dead and repeatedly trying to revive it.
 if _systemd_owns_pulse; then
 	if _systemd_pulse_alive; then
+		exit 0
+	fi
+	if [[ -x "$_LIFECYCLE_HELPER" ]] && "$_LIFECYCLE_HELPER" is-running >/dev/null 2>&1; then
 		exit 0
 	fi
 elif "$_LIFECYCLE_HELPER" is-running >/dev/null 2>&1; then

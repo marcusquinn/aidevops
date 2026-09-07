@@ -17,7 +17,7 @@
   "author": "Marcus Quinn",
   "license": "MIT",
   "opencode": {
-    "tracked_version": "1.18.25",
+    "tracked_version": "1.18.29",
     "repo": "anomalyco/opencode"
   },
   "peerDependencies": {
@@ -25,6 +25,6 @@
   },
   "dependencies": {
     "@bufbuild/protobuf": "^2.0.0",
-    "@opencode-ai/plugin": "^1.18.25"
+    "@opencode-ai/plugin": "^1.18.29"
   }
 }
