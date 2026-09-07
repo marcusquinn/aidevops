@@ -107,25 +107,13 @@ test_creates_issue_when_snippet_still_exists() {
 }
 
 test_generated_issue_has_valid_files_scope() {
-	reset_mock_state
-	GH_RAW_CONTENT=$'#!/usr/bin/env bash\nverification marker present\nreturn 1\n'
-
-	local findings
-	findings='[{"file":".agents/scripts/example.sh","line":42,"body_full":"```bash\nverification marker present\n```","reviewer":"coderabbit","reviewer_login":"coderabbitai","severity":"high","url":"https://example.test/comment"}]'
-
-	local out_file
-	out_file=$(mktemp)
-	_create_quality_debt_issues "owner/repo" "123" "$findings" >"$out_file"
-	rm -f "$out_file"
-
 	local body
-	body=$(<"$GH_CREATE_BODY_LOG")
+	body=$(_build_quality_debt_issue_body "123" ".agents/scripts/example.sh" "coderabbit" "1" "high" "actionable finding" "true")
 	if [[ "$body" == *$'## Files Scope\n\n- EDIT: `.agents/scripts/example.sh`'* ]]; then
 		print_result "generated quality-debt issue has dispatchable Files Scope" 0
 	else
 		print_result "generated quality-debt issue has dispatchable Files Scope" 1 "body=${body}"
 	fi
-	rm -f "$GH_CREATE_LOG" "$GH_CREATE_BODY_LOG" "$GH_API_LOG"
 	return 0
 }
 
