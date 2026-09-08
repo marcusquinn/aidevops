@@ -14,6 +14,7 @@
 #   - shared-gh-wrappers-session.sh       — session origin, token, internal helpers
 #   - shared-gh-wrappers-create.sh        — issue/PR creation, comments, parent linking
 #   - shared-gh-wrappers-safe-edit.sh     — safe edit/close/merge with audit logging
+#   - shared-gh-wrappers-batch.sh         — bounded manifest-based GitHub writes
 #   - shared-gh-wrappers-status.sh        — status labels, read wrappers with REST fallback
 #   - shared-gh-wrappers-checks.sh        — PR check status via REST check-suites/check-runs (GH#21799)
 #   - shared-gh-wrappers-rest-fallback.sh — REST fallback translators (pre-existing)
@@ -890,6 +891,10 @@ if [[ -n "$_SHARED_GH_WRAPPERS_DIR" ]]; then
 	# shellcheck source=shared-gh-wrappers-create.sh
 	# shellcheck disable=SC1091  # sub-library resolved at runtime via $_SHARED_GH_WRAPPERS_DIR
 	source "$_SHARED_GH_WRAPPERS_DIR/shared-gh-wrappers-create.sh"
+	if [[ -f "$_SHARED_GH_WRAPPERS_DIR/shared-gh-wrappers-batch.sh" ]]; then
+		# shellcheck source=shared-gh-wrappers-batch.sh
+		source "$_SHARED_GH_WRAPPERS_DIR/shared-gh-wrappers-batch.sh"
+	fi
 
 	# shellcheck source=shared-gh-wrappers-safe-edit.sh
 	# shellcheck disable=SC1091  # sub-library resolved at runtime via $_SHARED_GH_WRAPPERS_DIR

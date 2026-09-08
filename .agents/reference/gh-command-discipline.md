@@ -78,6 +78,28 @@ their existing behavior.
   comment` or `gh-write-helper.sh pr comment`. Use `--body-file -` for streamed
   bodies; the executable loads the audited create/edit/comment wrappers
   internally without caller-side `source`.
+- Explicit bounded publication uses `gh-write-helper.sh batch MANIFEST.json`.
+  The owner-only manifest and every body file must live under
+  `AIDEVOPS_TEMP_DIR`. Schema `aidevops.github-write-batch/v1` accepts 1-10
+  independent operations in one repository: `issue_comment`, `pr_comment`,
+  `issue_edit`, `pr_edit`, `issue_add_labels`, `issue_remove_labels`,
+  `pr_add_labels`, and `pr_remove_labels`. Each operation requires a stable `id`
+  and positive `number`; comments require `body_file`, edits require `title`
+  and/or `body_file`, and label changes require `labels`. Unknown fields fail
+  closed. Batch mode rejects protected lifecycle/provenance labels; use their
+  dedicated helpers instead.
+  It validates the complete set and fresh repository state before one aliased
+  GraphQL mutation, then writes an owner-only per-operation receipt. Never replay
+  an `unknown` result. Comments carry an `aidevops:batch` marker. Recovery scans
+  a complete bounded fresh comment window and must prove that marker absent
+  before placing a proven-missing comment in a manifest whose `recovery_of`
+  identifies the owner-only
+  original receipt and its manifest digest. Only operations recorded `unknown`
+  may be recovered, and the operation identity and payload digest must match the
+  receipt. Metadata recovery likewise requires fresh exact state. Keep dependent
+  writes sequential when a later operation needs state produced by an earlier
+  operation. A recovery manifest uses `"recovery_of":{"manifest_sha256":"...",
+  "receipt_file":"<owner-only-absolute-path>"}`.
 - ANTI-PATTERN (blocked by t2893 enforcement): same-command heredoc, process
   substitution, command substitution, or shell-variable body construction such
   as passing a heredoc through command substitution to `--body`, passing

@@ -14,6 +14,7 @@ usage() {
 	printf 'Usage: gh-write-helper.sh {issue|pr} create [gh create options]\n'
 	printf '       gh-write-helper.sh {issue|pr} edit <number-or-url> [gh edit options]\n'
 	printf '       gh-write-helper.sh {issue|pr} comment <number-or-url> [gh comment options]\n'
+	printf '       gh-write-helper.sh batch MANIFEST.json\n'
 	printf 'Bodies may use --body-file - to read stdin once through the safe wrapper.\n'
 	return 0
 }
@@ -24,6 +25,11 @@ main() {
 	if [[ "$resource" == "help" || "$resource" == "--help" || "$resource" == "-h" ]]; then
 		usage
 		return 0
+	fi
+	if [[ "$resource" == "batch" ]]; then
+		shift
+		gh_write_batch "$@"
+		return $?
 	fi
 	if [[ "$action" != "create" && "$action" != "edit" && "$action" != "comment" ]]; then
 		usage >&2
