@@ -178,9 +178,21 @@ pulse_pr_list_get() {
 		printf '%s' "$cached_output"
 		return 0
 	fi
-	local output=""
-	output="$(gh_pr_list "$@")"
-	local rc=$?
+	local output="" rc=0 attempt=1
+	# A timed-out list is not equivalent to an empty repository. Retry once so a
+	# transient slow GraphQL/REST response cannot silently skip this merge pass.
+	while :; do
+		if output="$(gh_pr_list "$@")"; then
+			rc=0
+		else
+			rc=$?
+		fi
+		if [[ "$rc" -ne 124 || "$attempt" -ge 2 ]]; then
+			break
+		fi
+		printf '[pulse-wrapper] pulse_pr_list_get: timed out; retrying PR list (attempt %s/2)\n' "$attempt" >&2
+		attempt=$((attempt + 1))
+	done
 	if [[ "$rc" -eq 0 ]]; then
 		_pulse_pr_list_cache_put "$output" "$@"
 		printf '%s' "$output"

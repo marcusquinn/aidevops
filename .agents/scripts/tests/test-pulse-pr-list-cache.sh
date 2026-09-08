@@ -44,6 +44,10 @@ gh_pr_list_cache_invalidate_repo() {
 
 gh_pr_list() {
 	printf '%s\n' "$*" >>"$GH_CALLS"
+	if [[ -n "${PULSE_TEST_TIMEOUT_MARKER:-}" && -f "$PULSE_TEST_TIMEOUT_MARKER" ]]; then
+		rm -f "$PULSE_TEST_TIMEOUT_MARKER"
+		return 124
+	fi
 	if [[ "${PULSE_TEST_EMPTY_OUTPUT:-0}" == "1" ]]; then
 		return 0
 	fi
@@ -56,6 +60,19 @@ source "${SCRIPTS_DIR}/pulse-pr-list-cache.sh"
 
 export PULSE_PR_LIST_PROVIDER_CACHE_DIR="${TMP_DIR}/cache"
 export PULSE_PR_LIST_PROVIDER_CACHE_TTL=3600
+
+: >"$GH_CALLS"
+export PULSE_TEST_TIMEOUT_MARKER="${TMP_DIR}/timeout-once"
+: >"$PULSE_TEST_TIMEOUT_MARKER"
+retry_output=$(pulse_pr_list_get --repo owner/retry --state open --json number --limit 10)
+unset PULSE_TEST_TIMEOUT_MARKER
+retry_backend_calls=$(grep -cF -- '--repo owner/retry --state open --json number --limit 10' "$GH_CALLS" 2>/dev/null || true)
+if [[ "$retry_output" == '[{"number":1,"reviewDecision":"APPROVED","headRefOid":"abc123"}]' && "$retry_backend_calls" == "2" ]]; then
+	pass "provider retries a timed-out PR list instead of treating it as empty"
+else
+	fail "provider retries a timed-out PR list instead of treating it as empty" \
+		"output=${retry_output} backend_calls=${retry_backend_calls} calls=$(<"$GH_CALLS")"
+fi
 
 first_output=$(pulse_pr_list_get --repo owner/repo --state open --json number,reviewDecision,headRefOid --limit 200)
 second_output=$(pulse_pr_list_get --repo owner/repo --state open --json number,reviewDecision,headRefOid --limit 200)
