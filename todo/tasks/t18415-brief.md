@@ -84,10 +84,32 @@ Source-fix paths cannot be selected responsibly before index and policy recovery
 
 ## Acceptance Criteria
 
-- [ ] **Positive:** Every genuine rating driver is mapped to a bounded child or ruled out with exact-SHA evidence.
-- [ ] Every filed child has a fresh task ID, worker-ready context, direct parent relationship, and correct dispatch/dependency metadata.
-- [ ] The parent Children section remains current for completion reconciliation.
-- [ ] **Negative/regression:** Quality policy, badge visibility, and production-source coverage remain intact.
+- [x] **Positive:** Every genuine rating driver is mapped to a bounded child or ruled out with exact-SHA evidence.
+- [x] Every filed child has a fresh task ID, worker-ready context, direct parent relationship, and correct dispatch/dependency metadata.
+- [x] The parent Children section remains current for completion reconciliation.
+- [x] **Negative/regression:** Quality policy, badge visibility, and production-source coverage remain intact.
+
+## Completion Evidence
+
+- **Exact default and analysed SHA:** `8c10218a1f3283390eb82657825f769452c1f922`
+- **Completed analysis:** 2026-09-08T16:09:06Z; grade A/99, 1,100 issues,
+  1,201,981 analysed LOC, and 755 complex files.
+- **Rating-driver decision:** Codacy reports `issuesPercentage: 0` and grade A, so
+  no open finding is currently a rating driver requiring a remediation child.
+  The aggregate overview still records existing advisory/security and complexity
+  debt, but filing speculative bulk-fix tasks would not advance the authorised
+  A-grade outcome.
+- **Policy recovery:** The three obsolete ESLint compatibility/style counts are
+  zero. The remaining 83 cached `Bandit_B404` findings are ruled out as a source
+  remediation batch by the verified policy audit in GH#31459: B404 is disabled
+  in both effective Codacy policy and `.bandit`, while narrower subprocess checks
+  remain active.
+- **Publication:** The live Codacy badge renders A. The repository remains on the
+  dedicated `aidevops modern runtimes` standard, with analysed scope above the
+  trustworthy 814,993-LOC baseline and no quality-policy, source-exclusion, or
+  badge change in this task.
+- **Children:** None filed. Parent GH#31275 already lists all three recovery
+  phases, so its `## Children` section and native relationships remain current.
 
 ## Context
 
