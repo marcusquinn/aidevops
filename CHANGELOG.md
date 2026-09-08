@@ -10,6 +10,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.32.341] - 2026-09-08
+
+### Fixed
+
+- recover quota during continuous traffic and preserve deferrals
+- scope full-loop publication validators (#31569)
+
 ## [3.32.340] - 2026-09-08
 
 ### Added
