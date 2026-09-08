@@ -823,6 +823,44 @@ privacy_scan_secret_material_text() {
 }
 
 #######################################
+# Stream a conservative candidate diff in one process. Synthetic one-line hunk
+# headers retain original line numbers for the authoritative scanners below.
+# Public mode is only used with empty entity and custom-path inventories.
+#######################################
+_privacy_builtin_candidate_diff() {
+	local diff_text="$1"
+	local mode="$2"
+	printf '%s\n' "$diff_text" | awk -v credentials="$PRIVACY_CREDENTIAL_PREFIX_ERE" -v mode="$mode" -v debug="${PRIVACY_GUARD_DEBUG:-0}" '
+		/^\+\+\+ b\// { pem = 0; print; next }
+		/^\+\+\+ / { next }
+		/^@@ / {
+			header = $0
+			sub(/^@@ -[^+]*\+/, "", header)
+			split(header, fields, /[, ]/)
+			line = fields[1] + 0
+			next
+		}
+		/^\+/ {
+			text = substr($0, 2)
+			if (text ~ /-----BEGIN[[:space:]][A-Z0-9[:space:]]*PRIVATE[[:space:]]KEY-----/) pem = 1
+			candidate = pem || text ~ credentials || index(text, "PRIVATE")
+			if (mode == "public" && (index(text, "/" "Users/") || index(text, "/" "home/") || index(text, "~/") || index(text, "file://"))) candidate = 1
+			if (candidate) {
+				candidates++
+				printf "@@ -0,0 +%d,1 @@\n", line
+				print
+			}
+			if (text ~ /-----END[[:space:]][A-Z0-9[:space:]]*PRIVATE[[:space:]]KEY-----/) pem = 0
+			line++
+			next
+		}
+		/^ / { line++ }
+		END { if (debug == 1) printf "[privacy-guard][INFO] %s filter: %d diff lines, %d candidate lines\n", mode, NR, candidates > "/dev/stderr" }
+	'
+	return $?
+}
+
+#######################################
 # Scan all added diff lines for private-key material.
 # Arguments:
 #   $1 - base SHA (remote tip); may be all zeros for a new branch push
@@ -846,13 +884,14 @@ privacy_scan_secret_material_diff() {
 	local diff_output
 	diff_output=$(git diff --unified=0 --no-color "$diff_base" "$head_sha" 2>/dev/null) || return 0
 	[[ -z "$diff_output" ]] && return 0
+	diff_output=$(_privacy_builtin_candidate_diff "$diff_output" secret) || return 2
 
 	local hits=0 current_file="" line_num=0 in_pem=0
 	local aidevops_script_basenames
 	aidevops_script_basenames=$(_privacy_aidevops_script_reference_basenames)
 	while IFS= read -r line; do
 		case "$line" in
-		"+++ b/"*) current_file="${line#+++ b/}"; line_num=0 ;;
+		"+++ b/"*) current_file="${line#+++ b/}"; line_num=0; in_pem=0 ;;
 		"--- "*) ;;
 		"@@ "*)
 			local rest="${line#@@ -*+}"
@@ -862,8 +901,12 @@ privacy_scan_secret_material_diff() {
 		"+"*)
 			[[ "$line" == "+++ "* ]] && continue
 			local added="${line:1}"
-			local scan_added
-			scan_added=$(_privacy_redact_aidevops_script_references "$added" "$aidevops_script_basenames")
+			local scan_added="$added"
+			# Redaction only affects credential-like script references. Avoid a
+			# subshell on every ordinary added line, without skipping PEM state.
+			if [[ "$added" =~ $PRIVACY_CREDENTIAL_PREFIX_ERE ]]; then
+				scan_added=$(_privacy_redact_aidevops_script_references "$added" "$aidevops_script_basenames")
+			fi
 			if [[ "$scan_added" != "$added" ]]; then
 				printf '%s:%s: [privacy-scan][ALLOW] aidevops script file reference\n' "$current_file" "$line_num" >&2
 			fi
@@ -878,7 +921,7 @@ privacy_scan_secret_material_diff() {
 			if [[ "$scan_added" =~ -----END[[:space:]][A-Z0-9[:space:]]*PRIVATE[[:space:]]KEY----- ]]; then
 				in_pem=0
 			fi
-			if printf '%s' "$scan_added" | grep -qE -- "$PRIVACY_CREDENTIAL_PREFIX_ERE"; then
+			if [[ "$scan_added" =~ $PRIVACY_CREDENTIAL_PREFIX_ERE ]]; then
 				printf '%s:%s: credential token prefix\n' "$current_file" "$line_num"
 				hits=$((hits + 1))
 			fi
@@ -1040,6 +1083,8 @@ privacy_scan_public_diff() {
 	local diff_base="$base_sha" diff_output
 	local current_file="" line_num=0 hits=0 line added matching_hits scan_rc hit
 	local aidevops_script_basenames
+	local configured_paths="$HOME/.aidevops/configs/privacy-guard-private-path-patterns.txt"
+	local filtered=0
 
 	[[ -f "$entities_file" ]] || return 2
 	if [[ "$base_sha" =~ ^0+$ ]]; then
@@ -1049,6 +1094,10 @@ privacy_scan_public_diff() {
 		[[ -z "$diff_base" ]] && diff_base=$(git hash-object -t tree /dev/null)
 	fi
 	diff_output=$(git diff --unified=0 --no-color "$diff_base" "$head_sha" -- . 2>/dev/null) || return 2
+	if [[ ! -s "$entities_file" && ! -s "$configured_paths" ]]; then
+		diff_output=$(_privacy_builtin_candidate_diff "$diff_output" public) || return 2
+		filtered=1
+	fi
 	aidevops_script_basenames=$(_privacy_aidevops_script_reference_basenames)
 	while IFS= read -r line; do
 		case "$line" in
@@ -1079,6 +1128,11 @@ privacy_scan_public_diff() {
 		" "*) line_num=$((line_num + 1)) ;;
 		esac
 	done <<<"$diff_output"
+	# Do not approve a filtered scan if custom rules appeared during the scan.
+	[[ -f "$entities_file" ]] || return 2
+	if [[ "$filtered" -eq 1 && (-s "$entities_file" || -s "$configured_paths") ]]; then
+		return 2
+	fi
 	[[ "$hits" -gt 0 ]] && return 1
 	return 0
 }

@@ -341,23 +341,20 @@ else
 	fail "is_target_public: unparseable URL should return 2 (got $rc)"
 fi
 
-# Test: stale cache entry (older than TTL) is NOT used — the function should
-# fall through to a fresh probe. We can't stub gh, so we seed a stale private
-# entry for a slug we KNOW is public (our own aidevops repo), set TTL=1, and
-# verify the result matches the live state rather than the stale cache.
-# If gh is unavailable, this test is skipped (fail-open returns 2, not a bug).
-if command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then
-	_seed_cache "marcusquinn/aidevops" true 9999
-	PRIVACY_CACHE_TTL=1 privacy_is_target_public "git@github.com:marcusquinn/aidevops.git"
-	rc=$?
-	# Live aidevops repo is public → fresh probe should return 0, overriding the stale private entry
-	if [[ "$rc" -eq 0 ]]; then
-		pass "is_target_public: stale cache entry is refreshed via fresh probe"
-	else
-		fail "is_target_public: stale cache should have been refreshed (got $rc)"
-	fi
+# A stale cache must trigger a fresh probe. Stub only the probe transport so
+# GitHub availability and account-level cooldowns cannot change this test.
+cat >"${TMP}/fresh-public-probe" <<'PROBE'
+#!/usr/bin/env bash
+printf 'false\n'
+PROBE
+chmod +x "${TMP}/fresh-public-probe"
+_seed_cache "owner/stale-public" true 9999
+PRIVACY_GH_BIN="${TMP}/fresh-public-probe" PRIVACY_CACHE_TTL=1 privacy_is_target_public "git@github.com:owner/stale-public.git"
+rc=$?
+if [[ "$rc" -eq 0 ]]; then
+	pass "is_target_public: stale cache entry is refreshed via fresh probe"
 else
-	pass "is_target_public: stale cache refresh test skipped (gh unavailable)"
+	fail "is_target_public: stale cache should have been refreshed (got $rc)"
 fi
 
 # Reset cache for hook-dispatch tests
