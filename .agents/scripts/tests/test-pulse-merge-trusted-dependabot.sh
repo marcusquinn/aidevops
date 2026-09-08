@@ -461,6 +461,20 @@ test_repository_allows_types_bun() {
 	return 0
 }
 
+test_repository_allows_types_react_dom() {
+	local fixture_allowlist="$AIDEVOPS_TRUSTED_DEPENDABOT_UPDATES_CONF"
+
+	unset AIDEVOPS_TRUSTED_DEPENDABOT_UPDATES_CONF
+	if _trusted_dependabot_dependency_allowed "" "@types/react-dom"; then
+		export AIDEVOPS_TRUSTED_DEPENDABOT_UPDATES_CONF="$fixture_allowlist"
+		print_result "repository allowlist permits @types/react-dom updates" 0
+		return 0
+	fi
+	export AIDEVOPS_TRUSTED_DEPENDABOT_UPDATES_CONF="$fixture_allowlist"
+	print_result "repository allowlist permits @types/react-dom updates" 1
+	return 0
+}
+
 test_repository_allows_hono() {
 	local fixture_allowlist="$AIDEVOPS_TRUSTED_DEPENDABOT_UPDATES_CONF"
 
@@ -684,6 +698,7 @@ main() {
 	test_trusted_actions_dependabot_passes
 	test_unallowlisted_dependency_fails
 	test_repository_allows_types_bun
+	test_repository_allows_types_react_dom
 	test_repository_allows_hono
 	test_repository_allows_vite_react_plugin
 	test_repository_allows_elysia
